@@ -1,0 +1,23 @@
+{
+  "name": "@whonb/dao-tui",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc --noEmit && eslint . --ext .ts,.tsx",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@mariozechner/pi-tui": "^0.57.1",
+    "chalk": "^5.6.2",
+    "yoga-layout": "^3.2.1",
+    "yoga-layout-prebuilt": "^1.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/yoga-layout": "^1.9.2",
+    "typescript": "^5.0.0"
+  }
+}

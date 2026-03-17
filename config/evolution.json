@@ -1,0 +1,44 @@
+{
+  "objectives": [
+    "提升自主进化循环的稳定性与可恢复性",
+    "提升日志可观测性与故障定位速度",
+    "降低每轮进化失败率并提高可晋升比例"
+  ],
+  "validate_commands": [
+    "npm run build"
+  ],
+  "protected_paths": [
+    "dist",
+    "node_modules",
+    "state",
+    "logs"
+  ],
+  "allowed_edit_roots": [
+    "src",
+    "config"
+  ],
+  "enabled_tools": ["codebuddy"],
+  "toolchain": [
+    {
+      "name": "gemini",
+      "check_cmd": "command -v gemini >/dev/null 2>&1",
+      "run_cmd": "gemini --max-session-turns 100 --output-format stream-json -p \"$(cat {prompt_file})\" -y",
+      "parser": "gemini"
+    },
+    {
+      "name": "qwen",
+      "check_cmd": "command -v qwen >/dev/null 2>&1",
+      "run_cmd": "qwen --max-session-turns 100 --output-format stream-json --include-partial-messages -p \"$(cat {prompt_file})\" -y",
+      "parser": "qwen"
+    },
+    {
+      "name": "codebuddy",
+      "check_cmd": "command -v codebuddy >/dev/null 2>&1",
+      "run_cmd": "codebuddy --max-turns 100 --output-format stream-json --include-partial-messages -p \"$(cat {prompt_file})\" -y",
+      "parser": "codebuddy"
+    }
+  ],
+  "min_score_promote": 0.7,
+  "inactivity_timeout_sec": 300,
+  "total_timeout_sec": 900
+}

@@ -1,0 +1,32 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build output
+dist/
+
+# Env / OS
+.env
+.DS_Store
+
+tmp*
+
+# Logs
+logs/
+
+.worktree/
+state/
+data/
+
+# DAO ref
+.dao/ref/
+.dao/registry-cache.json
+src/agents-gemini-cli/devtools/client
+
+# IDEs
+.idea/*
+!.idea/dictionaries/
+!.idea/dao.iml
+!.idea/typescript-compiler.xml
