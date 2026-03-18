@@ -17,7 +17,7 @@
 
 ## 准确性规范 (Strict Source)
 1. **重新加载**: 每次工作前重新加载上下文文件。
-2. **查阅优先**: 每次工作前,先查资料再工作,查阅顺序为: 本项目问题查本项目代码 > 项目依赖问题查 `.dao/ref` 到依赖源代码 > 没有依赖源代码查 `node_modules` > 最后查网上资料。查阅时需对齐版本号。
+2. **查阅优先**: 每次工作前, 先查资料再工作,查阅顺序为: 本项目问题查本项目代码 > 项目依赖问题查 `.dao/ref` 到依赖源代码 > 没有依赖源代码查 `node_modules` > 最后查网上资料。查阅时需对齐版本号。
 
 ---
 
@@ -36,7 +36,7 @@
 5. **运行期验证**: 对于工具调度等复杂逻辑，除了类型检查外，还必须编写或运行 `*_example.ts` 或现有测试来确认。
 
 ## 直接依赖 (Dependencies)
-<div>sss</div>
+
 <!-- DAO_DEPS_START -->
 <!-- 自动生成，请勿手动修改 (Auto-generated, do not edit manually) -->
 <!-- 依赖树格式说明: 格式为 `[包名@版本] -> [源代码目录]` , 第一层为本项目 Workspace 模块；缩进层为该模块的直接依赖；`->` 后缀指向该依赖的本地源代码映射路径，供 AI 精准分析源码。 -->
@@ -48,7 +48,7 @@
   - typescript@^5.6.3 -> .dao/ref/github.com/microsoft/TypeScript/5.0.0
   - typescript-eslint@^8.25.0 -> .dao/ref/github.com/typescript-eslint/typescript-eslint/v8.25.0/packages/typescript-eslint
   - vitest@^3.0.0 -> .dao/ref/github.com/vitest-dev/vitest/v3.0.0/packages/vitest
-- @whonb/agents-gemini-cli@0.1.0 -> packages/agents-gemini-cli
+- @whonb/agents-gemini-cli@0.1.0 -> packages/dao-core
   - @google/gemini-cli-core@^0.34.0-preview.0 -> .dao/ref/github.com/google-gemini/gemini-cli/v0.34.0-preview.0
 - @whonb/dao-cli@0.1.0 -> packages/dao-cli
   - @google/gemini-cli-core@^0.34.0-preview.0 -> .dao/ref/github.com/google-gemini/gemini-cli/v0.34.0-preview.0

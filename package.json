@@ -18,7 +18,7 @@
     "check:all": "npm run check && npm run check --workspaces --if-present",
     "evolve": "tsx packages/dao-cli/src/dao/cli.ts",
     "sync": "tsx packages/dao-cli/src/dao/cli.ts sync",
-    "example:pirate": "tsx packages/agents-gemini-cli/examples/example.ts",
+    "example:pirate": "tsx packages/dao-core/examples/example.ts",
     "clean:all": "rm -rf dist && npm run clean --workspaces --if-present",
     "postinstall":"npm run sync"
   },

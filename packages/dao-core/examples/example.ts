@@ -6,7 +6,7 @@
 
 /* eslint-disable no-console */
 
-import { SimpleGeminiAgent } from '@whonb/agents-gemini-cli';
+import { SimpleGeminiAgent } from '@whonb/dao-core';
 import { GeminiEventType } from '@google/gemini-cli-core';
 import { setupDevTools } from '@whonb/devtools';
 
@@ -74,7 +74,7 @@ async function main() {
     }
   }
   console.log('\n\n--- 🏁 汇报完毕，船长！ ---');
-  
+
   await sleep(150*1000);
 }
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
