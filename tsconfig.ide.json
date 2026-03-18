@@ -157,6 +157,12 @@
       "ws/*": [
         "./.dao/ref/github.com/websockets/ws/8.16.0/*"
       ],
+      "@types/marked": [
+        "./.dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/5.0.2/types/marked"
+      ],
+      "@types/marked/*": [
+        "./.dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/5.0.2/types/marked/*"
+      ],
       "@types/ws": [
         "./.dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/8.5.10/types/ws"
       ],
@@ -174,6 +180,12 @@
       ],
       "yoga-layout-prebuilt/*": [
         "./.dao/ref/github.com/vadimdemedes/yoga-layout-prebuilt/v1.10.0/*"
+      ],
+      "@types/yoga-layout": [
+        "./.dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/1.9.2/types/yoga-layout"
+      ],
+      "@types/yoga-layout/*": [
+        "./.dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/1.9.2/types/yoga-layout/*"
       ]
     }
   },

@@ -59,7 +59,7 @@
   - @opentelemetry/resources@^2.6.0 -> .dao/ref/github.com/open-telemetry/opentelemetry-js/v2.6.0
   - @opentelemetry/sdk-trace-base@^2.6.0 -> .dao/ref/github.com/open-telemetry/opentelemetry-js/v2.6.0
   - @opentelemetry/semantic-conventions@^1.40.0 -> .dao/ref/github.com/open-telemetry/opentelemetry-js/1.40.0
-  - @types/marked@^5.0.2
+  - @types/marked@^5.0.2 -> .dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/5.0.2/types/marked
   - @types/node@^22.0.0 -> .dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/22.0.0/types/node
   - @types/ws@^8.18.1 -> .dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/8.5.10/types/ws
   - @whonb/agents-gemini-cli@*
@@ -75,7 +75,7 @@
 - @whonb/dao-tui@0.1.0 -> packages/dao-tui
   - @mariozechner/pi-tui@^0.57.1 -> .dao/ref/github.com/badlogic/pi-mono/v0.57.1/packages/tui
   - @types/node@^22.0.0 -> .dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/22.0.0/types/node
-  - @types/yoga-layout@^1.9.2
+  - @types/yoga-layout@^1.9.2 -> .dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/1.9.2/types/yoga-layout
   - chalk@^5.6.2 -> .dao/ref/github.com/chalk/chalk/v5.6.2
   - typescript@^5.0.0 -> .dao/ref/github.com/microsoft/TypeScript/5.0.0
   - yoga-layout@^3.2.1 -> .dao/ref/github.com/facebook/yoga/v3.2.1
