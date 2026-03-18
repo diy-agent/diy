@@ -1,2 +1,2 @@
-#!/usr/bin/env npx tsx --tsconfig tsconfig.build.json
+#!/usr/bin/env npx tsx
 import "../packages/dao-cli/src/dao/cli.ts";
