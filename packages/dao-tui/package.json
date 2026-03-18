@@ -5,6 +5,7 @@
   "main": "dist/src/index.js",
   "private": true,
   "scripts": {
+    "test": "vitest run",
     "build": "tsc -p tsconfig.json",
     "check": "tsc --noEmit && eslint . --ext .ts,.tsx",
     "clean": "rm -rf dist"
