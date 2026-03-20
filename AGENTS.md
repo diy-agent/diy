@@ -154,8 +154,6 @@ dao-cli (main entry)
   - typescript@^5.6.3 -> .dao/ref/github.com/microsoft/TypeScript/5.0.0
   - typescript-eslint@^8.25.0 -> .dao/ref/github.com/typescript-eslint/typescript-eslint/v8.25.0/packages/typescript-eslint
   - vitest@^3.0.0 -> .dao/ref/github.com/vitest-dev/vitest/v3.0.0/packages/vitest
-- @whonb/dao-core@0.1.0 -> packages/dao-core
-  - @google/gemini-cli-core@^0.34.0-preview.0 -> .dao/ref/github.com/google-gemini/gemini-cli/v0.34.0-preview.0
 - @whonb/dao-cli@0.1.0 -> packages/dao-cli
   - @google/gemini-cli-core@^0.34.0-preview.0 -> .dao/ref/github.com/google-gemini/gemini-cli/v0.34.0-preview.0
   - @mariozechner/pi-tui@^0.57.1 -> .dao/ref/github.com/badlogic/pi-mono/v0.57.1/packages/tui
@@ -178,6 +176,9 @@ dao-cli (main entry)
   - pino@^10.3.1 -> .dao/ref/github.com/pinojs/pino/v10.3.1
   - pino-pretty@^13.1.3 -> .dao/ref/github.com/pinojs/pino-pretty/v13.1.3
   - ws@^8.19.0 -> .dao/ref/github.com/websockets/ws/8.16.0
+- @whonb/dao-core@0.1.0 -> packages/dao-core
+  - @google/gemini-cli-core@^0.34.0-preview.0 -> .dao/ref/github.com/google-gemini/gemini-cli/v0.34.0-preview.0
+  - @mariozechner/pi-coding-agent@^0.61.0 -> .dao/ref/github.com/badlogic/pi-mono/v0.61.0/packages/coding-agent
 - @whonb/dao-tui@0.1.0 -> packages/dao-tui
   - @mariozechner/pi-tui@^0.57.1 -> .dao/ref/github.com/badlogic/pi-mono/v0.57.1/packages/tui
   - @types/node@^22.0.0 -> .dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/22.0.0/types/node

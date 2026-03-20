@@ -169,6 +169,12 @@
       "@types/ws/*": [
         "./.dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/8.5.10/types/ws/*"
       ],
+      "@mariozechner/pi-coding-agent": [
+        "./.dao/ref/github.com/badlogic/pi-mono/v0.61.0/packages/coding-agent/src/index.ts"
+      ],
+      "@mariozechner/pi-coding-agent/*": [
+        "./.dao/ref/github.com/badlogic/pi-mono/v0.61.0/packages/coding-agent/src/*"
+      ],
       "yoga-layout": [
         "./.dao/ref/github.com/facebook/yoga/v3.2.1"
       ],

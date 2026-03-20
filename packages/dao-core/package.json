@@ -12,6 +12,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@google/gemini-cli-core": "^0.34.0-preview.0"
+    "@google/gemini-cli-core": "^0.34.0-preview.0",
+    "@mariozechner/pi-coding-agent": "^0.61.0"
   }
 }
