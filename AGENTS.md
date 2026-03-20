@@ -1,59 +1,64 @@
-# Dao Project Instructions
+# Dao Project Instructions (System Protocol)
 
-## Project Vision
+## 🎯 Project Vision
 
+Dao encapsulates existing open-source agent CLI tools (gemini-cli, qwen-code, codex, pi, opencode) and provides:
 
-Dao encapsulates existing open-source agent CLI tools (gemini-cli, qwen-code, codex, pi, opencode) and provides the following features:
+1. **Core Functionality**: An AI-driven autonomous development tool guided by user goals. It evolves through workflows(can custom): goal understanding -> approach research -> planning -> execution -> review -> upgrading.
+2. **Multi-Interface**: Unified CLI & web interface for multi-agent conversations.
+3. **Observability**: In-depth explanation tools and tracing for each AI agent.
+4. **Evaluation**: Benchmarking tools for various LLM agents.
+5. **Anti-Hallucination**: Dependency source code, documentation, and configuration synchronization (`.dao/ref/`).
+6. **Framework Agnostic**: Fully customizable workflows without specific framework lock-in.
 
-1. **Core Functionality**: An AI-driven autonomous development tool that is guided by user goals and vision. It continuously evolves autonomously through workflows including goal understanding, approach research, planning, execution, review, and upgrading, to better achieve user objectives.
-2. Unified CLI & web interface for multi-agent conversations.
-3. In-depth observability and explanation tools for each AI agent.
-4. Evaluation tools for various AI agents.
-5. Dependency source code, documentation, and configuration synchronization tools to reduce AI hallucinations.
-6. Fully customizable workflows without being bound to any specific framework or paradigm.
+**Project Status**: Initial development phase.
 
-Project Status: Initial development phase.
+---
 
-## Tech Stack
+## 💻 Tech Stack
 
-- **Runtime**: Node.js (ESM, `"type": "module"`)
-- **Language**: TypeScript (strict mode, target ES2024)
-- **Build**: tsc (tsconfig.json -> dist/)
-- **Dev runner**: tsx (executes .ts directly without compilation)
-- **Test**: vitest (`test/**/*.test.ts`)
-- **Lint**: eslint + typescript-eslint
-- **Logging**: pino + pino-pretty
-- **Tracing**: OpenTelemetry (gRPC/HTTP export)
-- **Terminal UI**: @mariozechner/pi-tui + yoga-layout
-- **CLI framework**: commander
-- **AI SDK**: @google/gemini-cli-core
-- **Package management**: npm workspaces (monorepo)
-- **Version control**: git worktree isolated development
+- **Runtime**: Node.js (Strict ESM, `"type": "module"`)
+- **Language**: TypeScript (Strict mode, target ES2024, NodeNext)
+- **Build/Dev**: `tsc` (dist/) + `tsx` (direct execution)
+- **Testing**: `vitest` (`test/**/*.test.ts`)
+- **Lint/Format**: `eslint` + `typescript-eslint` + `prettier`
+- **Logging/Tracing**: `pino` + `pino-pretty` + `OpenTelemetry` (gRPC/HTTP export)
+- **UI**: `@mariozechner/pi-tui` + `yoga-layout` (Declarative Terminal UI)
+- **CLI**: `commander` + `@google/gemini-cli-core`
+- **Package Management**: `npm workspaces` (Monorepo)
+- **VCS**: `git worktree` isolated development workflow
 
-## Commands
+---
+
+## 🛠️ Commands
 
 ```bash
+# Core Build & Quality
 npm run build          # Build current package
 npm run build:all      # Build all workspace packages
 npm run test           # Run root tests (vitest run)
 npm run test:all       # Run all workspace tests
-npm run check          # tsc --noEmit + eslint (type check + lint)
-npm run check:all      # check for all workspaces
-npm run evolve         # Start autonomous evolution loop
-npm run sync           # Sync dependency source maps and configs
+npm run check          # tsc --noEmit + eslint (Local check)
+npm run check:all      # Full monorepo type check + lint
 npm run format         # Prettier formatting
-npm run clean:all      # Clean dist directories
+npm run clean:all      # Clean all dist directories
 
-# Git Worktree Workflow
+# Project Specific
+npm run evolve         # Start autonomous evolution loop
+npm run sync           # Sync dependency source maps and configs to .dao/ref/
+
+# Git Worktree Workflow (CRITICAL)
 ./sha.sh worktree add <name>    # Create worktree branch (.worktree/<name>)
 ./sha.sh worktree merge <name>  # Test + merge to main + cleanup
-./sha.sh worktree list          # List all worktrees
+./sha.sh worktree list          # List all active worktrees
 ./sha.sh worktree remove <name> # Remove worktree without merging
 ```
 
-## Project Structure
+---
 
-```
+## 📂 Project Structure
+
+```text
 dao/
 ├── packages/
 │   ├── dao-cli/           # Main entry: CLI interface, evolution loop, planner
@@ -65,116 +70,82 @@ dao/
 │   │   └── src/
 │   │       ├── index.ts
 │   │       └── simple-agent.ts
-│   ├── dao-tui/           # Declarative terminal UI: App/Label/Header/Horizontal/Vertical
+│   ├── dao-tui/           # Declarative terminal UI components
 │   │   └── src/index.ts
-│   └── devtools/          # Dev debugging: HTTP/WS server, network logging, frontend UI
+│   └── devtools/          # Dev debugging: HTTP/WS server, network logging
 │       └── src/
 │           ├── index.ts           # DevTools singleton
 │           ├── activity-logger.ts # Request interceptor
 │           └── types.ts
-├── config/
-│   └── evolution.json     # Evolution config: goals, toolchain, guardrails, timeouts
+├── config/                #  goals, toolchain, guardrails
 ├── docs/                  # Architecture docs, roadmap
 ├── bin/dao                # Global CLI entry script
 ├── sha.sh                 # Bash scaffold: worktree/workspace/submodule management
 ├── vendor/sha/            # Git submodule: shared bash utilities
-├── .dao/ref/              # Dependency source mirror (gitignored, IDE navigation only, never import directly)
+├── .dao/ref/              # Dependency source mirror (READ-ONLY, NEVER IMPORT)
 ├── temp/                  # Experiment/trial directory
 ├── state/                 # Runtime state (gitignored)
 ├── logs/                  # Log output (gitignored)
 ├── todo/                  # Development improvement notes
 ├── tsconfig.json          # Build config (NodeNext)
-├── tsconfig.base.json     # Shared base config (ES2024, strict)
-├── tsconfig.ide.json      # IDE source navigation (contains .dao/ref path mappings)
-├── vitest.config.ts
-├── eslint.config.mjs
-└── AGENTS.md              # This file: shared AI agent instructions
+├── tsconfig.ide.json      # IDE source navigation (Path mappings to .dao/ref)
+└── AGENTS.md              # This file: Shared AI agent instructions
 ```
 
-### Package Dependencies
+---
 
-```
+## 📜 Development Rules
+
+### 1. Evolution Rules
+- **Test-Driven**: Run `npm run test` or `npm run check:all` after **every** modification.
+- **Minimal Changes**: Each evolution round must contain the smallest verifiable change.
+- **Observability First**: Prioritize adding logs, heartbeats, and OpenTelemetry spans.
+
+### 2. Git Worktree Workflow (STRICT)
+**NEVER modify the `main` branch directly.**
+1. Create worktree: `./sha.sh worktree add <name>`
+2. Develop inside: `.worktree/<name>`
+3. Merge: `./sha.sh worktree merge <name>` (This auto-runs tests before merging).
+
+### 3. ESM & TypeScript Standards
+- **Suffix Rule**: Imports MUST include the `.js` extension (e.g., `import { x } from "./y.js"`).
+- **No Hacks**: `as any` or `@ts-ignore` are forbidden without user authorization.
+- **Surgical Edits**: Use targeted replace operations. NEVER use `// ... rest of code` placeholders.
+- **No .dao/ref Imports**: Code must use standard package names. `.dao/ref` is for reference ONLY.
+
+### 4. Source Accuracy (Anti-Hallucination)
+Consult sources in this priority:
+1. Current Project Code
+2. `.dao/ref/` dependency source code (Verify actual logic/signatures)
+3. `node_modules/` (If no mirror exists)
+4. Online documentation (Last resort)
+
+### 5. Self-Correction Protocol
+When stuck in repeated failures:
+1. Search for similar implementations within the project.
+2. Consult `.dao/ref/` source definitions for the dependency.
+3. Move to `temp/` to re-validate the logic in isolation.
+
+---
+
+## 🔗 Dependency Tree (Context Map)
+
+```text
 dao-cli (main entry)
 ├── dao-core   (@whonb/agents-gemini-cli)  -- Gemini Agent abstraction
 ├── dao-tui    (@whonb/dao-tui)            -- Terminal UI
 └── devtools   (@whonb/devtools)           -- Debug tools
 ```
 
-## Development Rules
 
-### Evolution Rules
-
-1. **Test-Driven**: Run tests after every code change to verify modifications. Use `npm run check:all` or `npm run test:all`.
-2. **Minimal Changes**: Each evolution round must only contain the smallest verifiable change. Avoid large-scale refactoring.
-3. **Observability First**: Prioritize adding logs, heartbeats, and OpenTelemetry tracing.
-
-### Git Worktree Workflow (CRITICAL)
-
-NEVER modify the `main` branch directly. All development must use worktree isolation.
-
-1. Create worktree: `./sha.sh worktree add dao-feature-<name>`
-2. Develop inside: `.worktree/dao-feature-<name>`
-3. Merge when done: `./sha.sh worktree merge dao-feature-<name>` (auto-tests + merge + cleanup)
-
-### ESM & TypeScript Standards
-
-- **ESM environment**: All code is ESM. Import paths MUST include `.js` extension.
-- **No `as any` or `@ts-ignore`**: Forbidden without explicit user authorization.
-- **Mandatory validation**: Run `npm run check` or `npx tsc --noEmit` after ANY `.ts`/`.tsx` change. Fix all errors before delivery.
-- **Surgical edits**: Use standard diff format or explicit search/replace blocks. DO NOT rewrite the entire file unless it's under 50 lines..
-- **Trial first**: Test complex logic in the `temp/` directory before applying to the main codebase.
-- **No .dao/ref imports**: Code MUST use standard package names (e.g., `import chalk from "chalk"`). The `.dao/ref` directory is ONLY for IDE source navigation via `tsconfig.ide.json` path mappings.
-
-### Source Accuracy (Use Retrieval-Augmented Generation)
-
-Consult sources in this order:
-1. Project code (for project-specific questions)
-2. `.dao/ref/` dependency source code (for dependency questions)
-3. `node_modules/` (if no source mirror available)
-4. Online documentation (last search, verify version alignment)
-
-### Self-Correction Protocol
-
-When stuck in repeated failures, DO NOT blindly retry. Instead:
-1. Search for similar implementations within this project
-2. Consult relevant dependency source definitions in `.dao/ref/`
-3. Return to `temp/` trial directory to re-validate approach
-
-### Delivery Checklist
-
-Before delivering any change, verify:
-- No hardcoded paths that would fail on other machines
-- No local file references that are machine-specific
-- No temporary hacks introduced just to make things pass
-- All type checks pass (`npm run check`)
-
-### Commit Convention
-
-Follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0).
-
-### Protected Paths
-
-- **DO NOT modify**: `dist/`, `node_modules/`, `state/`, `logs/`
-- **Edits allowed in**: `src/`, `config/`
-
-## Key Configuration Files
-
-- `tsconfig.ide.json`: IDE path mappings (standard package names -> .dao/ref local source)
-- `.gitmodules`: vendor/sha submodule (bash utility library)
-- `.eslintignore` / `eslint.config.mjs`: Lint rules, prohibits imports from .dao/ref
-
-## Current Roadmap Focus
-
-- Implement Planner Agent module: LLM-based reflection on recent execution history to auto-generate new objectives
-- Improve ROADMAP.md auto read/write mechanism
-- Introduce exploration mode: periodically discover refactoring opportunities
-- Generalize `dao init` to support initializing evolution environment in any directory
-
-## Direct Dependencies
+## 🔍 AI Context Mapping (Dependency Mirrors)
 
 <!-- DAO_DEPS_START -->
-<!-- Auto-generated, do not edit manually -->
-<!-- Dependency tree format: `[package@version] -> [source directory]`. Top level = workspace modules; indented = direct dependencies; `->` suffix points to local source mirror path for AI source analysis. -->
+
+> **IMPORTANT**: This section is auto-generated for AI Source Analysis. 
+> Format: `[package] -> [local_source_path]`. 
+> When you need to understand the internal logic of a dependency, READ from the mapped `.dao/ref/` path. **DO NOT** attempt to modify these files.
+
 - @whonb/dao@0.1.0 -> .
   - @eslint/js@^9.21.0 -> .dao/ref/github.com/eslint/eslint/v9.21.0/packages/js
   - @types/node@^22.0.0 -> .dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/22.0.0/types/node

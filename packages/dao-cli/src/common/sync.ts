@@ -380,8 +380,11 @@ function updateAgentsMdWithDeps(workspacePackages: Map<string, WorkspaceInfo>, s
     const sectionHeader = "## 直接依赖 (Dependencies)";
     const startTag = "<!-- DAO_DEPS_START -->";
     const endTag = "<!-- DAO_DEPS_END -->";
-    const warning = "<!-- 自动生成，请勿手动修改 (Auto-generated, do not edit manually) -->";
-    const formatNote = "<!-- 依赖树格式说明: 格式为 `[包名@版本] -> [源代码目录]` , 第一层为本项目 Workspace 模块；缩进层为该模块的直接依赖；`->` 后缀指向该依赖的本地源代码映射路径，供 AI 精准分析源码。 -->";
+    const comment = `
+> **IMPORTANT**: This section is auto-generated for AI Source Analysis. 
+> Format: \`[package] -> [local_source_path]\`. 
+> When you need to understand the internal logic of a dependency, READ from the mapped \`.dao/ref/\` path. **DO NOT** attempt to modify these files.
+`;
 
     const depLines: string[] = [];
 
@@ -412,7 +415,7 @@ function updateAgentsMdWithDeps(workspacePackages: Map<string, WorkspaceInfo>, s
 
     const depList = depLines.join("\n");
 
-    const newChunk = `${startTag}\n${warning}\n${formatNote}\n${depList}\n${endTag}`;
+    const newChunk = `${startTag}\n${comment}\n${depList}\n${endTag}`;
 
     const startIndex = content.indexOf(startTag);
     const endIndex = content.indexOf(endTag);
