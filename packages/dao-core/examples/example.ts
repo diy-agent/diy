@@ -4,9 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/* eslint-disable no-console */
-
-import { SimpleGeminiAgent } from '@whonb/dao-core';
+import { GeminiCliAgent } from '@whonb/dao-core';
 import { GeminiEventType } from '@google/gemini-cli-core';
 import { setupDevTools } from '@whonb/devtools';
 
@@ -14,7 +12,7 @@ async function main() {
   const abort = new AbortController();
 
   // 1. 创建 Agent 实例
-  await using agent = new SimpleGeminiAgent({
+  await using agent = new GeminiCliAgent({
     instructions:
       '你是一个专业的终端助手，总是使用海盗的口吻说话。你可以使用工具来查看文件。',
     // model: 'auto', // 默认即为 auto

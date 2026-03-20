@@ -4,9 +4,16 @@
   "compilerOptions": {
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "noEmit": false
+    "noEmit": false,
+    "baseUrl": ".",
+    "paths": {
+      "@whonb/dao-core": ["./packages/dao-core/src/index.ts"],
+      "@whonb/dao-cli": ["./packages/dao-cli/src/main.ts"],
+      "@whonb/dao-tui": ["./packages/dao-tui/src/index.ts"],
+      "@whonb/devtools": ["./packages/devtools/index.ts"]
+    }
   },
-  "include": ["packages/*/src"],
+  "include": ["packages/*/src", "packages/*/examples"],
   "exclude": [
     "node_modules",
     "dist",

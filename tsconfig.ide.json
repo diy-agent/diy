@@ -10,8 +10,8 @@
       "@whonb/devtools": [
         "./packages/devtools/index.ts"
       ],
-      "@whonb/agents-gemini-cli": [
-        "./packages/agents-gemini-cli/src/index.ts"
+      "@whonb/dao-core": [
+        "./packages/dao-core/src/index.ts"
       ],
       "@whonb/dao-cli": [
         "./packages/dao-cli/src/main.ts"
@@ -189,7 +189,7 @@
       ]
     }
   },
-  "include": ["packages/*/src"],
+  "include": ["packages/*/src", "packages/*/examples"],
   "exclude": [
     "node_modules",
     "dist",

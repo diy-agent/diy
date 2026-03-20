@@ -23,7 +23,7 @@ data/
 # DAO ref
 .dao/ref/
 .dao/registry-cache.json
-src/agents-gemini-cli/devtools/client
+src/dao-core/devtools/client
 
 # IDEs
 .idea/*

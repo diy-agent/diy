@@ -4,10 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-type-assertion */
-
 import {
   Config,
   AuthType,
@@ -20,7 +16,7 @@ import {
   type ToolCallRequestInfo,
 } from '@google/gemini-cli-core';
 
-export interface SimpleAgentOptions {
+export interface AgentOptions {
   instructions: string;
   model?: string;
   cwd?: string;
@@ -31,11 +27,11 @@ export interface SimpleAgentOptions {
  * 一个对 core 包的精简包装。
  * 学习了原 SDK 的配置方式，确保在 OAuth 环境下依然稳健。
  */
-export class SimpleGeminiAgent {
+export class GeminiCliAgent {
   private readonly config: Config;
   private initialized = false;
 
-  constructor(options: SimpleAgentOptions) {
+  constructor(options: AgentOptions) {
     const cwd = options.cwd || process.cwd();
 
     // 关键：模仿原 SDK 的配置，不传递 modelConfigServiceConfig，让 core 使用默认逻辑

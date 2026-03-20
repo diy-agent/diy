@@ -69,7 +69,7 @@ dao/
 │   ├── dao-core/          # Gemini Agent wrapper: SimpleGeminiAgent class
 │   │   └── src/
 │   │       ├── index.ts
-│   │       └── simple-agent.ts
+│   │       └── gemini-agent.ts
 │   ├── dao-tui/           # Declarative terminal UI components
 │   │   └── src/index.ts
 │   └── devtools/          # Dev debugging: HTTP/WS server, network logging
@@ -132,7 +132,7 @@ When stuck in repeated failures:
 
 ```text
 dao-cli (main entry)
-├── dao-core   (@whonb/agents-gemini-cli)  -- Gemini Agent abstraction
+├── dao-core   (@whonb/dao-core)  -- Gemini Agent abstraction
 ├── dao-tui    (@whonb/dao-tui)            -- Terminal UI
 └── devtools   (@whonb/devtools)           -- Debug tools
 ```
@@ -154,7 +154,7 @@ dao-cli (main entry)
   - typescript@^5.6.3 -> .dao/ref/github.com/microsoft/TypeScript/5.0.0
   - typescript-eslint@^8.25.0 -> .dao/ref/github.com/typescript-eslint/typescript-eslint/v8.25.0/packages/typescript-eslint
   - vitest@^3.0.0 -> .dao/ref/github.com/vitest-dev/vitest/v3.0.0/packages/vitest
-- @whonb/agents-gemini-cli@0.1.0 -> packages/dao-core
+- @whonb/dao-core@0.1.0 -> packages/dao-core
   - @google/gemini-cli-core@^0.34.0-preview.0 -> .dao/ref/github.com/google-gemini/gemini-cli/v0.34.0-preview.0
 - @whonb/dao-cli@0.1.0 -> packages/dao-cli
   - @google/gemini-cli-core@^0.34.0-preview.0 -> .dao/ref/github.com/google-gemini/gemini-cli/v0.34.0-preview.0
@@ -168,7 +168,7 @@ dao-cli (main entry)
   - @types/marked@^5.0.2 -> .dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/5.0.2/types/marked
   - @types/node@^22.0.0 -> .dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/22.0.0/types/node
   - @types/ws@^8.18.1 -> .dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/8.5.10/types/ws
-  - @whonb/agents-gemini-cli@*
+  - @whonb/dao-core@*
   - @whonb/devtools@*
   - chalk@^5.6.2 -> .dao/ref/github.com/chalk/chalk/v5.6.2
   - commander@^14.0.1 -> .dao/ref/github.com/tj/commander.js/v14.0.1

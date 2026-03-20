@@ -1,5 +1,5 @@
 {
-  "name": "@whonb/agents-gemini-cli",
+  "name": "@whonb/dao-core",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/src/index.js",
@@ -8,7 +8,7 @@
   "scripts": {
     "test": "vitest run",
     "build": "tsc -p tsconfig.json",
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && eslint . --ext .ts,.tsx",
     "clean": "rm -rf dist"
   },
   "dependencies": {
