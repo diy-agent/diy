@@ -1,45 +1,180 @@
-# DAO AI 核心指令集 (AGENTS.md)
+# Dao Project Instructions
 
-项目愿景：dao是 目标导向的自主进化型AI工具, 以用户目标、愿景为导向，通过理解目标、研究方向、制定计划、实施计划、评审升级的不断循环，
-不断提升解决问题工具和结果的质量。 进化包括但不限于完成甚至超越用户目标，持续提升系统稳定性、可观测性、可恢复性，
-并通过最小可验证改动推进，以不断的小步前进的方式越来越好的帮助用户达成目标。
+## Project Vision
 
-## 自主进化规则 (Evolution Rules)
-1. **测试驱动**：每次修改代码后，必须在工作树内执行测试以验证改动，例如使用 `npm run evolve`。
-2. **最小化修改**：每一轮进化应只包含最小的可验证改动，避免大规模重构。
-3. **可观测性优先**：优先增加日志、心跳或其他可观测手段。
-4. **护栏守则**：严格遵守 `config/evolution.json` 中的 `protected_paths` 和 `allowed_edit_roots` 约束。
 
-## 环境与目录规范
-- **ESM 优先**：本项目主要为 ESM 环境，修改代码前务必确认 `package.json` 中的 `"type": "module"` 标识。
-- **tsconfig 分工**: `tsconfig.json` 服务于默认运行(tsx)与生产构建, `tsconfig.ide.json` 服务于 IDE 源代码级导航, `tsconfig.base.json` 服务于基础公共配置。
-- **禁止引用缓存**: 严禁在代码中直接 import/require `.dao/ref` 下的文件。必须使用依赖包的原始标准名称（如 `import chalk from "chalk"`），`.dao/ref` 的目的是通过 `tsconfig.ide.json` 的 `paths` 映射来实现 IDE 源码级导航。
+Dao encapsulates existing open-source agent CLI tools (gemini-cli, qwen-code, codex, pi, opencode) and provides the following features:
 
-## 准确性规范 (Strict Source)
-1. **重新加载**: 每次工作前重新加载上下文文件。
-2. **查阅优先**: 每次工作前, 先查资料再工作,查阅顺序为: 本项目问题查本项目代码 > 项目依赖问题查 `.dao/ref` 到依赖源代码 > 没有依赖源代码查 `node_modules` > 最后查网上资料。查阅时需对齐版本号。
+1. **Core Functionality**: An AI-driven autonomous development tool that is guided by user goals and vision. It continuously evolves autonomously through workflows including goal understanding, approach research, planning, execution, review, and upgrading, to better achieve user objectives.
+2. Unified CLI & web interface for multi-agent conversations.
+3. In-depth observability and explanation tools for each AI agent.
+4. Evaluation tools for various AI agents.
+5. Dependency source code, documentation, and configuration synchronization tools to reduce AI hallucinations.
+6. Fully customizable workflows without being bound to any specific framework or paradigm.
 
----
+Project Status: Initial development phase.
 
-### 标准开发规范
+## Tech Stack
 
-1. **实验室模式 (Trial First)**: 修改前先在 `temp` 目录试验，必要时建立小项目完整试验修改的最小案例，验证通过后再应用到主项目。
-2. **精准修改 (Surgical Edit)**: 优先使用 `replace` 工具进行精准修改。严禁在代码中使用 `// ... rest of code` 占位符，严禁随意删除无关代码。
-3. **自救循环 (Self-Correction)**: 修改代码遇反复尝试的卡点时，严禁盲目重试。应立即：1. 搜索本项目类似功能的实现；2. 查阅 `.dao/ref` 中相关依赖的源码定义；3. 回到 `temp` 试验目录重新验证思路。
-4. **评估专业性**: 交付前评估：是否存在硬编码路径？是否包含跨机器失效的 local 文件引用？是否包含为了运行通过而引入的临时 hack？
+- **Runtime**: Node.js (ESM, `"type": "module"`)
+- **Language**: TypeScript (strict mode, target ES2024)
+- **Build**: tsc (tsconfig.json -> dist/)
+- **Dev runner**: tsx (executes .ts directly without compilation)
+- **Test**: vitest (`test/**/*.test.ts`)
+- **Lint**: eslint + typescript-eslint
+- **Logging**: pino + pino-pretty
+- **Tracing**: OpenTelemetry (gRPC/HTTP export)
+- **Terminal UI**: @mariozechner/pi-tui + yoga-layout
+- **CLI framework**: commander
+- **AI SDK**: @google/gemini-cli-core
+- **Package management**: npm workspaces (monorepo)
+- **Version control**: git worktree isolated development
 
-## TS 强制验证规范 (Strict Validation)
-1. **无验证，不交付**：所有的代码修改（`.ts`, `.tsx`, `.js`）在完成修改后，**必须**紧跟一步校验。
-2. **验证发现**: 优先执行包内 `package.json` 定义的 `check` 或 `lint` 脚本。如果不存在，则执行 `npx tsc --noEmit`。
-3. **错误即反馈**：如果校验失败，必须在回复中展示完整错误日志并原地修正，直到验证通过。
-4. **禁止 `as any`**: 除非获得用户明确授权，否则禁止使用 `as any` 或 `@ts-ignore` 规避类型报错。
-5. **运行期验证**: 对于工具调度等复杂逻辑，除了类型检查外，还必须编写或运行 `*_example.ts` 或现有测试来确认。
+## Commands
 
-## 直接依赖 (Dependencies)
+```bash
+npm run build          # Build current package
+npm run build:all      # Build all workspace packages
+npm run test           # Run root tests (vitest run)
+npm run test:all       # Run all workspace tests
+npm run check          # tsc --noEmit + eslint (type check + lint)
+npm run check:all      # check for all workspaces
+npm run evolve         # Start autonomous evolution loop
+npm run sync           # Sync dependency source maps and configs
+npm run format         # Prettier formatting
+npm run clean:all      # Clean dist directories
+
+# Git Worktree Workflow
+./sha.sh worktree add <name>    # Create worktree branch (.worktree/<name>)
+./sha.sh worktree merge <name>  # Test + merge to main + cleanup
+./sha.sh worktree list          # List all worktrees
+./sha.sh worktree remove <name> # Remove worktree without merging
+```
+
+## Project Structure
+
+```
+dao/
+├── packages/
+│   ├── dao-cli/           # Main entry: CLI interface, evolution loop, planner
+│   │   └── src/
+│   │       ├── dao/       # Core: cli.ts(entry) evolve.ts(engine) planner.ts tracing.ts
+│   │       ├── common/    # Utilities: logger.ts fs.ts sync.ts
+│   │       └── tools/     # Helper tool scripts
+│   ├── dao-core/          # Gemini Agent wrapper: SimpleGeminiAgent class
+│   │   └── src/
+│   │       ├── index.ts
+│   │       └── simple-agent.ts
+│   ├── dao-tui/           # Declarative terminal UI: App/Label/Header/Horizontal/Vertical
+│   │   └── src/index.ts
+│   └── devtools/          # Dev debugging: HTTP/WS server, network logging, frontend UI
+│       └── src/
+│           ├── index.ts           # DevTools singleton
+│           ├── activity-logger.ts # Request interceptor
+│           └── types.ts
+├── config/
+│   └── evolution.json     # Evolution config: goals, toolchain, guardrails, timeouts
+├── docs/                  # Architecture docs, roadmap
+├── bin/dao                # Global CLI entry script
+├── sha.sh                 # Bash scaffold: worktree/workspace/submodule management
+├── vendor/sha/            # Git submodule: shared bash utilities
+├── .dao/ref/              # Dependency source mirror (gitignored, IDE navigation only, never import directly)
+├── temp/                  # Experiment/trial directory
+├── state/                 # Runtime state (gitignored)
+├── logs/                  # Log output (gitignored)
+├── todo/                  # Development improvement notes
+├── tsconfig.json          # Build config (NodeNext)
+├── tsconfig.base.json     # Shared base config (ES2024, strict)
+├── tsconfig.ide.json      # IDE source navigation (contains .dao/ref path mappings)
+├── vitest.config.ts
+├── eslint.config.mjs
+└── AGENTS.md              # This file: shared AI agent instructions
+```
+
+### Package Dependencies
+
+```
+dao-cli (main entry)
+├── dao-core   (@whonb/agents-gemini-cli)  -- Gemini Agent abstraction
+├── dao-tui    (@whonb/dao-tui)            -- Terminal UI
+└── devtools   (@whonb/devtools)           -- Debug tools
+```
+
+## Development Rules
+
+### Evolution Rules
+
+1. **Test-Driven**: Run tests after every code change to verify modifications. Use `npm run check:all` or `npm run test:all`.
+2. **Minimal Changes**: Each evolution round must only contain the smallest verifiable change. Avoid large-scale refactoring.
+3. **Observability First**: Prioritize adding logs, heartbeats, and OpenTelemetry tracing.
+
+### Git Worktree Workflow (CRITICAL)
+
+NEVER modify the `main` branch directly. All development must use worktree isolation.
+
+1. Create worktree: `./sha.sh worktree add dao-feature-<name>`
+2. Develop inside: `.worktree/dao-feature-<name>`
+3. Merge when done: `./sha.sh worktree merge dao-feature-<name>` (auto-tests + merge + cleanup)
+
+### ESM & TypeScript Standards
+
+- **ESM environment**: All code is ESM. Import paths MUST include `.js` extension.
+- **No `as any` or `@ts-ignore`**: Forbidden without explicit user authorization.
+- **Mandatory validation**: Run `npm run check` or `npx tsc --noEmit` after ANY `.ts`/`.tsx` change. Fix all errors before delivery.
+- **Surgical edits**: Use standard diff format or explicit search/replace blocks. DO NOT rewrite the entire file unless it's under 50 lines..
+- **Trial first**: Test complex logic in the `temp/` directory before applying to the main codebase.
+- **No .dao/ref imports**: Code MUST use standard package names (e.g., `import chalk from "chalk"`). The `.dao/ref` directory is ONLY for IDE source navigation via `tsconfig.ide.json` path mappings.
+
+### Source Accuracy (Use Retrieval-Augmented Generation)
+
+Consult sources in this order:
+1. Project code (for project-specific questions)
+2. `.dao/ref/` dependency source code (for dependency questions)
+3. `node_modules/` (if no source mirror available)
+4. Online documentation (last search, verify version alignment)
+
+### Self-Correction Protocol
+
+When stuck in repeated failures, DO NOT blindly retry. Instead:
+1. Search for similar implementations within this project
+2. Consult relevant dependency source definitions in `.dao/ref/`
+3. Return to `temp/` trial directory to re-validate approach
+
+### Delivery Checklist
+
+Before delivering any change, verify:
+- No hardcoded paths that would fail on other machines
+- No local file references that are machine-specific
+- No temporary hacks introduced just to make things pass
+- All type checks pass (`npm run check`)
+
+### Commit Convention
+
+Follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0).
+
+### Protected Paths
+
+- **DO NOT modify**: `dist/`, `node_modules/`, `state/`, `logs/`
+- **Edits allowed in**: `src/`, `config/`
+
+## Key Configuration Files
+
+- `tsconfig.ide.json`: IDE path mappings (standard package names -> .dao/ref local source)
+- `.gitmodules`: vendor/sha submodule (bash utility library)
+- `.eslintignore` / `eslint.config.mjs`: Lint rules, prohibits imports from .dao/ref
+
+## Current Roadmap Focus
+
+- Implement Planner Agent module: LLM-based reflection on recent execution history to auto-generate new objectives
+- Improve ROADMAP.md auto read/write mechanism
+- Introduce exploration mode: periodically discover refactoring opportunities
+- Generalize `dao init` to support initializing evolution environment in any directory
+
+## Direct Dependencies
 
 <!-- DAO_DEPS_START -->
-<!-- 自动生成，请勿手动修改 (Auto-generated, do not edit manually) -->
-<!-- 依赖树格式说明: 格式为 `[包名@版本] -> [源代码目录]` , 第一层为本项目 Workspace 模块；缩进层为该模块的直接依赖；`->` 后缀指向该依赖的本地源代码映射路径，供 AI 精准分析源码。 -->
+<!-- Auto-generated, do not edit manually -->
+<!-- Dependency tree format: `[package@version] -> [source directory]`. Top level = workspace modules; indented = direct dependencies; `->` suffix points to local source mirror path for AI source analysis. -->
 - @whonb/dao@0.1.0 -> .
   - @eslint/js@^9.21.0 -> .dao/ref/github.com/eslint/eslint/v9.21.0/packages/js
   - @types/node@^22.0.0 -> .dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/22.0.0/types/node
