@@ -21,7 +21,7 @@
     "sync": "tsx packages/dao-cli/src/dao/cli.ts sync",
     "example:pirate": "tsx packages/dao-core/examples/example.ts",
     "clean:all": "rm -rf dist && npm run clean --workspaces --if-present",
-    "postinstall":"npm run sync"
+    "postinstall":"echo postinstall temp stop sync || npm run sync"
   },
   "dependencies": {
   },
