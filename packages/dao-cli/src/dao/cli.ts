@@ -43,7 +43,7 @@ program
   .action(async (opts: any) => {
     const log = logger.withTag("sync");
     syncDependencies().catch(err => {
-        log.error(`同步失败: ${err.message}`);
+        log.error("同步失败:", err);
         process.exit(1);
     });
 

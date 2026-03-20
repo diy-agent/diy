@@ -1,0 +1,6 @@
+{
+  // 1. 显示侧边栏的 node_modules
+  "files.exclude": {
+    "**/node_modules": false // 设为 false 显示，删除则恢复默认
+  }
+}

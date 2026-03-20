@@ -1,3 +1,7 @@
+/*
+* AI确定性工程: 依赖库git同步到 `.dao/ref`
+* */
+
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -296,25 +300,69 @@ async function processPackage(
     const projectRepoLink = path.join(projectRefBase, repoInfo.host, repoInfo.owner, repoInfo.repo, versionDirName);
     const relativeRepoPath = `./.dao/ref/${repoInfo.host}/${repoInfo.owner}/${repoInfo.repo}/${versionDirName}`;
 
-    try {
-      fs.rmSync(projectRepoLink, { recursive: true, force: true });
-    } catch ( _e) {
-        // 忽略删除失败
-    }
-
     const linkParent = path.dirname(projectRepoLink);
     if (!fs.existsSync(linkParent)) fs.mkdirSync(linkParent, { recursive: true });
 
     const relativeTarget = path.relative(linkParent, finalGlobalPath);
-    fs.symlinkSync(relativeTarget, projectRepoLink, "dir");
 
-    log.debug(`[${name}] 软连接建立成功: ${name} -> ${relativeRepoPath}`);
+    let needsCreate = true;
+    try {
+      const stats = fs.lstatSync(projectRepoLink);
+      if (stats.isSymbolicLink()) {
+        const currentLink = fs.readlinkSync(projectRepoLink);
+        // 规范化路径后比较（处理相对路径的不同表示）
+        const normalizedCurrent = path.resolve(linkParent, currentLink);
+        const normalizedTarget = path.resolve(linkParent, relativeTarget);
+        if (normalizedCurrent === normalizedTarget) {
+          needsCreate = false;
+        } else {
+          log.debug(`[${name}] 软连接目标不匹配，需要更新：${currentLink} -> ${relativeTarget}`);
+        }
+      } else {
+        log.debug(`[${name}] 现有路径不是软连接，类型：${stats.isDirectory() ? 'directory' : 'file'}`);
+      }
+    } catch (e: any) {
+      if (e.code !== 'ENOENT') {
+        log.debug(`[${name}] 检查现有链接时出错：${e.message}`);
+      }
+      // ENOENT 表示文件不存在，需要创建，保持 needsCreate = true
+    }
+
+    if (needsCreate) {
+      log.debug(`[${name}] 准备删除现有文件：${projectRepoLink}`);
+      try {
+        fs.unlinkSync(projectRepoLink);
+      } catch (e: any) {
+        if (e.code !== 'ENOENT') {
+          log.debug(`[${name}] unlinkSync 失败：${e.message}`);
+          // 如果不是 symlink，尝试用 rmSync 删除
+          fs.rmSync(projectRepoLink, { recursive: true, force: true });
+        }
+      }
+      log.debug(`[${name}] rmSync 执行完成`);
+      try {
+        const statsAfter = fs.lstatSync(projectRepoLink);
+        log.debug(`[${name}] 删除后 lstat: 文件仍存在，isSymbolicLink=${statsAfter.isSymbolicLink()}`);
+      } catch (e: any) {
+        log.debug(`[${name}] 删除后 lstat: 文件已不存在 (code=${e.code})`);
+      }
+      log.debug(`[${name}] symlinkSync 参数：target=${relativeTarget}, path=${projectRepoLink}`);
+      const parentDir = path.dirname(projectRepoLink);
+      log.debug(`[${name}] 父目录：${parentDir}`);
+      const parentEntries = fs.readdirSync(parentDir);
+      log.debug(`[${name}] 父目录内容：${JSON.stringify(parentEntries)}`);
+      fs.symlinkSync(relativeTarget, projectRepoLink, "dir");
+      log.debug(`[${name}] 软连接建立成功：${name} -> ${relativeRepoPath}`);
+    } else {
+      log.debug(`[${name}] 软连接已是最新状态`);
+    }
     return {
         relativePath: subDir ? `${relativeRepoPath}/${subDir}` : relativeRepoPath,
         absolutePath: subDir ? path.join(finalGlobalPath, subDir) : finalGlobalPath
     };
   } catch (err: unknown) {
-    log.error(`[${name}] 同步失败: ${err instanceof Error ? err.message : String(err)}`);
+    const errText = err instanceof Error ? (err.stack || err.message) : String(err);
+    log.error(`[${name}] 同步失败: \n${errText}`);
     return null;
   }
 }

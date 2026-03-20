@@ -19,7 +19,7 @@ draft: false
    ```bash
    ./sha.sh worktree add dao-feature-<name>
    # 例：./sha.sh worktree add dao-feature-auth
-   # 例：./sha.sh worktree add dao-fix-bugxxx
+   # 例：./sha.sh worktree add dao-fix-bug-something-wrong
    ```
    这将在 `.worktree/dao-feature-<name>` 创建独立的开发环境
 
