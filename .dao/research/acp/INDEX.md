@@ -1,0 +1,483 @@
+---
+topic: 分析 @google/gemini-cli-core 的acp 协议支持情况，如何使用, 给出一份完整详实的 gemini-cli acp分析报告.
+dependencies:
+  node: 
+    - @google/gemini-cli-core@0.34.0-preview.0
+ref:
+  - 
+---
+
+# Gemini CLI ACP (Agent Client Protocol) 完整分析报告
+
+## 1. ACP 协议支持概况
+
+### 1.1 协议定位
+ACP (Agent Client Protocol) 是一种标准化的 **JSON-RPC 风格** 客户端 - 代理通信协议，允许外部客户端（如 IDE、编辑器插件）通过标准化的消息与 Gemini CLI 代理进行深度交互。
+
+### 1.2 核心实现
+| 组件 | 位置 | 说明 |
+|------|------|------|
+| **核心客户端** | `packages/cli/src/acp/acpClient.ts` | ~1750 行，完整 ACP 协议实现 |
+| **文件系统服务** | `packages/cli/src/acp/fileSystemService.ts` | 桥接客户端文件系统能力 |
+| **错误处理** | `packages/cli/src/acp/acpErrors.ts` | ACP 错误映射与处理 |
+| **SDK 依赖** | `@agentclientprotocol/sdk` | 第三方协议 SDK |
+| **命令处理器** | `packages/cli/src/acp/commandHandler.ts` | 处理 `/` 命令 |
+
+### 1.3 通信架构
+```
+┌─────────────────┐         NDJSON Stream         ┌─────────────────┐
+│   Client (IDE)  │ ◄──────────────────────────►  │  Gemini Agent   │
+│                 │    (stdin/stdout JSON-RPC)    │   (--acp mode)  │
+└─────────────────┘                               └─────────────────┘
+```
+
+- **通信方式**: 标准输入输出（stdin/stdout）NDJSON 流式通信
+- **协议版本**: `2024-11-05` (当前支持)
+- **启动命令**: `gemini --acp`
+
+---
+
+## 2. 主要功能特性
+
+### 2.1 身份验证 (Authentication)
+支持多种认证方式，在 `initialize` 响应中声明：
+
+```typescript
+authMethods: [
+  'login-with-google',  // Google 账号 OAuth 登录
+  'use-gemini',         // Gemini API Key
+  'use-vertex-ai',      // Vertex AI
+  'gateway'             // 自定义 AI API Gateway
+]
+```
+
+**认证流程**:
+```typescript
+await connection.authenticate({
+  methodId: 'use-gemini',
+  _meta: { 'api-key': 'YOUR_GEMINI_API_KEY' }
+});
+```
+
+### 2.2 会话管理
+
+#### 核心能力
+| 方法 | 说明 |
+|------|------|
+| `newSession` | 创建新会话，支持工作目录、MCP 服务器配置 |
+| `loadSession` | 恢复历史会话，同步会话记录 |
+| `setSessionMode` | 切换会话模式 |
+| `setSessionModel` | 动态切换模型 |
+| `cancel` | 取消正在进行的提示 |
+
+#### 支持的模型
+```typescript
+// 默认模型
+'gemini-2.5-pro'
+'gemini-2.5-flash'
+
+// 预览模型
+'gemini-3.1-pro'
+'gemini-3-flash'
+
+// 特殊模型
+'gemini-3.1-pro-custom-tools'  // 自定义工具支持
+```
+
+#### 会话模式
+| 模式 | 常量 | 说明 |
+|------|------|------|
+| Default | `default` | 默认模式，所有操作需要确认 |
+| Auto Edit | `auto-edit` | 自动批准编辑类工具 |
+| YOLO | `yolo` | 全自动模式，无需确认 |
+| Plan | `plan` | 只读规划模式 |
+
+### 2.3 工具调用与权限控制
+
+#### 原生工具支持
+Gemini CLI 的所有原生工具都可通过 ACP 远程调用：
+- **文件操作**: `ReadFile`, `WriteFile`, `EditFile`, `Glob`, `Grep`
+- **搜索**: `CodeSearch`, `WebSearch`
+- **执行**: `Shell` (命令执行)
+- **其他**: `Memory`, `TodoWrite`, `Think` 等
+
+#### 交互式授权机制
+当 Agent 需要执行敏感操作时，会通过 ACP 发起权限请求：
+
+```typescript
+// 客户端会收到 requestPermission 回调
+const client: acp.Client = {
+  async requestPermission(params) {
+    console.log(`Agent 请求权限：${params.toolCall.title}`);
+    // 显示确认对话框给用户
+    const userChoice = await showConfirmationDialog(params);
+    return { 
+      outcome: { optionId: userChoice }  // 'proceed_once', 'proceed_always', etc.
+    };
+  }
+};
+```
+
+#### 权限选项
+- `proceed_once`: 仅此一次允许
+- `proceed_always`: 总是允许此类操作
+- `modify_with_editor`: 使用编辑器修改后执行
+- `abort`: 拒绝/中止
+
+### 2.4 文件系统集成 (FileSystemService)
+
+通过 `AcpFileSystemService`，Agent 可以利用客户端 (IDE) 提供的文件系统能力：
+
+**客户端能力声明**:
+```typescript
+await connection.initialize({
+  clientCapabilities: {
+    fs: {
+      readTextFile: true,
+      writeTextFile: true,
+      list: true
+    }
+  }
+});
+```
+
+**客户端实现**:
+```typescript
+const client: acp.Client = {
+  async fsRead(params) {
+    const content = await hostEditor.readFile(params.path);
+    return { content };
+  },
+  
+  async fsWrite(params) {
+    await hostEditor.writeFile(params.path, params.content);
+    return {};
+  }
+};
+```
+
+**优势**:
+- 跨环境文件访问（如远程开发场景）
+- IDE 缓存优先读取
+- 统一的文件锁和权限管理
+
+### 2.5 MCP (Model Context Protocol) 支持
+
+#### 协议能力声明
+```typescript
+mcpCapabilities: {
+  http: true,   // HTTP 传输
+  sse: true     // Server-Sent Events 传输
+}
+```
+
+#### 支持的 MCP 服务器类型
+| 类型 | 配置示例 |
+|------|----------|
+| **Stdio** | `{ command: 'node', args: ['server.js'], env: [...] }` |
+| **HTTP** | `{ type: 'http', url: 'https://example.com/mcp', headers: [...] }` |
+| **SSE** | `{ type: 'sse', url: 'https://example.com/sse', headers: [...] }` |
+
+#### 使用示例
+```typescript
+const { sessionId } = await connection.newSession({
+  cwd: '/path/to/project',
+  mcpServers: [
+    {
+      name: 'my-custom-server',
+      command: 'node',
+      args: ['mcp-server.js'],
+      env: [{ name: 'API_KEY', value: 'secret' }]
+    },
+    {
+      type: 'http',
+      name: 'remote-mcp',
+      url: 'https://api.example.com/mcp',
+      headers: [{ name: 'Authorization', value: 'Bearer token' }]
+    }
+  ]
+});
+```
+
+**注意**: ACP **不直接支持注册单个 tool**，必须通过 MCP 服务器间接提供自定义工具。
+
+### 2.6 多模态能力
+
+在 `initialize` 响应中声明的提示能力：
+```typescript
+promptCapabilities: {
+  image: true,           // 图片输入
+  audio: true,           // 音频输入
+  embeddedContext: true  // 嵌入上下文引用
+}
+```
+
+---
+
+## 3. 协议方法与通知
+
+### 3.1 核心方法 (Client → Agent)
+
+| 方法 | 参数 | 返回值 | 说明 |
+|------|------|--------|------|
+| `initialize` | `clientInfo`, `protocolVersion`, `clientCapabilities` | `agentInfo`, `authMethods`, `agentCapabilities` | 初始化握手 |
+| `authenticate` | `methodId`, `_meta` (可选 API Key) | `result` | 身份验证 |
+| `newSession` | `cwd`, `mcpServers`, `history` | `sessionId` | 创建新会话 |
+| `loadSession` | `sessionId` | `sessionId`, `history` | 加载历史会话 |
+| `prompt` | `sessionId`, `prompt[]` | `stopReason`, `output[]` | 发送用户提示 |
+| `setSessionMode` | `sessionId`, `mode` | - | 设置会话模式 |
+| `setSessionModel` | `sessionId`, `model` | - | 设置模型 |
+| `cancel` | `sessionId`, `requestId` | - | 取消进行中操作 |
+
+### 3.2 Agent → Client 回调
+
+| 方法 | 触发时机 | 客户端响应 |
+|------|----------|------------|
+| `requestPermission` | Agent 需要执行敏感工具 | `{ outcome: { optionId } }` |
+| `sessionUpdate` | 会话状态变化 | 无（通知） |
+| `fsRead` | Agent 需要读取文件 | `{ content }` |
+| `fsWrite` | Agent 需要写入文件 | `{}` |
+| `fsList` | Agent 需要列出目录 | `{ entries: [...] }` |
+
+### 3.3 流式事件 (Prompt 响应)
+
+```typescript
+const response = await connection.prompt({
+  sessionId,
+  prompt: [{ type: 'text', text: 'Hello!' }]
+});
+
+// 流式事件类型
+StreamEventType = {
+  AGENT_RESPONSE,      // Agent 回复内容
+  TOOL_CALL_REQUEST,   // 工具调用请求（需权限）
+  TOOL_CALL_RESULT,    // 工具执行结果
+  ERROR               // 错误
+}
+```
+
+---
+
+## 4. 使用指南
+
+### 4.1 命令行测试（调试用）
+
+```bash
+# 启动 ACP 模式
+gemini --acp
+
+# 手动发送初始化请求（粘贴到终端）
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+  "clientInfo":{"name":"test","version":"1.0.0"},
+  "protocolVersion":"2024-11-05"
+}}
+```
+
+### 4.2 Node.js 脚本集成
+
+```javascript
+import { spawn } from 'child_process';
+
+const child = spawn('gemini', ['--acp']);
+
+child.stdout.on('data', (data) => {
+  console.log('收到:', data.toString());
+});
+
+// 发送初始化
+child.stdin.write(JSON.stringify({
+  jsonrpc: "2.0",
+  id: 1,
+  method: "initialize",
+  params: {
+    clientInfo: { name: "Script", version: "1.0.0" },
+    protocolVersion: "2024-11-05"
+  }
+}) + '\n');
+```
+
+### 4.3 TypeScript SDK 完整示例
+
+```typescript
+import * as acp from '@agentclientprotocol/sdk';
+import { spawn } from 'child_process';
+
+async function run() {
+  const child = spawn('gemini', ['--acp']);
+  
+  // 1. 创建 NDJSON 流
+  const stream = acp.ndJsonStream(child.stdin, child.stdout);
+  
+  // 2. 实现客户端
+  const client: acp.Client = {
+    async requestPermission(params) {
+      console.log(`权限请求：${params.toolCall.title}`);
+      return { outcome: { optionId: 'proceed_once' } };
+    },
+    
+    async sessionUpdate(params) {
+      console.log(`会话更新：`, params.update);
+    }
+  };
+  
+  // 3. 建立连接
+  const connection = new acp.ClientSideConnection(() => client, stream);
+  
+  // 4. 初始化
+  await connection.initialize({
+    clientInfo: { name: "MyApp", version: "1.0.0" },
+    protocolVersion: acp.PROTOCOL_VERSION
+  });
+  
+  // 5. 认证
+  await connection.authenticate({
+    methodId: 'use-gemini',
+    _meta: { 'api-key': process.env.GEMINI_API_KEY }
+  });
+  
+  // 6. 创建会话
+  const { sessionId } = await connection.newSession({
+    cwd: process.cwd(),
+    mcpServers: []
+  });
+  
+  // 7. 发送提示
+  const response = await connection.prompt({
+    sessionId,
+    prompt: [{ type: 'text', text: '你好！' }]
+  });
+  
+  console.log('完成:', response.stopReason);
+}
+
+run();
+```
+
+### 4.4 IDE 级别集成（含文件系统）
+
+```typescript
+const ideClient: acp.Client = {
+  async requestPermission(params) {
+    // 显示 IDE 原生确认对话框
+    const result = await vscode.window.showWarningMessage(
+      `${params.toolCall.title} 需要权限`,
+      '允许', '拒绝'
+    );
+    return { outcome: { optionId: result === '允许' ? 'proceed_once' : 'abort' } };
+  },
+  
+  async fsRead(params) {
+    const content = await vscode.workspace.fs.readFile(vscode.Uri.file(params.path));
+    return { content: Buffer.from(content).toString('utf-8') };
+  },
+  
+  async fsWrite(params) {
+    await vscode.workspace.fs.writeFile(
+      vscode.Uri.file(params.path),
+      Buffer.from(params.content, 'utf-8')
+    );
+    return {};
+  },
+  
+  clientCapabilities: {
+    fs: {
+      readTextFile: true,
+      writeTextFile: true,
+      list: true
+    }
+  }
+};
+```
+
+---
+
+## 5. 错误处理
+
+### 5.1 标准错误码
+```typescript
+enum AcpErrorCodes {
+  INVALID_PARAMS = -32602,
+  INTERNAL_ERROR = -32603,
+  AUTH_REQUIRED = -32001,
+  SESSION_NOT_FOUND = -32002,
+  TOOL_EXECUTION_FAILED = -32003,
+  FILE_SYSTEM_ERROR = -32004,
+  CANCELLED = -32005
+}
+```
+
+### 5.2 错误响应格式
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32001,
+    "message": "Authentication required",
+    "data": {
+      "requiredAuthType": "use-gemini"
+    }
+  }
+}
+```
+
+---
+
+## 6. 测试用例参考
+
+项目包含完整的 ACP 集成测试：
+
+| 测试文件 | 测试内容 |
+|----------|----------|
+| `integration-tests/acp-env-auth.test.ts` | 环境变量认证流程 |
+| `integration-tests/acp-telemetry.test.ts` | 遥测数据上报 |
+| `packages/cli/src/acp/acpClient.test.ts` | 单元测试 |
+
+---
+
+## 7. 总结与建议
+
+### 7.1 能力评估
+
+| 维度 | 评级 | 说明 |
+|------|------|------|
+| **协议完整性** | ★★★★★ | 完整实现 ACP 所有核心方法 |
+| **认证灵活性** | ★★★★★ | 支持 4 种认证方式 |
+| **工具扩展性** | ★★★★☆ | 通过 MCP 支持自定义工具 |
+| **文件系统** | ★★★★★ | 完整的客户端 FS 桥接 |
+| **多模态** | ★★★★☆ | 支持图片、音频、上下文 |
+| **文档完善度** | ★★★☆☆ | 代码注释充分，独立文档较少 |
+
+### 7.2 适用场景
+
+✅ **推荐使用**:
+- IDE/编辑器 AI 助手集成
+- 远程开发环境代理
+- 自动化脚本与 CI/CD
+- 自定义 AI 工作流编排
+
+❌ **不推荐**:
+- 简单聊天机器人（直接用 CLI 即可）
+- 不需要工具调用的场景
+- 对延迟极度敏感的应用
+
+### 7.3 最佳实践
+
+1. **始终使用 SDK**: 避免手动处理 JSON-RPC 序列化
+2. **实现权限回调**: 让用户确认敏感操作
+3. **提供文件系统**: 提升跨环境体验
+4. **合理配置 MCP**: 按需加载自定义工具
+5. **处理取消**: 支持用户中断长任务
+
+### 7.4 限制与注意事项
+
+- ❌ 不支持直接注册单个 tool（必须通过 MCP）
+- ⚠️ 仅支持单路 stdin/stdout 通信
+- ⚠️ 需要客户端主动处理权限请求
+- ⚠️ 会话状态由 Agent 维护，客户端需同步
+
+---
+
+## 结论
+
+Gemini CLI 的 ACP 实现非常成熟，不仅是一个简单的聊天接口，还通过协议深度集成了**文件系统管理**、**工具权限流转**、**多模型调度**和**MCP 扩展**，是目前该项目作为 IDE 辅助工具的核心能力之一。对于需要深度集成的场景（如编辑器插件），ACP 是首选方案。

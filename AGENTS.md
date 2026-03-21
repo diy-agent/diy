@@ -177,6 +177,7 @@ dao-cli (main entry)
   - pino-pretty@^13.1.3 -> .dao/ref/github.com/pinojs/pino-pretty/v13.1.3
   - ws@^8.19.0 -> .dao/ref/github.com/websockets/ws/8.16.0
 - @whonb/dao-core@0.1.0 -> packages/dao-core
+  - @agentclientprotocol/sdk@^0.16.1 -> .dao/ref/github.com/agentclientprotocol/typescript-sdk/v0.16.1
   - @google/gemini-cli-core@^0.34.0-preview.0 -> .dao/ref/github.com/google-gemini/gemini-cli/v0.34.0-preview.0
   - @mariozechner/pi-coding-agent@^0.61.0 -> .dao/ref/github.com/badlogic/pi-mono/v0.61.0/packages/coding-agent
 - @whonb/dao-tui@0.1.0 -> packages/dao-tui
