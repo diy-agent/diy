@@ -16,12 +16,7 @@ import {
   type ToolCallRequestInfo,
 } from '@google/gemini-cli-core';
 
-export interface AgentOptions {
-  instructions: string;
-  model?: string;
-  cwd?: string;
-  debug?: boolean;
-}
+import type { AgentOptions } from './agent.js';
 
 /**
  * 一个对 core 包的精简包装。

@@ -169,6 +169,12 @@
       "@types/ws/*": [
         "./.dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/8.5.10/types/ws/*"
       ],
+      "@agentclientprotocol/sdk": [
+        "./.dao/ref/github.com/agentclientprotocol/typescript-sdk/v0.16.1"
+      ],
+      "@agentclientprotocol/sdk/*": [
+        "./.dao/ref/github.com/agentclientprotocol/typescript-sdk/v0.16.1/*"
+      ],
       "@mariozechner/pi-coding-agent": [
         "./.dao/ref/github.com/badlogic/pi-mono/v0.61.0/packages/coding-agent/src/index.ts"
       ],

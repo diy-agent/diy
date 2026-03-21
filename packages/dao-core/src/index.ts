@@ -4,4 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// Common agent types and interfaces
+export * from './agent.js';
+
+// Gemini CLI Agent
 export * from './gemini-agent.js';
+
+// PI Coding Agent
+export * from './pi-agent.js';
