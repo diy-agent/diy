@@ -6,7 +6,6 @@
 
 import { GeminiCliAgent } from '@whonb/dao-core';
 import { GeminiEventType } from '@google/gemini-cli-core';
-import { setupDevTools } from '@whonb/devtools';
 
 async function main() {
   const abort = new AbortController();
@@ -18,11 +17,6 @@ async function main() {
     // model: 'auto', // 默认即为 auto
     debug: false,
   });
-
-  // --- 启用 DevTools ---
-  const sessionId = agent.coreConfig.getSessionId();
-  await setupDevTools(sessionId);
-  // -------------------
 
   // 捕获 Ctrl+C
   process.on('SIGINT', () => {

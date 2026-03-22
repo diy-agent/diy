@@ -7,9 +7,6 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@whonb/devtools": [
-        "./packages/devtools/index.ts"
-      ],
       "@whonb/dao-core": [
         "./packages/dao-core/src/index.ts"
       ],
@@ -152,10 +149,10 @@
         "./.dao/ref/github.com/pinojs/pino-pretty/v13.1.3/*"
       ],
       "ws": [
-        "./.dao/ref/github.com/websockets/ws/8.16.0"
+        "./.dao/ref/github.com/websockets/ws/8.19.0"
       ],
       "ws/*": [
-        "./.dao/ref/github.com/websockets/ws/8.16.0/*"
+        "./.dao/ref/github.com/websockets/ws/8.19.0/*"
       ],
       "@types/marked": [
         "./.dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/5.0.2/types/marked"
@@ -164,10 +161,10 @@
         "./.dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/5.0.2/types/marked/*"
       ],
       "@types/ws": [
-        "./.dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/8.5.10/types/ws"
+        "./.dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/8.18.1/types/ws"
       ],
       "@types/ws/*": [
-        "./.dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/8.5.10/types/ws/*"
+        "./.dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/8.18.1/types/ws/*"
       ],
       "@agentclientprotocol/sdk": [
         "./.dao/ref/github.com/agentclientprotocol/typescript-sdk/v0.16.1"

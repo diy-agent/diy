@@ -200,6 +200,32 @@ interface SyncResult {
   absolutePath: string;
 }
 
+interface RefLockDependency {
+  name: string;
+  spec: string;
+  scope: "runtime" | "dev";
+  resolvedVersion?: string;
+  mirrorPath?: string;
+  origin?: string;
+}
+
+interface RefLockWorkspace {
+  id: string;
+  name: string;
+  version: string;
+  ecosystem: "node";
+  path: string;
+  manifest: string;
+  dependencies: RefLockDependency[];
+}
+
+interface RefLockFile {
+  version: 1;
+  generatedAt: string;
+  mirrorRoot: ".dao/ref";
+  workspaces: RefLockWorkspace[];
+}
+
 async function processPackage(
   name: string,
   version: string,
@@ -367,85 +393,85 @@ async function processPackage(
   }
 }
 
-/**
- * 更新 AGENTS.md 中的依赖列表
- */
-function updateAgentsMdWithDeps(workspacePackages: Map<string, WorkspaceInfo>, syncResults: Record<string, SyncResult> = {}): void {
-  const agentsMdPath = path.resolve(process.cwd(), "AGENTS.md");
-  if (!fs.existsSync(agentsMdPath)) return;
+function buildRefLock(
+  workspacePackages: Map<string, WorkspaceInfo>,
+  syncResults: Record<string, SyncResult>
+): RefLockFile {
+  const buildDependencies = (
+    deps: Record<string, string>,
+    scope: "runtime" | "dev"
+  ): RefLockDependency[] =>
+    Object.entries(deps)
+      .sort(([nameA], [nameB]) => nameA.localeCompare(nameB))
+      .map(([depName, spec]) => {
+        const res = syncResults[depName];
+        const mirrorPath = res?.relativePath.replace(/^\.\//, "");
+        const resolvedVersion = mirrorPath ? path.basename(mirrorPath) : undefined;
+        const dependency: RefLockDependency = {
+          name: depName,
+          spec,
+          scope
+        };
 
-  const log = logger.withTag("Agents");
-  try {
-    let content = fs.readFileSync(agentsMdPath, "utf-8");
-    const sectionHeader = "## 直接依赖 (Dependencies)";
-    const startTag = "<!-- DAO_DEPS_START -->";
-    const endTag = "<!-- DAO_DEPS_END -->";
-    const comment = `
-> **IMPORTANT**: This section is auto-generated for AI Source Analysis. 
-> Format: \`[package] -> [local_source_path]\`. 
-> When you need to understand the internal logic of a dependency, READ from the mapped \`.dao/ref/\` path. **DO NOT** attempt to modify these files.
-`;
+        if (resolvedVersion) dependency.resolvedVersion = resolvedVersion;
+        if (mirrorPath) dependency.mirrorPath = mirrorPath;
 
-    const depLines: string[] = [];
+        // Only annotate non-registry origins when the spec itself carries it.
+        if (/^(git\+|https?:\/\/|git@|file:|workspace:)/.test(spec)) {
+          dependency.origin = spec;
+        }
 
-    // 对 workspacePackages 进行排序，使根目录排在前面，然后按名称字母排序
-    const sortedWorkspacePackages = Array.from(workspacePackages.values()).sort((a, b) => {
+        return dependency;
+      });
+
+  const workspaces = Array.from(workspacePackages.values())
+    .sort((a, b) => {
       if (a.relativePath === "." && b.relativePath !== ".") return -1;
       if (a.relativePath !== "." && b.relativePath === ".") return 1;
       return a.name.localeCompare(b.name);
+    })
+    .map(pkgInfo => {
+      const manifest = pkgInfo.relativePath === "."
+        ? "package.json"
+        : `${pkgInfo.relativePath}/package.json`;
+      const dependencies = [
+        ...buildDependencies(pkgInfo.dependencies, "runtime"),
+        ...buildDependencies(pkgInfo.devDependencies, "dev")
+      ].sort((a, b) => a.name.localeCompare(b.name) || a.scope.localeCompare(b.scope));
+
+      return {
+        id: `node:${pkgInfo.relativePath}`,
+        name: pkgInfo.name,
+        version: pkgInfo.version || "unknown",
+        ecosystem: "node" as const,
+        path: pkgInfo.relativePath,
+        manifest,
+        dependencies
+      };
     });
 
-    for (const pkgInfo of sortedWorkspacePackages) {
-      depLines.push(`- ${pkgInfo.name}@${pkgInfo.version || "unknown"} -> ${pkgInfo.relativePath}`);
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    mirrorRoot: ".dao/ref",
+    workspaces
+  };
+}
 
-      const combinedDeps = { ...pkgInfo.dependencies, ...pkgInfo.devDependencies };
-      // 按照依赖名称排序
-      const sortedDeps = Object.entries(combinedDeps).sort(([nameA], [nameB]) => nameA.localeCompare(nameB));
+function writeRefLockFile(
+  workspacePackages: Map<string, WorkspaceInfo>,
+  syncResults: Record<string, SyncResult>
+): void {
+  const refLockPath = path.resolve(process.cwd(), ".dao", "ref", "ref.lock.json");
+  const refLockDir = path.dirname(refLockPath);
 
-      for (const [depName, depVersion] of sortedDeps) {
-        const res = syncResults[depName];
-        let depLine = `  - ${depName}@${depVersion}`;
-        if (res) {
-          const cleanPath = res.relativePath.startsWith("./") ? res.relativePath.slice(2) : res.relativePath;
-          depLine += ` -> ${cleanPath}`;
-        }
-        depLines.push(depLine);
-      }
-    }
-
-    const depList = depLines.join("\n");
-
-    const newChunk = `${startTag}\n${comment}\n${depList}\n${endTag}`;
-
-    const startIndex = content.indexOf(startTag);
-    const endIndex = content.indexOf(endTag);
-
-    if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
-      // 模式 A: 已存在标签，直接替换中间内容
-      content = content.slice(0, startIndex) + newChunk + content.slice(endIndex + endTag.length);
-    } else {
-      // 模式 B: 尚无标签，寻找标题
-      const lines = content.split("\n");
-      const sectionIndex = lines.findIndex(line => line.trim() === sectionHeader);
-
-      if (sectionIndex !== -1) {
-        // 找到标题，在标题下方插入内容（保留标题后的空行逻辑）
-        let nextContentIndex = sectionIndex + 1;
-        // 如果标题后紧跟了空行，跳过它
-        if (lines[nextContentIndex]?.trim() === "") nextContentIndex++;
-
-        lines.splice(nextContentIndex, 0, "\n" + newChunk + "\n");
-        content = lines.join("\n");
-      } else {
-        // 没找到标题，追加到末尾
-        content = content.trim() + "\n\n" + sectionHeader + "\n\n" + newChunk + "\n";
-      }
-    }
-
-    fs.writeFileSync(agentsMdPath, content.trim() + "\n");
-    log.info("AGENTS.md 依赖列表已更新 (使用结构化锚点)");
+  try {
+    fs.mkdirSync(refLockDir, { recursive: true });
+    const payload = buildRefLock(workspacePackages, syncResults);
+    fs.writeFileSync(refLockPath, JSON.stringify(payload, null, 2) + "\n");
+    log.info(`dependency mirror index 已更新: ${path.relative(process.cwd(), refLockPath)}`);
   } catch (err) {
-    log.warn(`更新 AGENTS.md 失败: ${err instanceof Error ? err.message : String(err)}`);
+    log.warn(`更新 ref.lock.json 失败: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -510,8 +536,8 @@ export async function syncDependencies(): Promise<void> {
 
   saveMetadataCache();
 
-  // 更新 AGENTS.md 中的依赖列表
-  updateAgentsMdWithDeps(workspacePackages, syncResults);
+  // 输出 dependency mirror 索引到 .dao/ref，使索引和镜像目录生命周期保持一致
+  writeRefLockFile(workspacePackages, syncResults);
 
   // 更新 tsconfig.ide.json
   if (fs.existsSync(tsConfigPath)) {

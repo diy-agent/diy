@@ -9,8 +9,7 @@
     "paths": {
       "@whonb/dao-core": ["./packages/dao-core/src/index.ts"],
       "@whonb/dao-cli": ["./packages/dao-cli/src/main.ts"],
-      "@whonb/dao-tui": ["./packages/dao-tui/src/index.ts"],
-      "@whonb/devtools": ["./packages/devtools/index.ts"]
+      "@whonb/dao-tui": ["./packages/dao-tui/src/index.ts"]
     }
   },
   "include": ["packages/*/src", "packages/*/examples"],
