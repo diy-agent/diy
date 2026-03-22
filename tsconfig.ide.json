@@ -154,6 +154,12 @@
       "ws/*": [
         "./.dao/ref/github.com/websockets/ws/8.19.0/*"
       ],
+      "yaml": [
+        "./.dao/ref/github.com/eemeli/yaml/v2.8.3/src/index.ts"
+      ],
+      "yaml/*": [
+        "./.dao/ref/github.com/eemeli/yaml/v2.8.3/src/*"
+      ],
       "@types/marked": [
         "./.dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/5.0.2/types/marked"
       ],

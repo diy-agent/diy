@@ -5,4 +5,5 @@ research:
   require:
     node:
       dependencies:
-        @google/gemini-cli-core@0.34.0-preview.0
+        "@google/gemini-cli-core@0.34.0-preview.0"
+overrides: {}

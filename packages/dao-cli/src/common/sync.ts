@@ -7,6 +7,7 @@ import path from "node:path";
 import os from "node:os";
 import { execSync } from "node:child_process";
 import * as jsonc from "jsonc-parser";
+import YAML from "yaml";
 import { logger } from "./logger.js";
 
 const log = logger.withTag("sync");
@@ -488,7 +489,7 @@ export async function syncDependencies(): Promise<void> {
 
   const pkgPath = path.resolve(process.cwd(), "package.json");
   const tsConfigPath = path.resolve(process.cwd(), "tsconfig.ide.json");
-  const projectConfigPath = path.resolve(process.cwd(), ".dao", "config.json");
+  const projectConfigPath = path.resolve(process.cwd(), ".dao", "config.yaml");
 
   if (!fs.existsSync(pkgPath)) {
     log.error("未找到 package.json");
@@ -499,7 +500,7 @@ export async function syncDependencies(): Promise<void> {
   let projectConfig: ProjectConfig = {};
   if (fs.existsSync(projectConfigPath)) {
     try {
-      projectConfig = JSON.parse(fs.readFileSync(projectConfigPath, "utf-8"));
+      projectConfig = YAML.parse(fs.readFileSync(projectConfigPath, "utf-8"));
     } catch ( _e) {
       log.warn(`无法解析项目配置: ${projectConfigPath}`);
     }
