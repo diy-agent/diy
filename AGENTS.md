@@ -6,7 +6,7 @@ generic, execution-focused, and short.
 
 ## What This Repo Is
 
-Dao is a Node.js + TypeScript monorepo for orchestrating coding agents through a
+Dao is a Nodsse.js + TypeScript monorepo for orchestrating coding agents through a
 shared CLI workflow.
 
 Primary workspaces:
