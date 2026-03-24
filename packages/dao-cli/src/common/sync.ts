@@ -602,7 +602,7 @@ export async function syncDependencies(): Promise<void> {
   // 5. 处理 Agent 配置文件软链接 (让多 Agent 共享 AGENTS.md)
   const agentsMd = path.resolve(process.cwd(), "AGENTS.md");
   if (fs.existsSync(agentsMd)) {
-    const agentFiles = ["GEMINI.md", "QWEN.md"];
+    const agentFiles = ["GEMINI.md", "QWEN.md","CLAUDE.md"];
     const agentLog = logger.withTag("Agents");
     for (const agentFile of agentFiles) {
       const agentPath = path.resolve(process.cwd(), agentFile);

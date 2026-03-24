@@ -1,7 +1,7 @@
 # Dao Agent Instructions
 
 This file is the repository-wide instruction context for coding agents.
-`npm run sync` may link `GEMINI.md` and `QWEN.md` to this file, so keep it
+`npm run sync` may link `GEMINI.md`,`CLAUDE.md` and `QWEN.md` to this file, so keep it
 generic, execution-focused, and short.
 
 ## What This Repo Is
@@ -27,6 +27,7 @@ Important entrypoints:
 - Do not modify `main` directly.
 - Start work in an isolated worktree with `./sha.sh worktree add <name>`.
 - Work inside `.worktree/<name>` when following the project workflow.
+  - inside `.worktree/<name>`, you need run `./sha.sh sync all` to init project.
 - Merge through `./sha.sh worktree merge <name>` when that workflow is in use.
 
 ### Validation
