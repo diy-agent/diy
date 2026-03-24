@@ -142,3 +142,9 @@ stateDiagram-v2
 ### doc 确定性 ref
 -  nodejs
   - `npm query`的解析器: <https://github.com/npm/cli/tree/latest/workspaces/arborist>
+
+## 浏览器接入
+
+OpenCLI 
+CLI-Anything
+https://github.com/vercel-labs/agent-browser
