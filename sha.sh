@@ -94,8 +94,10 @@ worktree() {
   # 合并 worktree 到 main 分支
   merge() {
     local name="${1:-}"
+    local squash="$2"
     if [[ -z "$name" ]]; then
-      echo "${c_error}用法：./sha.sh wt merge <branch-name>${c_reset}" >&2
+      echo "${c_error}用法：./sha.sh worktree merge <branch-name> [--squash]${c_reset}" >&2
+      echo "${c_info}  --squash: 压缩为单一提交合并（类似 GitHub Squash and merge）${c_reset}" >&2
       return 1
     fi
 
@@ -120,17 +122,38 @@ worktree() {
 
     # 3. 合并 worktree 分支
     echo "${c_primary}步骤 3/4: 合并 $name 到 main...${c_reset}"
-    run git merge "$name" -m "merge: $name" || { echo "${c_error}合并冲突，请手动解决${c_reset}" >&2; return 1; }
+    if [[ "$squash" == "--squash" ]]; then
+      echo "${c_info}使用 squash 合并（压缩为单一提交）...${c_reset}"
+      run git merge --squash "$name" || {
+        echo "${c_error}合并冲突，请手动解决：${c_reset}" >&2
+        echo "${c_warning}  1. 手动编辑冲突文件解决冲突${c_reset}" >&2
+        echo "${c_warning}  2. git add <resolved-files>${c_reset}" >&2
+        echo "${c_warning}  3. git commit${c_reset}" >&2
+        echo "${c_warning}  4. ./sha.sh worktree remove $name${c_reset}" >&2
+        return 1
+      }
+      # squash merge 自动暂存了所有变更，需要提示用户提交
+      echo "${c_info}冲突已解决，所有变更已暂存，请执行提交：${c_reset}"
+      echo "${c_dim}   git commit -m \"feat: $name\"${c_reset}"
+    else
+      run git merge "$name" -m "merge: $name" || {
+        echo "${c_error}合并冲突，请手动解决：${c_reset}" >&2
+        echo "${c_warning}  1. 手动编辑冲突文件解决冲突${c_reset}" >&2
+        echo "${c_warning}  2. git add <resolved-files>${c_reset}" >&2
+        echo "${c_warning}  3. git commit${c_reset}" >&2
+        echo "${c_warning}  4. ./sha.sh worktree remove $name${c_reset}" >&2
+        return 1
+      }
 
-    # 4. 清理 worktree
-    echo "${c_primary}步骤 4/4: 清理 worktree...${c_reset}"
-    run git worktree remove "$worktree_path"
-    run rm -rf "$worktree_path"
-    # 删除分支
-    run git branch -D "$name"
+      # 4. 自动清理 worktree（只有正常非squash合并成功才清理）
+      echo "${c_primary}步骤 4/4: 清理 worktree...${c_reset}"
+      run git worktree remove "$worktree_path" 2>/dev/null || run rm -rf "$worktree_path"
+      # 删除分支
+      run git branch -D "$name"
 
-    echo "${c_success}✓ 合并完成：$name → main${c_reset}"
-    echo "${c_info}推送变更：git push origin main${c_reset}"
+      echo "${c_success}✓ 合并完成：$name → main${c_reset}"
+      echo "${c_info}推送变更：git push origin main${c_reset}"
+    fi
   }
 
   # 显示帮助
@@ -143,7 +166,9 @@ ${c_primary}Worktree 开发流程管理${c_reset}
 命令:
   ${c_secondary}add <name>${c_reset}     创建新的 worktree 分支到 $worktree_dir/<name>
   ${c_secondary}list${c_reset}           查看所有 worktree 状态
-  ${c_secondary}merge <name>${c_reset}   合并 worktree 到 main 并清理
+  ${c_secondary}merge <name> [--squash]${c_reset}
+                         合并 worktree 到 main 并清理
+                         --squash: 压缩为单一提交 (类似 GitHub Squash and merge)
   ${c_secondary}remove <name>${c_reset}  清理已合并的 worktree (不合并)
   ${c_secondary}help${c_reset}           显示此帮助信息
 
