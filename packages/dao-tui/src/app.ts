@@ -1,0 +1,78 @@
+import {
+  TUI as PiTUI,
+  ProcessTerminal as PiProcessTerminal,
+  Container as PiContainer,
+  type Component,
+} from "@mariozechner/pi-tui";
+import type { ComponentGenerator } from "./types.js";
+
+/**
+ * Abstract base class for DAO-TUI applications.
+ * Subclasses implement the `compose` generator method to define the UI structure.
+ */
+export abstract class App extends PiContainer {
+  protected tui: PiTUI;
+  protected terminal: PiProcessTerminal;
+  public readonly isVSCodeTerminal: boolean;
+
+  constructor() {
+    super();
+    this.terminal = new PiProcessTerminal();
+    // Detect VS Code terminal - IME issue workaround
+    this.isVSCodeTerminal = process.env.TERM_PROGRAM === 'vscode';
+    // Disable raw mode for VSCode to allow IME (Chinese/English) input
+    // Raw mode required for interactive arrow keys but breaks IME in VSCode
+    const useRawMode = !this.isVSCodeTerminal;
+    this.tui = new PiTUI(this.terminal, useRawMode);
+    this.tui.addChild(this);
+  }
+
+  /**
+   * Mount components: iterate through the generator returned by compose()
+   * and add each component as a child.
+   */
+  public mount(): void {
+    this.clear();
+    for (const child of this.compose()) {
+      this.addChild(child);
+    }
+  }
+
+  /**
+   * Rebuild UI and request a render.
+   * Suitable for state-driven scenarios like demos and mock agents.
+   */
+  public refresh(): void {
+    this.mount();
+    this.tui.requestRender();
+  }
+
+  /**
+   * Subclasses must implement this method, yielding components to define the UI.
+   */
+  abstract compose(): Iterable<Component>;
+
+  /**
+   * Start the TUI application.
+   */
+  public run(): void {
+    this.mount();
+    this.tui.start();
+    this.tui.requestRender();
+
+    // Default exit logic
+    this.tui.addInputListener((data) => {
+      if (data.toLowerCase() === "q" || data === "\u0003") {
+        this.stop();
+        return { consume: true };
+      }
+      return undefined;
+    });
+  }
+
+  public stop(): void {
+    this.tui.stop();
+    this.terminal.stop();
+    process.exit(0);
+  }
+}

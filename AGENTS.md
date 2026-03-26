@@ -62,6 +62,9 @@ Important entrypoints:
 ## Agent Workflow
 
 - Read the closest relevant code before proposing or making changes.
+- **When working on a specific subproject (package) always read the `AGENTS.md` in that package directory first**, for example:
+  - When working on `packages/dao-tui`, read `packages/dao-tui/AGENTS.md` for architecture and API context
+  - Subpackage AGENTS.md contains module-specific documentation that root doesn't repeat
 - Prefer targeted edits over rewriting whole modules.
 - If blocked by repeated failures:
   1. Search for an existing local pattern.

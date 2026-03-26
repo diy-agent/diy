@@ -205,10 +205,11 @@ sync() {
     run git submodule update --init --recursive --remote
   }
   dao() {
-    run tsx packages/dao-cli/src/dao/cli.ts sync 
+    run npx tsx packages/dao-cli/src/dao/cli.ts sync
   }
   all() {
     submodule
+    dao
   }
 }
 
