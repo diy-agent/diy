@@ -204,6 +204,9 @@ sync() {
     run git submodule set-branch --branch main vendor/sha
     run git submodule update --init --recursive --remote
   }
+  dao() {
+    run tsx packages/dao-cli/src/dao/cli.ts sync 
+  }
   all() {
     submodule
   }
