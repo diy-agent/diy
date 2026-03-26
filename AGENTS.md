@@ -22,13 +22,6 @@ Important entrypoints:
 
 ## Hard Rules
 
-### Git And Worktrees
-
-- Do not modify `main` directly.
-- Start work in an isolated worktree with `./sha.sh worktree add <name>`.
-- Work inside `.worktree/<name>` when following the project workflow.
-- Merge through `./sha.sh worktree merge <name>` when that workflow is in use.
-
 ### Validation
 
 - After each meaningful change, run at least one validation command.
@@ -41,17 +34,14 @@ Important entrypoints:
 - The repo uses strict ESM and NodeNext resolution.
 - Local imports must keep the `.js` extension.
 - Do not use `as any` or `@ts-ignore` without explicit user approval.
-- Do not leave placeholder edits such as `TODO`, `...`, or commented-out
-  replacement blocks instead of real code.
+- Do not leave placeholder edits such as `TODO`, `...`, or commented-out replacement blocks instead of real code.
 
 ### Reference Code
 
 - `.dao/ref/` is read-only reference material for dependency internals.
-- Run `npm run sync` when mirrored dependency sources or their index may be
-  stale.
+- Run `npm run sync` when mirrored dependency sources or their index may be stale.
 - Dependency mirror index: `.dao/ref/ref.lock.json`.
-- Use `ref.lock.json` only when you need dependency internals, then read the
-  mapped source under `.dao/ref/`.
+- Use `ref.lock.json` only when you need dependency internals, then read the mapped source under `.dao/ref/`.
 - Never import from `.dao/ref/`.
 - Read dependency internals in this order:
   1. Current project code
@@ -61,17 +51,9 @@ Important entrypoints:
 
 ## Agent Workflow
 
-- Read the closest relevant code before proposing or making changes.
-- **When working on a specific subproject (package) always read the `AGENTS.md` in that package directory first**, for example:
-  - When working on `packages/dao-tui`, read `packages/dao-tui/AGENTS.md` for architecture and API context
-  - Subpackage AGENTS.md contains module-specific documentation that root doesn't repeat
+- Read the closest relevant code before changing anything.
+- **When working on a specific package, always read the `AGENTS.md` in that package directory first** - it contains module-specific documentation not repeated here.
 - Prefer targeted edits over rewriting whole modules.
-- If blocked by repeated failures:
-  1. Search for an existing local pattern.
-  2. Check the mirrored dependency source in `.dao/ref/`.
-  3. Reproduce or validate the idea in `temp/` if needed.
-- Favor observability-friendly changes when touching long-running flows:
-  logging, heartbeats, trace spans, explicit failure reporting.
 
 ## Useful Commands
 
@@ -81,7 +63,4 @@ npm run check
 npm run check:all
 npm run build
 npm run sync
-./sha.sh worktree add <name>
-./sha.sh worktree list
-./sha.sh worktree merge <name>
 ```
