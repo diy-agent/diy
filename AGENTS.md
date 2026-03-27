@@ -63,6 +63,7 @@ Important entrypoints:
 ## Agent Workflow
 
 - Read the closest relevant code before proposing or making changes.
+- if pkg depedencies not exists, run `npm i <pkg_name>` add to package.json, then run `npm run sync`
 - Prefer targeted edits over rewriting whole modules.
 - If blocked by repeated failures:
   1. Search for an existing local pattern.
