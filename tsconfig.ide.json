@@ -53,10 +53,10 @@
         "./.dao/ref/github.com/typescript-eslint/typescript-eslint/v8.25.0/packages/typescript-eslint/src/*"
       ],
       "vitest": [
-        "./.dao/ref/github.com/vitest-dev/vitest/v3.0.0/packages/vitest"
+        "./.dao/ref/github.com/vitest-dev/vitest/v4.1.2/packages/vitest"
       ],
       "vitest/*": [
-        "./.dao/ref/github.com/vitest-dev/vitest/v3.0.0/packages/vitest/*"
+        "./.dao/ref/github.com/vitest-dev/vitest/v4.1.2/packages/vitest/*"
       ],
       "@google/gemini-cli-core": [
         "./.dao/ref/github.com/google-gemini/gemini-cli/v0.34.0-preview.0"

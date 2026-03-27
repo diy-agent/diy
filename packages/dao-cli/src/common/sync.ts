@@ -190,7 +190,7 @@ function getBestTag(repoUrl: string, version: string): string | null {
  * 项目配置
  */
 interface ProjectConfig {
-  overrides?: Record<string, { tag?: string; repoUrl?: string; subDir?: string }>;
+  sources?: string[];
 }
 
 /**
@@ -242,16 +242,10 @@ async function processPackage(
       return null;
     }
 
-    const override = config?.overrides?.[name];
-
     // 1. 获取仓库元数据 (优先从缓存读取)
     let repoUrl = "";
     let subDir = "";
-    if (override?.repoUrl) {
-        repoUrl = override.repoUrl;
-        subDir = override.subDir || "";
-        log.debug(`[${name}] 使用配置覆盖的元数据: ${repoUrl}`);
-    } else if (metadataCache[name] && (metadataCache[name].lastVersion === version || metadataCache[name].lastVersion.includes(version))) {
+    if (metadataCache[name] && (metadataCache[name].lastVersion === version || metadataCache[name].lastVersion.includes(version))) {
         repoUrl = metadataCache[name].repoUrl;
         subDir = metadataCache[name].subDir;
         log.debug(`[${name}] 使用缓存的元数据: ${repoUrl}`);
@@ -282,7 +276,7 @@ async function processPackage(
 
     // 2. 检查本地是否已下载
     const versionDirNameBase = version.replace(/^[\^~]/, "");
-    const possibleNames = override?.tag ? [override.tag] : [versionDirNameBase, `v${versionDirNameBase}`];
+    const possibleNames = [versionDirNameBase, `v${versionDirNameBase}`];
 
     let finalGlobalPath = "";
     for (const pName of possibleNames) {
@@ -295,14 +289,10 @@ async function processPackage(
     }
 
     if (!finalGlobalPath) {
-        log.info(`正在同步新源码: ${name}@${version}${override?.tag ? ` (Override Tag: ${override.tag})` : ""}`);
+        log.info(`正在同步新源码: ${name}@${version}`);
 
         let bestTag: string | null = null;
-        if (override?.tag) {
-            bestTag = override.tag;
-        } else {
-            bestTag = getBestTag(cloneUrl, versionDirNameBase);
-        }
+        bestTag = getBestTag(cloneUrl, versionDirNameBase);
 
         // 优先使用 bestTag 作为目录名，如果没有则用版本号
         const finalDirName = bestTag || versionDirNameBase;
@@ -489,7 +479,7 @@ export async function syncDependencies(): Promise<void> {
 
   const pkgPath = path.resolve(process.cwd(), "package.json");
   const tsConfigPath = path.resolve(process.cwd(), "tsconfig.ide.json");
-  const projectConfigPath = path.resolve(process.cwd(), ".dao", "config.yaml");
+  const projectConfigPath = path.resolve(process.cwd(), "dao.yaml");
 
   if (!fs.existsSync(pkgPath)) {
     log.error("未找到 package.json");
@@ -533,6 +523,121 @@ export async function syncDependencies(): Promise<void> {
     log.info(`[${i + 1}/${entries.length}] 正在处理 ${name}@${version}...`);
     const result = await processPackage(name, version as string, globalRefBase, projectRefBase, projectConfig, workspacePackages);
     if (result) syncResults[name] = result;
+  }
+
+  // 处理额外配置的 sources
+  if (projectConfig.sources && Array.isArray(projectConfig.sources) && projectConfig.sources.length > 0) {
+    log.info(`开始同步 ${projectConfig.sources.length} 个配置 sources...`);
+    for (let i = 0; i < projectConfig.sources.length; i++) {
+      const sourceSpec = projectConfig.sources[i];
+      if (!sourceSpec) continue;
+
+      // 解析格式: https://github.com/nodeca/js-yaml@4.1.1
+      // 或者 https://github.com/agentclientprotocol/agent-client-protocol/tree/v0.11.3
+      let urlPart = sourceSpec;
+      let version = "";
+
+      // 处理 @version 格式
+      const atIndex = sourceSpec.lastIndexOf("@");
+      if (atIndex !== -1 && atIndex > 8) { // @ 在 https:// 之后
+        urlPart = sourceSpec.slice(0, atIndex);
+        version = sourceSpec.slice(atIndex + 1);
+      } else {
+        // 处理 /tree/v0.11.3 格式
+        const treeMatch = sourceSpec.match(/\/tree\/([^\/]+)$/);
+        if (treeMatch) {
+          version = treeMatch[1];
+          urlPart = sourceSpec.replace(/\/tree\/[^\/]+$/, "");
+        }
+      }
+
+      // 从 URL 解析 repo 信息
+      const repoInfo = parseRepoUrl(urlPart);
+      if (!repoInfo) {
+        log.warn(`[source] 无法解析仓库地址: ${sourceSpec}`);
+        continue;
+      }
+
+      const name = `${repoInfo.owner}/${repoInfo.repo}`;
+      log.info(`[source ${i + 1}/${projectConfig.sources.length}] 正在处理 ${name}@${version}...`);
+
+      const cloneUrl = `https://${repoInfo.host}/${repoInfo.owner}/${repoInfo.repo}`;
+
+      // 检查本地缓存
+      let finalGlobalPath = "";
+      const possibleNames = version ? [version, `v${version}`] : ["main", "master"];
+
+      let found = false;
+      for (const pName of possibleNames) {
+        const p = path.join(globalRefBase, repoInfo.host, repoInfo.owner, repoInfo.repo, pName);
+        if (fs.existsSync(p)) {
+          finalGlobalPath = p;
+          log.debug(`[source ${name}] 命中本地版本缓存: ${p}`);
+          found = true;
+          break;
+        }
+      }
+
+      if (!found) {
+        log.info(`正在同步新源码: ${name}@${version || "latest"}`);
+        let bestTag: string | null = null;
+        if (version) {
+          bestTag = getBestTag(cloneUrl, version.replace(/^v/, ""));
+        }
+        const finalDirName = bestTag || version || "main";
+        finalGlobalPath = path.join(globalRefBase, repoInfo.host, repoInfo.owner, repoInfo.repo, finalDirName);
+
+        if (!fs.existsSync(finalGlobalPath)) {
+          const branchCmd = bestTag ? `--branch ${bestTag}` : version ? `--branch ${version}` : "";
+          const cloneCmd = `git clone --depth 1 ${branchCmd} ${cloneUrl} "${finalGlobalPath}"`;
+          log.info(`[source ${name}] 执行克隆: ${cloneCmd}`);
+          fs.mkdirSync(path.dirname(finalGlobalPath), { recursive: true });
+          try {
+            execSync(cloneCmd, { stdio: ["ignore", "pipe", "pipe"] });
+          } catch (err: any) {
+            const stderr = err.stderr?.toString().trim() || err.message;
+            log.error(`[source ${name}] Git clone 失败: ${stderr}`);
+            continue;
+          }
+        }
+      }
+
+      // 创建软连接
+      const versionDirName = path.basename(finalGlobalPath);
+      const projectRepoLink = path.join(projectRefBase, repoInfo.host, repoInfo.owner, repoInfo.repo, versionDirName);
+      const relativeRepoPath = `./.dao/ref/${repoInfo.host}/${repoInfo.owner}/${repoInfo.repo}/${versionDirName}`;
+
+      const linkParent = path.dirname(projectRepoLink);
+      if (!fs.existsSync(linkParent)) fs.mkdirSync(linkParent, { recursive: true });
+
+      const relativeTarget = path.relative(linkParent, finalGlobalPath);
+
+      let needsCreate = true;
+      try {
+        const stats = fs.lstatSync(projectRepoLink);
+        if (stats.isSymbolicLink()) {
+          const currentLink = fs.readlinkSync(projectRepoLink);
+          const normalizedCurrent = path.resolve(linkParent, currentLink);
+          const normalizedTarget = path.resolve(linkParent, relativeTarget);
+          if (normalizedCurrent === normalizedTarget) {
+            needsCreate = false;
+          }
+        }
+      } catch ( _e) { /* ignore */ }
+
+      if (needsCreate) {
+        try {
+          fs.unlinkSync(projectRepoLink);
+        } catch ( _e) { /* ignore */ }
+        fs.symlinkSync(relativeTarget, projectRepoLink, "dir");
+        log.debug(`[source ${name}] 软连接建立成功: -> ${relativeRepoPath}`);
+      }
+
+      syncResults[`source:${name}`] = {
+        relativePath: relativeRepoPath,
+        absolutePath: finalGlobalPath
+      };
+    }
   }
 
   saveMetadataCache();
