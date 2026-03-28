@@ -9,7 +9,7 @@ import chalk from "chalk";
  * Basic text label component.
  */
 export class Label extends PiText {
-  constructor(content: string) {
+  constructor({ content }: { content: string }) {
     super(content);
   }
 }
@@ -18,9 +18,12 @@ export class Label extends PiText {
  * Header component with blue background styling.
  */
 export class Header extends PiText {
-  constructor(private title: string) {
+  constructor({ title }: { title: string }) {
     super("");
+    this.title = title;
   }
+
+  private title: string;
 
   render(width: number): string[] {
     return [chalk.bgBlueBright.black.bold(` ${this.title} `.padEnd(width))];
@@ -31,9 +34,12 @@ export class Header extends PiText {
  * Horizontal rule divider with optional label.
  */
 export class Rule extends PiText {
-  constructor(private label = "") {
+  constructor({ label = "" }: { label?: string }) {
     super("");
+    this.label = label;
   }
+
+  private label: string;
 
   render(width: number): string[] {
     if (!this.label) {
@@ -52,12 +58,20 @@ export class Rule extends PiText {
  * Colored pill badge component.
  */
 export class Pill extends PiText {
-  constructor(
-    private value: string,
-    private color: "blue" | "cyan" | "green" | "yellow" | "red" | "magenta" = "cyan"
-  ) {
+  constructor({ 
+    value, 
+    color = "cyan" 
+  }: { 
+    value: string; 
+    color?: "blue" | "cyan" | "green" | "yellow" | "red" | "magenta";
+  }) {
     super("");
+    this.value = value;
+    this.color = color;
   }
+
+  private value: string;
+  private color: "blue" | "cyan" | "green" | "yellow" | "red" | "magenta";
 
   render(width: number): string[] {
     const styled = chalk[this.color].black.bold(` ${this.value} `);
@@ -69,13 +83,24 @@ export class Pill extends PiText {
  * Log line with colored prefix.
  */
 export class LogLine extends PiText {
-  constructor(
-    private prefix: string,
-    private content: string,
-    private accent: "cyan" | "green" | "yellow" | "red" | "magenta" = "cyan"
-  ) {
+  constructor({ 
+    prefix, 
+    content, 
+    accent = "cyan" 
+  }: { 
+    prefix: string; 
+    content: string; 
+    accent?: "cyan" | "green" | "yellow" | "red" | "magenta";
+  }) {
     super("");
+    this.prefix = prefix;
+    this.content = content;
+    this.accent = accent;
   }
+
+  private prefix: string;
+  private content: string;
+  private accent: "cyan" | "green" | "yellow" | "red" | "magenta";
 
   render(width: number): string[] {
     const rendered = `${chalk[this.accent].bold(this.prefix)} ${this.content}`;
