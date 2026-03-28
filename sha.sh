@@ -66,8 +66,93 @@ worktree() {
 
   # 列出所有 worktree 状态
   list() {
-    run git worktree list
-  }
+    # 获取主分支名称（main 或 master）
+    local main_branch="main"
+    if ! git show-ref --verify --quiet "refs/heads/main"; then
+      if git show-ref --verify --quiet "refs/heads/master"; then
+        main_branch="master"
+      fi
+    fi
+
+    # 表头，缩短路径显示
+    printf "${c_primary}%-40s %-15s %-25s %s${c_reset}\n" "Path" "Branch" "Status" "Changes"
+    echo
+
+    # 遍历所有 worktree
+    git worktree list | while read -r line; do
+      # 提取路径
+      local path=$(echo "$line" | awk '{print $1}')
+      
+      # 提取分支名称
+      local branch=$(echo "$line" | grep -oE '\[[^]]+\]' | tr -d '[]')
+
+      # 缩短路径显示
+      local short_path="$path"
+      if [[ "$path" == "$ROOT_DIR" ]]; then
+        short_path="."
+      else
+        # 相对于根目录显示
+        short_path="${path#$ROOT_DIR/}"
+      fi
+
+      # 检查是否有未提交变更
+      local change_str=""
+      local has_changes=false
+      if [[ -d "$path/.git" ]]; then
+        # 检查工作目录状态
+        local status_out=$(cd "$path" && git status --porcelain)
+        if [[ -n "$status_out" ]]; then
+          has_changes=true
+          # Use awk to count - avoids arithmetic issues in bash
+          local untracked=$(echo "$status_out" | awk '/^??/ {count++} END {print count+0}')
+          local modified=$(echo "$status_out" | awk '/^ M/ {count++} END {print count+0}')
+          if [[ $modified -gt 0 && $untracked -gt 0 ]]; then
+            change_str="${c_warning}${modified}m/${untracked}u${c_reset}"
+          elif [[ $modified -gt 0 ]]; then
+            change_str="${c_warning}${modified}m${c_reset}"
+          elif [[ $untracked -gt 0 ]]; then
+            change_str="${c_warning}${untracked}u${c_reset}"
+          fi
+        fi
+      fi
+
+      # 计算相对于主分支的状态
+      local plain_status=""
+      if [[ -n "$branch" && "$branch" != "$main_branch" ]]; then
+        local ahead=0
+        local behind=0
+        if git rev-parse --verify "$branch" >/dev/null 2>&1; then
+          # 使用 three-dot 语法分别计算领先和落后
+          behind=$(git rev-list --count "$branch..$main_branch")
+          ahead=$(git rev-list --count "$main_branch..$branch")
+        fi
+
+        if [[ $ahead -eq 0 && $behind -eq 0 ]]; then
+          plain_status="synced with $main_branch"
+        elif [[ $ahead -gt 0 && $behind -eq 0 ]]; then
+          if [[ $has_changes == true ]]; then
+            plain_status="$ahead ahead, has uncommitted"
+          else
+            plain_status="$ahead ahead, ready to merge"
+          fi
+        elif [[ $behind -gt 0 && $ahead -eq 0 ]]; then
+          plain_status="$behind behind $main_branch"
+        else
+          plain_status="$ahead ahead / $behind behind"
+        fi
+      else
+        # main 分支也要检查是否有未提交变化
+        if [[ $has_changes == true ]]; then
+          plain_status="$main_branch, has uncommitted changes"
+        else
+          plain_status="$main_branch, clean"
+        fi
+      fi
+
+      # 使用简单的方式：先打印固定宽度的文本，再打印变更
+      printf "%-40s %-15s %-25s %s\n" "$short_path" "$branch" "$plain_status" "$change_str"
+     done
+   }
 
   # 移除 worktree
   remove() {
@@ -88,10 +173,10 @@ worktree() {
     run git worktree remove "$worktree_path"
     run rm -rf "$worktree_path"
 
-    echo "${c_success}✓ Worktree 已清理：$name${c_reset}"
-  }
-
-  # 双向合并：将目标分支合并到当前所在分支
+     echo "${c_success}✓ Worktree 已清理：$name${c_reset}"
+   }
+   
+   # 双向合并：将目标分支合并到当前所在分支
   merge() {
     local target_name="${1:-}"
     local squash="$2"
@@ -122,14 +207,8 @@ worktree() {
       fi
     fi
 
-    # 如果目标是 worktree 分支，且我们正在合并到 main，并且不是 squash 合并，则自动清理
-    local should_cleanup=false
-    if [[ "$current_branch" == "main" && "$target_name" != "main" && "$squash" != "--squash" ]]; then
-      should_cleanup=true
-    fi
-
     # 1. 更新目标分支（获取最新代码）
-    echo "${c_primary}步骤 1/3: 更新目标分支 $target_name...${c_reset}"
+    echo "${c_primary}步骤 1/2: 更新目标分支 $target_name...${c_reset}"
     (
       if [[ -d "$target_path" ]]; then
         cd "$target_path"
@@ -149,9 +228,7 @@ worktree() {
         echo "${c_warning}  1. 手动编辑冲突文件解决冲突${c_reset}" >&2
         echo "${c_warning}  2. git add <resolved-files>${c_reset}" >&2
         echo "${c_warning}  3. git commit${c_reset}" >&2
-        if [[ $should_cleanup == true ]]; then
-          echo "${c_warning}  4. ./sha.sh worktree remove $target_name${c_reset}" >&2
-        fi
+        echo "${c_warning}  4. ./sha.sh worktree clean $target_name${c_reset}" >&2
         return 1
       }
       # squash merge 自动暂存了所有变更，需要提示用户提交
@@ -163,9 +240,7 @@ worktree() {
         echo "${c_warning}  1. 手动编辑冲突文件解决冲突${c_reset}" >&2
         echo "${c_warning}  2. git add <resolved-files>${c_reset}" >&2
         echo "${c_warning}  3. git commit${c_reset}" >&2
-        if [[ $should_cleanup == true ]]; then
-          echo "${c_warning}  4. ./sha.sh worktree remove $target_name${c_reset}" >&2
-        fi
+        echo "${c_warning}  4. ./sha.sh worktree clean $target_name${c_reset}" >&2
         return 1
       }
 
@@ -200,13 +275,14 @@ ${c_primary}Worktree 开发流程管理${c_reset}
                           双向合并: <target> → 当前所在分支
                           target 可以是 main 或任意 worktree 分支名称
                           --squash: 压缩为单一提交 (类似 GitHub Squash and merge)
-                          自动清理: worktree → main (非squash) 合并成功自动清理
+                          合并完成后需手动清理: ./sha.sh worktree clean <name>
    ${c_secondary}to_main <name> [--squash]${c_reset}
                           (兼容) 合并 worktree 到 main 并清理
    ${c_secondary}from_main [name]${c_reset}
                           (兼容) 合并 main 最新修改到 worktree 开发分支
                           在 .worktree/xxx 下可省略参数自动检测
-   ${c_secondary}remove <name>${c_reset}      清理已合并的 worktree (不合并)
+   ${c_secondary}remove <name>${c_reset}     删除并清理指定 worktree 分支
+   ${c_secondary}clean <name>${c_reset}      清理已合并的 worktree (remove 的别名)
    ${c_secondary}help${c_reset}               显示此帮助信息
 
   示例:
