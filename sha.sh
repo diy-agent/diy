@@ -90,13 +90,13 @@ worktree() {
 
     echo "${c_success}✓ Worktree 已清理：$name${c_reset}"
   }
-
+  
   # 合并 worktree 到 main 分支
-  merge() {
+  to_main() {
     local name="${1:-}"
     local squash="$2"
     if [[ -z "$name" ]]; then
-      echo "${c_error}用法：./sha.sh worktree merge <branch-name> [--squash]${c_reset}" >&2
+      echo "${c_error}用法：./sha.sh worktree to_main <branch-name> [--squash]${c_reset}" >&2
       echo "${c_info}  --squash: 压缩为单一提交合并（类似 GitHub Squash and merge）${c_reset}" >&2
       return 1
     fi
@@ -163,20 +163,25 @@ ${c_primary}Worktree 开发流程管理${c_reset}
 
 用法：./sha.sh worktree <command> [args]
 
-命令:
-  ${c_secondary}add <name>${c_reset}     创建新的 worktree 分支到 $worktree_dir/<name>
-  ${c_secondary}list${c_reset}           查看所有 worktree 状态
-  ${c_secondary}merge <name> [--squash]${c_reset}
-                         合并 worktree 到 main 并清理
-                         --squash: 压缩为单一提交 (类似 GitHub Squash and merge)
-  ${c_secondary}remove <name>${c_reset}  清理已合并的 worktree (不合并)
-  ${c_secondary}help${c_reset}           显示此帮助信息
+ 命令:
+   ${c_secondary}add <name>${c_reset}     创建新的 worktree 分支到 $worktree_dir/<name>
+   ${c_secondary}list${c_reset}           查看所有 worktree 状态
+   ${c_secondary}to_main <name> [--squash]${c_reset}
+                          合并 worktree 到 main 并清理
+                          --squash: 压缩为单一提交 (类似 GitHub Squash and merge)
+   ${c_secondary}from_main [name]${c_reset}
+                          合并 main 最新修改到 worktree 开发分支
+                          如在 .worktree/xxx 目录下可省略参数自动检测
+   ${c_secondary}remove <name>${c_reset}  清理已合并的 worktree (不合并)
+   ${c_secondary}help${c_reset}           显示此帮助信息
 
-示例:
-  ./sha.sh worktree add dao-feature-auth     # 创建新特性分支
-  cd .worktree/dao-feature-auth             # 进入开发
-  # ... 开发、测试、提交 ...
-  ./sha.sh worktree merge dao-feature-auth   # 合并回 main
+ 示例:
+   ./sha.sh worktree add dao-feature-auth     # 创建新特性分支
+   cd .worktree/dao-feature-auth             # 进入开发
+   # ... 主线有更新，同步主线改动 ...
+   ./sha.sh worktree from_main               # 合并 main 最新修改到当前开发分支
+   # ... 开发、测试、提交 ...
+   ./sha.sh worktree to_main dao-feature-auth  # 合并回 main
 
 流程说明:
   1. 主分支 (main) 保持稳定，不直接修改
