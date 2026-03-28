@@ -12,3 +12,6 @@ export * from './gemini-agent.js';
 
 // PI Coding Agent
 export * from './pi-agent.js';
+
+// ACP Client Adapter
+export * from './acp-adapter.js';

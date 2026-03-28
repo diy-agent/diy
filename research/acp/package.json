@@ -8,5 +8,10 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.16.1"
   }
+
 }

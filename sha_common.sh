@@ -120,6 +120,7 @@ run() {
 # run pwd
 # shellcheck source=../vendor/sha.bash
 if [ ! -d "$ROOT_DIR/vendor/sha" ] || [ -z "$(ls -A "$ROOT_DIR/vendor/sha" 2>/dev/null)" ]; then
+  echo "${c_info} vendor/sha等子模块初始化不存在, 开始初始化... ${c_reset}"
   run git submodule update --init --recursive
 fi
 source "$ROOT_DIR/vendor/sha/sha.bash"

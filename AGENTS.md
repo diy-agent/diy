@@ -1,12 +1,12 @@
 # Dao Agent Instructions
 
 This file is the repository-wide instruction context for coding agents.
-`npm run sync` may link `GEMINI.md` and `QWEN.md` to this file, so keep it
+`npm run sync` may link `GEMINI.md`,`CLAUDE.md` and `QWEN.md` to this file, so keep it
 generic, execution-focused, and short.
 
 ## What This Repo Is
 
-Dao is a Node.js + TypeScript monorepo for orchestrating coding agents through a
+Dao is a Nodsse.js + TypeScript monorepo for orchestrating coding agents through a
 shared CLI workflow.
 
 Primary workspaces:
