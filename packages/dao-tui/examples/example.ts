@@ -1,5 +1,4 @@
-import { App, Header, Horizontal, Vertical, Panel, Input, ChatBubble, SlashCommandSuggestion, type ChatMessage, type Component } from "../src/index.js";
-import { Text as PiText } from "@mariozechner/pi-tui";
+import { App, Text, Header, Horizontal, Vertical, Panel, Input, ChatBubble, SlashCommandSuggestion, type ChatMessage, type Component } from "../src/index.js";
 import chalk from "chalk";
 
 type PiComponent = Component;
@@ -63,11 +62,11 @@ class ClaudeCodeTUI extends App {
               yield new ChatBubble(msg);
             }
             if (this.isThinking) {
-              yield new PiText(chalk.cyan.dim(`  Thinking${".".repeat(this.thinkingDots)}`));
+              yield new Text(chalk.cyan.dim(`  Thinking${".".repeat(this.thinkingDots)}`));
             } else {
-              yield new PiText("");
+              yield new Text("");
             }
-            yield new PiText("");
+            yield new Text("");
           }.bind(this), 0);
         }.bind(this),
         function*(this: ClaudeCodeTUI) {
@@ -77,7 +76,7 @@ class ClaudeCodeTUI extends App {
             if (suggestions) {
               yield suggestions;
             }
-            yield new PiText(chalk.gray.dim(this.isVSCode
+            yield new Text(chalk.gray.dim(this.isVSCode
               ? "  VSCode Terminal • Enter to send • Ctrl+C to exit"
               : "  ↑/↓ or Tab to select • Enter to send • Ctrl+C to exit"
             ));
@@ -94,12 +93,12 @@ class ClaudeCodeTUI extends App {
   private renderSuggestions(): PiComponent {
     if (!this.showSuggestions || this.isVSCode) {
       // In VSCode, disable real-time suggestions since arrow keys don't work well with IME
-      return new PiText("");
+      return new Text("");
     }
 
     const filtered = this.getFilteredCommands();
     if (filtered.length === 0) {
-      return new PiText("");
+      return new Text("");
     }
 
     return new Panel(

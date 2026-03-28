@@ -8,7 +8,7 @@ import chalk from "chalk";
 /**
  * Basic text label component.
  */
-export class Label extends PiText {
+export class Text extends PiText {
   constructor(content: string) {
     super(content);
   }

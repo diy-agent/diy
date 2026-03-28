@@ -34,7 +34,7 @@ Properties:
 
 ### Basic Components
 - `Header(title)` - blue bold header bar spanning full width
-- `Label(content)` - simple text
+- `Text(content)` - simple text
 - `Rule(label?)` - horizontal divider line, can have centered label
 - `Pill(value, color)` - colored pill tag (colors: blue/cyan/green/yellow/red/magenta)
 - `Panel(title, body, footer?)` - panel with header, content, optional footer
@@ -79,7 +79,7 @@ override *compose(): Iterable<PiComponent> {
   yield new Header("My App");
   yield new Horizontal(() => [
     new Panel("Left", () => [
-      new Label("Hello world"),
+      new Text("Hello world"),
     ]),
     new Panel("Right", () => [
       new Input(this.value, "Type..."),
