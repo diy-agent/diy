@@ -156,6 +156,56 @@ worktree() {
     fi
   }
 
+  # 合并 main 分支到 worktree 开发分支
+  from_main() {
+    local name="${1:-}"
+    if [[ -z "$name" ]]; then
+      # 如果在 worktree 内，可以自动推断分支名称
+      local current_dir=$(pwd)
+      if [[ "$current_dir" == *"$worktree_dir"* ]]; then
+        name=$(basename "$current_dir")
+        echo "${c_info}自动检测到当前分支：$name${c_reset}"
+      else
+        echo "${c_error}用法：./sha.sh worktree from_main <branch-name>${c_reset}" >&2
+        echo "${c_info}如果已经在 .worktree/xxx 目录下，可以省略参数自动检测${c_reset}" >&2
+        return 1
+      fi
+    fi
+
+    local worktree_path="$worktree_dir/$name"
+
+    if [[ ! -d "$worktree_path" ]]; then
+      echo "${c_error}Worktree 不存在：$worktree_path${c_reset}" >&2
+      return 1
+    fi
+
+    # 1. 更新主仓库 main 分支
+    echo "${c_primary}步骤 1/3: 更新主 main 分支...${c_reset}"
+    run git checkout main
+    run git pull origin main
+
+    # 2. 切换到 worktree 分支
+    echo "${c_primary}步骤 2/3: 切换到开发分支 $name...${c_reset}"
+    (
+      cd "$worktree_path"
+      run git checkout "$name"
+
+      # 3. 合并 main 到当前开发分支
+      echo "${c_primary}步骤 3/3: 合并 main 到 $name...${c_reset}"
+      run git merge main -m "merge: main into $name" || {
+        echo "${c_error}合并冲突，请手动解决：${c_reset}" >&2
+        echo "${c_warning}  1. 手动编辑冲突文件解决冲突${c_reset}" >&2
+        echo "${c_warning}  2. git add <resolved-files>${c_reset}" >&2
+        echo "${c_warning}  3. git commit${c_reset}" >&2
+        return 1
+      }
+
+      echo "${c_success}✓ 合并完成：main → $name${c_reset}"
+      echo "${c_info}现在可以继续在 $worktree_path 开发${c_reset}"
+    ) || return 1
+  }
+
+
   # 显示帮助
   help() {
     cat << EOF
