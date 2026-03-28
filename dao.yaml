@@ -2,3 +2,4 @@ sources:
   - https://github.com/nodeca/js-yaml@4.1.1
   - https://github.com/agentclientprotocol/agent-client-protocol/tree/v0.11.3
   - https://github.com/vitest-dev/docs-cn/tree/v3
+  - https://github.com/anomalyco/opencode/tree/dev
