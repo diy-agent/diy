@@ -18,8 +18,11 @@ export type ChatMessage = {
  * Chat bubble component for displaying chat messages.
  */
 export class ChatBubble extends PiText {
-  constructor(private message: ChatMessage) {
+  private message: ChatMessage;
+
+  constructor(props: { message: ChatMessage }) {
     super("");
+    this.message = props.message;
   }
 
   render(width: number): string[] {
@@ -57,12 +60,19 @@ export class ChatBubble extends PiText {
  * Text input component with prompt and cursor.
  */
 export class Input extends PiText {
-  constructor(
-    private value: string,
-    private placeholder: string = "Type a message...",
-    private cursorVisible: boolean = true
-  ) {
+  private value: string;
+  private placeholder: string;
+  private cursorVisible: boolean;
+
+  constructor(props: {
+    value: string;
+    placeholder?: string;
+    cursorVisible?: boolean;
+  }) {
     super("");
+    this.value = props.value;
+    this.placeholder = props.placeholder ?? "Type a message...";
+    this.cursorVisible = props.cursorVisible ?? true;
   }
 
   render(width: number): string[] {
@@ -89,12 +99,19 @@ export class Input extends PiText {
  * Slash command suggestion item with selection state.
  */
 export class SlashCommandSuggestion extends PiText {
-  constructor(
-    private command: string,
-    private description: string,
-    private selected: boolean
-  ) {
+  private command: string;
+  private description: string;
+  private selected: boolean;
+
+  constructor(props: {
+    command: string;
+    description: string;
+    selected: boolean;
+  }) {
     super("");
+    this.command = props.command;
+    this.description = props.description;
+    this.selected = props.selected;
   }
 
   render(width: number): string[] {

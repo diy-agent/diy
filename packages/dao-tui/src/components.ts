@@ -9,8 +9,8 @@ import chalk from "chalk";
  * Basic text label component.
  */
 export class Text extends PiText {
-  constructor(content: string) {
-    super(content);
+  constructor(props: { content: string }) {
+    super(props.content);
   }
 }
 
@@ -18,8 +18,11 @@ export class Text extends PiText {
  * Header component with blue background styling.
  */
 export class Header extends PiText {
-  constructor(private title: string) {
+  private title: string;
+
+  constructor(props: { title: string }) {
     super("");
+    this.title = props.title;
   }
 
   render(width: number): string[] {
@@ -31,8 +34,11 @@ export class Header extends PiText {
  * Horizontal rule divider with optional label.
  */
 export class Rule extends PiText {
-  constructor(private label = "") {
+  private label: string;
+
+  constructor(props: { label?: string } = {}) {
     super("");
+    this.label = props.label ?? "";
   }
 
   render(width: number): string[] {
@@ -52,11 +58,16 @@ export class Rule extends PiText {
  * Colored pill badge component.
  */
 export class Pill extends PiText {
-  constructor(
-    private value: string,
-    private color: "blue" | "cyan" | "green" | "yellow" | "red" | "magenta" = "cyan"
-  ) {
+  private value: string;
+  private color: "blue" | "cyan" | "green" | "yellow" | "red" | "magenta";
+
+  constructor(props: {
+    value: string;
+    color?: "blue" | "cyan" | "green" | "yellow" | "red" | "magenta";
+  }) {
     super("");
+    this.value = props.value;
+    this.color = props.color ?? "cyan";
   }
 
   render(width: number): string[] {
@@ -69,12 +80,19 @@ export class Pill extends PiText {
  * Log line with colored prefix.
  */
 export class LogLine extends PiText {
-  constructor(
-    private prefix: string,
-    private content: string,
-    private accent: "cyan" | "green" | "yellow" | "red" | "magenta" = "cyan"
-  ) {
+  private prefix: string;
+  private content: string;
+  private accent: "cyan" | "green" | "yellow" | "red" | "magenta";
+
+  constructor(props: {
+    prefix: string;
+    content: string;
+    accent?: "cyan" | "green" | "yellow" | "red" | "magenta";
+  }) {
     super("");
+    this.prefix = props.prefix;
+    this.content = props.content;
+    this.accent = props.accent ?? "cyan";
   }
 
   render(width: number): string[] {

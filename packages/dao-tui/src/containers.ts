@@ -11,8 +11,11 @@ import type { ComponentGenerator } from "./types.js";
  * Uses a generator function to yield child components horizontally.
  */
 export class Horizontal extends PiContainer {
-  constructor(private generator: ComponentGenerator, private gap = 0) {
+  private gap: number;
+
+  constructor(props: { gap?: number } = {}, generator: ComponentGenerator) {
     super();
+    this.gap = props.gap ?? 0;
     for (const child of generator()) {
       this.addChild(child);
     }
@@ -45,8 +48,11 @@ export class Horizontal extends PiContainer {
  * Uses a generator function to yield child components vertically.
  */
 export class Vertical extends PiContainer {
-  constructor(private generator: ComponentGenerator, private gap = 0) {
+  private gap: number;
+
+  constructor(props: { gap?: number } = {}, generator: ComponentGenerator) {
     super();
+    this.gap = props.gap ?? 0;
     for (const child of generator()) {
       this.addChild(child);
     }
@@ -69,16 +75,22 @@ export class Vertical extends PiContainer {
  * Uses generator functions for body and footer.
  */
 export class Panel extends PiContainer {
-  constructor(title: string, body: ComponentGenerator, footer?: ComponentGenerator) {
+  constructor(
+    props: {
+      title: string;
+      footer?: ComponentGenerator;
+    },
+    body: ComponentGenerator
+  ) {
     super();
-    this.addChild(new Header(title));
-    this.addChild(new Rule());
+    this.addChild(new Header({ title: props.title }));
+    this.addChild(new Rule({}));
     for (const child of body()) {
       this.addChild(child);
     }
-    if (footer) {
-      this.addChild(new Rule());
-      for (const child of footer()) {
+    if (props.footer) {
+      this.addChild(new Rule({}));
+      for (const child of props.footer()) {
         this.addChild(child);
       }
     }

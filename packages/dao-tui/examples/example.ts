@@ -51,61 +51,73 @@ class ClaudeCodeTUI extends App {
   }
 
   override *compose(): Iterable<PiComponent> {
-    yield new Header("  Claude Code  ");
+    yield new Header({ title: "  Claude Code  " });
 
-    yield new Horizontal(function*(this: ClaudeCodeTUI) {
+    yield new Horizontal({}, function*(this: ClaudeCodeTUI) {
       yield new Panel(
-        "Chat",
+        {
+          title: "Chat",
+          footer: function*(this: ClaudeCodeTUI) {
+            yield new Vertical({}, function*(this: ClaudeCodeTUI) {
+              yield this.renderInput();
+              const suggestions = this.renderSuggestions();
+              if (suggestions) {
+                yield suggestions;
+              }
+              yield new Text({
+                content: chalk.gray.dim(this.isVSCode
+                  ? "  VSCode Terminal • Enter to send • Ctrl+C to exit"
+                  : "  ↑/↓ or Tab to select • Enter to send • Ctrl+C to exit"
+                )
+              });
+            }.bind(this));
+          }.bind(this)
+        },
         function*(this: ClaudeCodeTUI) {
-          yield new Vertical(function*(this: ClaudeCodeTUI) {
+          yield new Vertical({}, function*(this: ClaudeCodeTUI) {
             for (const msg of this.messages) {
-              yield new ChatBubble(msg);
+              yield new ChatBubble({ message: msg });
             }
             if (this.isThinking) {
-              yield new Text(chalk.cyan.dim(`  Thinking${".".repeat(this.thinkingDots)}`));
+              yield new Text({ content: chalk.cyan.dim(`  Thinking${".".repeat(this.thinkingDots)}`) });
             } else {
-              yield new Text("");
+              yield new Text({ content: "" });
             }
-            yield new Text("");
-          }.bind(this), 0);
-        }.bind(this),
-        function*(this: ClaudeCodeTUI) {
-          yield new Vertical(function*(this: ClaudeCodeTUI) {
-            yield this.renderInput();
-            const suggestions = this.renderSuggestions();
-            if (suggestions) {
-              yield suggestions;
-            }
-            yield new Text(chalk.gray.dim(this.isVSCode
-              ? "  VSCode Terminal • Enter to send • Ctrl+C to exit"
-              : "  ↑/↓ or Tab to select • Enter to send • Ctrl+C to exit"
-            ));
-          }.bind(this), 0);
+            yield new Text({ content: "" });
+          }.bind(this));
         }.bind(this)
       );
-    }.bind(this), 0);
+    }.bind(this));
   }
 
   private renderInput(): PiComponent {
-    return new Input(this.inputValue, "Type your message...", this.cursorBlink);
+    return new Input({
+      value: this.inputValue,
+      placeholder: "Type your message...",
+      cursorVisible: this.cursorBlink
+    });
   }
 
   private renderSuggestions(): PiComponent {
     if (!this.showSuggestions || this.isVSCode) {
       // In VSCode, disable real-time suggestions since arrow keys don't work well with IME
-      return new Text("");
+      return new Text({ content: "" });
     }
 
     const filtered = this.getFilteredCommands();
     if (filtered.length === 0) {
-      return new Text("");
+      return new Text({ content: "" });
     }
 
     return new Panel(
-      "Suggestions",
+      { title: "Suggestions" },
       function*(this: ClaudeCodeTUI) {
         for (const [idx, cmd] of filtered.entries()) {
-          yield new SlashCommandSuggestion(cmd.command, cmd.description, idx === this.selectedSuggestion);
+          yield new SlashCommandSuggestion({
+            command: cmd.command,
+            description: cmd.description,
+            selected: idx === this.selectedSuggestion
+          });
         }
       }.bind(this),
     );
