@@ -6,7 +6,7 @@
 
 ## Core Architecture
 
-### Base Class: `App` (src/index.ts)
+### Base Class: `App` (src/app.ts)
 
 The abstract `App` class extends `PiContainer` and provides:
 
@@ -25,6 +25,26 @@ Properties:
 - `protected tui: PiTUI` - underlying pi-tui instance
 - `protected terminal: PiProcessTerminal` - terminal instance
 - `protected isVSCodeTerminal: boolean` - detected if running in VSCode
+
+## Functional App: `createApp` (added 2026-03-27)
+
+New API that allows **closure-based state** without class inheritance:
+
+```typescript
+import { createApp, Panel, Input } from "@whonb/dao-tui';
+
+const app = createApp(function*() {
+  let inputValue = ""; // state in closure, NO `this` needed!
+  yield new Panel("Chat", function*() {
+    yield new Input(inputValue, "Type...");
+    // No .bind(this) needed - closure captures automatically!
+  });
+});
+app.run();
+```
+
+- `FunctionalApp` - concrete App class that accepts a generator from closure.
+- `createApp(generator)` - factory function to create functional app.
 
 ## Components Provided
 
@@ -75,20 +95,29 @@ The framework automatically handles the VSCode terminal IME issue:
 Instead of manually constructing component trees, you yield components from a generator:
 
 ```ts
-override *compose(): Iterable<PiComponent> {
-  yield new Header("My App");
-  yield new Horizontal(() => [
-    new Panel("Left", () => [
-      new Label("Hello world"),
-    ]),
-    new Panel("Right", () => [
-      new Input(this.value, "Type..."),
-    ]),
-  ], 1);
+// Class-based style (compatible):
+class MyApp extends App {
+  override *compose(): Iterable<PiComponent> {
+    yield new Header("My App");
+    yield new Horizontal(() => [
+      new Panel("Left", function*() {
+        yield new Label("Hello world");
+      }),
+    ], 1);
+  }
 }
+
+// Functional style (new):
+const app = createApp(function*() {
+  let inputValue = "";
+  yield new Header("My App");
+  yield new Panel("Chat", function*() {
+    yield new Input(inputValue, "Type...");
+  });
+});
 ```
 
-When state changes, just call `this.refresh()` - it calls `compose()` again and rebuilds everything automatically. This is perfect for:
+When state changes, just call `app.refresh()` - it calls the generator again and rebuilds everything automatically. This is perfect for:
 - Mock agents
 - Demos
 - Simple interactive applications
@@ -124,6 +153,7 @@ In VSCode terminal (raw mode disabled):
 
 ## Usage
 
+### Class-based style (existing, backward compatible):
 ```ts
 import { App, Header, Panel, Input, Vertical } from "@whonb/dao-tui";
 
@@ -147,6 +177,32 @@ const app = new MyApp();
 app.run();
 ```
 
+### Functional style (new, recommended):
+```ts
+import { createApp, Header, Panel, Input, Vertical } from "@whonb/dao-tui";
+
+const app = createApp(function*() {
+  let inputValue = ""; // state in closure
+  let messages: ChatMessage[] = [];
+
+  yield new Header("My App");
+  yield new Panel("Chat", function*() {
+    for (const msg of messages) {
+      yield new ChatBubble(msg);
+    }
+    yield new Input(inputValue, "Type here...", cursorVisible);
+    // NO .bind(this) needed at all!
+  });
+
+  // You still access variables directly from closure in callbacks
+  app.tui.addInputListener(data => {
+    inputValue += data;
+    app.refresh(); // full rebuild after change
+  });
+});
+app.run();
+```
+
 ## Project Notes
 
 ### Imports
@@ -167,3 +223,81 @@ When adding new components:
 - Follow the existing pattern: extend `PiText` or `PiContainer`
 - Override the `render(width: number): string[]` method for custom rendering
 - Use the existing `truncateToWidth` and `visibleWidth` utilities from pi-tui
+
+---
+
+## Ongoing Refactor: Functional Component Support
+
+### Goal
+
+Refactor to support **factory function components** in addition to class-based components, eliminating the need for `.bind(this)`.
+
+### Background
+
+Current issue: In class-based `App`, when passing generator functions to containers (`Horizontal`, `Vertical`, `Panel`), you need to bind `this` to access instance state:
+
+```ts
+yield new Panel(
+  "Chat",
+  function*(this: MyApp) {
+    yield new Input(this.inputValue, "...");
+  }.bind(this)  // <-- this boilerplate is required, easy to forget
+);
+```
+
+### Design Decision
+
+After discussion, we're implementing **basic closure version**:
+
+- ✅ Add `createApp()` factory function
+- ✅ Allow functional style with closure state (no `this` needed)
+- ✅ Keep full backward compatibility for existing code
+- ✅ Full refresh on `app.refresh()` (same as before, no fine-grained reactivity for now)
+- ✅ Only root app level is functional, containers keep existing API
+
+Rejected for now: full signal-based reactivity with auto dependency collection (would require more extensive changes).
+
+### New API
+
+```ts
+// Functional style - no this, no bind needed!
+const app = createApp(function*() {
+  let inputValue = ""; // state lives in closure
+
+  yield new Panel("Chat", function*() {
+    yield new Input(inputValue, "Type...");
+    // No bind needed - closure automatically captures inputValue
+  });
+});
+app.run();
+```
+
+### Current Status (2026-03-27)
+
+| Task | Status |
+|------|--------|
+| Add `FunctionalApp` class to `src/app.ts` | ✅ Done |
+| Add `createApp()` factory function | ✅ Done |
+| Export `createApp` and `FunctionalApp` from `index.ts` | ✅ Done |
+| Refactor `examples/example.ts` to functional style (remove 6 `.bind(this)` | ✅ Done |
+| Verify containers work correctly with new API | ✅ Done |
+| Test that everything still compiles/runs | ✅ Done |
+
+### TODO
+
+- [x] Add `FunctionalApp` and `createApp` core implementation
+- [x] Export from `index.ts`
+- [x] Refactor `examples/example.ts` from class-based to functional style
+- [x] Remove all 6 occurrences of `.bind(this)`
+- [x] Test compile and run
+- [ ] Document API in README if needed
+
+### Future Roadmap (Possible Future Enhancements
+
+If functional style is adopted, could consider:
+
+1. Full signal-based reactivity with automatic dependency tracking
+2. Allow inline function components `yield () => Component` for granular refresh
+3. Auto-invalidation of subtrees instead of full refresh
+
+These would require more extensive changes and are not planned for now.

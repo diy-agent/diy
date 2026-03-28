@@ -18,9 +18,12 @@ export type ChatMessage = {
  * Chat bubble component for displaying chat messages.
  */
 export class ChatBubble extends PiText {
-  constructor(private message: ChatMessage) {
+  constructor({ message }: { message: ChatMessage }) {
     super("");
+    this.message = message;
   }
+
+  private message: ChatMessage;
 
   render(width: number): string[] {
     const roleTag = this.message.role === 'user'
@@ -57,13 +60,24 @@ export class ChatBubble extends PiText {
  * Text input component with prompt and cursor.
  */
 export class Input extends PiText {
-  constructor(
-    private value: string,
-    private placeholder: string = "Type a message...",
-    private cursorVisible: boolean = true
-  ) {
+  constructor({
+    value,
+    placeholder = "Type a message...",
+    cursorVisible = true
+  }: {
+    value: string;
+    placeholder?: string;
+    cursorVisible?: boolean;
+  }) {
     super("");
+    this.value = value;
+    this.placeholder = placeholder;
+    this.cursorVisible = cursorVisible;
   }
+
+  private value: string;
+  private placeholder: string;
+  private cursorVisible: boolean;
 
   render(width: number): string[] {
     const prompt = chalk.blue.bold("> ");
@@ -89,13 +103,24 @@ export class Input extends PiText {
  * Slash command suggestion item with selection state.
  */
 export class SlashCommandSuggestion extends PiText {
-  constructor(
-    private command: string,
-    private description: string,
-    private selected: boolean
-  ) {
+  constructor({
+    command,
+    description,
+    selected
+  }: {
+    command: string;
+    description: string;
+    selected: boolean;
+  }) {
     super("");
+    this.command = command;
+    this.description = description;
+    this.selected = selected;
   }
+
+  private command: string;
+  private description: string;
+  private selected: boolean;
 
   render(width: number): string[] {
     const prefix = this.selected ? chalk.cyan('▶ ') : '  ';
