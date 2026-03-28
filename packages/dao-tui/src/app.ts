@@ -11,7 +11,7 @@ import type { ComponentGenerator } from "./types.js";
  * Subclasses implement the `compose` generator method to define the UI structure.
  */
 export abstract class App extends PiContainer {
-  protected tui: PiTUI;
+  public readonly tui: PiTUI;
   protected terminal: PiProcessTerminal;
   public readonly isVSCodeTerminal: boolean;
 
@@ -75,4 +75,39 @@ export abstract class App extends PiContainer {
     this.terminal.stop();
     process.exit(0);
   }
+}
+
+/**
+ * Concrete App implementation that uses a generator function from closure.
+ * Allows functional style with closure-based state instead of class inheritance.
+ */
+export class FunctionalApp extends App {
+  private readonly composeFn: () => Iterable<Component>;
+
+  constructor(composeFn: () => Iterable<Component>) {
+    super();
+    this.composeFn = composeFn;
+  }
+
+  override compose(): Iterable<Component> {
+    return this.composeFn();
+  }
+}
+
+/**
+ * Factory function to create a functional app with closure-based state.
+ * 
+ * Example:
+ * ```ts
+ * const app = createApp(function*() {
+ *   let inputValue = ""; // state in closure, no `this` needed!
+ *   yield new Panel("Chat", function*() {
+ *     yield new Input(inputValue, "Type...");
+ *   });
+ * });
+ * app.run();
+ * ```
+ */
+export function createApp(composeFn: () => Iterable<Component>): FunctionalApp {
+  return new FunctionalApp(composeFn);
 }

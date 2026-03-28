@@ -1,6 +1,6 @@
 // Re-exports for the public API
 export type { ComponentGenerator, Component } from "./types.js";
-export { App } from "./app.js";
+export { App, FunctionalApp, createApp } from "./app.js";
 export { Horizontal, Vertical, Panel } from "./containers.js";
 export { Label, Header, Rule, Pill, LogLine } from "./components.js";
 export type { ChatMessage } from "./chat.js";
