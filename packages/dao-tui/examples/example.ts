@@ -84,14 +84,11 @@ function renderSuggestions(): PiComponent {
     return new PiText("");
   }
 
-  return new Panel(
-    { title: "Suggestions" },
-    function*() {
-      for (const [idx, cmd] of filtered.entries()) {
-        yield new SlashCommandSuggestion({ command: cmd.command, description: cmd.description, selected: idx === selectedSuggestion });
-      }
+  return new Panel({ title: "Suggestions" }, function* () {
+    for (const [idx, cmd] of filtered.entries()) {
+      yield new SlashCommandSuggestion({ command: cmd.command, description: cmd.description, selected: idx === selectedSuggestion });
     }
-  );
+  });
 }
 
 // Handle message submission
@@ -147,46 +144,33 @@ function handleSubmit(): void {
 function* createAppComposition() {
   yield new Header({ title: "  Claude Code  " });
 
-  yield new Horizontal(
-    { gap: 0 },
-    function*() {
-      yield new Panel(
-        { title: "Chat" },
-        function*() {
-          yield new Vertical(
-            { gap: 0 },
-            function*() {
-              for (const msg of messages) {
-                yield new ChatBubble({ message: msg });
-              }
-              if (isThinking) {
-                yield new PiText(chalk.cyan.dim(`  Thinking${".".repeat(thinkingDots)}`));
-              } else {
-                yield new PiText("");
-              }
-              yield new PiText("");
-            }
-          );
-        },
-        function*() {
-          yield new Vertical(
-            { gap: 0 },
-            function*() {
-              yield renderInput();
-              const suggestions = renderSuggestions();
-              if (suggestions) {
-                yield suggestions;
-              }
-              yield new PiText(chalk.gray.dim(isVSCode
-                ? "  VSCode Terminal • Enter to send • Ctrl+C to exit"
-                : "  ↑/↓ or Tab to select • Enter to send • Ctrl+C to exit"
-              ));
-            }
-          );
+  yield new Horizontal({ gap: 0 }, function* () {
+    yield new Panel({ title: "Chat" }, function* () {
+      yield new Vertical({ gap: 0 }, function* () {
+        for (const msg of messages) {
+          yield new ChatBubble({ message: msg });
         }
-      );
-    }
-  );
+        if (isThinking) {
+          yield new PiText(chalk.cyan.dim(`  Thinking${".".repeat(thinkingDots)}`));
+        } else {
+          yield new PiText("");
+        }
+        yield new PiText("");
+      });
+    }, function* () {
+      yield new Vertical({ gap: 0 }, function* () {
+        yield renderInput();
+        const suggestions = renderSuggestions();
+        if (suggestions) {
+          yield suggestions;
+        }
+        yield new PiText(chalk.gray.dim(isVSCode
+          ? "  VSCode Terminal • Enter to send • Ctrl+C to exit"
+          : "  ↑/↓ or Tab to select • Enter to send • Ctrl+C to exit"
+        ));
+      });
+    });
+  });
 }
 
 const app = createApp(createAppComposition);
