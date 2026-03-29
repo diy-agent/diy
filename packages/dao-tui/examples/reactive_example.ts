@@ -1,5 +1,5 @@
 import { reactive } from "@vue/reactivity";
-import { App, Panel, Text, Vertical, Header, Input, createApp } from "../src/index.js";
+import { App, Panel, Text, Vertical, Header, Input, Rule, createApp } from "../src/index.js";
 import chalk from "chalk";
 
 /**
@@ -43,14 +43,14 @@ function runReactiveDemo() {
       });
     });
 
-    yield new Panel({ title: "Interactive Input", footer: function*() {
-        yield new Text({ content: chalk.gray("  Type something and press Enter to add to list • 'q' to quit") });
-    }}, function*() {
+    yield new Panel({ title: "Interactive Input" }, function*() {
       yield new Input({ 
         value: state.inputValue, 
         placeholder: "Type message...", 
         cursorVisible: state.cursorVisible 
       });
+      yield new Rule({});
+      yield new Text({ content: chalk.gray("  Type something and press Enter to add to list • 'q' to quit") });
     });
     
   });

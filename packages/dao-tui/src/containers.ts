@@ -68,11 +68,12 @@ export class Vertical extends PiContainer {
 }
 
 /**
- * Panel container with a title, optional footer, and body content.
+ * Panel container with a title and body content.
+ * Any footer-like content should be included as part of the children generator.
  */
 export class Panel extends PiContainer {
   constructor(
-    props: { title: string; footer?: ComponentGenerator },
+    props: { title: string },
     children: ComponentGenerator
   ) {
     super();
@@ -80,12 +81,6 @@ export class Panel extends PiContainer {
     this.addChild(new Rule({}));
     for (const child of children()) {
       this.addChild(child);
-    }
-    if (props.footer) {
-      this.addChild(new Rule({}));
-      for (const child of props.footer()) {
-        this.addChild(child);
-      }
     }
   }
 }

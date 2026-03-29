@@ -2,7 +2,7 @@ import { reactive } from "@vue/reactivity";
 import { 
   Text, Header, Horizontal, Vertical, Panel, Input, 
   ChatBubble, SlashCommandSuggestion, type ChatMessage, 
-  createApp 
+  Rule, createApp 
 } from "../src/index.js";
 import chalk from "chalk";
 
@@ -95,38 +95,7 @@ function runClaudeTUI() {
     yield new Header({ title: "  Claude Code (Reactive)  " });
 
     yield new Horizontal({}, function*() {
-      yield new Panel({ 
-        title: "Chat", 
-        footer: function*() {
-          yield new Vertical({}, function*() {
-            // Render Input
-            yield new Input({ 
-              value: state.inputValue, 
-              placeholder: "Type your message...", 
-              cursorVisible: state.cursorBlink 
-            });
-
-            // Render Suggestions
-            const filtered = getFilteredCommands();
-            if (state.showSuggestions && !isVSCode && filtered.length > 0) {
-              yield new Panel({ title: "Suggestions" }, function*() {
-                for (const [idx, cmd] of filtered.entries()) {
-                  yield new SlashCommandSuggestion({ 
-                    command: cmd.command, 
-                    description: cmd.description, 
-                    selected: idx === state.selectedSuggestion 
-                  });
-                }
-              });
-            }
-
-            yield new Text({ content: chalk.gray.dim(isVSCode
-              ? "  VSCode Terminal • Enter to send • Ctrl+C to exit"
-              : "  ↑/↓ or Tab to select • Enter to send • Ctrl+C to exit"
-            )});
-          });
-        } 
-      }, function*() {
+      yield new Panel({ title: "Chat" }, function*() {
         yield new Vertical({}, function*() {
           for (const msg of state.messages) {
             yield new ChatBubble({ message: msg });
@@ -137,6 +106,36 @@ function runClaudeTUI() {
             yield new Text({ content: "" });
           }
           yield new Text({ content: "" });
+        });
+
+        // "Footer" section directly in children
+        yield new Rule({});
+        yield new Vertical({}, function*() {
+          // Render Input
+          yield new Input({ 
+            value: state.inputValue, 
+            placeholder: "Type your message...", 
+            cursorVisible: state.cursorBlink 
+          });
+
+          // Render Suggestions
+          const filtered = getFilteredCommands();
+          if (state.showSuggestions && !isVSCode && filtered.length > 0) {
+            yield new Panel({ title: "Suggestions" }, function*() {
+              for (const [idx, cmd] of filtered.entries()) {
+                yield new SlashCommandSuggestion({ 
+                  command: cmd.command, 
+                  description: cmd.description, 
+                  selected: idx === state.selectedSuggestion 
+                });
+              }
+            });
+          }
+
+          yield new Text({ content: chalk.gray.dim(isVSCode
+            ? "  VSCode Terminal • Enter to send • Ctrl+C to exit"
+            : "  ↑/↓ or Tab to select • Enter to send • Ctrl+C to exit"
+          )});
         });
       });
     });

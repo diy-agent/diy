@@ -54,7 +54,7 @@ yield new Panel(
 ### Layout Components
 - `Horizontal(props: { gap?: number }, children: ComponentGenerator)`
 - `Vertical(props: { gap?: number }, children: ComponentGenerator)`
-- `Panel(props: { title: string, footer?: ComponentGenerator }, children: ComponentGenerator)`
+- `Panel(props: { title: string }, children: ComponentGenerator)`
 
 ### Basic Components (Single Prop Argument)
 - `Header({ title: string })`
