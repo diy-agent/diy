@@ -31,6 +31,27 @@ project-root/        # 项目根目录，main 分支（主工作树）
 
 [ ] TODO 纯local工作流 + 自定义脚本 (Local Standard Workflow)
 
+1. **创建 worktree** - 在主分支（main）上执行，创建新的特性分支和 worktree：
+```bash
+# 确保 main 是最新的
+./sha.sh work new
+# 脚本内主要工作：
+# git checkout main
+# git pull origin main
+# 创建特性分支并在 .worktree/ 目录添加 worktree
+# git worktree add .worktree/dao-feature-<name> -b dao-feature-<name>
+# 例：git worktree add .worktree/dao-feature-auth -b dao-feature-auth
+# 例：git worktree add .worktree/dao-bug-xxx -b dao-bug-xxx
+```
+
+新worktree分支创建后首先同步各项资源:
+```bash
+# npm install , .dao/ref sync , gitmodule sync ...
+cd .worktree/dao-feature-<name>
+./sha.sh sync all
+```
+
+
 ## github工作流 + 自定义脚本 (Github Standard Workflow)
 
 [ ] TODO github工作流 + 自定义脚本 (Github Standard Workflow)

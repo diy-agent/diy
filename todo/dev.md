@@ -1,6 +1,6 @@
 # dev flow 改进点
 
-从 AI Agent 协同和工程健壮性两个维度对 @docs/dev.md 和 @sha.sh 提出了以下优化建议：
+从 AI Agent 协同和工程健壮性两个维度对 @docs/dev-flow.md 和 @sha.sh 提出了以下优化建议：
 
 1. 解决 .gitignore 导致的工具失效 (最紧迫)
    问题： .worktree/ 目录在 .gitignore 中，导致 AI 的高级工具（如 read_file, grep_search）默认会跳过这些目录。这迫使 Agent 退化到使用 cat 等低级 shell 命令，降低了感知能力。
@@ -28,9 +28,9 @@
 - sha.sh worktree add 增加可选参数 --install，自动在目标目录运行依赖安装。
 - 自动链接根目录的 node_modules（使用 pnpm 或 ln -s）以节省空间和时间。
 
-5. AI 协同指令优化 (docs/dev.md)
-   问题： 现有的 dev.md 对 AI 的约束较少。
-   建议在 dev.md 增加以下内容：
+5. AI 协同指令优化 (docs/dev-flow.md)
+   问题： 现有的 dev-flow.md 对 AI 的约束较少。
+   建议在 dev-flow.md 增加以下内容：
 - 验证强制要求： “合并前必须在 worktree 目录下运行 ./sha.sh check 或 npm run check。”
 - 提交规范： “必须在 worktree 内完成 commit 后再返回根目录执行 merge。”
 
