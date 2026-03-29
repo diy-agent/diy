@@ -1,7 +1,10 @@
-import { App, Text, Header, Horizontal, Vertical, Panel, Input, ChatBubble, SlashCommandSuggestion, type ChatMessage, type Component } from "../src/index.js";
+import { reactive } from "@vue/reactivity";
+import { 
+  Text, Header, Horizontal, Vertical, Panel, Input, 
+  ChatBubble, SlashCommandSuggestion, type ChatMessage, 
+  createApp 
+} from "../src/index.js";
 import chalk from "chalk";
-
-type PiComponent = Component;
 
 type SlashCommand = {
   command: string;
@@ -33,211 +36,203 @@ You can also just type any question or request and I'll respond!`,
   default: "I'm Claude, an AI assistant built by Anthropic. I can help you with coding, answering questions, debugging, and more. What would you like to work on today!",
 };
 
-class ClaudeCodeTUI extends App {
-  private inputValue = "";
-  private messages: ChatMessage[] = [];
-  private showSuggestions = false;
-  private selectedSuggestion = 0;
-  private cursorBlink = true;
-  private isThinking = false;
-  private thinkingDots = 0;
-  private blinkInterval?: ReturnType<typeof setInterval>;
-  private thinkingInterval?: ReturnType<typeof setInterval>;
-
-  constructor() {
-    super();
-    this.messages.push({
-      role: "assistant",
+function runClaudeTUI() {
+  // 1. Reactive State
+  const state = reactive({
+    inputValue: "",
+    messages: [{
+      role: "assistant" as const,
       content: "Welcome to Claude Code! Type a message or use a slash command to get started.",
       timestamp: new Date(),
-    });
-  }
+    }] as ChatMessage[],
+    showSuggestions: false,
+    selectedSuggestion: 0,
+    cursorBlink: true,
+    isThinking: false,
+    thinkingDots: 0,
+  });
 
-  private get isVSCode(): boolean {
-    return this.isVSCodeTerminal;
-  }
+  // 2. Logic Helpers (Closures)
+  const getFilteredCommands = (): SlashCommand[] => {
+    if (!state.inputValue.startsWith("/")) return [];
+    return availableCommands.filter(c => c.command.startsWith(state.inputValue));
+  };
 
-  override *compose(): Iterable<PiComponent> {
-    yield new Header({ title: "  Claude Code  " });
+  const updateSuggestions = () => {
+    const filtered = getFilteredCommands();
+    state.showSuggestions = filtered.length > 0;
+    if (state.selectedSuggestion >= filtered.length) {
+      state.selectedSuggestion = 0;
+    }
+  };
 
-    yield new Horizontal({}, function*(this: ClaudeCodeTUI) {
-      yield new Panel({ title: "Chat", footer: function*(this: ClaudeCodeTUI) {
-        yield new Vertical({}, function*(this: ClaudeCodeTUI) {
-          yield this.renderInput();
-          const suggestions = this.renderSuggestions();
-          if (suggestions) yield suggestions;
-          yield new Text({ content: chalk.gray.dim(this.isVSCode
-            ? "  VSCode Terminal • Enter to send • Ctrl+C to exit"
-            : "  ↑/↓ or Tab to select • Enter to send • Ctrl+C to exit"
-          )});
-        }.bind(this));
-      }.bind(this) }, function*(this: ClaudeCodeTUI) {
-        yield new Vertical({}, function*(this: ClaudeCodeTUI) {
-          for (const msg of this.messages) {
+  const handleSubmit = () => {
+    if (!state.inputValue.trim()) return;
+
+    const userMsg = state.inputValue.trim();
+    state.messages.push({ role: "user", content: userMsg, timestamp: new Date() });
+    state.inputValue = "";
+    state.showSuggestions = false;
+    state.isThinking = true;
+    state.thinkingDots = 0;
+
+    const thinkingInterval = setInterval(() => {
+      state.thinkingDots = (state.thinkingDots + 1) % 4;
+    }, 300);
+
+    setTimeout(() => {
+      clearInterval(thinkingInterval);
+      state.isThinking = false;
+      const response = mockResponses[userMsg] || mockResponses.default;
+      state.messages.push({ role: "assistant", content: response, timestamp: new Date() });
+    }, 1500);
+  };
+
+  // 3. Create Functional App
+  const app = createApp(function*() {
+    const isVSCode = app.isVSCodeTerminal;
+
+    yield new Header({ title: "  Claude Code (Reactive)  " });
+
+    yield new Horizontal({}, function*() {
+      yield new Panel({ 
+        title: "Chat", 
+        footer: function*() {
+          yield new Vertical({}, function*() {
+            // Render Input
+            yield new Input({ 
+              value: state.inputValue, 
+              placeholder: "Type your message...", 
+              cursorVisible: state.cursorBlink 
+            });
+
+            // Render Suggestions
+            const filtered = getFilteredCommands();
+            if (state.showSuggestions && !isVSCode && filtered.length > 0) {
+              yield new Panel({ title: "Suggestions" }, function*() {
+                for (const [idx, cmd] of filtered.entries()) {
+                  yield new SlashCommandSuggestion({ 
+                    command: cmd.command, 
+                    description: cmd.description, 
+                    selected: idx === state.selectedSuggestion 
+                  });
+                }
+              });
+            }
+
+            yield new Text({ content: chalk.gray.dim(isVSCode
+              ? "  VSCode Terminal • Enter to send • Ctrl+C to exit"
+              : "  ↑/↓ or Tab to select • Enter to send • Ctrl+C to exit"
+            )});
+          });
+        } 
+      }, function*() {
+        yield new Vertical({}, function*() {
+          for (const msg of state.messages) {
             yield new ChatBubble({ message: msg });
           }
-          if (this.isThinking) {
-            yield new Text({ content: chalk.cyan.dim(`  Thinking${".".repeat(this.thinkingDots)}`) });
+          if (state.isThinking) {
+            yield new Text({ content: chalk.cyan.dim(`  Thinking${".".repeat(state.thinkingDots)}`) });
           } else {
             yield new Text({ content: "" });
           }
           yield new Text({ content: "" });
-        }.bind(this));
-      }.bind(this));
-    }.bind(this));
-  }
+        });
+      });
+    });
+  });
 
-  private renderInput(): PiComponent {
-    return new Input({ value: this.inputValue, placeholder: "Type your message...", cursorVisible: this.cursorBlink });
-  }
-
-  private renderSuggestions(): PiComponent {
-    if (!this.showSuggestions || this.isVSCode) return new Text({ content: "" });
-    const filtered = this.getFilteredCommands();
-    if (filtered.length === 0) return new Text({ content: "" });
-
-    return new Panel({ title: "Suggestions" }, function*(this: ClaudeCodeTUI) {
-      for (const [idx, cmd] of filtered.entries()) {
-        yield new SlashCommandSuggestion({ command: cmd.command, description: cmd.description, selected: idx === this.selectedSuggestion });
-      }
-    }.bind(this));
-  }
-
-  private getFilteredCommands(): SlashCommand[] {
-    if (!this.inputValue.startsWith("/")) return [];
-    return availableCommands.filter(c => c.command.startsWith(this.inputValue));
-  }
-
-  private updateSuggestions(): void {
-    const filtered = this.getFilteredCommands();
-    this.showSuggestions = filtered.length > 0;
-    if (this.selectedSuggestion >= filtered.length) {
-      this.selectedSuggestion = 0;
+  // 4. Input handling
+  app.tui.addInputListener((data: string) => {
+    if (data === "\u0003") {
+      app.stop();
+      return { consume: true };
     }
-  }
 
-  private handleSubmit(): void {
-    if (!this.inputValue.trim()) return;
+    const isVSCode = app.isVSCodeTerminal;
 
-    const userMsg = this.inputValue.trim();
-    this.messages.push({ role: "user", content: userMsg, timestamp: new Date() });
-    this.inputValue = "";
-    this.showSuggestions = false;
-    this.isThinking = true;
-    this.thinkingDots = 0;
-
-    this.thinkingInterval = setInterval(() => {
-      this.thinkingDots = (this.thinkingDots + 1) % 4;
-      this.refresh();
-    }, 300);
-
-    setTimeout(() => {
-      if (this.thinkingInterval) clearInterval(this.thinkingInterval);
-      this.isThinking = false;
-      const response = mockResponses[userMsg] || mockResponses.default;
-      this.messages.push({ role: "assistant", content: response, timestamp: new Date() });
-      this.refresh();
-    }, 1500);
-
-    this.refresh();
-  }
-
-  override run(): void {
-    super.run();
-
-    this.blinkInterval = setInterval(() => {
-      this.cursorBlink = !this.cursorBlink;
-      this.refresh();
-    }, 500);
-
-    this.tui.addInputListener((data: string) => {
-      if (data === "\u0003") {
-        this.stop();
+    if (isVSCode) {
+      if (data.includes("\n") || data.includes("\r")) {
+        const lines = data.split(/[\r\n]+/);
+        state.inputValue += lines[0];
+        handleSubmit();
+        if (lines.length > 1) state.inputValue = lines.slice(1).join("");
+        return { consume: true };
+      } else if (data === "\b" || data === "\u007F") {
+        if (state.inputValue.length > 0) {
+          state.inputValue = state.inputValue.slice(0, -1);
+          updateSuggestions();
+        }
+        return { consume: true };
+      } else {
+        state.inputValue += data;
+        updateSuggestions();
         return { consume: true };
       }
-
-      if (this.isVSCode) {
-        if (data.includes("\n") || data.includes("\r")) {
-          const lines = data.split(/[\r\n]+/);
-          this.inputValue += lines[0];
-          this.handleSubmit();
-          if (lines.length > 1) this.inputValue = lines.slice(1).join("");
-          this.refresh();
-          return { consume: true };
-        } else if (data === "\b" || data === "\u007F") {
-          if (this.inputValue.length > 0) {
-            this.inputValue = this.inputValue.slice(0, -1);
-            this.updateSuggestions();
-            this.refresh();
-          }
-        } else {
-          this.inputValue += data;
-          this.updateSuggestions();
-          this.refresh();
+    } else {
+      // Arrow keys and Tabs for suggestions
+      if (data === "\x1b[A" || data === "\u001B[A") {
+        if (state.showSuggestions) {
+          const filtered = getFilteredCommands();
+          state.selectedSuggestion = (state.selectedSuggestion - 1 + filtered.length) % filtered.length;
         }
-      } else {
-        if (data === "\x1b[A" || data === "\u001B[A") {
-          if (this.showSuggestions) {
-            const filtered = this.getFilteredCommands();
-            this.selectedSuggestion = (this.selectedSuggestion - 1 + filtered.length) % filtered.length;
-            this.refresh();
-          }
-          return { consume: true };
-        }
-        if (data === "\x1b[B" || data === "\u001B[B") {
-          if (this.showSuggestions) {
-            const filtered = this.getFilteredCommands();
-            this.selectedSuggestion = (this.selectedSuggestion + 1) % filtered.length;
-            this.refresh();
-          }
-          return { consume: true };
-        }
-        if (data === "\r" || data === "\n") {
-          if (this.showSuggestions) {
-            const filtered = this.getFilteredCommands();
-            if (filtered.length > 0 && this.selectedSuggestion < filtered.length) {
-              this.inputValue = filtered[this.selectedSuggestion].command;
-            }
-          }
-          this.handleSubmit();
-          return { consume: true };
-        }
-        if (data === "\u007F" || data === "\b") {
-          if (this.inputValue.length > 0) {
-            this.inputValue = this.inputValue.slice(0, -1);
-            this.updateSuggestions();
-            this.refresh();
-          }
-          return { consume: true };
-        }
-        if (data === "\t") {
-          if (this.showSuggestions) {
-            const filtered = this.getFilteredCommands();
-            this.selectedSuggestion = (this.selectedSuggestion + 1) % filtered.length;
-            this.refresh();
-          }
-          return { consume: true };
-        }
-        const code = data.charCodeAt(0);
-        if (data.length >= 1 && code >= 32) {
-          this.inputValue += data;
-          this.updateSuggestions();
-          this.refresh();
-          return { consume: true };
-        }
+        return { consume: true };
       }
-      return undefined;
-    });
-  }
+      if (data === "\x1b[B" || data === "\u001B[B") {
+        if (state.showSuggestions) {
+          const filtered = getFilteredCommands();
+          state.selectedSuggestion = (state.selectedSuggestion + 1) % filtered.length;
+        }
+        return { consume: true };
+      }
+      if (data === "\r" || data === "\n") {
+        if (state.showSuggestions) {
+          const filtered = getFilteredCommands();
+          if (filtered.length > 0 && state.selectedSuggestion < filtered.length) {
+            state.inputValue = filtered[state.selectedSuggestion].command;
+            state.showSuggestions = false;
+            return { consume: true };
+          }
+        }
+        handleSubmit();
+        return { consume: true };
+      }
+      if (data === "\u007F" || data === "\b") {
+        if (state.inputValue.length > 0) {
+          state.inputValue = state.inputValue.slice(0, -1);
+          updateSuggestions();
+        }
+        return { consume: true };
+      }
+      if (data === "\t") {
+        if (state.showSuggestions) {
+          const filtered = getFilteredCommands();
+          state.selectedSuggestion = (state.selectedSuggestion + 1) % filtered.length;
+        }
+        return { consume: true };
+      }
+      
+      const code = data.charCodeAt(0);
+      if (data.length >= 1 && code >= 32) {
+        state.inputValue += data;
+        updateSuggestions();
+        return { consume: true };
+      }
+    }
+    return undefined;
+  });
 
-  override stop(): void {
-    if (this.blinkInterval) clearInterval(this.blinkInterval);
-    if (this.thinkingInterval) clearInterval(this.thinkingInterval);
-    super.stop();
-  }
+  // 5. Intervals
+  const blinkInterval = setInterval(() => {
+    state.cursorBlink = !state.cursorBlink;
+  }, 500);
+
+  // Auto-cleanup would be nice, but for an example this is fine
+  // or we could wrap app.stop()
+
+  app.run();
 }
 
-const app = new ClaudeCodeTUI();
 if (process.argv[1] === import.meta.filename) {
-  app.run();
+  runClaudeTUI();
 }
