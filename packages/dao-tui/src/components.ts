@@ -3,30 +3,62 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@mariozechner/pi-tui";
-import chalk from "chalk";
+import { t, applyStyles, type TStyle } from "./styles.js";
+
+export type StyleSet = TStyle | TStyle[];
 
 /**
- * Basic text label component.
+ * Basic text label component with style support.
  */
 export class Text extends PiText {
-  constructor(props: { content: string }) {
-    super(props.content);
+  private _content: string;
+  private _style?: StyleSet;
+
+  constructor(props: { content: string; style?: StyleSet }) {
+    super("");
+    this._content = props.content;
+    this._style = props.style;
+  }
+
+  render(width: number): string[] {
+    const text = truncateToWidth(this._content, width, "…");
+    return [this._style ? applyStyles(text, this._style) : text];
   }
 }
 
 /**
- * Header component with blue background styling.
+ * Header component with blue background styling by default.
  */
-export class Header extends PiText {
-  private title: string;
-
-  constructor(props: { title: string }) {
-    super("");
-    this.title = props.title;
+export class Header extends Text {
+  constructor(props: { title: string; style?: StyleSet }) {
+    super({
+      content: props.title,
+      style: props.style ?? t.bg_blue_300.text_black.font_bold,
+    });
   }
 
   render(width: number): string[] {
-    return [chalk.bgBlueBright.black.bold(` ${this.title} `.padEnd(width))];
+    // Fill the background for the entire width
+    const title = ` ${this["_content"]} `.padEnd(width);
+    const style = this["_style"] ?? t.bg_blue_300.text_black.font_bold;
+    return [applyStyles(title, style)];
+  }
+}
+
+/**
+ * Colored pill badge component.
+ */
+export class Pill extends Text {
+  constructor(props: { value: string; style?: StyleSet }) {
+    super({
+      content: ` ${props.value} `,
+      style: props.style ?? t.bg_cyan_300.text_black.font_bold,
+    });
+  }
+
+  render(width: number): string[] {
+    const text = truncateToWidth(this["_content"], width, "", true);
+    return [this["_style"] ? applyStyles(text, this["_style"]) : text];
   }
 }
 
@@ -35,68 +67,56 @@ export class Header extends PiText {
  */
 export class Rule extends PiText {
   private label: string;
+  private style?: StyleSet;
 
-  constructor(props: { label?: string } = {}) {
+  constructor(props: { label?: string; style?: StyleSet } = {}) {
     super("");
     this.label = props.label ?? "";
+    this.style = props.style;
   }
 
   render(width: number): string[] {
+    const lineStyle = this.style ?? t.font_dim;
+
     if (!this.label) {
-      return [chalk.dim("─".repeat(width))];
+      return [applyStyles("─".repeat(width), lineStyle)];
     }
 
     const text = ` ${this.label} `;
     const remaining = Math.max(0, width - visibleWidth(text));
     const left = Math.floor(remaining / 2);
     const right = remaining - left;
-    return [chalk.dim(`${"─".repeat(left)}${text}${"─".repeat(right)}`)];
+
+    const line = `${"─".repeat(left)}${text}${"─".repeat(right)}`;
+    return [applyStyles(line, lineStyle)];
   }
 }
 
 /**
- * Colored pill badge component.
+ * Log line with styled prefix.
  */
-export class Pill extends PiText {
-  private value: string;
-  private color: "blue" | "cyan" | "green" | "yellow" | "red" | "magenta";
-
-  constructor(props: {
-    value: string;
-    color?: "blue" | "cyan" | "green" | "yellow" | "red" | "magenta";
-  }) {
-    super("");
-    this.value = props.value;
-    this.color = props.color ?? "cyan";
-  }
-
-  render(width: number): string[] {
-    const styled = chalk[this.color].black.bold(` ${this.value} `);
-    return [truncateToWidth(styled, width, "", true)];
-  }
-}
-
-/**
- * Log line with colored prefix.
- */
-export class LogLine extends PiText {
+export class LogLine extends Text {
   private prefix: string;
-  private content: string;
-  private accent: "cyan" | "green" | "yellow" | "red" | "magenta";
+  private prefixStyle: TStyle;
 
   constructor(props: {
     prefix: string;
     content: string;
-    accent?: "cyan" | "green" | "yellow" | "red" | "magenta";
+    prefixStyle?: TStyle;
+    style?: StyleSet;
   }) {
-    super("");
+    super({ content: props.content, style: props.style });
     this.prefix = props.prefix;
-    this.content = props.content;
-    this.accent = props.accent ?? "cyan";
+    this.prefixStyle = props.prefixStyle ?? t.text_cyan_300.font_bold;
   }
 
   render(width: number): string[] {
-    const rendered = `${chalk[this.accent].bold(this.prefix)} ${this.content}`;
+    const prefixStr = this.prefixStyle.apply(this.prefix);
+    const contentStr = this["_style"]
+      ? applyStyles(this["_content"], this["_style"])
+      : this["_content"];
+
+    const rendered = `${prefixStr} ${contentStr}`;
     return [truncateToWidth(rendered, width, "", true)];
   }
 }
