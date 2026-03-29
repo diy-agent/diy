@@ -2,7 +2,6 @@ import {
   Container as PiContainer,
   truncateToWidth,
 } from "@mariozechner/pi-tui";
-import { Header, Rule } from "./components.js";
 import type { ComponentGenerator } from "./types.js";
 
 /**
@@ -64,23 +63,5 @@ export class Vertical extends PiContainer {
       }
     }
     return lines;
-  }
-}
-
-/**
- * Panel container with a title and body content.
- * Any footer-like content should be included as part of the children generator.
- */
-export class Panel extends PiContainer {
-  constructor(
-    props: { title: string },
-    children: ComponentGenerator
-  ) {
-    super();
-    this.addChild(new Header({ title: props.title }));
-    this.addChild(new Rule({}));
-    for (const child of children()) {
-      this.addChild(child);
-    }
   }
 }
