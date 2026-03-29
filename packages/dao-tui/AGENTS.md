@@ -81,7 +81,7 @@ override *compose(): Iterable<PiComponent> {
 }
 ```
 
-When state changes, just call `this.refresh()` - it calls `compose()` again and rebuilds everything automatically. This is perfect for:
+When state changes, just call `app.refresh()` - it calls the generator again and rebuilds everything automatically. This is perfect for:
 - Mock agents
 - Demos
 - Simple interactive applications

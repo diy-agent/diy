@@ -184,6 +184,12 @@
       "@mariozechner/pi-coding-agent/*": [
         "./.dao/ref/github.com/badlogic/pi-mono/v0.61.0/packages/coding-agent/src/*"
       ],
+      "@vue/reactivity": [
+        "./.dao/ref/github.com/vuejs/core/v3.5.31/packages/reactivity/src/index.ts"
+      ],
+      "@vue/reactivity/*": [
+        "./.dao/ref/github.com/vuejs/core/v3.5.31/packages/reactivity/src/*"
+      ],
       "yoga-layout": [
         "./.dao/ref/github.com/facebook/yoga/v3.2.1"
       ],

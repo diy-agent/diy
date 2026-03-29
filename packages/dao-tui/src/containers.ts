@@ -21,6 +21,8 @@ export class Horizontal extends PiContainer {
     }
   }
 
+  private gap: number;
+
   render(width: number): string[] {
     if (this.children.length === 0) return [];
 
@@ -57,6 +59,8 @@ export class Vertical extends PiContainer {
       this.addChild(child);
     }
   }
+
+  private gap: number;
 
   render(width: number): string[] {
     const lines: string[] = [];

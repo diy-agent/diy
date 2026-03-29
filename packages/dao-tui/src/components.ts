@@ -25,6 +25,8 @@ export class Header extends PiText {
     this.title = props.title;
   }
 
+  private title: string;
+
   render(width: number): string[] {
     return [chalk.bgBlueBright.black.bold(` ${this.title} `.padEnd(width))];
   }
@@ -40,6 +42,8 @@ export class Rule extends PiText {
     super("");
     this.label = props.label ?? "";
   }
+
+  private label: string;
 
   render(width: number): string[] {
     if (!this.label) {
@@ -70,6 +74,9 @@ export class Pill extends PiText {
     this.color = props.color ?? "cyan";
   }
 
+  private value: string;
+  private color: "blue" | "cyan" | "green" | "yellow" | "red" | "magenta";
+
   render(width: number): string[] {
     const styled = chalk[this.color].black.bold(` ${this.value} `);
     return [truncateToWidth(styled, width, "", true)];
@@ -94,6 +101,10 @@ export class LogLine extends PiText {
     this.content = props.content;
     this.accent = props.accent ?? "cyan";
   }
+
+  private prefix: string;
+  private content: string;
+  private accent: "cyan" | "green" | "yellow" | "red" | "magenta";
 
   render(width: number): string[] {
     const rendered = `${chalk[this.accent].bold(this.prefix)} ${this.content}`;
