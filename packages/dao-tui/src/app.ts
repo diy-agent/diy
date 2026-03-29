@@ -4,6 +4,7 @@ import {
   Container as PiContainer,
   type Component,
 } from "@mariozechner/pi-tui";
+import { effect } from "@vue/reactivity";
 import type { ComponentGenerator } from "./types.js";
 
 /**
@@ -56,9 +57,14 @@ export abstract class App extends PiContainer {
    * Start the TUI application.
    */
   public run(): void {
-    this.mount();
+    // Initial mount and render, automatically tracking reactive dependencies
+    // accessed during the compose() phase.
+    effect(() => {
+      this.mount();
+      this.tui.requestRender();
+    });
+
     this.tui.start();
-    this.tui.requestRender();
 
     // Default exit logic
     this.tui.addInputListener((data) => {

@@ -2,26 +2,22 @@ import {
   Container as PiContainer,
   truncateToWidth,
 } from "@mariozechner/pi-tui";
-import { Header } from "./components.js";
-import { Rule } from "./components.js";
+import { Header, Rule } from "./components.js";
 import type { ComponentGenerator } from "./types.js";
 
 /**
  * Horizontal layout container.
- * Uses a generator function to yield child components horizontally.
  */
 export class Horizontal extends PiContainer {
   private gap: number;
 
-  constructor(props: { gap?: number } = {}, generator: ComponentGenerator) {
+  constructor(props: { gap?: number } = {}, children: ComponentGenerator) {
     super();
     this.gap = props.gap ?? 0;
-    for (const child of generator()) {
+    for (const child of children()) {
       this.addChild(child);
     }
   }
-
-  private gap: number;
 
   render(width: number): string[] {
     if (this.children.length === 0) return [];
@@ -47,20 +43,17 @@ export class Horizontal extends PiContainer {
 
 /**
  * Vertical layout container.
- * Uses a generator function to yield child components vertically.
  */
 export class Vertical extends PiContainer {
   private gap: number;
 
-  constructor(props: { gap?: number } = {}, generator: ComponentGenerator) {
+  constructor(props: { gap?: number } = {}, children: ComponentGenerator) {
     super();
     this.gap = props.gap ?? 0;
-    for (const child of generator()) {
+    for (const child of children()) {
       this.addChild(child);
     }
   }
-
-  private gap: number;
 
   render(width: number): string[] {
     const lines: string[] = [];
@@ -76,20 +69,16 @@ export class Vertical extends PiContainer {
 
 /**
  * Panel container with a title, optional footer, and body content.
- * Uses generator functions for body and footer.
  */
 export class Panel extends PiContainer {
   constructor(
-    props: {
-      title: string;
-      footer?: ComponentGenerator;
-    },
-    body: ComponentGenerator
+    props: { title: string; footer?: ComponentGenerator },
+    children: ComponentGenerator
   ) {
     super();
     this.addChild(new Header({ title: props.title }));
     this.addChild(new Rule({}));
-    for (const child of body()) {
+    for (const child of children()) {
       this.addChild(child);
     }
     if (props.footer) {

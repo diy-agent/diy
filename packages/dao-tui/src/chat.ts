@@ -25,8 +25,6 @@ export class ChatBubble extends PiText {
     this.message = props.message;
   }
 
-  private message: ChatMessage;
-
   render(width: number): string[] {
     const roleTag = this.message.role === 'user'
       ? chalk.bgBlue.black.bold(' You ')
@@ -77,10 +75,6 @@ export class Input extends PiText {
     this.cursorVisible = props.cursorVisible ?? true;
   }
 
-  private value: string;
-  private placeholder: string;
-  private cursorVisible: boolean;
-
   render(width: number): string[] {
     const prompt = chalk.blue.bold("> ");
     let display = this.value;
@@ -119,10 +113,6 @@ export class SlashCommandSuggestion extends PiText {
     this.description = props.description;
     this.selected = props.selected;
   }
-
-  private command: string;
-  private description: string;
-  private selected: boolean;
 
   render(width: number): string[] {
     const prefix = this.selected ? chalk.cyan('▶ ') : '  ';
