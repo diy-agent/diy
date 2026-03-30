@@ -47,44 +47,15 @@ _get_main_branch() {
 #   ./sha.sh worktree remove dao-feature-xxx    # 清理已合并的 worktree
 #   ./sha.sh worktree merge dao-feature-xxx     # 合并 worktree 到 main 并清理
 ####################################################################################
-worktree() {
-
-  # 创建新 worktree
-  add() {
-    if [ $# -ne 1 ]; then
-      echo "${c_error}Usage: ./sha.sh worktree add <branch-name>${c_reset}"
-      exit 1
-    fi
-    local branch="$1"
-    local main_branch=$(_get_main_branch)
-
-    # Ensure worktree directory exists
-    mkdir -p "$worktree_dir"
-
-    local worktree_path="$worktree_dir/$branch"
-    if [ -d "$worktree_path" ]; then
-      echo "${c_error}Worktree already exists at $worktree_path${c_reset}"
-      exit 1
-    fi
-
-    echo "${c_info}Creating new worktree for branch $branch from $main_branch...${c_reset}"
-    run git worktree add -b "$branch" "$worktree_path" "$main_branch"
-
-    echo
-    echo "${c_success}Created worktree at: $worktree_path${c_reset}"
-    echo "${c_success}Branch: $branch${c_reset}"
-    echo
-    echo "To start working:"
-    echo "  cd $worktree_path"
-  }
+working() {
 
   # 列出所有 worktree 状态
   list() {
     local main_branch=$(_get_main_branch)
 
-    # 使用进程替换，避免子shell变量丢失问题
-    local json="["
-    local first=true
+    # First pass: collect all worktree info and extract issue numbers
+    local -a worktrees=()
+    local -a issue_nums=()
 
     while read -r line; do
       # 提取路径
@@ -102,79 +73,110 @@ worktree() {
         short_path="${path#$ROOT_DIR/}"
       fi
 
-      # 检查是否有未提交变更
-      local change_str=""
+      # 检查是否有未提交变更（只需知道是否有变更，用于添加*）
       local has_changes=false
       if [[ -d "$path/.git" ]]; then
-        # 检查工作目录状态
         local status_out=$(cd "$path" && git status --porcelain)
         if [[ -n "$status_out" ]]; then
           has_changes=true
-          # Use awk to count - avoids arithmetic issues in bash
-          local untracked=$(echo "$status_out" | awk '/^??/ {count++} END {print count+0}')
-          local modified=$(echo "$status_out" | awk '/^ M/ {count++} END {print count+0}')
-          if [[ $modified -gt 0 && $untracked -gt 0 ]]; then
-            change_str="${modified}m/${untracked}u"
-          elif [[ $modified -gt 0 ]]; then
-            change_str="${modified}m"
-          elif [[ $untracked -gt 0 ]]; then
-            change_str="${untracked}u"
-          fi
         fi
       fi
 
-      # 计算相对于主分支的状态
-      local plain_status=""
+      # 合并分支名称+状态：Branch* + arrows for ahead/behind
+      local branch_display="$branch"
+      # Add * for uncommitted changes
+      if [[ $has_changes == true ]]; then
+        branch_display="$branch_display*"
+      fi
+      # Add arrows for ahead/behind - only for non-main branches
+      local ahead=0
+      local behind=0
       if [[ -n "$branch" && "$branch" != "$main_branch" ]]; then
-        local ahead=0
-        local behind=0
         if git rev-parse --verify "$branch" >/dev/null 2>&1; then
           # 使用 three-dot 语法分别计算领先和落后
           behind=$(git rev-list --count "$branch..$main_branch")
           ahead=$(git rev-list --count "$main_branch..$branch")
         fi
-
-        if [[ $ahead -eq 0 && $behind -eq 0 ]]; then
-          plain_status="synced with $main_branch"
-        elif [[ $ahead -gt 0 && $behind -eq 0 ]]; then
-          if [[ $has_changes == true ]]; then
-            plain_status="$ahead ahead, has uncommitted"
-          else
-            plain_status="$ahead ahead, ready to merge"
-          fi
-        elif [[ $behind -gt 0 && $ahead -eq 0 ]]; then
-          plain_status="$behind behind $main_branch"
-        else
-          plain_status="$ahead ahead / $behind behind"
-        fi
-      else
-        # main 分支也要检查是否有未提交变化
-        if [[ $has_changes == true ]]; then
-          plain_status="$main_branch, has uncommitted changes"
-        else
-          plain_status="$main_branch, clean"
-        fi
+        branch_display="$branch_display ↑$ahead ↓$behind"
       fi
 
-      # 输出JSON行
+      # Extract issue number from branch:
+      # - 8-feat-name (new format)
+      # - issue-8 (old format for backward compatibility)
+      # - 8 (just the issue number)
+      local issue_num=""
+      if [[ "$branch" =~ ^([0-9]+)- ]]; then
+        issue_num="${BASH_REMATCH[1]}"
+        issue_nums+=("$issue_num")
+      elif [[ "$branch" =~ ^issue-([0-9]+)$ ]]; then
+        issue_num="${BASH_REMATCH[1]}"
+        issue_nums+=("$issue_num")
+      elif [[ "$branch" =~ ^[0-9]+$ ]]; then
+        issue_num="$branch"
+        issue_nums+=("$issue_num")
+      fi
+
+      # Store worktree data for second pass
+      worktrees+=("$short_path|$branch_display|$issue_num")
+    done < <(git worktree list)
+
+    # If we found issue branches, fetch all issue titles in one API call
+    # Use temp file for mapping since bash 3.2 doesn't support associative arrays
+    local issue_map_file
+    issue_map_file=$(mktemp)
+    if [[ ${#issue_nums[@]} -gt 0 ]]; then
+      # Fetch all project items once - reuse the same pattern as issue list
+      local project_data
+      project_data=$(run gh project item-list "$GH_PROJECT_NUM" --owner "$GH_OWNER" --format json 2>/dev/null)
+      if [[ $? -eq 0 ]]; then
+        # Extract all issue numbers, status, and titles into temp file
+        echo "$project_data" | jq -r '
+          ((if type == "object" and .items then .items else . end)[]
+           | select(.content != null)
+           | select(.content.number != null)
+           | "\(.content.number)\t\(.status // "-")\t\(.content.title)")
+        ' > "$issue_map_file"
+      fi
+    fi
+
+    # Second pass: build JSON with issue information
+    local json="["
+    local first=true
+    for wt in "${worktrees[@]}"; do
+      IFS='|' read -r short_path branch_display issue_num <<< "$wt"
+      local issue_status="-"
+      local issue_title=""
+      if [[ -n "$issue_num" && -s "$issue_map_file" ]]; then
+        # Lookup issue status and title from temp file
+        issue_status=$(grep "^$issue_num"$'\t' "$issue_map_file" | cut -f2)
+        issue_title=$(grep "^$issue_num"$'\t' "$issue_map_file" | cut -f3)
+      fi
+
       if [ "$first" = true ]; then
         first=false
       else
         json="$json,"
       fi
-      json="$json{\"path\":\"$short_path\",\"branch\":\"$branch\",\"status\":\"$plain_status\",\"changes\":\"$change_str\"}"
-    done < <(git worktree list)
+      json="$json{\"path\":\"$short_path\",\"branch_display\":\"$branch_display\",\"issue_num\":\"$issue_num\",\"issue_status\":\"$issue_status\",\"issue_title\":\"$issue_title\"}"
+    done
+
+    # Cleanup temp file
+    rm -f "$issue_map_file"
 
     json="$json]"
 
     # 使用jq格式化为表格，然后column自动对齐
     printf "${c_primary}"
     echo "$json" | jq -r '
-      ["Path", "Branch", "Status", "Changes"],
-      ["----", "------", "------", "-------"],
-      (.[] | [.path, .branch, .status, .changes])
+      ["Path", "Branch", "Issue"],
+      ["----", "------", "-----"],
+      (.[] | [
+        .path,
+        .branch_display,
+        (if .issue_num != "" then "#\(.issue_num) \(.issue_status): \(.issue_title)" else "-" end)
+      ])
       | @tsv
-    ' | column -t -s $'\t'
+    ' | COLUMNS=1000 column -t -s $'\t'
     printf "${c_reset}"
   }
 }
@@ -240,6 +242,7 @@ clean() {
 ####################################################################################
 # GitHub Project 工作流命令 - 任务管理集成
 ####################################################################################
+# ref: `docs/dev-flow.md`
 # GitHub Project 配置:
 #   Owner: chen56
 #   Project: dao (number 13)
@@ -250,7 +253,7 @@ GH_OWNER="chen56"
 GH_PROJECT_NUM="13"
 GH_PROJECT_ID="PVT_kwHOAB8fvs4BTGD4"
 GH_REPO="whonb/dao"
-work() {
+issue() {
 
   # 创建新工作任务
   # Usage: ./sha.sh work new "<issue-description>"
@@ -302,9 +305,9 @@ work() {
     local issue_num="$1"
     local branch_name
     if [ $# -eq 2 ]; then
-      branch_name="$2"
+      branch_name="$issue_num-$2"
     else
-      branch_name="issue-$issue_num"
+      branch_name="$issue_num"
     fi
     local main_branch=$(_get_main_branch)
 
