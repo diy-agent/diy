@@ -39,15 +39,12 @@ _get_main_branch() {
 }
 
 ####################################################################################
-# worktree 开发流程 (方案 B: 脚本 + AGENTS.md 双重保障)
+# dev 工作流
 ####################################################################################
 # 使用示例:
-#   ./sha.sh worktree add dao-feature-xxx       # 创建新 worktree 分支
-#   ./sha.sh worktree status                    # 查看所有 worktree 状态
-#   ./sha.sh worktree remove dao-feature-xxx    # 清理已合并的 worktree
-#   ./sha.sh worktree merge dao-feature-xxx     # 合并 worktree 到 main 并清理
+#   ./sha.sh dev list                    # 查看所有 worktree 状态
 ####################################################################################
-working() {
+dev() {
 
   # 列出所有 worktree 状态
   list() {
@@ -73,9 +70,14 @@ working() {
         short_path="${path#$ROOT_DIR/}"
       fi
 
+      # 检查路径是否存在，如果不存在标记为 prunable
+      if [[ ! -d "$path" ]]; then
+        short_path="$short_path **prunable**"
+      fi
+
       # 检查是否有未提交变更（只需知道是否有变更，用于添加*）
       local has_changes=false
-      if [[ -d "$path/.git" ]]; then
+      if [[ -e "$path/.git" ]]; then
         local status_out=$(cd "$path" && git status --porcelain)
         if [[ -n "$status_out" ]]; then
           has_changes=true
