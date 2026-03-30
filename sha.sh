@@ -166,6 +166,9 @@ sub() {
 # 此位置以上的全都是bake工具脚本，copy走可以直接用，之下的为项目特定cmd，自己弄
 ####################################################################################
 sync() {
+  nodejs() {
+    npm i --workspaces
+  }
   submodule() {
     run git submodule set-branch --branch main vendor/sha
     run git submodule update --init --recursive --remote
@@ -176,6 +179,7 @@ sync() {
   all() {
     submodule
     dao
+    nodejs
   }
 }
 
