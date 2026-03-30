@@ -256,14 +256,14 @@ work() {
   # Usage: ./sha.sh work new "<issue-description>"
   new() {
     if [ $# -lt 1 ]; then
-      echo "${c_error}Usage: ./sha.sh work new \"<issue-description>\"${c_reset}"
+      echo "${c_error}error: Usage: ./sha.sh work new \"<issue-description>\"${c_reset}"
       exit 1
     fi
     local description="$*"
 
     # 检查变量 (防止空参数导致错误)
     if [ -z "$GH_PROJECT_NUM" ] || [ -z "$GH_OWNER" ] || [ -z "$GH_REPO" ]; then
-      echo "${c_error}Configuration error: missing project configuration${c_reset}"
+      echo "${c_error}error: Configuration error: missing project configuration${c_reset}"
       exit 1
     fi
 
@@ -272,7 +272,7 @@ work() {
     output=$(run gh issue create --repo "$GH_REPO" --title "$description" --body "$description")
 
     if [ $? -ne 0 ]; then
-      echo "${c_error}Failed to create issue${c_reset}"
+      echo "${c_error}error: Failed to create issue${c_reset}"
       exit 1
     fi
 
@@ -285,8 +285,8 @@ work() {
     run gh project item-add --owner "$GH_OWNER" "$GH_PROJECT_NUM" --url "$issue_url"
 
     echo
-    echo "${c_success}Created issue #$issue_num: $issue_url${c_reset}"
-    echo "${c_success}Added to project $GH_PROJECT_NUM (Status: Backlog)${c_reset}"
+    echo "${c_success}success: Created issue #$issue_num: $issue_url${c_reset}"
+    echo "${c_success}success: Added to project $GH_PROJECT_NUM (Status: Backlog)${c_reset}"
     echo
     echo "To start working:"
     echo "  ./sha.sh work start $issue_num"
@@ -314,13 +314,13 @@ work() {
       jq -r '.items[] | select(.content.number == '"$issue_num"') | .id')
 
     if [ -z "$item_id" ] || [ "$item_id" = "null" ]; then
-      echo "${c_error}Could not find issue #$issue_num in project $GH_PROJECT_NUM${c_reset}"
+      echo "${c_error}error: Could not find issue #$issue_num in project $GH_PROJECT_NUM${c_reset}"
       exit 1
     fi
 
     run _gh_edit_item_feild_single_select "$GH_PROJECT_NUM" "$item_id" "Status" "In progress"
 
-    echo "${c_success}Moved issue #$issue_num to In Progress${c_reset}"
+    echo "${c_success}success: Moved issue #$issue_num to In progress${c_reset}"
     echo
 
     # Ensure worktree directory exists
@@ -329,18 +329,18 @@ work() {
     # 创建 worktree
     local worktree_path="$worktree_dir/$branch_name"
     if [ -d "$worktree_path" ]; then
-      echo "${c_error}Worktree already exists at $worktree_path${c_reset}"
-      exit 1
+      echo "${c_success}success: Worktree already exists at $worktree_path${c_reset}"
+      exit 0
     fi
 
     run git worktree add -b "$branch_name" "$worktree_path" "$main_branch"
 
     echo
-    echo "${c_success}Created worktree at: $worktree_path${c_reset}"
-    echo "${c_success}Branch: $branch_name${c_reset}"
+    echo "${c_success}success: Created worktree at: $worktree_path${c_reset}"
+    echo "${c_success}success: Branch: $branch_name${c_reset}"
     echo
     echo "To start working:"
-    echo "  cd $worktree_path"
+    echo "  cd $worktree_path and dev"
   }
 
   # 列出所有未完成任务
