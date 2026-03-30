@@ -1,8 +1,10 @@
-import { createApp, FunctionalApp, Header, Horizontal, Vertical, Panel, Input, ChatBubble, SlashCommandSuggestion, type ChatMessage, type Component } from "../src/index.js";
-import { Text as PiText } from "@mariozechner/pi-tui";
+import { reactive } from "@vue/reactivity";
+import { 
+  Text, Header, Horizontal, Vertical, Panel, Input, 
+  ChatBubble, SlashCommandSuggestion, type ChatMessage, 
+  Rule, createApp 
+} from "../src/index.js";
 import chalk from "chalk";
-
-type PiComponent = Component;
 
 type SlashCommand = {
   command: string;
@@ -18,7 +20,6 @@ const availableCommands: SlashCommand[] = [
   { command: "/model", description: "Change the current model" },
 ];
 
-// Simulated LLM responses for demo
 const mockResponses: Record<string, string> = {
   "/help": `Available slash commands:
 - /commit - Commit staged changes
@@ -32,284 +33,205 @@ You can also just type any question or request and I'll respond!`,
   "/clear": "Chat history cleared. Starting fresh conversation.",
   "/model": "Current model: claude-opus-4.6\nAvailable models: claude-opus-4.6, claude-sonnet-4.6, claude-haiku-4.5",
   "/commit": "Let me help you create a commit. I'll analyze your changes and draft a descriptive commit message for you.",
-  default: "I'm Claude, an AI assistant built by Anthropic. I can help you with coding, answering questions, debugging, and more. What would you like to work on today?",
+  default: "I'm Claude, an AI assistant built by Anthropic. I can help you with coding, answering questions, debugging, and more. What would you like to work on today!",
 };
 
-// Get isVSCode directly from environment - matches what App does
-// This avoids the circular dependency issue
-const isVSCode = process.env.TERM_PROGRAM === 'vscode';
-
-// State variables moved outside compose for proper closure capture
-let inputValue = "";
-const messages: ChatMessage[] = [];
-let showSuggestions = false;
-let selectedSuggestion = 0;
-let cursorBlink = true;
-let isThinking = false;
-let thinkingDots = 0;
-let thinkingInterval: ReturnType<typeof setInterval> | undefined;
-
-// Render input component
-function renderInput(): PiComponent {
-  return new Input({ value: inputValue, placeholder: "Type your message...", cursorVisible: cursorBlink });
-}
-
-// Get filtered commands based on input
-function getFilteredCommands(): SlashCommand[] {
-  const input = inputValue.toLowerCase();
-  return availableCommands.filter(cmd =>
-    cmd.command.toLowerCase().startsWith(input)
-  );
-}
-
-// Update suggestion visibility based on input
-function updateSuggestions(): void {
-  if (inputValue.startsWith("/")) {
-    showSuggestions = true;
-    selectedSuggestion = 0;
-  } else {
-    showSuggestions = false;
-  }
-}
-
-// Render suggestion panel
-function renderSuggestions(): PiComponent {
-  if (!showSuggestions || isVSCode) {
-    // In VSCode, disable real-time suggestions since arrow keys don't work well with IME
-    return new PiText("");
-  }
-
-  const filtered = getFilteredCommands();
-  if (filtered.length === 0) {
-    return new PiText("");
-  }
-
-  return new Panel({ title: "Suggestions" }, function* () {
-    for (const [idx, cmd] of filtered.entries()) {
-      yield new SlashCommandSuggestion({ command: cmd.command, description: cmd.description, selected: idx === selectedSuggestion });
-    }
-  });
-}
-
-// Handle message submission
-function handleSubmit(): void {
-  const content = inputValue.trim();
-  if (!content) return;
-
-  // Add user message
-  messages.push({
-    role: "user",
-    content,
-    timestamp: new Date(),
-  });
-
-  inputValue = "";
-  showSuggestions = false;
-  isThinking = true;
-  app.refresh();
-
-  // Animate thinking
-  thinkingDots = 0;
-  thinkingInterval = setInterval(() => {
-    thinkingDots = (thinkingDots + 1) % 4;
-    app.refresh();
-  }, 300);
-
-  // Simulate LLM response delay
-  setTimeout(() => {
-    clearInterval(thinkingInterval!);
-    isThinking = false;
-
-    // Get mock response
-    let response = mockResponses[content];
-    if (!response) {
-      if (content.startsWith("/")) {
-        response = `Unknown command: ${content}. Type /help to see available commands.`;
-      } else {
-        response = `You asked: "${content}". This is a simulated response in the mock Claude Code TUI demo. In the real Claude Code, I would help you with your request!`;
-      }
-    }
-
-    messages.push({
-      role: "assistant",
-      content: response,
+function runClaudeTUI() {
+  // 1. Reactive State
+  const state = reactive({
+    inputValue: "",
+    messages: [{
+      role: "assistant" as const,
+      content: "Welcome to Claude Code! Type a message or use a slash command to get started.",
       timestamp: new Date(),
-    });
+    }] as ChatMessage[],
+    showSuggestions: false,
+    selectedSuggestion: 0,
+    cursorBlink: true,
+    isThinking: false,
+    thinkingDots: 0,
+  });
 
-    app.refresh();
-  }, 1500 + Math.random() * 1000);
-}
+  // 2. Logic Helpers (Closures)
+  const getFilteredCommands = (): SlashCommand[] => {
+    if (!state.inputValue.startsWith("/")) return [];
+    return availableCommands.filter(c => c.command.startsWith(state.inputValue));
+  };
 
-// Main UI composition
-function* createAppComposition() {
-  yield new Header({ title: "  Claude Code  " });
+  const updateSuggestions = () => {
+    const filtered = getFilteredCommands();
+    state.showSuggestions = filtered.length > 0;
+    if (state.selectedSuggestion >= filtered.length) {
+      state.selectedSuggestion = 0;
+    }
+  };
 
-  yield new Horizontal({ gap: 0 }, function* () {
-    yield new Panel({ title: "Chat" }, function* () {
-      yield new Vertical({ gap: 0 }, function* () {
-        for (const msg of messages) {
-          yield new ChatBubble({ message: msg });
-        }
-        if (isThinking) {
-          yield new PiText(chalk.cyan.dim(`  Thinking${".".repeat(thinkingDots)}`));
-        } else {
-          yield new PiText("");
-        }
-        yield new PiText("");
-      });
-    }, function* () {
-      yield new Vertical({ gap: 0 }, function* () {
-        yield renderInput();
-        const suggestions = renderSuggestions();
-        if (suggestions) {
-          yield suggestions;
-        }
-        yield new PiText(chalk.gray.dim(isVSCode
-          ? "  VSCode Terminal • Enter to send • Ctrl+C to exit"
-          : "  ↑/↓ or Tab to select • Enter to send • Ctrl+C to exit"
-        ));
+  const handleSubmit = () => {
+    if (!state.inputValue.trim()) return;
+
+    const userMsg = state.inputValue.trim();
+    state.messages.push({ role: "user", content: userMsg, timestamp: new Date() });
+    state.inputValue = "";
+    state.showSuggestions = false;
+    state.isThinking = true;
+    state.thinkingDots = 0;
+
+    const thinkingInterval = setInterval(() => {
+      state.thinkingDots = (state.thinkingDots + 1) % 4;
+    }, 300);
+
+    setTimeout(() => {
+      clearInterval(thinkingInterval);
+      state.isThinking = false;
+      const response = mockResponses[userMsg] || mockResponses.default;
+      state.messages.push({ role: "assistant", content: response, timestamp: new Date() });
+    }, 1500);
+  };
+
+  // 3. Create Functional App
+  const app = createApp(function*() {
+    const isVSCode = app.isVSCodeTerminal;
+
+    yield new Header({ title: "  Claude Code (Reactive)  " });
+
+    yield new Horizontal({}, function*() {
+      yield new Panel({ title: "Chat" }, function*() {
+        yield new Vertical({}, function*() {
+          for (const msg of state.messages) {
+            yield new ChatBubble({ message: msg });
+          }
+          if (state.isThinking) {
+            yield new Text({ content: chalk.cyan.dim(`  Thinking${".".repeat(state.thinkingDots)}`) });
+          } else {
+            yield new Text({ content: "" });
+          }
+          yield new Text({ content: "" });
+        });
+
+        // "Footer" section directly in children
+        yield new Rule({});
+        yield new Vertical({}, function*() {
+          // Render Input
+          yield new Input({ 
+            value: state.inputValue, 
+            placeholder: "Type your message...", 
+            cursorVisible: state.cursorBlink 
+          });
+
+          // Render Suggestions
+          const filtered = getFilteredCommands();
+          if (state.showSuggestions && !isVSCode && filtered.length > 0) {
+            yield new Panel({ title: "Suggestions" }, function*() {
+              for (const [idx, cmd] of filtered.entries()) {
+                yield new SlashCommandSuggestion({ 
+                  command: cmd.command, 
+                  description: cmd.description, 
+                  selected: idx === state.selectedSuggestion 
+                });
+              }
+            });
+          }
+
+          yield new Text({ content: chalk.gray.dim(isVSCode
+            ? "  VSCode Terminal • Enter to send • Ctrl+C to exit"
+            : "  ↑/↓ or Tab to select • Enter to send • Ctrl+C to exit"
+          )});
+        });
       });
     });
   });
-}
 
-const app = createApp(createAppComposition);
-
-// Setup cursor blinking
-const blinkInterval = setInterval(() => {
-  cursorBlink = !cursorBlink;
-  app.refresh();
-}, 500);
-
-// TODO: vscode ime can not work！can not input word
-if (isVSCode) {
-  // VSCode + IME workaround: read entire line on enter
-  // This allows IME to work properly at the cost of no real-time preview
-  // But English/Chinese input will both work
+  // 4. Input handling
   app.tui.addInputListener((data: string) => {
-    if (data === "\u0003" || data === "q" || data === "Q") {
+    if (data === "\u0003") {
       app.stop();
       return { consume: true };
     }
 
-    // In VSCode line mode, we accumulate until newline
-    // data can have multiple characters at once
-    if (data.includes("\n") || data.includes("\r")) {
-      // Split and take the first line
-      const lines = data.split(/[\r\n]+/);
-      inputValue += lines[0];
-      handleSubmit();
-      // Any remaining characters (unlikely) get added
-      if (lines.length > 1) {
-        inputValue = lines.slice(1).join('');
-      }
-      app.refresh();
-      return { consume: true };
-    } else {
-      // Add the characters and handle backspace
-      if (data === "\b" || data === "\u007F") {
-        if (inputValue.length > 0) {
-          inputValue = inputValue.slice(0, -1);
+    const isVSCode = app.isVSCodeTerminal;
+
+    if (isVSCode) {
+      if (data.includes("\n") || data.includes("\r")) {
+        const lines = data.split(/[\r\n]+/);
+        state.inputValue += lines[0];
+        handleSubmit();
+        if (lines.length > 1) state.inputValue = lines.slice(1).join("");
+        return { consume: true };
+      } else if (data === "\b" || data === "\u007F") {
+        if (state.inputValue.length > 0) {
+          state.inputValue = state.inputValue.slice(0, -1);
           updateSuggestions();
-          app.refresh();
         }
+        return { consume: true };
       } else {
-        inputValue += data;
-        // Still update suggestions even in VSCode mode for matching
+        state.inputValue += data;
         updateSuggestions();
-        app.refresh();
+        return { consume: true };
       }
-    }
-    return { consume: true };
-  });
-} else {
-  // Normal terminal - full interactive mode with arrow keys
-  app.tui.addInputListener((char: string) => {
-    if (char === "\u0003" || char === "q" || char === "Q") {
-      app.stop();
-      return { consume: true };
-    }
-
-    if (char === "\x1b[A" || char === "\u001B[A") {
-      // Up arrow - previous suggestion
-      if (showSuggestions) {
-        const filtered = getFilteredCommands();
-        selectedSuggestion = (selectedSuggestion - 1 + filtered.length) % filtered.length;
-        app.refresh();
-      }
-      return { consume: true };
-    }
-
-    if (char === "\x1b[B" || char === "\u001B[B") {
-      // Down arrow - next suggestion
-      if (showSuggestions) {
-        const filtered = getFilteredCommands();
-        selectedSuggestion = (selectedSuggestion + 1) % filtered.length;
-        app.refresh();
-      }
-      return { consume: true };
-    }
-
-    if (char === "\r" || char === "\n") {
-      // Enter - accept selected suggestion if visible
-      if (showSuggestions && !isVSCode) {
-        const filtered = getFilteredCommands();
-        if (filtered.length > 0 && selectedSuggestion < filtered.length) {
-          inputValue = filtered[selectedSuggestion].command;
+    } else {
+      // Arrow keys and Tabs for suggestions
+      if (data === "\x1b[A" || data === "\u001B[A") {
+        if (state.showSuggestions) {
+          const filtered = getFilteredCommands();
+          state.selectedSuggestion = (state.selectedSuggestion - 1 + filtered.length) % filtered.length;
         }
+        return { consume: true };
       }
-      handleSubmit();
-      return { consume: true };
-    }
-
-    if (char === "\u007F" || char === "\b") {
-      // Backspace
-      if (inputValue.length > 0) {
-        inputValue = inputValue.slice(0, -1);
+      if (data === "\x1b[B" || data === "\u001B[B") {
+        if (state.showSuggestions) {
+          const filtered = getFilteredCommands();
+          state.selectedSuggestion = (state.selectedSuggestion + 1) % filtered.length;
+        }
+        return { consume: true };
+      }
+      if (data === "\r" || data === "\n") {
+        if (state.showSuggestions) {
+          const filtered = getFilteredCommands();
+          if (filtered.length > 0 && state.selectedSuggestion < filtered.length) {
+            state.inputValue = filtered[state.selectedSuggestion].command;
+            state.showSuggestions = false;
+            return { consume: true };
+          }
+        }
+        handleSubmit();
+        return { consume: true };
+      }
+      if (data === "\u007F" || data === "\b") {
+        if (state.inputValue.length > 0) {
+          state.inputValue = state.inputValue.slice(0, -1);
+          updateSuggestions();
+        }
+        return { consume: true };
+      }
+      if (data === "\t") {
+        if (state.showSuggestions) {
+          const filtered = getFilteredCommands();
+          state.selectedSuggestion = (state.selectedSuggestion + 1) % filtered.length;
+        }
+        return { consume: true };
+      }
+      
+      const code = data.charCodeAt(0);
+      if (data.length >= 1 && code >= 32) {
+        state.inputValue += data;
         updateSuggestions();
-        app.refresh();
+        return { consume: true };
       }
-      return { consume: true };
     }
-
-    if (char === "\t") {
-      // Tab - cycle suggestions
-      if (showSuggestions && !isVSCode) {
-        const filtered = getFilteredCommands();
-        selectedSuggestion = (selectedSuggestion + 1) % filtered.length;
-        app.refresh();
-      }
-      return { consume: true };
-    }
-
-    // Check if it's a normal printable character (not an escape sequence)
-    const code = char.charCodeAt(0);
-    if (char.length >= 1 && code >= 32) {
-      inputValue += char;
-      updateSuggestions();
-      app.refresh();
-      return { consume: true };
-    }
-
     return undefined;
   });
+
+  // 5. Intervals
+  const blinkInterval = setInterval(() => {
+    state.cursorBlink = !state.cursorBlink;
+  }, 500);
+
+  // Auto-cleanup would be nice, but for an example this is fine
+  // or we could wrap app.stop()
+
+  app.run();
 }
 
-// Cleanup intervals on stop
-const originalStop = app.stop.bind(app);
-app.stop = () => {
-  if (blinkInterval) clearInterval(blinkInterval);
-  if (thinkingInterval) clearInterval(thinkingInterval);
-  originalStop();
-};
-
-// Add welcome message
-messages.push({
-  role: "assistant",
-  content: "Welcome to Claude Code! Type a message or use a slash command to get started.",
-  timestamp: new Date(),
-});
-
 if (process.argv[1] === import.meta.filename) {
-  app.run();
+  runClaudeTUI();
 }

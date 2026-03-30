@@ -3,7 +3,7 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@mariozechner/pi-tui";
-import chalk from "chalk";
+import { t } from "./styles.js";
 
 /**
  * Chat message structure for chat bubbles.
@@ -18,17 +18,17 @@ export type ChatMessage = {
  * Chat bubble component for displaying chat messages.
  */
 export class ChatBubble extends PiText {
-  constructor({ message }: { message: ChatMessage }) {
-    super("");
-    this.message = message;
-  }
-
   private message: ChatMessage;
+
+  constructor(props: { message: ChatMessage }) {
+    super("");
+    this.message = props.message;
+  }
 
   render(width: number): string[] {
     const roleTag = this.message.role === 'user'
-      ? chalk.bgBlue.black.bold(' You ')
-      : chalk.bgMagenta.black.bold(' Claude ');
+      ? t.bg_blue_500.text_black.font_bold.apply(' You ')
+      : t.bg_magenta_500.text_black.font_bold.apply(' Claude ');
 
     const lines: string[] = [];
     lines.push('');
@@ -43,12 +43,12 @@ export class ChatBubble extends PiText {
       if (visibleWidth(testLine) <= width - 2) {
         currentLine = testLine;
       } else {
-        lines.push(chalk.white('  ' + currentLine));
+        lines.push(t.text_white.apply('  ' + currentLine));
         currentLine = word;
       }
     }
     if (currentLine) {
-      lines.push(chalk.white('  ' + currentLine));
+      lines.push(t.text_white.apply('  ' + currentLine));
     }
 
     lines.push('');
@@ -60,33 +60,29 @@ export class ChatBubble extends PiText {
  * Text input component with prompt and cursor.
  */
 export class Input extends PiText {
-  constructor({
-    value,
-    placeholder = "Type a message...",
-    cursorVisible = true
-  }: {
+  private value: string;
+  private placeholder: string;
+  private cursorVisible: boolean;
+
+  constructor(props: {
     value: string;
     placeholder?: string;
     cursorVisible?: boolean;
   }) {
     super("");
-    this.value = value;
-    this.placeholder = placeholder;
-    this.cursorVisible = cursorVisible;
+    this.value = props.value;
+    this.placeholder = props.placeholder ?? "Type a message...";
+    this.cursorVisible = props.cursorVisible ?? true;
   }
 
-  private value: string;
-  private placeholder: string;
-  private cursorVisible: boolean;
-
   render(width: number): string[] {
-    const prompt = chalk.blue.bold("> ");
+    const prompt = t.text_blue_500.font_bold.apply("> ");
     let display = this.value;
 
     if (!display && !this.cursorVisible) {
-      display = chalk.gray.dim(this.placeholder);
+      display = t.text_gray_500.font_dim.apply(this.placeholder);
     } else if (this.cursorVisible) {
-      const cursor = chalk.bgWhite.black(" ");
+      const cursor = t.bg_white.text_black.apply(" ");
       if (display.length === 0) {
         display = cursor;
       } else {
@@ -103,29 +99,25 @@ export class Input extends PiText {
  * Slash command suggestion item with selection state.
  */
 export class SlashCommandSuggestion extends PiText {
-  constructor({
-    command,
-    description,
-    selected
-  }: {
+  private command: string;
+  private description: string;
+  private selected: boolean;
+
+  constructor(props: {
     command: string;
     description: string;
     selected: boolean;
   }) {
     super("");
-    this.command = command;
-    this.description = description;
-    this.selected = selected;
+    this.command = props.command;
+    this.description = props.description;
+    this.selected = props.selected;
   }
 
-  private command: string;
-  private description: string;
-  private selected: boolean;
-
   render(width: number): string[] {
-    const prefix = this.selected ? chalk.cyan('▶ ') : '  ';
-    const cmd = chalk.bold.yellow(this.command.padEnd(12));
-    const desc = chalk.dim.gray(this.description);
+    const prefix = this.selected ? t.text_cyan_300.apply('▶ ') : '  ';
+    const cmd = t.font_bold.text_yellow_500.apply(this.command.padEnd(12));
+    const desc = t.font_dim.text_gray_500.apply(this.description);
     const line = prefix + cmd + desc;
     return [truncateToWidth(line, width, "", true)];
   }
