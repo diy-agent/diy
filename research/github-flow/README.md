@@ -7,7 +7,9 @@
 - **Owner**: `chen56`
 - **Project**: `dao` (编号 **13**)
 - **Project ID**: `PVT_kwHOAB8fvs4BTGD4`
-- **Repository**: `whonb/dao`
+- **Repositories**:
+  - `whonb/dao` - 主仓库 monorepo
+  - `chen56/sha` - 辅助工具仓库
 - **看板结构**: 标准 GitHub 看板模板，包含 `Status` 单选项字段
 
 ## 完整开发工作流
@@ -192,7 +194,32 @@ gh project item-edit --id ITEM_ID --field Status --option "Done"
 | `In Review` | 代码审查中 |
 | `Done` | 完成 |
 
+## 管理关联仓库
+
+GitHub Project V2 支持关联多个仓库，所有关联仓库中新建的 issue 和 PR 会自动同步到项目看板。
+
+### 关联新仓库
+
+```bash
+# 语法: gh project link <project-number> --owner <owner> --repo <owner/repo>
+gh project link 13 --owner chen56 --repo chen56/sha
+```
+
+### 列出所有已关联仓库
+
+> **Note**: 当前 gh CLI (v2.86.0) 没有内置命令列出已关联仓库，只能通过 GitHub Web UI 在项目设置中查看。
+
+### 取消关联仓库
+
+```bash
+# 语法: gh project unlink <project-number> --owner <owner> --repo <owner/repo>
+gh project unlink 13 --owner chen56 --repo chen56/sha
+```
+
+> **效果说明**: 关联仓库只用于自动同步新 issue/PR，已有的 issue/PR 需要手动添加到项目。取消关联不会移除项目中已有的 items。
+
 ## 参考链接
 
 - [GitHub CLI 官方文档](https://cli.github.com/manual/)
 - [GitHub Project 文档](https://docs.github.com/en/issues/planning-and-tracking-with-projects)
+- [Adding your project to a repository (Project V2)](https://docs.github.com/en/issues/planning-and-tracking-with-projects/managing-your-project/adding-your-project-to-a-repository)

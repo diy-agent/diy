@@ -112,7 +112,20 @@ run() {
   local current_pwd=$(echo "$PWD" | sed "s@^$HOME@~@" )
   local color_caller="${c_secondary}${caller_script}:${caller_line} ${FUNCNAME[1]}() ${c_reset}"
   local color_pwd="${c_info}${current_pwd} ${c_reset}"
-  local color_cmd="${c_primary}$*${c_reset}"
+
+  # 只给包含空格的参数加上引号，方便复制粘贴
+  local quoted_cmd=""
+  for arg in "$@"; do
+    if [[ "$arg" == *" "* ]]; then
+      quoted_cmd+="\"$arg\" "
+    else
+      quoted_cmd+="$arg "
+    fi
+  done
+  # 移除末尾多余的空格
+  quoted_cmd="${quoted_cmd% }"
+
+  local color_cmd="${c_primary}${quoted_cmd}${c_reset}"
   echo "$color_caller$color_pwd$color_cmd" >&2
   "$@"
 }
