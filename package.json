@@ -16,7 +16,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:all": "npm run test --workspaces --if-present",
-    "check": "tsc --noEmit && eslint . --ext .ts,.tsx",
+    "check": "tsc --noEmit && eslint . --ext .ts,.tsx && shellcheck *.sh",
     "check:all": "npm run check && npm run check --workspaces --if-present",
     "evolve": "tsx packages/dao-cli/src/dao/cli.ts",
     "sync": "tsx packages/dao-cli/src/dao/cli.ts sync",

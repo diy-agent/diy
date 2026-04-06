@@ -29,6 +29,10 @@ Important entrypoints:
 - Use `npm run check:all` when changes span packages or shared build behavior.
 - Prefer the smallest verifiable change over broad refactors.
 
+### Scripting and Error Handling
+
+- Do not hide error messages in scripts (e.g., avoid `2>/dev/null`). All errors should be visible for easier debugging.
+
 ### TypeScript And ESM
 
 - The repo uses strict ESM and NodeNext resolution.
@@ -48,6 +52,14 @@ Important entrypoints:
   2. `.dao/ref/`
   3. `node_modules/`
   4. Online documentation
+
+## Data Handling Guidelines
+
+- Always read data from files when explicitly provided; never invent data not present in the source files.
+
+## Code Quality
+
+- Always test code thoroughly before considering it complete, and be meticulous with shell command escaping, especially when handling variables.
 
 ## Agent Workflow
 

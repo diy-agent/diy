@@ -149,6 +149,7 @@ gh project item-edit \
 |------|------|
 | `./sha.sh work new <branch> "desc"` | 创建新任务 + 分支 |
 | `./sha.sh work accept <issue-num>` | 领取任务 → In Progress |
+| `./sha.sh dev pr` | 提交并创建 PR → In Review |
 | `./sha.sh work list` | 列出所有**未完成**任务 |
 | `gh project item-list 13 --owner chen56` | 列出项目所有 items |
 
@@ -404,4 +405,6 @@ git branch -d dao-<num>-description
 | **Resolution**| Single Select | Duplicate, Wontfix, Invalid |
 | **Estimate** | Number | - |
 | **Start date**| Date | - |
+| **Target date**| Date | - |
+e | - |
 | **Target date**| Date | - |
