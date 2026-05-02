@@ -15,7 +15,9 @@ shopt -s globstar
 shopt -s extglob
 
 # Get the real path of the script directory
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_PATH="$(realpath "$(command -v "${BASH_SOURCE[0]}")")"
+ROOT_DIR="$(dirname "$C_MAC_PATH")"
+
 cd "$ROOT_DIR"
 source "./sha_common.sh"
 
