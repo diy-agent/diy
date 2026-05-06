@@ -2,7 +2,7 @@
 
 ## 需求描述
 
-将 dao-tui 的 `Horizontal/Vertical/Panel` 等容器组件改造为支持 **类组件 + 工厂函数组件** 双模式，类似 React：
+将 xx-tui 的 `Horizontal/Vertical/Panel` 等容器组件改造为支持 **类组件 + 工厂函数组件** 双模式，类似 React：
 - 保持现有类组件方式不变
 - 新增支持工厂函数方式，避免 `this` 绑定问题
 - 函数组件通过容器包装获得普通组件的外观接口
@@ -55,7 +55,7 @@ constructor(input: AnyComponent | ComponentGenerator, gap?: number);
 ## 修改范围
 
 需要修改：
-1. `packages/dao-tui/src/containers.ts` - `Horizontal`, `Vertical`, `Panel` 等容器
+1. `packages/xx-tui/src/containers.ts` - `Horizontal`, `Vertical`, `Panel` 等容器
 2. 类型定义更新
 3. `examples/example.ts` - 示例迁移到新写法作为演示
 

@@ -505,12 +505,12 @@ sync() {
     # run git submodule set-branch --branch main vendor/sha
     run git submodule update --init --recursive --remote
   }
-  dao() {
-    run npx tsx packages/dao-cli/src/dao/cli.ts sync
+  xx() {
+    run npx tsx packages/xx-cli/src/xx/cli.ts sync
   }
   all() {
     submodule
-    dao
+    xx
     nodejs
   }
 }
@@ -526,7 +526,7 @@ clean() {
 # ref: `docs/dev-flow.md`
 # GitHub Project 配置:
 #   Owner: chen56
-#   Project: dao (number 13)
+#   Project: xx (number 13)
 #   Project ID: PVT_kwHOAB8fvs4BTGD4
 #   Repository: xx-agent/xx
 ####################################################################################

@@ -28,16 +28,16 @@ data/
 .claude/worktrees
 .claude/settings.local.json
 
-# DAO ref
-.dao/ref/
-.dao/registry-cache.json
+# xx ref
+.xx/ref/
+.xx/registry-cache.json
 
 # IDEs
 .idea/*
 !.idea/dictionaries/
-!.idea/dao.iml
+!.idea/xx.iml
 !.idea/typescript-compiler.xml
 
-src/dao-core/devtools/client
+src/xx-core/devtools/client
 
 .worktree/

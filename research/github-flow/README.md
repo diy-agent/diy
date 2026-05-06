@@ -5,7 +5,7 @@
 ## 项目信息
 
 - **Owner**: `chen56`
-- **Project**: `dao` (编号 **13**)
+- **Project**: `xx` (编号 **13**)
 - **Project ID**: `PVT_kwHOAB8fvs4BTGD4`
 - **Repositories**:
   - `xx-agent/xx` - 主仓库 monorepo
@@ -64,7 +64,7 @@ git checkout main
 git pull
 
 # 创建功能分支 (建议带上 issue 编号)
-git checkout -b feature/dao-[issue-num]-xxx-feature
+git checkout -b feature/xx-[issue-num]-xxx-feature
 
 # 开发完成后验证 (遵循 CLAUDE.md)
 npm run check
@@ -74,14 +74,14 @@ npm run test
 # 提交推送
 git add .
 git commit -m "feat: implement xxx (close #[issue-num])"
-git push -u origin feature/dao-[issue-num]-xxx-feature
+git push -u origin feature/xx-[issue-num]-xxx-feature
 ```
 
 ### 6. 创建 Pull Request，移动到 In Review
 
 ```bash
 # 创建 PR
-gh pr create --base main --head feature/dao-[issue-num]-xxx-feature \
+gh pr create --base main --head feature/xx-[issue-num]-xxx-feature \
   --title "feat: 实现 xxx 功能" \
   --body "Closes #[issue-num]"
 
@@ -106,7 +106,7 @@ gh pr merge [pr-num] --squash
 # 清理本地分支
 git checkout main
 git pull
-git branch -d feature/dao-[issue-num]-xxx-feature
+git branch -d feature/xx-[issue-num]-xxx-feature
 
 # 如果没自动关闭，手动关闭 Issue
 gh issue close [issue-num]

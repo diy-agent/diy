@@ -1,6 +1,6 @@
 ---
 title: 开发规范
-tags: [dao, 开发]
+tags: [xx, 开发]
 category: 开发
 description: 开发流程、规范
 draft: false
@@ -16,8 +16,8 @@ draft: false
 project-root/        # 项目根目录，main 分支（主工作树）
 ├── .git/
 ├── .worktree/       # 所有特性 worktree 都放在这里
-│   ├── dao-feature-auth/
-│   ├── dao-bug-xxx/
+│   ├── xx-feature-auth/
+│   ├── xx-bug-xxx/
 │   └── ...
 ├── src/
 └── README.md
@@ -39,15 +39,15 @@ project-root/        # 项目根目录，main 分支（主工作树）
 # git checkout main
 # git pull origin main
 # 创建特性分支并在 .worktree/ 目录添加 worktree
-# git worktree add .worktree/dao-feature-<name> -b dao-feature-<name>
-# 例：git worktree add .worktree/dao-feature-auth -b dao-feature-auth
-# 例：git worktree add .worktree/dao-bug-xxx -b dao-bug-xxx
+# git worktree add .worktree/xx-feature-<name> -b xx-feature-<name>
+# 例：git worktree add .worktree/xx-feature-auth -b xx-feature-auth
+# 例：git worktree add .worktree/xx-bug-xxx -b xx-bug-xxx
 ```
 
 新worktree分支创建后首先同步各项资源:
 ```bash
-# npm install , .dao/ref sync , gitmodule sync ...
-cd .worktree/dao-feature-<name>
+# npm install , .xx/ref sync , gitmodule sync ...
+cd .worktree/xx-feature-<name>
 ./sha.sh sync all
 ```
 
@@ -181,14 +181,14 @@ git checkout main
 git pull origin main
 
 # 创建特性分支并在 .worktree/ 目录添加 worktree
-git worktree add .worktree/dao-feature-<name> -b dao-feature-<name>
-# 例：git worktree add .worktree/dao-feature-auth -b dao-feature-auth
-# 例：git worktree add .worktree/dao-bug-xxx -b dao-bug-xxx
+git worktree add .worktree/xx-feature-<name> -b xx-feature-<name>
+# 例：git worktree add .worktree/xx-feature-auth -b xx-feature-auth
+# 例：git worktree add .worktree/xx-bug-xxx -b xx-bug-xxx
 ```
 
 2. **进入 worktree 开发**：
 ```bash
-cd .worktree/dao-feature-<name>
+cd .worktree/xx-feature-<name>
 # 进行开发、测试、提交
 git commit -m "..."
 ```
@@ -208,14 +208,14 @@ git checkout main
 git pull origin main
 
 # 合并特性分支, --no-ff 保commit log 原始阵型
-git merge --no-ff dao-feature-<name>
+git merge --no-ff xx-feature-<name>
 
 # 推送到远端
 git push origin main
 
 # 清理：删除 worktree 和分支
-git worktree remove .worktree/dao-feature-<name>
-git branch -d dao-feature-<name>
+git worktree remove .worktree/xx-feature-<name>
+git branch -d xx-feature-<name>
 ```
 
 **常用命令：**
@@ -262,14 +262,14 @@ gh issue create --title "实现功能: xxx" --body "详细描述" --label "featu
 
 ```bash
 # 创建特性分支和 worktree
-# 分支命名建议带上 issue 编号: dao-<num>-description
-git worktree add .worktree/dao-<num>-description -b dao-<num>-description
+# 分支命名建议带上 issue 编号: xx-<num>-description
+git worktree add .worktree/xx-<num>-description -b xx-<num>-description
 ```
 
 ### 3. 进入 worktree 开发
 
 ```bash
-cd .worktree/dao-<num>-description
+cd .worktree/xx-<num>-description
 # 同步依赖
 ./sha.sh sync all
 ```
@@ -298,14 +298,14 @@ npm run check
 # 提交
 git add .
 git commit -m "feat: implement xxx (close #<issue-num>)"
-git push -u origin dao-<num>-description
+git push -u origin xx-<num>-description
 ```
 
 ### 5. 创建 PR 并合并
 
 ```bash
 # 创建 PR
-gh pr create --base main --head dao-<num>-description \
+gh pr create --base main --head xx-<num>-description \
   --title "feat: xxx" --body "Closes #<issue-num>"
 
 # 审查通过后合并
@@ -321,8 +321,8 @@ git checkout main
 git pull
 
 # 删除 worktree 和分支
-git worktree remove .worktree/dao-<num>-description
-git branch -d dao-<num>-description
+git worktree remove .worktree/xx-<num>-description
+git branch -d xx-<num>-description
 ```
 
 ### 状态移动速查表
@@ -401,7 +401,7 @@ git branch -d dao-<num>-description
 | **Status** | Single Select | Backlog, Ready, In progress, In review, Closed |
 | **Priority**| Single Select | P0, P1, P2, P3 |
 | **Size**     | Single Select | XS, S, M, L, XL |
-| **Module**   | Single Select | sources, dao-tui, acp, cli, tui, dev-flow |
+| **Module**   | Single Select | sources, xx-tui, acp, cli, tui, dev-flow |
 | **Resolution**| Single Select | Duplicate, Wontfix, Invalid |
 | **Estimate** | Number | - |
 | **Start date**| Date | - |

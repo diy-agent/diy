@@ -1,6 +1,6 @@
 ---
 title: agent acp 协议使用报告
-workflow: @dao/research
+workflow: @xx/research
 status: completed
 date: 2026-03-24
 ---
@@ -22,15 +22,15 @@ date: 2026-03-24
    - 会话: `newSession()` 支持 cwd/MCP 配置
    - 文件系统: `AcpFileSystemService` 桥接客户端 FS
 
-3. **dao-core 集成方案**
+3. **xx-core 集成方案**
    - `AcpClientAdapter`: 通用 ACP 适配器类
    - 映射 ACP 事件到 `AgentStreamEvent[]`
    - 回调映射: `requestPermission` → TUI prompt
 
 ### 实现状态
 
-- [x] 在 dao-core 中实现 `AcpClientAdapter` 基础框架
-  - 文件: `packages/dao-core/src/acp-adapter.ts`
+- [x] 在 xx-core 中实现 `AcpClientAdapter` 基础框架
+  - 文件: `packages/xx-core/src/acp-adapter.ts`
   - 导出: `AcpClientAdapter`, `AcpAdapterOptions`
 - [ ] 测试 `gemini --acp` 接入
 - [ ] 实现 TUI 权限确认流程

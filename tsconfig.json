@@ -7,9 +7,9 @@
     "noEmit": false,
     "baseUrl": ".",
     "paths": {
-      "@xx-agent/dao-core": ["./packages/dao-core/src/index.ts"],
-      "@xx-agent/dao-cli": ["./packages/dao-cli/src/main.ts"],
-      "@xx-agent/dao-tui": ["./packages/dao-tui/src/index.ts"]
+      "@xx-agent/xx-core": ["./packages/xx-core/src/index.ts"],
+      "@xx-agent/xx-cli": ["./packages/xx-cli/src/main.ts"],
+      "@xx-agent/xx-tui": ["./packages/xx-tui/src/index.ts"]
     }
   },
   "include": ["packages/*/src", "packages/*/examples"],
@@ -17,6 +17,6 @@
     "node_modules",
     "dist",
     "build",
-    ".dao/ref"
+    ".xx/ref"
   ]
 }
