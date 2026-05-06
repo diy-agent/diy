@@ -1,7 +1,7 @@
 [project]
 name = "xxui"
 version = "0.1.0"
-description = "xxui warp panel..."
+description = "xxui - A thin reactive wrapper over UI frameworks."
 requires-python = ">=3.12"
 dependencies = [
     "marimo>=0.23.2",
