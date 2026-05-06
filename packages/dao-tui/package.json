@@ -1,5 +1,5 @@
 {
-  "name": "@whonb/dao-tui",
+  "name": "@xx-agent/dao-tui",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/src/index.js",

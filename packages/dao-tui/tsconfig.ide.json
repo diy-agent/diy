@@ -7,7 +7,7 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@whonb/dao-tui": [
+      "@xx-agent/dao-tui": [
         "./src/index.ts"
       ],
       "@mariozechner/pi-tui": [

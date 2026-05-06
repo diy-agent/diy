@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { GeminiCliAgent } from '@whonb/dao-core';
+import { GeminiCliAgent } from '@xx-agent/dao-core';
 import { GeminiEventType } from '@google/gemini-cli-core';
 
 async function main() {

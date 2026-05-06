@@ -1,5 +1,5 @@
 {
-  "name": "@whonb/dao-cli",
+  "name": "@xx-agent/dao-cli",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/src/main.js",
@@ -36,6 +36,6 @@
     "@types/marked": "^5.0.2",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.18.1",
-    "@whonb/dao-core": "*"
+    "@xx-agent/dao-core": "*"
   }
 }

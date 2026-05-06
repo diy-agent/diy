@@ -7,7 +7,7 @@
     "baseUrl": ".",
     "paths": {
       "@google/gemini-cli-core": ["../../.dao/ref/github.com/google-gemini/gemini-cli/v0.34.0-preview.0"],
-      "@whonb/dao-core": ["./src/index.ts"]
+      "@xx-agent/dao-core": ["./src/index.ts"]
     }
   },
   "include": ["src", "examples"],

@@ -76,7 +76,7 @@ cd .worktree/dao-feature-<name>
 ```
 
 该命令会自动：
-1. 在 `whonb/dao` 创建新 issue
+1. 在 `xx-agent/xx` 创建新 issue
 2. 将 issue 添加到 project 13
 3. 创建并切换到你指定的分支
 
@@ -351,13 +351,13 @@ git branch -d dao-<num>-description
       "content": {
         "type": "Issue",
         "number": 8,
-        "repository": "whonb/dao",
+        "repository": "xx-agent/xx",
         "title": "feat: xxx",
-        "url": "https://github.com/whonb/dao/issues/8"
+        "url": "https://github.com/xx-agent/xx/issues/8"
       },
       "module": "dev-flow",   // 自定义字段
       "priority": "P2",       // 自定义字段
-      "repository": "https://github.com/whonb/dao"
+      "repository": "https://github.com/xx-agent/xx"
     }
   ]
 }
@@ -371,7 +371,7 @@ git branch -d dao-<num>-description
   "number": 8,
   "title": "feat: xxx",
   "state": "OPEN",
-  "url": "https://github.com/whonb/dao/issues/8",
+  "url": "https://github.com/xx-agent/xx/issues/8",
   "labels": [],
   "assignees": [],
   "author": { "login": "chen56", "name": "Chen Peng" }
@@ -389,7 +389,7 @@ git branch -d dao-<num>-description
   "headRefName": "feature-branch",
   "baseRefName": "main",
   "mergeable": "UNKNOWN",
-  "url": "https://github.com/whonb/dao/pull/2"
+  "url": "https://github.com/xx-agent/xx/pull/2"
 }
 ```
 

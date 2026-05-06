@@ -7,13 +7,13 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@whonb/dao-core": [
+      "@xx-agent/dao-core": [
         "./packages/dao-core/src/index.ts"
       ],
-      "@whonb/dao-cli": [
+      "@xx-agent/dao-cli": [
         "./packages/dao-cli/src/main.ts"
       ],
-      "@whonb/dao-tui": [
+      "@xx-agent/dao-tui": [
         "./packages/dao-tui/src/index.ts"
       ],
       "@eslint/js": [

@@ -1,5 +1,5 @@
 {
-  "name": "@whonb/dao-core",
+  "name": "@xx-agent/dao-core",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/src/index.js",

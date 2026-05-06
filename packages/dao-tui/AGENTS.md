@@ -19,7 +19,7 @@ The TUI framework is integrated with `@vue/reactivity`. By using `reactive` or `
 ### ✅ Good (Reactive Style)
 ```typescript
 import { reactive } from "@vue/reactivity";
-import { createApp, Text } from "@whonb/dao-tui";
+import { createApp, Text } from "@xx-agent/dao-tui";
 
 const state = reactive({ count: 0 });
 setInterval(() => state.count++, 1000);

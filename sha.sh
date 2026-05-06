@@ -28,7 +28,7 @@ source "./sha_common.sh"
 GH_OWNER="chen56"
 GH_PROJECT_NUM="13"
 GH_PROJECT_ID="PVT_kwHOAB8fvs4BTGD4"
-GH_REPO="whonb/dao"
+GH_REPO="xx-agent/xx"
 
 # 获取当前 GitHub 用户名
 _get_gh_user() {
@@ -528,7 +528,7 @@ clean() {
 #   Owner: chen56
 #   Project: dao (number 13)
 #   Project ID: PVT_kwHOAB8fvs4BTGD4
-#   Repository: whonb/dao
+#   Repository: xx-agent/xx
 ####################################################################################
 issue() {
 

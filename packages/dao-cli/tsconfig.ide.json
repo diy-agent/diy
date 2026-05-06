@@ -91,7 +91,7 @@
       "@opentelemetry/semantic-conventions/*": [
         "../../.dao/ref/github.com/open-telemetry/opentelemetry-js/1.40.0/*"
       ],
-      "@whonb/dao-cli": ["./src/main.ts"]
+      "@xx-agent/dao-cli": ["./src/main.ts"]
     }
   },
   "include": ["src"],

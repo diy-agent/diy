@@ -8,7 +8,7 @@
 - **Project**: `dao` (编号 **13**)
 - **Project ID**: `PVT_kwHOAB8fvs4BTGD4`
 - **Repositories**:
-  - `whonb/dao` - 主仓库 monorepo
+  - `xx-agent/xx` - 主仓库 monorepo
   - `chen56/sha` - 辅助工具仓库
 - **看板结构**: 标准 GitHub 看板模板，包含 `Status` 单选项字段
 
@@ -31,7 +31,7 @@ gh project item-list 13 --owner chen56
 
 输出格式：
 ```
-Issue  [标题]  [编号]  whonb/dao  [ITEM-ID]
+Issue  [标题]  [编号]  xx-agent/xx  [ITEM-ID]
 ```
 
 ### 3. 规划：从 Backlog 移动到 Ready

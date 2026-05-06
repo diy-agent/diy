@@ -8,7 +8,7 @@
     "rootDir": "src",
     "baseUrl": ".",
     "paths": {
-      "@whonb/dao-cli": ["./src/main.ts"]
+      "@xx-agent/dao-cli": ["./src/main.ts"]
     }
   },
   "include": ["src"],

@@ -4,7 +4,7 @@
  * Demonstrates how to use the PiCodingAgent with the common agent interface.
  */
 
-import { PiCodingAgent } from '@whonb/dao-core';
+import { PiCodingAgent } from '@xx-agent/dao-core';
 
 async function main() {
 
