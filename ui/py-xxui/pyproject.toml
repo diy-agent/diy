@@ -1,0 +1,44 @@
+[project]
+name = "xxui"
+version = "0.1.0"
+description = "xxui warp panel..."
+requires-python = ">=3.12"
+dependencies = [
+    "marimo>=0.23.2",
+    "panel>=1.8.10",
+    "asyncio>=4.0.0",
+    "param>=2.3.3",
+]
+
+[dependency-groups]
+dev = [
+    "jupyter>=1.1.1",
+    "jupytext>=1.19.1",
+    "jupyterlab>=4.5.6",
+    "pip>=25.3",
+    "jupyterlab-lsp>=5.3.0",
+    "pytest>=9.0.3",
+]
+
+[tool.uv]
+package = true
+
+# `uv python install`的不是官网文件，而是这个项目打包的便携版: https://github.com/astral-sh/python-build-standalone/
+# 镜像较少，参考: https://github.com/tuna/issues/issues/2125
+# 已知镜像站点：
+# - https://mirror.nju.edu.cn/github-release/astral-sh/python-build-standalone/
+# - https://registry.npmmirror.com/-/binary/python-build-standalone/
+# - https://gh-proxy.com/github.com/indygreg/python-build-standalone/releases/download
+# 镜像下载示例：
+# - uv python install --mirror https://registry.npmmirror.com/-/binary/python-build-standalone/ 3.12
+# - UV_PYTHON_INSTALL_MIRROR=https://mirror.nju.edu.cn/github-release/astral-sh/python-build-standalone/ uv python install 3.12
+# pyproject.toml config ref: https://docs.astral.sh/uv/reference/settings/#python-install-mirror
+python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-standalone/"
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+# url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+
+[tool.marimo.runtime]  
+# auto_instantiate = true
+show_tracebacks = true
