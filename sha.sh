@@ -11,7 +11,7 @@ set -o pipefail  # default pipeline status==last command status, If set, status=
 
 ## 开启globstar模式，允许使用**匹配所有子目录,bash4特性，默认是关闭的
 shopt -s globstar
-## 开启后可用排除语法：workspaces=(~ ~/git/chen56/!(applab)/ ~/git/botsay/*/ )
+## 开启后可用排除语法：_workspaces=(~ ~/git/chen56/!(applab)/ ~/git/botsay/*/ )
 shopt -s extglob
 
 # Get the real path of the script directory
@@ -38,9 +38,9 @@ _get_gh_user() {
 # 全局命令不要进入到_c目录
 # cd "$ROOT_DIR"
 
-workspaces=(packages/*/)
-submodules=(vendor/*/)
-worktree_dir=".worktree"
+_workspaces=(packages/*/)
+_submodules=(vendor/*/)
+_worktree_dir=".worktree"
 
 # 获取主分支名称（main 或 master）
 _get_main_branch() {
@@ -463,7 +463,7 @@ dev() {
 }
 
 _ws_run() {
-  for ws in "${workspaces[@]}"; do
+  for ws in "${_workspaces[@]}"; do
     (
       run cd "$ws"
       run "$@"
@@ -477,16 +477,16 @@ ws() {
 }
 
 _sub_run() {
-  for submodule in "${submodules[@]}"; do
+  for submodule in "${_submodules[@]}"; do
     (
-      run cd "$submodule"
+      cd "$submodule"
       run "$@"
     )
   done
 }
 
 
-sub() {
+submodule() {
   pwd()     { _sub_run command pwd; }
   status()  { _sub_run git status; }
   exec()    { _sub_run command "$@"; }
@@ -499,7 +499,7 @@ sub() {
 ####################################################################################
 sync() {
   nodejs() {
-    npm i --workspaces
+    npm i --_workspaces
   }
   submodule() {
     # run git submodule set-branch --branch main vendor/sha
@@ -595,10 +595,10 @@ issue() {
     echo
 
     # Ensure worktree directory exists
-    mkdir -p "$worktree_dir"
+    mkdir -p "$_worktree_dir"
 
     # 创建 worktree
-    local worktree_path="$worktree_dir/$branch_name"
+    local worktree_path="$_worktree_dir/$branch_name"
     if [ -d "$worktree_path" ]; then
       echo "${success}success: Worktree already exists at $worktree_path${reset}"
       exit 0
