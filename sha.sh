@@ -499,7 +499,7 @@ submodule() {
 ####################################################################################
 sync() {
   nodejs() {
-    npm i --_workspaces
+    npm i --workspaces
   }
   submodule() {
     # run git submodule set-branch --branch main vendor/sha
