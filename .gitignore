@@ -30,7 +30,6 @@ data/
 
 # xx ref
 .xx/ref/
-.xx/registry-cache.json
 
 # IDEs
 .idea/*
