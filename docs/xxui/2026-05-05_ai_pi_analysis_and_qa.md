@@ -7,7 +7,7 @@ status: round2_analysis
 rounds: 2
 ---
 
-# DAO UI v0.1 开发问题分析与待确认事项
+# XX UI v0.1 开发问题分析与待确认事项
 
 基于 <2026-05-05_ai_codex_development_spec_v0.1.md> 的阅读分析。
 
@@ -15,7 +15,7 @@ rounds: 2
 
 ## 当前代码状态
 
-- `src/dao_ui/__init__.py`：仅有版本号 `"0.1.0"`，**尚未实现任何代码**。
+- `src/xxui/__init__.py`：仅有版本号 `"0.1.0"`，**尚未实现任何代码**。
 - `tests/` 目录：无测试文件。
 - 已有依赖：`panel>=1.8.10`、`marimo>=0.23.2`、`pytest>=9.0.3`。
 
@@ -35,10 +35,10 @@ Spec 定义两层抽象：
 
 倾向方案 A，符合 spec 继承图（`ScopeNode → UIComponent → PanelButton`）。
 
-Q: 继承ScopeNode → UIComponent → dao_ui.provider.panel.Button
+Q: 继承ScopeNode → UIComponent → xxui.provider.panel.Button
 注意包名
 
-✓ 确认。方案 A，继承链 `ScopeNode → UIComponent → dao_ui.providers.panel.Button`。
+✓ 确认。方案 A，继承链 `ScopeNode → UIComponent → xxui.providers.panel.Button`。
 
 ### Q2: Cell staging rerun 与"组件创建立即挂载"如何共存？
 
@@ -126,7 +126,7 @@ C = TypeVar('C', bound=UIComponent)
 class UIComponent:
     def cell(self: C) -> Callable[[Callable[[C], None]], C]: ...
 ```
-装饰后 `node` 参数获得具体类型（如 `dao_ui.providers.panel.Button`）。
+装饰后 `node` 参数获得具体类型（如 `xxui.providers.panel.Button`）。
 
 ### Q8: `app.mount()` 的行为
 
@@ -134,23 +134,23 @@ Panel 下 `mount()` 调用 `pn.serve()` 或 `pn.Column(...).servable()`？还是
 
 **建议**：provider 定义 `mount(app)` 方法，FakeProvider 只记录调用，PanelProvider 执行实际的 servable 逻辑。
 
-Q: 因为我们放弃了大统一语法，所以app已经不是统一的dao_ui.App而是 app:dao_ui.provider.panel.Provider,这是专门为panel设计的类, 它不应该有mount函数，而应该直接提供servable吧? 即便是root虚拟组件没有对应的Column()之类的实际包装组件，也应该向下寻找实际的 panel 组件for调用其servable()
+Q: 因为我们放弃了大统一语法，所以app已经不是统一的xxui.App而是 app:xxui.provider.panel.Provider,这是专门为panel设计的类, 它不应该有mount函数，而应该直接提供servable吧? 即便是root虚拟组件没有对应的Column()之类的实际包装组件，也应该向下寻找实际的 panel 组件for调用其servable()
 
 ⚠️ **Q2: 需确认**。你的意思是 App 应该是 provider 专属类？
 
 Q2: 肯定是方案B，因为方案A无法安排app.panel_特定widges()，函数爆炸，marimo怎么办？qt怎么办？tui？
-可以安排一个dao_ui.BaseApp的基础类
+可以安排一个xxui.BaseApp的基础类
 
-✓ 确认。方案 B：`dao_ui.BaseApp` 基础类，各 provider 继承。
+✓ 确认。方案 B：`xxui.BaseApp` 基础类，各 provider 继承。
 ```python
-from dao_ui.providers.panel import App
+from xxui.providers.panel import App
 app = App()
 app.markdown("# Title")
 app.servable()   # Panel 专属，向下找首个实际组件调 .target.servable()
 ```
-- `dao_ui.BaseApp`：包含 ScopeNode 根、with context、signal/cell 通用能力
-- `dao_ui.providers.panel.App`：继承 BaseApp，挂 Panel 组件方法（button/text_input/...）+ servable
-- `dao_ui.providers.marimo.App`：继承 BaseApp，挂 marimo 组件方法 + 自己的 serve 入口
+- `xxui.BaseApp`：包含 ScopeNode 根、with context、signal/cell 通用能力
+- `xxui.providers.panel.App`：继承 BaseApp，挂 Panel 组件方法（button/text_input/...）+ servable
+- `xxui.providers.marimo.App`：继承 BaseApp，挂 marimo 组件方法 + 自己的 serve 入口
 - 各 provider App 组件方法名和参数与原生保持一致，不跨 provider 统一
 
 ### Q9: 输入组件初始值 vs signal 值
@@ -190,7 +190,7 @@ Signal 保持纯净，只做存储+依赖通知。provider 同步是 wrapper set
 | 祖先检查 | 遍历链 | P1 实现 `_ancestor_ids: set[int]` |
 | wrapper setter | 只设 signal | signal + target **双写** |
 | App 入口 | `app.mount()` | 各 provider App 自行提供 `servable()` |
-| App 类 | 完全通用 | **方案 B**：`dao_ui.BaseApp` 基类 + provider 继承 |
+| App 类 | 完全通用 | **方案 B**：`xxui.BaseApp` 基类 + provider 继承 |
 
 ## 四、开发计划
 
@@ -205,7 +205,7 @@ Signal 保持纯净，只做存储+依赖通知。provider 同步是 wrapper set
 ### 文件结构
 
 ```text
-src/dao_ui/
+src/xxui/
   __init__.py
   signal.py          # Signal[T] 原语
   scope.py           # ScopeNode, ScopeConfig

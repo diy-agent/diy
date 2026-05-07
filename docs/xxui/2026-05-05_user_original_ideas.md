@@ -11,7 +11,7 @@ status: source_material
 
 我想设计一套薄的封装层UI框架，想法是：
 1. 实现基本组件装配系统，可以对接多种不同的后端框架，比如panel,marimo ui 等，先用这两个，
-import dao.ui as ui
+import xxui as ui
 app = ui.use(Panel())
 app.button("xxx") # 内部在页面上挂载一个button
 2 对接的形式是类似nicegui/solara.dev 这样的通过with层级装配组件的方式，通过上下文父对象隐含的构造父子关系，比如执行
@@ -166,7 +166,7 @@ def MyButton(text):
 ### 组件树/Runtime Scope Node抽象范例:
 
 ```
-import dao_ui as ui
+import xxui as ui
 app = ui.app(provider=xxx,scope={
     mode:"prod"
     refresh = ui.scheduler.realtime_rerun_scheduler() if app.is_dev else ui.scheduler.period_scheduler(period="10ms")

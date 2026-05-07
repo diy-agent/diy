@@ -6,7 +6,7 @@ last_updated: 2026-05-05
 status: index
 ---
 
-# DAO UI 文档索引
+# XX UI 文档索引
 
 ## 文件命名规则
 

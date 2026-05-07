@@ -6,11 +6,11 @@ last_updated: 2026-05-04
 status: process_draft
 ---
 
-# DAO UI Framework 初步规格（AI Coding Draft v0.1）
+# XX UI Framework 初步规格（AI Coding Draft v0.1）
 
 ## 项目目标
 
-DAO UI 是一个：
+XX UI 是一个：
 
 > “Python-first、signal/reactive 驱动、树形组件 DSL、多后端适配”的薄封装 UI 框架。
 
@@ -37,10 +37,10 @@ DAO UI 是一个：
 
 ## 1. 薄封装（Thin Layer）
 
-DAO UI 只是：
+XX UI 只是：
 
 ```text id="whosyx"
-DAO UI
+XX UI
     ↓
 Panel / marimo / Qt
 ```
@@ -48,7 +48,7 @@ Panel / marimo / Qt
 不是：
 
 ```text id="8npzbu"
-DAO UI Runtime
+XX UI Runtime
     ↓
 HTML Renderer
 ```
@@ -110,7 +110,7 @@ Panel / marimo / Qt
 
 # 三、核心概念
 
-DAO UI 中有四种核心对象：
+XX UI 中有四种核心对象：
 
 | 概念        | 作用          |
 | --------- | ----------- |
@@ -216,7 +216,7 @@ v0.1 仅支持：
 
 # rerun 粒度 ≠ 组件粒度
 
-DAO UI 不采用：
+XX UI 不采用：
 
 ```python id="phhsp4"
 @component
@@ -516,7 +516,7 @@ s.value
 
 ## 目标
 
-DAO UI 不统一 runtime。
+XX UI 不统一 runtime。
 
 而是：
 
@@ -542,11 +542,11 @@ marimo：
 
 * 仍然符合 notebook rerun 模型
 
-DAO UI 不强行统一它们。
+XX UI 不强行统一它们。
 
 ---
 
-## DAO UI 负责统一：
+## XX UI 负责统一：
 
 * signal
 * rerun
@@ -557,7 +557,7 @@ DAO UI 不强行统一它们。
 
 # 十一、禁止事项
 
-DAO UI 不做：
+XX UI 不做：
 
 ---
 
@@ -614,7 +614,7 @@ useMemo()
 
 # 十二、Notebook 设计方向
 
-DAO UI：
+XX UI：
 
 # 不是 notebook framework
 
@@ -624,7 +624,7 @@ DAO UI：
 
 ---
 
-## DAO notebook 特点
+## XX notebook 特点
 
 希望 notebook：
 
@@ -732,7 +732,7 @@ signal 本身已经：
 
 # 十四、AI Coding 友好性（重要）
 
-DAO UI 的一个核心目标：
+XX UI 的一个核心目标：
 
 # 降低 AI coding 理解难度。
 

@@ -6,7 +6,7 @@ last_updated: 2026-05-04
 status: process_draft
 ---
 
-# DAO UI API 设计文档 v0.2
+# XX UI API 设计文档 v0.2
 
 > **实验阶段**：当前版本仅支持单线程、同步代码。Async 支持后续再议。
 
@@ -15,7 +15,7 @@ status: process_draft
 ## 一、项目定位
 
 ```python
-# DAO UI 是薄封装层，不是新框架
+# XX UI 是薄封装层，不是新框架
 app = ui.App(render=PanelRender())  # 在 Panel 之上封装
 app.Button("OK")                     # 立即创建 Panel Button 并挂载
 
@@ -169,7 +169,7 @@ items.value = items.value[1:]  # 会触发通知
 ### 5.1 根容器
 
 ```python
-import dao_ui as ui
+import xxui as ui
 
 app = ui.App(render=PanelRender())
 # current_context = app（根容器）
@@ -472,11 +472,11 @@ app = ui.App(render=PanelRender())   # Panel
 
 ### 9.2 后端遵循原框架规则
 
-DAO UI 不统一 runtime：
+XX UI 不统一 runtime：
 - Panel：仍是 persistent widget model
 - marimo：仍是 notebook rerun 模型
 
-DAO UI 统一的是：signal、rerun、context stack、component DSL。
+XX UI 统一的是：signal、rerun、context stack、component DSL。
 
 ### 9.3 组件创建立即映射
 
@@ -515,7 +515,7 @@ app.Button("OK")
 ### 示例 1：计数器
 
 ```python
-import dao_ui as ui
+import xxui as ui
 
 app = ui.App(render=PanelRender())
 count = ui.signal(0)
@@ -538,7 +538,7 @@ def _():
 ### 示例 2：Todo 列表
 
 ```python
-import dao_ui as ui
+import xxui as ui
 
 app = ui.App(render=PanelRender())
 items = ui.signal(["Buy milk", "Write code"])
@@ -569,7 +569,7 @@ TodoList(app)
 ### 示例 3：带信号联动的面板
 
 ```python
-import dao_ui as ui
+import xxui as ui
 
 app = ui.App(render=PanelRender())
 
