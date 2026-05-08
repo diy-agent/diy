@@ -25,9 +25,9 @@ source "./sha_common.sh"
 ####################################################################################
 # GitHub Project 工作流配置
 ####################################################################################
-GH_OWNER="chen56"
-GH_PROJECT_NUM="13"
-GH_PROJECT_ID="PVT_kwHOAB8fvs4BTGD4"
+GH_OWNER="xx-agent"
+GH_PROJECT_NUM="2"
+GH_PROJECT_ID="PVT_kwDOENC_Tc4BXDLA"
 GH_REPO="xx-agent/xx"
 
 # 获取当前 GitHub 用户名
@@ -459,6 +459,62 @@ dev() {
     fi
 
     echo
+  }
+
+  # 合并 PR (squash merge)
+  # Usage: ./sha.sh dev merge_pr
+  # 必须在 worktree 子目录执行
+  merge_pr() {
+    local branch=$(git branch --show-current)
+    local main_branch=$(_get_main_branch)
+
+    if [[ "$branch" == "$main_branch" ]]; then
+      echo "${error}error: Must run from a worktree branch, not main${reset}"
+      exit 1
+    fi
+
+    local pr_num
+    pr_num=$(run gh pr list --repo "$GH_REPO" --head "$branch" --state open --json number -q ".[0].number")
+    if [[ -z "$pr_num" ]]; then
+      echo "${error}error: No open PR found for branch '$branch'${reset}"
+      exit 1
+    fi
+
+    run gh pr merge "$pr_num" --repo "$GH_REPO" --squash
+    echo "${success}success: PR #$pr_num merged (squash)${reset}"
+  }
+
+  # 清理 worktree 和本地分支
+  # Usage: ./sha.sh dev remove
+  # 必须在 worktree 子目录执行
+  remove() {
+    local branch=$(git branch --show-current)
+    local main_branch=$(_get_main_branch)
+
+    if [[ "$branch" == "$main_branch" ]]; then
+      echo "${error}error: Must run from a worktree branch, not main${reset}"
+      exit 1
+    fi
+
+    local worktree_path="$ROOT_DIR/$_worktree_dir/$branch"
+
+    # 切回 main 并拉取最新
+    run git checkout "$main_branch"
+    run git pull
+
+    # 删除 worktree
+    if [[ -d "$worktree_path" ]]; then
+      run git worktree remove "$worktree_path"
+    else
+      echo "${warning}warning: Worktree path '$worktree_path' not found, skipping${reset}"
+    fi
+
+    # 删除本地分支
+    if git show-ref --verify --quiet "refs/heads/$branch"; then
+      run git branch -d "$branch"
+    fi
+
+    echo "${success}success: Removed worktree and branch '$branch'${reset}"
   }
 }
 
