@@ -638,7 +638,7 @@ issue() {
       (["Issue", "Status", "Prio", "Repository", "Module", "Title"] | @tsv),
       (["-----", "------", "----", "------", "------", "-----"] | @tsv),
       ((if type == "object" and .items then .items else . end)[]
-       | select(.status != "Done")
+       | select(.status == "Ready" or .status == "In progress" or .status == "In review")
        | select(.content != null)
        | ["#\(.content.number)", .status, .priority // "-", .content.repository // "-",  .module // "-", .content.title]
        | @tsv)
