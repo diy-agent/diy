@@ -2,12 +2,23 @@
 #
 # py-xxui 开发脚本入口
 #
-# 命令：
-#   test [args]  - 运行 pytest
-#   check        - ruff lint + format check + test
-#   fix          - ruff 自动修复
-#   panel        - 启动 Panel 示例服务
-#   clean        - 清理 build/dist
+# ── 编写规则 ────────────────────────────────────
+# 1. 定义函数即为子命令：`foo() { ... }` → `./sha.sh foo`
+# 2. 命令可嵌套：函数内再定义函数 → `./sha.sh foo bar`
+# 3. 用 `run` 执行外部命令（带彩色日志）：`run uv run pytest`
+# 4. 可用颜色变量：$primary $secondary $error $info $reset
+# 5. 文件末尾保留 `sha "$@"` 调度入口
+#
+# ── 执行链 ──────────────────────────────────────
+# sha.sh → source ../../sha_common.sh → source vendor/sha/sha.bash
+#        → sha "$@" 解析命令 → 调用对应函数
+#
+# ── 示例 ─────────────────────────────────────────
+# build() {
+#   subcommand() { run echo "subcommand"; }
+#   run npm run build
+# }
+# 调用：./sha.sh build subcommand
 #
 
 # shellcheck disable=SC2329,SC2317,SC2034
@@ -47,9 +58,6 @@ fix() {
 panel() {
   run uv run panel serve examples/*.pn.py
 }
-####################################################
-# app entry script & _root cmd
-####################################################
 
 sha "$@"
 
