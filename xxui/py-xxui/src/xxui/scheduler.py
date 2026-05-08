@@ -3,7 +3,9 @@
 Scheduler 是 ScopeNode 的配置 facet，不作为全局单例。
 v0.1：ImmediateScheduler（同步执行/rerun 中延迟）。
 """
-from typing import Callable
+
+from collections.abc import Callable
+
 from xxui import signal as signal_mod
 
 

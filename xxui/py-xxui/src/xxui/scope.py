@@ -7,9 +7,12 @@
 - Signal 挂载与生命周期
 - Cell 依赖追踪与 rerun（staging 原子替换）
 """
+
 from __future__ import annotations
-from typing import Any, Callable, TypeVar
+
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any, TypeVar
 
 C = TypeVar("C", bound="ScopeNode")
 
@@ -20,8 +23,9 @@ class ScopeConfig:
 
     所有字段可选；未设置时向上追溯祖先配置。
     """
-    mode: str | None = None           # "dev" | "prod"
-    scheduler: object | None = None   # Scheduler 实例
+
+    mode: str | None = None  # "dev" | "prod"
+    scheduler: object | None = None  # Scheduler 实例
 
 
 class ScopeNode:
@@ -113,10 +117,12 @@ class ScopeNode:
         cell 函数接收当前 wrapper node 作为参数。
         定义时立即首次执行，之后依赖的 signal 变化时自动 rerun。
         """
+
         def decorator(fn: Callable[[C], None]) -> C:
             self._cell_fn = fn  # type: ignore[assignment]
             self._execute_cell(initial=True)
             return self
+
         return decorator
 
     def _mark_dirty(self) -> None:
@@ -131,6 +137,7 @@ class ScopeNode:
         - cell 执行期间 self 作为当前 context
         """
         from xxui import signal as signal_mod
+
         fn = self._cell_fn
         if fn is None:
             return
@@ -154,6 +161,7 @@ class ScopeNode:
         signal_mod._rerun_depth += 1
 
         from xxui.debug import get_debug
+
         debug = get_debug(self)
         debug.record_rerun()
 

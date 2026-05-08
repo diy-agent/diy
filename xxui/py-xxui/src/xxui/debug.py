@@ -3,7 +3,9 @@
 v0.1 最小实现：错误捕获、rerun 计数、dev/prod 区分。
 数据模型预留扩展：日志策略、通知渠道等。
 """
+
 from __future__ import annotations
+
 import traceback
 
 

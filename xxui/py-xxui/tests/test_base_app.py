@@ -5,15 +5,17 @@ BaseApp 是各 provider App 的基类，提供：
 - app.signal() 创建 scope signal
 - 上下文栈管理
 """
-import pytest
-from xxui.base_app import BaseApp
-from xxui.signal import Signal
-from xxui.scope import ScopeNode
 
+import pytest
+
+from xxui.base_app import BaseApp
+from xxui.scope import ScopeNode
+from xxui.signal import Signal
 
 # ═══════════════════════════════════════════════
 # FakeApp：测试用最小 App
 # ═══════════════════════════════════════════════
+
 
 class FakeMarkdown(ScopeNode):
     """测试用 markdown 组件。"""
@@ -59,6 +61,7 @@ class FakeApp(BaseApp):
 # 构造
 # ═══════════════════════════════════════════════
 
+
 class TestBaseAppConstruction:
     """BaseApp / FakeApp 构造。"""
 
@@ -74,6 +77,7 @@ class TestBaseAppConstruction:
 # ═══════════════════════════════════════════════
 # with context 构树
 # ═══════════════════════════════════════════════
+
 
 class TestWithContext:
     """with 语法构建 parent-child 树。"""
@@ -124,6 +128,7 @@ class TestWithContext:
 # app.signal()
 # ═══════════════════════════════════════════════
 
+
 class TestAppSignal:
     """app.signal() 创建带 scope 的 Signal。"""
 
@@ -162,6 +167,7 @@ class TestAppSignal:
 # ═══════════════════════════════════════════════
 # 上下文栈
 # ═══════════════════════════════════════════════
+
 
 class TestContextStack:
     """BaseApp 内部上下文栈管理。"""

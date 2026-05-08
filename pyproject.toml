@@ -1,0 +1,14 @@
+[project]
+name = "xx-monorepo"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["xxui/py-xxui"]
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"

@@ -3,12 +3,13 @@
 Scheduler 是 ScopeNode facet，决定 cell rerun 的时机策略。
 v0.1 支持 immediate 和 periodic 两种。
 """
-from xxui.scheduler import ImmediateScheduler
 
+from xxui.scheduler import ImmediateScheduler
 
 # ═══════════════════════════════════════════════
 # ImmediateScheduler
 # ═══════════════════════════════════════════════
+
 
 class TestImmediateScheduler:
     """immediate scheduler：enqueue 时同步执行。"""
@@ -63,17 +64,20 @@ class TestImmediateScheduler:
 # Scheduler 与 ScopeNode 配置集成
 # ═══════════════════════════════════════════════
 
+
 class TestSchedulerConfig:
     """scheduler 通过 ScopeConfig 挂到 ScopeNode 上。"""
 
     def test_immediate_scheduler_from_config(self):
-        from xxui.scope import ScopeNode, ScopeConfig
+        from xxui.scope import ScopeConfig, ScopeNode
+
         sched = ImmediateScheduler()
         node = ScopeNode(config=ScopeConfig(scheduler=sched))
         assert node.get_config("scheduler") is sched
 
     def test_child_inherits_parent_scheduler(self):
-        from xxui.scope import ScopeNode, ScopeConfig
+        from xxui.scope import ScopeConfig, ScopeNode
+
         sched = ImmediateScheduler()
         parent = ScopeNode(config=ScopeConfig(scheduler=sched))
         child = ScopeNode()

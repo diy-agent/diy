@@ -6,16 +6,16 @@ Debug 是 scope 能力，提供：
 - cell rerun 计数
 - 跨 scope 访问警告
 """
-import pytest
-from xxui.scope import ScopeNode, ScopeConfig
-from xxui.scheduler import ImmediateScheduler
-from xxui.signal import Signal
-from xxui.debug import DebugInfo
 
+from xxui.debug import DebugInfo
+from xxui.scheduler import ImmediateScheduler
+from xxui.scope import ScopeConfig, ScopeNode
+from xxui.signal import Signal
 
 # ═══════════════════════════════════════════════
 # DebugInfo 基础
 # ═══════════════════════════════════════════════
+
 
 class TestDebugInfoBasics:
     """DebugInfo 记录 scope 运行时信息。"""
@@ -43,6 +43,7 @@ class TestDebugInfoBasics:
 # cell 执行错误捕获
 # ═══════════════════════════════════════════════
 
+
 class TestCellErrorCapture:
     """cell rerun 失败时错误被 debug 系统捕获。"""
 
@@ -51,10 +52,12 @@ class TestCellErrorCapture:
 
         class FakeApp(ScopeNode):
             def __init__(self):
-                super().__init__(config=ScopeConfig(
-                    mode="dev",
-                    scheduler=ImmediateScheduler(),
-                ))
+                super().__init__(
+                    config=ScopeConfig(
+                        mode="dev",
+                        scheduler=ImmediateScheduler(),
+                    )
+                )
                 self._context_stack = [self]
 
             @property
@@ -114,6 +117,7 @@ class TestCellErrorCapture:
 # rerun 计数
 # ═══════════════════════════════════════════════
 
+
 class TestRerunCount:
     """cell 每次执行增加 rerun_count。"""
 
@@ -122,10 +126,12 @@ class TestRerunCount:
 
         class FakeApp(ScopeNode):
             def __init__(self):
-                super().__init__(config=ScopeConfig(
-                    mode="dev",
-                    scheduler=ImmediateScheduler(),
-                ))
+                super().__init__(
+                    config=ScopeConfig(
+                        mode="dev",
+                        scheduler=ImmediateScheduler(),
+                    )
+                )
                 self._context_stack = [self]
 
             @property

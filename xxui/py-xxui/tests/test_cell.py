@@ -3,14 +3,16 @@
 Cell 是 rerun 单位。普通函数不是 reactive component。
 cell 函数接收当前 wrapper node 参数。定义时首次执行，依赖变化时自动 rerun。
 """
-import pytest
-from xxui.scope import ScopeNode, ScopeConfig
-from xxui.scheduler import ImmediateScheduler
 
+import pytest
+
+from xxui.scheduler import ImmediateScheduler
+from xxui.scope import ScopeConfig, ScopeNode
 
 # ═══════════════════════════════════════════════
 # 测试辅助
 # ═══════════════════════════════════════════════
+
 
 class FakeMarkdown(ScopeNode):
     def __init__(self, content: str) -> None:
@@ -23,7 +25,7 @@ class FakeColumn(ScopeNode):
 
     def __init__(self) -> None:
         super().__init__()
-        self._app: "FakeApp | None" = None
+        self._app: FakeApp | None = None
 
     def __enter__(self) -> "FakeColumn":
         assert self._app is not None
@@ -61,6 +63,7 @@ class FakeApp(ScopeNode):
 
     def signal(self, value):
         from xxui.signal import Signal
+
         sig = Signal(value)
         self._current._mount_signal(sig)
         return sig
@@ -80,6 +83,7 @@ class FakeApp(ScopeNode):
 # ═══════════════════════════════════════════════
 # cell 基础
 # ═══════════════════════════════════════════════
+
 
 class TestCellBasics:
     """cell 定义时立即首次执行，接收 node 参数。"""
@@ -117,6 +121,7 @@ class TestCellBasics:
 # ═══════════════════════════════════════════════
 # 依赖追踪
 # ═══════════════════════════════════════════════
+
 
 class TestCellDependencyTracking:
     """cell 执行时读取 signal.value 自动注册依赖。"""
@@ -170,6 +175,7 @@ class TestCellDependencyTracking:
 # ═══════════════════════════════════════════════
 # signal 更新触发 rerun
 # ═══════════════════════════════════════════════
+
 
 class TestCellRerun:
     """signal 变化时自动 rerun 依赖 cell。"""
@@ -235,6 +241,7 @@ class TestCellRerun:
 # staging：rerun 原子替换 children
 # ═══════════════════════════════════════════════
 
+
 class TestCellStaging:
     """cell rerun 时 staging 收集新 children，成功后原子替换。"""
 
@@ -283,6 +290,7 @@ class TestCellStaging:
 # rerun 事务：防嵌套、写 signal enqueue
 # ═══════════════════════════════════════════════
 
+
 class TestCellTransaction:
     """rerun 中写 signal 只 enqueue，不嵌套执行。"""
 
@@ -307,6 +315,7 @@ class TestCellTransaction:
 # ═══════════════════════════════════════════════
 # 普通函数不是 reactive
 # ═══════════════════════════════════════════════
+
 
 class TestPlainFunctionNotReactive:
     """普通 Python 函数不自动 rerun。只有 .cell() 标记的才响应。"""
@@ -336,29 +345,30 @@ class TestPlainFunctionNotReactive:
 # 跨 scope signal 访问
 # ═══════════════════════════════════════════════
 
+
 class TestCrossScopeSignal:
     """子树外访问 signal：dev 报错。"""
 
     def test_cross_scope_read_raises_in_dev(self):
         from xxui.signal import ScopeViolationError
+
         app = FakeApp(config=ScopeConfig(mode="dev", scheduler=ImmediateScheduler()))
 
-        with app.column() as left:
+        with app.column() as _left:
             secret = app.signal("left-secret")
 
         # right column 的 cell 读取 left column 的 signal → 跨 scope
-        with pytest.raises(ScopeViolationError):
-            with app.column() as right:
+        with pytest.raises(ScopeViolationError), app.column() as right:
 
-                @right.cell()
-                def _(node):
-                    _ = secret.value  # 跨 scope！
+            @right.cell()
+            def _(node):
+                _ = secret.value  # 跨 scope！
 
     def test_cross_scope_no_error_in_prod(self):
         """prod 模式不报错，但也不注册依赖。"""
         app = FakeApp(config=ScopeConfig(mode="prod", scheduler=ImmediateScheduler()))
 
-        with app.column() as left:
+        with app.column() as _left:
             secret = app.signal("left-secret")
 
         # prod 模式不应该报错

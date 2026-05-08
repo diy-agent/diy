@@ -6,12 +6,13 @@ ScopeNode 是 runtime 树节点，负责：
 - 祖先集合 O(1) 查询
 - Signal 挂载点的生命周期
 """
-from xxui.scope import ScopeNode, ScopeConfig
 
+from xxui.scope import ScopeConfig, ScopeNode
 
 # ═══════════════════════════════════════════════
 # 树结构
 # ═══════════════════════════════════════════════
+
 
 class TestScopeNodeTree:
     """ScopeNode 构成一棵树。"""
@@ -47,6 +48,7 @@ class TestScopeNodeTree:
 # ═══════════════════════════════════════════════
 # 祖先集合 O(1) 查询
 # ═══════════════════════════════════════════════
+
 
 class TestAncestorIds:
     """_ancestor_ids 支持 O(1) 判断节点是否在子树内。"""
@@ -93,6 +95,7 @@ class TestAncestorIds:
 # 配置向上追溯
 # ═══════════════════════════════════════════════
 
+
 class TestScopeConfigLookup:
     """get_config 向上追溯：自己 → 父 → 祖父 → 默认值。"""
 
@@ -137,11 +140,13 @@ class TestScopeConfigLookup:
 # Signal 挂载
 # ═══════════════════════════════════════════════
 
+
 class TestScopeNodeSignal:
     """ScopeNode 是 signal 的 owner，记录挂载的 signal。"""
 
     def test_mount_signal_sets_owner(self):
         from xxui.signal import Signal
+
         node = ScopeNode()
         sig = Signal(0)
         node._mount_signal(sig)
@@ -149,6 +154,7 @@ class TestScopeNodeSignal:
 
     def test_mounted_signals_tracked(self):
         from xxui.signal import Signal
+
         node = ScopeNode()
         a = Signal(1)
         b = Signal(2)

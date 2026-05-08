@@ -2,12 +2,13 @@
 
 Signal 是 xxui 的状态原语，独立于 App/UI 存在。
 """
-from xxui.signal import Signal
 
+from xxui.signal import Signal
 
 # ═══════════════════════════════════════════════
 # 构造
 # ═══════════════════════════════════════════════
+
 
 class TestSignalConstruction:
     """Signal 可独立构造，不依赖 App。"""
@@ -27,6 +28,7 @@ class TestSignalConstruction:
 # 读写
 # ═══════════════════════════════════════════════
 
+
 class TestSignalReadWrite:
     """Signal.value 基本读写语义。"""
 
@@ -43,6 +45,7 @@ class TestSignalReadWrite:
 # ═══════════════════════════════════════════════
 # 观察者
 # ═══════════════════════════════════════════════
+
 
 class TestSignalObservers:
     """Signal 值变化时通知已注册的观察者，相等值不触发。"""
@@ -108,6 +111,7 @@ class TestSignalObservers:
 # 所有权（为 scope 检查预留）
 # ═══════════════════════════════════════════════
 
+
 class TestSignalOwnership:
     """Signal 记录所属 ScopeNode，用于子树访问检查。"""
 
@@ -125,6 +129,7 @@ class TestSignalOwnership:
 # ═══════════════════════════════════════════════
 # 依赖追踪（cell 构建于其上）
 # ═══════════════════════════════════════════════
+
 
 class TestSignalDependencyTracking:
     """Signal 提供依赖注册钩子，cell 系统构建于其上。"""

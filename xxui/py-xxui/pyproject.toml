@@ -18,6 +18,7 @@ dev = [
     "pip>=25.3",
     "jupyterlab-lsp>=5.3.0",
     "pytest>=9.0.3",
+    "ruff>=0.15.12",
 ]
 
 [tool.uv]
@@ -39,6 +40,38 @@ python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-st
 url = "https://mirrors.aliyun.com/pypi/simple/"
 # url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
 
+# ========== Ruff 配置 ==========
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "F",      # pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking
+]
+ignore = [
+    "E501",    # line too long (交给 formatter 处理)
+    "B008",    # function call in default argument
+    "TC003",   # stdlib import into type-checking block (运行时需要)
+    "UP046",   # Generic subclass (兼容旧写法)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["xxui"]
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = true
+
+# ========== Marimo 配置 ==========
 [tool.marimo.runtime]  
 # auto_instantiate = true
 show_tracebacks = true

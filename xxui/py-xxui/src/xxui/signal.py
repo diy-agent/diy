@@ -3,8 +3,12 @@
 Signal 是独立 runtime primitive，可直接构造，不依赖 App。
 UI 响应式 rerun 需用 app.signal() 创建 scope signal。
 """
+
 from __future__ import annotations
-from typing import TypeVar, Generic, Callable
+
+import contextlib
+from collections.abc import Callable
+from typing import Generic, TypeVar
 
 T = TypeVar("T")
 
@@ -18,6 +22,7 @@ _rerun_depth: int = 0
 
 class ScopeViolationError(Exception):
     """跨 scope 访问 signal 异常。"""
+
     pass
 
 
@@ -51,7 +56,7 @@ class Signal(Generic[T]):
                 mode = _current_cell_node.get_config("mode")  # type: ignore[attr-defined]
                 if mode == "dev":
                     raise ScopeViolationError(
-                        f"Cross-scope signal access: cell node not in signal owner's subtree"
+                        "Cross-scope signal access: cell node not in signal owner's subtree"
                     )
                 # prod: warn only, skip dependency
         # 依赖收集（跨 scope 访问不注册依赖）
@@ -88,10 +93,9 @@ class Signal(Generic[T]):
         self._observers.append(callback)
 
         def unsubscribe() -> None:
-            try:
+            # TODO 为什么吃掉异常？
+            with contextlib.suppress(ValueError):
                 self._observers.remove(callback)
-            except ValueError:
-                pass
 
         return unsubscribe
 

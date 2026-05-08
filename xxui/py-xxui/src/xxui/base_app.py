@@ -1,12 +1,15 @@
 """BaseApp — xxui App 基类。
 
-各 provider App（Panel、marimo）继承 BaseApp。
+各 provider App（Panel 等）继承 BaseApp。
 提供 with context 管理、app.signal()、上下文栈。
 """
+
 from __future__ import annotations
+
 from typing import TypeVar
-from xxui.signal import Signal
+
 from xxui.scope import ScopeNode
+from xxui.signal import Signal
 
 T = TypeVar("T")
 

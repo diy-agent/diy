@@ -3,17 +3,17 @@
 PanelApp 是 Panel 专属的 xxui App。
 组件是 Panel 原生组件的薄包装，参数保持 Panel 风格。
 """
+
 import panel as pn
+
 from xxui.providers.panel import (
     PanelApp,
-    PanelColumn, PanelRow, PanelCard,
-    PanelButton, PanelTextInput, PanelRadioButtonGroup, PanelMarkdown,
 )
-
 
 # ═══════════════════════════════════════════════
 # 构造与入口
 # ═══════════════════════════════════════════════
+
 
 class TestPanelAppConstruction:
     """PanelApp 构造与 provider 标识。"""
@@ -24,6 +24,7 @@ class TestPanelAppConstruction:
 
     def test_app_is_base_app(self):
         from xxui.base_app import BaseApp
+
         app = PanelApp()
         assert isinstance(app, BaseApp)
 
@@ -31,6 +32,7 @@ class TestPanelAppConstruction:
 # ═══════════════════════════════════════════════
 # 组件参数保持 Panel 风格
 # ═══════════════════════════════════════════════
+
 
 class TestComponentPanelStyle:
     """组件参数与 Panel 原生保持一致。"""
@@ -61,6 +63,7 @@ class TestComponentPanelStyle:
 # ═══════════════════════════════════════════════
 # with context 构建 Panel 树
 # ═══════════════════════════════════════════════
+
 
 class TestWithContextPanelTree:
     """with 语法在 Panel 容器中构建父子关系。"""
@@ -95,6 +98,7 @@ class TestWithContextPanelTree:
 # 输入组件 value ↔ signal
 # ═══════════════════════════════════════════════
 
+
 class TestInputComponentSignal:
     """输入组件的 .value 代理到 signal.value。"""
 
@@ -124,6 +128,7 @@ class TestInputComponentSignal:
 # wrapper 公开 native target
 # ═══════════════════════════════════════════════
 
+
 class TestWrapperExposesTarget:
     """xxui 是薄层，用户可直接访问 .target。"""
 
@@ -147,11 +152,13 @@ class TestWrapperExposesTarget:
 # app.signal() 在 Panel context 中
 # ═══════════════════════════════════════════════
 
+
 class TestPanelAppSignal:
     """app.signal() 创建 scope signal 并参与 cell rerun。"""
 
     def test_signal_inside_panel_container(self):
         from xxui.signal import Signal
+
         app = PanelApp()
         with app.column() as col:
             sig = app.signal(42)
@@ -162,10 +169,13 @@ class TestPanelAppSignal:
         """cell 内使用 Panel 组件，signal 变化时 rerun。"""
         from xxui.scheduler import ImmediateScheduler
         from xxui.scope import ScopeConfig
-        app = PanelApp(config=ScopeConfig(
-            mode="dev",
-            scheduler=ImmediateScheduler(),
-        ))
+
+        app = PanelApp(
+            config=ScopeConfig(
+                mode="dev",
+                scheduler=ImmediateScheduler(),
+            )
+        )
         count = app.signal(0)
 
         col = app.column()
@@ -184,6 +194,7 @@ class TestPanelAppSignal:
 # ═══════════════════════════════════════════════
 # servable
 # ═══════════════════════════════════════════════
+
 
 class TestPanelServable:
     """servable() 找到首个实际 Panel 组件并调用 .servable()。"""

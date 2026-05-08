@@ -3,13 +3,17 @@
 组件参数尽量与 Panel 保持一致。
 xxui 在 wrapper 上附加 ScopeNode、Signal、rerun、debug、lifetime 能力。
 """
+
 from __future__ import annotations
+
 from typing import Any, TypeVar
+
 import panel as pn
+
 from xxui.base_app import BaseApp
-from xxui.signal import Signal
-from xxui.scope import ScopeNode, ScopeConfig
 from xxui.scheduler import ImmediateScheduler
+from xxui.scope import ScopeConfig, ScopeNode
+from xxui.signal import Signal
 
 T = TypeVar("T")
 C = TypeVar("C", bound="UIComponent")
@@ -50,15 +54,13 @@ class _PanelContainerMixin:
             self.target.append(child.target)
 
     def _sync_to_target(self: UIComponent, children: list[ScopeNode]) -> None:
-        self.target[:] = [
-            c.target for c in children
-            if isinstance(c, UIComponent)
-        ]
+        self.target[:] = [c.target for c in children if isinstance(c, UIComponent)]
 
 
 # ═══════════════════════════════════════════════
 # 容器组件
 # ═══════════════════════════════════════════════
+
 
 class PanelColumn(_PanelContainerMixin, UIComponent):
     """Panel Column 包装。"""
@@ -115,6 +117,7 @@ class PanelCard(_PanelContainerMixin, UIComponent):
 # 展示组件
 # ═══════════════════════════════════════════════
 
+
 class PanelMarkdown(UIComponent):
     """Panel Markdown 包装。"""
 
@@ -132,6 +135,7 @@ class PanelButton(UIComponent):
 # ═══════════════════════════════════════════════
 # 输入组件
 # ═══════════════════════════════════════════════
+
 
 class PanelTextInput(UIComponent):
     """Panel TextInput 包装。value 代理到 signal。"""
@@ -154,8 +158,10 @@ class PanelTextInput(UIComponent):
 
     def _setup_event_bridge(self) -> None:
         """Panel 用户输入 → signal。"""
+
         def on_change(event: Any) -> None:
             self.signal.value = event.new
+
         self.target.param.watch(on_change, "value")
 
 
@@ -181,12 +187,14 @@ class PanelRadioButtonGroup(UIComponent):
     def _setup_event_bridge(self) -> None:
         def on_change(event: Any) -> None:
             self.signal.value = event.new
+
         self.target.param.watch(on_change, "value")
 
 
 # ═══════════════════════════════════════════════
 # PanelApp
 # ═══════════════════════════════════════════════
+
 
 class PanelApp(BaseApp):
     """Panel 专属 xxui App。
