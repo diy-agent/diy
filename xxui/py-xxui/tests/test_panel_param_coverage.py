@@ -34,13 +34,14 @@ def _count_missing() -> int:
     return total
 
 
-def _get_wrapper_cls(name: str) -> type | None:
+def _get_wrapper_cls(name: str) -> type:
+    """按 wrapper 名查找类，断言一定存在（测试数据来自 run_checks 内部）。"""
     from check_panel_params import _WRAPPER_MAP
 
     for cls in _WRAPPER_MAP:
         if cls.__name__ == name:
             return cls
-    return None
+    raise KeyError(f"未注册的 wrapper: {name}")
 
 
 class TestPanelParamCoverage:
@@ -75,8 +76,8 @@ class TestPanelParamCoverage:
             ]
             if local_missing:
                 failures.append(f"{c.wrapper_name}: {local_missing}")
-        assert not failures, (
-            "以下 wrapper 缺少 Panel 参数显式定义:\n" + "\n".join(failures)
+        assert not failures, "以下 wrapper 缺少 Panel 参数显式定义:\n" + "\n".join(
+            failures
         )
 
     def test_excluded_params_not_in_wrapper_signatures(self) -> None:
@@ -94,6 +95,4 @@ class TestPanelParamCoverage:
                     )
         # 这是 warning 级别，不阻塞 CI
         if warnings:
-            pytest.fail(
-                "排除参数不应出现在 wrapper 签名中:\n" + "\n".join(warnings)
-            )
+            pytest.fail("排除参数不应出现在 wrapper 签名中:\n" + "\n".join(warnings))
