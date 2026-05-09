@@ -32,6 +32,20 @@ py-xxui/
 2. 若改动涉及 browser 测试：`./sha.sh test-headless`
 3. 自查 diff：`git diff --stat`，确保不夹带无关改动
 
+## Panel 参数强类型化工具
+
+`tools/check_panel_params.py` — 内省 Panel 原生类 param 定义，生成可复制签名。
+`tests/test_panel_param_coverage.py` — 参数一致性 pytest 测试。
+
+```bash
+uv run python tools/check_panel_params.py --query Button     # 查构造器签名
+uv run python tools/check_panel_params.py --methods Button   # 查方法签名
+uv run python tools/check_panel_params.py --list             # 已注册 wrapper
+uv run python tools/check_panel_params.py --ci               # CI 检查
+```
+
+详见 `.agents/skills/panel-params/SKILL.md`。
+
 ## 常用命令
 ```bash
 ./sha.sh test [args]        # pytest（跳过 browser）
