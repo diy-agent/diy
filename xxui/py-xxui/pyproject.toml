@@ -13,12 +13,15 @@ dependencies = [
 [dependency-groups]
 dev = [
     "jupyter>=1.1.1",
+    "playwright>=1.57.0",
+    "pytest-playwright>=0.7.0",
     "jupytext>=1.19.1",
     "jupyterlab>=4.5.6",
     "pip>=25.3",
     "jupyterlab-lsp>=5.3.0",
     "pytest>=9.0.3",
     "ruff>=0.15.12",
+    "pyright>=1.1.409",
 ]
 
 [tool.uv]
@@ -70,6 +73,19 @@ known-first-party = ["xxui"]
 [tool.ruff.format]
 quote-style = "double"
 docstring-code-format = true
+
+# ========== Pyright 配置 ==========
+[tool.pyright]
+typeCheckingMode = "standard"
+pythonVersion = "3.12"
+include = ["src", "tests", "examples"]
+reportMissingParameterType = true
+reportUnknownParameterType = true
+
+# ========== Pytest 配置 ==========
+[tool.pytest.ini_options]
+markers = ["browser: 需要 headless browser 的测试"]
+testpaths = ["tests"]
 
 # ========== Marimo 配置 ==========
 [tool.marimo.runtime]  
