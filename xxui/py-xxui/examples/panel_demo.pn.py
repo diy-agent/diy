@@ -2,7 +2,7 @@
 
 运行：uv run panel serve examples/panel_demo.py
 """
-from xxui.providers.panel import PanelApp
+from xxui.providers.panel import PanelApp, PanelColumn
 from xxui.scheduler import ImmediateScheduler
 from xxui.scope import ScopeConfig
 
@@ -27,7 +27,7 @@ with app.column():
 
     # 响应式 cell：读 wrapper.value → 自动追踪依赖，变化时 rerun
     @app.column().cell()
-    def _(node):
+    def _(node: PanelColumn):
         app.markdown(f"## Hello **{name_input.value}** × {multiplier_input.value} !")
         app.markdown(f"Repeated: {'🔥' * multiplier_input.value}")
 
@@ -42,7 +42,7 @@ with app.column():
         app.button(name="+1").on_click(lambda e: setattr(counter, 'value', counter.value + 1))
 
     @app.column().cell()
-    def _(node):
+    def _(node: PanelColumn):
         app.markdown(f"Counter: **{counter.value}**")
 
 

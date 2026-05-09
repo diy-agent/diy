@@ -4,6 +4,8 @@ Cell 是 rerun 单位。普通函数不是 reactive component。
 cell 函数接收当前 wrapper node 参数。定义时首次执行，依赖变化时自动 rerun。
 """
 
+from typing import Any
+
 import pytest
 
 from xxui.scheduler import ImmediateScheduler
@@ -25,7 +27,7 @@ class FakeColumn(ScopeNode):
 
     def __init__(self) -> None:
         super().__init__()
-        self._app: FakeApp | None = None
+        # _app 类型已在 ScopeNode 中声明
 
     def __enter__(self) -> "FakeColumn":
         assert self._app is not None
@@ -61,10 +63,10 @@ class FakeApp(ScopeNode):
     def _add_to_current(self, child: ScopeNode) -> None:
         self._current._add_child(child)
 
-    def signal(self, value):
+    def signal(self, value: Any):
         from xxui.signal import Signal
 
-        sig = Signal(value)
+        sig: Signal[Any] = Signal(value)
         self._current._mount_signal(sig)
         return sig
 
@@ -75,7 +77,7 @@ class FakeApp(ScopeNode):
 
     def column(self) -> FakeColumn:
         col = FakeColumn()
-        col._app = self
+        col._app = self  # type: ignore[assignment]
         self._add_to_current(col)
         return col
 
@@ -93,7 +95,7 @@ class TestCellBasics:
         executed = []
 
         @app.column().cell()
-        def _(node):
+        def _(node: object):
             executed.append(node)
 
         assert len(executed) == 1
@@ -106,7 +108,7 @@ class TestCellBasics:
         col = app.column()
 
         @col.cell()
-        def _(node):
+        def _(node: object):
             seen.append(node)
 
         assert seen[0] is col
@@ -131,7 +133,7 @@ class TestCellDependencyTracking:
         count = app.signal(0)
 
         @app.column().cell()
-        def _(node):
+        def _(node: object):
             app.markdown(str(count.value))
 
         assert len(count._cell_subscribers) == 1
@@ -142,7 +144,7 @@ class TestCellDependencyTracking:
         b = app.signal(2)
 
         @app.column().cell()
-        def _(node):
+        def _(node: object):
             app.markdown(str(a.value + b.value))
 
         assert len(a._cell_subscribers) == 1
@@ -157,7 +159,7 @@ class TestCellDependencyTracking:
         values = []
 
         @app.column().cell()
-        def _(node):
+        def _(node: object):
             values.append(a.value if flag.value else b.value)
 
         # 初始：依赖 flag 和 a
@@ -186,7 +188,7 @@ class TestCellRerun:
         calls = []
 
         @app.column().cell()
-        def _(node):
+        def _(node: object):
             calls.append(count.value)
 
         count.value = 1
@@ -199,7 +201,7 @@ class TestCellRerun:
         calls = []
 
         @app.column().cell()
-        def _(node):
+        def _(node: object):
             calls.append(count.value)
 
         count.value = 0
@@ -212,7 +214,7 @@ class TestCellRerun:
         calls = []
 
         @app.column().cell()
-        def _(node):
+        def _(node: object):
             calls.append(count.value)
 
         count.value = 1
@@ -229,7 +231,7 @@ class TestCellRerun:
         calls = []
 
         @app.column().cell()
-        def _(node):
+        def _(node: object):
             calls.append(a.value)
 
         b.value = "bb"
@@ -252,16 +254,16 @@ class TestCellStaging:
         col = app.column()
 
         @col.cell()
-        def _(node):
+        def _(node: object):
             app.markdown(str(count.value))
 
         assert len(col._children) == 1
-        assert col._children[0].content == "0"
+        assert col._children[0].content == "0"  # type: ignore[attr-defined]
 
         count.value = 42
 
         assert len(col._children) == 1
-        assert col._children[0].content == "42"
+        assert col._children[0].content == "42"  # type: ignore[attr-defined]
 
     def test_failed_rerun_keeps_old_children(self):
         app = FakeApp()
@@ -271,19 +273,19 @@ class TestCellStaging:
         col = app.column()
 
         @col.cell()
-        def _(node):
+        def _(node: object):
             if fail.value:
                 raise RuntimeError("bad")
             app.markdown(value.value)
 
         old_md = col._children[0]
-        assert old_md.content == "ok"
+        assert old_md.content == "ok"  # type: ignore[attr-defined]
 
         fail.value = True  # 触发 rerun，应该失败
 
         # 旧 children 保持不变
         assert col._children == [old_md]
-        assert old_md.content == "ok"
+        assert old_md.content == "ok"  # type: ignore[attr-defined]
 
 
 # ═══════════════════════════════════════════════
@@ -300,7 +302,7 @@ class TestCellTransaction:
         calls = []
 
         @app.column().cell()
-        def _(node):
+        def _(node: object):
             calls.append(count.value)
             if count.value == 1:
                 count.value = 2  # rerun 中写 signal
@@ -332,7 +334,7 @@ class TestPlainFunctionNotReactive:
         header()
 
         @app.column().cell()
-        def _(node):
+        def _(node: object):
             app.markdown(str(count.value))
 
         count.value = 1
@@ -361,7 +363,7 @@ class TestCrossScopeSignal:
         with pytest.raises(ScopeViolationError), app.column() as right:
 
             @right.cell()
-            def _(node):
+            def _(node: object):
                 _ = secret.value  # 跨 scope！
 
     def test_cross_scope_no_error_in_prod(self):
@@ -375,7 +377,7 @@ class TestCrossScopeSignal:
         with app.column() as right:
 
             @right.cell()
-            def _(node):
+            def _(node: object):
                 _ = secret.value  # prod: 不报错
 
         # prod 下不注册依赖

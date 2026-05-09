@@ -7,6 +7,10 @@ v0.1 最小实现：错误捕获、rerun 计数、dev/prod 区分。
 from __future__ import annotations
 
 import traceback
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from xxui.scope import ScopeNode
 
 
 class DebugInfo:
@@ -15,7 +19,7 @@ class DebugInfo:
     通过 get_debug(node) 获取，自动向上追溯。
     """
 
-    def __init__(self, node) -> None:
+    def __init__(self, node: ScopeNode) -> None:
         self._node = node
         self.rerun_count: int = 0
         self.last_error: str | None = None
@@ -44,7 +48,7 @@ class DebugInfo:
 _debug_cache: dict[int, DebugInfo] = {}
 
 
-def get_debug(node) -> DebugInfo:
+def get_debug(node: ScopeNode) -> DebugInfo:
     """获取或创建 node 的 DebugInfo。"""
     key = id(node)
     if key not in _debug_cache:

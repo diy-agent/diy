@@ -12,7 +12,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
+
+if TYPE_CHECKING:
+    from xxui.base_app import BaseApp
 
 C = TypeVar("C", bound="ScopeNode")
 
@@ -49,7 +52,7 @@ class ScopeNode:
         self._staging_mode: bool = False
         self._staging_children: list[ScopeNode] = []
         # app 引用，cell 执行时用于 push/pop context
-        self._app: object | None = None  # BaseApp 实例
+        self._app: BaseApp | None = None
 
     # ── tree ───────────────────────────────────
 

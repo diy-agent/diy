@@ -45,9 +45,9 @@ class UIComponent(ScopeNode):
         """
         pass
 
-    def _on_children_replaced(self, new_children: list[ScopeNode]) -> None:
+    def _on_children_replaced(self, children: list[ScopeNode]) -> None:
         """children 被 cell staging 替换后调用。覆写以同步到 provider target。"""
-        self._sync_to_target(new_children)
+        self._sync_to_target(children)
 
 
 class _PanelContainerMixin:
@@ -57,13 +57,13 @@ class _PanelContainerMixin:
     self.append(child) / self[:] = [...] 直接操作 Panel 原生 children。
     """
 
-    def _add_child(self: UIComponent, child: ScopeNode) -> None:
-        super(UIComponent, self)._add_child(child)
-        if not self._staging_mode and isinstance(child, UIComponent):
-            self.append(child)
+    def _add_child(self, child: ScopeNode) -> None:
+        super(UIComponent, self)._add_child(child)  # type: ignore[arg-type]
+        if not self._staging_mode and isinstance(child, UIComponent):  # type: ignore[attr-defined]
+            self.append(child)  # type: ignore[attr-defined]
 
-    def _sync_to_target(self: UIComponent, children: list[ScopeNode]) -> None:
-        self[:] = [c for c in children if isinstance(c, UIComponent)]
+    def _sync_to_target(self, children: list[ScopeNode]) -> None:
+        self[:] = [c for c in children if isinstance(c, UIComponent)]  # type: ignore[index]
 
 
 # ═══════════════════════════════════════════════
@@ -283,7 +283,7 @@ class PanelApp(BaseApp):
         root = self._find_first_real_component(self)
         if root is not None:
             self._sync_tree_to_panel(self)
-            return root.servable()
+            return root.servable()  # type: ignore[attr-defined]
         return None
 
     def _find_first_real_component(self, node: ScopeNode) -> UIComponent | None:

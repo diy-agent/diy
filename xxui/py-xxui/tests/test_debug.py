@@ -7,6 +7,8 @@ Debug 是 scope 能力，提供：
 - 跨 scope 访问警告
 """
 
+from typing import Any
+
 from xxui.debug import DebugInfo
 from xxui.scheduler import ImmediateScheduler
 from xxui.scope import ScopeConfig, ScopeNode
@@ -36,6 +38,7 @@ class TestDebugInfoBasics:
         info = DebugInfo(node)
         info.record_error(RuntimeError("bad"))
         assert info.has_error
+        assert info.last_error is not None
         assert "bad" in info.last_error
 
 
@@ -58,13 +61,13 @@ class TestCellErrorCapture:
                         scheduler=ImmediateScheduler(),
                     )
                 )
-                self._context_stack = [self]
+                self._context_stack: list[ScopeNode] = [self]
 
             @property
             def _current(self):
                 return self._context_stack[-1]
 
-            def _push_context(self, node):
+            def _push_context(self, node: ScopeNode):
                 self._context_stack.append(node)
 
             def _pop_context(self):
@@ -72,23 +75,23 @@ class TestCellErrorCapture:
                     raise IndexError
                 self._context_stack.pop()
 
-            def _add_to_current(self, child):
-                child._app = self
+            def _add_to_current(self, child: ScopeNode):
+                child._app = self  # type: ignore[assignment]
                 self._current._add_child(child)
 
-            def signal(self, value):
+            def signal(self, value: Any):
                 sig = Signal(value)
                 self._current._mount_signal(sig)
                 return sig
 
-            def markdown(self, content):
+            def markdown(self, content: Any):
                 md = ScopeNode()
                 self._add_to_current(md)
                 return md
 
             def column(self):
                 col = ScopeNode()
-                col._app = self
+                col._app = self  # type: ignore[assignment]
                 self._add_to_current(col)
                 return col
 
@@ -97,7 +100,7 @@ class TestCellErrorCapture:
         col = app.column()
 
         @col.cell()
-        def _(node):
+        def _(node: object):
             if fail.value:
                 raise RuntimeError("cell failed")
 
@@ -109,6 +112,7 @@ class TestCellErrorCapture:
         fail.value = True
 
         assert debug.has_error
+        assert debug.last_error is not None
         assert "cell failed" in debug.last_error
         assert debug.rerun_count == 2  # 初始 1 + rerun 1
 
@@ -132,13 +136,13 @@ class TestRerunCount:
                         scheduler=ImmediateScheduler(),
                     )
                 )
-                self._context_stack = [self]
+                self._context_stack: list[ScopeNode] = [self]
 
             @property
             def _current(self):
                 return self._context_stack[-1]
 
-            def _push_context(self, node):
+            def _push_context(self, node: ScopeNode):
                 self._context_stack.append(node)
 
             def _pop_context(self):
@@ -146,23 +150,23 @@ class TestRerunCount:
                     raise IndexError
                 self._context_stack.pop()
 
-            def _add_to_current(self, child):
-                child._app = self
+            def _add_to_current(self, child: ScopeNode):
+                child._app = self  # type: ignore[assignment]
                 self._current._add_child(child)
 
-            def signal(self, value):
+            def signal(self, value: Any):
                 sig = Signal(value)
                 self._current._mount_signal(sig)
                 return sig
 
-            def markdown(self, content):
+            def markdown(self, content: Any):
                 md = ScopeNode()
                 self._add_to_current(md)
                 return md
 
             def column(self):
                 col = ScopeNode()
-                col._app = self
+                col._app = self  # type: ignore[assignment]
                 self._add_to_current(col)
                 return col
 
@@ -171,7 +175,7 @@ class TestRerunCount:
         col = app.column()
 
         @col.cell()
-        def _(node):
+        def _(node: object):
             app.markdown(str(count.value))
 
         debug = get_debug(col)

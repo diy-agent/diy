@@ -30,7 +30,7 @@ class FakeColumn(ScopeNode):
 
     def __init__(self) -> None:
         super().__init__()
-        self._app: BaseApp | None = None
+        # _app 类型已在 ScopeNode 中声明为 BaseApp | None
 
     def __enter__(self) -> "FakeColumn":
         assert self._app is not None

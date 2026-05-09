@@ -271,14 +271,14 @@ class TestPanelAppSignal:
         col = app.column()
 
         @col.cell()
-        def _(node):
+        def _(node: object):
             app.markdown(str(count.value))
 
-        assert col._children[0].object == "0"
+        assert col._children[0].object == "0"  # type: ignore[attr-defined]
 
         count.value = 42
 
-        assert col._children[0].object == "42"
+        assert col._children[0].object == "42"  # type: ignore[attr-defined]
 
 
 # ═══════════════════════════════════════════════
@@ -301,3 +301,166 @@ class TestPanelServable:
             app.button(name="Run")
         result = app.servable()
         assert result is not None
+
+
+# ═══════════════════════════════════════════════
+# 场景集成测试 — Demo 级完整链路
+# ═══════════════════════════════════════════════
+
+
+class TestPanelScenario:
+    """Demo 页面场景：输入组件 ↔ cell ↔ 按钮事件 联动验证。
+
+    这是最易出"signal 无效"的测试：单组件测试全过，但完整场景链路断裂。
+    """
+
+    def test_input_changes_trigger_cell_rerun(self):
+        """输入组件 value 变化 → signal 更新 → 依赖 cell 自动 rerun。
+
+        覆盖 demo 中的 name_input / multiplier_input → greeting cell 链。
+        """
+        from xxui.scheduler import ImmediateScheduler
+        from xxui.scope import ScopeConfig
+
+        app = PanelApp(config=ScopeConfig(mode="dev", scheduler=ImmediateScheduler()))
+
+        # 模拟 demo 布局：输入组件在一个列中
+        with app.column():
+            name_input = app.text_input(name="Name", value="World")
+
+        # cell 在兄弟列中，读取 name_input.value（跨组件依赖）
+        @app.column().cell()
+        def _(node: object):
+            app.markdown(f"Hello {name_input.value}")
+
+        # 初始渲染
+        assert app._children[1]._children[0].object == "Hello World"  # type: ignore[attr-defined]
+
+        # 模拟 Panel 用户输入 → 触发 _setup_event_bridge 中的 param.watch
+        name_input.param.update(value="Alice")
+
+        # cell 应自动 rerun
+        assert app._children[1]._children[0].object == "Hello Alice"  # type: ignore[attr-defined]
+
+    def test_cell_rerenders_multiple_signals(self):
+        """多个信号变化时 cell 正确 rerun，不遗漏也不多跑。"""
+        from xxui.scheduler import ImmediateScheduler
+        from xxui.scope import ScopeConfig
+
+        app = PanelApp(config=ScopeConfig(mode="dev", scheduler=ImmediateScheduler()))
+
+        with app.column():
+            name = app.text_input(name="Name", value="A")
+            mult = app.radio_button_group(
+                name="Mult", options={"x1": 1, "x2": 2}, value=1
+            )
+
+        @app.column().cell()
+        def _(node: object):
+            app.markdown(f"{name.value}×{mult.value}")
+
+        cell_col = app._children[1]
+        assert cell_col._children[0].object == "A×1"  # type: ignore[attr-defined]
+
+        # 只改 multiplier
+        mult.param.update(value=2)
+        assert cell_col._children[0].object == "A×2"  # type: ignore[attr-defined]
+
+        # 改 name
+        name.param.update(value="B")
+        assert cell_col._children[0].object == "B×2"  # type: ignore[attr-defined]
+
+    def test_button_click_updates_signal_and_triggers_cell(self):
+        """按钮 on_click → signal.value 变更 → 依赖 cell 自动 rerun。
+
+        覆盖 demo 中的 counter + button + cell 链。Button 的 click 回调通过
+        Panel 原生机制触发，不走 xxui API——这是最容易断的链路。
+        """
+        from xxui.scheduler import ImmediateScheduler
+        from xxui.scope import ScopeConfig
+
+        app = PanelApp(config=ScopeConfig(mode="dev", scheduler=ImmediateScheduler()))
+
+        with app.column():
+            counter = app.signal(0)
+
+            with app.row():
+                btn_dec = app.button(name="-1")
+                btn_inc = app.button(name="+1")
+                btn_dec.on_click(lambda e: setattr(counter, "value", counter.value - 1))
+                btn_inc.on_click(lambda e: setattr(counter, "value", counter.value + 1))
+
+            @app.column().cell()
+            def _(node: object):
+                app.markdown(f"Count: {counter.value}")
+
+        # 初始：cell 已执行，counter=0
+        outer_col = app._children[0]
+        _row = outer_col._children[0]  # 第1个子节点：app.row()
+        cell_col = outer_col._children[1]  # 第2个子节点：cell 所在列
+        assert cell_col._children[0].object == "Count: 0"  # type: ignore[attr-defined]
+
+        # 模拟 Panel 按钮点击（param.trigger 触发 on_click 回调链）
+        # Panel Button 通过 param.trigger('value') 或 param.trigger('clicks') 触发
+        # 这里直接调 clicks param 触发 on_click watcher
+        btn_inc.param.trigger("clicks")
+
+        assert counter.value == 1
+        assert cell_col._children[0].object == "Count: 1"  # type: ignore[attr-defined]
+
+        btn_dec.param.trigger("clicks")
+        assert counter.value == 0
+        assert cell_col._children[0].object == "Count: 0"  # type: ignore[attr-defined]
+
+    def test_servable_syncs_panel_native_children(self):
+        """servable() 后 Panel 原生容器 children 与 xxui 树一致。
+
+        这是 UI 渲染正确性的关键：xxui children → Panel Column[:]。
+        """
+        app = PanelApp()
+        with app.column():
+            app.markdown("# Title")
+            app.button(name="Click Me")
+
+        result = app.servable()
+        assert result is not None
+
+        # 验证 Panel 原生 children 已同步
+        col = app._children[0]  # 第一个子节点就是 column
+        # Panel Column 的原生 objects 属性包含实际渲染对象
+        native_objects = list(col.objects)  # type: ignore[attr-defined]
+        assert len(native_objects) == 2
+        assert isinstance(native_objects[0], pn.pane.Markdown)
+        assert isinstance(native_objects[1], pn.widgets.Button)
+        assert native_objects[0].object == "# Title"  # type: ignore[attr-defined]
+
+    def test_cell_rerun_updates_panel_native_children(self):
+        """Cell rerun 后 Panel 原生 children 也得到更新（servable 同步）。
+
+        验证完整链路：signal 变化 → cell rerun → xxui children 替换
+        → servable() → Panel 原生 children 更新。
+        """
+        from xxui.scheduler import ImmediateScheduler
+        from xxui.scope import ScopeConfig
+
+        app = PanelApp(config=ScopeConfig(mode="dev", scheduler=ImmediateScheduler()))
+
+        count = app.signal(0)
+
+        @app.column().cell()
+        def _(node: object):
+            app.markdown(str(count.value))
+
+        col = app._children[0]
+
+        # 初始
+        assert col._children[0].object == "0"  # type: ignore[attr-defined]
+
+        count.value = 99
+        assert col._children[0].object == "99"  # type: ignore[attr-defined]
+
+        # servable() 后 Panel 原生也同步
+        app.servable()
+        native_objects = list(col.objects)  # type: ignore[attr-defined]
+        assert len(native_objects) == 1
+        assert native_objects[0].object == "99"  # type: ignore[attr-defined]
