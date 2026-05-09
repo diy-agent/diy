@@ -26,10 +26,17 @@ py-xxui/
 - **Cell**: 响应式函数，依赖 Signal 变化自动 rerun
 - **BaseApp**: 根节点，提供 `app.signal()` 和上下文管理
 
+## Commit 前检查清单
+每次 commit 前必须执行：
+1. `./sha.sh check` — ruff check + format check + pyright + test
+2. 若改动涉及 browser 测试：`./sha.sh test-headless`
+3. 自查 diff：`git diff --stat`，确保不夹带无关改动
+
 ## 常用命令
 ```bash
-./sha.sh test [args]   # pytest
-./sha.sh check         # ruff check + format check + test
-./sha.sh fix           # ruff 自动修复
-./sha.sh panel         # 启动 Panel 示例
+./sha.sh test [args]        # pytest（跳过 browser）
+./sha.sh check              # ruff + format check + pyright + test
+./sha.sh test-headless [args]  # 含 browser 测试
+./sha.sh fix                # ruff 自动修复
+./sha.sh panel              # 启动 Panel 示例
 ```
