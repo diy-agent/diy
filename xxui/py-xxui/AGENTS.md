@@ -53,4 +53,5 @@ uv run python tools/check_panel_params.py --ci               # CI 检查
 ./sha.sh test-headless [args]  # 含 browser 测试
 ./sha.sh fix                # ruff 自动修复
 ./sha.sh panel              # 启动 Panel 示例
-```
+``` 
+ 
