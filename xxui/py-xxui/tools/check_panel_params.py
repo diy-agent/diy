@@ -4,13 +4,13 @@
 首次运行会在强类型化前展示所有通过 **kwargs 透传的参数清单。
 
 用法:
-  uv run python tools/check_panel_params.py                        # 诊断模式，打印完整对比表
-  uv run python tools/check_panel_params.py --ci                   # CI 模式，缺失参数时报错退出
-  uv run python tools/check_panel_params.py --query Column         # 查询原生 Panel 类的参数签名
-  uv run python tools/check_panel_params.py --query Button         # 支持模糊匹配
-  uv run python tools/check_panel_params.py --query pn.widgets.TextInput  # 完整路径
-  uv run python tools/check_panel_params.py --list                 # 列出所有可查询的 Panel 类名
-  uv run python tools/check_panel_params.py --methods Button       # 列出 Panel 类的公开方法签名
+  uv run python tools/check_panel_params.py                   # 诊断模式，打印完整对比表
+  uv run python tools/check_panel_params.py --ci              # CI 模式，缺失参数时报错退出
+  uv run python tools/check_panel_params.py query Column      # 查询原生 Panel 类的参数签名
+  uv run python tools/check_panel_params.py query Button      # 支持模糊匹配
+  uv run python tools/check_panel_params.py query pn.widgets.TextInput  # 完整路径
+  uv run python tools/check_panel_params.py list              # 列出所有可查询的 Panel 类名
+  uv run python tools/check_panel_params.py methods Button    # 列出 Panel 类的公开方法签名
 """
 
 from __future__ import annotations
@@ -18,8 +18,9 @@ from __future__ import annotations
 import inspect
 import sys
 from dataclasses import dataclass, field
-from typing import Any, get_type_hints
+from typing import Annotated, Any, get_type_hints
 
+import cyclopts
 import panel as pn
 import param
 
@@ -404,13 +405,13 @@ def _query_class(panel_cls: type, label: str) -> None:
     cls_path = f"{panel_cls.__module__}.{panel_cls.__qualname__}"
     print(f"\n# {cls_path}")
     print(f"# 共 {len(params)} 个 param 参数\n")
-    print(f"def __init__(")
-    print(f"    self,")
+    print("def __init__(")
+    print("    self,")
     if has_vargs:
-        print(f"    *children: Any,")
+        print("    *children: Any,")
     for pp in params:
         print(_format_param_line(pp))
-    print(f") -> None: ...")
+    print(") -> None: ...")
 
 
 def _query_mode(name: str) -> None:
@@ -418,7 +419,7 @@ def _query_mode(name: str) -> None:
     cls = _find_panel_class(name)
     if cls is None:
         print(f"❌ 未找到 Panel 类: {name}")
-        print(f"   可用 --list 列出所有可查询类")
+        print("   可用 --list 列出所有可查询类")
         sys.exit(1)
     _query_class(cls, name)
 
@@ -430,8 +431,8 @@ def _list_mode() -> None:
         cls_path = f"{panel_cls.__module__}.{panel_cls.__qualname__}"
         print(f"  {wrapper_cls.__name__:<24} ←  {cls_path}")
     print("\n也可直接查询任意 panel 类名，如:")
-    print("  uv run python tools/check_panel_params.py --query Select")
-    print("  uv run python tools/check_panel_params.py --query widgets.IntSlider")
+    print("  uv run python tools/check_panel_params.py query -n Select")
+    print("  uv run python tools/check_panel_params.py query -n widgets.IntSlider")
 
 
 # ── methods 模式 ─────────────────────────────────────────────
@@ -495,10 +496,7 @@ def _format_method_sig(method: Any, name: str) -> str | None:
             ann = p.annotation
             annotation = getattr(ann, "__name__", str(ann))
 
-        if annotation:
-            param_str = f"{pname}: {annotation}"
-        else:
-            param_str = pname
+        param_str = f"{pname}: {annotation}" if annotation else pname
 
         if p.default is not inspect.Parameter.empty:
             param_str += f" = {_format_default(p.default)}"
@@ -572,61 +570,97 @@ def _query_methods(panel_cls: type, label: str) -> None:
             print(f"  {line}")
 
 
-def main() -> None:
-    # --methods
-    if "--methods" in sys.argv:
-        idx = sys.argv.index("--methods")
-        name = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else ""
-        if not name:
-            print("用法: --methods <类名>")
-            sys.exit(1)
-        cls = _find_panel_class(name)
-        if cls is None:
-            print(f"❌ 未找到 Panel 类: {name}")
-            sys.exit(1)
-        _query_methods(cls, name)
-        return
+app = cyclopts.App(
+    name="check_panel_params",
+    help="检查 xxui Panel 包装器与原生 Panel 组件的参数一致性。",
+    version="0.1.0",
+)
 
-    # --query
-    if "--query" in sys.argv:
-        idx = sys.argv.index("--query")
-        name = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else ""
-        if not name:
-            print("用法: --query <类名>")
-            sys.exit(1)
-        _query_mode(name)
-        return
 
-    # --list
-    if "--list" in sys.argv:
-        _list_mode()
-        return
-
-    ci_mode = "--ci" in sys.argv
+@app.default
+def check(
+    *,
+    ci: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name=("--ci",),
+            help="CI 模式：有 **kwargs 兜底也视为通过",
+        ),
+    ] = False,
+) -> None:
+    """诊断模式：对比所有 xxui wrapper 与原生 Panel 的参数一致性。"""
     checks = run_checks()
     missing = _print_report(checks)
 
     if missing > 0:
         print(f"\n❌ {missing} 个参数缺失（无 **kwargs 兜底）")
         sys.exit(1)
-    elif ci_mode:
-        # CI 模式：有 **kwargs 也算合规
+    elif ci:
         print("\n✅ CI 检查通过（所有参数有 **kwargs 兜底）")
     else:
-        kpass_total = sum(
-            sum(
-                1
-                for pp in c.panel_params
-                if pp.name not in (_COMMON_EXCLUDED | _WRAPPER_EXCLUDED.get(_get_wrapper_cls(c.wrapper_name), set()))
-                and pp.name not in c.wrapper_params
-            )
-            for c in checks
-            if c.has_kwargs
-        )
-        if kpass_total > 0:
-            print(f"\n⚠️  {kpass_total} 个参数通过 **kwargs 透传，建议强类型化")
+        _kwargs_pass_total(checks)
         print("\n✅ 诊断完成")
 
 
+@app.command
+def query(
+    name: Annotated[
+        str,
+        cyclopts.Parameter(
+            name=("--name", "-n"),
+            help='Panel 类名，如 "Button"、"widgets.Button"',
+        ),
+    ],
+) -> None:
+    """查询原生 Panel 类的 __init__ 参数签名（支持模糊匹配）。"""
+    _query_mode(name)
+
+
+@app.command(name="list")
+def list_classes() -> None:
+    """列出所有已注册的 xxui wrapper 和可查询的 Panel 类名。"""
+    _list_mode()
+
+
+@app.command(name="methods")
+def query_methods(
+    name: Annotated[
+        str,
+        cyclopts.Parameter(
+            name=("--name", "-n"),
+            help='Panel 类名，如 "Button"、"widgets.IntSlider"',
+        ),
+    ],
+) -> None:
+    """列出 Panel 原生类的公开方法签名。"""
+    cls = _find_panel_class(name)
+    if cls is None:
+        print(f"❌ 未找到 Panel 类: {name}")
+        sys.exit(1)
+    _query_methods(cls, name)
+
+
+def _kwargs_pass_total(checks: list[WrapperCheck]) -> None:
+    """打印通过 **kwargs 透传的参数统计。"""
+    kpass_total = sum(
+        sum(
+            1
+            for pp in c.panel_params
+            if pp.name
+            not in (
+                _COMMON_EXCLUDED
+                | _WRAPPER_EXCLUDED.get(
+                    _get_wrapper_cls(c.wrapper_name), set()
+                )
+            )
+            and pp.name not in c.wrapper_params
+        )
+        for c in checks
+        if c.has_kwargs
+    )
+    if kpass_total > 0:
+        print(f"\n⚠️  {kpass_total} 个参数通过 **kwargs 透传，建议强类型化")
+
+
 if __name__ == "__main__":
-    main()
+    app()
