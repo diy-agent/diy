@@ -56,7 +56,7 @@ fix() {
 }
 
 panel() {
-  run uv run panel serve examples/*.pn.py
+  run uv run panel serve --dev --show examples/*.pn.py
 }
 
 sha "$@"

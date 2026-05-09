@@ -37,9 +37,9 @@ with app.column():
     with app.row():
         # ── 按钮 → signal → cell rerun ──
         # Panel 原生事件 → 设置 signal.value → 依赖 cell 自动 rerun
-        # 这是 XX UI 的标准事件桥接模式
-        app.button(name="-1").target.on_click(lambda e: setattr(counter, 'value', counter.value - 1))
-        app.button(name="+1").target.on_click(lambda e: setattr(counter, 'value', counter.value + 1))
+        # 继承模式下，on_click 直接可用，无需 .target
+        app.button(name="-1").on_click(lambda e: setattr(counter, 'value', counter.value - 1))
+        app.button(name="+1").on_click(lambda e: setattr(counter, 'value', counter.value + 1))
 
     @app.column().cell()
     def _(node):

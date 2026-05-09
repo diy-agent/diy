@@ -40,24 +40,24 @@ class TestComponentPanelStyle:
     def test_button_keeps_panel_params(self):
         app = PanelApp()
         btn = app.button(name="Run", button_type="primary")
-        assert btn.target.name == "Run"
-        assert btn.target.button_type == "primary"
+        assert btn.name == "Run"
+        assert btn.button_type == "primary"
 
     def test_text_input_keeps_panel_params(self):
         app = PanelApp()
         inp = app.text_input(name="Name", placeholder="input name")
-        assert inp.target.name == "Name"
-        assert inp.target.placeholder == "input name"
+        assert inp.name == "Name"
+        assert inp.placeholder == "input name"
 
     def test_radio_button_group_keeps_panel_params(self):
         app = PanelApp()
         radio = app.radio_button_group(options=["a", "b", "c"])
-        assert radio.target.options == ["a", "b", "c"]
+        assert radio.options == ["a", "b", "c"]
 
     def test_markdown_keeps_panel_params(self):
         app = PanelApp()
         md = app.markdown("# Title")
-        assert "# Title" in str(md.target.object)
+        assert "# Title" in str(md.object)
 
 
 # ═══════════════════════════════════════════════
@@ -91,7 +91,7 @@ class TestWithContextPanelTree:
             btn = app.button(name="OK")
         assert btn.parent is card
         assert btn in card._children
-        assert card.target.title == "My Card"
+        assert card.title == "My Card"
 
 
 # ═══════════════════════════════════════════════
@@ -109,11 +109,24 @@ class TestInputComponentSignal:
         assert inp.signal.value == "Alice"
 
     def test_text_input_value_writes_signal_and_target(self):
+        """通过 wrapper.value 写入时，signal 和 Panel 原生值同步更新。"""
         app = PanelApp()
         inp = app.text_input(name="Name", value="Alice")
         inp.value = "Bob"
         assert inp.signal.value == "Bob"
-        assert inp.target.value == "Bob"
+        assert inp.value == "Bob"
+        # 验证 Panel 原生 param 值也同步（通过 descriptor __get__ 绕过 property）
+        pv = inp.param["value"].__get__(inp, type(inp))
+        assert pv == "Bob"
+
+    def test_text_input_panel_native_value_sync(self):
+        """通过 Panel param 模拟用户输入，signal.value 应同步。"""
+        app = PanelApp()
+        inp = app.text_input(name="Name", value="Alice")
+        # 模拟 Panel 用户输入事件
+        inp.param.update(value="Charlie")
+        assert inp.signal.value == "Charlie"
+        assert inp.value == "Charlie"
 
     def test_radio_button_group_value(self):
         app = PanelApp()
@@ -121,7 +134,10 @@ class TestInputComponentSignal:
         assert radio.value == "a"
         radio.value = "b"
         assert radio.signal.value == "b"
-        assert radio.target.value == "b"
+        assert radio.value == "b"
+        # 验证 Panel 原生 param 值也同步
+        pv = radio.param["value"].__get__(radio, type(radio))
+        assert pv == "b"
 
 
 # ═══════════════════════════════════════════════
@@ -130,7 +146,7 @@ class TestInputComponentSignal:
 
 
 class TestWrapperExposesTarget:
-    """xxui 是薄层，用户可直接访问 .target。"""
+    """xxui 是薄层，用户可直接访问 .target（向后兼容，self 就是 provider 原生对象）。"""
 
     def test_button_exposes_target(self):
         app = PanelApp()
@@ -146,6 +162,80 @@ class TestWrapperExposesTarget:
         app = PanelApp()
         col = app.column()
         assert isinstance(col.target, pn.Column)
+
+
+# ═══════════════════════════════════════════════
+# 组件即 Panel 原生实例（继承验证）
+# ═══════════════════════════════════════════════
+
+
+class TestComponentIsPanelNative:
+    """xxui 组件继承 Panel 原生类，可直接当 Panel 组件使用。"""
+
+    def test_button_is_panel_button(self):
+        app = PanelApp()
+        btn = app.button(name="Run")
+        assert isinstance(btn, pn.widgets.Button)
+        assert btn.name == "Run"  # Panel param 直接可访问
+
+    def test_text_input_is_panel_text_input(self):
+        app = PanelApp()
+        inp = app.text_input(name="Name", value="Alice")
+        assert isinstance(inp, pn.widgets.TextInput)
+
+    def test_radio_button_group_is_panel_radio(self):
+        app = PanelApp()
+        radio = app.radio_button_group(options=["a", "b"])
+        assert isinstance(radio, pn.widgets.RadioButtonGroup)
+
+    def test_markdown_is_panel_markdown(self):
+        app = PanelApp()
+        md = app.markdown("hi")
+        assert isinstance(md, pn.pane.Markdown)
+
+    def test_column_is_panel_column(self):
+        app = PanelApp()
+        col = app.column()
+        assert isinstance(col, pn.Column)
+
+    def test_row_is_panel_row(self):
+        app = PanelApp()
+        row = app.row()
+        assert isinstance(row, pn.Row)
+
+    def test_card_is_panel_card(self):
+        app = PanelApp()
+        card = app.card(title="T")
+        assert isinstance(card, pn.Card)
+
+
+class TestPanelNativeApiDirectAccess:
+    """无需 .target 即可直接访问 Panel 原生 API。"""
+
+    def test_button_on_click_works_directly(self):
+        app = PanelApp()
+        btn = app.button(name="Run")
+        calls = []
+        btn.on_click(lambda e: calls.append(1))
+        assert btn.clicks == 0
+        # on_click 已注册，验证无异常
+        assert hasattr(btn, "on_click")
+
+    def test_button_clicks_directly(self):
+        app = PanelApp()
+        btn = app.button(name="Run")
+        assert btn.clicks == 0
+
+    def test_target_is_self_for_backward_compat(self):
+        app = PanelApp()
+        btn = app.button(name="Run")
+        assert btn.target is btn
+
+    def test_text_input_param_watch_directly(self):
+        app = PanelApp()
+        inp = app.text_input(value="hello")
+        # param.watch 直接可用（无 .target）
+        assert hasattr(inp.param, "watch")
 
 
 # ═══════════════════════════════════════════════
@@ -184,11 +274,11 @@ class TestPanelAppSignal:
         def _(node):
             app.markdown(str(count.value))
 
-        assert col._children[0].target.object == "0"
+        assert col._children[0].object == "0"
 
         count.value = 42
 
-        assert col._children[0].target.object == "42"
+        assert col._children[0].object == "42"
 
 
 # ═══════════════════════════════════════════════
