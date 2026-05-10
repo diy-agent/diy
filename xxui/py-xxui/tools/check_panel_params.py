@@ -94,19 +94,15 @@ _WRAPPER_MAP: dict[type, type] = {
 
 # 所有 wrapper 公共排除（xxui 内部管理）
 _COMMON_EXCLUDED: set[str] = {
-    "name",  # param 内部名
     "objects",  # 容器 children，由 _PanelContainerMixin sync 管理
 }
 
 # 各 wrapper 特有排除
 _WRAPPER_EXCLUDED: dict[type, set[str]] = {
     PanelTextInput: {
-        "value",  # signal 代理，构造器中 pop
+        # value 已改为显式参数，不再 pop
         "value_input",  # 内部中间态，不暴露
         "enter_pressed",  # 只读事件
-    },
-    PanelRadioButtonGroup: {
-        "value",  # signal 代理，构造器中 pop
     },
     PanelButton: {
         "clicks",  # 只读计数器
@@ -130,9 +126,7 @@ def _infer_param_type(p: param.Parameter) -> str:
     if cls_ is not None:
         if isinstance(cls_, tuple):
             names = [
-                getattr(c, "__name__", str(c))
-                for c in cls_
-                if c is not type(None)
+                getattr(c, "__name__", str(c)) for c in cls_ if c is not type(None)
             ]
             py_base = " | ".join(names) if names else "Any"
         else:
@@ -396,8 +390,7 @@ def _query_class(panel_cls: type, label: str) -> None:
     try:
         sig = inspect.signature(panel_cls.__init__)
         has_vargs = any(
-            p.kind == inspect.Parameter.VAR_POSITIONAL
-            for p in sig.parameters.values()
+            p.kind == inspect.Parameter.VAR_POSITIONAL for p in sig.parameters.values()
         )
     except (ValueError, TypeError):
         has_vargs = False
@@ -440,16 +433,42 @@ def _list_mode() -> None:
 # 要排除的方法名（param 内部、Python object 基类等）
 _METHOD_EXCLUDE: set[str] = {
     # object 基类
-    "__init__", "__new__", "__del__", "__repr__", "__str__",
-    "__hash__", "__getattribute__", "__setattr__", "__delattr__",
-    "__sizeof__", "__reduce__", "__reduce_ex__", "__getstate__",
-    "__subclasshook__", "__init_subclass__", "__dir__",
-    "__format__", "__eq__", "__ne__", "__lt__", "__le__",
-    "__gt__", "__ge__", "__class__", "__doc__", "__module__",
-    "__dict__", "__weakref__", "__slots__", "__abstractmethods__",
+    "__init__",
+    "__new__",
+    "__del__",
+    "__repr__",
+    "__str__",
+    "__hash__",
+    "__getattribute__",
+    "__setattr__",
+    "__delattr__",
+    "__sizeof__",
+    "__reduce__",
+    "__reduce_ex__",
+    "__getstate__",
+    "__subclasshook__",
+    "__init_subclass__",
+    "__dir__",
+    "__format__",
+    "__eq__",
+    "__ne__",
+    "__lt__",
+    "__le__",
+    "__gt__",
+    "__ge__",
+    "__class__",
+    "__doc__",
+    "__module__",
+    "__dict__",
+    "__weakref__",
+    "__slots__",
+    "__abstractmethods__",
     # param 内部 (实例级)
-    "_param_watchers", "_events", "_callbacks",
-    "_link_deps", "_param_private",
+    "_param_watchers",
+    "_events",
+    "_callbacks",
+    "_link_deps",
+    "_param_private",
 }
 
 # 方法名前缀排除
@@ -537,9 +556,7 @@ def _query_methods(panel_cls: type, label: str) -> None:
 
     # 收集所有非排除的公开方法 → (name, owner, signature_line)
     methods_by_owner: dict[str, list[str]] = {}
-    mro_order: dict[str, int] = {
-        c.__name__: i for i, c in enumerate(panel_cls.__mro__)
-    }
+    mro_order: dict[str, int] = {c.__name__: i for i, c in enumerate(panel_cls.__mro__)}
 
     for name in dir(panel_cls):
         if name in _METHOD_EXCLUDE:
@@ -561,10 +578,14 @@ def _query_methods(panel_cls: type, label: str) -> None:
         methods_by_owner.setdefault(owner, []).append(line)
 
     print(f"\n# {cls_path}")
-    print(f"# MRO: {' → '.join(list(mro_order.keys())[:8])}{' …' if len(mro_order) > 8 else ''}\n")
+    print(
+        f"# MRO: {' → '.join(list(mro_order.keys())[:8])}{' …' if len(mro_order) > 8 else ''}\n"
+    )
 
     # 按 MRO 顺序输出（父类先）
-    for owner in sorted(methods_by_owner, key=lambda o: mro_order.get(o, 999), reverse=True):
+    for owner in sorted(
+        methods_by_owner, key=lambda o: mro_order.get(o, 999), reverse=True
+    ):
         print(f"  # ── 定义于 {owner} ──")
         for line in methods_by_owner[owner]:
             print(f"  {line}")
@@ -649,9 +670,7 @@ def _kwargs_pass_total(checks: list[WrapperCheck]) -> None:
             if pp.name
             not in (
                 _COMMON_EXCLUDED
-                | _WRAPPER_EXCLUDED.get(
-                    _get_wrapper_cls(c.wrapper_name), set()
-                )
+                | _WRAPPER_EXCLUDED.get(_get_wrapper_cls(c.wrapper_name), set())
             )
             and pp.name not in c.wrapper_params
         )
