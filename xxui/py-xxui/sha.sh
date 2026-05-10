@@ -41,53 +41,36 @@ clean() {
 }
 
 
-
-#  # 单个测试（精确路径）                                                                                                                       
+#  # 单个测试（精确路径）
 #  ./sha.sh test-head "tests/test_browser.py::TestButtonClickToCellRerun::test_increment_button_updates_counter"
-#                        
-#  # 按名字匹配（-k 模糊）                                                                                                                      
+#
+#  # 按名字匹配（-k 模糊）
 #  ./sha.sh test-head -k "counter"
-#                                                                                                      
-#  # 整个测试类                                                                                                                                 
+#
+#  # 整个测试类
 #  ./sha.sh test-head -k "TestButtonClickToCellRerun"
-#                                                                                   
-#  # 无参数 = 全部 15 个                                                                                                                        
-#  ./sha.sh test-headless                                                                                                                   
-test-headless() {
-  local test_args="${@:-tests/test_browser.py}"
-  run uv run pytest -v --browser chromium $test_args 
-}
-test-head() {
-  # 有头模式 + slowmo 500ms，可以看着浏览器执行
-  local test_args="${@:-tests/test_browser.py}"
-  run uv run pytest -v --browser chromium --headed --slowmo 500 $test_args
-}
-test-unit() {
-  run uv run pytest "${@:-tests/}" -m "not browser"
-}
-test() {
-  test-unit
-  test-headless
-}
+#
+#  # 无参数 = 全部 15 个
+#  ./sha.sh test-headless
+test-headless() { run uv run pytest -v --browser chromium "${@:-tests/test_browser.py}";}
+# 有头模式 + slowmo 500ms，可以看着浏览器执行
+test-head() { run uv run pytest -v --browser chromium --headed --slowmo 500 "${@:-tests/test_browser.py}";}
+# unit test
+test() { run uv run pytest "${@:-tests/}" -m "not browser";}
+test-all() { test; test-headless;}
 
 check() {
   run uv run ruff check src/ tests/
   run uv run ruff format --check src/ tests/
   run uv run pyright src/ tests/ examples/
-  test-unit "$@"
 }
 
 fix() {
   run uv run ruff check --fix src/ tests/
   run uv run ruff format src/ tests/
 }
+ci() { check;test-all; }
 
-panel() {
-  run uv run panel serve --dev --show examples/*.pn.py
-}
-
-
-
+panel() {  run uv run panel serve --dev --show examples/*.pn.py; }
 
 sha "$@"
-

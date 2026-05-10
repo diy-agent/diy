@@ -38,7 +38,8 @@ _get_gh_user() {
 # 全局命令不要进入到_c目录
 # cd "$ROOT_DIR"
 
-_workspaces=(packages/*/)
+# _workspaces=(packages/*/ xxui/*/)
+_workspaces=(xxui/*/)
 _submodules=(vendor/*/)
 _worktree_dir=".worktree"
 
@@ -61,7 +62,7 @@ _get_main_branch() {
 ####################################################################################
 dev() {
 
-  # 列出所有 worktree 状态   
+  # 列出所有 worktree 状态
   list() {
     local main_branch=$(_get_main_branch)
 
@@ -147,7 +148,7 @@ dev() {
     # Temp file for PR info
     local pr_map_file
     pr_map_file=$(mktemp)
-    
+
     if [[ ${#issue_nums[@]} -gt 0 ]]; then
       # Fetch all project items once - reuse the same pattern as issue list
       local project_data
@@ -162,7 +163,7 @@ dev() {
         ' > "$issue_map_file"
       fi
     fi
-    
+
     # Fetch PR info for all branches with issue numbers
     if [[ ${#branches[@]} -gt 0 ]]; then
       # Fetch all PRs in one go
@@ -188,7 +189,7 @@ dev() {
         issue_status=$(grep "^$issue_num"$'\t' "$issue_map_file" | cut -f2)
         issue_title=$(grep "^$issue_num"$'\t' "$issue_map_file" | cut -f3)
       fi
-      
+
       # PR information
       local pr_num="-"
       local pr_state="-"
@@ -206,7 +207,7 @@ dev() {
 
       # 处理内容中的特殊字符，替换掉换行符
       issue_title="${issue_title//$'\n'/ }"
-      
+
       if [ "$first" = true ]; then
         first=false
       else
@@ -224,7 +225,7 @@ dev() {
     # 先输出标题
     printf "${primary}%-20s %-18s %-8s %-6s %-12s %s${reset}\n" "Path" "Branch" "Ahead" "PR" "PR State" "Project Status"
     printf "${primary}%-20s %-18s %-8s %-6s %-12s %s${reset}\n" "----" "------" "-----" "--" "--------" "--------------"
-    
+
     # 逐行处理并上色
     echo "$json" | jq -c '.[]' | while read -r item; do
       local path=$(echo "$item" | jq -r '.path')
@@ -233,13 +234,13 @@ dev() {
       local pr_num=$(echo "$item" | jq -r '.pr_num')
       local pr_state=$(echo "$item" | jq -r '.pr_state')
       local issue_status=$(echo "$item" | jq -r '.issue_status')
-      
+
       # 格式化PR
       local pr="$pr_num"
       if [[ "$pr_num" != "-" ]]; then
         pr="#$pr_num"
       fi
-      
+
        # 特殊处理颜色，保证对齐（转义字符不占可见宽度）
       local ahead_start=""
       local ahead_end=""
@@ -247,14 +248,14 @@ dev() {
         ahead_start="$warning"
         ahead_end="$reset"
       fi
-      
+
       local pr_start=""
       local pr_end=""
       if [[ "$pr_state" == "OPEN" ]]; then
         pr_start="$warning"
         pr_end="$reset"
       fi
-      
+
       printf "%-20s %-18s ${ahead_start}%-8d${ahead_end} %-6s ${pr_start}%-12s${pr_end} %s\n" "$path" "$branch_display" "$ahead" "$pr" "$pr_state" "$issue_status"
     done
   }
@@ -521,15 +522,20 @@ dev() {
 _ws_run() {
   for ws in "${_workspaces[@]}"; do
     (
-      run cd "$ws"
+      cd "$ws"
+      echo "${inverse_surface}info: workspace: Running '$@' in '$ws'${reset}"
       run "$@"
     )
   done
 }
 
 ws() {
-  pwd()  { _ws_run command pwd; }
-  exec() { _ws_run command "$@"; }
+  pwd()   {  _ws_run command pwd; }
+  exec()  {  _ws_run command "$@"; }
+  ci()    {  _ws_run command ./sha.sh ci; }
+  test()  {  _ws_run command ./sha.sh test; }
+  check() {  _ws_run command ./sha.sh check; }
+  fix()   {  _ws_run command ./sha.sh fix; }
 }
 
 _sub_run() {
@@ -747,4 +753,3 @@ _gh_edit_item_field_single_select() {
 ####################################################
 
 sha "$@"
-

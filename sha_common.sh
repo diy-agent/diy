@@ -95,7 +95,20 @@ surface_variant=$(_color_compose "$m3_on_surface_variant" "$m3_surface_variant")
 inverse_surface=$(_color_compose "$m3_inverse_on_surface" "$m3_inverse_surface")
 outline="\033[${m3_outline}m"
 reset=$(printf '\033[0m')
-creset=$(printf '\033[0m')
+
+# 测试所有构造的颜色
+test_colors() {
+  local composite_colors=(
+    "primary" "secondary" "tertiary" "success" "error" "warning" "info"
+    "surface" "surface_container" "surface_variant" "inverse_surface" "outline"
+  )
+
+  echo "--- Material Design 3 Composite Colors ---"
+  for name in "${composite_colors[@]}"; do
+    local val="${!name}"
+    printf "%-20s : %b Color Test %b\n" "$name" "$val" "$reset"
+  done
+}
 
 # 清晰的函数调用日志，替代 `set -x` 功能
 #
