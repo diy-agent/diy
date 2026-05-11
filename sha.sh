@@ -152,7 +152,7 @@ dev() {
     if [[ ${#issue_nums[@]} -gt 0 ]]; then
       # Fetch all project items once - reuse the same pattern as issue list
       local project_data
-      project_data=$(run gh project item-list "$GH_PROJECT_NUM" --owner "$GH_OWNER" --format json)
+      project_data=$(run gh project item-list "$GH_PROJECT_NUM" --owner "$GH_OWNER" --format json --limit 100)
       if [[ $? -eq 0 ]]; then
         # Extract all issue numbers, status, and titles into temp file
         echo "$project_data" | jq -r '
@@ -411,7 +411,7 @@ dev() {
     echo
     echo "${primary}=== Project Information ===${reset}"
     local project_info
-    project_info=$(run gh project item-list "$GH_PROJECT_NUM" --owner "$GH_OWNER" --format json 2>/dev/null)
+    project_info=$(run gh project item-list "$GH_PROJECT_NUM" --owner "$GH_OWNER" --format json --limit 100 2>/dev/null)
     if [[ $? -eq 0 && -n "$project_info" ]]; then
        local status=$(echo "$project_info" | jq -r "(if type == \"object\" and .items then .items else . end)[] | select(.content != null and .content.number == $issue_num) | .status // \"-\"")
        local priority=$(echo "$project_info" | jq -r "(if type == \"object\" and .items then .items else . end)[] | select(.content != null and .content.number == $issue_num) | .priority // \"-\"")
@@ -688,7 +688,7 @@ issue() {
     echo
 
     # Get data output all at once
-    local lines=$(run gh project item-list "$GH_PROJECT_NUM" --owner "$GH_OWNER" --format json)
+    local lines=$(run gh project item-list "$GH_PROJECT_NUM" --owner "$GH_OWNER" --format json --limit 100)
 
     if [ $? -ne 0 ]; then
       return $?
@@ -722,7 +722,7 @@ _gh_edit_item_field_single_select() {
 
   # 0. 自动获取 Item ID
   local item_id
-  item_id=$(run gh project item-list "$proj_num" --owner "$GH_OWNER" --format json | \
+  item_id=$(run gh project item-list "$proj_num" --owner "$GH_OWNER" --format json --limit 100 | \
     jq -r "(if type == \"object\" and .items then .items else . end)[] | select(.content.number == $issue_num) | .id")
 
   if [ -z "$item_id" ] || [ "$item_id" = "null" ]; then
