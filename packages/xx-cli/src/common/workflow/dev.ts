@@ -6,7 +6,11 @@ import {
 import { parseIssueNumber, getCurrentBranch, getMainBranch, run } from "./helpers.js";
 import type { WorktreeRow, PRInfo, IssueInfo } from "./types.js";
 import { logger } from "../logger.js";
-import { Markdown, type MarkdownTheme } from "@mariozechner/pi-tui";
+import {
+  Markdown, type MarkdownTheme,
+  ProcessTerminal, TUI, Container, SelectList, Text,
+  type SelectItem, type SelectListTheme,
+} from "@mariozechner/pi-tui";
 
 /** CLI 场景用纯文本主题，不依赖 initTheme() */
 const plainTheme: MarkdownTheme = {
@@ -240,16 +244,19 @@ export class DevWorkflow {
 
     const prNum = prs[0].number;
 
-    // 交互模式：如果没指定 method，列出可用策略让用户选
+    // 交互模式：如果没指定 method，TUI 选择
     if (!method) {
       const availableMethods = ghRepoMergeMethod(this.repo);
       const methods = availableMethods.split(",");
       if (methods.length === 1) {
         method = methods[0];
       } else {
-        // 优先 squash
-        method = methods.includes("squash") ? "squash" : methods[0];
-        log.info(`可用合并策略: ${methods.join(", ")}，使用: ${method}`);
+        const selected = await selectMethod(methods);
+        if (!selected) {
+          log.info("已取消合并");
+          return;
+        }
+        method = selected;
       }
     }
 
@@ -314,4 +321,53 @@ export class DevWorkflow {
 
     log.success(`成功: 已删除 worktree 和分支 "${branch}"`);
   }
+}
+
+/** 合并策略的中文描述 */
+const MERGE_METHOD_DESC: Record<string, string> = {
+  merge:  "创建合并提交 (merge commit)",
+  squash: "将所有提交压缩为一条 (squash)",
+  rebase: "变基合并 (rebase)",
+};
+
+/** TUI 选择合并策略，返回选中的 method 或 null（取消） */
+function selectMethod(methods: string[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    const items: SelectItem[] = methods.map((m) => ({
+      value: m,
+      label: m,
+      description: MERGE_METHOD_DESC[m] ?? "",
+    }));
+
+    const theme: SelectListTheme = {
+      selectedPrefix: (s) => `\x1b[1;36m${s}\x1b[0m`,
+      selectedText:   (s) => `\x1b[1;36m${s}\x1b[0m`,
+      description:    (s) => `\x1b[2m${s}\x1b[0m`,
+      scrollInfo:     (s) => `\x1b[2m${s}\x1b[0m`,
+      noMatch:        (s) => s,
+    };
+
+    const terminal = new ProcessTerminal();
+    const tui = new TUI(terminal, false);
+
+    const container = new Container();
+    container.addChild(new Text("\x1b[1m选择合并策略:\x1b[0m"));
+
+    const selectList = new SelectList(items, items.length, theme);
+    selectList.onSelect = (item) => {
+      tui.stop();
+      resolve(item.value);
+    };
+    selectList.onCancel = () => {
+      tui.stop();
+      resolve(null);
+    };
+    container.addChild(selectList);
+
+    container.addChild(new Text("\x1b[2m↑↓ 选择  Enter 确认  Esc/q 取消\x1b[0m"));
+
+    tui.addChild(container);
+    tui.setFocus(selectList);
+    tui.start();
+  });
 }

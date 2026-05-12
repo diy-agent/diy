@@ -101,7 +101,7 @@ export function workflowCli() {
   devCmd
     .command("merge-pr")
     .description("合并当前分支的 PR")
-    .option("--method <method>", "合并策略: merge | squash | rebase")
+    .option("--method <method>", "合并策略: merge | squash | rebase（未指定则交互选择）")
     .action(safeAction(async (opts: any) => {
       await wf.dev.mergePr(opts.method);
     }));
