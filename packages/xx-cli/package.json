@@ -2,7 +2,7 @@
   "name": "@xx-agent/xx-cli",
   "version": "0.1.0",
   "type": "module",
-  "main": "dist/src/main.js",
+  "main": "dist/src/xx/cli.js",
   "bin": {
     "xx-cli": "dist/src/cli.js"
   },
@@ -16,15 +16,7 @@
   "dependencies": {
     "@google/gemini-cli-core": "^0.34.0-preview.0",
     "@mariozechner/pi-tui": "^0.57.1",
-    "@opentelemetry/api": "^1.9.0",
-    "@opentelemetry/exporter-trace-otlp-grpc": "^0.213.0",
-    "@opentelemetry/exporter-trace-otlp-http": "^0.213.0",
-    "@opentelemetry/resources": "^2.6.0",
-    "@opentelemetry/sdk-trace-base": "^2.6.0",
-    "@opentelemetry/semantic-conventions": "^1.40.0",
-    "chalk": "^5.6.2",
     "commander": "^14.0.1",
-    "get-east-asian-width": "^1.5.0",
     "jsonc-parser": "^3.3.1",
     "marked": "^17.0.4",
     "pino": "^10.3.1",

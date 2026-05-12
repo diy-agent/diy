@@ -14,7 +14,7 @@ export const logger = {
         translateTime: "HH:MM:ss",
       },
     },
-    level: "debug",
+    level: "info",
   }),
 
   /**
