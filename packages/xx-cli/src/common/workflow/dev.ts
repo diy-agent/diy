@@ -231,6 +231,12 @@ export class DevWorkflow {
       return;
     }
 
+    // 检查是否已有 merged PR（提示不复用旧分支）
+    const merged = ghPrList(this.repo, branch, "merged");
+    if (merged.length > 0) {
+      log.warn(`分支 "${branch}" 已有已合并的 PR，建议开新 issue + 新分支`);
+    }
+
     // 推送
     gitPush();
 
