@@ -66,3 +66,8 @@ export function parseIssueNumber(branch: string): number | undefined {
 export function getCurrentBranch(cwd?: string): string {
   return run("git branch --show-current", cwd).trim();
 }
+
+/** 获取两个分支的 merge-base */
+export function getMergeBase(branch1: string, branch2: string, cwd?: string): string {
+  return run(`git merge-base "${branch1}" "${branch2}"`, cwd).trim();
+}

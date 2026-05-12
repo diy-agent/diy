@@ -3,7 +3,7 @@ import { ghIssueView, ghPrList, ghPrCreate, ghPrMerge, ghRepoMergeMethod } from 
 import {
   gitWorktreeList, gitWorktreeRemove, gitBranchDeleteForce, gitCheckout, gitPull, gitPush,
 } from "./git.js";
-import { parseIssueNumber, getCurrentBranch, getMainBranch, run } from "./helpers.js";
+import { parseIssueNumber, getCurrentBranch, getMainBranch, getMergeBase, run } from "./helpers.js";
 import type { WorktreeRow, PRInfo, IssueInfo } from "./types.js";
 import { logger } from "../logger.js";
 import {
@@ -184,6 +184,14 @@ export class DevWorkflow {
       console.log("  无法获取 PR 信息");
     }
 
+    // 分支示意图
+    console.log("\n=== 分支示意图 ===");
+    const diagram = buildBranchDiagram(branch, mainBranch);
+    const termWidth = process.stdout.columns ?? 120;
+    const md = new Markdown(diagram, 0, 0, plainTheme);
+    for (const line of md.render(termWidth)) {
+      console.log(line);
+    }
     console.log();
   }
 
@@ -216,7 +224,10 @@ export class DevWorkflow {
     // 检查是否已有 open PR
     const existing = ghPrList(this.repo, branch, "open");
     if (existing.length > 0) {
-      log.success(`成功: 已存在 open PR #${existing[0].number}`);
+      // 推送新的 commit 到已有 PR
+      gitPush();
+      log.warn(`分支 "${branch}" 已存在 open PR #${existing[0].number}，新 commit 已推送`);
+      log.info(`合并方式: workflow dev merge-pr 或到 ${existing[0].url} 页面手动合并`);
       return;
     }
 
@@ -244,7 +255,27 @@ export class DevWorkflow {
 
     const prNum = prs[0].number;
 
-    // 交互模式：如果没指定 method，TUI 选择
+    // 预检 mergeable 状态（在 TUI 之前，避免用户白选）
+    if (prs[0].mergeable === "CONFLICTING") {
+      const prUrl = prs[0].url;
+      throw new UserError(
+        `PR #${prNum} 与 ${mainBranch} 有冲突，请先解决冲突\n` +
+        `\n` +
+        `  页面操作: ${prUrl}\n` +
+        `\n` +
+        `  手工命令:\n` +
+        `    git fetch origin\n` +
+        `    git rebase origin/${mainBranch}\n` +
+        `    # 解决冲突后:\n` +
+        `    git add .\n` +
+        `    git rebase --continue\n` +
+        `    git push --force-with-lease\n` +
+        `\n` +
+        `  解决后重新执行: workflow dev merge-pr`
+      );
+    }
+
+    // 交互模式：如果没指定 method，显示选择器 TUI
     if (!method) {
       const availableMethods = ghRepoMergeMethod(this.repo);
       const methods = availableMethods.split(",");
@@ -258,12 +289,6 @@ export class DevWorkflow {
         }
         method = selected;
       }
-    }
-
-    // 预检 mergeable 状态
-    const prDetail = ghPrList(this.repo, branch, "open");
-    if (prDetail.length > 0 && prDetail[0].mergeable === "CONFLICTING") {
-      throw new UserError(`PR #${prNum} 有冲突，请在 Web 页面解决`);
     }
 
     ghPrMerge(prNum, this.repo, method);
@@ -330,6 +355,67 @@ const MERGE_METHOD_DESC: Record<string, string> = {
   rebase: "变基合并 (rebase)",
 };
 
+/** 合并策略的 ASCII 示意图（Markdown 格式） */
+const MERGE_METHOD_DIAGRAM: Record<string, string> = {
+  merge: [
+    "### Merge（合并提交）",
+    "",
+    "```",
+    "PR 合并前:",
+    "  main:  A---B---C",
+    "           \\",
+    "  分支:     D---E---F",
+    "",
+    "PR 合并后:",
+    "  main:  A---B---C-------M",
+    "           \\             /",
+    "  分支:     D---E---F---",
+    "```",
+    "",
+    "> 保留完整分支历史，M 是新的 merge commit",
+    "",
+    "**原始命令:** `git checkout main && git merge 分支`",
+  ].join("\n"),
+  squash: [
+    "### Squash（压缩合并）",
+    "",
+    "```",
+    "PR 合并前:",
+    "  main:  A---B---C",
+    "           \\",
+    "  分支:     D---E---F",
+    "",
+    "PR 合并后:",
+    "  main:  A---B---C---S       ← S 是新 commit，和 D/E/F 无关",
+    "",
+    "  分支:     D---E---F        ← 这 3 个仍在分支上，main 不认识",
+    "```",
+    "",
+    "> 历史简洁，但丢失 commit 身份 → **会导致后续 PR 冲突**",
+    "",
+    "**原始命令:** `git checkout main && git merge --squash 分支 && git commit`",
+  ].join("\n"),
+  rebase: [
+    "### Rebase（变基合并）",
+    "",
+    "```",
+    "PR 合并前:",
+    "  main:  A---B---C",
+    "           \\",
+    "  分支:     D---E---F",
+    "",
+    "PR 合并后:",
+    "  main:  A---B---C---D'--E'--F'   ← 线性历史，commit 独立保留",
+    "",
+    "  分支:     D---E---F             ← 旧 commit 需手动同步 main",
+    "```",
+    "",
+    "> 线性干净，commit 独立保留 → **推荐，不会导致后续冲突**",
+    "",
+    "**原始命令:** `git checkout 分支 && git rebase main && git checkout main && git merge 分支`",
+  ].join("\n"),
+};
+
 /** TUI 选择合并策略，返回选中的 method 或 null（取消） */
 function selectMethod(methods: string[]): Promise<string | null> {
   return new Promise((resolve) => {
@@ -339,7 +425,7 @@ function selectMethod(methods: string[]): Promise<string | null> {
       description: MERGE_METHOD_DESC[m] ?? "",
     }));
 
-    const theme: SelectListTheme = {
+    const listTheme: SelectListTheme = {
       selectedPrefix: (s) => `\x1b[1;36m${s}\x1b[0m`,
       selectedText:   (s) => `\x1b[1;36m${s}\x1b[0m`,
       description:    (s) => `\x1b[2m${s}\x1b[0m`,
@@ -353,7 +439,15 @@ function selectMethod(methods: string[]): Promise<string | null> {
     const container = new Container();
     container.addChild(new Text("\x1b[1m选择合并策略:\x1b[0m"));
 
-    const selectList = new SelectList(items, items.length, theme);
+    // 示意图 Markdown 组件，初始显示第一个选项的图
+    const initialMethod = methods[0] ?? "merge";
+    const diagramMd = new Markdown(
+      MERGE_METHOD_DIAGRAM[initialMethod] ?? "",
+      1, 0,
+      plainTheme
+    );
+
+    const selectList = new SelectList(items, items.length, listTheme);
     selectList.onSelect = (item) => {
       tui.stop();
       resolve(item.value);
@@ -362,7 +456,15 @@ function selectMethod(methods: string[]): Promise<string | null> {
       tui.stop();
       resolve(null);
     };
+    // 切换选项时更新示意图
+    selectList.onSelectionChange = (item) => {
+      const diagram = MERGE_METHOD_DIAGRAM[item.value] ?? "";
+      diagramMd.setText(diagram);
+      tui.requestRender();
+    };
     container.addChild(selectList);
+
+    container.addChild(diagramMd);
 
     container.addChild(new Text("\x1b[2m↑↓ 选择  Enter 确认  Esc/q 取消\x1b[0m"));
 
@@ -370,4 +472,57 @@ function selectMethod(methods: string[]): Promise<string | null> {
     tui.setFocus(selectList);
     tui.start();
   });
+}
+
+/** 构建当前分支的 ASCII 示意图（Markdown 代码块） */
+function buildBranchDiagram(branch: string, mainBranch: string): string {
+  const lines: string[] = [];
+  lines.push("### 当前分支拓扑");
+  lines.push("");
+  lines.push("```");
+
+  // 获取 merge-base
+  let mergeBase = "?";
+  try {
+    mergeBase = getMergeBase(branch, mainBranch).slice(0, 7);
+  } catch { /* ignore */ }
+
+  // 分支上的 commit
+  let branchCommits: string[] = [];
+  try {
+    const raw = run(`git log --oneline "${mergeBase}..${branch}"`);
+    branchCommits = raw.split("\n").filter(Boolean).map((l) => l.slice(0, 7));
+  } catch { /* ignore */ }
+
+  // main 上的 commit（从 merge-base 往后取一段）
+  let mainCommits: string[] = [];
+  try {
+    const raw = run(`git log --oneline "${mergeBase}..${mainBranch}"`);
+    mainCommits = raw.split("\n").filter(Boolean).map((l) => l.slice(0, 7));
+  } catch { /* ignore */ }
+
+  const indent = "  ";
+
+  // main 分支线
+  if (mainCommits.length === 0) {
+    lines.push(`${indent}main: ...---${mergeBase}`);
+  } else {
+    const mainChain = mainCommits.join("---");
+    lines.push(`${indent}main: ...---${mergeBase}---${mainChain}`);
+  }
+
+  // 分支连接线
+  const branchConnector = branchCommits.length > 0
+    ? `\\\n${indent}${branch}:${indent}`
+    : "";
+
+  // 分支 commit 链
+  const branchChain = branchCommits.join("---");
+  lines.push(`${indent}     ${branchConnector}${branchChain}`);
+
+  lines.push("```");
+  lines.push("");
+  lines.push(`> merge-base: \`${mergeBase}\` · ${branch} ahead ${branchCommits.length} · ${mainBranch} ahead ${mainCommits.length}`);
+
+  return lines.join("\n");
 }
