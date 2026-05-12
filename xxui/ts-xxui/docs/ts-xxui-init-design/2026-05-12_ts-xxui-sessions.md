@@ -15,7 +15,7 @@ last_updated: 2026-05-12
 
 ## 会话 1：搭建项目骨架 + pi-tui 接口检查工具
 
-### 任务 1.1 创建项目结构
+### 任务 1.1 ✅ 创建项目结构
 
 ```
 xxui/ts-xxui/
@@ -35,7 +35,7 @@ xxui/ts-xxui/
 - ESM, NodeNext 模块解析
 - 执行 `npm run check` 通过
 
-### 任务 1.2 实现 tools/check-pitui.ts
+### 任务 1.2 ✅ 实现 tools/check-pitui.ts
 
 参考 `xxui/py-xxui/tools/check_panel_params.py` 的设计：
 - 从 `@mariozechner/pi-tui` 导入所有公开组件类
@@ -65,7 +65,7 @@ xxui/ts-xxui/
 | `TUI` | extends Container | 主 TUI 循环、渲染 |
 | `Container` | Component | 基础容器 |
 
-### 任务 1.3 生成 pi-tui 接口参考文件
+### 任务 1.3 ✅ 生成 pi-tui 接口参考文件
 
 运行 `check-pitui.ts --all`，将输出保存为:
 ```
@@ -78,7 +78,7 @@ xxui/ts-xxui/docs/ref-pitui-interfaces.md
 
 ## 会话 2：实现 Signal + ScopeNode + Context 栈
 
-### 任务 2.1 实现 Signal<T>
+### 任务 2.1 ✅ 实现 Signal<T>
 
 参考 `xxui/ts-xxui/docs/ts-xxui-design-v0.2.md` 第 3 节。
 
@@ -87,7 +87,7 @@ xxui/ts-xxui/docs/ref-pitui-interfaces.md
 - 不暴露 `Ref` 类型
 - 单元测试：`tests/signal.test.ts`
 
-### 任务 2.2 实现 ScopeNode + ScopeConfig
+### 任务 2.2 ✅ 实现 ScopeNode + ScopeConfig
 
 参考设计文档第 6 节。
 
@@ -97,7 +97,7 @@ xxui/ts-xxui/docs/ref-pitui-interfaces.md
 - `clearChildren()`、`replaceChildren()`、`registerSignal()`
 - 单元测试：`tests/scope.test.ts`
 
-### 任务 2.3 实现 Context 栈
+### 任务 2.3 ✅ 实现 Context 栈
 
 参考设计文档第 4 节。
 
@@ -109,7 +109,7 @@ xxui/ts-xxui/docs/ref-pitui-interfaces.md
 
 ## 会话 3：实现 UIComponent + App + Basic Components
 
-### 任务 3.1 实现 UIComponent 基类
+### 任务 3.1 ✅ 实现 UIComponent 基类
 
 参考设计文档第 7.1 节。
 
@@ -118,7 +118,7 @@ xxui/ts-xxui/docs/ref-pitui-interfaces.md
 - `handleInput?`、`wantsKeyRelease?`、`invalidate()`
 - 区分 `ContainerComponent`（可挂载子 UI）和 `LeafComponent`（不可）
 
-### 任务 3.2 实现 App 根节点
+### 任务 3.2 ✅ 实现 App 根节点
 
 参考设计文档第 7.3 节。
 
@@ -128,7 +128,7 @@ xxui/ts-xxui/docs/ref-pitui-interfaces.md
 - `mount()`, `run()`, `stop()`
 - 参考 `ref-pitui-interfaces.md` 中 pi-tui 组件的构造参数
 
-### 任务 3.3 实现基础组件
+### 任务 3.3 ✅ 实现基础组件
 
 - `Text` — 包装 pi-tui `Text`
 - `Label` — 便捷字符串版本
@@ -142,7 +142,7 @@ xxui/ts-xxui/docs/ref-pitui-interfaces.md
 
 ## 会话 4：实现 Cell + Scheduler
 
-### 任务 4.1 实现 CellHost
+### 任务 4.1 ✅ 实现 CellHost
 
 参考设计文档第 5 节。
 
@@ -151,7 +151,7 @@ xxui/ts-xxui/docs/ref-pitui-interfaces.md
 - staging rerun：清空 children → 执行 fn → 失败恢复旧 children
 - 首次定义时立即执行
 
-### 任务 4.2 实现 Scheduler
+### 任务 4.2 ✅ 实现 Scheduler
 
 参考设计文档第 9 节。
 
@@ -159,7 +159,7 @@ xxui/ts-xxui/docs/ref-pitui-interfaces.md
 - `ImmediateScheduler` — dev 默认，立即执行
 - signal 写入 → scheduler.schedule(cell) → cell.rerun()
 
-### 任务 4.3 集成 vue effect
+### 任务 4.3 ✅ 集成 vue effect
 
 参考设计文档第 10.3 节。
 
@@ -171,7 +171,7 @@ xxui/ts-xxui/docs/ref-pitui-interfaces.md
 
 ## 会话 5：验收示例 + 端到端验证
 
-### 任务 5.1 写验收示例
+### 任务 5.1 ✅ 写验收示例
 
 参考设计文档第 11 节，对照 `packages/xx-tui/examples/`：
 
@@ -181,7 +181,7 @@ xxui/ts-xxui/docs/ref-pitui-interfaces.md
 | `examples/reactive_demo.ts` | `reactive_example.ts` | 计数器 + 定时器 + 输入联动 |
 | `examples/chat_demo.ts` | `example.ts` | chat 面板 + 消息列表 cell + button 互动 |
 
-### 任务 5.2 写单元测试
+### 任务 5.2 ✅ 写单元测试
 
 - `tests/signal.test.ts` — 等值跳过、依赖追踪
 - `tests/scope.test.ts` — config 继承、scope violation

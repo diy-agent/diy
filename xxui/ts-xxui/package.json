@@ -1,0 +1,22 @@
+{
+  "name": "ts-xxui",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "tsc",
+    "check-pitui": "npx tsx tools/check-pitui.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mariozechner/pi-tui": "^0.57.1",
+    "@vue/reactivity": "^3.5.31"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.6"
+  }
+}
