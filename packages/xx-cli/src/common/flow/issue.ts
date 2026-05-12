@@ -5,7 +5,7 @@ import { logger } from "../logger.js";
 
 const log = logger.withTag("issue");
 
-export class IssueWorkflow {
+export class IssueFlow {
   constructor(private repo: string) {}
 
   /** 创建新 issue */

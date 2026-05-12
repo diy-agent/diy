@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { syncDependencies } from "../common/sync.js";
 import { logger } from "../common/logger.js";
-import { workflowCli } from "../common/workflow/workflow-cli.js";
+import { flowCli } from "../common/flow/flow-cli.js";
 
 const program = new Command();
 program
@@ -19,7 +19,7 @@ program
     });
   });
 
-program.addCommand(workflowCli());
+program.addCommand(flowCli());
 
 program.parseAsync(process.argv).catch((err: any) => {
   // exitOverride 让帮助信息等正常场景抛 CommanderError 而不是 process.exit(1)

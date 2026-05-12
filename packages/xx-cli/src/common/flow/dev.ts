@@ -32,7 +32,7 @@ const plainTheme: MarkdownTheme = {
 
 const log = logger.withTag("dev");
 
-export class DevWorkflow {
+export class DevFlow {
   constructor(private repo: string) {}
 
   /** 列出所有 worktree 及其关联 issue / PR */
@@ -227,7 +227,7 @@ export class DevWorkflow {
       // 推送新的 commit 到已有 PR
       gitPush();
       log.warn(`分支 "${branch}" 已存在 open PR #${existing[0].number}，新 commit 已推送`);
-      log.info(`合并方式: workflow dev merge-pr 或到 ${existing[0].url} 页面手动合并`);
+      log.info(`合并方式: flow dev merge-pr 或到 ${existing[0].url} 页面手动合并`);
       return;
     }
 
@@ -277,7 +277,7 @@ export class DevWorkflow {
         `    git rebase --continue\n` +
         `    git push --force-with-lease\n` +
         `\n` +
-        `  解决后重新执行: workflow dev merge-pr`
+        `  解决后重新执行: flow dev merge-pr`
       );
     }
 

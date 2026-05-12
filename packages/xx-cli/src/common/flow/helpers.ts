@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { logger } from "../logger.js";
 
-const log = logger.withTag("workflow");
+const log = logger.withTag("flow");
 
 /** 执行 shell 命令，打印命令和输出，遇错抛异常 */
 export function run(cmd: string, cwd?: string): string {
