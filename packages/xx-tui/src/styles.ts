@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { visibleWidth } from "@mariozechner/pi-tui";
+import { visibleWidth } from "@earendil-works/pi-tui";
 
 /**
  * TStyle: A Tailwind-inspired styling utility for TUI.

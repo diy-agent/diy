@@ -45,20 +45,40 @@ app.column(() => {
     app.label(`Input:   ${inputValue.value || "(empty)"}`);
   });
 
-  // 输入交互（简化版，使用 pi-tui Input）
-  app.textInput({
-    value: inputValue.value,
-    placeholder: "Type message...",
-    onSubmit: (v) => {
-      if (v.trim()) {
-        messages.value = [...messages.value, v.trim()];
-        inputValue.value = "";
-      }
-    },
+  // 输入区域
+  app.column().cell(() => {
+    app.label(`> ${inputValue.value}${inputValue.value ? "" : "_"}`);
   });
 
   app.spacer();
-  app.label("  Type something and press Enter to add to list");
+  app.label("  Type text, Enter to add to list • q to quit");
+});
+
+// 全局输入处理 —— 参考 original reactive_example
+app.addInputListener((data: string) => {
+  // Enter 提交
+  if (data === "\r" || data === "\n") {
+    if (inputValue.value.trim()) {
+      messages.value = [...messages.value, inputValue.value.trim()];
+      inputValue.value = "";
+    }
+    return { consume: true };
+  }
+
+  // Backspace
+  if (data === "\x7f" || data === "\b") {
+    inputValue.value = inputValue.value.slice(0, -1);
+    return { consume: true };
+  }
+
+  // 普通可打印字符（排除控制字符）
+  const code = data.charCodeAt(0);
+  if (data.length === 1 && code >= 32 && code !== 127) {
+    inputValue.value += data;
+    return { consume: true };
+  }
+
+  return undefined;
 });
 
 app.mount();

@@ -462,28 +462,69 @@ export class PiTuiApp extends ContainerComponent implements ContextManager {
   // ── 生命周期 ─────────────────────────────────────────
 
   /**
-   * 挂载：触发初始渲染
+   * 挂载：触发初始渲染，并将 focus 自动分配给第一个可聚焦组件
    */
   mount(): void {
     // cells 的 effect 已在 markCell 中注册，会自动渲染
     // 这里只需确保初始渲染
     this.tui.requestRender();
+    // 初始 focus：找到第一个可交互组件
+    this.autoFocus();
+  }
+
+  /**
+   * 自动聚焦第一个可交互的叶子组件
+   */
+  private autoFocus(): void {
+    const findFocusable = (node: ScopeNode): UIComponent | null => {
+      if (
+        node instanceof UIComponent &&
+        "handleInput" in node &&
+        typeof node.handleInput === "function"
+      ) {
+        return node;
+      }
+      for (const child of node.children) {
+        const result = findFocusable(child);
+        if (result) return result;
+      }
+      return null;
+    };
+    const target = findFocusable(this);
+    if (target instanceof UIComponent) {
+      this.tui.setFocus(target);
+    }
+  }
+
+  /**
+   * 注册全局输入监听器，暴露给用户
+   */
+  addInputListener(listener: Parameters<PiTUI["addInputListener"]>[0]): ReturnType<PiTUI["addInputListener"]> {
+    return this.tui.addInputListener(listener);
+  }
+
+  /**
+   * 聚焦指定组件
+   */
+  focus(component: UIComponent): void {
+    this.tui.setFocus(component);
   }
 
   /**
    * 启动事件循环
    */
   run(): void {
-    this.tui.start();
-
-    // 默认退出逻辑
+    // 默认退出逻辑（q 或 Ctrl+C）—— 高优先级全局监听器
     this.tui.addInputListener((data: string) => {
-      if (data.toLowerCase() === "q" || data === "\u0003") {
+      // Ctrl+C 或 q 退出
+      if (data === "\u0003" || data.toLowerCase() === "q") {
         this.stop();
         return { consume: true };
       }
       return undefined;
     });
+
+    this.tui.start();
   }
 
   /**

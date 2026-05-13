@@ -1,7 +1,7 @@
 import {
   Text as PiText,
   truncateToWidth,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import { applyStyles, type TStyle } from "./styles.js";
 
 export type StyleSet = TStyle | TStyle[];

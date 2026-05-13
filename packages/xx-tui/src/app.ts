@@ -3,7 +3,7 @@ import {
   ProcessTerminal as PiProcessTerminal,
   Container as PiContainer,
   type Component,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import { effect } from "@vue/reactivity";
 import type { ComponentGenerator } from "./types.js";
 

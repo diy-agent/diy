@@ -1,7 +1,7 @@
 import {
   Container as PiContainer,
   truncateToWidth,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import type { ComponentGenerator } from "./types.js";
 
 /**
