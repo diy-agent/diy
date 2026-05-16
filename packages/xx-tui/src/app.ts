@@ -57,6 +57,12 @@ export abstract class App extends PiContainer {
    * Start the TUI application.
    */
   public run(): void {
+    // VSCode 终端下 Ctrl+C 可能以 SIGINT 而非 \u0003 到达，
+    // 注册 SIGINT handler 作为后备退出方式
+    process.on("SIGINT", () => {
+      this.stop();
+    });
+
     // Initial mount and render, automatically tracking reactive dependencies
     // accessed during the compose() phase.
     effect(() => {

@@ -57,4 +57,11 @@ fix() {
   run npx prettier --write 'src/**/*.ts' 'tests/**/*.ts' 'tools/**/*.ts' 'examples/**/*.ts'
 }
 
+examples() {
+  chat() { npx tsx examples/chat_demo.ts; }
+  counter() { npx tsx examples/counter.ts; }
+  tui() { npx tsx examples/tui.ts; }
+  reactive() { npx tsx examples/reactive.ts; }
+}
+
 sha "$@"

@@ -543,6 +543,12 @@ export class PiTuiApp extends ContainerComponent implements ContextManager {
    * 启动事件循环
    */
   run(): void {
+    // VSCode 终端下 Ctrl+C 可能以 SIGINT 而非 \u0003 到达，
+    // 注册 SIGINT handler 作为后备退出方式
+    process.on("SIGINT", () => {
+      this.stop();
+    });
+
     // 默认退出逻辑（q 或 Ctrl+C）—— 高优先级全局监听器
     this.tui.addInputListener((data: string) => {
       // Ctrl+C 或 q 退出
