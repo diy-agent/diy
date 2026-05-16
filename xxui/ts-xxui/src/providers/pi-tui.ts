@@ -140,7 +140,7 @@ class TsColumn extends ContainerComponent {
   static create(
     app: PiTuiApp,
     children: (ctx: TsColumn) => void,
-    config?: ScopeConfig
+    config?: ScopeConfig,
   ): TsColumn {
     const col = new TsColumn(config, app.currentContext);
     app.pushContext(col);
@@ -175,7 +175,7 @@ class TsRow extends ContainerComponent {
   static create(
     app: PiTuiApp,
     children: (ctx: TsRow) => void,
-    config?: ScopeConfig
+    config?: ScopeConfig,
   ): TsRow {
     const row = new TsRow(config, app.currentContext);
     app.pushContext(row);
@@ -197,14 +197,14 @@ class TsRow extends ContainerComponent {
   override render(width: number): string[] {
     // 横向布局：每个子组件平分宽度
     const uiChildren = this.children.filter(
-      (c) => c instanceof UIComponent
+      (c) => c instanceof UIComponent,
     ) as UIComponent[];
 
     if (uiChildren.length === 0) return [];
 
     const childWidth = Math.max(1, Math.floor(width / uiChildren.length));
     const childLines: string[][] = uiChildren.map((child) =>
-      child.render(childWidth)
+      child.render(childWidth),
     );
 
     // 找出最长子组件的行数
@@ -232,7 +232,12 @@ class TsRow extends ContainerComponent {
 class TsBox extends ContainerComponent {
   private piBox: PiBox;
 
-  constructor(config?: ScopeConfig, parent?: ScopeNode, paddingX: number = 1, paddingY: number = 1) {
+  constructor(
+    config?: ScopeConfig,
+    parent?: ScopeNode,
+    paddingX: number = 1,
+    paddingY: number = 1,
+  ) {
     super(config, parent);
     this.piBox = new PiBox(paddingX, paddingY);
   }
@@ -241,7 +246,7 @@ class TsBox extends ContainerComponent {
     app: PiTuiApp,
     props: { x?: number; y?: number },
     children: (ctx: TsBox) => void,
-    config?: ScopeConfig
+    config?: ScopeConfig,
   ): TsBox {
     const box = new TsBox(config, app.currentContext, props.x, props.y);
     box.mountToParentPiContainerVia(box);
@@ -286,9 +291,13 @@ class TsTextInput extends LeafComponent {
   private piInput: PiInput;
 
   constructor(
-    opts: { value?: string; placeholder?: string; onSubmit?: (v: string) => void },
+    opts: {
+      value?: string;
+      placeholder?: string;
+      onSubmit?: (v: string) => void;
+    },
     config?: ScopeConfig,
-    parent?: ScopeNode
+    parent?: ScopeNode,
   ) {
     super(config, parent);
     this.piInput = new PiInput();
@@ -396,27 +405,41 @@ export class PiTuiApp extends ContainerComponent implements ContextManager {
 
   column(children: (ctx: TsColumn) => void, config?: ScopeConfig): TsColumn;
   column(config?: ScopeConfig): TsColumn;
-  column(childrenOrConfig?: ((ctx: TsColumn) => void) | ScopeConfig, config?: ScopeConfig): TsColumn {
+  column(
+    childrenOrConfig?: ((ctx: TsColumn) => void) | ScopeConfig,
+    config?: ScopeConfig,
+  ): TsColumn {
     if (typeof childrenOrConfig === "function") {
       return TsColumn.create(this, childrenOrConfig, config);
     }
     // 无回调：创建空容器（用于 .cell() 链式调用）
-    return TsColumn.create(this, () => {}, childrenOrConfig as ScopeConfig | undefined);
+    return TsColumn.create(
+      this,
+      () => {},
+      childrenOrConfig as ScopeConfig | undefined,
+    );
   }
 
   row(children: (ctx: TsRow) => void, config?: ScopeConfig): TsRow;
   row(config?: ScopeConfig): TsRow;
-  row(childrenOrConfig?: ((ctx: TsRow) => void) | ScopeConfig, config?: ScopeConfig): TsRow {
+  row(
+    childrenOrConfig?: ((ctx: TsRow) => void) | ScopeConfig,
+    config?: ScopeConfig,
+  ): TsRow {
     if (typeof childrenOrConfig === "function") {
       return TsRow.create(this, childrenOrConfig, config);
     }
-    return TsRow.create(this, () => {}, childrenOrConfig as ScopeConfig | undefined);
+    return TsRow.create(
+      this,
+      () => {},
+      childrenOrConfig as ScopeConfig | undefined,
+    );
   }
 
   box(
     props: { x?: number; y?: number },
     children: (ctx: TsBox) => void,
-    config?: ScopeConfig
+    config?: ScopeConfig,
   ): TsBox {
     return TsBox.create(this, props, children, config);
   }
@@ -426,8 +449,12 @@ export class PiTuiApp extends ContainerComponent implements ContextManager {
   }
 
   textInput(
-    opts: { value?: string; placeholder?: string; onSubmit?: (v: string) => void },
-    config?: ScopeConfig
+    opts: {
+      value?: string;
+      placeholder?: string;
+      onSubmit?: (v: string) => void;
+    },
+    config?: ScopeConfig,
   ): TsTextInput {
     return new TsTextInput(opts, config, this.currentContext);
   }
@@ -499,7 +526,9 @@ export class PiTuiApp extends ContainerComponent implements ContextManager {
   /**
    * 注册全局输入监听器，暴露给用户
    */
-  addInputListener(listener: Parameters<PiTUI["addInputListener"]>[0]): ReturnType<PiTUI["addInputListener"]> {
+  addInputListener(
+    listener: Parameters<PiTUI["addInputListener"]>[0],
+  ): ReturnType<PiTUI["addInputListener"]> {
     return this.tui.addInputListener(listener);
   }
 

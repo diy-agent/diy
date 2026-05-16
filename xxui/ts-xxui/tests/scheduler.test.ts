@@ -4,7 +4,11 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { ImmediateScheduler, PeriodicScheduler, type CellRef } from "../src/scheduler.js";
+import {
+  ImmediateScheduler,
+  PeriodicScheduler,
+  type CellRef,
+} from "../src/scheduler.js";
 
 function makeCellRef(name: string, depth: number): CellRef {
   return {

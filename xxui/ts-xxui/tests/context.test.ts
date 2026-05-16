@@ -28,7 +28,7 @@ class MockApp extends ScopeNode implements ContextManager {
   /** 创建容器并推入 context 栈（模拟 app.column()） */
   createContainer(
     createFn: (app: MockApp) => ScopeNode,
-    childrenFn: (ctx: ScopeNode) => void
+    childrenFn: (ctx: ScopeNode) => void,
   ): ScopeNode {
     const container = createFn(this);
     this.pushContext(container);
@@ -53,7 +53,7 @@ describe("Context 栈（回调构树）", () => {
         const child = new ScopeNode(undefined, app.currentContext);
         created.push(child);
         expect(app.currentContext).toBe(ctx);
-      }
+      },
     );
 
     // 容器外的 context 应恢复为 app
@@ -82,12 +82,12 @@ describe("Context 栈（回调构树）", () => {
             const inInner = new ScopeNode(undefined, app.currentContext);
             parents.push(inInner.parent);
             expect(app.currentContext).toBe(inner);
-          }
+          },
         );
 
         // 嵌套后恢复 outer
         expect(app.currentContext).toBe(outer);
-      }
+      },
     );
 
     // 最终恢复 app
@@ -106,7 +106,7 @@ describe("Context 栈（回调构树）", () => {
         (app) => new ScopeNode(undefined, app.currentContext),
         (_ctx) => {
           throw new Error("组件创建失败");
-        }
+        },
       );
     } catch {
       // 预期异常
@@ -130,7 +130,7 @@ describe("Context 栈（回调构树）", () => {
               (app) => new ScopeNode(undefined, app.currentContext),
               (_inner) => {
                 throw new Error("内部失败");
-              }
+              },
             );
           } catch {
             // 捕获内部异常，继续
@@ -138,7 +138,7 @@ describe("Context 栈（回调构树）", () => {
 
           // 应该恢复到 outer
           expect(app.currentContext).toBe(outer);
-        }
+        },
       );
     } catch {
       // 不应到达这里

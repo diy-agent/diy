@@ -13,7 +13,7 @@ const app = new App(
   new ScopeConfig({
     mode: "dev",
     scheduler: new ImmediateScheduler(),
-  })
+  }),
 );
 
 const count = app.signal(0);

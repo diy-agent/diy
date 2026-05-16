@@ -43,7 +43,8 @@ export class ScopeConfig {
     if (opts) {
       if (opts.mode !== undefined) this.mode = opts.mode;
       if (opts.scheduler !== undefined) this.scheduler = opts.scheduler;
-      if (opts.maxRerunDepth !== undefined) this.maxRerunDepth = opts.maxRerunDepth;
+      if (opts.maxRerunDepth !== undefined)
+        this.maxRerunDepth = opts.maxRerunDepth;
     }
   }
 }
@@ -75,7 +76,9 @@ export class ScopeNode {
     if (this.config?.scheduler) return this.config.scheduler;
     if (this.parent) return this.parent.getEffectiveScheduler();
     // 根节点没有 scheduler 时应有默认实现
-    throw new Error("No scheduler configured. App root must provide a default Scheduler.");
+    throw new Error(
+      "No scheduler configured. App root must provide a default Scheduler.",
+    );
   }
 
   /** 获取最近祖先的有效 mode */
@@ -87,7 +90,8 @@ export class ScopeNode {
 
   /** 获取最近祖先的有效 maxRerunDepth */
   getEffectiveMaxRerunDepth(): number {
-    if (this.config?.maxRerunDepth !== undefined) return this.config.maxRerunDepth;
+    if (this.config?.maxRerunDepth !== undefined)
+      return this.config.maxRerunDepth;
     if (this.parent) return this.parent.getEffectiveMaxRerunDepth();
     return 100; // 默认 100
   }

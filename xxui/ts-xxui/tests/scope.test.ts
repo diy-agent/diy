@@ -4,14 +4,21 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { ScopeNode, ScopeConfig, type Scheduler, type ContextManager } from "../src/scope.js";
+import {
+  ScopeNode,
+  ScopeConfig,
+  type Scheduler,
+  type ContextManager,
+} from "../src/scope.js";
 import { Signal } from "../src/signal.js";
 
 // ── 测试用 Scheduler ──────────────────────────────────────
 
 class NoopScheduler implements Scheduler {
   scheduled: unknown[] = [];
-  schedule(cell: unknown): void { this.scheduled.push(cell); }
+  schedule(cell: unknown): void {
+    this.scheduled.push(cell);
+  }
   flush(): void {}
 }
 
@@ -146,7 +153,7 @@ describe("ScopeNode", () => {
   it("getEffectiveScheduler 没配置时应抛出", () => {
     const node = new ScopeNode();
     expect(() => node.getEffectiveScheduler()).toThrow(
-      "No scheduler configured"
+      "No scheduler configured",
     );
   });
 

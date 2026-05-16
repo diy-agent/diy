@@ -5,7 +5,11 @@
 
 import { describe, it, expect } from "vitest";
 import { ScopeNode, ScopeConfig } from "../src/scope.js";
-import { UIComponent, ContainerComponent, LeafComponent } from "../src/components.js";
+import {
+  UIComponent,
+  ContainerComponent,
+  LeafComponent,
+} from "../src/components.js";
 import { Container as PiContainer } from "@mariozechner/pi-tui";
 
 // ── 测试用叶子组件 ──────────────────────────────────────

@@ -37,14 +37,27 @@ const DEFAULT_COMPONENTS: Record<string, string> = {
 };
 
 // Component 接口必须实现的方法
-const COMPONENT_IFACE = ["render", "handleInput", "wantsKeyRelease", "invalidate"] as const;
+const COMPONENT_IFACE = [
+  "render",
+  "handleInput",
+  "wantsKeyRelease",
+  "invalidate",
+] as const;
 
 // 基类通用方法排除（Object.prototype 等）
 const BASE_EXCLUDE = new Set([
   "constructor",
-  "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__",
-  "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable", "toLocaleString",
-  "toString", "valueOf", "__proto__",
+  "__defineGetter__",
+  "__defineSetter__",
+  "__lookupGetter__",
+  "__lookupSetter__",
+  "hasOwnProperty",
+  "isPrototypeOf",
+  "propertyIsEnumerable",
+  "toLocaleString",
+  "toString",
+  "valueOf",
+  "__proto__",
 ]);
 
 // 方法名前缀排除
@@ -54,7 +67,9 @@ const PREFIX_EXCLUDE = ["_"];
 // 保守列表，宁可多漏也不要多杀。
 const INTERNAL_EXCLUDE = new Set([
   // Box 运行时实现（.d.ts 无）
-  "applyBg", "invalidateCache", "matchCache",
+  "applyBg",
+  "invalidateCache",
+  "matchCache",
   // CancellableLoader 内部
   "dispose",
 ]);
@@ -82,7 +97,10 @@ function getConstructorSignature(cls: any, className: string): string {
   // 回退：用 .length 推参数个数
   const paramCount = cls.length;
   if (paramCount > 0) {
-    const generic = Array.from({ length: paramCount }, (_, i) => `arg${i}`).join(", ");
+    const generic = Array.from(
+      { length: paramCount },
+      (_, i) => `arg${i}`,
+    ).join(", ");
     return `constructor(${generic}) // 推断 ${paramCount} 参数, 无源码签名`;
   }
   return `constructor()`;
@@ -197,15 +215,20 @@ function printClass(cls: any, className: string): void {
   // 4. 是否有 children (容器类)
   if ("children" in cls.prototype) {
     console.log("### 子组件管理（Container）");
-    const childrenDesc = Object.getOwnPropertyDescriptor(cls.prototype, "children");
+    const childrenDesc = Object.getOwnPropertyDescriptor(
+      cls.prototype,
+      "children",
+    );
     if (childrenDesc) {
       console.log("- **children**: `Component[]`");
     }
-    const containerMethods = ["addChild", "removeChild", "clear"].filter(
-      (m) => methods.includes(m)
+    const containerMethods = ["addChild", "removeChild", "clear"].filter((m) =>
+      methods.includes(m),
     );
     if (containerMethods.length > 0) {
-      console.log(`- 方法: ${containerMethods.map((m) => `\`${m}()\``).join(", ")}`);
+      console.log(
+        `- 方法: ${containerMethods.map((m) => `\`${m}()\``).join(", ")}`,
+      );
     }
     console.log();
   }
@@ -225,7 +248,12 @@ function listComponents(): void {
 
 // ── 入口 ──────────────────────────────────────────────────
 
-function parseArgs(): { class?: string; list?: boolean; methods?: string; all?: boolean } {
+function parseArgs(): {
+  class?: string;
+  list?: boolean;
+  methods?: string;
+  all?: boolean;
+} {
   const args = process.argv.slice(2);
   const result: Record<string, string | boolean> = {};
   for (let i = 0; i < args.length; i++) {
