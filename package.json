@@ -18,7 +18,7 @@
     "test:all": "npm run test --workspaces --if-present",
     "check": "tsc --noEmit && eslint . --ext .ts,.tsx && shellcheck *.sh",
     "check:all": "npm run check && npm run check --workspaces --if-present",
-    "evolve": "tsx packages/xx-cli/src/xx/cli.ts",
+    "xx": "tsx packages/xx-cli/src/xx/cli.ts",
     "sync": "tsx packages/xx-cli/src/xx/cli.ts sync",
     "example:pirate": "tsx packages/xx-core/examples/example.ts",
     "clean:all": "rm -rf dist && npm run clean --workspaces --if-present",
