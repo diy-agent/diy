@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 共享 pre-commit hook（core.hooksPath=/Users/ccc/git/dao/.git/hooks）
-# 仅对 xx 仓库的 py-diyui 子项目生效
+# 仅对 diy 仓库的 py-diyui 子项目生效
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"

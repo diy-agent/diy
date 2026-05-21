@@ -6,7 +6,7 @@ last_updated: 2026-05-05
 status: index
 ---
 
-# XX UI 文档索引
+# diy UI 文档索引
 
 ## 文件命名规则
 

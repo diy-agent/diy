@@ -20,12 +20,12 @@ last_updated: 2026-05-12
 **定位**：浅包装 + 新风格 + ScopeNode。可集成多种不同风格框架，不是最大公约数封装。
 **不是**：重做 pi-tui、做 Virtual DOM、统一所有 TUI 框架。
 
-**验收目标**：实现 `packages/xx-tui/examples/` 的同等范例：
+**验收目标**：实现 `packages/diy-tui/examples/` 的同等范例：
 - `reactive_example.ts` — 计数器 + 输入联动
 - `example.ts` — chat bubble + slash command 面板
 - `styling_example.ts` — 样式组件
 
-> ts-diyui 是独立项目，**不在 `packages/xx-tui/` 里改**，而是新建 `diyui/ts-diyui/` 包。
+> ts-diyui 是独立项目，**不在 `packages/diy-tui/` 里改**，而是新建 `diyui/ts-diyui/` 包。
 
 ---
 
@@ -845,7 +845,7 @@ ts-diyui/
 
 ## 13. pi-tui 关键接口参考（只读）
 
-> **来源**: `.xx/ref/github.com/badlogic/pi-mono/v0.61.0/packages/tui/src/`
+> **来源**: `.diy/ref/github.com/badlogic/pi-mono/v0.61.0/packages/tui/src/`
 > **工具**: 可用 `tools/check-pitui.ts` 自动生成完整参考文件 `docs/ref-pitui-interfaces.md`
 
 ### 13.1 Component 接口（所有组件必须实现）
@@ -1146,5 +1146,5 @@ export { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.js";
 | `diyui/ts-diyui/tools/check-pitui.ts` | pi-tui 组件检查工具（类似 py-diyui 的 `check_panel_params.py`） |
 | `diyui/py-diyui/docs/py-diyui-init-design/2026-05-05_ai_codex_development_spec_v0.1.md` | py-diyui v0.1 开发规格（参考用） |
 | `diyui/py-diyui/docs/py-diyui-init-design/2026-05-05_user_original_ideas.md` | 原始思路（参考用） |
-| `.xx/ref/github.com/badlogic/pi-mono/v0.61.0/packages/tui/src/` | pi-tui 源码（只读参考） |
-| `packages/xx-tui/examples/` | xx-tui 范例（验收目标） |
+| `.diy/ref/github.com/badlogic/pi-mono/v0.61.0/packages/tui/src/` | pi-tui 源码（只读参考） |
+| `packages/diy-tui/examples/` | diy-tui 范例（验收目标） |

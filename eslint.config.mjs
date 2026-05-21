@@ -4,7 +4,7 @@ import tslint from "typescript-eslint";
 
 export default tslint.config(
   {
-    ignores: ["dist/**", "coverage/**", "node_modules/**", ".xx/**", ".worktree/**", "packages/**/dist/**"],
+    ignores: ["dist/**", "coverage/**", "node_modules/**", ".diy/**", ".worktree/**", "packages/**/dist/**"],
   },
   js.configs.recommended,
   tslint.configs.recommended,
@@ -23,8 +23,8 @@ export default tslint.config(
         {
           "patterns": [
             {
-              "group": ["**/.xx/ref/**"],
-              "message": "禁止直接从 .xx/ref 导入。请使用标准包名并在 tsconfig.json 中配置 paths 映射。",
+              "group": ["**/.diy/ref/**"],
+              "message": "禁止直接从 .diy/ref 导入。请使用标准包名并在 tsconfig.json 中配置 paths 映射。",
             },
           ],
         },

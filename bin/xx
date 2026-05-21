@@ -1,2 +1,0 @@
-#!/usr/bin/env npx tsx
-import "../packages/xx-cli/src/xx/cli.ts";

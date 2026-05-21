@@ -6,7 +6,7 @@ last_updated: 2026-05-04
 status: process_draft
 ---
 
-# XX UI API 设计文档 v0.2
+# diy UI API 设计文档 v0.2
 
 > **实验阶段**：当前版本仅支持单线程、同步代码。Async 支持后续再议。
 
@@ -15,7 +15,7 @@ status: process_draft
 ## 一、项目定位
 
 ```python
-# XX UI 是薄封装层，不是新框架
+# diy UI 是薄封装层，不是新框架
 app = ui.App(render=PanelRender())  # 在 Panel 之上封装
 app.Button("OK")                     # 立即创建 Panel Button 并挂载
 
@@ -472,11 +472,11 @@ app = ui.App(render=PanelRender())   # Panel
 
 ### 9.2 后端遵循原框架规则
 
-XX UI 不统一 runtime：
+diy UI 不统一 runtime：
 - Panel：仍是 persistent widget model
 - marimo：仍是 notebook rerun 模型
 
-XX UI 统一的是：signal、rerun、context stack、component DSL。
+diy UI 统一的是：signal、rerun、context stack、component DSL。
 
 ### 9.3 组件创建立即映射
 

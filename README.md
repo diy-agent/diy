@@ -1,6 +1,6 @@
-# xx 
+# diy 
 
-xx 是一个cli智能体应用，封装常用agent cli，比如geminicli/codex/qwen/codebuddy/pi/opencode 等，这些工具本身就具有极高的使用价值和有些甚至还有不错的免费额度, xx将这些工具整合起来，提供一个统一的cli接口，方便用户使用, 并提供: AI确定性工程能力、完全可定制AGENT工作流、全自动开发、AGENT评测、agent工具可观侧性工程等附加特性。
+diy 是一个cli智能体应用，封装常用agent cli，比如geminicli/codex/qwen/codebuddy/pi/opencode 等，这些工具本身就具有极高的使用价值和有些甚至还有不错的免费额度, xx将这些工具整合起来，提供一个统一的cli接口，方便用户使用, 并提供: AI确定性工程能力、完全可定制AGENT工作流、全自动开发、AGENT评测、agent工具可观侧性工程等附加特性。
 
 ## ai 全自动开发愿景
 
@@ -17,29 +17,29 @@ xx 是一个cli智能体应用，封装常用agent cli，比如geminicli/codex/q
 
 ## 如何做到
 
-假设这个系统叫xx，道生一，一生二，二生三，三生天下，xx 是一个智能体应用，暂定为cli命令行工具，封装各种编程agent cli或其他工具，比如geminicli/qwen/codebuddy/pi/opencode 等，这些大厂开发的工具本身就具有极高的使用价值和不错的免费额度。
+假设这个系统叫xx，道生一，一生二，二生三，三生天下，diy 是一个智能体应用，暂定为cli命令行工具，封装各种编程agent cli或其他工具，比如geminicli/qwen/codebuddy/pi/opencode 等，这些大厂开发的工具本身就具有极高的使用价值和不错的免费额度。
 
 在一个目录中输入
 ```bash
-xx
+diy
 ```
 
 他会提示你输入你的目标:
 
-> 本目录无`xx.md`, 初始化项目, 你的愿景是什么? 你要达成什么目标? 请输入: __________  
+> 本目录无`diy.md`, 初始化项目, 你的愿景是什么? 你要达成什么目标? 请输入: __________  
 
 然后xx会：
-- 生成`xx.md`, 包含: 你的愿景, xx 运转模版提示词
+- 生成`diy.md`, 包含: 你的愿景, diy 运转模版提示词
 - 提示你可用的agent tools工具集, 按照你目前安装的情况帮你初始化 `.gemini`/`.qwen`等目录
 
-在至少具备最少一个可用agent tools的情况下，生成第一个 `xx.ts` 模版，
+在至少具备最少一个可用agent tools的情况下，生成第一个 `diy.ts` 模版，
 
 并进入进化循环:
 while(true){
-    run xx.ts
+    run diy.ts
 }
 
-xx 本质并不添加任何额外的流程、魔法、提示词，只是原本的构成一个初始循环，而具体每一次循环做什么进化，要看你自己项目里的xx.ts脚本及其配置了。
+diy 本质并不添加任何额外的流程、魔法、提示词，只是原本的构成一个初始循环，而具体每一次循环做什么进化，要看你自己项目里的xx.ts脚本及其配置了。
 
 最好的畅想是：这个循环按照项目愿景和目标，进入一种自我寻找方向，寻找出路，自我衡量，自我编程去达成任务，
 
@@ -60,6 +60,6 @@ xx 本质并不添加任何额外的流程、魔法、提示词，只是原本�
 ## 文档引用
 - [开发规范](./docs/dev-flow.md)
 - [开发框架及工具选型](./docs/dev-framework.md)
-- [xx Roadmap](./docs/ROADMAP.md)
+- [diy Roadmap](./docs/ROADMAP.md)
 - 工作流
   - [工作流-github工作流](./docs/workflow-github.md)test fix

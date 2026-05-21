@@ -1,6 +1,6 @@
 ---
 title: agent acp 协议使用报告
-workflow: @xx/research
+workflow: @diy/research
 status: completed
 date: 2026-03-24
 ---

@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@google/gemini-cli-core": ["../../.diy/ref/github.com/google-gemini/gemini-cli/v0.34.0-preview.0"],
+      "@diy-agent/diy-core": ["./src/index.ts"]
+    }
+  },
+  "include": ["src", "examples"],
+  "exclude": ["node_modules", "dist"]
+}

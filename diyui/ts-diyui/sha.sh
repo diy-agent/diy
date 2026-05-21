@@ -38,6 +38,9 @@ source "../../sha_common.sh"
 clean() {
   run rm -rf ./dist
 }
+sync() {
+  :
+}
 
 # check：类型检查
 check() {

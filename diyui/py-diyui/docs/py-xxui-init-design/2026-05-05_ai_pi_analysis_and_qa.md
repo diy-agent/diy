@@ -7,7 +7,7 @@ status: round2_analysis
 rounds: 2
 ---
 
-# XX UI v0.1 开发问题分析与待确认事项
+# diy UI v0.1 开发问题分析与待确认事项
 
 基于 <2026-05-05_ai_codex_development_spec_v0.1.md> 的阅读分析。
 

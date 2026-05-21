@@ -38,8 +38,13 @@ source "../../sha_common.sh"
 clean() {
   run rm -rf ./build
   run rm -rf ./dist
+  run rm -rf ./.pytest_cache
+  run rm -rf ./.ruff_cache
+  run find . -type d -name "*.egg-info" -prune -exec rm -rf {} \;
 }
-
+sync() {
+  :
+}
 
 #  # 单个测试（精确路径）
 #  ./sha.sh test-head "tests/test_browser.py::TestButtonClickToCellRerun::test_increment_button_updates_counter"

@@ -173,9 +173,9 @@ diyui/ts-diyui/docs/ref-pitui-interfaces.md
 
 ### 任务 5.1 ✅ 写验收示例
 
-参考设计文档第 11 节，对照 `packages/xx-tui/examples/`：
+参考设计文档第 11 节，对照 `packages/diy-tui/examples/`：
 
-| ts-diyui 示例 | 对应 xx-tui 范例 | 验证目标 |
+| ts-diyui 示例 | 对应 diy-tui 范例 | 验证目标 |
 |-------------|-----------------|---------|
 | `examples/counter.ts` | — | 最小验证：signal + cell + rerun |
 | `examples/reactive_demo.ts` | `reactive_example.ts` | 计数器 + 定时器 + 输入联动 |

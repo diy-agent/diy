@@ -1,6 +1,6 @@
 ---
 title: 开发规范
-tags: [xx, 开发]
+tags: [diy, 开发]
 category: 开发
 description: 开发流程、规范
 draft: false
@@ -53,9 +53,9 @@ issue new → issue dev → (开发) → dev pr → (合并) → 清理 worktree
 
 实际执行：
 ```bash
-gh issue create --repo xx-agent/xx --title "支持插件热加载" --body "支持插件热加载"
+gh issue create --repo diy-agent/diy --title "支持插件热加载" --body "支持插件热加载"
 # 提取 issue 编号 N
-gh project item-add --owner chen56 13 --url https://github.com/xx-agent/xx/issues/N
+gh project item-add --owner chen56 13 --url https://github.com/diy-agent/diy/issues/N
 # → Project Status: Backlog
 ```
 
@@ -81,7 +81,7 @@ git push -u origin 42-hot-reload
 进入 worktree 开发：
 ```bash
 cd .worktree/42-hot-reload
-./sha.sh sync all   # npm install + submodule + .xx/ref 同步
+./sha.sh sync all   # npm install + submodule + .diy/ref 同步
 # ... 编码、提交 ...
 ```
 
@@ -105,10 +105,10 @@ cd .worktree/42-hot-reload
 实际执行：
 ```bash
 # 从分支名提取 issue 编号 (格式: {N}-xxx / issue-{N} / {N})
-gh issue view 42 --repo xx-agent/xx --json title -q .title   # → PR 标题
+gh issue view 42 --repo diy-agent/diy --json title -q .title   # → PR 标题
 git push origin 42-hot-reload
 # 已有 open PR 则跳过，否则：
-gh pr create --repo xx-agent/xx --base main --head 42-hot-reload --title "<issue标题>" --body "Complete #42"
+gh pr create --repo diy-agent/diy --base main --head 42-hot-reload --title "<issue标题>" --body "Complete #42"
 # → Project 自动化: Status → In review
 ```
 
@@ -120,7 +120,7 @@ gh pr create --repo xx-agent/xx --base main --head 42-hot-reload --title "<issue
 
 实际执行（自动从当前分支查找 open PR）：
 ```bash
-gh pr merge <pr-number> --repo xx-agent/xx --squash
+gh pr merge <pr-number> --repo diy-agent/diy --squash
 ```
 
 ### 6. 清理 worktree
@@ -175,13 +175,13 @@ gh project unlink 13 --owner chen56 --repo owner/repo-name   # 取消关联
       "content": {
         "type": "Issue",
         "number": 8,
-        "repository": "xx-agent/xx",
+        "repository": "diy-agent/diy",
         "title": "feat: xxx",
-        "url": "https://github.com/xx-agent/xx/issues/8"
+        "url": "https://github.com/diy-agent/diy/issues/8"
       },
       "module": "dev-flow",
       "priority": "P2",
-      "repository": "https://github.com/xx-agent/xx"
+      "repository": "https://github.com/diy-agent/diy"
     }
   ]
 }
@@ -195,7 +195,7 @@ gh project unlink 13 --owner chen56 --repo owner/repo-name   # 取消关联
   "number": 8,
   "title": "feat: xxx",
   "state": "OPEN",
-  "url": "https://github.com/xx-agent/xx/issues/8",
+  "url": "https://github.com/diy-agent/diy/issues/8",
   "labels": [],
   "assignees": [],
   "author": { "login": "chen56", "name": "Chen Peng" }
@@ -213,7 +213,7 @@ gh project unlink 13 --owner chen56 --repo owner/repo-name   # 取消关联
   "headRefName": "feature-branch",
   "baseRefName": "main",
   "mergeable": "UNKNOWN",
-  "url": "https://github.com/xx-agent/xx/pull/2"
+  "url": "https://github.com/diy-agent/diy/pull/2"
 }
 ```
 
@@ -226,7 +226,7 @@ gh project unlink 13 --owner chen56 --repo owner/repo-name   # 取消关联
 | **Status** | Single Select | Backlog, Ready, In progress, In review, Closed |
 | **Priority** | Single Select | P0, P1, P2, P3 |
 | **Size** | Single Select | XS, S, M, L, XL |
-| **Module** | Single Select | sources, xx-tui, acp, cli, tui, dev-flow |
+| **Module** | Single Select | sources, diy-tui, acp, cli, tui, dev-flow |
 | **Resolution** | Single Select | Duplicate, Wontfix, Invalid |
 | **Estimate** | Number | - |
 | **Start date** | Date | - |

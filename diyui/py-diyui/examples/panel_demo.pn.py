@@ -1,4 +1,4 @@
-"""XX UI Panel Demo — 输入联动 + 响应式 cell。
+"""diy UI Panel Demo — 输入联动 + 响应式 cell。
 
 运行：uv run panel serve examples/panel_demo.py
 """
@@ -15,7 +15,7 @@ app = PanelApp(config=ScopeConfig(
 # @app.column().cell()
 # def _(node):
 with app.column():
-    app.markdown("# 🧪 XX UI Panel Demo")
+    app.markdown("# 🧪 diy UI Panel Demo")
 
     # 输入组件：wrapper.value 即 signal 值，Panel 事件自动桥接
     name_input = app.text_input(name="Name", value="World")

@@ -1,4 +1,4 @@
-# xx Agent Instructions
+# diy Agent Instructions
 
 This file is the repository-wide instruction context for coding agents.
 `npm run sync` may link `GEMINI.md`,`CLAUDE.md` and `QWEN.md` to this file, so keep it
@@ -6,18 +6,18 @@ generic, execution-focused, and short.
 
 ## What This Repo Is
 
-xx is a Nodsse.js + TypeScript monorepo for orchestrating coding agents through a
+diy is a Nodsse.js + TypeScript monorepo for orchestrating coding agents through a
 shared CLI workflow.
 
 Primary workspaces:
-- `packages/xx-cli`: CLI entrypoints, evolve loop, planner, sync logic.
-- `packages/xx-core`: agent wrappers and shared runtime abstractions.
-- `packages/xx-tui`: terminal UI components.
+- `packages/diy-cli`: CLI entrypoints, evolve loop, planner, sync logic.
+- `packages/diy-core`: agent wrappers and shared runtime abstractions.
+- `packages/diy-tui`: terminal UI components.
 
 Important entrypoints:
-- `packages/xx-cli/src/xx/cli.ts`
-- `packages/xx-cli/src/xx/evolve.ts`
-- `packages/xx-cli/src/common/sync.ts`
+- `packages/diy-cli/src/diy/cli.ts`
+- `packages/diy-cli/src/diy/evolve.ts`
+- `packages/diy-cli/src/common/sync.ts`
 - `sha.sh`
 
 ## Hard Rules
@@ -42,14 +42,14 @@ Important entrypoints:
 
 ### Reference Code
 
-- `.xx/ref/` is read-only reference material for dependency internals.
+- `.diy/ref/` is read-only reference material for dependency internals.
 - Run `npm run sync` when mirrored dependency sources or their index may be stale.
-- Dependency mirror index: `.xx/ref/ref.lock.json`.
-- Use `ref.lock.json` only when you need dependency internals, then read the mapped source under `.xx/ref/`.
-- Never import from `.xx/ref/`.
+- Dependency mirror index: `.diy/ref/ref.lock.json`.
+- Use `ref.lock.json` only when you need dependency internals, then read the mapped source under `.diy/ref/`.
+- Never import from `.diy/ref/`.
 - Read dependency internals in this order:
   1. Current project code
-  2. `.xx/ref/`
+  2. `.diy/ref/`
   3. `node_modules/`
   4. Online documentation
 

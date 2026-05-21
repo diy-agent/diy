@@ -12,7 +12,7 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "xx-monorepo",
+    "diy-monorepo",
     "diyui",
 ]
 
@@ -2529,7 +2529,7 @@ wheels = [
 ]
 
 [[package]]
-name = "xx-monorepo"
+name = "diy-monorepo"
 version = "0.0.0"
 source = { virtual = "." }
 

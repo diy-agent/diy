@@ -6,15 +6,15 @@ last_updated: 2026-05-05
 status: current_development_spec
 ---
 
-# XX UI v0.1 Development Spec
+# diy UI v0.1 Development Spec
 
 本文是后续开发入口文档。旧文件保留为过程材料；实现、测试、计划应以本文为准。
 
 ## 0. 核心决策
 
-XX UI 不再尝试抽象一套统一 UI 组件设计语言。
+diy UI 不再尝试抽象一套统一 UI 组件设计语言。
 
-XX UI 只统一：
+diy UI 只统一：
 
 - state runtime
 - ScopeNode runtime
@@ -24,7 +24,7 @@ XX UI 只统一：
 - debug/log/notify scope
 - resource lifetime
 
-XX UI 不统一：
+diy UI 不统一：
 
 - CSS/layout 语义
 - provider 组件参数
@@ -46,7 +46,7 @@ class diyui.providers.panel.Button:
         return self.signal.value
 ```
 
-也就是：组件是 provider 原生组件的薄包装，参数尽量与 provider 保持一致；XX UI 在 wrapper 上附加自己的 ScopeNode、Signal、rerun、debug、lifetime 能力。
+也就是：组件是 provider 原生组件的薄包装，参数尽量与 provider 保持一致；diy UI 在 wrapper 上附加自己的 ScopeNode、Signal、rerun、debug、lifetime 能力。
 
 ## 1. 包名与入口
 
@@ -126,7 +126,7 @@ class TextInput(UIComponent):
 
 ## 3. Provider 原则
 
-Provider 负责把 XX UI runtime 接到现有框架。
+Provider 负责把 diy UI runtime 接到现有框架。
 
 ```python
 app = ui.App(provider=panel.Provider())
@@ -140,7 +140,7 @@ Provider 必须遵守：
 - 不做 CSS/layout 抽象翻译。
 - 不暴露统一 HTML/CSS 设计语言。
 - 可以在 adapter 内部使用 provider 的 watch/callback/event 机制。
-- 用户侧不需要理解 provider 的状态机制，状态统一进入 XX UI signal。
+- 用户侧不需要理解 provider 的状态机制，状态统一进入 diy UI signal。
 
 Panel 示例：
 
@@ -208,7 +208,7 @@ v0.1 暂不实现 `contextvars.ContextVar`。
 
 ## 6. Signal
 
-Signal 是 XX UI 状态原语。
+Signal 是 diy UI 状态原语。
 
 ```python
 count = app.signal(0)
@@ -532,11 +532,11 @@ marimo provider v0.1：
 - `radio`
 - `md` / markdown
 - 参数按 marimo 原生习惯，不强行与 Panel 一致。
-- marimo 只是 provider，不依赖 marimo cell 语义实现 XX UI runtime。
+- marimo 只是 provider，不依赖 marimo cell 语义实现 diy UI runtime。
 
 ## 15. Mount 与原生对象暴露
 
-provider 原生对象不隐藏。XX UI 是薄层，允许用户直接查看和操作 wrapper 的 `target`。
+provider 原生对象不隐藏。diy UI 是薄层，允许用户直接查看和操作 wrapper 的 `target`。
 
 ```python
 button = app.button(name="Run")
@@ -546,9 +546,9 @@ button.target  # provider native object
 注意：
 
 - 直接操作 `target` 是高级用法。
-- 如果用户绕过 XX UI signal/runtime 修改 provider 状态，XX UI 不保证能追踪这些变化。
-- XX UI 不干预用户直接操作原生组件。
-- 当 XX UI wrapper 能力不足时，用户可以自行扩展或直接使用原 provider 组件。
+- 如果用户绕过 diy UI signal/runtime 修改 provider 状态，diy UI 不保证能追踪这些变化。
+- diy UI 不干预用户直接操作原生组件。
+- 当 diy UI wrapper 能力不足时，用户可以自行扩展或直接使用原 provider 组件。
 - 常规状态联动仍应通过 wrapper `.value` / `.signal` / `app.signal()` 完成。
 
 ## 16. 非目标
@@ -844,6 +844,6 @@ def test_mount_delegates_to_provider():
 2. v0.1 暂不实现 `contextvars.ContextVar`，因为当前 UI API 是单线程同步模型。
 3. 默认 scheduler：dev mode 使用 immediate，prod mode 使用 periodic。
 4. cell 函数支持 `node` 参数；`node` 是当前 provider wrapper / ScopeNode。
-5. provider wrapper 不隐藏 `target`，因为 XX UI 是 provider 原生 UI 的薄层；直接操作 `target` 不保证同步 XX UI runtime，但框架不干预。
+5. provider wrapper 不隐藏 `target`，因为 diy UI 是 provider 原生 UI 的薄层；直接操作 `target` 不保证同步 diy UI runtime，但框架不干预。
 6. v0.1 provider 组件清单：Panel 为 `Column/Row/Card/Button/TextInput/RadioButtonGroup/Markdown`；marimo 为 `hstack/vstack/button/text/radio/md`。
 7. signal 跨 scope：dev 报错，prod warning log。

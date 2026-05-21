@@ -1,6 +1,6 @@
 /**
  * reactive_demo.ts — 计数器 + 输入联动示例
- * 对应 xx-tui examples/reactive_example.ts
+ * 对应 diy-tui examples/reactive_example.ts
  *
  * 运行：npx tsx examples/reactive_demo.ts
  * 退出：按 q 或 Ctrl+C

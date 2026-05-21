@@ -1,6 +1,6 @@
 /**
  * chat_demo.ts — chat 面板 + 按钮互动示例
- * 对应 xx-tui examples/example.ts
+ * 对应 diy-tui examples/example.ts
  *
  * 运行：npx tsx examples/chat_demo.ts
  * 退出：按 q 或 Ctrl+C

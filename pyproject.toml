@@ -1,5 +1,5 @@
 [project]
-name = "xx-monorepo"
+name = "diy-monorepo"
 version = "0.0.0"
 requires-python = ">=3.12"
 dependencies = []
