@@ -35,21 +35,19 @@ _ws_run() {
   done
 }
 
-ws() {
-  pwd()   {  _ws_run command pwd; }
-  exec()  {  _ws_run command "$@"; }
-  clean() {  _ws_run command ./sha.sh clean; }
-  sync()  {  _ws_run command ./sha.sh sync; }
-  ci()    {  _ws_run command ./sha.sh ci; }
-  check() {  _ws_run command ./sha.sh check; }
-  fix()   {  _ws_run command ./sha.sh fix; }
-  test()  {  _ws_run command ./sha.sh test; }
-  sync() {
-    run uv sync --all-packages
-    run npm i --workspaces
-    run git submodule update --init --recursive
-    _ws_run command ./sha.sh sync;
-  }
+pwd()   {  _ws_run command pwd; }
+exec()  {  _ws_run command "$@"; }
+clean() {  _ws_run command ./sha.sh clean; }
+sync()  {  _ws_run command ./sha.sh sync; }
+ci()    {  _ws_run command ./sha.sh ci; }
+check() {  _ws_run command ./sha.sh check; }
+fix()   {  _ws_run command ./sha.sh fix; }
+test()  {  _ws_run command ./sha.sh test; }
+sync() {
+  run uv sync --all-packages
+  run npm i --workspaces
+  run git submodule update --init --recursive
+  _ws_run command ./sha.sh sync;
 }
 
 _vendors_run() {
