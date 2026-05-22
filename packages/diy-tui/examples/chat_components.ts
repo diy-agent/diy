@@ -9,7 +9,7 @@ import { t } from "./styles.js";
  * Chat message structure for chat bubbles.
  */
 export type ChatMessage = {
-  role: 'user' | 'assistant';
+  role: "user" | "assistant";
   content: string;
   timestamp: Date;
 };
@@ -26,32 +26,33 @@ export class ChatBubble extends PiText {
   }
 
   render(width: number): string[] {
-    const roleTag = this.message.role === 'user'
-      ? t.bg_blue_500.text_black.font_bold.apply(' You ')
-      : t.bg_magenta_500.text_black.font_bold.apply(' Claude ');
+    const roleTag =
+      this.message.role === "user"
+        ? t.bg_blue_500.text_black.font_bold.apply(" You ")
+        : t.bg_magenta_500.text_black.font_bold.apply(" Claude ");
 
     const lines: string[] = [];
-    lines.push('');
+    lines.push("");
     lines.push(roleTag);
 
     // Split content into lines that fit width
-    const words = this.message.content.split(' ');
-    let currentLine = '';
+    const words = this.message.content.split(" ");
+    let currentLine = "";
 
     for (const word of words) {
       const testLine = currentLine ? `${currentLine} ${word}` : word;
       if (visibleWidth(testLine) <= width - 2) {
         currentLine = testLine;
       } else {
-        lines.push(t.text_white.apply('  ' + currentLine));
+        lines.push(t.text_white.apply("  " + currentLine));
         currentLine = word;
       }
     }
     if (currentLine) {
-      lines.push(t.text_white.apply('  ' + currentLine));
+      lines.push(t.text_white.apply("  " + currentLine));
     }
 
-    lines.push('');
+    lines.push("");
     return lines;
   }
 }
@@ -115,7 +116,7 @@ export class SlashCommandSuggestion extends PiText {
   }
 
   render(width: number): string[] {
-    const prefix = this.selected ? t.text_cyan_300.apply('▶ ') : '  ';
+    const prefix = this.selected ? t.text_cyan_300.apply("▶ ") : "  ";
     const cmd = t.font_bold.text_yellow_500.apply(this.command.padEnd(12));
     const desc = t.font_dim.text_gray_500.apply(this.description);
     const line = prefix + cmd + desc;

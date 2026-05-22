@@ -1,5 +1,5 @@
 ---
-module: ts-diyui
+module: diyui.ts
 version: v0.2
 status: draft
 based_on: v0.1 + chen56 review
@@ -7,11 +7,11 @@ author: chen56 + ai
 last_updated: 2026-05-12
 ---
 
-# ts-diyui 设计文档 v0.2
+# diyui.py 设计文档 v0.2
 
 ## 0. 目标与定位
 
-在 pi-tui 之上封装一层薄薄的 UI 框架，借鉴 py-diyui 的核心思维：
+在 pi-tui 之上封装一层薄薄的 UI 框架，借鉴 diyui.py 的核心思维：
 - **声明即注册**：`app.button("-1")` 创建即挂载到当前上下文
 - **Signal 响应式状态**：基于 `@vue/reactivity`，不直接暴露 vue 原语
 - **树形 ScopeNode**：组件树同时也是运行时配置树（scheduler、debug、notification scope）
@@ -25,7 +25,7 @@ last_updated: 2026-05-12
 - `example.ts` — chat bubble + slash command 面板
 - `styling_example.ts` — 样式组件
 
-> ts-diyui 是独立项目，**不在 `packages/diy-tui/` 里改**，而是新建 `diyui/ts-diyui/` 包。
+> diyui.py 是独立项目，**不在 `packages/diy-tui/` 里改**，而是新建 `diyui/diyui.py/` 包。
 
 ---
 
@@ -33,7 +33,7 @@ last_updated: 2026-05-12
 
 ### 1.1 App 是框架特定的
 
-不同于 py-diyui 统一的 `App(provider=...)` 模式，TS 版 **App 是特定于某一框架的类**，直接从对应路径 import：
+不同于 diyui.py 统一的 `App(provider=...)` 模式，TS 版 **App 是特定于某一框架的类**，直接从对应路径 import：
 
 ```typescript
 // pi-tui 框架
@@ -59,7 +59,7 @@ const app = new App({
 
 // ── 布局 ──
 app.column(() => {
-  app.text("# 🧪 ts-diyui Demo");
+  app.text("# 🧪 diyui.ts Demo");
 
   // 输入组件：wrapper.value 即 signal 值，事件自动桥接
   const nameInput = app.textInput({ name: "Name", value: "World" });
@@ -96,9 +96,9 @@ app.mount();
 app.run();
 ```
 
-### 1.3 对比 py-diyui 的语法差异
+### 1.3 对比 diyui.py 的语法差异
 
-| 特性 | py-diyui | ts-diyui |
+| 特性 | diyui.py | diyui.py |
 |------|---------|---------|
 | 入口 | `PanelApp(config=...)` | `new App({ mode, scheduler })` |
 | with 构树 | `with app.column():` | `app.column(() => { ... })`  — 回调函数替代 with |
@@ -152,7 +152,7 @@ app.button({ name: "OK" });               // pi-tui 无原生 Button，自定义
 app.textInput({ value: "", placeholder: "..." }); // 对标 PiInput 参数
 ```
 
-pi-tui 原生组件的参数不同时，ts-diyui wrapper 按各自原生参数设计，不做跨组件统一。
+pi-tui 原生组件的参数不同时，diyui.py wrapper 按各自原生参数设计，不做跨组件统一。
 
 ---
 
@@ -199,15 +199,15 @@ pi-tui 原生组件的参数不同时，ts-diyui wrapper 按各自原生参数�
 
 ### 2.2 UIComponent 不再持有 target
 
-与 py-diyui 不同，ts-diyui 的 UIComponent **直接继承/实现 pi-tui 的 Component 接口**，不通过 `target` 代理：
+与 diyui.py 不同，diyui.py 的 UIComponent **直接继承/实现 pi-tui 的 Component 接口**，不通过 `target` 代理：
 
 ```typescript
-// py-diyui 风格（不采用）：
+// diyui.py 风格（不采用）：
 // class Button {
 //   target: pn.widgets.Button;  // ❌ 代理人模式
 // }
 
-// ts-diyui 风格（采用）：
+// diyui.ts 风格（采用）：
 class Button extends ScopeNode implements Component {
   // 直接就是 pi-tui Component, render/handleInput 等直接实现
   render(width: number): string[] { ... }
@@ -592,7 +592,7 @@ class App extends ScopeNode implements Component {
 
 ## 8. 组件清单（v0.1）
 
-| ts-diyui 方法 | 对应 pi-tui 组件 | 类型 | 说明 |
+| diyui.py 方法 | 对应 pi-tui 组件 | 类型 | 说明 |
 |-------------|-----------------|------|------|
 | `app.text({ content })` | `PiText` | Leaf | 文本显示 |
 | `app.label(content)` | `PiText` | Leaf | 便捷文本，字符串参数 |
@@ -735,7 +735,7 @@ const count = app.signal(0);
 const name = app.signal("World");
 
 app.column(() => {
-  app.label("# 🧪 ts-diyui Reactive Demo");
+  app.label("# 🧪 diyui.ts Reactive Demo");
 
   app.row(() => {
     app.button({ name: "-1" }).onClick(() => { count.value--; });
@@ -796,7 +796,7 @@ app.column(() => {
 ### 12.1 项目结构
 
 ```
-ts-diyui/
+diyui.py/
 ├── package.json
 ├── tsconfig.json
 ├── src/
@@ -1110,7 +1110,7 @@ export { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.js";
 ### 13.13 Component vs ScopeNode 集成要点
 
 ```typescript
-// ts-diyui UIComponent 同时满足两个身份：
+// diyui.ts UIComponent 同时满足两个身份：
 //   1. ScopeNode（父子关系、config、signal scope）
 //   2. pi-tui Component（render/handleInput 由 TUI 调用）
 //
@@ -1140,11 +1140,11 @@ export { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.js";
 
 | 文件 | 用途 |
 |------|------|
-| `diyui/ts-diyui/docs/ts-diyui-design-v0.2.md` | **主设计文档**（本文） |
-| `diyui/ts-diyui/docs/ts-diyui-sessions.md` | 多会话任务清单 |
-| `diyui/ts-diyui/docs/ref-pitui-interfaces.md` | pi-tui 接口参考（由 `tools/check-pitui.ts` 生成） |
-| `diyui/ts-diyui/tools/check-pitui.ts` | pi-tui 组件检查工具（类似 py-diyui 的 `check_panel_params.py`） |
-| `diyui/py-diyui/docs/py-diyui-init-design/2026-05-05_ai_codex_development_spec_v0.1.md` | py-diyui v0.1 开发规格（参考用） |
-| `diyui/py-diyui/docs/py-diyui-init-design/2026-05-05_user_original_ideas.md` | 原始思路（参考用） |
+| `diyui/diyui.py/docs/diyui.py-design-v0.2.md` | **主设计文档**（本文） |
+| `diyui/diyui.py/docs/diyui.py-sessions.md` | 多会话任务清单 |
+| `diyui/diyui.py/docs/ref-pitui-interfaces.md` | pi-tui 接口参考（由 `tools/check-pitui.ts` 生成） |
+| `diyui/diyui.py/tools/check-pitui.ts` | pi-tui 组件检查工具（类似 diyui.py 的 `check_panel_params.py`） |
+| `diyui/diyui.py/docs/diyui.py-init-design/2026-05-05_ai_codex_development_spec_v0.1.md` | diyui.py v0.1 开发规格（参考用） |
+| `diyui/diyui.py/docs/diyui.py-init-design/2026-05-05_user_original_ideas.md` | 原始思路（参考用） |
 | `.diy/ref/github.com/badlogic/pi-mono/v0.61.0/packages/tui/src/` | pi-tui 源码（只读参考） |
 | `packages/diy-tui/examples/` | diy-tui 范例（验收目标） |

@@ -1,5 +1,5 @@
 /**
- * UIComponent — ts-diyui 组件基类
+ * UIComponent — diyui.ts 组件基类
  *
  * 同时继承 ScopeNode 和实现 pi-tui Component 接口。
  * 不通过 target 代理，直接就是 pi-tui Component。

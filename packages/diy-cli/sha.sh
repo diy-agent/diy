@@ -10,7 +10,7 @@
 # 5. 文件末尾保留 `sha "$@"` 调度入口
 #
 # ── 执行链 ──────────────────────────────────────
-# sha.sh → source ../../sha_common.sh → source vendor/sha/sha.bash
+# sha.sh → source ../../sha.common.sh → source vendor/sha/sha.bash
 #        → sha "$@" 解析命令 → 调用对应函数
 #
 # ── 示例 ─────────────────────────────────────────
@@ -29,7 +29,7 @@ shopt -s globstar extglob
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 cd "$ROOT_DIR"
-source "../../sha_common.sh"
+source "../../sha.common.sh"
 
 ####################################################################################
 # ts-pkgs-diyui 开发工作流
@@ -49,7 +49,7 @@ check() {
 
 # test：运行 vitest 单元测试
 #   ./sha.sh test                       # 全部测试
-#   ./sha.sh test tests/cell.test.ts    # 单个测试文件
+#   ./sha.sh test test/cell.test.ts    # 单个测试文件
 test() { run npx vitest run "${@:-}"; }
 
 # ci：check + test
@@ -57,14 +57,7 @@ ci() { check; test; }
 
 # fix：代码格式化
 fix() {
-  run npx prettier --write 'src/**/*.ts' 'tests/**/*.ts' 'tools/**/*.ts' 'examples/**/*.ts'
-}
-
-examples() {
-  chat() { npx tsx examples/chat_demo.ts; }
-  counter() { npx tsx examples/counter.ts; }
-  tui() { npx tsx examples/tui.ts; }
-  reactive() { npx tsx examples/reactive.ts; }
+  run npx prettier --write 'src/**/*.ts' 'test/**/*.ts'
 }
 
 sha "$@"

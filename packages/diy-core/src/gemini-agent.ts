@@ -14,9 +14,9 @@ import {
   PolicyDecision,
   type Part,
   type ToolCallRequestInfo,
-} from '@google/gemini-cli-core';
+} from "@google/gemini-cli-core";
 
-import type { AgentOptions } from './agent.js';
+import type { AgentOptions } from "./agent.js";
 
 /**
  * 一个对 core 包的精简包装。
@@ -34,7 +34,7 @@ export class GeminiCliAgent {
       sessionId: `simple-${Math.random().toString(36).slice(2, 10)}`,
       targetDir: cwd,
       cwd,
-      model: options.model || 'auto', // 改为 auto 触发路由
+      model: options.model || "auto", // 改为 auto 触发路由
       userMemory: options.instructions,
       debugMode: options.debug ?? false,
       // 以下是原 SDK 的标准配置

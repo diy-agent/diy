@@ -10,26 +10,44 @@ function* StylingApp() {
 
   // --- 1. COLORS & DECORATIONS ---
   yield new Text({ content: " 1. COLORS & DECORATIONS ", style: headerStyle });
-  yield new Text({ content: " White on Blue (bg_blue_500) ", style: t.bg_blue_500.text_white });
-  yield new Text({ content: " Black on Yellow (bg_yellow_500) ", style: t.bg_yellow_500.text_black });
-  yield new Text({ content: " White on Magenta (bg_magenta_500) ", style: t.bg_magenta_500.text_white });
-  
+  yield new Text({
+    content: " White on Blue (bg_blue_500) ",
+    style: t.bg_blue_500.text_white,
+  });
+  yield new Text({
+    content: " Black on Yellow (bg_yellow_500) ",
+    style: t.bg_yellow_500.text_black,
+  });
+  yield new Text({
+    content: " White on Magenta (bg_magenta_500) ",
+    style: t.bg_magenta_500.text_white,
+  });
+
   yield new Text({ content: "" }); // Spacer
 
   // --- 2. WIDTH PERCENTAGES ---
   yield new Text({ content: " 2. WIDTH PERCENTAGES ", style: headerStyle });
   yield new Text({ content: "w-full", style: t.w_full.bg_white.text_black });
-  yield new Text({ content: "w-2/3",  style: t.w_2_3.bg_yellow_500.text_black });
-  yield new Text({ content: "w-1/2",  style: t.w_1_2.bg_white.text_black });
-  yield new Text({ content: "w-1/3",  style: t.w_1_3.bg_yellow_500.text_black });
+  yield new Text({ content: "w-2/3", style: t.w_2_3.bg_yellow_500.text_black });
+  yield new Text({ content: "w-1/2", style: t.w_1_2.bg_white.text_black });
+  yield new Text({ content: "w-1/3", style: t.w_1_3.bg_yellow_500.text_black });
 
   yield new Text({ content: "" }); // Spacer
 
   // --- 3. ALIGNMENT ---
   yield new Text({ content: " 3. ALIGNMENT ", style: headerStyle });
-  yield new Text({ content: "text-left (default)", style: t.w_full.bg_cyan_500.text_black });
-  yield new Text({ content: "text-center", style: t.text_center.bg_black.text_white });
-  yield new Text({ content: "text-right", style: t.text_right.bg_cyan_500.text_black });
+  yield new Text({
+    content: "text-left (default)",
+    style: t.w_full.bg_cyan_500.text_black,
+  });
+  yield new Text({
+    content: "text-center",
+    style: t.text_center.bg_black.text_white,
+  });
+  yield new Text({
+    content: "text-right",
+    style: t.text_right.bg_cyan_500.text_black,
+  });
 
   yield new Text({ content: "" }); // Spacer
 

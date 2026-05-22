@@ -16,10 +16,7 @@ export interface CodingAgent {
    * @param signal - Optional abort signal for cancellation
    * @returns Promise resolving to agent events
    */
-  ask(
-    prompt: string,
-    signal?: AbortSignal,
-  ): Promise<AgentStreamEvent[]>;
+  ask(prompt: string, signal?: AbortSignal): Promise<AgentStreamEvent[]>;
 
   /**
    * Clean up resources and dispose the agent.
@@ -50,29 +47,33 @@ export interface AgentOptions {
  * Base event type for agent streaming responses.
  * Different agents may have additional event types.
  */
-export type AgentStreamEvent = ContentEvent | ToolCallRequestEvent | ToolCallResponseEvent | ErrorEvent;
+export type AgentStreamEvent =
+  | ContentEvent
+  | ToolCallRequestEvent
+  | ToolCallResponseEvent
+  | ErrorEvent;
 
 /** Event containing text content from the agent */
 export interface ContentEvent {
-  type: 'content';
+  type: "content";
   value: string;
 }
 
 /** Event requesting tool execution */
 export interface ToolCallRequestEvent {
-  type: 'tool_call_request';
+  type: "tool_call_request";
   value: ToolCallInfo;
 }
 
 /** Event with tool execution result */
 export interface ToolCallResponseEvent {
-  type: 'tool_call_response';
+  type: "tool_call_response";
   value: ToolCallResult;
 }
 
 /** Event indicating an error occurred */
 export interface ErrorEvent {
-  type: 'error';
+  type: "error";
   value: string | Error;
 }
 

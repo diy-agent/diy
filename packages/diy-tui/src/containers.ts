@@ -21,8 +21,12 @@ export class Horizontal extends PiContainer {
   render(width: number): string[] {
     if (this.children.length === 0) return [];
 
-    const totalGap = Math.max(0, this.gap) * Math.max(0, this.children.length - 1);
-    const childWidth = Math.max(1, Math.floor((width - totalGap) / this.children.length));
+    const totalGap =
+      Math.max(0, this.gap) * Math.max(0, this.children.length - 1);
+    const childWidth = Math.max(
+      1,
+      Math.floor((width - totalGap) / this.children.length),
+    );
     const allChildLines = this.children.map((c) => c.render(childWidth));
     const maxLines = Math.max(...allChildLines.map((l) => l.length));
 
@@ -32,7 +36,8 @@ export class Horizontal extends PiContainer {
       for (let j = 0; j < allChildLines.length; j++) {
         const content = allChildLines[j][i] || "";
         line += truncateToWidth(content, childWidth, "", true);
-        if (j < allChildLines.length - 1 && this.gap > 0) line += " ".repeat(this.gap);
+        if (j < allChildLines.length - 1 && this.gap > 0)
+          line += " ".repeat(this.gap);
       }
       result.push(line);
     }

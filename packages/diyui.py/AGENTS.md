@@ -1,11 +1,11 @@
-# py-diyui 项目结构
+# diyui.py 项目结构
 
 ## 项目定位
 响应式 UI 框架薄封装层，支持 Panel 等 UI 框架的信号/作用域/Cell 响应式模型。
 
 ## 目录结构
 ```
-py-diyui/
+diyui.py/
 ├── src/diyui/           # 源码
 │   ├── signal.py       # Signal[T] 可观察状态容器
 │   ├── scope.py        # ScopeNode 运行时树节点、Cell 依赖追踪

@@ -19,6 +19,12 @@ export function createFlow(cwd?: string): Flow {
   };
 }
 
-export type { WorktreeInfo, IssueInfo, PRInfo, WorktreeRow, MergeMethod } from "./types.js";
+export type {
+  WorktreeInfo,
+  IssueInfo,
+  PRInfo,
+  WorktreeRow,
+  MergeMethod,
+} from "./types.js";
 export { IssueFlow } from "./issue.js";
 export { DevFlow } from "./dev.js";

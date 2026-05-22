@@ -34,9 +34,11 @@ export function gitWorktreeList(cwd?: string): WorktreeInfo[] {
     if (branch && branch !== mainBranch) {
       try {
         ahead = Number(
-          run(`git rev-list --count "${mainBranch}..${branch}"`, cwd).trim()
+          run(`git rev-list --count "${mainBranch}..${branch}"`, cwd).trim(),
         );
-      } catch { /* 分支不存在 */ }
+      } catch {
+        /* 分支不存在 */
+      }
     }
 
     // 检查是否有未提交变更
@@ -44,7 +46,9 @@ export function gitWorktreeList(cwd?: string): WorktreeInfo[] {
     try {
       const statusOut = run("git status --porcelain", fullPath);
       if (statusOut.trim()) hasUncommitted = true;
-    } catch { /* 目录不存在 */ }
+    } catch {
+      /* 目录不存在 */
+    }
 
     const isPrunable = branch === "";
 
@@ -62,7 +66,11 @@ export function gitWorktreeList(cwd?: string): WorktreeInfo[] {
 }
 
 /** 创建 worktree */
-export function gitWorktreeAdd(branch: string, baseBranch: string, cwd?: string): string {
+export function gitWorktreeAdd(
+  branch: string,
+  baseBranch: string,
+  cwd?: string,
+): string {
   const worktreePath = `${WORKTREE_DIR}/${branch}`;
   run(`git worktree add -b "${branch}" "${worktreePath}" "${baseBranch}"`, cwd);
   return worktreePath;

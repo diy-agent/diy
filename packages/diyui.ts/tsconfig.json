@@ -16,5 +16,7 @@
     "skipLibCheck": true
   },
   "include": ["src", "tools"],
-  "exclude": ["node_modules", "dist", "examples", "tests"]
+  "exclude": ["node_modules", "dist", "examples",
+    "test"
+  ]
 }

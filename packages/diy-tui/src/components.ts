@@ -1,7 +1,4 @@
-import {
-  Text as PiText,
-  truncateToWidth,
-} from "@earendil-works/pi-tui";
+import { Text as PiText, truncateToWidth } from "@earendil-works/pi-tui";
 import { applyStyles, type TStyle } from "./styles.js";
 
 export type StyleSet = TStyle | TStyle[];
@@ -27,8 +24,8 @@ export class Text extends PiText {
 
   render(width: number): string[] {
     // 1. Apply styles (some styles like w_full or text_center will use the width)
-    const rendered = this._style 
-      ? applyStyles(this._content, this._style, width) 
+    const rendered = this._style
+      ? applyStyles(this._content, this._style, width)
       : this._content;
 
     // 2. Final truncation for safety

@@ -4,7 +4,7 @@
  * 持有 pi-tui TUI 实例，提供组件工厂方法。
  * 通过 contextStack 实现回调式构树（替代 Python 的 with 语句）。
  *
- * 参考: diyui/ts-diyui/docs/ts-diyui-design-v0.2.md §7
+ * 参考: diyui/diyui.ts/docs/diyui.ts-design-v0.2.md §7
  */
 
 import {

@@ -1,12 +1,12 @@
 ---
-module: ts-diyui
+module: diyui.ts
 type: task-list
 status: open
 author: chen56 + ai
 last_updated: 2026-05-12
 ---
 
-# ts-diyui 多会话实施任务清单
+# diyui.py 多会话实施任务清单
 
 本文档组织多次会话的任务，每完成一个标记 ✅。新会话按序号执行。
 每个任务都是**独立可验收**的最小单元，会话间保持上下文文件引用即可。
@@ -18,7 +18,7 @@ last_updated: 2026-05-12
 ### 任务 1.1 ✅ 创建项目结构
 
 ```
-diyui/ts-diyui/
+diyui/diyui.py/
 ├── package.json
 ├── tsconfig.json
 ├── src/
@@ -31,13 +31,13 @@ diyui/ts-diyui/
     └── (空)
 ```
 
-- 依赖: `@mariozechner/pi-tui`, `@vue/reactivity`（reference: `diyui/ts-diyui/docs/ts-diyui-design-v0.2.md` 第 12 节）
+- 依赖: `@mariozechner/pi-tui`, `@vue/reactivity`（reference: `diyui/diyui.py/docs/diyui.py-design-v0.2.md` 第 12 节）
 - ESM, NodeNext 模块解析
 - 执行 `npm run check` 通过
 
 ### 任务 1.2 ✅ 实现 tools/check-pitui.ts
 
-参考 `diyui/py-diyui/tools/check_panel_params.py` 的设计：
+参考 `diyui/diyui.py/tools/check_panel_params.py` 的设计：
 - 从 `@mariozechner/pi-tui` 导入所有公开组件类
 - 对每个类输出三个信息：
   1. **构造函数签名** — 参数名、类型、默认值
@@ -69,7 +69,7 @@ diyui/ts-diyui/
 
 运行 `check-pitui.ts --all`，将输出保存为:
 ```
-diyui/ts-diyui/docs/ref-pitui-interfaces.md
+diyui/diyui.py/docs/ref-pitui-interfaces.md
 ```
 
 这份文件是**只读参考**，后续会话编写 wrapper 时引用。
@@ -80,7 +80,7 @@ diyui/ts-diyui/docs/ref-pitui-interfaces.md
 
 ### 任务 2.1 ✅ 实现 Signal<T>
 
-参考 `diyui/ts-diyui/docs/ts-diyui-design-v0.2.md` 第 3 节。
+参考 `diyui/diyui.py/docs/diyui.py-design-v0.2.md` 第 3 节。
 
 - `src/signal.ts`：`Signal<T>` 类，包装 `@vue/reactivity` 的 `ref`
 - `get value()` / `set value()` — `Object.is` 等值跳过
@@ -175,7 +175,7 @@ diyui/ts-diyui/docs/ref-pitui-interfaces.md
 
 参考设计文档第 11 节，对照 `packages/diy-tui/examples/`：
 
-| ts-diyui 示例 | 对应 diy-tui 范例 | 验证目标 |
+| diyui.py 示例 | 对应 diy-tui 范例 | 验证目标 |
 |-------------|-----------------|---------|
 | `examples/counter.ts` | — | 最小验证：signal + cell + rerun |
 | `examples/reactive_demo.ts` | `reactive_example.ts` | 计数器 + 定时器 + 输入联动 |
@@ -195,13 +195,13 @@ diyui/ts-diyui/docs/ref-pitui-interfaces.md
 新会话开始时，读取以下文件即可获知全部设计：
 
 ```
-diyui/ts-diyui/docs/ts-diyui-design-v0.2.md          # 主设计文档
-diyui/ts-diyui/docs/ts-diyui-sessions.md              # 本任务清单
-diyui/ts-diyui/docs/ref-pitui-interfaces.md          # pi-tui 接口参考（会话 1 生成）
-diyui/py-diyui/docs/py-diyui-init-design/2026-05-05_ai_codex_development_spec_v0.1.md  # py 版开发规格
+diyui/diyui.py/docs/diyui.py-design-v0.2.md          # 主设计文档
+diyui/diyui.py/docs/diyui.py-sessions.md              # 本任务清单
+diyui/diyui.py/docs/ref-pitui-interfaces.md          # pi-tui 接口参考（会话 1 生成）
+diyui/diyui.py/docs/diyui.py-init-design/2026-05-05_ai_codex_development_spec_v0.1.md  # py 版开发规格
 ```
 
-加上项目代码本身即可，不需要加载 py-diyui 源码。
+加上项目代码本身即可，不需要加载 diyui.py 源码。
 
 ## 附录 B：参考设计文档的关键节号速查
 

@@ -27,7 +27,7 @@ setInterval(() => {
 }, 1000);
 
 app.column(() => {
-  app.label("# 🧪 ts-diyui Reactive Demo");
+  app.label("# 🧪 diyui.ts Reactive Demo");
 
   // 消息历史面板
   app.column().cell(() => {

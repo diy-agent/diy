@@ -19,7 +19,7 @@
 
 ### 今天完成的修改
 
-1. `sha_common.sh`:
+1. `sha.common.sh`:
    - 定义了全套 Tailwind 基础色（slate/gray/red/orange/amber/yellow/green/blue/indigo/purple/pink）从 50 到 950
    - 定义了 Material 3 语义单色 `m3_*` / `m3_on_*`
    - 定义了文字样式 `font_bold`, `text_dim`, `text_italic`, `text_underline`

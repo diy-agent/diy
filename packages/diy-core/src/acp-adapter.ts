@@ -5,14 +5,11 @@
  * via stdin/stdout subprocess communication.
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
-import { Writable, Readable } from 'node:stream';
-import {
-  WritableStream,
-  ReadableStream,
-} from 'node:stream/web';
-import * as acp from '@agentclientprotocol/sdk';
-import type { Client } from '@agentclientprotocol/sdk';
+import { spawn, type ChildProcess } from "node:child_process";
+import { Writable, Readable } from "node:stream";
+import { WritableStream, ReadableStream } from "node:stream/web";
+import * as acp from "@agentclientprotocol/sdk";
+import type { Client } from "@agentclientprotocol/sdk";
 import type {
   CodingAgent,
   AgentStreamEvent,
@@ -20,7 +17,7 @@ import type {
   ToolCallRequestEvent,
   ToolCallResponseEvent,
   ErrorEvent,
-} from './agent.js';
+} from "./agent.js";
 
 export interface AcpAdapterOptions {
   command: string;
@@ -65,8 +62,8 @@ export class AcpClientAdapter implements CodingAgent {
   constructor(options: AcpAdapterOptions) {
     this.opts = {
       command: options.command,
-      args: options.args ?? ['--acp'],
-      authMethod: options.authMethod ?? 'use-gemini',
+      args: options.args ?? ["--acp"],
+      authMethod: options.authMethod ?? "use-gemini",
       apiKey: options.apiKey,
       cwd: options.cwd ?? process.cwd(),
       mcpServers: options.mcpServers ?? [],
@@ -82,21 +79,25 @@ export class AcpClientAdapter implements CodingAgent {
     if (this.initialized) return;
 
     this.process = spawn(this.opts.command, this.opts.args, {
-      stdio: ['pipe', 'pipe', 'inherit'],
+      stdio: ["pipe", "pipe", "inherit"],
       cwd: this.opts.cwd,
     });
 
-    const input = Writable.toWeb(this.process.stdin!) as WritableStream<Uint8Array>;
-    const output = Readable.toWeb(this.process.stdout!) as ReadableStream<Uint8Array>;
+    const input = Writable.toWeb(
+      this.process.stdin!,
+    ) as WritableStream<Uint8Array>;
+    const output = Readable.toWeb(
+      this.process.stdout!,
+    ) as ReadableStream<Uint8Array>;
 
     const client: Client = {
       requestPermission: async (params) => {
-        const title = params.toolCall.title ?? 'Tool Call';
+        const title = params.toolCall.title ?? "Tool Call";
         const outcome = await this.opts.requestPermission?.(title, params);
         if (outcome) {
           return outcome;
         }
-        return { outcome: 'cancelled' };
+        return { outcome: "cancelled" };
       },
 
       sessionUpdate: async (params) => {
@@ -108,7 +109,7 @@ export class AcpClientAdapter implements CodingAgent {
           const content = await this.opts.fsRead(params.path);
           return { content };
         }
-        throw new Error('fsRead not implemented');
+        throw new Error("fsRead not implemented");
       },
 
       writeTextFile: async (params) => {
@@ -116,7 +117,7 @@ export class AcpClientAdapter implements CodingAgent {
           await this.opts.fsWrite(params.path, params.content);
           return {};
         }
-        throw new Error('fsWrite not implemented');
+        throw new Error("fsWrite not implemented");
       },
     };
 
@@ -124,14 +125,14 @@ export class AcpClientAdapter implements CodingAgent {
     this.connection = new acp.ClientSideConnection(() => client, stream);
 
     await this.connection.initialize({
-      clientInfo: { name: 'diy', version: '1.0.0' },
+      clientInfo: { name: "diy", version: "1.0.0" },
       protocolVersion: acp.PROTOCOL_VERSION,
     });
 
     if (this.opts.apiKey) {
       await this.connection.authenticate({
         methodId: this.opts.authMethod,
-        _meta: { 'api-key': this.opts.apiKey },
+        _meta: { "api-key": this.opts.apiKey },
       });
     }
 
@@ -147,21 +148,24 @@ export class AcpClientAdapter implements CodingAgent {
   private bufferSessionUpdate(params: acp.SessionNotification): void {
     const update = params.update;
     switch (update.sessionUpdate) {
-      case 'agent_message_chunk':
-      case 'user_message_chunk':
-      case 'agent_thought_chunk': {
+      case "agent_message_chunk":
+      case "user_message_chunk":
+      case "agent_thought_chunk": {
         const chunk = update as acp.ContentChunk & { sessionUpdate: string };
-        if (chunk.content.type === 'text') {
-          const event: ContentEvent = { type: 'content', value: chunk.content.text };
+        if (chunk.content.type === "text") {
+          const event: ContentEvent = {
+            type: "content",
+            value: chunk.content.text,
+          };
           this.eventBuffer.push(event);
           this.opts.onContent?.(chunk.content.text);
         }
         break;
       }
-      case 'tool_call': {
+      case "tool_call": {
         const tool = update as acp.ToolCall;
         const event: ToolCallRequestEvent = {
-          type: 'tool_call_request',
+          type: "tool_call_request",
           value: {
             name: tool.title,
             args: tool.rawInput as Record<string, unknown>,
@@ -171,14 +175,14 @@ export class AcpClientAdapter implements CodingAgent {
         this.opts.onToolCall?.(tool.toolCallId, tool.title, tool.rawInput);
         break;
       }
-      case 'tool_call_update': {
+      case "tool_call_update": {
         const toolUpdate = update as acp.ToolCallUpdate;
         const event: ToolCallResponseEvent = {
-          type: 'tool_call_response',
+          type: "tool_call_response",
           value: {
             name: toolUpdate.toolCallId,
             result: toolUpdate.rawOutput ?? null,
-            success: toolUpdate.status === 'completed' && !toolUpdate.rawOutput,
+            success: toolUpdate.status === "completed" && !toolUpdate.rawOutput,
           },
         };
         this.eventBuffer.push(event);
@@ -192,7 +196,7 @@ export class AcpClientAdapter implements CodingAgent {
     _signal?: AbortSignal,
   ): Promise<AgentStreamEvent[]> {
     if (!this.connection || !this.sessionId) {
-      throw new Error('Adapter not initialized');
+      throw new Error("Adapter not initialized");
     }
 
     this.eventBuffer = [];
@@ -200,20 +204,20 @@ export class AcpClientAdapter implements CodingAgent {
     try {
       await this.connection.prompt({
         sessionId: this.sessionId,
-        prompt: [{ type: 'text', text: prompt }],
+        prompt: [{ type: "text", text: prompt }],
       });
 
       const events = [...this.eventBuffer];
       this.eventBuffer = [];
       return events;
     } catch (error) {
-      const errorEvent: ErrorEvent = { type: 'error', value: String(error) };
+      const errorEvent: ErrorEvent = { type: "error", value: String(error) };
       return [errorEvent];
     }
   }
 
   getSessionId(): string {
-    if (!this.sessionId) throw new Error('Not initialized');
+    if (!this.sessionId) throw new Error("Not initialized");
     return this.sessionId;
   }
 

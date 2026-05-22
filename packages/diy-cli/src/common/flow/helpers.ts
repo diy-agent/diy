@@ -68,6 +68,10 @@ export function getCurrentBranch(cwd?: string): string {
 }
 
 /** 获取两个分支的 merge-base */
-export function getMergeBase(branch1: string, branch2: string, cwd?: string): string {
+export function getMergeBase(
+  branch1: string,
+  branch2: string,
+  cwd?: string,
+): string {
   return run(`git merge-base "${branch1}" "${branch2}"`, cwd).trim();
 }

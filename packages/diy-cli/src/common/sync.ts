@@ -1,6 +1,6 @@
 /*
-* AI确定性工程: 依赖库git同步到 `.diy/ref`
-* */
+ * AI确定性工程: 依赖库git同步到 `.diy/ref`
+ * */
 
 import fs from "node:fs";
 import path from "node:path";
@@ -21,13 +21,12 @@ const METADATA_CACHE_PATH = path.join(GLOBAL_CACHE_DIR, "registry-cache.json");
 function cleanExecOutput(output: string): string {
   return output
     .split("\n")
-    .filter(line => {
+    .filter((line) => {
       const l = line.trim();
       if (!l) return false;
       if (l.startsWith("Agent pid")) return false;
       if (l.includes("load ~/.bashrc")) return false;
       return !l.includes("Output: load");
-
     })
     .join("\n")
     .trim();
@@ -87,14 +86,18 @@ function getWorkspacePackages(): Map<string, WorkspaceInfo> {
                       devDependencies: pkg.devDependencies || {},
                     });
                   }
-                } catch ( _e) { /* ignore */ }
+                } catch (_e) {
+                  /* ignore */
+                }
               }
             }
           }
         }
       }
     }
-  } catch ( _e) { /* ignore */ }
+  } catch (_e) {
+    /* ignore */
+  }
   return workspaceMap;
 }
 
@@ -115,12 +118,13 @@ try {
   if (fs.existsSync(METADATA_CACHE_PATH)) {
     metadataCache = JSON.parse(fs.readFileSync(METADATA_CACHE_PATH, "utf-8"));
   }
-} catch ( _e) {
+} catch (_e) {
   // 忽略缓存读取错误
 }
 
 function saveMetadataCache(): void {
-  if (!fs.existsSync(GLOBAL_CACHE_DIR)) fs.mkdirSync(GLOBAL_CACHE_DIR, { recursive: true });
+  if (!fs.existsSync(GLOBAL_CACHE_DIR))
+    fs.mkdirSync(GLOBAL_CACHE_DIR, { recursive: true });
   fs.writeFileSync(METADATA_CACHE_PATH, JSON.stringify(metadataCache, null, 2));
 }
 
@@ -145,19 +149,29 @@ function parseRepoUrl(url: string): RepoInfo | null {
   // 处理 git@ 格式
   if (cleanUrl.startsWith("git@")) {
     const match = cleanUrl.match(/^git@([^:]+):([^/]+)\/(.+)$/);
-    if (match) return { host: match[1] as string, owner: match[2] as string, repo: match[3] as string };
+    if (match)
+      return {
+        host: match[1] as string,
+        owner: match[2] as string,
+        repo: match[3] as string,
+      };
   }
 
   // 处理各种协议 (http, https, git)
   try {
     // 统一替换 git:// 为 https:// 以便 URL 解析，或者直接处理已有的 http/https
     const urlWithProtocol = cleanUrl.replace(/^git:\/\//, "https://");
-    const urlObj = new URL(urlWithProtocol.includes("://") ? urlWithProtocol : `https://${urlWithProtocol}`);
+    const urlObj = new URL(
+      urlWithProtocol.includes("://")
+        ? urlWithProtocol
+        : `https://${urlWithProtocol}`,
+    );
 
     const host = urlObj.host;
     const parts = urlObj.pathname.split("/").filter(Boolean);
-    if (parts.length >= 2) return { host, owner: parts[0] as string, repo: parts[1] as string };
-  } catch ( _e) {
+    if (parts.length >= 2)
+      return { host, owner: parts[0] as string, repo: parts[1] as string };
+  } catch (_e) {
     // 忽略解析错误
   }
   return null;
@@ -168,19 +182,25 @@ function parseRepoUrl(url: string): RepoInfo | null {
  */
 function getBestTag(repoUrl: string, version: string): string | null {
   try {
-    const cloneUrl = repoUrl.startsWith("http") ? repoUrl : `https://${repoUrl}`;
+    const cloneUrl = repoUrl.startsWith("http")
+      ? repoUrl
+      : `https://${repoUrl}`;
     log.info(`[Git] 正在获取远端 Tag 信息: ${cloneUrl}`);
-    const tagsOutput = cleanExecOutput(execSync(`git ls-remote --tags ${cloneUrl}`, { stdio: "pipe" }).toString());
+    const tagsOutput = cleanExecOutput(
+      execSync(`git ls-remote --tags ${cloneUrl}`, {
+        stdio: "pipe",
+      }).toString(),
+    );
     const tags = tagsOutput
       .split("\n")
-      .filter(line => line.includes("refs/tags/"))
-      .map(line => line.split("refs/tags/")[1]?.replace(/\^{}$/, "") ?? "")
+      .filter((line) => line.includes("refs/tags/"))
+      .map((line) => line.split("refs/tags/")[1]?.replace(/\^{}$/, "") ?? "")
       .filter(Boolean);
     const candidates = [`v${version}`, version];
     for (const cand of candidates) {
       if (tags.includes(cand)) return cand;
     }
-  } catch ( _e) {
+  } catch (_e) {
     // 忽略 git ls-remote 错误
   }
   return null;
@@ -233,7 +253,7 @@ async function processPackage(
   globalRefBase: string,
   projectRefBase: string,
   config?: ProjectConfig,
-  workspacePackages?: Map<string, WorkspaceInfo>
+  workspacePackages?: Map<string, WorkspaceInfo>,
 ): Promise<SyncResult | null> {
   try {
     // 跳过本地 workspace 依赖
@@ -245,25 +265,39 @@ async function processPackage(
     // 1. 获取仓库元数据 (优先从缓存读取)
     let repoUrl = "";
     let subDir = "";
-    if (metadataCache[name] && (metadataCache[name].lastVersion === version || metadataCache[name].lastVersion.includes(version))) {
-        repoUrl = metadataCache[name].repoUrl;
-        subDir = metadataCache[name].subDir;
-        log.debug(`[${name}] 使用缓存的元数据: ${repoUrl}`);
+    if (
+      metadataCache[name] &&
+      (metadataCache[name].lastVersion === version ||
+        metadataCache[name].lastVersion.includes(version))
+    ) {
+      repoUrl = metadataCache[name].repoUrl;
+      subDir = metadataCache[name].subDir;
+      log.debug(`[${name}] 使用缓存的元数据: ${repoUrl}`);
     } else {
-        log.info(`[${name}] 正在从 npm registry 获取元数据...`);
+      log.info(`[${name}] 正在从 npm registry 获取元数据...`);
+      try {
+        repoUrl = cleanExecOutput(
+          execSync(`npm view ${name} repository.url`, {
+            stdio: "pipe",
+          }).toString(),
+        );
         try {
-          repoUrl = cleanExecOutput(execSync(`npm view ${name} repository.url`, { stdio: "pipe" }).toString());
-          try {
-              subDir = cleanExecOutput(execSync(`npm view ${name} repository.directory`, { stdio: "pipe" }).toString());
-          } catch( _e) {
-              // 忽略 directory 不存在的错误
-          }
-        } catch (err: any) {
-          log.warn(`[${name}] 无法获取 npm 元数据, 请检查网络或是否为私有包: ${err.message}`);
-          return null;
+          subDir = cleanExecOutput(
+            execSync(`npm view ${name} repository.directory`, {
+              stdio: "pipe",
+            }).toString(),
+          );
+        } catch (_e) {
+          // 忽略 directory 不存在的错误
         }
-        metadataCache[name] = { repoUrl, subDir, lastVersion: version };
-        log.debug(`[${name}] 从远程获取元数据: ${repoUrl}`);
+      } catch (err: any) {
+        log.warn(
+          `[${name}] 无法获取 npm 元数据, 请检查网络或是否为私有包: ${err.message}`,
+        );
+        return null;
+      }
+      metadataCache[name] = { repoUrl, subDir, lastVersion: version };
+      log.debug(`[${name}] 从远程获取元数据: ${repoUrl}`);
     }
 
     const repoInfo = parseRepoUrl(repoUrl);
@@ -280,45 +314,64 @@ async function processPackage(
 
     let finalGlobalPath = "";
     for (const pName of possibleNames) {
-        const p = path.join(globalRefBase, repoInfo.host, repoInfo.owner, repoInfo.repo, pName);
-        if (fs.existsSync(p)) {
-            finalGlobalPath = p;
-            log.debug(`[${name}] 命中本地版本缓存: ${p}`);
-            break;
-        }
+      const p = path.join(
+        globalRefBase,
+        repoInfo.host,
+        repoInfo.owner,
+        repoInfo.repo,
+        pName,
+      );
+      if (fs.existsSync(p)) {
+        finalGlobalPath = p;
+        log.debug(`[${name}] 命中本地版本缓存: ${p}`);
+        break;
+      }
     }
 
     if (!finalGlobalPath) {
-        log.info(`正在同步新源码: ${name}@${version}`);
+      log.info(`正在同步新源码: ${name}@${version}`);
 
-        let bestTag: string | null = null;
-        bestTag = getBestTag(cloneUrl, versionDirNameBase);
+      let bestTag: string | null = null;
+      bestTag = getBestTag(cloneUrl, versionDirNameBase);
 
-        // 优先使用 bestTag 作为目录名，如果没有则用版本号
-        const finalDirName = bestTag || versionDirNameBase;
-        finalGlobalPath = path.join(globalRefBase, repoInfo.host, repoInfo.owner, repoInfo.repo, finalDirName);
+      // 优先使用 bestTag 作为目录名，如果没有则用版本号
+      const finalDirName = bestTag || versionDirNameBase;
+      finalGlobalPath = path.join(
+        globalRefBase,
+        repoInfo.host,
+        repoInfo.owner,
+        repoInfo.repo,
+        finalDirName,
+      );
 
-        if (!fs.existsSync(finalGlobalPath)) {
-            const branchCmd = bestTag ? `--branch ${bestTag}` : "";
-            const cloneCmd = `git clone --depth 1 ${branchCmd} ${cloneUrl} "${finalGlobalPath}"`;
-            log.info(`[${name}] 执行克隆: ${cloneCmd}`);
-            fs.mkdirSync(path.dirname(finalGlobalPath), { recursive: true });
-            try {
-              execSync(cloneCmd, { stdio: ["ignore", "pipe", "pipe"] });
-            } catch (err: any) {
-              const stderr = err.stderr?.toString().trim() || err.message;
-              throw new Error(`Git clone 失败: ${stderr}`);
-            }
+      if (!fs.existsSync(finalGlobalPath)) {
+        const branchCmd = bestTag ? `--branch ${bestTag}` : "";
+        const cloneCmd = `git clone --depth 1 ${branchCmd} ${cloneUrl} "${finalGlobalPath}"`;
+        log.info(`[${name}] 执行克隆: ${cloneCmd}`);
+        fs.mkdirSync(path.dirname(finalGlobalPath), { recursive: true });
+        try {
+          execSync(cloneCmd, { stdio: ["ignore", "pipe", "pipe"] });
+        } catch (err: any) {
+          const stderr = err.stderr?.toString().trim() || err.message;
+          throw new Error(`Git clone 失败: ${stderr}`);
         }
+      }
     }
 
     // 4. 创建软连接 (结构同全局缓存: host/owner/repo/version)
     const versionDirName = path.basename(finalGlobalPath);
-    const projectRepoLink = path.join(projectRefBase, repoInfo.host, repoInfo.owner, repoInfo.repo, versionDirName);
+    const projectRepoLink = path.join(
+      projectRefBase,
+      repoInfo.host,
+      repoInfo.owner,
+      repoInfo.repo,
+      versionDirName,
+    );
     const relativeRepoPath = `./.diy/ref/${repoInfo.host}/${repoInfo.owner}/${repoInfo.repo}/${versionDirName}`;
 
     const linkParent = path.dirname(projectRepoLink);
-    if (!fs.existsSync(linkParent)) fs.mkdirSync(linkParent, { recursive: true });
+    if (!fs.existsSync(linkParent))
+      fs.mkdirSync(linkParent, { recursive: true });
 
     const relativeTarget = path.relative(linkParent, finalGlobalPath);
 
@@ -333,13 +386,17 @@ async function processPackage(
         if (normalizedCurrent === normalizedTarget) {
           needsCreate = false;
         } else {
-          log.debug(`[${name}] 软连接目标不匹配，需要更新：${currentLink} -> ${relativeTarget}`);
+          log.debug(
+            `[${name}] 软连接目标不匹配，需要更新：${currentLink} -> ${relativeTarget}`,
+          );
         }
       } else {
-        log.debug(`[${name}] 现有路径不是软连接，类型：${stats.isDirectory() ? 'directory' : 'file'}`);
+        log.debug(
+          `[${name}] 现有路径不是软连接，类型：${stats.isDirectory() ? "directory" : "file"}`,
+        );
       }
     } catch (e: any) {
-      if (e.code !== 'ENOENT') {
+      if (e.code !== "ENOENT") {
         log.debug(`[${name}] 检查现有链接时出错：${e.message}`);
       }
       // ENOENT 表示文件不存在，需要创建，保持 needsCreate = true
@@ -350,7 +407,7 @@ async function processPackage(
       try {
         fs.unlinkSync(projectRepoLink);
       } catch (e: any) {
-        if (e.code !== 'ENOENT') {
+        if (e.code !== "ENOENT") {
           log.debug(`[${name}] unlinkSync 失败：${e.message}`);
           // 如果不是 symlink，尝试用 rmSync 删除
           fs.rmSync(projectRepoLink, { recursive: true, force: true });
@@ -359,11 +416,15 @@ async function processPackage(
       log.debug(`[${name}] rmSync 执行完成`);
       try {
         const statsAfter = fs.lstatSync(projectRepoLink);
-        log.debug(`[${name}] 删除后 lstat: 文件仍存在，isSymbolicLink=${statsAfter.isSymbolicLink()}`);
+        log.debug(
+          `[${name}] 删除后 lstat: 文件仍存在，isSymbolicLink=${statsAfter.isSymbolicLink()}`,
+        );
       } catch (e: any) {
         log.debug(`[${name}] 删除后 lstat: 文件已不存在 (code=${e.code})`);
       }
-      log.debug(`[${name}] symlinkSync 参数：target=${relativeTarget}, path=${projectRepoLink}`);
+      log.debug(
+        `[${name}] symlinkSync 参数：target=${relativeTarget}, path=${projectRepoLink}`,
+      );
       const parentDir = path.dirname(projectRepoLink);
       log.debug(`[${name}] 父目录：${parentDir}`);
       const parentEntries = fs.readdirSync(parentDir);
@@ -374,11 +435,14 @@ async function processPackage(
       log.debug(`[${name}] 软连接已是最新状态`);
     }
     return {
-        relativePath: subDir ? `${relativeRepoPath}/${subDir}` : relativeRepoPath,
-        absolutePath: subDir ? path.join(finalGlobalPath, subDir) : finalGlobalPath
+      relativePath: subDir ? `${relativeRepoPath}/${subDir}` : relativeRepoPath,
+      absolutePath: subDir
+        ? path.join(finalGlobalPath, subDir)
+        : finalGlobalPath,
     };
   } catch (err: unknown) {
-    const errText = err instanceof Error ? (err.stack || err.message) : String(err);
+    const errText =
+      err instanceof Error ? err.stack || err.message : String(err);
     log.error(`[${name}] 同步失败: \n${errText}`);
     return null;
   }
@@ -386,22 +450,24 @@ async function processPackage(
 
 function buildRefLock(
   workspacePackages: Map<string, WorkspaceInfo>,
-  syncResults: Record<string, SyncResult>
+  syncResults: Record<string, SyncResult>,
 ): RefLockFile {
   const buildDependencies = (
     deps: Record<string, string>,
-    scope: "runtime" | "dev"
+    scope: "runtime" | "dev",
   ): RefLockDependency[] =>
     Object.entries(deps)
       .sort(([nameA], [nameB]) => nameA.localeCompare(nameB))
       .map(([depName, spec]) => {
         const res = syncResults[depName];
         const mirrorPath = res?.relativePath.replace(/^\.\//, "");
-        const resolvedVersion = mirrorPath ? path.basename(mirrorPath) : undefined;
+        const resolvedVersion = mirrorPath
+          ? path.basename(mirrorPath)
+          : undefined;
         const dependency: RefLockDependency = {
           name: depName,
           spec,
-          scope
+          scope,
         };
 
         if (resolvedVersion) dependency.resolvedVersion = resolvedVersion;
@@ -421,14 +487,18 @@ function buildRefLock(
       if (a.relativePath !== "." && b.relativePath === ".") return 1;
       return a.name.localeCompare(b.name);
     })
-    .map(pkgInfo => {
-      const manifest = pkgInfo.relativePath === "."
-        ? "package.json"
-        : `${pkgInfo.relativePath}/package.json`;
+    .map((pkgInfo) => {
+      const manifest =
+        pkgInfo.relativePath === "."
+          ? "package.json"
+          : `${pkgInfo.relativePath}/package.json`;
       const dependencies = [
         ...buildDependencies(pkgInfo.dependencies, "runtime"),
-        ...buildDependencies(pkgInfo.devDependencies, "dev")
-      ].sort((a, b) => a.name.localeCompare(b.name) || a.scope.localeCompare(b.scope));
+        ...buildDependencies(pkgInfo.devDependencies, "dev"),
+      ].sort(
+        (a, b) =>
+          a.name.localeCompare(b.name) || a.scope.localeCompare(b.scope),
+      );
 
       return {
         id: `node:${pkgInfo.relativePath}`,
@@ -437,7 +507,7 @@ function buildRefLock(
         ecosystem: "node" as const,
         path: pkgInfo.relativePath,
         manifest,
-        dependencies
+        dependencies,
       };
     });
 
@@ -445,24 +515,33 @@ function buildRefLock(
     version: 1,
     generatedAt: new Date().toISOString(),
     mirrorRoot: ".diy/ref",
-    workspaces
+    workspaces,
   };
 }
 
 function writeRefLockFile(
   workspacePackages: Map<string, WorkspaceInfo>,
-  syncResults: Record<string, SyncResult>
+  syncResults: Record<string, SyncResult>,
 ): void {
-  const refLockPath = path.resolve(process.cwd(), ".diy", "ref", "ref.lock.json");
+  const refLockPath = path.resolve(
+    process.cwd(),
+    ".diy",
+    "ref",
+    "ref.lock.json",
+  );
   const refLockDir = path.dirname(refLockPath);
 
   try {
     fs.mkdirSync(refLockDir, { recursive: true });
     const payload = buildRefLock(workspacePackages, syncResults);
     fs.writeFileSync(refLockPath, JSON.stringify(payload, null, 2) + "\n");
-    log.info(`dependency mirror index 已更新: ${path.relative(process.cwd(), refLockPath)}`);
+    log.info(
+      `dependency mirror index 已更新: ${path.relative(process.cwd(), refLockPath)}`,
+    );
   } catch (err) {
-    log.warn(`更新 ref.lock.json 失败: ${err instanceof Error ? err.message : String(err)}`);
+    log.warn(
+      `更新 ref.lock.json 失败: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
@@ -491,7 +570,7 @@ export async function syncDependencies(): Promise<void> {
   if (fs.existsSync(projectConfigPath)) {
     try {
       projectConfig = YAML.parse(fs.readFileSync(projectConfigPath, "utf-8"));
-    } catch ( _e) {
+    } catch (_e) {
       log.warn(`无法解析项目配置: ${projectConfigPath}`);
     }
   }
@@ -502,7 +581,7 @@ export async function syncDependencies(): Promise<void> {
   const workspacePackages = getWorkspacePackages();
   const allDeps: Record<string, string> = {
     ...(pkg.dependencies || {}),
-    ...((pkg as any).devDependencies || {})
+    ...((pkg as any).devDependencies || {}),
   };
 
   for (const pkgInfo of workspacePackages.values()) {
@@ -512,7 +591,9 @@ export async function syncDependencies(): Promise<void> {
   const globalRefBase = path.join(GLOBAL_CACHE_DIR, "ref");
   const projectRefBase = path.resolve(process.cwd(), ".diy", "ref");
 
-  log.info(`开始同步 ${Object.keys(allDeps).length} 个依赖 (含所有子包 devDeps)...`);
+  log.info(
+    `开始同步 ${Object.keys(allDeps).length} 个依赖 (含所有子包 devDeps)...`,
+  );
   const startTime = Date.now();
   const syncResults: Record<string, SyncResult> = {};
   const entries = Object.entries(allDeps);
@@ -521,12 +602,23 @@ export async function syncDependencies(): Promise<void> {
   for (let i = 0; i < entries.length; i++) {
     const [name, version] = entries[i];
     log.info(`[${i + 1}/${entries.length}] 正在处理 ${name}@${version}...`);
-    const result = await processPackage(name, version as string, globalRefBase, projectRefBase, projectConfig, workspacePackages);
+    const result = await processPackage(
+      name,
+      version as string,
+      globalRefBase,
+      projectRefBase,
+      projectConfig,
+      workspacePackages,
+    );
     if (result) syncResults[name] = result;
   }
 
   // 处理额外配置的 sources
-  if (projectConfig.sources && Array.isArray(projectConfig.sources) && projectConfig.sources.length > 0) {
+  if (
+    projectConfig.sources &&
+    Array.isArray(projectConfig.sources) &&
+    projectConfig.sources.length > 0
+  ) {
     log.info(`开始同步 ${projectConfig.sources.length} 个配置 sources...`);
     for (let i = 0; i < projectConfig.sources.length; i++) {
       const sourceSpec = projectConfig.sources[i];
@@ -539,7 +631,8 @@ export async function syncDependencies(): Promise<void> {
 
       // 处理 @version 格式
       const atIndex = sourceSpec.lastIndexOf("@");
-      if (atIndex !== -1 && atIndex > 8) { // @ 在 https:// 之后
+      if (atIndex !== -1 && atIndex > 8) {
+        // @ 在 https:// 之后
         urlPart = sourceSpec.slice(0, atIndex);
         version = sourceSpec.slice(atIndex + 1);
       } else {
@@ -559,17 +652,27 @@ export async function syncDependencies(): Promise<void> {
       }
 
       const name = `${repoInfo.owner}/${repoInfo.repo}`;
-      log.info(`[source ${i + 1}/${projectConfig.sources.length}] 正在处理 ${name}@${version}...`);
+      log.info(
+        `[source ${i + 1}/${projectConfig.sources.length}] 正在处理 ${name}@${version}...`,
+      );
 
       const cloneUrl = `https://${repoInfo.host}/${repoInfo.owner}/${repoInfo.repo}`;
 
       // 检查本地缓存
       let finalGlobalPath = "";
-      const possibleNames = version ? [version, `v${version}`] : ["main", "master"];
+      const possibleNames = version
+        ? [version, `v${version}`]
+        : ["main", "master"];
 
       let found = false;
       for (const pName of possibleNames) {
-        const p = path.join(globalRefBase, repoInfo.host, repoInfo.owner, repoInfo.repo, pName);
+        const p = path.join(
+          globalRefBase,
+          repoInfo.host,
+          repoInfo.owner,
+          repoInfo.repo,
+          pName,
+        );
         if (fs.existsSync(p)) {
           finalGlobalPath = p;
           log.debug(`[source ${name}] 命中本地版本缓存: ${p}`);
@@ -585,10 +688,20 @@ export async function syncDependencies(): Promise<void> {
           bestTag = getBestTag(cloneUrl, version.replace(/^v/, ""));
         }
         const finalDirName = bestTag || version || "main";
-        finalGlobalPath = path.join(globalRefBase, repoInfo.host, repoInfo.owner, repoInfo.repo, finalDirName);
+        finalGlobalPath = path.join(
+          globalRefBase,
+          repoInfo.host,
+          repoInfo.owner,
+          repoInfo.repo,
+          finalDirName,
+        );
 
         if (!fs.existsSync(finalGlobalPath)) {
-          const branchCmd = bestTag ? `--branch ${bestTag}` : version ? `--branch ${version}` : "";
+          const branchCmd = bestTag
+            ? `--branch ${bestTag}`
+            : version
+              ? `--branch ${version}`
+              : "";
           const cloneCmd = `git clone --depth 1 ${branchCmd} ${cloneUrl} "${finalGlobalPath}"`;
           log.info(`[source ${name}] 执行克隆: ${cloneCmd}`);
           fs.mkdirSync(path.dirname(finalGlobalPath), { recursive: true });
@@ -604,11 +717,18 @@ export async function syncDependencies(): Promise<void> {
 
       // 创建软连接
       const versionDirName = path.basename(finalGlobalPath);
-      const projectRepoLink = path.join(projectRefBase, repoInfo.host, repoInfo.owner, repoInfo.repo, versionDirName);
+      const projectRepoLink = path.join(
+        projectRefBase,
+        repoInfo.host,
+        repoInfo.owner,
+        repoInfo.repo,
+        versionDirName,
+      );
       const relativeRepoPath = `./.diy/ref/${repoInfo.host}/${repoInfo.owner}/${repoInfo.repo}/${versionDirName}`;
 
       const linkParent = path.dirname(projectRepoLink);
-      if (!fs.existsSync(linkParent)) fs.mkdirSync(linkParent, { recursive: true });
+      if (!fs.existsSync(linkParent))
+        fs.mkdirSync(linkParent, { recursive: true });
 
       const relativeTarget = path.relative(linkParent, finalGlobalPath);
 
@@ -623,19 +743,23 @@ export async function syncDependencies(): Promise<void> {
             needsCreate = false;
           }
         }
-      } catch ( _e) { /* ignore */ }
+      } catch (_e) {
+        /* ignore */
+      }
 
       if (needsCreate) {
         try {
           fs.unlinkSync(projectRepoLink);
-        } catch ( _e) { /* ignore */ }
+        } catch (_e) {
+          /* ignore */
+        }
         fs.symlinkSync(relativeTarget, projectRepoLink, "dir");
         log.debug(`[source ${name}] 软连接建立成功: -> ${relativeRepoPath}`);
       }
 
       syncResults[`source:${name}`] = {
         relativePath: relativeRepoPath,
-        absolutePath: finalGlobalPath
+        absolutePath: finalGlobalPath,
       };
     }
   }
@@ -669,7 +793,9 @@ export async function syncDependencies(): Promise<void> {
       const paths = syncResults[name];
       if (!paths) {
         if ((version as string).startsWith("workspace:") && !newPaths[name]) {
-          configLog.debug(`[${name}] 本地 Workspace 包尚未建立映射，请手动配置或检查包名`);
+          configLog.debug(
+            `[${name}] 本地 Workspace 包尚未建立映射，请手动配置或检查包名`,
+          );
         }
         continue;
       }
@@ -677,7 +803,14 @@ export async function syncDependencies(): Promise<void> {
       const { relativePath, absolutePath } = paths;
       let entry = "";
       // 优先尝试映射到编译后的目录，减少 TS 扫描源码的压力
-      const candidates = ["dist/index.js", "build/index.js", "dist/index.d.ts", "src/index.ts", "src/tui.ts", "index.ts"];
+      const candidates = [
+        "dist/index.js",
+        "build/index.js",
+        "dist/index.d.ts",
+        "src/index.ts",
+        "src/tui.ts",
+        "index.ts",
+      ];
       for (const cand of candidates) {
         if (fs.existsSync(path.join(absolutePath, cand))) {
           // 如果找到的是 .js 或 .d.ts，我们映射到其目录或不带后缀的路径，让 TS 自己解析 package.json
@@ -691,13 +824,25 @@ export async function syncDependencies(): Promise<void> {
       }
       const tsPath = entry ? `${relativePath}/${entry}` : relativePath;
       newPaths[name] = [tsPath];
-      newPaths[`${name}/*`] = [`${relativePath}/${entry ? path.dirname(entry) + "/*" : "*"}`];
+      newPaths[`${name}/*`] = [
+        `${relativePath}/${entry ? path.dirname(entry) + "/*" : "*"}`,
+      ];
       configLog.debug(`映射: ${name} -> ${tsPath}`);
     }
 
-    let edits = jsonc.modify(content, ["compilerOptions", "baseUrl"], ".", options);
+    let edits = jsonc.modify(
+      content,
+      ["compilerOptions", "baseUrl"],
+      ".",
+      options,
+    );
     content = jsonc.applyEdits(content, edits);
-    edits = jsonc.modify(content, ["compilerOptions", "paths"], newPaths, options);
+    edits = jsonc.modify(
+      content,
+      ["compilerOptions", "paths"],
+      newPaths,
+      options,
+    );
     content = jsonc.applyEdits(content, edits);
 
     fs.writeFileSync(tsConfigPath, content);
@@ -707,7 +852,7 @@ export async function syncDependencies(): Promise<void> {
   // 5. 处理 Agent 配置文件软链接 (让多 Agent 共享 AGENTS.md)
   const agentsMd = path.resolve(process.cwd(), "AGENTS.md");
   if (fs.existsSync(agentsMd)) {
-    const agentFiles = ["GEMINI.md", "QWEN.md","CLAUDE.md"];
+    const agentFiles = ["GEMINI.md", "QWEN.md", "CLAUDE.md"];
     const agentLog = logger.withTag("Agents");
     for (const agentFile of agentFiles) {
       const agentPath = path.resolve(process.cwd(), agentFile);
@@ -725,7 +870,8 @@ export async function syncDependencies(): Promise<void> {
           } else {
             // 普通文件，备份并删除
             const backupPath = `${agentPath}.bak`;
-            if (fs.existsSync(backupPath)) fs.rmSync(backupPath, { force: true });
+            if (fs.existsSync(backupPath))
+              fs.rmSync(backupPath, { force: true });
             fs.renameSync(agentPath, backupPath);
             agentLog.info(`备份已有文件: ${agentFile} -> ${agentFile}.bak`);
           }
@@ -736,11 +882,15 @@ export async function syncDependencies(): Promise<void> {
           fs.symlinkSync("AGENTS.md", agentPath);
           agentLog.info(`强制同步软链接: ${agentFile} -> AGENTS.md`);
         }
-      } catch ( _e) {
-        agentLog.warn(`无法为 ${agentFile} 处理软链接: ${_e instanceof Error ? _e.message : String(_e)}`);
+      } catch (_e) {
+        agentLog.warn(
+          `无法为 ${agentFile} 处理软链接: ${_e instanceof Error ? _e.message : String(_e)}`,
+        );
       }
     }
   }
 
-  log.success(`同步完成！耗时: ${((Date.now() - startTime) / 1000).toFixed(2)}s`);
+  log.success(
+    `同步完成！耗时: ${((Date.now() - startTime) / 1000).toFixed(2)}s`,
+  );
 }

@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { GeminiCliAgent } from '@diy-agent/diy-core';
-import { GeminiEventType } from '@google/gemini-cli-core';
+import { GeminiCliAgent } from "@diy-agent/diy-core";
+import { GeminiEventType } from "@google/gemini-cli-core";
 
 async function main() {
   const abort = new AbortController();
@@ -13,14 +13,14 @@ async function main() {
   // 1. 创建 Agent 实例
   await using agent = new GeminiCliAgent({
     instructions:
-      '你是一个专业的终端助手，总是使用海盗的口吻说话。你可以使用工具来查看文件。',
+      "你是一个专业的终端助手，总是使用海盗的口吻说话。你可以使用工具来查看文件。",
     // model: 'auto', // 默认即为 auto
     debug: false,
   });
 
   // 捕获 Ctrl+C
-  process.on('SIGINT', () => {
-    console.log('\n\n🚢 正在紧急下锚（取消并退出）...');
+  process.on("SIGINT", () => {
+    console.log("\n\n🚢 正在紧急下锚（取消并退出）...");
     abort.abort();
     process.exitCode = 0;
     // 使用 await using 时，由 Node.js 确保在退出前完成资源的 asyncDispose
@@ -28,23 +28,19 @@ async function main() {
     // 更好的做法是触发 abort，让 loop 结束，然后 main 函数自然退出。
   });
 
-  console.log('--- ⚓️ 海盗助手正在登船... ---\n');
-
+  console.log("--- ⚓️ 海盗助手正在登船... ---\n");
 
   // 2. 发起询问
-  const stream = agent.ask(
-    '帮我看看当前目录下都有哪些文件？',
-    abort.signal,
-  );
+  const stream = agent.ask("帮我看看当前目录下都有哪些文件？", abort.signal);
 
   // 3. 处理流式响应
   for await (const event of stream) {
     switch (event.type) {
       case GeminiEventType.Content:
-              // console.log(event.
+        // console.log(event.
 
-        if (typeof event.value === 'string') {
-          process.stdout.write("> "+event.value);
+        if (typeof event.value === "string") {
+          process.stdout.write("> " + event.value);
         }
         break;
 
@@ -57,7 +53,7 @@ async function main() {
         break;
 
       case GeminiEventType.Error:
-        console.error('\n❌ 触礁了：', event.value);
+        console.error("\n❌ 触礁了：", event.value);
         break;
 
       default:
@@ -65,12 +61,10 @@ async function main() {
         break;
     }
   }
-  console.log('\n\n--- 🏁 汇报完毕，船长！ ---');
+  console.log("\n\n--- 🏁 汇报完毕，船长！ ---");
 
-  await sleep(150*1000);
+  await sleep(150 * 1000);
 }
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-
-
-await main()
+await main();

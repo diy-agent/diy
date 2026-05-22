@@ -1,33 +1,56 @@
 import { UserError } from "./errors.js";
-import { ghIssueView, ghPrList, ghPrCreate, ghPrMerge, ghRepoMergeMethod } from "./github.js";
 import {
-  gitWorktreeList, gitWorktreeRemove, gitBranchDeleteForce, gitCheckout, gitPull, gitPush,
+  ghIssueView,
+  ghPrList,
+  ghPrCreate,
+  ghPrMerge,
+  ghRepoMergeMethod,
+} from "./github.js";
+import {
+  gitWorktreeList,
+  gitWorktreeRemove,
+  gitBranchDeleteForce,
+  gitCheckout,
+  gitPull,
+  gitPush,
 } from "./git.js";
-import { parseIssueNumber, getCurrentBranch, getMainBranch, getMergeBase, run } from "./helpers.js";
+import {
+  parseIssueNumber,
+  getCurrentBranch,
+  getMainBranch,
+  getMergeBase,
+  run,
+} from "./helpers.js";
 import type { WorktreeRow, PRInfo, IssueInfo } from "./types.js";
 import { logger } from "../logger.js";
 import {
-  Markdown, type MarkdownTheme,
-  ProcessTerminal, TUI, Container, SelectList, Text,
-  type SelectItem, type SelectListTheme,
+  Markdown,
+  type MarkdownTheme,
+  ProcessTerminal,
+  TUI,
+  Container,
+  SelectList,
+  Text,
+  type SelectItem,
+  type SelectListTheme,
 } from "@mariozechner/pi-tui";
 
 /** CLI 场景用纯文本主题，不依赖 initTheme() */
 const plainTheme: MarkdownTheme = {
-  heading:         (s) => s,
-  link:            (s) => s,
-  linkUrl:         (s) => s,
-  code:            (s) => s,
-  codeBlock:       (s) => s,
+  heading: (s) => s,
+  link: (s) => s,
+  linkUrl: (s) => s,
+  code: (s) => s,
+  codeBlock: (s) => s,
   codeBlockBorder: (s) => s,
-  quote:           (s) => s,
-  quoteBorder:     (s) => s,
-  hr:              (s) => s,
-  listBullet:      (s) => s,
-  bold:            (s) => s,
-  italic:          (s) => s,
-  strikethrough:   (s) => s,
-  underline:       (s) => s,
+  quote: (s) => s,
+  quoteBorder: (s) => s,
+  hr: (s) => s,
+  listBullet: (s) => s,
+  bold: (s) => s,
+  italic: (s) => s,
+  strikethrough: (s) => s,
+  underline: (s) => s,
 };
 
 const log = logger.withTag("dev");
@@ -53,7 +76,9 @@ export class DevFlow {
           headRefName: pr.headRefName,
         });
       }
-    } catch { /* PR 列表获取失败，继续 */ }
+    } catch {
+      /* PR 列表获取失败，继续 */
+    }
 
     // 为每个 worktree 构建行数据
     const rows: WorktreeRow[] = [];
@@ -62,7 +87,11 @@ export class DevFlow {
       let issue: IssueInfo | undefined;
       if (issueNum) {
         try {
-          const data = ghIssueView(issueNum, this.repo, "number,title,state,url,createdAt,author");
+          const data = ghIssueView(
+            issueNum,
+            this.repo,
+            "number,title,state,url,createdAt,author",
+          );
           issue = {
             number: data.number,
             title: data.title,
@@ -71,7 +100,9 @@ export class DevFlow {
             createdAt: data.createdAt,
             author: (data.author as any)?.login ?? "-",
           };
-        } catch { /* issue 获取失败 */ }
+        } catch {
+          /* issue 获取失败 */
+        }
       }
 
       rows.push({
@@ -98,8 +129,17 @@ export class DevFlow {
 
   /** 构建 Markdown 表格字符串 */
   private buildTableMarkdown(rows: WorktreeRow[]): string {
-    const header = ["Path", "Branch", "Ahead", "PR", "PR State", "Mergeable", "Issue State", "Title"];
-    const sep    = header.map(() => "---");
+    const header = [
+      "Path",
+      "Branch",
+      "Ahead",
+      "PR",
+      "PR State",
+      "Mergeable",
+      "Issue State",
+      "Title",
+    ];
+    const sep = header.map(() => "---");
     const body = rows.map((row) => {
       const wt = row.worktree;
       return [
@@ -140,12 +180,20 @@ export class DevFlow {
     // ahead/behind
     if (branch !== mainBranch) {
       try {
-        const ahead = Number(run(`git rev-list --count "${mainBranch}..${branch}"`).trim());
-        const behind = Number(run(`git rev-list --count "${branch}..${mainBranch}"`).trim());
+        const ahead = Number(
+          run(`git rev-list --count "${mainBranch}..${branch}"`).trim(),
+        );
+        const behind = Number(
+          run(`git rev-list --count "${branch}..${mainBranch}"`).trim(),
+        );
         if (ahead > 0 || behind > 0) {
-          console.log(`  追踪:             ↑${ahead} ahead, ↓${behind} behind ${mainBranch}`);
+          console.log(
+            `  追踪:             ↑${ahead} ahead, ↓${behind} behind ${mainBranch}`,
+          );
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
 
     // Issue 信息
@@ -157,7 +205,11 @@ export class DevFlow {
 
     console.log("\n=== Issue 信息 ===");
     try {
-      const data = ghIssueView(issueNum, this.repo, "number,title,state,url,createdAt,author");
+      const data = ghIssueView(
+        issueNum,
+        this.repo,
+        "number,title,state,url,createdAt,author",
+      );
       console.log(`  #${data.number}  ${data.title}`);
       console.log(`  状态:           ${data.state}`);
       console.log(`  作者:           ${(data.author as any)?.login ?? "-"}`);
@@ -226,8 +278,12 @@ export class DevFlow {
     if (existing.length > 0) {
       // 推送新的 commit 到已有 PR
       gitPush();
-      log.warn(`分支 "${branch}" 已存在 open PR #${existing[0].number}，新 commit 已推送`);
-      log.info(`合并方式: flow dev merge-pr 或到 ${existing[0].url} 页面手动合并`);
+      log.warn(
+        `分支 "${branch}" 已存在 open PR #${existing[0].number}，新 commit 已推送`,
+      );
+      log.info(
+        `合并方式: flow dev merge-pr 或到 ${existing[0].url} 页面手动合并`,
+      );
       return;
     }
 
@@ -241,7 +297,13 @@ export class DevFlow {
     gitPush();
 
     // 创建 PR
-    const prNum = ghPrCreate(this.repo, mainBranch, branch, issue.title, `Complete #${issueNum}`);
+    const prNum = ghPrCreate(
+      this.repo,
+      mainBranch,
+      branch,
+      issue.title,
+      `Complete #${issueNum}`,
+    );
     log.success(`成功: 创建 PR #${prNum}`);
   }
 
@@ -266,18 +328,18 @@ export class DevFlow {
       const prUrl = prs[0].url;
       throw new UserError(
         `PR #${prNum} 与 ${mainBranch} 有冲突，请先解决冲突\n` +
-        `\n` +
-        `  页面操作: ${prUrl}\n` +
-        `\n` +
-        `  手工命令:\n` +
-        `    git fetch origin\n` +
-        `    git rebase origin/${mainBranch}\n` +
-        `    # 解决冲突后:\n` +
-        `    git add .\n` +
-        `    git rebase --continue\n` +
-        `    git push --force-with-lease\n` +
-        `\n` +
-        `  解决后重新执行: flow dev merge-pr`
+          `\n` +
+          `  页面操作: ${prUrl}\n` +
+          `\n` +
+          `  手工命令:\n` +
+          `    git fetch origin\n` +
+          `    git rebase origin/${mainBranch}\n` +
+          `    # 解决冲突后:\n` +
+          `    git add .\n` +
+          `    git rebase --continue\n` +
+          `    git push --force-with-lease\n` +
+          `\n` +
+          `  解决后重新执行: flow dev merge-pr`,
       );
     }
 
@@ -316,7 +378,9 @@ export class DevFlow {
     // 检查是否有未推送 commit
     try {
       const upstream = run("git rev-parse --abbrev-ref '@{upstream}'");
-      const ahead = Number(run(`git rev-list --count "${upstream}..${branch}"`).trim());
+      const ahead = Number(
+        run(`git rev-list --count "${upstream}..${branch}"`).trim(),
+      );
       if (ahead > 0) {
         throw new UserError(`有 ${ahead} 个未推送的 commit，请先推送`);
       }
@@ -356,7 +420,7 @@ export class DevFlow {
 
 /** 合并策略的中文描述 */
 const MERGE_METHOD_DESC: Record<string, string> = {
-  merge:  "创建合并提交 (merge commit)",
+  merge: "创建合并提交 (merge commit)",
   squash: "将所有提交压缩为一条 (squash)",
   rebase: "变基合并 (rebase)",
 };
@@ -433,10 +497,10 @@ function selectMethod(methods: string[]): Promise<string | null> {
 
     const listTheme: SelectListTheme = {
       selectedPrefix: (s) => `\x1b[1;36m${s}\x1b[0m`,
-      selectedText:   (s) => `\x1b[1;36m${s}\x1b[0m`,
-      description:    (s) => `\x1b[2m${s}\x1b[0m`,
-      scrollInfo:     (s) => `\x1b[2m${s}\x1b[0m`,
-      noMatch:        (s) => s,
+      selectedText: (s) => `\x1b[1;36m${s}\x1b[0m`,
+      description: (s) => `\x1b[2m${s}\x1b[0m`,
+      scrollInfo: (s) => `\x1b[2m${s}\x1b[0m`,
+      noMatch: (s) => s,
     };
 
     const terminal = new ProcessTerminal();
@@ -449,8 +513,9 @@ function selectMethod(methods: string[]): Promise<string | null> {
     const initialMethod = methods[0] ?? "merge";
     const diagramMd = new Markdown(
       MERGE_METHOD_DIAGRAM[initialMethod] ?? "",
-      1, 0,
-      plainTheme
+      1,
+      0,
+      plainTheme,
     );
 
     const selectList = new SelectList(items, items.length, listTheme);
@@ -472,7 +537,9 @@ function selectMethod(methods: string[]): Promise<string | null> {
 
     container.addChild(diagramMd);
 
-    container.addChild(new Text("\x1b[2m↑↓ 选择  Enter 确认  Esc/q 取消\x1b[0m"));
+    container.addChild(
+      new Text("\x1b[2m↑↓ 选择  Enter 确认  Esc/q 取消\x1b[0m"),
+    );
 
     tui.addChild(container);
     tui.setFocus(selectList);
@@ -491,21 +558,33 @@ function buildBranchDiagram(branch: string, mainBranch: string): string {
   let mergeBase = "?";
   try {
     mergeBase = getMergeBase(branch, mainBranch).slice(0, 7);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   // 分支上的 commit
   let branchCommits: string[] = [];
   try {
     const raw = run(`git log --oneline "${mergeBase}..${branch}"`);
-    branchCommits = raw.split("\n").filter(Boolean).map((l) => l.slice(0, 7));
-  } catch { /* ignore */ }
+    branchCommits = raw
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => l.slice(0, 7));
+  } catch {
+    /* ignore */
+  }
 
   // main 上的 commit（从 merge-base 往后取一段）
   let mainCommits: string[] = [];
   try {
     const raw = run(`git log --oneline "${mergeBase}..${mainBranch}"`);
-    mainCommits = raw.split("\n").filter(Boolean).map((l) => l.slice(0, 7));
-  } catch { /* ignore */ }
+    mainCommits = raw
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => l.slice(0, 7));
+  } catch {
+    /* ignore */
+  }
 
   const indent = "  ";
 
@@ -518,9 +597,8 @@ function buildBranchDiagram(branch: string, mainBranch: string): string {
   }
 
   // 分支连接线
-  const branchConnector = branchCommits.length > 0
-    ? `\\\n${indent}${branch}:${indent}`
-    : "";
+  const branchConnector =
+    branchCommits.length > 0 ? `\\\n${indent}${branch}:${indent}` : "";
 
   // 分支 commit 链
   const branchChain = branchCommits.join("---");
@@ -528,7 +606,9 @@ function buildBranchDiagram(branch: string, mainBranch: string): string {
 
   lines.push("```");
   lines.push("");
-  lines.push(`> merge-base: \`${mergeBase}\` · ${branch} ahead ${branchCommits.length} · ${mainBranch} ahead ${mainCommits.length}`);
+  lines.push(
+    `> merge-base: \`${mergeBase}\` · ${branch} ahead ${branchCommits.length} · ${mainBranch} ahead ${mainCommits.length}`,
+  );
 
   return lines.join("\n");
 }

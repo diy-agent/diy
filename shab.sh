@@ -21,27 +21,52 @@ ROOT_DIR="$(dirname "$C_MAC_PATH")"
 cd "$ROOT_DIR"
 source sha.common.sh
 
-####################################################################################
-# app script
-# 应用项目补充的公共脚本，不在bake维护范围
-# 此位置以上的全都是bake工具脚本，copy走可以直接用，之下的为项目特定cmd，自己弄
-####################################################################################
-check() { :; }
-ci() { :; }
-clean() {
-  run rm -rf ./build
-  run rm -rf ./dist
-  run rm -rf .venv
-  run rm -rf .nodemodules
+# _workspaces=(packages/*/ pkgs-diyui/*/)
+_workspaces=(. packages/*/)
+_vendors=(vendor/*/)
+
+_ws_run() {
+  for ws in "${_workspaces[@]}"; do
+    (
+      cd "$ws"
+      echo "${inverse_surface}info: workspace: Running '$@' in '$ws'${reset}"
+      run "$@"
+    )
+  done
 }
-fix()   {  :; }
-sync() {
-  run uv sync
-  run npm i
-  run git submodule update --init --recursive
-  # run run npx tsx packages/diy-cli/src/diy/cli.ts sync
+
+ws() {
+  pwd()   {  _ws_run command pwd; }
+  exec()  {  _ws_run command "$@"; }
+  clean() {  _ws_run command ./sha.sh clean; }
+  sync()  {  _ws_run command ./sha.sh sync; }
+  ci()    {  _ws_run command ./sha.sh ci; }
+  check() {  _ws_run command ./sha.sh check; }
+  fix()   {  _ws_run command ./sha.sh fix; }
+  test()  {  _ws_run command ./sha.sh test; }
+  sync() {
+    run uv sync --all-packages
+    run npm i --workspaces
+    run git submodule update --init --recursive
+    _ws_run command ./sha.sh sync;
+  }
 }
-test()   {  :; }
+
+_vendors_run() {
+  for submodule in "${_vendors[@]}"; do
+    (
+      cd "$submodule"
+      run "$@"
+    )
+  done
+}
+
+vendors() {
+  pwd()     { _vendors_run command pwd; }
+  status()  { _vendors_run git status; }
+  exec()    { _vendors_run command "$@"; }
+  update() {  run git submodule update --init --recursive --remote; }
+}
 
 ####################################################
 # other

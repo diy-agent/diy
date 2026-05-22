@@ -1,4 +1,4 @@
-// ts-diyui 公共导出
+// diyui.ts 公共导出
 // v0.1
 export { Signal } from "./signal.js";
 export {

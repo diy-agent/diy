@@ -6,15 +6,25 @@ export function ghIssueView(num: number, repo: string, fields: string): any {
   return JSON.parse(raw);
 }
 
-export function ghIssueCreate(title: string, body: string, repo: string): number {
-  const url = run(`gh issue create --repo ${repo} --title "${title}" --body "${body}"`).trim();
+export function ghIssueCreate(
+  title: string,
+  body: string,
+  repo: string,
+): number {
+  const url = run(
+    `gh issue create --repo ${repo} --title "${title}" --body "${body}"`,
+  ).trim();
   // 提取末尾编号
   const m = url.match(/(\d+)$/);
   if (!m) throw new Error(`无法解析 issue URL: ${url}`);
   return Number(m[1]);
 }
 
-export function ghIssueList(repo: string, state: string, labels?: string): any[] {
+export function ghIssueList(
+  repo: string,
+  state: string,
+  labels?: string,
+): any[] {
   let cmd = `gh issue list --repo ${repo} --state ${state} --json number,title,state,url,createdAt,author --limit 100`;
   if (labels) cmd += ` --label "${labels}"`;
   const raw = run(cmd);
@@ -31,10 +41,14 @@ export function ghPrList(repo: string, head?: string, state?: string): any[] {
 }
 
 export function ghPrCreate(
-  repo: string, base: string, head: string, title: string, body: string
+  repo: string,
+  base: string,
+  head: string,
+  title: string,
+  body: string,
 ): number {
   const url = run(
-    `gh pr create --repo ${repo} --base "${base}" --head "${head}" --title "${title}" --body "${body}"`
+    `gh pr create --repo ${repo} --base "${base}" --head "${head}" --title "${title}" --body "${body}"`,
   ).trim();
   const m = url.match(/(\d+)$/);
   if (!m) throw new Error(`无法解析 PR URL: ${url}`);

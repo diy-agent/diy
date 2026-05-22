@@ -19,7 +19,10 @@ export async function writeJson(p: string, obj: unknown): Promise<void> {
   const text = JSON.stringify(obj, null, 2);
   const dir = path.dirname(p);
   await ensureDir(dir);
-  const tmp = path.join(dir, `.tmp.${path.basename(p)}.${Math.random().toString(36).slice(2)}`);
+  const tmp = path.join(
+    dir,
+    `.tmp.${path.basename(p)}.${Math.random().toString(36).slice(2)}`,
+  );
   try {
     await fs.writeFile(tmp, text, "utf-8");
     await fs.rename(tmp, p);

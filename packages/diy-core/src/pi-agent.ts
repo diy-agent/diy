@@ -10,15 +10,15 @@ import {
   DefaultResourceLoader,
   codingTools,
   type AgentSession,
-} from '@mariozechner/pi-coding-agent';
-import type { CodingAgent, AgentStreamEvent, AgentOptions } from './agent.js';
+} from "@mariozechner/pi-coding-agent";
+import type { CodingAgent, AgentStreamEvent, AgentOptions } from "./agent.js";
 
 /**
  * Options specific to PI Coding Agent
  */
 export interface PiAgentOptions extends AgentOptions {
   /** Thinking level: "off", "low", "medium", "high" */
-  thinkingLevel?: 'off' | 'low' | 'medium' | 'high';
+  thinkingLevel?: "off" | "low" | "medium" | "high";
   /** Agent config directory (default: ~/.pi/agent) */
   agentDir?: string;
 }
@@ -28,7 +28,7 @@ export interface PiAgentOptions extends AgentOptions {
  */
 export class PiCodingAgent implements CodingAgent {
   private session: AgentSession | null = null;
-  private sessionId: string = '';
+  private sessionId: string = "";
   private initialized = false;
   private readonly options: PiAgentOptions;
 
@@ -40,7 +40,7 @@ export class PiCodingAgent implements CodingAgent {
     if (this.initialized) return;
 
     const cwd = this.options.cwd || process.cwd();
-    const agentDir = this.options.agentDir || '~/.pi/agent';
+    const agentDir = this.options.agentDir || "~/.pi/agent";
 
     // Setup auth and model registry
     const authStorage = AuthStorage.create();
@@ -65,7 +65,7 @@ export class PiCodingAgent implements CodingAgent {
       tools: codingTools,
       sessionManager: SessionManager.inMemory(),
       settingsManager: SettingsManager.inMemory(),
-      thinkingLevel: this.options.thinkingLevel || 'off',
+      thinkingLevel: this.options.thinkingLevel || "off",
     });
 
     this.session = session;
@@ -82,7 +82,7 @@ export class PiCodingAgent implements CodingAgent {
     _signal?: AbortSignal,
   ): Promise<AgentStreamEvent[]> {
     if (!this.session) {
-      throw new Error('Agent not initialized. Call initialize() first.');
+      throw new Error("Agent not initialized. Call initialize() first.");
     }
 
     // Subscribe to events
@@ -109,16 +109,16 @@ export class PiCodingAgent implements CodingAgent {
    */
   private mapEvent(event: any): AgentStreamEvent | null {
     // Text content
-    if (event.type === 'message_update') {
-      if (event.assistantMessageEvent?.type === 'text_delta') {
+    if (event.type === "message_update") {
+      if (event.assistantMessageEvent?.type === "text_delta") {
         return {
-          type: 'content',
+          type: "content",
           value: event.assistantMessageEvent.delta,
         };
       }
-      if (event.assistantMessageEvent?.type === 'tool_call_delta') {
+      if (event.assistantMessageEvent?.type === "tool_call_delta") {
         return {
-          type: 'tool_call_request',
+          type: "tool_call_request",
           value: {
             name: event.assistantMessageEvent.name,
             args: event.assistantMessageEvent.input,
@@ -128,18 +128,18 @@ export class PiCodingAgent implements CodingAgent {
     }
 
     // Tool execution
-    if (event.type === 'tool_execution_start') {
+    if (event.type === "tool_execution_start") {
       return {
-        type: 'tool_call_request',
+        type: "tool_call_request",
         value: {
           name: event.toolName,
         },
       };
     }
 
-    if (event.type === 'tool_execution_end') {
+    if (event.type === "tool_execution_end") {
       return {
-        type: 'tool_call_response',
+        type: "tool_call_response",
         value: {
           name: event.toolName,
           result: event.result,
@@ -149,18 +149,18 @@ export class PiCodingAgent implements CodingAgent {
     }
 
     // Agent end
-    if (event.type === 'agent_end') {
+    if (event.type === "agent_end") {
       return {
-        type: 'content',
-        value: '\n[Agent finished]',
+        type: "content",
+        value: "\n[Agent finished]",
       };
     }
 
     // Error
-    if (event.type === 'error' || event.error) {
+    if (event.type === "error" || event.error) {
       return {
-        type: 'error',
-        value: event.error?.message || event.message || 'Unknown error',
+        type: "error",
+        value: event.error?.message || event.message || "Unknown error",
       };
     }
 

@@ -43,7 +43,7 @@ function addMessage(content: string): void {
 }
 
 app.column(() => {
-  app.label("# 💬 ts-diyui Chat Demo");
+  app.label("# 💬 diyui.ts Chat Demo");
 
   // Chat history（响应式列表）
   app.column().cell(() => {

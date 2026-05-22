@@ -20,7 +20,7 @@ export abstract class App extends PiContainer {
     super();
     this.terminal = new PiProcessTerminal();
     // Detect VS Code terminal - IME issue workaround
-    this.isVSCodeTerminal = process.env.TERM_PROGRAM === 'vscode';
+    this.isVSCodeTerminal = process.env.TERM_PROGRAM === "vscode";
     // Disable raw mode for VSCode to allow IME (Chinese/English) input
     // Raw mode required for interactive arrow keys but breaks IME in VSCode
     const useRawMode = !this.isVSCodeTerminal;
@@ -108,7 +108,7 @@ export class FunctionalApp extends App {
 
 /**
  * Factory function to create a functional app with closure-based state.
- * 
+ *
  * Example:
  * ```ts
  * const app = createApp(function*() {

@@ -19,7 +19,7 @@ ROOT_PATH="$(realpath "$(command -v "${BASH_SOURCE[0]}")")"
 ROOT_DIR="$(dirname "$C_MAC_PATH")"
 
 cd "$ROOT_DIR"
-source "./sha_common.sh"
+source sha.common.sh
 
 
 ####################################################################################

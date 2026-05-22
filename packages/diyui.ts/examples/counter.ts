@@ -19,7 +19,7 @@ const app = new App(
 const count = app.signal(0);
 
 app.column(() => {
-  app.label("# 🧪 ts-diyui Counter Demo");
+  app.label("# 🧪 diyui.ts Counter Demo");
 
   app.row(() => {
     app.button({ name: "-1" }).onClick = () => {
