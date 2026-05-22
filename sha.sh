@@ -21,7 +21,7 @@ ROOT_DIR="$(dirname "$C_MAC_PATH")"
 cd "$ROOT_DIR"
 source "./sha_common.sh"
 
-# _workspaces=(packages/*/ diyui/*/)
+# _workspaces=(packages/*/ pkgs-diyui/*/)
 _workspaces=(./ diyui/*/)
 _submodules=(vendor/*/)
 

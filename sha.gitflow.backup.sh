@@ -38,7 +38,7 @@ _get_gh_user() {
 # 全局命令不要进入到_c目录
 # cd "$ROOT_DIR"
 
-# _workspaces=(packages/*/ diyui/*/)
+# _workspaces=(packages/*/ pkgs-diyui/*/)
 _workspaces=(diyui/*/)
 _submodules=(vendor/*/)
 _worktree_dir=".worktree"

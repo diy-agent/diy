@@ -142,11 +142,13 @@ Q2: 肯定是方案B，因为方案A无法安排app.panel_特定widges()，函�
 可以安排一个diyui.BaseApp的基础类
 
 ✓ 确认。方案 B：`diyui.BaseApp` 基础类，各 provider 继承。
+
 ```python
-from diyui.providers.panel import App
+from diyui import App
+
 app = App()
 app.markdown("# Title")
-app.servable()   # Panel 专属，向下找首个实际组件调 .target.servable()
+app.servable()  # Panel 专属，向下找首个实际组件调 .target.servable()
 ```
 - `diyui.BaseApp`：包含 ScopeNode 根、with context、signal/cell 通用能力
 - `diyui.providers.panel.App`：继承 BaseApp，挂 Panel 组件方法（button/text_input/...）+ servable

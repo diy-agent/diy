@@ -518,17 +518,21 @@ app.Button("OK")
 import diyui as ui
 
 app = ui.App(render=PanelRender())
-count = ui.signal(0)
+count = diyui.signal(0)
+
 
 def add():
     count.value += 1
 
+
 def sub():
     count.value -= 1
+
 
 with app.Card(title="Counter"):
     app.Button("+1", on_click=add)
     app.Button("-1", on_click=sub)
+
 
 @app.Card(title="Display").cell()
 def _():
@@ -541,15 +545,18 @@ def _():
 import diyui as ui
 
 app = ui.App(render=PanelRender())
-items = ui.signal(["Buy milk", "Write code"])
-new_item = ui.signal("")
+items = diyui.signal(["Buy milk", "Write code"])
+new_item = diyui.signal("")
+
 
 def remove_item(idx):
-    items.value = items.value[:idx] + items.value[idx+1:]
+    items.value = items.value[:idx] + items.value[idx + 1:]
+
 
 def add_item():
     items.value = items.value + [new_item.value]
     new_item.value = ""
+
 
 def TodoList(app):
     with app.Card(title="Todo List"):
@@ -563,6 +570,7 @@ def TodoList(app):
         app.input(label="New item", value=new_item)
         app.Button("Add", on_click=add_item)
 
+
 TodoList(app)
 ```
 
@@ -574,11 +582,12 @@ import diyui as ui
 app = ui.App(render=PanelRender())
 
 tab_select = app.select(options=["overview", "detail", "settings"])
-data = ui.signal({"sales": 100, "users": 50})
+data = diyui.signal({"sales": 100, "users": 50})
 
 with app.Card(title="Dashboard"):
     # tab_select.value 变化会触发依赖它的 cell rerun
     pass
+
 
 @app.Card().cell()
 def content():

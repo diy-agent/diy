@@ -54,7 +54,7 @@ class diyui.providers.panel.Button:
 
 ```python
 import diyui as ui
-import diyui.providers.panel as panel
+import diyui as panel
 
 app = ui.App(provider=panel.Provider())
 ```
