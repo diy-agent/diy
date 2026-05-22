@@ -1,6 +1,6 @@
 [project]
 name = "diyui"
-version = "0.1.0"
+version = "0.1.1"
 description = "diyui - A thin reactive wrapper over UI frameworks."
 requires-python = ">=3.12"
 dependencies = [
@@ -93,6 +93,6 @@ markers = ["browser: 需要 headless browser 的测试"]
 testpaths = ["tests"]
 
 # ========== Marimo 配置 ==========
-[tool.marimo.runtime]  
+[tool.marimo.runtime]
 # auto_instantiate = true
 show_tracebacks = true

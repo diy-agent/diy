@@ -75,7 +75,10 @@ fix() {
   run uv run ruff format src/ tests/
 }
 ci() { check;test-all; }
-
+publish() {
+  # UV_PUBLISH_TOKEN
+  uv publish
+}
 panel() {  run uv run panel serve --dev --show examples/*.pn.py; }
 
 sha "$@"
