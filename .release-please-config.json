@@ -1,0 +1,26 @@
+{
+  "packages": {
+    "packages/diyui.py": {
+      "package-name": "diyui",
+      "versioning": "always-bump-patch",
+      "component": "diyui",
+      "extra-files": [
+        {
+          "type": "pyproject",
+          "path": "packages/diyui.py/pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "python-simple",
+          "path": "packages/diyui.py/src/diyui/__init__.py",
+          "pattern": "__version__\s*=\s*\"([^\"]+)\""
+        }
+      ]
+    }
+  },
+  "separate-pull-requests": true,
+  "command": "release-please",
+  "release-type": "python",
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": true
+}
