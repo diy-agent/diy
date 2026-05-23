@@ -67,6 +67,15 @@ Important entrypoints:
 - **When working on a specific package, always read the `AGENTS.md` in that package directory first** - it contains module-specific documentation not repeated here.
 - Prefer targeted edits over rewriting whole modules.
 
+## Commit & Push Rules
+
+- 提交前先 review: `git diff --stat`，确认不夹带密钥、token、无关文件
+- 提交信息遵循 Conventional Commits（`feat:`、`fix:`、`chore:`、`docs:` 等），格式参考 `docs/dev-flow-commit-publish.md`
+- GPG 签名失败时使用 `--no-gpg-sign` 绕过（仅限开发环境），不修改系统 GPG 配置
+- **绝对不要自主 push**，必须等用户明确要求后再执行
+- 遇到不确定的内容（如 secret 配置、token 值），停下来问用户
+- 首次写新文件后提醒用户检查是否应加入 `.gitignore`
+
 ## Useful Commands
 
 ```bash
@@ -75,4 +84,5 @@ npm run check
 npm run check:all
 npm run build
 npm run sync
+sha.sh doctor release     # release 流程诊断
 ```
