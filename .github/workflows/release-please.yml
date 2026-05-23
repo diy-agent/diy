@@ -35,7 +35,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: 构建并发布到 PyPI
+      - name: 构建并发布正式版到 PyPI
         working-directory: packages/diyui.py
         run: |
           uv build
