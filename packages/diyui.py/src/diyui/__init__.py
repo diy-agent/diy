@@ -10,7 +10,7 @@ from diyui.scheduler import ImmediateScheduler
 from diyui.scope import ScopeConfig, ScopeNode
 from diyui.signal import Signal
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 __all__ = [
     "Signal",
     "ScopeNode",

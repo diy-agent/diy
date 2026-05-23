@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/diy-agent/diy/compare/diyui-v0.1.3...diyui-v0.1.4) (2026-05-23)
+
+
+### Bug Fixes
+
+* update init docstring ([2549d56](https://github.com/diy-agent/diy/commit/2549d56dce5d376e11af67601133b598d74ab0a1))
+
 ## [0.1.3](https://github.com/diy-agent/diy/compare/diyui-v0.1.2...diyui-v0.1.3) (2026-05-23)
 
 
