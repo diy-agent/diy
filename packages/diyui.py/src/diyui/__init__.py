@@ -1,5 +1,7 @@
 """
 diyui - A thin reactive wrapper over UI frameworks.
+
+轻量响应式 UI 框架包装层。
 """
 
 from diyui.base_app import BaseApp
