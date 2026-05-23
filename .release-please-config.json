@@ -13,7 +13,7 @@
         {
           "type": "python-simple",
           "path": "packages/diyui.py/src/diyui/__init__.py",
-          "pattern": "__version__\s*=\s*\"([^\"]+)\""
+          "pattern": "__version__\\s*=\\s*\"([^\"]+)\""
         }
       ]
     }
