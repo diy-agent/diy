@@ -7,10 +7,7 @@ from .git_ops import get_main_branch, get_current_branch, get_github_repo, run
 from .gh_ops import (
     gh_pr_list,
     gh_pr_merge,
-<<<<<<< HEAD
-=======
     gh_pr_ready,
->>>>>>> 07e9cee1603bbb80405305c7ca500c024bf4373a
     gh_repo_merge_method,
 )
 
@@ -74,21 +71,15 @@ def work_merge_pr(
         name=["--method", "-m"],
         help="合并策略: merge | squash | rebase（未指定则交互选择）",
     )] = None,
-<<<<<<< HEAD
-=======
     ready: Annotated[bool, Parameter(
         name=["--ready", "-r"],
         help="草稿 PR 自动转换为 Ready for review 后再合并",
     )] = False,
->>>>>>> 07e9cee1603bbb80405305c7ca500c024bf4373a
 ):
     """合并当前分支的 Pull Request。
 
     如果未通过 --method 指定合并策略，将显示交互式选择器。
-<<<<<<< HEAD
-=======
     草稿 PR 无法合并，可通过 --ready 自动转换状态后再合并。
->>>>>>> 07e9cee1603bbb80405305c7ca500c024bf4373a
     """
     branch = get_current_branch()
     main_branch = get_main_branch()
@@ -120,8 +111,6 @@ def work_merge_pr(
         print(f"\n  解决后重新执行: dev work merge-pr")
         return
 
-<<<<<<< HEAD
-=======
     # 预检草稿状态
     if pr.get("isDraft"):
         if ready:
@@ -149,7 +138,6 @@ def work_merge_pr(
             gh_pr_ready(pr_num, repo)
             print("已转换为 Ready for review\n")
 
->>>>>>> 07e9cee1603bbb80405305c7ca500c024bf4373a
     # 确定合并策略
     if method:
         if method not in ("merge", "squash", "rebase"):
