@@ -393,6 +393,7 @@ class PanelButton(UIComponent, pn.widgets.Button):
     def __init__(
         self,
         *,
+        label: str = "",
         name: str = "",
         value: bool = False,
         align: Any = "start",
@@ -419,13 +420,20 @@ class PanelButton(UIComponent, pn.widgets.Button):
         description_delay: int = 500,
         icon: str | None = None,
         icon_size: str = "1em",
-        button_type: Any = "default",
-        button_style: Any = "solid",
+        color: Any = "default",
+        variant: Any = "solid",
+        button_type: Any | None = None,
+        button_style: Any | None = None,
     ) -> None:
+        # label 取代 name：label 优先，name 仅在 label 未设置时作为兼容回退
+        _label = label or name
+        # color/variant 取代 button_type/button_style：新参数优先
+        _color = color if color != "default" else (button_type or "default")
+        _variant = variant if variant != "solid" else (button_style or "solid")
         UIComponent.__init__(self)
         pn.widgets.Button.__init__(
             self,
-            name=name,
+            label=_label,
             value=value,
             align=align,
             aspect_ratio=aspect_ratio,
@@ -451,8 +459,8 @@ class PanelButton(UIComponent, pn.widgets.Button):
             description_delay=description_delay,
             icon=icon,
             icon_size=icon_size,
-            button_type=button_type,
-            button_style=button_style,
+            color=_color,
+            variant=_variant,
         )
 
 
@@ -467,6 +475,7 @@ class PanelTextInput(UIComponent, pn.widgets.TextInput):
     def __init__(
         self,
         *,
+        label: str = "",
         name: str = "",
         value: str = "",
         align: Any = "start",
@@ -497,10 +506,12 @@ class PanelTextInput(UIComponent, pn.widgets.TextInput):
         # signal 必须在 Panel __init__ 之前创建，因为 Panel 的 _setup_params
         # 会触发 setattr(self, 'value', ...) → 我们的 value.setter → 需要 self.signal
         self.signal: Signal[str] = Signal[str](value)
+        # label 取代 name：label 优先，name 仅在 label 未设置时作为兼容回退
+        _label = label or name
         self._init_done: bool = False
         pn.widgets.TextInput.__init__(
             self,
-            name=name,
+            label=_label,
             value=value,
             align=align,
             aspect_ratio=aspect_ratio,
@@ -555,6 +566,7 @@ class PanelRadioButtonGroup(UIComponent, pn.widgets.RadioButtonGroup):
     def __init__(
         self,
         *,
+        label: str = "",
         name: str = "",
         value: Any = None,
         align: Any = "start",
@@ -579,18 +591,25 @@ class PanelRadioButtonGroup(UIComponent, pn.widgets.RadioButtonGroup):
         disabled: bool = False,
         description: Any | None = None,
         description_delay: int = 500,
-        button_type: Any = "default",
-        button_style: Any = "solid",
+        color: Any = "default",
+        variant: Any = "solid",
+        button_type: Any | None = None,
+        button_style: Any | None = None,
         options: Any | None = None,
         orientation: Any = "horizontal",
     ) -> None:
+        # label 取代 name：label 优先，name 仅在 label 未设置时作为兼容回退
+        _label = label or name
+        # color/variant 取代 button_type/button_style：新参数优先
+        _color = color if color != "default" else (button_type or "default")
+        _variant = variant if variant != "solid" else (button_style or "solid")
         UIComponent.__init__(self)
         # signal 必须在 Panel __init__ 之前创建（同 PanelTextInput）
         self.signal: Signal[Any] = Signal[Any](value)
         self._init_done: bool = False
         pn.widgets.RadioButtonGroup.__init__(
             self,
-            name=name,
+            label=_label,
             value=value,
             align=align,
             aspect_ratio=aspect_ratio,
@@ -614,8 +633,8 @@ class PanelRadioButtonGroup(UIComponent, pn.widgets.RadioButtonGroup):
             disabled=disabled,
             description=description,
             description_delay=description_delay,
-            button_type=button_type,
-            button_style=button_style,
+            color=_color,
+            variant=_variant,
             options=options if options is not None else [],
             orientation=orientation,
         )
@@ -931,6 +950,7 @@ class PanelApp(BaseApp):
     def button(
         self,
         *,
+        label: str = "",
         name: str = "",
         value: bool = False,
         align: Any = "start",
@@ -957,10 +977,13 @@ class PanelApp(BaseApp):
         description_delay: int = 500,
         icon: str | None = None,
         icon_size: str = "1em",
-        button_type: Any = "default",
-        button_style: Any = "solid",
+        color: Any = "default",
+        variant: Any = "solid",
+        button_type: Any | None = None,
+        button_style: Any | None = None,
     ) -> PanelButton:
         btn = PanelButton(
+            label=label,
             name=name,
             value=value,
             align=align,
@@ -987,6 +1010,8 @@ class PanelApp(BaseApp):
             description_delay=description_delay,
             icon=icon,
             icon_size=icon_size,
+            color=color,
+            variant=variant,
             button_type=button_type,
             button_style=button_style,
         )
@@ -998,6 +1023,7 @@ class PanelApp(BaseApp):
     def text_input(
         self,
         *,
+        label: str = "",
         name: str = "",
         value: str = "",
         align: Any = "start",
@@ -1025,6 +1051,7 @@ class PanelApp(BaseApp):
         placeholder: str = "",
     ) -> PanelTextInput:
         inp = PanelTextInput(
+            label=label,
             name=name,
             value=value,
             align=align,
@@ -1057,6 +1084,7 @@ class PanelApp(BaseApp):
     def radio_button_group(
         self,
         *,
+        label: str = "",
         name: str = "",
         value: Any = None,
         align: Any = "start",
@@ -1081,12 +1109,15 @@ class PanelApp(BaseApp):
         disabled: bool = False,
         description: Any | None = None,
         description_delay: int = 500,
-        button_type: Any = "default",
-        button_style: Any = "solid",
+        color: Any = "default",
+        variant: Any = "solid",
+        button_type: Any | None = None,
+        button_style: Any | None = None,
         options: Any | None = None,
         orientation: Any = "horizontal",
     ) -> PanelRadioButtonGroup:
         radio = PanelRadioButtonGroup(
+            label=label,
             name=name,
             value=value,
             align=align,
@@ -1111,6 +1142,8 @@ class PanelApp(BaseApp):
             disabled=disabled,
             description=description,
             description_delay=description_delay,
+            color=color,
+            variant=variant,
             button_type=button_type,
             button_style=button_style,
             options=options,

@@ -34,14 +34,16 @@ diyui.py/
 
 ## Panel 参数强类型化工具
 
-`tools/check_panel_params.py` — 内省 Panel 原生类 param 定义，生成可复制签名。
+`tools/doctor_panel.py` — Panel 诊断工具：适配列表 / 参数一致性 / 签名查询。
 `tests/test_panel_param_coverage.py` — 参数一致性 pytest 测试。
 
 ```bash
-uv run python tools/check_panel_params.py --query Button     # 查构造器签名
-uv run python tools/check_panel_params.py --methods Button   # 查方法签名
-uv run python tools/check_panel_params.py --list             # 已注册 wrapper
-uv run python tools/check_panel_params.py --ci               # CI 检查
+./sha.sh panel                      # 组件适配列表
+./sha.sh panel -g widgets           # 仅 widgets
+./sha.sh panel doctor               # 参数一致性诊断
+./sha.sh panel doctor --ci          # CI 检查
+./sha.sh panel query -n Button      # 查构造器签名
+./sha.sh panel methods -n Button    # 查方法签名
 ```
 
 详见 `.agents/skills/panel-params/SKILL.md`。

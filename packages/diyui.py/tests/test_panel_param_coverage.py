@@ -15,7 +15,7 @@ import pytest
 _tools_dir = Path(__file__).resolve().parent.parent / "tools"
 sys.path.insert(0, str(_tools_dir))
 
-from check_panel_params import _COMMON_EXCLUDED, _WRAPPER_EXCLUDED, run_checks
+from doctor_panel import _COMMON_EXCLUDED, _WRAPPER_EXCLUDED, run_checks
 
 
 def _count_missing() -> int:
@@ -36,7 +36,7 @@ def _count_missing() -> int:
 
 def _get_wrapper_cls(name: str) -> type:
     """按 wrapper 名查找类，断言一定存在（测试数据来自 run_checks 内部）。"""
-    from check_panel_params import _WRAPPER_MAP
+    from doctor_panel import _WRAPPER_MAP
 
     for cls in _WRAPPER_MAP:
         if cls.__name__ == name:
@@ -56,7 +56,7 @@ class TestPanelParamCoverage:
         missing = _count_missing()
         assert missing == 0, (
             f"{missing} 个 Panel 参数缺少显式定义且无 **kwargs 兜底。\n"
-            "运行 `uv run python tools/check_panel_params.py` 查看详情。"
+            "运行 `uv run python tools/doctor_panel.py doctor` 查看详情。"
         )
 
     def test_each_wrapper_reports_zero_missing(self) -> None:
