@@ -3,6 +3,7 @@
 from cyclopts import App, Parameter
 from typing import Annotated, Optional
 
+from .log import VerboseFlag, set_verbosity
 from .git_ops import get_main_branch, get_current_branch, get_github_repo, run
 from .gh_ops import (
     gh_pr_list,
@@ -67,6 +68,7 @@ MERGE_METHOD_DIAGRAM: dict[str, str] = {
 
 @merge_pr_app.default
 def work_merge_pr(
+    verbose: VerboseFlag = 0,
     method: Annotated[Optional[str], Parameter(
         name=["--method", "-m"],
         help="合并策略: merge | squash | rebase（未指定则交互选择）",
@@ -81,6 +83,7 @@ def work_merge_pr(
     如果未通过 --method 指定合并策略，将显示交互式选择器。
     草稿 PR 无法合并，可通过 --ready 自动转换状态后再合并。
     """
+    set_verbosity(verbose)
     branch = get_current_branch()
     main_branch = get_main_branch()
     repo = get_github_repo()

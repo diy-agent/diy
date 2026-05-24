@@ -12,6 +12,7 @@ from importlib.metadata import version as pkg_version
 from cyclopts import App, Parameter
 from typing import Annotated, Optional
 
+from .log import VerboseFlag, set_verbosity
 from .git_ops import (
     run,
     get_main_branch,
@@ -115,6 +116,7 @@ def _scan_prunable(repo: str) -> list[_PruneTarget]:
 
 @prune_app.default
 def work_prune(
+    verbose: VerboseFlag = 0,
     dry_run: Annotated[bool, Parameter(
         name=["--dry-run", "-n"],
         help="仅列出待清理项，不实际执行",
@@ -130,10 +132,11 @@ def work_prune(
     默认会列出待清理项并请求确认。
 
     示例:
-      dev work prune            # 列出并确认后清理
-      dev work prune -n         # 仅预览，不执行
-      dev work prune -y         # 直接清理，跳过确认
+      dev prune            # 列出并确认后清理
+      dev prune -n         # 仅预览，不执行
+      dev prune -y         # 直接清理，跳过确认
     """
+    set_verbosity(verbose)
     repo = get_github_repo()
     targets = _scan_prunable(repo)
 

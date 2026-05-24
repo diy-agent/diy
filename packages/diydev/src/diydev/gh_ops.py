@@ -103,6 +103,7 @@ def gh_pr_ready(pr_num: int, repo: str) -> None:
     run(f"gh pr ready {pr_num} --repo {repo}")
 
 
+
 def gh_issue_comment(num: int, body: str, repo: str) -> None:
     """对 issue 发表评论"""
     run(f'gh issue comment {num} --repo {repo} --body "{body}"')

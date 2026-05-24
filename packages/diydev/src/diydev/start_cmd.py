@@ -7,6 +7,7 @@
 from cyclopts import App, Parameter
 from typing import Annotated
 
+from .log import VerboseFlag, set_verbosity
 from .git_ops import (
     get_github_repo,
     get_main_branch,
@@ -29,13 +30,15 @@ def work_start(
         name=["branch_name"],
         help="分支名后缀（可选）",
     )] = "",
+    verbose: VerboseFlag = 0,
 ):
     """从 issue 编号开始开发，创建 worktree 并推送远程分支。
 
     示例:
-      dev work start 54           # 创建分支 54，worktree 在 .worktree/54
-      dev work start 54 fix-xx    # 创建分支 54-fix-xx
+      dev start 54           # 创建分支 54，worktree 在 .worktree/54
+      dev start 54 fix-xx    # 创建分支 54-fix-xx
     """
+    set_verbosity(verbose)
     repo = get_github_repo()
     main_branch = get_main_branch()
     branch = f"{issue_num}-{branch_name}" if branch_name else str(issue_num)

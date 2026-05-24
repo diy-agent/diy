@@ -1,7 +1,9 @@
 """dev work pr - 推送并创建 PR"""
 
-from cyclopts import App
+from cyclopts import App, Parameter
+from typing import Annotated, Optional
 
+from .log import VerboseFlag, set_verbosity
 from .git_ops import (
     run,
     get_github_repo,
@@ -16,12 +18,15 @@ pr_app = App(name="pr", help="推送并创建 PR")
 
 
 @pr_app.default
-def work_pr():
+def work_pr(
+    verbose: VerboseFlag = 0,
+):
     """推送当前分支并创建 Pull Request。
 
     自动从分支名提取 issue 编号，用 issue 标题作为 PR 标题。
     如果已有 open PR，则只推送新 commit。
     """
+    set_verbosity(verbose)
     branch = get_current_branch()
     main_branch = get_main_branch()
     repo = get_github_repo()

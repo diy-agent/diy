@@ -14,6 +14,7 @@ from cyclopts import Parameter
 from rich.console import Console
 from rich.table import Table
 
+from .log import VerboseFlag, set_verbosity
 from .git_ops import run, get_main_branch, get_github_repo, parse_issue_number
 from .gh_ops import gh_issue_list, gh_issue_view, gh_all_prs_map
 
@@ -238,6 +239,7 @@ def build_unified_rows(
 
 
 def work_list(
+    verbose: VerboseFlag = 0,
     labels: Annotated[Optional[str], Parameter(
         name=["--label", "-l"],
         help="按标签过滤 issue",
@@ -252,6 +254,7 @@ def work_list(
     先列出有 worktree 对应的 issue（正在开发中），再列出其余最近 open issue。
     无 worktree 对应关系的 issue，path/branch 等字段标注 '-'。
     """
+    set_verbosity(verbose)
     repo = get_github_repo()
     rows = build_unified_rows(repo, labels)
 
@@ -298,13 +301,13 @@ def work_list(
         border_style="dim",
         expand=True,
     )
-    table.add_column("Issue", style="cyan", no_wrap=True, width=7)
+    table.add_column("Issue", no_wrap=True, width=7)
     table.add_column("State", no_wrap=True, width=6)
     table.add_column("Created", no_wrap=True, width=10)
     table.add_column("Title", no_wrap=True, max_width=40)
     table.add_column("Worktree", no_wrap=True, max_width=35)
     table.add_column("Ahead", justify="right", width=5)
-    table.add_column("PR", style="magenta", no_wrap=True, max_width=12)
+    table.add_column("PR", no_wrap=True, max_width=12)
     table.add_column("PR State", no_wrap=True, width=7)
     table.add_column("Mergeable", no_wrap=True, width=10)
 
@@ -330,10 +333,11 @@ def work_list(
         if r.pr_number != "-":
             pr_display = f"#{r.pr_number}"
             if r.is_draft:
-                pr_state = r.pr_state + " [yellow]草稿[/]"
+                pr_state = f"[yellow]{r.pr_state} 草稿[/]"
+                pr_mergeable = f"[yellow]BLOCKED(草稿)[/]" if r.pr_mergeable != 'CONFLICTING' else f"[yellow]{r.pr_mergeable}[/]"
             else:
                 pr_state = r.pr_state
-            pr_mergeable = 'BLOCKED(草稿)' if r.is_draft and r.pr_mergeable != 'CONFLICTING' else r.pr_mergeable
+                pr_mergeable = r.pr_mergeable
 
         ahead_str = str(r.ahead) if r.ahead > 0 else "-"
 
