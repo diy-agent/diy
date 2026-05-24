@@ -38,12 +38,10 @@ diyui.py/
 `tests/test_panel_param_coverage.py` — 参数一致性 pytest 测试。
 
 ```bash
-./sha.sh panel                      # 组件适配列表
-./sha.sh panel -g widgets           # 仅 widgets
-./sha.sh panel doctor               # 参数一致性诊断
-./sha.sh panel doctor --ci          # CI 检查
-./sha.sh panel query -n Button      # 查构造器签名
-./sha.sh panel methods -n Button    # 查方法签名
+./sha.sh panel list                  # 组件适配列表
+./sha.sh panel list -g widgets        # 仅 widgets
+./sha.sh panel doctor                 # 参数一致性诊断
+./sha.sh panel query -n Button        # 查构造器签名
 ```
 
 详见 `.agents/skills/panel-params/SKILL.md`。

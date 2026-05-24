@@ -1,6 +1,6 @@
 ---
 name: panel-params
-description: Panel 组件诊断工具：适配状态 + 参数一致性 + 签名查询。当用户提到 Panel 参数、强类型化、wrapper 签名、**kwargs 消除、Panel 方法签名、组件适配状态时使用此 skill。
+description: Panel 组件诊断工具：适配状态 + 参数一致性 + 签名查询。当用户提到 Panel 参数、强类型化、wrapper 签名、**kwargs 消除、组件适配状态时使用此 skill。
 ---
 
 # Panel 诊断工具
@@ -15,15 +15,14 @@ tests/test_panel_param_coverage.py  # pytest 测试（3 个用例）
 ## 命令
 
 ```bash
-# 组件适配列表（默认命令）
-./sha.sh panel                      # 全量列表
-./sha.sh panel -g widgets           # 仅 widgets
-./sha.sh panel -g pane              # 仅 pane
-./sha.sh panel -g layout            # 仅 layout
+# 组件适配列表
+./sha.sh panel list                  # 全量列表
+./sha.sh panel list -g widgets       # 仅 widgets
+./sha.sh panel list -g pane          # 仅 pane
+./sha.sh panel list -g layout        # 仅 layout
 
 # 参数一致性诊断
-./sha.sh panel doctor               # 全量 7×wrapper 对照表
-./sha.sh panel doctor --ci          # CI 模式，缺失则 exit 1
+./sha.sh panel doctor               # 参数一致性诊断
 
 # 查构造器参数 → 输出可复制的 __init__ 签名
 ./sha.sh panel query -n Button
@@ -33,10 +32,6 @@ tests/test_panel_param_coverage.py  # pytest 测试（3 个用例）
 ./sha.sh panel query -n TextInput
 ./sha.sh panel query -n RadioButtonGroup
 ./sha.sh panel query -n widgets.IntSlider   # 任意 Panel 类
-
-# 查方法签名 → 按 MRO 分组列出所有公开方法
-./sha.sh panel methods -n Button
-./sha.sh panel methods -n TextInput
 ```
 
 ## 强类型化流程
