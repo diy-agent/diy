@@ -49,7 +49,9 @@ test()   {  :; }
 cli() {
   run npx tsx packages/diy-cli/src/diy/cli.ts "$@"
 }
-
+install() {
+  run uv tool install -e packages/diydev
+}
 ####################################################
 # app entry script & _root cmd
 ####################################################
