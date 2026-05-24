@@ -98,6 +98,16 @@ def gh_pr_merge(pr_num: int, repo: str, method: str) -> None:
     run(f"gh pr merge {pr_num} --repo {repo} --{method}")
 
 
+def gh_issue_comment(num: int, body: str, repo: str) -> None:
+    """对 issue 发表评论"""
+    run(f'gh issue comment {num} --repo {repo} --body "{body}"')
+
+
+def gh_issue_close(num: int, repo: str) -> None:
+    """关闭 issue"""
+    run(f"gh issue close {num} --repo {repo}")
+
+
 def gh_repo_merge_method(repo: str) -> str:
     """获取仓库允许的合并策略，逗号分隔"""
     try:

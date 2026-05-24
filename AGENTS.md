@@ -29,6 +29,12 @@ Important entrypoints:
 - Use `npm run check:all` when changes span packages or shared build behavior.
 - Prefer the smallest verifiable change over broad refactors.
 
+### Python 包安装
+
+- **禁止直接使用 `pip install`**，因为未激活 venv 时会污染全局 Python 环境
+- 必须使用 `uv pip install` 或 `uv run`，确保安装到项目 `.venv` 内
+- 示例：`uv pip install -e packages/diydev`、`uv run dev list`
+
 ### Scripting and Error Handling
 
 - Do not hide error messages in scripts (e.g., avoid `2>/dev/null`). All errors should be visible for easier debugging.
