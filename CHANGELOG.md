@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/diy-agent/diy/compare/diy-v0.1.5...diy-v0.1.6) (2026-05-24)
+
+
+### Features
+
+* **diydev:** feat(diydev):  ([e89064c](https://github.com/diy-agent/diy/commit/e89064ca74f07e13ecabcf505b58cce9e97db6f9))
+
 ## [0.1.5](https://github.com/diy-agent/diy/compare/diy-v0.1.4...diy-v0.1.5) (2026-05-24)
 
 
