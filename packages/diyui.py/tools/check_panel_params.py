@@ -598,8 +598,8 @@ app = cyclopts.App(
 )
 
 
-@app.default
-def check(
+@app.command
+def doctor(
     *,
     ci: Annotated[
         bool,

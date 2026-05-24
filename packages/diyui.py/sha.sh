@@ -68,9 +68,11 @@ test() { run uv run pytest "${@:-tests/}" -m "not browser";}
 # 子项目自己的命令
 ####################################################################################
 
-panel() {  run uv run panel serve --dev --show examples/*.pn.py; }
+examples() {  run uv run panel serve --dev --show examples/*.pn.py; }
 
-
+panel() {
+  run uv run python tools/check_panel_params.py "$@"
+}
 #  # 单个测试（精确路径）
 #  ./sha.sh test-head "tests/test_browser.py::TestButtonClickToCellRerun::test_increment_button_updates_counter"
 #

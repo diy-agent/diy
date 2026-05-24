@@ -59,11 +59,26 @@ _vendors_run() {
   done
 }
 
-vendors() {
-  pwd()     { _vendors_run command pwd; }
-  status()  { _vendors_run git status; }
+# 直接改submoulde代码推荐流程：
+#  ```bash
+#    # 1. 进入子模块，先切到分支
+#    cd vendor/sha
+#    git checkout main
+
+#    # 2. 正常改代码、提交、推送
+#    git add .
+#    git commit -m "feat: xxx"
+#    git push origin main
+
+#    # 3. 回到父仓库，更新子模块指针
+#    cd ../..
+#    git add vendor/sha
+#    git commit -m "chore: update vendor/sha"
+#  ```
+vendor() {
   exec()    { _vendors_run command "$@"; }
-  update() {  run git submodule update --init --recursive --remote; }
+  status()  { _vendors_run git status; }
+  update() {  run git submodule update --init --recursive --remote --merge; }
 }
 
 ####################################################
