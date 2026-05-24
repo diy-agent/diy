@@ -34,13 +34,14 @@ diyui.py/
 
 ## Panel 参数强类型化工具
 
-`tools/doctor_panel.py` — Panel 诊断工具：适配列表 / 参数一致性 / 签名查询。
-`tests/test_panel_param_coverage.py` — 参数一致性 pytest 测试。
+`tools/doctor_panel.py` — Panel 诊断工具：适配列表 / 参数一致性 / 透传验证。
+`tests/test_panel_param_coverage.py` — 参数一致性 + 透传验证 pytest 测试（5 个用例）。
 
 ```bash
 ./sha.sh panel list                  # 组件适配列表
 ./sha.sh panel list -g widgets        # 仅 widgets
 ./sha.sh panel doctor                 # 参数一致性诊断
+./sha.sh panel verify                 # 参数透传运行时验证
 ./sha.sh panel query -n Button        # 查构造器签名
 ```
 

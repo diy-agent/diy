@@ -1,4 +1,4 @@
-"""Panel 组件诊断工具：适配状态 + 参数一致性。
+"""Panel 组件诊断工具：适配状态 + 参数一致性 + 透传验证。
 
 用法:
   uv run python tools/doctor_panel.py list                  # 组件适配列表
@@ -6,6 +6,7 @@
   uv run python tools/doctor_panel.py list -g pane          # 仅 pane
   uv run python tools/doctor_panel.py list -g layout        # 仅 layout
   uv run python tools/doctor_panel.py doctor                # 参数一致性诊断
+  uv run python tools/doctor_panel.py verify                # 参数透传运行时验证
   uv run python tools/doctor_panel.py query -n Button       # 查询参数签名
 """
 
@@ -80,6 +81,20 @@ _WRAPPER_EXCLUDED: dict[type, set[str]] = {
     },
 }
 
+# ── 包装类参数别名映射 ──────────────────────────────────────
+# key: wrapper 类, value: {wrapper 参数名: 实际检查的 Panel 属性名}
+# 用于 wrapper 对参数做了语义重命名的情况（如 button_type → color）
+_WRAPPER_PARAM_MAP: dict[type, dict[str, str]] = {
+    PanelButton: {
+        "button_type": "color",
+        "button_style": "variant",
+    },
+    PanelRadioButtonGroup: {
+        "button_type": "color",
+        "button_style": "variant",
+    },
+}
+
 # ── list 命令用：模块收集 ─────────────────────────────────────
 
 _MODULE_SPECS: list[tuple[Any, str]] = [
@@ -117,6 +132,30 @@ class WrapperCheck:
     panel_params: list[PanelParam] = field(default_factory=list)
     wrapper_params: dict[str, str] = field(default_factory=dict)
     missing: list[str] = field(default_factory=list)
+
+
+@dataclass
+class PassThroughCheck:
+    """单参数透传验证结果。"""
+    param_name: str
+    target_attr: str          # 实际检查的 Panel 属性名
+    test_value: Any
+    actual_value: Any
+    passed: bool
+    error: str | None = None  # 构造异常时记录
+
+
+@dataclass
+class VerifyResult:
+    """运行时透传验证结果。"""
+    wrapper_name: str
+    panel_name: str
+    checks: list[PassThroughCheck] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+
+    @property
+    def failures(self) -> list[PassThroughCheck]:
+        return [c for c in self.checks if not c.passed]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -375,6 +414,167 @@ def _query_class(panel_cls: type) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════
+# verify 命令（运行时透传验证）
+# ═══════════════════════════════════════════════════════════════
+
+_NO_VALUE = object()  # 无法生成有效测试值的标记
+
+
+def _generate_test_value(p: param.Parameter) -> Any:
+    """为 param 参数生成一个非默认值的测试值。"""
+    default = p.default
+
+    # Selector / ObjectSelector：从允许值中选取非默认值
+    if isinstance(p, (param.Selector, param.ObjectSelector)):
+        objects = getattr(p, "objects", None) or []
+        for obj in objects:
+            if obj != default and obj is not None:
+                return obj
+        return _NO_VALUE
+
+    # Event 必须在 Boolean 之前检查（Event 继承 Boolean）
+    if isinstance(p, param.Event):
+        # Event 参数被 Panel 内部消费，设值后立即重置，无法用常规方式验证透传
+        return _NO_VALUE
+
+    if isinstance(p, param.Boolean):
+        return not default if default is not None else True
+    if isinstance(p, param.Integer):
+        for v in (42, 0, -1, 999):
+            if v != default:
+                return v
+        return _NO_VALUE
+    if isinstance(p, param.Number):
+        for v in (3.14, 0.0, -1.0, 999.0):
+            if v != default:
+                return v
+        return _NO_VALUE
+    if isinstance(p, param.String):
+        return "__test__" if default != "__test__" else "__other__"
+    if isinstance(p, param.Color):
+        return "#FF0000" if default != "#FF0000" else "#00FF00"
+    if isinstance(p, param.List):
+        item_type = getattr(p, "item_type", None)
+        if item_type is str:
+            return ["__test__"] if default != ["__test__"] else ["__other__"]
+        if item_type is int:
+            return [1] if default != [1] else [2]
+        # item_type 未声明时，先试 str 再试 int
+        if default == [] or isinstance(default, list) and default and isinstance(default[0], str):
+            return ["__test__"] if default != ["__test__"] else ["__other__"]
+        return [1] if default != [1] else [2]
+    if isinstance(p, param.Dict):
+        return {"__k": 1} if default != {"__k": 1} else {"__k": 2}
+    if isinstance(p, param.Tuple):
+        return (1, 2) if default != (1, 2) else (3, 4)
+    if isinstance(p, param.Range):
+        return (0, 1) if default != (0, 1) else (1, 2)
+
+    # ClassSelector / 未知类型
+    cls_ = getattr(p, "class_", None)
+    if cls_ is not None:
+        return _NO_VALUE
+
+    return _NO_VALUE
+
+
+def verify_pass_through(wrapper_cls: type, panel_cls: type) -> VerifyResult:
+    """运行时验证：用非默认值实例化 wrapper，检验参数是否真正透传到 Panel 原生对象。"""
+    result = VerifyResult(
+        wrapper_name=wrapper_cls.__name__,
+        panel_name=panel_cls.__name__,
+    )
+    param_map = _WRAPPER_PARAM_MAP.get(wrapper_cls, {})
+    excluded = _COMMON_EXCLUDED | _WRAPPER_EXCLUDED.get(wrapper_cls, set())
+    wrapper_param_names = set(extract_wrapper_params(wrapper_cls))
+
+    for pp in extract_panel_params(panel_cls):
+        if pp.name in excluded:
+            continue
+        if pp.name not in wrapper_param_names:
+            # 缺失参数由 doctor 命令负责，这里跳过
+            continue
+
+        p = panel_cls.param[pp.name]
+        test_val = _generate_test_value(p)
+        if test_val is _NO_VALUE:
+            result.skipped.append(pp.name)
+            continue
+
+        target_attr = param_map.get(pp.name, pp.name)
+
+        try:
+            instance = wrapper_cls(**{pp.name: test_val})
+            actual = getattr(instance, target_attr, _NO_VALUE)
+            if actual is _NO_VALUE or actual != test_val:
+                result.checks.append(PassThroughCheck(
+                    param_name=pp.name,
+                    target_attr=target_attr,
+                    test_value=test_val,
+                    actual_value=actual,
+                    passed=False,
+                    error=f"Expected {target_attr}={test_val!r}, got {actual!r}",
+                ))
+            else:
+                result.checks.append(PassThroughCheck(
+                    param_name=pp.name,
+                    target_attr=target_attr,
+                    test_value=test_val,
+                    actual_value=actual,
+                    passed=True,
+                ))
+        except Exception as exc:
+            result.checks.append(PassThroughCheck(
+                param_name=pp.name,
+                target_attr=target_attr,
+                test_value=test_val,
+                actual_value=_NO_VALUE,
+                passed=False,
+                error=f"构造异常: {exc}",
+            ))
+
+    return result
+
+
+def run_verify() -> list[VerifyResult]:
+    return [verify_pass_through(w, p) for w, p in _WRAPPER_MAP.items()]
+
+
+def _print_verify(results: list[VerifyResult]) -> int:
+    total_fail = 0
+    for r in results:
+        print(f"\n{'─' * 70}")
+        print(f"  🔬 {r.wrapper_name}  ←  panel {r.panel_name}")
+        print(f"{'─' * 70}")
+
+        if not r.checks and not r.skipped:
+            print("  （无可验证参数）")
+            continue
+
+        print(f"  {'参数':<24} {'目标属性':<20} {'测试值':<20} 状态")
+        print(f"  {'─' * 24} {'─' * 20} {'─' * 20} ─────")
+        for c in r.checks:
+            tv = repr(c.test_value)
+            if len(tv) > 19:
+                tv = tv[:16] + "…"
+            if c.passed:
+                print(f"  {c.param_name:<24} {c.target_attr:<20} {tv:<20} ✓")
+            else:
+                print(f"  {c.param_name:<24} {c.target_attr:<20} {tv:<20} ✗ {c.error}")
+                total_fail += 1
+        if r.skipped:
+            print(f"  跳过（无法生成测试值）: {', '.join(r.skipped)}")
+
+    print(f"\n{'═' * 70}")
+    if total_fail:
+        print(f"  ❌ {total_fail} 个参数透传失败")
+    else:
+        print(f"  ✅ 所有参数透传验证通过")
+    print(f"{'═' * 70}")
+    return total_fail
+
+
+# ═══════════════════════════════════════════════════════════════
 # CLI
 # ═══════════════════════════════════════════════════════════════
 
@@ -385,8 +585,8 @@ app = cyclopts.App(
 )
 
 
-@app.command
-def list(
+@app.command(name="list")
+def list_cmd(
     group: Annotated[
         str | None,
         cyclopts.Parameter(
@@ -408,6 +608,17 @@ def doctor() -> None:
         print(f"\n❌ {missing} 个参数未定义")
         sys.exit(1)
     print("\n✅ 所有参数已强类型化")
+
+
+@app.command
+def verify() -> None:
+    """运行时验证：用非默认值实例化 wrapper，检验参数是否透传到 Panel 原生对象。"""
+    results = run_verify()
+    failures = _print_verify(results)
+    if failures > 0:
+        print(f"\n❌ {failures} 个参数透传失败")
+        sys.exit(1)
+    print("\n✅ 所有参数透传验证通过")
 
 
 @app.command
