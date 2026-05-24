@@ -1,24 +1,19 @@
 [project]
-name = "diy-monorepo"
+name = "diy-mono"
 version = "0.0.0"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["diydev", "diyui"]
 
 [tool.uv]
 package = false
 
 [tool.uv.workspace]
-members = ["pkgs-diyui/diyui.py"]
+members = ["packages/diyui.py", "packages/diydev"]
 
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"
 
 [tool.uv.sources]
 diyui = { workspace = true }
+diydev = { workspace = true }
 
-# PyCharm 等 IDE 支持配置
-[tool.pyright]
-extraPaths = ["pkgs-diyui/diyui.py/src"]
-
-[tool.pytest.ini_options]
-pythonpath = ["pkgs-diyui/diyui.py/src"]

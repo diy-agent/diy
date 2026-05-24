@@ -1,17 +1,41 @@
-"""diydev CLI 入口 - dev 根命令，子命令 work"""
+"""diydev CLI 入口 - dev 根命令"""
 
 import sys
 from cyclopts import App
 
-from .work import work_app
+from .list_cmd import work_list
+from .start_cmd import start_app
+from .new_cmd import new_app
+from .status_cmd import status_app
+from .pr_cmd import pr_app
+from .merge_pr_cmd import merge_pr_app
+from .prune_cmd import prune_app
 
 app = App(
     name="dev",
     help="diy 开发流程管理",
 )
 
-# 将 work 作为子命令注册
-app.command(work_app, name="work")
+# dev list
+app.command(work_list, name="list")
+
+# dev start
+app.command(start_app, name="start")
+
+# dev new
+app.command(new_app, name="new")
+
+# dev status
+app.command(status_app, name="status")
+
+# dev pr
+app.command(pr_app, name="pr")
+
+# dev merge-pr
+app.command(merge_pr_app, name="merge-pr")
+
+# dev prune
+app.command(prune_app, name="prune")
 
 
 def main():
