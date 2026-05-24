@@ -70,7 +70,6 @@ Important entrypoints:
 ## Agent Workflow
 
 - Read the closest relevant code before changing anything.
-- **When working on a specific package, always read the `AGENTS.md` in that package directory first** - it contains module-specific documentation not repeated here.
 - Prefer targeted edits over rewriting whole modules.
 
 ## Commit & Push Rules
