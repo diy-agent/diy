@@ -80,8 +80,11 @@ def work_status():
         if prs:
             pr = prs[0]
             print(f"  #{pr['number']}  {pr['title']}")
-            print(f"  状态:           {pr['state']}")
-            print(f"  可合并:         {pr.get('mergeable', 'UNKNOWN')}")
+            print(f"  状态:           {pr['state']}{' (草稿)' if pr.get('isDraft') else ''}")
+            mergeable = pr.get('mergeable', 'UNKNOWN')
+            if pr.get('isDraft') and mergeable != 'CONFLICTING':
+                mergeable = 'BLOCKED(草稿)'
+            print(f"  可合并:         {mergeable}")
             print(f"  URL:            {pr['url']}")
         else:
             print("  未找到关联 PR")

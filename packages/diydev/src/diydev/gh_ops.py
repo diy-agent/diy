@@ -36,7 +36,7 @@ def gh_issue_create(title: str, body: str, repo: str) -> int:
 def gh_pr_list_by_branch(repo: str, branch: str, state: Optional[str] = None) -> Optional[dict[str, Any]]:
     """查询指定分支是否有 PR，返回第一个匹配的或 None"""
     try:
-        cmd = f'gh pr list --repo {repo} --head "{branch}" --json number,title,state,url,mergeable,headRefName --limit 1'
+        cmd = f'gh pr list --repo {repo} --head "{branch}" --json number,title,state,url,mergeable,headRefName,isDraft --limit 1'
         if state:
             cmd += f" --state {state}"
         raw = run(cmd)
@@ -53,14 +53,14 @@ def gh_all_prs_map(repo: str) -> dict[str, dict[str, Any]]:
     """
     result: dict[str, dict[str, Any]] = {}
     try:
-        cmd = f"gh pr list --repo {repo} --state open --json number,title,state,url,mergeable,headRefName --limit 100"
+        cmd = f"gh pr list --repo {repo} --state open --json number,title,state,url,mergeable,headRefName,isDraft --limit 100"
         raw = run(cmd)
         for pr in json.loads(raw):
             result[pr["headRefName"]] = pr
     except RuntimeError:
         pass
     try:
-        cmd = f"gh pr list --repo {repo} --state merged --json number,title,state,url,mergeable,headRefName --limit 100"
+        cmd = f"gh pr list --repo {repo} --state merged --json number,title,state,url,mergeable,headRefName,isDraft --limit 100"
         raw = run(cmd)
         for pr in json.loads(raw):
             # 不覆盖已有的 open PR 记录
@@ -73,7 +73,7 @@ def gh_all_prs_map(repo: str) -> dict[str, dict[str, Any]]:
 
 def gh_pr_list(repo: str, head: Optional[str] = None, state: Optional[str] = None) -> list[dict[str, Any]]:
     """列出 PR，可按分支和状态过滤"""
-    cmd = f"gh pr list --repo {repo} --json number,title,state,url,mergeable,headRefName --limit 100"
+    cmd = f"gh pr list --repo {repo} --json number,title,state,url,mergeable,headRefName,isDraft --limit 100"
     if head:
         cmd += f' --head "{head}"'
     if state:
@@ -96,6 +96,11 @@ def gh_pr_create(repo: str, base: str, head: str, title: str, body: str) -> int:
 def gh_pr_merge(pr_num: int, repo: str, method: str) -> None:
     """合并 PR"""
     run(f"gh pr merge {pr_num} --repo {repo} --{method}")
+
+
+def gh_pr_ready(pr_num: int, repo: str) -> None:
+    """将草稿 PR 标记为 Ready for review"""
+    run(f"gh pr ready {pr_num} --repo {repo}")
 
 
 def gh_issue_comment(num: int, body: str, repo: str) -> None:

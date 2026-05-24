@@ -58,7 +58,8 @@ def work_pr():
     existing = gh_pr_list(repo, head=branch, state="open")
     if existing:
         git_push()
-        print(f'警告: 分支 "{branch}" 已存在 open PR #{existing[0]["number"]}，新 commit 已推送')
+        draft_hint = " (草稿)" if existing[0].get("isDraft") else ""
+        print(f'警告: 分支 "{branch}" 已存在 open PR #{existing[0]["number"]}{draft_hint}，新 commit 已推送')
         print(f'合并: dev work merge-pr 或到 {existing[0]["url"]} 页面手动合并')
         return
 

@@ -9,6 +9,7 @@ from .config import WORKTREE_DIR
 
 def run(cmd: str, cwd: Optional[str] = None) -> str:
     """执行 shell 命令，返回 stdout。失败时抛出 RuntimeError。"""
+    print(f"$ {cmd}")
     try:
         result = subprocess.run(
             cmd,

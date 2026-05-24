@@ -42,6 +42,7 @@ class IssueRow:
     pr_number: str = "-"
     pr_state: str = "-"
     pr_mergeable: str = "-"
+    is_draft: bool = False
 
 
 @dataclass
@@ -191,6 +192,7 @@ def build_unified_rows(
                 row.pr_number = str(pr["number"])
                 row.pr_state = pr.get("state", "-")
                 row.pr_mergeable = pr.get("mergeable", "-")
+                row.is_draft = pr.get("isDraft", False)
                 # PR 已合并时标记可 prune
                 if pr.get("state") == "MERGED":
                     row.is_prunable = True
@@ -276,6 +278,7 @@ def work_list(
                         "number": r.pr_number if r.pr_number != "-" else None,
                         "state": r.pr_state if r.pr_state != "-" else None,
                         "mergeable": r.pr_mergeable if r.pr_mergeable != "-" else None,
+                        "isDraft": r.is_draft,
                     },
                     "prune": r.is_prunable,
                 }
@@ -326,8 +329,11 @@ def work_list(
         pr_mergeable = "-"
         if r.pr_number != "-":
             pr_display = f"#{r.pr_number}"
-            pr_state = r.pr_state
-            pr_mergeable = r.pr_mergeable
+            if r.is_draft:
+                pr_state = r.pr_state + " [yellow]草稿[/]"
+            else:
+                pr_state = r.pr_state
+            pr_mergeable = 'BLOCKED(草稿)' if r.is_draft and r.pr_mergeable != 'CONFLICTING' else r.pr_mergeable
 
         ahead_str = str(r.ahead) if r.ahead > 0 else "-"
 
