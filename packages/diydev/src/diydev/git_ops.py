@@ -5,11 +5,12 @@ import re
 from typing import Optional
 
 from .config import WORKTREE_DIR
+from .log import info, debug
 
 
 def run(cmd: str, cwd: Optional[str] = None) -> str:
     """执行 shell 命令，返回 stdout。失败时抛出 RuntimeError。"""
-    print(f"$ {cmd}")
+    info(f"$ {cmd}")
     try:
         result = subprocess.run(
             cmd,
@@ -21,7 +22,10 @@ def run(cmd: str, cwd: Optional[str] = None) -> str:
         )
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip())
-        return result.stdout.strip()
+        output = result.stdout.strip()
+        if output:
+            debug(output)
+        return output
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"命令超时: {cmd}")
 

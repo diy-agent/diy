@@ -3,6 +3,7 @@
 from cyclopts import App, Parameter
 from typing import Annotated
 
+from .log import VerboseFlag, set_verbosity
 from .git_ops import get_github_repo
 from .gh_ops import gh_issue_create
 
@@ -15,13 +16,15 @@ def work_new(
         name=["description"],
         help="issue 描述（同时作为 title 和 body）",
     )],
+    verbose: VerboseFlag = 0,
 ):
     """创建新的 GitHub issue，描述同时作为 title 和 body。
 
     示例:
-      dev work new 修复登录页面样式问题
-      dev work new 需要支持多语言切换功能
+      dev new 修复登录页面样式问题
+      dev new 需要支持多语言切换功能
     """
+    set_verbosity(verbose)
     repo = get_github_repo()
     desc = " ".join(description)
     num = gh_issue_create(desc, desc, repo)

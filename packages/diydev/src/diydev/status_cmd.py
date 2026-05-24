@@ -1,7 +1,9 @@
 """dev work status - 当前分支详情（Git + Issue + PR + 分支拓扑）"""
 
-from cyclopts import App
+from cyclopts import App, Parameter
+from typing import Annotated
 
+from .log import VerboseFlag, set_verbosity
 from .git_ops import (
     run,
     get_github_repo,
@@ -15,8 +17,11 @@ status_app = App(name="status", help="当前分支详情")
 
 
 @status_app.default
-def work_status():
+def work_status(
+    verbose: VerboseFlag = 0,
+):
     """显示当前分支的 Git 状态、关联 Issue、PR 信息及分支拓扑图。"""
+    set_verbosity(verbose)
     branch = get_current_branch()
     main_branch = get_main_branch()
     repo = get_github_repo()
