@@ -21,26 +21,19 @@ import cyclopts
 import panel as pn
 import param
 
-from diyui.providers.panel import (
-    PanelButton,
-    PanelCard,
-    PanelColumn,
-    PanelMarkdown,
-    PanelRadioButtonGroup,
-    PanelRow,
-    PanelTextInput,
-)
+import diyui
+import diyui.providers.panel
 
 # ── 已适配: diyui wrapper → Panel 原生类 ──────────────────────
 
 _WRAPPER_MAP: dict[type, type] = {
-    PanelColumn: pn.Column,
-    PanelRow: pn.Row,
-    PanelCard: pn.Card,
-    PanelMarkdown: pn.pane.Markdown,
-    PanelButton: pn.widgets.Button,
-    PanelTextInput: pn.widgets.TextInput,
-    PanelRadioButtonGroup: pn.widgets.RadioButtonGroup,
+    diyui.providers.panel.PanelColumn: pn.Column,
+    diyui.providers.panel.PanelRow: pn.Row,
+    diyui.providers.panel.PanelCard: pn.Card,
+    diyui.providers.panel.PanelMarkdown: pn.pane.Markdown,
+    diyui.providers.panel.PanelButton: pn.widgets.Button,
+    diyui.providers.panel.PanelTextInput: pn.widgets.TextInput,
+    diyui.providers.panel.PanelRadioButtonGroup: pn.widgets.RadioButtonGroup,
 }
 
 # Panel 原生类 → diyui wrapper 名（list 命令用）
@@ -72,11 +65,11 @@ _COMMON_EXCLUDED: set[str] = {
 }
 
 _WRAPPER_EXCLUDED: dict[type, set[str]] = {
-    PanelTextInput: {
+    diyui.providers.panel.PanelTextInput: {
         "value_input",
         "enter_pressed",
     },
-    PanelButton: {
+    diyui.providers.panel.PanelButton: {
         "clicks",
     },
 }
@@ -85,11 +78,11 @@ _WRAPPER_EXCLUDED: dict[type, set[str]] = {
 # key: wrapper 类, value: {wrapper 参数名: 实际检查的 Panel 属性名}
 # 用于 wrapper 对参数做了语义重命名的情况（如 button_type → color）
 _WRAPPER_PARAM_MAP: dict[type, dict[str, str]] = {
-    PanelButton: {
+    diyui.providers.panel.PanelButton: {
         "button_type": "color",
         "button_style": "variant",
     },
-    PanelRadioButtonGroup: {
+    diyui.providers.panel.PanelRadioButtonGroup: {
         "button_type": "color",
         "button_style": "variant",
     },

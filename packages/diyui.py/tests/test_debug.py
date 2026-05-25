@@ -9,10 +9,7 @@ Debug 是 scope 能力，提供：
 
 from typing import Any
 
-from diyui.debug import DebugInfo
-from diyui.scheduler import ImmediateScheduler
-from diyui.scope import ScopeConfig, ScopeNode
-from diyui.signal import Signal
+import diyui
 
 # ═══════════════════════════════════════════════
 # DebugInfo 基础
@@ -23,19 +20,19 @@ class TestDebugInfoBasics:
     """DebugInfo 记录 scope 运行时信息。"""
 
     def test_debug_info_attached_to_node(self):
-        node = ScopeNode(config=ScopeConfig(mode="dev"))
-        info = DebugInfo(node)
+        node = diyui.ScopeNode(config=diyui.ScopeConfig(mode="dev"))
+        info = diyui.DebugInfo(node)
         assert info.mode == "dev"
 
     def test_mode_defaults_to_prod(self):
-        node = ScopeNode()
-        info = DebugInfo(node)
+        node = diyui.ScopeNode()
+        info = diyui.DebugInfo(node)
         # 无配置时 get_config 返回 None，debug 应视为 prod
         assert info.mode == "prod"
 
     def test_record_error(self):
-        node = ScopeNode()
-        info = DebugInfo(node)
+        node = diyui.ScopeNode()
+        info = diyui.DebugInfo(node)
         info.record_error(RuntimeError("bad"))
         assert info.has_error
         assert info.last_error is not None
@@ -51,23 +48,21 @@ class TestCellErrorCapture:
     """cell rerun 失败时错误被 debug 系统捕获。"""
 
     def test_cell_error_recorded_in_debug(self):
-        from diyui.debug import get_debug
-
-        class FakeApp(ScopeNode):
+        class FakeApp(diyui.ScopeNode):
             def __init__(self):
                 super().__init__(
-                    config=ScopeConfig(
+                    config=diyui.ScopeConfig(
                         mode="dev",
-                        scheduler=ImmediateScheduler(),
+                        scheduler=diyui.ImmediateScheduler(),
                     )
                 )
-                self._context_stack: list[ScopeNode] = [self]
+                self._context_stack: list[diyui.ScopeNode] = [self]
 
             @property
             def _current(self):
                 return self._context_stack[-1]
 
-            def _push_context(self, node: ScopeNode):
+            def _push_context(self, node: diyui.ScopeNode):
                 self._context_stack.append(node)
 
             def _pop_context(self):
@@ -75,22 +70,22 @@ class TestCellErrorCapture:
                     raise IndexError
                 self._context_stack.pop()
 
-            def _add_to_current(self, child: ScopeNode):
+            def _add_to_current(self, child: diyui.ScopeNode):
                 child._app = self  # type: ignore[assignment]
                 self._current._add_child(child)
 
             def signal(self, value: Any):
-                sig = Signal(value)
+                sig = diyui.Signal(value)
                 self._current._mount_signal(sig)
                 return sig
 
             def markdown(self, content: Any):
-                md = ScopeNode()
+                md = diyui.ScopeNode()
                 self._add_to_current(md)
                 return md
 
             def column(self):
-                col = ScopeNode()
+                col = diyui.ScopeNode()
                 col._app = self  # type: ignore[assignment]
                 self._add_to_current(col)
                 return col
@@ -105,7 +100,7 @@ class TestCellErrorCapture:
                 raise RuntimeError("cell failed")
 
         # 第一次执行成功，无错误
-        debug = get_debug(col)
+        debug = diyui.get_debug(col)
         assert not debug.has_error
 
         # 触发失败 rerun
@@ -126,23 +121,21 @@ class TestRerunCount:
     """cell 每次执行增加 rerun_count。"""
 
     def test_rerun_count_increments(self):
-        from diyui.debug import get_debug
-
-        class FakeApp(ScopeNode):
+        class FakeApp(diyui.ScopeNode):
             def __init__(self):
                 super().__init__(
-                    config=ScopeConfig(
+                    config=diyui.ScopeConfig(
                         mode="dev",
-                        scheduler=ImmediateScheduler(),
+                        scheduler=diyui.ImmediateScheduler(),
                     )
                 )
-                self._context_stack: list[ScopeNode] = [self]
+                self._context_stack: list[diyui.ScopeNode] = [self]
 
             @property
             def _current(self):
                 return self._context_stack[-1]
 
-            def _push_context(self, node: ScopeNode):
+            def _push_context(self, node: diyui.ScopeNode):
                 self._context_stack.append(node)
 
             def _pop_context(self):
@@ -150,22 +143,22 @@ class TestRerunCount:
                     raise IndexError
                 self._context_stack.pop()
 
-            def _add_to_current(self, child: ScopeNode):
+            def _add_to_current(self, child: diyui.ScopeNode):
                 child._app = self  # type: ignore[assignment]
                 self._current._add_child(child)
 
             def signal(self, value: Any):
-                sig = Signal(value)
+                sig = diyui.Signal(value)
                 self._current._mount_signal(sig)
                 return sig
 
             def markdown(self, content: Any):
-                md = ScopeNode()
+                md = diyui.ScopeNode()
                 self._add_to_current(md)
                 return md
 
             def column(self):
-                col = ScopeNode()
+                col = diyui.ScopeNode()
                 col._app = self  # type: ignore[assignment]
                 self._add_to_current(col)
                 return col
@@ -178,7 +171,7 @@ class TestRerunCount:
         def _(node: object):
             app.markdown(str(count.value))
 
-        debug = get_debug(col)
+        debug = diyui.get_debug(col)
         assert debug.rerun_count == 1  # 初始执行
 
         count.value = 1

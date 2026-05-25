@@ -10,7 +10,7 @@ import traceback
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from diyui.scope import ScopeNode
+    from .scope import ScopeNode
 
 
 class DebugInfo:

@@ -8,16 +8,14 @@ BaseApp 是各 provider App 的基类，提供：
 
 import pytest
 
-from diyui.base_app import BaseApp
-from diyui.scope import ScopeNode
-from diyui.signal import Signal
+import diyui
 
 # ═══════════════════════════════════════════════
 # FakeApp：测试用最小 App
 # ═══════════════════════════════════════════════
 
 
-class FakeMarkdown(ScopeNode):
+class FakeMarkdown(diyui.ScopeNode):
     """测试用 markdown 组件。"""
 
     def __init__(self, content: str) -> None:
@@ -25,7 +23,7 @@ class FakeMarkdown(ScopeNode):
         self.content = content
 
 
-class FakeColumn(ScopeNode):
+class FakeColumn(diyui.ScopeNode):
     """测试用容器组件，支持 with 语法。"""
 
     def __init__(self) -> None:
@@ -42,7 +40,7 @@ class FakeColumn(ScopeNode):
         self._app._pop_context()
 
 
-class FakeApp(BaseApp):
+class FakeApp(diyui.BaseApp):
     """测试用 App，提供最小组件方法。"""
 
     def markdown(self, content: str) -> FakeMarkdown:
@@ -67,7 +65,7 @@ class TestBaseAppConstruction:
 
     def test_app_is_a_scope_node(self):
         app = FakeApp()
-        assert isinstance(app, ScopeNode)
+        assert isinstance(app, diyui.ScopeNode)
 
     def test_app_starts_with_no_children(self):
         app = FakeApp()
@@ -135,7 +133,7 @@ class TestAppSignal:
     def test_signal_created_on_app_root(self):
         app = FakeApp()
         sig = app.signal(0)
-        assert isinstance(sig, Signal)
+        assert isinstance(sig, diyui.Signal)
         assert sig.owner is app
         assert sig.value == 0
 

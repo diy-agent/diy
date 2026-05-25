@@ -6,9 +6,8 @@ PanelApp 是 Panel 专属的 diyui App。
 
 import panel as pn
 
-from diyui.providers.panel import (
-    PanelApp,
-)
+import diyui
+import diyui.providers.panel
 
 # ═══════════════════════════════════════════════
 # 构造与入口
@@ -19,14 +18,12 @@ class TestPanelAppConstruction:
     """PanelApp 构造与 provider 标识。"""
 
     def test_create_panel_app(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         assert app.provider == "panel"
 
     def test_app_is_base_app(self):
-        from diyui.base_app import BaseApp
-
-        app = PanelApp()
-        assert isinstance(app, BaseApp)
+        app = diyui.providers.panel.PanelApp()
+        assert isinstance(app, diyui.BaseApp)
 
 
 # ═══════════════════════════════════════════════
@@ -38,24 +35,24 @@ class TestComponentPanelStyle:
     """组件参数与 Panel 原生保持一致。"""
 
     def test_button_keeps_panel_params(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         btn = app.button(name="Run", button_type="primary")
         assert btn.name == "Run"
         assert btn.button_type == "primary"
 
     def test_text_input_keeps_panel_params(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         inp = app.text_input(name="Name", placeholder="input name")
         assert inp.name == "Name"
         assert inp.placeholder == "input name"
 
     def test_radio_button_group_keeps_panel_params(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         radio = app.radio_button_group(options=["a", "b", "c"])
         assert radio.options == ["a", "b", "c"]
 
     def test_markdown_keeps_panel_params(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         md = app.markdown("# Title")
         assert "# Title" in str(md.object)
 
@@ -69,14 +66,14 @@ class TestWithContextPanelTree:
     """with 语法在 Panel 容器中构建父子关系。"""
 
     def test_column_contains_button(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         with app.column() as col:
             btn = app.button(name="Run")
         assert btn.parent is col
         assert btn in col._children
 
     def test_nested_panel_containers(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         with app.column() as outer:
             md1 = app.markdown("outer")
             with app.row() as inner:
@@ -86,7 +83,7 @@ class TestWithContextPanelTree:
         assert inner._children == [btn]
 
     def test_card_as_container(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         with app.card(title="My Card") as card:
             btn = app.button(name="OK")
         assert btn.parent is card
@@ -103,14 +100,14 @@ class TestInputComponentSignal:
     """输入组件的 .value 代理到 signal.value。"""
 
     def test_text_input_value_reads_signal(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         inp = app.text_input(name="Name", value="Alice")
         assert inp.value == "Alice"
         assert inp.signal.value == "Alice"
 
     def test_text_input_value_writes_signal_and_target(self):
         """通过 wrapper.value 写入时，signal 和 Panel 原生值同步更新。"""
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         inp = app.text_input(name="Name", value="Alice")
         inp.value = "Bob"
         assert inp.signal.value == "Bob"
@@ -121,7 +118,7 @@ class TestInputComponentSignal:
 
     def test_text_input_panel_native_value_sync(self):
         """通过 Panel param 模拟用户输入，signal.value 应同步。"""
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         inp = app.text_input(name="Name", value="Alice")
         # 模拟 Panel 用户输入事件
         inp.param.update(value="Charlie")
@@ -129,7 +126,7 @@ class TestInputComponentSignal:
         assert inp.value == "Charlie"
 
     def test_radio_button_group_value(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         radio = app.radio_button_group(options=["a", "b"], value="a")
         assert radio.value == "a"
         radio.value = "b"
@@ -149,17 +146,17 @@ class TestWrapperExposesTarget:
     """diyui 是薄层，用户可直接访问 .target（向后兼容，self 就是 provider 原生对象）。"""
 
     def test_button_exposes_target(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         btn = app.button(name="Run")
         assert isinstance(btn.target, pn.widgets.Button)
 
     def test_markdown_exposes_target(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         md = app.markdown("hi")
         assert isinstance(md.target, pn.pane.Markdown)
 
     def test_column_exposes_target(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         col = app.column()
         assert isinstance(col.target, pn.Column)
 
@@ -173,38 +170,38 @@ class TestComponentIsPanelNative:
     """diyui 组件继承 Panel 原生类，可直接当 Panel 组件使用。"""
 
     def test_button_is_panel_button(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         btn = app.button(name="Run")
         assert isinstance(btn, pn.widgets.Button)
         assert btn.name == "Run"  # Panel param 直接可访问
 
     def test_text_input_is_panel_text_input(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         inp = app.text_input(name="Name", value="Alice")
         assert isinstance(inp, pn.widgets.TextInput)
 
     def test_radio_button_group_is_panel_radio(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         radio = app.radio_button_group(options=["a", "b"])
         assert isinstance(radio, pn.widgets.RadioButtonGroup)
 
     def test_markdown_is_panel_markdown(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         md = app.markdown("hi")
         assert isinstance(md, pn.pane.Markdown)
 
     def test_column_is_panel_column(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         col = app.column()
         assert isinstance(col, pn.Column)
 
     def test_row_is_panel_row(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         row = app.row()
         assert isinstance(row, pn.Row)
 
     def test_card_is_panel_card(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         card = app.card(title="T")
         assert isinstance(card, pn.Card)
 
@@ -213,7 +210,7 @@ class TestPanelNativeApiDirectAccess:
     """无需 .target 即可直接访问 Panel 原生 API。"""
 
     def test_button_on_click_works_directly(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         btn = app.button(name="Run")
         calls = []
         btn.on_click(lambda e: calls.append(1))
@@ -222,17 +219,17 @@ class TestPanelNativeApiDirectAccess:
         assert hasattr(btn, "on_click")
 
     def test_button_clicks_directly(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         btn = app.button(name="Run")
         assert btn.clicks == 0
 
     def test_target_is_self_for_backward_compat(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         btn = app.button(name="Run")
         assert btn.target is btn
 
     def test_text_input_param_watch_directly(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         inp = app.text_input(value="hello")
         # param.watch 直接可用（无 .target）
         assert hasattr(inp.param, "watch")
@@ -247,23 +244,18 @@ class TestPanelAppSignal:
     """app.signal() 创建 scope signal 并参与 cell rerun。"""
 
     def test_signal_inside_panel_container(self):
-        from diyui.signal import Signal
-
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         with app.column() as col:
             sig = app.signal(42)
-        assert isinstance(sig, Signal)
+        assert isinstance(sig, diyui.Signal)
         assert sig.owner is col
 
     def test_cell_with_panel_components(self):
         """cell 内使用 Panel 组件，signal 变化时 rerun。"""
-        from diyui.scheduler import ImmediateScheduler
-        from diyui.scope import ScopeConfig
-
-        app = PanelApp(
-            config=ScopeConfig(
+        app = diyui.providers.panel.PanelApp(
+            config=diyui.ScopeConfig(
                 mode="dev",
-                scheduler=ImmediateScheduler(),
+                scheduler=diyui.ImmediateScheduler(),
             )
         )
         count = app.signal(0)
@@ -290,13 +282,13 @@ class TestPanelServable:
     """servable() 找到首个实际 Panel 组件并调用 .servable()。"""
 
     def test_servable_returns_servable_object(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         app.markdown("# Title")
         result = app.servable()
         assert result is not None
 
     def test_servable_works_with_nested_containers(self):
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         with app.column():
             app.button(name="Run")
         result = app.servable()
@@ -319,10 +311,7 @@ class TestPanelScenario:
 
         覆盖 demo 中的 name_input / multiplier_input → greeting cell 链。
         """
-        from diyui.scheduler import ImmediateScheduler
-        from diyui.scope import ScopeConfig
-
-        app = PanelApp(config=ScopeConfig(mode="dev", scheduler=ImmediateScheduler()))
+        app = diyui.providers.panel.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
 
         # 模拟 demo 布局：输入组件在一个列中
         with app.column():
@@ -344,10 +333,7 @@ class TestPanelScenario:
 
     def test_cell_rerenders_multiple_signals(self):
         """多个信号变化时 cell 正确 rerun，不遗漏也不多跑。"""
-        from diyui.scheduler import ImmediateScheduler
-        from diyui.scope import ScopeConfig
-
-        app = PanelApp(config=ScopeConfig(mode="dev", scheduler=ImmediateScheduler()))
+        app = diyui.providers.panel.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
 
         with app.column():
             name = app.text_input(name="Name", value="A")
@@ -376,10 +362,7 @@ class TestPanelScenario:
         覆盖 demo 中的 counter + button + cell 链。Button 的 click 回调通过
         Panel 原生机制触发，不走 diyui API——这是最容易断的链路。
         """
-        from diyui.scheduler import ImmediateScheduler
-        from diyui.scope import ScopeConfig
-
-        app = PanelApp(config=ScopeConfig(mode="dev", scheduler=ImmediateScheduler()))
+        app = diyui.providers.panel.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
 
         with app.column():
             counter = app.signal(0)
@@ -417,7 +400,7 @@ class TestPanelScenario:
 
         这是 UI 渲染正确性的关键：diyui children → Panel Column[:]。
         """
-        app = PanelApp()
+        app = diyui.providers.panel.PanelApp()
         with app.column():
             app.markdown("# Title")
             app.button(name="Click Me")
@@ -440,10 +423,7 @@ class TestPanelScenario:
         验证完整链路：signal 变化 → cell rerun → diyui children 替换
         → servable() → Panel 原生 children 更新。
         """
-        from diyui.scheduler import ImmediateScheduler
-        from diyui.scope import ScopeConfig
-
-        app = PanelApp(config=ScopeConfig(mode="dev", scheduler=ImmediateScheduler()))
+        app = diyui.providers.panel.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
 
         count = app.signal(0)
 

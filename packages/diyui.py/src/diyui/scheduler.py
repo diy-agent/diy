@@ -6,7 +6,7 @@ v0.1：ImmediateScheduler（同步执行/rerun 中延迟）。
 
 from collections.abc import Callable
 
-from diyui import signal as signal_mod
+from . import signal as signal_mod
 
 
 class ImmediateScheduler:

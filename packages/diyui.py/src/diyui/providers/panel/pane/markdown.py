@@ -6,7 +6,9 @@ from typing import Any
 
 import panel as pn
 
-from diyui.providers.panel._base import UIComponent
+import diyui
+
+from .._base import UIComponent
 
 
 class PanelMarkdown(UIComponent, pn.pane.Markdown):

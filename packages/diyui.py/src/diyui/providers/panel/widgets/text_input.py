@@ -6,8 +6,9 @@ from typing import Any
 
 import panel as pn
 
-from diyui.providers.panel._base import UIComponent
-from diyui.signal import Signal
+import diyui
+
+from .._base import UIComponent
 
 
 class PanelTextInput(UIComponent, pn.widgets.TextInput):
@@ -46,7 +47,7 @@ class PanelTextInput(UIComponent, pn.widgets.TextInput):
         UIComponent.__init__(self)
         # signal 必须在 Panel __init__ 之前创建，因为 Panel 的 _setup_params
         # 会触发 setattr(self, 'value', ...) → 我们的 value.setter → 需要 self.signal
-        self.signal: Signal[str] = Signal[str](value)
+        self.signal: diyui.Signal[str] = diyui.Signal[str](value)
         # label 取代 name：label 优先，name 仅在 label 未设置时作为兼容回退
         _label = label or name
         self._init_done: bool = False

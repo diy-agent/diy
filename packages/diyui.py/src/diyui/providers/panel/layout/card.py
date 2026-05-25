@@ -6,7 +6,9 @@ from typing import Any
 
 import panel as pn
 
-from diyui.providers.panel._base import C, UIComponent, _PanelContainerMixin
+import diyui
+
+from .._base import C, UIComponent, _PanelContainerMixin
 
 
 class PanelCard(_PanelContainerMixin, UIComponent, pn.Card):

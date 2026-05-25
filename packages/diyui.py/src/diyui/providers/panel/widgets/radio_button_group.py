@@ -6,8 +6,9 @@ from typing import Any
 
 import panel as pn
 
-from diyui.providers.panel._base import UIComponent
-from diyui.signal import Signal
+import diyui
+
+from .._base import UIComponent
 
 
 class PanelRadioButtonGroup(UIComponent, pn.widgets.RadioButtonGroup):
@@ -55,7 +56,7 @@ class PanelRadioButtonGroup(UIComponent, pn.widgets.RadioButtonGroup):
         _variant = variant if variant != "solid" else (button_style or "solid")
         UIComponent.__init__(self)
         # signal 必须在 Panel __init__ 之前创建（同 PanelTextInput）
-        self.signal: Signal[Any] = Signal[Any](value)
+        self.signal: diyui.Signal[Any] = diyui.Signal[Any](value)
         self._init_done: bool = False
         pn.widgets.RadioButtonGroup.__init__(
             self,

@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import TypeVar
 
-from diyui.scope import ScopeNode
-from diyui.signal import Signal
+from .scope import ScopeNode
+from .signal import Signal
 
 T = TypeVar("T")
 

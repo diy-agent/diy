@@ -1,3 +1,3 @@
-from diyui.providers.panel.pane.markdown import PanelMarkdown
+from .markdown import PanelMarkdown
 
 __all__ = ["PanelMarkdown"]

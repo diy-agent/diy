@@ -2,13 +2,12 @@
 
 运行：uv run panel serve examples/panel_demo.py
 """
-from diyui.providers.panel import PanelApp, PanelColumn
-from diyui.scheduler import ImmediateScheduler
-from diyui.scope import ScopeConfig
+import diyui
+import diyui.providers.panel
 
-app = PanelApp(config=ScopeConfig(
+app = diyui.providers.panel.PanelApp(config=diyui.ScopeConfig(
     mode="dev",
-    scheduler=ImmediateScheduler(),
+    scheduler=diyui.ImmediateScheduler(),
 ))
 
 # ── 布局 ──
@@ -27,7 +26,7 @@ with app.column():
 
     # 响应式 cell：读 wrapper.value → 自动追踪依赖，变化时 rerun
     @app.column().cell()
-    def _(node: PanelColumn):
+    def _(node: diyui.providers.panel.PanelColumn):
         app.markdown(f"## Hello **{name_input.value}** × {multiplier_input.value} !")
         app.markdown(f"Repeated: {'🔥' * multiplier_input.value}")
 
@@ -42,7 +41,7 @@ with app.column():
         app.button(name="+1").on_click(lambda e: setattr(counter, 'value', counter.value + 1))
 
     @app.column().cell()
-    def _(node: PanelColumn):
+    def _(node: diyui.providers.panel.PanelColumn):
         app.markdown(f"Counter: **{counter.value}**")
 
 

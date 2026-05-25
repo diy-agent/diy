@@ -3,11 +3,10 @@
 run: uv run panel serve tests/browser_test_app.py --port 0
 """
 
-from diyui.providers.panel import PanelApp, PanelColumn
-from diyui.scheduler import ImmediateScheduler
-from diyui.scope import ScopeConfig
+import diyui
+import diyui.providers.panel
 
-app = PanelApp(config=ScopeConfig(mode="dev", scheduler=ImmediateScheduler()))
+app = diyui.providers.panel.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
 
 with app.column():
     app.markdown("# 🧪 Browser Test App")
@@ -21,7 +20,7 @@ with app.column():
     )
 
     @app.column().cell()
-    def _(node: PanelColumn):
+    def _(node: diyui.providers.panel.PanelColumn):
         app.markdown(f"## Hello **{name_input.value}** × {multiplier_input.value} !")
         app.markdown(f"Repeated: {'🔥' * multiplier_input.value}")
 
@@ -34,7 +33,7 @@ with app.column():
         btn_inc.on_click(lambda e: setattr(counter, "value", counter.value + 1))
 
     @app.column().cell()
-    def _(node: PanelColumn):
+    def _(node: diyui.providers.panel.PanelColumn):
         app.markdown(f"Counter: **{counter.value}**")
 
 

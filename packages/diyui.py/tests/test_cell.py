@@ -8,21 +8,20 @@ from typing import Any
 
 import pytest
 
-from diyui.scheduler import ImmediateScheduler
-from diyui.scope import ScopeConfig, ScopeNode
+import diyui
 
 # ═══════════════════════════════════════════════
 # 测试辅助
 # ═══════════════════════════════════════════════
 
 
-class FakeMarkdown(ScopeNode):
+class FakeMarkdown(diyui.ScopeNode):
     def __init__(self, content: str) -> None:
         super().__init__()
         self.content = content
 
 
-class FakeColumn(ScopeNode):
+class FakeColumn(diyui.ScopeNode):
     """容器组件，支持 with 和 cell。"""
 
     def __init__(self) -> None:
@@ -39,20 +38,20 @@ class FakeColumn(ScopeNode):
         self._app._pop_context()
 
 
-class FakeApp(ScopeNode):
+class FakeApp(diyui.ScopeNode):
     """测试用 App。默认 immediate scheduler。"""
 
-    def __init__(self, *, config: ScopeConfig | None = None) -> None:
+    def __init__(self, *, config: diyui.ScopeConfig | None = None) -> None:
         if config is None:
-            config = ScopeConfig(scheduler=ImmediateScheduler())
+            config = diyui.ScopeConfig(scheduler=diyui.ImmediateScheduler())
         super().__init__(config=config)
-        self._context_stack: list[ScopeNode] = [self]
+        self._context_stack: list[diyui.ScopeNode] = [self]
 
     @property
-    def _current(self) -> ScopeNode:
+    def _current(self) -> diyui.ScopeNode:
         return self._context_stack[-1]
 
-    def _push_context(self, node: ScopeNode) -> None:
+    def _push_context(self, node: diyui.ScopeNode) -> None:
         self._context_stack.append(node)
 
     def _pop_context(self) -> None:
@@ -60,13 +59,11 @@ class FakeApp(ScopeNode):
             raise IndexError("不能 pop 最后一个 context")
         self._context_stack.pop()
 
-    def _add_to_current(self, child: ScopeNode) -> None:
+    def _add_to_current(self, child: diyui.ScopeNode) -> None:
         self._current._add_child(child)
 
     def signal(self, value: Any):
-        from diyui.signal import Signal
-
-        sig: Signal[Any] = Signal(value)
+        sig: diyui.Signal[Any] = diyui.Signal(value)
         self._current._mount_signal(sig)
         return sig
 
@@ -352,15 +349,13 @@ class TestCrossScopeSignal:
     """子树外访问 signal：dev 报错。"""
 
     def test_cross_scope_read_raises_in_dev(self):
-        from diyui.signal import ScopeViolationError
-
-        app = FakeApp(config=ScopeConfig(mode="dev", scheduler=ImmediateScheduler()))
+        app = FakeApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
 
         with app.column() as _left:
             secret = app.signal("left-secret")
 
         # right column 的 cell 读取 left column 的 signal → 跨 scope
-        with pytest.raises(ScopeViolationError), app.column() as right:
+        with pytest.raises(diyui.ScopeViolationError), app.column() as right:
 
             @right.cell()
             def _(node: object):
@@ -368,7 +363,7 @@ class TestCrossScopeSignal:
 
     def test_cross_scope_no_error_in_prod(self):
         """prod 模式不报错，但也不注册依赖。"""
-        app = FakeApp(config=ScopeConfig(mode="prod", scheduler=ImmediateScheduler()))
+        app = FakeApp(config=diyui.ScopeConfig(mode="prod", scheduler=diyui.ImmediateScheduler()))
 
         with app.column() as _left:
             secret = app.signal("left-secret")

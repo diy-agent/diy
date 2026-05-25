@@ -518,7 +518,6 @@ dependencies = [
     { name = "marimo" },
     { name = "panel" },
     { name = "param" },
-    { name = "pytest" },
 ]
 
 [package.dev-dependencies]
@@ -542,7 +541,6 @@ requires-dist = [
     { name = "marimo", specifier = ">=0.23.2" },
     { name = "panel", specifier = ">=1.8.10" },
     { name = "param", specifier = ">=2.3.3" },
-    { name = "pytest", specifier = ">=9.0.3" },
 ]
 
 [package.metadata.requires-dev]

@@ -15,17 +15,16 @@ from typing import Any
 
 import panel as pn
 
-from diyui.base_app import BaseApp
-from diyui.providers.panel._base import UIComponent, _PanelContainerMixin
-from diyui.providers.panel.layout.card import PanelCard
-from diyui.providers.panel.layout.column import PanelColumn
-from diyui.providers.panel.layout.row import PanelRow
-from diyui.providers.panel.pane.markdown import PanelMarkdown
-from diyui.providers.panel.widgets.button import PanelButton
-from diyui.providers.panel.widgets.radio_button_group import PanelRadioButtonGroup
-from diyui.providers.panel.widgets.text_input import PanelTextInput
-from diyui.scheduler import ImmediateScheduler
-from diyui.scope import ScopeConfig, ScopeNode
+import diyui
+
+from ._base import UIComponent
+from .layout.card import PanelCard
+from .layout.column import PanelColumn
+from .layout.row import PanelRow
+from .pane.markdown import PanelMarkdown
+from .widgets.button import PanelButton
+from .widgets.radio_button_group import PanelRadioButtonGroup
+from .widgets.text_input import PanelTextInput
 
 __all__ = [
     "PanelApp",
@@ -40,16 +39,16 @@ __all__ = [
 ]
 
 
-class PanelApp(BaseApp):
+class PanelApp(diyui.BaseApp):
     """Panel 专属 diyui App。
 
     用法：app = PanelApp()
     组件方法名和参数与 Panel 原生保持一致。
     """
 
-    def __init__(self, *, config: ScopeConfig | None = None) -> None:
+    def __init__(self, *, config: diyui.ScopeConfig | None = None) -> None:
         if config is None:
-            config = ScopeConfig(scheduler=ImmediateScheduler())
+            config = diyui.ScopeConfig(scheduler=diyui.ImmediateScheduler())
         super().__init__()
         self._config = config
         self.provider = "panel"
@@ -538,7 +537,7 @@ class PanelApp(BaseApp):
             return root.servable()  # type: ignore[attr-defined]
         return None
 
-    def _find_first_real_component(self, node: ScopeNode) -> UIComponent | None:
+    def _find_first_real_component(self, node: diyui.ScopeNode) -> UIComponent | None:
         """DFS 找到第一个 UIComponent。"""
         if isinstance(node, UIComponent):
             return node
@@ -548,7 +547,7 @@ class PanelApp(BaseApp):
                 return result
         return None
 
-    def _sync_tree_to_panel(self, node: ScopeNode) -> None:
+    def _sync_tree_to_panel(self, node: diyui.ScopeNode) -> None:
         """将 diyui 树同步到 Panel 原生 children。"""
         if isinstance(node, UIComponent) and node._panel_container:
             node._sync_to_target(node._children)

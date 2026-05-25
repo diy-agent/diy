@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
-    from diyui.base_app import BaseApp
+    from .base_app import BaseApp
 
 C = TypeVar("C", bound="ScopeNode")
 
@@ -139,7 +139,7 @@ class ScopeNode:
         - staging 模式收集新 children，成功后原子替换，失败保留旧 UI
         - cell 执行期间 self 作为当前 context
         """
-        from diyui import signal as signal_mod
+        from . import signal as signal_mod
 
         fn = self._cell_fn
         if fn is None:
@@ -163,7 +163,7 @@ class ScopeNode:
         signal_mod._current_cell_node = self
         signal_mod._rerun_depth += 1
 
-        from diyui.debug import get_debug
+        from .debug import get_debug
 
         debug = get_debug(self)
         debug.record_rerun()
