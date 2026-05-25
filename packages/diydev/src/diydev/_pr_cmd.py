@@ -3,8 +3,8 @@
 from cyclopts import App, Parameter
 from typing import Annotated, Optional
 
-from .log import VerboseFlag, set_verbosity
-from .git_ops import (
+from ._log import VerboseFlag, set_verbosity
+from ._git_ops import (
     run,
     get_github_repo,
     get_main_branch,
@@ -12,7 +12,7 @@ from .git_ops import (
     parse_issue_number,
     git_push,
 )
-from .gh_ops import gh_issue_view, gh_pr_list, gh_pr_create
+from ._gh_ops import gh_issue_view, gh_pr_list, gh_pr_create
 
 pr_app = App(name="pr", help="推送并创建 PR")
 

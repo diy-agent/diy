@@ -12,8 +12,8 @@ from importlib.metadata import version as pkg_version
 from cyclopts import App, Parameter
 from typing import Annotated, Optional
 
-from .log import VerboseFlag, set_verbosity
-from .git_ops import (
+from ._log import VerboseFlag, set_verbosity
+from ._git_ops import (
     run,
     get_main_branch,
     get_github_repo,
@@ -22,7 +22,7 @@ from .git_ops import (
     git_branch_delete_force,
     git_branch_delete_remote,
 )
-from .gh_ops import (
+from ._gh_ops import (
     gh_pr_list_by_branch,
     gh_issue_view,
     gh_issue_comment,

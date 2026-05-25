@@ -4,7 +4,7 @@ import json
 import re
 from typing import Optional, Any
 
-from .git_ops import run
+from ._git_ops import run
 
 
 def gh_issue_list(repo: str, state: str = "open", limit: int = 50, labels: Optional[str] = None) -> list[dict[str, Any]]:

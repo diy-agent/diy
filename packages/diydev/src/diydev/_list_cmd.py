@@ -14,9 +14,9 @@ from cyclopts import Parameter
 from rich.console import Console
 from rich.table import Table
 
-from .log import VerboseFlag, set_verbosity
-from .git_ops import run, get_main_branch, get_github_repo, parse_issue_number
-from .gh_ops import gh_issue_list, gh_issue_view, gh_all_prs_map
+from ._log import VerboseFlag, set_verbosity
+from ._git_ops import run, get_main_branch, get_github_repo, parse_issue_number
+from ._gh_ops import gh_issue_list, gh_issue_view, gh_all_prs_map
 
 
 # ---------------------------------------------------------------------------

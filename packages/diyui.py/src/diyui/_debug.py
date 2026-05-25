@@ -10,7 +10,7 @@ import traceback
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .scope import ScopeNode
+    from ._scope import ScopeNode
 
 
 class DebugInfo:

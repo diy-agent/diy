@@ -3,9 +3,9 @@
 from cyclopts import App, Parameter
 from typing import Annotated, Optional
 
-from .log import VerboseFlag, set_verbosity
-from .git_ops import get_main_branch, get_current_branch, get_github_repo, run
-from .gh_ops import (
+from ._log import VerboseFlag, set_verbosity
+from ._git_ops import get_main_branch, get_current_branch, get_github_repo, run
+from ._gh_ops import (
     gh_pr_list,
     gh_pr_merge,
     gh_pr_ready,

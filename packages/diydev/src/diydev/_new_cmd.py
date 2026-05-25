@@ -3,9 +3,9 @@
 from cyclopts import App, Parameter
 from typing import Annotated
 
-from .log import VerboseFlag, set_verbosity
-from .git_ops import get_github_repo
-from .gh_ops import gh_issue_create
+from ._log import VerboseFlag, set_verbosity
+from ._git_ops import get_github_repo
+from ._gh_ops import gh_issue_create
 
 new_app = App(name="new", help="创建新的 issue")
 

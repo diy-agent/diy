@@ -3,15 +3,15 @@
 from cyclopts import App, Parameter
 from typing import Annotated
 
-from .log import VerboseFlag, set_verbosity
-from .git_ops import (
+from ._log import VerboseFlag, set_verbosity
+from ._git_ops import (
     run,
     get_github_repo,
     get_main_branch,
     get_current_branch,
     get_merge_base,
 )
-from .gh_ops import gh_issue_view, gh_pr_list
+from ._gh_ops import gh_issue_view, gh_pr_list
 
 status_app = App(name="status", help="当前分支详情")
 

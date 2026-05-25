@@ -14,7 +14,7 @@ from . import layout
 from . import pane
 from . import widgets
 from ._base import UIComponent
-from .app import PanelApp
+from ._app import PanelApp
 
 __all__ = [
     "PanelApp",

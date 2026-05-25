@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import TypeVar
 
-from .scope import ScopeNode
-from .signal import Signal
+from ._scope import ScopeNode
+from ._signal import Signal
 
 T = TypeVar("T")
 

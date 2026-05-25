@@ -7,15 +7,15 @@
 from cyclopts import App, Parameter
 from typing import Annotated
 
-from .log import VerboseFlag, set_verbosity
-from .git_ops import (
+from ._log import VerboseFlag, set_verbosity
+from ._git_ops import (
     get_github_repo,
     get_main_branch,
     git_worktree_add,
     git_push_upstream,
 )
-from .gh_ops import gh_issue_view
-from .config import WORKTREE_DIR
+from ._gh_ops import gh_issue_view
+from ._config import WORKTREE_DIR
 
 start_app = App(name="start", help="开始开发：创建 worktree 并推送")
 

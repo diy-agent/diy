@@ -4,8 +4,8 @@ import subprocess
 import re
 from typing import Optional
 
-from .config import WORKTREE_DIR
-from .log import info, debug
+from ._config import WORKTREE_DIR
+from ._log import info, debug
 
 
 def run(cmd: str, cwd: Optional[str] = None) -> str:
