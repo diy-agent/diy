@@ -202,6 +202,12 @@ class ScopeNode:
                 sig._subscribe_cell(self)  # type: ignore[attr-defined]
             self._dependencies = deps
 
+            # auto-reset：cell 执行完成后，将标记 _reset_on_complete 的 signal 重置为默认值
+            # 用于 Button 等"点击后生效一次"的组件：点击 → True → cell rerun → 恢复 False
+            for sig in deps:
+                if getattr(sig, "_reset_on_complete", False):
+                    sig._reset_value(False)  # type: ignore[attr-defined]
+
         # 执行完成后若仍 dirty（rerun 中写了依赖的 signal），自动重新入队
         if self._is_dirty and self._cell_fn is not None:
             scheduler = self.get_config("scheduler")

@@ -34,7 +34,7 @@ class Signal(Generic[T]):
     - 写入 .value：新旧值相等则跳过；否则通知观察者，触发 cell rerun。
     """
 
-    __slots__ = ("_value", "_observers", "_owner", "_tracker", "_cell_subscribers")
+    __slots__ = ("_value", "_observers", "_owner", "_tracker", "_cell_subscribers", "_reset_on_complete")
 
     def __init__(self, value: T) -> None:
         self._value: T = value
@@ -42,6 +42,7 @@ class Signal(Generic[T]):
         self._owner: object | None = None
         self._tracker: Callable[[Signal[T]], None] | None = None
         self._cell_subscribers: set[object] = set()  # ScopeNode 实例
+        self._reset_on_complete: bool = False  # cell rerun 完成后自动重置为 False
 
     # ── value ──────────────────────────────────
 
@@ -118,6 +119,19 @@ class Signal(Generic[T]):
             scheduler = cell_node.get_config("scheduler")  # type: ignore[attr-defined]
             if scheduler is not None:
                 scheduler.enqueue(lambda cn=cell_node: cn._execute_cell())  # type: ignore[attr-defined]
+
+    # ── auto-reset ────────────────────────────
+
+    def _reset_value(self, value: T) -> None:
+        """仅重置内部值，通知 observers 但不触发 cell rerun。
+
+        用于 _reset_on_complete 场景（如 Button 点击后自动恢复 False）。
+        调用者需确保已在合适的时机调用（cell 执行完成后的 finally 块）。
+        """
+        if self._value == value:
+            return
+        self._value = value
+        self._notify(value)
 
     # ── internal ───────────────────────────────
 

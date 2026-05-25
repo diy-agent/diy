@@ -279,20 +279,26 @@ class TestPanelAppSignal:
 
 
 class TestPanelServable:
-    """servable() 找到首个实际 Panel 组件并调用 .servable()。"""
+    """servable() 遍历所有顶层 UIComponent 并调用 .servable()。"""
 
-    def test_servable_returns_servable_object(self):
+    def test_servable_called_on_all_root_components(self):
         app = diypn.PanelApp()
         app.pane.markdown("# Title")
-        result = app.servable()
-        assert result is not None
+        app.widgets.button(name="Run")
+        # 不应抛异常，所有组件都 servable
+        app.servable()
 
     def test_servable_works_with_nested_containers(self):
         app = diypn.PanelApp()
         with app.layout.column():
             app.widgets.button(name="Run")
-        result = app.servable()
-        assert result is not None
+        # 不应抛异常
+        app.servable()
+
+    def test_servable_empty_app(self):
+        app = diypn.PanelApp()
+        # 空 app 不抛异常
+        app.servable()
 
 
 # ═══════════════════════════════════════════════
@@ -405,8 +411,7 @@ class TestPanelScenario:
             app.pane.markdown("# Title")
             app.widgets.button(name="Click Me")
 
-        result = app.servable()
-        assert result is not None
+        app.servable()
 
         # 验证 Panel 原生 children 已同步
         col = app._children[0]  # 第一个子节点就是 column
@@ -444,3 +449,136 @@ class TestPanelScenario:
         native_objects = list(col.objects)  # type: ignore[attr-defined]
         assert len(native_objects) == 1
         assert native_objects[0].object == "99"  # type: ignore[attr-defined]
+
+
+# ═══════════════════════════════════════════════
+# Button 同步流测试
+# ═══════════════════════════════════════════════
+
+
+class TestButtonSyncFlow:
+    """Button 内部 Signal[bool] 同步流：点击 → True → cell rerun → 自动恢复 False。"""
+
+    def test_button_has_internal_signal(self):
+        """Button 创建时内部维护 Signal[bool]。"""
+        app = diypn.PanelApp()
+        btn = app.widgets.button(label="Go")
+        assert isinstance(btn.signal, diyui.Signal)
+        assert btn.signal.value is False
+        assert btn.value is False
+        assert btn.signal._reset_on_complete is True
+
+    def test_button_value_is_signal_proxy(self):
+        """btn.value 代理到 btn.signal.value。"""
+        app = diypn.PanelApp()
+        btn = app.widgets.button(label="Go")
+        btn.signal.value = True
+        assert btn.value is True
+        btn.value = False
+        assert btn.signal.value is False
+
+    def test_click_sets_signal_true(self):
+        """模拟点击（param.trigger clicks）→ signal.value = True。"""
+        app = diypn.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
+        btn = app.widgets.button(label="Go")
+        app._add_to_current(btn)
+
+        assert btn.value is False
+        btn.param.trigger("clicks")
+        assert btn.value is True
+        assert btn.signal.value is True
+
+    def test_button_click_triggers_cell_rerun(self):
+        """按钮点击 → signal=True → 依赖 cell rerun → if btn.value: 进入分支。"""
+        app = diypn.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
+
+        btn = app.widgets.button(label="Option 1")
+        app._add_to_current(btn)
+
+        messages = []
+
+        @btn.cell()
+        def _(node: object):
+            messages.append(f"cell ran, btn.value={btn.value}")
+            if btn.value:
+                messages.append(">> Option 1 selected!")
+
+        # 初始：cell 执行一次，btn.value=False
+        assert messages == ["cell ran, btn.value=False"]
+
+        # 模拟点击
+        btn.param.trigger("clicks")
+
+        # cell 应 rerun：读到 True，进入 if 分支
+        assert ">> Option 1 selected!" in messages
+        assert "cell ran, btn.value=True" in messages
+
+    def test_button_auto_reset_after_cell_rerun(self):
+        """Cell rerun 完成后 button signal 自动恢复为 False。"""
+        app = diypn.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
+
+        btn = app.widgets.button(label="Go")
+        app._add_to_current(btn)
+
+        @btn.cell()
+        def _(node: object):
+            _ = btn.value  # 只读，注册依赖
+
+        # 点击
+        btn.param.trigger("clicks")
+
+        # cell rerun 完成后 signal 恢复 False
+        assert btn.value is False
+        assert btn.signal.value is False
+
+    def test_button_no_extra_cell_rerun_on_reset(self):
+        """Auto-reset 不应触发额外的 cell rerun（使用 _reset_value，不触发 cell）。"""
+        app = diypn.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
+
+        btn = app.widgets.button(label="Go")
+        app._add_to_current(btn)
+
+        rerun_count = 0
+
+        @btn.cell()
+        def _(node: object):
+            nonlocal rerun_count
+            rerun_count += 1
+            _ = btn.value
+
+        # 初始执行 1 次
+        assert rerun_count == 1
+
+        # 点击 → 应只多 1 次 rerun（读到 True），reset 不触发额外 rerun
+        btn.param.trigger("clicks")
+        assert rerun_count == 2, f"Expected 2 reruns, got {rerun_count}"
+
+    def test_two_buttons_independent(self):
+        """两个独立 button，各自触发各自的 cell。"""
+        app = diypn.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
+
+        btn1 = app.widgets.button(label="First")
+        btn2 = app.widgets.button(label="Second")
+        app._add_to_current(btn1)
+        app._add_to_current(btn2)
+
+        results = []
+
+        @btn1.cell()
+        def _(node: object):
+            if btn1.value:
+                results.append("first")
+
+        @btn2.cell()
+        def _(node: object):
+            if btn2.value:
+                results.append("second")
+
+        # 点击 btn1
+        btn1.param.trigger("clicks")
+        assert "first" in results
+        assert "second" not in results
+
+        # 点击 btn2
+        btn2.param.trigger("clicks")
+        assert results == ["first", "second"]

@@ -1,4 +1,14 @@
-"""PanelButton — pn.widgets.Button 的 diyui 包装。"""
+"""PanelButton — pn.widgets.Button 的 diyui 包装。
+
+Button 内部维护 Signal[bool]，类似 TextInput。.value 代理到 signal.value。
+点击事件桥接到 signal，cell rerun 完成后自动恢复为 False。
+
+用法：
+    btn = app.widgets.button(label="Go")
+    if btn.value:
+        # 点击后执行一次
+        ...
+"""
 
 from __future__ import annotations
 
@@ -12,7 +22,15 @@ from .._base import UIComponent
 
 
 class Button(UIComponent, pn.widgets.Button):
-    """Panel Button 包装，同时是 pn.widgets.Button 实例。"""
+    """Panel Button 包装，同时是 pn.widgets.Button 实例。
+
+    .value 代理到内部 Signal[bool]：
+    - 点击 → value = True → 依赖 cell rerun
+    - cell rerun 完成后 → value 自动恢复为 False
+
+    注意：value 是 property（覆盖 Panel 的 Event param descriptor），
+    因此事件桥接通过 clicks param（普通 Integer）实现，而非 value Event。
+    """
 
     def __init__(
         self,
@@ -55,6 +73,10 @@ class Button(UIComponent, pn.widgets.Button):
         _color = color if color != "default" else (button_type or "default")
         _variant = variant if variant != "solid" else (button_style or "solid")
         UIComponent.__init__(self)
+        # signal 必须在 Panel __init__ 之前创建，且标记 auto-reset（cell rerun 后恢复 False）
+        self.signal: diyui.Signal[bool] = diyui.Signal[bool](value)
+        self.signal._reset_on_complete = True
+        self._init_done: bool = False
         pn.widgets.Button.__init__(
             self,
             label=_label,
@@ -86,3 +108,35 @@ class Button(UIComponent, pn.widgets.Button):
             color=_color,
             variant=_variant,
         )
+        self._init_done = True
+        self._setup_event_bridge()
+
+    # ── value 代理 ────────────────────────────────
+
+    @property
+    def value(self) -> bool:
+        return self.signal.value
+
+    @value.setter
+    def value(self, v: bool) -> None:
+        self.signal.value = v
+
+    # ── 事件桥接 ──────────────────────────────────
+
+    def _setup_event_bridge(self) -> None:
+        """Panel 按钮点击 → signal.value = True。
+
+        通过 clicks param watch 实现：Panel Button 点击时 clicks 递增，
+        触发 watcher 设置 signal 为 True。后续 cell rerun 完成后
+        _reset_on_complete 会将 signal 恢复为 False。
+
+        使用 clicks 而非 value Event，因为 value property 覆盖了
+        Panel 的 Event param descriptor，导致 param.trigger 无法正常工作。
+        """
+
+        def on_click(*events: object) -> None:
+            # Panel 按钮点击时 clicks 递增，设置 signal 为 True
+            # 后续 cell rerun 完成后 _reset_on_complete 会将 signal 恢复为 False
+            self.signal.value = True
+
+        self.param.watch(on_click, "clicks")

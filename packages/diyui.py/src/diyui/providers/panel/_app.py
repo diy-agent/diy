@@ -538,13 +538,13 @@ class PanelApp(diyui.BaseApp):
 
     # ── serve ─────────────────────────────────
 
-    def servable(self) -> Any:
-        """找到首个顶层容器/组件，调用 .servable()。"""
-        root = self._find_first_real_component(self)
-        if root is not None:
-            self._sync_tree_to_panel(self)
-            return root.servable()  # type: ignore[attr-defined]
-        return None
+    def servable(self) -> None:
+        """将 app 根下所有顶层 UIComponent 注册为 servable。"""
+        self._sync_tree_to_panel(self)
+        for child in self._children:
+            component = self._find_first_real_component(child)
+            if component is not None:
+                component.servable()  # type: ignore[attr-defined]
 
     def _find_first_real_component(self, node: diyui.ScopeNode) -> UIComponent | None:
         """DFS 找到第一个 UIComponent。"""
