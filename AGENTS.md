@@ -69,8 +69,8 @@ Important entrypoints:
 
 ## Agent Workflow
 
+- **首先执行 context-loader skill 的强制流程**（见 `~/.agents/skills/context-loader/SKILL.md`），加载子包 AGENTS.md 和 skills。禁止跳过。
 - Read the closest relevant code before changing anything.
-- **When working on a specific package, always read the `AGENTS.md` in that package directory first** - it contains module-specific documentation not repeated here.
 - Prefer targeted edits over rewriting whole modules.
 
 ## Commit & Push Rules
