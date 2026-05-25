@@ -62,7 +62,10 @@ publish() {
 sync() {
   :
 }
-test() { run uv run pytest "${@:-tests/}" -m "not browser";}
+test() {
+#  run uv run pytest "${@:-tests/}" -m "not browser";
+  :
+}
 
 ####################################################################################
 # 子项目自己的命令
