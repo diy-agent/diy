@@ -8,7 +8,7 @@ dependencies = [
 ]
 
 [project.scripts]
-dev = "diydev.cli:main"
+dev = "diydev:main"
 
 [build-system]
 requires = ["hatchling"]
