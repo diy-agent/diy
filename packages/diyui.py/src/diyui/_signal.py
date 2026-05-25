@@ -120,7 +120,10 @@ class Signal(Generic[T]):
                 continue  # 正在执行中，不入队，避免嵌套
             scheduler = cell_node.get_config("scheduler")  # type: ignore[attr-defined]
             if scheduler is not None:
-                scheduler.enqueue(lambda cn=cell_node: cn._execute_cell())  # type: ignore[attr-defined]
+                if cell_node._is_async_cell:  # type: ignore[attr-defined]
+                    scheduler.enqueue(lambda cn=cell_node: cn._execute_cell_generator())  # type: ignore[attr-defined]
+                else:
+                    scheduler.enqueue(lambda cn=cell_node: cn._execute_cell())  # type: ignore[attr-defined]
 
     # ── auto-reset ────────────────────────────
 

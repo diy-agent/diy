@@ -60,7 +60,8 @@ class FakeApp(diyui.ScopeNode):
         self._context_stack.pop()
 
     def _add_to_current(self, child: diyui.ScopeNode) -> None:
-        self._current._add_child(child)
+        if self._current.get_config("auto_mount_child") is not False:
+            self._current._add_child(child)
 
     def signal(self, value: Any):
         node = self._current
@@ -380,3 +381,206 @@ class TestCrossScopeSignal:
 
         # prod 下不注册依赖
         assert len(secret._cell_subscribers) == 0
+
+
+# ═══════════════════════════════════════════════
+# Generator Cell
+# ═══════════════════════════════════════════════
+
+
+class TestGeneratorCellBasics:
+    """生成器 cell 基础：定义时首次执行，yield 组件挂载到 cell node。"""
+
+    def test_generator_cell_executes_on_definition(self):
+        app = FakeApp()
+        executed = []
+
+        @app.column().cell()
+        def _(node: object):
+            executed.append(1)
+            yield
+
+        assert executed == [1]
+
+    def test_generator_cell_yields_components(self):
+        app = FakeApp()
+
+        col = app.column()
+
+        @col.cell()
+        def _(node: object):
+            yield app.markdown("step 1")
+            yield app.markdown("step 2")
+            yield app.markdown("step 3")
+
+        assert len(col._children) == 3
+        assert col._children[0].content == "step 1"  # type: ignore[attr-defined]
+        assert col._children[1].content == "step 2"  # type: ignore[attr-defined]
+        assert col._children[2].content == "step 3"  # type: ignore[attr-defined]
+
+    def test_generator_cell_empty_ok(self):
+        """空生成器（无 yield）不报错。"""
+        app = FakeApp()
+
+        @app.column().cell()
+        def _(node: object):
+            if False:
+                yield
+
+        # 不抛异常
+
+    def test_generator_cell_yield_none_ends(self):
+        """yield None 视为结束。"""
+        app = FakeApp()
+
+        col = app.column()
+
+        @col.cell()
+        def _(node: object):
+            yield app.markdown("visible")
+            yield None
+            yield app.markdown("never")  # 不会执行到
+
+        assert len(col._children) == 1
+        assert col._children[0].content == "visible"  # type: ignore[attr-defined]
+
+
+class TestGeneratorCellRerun:
+    """生成器 cell 依赖 signal 变化时自动 rerun。"""
+
+    def test_generator_cell_reruns_on_signal_change(self):
+        app = FakeApp()
+        count = app.signal(0)
+
+        col = app.column()
+
+        @col.cell()
+        def _(node: object):
+            yield app.markdown(str(count.value))
+
+        assert col._children[0].content == "0"  # type: ignore[attr-defined]
+
+        count.value = 1
+        assert col._children[0].content == "1"  # type: ignore[attr-defined]
+
+    def test_generator_cell_rerun_replaces_children(self):
+        """rerun 时清空旧 children，重建新 children。"""
+        app = FakeApp()
+        count = app.signal(0)
+
+        col = app.column()
+
+        @col.cell()
+        def _(node: object):
+            for i in range(count.value + 1):
+                yield app.markdown(f"item {i}")
+
+        assert len(col._children) == 1
+        assert col._children[0].content == "item 0"  # type: ignore[attr-defined]
+
+        count.value = 2
+        assert len(col._children) == 3
+        assert [c.content for c in col._children] == ["item 0", "item 1", "item 2"]  # type: ignore[attr-defined]
+
+    def test_generator_cell_multiple_reruns(self):
+        app = FakeApp()
+        count = app.signal(0)
+
+        col = app.column()
+
+        @col.cell()
+        def _(node: object):
+            yield app.markdown(str(count.value))
+
+        count.value = 1
+        count.value = 2
+        count.value = 3
+
+        assert col._children[0].content == "3"  # type: ignore[attr-defined]
+
+    def test_generator_cell_dependency_tracking(self):
+        """生成器 cell 正确追踪和清理依赖。"""
+        app = FakeApp()
+        flag = app.signal(True)
+        a = app.signal("a")
+        b = app.signal("b")
+
+        col = app.column()
+
+        @col.cell()
+        def _(node: object):
+            yield app.markdown(a.value if flag.value else b.value)
+
+        assert len(a._cell_subscribers) == 1
+        assert len(b._cell_subscribers) == 0
+
+        flag.value = False
+        assert len(a._cell_subscribers) == 0
+        assert len(b._cell_subscribers) == 1
+
+    def test_generator_cell_signal_write_during_rerun(self):
+        """生成器 cell rerun 中写 signal 被 enqueue。"""
+        app = FakeApp()
+        count = app.signal(0)
+        calls = []
+
+        col = app.column()
+
+        @col.cell()
+        def _(node: object):
+            calls.append(count.value)
+            if count.value == 1:
+                count.value = 2
+            yield app.markdown(str(count.value))
+
+        count.value = 1
+        assert calls == [0, 1, 2]
+
+
+class TestGeneratorCellWithPanel:
+    """生成器 cell 在 Panel provider 下的集成测试。"""
+
+    def test_generator_cell_yields_panel_components(self):
+        import diyui.providers.panel as diypn
+
+        app = diypn.PanelApp(
+            config=diyui.ScopeConfig(
+                mode=diyui.ScopeMode.DEV,
+                scheduler=diyui.ImmediateScheduler(),
+            )
+        )
+
+        col = app.layout.column()
+
+        @col.cell()
+        def _(node: object):
+            yield app.pane.markdown("## Step 1")
+            yield app.pane.markdown("## Step 2")
+
+        assert len(col._children) == 2
+        assert col._children[0].object == "## Step 1"  # type: ignore[attr-defined]
+        assert col._children[1].object == "## Step 2"  # type: ignore[attr-defined]
+
+    def test_generator_cell_rerun_panel(self):
+        import diyui.providers.panel as diypn
+
+        app = diypn.PanelApp(
+            config=diyui.ScopeConfig(
+                mode=diyui.ScopeMode.DEV,
+                scheduler=diyui.ImmediateScheduler(),
+            )
+        )
+        count = app.signal(1)
+
+        col = app.layout.column()
+
+        @col.cell()
+        def _(node: object):
+            for i in range(count.value):
+                yield app.pane.markdown(f"item {i}")
+
+        assert len(col._children) == 1
+
+        count.value = 3
+        assert len(col._children) == 3
+        assert col._children[2].object == "item 2"  # type: ignore[attr-defined]

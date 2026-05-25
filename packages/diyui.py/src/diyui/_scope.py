@@ -154,11 +154,19 @@ class ScopeNode:
 
         cell 函数接收当前 wrapper node 作为参数。
         定义时立即首次执行，之后依赖的 signal 变化时自动 rerun。
+
+        支持普通函数（同步 cell）和生成器函数（generator cell）。
         """
+        import inspect
 
         def decorator(fn: Callable[[C], None]) -> C:
             self._cell_fn = fn  # type: ignore[assignment]
-            self._execute_cell(initial=True)
+            if inspect.isgeneratorfunction(fn):
+                self._is_async_cell = True
+                self._execute_cell_generator(initial=True)
+            else:
+                self._cell_fn = fn  # type: ignore[assignment]
+                self._execute_cell(initial=True)
             return self
 
         return decorator
@@ -242,3 +250,101 @@ class ScopeNode:
             scheduler = self.get_config("scheduler")
             if scheduler is not None:
                 scheduler.enqueue(self._execute_cell)
+
+    def _execute_cell_generator(self, *, initial: bool = False) -> None:
+        """驱动生成器 cell（同步版本，Phase 3 不支持 yield awaitable）。
+
+        yield 的 ScopeNode 组件自动挂载到 cell node。
+        rerun 时重新创建生成器实例，旧 children 被清空重建。
+        """
+        from . import _signal as signal_mod
+
+        fn = self._cell_fn
+        if fn is None:
+            return
+
+        # 临时设置 auto_mount_child=False，让工厂函数只创建不挂载
+        # generator driver 通过 yield 接管挂载
+        saved_config = self._config
+        self._config = ScopeConfig(
+            mode=self.get_config("mode"),
+            scheduler=self.get_config("scheduler"),
+            auto_mount_child=False,
+        )
+
+        # 创建生成器实例
+        gen = fn(self)  # type: ignore[arg-type]
+
+        # 设置依赖收集器
+        deps: set[object] = set()
+
+        # push cell node 为当前 context
+        app = self._app
+        if app is not None:
+            app._push_context(self)  # type: ignore[attr-defined]
+
+        # 清空旧 children
+        old_children = list(self._children)
+        self._children = []
+        self._is_dirty = False
+        self._is_executing = True
+        signal_mod._current_cell_node = self
+        signal_mod._rerun_depth += 1
+
+        self._on_children_replaced([])
+
+        from ._debug import get_debug
+
+        debug = get_debug(self)
+        debug.record_rerun()
+
+        try:
+            while True:
+                signal_mod._dependency_collector = lambda s: deps.add(s)  # type: ignore[assignment]
+                try:
+                    yielded = gen.send(None)  # type: ignore[arg-type]
+                except StopIteration:
+                    break
+                finally:
+                    signal_mod._dependency_collector = None
+
+                if yielded is None:
+                    break
+
+                if isinstance(yielded, ScopeNode):
+                    self._add_child(yielded)
+        except Exception as exc:
+            if not initial:
+                debug.record_error(exc)
+            else:
+                raise
+        finally:
+            # 恢复 config
+            self._config = saved_config
+
+            for child in old_children:
+                child._parent = None
+
+            signal_mod._dependency_collector = None
+            signal_mod._current_cell_node = None
+            signal_mod._rerun_depth -= 1
+            self._is_executing = False
+            if app is not None:
+                app._pop_context()  # type: ignore[attr-defined]
+
+            old_deps = self._dependencies
+            for sig in old_deps - deps:
+                sig._unsubscribe_cell(self)  # type: ignore[attr-defined]
+            for sig in deps - old_deps:
+                sig._subscribe_cell(self)  # type: ignore[attr-defined]
+            self._dependencies = deps
+
+            for sig in deps:
+                if getattr(sig, "_reset_on_complete", False):
+                    sig._reset_value(False)  # type: ignore[attr-defined]
+
+        # dirty re-enqueue
+        if self._is_dirty and self._cell_fn is not None:
+            scheduler = self.get_config("scheduler")
+            if scheduler is not None:
+                scheduler.enqueue(self._execute_cell_generator)
