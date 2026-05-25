@@ -4,7 +4,9 @@ Scheduler 是 ScopeNode 的配置 facet，不作为全局单例。
 v0.1：ImmediateScheduler（同步执行/rerun 中延迟）。
 """
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from . import _signal as signal_mod
 
@@ -24,8 +26,20 @@ class ImmediateScheduler:
             self._pending.append(callback)
         else:
             callback()
-            # 执行 callback 期间可能产生新的 pending，flush 处理
             self._flush_pending()
+
+    def enqueue_async(self, async_callback: Callable[[], Coroutine[Any, Any, None]]) -> None:
+        """入队 async callback。
+
+        在已有或新建 event loop 中调度执行。
+        Panel/Bokeh session 中有自己的 IOLoop，这里创建 task 即可。
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        loop.create_task(async_callback())
 
     def flush(self) -> None:
         self._flush_pending()

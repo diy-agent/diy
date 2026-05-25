@@ -584,3 +584,96 @@ class TestGeneratorCellWithPanel:
         count.value = 3
         assert len(col._children) == 3
         assert col._children[2].object == "item 2"  # type: ignore[attr-defined]
+
+
+class TestAsyncGeneratorCell:
+    """异步生成器 cell：支持 yield awaitable（Phase 4）。"""
+
+    def test_sync_generator_yield_awaitable_warns(self):
+        """同步生成器 yield awaitable 发出 RuntimeWarning。"""
+        import asyncio
+        import warnings
+
+        app = FakeApp()
+        col = app.column()
+
+        async def fetch():
+            return "data"
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+
+            @col.cell()
+            def _(node: object):
+                yield app.markdown("before")
+                yield fetch()  # awaitable — sync path 无法处理
+                yield app.markdown("after")
+
+            # 生成器 cell 首次走 _execute_cell_generator → sync 路径
+            # 遇到 awaitable 时发出 warning
+            our_warnings = [
+                x for x in w
+                if "yielded awaitable" in str(x.message)
+            ]
+            assert len(our_warnings) == 1
+
+        # 仍创建了 ScopeNode 组件
+        assert len(col._children) == 2  # "before" and "after", awaitable skipped
+
+    def test_enqueue_async_scheduling(self):
+        """enqueue_async 在 event loop 中创建 task。"""
+        import asyncio
+
+        scheduler = diyui.ImmediateScheduler()
+        results: list[str] = []
+
+        async def task():
+            results.append("ran")
+
+        async def run():
+            scheduler.enqueue_async(lambda: task())
+            await asyncio.sleep(0)
+            return results
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            got = loop.run_until_complete(run())
+            assert got == ["ran"]
+        finally:
+            loop.close()
+
+    def test_drive_generator_async_with_awaitable(self):
+        """_drive_generator_async 正确处理 def 生成器中 yield awaitable。"""
+        import asyncio
+
+        app = FakeApp()
+
+        async def fetch():
+            await asyncio.sleep(0)
+            return "loaded"
+
+        def sync_cell(node: object):
+            data = yield fetch()
+            yield app.markdown(data)
+
+        # 直接测试 _drive_generator_async（不走装饰器）
+        col = app.column()
+        col._cell_fn = sync_cell  # type: ignore[assignment]
+        col._app = app  # type: ignore[assignment]
+        col._config = diyui.ScopeConfig(
+            auto_mount_child=False,
+            scheduler=diyui.ImmediateScheduler(),
+        )
+
+        async def run():
+            await col._drive_generator_async(initial=True)
+            return [c.content for c in col._children]  # type: ignore[attr-defined]
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            children = loop.run_until_complete(run())
+            assert children == ["loaded"]
+        finally:
+            loop.close()
