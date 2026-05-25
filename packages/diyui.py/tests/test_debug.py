@@ -20,15 +20,15 @@ class TestDebugInfoBasics:
     """DebugInfo 记录 scope 运行时信息。"""
 
     def test_debug_info_attached_to_node(self):
-        node = diyui.ScopeNode(config=diyui.ScopeConfig(mode="dev"))
+        node = diyui.ScopeNode(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV))
         info = diyui.DebugInfo(node)
-        assert info.mode == "dev"
+        assert info.mode == diyui.ScopeMode.DEV
 
     def test_mode_defaults_to_prod(self):
         node = diyui.ScopeNode()
         info = diyui.DebugInfo(node)
         # 无配置时 get_config 返回 None，debug 应视为 prod
-        assert info.mode == "prod"
+        assert info.mode == diyui.ScopeMode.PROD
 
     def test_record_error(self):
         node = diyui.ScopeNode()
@@ -52,7 +52,7 @@ class TestCellErrorCapture:
             def __init__(self):
                 super().__init__(
                     config=diyui.ScopeConfig(
-                        mode="dev",
+                        mode=diyui.ScopeMode.DEV,
                         scheduler=diyui.ImmediateScheduler(),
                     )
                 )
@@ -125,7 +125,7 @@ class TestRerunCount:
             def __init__(self):
                 super().__init__(
                     config=diyui.ScopeConfig(
-                        mode="dev",
+                        mode=diyui.ScopeMode.DEV,
                         scheduler=diyui.ImmediateScheduler(),
                     )
                 )

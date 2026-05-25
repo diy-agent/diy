@@ -9,7 +9,7 @@ import diyui
 import diyui.providers.panel as diypn
 
 app = diypn.PanelApp(config=diyui.ScopeConfig(
-    mode="dev",
+    mode=diyui.ScopeMode.DEV,
     scheduler=diyui.ImmediateScheduler(),
 ))
 

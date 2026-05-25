@@ -54,8 +54,10 @@ class Signal(Generic[T]):
             owner = self._owner
             if id(owner) not in _current_cell_node._ancestor_ids:  # type: ignore[attr-defined]
                 cross_scope = True
+                from ._scope import ScopeMode
+
                 mode = _current_cell_node.get_config("mode")  # type: ignore[attr-defined]
-                if mode == "dev":
+                if mode == ScopeMode.DEV:
                     raise ScopeViolationError(
                         "Cross-scope signal access: cell node not in signal owner's subtree"
                     )

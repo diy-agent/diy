@@ -352,7 +352,7 @@ class TestCrossScopeSignal:
     """子树外访问 signal：dev 报错。"""
 
     def test_cross_scope_read_raises_in_dev(self):
-        app = FakeApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
+        app = FakeApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
 
         with app.column() as _left:
             secret = app.signal("left-secret")
@@ -366,7 +366,7 @@ class TestCrossScopeSignal:
 
     def test_cross_scope_no_error_in_prod(self):
         """prod 模式不报错，但也不注册依赖。"""
-        app = FakeApp(config=diyui.ScopeConfig(mode="prod", scheduler=diyui.ImmediateScheduler()))
+        app = FakeApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.PROD, scheduler=diyui.ImmediateScheduler()))
 
         with app.column() as _left:
             secret = app.signal("left-secret")

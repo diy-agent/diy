@@ -10,7 +10,7 @@ import traceback
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ._scope import ScopeNode
+    from ._scope import ScopeMode, ScopeNode
 
 
 class DebugInfo:
@@ -26,9 +26,11 @@ class DebugInfo:
         self._has_error: bool = False
 
     @property
-    def mode(self) -> str:
+    def mode(self) -> ScopeMode:
+        from ._scope import ScopeMode
+
         m = self._node.get_config("mode")
-        return m if m else "prod"
+        return m if m is not None else ScopeMode.PROD
 
     @property
     def has_error(self) -> bool:

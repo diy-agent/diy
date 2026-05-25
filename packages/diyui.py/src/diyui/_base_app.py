@@ -42,9 +42,14 @@ class BaseApp(ScopeNode):
         self._context_stack.pop()
 
     def _add_to_current(self, child: ScopeNode) -> None:
-        """将 child 添加到当前 context 节点。"""
+        """将 child 添加到当前 context 节点。
+
+        若当前节点的 auto_mount_child 为 False，仅设置 _app，不挂载。
+        auto_mount_child 通过 get_config 从当前 context 节点向上追溯。
+        """
         child._app = self
-        self._current._add_child(child)
+        if self._current.get_config("auto_mount_child") is not False:
+            self._current._add_child(child)
 
     # ── signal ─────────────────────────────────
 

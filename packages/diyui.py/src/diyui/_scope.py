@@ -11,23 +11,41 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 if TYPE_CHECKING:
     from ._base_app import BaseApp
 
 C = TypeVar("C", bound="ScopeNode")
 
+
+class ScopeMode(Enum):
+    """Scope 运行模式。"""
+
+    DEV = "dev"
+    PROD = "prod"
+
+
+class SchedulerProtocol(Protocol):
+    """Scheduler 需实现的接口。"""
+
+    def enqueue(self, callback: Callable[[], None]) -> None: ...
+    def flush(self) -> None: ...
+
+
 @dataclass
 class ScopeConfig:
     """ScopeNode 的运行时配置。
 
-    所有字段可选；未设置时向上追溯祖先配置。
+    所有字段可选；None 表示未设置，向上追溯祖先配置。
+    子节点配置优先级高于祖先。
     """
 
-    mode: str | None = None  # "dev" | "prod"
-    scheduler: object | None = None  # Scheduler 实例
+    mode: ScopeMode | None = None
+    scheduler: SchedulerProtocol | None = None
+    auto_mount_child: bool | None = None  # 子组件创建时是否自动挂载到本节点，默认 True
 
 
 class ScopeNode:

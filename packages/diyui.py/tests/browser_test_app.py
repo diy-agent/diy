@@ -6,7 +6,7 @@ run: uv run panel serve tests/browser_test_app.py --port 0
 import diyui
 import diyui.providers.panel as diypn
 
-app = diypn.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
+app = diypn.PanelApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
 
 with app.layout.column():
     app.pane.markdown("# 🧪 Browser Test App")
