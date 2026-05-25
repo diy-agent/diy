@@ -68,7 +68,7 @@ test() { run uv run pytest "${@:-tests/}" -m "not browser";}
 # 子项目自己的命令
 ####################################################################################
 
-examples() {  run uv run panel serve --dev --show examples/*.py; }
+examples() {  run uv run panel serve --dev examples/*.py; }
 
 # Panel 诊断工具：适配列表 / 参数一致性 / 签名查询
 # 用法: ./sha.sh panel list             # 组件适配列表
