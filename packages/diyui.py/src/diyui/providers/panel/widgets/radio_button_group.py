@@ -11,7 +11,7 @@ import diyui
 from .._base import UIComponent
 
 
-class PanelRadioButtonGroup(UIComponent, pn.widgets.RadioButtonGroup):
+class RadioButtonGroup(UIComponent, pn.widgets.RadioButtonGroup):
     """Panel RadioButtonGroup 包装，同时是 pn.widgets.RadioButtonGroup 实例。"""
 
     def __init__(

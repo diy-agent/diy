@@ -1,5 +1,5 @@
-from .button import PanelButton
-from .text_input import PanelTextInput
-from .radio_button_group import PanelRadioButtonGroup
+from .button import Button
+from .text_input import TextInput
+from .radio_button_group import RadioButtonGroup
 
-__all__ = ["PanelButton", "PanelTextInput", "PanelRadioButtonGroup"]
+__all__ = ["Button", "TextInput", "RadioButtonGroup"]

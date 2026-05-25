@@ -11,7 +11,7 @@ import diyui
 from .._base import C, UIComponent, _PanelContainerMixin
 
 
-class PanelRow(_PanelContainerMixin, UIComponent, pn.Row):
+class Row(_PanelContainerMixin, UIComponent, pn.Row):
     """Panel Row 包装，同时是 pn.Row 实例。"""
 
     def __init__(

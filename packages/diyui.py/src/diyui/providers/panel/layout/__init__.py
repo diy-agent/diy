@@ -1,5 +1,5 @@
-from .column import PanelColumn
-from .row import PanelRow
-from .card import PanelCard
+from .column import Column
+from .row import Row
+from .card import Card
 
-__all__ = ["PanelColumn", "PanelRow", "PanelCard"]
+__all__ = ["Column", "Row", "Card"]

@@ -75,7 +75,7 @@ examples() {  run uv run panel serve --dev --show examples/*.pn.py; }
 #       ./sha.sh panel list -g widgets  # 仅 widgets
 #       ./sha.sh panel doctor           # 参数一致性诊断
 #       ./sha.sh panel query -n Button
-panel() {
+doctor() {
   run uv run python tools/doctor_panel.py "$@"
 }
 #  # 单个测试（精确路径）

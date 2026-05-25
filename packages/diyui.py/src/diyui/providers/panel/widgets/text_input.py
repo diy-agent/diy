@@ -11,7 +11,7 @@ import diyui
 from .._base import UIComponent
 
 
-class PanelTextInput(UIComponent, pn.widgets.TextInput):
+class TextInput(UIComponent, pn.widgets.TextInput):
     """Panel TextInput 包装。value 代理到 signal，同时是 pn.widgets.TextInput 实例。"""
 
     def __init__(

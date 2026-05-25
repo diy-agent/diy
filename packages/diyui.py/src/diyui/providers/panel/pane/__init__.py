@@ -1,3 +1,3 @@
-from .markdown import PanelMarkdown
+from .markdown import Markdown
 
-__all__ = ["PanelMarkdown"]
+__all__ = ["Markdown"]

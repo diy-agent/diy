@@ -11,7 +11,7 @@ import diyui
 from .._base import C, UIComponent, _PanelContainerMixin
 
 
-class PanelCard(_PanelContainerMixin, UIComponent, pn.Card):
+class Card(_PanelContainerMixin, UIComponent, pn.Card):
     """Panel Card 包装，同时是 pn.Card 实例。"""
 
     def __init__(

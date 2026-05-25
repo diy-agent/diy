@@ -20,6 +20,9 @@ from doctor_panel import (
     _COMMON_EXCLUDED,
     _WRAPPER_EXCLUDED,
     _WRAPPER_MAP,
+    _WRAPPER_SPECS,
+    _SUBPACKAGE_WRAPPERS,
+    _run_namespace_checks,
     run_checks,
     run_verify,
 )
@@ -121,6 +124,60 @@ class TestPanelParamPassThrough:
 
     def test_verify_coverage_ratio(self) -> None:
         """透传验证覆盖率应 >= 60%，避免大量参数被跳过导致验证形同虚设。"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# 包命名空间一致性测试
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestNamespaceConvention:
+    """验证 diypn 子包命名空间与 Panel 原生路径一致。"""
+
+    def test_each_wrapper_in_expected_subpkg(self) -> None:
+        """每个 wrapper 类必须在其对应的 diypn 子包下可访问。"""
+        import diyui.providers.panel as diypn
+
+        failures: list[str] = []
+        for sp_name, wrappers in _SUBPACKAGE_WRAPPERS.items():
+            sp = getattr(diypn, sp_name, None)
+            if sp is None:
+                failures.append(f"diypn.{sp_name} 子包不存在")
+                continue
+            for w in wrappers:
+                if getattr(sp, w.__name__, None) is None:
+                    failures.append(
+                        f"diypn.{sp_name}.{w.__name__} 无法访问"
+                    )
+        assert not failures, (
+            "命名空间不一致:\n" + "\n".join(failures)
+        )
+
+    def test_no_extra_exports_in_subpkgs(self) -> None:
+        """diypn 子包不应有多余的公开类（不在 _WRAPPER_SPECS 中）。"""
+        results = _run_namespace_checks()
+        for r in results:
+            assert not r.extra, (
+                f"diypn.{r.subpkg} 有多余公开类: {r.extra}\n"
+                "请确保 _WRAPPER_SPECS 覆盖所有导出类"
+            )
+
+    def test_class_names_match_panel_original(self) -> None:
+        """wrapper 类名应与 Panel 原生类名一致（去掉 Panel 前缀）。"""
+        import panel as pn
+
+        failures: list[str] = []
+        for wrapper_cls, panel_cls, _ in _WRAPPER_SPECS:
+            if wrapper_cls.__name__ != panel_cls.__name__:
+                failures.append(
+                    f"{wrapper_cls.__name__} → Panel 原生类名为 {panel_cls.__name__}"
+                )
+        assert not failures, (
+            "类名不一致，wrapper 类名应与 Panel 原生一致:\n"
+            + "\n".join(failures)
+        )
+
+    def test_verify_coverage_ratio(self) -> None:
         results = run_verify()
         total_params = 0
         verified_params = 0

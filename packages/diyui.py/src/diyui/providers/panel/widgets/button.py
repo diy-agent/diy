@@ -11,7 +11,7 @@ import diyui
 from .._base import UIComponent
 
 
-class PanelButton(UIComponent, pn.widgets.Button):
+class Button(UIComponent, pn.widgets.Button):
     """Panel Button 包装，同时是 pn.widgets.Button 实例。"""
 
     def __init__(

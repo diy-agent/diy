@@ -22,19 +22,26 @@ import panel as pn
 import param
 
 import diyui
-import diyui.providers.panel
+import diyui.providers.panel as diypn
 
-# ── 已适配: diyui wrapper → Panel 原生类 ──────────────────────
+# ── 已适配: diyui wrapper → (Panel 原生类, diypn 子包名) ─────────
 
-_WRAPPER_MAP: dict[type, type] = {
-    diyui.providers.panel.PanelColumn: pn.Column,
-    diyui.providers.panel.PanelRow: pn.Row,
-    diyui.providers.panel.PanelCard: pn.Card,
-    diyui.providers.panel.PanelMarkdown: pn.pane.Markdown,
-    diyui.providers.panel.PanelButton: pn.widgets.Button,
-    diyui.providers.panel.PanelTextInput: pn.widgets.TextInput,
-    diyui.providers.panel.PanelRadioButtonGroup: pn.widgets.RadioButtonGroup,
-}
+_WRAPPER_SPECS: list[tuple[type, type, str]] = [
+    (diypn.layout.Column, pn.Column, "layout"),
+    (diypn.layout.Row, pn.Row, "layout"),
+    (diypn.layout.Card, pn.Card, "layout"),
+    (diypn.pane.Markdown, pn.pane.Markdown, "pane"),
+    (diypn.widgets.Button, pn.widgets.Button, "widgets"),
+    (diypn.widgets.TextInput, pn.widgets.TextInput, "widgets"),
+    (diypn.widgets.RadioButtonGroup, pn.widgets.RadioButtonGroup, "widgets"),
+]
+
+# 子包名 → wrapper 类列表（供命名空间一致性检查用）
+_SUBPACKAGE_WRAPPERS: dict[str, list[type]] = {}
+for _w, _p, _sp in _WRAPPER_SPECS:
+    _SUBPACKAGE_WRAPPERS.setdefault(_sp, []).append(_w)
+
+_WRAPPER_MAP: dict[type, type] = {w: p for w, p, _ in _WRAPPER_SPECS}
 
 # Panel 原生类 → diyui wrapper 名（list 命令用）
 _PN_TO_WRAPPER: dict[type, str] = {v: k.__name__ for k, v in _WRAPPER_MAP.items()}
@@ -65,11 +72,11 @@ _COMMON_EXCLUDED: set[str] = {
 }
 
 _WRAPPER_EXCLUDED: dict[type, set[str]] = {
-    diyui.providers.panel.PanelTextInput: {
+    diypn.widgets.TextInput: {
         "value_input",
         "enter_pressed",
     },
-    diyui.providers.panel.PanelButton: {
+    diypn.widgets.Button: {
         "clicks",
     },
 }
@@ -78,11 +85,11 @@ _WRAPPER_EXCLUDED: dict[type, set[str]] = {
 # key: wrapper 类, value: {wrapper 参数名: 实际检查的 Panel 属性名}
 # 用于 wrapper 对参数做了语义重命名的情况（如 button_type → color）
 _WRAPPER_PARAM_MAP: dict[type, dict[str, str]] = {
-    diyui.providers.panel.PanelButton: {
+    diypn.widgets.Button: {
         "button_type": "color",
         "button_style": "variant",
     },
-    diyui.providers.panel.PanelRadioButtonGroup: {
+    diypn.widgets.RadioButtonGroup: {
         "button_type": "color",
         "button_style": "variant",
     },
@@ -568,6 +575,81 @@ def _print_verify(results: list[VerifyResult]) -> int:
 
 
 # ═══════════════════════════════════════════════════════════════
+# namespace 命令（包命名空间一致性检查）
+# ═══════════════════════════════════════════════════════════════
+
+
+@dataclass
+class NamespaceCheck:
+    """命名空间一致性检查结果。"""
+    subpkg: str
+    expected: list[str]    # 应在该子包下的 wrapper 类名
+    actual: list[str]      # 该子包下实际导出的公开类
+    extra: list[str]       # 多出的
+    missing_access: list[str]  # 无法从预期路径访问的
+
+
+def _run_namespace_checks() -> list[NamespaceCheck]:
+    """检查每个 diypn 子包的命名空间一致性：
+    1. wrapper 类能在对应子包路径下访问
+    2. 子包下不应有多余的公开类
+    """
+    results: list[NamespaceCheck] = []
+    for sp_name, wrappers in _SUBPACKAGE_WRAPPERS.items():
+        sp = getattr(diypn, sp_name, None)
+        if sp is None:
+            results.append(NamespaceCheck(
+                subpkg=sp_name,
+                expected=[w.__name__ for w in wrappers],
+                actual=[],
+                extra=[],
+                missing_access=[w.__name__ for w in wrappers],
+            ))
+            continue
+
+        expected_names = {w.__name__ for w in wrappers}
+        actual_names = set(getattr(sp, "__all__", []))
+        if not actual_names:
+            # fallback: 收集所有非下划线开头的属性
+            actual_names = {a for a in dir(sp) if not a.startswith("_")}
+
+        missing_access = [n for n in expected_names if getattr(sp, n, None) is None]
+        extra = sorted(actual_names - expected_names)
+
+        results.append(NamespaceCheck(
+            subpkg=sp_name,
+            expected=sorted(expected_names),
+            actual=sorted(actual_names),
+            extra=extra,
+            missing_access=missing_access,
+        ))
+    return results
+
+
+def _print_namespace(results: list[NamespaceCheck]) -> int:
+    issues = 0
+    for r in results:
+        print(f"\n{'─' * 70}")
+        print(f"  📁 diypn.{r.subpkg}")
+        print(f"{'─' * 70}")
+        if r.missing_access:
+            print(f"  ❌ 无法访问: {', '.join(r.missing_access)}")
+            issues += len(r.missing_access)
+        if r.extra:
+            print(f"  ⚠️  多余导出（不在 _WRAPPER_SPECS 中）: {', '.join(r.extra)}")
+            issues += len(r.extra)
+        if not r.missing_access and not r.extra:
+            print(f"  ✅ 与 Panel 原生路径一致: {', '.join(r.expected)}")
+    print(f"\n{'═' * 70}")
+    if issues:
+        print(f"  ❌ {issues} 个命名空间不一致")
+    else:
+        print(f"  ✅ 命名空间与 Panel 原生一致")
+    print(f"{'═' * 70}")
+    return issues
+
+
+# ═══════════════════════════════════════════════════════════════
 # CLI
 # ═══════════════════════════════════════════════════════════════
 
@@ -612,6 +694,17 @@ def verify() -> None:
         print(f"\n❌ {failures} 个参数透传失败")
         sys.exit(1)
     print("\n✅ 所有参数透传验证通过")
+
+
+@app.command
+def namespace() -> None:
+    """检查 diypn 子包命名空间是否与 Panel 原生路径一致。"""
+    results = _run_namespace_checks()
+    issues = _print_namespace(results)
+    if issues > 0:
+        print(f"\n❌ 命名空间不一致")
+        sys.exit(1)
+    print("\n✅ 命名空间与 Panel 原生一致")
 
 
 @app.command

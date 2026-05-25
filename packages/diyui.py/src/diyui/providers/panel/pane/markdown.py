@@ -11,7 +11,7 @@ import diyui
 from .._base import UIComponent
 
 
-class PanelMarkdown(UIComponent, pn.pane.Markdown):
+class Markdown(UIComponent, pn.pane.Markdown):
     """Panel Markdown 包装，同时是 pn.pane.Markdown 实例。"""
 
     def __init__(

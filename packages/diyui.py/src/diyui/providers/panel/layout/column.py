@@ -11,7 +11,7 @@ import diyui
 from .._base import C, UIComponent, _PanelContainerMixin
 
 
-class PanelColumn(_PanelContainerMixin, UIComponent, pn.Column):
+class Column(_PanelContainerMixin, UIComponent, pn.Column):
     """Panel Column 包装，同时是 pn.Column 实例。"""
 
     def __init__(
