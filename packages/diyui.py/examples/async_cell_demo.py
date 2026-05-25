@@ -82,14 +82,14 @@ def _(node: diypn.layout.Column):
 
 
 # ═══════════════════════════════════════════════════
-# Demo 3: 异步 awaitable（未来）
+# Demo 3: yield awaitable 异步执行
 # ═══════════════════════════════════════════════════
 
 app.pane.markdown("---")
-app.pane.markdown("## Demo 3: yield awaitable（需要 Bokeh IOLoop）")
+app.pane.markdown("## Demo 3: yield awaitable 异步执行")
 app.pane.markdown(
-    "sync generator 中 `yield awaitable` → `_drive_generator_async` 异步驱动。\n"
-    "以下展示 API 设计，实际运行需要 Panel serve + async scheduler。"
+    "sync generator 中 `yield awaitable` → 运行时升级到 async 路径。\n"
+    "点击按钮多次触发，每次 cell rerun 重新 yield awaitable。"
 )
 
 trigger3 = app.signal(0)
@@ -98,17 +98,12 @@ btn3.on_click(lambda e: setattr(trigger3, "value", trigger3.value + 1))
 
 @app.layout.card(title=f"异步加载 — 第 {trigger3.value} 次").cell()
 def _(node: diypn.layout.Column):
-    if trigger3.value == 0:
-        yield app.pane.markdown("  👆 点击按钮触发")
-        return
+    yield app.pane.markdown(f"  ⏳ 开始第 {trigger3.value} 次加载...")
 
-    # 同步 generator cell 模拟"异步加载"
-    yield app.pane.markdown(f"  ⏳ 请求中... {datetime.datetime.now().strftime('%H:%M:%S')}")
-    yield app.pane.markdown(
-        f"  ✅ 响应返回（模拟）\n\n"
-        f"  > 要真正异步执行 yield awaitable，需在 Bokeh/Panel serve 环境\n"
-        f"  > 使用 async scheduler，scheduler.enqueue_async 通过 IOLoop 驱动。"
-    )
-    yield app.pane.markdown(f"  **第 {trigger3.value} 次执行完成。** 再点一次试试？")
+    # yield awaitable → 升级到 async 路径，由 Bokeh IOLoop 驱动
+    result = yield load_data(1.0, f"response #{trigger3.value}")
+
+    yield app.pane.markdown(f"  ✅ 完成：{result}")
+    yield app.pane.markdown(f"  （点击按钮可再次执行）")
 
 app.servable()
