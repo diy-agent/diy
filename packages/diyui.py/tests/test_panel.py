@@ -469,13 +469,18 @@ class TestButtonSyncFlow:
         assert btn.signal._reset_on_complete is True
 
     def test_button_value_is_signal_proxy(self):
-        """btn.value 代理到 btn.signal.value。"""
+        """btn.value 读取代理到 btn.signal.value。
+
+        value.setter 在初始化后是 no-op（避免 Panel Event set-reset 干扰）。
+        程序化修改应走 btn.signal.value = ...。
+        """
         app = diypn.PanelApp()
         btn = app.widgets.button(label="Go")
+        assert btn.value is False
         btn.signal.value = True
         assert btn.value is True
-        btn.value = False
-        assert btn.signal.value is False
+        btn.signal.value = False
+        assert btn.value is False
 
     def test_click_sets_signal_true(self):
         """模拟点击（param.trigger clicks）→ signal.value = True。"""
@@ -552,6 +557,48 @@ class TestButtonSyncFlow:
         # 点击 → 应只多 1 次 rerun（读到 True），reset 不触发额外 rerun
         btn.param.trigger("clicks")
         assert rerun_count == 2, f"Expected 2 reruns, got {rerun_count}"
+
+    def test_full_click_only_reruns_once(self):
+        """模拟 Panel 真实点击（param.trigger value + clicks+=1），
+        只触发 1 次 cell rerun，不受 Event set-reset 干扰。"""
+        app = diypn.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
+
+        btn = app.widgets.button(label="Go")
+        app._add_to_current(btn)
+
+        rerun_count = 0
+
+        @btn.cell()
+        def _(node: object):
+            nonlocal rerun_count
+            rerun_count += 1
+            _ = btn.value
+
+        assert rerun_count == 1
+
+        # 模拟 Panel Button._process_event：value trigger + clicks += 1
+        btn.param.trigger("value")
+        btn.clicks += 1
+
+        assert rerun_count == 2, f"Expected 2 reruns, got {rerun_count}"
+        assert btn.value is False  # auto-reset done
+
+    def test_value_setter_noop_after_init(self):
+        """value.setter 在初始化后是 no-op，避免 Panel Event set-reset 干扰。
+        程序化修改应走 btn.signal.value = ...。"""
+        app = diypn.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
+        btn = app.widgets.button(label="Go")
+
+        assert btn.value is False
+
+        # init 后 value.setter 是 no-op
+        btn.value = True
+        assert btn.value is False  # signal 没变
+        assert btn.signal.value is False
+
+        # 只能走 signal 修改
+        btn.signal.value = True
+        assert btn.value is True
 
     def test_two_buttons_independent(self):
         """两个独立 button，各自触发各自的 cell。"""

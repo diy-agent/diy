@@ -60,9 +60,11 @@ class ScopeNode:
         return self._parent
 
     def _add_child(self, child: ScopeNode) -> None:
-        """添加子节点。staging 模式下进入 _staging_children。"""
+        """添加子节点。staging 模式下进入 _staging_children 并同步到 provider。"""
         if self._staging_mode:
             self._staging_children.append(child)
+            # staging 模式下即时同步到 provider（支持 cell 内步进式 UI 更新）
+            self._on_child_added(child)
         else:
             self._children.append(child)
         child._parent = self
@@ -73,6 +75,7 @@ class ScopeNode:
         self._children.remove(child)
         child._parent = None
         child._rebuild_ancestor_ids()
+        self._on_child_removed(child)
 
     # ── ancestor ids ───────────────────────────
 
@@ -107,8 +110,21 @@ class ScopeNode:
         signal.owner = self  # type: ignore[attr-defined]
         self._signals.append(signal)
 
+    # ── provider sync hooks ───────────────────
+
+    def _on_child_added(self, child: ScopeNode) -> None:
+        """子类覆写：新 child 加入时同步到 provider。"""
+        pass
+
+    def _on_child_removed(self, child: ScopeNode) -> None:
+        """子类覆写：child 移除时从 provider 删除。"""
+        pass
+
     def _on_children_replaced(self, children: list[ScopeNode]) -> None:
-        """children 被 cell staging 替换后调用。子类（UIComponent）覆写以同步 provider。"""
+        """子类覆写：children 被全量替换时同步到 provider。
+
+        cell rerun 开始时会清空旧 children 并调用此方法。
+        """
         pass
 
     # ── cell ───────────────────────────────────
@@ -135,7 +151,9 @@ class ScopeNode:
 
         - 执行期间保留旧依赖（支持 rerun 中写 signal 的 re-enqueue）
         - 执行后 diff 更新依赖：新增订阅，移除过时订阅
-        - staging 模式收集新 children，成功后原子替换，失败保留旧 UI
+        - staging 模式：每次 _add_child 即时同步到 provider
+        - 成功：staging children 转为正式 children
+        - 失败：恢复旧 children，清理 staging children
         - cell 执行期间 self 作为当前 context
         """
         from . import _signal as signal_mod
@@ -153,14 +171,18 @@ class ScopeNode:
         if app is not None:
             app._push_context(self)  # type: ignore[attr-defined]
 
-        # staging：保存旧 children，启用 staging mode
+        # staging：保存旧 children，清空 provider 侧旧内容，启用 staging mode
         old_children = list(self._children)
+        self._children = []
         self._staging_mode = True
         self._staging_children = []
         self._is_dirty = False
         self._is_executing = True
         signal_mod._current_cell_node = self
         signal_mod._rerun_depth += 1
+
+        # 通知 provider 清空旧 children（cell rerun 开始时清理 UI）
+        self._on_children_replaced([])
 
         from ._debug import get_debug
 
@@ -171,11 +193,12 @@ class ScopeNode:
             fn(self)  # type: ignore[arg-type]
         except Exception as exc:
             if not initial:
-                # rerun 失败：恢复旧 children，记录错误
+                # rerun 失败：恢复旧 children，清理 staging children
                 debug.record_error(exc)
                 self._children = old_children
                 for child in self._staging_children:
                     child._parent = None
+                    self._on_child_removed(child)
                 self._on_children_replaced(self._children)
             else:
                 raise  # 首次执行报错应传播
@@ -184,7 +207,6 @@ class ScopeNode:
             for child in old_children:
                 child._parent = None
             self._children = self._staging_children
-            self._on_children_replaced(self._children)
         finally:
             signal_mod._dependency_collector = None
             signal_mod._current_cell_node = None

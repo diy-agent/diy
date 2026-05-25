@@ -119,24 +119,28 @@ class Button(UIComponent, pn.widgets.Button):
 
     @value.setter
     def value(self, v: bool) -> None:
-        self.signal.value = v
+        # 仅在初始化期间允许 Panel 内部 setattr。
+        # 初始化后不走 signal——点击事件由 clicks watcher 驱动。
+        # 这样 Panel Event 的 set-reset 循环不会触发额外 signal 变化。
+        if not self._init_done:
+            self.signal.value = v
 
     # ── 事件桥接 ──────────────────────────────────
 
     def _setup_event_bridge(self) -> None:
         """Panel 按钮点击 → signal.value = True。
 
-        通过 clicks param watch 实现：Panel Button 点击时 clicks 递增，
-        触发 watcher 设置 signal 为 True。后续 cell rerun 完成后
+        监听 clicks param：Panel Button 点击时 clicks 递增（_process_event 中
+        self.clicks += 1），设置 signal 为 True。后续 cell rerun 完成后
         _reset_on_complete 会将 signal 恢复为 False。
 
-        使用 clicks 而非 value Event，因为 value property 覆盖了
-        Panel 的 Event param descriptor，导致 param.trigger 无法正常工作。
+        注意：不通过 value Event，因为 value property 覆盖了 Panel 的 Event
+        param descriptor。假设监听 value 的话，Panel 的 param.trigger('value')
+        会触发 Event 的 set-reset 循环（True→False），每次 set 都会走 value.setter，
+        导致多次 signal 变化。因此只监听 clicks 一次递增。
         """
 
         def on_click(*events: object) -> None:
-            # Panel 按钮点击时 clicks 递增，设置 signal 为 True
-            # 后续 cell rerun 完成后 _reset_on_complete 会将 signal 恢复为 False
             self.signal.value = True
 
         self.param.watch(on_click, "clicks")

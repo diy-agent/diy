@@ -559,6 +559,6 @@ class PanelApp(diyui.BaseApp):
     def _sync_tree_to_panel(self, node: diyui.ScopeNode) -> None:
         """将 diyui 树同步到 Panel 原生 children。"""
         if isinstance(node, UIComponent) and node._panel_container:
-            node._sync_to_target(node._children)
+            node._on_children_replaced(node._children)
         for child in node._children:
             self._sync_tree_to_panel(child)
