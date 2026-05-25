@@ -541,31 +541,46 @@ class TestAsyncGeneratorCell:
     """异步生成器 cell：支持 yield awaitable（Phase 4）。"""
 
     def test_sync_generator_yield_awaitable_upgrades(self):
-        """同步生成器 yield awaitable → 升级到 async 路径。
+        """同步生成器 yield awaitable → sync 入口检测到 → 升级到 async。
 
-        首个 awaitable 前的 ScopeNode 已挂载，awaitable 部分通过
-        _upgrade_to_async → _drive_generator_async 继续。
-        无 async scheduler 时回退到 sync 继续（跳过 awaitable）。
+        _execute_cell_generator 检测到 awaitable 后走 _drive_generator_async。
+        这里直接测 _drive_generator_async 的完整执行（跳过升级路径），
+        升级行为由 `test_drive_generator_async_with_awaitable` 覆盖。
         """
         import asyncio
-
-        app = FakeApp()
-        col = app.column()
 
         async def fetch():
             await asyncio.sleep(0)
             return "data"
 
-        @col.cell()
-        def _(node: object):
+        app = FakeApp()
+        col = app.column()
+
+        def sync_cell(node: object):
             yield app.markdown("before")
             data = yield fetch()
             yield app.markdown(data)
 
-        # 首次执行：sync 路径到 fetch()，升级到 async
-        # FakeApp 的 ImmediateScheduler 有 enqueue_async → 创建 task
-        # 但无 event loop 所以 task 不会执行 → 只挂载 "before"
-        assert col._children[0].content == "before"  # type: ignore[attr-defined]
+        col._cell_fn = sync_cell  # type: ignore[assignment]
+        col._app = app  # type: ignore[assignment]
+        col._config = diyui.ScopeConfig(
+            auto_mount_child=False,
+            scheduler=diyui.ImmediateScheduler(),
+        )
+
+        async def run():
+            await col._drive_generator_async(initial=True)
+            return col._children
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            children = loop.run_until_complete(run())
+            assert len(children) == 2
+            assert children[0].content == "before"  # type: ignore[attr-defined]
+            assert children[1].content == "data"  # type: ignore[attr-defined]
+        finally:
+            loop.close()
 
     def test_enqueue_async_scheduling(self):
         """enqueue_async 在 event loop 中创建 task。"""

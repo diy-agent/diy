@@ -166,7 +166,6 @@ class ScopeNode:
                 self._is_async_cell = True
                 self._execute_cell_generator(initial=True)
             else:
-                self._cell_fn = fn  # type: ignore[assignment]
                 self._execute_cell(initial=True)
             return self
 
@@ -262,10 +261,10 @@ class ScopeNode:
             auto_mount_child=False,
         )
 
-        # 检测是否需要 async 路径
-        has_awaitable = inspect.isasyncgenfunction(fn) or self._has_awaitable_in_generator(fn)
+        # 检测是否需要 async 路径：仅 async generator function 需要
+        is_async = inspect.isasyncgenfunction(fn)
 
-        if has_awaitable:
+        if is_async:
             # 有 awaitable：走 async 路径，通过 scheduler enqueue_async 调度
             scheduler = self.get_config("scheduler")
             if scheduler is not None and hasattr(scheduler, "enqueue_async"):
@@ -276,15 +275,6 @@ class ScopeNode:
         else:
             # 纯同步：直接驱动
             self._drive_generator_sync(fn, initial=initial, saved_config=saved_config)
-
-    @staticmethod
-    def _has_awaitable_in_generator(fn: Callable[[ScopeNode], Any]) -> bool:
-        """检测生成器函数体中是否可能 yield awaitable。
-
-        简单策略：检查是否 import asyncio / 包含 async/await 关键字。
-        Phase 4 简化：先让用户显式用 async def 标记。
-        """
-        return False  # Phase 4: 仅通过 isasyncgenfunction 检测
 
     def _drive_generator_sync(
         self,

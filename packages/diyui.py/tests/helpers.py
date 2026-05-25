@@ -102,11 +102,19 @@ def _signal_name(sig: object) -> str:
 
 
 class EventLog:
-    """收集 scope tree 运行时事件。"""
+    """收集 scope tree 运行时事件。
+
+    事件格式：
+    - signal <name>: <old> → <new>
+    - cell <label>: rerun start
+    - cell <label>: rerun complete
+    - cell <label>: error
+    """
 
     def __init__(self) -> None:
         self._events: list[str] = []
-        self._hooks: list[Callable[[], None]] = []
+        self._restore: list[Callable[[], None]] = []
+        self._previous_signal_values: dict[int, object] = {}
 
     def record(self, event: str) -> None:
         self._events.append(event)
@@ -123,34 +131,91 @@ class EventLog:
             return self._events == other
         return NotImplemented
 
+    def __repr__(self) -> str:
+        return f"EventLog({self._events})"
+
+    def start(self) -> None:
+        """激活事件收集（monkey-patch signal._trigger_cells 和 cell 执行）。"""
+        import diyui._scope
+        import diyui._signal
+
+        log = self
+
+        # Hook signal._trigger_cells
+        _original_trigger = diyui._signal.Signal._trigger_cells
+
+        def _trigger_cells_with_log(sig: Any) -> None:
+            sig_id = id(sig)
+            old_val = log._previous_signal_values.get(sig_id, "?")
+            old_val_str = _format_val(old_val)
+            new_val_str = _format_val(sig._value)  # type: ignore[attr-defined]
+            log.record(
+                f"signal {_signal_name(sig)}: {old_val_str} → {new_val_str}"
+            )
+            log._previous_signal_values[sig_id] = sig._value  # type: ignore[attr-defined]
+            _original_trigger(sig)
+
+        diyui._signal.Signal._trigger_cells = _trigger_cells_with_log  # type: ignore[assignment]
+
+        # Hook ScopeNode._execute_cell
+        _original_execute = diyui._scope.ScopeNode._execute_cell
+
+        def _execute_cell_with_log(self2: Any, *, initial: bool = False) -> None:
+            log.record(f"cell {_node_label(self2)}: rerun start")
+            try:
+                _original_execute(self2, initial=initial)
+            except Exception:
+                log.record(f"cell {_node_label(self2)}: error")
+                raise
+            else:
+                log.record(f"cell {_node_label(self2)}: rerun complete")
+
+        diyui._scope.ScopeNode._execute_cell = _execute_cell_with_log  # type: ignore[assignment]
+
+        # Hook generator cell
+        _original_execute_gen = diyui._scope.ScopeNode._execute_cell_generator
+
+        def _execute_cell_gen_with_log(self2: Any, *, initial: bool = False) -> None:
+            log.record(f"cell {_node_label(self2)}: rerun start")
+            try:
+                _original_execute_gen(self2, initial=initial)
+            except Exception:
+                log.record(f"cell {_node_label(self2)}: error")
+                raise
+            else:
+                log.record(f"cell {_node_label(self2)}: rerun complete")
+
+        diyui._scope.ScopeNode._execute_cell_generator = _execute_cell_gen_with_log  # type: ignore[assignment]
+
+        self._restore = [
+            lambda: setattr(diyui._signal.Signal, "_trigger_cells", _original_trigger),
+            lambda: setattr(diyui._scope.ScopeNode, "_execute_cell", _original_execute),
+            lambda: setattr(diyui._scope.ScopeNode, "_execute_cell_generator", _original_execute_gen),
+        ]
+
+    def stop(self) -> None:
+        """停用事件收集，恢复原始方法。"""
+        for restore_fn in self._restore:
+            restore_fn()
+        self._restore = []
+
 
 @contextlib.contextmanager
 def collect_events(
-    app: diyui.BaseApp, log: EventLog | None = None
+    app: diyui.BaseApp | None = None, log: EventLog | None = None
 ) -> Generator[EventLog, None, None]:
     """上下文管理器：收集 scope tree 运行时事件。
 
-    通过 monkey-patch signal 的 _notify 和 cell 的 _execute_cell 实现。
+    通过 monkey-patch 记录 signal 变化和 cell rerun。
     """
     if log is None:
         log = EventLog()
 
-    # patch signal._trigger_cells 记录事件
-    from diyui._signal import Signal
-
-    _original_trigger_cells = Signal._trigger_cells
-
-    def _trigger_cells_with_log(self: Signal[Any]) -> None:  # type: ignore[name-defined]
-        owner = getattr(self, "owner", None)
-        log.record(f"signal {_signal_name(self)}: {_format_val(self._value)}")  # type: ignore[attr-defined]
-        _original_trigger_cells(self)  # type: ignore[arg-type]
-
-    Signal._trigger_cells = _trigger_cells_with_log  # type: ignore[assignment]
-
+    log.start()
     try:
         yield log
     finally:
-        Signal._trigger_cells = _original_trigger_cells  # type: ignore[assignment]
+        log.stop()
 
 
 def _format_val(val: object) -> str:
