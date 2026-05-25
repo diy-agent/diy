@@ -97,7 +97,7 @@ outline="\033[${m3_outline}m"
 reset=$(printf '\033[0m')
 
 # 测试所有构造的颜色
-test_colors() {
+_test_colors() {
   local composite_colors=(
     "primary" "secondary" "tertiary" "success" "error" "warning" "info"
     "surface" "surface_container" "surface_variant" "inverse_surface" "outline"

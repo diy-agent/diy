@@ -68,9 +68,16 @@ test() { run uv run pytest "${@:-tests/}" -m "not browser";}
 # 子项目自己的命令
 ####################################################################################
 
-panel() {  run uv run panel serve --dev --show examples/*.pn.py; }
+examples() {  run uv run panel serve --dev examples/*.py; }
 
-
+# Panel 诊断工具：适配列表 / 参数一致性 / 签名查询
+# 用法: ./sha.sh panel list             # 组件适配列表
+#       ./sha.sh panel list -g widgets  # 仅 widgets
+#       ./sha.sh panel doctor           # 参数一致性诊断
+#       ./sha.sh panel query -n Button
+doctor() {
+  run uv run python tools/doctor_panel.py "$@"
+}
 #  # 单个测试（精确路径）
 #  ./sha.sh test-head "tests/test_browser.py::TestButtonClickToCellRerun::test_increment_button_updates_counter"
 #
