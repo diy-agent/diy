@@ -1,7 +1,10 @@
 """PanelApp — Panel 专属 diyui App。
 
 用法：app = diypn.PanelApp()
-组件方法名和参数与 Panel 原生保持一致。
+组件方法遵循 Panel 原生子包习惯：
+  app.layout.column()    # 同 pn.layout.Column()
+  app.pane.markdown()    # 同 pn.pane.Markdown()
+  app.widgets.button()   # 同 pn.widgets.Button()
 """
 
 from __future__ import annotations
@@ -18,21 +21,13 @@ from .pane import Markdown
 from .widgets import Button, TextInput, RadioButtonGroup
 
 
-class PanelApp(diyui.BaseApp):
-    """Panel 专属 diyui App。
+class _LayoutFactory:
+    """app.layout.xxx() 工厂，与 pn.layout 一致。"""
 
-    用法：app = diypn.PanelApp()
-    组件方法名和参数与 Panel 原生保持一致。
-    """
+    __slots__ = ("_app",)
 
-    def __init__(self, *, config: diyui.ScopeConfig | None = None) -> None:
-        if config is None:
-            config = diyui.ScopeConfig(scheduler=diyui.ImmediateScheduler())
-        super().__init__()
-        self._config = config
-        self.provider = "panel"
-
-    # ── 容器 ──────────────────────────────────
+    def __init__(self, app: PanelApp) -> None:
+        self._app = app
 
     def column(
         self,
@@ -91,7 +86,7 @@ class PanelApp(diyui.BaseApp):
             scroll_position=scroll_position,
             view_latest=view_latest,
         )
-        self._add_to_current(col)
+        self._app._add_to_current(col)
         return col
 
     def row(
@@ -143,7 +138,7 @@ class PanelApp(diyui.BaseApp):
             loading=loading,
             scroll=scroll,
         )
-        self._add_to_current(row)
+        self._app._add_to_current(row)
         return row
 
     def card(
@@ -225,10 +220,17 @@ class PanelApp(diyui.BaseApp):
             title_css_classes=title_css_classes,
             title=title,
         )
-        self._add_to_current(card)
+        self._app._add_to_current(card)
         return card
 
-    # ── 展示 ──────────────────────────────────
+
+class _PaneFactory:
+    """app.pane.xxx() 工厂，与 pn.pane 一致。"""
+
+    __slots__ = ("_app",)
+
+    def __init__(self, app: PanelApp) -> None:
+        self._app = app
 
     def markdown(
         self,
@@ -298,8 +300,17 @@ class PanelApp(diyui.BaseApp):
             renderer=renderer,
             renderer_options=renderer_options,
         )
-        self._add_to_current(md)
+        self._app._add_to_current(md)
         return md
+
+
+class _WidgetsFactory:
+    """app.widgets.xxx() 工厂，与 pn.widgets 一致。"""
+
+    __slots__ = ("_app",)
+
+    def __init__(self, app: PanelApp) -> None:
+        self._app = app
 
     def button(
         self,
@@ -369,10 +380,8 @@ class PanelApp(diyui.BaseApp):
             button_type=button_type,
             button_style=button_style,
         )
-        self._add_to_current(btn)
+        self._app._add_to_current(btn)
         return btn
-
-    # ── 输入 ──────────────────────────────────
 
     def text_input(
         self,
@@ -432,7 +441,7 @@ class PanelApp(diyui.BaseApp):
             max_length=max_length,
             placeholder=placeholder,
         )
-        self._add_to_current(inp)
+        self._app._add_to_current(inp)
         return inp
 
     def radio_button_group(
@@ -503,8 +512,29 @@ class PanelApp(diyui.BaseApp):
             options=options,
             orientation=orientation,
         )
-        self._add_to_current(radio)
+        self._app._add_to_current(radio)
         return radio
+
+
+class PanelApp(diyui.BaseApp):
+    """Panel 专属 diyui App。
+
+    用法：app = diypn.PanelApp()
+    组件方法遵循 Panel 原生子包习惯：
+      app.layout.column()    # 同 pn.layout.Column()
+      app.pane.markdown()    # 同 pn.pane.Markdown()
+      app.widgets.button()   # 同 pn.widgets.Button()
+    """
+
+    def __init__(self, *, config: diyui.ScopeConfig | None = None) -> None:
+        if config is None:
+            config = diyui.ScopeConfig(scheduler=diyui.ImmediateScheduler())
+        super().__init__()
+        self._config = config
+        self.provider = "panel"
+        self.layout = _LayoutFactory(self)
+        self.pane = _PaneFactory(self)
+        self.widgets = _WidgetsFactory(self)
 
     # ── serve ─────────────────────────────────
 

@@ -36,24 +36,24 @@ class TestComponentPanelStyle:
 
     def test_button_keeps_panel_params(self):
         app = diypn.PanelApp()
-        btn = app.button(name="Run", button_type="primary")
+        btn = app.widgets.button(name="Run", button_type="primary")
         assert btn.name == "Run"
         assert btn.button_type == "primary"
 
     def test_text_input_keeps_panel_params(self):
         app = diypn.PanelApp()
-        inp = app.text_input(name="Name", placeholder="input name")
+        inp = app.widgets.text_input(name="Name", placeholder="input name")
         assert inp.name == "Name"
         assert inp.placeholder == "input name"
 
     def test_radio_button_group_keeps_panel_params(self):
         app = diypn.PanelApp()
-        radio = app.radio_button_group(options=["a", "b", "c"])
+        radio = app.widgets.radio_button_group(options=["a", "b", "c"])
         assert radio.options == ["a", "b", "c"]
 
     def test_markdown_keeps_panel_params(self):
         app = diypn.PanelApp()
-        md = app.markdown("# Title")
+        md = app.pane.markdown("# Title")
         assert "# Title" in str(md.object)
 
 
@@ -67,25 +67,25 @@ class TestWithContextPanelTree:
 
     def test_column_contains_button(self):
         app = diypn.PanelApp()
-        with app.column() as col:
-            btn = app.button(name="Run")
+        with app.layout.column() as col:
+            btn = app.widgets.button(name="Run")
         assert btn.parent is col
         assert btn in col._children
 
     def test_nested_panel_containers(self):
         app = diypn.PanelApp()
-        with app.column() as outer:
-            md1 = app.markdown("outer")
-            with app.row() as inner:
-                btn = app.button(name="Go")
-            md2 = app.markdown("after")
+        with app.layout.column() as outer:
+            md1 = app.pane.markdown("outer")
+            with app.layout.row() as inner:
+                btn = app.widgets.button(name="Go")
+            md2 = app.pane.markdown("after")
         assert outer._children == [md1, inner, md2]
         assert inner._children == [btn]
 
     def test_card_as_container(self):
         app = diypn.PanelApp()
-        with app.card(title="My Card") as card:
-            btn = app.button(name="OK")
+        with app.layout.card(title="My Card") as card:
+            btn = app.widgets.button(name="OK")
         assert btn.parent is card
         assert btn in card._children
         assert card.title == "My Card"
@@ -101,14 +101,14 @@ class TestInputComponentSignal:
 
     def test_text_input_value_reads_signal(self):
         app = diypn.PanelApp()
-        inp = app.text_input(name="Name", value="Alice")
+        inp = app.widgets.text_input(name="Name", value="Alice")
         assert inp.value == "Alice"
         assert inp.signal.value == "Alice"
 
     def test_text_input_value_writes_signal_and_target(self):
         """通过 wrapper.value 写入时，signal 和 Panel 原生值同步更新。"""
         app = diypn.PanelApp()
-        inp = app.text_input(name="Name", value="Alice")
+        inp = app.widgets.text_input(name="Name", value="Alice")
         inp.value = "Bob"
         assert inp.signal.value == "Bob"
         assert inp.value == "Bob"
@@ -119,7 +119,7 @@ class TestInputComponentSignal:
     def test_text_input_panel_native_value_sync(self):
         """通过 Panel param 模拟用户输入，signal.value 应同步。"""
         app = diypn.PanelApp()
-        inp = app.text_input(name="Name", value="Alice")
+        inp = app.widgets.text_input(name="Name", value="Alice")
         # 模拟 Panel 用户输入事件
         inp.param.update(value="Charlie")
         assert inp.signal.value == "Charlie"
@@ -127,7 +127,7 @@ class TestInputComponentSignal:
 
     def test_radio_button_group_value(self):
         app = diypn.PanelApp()
-        radio = app.radio_button_group(options=["a", "b"], value="a")
+        radio = app.widgets.radio_button_group(options=["a", "b"], value="a")
         assert radio.value == "a"
         radio.value = "b"
         assert radio.signal.value == "b"
@@ -147,17 +147,17 @@ class TestWrapperExposesTarget:
 
     def test_button_exposes_target(self):
         app = diypn.PanelApp()
-        btn = app.button(name="Run")
+        btn = app.widgets.button(name="Run")
         assert isinstance(btn.target, pn.widgets.Button)
 
     def test_markdown_exposes_target(self):
         app = diypn.PanelApp()
-        md = app.markdown("hi")
+        md = app.pane.markdown("hi")
         assert isinstance(md.target, pn.pane.Markdown)
 
     def test_column_exposes_target(self):
         app = diypn.PanelApp()
-        col = app.column()
+        col = app.layout.column()
         assert isinstance(col.target, pn.Column)
 
 
@@ -171,38 +171,38 @@ class TestComponentIsPanelNative:
 
     def test_button_is_panel_button(self):
         app = diypn.PanelApp()
-        btn = app.button(name="Run")
+        btn = app.widgets.button(name="Run")
         assert isinstance(btn, pn.widgets.Button)
         assert btn.name == "Run"  # Panel param 直接可访问
 
     def test_text_input_is_panel_text_input(self):
         app = diypn.PanelApp()
-        inp = app.text_input(name="Name", value="Alice")
+        inp = app.widgets.text_input(name="Name", value="Alice")
         assert isinstance(inp, pn.widgets.TextInput)
 
     def test_radio_button_group_is_panel_radio(self):
         app = diypn.PanelApp()
-        radio = app.radio_button_group(options=["a", "b"])
+        radio = app.widgets.radio_button_group(options=["a", "b"])
         assert isinstance(radio, pn.widgets.RadioButtonGroup)
 
     def test_markdown_is_panel_markdown(self):
         app = diypn.PanelApp()
-        md = app.markdown("hi")
+        md = app.pane.markdown("hi")
         assert isinstance(md, pn.pane.Markdown)
 
     def test_column_is_panel_column(self):
         app = diypn.PanelApp()
-        col = app.column()
+        col = app.layout.column()
         assert isinstance(col, pn.Column)
 
     def test_row_is_panel_row(self):
         app = diypn.PanelApp()
-        row = app.row()
+        row = app.layout.row()
         assert isinstance(row, pn.Row)
 
     def test_card_is_panel_card(self):
         app = diypn.PanelApp()
-        card = app.card(title="T")
+        card = app.layout.card(title="T")
         assert isinstance(card, pn.Card)
 
 
@@ -211,7 +211,7 @@ class TestPanelNativeApiDirectAccess:
 
     def test_button_on_click_works_directly(self):
         app = diypn.PanelApp()
-        btn = app.button(name="Run")
+        btn = app.widgets.button(name="Run")
         calls = []
         btn.on_click(lambda e: calls.append(1))
         assert btn.clicks == 0
@@ -220,17 +220,17 @@ class TestPanelNativeApiDirectAccess:
 
     def test_button_clicks_directly(self):
         app = diypn.PanelApp()
-        btn = app.button(name="Run")
+        btn = app.widgets.button(name="Run")
         assert btn.clicks == 0
 
     def test_target_is_self_for_backward_compat(self):
         app = diypn.PanelApp()
-        btn = app.button(name="Run")
+        btn = app.widgets.button(name="Run")
         assert btn.target is btn
 
     def test_text_input_param_watch_directly(self):
         app = diypn.PanelApp()
-        inp = app.text_input(value="hello")
+        inp = app.widgets.text_input(value="hello")
         # param.watch 直接可用（无 .target）
         assert hasattr(inp.param, "watch")
 
@@ -245,7 +245,7 @@ class TestPanelAppSignal:
 
     def test_signal_inside_panel_container(self):
         app = diypn.PanelApp()
-        with app.column() as col:
+        with app.layout.column() as col:
             sig = app.signal(42)
         assert isinstance(sig, diyui.Signal)
         assert sig.owner is col
@@ -260,11 +260,11 @@ class TestPanelAppSignal:
         )
         count = app.signal(0)
 
-        col = app.column()
+        col = app.layout.column()
 
         @col.cell()
         def _(node: object):
-            app.markdown(str(count.value))
+            app.pane.markdown(str(count.value))
 
         assert col._children[0].object == "0"  # type: ignore[attr-defined]
 
@@ -283,14 +283,14 @@ class TestPanelServable:
 
     def test_servable_returns_servable_object(self):
         app = diypn.PanelApp()
-        app.markdown("# Title")
+        app.pane.markdown("# Title")
         result = app.servable()
         assert result is not None
 
     def test_servable_works_with_nested_containers(self):
         app = diypn.PanelApp()
-        with app.column():
-            app.button(name="Run")
+        with app.layout.column():
+            app.widgets.button(name="Run")
         result = app.servable()
         assert result is not None
 
@@ -314,13 +314,13 @@ class TestPanelScenario:
         app = diypn.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
 
         # 模拟 demo 布局：输入组件在一个列中
-        with app.column():
-            name_input = app.text_input(name="Name", value="World")
+        with app.layout.column():
+            name_input = app.widgets.text_input(name="Name", value="World")
 
         # cell 在兄弟列中，读取 name_input.value（跨组件依赖）
-        @app.column().cell()
+        @app.layout.column().cell()
         def _(node: object):
-            app.markdown(f"Hello {name_input.value}")
+            app.pane.markdown(f"Hello {name_input.value}")
 
         # 初始渲染
         assert app._children[1]._children[0].object == "Hello World"  # type: ignore[attr-defined]
@@ -335,15 +335,15 @@ class TestPanelScenario:
         """多个信号变化时 cell 正确 rerun，不遗漏也不多跑。"""
         app = diypn.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
 
-        with app.column():
-            name = app.text_input(name="Name", value="A")
-            mult = app.radio_button_group(
+        with app.layout.column():
+            name = app.widgets.text_input(name="Name", value="A")
+            mult = app.widgets.radio_button_group(
                 name="Mult", options={"x1": 1, "x2": 2}, value=1
             )
 
-        @app.column().cell()
+        @app.layout.column().cell()
         def _(node: object):
-            app.markdown(f"{name.value}×{mult.value}")
+            app.pane.markdown(f"{name.value}×{mult.value}")
 
         cell_col = app._children[1]
         assert cell_col._children[0].object == "A×1"  # type: ignore[attr-defined]
@@ -364,22 +364,22 @@ class TestPanelScenario:
         """
         app = diypn.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
 
-        with app.column():
+        with app.layout.column():
             counter = app.signal(0)
 
-            with app.row():
-                btn_dec = app.button(name="-1")
-                btn_inc = app.button(name="+1")
+            with app.layout.row():
+                btn_dec = app.widgets.button(name="-1")
+                btn_inc = app.widgets.button(name="+1")
                 btn_dec.on_click(lambda e: setattr(counter, "value", counter.value - 1))
                 btn_inc.on_click(lambda e: setattr(counter, "value", counter.value + 1))
 
-            @app.column().cell()
+            @app.layout.column().cell()
             def _(node: object):
-                app.markdown(f"Count: {counter.value}")
+                app.pane.markdown(f"Count: {counter.value}")
 
         # 初始：cell 已执行，counter=0
         outer_col = app._children[0]
-        _row = outer_col._children[0]  # 第1个子节点：app.row()
+        _row = outer_col._children[0]  # 第1个子节点：app.layout.row()
         cell_col = outer_col._children[1]  # 第2个子节点：cell 所在列
         assert cell_col._children[0].object == "Count: 0"  # type: ignore[attr-defined]
 
@@ -401,9 +401,9 @@ class TestPanelScenario:
         这是 UI 渲染正确性的关键：diyui children → Panel Column[:]。
         """
         app = diypn.PanelApp()
-        with app.column():
-            app.markdown("# Title")
-            app.button(name="Click Me")
+        with app.layout.column():
+            app.pane.markdown("# Title")
+            app.widgets.button(name="Click Me")
 
         result = app.servable()
         assert result is not None
@@ -427,9 +427,9 @@ class TestPanelScenario:
 
         count = app.signal(0)
 
-        @app.column().cell()
+        @app.layout.column().cell()
         def _(node: object):
-            app.markdown(str(count.value))
+            app.pane.markdown(str(count.value))
 
         col = app._children[0]
 

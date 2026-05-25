@@ -8,33 +8,33 @@ import diyui.providers.panel as diypn
 
 app = diypn.PanelApp(config=diyui.ScopeConfig(mode="dev", scheduler=diyui.ImmediateScheduler()))
 
-with app.column():
-    app.markdown("# 🧪 Browser Test App")
+with app.layout.column():
+    app.pane.markdown("# 🧪 Browser Test App")
 
-    name_input = app.text_input(name="Name", value="World")
+    name_input = app.widgets.text_input(name="Name", value="World")
 
-    multiplier_input = app.radio_button_group(
+    multiplier_input = app.widgets.radio_button_group(
         name="Multiplier",
         options={"x1": 1, "x2": 2, "x5": 5},
         value=1,
     )
 
-    @app.column().cell()
+    @app.layout.column().cell()
     def _(node: diypn.layout.Column):
-        app.markdown(f"## Hello **{name_input.value}** × {multiplier_input.value} !")
-        app.markdown(f"Repeated: {'🔥' * multiplier_input.value}")
+        app.pane.markdown(f"## Hello **{name_input.value}** × {multiplier_input.value} !")
+        app.pane.markdown(f"Repeated: {'🔥' * multiplier_input.value}")
 
     counter = app.signal(0)
 
-    with app.row():
-        btn_dec = app.button(name="-1")
-        btn_inc = app.button(name="+1")
+    with app.layout.row():
+        btn_dec = app.widgets.button(name="-1")
+        btn_inc = app.widgets.button(name="+1")
         btn_dec.on_click(lambda e: setattr(counter, "value", counter.value - 1))
         btn_inc.on_click(lambda e: setattr(counter, "value", counter.value + 1))
 
-    @app.column().cell()
+    @app.layout.column().cell()
     def _(node: diypn.layout.Column):
-        app.markdown(f"Counter: **{counter.value}**")
+        app.pane.markdown(f"Counter: **{counter.value}**")
 
 
 app.servable()
