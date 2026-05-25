@@ -6,10 +6,12 @@
 
 from __future__ import annotations
 
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from ._scope import ScopeNode
-from ._signal import Signal
+
+if TYPE_CHECKING:
+    from ._signal import Signal
 
 T = TypeVar("T")
 
@@ -47,7 +49,12 @@ class BaseApp(ScopeNode):
     # ── signal ─────────────────────────────────
 
     def signal(self, value: T) -> Signal[T]:
-        """创建 Signal 并挂载到当前 ScopeNode。"""
-        sig = Signal[T](value)
-        self._current._mount_signal(sig)
-        return sig
+        """创建 Signal 并挂载到当前 ScopeNode。
+
+        委托给 _current 的 ScopeNode.signal()（通过 super 跳过自身 override）。
+        """
+        # self._current 可能是 self（app 本身），不能直接调 self._current.signal()
+        # 因为那会再次进入 BaseApp.signal() 造成无限递归。
+        # 走 super() 直接调 ScopeNode.signal()，绕开 BaseApp 的 override。
+        node = self._current
+        return ScopeNode.signal(node, value)

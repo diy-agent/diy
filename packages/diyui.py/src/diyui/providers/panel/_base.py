@@ -36,16 +36,8 @@ class _PanelContainerMixin:
     """
 
     def _add_child(self, child: diyui.ScopeNode) -> None:
-        """添加子节点。非 staging 模式下同时追加到 Panel 原生容器。
-
-        staging 模式下由 _on_child_added 处理即时同步。
-        """
+        """添加子节点，同时同步到 Panel 原生容器。"""
         super(UIComponent, self)._add_child(child)  # type: ignore[arg-type]
-        if not self._staging_mode and isinstance(child, UIComponent):  # type: ignore[attr-defined]
-            self.append(child)  # type: ignore[attr-defined]
-
-    def _on_child_added(self, child: diyui.ScopeNode) -> None:
-        """staging 模式下每次 _add_child 即时同步到 Panel。"""
         if isinstance(child, UIComponent):
             self.append(child)  # type: ignore[attr-defined]
 

@@ -63,9 +63,8 @@ class FakeApp(diyui.ScopeNode):
         self._current._add_child(child)
 
     def signal(self, value: Any):
-        sig: diyui.Signal[Any] = diyui.Signal(value)
-        self._current._mount_signal(sig)
-        return sig
+        node = self._current
+        return diyui.ScopeNode.signal(node, value)
 
     def markdown(self, content: str) -> FakeMarkdown:
         md = FakeMarkdown(content)
@@ -262,7 +261,8 @@ class TestCellStaging:
         assert len(col._children) == 1
         assert col._children[0].content == "42"  # type: ignore[attr-defined]
 
-    def test_failed_rerun_keeps_old_children(self):
+    def test_failed_rerun_clears_children_and_logs_error(self):
+        """去 staging 后，rerun 失败时清空旧 children（不回滚），记录错误。"""
         app = FakeApp()
         value = app.signal("ok")
         fail = app.signal(False)
@@ -275,14 +275,17 @@ class TestCellStaging:
                 raise RuntimeError("bad")
             app.markdown(value.value)
 
-        old_md = col._children[0]
-        assert old_md.content == "ok"  # type: ignore[attr-defined]
+        assert len(col._children) == 1
+        assert col._children[0].content == "ok"  # type: ignore[attr-defined]
 
-        fail.value = True  # 触发 rerun，应该失败
+        fail.value = True  # 触发 rerun，失败
 
-        # 旧 children 保持不变
-        assert col._children == [old_md]
-        assert old_md.content == "ok"  # type: ignore[attr-defined]
+        # 去 staging 后：旧 children 解除关系，不恢复，children 为空
+        assert col._children == []
+        # debug 记录了错误
+        debug = diyui.get_debug(col)
+        assert debug.has_error
+        assert "bad" in (debug.last_error or "")
 
 
 # ═══════════════════════════════════════════════

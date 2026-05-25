@@ -86,6 +86,7 @@ include = ["src", "tests", "examples"]
 extraPaths = ["tools"]
 reportMissingParameterType = true
 reportUnknownParameterType = true
+reportIncompatibleMethodOverride = false
 
 # ========== Pytest 配置 ==========
 [tool.pytest.ini_options]

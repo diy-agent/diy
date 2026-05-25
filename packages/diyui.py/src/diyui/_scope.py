@@ -48,8 +48,7 @@ class ScopeNode:
         self._dependencies: set[object] = set()  # Signal 实例
         self._is_dirty: bool = False
         self._is_executing: bool = False
-        self._staging_mode: bool = False
-        self._staging_children: list[ScopeNode] = []
+        self._is_async_cell: bool = False
         # app 引用，cell 执行时用于 push/pop context
         self._app: BaseApp | None = None
 
@@ -60,13 +59,8 @@ class ScopeNode:
         return self._parent
 
     def _add_child(self, child: ScopeNode) -> None:
-        """添加子节点。staging 模式下进入 _staging_children 并同步到 provider。"""
-        if self._staging_mode:
-            self._staging_children.append(child)
-            # staging 模式下即时同步到 provider（支持 cell 内步进式 UI 更新）
-            self._on_child_added(child)
-        else:
-            self._children.append(child)
+        """添加子节点。"""
+        self._children.append(child)
         child._parent = self
         child._rebuild_ancestor_ids()
 
@@ -105,16 +99,24 @@ class ScopeNode:
 
     # ── signal ─────────────────────────────────
 
+    def signal(self, value: Any) -> Any:
+        """创建 Signal 并挂载到当前 ScopeNode。
+
+        延迟 import 避免循环依赖（_signal 模块 import _scope）。
+        注意：widget 子类可能用同名属性覆盖此方法（如 Button.signal: Signal[bool]）。
+        """
+        from ._signal import Signal
+
+        sig: Signal[Any] = Signal(value)
+        self._mount_signal(sig)
+        return sig
+
     def _mount_signal(self, signal: object) -> None:
         """挂载 Signal，设置 owner。"""
         signal.owner = self  # type: ignore[attr-defined]
         self._signals.append(signal)
 
     # ── provider sync hooks ───────────────────
-
-    def _on_child_added(self, child: ScopeNode) -> None:
-        """子类覆写：新 child 加入时同步到 provider。"""
-        pass
 
     def _on_child_removed(self, child: ScopeNode) -> None:
         """子类覆写：child 移除时从 provider 删除。"""
@@ -151,10 +153,8 @@ class ScopeNode:
 
         - 执行期间保留旧依赖（支持 rerun 中写 signal 的 re-enqueue）
         - 执行后 diff 更新依赖：新增订阅，移除过时订阅
-        - staging 模式：每次 _add_child 即时同步到 provider
-        - 成功：staging children 转为正式 children
-        - 失败：恢复旧 children，清理 staging children
-        - cell 执行期间 self 作为当前 context
+        - 清空旧 children → 执行 fn 重建 → children 即时生效
+        - 失败时（非 initial）记录错误，保留空 children（旧 children 已解除关系）
         """
         from . import _signal as signal_mod
 
@@ -171,11 +171,9 @@ class ScopeNode:
         if app is not None:
             app._push_context(self)  # type: ignore[attr-defined]
 
-        # staging：保存旧 children，清空 provider 侧旧内容，启用 staging mode
+        # 清空旧 children
         old_children = list(self._children)
         self._children = []
-        self._staging_mode = True
-        self._staging_children = []
         self._is_dirty = False
         self._is_executing = True
         signal_mod._current_cell_node = self
@@ -193,26 +191,17 @@ class ScopeNode:
             fn(self)  # type: ignore[arg-type]
         except Exception as exc:
             if not initial:
-                # rerun 失败：恢复旧 children，清理 staging children
                 debug.record_error(exc)
-                self._children = old_children
-                for child in self._staging_children:
-                    child._parent = None
-                    self._on_child_removed(child)
-                self._on_children_replaced(self._children)
             else:
                 raise  # 首次执行报错应传播
-        else:
-            # 成功：旧 children 解除关系，staging children 转为正式
+        finally:
+            # 旧 children 解除关系
             for child in old_children:
                 child._parent = None
-            self._children = self._staging_children
-        finally:
+
             signal_mod._dependency_collector = None
             signal_mod._current_cell_node = None
             signal_mod._rerun_depth -= 1
-            self._staging_mode = False
-            self._staging_children = []
             self._is_executing = False
             if app is not None:
                 app._pop_context()  # type: ignore[attr-defined]
