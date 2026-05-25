@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 # tools/ 不在 installed package 中，手动加到 path
-_tools_dir = Path(__file__).resolve().parent.parent / "tools"
+_tools_dir = Path(__file__).resolve().parent.parent.parent / "tools"
 sys.path.insert(0, str(_tools_dir))
 
 from doctor_panel import (
