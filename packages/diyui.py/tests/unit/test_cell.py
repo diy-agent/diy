@@ -9,74 +9,7 @@ from typing import Any
 import pytest
 
 import diyui
-
-# ═══════════════════════════════════════════════
-# 测试辅助
-# ═══════════════════════════════════════════════
-
-
-class FakeMarkdown(diyui.ScopeNode):
-    def __init__(self, content: str) -> None:
-        super().__init__()
-        self.content = content
-
-
-class FakeColumn(diyui.ScopeNode):
-    """容器组件，支持 with 和 cell。"""
-
-    def __init__(self) -> None:
-        super().__init__()
-        # _app 类型已在 ScopeNode 中声明
-
-    def __enter__(self) -> "FakeColumn":
-        assert self._app is not None
-        self._app._push_context(self)
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        assert self._app is not None
-        self._app._pop_context()
-
-
-class FakeApp(diyui.ScopeNode):
-    """测试用 App。默认 immediate scheduler。"""
-
-    def __init__(self, *, config: diyui.ScopeConfig | None = None) -> None:
-        if config is None:
-            config = diyui.ScopeConfig(scheduler=diyui.ImmediateScheduler())
-        super().__init__(config=config)
-        self._context_stack: list[diyui.ScopeNode] = [self]
-
-    @property
-    def _current(self) -> diyui.ScopeNode:
-        return self._context_stack[-1]
-
-    def _push_context(self, node: diyui.ScopeNode) -> None:
-        self._context_stack.append(node)
-
-    def _pop_context(self) -> None:
-        if len(self._context_stack) <= 1:
-            raise IndexError("不能 pop 最后一个 context")
-        self._context_stack.pop()
-
-    def _add_to_current(self, child: diyui.ScopeNode) -> None:
-        if self._current.get_config("auto_mount_child") is not False:
-            self._current._add_child(child)
-
-    def signal(self, value: Any):
-        node = self._current
-        return diyui.ScopeNode.signal(node, value)
-
-    def markdown(self, content: str) -> FakeMarkdown:
-        md = FakeMarkdown(content)
-        self._add_to_current(md)
-        return md
-
-    def column(self) -> FakeColumn:
-        col = FakeColumn()
-        col._app = self  # type: ignore[assignment]
-        self._add_to_current(col)
-        return col
+from helpers import FakeApp, FakeColumn, FakeMarkdown
 
 
 # ═══════════════════════════════════════════════

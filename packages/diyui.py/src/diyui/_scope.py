@@ -13,12 +13,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from ._base_app import BaseApp
-
-C = TypeVar("C", bound="ScopeNode")
 
 
 class ScopeMode(Enum):
@@ -118,7 +116,7 @@ class ScopeNode:
 
     # ── signal ─────────────────────────────────
 
-    def signal(self, value: Any) -> Any:
+    def signal[VT](self, value: VT) -> Signal[VT]:
         """创建 Signal 并挂载到当前 ScopeNode。
 
         延迟 import 避免循环依赖（_signal 模块 import _scope）。
@@ -126,7 +124,7 @@ class ScopeNode:
         """
         from ._signal import Signal
 
-        sig: Signal[Any] = Signal(value)
+        sig: Signal[VT] = Signal(value)
         self._mount_signal(sig)
         return sig
 
@@ -150,7 +148,7 @@ class ScopeNode:
 
     # ── cell ───────────────────────────────────
 
-    def cell(self: C) -> Callable[[Callable[[C], None]], C]:
+    def cell[T: ScopeNode](self: T) -> Callable[[Callable[[T], None]], T]:
         """标记此组件为 cell。返回装饰器。
 
         cell 函数接收当前 wrapper node 作为参数。
@@ -160,7 +158,7 @@ class ScopeNode:
         """
         import inspect
 
-        def decorator(fn: Callable[[C], None]) -> C:
+        def decorator(fn: Callable[[T], None]) -> T:
             self._cell_fn = fn  # type: ignore[assignment]
             if inspect.isgeneratorfunction(fn):
                 self._is_async_cell = True
@@ -365,12 +363,12 @@ class ScopeNode:
         initial: bool,
         saved_config: ScopeConfig | None,
     ) -> None:
-        import inspect as _inspect
         """sync 路径遇到 awaitable 时，升级到 async 路径。
 
         已执行的生成器进度（self._gen_instance）、已清空的 children、
         已累积的 deps 和 old_children 传递到 async 驱动。
         """
+        import inspect as _inspect
         scheduler = self.get_config("scheduler")
         if scheduler is None or not hasattr(scheduler, "enqueue_async"):
             # 无 async scheduler，回退：跳过 awaitable，继续同步
@@ -444,8 +442,8 @@ class ScopeNode:
         initial: bool,
         saved_config: ScopeConfig | None,
     ) -> None:
-        import inspect as _inspect
         """sync 回退：跳过一个 yield（awaitable），继续同步驱动。"""
+        import inspect as _inspect
         from . import _signal as signal_mod
 
         gen = self._gen_instance

@@ -15,51 +15,16 @@ import diyui
 # ═══════════════════════════════════════════════
 
 
-class FakeMarkdown(diyui.ScopeNode):
-    """测试用 markdown 组件。"""
 
-    def __init__(self, content: str) -> None:
-        super().__init__()
-        self.content = content
+import pytest
 
-
-class FakeColumn(diyui.ScopeNode):
-    """测试用容器组件，支持 with 语法。"""
-
-    def __init__(self) -> None:
-        super().__init__()
-        # _app 类型已在 ScopeNode 中声明为 BaseApp | None
-
-    def __enter__(self) -> "FakeColumn":
-        assert self._app is not None
-        self._app._push_context(self)
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        assert self._app is not None
-        self._app._pop_context()
-
-
-class FakeApp(diyui.BaseApp):
-    """测试用 App，提供最小组件方法。"""
-
-    def markdown(self, content: str) -> FakeMarkdown:
-        md = FakeMarkdown(content)
-        self._add_to_current(md)
-        return md
-
-    def column(self) -> FakeColumn:
-        col = FakeColumn()
-        col._app = self
-        self._add_to_current(col)
-        return col
+import diyui
+from helpers import FakeApp, FakeColumn, FakeMarkdown
 
 
 # ═══════════════════════════════════════════════
 # 构造
 # ═══════════════════════════════════════════════
-
-
 class TestBaseAppConstruction:
     """BaseApp / FakeApp 构造。"""
 

@@ -8,6 +8,139 @@ from collections.abc import Callable, Generator
 from typing import Any
 
 import diyui
+from diyui import ScopeConfig, ScopeMode, ImmediateScheduler
+
+
+# ══════════════════════════════════════════════════════════════════
+# Shared Fake Components for Tests
+# ══════════════════════════════════════════════════════════════════
+
+
+class FakeMarkdown(diyui.ScopeNode):
+    """Fake Markdown component with _tree_label."""
+
+    def __init__(self, content: str) -> None:
+        super().__init__()
+        self.content = content
+
+    def _tree_label(self) -> str:
+        return f'Markdown "{self.content}"'
+
+
+class FakeColumn(diyui.ScopeNode):
+    """Fake Column container with context manager support."""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def __enter__(self) -> "FakeColumn":
+        assert self._app is not None
+        self._app._push_context(self)
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        assert self._app is not None
+        self._app._pop_context()
+
+    def _tree_label(self) -> str:
+        return "Column"
+
+
+class FakeRow(diyui.ScopeNode):
+    """Fake Row container with context manager support."""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def __enter__(self) -> "FakeRow":
+        assert self._app is not None
+        self._app._push_context(self)
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        assert self._app is not None
+        self._app._pop_context()
+
+    def _tree_label(self) -> str:
+        return "Row"
+
+
+class FakeCard(diyui.ScopeNode):
+    """Fake Card container with title and context manager support."""
+
+    def __init__(self, title: str = "") -> None:
+        super().__init__()
+        self.title = title
+
+    def __enter__(self) -> "FakeCard":
+        assert self._app is not None
+        self._app._push_context(self)
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        assert self._app is not None
+        self._app._pop_context()
+
+    def _tree_label(self) -> str:
+        base = "Card"
+        return f'Card "{self.title}"' if self.title else base
+
+
+
+class FakeApp(diyui.BaseApp):
+    """测试用 App，继承 BaseApp，默认 ImmediateScheduler。
+
+    提供 markdown/column/row/card 工厂方法。
+    支持可选 config 参数（如 test_cell.py 需要）。
+    """
+
+    def __init__(self, *, config: ScopeConfig | None = None) -> None:
+        if config is None:
+            config = ScopeConfig(scheduler=ImmediateScheduler())
+        super().__init__()
+        self._config = config
+
+    def _tree_label(self) -> str:
+        return "App"
+
+    def _add_to_current(self, child: diyui.ScopeNode) -> None:
+        """将 child 添加到当前 context 节点，设置 _app。"""
+        child._app = self
+        if self._current.get_config("auto_mount_child") is not False:
+            self._current._add_child(child)
+
+    def signal(self, value: Any):
+        """创建 Signal 并挂载到当前 _current 节点。"""
+        node = self._current
+        return diyui.ScopeNode.signal(node, value)
+
+    def markdown(self, content: str) -> FakeMarkdown:
+        md = FakeMarkdown(content)
+        self._add_to_current(md)
+        return md
+
+    def column(self) -> FakeColumn:
+        col = FakeColumn()
+        col._app = self
+        self._add_to_current(col)
+        return col
+
+    def row(self) -> FakeRow:
+        r = FakeRow()
+        r._app = self
+        self._add_to_current(r)
+        return r
+
+    def card(self, title: str = "") -> FakeCard:
+        card = FakeCard(title)
+        card._app = self
+        self._add_to_current(card)
+        return card
+
+
+# ══════════════════════════════════════════════════════════════════
+# Tree Snapshot
+# ══════════════════════════════════════════════════════════════════
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -137,6 +270,7 @@ class EventLog:
     def start(self) -> None:
         """激活事件收集（monkey-patch signal._trigger_cells 和 cell 执行）。"""
         import diyui._scope
+        import diyui._debug
         import diyui._signal
 
         log = self
@@ -187,10 +321,22 @@ class EventLog:
 
         diyui._scope.ScopeNode._execute_cell_generator = _execute_cell_gen_with_log  # type: ignore[assignment]
 
+        diyui._scope.ScopeNode._execute_cell_generator = _execute_cell_gen_with_log  # type: ignore[assignment]
+
+        # Hook DebugInfo.record_error
+        _original_record_error = diyui._debug.DebugInfo.record_error
+
+        def _record_error_with_log(self2: Any, exc: Exception) -> None:
+            log.record(f"cell {_node_label(self2._node)}: error")  # type: ignore[attr-defined]
+            _original_record_error(self2, exc)
+
+        diyui._debug.DebugInfo.record_error = _record_error_with_log  # type: ignore[assignment]
+
         self._restore = [
             lambda: setattr(diyui._signal.Signal, "_trigger_cells", _original_trigger),
             lambda: setattr(diyui._scope.ScopeNode, "_execute_cell", _original_execute),
             lambda: setattr(diyui._scope.ScopeNode, "_execute_cell_generator", _original_execute_gen),
+            lambda: setattr(diyui._debug.DebugInfo, "record_error", _original_record_error),
         ]
 
     def stop(self) -> None:

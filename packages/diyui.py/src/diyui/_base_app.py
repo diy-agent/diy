@@ -6,14 +6,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 
 from ._scope import ScopeNode
 
 if TYPE_CHECKING:
     from ._signal import Signal
-
-T = TypeVar("T")
 
 
 class BaseApp(ScopeNode):
@@ -53,7 +51,7 @@ class BaseApp(ScopeNode):
 
     # ── signal ─────────────────────────────────
 
-    def signal(self, value: T) -> Signal[T]:
+    def signal[VT](self, value: VT) -> Signal[VT]:
         """创建 Signal 并挂载到当前 ScopeNode。
 
         委托给 _current 的 ScopeNode.signal()（通过 super 跳过自身 override）。
