@@ -1,7 +1,7 @@
 """diy UI Panel Demo — 异步 generator cell 多路并发。
 
 3 个独立的 button，各自触发自己的 generator cell。
-yield awaitable → 异步驱动，不阻塞其他 cell 和其他 UI 组件。
+每步 yield 一个 awaitable → UI 即时更新 → 下一步，步步可见。
 
 运行：uv run panel serve examples/async_cell_demo.py
 """
@@ -18,96 +18,95 @@ app = diypn.PanelApp(
     )
 )
 
-app.pane.markdown("# ⏳ Async Generator Cell — 多路并发")
+app.pane.markdown("# ⏳ Async Generator Cell — 步步可见")
 app.pane.markdown(
-    "3 个独立 cell，各自有 button 触发，yield awaitable 异步执行。\n"
-    "**互不阻塞**——可以同时点击多个按钮，每个 cell 独立驱动。"
+    "每步 yield 一个 awaitable，await 完成后 UI 更新，再下一步。\n"
+    "**互不阻塞**——同时点多个按钮，各自独立推进。"
 )
 
-# ── 模拟异步操作 ──
 
-async def simulate_work(name: str, steps: int, delay: float) -> list[str]:
-    """模拟长时间异步任务：多步骤，每步有延迟。"""
-    results: list[str] = []
-    for i in range(steps):
-        await asyncio.sleep(delay)
-        results.append(
-            f"  [{name}] 步骤 {i + 1}/{steps} — "
-            f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]}"
-        )
-    return results
+# ── 每步一个 awaitable ──
+
+async def step(label: str, n: int, total: int, delay: float) -> str:
+    """单步异步操作：延迟后返回时间戳。"""
+    await asyncio.sleep(delay)
+    return (
+        f"  [{label}] {n}/{total} — "
+        f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]}"
+    )
 
 
 # ═══════════════════════════════════════════════════
-# 多个独立的异步 cell
+# 3 路并行
 # ═══════════════════════════════════════════════════
 
 with app.layout.row():
 
-    # ── Cell A: 快任务（延迟短）──
-    with app.layout.card(title="Cell A — 快任务 (0.3s × 3)", width=400):
-        trigger_a = app.signal(0)
-        app.widgets.button(label="▶ 启动 A", name="btn_a").on_click(
-            lambda e: setattr(trigger_a, "value", trigger_a.value + 1)
+    # ── Cell A: 快 (0.5s × 5) ──
+    with app.layout.card(title="A — 快 (0.5s × 5)", width=400):
+        ta = app.signal(0)
+        app.widgets.button(label="▶ A", name="btn_a").on_click(
+            lambda e: setattr(ta, "value", ta.value + 1)
         )
+        app.pane.markdown(f"触发次数：**{ta.value}**")
 
         @app.layout.card(hide_header=True).cell()
         def _(node: diypn.layout.Column):
-            if trigger_a.value == 0:
-                yield app.pane.markdown("  点击 ▶ 启动")
+            if ta.value == 0:
+                yield app.pane.markdown("  👆 点按钮")
                 return
-
-            yield app.pane.markdown(f"  🟢 A 第 {trigger_a.value} 次启动")
-            steps = yield simulate_work("A", 3, 0.3)
-            for s in steps:
+            yield app.pane.markdown(f"  🟢 启动 #{ta.value}")
+            for i in range(5):
+                s = yield step("A", i + 1, 5, 0.5)
                 yield app.pane.markdown(s)
-            yield app.pane.markdown(f"  ✅ A 完成！")
+            yield app.pane.markdown(f"  ✅ A 完成")
 
-    # ── Cell B: 中任务 ──
-    with app.layout.card(title="Cell B — 中任务 (0.5s × 5)", width=400):
-        trigger_b = app.signal(0)
-        app.widgets.button(label="▶ 启动 B", name="btn_b").on_click(
-            lambda e: setattr(trigger_b, "value", trigger_b.value + 1)
+    # ── Cell B: 中 (0.8s × 5) ──
+    with app.layout.card(title="B — 中 (0.8s × 5)", width=400):
+        tb = app.signal(0)
+        app.widgets.button(label="▶ B", name="btn_b").on_click(
+            lambda e: setattr(tb, "value", tb.value + 1)
         )
+        app.pane.markdown(f"触发次数：**{tb.value}**")
 
         @app.layout.card(hide_header=True).cell()
         def _(node: diypn.layout.Column):
-            if trigger_b.value == 0:
-                yield app.pane.markdown("  点击 ▶ 启动")
+            if tb.value == 0:
+                yield app.pane.markdown("  👆 点按钮")
                 return
-
-            yield app.pane.markdown(f"  🔵 B 第 {trigger_b.value} 次启动")
-            steps = yield simulate_work("B", 5, 0.5)
-            for s in steps:
+            yield app.pane.markdown(f"  🔵 启动 #{tb.value}")
+            for i in range(5):
+                s = yield step("B", i + 1, 5, 0.8)
                 yield app.pane.markdown(s)
-            yield app.pane.markdown(f"  ✅ B 完成！")
+            yield app.pane.markdown(f"  ✅ B 完成")
 
-    # ── Cell C: 慢任务 ──
-    with app.layout.card(title="Cell C — 慢任务 (1.0s × 3)", width=400):
-        trigger_c = app.signal(0)
-        app.widgets.button(label="▶ 启动 C", name="btn_c").on_click(
-            lambda e: setattr(trigger_c, "value", trigger_c.value + 1)
+    # ── Cell C: 慢 (1.5s × 3) ──
+    with app.layout.card(title="C — 慢 (1.5s × 3)", width=400):
+        tc = app.signal(0)
+        app.widgets.button(label="▶ C", name="btn_c").on_click(
+            lambda e: setattr(tc, "value", tc.value + 1)
         )
+        app.pane.markdown(f"触发次数：**{tc.value}**")
 
         @app.layout.card(hide_header=True).cell()
         def _(node: diypn.layout.Column):
-            if trigger_c.value == 0:
-                yield app.pane.markdown("  点击 ▶ 启动")
+            if tc.value == 0:
+                yield app.pane.markdown("  👆 点按钮")
                 return
-
-            yield app.pane.markdown(f"  🟡 C 第 {trigger_c.value} 次启动")
-            steps = yield simulate_work("C", 3, 1.0)
-            for s in steps:
+            yield app.pane.markdown(f"  🟡 启动 #{tc.value}")
+            for i in range(3):
+                s = yield step("C", i + 1, 3, 1.5)
                 yield app.pane.markdown(s)
-            yield app.pane.markdown(f"  ✅ C 完成！")
+            yield app.pane.markdown(f"  ✅ C 完成")
+
 
 app.pane.markdown("---")
 app.pane.markdown("### 观察要点")
 app.pane.markdown("""
-1. **同时点击多个按钮**——3 个 cell 并行驱动，互不阻塞
-2. **快任务先完成**——A (0.3s×3) 在 C 的第二个步骤之前就会完成
-3. **各自独立 rerun**——A 第二次触发不影响 B 和 C
-4. **Bokeh UI 不冻结**——`await asyncio.sleep()` 不阻塞事件循环
+1. **步步可见** — 每个 yield → await 完成 → UI 更新 → 下一步，不像一次性弹出来
+2. **同时点击 A+B+C** — 三路并行，A 先到 5/5，C 还在 2/3
+3. **各自独立** — A 的 rerun 不影响 B/C
+4. **Bokeh UI 不冻结** — `await asyncio.sleep()` 不阻塞事件循环
 """)
 
 app.servable()
