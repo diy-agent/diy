@@ -7,12 +7,12 @@
 
 | Phase | 内容 | 状态 | 完成日期 | 备注 |
 |-------|------|------|---------|------|
-| P1 | 清理与简化（signal 下沉、去 staging） | ⬜ 未开始 | — | |
-| P2 | ScopeConfig 强类型化 + auto_mount | ⬜ 未开始 | — | |
-| P3 | 生成器 cell 核心实现 | ⬜ 未开始 | — | 不含 awaitable |
-| P4 | 异步 yield awaitable 支持 | ⬜ 未开始 | — | |
-| P5 | 测试重组 + tree snapshot + event log | ⬜ 未开始 | — | |
-| P6 | 文档迁移 | ⬜ 未开始 | — | |
+| P1 | 清理与简化（signal 下沉、去 staging） | ✅ 已完成 | 2026-05-25 | |
+| P2 | ScopeConfig 强类型化 + auto_mount_child | ✅ 已完成 | 2026-05-25 | auto_mount → auto_mount_child |
+| P3 | 生成器 cell 核心实现 | ✅ 已完成 | 2026-05-25 | 不含 awaitable |
+| P4 | 异步 yield awaitable 支持 | ✅ 已完成 | 2026-05-25 | _drive_generator_async + enqueue_async |
+| P5 | 测试重组 + tree snapshot + event log | ✅ 已完成 | 2026-05-25 | unit/intent/integration/browser/tools |
+| P6 | 文档迁移 + 示例补全 | 🔄 进行中 | — | |
 
 > 进度标记：⬜ 未开始 → 🔄 进行中 → ✅ 已完成
 > 每次 Phase 完成后更新此表 + 提交时在 commit message 中引用 `ref: design/async-cell P{N}`

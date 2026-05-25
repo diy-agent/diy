@@ -7,14 +7,19 @@
 ```
 diyui.py/
 ├── src/diyui/           # 源码
-│   ├── signal.py       # Signal[T] 可观察状态容器
-│   ├── scope.py        # ScopeNode 运行时树节点、Cell 依赖追踪
-│   ├── scheduler.py    # 调度器：ImmediateScheduler / BatchScheduler
-│   ├── debug.py        # 调试：错误捕获、rerun 计数
-│   ├── base_app.py     # BaseApp 基类，上下文栈管理
+│   ├── _signal.py      # Signal[T] 可观察状态容器
+│   ├── _scope.py       # ScopeNode 运行时树节点、Cell 依赖追踪
+│   ├── _scheduler.py   # 调度器：ImmediateScheduler
+│   ├── _debug.py       # 调试：错误捕获、rerun 计数
+│   ├── _base_app.py    # BaseApp 基类，上下文栈管理
 │   └── providers/      # UI 框架适配器
-│       └── panel.py    # Panel provider
-├── tests/              # 测试（对应各模块）
+│       └── panel/      # Panel provider
+├── tests/
+│   ├── unit/           # 纯逻辑单元测试
+│   ├── intent/         # 意图测试（tree snapshot + event log）
+│   ├── integration/    # Provider 集成测试
+│   ├── browser/        # Playwright 端到端测试
+│   └── tools/          # 工具自身测试
 ├── examples/           # 示例
 ├── pyproject.toml      # 项目配置（uv + ruff）
 └── sha.sh              # 开发脚本
@@ -23,7 +28,10 @@ diyui.py/
 ## 核心概念
 - **Signal**: 可观察单值状态，读写自动触发依赖更新
 - **ScopeNode**: 树形作用域，管理 Signal 生命周期和 Cell
-- **Cell**: 响应式函数，依赖 Signal 变化自动 rerun
+- **Cell**: 响应式函数（同步/生成器），依赖 Signal 变化自动 rerun
+- **Generator Cell**: 生成器形式的 cell，yield 组件自动挂载
+- **Async Cell**: cell 中 yield awaitable，异步驱动
+- **auto_mount_child**: 控制 factory（app.xxx()）是否自动挂载子组件
 - **BaseApp**: 根节点，提供 `app.signal()` 和上下文管理
 
 ## Commit 前检查清单
