@@ -76,11 +76,21 @@ def _node_label(node: diyui.ScopeNode) -> str:
 
 
 def _signal_name(sig: object) -> str:
-    """获取 signal 的可读名称。"""
-    # 尝试从 owner class 中找属性名
+    """获取 signal 的可读名称。
+
+    依次从 owner class members、owner __dict__ 查找。
+    """
     owner = getattr(sig, "owner", None)  # type: ignore[attr-defined]
     if owner is not None:
+        # 优先使用显式设置的 _name
+        if hasattr(sig, "_name"):  # type: ignore[attr-defined]
+            return sig._name  # type: ignore[attr-defined]
+        # 从 class members 找（property、descriptor 等）
         for name, val in inspect.getmembers(owner):
+            if val is sig:
+                return name
+        # 从 instance __dict__ 找（直接赋值的属性）
+        for name, val in owner.__dict__.items():
             if val is sig:
                 return name
     return "signal"

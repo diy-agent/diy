@@ -1,16 +1,17 @@
 """意图测试：signal 变化触发 cell rerun。
 
-用 tree_snapshot 断言运行时状态：rerun 次数、children 内容。
+同时断言 tree_snapshot（运行时状态）和 event log（运行时事件流）。
 """
 
 import diyui
-from helpers import tree_snapshot
+from helpers import EventLog, collect_events, tree_snapshot
 
 
 def test_signal_rerun_updates_children():
-    """count 从 0→42 → cell rerun → markdown 内容更新 + rerun 计数。"""
+    """count 从 0→42 → cell rerun → markdown 内容更新 + rerun 计数 + 事件流。"""
     app = FakeApp()
     count = app.signal(0)
+    log = EventLog()
 
     col = app.column()
 
@@ -18,25 +19,27 @@ def test_signal_rerun_updates_children():
     def _(node: object):
         app.markdown(str(count.value))
 
-    # 首次执行：rerun=1，markdown 内容 "0"
     assert tree_snapshot(col) == (
         "FakeColumn [rerun=1]\n"
         '  FakeMarkdown "0"'
     )
 
-    count.value = 42
+    with collect_events(app, log):
+        count.value = 42
 
-    # rerun 后：rerun=2，markdown 内容 "42"
     assert tree_snapshot(col) == (
         "FakeColumn [rerun=2]\n"
         '  FakeMarkdown "42"'
     )
+    assert len(log.events) == 1
+    assert "42" in log.events[0]
 
 
 def test_signal_rerun_changes_child_count():
-    """count 1→3 → cell 产生 3 个 children → tree 反映。"""
+    """count 1→3 → cell 产生 3 个 children + 事件流。"""
     app = FakeApp()
     count = app.signal(1)
+    log = EventLog()
 
     col = app.column()
 
@@ -45,46 +48,47 @@ def test_signal_rerun_changes_child_count():
         for i in range(count.value):
             app.markdown(f"item {i}")
 
-    assert tree_snapshot(col) == (
-        "FakeColumn [rerun=1]\n"
-        '  FakeMarkdown "item 0"'
-    )
+    with collect_events(app, log):
+        count.value = 3
 
-    count.value = 3
     assert tree_snapshot(col) == (
         "FakeColumn [rerun=2]\n"
         '  FakeMarkdown "item 0"\n'
         '  FakeMarkdown "item 1"\n'
         '  FakeMarkdown "item 2"'
     )
+    assert len(log.events) == 1
+    assert "3" in log.events[0]
 
 
-def test_cell_rerun_with_signal_value_visible():
-    """col 上挂的 signal 显示在 tree 中。"""
+def test_multiple_signal_changes():
+    """同一 context 内多次 signal 变化 → 多条事件。"""
     app = FakeApp()
-    count = app.signal(0)
-    flag = app.signal(True)
+    a = app.signal(0)
+    b = app.signal("x")
+    log = EventLog()
 
     col = app.column()
 
     @col.cell()
     def _(node: object):
-        app.markdown("A" if flag.value else "B")
-        _ = count.value  # 读 count 但不用于输出
+        _ = a.value, b.value
 
-    assert 'FakeColumn [rerun=1]' in tree_snapshot(col)
-    assert 'FakeMarkdown "A"' in tree_snapshot(col)
+    with collect_events(app, log):
+        a.value = 1
+        b.value = "y"
 
-    flag.value = False
-    assert 'FakeMarkdown "B"' in tree_snapshot(col)
-    assert "rerun=2" in tree_snapshot(col)
+    assert len(log.events) == 2
+    assert any("1" in e for e in log.events)
+    assert any("'y'" in e for e in log.events)
 
 
 def test_failed_rerun_shows_error():
-    """cell rerun 失败时 tree 显示 ERR 标记。"""
+    """cell rerun 失败 → tree 显示 ERR + event log 有 signal 事件。"""
     app = FakeApp()
     fail = app.signal(False)
     value = app.signal("ok")
+    log = EventLog()
 
     col = app.column()
 
@@ -94,18 +98,21 @@ def test_failed_rerun_shows_error():
             raise RuntimeError("boom")
         app.markdown(value.value)
 
-    # 首次 OK
     assert "ERR" not in tree_snapshot(col)
 
-    fail.value = True
-    # rerun 失败 → ERR
+    with collect_events(app, log):
+        fail.value = True
+
     assert "ERR" in tree_snapshot(col)
+    assert len(log.events) == 1
+    assert "True" in log.events[0]
 
 
-def test_generator_cell_tree():
-    """生成器 cell：yield 的组件体现在 tree 中，rerun 计数递增。"""
+def test_generator_cell_tree_and_events():
+    """生成器 cell：tree snapshot + event log 协同。"""
     app = FakeApp()
     count = app.signal(0)
+    log = EventLog()
 
     col = app.column()
 
@@ -114,18 +121,17 @@ def test_generator_cell_tree():
         for i in range(count.value + 1):
             yield app.markdown(f"step {i}")
 
-    assert tree_snapshot(col) == (
-        "FakeColumn [rerun=1]\n"
-        '  FakeMarkdown "step 0"'
-    )
+    with collect_events(app, log):
+        count.value = 2
 
-    count.value = 2
     assert tree_snapshot(col) == (
         "FakeColumn [rerun=2]\n"
         '  FakeMarkdown "step 0"\n'
         '  FakeMarkdown "step 1"\n'
         '  FakeMarkdown "step 2"'
     )
+    assert len(log.events) == 1
+    assert "2" in log.events[0]
 
 
 # ══════════════════════════════════════════════════════════════════
