@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.9](https://github.com/diy-agent/diy/compare/diy-v0.1.8...diy-v0.1.9) (2026-05-26)
+
+
+### Bug Fixes
+
+* **ci:** git submodule SSH→HTTPS 重写，修复 Actions 无法 clone 公开仓库 ([709f416](https://github.com/diy-agent/diy/commit/709f416b70638ea8f1643016f02a459d4f6373f1))
+* **publish:** 配置全局 git url 为 https 以避免 ssh 认证问题,action环境没有ssh key无法clone ([b0e6b03](https://github.com/diy-agent/diy/commit/b0e6b03c187ab505943fba61e89a4e9a1c29d1cd))
+
 ## [0.1.8](https://github.com/diy-agent/diy/compare/diy-v0.1.7...diy-v0.1.8) (2026-05-26)
 
 
