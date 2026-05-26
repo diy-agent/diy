@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.7](https://github.com/diy-agent/diy/compare/diy-v0.1.6...diy-v0.1.7) (2026-05-26)
+
+
+### Features
+
+* **devui:** add panel more widgets ([#74](https://github.com/diy-agent/diy/issues/74)) ([5b78e7d](https://github.com/diy-agent/diy/commit/5b78e7dda747747cbc0c5bf348d720c75cbe41a7))
+* **diydev:** add find-context and win-file-unlock skills ([d28ec6b](https://github.com/diy-agent/diy/commit/d28ec6b086fcab7acf4caf9b0ece667b4f3cf9f7))
+
+
+### Bug Fixes
+
+* **diyui:** 修复代码规范 + 统一测试辅助类 + PEP 695 泛型标注 ([2f80660](https://github.com/diy-agent/diy/commit/2f8066094ed5f951812ed9efcfcb546314b395d3))
+
 ## [0.1.6](https://github.com/diy-agent/diy/compare/diy-v0.1.5...diy-v0.1.6) (2026-05-24)
 
 
