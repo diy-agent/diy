@@ -488,15 +488,29 @@ dependencies = [
     { name = "diyui" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "diydev", editable = "packages/diydev" },
     { name = "diyui", editable = "packages/diyui.py" },
 ]
 
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1.409" },
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "ruff", specifier = ">=0.15.12" },
+]
+
 [[package]]
 name = "diydev"
-version = "0.1.0"
+version = "0.1.12"
 source = { editable = "packages/diydev" }
 dependencies = [
     { name = "cyclopts" },
@@ -511,7 +525,7 @@ requires-dist = [
 
 [[package]]
 name = "diyui"
-version = "0.1.4"
+version = "0.1.12"
 source = { editable = "packages/diyui.py" }
 dependencies = [
     { name = "asyncio" },
@@ -529,10 +543,7 @@ dev = [
     { name = "jupytext" },
     { name = "pip" },
     { name = "playwright" },
-    { name = "pyright" },
-    { name = "pytest" },
     { name = "pytest-playwright" },
-    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -552,10 +563,7 @@ dev = [
     { name = "jupytext", specifier = ">=1.19.1" },
     { name = "pip", specifier = ">=25.3" },
     { name = "playwright", specifier = ">=1.57.0" },
-    { name = "pyright", specifier = ">=1.1.409" },
-    { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-playwright", specifier = ">=0.7.0" },
-    { name = "ruff", specifier = ">=0.15.12" },
 ]
 
 [[package]]
