@@ -34,6 +34,11 @@ jobs:
               with:
                   python-version: "3.12"
 
+            - name: 安装依赖与 Playwright 浏览器
+              run: |
+                  uv sync --all-packages --group dev
+                  uv run playwright install chromium --with-deps
+
             - name: 发布到 PyPI
               env:
                   UV_PUBLISH_TOKEN: ${{ secrets.UV_PUBLISH_TOKEN }}
