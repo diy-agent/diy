@@ -106,7 +106,7 @@ class FakeApp(diyui.BaseApp):
     def _add_to_current(self, child: diyui.ScopeNode) -> None:
         """将 child 添加到当前 context 节点，设置 _app。"""
         child._app = self
-        if self._current.get_config("auto_mount_child") is not False:
+        if self._current.auto_mount_child:
             self._current._add_child(child)
 
     def signal(self, value: Any):

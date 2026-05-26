@@ -27,7 +27,7 @@ class TestDebugInfoBasics:
     def test_mode_defaults_to_prod(self):
         node = diyui.ScopeNode()
         info = diyui.DebugInfo(node)
-        # 无配置时 get_config 返回 None，debug 应视为 prod
+        # 无配置时 mode 默认 PROD
         assert info.mode == diyui.ScopeMode.PROD
 
     def test_record_error(self):

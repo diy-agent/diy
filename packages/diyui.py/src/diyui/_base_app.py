@@ -43,10 +43,10 @@ class BaseApp(ScopeNode):
         """将 child 添加到当前 context 节点。
 
         若当前节点的 auto_mount_child 为 False，仅设置 _app，不挂载。
-        auto_mount_child 通过 get_config 从当前 context 节点向上追溯。
+        auto_mount_child 通过 property 从当前 context 节点向上追溯。
         """
         child._app = self
-        if self._current.get_config("auto_mount_child") is not False:
+        if self._current.auto_mount_child:
             self._current._add_child(child)
 
     # ── signal ─────────────────────────────────

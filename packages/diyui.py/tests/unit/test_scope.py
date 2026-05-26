@@ -97,27 +97,27 @@ class TestAncestorIds:
 
 
 class TestScopeConfigLookup:
-    """get_config 向上追溯：自己 → 父 → 祖父 → 默认值。"""
+    """mode/scheduler/auto_mount_child property 向上追溯：自己 → 父 → 祖父 → 默认值。"""
 
     def test_returns_own_config_if_set(self):
         node = diyui.ScopeNode(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV))
-        assert node.get_config("mode") == diyui.ScopeMode.DEV
+        assert node.mode == diyui.ScopeMode.DEV
 
     def test_falls_back_to_parent(self):
         parent = diyui.ScopeNode(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV))
         child = diyui.ScopeNode()
         parent._add_child(child)
-        assert child.get_config("mode") == diyui.ScopeMode.DEV
+        assert child.mode == diyui.ScopeMode.DEV
 
     def test_own_config_overrides_parent(self):
         parent = diyui.ScopeNode(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV))
         child = diyui.ScopeNode(config=diyui.ScopeConfig(mode=diyui.ScopeMode.PROD))
         parent._add_child(child)
-        assert child.get_config("mode") == diyui.ScopeMode.PROD
+        assert child.mode == diyui.ScopeMode.PROD
 
-    def test_returns_none_when_no_config_in_chain(self):
+    def test_defaults_to_prod_when_no_config_in_chain(self):
         node = diyui.ScopeNode()
-        assert node.get_config("mode") is None
+        assert node.mode == diyui.ScopeMode.PROD
 
     def test_deep_chain_fallback(self):
         root = diyui.ScopeNode(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV))
@@ -125,15 +125,16 @@ class TestScopeConfigLookup:
         leaf = diyui.ScopeNode(config=diyui.ScopeConfig(mode=diyui.ScopeMode.PROD))
         root._add_child(mid)
         mid._add_child(leaf)
-        assert leaf.get_config("mode") == diyui.ScopeMode.PROD
-        assert mid.get_config("mode") == diyui.ScopeMode.DEV
+        assert leaf.mode == diyui.ScopeMode.PROD
+        assert mid.mode == diyui.ScopeMode.DEV
 
     def test_scheduler_lookup_same_rule(self):
-        """scheduler 和其他配置遵循同一向上追溯规则。"""
-        parent = diyui.ScopeNode(config=diyui.ScopeConfig(scheduler="immediate"))
+        """scheduler 和其他属性遵循同一向上追溯规则。"""
+        sched = diyui.ImmediateScheduler()
+        parent = diyui.ScopeNode(config=diyui.ScopeConfig(scheduler=sched))
         child = diyui.ScopeNode()
         parent._add_child(child)
-        assert child.get_config("scheduler") == "immediate"
+        assert child.scheduler is sched
 
 
 # ═══════════════════════════════════════════════

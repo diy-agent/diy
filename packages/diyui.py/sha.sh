@@ -89,9 +89,9 @@ doctor() {
 #
 #  # 无参数 = 全部 15 个
 #  ./sha.sh test-headless
-test-headless() { run uv run pytest -v --browser chromium "${@:-tests/test_browser.py}";}
+test-headless() { run uv run pytest -v --browser chromium "${@:-tests/browser/test*.py}";}
 # 有头模式 + slowmo 500ms，可以看着浏览器执行
-test-head() { run uv run pytest -v --browser chromium --headed --slowmo 500 "${@:-tests/test_browser.py}";}
+test-head() { run uv run pytest -v --browser chromium --headed --slowmo 500 "${@:-tests/browser/test*.py}";}
 # unit test
 test-all() { test; test-headless;}
 

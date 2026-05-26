@@ -29,8 +29,7 @@ class DebugInfo:
     def mode(self) -> ScopeMode:
         from ._scope import ScopeMode
 
-        m = self._node.get_config("mode")
-        return m if m is not None else ScopeMode.PROD
+        return self._node.mode
 
     @property
     def has_error(self) -> bool:

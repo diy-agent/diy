@@ -71,11 +71,11 @@ class TestSchedulerConfig:
     def test_immediate_scheduler_from_config(self):
         sched = diyui.ImmediateScheduler()
         node = diyui.ScopeNode(config=diyui.ScopeConfig(scheduler=sched))
-        assert node.get_config("scheduler") is sched
+        assert node.scheduler is sched
 
     def test_child_inherits_parent_scheduler(self):
         sched = diyui.ImmediateScheduler()
         parent = diyui.ScopeNode(config=diyui.ScopeConfig(scheduler=sched))
         child = diyui.ScopeNode()
         parent._add_child(child)
-        assert child.get_config("scheduler") is sched
+        assert child.scheduler is sched

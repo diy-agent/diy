@@ -8,14 +8,15 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Callable
-from typing import Generic, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
-T = TypeVar("T")
+if TYPE_CHECKING:
+    from ._scope import ScopeNode
 
 # 模块级依赖收集器，cell 执行时设置
 _dependency_collector: Callable[[Signal[object]], None] | None = None
 # 模块级当前 cell node，用于跨 scope 检查
-_current_cell_node: object | None = None
+_current_cell_node: ScopeNode | None = None
 # 防止嵌套 rerun 的深度计数
 _rerun_depth: int = 0
 
@@ -26,7 +27,7 @@ class ScopeViolationError(Exception):
     pass
 
 
-class Signal(Generic[T]):
+class Signal[T]:
     """可观察的单值状态容器。
 
     读写规则：
@@ -39,9 +40,9 @@ class Signal(Generic[T]):
     def __init__(self, value: T) -> None:
         self._value: T = value
         self._observers: list[Callable[[T], None]] = []
-        self._owner: object | None = None
+        self._owner: ScopeNode | None = None
         self._tracker: Callable[[Signal[T]], None] | None = None
-        self._cell_subscribers: set[object] = set()  # ScopeNode 实例
+        self._cell_subscribers: set[ScopeNode] = set()
         self._reset_on_complete: bool = False  # cell rerun 完成后自动重置为 False
 
     # ── value ──────────────────────────────────
@@ -59,7 +60,7 @@ class Signal(Generic[T]):
                 cross_scope = True
                 from ._scope import ScopeMode
 
-                mode = _current_cell_node.get_config("mode")  # type: ignore[attr-defined]
+                mode = _current_cell_node.mode  # type: ignore[attr-defined]
                 if mode == ScopeMode.DEV:
                     raise ScopeViolationError(
                         "Cross-scope signal access: cell node not in signal owner's subtree"
@@ -85,11 +86,11 @@ class Signal(Generic[T]):
     # ── owner ──────────────────────────────────
 
     @property
-    def owner(self) -> object | None:
+    def owner(self) -> ScopeNode | None:
         return self._owner
 
     @owner.setter
-    def owner(self, node: object | None) -> None:
+    def owner(self, node: ScopeNode | None) -> None:
         self._owner = node
 
     # ── observers ──────────────────────────────
@@ -107,10 +108,10 @@ class Signal(Generic[T]):
 
     # ── cell subscribers ───────────────────────
 
-    def _subscribe_cell(self, cell_node: object) -> None:
+    def _subscribe_cell(self, cell_node: ScopeNode) -> None:
         self._cell_subscribers.add(cell_node)
 
-    def _unsubscribe_cell(self, cell_node: object) -> None:
+    def _unsubscribe_cell(self, cell_node: ScopeNode) -> None:
         self._cell_subscribers.discard(cell_node)
 
     def _trigger_cells(self) -> None:
@@ -121,7 +122,7 @@ class Signal(Generic[T]):
             cell_node._mark_dirty()  # type: ignore[attr-defined]
             if cell_node._is_executing:  # type: ignore[attr-defined]
                 continue  # 正在执行中，不入队，避免嵌套
-            scheduler = cell_node.get_config("scheduler")  # type: ignore[attr-defined]
+            scheduler = cell_node.scheduler  # type: ignore[attr-defined]
             if scheduler is not None:
                 if cell_node._is_async_cell:  # type: ignore[attr-defined]
                     scheduler.enqueue(lambda cn=cell_node: cn._execute_cell_generator())  # type: ignore[attr-defined]
