@@ -26,9 +26,6 @@ logs/
 state/
 data/
 
-.claude/worktrees
-.claude/settings.local.json
-
 # diy ref
 .diy/ref/
 
@@ -41,3 +38,4 @@ data/
 src/diy-core/devtools/client
 
 .worktree/
+.playwright-cli/
