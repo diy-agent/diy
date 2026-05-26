@@ -1,6 +1,6 @@
 [project]
 name = "diyui"
-version = "0.1.10" # x-release-please-version
+version = "0.1.12" # x-release-please-version
 description = "diyui - A thin reactive wrapper over UI frameworks."
 dependencies = [
     "marimo>=0.23.2",

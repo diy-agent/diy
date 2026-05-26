@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.12](https://github.com/diy-agent/diy/compare/diy-v0.1.11...diy-v0.1.12) (2026-05-26)
+
+
+### Bug Fixes
+
+* 对齐子包版本号 0.1.10，添加 x-release-please-version 标记使 extra-files 自动更新生效 ([80f0f86](https://github.com/diy-agent/diy/commit/80f0f86019eaff2797fb1770d07eb144ae245325))
+
 ## [0.1.11](https://github.com/diy-agent/diy/compare/diy-v0.1.10...diy-v0.1.11) (2026-05-26)
 
 
