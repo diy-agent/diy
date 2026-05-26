@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8](https://github.com/diy-agent/diy/compare/diy-v0.1.7...diy-v0.1.8) (2026-05-26)
+
+
+### Bug Fixes
+
+* **publish:** publish script ([01e6b41](https://github.com/diy-agent/diy/commit/01e6b41bd2df98b0fb92a4463a0928e449d232bb))
+
 ## [0.1.7](https://github.com/diy-agent/diy/compare/diy-v0.1.6...diy-v0.1.7) (2026-05-26)
 
 
