@@ -4,13 +4,10 @@ Cell 是 rerun 单位。普通函数不是 reactive component。
 cell 函数接收当前 wrapper node 参数。定义时首次执行，依赖变化时自动 rerun。
 """
 
-from typing import Any
-
 import pytest
+from helpers import FakeApp
 
 import diyui
-from helpers import FakeApp, FakeColumn, FakeMarkdown
-
 
 # ═══════════════════════════════════════════════
 # cell 基础
@@ -286,7 +283,11 @@ class TestCrossScopeSignal:
     """子树外访问 signal：dev 报错。"""
 
     def test_cross_scope_read_raises_in_dev(self):
-        app = FakeApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
+        app = FakeApp(
+            config=diyui.ScopeConfig(
+                mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()
+            )
+        )
 
         with app.column() as _left:
             secret = app.signal("left-secret")
@@ -300,7 +301,11 @@ class TestCrossScopeSignal:
 
     def test_cross_scope_no_error_in_prod(self):
         """prod 模式不报错，但也不注册依赖。"""
-        app = FakeApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.PROD, scheduler=diyui.ImmediateScheduler()))
+        app = FakeApp(
+            config=diyui.ScopeConfig(
+                mode=diyui.ScopeMode.PROD, scheduler=diyui.ImmediateScheduler()
+            )
+        )
 
         with app.column() as _left:
             secret = app.signal("left-secret")
@@ -489,7 +494,7 @@ class TestAsyncGeneratorCell:
         app = FakeApp()
         col = app.column()
 
-        def sync_cell(node: object):
+        def sync_cell(node: object):  # type: ignore[return-type]
             yield app.markdown("before")
             data = yield fetch()
             yield app.markdown(data)
@@ -501,9 +506,9 @@ class TestAsyncGeneratorCell:
             scheduler=diyui.ImmediateScheduler(),
         )
 
-        async def run():
+        async def run() -> list[object]:
             await col._drive_generator_async(initial=True)
-            return col._children
+            return col._children  # type: ignore[return-value]
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -525,7 +530,7 @@ class TestAsyncGeneratorCell:
         async def task():
             results.append("ran")
 
-        async def run():
+        async def run() -> list[str]:
             scheduler.enqueue_async(lambda: task())
             await asyncio.sleep(0)
             return results
@@ -548,7 +553,7 @@ class TestAsyncGeneratorCell:
             await asyncio.sleep(0)
             return "loaded"
 
-        def sync_cell(node: object):
+        def sync_cell(node: object):  # type: ignore[return-type]
             data = yield fetch()
             yield app.markdown(data)
 
@@ -561,7 +566,7 @@ class TestAsyncGeneratorCell:
             scheduler=diyui.ImmediateScheduler(),
         )
 
-        async def run():
+        async def run() -> list[object]:
             await col._drive_generator_async(initial=True)
             return [c.content for c in col._children]  # type: ignore[attr-defined]
 
@@ -572,5 +577,3 @@ class TestAsyncGeneratorCell:
             assert children == ["loaded"]
         finally:
             loop.close()
-
-

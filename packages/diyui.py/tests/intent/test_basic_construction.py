@@ -6,18 +6,11 @@
 意图：让人类看一眼 tree_snapshot 输出就理解系统做了什么。
 """
 
-import diyui
-from helpers import tree_snapshot
-
-
 # ══════════════════════════════════════════════════════════════════
 # Shared Fake Components
 # ══════════════════════════════════════════════════════════════════
-
-
-import diyui
 from helpers import (
-    FakeApp, FakeMarkdown, FakeColumn, FakeRow, FakeCard,
+    FakeApp,
     tree_snapshot,
 )
 
@@ -34,11 +27,7 @@ def test_two_components_on_root():
     app.markdown("# 标题")
     app.markdown("正文")
 
-    assert tree_snapshot(app) == (
-        "App\n"
-        '  Markdown "# 标题"\n'
-        '  Markdown "正文"'
-    )
+    assert tree_snapshot(app) == ('App\n  Markdown "# 标题"\n  Markdown "正文"')
 
 
 def test_column_with_children():
@@ -49,10 +38,7 @@ def test_column_with_children():
         app.markdown("第2行")
 
     assert tree_snapshot(app) == (
-        "App\n"
-        "  Column\n"
-        '    Markdown "第1行"\n'
-        '    Markdown "第2行"'
+        'App\n  Column\n    Markdown "第1行"\n    Markdown "第2行"'
     )
 
 
@@ -83,11 +69,7 @@ def test_card_with_title():
     with app.card(title="设置"):
         app.markdown("选项 1")
 
-    assert tree_snapshot(app) == (
-        "App\n"
-        '  Card "设置"\n'
-        '    Markdown "选项 1"'
-    )
+    assert tree_snapshot(app) == ('App\n  Card "设置"\n    Markdown "选项 1"')
 
 
 def test_signal_mounted_on_owner():
@@ -107,10 +89,7 @@ def test_context_restored_after_with():
     app.markdown("col 外 — 回到 app")
 
     assert tree_snapshot(app) == (
-        "App\n"
-        "  Column\n"
-        '    Markdown "col 内"\n'
-        '  Markdown "col 外 — 回到 app"'
+        'App\n  Column\n    Markdown "col 内"\n  Markdown "col 外 — 回到 app"'
     )
 
 

@@ -21,37 +21,129 @@ ROOT_DIR="$(dirname "$C_MAC_PATH")"
 cd "$ROOT_DIR"
 source sha.common.sh
 
+# _workspaces=(packages/*/ pkgs-diyui/*/)
+_workspaces=(packages/diydev/ packages/diyui.py/)
+_vendors=(vendor/*/)
+
 ####################################################################################
 # app script
 # 应用项目补充的公共脚本，不在bake维护范围
 # 此位置以上的全都是bake工具脚本，copy走可以直接用，之下的为项目特定cmd，自己弄
 ####################################################################################
-check() { :; }
-ci() { :; }
+#
+_ws_run() {
+  for ws in "${_workspaces[@]}"; do
+    (
+      cd "$ws"
+      echo "${inverse_surface}info: workspace: Running '$@' in '$ws'${reset}"
+      run "$@"
+    )
+  done
+}
+
+# mono所有workspaced项目上执行一条命令
+exec()  {  _ws_run command "$@"; }
+# build() {  _ws_run command ./sha.sh build; }
+# mono所有workspaced的clean,包括删除build/dist等
 clean() {
-  run rm -rf ./build
-  run rm -rf ./dist
-  run rm -rf .venv
-  run rm -rf .nodemodules
+    run rm -rf ./build
+    run rm -rf ./dist
+    run rm -rf .venv
+    run rm -rf .nodemodules
+    _ws_run command ./sha.sh clean;
 }
-fix()   {  :; }
-sync() {
-  run uv sync
-  run npm i
-  run git submodule update --init --recursive
-  # run run npx tsx packages/diy-cli/src/diy/cli.ts sync
+
+# mono所有workspaced的sync,包括uv sync、ln软链接到全局执行文件等
+sync()  {
+    uninstall
+    run uv sync --all-packages
+    # run npm i --workspaces
+    run git submodule update --init --recursive
+    # ln dev version
+    run uv tool install -e packages/diydev
+    run ln -sf packages/diydev/skills/find-context ~/.agents/skills/find-context
+    run ln -sf packages/diydev/skills/win-file-unlock ~/.agents/skills/win-file-unlock
+
+    _ws_run command ./sha.sh sync;
 }
-test()   {  :; }
+# mono所有workspace的代码检查(ruff等)
+check() {  _ws_run command ./sha.sh check; }
+# mono所有workspace的代码自动修复(ruff等)
+fix()   {  _ws_run command ./sha.sh fix; }
+# mono所有workspace的单元测试
+test()  {  _ws_run command ./sha.sh test; }
+# mono所有workspace项目的所有测试，包括浏览器测试
+test-all()  {  _ws_run command ./sha.sh test-all; }
+
+_vendors_run() {
+  for submodule in "${_vendors[@]}"; do
+    (
+      cd "$submodule"
+      run "$@"
+    )
+  done
+}
+
+# 直接改submoulde代码推荐流程：
+#  ```bash
+#    # 1. 进入子模块，先切到分支
+#    cd vendor/sha
+#    git checkout main
+
+#    # 2. 正常改代码、提交、推送
+#    git add .
+#    git commit -m "feat: xxx"
+#    git push origin main
+
+#    # 3. 回到父仓库，更新子模块指针
+#    cd ../..
+#    git add vendor/sha
+#    git commit -m "chore: update vendor/sha"
+#  ```
+vendor() {
+  exec()    { _vendors_run command "$@"; }
+  status()  { _vendors_run git status; }
+  update() {  run git submodule update --init --recursive --remote --merge; }
+}
+
 
 ####################################################
-# other
+# Python 包发布
 ####################################################
-cli() {
-  run npx tsx packages/diy-cli/src/diy/cli.ts "$@"
+ci() {
+    clean
+    test-all
+    run uv build --all-packages
+    # test: 验证构建产物
+    echo "${info}构建产物:${reset}"
+    run ls -lh ./dist/
 }
-install() {
-  run uv tool install -e packages/diydev
+
+publish() {
+  local token="${UV_PUBLISH_TOKEN:-$1}"
+  if [[ -z "$token" ]]; then
+    echo "${error}错误: 需要 UV_PUBLISH_TOKEN 环境变量或传入 token 参数${reset}"
+    echo "用法: ./sha.sh publish [:token <token>]"
+    return 1
+  fi
+
+  # 发布
+  echo "${info}发布到 PyPI...${reset}"
+  run uv publish --token "$token"
+
+  echo "${success}✓ 发布完成${reset}"
 }
+# mono所有workspace的ci持续集成,包括check;test-all;
+cicd()    {
+    ci
+    publish
+}
+
+uninstall() {
+    run rm -rf ~/.agents/skills/find-context
+    run rm -rf ~/.agents/skills/win-file-unlock
+}
+
 ####################################################
 # app entry script & _root cmd
 ####################################################

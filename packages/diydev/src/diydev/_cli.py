@@ -4,7 +4,7 @@ import sys
 from typing import Annotated
 from cyclopts import App, Parameter, Group
 
-from ._log import VerboseFlag, set_verbosity
+from ._log import set_verbosity
 from ._list_cmd import work_list
 from ._start_cmd import start_app
 from ._new_cmd import new_app
@@ -15,12 +15,15 @@ from ._prune_cmd import prune_app
 
 _GLOBAL_GROUP = Group("全局选项")
 
-VerboseRoot = Annotated[int, Parameter(
-    name=["--verbose", "-v"],
-    count=True,
-    group=_GLOBAL_GROUP,
-    help="冗余级别: -v=INFO, -vv=DEBUG, -vvv=TRACE",
-)]
+VerboseRoot = Annotated[
+    int,
+    Parameter(
+        name=["--verbose", "-v"],
+        count=True,
+        group=_GLOBAL_GROUP,
+        help="冗余级别: -v=INFO, -vv=DEBUG, -vvv=TRACE",
+    ),
+]
 
 app = App(
     name="dev",
@@ -74,7 +77,9 @@ def _strip_verbose(argv: list[str]) -> tuple[int, list[str]]:
             except ValueError:
                 verbose += 1
             i += 1
-        elif arg.startswith("-") and not arg.startswith("--") and "v" in arg.lstrip("-"):
+        elif (
+            arg.startswith("-") and not arg.startswith("--") and "v" in arg.lstrip("-")
+        ):
             trimmed = arg.lstrip("-")
             verbose += trimmed.count("v")
             # 保留非 v 的 flag 字符

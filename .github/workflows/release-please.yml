@@ -1,47 +1,41 @@
 name: release-please
 
 on:
-  push:
-    branches:
-      - main
+    push:
+        branches:
+            - main
 
 permissions:
-  contents: write
-  pull-requests: write
+    contents: write
+    pull-requests: write
 
 jobs:
-  release-please:
-    runs-on: ubuntu-latest
-    outputs:
-      releases_created: ${{ steps.release.outputs.releases_created }}
-    steps:
-      - uses: googleapis/release-please-action@v4
-        id: release
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          config-file: .release-please-config.json
-          manifest-file: .release-please-manifest.json
+    release-please:
+        runs-on: ubuntu-latest
+        outputs:
+            releases_created: ${{ steps.release.outputs.releases_created }}
+        steps:
+            - uses: googleapis/release-please-action@v4
+              id: release
+              with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
+                  config-file: .release-please-config.json
+                  manifest-file: .release-please-manifest.json
 
-  # 统一发布所有 Python 包到 PyPI
-  publish-pypi:
-    needs: release-please
-    if: ${{ needs.release-please.outputs.releases_created == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    # 统一发布所有 Python 包到 PyPI
+    publish-pypi:
+        needs: release-please
+        if: ${{ needs.release-please.outputs.releases_created == 'true' }}
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v5
-        with:
-          python-version: "3.12"
+            - uses: astral-sh/setup-uv@v5
+              with:
+                  python-version: "3.12"
 
-      - name: 构建并发布 diydev
-        working-directory: packages/diydev
-        run: |
-          uv build
-          uv publish --token ${{ secrets.UV_PUBLISH_TOKEN }}
-
-      - name: 构建并发布 diyui
-        working-directory: packages/diyui.py
-        run: |
-          uv build
-          uv publish --token ${{ secrets.UV_PUBLISH_TOKEN }}
+            - name: 发布到 PyPI
+              env:
+                  UV_PUBLISH_TOKEN: ${{ secrets.UV_PUBLISH_TOKEN }}
+              run: |
+                  ./sha.sh cicd

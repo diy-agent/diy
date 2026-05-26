@@ -16,12 +16,12 @@ import pytest
 _tools_dir = Path(__file__).resolve().parent.parent.parent / "tools"
 sys.path.insert(0, str(_tools_dir))
 
-from doctor_panel import (
+from doctor_panel import (  # noqa: E402
     _COMMON_EXCLUDED,
+    _SUBPACKAGE_WRAPPERS,
     _WRAPPER_EXCLUDED,
     _WRAPPER_MAP,
     _WRAPPER_SPECS,
-    _SUBPACKAGE_WRAPPERS,
     _run_namespace_checks,
     run_checks,
     run_verify,
@@ -73,8 +73,7 @@ class TestPanelParamCoverage:
             local_missing = [
                 pp.name
                 for pp in c.panel_params
-                if pp.name not in excluded
-                and pp.name not in c.wrapper_params
+                if pp.name not in excluded and pp.name not in c.wrapper_params
             ]
             if local_missing:
                 failures.append(f"{c.wrapper_name}: {local_missing}")
@@ -146,12 +145,8 @@ class TestNamespaceConvention:
                 continue
             for w in wrappers:
                 if getattr(sp, w.__name__, None) is None:
-                    failures.append(
-                        f"diypn.{sp_name}.{w.__name__} 无法访问"
-                    )
-        assert not failures, (
-            "命名空间不一致:\n" + "\n".join(failures)
-        )
+                    failures.append(f"diypn.{sp_name}.{w.__name__} 无法访问")
+        assert not failures, "命名空间不一致:\n" + "\n".join(failures)
 
     def test_no_extra_exports_in_subpkgs(self) -> None:
         """diypn 子包不应有多余的公开类（不在 _WRAPPER_SPECS 中）。"""
@@ -164,7 +159,6 @@ class TestNamespaceConvention:
 
     def test_class_names_match_panel_original(self) -> None:
         """wrapper 类名应与 Panel 原生类名一致（去掉 Panel 前缀）。"""
-        import panel as pn
 
         failures: list[str] = []
         for wrapper_cls, panel_cls, _ in _WRAPPER_SPECS:
@@ -173,8 +167,7 @@ class TestNamespaceConvention:
                     f"{wrapper_cls.__name__} → Panel 原生类名为 {panel_cls.__name__}"
                 )
         assert not failures, (
-            "类名不一致，wrapper 类名应与 Panel 原生一致:\n"
-            + "\n".join(failures)
+            "类名不一致，wrapper 类名应与 Panel 原生一致:\n" + "\n".join(failures)
         )
 
     def test_verify_coverage_ratio(self) -> None:

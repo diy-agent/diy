@@ -11,14 +11,13 @@ from __future__ import annotations
 
 from typing import Any
 
+import diyui
 import panel as pn
 
-import diyui
-
 from ._base import UIComponent
-from .layout import Column, Row, Card
+from .layout import Card, Column, Row
 from .pane import Markdown
-from .widgets import Button, TextInput, RadioButtonGroup
+from .widgets import Button, RadioButtonGroup, TextInput
 
 
 class _LayoutFactory:

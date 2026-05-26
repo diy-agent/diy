@@ -4,7 +4,7 @@ from cyclopts import App, Parameter
 from typing import Annotated, Optional
 
 from ._log import VerboseFlag, set_verbosity
-from ._git_ops import get_main_branch, get_current_branch, get_github_repo, run
+from ._git_ops import get_main_branch, get_current_branch, get_github_repo
 from ._gh_ops import (
     gh_pr_list,
     gh_pr_merge,
@@ -69,14 +69,20 @@ MERGE_METHOD_DIAGRAM: dict[str, str] = {
 @merge_pr_app.default
 def work_merge_pr(
     verbose: VerboseFlag = 0,
-    method: Annotated[Optional[str], Parameter(
-        name=["--method", "-m"],
-        help="合并策略: merge | squash | rebase（未指定则交互选择）",
-    )] = None,
-    ready: Annotated[bool, Parameter(
-        name=["--ready", "-r"],
-        help="草稿 PR 自动转换为 Ready for review 后再合并",
-    )] = False,
+    method: Annotated[
+        Optional[str],
+        Parameter(
+            name=["--method", "-m"],
+            help="合并策略: merge | squash | rebase（未指定则交互选择）",
+        ),
+    ] = None,
+    ready: Annotated[
+        bool,
+        Parameter(
+            name=["--ready", "-r"],
+            help="草稿 PR 自动转换为 Ready for review 后再合并",
+        ),
+    ] = False,
 ):
     """合并当前分支的 Pull Request。
 
@@ -104,14 +110,14 @@ def work_merge_pr(
     if pr.get("mergeable") == "CONFLICTING":
         print(f"错误: PR #{pr_num} 与 {main_branch} 有冲突，请先解决冲突")
         print(f"\n  页面操作: {pr['url']}")
-        print(f"\n  手工命令:")
-        print(f"    git fetch origin")
+        print("\n  手工命令:")
+        print("    git fetch origin")
         print(f"    git rebase origin/{main_branch}")
-        print(f"    # 解决冲突后:")
-        print(f"    git add .")
-        print(f"    git rebase --continue")
-        print(f"    git push --force-with-lease")
-        print(f"\n  解决后重新执行: dev work merge-pr")
+        print("    # 解决冲突后:")
+        print("    git add .")
+        print("    git rebase --continue")
+        print("    git push --force-with-lease")
+        print("\n  解决后重新执行: dev work merge-pr")
         return
 
     # 预检草稿状态
@@ -137,7 +143,7 @@ def work_merge_pr(
                 print("已取消合并")
                 return
 
-            print(f"\n正在转换为 Ready for review...")
+            print("\n正在转换为 Ready for review...")
             gh_pr_ready(pr_num, repo)
             print("已转换为 Ready for review\n")
 
@@ -154,7 +160,7 @@ def work_merge_pr(
         else:
             # 交互式选择
             print(f"PR #{pr_num}: {pr.get('title', '-')}")
-            print(f"\n选择合并策略:\n")
+            print("\n选择合并策略:\n")
             for i, m in enumerate(methods):
                 print(f"  [{i + 1}] {m}")
             print()
@@ -163,7 +169,9 @@ def work_merge_pr(
             print()
 
             try:
-                choice = input("请输入编号 (1-" + str(len(methods)) + ") [取消: q]: ").strip()
+                choice = input(
+                    "请输入编号 (1-" + str(len(methods)) + ") [取消: q]: "
+                ).strip()
                 if choice.lower() == "q":
                     print("已取消合并")
                     return

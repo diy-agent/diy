@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-import panel as pn
-
 import diyui
+import panel as pn
 
 from .._base import UIComponent
 

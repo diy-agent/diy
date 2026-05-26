@@ -40,12 +40,14 @@ def _build_close_comment(pr_number: int) -> str:
         f"*Automated by [diydev](https://github.com/diy-agent/diy/tree/main/packages/diydev) v{DIYDEV_VERSION}*"
     )
 
+
 prune_app = App(name="prune", help="清理已完成合并的 worktree 和分支")
 
 
 @dataclass
 class _PruneTarget:
     """待清理的工作项"""
+
     branch: str
     worktree_path: str
     pr_number: int
@@ -88,7 +90,7 @@ def _scan_prunable(repo: str) -> list[_PruneTarget]:
         if full_path == cwd_root:
             wt_path = "."
         elif full_path.startswith(cwd_root + "/"):
-            wt_path = full_path[len(cwd_root) + 1:]
+            wt_path = full_path[len(cwd_root) + 1 :]
         else:
             wt_path = full_path
 
@@ -103,13 +105,15 @@ def _scan_prunable(repo: str) -> list[_PruneTarget]:
             except RuntimeError:
                 pass  # issue 不存在或无权限，跳过
 
-        targets.append(_PruneTarget(
-            branch=branch,
-            worktree_path=wt_path,
-            pr_number=pr["number"],
-            pr_state=pr["state"],
-            orphan_issue=orphan_issue,
-        ))
+        targets.append(
+            _PruneTarget(
+                branch=branch,
+                worktree_path=wt_path,
+                pr_number=pr["number"],
+                pr_state=pr["state"],
+                orphan_issue=orphan_issue,
+            )
+        )
 
     return targets
 
@@ -117,14 +121,20 @@ def _scan_prunable(repo: str) -> list[_PruneTarget]:
 @prune_app.default
 def work_prune(
     verbose: VerboseFlag = 0,
-    dry_run: Annotated[bool, Parameter(
-        name=["--dry-run", "-n"],
-        help="仅列出待清理项，不实际执行",
-    )] = False,
-    yes: Annotated[bool, Parameter(
-        name=["--yes", "-y"],
-        help="跳过确认，直接清理",
-    )] = False,
+    dry_run: Annotated[
+        bool,
+        Parameter(
+            name=["--dry-run", "-n"],
+            help="仅列出待清理项，不实际执行",
+        ),
+    ] = False,
+    yes: Annotated[
+        bool,
+        Parameter(
+            name=["--yes", "-y"],
+            help="跳过确认，直接清理",
+        ),
+    ] = False,
 ):
     """清理所有 PR 已合并的工作项（删除本地/远程分支及 worktree）。
 

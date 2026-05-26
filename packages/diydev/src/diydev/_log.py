@@ -21,19 +21,22 @@ _PREFIX = {
 }
 
 _STYLE = {
-    1: "\033[36m",   # cyan
-    2: "\033[33m",   # yellow
-    3: "\033[90m",   # gray/bright-black
+    1: "\033[36m",  # cyan
+    2: "\033[33m",  # yellow
+    3: "\033[90m",  # gray/bright-black
 }
 _RESET = "\033[0m"
 
 # 可复用的 cyclopts 参数类型，添加到每个子命令签名即可注册 -v 到 help
-VerboseFlag = Annotated[int, Parameter(
-    name=["--verbose", "-v"],
-    count=True,
-    group=Group("全局选项"),
-    help="冗余级别: -v=INFO, -vv=DEBUG, -vvv=TRACE",
-)]
+VerboseFlag = Annotated[
+    int,
+    Parameter(
+        name=["--verbose", "-v"],
+        count=True,
+        group=Group("全局选项"),
+        help="冗余级别: -v=INFO, -vv=DEBUG, -vvv=TRACE",
+    ),
+]
 
 
 def set_verbosity(level: int) -> None:

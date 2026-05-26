@@ -122,7 +122,7 @@ class TestSignalOwnership:
     def test_owner_can_be_set(self):
         """owner 由 app.signal() 或其他 ScopeNode 在挂载时设置。"""
         sig = diyui.Signal(0)
-        sig.owner = "fake-scope-node"
+        sig.owner = "fake-scope-node"  # type: ignore[assignment]
         assert sig.owner == "fake-scope-node"
 
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Callable
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ._scope import ScopeNode
@@ -35,7 +35,14 @@ class Signal[T]:
     - 写入 .value：新旧值相等则跳过；否则通知观察者，触发 cell rerun。
     """
 
-    __slots__ = ("_value", "_observers", "_owner", "_tracker", "_cell_subscribers", "_reset_on_complete")
+    __slots__ = (
+        "_value",
+        "_observers",
+        "_owner",
+        "_tracker",
+        "_cell_subscribers",
+        "_reset_on_complete",
+    )
 
     def __init__(self, value: T) -> None:
         self._value: T = value
@@ -56,7 +63,10 @@ class Signal[T]:
             # cell node 和 owner 必须互相在对方的祖先链中：
             # - owner 在 cell 祖先中 → cell 读取自己或祖先 scope 的 signal
             # - cell 在 owner 祖先中 → cell 在上层 scope，读取下层 signal（合法）
-            if id(owner) not in _current_cell_node._ancestor_ids and id(_current_cell_node) not in owner._ancestor_ids:  # type: ignore[attr-defined]
+            if (
+                id(owner) not in _current_cell_node._ancestor_ids
+                and id(_current_cell_node) not in owner._ancestor_ids
+            ):  # type: ignore[attr-defined]
                 cross_scope = True
                 from ._scope import ScopeMode
 

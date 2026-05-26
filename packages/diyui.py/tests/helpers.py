@@ -8,8 +8,7 @@ from collections.abc import Callable, Generator
 from typing import Any
 
 import diyui
-from diyui import ScopeConfig, ScopeMode, ImmediateScheduler
-
+from diyui import ImmediateScheduler, ScopeConfig
 
 # ══════════════════════════════════════════════════════════════════
 # Shared Fake Components for Tests
@@ -33,7 +32,7 @@ class FakeColumn(diyui.ScopeNode):
     def __init__(self) -> None:
         super().__init__()
 
-    def __enter__(self) -> "FakeColumn":
+    def __enter__(self) -> FakeColumn:
         assert self._app is not None
         self._app._push_context(self)
         return self
@@ -52,7 +51,7 @@ class FakeRow(diyui.ScopeNode):
     def __init__(self) -> None:
         super().__init__()
 
-    def __enter__(self) -> "FakeRow":
+    def __enter__(self) -> FakeRow:
         assert self._app is not None
         self._app._push_context(self)
         return self
@@ -72,7 +71,7 @@ class FakeCard(diyui.ScopeNode):
         super().__init__()
         self.title = title
 
-    def __enter__(self) -> "FakeCard":
+    def __enter__(self) -> FakeCard:
         assert self._app is not None
         self._app._push_context(self)
         return self
@@ -84,7 +83,6 @@ class FakeCard(diyui.ScopeNode):
     def _tree_label(self) -> str:
         base = "Card"
         return f'Card "{self.title}"' if self.title else base
-
 
 
 class FakeApp(diyui.BaseApp):
@@ -177,10 +175,7 @@ def _node_label(node: diyui.ScopeNode) -> str:
 
     依次拼装：_tree_label() 或类名 → signal 值 → rerun_count → error。
     """
-    if hasattr(node, "_tree_label"):
-        base = node._tree_label()  # type: ignore[no-any-return]
-    else:
-        base = type(node).__name__
+    base = node._tree_label() if hasattr(node, "_tree_label") else type(node).__name__  # type: ignore[no-any-return]
 
     extras: list[str] = []
 
@@ -269,8 +264,8 @@ class EventLog:
 
     def start(self) -> None:
         """激活事件收集（monkey-patch signal._trigger_cells 和 cell 执行）。"""
-        import diyui._scope
         import diyui._debug
+        import diyui._scope
         import diyui._signal
 
         log = self
@@ -283,9 +278,7 @@ class EventLog:
             old_val = log._previous_signal_values.get(sig_id, "?")
             old_val_str = _format_val(old_val)
             new_val_str = _format_val(sig._value)  # type: ignore[attr-defined]
-            log.record(
-                f"signal {_signal_name(sig)}: {old_val_str} → {new_val_str}"
-            )
+            log.record(f"signal {_signal_name(sig)}: {old_val_str} → {new_val_str}")
             log._previous_signal_values[sig_id] = sig._value  # type: ignore[attr-defined]
             _original_trigger(sig)
 
@@ -335,8 +328,12 @@ class EventLog:
         self._restore = [
             lambda: setattr(diyui._signal.Signal, "_trigger_cells", _original_trigger),
             lambda: setattr(diyui._scope.ScopeNode, "_execute_cell", _original_execute),
-            lambda: setattr(diyui._scope.ScopeNode, "_execute_cell_generator", _original_execute_gen),
-            lambda: setattr(diyui._debug.DebugInfo, "record_error", _original_record_error),
+            lambda: setattr(
+                diyui._scope.ScopeNode, "_execute_cell_generator", _original_execute_gen
+            ),
+            lambda: setattr(
+                diyui._debug.DebugInfo, "record_error", _original_record_error
+            ),
         ]
 
     def stop(self) -> None:

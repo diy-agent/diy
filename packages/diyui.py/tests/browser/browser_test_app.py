@@ -6,7 +6,11 @@ run: uv run panel serve tests/browser_test_app.py --port 0
 import diyui
 import diyui.providers.panel as diypn
 
-app = diypn.PanelApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
+app = diypn.PanelApp(
+    config=diyui.ScopeConfig(
+        mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()
+    )
+)
 
 with app.layout.column():
     app.pane.markdown("# 🧪 Browser Test App")
@@ -21,7 +25,9 @@ with app.layout.column():
 
     @app.layout.column().cell()
     def _(node: diypn.layout.Column):
-        app.pane.markdown(f"## Hello **{name_input.value}** × {multiplier_input.value} !")
+        app.pane.markdown(
+            f"## Hello **{name_input.value}** × {multiplier_input.value} !"
+        )
         app.pane.markdown(f"Repeated: {'🔥' * multiplier_input.value}")
 
     counter = app.signal(0)

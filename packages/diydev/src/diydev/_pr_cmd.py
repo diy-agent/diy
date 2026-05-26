@@ -1,7 +1,6 @@
 """dev work pr - 推送并创建 PR"""
 
-from cyclopts import App, Parameter
-from typing import Annotated, Optional
+from cyclopts import App
 
 from ._log import VerboseFlag, set_verbosity
 from ._git_ops import (
@@ -64,8 +63,10 @@ def work_pr(
     if existing:
         git_push()
         draft_hint = " (草稿)" if existing[0].get("isDraft") else ""
-        print(f'警告: 分支 "{branch}" 已存在 open PR #{existing[0]["number"]}{draft_hint}，新 commit 已推送')
-        print(f'合并: dev work merge-pr 或到 {existing[0]["url"]} 页面手动合并')
+        print(
+            f'警告: 分支 "{branch}" 已存在 open PR #{existing[0]["number"]}{draft_hint}，新 commit 已推送'
+        )
+        print(f"合并: dev work merge-pr 或到 {existing[0]['url']} 页面手动合并")
         return
 
     # 检查是否已有 merged PR

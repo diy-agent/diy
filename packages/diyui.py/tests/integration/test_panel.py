@@ -317,7 +317,11 @@ class TestPanelScenario:
 
         覆盖 demo 中的 name_input / multiplier_input → greeting cell 链。
         """
-        app = diypn.PanelApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
+        app = diypn.PanelApp(
+            config=diyui.ScopeConfig(
+                mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()
+            )
+        )
 
         # 模拟 demo 布局：输入组件在一个列中
         with app.layout.column():
@@ -339,7 +343,11 @@ class TestPanelScenario:
 
     def test_cell_rerenders_multiple_signals(self):
         """多个信号变化时 cell 正确 rerun，不遗漏也不多跑。"""
-        app = diypn.PanelApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
+        app = diypn.PanelApp(
+            config=diyui.ScopeConfig(
+                mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()
+            )
+        )
 
         with app.layout.column():
             name = app.widgets.text_input(name="Name", value="A")
@@ -368,7 +376,11 @@ class TestPanelScenario:
         覆盖 demo 中的 counter + button + cell 链。Button 的 click 回调通过
         Panel 原生机制触发，不走 diyui API——这是最容易断的链路。
         """
-        app = diypn.PanelApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
+        app = diypn.PanelApp(
+            config=diyui.ScopeConfig(
+                mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()
+            )
+        )
 
         with app.layout.column():
             counter = app.signal(0)
@@ -428,7 +440,11 @@ class TestPanelScenario:
         验证完整链路：signal 变化 → cell rerun → diyui children 替换
         → servable() → Panel 原生 children 更新。
         """
-        app = diypn.PanelApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
+        app = diypn.PanelApp(
+            config=diyui.ScopeConfig(
+                mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()
+            )
+        )
 
         count = app.signal(0)
 
@@ -484,7 +500,11 @@ class TestButtonSyncFlow:
 
     def test_click_sets_signal_true(self):
         """模拟点击（param.trigger clicks）→ signal.value = True。"""
-        app = diypn.PanelApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
+        app = diypn.PanelApp(
+            config=diyui.ScopeConfig(
+                mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()
+            )
+        )
         btn = app.widgets.button(label="Go")
         app._add_to_current(btn)
 
@@ -495,7 +515,11 @@ class TestButtonSyncFlow:
 
     def test_button_click_triggers_cell_rerun(self):
         """按钮点击 → signal=True → 依赖 cell rerun → if btn.value: 进入分支。"""
-        app = diypn.PanelApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
+        app = diypn.PanelApp(
+            config=diyui.ScopeConfig(
+                mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()
+            )
+        )
 
         btn = app.widgets.button(label="Option 1")
         app._add_to_current(btn)
@@ -520,7 +544,11 @@ class TestButtonSyncFlow:
 
     def test_button_auto_reset_after_cell_rerun(self):
         """Cell rerun 完成后 button signal 自动恢复为 False。"""
-        app = diypn.PanelApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
+        app = diypn.PanelApp(
+            config=diyui.ScopeConfig(
+                mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()
+            )
+        )
 
         btn = app.widgets.button(label="Go")
         app._add_to_current(btn)
@@ -538,7 +566,11 @@ class TestButtonSyncFlow:
 
     def test_button_no_extra_cell_rerun_on_reset(self):
         """Auto-reset 不应触发额外的 cell rerun（使用 _reset_value，不触发 cell）。"""
-        app = diypn.PanelApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
+        app = diypn.PanelApp(
+            config=diyui.ScopeConfig(
+                mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()
+            )
+        )
 
         btn = app.widgets.button(label="Go")
         app._add_to_current(btn)
@@ -561,7 +593,11 @@ class TestButtonSyncFlow:
     def test_full_click_only_reruns_once(self):
         """模拟 Panel 真实点击（param.trigger value + clicks+=1），
         只触发 1 次 cell rerun，不受 Event set-reset 干扰。"""
-        app = diypn.PanelApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
+        app = diypn.PanelApp(
+            config=diyui.ScopeConfig(
+                mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()
+            )
+        )
 
         btn = app.widgets.button(label="Go")
         app._add_to_current(btn)
@@ -586,7 +622,11 @@ class TestButtonSyncFlow:
     def test_value_setter_noop_after_init(self):
         """value.setter 在初始化后是 no-op，避免 Panel Event set-reset 干扰。
         程序化修改应走 btn.signal.value = ...。"""
-        app = diypn.PanelApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
+        app = diypn.PanelApp(
+            config=diyui.ScopeConfig(
+                mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()
+            )
+        )
         btn = app.widgets.button(label="Go")
 
         assert btn.value is False
@@ -602,7 +642,11 @@ class TestButtonSyncFlow:
 
     def test_two_buttons_independent(self):
         """两个独立 button，各自触发各自的 cell。"""
-        app = diypn.PanelApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
+        app = diypn.PanelApp(
+            config=diyui.ScopeConfig(
+                mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()
+            )
+        )
 
         btn1 = app.widgets.button(label="First")
         btn2 = app.widgets.button(label="Second")
@@ -653,7 +697,6 @@ class TestAutoMount:
             config=diyui.ScopeConfig(scheduler=diyui.ImmediateScheduler())
         )
         col = app.layout.column()
-        push_was = app._current  # app 本身
         # 给 col 设 auto_mount_child=False（作为已挂载容器控制子组件行为）
         col._config = diyui.ScopeConfig(
             auto_mount_child=False,

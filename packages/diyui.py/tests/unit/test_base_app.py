@@ -8,18 +8,12 @@ BaseApp 是各 provider App 的基类，提供：
 
 import pytest
 
-import diyui
-
 # ═══════════════════════════════════════════════
 # FakeApp：测试用最小 App
 # ═══════════════════════════════════════════════
-
-
-
-import pytest
+from helpers import FakeApp, FakeColumn
 
 import diyui
-from helpers import FakeApp, FakeColumn, FakeMarkdown
 
 
 # ═══════════════════════════════════════════════

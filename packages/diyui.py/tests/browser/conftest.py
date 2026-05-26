@@ -70,18 +70,11 @@ def panel_server() -> Generator[str, None, None]:
     proc.wait(timeout=5)
 
 
-def pytest_addoption(parser: pytest.Parser) -> None:
-    """注册 --no-browser 命令行选项。
-
-    pytest 在启动时自动调用此函数。用户可通过 `--no-browser` 跳过浏览器测试。
-    """
-    parser.addoption("--no-browser", action="store_true", help="跳过浏览器测试")
-
-
 def pytest_configure(config: pytest.Config) -> None:
     """注册 browser marker。
 
     pytest 在配置阶段自动调用。注册后测试文件可用 `@pytest.mark.browser`。
+    注意：marker 也在 pyproject.toml 中声明，此处作为双层保险。
     """
     config.addinivalue_line("markers", "browser: 需要 headless browser 的测试")
 

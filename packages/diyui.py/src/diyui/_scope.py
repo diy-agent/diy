@@ -10,13 +10,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from ._base_app import BaseApp
+    from ._signal import Signal
 
 
 class ScopeMode(Enum):
@@ -30,6 +31,9 @@ class SchedulerProtocol(Protocol):
     """Scheduler 需实现的接口。"""
 
     def enqueue(self, callback: Callable[[], None]) -> None: ...
+    def enqueue_async(
+        self, async_callback: Callable[[], Coroutine[Any, Any, None]]
+    ) -> None: ...
     def flush(self) -> None: ...
 
 
@@ -166,7 +170,7 @@ class ScopeNode:
 
     # ── cell ───────────────────────────────────
 
-    def cell[T: ScopeNode](self: T) -> Callable[[Callable[[T], None]], T]:
+    def cell[T: ScopeNode](self: T) -> Callable[[Callable[..., object]], T]:
         """标记此组件为 cell。返回装饰器。
 
         cell 函数接收当前 wrapper node 作为参数。
@@ -176,7 +180,7 @@ class ScopeNode:
         """
         import inspect
 
-        def decorator(fn: Callable[[T], None]) -> T:
+        def decorator(fn: Callable[..., object]) -> T:
             self._cell_fn = fn  # type: ignore[assignment]
             if inspect.isgeneratorfunction(fn) or inspect.isasyncgenfunction(fn):
                 self._is_async_cell = True
@@ -250,9 +254,8 @@ class ScopeNode:
             self._flush_deps_and_reset(deps)
 
         # 执行完成后若仍 dirty（rerun 中写了依赖的 signal），自动重新入队
-        if self._is_dirty and self._cell_fn is not None:
-            if self.scheduler is not None:
-                self.scheduler.enqueue(self._execute_cell)
+        if self._is_dirty and self._cell_fn is not None and self.scheduler is not None:
+            self.scheduler.enqueue(self._execute_cell)
 
     def _execute_cell_generator(self, *, initial: bool = False) -> None:
         """驱动生成器 cell（同步入口，内部调度 async 驱动）。
@@ -282,10 +285,14 @@ class ScopeNode:
         if is_async:
             # 有 awaitable：走 async 路径，通过 scheduler enqueue_async 调度
             if self.scheduler is not None and hasattr(self.scheduler, "enqueue_async"):
-                self.scheduler.enqueue_async(lambda: self._drive_generator_async(initial=initial))
+                self.scheduler.enqueue_async(
+                    lambda: self._drive_generator_async(initial=initial)
+                )
             else:
                 # 无 async scheduler 回退：同步驱动（遇到 awaitable 会报错）
-                self._drive_generator_sync(fn, initial=initial, saved_config=saved_config)
+                self._drive_generator_sync(
+                    fn, initial=initial, saved_config=saved_config
+                )
         else:
             # 纯同步：直接驱动
             self._drive_generator_sync(fn, initial=initial, saved_config=saved_config)
@@ -345,6 +352,7 @@ class ScopeNode:
                         "Generator cell yielded awaitable in sync path. "
                         "Use async def for async generator cells.",
                         RuntimeWarning,
+                        stacklevel=2,
                     )
         except Exception as exc:
             if not initial:
@@ -367,9 +375,8 @@ class ScopeNode:
 
             self._flush_deps_and_reset(deps)
 
-        if self._is_dirty and self._cell_fn is not None:
-            if self.scheduler is not None:
-                self.scheduler.enqueue(self._execute_cell_generator)
+        if self._is_dirty and self._cell_fn is not None and self.scheduler is not None:
+            self.scheduler.enqueue(self._execute_cell_generator)
 
     async def _drive_generator_async(self, *, initial: bool = False) -> None:
         """异步驱动生成器（支持 yield awaitable 和 async def generator）。"""
@@ -448,9 +455,15 @@ class ScopeNode:
 
             self._flush_deps_and_reset(deps)
 
-        if self._is_dirty and self._cell_fn is not None:
-            if self.scheduler is not None and hasattr(self.scheduler, "enqueue_async"):
-                self.scheduler.enqueue_async(lambda: self._drive_generator_async(initial=False))
+        if (
+            self._is_dirty
+            and self._cell_fn is not None
+            and self.scheduler is not None
+            and hasattr(self.scheduler, "enqueue_async")
+        ):
+            self.scheduler.enqueue_async(
+                lambda: self._drive_generator_async(initial=False)
+            )
 
     def _flush_deps_and_reset(self, deps: set[object]) -> None:
         """diff 更新依赖 + auto-reset。提取为共享逻辑。"""

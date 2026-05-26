@@ -7,20 +7,17 @@
 意图：让人类同时看到"发生了什么"（事件流）和"结果是什么"（树状态）。
 """
 
-import diyui
-from helpers import EventLog, collect_events, tree_snapshot
-
-
 # ══════════════════════════════════════════════════════════════════
 # Shared Fake Components（与 test_basic_construction.py 共用）
 # ══════════════════════════════════════════════════════════════════
-
+from helpers import (
+    EventLog,
+    FakeApp,
+    collect_events,
+    tree_snapshot,
+)
 
 import diyui
-from helpers import (
-    FakeApp, FakeMarkdown, FakeColumn,
-    EventLog, collect_events, tree_snapshot,
-)
 
 
 def test_count_signal_rerenders_markdown():
@@ -40,19 +37,13 @@ def test_count_signal_rerenders_markdown():
         app.markdown(str(count.value))
 
     # 初始：cell 首次执行
-    assert tree_snapshot(col) == (
-        "Column [rerun=1]\n"
-        '  Markdown "0"'
-    )
+    assert tree_snapshot(col) == ('Column [rerun=1]\n  Markdown "0"')
 
     # 修改 signal，收集事件
     with collect_events(log=log):
         count.value = 42
 
-    assert tree_snapshot(col) == (
-        "Column [rerun=2]\n"
-        '  Markdown "42"'
-    )
+    assert tree_snapshot(col) == ('Column [rerun=2]\n  Markdown "42"')
     assert any("→ 42" in e for e in log.events)
     assert any("rerun start" in e for e in log.events)
     assert any("rerun complete" in e for e in log.events)
@@ -89,8 +80,7 @@ def test_loop_rerenders_N_children():
 
 
 def test_unchanged_value_no_rerun():
-    """相等值不触发 rerun：count.value = 0（本来就是 0）→ 无事件。
-    """
+    """相等值不触发 rerun：count.value = 0（本来就是 0）→ 无事件。"""
     app = FakeApp()
     count = app.signal(0)
     log = EventLog()
@@ -280,7 +270,6 @@ def test_generator_cell_step_by_step():
     事件流：generator cell rerun 开始→完成。
     """
     app = FakeApp()
-    log = EventLog()
 
     col = app.column()
 

@@ -7,7 +7,9 @@ from typing import Optional, Any
 from ._git_ops import run
 
 
-def gh_issue_list(repo: str, state: str = "open", limit: int = 50, labels: Optional[str] = None) -> list[dict[str, Any]]:
+def gh_issue_list(
+    repo: str, state: str = "open", limit: int = 50, labels: Optional[str] = None
+) -> list[dict[str, Any]]:
     """列出 GitHub issues"""
     cmd = f"gh issue list --repo {repo} --state {state} --json number,title,state,url,createdAt,author --limit {limit}"
     if labels:
@@ -16,7 +18,9 @@ def gh_issue_list(repo: str, state: str = "open", limit: int = 50, labels: Optio
     return json.loads(raw)
 
 
-def gh_issue_view(num: int, repo: str, fields: str = "number,title,state,url,createdAt,author") -> dict[str, Any]:
+def gh_issue_view(
+    num: int, repo: str, fields: str = "number,title,state,url,createdAt,author"
+) -> dict[str, Any]:
     """查看单个 issue 详情"""
     raw = run(f"gh issue view {num} --repo {repo} --json {fields}")
     return json.loads(raw)
@@ -33,7 +37,9 @@ def gh_issue_create(title: str, body: str, repo: str) -> int:
     return int(m.group(1))
 
 
-def gh_pr_list_by_branch(repo: str, branch: str, state: Optional[str] = None) -> Optional[dict[str, Any]]:
+def gh_pr_list_by_branch(
+    repo: str, branch: str, state: Optional[str] = None
+) -> Optional[dict[str, Any]]:
     """查询指定分支是否有 PR，返回第一个匹配的或 None"""
     try:
         cmd = f'gh pr list --repo {repo} --head "{branch}" --json number,title,state,url,mergeable,headRefName,isDraft --limit 1'
@@ -71,7 +77,9 @@ def gh_all_prs_map(repo: str) -> dict[str, dict[str, Any]]:
     return result
 
 
-def gh_pr_list(repo: str, head: Optional[str] = None, state: Optional[str] = None) -> list[dict[str, Any]]:
+def gh_pr_list(
+    repo: str, head: Optional[str] = None, state: Optional[str] = None
+) -> list[dict[str, Any]]:
     """列出 PR，可按分支和状态过滤"""
     cmd = f"gh pr list --repo {repo} --json number,title,state,url,mergeable,headRefName,isDraft --limit 100"
     if head:
@@ -101,7 +109,6 @@ def gh_pr_merge(pr_num: int, repo: str, method: str) -> None:
 def gh_pr_ready(pr_num: int, repo: str) -> None:
     """将草稿 PR 标记为 Ready for review"""
     run(f"gh pr ready {pr_num} --repo {repo}")
-
 
 
 def gh_issue_comment(num: int, body: str, repo: str) -> None:

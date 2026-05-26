@@ -22,14 +22,20 @@ start_app = App(name="start", help="开始开发：创建 worktree 并推送")
 
 @start_app.default
 def work_start(
-    issue_num: Annotated[int, Parameter(
-        name=["issue_num"],
-        help="GitHub issue 编号",
-    )],
-    branch_name: Annotated[str, Parameter(
-        name=["branch_name"],
-        help="分支名后缀（可选）",
-    )] = "",
+    issue_num: Annotated[
+        int,
+        Parameter(
+            name=["issue_num"],
+            help="GitHub issue 编号",
+        ),
+    ],
+    branch_name: Annotated[
+        str,
+        Parameter(
+            name=["branch_name"],
+            help="分支名后缀（可选）",
+        ),
+    ] = "",
     verbose: VerboseFlag = 0,
 ):
     """从 issue 编号开始开发，创建 worktree 并推送远程分支。

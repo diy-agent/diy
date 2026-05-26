@@ -28,7 +28,9 @@ class ImmediateScheduler:
             callback()
             self._flush_pending()
 
-    def enqueue_async(self, async_callback: Callable[[], Coroutine[Any, Any, None]]) -> None:
+    def enqueue_async(
+        self, async_callback: Callable[[], Coroutine[Any, Any, None]]
+    ) -> None:
         """入队 async callback。
 
         优先用运行中的 asyncio loop；否则尝试 Tornado IOLoop 的 asyncio_loop；

@@ -10,11 +10,9 @@
 diyui 在 wrapper 上附加 ScopeNode、Signal、rerun、debug、lifetime 能力。
 """
 
-from . import layout
-from . import pane
-from . import widgets
-from ._base import UIComponent
+from . import layout, pane, widgets
 from ._app import PanelApp
+from ._base import UIComponent
 
 __all__ = [
     "PanelApp",

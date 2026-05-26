@@ -27,7 +27,6 @@ class DebugInfo:
 
     @property
     def mode(self) -> ScopeMode:
-        from ._scope import ScopeMode
 
         return self._node.mode
 

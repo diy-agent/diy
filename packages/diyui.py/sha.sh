@@ -43,7 +43,6 @@ clean() {
   run find . -type d -name "*.egg-info" -prune -exec rm -rf {} \;
 }
 
-
 check() {
   run uv run ruff check src/ tests/
   run uv run ruff format --check src/ tests/
@@ -55,14 +54,14 @@ fix() {
   run uv run ruff format src/ tests/
 }
 ci() { check;test-all; }
-publish() {
-  # UV_PUBLISH_TOKEN
-  uv publish
-}
-sync() {
-  :
-}
+sync() { :; }
 test() { run uv run pytest "${@:-tests/}" -m "not browser";}
+
+test-headless() { run uv run pytest -v --browser chromium tests/browser/test*.py ;}
+# 有头模式 + slowmo 500ms，可以看着浏览器执行
+test-head() { run uv run pytest -v --browser chromium --headed --slowmo 500 tests/browser/test*.py ;}
+# unit test
+test-all() { test; test-headless;}
 
 ####################################################################################
 # 子项目自己的命令
@@ -78,22 +77,6 @@ examples() {  run uv run panel serve --dev examples/*.py; }
 doctor() {
   run uv run python tools/doctor_panel.py "$@"
 }
-#  # 单个测试（精确路径）
-#  ./sha.sh test-head "tests/test_browser.py::TestButtonClickToCellRerun::test_increment_button_updates_counter"
-#
-#  # 按名字匹配（-k 模糊）
-#  ./sha.sh test-head -k "counter"
-#
-#  # 整个测试类
-#  ./sha.sh test-head -k "TestButtonClickToCellRerun"
-#
-#  # 无参数 = 全部 15 个
-#  ./sha.sh test-headless
-test-headless() { run uv run pytest -v --browser chromium "${@:-tests/browser/test*.py}";}
-# 有头模式 + slowmo 500ms，可以看着浏览器执行
-test-head() { run uv run pytest -v --browser chromium --headed --slowmo 500 "${@:-tests/browser/test*.py}";}
-# unit test
-test-all() { test; test-headless;}
 
 
 sha "$@"

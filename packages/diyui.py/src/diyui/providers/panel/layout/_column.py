@@ -6,8 +6,6 @@ from typing import Any
 
 import panel as pn
 
-import diyui
-
 from .._base import C, UIComponent, _PanelContainerMixin
 
 

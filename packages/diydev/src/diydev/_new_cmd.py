@@ -12,10 +12,13 @@ new_app = App(name="new", help="创建新的 issue")
 
 @new_app.default
 def work_new(
-    description: Annotated[list[str], Parameter(
-        name=["description"],
-        help="issue 描述（同时作为 title 和 body）",
-    )],
+    description: Annotated[
+        list[str],
+        Parameter(
+            name=["description"],
+            help="issue 描述（同时作为 title 和 body）",
+        ),
+    ],
     verbose: VerboseFlag = 0,
 ):
     """创建新的 GitHub issue，描述同时作为 title 和 body。

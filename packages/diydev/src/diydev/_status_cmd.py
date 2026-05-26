@@ -1,7 +1,6 @@
 """dev work status - 当前分支详情（Git + Issue + PR + 分支拓扑）"""
 
-from cyclopts import App, Parameter
-from typing import Annotated
+from cyclopts import App
 
 from ._log import VerboseFlag, set_verbosity
 from ._git_ops import (
@@ -34,7 +33,7 @@ def work_status(
 
     status_out = run("git status --porcelain")
     if status_out.strip():
-        count = len([l for l in status_out.split("\n") if l.strip()])
+        count = len([line for line in status_out.split("\n") if line.strip()])
         print(f"  变更:             {count} 个文件未提交")
     else:
         print("  变更:             干净")
@@ -44,7 +43,9 @@ def work_status(
             ahead = int(run(f'git rev-list --count "{main_branch}..{branch}"'))
             behind = int(run(f'git rev-list --count "{branch}..{main_branch}"'))
             if ahead > 0 or behind > 0:
-                print(f"  追踪:             ↑{ahead} ahead, ↓{behind} behind {main_branch}")
+                print(
+                    f"  追踪:             ↑{ahead} ahead, ↓{behind} behind {main_branch}"
+                )
         except (RuntimeError, ValueError):
             pass
 
@@ -56,6 +57,7 @@ def work_status(
         (r"^(\d+)$", 1),
     ]:
         import re
+
         m = re.match(pattern, branch)
         if m:
             issue_num = int(m.group(parser))
@@ -65,7 +67,7 @@ def work_status(
         print(f'\n⚠ 分支 "{branch}" 无法解析 issue 编号')
         return
 
-    print(f"\n=== Issue 信息 ===")
+    print("\n=== Issue 信息 ===")
     try:
         data = gh_issue_view(issue_num, repo, "number,title,state,url,createdAt,author")
         author = data.get("author", {})
@@ -85,10 +87,12 @@ def work_status(
         if prs:
             pr = prs[0]
             print(f"  #{pr['number']}  {pr['title']}")
-            print(f"  状态:           {pr['state']}{' (草稿)' if pr.get('isDraft') else ''}")
-            mergeable = pr.get('mergeable', 'UNKNOWN')
-            if pr.get('isDraft') and mergeable != 'CONFLICTING':
-                mergeable = 'BLOCKED(草稿)'
+            print(
+                f"  状态:           {pr['state']}{' (草稿)' if pr.get('isDraft') else ''}"
+            )
+            mergeable = pr.get("mergeable", "UNKNOWN")
+            if pr.get("isDraft") and mergeable != "CONFLICTING":
+                mergeable = "BLOCKED(草稿)"
             print(f"  可合并:         {mergeable}")
             print(f"  URL:            {pr['url']}")
         else:
@@ -113,14 +117,14 @@ def _build_branch_diagram(branch: str, main_branch: str) -> str:
     branch_commits: list[str] = []
     try:
         raw = run(f'git log --oneline "{merge_base}..{branch}"')
-        branch_commits = [l[:7] for l in raw.split("\n") if l]
+        branch_commits = [line[:7] for line in raw.split("\n") if line]
     except RuntimeError:
         pass
 
     main_commits: list[str] = []
     try:
         raw = run(f'git log --oneline "{merge_base}..{main_branch}"')
-        main_commits = [l[:7] for l in raw.split("\n") if l]
+        main_commits = [line[:7] for line in raw.split("\n") if line]
     except RuntimeError:
         pass
 

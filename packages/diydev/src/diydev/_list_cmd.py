@@ -8,7 +8,7 @@
 import json
 import re
 from dataclasses import dataclass
-from typing import Optional, Any, Annotated
+from typing import Optional, Annotated
 
 from cyclopts import Parameter
 from rich.console import Console
@@ -177,7 +177,9 @@ def build_unified_rows(
             try:
                 issue = gh_issue_view(issue_num, repo)
                 author = issue.get("author", {})
-                author_login = author.get("login", "-") if isinstance(author, dict) else "-"
+                author_login = (
+                    author.get("login", "-") if isinstance(author, dict) else "-"
+                )
                 row.issue_number = issue["number"]
                 row.issue_title = issue.get("title", "-")
                 row.issue_state = issue.get("state", "-")
@@ -240,14 +242,20 @@ def build_unified_rows(
 
 def work_list(
     verbose: VerboseFlag = 0,
-    labels: Annotated[Optional[str], Parameter(
-        name=["--label", "-l"],
-        help="按标签过滤 issue",
-    )] = None,
-    json_output: Annotated[bool, Parameter(
-        name="--json",
-        help="输出 JSON 格式",
-    )] = False,
+    labels: Annotated[
+        Optional[str],
+        Parameter(
+            name=["--label", "-l"],
+            help="按标签过滤 issue",
+        ),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        Parameter(
+            name="--json",
+            help="输出 JSON 格式",
+        ),
+    ] = False,
 ):
     """列出 issue，并标出与 worktree 的对应关系。
 
@@ -334,7 +342,11 @@ def work_list(
             pr_display = f"#{r.pr_number}"
             if r.is_draft:
                 pr_state = f"[yellow]{r.pr_state} 草稿[/]"
-                pr_mergeable = f"[yellow]BLOCKED(草稿)[/]" if r.pr_mergeable != 'CONFLICTING' else f"[yellow]{r.pr_mergeable}[/]"
+                pr_mergeable = (
+                    "[yellow]BLOCKED(草稿)[/]"
+                    if r.pr_mergeable != "CONFLICTING"
+                    else f"[yellow]{r.pr_mergeable}[/]"
+                )
             else:
                 pr_state = r.pr_state
                 pr_mergeable = r.pr_mergeable
