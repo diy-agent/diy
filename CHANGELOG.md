@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.11](https://github.com/diy-agent/diy/compare/diy-v0.1.10...diy-v0.1.11) (2026-05-26)
+
+
+### Bug Fixes
+
+* **ci:** 安装 dev 依赖与 Playwright 浏览器，修复 publish 触发时缺少 playwright ([5ba07d1](https://github.com/diy-agent/diy/commit/5ba07d10b3d8ab5a20b6631ba9558ae2dfe23c68))
+
 ## [0.1.10](https://github.com/diy-agent/diy/compare/diy-v0.1.9...diy-v0.1.10) (2026-05-26)
 
 
