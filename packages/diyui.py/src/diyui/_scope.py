@@ -65,7 +65,6 @@ class ScopeNode:
         self._is_dirty: bool = False
         self._is_executing: bool = False
         self._is_async_cell: bool = False
-        self._gen_instance: Any = None  # generator cell 的生成器实例（异步升级用）
         # app 引用，cell 执行时用于 push/pop context
         self._app: BaseApp | None = None
 
@@ -160,7 +159,7 @@ class ScopeNode:
 
         def decorator(fn: Callable[[T], None]) -> T:
             self._cell_fn = fn  # type: ignore[assignment]
-            if inspect.isgeneratorfunction(fn):
+            if inspect.isgeneratorfunction(fn) or inspect.isasyncgenfunction(fn):
                 self._is_async_cell = True
                 self._execute_cell_generator(initial=True)
             else:
@@ -323,11 +322,13 @@ class ScopeNode:
                 if isinstance(yielded, ScopeNode):
                     self._add_child(yielded)
                 elif _inspect.isawaitable(yielded):
-                    # 遇到 awaitable：保存当前执行到一半的生成器，
-                    # 升级到 async 路径继续驱动
-                    self._gen_instance = gen
-                    self._upgrade_to_async(yielded, deps, old_children, app, initial, saved_config)
-                    return  # async 路径接管后续执行
+                    import warnings
+
+                    warnings.warn(
+                        "Generator cell yielded awaitable in sync path. "
+                        "Use async def for async generator cells.",
+                        RuntimeWarning,
+                    )
         except Exception as exc:
             if not initial:
                 debug.record_error(exc)
@@ -354,148 +355,8 @@ class ScopeNode:
             if scheduler is not None:
                 scheduler.enqueue(self._execute_cell_generator)
 
-    def _upgrade_to_async(
-        self,
-        first_awaitable: object,
-        deps: set[object],
-        old_children: list[ScopeNode],
-        app: object | None,
-        initial: bool,
-        saved_config: ScopeConfig | None,
-    ) -> None:
-        """sync 路径遇到 awaitable 时，升级到 async 路径。
-
-        已执行的生成器进度（self._gen_instance）、已清空的 children、
-        已累积的 deps 和 old_children 传递到 async 驱动。
-        """
-        import inspect as _inspect
-        scheduler = self.get_config("scheduler")
-        if scheduler is None or not hasattr(scheduler, "enqueue_async"):
-            # 无 async scheduler，回退：跳过 awaitable，继续同步
-            self._drive_generator_sync_continue(deps, old_children, app, initial, saved_config)
-            return
-
-        # async 调度：用闭包传递已累积的状态
-        gen = self._gen_instance
-        saved_config_val = saved_config
-
-        async def resume() -> None:
-            from . import _signal as signal_mod
-
-            deps_local = deps
-
-            try:
-                result = None
-                # 首次 yield 的是第一个 awaitable
-                yielded: object = first_awaitable
-                while True:
-                    if _inspect.isawaitable(yielded):
-                        result = await yielded
-                    elif isinstance(yielded, ScopeNode):
-                        self._add_child(yielded)
-                        result = None
-                    elif yielded is None:
-                        break
-                    else:
-                        result = None
-
-                    signal_mod._dependency_collector = lambda s: deps_local.add(s)  # type: ignore[assignment]
-                    try:
-                        yielded = gen.send(result)  # type: ignore[arg-type]
-                    except StopIteration:
-                        break
-                    finally:
-                        signal_mod._dependency_collector = None
-            except Exception as exc:
-                if not initial:
-                    from ._debug import get_debug
-
-                    get_debug(self).record_error(exc)
-            finally:
-                if saved_config_val is not None:
-                    self._config = saved_config_val
-
-                for child in old_children:
-                    child._parent = None
-
-                signal_mod._dependency_collector = None
-                signal_mod._current_cell_node = None
-                signal_mod._rerun_depth -= 1
-                self._is_executing = False
-                if app is not None:
-                    app._pop_context()  # type: ignore[attr-defined]
-
-                self._flush_deps_and_reset(deps_local)
-
-            if self._is_dirty and self._cell_fn is not None:
-                s = self.get_config("scheduler")
-                if s is not None and hasattr(s, "enqueue_async"):
-                    s.enqueue_async(lambda: self._drive_generator_async(initial=False))
-
-        scheduler.enqueue_async(resume)
-
-    def _drive_generator_sync_continue(
-        self,
-        deps: set[object],
-        old_children: list[ScopeNode],
-        app: object | None,
-        initial: bool,
-        saved_config: ScopeConfig | None,
-    ) -> None:
-        """sync 回退：跳过一个 yield（awaitable），继续同步驱动。"""
-        import inspect as _inspect
-        from . import _signal as signal_mod
-
-        gen = self._gen_instance
-
-        try:
-            result = None
-            while True:
-                signal_mod._dependency_collector = lambda s: deps.add(s)  # type: ignore[assignment]
-                try:
-                    yielded = gen.send(result)  # type: ignore[arg-type]
-                except StopIteration:
-                    break
-                finally:
-                    signal_mod._dependency_collector = None
-
-                if yielded is None:
-                    break
-
-                if isinstance(yielded, ScopeNode):
-                    self._add_child(yielded)
-                elif _inspect.isawaitable(yielded):
-                    result = yielded  # 跳过，不 await
-                else:
-                    result = None
-        except Exception as exc:
-            if not initial:
-                from ._debug import get_debug
-
-                get_debug(self).record_error(exc)
-        finally:
-            if saved_config is not None:
-                self._config = saved_config
-
-            for child in old_children:
-                child._parent = None
-
-            signal_mod._dependency_collector = None
-            signal_mod._current_cell_node = None
-            signal_mod._rerun_depth -= 1
-            self._is_executing = False
-            if app is not None:
-                app._pop_context()  # type: ignore[attr-defined]
-
-            self._flush_deps_and_reset(deps)
-
-        if self._is_dirty and self._cell_fn is not None:
-            scheduler = self.get_config("scheduler")
-            if scheduler is not None:
-                scheduler.enqueue(self._execute_cell_generator)
-
     async def _drive_generator_async(self, *, initial: bool = False) -> None:
-        """异步驱动生成器（支持 yield awaitable）。"""
+        """异步驱动生成器（支持 yield awaitable 和 async def generator）。"""
         import inspect as _inspect
 
         from . import _signal as signal_mod
@@ -525,13 +386,20 @@ class ScopeNode:
         debug = get_debug(self)
         debug.record_rerun()
 
+        is_async_gen = _inspect.isasyncgen(gen)
+
         try:
             result = None
             while True:
                 signal_mod._dependency_collector = lambda s: deps.add(s)  # type: ignore[assignment]
                 try:
-                    yielded = gen.send(result)  # type: ignore[arg-type]
+                    if is_async_gen:
+                        yielded = await gen.asend(result)  # type: ignore[attr-defined]
+                    else:
+                        yielded = gen.send(result)  # type: ignore[arg-type]
                 except StopIteration:
+                    break
+                except StopAsyncIteration:
                     break
                 finally:
                     signal_mod._dependency_collector = None

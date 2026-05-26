@@ -52,7 +52,10 @@ class Signal(Generic[T]):
         cross_scope = False
         if _current_cell_node is not None and self._owner is not None:
             owner = self._owner
-            if id(owner) not in _current_cell_node._ancestor_ids:  # type: ignore[attr-defined]
+            # cell node 和 owner 必须互相在对方的祖先链中：
+            # - owner 在 cell 祖先中 → cell 读取自己或祖先 scope 的 signal
+            # - cell 在 owner 祖先中 → cell 在上层 scope，读取下层 signal（合法）
+            if id(owner) not in _current_cell_node._ancestor_ids and id(_current_cell_node) not in owner._ancestor_ids:  # type: ignore[attr-defined]
                 cross_scope = True
                 from ._scope import ScopeMode
 

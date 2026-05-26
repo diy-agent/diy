@@ -572,3 +572,5 @@ class TestAsyncGeneratorCell:
             assert children == ["loaded"]
         finally:
             loop.close()
+
+

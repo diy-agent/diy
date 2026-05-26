@@ -1,7 +1,7 @@
 """diy UI Panel Demo — 异步 generator cell 多路并发。
 
-3 个独立的 button，各自触发自己的 generator cell。
-每步 yield 一个 awaitable → UI 即时更新 → 下一步，步步可见。
+3 个独立的 button，各自触发自己的 async def generator cell。
+yield 组件 + await 异步操作 → UI 即时更新 → 下一步，步步可见。
 
 运行：uv run panel serve examples/async_cell_demo.py
 """
@@ -40,7 +40,8 @@ async def step(label: str, n: int, total: int, delay: float) -> str:
 # 3 路并行
 # ═══════════════════════════════════════════════════
 
-with app.layout.row():
+@app.layout.row().cell()
+def _(_: diypn.layout.Column):
 
     # ── Cell A: 快 (0.5s × 5) ──
     with app.layout.card(title="A — 快 (0.5s × 5)", width=400):
@@ -51,13 +52,13 @@ with app.layout.row():
         app.pane.markdown(f"触发次数：**{ta.value}**")
 
         @app.layout.card(hide_header=True).cell()
-        def _(node: diypn.layout.Column):
+        async def _(node: diypn.layout.Column):
             if ta.value == 0:
                 yield app.pane.markdown("  👆 点按钮")
                 return
             yield app.pane.markdown(f"  🟢 启动 #{ta.value}")
             for i in range(5):
-                s = yield step("A", i + 1, 5, 0.5)
+                s = await step("A", i + 1, 5, 0.5)
                 yield app.pane.markdown(s)
             yield app.pane.markdown(f"  ✅ A 完成")
 
@@ -70,13 +71,13 @@ with app.layout.row():
         app.pane.markdown(f"触发次数：**{tb.value}**")
 
         @app.layout.card(hide_header=True).cell()
-        def _(node: diypn.layout.Column):
+        async def _(node: diypn.layout.Column):
             if tb.value == 0:
                 yield app.pane.markdown("  👆 点按钮")
                 return
             yield app.pane.markdown(f"  🔵 启动 #{tb.value}")
             for i in range(5):
-                s = yield step("B", i + 1, 5, 0.8)
+                s = await step("B", i + 1, 5, 0.8)
                 yield app.pane.markdown(s)
             yield app.pane.markdown(f"  ✅ B 完成")
 
@@ -89,13 +90,13 @@ with app.layout.row():
         app.pane.markdown(f"触发次数：**{tc.value}**")
 
         @app.layout.card(hide_header=True).cell()
-        def _(node: diypn.layout.Column):
+        async def _(node: diypn.layout.Column):
             if tc.value == 0:
                 yield app.pane.markdown("  👆 点按钮")
                 return
             yield app.pane.markdown(f"  🟡 启动 #{tc.value}")
             for i in range(3):
-                s = yield step("C", i + 1, 3, 1.5)
+                s = await step("C", i + 1, 3, 1.5)
                 yield app.pane.markdown(s)
             yield app.pane.markdown(f"  ✅ C 完成")
 
