@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.10](https://github.com/diy-agent/diy/compare/diy-v0.1.9...diy-v0.1.10) (2026-05-26)
+
+
+### Bug Fixes
+
+* **publish:** github-actions-cicd add :uv run playwright install ([2f5677a](https://github.com/diy-agent/diy/commit/2f5677adc213d3a5b9044a5f9fc2d37e9f47d712))
+
 ## [0.1.9](https://github.com/diy-agent/diy/compare/diy-v0.1.8...diy-v0.1.9) (2026-05-26)
 
 
