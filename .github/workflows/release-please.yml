@@ -40,4 +40,4 @@ jobs:
               # 配置全局 git url 为 https 以避免 ssh 认证问题,action环境没有ssh key无法clone
               run: |
                   git config --global url."https://github.com/".insteadOf "git@github.com:"
-                  ./sha.sh cicd
+                  ./sha.sh github-actions-cicd

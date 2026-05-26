@@ -134,7 +134,9 @@ publish() {
   echo "${success}✓ 发布完成${reset}"
 }
 # mono所有workspace的ci持续集成,包括check;test-all;
-cicd()    {
+github-actions-cicd()    {
+    # github actions 安装 playwright 依赖
+    uv run playwright install chromium --with-deps
     ci
     publish
 }
