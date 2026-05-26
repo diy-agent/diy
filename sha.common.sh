@@ -5,7 +5,7 @@
 shopt -s globstar
 
 # On Mac OS, readlink -f doesn't work, so use._real_path get the real path of the file
-ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/" && pwd)
+__SHA_COMMON_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/" && pwd)
 
 # --- 1. M3 原子颜色 (Raw Components) ---
 # Primary Colors
@@ -161,9 +161,9 @@ run() {
 
 # run pwd
 # shellcheck source=../vendor/sha.bash
-if [ ! -d "$ROOT_DIR/vendor/sha" ] || [ -z "$(ls -A "$ROOT_DIR/vendor/sha" 2>/dev/null)" ]; then
+if [ ! -d "$__SHA_COMMON_DIR/vendor/sha" ] || [ -z "$(ls -A "$__SHA_COMMON_DIR/vendor/sha" 2>/dev/null)" ]; then
   echo "${info} vendor/sha等子模块初始化不存在, 开始初始化... ${reset}"
   run git submodule update --init --recursive
 fi
-source "$ROOT_DIR/vendor/sha/sha.bash"
+source "$__SHA_COMMON_DIR/vendor/sha/sha.bash"
 shopt -s expand_aliases  # bash默认不开启alias 扩展

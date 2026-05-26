@@ -26,9 +26,8 @@ set -o errtrace -o errexit -o functrace -o pipefail
 shopt -s globstar extglob
 
 # Get the real path of the script directory
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-cd "$ROOT_DIR"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 source "../../sha.common.sh"
 
 ####################################################################################
@@ -91,5 +90,13 @@ test-head() { run uv run pytest -v --browser chromium --headed --slowmo 500 "${@
 # unit test
 test-all() { test; test-headless;}
 
-
+install() {
+    uninstall
+    run ln -sf "$SCRIPT_DIR/skills/find-context" ~/.agents/skills/find-context
+    run ln -sf "$SCRIPT_DIR/skills/win-file-unlock" ~/.agents/skills/win-file-unlock
+}
+uninstall() {
+    run rm -rf ~/.agents/skills/find-context
+    run rm -rf ~/.agents/skills/win-file-unlock
+}
 sha "$@"
