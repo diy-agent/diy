@@ -79,8 +79,13 @@ class Signal[T]:
 
     @value.setter
     def value(self, new: T) -> None:
-        if self._value == new:
-            return
+        try:
+            if self._value == new:
+                return
+        except ValueError:
+            # DataFrame 等对象的 == 可能返回数组而非 bool，
+            # 此时无法比较，直接视为不等
+            pass
         self._value = new
         self._notify(new)
         self._trigger_observers()
@@ -129,8 +134,11 @@ class Signal[T]:
         用于 _reset_on_complete 场景（如 Button 点击后自动恢复 False）。
         调用者需确保已在合适的时机调用（cell 执行完成后的 finally 块）。
         """
-        if self._value == value:
-            return
+        try:
+            if self._value == value:
+                return
+        except ValueError:
+            pass
         self._value = value
         self._notify(value)
 
