@@ -138,7 +138,7 @@ class TestSignalDependencyTracking:
         """读取 .value 时若存在 tracker，则注册依赖。"""
         sig = diyui.Signal(0)
         tracked = []
-        sig._tracker = tracked.append  # 模拟 cell 执行时设置的 tracker
+        sig._tracker = tracked.append
 
         _ = sig.value
 

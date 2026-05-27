@@ -14,30 +14,46 @@ if TYPE_CHECKING:
     from ._signal import Signal
 
 
+from contextvars import ContextVar, Token
+from typing import Any
+
 class BaseApp(ScopeNode):
     """App 基类，也是 ScopeNode 树的根节点。
 
-    _context_stack 顶部是当前活跃的 ScopeNode。
-    所有组件创建和 signal 挂载都落到 _current。
+    使用 ContextVar 管理上下文栈，确保异步安全。
+    顶部是当前活跃的 ScopeNode。所有组件创建和 signal 挂载都落到 _current。
     """
 
     def __init__(self) -> None:
         super().__init__()
-        self._context_stack: list[ScopeNode] = [self]
+        self._context_stack_var: ContextVar[tuple[ScopeNode, ...]] = ContextVar(
+            f"diyui_context_stack_{id(self)}", default=()
+        )
+        self._context_stack_var.set((self,))
 
     # ── context ────────────────────────────────
 
     @property
     def _current(self) -> ScopeNode:
-        return self._context_stack[-1]
+        stack = self._context_stack_var.get()
+        if not stack:
+            return self
+        return stack[-1]
 
-    def _push_context(self, node: ScopeNode) -> None:
-        self._context_stack.append(node)
+    def _push_context(self, node: ScopeNode) -> Token[tuple[ScopeNode, ...]]:
+        stack = self._context_stack_var.get()
+        if not stack:
+            stack = (self,)
+        return self._context_stack_var.set(stack + (node,))
 
-    def _pop_context(self) -> None:
-        if len(self._context_stack) <= 1:
-            raise IndexError("不能 pop 最后一个 context（app 本身）")
-        self._context_stack.pop()
+    def _pop_context(self, token: Token[tuple[ScopeNode, ...]] | None = None) -> None:
+        if token is not None:
+            self._context_stack_var.reset(token)
+        else:
+            stack = self._context_stack_var.get()
+            if len(stack) <= 1:
+                raise IndexError("不能 pop 最后一个 context（app 本身）")
+            self._context_stack_var.set(stack[:-1])
 
     def _add_to_current(self, child: ScopeNode) -> None:
         """将 child 添加到当前 context 节点。

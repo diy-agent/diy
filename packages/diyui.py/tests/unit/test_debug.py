@@ -64,8 +64,9 @@ class TestCellErrorCapture:
 
             def _push_context(self, node: diyui.ScopeNode):
                 self._context_stack.append(node)
+                return None
 
-            def _pop_context(self):
+            def _pop_context(self, token: Any = None):
                 if len(self._context_stack) <= 1:
                     raise IndexError
                 self._context_stack.pop()
@@ -137,8 +138,9 @@ class TestRerunCount:
 
             def _push_context(self, node: diyui.ScopeNode):
                 self._context_stack.append(node)
+                return None
 
-            def _pop_context(self):
+            def _pop_context(self, token: Any = None):
                 if len(self._context_stack) <= 1:
                     raise IndexError
                 self._context_stack.pop()

@@ -8,25 +8,27 @@ import asyncio
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from . import _signal as signal_mod
-
-
 class ImmediateScheduler:
     """enqueue 时通常同步执行。
 
-    rerun 深度 > 0 时（嵌套保护），callback 进入 _pending 队列，
+    如果当前正在执行 callback（例如 cell rerun），则新 callback 进入 _pending 队列，
     等 flush() 时执行。
     """
 
     def __init__(self) -> None:
         self._pending: list[Callable[[], None]] = []
+        self._is_executing: bool = False
 
     def enqueue(self, callback: Callable[[], None]) -> None:
-        if signal_mod._rerun_depth > 0:
+        if self._is_executing:
             self._pending.append(callback)
         else:
-            callback()
-            self._flush_pending()
+            self._is_executing = True
+            try:
+                callback()
+                self._flush_pending()
+            finally:
+                self._is_executing = False
 
     def enqueue_async(
         self, async_callback: Callable[[], Coroutine[Any, Any, None]]

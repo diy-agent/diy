@@ -63,7 +63,7 @@ class TestCellDependencyTracking:
         def _(node: object):
             app.markdown(str(count.value))
 
-        assert len(count._cell_subscribers) == 1
+        assert len(count._system_observers) == 1
 
     def test_multiple_signals_tracked(self):
         app = FakeApp()
@@ -74,8 +74,8 @@ class TestCellDependencyTracking:
         def _(node: object):
             app.markdown(str(a.value + b.value))
 
-        assert len(a._cell_subscribers) == 1
-        assert len(b._cell_subscribers) == 1
+        assert len(a._system_observers) == 1
+        assert len(b._system_observers) == 1
 
     def test_old_dependencies_cleared_on_rerun(self):
         """条件变化时，旧依赖被清理，新依赖重新收集。"""
@@ -90,15 +90,15 @@ class TestCellDependencyTracking:
             values.append(a.value if flag.value else b.value)
 
         # 初始：依赖 flag 和 a
-        assert len(a._cell_subscribers) == 1
-        assert len(b._cell_subscribers) == 0
+        assert len(a._system_observers) == 1
+        assert len(b._system_observers) == 0
 
         # 改变 flag，rerun 后依赖变为 flag 和 b
         flag.value = False
 
         assert values == ["a", "b"]
-        assert len(a._cell_subscribers) == 0
-        assert len(b._cell_subscribers) == 1
+        assert len(a._system_observers) == 0
+        assert len(b._system_observers) == 1
 
 
 # ═══════════════════════════════════════════════
@@ -318,7 +318,7 @@ class TestCrossScopeSignal:
                 _ = secret.value  # prod: 不报错
 
         # prod 下不注册依赖
-        assert len(secret._cell_subscribers) == 0
+        assert len(secret._system_observers) == 0
 
 
 # ═══════════════════════════════════════════════
@@ -449,12 +449,12 @@ class TestGeneratorCellRerun:
         def _(node: object):
             yield app.markdown(a.value if flag.value else b.value)
 
-        assert len(a._cell_subscribers) == 1
-        assert len(b._cell_subscribers) == 0
+        assert len(a._system_observers) == 1
+        assert len(b._system_observers) == 0
 
         flag.value = False
-        assert len(a._cell_subscribers) == 0
-        assert len(b._cell_subscribers) == 1
+        assert len(a._system_observers) == 0
+        assert len(b._system_observers) == 1
 
     def test_generator_cell_signal_write_during_rerun(self):
         """生成器 cell rerun 中写 signal 被 enqueue。"""

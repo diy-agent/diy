@@ -1,113 +1,64 @@
-"""diy UI Panel Demo — 异步 generator cell 多路并发。
-
-3 个独立的 button，各自触发自己的 async def generator cell。
-yield 组件 + await 异步操作 → UI 即时更新 → 下一步，步步可见。
-
-运行：uv run panel serve examples/async_cell_demo.py
-"""
 import asyncio
 import datetime
-
 import diyui
 import diyui.providers.panel as diypn
 
-app = diypn.PanelApp(
-    config=diyui.ScopeConfig(
-        mode=diyui.ScopeMode.DEV,
-        scheduler=diyui.ImmediateScheduler(),
-    )
+app = diypn.PanelApp()
+
+app.pane.markdown("# 🚀 diyUI 异步并发与隔离压力测试")
+app.pane.markdown("点击 **Launch All** 观察三路异步任务如何在 **不阻塞 UI、不互相干扰** 的情况下并发执行。")
+
+# 1. 全局触发信号（用于一键启动三路并行）
+start_all = app.signal(0)
+app.widgets.button(label="🚀 Launch All Simultaneously", button_type="primary").on_click(
+    lambda e: setattr(start_all, "value", start_all.value + 1)
 )
 
-app.pane.markdown("# ⏳ Async Generator Cell — 步步可见")
-app.pane.markdown(
-    "每步 yield 一个 awaitable，await 完成后 UI 更新，再下一步。\n"
-    "**互不阻塞**——同时点多个按钮，各自独立推进。"
-)
-
-
-# ── 每步一个 awaitable ──
-
-async def step(label: str, n: int, total: int, delay: float) -> str:
-    """单步异步操作：延迟后返回时间戳。"""
-    await asyncio.sleep(delay)
-    return (
-        f"  [{label}] {n}/{total} — "
-        f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]}"
-    )
-
-
-# ═══════════════════════════════════════════════════
-# 3 路并行
-# ═══════════════════════════════════════════════════
-
-@app.layout.row().cell()
-def _(_: diypn.layout.Column):
-
-    # ── Cell A: 快 (0.5s × 5) ──
-    with app.layout.card(title="A — 快 (0.5s × 5)", width=400):
-        ta = app.signal(0)
-        app.widgets.button(label="▶ A", name="btn_a").on_click(
-            lambda e: setattr(ta, "value", ta.value + 1)
+# 2. 封装任务逻辑，体现“局部状态隔离”
+def task_card(name, color, delay):
+    # 使用独立的 Card 容器
+    with app.layout.card(title=f"Task {name} ({delay}s)", width=350):
+        # 每个任务独立的计数器（局部信号）
+        local_run = app.signal(0)
+        
+        app.widgets.button(label=f"Run {name}").on_click(
+            lambda e: setattr(local_run, "value", local_run.value + 1)
         )
-        app.pane.markdown(f"触发次数：**{ta.value}**")
-
-        @app.layout.card(hide_header=True).cell()
-        async def _(node: diypn.layout.Column):
-            if ta.value == 0:
-                yield app.pane.markdown("  👆 点按钮")
+        
+        # 内部 Cell：监听全局和局部信号
+        # 这里故意不加装饰器参数，体现其独立响应能力
+        @app.layout.column().cell()
+        async def _(node):
+            # 这里的读操作会注册两个依赖
+            trigger_id = start_all.value + local_run.value
+            if trigger_id == 0:
+                yield app.pane.markdown("  等待启动...")
                 return
-            yield app.pane.markdown(f"  🟢 启动 #{ta.value}")
+
+            yield app.pane.markdown(f"  {color} **任务 #{trigger_id} 启动**")
+            
             for i in range(5):
-                s = await step("A", i + 1, 5, 0.5)
-                yield app.pane.markdown(s)
-            yield app.pane.markdown(f"  ✅ A 完成")
+                await asyncio.sleep(delay)
+                # 核心测试点：
+                # 1. yield 是否依然准确挂载到本 Card 的 Column 中（测试 ContextVar 隔离）
+                # 2. await 切换后，读取到的信号值是否准确
+                now = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                yield app.pane.markdown(f"  {color} {name}: {i+1}/5 @ {now}")
+                
+            yield app.pane.markdown(f"  ✅ {name} 完成")
 
-    # ── Cell B: 中 (0.8s × 5) ──
-    with app.layout.card(title="B — 中 (0.8s × 5)", width=400):
-        tb = app.signal(0)
-        app.widgets.button(label="▶ B", name="btn_b").on_click(
-            lambda e: setattr(tb, "value", tb.value + 1)
-        )
-        app.pane.markdown(f"触发次数：**{tb.value}**")
-
-        @app.layout.card(hide_header=True).cell()
-        async def _(node: diypn.layout.Column):
-            if tb.value == 0:
-                yield app.pane.markdown("  👆 点按钮")
-                return
-            yield app.pane.markdown(f"  🔵 启动 #{tb.value}")
-            for i in range(5):
-                s = await step("B", i + 1, 5, 0.8)
-                yield app.pane.markdown(s)
-            yield app.pane.markdown(f"  ✅ B 完成")
-
-    # ── Cell C: 慢 (1.5s × 3) ──
-    with app.layout.card(title="C — 慢 (1.5s × 3)", width=400):
-        tc = app.signal(0)
-        app.widgets.button(label="▶ C", name="btn_c").on_click(
-            lambda e: setattr(tc, "value", tc.value + 1)
-        )
-        app.pane.markdown(f"触发次数：**{tc.value}**")
-
-        @app.layout.card(hide_header=True).cell()
-        async def _(node: diypn.layout.Column):
-            if tc.value == 0:
-                yield app.pane.markdown("  👆 点按钮")
-                return
-            yield app.pane.markdown(f"  🟡 启动 #{tc.value}")
-            for i in range(3):
-                s = await step("C", i + 1, 3, 1.5)
-                yield app.pane.markdown(s)
-            yield app.pane.markdown(f"  ✅ C 完成")
-
+# 3. 布局：三路并行。这三路 Task 之间完全解耦。
+with app.layout.row():
+    task_card("A", "🔴", 0.4)
+    task_card("B", "🔵", 0.7)
+    task_card("C", "🟡", 1.2)
 
 app.pane.markdown("---")
-app.pane.markdown("### 观察要点")
+app.pane.markdown("### 验证要点")
 app.pane.markdown("""
-1. **步步可见** — 每个 yield → await 完成 → UI 更新 → 下一步，不像一次性弹出来
-2. **同时点击 A+B+C** — 三路并行，A 先到 5/5，C 还在 2/3
-3. **各自独立** — A 的 rerun 不影响 B/C
-4. **Bokeh UI 不冻结** — `await asyncio.sleep()` 不阻塞事件循环
+1. **并发性**：点击 Launch All，三路进度条独立跳动。
+2. **隔离性**：即使 Task A 正在 await，Task B 的 yield 也绝不会出现在 A 的卡片中。
+3. **状态独立**：单独点 Run A 不会重置或干扰 B 和 C。
 """)
 
 app.servable()

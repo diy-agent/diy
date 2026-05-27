@@ -263,17 +263,17 @@ class EventLog:
         return f"EventLog({self._events})"
 
     def start(self) -> None:
-        """激活事件收集（monkey-patch signal._trigger_cells 和 cell 执行）。"""
+        """激活事件收集（monkey-patch signal._trigger_observers 和 cell 执行）。"""
         import diyui._debug
         import diyui._scope
         import diyui._signal
 
         log = self
 
-        # Hook signal._trigger_cells
-        _original_trigger = diyui._signal.Signal._trigger_cells
+        # Hook signal._trigger_observers
+        _original_trigger = diyui._signal.Signal._trigger_observers
 
-        def _trigger_cells_with_log(sig: Any) -> None:
+        def _trigger_observers_with_log(sig: Any) -> None:
             sig_id = id(sig)
             old_val = log._previous_signal_values.get(sig_id, "?")
             old_val_str = _format_val(old_val)
@@ -282,7 +282,7 @@ class EventLog:
             log._previous_signal_values[sig_id] = sig._value  # type: ignore[attr-defined]
             _original_trigger(sig)
 
-        diyui._signal.Signal._trigger_cells = _trigger_cells_with_log  # type: ignore[assignment]
+        diyui._signal.Signal._trigger_observers = _trigger_observers_with_log  # type: ignore[assignment]
 
         # Hook ScopeNode._execute_cell
         _original_execute = diyui._scope.ScopeNode._execute_cell
@@ -326,7 +326,7 @@ class EventLog:
         diyui._debug.DebugInfo.record_error = _record_error_with_log  # type: ignore[assignment]
 
         self._restore = [
-            lambda: setattr(diyui._signal.Signal, "_trigger_cells", _original_trigger),
+            lambda: setattr(diyui._signal.Signal, "_trigger_observers", _original_trigger),
             lambda: setattr(diyui._scope.ScopeNode, "_execute_cell", _original_execute),
             lambda: setattr(
                 diyui._scope.ScopeNode, "_execute_cell_generator", _original_execute_gen

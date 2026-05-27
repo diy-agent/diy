@@ -17,7 +17,44 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from ._base_app import BaseApp
-    from ._signal import Signal
+
+from ._signal import Signal, SignalContext, SignalObserver, ScopeViolationError
+
+from contextvars import ContextVar
+
+_active_cell_var: ContextVar[ScopeNode | None] = ContextVar("diyui_active_cell", default=None)
+_deps_var: ContextVar[set[object] | None] = ContextVar("diyui_deps", default=None)
+
+
+class CellRuntimeContext(SignalContext):
+    def on_signal_read(self, signal: Signal[Any]) -> bool:
+        active_cell = _active_cell_var.get()
+        deps = _deps_var.get()
+
+        if active_cell is None or deps is None:
+            return False
+
+        cross_scope = False
+        owner = signal.owner
+        if owner is not None and isinstance(owner, ScopeNode):
+            if (
+                id(owner) not in active_cell._ancestor_ids
+                and id(active_cell) not in owner._ancestor_ids
+            ):
+                cross_scope = True
+                if active_cell.mode == ScopeMode.DEV:
+                    raise ScopeViolationError(
+                        f"Cross-scope signal access: cell node {active_cell} not in signal owner {owner}'s subtree"
+                    )
+        if not cross_scope:
+            deps.add(signal)
+
+        return True
+
+
+_runtime = CellRuntimeContext()
+# Signal._context = _runtime  <-- 此处不再直接赋值 ClassVar，而是通过 Signal._set_context()
+Signal._set_context(_runtime)
 
 
 class ScopeMode(Enum):
@@ -202,7 +239,8 @@ class ScopeNode:
         - 清空旧 children → 执行 fn 重建 → children 即时生效
         - 失败时（非 initial）记录错误，保留空 children（旧 children 已解除关系）
         """
-        from . import _signal as signal_mod
+        if self._is_executing:
+            return
 
         fn = self._cell_fn
         if fn is None:
@@ -210,20 +248,22 @@ class ScopeNode:
 
         # 设置依赖收集器（不清旧依赖，执行期间保留）
         deps: set[object] = set()
-        signal_mod._dependency_collector = lambda s: deps.add(s)  # type: ignore[assignment]
 
         # push cell node 为当前 context
         app = self._app
+        token_app = None
         if app is not None:
-            app._push_context(self)  # type: ignore[attr-defined]
+            token_app = app._push_context(self)  # type: ignore[attr-defined]
 
         # 清空旧 children
         old_children = list(self._children)
         self._children = []
         self._is_dirty = False
         self._is_executing = True
-        signal_mod._current_cell_node = self
-        signal_mod._rerun_depth += 1
+        
+        token_active = _active_cell_var.set(self)
+        token_deps = _deps_var.set(deps)
+        token_sig_ctx = Signal._set_context(_runtime)
 
         # 通知 provider 清空旧 children（cell rerun 开始时清理 UI）
         self._on_children_replaced([])
@@ -245,12 +285,12 @@ class ScopeNode:
             for child in old_children:
                 child._parent = None
 
-            signal_mod._dependency_collector = None
-            signal_mod._current_cell_node = None
-            signal_mod._rerun_depth -= 1
+            _active_cell_var.reset(token_active)
+            _deps_var.reset(token_deps)
+            Signal._context_var.reset(token_sig_ctx)
             self._is_executing = False
             if app is not None:
-                app._pop_context()  # type: ignore[attr-defined]
+                app._pop_context(token_app)  # type: ignore[attr-defined]
             self._flush_deps_and_reset(deps)
 
         # 执行完成后若仍 dirty（rerun 中写了依赖的 signal），自动重新入队
@@ -270,15 +310,6 @@ class ScopeNode:
         if fn is None:
             return
 
-        # 临时设置 auto_mount_child=False，让工厂函数只创建不挂载
-        # generator driver 通过 yield 接管挂载
-        saved_config = self._config
-        self._config = ScopeConfig(
-            mode=self.mode,
-            scheduler=self.scheduler,
-            auto_mount_child=False,
-        )
-
         # 检测是否需要 async 路径：仅 async generator function 需要
         is_async = inspect.isasyncgenfunction(fn)
 
@@ -290,38 +321,47 @@ class ScopeNode:
                 )
             else:
                 # 无 async scheduler 回退：同步驱动（遇到 awaitable 会报错）
-                self._drive_generator_sync(
-                    fn, initial=initial, saved_config=saved_config
-                )
+                self._drive_generator_sync(fn, initial=initial)
         else:
             # 纯同步：直接驱动
-            self._drive_generator_sync(fn, initial=initial, saved_config=saved_config)
+            self._drive_generator_sync(fn, initial=initial)
 
     def _drive_generator_sync(
         self,
         fn: Callable[[ScopeNode], Any],
         *,
         initial: bool,
-        saved_config: ScopeConfig | None,
     ) -> None:
         """同步驱动生成器（无 awaitable）。"""
+        if self._is_executing:
+            return
+
         import inspect as _inspect
 
-        from . import _signal as signal_mod
+        # 临时设置 auto_mount_child=False，让工厂函数只创建不挂载
+        saved_config = self._config
+        self._config = ScopeConfig(
+            mode=self.mode,
+            scheduler=self.scheduler,
+            auto_mount_child=False,
+        )
 
         gen = fn(self)  # type: ignore[arg-type]
         deps: set[object] = set()
 
         app = self._app
+        token_app = None
         if app is not None:
-            app._push_context(self)  # type: ignore[attr-defined]
+            token_app = app._push_context(self)  # type: ignore[attr-defined]
 
         old_children = list(self._children)
         self._children = []
         self._is_dirty = False
         self._is_executing = True
-        signal_mod._current_cell_node = self
-        signal_mod._rerun_depth += 1
+        
+        token_active = _active_cell_var.set(self)
+        token_deps = _deps_var.set(deps)
+        token_sig_ctx = Signal._set_context(_runtime)
 
         self._on_children_replaced([])
 
@@ -332,13 +372,10 @@ class ScopeNode:
 
         try:
             while True:
-                signal_mod._dependency_collector = lambda s: deps.add(s)  # type: ignore[assignment]
                 try:
                     yielded = gen.send(None)  # type: ignore[arg-type]
                 except StopIteration:
                     break
-                finally:
-                    signal_mod._dependency_collector = None
 
                 if yielded is None:
                     break
@@ -366,12 +403,12 @@ class ScopeNode:
             for child in old_children:
                 child._parent = None
 
-            signal_mod._dependency_collector = None
-            signal_mod._current_cell_node = None
-            signal_mod._rerun_depth -= 1
+            _active_cell_var.reset(token_active)
+            _deps_var.reset(token_deps)
+            Signal._context_var.reset(token_sig_ctx)
             self._is_executing = False
             if app is not None:
-                app._pop_context()  # type: ignore[attr-defined]
+                app._pop_context(token_app)  # type: ignore[attr-defined]
 
             self._flush_deps_and_reset(deps)
 
@@ -380,27 +417,39 @@ class ScopeNode:
 
     async def _drive_generator_async(self, *, initial: bool = False) -> None:
         """异步驱动生成器（支持 yield awaitable 和 async def generator）。"""
-        import inspect as _inspect
+        if self._is_executing:
+            return
 
-        from . import _signal as signal_mod
+        import inspect as _inspect
 
         fn = self._cell_fn
         if fn is None:
             return
 
+        # 临时设置 auto_mount_child=False
+        saved_config = self._config
+        self._config = ScopeConfig(
+            mode=self.mode,
+            scheduler=self.scheduler,
+            auto_mount_child=False,
+        )
+
         gen = fn(self)  # type: ignore[arg-type]
         deps: set[object] = set()
 
         app = self._app
+        token_app = None
         if app is not None:
-            app._push_context(self)  # type: ignore[attr-defined]
+            token_app = app._push_context(self)  # type: ignore[attr-defined]
 
         old_children = list(self._children)
         self._children = []
         self._is_dirty = False
         self._is_executing = True
-        signal_mod._current_cell_node = self
-        signal_mod._rerun_depth += 1
+        
+        token_active = _active_cell_var.set(self)
+        token_deps = _deps_var.set(deps)
+        token_sig_ctx = Signal._set_context(_runtime)
 
         self._on_children_replaced([])
 
@@ -414,7 +463,6 @@ class ScopeNode:
         try:
             result = None
             while True:
-                signal_mod._dependency_collector = lambda s: deps.add(s)  # type: ignore[assignment]
                 try:
                     if is_async_gen:
                         yielded = await gen.asend(result)  # type: ignore[attr-defined]
@@ -424,8 +472,6 @@ class ScopeNode:
                     break
                 except StopAsyncIteration:
                     break
-                finally:
-                    signal_mod._dependency_collector = None
 
                 if yielded is None:
                     break
@@ -443,35 +489,41 @@ class ScopeNode:
             else:
                 raise
         finally:
+            if saved_config is not None:
+                self._config = saved_config
+
             for child in old_children:
                 child._parent = None
 
-            signal_mod._dependency_collector = None
-            signal_mod._current_cell_node = None
-            signal_mod._rerun_depth -= 1
+            _active_cell_var.reset(token_active)
+            _deps_var.reset(token_deps)
+            Signal._context_var.reset(token_sig_ctx)
             self._is_executing = False
             if app is not None:
-                app._pop_context()  # type: ignore[attr-defined]
+                app._pop_context(token_app)  # type: ignore[arg-type]
 
             self._flush_deps_and_reset(deps)
 
-        if (
-            self._is_dirty
-            and self._cell_fn is not None
-            and self.scheduler is not None
-            and hasattr(self.scheduler, "enqueue_async")
-        ):
-            self.scheduler.enqueue_async(
-                lambda: self._drive_generator_async(initial=False)
-            )
+        if self._is_dirty and self._cell_fn is not None and self.scheduler is not None:
+            self.scheduler.enqueue(self._execute_cell_generator)
+
+    def on_signal_changed(self, signal: Signal[Any]) -> None:
+        self._mark_dirty()
+        if self._is_executing:
+            return
+        if self.scheduler is not None:
+            if self._is_async_cell:
+                self.scheduler.enqueue(self._execute_cell_generator)
+            else:
+                self.scheduler.enqueue(self._execute_cell)
 
     def _flush_deps_and_reset(self, deps: set[object]) -> None:
         """diff 更新依赖 + auto-reset。提取为共享逻辑。"""
         old_deps = self._dependencies
         for sig in old_deps - deps:
-            sig._unsubscribe_cell(self)  # type: ignore[attr-defined]
+            sig.remove_system_observer(self)  # type: ignore[attr-defined]
         for sig in deps - old_deps:
-            sig._subscribe_cell(self)  # type: ignore[attr-defined]
+            sig.add_system_observer(self)  # type: ignore[attr-defined]
         self._dependencies = deps
 
         for sig in deps:
