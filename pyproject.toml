@@ -17,12 +17,13 @@ package = false
 python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-standalone/"
 
 [tool.uv.workspace]
-members = ["packages/diyui.py", "packages/diydev"]
+members = ["packages/diyui.py", "packages/diydev", "packages/diy-cli.py"]
 
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"
 
 [tool.uv.sources]
+diy-cli = { workspace = true }
 diyui = { workspace = true }
 diydev = { workspace = true }
 
@@ -65,6 +66,8 @@ docstring-code-format = true
 typeCheckingMode = "standard"
 pythonVersion = "3.12"
 include = [
+    "packages/diy-cli.py/src",
+    "packages/diy-cli.py/tests",
     "packages/diyui.py/src",
     "packages/diyui.py/tests",
     "packages/diyui.py/examples",
@@ -80,7 +83,7 @@ reportIncompatibleMethodOverride = false
 [tool.pytest.ini_options]
 markers = ["browser: 需要 headless browser 的测试"]
 testpaths = [
+    "packages/diy-cli.py/tests",
     "packages/diyui.py/tests",
     "packages/diydev/tests",
 ]
-

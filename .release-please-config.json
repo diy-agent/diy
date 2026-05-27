@@ -6,7 +6,8 @@
       "component": "diy",
       "extra-files": [
         "packages/diydev/pyproject.toml",
-        "packages/diyui.py/pyproject.toml"
+        "packages/diyui.py/pyproject.toml",
+        "packages/diy-cli.py/pyproject.toml"
       ]
     }
   },
