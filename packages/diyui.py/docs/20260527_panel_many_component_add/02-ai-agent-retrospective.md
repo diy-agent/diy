@@ -8,6 +8,14 @@
 
 ## 一、关键教训
 
+核心要点：
+最大教训：runpy 通过 ≠ panel serve 正常。Bokeh 渲染阶段的错误（类型校验、_get_model、_process_param_change）只能通过 panel serve 或直接调用 _get_model(doc) 发现。
+三个最值得做的改进：
+1. _get_model 渲染测试 — 不启动 HTTP server，直接调用 Panel 的完整渲染链路，比 panel serve 快得多
+2. Generator 后验证 Hook — 生成 wrapper 后自动对比 Panel 源码，对齐参数类型和默认值
+3. 错误模式库 — 将本次遇到的 5 种错误模式固化到工具中，AI 可以自动匹配修复
+文档里还有对 diydev 的 5 个具体工具建议（Panel Runtime Inspector、渲染测试套件、后验证 Hook、错误分类库、SHA 集成），以及对项目结构和 AI 工作流的优化建议。
+
 ### 1. "Import 通过 ≠ 运行正常" 的鸿沟
 
 这是本次会话最大的教训。`runpy.run_path()` 只执行 Python 代码，**不触发 Bokeh 模型创建**，大量错误只在 `panel serve` 的 Bokeh 渲染阶段出现：
@@ -241,19 +249,12 @@ diydev/            ← 辅助工具包
 3. 在 generator 中添加参数类型与 Panel 源码的自动对齐
 
 chen56: 可能需要回顾构造器传递的问题，我们是否真的能够保证参数定义和传递的有效性？因为Panel所有参数均由param定义，而param的定义有时比较松散，比如只在文档中说明了部分参数类型[],其实又在文档中说明了更细致的类型比如[{"":[...]}] ， 如果只是强化参数静态类型，是否别的方案（类型描述）就可以？
+另外param这种声明型和pydandic的类型定义很像，缺省值可能（未调查）会携带一个工厂函数？那利用pydandic是否ok？
 
 **中等优先级**：
-4. 错误模式库，加速 AI 的修复流程
-5. 分层测试体系（L0-L4）
+1. 错误模式库，加速 AI 的修复流程
+2. 分层测试体系（L0-L4）
 
 **长期方向**：
 6. `diydev` 统一 CLI，整合所有工具
 7. Playwright 端到端渲染测试
-
-核心要点：
-最大教训：runpy 通过 ≠ panel serve 正常。Bokeh 渲染阶段的错误（类型校验、_get_model、_process_param_change）只能通过 panel serve 或直接调用 _get_model(doc) 发现。
-三个最值得做的改进：
-1. _get_model 渲染测试 — 不启动 HTTP server，直接调用 Panel 的完整渲染链路，比 panel serve 快得多
-2. Generator 后验证 Hook — 生成 wrapper 后自动对比 Panel 源码，对齐参数类型和默认值
-3. 错误模式库 — 将本次遇到的 5 种错误模式固化到工具中，AI 可以自动匹配修复
-文档里还有对 diydev 的 5 个具体工具建议（Panel Runtime Inspector、渲染测试套件、后验证 Hook、错误分类库、SHA 集成），以及对项目结构和 AI 工作流的优化建议。

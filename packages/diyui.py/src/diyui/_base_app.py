@@ -62,7 +62,7 @@ class BaseApp(ScopeNode):
         auto_mount_child 通过 property 从当前 context 节点向上追溯。
         """
         child._app = self
-        if self._current.auto_mount_child:
+        if self._current._lookup_auto_mount_child:
             self._current._add_child(child)
 
     # ── signal ─────────────────────────────────

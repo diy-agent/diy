@@ -4,7 +4,6 @@ version = "0.1.12" # x-release-please-version
 description = "diyui - A thin reactive wrapper over UI frameworks."
 requires-python = ">=3.12"
 dependencies = [
-    "marimo>=0.23.2",
     "panel>=1.9.1",
     "asyncio>=4.0.0",
     "param>=2.3.3",
@@ -12,13 +11,10 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "jupyter>=1.1.1",
+    "marimo>=0.23.2",
     "playwright>=1.57.0",
     "pytest-playwright>=0.7.0",
-    "jupytext>=1.19.1",
-    "jupyterlab>=4.5.6",
     "pip>=25.3",
-    "jupyterlab-lsp>=5.3.0",
     "cyclopts>=4.11.2",
 ]
 

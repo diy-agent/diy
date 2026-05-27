@@ -28,7 +28,7 @@ class DebugInfo:
     @property
     def mode(self) -> ScopeMode:
 
-        return self._node.mode
+        return self._node._lookup_mode
 
     @property
     def has_error(self) -> bool:

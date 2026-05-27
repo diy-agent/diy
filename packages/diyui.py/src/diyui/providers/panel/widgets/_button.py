@@ -73,9 +73,9 @@ class Button(UIComponent, pn.widgets.Button):
         _variant = variant if variant != "solid" else (button_style or "solid")
         UIComponent.__init__(self)
         # signal 必须在 Panel __init__ 之前创建，且标记 auto-reset（cell rerun 后恢复 False）
-        self.signal: diyui.Signal[bool] = diyui.Signal[bool](value)
-        self.signal._reset_on_complete = True
-        self._init_done: bool = False
+        self.diy.signal: diyui.Signal[bool] = diyui.Signal[bool](value)
+        self.diy.signal._reset_on_complete = True
+        self.diy.init_done: bool = False
         pn.widgets.Button.__init__(
             self,
             label=_label,
@@ -107,22 +107,22 @@ class Button(UIComponent, pn.widgets.Button):
             color=_color,
             variant=_variant,
         )
-        self._init_done = True
+        self.diy.init_done = True
         self._setup_event_bridge()
 
     # ── value 代理 ────────────────────────────────
 
     @property
     def value(self) -> bool:
-        return self.signal.value
+        return self.diy.signal.value
 
     @value.setter
     def value(self, v: bool) -> None:
         # 仅在初始化期间允许 Panel 内部 setattr。
         # 初始化后不走 signal——点击事件由 clicks watcher 驱动。
         # 这样 Panel Event 的 set-reset 循环不会触发额外 signal 变化。
-        if not self._init_done:
-            self.signal.value = v
+        if not self.diy.init_done:
+            self.diy.signal.value = v
 
     # ── 事件桥接 ──────────────────────────────────
 
@@ -140,6 +140,6 @@ class Button(UIComponent, pn.widgets.Button):
         """
 
         def on_click(*events: object) -> None:
-            self.signal.value = True
+            self.diy.signal.value = True
 
         self.param.watch(on_click, "clicks")

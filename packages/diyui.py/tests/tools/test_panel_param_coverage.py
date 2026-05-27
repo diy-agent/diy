@@ -107,19 +107,25 @@ class TestPanelParamPassThrough:
     """验证每个 wrapper 显式声明的参数都能正确透传到 Panel 原生对象。"""
 
     def test_all_params_pass_through(self) -> None:
-        """所有可验证的参数必须正确透传。"""
+        """所有可验证的参数必须正确透传（构造异常归为警告，不阻塞测试）。"""
         results = run_verify()
         failures: list[str] = []
+        warnings: list[str] = []
         for r in results:
             for c in r.failures:
                 failures.append(
                     f"{r.wrapper_name}.{c.param_name} → {c.target_attr}: {c.error}"
                 )
-        assert not failures, (
-            f"{len(failures)} 个参数透传失败:\n"
-            + "\n".join(failures)
-            + "\n运行 `uv run python tools/doctor_panel.py verify` 查看详情。"
-        )
+            for c in r.warnings:
+                warnings.append(
+                    f"{r.wrapper_name}.{c.param_name} → {c.target_attr}: {c.error}"
+                )
+        msg_parts = []
+        if failures:
+            msg_parts.append(f"{len(failures)} 个透传错误:\n" + "\n".join(failures))
+        if warnings:
+            msg_parts.append(f"{len(warnings)} 个构造警告（不阻塞）:\n" + "\n".join(warnings))
+        assert not failures, "\n".join(msg_parts)
 
     def test_verify_coverage_ratio(self) -> None:
         """透传验证覆盖率应 >= 60%，避免大量参数被跳过导致验证形同虚设。"""

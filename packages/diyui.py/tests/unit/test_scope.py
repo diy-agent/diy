@@ -101,23 +101,23 @@ class TestScopeConfigLookup:
 
     def test_returns_own_config_if_set(self):
         node = diyui.ScopeNode(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV))
-        assert node.mode == diyui.ScopeMode.DEV
+        assert node._lookup_mode == diyui.ScopeMode.DEV
 
     def test_falls_back_to_parent(self):
         parent = diyui.ScopeNode(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV))
         child = diyui.ScopeNode()
         parent._add_child(child)
-        assert child.mode == diyui.ScopeMode.DEV
+        assert child._lookup_mode == diyui.ScopeMode.DEV
 
     def test_own_config_overrides_parent(self):
         parent = diyui.ScopeNode(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV))
         child = diyui.ScopeNode(config=diyui.ScopeConfig(mode=diyui.ScopeMode.PROD))
         parent._add_child(child)
-        assert child.mode == diyui.ScopeMode.PROD
+        assert child._lookup_mode == diyui.ScopeMode.PROD
 
     def test_defaults_to_prod_when_no_config_in_chain(self):
         node = diyui.ScopeNode()
-        assert node.mode == diyui.ScopeMode.PROD
+        assert node._lookup_mode == diyui.ScopeMode.PROD
 
     def test_deep_chain_fallback(self):
         root = diyui.ScopeNode(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV))
@@ -125,8 +125,8 @@ class TestScopeConfigLookup:
         leaf = diyui.ScopeNode(config=diyui.ScopeConfig(mode=diyui.ScopeMode.PROD))
         root._add_child(mid)
         mid._add_child(leaf)
-        assert leaf.mode == diyui.ScopeMode.PROD
-        assert mid.mode == diyui.ScopeMode.DEV
+        assert leaf._lookup_mode == diyui.ScopeMode.PROD
+        assert mid._lookup_mode == diyui.ScopeMode.DEV
 
     def test_scheduler_lookup_same_rule(self):
         """scheduler 和其他属性遵循同一向上追溯规则。"""
@@ -134,7 +134,7 @@ class TestScopeConfigLookup:
         parent = diyui.ScopeNode(config=diyui.ScopeConfig(scheduler=sched))
         child = diyui.ScopeNode()
         parent._add_child(child)
-        assert child.scheduler is sched
+        assert child._lookup_scheduler is sched
 
 
 # ═══════════════════════════════════════════════

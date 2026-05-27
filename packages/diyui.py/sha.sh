@@ -67,13 +67,16 @@ test-all() { test; test-headless;}
 # 子项目自己的命令
 ####################################################################################
 
-examples() {  run uv run panel serve --dev examples/*.py; }
+examples() {  run uv run panel serve --dev examples/*.pn.py; }
 
 # Panel 诊断工具：适配列表 / 参数一致性 / 签名查询
 # 用法: ./sha.sh panel list             # 组件适配列表
 #       ./sha.sh panel list -g widgets  # 仅 widgets
 #       ./sha.sh panel doctor           # 参数一致性诊断
 #       ./sha.sh panel query -n Button
+example-marimo() {
+  run uv run marimo edit --watch examples 
+}
 doctor() {
   run uv run python tools/doctor_panel.py "$@"
 }

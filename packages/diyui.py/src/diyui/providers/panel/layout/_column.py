@@ -71,7 +71,7 @@ class Column(_PanelContainerMixin, UIComponent, pn.Column):
             scroll_position=scroll_position,
             view_latest=view_latest,
         )
-        self._panel_container = True
+        self.diy.panel_container = True
 
     def __enter__(self: C) -> C:
         assert self._app is not None

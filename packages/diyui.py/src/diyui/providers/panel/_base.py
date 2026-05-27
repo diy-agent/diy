@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, TypeVar
+from typing import TypeVar
 
 import diyui
 
-T = TypeVar("T")
 C = TypeVar("C", bound="UIComponent")
 
 
@@ -14,18 +13,12 @@ class UIComponent(diyui.ScopeNode):
     """provider 原生组件的薄包装。
 
     diyui 组件直接继承 Panel 原生类，self 就是 provider 原生对象。
-    target 属性向后兼容，返回 self。
-    provider adapter 方法由子类按需覆写。
+    diy 命名空间存放 diy 扩展属性（signal/init_done/panel_container）。
     """
 
     def __init__(self, *, config: diyui.ScopeConfig | None = None) -> None:
         super().__init__(config=config)
-        self._panel_container: bool = False
-
-    @property
-    def target(self) -> Any:
-        """向后兼容：self 就是 provider 原生对象。"""
-        return self
+        self.diy.panel_container = False
 
 
 class _PanelContainerMixin:

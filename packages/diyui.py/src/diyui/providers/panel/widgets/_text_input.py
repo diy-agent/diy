@@ -45,11 +45,11 @@ class TextInput(UIComponent, pn.widgets.TextInput):
     ) -> None:
         UIComponent.__init__(self)
         # signal 必须在 Panel __init__ 之前创建，因为 Panel 的 _setup_params
-        # 会触发 setattr(self, 'value', ...) → 我们的 value.setter → 需要 self.signal
-        self.signal: diyui.Signal[str] = diyui.Signal[str](value)
+        # 会触发 setattr(self, 'value', ...) → 我们的 value.setter → 需要 self.diy.signal
+        self.diy.signal: diyui.Signal[str] = diyui.Signal[str](value)
         # label 取代 name：label 优先，name 仅在 label 未设置时作为兼容回退
         _label = label or name
-        self._init_done: bool = False
+        self.diy.init_done: bool = False
         pn.widgets.TextInput.__init__(
             self,
             label=_label,
@@ -78,16 +78,16 @@ class TextInput(UIComponent, pn.widgets.TextInput):
             max_length=max_length,
             placeholder=placeholder,
         )
-        self._init_done = True
+        self.diy.init_done = True
         self._setup_event_bridge()
 
     @property
     def value(self) -> str:
-        return self.signal.value
+        return self.diy.signal.value
 
     @value.setter
     def value(self, v: str) -> None:
-        self.signal.value = v
+        self.diy.signal.value = v
         if getattr(self, "_init_done", False):
             # 通过 param descriptor 的 __set__ 直接设值，绕过 property 避免递归
             self.param["value"].__set__(self, v)
@@ -96,6 +96,6 @@ class TextInput(UIComponent, pn.widgets.TextInput):
         """Panel 用户输入 -> signal。"""
 
         def on_change(event: Any) -> None:
-            self.signal.value = event.new
+            self.diy.signal.value = event.new
 
         self.param.watch(on_change, "value")

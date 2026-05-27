@@ -55,8 +55,8 @@ class RadioButtonGroup(UIComponent, pn.widgets.RadioButtonGroup):
         _variant = variant if variant != "solid" else (button_style or "solid")
         UIComponent.__init__(self)
         # signal 必须在 Panel __init__ 之前创建（同 PanelTextInput）
-        self.signal: diyui.Signal[Any] = diyui.Signal[Any](value)
-        self._init_done: bool = False
+        self.diy.signal: diyui.Signal[Any] = diyui.Signal[Any](value)
+        self.diy.init_done: bool = False
         pn.widgets.RadioButtonGroup.__init__(
             self,
             label=_label,
@@ -88,22 +88,22 @@ class RadioButtonGroup(UIComponent, pn.widgets.RadioButtonGroup):
             options=options if options is not None else [],
             orientation=orientation,
         )
-        self._init_done = True
+        self.diy.init_done = True
         self._setup_event_bridge()
 
     @property
     def value(self) -> Any:
-        return self.signal.value
+        return self.diy.signal.value
 
     @value.setter
     def value(self, v: Any) -> None:
-        self.signal.value = v
+        self.diy.signal.value = v
         if getattr(self, "_init_done", False):
             # 通过 param descriptor 的 __set__ 直接设值，绕过 property 避免递归
             self.param["value"].__set__(self, v)
 
     def _setup_event_bridge(self) -> None:
         def on_change(event: Any) -> None:
-            self.signal.value = event.new
+            self.diy.signal.value = event.new
 
         self.param.watch(on_change, "value")

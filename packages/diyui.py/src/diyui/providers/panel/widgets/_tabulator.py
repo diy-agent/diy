@@ -94,11 +94,12 @@ class Tabulator(UIComponent, pn.widgets.Tabulator):
     ) -> None:
         UIComponent.__init__(self)
         # signal 必须在 Panel __init__ 之前创建
-        self.signal: diyui.Signal[pd.DataFrame | None] = diyui.Signal(value)
-        self._init_done: bool = False
+        self.diy.signal: diyui.Signal[pd.DataFrame | None] = diyui.Signal(value)
+        self.diy.init_done: bool = False
         
         pn.widgets.Tabulator.__init__(
             self,
+            label=label,
             value=value,
             align=align,
             aspect_ratio=aspect_ratio,
@@ -158,18 +159,18 @@ class Tabulator(UIComponent, pn.widgets.Tabulator):
             theme_classes=theme_classes or [],
             title_formatters=title_formatters or {},
         )
-        self._init_done = True
+        self.diy.init_done = True
         self._setup_event_bridge()
 
     # ── value 代理 ────────────────────────────────
 
     @property
     def value(self) -> pd.DataFrame | None:
-        return self.signal.value
+        return self.diy.signal.value
 
     @value.setter
     def value(self, v: pd.DataFrame | None) -> None:
-        self.signal.value = v
+        self.diy.signal.value = v
         if getattr(self, "_init_done", False):
             # 绕过 property 直接设置 param
             self.param["value"].__set__(self, v)
@@ -180,6 +181,6 @@ class Tabulator(UIComponent, pn.widgets.Tabulator):
         """Panel 用户操作（如编辑单元格） -> signal。"""
 
         def on_change(event: Any) -> None:
-            self.signal.value = event.new
+            self.diy.signal.value = event.new
 
         self.param.watch(on_change, "value")

@@ -63,7 +63,7 @@ class Row(_PanelContainerMixin, UIComponent, pn.Row):
             loading=loading,
             scroll=scroll,
         )
-        self._panel_container = True
+        self.diy.panel_container = True
 
     def __enter__(self: C) -> C:
         assert self._app is not None

@@ -93,7 +93,7 @@ class Card(_PanelContainerMixin, UIComponent, pn.Card):
             title_css_classes=title_css_classes or ["card-title"],
             title=title,
         )
-        self._panel_container = True
+        self.diy.panel_container = True
 
     def __enter__(self: C) -> C:
         assert self._app is not None

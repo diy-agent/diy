@@ -38,11 +38,11 @@ class CellRuntimeContext(SignalContext):
         owner = signal.owner
         if owner is not None and isinstance(owner, ScopeNode):
             if (
-                id(owner) not in active_cell._ancestor_ids
-                and id(active_cell) not in owner._ancestor_ids
+                id(owner) not in active_cell._ScopeNode__ancestor_ids
+                and id(active_cell) not in owner._ScopeNode__ancestor_ids
             ):
                 cross_scope = True
-                if active_cell.mode == ScopeMode.DEV:
+                if active_cell._lookup_mode == ScopeMode.DEV:
                     raise ScopeViolationError(
                         f"Cross-scope signal access: cell node {active_cell} not in signal owner {owner}'s subtree"
                     )
@@ -87,90 +87,134 @@ class ScopeConfig:
     auto_mount_child: bool | None = None  # 子组件创建时是否自动挂载到本节点，默认 True
 
 
+class _DiyData:
+    """命名空间：存放所有 diy 扩展属性，避免与 provider 属性冲突。"""
+    __slots__ = ('signal', 'init_done', 'panel_container')
+
+    def __init__(self) -> None:
+        self.signal: object = None        # widget 的 Signal 实例
+        self.init_done: bool = False      # widget 初始化完成标记
+        self.panel_container: bool = False  # layout 容器标记
+
+
 class ScopeNode:
     """runtime 树节点。
 
     _children 是 diyui 的权威 children 列表。
     当节点也是 UI 容器时，provider adapter 负责同步到 provider 原生 children。
+
+    ═══ 命名约定 ═══
+    self.__xxx  — 仅在本类内部使用（name mangling → _ScopeNode__xxx）
+    self._xxx   — 子类 / 外部可访问
+    self.diy.xxx — diy 扩展属性，永不冲突
     """
 
     def __init__(self, *, config: ScopeConfig | None = None) -> None:
-        self._parent: ScopeNode | None = None
-        self._children: list[ScopeNode] = []
-        self._config = config
-        self._ancestor_ids: set[int] = {id(self)}
-        self._signals: list[object] = []  # Signal 实例
+        self.__parent: ScopeNode | None = None
+        self.__children: list[ScopeNode] = []
+        self.__config = config
+        self.__ancestor_ids: set[int] = {id(self)}
+        self.__signals: list[object] = []  # Signal 实例
         # cell
-        self._cell_fn: Callable[[ScopeNode], None] | None = None
-        self._dependencies: set[object] = set()  # Signal 实例
-        self._is_dirty: bool = False
-        self._is_executing: bool = False
-        self._is_async_cell: bool = False
-        # app 引用，cell 执行时用于 push/pop context
-        self._app: BaseApp | None = None
+        self.__cell_fn: Callable[[ScopeNode], None] | None = None
+        self.__dependencies: set[object] = set()  # Signal 实例
+        self.__is_dirty: bool = False
+        self.__is_executing: bool = False
+        self.__is_async_cell: bool = False
+        self.__app: BaseApp | None = None
+        self.__diy = _DiyData()
+
+    @property
+    def diy(self) -> _DiyData:
+        return self.__diy
+
+    # ── _app 外部访问 property ──────────────────
+
+    @property
+    def _app(self) -> BaseApp | None:
+        return self.__app
+
+    @_app.setter
+    def _app(self, v: BaseApp | None) -> None:
+        self.__app = v
 
     # ── tree ───────────────────────────────────
 
     @property
     def parent(self) -> ScopeNode | None:
-        return self._parent
+        return self.__parent
+
+    @property
+    def _children(self) -> list[ScopeNode]:
+        """外部读取 children（如 _app.py）。"""
+        return self.__children
+
+    @property
+    def _config(self) -> ScopeConfig | None:
+        return self.__config
+
+    @_config.setter
+    def _config(self, v: ScopeConfig | None) -> None:
+        self.__config = v
 
     def _add_child(self, child: ScopeNode) -> None:
         """添加子节点。"""
-        self._children.append(child)
-        child._parent = self
-        child._rebuild_ancestor_ids()
+        self.__children.append(child)
+        child.__parent = self
+        child.__rebuild_ancestor_ids()
 
     def _remove_child(self, child: ScopeNode) -> None:
         """移除子节点，清除父子关系和祖先集合。"""
-        self._children.remove(child)
-        child._parent = None
-        child._rebuild_ancestor_ids()
+        self.__children.remove(child)
+        child.__parent = None
+        child.__rebuild_ancestor_ids()
         self._on_child_removed(child)
 
     # ── ancestor ids ───────────────────────────
 
-    def _rebuild_ancestor_ids(self) -> None:
-        """重建本节点及所有子孙的 _ancestor_ids。"""
+    def __rebuild_ancestor_ids(self) -> None:
+        """重建本节点及所有子孙的 __ancestor_ids。"""
         ids: set[int] = {id(self)}
-        node = self._parent
+        node = self.__parent
         while node is not None:
             ids.add(id(node))
-            node = node._parent
-        self._ancestor_ids = ids
-        for child in self._children:
-            child._rebuild_ancestor_ids()
+            node = node.__parent
+        self.__ancestor_ids = ids
+        for child in self.__children:
+            child.__rebuild_ancestor_ids()
 
     # ── config lookup ──────────────────────────
+    # NOTE: 以下用 _lookup_ 前缀避免与 Panel 组件的同名 param 冲突。
+    # 不带 _ 前缀的属性名（如 mode/scheduler）会因 MRO 优先于 Panel 基类而丢失 setter。
 
     @property
-    def mode(self) -> ScopeMode:
+    def _lookup_mode(self) -> ScopeMode:
         """向上追溯 mode，默认 PROD。"""
         node: ScopeNode | None = self
         while node is not None:
-            if node._config is not None and node._config.mode is not None:
-                return node._config.mode
-            node = node._parent
+            if node.__config is not None and node.__config.mode is not None:
+                return node.__config.mode
+            node = node.__parent
         return ScopeMode.PROD
 
     @property
-    def scheduler(self) -> SchedulerProtocol | None:
+    def _lookup_scheduler(self) -> SchedulerProtocol | None:
         """向上追溯 scheduler。"""
         node: ScopeNode | None = self
         while node is not None:
-            if node._config is not None and node._config.scheduler is not None:
-                return node._config.scheduler
-            node = node._parent
+            if node.__config is not None and node.__config.scheduler is not None:
+                return node.__config.scheduler
+            node = node.__parent
         return None
 
     @property
-    def auto_mount_child(self) -> bool:
+    def _lookup_auto_mount_child(self) -> bool:
         """向上追溯 auto_mount_child，默认 True。"""
         node: ScopeNode | None = self
         while node is not None:
-            if node._config is not None and node._config.auto_mount_child is not None:
-                return node._config.auto_mount_child
-            node = node._parent
+            if node.__config is not None and node.__config.auto_mount_child is not None:
+                return node.__config.auto_mount_child
+            node = node.__parent
         return True
 
     # ── signal ─────────────────────────────────
@@ -190,7 +234,7 @@ class ScopeNode:
     def _mount_signal(self, signal: object) -> None:
         """挂载 Signal，设置 owner。"""
         signal.owner = self  # type: ignore[attr-defined]
-        self._signals.append(signal)
+        self.__signals.append(signal)
 
     # ── provider sync hooks ───────────────────
 
@@ -218,9 +262,9 @@ class ScopeNode:
         import inspect
 
         def decorator(fn: Callable[..., object]) -> T:
-            self._cell_fn = fn  # type: ignore[assignment]
+            self.__cell_fn = fn  # type: ignore[assignment]
             if inspect.isgeneratorfunction(fn) or inspect.isasyncgenfunction(fn):
-                self._is_async_cell = True
+                self.__is_async_cell = True
                 self._execute_cell_generator(initial=True)
             else:
                 self._execute_cell(initial=True)
@@ -229,7 +273,7 @@ class ScopeNode:
         return decorator
 
     def _mark_dirty(self) -> None:
-        self._is_dirty = True
+        self.__is_dirty = True
 
     def _execute_cell(self, *, initial: bool = False) -> None:
         """执行 cell 函数。
@@ -239,10 +283,10 @@ class ScopeNode:
         - 清空旧 children → 执行 fn 重建 → children 即时生效
         - 失败时（非 initial）记录错误，保留空 children（旧 children 已解除关系）
         """
-        if self._is_executing:
+        if self.__is_executing:
             return
 
-        fn = self._cell_fn
+        fn = self.__cell_fn
         if fn is None:
             return
 
@@ -256,10 +300,10 @@ class ScopeNode:
             token_app = app._push_context(self)  # type: ignore[attr-defined]
 
         # 清空旧 children
-        old_children = list(self._children)
-        self._children = []
-        self._is_dirty = False
-        self._is_executing = True
+        old_children = list(self.__children)
+        self.__children = []
+        self.__is_dirty = False
+        self.__is_executing = True
         
         token_active = _active_cell_var.set(self)
         token_deps = _deps_var.set(deps)
@@ -283,19 +327,19 @@ class ScopeNode:
         finally:
             # 旧 children 解除关系
             for child in old_children:
-                child._parent = None
+                child.__parent = None
 
             _active_cell_var.reset(token_active)
             _deps_var.reset(token_deps)
             Signal._context_var.reset(token_sig_ctx)
-            self._is_executing = False
+            self.__is_executing = False
             if app is not None:
                 app._pop_context(token_app)  # type: ignore[attr-defined]
             self._flush_deps_and_reset(deps)
 
         # 执行完成后若仍 dirty（rerun 中写了依赖的 signal），自动重新入队
-        if self._is_dirty and self._cell_fn is not None and self.scheduler is not None:
-            self.scheduler.enqueue(self._execute_cell)
+        if self.__is_dirty and self.__cell_fn is not None and self._lookup_scheduler is not None:
+            self._lookup_scheduler.enqueue(self._execute_cell)
 
     def _execute_cell_generator(self, *, initial: bool = False) -> None:
         """驱动生成器 cell（同步入口，内部调度 async 驱动）。
@@ -306,7 +350,7 @@ class ScopeNode:
         """
         import inspect
 
-        fn = self._cell_fn
+        fn = self.__cell_fn
         if fn is None:
             return
 
@@ -315,8 +359,8 @@ class ScopeNode:
 
         if is_async:
             # 有 awaitable：走 async 路径，通过 scheduler enqueue_async 调度
-            if self.scheduler is not None and hasattr(self.scheduler, "enqueue_async"):
-                self.scheduler.enqueue_async(
+            if self._lookup_scheduler is not None and hasattr(self._lookup_scheduler, "enqueue_async"):
+                self._lookup_scheduler.enqueue_async(
                     lambda: self._drive_generator_async(initial=initial)
                 )
             else:
@@ -333,16 +377,16 @@ class ScopeNode:
         initial: bool,
     ) -> None:
         """同步驱动生成器（无 awaitable）。"""
-        if self._is_executing:
+        if self.__is_executing:
             return
 
         import inspect as _inspect
 
         # 临时设置 auto_mount_child=False，让工厂函数只创建不挂载
-        saved_config = self._config
-        self._config = ScopeConfig(
-            mode=self.mode,
-            scheduler=self.scheduler,
+        saved_config = self.__config
+        self.__config = ScopeConfig(
+            mode=self._lookup_mode,
+            scheduler=self._lookup_scheduler,
             auto_mount_child=False,
         )
 
@@ -354,10 +398,10 @@ class ScopeNode:
         if app is not None:
             token_app = app._push_context(self)  # type: ignore[attr-defined]
 
-        old_children = list(self._children)
-        self._children = []
-        self._is_dirty = False
-        self._is_executing = True
+        old_children = list(self.__children)
+        self.__children = []
+        self.__is_dirty = False
+        self.__is_executing = True
         
         token_active = _active_cell_var.set(self)
         token_deps = _deps_var.set(deps)
@@ -398,39 +442,39 @@ class ScopeNode:
                 raise
         finally:
             if saved_config is not None:
-                self._config = saved_config
+                self.__config = saved_config
 
             for child in old_children:
-                child._parent = None
+                child.__parent = None
 
             _active_cell_var.reset(token_active)
             _deps_var.reset(token_deps)
             Signal._context_var.reset(token_sig_ctx)
-            self._is_executing = False
+            self.__is_executing = False
             if app is not None:
                 app._pop_context(token_app)  # type: ignore[attr-defined]
 
             self._flush_deps_and_reset(deps)
 
-        if self._is_dirty and self._cell_fn is not None and self.scheduler is not None:
-            self.scheduler.enqueue(self._execute_cell_generator)
+        if self.__is_dirty and self.__cell_fn is not None and self._lookup_scheduler is not None:
+            self._lookup_scheduler.enqueue(self._execute_cell_generator)
 
     async def _drive_generator_async(self, *, initial: bool = False) -> None:
         """异步驱动生成器（支持 yield awaitable 和 async def generator）。"""
-        if self._is_executing:
+        if self.__is_executing:
             return
 
         import inspect as _inspect
 
-        fn = self._cell_fn
+        fn = self.__cell_fn
         if fn is None:
             return
 
         # 临时设置 auto_mount_child=False
-        saved_config = self._config
-        self._config = ScopeConfig(
-            mode=self.mode,
-            scheduler=self.scheduler,
+        saved_config = self.__config
+        self.__config = ScopeConfig(
+            mode=self._lookup_mode,
+            scheduler=self._lookup_scheduler,
             auto_mount_child=False,
         )
 
@@ -442,10 +486,10 @@ class ScopeNode:
         if app is not None:
             token_app = app._push_context(self)  # type: ignore[attr-defined]
 
-        old_children = list(self._children)
-        self._children = []
-        self._is_dirty = False
-        self._is_executing = True
+        old_children = list(self.__children)
+        self.__children = []
+        self.__is_dirty = False
+        self.__is_executing = True
         
         token_active = _active_cell_var.set(self)
         token_deps = _deps_var.set(deps)
@@ -490,41 +534,41 @@ class ScopeNode:
                 raise
         finally:
             if saved_config is not None:
-                self._config = saved_config
+                self.__config = saved_config
 
             for child in old_children:
-                child._parent = None
+                child.__parent = None
 
             _active_cell_var.reset(token_active)
             _deps_var.reset(token_deps)
             Signal._context_var.reset(token_sig_ctx)
-            self._is_executing = False
+            self.__is_executing = False
             if app is not None:
                 app._pop_context(token_app)  # type: ignore[arg-type]
 
             self._flush_deps_and_reset(deps)
 
-        if self._is_dirty and self._cell_fn is not None and self.scheduler is not None:
-            self.scheduler.enqueue(self._execute_cell_generator)
+        if self.__is_dirty and self.__cell_fn is not None and self._lookup_scheduler is not None:
+            self._lookup_scheduler.enqueue(self._execute_cell_generator)
 
     def on_signal_changed(self, signal: Signal[Any]) -> None:
         self._mark_dirty()
-        if self._is_executing:
+        if self.__is_executing:
             return
-        if self.scheduler is not None:
-            if self._is_async_cell:
-                self.scheduler.enqueue(self._execute_cell_generator)
+        if self._lookup_scheduler is not None:
+            if self.__is_async_cell:
+                self._lookup_scheduler.enqueue(self._execute_cell_generator)
             else:
-                self.scheduler.enqueue(self._execute_cell)
+                self._lookup_scheduler.enqueue(self._execute_cell)
 
     def _flush_deps_and_reset(self, deps: set[object]) -> None:
         """diff 更新依赖 + auto-reset。提取为共享逻辑。"""
-        old_deps = self._dependencies
+        old_deps = self.__dependencies
         for sig in old_deps - deps:
             sig.remove_system_observer(self)  # type: ignore[attr-defined]
         for sig in deps - old_deps:
             sig.add_system_observer(self)  # type: ignore[attr-defined]
-        self._dependencies = deps
+        self.__dependencies = deps
 
         for sig in deps:
             if getattr(sig, "_reset_on_complete", False):

@@ -14,10 +14,10 @@ from typing import Any
 import diyui
 import panel as pn
 
+from . import layout as _layout
+from . import pane as _pane
+from . import widgets as _widgets
 from ._base import UIComponent
-from .layout import Card, Column, Row
-from .pane import Markdown
-from .widgets import Button, RadioButtonGroup, Tabulator, TextInput
 
 
 class _LayoutFactory:
@@ -28,199 +28,63 @@ class _LayoutFactory:
     def __init__(self, app: PanelApp) -> None:
         self._app = app
 
-    def column(
-        self,
-        *children: Any,
-        name: str = "",
-        align: Any = "start",
-        aspect_ratio: Any | None = None,
-        css_classes: list[Any] | None = None,
-        design: Any = None,
-        height: int | None = None,
-        min_width: int | None = None,
-        min_height: int | None = None,
-        max_width: int | None = None,
-        max_height: int | None = None,
-        margin: Any | None = 0,
-        styles: dict[str, Any] | None = None,
-        stylesheets: list[Any] | None = None,
-        tags: list[Any] | None = None,
-        width: int | None = None,
-        width_policy: Any = "auto",
-        height_policy: Any = "auto",
-        sizing_mode: Any = None,
-        visible: bool = True,
-        loading: bool = False,
-        scroll: Any = False,
-        auto_scroll_limit: int = 0,
-        scroll_button_threshold: int = 0,
-        scroll_position: int = 0,
-        view_latest: bool = False,
-    ) -> Column:
-        col = Column(
-            *children,
-            name=name,
-            align=align,
-            aspect_ratio=aspect_ratio,
-            css_classes=css_classes,
-            design=design,
-            height=height,
-            min_width=min_width,
-            min_height=min_height,
-            max_width=max_width,
-            max_height=max_height,
-            margin=margin,
-            styles=styles,
-            stylesheets=stylesheets,
-            tags=tags,
-            width=width,
-            width_policy=width_policy,
-            height_policy=height_policy,
-            sizing_mode=sizing_mode,
-            visible=visible,
-            loading=loading,
-            scroll=scroll,
-            auto_scroll_limit=auto_scroll_limit,
-            scroll_button_threshold=scroll_button_threshold,
-            scroll_position=scroll_position,
-            view_latest=view_latest,
-        )
-        self._app._add_to_current(col)
-        return col
+    def _add(self, comp: UIComponent) -> UIComponent:
+        self._app._add_to_current(comp)
+        return comp
 
-    def row(
-        self,
-        *children: Any,
-        name: str = "",
-        align: Any = "start",
-        aspect_ratio: Any | None = None,
-        css_classes: list[Any] | None = None,
-        design: Any = None,
-        height: int | None = None,
-        min_width: int | None = None,
-        min_height: int | None = None,
-        max_width: int | None = None,
-        max_height: int | None = None,
-        margin: Any | None = 0,
-        styles: dict[str, Any] | None = None,
-        stylesheets: list[Any] | None = None,
-        tags: list[Any] | None = None,
-        width: int | None = None,
-        width_policy: Any = "auto",
-        height_policy: Any = "auto",
-        sizing_mode: Any = None,
-        visible: bool = True,
-        loading: bool = False,
-        scroll: Any = False,
-    ) -> Row:
-        row = Row(
-            *children,
-            name=name,
-            align=align,
-            aspect_ratio=aspect_ratio,
-            css_classes=css_classes,
-            design=design,
-            height=height,
-            min_width=min_width,
-            min_height=min_height,
-            max_width=max_width,
-            max_height=max_height,
-            margin=margin,
-            styles=styles,
-            stylesheets=stylesheets,
-            tags=tags,
-            width=width,
-            width_policy=width_policy,
-            height_policy=height_policy,
-            sizing_mode=sizing_mode,
-            visible=visible,
-            loading=loading,
-            scroll=scroll,
-        )
-        self._app._add_to_current(row)
-        return row
+    def accordion(self, *children: Any, **kwargs: Any) -> _layout.Accordion:
+        return self._add(_layout.Accordion(*children, **kwargs))
 
-    def card(
-        self,
-        *children: Any,
-        name: str = "",
-        align: Any = "start",
-        aspect_ratio: Any | None = None,
-        css_classes: list[Any] | None = None,
-        design: Any = None,
-        height: int | None = None,
-        min_width: int | None = None,
-        min_height: int | None = None,
-        max_width: int | None = None,
-        max_height: int | None = None,
-        margin: Any | None = 0,
-        styles: dict[str, Any] | None = None,
-        stylesheets: list[Any] | None = None,
-        tags: list[Any] | None = None,
-        width: int | None = None,
-        width_policy: Any = "auto",
-        height_policy: Any = "auto",
-        sizing_mode: Any = None,
-        visible: bool = True,
-        loading: bool = False,
-        scroll: Any = False,
-        auto_scroll_limit: int = 0,
-        scroll_button_threshold: int = 0,
-        scroll_position: int = 0,
-        view_latest: bool = False,
-        active_header_background: str | None = None,
-        button_css_classes: list[Any] | None = None,
-        collapsible: bool = True,
-        collapsed: bool = False,
-        header: Any | None = None,
-        header_background: str = "",
-        header_color: str = "",
-        header_css_classes: list[Any] | None = None,
-        hide_header: bool = False,
-        title_css_classes: list[Any] | None = None,
-        title: str = "",
-    ) -> Card:
-        card = Card(
-            *children,
-            name=name,
-            align=align,
-            aspect_ratio=aspect_ratio,
-            css_classes=css_classes,
-            design=design,
-            height=height,
-            min_width=min_width,
-            min_height=min_height,
-            max_width=max_width,
-            max_height=max_height,
-            margin=margin,
-            styles=styles,
-            stylesheets=stylesheets,
-            tags=tags,
-            width=width,
-            width_policy=width_policy,
-            height_policy=height_policy,
-            sizing_mode=sizing_mode,
-            visible=visible,
-            loading=loading,
-            scroll=scroll,
-            auto_scroll_limit=auto_scroll_limit,
-            scroll_button_threshold=scroll_button_threshold,
-            scroll_position=scroll_position,
-            view_latest=view_latest,
-            active_header_background=active_header_background,
-            button_css_classes=button_css_classes,
-            collapsible=collapsible,
-            collapsed=collapsed,
-            header=header,
-            header_background=header_background,
-            header_color=header_color,
-            header_css_classes=header_css_classes,
-            hide_header=hide_header,
-            title_css_classes=title_css_classes,
-            title=title,
-        )
-        self._app._add_to_current(card)
-        return card
+    def card(self, *children: Any, **kwargs: Any) -> _layout.Card:
+        return self._add(_layout.Card(*children, **kwargs))
+
+    def column(self, *children: Any, **kwargs: Any) -> _layout.Column:
+        return self._add(_layout.Column(*children, **kwargs))
+
+    def divider(self, **kwargs: Any) -> _layout.Divider:
+        return self._add(_layout.Divider(**kwargs))
+
+    def feed(self, *children: Any, **kwargs: Any) -> _layout.Feed:
+        return self._add(_layout.Feed(*children, **kwargs))
+
+    def flex_box(self, *children: Any, **kwargs: Any) -> _layout.FlexBox:
+        return self._add(_layout.FlexBox(*children, **kwargs))
+
+    def float_panel(self, *children: Any, **kwargs: Any) -> _layout.FloatPanel:
+        return self._add(_layout.FloatPanel(*children, **kwargs))
+
+    def grid_box(self, *children: Any, **kwargs: Any) -> _layout.GridBox:
+        return self._add(_layout.GridBox(*children, **kwargs))
+
+    def grid_spec(self, **kwargs: Any) -> _layout.GridSpec:
+        return self._add(_layout.GridSpec(**kwargs))
+
+    def grid_stack(self, **kwargs: Any) -> _layout.GridStack:
+        return self._add(_layout.GridStack(**kwargs))
+
+    def hspacer(self, **kwargs: Any) -> _layout.HSpacer:
+        return self._add(_layout.HSpacer(**kwargs))
+
+    def modal(self, *children: Any, **kwargs: Any) -> _layout.Modal:
+        return self._add(_layout.Modal(*children, **kwargs))
+
+    def row(self, *children: Any, **kwargs: Any) -> _layout.Row:
+        return self._add(_layout.Row(*children, **kwargs))
+
+    def spacer(self, **kwargs: Any) -> _layout.Spacer:
+        return self._add(_layout.Spacer(**kwargs))
+
+    def swipe(self, *children: Any, **kwargs: Any) -> _layout.Swipe:
+        return self._add(_layout.Swipe(*children, **kwargs))
+
+    def tabs(self, *children: Any, **kwargs: Any) -> _layout.Tabs:
+        return self._add(_layout.Tabs(*children, **kwargs))
+
+    def vspacer(self, **kwargs: Any) -> _layout.VSpacer:
+        return self._add(_layout.VSpacer(**kwargs))
+
+    def widget_box(self, *children: Any, **kwargs: Any) -> _layout.WidgetBox:
+        return self._add(_layout.WidgetBox(*children, **kwargs))
 
 
 class _PaneFactory:
@@ -231,76 +95,87 @@ class _PaneFactory:
     def __init__(self, app: PanelApp) -> None:
         self._app = app
 
-    def markdown(
-        self,
-        object: Any | None = None,
-        *,
-        name: str = "",
-        align: Any = "start",
-        aspect_ratio: Any | None = None,
-        css_classes: list[Any] | None = None,
-        design: Any = None,
-        height: int | None = None,
-        min_width: int | None = None,
-        min_height: int | None = None,
-        max_width: int | None = None,
-        max_height: int | None = None,
-        margin: Any | None = (5, 10),
-        styles: dict[str, Any] | None = None,
-        stylesheets: list[Any] | None = None,
-        tags: list[Any] | None = None,
-        width: int | None = None,
-        width_policy: Any = "auto",
-        height_policy: Any = "auto",
-        sizing_mode: Any = None,
-        visible: bool = True,
-        loading: bool = False,
-        default_layout: Any = pn.Row,
-        enable_streaming: bool = False,
-        dedent: bool = True,
-        disable_anchors: bool = False,
-        disable_math: bool = False,
-        extensions: list[str] | None = None,
-        hard_line_break: bool = False,
-        plugins: list[Any] | None = None,
-        renderer: Any = "markdown-it",
-        renderer_options: dict[str, Any] | None = None,
-    ) -> Markdown:
-        md = Markdown(
-            object,
-            name=name,
-            align=align,
-            aspect_ratio=aspect_ratio,
-            css_classes=css_classes,
-            design=design,
-            height=height,
-            min_width=min_width,
-            min_height=min_height,
-            max_width=max_width,
-            max_height=max_height,
-            margin=margin,
-            styles=styles,
-            stylesheets=stylesheets,
-            tags=tags,
-            width=width,
-            width_policy=width_policy,
-            height_policy=height_policy,
-            sizing_mode=sizing_mode,
-            visible=visible,
-            loading=loading,
-            default_layout=default_layout,
-            enable_streaming=enable_streaming,
-            dedent=dedent,
-            disable_anchors=disable_anchors,
-            disable_math=disable_math,
-            extensions=extensions,
-            hard_line_break=hard_line_break,
-            plugins=plugins,
-            renderer=renderer,
-            renderer_options=renderer_options,
-        )
-        self._app._add_to_current(md)
-        return md
+    def _add(self, comp: UIComponent) -> UIComponent:
+        self._app._add_to_current(comp)
+        return comp
+
+    def alert(self, object: Any = None, **kwargs: Any) -> _pane.Alert:
+        return self._add(_pane.Alert(object, **kwargs))
+
+    def audio(self, object: str = "", **kwargs: Any) -> _pane.Audio:
+        return self._add(_pane.Audio(object, **kwargs))
+
+    def bokeh(self, object: Any = None, **kwargs: Any) -> _pane.Bokeh:
+        return self._add(_pane.Bokeh(object, **kwargs))
+
+    def dataframe(self, object: Any = None, **kwargs: Any) -> _pane.DataFrame:
+        return self._add(_pane.DataFrame(object, **kwargs))
+
+    def deckgl(self, object: Any = None, **kwargs: Any) -> _pane.DeckGL:
+        return self._add(_pane.DeckGL(object, **kwargs))
+
+    def echarts(self, object: Any = None, **kwargs: Any) -> _pane.ECharts:
+        return self._add(_pane.ECharts(object, **kwargs))
+
+    def holoviews(self, object: Any = None, **kwargs: Any) -> _pane.HoloViews:
+        return self._add(_pane.HoloViews(object, **kwargs))
+
+    def html(self, object: Any = None, **kwargs: Any) -> _pane.HTML:
+        return self._add(_pane.HTML(object, **kwargs))
+
+    def image(self, object: Any = None, **kwargs: Any) -> _pane.Image:
+        return self._add(_pane.Image(object, **kwargs))
+
+    def jpg(self, object: Any = None, **kwargs: Any) -> _pane.JPG:
+        return self._add(_pane.JPG(object, **kwargs))
+
+    def json(self, object: Any = None, **kwargs: Any) -> _pane.JSON:
+        return self._add(_pane.JSON(object, **kwargs))
+
+    def latex(self, object: Any = None, **kwargs: Any) -> _pane.LaTeX:
+        return self._add(_pane.LaTeX(object, **kwargs))
+
+    def markdown(self, object: Any = None, **kwargs: Any) -> _pane.Markdown:
+        return self._add(_pane.Markdown(object, **kwargs))
+
+    def matplotlib(self, object: Any = None, **kwargs: Any) -> _pane.Matplotlib:
+        return self._add(_pane.Matplotlib(object, **kwargs))
+
+    def pdf(self, object: Any = None, **kwargs: Any) -> _pane.PDF:
+        return self._add(_pane.PDF(object, **kwargs))
+
+    def png(self, object: Any = None, **kwargs: Any) -> _pane.PNG:
+        return self._add(_pane.PNG(object, **kwargs))
+
+    def plotly(self, object: Any = None, **kwargs: Any) -> _pane.Plotly:
+        return self._add(_pane.Plotly(object, **kwargs))
+
+    def str(self, object: Any = None, **kwargs: Any) -> _pane.Str:
+        return self._add(_pane.Str(object, **kwargs))
+
+    def svg(self, object: Any = None, **kwargs: Any) -> _pane.SVG:
+        return self._add(_pane.SVG(object, **kwargs))
+
+    def vega(self, object: Any = None, **kwargs: Any) -> _pane.Vega:
+        return self._add(_pane.Vega(object, **kwargs))
+
+    def video(self, object: str = "", **kwargs: Any) -> _pane.Video:
+        return self._add(_pane.Video(object, **kwargs))
+
+    def avif(self, object: str = "", **kwargs: Any) -> _pane.AVIF:
+        return self._add(_pane.AVIF(object, **kwargs))
+
+    def gif(self, object: str = "", **kwargs: Any) -> _pane.GIF:
+        return self._add(_pane.GIF(object, **kwargs))
+
+    def ico(self, object: str = "", **kwargs: Any) -> _pane.ICO:
+        return self._add(_pane.ICO(object, **kwargs))
+
+    def placeholder(self, object: Any = None, **kwargs: Any) -> _pane.Placeholder:
+        return self._add(_pane.Placeholder(object, **kwargs))
+
+    def webp(self, object: str = "", **kwargs: Any) -> _pane.WebP:
+        return self._add(_pane.WebP(object, **kwargs))
 
 
 class _WidgetsFactory:
@@ -311,335 +186,183 @@ class _WidgetsFactory:
     def __init__(self, app: PanelApp) -> None:
         self._app = app
 
-    def button(
-        self,
-        *,
-        label: str = "",
-        name: str = "",
-        value: bool = False,
-        align: Any = "start",
-        aspect_ratio: Any | None = None,
-        css_classes: list[Any] | None = None,
-        design: Any = None,
-        height: int | None = None,
-        min_width: int | None = None,
-        min_height: int | None = None,
-        max_width: int | None = None,
-        max_height: int | None = None,
-        margin: Any | None = (5, 10),
-        styles: dict[str, Any] | None = None,
-        stylesheets: list[Any] | None = None,
-        tags: list[Any] | None = None,
-        width: int | None = None,
-        width_policy: Any = "auto",
-        height_policy: Any = "auto",
-        sizing_mode: Any = None,
-        visible: bool = True,
-        loading: bool = False,
-        disabled: bool = False,
-        description: Any | None = None,
-        description_delay: int = 500,
-        icon: str | None = None,
-        icon_size: str = "1em",
-        color: Any = "default",
-        variant: Any = "solid",
-        button_type: Any | None = None,
-        button_style: Any | None = None,
-    ) -> Button:
-        btn = Button(
-            label=label,
-            name=name,
-            value=value,
-            align=align,
-            aspect_ratio=aspect_ratio,
-            css_classes=css_classes,
-            design=design,
-            height=height,
-            min_width=min_width,
-            min_height=min_height,
-            max_width=max_width,
-            max_height=max_height,
-            margin=margin,
-            styles=styles,
-            stylesheets=stylesheets,
-            tags=tags,
-            width=width,
-            width_policy=width_policy,
-            height_policy=height_policy,
-            sizing_mode=sizing_mode,
-            visible=visible,
-            loading=loading,
-            disabled=disabled,
-            description=description,
-            description_delay=description_delay,
-            icon=icon,
-            icon_size=icon_size,
-            color=color,
-            variant=variant,
-            button_type=button_type,
-            button_style=button_style,
-        )
-        self._app._add_to_current(btn)
-        return btn
+    def _add(self, comp: UIComponent) -> UIComponent:
+        self._app._add_to_current(comp)
+        return comp
 
-    def text_input(
-        self,
-        *,
-        label: str = "",
-        name: str = "",
-        value: str = "",
-        align: Any = "start",
-        aspect_ratio: Any | None = None,
-        css_classes: list[Any] | None = None,
-        design: Any = None,
-        height: int | None = None,
-        min_width: int | None = None,
-        min_height: int | None = None,
-        max_width: int | None = None,
-        max_height: int | None = None,
-        margin: Any | None = (5, 10),
-        styles: dict[str, Any] | None = None,
-        stylesheets: list[Any] | None = None,
-        tags: list[Any] | None = None,
-        width: int | None = 300,
-        width_policy: Any = "auto",
-        height_policy: Any = "auto",
-        sizing_mode: Any = None,
-        visible: bool = True,
-        loading: bool = False,
-        disabled: bool = False,
-        description: str | None = None,
-        max_length: int = 5000,
-        placeholder: str = "",
-    ) -> TextInput:
-        inp = TextInput(
-            label=label,
-            name=name,
-            value=value,
-            align=align,
-            aspect_ratio=aspect_ratio,
-            css_classes=css_classes,
-            design=design,
-            height=height,
-            min_width=min_width,
-            min_height=min_height,
-            max_width=max_width,
-            max_height=max_height,
-            margin=margin,
-            styles=styles,
-            stylesheets=stylesheets,
-            tags=tags,
-            width=width,
-            width_policy=width_policy,
-            height_policy=height_policy,
-            sizing_mode=sizing_mode,
-            visible=visible,
-            loading=loading,
-            disabled=disabled,
-            description=description,
-            max_length=max_length,
-            placeholder=placeholder,
-        )
-        self._app._add_to_current(inp)
-        return inp
+    def button(self, **kwargs: Any) -> _widgets.Button:
+        return self._add(_widgets.Button(**kwargs))
 
-    def tabulator(
-        self,
-        *,
-        label: str = "",
-        value: pd.DataFrame | None = None,
-        align: Any = "start",
-        aspect_ratio: Any | None = None,
-        css_classes: list[Any] | None = None,
-        design: Any = None,
-        height: int | None = None,
-        min_width: int | None = None,
-        min_height: int | None = None,
-        max_width: int | None = None,
-        max_height: int | None = None,
-        margin: Any | None = (5, 10),
-        styles: dict[str, Any] | None = None,
-        stylesheets: list[Any] | None = None,
-        tags: list[Any] | None = None,
-        width: int | None = None,
-        width_policy: Any = "auto",
-        height_policy: Any = "auto",
-        sizing_mode: Any = None,
-        visible: bool = True,
-        loading: bool = False,
-        disabled: bool = False,
-        selection: list[Any] | None = None,
-        aggregators: dict[str, Any] | None = None,
-        editables: dict[str, Any] | None = None,
-        editors: dict[str, Any] | None = None,
-        formatters: dict[str, Any] | None = None,
-        hierarchical: bool = False,
-        row_height: int = 30,
-        show_index: bool = True,
-        sorters: list[Any] | None = None,
-        text_align: dict[str, str] | str = {},
-        titles: dict[str, str] | None = None,
-        widths: dict[str, int] | int = {},
-        buttons: dict[str, str] | None = None,
-        container_popup: bool = True,
-        expanded: list[Any] | None = None,
-        embed_content: bool = False,
-        filters: list[Any] | None = None,
-        frozen_columns: list[str] | dict[str, Any] | None = None,
-        frozen_rows: list[int] | None = None,
-        groups: dict[str, Any] | None = None,
-        groupby: list[str] | None = None,
-        header_align: dict[str, str] | str = {},
-        header_filters: bool | dict[str, Any] | None = None,
-        header_tooltips: dict[str, str] | None = None,
-        hidden_columns: list[str] | None = None,
-        layout: Any = "fit_data_table",
-        initial_page_size: int = 20,
-        pagination: Any | None = None,
-        page: int = 1,
-        page_size: int | None = None,
-        row_content: Any | None = None,
-        selectable: bool | str | int = True,
-        selectable_rows: Any | None = None,
-        sortable: bool | dict[str, bool] = True,
-        theme: Any = "simple",
-        theme_classes: list[Any] | None = None,
-        title_formatters: dict[str, Any] | None = None,
-    ) -> Tabulator:
-        tab = Tabulator(
-            label=label,
-            value=value,
-            align=align,
-            aspect_ratio=aspect_ratio,
-            css_classes=css_classes,
-            design=design,
-            height=height,
-            min_width=min_width,
-            min_height=min_height,
-            max_width=max_width,
-            max_height=max_height,
-            margin=margin,
-            styles=styles,
-            stylesheets=stylesheets,
-            tags=tags,
-            width=width,
-            width_policy=width_policy,
-            height_policy=height_policy,
-            sizing_mode=sizing_mode,
-            visible=visible,
-            loading=loading,
-            disabled=disabled,
-            selection=selection,
-            aggregators=aggregators,
-            editables=editables,
-            editors=editors,
-            formatters=formatters,
-            hierarchical=hierarchical,
-            row_height=row_height,
-            show_index=show_index,
-            sorters=sorters,
-            text_align=text_align,
-            titles=titles,
-            widths=widths,
-            buttons=buttons,
-            container_popup=container_popup,
-            expanded=expanded,
-            embed_content=embed_content,
-            filters=filters,
-            frozen_columns=frozen_columns,
-            frozen_rows=frozen_rows,
-            groups=groups,
-            groupby=groupby,
-            header_align=header_align,
-            header_filters=header_filters,
-            header_tooltips=header_tooltips,
-            hidden_columns=hidden_columns,
-            layout=layout,
-            initial_page_size=initial_page_size,
-            pagination=pagination,
-            page=page,
-            page_size=page_size,
-            row_content=row_content,
-            selectable=selectable,
-            selectable_rows=selectable_rows,
-            sortable=sortable,
-            theme=theme,
-            theme_classes=theme_classes,
-            title_formatters=title_formatters,
-        )
-        self._app._add_to_current(tab)
-        return tab
+    def button_icon(self, **kwargs: Any) -> _widgets.ButtonIcon:
+        return self._add(_widgets.ButtonIcon(**kwargs))
 
-    def radio_button_group(
-        self,
-        *,
-        label: str = "",
-        name: str = "",
-        value: Any = None,
-        align: Any = "start",
-        aspect_ratio: Any | None = None,
-        css_classes: list[Any] | None = None,
-        design: Any = None,
-        height: int | None = None,
-        min_width: int | None = None,
-        min_height: int | None = None,
-        max_width: int | None = None,
-        max_height: int | None = None,
-        margin: Any | None = (5, 10),
-        styles: dict[str, Any] | None = None,
-        stylesheets: list[Any] | None = None,
-        tags: list[Any] | None = None,
-        width: int | None = None,
-        width_policy: Any = "auto",
-        height_policy: Any = "auto",
-        sizing_mode: Any = None,
-        visible: bool = True,
-        loading: bool = False,
-        disabled: bool = False,
-        description: Any | None = None,
-        description_delay: int = 500,
-        color: Any = "default",
-        variant: Any = "solid",
-        button_type: Any | None = None,
-        button_style: Any | None = None,
-        options: Any | None = None,
-        orientation: Any = "horizontal",
-    ) -> RadioButtonGroup:
-        radio = RadioButtonGroup(
-            label=label,
-            name=name,
-            value=value,
-            align=align,
-            aspect_ratio=aspect_ratio,
-            css_classes=css_classes,
-            design=design,
-            height=height,
-            min_width=min_width,
-            min_height=min_height,
-            max_width=max_width,
-            max_height=max_height,
-            margin=margin,
-            styles=styles,
-            stylesheets=stylesheets,
-            tags=tags,
-            width=width,
-            width_policy=width_policy,
-            height_policy=height_policy,
-            sizing_mode=sizing_mode,
-            visible=visible,
-            loading=loading,
-            disabled=disabled,
-            description=description,
-            description_delay=description_delay,
-            color=color,
-            variant=variant,
-            button_type=button_type,
-            button_style=button_style,
-            options=options,
-            orientation=orientation,
-        )
-        self._app._add_to_current(radio)
-        return radio
+    def check_box_group(self, **kwargs: Any) -> _widgets.CheckBoxGroup:
+        return self._add(_widgets.CheckBoxGroup(**kwargs))
+
+    def check_button_group(self, **kwargs: Any) -> _widgets.CheckButtonGroup:
+        return self._add(_widgets.CheckButtonGroup(**kwargs))
+
+    def checkbox(self, **kwargs: Any) -> _widgets.Checkbox:
+        return self._add(_widgets.Checkbox(**kwargs))
+
+    def code_editor(self, **kwargs: Any) -> _widgets.CodeEditor:
+        return self._add(_widgets.CodeEditor(**kwargs))
+
+    def color_picker(self, **kwargs: Any) -> _widgets.ColorPicker:
+        return self._add(_widgets.ColorPicker(**kwargs))
+
+    def date_picker(self, **kwargs: Any) -> _widgets.DatePicker:
+        return self._add(_widgets.DatePicker(**kwargs))
+
+    def file_download(self, **kwargs: Any) -> _widgets.FileDownload:
+        return self._add(_widgets.FileDownload(**kwargs))
+
+    def file_input(self, **kwargs: Any) -> _widgets.FileInput:
+        return self._add(_widgets.FileInput(**kwargs))
+
+    def float_input(self, **kwargs: Any) -> _widgets.FloatInput:
+        return self._add(_widgets.FloatInput(**kwargs))
+
+    def float_slider(self, **kwargs: Any) -> _widgets.FloatSlider:
+        return self._add(_widgets.FloatSlider(**kwargs))
+
+    def int_input(self, **kwargs: Any) -> _widgets.IntInput:
+        return self._add(_widgets.IntInput(**kwargs))
+
+    def int_slider(self, **kwargs: Any) -> _widgets.IntSlider:
+        return self._add(_widgets.IntSlider(**kwargs))
+
+    def literal_input(self, **kwargs: Any) -> _widgets.LiteralInput:
+        return self._add(_widgets.LiteralInput(**kwargs))
+
+    def loading_spinner(self, **kwargs: Any) -> _widgets.LoadingSpinner:
+        return self._add(_widgets.LoadingSpinner(**kwargs))
+
+    def menu_button(self, **kwargs: Any) -> _widgets.MenuButton:
+        return self._add(_widgets.MenuButton(**kwargs))
+
+    def multi_select(self, **kwargs: Any) -> _widgets.MultiSelect:
+        return self._add(_widgets.MultiSelect(**kwargs))
+
+    def password_input(self, **kwargs: Any) -> _widgets.PasswordInput:
+        return self._add(_widgets.PasswordInput(**kwargs))
+
+    def progress(self, **kwargs: Any) -> _widgets.Progress:
+        return self._add(_widgets.Progress(**kwargs))
+
+    def radio_box_group(self, **kwargs: Any) -> _widgets.RadioBoxGroup:
+        return self._add(_widgets.RadioBoxGroup(**kwargs))
+
+    def radio_button_group(self, **kwargs: Any) -> _widgets.RadioButtonGroup:
+        return self._add(_widgets.RadioButtonGroup(**kwargs))
+
+    def range_slider(self, **kwargs: Any) -> _widgets.RangeSlider:
+        return self._add(_widgets.RangeSlider(**kwargs))
+
+    def select(self, **kwargs: Any) -> _widgets.Select:
+        return self._add(_widgets.Select(**kwargs))
+
+    def static_text(self, **kwargs: Any) -> _widgets.StaticText:
+        return self._add(_widgets.StaticText(**kwargs))
+
+    def switch(self, **kwargs: Any) -> _widgets.Switch:
+        return self._add(_widgets.Switch(**kwargs))
+
+    def tabulator(self, **kwargs: Any) -> _widgets.Tabulator:
+        return self._add(_widgets.Tabulator(**kwargs))
+
+    def text_area_input(self, **kwargs: Any) -> _widgets.TextAreaInput:
+        return self._add(_widgets.TextAreaInput(**kwargs))
+
+    def text_input(self, **kwargs: Any) -> _widgets.TextInput:
+        return self._add(_widgets.TextInput(**kwargs))
+
+    def toggle(self, **kwargs: Any) -> _widgets.Toggle:
+        return self._add(_widgets.Toggle(**kwargs))
+
+    def toggle_group(self, **kwargs: Any) -> _widgets.ToggleGroup:
+        return self._add(_widgets.ToggleGroup(**kwargs))
+
+    def array_input(self, **kwargs: Any) -> _widgets.ArrayInput:
+        return self._add(_widgets.ArrayInput(**kwargs))
+
+    def autocomplete_input(self, **kwargs: Any) -> _widgets.AutocompleteInput:
+        return self._add(_widgets.AutocompleteInput(**kwargs))
+
+    def boolean_status(self, **kwargs: Any) -> _widgets.BooleanStatus:
+        return self._add(_widgets.BooleanStatus(**kwargs))
+
+    def color_map(self, **kwargs: Any) -> _widgets.ColorMap:
+        return self._add(_widgets.ColorMap(**kwargs))
+
+    def date_range_picker(self, **kwargs: Any) -> _widgets.DateRangePicker:
+        return self._add(_widgets.DateRangePicker(**kwargs))
+
+    def date_range_slider(self, **kwargs: Any) -> _widgets.DateRangeSlider:
+        return self._add(_widgets.DateRangeSlider(**kwargs))
+
+    def date_slider(self, **kwargs: Any) -> _widgets.DateSlider:
+        return self._add(_widgets.DateSlider(**kwargs))
+
+    def datetime_input(self, **kwargs: Any) -> _widgets.DatetimeInput:
+        return self._add(_widgets.DatetimeInput(**kwargs))
+
+    def datetime_picker(self, **kwargs: Any) -> _widgets.DatetimePicker:
+        return self._add(_widgets.DatetimePicker(**kwargs))
+
+    def time_picker(self, **kwargs: Any) -> _widgets.TimePicker:
+        return self._add(_widgets.TimePicker(**kwargs))
+
+    def datetime_range_picker(self, **kwargs: Any) -> _widgets.DatetimeRangePicker:
+        return self._add(_widgets.DatetimeRangePicker(**kwargs))
+
+    def datetime_range_slider(self, **kwargs: Any) -> _widgets.DatetimeRangeSlider:
+        return self._add(_widgets.DatetimeRangeSlider(**kwargs))
+
+    def datetime_slider(self, **kwargs: Any) -> _widgets.DatetimeSlider:
+        return self._add(_widgets.DatetimeSlider(**kwargs))
+
+    def dial(self, **kwargs: Any) -> _widgets.Dial:
+        return self._add(_widgets.Dial(**kwargs))
+
+    def discrete_player(self, **kwargs: Any) -> _widgets.DiscretePlayer:
+        return self._add(_widgets.DiscretePlayer(**kwargs))
+
+    def gauge(self, **kwargs: Any) -> _widgets.Gauge:
+        return self._add(_widgets.Gauge(**kwargs))
+
+    def int_range_slider(self, **kwargs: Any) -> _widgets.IntRangeSlider:
+        return self._add(_widgets.IntRangeSlider(**kwargs))
+
+    def linear_gauge(self, **kwargs: Any) -> _widgets.LinearGauge:
+        return self._add(_widgets.LinearGauge(**kwargs))
+
+    def multi_choice(self, **kwargs: Any) -> _widgets.MultiChoice:
+        return self._add(_widgets.MultiChoice(**kwargs))
+
+    def number(self, **kwargs: Any) -> _widgets.Number:
+        return self._add(_widgets.Number(**kwargs))
+
+    def number_input(self, **kwargs: Any) -> _widgets.NumberInput:
+        return self._add(_widgets.NumberInput(**kwargs))
+
+    def player(self, **kwargs: Any) -> _widgets.Player:
+        return self._add(_widgets.Player(**kwargs))
+
+    def toggle_icon(self, **kwargs: Any) -> _widgets.ToggleIcon:
+        return self._add(_widgets.ToggleIcon(**kwargs))
+
+    def tooltip_icon(self, **kwargs: Any) -> _widgets.TooltipIcon:
+        return self._add(_widgets.TooltipIcon(**kwargs))
+
+    def tqdm(self, **kwargs: Any) -> _widgets.Tqdm:
+        return self._add(_widgets.Tqdm(**kwargs))
+
+    def trend(self, **kwargs: Any) -> _widgets.Trend:
+        return self._add(_widgets.Trend(**kwargs))
+
+    def video_stream(self, **kwargs: Any) -> _widgets.VideoStream:
+        return self._add(_widgets.VideoStream(**kwargs))
 
 
 class PanelApp(diyui.BaseApp):
@@ -667,10 +390,8 @@ class PanelApp(diyui.BaseApp):
     def servable(self) -> None:
         """将 app 根下所有顶层 UIComponent 注册为 servable。"""
         self._sync_tree_to_panel(self)
-        for child in self._children:
-            component = self._find_first_real_component(child)
-            if component is not None:
-                component.servable()  # type: ignore[attr-defined]
+        for component in self.get_panel_roots():
+            component.servable()  # type: ignore[attr-defined]
 
     def _find_first_real_component(self, node: diyui.ScopeNode) -> UIComponent | None:
         """DFS 找到第一个 UIComponent。"""
@@ -682,9 +403,35 @@ class PanelApp(diyui.BaseApp):
                 return result
         return None
 
+    @property
+    def components(self) -> list[UIComponent]:
+        """获取所有 UIComponent。"""
+        result: list[UIComponent] = []
+        for child in self._children:
+            result.extend(self._find_all_real_components(child))
+        return result
+
+    def _find_all_real_components(self, node: diyui.ScopeNode) -> list[UIComponent]:
+        """DFS 找到所有 UIComponent。"""
+        if isinstance(node, UIComponent):
+            return [node]
+        result: list[UIComponent] = []
+        for child in node._children:
+            result.extend(self._find_all_real_components(child))
+        return result
+
+    def get_panel_roots(self) -> list[UIComponent]:
+        """获取所有 panel 根组件（app._children 中每个分支的第一个 UIComponent）。"""
+        result: list[UIComponent] = []
+        for child in self._children:
+            component = self._find_first_real_component(child)
+            if component is not None:
+                result.append(component)
+        return result
+
     def _sync_tree_to_panel(self, node: diyui.ScopeNode) -> None:
         """将 diyui 树同步到 Panel 原生 children。"""
-        if isinstance(node, UIComponent) and node._panel_container:
+        if isinstance(node, UIComponent) and node.diy.panel_container:
             node._on_children_replaced(node._children)
         for child in node._children:
             self._sync_tree_to_panel(child)
