@@ -3,9 +3,15 @@ import json
 import subprocess
 import shutil
 import yaml
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Set
 from dataclasses import dataclass, asdict
+from rich.live import Live
+from rich.console import Group
+from rich.text import Text
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
 from ._log import logger
 
 log = logger.with_tag("sync")
@@ -13,7 +19,11 @@ log = logger.with_tag("sync")
 GLOBAL_CACHE_DIR = Path.home() / ".diy"
 METADATA_CACHE_PATH = GLOBAL_CACHE_DIR / "registry-cache.json"
 
+metadata_cache: Dict[str, Any] = {}
+metadata_lock = threading.Lock()
+
 def clean_exec_output(output: str) -> str:
+# ... (rest of the file)
     lines = output.splitlines()
     filtered = []
     for line in lines:
@@ -132,7 +142,31 @@ def get_workspace_packages(root_dir: Path) -> Dict[str, WorkspaceInfo]:
                                 if info: workspace_map[info.name] = info
         except Exception: pass
 
-    # 3. Check packages/ directory (common for both)
+    # 3. Check Python workspaces from pyproject.toml
+    root_pyproject_path = root_dir / "pyproject.toml"
+    if root_pyproject_path.exists():
+        try:
+            with open(root_pyproject_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            import re
+            # Extract tool.uv.workspace.members or tool.poetry.workspace.members
+            workspace_match = re.search(r'\[tool\.(?:uv|poetry)\.workspace\][\s\S]*?members\s*=\s*\[(.*?)\]', content)
+            if workspace_match:
+                for pattern in re.findall(r'"([^"]+)"', workspace_match.group(1)):
+                    base_dir_str = pattern.replace("/*", "")
+                    full_base_dir = root_dir / base_dir_str
+                    if full_base_dir.exists() and full_base_dir.is_dir():
+                        if "/*" in pattern:
+                            for item in full_base_dir.iterdir():
+                                if item.is_dir():
+                                    info = get_dir_info(item, str(item.relative_to(root_dir)))
+                                    if info: workspace_map[info.name] = info
+                        else:
+                            info = get_dir_info(full_base_dir, str(full_base_dir.relative_to(root_dir)))
+                            if info: workspace_map[info.name] = info
+        except Exception: pass
+
+    # 4. Check packages/ directory (fallback for both)
     packages_dir = root_dir / "packages"
     if packages_dir.exists():
         for item in packages_dir.iterdir():
@@ -195,8 +229,9 @@ def parse_repo_url(url: str) -> Optional[RepoInfo]:
 def get_best_tag(repo_url: str, version: str) -> Optional[str]:
     try:
         clone_url = repo_url if repo_url.startswith("http") else f"https://{repo_url}"
-        log.info(f"[Git] 正在获取远端 Tag 信息: {clone_url}")
-        output = subprocess.check_output(["git", "ls-remote", "--tags", clone_url], stderr=subprocess.PIPE, text=True)
+        log.debug(f"[Git] 正在获取远端 Tag 信息: {clone_url}")
+        # 静默 stderr 避免干扰进度条
+        output = subprocess.check_output(["git", "ls-remote", "--tags", clone_url], stderr=subprocess.DEVNULL, text=True)
         tags_output = clean_exec_output(output)
         
         tags = []
@@ -217,12 +252,25 @@ def get_best_tag(repo_url: str, version: str) -> Optional[str]:
 class SyncResult:
     relative_path: str
     absolute_path: str
+    ecosystem: str
+
+npm_registry_url = "https://registry.npmjs.org"
+
+def load_npm_config():
+    global npm_registry_url
+    try:
+        # 获取用户配置的 registry (如淘宝镜像、公司私有镜像)
+        npm_registry_url = subprocess.check_output(["npm", "config", "get", "registry"], text=True).strip().rstrip("/")
+    except Exception:
+        pass
 
 def process_package(
     name: str,
     version: str,
+    ecosystem: str,
     global_ref_base: Path,
-    workspace_packages: Dict[str, WorkspaceInfo]
+    workspace_packages: Dict[str, WorkspaceInfo],
+    status_cb: Optional[Any] = None
 ) -> Optional[SyncResult]:
     env = os.environ.copy()
     env["GIT_LOW_SPEED_LIMIT"] = "1000"
@@ -231,33 +279,83 @@ def process_package(
 
     try:
         if version.startswith("workspace:") or name in workspace_packages:
-            log.debug(f"[{name}] 跳过本地 Workspace 依赖")
-            return None
-
-        is_python = any(pkg.name == name for pkg in workspace_packages.values() if pkg.dependencies.get(name))
-        if is_python or name in ["cyclopts", "rich", "PyYAML"]:
-            log.debug(f"[{name}] 检测为 Python 依赖，跳过 NPM 元数据获取")
+            log.debug(f"[{ecosystem}:{name}] 跳过本地 Workspace 依赖")
             return None
 
         repo_url = ""
         sub_dir = ""
         
-        cache_item = metadata_cache.get(name)
-        if cache_item and (cache_item.get("lastVersion") == version or version in cache_item.get("lastVersion", "")):
+        cache_key = f"{ecosystem}:{name}"
+        with metadata_lock:
+            cache_item = metadata_cache.get(cache_key)
+        
+        if cache_item and (cache_item.get("lastVersion") == version or version in str(cache_item.get("lastVersion", ""))):
             repo_url = cache_item.get("repoUrl", "")
             sub_dir = cache_item.get("subDir", "")
         else:
-            log.info(f"[{name}] 正在请求 NPM Registry (npm view)...")
-            try:
-                repo_url = clean_exec_output(subprocess.check_output(["npm", "view", name, "repository.url"], text=True, timeout=30))
+            if ecosystem == "node":
+                log.debug(f"[{name}] 正在通过 Registry API 获取元数据...")
                 try:
-                    sub_dir = clean_exec_output(subprocess.check_output(["npm", "view", name, "repository.directory"], text=True, timeout=10))
-                except Exception: pass
-            except Exception as e:
-                log.error(f"[{name}] 获取 NPM 元数据失败: {e}")
-                return None
-            metadata_cache[name] = {"repoUrl": repo_url, "subDir": sub_dir, "lastVersion": version}
+                    import urllib.request
+                    import json as json_lib
+                    api_url = f"{npm_registry_url}/{name.replace('/', '%2f')}"
+                    with urllib.request.urlopen(api_url, timeout=10) as response:
+                        data = json_lib.loads(response.read().decode())
+                        repo_info = data.get("repository")
+                        if not repo_info:
+                            latest_ver = data.get("dist-tags", {}).get("latest")
+                            if latest_ver:
+                                repo_info = data.get("versions", {}).get(latest_ver, {}).get("repository")
+                        
+                        if isinstance(repo_info, dict):
+                            repo_url = repo_info.get("url", "")
+                            sub_dir = repo_info.get("directory", "")
+                        elif isinstance(repo_info, str):
+                            repo_url = repo_info
+                except Exception as e:
+                    log.debug(f"[{name}] API 请求失败 ({e})，回退到 npm view...")
+                    try:
+                        repo_url = clean_exec_output(subprocess.check_output(
+                            ["npm", "view", name, "repository.url", "--no-workspaces"], 
+                            text=True, timeout=30, stderr=subprocess.DEVNULL
+                        ))
+                        try:
+                            sub_dir = clean_exec_output(subprocess.check_output(
+                                ["npm", "view", name, "repository.directory", "--no-workspaces"], 
+                                text=True, timeout=10, stderr=subprocess.DEVNULL
+                            ))
+                        except Exception: pass
+                    except Exception: pass
+            elif ecosystem == "python":
+                log.debug(f"[{name}] 正在请求 PyPI Registry...")
+                try:
+                    import urllib.request
+                    import json as json_lib
+                    with urllib.request.urlopen(f"https://pypi.org/pypi/{name}/json", timeout=10) as response:
+                        data = json_lib.loads(response.read().decode())
+                        info = data.get("info", {})
+                        project_urls = info.get("project_urls", {}) or {}
+                        repo_url = project_urls.get("Source") or project_urls.get("GitHub") or project_urls.get("Homepage") or ""
+                        if "github.com" not in repo_url:
+                             for url in project_urls.values():
+                                 if "github.com" in str(url):
+                                     repo_url = url
+                                     break
+                except Exception as e:
+                    log.error(f"[{name}] 获取 PyPI 元数据失败: {e}")
+                    return None
+            
+            if repo_url:
+                with metadata_lock:
+                    metadata_cache[cache_key] = {"repoUrl": repo_url, "subDir": sub_dir, "lastVersion": version}
         
+        if status_cb and repo_url:
+            status_cb(f"正在同步 [bold cyan]{ecosystem}:{name}[/bold cyan] 从 [yellow]{repo_url}[/yellow]")
+
+        if not repo_url:
+            log.debug(f"[{ecosystem}:{name}] 未找到源码仓库地址")
+            return None
+            
         repo_info = parse_repo_url(repo_url)
         if not repo_info: return None
         
@@ -273,22 +371,24 @@ def process_package(
                 break
         
         if not final_global_path:
-            log.info(f"[{name}] 准备同步源码: {name}@{version}")
+            log.debug(f"[{name}] 准备同步源码: {name}@{version}")
             best_tag = get_best_tag(clone_url, version_base)
             final_dir_name = best_tag or version_base
             final_global_path = global_ref_base / repo_info.host / repo_info.owner / repo_info.repo / final_dir_name
             
             if not final_global_path.exists():
                 final_global_path.parent.mkdir(parents=True, exist_ok=True)
-                cmd = ["git", "clone", "--depth", "1", "--progress"]
+                # 并发环境下必须静默，否则会破坏 Rich 进度条
+                cmd = ["git", "clone", "--depth", "1"] 
                 if best_tag: cmd += ["--branch", best_tag]
                 cmd += [clone_url, str(final_global_path)]
-                log.info(f"[{name}] 执行 Git Clone: {' '.join(cmd)}")
-                subprocess.check_call(cmd, env=env)
+                log.debug(f"[{name}] 执行 Git Clone: {' '.join(cmd)}")
+                subprocess.check_call(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         return SyncResult(
             relative_path=str(final_global_path.relative_to(Path.home())), 
-            absolute_path=str(Path(final_global_path) / sub_dir) if sub_dir else str(final_global_path)
+            absolute_path=str(Path(final_global_path) / sub_dir) if sub_dir else str(final_global_path),
+            ecosystem=ecosystem
         )
     except Exception as e:
         log.error(f"[{name}] 同步失败: {e}")
@@ -297,10 +397,10 @@ def process_package(
 def build_ref_lock(workspace_packages: Dict[str, WorkspaceInfo], sync_results: Dict[str, SyncResult]) -> Dict[str, Any]:
     import datetime
     
-    def build_deps(deps: Dict[str, str], scope: str) -> List[Dict[str, Any]]:
+    def build_deps(deps: Dict[str, str], scope: str, ecosystem: str) -> List[Dict[str, Any]]:
         result = []
         for name, spec in sorted(deps.items()):
-            res = sync_results.get(name)
+            res = sync_results.get(f"{ecosystem}:{name}")
             mirror_path = res.relative_path if res else None
             resolved_version = Path(mirror_path).name if mirror_path else None
             dep = {"name": name, "spec": spec, "scope": scope}
@@ -314,17 +414,19 @@ def build_ref_lock(workspace_packages: Dict[str, WorkspaceInfo], sync_results: D
     workspaces = []
     for pkg in sorted(workspace_packages.values(), key=lambda x: (x.relative_path != ".", x.name)):
         manifest = "package.json" if pkg.relative_path == "." else f"{pkg.relative_path}/package.json"
+        ecosystem = "node"
         if not (Path(pkg.path) / manifest).exists() and (Path(pkg.path) / "pyproject.toml").exists():
             manifest = "pyproject.toml" if pkg.relative_path == "." else f"{pkg.relative_path}/pyproject.toml"
+            ecosystem = "python"
 
-        deps = build_deps(pkg.dependencies, "runtime") + build_deps(pkg.dev_dependencies, "dev")
+        deps = build_deps(pkg.dependencies, "runtime", ecosystem) + build_deps(pkg.dev_dependencies, "dev", ecosystem)
         deps.sort(key=lambda x: (x["name"], x["scope"]))
         
         workspaces.append({
-            "id": f"node:{pkg.relative_path}" if "package.json" in manifest else f"python:{pkg.relative_path}",
+            "id": f"{ecosystem}:{pkg.relative_path}",
             "name": pkg.name,
             "version": pkg.version,
-            "ecosystem": "node" if "package.json" in manifest else "python",
+            "ecosystem": ecosystem,
             "path": pkg.relative_path,
             "manifest": manifest,
             "dependencies": deps
@@ -346,7 +448,7 @@ def write_ref_lock_file(root_dir: Path, workspace_packages: Dict[str, WorkspaceI
         f.write("\n")
     log.info(f"dependency mirror index 已更新: {ref_lock_path.relative_to(root_dir)}")
 
-def update_tsconfig(root_dir: Path, workspace_packages: Dict[str, WorkspaceInfo], sync_results: Dict[str, SyncResult], all_deps: Dict[str, str]):
+def update_tsconfig(root_dir: Path, workspace_packages: Dict[str, WorkspaceInfo], sync_results: Dict[str, SyncResult]):
     tsconfig_path = root_dir / "tsconfig.ide.json"
     if not tsconfig_path.exists(): return
     
@@ -365,13 +467,14 @@ def update_tsconfig(root_dir: Path, workspace_packages: Dict[str, WorkspaceInfo]
         current_paths = parsed.get("compilerOptions", {}).get("paths", {})
         new_paths = {}
         
+        # 保留现有的 workspace 路径
         for key, val in current_paths.items():
             base_name = key[:-2] if key.endswith("/*") else key
             if base_name in workspace_packages: new_paths[key] = val
         
-        for name, version in all_deps.items():
-            res = sync_results.get(name)
-            if not res: continue
+        for key, res in sync_results.items():
+            if not key.startswith("node:"): continue
+            name = key[5:]
             abs_path = Path(res.absolute_path)
             entry = ""
             candidates = ["dist/index.js", "build/index.js", "dist/index.d.ts", "src/index.ts", "src/tui.ts", "index.ts"]
@@ -391,6 +494,49 @@ def update_tsconfig(root_dir: Path, workspace_packages: Dict[str, WorkspaceInfo]
         log.info("tsconfig.ide.json 更新成功！")
     except Exception as e:
         log.error(f"更新 tsconfig.ide.json 失败: {e}")
+
+def update_python_ide_config(root_dir: Path, sync_results: Dict[str, SyncResult]):
+    """更新 Python IDE 配置 (extraPaths)"""
+    python_paths = [res.absolute_path for key, res in sync_results.items() if key.startswith("python:")]
+    if not python_paths: return
+
+    # 1. 更新 .vscode/settings.json
+    vscode_dir = root_dir / ".vscode"
+    settings_path = vscode_dir / "settings.json"
+    if settings_path.exists():
+        log.info("正在更新 .vscode/settings.json extraPaths...")
+        try:
+            with open(settings_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            import json as json_lib
+            # 简单处理注释
+            lines = [l for l in content.splitlines() if not l.strip().startswith("//")]
+            data = json_lib.loads("\n".join(lines))
+            
+            existing_paths = data.get("python.analysis.extraPaths", [])
+            # 过滤掉旧的 .diy/ref 路径
+            existing_paths = [p for p in existing_paths if ".diy/ref" not in p]
+            data["python.analysis.extraPaths"] = existing_paths + python_paths
+            
+            with open(settings_path, "w", encoding="utf-8") as f:
+                json_lib.dump(data, f, indent=4)
+        except Exception as e:
+            log.error(f"更新 .vscode/settings.json 失败: {e}")
+
+    # 2. 更新 pyrightconfig.json
+    pyright_path = root_dir / "pyrightconfig.json"
+    if pyright_path.exists():
+        log.info("正在更新 pyrightconfig.json extraPaths...")
+        try:
+            with open(pyright_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            existing_paths = data.get("extraPaths", [])
+            existing_paths = [p for p in existing_paths if ".diy/ref" not in p]
+            data["extraPaths"] = existing_paths + python_paths
+            with open(pyright_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            log.error(f"更新 pyrightconfig.json 失败: {e}")
 
 def manage_agent_symlinks(root_dir: Path):
     agents_md = root_dir / "AGENTS.md"
@@ -440,6 +586,7 @@ def load_uv_lock(root_dir: Path) -> Dict[str, str]:
 
 def sync_dependencies():
     log.info("sync start")
+    load_npm_config()
     root_dir = find_project_root()
     log.info(f"识别到项目根目录: {root_dir}")
     
@@ -463,13 +610,16 @@ def sync_dependencies():
     pkg_lock = load_package_lock(root_dir)
     uv_lock = load_uv_lock(root_dir)
     
-    all_deps = {}
+    # all_deps: {(ecosystem, name): version}
+    all_deps: Dict[tuple[str, str], str] = {}
+    
     if pkg_path.exists():
         try:
             with open(pkg_path, "r", encoding="utf-8") as f:
                 pkg = json.load(f)
             manifest = {**(pkg.get("dependencies", {})), **(pkg.get("devDependencies", {}))}
-            for n, s in manifest.items(): all_deps[n] = pkg_lock.get(n, s)
+            for n, s in manifest.items():
+                all_deps[("node", n)] = pkg_lock.get(n, s)
         except Exception: pass
         
     if pyproject_path.exists():
@@ -483,61 +633,123 @@ def sync_dependencies():
                     parts = re.split(r'[>=<]', d)
                     if parts:
                         name = parts[0].strip()
-                        all_deps[name] = uv_lock.get(name, d[len(name):].strip() or "*")
+                        all_deps[("python", name)] = uv_lock.get(name, d[len(name):].strip() or "*")
         except Exception: pass
     
+    # 合并 workspace packages 的依赖
     for pkg in workspace_packages.values():
+        ecosystem = "node" if (Path(pkg.path) / "package.json").exists() else "python"
         for n, s in {**pkg.dependencies, **pkg.dev_dependencies}.items():
-            if n not in all_deps: all_deps[n] = pkg_lock.get(n, uv_lock.get(n, s))
+            if (ecosystem, n) not in all_deps:
+                all_deps[(ecosystem, n)] = pkg_lock.get(n, uv_lock.get(n, s))
 
     global_ref_base = GLOBAL_CACHE_DIR / "ref"
     log.info(f"开始同步 {len(all_deps)} 个活跃依赖...")
     
     import time
     start_time = time.time()
-    sync_results = {}
+    sync_results: Dict[str, SyncResult] = {}
+    
     items = list(all_deps.items())
-    for i, (name, version) in enumerate(items):
-        log.info(f"[{i + 1}/{len(items)}] 处理 {name}@{version}...")
-        res = process_package(name, str(version), global_ref_base, workspace_packages)
-        if res: sync_results[name] = res
+    
+    # 使用 Rich Live + Progress 进行可视化
+    status_label = Text("准备中...", style="dim")
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+    )
+    
+    render_group = Group(progress, status_label)
+    with Live(render_group, transient=True) as live:
+        main_task = progress.add_task("[cyan]总体进度", total=len(items))
+        
+        def task_wrapper(ecosystem, name, version):
+            res = process_package(
+                name, str(version), ecosystem, global_ref_base, workspace_packages,
+                status_cb=lambda msg: setattr(status_label, "plain", msg)
+            )
+            progress.advance(main_task)
+            return (f"{ecosystem}:{name}", res)
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            future_to_pkg = [executor.submit(task_wrapper, eco, name, ver) for (eco, name), ver in items]
+            for future in future_to_pkg:
+                key, res = future.result()
+                if res:
+                    sync_results[key] = res
             
     sources = project_config.get("sources", [])
-    if isinstance(sources, list):
-        for i, source_spec in enumerate(sources):
-            if not source_spec: continue
-            url_part, version = source_spec, ""
-            if "@" in source_spec and not source_spec.startswith("git@"):
-                idx = source_spec.rfind("@")
-                if idx > 8: url_part, version = source_spec[:idx], source_spec[idx+1:]
+    if isinstance(sources, list) and sources:
+        log.info(f"开始同步 {len(sources)} 个自定义 Source...")
+        status_label = Text("准备同步 Sources...", style="dim")
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+        )
+        
+        render_group = Group(progress, status_label)
+        with Live(render_group, transient=True) as live:
+            source_task = progress.add_task("[magenta]Source 进度", total=len(sources))
             
-            repo_info = parse_repo_url(url_part)
-            if not repo_info: continue
-            name = f"{repo_info.owner}/{repo_info.repo}"
-            log.info(f"[source {i+1}] 处理 {name}@{version}...")
-            clone_url = f"https://{repo_info.host}/{repo_info.owner}/{repo_info.repo}"
-            
-            final_p = None
-            for n in ([version, f"v{version}"] if version else ["main", "master"]):
-                p = global_ref_base / repo_info.host / repo_info.owner / repo_info.repo / n
-                if p.exists(): final_p = p; break
-            
-            if not final_p:
-                best = get_best_tag(clone_url, version.lstrip("v")) if version else None
-                final_dir = best or version or "main"
-                final_p = global_ref_base / repo_info.host / repo_info.owner / repo_info.repo / final_dir
-                if not final_p.exists():
-                    final_p.parent.mkdir(parents=True, exist_ok=True)
-                    cmd = ["git", "clone", "--depth", "1", "--progress"]
-                    if best: cmd += ["--branch", best]
-                    elif version: cmd += ["--branch", version]
-                    cmd += [clone_url, str(final_p)]
-                    subprocess.check_call(cmd)
-            
-            sync_results[f"source:{name}"] = SyncResult(relative_path=str(final_p.relative_to(Path.home())), absolute_path=str(final_p))
+            def source_wrapper(i, source_spec):
+                if not source_spec: 
+                    progress.advance(source_task)
+                    return None
+                url_part, version = source_spec, ""
+                if "@" in source_spec and not source_spec.startswith("git@"):
+                    idx = source_spec.rfind("@")
+                    if idx > 8: url_part, version = source_spec[:idx], source_spec[idx+1:]
+                
+                repo_info = parse_repo_url(url_part)
+                if not repo_info: 
+                    progress.advance(source_task)
+                    return None
+                name = f"{repo_info.owner}/{repo_info.repo}"
+                clone_url = f"https://{repo_info.host}/{repo_info.owner}/{repo_info.repo}"
+                
+                status_label.plain = f"正在同步 Source [bold magenta]{name}[/bold magenta] 从 [yellow]{clone_url}[/yellow]"
+                
+                final_p = None
+                for n in ([version, f"v{version}"] if version else ["main", "master"]):
+                    p = global_ref_base / repo_info.host / repo_info.owner / repo_info.repo / n
+                    if p.exists(): final_p = p; break
+                
+                if not final_p:
+                    best = get_best_tag(clone_url, version.lstrip("v")) if version else None
+                    final_dir = best or version or "main"
+                    final_p = global_ref_base / repo_info.host / repo_info.owner / repo_info.repo / final_dir
+                    if not final_p.exists():
+                        final_p.parent.mkdir(parents=True, exist_ok=True)
+                        cmd = ["git", "clone", "--depth", "1"]
+                        if best: cmd += ["--branch", best]
+                        elif version: cmd += ["--branch", version]
+                        cmd += [clone_url, str(final_p)]
+                        subprocess.check_call(cmd, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+                
+                progress.advance(source_task)
+                return (f"source:{name}", SyncResult(
+                    relative_path=str(final_p.relative_to(Path.home())), 
+                    absolute_path=str(final_p),
+                    ecosystem="source"
+                ))
+
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                futures = [executor.submit(source_wrapper, i, s) for i, s in enumerate(sources)]
+                for f in futures:
+                    res = f.result()
+                    if res:
+                        key, val = res
+                        sync_results[key] = val
 
     save_metadata_cache()
     write_ref_lock_file(root_dir, workspace_packages, sync_results)
-    update_tsconfig(root_dir, workspace_packages, sync_results, all_deps)
+    update_tsconfig(root_dir, workspace_packages, sync_results)
+    update_python_ide_config(root_dir, sync_results)
     manage_agent_symlinks(root_dir)
     log.success(f"同步完成！耗时: {time.time() - start_time:.2f}s")
