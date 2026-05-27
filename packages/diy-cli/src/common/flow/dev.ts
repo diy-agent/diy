@@ -55,6 +55,21 @@ const plainTheme: MarkdownTheme = {
 
 const log = logger.withTag("dev");
 
+/** ANSI 红色文本 */
+const RED = (s: string) => `\x1b[31m${s}\x1b[0m`;
+
+/** 如果状态是 CLOSED 或 MERGED，标红 */
+function errorIfClosed(state: string): string {
+  if (state === "CLOSED" || state === "MERGED") return RED(state);
+  return state;
+}
+
+/** 如果 mergeable 是 UNKNOWN，标红 */
+function errorIfUnknown(state: string): string {
+  if (state === "UNKNOWN") return RED(state);
+  return state;
+}
+
 export class DevFlow {
   constructor(private repo: string) {}
 
@@ -142,14 +157,17 @@ export class DevFlow {
     const sep = header.map(() => "---");
     const body = rows.map((row) => {
       const wt = row.worktree;
+      const prState = row.pr?.state;
+      const mergeable = row.pr?.mergeable;
+      const issueState = row.issue?.state;
       return [
         wt.isPrunable ? `\`${wt.shortPath}\` *prunable*` : wt.shortPath,
         wt.branchDisplay,
         String(wt.ahead),
         row.pr ? `#${row.pr.number}` : "-",
-        row.pr?.state ?? "-",
-        row.pr?.mergeable ?? "-",
-        row.issue?.state ?? "-",
+        prState ? errorIfClosed(prState) : "-",
+        mergeable ? errorIfUnknown(mergeable) : "-",
+        issueState ? errorIfClosed(issueState) : "-",
         (row.issue?.title ?? "-").replace(/\|/g, "\\|"),
       ];
     });

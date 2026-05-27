@@ -539,5 +539,4 @@ def sync_dependencies():
     save_metadata_cache()
     write_ref_lock_file(root_dir, workspace_packages, sync_results)
     update_tsconfig(root_dir, workspace_packages, sync_results, all_deps)
-    manage_agent_symlinks(root_dir)
     log.success(f"同步完成！耗时: {time.time() - start_time:.2f}s")

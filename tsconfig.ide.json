@@ -76,24 +76,6 @@
       "vitest/*": [
         "/Users/ccc/.diy/ref/github.com/vitest-dev/vitest/v4.1.7/packages/vitest/*"
       ],
-      "marimo": [
-        "/Users/ccc/.diy/ref/github.com/lawrips/marimo/0.23.8"
-      ],
-      "marimo/*": [
-        "/Users/ccc/.diy/ref/github.com/lawrips/marimo/0.23.8/*"
-      ],
-      "panel": [
-        "/Users/ccc/.diy/ref/git@github.com/mixpanel/panel/1.9.1"
-      ],
-      "panel/*": [
-        "/Users/ccc/.diy/ref/git@github.com/mixpanel/panel/1.9.1/*"
-      ],
-      "param": [
-        "/Users/ccc/.diy/ref/github.com/mafintosh/param/2.4.0"
-      ],
-      "param/*": [
-        "/Users/ccc/.diy/ref/github.com/mafintosh/param/2.4.0/*"
-      ],
       "@vue/reactivity": [
         "/Users/ccc/.diy/ref/github.com/vuejs/core/v3.5.34/packages/reactivity/src/index.ts"
       ],

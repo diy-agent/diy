@@ -351,6 +351,19 @@ def work_list(
                 pr_state = r.pr_state
                 pr_mergeable = r.pr_mergeable
 
+        # 异常状态标红：issue 已关闭、PR 已合并/关闭、mergeable 未知
+        issue_state_display = r.issue_state
+        if r.issue_state in ("CLOSED",):
+            issue_state_display = f"[bold red]{r.issue_state}[/]"
+        # PR 状态：只在非草稿时检查原始值
+        raw_pr_state = r.pr_state  # 原始值，如 OPEN/CLOSED/MERGED
+        if not r.is_draft and raw_pr_state in ("MERGED", "CLOSED"):
+            pr_state = f"[bold red]{raw_pr_state}[/]"
+        # PR mergeable
+        raw_mergeable = r.pr_mergeable
+        if not r.is_draft and raw_mergeable == "UNKNOWN":
+            pr_mergeable = f"[bold red]{raw_mergeable}[/]"
+
         ahead_str = str(r.ahead) if r.ahead > 0 else "-"
 
         # 有 worktree 的行高亮
@@ -358,7 +371,7 @@ def work_list(
 
         table.add_row(
             issue_str,
-            r.issue_state,
+            issue_state_display,
             created_short,
             title,
             wt_display,

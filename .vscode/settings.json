@@ -1,6 +1,14 @@
 {
-  "files.exclude": {
-    "**/node_modules": false
-  },
-  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
+    "files.exclude": {
+        "**/node_modules": false
+    },
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "python.analysis.extraPaths": [
+        "/Users/ccc/.diy/ref/github.com/holoviz/panel/v1.9.1",
+        "/Users/ccc/.diy/ref/github.com/python/asyncio/4.0.0",
+        "/Users/ccc/.diy/ref/github.com/holoviz/param/v2.4.0",
+        "/Users/ccc/.diy/ref/github.com/BrianPugh/cyclopts/v4.16.0",
+        "/Users/ccc/.diy/ref/github.com/Textualize/rich/15.0.0",
+        "/Users/ccc/.diy/ref/github.com/yaml/pyyaml/>=6.0"
+    ]
 }
