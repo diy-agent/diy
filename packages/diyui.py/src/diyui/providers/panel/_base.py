@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import diyui
+
+if TYPE_CHECKING:
+    from diyui._signal import Signal
 
 C = TypeVar("C", bound="UIComponent")
 
@@ -19,6 +22,20 @@ class UIComponent(diyui.ScopeNode):
     def __init__(self, *, config: diyui.ScopeConfig | None = None) -> None:
         super().__init__(config=config)
         self.diy.panel_container = False
+
+    @property
+    def signal(self) -> "Signal[Any]":
+        """返回组件绑定的 Signal 实例。
+
+        仅 value widget 有此属性。layout 容器应使用 app.signal(value) 创建 scope signal。
+        """
+        sig = self.diy.signal
+        if sig is not None:
+            return sig  # type: ignore[return-value]
+        raise AttributeError(
+            f"{type(self).__name__} 没有绑定的 signal。"
+            "layout 容器请使用 app.signal(value) 创建 scope signal。"
+        )
 
 
 class _PanelContainerMixin:

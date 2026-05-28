@@ -322,6 +322,7 @@ _WRAPPER_EXCLUDED: dict[type, set[str]] = {
     },
     diypn.widgets.DatetimeSlider: {
         "value_throttled",
+        "as_datetime",
     },
     diypn.widgets.DiscretePlayer: {
         "value_throttled",
@@ -329,8 +330,15 @@ _WRAPPER_EXCLUDED: dict[type, set[str]] = {
     diypn.widgets.Player: {
         "value_throttled",
     },
-    diypn.widgets.DatetimeSlider: {
-        "as_datetime",
+    diypn.layout.Divider: {
+        "width_policy",
+        "height_policy",
+    },
+    diypn.layout.HSpacer: {
+        "sizing_mode",
+    },
+    diypn.layout.VSpacer: {
+        "sizing_mode",
     },
 }
 
@@ -770,6 +778,8 @@ _PARAM_TEST_VALUE_OVERRIDES: dict[str, Any] = {
     "title_css_classes": _NO_VALUE,
     "extensions": _NO_VALUE,        # Markdown / HTML 有默认扩展
     # ---- 需要正确格式的（用合理值替代） ----
+    "classes": _NO_VALUE,      # Panel 内部追加 ['panel-df']
+    "disabled": _NO_VALUE,     # CodeEditor 的 disabled 构造后状态变化
     "groups": {"g1": ["a", "b"]},
     "sorters": [{"field": "col1", "dir": "asc"}],
     "filters": [{"field": "col1", "type": "ge", "value": 0}],

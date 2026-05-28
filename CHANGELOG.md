@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.1.14](https://github.com/diy-agent/diy/compare/diy-v0.1.13...diy-v0.1.14) (2026-05-27)
+
+
+### Features
+
+* **diy-ref:** diy-ref 改造升级，增加:预处理，增加动态skill ([#83](https://github.com/diy-agent/diy/issues/83)) ([8fd0e76](https://github.com/diy-agent/diy/commit/8fd0e7631221d470b0a274d8d65c154cc668943d))
+
+## [0.1.13](https://github.com/diy-agent/diy/compare/diy-v0.1.12...diy-v0.1.13) (2026-05-27)
+
+
+### Features
+
+* **diyui:** redesign system_monitor with side-by-side layout, add panel-debug skill ([dba2e7f](https://github.com/diy-agent/diy/commit/dba2e7fdc2a925923977654272274c853e3ebf06))
+
+
+### Bug Fixes
+
+* **diyui:** ensure async-safety using contextvars and fix concurrent cell interference ([3c54132](https://github.com/diy-agent/diy/commit/3c5413297ed750d28faa46b127ffc0d9d91f4870))
+* **diyui:** fix DataFrame comparison in Signal, add Tabulator widget ([632cb16](https://github.com/diy-agent/diy/commit/632cb16c31fc16feac7af42a5bd9523922f9005a))
+
 ## [0.1.12](https://github.com/diy-agent/diy/compare/diy-v0.1.11...diy-v0.1.12) (2026-05-26)
 
 

@@ -143,22 +143,22 @@ class TestInputComponentSignal:
 
 
 class TestWrapperExposesTarget:
-    """diyui 是薄层，用户可直接访问 .target（向后兼容，self 就是 provider 原生对象）。"""
+    """wrapper 本身就是 Panel 原生实例，无需 .target。"""
 
-    def test_button_exposes_target(self):
+    def test_button_is_panel_instance(self):
         app = diypn.PanelApp()
         btn = app.widgets.button(name="Run")
-        assert isinstance(btn.target, pn.widgets.Button)
+        assert isinstance(btn, pn.widgets.Button)
 
-    def test_markdown_exposes_target(self):
+    def test_markdown_is_panel_instance(self):
         app = diypn.PanelApp()
         md = app.pane.markdown("hi")
-        assert isinstance(md.target, pn.pane.Markdown)
+        assert isinstance(md, pn.pane.Markdown)
 
-    def test_column_exposes_target(self):
+    def test_column_is_panel_instance(self):
         app = diypn.PanelApp()
         col = app.layout.column()
-        assert isinstance(col.target, pn.Column)
+        assert isinstance(col, pn.Column)
 
 
 # ═══════════════════════════════════════════════
@@ -223,10 +223,11 @@ class TestPanelNativeApiDirectAccess:
         btn = app.widgets.button(name="Run")
         assert btn.clicks == 0
 
-    def test_target_is_self_for_backward_compat(self):
+    def test_wrapper_is_panel_instance_directly(self):
+        """wrapper 自身就是 Panel 原生实例，可直接当 Panel 组件使用。"""
         app = diypn.PanelApp()
         btn = app.widgets.button(name="Run")
-        assert btn.target is btn
+        assert isinstance(btn, pn.widgets.Button)
 
     def test_text_input_param_watch_directly(self):
         app = diypn.PanelApp()

@@ -171,7 +171,7 @@ class Tabulator(UIComponent, pn.widgets.Tabulator):
     @value.setter
     def value(self, v: pd.DataFrame | None) -> None:
         self.diy.signal.value = v
-        if getattr(self, "_init_done", False):
+        if self.diy.init_done:
             # 绕过 property 直接设置 param
             self.param["value"].__set__(self, v)
 

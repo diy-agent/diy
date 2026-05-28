@@ -98,7 +98,7 @@ class RadioButtonGroup(UIComponent, pn.widgets.RadioButtonGroup):
     @value.setter
     def value(self, v: Any) -> None:
         self.diy.signal.value = v
-        if getattr(self, "_init_done", False):
+        if self.diy.init_done:
             # 通过 param descriptor 的 __set__ 直接设值，绕过 property 避免递归
             self.param["value"].__set__(self, v)
 

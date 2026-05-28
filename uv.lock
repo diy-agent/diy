@@ -328,6 +328,23 @@ requires-dist = [
 ]
 
 [[package]]
+name = "diy-cli"
+version = "0.1.0"
+source = { editable = "packages/diy-cli.py" }
+dependencies = [
+    { name = "cyclopts" },
+    { name = "pyyaml" },
+    { name = "rich" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cyclopts", specifier = ">=3.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "rich", specifier = ">=13.0" },
+]
+
+[[package]]
 name = "diy-mono"
 version = "0.0.0"
 source = { virtual = "." }

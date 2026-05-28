@@ -78,7 +78,7 @@ class ToggleGroup(UIComponent, pn.widgets.ToggleGroup):
     @value.setter
     def value(self, v: Any) -> None:
         self.diy.signal.value = v
-        if getattr(self, "_init_done", False):
+        if self.diy.init_done:
             self.param["value"].__set__(self, v)
 
     def _setup_event_bridge(self) -> None:
