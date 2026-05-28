@@ -6,18 +6,18 @@ generic, execution-focused, and short.
 
 ## What This Repo Is
 
-diy is a Nodsse.js + TypeScript monorepo for orchestrating coding agents through a
+diy is a Python monorepo for orchestrating coding agents through a
 shared CLI workflow.
 
 Primary workspaces:
-- `packages/diy-cli`: CLI entrypoints, evolve loop, planner, sync logic.
-- `packages/diy-core`: agent wrappers and shared runtime abstractions.
-- `packages/diy-tui`: terminal UI components.
+- `packages/diy-cli.py`: CLI entrypoints, evolve loop, planner, sync logic.
+- `packages/diyui.py`: reactive UI wrapper over Panel.
+- `packages/diydev`: development utilities and skills.
 
 Important entrypoints:
-- `packages/diy-cli/src/diy/cli.ts`
-- `packages/diy-cli/src/diy/evolve.ts`
-- `packages/diy-cli/src/common/sync.ts`
+- `packages/diy-cli.py/src/diycli/`
+- `packages/diyui.py/src/diyui/`
+- `packages/diydev/src/diydev/`
 - `sha.sh`
 
 ## Hard Rules
@@ -25,8 +25,8 @@ Important entrypoints:
 ### Validation
 
 - After each meaningful change, run at least one validation command.
-- Use `npm run test` or `npm run check` for local changes.
-- Use `npm run check:all` when changes span packages or shared build behavior.
+- Use `uv run pytest` for local changes.
+- Use `./sha.sh check` when changes span packages or shared build behavior.
 - Prefer the smallest verifiable change over broad refactors.
 
 ### Python 包安装
@@ -39,25 +39,16 @@ Important entrypoints:
 
 - Do not hide error messages in scripts (e.g., avoid `2>/dev/null`). All errors should be visible for easier debugging.
 
-### TypeScript And ESM
-
-- The repo uses strict ESM and NodeNext resolution.
-- Local imports must keep the `.js` extension.
-- Do not use `as any` or `@ts-ignore` without explicit user approval.
-- Do not leave placeholder edits such as `TODO`, `...`, or commented-out replacement blocks instead of real code.
-
 ### Reference Code
 
 - `.diy/ref/` is read-only reference material for dependency internals.
-- Run `npm run sync` when mirrored dependency sources or their index may be stale.
+- Run `uv run dev sync` when mirrored dependency sources or their index may be stale.
 - Dependency mirror index: `.diy/ref/ref.lock.json`.
-- Use `ref.lock.json` only when you need dependency internals, then read the mapped source under `.diy/ref/`.
 - Never import from `.diy/ref/`.
 - Read dependency internals in this order:
   1. Current project code
   2. `.diy/ref/`
-  3. `node_modules/`
-  4. Online documentation
+  3. `.venv/lib/`
 
 ## Data Handling Guidelines
 
@@ -84,10 +75,10 @@ Important entrypoints:
 ## Useful Commands
 
 ```bash
-npm run test
-npm run check
-npm run check:all
-npm run build
-npm run sync
+uv run pytest
+./sha.sh check
+./sha.sh test
+./sha.sh test-all
+uv run dev sync
 sha.sh doctor release     # release 流程诊断
 ```
