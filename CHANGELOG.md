@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.16](https://github.com/diy-agent/diy/compare/diy-v0.1.15...diy-v0.1.16) (2026-05-28)
+
+
+### Features
+
+* **diydev:** 分离出去变为一个独立的项目，作为专门进行定制化diy系列项目开发的规范和工具集合，不适合直接放在diy项目里 ([#107](https://github.com/diy-agent/diy/issues/107)) ([86053e7](https://github.com/diy-agent/diy/commit/86053e78e4cc12b116c67ef8f0cc27d7c029c250))
+
 ## [0.1.15](https://github.com/diy-agent/diy/compare/diy-v0.1.14...diy-v0.1.15) (2026-05-28)
 
 
