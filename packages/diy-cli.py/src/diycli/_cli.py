@@ -27,7 +27,7 @@ app = App(
 
 @app.command(name="sync")
 def sync_cmd():
-    """同步项目依赖源码到 .diy/ref"""
+    """同步项目依赖源码到 .diy"""
     try:
         sync_dependencies()
     except FileNotFoundError as e:
