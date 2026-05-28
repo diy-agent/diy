@@ -12,12 +12,10 @@ shared CLI workflow.
 Primary workspaces:
 - `packages/diy-cli.py`: CLI entrypoints, evolve loop, planner, sync logic.
 - `packages/diyui.py`: reactive UI wrapper over Panel.
-- `packages/diydev`: development utilities and skills.
 
 Important entrypoints:
 - `packages/diy-cli.py/src/diycli/`
 - `packages/diyui.py/src/diyui/`
-- `packages/diydev/src/diydev/`
 - `sha.sh`
 
 ## Hard Rules
@@ -32,8 +30,7 @@ Important entrypoints:
 ### Python 包安装
 
 - **禁止直接使用 `pip install`**，因为未激活 venv 时会污染全局 Python 环境
-- 必须使用 `uv pip install` 或 `uv run`，确保安装到项目 `.venv` 内
-- 示例：`uv pip install -e packages/diydev`、`uv run dev list`
+- 必须使用 `uv add install` 或 `uv run`，确保安装到项目 `.venv` 内
 
 ### Scripting and Error Handling
 

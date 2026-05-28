@@ -14,7 +14,6 @@ resolution-markers = [
 members = [
     "diy-cli",
     "diy-mono",
-    "diydev",
     "diyui",
 ]
 
@@ -332,7 +331,6 @@ name = "diy-mono"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "diydev" },
     { name = "diyui" },
 ]
 
@@ -344,10 +342,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "diydev", editable = "packages/diydev" },
-    { name = "diyui", editable = "packages/diyui.py" },
-]
+requires-dist = [{ name = "diyui", editable = "packages/diyui.py" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -357,23 +352,8 @@ dev = [
 ]
 
 [[package]]
-name = "diydev"
-version = "0.1.14"
-source = { editable = "packages/diydev" }
-dependencies = [
-    { name = "cyclopts" },
-    { name = "rich" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cyclopts", specifier = ">=3.0" },
-    { name = "rich", specifier = ">=13.0" },
-]
-
-[[package]]
 name = "diyui"
-version = "0.1.14"
+version = "0.1.15"
 source = { editable = "packages/diyui.py" }
 dependencies = [
     { name = "asyncio" },

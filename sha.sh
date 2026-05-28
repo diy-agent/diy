@@ -22,7 +22,7 @@ cd "$ROOT_DIR"
 source sha.common.sh
 
 # _workspaces=(packages/*/ pkgs-diyui/*/)
-_workspaces=(packages/diydev/ packages/diyui.py/ packages/diy-cli.py/)
+_workspaces=(packages/diyui.py/ packages/diy-cli.py/)
 _vendors=(vendor/*/)
 
 ####################################################################################
@@ -60,10 +60,7 @@ sync()  {
     # run npm i --workspaces
     run git submodule update --init --recursive
     # ln dev version
-    run uv tool install -e packages/diydev
     run uv tool install -e packages/diy-cli.py
-    run ln -sf packages/diydev/skills/find-context ~/.agents/skills/find-context
-    run ln -sf packages/diydev/skills/win-file-unlock ~/.agents/skills/win-file-unlock
 
     _ws_run command ./sha.sh sync;
 }

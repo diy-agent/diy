@@ -2,7 +2,7 @@
 name = "diy-mono"
 version = "0.0.0"
 requires-python = ">=3.12"
-dependencies = ["diydev", "diyui"]
+dependencies = ["diyui"]
 
 [dependency-groups]
 dev = [
@@ -17,7 +17,7 @@ package = false
 python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-standalone/"
 
 [tool.uv.workspace]
-members = ["packages/diyui.py", "packages/diydev", "packages/diy-cli.py"]
+members = ["packages/diyui.py", "packages/diy-cli.py"]
 
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"
@@ -25,13 +25,12 @@ url = "https://mirrors.aliyun.com/pypi/simple/"
 [tool.uv.sources]
 diy-cli = { workspace = true }
 diyui = { workspace = true }
-diydev = { workspace = true }
 
 # ========== Ruff 配置 ==========
 [tool.ruff]
 target-version = "py312"
 line-length = 88
-src = ["packages/diyui.py/src", "packages/diydev/src"]
+src = ["packages/diyui.py/src"]
 
 [tool.ruff.lint]
 select = [
@@ -52,7 +51,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["diyui", "diydev"]
+known-first-party = ["diyui"]
 
 [tool.ruff.lint.per-file-ignores]
 "packages/diyui.py/tests/test_panel_param_coverage.py" = ["E402"]
@@ -71,8 +70,6 @@ include = [
     "packages/diyui.py/src",
     "packages/diyui.py/tests",
     "packages/diyui.py/examples",
-    "packages/diydev/src",
-    "packages/diydev/tests",
 ]
 extraPaths = ["packages/diyui.py/tools"]
 reportMissingParameterType = true
@@ -85,5 +82,4 @@ markers = ["browser: 需要 headless browser 的测试"]
 testpaths = [
     "packages/diy-cli.py/tests",
     "packages/diyui.py/tests",
-    "packages/diydev/tests",
 ]
