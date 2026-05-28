@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.15](https://github.com/diy-agent/diy/compare/diy-v0.1.14...diy-v0.1.15) (2026-05-28)
+
+
+### Features
+
+* **diydev:** add diy-project-manager skill with Goal-based issue organization ([c199014](https://github.com/diy-agent/diy/commit/c199014115b00d4a900ebe4cd0aee688d5e884bc))
+* **panel-provider:** complete wrapper generation, demo files, and debug infra ([23c1745](https://github.com/diy-agent/diy/commit/23c17454f44ee25bcf691fdc4f1d4ece357020a6))
+
+
+### Bug Fixes
+
+* **diyui:** 修复 ./sha.sh test 全部测试错误 ([e5b5ac0](https://github.com/diy-agent/diy/commit/e5b5ac04075d60439cf462f2183f936ab10b1783))
+* **diyui:** 修复 widget 类型注解、scheduler 测试变量名、暴露 _scope 内部属性 ([3f61d49](https://github.com/diy-agent/diy/commit/3f61d493267d43280646438fb0ad6b7355ea3251))
+* **panel-provider:** fix wrapper runtime errors and demo rendering ([414fe93](https://github.com/diy-agent/diy/commit/414fe93564da79cb2f2a63b866e1938f03deeef7))
+
 ## [0.1.14](https://github.com/diy-agent/diy/compare/diy-v0.1.13...diy-v0.1.14) (2026-05-27)
 
 

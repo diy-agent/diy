@@ -1,6 +1,6 @@
 [project]
 name = "diydev"
-version = "0.1.14" # x-release-please-version
+version = "0.1.15" # x-release-please-version
 description = "diy 开发流程 CLI - issue 与 worktree 统一管理"
 requires-python = ">=3.12"
 dependencies = [
