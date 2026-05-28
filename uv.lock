@@ -355,7 +355,7 @@ dev = [
 
 [[package]]
 name = "diyui"
-version = "0.1.15"
+version = "0.1.16"
 source = { editable = "packages/diyui.py" }
 dependencies = [
     { name = "asyncio" },
