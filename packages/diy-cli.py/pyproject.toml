@@ -7,6 +7,7 @@ dependencies = [
     "cyclopts>=3.0",
     "rich>=13.0",
     "PyYAML>=6.0",
+    "json5>=0.10",
 ]
 
 [project.scripts]

@@ -20,7 +20,7 @@ logs/
 state/
 data/
 
-# diy ref
+# diy ref（全局缓存目录不跟踪，本地锁文件需跟踪）
 .diy/ref/
 
 # IDEs

@@ -440,7 +440,7 @@ def build_ref_lock(workspace_packages: Dict[str, WorkspaceInfo], sync_results: D
     }
 
 def write_ref_lock_file(root_dir: Path, workspace_packages: Dict[str, WorkspaceInfo], sync_results: Dict[str, SyncResult]):
-    ref_lock_path = root_dir / ".diy" / "ref" / "ref.lock.json"
+    ref_lock_path = root_dir / ".diy" / "ref.lock.json"
     ref_lock_path.parent.mkdir(parents=True, exist_ok=True)
     payload = build_ref_lock(workspace_packages, sync_results)
     with open(ref_lock_path, "w", encoding="utf-8") as f:
@@ -497,8 +497,11 @@ def update_tsconfig(root_dir: Path, workspace_packages: Dict[str, WorkspaceInfo]
 
 def update_python_ide_config(root_dir: Path, sync_results: Dict[str, SyncResult]):
     """更新 Python IDE 配置 (extraPaths)"""
-    python_paths = [res.absolute_path for key, res in sync_results.items() if key.startswith("python:")]
-    if not python_paths: return
+    python_paths_raw = [res.absolute_path for key, res in sync_results.items() if key.startswith("python:")]
+    if not python_paths_raw: return
+    # 用 ~ 替代 HOME 目录，减少隐私暴露和跨机器冲突
+    home = str(Path.home())
+    python_paths = [p.replace(home, "~") if p.startswith(home) else p for p in python_paths_raw]
 
     # 1. 更新 .vscode/settings.json
     vscode_dir = root_dir / ".vscode"
@@ -506,19 +509,17 @@ def update_python_ide_config(root_dir: Path, sync_results: Dict[str, SyncResult]
     if settings_path.exists():
         log.info("正在更新 .vscode/settings.json extraPaths...")
         try:
+            import json5
             with open(settings_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            import json as json_lib
-            # 简单处理注释
-            lines = [l for l in content.splitlines() if not l.strip().startswith("//")]
-            data = json_lib.loads("\n".join(lines))
-            
+                data = json5.load(f)
+
             existing_paths = data.get("python.analysis.extraPaths", [])
             # 过滤掉旧的 .diy/ref 路径
             existing_paths = [p for p in existing_paths if ".diy/ref" not in p]
             data["python.analysis.extraPaths"] = existing_paths + python_paths
-            
+
             with open(settings_path, "w", encoding="utf-8") as f:
+                import json as json_lib
                 json_lib.dump(data, f, indent=4)
         except Exception as e:
             log.error(f"更新 .vscode/settings.json 失败: {e}")

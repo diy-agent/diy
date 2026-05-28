@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "generatedAt": "2026-05-28T15:08:02.112725Z",
+  "mirrorRoot": "~",
+  "workspaces": [
+    {
+      "id": "python:.",
+      "name": "diy-mono",
+      "version": "0.0.0",
+      "ecosystem": "python",
+      "path": ".",
+      "manifest": "pyproject.toml",
+      "dependencies": [
+        {
+          "name": "diyui",
+          "spec": "*",
+          "scope": "runtime"
+        }
+      ]
+    },
+    {
+      "id": "python:packages/diy-cli.py",
+      "name": "diy-cli",
+      "version": "0.1.0",
+      "ecosystem": "python",
+      "path": "packages/diy-cli.py",
+      "manifest": "packages/diy-cli.py/pyproject.toml",
+      "dependencies": [
+        {
+          "name": "PyYAML",
+          "spec": ">=6.0",
+          "scope": "runtime",
+          "resolvedVersion": ">=6.0",
+          "mirrorPath": ".diy/ref/github.com/yaml/pyyaml/>=6.0"
+        },
+        {
+          "name": "cyclopts",
+          "spec": ">=3.0",
+          "scope": "runtime",
+          "resolvedVersion": "v4.16.1",
+          "mirrorPath": ".diy/ref/github.com/BrianPugh/cyclopts/v4.16.1"
+        },
+        {
+          "name": "json5",
+          "spec": ">=0.10",
+          "scope": "runtime",
+          "resolvedVersion": "v0.14.0",
+          "mirrorPath": ".diy/ref/github.com/dpranke/pyjson5/v0.14.0"
+        },
+        {
+          "name": "rich",
+          "spec": ">=13.0",
+          "scope": "runtime",
+          "resolvedVersion": "15.0.0",
+          "mirrorPath": ".diy/ref/github.com/Textualize/rich/15.0.0"
+        }
+      ]
+    },
+    {
+      "id": "python:packages/diyui.py",
+      "name": "diyui",
+      "version": "0.1.15",
+      "ecosystem": "python",
+      "path": "packages/diyui.py",
+      "manifest": "packages/diyui.py/pyproject.toml",
+      "dependencies": [
+        {
+          "name": "asyncio",
+          "spec": ">=4.0.0",
+          "scope": "runtime",
+          "resolvedVersion": "4.0.0",
+          "mirrorPath": ".diy/ref/github.com/python/asyncio/4.0.0"
+        },
+        {
+          "name": "panel",
+          "spec": ">=1.9.1",
+          "scope": "runtime",
+          "resolvedVersion": "v1.9.2",
+          "mirrorPath": ".diy/ref/github.com/holoviz/panel/v1.9.2"
+        },
+        {
+          "name": "param",
+          "spec": ">=2.3.3",
+          "scope": "runtime",
+          "resolvedVersion": "v2.4.0",
+          "mirrorPath": ".diy/ref/github.com/holoviz/param/v2.4.0"
+        }
+      ]
+    }
+  ]
+}

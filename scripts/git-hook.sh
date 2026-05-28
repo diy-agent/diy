@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 共享 pre-commit hook（core.hooksPath=/Users/ccc/git/dao/.git/hooks）
+# 共享 pre-commit hook（core.hooksPath=~/git/diy/.git/hooks）
 # 仅对 diy 仓库的 diyui.py 子项目生效
 set -euo pipefail
 

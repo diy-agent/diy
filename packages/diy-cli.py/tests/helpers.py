@@ -39,7 +39,7 @@ def sync_snapshot(root: Path) -> str:
     lines = []
     
     # 1. 检查 ref.lock.json
-    lock_path = root / ".diy" / "ref" / "ref.lock.json"
+    lock_path = root / ".diy" / "ref.lock.json"
     if lock_path.exists():
         with open(lock_path, "r") as f:
             data = json.load(f)
