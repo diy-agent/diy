@@ -37,15 +37,15 @@ class ColorMap(UIComponent, pn.widgets.ColorMap):
         visible: bool = True,
         loading: bool = False,
         disabled: bool = False,
-        value: str | list[str] | None = None,
-        options: dict[str, list[str]] | None = None,
+        value: str = "viridis",
+        options: dict[str, str] | None = None,
         ncols: int = 4,
         swatch_height: int = 20,
         swatch_width: int = 100,
         value_name: str | None = None,
     ) -> None:
         UIComponent.__init__(self)
-        self.diy.signal: diyui.Signal[Any] = diyui.Signal[Any](value)
+        self.diy.signal: diyui.Signal[str] = diyui.Signal[str](value)
         _label = label or name
         self.diy.init_done: bool = False
         pn.widgets.ColorMap.__init__(
@@ -82,11 +82,11 @@ class ColorMap(UIComponent, pn.widgets.ColorMap):
         self._setup_event_bridge()
 
     @property
-    def value(self) -> Any:
+    def value(self) -> str:
         return self.diy.signal.value
 
     @value.setter
-    def value(self, v: Any) -> None:
+    def value(self, v: str) -> None:
         self.diy.signal.value = v
         if self.diy.init_done:
             self.param["value"].__set__(self, v)

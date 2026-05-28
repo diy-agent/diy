@@ -50,8 +50,6 @@ class Tqdm(UIComponent, pn.widgets.Tqdm):
         self.diy.signal: diyui.Signal[int] = diyui.Signal[int](value)
         _label = label or name
         self.diy.init_done: bool = False
-        # layout, lock, progress, text_pane are consumed by Tqdm.__init__
-        # and must NOT be passed to super().__init__
         pn.widgets.Tqdm.__init__(
             self,
             label=_label,
@@ -79,7 +77,9 @@ class Tqdm(UIComponent, pn.widgets.Tqdm):
             layout=layout,
             lock=lock,
             max=max,
+            progress=progress,
             text=text,
+            text_pane=text_pane,
             write_to_console=write_to_console,
         )
         self.diy.init_done = True

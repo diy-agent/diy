@@ -46,7 +46,7 @@ class LinearGauge(UIComponent, pn.widgets.LinearGauge):
         needle_color: str = "black",
         show_boundaries: bool = True,
         horizontal: bool = True,
-        tick_size: str | None = None,
+        tick_size: int = 10,
         title_size: str | None = None,
         unfilled_color: str = "whitesmoke",
         value_size: int | None = None,

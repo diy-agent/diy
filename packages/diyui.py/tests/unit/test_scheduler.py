@@ -78,4 +78,4 @@ class TestSchedulerConfig:
         parent = diyui.ScopeNode(config=diyui.ScopeConfig(scheduler=sched))
         child = diyui.ScopeNode()
         parent._add_child(child)
-        assert child_lookup_scheduler is sched
+        assert child._lookup_scheduler is sched

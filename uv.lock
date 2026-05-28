@@ -297,7 +297,7 @@ wheels = [
 
 [[package]]
 name = "cyclopts"
-version = "4.16.0"
+version = "4.16.1"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
 dependencies = [
     { name = "attrs" },
@@ -305,26 +305,9 @@ dependencies = [
     { name = "rich" },
     { name = "rich-rst" },
 ]
-sdist = { url = "https://mirrors.aliyun.com/pypi/packages/cb/42/33977afb50c23345551c973fa1d25458d946ad6937373a73acd99ae21d9b/cyclopts-4.16.0.tar.gz", hash = "sha256:6a07b8ada2fa3d7611e227a98b661523c39644a50e04c92839832d9f599f398d" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/34/07/bf61d13de86d96a4c46aff00c9ca0eced44bcc8c3e16280605c1253e5720/cyclopts-4.16.1.tar.gz", hash = "sha256:8aa47bf92a5fb33abca5af05e576eecdb0d2f79893ad29238046df78370fc4a8" }
 wheels = [
-    { url = "https://mirrors.aliyun.com/pypi/packages/f9/45/9da25f3fe4b99e701b9a704bb6213e2d61bc44ae66294f9728574f3a607a/cyclopts-4.16.0-py3-none-any.whl", hash = "sha256:cbb9f8af92ace82c250178a3a51f5ecec1df95ab99116af3aa7140b218ccd2a1" },
-]
-
-[[package]]
-name = "diy-cli"
-version = "0.1.0"
-source = { editable = "packages/diy-cli.py" }
-dependencies = [
-    { name = "cyclopts" },
-    { name = "pyyaml" },
-    { name = "rich" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cyclopts", specifier = ">=3.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "rich", specifier = ">=13.0" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/00/8d/7f362c2fb8ef4decd2160bc24d4292c6ca658cc6d9a161b89ca5122bbdbf/cyclopts-4.16.1-py3-none-any.whl", hash = "sha256:617795392c4113a2c2cc7af716f20244900e87f23daa05442d1268d81472a592" },
 ]
 
 [[package]]
@@ -375,7 +358,7 @@ dev = [
 
 [[package]]
 name = "diydev"
-version = "0.1.12"
+version = "0.1.14"
 source = { editable = "packages/diydev" }
 dependencies = [
     { name = "cyclopts" },
@@ -390,7 +373,7 @@ requires-dist = [
 
 [[package]]
 name = "diyui"
-version = "0.1.12"
+version = "0.1.14"
 source = { editable = "packages/diyui.py" }
 dependencies = [
     { name = "asyncio" },
@@ -997,7 +980,7 @@ wheels = [
 
 [[package]]
 name = "panel"
-version = "1.9.1"
+version = "1.9.2"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
 dependencies = [
     { name = "bokeh" },
@@ -1016,9 +999,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://mirrors.aliyun.com/pypi/packages/3b/e8/e31a27936c482cd3b67be7c20c764d519f42f8b89da20ada7c79f722c994/panel-1.9.1.tar.gz", hash = "sha256:2e06294f9dcea6690c600fbcc8610976ca8a0b1531d1a49086267e1760075417" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/cd/fa/a319e89d500cdcf116103cdd2af1cfaf20749a6dcdc88876948406e03c37/panel-1.9.2.tar.gz", hash = "sha256:ede8daa7a2515a2f3b49f19ed9aff75fcef48d6d8c3b9df3a4ebf26a551a0407" }
 wheels = [
-    { url = "https://mirrors.aliyun.com/pypi/packages/32/ed/31e1b011e49c194587c688cfb4416fab6c02e055c8321fe77544caf1cc4f/panel-1.9.1-py3-none-any.whl", hash = "sha256:19c5a61772ebfa7c37a86af7a1208cccc3fb4bc1416123fb305fb9beec197a08" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/5a/3e/05b8f0a361fccedab13013769acdb00c24499b7b5c21f26fe9d45f65b7ae/panel-1.9.2-py3-none-any.whl", hash = "sha256:7099ad4334c305d7e2654d46945d3117e63379f15d0b8635e67f3f825dbccd9b" },
 ]
 
 [[package]]

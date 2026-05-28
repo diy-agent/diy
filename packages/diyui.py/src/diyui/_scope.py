@@ -238,6 +238,22 @@ class ScopeNode:
 
     # ── provider sync hooks ───────────────────
 
+    @property
+    def _ancestor_ids(self) -> set[int]:
+        return self.__ancestor_ids
+
+    @property
+    def _signals(self) -> list[object]:
+        return self.__signals
+
+    @property
+    def _cell_fn(self) -> Callable[[ScopeNode], None] | None:
+        return self.__cell_fn
+
+    @_cell_fn.setter
+    def _cell_fn(self, v: Callable[[ScopeNode], None] | None) -> None:
+        self.__cell_fn = v
+
     def _on_child_removed(self, child: ScopeNode) -> None:
         """子类覆写：child 移除时从 provider 删除。"""
         pass
