@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.20](https://github.com/diy-agent/diy/compare/diy-v0.1.19...diy-v0.1.20) (2026-05-31)
+
+
+### Bug Fixes
+
+* 删除 __version__ 硬编码，diy-cli 增加 -V/--version 支持 ([c3bde85](https://github.com/diy-agent/diy/commit/c3bde85573b259e984a2cb891ec0339efe027cb6))
+
 ## [0.1.19](https://github.com/diy-agent/diy/compare/diy-v0.1.18...diy-v0.1.19) (2026-05-31)
 
 
