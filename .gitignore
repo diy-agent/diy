@@ -1,8 +1,8 @@
 # PYTHON
 
-__pycache__
+__pycache__/
 *.egg-info
-.venv
+.venv/
 
 # Build output
 dist/
