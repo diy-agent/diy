@@ -1,6 +1,6 @@
 [project]
 name = "diy-cli"
-version = "0.1.18"
+version = "0.1.19" # x-release-please-version
 description = "diy 统一入口 (Python 移植版)"
 requires-python = ">=3.12"
 dependencies = [
