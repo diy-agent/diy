@@ -1,6 +1,7 @@
 """diycli CLI 入口"""
 
 import sys
+from importlib.metadata import version
 from typing import Annotated
 from cyclopts import App, Parameter, Group
 
@@ -22,7 +23,8 @@ VerboseRoot = Annotated[
 app = App(
     name="diy",
     help="diy 统一管理工具",
-    version_flags=[],
+    version=version("diy-cli"),
+    version_flags=["--version", "-V"],
 )
 
 @app.command(name="sync")
