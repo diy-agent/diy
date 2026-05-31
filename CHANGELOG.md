@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.17](https://github.com/diy-agent/diy/compare/diy-v0.1.16...diy-v0.1.17) (2026-05-31)
+
+
+### Bug Fixes
+
+* dev doctor check ([4f11785](https://github.com/diy-agent/diy/commit/4f11785a95a8c2963457167fa9b84737c9c5370d))
+
 ## [0.1.16](https://github.com/diy-agent/diy/compare/diy-v0.1.15...diy-v0.1.16) (2026-05-28)
 
 
