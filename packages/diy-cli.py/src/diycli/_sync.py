@@ -80,7 +80,7 @@ def get_workspace_packages(root_dir: Path) -> Dict[str, WorkspaceInfo]:
         pyproject_path = path / "pyproject.toml"
         
         name = ""
-        version = "0.1.0"
+        version = "0.1.18"
         deps = {}
         dev_deps = {}
 

@@ -311,7 +311,7 @@ wheels = [
 
 [[package]]
 name = "diy-cli"
-version = "0.1.0"
+version = "0.1.18"
 source = { editable = "packages/diy-cli.py" }
 dependencies = [
     { name = "cyclopts" },
@@ -355,7 +355,7 @@ dev = [
 
 [[package]]
 name = "diyui"
-version = "0.1.16"
+version = "0.1.18"
 source = { editable = "packages/diyui.py" }
 dependencies = [
     { name = "asyncio" },

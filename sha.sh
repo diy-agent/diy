@@ -108,10 +108,13 @@ vendor() {
 ####################################################
 # Python 包发布
 ####################################################
+build() {
+    run uv build --all-packages
+}
 ci() {
     clean
     test-all
-    run uv build --all-packages
+    build
     # test: 验证构建产物
     echo "${info}构建产物:${reset}"
     run ls -lh ./dist/
