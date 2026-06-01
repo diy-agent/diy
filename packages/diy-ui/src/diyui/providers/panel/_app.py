@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import Any
 
 import diyui
-import panel as pn
 
 from . import layout as _layout
 from . import pane as _pane

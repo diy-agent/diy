@@ -1,7 +1,7 @@
 [project]
-name = "diyui"
+name = "diy-ui"
 version = "0.1.21" # x-release-please-version
-description = "diyui - A thin reactive wrapper over UI frameworks."
+description = "diy-ui - A thin reactive wrapper over UI frameworks."
 requires-python = ">=3.12"
 dependencies = [
     "panel>=1.9.1",

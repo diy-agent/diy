@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     from ._base_app import BaseApp
 
-from ._signal import Signal, SignalContext, SignalObserver, ScopeViolationError
-
 from contextvars import ContextVar
+
+from ._signal import ScopeViolationError, Signal, SignalContext
 
 _active_cell_var: ContextVar[ScopeNode | None] = ContextVar("diyui_active_cell", default=None)
 _deps_var: ContextVar[set[object] | None] = ContextVar("diyui_deps", default=None)

@@ -8,6 +8,7 @@ import asyncio
 from collections.abc import Callable, Coroutine
 from typing import Any
 
+
 class ImmediateScheduler:
     """enqueue 时通常同步执行。
 

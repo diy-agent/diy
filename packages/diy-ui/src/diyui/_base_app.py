@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 from contextvars import ContextVar, Token
-from typing import Any
+
 
 class BaseApp(ScopeNode):
     """App 基类，也是 ScopeNode 树的根节点。

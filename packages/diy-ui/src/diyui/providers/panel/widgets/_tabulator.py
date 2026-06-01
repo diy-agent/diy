@@ -11,7 +11,7 @@ Tabulator 内部维护 Signal[pd.DataFrame]，.value 代理到 signal.value。
 
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import diyui
 import panel as pn

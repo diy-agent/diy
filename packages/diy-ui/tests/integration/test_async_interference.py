@@ -1,6 +1,7 @@
 import asyncio
-import diyui
+
 from helpers import FakeApp
+
 
 def test_concurrent_async_cells_interference():
     """测试并发异步 cell 是否互相干扰。

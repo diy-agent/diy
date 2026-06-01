@@ -22,7 +22,7 @@ cd "$ROOT_DIR"
 source sha.common.sh
 
 # _workspaces=(packages/*/ pkgs-diyui/*/)
-_workspaces=(packages/diyui.py/ packages/diy-cli.py/)
+_workspaces=(packages/diy-ui/ packages/diy-cli.py/)
 _vendors=(vendor/*/)
 
 ####################################################################################

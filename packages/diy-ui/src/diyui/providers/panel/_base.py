@@ -24,7 +24,7 @@ class UIComponent(diyui.ScopeNode):
         self.diy.panel_container = False
 
     @property
-    def signal(self) -> "Signal[Any]":
+    def signal(self) -> Signal[Any]:
         """返回组件绑定的 Signal 实例。
 
         仅 value widget 有此属性。layout 容器应使用 app.signal(value) 创建 scope signal。

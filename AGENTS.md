@@ -7,11 +7,11 @@ shared CLI workflow.
 
 Primary workspaces:
 - `packages/diy-cli.py`: CLI entrypoints, evolve loop, planner, sync logic.
-- `packages/diyui.py`: reactive UI wrapper over Panel.
+- `packages/diy-ui`: reactive UI wrapper over Panel.
 
 Important entrypoints:
 - `packages/diy-cli.py/src/diycli/`
-- `packages/diyui.py/src/diyui/`
+- `packages/diy-ui/src/diy/ui/`
 - `sha.sh`
 
 ## Hard Rules

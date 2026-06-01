@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Callable
-from typing import Protocol, Any
+from typing import Any, Protocol
+
 
 class ScopeViolationError(Exception):
     """跨 scope 访问 signal 异常。"""
