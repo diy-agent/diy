@@ -17,7 +17,7 @@ package = false
 python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-standalone/"
 
 [tool.uv.workspace]
-members = ["packages/diy-ui", "packages/diy-cli.py"]
+members = ["pkgs/diy-ui", "pkgs/diy-cli"]
 
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"
@@ -30,7 +30,7 @@ diy-ui = { workspace = true }
 [tool.ruff]
 target-version = "py312"
 line-length = 88
-src = ["packages/diy-ui/src"]
+src = ["pkgs/diy-ui/src"]
 
 [tool.ruff.lint]
 select = [
@@ -54,7 +54,7 @@ ignore = [
 known-first-party = ["diy.ui"]
 
 [tool.ruff.lint.per-file-ignores]
-"packages/diy-ui/tests/test_panel_param_coverage.py" = ["E402"]
+"pkgs/diy-ui/tests/test_panel_param_coverage.py" = ["E402"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -65,13 +65,13 @@ docstring-code-format = true
 typeCheckingMode = "standard"
 pythonVersion = "3.12"
 include = [
-    "packages/diy-cli.py/src",
-    "packages/diy-cli.py/tests",
-    "packages/diy-ui/src",
-    "packages/diy-ui/tests",
-    "packages/diy-ui/examples",
+    "pkgs/diy-cli/src",
+    "pkgs/diy-cli/tests",
+    "pkgs/diy-ui/src",
+    "pkgs/diy-ui/tests",
+    "pkgs/diy-ui/examples",
 ]
-extraPaths = ["packages/diy-ui/tools"]
+extraPaths = ["pkgs/diy-ui/tools"]
 reportMissingParameterType = true
 reportUnknownParameterType = true
 reportIncompatibleMethodOverride = false
@@ -80,6 +80,6 @@ reportIncompatibleMethodOverride = false
 [tool.pytest.ini_options]
 markers = ["browser: 需要 headless browser 的测试"]
 testpaths = [
-    "packages/diy-cli.py/tests",
-    "packages/diy-ui/tests",
+    "pkgs/diy-cli/tests",
+    "pkgs/diy-ui/tests",
 ]

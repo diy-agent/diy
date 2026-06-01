@@ -312,7 +312,7 @@ wheels = [
 [[package]]
 name = "diy-cli"
 version = "0.1.21"
-source = { editable = "packages/diy-cli.py" }
+source = { editable = "pkgs/diy-cli" }
 dependencies = [
     { name = "cyclopts" },
     { name = "json5" },
@@ -344,7 +344,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "diy-ui", editable = "packages/diy-ui" }]
+requires-dist = [{ name = "diy-ui", editable = "pkgs/diy-ui" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -356,7 +356,7 @@ dev = [
 [[package]]
 name = "diy-ui"
 version = "0.1.21"
-source = { editable = "packages/diy-ui" }
+source = { editable = "pkgs/diy-ui" }
 dependencies = [
     { name = "asyncio" },
     { name = "panel" },

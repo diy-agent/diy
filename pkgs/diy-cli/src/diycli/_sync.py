@@ -166,7 +166,7 @@ def get_workspace_packages(root_dir: Path) -> Dict[str, WorkspaceInfo]:
                             if info: workspace_map[info.name] = info
         except Exception: pass
 
-    # 4. Check packages/ directory (fallback for both)
+    # 4. Check pkgs/ directory (fallback for both)
     packages_dir = root_dir / "packages"
     if packages_dir.exists():
         for item in packages_dir.iterdir():

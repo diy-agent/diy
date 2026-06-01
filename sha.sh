@@ -21,8 +21,8 @@ ROOT_DIR="$(dirname "$C_MAC_PATH")"
 cd "$ROOT_DIR"
 source sha.common.sh
 
-# _workspaces=(packages/*/ pkgs-diyui/*/)
-_workspaces=(packages/diy-ui/ packages/diy-cli.py/)
+# _workspaces=(pkgs/*/)
+_workspaces=(pkgs/diy-ui/ pkgs/diy-cli/)
 _vendors=(vendor/*/)
 
 ####################################################################################
@@ -60,7 +60,7 @@ sync()  {
     # run npm i --workspaces
     run git submodule update --init --recursive
     # ln dev version
-    run uv tool install -e packages/diy-cli.py
+    run uv tool install -e pkgs/diy-cli
 
     _ws_run command ./sha.sh sync;
 }

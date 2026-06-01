@@ -1,7 +1,7 @@
 """
 系统资源监控面板 — 左进程列表 + 右使用率卡片，刷新频率可调。
 
-运行：uv run panel serve packages/diy.ui.py/examples/system_monitor.py
+运行：uv run panel serve pkgs/diy-ui/examples/system_monitor.py
 """
 
 import asyncio
