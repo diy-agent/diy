@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.21](https://github.com/diy-agent/diy/compare/diy-v0.1.20...diy-v0.1.21) (2026-06-01)
+
+
+### Bug Fixes
+
+* **diy-cli:** bump版本至0.1.19并添加release-please标记，修复重复发布失败 ([36604b8](https://github.com/diy-agent/diy/commit/36604b82cafeb9586291b5a85876558f8b64680a))
+
 ## [0.1.20](https://github.com/diy-agent/diy/compare/diy-v0.1.19...diy-v0.1.20) (2026-05-31)
 
 

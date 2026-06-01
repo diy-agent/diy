@@ -1,6 +1,6 @@
 [project]
 name = "diyui"
-version = "0.1.20" # x-release-please-version
+version = "0.1.21" # x-release-please-version
 description = "diyui - A thin reactive wrapper over UI frameworks."
 requires-python = ">=3.12"
 dependencies = [
