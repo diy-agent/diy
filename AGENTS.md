@@ -6,12 +6,12 @@ diy is a Python monorepo for orchestrating agents through a
 shared CLI workflow.
 
 Primary workspaces:
-- `packages/diy-cli.py`: CLI entrypoints, evolve loop, planner, sync logic.
-- `packages/diyui.py`: reactive UI wrapper over Panel.
+- `pkgs/diy-cli`: CLI entrypoints, evolve loop, planner, sync logic.
+- `pkgs/diy-ui`: reactive UI wrapper over Panel.
 
 Important entrypoints:
-- `packages/diy-cli.py/src/diycli/`
-- `packages/diyui.py/src/diyui/`
+- `pkgs/diy-cli/src/diycli/`
+- `pkgs/diy-ui/src/diy/ui/`
 - `sha.sh`
 
 ## Hard Rules
