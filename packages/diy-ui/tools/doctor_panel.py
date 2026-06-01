@@ -21,10 +21,9 @@ import cyclopts
 import panel as pn
 import param
 
-import diyui
-import diyui.providers.panel as diypn
+import diy.ui.providers.panel as diypn
 
-# ── 已适配: diyui wrapper → (Panel 原生类, diypn 子包名) ─────────
+# ── 已适配: diy.ui wrapper → (Panel 原生类, diypn 子包名) ─────────
 
 _WRAPPER_SPECS: list[tuple[type, type, str]] = [
     # ── layout ──
@@ -141,7 +140,7 @@ for _w, _p, _sp in _WRAPPER_SPECS:
 
 _WRAPPER_MAP: dict[type, type] = {w: p for w, p, _ in _WRAPPER_SPECS}
 
-# Panel 原生类 → diyui wrapper 名（list 命令用）
+# Panel 原生类 → diy.ui wrapper 名（list 命令用）
 _PN_TO_WRAPPER: dict[type, str] = {v: k.__name__ for k, v in _WRAPPER_MAP.items()}
 
 # ── param 类型 → Python 类型映射 ──────────────────────────────
@@ -672,7 +671,7 @@ def _print_report(checks: list[WrapperCheck]) -> tuple[int, int]:
     if total_type_mismatches:
         print(f"  ⚠ {total_type_mismatches} 个参数类型近似（Panel 推断精度有限，仅供参考）")
     if not total_strict_missing and not total_type_mismatches:
-        print(f"  ✅ 所有参数已强类型化，类型一致")
+        print("  ✅ 所有参数已强类型化，类型一致")
     print(f"{'═' * 70}")
     return total_strict_missing, total_type_mismatches
 
@@ -756,7 +755,7 @@ def _query_class(panel_cls: type) -> None:
             doc_comment = ""
         print(f"    {pp.name}: {pp.py_type} = {_format_default(pp.default)},{doc_comment}")
     print(") -> None: ...")
-    print(f"\n# ═══════════════════════════════════════════════")
+    print("\n# ═══════════════════════════════════════════════")
     print("# 别名映射: button_type→color, button_style→variant")
     print("# 查看 doctor_panel.py _WRAPPER_PARAM_MAP 获取完整映射")
 
@@ -1038,7 +1037,7 @@ def _print_namespace(results: list[NamespaceCheck]) -> int:
     if issues:
         print(f"  ❌ {issues} 个命名空间不一致")
     else:
-        print(f"  ✅ 命名空间与 Panel 原生一致")
+        print("  ✅ 命名空间与 Panel 原生一致")
     print(f"{'═' * 70}")
     return issues
 
@@ -1064,13 +1063,13 @@ def list_cmd(
         ),
     ] = None,
 ) -> None:
-    """列出所有 Panel 组件及 diyui 适配状态。"""
+    """列出所有 Panel 组件及 diy.ui 适配状态。"""
     _print_list(group)
 
 
 @app.command
 def doctor() -> None:
-    """诊断模式：对比所有 diyui wrapper 与原生 Panel 的参数一致性和类型匹配。"""
+    """诊断模式：对比所有 diy.ui wrapper 与原生 Panel 的参数一致性和类型匹配。"""
     checks = run_checks()
     missing, mismatches = _print_report(checks)
     if missing > 0:
@@ -1102,7 +1101,7 @@ def namespace() -> None:
     results = _run_namespace_checks()
     issues = _print_namespace(results)
     if issues > 0:
-        print(f"\n❌ 命名空间不一致")
+        print("\n❌ 命名空间不一致")
         sys.exit(1)
     print("\n✅ 命名空间与 Panel 原生一致")
 
@@ -1162,7 +1161,7 @@ def doc(
     else:
         # snippet: 生成可直接粘贴到 __init__ 中的 #: 注释块
         print(f"# ── {cls.__name__} params ──")
-        print(f'"""')
+        print('"""')
         for pp in params:
             if pp.name in excluded:
                 continue
@@ -1171,7 +1170,7 @@ def doc(
             docstr = (getattr(p, "doc", "") or "").strip().split("\n")[0][:120]
             if docstr:
                 print(f"{pp.name}: {docstr}")
-        print(f'"""')
+        print('"""')
 
 
 @app.command

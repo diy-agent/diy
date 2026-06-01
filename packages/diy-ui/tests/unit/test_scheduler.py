@@ -4,7 +4,7 @@ Scheduler 是 ScopeNode facet，决定 cell rerun 的时机策略。
 v0.1 支持 immediate 和 periodic 两种。
 """
 
-import diyui
+import diy.ui
 
 # ═══════════════════════════════════════════════
 # ImmediateScheduler
@@ -15,13 +15,13 @@ class TestImmediateScheduler:
     """immediate scheduler：enqueue 时同步执行。"""
 
     def test_enqueue_executes_immediately(self):
-        sched = diyui.ImmediateScheduler()
+        sched = diy.ui.ImmediateScheduler()
         seen = []
         sched.enqueue(lambda: seen.append(1))
         assert seen == [1]
 
     def test_multiple_enqueue_execute_in_order(self):
-        sched = diyui.ImmediateScheduler()
+        sched = diy.ui.ImmediateScheduler()
         log = []
         sched.enqueue(lambda: log.append("a"))
         sched.enqueue(lambda: log.append("b"))
@@ -29,13 +29,13 @@ class TestImmediateScheduler:
 
     def test_flush_is_noop_after_immediate(self):
         """immediate 已在 enqueue 时执行，flush 是空操作。"""
-        sched = diyui.ImmediateScheduler()
+        sched = diy.ui.ImmediateScheduler()
         sched.enqueue(lambda: None)
         sched.flush()  # 不抛异常
 
     def test_duplicate_callbacks_deduplicated(self):
         """同一 callback 在同一次 flush 内去重（和 cell 去重配合）。"""
-        sched = diyui.ImmediateScheduler()
+        sched = diy.ui.ImmediateScheduler()
         seen = []
 
         def cb():
@@ -49,7 +49,7 @@ class TestImmediateScheduler:
 
     def test_enqueue_nested_callbacks_executed(self):
         """enqueue 的 callback 内部再次 enqueue，立即执行。"""
-        sched = diyui.ImmediateScheduler()
+        sched = diy.ui.ImmediateScheduler()
         log = []
 
         def outer():
@@ -69,13 +69,13 @@ class TestSchedulerConfig:
     """scheduler 通过 ScopeConfig 挂到 ScopeNode 上。"""
 
     def test_immediate_scheduler_from_config(self):
-        sched = diyui.ImmediateScheduler()
-        node = diyui.ScopeNode(config=diyui.ScopeConfig(scheduler=sched))
+        sched = diy.ui.ImmediateScheduler()
+        node = diy.ui.ScopeNode(config=diy.ui.ScopeConfig(scheduler=sched))
         assert node._lookup_scheduler is sched
 
     def test_child_inherits_parent_scheduler(self):
-        sched = diyui.ImmediateScheduler()
-        parent = diyui.ScopeNode(config=diyui.ScopeConfig(scheduler=sched))
-        child = diyui.ScopeNode()
+        sched = diy.ui.ImmediateScheduler()
+        parent = diy.ui.ScopeNode(config=diy.ui.ScopeConfig(scheduler=sched))
+        child = diy.ui.ScopeNode()
         parent._add_child(child)
         assert child._lookup_scheduler is sched

@@ -1,9 +1,10 @@
 """Picker 组件演示 — 日期/时间/颜色选择器"""
-import diyui
-import diyui.providers.panel as diypn
 import datetime
 
-app = diypn.PanelApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
+import diy.ui
+import diy.ui.providers.panel as diypn
+
+app = diypn.PanelApp(config=diy.ui.ScopeConfig(mode=diy.ui.ScopeMode.DEV, scheduler=diy.ui.ImmediateScheduler()))
 
 with app.layout.column():
     app.pane.markdown("# Picker 组件")

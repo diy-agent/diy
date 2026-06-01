@@ -1,8 +1,8 @@
 """Layout 组件演示 — 18 个容器类组件"""
-import diyui
-import diyui.providers.panel as diypn
+import diy.ui
+import diy.ui.providers.panel as diypn
 
-app = diypn.PanelApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
+app = diypn.PanelApp(config=diy.ui.ScopeConfig(mode=diy.ui.ScopeMode.DEV, scheduler=diy.ui.ImmediateScheduler()))
 
 with app.layout.column():
     app.pane.markdown("# Layout 组件")

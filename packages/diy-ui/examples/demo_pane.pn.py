@@ -1,8 +1,8 @@
 """Pane 组件演示 — 26 个展示类组件"""
-import diyui
-import diyui.providers.panel as diypn
+import diy.ui
+import diy.ui.providers.panel as diypn
 
-app = diypn.PanelApp(config=diyui.ScopeConfig(mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()))
+app = diypn.PanelApp(config=diy.ui.ScopeConfig(mode=diy.ui.ScopeMode.DEV, scheduler=diy.ui.ImmediateScheduler()))
 
 with app.layout.column():
     app.pane.markdown("# Pane 组件")
@@ -25,8 +25,8 @@ with app.layout.column():
 
     app.pane.markdown("## Bokeh")
     try:
-        from bokeh.plotting import figure
         from bokeh.models import ColumnDataSource
+        from bokeh.plotting import figure
         p = figure(height=150, title="Bokeh Demo")
         p.circle([1, 2, 3, 4], [2, 4, 6, 8], size=10)
         app.pane.bokeh(p)

@@ -5,13 +5,13 @@
 
 运行：uv run panel serve examples/generator_cell_demo.py
 """
-import diyui
-import diyui.providers.panel as diypn
+import diy.ui
+import diy.ui.providers.panel as diypn
 
 app = diypn.PanelApp(
-    config=diyui.ScopeConfig(
-        mode=diyui.ScopeMode.DEV,
-        scheduler=diyui.ImmediateScheduler(),
+    config=diy.ui.ScopeConfig(
+        mode=diy.ui.ScopeMode.DEV,
+        scheduler=diy.ui.ImmediateScheduler(),
     )
 )
 

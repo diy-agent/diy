@@ -51,7 +51,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["diyui"]
+known-first-party = ["diy.ui"]
 
 [tool.ruff.lint.per-file-ignores]
 "packages/diy-ui/tests/test_panel_param_coverage.py" = ["E402"]

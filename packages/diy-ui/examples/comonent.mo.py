@@ -4,11 +4,12 @@ __generated_with = "0.23.8"
 app = marimo.App(width="medium")
 
 with app.setup:
-    import diyui
-    import diyui.providers.panel as diypn
-    import time
     import datetime
+    import time
+
     import panel as pn
+
+    import diy.ui.providers.panel as diypn
     pn.extension()
 
 

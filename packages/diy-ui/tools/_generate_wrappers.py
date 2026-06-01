@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-PKG = Path(__file__).resolve().parent.parent / "src" / "diyui" / "providers" / "panel"
+PKG = Path(__file__).resolve().parent.parent / "src" / "diy" / "ui" / "providers" / "panel"
 PANE_DIR = PKG / "pane"
 WIDGET_DIR = PKG / "widgets"
 
@@ -97,7 +97,7 @@ WIDGET_COMMON_INIT = """            align=align,
 
 
 def image_pane(name: str) -> str:
-    return f'''"""Panel {name} — pn.pane.{name} 的 diyui 包装。"""
+    return f'''"""Panel {name} — pn.pane.{name} 的 diy.ui 包装。"""
 
 from __future__ import annotations
 
@@ -143,7 +143,7 @@ def simple_pane(name: str, panel_ref: str,
                 extra_params: str = "", extra_init: str = "") -> str:
     extra_params_str = f"\n{extra_params}" if extra_params else ""
     extra_init_str = f"\n{extra_init}" if extra_init else ""
-    return f'''"""Panel {name} — {panel_ref} 的 diyui 包装。"""
+    return f'''"""Panel {name} — {panel_ref} 的 diy.ui 包装。"""
 
 from __future__ import annotations
 
@@ -178,13 +178,13 @@ def value_widget(name: str, panel_ref: str, value_type: str, value_default: str,
     extra_params_str = f"\n{extra_params}" if extra_params else ""
     extra_init_str = f"\n{extra_init}" if extra_init else ""
     extra_new_str = f"\n{extra_new}\n" if extra_new else ""
-    return f'''"""Panel {name} — {panel_ref} 的 diyui 包装。"""
+    return f'''"""Panel {name} — {panel_ref} 的 diy.ui 包装。"""
 
 from __future__ import annotations
 
 from typing import Any
 
-import diyui
+import diy.ui
 import panel as pn
 
 from .._base import UIComponent
@@ -199,7 +199,7 @@ class {name}(UIComponent, {panel_ref}):
         {value_param}: {value_type} = {value_default},{extra_params_str}
     ) -> None:
         UIComponent.__init__(self)
-        self.diy.signal: diyui.Signal[{value_type}] = diyui.Signal[{value_type}]({value_param})
+        self.diy.signal: diy.ui.Signal[{value_type}] = diy.ui.Signal[{value_type}]({value_param})
         _label = label or name
         self.diy.init_done: bool = False
         {panel_ref}.__init__(
@@ -233,7 +233,7 @@ def display_widget(name: str, panel_ref: str,
                    extra_params: str = "", extra_init: str = "") -> str:
     extra_params_str = f"\n{extra_params}" if extra_params else ""
     extra_init_str = f"\n{extra_init}" if extra_init else ""
-    return f'''"""Panel {name} — {panel_ref} 的 diyui 包装。"""
+    return f'''"""Panel {name} — {panel_ref} 的 diy.ui 包装。"""
 
 from __future__ import annotations
 

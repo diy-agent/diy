@@ -1,9 +1,9 @@
 """Signal API 契约测试。
 
-Signal 是 diyui 的状态原语，独立于 App/UI 存在。
+Signal 是 diy.ui 的状态原语，独立于 App/UI 存在。
 """
 
-import diyui
+import diy.ui
 
 # ═══════════════════════════════════════════════
 # 构造
@@ -14,14 +14,14 @@ class TestSignalConstruction:
     """Signal 可独立构造，不依赖 App。"""
 
     def test_standalone_construction(self):
-        sig = diyui.Signal(0)
+        sig = diy.ui.Signal(0)
         assert sig.value == 0
 
     def test_initial_type_preserved(self):
         """Signal[T] 保持初始值类型。"""
-        assert isinstance(diyui.Signal(0).value, int)
-        assert isinstance(diyui.Signal("hello").value, str)
-        assert isinstance(diyui.Signal(["a", "b"]).value, list)
+        assert isinstance(diy.ui.Signal(0).value, int)
+        assert isinstance(diy.ui.Signal("hello").value, str)
+        assert isinstance(diy.ui.Signal(["a", "b"]).value, list)
 
 
 # ═══════════════════════════════════════════════
@@ -33,11 +33,11 @@ class TestSignalReadWrite:
     """Signal.value 基本读写语义。"""
 
     def test_read_returns_current_value(self):
-        sig = diyui.Signal("hello")
+        sig = diy.ui.Signal("hello")
         assert sig.value == "hello"
 
     def test_write_updates_value(self):
-        sig = diyui.Signal(0)
+        sig = diy.ui.Signal(0)
         sig.value = 42
         assert sig.value == 42
 
@@ -51,7 +51,7 @@ class TestSignalObservers:
     """Signal 值变化时通知已注册的观察者，相等值不触发。"""
 
     def test_observer_called_on_change(self):
-        sig = diyui.Signal(0)
+        sig = diy.ui.Signal(0)
         seen = []
         sig.on_change(lambda v: seen.append(v))
 
@@ -61,7 +61,7 @@ class TestSignalObservers:
 
     def test_equal_value_triggers_nothing(self):
         """新旧值相等：不通知观察者，不触发任何副作用。"""
-        sig = diyui.Signal(0)
+        sig = diy.ui.Signal(0)
         seen = []
         sig.on_change(lambda v: seen.append(v))
 
@@ -70,7 +70,7 @@ class TestSignalObservers:
         assert seen == []
 
     def test_multiple_observers_all_notified(self):
-        sig = diyui.Signal(0)
+        sig = diy.ui.Signal(0)
         a, b = [], []
         sig.on_change(lambda v: a.append(v))
         sig.on_change(lambda v: b.append(v))
@@ -81,7 +81,7 @@ class TestSignalObservers:
         assert b == [1]
 
     def test_observer_receives_new_value(self):
-        sig = diyui.Signal("old")
+        sig = diy.ui.Signal("old")
         received = []
         sig.on_change(lambda v: received.append(v))
 
@@ -90,7 +90,7 @@ class TestSignalObservers:
         assert received == ["new"]
 
     def test_remove_observer_stops_notification(self):
-        sig = diyui.Signal(0)
+        sig = diy.ui.Signal(0)
         seen = []
         unsub = sig.on_change(lambda v: seen.append(v))
 
@@ -101,7 +101,7 @@ class TestSignalObservers:
 
     def test_double_unsubscribe_no_error(self):
         """重复取消订阅不报错。"""
-        sig = diyui.Signal(0)
+        sig = diy.ui.Signal(0)
         unsub = sig.on_change(lambda v: None)
         unsub()
         unsub()  # 不抛异常
@@ -116,12 +116,12 @@ class TestSignalOwnership:
     """Signal 记录所属 ScopeNode，用于子树访问检查。"""
 
     def test_standalone_signal_has_no_owner(self):
-        sig = diyui.Signal(0)
+        sig = diy.ui.Signal(0)
         assert sig.owner is None
 
     def test_owner_can_be_set(self):
         """owner 由 app.signal() 或其他 ScopeNode 在挂载时设置。"""
-        sig = diyui.Signal(0)
+        sig = diy.ui.Signal(0)
         sig.owner = "fake-scope-node"  # type: ignore[assignment]
         assert sig.owner == "fake-scope-node"
 
@@ -136,7 +136,7 @@ class TestSignalDependencyTracking:
 
     def test_reading_registers_with_current_tracker(self):
         """读取 .value 时若存在 tracker，则注册依赖。"""
-        sig = diyui.Signal(0)
+        sig = diy.ui.Signal(0)
         tracked = []
         sig._tracker = tracked.append
 
@@ -147,13 +147,13 @@ class TestSignalDependencyTracking:
 
     def test_reading_without_tracker_is_safe(self):
         """无 tracker 时正常读取，不报错。"""
-        sig = diyui.Signal(0)
+        sig = diy.ui.Signal(0)
         assert sig._tracker is None
         assert sig.value == 0  # 不抛异常
 
     def test_writing_notifies_observers_then_enqueues_rerun(self):
         """写入时：通知观察者 → scheduler enqueue。先验证观察者部分。"""
-        sig = diyui.Signal(0)
+        sig = diy.ui.Signal(0)
         seen = []
         sig.on_change(lambda v: seen.append(v))
 

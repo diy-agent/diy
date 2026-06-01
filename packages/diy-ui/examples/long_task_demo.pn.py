@@ -5,14 +5,15 @@ _staging_mode 下每次 _add_child 自动 sync 到 Panel。
 
 运行：uv run panel serve examples/long_task_demo.py
 """
-import time
 import datetime
-import diyui
-import diyui.providers.panel as diypn
+import time
 
-app = diypn.PanelApp(config=diyui.ScopeConfig(
-    mode=diyui.ScopeMode.DEV,
-    scheduler=diyui.ImmediateScheduler(),
+import diy.ui
+import diy.ui.providers.panel as diypn
+
+app = diypn.PanelApp(config=diy.ui.ScopeConfig(
+    mode=diy.ui.ScopeMode.DEV,
+    scheduler=diy.ui.ImmediateScheduler(),
 ))
 
 rerun_times = 0
@@ -33,8 +34,8 @@ def _(_: diypn.layout.Column):
                 time.sleep(1)
             app.pane.markdown(f"✅ 任务完成！— {datetime.datetime.now().strftime('%H:%M:%S')}")
 
-    app.pane.markdown(f"---")
-    app.pane.markdown(f"每次 `app.pane.markdown()` 即时同步到浏览器。")
-    app.pane.markdown(f"注意：`time.sleep()` 会阻塞 Bokeh 事件循环。")
+    app.pane.markdown("---")
+    app.pane.markdown("每次 `app.pane.markdown()` 即时同步到浏览器。")
+    app.pane.markdown("注意：`time.sleep()` 会阻塞 Bokeh 事件循环。")
 
 app.servable()

@@ -1,7 +1,7 @@
 """Cell Panel 集成测试 — 使用 Panel provider。"""
 
-import diyui
-import diyui.providers.panel as diypn
+import diy.ui
+import diy.ui.providers.panel as diypn
 
 
 class TestGeneratorCellWithPanel:
@@ -9,9 +9,9 @@ class TestGeneratorCellWithPanel:
 
     def test_generator_cell_yields_panel_components(self):
         app = diypn.PanelApp(
-            config=diyui.ScopeConfig(
-                mode=diyui.ScopeMode.DEV,
-                scheduler=diyui.ImmediateScheduler(),
+            config=diy.ui.ScopeConfig(
+                mode=diy.ui.ScopeMode.DEV,
+                scheduler=diy.ui.ImmediateScheduler(),
             )
         )
 
@@ -28,9 +28,9 @@ class TestGeneratorCellWithPanel:
 
     def test_generator_cell_rerun_panel(self):
         app = diypn.PanelApp(
-            config=diyui.ScopeConfig(
-                mode=diyui.ScopeMode.DEV,
-                scheduler=diyui.ImmediateScheduler(),
+            config=diy.ui.ScopeConfig(
+                mode=diy.ui.ScopeMode.DEV,
+                scheduler=diy.ui.ImmediateScheduler(),
             )
         )
         count = app.signal(1)

@@ -1,7 +1,7 @@
 import asyncio
 import datetime
-import diyui
-import diyui.providers.panel as diypn
+
+import diy.ui.providers.panel as diypn
 
 app = diypn.PanelApp()
 

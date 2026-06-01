@@ -7,7 +7,7 @@ cell 函数接收当前 wrapper node 参数。定义时首次执行，依赖变�
 import pytest
 from helpers import FakeApp
 
-import diyui
+import diy.ui
 
 # ═══════════════════════════════════════════════
 # cell 基础
@@ -214,7 +214,7 @@ class TestCellStaging:
         # 去 staging 后：旧 children 解除关系，不恢复，children 为空
         assert col._children == []
         # debug 记录了错误
-        debug = diyui.get_debug(col)
+        debug = diy.ui.get_debug(col)
         assert debug.has_error
         assert "bad" in (debug.last_error or "")
 
@@ -284,8 +284,8 @@ class TestCrossScopeSignal:
 
     def test_cross_scope_read_raises_in_dev(self):
         app = FakeApp(
-            config=diyui.ScopeConfig(
-                mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()
+            config=diy.ui.ScopeConfig(
+                mode=diy.ui.ScopeMode.DEV, scheduler=diy.ui.ImmediateScheduler()
             )
         )
 
@@ -293,7 +293,7 @@ class TestCrossScopeSignal:
             secret = app.signal("left-secret")
 
         # right column 的 cell 读取 left column 的 signal → 跨 scope
-        with pytest.raises(diyui.ScopeViolationError), app.column() as right:
+        with pytest.raises(diy.ui.ScopeViolationError), app.column() as right:
 
             @right.cell()
             def _(node: object):
@@ -302,8 +302,8 @@ class TestCrossScopeSignal:
     def test_cross_scope_no_error_in_prod(self):
         """prod 模式不报错，但也不注册依赖。"""
         app = FakeApp(
-            config=diyui.ScopeConfig(
-                mode=diyui.ScopeMode.PROD, scheduler=diyui.ImmediateScheduler()
+            config=diy.ui.ScopeConfig(
+                mode=diy.ui.ScopeMode.PROD, scheduler=diy.ui.ImmediateScheduler()
             )
         )
 
@@ -501,9 +501,9 @@ class TestAsyncGeneratorCell:
 
         col._cell_fn = sync_cell  # type: ignore[assignment]
         col._app = app  # type: ignore[assignment]
-        col._config = diyui.ScopeConfig(
+        col._config = diy.ui.ScopeConfig(
             auto_mount_child=False,
-            scheduler=diyui.ImmediateScheduler(),
+            scheduler=diy.ui.ImmediateScheduler(),
         )
 
         async def run() -> list[object]:
@@ -524,7 +524,7 @@ class TestAsyncGeneratorCell:
         """enqueue_async 在 event loop 中创建 task。"""
         import asyncio
 
-        scheduler = diyui.ImmediateScheduler()
+        scheduler = diy.ui.ImmediateScheduler()
         results: list[str] = []
 
         async def task():
@@ -561,9 +561,9 @@ class TestAsyncGeneratorCell:
         col = app.column()
         col._cell_fn = sync_cell  # type: ignore[assignment]
         col._app = app  # type: ignore[assignment]
-        col._config = diyui.ScopeConfig(
+        col._config = diy.ui.ScopeConfig(
             auto_mount_child=False,
-            scheduler=diyui.ImmediateScheduler(),
+            scheduler=diy.ui.ImmediateScheduler(),
         )
 
         async def run() -> list[object]:

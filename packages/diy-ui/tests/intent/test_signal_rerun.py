@@ -17,7 +17,7 @@ from helpers import (
     tree_snapshot,
 )
 
-import diyui
+import diy.ui
 
 
 def test_count_signal_rerenders_markdown():
@@ -206,9 +206,9 @@ def test_conditional_dependency_switches():
 def test_cross_scope_signal_blocked_in_dev():
     """dev 模式下跨 scope 读 signal 抛出 ScopeViolationError。"""
     app = FakeApp()
-    app._config = diyui.ScopeConfig(
-        mode=diyui.ScopeMode.DEV,
-        scheduler=diyui.ImmediateScheduler(),
+    app._config = diy.ui.ScopeConfig(
+        mode=diy.ui.ScopeMode.DEV,
+        scheduler=diy.ui.ImmediateScheduler(),
     )
 
     with app.column():
@@ -216,7 +216,7 @@ def test_cross_scope_signal_blocked_in_dev():
 
     import pytest
 
-    with pytest.raises(diyui.ScopeViolationError):
+    with pytest.raises(diy.ui.ScopeViolationError):
 
         @app.column().cell()
         def _(node: object):

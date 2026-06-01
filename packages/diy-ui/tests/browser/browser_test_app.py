@@ -3,12 +3,12 @@
 run: uv run panel serve tests/browser_test_app.py --port 0
 """
 
-import diyui
-import diyui.providers.panel as diypn
+import diy.ui
+import diy.ui.providers.panel as diypn
 
 app = diypn.PanelApp(
-    config=diyui.ScopeConfig(
-        mode=diyui.ScopeMode.DEV, scheduler=diyui.ImmediateScheduler()
+    config=diy.ui.ScopeConfig(
+        mode=diy.ui.ScopeMode.DEV, scheduler=diy.ui.ImmediateScheduler()
     )
 )
 

@@ -13,7 +13,7 @@ import pytest
 # ═══════════════════════════════════════════════
 from helpers import FakeApp, FakeColumn
 
-import diyui
+import diy.ui
 
 
 # ═══════════════════════════════════════════════
@@ -24,7 +24,7 @@ class TestBaseAppConstruction:
 
     def test_app_is_a_scope_node(self):
         app = FakeApp()
-        assert isinstance(app, diyui.ScopeNode)
+        assert isinstance(app, diy.ui.ScopeNode)
 
     def test_app_starts_with_no_children(self):
         app = FakeApp()
@@ -92,7 +92,7 @@ class TestAppSignal:
     def test_signal_created_on_app_root(self):
         app = FakeApp()
         sig = app.signal(0)
-        assert isinstance(sig, diyui.Signal)
+        assert isinstance(sig, diy.ui.Signal)
         assert sig.owner is app
         assert sig.value == 0
 

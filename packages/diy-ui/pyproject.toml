@@ -23,7 +23,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/diyui"]
+packages = ["src/diy"]
 
 [tool.uv]
 package = true

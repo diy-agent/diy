@@ -1,4 +1,4 @@
-"""测试 diyui Panel wrapper 与原生 Panel 参数一致性与透传正确性。
+"""测试 diy.ui Panel wrapper 与原生 Panel 参数一致性与透传正确性。
 
 强类型化完成后，应去掉 wrapper 的 **kwargs。
 此测试断言所有 Panel 参数都有显式定义或已声明排除，
@@ -141,7 +141,7 @@ class TestNamespaceConvention:
 
     def test_each_wrapper_in_expected_subpkg(self) -> None:
         """每个 wrapper 类必须在其对应的 diypn 子包下可访问。"""
-        import diyui.providers.panel as diypn
+        import diy.ui.providers.panel as diypn
 
         failures: list[str] = []
         for sp_name, wrappers in _SUBPACKAGE_WRAPPERS.items():

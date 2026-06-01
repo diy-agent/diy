@@ -5,14 +5,14 @@
 
 运行：uv run panel serve examples/auto_mount_child_demo.py
 """
-import diyui
-import diyui.providers.panel as diypn
+import diy.ui
+import diy.ui.providers.panel as diypn
 
 # ── 默认模式：auto_mount_child=True（默认）──
 app = diypn.PanelApp(
-    config=diyui.ScopeConfig(
-        mode=diyui.ScopeMode.DEV,
-        scheduler=diyui.ImmediateScheduler(),
+    config=diy.ui.ScopeConfig(
+        mode=diy.ui.ScopeMode.DEV,
+        scheduler=diy.ui.ImmediateScheduler(),
     )
 )
 
@@ -34,9 +34,9 @@ app.pane.markdown("factory 只创建组件，不挂载。组件的 parent 为 No
 
 col = app.layout.card(title="解绑：button 不自动挂载", hide_header=True)
 # 给这个容器设 auto_mount_child=False
-col._config = diyui.ScopeConfig(
+col._config = diy.ui.ScopeConfig(
     auto_mount_child=False,
-    scheduler=diyui.ImmediateScheduler(),
+    scheduler=diy.ui.ImmediateScheduler(),
 )
 with col:
     solo_btn = app.widgets.button(label="孤立的按钮", name="solo")
