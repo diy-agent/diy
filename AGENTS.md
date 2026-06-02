@@ -13,6 +13,4 @@ diy 是 diy 生态主 monorepo，编排 agent 工作流的共享 CLI 基础设�
 ### GPG
 - GPG 签名失败时停下求助，**禁止 `--no-gpg-sign` 绕过**
 
-### 参考代码
-- 依赖镜像索引: `.diy/ref.lock.json`
-- 读依赖内部实现顺序: `~/.diy/ref` → `.venv/lib/`
+
