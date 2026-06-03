@@ -394,7 +394,7 @@ def process_package(
         log.error(f"[{name}] 同步失败: {e}")
         return None
 
-def build_ref_lock(workspace_packages: Dict[str, WorkspaceInfo], sync_results: Dict[str, SyncResult]) -> Dict[str, Any]:
+def build_ref_lock(workspace_packages: Dict[str, WorkspaceInfo], sync_results: Dict[str, SyncResult], sources: Optional[List[str]] = None) -> Dict[str, Any]:
     import datetime
     
     def build_deps(deps: Dict[str, str], scope: str, ecosystem: str) -> List[Dict[str, Any]]:
@@ -432,17 +432,41 @@ def build_ref_lock(workspace_packages: Dict[str, WorkspaceInfo], sync_results: D
             "dependencies": deps
         })
     
-    return {
+    # Build sources section from sync_results
+    source_entries: List[Dict[str, Any]] = []
+    if sources:
+        for source_url in sources:
+            if not source_url:
+                continue
+            repo_info = parse_repo_url(source_url)
+            if not repo_info:
+                continue
+            name = f"{repo_info.owner}/{repo_info.repo}"
+            sr = sync_results.get(f"source:{name}")
+            entry: Dict[str, Any] = {
+                "url": source_url,
+                "host": repo_info.host,
+                "owner": repo_info.owner,
+                "repo": repo_info.repo,
+            }
+            if sr:
+                entry["mirrorPath"] = sr.relative_path
+            source_entries.append(entry)
+    
+    result: Dict[str, Any] = {
         "version": 1,
         "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         "mirrorRoot": "~",
-        "workspaces": workspaces
+        "workspaces": workspaces,
     }
+    if source_entries:
+        result["sources"] = source_entries
+    return result
 
-def write_ref_lock_file(root_dir: Path, workspace_packages: Dict[str, WorkspaceInfo], sync_results: Dict[str, SyncResult]):
+def write_ref_lock_file(root_dir: Path, workspace_packages: Dict[str, WorkspaceInfo], sync_results: Dict[str, SyncResult], sources: Optional[List[str]] = None):
     ref_lock_path = root_dir / ".diy" / "ref.lock.json"
     ref_lock_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = build_ref_lock(workspace_packages, sync_results)
+    payload = build_ref_lock(workspace_packages, sync_results, sources)
     with open(ref_lock_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
         f.write("\n")
@@ -749,7 +773,7 @@ def sync_dependencies():
                         sync_results[key] = val
 
     save_metadata_cache()
-    write_ref_lock_file(root_dir, workspace_packages, sync_results)
+    write_ref_lock_file(root_dir, workspace_packages, sync_results, sources)
     update_tsconfig(root_dir, workspace_packages, sync_results)
     update_python_ide_config(root_dir, sync_results)
     manage_agent_symlinks(root_dir)
