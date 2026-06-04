@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import subprocess
 import shutil
 import yaml
@@ -97,16 +98,17 @@ def get_workspace_packages(root_dir: Path) -> Dict[str, WorkspaceInfo]:
         py_deps = parse_python_deps(path)
         if py_deps:
             deps.update(py_deps)
-            if not name:
-                try:
-                    with open(pyproject_path, "r", encoding="utf-8") as f:
-                        content = f.read()
-                    import re
-                    name_match = re.search(r'name\s*=\s*"([^"]+)"', content)
-                    if name_match: name = name_match.group(1)
-                    version_match = re.search(r'version\s*=\s*"([^"]+)"', content)
-                    if version_match: version = version_match.group(1)
-                except Exception: pass
+        # 无论有无 deps，都尝试从 pyproject.toml 读取 name/version
+        if not name and pyproject_path.exists():
+            try:
+                with open(pyproject_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                import re
+                name_match = re.search(r'name\s*=\s*"([^"]+)"', content)
+                if name_match: name = name_match.group(1)
+                version_match = re.search(r'version\s*=\s*"([^"]+)"', content)
+                if version_match: version = version_match.group(1)
+            except Exception: pass
         
         if name:
             return WorkspaceInfo(
@@ -202,6 +204,8 @@ def parse_repo_url(url: str) -> Optional[RepoInfo]:
     import re
     clean_url = url.strip()
     if clean_url.startswith("git+"): clean_url = clean_url[4:]
+    # 剥掉 GitHub/GitLab/Gitea 的 Web UI 路径（/tree/..., /-/tree/..., /src/branch/...）
+    clean_url = re.sub(r'(/tree/[^/]+(?:/.*)?|/blob/[^/]+(?:/.*)?|/-/tree/[^/]+(?:/.*)?|/-/blob/[^/]+(?:/.*)?|/src/(?:branch|tag)/[^/]+(?:/.*)?)$', '', clean_url)
     if clean_url.endswith(".git"): clean_url = clean_url[:-4]
 
     # git@host:owner/repo
@@ -360,7 +364,9 @@ def process_package(
         if not repo_info: return None
         
         clone_url = f"https://{repo_info.host}/{repo_info.owner}/{repo_info.repo}"
-        version_base = version.lstrip("^~")
+        version_base = re.sub(r'^[>=<~^!]+', '', version.replace(',', ' ').split()[0].strip())
+        if not version_base or version_base == '*':
+            version_base = 'main'
         possible_names = [version_base, f"v{version_base}"]
         
         final_global_path = None
@@ -373,17 +379,37 @@ def process_package(
         if not final_global_path:
             log.debug(f"[{name}] 准备同步源码: {name}@{version}")
             best_tag = get_best_tag(clone_url, version_base)
-            final_dir_name = best_tag or version_base
+            if best_tag:
+                final_dir_name = best_tag
+            else:
+                # 无匹配 tag → clone 默认分支，取实际分支名
+                final_dir_name = version_base
+        
             final_global_path = global_ref_base / repo_info.host / repo_info.owner / repo_info.repo / final_dir_name
             
             if not final_global_path.exists():
                 final_global_path.parent.mkdir(parents=True, exist_ok=True)
-                # 并发环境下必须静默，否则会破坏 Rich 进度条
                 cmd = ["git", "clone", "--depth", "1"] 
-                if best_tag: cmd += ["--branch", best_tag]
+                if best_tag:
+                    cmd += ["--branch", best_tag]
                 cmd += [clone_url, str(final_global_path)]
                 log.debug(f"[{name}] 执行 Git Clone: {' '.join(cmd)}")
                 subprocess.check_call(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+                # 无 tag 时，目录名可能是 spec 残余 → 重命名为实际分支名
+                if not best_tag:
+                    try:
+                        actual_branch = subprocess.check_output(
+                            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                            cwd=str(final_global_path), text=True, stderr=subprocess.DEVNULL
+                        ).strip()
+                        if actual_branch and actual_branch != version_base and actual_branch != "HEAD":
+                            new_path = final_global_path.parent / actual_branch
+                            if not new_path.exists():
+                                final_global_path.rename(new_path)
+                                final_global_path = new_path
+                    except Exception:
+                        pass
 
         return SyncResult(
             relative_path=str(final_global_path.relative_to(Path.home())), 
@@ -394,82 +420,63 @@ def process_package(
         log.error(f"[{name}] 同步失败: {e}")
         return None
 
-def build_ref_lock(workspace_packages: Dict[str, WorkspaceInfo], sync_results: Dict[str, SyncResult], sources: Optional[List[str]] = None) -> Dict[str, Any]:
+def build_ref_lock(
+    workspace_packages: Dict[str, WorkspaceInfo],
+    sync_results: Dict[str, SyncResult],
+    sources: Optional[List[str]] = None,
+) -> Dict[str, str]:
+    """构建平面 ref 映射: key → mirror 路径。
+
+    规则：
+      - 只输出 sync_results 中存在的条目（已成功 clone）
+      - workspace 内部包不输出
+      - sources 以 "source:" 前缀输出
+      - key 格式: {eco}:{name} 或 source:{owner/repo}
+    """
     import datetime
-    
-    def build_deps(deps: Dict[str, str], scope: str, ecosystem: str) -> List[Dict[str, Any]]:
-        result = []
-        for name, spec in sorted(deps.items()):
-            res = sync_results.get(f"{ecosystem}:{name}")
-            mirror_path = res.relative_path if res else None
-            resolved_version = Path(mirror_path).name if mirror_path else None
-            dep = {"name": name, "spec": spec, "scope": scope}
-            if resolved_version: dep["resolvedVersion"] = resolved_version
-            if mirror_path: dep["mirrorPath"] = mirror_path
-            if any(spec.startswith(p) for p in ["git+", "http://", "https://", "git@", "file:", "workspace:"]):
-                dep["origin"] = spec
-            result.append(dep)
-        return result
+    refs: Dict[str, str] = {}
 
-    workspaces = []
-    for pkg in sorted(workspace_packages.values(), key=lambda x: (x.relative_path != ".", x.name)):
-        manifest = "package.json" if pkg.relative_path == "." else f"{pkg.relative_path}/package.json"
-        ecosystem = "node"
-        if not (Path(pkg.path) / manifest).exists() and (Path(pkg.path) / "pyproject.toml").exists():
-            manifest = "pyproject.toml" if pkg.relative_path == "." else f"{pkg.relative_path}/pyproject.toml"
-            ecosystem = "python"
+    workspace_names = set(workspace_packages.keys())
 
-        deps = build_deps(pkg.dependencies, "runtime", ecosystem) + build_deps(pkg.dev_dependencies, "dev", ecosystem)
-        deps.sort(key=lambda x: (x["name"], x["scope"]))
-        
-        workspaces.append({
-            "id": f"{ecosystem}:{pkg.relative_path}",
-            "name": pkg.name,
-            "version": pkg.version,
-            "ecosystem": ecosystem,
-            "path": pkg.relative_path,
-            "manifest": manifest,
-            "dependencies": deps
-        })
-    
-    # Build sources section from sync_results
-    source_entries: List[Dict[str, Any]] = []
-    if sources:
-        for source_url in sources:
-            if not source_url:
-                continue
-            repo_info = parse_repo_url(source_url)
-            if not repo_info:
-                continue
-            name = f"{repo_info.owner}/{repo_info.repo}"
-            sr = sync_results.get(f"source:{name}")
-            entry: Dict[str, Any] = {
-                "url": source_url,
-                "host": repo_info.host,
-                "owner": repo_info.owner,
-                "repo": repo_info.repo,
-            }
-            if sr:
-                entry["mirrorPath"] = sr.relative_path
-            source_entries.append(entry)
-    
-    result: Dict[str, Any] = {
-        "version": 1,
-        "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
-        "mirrorRoot": "~",
-        "workspaces": workspaces,
+    for key, sr in sorted(sync_results.items()):
+        if key.startswith("source:"):
+            # sources 保持 source:owner/repo 作为 key
+            refs[key] = sr.relative_path
+            continue
+
+        # "python:name" or "node:name"
+        eco, name = key.split(":", 1)
+        if name in workspace_names:
+            continue
+        refs[key] = sr.relative_path
+
+    return {
+        "version": 2,
+        "generated": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "refs": refs,
     }
-    if source_entries:
-        result["sources"] = source_entries
-    return result
 
-def write_ref_lock_file(root_dir: Path, workspace_packages: Dict[str, WorkspaceInfo], sync_results: Dict[str, SyncResult], sources: Optional[List[str]] = None):
-    ref_lock_path = root_dir / ".diy" / "ref.lock.json"
+def write_ref_lock_file(
+    root_dir: Path,
+    workspace_packages: Dict[str, WorkspaceInfo],
+    sync_results: Dict[str, SyncResult],
+    sources: Optional[List[str]] = None,
+):
+    ref_lock_path = root_dir / ".diy" / "ref.lock.yaml"
     ref_lock_path.parent.mkdir(parents=True, exist_ok=True)
     payload = build_ref_lock(workspace_packages, sync_results, sources)
+
+    lines = [f"version: {payload['version']}"]
+    lines.append(f'generated: "{payload["generated"]}"')
+    refs = payload.get("refs", {})
+    if refs:
+        lines.append("")
+        lines.append("refs:")
+        for k, v in refs.items():
+            lines.append(f"  {k}: ~/{v}")
+
     with open(ref_lock_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
-        f.write("\n")
+        f.write("\n".join(lines) + "\n")
     log.info(f"dependency mirror index 已更新: {ref_lock_path.relative_to(root_dir)}")
 
 def update_tsconfig(root_dir: Path, workspace_packages: Dict[str, WorkspaceInfo], sync_results: Dict[str, SyncResult]):
@@ -668,6 +675,10 @@ def sync_dependencies():
             if (ecosystem, n) not in all_deps:
                 all_deps[(ecosystem, n)] = pkg_lock.get(n, uv_lock.get(n, s))
 
+    # 过滤掉 workspace 内部包 — 它们是源码，不需要 clone
+    workspace_names = set(workspace_packages.keys())
+    all_deps = {k: v for k, v in all_deps.items() if k[1] not in workspace_names}
+
     global_ref_base = GLOBAL_CACHE_DIR / "ref"
     log.info(f"开始同步 {len(all_deps)} 个活跃依赖...")
     
@@ -727,16 +738,28 @@ def sync_dependencies():
                     progress.advance(source_task)
                     return None
                 url_part, version = source_spec, ""
-                if "@" in source_spec and not source_spec.startswith("git@"):
+                # 取最后一个 @ 分割（兼容 git@host:path@ref 和 https://...@ref）
+                if "@" in source_spec:
                     idx = source_spec.rfind("@")
-                    if idx > 8: url_part, version = source_spec[:idx], source_spec[idx+1:]
+                    # 只有 @ 在非起始位置（排除 email 前缀的 @）时才分割
+                    if idx > 7:
+                        url_part, version = source_spec[:idx], source_spec[idx+1:]
                 
                 repo_info = parse_repo_url(url_part)
                 if not repo_info: 
                     progress.advance(source_task)
                     return None
                 name = f"{repo_info.owner}/{repo_info.repo}"
-                clone_url = f"https://{repo_info.host}/{repo_info.owner}/{repo_info.repo}"
+                # 从 url_part 重建干净的 clone URL（剥掉 Web UI 路径 + @ref）
+                if url_part.startswith("git@"):
+                    clone_url = url_part.rstrip("/")
+                elif url_part.startswith("http"):
+                    # 剥掉 Web UI 路径后缀
+                    import re
+                    clean = re.sub(r'(/tree/[^/]+(?:/.*)?|/blob/[^/]+(?:/.*)?|/-/tree/[^/]+(?:/.*)?|/-/blob/[^/]+(?:/.*)?|/src/(?:branch|tag)/[^/]+(?:/.*)?)$', '', url_part)
+                    clone_url = clean.rstrip("/")
+                else:
+                    clone_url = f"https://{repo_info.host}/{repo_info.owner}/{repo_info.repo}"
                 
                 status_label.plain = f"正在同步 Source [bold magenta]{name}[/bold magenta] 从 [yellow]{clone_url}[/yellow]"
                 

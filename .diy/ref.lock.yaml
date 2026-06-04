@@ -1,0 +1,16 @@
+version: 2
+generated: "2026-06-03T22:15:59.949855Z"
+
+refs:
+  python:PyYAML: ~/.diy/ref/github.com/yaml/pyyaml/6.0
+  python:asyncio: ~/.diy/ref/github.com/python/asyncio/4.0.0
+  python:cyclopts: ~/.diy/ref/github.com/BrianPugh/cyclopts/v4.16.1
+  python:json5: ~/.diy/ref/github.com/dpranke/pyjson5/v0.14.0
+  python:panel: ~/.diy/ref/github.com/holoviz/panel/v1.9.2
+  python:param: ~/.diy/ref/github.com/holoviz/param/v2.4.0
+  python:rich: ~/.diy/ref/github.com/Textualize/rich/15.0.0
+  source:agentclientprotocol/agent-client-protocol: ~/.diy/ref/github.com/agentclientprotocol/agent-client-protocol/v0.11.3
+  source:anomalyco/opencode: ~/.diy/ref/github.com/anomalyco/opencode/dev
+  source:github/docs: ~/.diy/ref/github.com/github/docs/main
+  source:nodeca/js-yaml: ~/.diy/ref/github.com/nodeca/js-yaml/4.1.1
+  source:vitest-dev/docs-cn: ~/.diy/ref/github.com/vitest-dev/docs-cn/v3
