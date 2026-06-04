@@ -37,21 +37,37 @@ class FakeProject:
 def sync_snapshot(root: Path) -> str:
     """生成项目同步后的状态快照。"""
     lines = []
-    
-    # 1. 检查 ref.lock.json
-    lock_path = root / ".diy" / "ref.lock.json"
-    if lock_path.exists():
-        with open(lock_path, "r") as f:
-            data = json.load(f)
+
+    # 1. 检查 ref.lock.yaml
+    for ext in (".yaml", ".json"):
+        lock_path = root / ".diy" / f"ref.lock{ext}"
+        if lock_path.exists():
+            break
+    else:
+        lock_path = None
+
+    if lock_path and lock_path.exists():
+        text = lock_path.read_text()
         lines.append("RefLock:")
-        for ws in data.get("workspaces", []):
-            lines.append(f"  Workspace: {ws['name']} ({ws['ecosystem']})")
-            for dep in ws.get("dependencies", []):
-                mirror = dep.get("mirrorPath", "None")
-                if mirror and "~" in mirror:
-                    # 简化路径显示
-                    mirror = mirror[mirror.find(".diy/ref"):]
-                lines.append(f"    - {dep['name']}@{dep.get('resolvedVersion', '???')} -> {mirror}")
+        if lock_path.suffix == ".json":
+            # 旧格式 JSON
+            data = json.loads(text)
+            for ws in data.get("workspaces", []):
+                lines.append(f"  Workspace: {ws['name']} ({ws['ecosystem']})")
+                for dep in ws.get("dependencies", []):
+                    mirror = dep.get("mirrorPath", "None")
+                    if mirror and "~" in mirror:
+                        mirror = mirror[mirror.find(".diy/ref"):]
+                    lines.append(f"    - {dep['name']}@{dep.get('resolvedVersion', '???')} -> {mirror}")
+        else:
+            # 新格式 YAML: version + refs 平面映射
+            for line in text.splitlines():
+                s = line.strip()
+                if s.startswith("#") or not s or s.startswith("version:") or s.startswith("generated:") or s == "refs:":
+                    continue
+                # "  python:rich: .diy/ref/..."
+                if ":" in s and ".diy/ref" in s:
+                    lines.append(f"  {s.strip()}")
 
     # 2. 检查 tsconfig.ide.json
     ts_path = root / "tsconfig.ide.json"

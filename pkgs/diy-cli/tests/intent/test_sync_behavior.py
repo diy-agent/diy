@@ -119,13 +119,13 @@ def test_sync_avoids_ecosystem_collision(tmp_path, mock_registry):
 
         snapshot = sync_snapshot(project_root)
 
-        # 验证 Node 子包的依赖
-        assert "Workspace: js-part (node)" in snapshot
-        assert "shared-pkg@v1.0.0 -> .diy/ref/github.com/npm-user/shared-js/v1.0.0" in snapshot
+        # 验证 Node 子包的依赖 — 新格式 key→path 直接用 eco:name 区分
+        assert "node:shared-pkg:" in snapshot
+        assert ".diy/ref/github.com/npm-user/shared-js/v1.0.0" in snapshot
 
-        # 验证 Python 子包的依赖
-        assert "Workspace: py-part (python)" in snapshot
-        assert "shared-pkg@v1.0.0 -> .diy/ref/github.com/py-user/shared-py/v1.0.0" in snapshot
+        # 验证 Python 子包的依赖 — 同名但不同生态，指向不同仓库
+        assert "python:shared-pkg:" in snapshot
+        assert ".diy/ref/github.com/py-user/shared-py/v1.0.0" in snapshot
 
 def test_ide_config_updates(tmp_path, mock_registry):
     """

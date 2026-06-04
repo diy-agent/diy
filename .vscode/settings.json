@@ -9,7 +9,7 @@
         "~/.diy/ref/github.com/holoviz/param/v2.4.0",
         "~/.diy/ref/github.com/BrianPugh/cyclopts/v4.16.1",
         "~/.diy/ref/github.com/Textualize/rich/15.0.0",
-        "~/.diy/ref/github.com/yaml/pyyaml/>=6.0",
+        "~/.diy/ref/github.com/yaml/pyyaml/6.0",
         "~/.diy/ref/github.com/dpranke/pyjson5/v0.14.0"
     ]
 }

@@ -55,15 +55,14 @@ clean() {
 
 # mono所有workspaced的sync,包括uv sync、ln软链接到全局执行文件等
 sync()  {
-    uninstall
+    link
     run uv sync --all-packages
     # run npm i --workspaces
     run git submodule update --init --recursive
-    # ln dev version
-    run uv tool install -e pkgs/diy-cli
 
     _ws_run command ./sha.sh sync;
 }
+link() {  _ws_run command ./sha.sh unlink; }
 # mono所有workspace的代码检查(ruff等)
 check() {  _ws_run command ./sha.sh check; }
 # mono所有workspace的代码自动修复(ruff等)
@@ -142,10 +141,6 @@ github-actions-cicd()    {
     publish
 }
 
-uninstall() {
-    run rm -rf ~/.agents/skills/find-context
-    run rm -rf ~/.agents/skills/win-file-unlock
-}
 
 ####################################################
 # app entry script & _root cmd

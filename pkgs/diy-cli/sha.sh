@@ -53,7 +53,10 @@ fix() {
   run uv run ruff check --fix src/ tests/
   run uv run ruff format src/ tests/
 }
-sync() { :; }
+sync() { unlink ; link; }
+link() {  run uv tool install -e ./ ; }
+unlink() {  if command -v diy; then  uv tool uninstall diy-cli; fi;}
+
 test() { :; }
 #  ./sha.sh test-headless
 test-headless() { :;}

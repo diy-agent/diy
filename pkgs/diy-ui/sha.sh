@@ -55,6 +55,10 @@ fix() {
 }
 ci() { check;test-all; }
 sync() { :; }
+link() { :; }
+unlink() { :; }
+
+
 test() { run uv run pytest "${@:-tests/}" -m "not browser";}
 
 test-headless() { run uv run pytest -v --browser chromium tests/browser/test*.py ;}
