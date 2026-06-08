@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "输入联动 + 响应式 cell"
+# tags = ["reactive", "cell", "signal"]
+# ///
+
 """diy UI Panel Demo — 输入联动 + 响应式 cell。
 
 运行：uv run panel serve examples/panel_demo.py

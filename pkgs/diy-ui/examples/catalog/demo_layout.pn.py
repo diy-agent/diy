@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "Layout 组件演示"
+# tags = ["layout", "column", "row", "tabs", "card"]
+# ///
+
 """Layout 组件演示 — 18 个容器类组件"""
 import diy.ui
 import diy.ui.providers.panel as diypn

@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "Picker 组件演示"
+# tags = ["date", "time", "color"]
+# ///
+
 """Picker 组件演示 — 日期/时间/颜色选择器"""
 import datetime
 
@@ -28,7 +37,7 @@ with app.layout.column():
     app.widgets.color_picker(value="#4CAF50", name="Pick color")
 
     app.pane.markdown("## ColorMap (带色标)")
-    app.widgets.color_map(options={"Reds": ["white", "red"], "Blues": ["#ffffff", "#0000ff"]}, name="Color Map")
+    app.widgets.color_map(options={"Reds": ["white", "red"], "Blues": ["#ffffff", "#0000ff"]}, value="Reds", name="Color Map")
 
     # Reactive display
     dp = app.widgets.date_picker(value=datetime.date(2025, 6, 15), name="Demo Picker")

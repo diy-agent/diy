@@ -71,7 +71,7 @@ test-all() { test; test-headless;}
 # 子项目自己的命令
 ####################################################################################
 
-examples() {  run uv run panel serve --dev examples/*.pn.py; }
+examples() {  run uv run python examples/serve_all.py --dev; }
 
 # Panel 诊断工具：适配列表 / 参数一致性 / 签名查询
 # 用法: ./sha.sh panel list             # 组件适配列表

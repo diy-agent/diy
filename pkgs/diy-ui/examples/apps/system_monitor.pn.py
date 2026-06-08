@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "系统资源监控面板"
+# tags = ["dashboard", "system"]
+# ///
+
 """
 系统资源监控面板 — 左进程列表 + 右使用率卡片，刷新频率可调。
 

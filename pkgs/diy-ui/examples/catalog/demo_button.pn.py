@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "Button 组件演示"
+# tags = ["button"]
+# ///
+
 """Button 组件演示 — 按钮类"""
 import diy.ui
 import diy.ui.providers.panel as diypn

@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "组件总览路由导航"
+# tags = ["index", "navigation"]
+# ///
+
 """diy UI 组件总览 — 路由导航页面"""
 
 import diy.ui

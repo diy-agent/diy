@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "生成器 cell 演示"
+# tags = ["generator", "cell", "yield"]
+# ///
+
 """diy UI Panel Demo — 生成器 cell。
 
 展示 yield 语法：cell 函数是生成器，yield ScopeNode 组件自动挂载到 cell node。

@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "Slider 组件演示"
+# tags = ["slider", "range"]
+# ///
+
 """Slider 组件演示 — 滑动条"""
 import datetime
 

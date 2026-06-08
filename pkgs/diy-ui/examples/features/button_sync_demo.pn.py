@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "Button 同步流演示"
+# tags = ["button", "signal", "sync"]
+# ///
+
 """diy UI Panel Demo — Button 同步流。
 
 展示 Button 的新设计：内部维护 Signal[bool]，点击 → True → cell rerun → 自动恢复 False。

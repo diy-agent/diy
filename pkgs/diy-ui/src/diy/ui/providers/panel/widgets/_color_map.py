@@ -48,10 +48,18 @@ class ColorMap(UIComponent, pn.widgets.ColorMap):
         self.diy.signal: diy.ui.Signal[str] = diy.ui.Signal[str](value)
         _label = label or name
         self.diy.init_done: bool = False
+        _opts = options or {}
+        # Panel's ColorMap.value holds color lists, not string keys.
+        # Pass the key via value_name so Panel maps it to the actual list.
+        # When no options are provided, pass a real color list instead of a string name.
+        _use_value_name = value if _opts and value in _opts else None
+        _use_value = _use_value_name if _use_value_name else (
+            value if isinstance(value, list) else None
+        )
         pn.widgets.ColorMap.__init__(
             self,
             label=_label,
-            value=value,
+            value=_use_value,
             align=align,
             aspect_ratio=aspect_ratio,
             css_classes=css_classes or [],
@@ -72,7 +80,7 @@ class ColorMap(UIComponent, pn.widgets.ColorMap):
             visible=visible,
             loading=loading,
             disabled=disabled,
-            options=options or {},
+            options=_opts,
             ncols=ncols,
             swatch_height=swatch_height,
             swatch_width=swatch_width,

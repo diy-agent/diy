@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "长时间任务 + 步进式 UI"
+# tags = ["async", "progress"]
+# ///
+
 """diy UI Panel Demo — 长时间任务 + 步进式 UI。
 
 展示 cell 内长时间任务如何通过 provider 即时同步实现步进式进度展示。

@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "auto_mount_child 开关演示"
+# tags = ["mount", "cell", "generator"]
+# ///
+
 """diy UI Panel Demo — auto_mount_child 开关。
 
 展示 auto_mount_child=False 时，app.widgets.button() 等 factory 不自动挂载组件。

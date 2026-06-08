@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "Input 组件演示"
+# tags = ["input", "text", "number"]
+# ///
+
 """Input 组件演示 — 文本/数字输入"""
 import numpy as np
 

@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "Code & Data 组件演示"
+# tags = ["code", "data", "tabulator"]
+# ///
+
 """Code & Data 组件演示"""
 import diy.ui
 import diy.ui.providers.panel as diypn

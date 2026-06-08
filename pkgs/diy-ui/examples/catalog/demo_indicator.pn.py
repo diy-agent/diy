@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "Indicator 组件演示"
+# tags = ["gauge", "progress", "indicator"]
+# ///
+
 """Indicator 组件演示 — 状态/进度显示"""
 import diy.ui
 import diy.ui.providers.panel as diypn

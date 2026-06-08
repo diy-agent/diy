@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "Media 组件演示"
+# tags = ["audio", "video", "player"]
+# ///
+
 """Media 组件演示 — 音频/视频/播放器"""
 import diy.ui
 import diy.ui.providers.panel as diypn

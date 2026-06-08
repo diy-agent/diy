@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "Pane 组件演示"
+# tags = ["markdown", "html", "image", "plotly"]
+# ///
+
 """Pane 组件演示 — 26 个展示类组件"""
 import diy.ui
 import diy.ui.providers.panel as diypn

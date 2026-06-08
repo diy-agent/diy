@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "Choice 组件演示"
+# tags = ["choice", "select", "checkbox"]
+# ///
+
 """Choice 组件演示 — 选择类"""
 import diy.ui
 import diy.ui.providers.panel as diypn

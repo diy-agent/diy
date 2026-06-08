@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+#
+# [tool.diy]
+# description = "Async cell 异步演示"
+# tags = ["async", "cell"]
+# ///
+
 import asyncio
 import datetime
 
