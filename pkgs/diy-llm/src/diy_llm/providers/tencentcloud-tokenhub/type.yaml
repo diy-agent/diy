@@ -1,0 +1,18 @@
+# ============================================================
+# Provider Type: tencentcloud-tokenhub
+# 腾讯云 TokenHub API (tokenhub.tencentmaas.com)
+# ============================================================
+
+type: tencentcloud-tokenhub
+name: 腾讯云 TokenHub
+
+# 🔐 认证方式 —— 固定 api_key
+auth:
+  scheme: api_key
+  header: Authorization
+  prefix: "Bearer "
+
+# 🌐 API 协议
+api:
+  protocol: openai-compatible
+  default_base: https://tokenhub.tencentmaas.com/v1

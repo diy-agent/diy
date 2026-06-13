@@ -1,0 +1,25 @@
+{
+  "models": {
+    "deepseek-v4-pro": {
+      "name": "DeepSeek V4 Pro",
+      "reasoning": true,
+      "context_window": 1000000,
+      "max_tokens": 384000,
+      "cost": {"input": 3, "output": 15}
+    },
+    "deepseek-v4-flash": {
+      "name": "DeepSeek V4 Flash",
+      "reasoning": true,
+      "context_window": 1000000,
+      "max_tokens": 384000,
+      "cost": {"input": 0.14, "output": 0.28}
+    },
+    "deepseek-r1": {
+      "name": "DeepSeek R1",
+      "reasoning": true,
+      "context_window": 128000,
+      "max_tokens": 32000,
+      "cost": {"input": 0.14, "output": 0.28}
+    }
+  }
+}
