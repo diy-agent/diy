@@ -33,10 +33,11 @@ def load_dotenv(path: Path | None = None) -> None:
 
 
 def load_auth() -> dict[str, Any]:
+    """Load auth.json. New format: {version, providers: {name: {source}}}."""
     if AUTH_FILE.is_file():
         with open(AUTH_FILE) as f:
             return json.load(f)
-    return {"version": 1, "credential_pool": {}}
+    return {"version": 1, "providers": {}}
 
 
 def save_auth(auth: dict[str, Any]) -> None:
@@ -47,23 +48,14 @@ def save_auth(auth: dict[str, Any]) -> None:
         f.write("\n")
 
 
-def fingerprint(value: str) -> str:
-    return "sha256:" + hashlib.sha256(value.encode()).hexdigest()[:16]
-
-
-def resolve_api_key(cred: dict[str, Any]) -> str | None:
-    source = cred.get("source", "")
+def resolve_api_key(source: str) -> str | None:
+    """Resolve an API key from its source string (env:VAR_NAME)."""
     if source.startswith("env:"):
         return os.environ.get(source[4:])
     return None
 
 
-def get_active_credential(name: str) -> dict[str, Any] | None:
+def has_credential(name: str) -> bool:
+    """Check if a provider has credentials registered."""
     auth = load_auth()
-    pool = auth.get("credential_pool", {}).get(name, [])
-    if not pool:
-        return None
-    ok = [c for c in pool if c.get("last_status") == "ok"]
-    candidates = ok if ok else pool
-    candidates.sort(key=lambda c: c.get("priority", 999))
-    return candidates[0] if candidates else pool[0]
+    return name in auth.get("providers", {})

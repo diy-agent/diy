@@ -18,7 +18,6 @@ import yaml
 # ── paths ─────────────────────────────────────────────────────────────
 
 DIYM_HOME = Path.home() / ".diy-llm"
-CONFIG_FILE = DIYM_HOME / "config.json"
 PROVIDERS_DIR = DIYM_HOME / "providers"
 LOCK_VERSION = 1
 
@@ -57,23 +56,7 @@ def load_provider_type(ptype: str) -> dict[str, Any] | None:
         return yaml.safe_load(f)
 
 
-# ── config.json (default-model etc.) ──────────────────────────────────
-
-def load_config() -> dict[str, Any]:
-    if CONFIG_FILE.is_file():
-        with open(CONFIG_FILE) as f:
-            return json.load(f)
-    return {"version": 1, "default_model": {}}
-
-
-def save_config(cfg: dict[str, Any]) -> None:
-    ensure_dirs()
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-
-
-# ── state file (was lock file) ────────────────────────────────────────
+# ── state file ────────────────────────────────────────────────────────
 
 def state_path(provider_name: str) -> Path:
     return PROVIDERS_DIR / f"{provider_name}.json"
@@ -175,13 +158,6 @@ def ensure_state(name: str, api_base: str, api_key: str, ptype: str) -> tuple[di
         if mid not in models:
             models[mid] = {**prev, "stale": True}
 
-    # Apply excludes from config
-    cfg = load_config()
-    provider_excludes = cfg.get("exclude_models", {}).get(name, [])
-    for mid in provider_excludes:
-        if mid in models:
-            models[mid]["enabled"] = False
-
     state = {
         "version": LOCK_VERSION,
         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -193,34 +169,32 @@ def ensure_state(name: str, api_base: str, api_key: str, ptype: str) -> tuple[di
 
 
 def get_enabled_models(name: str) -> dict[str, dict[str, Any]]:
-    """Return enabled non-stale models from state, with excludes applied."""
+    """Return enabled non-stale models from state."""
     state = load_state(name)
     if not state:
         return {}
     models = state.get("models", {})
-
-    # Apply excludes from config as safety net
-    cfg = load_config()
-    provider_excludes = cfg.get("exclude_models", {}).get(name, [])
-    for mid in provider_excludes:
-        if mid in models:
-            models[mid]["enabled"] = False
-
     return {mid: m for mid, m in models.items() if m.get("enabled") and not m.get("stale")}
 
 
-def build_litellm_config(name: str, api_base: str, api_key: str, models: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """Build a LiteLLM proxy config dict for a single provider."""
+def build_litellm_config(models_by_provider: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Build a LiteLLM proxy config dict for one or more providers.
+
+    models_by_provider: {provider_name: {model_id: {api_base, api_key, models: {mid: meta}}}}
+    """
     model_list = []
-    for mid, mdef in models.items():
-        model_list.append({
-            "model_name": f"{name}/{mid}",
-            "litellm_params": {
-                "model": f"custom_openai/{mid}",
-                "api_base": api_base,
-                "api_key": api_key,
-            },
-        })
+    for pname, pdef in models_by_provider.items():
+        api_base = pdef["api_base"]
+        api_key = pdef["api_key"]
+        for mid in pdef["models"]:
+            model_list.append({
+                "model_name": f"{pname}/{mid}",
+                "litellm_params": {
+                    "model": f"custom_openai/{mid}",
+                    "api_base": api_base,
+                    "api_key": api_key,
+                },
+            })
 
     return {
         "model_list": model_list,

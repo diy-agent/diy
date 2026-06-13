@@ -428,7 +428,7 @@ def load_dotenv(path: Path | None = None) -> None:
 - [ ] 迁移：旧 auth.json 格式转换（或让用户重新 `diy-llm auth set`）
 - [ ] 不再写 `~/.diy-llm/.env`（R6 加载 .env，但不写入——auth set 只写 auth.json）
 
-**状态：** 🔴 待实现
+**状态：** ✅ 已完成 (2026-06-14)
 
 ---
 
@@ -465,7 +465,7 @@ def load_dotenv(path: Path | None = None) -> None:
 - [ ] `serve` 的 default 标记逻辑适配
 - [ ] 迁移旧 config.json
 
-**状态：** 🔴 待实现
+**状态：** ✅ 已完成 (2026-06-14)
 
 ---
 
