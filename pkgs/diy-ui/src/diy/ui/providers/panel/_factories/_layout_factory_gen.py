@@ -1,7 +1,6 @@
 """app.layout.xxx() 工厂类 — 由 tools/_generate_factories.py 自动生成，勿手改。"""
 
 from __future__ import annotations
-
 from typing import Any
 
 from .. import layout as _layout
@@ -38,6 +37,7 @@ class _LayoutFactoryGen:
         header_color: str = '',
         header_background: str = '',
         toggle: bool = False,
+        **kwargs: Any,
     ) -> _layout.Accordion:
         return self._add(_layout.Accordion(
             *children,
@@ -67,6 +67,7 @@ class _LayoutFactoryGen:
             header_color=header_color,
             header_background=header_background,
             toggle=toggle,
+            **kwargs,
         ))
 
     def card(self,
@@ -107,6 +108,7 @@ class _LayoutFactoryGen:
         hide_header: bool = False,
         title_css_classes: list[Any] | None = None,
         title: str = '',
+        **kwargs: Any,
     ) -> _layout.Card:
         return self._add(_layout.Card(
             *children,
@@ -146,6 +148,7 @@ class _LayoutFactoryGen:
             hide_header=hide_header,
             title_css_classes=title_css_classes,
             title=title,
+            **kwargs,
         ))
 
     def column(self,
@@ -175,6 +178,7 @@ class _LayoutFactoryGen:
         scroll_button_threshold: int = 0,
         scroll_position: int = 0,
         view_latest: bool = False,
+        **kwargs: Any,
     ) -> _layout.Column:
         return self._add(_layout.Column(
             *children,
@@ -203,6 +207,7 @@ class _LayoutFactoryGen:
             scroll_button_threshold=scroll_button_threshold,
             scroll_position=scroll_position,
             view_latest=view_latest,
+            **kwargs,
         ))
 
     def divider(self,
@@ -225,6 +230,7 @@ class _LayoutFactoryGen:
         sizing_mode: Any = None,
         visible: bool = True,
         loading: bool = False,
+        **kwargs: Any,
     ) -> _layout.Divider:
         return self._add(_layout.Divider(
             *children,
@@ -246,6 +252,7 @@ class _LayoutFactoryGen:
             sizing_mode=sizing_mode,
             visible=visible,
             loading=loading,
+            **kwargs,
         ))
 
     def feed(self,
@@ -276,6 +283,7 @@ class _LayoutFactoryGen:
         scroll_position: int = 0,
         view_latest: bool = False,
         load_buffer: int = 50,
+        **kwargs: Any,
     ) -> _layout.Feed:
         return self._add(_layout.Feed(
             *children,
@@ -305,6 +313,7 @@ class _LayoutFactoryGen:
             scroll_position=scroll_position,
             view_latest=view_latest,
             load_buffer=load_buffer,
+            **kwargs,
         ))
 
     def flex_box(self,
@@ -335,6 +344,7 @@ class _LayoutFactoryGen:
         flex_wrap: Any = 'wrap',
         gap: str = '',
         justify_content: Any = 'flex-start',
+        **kwargs: Any,
     ) -> _layout.FlexBox:
         return self._add(_layout.FlexBox(
             *children,
@@ -364,6 +374,7 @@ class _LayoutFactoryGen:
             flex_wrap=flex_wrap,
             gap=gap,
             justify_content=justify_content,
+            **kwargs,
         ))
 
     def float_panel(self,
@@ -395,6 +406,7 @@ class _LayoutFactoryGen:
         offsety: int | None = None,
         theme: str = 'primary',
         status: Any = 'normalized',
+        **kwargs: Any,
     ) -> _layout.FloatPanel:
         return self._add(_layout.FloatPanel(
             *children,
@@ -425,6 +437,7 @@ class _LayoutFactoryGen:
             offsety=offsety,
             theme=theme,
             status=status,
+            **kwargs,
         ))
 
     def grid_box(self,
@@ -452,6 +465,7 @@ class _LayoutFactoryGen:
         scroll: Any = False,
         nrows: int | None = None,
         ncols: int | None = None,
+        **kwargs: Any,
     ) -> _layout.GridBox:
         return self._add(_layout.GridBox(
             *children,
@@ -478,6 +492,7 @@ class _LayoutFactoryGen:
             scroll=scroll,
             nrows=nrows,
             ncols=ncols,
+            **kwargs,
         ))
 
     def grid_spec(self,
@@ -506,6 +521,7 @@ class _LayoutFactoryGen:
         mode: Any = 'warn',
         ncols: int | None = None,
         nrows: int | None = None,
+        **kwargs: Any,
     ) -> _layout.GridSpec:
         return self._add(_layout.GridSpec(
             *children,
@@ -533,6 +549,7 @@ class _LayoutFactoryGen:
             mode=mode,
             ncols=ncols,
             nrows=nrows,
+            **kwargs,
         ))
 
     def grid_stack(self,
@@ -564,6 +581,7 @@ class _LayoutFactoryGen:
         allow_resize: bool = True,
         allow_drag: bool = True,
         state: list[Any] | None = None,
+        **kwargs: Any,
     ) -> _layout.GridStack:
         return self._add(_layout.GridStack(
             *children,
@@ -594,6 +612,7 @@ class _LayoutFactoryGen:
             allow_resize=allow_resize,
             allow_drag=allow_drag,
             state=state,
+            **kwargs,
         ))
 
     def h_spacer(self,
@@ -617,6 +636,7 @@ class _LayoutFactoryGen:
         height_policy: Any = 'auto',
         visible: bool = True,
         loading: bool = False,
+        **kwargs: Any,
     ) -> _layout.HSpacer:
         return self._add(_layout.HSpacer(
             *children,
@@ -639,6 +659,7 @@ class _LayoutFactoryGen:
             height_policy=height_policy,
             visible=visible,
             loading=loading,
+            **kwargs,
         ))
 
     def modal(self,
@@ -667,6 +688,7 @@ class _LayoutFactoryGen:
         open: bool = False,
         show_close_button: bool = True,
         background_close: bool = True,
+        **kwargs: Any,
     ) -> _layout.Modal:
         return self._add(_layout.Modal(
             *children,
@@ -694,6 +716,7 @@ class _LayoutFactoryGen:
             open=open,
             show_close_button=show_close_button,
             background_close=background_close,
+            **kwargs,
         ))
 
     def row(self,
@@ -719,6 +742,7 @@ class _LayoutFactoryGen:
         visible: bool = True,
         loading: bool = False,
         scroll: Any = False,
+        **kwargs: Any,
     ) -> _layout.Row:
         return self._add(_layout.Row(
             *children,
@@ -743,6 +767,7 @@ class _LayoutFactoryGen:
             visible=visible,
             loading=loading,
             scroll=scroll,
+            **kwargs,
         ))
 
     def spacer(self,
@@ -767,6 +792,7 @@ class _LayoutFactoryGen:
         sizing_mode: Any = None,
         visible: bool = True,
         loading: bool = False,
+        **kwargs: Any,
     ) -> _layout.Spacer:
         return self._add(_layout.Spacer(
             *children,
@@ -790,6 +816,7 @@ class _LayoutFactoryGen:
             sizing_mode=sizing_mode,
             visible=visible,
             loading=loading,
+            **kwargs,
         ))
 
     def swipe(self,
@@ -819,6 +846,7 @@ class _LayoutFactoryGen:
         start: int = 0,
         end: int = 100,
         value: int = 50,
+        **kwargs: Any,
     ) -> _layout.Swipe:
         return self._add(_layout.Swipe(
             *children,
@@ -847,6 +875,7 @@ class _LayoutFactoryGen:
             start=start,
             end=end,
             value=value,
+            **kwargs,
         ))
 
     def tabs(self,
@@ -876,6 +905,7 @@ class _LayoutFactoryGen:
         closable: bool = False,
         dynamic: bool = False,
         tabs_location: Any = 'above',
+        **kwargs: Any,
     ) -> _layout.Tabs:
         return self._add(_layout.Tabs(
             *children,
@@ -904,6 +934,7 @@ class _LayoutFactoryGen:
             closable=closable,
             dynamic=dynamic,
             tabs_location=tabs_location,
+            **kwargs,
         ))
 
     def v_spacer(self,
@@ -927,6 +958,7 @@ class _LayoutFactoryGen:
         height_policy: Any = 'auto',
         visible: bool = True,
         loading: bool = False,
+        **kwargs: Any,
     ) -> _layout.VSpacer:
         return self._add(_layout.VSpacer(
             *children,
@@ -949,6 +981,7 @@ class _LayoutFactoryGen:
             height_policy=height_policy,
             visible=visible,
             loading=loading,
+            **kwargs,
         ))
 
     def widget_box(self,
@@ -976,6 +1009,7 @@ class _LayoutFactoryGen:
         scroll: Any = False,
         disabled: bool = False,
         horizontal: bool = False,
+        **kwargs: Any,
     ) -> _layout.WidgetBox:
         return self._add(_layout.WidgetBox(
             *children,
@@ -1002,5 +1036,6 @@ class _LayoutFactoryGen:
             scroll=scroll,
             disabled=disabled,
             horizontal=horizontal,
+            **kwargs,
         ))
 

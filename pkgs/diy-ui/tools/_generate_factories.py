@@ -94,6 +94,8 @@ def _gen_method(cls_name: str, cls: type, wrapper_mod: str, has_children: bool, 
     for p in params:
         if has_children and p.name == "children":
             continue
+        if p.kind == inspect.Parameter.VAR_KEYWORD:
+            continue  # **kwargs 由工厂方法级兜底，不在显式签名里重复
         ann_str = _format_type(p.annotation)
         if p.default is not inspect.Parameter.empty:
             param_strs.append(f"{p.name}: {ann_str} = {_format_default(p.default)}")
@@ -102,6 +104,9 @@ def _gen_method(cls_name: str, cls: type, wrapper_mod: str, has_children: bool, 
 
     for i, ps in enumerate(param_strs):
         sig_lines.append(f"{indent}    {ps}{',' if i < len(param_strs) - 1 else ','}")
+
+    # factory 方法自己也加 **kwargs 兜底
+    sig_lines.append(f"{indent}    **kwargs: Any,")
     sig_lines.append(f"{indent}) -> {wrapper_mod}.{cls_name}:")
 
     # --- body ---
@@ -116,11 +121,15 @@ def _gen_method(cls_name: str, cls: type, wrapper_mod: str, has_children: bool, 
     for p in params:
         if has_children and p.name == "children":
             continue
+        if p.kind == inspect.Parameter.VAR_KEYWORD:
+            continue
         kw_names.append(p.name)
 
     for i, name in enumerate(kw_names):
         comma = "," if i < len(kw_names) - 1 else ","
         body.append(f"{indent}        {name}={name}{comma}")
+
+    body.append(f"{indent}        **kwargs,")
 
     body.append(f"{indent}    ))")
     return "\n".join(sig_lines + body)

@@ -22,7 +22,7 @@ cd "$ROOT_DIR"
 source sha.common.sh
 
 # _workspaces=(pkgs/*/)
-_workspaces=(pkgs/diy-ui/ pkgs/diy-cli/)
+_workspaces=(pkgs/diy-ui/ pkgs/diy-cli/ pkgs/diy-llm/)
 _vendors=(vendor/*/)
 
 ####################################################################################

@@ -1,7 +1,6 @@
 """app.widgets.xxx() 工厂类 — 由 tools/_generate_factories.py 自动生成，勿手改。"""
 
 from __future__ import annotations
-
 from typing import Any
 
 from .. import widgets as _widgets
@@ -39,6 +38,7 @@ class _WidgetsFactoryGen:
         description: str | None = None,
         serializer: str = 'ast',
         type: type | tuple[type, ...] | None = None,
+        **kwargs: Any,
     ) -> _widgets.ArrayInput:
         return self._add(_widgets.ArrayInput(
             label=label,
@@ -69,6 +69,7 @@ class _WidgetsFactoryGen:
             description=description,
             serializer=serializer,
             type=type,
+            **kwargs,
         ))
 
     def autocomplete_input(self,
@@ -102,6 +103,7 @@ class _WidgetsFactoryGen:
         min_characters: int = 0,
         search_strategy: str = 'includes',
         description: str | None = None,
+        **kwargs: Any,
     ) -> _widgets.AutocompleteInput:
         return self._add(_widgets.AutocompleteInput(
             label=label,
@@ -134,6 +136,7 @@ class _WidgetsFactoryGen:
             min_characters=min_characters,
             search_strategy=search_strategy,
             description=description,
+            **kwargs,
         ))
 
     def boolean_status(self,
@@ -162,6 +165,7 @@ class _WidgetsFactoryGen:
         value: bool = False,
         color: str = 'dark',
         throttle: int = 500,
+        **kwargs: Any,
     ) -> _widgets.BooleanStatus:
         return self._add(_widgets.BooleanStatus(
             label=label,
@@ -189,25 +193,25 @@ class _WidgetsFactoryGen:
             value=value,
             color=color,
             throttle=throttle,
+            **kwargs,
         ))
 
     def button(self,
         label: str = '',
-        name: str = '',
         value: bool = False,
         align: Any = 'start',
         aspect_ratio: Any | None = None,
-        css_classes: list[Any] | None = None,
+        css_classes: list[Any] = [],
         design: Any = None,
         height: int | None = None,
         min_width: int | None = None,
         min_height: int | None = None,
         max_width: int | None = None,
         max_height: int | None = None,
-        margin: Any | None = (5, 10),
-        styles: dict[str, Any] | None = None,
-        stylesheets: list[Any] | None = None,
-        tags: list[Any] | None = None,
+        margin: Any = (5, 10),
+        styles: dict[str, Any] = {},
+        stylesheets: list[Any] = [],
+        tags: list[Any] = [],
         width: int | None = None,
         width_policy: Any = 'auto',
         height_policy: Any = 'auto',
@@ -221,12 +225,10 @@ class _WidgetsFactoryGen:
         icon_size: str = '1em',
         color: Any = 'default',
         variant: Any = 'solid',
-        button_type: Any | None = None,
-        button_style: Any | None = None,
+        **kwargs: Any,
     ) -> _widgets.Button:
         return self._add(_widgets.Button(
             label=label,
-            name=name,
             value=value,
             align=align,
             aspect_ratio=aspect_ratio,
@@ -254,8 +256,7 @@ class _WidgetsFactoryGen:
             icon_size=icon_size,
             color=color,
             variant=variant,
-            button_type=button_type,
-            button_style=button_style,
+            **kwargs,
         ))
 
     def button_icon(self,
@@ -286,6 +287,7 @@ class _WidgetsFactoryGen:
         active_icon: str = '',
         icon: str = 'heart',
         size: str | None = None,
+        **kwargs: Any,
     ) -> _widgets.ButtonIcon:
         return self._add(_widgets.ButtonIcon(
             label=label,
@@ -315,6 +317,7 @@ class _WidgetsFactoryGen:
             active_icon=active_icon,
             icon=icon,
             size=size,
+            **kwargs,
         ))
 
     def check_box_group(self,
@@ -343,6 +346,7 @@ class _WidgetsFactoryGen:
         disabled: bool = False,
         options: list[Any] | dict[Any, Any] | None = None,
         inline: bool = False,
+        **kwargs: Any,
     ) -> _widgets.CheckBoxGroup:
         return self._add(_widgets.CheckBoxGroup(
             label=label,
@@ -370,6 +374,7 @@ class _WidgetsFactoryGen:
             disabled=disabled,
             options=options,
             inline=inline,
+            **kwargs,
         ))
 
     def check_button_group(self,
@@ -404,6 +409,7 @@ class _WidgetsFactoryGen:
         button_style: Any | None = None,
         options: list[Any] | dict[Any, Any] | None = None,
         orientation: Any = 'horizontal',
+        **kwargs: Any,
     ) -> _widgets.CheckButtonGroup:
         return self._add(_widgets.CheckButtonGroup(
             label=label,
@@ -437,6 +443,7 @@ class _WidgetsFactoryGen:
             button_style=button_style,
             options=options,
             orientation=orientation,
+            **kwargs,
         ))
 
     def checkbox(self,
@@ -463,6 +470,7 @@ class _WidgetsFactoryGen:
         visible: bool = True,
         loading: bool = False,
         disabled: bool = False,
+        **kwargs: Any,
     ) -> _widgets.Checkbox:
         return self._add(_widgets.Checkbox(
             label=label,
@@ -488,6 +496,7 @@ class _WidgetsFactoryGen:
             visible=visible,
             loading=loading,
             disabled=disabled,
+            **kwargs,
         ))
 
     def code_editor(self,
@@ -523,6 +532,7 @@ class _WidgetsFactoryGen:
         readonly: bool = False,
         soft_tabs: bool = False,
         theme: str = 'github_light_default',
+        **kwargs: Any,
     ) -> _widgets.CodeEditor:
         return self._add(_widgets.CodeEditor(
             label=label,
@@ -557,6 +567,7 @@ class _WidgetsFactoryGen:
             readonly=readonly,
             soft_tabs=soft_tabs,
             theme=theme,
+            **kwargs,
         ))
 
     def color_map(self,
@@ -588,6 +599,7 @@ class _WidgetsFactoryGen:
         swatch_height: int = 20,
         swatch_width: int = 100,
         value_name: str | None = None,
+        **kwargs: Any,
     ) -> _widgets.ColorMap:
         return self._add(_widgets.ColorMap(
             label=label,
@@ -618,6 +630,7 @@ class _WidgetsFactoryGen:
             swatch_height=swatch_height,
             swatch_width=swatch_width,
             value_name=value_name,
+            **kwargs,
         ))
 
     def color_picker(self,
@@ -645,6 +658,7 @@ class _WidgetsFactoryGen:
         loading: bool = False,
         disabled: bool = False,
         description: str | None = None,
+        **kwargs: Any,
     ) -> _widgets.ColorPicker:
         return self._add(_widgets.ColorPicker(
             label=label,
@@ -671,6 +685,7 @@ class _WidgetsFactoryGen:
             loading=loading,
             disabled=disabled,
             description=description,
+            **kwargs,
         ))
 
     def date_picker(self,
@@ -702,6 +717,7 @@ class _WidgetsFactoryGen:
         disabled_dates: list[Any] | None = None,
         enabled_dates: list[Any] | None = None,
         description: str | None = None,
+        **kwargs: Any,
     ) -> _widgets.DatePicker:
         return self._add(_widgets.DatePicker(
             label=label,
@@ -732,6 +748,7 @@ class _WidgetsFactoryGen:
             disabled_dates=disabled_dates,
             enabled_dates=enabled_dates,
             description=description,
+            **kwargs,
         ))
 
     def date_range_picker(self,
@@ -763,6 +780,7 @@ class _WidgetsFactoryGen:
         description: str | None = None,
         disabled_dates: list | None = None,
         enabled_dates: list | None = None,
+        **kwargs: Any,
     ) -> _widgets.DateRangePicker:
         return self._add(_widgets.DateRangePicker(
             label=label,
@@ -793,6 +811,7 @@ class _WidgetsFactoryGen:
             description=description,
             disabled_dates=disabled_dates,
             enabled_dates=enabled_dates,
+            **kwargs,
         ))
 
     def date_range_slider(self,
@@ -828,6 +847,7 @@ class _WidgetsFactoryGen:
         tooltips: bool = True,
         direction: str = 'ltr',
         format: str | None = None,
+        **kwargs: Any,
     ) -> _widgets.DateRangeSlider:
         return self._add(_widgets.DateRangeSlider(
             label=label,
@@ -862,6 +882,7 @@ class _WidgetsFactoryGen:
             tooltips=tooltips,
             direction=direction,
             format=format,
+            **kwargs,
         ))
 
     def date_slider(self,
@@ -898,6 +919,7 @@ class _WidgetsFactoryGen:
         direction: str = 'ltr',
         as_datetime: bool = False,
         format: str | None = None,
+        **kwargs: Any,
     ) -> _widgets.DateSlider:
         return self._add(_widgets.DateSlider(
             label=label,
@@ -933,6 +955,7 @@ class _WidgetsFactoryGen:
             direction=direction,
             as_datetime=as_datetime,
             format=format,
+            **kwargs,
         ))
 
     def datetime_input(self,
@@ -966,6 +989,7 @@ class _WidgetsFactoryGen:
         type: type | tuple[type, ...] | None = None,
         start: Any | None = None,
         end: Any | None = None,
+        **kwargs: Any,
     ) -> _widgets.DatetimeInput:
         return self._add(_widgets.DatetimeInput(
             label=label,
@@ -998,6 +1022,7 @@ class _WidgetsFactoryGen:
             type=type,
             start=start,
             end=end,
+            **kwargs,
         ))
 
     def datetime_picker(self,
@@ -1035,6 +1060,7 @@ class _WidgetsFactoryGen:
         enabled_dates: list | None = None,
         as_numpy_datetime64: bool | None = None,
         mode: str = 'single',
+        **kwargs: Any,
     ) -> _widgets.DatetimePicker:
         return self._add(_widgets.DatetimePicker(
             label=label,
@@ -1071,6 +1097,7 @@ class _WidgetsFactoryGen:
             enabled_dates=enabled_dates,
             as_numpy_datetime64=as_numpy_datetime64,
             mode=mode,
+            **kwargs,
         ))
 
     def datetime_range_picker(self,
@@ -1108,6 +1135,7 @@ class _WidgetsFactoryGen:
         enabled_dates: list | None = None,
         as_numpy_datetime64: bool | None = None,
         mode: str = 'range',
+        **kwargs: Any,
     ) -> _widgets.DatetimeRangePicker:
         return self._add(_widgets.DatetimeRangePicker(
             label=label,
@@ -1144,6 +1172,7 @@ class _WidgetsFactoryGen:
             enabled_dates=enabled_dates,
             as_numpy_datetime64=as_numpy_datetime64,
             mode=mode,
+            **kwargs,
         ))
 
     def datetime_range_slider(self,
@@ -1179,6 +1208,7 @@ class _WidgetsFactoryGen:
         tooltips: bool = True,
         direction: str = 'ltr',
         format: str | None = None,
+        **kwargs: Any,
     ) -> _widgets.DatetimeRangeSlider:
         return self._add(_widgets.DatetimeRangeSlider(
             label=label,
@@ -1213,6 +1243,7 @@ class _WidgetsFactoryGen:
             tooltips=tooltips,
             direction=direction,
             format=format,
+            **kwargs,
         ))
 
     def datetime_slider(self,
@@ -1248,6 +1279,7 @@ class _WidgetsFactoryGen:
         tooltips: bool = True,
         direction: str = 'ltr',
         format: str | None = None,
+        **kwargs: Any,
     ) -> _widgets.DatetimeSlider:
         return self._add(_widgets.DatetimeSlider(
             label=label,
@@ -1282,6 +1314,7 @@ class _WidgetsFactoryGen:
             tooltips=tooltips,
             direction=direction,
             format=format,
+            **kwargs,
         ))
 
     def dial(self,
@@ -1324,6 +1357,7 @@ class _WidgetsFactoryGen:
         title_size: int | None = None,
         unfilled_color: str = 'whitesmoke',
         value_size: int | None = None,
+        **kwargs: Any,
     ) -> _widgets.Dial:
         return self._add(_widgets.Dial(
             label=label,
@@ -1365,6 +1399,7 @@ class _WidgetsFactoryGen:
             title_size=title_size,
             unfilled_color=unfilled_color,
             value_size=value_size,
+            **kwargs,
         ))
 
     def discrete_player(self,
@@ -1403,6 +1438,7 @@ class _WidgetsFactoryGen:
         scale_buttons: int = 1,
         visible_buttons: list = ...,
         visible_loop_options: list = ['once', 'loop', 'reflect'],
+        **kwargs: Any,
     ) -> _widgets.DiscretePlayer:
         return self._add(_widgets.DiscretePlayer(
             label=label,
@@ -1440,6 +1476,7 @@ class _WidgetsFactoryGen:
             scale_buttons=scale_buttons,
             visible_buttons=visible_buttons,
             visible_loop_options=visible_loop_options,
+            **kwargs,
         ))
 
     def file_download(self,
@@ -1477,6 +1514,7 @@ class _WidgetsFactoryGen:
         file: str | None = None,
         filename: str | None = None,
         description: str | None = None,
+        **kwargs: Any,
     ) -> _widgets.FileDownload:
         return self._add(_widgets.FileDownload(
             label=label,
@@ -1513,6 +1551,7 @@ class _WidgetsFactoryGen:
             file=file,
             filename=filename,
             description=description,
+            **kwargs,
         ))
 
     def file_input(self,
@@ -1542,6 +1581,7 @@ class _WidgetsFactoryGen:
         description: str | None = None,
         directory: bool = False,
         multiple: bool = False,
+        **kwargs: Any,
     ) -> _widgets.FileInput:
         return self._add(_widgets.FileInput(
             label=label,
@@ -1570,6 +1610,7 @@ class _WidgetsFactoryGen:
             description=description,
             directory=directory,
             multiple=multiple,
+            **kwargs,
         ))
 
     def float_input(self,
@@ -1604,6 +1645,7 @@ class _WidgetsFactoryGen:
         format: str | None = None,
         page_step_multiplier: int = 10,
         wheel_wait: int = 100,
+        **kwargs: Any,
     ) -> _widgets.FloatInput:
         return self._add(_widgets.FloatInput(
             label=label,
@@ -1637,6 +1679,7 @@ class _WidgetsFactoryGen:
             format=format,
             page_step_multiplier=page_step_multiplier,
             wheel_wait=wheel_wait,
+            **kwargs,
         ))
 
     def float_slider(self,
@@ -1672,6 +1715,7 @@ class _WidgetsFactoryGen:
         start: float = 0.0,
         end: float = 1.0,
         step: float = 0.1,
+        **kwargs: Any,
     ) -> _widgets.FloatSlider:
         return self._add(_widgets.FloatSlider(
             label=label,
@@ -1706,6 +1750,7 @@ class _WidgetsFactoryGen:
             start=start,
             end=end,
             step=step,
+            **kwargs,
         ))
 
     def gauge(self,
@@ -1744,6 +1789,7 @@ class _WidgetsFactoryGen:
         title_size: int = 18,
         tooltip_format: str = '{b} : {c}%',
         custom_opts: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> _widgets.Gauge:
         return self._add(_widgets.Gauge(
             label=label,
@@ -1781,6 +1827,7 @@ class _WidgetsFactoryGen:
             title_size=title_size,
             tooltip_format=tooltip_format,
             custom_opts=custom_opts,
+            **kwargs,
         ))
 
     def int_input(self,
@@ -1815,6 +1862,7 @@ class _WidgetsFactoryGen:
         format: str | None = None,
         page_step_multiplier: int = 10,
         wheel_wait: int = 100,
+        **kwargs: Any,
     ) -> _widgets.IntInput:
         return self._add(_widgets.IntInput(
             label=label,
@@ -1848,6 +1896,7 @@ class _WidgetsFactoryGen:
             format=format,
             page_step_multiplier=page_step_multiplier,
             wheel_wait=wheel_wait,
+            **kwargs,
         ))
 
     def int_range_slider(self,
@@ -1883,6 +1932,7 @@ class _WidgetsFactoryGen:
         orientation: str = 'horizontal',
         show_value: bool = True,
         tooltips: bool = True,
+        **kwargs: Any,
     ) -> _widgets.IntRangeSlider:
         return self._add(_widgets.IntRangeSlider(
             label=label,
@@ -1917,6 +1967,7 @@ class _WidgetsFactoryGen:
             orientation=orientation,
             show_value=show_value,
             tooltips=tooltips,
+            **kwargs,
         ))
 
     def int_slider(self,
@@ -1952,6 +2003,7 @@ class _WidgetsFactoryGen:
         start: int = 0,
         end: int = 1,
         step: int = 1,
+        **kwargs: Any,
     ) -> _widgets.IntSlider:
         return self._add(_widgets.IntSlider(
             label=label,
@@ -1986,6 +2038,7 @@ class _WidgetsFactoryGen:
             start=start,
             end=end,
             step=step,
+            **kwargs,
         ))
 
     def linear_gauge(self,
@@ -2024,6 +2077,7 @@ class _WidgetsFactoryGen:
         title_size: str | None = None,
         unfilled_color: str = 'whitesmoke',
         value_size: int | None = None,
+        **kwargs: Any,
     ) -> _widgets.LinearGauge:
         return self._add(_widgets.LinearGauge(
             label=label,
@@ -2061,6 +2115,7 @@ class _WidgetsFactoryGen:
             title_size=title_size,
             unfilled_color=unfilled_color,
             value_size=value_size,
+            **kwargs,
         ))
 
     def literal_input(self,
@@ -2091,6 +2146,7 @@ class _WidgetsFactoryGen:
         placeholder: str = '',
         serializer: str = 'ast',
         type: type | None = None,
+        **kwargs: Any,
     ) -> _widgets.LiteralInput:
         return self._add(_widgets.LiteralInput(
             label=label,
@@ -2120,6 +2176,7 @@ class _WidgetsFactoryGen:
             placeholder=placeholder,
             serializer=serializer,
             type=type,
+            **kwargs,
         ))
 
     def loading_spinner(self,
@@ -2150,6 +2207,7 @@ class _WidgetsFactoryGen:
         bgcolor: str = 'light',
         color: str = 'dark',
         size: int = 125,
+        **kwargs: Any,
     ) -> _widgets.LoadingSpinner:
         return self._add(_widgets.LoadingSpinner(
             label=label,
@@ -2179,6 +2237,7 @@ class _WidgetsFactoryGen:
             bgcolor=bgcolor,
             color=color,
             size=size,
+            **kwargs,
         ))
 
     def menu_button(self,
@@ -2212,6 +2271,7 @@ class _WidgetsFactoryGen:
         button_style: Any | None = None,
         items: list[Any] | None = None,
         split: bool = False,
+        **kwargs: Any,
     ) -> _widgets.MenuButton:
         return self._add(_widgets.MenuButton(
             label=label,
@@ -2244,6 +2304,7 @@ class _WidgetsFactoryGen:
             button_style=button_style,
             items=items,
             split=split,
+            **kwargs,
         ))
 
     def multi_choice(self,
@@ -2278,6 +2339,7 @@ class _WidgetsFactoryGen:
         option_limit: int | None = None,
         search_option_limit: int | None = None,
         solid: bool = True,
+        **kwargs: Any,
     ) -> _widgets.MultiChoice:
         return self._add(_widgets.MultiChoice(
             label=label,
@@ -2311,6 +2373,7 @@ class _WidgetsFactoryGen:
             option_limit=option_limit,
             search_option_limit=search_option_limit,
             solid=solid,
+            **kwargs,
         ))
 
     def multi_select(self,
@@ -2340,6 +2403,7 @@ class _WidgetsFactoryGen:
         options: list[Any] | dict[Any, Any] | None = None,
         description: str | None = None,
         size: int = 4,
+        **kwargs: Any,
     ) -> _widgets.MultiSelect:
         return self._add(_widgets.MultiSelect(
             label=label,
@@ -2368,6 +2432,7 @@ class _WidgetsFactoryGen:
             options=options,
             description=description,
             size=size,
+            **kwargs,
         ))
 
     def number(self,
@@ -2400,6 +2465,7 @@ class _WidgetsFactoryGen:
         nan_format: str = '-',
         colors: list[str] | None = None,
         title_size: str = '18pt',
+        **kwargs: Any,
     ) -> _widgets.Number:
         return self._add(_widgets.Number(
             label=label,
@@ -2431,6 +2497,7 @@ class _WidgetsFactoryGen:
             nan_format=nan_format,
             colors=colors,
             title_size=title_size,
+            **kwargs,
         ))
 
     def number_input(self,
@@ -2466,6 +2533,7 @@ class _WidgetsFactoryGen:
         page_step_multiplier: int = 10,
         wheel_wait: int = 100,
         description: str | None = None,
+        **kwargs: Any,
     ) -> _widgets.NumberInput:
         return self._add(_widgets.NumberInput(
             label=label,
@@ -2500,6 +2568,7 @@ class _WidgetsFactoryGen:
             page_step_multiplier=page_step_multiplier,
             wheel_wait=wheel_wait,
             description=description,
+            **kwargs,
         ))
 
     def password_input(self,
@@ -2529,6 +2598,7 @@ class _WidgetsFactoryGen:
         description: str | None = None,
         max_length: int = 5000,
         placeholder: str = '',
+        **kwargs: Any,
     ) -> _widgets.PasswordInput:
         return self._add(_widgets.PasswordInput(
             label=label,
@@ -2557,6 +2627,7 @@ class _WidgetsFactoryGen:
             description=description,
             max_length=max_length,
             placeholder=placeholder,
+            **kwargs,
         ))
 
     def player(self,
@@ -2596,6 +2667,7 @@ class _WidgetsFactoryGen:
         scale_buttons: int = 1,
         visible_buttons: list = ...,
         visible_loop_options: list = ['once', 'loop', 'reflect'],
+        **kwargs: Any,
     ) -> _widgets.Player:
         return self._add(_widgets.Player(
             label=label,
@@ -2634,6 +2706,7 @@ class _WidgetsFactoryGen:
             scale_buttons=scale_buttons,
             visible_buttons=visible_buttons,
             visible_loop_options=visible_loop_options,
+            **kwargs,
         ))
 
     def progress(self,
@@ -2663,6 +2736,7 @@ class _WidgetsFactoryGen:
         active: bool = True,
         bar_color: str = 'success',
         max: int = 100,
+        **kwargs: Any,
     ) -> _widgets.Progress:
         return self._add(_widgets.Progress(
             label=label,
@@ -2691,6 +2765,7 @@ class _WidgetsFactoryGen:
             active=active,
             bar_color=bar_color,
             max=max,
+            **kwargs,
         ))
 
     def radio_box_group(self,
@@ -2719,6 +2794,7 @@ class _WidgetsFactoryGen:
         disabled: bool = False,
         options: list[Any] | dict[Any, Any] | None = None,
         inline: bool = False,
+        **kwargs: Any,
     ) -> _widgets.RadioBoxGroup:
         return self._add(_widgets.RadioBoxGroup(
             label=label,
@@ -2746,6 +2822,7 @@ class _WidgetsFactoryGen:
             disabled=disabled,
             options=options,
             inline=inline,
+            **kwargs,
         ))
 
     def radio_button_group(self,
@@ -2780,6 +2857,7 @@ class _WidgetsFactoryGen:
         button_style: Any | None = None,
         options: Any | None = None,
         orientation: Any = 'horizontal',
+        **kwargs: Any,
     ) -> _widgets.RadioButtonGroup:
         return self._add(_widgets.RadioButtonGroup(
             label=label,
@@ -2813,6 +2891,7 @@ class _WidgetsFactoryGen:
             button_style=button_style,
             options=options,
             orientation=orientation,
+            **kwargs,
         ))
 
     def range_slider(self,
@@ -2848,6 +2927,7 @@ class _WidgetsFactoryGen:
         end: Any = 1,
         step: float = 0.1,
         format: str | None = None,
+        **kwargs: Any,
     ) -> _widgets.RangeSlider:
         return self._add(_widgets.RangeSlider(
             label=label,
@@ -2882,6 +2962,7 @@ class _WidgetsFactoryGen:
             end=end,
             step=step,
             format=format,
+            **kwargs,
         ))
 
     def select(self,
@@ -2913,6 +2994,7 @@ class _WidgetsFactoryGen:
         disabled_options: list[Any] | None = None,
         groups: dict[str, Any] | None = None,
         size: int = 1,
+        **kwargs: Any,
     ) -> _widgets.Select:
         return self._add(_widgets.Select(
             label=label,
@@ -2943,6 +3025,7 @@ class _WidgetsFactoryGen:
             disabled_options=disabled_options,
             groups=groups,
             size=size,
+            **kwargs,
         ))
 
     def static_text(self,
@@ -2969,6 +3052,7 @@ class _WidgetsFactoryGen:
         visible: bool = True,
         loading: bool = False,
         disabled: bool = False,
+        **kwargs: Any,
     ) -> _widgets.StaticText:
         return self._add(_widgets.StaticText(
             label=label,
@@ -2994,6 +3078,7 @@ class _WidgetsFactoryGen:
             visible=visible,
             loading=loading,
             disabled=disabled,
+            **kwargs,
         ))
 
     def switch(self,
@@ -3020,6 +3105,7 @@ class _WidgetsFactoryGen:
         visible: bool = True,
         loading: bool = False,
         disabled: bool = False,
+        **kwargs: Any,
     ) -> _widgets.Switch:
         return self._add(_widgets.Switch(
             label=label,
@@ -3045,6 +3131,7 @@ class _WidgetsFactoryGen:
             visible=visible,
             loading=loading,
             disabled=disabled,
+            **kwargs,
         ))
 
     def tabulator(self,
@@ -3107,6 +3194,7 @@ class _WidgetsFactoryGen:
         theme: Any = 'simple',
         theme_classes: list[Any] | None = None,
         title_formatters: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> _widgets.Tabulator:
         return self._add(_widgets.Tabulator(
             label=label,
@@ -3168,6 +3256,7 @@ class _WidgetsFactoryGen:
             theme=theme,
             theme_classes=theme_classes,
             title_formatters=title_formatters,
+            **kwargs,
         ))
 
     def text_area_input(self,
@@ -3202,6 +3291,7 @@ class _WidgetsFactoryGen:
         max_rows: int | None = None,
         rows: int = 2,
         resizable: str = 'both',
+        **kwargs: Any,
     ) -> _widgets.TextAreaInput:
         return self._add(_widgets.TextAreaInput(
             label=label,
@@ -3235,6 +3325,7 @@ class _WidgetsFactoryGen:
             max_rows=max_rows,
             rows=rows,
             resizable=resizable,
+            **kwargs,
         ))
 
     def text_input(self,
@@ -3264,6 +3355,7 @@ class _WidgetsFactoryGen:
         description: str | None = None,
         max_length: int = 5000,
         placeholder: str = '',
+        **kwargs: Any,
     ) -> _widgets.TextInput:
         return self._add(_widgets.TextInput(
             label=label,
@@ -3292,6 +3384,7 @@ class _WidgetsFactoryGen:
             description=description,
             max_length=max_length,
             placeholder=placeholder,
+            **kwargs,
         ))
 
     def time_picker(self,
@@ -3326,6 +3419,7 @@ class _WidgetsFactoryGen:
         minute_increment: int = 1,
         second_increment: int = 1,
         clock: str = '12h',
+        **kwargs: Any,
     ) -> _widgets.TimePicker:
         return self._add(_widgets.TimePicker(
             label=label,
@@ -3359,6 +3453,7 @@ class _WidgetsFactoryGen:
             minute_increment=minute_increment,
             second_increment=second_increment,
             clock=clock,
+            **kwargs,
         ))
 
     def toggle(self,
@@ -3391,6 +3486,7 @@ class _WidgetsFactoryGen:
         variant: Any = 'solid',
         button_type: Any | None = None,
         button_style: Any | None = None,
+        **kwargs: Any,
     ) -> _widgets.Toggle:
         return self._add(_widgets.Toggle(
             label=label,
@@ -3422,6 +3518,7 @@ class _WidgetsFactoryGen:
             variant=variant,
             button_type=button_type,
             button_style=button_style,
+            **kwargs,
         ))
 
     def toggle_group(self,
@@ -3449,6 +3546,7 @@ class _WidgetsFactoryGen:
         loading: bool = False,
         disabled: bool = False,
         options: list[Any] | dict[Any, Any] | None = None,
+        **kwargs: Any,
     ) -> _widgets.ToggleGroup:
         return self._add(_widgets.ToggleGroup(
             label=label,
@@ -3475,6 +3573,7 @@ class _WidgetsFactoryGen:
             loading=loading,
             disabled=disabled,
             options=options,
+            **kwargs,
         ))
 
     def toggle_icon(self,
@@ -3506,6 +3605,7 @@ class _WidgetsFactoryGen:
         active_icon: str = '',
         description: str | None = None,
         description_delay: int = 500,
+        **kwargs: Any,
     ) -> _widgets.ToggleIcon:
         return self._add(_widgets.ToggleIcon(
             label=label,
@@ -3536,6 +3636,7 @@ class _WidgetsFactoryGen:
             active_icon=active_icon,
             description=description,
             description_delay=description_delay,
+            **kwargs,
         ))
 
     def tooltip_icon(self,
@@ -3562,6 +3663,7 @@ class _WidgetsFactoryGen:
         loading: bool = False,
         disabled: bool = False,
         value: str = '',
+        **kwargs: Any,
     ) -> _widgets.TooltipIcon:
         return self._add(_widgets.TooltipIcon(
             label=label,
@@ -3587,6 +3689,7 @@ class _WidgetsFactoryGen:
             loading=loading,
             disabled=disabled,
             value=value,
+            **kwargs,
         ))
 
     def tqdm(self,
@@ -3620,6 +3723,7 @@ class _WidgetsFactoryGen:
         text: str = '',
         text_pane: Any | None = None,
         write_to_console: bool = False,
+        **kwargs: Any,
     ) -> _widgets.Tqdm:
         return self._add(_widgets.Tqdm(
             label=label,
@@ -3652,6 +3756,7 @@ class _WidgetsFactoryGen:
             text=text,
             text_pane=text_pane,
             write_to_console=write_to_console,
+            **kwargs,
         ))
 
     def trend(self,
@@ -3688,6 +3793,7 @@ class _WidgetsFactoryGen:
         pos_color: str = '#5cb85c',
         neg_color: str = '#d9534f',
         value_change: Any = 'auto',
+        **kwargs: Any,
     ) -> _widgets.Trend:
         return self._add(_widgets.Trend(
             label=label,
@@ -3723,6 +3829,7 @@ class _WidgetsFactoryGen:
             pos_color=pos_color,
             neg_color=neg_color,
             value_change=value_change,
+            **kwargs,
         ))
 
     def video_stream(self,
@@ -3752,6 +3859,7 @@ class _WidgetsFactoryGen:
         paused: bool = False,
         timeout: int | None = None,
         value: Any | None = None,
+        **kwargs: Any,
     ) -> _widgets.VideoStream:
         return self._add(_widgets.VideoStream(
             label=label,
@@ -3780,5 +3888,6 @@ class _WidgetsFactoryGen:
             paused=paused,
             timeout=timeout,
             value=value,
+            **kwargs,
         ))
 

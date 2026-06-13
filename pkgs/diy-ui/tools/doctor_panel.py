@@ -212,6 +212,9 @@ _WRAPPER_EXCLUDED: dict[type, set[str]] = {
     },
     diypn.widgets.Button: {
         "clicks",
+        "name",
+        "button_type",
+        "button_style",
     },
     diypn.widgets.PasswordInput: {
         "value_input",

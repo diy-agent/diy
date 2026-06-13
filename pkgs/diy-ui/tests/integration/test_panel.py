@@ -36,9 +36,9 @@ class TestComponentPanelStyle:
 
     def test_button_keeps_panel_params(self):
         app = diypn.PanelApp()
-        btn = app.widgets.button(name="Run", button_type="primary")
-        assert btn.name == "Run"
-        assert btn.button_type == "primary"
+        btn = app.widgets.button(label="Run", color="primary")
+        assert btn.label == "Run"
+        assert btn.color == "primary"
 
     def test_text_input_keeps_panel_params(self):
         app = diypn.PanelApp()
@@ -171,9 +171,9 @@ class TestComponentIsPanelNative:
 
     def test_button_is_panel_button(self):
         app = diypn.PanelApp()
-        btn = app.widgets.button(name="Run")
+        btn = app.widgets.button(label="Run")
         assert isinstance(btn, pn.widgets.Button)
-        assert btn.name == "Run"  # Panel param 直接可访问
+        assert btn.label == "Run"  # Panel param 直接可访问
 
     def test_text_input_is_panel_text_input(self):
         app = diypn.PanelApp()

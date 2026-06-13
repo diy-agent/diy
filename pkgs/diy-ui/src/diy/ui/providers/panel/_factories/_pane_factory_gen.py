@@ -1,9 +1,7 @@
 """app.pane.xxx() 工厂类 — 由 tools/_generate_factories.py 自动生成，勿手改。"""
 
 from __future__ import annotations
-
 from typing import Any
-
 import panel as pn
 
 from .. import pane as _pane
@@ -42,6 +40,7 @@ class _PaneFactoryGen:
         fixed_aspect: bool = True,
         link_url: str | None = None,
         target: str = '_blank',
+        **kwargs: Any,
     ) -> _pane.AVIF:
         return self._add(_pane.AVIF(
             object=object,
@@ -73,6 +72,7 @@ class _PaneFactoryGen:
             fixed_aspect=fixed_aspect,
             link_url=link_url,
             target=target,
+            **kwargs,
         ))
 
     def alert(self,
@@ -108,6 +108,7 @@ class _PaneFactoryGen:
         renderer: Any = 'markdown-it',
         renderer_options: dict[str, Any] | None = None,
         alert_type: Any = 'primary',
+        **kwargs: Any,
     ) -> _pane.Alert:
         return self._add(_pane.Alert(
             object=object,
@@ -142,6 +143,7 @@ class _PaneFactoryGen:
             renderer=renderer,
             renderer_options=renderer_options,
             alert_type=alert_type,
+            **kwargs,
         ))
 
     def audio(self,
@@ -175,6 +177,7 @@ class _PaneFactoryGen:
         autoplay: bool = False,
         muted: bool = False,
         sample_rate: int = 44100,
+        **kwargs: Any,
     ) -> _pane.Audio:
         return self._add(_pane.Audio(
             object=object,
@@ -207,6 +210,7 @@ class _PaneFactoryGen:
             autoplay=autoplay,
             muted=muted,
             sample_rate=sample_rate,
+            **kwargs,
         ))
 
     def bokeh(self,
@@ -234,6 +238,7 @@ class _PaneFactoryGen:
         default_layout: Any = pn.layout.base.Row,
         autodispatch: bool = True,
         theme: str | None = None,
+        **kwargs: Any,
     ) -> _pane.Bokeh:
         return self._add(_pane.Bokeh(
             object=object,
@@ -260,6 +265,7 @@ class _PaneFactoryGen:
             default_layout=default_layout,
             autodispatch=autodispatch,
             theme=theme,
+            **kwargs,
         ))
 
     def data_frame(self,
@@ -307,6 +313,7 @@ class _PaneFactoryGen:
         show_dimensions: bool = False,
         sparsify: bool = True,
         text_align: Any = 'start',
+        **kwargs: Any,
     ) -> _pane.DataFrame:
         return self._add(_pane.DataFrame(
             object=object,
@@ -353,6 +360,7 @@ class _PaneFactoryGen:
             show_dimensions=show_dimensions,
             sparsify=sparsify,
             text_align=text_align,
+            **kwargs,
         ))
 
     def deck_gl(self,
@@ -381,6 +389,7 @@ class _PaneFactoryGen:
         mapbox_api_key: str | None = None,
         tooltips: bool = True,
         configuration: str = '',
+        **kwargs: Any,
     ) -> _pane.DeckGL:
         return self._add(_pane.DeckGL(
             object=object,
@@ -408,6 +417,7 @@ class _PaneFactoryGen:
             mapbox_api_key=mapbox_api_key,
             tooltips=tooltips,
             configuration=configuration,
+            **kwargs,
         ))
 
     def e_charts(self,
@@ -436,6 +446,7 @@ class _PaneFactoryGen:
         options: dict[str, Any] | None = None,
         renderer: str = 'canvas',
         theme: str = 'default',
+        **kwargs: Any,
     ) -> _pane.ECharts:
         return self._add(_pane.ECharts(
             object=object,
@@ -463,6 +474,7 @@ class _PaneFactoryGen:
             options=options,
             renderer=renderer,
             theme=theme,
+            **kwargs,
         ))
 
     def gif(self,
@@ -495,6 +507,7 @@ class _PaneFactoryGen:
         fixed_aspect: bool = True,
         link_url: str | None = None,
         target: str = '_blank',
+        **kwargs: Any,
     ) -> _pane.GIF:
         return self._add(_pane.GIF(
             object=object,
@@ -526,6 +539,7 @@ class _PaneFactoryGen:
             fixed_aspect=fixed_aspect,
             link_url=link_url,
             target=target,
+            **kwargs,
         ))
 
     def html(self,
@@ -554,6 +568,7 @@ class _PaneFactoryGen:
         enable_streaming: bool = False,
         disable_math: bool = True,
         sanitize_html: bool = False,
+        **kwargs: Any,
     ) -> _pane.HTML:
         return self._add(_pane.HTML(
             object=object,
@@ -581,6 +596,7 @@ class _PaneFactoryGen:
             enable_streaming=enable_streaming,
             disable_math=disable_math,
             sanitize_html=sanitize_html,
+            **kwargs,
         ))
 
     def holo_views(self,
@@ -615,6 +631,7 @@ class _PaneFactoryGen:
         widget_location: Any = 'right_top',
         widget_type: str = 'individual',
         widgets: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> _pane.HoloViews:
         return self._add(_pane.HoloViews(
             object=object,
@@ -648,6 +665,7 @@ class _PaneFactoryGen:
             widget_location=widget_location,
             widget_type=widget_type,
             widgets=widgets,
+            **kwargs,
         ))
 
     def ico(self,
@@ -680,6 +698,7 @@ class _PaneFactoryGen:
         fixed_aspect: bool = True,
         link_url: str | None = None,
         target: str = '_blank',
+        **kwargs: Any,
     ) -> _pane.ICO:
         return self._add(_pane.ICO(
             object=object,
@@ -711,6 +730,7 @@ class _PaneFactoryGen:
             fixed_aspect=fixed_aspect,
             link_url=link_url,
             target=target,
+            **kwargs,
         ))
 
     def image(self,
@@ -743,6 +763,7 @@ class _PaneFactoryGen:
         fixed_aspect: bool = True,
         link_url: str | None = None,
         target: str = '_blank',
+        **kwargs: Any,
     ) -> _pane.Image:
         return self._add(_pane.Image(
             object=object,
@@ -774,6 +795,7 @@ class _PaneFactoryGen:
             fixed_aspect=fixed_aspect,
             link_url=link_url,
             target=target,
+            **kwargs,
         ))
 
     def jpg(self,
@@ -806,6 +828,7 @@ class _PaneFactoryGen:
         fixed_aspect: bool = True,
         link_url: str | None = None,
         target: str = '_blank',
+        **kwargs: Any,
     ) -> _pane.JPG:
         return self._add(_pane.JPG(
             object=object,
@@ -837,6 +860,7 @@ class _PaneFactoryGen:
             fixed_aspect=fixed_aspect,
             link_url=link_url,
             target=target,
+            **kwargs,
         ))
 
     def json(self,
@@ -866,6 +890,7 @@ class _PaneFactoryGen:
         depth: int = 1,
         hover_preview: bool = False,
         theme: Any = 'light',
+        **kwargs: Any,
     ) -> _pane.JSON:
         return self._add(_pane.JSON(
             object=object,
@@ -894,6 +919,7 @@ class _PaneFactoryGen:
             depth=depth,
             hover_preview=hover_preview,
             theme=theme,
+            **kwargs,
         ))
 
     def la_te_x(self,
@@ -920,6 +946,7 @@ class _PaneFactoryGen:
         loading: bool = False,
         default_layout: Any = pn.layout.base.Row,
         renderer: str | None = None,
+        **kwargs: Any,
     ) -> _pane.LaTeX:
         return self._add(_pane.LaTeX(
             object=object,
@@ -945,6 +972,7 @@ class _PaneFactoryGen:
             loading=loading,
             default_layout=default_layout,
             renderer=renderer,
+            **kwargs,
         ))
 
     def markdown(self,
@@ -979,6 +1007,7 @@ class _PaneFactoryGen:
         plugins: list[Any] | None = None,
         renderer: Any = 'markdown-it',
         renderer_options: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> _pane.Markdown:
         return self._add(_pane.Markdown(
             object=object,
@@ -1012,6 +1041,7 @@ class _PaneFactoryGen:
             plugins=plugins,
             renderer=renderer,
             renderer_options=renderer_options,
+            **kwargs,
         ))
 
     def matplotlib(self,
@@ -1050,6 +1080,7 @@ class _PaneFactoryGen:
         high_dpi: bool = True,
         interactive: bool = False,
         tight: bool = False,
+        **kwargs: Any,
     ) -> _pane.Matplotlib:
         return self._add(_pane.Matplotlib(
             object=object,
@@ -1087,6 +1118,7 @@ class _PaneFactoryGen:
             high_dpi=high_dpi,
             interactive=interactive,
             tight=tight,
+            **kwargs,
         ))
 
     def pdf(self,
@@ -1115,6 +1147,7 @@ class _PaneFactoryGen:
         enable_streaming: bool = False,
         embed: bool = False,
         start_page: int = 1,
+        **kwargs: Any,
     ) -> _pane.PDF:
         return self._add(_pane.PDF(
             object=object,
@@ -1142,6 +1175,7 @@ class _PaneFactoryGen:
             enable_streaming=enable_streaming,
             embed=embed,
             start_page=start_page,
+            **kwargs,
         ))
 
     def png(self,
@@ -1174,6 +1208,7 @@ class _PaneFactoryGen:
         fixed_aspect: bool = True,
         link_url: str | None = None,
         target: str = '_blank',
+        **kwargs: Any,
     ) -> _pane.PNG:
         return self._add(_pane.PNG(
             object=object,
@@ -1205,6 +1240,7 @@ class _PaneFactoryGen:
             fixed_aspect=fixed_aspect,
             link_url=link_url,
             target=target,
+            **kwargs,
         ))
 
     def placeholder(self,
@@ -1231,6 +1267,7 @@ class _PaneFactoryGen:
         loading: bool = False,
         default_layout: Any = pn.layout.base.Row,
         inplace: bool = False,
+        **kwargs: Any,
     ) -> _pane.Placeholder:
         return self._add(_pane.Placeholder(
             object=object,
@@ -1256,6 +1293,7 @@ class _PaneFactoryGen:
             loading=loading,
             default_layout=default_layout,
             inplace=inplace,
+            **kwargs,
         ))
 
     def plotly(self,
@@ -1285,6 +1323,7 @@ class _PaneFactoryGen:
         link_figure: bool = True,
         viewport_update_policy: Any = 'mouseup',
         viewport_update_throttle: int = 200,
+        **kwargs: Any,
     ) -> _pane.Plotly:
         return self._add(_pane.Plotly(
             object=object,
@@ -1313,6 +1352,7 @@ class _PaneFactoryGen:
             link_figure=link_figure,
             viewport_update_policy=viewport_update_policy,
             viewport_update_throttle=viewport_update_throttle,
+            **kwargs,
         ))
 
     def svg(self,
@@ -1346,6 +1386,7 @@ class _PaneFactoryGen:
         link_url: str | None = None,
         target: str = '_blank',
         encode: bool = True,
+        **kwargs: Any,
     ) -> _pane.SVG:
         return self._add(_pane.SVG(
             object=object,
@@ -1378,6 +1419,7 @@ class _PaneFactoryGen:
             link_url=link_url,
             target=target,
             encode=encode,
+            **kwargs,
         ))
 
     def str(self,
@@ -1404,6 +1446,7 @@ class _PaneFactoryGen:
         loading: bool = False,
         default_layout: Any = pn.layout.base.Row,
         enable_streaming: bool = False,
+        **kwargs: Any,
     ) -> _pane.Str:
         return self._add(_pane.Str(
             object=object,
@@ -1429,6 +1472,7 @@ class _PaneFactoryGen:
             loading=loading,
             default_layout=default_layout,
             enable_streaming=enable_streaming,
+            **kwargs,
         ))
 
     def vega(self,
@@ -1457,6 +1501,7 @@ class _PaneFactoryGen:
         debounce: int = 20,
         show_actions: bool = False,
         theme: str | None = None,
+        **kwargs: Any,
     ) -> _pane.Vega:
         return self._add(_pane.Vega(
             object=object,
@@ -1484,6 +1529,7 @@ class _PaneFactoryGen:
             debounce=debounce,
             show_actions=show_actions,
             theme=theme,
+            **kwargs,
         ))
 
     def video(self,
@@ -1516,6 +1562,7 @@ class _PaneFactoryGen:
         volume: int = 100,
         autoplay: bool = False,
         muted: bool = False,
+        **kwargs: Any,
     ) -> _pane.Video:
         return self._add(_pane.Video(
             object=object,
@@ -1547,6 +1594,7 @@ class _PaneFactoryGen:
             volume=volume,
             autoplay=autoplay,
             muted=muted,
+            **kwargs,
         ))
 
     def web_p(self,
@@ -1579,6 +1627,7 @@ class _PaneFactoryGen:
         fixed_aspect: bool = True,
         link_url: str | None = None,
         target: str = '_blank',
+        **kwargs: Any,
     ) -> _pane.WebP:
         return self._add(_pane.WebP(
             object=object,
@@ -1610,5 +1659,6 @@ class _PaneFactoryGen:
             fixed_aspect=fixed_aspect,
             link_url=link_url,
             target=target,
+            **kwargs,
         ))
 

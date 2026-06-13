@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import diy.ui
+from diy.ui.providers.panel._meta import DiyInitSub
 
 if TYPE_CHECKING:
     from diy.ui._signal import Signal
@@ -12,11 +13,13 @@ if TYPE_CHECKING:
 C = TypeVar("C", bound="UIComponent")
 
 
-class UIComponent(diy.ui.ScopeNode):
+class UIComponent(diy.ui.ScopeNode, DiyInitSub):
     """provider 原生组件的薄包装。
 
     diy.ui 组件直接继承 Panel 原生类，self 就是 provider 原生对象。
     diy 命名空间存放 diy 扩展属性（signal/init_done/panel_container）。
+
+    DiyInitSub 使子类自动从 Panel param 提取类型生成 __init__。
     """
 
     def __init__(self, *, config: diy.ui.ScopeConfig | None = None) -> None:
