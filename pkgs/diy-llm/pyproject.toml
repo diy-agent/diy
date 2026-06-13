@@ -21,7 +21,7 @@ packages = ["src/diy_llm"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    { path = "src/diy_llm/providers/*.yaml", format = "wheel" },
+    { path = "src/diy_llm/providers/**/provider.yaml", format = "wheel" },
 ]
 
 [tool.uv]

@@ -2,9 +2,6 @@
 
 Connects to the Tencent Cloud tokenhub API (OpenAI-compatible endpoint)
 at https://tokenhub.tencentmaas.com/v1/chat/completions.
-
-Authentication:
-- TENCENTCLOUD_LLM_SECRET_ID -- bearer token sent as Authorization header
 """
 
 from __future__ import annotations

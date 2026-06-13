@@ -53,7 +53,7 @@ tencent-<服务>-<渠道>
 - [ ] `hermes-agent` skill 中的引用
 - [ ] `diy-llm-provider-design` skill 中的引用
 
-**状态：** 🔴 待实现
+**状态：** ✅ 已完成 (2026-06-14)
 
 ---
 
@@ -158,7 +158,7 @@ models:
 - [ ] 删除 `models.defaults.json` 文件
 - [ ] 删除 `models.defaults.json` 被提到的所有文档
 
-**状态：** 🔴 待实现
+**状态：** ✅ 已完成 (2026-06-14)
 
 ---
 

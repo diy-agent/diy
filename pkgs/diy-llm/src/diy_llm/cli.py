@@ -63,9 +63,9 @@ def _discover_provider_types() -> dict[str, Path]:
     for entry in sorted(prov_dir.iterdir()):
         if not entry.is_dir():
             continue
-        type_file = Path(str(entry)) / "type.yaml"
-        if type_file.is_file():
-            result[entry.name] = type_file
+        prov_file = Path(str(entry)) / "provider.yaml"
+        if prov_file.is_file():
+            result[entry.name] = prov_file
     return result
 
 
@@ -171,9 +171,13 @@ def _fetch_model_ids(api_base: str, api_key: str) -> list[str] | None:
 
 
 def _ensure_lock(name: str, api_base: str, api_key: str, ptype: str) -> tuple[dict[str, Any], str]:
-    """Build a lock file entry."""
+    """Build a lock file entry. Provider definition wins for API facts, lock keeps user fields."""
     existing = _load_lock(name)
     existing_models = existing.get("models", {}) if existing else {}
+
+    # Load provider definition (models whitelist)
+    prov_def = _load_provider_type(ptype) or {}
+    prov_models = prov_def.get("models", {})
 
     try:
         live_ids = _fetch_model_ids(api_base, api_key)
@@ -184,41 +188,34 @@ def _ensure_lock(name: str, api_base: str, api_key: str, ptype: str) -> tuple[di
     except Exception as e:
         raise RuntimeError(f"Network error: {e}") from e
 
+    # Determine model IDs: prefer live /v1/models, then provider.yaml, then cache
     if live_ids is not None:
         ids = live_ids
         label = "live /v1/models"
+    elif prov_models:
+        ids = list(prov_models.keys())
+        label = "provider.yaml"
+    elif existing_models:
+        ids = list(existing_models.keys())
+        label = "cached (no /v1/models)"
     else:
-        defaults = _defaults_path(ptype)
-        if defaults and defaults.is_file():
-            with open(defaults) as f:
-                fallback = json.load(f)
-            ids = list(fallback.get("models", {}).keys())
-            label = "bundled defaults"
-        elif existing_models:
-            ids = list(existing_models.keys())
-            label = "cached (no /v1/models)"
-        else:
-            raise RuntimeError(f"No model source for '{ptype}' — provider has no /v1/models and no defaults bundled")
-
-    meta_defaults = {}
-    defaults = _defaults_path(ptype)
-    if defaults and defaults.is_file():
-        with open(defaults) as f:
-            meta_defaults = json.load(f).get("models", {})
+        raise RuntimeError(f"No model source for '{ptype}' — provider has no /v1/models and no provider.yaml models")
 
     models: dict[str, dict[str, Any]] = {}
     for mid in ids:
         prev = existing_models.get(mid, {})
-        meta = meta_defaults.get(mid, {})
+        meta = prov_models.get(mid, {})
+        # API facts: provider definition wins (meta > prev)
+        # max_tokens is client param: prev can override
         models[mid] = {
             "id": mid,
-            "name": prev.get("name", meta.get("name", mid)),
+            "label": meta.get("label", prev.get("name", prev.get("label", mid))),
             "enabled": prev.get("enabled", True),
-            "context_window": prev.get("context_window", meta.get("context_window", 128000)),
+            "context_window": meta.get("context_window", prev.get("context_window", 128000)),
             "max_tokens": prev.get("max_tokens", meta.get("max_tokens", 4096)),
-            "reasoning": prev.get("reasoning", meta.get("reasoning", False)),
-            "cost": prev.get("cost", meta.get("cost", {"input": 0, "output": 0})),
-            "compat": prev.get("compat", meta.get("compat", {})),
+            "reasoning": meta.get("reasoning", prev.get("reasoning", False)),
+            "cost": meta.get("cost", prev.get("cost", {"input": 0, "output": 0})),
+            "compat": meta.get("compat", prev.get("compat", {})),
             "status": prev.get("status", "ok"),
             "error_last_code": prev.get("error_last_code"),
             "error_last_message": prev.get("error_last_message"),
@@ -227,6 +224,7 @@ def _ensure_lock(name: str, api_base: str, api_key: str, ptype: str) -> tuple[di
             "error_retry_after": prev.get("error_retry_after"),
         }
 
+    # Mark models that were in lock but no longer in upstream as stale
     for mid, prev in existing_models.items():
         if mid not in models:
             models[mid] = {**prev, "stale": True}
@@ -373,7 +371,7 @@ def serve(
     print(f"    Key:    {cred.get('label', '?')}  [{cred.get('last_status', 'ok')}]")
     if default:
         dm = enabled.get(default)
-        dm_name = dm.get("name", default) if dm else default
+        dm_name = dm.get("label", default) if dm else default
         print(f"    Default: {default}  ({dm_name})")
     print(f"    Models: {len(model_list)} enabled")
     for i, m in enumerate(model_list, 1):
@@ -438,7 +436,7 @@ auth_app = App(name="auth", help="Manage credentials")
 
 @auth_app.command(name="set")
 def set_cred(
-    provider_type: Annotated[str, Parameter(help="Provider type (e.g. qcloud-tokenhub)")],
+    provider_type: Annotated[str, Parameter(help="Provider type (e.g. tencent-tokenhub)")],
     key: Annotated[str, Parameter(help="API key value or $ENV_VAR")],
     name: Annotated[str | None, Parameter(help="Instance name, default: same as type")] = None,
     base_url: Annotated[str | None, Parameter(help="Override default api_base")] = None,
@@ -588,7 +586,7 @@ def set_model(
 
     meta = models[model_id]
     print(f"✓  Default model for '{provider}' set to:")
-    print(f"     {model_id}  ({meta.get('name', model_id)})")
+    print(f"     {model_id}  ({meta.get('label', model_id)})")
 
 
 @model_app.command(name="show")
@@ -607,7 +605,7 @@ def show_model(
         lock = _load_lock(provider)
         meta = (lock or {}).get("models", {}).get(mid, {})
         print(f"Default model for '{provider}':")
-        print(f"  {mid}  ({meta.get('name', mid)})")
+        print(f"  {mid}  ({meta.get('label', mid)})")
         return
 
     if not defaults:
@@ -696,7 +694,7 @@ def include_model(
         print(f"Excluded models for '{provider}':")
         for mid in sorted(excludes):
             meta = models.get(mid, {})
-            label = f" ({meta.get('name', mid)})" if meta.get("name") else ""
+            label = f" ({meta.get('label', mid)})" if meta.get("label") else ""
             print(f"  - {mid}{label}")
         return
 
