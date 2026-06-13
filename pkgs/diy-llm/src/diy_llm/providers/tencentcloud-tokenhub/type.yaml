@@ -3,6 +3,10 @@
 # 腾讯云 TokenHub API (tokenhub.tencentmaas.com)
 # ============================================================
 
+# 🔗 参考文档
+#   模型价格: https://cloud.tencent.com/document/product/1823/130055
+#   模型列表: https://cloud.tencent.com/document/product/1823/129605
+
 type: tencentcloud-tokenhub
 name: 腾讯云 TokenHub
 
