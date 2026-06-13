@@ -222,7 +222,7 @@ def fingerprint(value: str) -> str
 - [ ] 更新 `pyproject.toml` entry points 确保导入路径正确
 - [ ] 测试：当前无测试文件，需建 `tests/test_core.py`
 
-**状态：** 🔴 待实现
+**状态：** ✅ 已完成 (2026-06-14)
 
 ---
 
@@ -363,7 +363,7 @@ def load_dotenv(path: Path | None = None) -> None:
 - [ ] `auth set` 写入 `.env` 后自动生效（已存在，load_dotenv 保证后续加载）
 - [ ] 文档更新：说明 `.env` 支持
 
-**状态：** 🔴 待实现
+**状态：** ✅ 已完成 (2026-06-14)
 
 ---
 
