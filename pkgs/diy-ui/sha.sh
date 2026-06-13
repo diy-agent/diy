@@ -85,5 +85,14 @@ doctor() {
   run uv run python tools/doctor_panel.py "$@"
 }
 
+# 生成 factory 文件 — 从 wrapper 类签名自动生成 _factories/*.gen.py
+gen() {
+  run uv run python tools/_generate_factories.py
+}
+
+pyi() {
+  run uv run python tools/_generate_pyi.py
+}
+
 
 sha "$@"
