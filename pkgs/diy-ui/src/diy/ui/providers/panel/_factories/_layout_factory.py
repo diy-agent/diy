@@ -1,19 +1,18 @@
-"""app.layout.xxx() 工厂 — 继承 _LayoutFactoryGen，添加运行时能力。"""
+"""app.layout.xxx() 工厂基类 — 提供运行时 _add 能力。"""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ._layout_factory_gen import _LayoutFactoryGen
+from .._base import UIComponent
 
 if TYPE_CHECKING:
     from .._app import PanelApp
-    from .._base import UIComponent
 
 
-class _LayoutFactory(_LayoutFactoryGen):
+class _LayoutFactoryBase:
     __slots__ = ("_app",)
 
-    def __init__(self, app: PanelApp) -> None:
+    def __init__(self, app: "PanelApp") -> None:
         self._app = app
 
     def _add(self, comp: UIComponent) -> UIComponent:

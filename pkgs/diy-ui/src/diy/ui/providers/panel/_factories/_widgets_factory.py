@@ -1,14 +1,18 @@
-"""app.widgets.xxx() 工厂 — 继承 _WidgetsFactoryGen，添加运行时能力。"""
+"""app.widgets.xxx() 工厂基类 — 提供运行时 _add 能力。"""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from .._base import UIComponent
-from ._widgets_factory_gen import _WidgetsFactoryGen
+
+if TYPE_CHECKING:
+    from .._app import PanelApp
 
 
-class _WidgetsFactory(_WidgetsFactoryGen):
+class _WidgetsFactoryBase:
     __slots__ = ("_app",)
 
-    def __init__(self, app: PanelApp) -> None:  # type: ignore[name-defined]
+    def __init__(self, app: "PanelApp") -> None:
         self._app = app
 
     def _add(self, comp: UIComponent) -> UIComponent:

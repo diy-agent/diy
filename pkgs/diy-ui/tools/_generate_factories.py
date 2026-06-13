@@ -2,12 +2,11 @@
 
 用法: uv run python tools/_generate_factories.py
 输出:
-  src/diy/ui/providers/panel/_factories/_layout_factory.gen.py
-  src/diy/ui/providers/panel/_factories/_pane_factory.gen.py
-  src/diy/ui/providers/panel/_factories/_widgets_factory.gen.py
+  src/diy/ui/providers/panel/_factories/_layout_factory_gen.py
+  src/diy/ui/providers/panel/_factories/_pane_factory_gen.py
+  src/diy/ui/providers/panel/_factories/_widgets_factory_gen.py
 
-每个 .gen.py 包含完整的工厂方法实现（用 **locals() 透传参数到 wrapper 类），
-手写 *_factory.py 继承 Gen 类并添加 __init__ + _add 即可。
+每个 .gen.py 包含完整的工厂方法实现，继承手写基类（提供 _add + __init__）。
 """
 from __future__ import annotations
 
@@ -15,21 +14,19 @@ import inspect
 import re
 from pathlib import Path
 
-import diy.ui.providers.panel.layout as diy_layout
-import diy.ui.providers.panel.pane as diy_pane
-import diy.ui.providers.panel.widgets as diy_widgets
-
 PKG = Path(__file__).resolve().parent.parent / "src" / "diy" / "ui" / "providers" / "panel"
 FACTORIES_DIR = PKG / "_factories"
 
 CONFIG = [
-    ("_LayoutFactoryGen", "_layout_factory_gen.py", diy_layout, "layout", True),
-    ("_PaneFactoryGen", "_pane_factory_gen.py", diy_pane, "pane", False),
-    ("_WidgetsFactoryGen", "_widgets_factory_gen.py", diy_widgets, "widgets", False),
+    ("_LayoutFactory", "_layout_factory_gen.py", "layout", True),
+    ("_PaneFactory", "_pane_factory_gen.py", "pane", False),
+    ("_WidgetsFactory", "_widgets_factory_gen.py", "widgets", False),
 ]
 
 DISPLAY = {"layout": "layout", "pane": "pane", "widgets": "widgets"}
 WRAPPER_MOD = {"layout": "_layout", "pane": "_pane", "widgets": "_widgets"}
+BASE_CLASS = {"layout": "_LayoutFactoryBase", "pane": "_PaneFactoryBase", "widgets": "_WidgetsFactoryBase"}
+MODULE_MAP = {"layout": "diy.ui.providers.panel.layout", "pane": "diy.ui.providers.panel.pane", "widgets": "diy.ui.providers.panel.widgets"}
 
 
 def _to_snake(name: str) -> str:
@@ -46,7 +43,9 @@ def _format_type(ann: object) -> str:
         pass
     s = inspect.formatannotation(ann)
     s = s.replace("typing.", "").replace("NoneType", "None")
-    for ch in ("'", '"'): s = s.replace(ch, "")
+    # 只去掉包围合法 Python 标识符的引号，保留字符串字面量（如 'flex-start', 'first baseline'）
+    s = re.sub(r"'([A-Za-z_][A-Za-z0-9_]*)'", r"\1", s)
+    s = re.sub(r"\"([A-Za-z_][A-Za-z0-9_]*)\"", r"\1", s)
     s = s.replace("ForwardRef(", "").replace(")", "")
     s = re.sub(r"\s+", " ", s).strip()
     if len(s) > 200 or not s or s == "None":
@@ -54,13 +53,14 @@ def _format_type(ann: object) -> str:
     return s
 
 
-def _collect(dir_module: object) -> list[tuple[str, type]]:
+def _collect(mod_name: str) -> list[tuple[str, type]]:
+    module = __import__(MODULE_MAP[mod_name], fromlist=[""])
     classes: list[tuple[str, type]] = []
-    for name in sorted(dir(dir_module)):
+    for name in sorted(dir(module)):
         if name.startswith("_"):
             continue
-        if isinstance(getattr(dir_module, name), type):
-            classes.append((name, getattr(dir_module, name)))
+        if isinstance(getattr(module, name), type):
+            classes.append((name, getattr(module, name)))
     return classes
 
 
@@ -135,10 +135,11 @@ def _gen_method(cls_name: str, cls: type, wrapper_mod: str, has_children: bool, 
     return "\n".join(sig_lines + body)
 
 
-def _gen_file(cls_name: str, fname: str, dir_module: object, mod_name: str, has_children: bool) -> str:
-    classes = _collect(dir_module)
+def _gen_file(cls_name: str, fname: str, mod_name: str, has_children: bool) -> str:
+    classes = _collect(mod_name)
     wrapper_mod = WRAPPER_MOD[mod_name]
     display = DISPLAY[mod_name]
+    base_class = BASE_CLASS[mod_name]
 
     # 检测是否需要 import panel
     needs_panel = False
@@ -159,9 +160,10 @@ def _gen_file(cls_name: str, fname: str, dir_module: object, mod_name: str, has_
         lines.append("import panel as pn")
     lines.append("")
     lines.append(f"from .. import {mod_name} as {wrapper_mod}")
+    lines.append(f"from ._{mod_name}_factory import {base_class}")
     lines.append("")
     lines.append("")
-    lines.append(f"class {cls_name}:")
+    lines.append(f"class {cls_name}({base_class}):")
     lines.append(f'    """app.{display}.xxx() 工厂方法（自动生成）。"""')
     lines.append("")
     for cls_name_w, cls in classes:
@@ -171,8 +173,8 @@ def _gen_file(cls_name: str, fname: str, dir_module: object, mod_name: str, has_
 
 
 def generate() -> dict[str, str]:
-    return {fname: _gen_file(cls_name, fname, mod, mod_name, children)
-            for cls_name, fname, mod, mod_name, children in CONFIG}
+    return {fname: _gen_file(cls_name, fname, mod_name, children)
+            for cls_name, fname, mod_name, children in CONFIG}
 
 
 def main() -> None:
