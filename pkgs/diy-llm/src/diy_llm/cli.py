@@ -231,6 +231,13 @@ def _ensure_lock(name: str, api_base: str, api_key: str, ptype: str) -> tuple[di
         if mid not in models:
             models[mid] = {**prev, "stale": True}
 
+    # Apply excludes from config
+    cfg = _load_config()
+    provider_excludes = cfg.get("exclude_models", {}).get(name, [])
+    for mid in provider_excludes:
+        if mid in models:
+            models[mid]["enabled"] = False
+
     lock = {
         "version": LOCK_VERSION,
         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -323,6 +330,14 @@ def serve(
         _die(f"No lock for '{name}'. Run: diy-llm sync {name}")
 
     models = lock.get("models", {})
+
+    # Apply excludes from config as safety net
+    cfg = _load_config()
+    provider_excludes = cfg.get("exclude_models", {}).get(name, [])
+    for mid in provider_excludes:
+        if mid in models:
+            models[mid]["enabled"] = False
+
     enabled = {mid: m for mid, m in models.items() if m.get("enabled") and not m.get("stale")}
     if not enabled:
         _die(f"No enabled models for '{name}'. Edit {_lock_path(name)} to enable some.")
@@ -630,6 +645,76 @@ def unset_model(
         cfg["default_model"] = {}
         _save_config(cfg)
         print(f"✓  All {count} default model(s) cleared.")
+
+
+@model_app.command(name="exclude")
+def exclude_model(
+    provider: Annotated[str, Parameter(help="Provider instance name")],
+    model_id: Annotated[str, Parameter(help="Model ID to exclude")],
+):
+    """Disable a model — mark as exclude in config and lock."""
+    lock = _load_lock(provider)
+    models = (lock or {}).get("models", {})
+    if model_id not in models:
+        available = ", ".join(sorted(models.keys())) if models else "(not synced)"
+        _die(f"Model '{model_id}' not found in lock for '{provider}'. Available: {available}")
+
+    if models[model_id].get("stale"):
+        print(f"⚠  Model '{model_id}' is already stale (no longer on provider).", file=sys.stderr)
+
+    cfg = _load_config()
+    excludes = cfg.setdefault("exclude_models", {}).setdefault(provider, [])
+    if model_id not in excludes:
+        excludes.append(model_id)
+    _save_config(cfg)
+
+    # Also update lock immediately
+    models[model_id]["enabled"] = False
+    _save_lock(provider, lock)
+
+    print(f"✓  Model '{model_id}' excluded for '{provider}'.")
+
+
+@model_app.command(name="include")
+def include_model(
+    provider: Annotated[str, Parameter(help="Provider instance name")],
+    model_id: Annotated[str | None, Parameter(help="Model ID to include back, or omit to list excludes", negative=False)] = None,
+):
+    """Re-enable a model — remove from exclude list."""
+    lock = _load_lock(provider)
+    if not lock:
+        _die(f"No lock for '{provider}'. Run sync first.")
+
+    cfg = _load_config()
+    excludes = cfg.setdefault("exclude_models", {}).get(provider, [])
+
+    if model_id is None:
+        models = lock.get("models", {})
+        if not excludes:
+            print(f"No models excluded for '{provider}'.")
+            return
+        print(f"Excluded models for '{provider}':")
+        for mid in sorted(excludes):
+            meta = models.get(mid, {})
+            label = f" ({meta.get('name', mid)})" if meta.get("name") else ""
+            print(f"  - {mid}{label}")
+        return
+
+    if model_id not in excludes:
+        _die(f"Model '{model_id}' is not excluded for '{provider}'. Use 'model exclude' first.")
+
+    excludes.remove(model_id)
+    if not excludes:
+        del cfg["exclude_models"][provider]
+    _save_config(cfg)
+
+    # Update lock
+    models = lock.get("models", {})
+    if model_id in models:
+        models[model_id]["enabled"] = True
+    _save_lock(provider, lock)
+
+    print(f"✓  Model '{model_id}' included back for '{provider}'.")
 
 
 # Register sub-apps
