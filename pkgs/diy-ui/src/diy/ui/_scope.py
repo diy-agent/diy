@@ -29,12 +29,24 @@ _deps_var: ContextVar[set[object] | None] = ContextVar("diyui_deps", default=Non
 
 @contextmanager
 def no_dep_tracking():
-    """暂时停止响应式依赖追踪。
+    """暂停响应式依赖追踪（学习 Vue 3 ``pauseTracking`` / ``resetTracking``）。
 
-    用 with 包裹「内部构建操作」——Panel init、Signal 初始化、bridge 安装等。
-    语义：这些操作中读取 Signal.value 不注册当前 cell 为依赖。
+    设计演进:
+      旧模型: wrapper __init__ 中创建 self.diy.signal → Panel init 读 value
+              → Signal 上下文触发 → deps.add(signal)
+              → 用 no_dep_tracking() 包裹 Panel init 来屏蔽副作用。
+      新模型: Signal 移入 _add()，wrapper __init__ 中 self.diy.signal 为 None，
+              value getter 走 param.__get__ fallback，不经过 Signal 上下文。
+              → 手动 wrapper（如 Checkbox）**不再需要** no_dep_tracking。
+
+    当前用途: 仅 _meta.py 生成的 __init__（DiyInitSub 自动生成）仍包裹
+    ``with no_dep_tracking()`` 以兼容尚未迁移的旧 wrapper。
+    新写的薄封装 wrapper 直接透传 Panel init 即可。
 
     可嵌套：内层 with 结束后自动恢复外层状态。
+
+    架构债: 理想设计（issue #121）是 _deps_var 作为 cell 的实例状态
+    而非 ContextVar 全局注入——让你写 ``with cell.no_tracking():``。
     """
     token = _deps_var.set(None)
     try:
@@ -109,9 +121,9 @@ class _DiyData:
     __slots__ = ('signal', 'init_done', 'panel_container')
 
     def __init__(self) -> None:
-        self.signal: object = None        # widget 的 Signal 实例
-        self.init_done: bool = False      # widget 初始化完成标记
-        self.panel_container: bool = False  # layout 容器标记
+        self.signal: Signal[Any] | None = None  # widget 的 Signal 实例
+        self.init_done: bool = False            # widget 初始化完成标记（旧模型，待清理）
+        self.panel_container: bool = False      # layout 容器标记
 
 
 class ScopeNode:
