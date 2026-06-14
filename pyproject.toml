@@ -24,6 +24,7 @@ members = [
     "pkgs/diy-ui",
     "pkgs/diy-cli",
     "pkgs/diy-llm",
+    "pkgs/diy-llm-gui",
 ]
 
 [[tool.uv.index]]
