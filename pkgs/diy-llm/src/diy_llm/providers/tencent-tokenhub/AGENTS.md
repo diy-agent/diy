@@ -32,7 +32,7 @@ LiteLLM 代理配置中每个 model entry 的 `litellm_params.model` 必须是 `
 
 ### 3. 凭据
 
-`auth.json` 只存 `source: env:VAR_NAME`，不存明文 key。key 在环境变量中。
+`provider state` 文件中 `source` 字段只存 `env:VAR_NAME`，不存明文 key。key 在环境变量中。
 
 ### 4. 模型管理
 

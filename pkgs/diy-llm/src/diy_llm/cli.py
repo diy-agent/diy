@@ -9,13 +9,13 @@ import json
 import os
 import sys
 import tempfile
-from typing import Annotated, Any
 from importlib.metadata import version
+from typing import Annotated, Any
 
 import yaml
-from cyclopts import App, Group, Parameter
+from cyclopts import App, Parameter
 
-from diy_llm import core, auth
+from diy_llm import auth, core
 
 
 def _die(msg: str, code: int = 1) -> None:
@@ -49,14 +49,13 @@ def serve(
     if list_providers:
         if not types:
             _die("No bundled provider types.")
-        auth_data = auth.load_auth()
-        providers = auth_data.get("providers", {})
+        providers_with_auth = auth.list_providers_with_auth()
         print("Available providers:")
         for tname in sorted(types):
-            cred_status = "has auth" if tname in providers else "no auth"
+            cred_status = "has auth" if tname in providers_with_auth else "no auth"
             state = core.load_state(tname)
             stale = sum(1 for m in (state or {}).get("models", {}).values() if m.get("stale"))
-            live = sum(1 for m in (state or {}).get("models", {}).values() if m.get("enabled") and not m.get("stale"))
+            live = sum(1 for m in (state or {}).get("models", {}).values() if m.get("editable", {}).get("enabled", m.get("enabled", True)) and not m.get("stale"))
             state_status = f"{live} models" if state else "not synced"
             if stale:
                 state_status += f" ({stale} stale)"
@@ -64,19 +63,18 @@ def serve(
         return
 
     # Resolve which providers to serve
+    providers_with_auth = auth.list_providers_with_auth()
     if provider:
         target_names = [provider]
     else:
-        auth_data = auth.load_auth()
-        target_names = [t for t in types if t in auth_data.get("providers", {})]
+        target_names = [t for t in types if t in providers_with_auth]
         if not target_names:
             _die("No providers with credentials. Run: diy-llm auth set <provider> --key $ENV_VAR")
 
     # Build combined config
     models_by_provider: dict[str, dict[str, Any]] = {}
-    auth_data = auth.load_auth()
     for name in target_names:
-        prov_auth = auth_data.get("providers", {}).get(name)
+        prov_auth = providers_with_auth.get(name)
         if not prov_auth:
             continue
 
@@ -103,7 +101,7 @@ def serve(
     litellm_cfg = core.build_litellm_config(models_by_provider)
 
     prov_label = ",".join(target_names) if not provider else provider
-    fd, config_path = tempfile.mkstemp(suffix=".yaml", prefix=f"diy-llm-")
+    fd, config_path = tempfile.mkstemp(suffix=".yaml", prefix="diy-llm-")
     with os.fdopen(fd, "w") as f:
         yaml.dump(litellm_cfg, f, default_flow_style=False, sort_keys=False)
 
@@ -134,18 +132,18 @@ def sync(
     provider: Annotated[str | None, Parameter(help="Provider name; omit for all configured", negative=False)] = None,
 ):
     """Fetch models from provider, update state file."""
-    auth_data = auth.load_auth()
+    providers_with_auth = auth.list_providers_with_auth()
 
     if provider:
         target_names = [provider]
     else:
-        target_names = [n for n in auth_data.get("providers", {})]
+        target_names = list(providers_with_auth.keys())
 
     if not target_names:
         _die("No providers with credentials. Run: diy-llm auth set <provider> --key $ENV_VAR")
 
     for name in target_names:
-        prov_auth = auth_data.get("providers", {}).get(name)
+        prov_auth = providers_with_auth.get(name)
         if not prov_auth:
             print(f"⚠  No credential for '{name}'", file=sys.stderr)
             continue
@@ -163,7 +161,7 @@ def sync(
         try:
             state, srcl = core.ensure_state(name, api_base, api_key, name)
             core.save_state(name, state)
-            enabled = sum(1 for m in state["models"].values() if m.get("enabled") and not m.get("stale"))
+            enabled = sum(1 for m in state["models"].values() if m.get("editable", {}).get("enabled", m.get("enabled", True)) and not m.get("stale"))
             total = len(state["models"])
             print(f"✓  {name} ({srcl}): {enabled}/{total} enabled  →  {core.state_path(name)}")
         except RuntimeError as e:
@@ -204,25 +202,19 @@ def set_cred(
         (core.DIYM_HOME / ".env").write_text(f"{env_name}={actual_key}\n")
         os.environ[env_name] = actual_key
 
-    prov_auth: dict[str, Any] = {"source": source}
-    if base_url:
-        prov_auth["api_base"] = base_url
-    else:
-        prov_auth["api_base"] = ptype_def.get("api", {}).get("default_base", "")
+    api_base = base_url or (ptype_def.get("api", {}).get("default_base", ""))
 
-    auth_data = auth.load_auth()
-    auth_data.setdefault("providers", {})[provider] = prov_auth
-    auth.save_auth(auth_data)
+    auth.set_provider_auth(provider, source, api_base)
 
     print(f"✓  Credential set for '{provider}'")
     print(f"   source:  {source}")
-    print(f"   base:    {prov_auth['api_base']}")
+    print(f"   base:    {api_base}")
 
     print()
     try:
-        state, srcl = core.ensure_state(provider, prov_auth["api_base"], actual_key, provider)
+        state, srcl = core.ensure_state(provider, api_base, actual_key, provider)
         core.save_state(provider, state)
-        enabled = sum(1 for m in state["models"].values() if m.get("enabled") and not m.get("stale"))
+        enabled = sum(1 for m in state["models"].values() if m.get("editable", {}).get("enabled", m.get("enabled", True)) and not m.get("stale"))
         print(f"✓  Initial sync ({srcl}): {enabled} models enabled")
     except RuntimeError as e:
         print(f"⚠  Sync failed: {e}", file=sys.stderr)
@@ -232,8 +224,7 @@ def set_cred(
 @auth_app.command(name="list")
 def list_cred():
     """List all credentials."""
-    auth_data = auth.load_auth()
-    providers = auth_data.get("providers", {})
+    providers = auth.list_providers_with_auth()
     if not providers:
         print("No credentials. Use: diy-llm auth set ...")
         return
@@ -247,8 +238,7 @@ def show_cred(
     provider: Annotated[str, Parameter(help="Provider name")],
 ):
     """Show credential details."""
-    auth_data = auth.load_auth()
-    prov_auth = auth_data.get("providers", {}).get(provider)
+    prov_auth = auth.get_provider_auth(provider)
     if not prov_auth:
         _die(f"No credential for '{provider}'")
     print(json.dumps(prov_auth, indent=2, ensure_ascii=False))
@@ -259,11 +249,9 @@ def remove_cred(
     provider: Annotated[str, Parameter(help="Provider name")],
 ):
     """Remove a credential."""
-    auth_data = auth.load_auth()
-    if provider not in auth_data.get("providers", {}):
+    if not auth.get_provider_auth(provider):
         _die(f"No credential for '{provider}'")
-    del auth_data["providers"][provider]
-    auth.save_auth(auth_data)
+    auth.remove_provider_auth(provider)
     print(f"✓  Credential removed for '{provider}'.")
 
 
@@ -291,8 +279,8 @@ def list_models(
             _print_model(mid, m)
         return
 
-    auth_data = auth.load_auth()
-    for pname in sorted(auth_data.get("providers", {})):
+    providers = auth.list_providers_with_auth()
+    for pname in sorted(providers):
         models = core.list_models(pname)
         if not models:
             continue
@@ -302,6 +290,7 @@ def list_models(
 
 
 def _print_model(mid: str, m: dict[str, Any]) -> None:
+    editable = m.get("editable", {})
     status = m.get("status", "ok")
     stale = " (stale)" if m.get("stale") else ""
     error = m.get("error")
@@ -311,7 +300,7 @@ def _print_model(mid: str, m: dict[str, Any]) -> None:
         status_str = "✗ error"
     elif status == "exhausted":
         status_str = "⚠ exhausted"
-    elif m.get("enabled"):
+    elif editable.get("enabled", False) if editable else m.get("enabled", True):
         status_str = "✓"
     else:
         status_str = "✗ disabled"
@@ -324,8 +313,8 @@ def clean_models(
     provider: Annotated[str | None, Parameter(help="Provider name; omit for all", negative=False)] = None,
 ):
     """Remove MODEL_DEPRECATED models from state."""
-    auth_data = auth.load_auth()
-    target_names = [provider] if provider else list(auth_data.get("providers", {}))
+    providers_with_auth = auth.list_providers_with_auth()
+    target_names = [provider] if provider else list(providers_with_auth.keys())
 
     for name in target_names:
         removed = core.clean_models(name)

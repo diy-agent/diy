@@ -28,6 +28,7 @@ def ensure_dirs() -> None:
 
 # ── provider type registry ────────────────────────────────────────────
 
+
 def discover_provider_types() -> dict[str, Path]:
     """Find bundled provider types by scanning providers/ for provider.yaml."""
     try:
@@ -58,6 +59,7 @@ def load_provider_type(ptype: str) -> dict[str, Any] | None:
 
 # ── state file ────────────────────────────────────────────────────────
 
+
 def state_path(provider_name: str) -> Path:
     return PROVIDERS_DIR / f"{provider_name}.json"
 
@@ -79,12 +81,16 @@ def save_state(provider_name: str, state: dict[str, Any]) -> None:
 
 # ── model sync logic ─────────────────────────────────────────────────
 
+
 def fetch_model_ids(api_base: str, api_key: str) -> list[str] | None:
     """Query /v1/models. Returns model ID list, None if 404 (no endpoint). Raises on other errors."""
     url = f"{api_base}/v1/models"
     req = urllib.request.Request(
         url,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -99,10 +105,23 @@ def fetch_model_ids(api_base: str, api_key: str) -> list[str] | None:
     return None
 
 
-def ensure_state(name: str, api_base: str, api_key: str, ptype: str) -> tuple[dict[str, Any], str]:
-    """Build a state entry. Whitelist = provider.yaml, MODEL_DEPRECATED for removed models."""
+def ensure_state(
+    name: str, api_base: str, api_key: str, ptype: str
+) -> tuple[dict[str, Any], str]:
+    """Sync models from provider, building/updating the state file.
+
+    Merge strategy (位置即语义):
+    - editable 外 = provider 事实 (label/reasoning/context_window/cost/compat)
+      → 每次 sync 以 provider.yaml 覆盖
+    - editable 内 = 用户地盘 (max_tokens/enabled)
+      → sync 绝不碰，新模型填默认值
+    - status/error = 运行时状态
+      → MODEL_DEPRECATED 等由 sync 自动标记
+    """
     existing = load_state(name)
     existing_models = existing.get("models", {}) if existing else {}
+    existing_source = existing.get("source") if existing else None
+    existing_api_base = existing.get("api_base", api_base) if existing else api_base
 
     # Load provider definition (models whitelist)
     prov_def = load_provider_type(ptype) or {}
@@ -112,7 +131,9 @@ def ensure_state(name: str, api_base: str, api_key: str, ptype: str) -> tuple[di
         live_ids = fetch_model_ids(api_base, api_key)
     except urllib.error.HTTPError as e:
         if 400 <= e.code < 500:
-            raise RuntimeError(f"4xx from provider: HTTP {e.code} — check your API key and endpoint") from e
+            raise RuntimeError(
+                f"4xx from provider: HTTP {e.code} — check your API key and endpoint"
+            ) from e
         raise RuntimeError(f"5xx from provider: HTTP {e.code} — provider error") from e
     except Exception as e:
         raise RuntimeError(f"Network error: {e}") from e
@@ -128,7 +149,9 @@ def ensure_state(name: str, api_base: str, api_key: str, ptype: str) -> tuple[di
         ids = list(existing_models.keys())
         label = "cached (no /v1/models)"
     else:
-        raise RuntimeError(f"No model source for '{ptype}' — provider has no /v1/models and no provider.yaml models")
+        raise RuntimeError(
+            f"No model source for '{ptype}' — provider has no /v1/models and no provider.yaml models"
+        )
 
     now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     upstream_set = set(ids) if live_ids is not None else None
@@ -138,20 +161,36 @@ def ensure_state(name: str, api_base: str, api_key: str, ptype: str) -> tuple[di
     whitelist_ids = list(prov_models.keys()) if prov_models else ids
     for mid in whitelist_ids:
         prev = existing_models.get(mid, {})
+        prev_editable = prev.get("editable", {})
         meta = prov_models.get(mid, {})
-        # API facts: provider definition wins
-        models[mid] = {
-            "id": mid,
-            "label": meta.get("label", prev.get("name", prev.get("label", mid))),
-            "enabled": prev.get("enabled", True),
-            "context_window": meta.get("context_window", prev.get("context_window", 128000)),
-            "max_tokens": prev.get("max_tokens", meta.get("max_tokens", 4096)),
+
+        # 兼容迁移：如果 prev 还有平铺的 enabled/max_tokens（旧格式），提取到 editable
+        if not prev_editable and ("enabled" in prev or "max_tokens" in prev):
+            prev_editable = {
+                "max_tokens": prev.get("max_tokens", 4096),
+                "enabled": prev.get("enabled", True),
+            }
+
+        # Provider facts — sync 时以 provider.yaml 为准，覆盖
+        model: dict[str, Any] = {
+            "label": meta.get("label", prev.get("label", mid)),
+            "context_window": meta.get(
+                "context_window", prev.get("context_window", 128000)
+            ),
             "reasoning": meta.get("reasoning", prev.get("reasoning", False)),
             "cost": meta.get("cost", prev.get("cost", {"input": 0, "output": 0})),
             "compat": meta.get("compat", prev.get("compat", {})),
             "status": prev.get("status", "ok"),
             "error": prev.get("error"),
         }
+
+        # User-editable 字段 — sync 绝不碰，只保留已有值或填默认
+        model["editable"] = {
+            "max_tokens": prev_editable.get("max_tokens", 4096),
+            "enabled": prev_editable.get("enabled", True),
+        }
+
+        models[mid] = model
 
         # MODEL_DEPRECATED: declared in provider.yaml but not returned by upstream
         if upstream_set is not None and mid not in upstream_set:
@@ -167,14 +206,25 @@ def ensure_state(name: str, api_base: str, api_key: str, ptype: str) -> tuple[di
         if mid not in models:
             models[mid] = {**prev, "stale": True}
 
-    state = {
+    state: dict[str, Any] = {
         "version": LOCK_VERSION,
         "updated_at": now,
         "provider": name,
         "provider_type": ptype,
         "models": models,
     }
+    if existing_source:
+        state["source"] = existing_source
+        state["api_base"] = existing_api_base
     return state, label
+
+
+def _is_enabled(m: dict[str, Any]) -> bool:
+    """Check if model is enabled, supporting both old flat and new editable format."""
+    editable = m.get("editable")
+    if editable is not None:
+        return bool(editable.get("enabled", False))
+    return bool(m.get("enabled", False))
 
 
 def get_enabled_models(name: str) -> dict[str, dict[str, Any]]:
@@ -184,8 +234,11 @@ def get_enabled_models(name: str) -> dict[str, dict[str, Any]]:
         return {}
     models = state.get("models", {})
     return {
-        mid: m for mid, m in models.items()
-        if m.get("enabled") and not m.get("stale") and m.get("status") not in ("error", "exhausted")
+        mid: m
+        for mid, m in models.items()
+        if _is_enabled(m)
+        and not m.get("stale")
+        and m.get("status") not in ("error", "exhausted")
     }
 
 
@@ -204,8 +257,10 @@ def clean_models(name: str) -> list[str]:
         return []
     models = state.get("models", {})
     removed = [
-        mid for mid, m in models.items()
-        if isinstance(m.get("error"), dict) and m["error"].get("code") == "MODEL_DEPRECATED"
+        mid
+        for mid, m in models.items()
+        if isinstance(m.get("error"), dict)
+        and m["error"].get("code") == "MODEL_DEPRECATED"
     ]
     for mid in removed:
         del models[mid]
@@ -213,7 +268,9 @@ def clean_models(name: str) -> list[str]:
     return removed
 
 
-def build_litellm_config(models_by_provider: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def build_litellm_config(
+    models_by_provider: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
     """Build a LiteLLM proxy config dict for one or more providers.
 
     models_by_provider: {provider_name: {model_id: {api_base, api_key, models: {mid: meta}}}}
@@ -223,19 +280,23 @@ def build_litellm_config(models_by_provider: dict[str, dict[str, Any]]) -> dict[
         api_base = pdef["api_base"]
         api_key = pdef["api_key"]
         for mid in pdef["models"]:
-            model_list.append({
-                "model_name": f"{pname}/{mid}",
-                "litellm_params": {
-                    "model": f"openai/{mid}",
-                    "api_base": api_base,
-                    "api_key": api_key,
-                    "drop_params": True,
-                },
-            })
+            model_list.append(
+                {
+                    "model_name": f"{pname}/{mid}",
+                    "litellm_params": {
+                        "model": f"openai/{mid}",
+                        "api_base": api_base,
+                        "api_key": api_key,
+                        "drop_params": True,
+                    },
+                }
+            )
 
     return {
         "model_list": model_list,
         "litellm_settings": {"drop_params": True, "set_verbose": False},
-        "general_settings": {"pass_through_endpoints": [{"path": "/v1/models", "target": ""}]},
+        "general_settings": {
+            "pass_through_endpoints": [{"path": "/v1/models", "target": ""}]
+        },
         "router_settings": {"drop_params": True},
     }
