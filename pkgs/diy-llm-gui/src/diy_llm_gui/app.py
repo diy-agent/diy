@@ -21,6 +21,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QApplication,
     QMenu,
+    QStyle,
     QSystemTrayIcon,
 )
 
@@ -56,7 +57,7 @@ class DiyLlmTray(QSystemTrayIcon):
         self._serve_process = None
 
         # 图标（无图标文件时用系统默认）
-        self.setIcon(app.style().standardIcon(app.style().SP_ComputerIcon))
+        self.setIcon(app.style().standardIcon(QStyle.SP_ComputerIcon))
         self.setToolTip("diy-llm")
 
         # 菜单
