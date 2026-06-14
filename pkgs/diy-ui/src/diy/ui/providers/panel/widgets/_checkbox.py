@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-import diy.ui
 import panel as pn
+
+from diy.ui import no_dep_tracking
 
 from .._base import UIComponent
 
@@ -39,48 +40,40 @@ class Checkbox(UIComponent, pn.widgets.Checkbox):
     ) -> None:
         _label = label or name
         UIComponent.__init__(self)
-        self.diy.signal: diy.ui.Signal[bool] = diy.ui.Signal[bool](value)
-        self.diy.init_done: bool = False
-        pn.widgets.Checkbox.__init__(
-            self,
-            label=_label,
-            value=value,
-            align=align,
-            aspect_ratio=aspect_ratio,
-            css_classes=css_classes or [],
-            design=design,
-            height=height,
-            min_width=min_width,
-            min_height=min_height,
-            max_width=max_width,
-            max_height=max_height,
-            margin=margin,
-            styles=styles or {},
-            stylesheets=stylesheets or [],
-            tags=tags or [],
-            width=width,
-            width_policy=width_policy,
-            height_policy=height_policy,
-            sizing_mode=sizing_mode,
-            visible=visible,
-            loading=loading,
-            disabled=disabled,
-        )
-        self.diy.init_done = True
-        self._setup_event_bridge()
+        with no_dep_tracking():
+            pn.widgets.Checkbox.__init__(
+                self,
+                label=_label,
+                value=value,
+                align=align,
+                aspect_ratio=aspect_ratio,
+                css_classes=css_classes or [],
+                design=design,
+                height=height,
+                min_width=min_width,
+                min_height=min_height,
+                max_width=max_width,
+                max_height=max_height,
+                margin=margin,
+                styles=styles or {},
+                stylesheets=stylesheets or [],
+                tags=tags or [],
+                width=width,
+                width_policy=width_policy,
+                height_policy=height_policy,
+                sizing_mode=sizing_mode,
+                visible=visible,
+                loading=loading,
+                disabled=disabled,
+            )
+        # Signal + bridge 由工厂 _add() 统一安装
+        # 不在此处创建 self._signal / self._setup_event_bridge
 
     @property
     def value(self) -> bool:
-        return self.diy.signal.value
+        sig = self.__dict__.get('_signal')
+        return sig.value if sig is not None else self.param['value'].__get__(self)
 
     @value.setter
     def value(self, v: bool) -> None:
-        self.diy.signal.value = v
-        if self.diy.init_done:
-            self.param["value"].__set__(self, v)
-
-    def _setup_event_bridge(self) -> None:
-        def on_change(event: Any) -> None:
-            self.diy.signal.value = event.new
-
-        self.param.watch(on_change, "value")
+        self.param['value'].__set__(self, v)

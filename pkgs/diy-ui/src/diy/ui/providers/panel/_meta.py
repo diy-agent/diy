@@ -128,8 +128,10 @@ def _build_init_source(class_name: str, param_list: list[tuple[str, str, Any]],
         filtered_str = ", ".join(repr(k) for k in sorted(pre_filtered))
         lines.append(f"    if _pre: _pre(**{{k: _kw[k] for k in {{{filtered_str}}} if k in _kw}})")
     lines.extend([
-        "    # Panel.__init__ — 纯透传",
-        "    pn_base.__init__(self, **_kw)",
+        "    # Panel.__init__ — 屏蔽依赖追踪",
+        "    from diy.ui import no_dep_tracking as __no_dep",
+        "    with __no_dep():",
+        "        pn_base.__init__(self, **_kw)",
         "    # _diy_post_init — 在 Panel.__init__ 之后",
         "    _post = getattr(self, '_diy_post_init', None)",
         "    if _post: _post()",

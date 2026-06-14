@@ -18,12 +18,29 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     from ._base_app import BaseApp
 
+from contextlib import contextmanager
 from contextvars import ContextVar
 
 from ._signal import ScopeViolationError, Signal, SignalContext
 
 _active_cell_var: ContextVar[ScopeNode | None] = ContextVar("diyui_active_cell", default=None)
 _deps_var: ContextVar[set[object] | None] = ContextVar("diyui_deps", default=None)
+
+
+@contextmanager
+def no_dep_tracking():
+    """暂时停止响应式依赖追踪。
+
+    用 with 包裹「内部构建操作」——Panel init、Signal 初始化、bridge 安装等。
+    语义：这些操作中读取 Signal.value 不注册当前 cell 为依赖。
+
+    可嵌套：内层 with 结束后自动恢复外层状态。
+    """
+    token = _deps_var.set(None)
+    try:
+        yield
+    finally:
+        _deps_var.reset(token)
 
 
 class CellRuntimeContext(SignalContext):
