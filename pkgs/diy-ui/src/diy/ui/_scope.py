@@ -41,8 +41,9 @@ class CellRuntimeContext(SignalContext):
         cross_scope = False
         owner = signal.owner
         if owner is not None and hasattr(owner, '_ancestor_ids'):
-            if (id(owner) not in active_cell._ancestor_ids
-                    and id(active_cell) not in owner._ancestor_ids):
+            owner_id = id(owner._host) if hasattr(owner, '_host') else id(owner)
+            if (owner_id not in active_cell._ancestor_ids
+                    and id(active_cell._host) not in owner._ancestor_ids):
                 cross_scope = True
                 if active_cell._lookup_mode == ScopeMode.DEV:
                     raise ScopeViolationError(
@@ -388,7 +389,9 @@ class ScopeNode:
     def _remove_child(self, child: 'ScopeNode'): self.diy._remove_child(child.diy)
 
     @property
-    def _ancestor_ids(self): return self.diy._ancestor_ids
+    def _ancestor_ids(self) -> set[int]:
+        """兼容：返回 node id（非 proxy id）。"""
+        return {id(self)} | {id(p._host) for p in self.diy._ancestor_ids if p is not self.diy}
     @property
     def _lookup_mode(self): return self.diy._lookup_mode
     @property
