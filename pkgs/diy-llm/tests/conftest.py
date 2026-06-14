@@ -1,6 +1,6 @@
 """diy-llm 意图测试共享配置。
 
-sh fixture 使用 subprocess 直接运行 diy-llm（非 PTY，因为 litellm 导入在 PTY 中会 hang）。
+sh fixture 使用 subprocess 直接运行 diy-llm。
 fake_home fixture 将 $HOME 隔离到临时目录。
 """
 

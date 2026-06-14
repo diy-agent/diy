@@ -171,15 +171,9 @@ def ensure_state(
                 "enabled": prev.get("enabled", True),
             }
 
-        # Provider facts — sync 时以 provider.yaml 为准，覆盖
+        # 运行时状态 — state 只存 editable/status/error，不进冗余的 provider 事实
+        # label/context_window/reasoning/cost/compat 都在 provider.yaml 里，显示时从那里读
         model: dict[str, Any] = {
-            "label": meta.get("label", prev.get("label", mid)),
-            "context_window": meta.get(
-                "context_window", prev.get("context_window", 128000)
-            ),
-            "reasoning": meta.get("reasoning", prev.get("reasoning", False)),
-            "cost": meta.get("cost", prev.get("cost", {"input": 0, "output": 0})),
-            "compat": meta.get("compat", prev.get("compat", {})),
             "status": prev.get("status", "ok"),
             "error": prev.get("error"),
         }
@@ -268,35 +262,4 @@ def clean_models(name: str) -> list[str]:
     return removed
 
 
-def build_litellm_config(
-    models_by_provider: dict[str, dict[str, Any]],
-) -> dict[str, Any]:
-    """Build a LiteLLM proxy config dict for one or more providers.
 
-    models_by_provider: {provider_name: {model_id: {api_base, api_key, models: {mid: meta}}}}
-    """
-    model_list = []
-    for pname, pdef in models_by_provider.items():
-        api_base = pdef["api_base"]
-        api_key = pdef["api_key"]
-        for mid in pdef["models"]:
-            model_list.append(
-                {
-                    "model_name": f"{pname}/{mid}",
-                    "litellm_params": {
-                        "model": f"openai/{mid}",
-                        "api_base": api_base,
-                        "api_key": api_key,
-                        "drop_params": True,
-                    },
-                }
-            )
-
-    return {
-        "model_list": model_list,
-        "litellm_settings": {"drop_params": True, "set_verbose": False},
-        "general_settings": {
-            "pass_through_endpoints": [{"path": "/v1/models", "target": ""}]
-        },
-        "router_settings": {"drop_params": True},
-    }

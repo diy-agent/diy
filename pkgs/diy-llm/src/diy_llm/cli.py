@@ -1,6 +1,6 @@
-"""diy-llm CLI — credential management, model sync, local proxy.
+"""diy-llm CLI — credential management, model sync, config export.
 
-Thin CLI layer on top of diy_llm.core and diy_llm.auth.
+Thin CLI layer on top of diy_llm.core, diy_llm.auth, and diy_llm.export.
 """
 
 from __future__ import annotations
@@ -8,14 +8,12 @@ from __future__ import annotations
 import json
 import os
 import sys
-import tempfile
 from importlib.metadata import version
 from typing import Annotated, Any
 
-import yaml
 from cyclopts import App, Parameter
 
-from diy_llm import auth, core
+from diy_llm import auth, core, export
 
 
 def _die(msg: str, code: int = 1) -> None:
@@ -29,106 +27,19 @@ def _die(msg: str, code: int = 1) -> None:
 
 app = App(
     name="diy-llm",
-    help="Local LLM proxy — multi-provider AI gateway via LiteLLM",
+    help="Provider config sync → PI agent / Hermes",
     version=version("diy-llm") if __package__ else "0.1.0",
     version_flags=["--version"],
 )
 
 
-# ── serve ─────────────────────────────────────────────────────────────
+# ── sync group ─────────────────────────────────────────────────────────
 
-@app.command
-def serve(
-    provider: Annotated[str | None, Parameter(help="Provider name; omit for all configured", negative=False)] = None,
-    port: Annotated[int, Parameter(help="Listen port")] = 18888,
-    list_providers: Annotated[bool, Parameter(name="--list-providers", help="Show provider status table")] = False,
-):
-    """Start LiteLLM proxy — serve all configured providers by default."""
-    types = core.discover_provider_types()
-
-    if list_providers:
-        if not types:
-            _die("No bundled provider types.")
-        providers_with_auth = auth.list_providers_with_auth()
-        print("Available providers:")
-        for tname in sorted(types):
-            cred_status = "has auth" if tname in providers_with_auth else "no auth"
-            state = core.load_state(tname)
-            stale = sum(1 for m in (state or {}).get("models", {}).values() if m.get("stale"))
-            live = sum(1 for m in (state or {}).get("models", {}).values() if m.get("editable", {}).get("enabled", m.get("enabled", True)) and not m.get("stale"))
-            state_status = f"{live} models" if state else "not synced"
-            if stale:
-                state_status += f" ({stale} stale)"
-            print(f"  {tname:30s}  [{cred_status}]  [{state_status}]")
-        return
-
-    # Resolve which providers to serve
-    providers_with_auth = auth.list_providers_with_auth()
-    if provider:
-        target_names = [provider]
-    else:
-        target_names = [t for t in types if t in providers_with_auth]
-        if not target_names:
-            _die("No providers with credentials. Run: diy-llm auth set <provider> --key $ENV_VAR")
-
-    # Build combined config
-    models_by_provider: dict[str, dict[str, Any]] = {}
-    for name in target_names:
-        prov_auth = providers_with_auth.get(name)
-        if not prov_auth:
-            continue
-
-        api_key = auth.resolve_api_key(prov_auth["source"])
-        if not api_key:
-            print(f"⚠  Skipping {name}: cannot resolve {prov_auth['source']}", file=sys.stderr)
-            continue
-
-        api_base = prov_auth.get("api_base", "")
-        if not api_base:
-            ptype_def = core.load_provider_type(name)
-            api_base = (ptype_def or {}).get("api", {}).get("default_base", "")
-
-        enabled = core.get_enabled_models(name)
-        if not enabled:
-            print(f"⚠  Skipping {name}: no enabled models", file=sys.stderr)
-            continue
-
-        models_by_provider[name] = {"api_base": api_base, "api_key": api_key, "models": enabled}
-
-    if not models_by_provider:
-        _die("No providers ready to serve. Check credentials and enabled models.")
-
-    litellm_cfg = core.build_litellm_config(models_by_provider)
-
-    prov_label = ",".join(target_names) if not provider else provider
-    fd, config_path = tempfile.mkstemp(suffix=".yaml", prefix="diy-llm-")
-    with os.fdopen(fd, "w") as f:
-        yaml.dump(litellm_cfg, f, default_flow_style=False, sort_keys=False)
-
-    total_models = sum(len(pd["models"]) for pd in models_by_provider.values())
-    print(f"🚀  diy-llm proxy  —  {prov_label}  :{port}")
-    print(f"    Providers: {len(models_by_provider)}")
-    print(f"    Models:    {total_models} total")
-    for pname, pdef in models_by_provider.items():
-        print(f"\n    [{pname}]")
-        for mid in pdef["models"]:
-            state = core.load_state(pname)
-            meta = (state or {}).get("models", {}).get(mid, {})
-            ctx = meta.get("context_window", "?")
-            r = "🧠" if meta.get("reasoning") else ""
-            print(f"      - {pname}/{mid:35s}  ctx={ctx:<8}  {r}")
-    print(f"\n    Config: {config_path}")
-    print()
-    sys.stdout.flush()
-
-    litellm_bin = os.path.join(os.path.dirname(sys.executable), "litellm")
-    os.execvp(litellm_bin, [litellm_bin, "--config", config_path, "--port", str(port)])
+sync_app = App(name="sync", help="Fetch models from provider, update state file / downstream tools")
 
 
-# ── sync ──────────────────────────────────────────────────────────────
-
-@app.command
-def sync(
+@sync_app.default
+def sync_state(
     provider: Annotated[str | None, Parameter(help="Provider name; omit for all configured", negative=False)] = None,
 ):
     """Fetch models from provider, update state file."""
@@ -168,6 +79,50 @@ def sync(
             print(f"✗  {name}: {e}", file=sys.stderr)
 
 
+@sync_app.command(name="pi")
+def sync_pi(
+    provider: Annotated[str | None, Parameter(help="Provider name; omit for all", negative=False)] = None,
+):
+    """Sync diy-llm providers to PI agent config (~/.pi/agent/models.json).
+
+    Removes all existing ``diy-*`` provider entries, then writes fresh
+    from diy-llm state. PI agent manual edits under ``diy-*`` are lost.
+    """
+    pi_path = export._find_pi_config()
+    config = export.read_pi_config(pi_path)
+    old_providers = config.get("providers", {})
+    old_diy_count = sum(1 for k in old_providers if k.startswith("diy-"))
+
+    providers_to_sync: list[str] | None = [provider] if provider else None
+    new_diy = export.build_pi_providers(providers_to_sync)
+
+    if not new_diy:
+        print("No providers to sync. Check credentials and model states.", file=sys.stderr)
+        return
+
+    # Remove all existing diy-* and merge new ones
+    for key in list(config.get("providers", {}).keys()):
+        if key.startswith("diy-"):
+            del config["providers"][key]
+    config["providers"].update(new_diy)
+
+    written = export.write_pi_config(config, pi_path)
+
+    added = len(new_diy)
+    print(f"✓  Synced {added} provider(s) to PI agent:")
+    for pname in new_diy:
+        pdef = new_diy[pname]
+        model_count = len(pdef.get("models", []))
+        print(f"     {pname:35s}  {pdef['baseUrl']:55s}  {model_count} models")
+    if old_diy_count:
+        print(f"   (removed {old_diy_count} stale diy-* provider(s))")
+    print(f"   →  {written}")
+
+
+# Register sync sub-app
+app.command(sync_app)
+
+
 # ── auth group ────────────────────────────────────────────────────────
 
 auth_app = App(name="auth", help="Manage credentials")
@@ -198,8 +153,21 @@ def set_cred(
         env_name = f"{provider.upper().replace('-','_')}_KEY"
         source = f"env:{env_name}"
         actual_key = key
-        core.ensure_dirs()
-        (core.DIYM_HOME / ".env").write_text(f"{env_name}={actual_key}\n")
+        # ── read-modify-write .env to preserve existing keys ──
+        env_path = core.DIYM_HOME / ".env"
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        entries: dict[str, str] = {}
+        if env_path.is_file():
+            for line in env_path.read_text().splitlines():
+                line_stripped = line.strip()
+                if "=" in line_stripped and not line_stripped.startswith("#"):
+                    k, _, v = line_stripped.partition("=")
+                    entries[k.strip()] = v.strip()
+        entries[env_name] = actual_key
+        content = "\n".join(f"{k}={v}" for k, v in sorted(entries.items()))
+        if content:
+            content += "\n"
+        env_path.write_text(content)
         os.environ[env_name] = actual_key
 
     api_base = base_url or (ptype_def.get("api", {}).get("default_base", ""))
@@ -276,7 +244,7 @@ def list_models(
             return
         print(f"Models for {provider}:")
         for mid, m in sorted(models.items()):
-            _print_model(mid, m)
+            _print_model(mid, m, provider_name=provider)
         return
 
     providers = auth.list_providers_with_auth()
@@ -286,10 +254,10 @@ def list_models(
             continue
         print(f"\n[{pname}]")
         for mid, m in sorted(models.items()):
-            _print_model(mid, m)
+            _print_model(mid, m, provider_name=pname)
 
 
-def _print_model(mid: str, m: dict[str, Any]) -> None:
+def _print_model(mid: str, m: dict[str, Any], provider_name: str | None = None) -> None:
     editable = m.get("editable", {})
     status = m.get("status", "ok")
     stale = " (stale)" if m.get("stale") else ""
@@ -304,7 +272,13 @@ def _print_model(mid: str, m: dict[str, Any]) -> None:
         status_str = "✓"
     else:
         status_str = "✗ disabled"
-    label = m.get("label", mid)
+    # label from provider.yaml (source of truth), not from state
+    label = mid
+    if provider_name:
+        ptype_def = core.load_provider_type(provider_name)
+        if ptype_def:
+            meta = ptype_def.get("models", {}).get(mid, {})
+            label = meta.get("label", mid)
     print(f"  {status_str}  {mid:35s}  {label}{stale}")
 
 

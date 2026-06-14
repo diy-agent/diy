@@ -1,14 +1,10 @@
 # ============================================================
-# Provider: tencent-tokenhub
-# 腾讯云 TokenHub API (tokenhub.tencentmaas.com)
+# Provider: deepseek
+# DeepSeek 官方 API (api.deepseek.com)
 # ============================================================
 
-# 🔗 参考文档
-#   模型价格: https://cloud.tencent.com/document/product/1823/130055
-#   模型列表: https://cloud.tencent.com/document/product/1823/129605
-
-type: tencent-tokenhub
-label: 腾讯云 TokenHub
+type: deepseek
+label: DeepSeek 官方
 
 # 🔐 认证方式 —— 固定 api_key
 auth:
@@ -19,26 +15,34 @@ auth:
 # 🌐 API 协议
 api:
   protocol: openai-compatible
-  default_base: https://tokenhub.tencentmaas.com/v1
+  default_base: https://api.deepseek.com
 
 # ── 模型白名单（只暴露这里声明的模型） ──────────────────
 
 models:
-  deepseek-v4-flash-202605:
-    label: DeepSeek V4 Flash 202605 (直通官网)
+  deepseek-v4-pro:
+    label: DeepSeek V4 Pro
     reasoning: true
     context_window: 1000000
-    cost: {input: 1, output: 2, cacheRead: 0.2, cacheWrite: 0}
+    max_tokens: 384000
+    cost: {input: 1.74, output: 3.48, cacheRead: 0.145, cacheWrite: 0}
     compat:
-      supportsDeveloperRole: false
+      requiresReasoningContentOnAssistantMessages: true
+      thinkingFormat: deepseek
+      reasoningEffortMap:
+        minimal: high
+        low: high
+        medium: high
+        high: high
+        xhigh: max
 
-  deepseek-v4-pro-202606:
-    label: DeepSeek V4 Pro 202606 (直通官网)
+  deepseek-v4-flash:
+    label: DeepSeek V4 Flash
     reasoning: true
     context_window: 1000000
-    cost: {input: 3, output: 6, cacheRead: 0.025, cacheWrite: 0}
+    max_tokens: 384000
+    cost: {input: 0.14, output: 0.28, cacheRead: 0.028, cacheWrite: 0}
     compat:
-      supportsDeveloperRole: false
       requiresReasoningContentOnAssistantMessages: true
       thinkingFormat: deepseek
       reasoningEffortMap:

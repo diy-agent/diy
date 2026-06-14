@@ -1,6 +1,6 @@
 # tencent-tokenhub — Provider
 
-腾讯云 TokenHub API 的 diy-llm provider。通过 LiteLLM `openai` provider 代理到 `tokenhub.tencentmaas.com`。
+腾讯云 TokenHub API 的 diy-llm provider，上游协议为 OpenAI-compatible。
 
 ## 关键事实（agent 需要知道的）
 
@@ -16,19 +16,19 @@
 
 ### 1. api_base 必须包含 `/v1`
 
-**根源：** LiteLLM 在 api_base 后追加 `chat/completions`。上游只认 `/v1/chat/completions`，所以 base URL 必须自带 `/v1`。
+上游 API 路径为 `/v1/chat/completions`，所以 base URL 必须自带 `/v1`。
 
 **正确：** `https://tokenhub.tencentmaas.com/v1`
 
-**错误：** `https://tokenhub.tencentmaas.com` → LiteLLM 拼出 `/chat/completions` → **404**。
+**错误：** `https://tokenhub.tencentmaas.com` → 拼出 `/chat/completions` → **404**。
 
 涉及位置：`provider.yaml` 的 `api.default_base`。
 
-### 2. 必须用 `openai/` provider，禁用 `custom_openai/`
+### 2. supportsDeveloperRole 必须为 false
 
-`custom_openai/` 全透传——所有请求 body 字段原样转发给上游。下游（Hermes）发的 `think` 等非标参数会导致上游 500。`openai/` 配合 `drop_params:true` 自动过滤不识别的参数。
+TokenHub 只接受 `system`、`user`、`assistant`、`tool` 四种角色，不接受 `developer` role。
 
-LiteLLM 代理配置中每个 model entry 的 `litellm_params.model` 必须是 `openai/{model_id}`。
+涉及位置：`provider.yaml` 中每个模型的 `compat.supportsDeveloperRole`。
 
 ### 3. 凭据
 

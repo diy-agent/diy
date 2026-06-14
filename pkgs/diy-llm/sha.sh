@@ -14,9 +14,9 @@
 #        → sha "$@" 解析命令 → 调用对应函数
 #
 # ── 示例 ─────────────────────────────────────────
-#   ./sha.sh serve          # 启动代理
 #   ./sha.sh auth set ...   # 注册密钥
 #   ./sha.sh sync           # 同步模型列表
+#   ./sha.sh sync-models    # 手动同步模型列表（不走 mono sync）
 #
 
 # shellcheck disable=SC2329,SC2317,SC2034
@@ -30,6 +30,10 @@ source "../../sha.common.sh"
 ####################################################################################
 # mono 必备子命令
 ####################################################################################
+sync() { unlink ; link; }
+link() {  run uv tool install -e ./ ; }
+unlink() {  if command -v diy-llm; then  uv tool uninstall diy-llm; fi;}
+
 
 clean() {
   run rm -rf ./build
@@ -50,10 +54,6 @@ fix() {
   run uv run ruff format src/ tests/
 }
 
-sync() { unlink; link; }
-link() { run uv pip install -e ./; }
-unlink() { run uv pip uninstall --yes diy-llm 2>/dev/null || true; }
-
 test() { :; }
 test-all() { test; }
 
@@ -61,12 +61,10 @@ test-all() { test; }
 # diy-llm 子命令
 ####################################################################################
 
-#  ./sha.sh serve           启动 LLM 代理
 #  ./sha.sh auth set ...    注册密钥
 #  ./sha.sh sync-models     手动同步模型列表（不走 mono sync）
 #  ./sha.sh run ...         透传任意命令到 uv run (由 sha.common.sh 提供)
 
-serve()       { run uv run diy-llm serve "$@"; }
 auth()        { run uv run diy-llm auth "$@"; }
 sync-models() { run uv run diy-llm sync "$@"; }
 model()       { run uv run diy-llm model "$@"; }

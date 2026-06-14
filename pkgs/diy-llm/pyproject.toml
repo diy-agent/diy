@@ -1,11 +1,9 @@
 [project]
 name = "diy-llm"
 version = "0.1.0"
-description = "diy-llm - Tencent Cloud LLM via LiteLLM"
-readme = "README.md"
+description = "diy-llm — 配置同步: provider → PI agent / Hermes"
 requires-python = ">=3.12"
 dependencies = [
-    "litellm>=1.0.0",
     "cyclopts>=3.0",
 ]
 
