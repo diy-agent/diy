@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 from diy_llm import auth as llm_auth
 from diy_llm import core as llm_core
 
-from .async_utils import init_async, run_async, start_event_loop
+from diy_llm_gui.async_utils import init_async, run_async, start_event_loop
 
 
 def _enabled_label(model_id: str, model: dict) -> str:
