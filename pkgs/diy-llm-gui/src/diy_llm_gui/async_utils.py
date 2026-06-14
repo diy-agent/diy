@@ -9,16 +9,16 @@
   ⚠️  asyncio.create_subprocess_exec() — QtAsyncio 6.8 未实现
       替代方案：asyncio.to_thread(subprocess.run, ...)
 
-  正确模式（后台计算 + 主线程更新 UI）：
-    async def compute():
-        result = await asyncio.to_thread(heavy_cpu_work)
-        label.setText(result)  # ✅ 回到主线程，安全
-
 使用方式：
   1. 先创建 QApplication
   2. 调用 init_async(app) 设置 asyncio policy
   3. 用 run_async(coro) 调度异步任务
-  4. 用 start_event_loop() 替代 app.exec()
+  4. 用 start_event_loop() 启动（内部用 run_forever，Qt 事件自动集成）
+
+退出方式：
+  - 托盘菜单 Quit（推荐，正常清理 serve 子进程）
+  - kill <pid>
+  - macOS 上 Ctrl+C 无效（Cocoa event loop 屏蔽 SIGINT，Qt 已知限制）
 """
 
 from __future__ import annotations
@@ -55,5 +55,8 @@ def run_async(coro: Coroutine) -> asyncio.Task:
 
 
 def start_event_loop() -> None:
-    """启动 asyncio 事件循环（替代 app.exec()）。Qt 事件同步处理。"""
+    """启动 asyncio 事件循环（Qt 事件自动集成）。
+
+    run_forever() 替代 app.exec()，QtAsyncio 自动处理 Qt 事件。
+    """
     asyncio.get_event_loop().run_forever()

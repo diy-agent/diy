@@ -178,6 +178,7 @@ class DiyLlmTray(QSystemTrayIcon):
 def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    app.setApplicationName("diy-llm")
 
     # PySide6 6.8+ 内置 QtAsyncio — 必须在 QApplication 创建后调用
     init_async(app)
@@ -185,9 +186,25 @@ def main():
     tray = DiyLlmTray(app)
     tray.show()
 
+    # 启动日志
+    providers = llm_auth.list_providers_with_auth()
+    print(f"diy-llm-gui v0.1.0  —  托盘已启动")
+    print(f"  provider:  {len(providers)} 个已配置")
+    for pname in sorted(providers):
+        state = llm_core.load_state(pname)
+        if state:
+            enabled = sum(1 for m in state.get("models", {}).values()
+                          if llm_core._is_enabled(m))
+            total = len(state["models"])
+            print(f"    {pname}:  {enabled}/{total} 模型")
+        else:
+            print(f"    {pname}:  未同步")
+    print(f"  托盘菜单 Quit 退出")
+
     # start_event_loop() 替代 app.exec()
     # asyncio 和 Qt 事件循环在此统一调度
     start_event_loop()
+    print("diy-llm-gui 已退出")
     sys.exit(0)
 
 
