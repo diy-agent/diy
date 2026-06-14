@@ -117,13 +117,154 @@ class ScopeConfig:
 
 
 class _DiyData:
-    """命名空间：存放所有 diy 扩展属性，避免与 provider 属性冲突。"""
+    """命名空间：存放所有 diy 扩展属性，避免与 provider 属性冲突。
+
+    已废弃 — ScopeProxy 合并了此功能。保留类定义以兼容任何残留引用。
+    """
     __slots__ = ('signal', 'init_done', 'panel_container')
 
     def __init__(self) -> None:
         self.signal: Signal[Any] | None = None  # widget 的 Signal 实例
         self.init_done: bool = False            # widget 初始化完成标记（旧模型，待清理）
         self.panel_container: bool = False      # layout 容器标记
+
+
+class ScopeProxy:
+    """diy scope tree 节点的公共接口。
+
+    每个参与 diy scope tree 的对象通过 .diy 属性持有本实例。
+    Phase 1（当前）：委托给内部 ScopeNode（self._node），行为完全不变。
+    Phase 3（未来）：ScopeNode 状态迁移到 ScopeProxy.__slots__，ScopeNode 删除。
+
+    合并原 _DiyData 的 slot：
+      signal / init_done / panel_container — 直接属于 ScopeProxy。
+    """
+
+    __slots__ = ('_node', '_host', 'signal', 'init_done', 'panel_container')
+
+    def __init__(self, node: 'ScopeNode', host: object) -> None:
+        self._node = node          # 内部 ScopeNode（Phase 3 消除）
+        self._host = host          # 宿主对象（widget / app 自身）
+        self.signal: Signal[Any] | None = None
+        self.init_done: bool = False
+        self.panel_container: bool = False
+
+    # ═══ host ═══
+
+    @property
+    def _scope_node(self) -> 'ScopeNode':
+        """内部 ScopeNode（迁移期使用，Phase 3 删除）。"""
+        return self._node
+
+    # ═══ tree — 全量委托给 _node ═══
+
+    @property
+    def parent(self) -> 'ScopeProxy | None':
+        p = self._node.parent
+        return p.diy if p is not None else None
+
+    @property
+    def _children(self) -> 'list[ScopeProxy]':
+        return [c.diy for c in self._node._children]
+
+    def _add_child(self, child: 'ScopeProxy') -> None:
+        self._node._add_child(child._node)
+
+    def _remove_child(self, child: 'ScopeProxy') -> None:
+        self._node._remove_child(child._node)
+
+    # ═══ app ═══
+
+    @property
+    def _app(self):
+        from ._base_app import BaseApp
+        return self._node._app
+
+    @_app.setter
+    def _app(self, v):
+        self._node._app = v
+
+    @property
+    def _current(self) -> 'ScopeProxy':
+        """当前活跃的 scope 节点（仅 root app.diy 有效）。"""
+        return self._node._current.diy  # BaseApp._current → ScopeNode → .diy
+
+    def _push_context(self, proxy: 'ScopeProxy'):
+        return self._node._push_context(proxy._node)
+
+    def _pop_context(self, token=None):
+        self._node._pop_context(token)
+
+    def _add_to_current(self, child: 'ScopeProxy') -> None:
+        self._node._add_to_current(child._node)
+
+    # ═══ config ═══
+
+    @property
+    def _config(self) -> 'ScopeConfig | None':
+        return self._node._config
+
+    @_config.setter
+    def _config(self, v: 'ScopeConfig | None') -> None:
+        self._node._config = v
+
+    @property
+    def _lookup_mode(self) -> 'ScopeMode':
+        return self._node._lookup_mode
+
+    @property
+    def _lookup_scheduler(self):
+        return self._node._lookup_scheduler
+
+    @property
+    def _lookup_auto_mount_child(self) -> bool:
+        return self._node._lookup_auto_mount_child
+
+    # ═══ ancestor ids ═══
+
+    @property
+    def _ancestor_ids(self) -> set[int]:
+        return self._node._ancestor_ids
+
+    # ═══ signal ═══
+
+    @property
+    def _signals(self) -> list[object]:
+        return self._node._signals
+
+    def _mount_signal(self, sig: object) -> None:
+        self._node._mount_signal(sig)
+
+    # ═══ cell ═══
+
+    @property
+    def _cell_fn(self):
+        return self._node._cell_fn
+
+    @_cell_fn.setter
+    def _cell_fn(self, v):
+        self._node._cell_fn = v
+
+    def cell(self, fn):
+        """标记此组件为 cell，返回宿主对象。"""
+        return self._node.cell(fn)
+
+    def _execute_cell(self, *, initial: bool = False) -> None:
+        self._node._execute_cell(initial=initial)
+
+    def _execute_cell_generator(self, *, initial: bool = False) -> None:
+        self._node._execute_cell_generator(initial=initial)
+
+    def _mark_dirty(self) -> None:
+        self._node._mark_dirty()
+
+    # ═══ provider sync hooks ═══
+
+    def _on_child_removed(self, child: 'ScopeProxy') -> None:
+        self._node._on_child_removed(child._node)
+
+    def _on_children_replaced(self, children: 'list[ScopeProxy]') -> None:
+        self._node._on_children_replaced([c._node for c in children])
 
 
 class ScopeNode:
@@ -151,10 +292,10 @@ class ScopeNode:
         self.__is_executing: bool = False
         self.__is_async_cell: bool = False
         self.__app: BaseApp | None = None
-        self.__diy = _DiyData()
+        self.__diy = ScopeProxy(self, host=self)
 
     @property
-    def diy(self) -> _DiyData:
+    def diy(self) -> ScopeProxy:
         return self.__diy
 
     # ── _app 外部访问 property ──────────────────
