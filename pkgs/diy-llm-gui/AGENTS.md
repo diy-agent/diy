@@ -6,7 +6,8 @@ diy-llm 的 PySide6 系统托盘管理程序。
 
 ```
 src/diy_llm_gui/
-└── app.py          # QSystemTrayIcon + 菜单：模型列表、Sync、Serve 开关
+├── app.py          # QSystemTrayIcon + 菜单：模型列表、Sync、Serve 开关
+└── async_utils.py  # QtAsyncio 集成：init_async / run_async / start_event_loop
 ```
 
 ## 入口

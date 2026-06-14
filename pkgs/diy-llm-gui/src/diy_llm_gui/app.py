@@ -2,17 +2,19 @@
 
 托盘菜单：
   - 模型列表（✓/✗/⚠ 状态）
-  - Sync 按钮
+  - Sync 按钮（异步，不阻塞 UI）
   - Serve 开/关 switch
+
+基于 QtAsyncio（PySide6 6.8+ 内置），asyncio 与 Qt 事件循环统一调度。
 """
 
 from __future__ import annotations
 
+import asyncio
 import sys
-import threading
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QIcon
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QApplication,
     QMenu,
@@ -21,6 +23,8 @@ from PySide6.QtWidgets import (
 
 from diy_llm import auth as llm_auth
 from diy_llm import core as llm_core
+
+from .async_utils import init_async, run_async, start_event_loop
 
 
 def _enabled_label(model_id: str, model: dict) -> str:
@@ -40,18 +44,6 @@ def _enabled_label(model_id: str, model: dict) -> str:
 # 托盘应用
 # ═══════════════════════════════════════════════════════════════════════
 
-class _WorkerThread(threading.Thread):
-    """后台工作线程 — subprocess 方式，不与 CLI 内部耦合。"""
-
-    def __init__(self, cmd: list[str]):
-        super().__init__(daemon=True)
-        self._cmd = cmd
-
-    def run(self):
-        import subprocess
-        subprocess.run(self._cmd, capture_output=True)
-
-
 class DiyLlmTray(QSystemTrayIcon):
     """diy-llm 系统托盘。"""
 
@@ -59,7 +51,6 @@ class DiyLlmTray(QSystemTrayIcon):
         super().__init__()
         self._app = app
         self._serve_process = None
-        self._serve_port = 18888
 
         # 图标（无图标文件时用系统默认）
         self.setIcon(app.style().standardIcon(app.style().SP_ComputerIcon))
@@ -132,9 +123,21 @@ class DiyLlmTray(QSystemTrayIcon):
     # ── 回调 ──
 
     def _on_sync(self):
+        """异步 sync，不阻塞 UI 菜单。"""
         providers = llm_auth.list_providers_with_auth()
         for pname in sorted(providers):
-            _WorkerThread([sys.executable, "-m", "diy_llm.cli", "sync", pname]).start()
+            run_async(self._sync_one(pname))
+
+    async def _sync_one(self, provider: str):
+        """单个 provider 的异步 sync — 用子进程避免阻塞。"""
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "diy_llm.cli", "sync", provider,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        # sync 完成后刷新菜单
+        self._build_menu()
 
     def _on_toggle_serve(self):
         if self._serve_process and self._serve_process.poll() is None:
@@ -145,10 +148,11 @@ class DiyLlmTray(QSystemTrayIcon):
 
             self._serve_process = subprocess.Popen(
                 [sys.executable, "-m", "diy_llm.cli", "serve"],
-                cwd=None,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+        # 刷新开关文本
+        self._build_menu()
 
     def _on_quit(self):
         if self._serve_process:
@@ -165,10 +169,16 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
+    # PySide6 6.8+ 内置 QtAsyncio — 必须在 QApplication 创建后调用
+    init_async(app)
+
     tray = DiyLlmTray(app)
     tray.show()
 
-    sys.exit(app.exec())
+    # start_event_loop() 替代 app.exec()
+    # asyncio 和 Qt 事件循环在此统一调度
+    start_event_loop()
+    sys.exit(0)
 
 
 if __name__ == "__main__":
