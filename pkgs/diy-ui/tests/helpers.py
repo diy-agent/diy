@@ -109,8 +109,7 @@ class FakeApp(diy.ui.BaseApp):
 
     def signal(self, value: Any):
         """创建 Signal 并挂载到当前 _current 节点。"""
-        proxy = self._current
-        return diy.ui.ScopeNode.signal(proxy._node, value)
+        return self._current.create_signal(value)
 
     def markdown(self, content: str) -> FakeMarkdown:
         md = FakeMarkdown(content)

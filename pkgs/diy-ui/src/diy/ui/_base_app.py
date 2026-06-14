@@ -61,7 +61,7 @@ class BaseApp(ScopeNode):
 
         若当前节点的 auto_mount_child 为 False，仅设置 _app，不挂载。
         """
-        child._node._app = self
+        child._app = self
         if self._current._lookup_auto_mount_child:
             self._current._add_child(child)
 
@@ -69,5 +69,4 @@ class BaseApp(ScopeNode):
 
     def signal(self, value):
         """创建 Signal 并挂载到当前 scope 节点。"""
-        proxy = self._current
-        return ScopeNode.signal(proxy._node, value)
+        return self._current.create_signal(value)
