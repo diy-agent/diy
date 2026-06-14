@@ -17,8 +17,8 @@ import yaml
 
 # ── paths ─────────────────────────────────────────────────────────────
 
-DIYM_HOME = Path.home() / ".diy-llm"
-PROVIDERS_DIR = DIYM_HOME / "providers"
+DIYM_HOME = Path.home() / ".diy"
+PROVIDERS_DIR = DIYM_HOME / "models"
 LOCK_VERSION = 1
 
 
@@ -32,7 +32,7 @@ def ensure_dirs() -> None:
 def discover_provider_types() -> dict[str, Path]:
     """Find bundled provider types by scanning providers/ for provider.yaml."""
     try:
-        prov_dir = importlib.resources.files("diy_llm").joinpath("providers")
+        prov_dir = importlib.resources.files("diycli.llm").joinpath("providers")
     except Exception:
         return {}
     if not prov_dir.is_dir():

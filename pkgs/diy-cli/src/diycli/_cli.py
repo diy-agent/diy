@@ -7,6 +7,8 @@ from cyclopts import App, Parameter, Group
 
 from ._log import set_verbosity, logger
 from ._sync import sync_dependencies
+from .llm import llm_app
+from .llm.auth import load_dotenv
 
 _GLOBAL_GROUP = Group("全局选项")
 
@@ -38,6 +40,8 @@ def sync_cmd():
     except Exception as e:
         logger.error("同步过程中发生未知错误", e)
         sys.exit(1)
+
+app.command(llm_app)
 
 @app.default
 def root(verbose: VerboseRoot = 0):
@@ -74,6 +78,7 @@ def _strip_verbose(argv: list[str]) -> tuple[int, list[str]]:
     return verbose, remaining
 
 def main():
+    load_dotenv()
     raw = sys.argv[1:]
     verbose, args = _strip_verbose(raw)
     set_verbosity(verbose)

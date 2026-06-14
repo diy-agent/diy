@@ -5,12 +5,15 @@ Builds provider configs for PI agent, Hermes, etc. from diy-llm state.
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 from typing import Any
 
-from diy_llm import auth
-from diy_llm.core import (
+import yaml
+
+from . import auth
+from .core import (
     _is_enabled,
     load_provider_type,
     load_state,
@@ -167,3 +170,159 @@ def merge_diy_providers(
     new_diy = build_pi_providers()
     existing.update(new_diy)
     return existing
+
+
+# ── Hermes config builder ────────────────────────────────────────
+
+HERMES_CONFIG = Path.home() / ".hermes" / "config.yaml"
+
+
+def build_hermes_providers(
+    provider_names: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Build Hermes custom_providers entries from diy-llm state.
+
+    Args:
+        provider_names: If provided, only sync these providers.
+                       If None, sync all providers with credentials.
+
+    Returns:
+        List of dicts suitable for Hermes config.yaml's ``custom_providers`` key.
+        Each entry is keyed by ``diy-<provider_name>``.
+    """
+    if provider_names:
+        providers_to_sync: dict[str, Any] = {}
+        for n in provider_names:
+            a = auth.get_provider_auth(n)
+            if a:
+                providers_to_sync[n] = a
+    else:
+        providers_to_sync = auth.list_providers_with_auth()
+
+    hermes_providers: list[dict[str, Any]] = []
+
+    for pname, pauth in providers_to_sync.items():
+        state = load_state(pname)
+        if not state:
+            continue
+
+        api_key = auth.resolve_api_key(pauth["source"])
+        if not api_key:
+            continue
+
+        ptype_def = load_provider_type(pname) or {}
+        ptype_models = ptype_def.get("models", {})
+        state_models = state.get("models", {})
+
+        if not state_models or not ptype_models:
+            continue
+
+        # Build model list
+        models: dict[str, dict[str, Any]] = {}
+        for mid, m_state in state_models.items():
+            if not _is_enabled(m_state):
+                continue
+            if m_state.get("stale"):
+                continue
+            if m_state.get("status") in ("error", "exhausted"):
+                continue
+
+            meta = ptype_models.get(mid, {})
+            ctx = meta.get("context_window", 128000)
+
+            models[mid] = {
+                "context_length": ctx,
+            }
+
+        if not models:
+            continue
+
+        api_base = pauth.get("api_base", "").rstrip("/")
+
+        # Determine default model: first enabled model
+        default_model = next(iter(models.keys()))
+
+        entry: dict[str, Any] = {
+            "name": f"diy-{pname}",
+            "discover_models": False,
+            "base_url": api_base,
+            "api_key": api_key,
+            "models": models,
+            "model": default_model,
+        }
+
+        # Only set api_mode if protocol is explicitly non-OpenAI
+        protocol = (ptype_def.get("api") or {}).get("protocol", "")
+        if protocol == "anthropic":
+            entry["api_mode"] = "anthropic_messages"
+
+        hermes_providers.append(entry)
+
+    return hermes_providers
+
+
+# ── Hermes config file I/O ───────────────────────────────────────
+
+
+def read_hermes_config(path: str | Path | None = None) -> dict[str, Any]:
+    """Read the full Hermes config.yaml. Returns empty dict if missing."""
+    cfg_path = Path(path) if path else HERMES_CONFIG
+    if not cfg_path.is_file():
+        return {}
+    with open(cfg_path) as f:
+        return yaml.safe_load(f) or {}
+
+
+class _HermesYAMLDumper(yaml.Dumper):
+    """Preserve config.yaml structure when writing back."""
+
+    pass
+
+
+def _hermes_yaml_dump(data: dict[str, Any]) -> str:
+    """Dump dict to YAML string matching Hermes config.yaml style."""
+    buf = io.StringIO()
+    yaml.dump(
+        data,
+        buf,
+        Dumper=_HermesYAMLDumper,
+        default_flow_style=False,
+        allow_unicode=True,
+        sort_keys=False,
+        width=120,
+    )
+    return buf.getvalue()
+
+
+def write_hermes_config(
+    config: dict[str, Any],
+    path: str | Path | None = None,
+) -> Path:
+    """Write the full Hermes config.yaml. Returns the path written."""
+    cfg_path = Path(path) if path else HERMES_CONFIG
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(cfg_path, "w") as f:
+        f.write(_hermes_yaml_dump(config))
+    return cfg_path
+
+
+def merge_hermes_custom_providers(
+    hermes_providers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Merge diy-llm providers into existing Hermes config.
+
+    Strategy: read existing config.yaml, remove all existing ``diy-*``
+    entries from ``custom_providers``, then append the new ones.
+    Preserves all other config sections untouched.
+
+    Returns the full merged config dict (not yet written to disk).
+    """
+    config = read_hermes_config()
+
+    existing = list(config.get("custom_providers", []))
+    # Remove all diy-* providers (ours to manage)
+    kept = [p for p in existing if not p.get("name", "").startswith("diy-")]
+    # Append new ones
+    config["custom_providers"] = kept + hermes_providers
+
+    return config

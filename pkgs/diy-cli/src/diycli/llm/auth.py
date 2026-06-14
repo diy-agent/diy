@@ -14,7 +14,7 @@ from typing import Any
 
 from .core import PROVIDERS_DIR, ensure_dirs, load_state, save_state
 
-DIYM_HOME = Path.home() / ".diy-llm"
+DIYM_HOME = Path.home() / ".diy"
 
 
 def load_dotenv(path: Path | None = None) -> None:

@@ -1,19 +1,15 @@
-"""diy-llm CLI — credential management, model sync, config export.
-
-Thin CLI layer on top of diy_llm.core, diy_llm.auth, and diy_llm.export.
-"""
+"""diy llm — Cyclopts sub-app: provider model sync → PI agent / Hermes."""
 
 from __future__ import annotations
 
 import json
 import os
 import sys
-from importlib.metadata import version
 from typing import Annotated, Any
 
 from cyclopts import App, Parameter
 
-from diy_llm import auth, core, export
+from . import auth, core, export
 
 
 def _die(msg: str, code: int = 1) -> None:
@@ -22,24 +18,22 @@ def _die(msg: str, code: int = 1) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Cyclopts App
+# llm App
 # ═══════════════════════════════════════════════════════════════════════
 
-app = App(
-    name="diy-llm",
-    help="Provider config sync → PI agent / Hermes",
-    version=version("diy-llm") if __package__ else "0.1.0",
-    version_flags=["--version"],
+llm_app = App(
+    name="llm",
+    help="LLM provider config sync",
 )
 
 
 # ── sync group ─────────────────────────────────────────────────────────
 
-sync_app = App(name="sync", help="Fetch models from provider, update state file / downstream tools")
+sync_app = App(name="sync", help="Sync models from provider, export to downstream tools")
 
 
-@sync_app.default
-def sync_state(
+@sync_app.command(name="diy")
+def sync_diy(
     provider: Annotated[str | None, Parameter(help="Provider name; omit for all configured", negative=False)] = None,
 ):
     """Fetch models from provider, update state file."""
@@ -51,7 +45,7 @@ def sync_state(
         target_names = list(providers_with_auth.keys())
 
     if not target_names:
-        _die("No providers with credentials. Run: diy-llm auth set <provider> --key $ENV_VAR")
+        _die("No providers with credentials. Run: diy llm auth set <provider> --key $ENV_VAR")
 
     for name in target_names:
         prov_auth = providers_with_auth.get(name)
@@ -100,7 +94,6 @@ def sync_pi(
         print("No providers to sync. Check credentials and model states.", file=sys.stderr)
         return
 
-    # Remove all existing diy-* and merge new ones
     for key in list(config.get("providers", {}).keys()):
         if key.startswith("diy-"):
             del config["providers"][key]
@@ -119,8 +112,83 @@ def sync_pi(
     print(f"   →  {written}")
 
 
-# Register sync sub-app
-app.command(sync_app)
+@sync_app.command(name="all")
+def sync_all(
+    provider: Annotated[str | None, Parameter(help="Provider name; omit for all configured", negative=False)] = None,
+):
+    """Full pipeline: fetch models → sync state → export to PI agent + Hermes.
+
+    Equivalent to running ``diy llm sync diy`` + ``diy llm sync pi`` + Hermes export
+    in one pass.
+    """
+    # ── 1. State sync ──
+    providers_with_auth = auth.list_providers_with_auth()
+
+    if provider:
+        target_names = [provider]
+    else:
+        target_names = list(providers_with_auth.keys())
+
+    if not target_names:
+        _die("No providers with credentials. Run: diy llm auth set <provider> --key $ENV_VAR")
+
+    synced: list[str] = []
+    for name in target_names:
+        prov_auth = providers_with_auth.get(name)
+        if not prov_auth:
+            print(f"⚠  No credential for '{name}'", file=sys.stderr)
+            continue
+
+        api_key = auth.resolve_api_key(prov_auth["source"])
+        if not api_key:
+            print(f"⚠  Cannot resolve {prov_auth['source']} for '{name}'", file=sys.stderr)
+            continue
+
+        api_base = prov_auth.get("api_base", "")
+        if not api_base:
+            ptype_def = core.load_provider_type(name)
+            api_base = (ptype_def or {}).get("api", {}).get("default_base", "")
+
+        try:
+            state, srcl = core.ensure_state(name, api_base, api_key, name)
+            core.save_state(name, state)
+            enabled = sum(1 for m in state["models"].values() if m.get("editable", {}).get("enabled", m.get("enabled", True)) and not m.get("stale"))
+            total = len(state["models"])
+            print(f"✓  {name} ({srcl}): {enabled}/{total} enabled  →  {core.state_path(name)}")
+            synced.append(name)
+        except RuntimeError as e:
+            print(f"✗  {name}: {e}", file=sys.stderr)
+
+    if not synced:
+        return
+
+    # ── 2. PI agent export ──
+    new_pi = export.build_pi_providers(synced)
+    if new_pi:
+        pi_path = export._find_pi_config()
+        pi_config = export.read_pi_config(pi_path)
+        for key in list(pi_config.get("providers", {}).keys()):
+            if key.startswith("diy-"):
+                del pi_config["providers"][key]
+        pi_config["providers"].update(new_pi)
+        written_pi = export.write_pi_config(pi_config, pi_path)
+        pi_count = len(new_pi)
+        print(f"✓  PI agent: {pi_count} provider(s)  →  {written_pi}")
+    else:
+        print("   PI agent: no providers to export", file=sys.stderr)
+
+    # ── 3. Hermes export ──
+    new_hermes = export.build_hermes_providers(synced)
+    if new_hermes:
+        merged = export.merge_hermes_custom_providers(new_hermes)
+        written_hermes = export.write_hermes_config(merged)
+        hermes_count = len(new_hermes)
+        print(f"✓  Hermes: {hermes_count} provider(s)  →  {written_hermes}")
+    else:
+        print("   Hermes: no providers to export", file=sys.stderr)
+
+
+llm_app.command(sync_app)
 
 
 # ── auth group ────────────────────────────────────────────────────────
@@ -141,7 +209,7 @@ def set_cred(
         _die(f"Unknown provider '{provider}'. Available: {available}")
 
     if not key:
-        _die(f"Missing --key. Usage: diy-llm auth set {provider} --key $ENV_VAR")
+        _die(f"Missing --key. Usage: diy llm auth set {provider} --key $ENV_VAR")
 
     if key.startswith("$"):
         env_name = key[1:]
@@ -186,7 +254,7 @@ def set_cred(
         print(f"✓  Initial sync ({srcl}): {enabled} models enabled")
     except RuntimeError as e:
         print(f"⚠  Sync failed: {e}", file=sys.stderr)
-        print(f"   Credential saved. Run 'diy-llm sync {provider}' when ready.", file=sys.stderr)
+        print(f"   Credential saved. Run 'diy llm sync {provider}' when ready.", file=sys.stderr)
 
 
 @auth_app.command(name="list")
@@ -194,7 +262,7 @@ def list_cred():
     """List all credentials."""
     providers = auth.list_providers_with_auth()
     if not providers:
-        print("No credentials. Use: diy-llm auth set ...")
+        print("No credentials. Use: diy llm auth set ...")
         return
     for pname, pauth in providers.items():
         api_base = pauth.get("api_base", "?")
@@ -223,8 +291,7 @@ def remove_cred(
     print(f"✓  Credential removed for '{provider}'.")
 
 
-# Register sub-apps
-app.command(auth_app)
+llm_app.command(auth_app)
 
 
 # ── model group ───────────────────────────────────────────────────────
@@ -272,7 +339,6 @@ def _print_model(mid: str, m: dict[str, Any], provider_name: str | None = None) 
         status_str = "✓"
     else:
         status_str = "✗ disabled"
-    # label from provider.yaml (source of truth), not from state
     label = mid
     if provider_name:
         ptype_def = core.load_provider_type(provider_name)
@@ -298,16 +364,4 @@ def clean_models(
             print(f"   {name}: no deprecated models")
 
 
-# Register sub-apps
-app.command(model_app)
-
-
-# ── entry point ───────────────────────────────────────────────────────
-
-def main() -> None:
-    auth.load_dotenv()
-    app(sys.argv[1:] if len(sys.argv) > 1 else ["--help"])
-
-
-if __name__ == "__main__":
-    main()
+llm_app.command(model_app)
