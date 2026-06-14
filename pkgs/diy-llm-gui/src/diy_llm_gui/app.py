@@ -1,5 +1,8 @@
 """diy-llm GUI — PySide6 系统托盘管理程序。
 
+基于 QtAsyncio（PySide6 6.8+ 内置），asyncio 与 Qt 事件循环统一调度。
+协程在主线程运行，await 后可直接操作 widget，无需 Signal 中转。
+
 托盘菜单：
   - 模型列表（✓/✗/⚠ 状态）
   - Sync 按钮（异步，不阻塞 UI）
