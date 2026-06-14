@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 
 from PySide6.QtCore import QTimer
@@ -189,6 +190,7 @@ def main():
     existing = _find_existing()
     if existing:
         print(f"diy-llm-gui 已在运行 (PID {existing})")
+        # 不阻塞，让用户决定是否手动 kill
         return
 
     # CLI 模式：拉起后台进程后立即返回
@@ -218,11 +220,14 @@ def _find_existing() -> int | None:
     import subprocess
     try:
         result = subprocess.run(
-            ["pgrep", "-f", "diy_llm_gui.app.*--daemon"],
+            ["pgrep", "-f", "diy_llm_gui\\.app"],
             capture_output=True, text=True,
         )
-        if result.stdout.strip():
-            return int(result.stdout.strip().split("\n")[0])
+        # 排除当前进程
+        pids = [int(p) for p in result.stdout.strip().split("\n") if p]
+        for pid in pids:
+            if pid != os.getpid():
+                return pid
     except Exception:
         pass
     return None
