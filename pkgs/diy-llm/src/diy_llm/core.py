@@ -226,14 +226,16 @@ def build_litellm_config(models_by_provider: dict[str, dict[str, Any]]) -> dict[
             model_list.append({
                 "model_name": f"{pname}/{mid}",
                 "litellm_params": {
-                    "model": f"custom_openai/{mid}",
+                    "model": f"openai/{mid}",
                     "api_base": api_base,
                     "api_key": api_key,
+                    "drop_params": True,
                 },
             })
 
     return {
         "model_list": model_list,
         "litellm_settings": {"drop_params": True, "set_verbose": False},
-        "general_settings": {},
+        "general_settings": {"pass_through_endpoints": [{"path": "/v1/models", "target": ""}]},
+        "router_settings": {"drop_params": True},
     }
