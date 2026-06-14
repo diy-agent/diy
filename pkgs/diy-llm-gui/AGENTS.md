@@ -13,9 +13,11 @@ src/diy_llm_gui/
 ## 入口
 
 ```bash
-diy-llm-gui          # 启动托盘程序
-python -m diy_llm_gui.app
+diy-llm-gui              # 入口点（推荐）
+python -m diy_llm_gui.app  # 模块方式
 ```
+
+注意：不要直接 `python src/diy_llm_gui/app.py`（relative import 会失败）。
 
 ## 依赖
 
