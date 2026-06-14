@@ -216,8 +216,12 @@ def _signal_name(sig: object) -> str:
         for name, val in inspect.getmembers(owner):
             if val is sig:
                 return name
-        # 从 instance __dict__ 找（直接赋值的属性）
-        for name, val in owner.__dict__.items():
+        # 从 instance __dict__ 找（直接赋值的属性）——兼容 __slots__
+        try:
+            owner_dict = owner.__dict__
+        except AttributeError:
+            owner_dict = {s: getattr(owner, s, None) for s in getattr(type(owner), '__slots__', ())}
+        for name, val in owner_dict.items():
             if val is sig:
                 return name
     return "signal"
