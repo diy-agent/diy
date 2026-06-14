@@ -176,19 +176,24 @@ class DiyLlmTray(QSystemTrayIcon):
 # ═══════════════════════════════════════════════════════════════════════
 
 def main():
-    app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(False)
-    app.setApplicationName("diy-llm")
+    """入口 — CLI 拉起 GUI 后立即返回，GUI 在后台运行。"""
+    import subprocess
 
-    # PySide6 6.8+ 内置 QtAsyncio — 必须在 QApplication 创建后调用
-    init_async(app)
+    # 如果已传 --daemon 标记，说明是后台进程，直接启动 GUI
+    if "--daemon" in sys.argv:
+        sys.argv.remove("--daemon")
+        _run_gui()
+        return
 
-    tray = DiyLlmTray(app)
-    tray.show()
+    # 检查是否已有实例在跑
+    existing = _find_existing()
+    if existing:
+        print(f"diy-llm-gui 已在运行 (PID {existing})")
+        return
 
-    # 启动日志
+    # CLI 模式：拉起后台进程后立即返回
     providers = llm_auth.list_providers_with_auth()
-    print(f"diy-llm-gui v0.1.0  —  托盘已启动")
+    print(f"diy-llm-gui v0.1.0")
     print(f"  provider:  {len(providers)} 个已配置")
     for pname in sorted(providers):
         state = llm_core.load_state(pname)
@@ -199,12 +204,42 @@ def main():
             print(f"    {pname}:  {enabled}/{total} 模型")
         else:
             print(f"    {pname}:  未同步")
-    print(f"  托盘菜单 Quit 退出")
 
-    # start_event_loop() 替代 app.exec()
-    # asyncio 和 Qt 事件循环在此统一调度
+    subprocess.Popen(
+        [sys.executable, "-m", "diy_llm_gui.app", "--daemon"],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _find_existing() -> int | None:
+    """检查是否已有 diy-llm-gui 实例在运行。"""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "diy_llm_gui.app.*--daemon"],
+            capture_output=True, text=True,
+        )
+        if result.stdout.strip():
+            return int(result.stdout.strip().split("\n")[0])
+    except Exception:
+        pass
+    return None
+
+
+def _run_gui():
+    """真正启动 GUI 托盘（后台进程入口）。"""
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+    app.setApplicationName("diy-llm")
+
+    init_async(app)
+
+    tray = DiyLlmTray(app)
+    tray.show()
+
     start_event_loop()
-    print("diy-llm-gui 已退出")
     sys.exit(0)
 
 
