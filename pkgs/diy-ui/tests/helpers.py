@@ -287,37 +287,37 @@ class EventLog:
 
         diy.ui._signal.Signal._trigger_observers = _trigger_observers_with_log  # type: ignore[assignment]
 
-        # Hook ScopeNode._execute_cell
-        _original_execute = diy.ui._scope.ScopeNode._execute_cell
+        # Hook ScopeProxy._execute_cell (Phase 3a: cell runs on ScopeProxy)
+        _original_execute = diy.ui._scope.ScopeProxy._execute_cell
 
         def _execute_cell_with_log(self2: Any, *, initial: bool = False) -> None:
-            log.record(f"cell {_node_label(self2)}: rerun start")
+            host = self2._host if hasattr(self2, '_host') else self2
+            log.record(f"cell {_node_label(host)}: rerun start")
             try:
                 _original_execute(self2, initial=initial)
             except Exception:
-                log.record(f"cell {_node_label(self2)}: error")
+                log.record(f"cell {_node_label(host)}: error")
                 raise
             else:
-                log.record(f"cell {_node_label(self2)}: rerun complete")
+                log.record(f"cell {_node_label(host)}: rerun complete")
 
-        diy.ui._scope.ScopeNode._execute_cell = _execute_cell_with_log  # type: ignore[assignment]
+        diy.ui._scope.ScopeProxy._execute_cell = _execute_cell_with_log  # type: ignore[assignment]
 
         # Hook generator cell
-        _original_execute_gen = diy.ui._scope.ScopeNode._execute_cell_generator
+        _original_execute_gen = diy.ui._scope.ScopeProxy._execute_cell_generator
 
         def _execute_cell_gen_with_log(self2: Any, *, initial: bool = False) -> None:
-            log.record(f"cell {_node_label(self2)}: rerun start")
+            host = self2._host if hasattr(self2, '_host') else self2
+            log.record(f"cell {_node_label(host)}: rerun start")
             try:
                 _original_execute_gen(self2, initial=initial)
             except Exception:
-                log.record(f"cell {_node_label(self2)}: error")
+                log.record(f"cell {_node_label(host)}: error")
                 raise
             else:
-                log.record(f"cell {_node_label(self2)}: rerun complete")
+                log.record(f"cell {_node_label(host)}: rerun complete")
 
-        diy.ui._scope.ScopeNode._execute_cell_generator = _execute_cell_gen_with_log  # type: ignore[assignment]
-
-        diy.ui._scope.ScopeNode._execute_cell_generator = _execute_cell_gen_with_log  # type: ignore[assignment]
+        diy.ui._scope.ScopeProxy._execute_cell_generator = _execute_cell_gen_with_log  # type: ignore[assignment]
 
         # Hook DebugInfo.record_error
         _original_record_error = diy.ui._debug.DebugInfo.record_error
