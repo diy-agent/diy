@@ -9,11 +9,11 @@ import json
 import os
 import sys
 import tempfile
-from typing import Annotated
+from typing import Annotated, Any
 from importlib.metadata import version
 
 import yaml
-from cyclopts import App, Parameter
+from cyclopts import App, Group, Parameter
 
 from diy_llm import core, auth
 
@@ -39,11 +39,11 @@ app = App(
 
 @app.command
 def serve(
-    provider: Annotated[str | None, Parameter(help="Provider instance name", negative=False)] = None,
+    provider: Annotated[str | None, Parameter(help="Provider name; omit for all configured", negative=False)] = None,
     port: Annotated[int, Parameter(help="Listen port")] = 18888,
     list_providers: Annotated[bool, Parameter(name="--list-providers", help="Show provider status table")] = False,
 ):
-    """Start LiteLLM proxy — reads state file, no API call needed."""
+    """Start LiteLLM proxy — serve all configured providers by default."""
     types = core.discover_provider_types()
 
     if list_providers:
@@ -63,51 +63,63 @@ def serve(
             print(f"  {tname:30s}  [{cred_status}]  [{state_status}]")
         return
 
-    name = provider or next(iter(types))
+    # Resolve which providers to serve
+    if provider:
+        target_names = [provider]
+    else:
+        auth_data = auth.load_auth()
+        target_names = [t for t in types if t in auth_data.get("providers", {})]
+        if not target_names:
+            _die("No providers with credentials. Run: diy-llm auth set <provider> --key $ENV_VAR")
 
+    # Build combined config
+    models_by_provider: dict[str, dict[str, Any]] = {}
     auth_data = auth.load_auth()
-    prov_auth = auth_data.get("providers", {}).get(name)
-    if not prov_auth:
-        _die(f"No credential for '{name}'. Run: diy-llm auth set {name} --key $ENV_VAR")
+    for name in target_names:
+        prov_auth = auth_data.get("providers", {}).get(name)
+        if not prov_auth:
+            continue
 
-    api_key = auth.resolve_api_key(prov_auth["source"])
-    if not api_key:
-        _die(f"Cannot resolve API key for '{name}'. Check env var {prov_auth['source']}")
+        api_key = auth.resolve_api_key(prov_auth["source"])
+        if not api_key:
+            print(f"⚠  Skipping {name}: cannot resolve {prov_auth['source']}", file=sys.stderr)
+            continue
 
-    api_base = prov_auth.get("api_base", "")
-    if not api_base:
-        ptype_def = core.load_provider_type(name)
-        api_base = (ptype_def or {}).get("api", {}).get("default_base", "")
+        api_base = prov_auth.get("api_base", "")
+        if not api_base:
+            ptype_def = core.load_provider_type(name)
+            api_base = (ptype_def or {}).get("api", {}).get("default_base", "")
 
-    enabled = core.get_enabled_models(name)
-    if not enabled:
-        _die(f"No enabled models for '{name}'. Edit {core.state_path(name)} to enable some.")
+        enabled = core.get_enabled_models(name)
+        if not enabled:
+            print(f"⚠  Skipping {name}: no enabled models", file=sys.stderr)
+            continue
 
-    litellm_cfg = core.build_litellm_config({name: {"api_base": api_base, "api_key": api_key, "models": enabled}})
+        models_by_provider[name] = {"api_base": api_base, "api_key": api_key, "models": enabled}
 
-    fd, config_path = tempfile.mkstemp(suffix=".yaml", prefix=f"diy-llm-{name}-")
+    if not models_by_provider:
+        _die("No providers ready to serve. Check credentials and enabled models.")
+
+    litellm_cfg = core.build_litellm_config(models_by_provider)
+
+    prov_label = ",".join(target_names) if not provider else provider
+    fd, config_path = tempfile.mkstemp(suffix=".yaml", prefix=f"diy-llm-")
     with os.fdopen(fd, "w") as f:
         yaml.dump(litellm_cfg, f, default_flow_style=False, sort_keys=False)
 
-    state = core.load_state(name)
-    ptype = (state or {}).get("provider_type", name)
-
-    print(f"🚀  diy-llm proxy  —  {name}  :{port}")
-    print(f"    Type:   {ptype}")
-    print(f"    Key:    {prov_auth['source']}")
-    print(f"    Models: {len(enabled)} enabled")
-    for i, (mid, meta) in enumerate(enabled.items(), 1):
-        ctx = meta.get("context_window", "?")
-        status = meta.get("status", "ok")
-        status_icon = {"ok": "✓", "error": "✗", "exhausted": "⚠"}.get(status, "?")
-        retries = meta.get("error_retry_times", 0)
-        retry_str = f" x{retries}" if retries else ""
-        cost = meta.get("cost", {})
-        ci, co = cost.get("input", 0), cost.get("output", 0)
-        cost_str = f"${ci}i/${co}o" if ci or co else ""
-        r = "🧠" if meta.get("reasoning") else ""
-        print(f"      {i}. {mid:35s}  [{status_icon} {status}{retry_str}]  ctx={ctx:<8}  {cost_str:15s}  {r}")
-    print(f"    Config: {config_path}")
+    total_models = sum(len(pd["models"]) for pd in models_by_provider.values())
+    print(f"🚀  diy-llm proxy  —  {prov_label}  :{port}")
+    print(f"    Providers: {len(models_by_provider)}")
+    print(f"    Models:    {total_models} total")
+    for pname, pdef in models_by_provider.items():
+        print(f"\n    [{pname}]")
+        for mid in pdef["models"]:
+            state = core.load_state(pname)
+            meta = (state or {}).get("models", {}).get(mid, {})
+            ctx = meta.get("context_window", "?")
+            r = "🧠" if meta.get("reasoning") else ""
+            print(f"      - {pname}/{mid:35s}  ctx={ctx:<8}  {r}")
+    print(f"\n    Config: {config_path}")
     print()
     sys.stdout.flush()
 
@@ -119,37 +131,43 @@ def serve(
 
 @app.command
 def sync(
-    provider: Annotated[str | None, Parameter(help="Provider instance name", negative=False)] = None,
+    provider: Annotated[str | None, Parameter(help="Provider name; omit for all configured", negative=False)] = None,
 ):
-    """Fetch models from provider, update state file. On error, keep old cache."""
-    types = core.discover_provider_types()
-    name = provider or next(iter(types))
-
+    """Fetch models from provider, update state file."""
     auth_data = auth.load_auth()
-    prov_auth = auth_data.get("providers", {}).get(name)
-    if not prov_auth:
-        _die(f"No credential for '{name}'. Run: diy-llm auth set {name} --key $ENV_VAR")
 
-    api_key = auth.resolve_api_key(prov_auth["source"])
-    if not api_key:
-        _die(f"Cannot resolve API key for '{name}'. Check env var {prov_auth['source']}")
+    if provider:
+        target_names = [provider]
+    else:
+        target_names = [n for n in auth_data.get("providers", {})]
 
-    api_base = prov_auth.get("api_base", "")
-    if not api_base:
-        ptype_def = core.load_provider_type(name)
-        api_base = (ptype_def or {}).get("api", {}).get("default_base", "")
-    ptype = name
+    if not target_names:
+        _die("No providers with credentials. Run: diy-llm auth set <provider> --key $ENV_VAR")
 
-    try:
-        state, srcl = core.ensure_state(name, api_base, api_key, ptype)
-        core.save_state(name, state)
-        enabled = sum(1 for m in state["models"].values() if m.get("enabled") and not m.get("stale"))
-        total = len(state["models"])
-        print(f"✓  Sync ok ({srcl}): {enabled}/{total} enabled  →  {core.state_path(name)}")
-    except RuntimeError as e:
-        print(f"✗  Sync failed: {e}", file=sys.stderr)
-        print("   Previous state file preserved.", file=sys.stderr)
-        sys.exit(1)
+    for name in target_names:
+        prov_auth = auth_data.get("providers", {}).get(name)
+        if not prov_auth:
+            print(f"⚠  No credential for '{name}'", file=sys.stderr)
+            continue
+
+        api_key = auth.resolve_api_key(prov_auth["source"])
+        if not api_key:
+            print(f"⚠  Cannot resolve {prov_auth['source']} for '{name}'", file=sys.stderr)
+            continue
+
+        api_base = prov_auth.get("api_base", "")
+        if not api_base:
+            ptype_def = core.load_provider_type(name)
+            api_base = (ptype_def or {}).get("api", {}).get("default_base", "")
+
+        try:
+            state, srcl = core.ensure_state(name, api_base, api_key, name)
+            core.save_state(name, state)
+            enabled = sum(1 for m in state["models"].values() if m.get("enabled") and not m.get("stale"))
+            total = len(state["models"])
+            print(f"✓  {name} ({srcl}): {enabled}/{total} enabled  →  {core.state_path(name)}")
+        except RuntimeError as e:
+            print(f"✗  {name}: {e}", file=sys.stderr)
 
 
 # ── auth group ────────────────────────────────────────────────────────
@@ -251,6 +269,74 @@ def remove_cred(
 
 # Register sub-apps
 app.command(auth_app)
+
+
+# ── model group ───────────────────────────────────────────────────────
+
+model_app = App(name="model", help="Manage models per provider")
+
+
+@model_app.command(name="list")
+def list_models(
+    provider: Annotated[str | None, Parameter(help="Provider name; omit for all", negative=False)] = None,
+):
+    """List models and their status."""
+    if provider:
+        models = core.list_models(provider)
+        if not models:
+            print(f"No models for '{provider}'. Run sync first.")
+            return
+        print(f"Models for {provider}:")
+        for mid, m in sorted(models.items()):
+            _print_model(mid, m)
+        return
+
+    auth_data = auth.load_auth()
+    for pname in sorted(auth_data.get("providers", {})):
+        models = core.list_models(pname)
+        if not models:
+            continue
+        print(f"\n[{pname}]")
+        for mid, m in sorted(models.items()):
+            _print_model(mid, m)
+
+
+def _print_model(mid: str, m: dict[str, Any]) -> None:
+    status = m.get("status", "ok")
+    stale = " (stale)" if m.get("stale") else ""
+    error = m.get("error")
+    if isinstance(error, dict) and error.get("code") == "MODEL_DEPRECATED":
+        status_str = "⚠ 废弃"
+    elif status == "error":
+        status_str = "✗ error"
+    elif status == "exhausted":
+        status_str = "⚠ exhausted"
+    elif m.get("enabled"):
+        status_str = "✓"
+    else:
+        status_str = "✗ disabled"
+    label = m.get("label", mid)
+    print(f"  {status_str}  {mid:35s}  {label}{stale}")
+
+
+@model_app.command(name="clean")
+def clean_models(
+    provider: Annotated[str | None, Parameter(help="Provider name; omit for all", negative=False)] = None,
+):
+    """Remove MODEL_DEPRECATED models from state."""
+    auth_data = auth.load_auth()
+    target_names = [provider] if provider else list(auth_data.get("providers", {}))
+
+    for name in target_names:
+        removed = core.clean_models(name)
+        if removed:
+            print(f"✓  {name}: removed {len(removed)} deprecated model(s): {', '.join(removed)}")
+        else:
+            print(f"   {name}: no deprecated models")
+
+
+# Register sub-apps
+app.command(model_app)
 
 
 # ── entry point ───────────────────────────────────────────────────────

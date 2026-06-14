@@ -100,7 +100,7 @@ def fetch_model_ids(api_base: str, api_key: str) -> list[str] | None:
 
 
 def ensure_state(name: str, api_base: str, api_key: str, ptype: str) -> tuple[dict[str, Any], str]:
-    """Build a state entry. Provider definition wins for API facts, state keeps user fields."""
+    """Build a state entry. Whitelist = provider.yaml, MODEL_DEPRECATED for removed models."""
     existing = load_state(name)
     existing_models = existing.get("models", {}) if existing else {}
 
@@ -117,7 +117,7 @@ def ensure_state(name: str, api_base: str, api_key: str, ptype: str) -> tuple[di
     except Exception as e:
         raise RuntimeError(f"Network error: {e}") from e
 
-    # Determine model IDs: prefer live /v1/models, then provider.yaml, then cache
+    # Determine model IDs and whitelist behaviour
     if live_ids is not None:
         ids = live_ids
         label = "live /v1/models"
@@ -130,12 +130,16 @@ def ensure_state(name: str, api_base: str, api_key: str, ptype: str) -> tuple[di
     else:
         raise RuntimeError(f"No model source for '{ptype}' — provider has no /v1/models and no provider.yaml models")
 
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    upstream_set = set(ids) if live_ids is not None else None
     models: dict[str, dict[str, Any]] = {}
-    for mid in ids:
+
+    # Only expose models declared in provider.yaml (whitelist) when fetching live
+    whitelist_ids = list(prov_models.keys()) if prov_models else ids
+    for mid in whitelist_ids:
         prev = existing_models.get(mid, {})
         meta = prov_models.get(mid, {})
-        # API facts: provider definition wins (meta > prev)
-        # max_tokens is client param: prev can override
+        # API facts: provider definition wins
         models[mid] = {
             "id": mid,
             "label": meta.get("label", prev.get("name", prev.get("label", mid))),
@@ -146,21 +150,26 @@ def ensure_state(name: str, api_base: str, api_key: str, ptype: str) -> tuple[di
             "cost": meta.get("cost", prev.get("cost", {"input": 0, "output": 0})),
             "compat": meta.get("compat", prev.get("compat", {})),
             "status": prev.get("status", "ok"),
-            "error_last_code": prev.get("error_last_code"),
-            "error_last_message": prev.get("error_last_message"),
-            "error_last_time": prev.get("error_last_time"),
-            "error_retry_times": prev.get("error_retry_times", 0),
-            "error_retry_after": prev.get("error_retry_after"),
+            "error": prev.get("error"),
         }
 
-    # Mark models that were in state but no longer in upstream as stale
+        # MODEL_DEPRECATED: declared in provider.yaml but not returned by upstream
+        if upstream_set is not None and mid not in upstream_set:
+            models[mid]["status"] = "error"
+            models[mid]["error"] = {
+                "code": "MODEL_DEPRECATED",
+                "message": "上游已下架，不再建议使用",
+                "time": now,
+            }
+
+    # Retain models that have existing user history but aren't in whitelist (stale)
     for mid, prev in existing_models.items():
         if mid not in models:
             models[mid] = {**prev, "stale": True}
 
     state = {
         "version": LOCK_VERSION,
-        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "updated_at": now,
         "provider": name,
         "provider_type": ptype,
         "models": models,
@@ -169,12 +178,39 @@ def ensure_state(name: str, api_base: str, api_key: str, ptype: str) -> tuple[di
 
 
 def get_enabled_models(name: str) -> dict[str, dict[str, Any]]:
-    """Return enabled non-stale models from state."""
+    """Return enabled, non-stale, non-error models from state."""
     state = load_state(name)
     if not state:
         return {}
     models = state.get("models", {})
-    return {mid: m for mid, m in models.items() if m.get("enabled") and not m.get("stale")}
+    return {
+        mid: m for mid, m in models.items()
+        if m.get("enabled") and not m.get("stale") and m.get("status") not in ("error", "exhausted")
+    }
+
+
+def list_models(name: str) -> dict[str, dict[str, Any]]:
+    """Return all models from state with their status, for display."""
+    state = load_state(name)
+    if not state:
+        return {}
+    return state.get("models", {})
+
+
+def clean_models(name: str) -> list[str]:
+    """Remove MODEL_DEPRECATED models from state. Returns list of removed IDs."""
+    state = load_state(name)
+    if not state:
+        return []
+    models = state.get("models", {})
+    removed = [
+        mid for mid, m in models.items()
+        if isinstance(m.get("error"), dict) and m["error"].get("code") == "MODEL_DEPRECATED"
+    ]
+    for mid in removed:
+        del models[mid]
+    save_state(name, state)
+    return removed
 
 
 def build_litellm_config(models_by_provider: dict[str, dict[str, Any]]) -> dict[str, Any]:

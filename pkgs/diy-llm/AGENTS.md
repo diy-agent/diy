@@ -273,7 +273,7 @@ model_list:
 - [ ] UI 输出显示所有 provider 的模型（按 provider 分组）
 - [ ] 单一 provider 仍然可用（向后兼容）
 
-**状态：** 🔴 待实现
+**状态：** ✅ 已完成 (2026-06-14)
 
 ---
 
@@ -322,7 +322,7 @@ model_list:
 - [ ] `diy-llm model clean <provider>` 命令删除 status=error 的模型
 - [ ] 上游没有 `/v1/models`（如 TokenHub 404），不标记任何模型为 error，模型来源是 provider.yaml
 
-**状态：** 🔴 待实现
+**状态：** ✅ 已完成 (2026-06-14)
 
 ---
 
