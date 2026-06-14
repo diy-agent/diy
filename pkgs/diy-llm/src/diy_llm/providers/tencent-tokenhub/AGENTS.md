@@ -1,6 +1,6 @@
 # tencent-tokenhub — Provider
 
-腾讯云 TokenHub API 的 diy-llm provider。通过 LiteLLM `custom_openai` 代理到 `tokenhub.tencentmaas.com`。
+腾讯云 TokenHub API 的 diy-llm provider。通过 LiteLLM `openai` provider 代理到 `tokenhub.tencentmaas.com`。
 
 ## 关键事实（agent 需要知道的）
 
@@ -9,29 +9,28 @@
 | **type 名** | `tencent-tokenhub` |
 | **上游协议** | OpenAI-compatible |
 | **`provider.yaml`** | `src/diy_llm/providers/tencent-tokenhub/provider.yaml` |
-| **凭据** | `env:TENCENT_TOKENHUB_KEY`（用户维护在 `~/.bashrc`，代理不应管理） |
+| **凭据** | `env:TENCENT_CLOUD_TOKENHUB_KEY` |
 | **认证方式** | `Authorization: Bearer` |
 
 ## ⚠️ 已知陷阱
 
 ### 1. api_base 必须包含 `/v1`
 
-**根源：** LiteLLM `custom_openai` 在 api_base 后追加 `chat/completions`。上游只认 `/v1/chat/completions`，所以 base URL 必须自带 `/v1`。
+**根源：** LiteLLM 在 api_base 后追加 `chat/completions`。上游只认 `/v1/chat/completions`，所以 base URL 必须自带 `/v1`。
 
 **正确：** `https://tokenhub.tencentmaas.com/v1`
 
 **错误：** `https://tokenhub.tencentmaas.com` → LiteLLM 拼出 `/chat/completions` → **404**。
 
-### 2. serve 启动路径
+涉及位置：`provider.yaml` 的 `api.default_base`。
 
-`diy-llm serve` 用 `os.execvp` 替换为 litellm 进程。必须用全路径：
-```python
-litellm_bin = os.path.join(os.path.dirname(sys.executable), "litellm")
-os.execvp(litellm_bin, [litellm_bin, "--config", config_path, "--port", str(port)])
-```
-不能用 `"litellm"`（不在 PATH 上）或 `python -m litellm`（uv run 下模块解析有问题）。
+### 2. 必须用 `openai/` provider，禁用 `custom_openai/`
 
-### 3. 凭据池
+`custom_openai/` 全透传——所有请求 body 字段原样转发给上游。下游（Hermes）发的 `think` 等非标参数会导致上游 500。`openai/` 配合 `drop_params:true` 自动过滤不识别的参数。
+
+LiteLLM 代理配置中每个 model entry 的 `litellm_params.model` 必须是 `openai/{model_id}`。
+
+### 3. 凭据
 
 `auth.json` 只存 `source: env:VAR_NAME`，不存明文 key。key 在环境变量中。
 

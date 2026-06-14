@@ -5,22 +5,14 @@
 CLI → credential pool → model sync → LiteLLM proxy。
 目标：统一管理多个上游渠道（TokenHub、TokenPlan、HyTokenPlan 等），让下游 Hermes / PI agent / 其他工具通过单一端口接入。
 
-## 架构（当前，待重构）
+## 架构（当前）
 
 ```
-type.yaml + models.defaults.json  →  auth.json  →  locks/*.lock.json  →  LiteLLM proxy
-     (2个文件)                          (凭据池)        (运行时快照)              (单 provider)
+provider.yaml  →  auth.json  →  providers/*.json  →  LiteLLM proxy
+  (1个文件)       (provider→source)  (运行时状态)        (openai provider)
 ```
 
-**已知问题（从本次审查中发现的）：**
-
-- `models.defaults.json` 与 `type.yaml` 是同一件事的两种格式，不应拆成两个文件
-- sync 的 merge 方向反了——lock（用户可改）覆盖 provider 定义（不可改的能力事实）
-- `reasoning` / `context_window` / `cost` 等是 API 事实，不应在 lock 中看起来可编辑
-- 所有业务逻辑都堆在 `cli.py`（731 行），GUI 无法复用
-- `serve` 只启动单个 provider，无法代理全部
-- `~/.diy-llm/.env` 被写入但从未加载
-- provider 命名不统一（`tencentcloud-tokenhub`）
+**Provider 选择：** 使用 `openai/` 而非 `custom_openai/`。`openai/` 会过滤不识别的参数（如 Hermes 发的 `think`），`custom_openai/` 全透传会导致上游 500。TokenHub 是标准 OpenAI 兼容 API，无需 `custom_openai`。
 
 ---
 
