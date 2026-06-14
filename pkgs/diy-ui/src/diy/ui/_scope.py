@@ -41,8 +41,7 @@ class CellRuntimeContext(SignalContext):
         cross_scope = False
         owner = signal.owner
         if owner is not None and hasattr(owner, '_ancestor_ids'):
-            owner_id = id(owner._host) if hasattr(owner, '_host') else id(owner)
-            if (owner_id not in active_cell._ancestor_ids
+            if (id(owner._host) not in active_cell._ancestor_ids
                     and id(active_cell._host) not in owner._ancestor_ids):
                 cross_scope = True
                 if active_cell._lookup_mode == ScopeMode.DEV:
@@ -135,9 +134,9 @@ class ScopeProxy:
         child._rebuild_ancestor_ids(); self._on_child_removed(child)
 
     def _rebuild_ancestor_ids(self):
-        ids: set[int] = {id(self)}
+        ids: set[int] = {id(self._host)}
         node = self._parent
-        while node is not None: ids.add(id(node)); node = node._parent
+        while node is not None: ids.add(id(node._host)); node = node._parent
         self._ancestor_ids = ids
         for c in self._children_v: c._rebuild_ancestor_ids()
 
@@ -390,8 +389,7 @@ class ScopeNode:
 
     @property
     def _ancestor_ids(self) -> set[int]:
-        """兼容：返回 node id（非 proxy id）。"""
-        return {id(self)} | {id(p._host) for p in self.diy._ancestor_ids if p is not self.diy}
+        return self.diy._ancestor_ids
     @property
     def _lookup_mode(self): return self.diy._lookup_mode
     @property
