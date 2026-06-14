@@ -85,7 +85,7 @@ class GridStack(UIComponent, pn.layout.GridStack):
 
     def __enter__(self: C) -> C:
         assert self._app is not None
-        self._app._push_context(self)
+        self._app._push_context(self.diy)
         return self
 
     def __exit__(self, *args: object) -> None:

@@ -507,7 +507,7 @@ class TestButtonSyncFlow:
             )
         )
         btn = app.widgets.button(label="Go")
-        app._add_to_current(btn)
+        app._add_to_current(btn.diy)
 
         assert btn.value is False
         btn.param.trigger("clicks")
@@ -523,7 +523,7 @@ class TestButtonSyncFlow:
         )
 
         btn = app.widgets.button(label="Option 1")
-        app._add_to_current(btn)
+        app._add_to_current(btn.diy)
 
         messages = []
 
@@ -552,7 +552,7 @@ class TestButtonSyncFlow:
         )
 
         btn = app.widgets.button(label="Go")
-        app._add_to_current(btn)
+        app._add_to_current(btn.diy)
 
         @btn.cell()
         def _(node: object):
@@ -574,7 +574,7 @@ class TestButtonSyncFlow:
         )
 
         btn = app.widgets.button(label="Go")
-        app._add_to_current(btn)
+        app._add_to_current(btn.diy)
 
         rerun_count = 0
 
@@ -601,7 +601,7 @@ class TestButtonSyncFlow:
         )
 
         btn = app.widgets.button(label="Go")
-        app._add_to_current(btn)
+        app._add_to_current(btn.diy)
 
         rerun_count = 0
 
@@ -651,8 +651,8 @@ class TestButtonSyncFlow:
 
         btn1 = app.widgets.button(label="First")
         btn2 = app.widgets.button(label="Second")
-        app._add_to_current(btn1)
-        app._add_to_current(btn2)
+        app._add_to_current(btn1.diy)
+        app._add_to_current(btn2.diy)
 
         results = []
 

@@ -16,5 +16,5 @@ class _PaneFactoryBase:
         self._app = app
 
     def _add(self, comp: UIComponent) -> UIComponent:
-        self._app._add_to_current(comp)
+        self._app._add_to_current(comp.diy)
         return comp

@@ -34,7 +34,7 @@ class FakeColumn(diy.ui.ScopeNode):
 
     def __enter__(self) -> FakeColumn:
         assert self._app is not None
-        self._app._push_context(self)
+        self._app._push_context(self.diy)
         return self
 
     def __exit__(self, *args: object) -> None:
@@ -53,7 +53,7 @@ class FakeRow(diy.ui.ScopeNode):
 
     def __enter__(self) -> FakeRow:
         assert self._app is not None
-        self._app._push_context(self)
+        self._app._push_context(self.diy)
         return self
 
     def __exit__(self, *args: object) -> None:
@@ -73,7 +73,7 @@ class FakeCard(diy.ui.ScopeNode):
 
     def __enter__(self) -> FakeCard:
         assert self._app is not None
-        self._app._push_context(self)
+        self._app._push_context(self.diy)
         return self
 
     def __exit__(self, *args: object) -> None:
@@ -105,12 +105,12 @@ class FakeApp(diy.ui.BaseApp):
         """将 child 添加到当前 context 节点，设置 _app。"""
         child._app = self
         if self._current._lookup_auto_mount_child:
-            self._current._add_child(child)
+            self._current._add_child(child.diy)
 
     def signal(self, value: Any):
         """创建 Signal 并挂载到当前 _current 节点。"""
-        node = self._current
-        return diy.ui.ScopeNode.signal(node, value)
+        proxy = self._current
+        return diy.ui.ScopeNode.signal(proxy._node, value)
 
     def markdown(self, content: str) -> FakeMarkdown:
         md = FakeMarkdown(content)

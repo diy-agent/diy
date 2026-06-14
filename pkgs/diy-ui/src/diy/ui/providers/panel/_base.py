@@ -51,14 +51,14 @@ class _PanelContainerMixin:
     def _add_child(self, child: diy.ui.ScopeNode) -> None:
         """添加子节点，同时同步到 Panel 原生容器。"""
         super(UIComponent, self)._add_child(child)  # type: ignore[arg-type]
-        if isinstance(child, UIComponent):
+        if hasattr(child, "diy"):
             self.append(child)  # type: ignore[attr-defined]
 
     def _on_child_removed(self, child: diy.ui.ScopeNode) -> None:
         """从 Panel 原生容器中移除 child。"""
-        if isinstance(child, UIComponent) and child in list(self):  # type: ignore[attr-defined]
+        if hasattr(child, "diy") and child in list(self):  # type: ignore[attr-defined]
             self.remove(child)  # type: ignore[attr-defined]
 
     def _on_children_replaced(self, children: list[diy.ui.ScopeNode]) -> None:
         """全量替换 Panel 原生 children。"""
-        self[:] = [c for c in children if isinstance(c, UIComponent)]  # type: ignore[index]
+        self[:] = [c for c in children if hasattr(c, "diy")]  # type: ignore[index]

@@ -47,7 +47,7 @@ class PanelApp(diy.ui.BaseApp):
 
     def _find_first_real_component(self, node: diy.ui.ScopeNode) -> UIComponent | None:
         """DFS 找到第一个 UIComponent。"""
-        if isinstance(node, UIComponent):
+        if hasattr(node, "diy"):
             return node
         for child in node._children:
             result = self._find_first_real_component(child)
@@ -65,7 +65,7 @@ class PanelApp(diy.ui.BaseApp):
 
     def _find_all_real_components(self, node: diy.ui.ScopeNode) -> list[UIComponent]:
         """DFS 找到所有 UIComponent。"""
-        if isinstance(node, UIComponent):
+        if hasattr(node, "diy"):
             return [node]
         result: list[UIComponent] = []
         for child in node._children:
@@ -83,7 +83,7 @@ class PanelApp(diy.ui.BaseApp):
 
     def _sync_tree_to_panel(self, node: diy.ui.ScopeNode) -> None:
         """将 diy.ui 树同步到 Panel 原生 children。"""
-        if isinstance(node, UIComponent) and node.diy.panel_container:
+        if hasattr(node, "diy") and node.diy.panel_container:
             node._on_children_replaced(node._children)
         for child in node._children:
             self._sync_tree_to_panel(child)

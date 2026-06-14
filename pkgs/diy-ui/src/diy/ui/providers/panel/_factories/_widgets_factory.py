@@ -69,5 +69,5 @@ class _WidgetsFactoryBase:
                 lambda event, s=comp: s.diy.signal.__setattr__('value', event.new),
                 'value',
             )
-        self._app._add_to_current(comp)
+        self._app._add_to_current(comp.diy)
         return comp

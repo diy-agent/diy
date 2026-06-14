@@ -75,12 +75,12 @@ class Tabs(_PanelContainerMixin, UIComponent, pn.layout.Tabs):
     def _add_child(self, child: Any) -> None:
         """将子组件作为未命名 Tab 添加。"""
         super(UIComponent, self)._add_child(child)
-        if isinstance(child, UIComponent):
+        if hasattr(child, "diy"):
             self.append(child)
 
     def __enter__(self: C) -> C:
         assert self._app is not None
-        self._app._push_context(self)
+        self._app._push_context(self.diy)
         return self
 
     def __exit__(self, *args: object) -> None:

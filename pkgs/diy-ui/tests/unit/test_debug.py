@@ -27,7 +27,6 @@ class TestDebugInfoBasics:
     def test_mode_defaults_to_prod(self):
         node = diy.ui.ScopeNode()
         info = diy.ui.DebugInfo(node)
-        # 无配置时 mode 默认 PROD
         assert info.mode == diy.ui.ScopeMode.PROD
 
     def test_record_error(self):
@@ -44,54 +43,58 @@ class TestDebugInfoBasics:
 # ═══════════════════════════════════════════════
 
 
+class _FakeAppForDebug(diy.ui.ScopeNode):
+    """测试用 FakeApp — 自管理 ScopeProxy context stack（兼容 Phase 2）。"""
+
+    def __init__(self, config=None):
+        super().__init__(config=config)
+        # context stack 存 ScopeProxy，与 BaseApp 一致
+        self._proxies: list[diy.ui.ScopeProxy] = [self.diy]
+
+    @property
+    def _current(self) -> diy.ui.ScopeProxy:
+        return self._proxies[-1]
+
+    def _push_context(self, proxy: diy.ui.ScopeProxy):
+        self._proxies.append(proxy)
+        return None
+
+    def _pop_context(self, token: Any = None):
+        if len(self._proxies) <= 1:
+            raise IndexError
+        self._proxies.pop()
+
+    def _add_to_current(self, child: diy.ui.ScopeNode):
+        child._app = self
+        self._current._add_child(child.diy)
+
+    def signal(self, value: Any):
+        sig = diy.ui.Signal(value)
+        self._current._mount_signal(sig)
+        return sig
+
+    def markdown(self, content: Any):
+        md = diy.ui.ScopeNode()
+        self._add_to_current(md)
+        return md
+
+    def column(self):
+        col = diy.ui.ScopeNode()
+        col._app = self
+        self._add_to_current(col)
+        return col
+
+
 class TestCellErrorCapture:
     """cell rerun 失败时错误被 debug 系统捕获。"""
 
     def test_cell_error_recorded_in_debug(self):
-        class FakeApp(diy.ui.ScopeNode):
-            def __init__(self):
-                super().__init__(
-                    config=diy.ui.ScopeConfig(
-                        mode=diy.ui.ScopeMode.DEV,
-                        scheduler=diy.ui.ImmediateScheduler(),
-                    )
-                )
-                self._context_stack: list[diy.ui.ScopeNode] = [self]
-
-            @property
-            def _current(self):
-                return self._context_stack[-1]
-
-            def _push_context(self, node: diy.ui.ScopeNode):
-                self._context_stack.append(node)
-                return None
-
-            def _pop_context(self, token: Any = None):
-                if len(self._context_stack) <= 1:
-                    raise IndexError
-                self._context_stack.pop()
-
-            def _add_to_current(self, child: diy.ui.ScopeNode):
-                child._app = self  # type: ignore[assignment]
-                self._current._add_child(child)
-
-            def signal(self, value: Any):
-                sig = diy.ui.Signal(value)
-                self._current._mount_signal(sig)
-                return sig
-
-            def markdown(self, content: Any):
-                md = diy.ui.ScopeNode()
-                self._add_to_current(md)
-                return md
-
-            def column(self):
-                col = diy.ui.ScopeNode()
-                col._app = self  # type: ignore[assignment]
-                self._add_to_current(col)
-                return col
-
-        app = FakeApp()
+        app = _FakeAppForDebug(
+            config=diy.ui.ScopeConfig(
+                mode=diy.ui.ScopeMode.DEV,
+                scheduler=diy.ui.ImmediateScheduler(),
+            )
+        )
         fail = app.signal(False)
         col = app.column()
 
@@ -100,72 +103,26 @@ class TestCellErrorCapture:
             if fail.value:
                 raise RuntimeError("cell failed")
 
-        # 第一次执行成功，无错误
         debug = diy.ui.get_debug(col)
         assert not debug.has_error
 
-        # 触发失败 rerun
         fail.value = True
-
         assert debug.has_error
         assert debug.last_error is not None
         assert "cell failed" in debug.last_error
-        assert debug.rerun_count == 2  # 初始 1 + rerun 1
-
-
-# ═══════════════════════════════════════════════
-# rerun 计数
-# ═══════════════════════════════════════════════
+        assert debug.rerun_count == 2
 
 
 class TestRerunCount:
     """cell 每次执行增加 rerun_count。"""
 
     def test_rerun_count_increments(self):
-        class FakeApp(diy.ui.ScopeNode):
-            def __init__(self):
-                super().__init__(
-                    config=diy.ui.ScopeConfig(
-                        mode=diy.ui.ScopeMode.DEV,
-                        scheduler=diy.ui.ImmediateScheduler(),
-                    )
-                )
-                self._context_stack: list[diy.ui.ScopeNode] = [self]
-
-            @property
-            def _current(self):
-                return self._context_stack[-1]
-
-            def _push_context(self, node: diy.ui.ScopeNode):
-                self._context_stack.append(node)
-                return None
-
-            def _pop_context(self, token: Any = None):
-                if len(self._context_stack) <= 1:
-                    raise IndexError
-                self._context_stack.pop()
-
-            def _add_to_current(self, child: diy.ui.ScopeNode):
-                child._app = self  # type: ignore[assignment]
-                self._current._add_child(child)
-
-            def signal(self, value: Any):
-                sig = diy.ui.Signal(value)
-                self._current._mount_signal(sig)
-                return sig
-
-            def markdown(self, content: Any):
-                md = diy.ui.ScopeNode()
-                self._add_to_current(md)
-                return md
-
-            def column(self):
-                col = diy.ui.ScopeNode()
-                col._app = self  # type: ignore[assignment]
-                self._add_to_current(col)
-                return col
-
-        app = FakeApp()
+        app = _FakeAppForDebug(
+            config=diy.ui.ScopeConfig(
+                mode=diy.ui.ScopeMode.DEV,
+                scheduler=diy.ui.ImmediateScheduler(),
+            )
+        )
         count = app.signal(0)
         col = app.column()
 
@@ -174,7 +131,7 @@ class TestRerunCount:
             app.markdown(str(count.value))
 
         debug = diy.ui.get_debug(col)
-        assert debug.rerun_count == 1  # 初始执行
+        assert debug.rerun_count == 1
 
         count.value = 1
         assert debug.rerun_count == 2

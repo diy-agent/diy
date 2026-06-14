@@ -65,10 +65,10 @@ class CellRuntimeContext(SignalContext):
 
         cross_scope = False
         owner = signal.owner
-        if owner is not None and isinstance(owner, ScopeNode):
+        if owner is not None and hasattr(owner, '_ancestor_ids'):
             if (
                 id(owner) not in active_cell._ScopeNode__ancestor_ids
-                and id(active_cell) not in owner._ScopeNode__ancestor_ids
+                and id(active_cell) not in owner._ancestor_ids
             ):
                 cross_scope = True
                 if active_cell._lookup_mode == ScopeMode.DEV:
@@ -143,8 +143,8 @@ class ScopeProxy:
     __slots__ = ('_node', '_host', 'signal', 'init_done', 'panel_container')
 
     def __init__(self, node: 'ScopeNode', host: object) -> None:
-        self._node = node          # 内部 ScopeNode（Phase 3 消除）
-        self._host = host          # 宿主对象（widget / app 自身）
+        self._node = node
+        self._host = host
         self.signal: Signal[Any] | None = None
         self.init_done: bool = False
         self.panel_container: bool = False
@@ -190,13 +190,13 @@ class ScopeProxy:
         return self._node._current.diy  # BaseApp._current → ScopeNode → .diy
 
     def _push_context(self, proxy: 'ScopeProxy'):
-        return self._node._push_context(proxy._node)
+        return self._node._push_context(proxy)
 
     def _pop_context(self, token=None):
         self._node._pop_context(token)
 
     def _add_to_current(self, child: 'ScopeProxy') -> None:
-        self._node._add_to_current(child._node)
+        self._node._add_to_current(child)
 
     # ═══ config ═══
 
@@ -483,7 +483,7 @@ class ScopeNode:
         app = self._app
         token_app = None
         if app is not None:
-            token_app = app._push_context(self)  # type: ignore[attr-defined]
+            token_app = app._push_context(self.diy)  # type: ignore[attr-defined]
 
         # 清空旧 children
         old_children = list(self.__children)
@@ -582,7 +582,7 @@ class ScopeNode:
         app = self._app
         token_app = None
         if app is not None:
-            token_app = app._push_context(self)  # type: ignore[attr-defined]
+            token_app = app._push_context(self.diy)  # type: ignore[attr-defined]
 
         old_children = list(self.__children)
         self.__children = []
@@ -610,7 +610,7 @@ class ScopeNode:
                 if yielded is None:
                     break
 
-                if isinstance(yielded, ScopeNode):
+                if hasattr(yielded, 'diy'):
                     self._add_child(yielded)
                 elif _inspect.isawaitable(yielded):
                     import warnings
@@ -670,7 +670,7 @@ class ScopeNode:
         app = self._app
         token_app = None
         if app is not None:
-            token_app = app._push_context(self)  # type: ignore[attr-defined]
+            token_app = app._push_context(self.diy)  # type: ignore[attr-defined]
 
         old_children = list(self.__children)
         self.__children = []
@@ -706,7 +706,7 @@ class ScopeNode:
                 if yielded is None:
                     break
 
-                if isinstance(yielded, ScopeNode):
+                if hasattr(yielded, 'diy'):
                     self._add_child(yielded)
                     result = None
                 elif _inspect.isawaitable(yielded):

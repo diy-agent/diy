@@ -131,16 +131,16 @@ class TestContextStack:
 
     def test_initial_current_is_app(self):
         app = FakeApp()
-        assert app._current is app
+        assert app._current is app.diy
 
     def test_push_and_pop(self):
         app = FakeApp()
         col = FakeColumn()
         col._app = app
-        app._push_context(col)
-        assert app._current is col
+        app._push_context(col.diy)
+        assert app._current is col.diy
         app._pop_context()
-        assert app._current is app
+        assert app._current is app.diy
 
     def test_pop_on_empty_raises(self):
         """栈只剩 app 时不可再 pop。"""
