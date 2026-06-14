@@ -104,7 +104,7 @@ class ScopeProxy:
         self._parent: ScopeProxy | None = None
         self._children_v: list[ScopeProxy] = []
         self._config_v: ScopeConfig | None = config
-        self._ancestor_ids: set[int] = {id(self)}
+        self._ancestor_ids: set[int] = {id(host)}
         self._signals_v: list[object] = []
         self._cell_fn_v: Callable[..., object] | None = None
         self._dependencies: set[object] = set()
@@ -411,5 +411,6 @@ class ScopeNode:
     def _mark_dirty(self): self.diy._mark_dirty()
     def _execute_cell(self, *, initial=False): self.diy._execute_cell(initial=initial)
     def _execute_cell_generator(self, *, initial=False): self.diy._execute_cell_generator(initial=initial)
+    async def _drive_generator_async(self, *, initial=False): await self.diy._drive_generator_async(initial=initial)
     def _on_child_removed(self, child): self.diy._on_child_removed(child.diy)
     def _on_children_replaced(self, children): self.diy._on_children_replaced([c.diy for c in children])

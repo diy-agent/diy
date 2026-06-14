@@ -93,7 +93,7 @@ class TestAppSignal:
         app = FakeApp()
         sig = app.signal(0)
         assert isinstance(sig, diy.ui.Signal)
-        assert sig.owner is app
+        assert sig.owner._host is app
         assert sig.value == 0
 
     def test_signal_created_inside_with(self):
@@ -101,7 +101,7 @@ class TestAppSignal:
         app = FakeApp()
         with app.column() as col:
             sig = app.signal("inner")
-        assert sig.owner is col
+        assert sig.owner._host is col
 
     def test_signal_value_is_readable(self):
         app = FakeApp()

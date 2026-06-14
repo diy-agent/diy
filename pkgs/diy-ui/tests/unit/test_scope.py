@@ -149,7 +149,7 @@ class TestScopeNodeSignal:
         node = diy.ui.ScopeNode()
         sig = diy.ui.Signal(0)
         node._mount_signal(sig)
-        assert sig.owner is node
+        assert sig.owner._host is node
 
     def test_mounted_signals_tracked(self):
         node = diy.ui.ScopeNode()
