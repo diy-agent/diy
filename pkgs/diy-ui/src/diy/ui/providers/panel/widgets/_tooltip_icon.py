@@ -15,7 +15,6 @@ class TooltipIcon(UIComponent, pn.widgets.TooltipIcon):
         self,
         *,
         label: str = "",
-        name: str = "",
         align: Any = "start",
         aspect_ratio: Any | None = None,
         css_classes: list[Any] | None = None,
@@ -40,10 +39,9 @@ class TooltipIcon(UIComponent, pn.widgets.TooltipIcon):
 
     ) -> None:
         UIComponent.__init__(self)
-        _label = label or name
         pn.widgets.TooltipIcon.__init__(
             self,
-            label=_label,
+            label=label,
             align=align,
             aspect_ratio=aspect_ratio,
             css_classes=css_classes or [],

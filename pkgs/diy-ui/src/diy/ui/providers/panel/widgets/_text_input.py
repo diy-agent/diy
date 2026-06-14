@@ -17,7 +17,6 @@ class TextInput(UIComponent, pn.widgets.TextInput):
         self,
         *,
         label: str = "",
-        name: str = "",
         value: str = "",
         align: Any = "start",
         aspect_ratio: Any | None = None,
@@ -46,13 +45,10 @@ class TextInput(UIComponent, pn.widgets.TextInput):
         UIComponent.__init__(self)
         # signal 必须在 Panel __init__ 之前创建，因为 Panel 的 _setup_params
         # 会触发 setattr(self, 'value', ...) → 我们的 value.setter → 需要 self.diy.signal
-        self.diy.signal: diy.ui.Signal[str] = diy.ui.Signal[str](value)
         # label 取代 name：label 优先，name 仅在 label 未设置时作为兼容回退
-        _label = label or name
-        self.diy.init_done: bool = False
         pn.widgets.TextInput.__init__(
             self,
-            label=_label,
+            label=label,
             value=value,
             align=align,
             aspect_ratio=aspect_ratio,
@@ -78,24 +74,15 @@ class TextInput(UIComponent, pn.widgets.TextInput):
             max_length=max_length,
             placeholder=placeholder,
         )
-        self.diy.init_done = True
-        self._setup_event_bridge()
 
     @property
     def value(self) -> str:
-        return self.diy.signal.value
+        """value getter：优先 self.diy.signal，None 时 fallback Panel param。"""
+        sig = self.diy.signal
+        return sig.value if sig is not None else self.param['value'].__get__(self)
 
     @value.setter
     def value(self, v: str) -> None:
-        self.diy.signal.value = v
-        if self.diy.init_done:
-            # 通过 param descriptor 的 __set__ 直接设值，绕过 property 避免递归
-            self.param["value"].__set__(self, v)
+        """value setter：只设 param，watch 自动推 Signal。不手工写 Signal。"""
+        self.param['value'].__set__(self, v)
 
-    def _setup_event_bridge(self) -> None:
-        """Panel 用户输入 -> signal。"""
-
-        def on_change(event: Any) -> None:
-            self.diy.signal.value = event.new
-
-        self.param.watch(on_change, "value")

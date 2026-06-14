@@ -34,7 +34,6 @@ class Button(UIComponent, pn.widgets.Button):
 
     def _diy_post_init(self) -> None:
         """在 Panel.__init__ 后执行：挂载 click 事件桥接到 signal。"""
-        self._setup_event_bridge()
 
     # ── 自定义属性 ──
 

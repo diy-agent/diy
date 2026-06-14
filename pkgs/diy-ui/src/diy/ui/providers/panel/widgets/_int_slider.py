@@ -1,8 +1,20 @@
 from __future__ import annotations
 
+"""Panel IntSlider wrapper — 响应式薄封装。
+
+设计原则（所有 wrapper 应遵循）:
+  - 薄封装：不做参数变换，Panel 有什么参数就透传什么
+  - Signal 外挂：不在 __init__ 创建 Signal，由工厂 _add() 统一安装。
+    避免 init 期间 Panel 内部读 self.value 污染 cell 依赖追踪。
+    此时 self.diy.signal 为 None，value getter 走 param.__get__ fallback，
+    不经过 Signal 上下文——依赖追踪天然不触发，无需 no_dep_tracking。
+  - value setter：只设 param.__set__，watch 回调自动推 Signal，不手工写 Signal
+  - 删除项：diy.init_done、_setup_event_bridge、wrapper 内 Signal 创建
+    → 全由 _widgets_factory._add() 统一处理到 self.diy.signal
+"""
+
 from typing import Any
 
-import diy.ui
 import panel as pn
 
 from .._base import UIComponent
@@ -15,7 +27,6 @@ class IntSlider(UIComponent, pn.widgets.IntSlider):
         *,
         label: str = "",
         value: int = 0,
-        name: str = "",
         align: Any = "start",
         aspect_ratio: Any | None = None,
         css_classes: list[Any] | None = None,
@@ -46,13 +57,10 @@ class IntSlider(UIComponent, pn.widgets.IntSlider):
         end: int = 1,
         step: int = 1,
     ) -> None:
-        _label = label or name
         UIComponent.__init__(self)
-        self.diy.signal: diy.ui.Signal[int] = diy.ui.Signal[int](value)
-        self.diy.init_done: bool = False
         pn.widgets.IntSlider.__init__(
             self,
-            label=_label,
+            label=label,
             value=value,
             align=align,
             aspect_ratio=aspect_ratio,
@@ -84,21 +92,15 @@ class IntSlider(UIComponent, pn.widgets.IntSlider):
             end=end,
             step=step,
         )
-        self.diy.init_done = True
-        self._setup_event_bridge()
 
     @property
     def value(self) -> int:
-        return self.diy.signal.value
+        """value getter：优先 self.diy.signal，None 时 fallback Panel param。"""
+        sig = self.diy.signal
+        return sig.value if sig is not None else self.param['value'].__get__(self)
 
     @value.setter
     def value(self, v: int) -> None:
-        self.diy.signal.value = v
-        if self.diy.init_done:
-            self.param["value"].__set__(self, v)
+        """value setter：只设 param，watch 自动推 Signal。不手工写 Signal。"""
+        self.param['value'].__set__(self, v)
 
-    def _setup_event_bridge(self) -> None:
-        def on_change(event: Any) -> None:
-            self.diy.signal.value = event.new
-
-        self.param.watch(on_change, "value")

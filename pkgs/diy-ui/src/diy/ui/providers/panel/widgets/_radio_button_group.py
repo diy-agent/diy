@@ -17,7 +17,6 @@ class RadioButtonGroup(UIComponent, pn.widgets.RadioButtonGroup):
         self,
         *,
         label: str = "",
-        name: str = "",
         value: Any = None,
         align: Any = "start",
         aspect_ratio: Any | None = None,
@@ -49,17 +48,14 @@ class RadioButtonGroup(UIComponent, pn.widgets.RadioButtonGroup):
         orientation: Any = "horizontal",
     ) -> None:
         # label 取代 name：label 优先，name 仅在 label 未设置时作为兼容回退
-        _label = label or name
-        # color/variant 取代 button_type/button_style：新参数优先
+                # color/variant 取代 button_type/button_style：新参数优先
         _color = color if color != "default" else (button_type or "default")
         _variant = variant if variant != "solid" else (button_style or "solid")
         UIComponent.__init__(self)
         # signal 必须在 Panel __init__ 之前创建（同 PanelTextInput）
-        self.diy.signal: diy.ui.Signal[Any] = diy.ui.Signal[Any](value)
-        self.diy.init_done: bool = False
         pn.widgets.RadioButtonGroup.__init__(
             self,
-            label=_label,
+            label=label,
             value=value,
             align=align,
             aspect_ratio=aspect_ratio,
@@ -88,22 +84,15 @@ class RadioButtonGroup(UIComponent, pn.widgets.RadioButtonGroup):
             options=options if options is not None else [],
             orientation=orientation,
         )
-        self.diy.init_done = True
-        self._setup_event_bridge()
 
     @property
     def value(self) -> Any:
-        return self.diy.signal.value
+        """value getter：优先 self.diy.signal，None 时 fallback Panel param。"""
+        sig = self.diy.signal
+        return sig.value if sig is not None else self.param['value'].__get__(self)
 
     @value.setter
     def value(self, v: Any) -> None:
-        self.diy.signal.value = v
-        if self.diy.init_done:
-            # 通过 param descriptor 的 __set__ 直接设值，绕过 property 避免递归
-            self.param["value"].__set__(self, v)
+        """value setter：只设 param，watch 自动推 Signal。不手工写 Signal。"""
+        self.param['value'].__set__(self, v)
 
-    def _setup_event_bridge(self) -> None:
-        def on_change(event: Any) -> None:
-            self.diy.signal.value = event.new
-
-        self.param.watch(on_change, "value")

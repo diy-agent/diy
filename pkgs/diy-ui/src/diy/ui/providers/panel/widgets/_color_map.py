@@ -16,7 +16,6 @@ class ColorMap(UIComponent, pn.widgets.ColorMap):
         self,
         *,
         label: str = "",
-        name: str = "",
         align: Any = "start",
         aspect_ratio: Any | None = None,
         css_classes: list[Any] | None = None,
@@ -45,9 +44,6 @@ class ColorMap(UIComponent, pn.widgets.ColorMap):
         value_name: str | None = None,
     ) -> None:
         UIComponent.__init__(self)
-        self.diy.signal: diy.ui.Signal[str] = diy.ui.Signal[str](value)
-        _label = label or name
-        self.diy.init_done: bool = False
         _opts = options or {}
         # Panel's ColorMap.value holds color lists, not string keys.
         # Pass the key via value_name so Panel maps it to the actual list.
@@ -58,7 +54,7 @@ class ColorMap(UIComponent, pn.widgets.ColorMap):
         )
         pn.widgets.ColorMap.__init__(
             self,
-            label=_label,
+            label=label,
             value=_use_value,
             align=align,
             aspect_ratio=aspect_ratio,
@@ -86,21 +82,15 @@ class ColorMap(UIComponent, pn.widgets.ColorMap):
             swatch_width=swatch_width,
             value_name=value_name,
         )
-        self.diy.init_done = True
-        self._setup_event_bridge()
 
     @property
     def value(self) -> str:
-        return self.diy.signal.value
+        """value getter：优先 self.diy.signal，None 时 fallback Panel param。"""
+        sig = self.diy.signal
+        return sig.value if sig is not None else self.param['value'].__get__(self)
 
     @value.setter
     def value(self, v: str) -> None:
-        self.diy.signal.value = v
-        if self.diy.init_done:
-            self.param["value"].__set__(self, v)
+        """value setter：只设 param，watch 自动推 Signal。不手工写 Signal。"""
+        self.param['value'].__set__(self, v)
 
-    def _setup_event_bridge(self) -> None:
-        def on_change(event: Any) -> None:
-            self.diy.signal.value = event.new
-
-        self.param.watch(on_change, "value")

@@ -93,10 +93,7 @@ class Tabulator(UIComponent, pn.widgets.Tabulator):
         title_formatters: dict[str, Any] | None = None,
     ) -> None:
         UIComponent.__init__(self)
-        # signal 必须在 Panel __init__ 之前创建
-        self.diy.signal: diy.ui.Signal[pd.DataFrame | None] = diy.ui.Signal(value)
-        self.diy.init_done: bool = False
-        
+                
         pn.widgets.Tabulator.__init__(
             self,
             label=label,
@@ -159,28 +156,19 @@ class Tabulator(UIComponent, pn.widgets.Tabulator):
             theme_classes=theme_classes or [],
             title_formatters=title_formatters or {},
         )
-        self.diy.init_done = True
-        self._setup_event_bridge()
 
     # ── value 代理 ────────────────────────────────
 
     @property
     def value(self) -> pd.DataFrame | None:
-        return self.diy.signal.value
+        """value getter：优先 self.diy.signal，None 时 fallback Panel param。"""
+        sig = self.diy.signal
+        return sig.value if sig is not None else self.param['value'].__get__(self)
 
     @value.setter
     def value(self, v: pd.DataFrame | None) -> None:
-        self.diy.signal.value = v
-        if self.diy.init_done:
-            # 绕过 property 直接设置 param
-            self.param["value"].__set__(self, v)
+        """value setter：只设 param，watch 自动推 Signal。不手工写 Signal。"""
+        self.param['value'].__set__(self, v)
 
     # ── 事件桥接 ──────────────────────────────────
 
-    def _setup_event_bridge(self) -> None:
-        """Panel 用户操作（如编辑单元格） -> signal。"""
-
-        def on_change(event: Any) -> None:
-            self.diy.signal.value = event.new
-
-        self.param.watch(on_change, "value")

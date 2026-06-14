@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+"""Panel Progress wrapper — 响应式薄封装。
+
+设计原则（所有 wrapper 应遵循）:
+  - 薄封装：不做参数变换，Panel 有什么参数就透传什么
+  - Signal 外挂：不在 __init__ 创建 Signal，由工厂 _add() 统一安装。
+  - 删除项：diy.init_done、_setup_event_bridge、wrapper 内 Signal 创建
+    → 全由 _widgets_factory._add() 统一处理到 self.diy.signal
+"""
+
 from typing import Any
 
 import panel as pn
@@ -14,7 +23,6 @@ class Progress(UIComponent, pn.widgets.Progress):
         *,
         label: str = "",
         value: int = -1,
-        name: str = "",
         align: Any = "start",
         aspect_ratio: Any | None = None,
         css_classes: list[Any] | None = None,
@@ -39,11 +47,10 @@ class Progress(UIComponent, pn.widgets.Progress):
         bar_color: str = "success",
         max: int = 100,
     ) -> None:
-        _label = label or name
         UIComponent.__init__(self)
         pn.widgets.Progress.__init__(
             self,
-            label=_label,
+            label=label,
             value=value,
             align=align,
             aspect_ratio=aspect_ratio,

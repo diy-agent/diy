@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+"""Panel ButtonIcon wrapper — 响应式薄封装。
+
+设计原则（所有 wrapper 应遵循）:
+  - 薄封装：不做参数变换，Panel 有什么参数就透传什么
+  - Signal 外挂：不在 __init__ 创建 Signal，由工厂 _add() 统一安装。
+  - 删除项：diy.init_done、_setup_event_bridge、wrapper 内 Signal 创建
+    → 全由 _widgets_factory._add() 统一处理到 self.diy.signal
+"""
+
 from typing import Any
 
 import panel as pn
@@ -13,7 +22,6 @@ class ButtonIcon(UIComponent, pn.widgets.ButtonIcon):
         self,
         *,
         label: str = "",
-        name: str = "",
         align: Any = "start",
         aspect_ratio: Any | None = None,
         css_classes: list[Any] | None = None,
@@ -40,11 +48,10 @@ class ButtonIcon(UIComponent, pn.widgets.ButtonIcon):
         icon: str = "heart",
         size: str | None = None,
     ) -> None:
-        _label = label or name
         UIComponent.__init__(self)
         pn.widgets.ButtonIcon.__init__(
             self,
-            label=_label,
+            label=label,
             align=align,
             aspect_ratio=aspect_ratio,
             css_classes=css_classes or [],

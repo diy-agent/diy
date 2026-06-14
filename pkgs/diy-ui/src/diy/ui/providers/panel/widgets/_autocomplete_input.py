@@ -16,7 +16,6 @@ class AutocompleteInput(UIComponent, pn.widgets.AutocompleteInput):
         self,
         *,
         label: str = "",
-        name: str = "",
         align: Any = "start",
         aspect_ratio: Any | None = None,
         css_classes: list[Any] | None = None,
@@ -47,12 +46,9 @@ class AutocompleteInput(UIComponent, pn.widgets.AutocompleteInput):
         description: str | None = None,
     ) -> None:
         UIComponent.__init__(self)
-        self.diy.signal: diy.ui.Signal[str] = diy.ui.Signal[str](value)
-        _label = label or name
-        self.diy.init_done: bool = False
         pn.widgets.AutocompleteInput.__init__(
             self,
-            label=_label,
+            label=label,
             value=value,
             align=align,
             aspect_ratio=aspect_ratio,
@@ -82,21 +78,15 @@ class AutocompleteInput(UIComponent, pn.widgets.AutocompleteInput):
             search_strategy=search_strategy,
             description=description,
         )
-        self.diy.init_done = True
-        self._setup_event_bridge()
 
     @property
     def value(self) -> str:
-        return self.diy.signal.value
+        """value getter：优先 self.diy.signal，None 时 fallback Panel param。"""
+        sig = self.diy.signal
+        return sig.value if sig is not None else self.param['value'].__get__(self)
 
     @value.setter
     def value(self, v: str) -> None:
-        self.diy.signal.value = v
-        if self.diy.init_done:
-            self.param["value"].__set__(self, v)
+        """value setter：只设 param，watch 自动推 Signal。不手工写 Signal。"""
+        self.param['value'].__set__(self, v)
 
-    def _setup_event_bridge(self) -> None:
-        def on_change(event: Any) -> None:
-            self.diy.signal.value = event.new
-
-        self.param.watch(on_change, "value")

@@ -15,7 +15,6 @@ class VideoStream(UIComponent, pn.widgets.VideoStream):
         self,
         *,
         label: str = "",
-        name: str = "",
         align: Any = "start",
         aspect_ratio: Any | None = None,
         css_classes: list[Any] | None = None,
@@ -42,10 +41,9 @@ class VideoStream(UIComponent, pn.widgets.VideoStream):
         value: Any | None = None,
     ) -> None:
         UIComponent.__init__(self)
-        _label = label or name
         pn.widgets.VideoStream.__init__(
             self,
-            label=_label,
+            label=label,
             align=align,
             aspect_ratio=aspect_ratio,
             css_classes=css_classes or [],

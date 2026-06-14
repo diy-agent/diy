@@ -1,3 +1,12 @@
+"""Panel LoadingSpinner wrapper — 响应式薄封装。
+
+设计原则（所有 wrapper 应遵循）:
+  - 薄封装：不做参数变换，Panel 有什么参数就透传什么
+  - Signal 外挂：不在 __init__ 创建 Signal，由工厂 _add() 统一安装。
+  - 删除项：diy.init_done、_setup_event_bridge、wrapper 内 Signal 创建
+    → 全由 _widgets_factory._add() 统一处理到 self.diy.signal
+"""
+
 from __future__ import annotations
 
 from typing import Any

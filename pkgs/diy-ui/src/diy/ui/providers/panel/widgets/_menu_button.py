@@ -1,3 +1,12 @@
+"""Panel MenuButton wrapper — 响应式薄封装。
+
+设计原则（所有 wrapper 应遵循）:
+  - 薄封装：不做参数变换，Panel 有什么参数就透传什么
+  - Signal 外挂：不在 __init__ 创建 Signal，由工厂 _add() 统一安装。
+  - 删除项：diy.init_done、_setup_event_bridge、wrapper 内 Signal 创建
+    → 全由 _widgets_factory._add() 统一处理到 self.diy.signal
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -13,7 +22,6 @@ class MenuButton(UIComponent, pn.widgets.MenuButton):
         self,
         *,
         label: str = "",
-        name: str = "",
         align: Any = "start",
         aspect_ratio: Any | None = None,
         css_classes: list[Any] | None = None,
@@ -43,13 +51,12 @@ class MenuButton(UIComponent, pn.widgets.MenuButton):
         items: list[Any] | None = None,
         split: bool = False,
     ) -> None:
-        _label = label or name
         _color = color if color != "default" else (button_type or "default")
         _variant = variant if variant != "solid" else (button_style or "solid")
         UIComponent.__init__(self)
         pn.widgets.MenuButton.__init__(
             self,
-            label=_label,
+            label=label,
             align=align,
             aspect_ratio=aspect_ratio,
             css_classes=css_classes or [],
@@ -77,3 +84,4 @@ class MenuButton(UIComponent, pn.widgets.MenuButton):
             items=items or [],
             split=split,
         )
+        # Signal + bridge 由工厂 _add() 统一安装到 self.diy.signal

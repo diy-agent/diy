@@ -16,7 +16,6 @@ class IntRangeSlider(UIComponent, pn.widgets.IntRangeSlider):
         self,
         *,
         label: str = "",
-        name: str = "",
         align: Any = "start",
         aspect_ratio: Any | None = None,
         css_classes: list[Any] | None = None,
@@ -49,12 +48,9 @@ class IntRangeSlider(UIComponent, pn.widgets.IntRangeSlider):
         tooltips: bool = True,
     ) -> None:
         UIComponent.__init__(self)
-        self.diy.signal: diy.ui.Signal[tuple[int, int]] = diy.ui.Signal[tuple[int, int]](value)
-        _label = label or name
-        self.diy.init_done: bool = False
         pn.widgets.IntRangeSlider.__init__(
             self,
-            label=_label,
+            label=label,
             value=value,
             align=align,
             aspect_ratio=aspect_ratio,
@@ -86,21 +82,15 @@ class IntRangeSlider(UIComponent, pn.widgets.IntRangeSlider):
             show_value=show_value,
             tooltips=tooltips,
         )
-        self.diy.init_done = True
-        self._setup_event_bridge()
 
     @property
     def value(self) -> tuple[int, int]:
-        return self.diy.signal.value
+        """value getter：优先 self.diy.signal，None 时 fallback Panel param。"""
+        sig = self.diy.signal
+        return sig.value if sig is not None else self.param['value'].__get__(self)
 
     @value.setter
     def value(self, v: tuple[int, int]) -> None:
-        self.diy.signal.value = v
-        if self.diy.init_done:
-            self.param["value"].__set__(self, v)
+        """value setter：只设 param，watch 自动推 Signal。不手工写 Signal。"""
+        self.param['value'].__set__(self, v)
 
-    def _setup_event_bridge(self) -> None:
-        def on_change(event: Any) -> None:
-            self.diy.signal.value = event.new
-
-        self.param.watch(on_change, "value")
