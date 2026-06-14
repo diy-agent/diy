@@ -133,14 +133,20 @@ class DiyLlmTray(QSystemTrayIcon):
             run_async(self._sync_one(pname))
 
     async def _sync_one(self, provider: str):
-        """单个 provider 的异步 sync — 用子进程避免阻塞。"""
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "diy_llm.cli", "sync", provider,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        # sync 完成后刷新菜单
+        """单个 provider 的异步 sync。
+
+        QtAsyncio 未实现 subprocess_exec，用 asyncio.to_thread
+        在线程池跑 subprocess.run，结果回主线程后刷新菜单。
+        """
+        import subprocess
+
+        def _run():
+            return subprocess.run(
+                [sys.executable, "-m", "diy_llm.cli", "sync", provider],
+                capture_output=True, text=True,
+            )
+
+        await asyncio.to_thread(_run)
         self._build_menu()
 
     def _on_toggle_serve(self):

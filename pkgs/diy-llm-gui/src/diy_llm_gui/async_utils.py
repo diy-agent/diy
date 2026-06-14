@@ -6,6 +6,8 @@
   ✅ 协程内 await I/O 后直接操作 widget — 安全（协程在主线程恢复）
   ❌ asyncio.to_thread() 内操作 widget — 危险（在线程池，非主线程）
   ❌ run_in_executor() 内操作 widget — 同上
+  ⚠️  asyncio.create_subprocess_exec() — QtAsyncio 6.8 未实现
+      替代方案：asyncio.to_thread(subprocess.run, ...)
 
   正确模式（后台计算 + 主线程更新 UI）：
     async def compute():
