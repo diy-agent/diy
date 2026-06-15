@@ -151,7 +151,7 @@ def _generate_init(cls, panel_base) -> None:
     pre_kwargs = getattr(cls, "__pre_kwargs__", {"value"})
 
     param_list: list[tuple[str, str, Any]] = []
-    for pname, pdesc in sorted(params.items()):
+    for pname, pdesc in params.items():
         if pname in exclude:
             continue
         ann = _param_to_annotation(pdesc)
