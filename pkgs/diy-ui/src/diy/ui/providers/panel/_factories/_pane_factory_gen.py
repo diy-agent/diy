@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from typing import Any
+import panel as pn
 
 from .. import pane as _pane
 from ._pane_factory import _PaneFactoryBase
@@ -11,6 +12,7 @@ class _PaneFactory(_PaneFactoryBase):
     """app.pane.xxx() 工厂方法（自动生成）。"""
 
     def avif(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -30,8 +32,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         enable_streaming: bool = False,
         embed: bool = False,
         alt_text: 'str | None' = None,
@@ -74,6 +75,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def alert(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -93,8 +95,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         enable_streaming: bool = False,
         dedent: bool = True,
         disable_anchors: bool = False,
@@ -143,6 +144,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def audio(self,
+        object: 'str | bytes | Path' = '',
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -162,8 +164,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'str | bytes | Path' = '',
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         loop: bool = False,
         time: float = 0,
         throttle: int = 250,
@@ -208,6 +209,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def bokeh(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -227,8 +229,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         autodispatch: bool = True,
         theme: 'Theme | str' = None,
         **kwargs: Any,
@@ -261,6 +262,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def data_frame(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -280,8 +282,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         enable_streaming: bool = False,
         disable_math: bool = True,
         sanitize_html: bool = False,
@@ -358,6 +359,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def deck_gl(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -377,8 +379,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         mapbox_api_key: 'str | None' = None,
         tooltips: 'bool | dict' = True,
         configuration: str = '',
@@ -421,6 +422,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def e_charts(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -440,8 +442,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         options: 'dict[str, Any] | None' = None,
         renderer: "canvas | svg" = 'canvas',
         theme: "default | light | dark" = 'default',
@@ -476,6 +477,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def gif(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -495,8 +497,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         enable_streaming: bool = False,
         embed: bool = False,
         alt_text: 'str | None' = None,
@@ -539,6 +540,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def html(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -558,8 +560,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         enable_streaming: bool = False,
         disable_math: bool = True,
         sanitize_html: bool = False,
@@ -596,6 +597,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def holo_views(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -615,8 +617,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         backend: "bokeh | matplotlib | plotly" = None,
         center: bool = False,
         default_widgets: 'dict[str, Any]' = None,
@@ -625,7 +626,7 @@ class _PaneFactory(_PaneFactoryBase):
         renderer: 'Any | None' = None,
         theme: 'Theme | str' = None,
         widget_location: "left | bottom | right | top | top_left | top_right | bottom_left | bottom_right | left_top | left_bottom | right_top | right_bottom" = 'right_top',
-        widget_layout: 'panel.layout.base.WidgetBox | panel.layout.base.Row | panel.layout.base.Column' = None,
+        widget_layout: 'panel.layout.base.WidgetBox | panel.layout.base.Row | panel.layout.base.Column' = pn.layout.base.WidgetBox,
         widget_type: "individual | scrubber" = 'individual',
         widgets: 'dict[str, Any]' = {},
         **kwargs: Any,
@@ -667,6 +668,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def ico(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -686,8 +688,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         enable_streaming: bool = False,
         embed: bool = False,
         alt_text: 'str | None' = None,
@@ -730,6 +731,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def image(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -749,8 +751,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         enable_streaming: bool = False,
         embed: bool = False,
         alt_text: 'str | None' = None,
@@ -793,6 +794,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def jpg(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -812,8 +814,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         enable_streaming: bool = False,
         embed: bool = False,
         alt_text: 'str | None' = None,
@@ -856,6 +857,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def json(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -875,8 +877,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         enable_streaming: bool = False,
         depth: int = 1,
         encoder: JSONEncoder = None,
@@ -915,6 +916,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def la_te_x(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -934,8 +936,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         renderer: "katex | mathjax" = None,
         **kwargs: Any,
     ) -> _pane.LaTeX:
@@ -966,6 +967,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def markdown(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -985,8 +987,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         enable_streaming: bool = False,
         dedent: bool = True,
         disable_anchors: bool = False,
@@ -1033,6 +1034,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def matplotlib(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -1052,8 +1054,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         enable_streaming: bool = False,
         embed: bool = False,
         alt_text: 'str | None' = None,
@@ -1108,6 +1109,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def pdf(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -1127,8 +1129,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         enable_streaming: bool = False,
         embed: bool = False,
         start_page: int = 1,
@@ -1163,6 +1164,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def png(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -1182,8 +1184,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         enable_streaming: bool = False,
         embed: bool = False,
         alt_text: 'str | None' = None,
@@ -1226,6 +1227,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def placeholder(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -1245,8 +1247,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         inplace: bool = False,
         _pane: Viewable = None,
         **kwargs: Any,
@@ -1279,6 +1280,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def plotly(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -1298,8 +1300,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         click_data: 'dict[str, Any] | None' = None,
         doubleclick_data: 'dict[str, Any] | None' = None,
         clickannotation_data: 'dict[str, Any] | None' = None,
@@ -1354,6 +1355,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def svg(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -1373,8 +1375,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         enable_streaming: bool = False,
         embed: bool = False,
         alt_text: 'str | None' = None,
@@ -1419,6 +1420,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def str(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -1438,8 +1440,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         enable_streaming: bool = False,
         **kwargs: Any,
     ) -> _pane.Str:
@@ -1470,6 +1471,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def vega(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -1489,8 +1491,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         debounce: 'int | dict' = 20,
         selection: Parameterized = None,
         show_actions: bool = False,
@@ -1527,6 +1528,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def video(self,
+        object: 'str | Path | BytesIO' = '',
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -1546,8 +1548,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'str | Path | BytesIO' = '',
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         loop: bool = False,
         time: float = 0,
         throttle: int = 250,
@@ -1590,6 +1591,7 @@ class _PaneFactory(_PaneFactoryBase):
         ))
 
     def web_p(self,
+        object: 'Any | None' = None,
         align: 'str | tuple[str, str]' = 'start',
         aspect_ratio: 'Any | None' = None,
         css_classes: 'list[Any]' = [],
@@ -1609,8 +1611,7 @@ class _PaneFactory(_PaneFactoryBase):
         sizing_mode: "fixed | stretch_width | stretch_height | stretch_both | scale_width | scale_height | scale_both | None" = None,
         visible: bool = True,
         loading: bool = False,
-        default_layout: 'ListLike | NamedListLike' = None,
-        object: 'Any | None' = None,
+        default_layout: 'ListLike | NamedListLike' = pn.layout.base.Row,
         enable_streaming: bool = False,
         embed: bool = False,
         alt_text: 'str | None' = None,

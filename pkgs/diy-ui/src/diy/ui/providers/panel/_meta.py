@@ -90,7 +90,14 @@ def _repr_default(val: Any) -> str:
             return inner
         except SyntaxError:
             pass
-    # Fallback for classes, enums, etc. → show as None with comment
+    # Panel classes — resolve to importable name in generated namespace
+    if isinstance(val, type):
+        mod = getattr(val, '__module__', '')
+        if mod.startswith('panel.'):
+            qual = getattr(val, '__qualname__', val.__name__)
+            return f'panel.{mod[6:]}.{qual}'  # panel.layout.Row
+        return repr(val)
+    # Fallback
     return "None"
 
 

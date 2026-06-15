@@ -102,6 +102,11 @@ def _gen_method(cls_name: str, cls: type, wrapper_mod: str, has_children: bool, 
         else:
             param_strs.append(f"{p.name}: {ann_str}")
 
+    # 把 object 放到第一个位置参数（Pane 等有 content object 的类）
+    _obj_strs = [s for s in param_strs if s.startswith("object")]
+    _rest = [s for s in param_strs if not s.startswith("object")]
+    param_strs = _obj_strs + _rest
+
     for i, ps in enumerate(param_strs):
         sig_lines.append(f"{indent}    {ps}{',' if i < len(param_strs) - 1 else ','}")
 
