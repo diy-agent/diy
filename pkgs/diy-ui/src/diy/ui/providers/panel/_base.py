@@ -62,3 +62,27 @@ class _PanelContainerMixin:
     def _on_children_replaced(self, children: list[diy.ui.ScopeNode]) -> None:
         """全量替换 Panel 原生 children。"""
         self[:] = [c for c in children if hasattr(c, "diy")]  # type: ignore[index]
+
+
+class _HasValue:
+    """Mixin：value getter/setter，优先 Signal，None 时 fallback Panel param。
+
+    所有有 value 的 widget wrapper 继承此类，替代重复的 value property 定义。
+    50 个 wrapper 共用此 mixin，减少 ~700 行重复代码。
+
+    用法:
+        class Checkbox(UIComponent, _HasValue, pn.widgets.Checkbox):
+            def __init__(self, *, value=False, ...):
+                ...
+    """
+
+    @property
+    def value(self) -> Any:
+        """value getter：优先 self.diy.signal，None 时 fallback Panel param。"""
+        sig = self.diy.signal  # type: ignore[attr-defined]
+        return sig.value if sig is not None else self.param['value'].__get__(self)  # type: ignore[attr-defined]
+
+    @value.setter
+    def value(self, v: Any) -> None:
+        """value setter：只设 param，watch 自动推 Signal。不手工写 Signal。"""
+        self.param['value'].__set__(self, v)  # type: ignore[attr-defined]

@@ -30,9 +30,10 @@ Panel widget (Button/Checkbox/...)
 - `src/diy/ui/_base_app.py` (73 行): BaseApp，context stack 存 ScopeProxy
 - `src/diy/ui/_signal.py`: Signal 类，`_trigger_observers` 调 `obs.on_signal_changed(self)`
 - `src/diy/ui/_debug.py`: DebugInfo，`get_debug(node: ScopeNode)` 缓存
-- `src/diy/ui/providers/panel/_base.py`: UIComponent(ScopeNode, DiyInitSub)
+- `src/diy/ui/providers/panel/_base.py`: UIComponent(ScopeNode, DiyInitSub) + `_HasValue` mixin
 - `src/diy/ui/providers/panel/_factories/_widgets_factory.py`: `_add()` 安装 Signal+bridge
-- `src/diy/ui/providers/panel/widgets/_*.py`: 50 个 wrapper，薄封装模板
+- `src/diy/ui/providers/panel/widgets/_wrapper_registry.py`: 57 个 widget 类动态生成
+- `src/diy/ui/providers/panel/widgets/_button.py`: 唯一保留的手写 wrapper（metaclass 模式）
 
 ## Phase 2/3a 关键变更清单
 
@@ -137,68 +138,47 @@ unit (90) + intent (18): 108 passed ✅
 
 ## 当前 branch 状态
 
-- branch: main, ahead of origin/main by ~31 commits
-- 最近 commit: `24b042e docs(diy-ui): 更新 AGENTS.md`
-- 工作目录: clean
+- branch: main, ahead of origin/main by ~35 commits
+- 最近改动: Step 1 (_HasValue mixin) + Step 2 (动态类消除 57 文件)
+- 工作目录: clean (uncommitted)
 
-## 50 wrapper 文件当前模式
+## Wrapper 动态生成
 
-每个 wrapper 统一结构（~60 行）：
+57 个 widget 类由 `_wrapper_registry.py` 用 `type()` 动态创建。
+`DiyInitSub` metaclass 在 `type()` 时自动从 Panel param 生成 `__init__`。
+
 ```python
-"""Panel Foo wrapper — 响应式薄封装。..."""
-from __future__ import annotations
-from typing import Any
-import panel as pn
-from .._base import UIComponent
+# _wrapper_registry.py
+_WIDGETS: list[tuple[str, type, bool]] = [
+    ("Checkbox",    pn.widgets.Checkbox,    True),   # True = 继承 _HasValue
+    ("Progress",    pn.widgets.Progress,    False),  # False = 不继承 _HasValue
+    ...
+]
 
-class Foo(UIComponent, pn.widgets.Foo):
-    def __init__(self, *, label="", value=..., ...):
-        UIComponent.__init__(self)
-        pn.widgets.Foo.__init__(self, label=label, value=value, ...)
-        # Signal + bridge 由工厂 _add() 统一安装到 self.diy.signal
+for _name, _panel_cls, _use_hasvalue in _WIDGETS:
+    _bases = (UIComponent, _HasValue, _panel_cls) if _use_hasvalue else (UIComponent, _panel_cls)
+    _cls = type(_name, _bases, {"__module__": __name__})
+    globals()[_name] = _cls
+```
 
-    @property
-    def value(self) -> T:
-        sig = self.diy.signal
-        return sig.value if sig is not None else self.param['value'].__get__(self)
-
-    @value.setter
-    def value(self, v: T) -> None:
-        self.param['value'].__set__(self, v)
+`__init__.py` 从 registry 导入后 re-export：
+```python
+from ._wrapper_registry import ArrayInput, ..., VideoStream
 ```
 
 特点：
-- 无 `name` 参数、无 `_label = label or name`
-- 无 `init_done`、无 `_setup_event_bridge`
-- 无 `import diy.ui`（Signal 不再在 wrapper 内创建）
-- value getter/setter 在所有 47 个有 value 的 wrapper 中完全相同
+- 无显式 `__init__` — metaclass 自动生成
+- 无 value getter/setter — `_HasValue` mixin 提供
+- 无 `name` 参数、无 `init_done`、无 `_setup_event_bridge`
+- `_button.py` 保留独立文件（metaclass pre_init/post_init 模式，使用 `self._signal`）
+
+**风险：IDE 补全失效**（pyright 看不到动态类）。可接受——class 数量大且稳定，手工维护成本更高。
 
 ## 下一步
 
-### Step 1: value getter/setter mixin 化
-在 `_base.py` 加 `_HasValue` mixin：
-```python
-class _HasValue:
-    @property
-    def value(self):
-        sig = self.diy.signal
-        return sig.value if sig is not None else self.param['value'].__get__(self)
-    @value.setter
-    def value(self, v):
-        self.param['value'].__set__(self, v)
-```
-每个 wrapper 改为 `class Foo(UIComponent, _HasValue, pn.widgets.Foo)`，删 value getter/setter。
-47 个文件 × ~15 行 = ~700 行减少。
-
-### Step 2: 动态类消除文件
-用 `type()` 生成类替代 50 个文件：
-```python
-def _make_wrapper(name, panel_cls, has_value=True):
-    bases = (UIComponent, _HasValue, panel_cls) if has_value else (UIComponent, panel_cls)
-    return type(name, bases, {'__module__': __name__})
-```
-
-风险：IDE 补全失效（pyright 看不到动态类），需评估是否接受。
-
 ### Phase 3b/3c: 删除 ScopeNode（非紧急）
 ScopeNode 已是零成本薄壳，可后续处理。
+
+### layout/pane 同理动态化
+layout (18 个) 和 pane (26 个) wrapper 也可同理用 `type()` 消除文件。
+但它们的 `__enter__/__exit__` 和 `panel_container` 逻辑需要特殊处理。
