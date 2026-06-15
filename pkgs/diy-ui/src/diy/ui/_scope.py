@@ -207,9 +207,22 @@ class ScopeProxy:
     def _cell_impl(self, fn):
         import inspect
         self._cell_fn_v = fn
-        if inspect.isgeneratorfunction(fn) or inspect.isasyncgenfunction(fn):
-            self._is_async_cell = True; self._execute_cell_generator(initial=True)
+        if inspect.isasyncgenfunction(fn):
+            self._is_async_cell = True
+            self._execute_cell_generator(initial=True)
+        elif inspect.iscoroutinefunction(fn):
+            self._is_async_cell = True
+            if self._lookup_scheduler and hasattr(self._lookup_scheduler, "enqueue_async"):
+                self._lookup_scheduler.enqueue_async(
+                    lambda: self._execute_cell_async(initial=True)  # type: ignore[return-value]
+                )
+            else:
+                self._execute_cell_async(initial=True)
+        elif inspect.isgeneratorfunction(fn):
+            self._is_async_cell = False
+            self._execute_cell_generator(initial=True)
         else:
+            self._is_async_cell = False
             self._execute_cell(initial=True)
         return self._host
 
@@ -246,6 +259,43 @@ class ScopeProxy:
             self._flush_deps_and_reset(deps)
         if self._is_dirty and self._cell_fn_v and self._lookup_scheduler:
             self._lookup_scheduler.enqueue(self._execute_cell)
+
+    async def _execute_cell_async(self, *, initial=False):
+        """执行 plain async cell（async def 无 yield）。
+
+        调度入口：首次由 _cell_impl 通过 scheduler.enqueue_async 触发；
+        后续 rerun 由 on_signal_changed 同样走 enqueue_async。
+        """
+        if self._is_executing: return
+        fn = self._cell_fn_v
+        if fn is None: return
+        deps: set[object] = set()
+        app = self._app_ref
+        token_app = app._push_context(self) if app else None
+        old = list(self._children_v)
+        self._children_v = []
+        self._is_dirty = False; self._is_executing = True
+        tok_a = _active_cell_var.set(self)
+        tok_d = _deps_var.set(deps)
+        tok_s = Signal._set_context(_runtime)
+        self._on_children_replaced([])
+        from ._debug import get_debug
+        dbg = get_debug(self._host)
+        dbg.record_rerun()
+        try:
+            await fn(self._host)
+        except Exception as exc:
+            if not initial: dbg.record_error(exc)
+            else: raise
+        finally:
+            for c in old: c._parent = None
+            _active_cell_var.reset(tok_a); _deps_var.reset(tok_d)
+            Signal._context_var.reset(tok_s)
+            self._is_executing = False
+            if app: app._pop_context(token_app)
+            self._flush_deps_and_reset(deps)
+        if self._is_dirty and self._cell_fn_v and self._lookup_scheduler:
+            self._lookup_scheduler.enqueue_async(self._execute_cell_async)
 
     def _execute_cell_generator(self, *, initial=False):
         import inspect
@@ -335,14 +385,20 @@ class ScopeProxy:
             if app: app._pop_context(token_app)  # type: ignore[attr-defined]
             self._flush_deps_and_reset(deps)
         if self._is_dirty and self._cell_fn_v and self._lookup_scheduler:
-            self._lookup_scheduler.enqueue(self._execute_cell_generator)
+            self._lookup_scheduler.enqueue_async(self._drive_generator_async)
 
     def on_signal_changed(self, signal):
         self._mark_dirty()
         if self._is_executing: return
         if self._lookup_scheduler:
-            if self._is_async_cell: self._lookup_scheduler.enqueue(self._execute_cell_generator)
-            else: self._lookup_scheduler.enqueue(self._execute_cell)
+            import inspect
+            fn = self._cell_fn_v
+            if fn is not None and inspect.iscoroutinefunction(fn):
+                self._lookup_scheduler.enqueue_async(self._execute_cell_async)
+            elif fn is not None and (inspect.isgeneratorfunction(fn) or inspect.isasyncgenfunction(fn)):
+                self._lookup_scheduler.enqueue(self._execute_cell_generator)
+            else:
+                self._lookup_scheduler.enqueue(self._execute_cell)
 
     def _flush_deps_and_reset(self, deps):
         old_deps = self._dependencies
@@ -411,6 +467,7 @@ class ScopeNode:
     def _mark_dirty(self): self.diy._mark_dirty()
     def _execute_cell(self, *, initial=False): self.diy._execute_cell(initial=initial)
     def _execute_cell_generator(self, *, initial=False): self.diy._execute_cell_generator(initial=initial)
+    async def _execute_cell_async(self, *, initial=False): await self.diy._execute_cell_async(initial=initial)
     async def _drive_generator_async(self, *, initial=False): await self.diy._drive_generator_async(initial=initial)
     def _on_child_removed(self, child): self.diy._on_child_removed(child.diy)
     def _on_children_replaced(self, children): self.diy._on_children_replaced([c.diy for c in children])
