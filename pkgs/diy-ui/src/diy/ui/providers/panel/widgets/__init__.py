@@ -1,9 +1,8 @@
-# Button 保留独立文件（metaclass 模式，有 pre_init/post_init）
-from ._button import Button
 from ._wrapper_registry import (
     ArrayInput,
     AutocompleteInput,
     BooleanStatus,
+    Button,
     ButtonIcon,
     CheckBoxGroup,
     CheckButtonGroup,

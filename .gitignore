@@ -31,3 +31,4 @@ data/
 
 .worktree/
 .playwright-cli/
+.hermes/
