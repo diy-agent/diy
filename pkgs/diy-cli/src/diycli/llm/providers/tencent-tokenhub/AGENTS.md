@@ -30,15 +30,36 @@ TokenHub 只接受 `system`、`user`、`assistant`、`tool` 四种角色，不�
 
 涉及位置：`provider.yaml` 中每个模型的 `compat.supportsDeveloperRole`。
 
-### 3. 凭据
+### 3. thinkingFormat / reasoningEffortMap 必须配全
+
+TokenHub 直通 DeepSeek 官网（直达官网），API 行为与 DeepSeek 原生一致。
+每个 reasoning 模型的 compat 必须完整配置：
+
+```yaml
+compat:
+  supportsDeveloperRole: false        # TokenHub 不支持 developer role
+  requiresReasoningContentOnAssistantMessages: true
+  thinkingFormat: deepseek
+  reasoningEffortMap:
+    minimal: high
+    low: high
+    medium: high
+    high: high
+    xhigh: max
+```
+
+**缺了会怎样？** pi 把 thinking 内容当普通文本发给 TokenHub，Tencent 天御内容安全
+系统可能误判触发 `content_filter`，返回 `finish_reason: content_filter` 错误。
+
+### 4. 凭据
 
 `provider state` 文件中 `source` 字段只存 `env:VAR_NAME`，不存明文 key。key 在环境变量中。
 
-### 4. 模型管理
+### 5. 模型管理
 
 模型定义在 `provider.yaml` 的 `models:` 段。添加模型直接编辑 provider.yaml。
 
-### 5. 价格
+### 6. 价格
 
 **来源：** https://cloud.tencent.com/document/product/1823/130055（TokenHub 官方定价页）
 **单位：** 元/百万 tokens

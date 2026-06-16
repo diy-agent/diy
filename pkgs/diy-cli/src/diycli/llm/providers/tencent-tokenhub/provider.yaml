@@ -19,23 +19,35 @@ auth:
 # 🌐 API 协议
 api:
   protocol: openai-compatible
-  default_base: https://tokenhub.tencentmaas.com/v1
+  default_base: https://tokenhub.tencentmaas.com/v1  # ⚠️ 必须带 /v1，否则拼出 /chat/completions → 404
 
 # ── 模型白名单（只暴露这里声明的模型） ──────────────────
+# ⚠️ 每个 reasoning 模型的 compat 必须配全 3 项（thinkingFormat / reasoningEffortMap / requiresReasoningContentOnAssistantMessages）
+#   缺了的话 pi 会把 thinking 当普通文本发给 TokenHub，天御内容安全可能误判 → finish_reason: content_filter
 
 models:
   deepseek-v4-flash-202605:
     label: DeepSeek V4 Flash 202605 (直通官网)
     reasoning: true
     context_window: 1000000
+    max_tokens: 384000
     cost: {input: 1, output: 2, cacheRead: 0.2, cacheWrite: 0}
     compat:
-      supportsDeveloperRole: false
+      supportsDeveloperRole: false                                    # TokenHub 不支持 developer role
+      requiresReasoningContentOnAssistantMessages: true               # 告诉 pi 发 thinking 给上游
+      thinkingFormat: deepseek                                        # 与 DeepSeek 原生格式一致
+      reasoningEffortMap:
+        minimal: high
+        low: high
+        medium: high
+        high: high
+        xhigh: max
 
   deepseek-v4-pro-202606:
     label: DeepSeek V4 Pro 202606 (直通官网)
     reasoning: true
     context_window: 1000000
+    max_tokens: 384000
     cost: {input: 3, output: 6, cacheRead: 0.025, cacheWrite: 0}
     compat:
       supportsDeveloperRole: false
