@@ -280,9 +280,14 @@ class TestPlainFunctionNotReactive:
 
 
 class TestCrossScopeSignal:
-    """子树外访问 signal：dev 报错。"""
+    """同 app 树内访问 signal（sibling/cousin）：DEV 模式不报错，并注册依赖。
 
-    def test_cross_scope_read_raises_in_dev(self):
+    跨 scope 检测允许同 app 树内任意节点间的 signal 访问（共用祖先），
+    仅阻止完全独立树（不同 app 实例）之间的访问。
+    """
+
+    def test_cross_scope_allowed_in_same_app(self):
+        """同 app 树内 sibling column 间读取 signal 是允许的，DEV 不报错。"""
         app = FakeApp(
             config=diy.ui.ScopeConfig(
                 mode=diy.ui.ScopeMode.DEV, scheduler=diy.ui.ImmediateScheduler()
@@ -292,15 +297,18 @@ class TestCrossScopeSignal:
         with app.column() as _left:
             secret = app.signal("left-secret")
 
-        # right column 的 cell 读取 left column 的 signal → 跨 scope
-        with pytest.raises(diy.ui.ScopeViolationError), app.column() as right:
+        # right column 的 cell 读取 left column 的 signal → 有公共祖先，允许
+        with app.column() as right:
 
             @right.cell()
             def _(node: object):
-                _ = secret.value  # 跨 scope！
+                _ = secret.value  # 同 app 树内，允许
+
+        # 注册了依赖
+        assert len(secret._system_observers) >= 1
 
     def test_cross_scope_no_error_in_prod(self):
-        """prod 模式不报错，但也不注册依赖。"""
+        """prod 模式不报错，并注册依赖。"""
         app = FakeApp(
             config=diy.ui.ScopeConfig(
                 mode=diy.ui.ScopeMode.PROD, scheduler=diy.ui.ImmediateScheduler()
@@ -310,15 +318,15 @@ class TestCrossScopeSignal:
         with app.column() as _left:
             secret = app.signal("left-secret")
 
-        # prod 模式不应该报错
+        # prod 模式不报错
         with app.column() as right:
 
             @right.cell()
             def _(node: object):
-                _ = secret.value  # prod: 不报错
+                _ = secret.value  # 同 app 树内，允许
 
-        # prod 下不注册依赖
-        assert len(secret._system_observers) == 0
+        # 注册了依赖
+        assert len(secret._system_observers) >= 1
 
 
 # ═══════════════════════════════════════════════

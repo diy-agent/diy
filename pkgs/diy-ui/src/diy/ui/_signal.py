@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol
 
 
 class ScopeViolationError(Exception):
@@ -126,6 +126,19 @@ class Signal[T]:
         """信号变化时，通知所有系统观察者。"""
         for obs in list(self._system_observers):
             obs.on_signal_changed(self)
+
+    # ── emit ──────────────────────────────────
+
+    def emit(self, value: T) -> None:
+        """强制发射值，触发所有观察者。绕开 same-value 检查。
+
+        用于 param.Event 类场景（如 Button 点击），value 短暂置 True
+        随即被 Panel 重置为 False——若不绕开 same-value skip，第二次点击
+        时 signal 已是 True，不会触发 cell rerun。
+        """
+        self._value = value
+        self._notify(value)
+        self._trigger_observers()
 
     # ── auto-reset ────────────────────────────
 

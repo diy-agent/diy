@@ -203,8 +203,8 @@ def test_conditional_dependency_switches():
 # ══════════════════════════════════════════════════════════════════
 
 
-def test_cross_scope_signal_blocked_in_dev():
-    """dev 模式下跨 scope 读 signal 抛出 ScopeViolationError。"""
+def test_cross_scope_signal_allowed_in_same_app():
+    """同 app 树内 sibling column 间读 signal 是允许的（有公共祖先）。"""
     app = FakeApp()
     app._config = diy.ui.ScopeConfig(
         mode=diy.ui.ScopeMode.DEV,
@@ -214,13 +214,12 @@ def test_cross_scope_signal_blocked_in_dev():
     with app.column():
         secret = app.signal("secret")
 
-    import pytest
+    @app.column().cell()
+    def _(node: object):
+        _ = secret.value  # 同 app 树内，允许
 
-    with pytest.raises(diy.ui.ScopeViolationError):
-
-        @app.column().cell()
-        def _(node: object):
-            _ = secret.value  # 跨 scope！
+    # 验证依赖已注册
+    assert len(secret._system_observers) >= 1
 
 
 # ══════════════════════════════════════════════════════════════════

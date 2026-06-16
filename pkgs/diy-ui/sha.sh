@@ -41,6 +41,7 @@ clean() {
   run rm -rf ./.pytest_cache
   run rm -rf ./.ruff_cache
   run find . -type d -name "*.egg-info" -prune -exec rm -rf {} \;
+  run find . -type d -name "*.pyc" -prune -exec rm -rf {} \;
 }
 
 check() {

@@ -41,10 +41,16 @@ class CellRuntimeContext(SignalContext):
         cross_scope = False
         owner = signal.owner
         if owner is not None and hasattr(owner, '_ancestor_ids'):
+            # 跨 scope 判断：若 signal owner 不是 cell 的祖先，且 cell 不是 signal owner 的祖先，
+            # 则检查它们是否有公共祖先。有公共祖先（siblings/cousins 在同棵树内）不算跨 scope。
+            # 真正的跨 scope 是两个独立的树（不同 app 实例），没有公共祖先。
             if (id(owner._host) not in active_cell._ancestor_ids
                     and id(active_cell._host) not in owner._ancestor_ids):
                 cross_scope = True
-                if active_cell._lookup_mode == ScopeMode.DEV:
+                if active_cell._ancestor_ids & owner._ancestor_ids:
+                    # 有公共祖先（如同一个 app 树），允许访问
+                    cross_scope = False
+                elif active_cell._lookup_mode == ScopeMode.DEV:
                     raise ScopeViolationError(
                         f"Cross-scope signal access: cell node {active_cell}"
                         f" not in signal owner {owner}'s subtree"
@@ -228,6 +234,15 @@ class ScopeProxy:
 
     def _mark_dirty(self): self._is_dirty = True
 
+    def _sync_host_children(self):
+        """将 scope tree children 同步到宿主（Panel）原生 children。
+
+        在 cell rerun 后调用，确保宿主容器的原生 children 与 scope tree 一致。
+        只在宿主为 Panel 容器（panel_container=True）时生效。
+        """
+        if self.panel_container and hasattr(self._host, '_on_children_replaced'):
+            self._host._on_children_replaced(self._host._children)
+
     def _execute_cell(self, *, initial=False):
         if self._is_executing: return
         fn = self._cell_fn_v
@@ -247,6 +262,7 @@ class ScopeProxy:
         dbg.record_rerun()
         try:
             fn(self._host)
+            self._sync_host_children()
         except Exception as exc:
             if not initial: dbg.record_error(exc)
             else: raise
@@ -284,6 +300,7 @@ class ScopeProxy:
         dbg.record_rerun()
         try:
             await fn(self._host)
+            self._sync_host_children()
         except Exception as exc:
             if not initial: dbg.record_error(exc)
             else: raise
@@ -333,6 +350,7 @@ class ScopeProxy:
                 elif _inspect.isawaitable(yielded):
                     import warnings
                     warnings.warn("Generator cell yielded awaitable in sync path.", RuntimeWarning, stacklevel=2)
+            self._sync_host_children()
         except Exception as exc:
             if not initial: dbg.record_error(exc)
             else: raise
@@ -374,6 +392,7 @@ class ScopeProxy:
                 if hasattr(yielded, 'diy'): self._add_child(yielded.diy); result = None
                 elif _inspect.isawaitable(yielded): result = await yielded
                 else: result = None
+            self._sync_host_children()
         except Exception as exc:
             if not initial: dbg.record_error(exc)
             else: raise

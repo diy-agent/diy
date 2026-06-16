@@ -41,6 +41,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from diy.ui._signal import Signal
+import param
 
 if TYPE_CHECKING:
     from .._base import UIComponent
@@ -65,9 +66,20 @@ class _WidgetsFactoryBase:
                 f"但应该由 _add() 统一安装。请删除 init 中的 Signal 创建。"
             )
             comp.diy.signal = Signal(comp.value)
-            comp.param.watch(
-                lambda event, s=comp: s.diy.signal.__setattr__('value', event.new),
-                'value',
-            )
+            if isinstance(comp.param['value'], param.Event):
+                # param.Event（如 Button.value）短暂 True → 立即重置 False，
+                # 必须用 emit() 绕开 Signal same-value skip，否则第二次点击无反应
+                comp.param.watch(
+                    lambda event, s=comp: (
+                        s.diy.signal.emit(True),
+                        s.diy.signal._reset_value(False),
+                    ),
+                    'value',
+                )
+            else:
+                comp.param.watch(
+                    lambda event, s=comp: s.diy.signal.__setattr__('value', event.new),
+                    'value',
+                )
         self._app._add_to_current(comp.diy)
         return comp
