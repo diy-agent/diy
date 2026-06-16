@@ -49,10 +49,8 @@ class _PanelContainerMixin:
     """
 
     def _add_child(self, child: diy.ui.ScopeNode) -> None:
-        """添加子节点，同时同步到 Panel 原生容器。"""
+        """添加子节点到 scope tree。Panel 原生同步由 ScopeProxy._add_child 处理。"""
         super(UIComponent, self)._add_child(child)  # type: ignore[arg-type]
-        if hasattr(child, "diy"):
-            self.append(child)  # type: ignore[attr-defined]
 
     def _on_child_removed(self, child: diy.ui.ScopeNode) -> None:
         """从 Panel 原生容器中移除 child。"""

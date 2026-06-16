@@ -134,6 +134,9 @@ class ScopeProxy:
 
     def _add_child(self, child: 'ScopeProxy'):
         self._children_v.append(child); child._parent = self; child._rebuild_ancestor_ids()
+        # 立即同步到 Panel 原生 children，实现逐步更新（如长时间任务中间步骤）
+        if self.panel_container and hasattr(self._host, 'append'):
+            self._host.append(child._host)  # type: ignore[attr-defined]
 
     def _remove_child(self, child: 'ScopeProxy'):
         self._children_v.remove(child); child._parent = None
@@ -235,13 +238,19 @@ class ScopeProxy:
     def _mark_dirty(self): self._is_dirty = True
 
     def _sync_host_children(self):
-        """将 scope tree children 同步到宿主（Panel）原生 children。
+        """将 scope tree children 全量同步到宿主（Panel）原生 children。
 
         在 cell rerun 后调用，确保宿主容器的原生 children 与 scope tree 一致。
         只在宿主为 Panel 容器（panel_container=True）时生效。
+        通常由 _add_child 的即时同步覆盖，作为 safety net 保留。
         """
         if self.panel_container and hasattr(self._host, '_on_children_replaced'):
             self._host._on_children_replaced(self._host._children)
+
+    def _clear_host_children(self):
+        """清空宿主（Panel）原生 children。在 cell rerun 开始时调用。"""
+        if self.panel_container and hasattr(self._host, '_on_children_replaced'):
+            self._host._on_children_replaced([])
 
     def _execute_cell(self, *, initial=False):
         if self._is_executing: return
@@ -256,7 +265,7 @@ class ScopeProxy:
         tok_a = _active_cell_var.set(self)
         tok_d = _deps_var.set(deps)
         tok_s = Signal._set_context(_runtime)
-        self._on_children_replaced([])
+        self._clear_host_children()
         from ._debug import get_debug
         dbg = get_debug(self._host)
         dbg.record_rerun()
@@ -294,7 +303,7 @@ class ScopeProxy:
         tok_a = _active_cell_var.set(self)
         tok_d = _deps_var.set(deps)
         tok_s = Signal._set_context(_runtime)
-        self._on_children_replaced([])
+        self._clear_host_children()
         from ._debug import get_debug
         dbg = get_debug(self._host)
         dbg.record_rerun()
@@ -338,7 +347,7 @@ class ScopeProxy:
         self._is_dirty = False; self._is_executing = True
         tok_a = _active_cell_var.set(self); tok_d = _deps_var.set(deps)
         tok_s = Signal._set_context(_runtime)
-        self._on_children_replaced([])
+        self._clear_host_children()
         from ._debug import get_debug
         dbg = get_debug(self._host); dbg.record_rerun()
         try:
@@ -378,7 +387,7 @@ class ScopeProxy:
         self._is_dirty = False; self._is_executing = True
         tok_a = _active_cell_var.set(self); tok_d = _deps_var.set(deps)
         tok_s = Signal._set_context(_runtime)
-        self._on_children_replaced([])
+        self._clear_host_children()
         from ._debug import get_debug
         dbg = get_debug(self._host); dbg.record_rerun()
         is_async_gen = _inspect.isasyncgen(gen)
