@@ -9,6 +9,9 @@ from ._log import set_verbosity, logger
 from ._sync import sync_dependencies
 from .llm import llm_app
 from .ref import ref_app
+from .task_cli import task_app
+from .task_local import local_app
+from .task_github import github_app
 from .llm.auth import load_dotenv
 
 _GLOBAL_GROUP = Group("全局选项")
@@ -44,6 +47,11 @@ def sync_cmd():
 
 app.command(llm_app)
 app.command(ref_app)
+
+# 注册 task 子命令
+task_app.command(local_app)
+task_app.command(github_app)
+app.command(task_app)
 
 @app.default
 def root(verbose: VerboseRoot = 0):
