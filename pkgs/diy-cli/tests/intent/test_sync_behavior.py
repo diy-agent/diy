@@ -7,7 +7,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 from diycli._sync import sync_dependencies
-from helpers import FakeProject, sync_snapshot
+from ..helpers import FakeProject, sync_snapshot
 
 @pytest.fixture
 def mock_registry():
@@ -92,7 +92,7 @@ def test_sync_avoids_ecosystem_collision(tmp_path, mock_registry):
     py_pkg_dir = project_root / "packages" / "py-part"
     py_pkg_dir.mkdir(parents=True)
     py_pkg = FakeProject(py_pkg_dir)
-    py_pkg.add_pyproject_toml('name = "py-part"\ndependencies = [\n  "shared-pkg",\n]')
+    py_pkg.add_pyproject_toml('[project]\nname = "py-part"\ndependencies = [\n  "shared-pkg",\n]')
 
     # 根目录 Lock
     project.add_package_lock({
@@ -129,23 +129,19 @@ def test_sync_avoids_ecosystem_collision(tmp_path, mock_registry):
 
 def test_ide_config_updates(tmp_path, mock_registry):
     """
-    意图：同步后自动更新 TS 和 VSCode 的路径配置。
+    意图：同步后自动更新 TSConfig 路径配置。
     """
     project_root = tmp_path / "ide-project"
     project_root.mkdir()
     project = FakeProject(project_root)
     project.add_diy_yaml({"name": "ide-test"})
-    
-    # 模拟已有配置
+
+    # 模拟已有 TS 配置
     project.add_tsconfig_ide({"compilerOptions": {"paths": {"old": ["./old"]}}})
-    vscode_dir = project_root / ".vscode"
-    vscode_dir.mkdir()
-    with open(vscode_dir / "settings.json", "w") as f:
-        f.write('{"python.analysis.extraPaths": ["/old/path"]}')
-        
+
     project.add_package_json({"dependencies": {"js-lib": "1.0.0"}})
     project.add_package_lock({"packages": {"node_modules/js-lib": {"version": "1.0.0"}}})
-    project.add_pyproject_toml('dependencies = ["py-lib"]')
+    project.add_pyproject_toml('[project]\ndependencies = ["py-lib"]')
     project.add_uv_lock('[[package]]\nname = "py-lib"\nversion = "2.0.0"')
 
     home_dir = tmp_path / "home"
@@ -166,12 +162,7 @@ def test_ide_config_updates(tmp_path, mock_registry):
         # 验证 TSConfig 更新
         assert "TSConfig Paths:" in snapshot
         assert "js-lib: .diy/ref/github.com/user/repo/v1.0.0" in snapshot
-        
-        # 验证 VSCode ExtraPaths 更新
-        assert "VSCode ExtraPaths:" in snapshot
-        assert ".diy/ref/github.com/user/repo/v1.0.0" in snapshot
-        # 验证旧路径是否被保留（除非它在 .diy/ref 下）
-        assert "/old/path" in (project_root / ".vscode" / "settings.json").read_text()
+
 
 def test_pruning_behavior(tmp_path, mock_registry):
     """

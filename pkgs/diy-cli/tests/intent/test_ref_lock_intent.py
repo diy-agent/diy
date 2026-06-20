@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 from unittest.mock import patch, MagicMock
 
-from helpers import FakeProject, sync_snapshot
+from ..helpers import FakeProject, sync_snapshot
 
 
 def _assert_ref_yaml(root: Path, expected_entries: dict[str, str]):
@@ -48,7 +48,7 @@ class TestRefLockFormat:
         project = FakeProject(tmp_path)
         project.add_diy_yaml({"name": "flat-test"})
         project.add_pyproject_toml(
-            'name = "flat-test"\ndependencies = ["rich"]'
+            '[project]\nname = "flat-test"\ndependencies = ["rich"]'
         )
         # uv.lock 中 rich 版本为 15.0.0
         project.add_uv_lock(
@@ -131,7 +131,7 @@ class TestRefLockFormat:
         project = FakeProject(tmp_path)
         project.add_diy_yaml({"name": "version-test"})
         project.add_pyproject_toml(
-            'name = "version-test"\ndependencies = ["pyyaml>=6.0"]\n'
+            '[project]\nname = "version-test"\ndependencies = ["pyyaml>=6.0"]\n'
         )
         # uv.lock 中 pyyaml 实际版本为 6.0.2
         project.add_uv_lock(
@@ -222,7 +222,7 @@ class TestRefLockFormat:
             ],
         })
         project.add_pyproject_toml(
-            'name = "source-test"\ndependencies = []\n'
+            '[project]\nname = "source-test"\ndependencies = []\n'
         )
 
         home = tmp_path / "home"

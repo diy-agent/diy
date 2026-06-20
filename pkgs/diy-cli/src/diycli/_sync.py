@@ -529,32 +529,8 @@ def update_python_ide_config(root_dir: Path, sync_results: Dict[str, SyncResult]
     """更新 Python IDE 配置 (extraPaths)"""
     python_paths_raw = [res.absolute_path for key, res in sync_results.items() if key.startswith("python:")]
     if not python_paths_raw: return
-    # 用 ~ 替代 HOME 目录，减少隐私暴露和跨机器冲突
-    home = str(Path.home())
-    python_paths = [p.replace(home, "~") if p.startswith(home) else p for p in python_paths_raw]
 
-    # 1. 更新 .vscode/settings.json
-    vscode_dir = root_dir / ".vscode"
-    settings_path = vscode_dir / "settings.json"
-    if settings_path.exists():
-        log.info("正在更新 .vscode/settings.json extraPaths...")
-        try:
-            import json5
-            with open(settings_path, "r", encoding="utf-8") as f:
-                data = json5.load(f)
-
-            existing_paths = data.get("python.analysis.extraPaths", [])
-            # 过滤掉旧的 .diy/ref 路径
-            existing_paths = [p for p in existing_paths if ".diy/ref" not in p]
-            data["python.analysis.extraPaths"] = existing_paths + python_paths
-
-            with open(settings_path, "w", encoding="utf-8") as f:
-                import json as json_lib
-                json_lib.dump(data, f, indent=4)
-        except Exception as e:
-            log.error(f"更新 .vscode/settings.json 失败: {e}")
-
-    # 2. 更新 pyrightconfig.json
+    # 更新 pyrightconfig.json（用绝对路径，pyright CLI 不认 VS Code 变量）
     pyright_path = root_dir / "pyrightconfig.json"
     if pyright_path.exists():
         log.info("正在更新 pyrightconfig.json extraPaths...")
@@ -563,7 +539,7 @@ def update_python_ide_config(root_dir: Path, sync_results: Dict[str, SyncResult]
                 data = json.load(f)
             existing_paths = data.get("extraPaths", [])
             existing_paths = [p for p in existing_paths if ".diy/ref" not in p]
-            data["extraPaths"] = existing_paths + python_paths
+            data["extraPaths"] = existing_paths + python_paths_raw
             with open(pyright_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
         except Exception as e:
