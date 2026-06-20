@@ -146,4 +146,11 @@ github-actions-cicd()    {
 # app entry script & _root cmd
 ####################################################
 
+# 隔离实验模式（数据在 .diy-dev/）
+# 用法: DIY_HOME=.diy-dev uv run diy task ...
+dev() {
+  echo "隔离模式: 数据目录 .diy-dev/"
+  echo "用法: DIY_HOME=.diy-dev uv run diy task ..."
+}
+
 sha "$@"
