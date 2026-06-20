@@ -61,18 +61,15 @@ def get_workspace_packages(root_dir: Path) -> Dict[str, WorkspaceInfo]:
         deps = {}
         if pyproject_path.exists():
             try:
-                with open(pyproject_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                import re
-                deps_match = re.search(r'dependencies\s*=\s*\[(.*?)\]', content, re.DOTALL)
-                if deps_match:
-                    dep_list = deps_match.group(1)
-                    for dep_str in re.findall(r'"([^"]+)"', dep_list):
-                        d_parts = re.split(r'[>=<]', dep_str)
-                        if d_parts:
-                            d_name = d_parts[0].strip()
-                            d_ver = dep_str[len(d_name):].strip() or "*"
-                            deps[d_name] = d_ver
+                import tomllib
+                with open(pyproject_path, "rb") as f:
+                    pyproject = tomllib.load(f)
+                for dep_str in pyproject.get("project", {}).get("dependencies", []):
+                    d_parts = re.split(r'[>=<]', dep_str)
+                    if d_parts:
+                        d_name = d_parts[0].strip()
+                        d_ver = dep_str[len(d_name):].strip() or "*"
+                        deps[d_name] = d_ver
             except Exception: pass
         return deps
 
@@ -101,13 +98,12 @@ def get_workspace_packages(root_dir: Path) -> Dict[str, WorkspaceInfo]:
         # 无论有无 deps，都尝试从 pyproject.toml 读取 name/version
         if not name and pyproject_path.exists():
             try:
-                with open(pyproject_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                import re
-                name_match = re.search(r'name\s*=\s*"([^"]+)"', content)
-                if name_match: name = name_match.group(1)
-                version_match = re.search(r'version\s*=\s*"([^"]+)"', content)
-                if version_match: version = version_match.group(1)
+                import tomllib
+                with open(pyproject_path, "rb") as f:
+                    pyproject = tomllib.load(f)
+                proj = pyproject.get("project", {})
+                name = proj.get("name", "")
+                version = proj.get("version", version)
             except Exception: pass
         
         if name:
@@ -148,24 +144,27 @@ def get_workspace_packages(root_dir: Path) -> Dict[str, WorkspaceInfo]:
     root_pyproject_path = root_dir / "pyproject.toml"
     if root_pyproject_path.exists():
         try:
-            with open(root_pyproject_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            import re
-            # Extract tool.uv.workspace.members or tool.poetry.workspace.members
-            workspace_match = re.search(r'\[tool\.(?:uv|poetry)\.workspace\][\s\S]*?members\s*=\s*\[(.*?)\]', content)
-            if workspace_match:
-                for pattern in re.findall(r'"([^"]+)"', workspace_match.group(1)):
-                    base_dir_str = pattern.replace("/*", "")
-                    full_base_dir = root_dir / base_dir_str
-                    if full_base_dir.exists() and full_base_dir.is_dir():
-                        if "/*" in pattern:
-                            for item in full_base_dir.iterdir():
-                                if item.is_dir():
-                                    info = get_dir_info(item, str(item.relative_to(root_dir)))
-                                    if info: workspace_map[info.name] = info
-                        else:
-                            info = get_dir_info(full_base_dir, str(full_base_dir.relative_to(root_dir)))
-                            if info: workspace_map[info.name] = info
+            import tomllib
+            with open(root_pyproject_path, "rb") as f:
+                pyproject = tomllib.load(f)
+            # uv.workspace.members 或 poetry.workspace.members
+            workspace_cfg = (
+                pyproject.get("tool", {}).get("uv", {}).get("workspace", {})
+                or pyproject.get("tool", {}).get("poetry", {}).get("workspace", {})
+            )
+            members = workspace_cfg.get("members", [])
+            for pattern in members:
+                base_dir_str = pattern.replace("/*", "")
+                full_base_dir = root_dir / base_dir_str
+                if full_base_dir.exists() and full_base_dir.is_dir():
+                    if "/*" in pattern:
+                        for item in full_base_dir.iterdir():
+                            if item.is_dir():
+                                info = get_dir_info(item, str(item.relative_to(root_dir)))
+                                if info: workspace_map[info.name] = info
+                    else:
+                        info = get_dir_info(full_base_dir, str(full_base_dir.relative_to(root_dir)))
+                        if info: workspace_map[info.name] = info
         except Exception: pass
 
     # 4. Check pkgs/ directory (fallback for both)
@@ -606,13 +605,14 @@ def load_uv_lock(root_dir: Path) -> Dict[str, str]:
     resolved = {}
     if lock_path.exists():
         try:
-            with open(lock_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            import re
-            for block, _ in re.findall(r'\[\[package\]\](.*?)(\n\n|(?=\[\[package\]\])|$)', content, re.DOTALL):
-                name = re.search(r'name\s*=\s*"([^"]+)"', block)
-                ver = re.search(r'version\s*=\s*"([^"]+)"', block)
-                if name and ver: resolved[name.group(1)] = ver.group(1)
+            import tomllib
+            with open(lock_path, "rb") as f:
+                data = tomllib.load(f)
+            for pkg in data.get("package", []):
+                name = pkg.get("name")
+                ver = pkg.get("version")
+                if name and ver:
+                    resolved[name] = ver
         except Exception: pass
     return resolved
 
@@ -656,16 +656,14 @@ def sync_dependencies():
         
     if pyproject_path.exists():
         try:
-            with open(pyproject_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            import re
-            m = re.search(r'dependencies\s*=\s*\[(.*?)\]', content, re.DOTALL)
-            if m:
-                for d in re.findall(r'"([^"]+)"', m.group(1)):
-                    parts = re.split(r'[>=<]', d)
-                    if parts:
-                        name = parts[0].strip()
-                        all_deps[("python", name)] = uv_lock.get(name, d[len(name):].strip() or "*")
+            import tomllib
+            with open(pyproject_path, "rb") as f:
+                pyproject = tomllib.load(f)
+            for d in pyproject.get("project", {}).get("dependencies", []):
+                parts = re.split(r'[>=<]', d)
+                if parts:
+                    name = parts[0].strip()
+                    all_deps[("python", name)] = uv_lock.get(name, d[len(name):].strip() or "*")
         except Exception: pass
     
     # 合并 workspace packages 的依赖
