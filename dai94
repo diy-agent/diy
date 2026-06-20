@@ -1,9 +1,0 @@
-#!/bin/bash
-# dai94 — 隔离实验环境
-# 数据: ~/.diy-dev/94/
-
-set -e
-export DIY_HOME="$HOME/.diy-dev/94"
-mkdir -p "$DIY_HOME"
-cd "$HOME/git/diy/_diy-work/feat/task-pool-star"
-exec uv run diy "$@"
