@@ -152,7 +152,7 @@ def get_workspace_packages(root_dir: Path) -> Dict[str, WorkspaceInfo]:
                 content = f.read()
             import re
             # Extract tool.uv.workspace.members or tool.poetry.workspace.members
-            workspace_match = re.search(r'\[tool\.(?:uv|poetry)\.workspace\][\s\S]*?members\s*=\s*\[(.*?)\]', content)
+            workspace_match = re.search(r'\[tool\.(?:uv|poetry)\.workspace\][\s\S]*?members\s*=\s*\[(.*?)\]', content, re.DOTALL)
             if workspace_match:
                 for pattern in re.findall(r'"([^"]+)"', workspace_match.group(1)):
                     base_dir_str = pattern.replace("/*", "")
