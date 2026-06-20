@@ -1,0 +1,45 @@
+#!/bin/bash
+# dai94 — 隔离实验环境命令
+# 数据目录: ~/.diy-dev/94/
+# Socket: ~/.diy-dev/94/app.sock
+
+set -e
+
+EXP_ID="94"
+DIY_DEV_HOME="$HOME/.diy-dev/$EXP_ID"
+
+# 创建隔离目录
+mkdir -p "$DIY_DEV_HOME"
+
+# 设置环境变量
+export DIY_HOME="$DIY_DEV_HOME"
+
+# 新分支代码目录
+WORKTREE="$HOME/git/diy/_diy-work/feat/task-pool-star"
+DIY_SRC="$HOME/git/diy/_diy"
+
+# 根据参数决定运行 app 还是 CLI
+if [ $# -eq 0 ]; then
+    # 无参数：启动 app
+    cd "$DIY_SRC"
+    PYTHONPATH="$WORKTREE/pkgs/diy-cli/src:$PYTHONPATH" exec uv run python -m diydev.app.main
+elif [ "$1" = "app" ]; then
+    # dai94 app：启动 app
+    shift
+    cd "$DIY_SRC"
+    PYTHONPATH="$WORKTREE/pkgs/diy-cli/src:$PYTHONPATH" exec uv run python -m diydev.app.main "$@"
+elif [ "$1" = "task" ]; then
+    # dai94 task ...：运行 task 命令
+    shift
+    cd "$WORKTREE"
+    exec uv run diy task "$@"
+elif [ "$1" = "ref" ]; then
+    # dai94 ref ...：运行 ref 命令
+    shift
+    cd "$WORKTREE"
+    exec uv run diy ref "$@"
+else
+    # 其他命令：直接运行 diy
+    cd "$WORKTREE"
+    exec uv run diy "$@"
+fi

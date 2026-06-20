@@ -26,7 +26,14 @@ log = logger.with_tag("task")
 # 路径常量
 # ══════════════════════════════════════════════════════════════
 
-DIY_HOME = Path.home() / ".diy"
+def _get_diy_home() -> Path:
+    """获取 DIY_HOME 目录（支持环境变量覆盖）"""
+    if env := os.environ.get("DIY_HOME"):
+        return Path(env)
+    return Path.home() / ".diy"
+
+
+DIY_HOME = _get_diy_home()
 POOL_DIR = DIY_HOME / "task"      # ~/.diy/task/
 STAR_DIR = DIY_HOME / "star"      # ~/.diy/star/
 
