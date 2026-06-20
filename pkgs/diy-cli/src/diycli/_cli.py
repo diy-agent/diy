@@ -8,6 +8,7 @@ from cyclopts import App, Parameter, Group
 from ._log import set_verbosity, logger
 from ._sync import sync_dependencies
 from .llm import llm_app
+from .ref import ref_app
 from .llm.auth import load_dotenv
 
 _GLOBAL_GROUP = Group("全局选项")
@@ -42,6 +43,7 @@ def sync_cmd():
         sys.exit(1)
 
 app.command(llm_app)
+app.command(ref_app)
 
 @app.default
 def root(verbose: VerboseRoot = 0):
