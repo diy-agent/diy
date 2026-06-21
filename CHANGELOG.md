@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.1.22](https://github.com/diy-agent/diy/compare/diy-v0.1.21...diy-v0.1.22) (2026-06-20)
+
+
+### Features
+
+* add diy-llm ([a714ca8](https://github.com/diy-agent/diy/commit/a714ca8e9ddfb9e2f71e132011a6295ae596365c))
+* diy llm AGENTS.md + deepseek provider, cleanup uv.lock ([b585b80](https://github.com/diy-agent/diy/commit/b585b806264d23789c3bc1fc95f3cdc33eed3b7f))
+* **diy-llm-gui:** PySide6 托盘管理程序 MVP ([39f9122](https://github.com/diy-agent/diy/commit/39f9122e124234ca9a1902028310b509a31cfc7e)), closes [#120](https://github.com/diy-agent/diy/issues/120)
+* **diy-llm-gui:** QtAsyncio async 基础设施 ([c798dc1](https://github.com/diy-agent/diy/commit/c798dc1a879f303b6fd10d793920de99bf4bfe9e))
+* **diy-llm-gui:** 启动日志 + 退出说明 ([41be8b6](https://github.com/diy-agent/diy/commit/41be8b6912bc7c1bfb3c8ef8e533010f9b347a07))
+* **diy-llm:** auth.json 合并 + editable 块设计 + 意图测试 ([03427b3](https://github.com/diy-agent/diy/commit/03427b33f24d01a284cc525b16fc359fc0df3e1c))
+* **diy-ui:** Phase 1 — ScopeProxy 委托层 ([ded6f67](https://github.com/diy-agent/diy/commit/ded6f6730e9274a2744fb23bc6df211a311d7062))
+* merge diy-llm into diy-cli as 'diy llm' subcommand ([68960fa](https://github.com/diy-agent/diy/commit/68960fa8e49705785690f1c561b8cf7b84df0ef2))
+* **ref:** diy ref 子命令 — list/add/remove/sync/status ([cde6902](https://github.com/diy-agent/diy/commit/cde6902987efd2b1941fdf21f23a34aa06492cba))
+* **ref:** diy ref 子命令 + TOML 解析重构 ([5761908](https://github.com/diy-agent/diy/commit/5761908e0f26b746ccd13f8480cf37f6e02da1cf))
+
+
+### Bug Fixes
+
+* **diy-cli:** diy sync writes sources to ref.lock.json ([#115](https://github.com/diy-agent/diy/issues/115)) ([7f57b20](https://github.com/diy-agent/diy/commit/7f57b2036e94710a14b1aafcafb53b07719cbda0))
+* **diy-llm-gui:** pgrep 检测放宽，匹配不带 --daemon 的旧实例 ([72bb1a2](https://github.com/diy-agent/diy/commit/72bb1a24839800a664e60aff021a9f36e49c001e))
+* **diy-llm-gui:** QtAsyncio 未实现 subprocess_exec，改用 asyncio.to_thread + subprocess.run ([e0c5d93](https://github.com/diy-agent/diy/commit/e0c5d93f79008addb545e9f581e1612038a7fbbf))
+* **diy-llm-gui:** relative import 改绝对导入，兼容 python app.py 直接运行 ([4619aac](https://github.com/diy-agent/diy/commit/4619aacdbb002e696fa39bd80a80dce28f609b9f))
+* **diy-llm-gui:** SP_ComputerIcon 用 QStyle 枚举访问，修正 AttributeError ([dd94a05](https://github.com/diy-agent/diy/commit/dd94a051a6e773b14ce16c8aa7fa8b23602b96fd))
+* **diy-ui:** _meta.py 去掉 sorted()——保留 Panel 原生 param 顺序 ([f406f1f](https://github.com/diy-agent/diy/commit/f406f1f6ea3d82e16458aa6fcd540e5ce705cf20))
+* **diy-ui:** Phase 3a _ancestor_ids 统一用 host id ([d3a475a](https://github.com/diy-agent/diy/commit/d3a475a8164ccfd11320257984fa9499b4a684b1))
+* **diy-ui:** Phase 3a _signal_name 兼容 __slots__ ([5b479bb](https://github.com/diy-agent/diy/commit/5b479bb6fbbd177d66fe33c81212407ed03aaa2f))
+* **diy-ui:** Phase 3a EventLog hook ScopeProxy._execute_cell ([7fd9b99](https://github.com/diy-agent/diy/commit/7fd9b994efa35d5e81cbdc4897f3edd942c51832))
+* **diy-ui:** Phase 3a unit test 全过 + _ancestor_ids 修复 ([7ef3b96](https://github.com/diy-agent/diy/commit/7ef3b96b0ca3f655a8ab929abf0716ef18095cc6))
+* **diy-ui:** Phase 3a 修复 _ancestor_ids / on_signal_read / cell() ([4e6ebc8](https://github.com/diy-agent/diy/commit/4e6ebc868ea0940c91446a676dd7c893dfeb75bd))
+* **diy-ui:** 修复 async cell 不执行 — _execute_cell 未 await coroutine ([50607f3](https://github.com/diy-agent/diy/commit/50607f3f26d21426a875f7d416c7108239ba6f71))
+* **diy-ui:** 修复动态类 param 顺序 + default 表示 ([4d3fd60](https://github.com/diy-agent/diy/commit/4d3fd60a4a2f50720fd3da786c4afc34658aa94c))
+* **reactivity:** _add_child 即时同步 Panel，恢复逐步更新 ([2a3f4fd](https://github.com/diy-agent/diy/commit/2a3f4fd43a92c044ec8846b8faa9044aa700e7ed))
+* **reactivity:** 修复跨 scope 误判和 Panel children 不同步 ([859cca5](https://github.com/diy-agent/diy/commit/859cca5af1cb1eaf5164fbad6ec10a827e1667af))
+* switch from custom_openai to openai provider to handle think param ([98a35d2](https://github.com/diy-agent/diy/commit/98a35d2241a9f5d0fdac2b9a28fed7abd7fa98e3))
+* **sync:** workspace 正则缺少 re.DOTALL，diy-ui 未被识别为本地包 ([870984c](https://github.com/diy-agent/diy/commit/870984c76a0f1b351f8db0161e9ca3bfe7cebde1))
+
+
+### Reverts
+
+* **diy-llm-gui:** 回退为 relative import，文档化正确运行方式 ([86f6e8a](https://github.com/diy-agent/diy/commit/86f6e8ab00499e30e4f7f63f54232f88eb071b0e))
+
 ## [0.1.21](https://github.com/diy-agent/diy/compare/diy-v0.1.20...diy-v0.1.21) (2026-06-01)
 
 
