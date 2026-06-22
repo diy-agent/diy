@@ -1,9 +1,9 @@
-"""diy ref — 参考仓库管理命令"""
+"""diy ref — 本地源码镜像管理"""
 
 import sys
 import yaml
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Optional
 from cyclopts import App, Parameter
 
 from ._log import logger
@@ -19,7 +19,11 @@ log = logger.with_tag("ref")
 
 ref_app = App(
     name="ref",
-    help="参考仓库管理 — list/add/remove/sync/status",
+    help="管理本地源码镜像 (ref: ~/.diy/ref/ + .diy/ref.lock.yaml)\n\n"
+    "ref 系统: diy.yaml 声明外部仓库, diy ref sync clone 源码到 ~/.diy/ref/,"
+    " 生成 .diy/ref.lock.yaml 映射表 (key → 本地路径)。"
+    " Agent 用 diy ref list 查路径, read_file 读源码。"
+    " 子命令: add list remove sync status。",
 )
 
 
@@ -69,9 +73,14 @@ def _parse_ref_key(key: str) -> tuple[str, str]:
 
 @ref_app.command(name="list")
 def ref_list(
-    verbose: int = 0,
+    verbose: Annotated[int, Parameter(help="冗余级别: -v=INFO, -vv=DEBUG")] = 0,
 ):
-    """列出所有已同步的 ref"""
+    """列出已同步的所有 ref, 输出 key → 路径映射表
+diy.yaml sources → source:owner/repo 键
+pyproject.toml 依赖 → python:name 键
+package.json 依赖 → node:name 键
+路径格式: ~/.diy/ref/{host}/{owner}/{repo}/{tag}
+Agent 查源码: diy ref list → 取 path → read_file(path)"""
     root_dir = find_project_root()
     refs = _load_ref_lock(root_dir)
     config = _load_diy_yaml(root_dir)
@@ -146,11 +155,14 @@ def ref_list(
 
 @ref_app.command(name="add")
 def ref_add(
-    url: str,
-    version: Optional[str] = None,
-    verbose: int = 0,
+    url: Annotated[str, Parameter(help="Git 仓库 URL")],
+    version: Annotated[Optional[str], Parameter(help="分支/tag/commit, 如 main、v1.0.0")] = None,
+    verbose: Annotated[int, Parameter(help="冗余级别: -v=INFO, -vv=DEBUG")] = 0,
 ):
-    """添加参考仓库"""
+    """添加外部仓库到 diy.yaml, 后续 diy ref sync 会 clone 源码
+diy ref add https://github.com/org/repo
+diy ref add https://github.com/org/repo@main
+diy ref add git@github.com:org/repo@v1.0.0"""
     root_dir = find_project_root()
     config = _load_diy_yaml(root_dir)
 
@@ -185,10 +197,12 @@ def ref_add(
 
 @ref_app.command(name="remove")
 def ref_remove(
-    name: str,
-    verbose: int = 0,
+    name: Annotated[str, Parameter(help="owner/repo | URL | diy.yaml 原串")],
+    verbose: Annotated[int, Parameter(help="冗余级别: -v=INFO, -vv=DEBUG")] = 0,
 ):
-    """移除参考仓库"""
+    """从 diy.yaml 移除 source (已 clone 的代码保留在 ~/.diy/ref/)
+diy ref remove github/org
+diy ref remove https://github.com/org/repo"""
     root_dir = find_project_root()
     config = _load_diy_yaml(root_dir)
     sources = config.get("sources", [])
@@ -224,18 +238,23 @@ def ref_remove(
 
 @ref_app.command(name="sync")
 def ref_sync(
-    verbose: int = 0,
+    verbose: Annotated[int, Parameter(help="冗余级别: -v=INFO, -vv=DEBUG")] = 0,
 ):
-    """同步所有 ref（依赖 + sources）"""
+    """同步 ref: 读 pyproject.toml/package.json + diy.yaml → clone 到 ~/.diy/ref/
+写 .diy/ref.lock.yaml 映射表, 更新 pyrightconfig.json extraPaths
+diy ref sync (只做 ref 部分, 完整同步用 diy sync)"""
     from ._sync import sync_dependencies
     sync_dependencies()
 
 
 @ref_app.command(name="status")
 def ref_status(
-    verbose: int = 0,
+    verbose: Annotated[int, Parameter(help="冗余级别: -v=INFO, -vv=DEBUG")] = 0,
 ):
-    """检查 ref 状态"""
+    """检查 .diy/ref.lock.yaml 各路径是否存在
+✓ 正常 = 路径存在可读, ✗ 缺失 = 需重新 diy ref sync
+Agent 读 ref 源码前先 status 确认路径有效
+diy ref status"""
     root_dir = find_project_root()
     refs = _load_ref_lock(root_dir)
     config = _load_diy_yaml(root_dir)
