@@ -6,7 +6,6 @@ from typing import Annotated
 from cyclopts import App, Parameter, Group
 
 from ._log import set_verbosity, logger
-from ._sync import sync_dependencies
 from .llm import llm_app
 from .ref import ref_app
 from .llm.auth import load_dotenv
@@ -29,18 +28,6 @@ app = App(
     version=version("diy-cli"),
     version_flags=["--version", "-V"],
 )
-
-@app.command(name="sync")
-def sync_cmd():
-    """同步项目依赖源码到 .diy"""
-    try:
-        sync_dependencies()
-    except FileNotFoundError as e:
-        logger.error(str(e))
-        sys.exit(1)
-    except Exception as e:
-        logger.error("同步过程中发生未知错误", e)
-        sys.exit(1)
 
 app.command(llm_app)
 app.command(ref_app)

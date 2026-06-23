@@ -24,7 +24,6 @@ metadata_cache: Dict[str, Any] = {}
 metadata_lock = threading.Lock()
 
 def clean_exec_output(output: str) -> str:
-# ... (rest of the file)
     lines = output.splitlines()
     filtered = []
     for line in lines:
@@ -591,6 +590,93 @@ def load_uv_lock(root_dir: Path) -> Dict[str, str]:
                     resolved[name] = ver
         except Exception: pass
     return resolved
+
+
+@dataclass
+class ScannedDep:
+    """一个被扫描到的依赖项。"""
+    eco: str
+    name: str
+    version: str
+    source_url: str = ''
+    local_path: str = ''
+    status: str = 'pending'
+    error_msg: str = ''
+
+
+def scan_project_deps(root_dir):
+    """扫描项目依赖（只读，不 clone）。"""
+    result = []
+    ref_lock_path = root_dir / '.diy' / 'ref.lock.yaml'
+    synced = {}
+    if ref_lock_path.exists():
+        try:
+            with open(ref_lock_path) as f:
+                import yaml as _y
+                data = _y.safe_load(f) or {}
+            synced = data.get('refs', {})
+        except Exception:
+            pass
+    load_metadata_cache()
+    workspace_packages = get_workspace_packages(root_dir)
+    workspace_names = set(workspace_packages.keys())
+    pkg_path = root_dir / 'package.json'
+    pyproject_path = root_dir / 'pyproject.toml'
+    pkg_lock = load_package_lock(root_dir)
+    uv_lock = load_uv_lock(root_dir)
+    all_deps = {}
+    if pkg_path.exists():
+        try:
+            with open(pkg_path) as f:
+                pkg = json.load(f)
+            for n, s in {**pkg.get('dependencies', {}), **pkg.get('devDependencies', {})}.items():
+                all_deps[('node', n)] = pkg_lock.get(n, s)
+        except Exception:
+            pass
+    if pyproject_path.exists():
+        try:
+            import tomllib
+            with open(pyproject_path, 'rb') as f:
+                pyproject = tomllib.load(f)
+            for d in pyproject.get('project', {}).get('dependencies', []):
+                parts = re.split(r'[>=<]', d)
+                if parts:
+                    name = parts[0].strip()
+                    all_deps[('python', name)] = uv_lock.get(name, d[len(name):].strip() or '*')
+        except Exception:
+            pass
+    for wp in workspace_packages.values():
+        eco = 'node' if (Path(wp.path) / 'package.json').exists() else 'python'
+        for n, s in {**wp.dependencies, **wp.dev_dependencies}.items():
+            if (eco, n) not in all_deps:
+                all_deps[(eco, n)] = pkg_lock.get(n, uv_lock.get(n, s))
+    all_deps = {k: v for k, v in all_deps.items() if k[1] not in workspace_names}
+    for (eco, name), version in sorted(all_deps.items()):
+        cache_key = f'{eco}:{name}'
+        cached = metadata_cache.get(cache_key, {})
+        repo_url = cached.get('repoUrl', '') if cached.get('lastVersion') == version else ''
+        lock_key = f'{eco}:{name}'
+        local_path = synced.get(lock_key, '')
+        result.append(ScannedDep(eco=eco, name=name, version=version, source_url=repo_url, local_path=local_path, status='synced' if local_path else 'pending'))
+    diy_yaml_path = root_dir / 'diy.yaml'
+    if diy_yaml_path.exists():
+        try:
+            with open(diy_yaml_path) as f:
+                import yaml as _y2
+                config = _y2.safe_load(f) or {}
+            for spec in config.get('sources', []):
+                url_part = spec.split('@')[0] if '@' in spec else spec
+                ver = spec.split('@')[1] if '@' in spec and spec.rfind('@') > 7 else ''
+                repo_info = parse_repo_url(url_part)
+                if repo_info:
+                    name = f'{repo_info.owner}/{repo_info.repo}'
+                    lock_key = f'source:{name}'
+                    local_path = synced.get(lock_key, '')
+                    result.append(ScannedDep(eco='source', name=name, version=ver or 'main', source_url=url_part, local_path=local_path, status='synced' if local_path else 'pending'))
+        except Exception:
+            pass
+    return result
+
 
 def sync_dependencies():
     log.info("sync start")
