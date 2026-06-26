@@ -82,6 +82,21 @@ def _mark_webengine_ready() -> None:
     _webengine_ready = True
 
 
+from diy.app._agent_chat import AgentChatPanel  # noqa: E402  # 同上
+from diy.app._app_log import logger, setup_app_logger  # noqa: E402  # 同上
+from diy.app._doctor import HealthIssue, run_check  # noqa: E402  # 同上
+from diy.app._log_panel import LogPanel  # noqa: E402  # 同上
+from diy.app._metrics import MetricsStore  # noqa: E402  # 同上
+from diy.app._overlay_panel import OverlayPanel  # noqa: E402  # 同上
+from diy.app._status_bar import StatusBar  # noqa: E402  # 同上
+from diy.app._title_bar import TitleBar  # noqa: E402  # 同上
+from diy.app.llm._page import LLMPage  # noqa: E402  # 同上
+from diy.app.screen import Area, Panel, Screen  # noqa: E402  # 同上
+from diy.app.task_tree import TaskNode, load_task_tree  # noqa: E402  # 同上
+from diy.core._state import (  # noqa: E402  # 因 Qt chromium flags 先行设置，以下 import 均无法在文件顶
+    diy_home,
+)
+from diy.core.agent_manager import get_manager  # noqa: E402  # 同上
 from PySide6.QtWidgets import (  # type: ignore[import-untyped]  # noqa: E402  # chromium flags 设后才能 import QtWidgets
     QAbstractItemView,
     QApplication,
@@ -103,21 +118,6 @@ from PySide6.QtWidgets import (  # type: ignore[import-untyped]  # noqa: E402  #
     QVBoxLayout,
     QWidget,
 )
-
-from diy.core._state import (  # noqa: E402  # 因 Qt chromium flags 先行设置，以下 import 均无法在文件顶
-    diy_home,
-)
-from diy.app._agent_chat import AgentChatPanel  # noqa: E402  # 同上
-from diy.app._app_log import logger, setup_app_logger  # noqa: E402  # 同上
-from diy.app._doctor import HealthIssue, run_check  # noqa: E402  # 同上
-from diy.app._log_panel import LogPanel  # noqa: E402  # 同上
-from diy.app._metrics import MetricsStore  # noqa: E402  # 同上
-from diy.app._overlay_panel import OverlayPanel  # noqa: E402  # 同上
-from diy.app._status_bar import StatusBar  # noqa: E402  # 同上
-from diy.app._title_bar import TitleBar  # noqa: E402  # 同上
-from diy.app.screen import Area, Panel, Screen  # noqa: E402  # 同上
-from diy.app.task_tree import TaskNode, load_task_tree  # noqa: E402  # 同上
-from diy.core.agent_manager import get_manager  # noqa: E402  # 同上
 
 # ═══════════════════════════════════════════════════════
 # 自定义 data roles
@@ -720,8 +720,35 @@ class MainWindow(QMainWindow):
         self._splitter.setStretchFactor(0, 1)
         self._splitter.setStretchFactor(1, 0)
         self._splitter.setSizes([800, 0])
-        self.setCentralWidget(self._splitter)
-        logger.debug("[init] 中央 Splitter + Overlay 创建完成")
+
+        # ── LLM 管理页面 ──
+        self._llm_page = LLMPage(self)
+
+        # ── 中央 TabWidget：任务树 | LLM 管理 ──
+        self._main_tabs = QTabWidget()
+        self._main_tabs.setDocumentMode(True)
+        self._main_tabs.setStyleSheet("""
+            QTabWidget::pane {
+                background: #1e1e2e; border: none;
+            }
+            QTabBar::tab {
+                background: #181825; color: #6c7086;
+                padding: 6px 16px; font-size: 12px;
+                border: none;
+                border-bottom: 2px solid transparent;
+            }
+            QTabBar::tab:selected {
+                color: #cdd6f4;
+                border-bottom: 2px solid #89b4fa;
+            }
+            QTabBar::tab:hover {
+                color: #a6adc8;
+            }
+        """)
+        self._main_tabs.addTab(self._splitter, "📁 任务树")
+        self._main_tabs.addTab(self._llm_page, "🤖 LLM")
+        self.setCentralWidget(self._main_tabs)
+        logger.debug("[init] 中央 TabWidget (任务树 + LLM) 创建完成")
 
         self._gateway.start()
         logger.debug("[init] Gateway 启动完成")
@@ -1738,6 +1765,86 @@ class MainWindow(QMainWindow):
             return "\n".join(lines)
         return "(无 agent)"
 
+    def _format_llm_status(self) -> str:
+        """LLM 页面状态快照 — provider 列表 + proxy 统计。"""
+        lines: list[str] = []
+        lines.append("=== LLM Provider ===")
+
+        models_dir = Path.home() / ".diy" / "models"
+        if models_dir.is_dir():
+            for f in sorted(models_dir.glob("*.json")):
+                try:
+                    import json as _json
+
+                    state = _json.loads(f.read_text())
+                    name = f.stem
+                    source = state.get("source", "?")
+                    api_base = state.get("api_base", "?")
+                    models = state.get("models", {})
+                    enabled = sum(
+                        1
+                        for m in models.values()
+                        if m.get("editable", {}).get("enabled", True)
+                        and not m.get("stale")
+                        and m.get("status") not in ("error", "exhausted")
+                    )
+                    lines.append(f"  {name:30s} {source:30s} {api_base}")
+                    lines.append(f"  {'':30s} {enabled}/{len(models)} models enabled")
+                except Exception:
+                    lines.append(f"  {f.stem:30s} (read error)")
+        else:
+            lines.append("  (无 provider)")
+
+        # Proxy 统计
+        lines.append("")
+        lines.append("=== Proxy 监控 ===")
+        from diy.app.llm._monitor import SHIM_LOG_DIR as _SLD
+
+        log_dir = _SLD
+        lines.append(f"  日志目录: {log_dir}")
+        try:
+            log_files = sorted(Path(log_dir).glob("shim-*.jsonl"))
+            if log_files:
+                total_entries = 0
+                for lf in log_files:
+                    try:
+                        total_entries += sum(1 for _ in lf.open())
+                    except Exception:
+                        logger.debug("[llm] 读取日志文件失败: %s", lf.name, exc_info=True)
+                lines.append(
+                    f"  日志文件: {len(log_files)} 个，共 {total_entries} 条记录"
+                )
+                lines.append(f"  最新: {log_files[-1].name}")
+            else:
+                lines.append("  (无日志)")
+        except Exception:
+            lines.append("  (无法读取日志目录)")
+
+        lines.append("")
+        active_tab = (
+            self._main_tabs.currentIndex() if hasattr(self, "_main_tabs") else 0
+        )  # noqa: SIM108
+        tab_name = ["任务树", "LLM 管理"][active_tab]
+        lines.append(f"  当前标签: {tab_name}")
+        return "\n".join(lines)
+
+    def _trigger_llm_sync(self) -> str:
+        """触发 diy llm sync all（含 proxy 变体）。"""
+        import subprocess as _sp
+
+        try:
+            result = _sp.run(
+                ["uv", "run", "diy", "llm", "sync", "all", "--proxy"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                return result.stdout or "同步成功"
+            return f"同步失败:\n{result.stderr}"
+        except Exception as e:
+            return f"同步异常: {e}"
+
     def closeEvent(self, event):  # noqa: N802  # 重写 Qt 事件方法，保持原大小写
         self._gateway.stop()
         super().closeEvent(event)
@@ -2367,7 +2474,6 @@ class GatewayCLI:
             import json as _json
 
             import yaml as _yaml
-
             from diy.core._state import load_state
 
             profiles = load_state().get("profiles", {})
@@ -2428,7 +2534,6 @@ class GatewayCLI:
             import json as _json
 
             import yaml as _yaml
-
             from diy.core._state import _subject_is_git, load_state
 
             data = load_state()
@@ -2488,7 +2593,6 @@ class GatewayCLI:
             import json as _json
 
             import yaml as _yaml
-
             from diy.cli._dai_cli import _build_subject_tree
             from diy.core._state import _subject_is_git, load_state
 
@@ -2524,7 +2628,6 @@ class GatewayCLI:
             import os as _os
 
             import yaml as _yaml
-
             from diy.core._state import _norm, load_state, save_state
 
             root_path = _os.path.abspath(_os.path.expanduser(root))
@@ -2571,7 +2674,6 @@ class GatewayCLI:
             import json as _json
 
             import yaml as _yaml
-
             from diy.core._state import get_task, star_task
 
             task = get_task(uri)
@@ -2603,7 +2705,6 @@ class GatewayCLI:
             import json as _json
 
             import yaml as _yaml
-
             from diy.core._state import get_task, unstar_task
 
             task = get_task(uri)
@@ -2634,7 +2735,6 @@ class GatewayCLI:
             import json as _json
 
             import yaml as _yaml
-
             from diy.core._state import is_starred, list_starred, list_tasks
 
             tasks = dict(list_tasks() if all else list_starred())
@@ -2667,7 +2767,6 @@ class GatewayCLI:
             import json as _json
 
             import yaml as _yaml
-
             from diy.core._state import get_task
 
             task = get_task(uri)
@@ -2746,7 +2845,6 @@ class GatewayCLI:
             import json as _json
 
             import yaml as _yaml
-
             from diy.core._state import _norm, get_task, update_task_field
 
             if get_task(uri) is None:
@@ -2827,7 +2925,6 @@ class GatewayCLI:
             import json as _json
 
             import yaml as _yaml
-
             from diy.core._state import (
                 _norm,
                 create_task,
@@ -2912,7 +3009,6 @@ class GatewayCLI:
             import subprocess
 
             import yaml as _yaml
-
             from diy.core._state import get_task, list_tasks, update_task_field
 
             if not uri and not all:
@@ -3189,6 +3285,23 @@ class GatewayCLI:
             import re  # noqa: PLC0415
 
             return re.sub(r"\x1b\[\d+(;\d+)*m", "", raw)
+
+        @ui_app.command(name="llm")
+        def ui_llm(*, refresh: bool = False):
+            """LLM 管理页面状态快照 — provider 列表 + proxy 统计。
+
+            范例: dai ui llm
+                   dai ui llm --refresh
+            """
+            return self._main.invoke(self._window._format_llm_status)
+
+        @ui_app.command(name="llm-sync")
+        def ui_llm_sync():
+            """触发 LLM provider 同步（diy llm sync all）。
+
+            范例: dai ui llm-sync
+            """
+            return self._main.invoke(self._window._trigger_llm_sync)
 
         @ui_app.command(name="shutdown")
         def ui_shutdown():
