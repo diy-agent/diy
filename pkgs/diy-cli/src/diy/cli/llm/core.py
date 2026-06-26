@@ -203,13 +203,16 @@ def ensure_state(
     state: dict[str, Any] = {
         "version": LOCK_VERSION,
         "updated_at": now,
-        "provider": name,
+        "provider_name": name,
         "provider_type": ptype,
-        "models": models,
     }
     if existing_source:
         state["source"] = existing_source
         state["api_base"] = existing_api_base
+    else:
+        state["source"] = ""
+        state["api_base"] = api_base
+    state["models"] = models
     return state, label
 
 

@@ -77,7 +77,9 @@ def build_pi_providers(
         if not api_key:
             continue
 
-        ptype_def = load_provider_type(pname) or {}
+        # 从 auth 中读取 provider_type（支持 name 实例）
+        provider_type = pauth.get("provider_type", pname)
+        ptype_def = load_provider_type(provider_type) or {}
         ptype_models = ptype_def.get("models", {})
         state_models = state.get("models", {})
 
@@ -97,6 +99,10 @@ def build_pi_providers(
             meta = ptype_models.get(mid, {})
             editable = m_state.get("editable", {})
 
+            cost = meta.get("cost")
+            if not cost:
+                cost = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+
             entry: dict[str, Any] = {
                 "id": mid,
                 "name": meta.get("label", mid),
@@ -104,7 +110,7 @@ def build_pi_providers(
                 "input": ["text"],
                 "contextWindow": meta.get("context_window", 128000),
                 "maxTokens": editable.get("max_tokens", 4096),
-                "cost": meta.get("cost", {}),
+                "cost": cost,
             }
 
             compat = meta.get("compat")
@@ -118,10 +124,16 @@ def build_pi_providers(
 
         api_base = pauth.get("api_base", "").rstrip("/")
 
+        # Map protocol to PI agent API type
+        protocol = (ptype_def.get("api") or {}).get("protocol", "openai-compatible")
+        pi_api_type = {
+            "google-native": "google-generative-ai",
+        }.get(protocol, "openai-completions")
+
         # Build PI provider entry
         pi_providers[f"diy-{pname}"] = {
             "baseUrl": api_base,
-            "api": "openai-completions",
+            "api": pi_api_type,
             "apiKey": api_key,
             "models": models_list,
         }
@@ -210,7 +222,9 @@ def build_hermes_providers(
         if not api_key:
             continue
 
-        ptype_def = load_provider_type(pname) or {}
+        # 从 auth 中读取 provider_type（支持 name 实例）
+        provider_type = pauth.get("provider_type", pname)
+        ptype_def = load_provider_type(provider_type) or {}
         ptype_models = ptype_def.get("models", {})
         state_models = state.get("models", {})
 

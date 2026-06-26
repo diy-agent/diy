@@ -11,6 +11,10 @@ from cyclopts import App, Parameter
 
 from . import auth, core, export
 
+# 加载 ~/.diy/.env 到环境变量
+from .auth import load_dotenv
+load_dotenv()
+
 
 def _die(msg: str, code: int = 1) -> None:
     print(msg, file=sys.stderr)
@@ -64,7 +68,9 @@ def sync_diy(
             api_base = (ptype_def or {}).get("api", {}).get("default_base", "")
 
         try:
-            state, srcl = core.ensure_state(name, api_base, api_key, name)
+            # 使用 provider_type（name 实例场景下不同于 provider 基类）
+            provider_type = prov_auth.get("provider_type", name)
+            state, srcl = core.ensure_state(name, api_base, api_key, provider_type)
             core.save_state(name, state)
             enabled = sum(1 for m in state["models"].values() if m.get("editable", {}).get("enabled", m.get("enabled", True)) and not m.get("stale"))
             total = len(state["models"])
@@ -146,11 +152,13 @@ def sync_all(
 
         api_base = prov_auth.get("api_base", "")
         if not api_base:
-            ptype_def = core.load_provider_type(name)
+            ptype_def = core.load_provider_type(prov_auth.get("provider_type", name))
             api_base = (ptype_def or {}).get("api", {}).get("default_base", "")
 
         try:
-            state, srcl = core.ensure_state(name, api_base, api_key, name)
+            # 使用 provider_type（name 实例场景下不同于 provider 基类）
+            provider_type = prov_auth.get("provider_type", name)
+            state, srcl = core.ensure_state(name, api_base, api_key, provider_type)
             core.save_state(name, state)
             enabled = sum(1 for m in state["models"].values() if m.get("editable", {}).get("enabled", m.get("enabled", True)) and not m.get("stale"))
             total = len(state["models"])
@@ -198,8 +206,9 @@ auth_app = App(name="auth", help="Manage credentials")
 
 @auth_app.command(name="set")
 def set_cred(
-    provider: Annotated[str, Parameter(help="Provider name (e.g. tencent-tokenhub)")],
+    provider: Annotated[str, Parameter(help="Provider name (e.g. google-ai)")],
     key: Annotated[str, Parameter(help="API key value or $ENV_VAR")],
+    name: Annotated[str | None, Parameter(help="Final provider instance name (e.g. google-ai-work). Defaults to provider name.", negative=False)] = None,
     base_url: Annotated[str | None, Parameter(help="Override default api_base")] = None,
 ):
     """Register a credential (idempotent) and sync models immediately."""
@@ -207,6 +216,10 @@ def set_cred(
     if not ptype_def:
         available = ", ".join(sorted(core.discover_provider_types()))
         _die(f"Unknown provider '{provider}'. Available: {available}")
+
+    # 实例名 = name（未提供则用 provider）
+    instance_name = name if name else provider
+    provider_type = provider  # 基类名
 
     if not key:
         _die(f"Missing --key. Usage: diy llm auth set {provider} --key $ENV_VAR")
@@ -218,7 +231,8 @@ def set_cred(
         if not actual_key:
             _die(f"Environment variable {env_name} is not set")
     else:
-        env_name = f"{provider.upper().replace('-','_')}_KEY"
+        # env 变量名带实例名，避免冲突
+        env_name = f"{instance_name.upper().replace('-','_')}_KEY"
         source = f"env:{env_name}"
         actual_key = key
         # ── read-modify-write .env to preserve existing keys ──
@@ -240,16 +254,19 @@ def set_cred(
 
     api_base = base_url or (ptype_def.get("api", {}).get("default_base", ""))
 
-    auth.set_provider_auth(provider, source, api_base)
+    # provider_type 存基类名（如 google-ai），实例名由用户指定
+    auth.set_provider_auth(instance_name, source, api_base, provider_type=provider)
 
-    print(f"✓  Credential set for '{provider}'")
+    print(f"✓  Credential set for '{instance_name}'")
     print(f"   source:  {source}")
     print(f"   base:    {api_base}")
+    if name:
+        print(f"   type:    {provider}")
 
     print()
     try:
-        state, srcl = core.ensure_state(provider, api_base, actual_key, provider)
-        core.save_state(provider, state)
+        state, srcl = core.ensure_state(instance_name, api_base, actual_key, provider)
+        core.save_state(instance_name, state)
         enabled = sum(1 for m in state["models"].values() if m.get("editable", {}).get("enabled", m.get("enabled", True)) and not m.get("stale"))
         print(f"✓  Initial sync ({srcl}): {enabled} models enabled")
     except RuntimeError as e:

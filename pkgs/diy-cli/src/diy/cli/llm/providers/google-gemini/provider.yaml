@@ -1,0 +1,52 @@
+# ============================================================
+# Provider: google-gemini
+# Gemini API (AI Studio)
+# ============================================================
+
+type: google-gemini
+label: Google Gemini API
+
+# 🔐 认证方式
+auth:
+  scheme: api_key
+  header: x-goog-api-key
+  prefix: ""
+
+# 🌐 API 协议 (注意：Gemini API 并非原生 OpenAI 兼容)
+# 使用时可能需要通过中间适配器转换
+api:
+  protocol: google-native
+  default_base: https://generativelanguage.googleapis.com/v1beta
+
+models:
+  gemini-3.5-flash:
+    label: Gemini 3.5 Flash
+    context_window: 1000000
+    max_tokens: 8192
+  gemini-3.1-flash-lite:
+    label: Gemini 3.1 Flash Lite
+    context_window: 1000000
+    max_tokens: 8192
+  gemini-2.5-flash:
+    label: Gemini 2.5 Flash
+    context_window: 1000000
+    max_tokens: 8192
+  gemini-2.5-flash-lite:
+    label: Gemini 2.5 Flash Lite
+    context_window: 1000000
+    max_tokens: 8192
+  gemini-2.5-pro:
+    label: Gemini 2.5 Pro
+    context_window: 2000000
+    max_tokens: 16384
+  gemini-3-flash:
+    label: Gemini 3 Flash
+    context_window: 1000000
+    max_tokens: 8192
+  gemma-4-26b:
+    label: Gemma 4 26B
+    context_window: 128000
+    max_tokens: 8192
+  gemini-3-flash-live:
+    label: Gemini 3 Flash Live (Live API)
+    context_window: 65000

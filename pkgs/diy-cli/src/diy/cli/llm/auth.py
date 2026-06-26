@@ -46,23 +46,36 @@ def resolve_api_key(source: str) -> str | None:
 # ── provider auth (stored in state file) ──────────────────────────
 
 def get_provider_auth(name: str) -> dict[str, Any] | None:
-    """Read {source, api_base} from provider state file. Returns None if no auth."""
+    """Read {source, api_base, provider_type} from provider state file. Returns None if no auth."""
     state = load_state(name)
     if not state:
         return None
     source = state.get("source")
     if not source:
         return None
-    return {"source": source, "api_base": state.get("api_base", "")}
+    return {
+        "source": source,
+        "api_base": state.get("api_base", ""),
+        "provider_type": state.get("provider_type", name),
+    }
 
 
-def set_provider_auth(name: str, source: str, api_base: str) -> None:
+def set_provider_auth(name: str, source: str, api_base: str, provider_type: str | None = None) -> None:
     """Set source/api_base in provider state file. Creates file if needed."""
     ensure_dirs()
-    state = load_state(name) or {}
+    existing = load_state(name) or {}
+
+    # 有序构建：auth 字段在前，models 在后
+    state: dict[str, Any] = {}
     state["source"] = source
     state["api_base"] = api_base
-    state.setdefault("provider", name)
+    state["provider_name"] = name
+    state["provider_type"] = provider_type or name
+    # 保留已有字段（version, updated_at, models 等），auth 字段优先
+    for k, v in existing.items():
+        if k not in state:
+            state[k] = v
+
     save_state(name, state)
 
 
