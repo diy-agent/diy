@@ -13,6 +13,7 @@ dev = [
     "ruff>=0.15.12",
     "pyright>=1.1.409",
     "pytest>=9.0.3",
+    "mistune>=3.2.1",
 ]
 
 [tool.uv]
@@ -76,6 +77,7 @@ docstring-code-format = true
 typeCheckingMode = "standard"
 pythonVersion = "3.12"
 include = [
+    "tests",
     "pkgs/diy-cli/src",
     "pkgs/diy-cli/tests",
     "pkgs/diy-ui/src",
@@ -91,6 +93,7 @@ reportIncompatibleMethodOverride = false
 [tool.pytest.ini_options]
 markers = ["browser: 需要 headless browser 的测试"]
 testpaths = [
+    "tests",
     "pkgs/diy-cli/tests",
     "pkgs/diy-ui/tests",
 ]
