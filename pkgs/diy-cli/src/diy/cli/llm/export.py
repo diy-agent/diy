@@ -44,6 +44,50 @@ def _ensure_pi_config() -> Path:
 # ── PI agent provider builder ──────────────────────────────────
 
 
+def _build_model_list(
+    state: dict[str, Any],
+    ptype_def: dict[str, Any],
+    provider_name: str,
+) -> list[dict[str, Any]]:
+    """Build PI agent model list from state + provider definition."""
+    ptype_models = ptype_def.get("models", {})
+    state_models = state.get("models", {})
+    models_list: list[dict[str, Any]] = []
+
+    for mid, m_state in state_models.items():
+        if not _is_enabled(m_state):
+            continue
+        if m_state.get("stale"):
+            continue
+        if m_state.get("status") in ("error", "exhausted"):
+            continue
+
+        meta = ptype_models.get(mid, {})
+        editable = m_state.get("editable", {})
+
+        cost = meta.get("cost")
+        if not cost:
+            cost = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+
+        entry: dict[str, Any] = {
+            "id": mid,
+            "name": meta.get("label", mid),
+            "reasoning": bool(meta.get("reasoning", False)),
+            "input": ["text"],
+            "contextWindow": meta.get("context_window", 128000),
+            "maxTokens": editable.get("max_tokens", 4096),
+            "cost": cost,
+        }
+
+        compat = meta.get("compat")
+        if compat:
+            entry["compat"] = compat
+
+        models_list.append(entry)
+
+    return models_list
+
+
 def build_pi_providers(
     provider_names: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -87,37 +131,7 @@ def build_pi_providers(
             continue
 
         # Build model list
-        models_list: list[dict[str, Any]] = []
-        for mid, m_state in state_models.items():
-            if not _is_enabled(m_state):
-                continue
-            if m_state.get("stale"):
-                continue
-            if m_state.get("status") in ("error", "exhausted"):
-                continue
-
-            meta = ptype_models.get(mid, {})
-            editable = m_state.get("editable", {})
-
-            cost = meta.get("cost")
-            if not cost:
-                cost = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
-
-            entry: dict[str, Any] = {
-                "id": mid,
-                "name": meta.get("label", mid),
-                "reasoning": bool(meta.get("reasoning", False)),
-                "input": ["text"],
-                "contextWindow": meta.get("context_window", 128000),
-                "maxTokens": editable.get("max_tokens", 4096),
-                "cost": cost,
-            }
-
-            compat = meta.get("compat")
-            if compat:
-                entry["compat"] = compat
-
-            models_list.append(entry)
+        models_list = _build_model_list(state, ptype_def, pname)
 
         if not models_list:
             continue

@@ -263,6 +263,3 @@ def clean_models(name: str) -> list[str]:
         del models[mid]
     save_state(name, state)
     return removed
-
-
-

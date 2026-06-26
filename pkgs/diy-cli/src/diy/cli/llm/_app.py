@@ -13,6 +13,7 @@ from . import auth, core, export
 
 # 加载 ~/.diy/.env 到环境变量
 from .auth import load_dotenv
+
 load_dotenv()
 
 
@@ -33,23 +34,30 @@ llm_app = App(
 
 # ── sync group ─────────────────────────────────────────────────────────
 
-sync_app = App(name="sync", help="Sync models from provider, export to downstream tools")
+sync_app = App(
+    name="sync", help="Sync models from provider, export to downstream tools"
+)
 
 
 @sync_app.command(name="diy")
 def sync_diy(
-    provider: Annotated[str | None, Parameter(help="Provider name; omit for all configured", negative=False)] = None,
+    provider: Annotated[
+        str | None,
+        Parameter(help="Provider name; omit for all configured", negative=False),
+    ] = None,
 ):
     """Fetch models from provider, update state file."""
     providers_with_auth = auth.list_providers_with_auth()
 
-    if provider:
+    if provider:  # noqa: SIM108
         target_names = [provider]
     else:
         target_names = list(providers_with_auth.keys())
 
     if not target_names:
-        _die("No providers with credentials. Run: diy llm auth set <provider> --key $ENV_VAR")
+        _die(
+            "No providers with credentials. Run: diy llm auth set <provider> --key $ENV_VAR"
+        )
 
     for name in target_names:
         prov_auth = providers_with_auth.get(name)
@@ -59,7 +67,9 @@ def sync_diy(
 
         api_key = auth.resolve_api_key(prov_auth["source"])
         if not api_key:
-            print(f"⚠  Cannot resolve {prov_auth['source']} for '{name}'", file=sys.stderr)
+            print(
+                f"⚠  Cannot resolve {prov_auth['source']} for '{name}'", file=sys.stderr
+            )
             continue
 
         api_base = prov_auth.get("api_base", "")
@@ -72,16 +82,25 @@ def sync_diy(
             provider_type = prov_auth.get("provider_type", name)
             state, srcl = core.ensure_state(name, api_base, api_key, provider_type)
             core.save_state(name, state)
-            enabled = sum(1 for m in state["models"].values() if m.get("editable", {}).get("enabled", m.get("enabled", True)) and not m.get("stale"))
+            enabled = sum(
+                1
+                for m in state["models"].values()
+                if m.get("editable", {}).get("enabled", m.get("enabled", True))
+                and not m.get("stale")
+            )
             total = len(state["models"])
-            print(f"✓  {name} ({srcl}): {enabled}/{total} enabled  →  {core.state_path(name)}")
+            print(
+                f"✓  {name} ({srcl}): {enabled}/{total} enabled  →  {core.state_path(name)}"
+            )
         except RuntimeError as e:
             print(f"✗  {name}: {e}", file=sys.stderr)
 
 
 @sync_app.command(name="pi")
 def sync_pi(
-    provider: Annotated[str | None, Parameter(help="Provider name; omit for all", negative=False)] = None,
+    provider: Annotated[
+        str | None, Parameter(help="Provider name; omit for all", negative=False)
+    ] = None,
 ):
     """Sync diy-llm providers to PI agent config (~/.pi/agent/models.json).
 
@@ -97,7 +116,9 @@ def sync_pi(
     new_diy = export.build_pi_providers(providers_to_sync)
 
     if not new_diy:
-        print("No providers to sync. Check credentials and model states.", file=sys.stderr)
+        print(
+            "No providers to sync. Check credentials and model states.", file=sys.stderr
+        )
         return
 
     for key in list(config.get("providers", {}).keys()):
@@ -120,23 +141,37 @@ def sync_pi(
 
 @sync_app.command(name="all")
 def sync_all(
-    provider: Annotated[str | None, Parameter(help="Provider name; omit for all configured", negative=False)] = None,
+    provider: Annotated[
+        str | None,
+        Parameter(help="Provider name; omit for all configured", negative=False),
+    ] = None,
+    proxy: Annotated[
+        bool,
+        Parameter(
+            help="Also create local proxy variants (e.g. proxy-google-gemini → localhost:8000)",
+            negative=False,
+        ),
+    ] = False,
 ):
     """Full pipeline: fetch models → sync state → export to PI agent + Hermes.
 
     Equivalent to running ``diy llm sync diy`` + ``diy llm sync pi`` + Hermes export
     in one pass.
+
+    Use --proxy to auto-generate proxy provider entries pointing to local shim proxy.
     """
     # ── 1. State sync ──
     providers_with_auth = auth.list_providers_with_auth()
 
-    if provider:
+    if provider:  # noqa: SIM108
         target_names = [provider]
     else:
         target_names = list(providers_with_auth.keys())
 
     if not target_names:
-        _die("No providers with credentials. Run: diy llm auth set <provider> --key $ENV_VAR")
+        _die(
+            "No providers with credentials. Run: diy llm auth set <provider> --key $ENV_VAR"
+        )
 
     synced: list[str] = []
     for name in target_names:
@@ -147,7 +182,9 @@ def sync_all(
 
         api_key = auth.resolve_api_key(prov_auth["source"])
         if not api_key:
-            print(f"⚠  Cannot resolve {prov_auth['source']} for '{name}'", file=sys.stderr)
+            print(
+                f"⚠  Cannot resolve {prov_auth['source']} for '{name}'", file=sys.stderr
+            )
             continue
 
         api_base = prov_auth.get("api_base", "")
@@ -160,9 +197,16 @@ def sync_all(
             provider_type = prov_auth.get("provider_type", name)
             state, srcl = core.ensure_state(name, api_base, api_key, provider_type)
             core.save_state(name, state)
-            enabled = sum(1 for m in state["models"].values() if m.get("editable", {}).get("enabled", m.get("enabled", True)) and not m.get("stale"))
+            enabled = sum(
+                1
+                for m in state["models"].values()
+                if m.get("editable", {}).get("enabled", m.get("enabled", True))
+                and not m.get("stale")
+            )
             total = len(state["models"])
-            print(f"✓  {name} ({srcl}): {enabled}/{total} enabled  →  {core.state_path(name)}")
+            print(
+                f"✓  {name} ({srcl}): {enabled}/{total} enabled  →  {core.state_path(name)}"
+            )
             synced.append(name)
         except RuntimeError as e:
             print(f"✗  {name}: {e}", file=sys.stderr)
@@ -195,6 +239,50 @@ def sync_all(
     else:
         print("   Hermes: no providers to export", file=sys.stderr)
 
+    # ── 4. Proxy variant（--proxy 开启时） ──
+    if proxy:
+        proxy_providers: dict[str, Any] = {}
+        for name in synced:
+            prov_auth = auth.get_provider_auth(name)
+            if not prov_auth:
+                continue
+            ptype = prov_auth.get("provider_type", name)
+            ptype_def = core.load_provider_type(ptype)
+            protocol = (ptype_def or {}).get("api", {}).get("protocol", "")
+            # 只为 google-native 协议创建代理变体
+            if protocol != "google-native":
+                continue
+            api_key = auth.resolve_api_key(prov_auth["source"])
+            if not api_key:
+                continue
+            state = core.load_state(name)
+            if not state:
+                continue
+            proxy_name = f"proxy-{name}"
+            models_list = export._build_model_list(state, ptype_def, name)
+            if not models_list:
+                continue
+            proxy_providers[f"diy-{proxy_name}"] = {
+                "baseUrl": "http://127.0.0.1:8000/v1beta",
+                "api": "google-generative-ai",
+                "apiKey": api_key,
+                "models": models_list,
+            }
+        if proxy_providers:
+            pi_path = export._find_pi_config()
+            pi_config = export.read_pi_config(pi_path)
+            # 清理旧的 proxy-* 条目
+            for key in list(pi_config.get("providers", {}).keys()):
+                if key.startswith("diy-proxy-"):
+                    del pi_config["providers"][key]
+            pi_config["providers"].update(proxy_providers)
+            export.write_pi_config(pi_config, pi_path)
+            for pname in proxy_providers:
+                pdef = proxy_providers[pname]
+                print(
+                    f"✓  {pname:35s}  {pdef['baseUrl']:55s}  {len(pdef['models'])} models (proxy)"
+                )
+
 
 llm_app.command(sync_app)
 
@@ -208,7 +296,13 @@ auth_app = App(name="auth", help="Manage credentials")
 def set_cred(
     provider: Annotated[str, Parameter(help="Provider name (e.g. google-ai)")],
     key: Annotated[str, Parameter(help="API key value or $ENV_VAR")],
-    name: Annotated[str | None, Parameter(help="Final provider instance name (e.g. google-ai-work). Defaults to provider name.", negative=False)] = None,
+    name: Annotated[
+        str | None,
+        Parameter(
+            help="Final provider instance name (e.g. google-ai-work). Defaults to provider name.",
+            negative=False,
+        ),
+    ] = None,
     base_url: Annotated[str | None, Parameter(help="Override default api_base")] = None,
 ):
     """Register a credential (idempotent) and sync models immediately."""
@@ -219,7 +313,6 @@ def set_cred(
 
     # 实例名 = name（未提供则用 provider）
     instance_name = name if name else provider
-    provider_type = provider  # 基类名
 
     if not key:
         _die(f"Missing --key. Usage: diy llm auth set {provider} --key $ENV_VAR")
@@ -232,7 +325,7 @@ def set_cred(
             _die(f"Environment variable {env_name} is not set")
     else:
         # env 变量名带实例名，避免冲突
-        env_name = f"{instance_name.upper().replace('-','_')}_KEY"
+        env_name = f"{instance_name.upper().replace('-', '_')}_KEY"
         source = f"env:{env_name}"
         actual_key = key
         # ── read-modify-write .env to preserve existing keys ──
@@ -267,11 +360,19 @@ def set_cred(
     try:
         state, srcl = core.ensure_state(instance_name, api_base, actual_key, provider)
         core.save_state(instance_name, state)
-        enabled = sum(1 for m in state["models"].values() if m.get("editable", {}).get("enabled", m.get("enabled", True)) and not m.get("stale"))
+        enabled = sum(
+            1
+            for m in state["models"].values()
+            if m.get("editable", {}).get("enabled", m.get("enabled", True))
+            and not m.get("stale")
+        )
         print(f"✓  Initial sync ({srcl}): {enabled} models enabled")
     except RuntimeError as e:
         print(f"⚠  Sync failed: {e}", file=sys.stderr)
-        print(f"   Credential saved. Run 'diy llm sync {provider}' when ready.", file=sys.stderr)
+        print(
+            f"   Credential saved. Run 'diy llm sync {provider}' when ready.",
+            file=sys.stderr,
+        )
 
 
 @auth_app.command(name="list")
@@ -318,7 +419,9 @@ model_app = App(name="model", help="Manage models per provider")
 
 @model_app.command(name="list")
 def list_models(
-    provider: Annotated[str | None, Parameter(help="Provider name; omit for all", negative=False)] = None,
+    provider: Annotated[
+        str | None, Parameter(help="Provider name; omit for all", negative=False)
+    ] = None,
 ):
     """List models and their status."""
     if provider:
@@ -367,7 +470,9 @@ def _print_model(mid: str, m: dict[str, Any], provider_name: str | None = None) 
 
 @model_app.command(name="clean")
 def clean_models(
-    provider: Annotated[str | None, Parameter(help="Provider name; omit for all", negative=False)] = None,
+    provider: Annotated[
+        str | None, Parameter(help="Provider name; omit for all", negative=False)
+    ] = None,
 ):
     """Remove MODEL_DEPRECATED models from state."""
     providers_with_auth = auth.list_providers_with_auth()
@@ -376,7 +481,9 @@ def clean_models(
     for name in target_names:
         removed = core.clean_models(name)
         if removed:
-            print(f"✓  {name}: removed {len(removed)} deprecated model(s): {', '.join(removed)}")
+            print(
+                f"✓  {name}: removed {len(removed)} deprecated model(s): {', '.join(removed)}"
+            )
         else:
             print(f"   {name}: no deprecated models")
 

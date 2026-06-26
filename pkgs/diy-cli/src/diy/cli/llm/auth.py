@@ -36,6 +36,7 @@ def load_dotenv(path: Path | None = None) -> None:
 
 # ── API key resolution ────────────────────────────────────────────
 
+
 def resolve_api_key(source: str) -> str | None:
     """Resolve an API key from its source string (env:VAR_NAME)."""
     if source.startswith("env:"):
@@ -44,6 +45,7 @@ def resolve_api_key(source: str) -> str | None:
 
 
 # ── provider auth (stored in state file) ──────────────────────────
+
 
 def get_provider_auth(name: str) -> dict[str, Any] | None:
     """Read {source, api_base, provider_type} from provider state file. Returns None if no auth."""
@@ -60,7 +62,9 @@ def get_provider_auth(name: str) -> dict[str, Any] | None:
     }
 
 
-def set_provider_auth(name: str, source: str, api_base: str, provider_type: str | None = None) -> None:
+def set_provider_auth(
+    name: str, source: str, api_base: str, provider_type: str | None = None
+) -> None:
     """Set source/api_base in provider state file. Creates file if needed."""
     ensure_dirs()
     existing = load_state(name) or {}
