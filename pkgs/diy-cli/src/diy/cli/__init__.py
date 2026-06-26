@@ -1,4 +1,4 @@
-"""diycli — diy 统一入口。"""
+"""diy.cli — diy CLI"""
 
 from ._cli import main
 

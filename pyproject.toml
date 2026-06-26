@@ -3,6 +3,8 @@ name = "diy-mono"
 version = "0.0.0"
 requires-python = ">=3.12"
 dependencies = [
+    "diy-cli",
+    "diy-app",
     "diy-ui",
 ]
 
@@ -20,14 +22,18 @@ python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-st
 
 [tool.uv.workspace]
 members = [
-    "pkgs/diy-ui",
+    "pkgs/diy-core",
+    "pkgs/diy-app",
     "pkgs/diy-cli",
+    "pkgs/diy-ui",
 ]
 
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"
 
 [tool.uv.sources]
+diy-core = { workspace = true }
+diy-app = { workspace = true }
 diy-cli = { workspace = true }
 diy-ui = { workspace = true }
 

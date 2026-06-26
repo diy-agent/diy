@@ -1,18 +1,13 @@
 [project]
-name = "diy-cli"
-version = "0.1.21" # x-release-please-version
-description = "diy 统一入口 (Python 移植版)"
+name = "diy-core"
+version = "0.1.0"
+description = "diy 核心逻辑 — state 管理、agent 后端、任务模型"
 requires-python = ">=3.12"
 dependencies = [
-    "diy-core",
     "cyclopts>=3.0",
     "rich>=13.0",
     "PyYAML>=6.0",
-    "json5>=0.10",
 ]
-
-[project.scripts]
-diy = "diy.cli:main"
 
 [build-system]
 requires = ["hatchling"]

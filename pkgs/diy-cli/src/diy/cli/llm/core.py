@@ -32,7 +32,7 @@ def ensure_dirs() -> None:
 def discover_provider_types() -> dict[str, Path]:
     """Find bundled provider types by scanning providers/ for provider.yaml."""
     try:
-        prov_dir = importlib.resources.files("diycli.llm").joinpath("providers")
+        prov_dir = importlib.resources.files("diy.cli.llm").joinpath("providers")
     except Exception:
         return {}
     if not prov_dir.is_dir():

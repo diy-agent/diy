@@ -1,18 +1,14 @@
 [project]
-name = "diy-cli"
-version = "0.1.21" # x-release-please-version
-description = "diy 统一入口 (Python 移植版)"
+name = "diy-app"
+version = "0.1.0"
+description = "diy 管控台 — PySide6 桌面 app"
 requires-python = ">=3.12"
 dependencies = [
     "diy-core",
+    "PySide6>=6.8,<6.9",
     "cyclopts>=3.0",
     "rich>=13.0",
-    "PyYAML>=6.0",
-    "json5>=0.10",
 ]
-
-[project.scripts]
-diy = "diy.cli:main"
 
 [build-system]
 requires = ["hatchling"]
