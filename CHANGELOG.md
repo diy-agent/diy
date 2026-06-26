@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.23](https://github.com/diy-agent/diy/compare/diy-v0.1.22...diy-v0.1.23) (2026-06-26)
+
+
+### Features
+
+* **diy-app:** 添加 LLM 管理页面及本地代理集成 ([fce7b01](https://github.com/diy-agent/diy/commit/fce7b01c42d548e503f1024dd250e5f694eca934))
+* **diy-cli:** 添加 google-gemini provider 支持及协议映射架构 ([1a20878](https://github.com/diy-agent/diy/commit/1a208788569c81c12999651a6599d8b533e55a96))
+
 ## [0.1.22](https://github.com/diy-agent/diy/compare/diy-v0.1.21...diy-v0.1.22) (2026-06-20)
 
 
