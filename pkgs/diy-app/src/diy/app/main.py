@@ -1499,33 +1499,54 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def show_notification(self, message: str) -> None:
-        """在窗口右上角弹出通知，3 秒自动消失。"""
+        """在窗口右上角弹出通知，3 秒自动消失。点击关闭按钮可手动关闭。"""
         from PySide6.QtCore import QPropertyAnimation  # type: ignore[import-untyped]
+        from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget  # type: ignore[import-untyped]
 
-        popup = QLabel(message, self)
-        popup.setStyleSheet("""
-            QLabel {
+        container = QWidget(self)
+        container.setStyleSheet("""
+            QWidget {
                 background: #1e1e2e; color: #cdd6f4;
                 border: 1px solid #45475a; border-radius: 8px;
-                padding: 10px 16px; font-size: 13px;
             }
+            QLabel {
+                background: transparent; color: #cdd6f4;
+                border: none; font-size: 13px;
+            }
+            QPushButton {
+                background: transparent; color: #a6adc8;
+                border: none; font-size: 15px; padding: 0 4px;
+            }
+            QPushButton:hover { color: #f38ba8; }
         """)
-        popup.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.ToolTip)
-        popup.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        popup.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        popup.adjustSize()
+        container.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.ToolTip)
+        container.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(12, 8, 4, 8)
+        layout.setSpacing(8)
+
+        label = QLabel(message[:120], container)
+        layout.addWidget(label)
+
+        close_btn = QPushButton("×", container)
+        close_btn.setFixedSize(24, 24)
+        close_btn.clicked.connect(container.deleteLater)
+        layout.addWidget(close_btn)
+
+        container.adjustSize()
 
         # 定位：窗口右上角
         geom = self.geometry()
-        popup.move(geom.right() - popup.width() - 20, geom.top() + 40)
-        popup.show()
+        container.move(geom.right() - container.width() - 20, geom.top() + 40)
+        container.show()
 
         # 3 秒后淡出
-        anim = QPropertyAnimation(popup, b"windowOpacity")
+        anim = QPropertyAnimation(container, b"windowOpacity")
         anim.setDuration(800)
         anim.setStartValue(1.0)
         anim.setEndValue(0.0)
-        anim.finished.connect(popup.deleteLater)
+        anim.finished.connect(container.deleteLater)
         QTimer.singleShot(3000, anim.start)
 
     # ── Gateway 序列化 ──
