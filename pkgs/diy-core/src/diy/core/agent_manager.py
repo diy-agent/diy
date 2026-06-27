@@ -16,7 +16,7 @@ from .backend import AgentBackend, AgentCallbacks, AgentState
 
 logger = logging.getLogger("diy.agent_mgr")
 
-BackendKind = Literal["hermes", "pi"]
+BackendKind = Literal["hermes", "pi", "opencode"]
 
 _default_manager: AgentManager | None = None
 
@@ -82,7 +82,13 @@ class AgentManager:
         else:
             from .acp_agent import AcpAgent
 
-            agent = AcpAgent(task_uri, callbacks=callbacks, session_id=saved_session_id)
+            binary = "opencode" if backend == "opencode" else None
+            agent = AcpAgent(
+                task_uri,
+                callbacks=callbacks,
+                session_id=saved_session_id,
+                binary=binary,
+            )
 
         self._agents[task_uri] = agent
         task = asyncio.create_task(agent.run(cwd=cwd), name=f"{backend}-{task_uri}")

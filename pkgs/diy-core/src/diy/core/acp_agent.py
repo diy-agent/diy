@@ -164,20 +164,21 @@ class _AcpClient:
 
 
 class AcpAgent(AgentBackend):
-    """AgentBackend — 通过 hermes acp 子进程实现。"""
+    """AgentBackend — 通过 hermes acp / opencode acp 等子进程实现。"""
 
     def __init__(
         self,
         task_uri: str,
         callbacks: AgentCallbacks | None = None,
         session_id: str | None = None,
+        binary: str | None = None,
     ) -> None:
         self._task_uri = task_uri
         self._callbacks = callbacks or AgentCallbacks()
         self._client = _AcpClient(self._callbacks)
         self._conn: ClientSideConnection | None = None
         self._session_id: str = session_id or ""
-        self._restore_session_id: str | None = session_id  # 要恢复的旧 session
+        self._restore_session_id: str | None = session_id
         self._history: list[Message] = []
         self._msg_queue: asyncio.Queue[tuple[str, asyncio.Future[str]]] = (
             asyncio.Queue()
@@ -186,6 +187,8 @@ class AcpAgent(AgentBackend):
         self._ready_ev = asyncio.Event()
         self._state: str = "starting"
         self._done = False
+        # ── 后端二进制（default: auto-detect hermes） ──
+        self._binary = binary
         # ── 诊断追踪 ──
         self._prompt_start_ts: float = 0.0
         # ── 可观测推送（由外部注入） ──
@@ -241,11 +244,12 @@ class AcpAgent(AgentBackend):
     # ── AgentBackend 生命周期 ──
 
     async def run(self, cwd: str | None = None) -> None:
-        hermes_bin = self._find_hermes()
-        logger.info("[%s] 启动 ACP: %s acp", self._task_uri, hermes_bin)
+        binary = self._binary or self._find_acp_bin()
+        acp_cmd = binary.split()[-1] if "/" in binary else binary
+        logger.info("[%s] 启动 ACP: %s acp", self._task_uri, binary)
 
         try:
-            async with spawn_agent_process(self._client, hermes_bin, "acp") as (
+            async with spawn_agent_process(self._client, binary, acp_cmd) as (
                 conn,
                 proc,
             ):
@@ -392,7 +396,7 @@ class AcpAgent(AgentBackend):
     # ── 工具 ──
 
     @staticmethod
-    def _find_hermes() -> str:
+    def _find_acp_bin() -> str:
         for c in ["hermes", str(Path.home() / ".local" / "bin" / "hermes")]:
             if "/" not in c:
                 if shutil.which(c):
