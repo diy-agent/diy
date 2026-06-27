@@ -550,9 +550,30 @@ def _session_icon(state: str) -> str:
 
 
 def _pi_session_path(task_uri: str) -> Path:
-    """task URI 对应的 pi session 文件路径（与 PiRpcAgent._session_path 一致）。"""
+    """task URI 对应的聊天记录文件（JSONL 格式）。"""
     safe_name = task_uri.replace("/", "_")
-    return diy_home() / "pi-sessions" / f"{safe_name}.jsonl"
+    p = diy_home() / "chats" / safe_name
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _save_message(task_uri: str, role: str, content: str, ts_ms: str) -> None:
+    """追加一条消息到聊天记录文件。"""
+    path = _pi_session_path(task_uri)
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(
+                json.dumps({
+                    "type": "message",
+                    "message": {
+                        "role": role,
+                        "content": content,
+                        "timestamp": int(datetime.now().timestamp() * 1000),
+                    },
+                }, ensure_ascii=False) + "\n"
+            )
+    except Exception as exc:
+        _logger.debug("[chat] 保存消息失败: %s", exc)
 
 
 def _load_pi_session(task_uri: str) -> list[DisplayMessage]:
@@ -981,6 +1002,7 @@ class AgentChatPanel(QWidget):
         # 缓存
         if self._task_uri:
             self._cached_msgs.setdefault(self._task_uri, []).append(dm)
+        _save_message(self._task_uri or "", dm.role, dm.raw_content, "")
         widget = ChatMessageWidget(dm)
         self._message_widgets.append(widget)
         self._messages_layout.insertWidget(self._messages_layout.count() - 1, widget)
@@ -1264,6 +1286,7 @@ class AgentChatPanel(QWidget):
         # 缓存
         if self._task_uri:
             self._cached_msgs.setdefault(self._task_uri, []).append(dm)
+        _save_message(self._task_uri or "", dm.role, dm.raw_content, "")
 
         # 通过 SignalBridge + AgentBackend 异步发送（实时事件通过 Qt Signal 返回）
         if self._agent is not None:
