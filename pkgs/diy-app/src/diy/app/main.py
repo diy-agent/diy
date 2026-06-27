@@ -1067,6 +1067,20 @@ class MainWindow(QMainWindow):
         self._metrics.gauge("agent.count", len(states))
         self._metrics.counter("agent.refresh")
 
+        # ── 刷新 Agent 面板 ──
+        if states:
+            lines = []
+            for s in states:
+                icon = {"running": "🟢", "idle": "⏸️", "error": "🔴"}.get(s.state, "❓")
+                line = f"{icon} {s.task_uri}\n"
+                line += f"   state: {s.state}  provider: {s.provider}  model: {s.model}\n"
+                if s.state == "running":
+                    line += f"   events: {s.event_count}  last: {s.last_event_type}  elapsed: {s.prompt_elapsed:.0f}s\n"
+                lines.append(line)
+            self._agent_panel.setPlainText("\n".join(lines))
+        else:
+            self._agent_panel.setPlainText("运行中的 agent 将显示在这里")
+
     def _iter_nodes(self, nodes: list[TaskNode]):
         for n in nodes:
             yield n
@@ -1985,6 +1999,34 @@ class GatewayCLI:
             输出: screen 名称 + 各 area 可见性/活跃 panel + overlay 动画状态
             """
             return self._main.invoke(self._window.format_screen)
+
+        @ui_app.command(name="toggle")
+        def ui_toggle(
+            area: str,
+            /,
+            *,
+            panel: str | None = None,
+        ):
+            """切换区域可见性。等价于点击底栏/顶栏按钮。
+
+            Args:
+                area: 区域名（left / right / bottom）
+                panel: 面板 ID（不填则切到 default，同 panel 则隐藏）
+
+            范例:
+                dai ui toggle bottom panel=agent_list  # 显示 Agent 列表
+                dai ui toggle bottom                   # 隐藏/切换底部
+            """
+            from diy.app.screen import Screen  # noqa: PLC0415
+
+            def _do():
+                screen: Screen | None = getattr(self._window, "_screen", None)
+                if screen is None:
+                    return "错误: Screen 未初始化"
+                screen.toggle_area(area, panel_id=panel)
+                return f"OK: {area}" + (f" panel={panel}" if panel else "")
+
+            return self._main.invoke(_do)
 
         @ui_app.command(name="agents")
         def ui_agents():
@@ -3170,7 +3212,7 @@ class GatewayCLI:
                 return first[3:].strip()
             return None
 
-        @agent_app.command
+        @agent_app.command(name="spawn")
         def agent_spawn(
             task_uri: str,
             message: str,
@@ -3195,7 +3237,7 @@ class GatewayCLI:
                 return f"agent {task_uri}: {err}"
             return f"agent {task_uri}: 已启动"
 
-        @agent_app.command
+        @agent_app.command(name="send")
         def agent_send(
             task_uri: str,
             message: str,
@@ -3209,7 +3251,7 @@ class GatewayCLI:
                 return f"agent {task_uri}: {err}"
             return f"agent {task_uri}: 消息已发送"
 
-        @agent_app.command
+        @agent_app.command(name="kill")
         def agent_kill(
             task_uri: str,
             /,
@@ -3222,7 +3264,7 @@ class GatewayCLI:
                 return f"agent {task_uri}: {err}"
             return f"agent {task_uri}: 已终止"
 
-        @agent_app.command
+        @agent_app.command(name="list")
         def agent_list():
             """列出所有活跃 agent"""
             resp = _agent_send_text("list")
@@ -3230,7 +3272,7 @@ class GatewayCLI:
                 return "(无活跃 agent)"
             return resp
 
-        @agent_app.command
+        @agent_app.command(name="show")
         def agent_show(
             task_uri: str,
             /,
@@ -3241,6 +3283,167 @@ class GatewayCLI:
             if resp.startswith("ERROR"):
                 return resp
             return resp
+
+        @agent_app.command(name="monitor")
+        def agent_monitor(
+            task_uri: str | None = None,
+            /,
+            *,
+            json: bool = False,
+        ):
+            """agent 实时监控。
+
+            范例: dai agent monitor
+                  dai agent monitor local/task/1
+            """
+            mgr = get_manager()
+            import json as _json
+            import time as _time
+
+            def _snap(uri):
+                agent = mgr.get(uri)
+                if agent is None:
+                    return None
+                s = agent.state_snapshot()
+                now = _time.time()
+                proc = getattr(agent, "_proc", None)
+                alive = proc.returncode is None if proc else False
+                pid = proc.pid if proc else 0
+                return {
+                    "task_uri": s.task_uri,
+                    "session_id": s.session_id,
+                    "state": s.state,
+                    "provider": s.provider,
+                    "model": s.model,
+                    "messages": s.message_count,
+                    "events": s.event_count,
+                    "last_event": s.last_event_type,
+                    "elapsed": f"{s.prompt_elapsed:.0f}s" if s.state == "running" else "",
+                    "pid": pid,
+                    "alive": alive,
+                }
+
+            def _do():
+                if task_uri:
+                    snap = _snap(task_uri)
+                    if snap is None:
+                        return f"agent {task_uri} 不活跃"
+                    if json:
+                        return _json.dumps(snap, ensure_ascii=False)
+                    lines = [
+                        f"{'='*50}",
+                        f"  {snap['task_uri']}",
+                        f"{'='*50}",
+                        f"  state:    {snap['state']}",
+                        f"  provider: {snap['provider']}",
+                        f"  model:    {snap['model']}",
+                        f"  messages: {snap['messages']}",
+                    ]
+                    if snap["state"] == "running":
+                        lines.append(f"  events:   {snap['events']} (last: {snap['last_event']})")
+                        lines.append(f"  elapsed:  {snap['elapsed']}")
+                    if snap["pid"]:
+                        lines.append(f"  pid:      {snap['pid']} (alive={snap['alive']})")
+                    return "\n".join(lines)
+                else:
+                    states = mgr.list()
+                    if json:
+                        data = [_snap(s.task_uri) for s in states]
+                        return _json.dumps({"agents": data}, ensure_ascii=False)
+                    if not states:
+                        return "(无 agent)"
+                    lines = [
+                        f"{'URI':<30} {'STATE':<10} {'PROVIDER':<15} {'MODEL':<20} {'EVENTS':<8} {'PID':<8}",
+                        "-" * 100,
+                    ]
+                    for s in states:
+                        snap = _snap(s.task_uri)
+                        icon = {"running": "🟢", "idle": "⏸️", "error": "🔴"}.get(snap["state"], "❓")
+                        ev = str(snap["events"]) if snap["events"] else ""
+                        pid = str(snap["pid"]) if snap["pid"] else ""
+                        lines.append(
+                            f"{snap['task_uri']:<30} {icon} {snap['state']:<8} "
+                            f"{snap['provider']:<15} {snap['model']:<20} {ev:<8} {pid:<8}"
+                        )
+                    return "\n".join(lines)
+
+            return self._main.invoke(_do)
+
+        @agent_app.command(name="stream")
+        def agent_stream(
+            task_uri: str | None = None,
+            /,
+            *,
+            timeout: int = 120,
+        ):
+            """agent 事件流（流式输出）。
+
+            范例: dai agent stream local/task/1
+                  dai agent stream local/task/1 --timeout 60
+            """
+            import time as _time
+            from diy.core.observer import InProcessAgentObserver
+
+            mgr = get_manager()
+            obs = InProcessAgentObserver(mgr)
+            out = getattr(self, "_stream_out", None)
+
+            if not out:
+                return "error: 非流式模式，不支持 stream"
+
+            def _do():
+                if task_uri:
+                    agent = mgr.get(task_uri)
+                    if agent is None:
+                        out.write(f"error: agent {task_uri} 不活跃\n")
+                        out.flush()
+                        return
+
+                    # 注入 observer
+                    if hasattr(agent, "_observer"):
+                        agent._observer = obs
+
+                    deadline = _time.time() + timeout
+                    seen = 0
+                    while _time.time() < deadline:
+                        # 检查 agent 是否还在运行
+                        if agent.is_alive is False:
+                            out.write("[done] agent 已停止\n")
+                            out.flush()
+                            return
+
+                        # 从 observer buffer 读取新事件
+                        buf = obs._buffers.get(task_uri)
+                        if buf:
+                            while len(buf) > seen:
+                                ev = buf[seen]
+                                out.write(
+                                    f"[{ev.level}] {ev.kind}: {ev.data}\n"
+                                )
+                                out.flush()
+                                seen += 1
+
+                        _time.sleep(0.3)
+
+                    out.write(f"[timeout] {timeout}s 到期\n")
+                    out.flush()
+                else:
+                    # 列出所有 agent 的状态（一次性输出）
+                    states = mgr.list()
+                    if not states:
+                        out.write("(无 agent)\n")
+                        out.flush()
+                        return
+                    for s in states:
+                        snap = s.state_snapshot()
+                        icon = {"running": "🟢", "idle": "⏸️", "error": "🔴"}.get(snap.state, "❓")
+                        out.write(
+                            f"{icon} {snap.task_uri:<30} {snap.state:<10} "
+                            f"{snap.provider:<15} {snap.model}\n"
+                        )
+                    out.flush()
+
+            self._main.invoke(_do)
 
         diy.command(agent_app)
 
@@ -3334,7 +3537,7 @@ class GatewayCLI:
         from rich.console import Console
 
         tokens = shlex.split(line) if line else ["--help"]
-        console = Console(file=out, force_terminal=True, width=80)
+        console = Console(file=out, width=80)
 
         # 保存 stream_out 供流式命令（如 wait）使用
         self._stream_out = out
@@ -3343,15 +3546,20 @@ class GatewayCLI:
         old_stderr = sys.stderr
         err_buf = io.StringIO()
         sys.stderr = err_buf
+        _logged = False  # 兜底标记：是否已通过 except Exception 记录到 app.log
+        _exit_code = None  # SystemExit 退出码（None=未退出，0=--help，2=错误）
         try:
             self._app(tokens, console=console, exit_on_error=True)
-        except SystemExit:
-            pass
+        except SystemExit as e:
+            _exit_code = e.code
         except UnknownCommandError:
-            pass
+            _exit_code = 2
         except Exception as exc:
-            logger.error("dispatch 异常: %s\n%s", exc, traceback.format_exc())
+            _logged = True
+            msg = f"dispatch 异常: {exc}"
+            logger.error("%s\n%s", msg, traceback.format_exc())
             out.write(f"\n内部错误: {exc}\n")
+            self._notify_error(msg)
         finally:
             sys.stderr = old_stderr
             self._stream_out = None
@@ -3359,7 +3567,25 @@ class GatewayCLI:
         err_text = err_buf.getvalue()
         if err_text:
             out.write(err_text)
+            # 兜底：cyclopts 写了错误到 stderr 但未被 except Exception 捕获
+            # 如 SystemExit(2) / UnknownCommandError 的上下文，所有通道统一推送
+            if not _logged and _exit_code:
+                msg = f"[dispatch] 命令异常 (exit={_exit_code}): {err_text.strip()}"
+                logger.warning("%s", msg)
+                self._notify_error(msg)
         out.flush()
+
+    def _notify_error(self, message: str) -> None:
+        """跨线程在 UI 右上角弹出错误通知。"""
+        from PySide6.QtCore import Q_ARG, QMetaObject  # noqa: PLC0415
+        from PySide6.QtCore import Qt as QtCore  # noqa: PLC0415
+
+        QMetaObject.invokeMethod(
+            self._window,
+            "show_notification",
+            QtCore.ConnectionType.QueuedConnection,
+            Q_ARG(str, message),
+        )
 
 
 # ═══════════════════════════════════════════════════════
@@ -3731,6 +3957,19 @@ def main():
     setup_app_logger()
     logger.info("=" * 50)
     logger.info("diy 管控台启动")
+
+    # ── 加载 ~/.diy/.env（LLM provider API keys） ──
+    _dotenv = diy_home() / ".env"
+    if _dotenv.is_file():
+        for _line in _dotenv.read_text().splitlines():
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _key, _sep, _val = _line.partition("=")
+            _key = _key.strip()
+            _val = _val.strip().strip("\"'")
+            if _key and _val and _key not in os.environ:
+                os.environ[_key] = _val
 
     # ── Qt 应用必须在 QtAsyncio event loop 之前创建 ──
     sandbox, sandbox_path = _detect_sandbox()

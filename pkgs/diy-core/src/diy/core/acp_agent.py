@@ -44,12 +44,16 @@ logging.getLogger("acp").setLevel(logging.WARNING)
 
 class _AcpClient:
     """ACP session_update 接收器：累积流式 delta → 回调 → 拼装 Message。"""
-
     def __init__(self, callbacks: AgentCallbacks) -> None:
         self._cb = callbacks
         self.content_buf: list[str] = []
         self.reasoning_buf: list[str] = []
         self.tool_buf: list[dict] = []
+        # ── 诊断追踪 ──
+        self.event_count: int = 0
+        self.last_event_type: str = ""
+        # ── 可观测推送（由 AcpAgent 注入） ──
+        self._push_event = None  # type: ignore[assignment]
 
     def on_connect(self, conn: ClientSideConnection) -> None:
         pass
@@ -65,7 +69,9 @@ class _AcpClient:
         | Any,
         **kwargs: Any,
     ) -> None:
+        self.event_count += 1
         if isinstance(update, AgentMessageChunk):
+            self.last_event_type = "text_delta"
             content = update.content
             text = (
                 content.text
@@ -74,18 +80,26 @@ class _AcpClient:
             )
             if text:
                 self.content_buf.append(text)
+                if self._push_event:
+                    self._push_event("agent", "text_delta", text[:200], event_type="text_delta")
                 if self._cb.on_delta:
                     self._cb.on_delta(text)
 
         elif isinstance(update, AgentThoughtChunk):
+            self.last_event_type = "thinking_delta"
             if update.thought and update.thought.content:
                 self.reasoning_buf.append(update.thought.content)
+                if self._push_event:
+                    self._push_event("agent", "thinking_delta", update.thought.content[:200], event_type="thinking_delta")
                 if self._cb.on_reasoning:
                     self._cb.on_reasoning(update.thought.content)
 
         elif isinstance(update, (ToolCallStart, ToolCallProgress)):
             tc = update.tool_call if hasattr(update, "tool_call") else None
             if tc:
+                self.last_event_type = f"tool:{tc.name or '?'}"
+                if self._push_event:
+                    self._push_event("agent", "tool_call", f"tool:{tc.name or '?'}", event_type="toolcall_start", tool_name=tc.name)
                 info = {
                     "name": tc.name or "?",
                     "id": tc.id or "",
@@ -96,7 +110,7 @@ class _AcpClient:
                     self._cb.on_tool_start(info["name"], info["id"], info["args"])
 
         elif isinstance(update, UsageUpdate):
-            pass  # 暂不处理
+            self.last_event_type = "usage"
 
     def finalize_message(self) -> Message:
         msg = Message(
@@ -172,6 +186,31 @@ class AcpAgent(AgentBackend):
         self._ready_ev = asyncio.Event()
         self._state: str = "starting"
         self._done = False
+        # ── 诊断追踪 ──
+        self._prompt_start_ts: float = 0.0
+        # ── 可观测推送（由外部注入） ──
+        self._observer = None  # type: ignore[assignment]
+
+    def _push_event(self, level: str, kind: str, data: str, **meta) -> None:
+        """推送事件到 observer（如果已注入）。"""
+        if self._observer is None:
+            return
+        import time
+
+        from .observer import AgentEvent
+
+        self._observer.push_event(
+            self._task_uri,
+            AgentEvent(
+                ts=time.time(),
+                level=level,
+                kind=kind,
+                source="acp",
+                data=data,
+                size=meta.pop("size", 0),
+                meta=meta,
+            ),
+        )
 
     # ── AgentBackend 属性 ──
 
@@ -279,6 +318,10 @@ class AcpAgent(AgentBackend):
                 )
             )
             self._state = "running"
+            # ── 重置诊断计数器 ──
+            self._client.event_count = 0
+            self._client.last_event_type = ""
+            self._prompt_start_ts = __import__("time").time()
 
             try:
                 result = await asyncio.wait_for(
@@ -292,9 +335,16 @@ class AcpAgent(AgentBackend):
                     self._history.append(msg)
                 future.set_result(result.stop_reason)
             except TimeoutError:
+                elapsed = __import__("time").time() - self._prompt_start_ts
+                detail = (
+                    f"已运行 {elapsed:.0f}s, "
+                    f"收到 {self._client.event_count} 个事件, "
+                    f"最后事件: {self._client.last_event_type or '(无)'}"
+                )
                 future.set_result("timeout")
+                logger.warning("[%s] prompt 总超时 — %s", self._task_uri, detail)
                 if self._callbacks.on_error:
-                    self._callbacks.on_error("prompt 总超时")
+                    self._callbacks.on_error(f"prompt 总超时 — {detail}")
                 try:
                     await self._conn.cancel(session_id=self._session_id)
                 except Exception:
@@ -328,11 +378,15 @@ class AcpAgent(AgentBackend):
     # ── 快照 ──
 
     def state_snapshot(self) -> AgentState:
+        now = __import__("time").time()
         return AgentState(
             task_uri=self._task_uri,
             session_id=self._session_id,
             state=self._state,
             message_count=len(self._history),
+            event_count=self._client.event_count,
+            last_event_type=self._client.last_event_type,
+            prompt_elapsed=(now - self._prompt_start_ts) if self._prompt_start_ts and self._state == "running" else 0,
         )
 
     # ── 工具 ──

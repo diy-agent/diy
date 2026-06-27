@@ -118,10 +118,44 @@ def _dai_runner(args_str: str) -> tuple[int, str, str]:
 
 
 @pytest.fixture
-def sh():
-    """ShellTest 实例，已激活项目 .venv，dai 直接可用。"""
-    return ShellTest(
+def sh(monkeypatch):
+    """ShellTest 实例，已激活项目 .venv，dai 直接可用。
+
+    Teardown 时自动终止 forward_to_app 启动的 app 子进程（Qt 窗口）。
+    """
+    import subprocess as _sp_mod
+
+    _app_procs: list[_sp_mod.Popen] = []
+
+    # 拦截 subprocess.Popen 追踪 diy.app.main 启动
+    _orig_popen = _sp_mod.Popen
+
+    def _tracked_popen(*args, **kwargs):
+        proc = _orig_popen(*args, **kwargs)
+        cmd = args[0] if args else kwargs.get("args", [])
+        if isinstance(cmd, (list, tuple)) and "diy.app.main" in " ".join(cmd):
+            _app_procs.append(proc)
+        return proc
+
+    monkeypatch.setattr(_sp_mod, "Popen", _tracked_popen)
+
+    st = ShellTest(
         cwd=_PROJECT,
         init_commands=["source .venv/bin/activate"],
         fast_commands={"dai": _dai_runner},
     )
+    yield st
+
+    # ── Teardown：终止测试期间启动的 app 进程 ──
+    for proc in _app_procs:
+        if proc.poll() is not None:
+            continue  # 已自然退出
+        try:
+            proc.terminate()
+            proc.wait(timeout=3)
+        except Exception:
+            try:
+                proc.kill()
+                proc.wait(timeout=2)
+            except Exception:
+                pass  # 尽力清理

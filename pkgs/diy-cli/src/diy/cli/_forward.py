@@ -20,7 +20,7 @@ def _lock_path() -> str:
 
 def _send_to_socket(socket_path: str, payload: str) -> str | None:
     """发送消息到 app.sock。流式命令（chat wait）增量推送。"""
-    is_stream = " chat wait " in payload
+    is_stream = " chat wait " in payload or " agent stream " in payload
     try:
         s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
         s.settimeout(5 if not is_stream else 0.3)

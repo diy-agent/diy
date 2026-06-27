@@ -30,11 +30,18 @@ class Message:
 @dataclass
 class AgentState:
     """agent 运行时快照。"""
-
     task_uri: str
     session_id: str = ""
     state: str = "idle"  # "starting" | "idle" | "running" | "error" | "stopped"
     message_count: int = 0
+    # ── 诊断字段（PiRpcAgent / AcpAgent 按需填充） ──
+    provider: str = ""
+    model: str = ""
+    pid: int = 0
+    event_count: int = 0  # 本次 prompt 收到的事件总数
+    last_event_type: str = ""  # 最后一个事件类型（text_delta / toolcall_start / agent_end 等）
+    last_event_age: float = 0  # 距最后事件的秒数（0 = 刚收到）
+    prompt_elapsed: float = 0  # 当前 prompt 已运行秒数（0 = idle）
 
 
 # ════════════════════════════════════════════════════════════════

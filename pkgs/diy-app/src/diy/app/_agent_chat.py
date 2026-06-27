@@ -795,39 +795,51 @@ class AgentChatPanel(QWidget):
     # ═══════════════════════════════════════════════════
 
     async def _ensure_agent(self, task_uri: str) -> None:
-        """通过 AgentManager 获取或创建 agent，绑定 SignalBridge。"""
+        """通过 AgentManager 获取或创建 agent，绑定 SignalBridge。
+
+        自动从 ~/.diy-llm/providers/ 读取第一个已配置的 provider 作为默认 LLM 后端。
+        """
         from diy.core.agent_manager import get_manager
 
-        mgr = get_manager()
+        try:
+            mgr = get_manager()
 
-        # 1. 先断开旧 bridge（确保停 agent 时信号不泄漏）
-        if self._bridge is not None:
-            self._disconnect_bridge()
-        # self._bridge 现在是 None
+            # 1. 先断开旧 bridge（确保停 agent 时信号不泄漏）
+            if self._bridge is not None:
+                self._disconnect_bridge()
+            # self._bridge 现在是 None
 
-        # 2. 停掉旧 task 的 agent
-        if self._agent is not None and self._agent.task_uri != task_uri:
-            self._agent.set_callbacks(AgentCallbacks())
-            await mgr.stop(self._agent.task_uri)
+            # 2. 停掉旧 task 的 agent
+            if self._agent is not None and self._agent.task_uri != task_uri:
+                self._agent.set_callbacks(AgentCallbacks())
+                await mgr.stop(self._agent.task_uri)
 
-        # 3. 从 task frontmatter 读取后端类型，默认 pi（兼容旧数据）
-        from diy.core._state import get_task
+            # 3. 从 task frontmatter 读取后端类型，默认 pi（兼容旧数据）
+            from diy.core._state import get_task
 
-        task_info = get_task(task_uri)
-        agent_meta = (task_info or {}).get("agent", {}) or {}
-        backend_type = agent_meta.get("type", "pi")
+            task_info = get_task(task_uri)
+            agent_meta = (task_info or {}).get("agent", {}) or {}
+            backend_type = agent_meta.get("type", "pi")
 
-        self._bridge = SignalBridge()
-        agent = await mgr.get_or_create(
-            task_uri,
-            backend=backend_type,
-            callbacks=self._bridge.callbacks(),
-        )
-        # 4. 替换 agent 回调（get_or_create 可能返回存活的旧 agent，其回调指向已删除的旧 bridge）
-        agent.set_callbacks(self._bridge.callbacks())
-        self._agent = agent
-        self._bridge.bind(agent)
-        self._connect_bridge()
+            # 4. 从 task frontmatter 读 provider/model（可选，pi 用自己的默认配置）
+            provider = agent_meta.get("provider")
+            model = agent_meta.get("model")
+
+            self._bridge = SignalBridge()
+            agent = await mgr.get_or_create(
+                task_uri,
+                backend=backend_type,
+                provider=provider,
+                model=model,
+                callbacks=self._bridge.callbacks(),
+            )
+            # 4. 替换 agent 回调（get_or_create 可能返回存活的旧 agent，其回调指向已删除的旧 bridge）
+            agent.set_callbacks(self._bridge.callbacks())
+            self._agent = agent
+            self._bridge.bind(agent)
+            self._connect_bridge()
+        except Exception as exc:
+            _logger.error("[agent] _ensure_agent 失败 (uri=%s): %s", task_uri, exc, exc_info=True)
 
     def _connect_bridge(self) -> None:
         """连接 SignalBridge 的信号。"""
@@ -1222,6 +1234,12 @@ class AgentChatPanel(QWidget):
 
         # 通过 SignalBridge + AgentBackend 异步发送（实时事件通过 Qt Signal 返回）
         if self._agent is not None:
+            if not self._agent.is_alive:
+                # agent 已死（如超时后 kill），触重新创建
+                _logger.info("[agent] agent 已死亡，重新创建: %s", self._agent.task_uri)
+                asyncio.ensure_future(self._ensure_agent(self._task_uri))
+                asyncio.ensure_future(self._deferred_send(text))
+                return
             try:
                 asyncio.ensure_future(self._run_prompt(text))
                 self._agent_running = True
@@ -1229,6 +1247,11 @@ class AgentChatPanel(QWidget):
             except RuntimeError as exc:
                 _logger.error("[agent] 发送失败（asyncio loop 未运行）: %s", exc)
             return
+
+        # agent 尚未创建（_ensure_agent 可能还在运行或在排队）
+        if self._task_uri:
+            _logger.info("[agent] 队列发送: task=%s agent 尚不可用，稍后重试", self._task_uri)
+            asyncio.ensure_future(self._deferred_send(text))
 
     async def _run_prompt(self, text: str) -> None:
         """在 event loop 上执行 agent.send()。"""
@@ -1243,6 +1266,15 @@ class AgentChatPanel(QWidget):
         if self._agent_running:
             self._agent_running = False
             self._switch_to_send_btn()
+
+    async def _deferred_send(self, text: str) -> None:
+        """等待 agent 就绪后发送（最多等 30s）。"""
+        for _ in range(30):
+            if self._agent is not None:
+                await self._run_prompt(text)
+                return
+            await asyncio.sleep(1)
+        _logger.warning("[agent] 超时等待 agent 就绪，消息未发送: %s", text[:60])
 
     def send_text(self, text: str) -> None:
         if self._agent_running:

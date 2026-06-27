@@ -1234,6 +1234,20 @@ def agent_status(
             {"role": m.role, "content": m.content[:120]} for m in a.history[-6:]
         ],
     }
+    # ── 诊断字段 ──
+    if s.provider:
+        data["provider"] = s.provider
+    if s.model:
+        data["model"] = s.model
+    if s.pid:
+        data["pid"] = s.pid
+    if s.state == "running":
+        data["events"] = s.event_count
+        data["last_event"] = s.last_event_type or "(无)"
+        data["elapsed"] = f"{s.prompt_elapsed:.0f}s"
+    elif s.event_count:
+        data["last_prompt_events"] = s.event_count
+        data["last_prompt_event"] = s.last_event_type or "(无)"
     _output(data, json_output)
 
 
@@ -1369,6 +1383,69 @@ def agent_stop(
 ):
     """停止 agent。"""
     asyncio.run(_async_stop(task_uri))
+
+
+@agent_app.command(name="monitor")
+def agent_monitor(
+    task_uri: Annotated[str | None, Parameter(help="任务 URI（不填则列出所有）")] = None,
+    /,
+    *,
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+    watch: Annotated[
+        bool, Parameter(name=["-w", "--watch"], help="实时刷新（1s 间隔）")
+    ] = False,
+):
+    """agent 实时监控。
+
+    范例:
+      dai agent monitor              # 列出所有 agent
+      dai agent monitor local/task/1 # 详细监控单个 agent
+      dai agent monitor -w           # 实时刷新列表
+    """
+    from diy.cli._forward import forward_to_app
+
+    args = ["diy", "agent", "monitor"]
+    if task_uri:
+        args.append(task_uri)
+    if json_output:
+        args.append("--json")
+
+    if not watch:
+        forward_to_app(args)
+        return
+
+    # watch 模式：循环调用
+    import sys
+    import time
+
+    while True:
+        forward_to_app(args)
+        time.sleep(1)
+        print("\033[2J\033[H", end="", file=sys.stderr)  # 清屏
+
+
+@agent_app.command(name="stream")
+def agent_stream(
+    task_uri: Annotated[str | None, Parameter(help="任务 URI（不填则列出所有）")] = None,
+    /,
+    *,
+    timeout: Annotated[int, Parameter(help="超时秒数")] = 120,
+):
+    """agent 事件流（流式输出）。
+
+    范例:
+      dai agent stream local/task/1
+      dai agent stream local/task/1 --timeout 60
+    """
+    from diy.cli._forward import forward_to_app
+
+    args = ["diy", "agent", "stream"]
+    if task_uri:
+        args.append(task_uri)
+    args.extend(["--timeout", str(timeout)])
+    forward_to_app(args)
 
 
 app.command(agent_app)
