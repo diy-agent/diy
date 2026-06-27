@@ -1138,7 +1138,7 @@ class AgentChatPanel(QWidget):
     # ═══════════════════════════════════════════════════
 
     def set_task(self, task_uri: str, *, backend: str | None = None) -> None:
-        if task_uri == self._task_uri:
+        if task_uri == self._task_uri and backend is None:
             return
         self._task_uri = task_uri
         self._message_widgets.clear()
