@@ -83,6 +83,26 @@ class AgentEvent:
     size: int = 0  # 原始字节数
     meta: dict = field(default_factory=dict)  # 额外元数据
 
+    def to_dict(self) -> dict:
+        """序列化到 dict（供 JSON 输出）。"""
+        return {
+            "ts": self.ts,
+            "level": self.level,
+            "kind": self.kind,
+            "source": self.source,
+            "data": self.data,
+            "size": self.size,
+            "meta": dict(self.meta),
+        }
+
+    def format(self, compact: bool = False) -> str:
+        """格式化为人类可读文本。compact=True 省略长 data。"""
+        import time as _time
+
+        ts = _time.strftime("%H:%M:%S", _time.localtime(self.ts))
+        data = self.data[:80] + "..." if compact and len(self.data) > 80 else self.data
+        return f"[{ts}] [{self.level}] [{self.kind}] {data}"
+
 
 # ════════════════════════════════════════════════════════════════
 # 协议（接口）

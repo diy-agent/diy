@@ -1387,6 +1387,24 @@ def agent_stop(
     asyncio.run(_async_stop(task_uri))
 
 
+@agent_app.command(name="health")
+def agent_health(
+    task_uri: Annotated[str | None, Parameter(help="任务 URI（不填则检查所有）")] = None,
+    /,
+):
+    """检查 agent 子进程健康状态。
+
+    检查进程存活、状态。无参数时检查所有 agent。
+
+    输出: 🟢/🔴 uri state pid
+
+    范例: diy agent health
+          diy agent health local/task/1
+    """
+    result = _send_to_socket(f"diy agent health {task_uri or ''}")
+    print(result or "(无响应)")
+
+
 @agent_app.command(name="monitor")
 def agent_monitor(
     task_uri: Annotated[str | None, Parameter(help="任务 URI（不填则列出所有）")] = None,

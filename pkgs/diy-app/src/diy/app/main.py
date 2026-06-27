@@ -1069,6 +1069,12 @@ class MainWindow(QMainWindow):
 
         # ── 刷新 Agent 面板 ──
         if states:
+            from diy.core.observer import InProcessAgentObserver
+            obs = getattr(self, "_agent_observer", None)
+            if obs is None:
+                obs = InProcessAgentObserver(get_manager())
+                self._agent_observer = obs
+
             lines = []
             for s in states:
                 icon = {"running": "🟢", "idle": "⏸️", "error": "🔴"}.get(s.state, "❓")
@@ -1076,6 +1082,20 @@ class MainWindow(QMainWindow):
                 line += f"   state: {s.state}  provider: {s.provider}  model: {s.model}\n"
                 if s.state == "running":
                     line += f"   events: {s.event_count}  last: {s.last_event_type}  elapsed: {s.prompt_elapsed:.0f}s\n"
+
+                # 从 observer 读取最近事件（stderr / text_delta 等）
+                buf = obs._buffers.get(s.task_uri)
+                if buf:
+                    recent = []
+                    for ev in list(buf)[-5:]:
+                        if ev.kind in ("text_delta", "tool_call", "error"):
+                            text = ev.data[:80].replace("\n", " ")
+                            recent.append(f"   [{ev.kind}] {text}")
+                        elif ev.stream == "stderr":
+                            recent.append(f"   [stderr] {ev.data[:60].replace(chr(10), ' ')}")
+                    if recent:
+                        line += "\n".join(recent) + "\n"
+
                 lines.append(line)
             self._agent_panel.setPlainText("\n".join(lines))
         else:
@@ -3272,6 +3292,57 @@ class GatewayCLI:
                 return "(无活跃 agent)"
             return resp
 
+        @agent_app.command(name="health")
+        def agent_health(
+            task_uri: str | None = None,
+            /,
+        ):
+            """检查 agent 子进程健康状态。
+
+            检查进程存活、状态、运行时长。无参数时检查所有 agent。
+
+            范例: diy agent health
+                  diy agent health local/task/1
+            """
+            import os as _os
+            import time as _time
+
+            mgr = get_manager()
+            agents = [mgr.get(task_uri)] if task_uri else mgr.list()
+
+            if not agents:
+                return "(无 agent)"
+
+            lines = []
+            for a in agents:
+                uri = a.task_uri if hasattr(a, "task_uri") else ""
+                proc = getattr(a, "_proc", None)
+                pid = proc.pid if proc else 0
+                alive = proc.returncode is None if proc else False
+
+                # 进程存在性检查
+                proc_exists = False
+                if pid:
+                    try:
+                        _os.kill(pid, 0)
+                        proc_exists = True
+                    except ProcessLookupError:
+                        proc_exists = False
+                    except PermissionError:
+                        proc_exists = True
+
+                state = a.state if hasattr(a, "state") else "?"
+                lines.append(
+                    f"{'🟢' if proc_exists else '🔴'} {uri:<30} "
+                    f"state={state:<8} pid={pid or '?'}"
+                )
+                if proc_exists and not alive:
+                    lines[-1] += " (僵尸)"
+                elif not proc_exists and alive:
+                    lines[-1] += " (失联)"
+
+            return "\n".join(lines)
+
         @agent_app.command(name="show")
         def agent_show(
             task_uri: str,
@@ -3375,12 +3446,15 @@ class GatewayCLI:
             /,
             *,
             timeout: int = 120,
+            json: bool = False,
         ):
             """agent 事件流（流式输出）。
 
             范例: diy agent stream local/task/1
                   diy agent stream local/task/1 --timeout 60
+                  diy agent stream local/task/1 --json
             """
+            import json as _json
             import time as _time
             from diy.core.observer import InProcessAgentObserver
 
@@ -3417,9 +3491,10 @@ class GatewayCLI:
                         if buf:
                             while len(buf) > seen:
                                 ev = buf[seen]
-                                out.write(
-                                    f"[{ev.level}] {ev.kind}: {ev.data}\n"
-                                )
+                                if json:
+                                    out.write(_json.dumps(ev.to_dict(), ensure_ascii=False) + "\n")
+                                else:
+                                    out.write(ev.format() + "\n")
                                 out.flush()
                                 seen += 1
 
@@ -3434,13 +3509,25 @@ class GatewayCLI:
                         out.write("(无 agent)\n")
                         out.flush()
                         return
-                    for s in states:
-                        snap = s.state_snapshot()
-                        icon = {"running": "🟢", "idle": "⏸️", "error": "🔴"}.get(snap.state, "❓")
-                        out.write(
-                            f"{icon} {snap.task_uri:<30} {snap.state:<10} "
-                            f"{snap.provider:<15} {snap.model}\n"
-                        )
+                    if json:
+                        data = []
+                        for s in states:
+                            snap = s.state_snapshot()
+                            data.append({
+                                "task_uri": snap.task_uri,
+                                "state": snap.state,
+                                "provider": snap.provider,
+                                "model": snap.model,
+                            })
+                        out.write(_json.dumps({"agents": data}, ensure_ascii=False) + "\n")
+                    else:
+                        for s in states:
+                            snap = s.state_snapshot()
+                            icon = {"running": "🟢", "idle": "⏸️", "error": "🔴"}.get(snap.state, "❓")
+                            out.write(
+                                f"{icon} {snap.task_uri:<30} {snap.state:<10} "
+                                f"{snap.provider:<15} {snap.model}\n"
+                            )
                     out.flush()
 
             self._main.invoke(_do)
