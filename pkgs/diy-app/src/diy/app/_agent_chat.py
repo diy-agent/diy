@@ -815,7 +815,15 @@ class AgentChatPanel(QWidget):
 
             task_info = get_task(task_uri)
             agent_meta = (task_info or {}).get("agent", {}) or {}
-            backend_type = backend or agent_meta.get("type", "pi")
+            backend_type = backend or agent_meta.get("type")
+
+            if not backend_type:
+                _logger.warning(
+                    "[agent] 未指定后端类型 (task=%s), 跳过创建。"
+                    " 请用 diy ui task detail <uri> --backend pi|hermes|opencode",
+                    task_uri,
+                )
+                return
 
             # 4. 从 task frontmatter 读 provider/model（可选）
             provider = agent_meta.get("provider")

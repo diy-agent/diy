@@ -1,9 +1,9 @@
-"""
-AgentManager — 多 agent 管理器，全 async。
+"""AgentManager — 多 agent 管理器，全 async。
 
-支持后端:
-  hermes — AcpAgent  ()
-  pi     — PiRpcAgent (provider, model)
+支持后端（由 _agent_chat._ensure_agent 的 --backend 参数或 task frontmatter 决定）:
+  pi       — PiRpcAgent (provider, model)
+  hermes   — AcpAgent (hermes acp)
+  opencode — AcpAgent (opencode acp)
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ class AgentManager:
         task_uri: str,
         cwd: str | None = None,
         *,
-        backend: BackendKind = "hermes",
+        backend: str,
         provider: str | None = None,
         model: str | None = None,
         callbacks: AgentCallbacks | None = None,
