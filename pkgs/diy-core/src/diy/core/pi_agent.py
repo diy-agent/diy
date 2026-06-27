@@ -160,7 +160,7 @@ class PiRpcAgent(AgentBackend):
                 data = await loop.run_in_executor(
                     None, self._proc.stdout.read, 4096
                 )
-            except Exception:
+            except BaseException:
                 break
             if not data:  # EOF
                 break
@@ -206,7 +206,7 @@ class PiRpcAgent(AgentBackend):
                 data = await loop.run_in_executor(
                     None, self._proc.stderr.read, 4096
                 )
-            except Exception:
+            except BaseException:
                 break
             if not data:
                 break
