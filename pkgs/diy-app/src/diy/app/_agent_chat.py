@@ -794,36 +794,39 @@ class AgentChatPanel(QWidget):
     # Agent 生命周期 — 每个 task 一个 AgentBackend
     # ═══════════════════════════════════════════════════
 
-    async def _ensure_agent(self, task_uri: str) -> None:
-        """通过 AgentManager 获取或创建 agent，绑定 SignalBridge。
-
-        自动从 ~/.diy-llm/providers/ 读取第一个已配置的 provider 作为默认 LLM 后端。
-        """
+    async def _ensure_agent(self, task_uri: str, *, backend: str | None = None) -> None:
+        """通过 AgentManager 获取或创建 agent，绑定 SignalBridge。"""
         from diy.core.agent_manager import get_manager
 
         try:
             mgr = get_manager()
 
-            # 1. 先断开旧 bridge（确保停 agent 时信号不泄漏）
+            # 1. 先断开旧 bridge
             if self._bridge is not None:
                 self._disconnect_bridge()
-            # self._bridge 现在是 None
 
             # 2. 停掉旧 task 的 agent
             if self._agent is not None and self._agent.task_uri != task_uri:
                 self._agent.set_callbacks(AgentCallbacks())
                 await mgr.stop(self._agent.task_uri)
 
-            # 3. 从 task frontmatter 读取后端类型，默认 pi（兼容旧数据）
-            from diy.core._state import get_task
+            # 3. 从 task frontmatter 读取后端类型
+            from diy.core._state import get_task, update_task_field
 
             task_info = get_task(task_uri)
             agent_meta = (task_info or {}).get("agent", {}) or {}
-            backend_type = agent_meta.get("type", "pi")
+            backend_type = backend or agent_meta.get("type", "pi")
 
-            # 4. 从 task frontmatter 读 provider/model（可选，pi 用自己的默认配置）
+            # 4. 从 task frontmatter 读 provider/model（可选）
             provider = agent_meta.get("provider")
             model = agent_meta.get("model")
+
+            # 5. 持久化 backend 选择到 task frontmatter
+            if backend and agent_meta.get("type") != backend:
+                try:
+                    update_task_field(task_uri, **{"agent": {"type": backend}})
+                except Exception:
+                    pass
 
             self._bridge = SignalBridge()
             agent = await mgr.get_or_create(
@@ -833,11 +836,32 @@ class AgentChatPanel(QWidget):
                 model=model,
                 callbacks=self._bridge.callbacks(),
             )
-            # 4. 替换 agent 回调（get_or_create 可能返回存活的旧 agent，其回调指向已删除的旧 bridge）
             agent.set_callbacks(self._bridge.callbacks())
             self._agent = agent
             self._bridge.bind(agent)
             self._connect_bridge()
+
+            # 6. 从 agent 加载会话历史（重连时加载 pi/hermes 的完整对话）
+            #    get_or_create 可能返回存活的旧 agent（已有 history）
+            try:
+                history = agent.history
+                if history:
+                    task_cache = self._cached_msgs.setdefault(task_uri, [])
+                    # 只追加 agent 有而我们 cache 没有的消息
+                    existing_count = len(task_cache)
+                    for msg in history[existing_count:]:
+                        dm = DisplayMessage(
+                            role=msg.role or "user",
+                            content=msg.content or "",
+                            raw_content=msg.content or "",
+                            timestamp=msg.timestamp or "",
+                        )
+                        task_cache.append(dm)
+                    self._render_window(task_uri)
+                    self._do_scroll_to_bottom()
+            except Exception:
+                _logger.debug("[agent] 加载 session 历史失败", exc_info=True)
+
         except Exception as exc:
             _logger.error("[agent] _ensure_agent 失败 (uri=%s): %s", task_uri, exc, exc_info=True)
 
@@ -1083,7 +1107,7 @@ class AgentChatPanel(QWidget):
     # 发送 / 设置 task
     # ═══════════════════════════════════════════════════
 
-    def set_task(self, task_uri: str) -> None:
+    def set_task(self, task_uri: str, *, backend: str | None = None) -> None:
         if task_uri == self._task_uri:
             return
         self._task_uri = task_uri
@@ -1123,7 +1147,8 @@ class AgentChatPanel(QWidget):
         self._input.setFocus()
 
         # 异步获取 agent（SignalBridge 自动连接）
-        asyncio.ensure_future(self._ensure_agent(task_uri))
+        self._pending_backend = backend
+        asyncio.ensure_future(self._ensure_agent(task_uri, backend=backend or self._pending_backend))
 
     def _render_window(self, task_uri: str) -> None:
         """渲染 task 的消息窗口（惰性加载，最近 _MAX_RENDER_LINES 行）。"""

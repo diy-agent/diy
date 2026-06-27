@@ -196,12 +196,12 @@ class OverlayPanel(QFrame):
         if self._visible:
             self._tab.setCurrentIndex(tab_index)
 
-    def set_task(self, uri: str) -> None:
+    def set_task(self, uri: str, *, backend: str | None = None) -> None:
         """设置当前任务 URI — 传递到 detail view 和 agent chat。"""
         if hasattr(self, "_detail"):
             self._detail.show_task(uri)
         if hasattr(self, "_agent_chat"):
-            self._agent_chat.set_task(uri)
+            self._agent_chat.set_task(uri, backend=backend)
 
     def state(self) -> dict:
         """返回面板状态快照（供 diy ui 查询）。"""

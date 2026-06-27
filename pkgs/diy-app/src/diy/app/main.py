@@ -2132,13 +2132,17 @@ class GatewayCLI:
         def ui_task_detail(
             uri: str,
             /,
+            *,
+            backend: str | None = None,
         ):
-            """<uri> 展示任务详情并设为当前选中任务。
+            """<uri> 查看任务详情并切入对话模式。
 
             三合一: 详情展示 + 切聊天面板 + 设 _current_task_uri。
             后续 edit input 无需再传 URI。
+            --backend pi|hermes  选择 agent 后端（不填则使用 task frontmatter 或默认 pi）
 
             范例: diy ui task detail local/task/1
+                  diy ui task detail local/task/1 --backend hermes
             """
 
             def _do():
@@ -2149,7 +2153,7 @@ class GatewayCLI:
                 )
                 if panel is None:
                     return "error: UI 尚未初始化"
-                panel.set_task(uri)
+                panel.set_task(uri, backend=backend)
                 from markdown_it import MarkdownIt as _md
 
                 node = self._window._find_node(uri)
