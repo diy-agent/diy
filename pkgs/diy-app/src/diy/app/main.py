@@ -1513,7 +1513,7 @@ class MainWindow(QMainWindow):
     def format_tree(self, all_tasks: bool = False) -> str:
         """遍历 QStandardItemModel，直接读 DisplayRole — 和 UI 完全一致。
 
-        all_tasks=True 时加载全部任务（CLI dai tree 使用）。
+        all_tasks=True 时加载全部任务（CLI diy tree 使用）。
         """
         if all_tasks:
             from diy.app.task_tree import load_task_tree
@@ -1596,7 +1596,7 @@ class MainWindow(QMainWindow):
         )
 
     def format_screen(self) -> str:
-        """Screen / Area / Overlay 状态快照（供 dai ui screen 查询）。"""
+        """Screen / Area / Overlay 状态快照（供 diy ui screen 查询）。"""
         lines = [f"screen: {self._screen.name}"]
         for aid in ["left", "right", "bottom"]:
             area = self._screen.area(aid)
@@ -1978,7 +1978,7 @@ class GatewayCLI:
         def ui_tree():
             """完整任务树（和 GUI 一致）。
 
-            范例: dai ui tree
+            范例: diy ui tree
             """
             return self._main.invoke(self._window.format_tree)
 
@@ -1986,7 +1986,7 @@ class GatewayCLI:
         def ui_status():
             """健康检查（pid/dock 可见性/焦点/窗口/定时器）。
 
-            范例: dai ui status
+            范例: diy ui status
             输出: pid, uptime, window, overlay=✗, panel=✗, focus: QTreeView
             """
             return self._main.invoke(self._window.format_status)
@@ -1995,7 +1995,7 @@ class GatewayCLI:
         def ui_screen():
             """Screen / Area / Overlay 状态快照。
 
-            范例: dai ui screen
+            范例: diy ui screen
             输出: screen 名称 + 各 area 可见性/活跃 panel + overlay 动画状态
             """
             return self._main.invoke(self._window.format_screen)
@@ -2014,8 +2014,8 @@ class GatewayCLI:
                 panel: 面板 ID（不填则切到 default，同 panel 则隐藏）
 
             范例:
-                dai ui toggle bottom panel=agent_list  # 显示 Agent 列表
-                dai ui toggle bottom                   # 隐藏/切换底部
+                diy ui toggle bottom panel=agent_list  # 显示 Agent 列表
+                diy ui toggle bottom                   # 隐藏/切换底部
             """
             from diy.app.screen import Screen  # noqa: PLC0415
 
@@ -2080,7 +2080,7 @@ class GatewayCLI:
         ):
             """<uri> 任务节点详情。
 
-            范例: dai ui node local/task/1
+            范例: diy ui node local/task/1
             """
             return self._main.invoke(lambda: self._window.format_node(uri))
 
@@ -2097,7 +2097,7 @@ class GatewayCLI:
             三合一: 详情展示 + 切聊天面板 + 设 _current_task_uri。
             后续 edit input 无需再传 URI。
 
-            范例: dai ui task detail local/task/1
+            范例: diy ui task detail local/task/1
             """
 
             def _do():
@@ -2207,7 +2207,7 @@ class GatewayCLI:
             body_file: str | None = None,
         ):
             """为当前已选中的任务设置编辑字段并切换到编辑模式。
-            先用 `dai ui task detail <uri>` 选中任务。
+            先用 `diy ui task detail <uri>` 选中任务。
             支持 --title / --body / --body-file。"""
 
             def _set_fields():
@@ -2268,7 +2268,7 @@ class GatewayCLI:
         def state() -> str:
             """当前面板状态（task_uri, mode, sessions）。
 
-            范例: dai ui chat state
+            范例: diy ui chat state
             """
             import yaml as _yaml
 
@@ -2327,7 +2327,7 @@ class GatewayCLI:
         ):
             """读取当前对话文本。
 
-            范例: dai ui chat read
+            范例: diy ui chat read
             流程: send → wait → read
             """
             panel = (
@@ -2348,7 +2348,7 @@ class GatewayCLI:
         ):
             """等待 agent 回复完成（轮询）。
 
-            范例: dai ui chat wait --timeout 120
+            范例: diy ui chat wait --timeout 120
             """
             import time as _time
 
@@ -2414,8 +2414,8 @@ class GatewayCLI:
         ):
             """向当前 task 发送消息。
 
-            范例: dai ui chat send "帮我分析这个项目"
-            流程: dai ui task detail <uri> → send → wait → read
+            范例: diy ui chat send "帮我分析这个项目"
+            流程: diy ui task detail <uri> → send → wait → read
             """
             panel = (
                 self._window._chat
@@ -2554,8 +2554,8 @@ class GatewayCLI:
         ):
             """注册 subject。自动检测是否为 git 仓库。
 
-            范例: dai subject add ~/git/diy/_diy
-            范例: dai subject add ~/git/diy/_diy --desc "dev 工具项目"
+            范例: diy subject add ~/git/diy/_diy
+            范例: diy subject add ~/git/diy/_diy --desc "dev 工具项目"
             注意: 路径必须是 git 仓库目录。
             """
             from diy.core.middleware import gateway_call
@@ -2570,7 +2570,7 @@ class GatewayCLI:
         ):
             """列出所有已注册的 subject。
 
-            范例: dai subject list
+            范例: diy subject list
             """
             import io as _io
             import json as _json
@@ -2629,7 +2629,7 @@ class GatewayCLI:
         ):
             """树状展示 subject（按路径层级嵌套）。
 
-            范例: dai subject tree
+            范例: diy subject tree
             """
             import io as _io
             import json as _json
@@ -2804,7 +2804,7 @@ class GatewayCLI:
         ):
             """查看单个任务详情。
 
-            范例: dai task show local/task/1
+            范例: diy task show local/task/1
             """
             import json as _json
 
@@ -2848,9 +2848,9 @@ class GatewayCLI:
             """创建本地任务，自动 star。
 
             输出格式: status: success / data: {title, state, uri, ...}
-            范例: dai task create "标题" ~/git/diy/_diy
-            范例: dai task create "子任务" ~/git/diy/_diy --parent local/task/1
-            注意: subject 必须已通过 dai subject add 注册。
+            范例: diy task create "标题" ~/git/diy/_diy
+            范例: diy task create "子任务" ~/git/diy/_diy --parent local/task/1
+            注意: subject 必须已通过 diy subject add 注册。
             """
             from diy.core.middleware import gateway_call
             from diy.core.task import create_task
@@ -2881,7 +2881,7 @@ class GatewayCLI:
         ):
             """编辑任务元数据。返回编辑后的完整字段。
 
-            范例: dai task edit local/task/1 --title "新标题" --state active
+            范例: diy task edit local/task/1 --title "新标题" --state active
             注意: 不传的参数保持不变。
             """
             import json as _json
@@ -3293,8 +3293,8 @@ class GatewayCLI:
         ):
             """agent 实时监控。
 
-            范例: dai agent monitor
-                  dai agent monitor local/task/1
+            范例: diy agent monitor
+                  diy agent monitor local/task/1
             """
             mgr = get_manager()
             import json as _json
@@ -3378,8 +3378,8 @@ class GatewayCLI:
         ):
             """agent 事件流（流式输出）。
 
-            范例: dai agent stream local/task/1
-                  dai agent stream local/task/1 --timeout 60
+            范例: diy agent stream local/task/1
+                  diy agent stream local/task/1 --timeout 60
             """
             import time as _time
             from diy.core.observer import InProcessAgentObserver
@@ -3465,7 +3465,7 @@ class GatewayCLI:
             """<文本...> 改窗口标题"""
             title_text = " ".join(text)
             if not title_text:
-                return "错误: 缺少参数，用法: dai ui title <文本...>"
+                return "错误: 缺少参数，用法: diy ui title <文本...>"
             QMetaObject.invokeMethod(
                 self._window,
                 "setWindowTitle",
@@ -3508,7 +3508,7 @@ class GatewayCLI:
 
         @ui_app.command(name="shutdown")
         def ui_shutdown():
-            """关闭管控台。app 退出后下次 dai 命令会自动启动。
+            """关闭管控台。app 退出后下次 diy 命令会自动启动。
 
             不尝试优雅退出——QtWebEngine 线程不配合清理，Python finalization
             会卡死导致 flock 永不到达、新实例无法启动。

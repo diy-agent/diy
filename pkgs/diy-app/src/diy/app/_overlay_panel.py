@@ -204,7 +204,7 @@ class OverlayPanel(QFrame):
             self._agent_chat.set_task(uri)
 
     def state(self) -> dict:
-        """返回面板状态快照（供 dai ui 查询）。"""
+        """返回面板状态快照（供 diy ui 查询）。"""
         return {
             "visible": self._visible,
             "animating": self._animating,

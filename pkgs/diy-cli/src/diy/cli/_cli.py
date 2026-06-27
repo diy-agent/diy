@@ -33,7 +33,7 @@ app = App(
 app.command(llm_app)
 app.command(ref_app)
 
-# 注册 dai 命令组到 diy
+# 注册 dai 子命令组到 diy
 app.command(_dai_cli.task_app)
 app.command(_dai_cli.subject_app)
 app.command(_dai_cli.profile_app)

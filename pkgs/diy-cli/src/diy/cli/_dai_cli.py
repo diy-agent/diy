@@ -1,13 +1,15 @@
-"""dai CLI — diy agent 接口
+"""dai 子命令组（注册到 diy CLI） — diy agent 接口
 
-命令:
-  dai task ...         任务 CRUD（star/unstar/list/show/create/edit/delete/link/unlink/sync）
-  dai subject ...      subject 树管理（add/list/tree/show/remove/scan）
-  dai profile ...      profile 预设管理
-  dai ui ...           UI 交互（tree/status/agents/node/reload/title/notify/metrics/shutdown/chat）
-  dai doctor           健康自检
+这些命令通过 `diy` CLI 调用（dai 是旧的内部名，CLI 入口已合并到 diy）。
+
+子命令:
+  diy task ...         任务 CRUD（star/unstar/list/show/create/edit/delete/link/unlink/sync）
+  diy subject ...      subject 树管理（add/list/tree/show/remove/scan）
+  diy profile ...      profile 预设管理
+  diy ui ...           UI 交互（tree/status/agents/node/reload/title/notify/metrics/shutdown/chat）
+  diy doctor           健康自检
+  diy agent ...        agent 管理（monitor/stream/spawn/send/kill/list/show）
 """
-
 from __future__ import annotations
 
 import asyncio
@@ -249,7 +251,7 @@ def subject_add(
 ):
     """注册 subject。自动检测是否为 git 仓库。
 
-    范例: dai subject add ~/git/diy/_diy
+    范例: diy subject add ~/git/diy/_diy
     注意: 路径必须是 git 仓库目录。
     """
     from diy.core.middleware import cli_call
@@ -266,7 +268,7 @@ def subject_list(
 ):
     """扁平列表（实时 is_git 检测）。
 
-    范例: dai subject list
+    范例: diy subject list
     """
     data = load_state()
     subjects = _enrich(data.get("subjects", {}))
@@ -290,7 +292,7 @@ def subject_tree(
 ):
     """树状展示（实时 is_git 检测）。
 
-    范例: dai subject tree
+    范例: diy subject tree
     """
     data = load_state()
     subjects = _enrich(data.get("subjects", {}))
@@ -546,10 +548,10 @@ def task_create(
         uri: local/task/42
 
     范例:
-      $ dai task create --title "重构 CLI" --subject ~/git/diy/_diy
-      $ dai task create --title "子任务" --subject ~/git/diy/_diy --parent local/task/1
+      $ diy task create --title "重构 CLI" --subject ~/git/diy/_diy
+      $ diy task create --title "子任务" --subject ~/git/diy/_diy --parent local/task/1
 
-    注意: subject 必须已通过 dai subject add 注册。
+    注意: subject 必须已通过 diy subject add 注册。
     """
     from diy.core.middleware import cli_call
     from diy.core.task import create_task
@@ -586,10 +588,10 @@ def task_link(
     ] = False,
 ):
     """链接外部任务（GitHub issue / PR）。只建立本地引用，不修改远端。
-    创建后需 dai task sync <uri> 拉取 title/body/state。
+    创建后需 diy task sync <uri> 拉取 title/body/state。
 
     范例:
-      $ dai task link --title "bug 修复" --source-uri github.com/org/repo/issues/42 --subject ~/git/diy/_diy
+      $ diy task link --title "bug 修复" --source-uri github.com/org/repo/issues/42 --subject ~/git/diy/_diy
 
     注意: 首次 link 后 body 为空，必须 sync 拉取。
     """
@@ -748,8 +750,8 @@ def task_sync(
     从远端拉取最新 title/state/body 并更新本地 AGENTS.md。
 
     范例:
-      $ dai task sync github.com/org/repo/issues/42
-      $ dai task sync --all
+      $ diy task sync github.com/org/repo/issues/42
+      $ diy task sync --all
 
     注意: 目前只支持 GitHub issue（需 gh CLI）。parent 不覆盖。
     """
@@ -840,8 +842,8 @@ def task_list(
     """列出任务。默认只显示 starred（焦点视图），--all 显示全部。
 
     范例:
-      $ dai task list
-      $ dai task list --all
+      $ diy task list
+      $ diy task list --all
     """
     if all:  # noqa: SIM108  # if/else 比三元表达式更清晰
         tasks = list_tasks()
@@ -877,7 +879,7 @@ def task_show(
     """查看单个任务详情。
 
     范例:
-      $ dai task show local/task/1
+      $ diy task show local/task/1
     """
     task = get_task(uri)
     if task is None:
@@ -921,7 +923,7 @@ def task_edit(
     """编辑任务元数据。返回编辑后的完整字段。
 
     范例:
-      $ dai task edit local/task/1 --title "新标题" --state active
+      $ diy task edit local/task/1 --title "新标题" --state active
 
     注意: 不传的参数保持不变。
     """

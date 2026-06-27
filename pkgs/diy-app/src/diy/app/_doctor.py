@@ -8,7 +8,7 @@
 锁定机制：
   - critical 问题触发 _in_lockdown → GUI 显示故障告示面板
   - 非 running 状态不检查运行时项
-  - CLI `dai doctor` 和 app 内定时自检共用同一套引擎
+  - CLI `diy doctor` 和 app 内定时自检共用同一套引擎
 """
 
 from __future__ import annotations

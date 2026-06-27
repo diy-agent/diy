@@ -1,7 +1,7 @@
 """任务树数据解析 — 纯 Python，无 Qt 依赖。
 
 数据流: ~/.diy/star/ symlink → TaskNode 树
-默认只显示 starred 任务。tree 加任务用 `dai task create --subject <path>`。
+默认只显示 starred 任务。tree 加任务用 `diy task create --subject <path>`。
 AGENTS.md 是渲染输出，不解析。
 """
 
