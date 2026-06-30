@@ -83,7 +83,7 @@ class PanelApp(diy.ui.BaseApp):
 
     def _sync_tree_to_panel(self, node: diy.ui.ScopeNode) -> None:
         """将 diy.ui 树同步到 Panel 原生 children。"""
-        if hasattr(node, "diy") and node.diy.panel_container:
-            node._on_children_replaced(node._children)
+        if hasattr(node, "diy") and node.diy._is_container:
+            node.diy._host_ctrl.replace_children(node, [c for c in node._children if hasattr(c, "diy")])
         for child in node._children:
             self._sync_tree_to_panel(child)

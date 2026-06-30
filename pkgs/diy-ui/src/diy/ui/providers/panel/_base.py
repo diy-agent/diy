@@ -13,18 +13,31 @@ if TYPE_CHECKING:
 C = TypeVar("C", bound="UIComponent")
 
 
+class _PanelHostCtrl:
+    """Panel 容器原生 children 同步。"""
+    __slots__ = ()
+    def add_child(self, parent_host: object, child_host: object) -> None:
+        if hasattr(parent_host, 'append'):
+            parent_host.append(child_host)
+    def replace_children(self, host: object, child_hosts: list[object]) -> None:
+        host[:] = child_hosts
+    def clear_children(self, host: object) -> None:
+        host[:] = []
+
+
+_PANEL_HOST_CTRL = _PanelHostCtrl()
+
+
 class UIComponent(diy.ui.ScopeNode, DiyInitSub):
     """provider 原生组件的薄包装。
 
     diy.ui 组件直接继承 Panel 原生类，self 就是 provider 原生对象。
-    diy 命名空间存放 diy 扩展属性（signal/init_done/panel_container）。
-
-    DiyInitSub 使子类自动从 Panel param 提取类型生成 __init__。
+    diy 命名空间存放 diy 扩展属性（signal/init_done/_is_container）。
     """
 
     def __init__(self, *, config: diy.ui.ScopeConfig | None = None) -> None:
         super().__init__(config=config)
-        self.diy.panel_container = False
+        self.diy._is_container = False
 
     @property
     def signal(self) -> Signal[Any]:

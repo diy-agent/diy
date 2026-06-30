@@ -5,7 +5,7 @@ from typing import Any
 
 import panel as pn
 
-from .._base import C, UIComponent, _PanelContainerMixin
+from .._base import C, UIComponent, _PanelContainerMixin, _PANEL_HOST_CTRL
 
 _MODULE = __name__
 
@@ -24,7 +24,8 @@ def _container_exit(self: C, *args: object) -> None:
 
 
 def _container_post_init(self) -> None:
-    self.diy.panel_container = True
+    self.diy._is_container = True
+    self.diy._host_ctrl = _PANEL_HOST_CTRL
 
 
 # ── 容器 layout（有 _PanelContainerMixin + __enter__/__exit__） ──

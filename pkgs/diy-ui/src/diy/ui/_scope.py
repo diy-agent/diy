@@ -82,11 +82,30 @@ class ScopeConfig:
     auto_mount_child: bool | None = None
 
 
+class _HostCtrl:
+    """Provider-specific host synchronization.
+
+    每个 provider 实现 add_child/replace_children/clear_children，
+    将 scope tree 操作同步到原生 widget 树。
+    默认 no-op，非容器节点无需处理。
+    """
+    __slots__ = ()
+    def add_child(self, parent_host: object, child_host: object) -> None:
+        pass
+    def replace_children(self, host: object, child_hosts: list[object]) -> None:
+        pass
+    def clear_children(self, host: object) -> None:
+        pass
+
+
+_DEFAULT_HOST_CTRL = _HostCtrl()
+
+
 class _DiyData:
     """已废弃。保留兼容。"""
-    __slots__ = ('signal', 'init_done', 'panel_container')
+    __slots__ = ('signal', 'init_done', '_is_container')
     def __init__(self):
-        self.signal = None; self.init_done = False; self.panel_container = False
+        self.signal = None; self.init_done = False; self._is_container = False
 
 
 # ═══════════════════════════════════════════════════
@@ -96,7 +115,8 @@ class _DiyData:
 class ScopeProxy:
     __slots__ = (
         '_host',
-        'signal', 'init_done', 'panel_container',       # _DiyData slots
+        'signal', 'init_done', '_is_container',          # _DiyData slots
+        '_host_ctrl',
         '_parent', '_children_v', '_config_v', '_ancestor_ids',  # tree
         '_signals_v', '_cell_fn_v', '_dependencies',               # signal/cell
         '_is_dirty', '_is_executing', '_is_async_cell', '_app_ref',
@@ -106,7 +126,8 @@ class ScopeProxy:
         self._host = host
         self.signal: Signal[Any] | None = None
         self.init_done = False
-        self.panel_container = False
+        self._is_container = False
+        self._host_ctrl = _DEFAULT_HOST_CTRL
         self._parent: ScopeProxy | None = None
         self._children_v: list[ScopeProxy] = []
         self._config_v: ScopeConfig | None = config
@@ -134,9 +155,9 @@ class ScopeProxy:
 
     def _add_child(self, child: 'ScopeProxy'):
         self._children_v.append(child); child._parent = self; child._rebuild_ancestor_ids()
-        # 立即同步到 Panel 原生 children，实现逐步更新（如长时间任务中间步骤）
-        if self.panel_container and hasattr(self._host, 'append'):
-            self._host.append(child._host)  # type: ignore[attr-defined]
+        # 立即同步到宿主原生 children，实现逐步更新（如长时间任务中间步骤）
+        if self._is_container:
+            self._host_ctrl.add_child(self._host, child._host)
 
     def _remove_child(self, child: 'ScopeProxy'):
         self._children_v.remove(child); child._parent = None
@@ -238,19 +259,19 @@ class ScopeProxy:
     def _mark_dirty(self): self._is_dirty = True
 
     def _sync_host_children(self):
-        """将 scope tree children 全量同步到宿主（Panel）原生 children。
+        """将 scope tree children 全量同步到宿主原生 children。
 
         在 cell rerun 后调用，确保宿主容器的原生 children 与 scope tree 一致。
-        只在宿主为 Panel 容器（panel_container=True）时生效。
+        只在宿主为容器（_is_container=True）时生效。
         通常由 _add_child 的即时同步覆盖，作为 safety net 保留。
         """
-        if self.panel_container and hasattr(self._host, '_on_children_replaced'):
-            self._host._on_children_replaced(self._host._children)
+        if self._is_container:
+            self._host_ctrl.replace_children(self._host, [c._host for c in self._children_v])
 
     def _clear_host_children(self):
-        """清空宿主（Panel）原生 children。在 cell rerun 开始时调用。"""
-        if self.panel_container and hasattr(self._host, '_on_children_replaced'):
-            self._host._on_children_replaced([])
+        """清空宿主原生 children。在 cell rerun 开始时调用。"""
+        if self._is_container:
+            self._host_ctrl.clear_children(self._host)
 
     def _execute_cell(self, *, initial=False):
         if self._is_executing: return
