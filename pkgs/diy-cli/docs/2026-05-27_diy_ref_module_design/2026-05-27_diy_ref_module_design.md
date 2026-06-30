@@ -109,7 +109,7 @@ description: >
 
 ## 5. 新会话实施路径 (Implementation Roadmap)
 
-接手此任务的 Agent 请按照以下步骤在 `packages/diy-cli.py/src/diycli/_sync.py` 等文件中进行改造：
+接手此任务的 Agent 请按照以下步骤在 `pkgs/diy-cli/src/diy/cli/_sync.py` 等文件中进行改造：
 
 - [ ] **Step 1: 升级配置解析**。修改 `diy.yaml` 解析逻辑，支持解析 `references` 字段，并编写 `npm:` 和 `git:` 等快捷协议前缀的解析正则。
 - [ ] **Step 2: 重构锁文件**。更新 `build_ref_lock` 和 `write_ref_lock_file` 函数。引入 `_generated` 元数据节点；将文件名从 `ref.lock.json` mv到 `./diy/ref.lock.json`。

@@ -7,7 +7,7 @@ CLI → credential pool → model sync → export。
 ## 架构
 
 ```
-src/diycli/llm/
+src/diy/cli/llm/
 ├── _app.py            # Cyclopts App (diy llm ...)
 ├── auth.py            # 凭据管理（读 env:VAR_NAME → 写 state）
 ├── core.py            # provider 发现、sync、state 管理

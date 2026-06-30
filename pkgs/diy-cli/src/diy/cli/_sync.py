@@ -44,13 +44,125 @@ class WorkspaceInfo:
     dependencies: Dict[str, str]
     dev_dependencies: Dict[str, str]
 
+def find_project_boundary(start: Optional[Path] = None) -> Path:
+    """定位当前所在的项目边界（作用域），用于决定 diy.yaml 读写哪个层级。
+
+    ════════════════════════════════════════════════════════════════════
+    设计：层级化项目边界（2026-06-29）
+
+    问题：
+      大型 monorepo（如 diy 本身）有多个子项目（pkgs/diy-core、pkgs/diy-app…），
+      每个有各自的 pyproject.toml/package.json。之前 diy ref 操作固定写根 diy.yaml，
+      子项目无法独立声明 "我需要这个 source" 或 "这是我的 Python source ref"。
+
+    方案：
+      ref 操作的作用域由"项目边界"定义。边界按优先级：
+       ① diy.yaml       — 明确创建的 diy 项目（最高优先级）
+       ② pyproject.toml — Python 项目
+       ③ package.json   — Node.js 项目
+       ④ .git           — git 仓库根（最外层兜底，不再上溯）
+
+      先检查 cwd，再逐级向上。cwd 自身是有效边界时立即返回，不继续上溯。
+      这样 monorepo 的子包有自己的边界，不会被父级 diy.yaml 吞掉。
+
+    场景验证：
+      A. 子包 diy ref add（cwd 有 pyproject.toml）
+         → 边界 = cwd，在该目录创建/写入 diy.yaml ✓
+      B. 根项目 diy ref add（cwd 有 diy.yaml）
+         → 边界 = cwd，直接写入根 diy.yaml ✓
+      C. 无标记子目录（空目录，无 py/pj/diy）
+         → 上溯到第一个 py/pj/diy/.git 边界 ✓
+      D. 纯 Python 项目（无 diy.yaml，有 pyproject.toml）
+         → 边界 = 该项目根目录，创建 diy.yaml ✓
+      E. 父级有 diy.yaml，但 cwd 有 pyproject.toml
+         → 边界 = cwd（子包不被父级 diy.yaml 吞掉）✓
+      F. 纯 git 项目（无 py/pj/diy）
+         → 边界 = git 根 ✓
+    ════════════════════════════════════════════════════════════════════
+    """
+    curr = (start or Path.cwd()).resolve()
+
+    # --- ① cwd 自身就是边界吗？---
+    for marker in ("diy.yaml", "pyproject.toml", "package.json", ".git"):
+        if (curr / marker).exists():
+            return curr
+
+    # --- ② 向上遍历，找最近的项目边界 ---
+    for parent in curr.parents:
+        # Git 根是兜底边界
+        if (parent / ".git").exists():
+            return parent
+        # 其他标记
+        for marker in ("diy.yaml", "pyproject.toml", "package.json"):
+            if (parent / marker).exists():
+                return parent
+        # 到达文件系统根 → 停止
+        if parent == parent.parent:
+            break
+
+    raise FileNotFoundError(
+        "未找到项目边界。当前目录不在任何 git / Python / Node / diy 项目范围内。\n"
+        "提示：进入有 pyproject.toml / package.json / diy.yaml / .git 的目录再试。"
+    )
+
+
 def find_project_root() -> Path:
-    """从当前目录向上查找，直到找到 diy.yaml 为止。"""
+    """从当前目录向上查找，直到找到 diy.yaml 为止（原行为，用于 sync 等全局操作）。
+
+    注意：与 find_project_boundary() 不同，此函数只认 diy.yaml，
+    不将 pyproject.toml / package.json / .git 视为边界。
+    """
     curr = Path.cwd().resolve()
     for parent in [curr] + list(curr.parents):
         if (parent / "diy.yaml").exists():
             return parent
     raise FileNotFoundError("未发现 `diy.yaml`。请确保你在一个 diy 项目目录下，或该项目已初始化。")
+
+
+def _collect_sources_from_all_boundaries(root_dir: Path) -> list[str]:
+    """收集项目根下所有 diy.yaml 的 sources（含根自身和子项目边界）。
+
+    子项目可能有自己的 diy.yaml，我们需要聚合所有 sources
+    让 diy ref sync 能一次性同步完所有作用域的引用。
+    """
+    sources: list[str] = []
+
+    def _load_sources(path: Path):
+        yml = path / "diy.yaml"
+        if not yml.exists():
+            return
+        try:
+            with open(yml, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            items = cfg.get("sources", [])
+            if isinstance(items, list):
+                sources.extend(items)
+        except Exception:
+            pass
+
+    # 1. 根自身的 diy.yaml
+    _load_sources(root_dir)
+
+    # 2. 已知子项目边界（workspace packages）
+    workspaces = get_workspace_packages(root_dir)
+    seen = {root_dir}
+    for wp in workspaces.values():
+        p = Path(wp.path)
+        if p not in seen:
+            seen.add(p)
+            _load_sources(p)
+
+    # 3. 扫描子目录中独立的 diy.yaml（不起眼但自己有 source 声明的目录）
+    try:
+        for child in sorted(root_dir.iterdir()):
+            if child.is_dir() and child not in seen:
+                if (child / "pyproject.toml").exists() or (child / "package.json").exists():
+                    _load_sources(child)
+    except PermissionError:
+        pass
+
+    return sources
+
 
 def get_workspace_packages(root_dir: Path) -> Dict[str, WorkspaceInfo]:
     workspace_map = {}
@@ -205,6 +317,8 @@ def parse_repo_url(url: str) -> Optional[RepoInfo]:
     # 剥掉 GitHub/GitLab/Gitea 的 Web UI 路径（/tree/..., /-/tree/..., /src/branch/...）
     clean_url = re.sub(r'(/tree/[^/]+(?:/.*)?|/blob/[^/]+(?:/.*)?|/-/tree/[^/]+(?:/.*)?|/-/blob/[^/]+(?:/.*)?|/src/(?:branch|tag)/[^/]+(?:/.*)?)$', '', clean_url)
     if clean_url.endswith(".git"): clean_url = clean_url[:-4]
+    # 剥离 @version/branch/tag 后缀（npm/pip 风格的 URL 引用）
+    clean_url = re.sub(r'@[^/]+$', '', clean_url)
 
     # git@host:owner/repo
     git_at_match = re.match(r"^git@([^:]+):([^/]+)/(.+)$", clean_url)
@@ -266,6 +380,43 @@ def load_npm_config():
     except Exception:
         pass
 
+def _git_clone_with_progress(
+    cmd: list[str],
+    dest: str,
+    label: str,
+    status_cb,
+    env=None,
+) -> None:
+    """执行 git clone 并实时转发 stderr 进度到 status_cb。
+
+    Git 在 stderr 输出如：
+      Receiving objects:  42% (1234/2938), 15.2 MiB | 1.2 MiB/s
+    """
+    import subprocess as _sp
+    proc = _sp.Popen(
+        cmd,
+        env=env,
+        stdout=_sp.DEVNULL,
+        stderr=_sp.PIPE,
+        text=True,
+    )
+    for line in proc.stderr or []:
+        line = line.strip()
+        if not line:
+            continue
+        # 只转发带进度的行，过滤掉去程信息
+        if "Receiving" in line or "Resolving" in line or "Checking" in line:
+            if status_cb:
+                status_cb(f"{label}: {line}")
+        else:
+            # 初次连接信息也显示
+            if status_cb and ("remote" in line.lower() or line.startswith("Cloning")):
+                status_cb(f"{label}: {line}")
+    proc.wait()
+    if proc.returncode != 0:
+        raise _sp.CalledProcessError(proc.returncode, cmd)
+
+
 def process_package(
     name: str,
     version: str,
@@ -274,6 +425,9 @@ def process_package(
     workspace_packages: Dict[str, WorkspaceInfo],
     status_cb: Optional[Any] = None
 ) -> Optional[SyncResult]:
+    # 剥离 extras（如 PySide6-Fluent-Widgets[full] → PySide6-Fluent-Widgets）
+    clean_name = name.split("[", 1)[0] if "[" in name else name
+
     env = os.environ.copy()
     env["GIT_LOW_SPEED_LIMIT"] = "1000"
     env["GIT_LOW_SPEED_TIME"] = "60"
@@ -287,7 +441,7 @@ def process_package(
         repo_url = ""
         sub_dir = ""
         
-        cache_key = f"{ecosystem}:{name}"
+        cache_key = f"{ecosystem}:{clean_name}"
         with metadata_lock:
             cache_item = metadata_cache.get(cache_key)
         
@@ -300,7 +454,7 @@ def process_package(
                 try:
                     import urllib.request
                     import json as json_lib
-                    api_url = f"{npm_registry_url}/{name.replace('/', '%2f')}"
+                    api_url = f"{npm_registry_url}/{clean_name.replace('/', '%2f')}"
                     with urllib.request.urlopen(api_url, timeout=10) as response:
                         data = json_lib.loads(response.read().decode())
                         repo_info = data.get("repository")
@@ -318,12 +472,12 @@ def process_package(
                     log.debug(f"[{name}] API 请求失败 ({e})，回退到 npm view...")
                     try:
                         repo_url = clean_exec_output(subprocess.check_output(
-                            ["npm", "view", name, "repository.url", "--no-workspaces"], 
+                            ["npm", "view", clean_name, "repository.url", "--no-workspaces"], 
                             text=True, timeout=30, stderr=subprocess.DEVNULL
                         ))
                         try:
                             sub_dir = clean_exec_output(subprocess.check_output(
-                                ["npm", "view", name, "repository.directory", "--no-workspaces"], 
+                                ["npm", "view", clean_name, "repository.directory", "--no-workspaces"], 
                                 text=True, timeout=10, stderr=subprocess.DEVNULL
                             ))
                         except Exception: pass
@@ -333,7 +487,7 @@ def process_package(
                 try:
                     import urllib.request
                     import json as json_lib
-                    with urllib.request.urlopen(f"https://pypi.org/pypi/{name}/json", timeout=10) as response:
+                    with urllib.request.urlopen(f"https://pypi.org/pypi/{clean_name}/json", timeout=10) as response:
                         data = json_lib.loads(response.read().decode())
                         info = data.get("info", {})
                         project_urls = info.get("project_urls", {}) or {}
@@ -392,7 +546,7 @@ def process_package(
                     cmd += ["--branch", best_tag]
                 cmd += [clone_url, str(final_global_path)]
                 log.debug(f"[{name}] 执行 Git Clone: {' '.join(cmd)}")
-                subprocess.check_call(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                _git_clone_with_progress(cmd, str(final_global_path), name, status_cb, env=env)
 
                 # 无 tag 时，目录名可能是 spec 残余 → 重命名为实际分支名
                 if not best_tag:
@@ -418,65 +572,131 @@ def process_package(
         log.error(f"[{name}] 同步失败: {e}")
         return None
 
-def build_ref_lock(
-    workspace_packages: Dict[str, WorkspaceInfo],
-    sync_results: Dict[str, SyncResult],
-    sources: Optional[List[str]] = None,
-) -> Dict[str, str]:
-    """构建平面 ref 映射: key → mirror 路径。
+def _get_root_project_name(root_dir: Path) -> str:
+    """读取根项目名，供替换 scope '.' 用。"""
+    pyproject_path = root_dir / "pyproject.toml"
+    if pyproject_path.exists():
+        try:
+            import tomllib
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f)
+            name = data.get("project", {}).get("name", "")
+            if name:
+                return name
+        except Exception:
+            pass
+    pkg_path = root_dir / "package.json"
+    if pkg_path.exists():
+        try:
+            with open(pkg_path) as f:
+                data = json.load(f)
+            name = data.get("name", "")
+            if name:
+                return name
+        except Exception:
+            pass
+    return "."
 
-    规则：
-      - 只输出 sync_results 中存在的条目（已成功 clone）
-      - workspace 内部包不输出
-      - sources 以 "source:" 前缀输出
-      - key 格式: {eco}:{name} 或 source:{owner/repo}
-    """
-    import datetime
-    refs: Dict[str, str] = {}
-
-    workspace_names = set(workspace_packages.keys())
-
-    for key, sr in sorted(sync_results.items()):
-        if key.startswith("source:"):
-            # sources 保持 source:owner/repo 作为 key
-            refs[key] = sr.relative_path
-            continue
-
-        # "python:name" or "node:name"
-        eco, name = key.split(":", 1)
-        if name in workspace_names:
-            continue
-        refs[key] = sr.relative_path
-
-    return {
-        "version": 2,
-        "generated": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
-        "refs": refs,
-    }
 
 def write_ref_lock_file(
     root_dir: Path,
     workspace_packages: Dict[str, WorkspaceInfo],
     sync_results: Dict[str, SyncResult],
     sources: Optional[List[str]] = None,
+    scope_deps: Optional[Dict[str, Dict[str, set]]] = None,
 ):
+    """写入 root ref.lock.yaml（v5 — ecosystem → scope → category → pkg）
+
+    v5 格式:
+      version: 5
+      generated: "..."
+      refs:
+        python:
+          <scope-name>:            # scope/workspace package 名, "." 表示 root
+            dependencies:          # [project] dependencies
+              dep: ~/.diy/ref/...
+            dependency-groups:     # uv [dependency-groups]
+              dev:
+                pkg: ~/path
+            optional-dependencies: # [project.optional-dependencies]
+              test:
+                pkg: ~/path
+        node:
+          <scope-name>:
+            dependencies:
+              dep: ~/.diy/ref/...
+            dev-dependencies:
+              dep: ~/.diy/ref/...
+        source:
+          <scope-name>:            # scope 名（对 source 等价于相对目录）
+            host/owner/repo: ~/path
+    """
     ref_lock_path = root_dir / ".diy" / "ref.lock.yaml"
     ref_lock_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = build_ref_lock(workspace_packages, sync_results, sources)
 
-    lines = [f"version: {payload['version']}"]
-    lines.append(f'generated: "{payload["generated"]}"')
-    refs = payload.get("refs", {})
-    if refs:
-        lines.append("")
-        lines.append("refs:")
-        for k, v in refs.items():
-            lines.append(f"  {k}: ~/{v}")
+    import datetime as _dt
+    generated = _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+    data: dict = {"version": 5, "generated": generated}
+    root_project_name = _get_root_project_name(root_dir)
+
+    if scope_deps:
+        # {eco: {scope_name: {category: {name: path}}}}
+        refs: dict[str, dict] = {}
+        for scope_name in sorted(scope_deps.keys()):
+            categories = scope_deps[scope_name]
+            for cat_key, dep_keys in sorted(categories.items()):
+                for key in sorted(dep_keys):
+                    sr = sync_results.get(key)
+                    if not sr:
+                        continue
+                    rel_path = f"~/{sr.relative_path}"
+
+                    if key.startswith("source:"):
+                        name = key.split(":", 1)[1]
+                        refs.setdefault("source", {}).setdefault(scope_name, {})[name] = rel_path
+                    else:
+                        eco, pkg_name = key.split(":", 1)
+                        # python/node 根 scope 用项目名代替 "."
+                        resolved_scope = root_project_name if scope_name == "." and eco in ("python", "node") else scope_name
+
+                        # 解析 category 类型
+                        if cat_key == "dependencies":
+                            refs.setdefault(eco, {}).setdefault(resolved_scope, {}).setdefault("dependencies", {})[pkg_name] = rel_path
+                        elif cat_key == "dev-dependencies":
+                            refs.setdefault(eco, {}).setdefault(resolved_scope, {}).setdefault("dev-dependencies", {})[pkg_name] = rel_path
+                        elif cat_key.startswith("dependency-groups:"):
+                            group = cat_key.split(":", 1)[1]
+                            refs.setdefault(eco, {}).setdefault(resolved_scope, {}).setdefault("dependency-groups", {}).setdefault(group, {})[pkg_name] = rel_path
+                        elif cat_key.startswith("optional-dependencies:"):
+                            group = cat_key.split(":", 1)[1]
+                            refs.setdefault(eco, {}).setdefault(resolved_scope, {}).setdefault("optional-dependencies", {}).setdefault(group, {})[pkg_name] = rel_path
+                        else:
+                            # 未知 category，作为 flat 兜底
+                            refs.setdefault(eco, {}).setdefault(resolved_scope, {})[cat_key] = rel_path
+
+        if refs:
+            data["refs"] = refs
+    else:
+        # Fallback: flat refs (v3/v4 compat for callers without scope info)
+        flat_refs: dict[str, dict[str, str]] = {}
+        ws_names = set(workspace_packages.keys())
+        for key, sr in sorted(sync_results.items()):
+            rel_path = f"~/{sr.relative_path}"
+            if key.startswith("source:"):
+                name = key.split(":", 1)[1]
+                flat_refs.setdefault("source", {})[name] = rel_path
+                continue
+            eco, name = key.split(":", 1)
+            if name in ws_names:
+                continue
+            flat_refs.setdefault(eco, {})[name] = rel_path
+        if flat_refs:
+            data["refs"] = flat_refs
 
     with open(ref_lock_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
     log.info(f"dependency mirror index 已更新: {ref_lock_path.relative_to(root_dir)}")
-
 def update_tsconfig(root_dir: Path, workspace_packages: Dict[str, WorkspaceInfo], sync_results: Dict[str, SyncResult]):
     tsconfig_path = root_dir / "tsconfig.ide.json"
     if not tsconfig_path.exists(): return
@@ -604,17 +824,68 @@ class ScannedDep:
     error_msg: str = ''
 
 
+def _extract_v5_pkgs(categories: dict, eco: str, out: dict[str, dict[str, str]]) -> None:
+    """从 v5 categories 结构中提取 {eco: {name: path}} 到 out 字典。
+
+    categories 可能是 {dependencies: {name: path}} 或 {dependency-groups: {group: {name: path}}}。
+    """
+    for cat_key, cat_val in categories.items():
+        if isinstance(cat_val, dict):
+            first_val = next(iter(cat_val.values())) if cat_val else None
+            if isinstance(first_val, dict):
+                # Sub-grouped: {group: {name: path}}
+                for pkgs in cat_val.values():
+                    for name, path in pkgs.items():
+                        out.setdefault(eco, {})[name] = path
+            else:
+                # Flat: {name: path}
+                for name, path in cat_val.items():
+                    out.setdefault(eco, {})[name] = path
+
+
 def scan_project_deps(root_dir):
     """扫描项目依赖（只读，不 clone）。"""
     result = []
     ref_lock_path = root_dir / '.diy' / 'ref.lock.yaml'
-    synced = {}
+    synced = {}  # {eco: {name: path}}
     if ref_lock_path.exists():
         try:
             with open(ref_lock_path) as f:
                 import yaml as _y
                 data = _y.safe_load(f) or {}
-            synced = data.get('refs', {})
+            raw = data.get('refs', {})
+            # 兼容 v2 平面格式 { "python:rich": "~/.diy/...", } → 归一为 v3 嵌套格式
+            ver = data.get("version", 0)
+            if raw and isinstance(next(iter(raw.values())), str):
+                flat: dict[str, dict[str, str]] = {}
+                for k, v in raw.items():
+                    if ":" in k:
+                        eco, name = k.split(":", 1)
+                        flat.setdefault(eco, {})[name] = v
+                    else:
+                        flat.setdefault("source", {})[k] = v
+                synced = flat
+            elif ver >= 5 and isinstance(raw, dict):
+                # v5: refs → eco → scope → category → {name: path}
+                flat_v5: dict[str, dict[str, str]] = {}
+                for eco, scopes in raw.items():
+                    if not isinstance(scopes, dict):
+                        continue
+                    for scope_name, entry in scopes.items():
+                        if not isinstance(entry, dict):
+                            continue
+                        first_val = next(iter(entry.values())) if entry else None
+                        if isinstance(first_val, dict):
+                            # Has categories: {dependencies: {name: path}} etc.
+                            _extract_v5_pkgs(entry, eco, flat_v5)
+                        else:
+                            # No categories: {name: path} (e.g. source)
+                            for name, path in entry.items():
+                                if isinstance(path, str):
+                                    flat_v5.setdefault(eco, {})[name] = path
+                synced = flat_v5
+            else:
+                synced = raw if isinstance(raw, dict) else {}
         except Exception:
             pass
     load_metadata_cache()
@@ -655,27 +926,20 @@ def scan_project_deps(root_dir):
         cache_key = f'{eco}:{name}'
         cached = metadata_cache.get(cache_key, {})
         repo_url = cached.get('repoUrl', '') if cached.get('lastVersion') == version else ''
-        lock_key = f'{eco}:{name}'
-        local_path = synced.get(lock_key, '')
+        local_path = synced.get(eco, {}).get(name, '')
         result.append(ScannedDep(eco=eco, name=name, version=version, source_url=repo_url, local_path=local_path, status='synced' if local_path else 'pending'))
-    diy_yaml_path = root_dir / 'diy.yaml'
-    if diy_yaml_path.exists():
-        try:
-            with open(diy_yaml_path) as f:
-                import yaml as _y2
-                config = _y2.safe_load(f) or {}
-            for spec in config.get('sources', []):
-                url_part = spec.split('@')[0] if '@' in spec else spec
-                ver = spec.split('@')[1] if '@' in spec and spec.rfind('@') > 7 else ''
-                repo_info = parse_repo_url(url_part)
-                if repo_info:
-                    name = f'{repo_info.owner}/{repo_info.repo}'
-                    lock_key = f'source:{name}'
-                    local_path = synced.get(lock_key, '')
-                    result.append(ScannedDep(eco='source', name=name, version=ver or 'main', source_url=url_part, local_path=local_path, status='synced' if local_path else 'pending'))
-        except Exception:
-            pass
+    # Sources from all boundaries (root + sub-project diy.yaml)
+    all_sources = _collect_sources_from_all_boundaries(root_dir)
+    for spec in all_sources:
+        url_part = spec.split('@')[0] if '@' in spec else spec
+        ver = spec.split('@')[1] if '@' in spec and spec.rfind('@') > 7 else ''
+        repo_info = parse_repo_url(url_part)
+        if repo_info:
+            name = f'{repo_info.owner}/{repo_info.repo}'
+            local_path = synced.get('source', {}).get(name, '')
+            result.append(ScannedDep(eco='source', name=name, version=ver or 'main', source_url=url_part, local_path=local_path, status='synced' if local_path else 'pending'))
     return result
+
 
 
 def sync_dependencies():
@@ -686,18 +950,10 @@ def sync_dependencies():
     
     pkg_path = root_dir / "package.json"
     pyproject_path = root_dir / "pyproject.toml"
-    project_config_path = root_dir / "diy.yaml"
-    
+
     if not pkg_path.exists() and not pyproject_path.exists():
         log.error("未找到 package.json 或 pyproject.toml")
         return
-
-    project_config = {}
-    if project_config_path.exists():
-        try:
-            with open(project_config_path, "r", encoding="utf-8") as f:
-                project_config = yaml.safe_load(f) or {}
-        except Exception: pass
 
     load_metadata_cache()
     workspace_packages = get_workspace_packages(root_dir)
@@ -706,49 +962,124 @@ def sync_dependencies():
     
     # all_deps: {(ecosystem, name): version}
     all_deps: Dict[tuple[str, str], str] = {}
-    
+    # scope_deps: {scope_name: {category: {dep_key_string}}}
+    # category: "dependencies", "dev-dependencies",
+    #           "dependency-groups:<name>", "optional-dependencies:<name>",
+    #           "source"
+    scope_deps: Dict[str, Dict[str, set]] = {".": {"dependencies": set()}}
+
+    def _add_to_scope(scope: str, category: str, key: str) -> None:
+        """将依赖 key 添加到 scope_deps 的指定 category."""
+        if scope not in scope_deps:
+            scope_deps[scope] = {}
+        if category not in scope_deps[scope]:
+            scope_deps[scope][category] = set()
+        scope_deps[scope][category].add(key)
+
     if pkg_path.exists():
         try:
             with open(pkg_path, "r", encoding="utf-8") as f:
                 pkg = json.load(f)
-            manifest = {**(pkg.get("dependencies", {})), **(pkg.get("devDependencies", {}))}
-            for n, s in manifest.items():
-                all_deps[("node", n)] = pkg_lock.get(n, s)
+            for n, s in pkg.get("dependencies", {}).items():
+                ver = pkg_lock.get(n, s)
+                all_deps[("node", n)] = ver
+                _add_to_scope(".", "dependencies", f"node:{n}")
+            for n, s in pkg.get("devDependencies", {}).items():
+                ver = pkg_lock.get(n, s)
+                all_deps[("node", n)] = ver
+                _add_to_scope(".", "dev-dependencies", f"node:{n}")
         except Exception: pass
-        
+
     if pyproject_path.exists():
         try:
             import tomllib
             with open(pyproject_path, "rb") as f:
                 pyproject = tomllib.load(f)
-            for d in pyproject.get("project", {}).get("dependencies", []):
-                parts = re.split(r'[>=<]', d)
+            proj = pyproject.get("project", {})
+            # [project] dependencies
+            for dep_str in proj.get("dependencies", []):
+                parts = re.split(r'[>=<]', dep_str)
                 if parts:
                     name = parts[0].strip()
-                    all_deps[("python", name)] = uv_lock.get(name, d[len(name):].strip() or "*")
+                    ver = uv_lock.get(name, dep_str[len(name):].strip() or "*")
+                    all_deps[("python", name)] = ver
+                    _add_to_scope(".", "dependencies", f"python:{name}")
+            # [project.optional-dependencies] 可选依赖组
+            for group_name, deps_list in proj.get("optional-dependencies", {}).items():
+                for dep_str in deps_list:
+                    parts = re.split(r'[>=<]', dep_str)
+                    if parts:
+                        name = parts[0].strip()
+                        ver = uv_lock.get(name, dep_str[len(name):].strip() or "*")
+                        all_deps[("python", name)] = ver
+                        _add_to_scope(".", f"optional-dependencies:{group_name}", f"python:{name}")
+            # [dependency-groups] (uv 特性)
+            for group_name, deps_list in pyproject.get("dependency-groups", {}).items():
+                for dep_str in deps_list:
+                    parts = re.split(r'[>=<]', dep_str)
+                    if parts:
+                        name = parts[0].strip()
+                        ver = uv_lock.get(name, dep_str[len(name):].strip() or "*")
+                        all_deps[("python", name)] = ver
+                        _add_to_scope(".", f"dependency-groups:{group_name}", f"python:{name}")
         except Exception: pass
-    
+
     # 合并 workspace packages 的依赖
-    for pkg in workspace_packages.values():
-        ecosystem = "node" if (Path(pkg.path) / "package.json").exists() else "python"
-        for n, s in {**pkg.dependencies, **pkg.dev_dependencies}.items():
-            if (ecosystem, n) not in all_deps:
-                all_deps[(ecosystem, n)] = pkg_lock.get(n, uv_lock.get(n, s))
+    for wp in workspace_packages.values():
+        eco = "node" if (Path(wp.path) / "package.json").exists() else "python"
+        if eco == "node":
+            for n, s in wp.dependencies.items():
+                ver = pkg_lock.get(n, uv_lock.get(n, s))
+                all_deps[(eco, n)] = ver
+                _add_to_scope(wp.name, "dependencies", f"{eco}:{n}")
+            for n, s in wp.dev_dependencies.items():
+                ver = pkg_lock.get(n, uv_lock.get(n, s))
+                all_deps[(eco, n)] = ver
+                _add_to_scope(wp.name, "dev-dependencies", f"{eco}:{n}")
+        else:
+            for n, s in wp.dependencies.items():
+                ver = pkg_lock.get(n, uv_lock.get(n, s))
+                all_deps[(eco, n)] = ver
+                _add_to_scope(wp.name, "dependencies", f"{eco}:{n}")
 
     # 过滤掉 workspace 内部包 — 它们是源码，不需要 clone
     workspace_names = set(workspace_packages.keys())
     all_deps = {k: v for k, v in all_deps.items() if k[1] not in workspace_names}
 
+    # 清理 scope_deps 中 workspace 内部包的引用
+    for scope in list(scope_deps.keys()):
+        for cat in list(scope_deps.get(scope, {}).keys()):
+            scope_deps[scope][cat] = {
+                k for k in scope_deps[scope][cat]
+                if k.split(":", 1)[1] not in workspace_names
+            }
+        # 删掉全空的 scope
+        scope_deps[scope] = {k: v for k, v in scope_deps[scope].items() if v}
+        if not scope_deps[scope]:
+            del scope_deps[scope]
+
+    items = list(all_deps.items())
+    # sources = root & sub-project diy.yaml
+    sources = _collect_sources_from_all_boundaries(root_dir)
+    if not isinstance(sources, list):
+        sources = []
+    # sources 归入根 scope 的 "source" category
+    for src_spec in sources:
+        url_part = src_spec.split("@")[0] if "@" in src_spec else src_spec
+        repo_info = parse_repo_url(url_part)
+        if repo_info:
+            sname = f"{repo_info.host}/{repo_info.owner}/{repo_info.repo}"
+            _add_to_scope(".", "source", f"source:{sname}")
+    total_items = len(items) + len(sources)
+
     global_ref_base = GLOBAL_CACHE_DIR / "ref"
-    log.info(f"开始同步 {len(all_deps)} 个活跃依赖...")
-    
+    log.info(f"开始同步 {total_items} 项（{len(items)} 依赖 + {len(sources)} 自定义 source）...")
+
     import time
     start_time = time.time()
     sync_results: Dict[str, SyncResult] = {}
-    
-    items = list(all_deps.items())
-    
-    # 使用 Rich Live + Progress 进行可视化
+
+    # 使用 Rich Live + Progress 进行可视化（单条进度条，不分阶段）
     status_label = Text("准备中...", style="dim")
     progress = Progress(
         SpinnerColumn(),
@@ -757,11 +1088,12 @@ def sync_dependencies():
         TaskProgressColumn(),
         TimeElapsedColumn(),
     )
-    
+
     render_group = Group(progress, status_label)
     with Live(render_group, transient=True) as live:
-        main_task = progress.add_task("[cyan]总体进度", total=len(items))
-        
+        main_task = progress.add_task("[cyan]同步进度", total=total_items)
+
+        # ---- Phase 1: 依赖同步 ----
         def task_wrapper(ecosystem, name, version):
             res = process_package(
                 name, str(version), ecosystem, global_ref_base, workspace_packages,
@@ -776,77 +1108,67 @@ def sync_dependencies():
                 key, res = future.result()
                 if res:
                     sync_results[key] = res
-            
-    sources = project_config.get("sources", [])
-    if isinstance(sources, list) and sources:
-        log.info(f"开始同步 {len(sources)} 个自定义 Source...")
-        status_label = Text("准备同步 Sources...", style="dim")
-        progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TimeElapsedColumn(),
-        )
-        
-        render_group = Group(progress, status_label)
-        with Live(render_group, transient=True) as live:
-            source_task = progress.add_task("[magenta]Source 进度", total=len(sources))
-            
-            def source_wrapper(i, source_spec):
-                if not source_spec: 
-                    progress.advance(source_task)
-                    return None
-                url_part, version = source_spec, ""
-                # 取最后一个 @ 分割（兼容 git@host:path@ref 和 https://...@ref）
-                if "@" in source_spec:
-                    idx = source_spec.rfind("@")
-                    # 只有 @ 在非起始位置（排除 email 前缀的 @）时才分割
-                    if idx > 7:
-                        url_part, version = source_spec[:idx], source_spec[idx+1:]
-                
-                repo_info = parse_repo_url(url_part)
-                if not repo_info: 
-                    progress.advance(source_task)
-                    return None
-                name = f"{repo_info.owner}/{repo_info.repo}"
-                # 从 url_part 重建干净的 clone URL（剥掉 Web UI 路径 + @ref）
-                if url_part.startswith("git@"):
-                    clone_url = url_part.rstrip("/")
-                elif url_part.startswith("http"):
-                    # 剥掉 Web UI 路径后缀
-                    import re
-                    clean = re.sub(r'(/tree/[^/]+(?:/.*)?|/blob/[^/]+(?:/.*)?|/-/tree/[^/]+(?:/.*)?|/-/blob/[^/]+(?:/.*)?|/src/(?:branch|tag)/[^/]+(?:/.*)?)$', '', url_part)
-                    clone_url = clean.rstrip("/")
-                else:
-                    clone_url = f"https://{repo_info.host}/{repo_info.owner}/{repo_info.repo}"
-                
-                status_label.plain = f"正在同步 Source [bold magenta]{name}[/bold magenta] 从 [yellow]{clone_url}[/yellow]"
-                
-                final_p = None
-                for n in ([version, f"v{version}"] if version else ["main", "master"]):
-                    p = global_ref_base / repo_info.host / repo_info.owner / repo_info.repo / n
-                    if p.exists(): final_p = p; break
-                
-                if not final_p:
-                    best = get_best_tag(clone_url, version.lstrip("v")) if version else None
-                    final_dir = best or version or "main"
-                    final_p = global_ref_base / repo_info.host / repo_info.owner / repo_info.repo / final_dir
-                    if not final_p.exists():
-                        final_p.parent.mkdir(parents=True, exist_ok=True)
-                        cmd = ["git", "clone", "--depth", "1"]
-                        if best: cmd += ["--branch", best]
-                        elif version: cmd += ["--branch", version]
-                        cmd += [clone_url, str(final_p)]
-                        subprocess.check_call(cmd, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-                
-                progress.advance(source_task)
-                return (f"source:{name}", SyncResult(
-                    relative_path=str(final_p.relative_to(Path.home())), 
-                    absolute_path=str(final_p),
-                    ecosystem="source"
-                ))
 
+        # ---- Phase 2: Source 同步 ----
+        def source_wrapper(i, source_spec):
+            if not source_spec:
+                progress.advance(main_task)
+                return None
+            url_part, version = source_spec, ""
+            # 取最后一个 @ 分割（兼容 git@host:path@ref 和 https://...@ref）
+            if "@" in source_spec:
+                idx = source_spec.rfind("@")
+                # 只有 @ 在非起始位置（排除 email 前缀的 @）时才分割
+                if idx > 7:
+                    url_part, version = source_spec[:idx], source_spec[idx+1:]
+
+            repo_info = parse_repo_url(url_part)
+            if not repo_info:
+                progress.advance(main_task)
+                return None
+            name = f"{repo_info.host}/{repo_info.owner}/{repo_info.repo}"
+            # 从 url_part 重建干净的 clone URL（剥掉 Web UI 路径 + @ref）
+            if url_part.startswith("git@"):
+                clone_url = url_part.rstrip("/")
+            elif url_part.startswith("http"):
+                import re
+                clean = re.sub(r'(/tree/[^/]+(?:/.*)?|/blob/[^/]+(?:/.*)?|/-/tree/[^/]+(?:/.*)?|/-/blob/[^/]+(?:/.*)?|/src/(?:branch|tag)/[^/]+(?:/.*)?)$', '', url_part)
+                clone_url = clean.rstrip("/")
+            else:
+                clone_url = f"https://{repo_info.host}/{repo_info.owner}/{repo_info.repo}"
+
+            status_label.plain = f"正在同步 Source [bold magenta]{name}[/bold magenta] 从 [yellow]{clone_url}[/yellow]"
+
+            final_p = None
+            for n in ([version, f"v{version}"] if version else ["main", "master"]):
+                p = global_ref_base / repo_info.host / repo_info.owner / repo_info.repo / n
+                if p.exists(): final_p = p; break
+
+            if not final_p:
+                best = get_best_tag(clone_url, version.lstrip("v")) if version else None
+                final_dir = best or version or "main"
+                final_p = global_ref_base / repo_info.host / repo_info.owner / repo_info.repo / final_dir
+                if not final_p.exists():
+                    final_p.parent.mkdir(parents=True, exist_ok=True)
+                    cmd = ["git", "clone", "--depth", "1"]
+                    if best: cmd += ["--branch", best]
+                    elif version: cmd += ["--branch", version]
+                    cmd += [clone_url, str(final_p)]
+                    try:
+                        _git_clone_with_progress(cmd, str(final_p), name, lambda msg: setattr(status_label, "plain", msg))
+                    except Exception as e:
+                        log.error(f"[source:{name}] 同步失败: {e}")
+                        progress.advance(main_task)
+                        return None
+
+            progress.advance(main_task)
+            return (f"source:{name}", SyncResult(
+                relative_path=str(final_p.relative_to(Path.home())),
+                absolute_path=str(final_p),
+                ecosystem="source"
+            ))
+
+        if sources:
             with ThreadPoolExecutor(max_workers=4) as executor:
                 futures = [executor.submit(source_wrapper, i, s) for i, s in enumerate(sources)]
                 for f in futures:
@@ -856,7 +1178,7 @@ def sync_dependencies():
                         sync_results[key] = val
 
     save_metadata_cache()
-    write_ref_lock_file(root_dir, workspace_packages, sync_results, sources)
+    write_ref_lock_file(root_dir, workspace_packages, sync_results, sources, scope_deps=scope_deps)
     update_tsconfig(root_dir, workspace_packages, sync_results)
     update_python_ide_config(root_dir, sync_results)
     manage_agent_symlinks(root_dir)

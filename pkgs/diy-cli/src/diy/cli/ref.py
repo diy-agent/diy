@@ -23,31 +23,35 @@ from ._sync import (
     parse_repo_url,
     scan_project_deps,
     sync_dependencies,
+    find_project_boundary,
+    get_workspace_packages,
 )
 
 log = logger.with_tag("ref")
 
-_REF_HELP = """
-~/.diy/ref/ 是项目依赖和外部仓库的本地源码镜像目录。
+_REF_HELP = """\
+~/.diy/ref/ 是本地源码镜像。将外部 git 仓库 clone 到本地,
+让 AI agent 可离线阅读项目依赖和外部仓库的源码。
 
-目的：让 AI agent 可以直接阅读项目使用的第三方依赖源码，
-无需网络请求，且版本与 lock 文件中锁定的一致。
+数据流:
+  diy ref sync         扫描 pyproject.toml/package.json, 查出 git 仓库并 clone
+                       写入 .diy/ref.lock.yaml (v5)
+  diy ref add <url>    注册外部仓库到 diy.yaml, 下次 sync 一并 clone
+  diy ref list         查看 .diy/ref.lock.yaml 的镜像映射表
+  diy ref list --all   显示所有 scope (不按当前目录过滤)
 
-两种来源：
-  1. 自动扫描 — diy ref sync 读取 pyproject.toml / package.json
-     的依赖，从 PyPI / npm 查出 git 仓库并 clone。
-  2. 手动添加 — diy ref add 将不在依赖中的外部仓库注册到
-     diy.yaml，sync 时一并 clone。
+v5 ref.lock.yaml 层级: refs → ecosystem(python/node/source) → scope(项目名) → category → pkg
 
-数据流：
-  diy.yaml 声明 → diy ref sync 下载 → .diy/ref.lock.yaml 记录路径
-  → diy ref list 查看状态 → agent 用 read_file 读取源码"""
+输出示例: diy ref list 显示五级层级 — version → python/diy-cli/dependencies/rich → ~/path
+
+本地镜像目录:  ~/.diy/ref/github.com/<owner>/<repo>/<version>/
+"""
 
 ref_app = App(
     name="ref",
     help="管理 ~/.diy/ref/ 本地源码镜像",
     help_prologue=_REF_HELP,
-    help_epilogue="典型流程: diy ref add <url> → diy ref sync → diy ref list → agent 读源码",
+    help_epilogue="典型: diy ref add <url> → diy ref sync → diy ref list  |  数据: ~/.diy/ref/ + .diy/ref.lock.yaml",
 )
 
 
@@ -105,88 +109,173 @@ def _status_icon(status: str) -> str:
 @ref_app.command(name="list")
 def ref_list(
     verbose: Annotated[int, Parameter(help="冗余级别: -v=INFO, -vv=DEBUG")] = 0,
+    all: Annotated[bool, Parameter(help="显示所有 scope 的条目", name="--all", negative="")] = False,
 ):
-    """列出项目检测到的所有依赖及源码镜像状态
+    """查看 .diy/ref.lock.yaml 的镜像映射表
 
-即使未运行 diy sync，也会扫描 pyproject.toml / package.json
-并展示检测到的包和待下载状态。
+从当前目录自动检测所属 scope (项目边界), 只显示该 scope 的条目。
+--all 显示文件中所有 scope。
 
-✓ = 已同步到本地  ○ = 未同步（待 sync）  ✗ = 出错
+输出层级: ecosystem(python/node/source) → scope(项目名) → category(dependencies/…) → 包名
 
-路径格式: ~/.diy/ref/{host}/{owner}/{repo}/{tag}
+示例:
+  # 当前在子包 diy-cli 目录
+  $ diy ref list
+  python:
+    diy-cli:
+      dependencies:
+        rich: ~/.diy/ref/github.com/Textualize/rich/v13.9.4
+  Scope: diy/diy-cli (python)
+
+  $ diy ref list --all
+  python:
+    diy-app:   ...
+    diy-cli:   ...
+  ...
+
+  # 镜像文件: ~/.diy/ref/github.com/Textualize/rich/v13.9.4/
 """
     root_dir = _require_project_root()
-    deps = scan_project_deps(root_dir)
 
-    if not deps:
-        log.info("项目未检测到外部依赖（或所有包都已过滤为 workspace 内部包）")
-        log.info("运行 'diy ref add <git-url>' 添加外部仓库")
+    lock_path = root_dir / ".diy" / "ref.lock.yaml"
+    if not lock_path.exists():
+        log.info("没有 .diy/ref.lock.yaml — 先运行 'diy ref sync' 生成")
         return
 
-    from rich.console import Console
-    from rich.table import Table
-    from rich import box
+    import yaml
+    try:
+        data = yaml.safe_load(lock_path.read_text()) or {}
+    except yaml.YAMLError as e:
+        log.error(f"ref.lock.yaml 解析失败: {e}")
+        log.info("运行 'diy ref sync' 重新生成即可修复")
+        sys.exit(1)
 
+    ver = data.get("version", 0)
+    from rich.console import Console
     console = Console()
 
-    # 分依赖和 sources 两组显示
-    dep_items = [d for d in deps if d.eco != "source"]
-    source_items = [d for d in deps if d.eco == "source"]
+    if ver >= 5 and "refs" in data:
+        refs_data = data["refs"]
+        console.print(f"version: {ver}")
+        console.print(f'generated: "{data.get("generated", "?")}"')
 
-    synced_count = sum(1 for d in deps if d.status == "synced")
-    pending_count = sum(1 for d in deps if d.status == "pending")
+        # 解析 root 项目名（根 scope 可能存为项目名而非 "."）
+        root_project_name = _read_root_project_name(root_dir)
+        root_aliases: list[str] = ["."]
+        if root_project_name and root_project_name != ".":
+            root_aliases.append(root_project_name)
 
-    if dep_items:
-        table = Table(
-            title="Dependencies（依赖 — 来自 pyproject.toml / package.json）",
-            box=box.SIMPLE,
-        )
-        table.add_column("", justify="center", width=2)  # 状态图标
-        table.add_column("类型", style="magenta", width=8)
-        table.add_column("包名", style="cyan")
-        table.add_column("版本", style="yellow", width=20)
-        table.add_column("Git 仓库", style="dim", width=60)
+        # 检测当前 scope
+        boundary = find_project_boundary()
+        current_scope = None
+        if boundary:
+            try:
+                for name, info in get_workspace_packages(root_dir).items():
+                    if Path(info.path).resolve() == boundary:
+                        current_scope = name
+                        break
+            except Exception:
+                pass
+            if not current_scope and boundary == (root_dir / ".").resolve():
+                current_scope = "."
 
-        for d in dep_items:
-            icon = _status_icon(d.status)
-            color = "green" if d.status == "synced" else "dim"
-            url = d.source_url or "[dim]（待 registry 查询）[/dim]"
-            table.add_row(f"[{color}]{icon}[/{color}]", d.eco, d.name, d.version, url)
+        has_entries = False
+        for eco in sorted(refs_data.keys()):
+            scopes = refs_data[eco]
+            if all:
+                scope_keys = sorted(scopes.keys())
+            else:
+                if current_scope and current_scope in scopes:
+                    scope_keys = [current_scope]
+                elif eco == "source":
+                    scope_keys = []
+                else:
+                    scope_keys = []
+                    for alias in root_aliases:
+                        if alias in scopes:
+                            scope_keys = [alias]
+                            break
+                    if not scope_keys:
+                        scope_keys = [next(iter(scopes))] if scopes else []
+            if not scope_keys:
+                continue
+            has_entries = True
+            console.print("")
+            console.print(f"[bold]{eco}:[/bold]")
+            for sk in scope_keys:
+                entry = scopes[sk]
+                if not entry:
+                    continue
+                console.print(f"  {sk}:")
+                _print_refs_v5(console, entry, indent=4)
 
-        console.print(table)
-        console.print()
+        if not has_entries:
+            console.print("")
+            console.print("[dim]（当前 scope 无 ref 条目）[/dim]")
 
-    if source_items:
-        table = Table(
-            title="Sources（外部仓库 — 来自 diy ref add）",
-            box=box.SIMPLE,
-        )
-        table.add_column("", justify="center", width=2)
-        table.add_column("名称", style="cyan")
-        table.add_column("版本", style="yellow", width=20)
-        table.add_column("URL / 路径", style="dim", width=60)
+        # scope 标签
+        label = root_dir.name or str(root_dir)
+        if all:
+            label += " (all scopes)"
+        elif current_scope and current_scope != ".":
+            label += f"/{current_scope}"
+        if (root_dir / "pyproject.toml").exists():
+            label += " (python)"
+        elif (root_dir / "package.json").exists():
+            label += " (node)"
+        console.print(f"[dim]Scope: {label}[/dim]")
+    else:
+        log.warning(f"不支持 ref.lock.yaml 版本: {ver}, 运行 'diy ref sync' 升级")
+        console.print(lock_path.read_text().rstrip() if lock_path.exists() else "")
 
-        for d in source_items:
-            icon = _status_icon(d.status)
-            color = "green" if d.status == "synced" else "dim"
-            loc = d.local_path if d.local_path else d.source_url
-            table.add_row(f"[{color}]{icon}[/{color}]", d.name, d.version, loc)
 
-        console.print(table)
-        console.print()
+def _print_refs_v5(console, entry: dict, indent: int = 0) -> None:
+    """递归打印 v5 refs 层级 (category/sub-group/pkg)。"""
+    pad = " " * indent
+    pad2 = " " * (indent + 2)
+    pad3 = " " * (indent + 4)
+    for k, v in sorted(entry.items()):
+        if isinstance(v, dict):
+            first = next(iter(v.values())) if v else None
+            if isinstance(first, dict):
+                console.print(f"{pad}{k}:")
+                for sub_k, pkgs in sorted(v.items()):
+                    console.print(f"{pad2}{sub_k}:")
+                    for name, path in sorted(pkgs.items()):
+                        p = f"~/{path}" if not path.startswith("~/") else path
+                        console.print(f"{pad3}{name}: {p}")
+            else:
+                console.print(f"{pad}{k}:")
+                for name, path in sorted(v.items()):
+                    p = f"~/{path}" if not path.startswith("~/") else path
+                    console.print(f"{pad2}{name}: {p}")
+        else:
+            console.print(f"{pad}{k}: {v}")
 
-    # 汇总
-    parts = []
-    if synced_count:
-        parts.append(f"[green]{synced_count} 已同步[/green]")
-    if pending_count:
-        parts.append(f"[yellow]{pending_count} 待同步[/yellow]")
-    if parts:
-        console.print("  ".join(parts))
 
-    if pending_count > 0:
-        console.print()
-        console.print("[yellow]运行 'diy sync' 下载待同步的源码[/yellow]")
+def _read_root_project_name(root_dir: Path) -> str:
+    """读取根项目名 (pyproject.toml / package.json 的 name)。"""
+    pyproj = root_dir / "pyproject.toml"
+    if pyproj.exists():
+        try:
+            import tomllib
+            with open(pyproj, "rb") as f:
+                data = tomllib.load(f)
+            name = data.get("project", {}).get("name", "")
+            if name:
+                return name
+        except Exception:
+            pass
+    pkg = root_dir / "package.json"
+    if pkg.exists():
+        try:
+            with open(pkg) as f:
+                name = json.load(f).get("name", "")
+            if name:
+                return name
+        except Exception:
+            pass
+    return "."
 
 
 @ref_app.command(name="add")
@@ -195,23 +284,32 @@ def ref_add(
     version: Annotated[Optional[str], Parameter(help="分支/tag/commit，如 main、v1.0.0")] = None,
     verbose: Annotated[int, Parameter(help="冗余级别: -v=INFO, -vv=DEBUG")] = 0,
 ):
-    """注册外部仓库到 diy.yaml，供后续 diy sync 下载源码
+    """注册外部仓库到 diy.yaml，供后续 diy ref sync 下载源码
 
-适用场景：外部仓库不在 pyproject.toml / package.json 的依赖中，
-但 agent 仍然需要阅读其源码（如研究、调试用）。
+注册后运行 diy ref sync 实际 clone 到 ~/.diy/ref/。
 
-添加后需运行 diy sync 实际 clone 代码到本地。
-
-用法示例:
+示例:
+  # 基本注册
   diy ref add https://github.com/org/repo
-  diy ref add https://github.com/org/repo@main
-  diy ref add git@github.com:org/repo@v1.0.0
+  -> diy.yaml 追加 sources: ["https://github.com/org/repo"]
+  -> diy ref sync -> ~/.diy/ref/github.com/org/repo/main/
+
+  # 指定版本
+  diy ref add https://github.com/org/repo@v1.0.0
+  -> .diy/ref.lock.yaml -> source:. : github.com/org/repo: ~/path
+
+  # 查看镜像列表
+  diy ref list -> source 组显示条目
 """
     root_dir = _require_project_root()
     config = _load_diy_yaml(root_dir)
 
     if "sources" not in config:
         config["sources"] = []
+
+    # 自动识别 URL 中的 @version（如 https://github.com/org/repo@main）
+    if "@" in url and not version:
+        url, version = url.rsplit("@", 1)
 
     spec = url
     if version:
@@ -223,20 +321,46 @@ def ref_add(
         sys.exit(1)
 
     name = f"{repo_info.owner}/{repo_info.repo}"
+    scope_key = f"{repo_info.host}/{name}"  # host/owner/repo 去重键
 
+    # 验证 URL 是否可访问（是真实的 git 仓库）
+    import subprocess as _sp
+    verify_url = url.rstrip("/")
+    result = _sp.run(
+        ["git", "ls-remote", "--heads", verify_url],
+        capture_output=True, text=True, timeout=15,
+    )
+    if result.returncode != 0:
+        log.error(f"URL 不是有效的 git 仓库: {url}")
+        log.info("  git ls-remote 请求失败 — 请确认 URL 正确且仓库可公开访问。")
+        sys.exit(1)
+
+    # 同 host/owner/repo 但 URL 不同 → 替换旧条目
+    replaced = False
+    new_sources: list[str] = []
     for existing in config["sources"]:
         existing_part = existing.split("@")[0] if "@" in existing else existing
         existing_info = parse_repo_url(existing_part)
-        if existing_info and f"{existing_info.owner}/{existing_info.repo}" == name:
-            log.warning(f"Source 已存在，跳过: {name}")
-            log.info("  如需变更版本，先 'diy ref remove %s' 再重新添加", name)
-            return
+        existing_key = f"{existing_info.host}/{existing_info.owner}/{existing_info.repo}" if existing_info else ""
+        if existing_key == scope_key:
+            if existing != spec:
+                log.info("替换 source: %s → %s", existing, spec)
+                new_sources.append(spec)
+                replaced = True
+                continue
+            else:
+                log.warning(f"Source 已存在，跳过: {name}")
+                return
+        new_sources.append(existing)
 
-    config["sources"].append(spec)
+    if replaced:
+        config["sources"] = new_sources
+    else:
+        config["sources"].append(spec)
     _save_diy_yaml(root_dir, config)
     log.success("已注册 source: %s", spec)
-    log.info("")
-    log.info("下一步: 运行 'diy sync' 下载源码到 ~/.diy/ref/")
+    log.info("立即同步...")
+    sync_dependencies()
 
 
 @ref_app.command(name="remove")
@@ -354,13 +478,23 @@ Agent 读 ref 源码前可用此命令确认路径有效。
 def ref_sync(
     verbose: Annotated[int, Parameter(help="冗余级别: -v=INFO, -vv=DEBUG")] = 0,
 ):
-    """同步项目依赖源码到 ~/.diy/ref/
+    """同步项目依赖和 sources 到 ~/.diy/ref/
 
-自动扫描 pyproject.toml / package.json 的 workspace 和 dependencies，
-从 PyPI / npm registry 查出对应 git 仓库，clone 到本地 ~/.diy/ref/，
-生成 .diy/ref.lock.yaml 映射表供 agent 读取源码。
+扫描 pyproject.toml 和 package.json:
+  - [project] dependencies           -> python:dependencies
+  - [project.optional-dependencies]  -> python:optional-dependencies:<组>
+  - [dependency-groups]              -> python:dependency-groups:<组>
+  - dependencies / devDependencies   -> node:dependencies / node:dev-dependencies
 
-也处理 diy ref add 注册的外部仓库（sources）。
+也处理 diy ref add 注册的外部仓库 (diy.yaml -> sources)。
+
+写入 .diy/ref.lock.yaml (v5), 镜像存放 ~/.diy/ref/github.com/<owner>/<repo>/<version>/
+
+示例:
+  diy ref sync
+  -> .diy/ref.lock.yaml (version:5)
+  -> ~/.diy/ref/github.com/pytest-dev/pytest/9.0.3/
+  -> ~/.diy/ref/github.com/Textualize/rich/v13.9.4/
 """
     try:
         sync_dependencies()

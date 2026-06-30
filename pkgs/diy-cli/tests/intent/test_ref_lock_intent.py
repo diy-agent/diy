@@ -24,20 +24,79 @@ from unittest.mock import patch, MagicMock
 from ..helpers import FakeProject, sync_snapshot
 
 
-def _assert_ref_yaml(root: Path, expected_entries: dict[str, str]):
-    """断言 ref.lock.yaml 包含指定的 key→path 映射。"""
+def _mock_git_clone(cmd: list[str], dest: str, label: str, status_cb, env=None) -> None:
+    """Mock git clone: 创建目标目录，不实际执行 git"""
+    Path(dest).mkdir(parents=True, exist_ok=True)
+    (Path(dest) / ".git").mkdir(parents=True, exist_ok=True)
+
+
+def _assert_ref_yaml(root: Path, expected_entries: dict[str, str]) -> None:
+    """断言 ref.lock.yaml 包含指定的 key→path 映射（v4/v5 格式）。"""
+    import yaml as _yaml
     ref_path = root / ".diy" / "ref.lock.yaml"
     assert ref_path.exists(), f"{ref_path} 不存在"
 
-    text = ref_path.read_text()
-    lines = text.splitlines()
+    data = _yaml.safe_load(ref_path.read_text())
+    assert isinstance(data, dict), f"ref.lock.yaml 应为 dict, 实际: {type(data)}"
 
-    # 验证头
-    assert lines[0].strip() == "version: 2", f"首行应为 version: 2, 实际: {lines[0]}"
+    ver = data.get("version")
+    assert ver in (4, 5), f"version 应为 4 或 5, 实际: {ver}"
+
+    # 展平所有 ecosystem → name → path
+    flat: dict[str, str] = {}
+
+    if ver >= 5 and "refs" in data:
+        # v5: refs → eco → scope → category|pkgs → {name: path}
+        for eco, scopes in data["refs"].items():
+            if not isinstance(scopes, dict):
+                continue
+            for scope_name, categories in scopes.items():
+                if not isinstance(categories, dict):
+                    continue
+                first_val = next(iter(categories.values())) if categories else None
+                if isinstance(first_val, dict):
+                    # Has categories: {dependencies: {name: path}} or
+                    # {dependency-groups: {group: {name: path}}}
+                    for cat_key, cat_val in categories.items():
+                        if not isinstance(cat_val, dict):
+                            continue
+                        sub_first = next(iter(cat_val.values())) if cat_val else None
+                        if isinstance(sub_first, dict):
+                            # Sub-grouped: {group: {name: path}}
+                            for pkgs in cat_val.values():
+                                for name, path in pkgs.items():
+                                    flat[f"{eco}:{name}"] = path
+                        else:
+                            # Flat: {name: path}
+                            for name, path in cat_val.items():
+                                flat[f"{eco}:{name}"] = path
+                else:
+                    # No categories — scope directly maps to {name: path} (e.g. source)
+                    for name, path in categories.items():
+                        flat[f"{eco}:{name}"] = path
+    elif "scopes" in data:
+        # v4: scopes → scope → eco → name → path
+        scopes = data.get("scopes", {})
+        for scope_name, ecosystems in scopes.items():
+            for eco, packages in ecosystems.items():
+                for name, path in packages.items():
+                    flat[f"{eco}:{name}"] = path
+    elif "refs" in data:
+        # v2/v3: refs → eco → name → path
+        refs = data["refs"]
+        for eco, packages in refs.items():
+            if isinstance(packages, dict):
+                for name, path in packages.items():
+                    if isinstance(path, str):
+                        flat[f"{eco}:{name}"] = path
 
     for key, path in expected_entries.items():
-        assert f"{key}:" in text, f"缺少 key: {key}"
-        assert path in text, f"key {key} 的路径不匹配, 期望含: {path}"
+        assert key in flat, f"缺少 key: {key}, 实际有: {sorted(flat.keys())}"
+        assert flat[key] == path, (
+            f"key {key} 路径不匹配:\n"
+            f"  期望: {path}\n"
+            f"  实际: {flat[key]}"
+        )
 
 
 class TestRefLockFormat:
@@ -59,12 +118,13 @@ class TestRefLockFormat:
         home.mkdir()
         cache = home / ".diy"
 
-        with patch("diycli._sync.Path.cwd", return_value=tmp_path), \
-             patch("diycli._sync.Path.home", return_value=home), \
-             patch("diycli._sync.GLOBAL_CACHE_DIR", cache), \
-             patch("diycli._sync.METADATA_CACHE_PATH", cache / "meta.json"), \
+        with patch("diy.cli._sync.Path.cwd", return_value=tmp_path), \
+             patch("diy.cli._sync.Path.home", return_value=home), \
+             patch("diy.cli._sync.GLOBAL_CACHE_DIR", cache), \
+             patch("diy.cli._sync.METADATA_CACHE_PATH", cache / "meta.json"), \
              patch("urllib.request.urlopen") as mock_urlopen, \
-             patch("subprocess.check_call"):
+             patch("diy.cli._sync.get_best_tag", return_value=None), \
+             patch("diy.cli._sync._git_clone_with_progress", side_effect=_mock_git_clone):
             # Mock PyPI 返回 rich 在 github.com/Textualize/rich
             resp = MagicMock()
             resp.__enter__.return_value = resp
@@ -73,11 +133,11 @@ class TestRefLockFormat:
             }).encode()
             mock_urlopen.return_value = resp
 
-            from diycli._sync import sync_dependencies
+            from diy.cli._sync import sync_dependencies
             sync_dependencies()
 
         _assert_ref_yaml(tmp_path, {
-            "python:rich": "~/.diy/ref/github.com/Textualize/rich/v15.0.0",
+            "python:rich": "~/.diy/ref/github.com/Textualize/rich/15.0.0",
         })
 
     def test_workspace_internal_deps_excluded(self, tmp_path):
@@ -110,12 +170,12 @@ class TestRefLockFormat:
         cache = home / ".diy"
         (root / ".diy").mkdir(parents=True, exist_ok=True)
 
-        with patch("diycli._sync.Path.cwd", return_value=root), \
-             patch("diycli._sync.Path.home", return_value=home), \
-             patch("diycli._sync.GLOBAL_CACHE_DIR", cache), \
-             patch("diycli._sync.METADATA_CACHE_PATH", cache / "meta.json"), \
-             patch("subprocess.check_call"):
-            from diycli._sync import sync_dependencies
+        with patch("diy.cli._sync.Path.cwd", return_value=root), \
+             patch("diy.cli._sync.Path.home", return_value=home), \
+             patch("diy.cli._sync.GLOBAL_CACHE_DIR", cache), \
+             patch("diy.cli._sync.METADATA_CACHE_PATH", cache / "meta.json"), \
+             patch("diy.cli._sync._git_clone_with_progress", side_effect=_mock_git_clone):
+            from diy.cli._sync import sync_dependencies
             sync_dependencies()
 
         ref_path = root / ".diy" / "ref.lock.yaml"
@@ -142,12 +202,13 @@ class TestRefLockFormat:
         home.mkdir()
         cache = home / ".diy"
 
-        with patch("diycli._sync.Path.cwd", return_value=tmp_path), \
-             patch("diycli._sync.Path.home", return_value=home), \
-             patch("diycli._sync.GLOBAL_CACHE_DIR", cache), \
-             patch("diycli._sync.METADATA_CACHE_PATH", cache / "meta.json"), \
+        with patch("diy.cli._sync.Path.cwd", return_value=tmp_path), \
+             patch("diy.cli._sync.Path.home", return_value=home), \
+             patch("diy.cli._sync.GLOBAL_CACHE_DIR", cache), \
+             patch("diy.cli._sync.METADATA_CACHE_PATH", cache / "meta.json"), \
              patch("urllib.request.urlopen") as mock_urlopen, \
-             patch("subprocess.check_call"):
+             patch("diy.cli._sync.get_best_tag", return_value=None), \
+             patch("diy.cli._sync._git_clone_with_progress", side_effect=_mock_git_clone):
             resp = MagicMock()
             resp.__enter__.return_value = resp
             resp.read.return_value = json.dumps({
@@ -155,7 +216,7 @@ class TestRefLockFormat:
             }).encode()
             mock_urlopen.return_value = resp
 
-            from diycli._sync import sync_dependencies
+            from diy.cli._sync import sync_dependencies
             sync_dependencies()
 
         ref_path = tmp_path / ".diy" / "ref.lock.yaml"
@@ -195,16 +256,16 @@ class TestRefLockFormat:
         home.mkdir()
         cache = home / ".diy"
 
-        with patch("diycli._sync.Path.cwd", return_value=tmp_path), \
-             patch("diycli._sync.Path.home", return_value=home), \
-             patch("diycli._sync.GLOBAL_CACHE_DIR", cache), \
-             patch("diycli._sync.METADATA_CACHE_PATH", cache / "meta.json"), \
+        with patch("diy.cli._sync.Path.cwd", return_value=tmp_path), \
+             patch("diy.cli._sync.Path.home", return_value=home), \
+             patch("diy.cli._sync.GLOBAL_CACHE_DIR", cache), \
+             patch("diy.cli._sync.METADATA_CACHE_PATH", cache / "meta.json"), \
              patch("subprocess.check_output") as mock_co, \
-             patch("subprocess.check_call"):
+             patch("diy.cli._sync._git_clone_with_progress", side_effect=_mock_git_clone):
             # npm view 返回 react 的仓库 URL
             mock_co.return_value = "https://github.com/facebook/react.git"
 
-            from diycli._sync import sync_dependencies
+            from diy.cli._sync import sync_dependencies
             sync_dependencies()
 
         _assert_ref_yaml(tmp_path, {
@@ -229,15 +290,122 @@ class TestRefLockFormat:
         home.mkdir()
         cache = home / ".diy"
 
-        with patch("diycli._sync.Path.cwd", return_value=tmp_path), \
-             patch("diycli._sync.Path.home", return_value=home), \
-             patch("diycli._sync.GLOBAL_CACHE_DIR", cache), \
-             patch("diycli._sync.METADATA_CACHE_PATH", cache / "meta.json"), \
-             patch("subprocess.check_call"):
-            from diycli._sync import sync_dependencies
+        with patch("diy.cli._sync.Path.cwd", return_value=tmp_path), \
+             patch("diy.cli._sync.Path.home", return_value=home), \
+             patch("diy.cli._sync.GLOBAL_CACHE_DIR", cache), \
+             patch("diy.cli._sync.METADATA_CACHE_PATH", cache / "meta.json"), \
+             patch("diy.cli._sync.get_best_tag", return_value=None), \
+             patch("diy.cli._sync._git_clone_with_progress", side_effect=_mock_git_clone):
+            from diy.cli._sync import sync_dependencies
             sync_dependencies()
 
         _assert_ref_yaml(tmp_path, {
-            "source:github/gh-aw": "~/.diy/ref/github.com/github/gh-aw/main",
-            "source:github/docs": "~/.diy/ref/github.com/github/docs/main",
+            "source:github.com/github/gh-aw": "~/.diy/ref/github.com/github/gh-aw/main",
+            "source:github.com/github/docs": "~/.diy/ref/github.com/github/docs/main",
         })
+
+
+class TestRefAdd:
+    """diy ref add 行为测试。"""
+
+    def _setup_boundary(self, tmp_path, diy_yaml: dict | None = None) -> Path:
+        """创建项目边界（.git + diy.yaml）并返回路径"""
+        if diy_yaml is None:
+            diy_yaml = {"sources": []}
+        (tmp_path / ".git").mkdir()
+        import yaml as _y
+        (tmp_path / "diy.yaml").write_text(_y.dump(diy_yaml))
+        return tmp_path
+
+    def test_add_invalid_url_rejected(self, tmp_path):
+        """意图：非 git 仓库的 URL（如 deepwiki）应拒绝添加"""
+        root = self._setup_boundary(tmp_path)
+
+        with patch("diy.cli.ref.find_project_root", return_value=root), patch("diy.cli.ref.Path.cwd", return_value=root), \
+             patch("subprocess.run") as mock_run:
+            # git ls-remote 失败
+            mock_run.return_value.returncode = 128
+
+            from diy.cli.ref import ref_add
+            with pytest.raises(SystemExit):
+                ref_add(url="https://deepwiki.com/brentyi/tyro")
+
+        # diy.yaml 不应包含该 URL
+        import yaml as _y
+        cfg = _y.safe_load((root / "diy.yaml").read_text()) or {}
+        assert "https://deepwiki.com/brentyi/tyro" not in str(cfg.get("sources", []))
+
+    def test_add_valid_url(self, tmp_path):
+        """意图：有效的 git 仓库 URL 应写入 diy.yaml"""
+        root = self._setup_boundary(tmp_path)
+
+        with patch("diy.cli.ref.find_project_root", return_value=root), patch("diy.cli.ref.Path.cwd", return_value=root), \
+             patch("subprocess.run") as mock_run, \
+             patch("diy.cli.ref.sync_dependencies"):
+            # git ls-remote 成功
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = ""
+
+            from diy.cli.ref import ref_add
+            ref_add(url="https://github.com/brentyi/tyro")
+
+        import yaml as _y
+        cfg = _y.safe_load((root / "diy.yaml").read_text()) or {}
+        assert "https://github.com/brentyi/tyro" in cfg.get("sources", [])
+
+    def test_add_duplicate_url_skipped(self, tmp_path):
+        """意图：完全相同的 URL 再次添加应跳过"""
+        root = self._setup_boundary(tmp_path, {
+            "sources": ["https://github.com/brentyi/tyro"]
+        })
+
+        with patch("diy.cli.ref.find_project_root", return_value=root), patch("diy.cli.ref.Path.cwd", return_value=root), \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+
+            from diy.cli.ref import ref_add
+            ref_add(url="https://github.com/brentyi/tyro")
+
+        # 不应重复
+        import yaml as _y
+        cfg = _y.safe_load((root / "diy.yaml").read_text()) or {}
+        assert cfg.get("sources") == ["https://github.com/brentyi/tyro"]
+
+    def test_add_replace_different_url_same_host(self, tmp_path):
+        """意图：同 host/owner/repo 但不同 URL（如版本不同） → 替换旧条目"""
+        root = self._setup_boundary(tmp_path, {
+            "sources": ["https://github.com/brentyi/tyro@v1"]
+        })
+
+        with patch("diy.cli.ref.find_project_root", return_value=root), patch("diy.cli.ref.Path.cwd", return_value=root), \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+
+            from diy.cli.ref import ref_add
+            ref_add(url="https://github.com/brentyi/tyro@v2")
+
+        import yaml as _y
+        cfg = _y.safe_load((root / "diy.yaml").read_text()) or {}
+        sources = cfg.get("sources", [])
+        assert "https://github.com/brentyi/tyro@v1" not in sources, "旧版本应被替换"
+        assert "https://github.com/brentyi/tyro@v2" in sources, "新版本应存在"
+
+    def test_add_different_host_same_owner_repo(self, tmp_path):
+        """意图：不同 host 但同 owner/repo → 各自独立，不替换"""
+        root = self._setup_boundary(tmp_path, {
+            "sources": ["https://github.com/brentyi/tyro"]
+        })
+
+        with patch("diy.cli.ref.find_project_root", return_value=root), patch("diy.cli.ref.Path.cwd", return_value=root), \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+
+            from diy.cli.ref import ref_add
+            ref_add(url="https://gitlab.com/brentyi/tyro")
+
+        import yaml as _y
+        cfg = _y.safe_load((root / "diy.yaml").read_text()) or {}
+        sources = cfg.get("sources", [])
+        assert "https://github.com/brentyi/tyro" in sources
+        assert "https://gitlab.com/brentyi/tyro" in sources
+

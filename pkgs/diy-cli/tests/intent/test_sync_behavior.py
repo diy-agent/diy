@@ -6,7 +6,7 @@
 import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from diycli._sync import sync_dependencies
+from diy.cli._sync import sync_dependencies
 from ..helpers import FakeProject, sync_snapshot
 
 @pytest.fixture
@@ -14,14 +14,14 @@ def mock_registry():
     """Mock NPM 和 PyPI 的响应。"""
     import json as json_lib
     
-    def mock_npm_view(cmd, **kwargs):
+    def mock_npm_view(cmd: list[str], **kwargs) -> str:
         return ""
 
-    def mock_urlopen(url, **kwargs):
+    def mock_urlopen(url: str, **kwargs) -> MagicMock:
         import json as json_lib
         mock_resp = MagicMock()
         mock_resp.__enter__.return_value = mock_resp
-        
+
         # 处理 NPM Registry API (以 registry.npmjs.org 开头或自定义)
         if "shared-pkg" in url and ("registry.npmjs.org" in url or "https://registry.npmjs.org" in url or "shared-pkg" in url):
             # 只有当它是 Node 相关的请求时才返回 Node 数据
@@ -34,12 +34,12 @@ def mock_registry():
                 }
                 mock_resp.read.return_value = json_lib.dumps(data).encode()
                 return mock_resp
-        
+
         if "js-lib" in url or "pkg-a" in url or "pkg-b" in url:
              data = {"repository": {"url": "https://github.com/user/repo.git"}}
              mock_resp.read.return_value = json_lib.dumps(data).encode()
              return mock_resp
-        
+
         # 处理 PyPI Registry API
         if "pypi.org" in url:
             if "shared-pkg" in url:
@@ -62,10 +62,16 @@ def mock_registry():
                 mock_resp.read.return_value = json_lib.dumps(data).encode()
         return mock_resp
 
+    def _mock_git_clone(cmd: list[str], dest: str, label: str, status_cb, env=None) -> None:
+        """Mock git clone: 创建目标目录，不实际执行 git"""
+        from pathlib import Path as _P
+        _P(dest).mkdir(parents=True, exist_ok=True)
+        (Path(dest) / ".git").mkdir(parents=True, exist_ok=True)
+
     with patch("subprocess.check_output", side_effect=mock_npm_view), \
          patch("urllib.request.urlopen", side_effect=mock_urlopen), \
-         patch("subprocess.check_call", return_value=0), \
-         patch("diycli._sync.get_best_tag", return_value="v1.0.0"):
+         patch("diy.cli._sync._git_clone_with_progress", side_effect=_mock_git_clone), \
+         patch("diy.cli._sync.get_best_tag", return_value="v1.0.0"):
         yield
 
 def test_sync_avoids_ecosystem_collision(tmp_path, mock_registry):
@@ -110,10 +116,10 @@ def test_sync_avoids_ecosystem_collision(tmp_path, mock_registry):
     cache_dir = home_dir / ".diy"
     meta_path = cache_dir / "meta.json"
 
-    with patch("diycli._sync.Path.cwd", return_value=project_root), \
-         patch("diycli._sync.Path.home", return_value=home_dir), \
-         patch("diycli._sync.GLOBAL_CACHE_DIR", cache_dir), \
-         patch("diycli._sync.METADATA_CACHE_PATH", meta_path):
+    with patch("diy.cli._sync.Path.cwd", return_value=project_root), \
+         patch("diy.cli._sync.Path.home", return_value=home_dir), \
+         patch("diy.cli._sync.GLOBAL_CACHE_DIR", cache_dir), \
+         patch("diy.cli._sync.METADATA_CACHE_PATH", meta_path):
 
         sync_dependencies()
 
@@ -149,10 +155,10 @@ def test_ide_config_updates(tmp_path, mock_registry):
     cache_dir = home_dir / ".diy"
     meta_path = cache_dir / "meta.json"
 
-    with patch("diycli._sync.Path.cwd", return_value=project_root), \
-         patch("diycli._sync.Path.home", return_value=home_dir), \
-         patch("diycli._sync.GLOBAL_CACHE_DIR", cache_dir), \
-         patch("diycli._sync.METADATA_CACHE_PATH", meta_path), \
+    with patch("diy.cli._sync.Path.cwd", return_value=project_root), \
+         patch("diy.cli._sync.Path.home", return_value=home_dir), \
+         patch("diy.cli._sync.GLOBAL_CACHE_DIR", cache_dir), \
+         patch("diy.cli._sync.METADATA_CACHE_PATH", meta_path), \
          patch("subprocess.check_output", return_value="https://github.com/user/repo.git"):
         
         sync_dependencies()
@@ -187,10 +193,10 @@ def test_pruning_behavior(tmp_path, mock_registry):
     home_dir.mkdir()
     cache_dir = home_dir / ".diy"
     
-    with patch("diycli._sync.Path.cwd", return_value=project_root), \
-         patch("diycli._sync.Path.home", return_value=home_dir), \
-         patch("diycli._sync.GLOBAL_CACHE_DIR", cache_dir), \
-         patch("diycli._sync.METADATA_CACHE_PATH", cache_dir / "meta.json"), \
+    with patch("diy.cli._sync.Path.cwd", return_value=project_root), \
+         patch("diy.cli._sync.Path.home", return_value=home_dir), \
+         patch("diy.cli._sync.GLOBAL_CACHE_DIR", cache_dir), \
+         patch("diy.cli._sync.METADATA_CACHE_PATH", cache_dir / "meta.json"), \
          patch("subprocess.check_output", return_value="https://github.com/user/repo.git"):
         
         sync_dependencies()

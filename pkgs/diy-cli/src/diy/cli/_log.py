@@ -74,15 +74,19 @@ class Logger:
     def __init__(self, tag: str = None):
         self.tag = tag
     
-    def info(self, msg: str): info(msg, self.tag)
-    def debug(self, msg: str): debug(msg, self.tag)
-    def trace(self, msg: str): trace(msg, self.tag)
-    def success(self, msg: str): success(msg, self.tag)
-    def error(self, msg: str, err: Exception = None):
+    def _fmt(self, msg: str, args: tuple) -> str:
+        return msg % args if args else msg
+
+    def info(self, msg: str, *args): info(self._fmt(msg, args), self.tag)
+    def debug(self, msg: str, *args): debug(self._fmt(msg, args), self.tag)
+    def trace(self, msg: str, *args): trace(self._fmt(msg, args), self.tag)
+    def success(self, msg: str, *args): success(self._fmt(msg, args), self.tag)
+    def warning(self, msg: str, *args): info(f"⚠ {self._fmt(msg, args)}", self.tag)
+    def error(self, msg: str, *args, err: Exception = None):
         if err:
-            error(f"{msg} {err}", self.tag)
+            error(f"{self._fmt(msg, args)} {err}", self.tag)
         else:
-            error(msg, self.tag)
+            error(self._fmt(msg, args), self.tag)
     
     def with_tag(self, tag: str):
         return Logger(tag)

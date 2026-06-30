@@ -5,7 +5,7 @@ from typing import Any
 
 import panel as pn
 
-from .._base import C, UIComponent, _PanelContainerMixin, _PANEL_HOST_CTRL
+from .._base import _PANEL_HOST_CTRL, C, UIComponent, _PanelContainerMixin
 
 _MODULE = __name__
 
