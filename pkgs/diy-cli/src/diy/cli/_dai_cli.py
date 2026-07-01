@@ -1529,20 +1529,11 @@ def _local_shutdown():
     # socket 不存在或不通 → 进程级兜底
     import subprocess
 
-    kill = subprocess.run(
-        ["pkill", "-f", "diy.app.main"],
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
-    if kill.returncode == 0:
+    kill = _safe_pkill("diy.app.main", timeout=5)
+    if kill and kill.returncode == 0:
         # 清理残留的 QWebEngine 子进程
-        subprocess.run(
-            ["pkill", "-f", "QtWebEngineProcess"], capture_output=True, timeout=3
-        )
-        subprocess.run(
-            ["pkill", "-f", "Chromium Helper"], capture_output=True, timeout=3
-        )
+        _safe_pkill("QtWebEngineProcess", timeout=3)
+        _safe_pkill("Chromium Helper", timeout=3)
         info("管控台已强制关闭")
     else:
         info("管控台未运行")
@@ -1581,6 +1572,22 @@ def _try_lock(lock_path: str) -> bool:
         return True  # 文件系统问题，不阻塞
 
 
+def _safe_pkill(pattern: str, timeout: int = 5) -> subprocess.CompletedProcess | None:
+    """执行 pkill，缺失时静默忽略。"""
+    import shutil as _su
+    if not _su.which("pkill"):
+        return None
+    try:
+        return subprocess.run(
+            ["pkill", "-f", pattern],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except FileNotFoundError:
+        return None
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(args=[], returncode=-1, stdout="", stderr="timeout")
+
+
 def _app_restart():
     """重启管控台：shutdown → 等锁释放 → 启动 app。
 
@@ -1613,13 +1620,8 @@ def _app_restart():
             warn("旧管控台未在 5s 内退出，尝试强杀...")
             import subprocess as _sp
 
-            kill = _sp.run(
-                ["pkill", "-f", "diy.app.main"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if kill.returncode == 0:
+            kill = _safe_pkill("diy.app.main", timeout=5)
+            if kill and kill.returncode == 0:
                 _time.sleep(1.0)
                 if _wait_lock_released(lock_path, timeout=3.0):
                     info("旧管控台已强制关闭")
@@ -1634,10 +1636,8 @@ def _app_restart():
     #   注意：已改用 --disable-gpu，不再有 GPU 子进程的 MachPort 污染问题，
     #   无需 sleep 等待。kill QtWebEngineProcess 在旧版 --single-process
     #   时是必要的，现在保留仅作防御。
-    subprocess.run(
-        ["pkill", "-f", "QtWebEngineProcess"], capture_output=True, timeout=3
-    )
-    subprocess.run(["pkill", "-f", "Chromium Helper"], capture_output=True, timeout=3)
+    _safe_pkill("QtWebEngineProcess", timeout=3)
+    _safe_pkill("Chromium Helper", timeout=3)
     try:
         os.unlink(socket_path)
     except FileNotFoundError:

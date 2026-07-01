@@ -326,6 +326,13 @@ def ref_add(
     name = f"{repo_info.owner}/{repo_info.repo}"
     scope_key = f"{repo_info.host}/{name}"  # host/owner/repo 去重键
 
+    # 验证 git 命令可用
+    import shutil as _su
+    if not _su.which("git"):
+        log.error("缺少 git 命令")
+        log.info("  安装 git 后重试：brew install git")
+        sys.exit(1)
+
     # 验证 URL 是否可访问（是真实的 git 仓库）
     import subprocess as _sp
     verify_url = url.rstrip("/")

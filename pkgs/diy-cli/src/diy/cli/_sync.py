@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import re
 import subprocess
@@ -19,6 +20,15 @@ log = logger.with_tag("sync")
 
 GLOBAL_CACHE_DIR = Path.home() / ".diy"
 METADATA_CACHE_PATH = GLOBAL_CACHE_DIR / "registry-cache.json"
+
+
+def _require_cmd(name: str, hint: str = "") -> None:
+    """检查外部命令是否存在，缺失时直接报错退出。"""
+    if not shutil.which(name):
+        log.error("缺少外部命令: %s", name)
+        if hint:
+            log.info("  %s", hint)
+        sys.exit(1)
 
 metadata_cache: Dict[str, Any] = {}
 metadata_lock = threading.Lock()
@@ -374,6 +384,9 @@ npm_registry_url = "https://registry.npmjs.org"
 
 def load_npm_config():
     global npm_registry_url
+    if not shutil.which("npm"):
+        log.debug("npm 未安装，使用默认 registry")
+        return
     try:
         # 获取用户配置的 registry (如淘宝镜像、公司私有镜像)
         npm_registry_url = subprocess.check_output(["npm", "config", "get", "registry"], text=True).strip().rstrip("/")
@@ -944,6 +957,7 @@ def scan_project_deps(root_dir):
 
 def sync_dependencies():
     log.info("sync start")
+    _require_cmd("git", "安装 git 后重试：brew install git")
     load_npm_config()
     root_dir = find_project_root()
     log.info(f"识别到项目根目录: {root_dir}")
