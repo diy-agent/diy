@@ -18,7 +18,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from _shelltest import ShellTest
+from diy.test import ShellTest
 
 _PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

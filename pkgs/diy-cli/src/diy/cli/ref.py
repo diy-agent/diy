@@ -187,6 +187,9 @@ def ref_list(
             else:
                 if current_scope and current_scope in scopes:
                     scope_keys = [current_scope]
+                elif current_scope and current_scope != ".":
+                    # 非根边界（子项目）→ 只在该 scope 精确匹配的生态显示，不回溯到根
+                    scope_keys = []
                 elif eco == "source":
                     scope_keys = []
                 else:

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from _shelltest import ShellTest
+from diy.test import ShellTest
 
 
 def test_intent_agent_monitor_empty(sh: ShellTest, fake_home: Path):

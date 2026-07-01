@@ -19,6 +19,10 @@ Usage:
     #       return ShellTest(cwd="/tmp")
     #   def test_xxx(sh):
     #       sh.assert_session("...")
+
+Import:
+    from diy.test import ShellTest
+    from diy.test.shelltest import Session
 """
 
 from __future__ import annotations

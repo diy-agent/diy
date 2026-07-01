@@ -14,6 +14,7 @@ dev = [
     "pyright>=1.1.409",
     "pytest>=9.0.3",
     "mistune>=3.2.1",
+    "diy-test",
 ]
 
 [tool.uv]
@@ -27,6 +28,7 @@ members = [
     "pkgs/diy-app",
     "pkgs/diy-cli",
     "pkgs/diy-ui",
+    "pkgs/diy-test",
 ]
 
 [[tool.uv.index]]
@@ -37,6 +39,7 @@ diy-core = { workspace = true }
 diy-app = { workspace = true }
 diy-cli = { workspace = true }
 diy-ui = { workspace = true }
+diy-test = { workspace = true }
 
 # ========== Ruff 配置 ==========
 [tool.ruff]

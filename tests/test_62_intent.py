@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from _shelltest import ShellTest
+from diy.test import ShellTest
 
 
 def test_intent_profile_list_default_yaml(sh: ShellTest, fake_home: Path):

@@ -5,7 +5,7 @@
 使用 assert_session 做多行 transcript 式断言。
 """
 
-from _shelltest import ShellTest
+from diy.test import ShellTest
 
 
 def test_intent_exit_code_direct():

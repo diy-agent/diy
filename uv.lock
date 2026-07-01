@@ -16,6 +16,7 @@ members = [
     "diy-cli",
     "diy-core",
     "diy-mono",
+    "diy-test",
     "diy-ui",
 ]
 
@@ -410,6 +411,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "diy-test" },
     { name = "mistune" },
     { name = "pyright" },
     { name = "pytest" },
@@ -425,11 +427,23 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "diy-test", editable = "pkgs/diy-test" },
     { name = "mistune", specifier = ">=3.2.1" },
     { name = "pyright", specifier = ">=1.1.409" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "ruff", specifier = ">=0.15.12" },
 ]
+
+[[package]]
+name = "diy-test"
+version = "0.1.0"
+source = { editable = "pkgs/diy-test" }
+dependencies = [
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pyyaml", specifier = ">=6.0" }]
 
 [[package]]
 name = "diy-ui"

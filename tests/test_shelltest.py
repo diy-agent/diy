@@ -5,7 +5,7 @@
 
 import os
 
-from _shelltest import ShellTest
+from diy.test import ShellTest
 
 
 def test_intent_cwd_initial():
