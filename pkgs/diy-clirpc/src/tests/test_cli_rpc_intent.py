@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -25,31 +24,24 @@ PKG = Path(__file__).resolve().parent.parent
 def connect_server():
     """ConnectRPC 服务端（uvicorn）"""
     proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "cli_rpc.server_demo:app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            "19341",
-            "--log-level",
-            "warning",
-        ],
+        ["uv", "run", "uvicorn", "cli_rpc.server_demo:app",
+         "--host", "127.0.0.1", "--port", "19341", "--log-level", "warning"],
         cwd=PKG,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
-    for _ in range(20):
-        r = subprocess.run(
-            ["curl", "-sf", "http://127.0.0.1:19341/healthz"],
-            capture_output=True,
-            timeout=3,
-        )
-        if r.returncode == 0:
-            break
-        time.sleep(0.3)
+    for _ in range(30):
+        try:
+            r = subprocess.run(
+                ["curl", "-sf", "http://127.0.0.1:19341/healthz"],
+                capture_output=True,
+                timeout=3,
+            )
+            if r.returncode == 0:
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
     yield
     proc.terminate()
     proc.wait()
@@ -70,20 +62,23 @@ def http2_server():
         "asyncio.run(serve(app, c))"
     )
     proc = subprocess.Popen(
-        [sys.executable, "-u", "-c", code],
+        ["uv", "run", "python", "-u", "-c", code],
         cwd=PKG,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
-    for _ in range(20):
-        r = subprocess.run(
-            ["curl", "-sf", "http://127.0.0.1:19342/healthz"],
-            capture_output=True,
-            timeout=3,
-        )
-        if r.returncode == 0:
-            break
-        time.sleep(0.3)
+    for _ in range(30):
+        try:
+            r = subprocess.run(
+                ["curl", "-sf", "http://127.0.0.1:19342/healthz"],
+                capture_output=True,
+                timeout=3,
+            )
+            if r.returncode == 0:
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
     yield
     proc.terminate()
     proc.wait()
