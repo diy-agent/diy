@@ -1,0 +1,38 @@
+syntax = "proto3";
+package clirpc;
+
+// POSIX 四通道枚举
+enum Channel {
+  CHANNEL_STDIN   = 0;
+  CHANNEL_STDOUT  = 1;
+  CHANNEL_STDERR  = 2;
+  CHANNEL_CONTROL = 3;
+}
+
+// 通道分片：流式传输最小业务单元
+// 最后一条帧携带 exit_code（尾帧），client 在 async for 结束后读取
+message RawFrame {
+  Channel channel = 1;
+  bytes   data    = 2;
+  int32   exit_code = 3;  // 0=中间帧，非0=尾帧退出码
+}
+
+// unary / serverStream 请求
+message RawRequest {
+  repeated string argv = 1;
+}
+
+// unary 响应
+message RawResponse {
+  int32 exit_code = 1;
+  bytes stdout = 2;
+  bytes stderr = 3;
+}
+
+// RPC 服务定义
+service CliRpcService {
+  rpc unary(RawRequest) returns (RawResponse);
+  rpc serverStream(RawRequest) returns (stream RawFrame);
+  rpc clientStream(stream RawFrame) returns (RawResponse);
+  rpc duplexStream(stream RawFrame) returns (stream RawFrame);
+}

@@ -6,6 +6,7 @@ dependencies = [
     "diy-cli",
     "diy-app",
     "diy-ui",
+    "hypercorn[h2]>=0.18.0",
 ]
 
 [dependency-groups]
@@ -29,6 +30,7 @@ members = [
     "pkgs/diy-cli",
     "pkgs/diy-ui",
     "pkgs/diy-test",
+    "pkgs/diy-clirpc",
 ]
 
 [[tool.uv.index]]
