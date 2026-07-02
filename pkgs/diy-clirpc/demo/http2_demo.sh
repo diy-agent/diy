@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# demo.sh — HTTP/2 演示
+# http2_demo.sh — HTTP/2 演示
 # 启动 hypercorn 服务端 → 展示 4 种 RPC 模式 → 清理
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT=19332
 SERVER_PID=
 
@@ -16,7 +16,7 @@ import asyncio
 from hypercorn.config import Config
 from hypercorn.asyncio import serve
 from cli_rpc.cli.cyclopts._dispatch import CycloptsDispatch
-from cli_rpc.cli.cyclopts._commands import diy
+from demo.commands import diy
 from cli_rpc.transport.http2 import make_http2_app
 app = make_http2_app(CycloptsDispatch(diy))
 config = Config()

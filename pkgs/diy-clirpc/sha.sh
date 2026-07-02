@@ -48,20 +48,38 @@ test() {
 }
 
 # ════════════════════════════════════════════════════════════
-# 演示
+# 生成代码 + 演示
 # ════════════════════════════════════════════════════════════
+
+gen() {
+  run uv run python demo/proto_gen.py
+  run cd demo/gen && buf generate
+}
 
 demo() {
   connect() {
-    run bash "$PKG/transport/connectrpc/demo.sh"
+    run bash "demo/connectrpc_demo.sh"
   }
   h2rpc() {
-    run bash "$PKG/transport/http2/demo.sh"
+    run bash "demo/http2_demo.sh"
+  }
+  typed() {
+    run uv run uvicorn demo.connect_servicer:app --host 127.0.0.1 --port 8322
+  }
+  typed-test() {
+    run uv run python demo/test_connect.py
+  }
+  gen-all() {
+    run uv run python demo/proto_gen.py
+    run cd demo/gen && buf generate
+    echo "✓ 全部生成完成"
   }
   if [[ $# -eq 0 ]]; then
     echo "演示命令"
-    echo "  connect   ConnectRPC"
-    echo "  h2rpc     HTTP/2"
+    echo "  connect     ConnectRPC"
+    echo "  h2rpc       HTTP/2"
+    echo "  typed       类型安全 RPC 服务端"
+    echo "  typed-test  闭环测试"
   fi
 }
 

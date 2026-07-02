@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# demo.sh — ConnectRPC 演示
+# connectrpc_demo.sh — ConnectRPC 演示
 # 启动 uvicorn 服务端 → 展示 4 种 RPC 模式 → 清理
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT=19331
 SERVER_PID=
 
@@ -11,7 +11,7 @@ cleanup() { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true; wait
 trap cleanup EXIT INT TERM
 
 echo "  [server] 启动 uvicorn (端口 $PORT) ..." >&2
-uv run --directory "$ROOT" uvicorn cli_rpc.server_demo:app \
+uv run --directory "$ROOT" uvicorn demo.server:app \
   --host 127.0.0.1 --port "$PORT" --log-level warning &
 SERVER_PID=$!
 

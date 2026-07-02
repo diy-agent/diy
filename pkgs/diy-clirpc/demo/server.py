@@ -4,7 +4,7 @@ cli_rpc server — Starlette ASGI app backed by demo Cyclopts commands
 胶水层: 组合 cli/cyclopts (Cyclopts) 和 transport/connectrpc (传输层)。
 
 用法:
-    uvicorn cli_rpc.server_demo:app
+    uvicorn demo.server:app
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import sys
 
-from cli_rpc.cli.cyclopts._commands import diy
+from demo.commands import diy
 from cli_rpc.cli.cyclopts._dispatch import CycloptsDispatch
 from cli_rpc.transport.connectrpc._server import make_app, make_service
 

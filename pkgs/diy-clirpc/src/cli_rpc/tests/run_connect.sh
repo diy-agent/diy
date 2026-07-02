@@ -17,7 +17,7 @@ trap cleanup EXIT INT TERM
 # ── 启动服务端 ──
 echo "  [server] 启动 uvicorn (端口 $PORT) ..." >&2
 UVICORN_WIRE="${CLI_RPC_WIRE:-0}" uv run --directory "$ROOT" \
-  uvicorn cli_rpc.server_demo:app \
+  uvicorn demo.server:app \
   --host 127.0.0.1 --port "$PORT" --log-level warning &
 SERVER_PID=$!
 

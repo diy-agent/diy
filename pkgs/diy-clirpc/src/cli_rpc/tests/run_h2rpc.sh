@@ -21,7 +21,7 @@ import asyncio
 from hypercorn.config import Config
 from hypercorn.asyncio import serve
 from cli_rpc.cli.cyclopts._dispatch import CycloptsDispatch
-from cli_rpc.cli.cyclopts._commands import diy
+from demo.commands import diy
 from cli_rpc.transport.http2 import make_http2_app
 app = make_http2_app(CycloptsDispatch(diy))
 config = Config()

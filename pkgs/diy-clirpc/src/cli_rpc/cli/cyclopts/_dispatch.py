@@ -147,7 +147,7 @@ class CycloptsDispatch:
 
     def __init__(self, app: App):
         self._app = app
-        # install_meta_launcher 在 _commands.py 中已调用
+        # install_meta_launcher 在 demo/commands.py 中已调用
 
     async def execute(
         self, argv: list[str], request: Request, response: Response

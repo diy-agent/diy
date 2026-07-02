@@ -83,13 +83,13 @@ typeCheckingMode = "standard"
 pythonVersion = "3.12"
 include = [
     "tests",
-    "pkgs/diy-cli/src",
-    "pkgs/diy-cli/tests",
-    "pkgs/diy-ui/src",
-    "pkgs/diy-ui/tests",
-    "pkgs/diy-ui/examples",
+    "pkgs/*/src",
+    "pkgs/*/tests",
+    "pkgs/*/demo",
+    "pkgs/*/examples",
+    "pkgs/*/tools",
 ]
-extraPaths = ["pkgs/diy-ui/tools"]
+# extraPaths = ["pkgs/diy-ui/tools"]
 reportMissingParameterType = true
 reportUnknownParameterType = true
 reportIncompatibleMethodOverride = false

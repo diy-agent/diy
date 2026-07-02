@@ -35,7 +35,6 @@ def task_list(*, response: Resp):
     response.out.print("  task/001  实现 RPC (active)")
     response.out.print("  task/002  重构 Gateway (pending)")
 
-
 @diy.command
 def task_detail(uri: str, *, response: Resp = None):
     """查看任务详情"""

@@ -1,0 +1,116 @@
+syntax = "proto3";
+package clirpc_gen;
+
+import "google/protobuf/empty.proto";
+
+// --- 从 Cyclopts App 自动生成 ---
+service CycloptsCommands {
+  // 列出所有任务
+  // argv: task-list
+  rpc TaskList(TaskListRequest) returns (TaskListResponse);
+
+  // 查看任务详情
+  // argv: task-detail
+  rpc TaskDetail(TaskDetailRequest) returns (TaskDetailResponse);
+
+  // 同步 ref
+  // argv: ref-sync
+  rpc RefSync(RefSyncRequest) returns (RefSyncResponse);
+
+  // 实时日志（模拟 serverStream，含 stderr 分流）
+  // argv: log-tail
+  rpc LogTail(LogTailRequest) returns (stream LogTailResponse);
+
+  // 回声 stdin — 通过 duplexStream 接收 stdin 并返回
+  // argv: chat
+  rpc Chat(stream ChatRequest) returns (ChatResponse);
+
+  // 统计 stdin 字节数 — 通过 duplexStream 或 clientStream
+  // argv: count-bytes
+  rpc CountBytes(stream CountBytesRequest) returns (CountBytesResponse);
+
+  // 管控台状态
+  // argv: ui status
+  rpc UiStatus(UiStatusRequest) returns (UiStatusResponse);
+
+  // 任务树
+  // argv: ui tree
+  rpc UiTree(UiTreeRequest) returns (UiTreeResponse);
+
+}
+// --- task-list ---
+message TaskListRequest {
+}
+message TaskListResponse {
+  int32 exit_code = 1;
+  string stdout = 2;
+  string stderr = 3;
+}
+
+// --- task-detail ---
+message TaskDetailRequest {
+  string uri = 1;
+}
+message TaskDetailResponse {
+  int32 exit_code = 1;
+  string stdout = 2;
+  string stderr = 3;
+}
+
+// --- ref-sync ---
+message RefSyncRequest {
+}
+message RefSyncResponse {
+  int32 exit_code = 1;
+  string stdout = 2;
+  string stderr = 3;
+}
+
+// --- log-tail ---
+message LogTailRequest {
+}
+message LogTailResponse {
+  int32 channel = 1;  // 1=stdout, 2=stderr
+  string data = 2;
+  int32 exit_code = 3;  // 尾帧 exit code
+}
+
+// --- chat ---
+message ChatRequest {
+  bytes stdin = 1;
+  bool eof = 2;
+}
+message ChatResponse {
+  int32 exit_code = 1;
+  string stdout = 2;
+  string stderr = 3;
+}
+
+// --- count-bytes ---
+message CountBytesRequest {
+  bytes stdin = 1;
+  bool eof = 2;
+}
+message CountBytesResponse {
+  int32 exit_code = 1;
+  string stdout = 2;
+  string stderr = 3;
+}
+
+// --- ui_status ---
+message UiStatusRequest {
+}
+message UiStatusResponse {
+  int32 exit_code = 1;
+  string stdout = 2;
+  string stderr = 3;
+}
+
+// --- ui_tree ---
+message UiTreeRequest {
+}
+message UiTreeResponse {
+  int32 exit_code = 1;
+  string stdout = 2;
+  string stderr = 3;
+}

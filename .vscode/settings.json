@@ -11,8 +11,5 @@
             "depth": 4,
             "includeAllSymbols": true
         }
-    ],
-    "python.analysis.extraPaths": [
-        "${workspaceFolder}/.venv/lib/python3.12/site-packages"
     ]
 }

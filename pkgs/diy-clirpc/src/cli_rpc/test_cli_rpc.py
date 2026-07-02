@@ -43,7 +43,7 @@ async def _start_server(port: int):
         sys.executable,
         "-m",
         "uvicorn",
-        "cli_rpc.server_demo:app",
+        "demo.server:app",
         "--host",
         "127.0.0.1",
         "--port",
