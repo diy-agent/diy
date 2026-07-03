@@ -20,6 +20,7 @@ from cyclopts import App, Parameter
 
 from ._log import logger
 from ._sync import (
+    _get_scope_name,
     find_project_boundary,
     find_project_root,
     get_workspace_packages,
@@ -318,6 +319,7 @@ def ref_list(
         boundary = find_project_boundary()
         current_scope = None
         if boundary:
+            # 1. 先查 workspace packages
             try:
                 for name, info in get_workspace_packages(root_dir).items():
                     if Path(info.path).resolve() == boundary:
@@ -325,6 +327,10 @@ def ref_list(
                         break
             except Exception:
                 pass
+            # 2. workspace 未命中 → 从边界自身的 package.json / pyproject.toml 读项目名
+            if not current_scope and boundary != root_dir:
+                current_scope = _get_scope_name(boundary)
+            # 3. 根边界
             if not current_scope and boundary == (root_dir / ".").resolve():
                 current_scope = "."
 
@@ -339,16 +345,15 @@ def ref_list(
                 elif current_scope and current_scope != ".":
                     # 非根边界（子项目）→ 只在该 scope 精确匹配的生态显示，不回溯到根
                     scope_keys = []
-                elif eco == "source":
-                    scope_keys = []
                 else:
+                    # scope 未找到或为根 → 显示根 scope（含 source）
                     scope_keys = []
                     for alias in root_aliases:
                         if alias in scopes:
                             scope_keys = [alias]
                             break
-                    if not scope_keys:
-                        scope_keys = [next(iter(scopes))] if scopes else []
+                    if not scope_keys and scopes:
+                        scope_keys = [next(iter(scopes))]
             if not scope_keys:
                 continue
             has_entries = True

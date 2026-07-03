@@ -162,11 +162,7 @@ def _collect_sources_from_all_boundaries(root_dir: Path) -> list[str]:
             with open(yml, encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
             # 新版：ref.source；旧版兼容：顶层 sources / ref.sources
-            items = (
-                cfg.get("ref", {}).get("source", [])
-                or cfg.get("sources", [])
-                or []
-            )
+            items = cfg.get("ref", {}).get("source", []) or cfg.get("sources", []) or []
             if isinstance(items, list):
                 sources.extend(items)
         except Exception:
@@ -1210,6 +1206,7 @@ def _apply_ref_filters(
     try:
         with open(diy_yml, encoding="utf-8") as f:
             import yaml as _y
+
             cfg = _y.safe_load(f) or {}
     except Exception:
         return
@@ -1248,6 +1245,118 @@ def _apply_ref_filters(
                 scope_deps[scope] = {k: v for k, v in scope_deps[scope].items() if v}
                 if not scope_deps[scope]:
                     del scope_deps[scope]
+
+
+def _scan_sub_project_deps(
+    root_dir: Path,
+    all_deps: dict[tuple[str, str], str],
+    scope_deps: dict[str, dict[str, set]],
+    pkg_lock: dict[str, str],
+    uv_lock: dict[str, str],
+) -> None:
+    """递归扫描所有子项目边界（package.json / pyproject.toml），补充依赖。
+
+    只处理 root_dir 之下的子项目，跳过 root_dir 自身、
+    workspace 已处理的、以及 node_modules 等 vendor 目录。
+    同名依赖以先到为准（root/ workspace 优先）。
+    """
+    import tomllib
+
+    already_done: set[Path] = set()
+    for eco, name in all_deps:
+        pass  # 只为下面的跳过逻辑做准备
+    try:
+        for marker in ("package.json", "pyproject.toml"):
+            for match in sorted(root_dir.rglob(marker)):
+                d = match.parent
+                if d == root_dir or d in already_done:
+                    continue
+                if any(
+                    p in d.relative_to(root_dir).parts
+                    for p in ("node_modules", ".git", ".venv", "__pycache__")
+                ):
+                    continue
+                already_done.add(d)
+                scope_name = _get_scope_name(d)
+                pkg_json = d / "package.json"
+                pyproject = d / "pyproject.toml"
+                if pkg_json.exists():
+                    try:
+                        with open(pkg_json, encoding="utf-8") as f:
+                            pkg = json.load(f)
+                        for n, s in pkg.get("dependencies", {}).items():
+                            if ("node", n) not in all_deps:
+                                all_deps[("node", n)] = pkg_lock.get(n, s)
+                                _add_to_scope(scope_name, "dependencies", f"node:{n}")
+                        for n, s in pkg.get("devDependencies", {}).items():
+                            if ("node", n) not in all_deps:
+                                all_deps[("node", n)] = pkg_lock.get(n, s)
+                                _add_to_scope(
+                                    scope_name, "dev-dependencies", f"node:{n}"
+                                )
+                    except Exception:
+                        pass
+                if pyproject.exists():
+                    try:
+                        with open(pyproject, "rb") as f:
+                            pyproj = tomllib.load(f)
+                        proj = pyproj.get("project", {})
+                        for dep_str in proj.get("dependencies", []):
+                            parts = re.split(r"[>=<]", dep_str)
+                            if parts:
+                                n = parts[0].strip()
+                                v = uv_lock.get(n, dep_str[len(n) :].strip() or "*")
+                                if ("python", n) not in all_deps:
+                                    all_deps[("python", n)] = v
+                                    _add_to_scope(
+                                        scope_name, "dependencies", f"python:{n}"
+                                    )
+                        for group_name, deps_list in pyproj.get(
+                            "dependency-groups", {}
+                        ).items():
+                            for dep_str in deps_list:
+                                parts = re.split(r"[>=<]", dep_str)
+                                if parts:
+                                    n = parts[0].strip()
+                                    v = uv_lock.get(n, dep_str[len(n) :].strip() or "*")
+                                    if ("python", n) not in all_deps:
+                                        all_deps[("python", n)] = v
+                                        _add_to_scope(
+                                            scope_name,
+                                            f"dependency-groups:{group_name}",
+                                            f"python:{n}",
+                                        )
+                    except Exception:
+                        pass
+    except PermissionError:
+        pass
+
+
+def _get_scope_name(d: Path) -> str:
+    """从 package.json / pyproject.toml 读取项目名，用于 scope 标识。"""
+    pkg_json = d / "package.json"
+    pyproject = d / "pyproject.toml"
+    if pkg_json.exists():
+        try:
+            with open(pkg_json, encoding="utf-8") as f:
+                pkg = json.load(f)
+            name = pkg.get("name", "")
+            if name:
+                return name
+        except Exception:
+            pass
+    if pyproject.exists():
+        try:
+            import tomllib
+
+            with open(pyproject, "rb") as f:
+                data = tomllib.load(f)
+            name = data.get("project", {}).get("name", "")
+            if name:
+                return name
+        except Exception:
+            pass
+    return d.name
 
 
 def sync_dependencies():
@@ -1357,6 +1466,10 @@ def sync_dependencies():
                 ver = pkg_lock.get(n, uv_lock.get(n, s))
                 all_deps[(eco, n)] = ver
                 _add_to_scope(wp.name, "dependencies", f"{eco}:{n}")
+
+    # 4. 递归扫描所有子项目边界（有 package.json / pyproject.toml 的目录）
+    #    补充 workspace 之外的独立子项目依赖
+    _scan_sub_project_deps(root_dir, all_deps, scope_deps, pkg_lock, uv_lock)
 
     # 过滤掉 workspace 内部包 — 它们是源码，不需要 clone
     workspace_names = set(workspace_packages.keys())
