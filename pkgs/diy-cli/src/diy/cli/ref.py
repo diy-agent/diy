@@ -12,19 +12,20 @@ Agent 通过 diy ref list 查到路径，再用 read_file 读源码。
 """
 
 import sys
-import yaml
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
+
+import yaml
 from cyclopts import App, Parameter
 
 from ._log import logger
 from ._sync import (
+    find_project_boundary,
     find_project_root,
+    get_workspace_packages,
     parse_repo_url,
     scan_project_deps,
     sync_dependencies,
-    find_project_boundary,
-    get_workspace_packages,
 )
 
 log = logger.with_tag("ref")
@@ -66,13 +67,28 @@ def _require_project_root() -> Path:
         sys.exit(1)
 
 
+def _require_project_boundary() -> Path:
+    """找当前项目边界（diy.yaml / pyproject.toml / package.json / .git），失败则报错退出。
+
+    边界优先级：
+      ① cwd 自身 → ② parent 链上第一个标记 → ③ git 根
+    标记：diy.yaml / pyproject.toml / package.json
+    兜底：.git
+    """
+    try:
+        return find_project_boundary()
+    except FileNotFoundError as e:
+        log.error(str(e))
+        sys.exit(1)
+
+
 def _load_ref_lock(root_dir: Path) -> dict:
     """加载 .diy/ref.lock.yaml"""
     lock_path = root_dir / ".diy" / "ref.lock.yaml"
     if not lock_path.exists():
         return {}
     try:
-        with open(lock_path, "r", encoding="utf-8") as f:
+        with open(lock_path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         return data.get("refs", {})
     except Exception:
@@ -85,7 +101,7 @@ def _load_diy_yaml(root_dir: Path) -> dict:
     if not diy_yaml.exists():
         return {}
     try:
-        with open(diy_yaml, "r", encoding="utf-8") as f:
+        with open(diy_yaml, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except Exception:
         return {}
@@ -109,32 +125,34 @@ def _status_icon(status: str) -> str:
 @ref_app.command(name="list")
 def ref_list(
     verbose: Annotated[int, Parameter(help="冗余级别: -v=INFO, -vv=DEBUG")] = 0,
-    all: Annotated[bool, Parameter(help="显示所有 scope 的条目", name="--all", negative="")] = False,
+    all: Annotated[
+        bool, Parameter(help="显示所有 scope 的条目", name="--all", negative="")
+    ] = False,
 ):
     """查看 .diy/ref.lock.yaml 的镜像映射表
 
-从当前目录自动检测所属 scope (项目边界), 只显示该 scope 的条目。
---all 显示文件中所有 scope。
+    从当前目录自动检测所属 scope (项目边界), 只显示该 scope 的条目。
+    --all 显示文件中所有 scope。
 
-输出层级: ecosystem(python/node/source) → scope(项目名) → category(dependencies/…) → 包名
+    输出层级: ecosystem(python/node/source) → scope(项目名) → category(dependencies/…) → 包名
 
-示例:
-  # 当前在子包 diy-cli 目录
-  $ diy ref list
-  python:
-    diy-cli:
-      dependencies:
-        rich: ~/.diy/ref/github.com/Textualize/rich/v13.9.4
-  Scope: diy/diy-cli (python)
+    示例:
+      # 当前在子包 diy-cli 目录
+      $ diy ref list
+      python:
+        diy-cli:
+          dependencies:
+            rich: ~/.diy/ref/github.com/Textualize/rich/v13.9.4
+      Scope: diy/diy-cli (python)
 
-  $ diy ref list --all
-  python:
-    diy-app:   ...
-    diy-cli:   ...
-  ...
+      $ diy ref list --all
+      python:
+        diy-app:   ...
+        diy-cli:   ...
+      ...
 
-  # 镜像文件: ~/.diy/ref/github.com/Textualize/rich/v13.9.4/
-"""
+      # 镜像文件: ~/.diy/ref/github.com/Textualize/rich/v13.9.4/
+    """
     root_dir = _require_project_root()
 
     lock_path = root_dir / ".diy" / "ref.lock.yaml"
@@ -143,6 +161,7 @@ def ref_list(
         return
 
     import yaml
+
     try:
         data = yaml.safe_load(lock_path.read_text()) or {}
     except yaml.YAMLError as e:
@@ -152,6 +171,7 @@ def ref_list(
 
     ver = data.get("version", 0)
     from rich.console import Console
+
     console = Console()
 
     if ver >= 5 and "refs" in data:
@@ -262,6 +282,7 @@ def _read_root_project_name(root_dir: Path) -> str:
     if pyproj.exists():
         try:
             import tomllib
+
             with open(pyproj, "rb") as f:
                 data = tomllib.load(f)
             name = data.get("project", {}).get("name", "")
@@ -284,27 +305,29 @@ def _read_root_project_name(root_dir: Path) -> str:
 @ref_app.command(name="add")
 def ref_add(
     url: Annotated[str, Parameter(help="Git 仓库 URL，如 https://github.com/org/repo")],
-    version: Annotated[Optional[str], Parameter(help="分支/tag/commit，如 main、v1.0.0")] = None,
+    version: Annotated[
+        str | None, Parameter(help="分支/tag/commit，如 main、v1.0.0")
+    ] = None,
     verbose: Annotated[int, Parameter(help="冗余级别: -v=INFO, -vv=DEBUG")] = 0,
 ):
     """注册外部仓库到 diy.yaml，供后续 diy ref sync 下载源码
 
-注册后运行 diy ref sync 实际 clone 到 ~/.diy/ref/。
+    注册后运行 diy ref sync 实际 clone 到 ~/.diy/ref/。
 
-示例:
-  # 基本注册
-  diy ref add https://github.com/org/repo
-  -> diy.yaml 追加 sources: ["https://github.com/org/repo"]
-  -> diy ref sync -> ~/.diy/ref/github.com/org/repo/main/
+    示例:
+      # 基本注册
+      diy ref add https://github.com/org/repo
+      -> diy.yaml 追加 sources: ["https://github.com/org/repo"]
+      -> diy ref sync -> ~/.diy/ref/github.com/org/repo/main/
 
-  # 指定版本
-  diy ref add https://github.com/org/repo@v1.0.0
-  -> .diy/ref.lock.yaml -> source:. : github.com/org/repo: ~/path
+      # 指定版本
+      diy ref add https://github.com/org/repo@v1.0.0
+      -> .diy/ref.lock.yaml -> source:. : github.com/org/repo: ~/path
 
-  # 查看镜像列表
-  diy ref list -> source 组显示条目
-"""
-    root_dir = _require_project_root()
+      # 查看镜像列表
+      diy ref list -> source 组显示条目
+    """
+    root_dir = _require_project_boundary()
     config = _load_diy_yaml(root_dir)
 
     if "sources" not in config:
@@ -328,6 +351,7 @@ def ref_add(
 
     # 验证 git 命令可用
     import shutil as _su
+
     if not _su.which("git"):
         log.error("缺少 git 命令")
         log.info("  安装 git 后重试：brew install git")
@@ -335,15 +359,24 @@ def ref_add(
 
     # 验证 URL 是否可访问（是真实的 git 仓库）
     import subprocess as _sp
+
     verify_url = url.rstrip("/")
-    result = _sp.run(
-        ["git", "ls-remote", "--heads", verify_url],
-        capture_output=True, text=True, timeout=15,
-    )
-    if result.returncode != 0:
-        log.error(f"URL 不是有效的 git 仓库: {url}")
-        log.info("  git ls-remote 请求失败 — 请确认 URL 正确且仓库可公开访问。")
+    try:
+        result = _sp.run(
+            ["git", "ls-remote", "--heads", verify_url],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except _sp.TimeoutExpired:
+        log.error(f"验证超时（15 秒）: {url}")
+        log.info("  git ls-remote 请求超时 — 请确认网络连接或 URL 是否正确。")
         sys.exit(1)
+    else:
+        if result.returncode != 0:
+            log.error(f"URL 不是有效的 git 仓库: {url}")
+            log.info("  git ls-remote 请求失败 — 请确认 URL 正确且仓库可公开访问。")
+            sys.exit(1)
 
     # 同 host/owner/repo 但 URL 不同 → 替换旧条目
     replaced = False
@@ -351,7 +384,11 @@ def ref_add(
     for existing in config["sources"]:
         existing_part = existing.split("@")[0] if "@" in existing else existing
         existing_info = parse_repo_url(existing_part)
-        existing_key = f"{existing_info.host}/{existing_info.owner}/{existing_info.repo}" if existing_info else ""
+        existing_key = (
+            f"{existing_info.host}/{existing_info.owner}/{existing_info.repo}"
+            if existing_info
+            else ""
+        )
         if existing_key == scope_key:
             if existing != spec:
                 log.info("替换 source: %s → %s", existing, spec)
@@ -375,21 +412,24 @@ def ref_add(
 
 @ref_app.command(name="remove")
 def ref_remove(
-    name: Annotated[str, Parameter(
-        help="要移除的 source（支持 owner/repo、完整 URL、或 diy.yaml 中的原字符串）"
-    )],
+    name: Annotated[
+        str,
+        Parameter(
+            help="要移除的 source（支持 owner/repo、完整 URL、或 diy.yaml 中的原字符串）"
+        ),
+    ],
     verbose: Annotated[int, Parameter(help="冗余级别: -v=INFO, -vv=DEBUG")] = 0,
 ):
     """从 diy.yaml 中移除已注册的 source
 
-只移除注册信息，已 clone 到 ~/.diy/ref/ 的源码保留不动。
+    只移除注册信息，已 clone 到 ~/.diy/ref/ 的源码保留不动。
 
-用法示例:
-  diy ref remove owner/repo
-  diy ref remove https://github.com/org/repo
-  diy ref remove https://github.com/org/repo@main
-"""
-    root_dir = _require_project_root()
+    用法示例:
+      diy ref remove owner/repo
+      diy ref remove https://github.com/org/repo
+      diy ref remove https://github.com/org/repo@main
+    """
+    root_dir = _require_project_boundary()
     config = _load_diy_yaml(root_dir)
     sources = config.get("sources", [])
 
@@ -429,9 +469,9 @@ def ref_status(
 ):
     """检查 ~/.diy/ref/ 下已同步的源码目录是否存在
 
-✓ 正常 = 路径存在可读, ✗ 缺失 = 需重新 diy sync
-Agent 读 ref 源码前可用此命令确认路径有效。
-"""
+    ✓ 正常 = 路径存在可读, ✗ 缺失 = 需重新 diy sync
+    Agent 读 ref 源码前可用此命令确认路径有效。
+    """
     root_dir = _require_project_root()
     deps = scan_project_deps(root_dir)
     synced = [d for d in deps if d.status == "synced"]
@@ -441,9 +481,9 @@ Agent 读 ref 源码前可用此命令确认路径有效。
         log.info("运行 'diy sync' 下载")
         return
 
+    from rich import box
     from rich.console import Console
     from rich.table import Table
-    from rich import box
 
     console = Console()
     table = Table(title="Ref 状态 — 本地路径检查", box=box.SIMPLE)
@@ -480,7 +520,9 @@ Agent 读 ref 源码前可用此命令确认路径有效。
     console.print()
 
     if missing_count > 0:
-        console.print(f"[yellow]⚠ 有 {missing_count} 个镜像缺失，运行 'diy sync' 重新下载[/yellow]")
+        console.print(
+            f"[yellow]⚠ 有 {missing_count} 个镜像缺失，运行 'diy sync' 重新下载[/yellow]"
+        )
     console.print(f"[green]{ok_count}[/green] 正常, [red]{missing_count}[/red] 缺失")
 
 
@@ -490,22 +532,22 @@ def ref_sync(
 ):
     """同步项目依赖和 sources 到 ~/.diy/ref/
 
-扫描 pyproject.toml 和 package.json:
-  - [project] dependencies           -> python:dependencies
-  - [project.optional-dependencies]  -> python:optional-dependencies:<组>
-  - [dependency-groups]              -> python:dependency-groups:<组>
-  - dependencies / devDependencies   -> node:dependencies / node:dev-dependencies
+    扫描 pyproject.toml 和 package.json:
+      - [project] dependencies           -> python:dependencies
+      - [project.optional-dependencies]  -> python:optional-dependencies:<组>
+      - [dependency-groups]              -> python:dependency-groups:<组>
+      - dependencies / devDependencies   -> node:dependencies / node:dev-dependencies
 
-也处理 diy ref add 注册的外部仓库 (diy.yaml -> sources)。
+    也处理 diy ref add 注册的外部仓库 (diy.yaml -> sources)。
 
-写入 .diy/ref.lock.yaml (v5), 镜像存放 ~/.diy/ref/github.com/<owner>/<repo>/<version>/
+    写入 .diy/ref.lock.yaml (v5), 镜像存放 ~/.diy/ref/github.com/<owner>/<repo>/<version>/
 
-示例:
-  diy ref sync
-  -> .diy/ref.lock.yaml (version:5)
-  -> ~/.diy/ref/github.com/pytest-dev/pytest/9.0.3/
-  -> ~/.diy/ref/github.com/Textualize/rich/v13.9.4/
-"""
+    示例:
+      diy ref sync
+      -> .diy/ref.lock.yaml (version:5)
+      -> ~/.diy/ref/github.com/pytest-dev/pytest/9.0.3/
+      -> ~/.diy/ref/github.com/Textualize/rich/v13.9.4/
+    """
     try:
         sync_dependencies()
     except FileNotFoundError as e:
