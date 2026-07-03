@@ -128,3 +128,101 @@ def test_collect_sources_skips_vendor_dirs(fake_home: Path):
     sources = _collect_sources_from_all_boundaries(root)
 
     assert "https://github.com/evil/repo" not in sources
+
+
+def test_migrate_diy_config_old_top_sources(fake_home: Path):
+    """旧版顶层 sources → 迁移为 ref.source。"""
+    from diy.cli.ref import _migrate_diy_config
+
+    old = {"sources": ["https://github.com/org/repo"]}
+    result = _migrate_diy_config(old)
+    assert "sources" not in result
+    assert result["ref"]["source"] == ["https://github.com/org/repo"]
+
+
+def test_migrate_diy_config_old_ref_sources(fake_home: Path):
+    """旧版 ref.sources（复数）→ ref.source（singular）。"""
+    from diy.cli.ref import _migrate_diy_config
+
+    old = {"ref": {"sources": ["https://github.com/org/repo"]}}
+    result = _migrate_diy_config(old)
+    assert "sources" not in result["ref"]
+    assert result["ref"]["source"] == ["https://github.com/org/repo"]
+
+
+def test_migrate_diy_config_merge(fake_home: Path):
+    """新旧 source 合并去重。"""
+    from diy.cli.ref import _migrate_diy_config
+
+    old = {
+        "sources": ["https://github.com/org/repo1"],
+        "ref": {"source": ["https://github.com/org/repo2"]},
+    }
+    result = _migrate_diy_config(old)
+    assert "sources" not in result
+    assert "https://github.com/org/repo1" in result["ref"]["source"]
+    assert "https://github.com/org/repo2" in result["ref"]["source"]
+
+
+def test_migrate_diy_config_skip_empty(fake_home: Path):
+    """空列表不生成 ref.source。"""
+    from diy.cli.ref import _migrate_diy_config
+
+    old = {"sources": []}
+    result = _migrate_diy_config(old)
+    assert result.get("ref", {}).get("source", None) is None
+
+
+def test_apply_ref_filters_include(fake_home: Path):
+    """ref.python.include 只保留匹配的依赖。"""
+    from diy.cli._sync import _apply_ref_filters
+
+    root = fake_home / "test-filter"
+    root.mkdir()
+    (root / "diy.yaml").write_text(
+        "ref:\n  python:\n    include:\n      - rich\n"
+    )
+
+    all_deps: dict[tuple[str, str], str] = {
+        ("python", "rich"): "13.0.0",
+        ("python", "pytest"): "8.0.0",
+        ("node", "react"): "18.0.0",
+    }
+    scope_deps: dict[str, dict[str, set]] = {
+        ".": {"dependencies": {"python:rich", "python:pytest", "node:react"}}
+    }
+
+    _apply_ref_filters(root, all_deps, scope_deps)
+
+    assert ("python", "rich") in all_deps
+    assert ("python", "pytest") not in all_deps  # 不在 include 中
+    assert ("node", "react") in all_deps  # node 不受 python include 影响
+    assert "python:pytest" not in scope_deps["."]["dependencies"]
+
+
+def test_apply_ref_filters_exclude(fake_home: Path):
+    """ref.node.exclude 排除匹配的依赖。"""
+    from diy.cli._sync import _apply_ref_filters
+
+    root = fake_home / "test-filter"
+    root.mkdir()
+    (root / "diy.yaml").write_text(
+        "ref:\n  node:\n    exclude:\n      - eslint*\n"
+    )
+
+    all_deps: dict[tuple[str, str], str] = {
+        ("node", "react"): "18.0.0",
+        ("node", "eslint"): "9.1.0",
+        ("node", "eslint-plugin-react"): "7.0.0",
+        ("python", "pytest"): "8.0.0",
+    }
+    scope_deps: dict[str, dict[str, set]] = {
+        ".": {"dependencies": {"node:react", "node:eslint", "node:eslint-plugin-react", "python:pytest"}}
+    }
+
+    _apply_ref_filters(root, all_deps, scope_deps)
+
+    assert ("node", "react") in all_deps
+    assert ("node", "eslint") not in all_deps  # 匹配 eslint*
+    assert ("node", "eslint-plugin-react") not in all_deps  # 匹配 eslint*
+    assert ("python", "pytest") in all_deps  # python 不受 node exclude 影响

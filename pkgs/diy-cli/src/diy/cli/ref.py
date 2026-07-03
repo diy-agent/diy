@@ -95,16 +95,83 @@ def _load_ref_lock(root_dir: Path) -> dict:
         return {}
 
 
+def _migrate_diy_config(config: dict) -> dict:
+    """将旧版 diy.yaml 格式迁移到新版。
+
+    旧版（v1）：
+      sources: ["https://..."]
+
+    新版（v2）：
+      ref:
+        source: ["https://..."]       # 人工指定 source
+        node:
+          include: ["xxx-*"]
+          exclude: ["xxx-*"]
+        python:
+          include: ["xxx-*"]
+          exclude: ["xxx-*"]
+
+    迁移规则：
+      - 顶层 sources → ref.source（去重合并）
+      - 旧版 ref.sources → ref.source（singular）
+    """
+    if not config:
+        return config
+
+    config.setdefault("ref", {})
+    ref = config["ref"]
+
+    # 迁移旧顶层 sources → ref.source
+    old_top = config.pop("sources", None)
+    if isinstance(old_top, list) and old_top:
+        existing = ref.get("source", [])
+        seen = set(existing)
+        for s in old_top:
+            if s not in seen:
+                existing.append(s)
+                seen.add(s)
+        ref["source"] = existing
+
+    # 迁移旧版 ref.sources（复数）→ ref.source（singular）
+    old_ref_sources = ref.pop("sources", None)
+    if isinstance(old_ref_sources, list) and old_ref_sources:
+        existing = ref.get("source", [])
+        seen = set(existing)
+        for s in old_ref_sources:
+            if s not in seen:
+                existing.append(s)
+                seen.add(s)
+        ref["source"] = existing
+
+    # 清理：ref 无有效内容时移除
+    if not ref.get("source") and not ref.get("node") and not ref.get("python"):
+        config.pop("ref", None)
+
+    return config
+
+
 def _load_diy_yaml(root_dir: Path) -> dict:
-    """加载 diy.yaml"""
+    """加载 diy.yaml，自动迁移旧版格式到新版。"""
     diy_yaml = root_dir / "diy.yaml"
     if not diy_yaml.exists():
         return {}
     try:
         with open(diy_yaml, encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+            config = yaml.safe_load(f) or {}
+        return _migrate_diy_config(config)
     except Exception:
         return {}
+
+
+def _save_diy_yaml(root_dir: Path, config: dict):
+    """保存 diy.yaml（始终写入新版格式）"""
+    diy_yaml = root_dir / "diy.yaml"
+    try:
+        with open(diy_yaml, "w", encoding="utf-8") as f:
+            yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+    except Exception as e:
+        log.error(f"保存 diy.yaml 失败: {e}")
+        raise
 
 
 def _save_diy_yaml(root_dir: Path, config: dict):
@@ -330,8 +397,8 @@ def ref_add(
     root_dir = _require_project_boundary()
     config = _load_diy_yaml(root_dir)
 
-    if "sources" not in config:
-        config["sources"] = []
+    ref = config.setdefault("ref", {})
+    source_list = ref.setdefault("source", [])
 
     # 自动识别 URL 中的 @version（如 https://github.com/org/repo@main）
     if "@" in url and not version:
@@ -381,7 +448,7 @@ def ref_add(
     # 同 host/owner/repo 但 URL 不同 → 替换旧条目
     replaced = False
     new_sources: list[str] = []
-    for existing in config["sources"]:
+    for existing in source_list:
         existing_part = existing.split("@")[0] if "@" in existing else existing
         existing_info = parse_repo_url(existing_part)
         existing_key = (
@@ -401,9 +468,9 @@ def ref_add(
         new_sources.append(existing)
 
     if replaced:
-        config["sources"] = new_sources
+        ref["source"] = new_sources
     else:
-        config["sources"].append(spec)
+        ref["source"].append(spec)
     _save_diy_yaml(root_dir, config)
     log.success("已注册 source: %s", spec)
     log.info("立即同步...")
@@ -431,15 +498,16 @@ def ref_remove(
     """
     root_dir = _require_project_boundary()
     config = _load_diy_yaml(root_dir)
-    sources = config.get("sources", [])
+    ref = config.setdefault("ref", {})
+    source_list = ref.get("source", [])
 
-    if not sources:
-        log.info("diy.yaml 中没有注册 sources，无需移除")
+    if not source_list:
+        log.info("diy.yaml 中没有注册 source，无需移除")
         return
 
     found = False
     new_sources = []
-    for s in sources:
+    for s in source_list:
         url_part = s.split("@")[0] if "@" in s else s
         repo_info = parse_repo_url(url_part)
         if repo_info:
@@ -452,12 +520,12 @@ def ref_remove(
 
     if not found:
         log.error("未找到匹配的 source: %s", name)
-        log.info("  现有 sources:")
-        for s in sources:
+        log.info("  现有 source:")
+        for s in source_list:
             log.info("    %s", s)
         sys.exit(1)
 
-    config["sources"] = new_sources
+    ref["source"] = new_sources
     _save_diy_yaml(root_dir, config)
     log.success("已移除 source: %s", name)
     log.info("  本地缓存 ~/.diy/ref/ 中的代码不受影响")

@@ -161,7 +161,12 @@ def _collect_sources_from_all_boundaries(root_dir: Path) -> list[str]:
         try:
             with open(yml, encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
-            items = cfg.get("sources", [])
+            # 新版：ref.source；旧版兼容：顶层 sources / ref.sources
+            items = (
+                cfg.get("ref", {}).get("source", [])
+                or cfg.get("sources", [])
+                or []
+            )
             if isinstance(items, list):
                 sources.extend(items)
         except Exception:
@@ -1187,6 +1192,64 @@ def scan_project_deps(root_dir):
     return result
 
 
+def _apply_ref_filters(
+    root_dir: Path,
+    all_deps: dict[tuple[str, str], str],
+    scope_deps: dict[str, dict[str, set]],
+) -> None:
+    """应用 diy.yaml ref.{node,python}.{include,exclude} 过滤。
+
+    从 diy.yaml 读取 include/exclude 模式（glob 风格），
+    过滤 all_deps 和 scope_deps，匹配 exclude 或不在 include 中的条目被跳过。
+    """
+    import fnmatch
+
+    diy_yml = root_dir / "diy.yaml"
+    if not diy_yml.exists():
+        return
+    try:
+        with open(diy_yml, encoding="utf-8") as f:
+            import yaml as _y
+            cfg = _y.safe_load(f) or {}
+    except Exception:
+        return
+
+    ref_cfg = cfg.get("ref", {})
+    for eco in ("node", "python"):
+        eco_cfg = ref_cfg.get(eco, {})
+        if not eco_cfg:
+            continue
+        include_pats: list[str] = eco_cfg.get("include", [])
+        exclude_pats: list[str] = eco_cfg.get("exclude", [])
+        if not include_pats and not exclude_pats:
+            continue
+
+        removed: set[tuple[str, str]] = set()
+        for (e, name), ver in list(all_deps.items()):
+            if e != eco:
+                continue
+            # include: 如果指定了，name 必须在任一模式中
+            if include_pats and not any(fnmatch.fnmatch(name, p) for p in include_pats):
+                removed.add((e, name))
+                continue
+            # exclude: name 匹配任一模式则跳过
+            if exclude_pats and any(fnmatch.fnmatch(name, p) for p in exclude_pats):
+                removed.add((e, name))
+                continue
+
+        for e, name in removed:
+            all_deps.pop((e, name), None)
+            # 同步清理 scope_deps
+            dep_key = f"{e}:{name}"
+            for scope in list(scope_deps.keys()):
+                for cat in list(scope_deps.get(scope, {}).keys()):
+                    scope_deps[scope][cat].discard(dep_key)
+                # 删空 category
+                scope_deps[scope] = {k: v for k, v in scope_deps[scope].items() if v}
+                if not scope_deps[scope]:
+                    del scope_deps[scope]
+
+
 def sync_dependencies():
     log.info("sync start")
     _require_cmd("git", "安装 git 后重试：brew install git")
@@ -1311,6 +1374,9 @@ def sync_dependencies():
         scope_deps[scope] = {k: v for k, v in scope_deps[scope].items() if v}
         if not scope_deps[scope]:
             del scope_deps[scope]
+
+    # 应用 ref.{node,python}.{include,exclude} 过滤
+    _apply_ref_filters(root_dir, all_deps, scope_deps)
 
     items = list(all_deps.items())
     # sources = root & sub-project diy.yaml
