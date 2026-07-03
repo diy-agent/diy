@@ -56,6 +56,32 @@ ref_app = App(
 )
 
 
+def _init_diy_yaml(target: Path | None = None) -> Path:
+    """在目标目录创建 diy.yaml，返回文件路径。
+
+    target=None → 从 cwd 找项目边界，在边界处创建。
+    target=指定 → 直接在指定路径创建。文件已存在则报错。"""
+    if target:
+        diy_yaml = target / "diy.yaml"
+        if diy_yaml.exists():
+            log.warning("已存在 diy.yaml，跳过初始化")
+            log.info("  路径: %s", diy_yaml)
+            return diy_yaml
+        target.mkdir(parents=True, exist_ok=True)
+    else:
+        root_dir = _require_project_boundary()
+        diy_yaml = root_dir / "diy.yaml"
+        if diy_yaml.exists():
+            log.warning("已存在 diy.yaml，跳过初始化")
+            log.info("  路径: %s", diy_yaml)
+            return diy_yaml
+
+    diy_yaml.write_text(_DIY_YAML_TEMPLATE, encoding="utf-8")
+    log.success("已初始化 diy.yaml")
+    log.info("  路径: %s", diy_yaml)
+    return diy_yaml
+
+
 def _require_project_root() -> Path:
     """找项目根目录（含 diy.yaml），失败则报错退出。"""
     try:
@@ -172,6 +198,42 @@ def _save_diy_yaml(root_dir: Path, config: dict):
     except Exception as e:
         log.error(f"保存 diy.yaml 失败: {e}")
         raise
+
+
+_DIY_YAML_TEMPLATE = """\
+# diy — 本地源码镜像配置
+#
+# diy ref add <url>  — 注册人工指定 source（总是 clone）
+# diy ref sync       — 扫描项目依赖 + clone 所有 source
+#
+# 人工指定 source（总是下载）：
+#   diy ref add https://github.com/org/repo
+#   diy ref add https://github.com/org/repo@v1.0.0
+#   -> ref.sync 时 clone 到 ~/.diy/ref/github.com/org/repo/v1.0.0/
+#
+# 自动依赖过滤（ref sync 从 pyproject.toml / package.json 扫描）：
+#   include = 白名单 glob，匹配的才下载（空列表 = 全部下载）
+#   exclude = 黑名单 glob，匹配的跳过（空列表 = 不跳过）
+#
+# 示例：
+#   ref:
+#     source: https://github.com/xxx/yyy  # 人工指定
+#     node:
+#       include: ['@acme/*', 'react']     # 仅下载 @acme/ 下和 react
+#       exclude: ['eslint-*']             # eslint- 开头的跳过
+#     python:
+#       include: ['rich', 'typer']
+#       exclude: ['pytest-*']
+
+ref:
+  source: []
+  # node:
+  #   include: []
+  #   exclude: []
+  # python:
+  #   include: []
+  #   exclude: []
+"""
 
 
 def _save_diy_yaml(root_dir: Path, config: dict):
@@ -395,6 +457,9 @@ def ref_add(
       diy ref list -> source 组显示条目
     """
     root_dir = _require_project_boundary()
+    # diy.yaml 不存在时，先用模板初始化
+    if not (root_dir / "diy.yaml").exists():
+        _init_diy_yaml(root_dir)
     config = _load_diy_yaml(root_dir)
 
     ref = config.setdefault("ref", {})

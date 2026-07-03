@@ -226,3 +226,61 @@ def test_apply_ref_filters_exclude(fake_home: Path):
     assert ("node", "eslint") not in all_deps  # 匹配 eslint*
     assert ("node", "eslint-plugin-react") not in all_deps  # 匹配 eslint*
     assert ("python", "pytest") in all_deps  # python 不受 node exclude 影响
+
+
+def test_init_diy_yaml_creates_template(fake_home: Path):
+    """diy init 在目标目录创建 diy.yaml 模板。"""
+    from diy.cli.ref import _DIY_YAML_TEMPLATE, _init_diy_yaml
+
+    target = fake_home / "my-project"
+    target.mkdir()
+
+    diy_yaml = _init_diy_yaml(target)
+    assert diy_yaml.exists()
+    content = diy_yaml.read_text(encoding="utf-8")
+    assert content == _DIY_YAML_TEMPLATE
+    assert "source:" in content
+    assert "# node:" in content
+    assert "# python:" in content
+
+
+def test_init_diy_yaml_skip_existing(fake_home: Path):
+    """diy init 跳过已存在的 diy.yaml。"""
+    from diy.cli.ref import _init_diy_yaml
+
+    target = fake_home / "my-project"
+    target.mkdir()
+    (target / "diy.yaml").write_text("existing: true\n")
+
+    diy_yaml = _init_diy_yaml(target)
+    content = diy_yaml.read_text(encoding="utf-8")
+    # 应保留原有内容
+    assert "existing: true" in content
+    assert "ref.source" not in content  # 不应覆盖
+
+
+def test_init_diy_yaml_auto_ref_add(fake_home: Path):
+    """ref add 在无 diy.yaml 时自动创建模板并写入 source。"""
+    root = fake_home / "auto-init-project"
+    root.mkdir()
+    # 模拟 ref add 找到的项目边界
+    from diy.cli.ref import _init_diy_yaml
+    _init_diy_yaml(root)
+
+    diy_yaml = root / "diy.yaml"
+    assert diy_yaml.exists()
+    content = diy_yaml.read_text(encoding="utf-8")
+    assert "# diy" in content
+    assert "source:" in content
+
+
+def test_init_diy_yaml_at_boundary(fake_home: Path):
+    """diy init 在项目边界创建 diy.yaml。"""
+    root = fake_home / "init-boundary"
+    root.mkdir()
+    (root / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+
+    from diy.cli.ref import _init_diy_yaml
+    diy_yaml = _init_diy_yaml(root)
+    assert diy_yaml.exists()
+    assert diy_yaml.parent == root

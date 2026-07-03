@@ -3,13 +3,14 @@
 import sys
 from importlib.metadata import version
 from typing import Annotated
-from cyclopts import App, Parameter, Group
+
+from cyclopts import App, Group, Parameter
 
 from . import _dai_cli
-from ._log import set_verbosity, logger
+from ._log import set_verbosity
 from .llm import llm_app
-from .ref import ref_app
 from .llm.auth import load_dotenv
+from .ref import ref_app
 
 _GLOBAL_GROUP = Group("全局选项")
 
@@ -64,6 +65,21 @@ def doctor():
 # 因为它是不同的 App 实例
 app.command(_dai_cli.scan)
 
+
+@app.command(name="init")
+def init_cmd():
+    """初始化项目 diy.yaml 配置模板
+
+在当前目录（或项目边界）创建 diy.yaml，包含所有可配置字段的注释说明。
+文件已存在时跳过。
+
+示例:
+  diy init                → 在项目边界创建 diy.yaml
+  diy init -v             → 详细输出
+"""
+    from .ref import _init_diy_yaml
+    _init_diy_yaml()
+
 @app.default
 def root(verbose: VerboseRoot = 0):
     """diy 统一管理工具"""
@@ -114,7 +130,7 @@ def main():
         return
 
     # 本地执行的命令（不走 socket）
-    local_cmds = {"restart", "shutdown", "agent", "doctor", "llm", "ref", "scan",
+    local_cmds = {"restart", "shutdown", "agent", "doctor", "llm", "ref", "init", "scan",
                    "--help", "-h", "--version", "-V"}
     cmd = args[0]
     if cmd in local_cmds:
