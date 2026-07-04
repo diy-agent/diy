@@ -15,8 +15,8 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def test_find_project_boundary_package_json(fake_home: Path):
-    """package.json 作为子项目边界标记。"""
+def test_find_project_boundary_diy_yaml_only(fake_home: Path):
+    """diy.yaml 是唯一边界标记 — package.json/pyproject.toml 不再是边界。"""
     root = fake_home / "test-monorepo"
     sub = root / "packages" / "web-ui"
     sub.mkdir(parents=True)
@@ -25,40 +25,45 @@ def test_find_project_boundary_package_json(fake_home: Path):
     (root / ".git").mkdir()
     (sub / "package.json").write_text('{"name": "web-ui"}\n')
 
-    # 从子项目目录 → 边界是子项目（需 resolve() 匹配 find_project_boundary 内部 resolve）
     from diy.cli._sync import find_project_boundary
-    assert find_project_boundary(start=sub) == sub.resolve()
-
-    # 从根目录 → 边界是根
+    # 子目录无 diy.yaml → 向上找到根的 diy.yaml
+    assert find_project_boundary(start=sub) == root.resolve()
+    # 根有 diy.yaml → 返回根
     assert find_project_boundary(start=root) == root.resolve()
 
 
-def test_find_project_boundary_pyproject_toml(fake_home: Path):
-    """pyproject.toml 作为子项目边界标记。"""
+def test_find_project_boundary_pyproject_ignored(fake_home: Path):
+    """pyproject.toml 不再是边界标记 — 遇到 .git 无 diy.yaml 则报错。"""
     root = fake_home / "test-monorepo"
     sub = root / "pkgs" / "diy-extras"
     sub.mkdir(parents=True)
 
-    (root / "diy.yaml").write_text("sources: []\n")
     (root / ".git").mkdir()
     (sub / "pyproject.toml").write_text("[project]\nname = 'diy-extras'\n")
 
+    import pytest
     from diy.cli._sync import find_project_boundary
-    assert find_project_boundary(start=sub) == sub.resolve()
-    assert find_project_boundary(start=root) == root.resolve()
+    # 根无 diy.yaml 但有 .git → 不是 diy 项目
+    with pytest.raises(FileNotFoundError, match="未找到 diy.yaml"):
+        find_project_boundary(start=sub)
 
 
-def test_find_project_boundary_git_fallback(fake_home: Path):
-    """无 py/package.json/diy.yaml → .git 兜底边界。"""
+def test_find_project_boundary_git_stops(fake_home: Path):
+    """无 diy.yaml 时 .git 是硬停止，不是兜底边界。"""
     root = fake_home / "git-only-repo"
     nested = root / "src" / "deeply" / "nested"
     nested.mkdir(parents=True)
 
     (root / ".git").mkdir()
 
+    import pytest
     from diy.cli._sync import find_project_boundary
-    assert find_project_boundary(start=nested) == root.resolve()
-    assert find_project_boundary(start=root) == root.resolve()
+    # 从深层向上，遇到 .git 但无 diy.yaml → 报错
+    with pytest.raises(FileNotFoundError, match="未找到 diy.yaml"):
+        find_project_boundary(start=nested)
+    # 从根目录自身，.git 在此但无 diy.yaml → 报错
+    with pytest.raises(FileNotFoundError, match="未找到 diy.yaml"):
+        find_project_boundary(start=root)
 
 
 def test_find_project_boundary_diy_yaml_priority(fake_home: Path):
@@ -78,12 +83,12 @@ def test_find_project_boundary_diy_yaml_priority(fake_home: Path):
 
 
 def test_find_project_boundary_upward_traversal(fake_home: Path):
-    """子目录无标记时向上遍历到最近的项目边界。"""
+    """子目录无标记时向上遍历到最近的 diy.yaml。"""
     root = fake_home / "test-monorepo"
     deep = root / "some" / "random" / "dir"
     deep.mkdir(parents=True)
 
-    (root / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+    (root / "diy.yaml").write_text("sources: []\n")
     (root / ".git").mkdir()
 
     from diy.cli._sync import find_project_boundary

@@ -351,7 +351,7 @@ class TestRefAdd:
 
         import yaml as _y
         cfg = _y.safe_load((root / "diy.yaml").read_text()) or {}
-        assert "https://github.com/brentyi/tyro" in cfg.get("sources", [])
+        assert "https://github.com/brentyi/tyro" in cfg.get("ref", {}).get("source", [])
 
     def test_add_duplicate_url_skipped(self, tmp_path):
         """意图：完全相同的 URL 再次添加应跳过"""
@@ -366,7 +366,7 @@ class TestRefAdd:
             from diy.cli.ref import ref_add
             ref_add(url="https://github.com/brentyi/tyro")
 
-        # 不应重复
+        # 不应重复 — 文件未被修改（函数提前返回），内容仍是原始格式
         import yaml as _y
         cfg = _y.safe_load((root / "diy.yaml").read_text()) or {}
         assert cfg.get("sources") == ["https://github.com/brentyi/tyro"]
@@ -386,7 +386,7 @@ class TestRefAdd:
 
         import yaml as _y
         cfg = _y.safe_load((root / "diy.yaml").read_text()) or {}
-        sources = cfg.get("sources", [])
+        sources = cfg.get("ref", {}).get("source", [])
         assert "https://github.com/brentyi/tyro@v1" not in sources, "旧版本应被替换"
         assert "https://github.com/brentyi/tyro@v2" in sources, "新版本应存在"
 
@@ -405,7 +405,7 @@ class TestRefAdd:
 
         import yaml as _y
         cfg = _y.safe_load((root / "diy.yaml").read_text()) or {}
-        sources = cfg.get("sources", [])
+        sources = cfg.get("ref", {}).get("source", [])
         assert "https://github.com/brentyi/tyro" in sources
         assert "https://gitlab.com/brentyi/tyro" in sources
 

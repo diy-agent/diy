@@ -70,79 +70,56 @@ class WorkspaceInfo:
 
 
 def find_project_boundary(start: Path | None = None) -> Path:
-    """定位当前所在的项目边界（作用域），用于决定 diy.yaml 读写哪个层级。
+    """定位当前所在的 diy 项目边界（作用域）。
 
     ════════════════════════════════════════════════════════════════════
-    设计：层级化项目边界（2026-06-29）
+    设计：diy.yaml 驱动的项目边界（2026-07-04）
 
-    问题：
-      大型 monorepo（如 diy 本身）有多个子项目（pkgs/diy-core、pkgs/diy-app…），
-      每个有各自的 pyproject.toml/package.json。之前 diy ref 操作固定写根 diy.yaml，
-      子项目无法独立声明 "我需要这个 source" 或 "这是我的 Python source ref"。
+    规则：
+      1. 从 cwd 向上遍历，第一个遇到的 diy.yaml 就是边界。
+      2. 如果越过 .git 根目录仍没有 diy.yaml → 不是 diy 项目，报错。
+      3. 到达文件系统根仍没有 → 报错。
 
-    方案：
-      ref 操作的作用域由"项目边界"定义。边界按优先级：
-       ① diy.yaml       — 明确创建的 diy 项目（最高优先级）
-       ② pyproject.toml — Python 项目
-       ③ package.json   — Node.js 项目
-       ④ .git           — git 仓库根（最外层兜底，不再上溯）
-
-      先检查 cwd，再逐级向上。cwd 自身是有效边界时立即返回，不继续上溯。
-      这样 monorepo 的子包有自己的边界，不会被父级 diy.yaml 吞掉。
-
-    场景验证：
-      A. 子包 diy ref add（cwd 有 pyproject.toml）
-         → 边界 = cwd，在该目录创建/写入 diy.yaml ✓
-      B. 根项目 diy ref add（cwd 有 diy.yaml）
-         → 边界 = cwd，直接写入根 diy.yaml ✓
-      C. 无标记子目录（空目录，无 py/pj/diy）
-         → 上溯到第一个 py/pj/diy/.git 边界 ✓
-      D. 纯 Python 项目（无 diy.yaml，有 pyproject.toml）
-         → 边界 = 该项目根目录，创建 diy.yaml ✓
-      E. 父级有 diy.yaml，但 cwd 有 pyproject.toml
-         → 边界 = cwd（子包不被父级 diy.yaml 吞掉）✓
-      F. 纯 git 项目（无 py/pj/diy）
-         → 边界 = git 根 ✓
+    diy.yaml 是唯一有效的项目边界标记。
+    pyproject.toml / package.json / .git 不再作为 diy 操作的边界。
     ════════════════════════════════════════════════════════════════════
     """
     curr = (start or Path.cwd()).resolve()
 
-    # --- ① cwd 自身就是边界吗？---
-    for marker in ("diy.yaml", "pyproject.toml", "package.json", ".git"):
-        if (curr / marker).exists():
-            return curr
-
-    # --- ② 向上遍历，找最近的项目边界 ---
-    for parent in curr.parents:
-        # Git 根是兜底边界
-        if (parent / ".git").exists():
-            return parent
-        # 其他标记
-        for marker in ("diy.yaml", "pyproject.toml", "package.json"):
-            if (parent / marker).exists():
-                return parent
-        # 到达文件系统根 → 停止
-        if parent == parent.parent:
+    # --- 从 cwd 向上遍历 ---
+    for candidate in [curr] + list(curr.parents):
+        if (candidate / "diy.yaml").exists():
+            return candidate
+        # .git 是硬边界：遇到 .git 但没有 diy.yaml → 不是 diy 项目
+        if (candidate / ".git").exists():
+            break
+        # 文件系统根 → 停止
+        if candidate == candidate.parent:
             break
 
     raise FileNotFoundError(
-        "未找到项目边界。当前目录不在任何 git / Python / Node / diy 项目范围内。\n"
-        "提示：进入有 pyproject.toml / package.json / diy.yaml / .git 的目录再试。"
+        "未找到 diy.yaml — 当前目录不在任何 diy 项目范围内。\n"
+        "提示：运行 'diy init' 在当前目录初始化，或进入已有 diy.yaml 的目录。"
     )
 
 
 def find_project_root() -> Path:
-    """从当前目录向上查找，直到找到 diy.yaml 为止（原行为，用于 sync 等全局操作）。
+    """从当前目录向上查找 diy.yaml，直到找到为止。
 
-    注意：与 find_project_boundary() 不同，此函数只认 diy.yaml，
-    不将 pyproject.toml / package.json / .git 视为边界。
+    规则与 find_project_boundary() 一致：
+    遇到 .git 但没有 diy.yaml → 不是 diy 项目，报错。
     """
     curr = Path.cwd().resolve()
-    for parent in [curr] + list(curr.parents):
-        if (parent / "diy.yaml").exists():
-            return parent
+    for candidate in [curr] + list(curr.parents):
+        if (candidate / "diy.yaml").exists():
+            return candidate
+        if (candidate / ".git").exists():
+            break
+        if candidate == candidate.parent:
+            break
     raise FileNotFoundError(
-        "未发现 `diy.yaml`。请确保你在一个 diy 项目目录下，或该项目已初始化。"
+        "未发现 diy.yaml — 当前目录不在任何 diy 项目范围内。\n"
+        "提示：运行 'diy init' 在当前目录初始化，或进入已有 diy.yaml 的目录。"
     )
 
 
@@ -872,7 +849,7 @@ def write_ref_lock_file(
             data["refs"] = flat_refs
 
     with open(ref_lock_path, "w", encoding="utf-8") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
     log.info(f"dependency mirror index 已更新: {ref_lock_path.relative_to(root_dir)}")
 
 

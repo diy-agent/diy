@@ -12,6 +12,7 @@ dependencies = [
     "httpx",
     "fastapi>=0.138.1",
     "uvicorn>=0.48.0",
+    "ruamel-yaml>=0.19.1",
 ]
 
 [project.scripts]

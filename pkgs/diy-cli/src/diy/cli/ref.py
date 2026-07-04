@@ -60,7 +60,7 @@ ref_app = App(
 def _init_diy_yaml(target: Path | None = None) -> Path:
     """在目标目录创建 diy.yaml，返回文件路径。
 
-    target=None → 从 cwd 找项目边界，在边界处创建。
+    target=None → 直接在 cwd 创建（不向上查找边界）。
     target=指定 → 直接在指定路径创建。文件已存在则报错。"""
     if target:
         diy_yaml = target / "diy.yaml"
@@ -70,8 +70,8 @@ def _init_diy_yaml(target: Path | None = None) -> Path:
             return diy_yaml
         target.mkdir(parents=True, exist_ok=True)
     else:
-        root_dir = _require_project_boundary()
-        diy_yaml = root_dir / "diy.yaml"
+        target = Path.cwd()
+        diy_yaml = target / "diy.yaml"
         if diy_yaml.exists():
             log.warning("已存在 diy.yaml，跳过初始化")
             log.info("  路径: %s", diy_yaml)
@@ -177,25 +177,35 @@ def _migrate_diy_config(config: dict) -> dict:
     return config
 
 
-def _load_diy_yaml(root_dir: Path) -> dict:
-    """加载 diy.yaml，自动迁移旧版格式到新版。"""
+def _load_diy_yaml(root_dir: Path):
+    """加载 diy.yaml，保留注释（ruamel.yaml round-trip），自动迁移旧版格式。
+
+    返回 CommentedMap（支持 dict 操作 + 注释保留），文件不存在时返回 {}。
+    """
     diy_yaml = root_dir / "diy.yaml"
     if not diy_yaml.exists():
         return {}
     try:
+        from ruamel.yaml import YAML
+
+        _yaml = YAML()
         with open(diy_yaml, encoding="utf-8") as f:
-            config = yaml.safe_load(f) or {}
+            config = _yaml.load(f) or {}
         return _migrate_diy_config(config)
     except Exception:
         return {}
 
 
-def _save_diy_yaml(root_dir: Path, config: dict):
-    """保存 diy.yaml（始终写入新版格式）"""
+def _save_diy_yaml(root_dir: Path, config) -> None:
+    """保存 diy.yaml，保留注释（ruamel.yaml round-trip）。"""
     diy_yaml = root_dir / "diy.yaml"
     try:
+        from ruamel.yaml import YAML
+
+        _yaml = YAML()
+        _yaml.default_flow_style = False
         with open(diy_yaml, "w", encoding="utf-8") as f:
-            yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            _yaml.dump(config, f)
     except Exception as e:
         log.error(f"保存 diy.yaml 失败: {e}")
         raise
@@ -236,16 +246,6 @@ ref:
   #   exclude: []
 """
 
-
-def _save_diy_yaml(root_dir: Path, config: dict):
-    """保存 diy.yaml"""
-    diy_yaml = root_dir / "diy.yaml"
-    try:
-        with open(diy_yaml, "w", encoding="utf-8") as f:
-            yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
-    except Exception as e:
-        log.error(f"保存 diy.yaml 失败: {e}")
-        raise
 
 
 def _status_icon(status: str) -> str:
@@ -343,8 +343,12 @@ def ref_list(
                 if current_scope and current_scope in scopes:
                     scope_keys = [current_scope]
                 elif current_scope and current_scope != ".":
-                    # 非根边界（子项目）→ 只在该 scope 精确匹配的生态显示，不回溯到根
+                    # 非根边界（子项目）→ 先精确匹配，未命中则回退到根 scope
                     scope_keys = []
+                    for alias in root_aliases:
+                        if alias in scopes:
+                            scope_keys = [alias]
+                            break
                 else:
                     # scope 未找到或为根 → 显示根 scope（含 source）
                     scope_keys = []
