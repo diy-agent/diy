@@ -1,0 +1,8 @@
+ref:
+  source:
+    - https://github.com/TanStack/router
+    - https://github.com/anomalyco/opencode
+  node:
+    include:
+      - '@agentclientprotocol/sdk'
+    exclude: []

@@ -1,0 +1,23 @@
+{
+  "name": "diy-monorepo",
+  "private": true,
+  "workspaces": [
+    "pkgs.ts/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc -b tsconfig.all.json --noEmit",
+    "lint": "oxlint pkgs.ts/",
+    "lint:fix": "oxlint --fix pkgs.ts/",
+    "fmt": "oxfmt --check pkgs.ts/",
+    "fmt:fix": "oxfmt --write pkgs.ts/",
+    "check": "npm run typecheck && npm run lint && npm run fmt",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

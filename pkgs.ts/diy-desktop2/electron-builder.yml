@@ -1,0 +1,45 @@
+# electron-builder.yml
+# 🎯 diy 管控台 打包配置
+
+appId: com.diy.desktop2
+productName: diy
+copyright: Copyright © 2026
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+  - "!node_modules/**"
+
+asar: true
+
+# ── macOS ──
+mac:
+  icon: build/icon.icns
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  category: public.app-category.developer-tools
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+
+dmg:
+  title: "diy 管控台"
+
+# ── Linux ──
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+
+# ── Windows ──
+win:
+  target:
+    - portable
+  artifactName: "${productName}-${version}-${arch}.${ext}"

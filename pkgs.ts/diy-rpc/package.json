@@ -1,0 +1,19 @@
+{
+  "name": "@diy/rpc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "files": ["src/"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "check:browser": "! grep -rn \"from 'node:\\|from '\\(fs\\|path\\|os\\|child_process\\|net\\|http\\|crypto\\|stream\\|url\\|electron\\)'\" src/",
+    "test": "tsx test/transport-rpc.test.ts && tsx test/protocol-envelopes.test.ts"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}
