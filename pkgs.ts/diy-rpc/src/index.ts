@@ -1,4 +1,5 @@
 // ═══ Zod 扩展：cliArg / cliOption（side-effect import，必须在任何 schema 定义前执行）
+// meta 本身无 Node 依赖，浏览器 schema 也用它打标记
 import './rpc/cli-rpc/meta';
 
 export type {
@@ -22,5 +23,3 @@ export type {
   UnaryConfig, ServerStreamConfig, ClientStreamConfig, BidiStreamConfig,
   ProcedureCliMeta,
 } from './rpc/index';
-export { CliApp, createCli } from './rpc/cli-rpc/index';
-export type { CliConfig, CliOptionMeta, CliArgMeta } from './rpc/cli-rpc/index';

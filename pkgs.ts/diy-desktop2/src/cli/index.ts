@@ -3,7 +3,8 @@ import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import { Client, Server, createHandler, CliApp, createMemTransportPair } from "@diy/rpc";
+import { Client, Server, createHandler, createMemTransportPair } from "@diy/rpc";
+import { CliApp } from "@diy/rpc/cli";
 import { connectHttp2Rpc } from "@diy/rpc-transport";
 import { api } from "../main/services/api";
 

@@ -4,10 +4,14 @@
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./cli": "./src/cli.ts"
+  },
   "files": ["src/"],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "check:browser": "! grep -rn \"from 'node:\\|from '\\(fs\\|path\\|os\\|child_process\\|net\\|http\\|crypto\\|stream\\|url\\|electron\\)'\" src/",
+    "check:browser": "tsc --noEmit -p tsconfig.browser.json",
     "test": "tsx test/transport-rpc.test.ts && tsx test/protocol-envelopes.test.ts"
   },
   "dependencies": {

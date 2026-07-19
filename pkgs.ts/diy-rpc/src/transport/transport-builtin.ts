@@ -36,14 +36,14 @@ export function createMemTransportPair(): {
       const msg = qClient.shift()!;
       for (const h of serverListeners) h(msg as Envelope);
     }
-    if (qServer.length > 0 || qClient.length > 0) setImmediate(drain);
+    if (qServer.length > 0 || qClient.length > 0) queueMicrotask(drain);
   }
 
   return {
     serverTx: {
       send(p: unknown) {
         qServer.push(p);
-        setImmediate(drain);
+        queueMicrotask(drain);
       },
       on(h: (msg: Envelope) => void) {
         serverListeners.add(h);
@@ -56,7 +56,7 @@ export function createMemTransportPair(): {
     clientTx: {
       send(p: unknown) {
         qClient.push(p);
-        setImmediate(drain);
+        queueMicrotask(drain);
       },
       on(h: (msg: Envelope) => void) {
         clientListeners.add(h);
