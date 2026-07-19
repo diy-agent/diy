@@ -11,7 +11,6 @@ type WsLike = {
   on(event: 'message', cb: (data: Buffer, isBinary: boolean) => void): void;
   on(event: 'close', cb: () => void): void;
   on(event: string, cb: (...args: any[]) => void): void;
-  removeEventListener?(event: string, cb: Function): void;
 };
 
 export class WsTransport implements Transport {

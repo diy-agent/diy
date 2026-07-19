@@ -26,12 +26,12 @@ function createLoggedMemTransportPair(): {
   function drain() {
     while (qServer.length > 0) {
       const msg = qServer.shift()!;
-      logs.push({ dir: '<', envelope: deepClone(msg) });
+      logs.push({ dir: '<', envelope: deepClone(msg as Record<string, unknown>) });
       for (const h of clientListeners) h(msg);
     }
     while (qClient.length > 0) {
       const msg = qClient.shift()!;
-      logs.push({ dir: '>', envelope: deepClone(msg) });
+      logs.push({ dir: '>', envelope: deepClone(msg as Record<string, unknown>) });
       for (const h of serverListeners) h(msg);
     }
     if (qServer.length > 0 || qClient.length > 0) setImmediate(drain);

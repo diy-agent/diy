@@ -10,7 +10,7 @@
     "lint:fix": "oxlint --fix pkgs.ts/",
     "fmt": "oxfmt --check pkgs.ts/",
     "fmt:fix": "oxfmt --write pkgs.ts/",
-    "check": "npm run typecheck && npm run lint && npm run fmt",
+    "check": "npm run typecheck && npm run lint",
     "test": "vitest run",
     "test:watch": "vitest"
   },

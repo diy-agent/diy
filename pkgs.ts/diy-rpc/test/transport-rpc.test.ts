@@ -155,7 +155,7 @@ async function main() {
     async function* msgs() { yield 'hello'; yield 'world'; }
 
     // Use transport-level bidiStream directly (not rpc layer)
-    const replies = await client.bidiStream('echo', { input: {}, meta: {} }, msgs());
+    const replies = await client.bidiStream<unknown, string, string>('echo', { input: {}, meta: {} }, msgs());
     console.log('  bidiStream returned');
     const out: string[] = [];
     for await (const r of replies) {
