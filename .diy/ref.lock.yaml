@@ -1,6 +1,14 @@
-generated: '2026-06-30T06:45:55.081437Z'
+version: 5
+generated: '2026-07-04T08:20:22.355706Z'
 refs:
   python:
+    diy-mono:
+      dependency-groups:
+        dev:
+          mistune: ~/.diy/ref/github.com/lepture/mistune/3.3.2
+          pyright: ~/.diy/ref/github.com/RobertCraigie/pyright-python/v1.1.409
+          pytest: ~/.diy/ref/github.com/pytest-dev/pytest/9.0.3
+          ruff: ~/.diy/ref/github.com/astral-sh/ruff/0.15.14
     diy-app:
       dependencies:
         cyclopts: ~/.diy/ref/github.com/BrianPugh/cyclopts/v4.16.1
@@ -17,18 +25,25 @@ refs:
         json5: ~/.diy/ref/github.com/dpranke/pyjson5/v0.14.0
         rich: ~/.diy/ref/github.com/Textualize/rich/v13.9.4
         uvicorn: ~/.diy/ref/github.com/Kludex/uvicorn/0.48.0
+    diy-clirpc:
+      dependencies:
+        connectrpc: ~/.diy/ref/github.com/connectrpc/connect-py/v0.11.0
+        cyclopts: ~/.diy/ref/github.com/BrianPugh/cyclopts/v4.16.1
+        h2: ~/.diy/ref/github.com/python-hyper/h2/v4.3.0
+        httpx[http2]: ~/.diy/ref/github.com/encode/httpx/0.28.1
+        protobuf-py: ~/.diy/ref/github.com/bufbuild/protobuf-py/0.1.1
+        pytest: ~/.diy/ref/github.com/pytest-dev/pytest/9.0.3
+        pytest-asyncio: ~/.diy/ref/github.com/pytest-dev/pytest-asyncio/v1.4.0
+        starlette: ~/.diy/ref/github.com/Kludex/starlette/1.1.0
+        uvicorn[standard]: ~/.diy/ref/github.com/Kludex/uvicorn/0.34
     diy-core:
       dependencies:
         PyYAML: ~/.diy/ref/github.com/yaml/pyyaml/6.0
         cyclopts: ~/.diy/ref/github.com/BrianPugh/cyclopts/v4.16.1
         rich: ~/.diy/ref/github.com/Textualize/rich/v13.9.4
-    diy-mono:
-      dependency-groups:
-        dev:
-          mistune: ~/.diy/ref/github.com/lepture/mistune/3.3.2
-          pyright: ~/.diy/ref/github.com/RobertCraigie/pyright-python/v1.1.409
-          pytest: ~/.diy/ref/github.com/pytest-dev/pytest/9.0.3
-          ruff: ~/.diy/ref/github.com/astral-sh/ruff/0.15.14
+    diy-test:
+      dependencies:
+        pyyaml: ~/.diy/ref/github.com/yaml/pyyaml/6.0.3
     diy-ui:
       dependencies:
         asyncio: ~/.diy/ref/github.com/python/asyncio/4.0.0
@@ -36,10 +51,10 @@ refs:
         param: ~/.diy/ref/github.com/holoviz/param/v2.4.0
   source:
     .:
+      github.com/TanStack/router: ~/.diy/ref/github.com/TanStack/router/main
       github.com/agentclientprotocol/agent-client-protocol: ~/.diy/ref/github.com/agentclientprotocol/agent-client-protocol/v0.11.3
       github.com/anomalyco/opencode: ~/.diy/ref/github.com/anomalyco/opencode/dev
       github.com/connectrpc/connect-go: ~/.diy/ref/github.com/connectrpc/connect-go/main
       github.com/github/docs: ~/.diy/ref/github.com/github/docs/main
       github.com/nodeca/js-yaml: ~/.diy/ref/github.com/nodeca/js-yaml/4.1.1
       github.com/vitest-dev/docs-cn: ~/.diy/ref/github.com/vitest-dev/docs-cn/v3
-version: 5
