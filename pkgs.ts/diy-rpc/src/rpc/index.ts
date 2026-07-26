@@ -1,11 +1,14 @@
 /**
  * rpc/index.ts — 第3层 RPC：声明式 Procedure 定义
  *
- * 角色：在第2层 Client/Server 之上提供类型安全的声明式 API。
- *       应用程序代码只应该使用这层（rpc.unary / router / createHandler / createClient）。
+ * 两种定义形态：
+ *   1. 元信息形式（半完成态）— defineUnary / defineServerStream / ...
+ *      只定义 API 外观（inputSchema、outputSchema、streamMode），不含 call
+ *   2. 完整形式 — unary / serverStream / clientStream / bidiStream
+ *      schemas + 内置 call 实现
  *
- * 四种工厂函数：rpc.unary / rpc.serverStream / rpc.clientStream / rpc.bidiStream
- * 每个接受配置对象，返回 ProcedureDef。
+ * 角色：在第2层 Client/Server 之上提供类型安全的声明式 API。
+ *       应用程序代码只应该使用这层。
  */
 
 import { z } from 'zod';
@@ -15,7 +18,7 @@ import type { StreamHandle } from '../transport/types';
 import { RpcError } from '../transport/types';
 
 // ═══════════════════════════════════════════════════
-//  Procedure 类型
+//  类型基础
 // ═══════════════════════════════════════════════════
 
 type ProcedureMode = 'unary' | 'server' | 'client' | 'bidi';
@@ -24,181 +27,253 @@ export interface ProcedureCliMeta {
   description?: string;
 }
 
-export interface ProcedureDef<
-  TInput = unknown,
-  TOutput = unknown,
-  TChunkIn = never,
-  TChunkOut = never,
-  TMode extends ProcedureMode = 'unary',
+/** Handler 绑定：meta 对象 + 其原始 handler */
+export interface HandlerBinding {
+  meta: AnyProcedureMeta;
+  handler: (params: unknown, stream?: unknown) => unknown;
+}
+
+/** 从 schema 记录推导输入类型（{ a: z.number() } → { a: number }） */
+// (故意保留类型名但 IDE 显示的是内联展开) - 实际计算靠 z.output<T[K]>
+
+/** 从 ProcedureMeta 的类型参数推导 handler 签名 */
+type HandlerFor<TIn, TOut, TChIn, TChOut, TMode> =
+  TMode extends 'unary'   ? (opts: { input: TIn }) => TOut | Promise<TOut> :
+  TMode extends 'server'  ? (opts: { input: TIn }) => AsyncGenerator<TOut> :
+  TMode extends 'client'  ? (opts: { input: TIn; stream: StreamHandle<TChIn> }) => TOut | Promise<TOut> :
+  TMode extends 'bidi'    ? (opts: { input: TIn; stream: StreamHandle<TChIn> }) => AsyncGenerator<TChOut> :
+  never;
+
+// ═══════════════════════════════════════════════════
+//  ProcedureMeta — 元信息形式（半完成态）
+// ═══════════════════════════════════════════════════
+
+export interface ProcedureMeta<
+  TIn = unknown,
+  TOut = unknown,
+  TChIn = never,
+  TChOut = never,
+  TMode extends string = 'unary',
 > {
-  _type: 'procedure';
-  _input: TInput;
-  _output: TOutput;
-  _chunkIn: TChunkIn;
-  _chunkOut: TChunkOut;
-  _streamMode: TMode;
-  inputSchema?: z.ZodType<TInput>;
-  chunkInSchema?: z.ZodType<TChunkIn>;
-  chunkOutSchema?: z.ZodType<TChunkOut>;
+  readonly _type: 'procedure';
+  readonly _input: TIn;
+  readonly _output: TOut;
+  readonly _chunkIn: TChIn;
+  readonly _chunkOut: TChOut;
+  readonly _streamMode: TMode;
+  inputSchema?: z.ZodType<TIn>;
+  outputSchema?: z.ZodType<TOut>;
+  chunkInSchema?: z.ZodType<TChIn>;
+  chunkOutSchema?: z.ZodType<TChOut>;
   summary?: string;
   description?: string;
   cliDesc?: ProcedureCliMeta;
-  call: (opts: { input: TInput; ctx: unknown; meta: unknown }) => unknown;
+
+  /** 绑定 handler，返回绑定对供 createHandler 消费 */
+  on(handler: HandlerFor<TIn, TOut, TChIn, TChOut, TMode>): HandlerBinding;
 }
 
-type AnyProcedure = ProcedureDef<any, any, any, any, any>;
-export type { AnyProcedure };
-export interface Router { [key: string]: AnyProcedure | Router; }
-
 // ═══════════════════════════════════════════════════
-//  Unary
+//  ProcedureDef — 完整形式（含 call）
 // ═══════════════════════════════════════════════════
 
-export interface UnaryConfig<TInput, TOutput> {
+export interface ProcedureDef<
+  TIn = unknown,
+  TOut = unknown,
+  TChIn = never,
+  TChOut = never,
+  TMode extends string = 'unary',
+> extends ProcedureMeta<TIn, TOut, TChIn, TChOut, TMode> {
+  call: (opts: { input: TIn; ctx?: unknown; meta?: unknown }) => unknown;
+}
+
+export type AnyProcedureMeta = ProcedureMeta<any, any, any, any, any>;
+export type AnyProcedureDef = ProcedureDef<any, any, any, any, any>;
+/** @deprecated 用 AnyProcedureMeta */
+export type AnyProcedure = AnyProcedureDef;
+export interface Router { [key: string]: AnyProcedureMeta | Router; }
+
+// ═══════════════════════════════════════════════════
+//  Meta 配置类型（无 call）— 用 schema 类型推导输入类型
+// ═══════════════════════════════════════════════════
+
+export interface DefineUnaryConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput> {
   summary?: string;
   description?: string;
-  input: Record<string, z.ZodTypeAny>;
-  call: (opts: { input: TInput; ctx?: unknown; meta?: unknown }) => TOutput | Promise<TOutput>;
+  input: TSchema;
+  output: z.ZodType<TOutput>;
 }
 
-function unary<TInput extends Record<string, any>, TOutput>(
-  config: UnaryConfig<TInput, TOutput>,
-): ProcedureDef<TInput, TOutput, never, never, 'unary'> {
-  const schema = z.object(config.input);
-
-  return {
-    _type: 'procedure',
-    _input: undefined as never,
-    _output: undefined as never,
-    _chunkIn: undefined as never,
-    _chunkOut: undefined as never,
-    _streamMode: 'unary',
-    inputSchema: schema as z.ZodType<TInput>,
-    summary: config.summary,
-    description: config.description,
-    call: (opts) => config.call({ input: opts.input, ctx: opts.ctx, meta: opts.meta }),
-  };
-}
-
-// ═══════════════════════════════════════════════════
-//  Server-Stream
-// ═══════════════════════════════════════════════════
-
-export interface ServerStreamConfig<TInput, TOutput> {
+export interface DefineServerStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput> {
   summary?: string;
   description?: string;
-  input: Record<string, z.ZodTypeAny>;
-  call: (opts: { input: TInput; ctx?: unknown; meta?: unknown }) => AsyncGenerator<TOutput>;
+  input: TSchema;
+  output: z.ZodType<TOutput>;
 }
 
-function serverStream<TInput extends Record<string, any>, TOutput>(
-  config: ServerStreamConfig<TInput, TOutput>,
-): ProcedureDef<TInput, TOutput, never, TOutput, 'server'> {
-  const schema = z.object(config.input);
-
-  return {
-    _type: 'procedure',
-    _input: undefined as never,
-    _output: undefined as never,
-    _chunkIn: undefined as never,
-    _chunkOut: undefined as never,
-    _streamMode: 'server',
-    inputSchema: schema as z.ZodType<TInput>,
-    summary: config.summary,
-    description: config.description,
-    call: (opts) => config.call({ input: opts.input, ctx: opts.ctx, meta: opts.meta }),
-  };
-}
-
-// ═══════════════════════════════════════════════════
-//  Client-Stream
-// ═══════════════════════════════════════════════════
-
-export interface ClientStreamConfig<TInput, TChunk, TOutput> {
+export interface DefineClientStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput> {
   summary?: string;
   description?: string;
-  input: Record<string, z.ZodTypeAny>;
-  chunk: z.ZodType<TChunk>;
-  call: (opts: { input: TInput; stream: StreamHandle<TChunk>; ctx?: unknown; meta?: unknown }) => TOutput | Promise<TOutput>;
+  input: TSchema;
+  chunkIn: z.ZodType<TChunk>;
+  output: z.ZodType<TOutput>;
 }
 
-function clientStream<TInput extends Record<string, any>, TChunk, TOutput>(
-  config: ClientStreamConfig<TInput, TChunk, TOutput>,
-): ProcedureDef<TInput, TOutput, TChunk, never, 'client'> {
-  const schema = z.object(config.input);
-
-  return {
-    _type: 'procedure',
-    _input: undefined as never,
-    _output: undefined as never,
-    _chunkIn: undefined as never,
-    _chunkOut: undefined as never,
-    _streamMode: 'client',
-    inputSchema: schema as z.ZodType<TInput>,
-    chunkInSchema: config.chunk,
-    summary: config.summary,
-    description: config.description,
-    call: (opts: any) => config.call({ input: opts.input, stream: opts.stream, ctx: opts.ctx, meta: opts.meta }),
-  };
-}
-
-// ═══════════════════════════════════════════════════
-//  Bidi-Stream
-// ═══════════════════════════════════════════════════
-
-export interface BidiStreamConfig<TInput, TChunkIn, TChunkOut> {
+export interface DefineBidiStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut> {
   summary?: string;
   description?: string;
-  input: Record<string, z.ZodTypeAny>;
+  input: TSchema;
   chunkIn: z.ZodType<TChunkIn>;
   chunkOut: z.ZodType<TChunkOut>;
-  call: (opts: { input: TInput; stream: StreamHandle<TChunkIn>; ctx?: unknown; meta?: unknown }) => AsyncGenerator<TChunkOut>;
 }
 
-function bidiStream<TInput extends Record<string, any>, TChunkIn, TChunkOut>(
-  config: BidiStreamConfig<TInput, TChunkIn, TChunkOut>,
-): ProcedureDef<TInput, TChunkOut, TChunkIn, TChunkOut, 'bidi'> {
-  const schema = z.object(config.input);
+// ═══════════════════════════════════════════════════
+//  完整配置类型（含 call）
+// ═══════════════════════════════════════════════════
 
-  return {
+export interface UnaryConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput>
+  extends DefineUnaryConfig<TSchema, TOutput> {
+  call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; ctx?: unknown; meta?: unknown }) => TOutput | Promise<TOutput>;
+}
+
+export interface ServerStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput>
+  extends DefineServerStreamConfig<TSchema, TOutput> {
+  call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; ctx?: unknown; meta?: unknown }) => AsyncGenerator<TOutput>;
+}
+
+export interface ClientStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput>
+  extends DefineClientStreamConfig<TSchema, TChunk, TOutput> {
+  call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; stream: StreamHandle<TChunk>; ctx?: unknown; meta?: unknown }) => TOutput | Promise<TOutput>;
+}
+
+export interface BidiStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut>
+  extends DefineBidiStreamConfig<TSchema, TChunkIn, TChunkOut> {
+  call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; stream: StreamHandle<TChunkIn>; ctx?: unknown; meta?: unknown }) => AsyncGenerator<TChunkOut>;
+}
+
+// ═══════════════════════════════════════════════════
+//  Meta 工厂函数
+// ═══════════════════════════════════════════════════
+
+function defineUnary<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
+  config: DefineUnaryConfig<TSchema, TOutput>,
+): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, never, 'unary'> {
+  return _makeMeta(config, 'unary', z.object(config.input), config.output);
+}
+
+function defineServerStream<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
+  config: DefineServerStreamConfig<TSchema, TOutput>,
+): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, TOutput, 'server'> {
+  return _makeMeta(config, 'server', z.object(config.input), config.output);
+}
+
+function defineClientStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput>(
+  config: DefineClientStreamConfig<TSchema, TChunk, TOutput>,
+): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, TChunk, never, 'client'> {
+  return _makeMeta(config, 'client', z.object(config.input), config.output, config.chunkIn);
+}
+
+function defineBidiStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut>(
+  config: DefineBidiStreamConfig<TSchema, TChunkIn, TChunkOut>,
+): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TChunkOut, TChunkIn, TChunkOut, 'bidi'> {
+  return _makeMeta(config, 'bidi', z.object(config.input), undefined, config.chunkIn, config.chunkOut);
+}
+
+function _makeMeta(
+  config: { summary?: string; description?: string },
+  streamMode: string,
+  inputSchema: z.ZodTypeAny,
+  outputSchema?: z.ZodTypeAny,
+  chunkInSchema?: z.ZodTypeAny,
+  chunkOutSchema?: z.ZodTypeAny,
+): any {
+  const meta: any = {
     _type: 'procedure',
-    _input: undefined as never,
-    _output: undefined as never,
-    _chunkIn: undefined as never,
-    _chunkOut: undefined as never,
-    _streamMode: 'bidi',
-    inputSchema: schema as z.ZodType<TInput>,
-    chunkInSchema: config.chunkIn,
-    chunkOutSchema: config.chunkOut,
+    _input: undefined,
+    _output: undefined,
+    _chunkIn: undefined,
+    _chunkOut: undefined,
+    _streamMode: streamMode,
+    inputSchema,
+    outputSchema,
+    chunkInSchema,
+    chunkOutSchema,
     summary: config.summary,
     description: config.description,
-    call: (opts: any) => config.call({ input: opts.input, stream: opts.stream, ctx: opts.ctx, meta: opts.meta }),
+    cliDesc: undefined,
+    on(handler: any) {
+      return { meta: this, handler };
+    },
   };
+  return meta;
+}
+
+// ═══════════════════════════════════════════════════
+//  Impl 工厂函数（含 call，保持向后兼容 + 新增 output）
+// ═══════════════════════════════════════════════════
+
+function unary<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
+  config: UnaryConfig<TSchema, TOutput>,
+): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, never, 'unary'> {
+  const meta = _makeMeta(config, 'unary', z.object(config.input), config.output);
+  meta.call = (opts: any) => config.call({ input: opts.input, ctx: opts.ctx, meta: opts.meta });
+  return meta;
+}
+
+function serverStream<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
+  config: ServerStreamConfig<TSchema, TOutput>,
+): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, TOutput, 'server'> {
+  const meta = _makeMeta(config, 'server', z.object(config.input), config.output);
+  meta.call = (opts: any) => config.call({ input: opts.input, ctx: opts.ctx, meta: opts.meta });
+  return meta;
+}
+
+function clientStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput>(
+  config: ClientStreamConfig<TSchema, TChunk, TOutput>,
+): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, TChunk, never, 'client'> {
+  const meta = _makeMeta(config, 'client', z.object(config.input), config.output, config.chunkIn);
+  meta.call = (opts: any) => config.call({ input: opts.input, stream: opts.stream, ctx: opts.ctx, meta: opts.meta });
+  return meta;
+}
+
+function bidiStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut>(
+  config: BidiStreamConfig<TSchema, TChunkIn, TChunkOut>,
+): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TChunkOut, TChunkIn, TChunkOut, 'bidi'> {
+  const meta = _makeMeta(config, 'bidi', z.object(config.input), undefined, config.chunkIn, config.chunkOut);
+  meta.call = (opts: any) => config.call({ input: opts.input, stream: opts.stream, ctx: opts.ctx, meta: opts.meta });
+  return meta;
 }
 
 // ═══════════════════════════════════════════════════
 //  rpc 命名空间导出
 // ═══════════════════════════════════════════════════
 
-export const rpc = { unary, serverStream, clientStream, bidiStream };
+export const rpc = {
+  // meta 工厂
+  defineUnary,
+  defineServerStream,
+  defineClientStream,
+  defineBidiStream,
+  // impl 工厂
+  unary,
+  serverStream,
+  clientStream,
+  bidiStream,
+};
 
 // ═══════════════════════════════════════════════════
-//  Router
+//  Router 工具
 // ═══════════════════════════════════════════════════
 
-// ═══════════════════════════════════════════════════
-//  Router → RouteNode 树转换
-// ═══════════════════════════════════════════════════
-
-export function isProcedure(v: unknown): v is AnyProcedure {
-  return typeof v === 'object' && v !== null && (v as AnyProcedure)._type === 'procedure';
+export function isProcedure(v: unknown): v is AnyProcedureMeta {
+  return typeof v === 'object' && v !== null && (v as AnyProcedureMeta)._type === 'procedure';
 }
 
 export type ProcNode = {
   kind: 'proc';
   name: string;
   path: string;
-  def: AnyProcedure;
+  def: AnyProcedureMeta;
   parent: RouterNode | null;
 };
 
@@ -273,9 +348,9 @@ export function router<T extends Router>(def: T): T {
   return def;
 }
 
-/** 拍平嵌套 router 为 method→ProcedureDef 映射 */
-export function flattenRouter(r: Router): Record<string, AnyProcedure> {
-  const result: Record<string, AnyProcedure> = {};
+/** 拍平嵌套 router 为 method→AnyProcedureMeta 映射 */
+export function flattenRouter(r: Router): Record<string, AnyProcedureMeta> {
+  const result: Record<string, AnyProcedureMeta> = {};
   for (const { path, def } of routeLeaves(buildRouteTree(r))) {
     result[path] = def;
   }
@@ -283,69 +358,115 @@ export function flattenRouter(r: Router): Record<string, AnyProcedure> {
 }
 
 // ═══════════════════════════════════════════════════
-//  createHandler
+//  createHandler / createMetaHandler
 // ═══════════════════════════════════════════════════
 
-export function createHandler<TCtx = {}>(opts: {
+/** 内部共享：遍历 router 树 + 注册 handler 到 transport */
+function _registerRouter<TCtx = {}>(opts: {
   router: Router;
   transport: Server;
-  ctx: TCtx | (() => TCtx);
+  handlers: Map<AnyProcedureMeta, (params: unknown, stream?: unknown) => unknown>;
+  getCtx: () => TCtx;
 }) {
   const { transport: tx } = opts;
-  const getCtx = () => (typeof opts.ctx === 'function' ? (opts.ctx as () => TCtx)() : opts.ctx);
   const flat = flattenRouter(opts.router);
 
   for (const [name, def] of Object.entries(flat)) {
     const mode = def._streamMode;
+    const handler = opts.handlers.get(def) ?? (def as any).call;
+    if (!handler) {
+      throw new Error(`[createHandler] No handler for procedure "${name}" — provide via .on() or use rpc.unary with call`);
+    }
 
     if (mode === 'unary') {
       tx.onUnary(name, ((raw: unknown) => {
         const { input, meta } = (raw ?? {}) as any;
         const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
-        return def.call({ input: validated, ctx: getCtx(), meta: meta ?? {} });
+        return handler({ input: validated, ctx: opts.getCtx(), meta: meta ?? {} });
       }) as any);
     } else if (mode === 'server') {
       tx.onServerStream(name, ((raw: unknown) => {
         const { input, meta } = (raw ?? {}) as any;
         const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
-        return def.call({ input: validated, ctx: getCtx(), meta: meta ?? {} });
+        return handler({ input: validated, ctx: opts.getCtx(), meta: meta ?? {} });
       }) as any);
     } else if (mode === 'client') {
       tx.onClientStream(name, ((raw: unknown, chunks: StreamHandle<any>) => {
         const { input, meta } = (raw ?? {}) as any;
         const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
         const validatedChunks = def.chunkInSchema ? (chunks as any) : chunks;
-        return (def.call as any)({ input: validated, ctx: getCtx(), meta: meta ?? {}, stream: validatedChunks });
+        return handler({ input: validated, ctx: opts.getCtx(), meta: meta ?? {}, stream: validatedChunks });
       }) as any);
     } else if (mode === 'bidi') {
       tx.onBidiStream(name, ((raw: unknown, incoming: StreamHandle<any>) => {
         const { input, meta } = (raw ?? {}) as any;
         const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
         const validatedChunks = def.chunkInSchema ? (incoming as any) : incoming;
-        return (def.call as any)({ input: validated, ctx: getCtx(), meta: meta ?? {}, stream: validatedChunks });
+        return handler({ input: validated, ctx: opts.getCtx(), meta: meta ?? {}, stream: validatedChunks });
       }) as any);
     }
   }
+}
+
+/**
+ * 注册完整定义（含 call）的 router。
+ * 所有 procedure 必须通过 rpc.unary/serverStream/... 提供 inline call。
+ */
+export function createHandler<TCtx = {}>(opts: {
+  router: Router;
+  transport: Server;
+  ctx?: TCtx | (() => TCtx);
+}) {
+  const getCtx = () => (typeof opts.ctx === 'function' ? (opts.ctx as () => TCtx)() : opts.ctx);
+  _registerRouter({
+    router: opts.router,
+    transport: opts.transport,
+    handlers: new Map(),
+    getCtx,
+  });
+}
+
+/**
+ * 注册元信息 router（半完成态），需要先通过 .on() 绑定 handler。
+ * handlers 由 defineUnary/... 返回的 meta 对象的 .on() 方法产生。
+ */
+export function createMetaHandler<TCtx = {}>(opts: {
+  router: Router;
+  transport: Server;
+  handlers: HandlerBinding[];
+  ctx?: TCtx | (() => TCtx);
+}) {
+  const handlerMap = new Map<AnyProcedureMeta, (params: unknown, stream?: unknown) => unknown>();
+  for (const b of opts.handlers) {
+    handlerMap.set(b.meta, b.handler);
+  }
+  const getCtx = () => (typeof opts.ctx === 'function' ? (opts.ctx as () => TCtx)() : opts.ctx);
+  _registerRouter({
+    router: opts.router,
+    transport: opts.transport,
+    handlers: handlerMap,
+    getCtx,
+  });
 }
 
 // ═══════════════════════════════════════════════════
 //  Client 类型推断
 // ═══════════════════════════════════════════════════
 
-export type ClientRouter<TRouter extends Router> = {
-  [K in keyof TRouter]: TRouter[K] extends ProcedureDef<
-    infer TIn, infer TOut, infer TChunkIn, infer TChunkOut, infer TMode
+export type ClientRouter<TRouter> = {
+  [K in keyof TRouter]: TRouter[K] extends ProcedureMeta<
+    infer TIn, infer TOut, infer TChIn, infer TChOut, infer TMode
   >
     ? TMode extends 'unary'
       ? (input: TIn, options?: CallOptions) => Promise<TOut>
       : TMode extends 'server'
         ? (input: TIn, options?: CallOptions) => Promise<StreamHandle<TOut>>
         : TMode extends 'client'
-          ? (input: TIn, chunks: AsyncIterable<TChunkIn>, options?: CallOptions) => Promise<TOut>
+          ? (input: TIn, chunks: AsyncIterable<TChIn>, options?: CallOptions) => Promise<TOut>
           : TMode extends 'bidi'
-            ? (input: TIn, chunks: AsyncIterable<TChunkIn>, options?: CallOptions) => Promise<StreamHandle<TChunkOut>>
+            ? (input: TIn, chunks: AsyncIterable<TChIn>, options?: CallOptions) => Promise<StreamHandle<TChOut>>
             : never
-    : TRouter[K] extends Router
+    : TRouter[K] extends Record<string, any>
       ? ClientRouter<TRouter[K]>
       : never;
 };
@@ -354,11 +475,11 @@ export type ClientRouter<TRouter extends Router> = {
 //  Client 工厂
 // ═══════════════════════════════════════════════════
 
-export function createClient<TRouter extends Router>(
+export function createClient<TRouter>(
   transport: Client,
   router: TRouter,
 ): ClientRouter<TRouter> {
-  const flat = flattenRouter(router);
+  const flat = flattenRouter(router as any);
   const modes: Record<string, string> = {};
   for (const [name, def] of Object.entries(flat)) {
     modes[name] = def._streamMode || 'unary';
@@ -386,7 +507,6 @@ export function createClient<TRouter extends Router>(
         return (input: any, options?: CallOptions) => transport.invoke(name, { input, meta: {} }, options);
       }
 
-      // 嵌套 namespace：返回子 proxy
       return buildProxy(name);
     },
   });

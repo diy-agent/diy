@@ -27,6 +27,10 @@ async function getLlmProxy() {
   return _llmProxyInstance;
 }
 
+const StatusDataUri = z.object({ status: z.string(), data: z.object({ uri: z.string() }) });
+const StatusDataPath = z.object({ status: z.string(), data: z.object({ path: z.string() }) });
+const StatusOk = z.object({ status: z.string() });
+
 export const api = router({
   task: router({
     create: rpc.unary({
@@ -37,6 +41,7 @@ export const api = router({
         detail: z.string().optional().cliOption({ desc: "任务详情" }),
         body: z.string().optional().cliOption({ desc: "任务正文" }),
       },
+      output: StatusDataUri,
       call: async ({ input }) => {
         return { status: "ok", data: { uri: task.createTask(input as any) } };
       },
@@ -46,6 +51,7 @@ export const api = router({
       input: {
         subject: z.string().optional().cliOption({ short: "s", desc: "按 subject 筛选" }),
       },
+      output: z.object({ status: z.string(), data: z.object({ tasks: z.any() }) }),
       call: async ({ input }) => {
         return { status: "ok", data: { tasks: task.listTasks(input.subject) } };
       },
@@ -55,6 +61,7 @@ export const api = router({
       input: {
         uri: z.string().cliArg({ desc: "任务 URI" }),
       },
+      output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
       call: async ({ input }) => {
         const t = state.getTask(input.uri);
         if (!t) return { status: "error", msg: `任务 ${input.uri} 不存在` };
@@ -69,6 +76,7 @@ export const api = router({
         state: task.TaskStateSchema.optional().cliOption({ desc: "新状态" }),
         detail: z.string().optional().cliOption({ desc: "新详情" }),
       },
+      output: StatusDataUri,
       call: async ({ input }) => {
         const { uri, ...changes } = input;
         const filtered: Record<string, string> = {};
@@ -84,6 +92,7 @@ export const api = router({
       input: {
         uri: z.string().cliArg({ desc: "任务 URI" }),
       },
+      output: StatusDataUri,
       call: async ({ input }) => {
         task.deleteTask(input.uri);
         return { status: "ok", data: { uri: input.uri } };
@@ -94,6 +103,7 @@ export const api = router({
       input: {
         uri: z.string().cliArg({ desc: "任务 URI" }),
       },
+      output: z.object({ status: z.string(), data: z.object({ uri: z.string(), starred: z.boolean() }) }),
       call: async ({ input }) => {
         state.starTask(input.uri);
         return { status: "ok", data: { uri: input.uri, starred: true } };
@@ -104,6 +114,7 @@ export const api = router({
       input: {
         uri: z.string().cliArg({ desc: "任务 URI" }),
       },
+      output: z.object({ status: z.string(), data: z.object({ uri: z.string(), starred: z.boolean() }) }),
       call: async ({ input }) => {
         state.unstarTask(input.uri);
         return { status: "ok", data: { uri: input.uri, starred: false } };
@@ -117,6 +128,7 @@ export const api = router({
         path: z.string().min(1, "路径不能为空").cliArg({ desc: "subject 路径" }),
         label: z.string().optional().cliOption({ short: "l", desc: "显示名称" }),
       },
+      output: StatusDataPath,
       call: async ({ input }) => {
         subject.addSubject(input.path, input.label);
         return { status: "ok", data: { path: input.path } };
@@ -125,6 +137,7 @@ export const api = router({
 
     list: rpc.unary({
       input: {},
+      output: z.object({ status: z.string(), data: z.object({ subjects: z.any() }) }),
       call: async () => {
         return { status: "ok", data: { subjects: subject.listSubjects() } };
       },
@@ -134,6 +147,7 @@ export const api = router({
       input: {
         path: z.string().cliArg({ desc: "subject 路径" }),
       },
+      output: StatusDataPath,
       call: async ({ input }) => {
         subject.removeSubject(input.path);
         return { status: "ok", data: { path: input.path } };
@@ -146,6 +160,7 @@ export const api = router({
       input: {
         all: z.boolean().optional().cliOption({ short: "a", desc: "显示全部任务" }),
       },
+      output: z.object({ status: z.string(), data: z.string() }),
       call: async ({ input }) => {
         return { status: "ok", data: taskTree.renderTreeText(taskTree.loadTaskTree(input.all)) };
       },
@@ -153,6 +168,7 @@ export const api = router({
 
     status: rpc.unary({
       input: {},
+      output: z.object({ status: z.string(), data: z.object({ pid: z.number(), uptime: z.number(), memory: z.number() }) }),
       call: () => ({
         status: "ok",
         data: { pid: process.pid, uptime: process.uptime(), memory: process.memoryUsage().heapUsed },
@@ -163,6 +179,7 @@ export const api = router({
       input: {
         page: z.string().cliArg({ desc: "目标页面" }),
       },
+      output: z.object({ status: z.string(), data: z.object({ page: z.string() }), meta: z.object({ pushedToGui: z.any() }).optional() }),
       call: async ({ input }) => {
         const pushed = notifyRenderer({ type: "navigate", page: input.page });
         return { status: "ok", data: { page: input.page }, meta: { pushedToGui: pushed } };
@@ -173,6 +190,7 @@ export const api = router({
       input: {
         uri: z.string().cliArg({ desc: "任务 URI" }),
       },
+      output: z.object({ status: z.string(), data: z.object({ uri: z.string() }), meta: z.object({ pushedToGui: z.any() }).optional() }),
       call: async ({ input }) => {
         const pushed = notifyRenderer({ type: "focus", uri: input.uri });
         return { status: "ok", data: { uri: input.uri }, meta: { pushedToGui: pushed } };
@@ -184,15 +202,26 @@ export const api = router({
         message: z.string().cliArg({ desc: "通知内容" }),
         level: z.enum(["info", "success", "error"]).optional().cliOption({ short: "l", desc: "级别" }),
       },
+      output: z.object({ status: z.string(), data: z.object({ message: z.string(), level: z.string() }), meta: z.object({ pushedToGui: z.any() }).optional() }),
       call: async ({ input }) => {
         const pushed = notifyRenderer({ type: "toast", message: input.message, level: input.level ?? "info" });
-        return { status: "ok", data: { message: input.message, level: input.level }, meta: { pushedToGui: pushed } };
+        return { status: "ok", data: { message: input.message, level: input.level ?? "info" }, meta: { pushedToGui: pushed } };
       },
     }),
   }),
 
   doctor: rpc.unary({
     input: {},
+    output: z.object({
+      status: z.string(),
+      data: z.object({
+        pid: z.number(),
+        home: z.string(),
+        state_exists: z.boolean(),
+        issues: z.array(z.string()),
+        healthy: z.boolean(),
+      }),
+    }),
     call: async () => {
       const issues = health.runHealthCheck();
       const home = state.diyHome();
@@ -213,6 +242,7 @@ export const api = router({
 
   loadTaskTree: rpc.unary({
     input: { allTasks: z.boolean().optional() },
+    output: z.any(),
     call: async ({ input }) => {
       return taskTree.loadTaskTree(input.allTasks);
     },
@@ -220,6 +250,7 @@ export const api = router({
 
   getTask: rpc.unary({
     input: { uri: z.string() },
+    output: z.any(),
     call: async ({ input }) => {
       return state.getTask(input.uri);
     },
@@ -231,6 +262,7 @@ export const api = router({
         model: z.string().cliArg({ desc: "模型名称" }),
         messages: z.array(z.object({ role: z.string(), content: z.string() })).cliOption({ desc: "消息数组 JSON" }),
       },
+      output: z.object({ role: z.string(), content: z.string() }),
       call: async ({ input }) => {
         const client = await getAgentClient();
         const result = await client.chat(input.model, input.messages);
@@ -243,6 +275,7 @@ export const api = router({
         model: z.string(),
         messages: z.array(z.object({ role: z.string(), content: z.string() })),
       },
+      output: z.any(),
       call: async function* ({ input }) {
         const client = await getAgentClient();
         for await (const delta of client.streamChat(input.model, input.messages)) {
@@ -253,6 +286,7 @@ export const api = router({
 
     listModels: rpc.unary({
       input: {},
+      output: z.array(z.object({ id: z.string(), name: z.string() })),
       call: () => [
         { id: "llama3.2", name: "Llama 3.2" },
         { id: "hermes", name: "Hermes Agent" },
@@ -263,6 +297,7 @@ export const api = router({
       input: {
         agentId: z.string().cliArg({ desc: "Agent ID" }),
       },
+      output: z.object({ agentId: z.string(), state: z.string(), model: z.string() }),
       call: async ({ input }) => {
         const client = await getAgentClient();
         const s = await client.getAgentStatus(input.agentId);
@@ -274,6 +309,7 @@ export const api = router({
   llmProxy: router({
     status: rpc.unary({
       input: {},
+      output: z.object({ running: z.boolean(), port: z.number() }),
       call: async () => {
         const proxy = await getLlmProxy();
         return { running: proxy.isRunning, port: 8000 };
@@ -282,6 +318,7 @@ export const api = router({
 
     start: rpc.unary({
       input: {},
+      output: StatusOk,
       call: async () => {
         const proxy = await getLlmProxy();
         proxy.start();
@@ -291,6 +328,7 @@ export const api = router({
 
     stop: rpc.unary({
       input: {},
+      output: StatusOk,
       call: async () => {
         const proxy = await getLlmProxy();
         proxy.stop();
@@ -304,6 +342,7 @@ export const api = router({
       input: {
         limit: z.number().optional().cliOption({ desc: "返回条目数" }),
       },
+      output: z.array(z.any()),
       call: async ({ input }) => {
         const { existsSync, readFileSync } = await import("node:fs");
         const { join } = await import("node:path");
@@ -333,6 +372,7 @@ export const api = router({
         scope: z.string().optional().cliOption({ desc: "指定 scope 名称" }),
         concurrency: z.number().default(4).optional().cliOption({ desc: "并发克隆数" }),
       },
+      output: z.object({ status: z.string(), data: z.any() }),
       call: async ({ input }) => {
         const result = await syncRefs({
           all: input.all,
@@ -347,6 +387,7 @@ export const api = router({
       input: {
         all: z.boolean().optional().cliOption({ short: "a", desc: "显示所有 scope" }),
       },
+      output: z.object({ status: z.string(), data: z.any() }),
       call: async ({ input }) => {
         return { status: "ok", data: refList(input.all) };
       },
@@ -354,6 +395,14 @@ export const api = router({
 
     status: rpc.unary({
       input: {},
+      output: z.object({
+        status: z.string(),
+        data: z.object({
+          total: z.number(),
+          missing: z.number(),
+          paths: z.any(),
+        }),
+      }),
       call: async () => {
         const paths = checkRefPaths();
         const missing = paths.filter((p) => !p.exists);
@@ -368,6 +417,7 @@ export const api = router({
       input: {
         url: z.string().cliArg({ desc: "Git 仓库 URL" }),
       },
+      output: z.object({ status: z.string(), data: z.object({ added: z.any() }) }),
       call: async ({ input }) => {
         return { status: "ok", data: { added: addSource(input.url) } };
       },
@@ -377,6 +427,7 @@ export const api = router({
       input: {
         name: z.string().cliArg({ desc: "仓库标识（diy.yaml 中注册的 URL 或 host/owner/repo）" }),
       },
+      output: z.object({ status: z.string(), data: z.object({ removed: z.any() }) }).or(z.object({ status: z.string(), msg: z.string() })),
       call: async ({ input }) => {
         const removed = removeSource(input.name);
         if (!removed) return { status: "error", msg: `未找到 source: ${input.name}` };

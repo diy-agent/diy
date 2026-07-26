@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { AnyProcedure } from '..';
+import type { AnyProcedureMeta } from '..';
 import { getCliOptionMeta, getCliArgMeta, inferTypeName, inferDefault, isOptional, unwrap } from './meta';
 
 export class CliParseError extends Error {
@@ -14,7 +14,7 @@ export interface ParsedInput {
   helpRequested: boolean;
 }
 
-export function parseArgv(def: AnyProcedure, argv: string[]): ParsedInput {
+export function parseArgv(def: AnyProcedureMeta, argv: string[]): ParsedInput {
   const schema = def.inputSchema;
   if (!(schema instanceof z.ZodObject)) {
     throw new CliParseError('Procedure has no input schema');
@@ -116,7 +116,7 @@ export function parseArgv(def: AnyProcedure, argv: string[]): ParsedInput {
   }
 }
 
-export function generateHelp(def: AnyProcedure, cmdName: string, description?: string): string {
+export function generateHelp(def: AnyProcedureMeta, cmdName: string, description?: string): string {
   const schema = def.inputSchema;
   if (!(schema instanceof z.ZodObject)) return '';
 

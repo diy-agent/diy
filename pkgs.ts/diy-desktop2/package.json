@@ -12,6 +12,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx scripts/electron-dev.mts",
+    "cli": "tsx src/cli/index.ts",
     "serve": "npm run build:renderer && tsx src/serve/index.ts",
     "serve:build": "npm run build:renderer && vite build --config vite.serve.config.ts",
     "build": "npm run build:main && npm run build:preload && npm run build:renderer",

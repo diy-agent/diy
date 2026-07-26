@@ -11,14 +11,17 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const app = router({
   ping: rpc.unary({
     input: { msg: z.string() },
+    output: z.string(),
     call: ({ input }) => `pong: ${input.msg}`,
   }),
   add: rpc.unary({
     input: { a: z.number(), b: z.number() },
+    output: z.number(),
     call: ({ input }) => input.a + input.b,
   }),
   slow: rpc.unary({
     input: { delay: z.number(), id: z.number() },
+    output: z.object({ id: z.number() }),
     call: async ({ input }) => {
       await sleep(input.delay);
       return { id: input.id };
@@ -26,6 +29,7 @@ const app = router({
   }),
   count: rpc.serverStream({
     input: { n: z.number() },
+    output: z.number(),
     call: async function* ({ input }) {
       for (let i = 0; i < input.n; i++) {
         await sleep(3);
@@ -35,7 +39,8 @@ const app = router({
   }),
   upload: rpc.clientStream({
     input: { tag: z.string() },
-    chunk: z.number(),
+    chunkIn: z.number(),
+    output: z.object({ tag: z.string(), sum: z.number() }),
     call: async ({ input, stream }) => {
       let sum = 0;
       for await (const v of stream) sum += v;

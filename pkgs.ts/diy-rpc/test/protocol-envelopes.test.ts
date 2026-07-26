@@ -125,7 +125,7 @@ async function testServerStreamEnvelopes() {
 
   server.onServerStream('count', async function* (p: { to: number }) {
     for (let i = 0; i < p.to; i++) {
-      await sleep(1);
+      await new Promise(r => setImmediate(r));
       yield { val: i };
     }
   });
@@ -214,12 +214,14 @@ async function testRpcLayerEnvelopes() {
   const app = router({
     ping: rpc.unary({
       input: { msg: z.string() },
+      output: z.string(),
       call: ({ input }) => `pong: ${input.msg}`,
     }),
 
     upload: rpc.clientStream({
       input: { tag: z.string() },
-      chunk: z.number(),
+      chunkIn: z.number(),
+      output: z.object({ tag: z.string(), sum: z.number() }),
       call: async ({ input, stream }) => {
         let sum = 0;
         for await (const v of stream) sum += v;

@@ -56,6 +56,10 @@ export class Http2Transport implements Transport {
     this.stream.write(JSON.stringify(payload) + '\n');
   }
 
+  close(): void {
+    this.stream.end();
+  }
+
   on(handler: (msg: any) => void): () => void {
     this.handlers.add(handler);
     return () => { this.handlers.delete(handler); };

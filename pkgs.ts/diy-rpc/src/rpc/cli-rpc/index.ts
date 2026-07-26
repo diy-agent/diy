@@ -11,6 +11,7 @@ import {
   routeWalk,
 } from "..";
 import type { Client } from "../../transport/client";
+import type { AnyProcedureMeta } from "..";
 import { parseArgv, generateHelp, CliParseError } from "./parser";
 import type { ProcedureCliMeta } from "./meta";
 

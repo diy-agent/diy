@@ -13,13 +13,15 @@ export { AsyncQueue } from './transport/async-queue';
 export { createMemTransportPair, createLoggedTransport } from './transport/transport-builtin';
 export type { TransportLogHandler } from './transport/transport-builtin';
 export {
-  rpc, router, createHandler, createClient, flattenRouter,
+  rpc, router, createHandler, createMetaHandler, createClient, flattenRouter,
   isProcedure, buildRouteTree, routeLeaves, routeResolve, routeWalk,
 } from './rpc/index';
 export type {
-  ProcedureDef, Router, ClientRouter,
+  ProcedureMeta, ProcedureDef, Router, ClientRouter,
   ProcNode, RouterNode, RouteNode,
-  AnyProcedure,
+  AnyProcedureMeta, AnyProcedureDef, AnyProcedure,
+  HandlerBinding,
   UnaryConfig, ServerStreamConfig, ClientStreamConfig, BidiStreamConfig,
+  DefineUnaryConfig, DefineServerStreamConfig, DefineClientStreamConfig, DefineBidiStreamConfig,
   ProcedureCliMeta,
 } from './rpc/index';

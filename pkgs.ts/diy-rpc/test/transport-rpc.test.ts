@@ -75,9 +75,9 @@ async function main() {
     const server = new Server(txA);
     const client = new Client(txB);
 
-    server.onServerStream('count', async function* (params: { to: number }) {
-      for (let i = 1; i <= params.to; i++) {
-        await sleep(1);
+    server.onServerStream('count', async function* (p: { to: number }) {
+      for (let i = 1; i <= p.to; i++) {
+        await new Promise(r => setImmediate(r));
         yield i;
       }
     });
@@ -177,19 +177,25 @@ async function main() {
     const app = router({
       ping: rpc.unary({
         input: { msg: z.string() },
+        output: z.string(),
         call: ({ input }) => `pong: ${input.msg}`,
       }),
 
       nums: rpc.serverStream({
         input: { n: z.number() },
+        output: z.number(),
         call: async function* ({ input }) {
-          for (let i = 0; i < input.n; i++) yield i;
+          for (let i = 0; i < input.n; i++) {
+            await new Promise(r => setTimeout(r, 0));
+            yield i;
+          }
         },
       }),
 
       upload: rpc.clientStream({
         input: { tag: z.string() },
-        chunk: z.number(),
+        chunkIn: z.number(),
+        output: z.object({ tag: z.string(), sum: z.number() }),
         call: async ({ input, stream }) => {
           let sum = 0;
           for await (const v of stream) sum += v;

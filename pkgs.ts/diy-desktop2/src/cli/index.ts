@@ -34,11 +34,13 @@ async function main() {
   const argv = process.argv.slice(2);
 
   let transport: Client;
+  let http2Tx: { close(): void } | null = null;
 
   const port = readPort();
   if (port !== null) {
     try {
       const tx = await connectHttp2Rpc(port);
+      http2Tx = tx;
       transport = new Client(tx);
     } catch {
       transport = createLocalClient();
@@ -63,6 +65,11 @@ async function main() {
       log: "日志",
     },
   }).parse(argv);
+
+  // 清理：关闭 RPC 连接，允许进程正常退出
+  transport.dispose();
+  http2Tx?.close();
+  process.exit(0);
 }
 
 function createLocalClient(): Client {
