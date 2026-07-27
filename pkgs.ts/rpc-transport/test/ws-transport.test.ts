@@ -57,7 +57,7 @@ async function main() {
   wss.on('connection', (ws) => {
     const transport = new WsTransport(ws);
     const server = new Server(transport);
-    createHandler({ router: app, transport: server, ctx: {} });
+    createHandler({ router: app, transport: server });
   });
 
   function connect() {

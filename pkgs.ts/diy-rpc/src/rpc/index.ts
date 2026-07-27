@@ -84,7 +84,7 @@ export interface ProcedureDef<
   TChOut = never,
   TMode extends string = 'unary',
 > extends ProcedureMeta<TIn, TOut, TChIn, TChOut, TMode> {
-  call: (opts: { input: TIn; ctx?: unknown; meta?: unknown }) => unknown;
+  call: (opts: { input: TIn; meta?: unknown }) => unknown;
 }
 
 export type AnyProcedureMeta = ProcedureMeta<any, any, any, any, any>;
@@ -133,22 +133,22 @@ export interface DefineBidiStreamConfig<TSchema extends Record<string, z.ZodType
 
 export interface UnaryConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput>
   extends DefineUnaryConfig<TSchema, TOutput> {
-  call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; ctx?: unknown; meta?: unknown }) => TOutput | Promise<TOutput>;
+  call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; meta?: unknown }) => TOutput | Promise<TOutput>;
 }
 
 export interface ServerStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput>
   extends DefineServerStreamConfig<TSchema, TOutput> {
-  call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; ctx?: unknown; meta?: unknown }) => AsyncGenerator<TOutput>;
+  call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; meta?: unknown }) => AsyncGenerator<TOutput>;
 }
 
 export interface ClientStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput>
   extends DefineClientStreamConfig<TSchema, TChunk, TOutput> {
-  call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; stream: StreamHandle<TChunk>; ctx?: unknown; meta?: unknown }) => TOutput | Promise<TOutput>;
+  call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; stream: StreamHandle<TChunk>; meta?: unknown }) => TOutput | Promise<TOutput>;
 }
 
 export interface BidiStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut>
   extends DefineBidiStreamConfig<TSchema, TChunkIn, TChunkOut> {
-  call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; stream: StreamHandle<TChunkIn>; ctx?: unknown; meta?: unknown }) => AsyncGenerator<TChunkOut>;
+  call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; stream: StreamHandle<TChunkIn>; meta?: unknown }) => AsyncGenerator<TChunkOut>;
 }
 
 // ═══════════════════════════════════════════════════
@@ -216,7 +216,7 @@ function unary<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
   config: UnaryConfig<TSchema, TOutput>,
 ): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, never, 'unary'> {
   const meta = _makeMeta(config, 'unary', z.object(config.input), config.output);
-  meta.call = (opts: any) => config.call({ input: opts.input, ctx: opts.ctx, meta: opts.meta });
+  meta.call = (opts: any) => config.call({ input: opts.input, meta: opts.meta });
   return meta;
 }
 
@@ -224,7 +224,7 @@ function serverStream<const TSchema extends Record<string, z.ZodTypeAny>, TOutpu
   config: ServerStreamConfig<TSchema, TOutput>,
 ): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, TOutput, 'server'> {
   const meta = _makeMeta(config, 'server', z.object(config.input), config.output);
-  meta.call = (opts: any) => config.call({ input: opts.input, ctx: opts.ctx, meta: opts.meta });
+  meta.call = (opts: any) => config.call({ input: opts.input, meta: opts.meta });
   return meta;
 }
 
@@ -232,7 +232,7 @@ function clientStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunk
   config: ClientStreamConfig<TSchema, TChunk, TOutput>,
 ): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, TChunk, never, 'client'> {
   const meta = _makeMeta(config, 'client', z.object(config.input), config.output, config.chunkIn);
-  meta.call = (opts: any) => config.call({ input: opts.input, stream: opts.stream, ctx: opts.ctx, meta: opts.meta });
+  meta.call = (opts: any) => config.call({ input: opts.input, stream: opts.stream, meta: opts.meta });
   return meta;
 }
 
@@ -240,7 +240,7 @@ function bidiStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunkIn
   config: BidiStreamConfig<TSchema, TChunkIn, TChunkOut>,
 ): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TChunkOut, TChunkIn, TChunkOut, 'bidi'> {
   const meta = _makeMeta(config, 'bidi', z.object(config.input), undefined, config.chunkIn, config.chunkOut);
-  meta.call = (opts: any) => config.call({ input: opts.input, stream: opts.stream, ctx: opts.ctx, meta: opts.meta });
+  meta.call = (opts: any) => config.call({ input: opts.input, stream: opts.stream, meta: opts.meta });
   return meta;
 }
 
@@ -362,11 +362,10 @@ export function flattenRouter(r: Router): Record<string, AnyProcedureMeta> {
 // ═══════════════════════════════════════════════════
 
 /** 内部共享：遍历 router 树 + 注册 handler 到 transport */
-function _registerRouter<TCtx = {}>(opts: {
+function _registerRouter(opts: {
   router: Router;
   transport: Server;
   handlers: Map<AnyProcedureMeta, (params: unknown, stream?: unknown) => unknown>;
-  getCtx: () => TCtx;
 }) {
   const { transport: tx } = opts;
   const flat = flattenRouter(opts.router);
@@ -382,27 +381,27 @@ function _registerRouter<TCtx = {}>(opts: {
       tx.onUnary(name, ((raw: unknown) => {
         const { input, meta } = (raw ?? {}) as any;
         const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
-        return handler({ input: validated, ctx: opts.getCtx(), meta: meta ?? {} });
+        return handler({ input: validated, meta: meta ?? {} });
       }) as any);
     } else if (mode === 'server') {
       tx.onServerStream(name, ((raw: unknown) => {
         const { input, meta } = (raw ?? {}) as any;
         const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
-        return handler({ input: validated, ctx: opts.getCtx(), meta: meta ?? {} });
+        return handler({ input: validated, meta: meta ?? {} });
       }) as any);
     } else if (mode === 'client') {
       tx.onClientStream(name, ((raw: unknown, chunks: StreamHandle<any>) => {
         const { input, meta } = (raw ?? {}) as any;
         const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
         const validatedChunks = def.chunkInSchema ? (chunks as any) : chunks;
-        return handler({ input: validated, ctx: opts.getCtx(), meta: meta ?? {}, stream: validatedChunks });
+        return handler({ input: validated, meta: meta ?? {}, stream: validatedChunks });
       }) as any);
     } else if (mode === 'bidi') {
       tx.onBidiStream(name, ((raw: unknown, incoming: StreamHandle<any>) => {
         const { input, meta } = (raw ?? {}) as any;
         const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
         const validatedChunks = def.chunkInSchema ? (incoming as any) : incoming;
-        return handler({ input: validated, ctx: opts.getCtx(), meta: meta ?? {}, stream: validatedChunks });
+        return handler({ input: validated, meta: meta ?? {}, stream: validatedChunks });
       }) as any);
     }
   }
@@ -412,17 +411,14 @@ function _registerRouter<TCtx = {}>(opts: {
  * 注册完整定义（含 call）的 router。
  * 所有 procedure 必须通过 rpc.unary/serverStream/... 提供 inline call。
  */
-export function createHandler<TCtx = {}>(opts: {
+export function createHandler(opts: {
   router: Router;
   transport: Server;
-  ctx?: TCtx | (() => TCtx);
 }) {
-  const getCtx = () => (typeof opts.ctx === 'function' ? (opts.ctx as () => TCtx)() : opts.ctx);
   _registerRouter({
     router: opts.router,
     transport: opts.transport,
     handlers: new Map(),
-    getCtx,
   });
 }
 
@@ -430,22 +426,19 @@ export function createHandler<TCtx = {}>(opts: {
  * 注册元信息 router（半完成态），需要先通过 .on() 绑定 handler。
  * handlers 由 defineUnary/... 返回的 meta 对象的 .on() 方法产生。
  */
-export function createMetaHandler<TCtx = {}>(opts: {
+export function createMetaHandler(opts: {
   router: Router;
   transport: Server;
   handlers: HandlerBinding[];
-  ctx?: TCtx | (() => TCtx);
 }) {
   const handlerMap = new Map<AnyProcedureMeta, (params: unknown, stream?: unknown) => unknown>();
   for (const b of opts.handlers) {
     handlerMap.set(b.meta, b.handler);
   }
-  const getCtx = () => (typeof opts.ctx === 'function' ? (opts.ctx as () => TCtx)() : opts.ctx);
   _registerRouter({
     router: opts.router,
     transport: opts.transport,
     handlers: handlerMap,
-    getCtx,
   });
 }
 

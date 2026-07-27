@@ -96,7 +96,7 @@ async function main() {
   wss.on("connection", (ws) => {
     const transport = new WsTransport(ws);
     const rpcServer = new Server(transport);
-    createHandler({ router: api, transport: rpcServer, ctx: {} });
+    createHandler({ router: api, transport: rpcServer });
   });
 
   // UI 推送：广播 notify 到所有连接的浏览器

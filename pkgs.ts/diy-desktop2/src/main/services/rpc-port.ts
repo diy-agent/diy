@@ -35,7 +35,7 @@ export class RpcPortService {
     return new Promise<void>((resolve, reject) => {
       const { server } = createHttp2RpcServer((transport: Http2Transport) => {
         this.rpcServer = new Server(transport);
-        createHandler({ router, transport: this.rpcServer, ctx: {} });
+        createHandler({ router, transport: this.rpcServer });
       });
 
       this._http2Server = server as any;

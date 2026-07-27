@@ -186,7 +186,7 @@ async function main() {
         output: z.number(),
         call: async function* ({ input }) {
           for (let i = 0; i < input.n; i++) {
-            await new Promise(r => setTimeout(r, 0));
+            await new Promise(r => setImmediate(r));
             yield i;
           }
         },
@@ -213,7 +213,7 @@ async function main() {
       }),
     });
 
-    createHandler({ router: app, transport: server, ctx: {} });
+    createHandler({ router: app, transport: server });
     const rpcClient = createClient<typeof app>(client, app);
 
     const p1 = await rpcClient.ping({ msg: 'hi' });

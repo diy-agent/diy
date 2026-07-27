@@ -60,7 +60,7 @@ async function main() {
 
   const { server, port } = createHttp2RpcServer((transport) => {
     const srv = new Server(transport);
-    createHandler({ router: app, transport: srv, ctx: {} });
+    createHandler({ router: app, transport: srv });
   });
   server.listen(0);
   await new Promise<void>(resolve => server.once('listening', resolve));

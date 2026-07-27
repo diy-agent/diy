@@ -230,7 +230,7 @@ async function testRpcLayerEnvelopes() {
     }),
   });
 
-  createHandler({ router: app, transport: server, ctx: {} });
+  createHandler({ router: app, transport: server });
   const rpcClient = createClient<typeof app>(client, app);
 
   const pong = await rpcClient.ping({ msg: 'hi' });

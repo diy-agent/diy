@@ -41,8 +41,6 @@ function createMemTransportPair(): [Transport, Transport] {
   ];
 }
 
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-
 // ═══════════════════════════════════════════════════
 //  测试主体
 // ═══════════════════════════════════════════════════
@@ -102,7 +100,7 @@ async function main() {
     apiDef.greet.on(async ({ input }) => `Hello, ${input.name}!`),
     apiDef.nums.on(async function* ({ input }) {
       for (let i = 1; i <= input.n; i++) {
-        await new Promise(r => setTimeout(r, 0));
+        await new Promise(r => setImmediate(r));
         yield i;
       }
     }),
@@ -181,7 +179,7 @@ async function main() {
         output: z.number(),
         call: async function* ({ input }) {
           for (let i = 1; i <= input.to; i++) {
-            await new Promise(r => setTimeout(r, 0));
+            await new Promise(r => setImmediate(r));
             yield i;
           }
         },

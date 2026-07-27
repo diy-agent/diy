@@ -75,7 +75,7 @@ async function main() {
 function createLocalClient(): Client {
   const { serverTx, clientTx } = createMemTransportPair();
   const server = new Server(serverTx);
-  createHandler({ router: api, transport: server, ctx: {} });
+  createHandler({ router: api, transport: server });
   return new Client(clientTx);
 }
 

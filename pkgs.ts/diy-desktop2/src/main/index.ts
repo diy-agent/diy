@@ -132,7 +132,7 @@ function createWindow(): void {
 
   // RPC Server — 渲染进程 ↔ 主进程通信
   ipcRpcServer = new Server(createMainTransport(() => mainWindow!.webContents));
-  createHandler({ router: api, transport: ipcRpcServer, ctx: {} });
+  createHandler({ router: api, transport: ipcRpcServer });
 
   // UI 总线：命令定义层 → 渲染进程
   setNotifyRenderer((cmd) => {
