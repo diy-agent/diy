@@ -1,7 +1,7 @@
 import type { Transport, ErrorPayload, StreamHandle } from '../transport/types';
 import type { Envelope, CallMsg } from '../transport/types';
 import { RpcError } from '../transport/types';
-import { AsyncQueue } from '../transport/async-queue';
+import { AsyncQueue } from './async-queue';
 
 export interface CallOptions {
   signal?: AbortSignal;

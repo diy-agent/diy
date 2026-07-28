@@ -15,7 +15,7 @@
 
 import type { Transport, StreamHandle, StreamMode, Envelope, ErrorPayload } from '../transport/types';
 import { errMsg } from '../transport/types';
-import { AsyncQueue } from '../transport/async-queue';
+import { AsyncQueue } from './async-queue';
 
 let _streamId = 0;
 

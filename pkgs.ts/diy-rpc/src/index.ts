@@ -9,7 +9,7 @@ export type {
 export { errMsg, RpcError } from './transport/types';
 export { RawServer } from './rpc/raw-server';
 export { RawClient } from './rpc/raw-client';
-export { AsyncQueue } from './transport/async-queue';
+export { AsyncQueue } from './rpc/async-queue';
 export { createMemTransportPair, createLoggedTransport } from './transport/transport-builtin';
 export type { TransportLogHandler } from './transport/transport-builtin';
 export {
