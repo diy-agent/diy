@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import { Client, Server, createHandler, createMemTransportPair } from "@diy/rpc";
+import { Client, RpcServer, createMemTransportPair } from "@diy/rpc";
 import { CliApp } from "@diy/rpc/cli";
 import { connectHttp2Rpc } from "@diy/rpc-transport";
 import { api } from "../main/services/api";
@@ -74,8 +74,7 @@ async function main() {
 
 function createLocalClient(): Client {
   const { serverTx, clientTx } = createMemTransportPair();
-  const server = new Server(serverTx);
-  createHandler({ router: api, transport: server });
+  new RpcServer({ router: api, transport: serverTx });
   return new Client(clientTx);
 }
 

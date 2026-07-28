@@ -2,24 +2,24 @@
  * http2-transport.test.ts — HTTP/2 Transport 测试
  */
 
-import { Server, Client, rpc, router, createHandler, createClient } from '@diy/rpc';
+import { RpcImpl, router, RpcServer, createClient } from '@diy/rpc';
 import { createHttp2RpcServer, connectHttp2Rpc } from '../src/http2';
 import { z } from 'zod';
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 const app = router({
-  ping: rpc.unary({
+  ping: RpcImpl.unary({
     input: { msg: z.string() },
     output: z.string(),
     call: ({ input }) => `pong: ${input.msg}`,
   }),
-  add: rpc.unary({
+  add: RpcImpl.unary({
     input: { a: z.number(), b: z.number() },
     output: z.number(),
     call: ({ input }) => input.a + input.b,
   }),
-  slow: rpc.unary({
+  slow: RpcImpl.unary({
     input: { delay: z.number(), id: z.number() },
     output: z.object({ id: z.number() }),
     call: async ({ input }) => {
@@ -27,7 +27,7 @@ const app = router({
       return { id: input.id };
     },
   }),
-  count: rpc.serverStream({
+  count: RpcImpl.serverStream({
     input: { n: z.number() },
     output: z.number(),
     call: async function* ({ input }) {
@@ -37,7 +37,7 @@ const app = router({
       }
     },
   }),
-  upload: rpc.clientStream({
+  upload: RpcImpl.clientStream({
     input: { tag: z.string() },
     chunkIn: z.number(),
     output: z.object({ tag: z.string(), sum: z.number() }),
@@ -59,8 +59,7 @@ async function main() {
   }
 
   const { server, port } = createHttp2RpcServer((transport) => {
-    const srv = new Server(transport);
-    createHandler({ router: app, transport: srv });
+    new RpcServer({ router: app, transport });
   });
   server.listen(0);
   await new Promise<void>(resolve => server.once('listening', resolve));
@@ -72,7 +71,7 @@ async function main() {
   console.log('\n── Unary ──');
   {
     const transport = await connect();
-    const rpcClient = createClient<typeof app>(new Client(transport), app);
+    const rpcClient = createClient(transport, app);
 
     const p = await rpcClient.ping({ msg: 'http2' });
     assert(p === 'pong: http2', `ping = ${JSON.stringify(p)}`);
@@ -86,7 +85,7 @@ async function main() {
   console.log('\n── Server-Stream ──');
   {
     const transport = await connect();
-    const rpcClient = createClient<typeof app>(new Client(transport), app);
+    const rpcClient = createClient(transport, app);
 
     const handle = await rpcClient.count({ n: 4 });
     const results: number[] = [];
@@ -97,7 +96,7 @@ async function main() {
   console.log('\n── Client-Stream ──');
   {
     const transport = await connect();
-    const rpcClient = createClient<typeof app>(new Client(transport), app);
+    const rpcClient = createClient(transport, app);
 
     async function* gen() { yield 10; yield 20; yield 30; }
     const result = await rpcClient.upload({ tag: 'sum' }, gen());
@@ -107,7 +106,7 @@ async function main() {
   console.log('\n── Multiplex (concurrent unary) ──');
   {
     const transport = await connect();
-    const rpcClient = createClient<typeof app>(new Client(transport), app);
+    const rpcClient = createClient(transport, app);
 
     const results = await Promise.all([
       rpcClient.slow({ delay: 30, id: 1 }),
@@ -122,7 +121,7 @@ async function main() {
   console.log('\n── Multiplex (unary + stream) ──');
   {
     const transport = await connect();
-    const rpcClient = createClient<typeof app>(new Client(transport), app);
+    const rpcClient = createClient(transport, app);
 
     const [pingResult, streamHandle] = await Promise.all([
       rpcClient.ping({ msg: 'mix' }),

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { rpc, router } from "@diy/rpc";
+import { RpcImpl, router } from "@diy/rpc";
 import * as task from "../core/task";
 import * as subject from "../core/subject";
 import * as state from "../core/state";
@@ -33,7 +33,7 @@ const StatusOk = z.object({ status: z.string() });
 
 export const api = router({
   task: router({
-    create: rpc.unary({
+    create: RpcImpl.unary({
       input: {
         title: z.string().min(1, "标题不能为空").max(200).cliArg({ desc: "任务标题" }),
         subject: z.string().cliArg({ desc: "所属 subject 路径" }),
@@ -47,7 +47,7 @@ export const api = router({
       },
     }),
 
-    list: rpc.unary({
+    list: RpcImpl.unary({
       input: {
         subject: z.string().optional().cliOption({ short: "s", desc: "按 subject 筛选" }),
       },
@@ -57,7 +57,7 @@ export const api = router({
       },
     }),
 
-    show: rpc.unary({
+    show: RpcImpl.unary({
       input: {
         uri: z.string().cliArg({ desc: "任务 URI" }),
       },
@@ -69,7 +69,7 @@ export const api = router({
       },
     }),
 
-    edit: rpc.unary({
+    edit: RpcImpl.unary({
       input: {
         uri: z.string().cliArg({ desc: "任务 URI" }),
         title: z.string().optional().cliOption({ short: "t", desc: "新标题" }),
@@ -88,7 +88,7 @@ export const api = router({
       },
     }),
 
-    delete: rpc.unary({
+    delete: RpcImpl.unary({
       input: {
         uri: z.string().cliArg({ desc: "任务 URI" }),
       },
@@ -99,7 +99,7 @@ export const api = router({
       },
     }),
 
-    star: rpc.unary({
+    star: RpcImpl.unary({
       input: {
         uri: z.string().cliArg({ desc: "任务 URI" }),
       },
@@ -110,7 +110,7 @@ export const api = router({
       },
     }),
 
-    unstar: rpc.unary({
+    unstar: RpcImpl.unary({
       input: {
         uri: z.string().cliArg({ desc: "任务 URI" }),
       },
@@ -123,7 +123,7 @@ export const api = router({
   }),
 
   subject: router({
-    add: rpc.unary({
+    add: RpcImpl.unary({
       input: {
         path: z.string().min(1, "路径不能为空").cliArg({ desc: "subject 路径" }),
         label: z.string().optional().cliOption({ short: "l", desc: "显示名称" }),
@@ -135,7 +135,7 @@ export const api = router({
       },
     }),
 
-    list: rpc.unary({
+    list: RpcImpl.unary({
       input: {},
       output: z.object({ status: z.string(), data: z.object({ subjects: z.any() }) }),
       call: async () => {
@@ -143,7 +143,7 @@ export const api = router({
       },
     }),
 
-    remove: rpc.unary({
+    remove: RpcImpl.unary({
       input: {
         path: z.string().cliArg({ desc: "subject 路径" }),
       },
@@ -156,7 +156,7 @@ export const api = router({
   }),
 
   ui: router({
-    tree: rpc.unary({
+    tree: RpcImpl.unary({
       input: {
         all: z.boolean().optional().cliOption({ short: "a", desc: "显示全部任务" }),
       },
@@ -166,7 +166,7 @@ export const api = router({
       },
     }),
 
-    status: rpc.unary({
+    status: RpcImpl.unary({
       input: {},
       output: z.object({ status: z.string(), data: z.object({ pid: z.number(), uptime: z.number(), memory: z.number() }) }),
       call: () => ({
@@ -175,7 +175,7 @@ export const api = router({
       }),
     }),
 
-    navigate: rpc.unary({
+    navigate: RpcImpl.unary({
       input: {
         page: z.string().cliArg({ desc: "目标页面" }),
       },
@@ -186,7 +186,7 @@ export const api = router({
       },
     }),
 
-    focus: rpc.unary({
+    focus: RpcImpl.unary({
       input: {
         uri: z.string().cliArg({ desc: "任务 URI" }),
       },
@@ -197,7 +197,7 @@ export const api = router({
       },
     }),
 
-    toast: rpc.unary({
+    toast: RpcImpl.unary({
       input: {
         message: z.string().cliArg({ desc: "通知内容" }),
         level: z.enum(["info", "success", "error"]).optional().cliOption({ short: "l", desc: "级别" }),
@@ -210,7 +210,7 @@ export const api = router({
     }),
   }),
 
-  doctor: rpc.unary({
+  doctor: RpcImpl.unary({
     input: {},
     output: z.object({
       status: z.string(),
@@ -240,7 +240,7 @@ export const api = router({
     },
   }),
 
-  loadTaskTree: rpc.unary({
+  loadTaskTree: RpcImpl.unary({
     input: { allTasks: z.boolean().optional() },
     output: z.any(),
     call: async ({ input }) => {
@@ -248,7 +248,7 @@ export const api = router({
     },
   }),
 
-  getTask: rpc.unary({
+  getTask: RpcImpl.unary({
     input: { uri: z.string() },
     output: z.any(),
     call: async ({ input }) => {
@@ -257,7 +257,7 @@ export const api = router({
   }),
 
   agent: router({
-    chat: rpc.unary({
+    chat: RpcImpl.unary({
       input: {
         model: z.string().cliArg({ desc: "模型名称" }),
         messages: z.array(z.object({ role: z.string(), content: z.string() })).cliOption({ desc: "消息数组 JSON" }),
@@ -270,7 +270,7 @@ export const api = router({
       },
     }),
 
-    chatStream: rpc.serverStream({
+    chatStream: RpcImpl.serverStream({
       input: {
         model: z.string(),
         messages: z.array(z.object({ role: z.string(), content: z.string() })),
@@ -284,7 +284,7 @@ export const api = router({
       },
     }),
 
-    listModels: rpc.unary({
+    listModels: RpcImpl.unary({
       input: {},
       output: z.array(z.object({ id: z.string(), name: z.string() })),
       call: () => [
@@ -293,7 +293,7 @@ export const api = router({
       ],
     }),
 
-    status: rpc.unary({
+    status: RpcImpl.unary({
       input: {
         agentId: z.string().cliArg({ desc: "Agent ID" }),
       },
@@ -307,7 +307,7 @@ export const api = router({
   }),
 
   llmProxy: router({
-    status: rpc.unary({
+    status: RpcImpl.unary({
       input: {},
       output: z.object({ running: z.boolean(), port: z.number() }),
       call: async () => {
@@ -316,7 +316,7 @@ export const api = router({
       },
     }),
 
-    start: rpc.unary({
+    start: RpcImpl.unary({
       input: {},
       output: StatusOk,
       call: async () => {
@@ -326,7 +326,7 @@ export const api = router({
       },
     }),
 
-    stop: rpc.unary({
+    stop: RpcImpl.unary({
       input: {},
       output: StatusOk,
       call: async () => {
@@ -338,7 +338,7 @@ export const api = router({
   }),
 
   log: router({
-    read: rpc.unary({
+    read: RpcImpl.unary({
       input: {
         limit: z.number().optional().cliOption({ desc: "返回条目数" }),
       },
@@ -366,7 +366,7 @@ export const api = router({
   }),
 
   ref: router({
-    sync: rpc.unary({
+    sync: RpcImpl.unary({
       input: {
         all: z.boolean().optional().cliOption({ short: "a", desc: "sync 所有 scope" }),
         scope: z.string().optional().cliOption({ desc: "指定 scope 名称" }),
@@ -383,7 +383,7 @@ export const api = router({
       },
     }),
 
-    list: rpc.unary({
+    list: RpcImpl.unary({
       input: {
         all: z.boolean().optional().cliOption({ short: "a", desc: "显示所有 scope" }),
       },
@@ -393,7 +393,7 @@ export const api = router({
       },
     }),
 
-    status: rpc.unary({
+    status: RpcImpl.unary({
       input: {},
       output: z.object({
         status: z.string(),
@@ -413,7 +413,7 @@ export const api = router({
       },
     }),
 
-    add: rpc.unary({
+    add: RpcImpl.unary({
       input: {
         url: z.string().cliArg({ desc: "Git 仓库 URL" }),
       },
@@ -423,7 +423,7 @@ export const api = router({
       },
     }),
 
-    remove: rpc.unary({
+    remove: RpcImpl.unary({
       input: {
         name: z.string().cliArg({ desc: "仓库标识（diy.yaml 中注册的 URL 或 host/owner/repo）" }),
       },
