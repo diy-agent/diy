@@ -6,7 +6,8 @@
 //   2. app.setPath('userData')  → 仅 temp 模式（生产用 Electron 默认）
 //   3. app.setPath('cache')     → 仅 temp 模式
 //   4. requestSingleInstanceLock → 同 userData 只一个实例
-//   5. 端口绑定 → 生产 18888，临时 0（随机）
+//   5. 创建窗口 + IPC transport
+//   6. 端口绑定 → 生产 18888，临时 0（随机）
 //
 // 生产 vs 临时:
 //   生产: userData/cache = Electron 默认, 锁基于 appName
@@ -15,7 +16,7 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { RawServer, RpcServer } from "@diy/rpc";
+import { RpcServer } from "@diy/rpc";
 import { createMainTransport } from "@diy/rpc-transport-electron";
 import { RpcPortService } from "./services/rpc-port";
 import { AppConfig } from "./core/app-config";
@@ -118,7 +119,7 @@ function loadMainApp(): void {
   }
 }
 
-function createWindow(): void {
+function createWindow(): { server: RpcServer; ipcTransport: import("@diy/rpc").Transport } {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -132,7 +133,7 @@ function createWindow(): void {
 
   // RPC Server — 渲染进程 ↔ 主进程通信
   const ipcTransport = createMainTransport(() => mainWindow!.webContents);
-  ipcRpcServer = new RpcServer({ router: api, transport: ipcTransport });
+  const server = new RpcServer({ router: api, transport: ipcTransport });
 
   // UI 总线：命令定义层 → 渲染进程
   setNotifyRenderer((cmd) => {
@@ -149,11 +150,13 @@ function createWindow(): void {
       if (input.key === "r" && (input.meta || input.control)) mainWindow?.reload();
     });
   }
+
+  return { server, ipcTransport };
 }
 
 // ── RPC 端口服务（外部 CLI 接入） ──
 
-async function startRpcPort(): Promise<boolean> {
+async function startRpcPort(ipcTransport: import("@diy/rpc").Transport): Promise<boolean> {
   const preferredPort = overridePort ?? appConfig.readPort();
   console.log(
     `  Port:         ${preferredPort}${overridePort !== null ? ` (--port, conflict = kill or change)` : ` (from ${appConfig.diyHome}/app.port)`}`,
@@ -162,7 +165,7 @@ async function startRpcPort(): Promise<boolean> {
   rpcPort = new RpcPortService();
 
   try {
-    await rpcPort.start(api, appConfig, preferredPort);
+    await rpcPort.start(appConfig, preferredPort, ipcTransport);
     httpPort = rpcPort.port;
     return true;
   } catch (err: any) {
@@ -175,7 +178,7 @@ async function startRpcPort(): Promise<boolean> {
     }
     console.log("  → 尝试随机端口...");
     try {
-      await rpcPort.start(api, appConfig, 0);
+      await rpcPort.start(appConfig, 0, ipcTransport);
       httpPort = rpcPort.port;
       console.log(`  RPC Port:     http://127.0.0.1:${httpPort} (random)`);
       return true;
@@ -192,16 +195,19 @@ app.whenReady().then(async () => {
   // 注册 app 信息 IPC（独立通道，不走 RPC router）
   ipcMain.handle("getAppInfo", () => getAppInfo());
 
-  const ok = await startRpcPort();
+  // 先创建窗口（产生 IPC transport），再启动 HTTP/2 端口
+  // CLI 连接时会桥接到 IPC transport，故 IPC 必须就绪
+  const { server, ipcTransport } = createWindow();
+  ipcRpcServer = server;
+
+  const ok = await startRpcPort(ipcTransport);
 
   if (ok) {
-    createWindow();
     loadMainApp();
     console.log("═══════════════════════════════════════");
   } else if (overridePort !== null) {
     app.quit();
   } else {
-    createWindow();
     loadMainApp();
     console.warn("[diy] RPC 服务器启动失败，GUI 功能受限");
   }

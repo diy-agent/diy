@@ -1,24 +1,29 @@
 /**
- * rpc-port.ts — HTTP/2 RPC 端口服务
+ * rpc-port.ts — HTTP/2 RPC 端口服务（桥接模式）
  *
- * 在 HTTP/2 端口上暴露 api router，使外部进程（如 CLI）可通过网络调用。
- * 替代旧的 adapters/rpc-server.ts。
+ * 不再创建独立的 RpcServer，而是将 HTTP/2 传输层 pipe 到 IPC 传输层。
+ * CLI 的 RPC 调用通过 pipe 透明到达 Renderer 和 Main 的 RpcServer。
  *
- * 端口生命周期:
- *   端口持久化 → AppDir 管理（app.port 文件）
- *   启动 → 读 appConfig.readPort() → 尝试绑定
- *   成功 → appConfig.writePort()
- *   失败(被占) → 自动切随机端口
+ * 架构:
+ *   CLI ──HTTP/2──→ Main Process ──pipe──→ IPC Transport
+ *                                             ├── Main RpcServer(api)
+ *                                             └── Renderer RpcServer(rendererApi)
  */
 
-import { createHttp2RpcServer, type Http2Transport } from "@diy/rpc-transport";
-import { RawServer, RpcServer, type Router } from "@diy/rpc";
-import type { AppConfig } from "../core/app-config";
+import { createHttp2RpcServer, type Http2Transport } from '@diy/rpc-transport';
+import type { Transport } from '@diy/rpc';
+import type { AppConfig } from '../core/app-config';
+
+/** 传输层桥接：a 收到的消息转发给 b，b 收到的消息转发给 a */
+function pipe(a: Transport, b: Transport): () => void {
+  const ua = a.on((msg) => b.send(msg));
+  const ub = b.on((msg) => a.send(msg));
+  return () => { ua(); ub(); };
+}
 
 export class RpcPortService {
-  // http2.Server (from createHttp2RpcServer return type)
-  private _http2Server: { close(): void; on(e: string, h: (...args: any[]) => void): void; listen(p: number, h: string, cb: () => void): void; address(): { port: number } | null } | null = null;
-  private rpcServer: RpcServer | null = null;
+  private bridges: Array<{ unsub: () => void; close(): void }> = [];
+  private _http2Server: ReturnType<typeof createHttp2RpcServer>['server'] | null = null;
   private _port = 0;
 
   get port(): number {
@@ -29,35 +34,52 @@ export class RpcPortService {
     return this._http2Server !== null && this._port > 0;
   }
 
-  async start(router: Router, appConfig: AppConfig, preferredPort?: number): Promise<void> {
+  /**
+   * @param ipcTransport 主进程↔渲染进程的 IPC Transport，用于桥接
+   */
+  async start(
+    appConfig: AppConfig,
+    preferredPort?: number,
+    ipcTransport?: Transport,
+  ): Promise<void> {
     const targetPort = preferredPort ?? appConfig.readPort() ?? 18888;
 
     return new Promise<void>((resolve, reject) => {
-      const { server } = createHttp2RpcServer((transport: Http2Transport) => {
-        this.rpcServer = new RpcServer({ router, transport });
+      const { server } = createHttp2RpcServer((cliTx: Http2Transport) => {
+        if (ipcTransport) {
+          // 桥接模式：CLI 的 transport 直通 IPC transport
+          const unsub = pipe(cliTx, ipcTransport);
+          this.bridges.push({
+            unsub,
+            close: () => cliTx.close(),
+          });
+        }
       });
 
       this._http2Server = server as any;
 
-      server.on("error", (err: Error & { code?: string }) => {
+      server.on('error', (err: Error & { code?: string }) => {
         server.close();
         this._http2Server = null;
         reject(err);
       });
 
-      server.listen(targetPort, "127.0.0.1", () => {
+      server.listen(targetPort, '127.0.0.1', () => {
         const addr = server.address();
-        this._port = typeof addr === "object" && addr ? addr.port : targetPort;
+        this._port = typeof addr === 'object' && addr ? addr.port : targetPort;
         appConfig.writePort(this._port);
-        console.log(`[diy] RPC HTTP/2 端口: http://127.0.0.1:${this._port}`);
+        console.log(`[diy] RPC HTTP/2 端口: http://127.0.0.1:${this._port} (桥接模式)`);
         resolve();
       });
     });
   }
 
   stop(): void {
-    this.rpcServer?.destroy();
-    this.rpcServer = null;
+    for (const b of this.bridges) {
+      b.unsub();
+      b.close();
+    }
+    this.bridges = [];
     this._http2Server?.close();
     this._http2Server = null;
     this._port = 0;

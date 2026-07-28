@@ -10,7 +10,7 @@ import {
   routeResolve,
   routeWalk,
 } from "..";
-import type { Client } from "../../transport/client";
+import type { RawClient } from "../raw-client";
 import type { AnyProcedureMeta } from "..";
 import { parseArgv, generateHelp, CliParseError } from "./parser";
 import type { ProcedureCliMeta } from "./meta";
@@ -37,7 +37,7 @@ export interface CliConfig<TRouter extends Router> {
   version?: string;
   description?: string;
   router: TRouter;
-  transport: Client;
+  transport: RawClient;
   json?: boolean;
   groups?: Record<string, string>;
 }
