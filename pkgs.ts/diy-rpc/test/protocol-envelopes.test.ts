@@ -4,7 +4,7 @@
 
 import type { Transport, StreamHandle } from '../src/transport/types';
 import { Server, Client } from '../src/transport';
-import { rpc, router, createHandler, createClient } from '../src/rpc';
+import { RpcImpl, RpcServer, RpcClient, router } from '../src/rpc';
 import { z } from 'zod';
 
 // ═══════════════════════════════════════════════════
@@ -208,17 +208,15 @@ async function testBidiStreamEnvelopes() {
 async function testRpcLayerEnvelopes() {
   console.log('\n── RPC 层信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
-  const server = new Server(serverTx);
-  const client = new Client(clientTx);
 
   const app = router({
-    ping: rpc.unary({
+    ping: RpcImpl.unary({
       input: { msg: z.string() },
       output: z.string(),
       call: ({ input }) => `pong: ${input.msg}`,
     }),
 
-    upload: rpc.clientStream({
+    upload: RpcImpl.clientStream({
       input: { tag: z.string() },
       chunkIn: z.number(),
       output: z.object({ tag: z.string(), sum: z.number() }),
@@ -230,8 +228,8 @@ async function testRpcLayerEnvelopes() {
     }),
   });
 
-  createHandler({ router: app, transport: server });
-  const rpcClient = createClient<typeof app>(client, app);
+  const rpcServer = new RpcServer({ router: app, transport: serverTx });
+  const rpcClient = RpcClient.create({ router: app, transport: clientTx });
 
   const pong = await rpcClient.ping({ msg: 'hi' });
   assert(pong === 'pong: hi', `ping = ${pong}`);

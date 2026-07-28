@@ -7,7 +7,7 @@
 
 import type { Transport, Envelope } from '../src/transport/types';
 import { Server, Client } from '../src/transport';
-import { RpcImpl, RpcServer, router, createClient } from '../src/rpc';
+import { RpcImpl, RpcServer, RpcClient, router } from '../src/rpc';
 import { z } from 'zod';
 
 // ═══════════════════════════════════════════════════
@@ -213,7 +213,7 @@ async function main() {
     });
 
     const rpcServer = new RpcServer({ router: app, transport: txA });
-    const rpcClient = createClient<typeof app>(client, app);
+    const rpcClient = RpcClient.create({ router: app, transport: txB });
 
     const p1 = await rpcClient.ping({ msg: 'hi' });
     assert(p1 === 'pong: hi', `ping = ${p1}`);

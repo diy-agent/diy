@@ -10,7 +10,7 @@
  */
 
 import { z } from 'zod';
-import type { Client, CallOptions } from '../transport/client';
+import { Client, type CallOptions } from '../transport/client';
 import type { Transport, StreamHandle } from '../transport/types';
 import { RpcError } from '../transport/types';
 // 运行时需要 value import 给 new Server(...)
@@ -530,6 +530,29 @@ export class RpcServer {
         return handler({ input: validated, meta: meta ?? {}, stream: validatedChunks });
       }) as any);
     }
+  }
+}
+
+// ═══════════════════════════════════════════════════
+//  RpcClient — 第3层客户端统一入口
+// ═══════════════════════════════════════════════════
+
+/**
+ * 第3层 RPC 客户端工厂。
+ *
+ * 替代手动组合 new Client() + createClient()。
+ * 与 RpcServer 对称：构造时传入 router + Transport。
+ *
+ * 用法：
+ *   const cli = RpcClient.create({ router: app, transport: txCli });
+ *   const r = await cli.math.add({ a: 1, b: 2 });
+ */
+export class RpcClient {
+  static create<TRouter>(
+    opts: { router: TRouter; transport: Transport },
+  ): ClientRouter<TRouter> {
+    const client = new Client(opts.transport);
+    return createClient(client, opts.router as any);
   }
 }
 

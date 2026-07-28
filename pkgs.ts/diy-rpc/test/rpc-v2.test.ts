@@ -9,11 +9,9 @@
  */
 
 import type { Transport } from '../src/transport/types';
-import { Client } from '../src/transport/client';
 import { z } from 'zod';
 import {
-  RpcSchema, RpcImpl, RpcServer,
-  createClient,
+  RpcSchema, RpcImpl, RpcServer, RpcClient,
 } from '../src/index';
 
 // ═══════════════════════════════════════════════════
@@ -91,7 +89,6 @@ async function main() {
   console.log('\n── Server 注册 ──');
 
   const [txSrv, txCli] = createMemTransportPair();
-  const client = new Client(txCli);
 
   const rpcServer = new RpcServer({ router: apiDef, transport: txSrv });
   rpcServer.on(apiDef.math.add, async ({ input }) => input.a + input.b);
@@ -115,7 +112,7 @@ async function main() {
 
   console.log('\n── Client 调用 ──');
 
-  const rpcClient = createClient(client, apiDef);
+  const rpcClient = RpcClient.create({ router: apiDef, transport: txCli });
 
   // Unary
   const r1 = await rpcClient.math.add({ a: 3, b: 4 });
@@ -147,7 +144,6 @@ async function main() {
   console.log('\n── 向前兼容 RpcImpl（内置 call） ──');
 
   const [txSrv2, txCli2] = createMemTransportPair();
-  const client2 = new Client(txCli2);
 
   // 跟当前一样的完整定义
   const apiFull = {
@@ -171,7 +167,7 @@ async function main() {
   const rpcServer2 = new RpcServer({ router: apiFull, transport: txSrv2 });
   // 含 call, 自动注册, 无需 .on()
 
-  const rpcClient2 = createClient(client2, apiFull);
+  const rpcClient2 = RpcClient.create({ router: apiFull, transport: txCli2 });
   const r3 = await rpcClient2.ping({ msg: 'hi' });
   assert(r3 === 'pong: hi', `ping = ${r3}`);
 
