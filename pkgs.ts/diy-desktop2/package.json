@@ -26,6 +26,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:intent": "vitest run tests/cli.intent.test.ts",
+    "test:bridge": "node bin/test-bridge.mjs",
     "test:unit": "vitest run --exclude tests/cli.intent.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src/ tests/",
