@@ -156,7 +156,7 @@ function createWindow(): { server: RpcServer; ipcTransport: import("@diy/rpc").T
 
 // ── RPC 端口服务（外部 CLI 接入） ──
 
-async function startRpcPort(ipcTransport: import("@diy/rpc").Transport): Promise<boolean> {
+async function startRpcPort(api: import("@diy/rpc").Router, ipcTransport: import("@diy/rpc").Transport): Promise<boolean> {
   const preferredPort = overridePort ?? appConfig.readPort();
   console.log(
     `  Port:         ${preferredPort}${overridePort !== null ? ` (--port, conflict = kill or change)` : ` (from ${appConfig.diyHome}/app.port)`}`,
@@ -165,7 +165,7 @@ async function startRpcPort(ipcTransport: import("@diy/rpc").Transport): Promise
   rpcPort = new RpcPortService();
 
   try {
-    await rpcPort.start(appConfig, preferredPort, ipcTransport);
+    await rpcPort.start(api, appConfig, preferredPort, ipcTransport);
     httpPort = rpcPort.port;
     return true;
   } catch (err: any) {
@@ -178,7 +178,7 @@ async function startRpcPort(ipcTransport: import("@diy/rpc").Transport): Promise
     }
     console.log("  → 尝试随机端口...");
     try {
-      await rpcPort.start(appConfig, 0, ipcTransport);
+      await rpcPort.start(api, appConfig, 0, ipcTransport);
       httpPort = rpcPort.port;
       console.log(`  RPC Port:     http://127.0.0.1:${httpPort} (random)`);
       return true;
@@ -200,7 +200,7 @@ app.whenReady().then(async () => {
   const { server, ipcTransport } = createWindow();
   ipcRpcServer = server;
 
-  const ok = await startRpcPort(ipcTransport);
+  const ok = await startRpcPort(api, ipcTransport);
 
   if (ok) {
     loadMainApp();
