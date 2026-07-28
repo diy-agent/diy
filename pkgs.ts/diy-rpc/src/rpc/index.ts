@@ -10,10 +10,11 @@
  */
 
 import { z } from 'zod';
-import type { Server } from '../transport/server';
 import type { Client, CallOptions } from '../transport/client';
-import type { StreamHandle } from '../transport/types';
+import type { Transport, StreamHandle } from '../transport/types';
 import { RpcError } from '../transport/types';
+// 运行时需要 value import 给 new Server(...)
+import { Server } from '../transport/server';
 
 // ═══════════════════════════════════════════════════
 //  类型基础
@@ -426,6 +427,110 @@ export function createMetaHandler(opts: {
     transport: opts.transport,
     handlers: handlerMap,
   });
+}
+
+// ═══════════════════════════════════════════════════
+//  RpcServer — 第3层服务端统一入口
+// ═══════════════════════════════════════════════════
+
+/** 从 ProcedureMeta 类型参数推导 handler 签名 */
+type HandlerForProc<T> =
+  T extends ProcedureMeta<infer TIn, infer TOut, infer TChIn, infer TChOut, infer TMode>
+    ? HandlerFor<TIn, TOut, TChIn, TChOut, TMode>
+    : never;
+
+/**
+ * 第3层 RPC 服务端。
+ *
+ * 构造时自动注册所有含 call 的 procedure（RpcImpl），
+ * 不含 call 的（RpcSchema）通过 .on() 绑定 handler。
+ *
+ * 替代手动组合 new Server() + createHandler()/createMetaHandler()。
+ */
+export class RpcServer {
+  private _server: Server;
+  private _metaToMethod = new Map<AnyProcedureMeta, string>();
+
+  constructor(opts: { router: Router; transport: Transport }) {
+    this._server = new Server(opts.transport);
+
+    // 建立 meta → method 映射
+    const flat = flattenRouter(opts.router);
+    for (const [name, def] of Object.entries(flat)) {
+      this._metaToMethod.set(def, name);
+    }
+
+    // 含 call 的 procedure 自动注册
+    this._autoRegister();
+  }
+
+  /**
+   * 绑定 handler 到某个 procedure。
+   * 同时适用于 RpcSchema（必须调）和 RpcImpl（可选覆盖）。
+   */
+  on<T extends AnyProcedureMeta>(
+    proc: T,
+    handler: HandlerForProc<T>,
+  ): void {
+    const method = this._metaToMethod.get(proc);
+    if (!method) {
+      throw new Error(
+        `[RpcServer] Procedure not found in router — ` +
+        `did you pass the correct meta object?`,
+      );
+    }
+    this._register(proc, handler as any);
+  }
+
+  /** 销毁：清理内部 Server 所有监听和流 */
+  destroy(): void {
+    this._server.destroy();
+    this._metaToMethod.clear();
+  }
+
+  // ── 内部 ──────────────────────────────────────
+
+  private _autoRegister(): void {
+    for (const def of this._metaToMethod.keys()) {
+      const callFn = (def as unknown as AnyProcedureDef).call;
+      if (typeof callFn === 'function') {
+        this._register(def, callFn as unknown as (params: unknown, stream?: unknown) => unknown);
+      }
+    }
+  }
+
+  private _register(def: AnyProcedureMeta, handler: (params: unknown, stream?: unknown) => unknown): void {
+    const name = this._metaToMethod.get(def)!;
+    const mode = def._streamMode;
+
+    if (mode === 'unary') {
+      this._server.onUnary(name, ((raw: unknown) => {
+        const { input, meta } = (raw ?? {}) as any;
+        const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
+        return handler({ input: validated, meta: meta ?? {} });
+      }) as any);
+    } else if (mode === 'server') {
+      this._server.onServerStream(name, ((raw: unknown) => {
+        const { input, meta } = (raw ?? {}) as any;
+        const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
+        return handler({ input: validated, meta: meta ?? {} });
+      }) as any);
+    } else if (mode === 'client') {
+      this._server.onClientStream(name, ((raw: unknown, chunks: StreamHandle<any>) => {
+        const { input, meta } = (raw ?? {}) as any;
+        const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
+        const validatedChunks = def.chunkInSchema ? (chunks as any) : chunks;
+        return handler({ input: validated, meta: meta ?? {}, stream: validatedChunks });
+      }) as any);
+    } else if (mode === 'bidi') {
+      this._server.onBidiStream(name, ((raw: unknown, incoming: StreamHandle<any>) => {
+        const { input, meta } = (raw ?? {}) as any;
+        const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
+        const validatedChunks = def.chunkInSchema ? (incoming as any) : incoming;
+        return handler({ input: validated, meta: meta ?? {}, stream: validatedChunks });
+      }) as any);
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════

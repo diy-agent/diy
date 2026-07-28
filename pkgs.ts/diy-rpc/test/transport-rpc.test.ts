@@ -7,7 +7,7 @@
 
 import type { Transport, Envelope } from '../src/transport/types';
 import { Server, Client } from '../src/transport';
-import { RpcImpl, router, createHandler, createClient } from '../src/rpc';
+import { RpcImpl, RpcServer, router, createClient } from '../src/rpc';
 import { z } from 'zod';
 
 // ═══════════════════════════════════════════════════
@@ -171,7 +171,6 @@ async function main() {
   console.log('\n── RPC 层 ──');
   {
     const [txA, txB] = createMemTransportPair();
-    const server = new Server(txA);
     const client = new Client(txB);
 
     const app = router({
@@ -213,7 +212,7 @@ async function main() {
       }),
     });
 
-    createHandler({ router: app, transport: server });
+    const rpcServer = new RpcServer({ router: app, transport: txA });
     const rpcClient = createClient<typeof app>(client, app);
 
     const p1 = await rpcClient.ping({ msg: 'hi' });

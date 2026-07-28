@@ -2,22 +2,17 @@
  * RPC V2 设计验证测试
  *
  * 展示新技术四种流程模式的完整外观：
- *   1. meta 定义（半完成态）— rpc.defineUnary / defineServerStream / ...
- *   2. handler 绑定 — metaNode.on(handler) 返回绑定对
- *   3. server 注册 — createHandler() 消费 meta + bindings
- *   4. client 调用 — createClient(transport, apiDef)
- *
- * 在同一测试中同时展示内置 impl 模式（rpc.unary 等保持兼容）
+ *   1. RpcSchema 定义 — RpcSchema.unary / serverStream / ...
+ *   2. handler 绑定 — RpcServer.on(metaNode, handler)
+ *   3. client 调用 — createClient(transport, apiDef)
+ *   4. RpcImpl 自动注册 — 构造时自动注册所有含 call 的 procedure
  */
 
 import type { Transport } from '../src/transport/types';
-import { Server } from '../src/transport/server';
 import { Client } from '../src/transport/client';
 import { z } from 'zod';
 import {
-  RpcSchema, RpcImpl,
-  createHandler,
-  createMetaHandler,
+  RpcSchema, RpcImpl, RpcServer,
   createClient,
 } from '../src/index';
 
@@ -91,41 +86,29 @@ async function main() {
   console.log('  meta 类型:', greetMeta._streamMode);
   console.log('  meta 输入字段:', Object.keys((greetMeta as any).inputSchema?.shape ?? {}));
 
-  // ── 2. Handler 绑定（.on）───────────────────
-
-  console.log('\n── Handler 绑定 ──');
-
-  const handlers = [
-    apiDef.math.add.on(async ({ input }) => input.a + input.b),
-    apiDef.greet.on(async ({ input }) => `Hello, ${input.name}!`),
-    apiDef.nums.on(async function* ({ input }) {
-      for (let i = 1; i <= input.n; i++) {
-        await new Promise(r => setImmediate(r));
-        yield i;
-      }
-    }),
-    apiDef.upload.on(async ({ input, stream }) => {
-      let sum = 0;
-      for await (const v of stream) sum += v;
-      return { tag: input.tag, sum };
-    }),
-    apiDef.chat.on(async function* ({ input, stream }) {
-      for await (const msg of stream) yield `[${input.room}] ${msg}`;
-    }),
-  ];
-
-  // ── 3. Server 注册 ────────────────────────
+  // ── 3. Server 注册 + handler 绑定 ─────────────────
 
   console.log('\n── Server 注册 ──');
 
   const [txSrv, txCli] = createMemTransportPair();
-  const server = new Server(txSrv);
   const client = new Client(txCli);
 
-  createMetaHandler({
-    router: apiDef,
-    transport: server,
-    handlers,
+  const rpcServer = new RpcServer({ router: apiDef, transport: txSrv });
+  rpcServer.on(apiDef.math.add, async ({ input }) => input.a + input.b);
+  rpcServer.on(apiDef.greet, async ({ input }) => `Hello, ${input.name}!`);
+  rpcServer.on(apiDef.nums, async function* ({ input }) {
+    for (let i = 1; i <= input.n; i++) {
+      await new Promise(r => setImmediate(r));
+      yield i;
+    }
+  });
+  rpcServer.on(apiDef.upload, async ({ input, stream }) => {
+    let sum = 0;
+    for await (const v of stream) sum += v;
+    return { tag: input.tag, sum };
+  });
+  rpcServer.on(apiDef.chat, async function* ({ input, stream }) {
+    for await (const msg of stream) yield `[${input.room}] ${msg}`;
   });
 
   // ── 4. Client 调用 ─────────────────────────
@@ -164,7 +147,6 @@ async function main() {
   console.log('\n── 向前兼容 RpcImpl（内置 call） ──');
 
   const [txSrv2, txCli2] = createMemTransportPair();
-  const server2 = new Server(txSrv2);
   const client2 = new Client(txCli2);
 
   // 跟当前一样的完整定义
@@ -186,11 +168,8 @@ async function main() {
       }),
   } as const;
 
-  createHandler({
-    router: apiFull,
-    transport: server2,
-    // 没有 handlers: 取 def.call
-  });
+  const rpcServer2 = new RpcServer({ router: apiFull, transport: txSrv2 });
+  // 含 call, 自动注册, 无需 .on()
 
   const rpcClient2 = createClient(client2, apiFull);
   const r3 = await rpcClient2.ping({ msg: 'hi' });

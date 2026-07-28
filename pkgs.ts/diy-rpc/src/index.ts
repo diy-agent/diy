@@ -13,7 +13,7 @@ export { AsyncQueue } from './transport/async-queue';
 export { createMemTransportPair, createLoggedTransport } from './transport/transport-builtin';
 export type { TransportLogHandler } from './transport/transport-builtin';
 export {
-  RpcSchema, RpcImpl, router, createHandler, createMetaHandler, createClient, flattenRouter,
+  RpcSchema, RpcImpl, RpcServer, router, createHandler, createMetaHandler, createClient, flattenRouter,
   isProcedure, buildRouteTree, routeLeaves, routeResolve, routeWalk,
 } from './rpc/index';
 export type {
