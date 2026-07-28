@@ -534,29 +534,6 @@ export class RpcServer {
 }
 
 // ═══════════════════════════════════════════════════
-//  RpcClient — 第3层客户端统一入口
-// ═══════════════════════════════════════════════════
-
-/**
- * 第3层 RPC 客户端工厂。
- *
- * 替代手动组合 new Client() + createClient()。
- * 与 RpcServer 对称：构造时传入 router + Transport。
- *
- * 用法：
- *   const cli = RpcClient.create({ router: app, transport: txCli });
- *   const r = await cli.math.add({ a: 1, b: 2 });
- */
-export class RpcClient {
-  static create<TRouter>(
-    opts: { router: TRouter; transport: Transport },
-  ): ClientRouter<TRouter> {
-    const client = new Client(opts.transport);
-    return createClient(client, opts.router as any);
-  }
-}
-
-// ═══════════════════════════════════════════════════
 //  Client 类型推断
 // ═══════════════════════════════════════════════════
 
@@ -583,9 +560,10 @@ export type ClientRouter<TRouter> = {
 // ═══════════════════════════════════════════════════
 
 export function createClient<TRouter>(
-  transport: Client,
+  transport: Transport,
   router: TRouter,
 ): ClientRouter<TRouter> {
+  const tx = new Client(transport);
   const flat = flattenRouter(router as any);
   const modes: Record<string, string> = {};
   for (const [name, def] of Object.entries(flat)) {
@@ -598,20 +576,20 @@ export function createClient<TRouter>(
       const m = modes[name];
 
       if (m === 'server') {
-        return (input: any, options?: CallOptions) => transport.serverStream(name, { input, meta: {} }, options);
+        return (input: any, options?: CallOptions) => tx.serverStream(name, { input, meta: {} }, options);
       }
       if (m === 'client') {
         return (input: any, chunks: any, options?: CallOptions) =>
-          transport.clientStream(name, { input, meta: {} },
+          tx.clientStream(name, { input, meta: {} },
             typeof chunks === 'function' ? chunks() : chunks, options);
       }
       if (m === 'bidi') {
         return (input: any, chunks: any, options?: CallOptions) =>
-          transport.bidiStream(name, { input, meta: {} },
+          tx.bidiStream(name, { input, meta: {} },
             typeof chunks === 'function' ? chunks() : chunks, options);
       }
       if (m) {
-        return (input: any, options?: CallOptions) => transport.invoke(name, { input, meta: {} }, options);
+        return (input: any, options?: CallOptions) => tx.invoke(name, { input, meta: {} }, options);
       }
 
       return buildProxy(name);

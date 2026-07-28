@@ -11,7 +11,8 @@
 import type { Transport } from '../src/transport/types';
 import { z } from 'zod';
 import {
-  RpcSchema, RpcImpl, RpcServer, RpcClient,
+  RpcSchema, RpcImpl, RpcServer,
+  createClient,
 } from '../src/index';
 
 // ═══════════════════════════════════════════════════
@@ -112,7 +113,7 @@ async function main() {
 
   console.log('\n── Client 调用 ──');
 
-  const rpcClient = RpcClient.create({ router: apiDef, transport: txCli });
+  const rpcClient = createClient(txCli, apiDef);
 
   // Unary
   const r1 = await rpcClient.math.add({ a: 3, b: 4 });
@@ -167,7 +168,7 @@ async function main() {
   const rpcServer2 = new RpcServer({ router: apiFull, transport: txSrv2 });
   // 含 call, 自动注册, 无需 .on()
 
-  const rpcClient2 = RpcClient.create({ router: apiFull, transport: txCli2 });
+  const rpcClient2 = createClient(txCli2, apiFull);
   const r3 = await rpcClient2.ping({ msg: 'hi' });
   assert(r3 === 'pong: hi', `ping = ${r3}`);
 

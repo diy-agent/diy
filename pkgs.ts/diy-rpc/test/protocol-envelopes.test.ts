@@ -4,7 +4,7 @@
 
 import type { Transport, StreamHandle } from '../src/transport/types';
 import { Server, Client } from '../src/transport';
-import { RpcImpl, RpcServer, RpcClient, router } from '../src/rpc';
+import { RpcImpl, RpcServer, router, createClient } from '../src/rpc';
 import { z } from 'zod';
 
 // ═══════════════════════════════════════════════════
@@ -229,7 +229,7 @@ async function testRpcLayerEnvelopes() {
   });
 
   const rpcServer = new RpcServer({ router: app, transport: serverTx });
-  const rpcClient = RpcClient.create({ router: app, transport: clientTx });
+  const rpcClient = createClient(clientTx, app);
 
   const pong = await rpcClient.ping({ msg: 'hi' });
   assert(pong === 'pong: hi', `ping = ${pong}`);
