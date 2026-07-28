@@ -12,13 +12,13 @@
  */
 
 import { createHttp2RpcServer, type Http2Transport } from "@diy/rpc-transport";
-import { Server, createHandler, type Router } from "@diy/rpc";
+import { RawServer, RpcServer, type Router } from "@diy/rpc";
 import type { AppConfig } from "../core/app-config";
 
 export class RpcPortService {
   // http2.Server (from createHttp2RpcServer return type)
   private _http2Server: { close(): void; on(e: string, h: (...args: any[]) => void): void; listen(p: number, h: string, cb: () => void): void; address(): { port: number } | null } | null = null;
-  private rpcServer: Server | null = null;
+  private rpcServer: RpcServer | null = null;
   private _port = 0;
 
   get port(): number {
@@ -34,8 +34,7 @@ export class RpcPortService {
 
     return new Promise<void>((resolve, reject) => {
       const { server } = createHttp2RpcServer((transport: Http2Transport) => {
-        this.rpcServer = new Server(transport);
-        createHandler({ router, transport: this.rpcServer });
+        this.rpcServer = new RpcServer({ router, transport });
       });
 
       this._http2Server = server as any;

@@ -10,11 +10,10 @@
  */
 
 import { z } from 'zod';
-import { Client, type CallOptions } from '../transport/client';
+import { RawClient, type CallOptions } from './raw-client';
 import type { Transport, StreamHandle } from '../transport/types';
 import { RpcError } from '../transport/types';
-// 运行时需要 value import 给 new Server(...)
-import { Server } from '../transport/server';
+import { RawServer } from './raw-server';
 
 // ═══════════════════════════════════════════════════
 //  类型基础
@@ -351,7 +350,7 @@ export function flattenRouter(r: Router): Record<string, AnyProcedureMeta> {
 /** 内部共享：遍历 router 树 + 注册 handler 到 transport */
 function _registerRouter(opts: {
   router: Router;
-  transport: Server;
+  transport: RawServer;
   handlers: Map<AnyProcedureMeta, (params: unknown, stream?: unknown) => unknown>;
 }) {
   const { transport: tx } = opts;
@@ -400,7 +399,7 @@ function _registerRouter(opts: {
  */
 export function createHandler(opts: {
   router: Router;
-  transport: Server;
+  transport: RawServer;
 }) {
   _registerRouter({
     router: opts.router,
@@ -415,7 +414,7 @@ export function createHandler(opts: {
  */
 export function createMetaHandler(opts: {
   router: Router;
-  transport: Server;
+  transport: RawServer;
   handlers: HandlerBinding[];
 }) {
   const handlerMap = new Map<AnyProcedureMeta, (params: unknown, stream?: unknown) => unknown>();
@@ -445,14 +444,14 @@ type HandlerForProc<T> =
  * 构造时自动注册所有含 call 的 procedure（RpcImpl），
  * 不含 call 的（RpcSchema）通过 .on() 绑定 handler。
  *
- * 替代手动组合 new Server() + createHandler()/createMetaHandler()。
+ * 替代手动组合 new RawServer() + createHandler()/createMetaHandler()。
  */
 export class RpcServer {
-  private _server: Server;
+  private _server: RawServer;
   private _metaToMethod = new Map<AnyProcedureMeta, string>();
 
   constructor(opts: { router: Router; transport: Transport }) {
-    this._server = new Server(opts.transport);
+    this._server = new RawServer(opts.transport);
 
     // 建立 meta → method 映射
     const flat = flattenRouter(opts.router);
@@ -482,7 +481,7 @@ export class RpcServer {
     this._register(proc, handler as any);
   }
 
-  /** 销毁：清理内部 Server 所有监听和流 */
+  /** 销毁：清理内部 RawServer 所有监听和流 */
   destroy(): void {
     this._server.destroy();
     this._metaToMethod.clear();
@@ -563,7 +562,7 @@ export function createClient<TRouter>(
   transport: Transport,
   router: TRouter,
 ): ClientRouter<TRouter> {
-  const tx = new Client(transport);
+  const tx = new RawClient(transport);
   const flat = flattenRouter(router as any);
   const modes: Record<string, string> = {};
   for (const [name, def] of Object.entries(flat)) {

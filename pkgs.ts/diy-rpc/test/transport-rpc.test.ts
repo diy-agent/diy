@@ -6,7 +6,7 @@
  */
 
 import type { Transport, Envelope } from '../src/transport/types';
-import { Server, Client } from '../src/transport';
+import { RawServer, RawClient } from '../src/transport';
 import { RpcImpl, RpcServer, router, createClient } from '../src/rpc';
 import { z } from 'zod';
 
@@ -50,8 +50,8 @@ async function main() {
   console.log('\n── Unary ──');
   {
     const [txA, txB] = createMemTransportPair();
-    const server = new Server(txA);
-    const client = new Client(txB);
+    const server = new RawServer(txA);
+    const client = new RawClient(txB);
 
     server.onUnary('greet', (params: { name: string }) => `Hello, ${params.name}!`);
     server.onUnary('fail', () => { throw new Error('boom'); });
@@ -72,8 +72,8 @@ async function main() {
   console.log('\n── Server-Stream ──');
   {
     const [txA, txB] = createMemTransportPair();
-    const server = new Server(txA);
-    const client = new Client(txB);
+    const server = new RawServer(txA);
+    const client = new RawClient(txB);
 
     server.onServerStream('count', async function* (p: { to: number }) {
       for (let i = 1; i <= p.to; i++) {
@@ -93,8 +93,8 @@ async function main() {
   console.log('\n── Client-Stream ──');
   {
     const [txA, txB] = createMemTransportPair();
-    const server = new Server(txA);
-    const client = new Client(txB);
+    const server = new RawServer(txA);
+    const client = new RawClient(txB);
 
     server.onClientStream('upload', async (params: { tag: string }, chunks: AsyncIterable<string>) => {
       let received: string[] = [];
@@ -116,8 +116,8 @@ async function main() {
   console.log('\n── Client-Stream (abort) ──');
   {
     const [txA, txB] = createMemTransportPair();
-    const server = new Server(txA);
-    const client = new Client(txB);
+    const server = new RawServer(txA);
+    const client = new RawClient(txB);
 
     server.onClientStream('limited', async (_params: {}, chunks: AsyncIterable<number>) => {
       let count = 0;
@@ -142,8 +142,8 @@ async function main() {
   console.log('\n── Bidi-Stream ──');
   {
     const [txA, txB] = createMemTransportPair();
-    const server = new Server(txA);
-    const client = new Client(txB);
+    const server = new RawServer(txA);
+    const client = new RawClient(txB);
 
     server.onBidiStream('echo', async function* (_params: {}, incoming: any) {
       for await (const msg of incoming) {
@@ -171,7 +171,7 @@ async function main() {
   console.log('\n── RPC 层 ──');
   {
     const [txA, txB] = createMemTransportPair();
-    const client = new Client(txB);
+    const client = new RawClient(txB);
 
     const app = router({
       ping: RpcImpl.unary({
@@ -239,8 +239,8 @@ async function main() {
   console.log('\n── AbortController (unary) ──');
   {
     const [txA, txB] = createMemTransportPair();
-    const server = new Server(txA);
-    const client = new Client(txB);
+    const server = new RawServer(txA);
+    const client = new RawClient(txB);
 
     server.onUnary('slow', async (_: any) => {
       await sleep(1000);

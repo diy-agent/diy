@@ -17,7 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { WsTransport } from "@diy/rpc-transport";
-import { Server, createHandler } from "@diy/rpc";
+import { RawServer, RpcServer } from "@diy/rpc";
 import { api } from "../main/services/api";
 import { AppConfig } from "../main/core/app-config";
 import { setNotifyRenderer } from "../main/services/ui-bus";
@@ -95,8 +95,7 @@ async function main() {
 
   wss.on("connection", (ws) => {
     const transport = new WsTransport(ws);
-    const rpcServer = new Server(transport);
-    createHandler({ router: api, transport: rpcServer });
+    const rpcServer = new RpcServer({ router: api, transport: new WsTransport(ws) });
   });
 
   // UI 推送：广播 notify 到所有连接的浏览器

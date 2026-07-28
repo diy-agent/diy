@@ -7,8 +7,8 @@ export type {
   ErrorPayload, CallMsg, DataMsg, EndMsg, NotifyMsg,
 } from './transport/types';
 export { errMsg, RpcError } from './transport/types';
-export { Server } from './transport/server';
-export { Client } from './transport/client';
+export { RawServer } from './rpc/raw-server';
+export { RawClient } from './rpc/raw-client';
 export { AsyncQueue } from './transport/async-queue';
 export { createMemTransportPair, createLoggedTransport } from './transport/transport-builtin';
 export type { TransportLogHandler } from './transport/transport-builtin';

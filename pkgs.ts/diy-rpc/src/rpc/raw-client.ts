@@ -1,7 +1,7 @@
-import type { Transport, ErrorPayload, StreamHandle } from './types';
-import type { Envelope, CallMsg } from './types';
-import { RpcError } from './types';
-import { AsyncQueue } from './async-queue';
+import type { Transport, ErrorPayload, StreamHandle } from '../transport/types';
+import type { Envelope, CallMsg } from '../transport/types';
+import { RpcError } from '../transport/types';
+import { AsyncQueue } from '../transport/async-queue';
 
 export interface CallOptions {
   signal?: AbortSignal;
@@ -18,7 +18,7 @@ interface StreamEntry {
   end: (error?: ErrorPayload) => void;
 }
 
-export class Client {
+export class RawClient {
   private _reqId = 0;
   private unsub: () => void;
   private pending = new Map<number, PendingEntry>();

@@ -15,7 +15,7 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Server, createHandler } from "@diy/rpc";
+import { RawServer, RpcServer } from "@diy/rpc";
 import { createMainTransport } from "@diy/rpc-transport-electron";
 import { RpcPortService } from "./services/rpc-port";
 import { AppConfig } from "./core/app-config";
@@ -25,7 +25,7 @@ import { homedir, hostname, platform, arch, release, totalmem, freemem } from "n
 
 // ── 共享全局信息（给 IPC 用） ──
 let rpcPort: RpcPortService | null = null;
-let ipcRpcServer: Server | null = null;
+let ipcRpcServer: RpcServer | null = null;
 let mainWindow: BrowserWindow | null = null;
 let appConfig: AppConfig;
 let httpPort = 0;
@@ -131,8 +131,8 @@ function createWindow(): void {
   });
 
   // RPC Server — 渲染进程 ↔ 主进程通信
-  ipcRpcServer = new Server(createMainTransport(() => mainWindow!.webContents));
-  createHandler({ router: api, transport: ipcRpcServer });
+  const ipcTransport = createMainTransport(() => mainWindow!.webContents);
+  ipcRpcServer = new RpcServer({ router: api, transport: ipcTransport });
 
   // UI 总线：命令定义层 → 渲染进程
   setNotifyRenderer((cmd) => {

@@ -1,5 +1,5 @@
 import type { Transport, StreamHandle } from "@diy/rpc";
-import { Client } from "@diy/rpc";
+import { RawClient } from "@diy/rpc";
 import type { ClientApi } from "../../../shared/client";
 
 declare global {
@@ -12,7 +12,7 @@ declare global {
 }
 
 function makeClient(): ClientApi {
-  const cli = new Client(window.transport);
+  const cli = new RawClient(window.transport);
 
   const s = (method: string) => (input: unknown) =>
     cli.serverStream(method, { input, meta: {} }) as Promise<StreamHandle<string>>;

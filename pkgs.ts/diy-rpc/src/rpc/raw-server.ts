@@ -1,9 +1,9 @@
 /**
- * server.ts — 第2层 Raw API：Server 类
+ * raw-server.ts — 第2层 Raw API：RawServer 类
  *
  * 角色：在第1层 Transport 之上提供消息分发 + 流管理。
  *       只应在入口组装代码中使用（传给 createHandler），
- *       业务代码应使用第3层 RPC，不直接操作 Server。
+ *       业务代码应使用第3层 RPC，不直接操作 RawServer。
  *
  * 四类 handler：
  *   onUnary        — unary（请求-响应）
@@ -13,9 +13,9 @@
  *   onNotify       — 单向通知
  */
 
-import type { Transport, StreamHandle, StreamMode, Envelope, ErrorPayload } from './types';
-import { errMsg } from './types';
-import { AsyncQueue } from './async-queue';
+import type { Transport, StreamHandle, StreamMode, Envelope, ErrorPayload } from '../transport/types';
+import { errMsg } from '../transport/types';
+import { AsyncQueue } from '../transport/async-queue';
 
 let _streamId = 0;
 
@@ -25,7 +25,7 @@ type ClientStreamHandler = (params: unknown, chunks: StreamHandle<unknown>) => P
 type BidiStreamHandler = (params: unknown, incoming: StreamHandle<unknown>) => AsyncGenerator<unknown>;
 type NotifyHandler = (params: unknown) => void | Promise<void>;
 
-export class Server {
+export class RawServer {
   private _unaries = new Map<string, UnaryHandler>();
   private _serverStreams = new Map<string, ServerStreamHandler>();
   private _clientStreams = new Map<string, ClientStreamHandler>();

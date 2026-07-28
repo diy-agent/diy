@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import { Client, RpcServer, createMemTransportPair } from "@diy/rpc";
+import { RawClient, RpcServer, createMemTransportPair } from "@diy/rpc";
 import { CliApp } from "@diy/rpc/cli";
 import { connectHttp2Rpc } from "@diy/rpc-transport";
 import { api } from "../main/services/api";
@@ -33,7 +33,7 @@ function readPort(): number | null {
 async function main() {
   const argv = process.argv.slice(2);
 
-  let transport: Client;
+  let transport: RawClient;
   let http2Tx: { close(): void } | null = null;
 
   const port = readPort();
@@ -41,7 +41,7 @@ async function main() {
     try {
       const tx = await connectHttp2Rpc(port);
       http2Tx = tx;
-      transport = new Client(tx);
+      transport = new RawClient(tx);
     } catch {
       transport = createLocalClient();
     }
@@ -72,10 +72,10 @@ async function main() {
   process.exit(0);
 }
 
-function createLocalClient(): Client {
+function createLocalClient(): RawClient {
   const { serverTx, clientTx } = createMemTransportPair();
   new RpcServer({ router: api, transport: serverTx });
-  return new Client(clientTx);
+  return new RawClient(clientTx);
 }
 
 main().catch((e) => {

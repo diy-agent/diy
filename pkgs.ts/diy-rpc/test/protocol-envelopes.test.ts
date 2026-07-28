@@ -3,7 +3,7 @@
  */
 
 import type { Transport, StreamHandle } from '../src/transport/types';
-import { Server, Client } from '../src/transport';
+import { RawServer, RawClient } from '../src/transport';
 import { RpcImpl, RpcServer, router, createClient } from '../src/rpc';
 import { z } from 'zod';
 
@@ -103,8 +103,8 @@ function assert(cond: boolean, msg: string) {
 async function testUnaryEnvelopes() {
   console.log('\n── Unary 信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
-  const server = new Server(serverTx);
-  const client = new Client(clientTx);
+  const server = new RawServer(serverTx);
+  const client = new RawClient(clientTx);
 
   server.onUnary('greet', (p: { name: string }) => `Hello ${p.name}!`);
 
@@ -120,8 +120,8 @@ async function testUnaryEnvelopes() {
 async function testServerStreamEnvelopes() {
   console.log('\n── Server-Stream 信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
-  const server = new Server(serverTx);
-  const client = new Client(clientTx);
+  const server = new RawServer(serverTx);
+  const client = new RawClient(clientTx);
 
   server.onServerStream('count', async function* (p: { to: number }) {
     for (let i = 0; i < p.to; i++) {
@@ -147,8 +147,8 @@ async function testServerStreamEnvelopes() {
 async function testClientStreamEnvelopes() {
   console.log('\n── Client-Stream 信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
-  const server = new Server(serverTx);
-  const client = new Client(clientTx);
+  const server = new RawServer(serverTx);
+  const client = new RawClient(clientTx);
 
   server.onClientStream('upload', async (p: { tag: string }, chunks: StreamHandle<string>) => {
     const items: string[] = [];
@@ -176,8 +176,8 @@ async function testClientStreamEnvelopes() {
 async function testBidiStreamEnvelopes() {
   console.log('\n── Bidi-Stream 信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
-  const server = new Server(serverTx);
-  const client = new Client(clientTx);
+  const server = new RawServer(serverTx);
+  const client = new RawClient(clientTx);
 
   server.onBidiStream('echo', async function* (p: { prefix: string }, incoming: StreamHandle<string>) {
     for await (const m of incoming) {
