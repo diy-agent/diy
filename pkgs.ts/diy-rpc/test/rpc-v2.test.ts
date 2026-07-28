@@ -15,7 +15,7 @@ import { Server } from '../src/transport/server';
 import { Client } from '../src/transport/client';
 import { z } from 'zod';
 import {
-  rpc,
+  RpcSchema, RpcImpl,
   createHandler,
   createMetaHandler,
   createClient,
@@ -60,25 +60,25 @@ async function main() {
 
   const apiDef = {
     math: {
-      add: rpc.defineUnary({
+      add: RpcSchema.unary({
         input: { a: z.number(), b: z.number() },
         output: z.number(),
       }),
     },
-    greet: rpc.defineUnary({
+    greet: RpcSchema.unary({
       input: { name: z.string() },
       output: z.string(),
     }),
-    nums: rpc.defineServerStream({
+    nums: RpcSchema.serverStream({
       input: { n: z.number() },
       output: z.number(),
     }),
-    upload: rpc.defineClientStream({
+    upload: RpcSchema.clientStream({
       input: { tag: z.string() },
       chunkIn: z.number(),
       output: z.object({ tag: z.string(), sum: z.number() }),
     }),
-    chat: rpc.defineBidiStream({
+    chat: RpcSchema.bidiStream({
       input: { room: z.string() },
       chunkIn: z.string(),
       chunkOut: z.string(),
@@ -161,7 +161,7 @@ async function main() {
 
   // ── 5. 向前兼容：内置 impl 模式 ──────────────
 
-  console.log('\n── 向前兼容 rpc.unary（内置 call） ──');
+  console.log('\n── 向前兼容 RpcImpl（内置 call） ──');
 
   const [txSrv2, txCli2] = createMemTransportPair();
   const server2 = new Server(txSrv2);
@@ -169,12 +169,12 @@ async function main() {
 
   // 跟当前一样的完整定义
   const apiFull = {
-    ping: rpc.unary({
+    ping: RpcImpl.unary({
       input: { msg: z.string() },
       output: z.string(),
       call: async ({ input }) => `pong: ${input.msg}`,
     }),
-    count: rpc.serverStream({
+    count: RpcImpl.serverStream({
         input: { to: z.number() },
         output: z.number(),
         call: async function* ({ input }) {

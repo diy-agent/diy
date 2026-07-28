@@ -1,11 +1,9 @@
 /**
  * rpc/index.ts — 第3层 RPC：声明式 Procedure 定义
  *
- * 两种定义形态：
- *   1. 元信息形式（半完成态）— defineUnary / defineServerStream / ...
- *      只定义 API 外观（inputSchema、outputSchema、streamMode），不含 call
- *   2. 完整形式 — unary / serverStream / clientStream / bidiStream
- *      schemas + 内置 call 实现
+ * 两种定义形态，由两个静态工厂类提供：
+ *   1. RpcSchema — 纯定义（不含 call），对应 ProcedureMeta
+ *   2. RpcImpl   — 完整定义（含 call），对应 ProcedureDef
  *
  * 角色：在第2层 Client/Server 之上提供类型安全的声明式 API。
  *       应用程序代码只应该使用这层。
@@ -32,9 +30,6 @@ export interface HandlerBinding {
   meta: AnyProcedureMeta;
   handler: (params: unknown, stream?: unknown) => unknown;
 }
-
-/** 从 schema 记录推导输入类型（{ a: z.number() } → { a: number }） */
-// (故意保留类型名但 IDE 显示的是内联展开) - 实际计算靠 z.output<T[K]>
 
 /** 从 ProcedureMeta 的类型参数推导 handler 签名 */
 type HandlerFor<TIn, TOut, TChIn, TChOut, TMode> =
@@ -69,7 +64,7 @@ export interface ProcedureMeta<
   description?: string;
   cliDesc?: ProcedureCliMeta;
 
-  /** 绑定 handler，返回绑定对供 createHandler 消费 */
+  /** 绑定 handler，返回绑定对供 createMetaHandler 消费 */
   on(handler: HandlerFor<TIn, TOut, TChIn, TChOut, TMode>): HandlerBinding;
 }
 
@@ -94,24 +89,24 @@ export type AnyProcedure = AnyProcedureDef;
 export interface Router { [key: string]: AnyProcedureMeta | Router; }
 
 // ═══════════════════════════════════════════════════
-//  Meta 配置类型（无 call）— 用 schema 类型推导输入类型
+//  RpcSchema 配置类型（纯定义，无 call）
 // ═══════════════════════════════════════════════════
 
-export interface DefineUnaryConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput> {
+export interface RpcSchemaUnaryConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput> {
   summary?: string;
   description?: string;
   input: TSchema;
   output: z.ZodType<TOutput>;
 }
 
-export interface DefineServerStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput> {
+export interface RpcSchemaServerStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput> {
   summary?: string;
   description?: string;
   input: TSchema;
   output: z.ZodType<TOutput>;
 }
 
-export interface DefineClientStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput> {
+export interface RpcSchemaClientStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput> {
   summary?: string;
   description?: string;
   input: TSchema;
@@ -119,7 +114,7 @@ export interface DefineClientStreamConfig<TSchema extends Record<string, z.ZodTy
   output: z.ZodType<TOutput>;
 }
 
-export interface DefineBidiStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut> {
+export interface RpcSchemaBidiStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut> {
   summary?: string;
   description?: string;
   input: TSchema;
@@ -128,56 +123,100 @@ export interface DefineBidiStreamConfig<TSchema extends Record<string, z.ZodType
 }
 
 // ═══════════════════════════════════════════════════
-//  完整配置类型（含 call）
+//  RpcImpl 配置类型（含 call）
 // ═══════════════════════════════════════════════════
 
-export interface UnaryConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput>
-  extends DefineUnaryConfig<TSchema, TOutput> {
+export interface RpcImplUnaryConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput>
+  extends RpcSchemaUnaryConfig<TSchema, TOutput> {
   call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; meta?: unknown }) => TOutput | Promise<TOutput>;
 }
 
-export interface ServerStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput>
-  extends DefineServerStreamConfig<TSchema, TOutput> {
+export interface RpcImplServerStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput>
+  extends RpcSchemaServerStreamConfig<TSchema, TOutput> {
   call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; meta?: unknown }) => AsyncGenerator<TOutput>;
 }
 
-export interface ClientStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput>
-  extends DefineClientStreamConfig<TSchema, TChunk, TOutput> {
+export interface RpcImplClientStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput>
+  extends RpcSchemaClientStreamConfig<TSchema, TChunk, TOutput> {
   call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; stream: StreamHandle<TChunk>; meta?: unknown }) => TOutput | Promise<TOutput>;
 }
 
-export interface BidiStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut>
-  extends DefineBidiStreamConfig<TSchema, TChunkIn, TChunkOut> {
+export interface RpcImplBidiStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut>
+  extends RpcSchemaBidiStreamConfig<TSchema, TChunkIn, TChunkOut> {
   call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; stream: StreamHandle<TChunkIn>; meta?: unknown }) => AsyncGenerator<TChunkOut>;
 }
 
 // ═══════════════════════════════════════════════════
-//  Meta 工厂函数
+//  RpcSchema — 纯定义工厂（返回 ProcedureMeta，无 call）
 // ═══════════════════════════════════════════════════
 
-function defineUnary<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
-  config: DefineUnaryConfig<TSchema, TOutput>,
-): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, never, 'unary'> {
-  return _makeMeta(config, 'unary', z.object(config.input), config.output);
+export class RpcSchema {
+  static unary<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
+    config: RpcSchemaUnaryConfig<TSchema, TOutput>,
+  ): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, never, 'unary'> {
+    return _makeMeta(config, 'unary', z.object(config.input), config.output);
+  }
+
+  static serverStream<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
+    config: RpcSchemaServerStreamConfig<TSchema, TOutput>,
+  ): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, TOutput, 'server'> {
+    return _makeMeta(config, 'server', z.object(config.input), config.output);
+  }
+
+  static clientStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput>(
+    config: RpcSchemaClientStreamConfig<TSchema, TChunk, TOutput>,
+  ): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, TChunk, never, 'client'> {
+    return _makeMeta(config, 'client', z.object(config.input), config.output, config.chunkIn);
+  }
+
+  static bidiStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut>(
+    config: RpcSchemaBidiStreamConfig<TSchema, TChunkIn, TChunkOut>,
+  ): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TChunkOut, TChunkIn, TChunkOut, 'bidi'> {
+    return _makeMeta(config, 'bidi', z.object(config.input), undefined, config.chunkIn, config.chunkOut);
+  }
 }
 
-function defineServerStream<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
-  config: DefineServerStreamConfig<TSchema, TOutput>,
-): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, TOutput, 'server'> {
-  return _makeMeta(config, 'server', z.object(config.input), config.output);
+// ═══════════════════════════════════════════════════
+//  RpcImpl — 完整定义工厂（返回 ProcedureDef，含 call）
+// ═══════════════════════════════════════════════════
+
+export class RpcImpl {
+  static unary<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
+    config: RpcImplUnaryConfig<TSchema, TOutput>,
+  ): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, never, 'unary'> {
+    const meta = _makeMeta(config, 'unary', z.object(config.input), config.output);
+    meta.call = (opts: any) => config.call({ input: opts.input, meta: opts.meta });
+    return meta;
+  }
+
+  static serverStream<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
+    config: RpcImplServerStreamConfig<TSchema, TOutput>,
+  ): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, TOutput, 'server'> {
+    const meta = _makeMeta(config, 'server', z.object(config.input), config.output);
+    meta.call = (opts: any) => config.call({ input: opts.input, meta: opts.meta });
+    return meta;
+  }
+
+  static clientStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput>(
+    config: RpcImplClientStreamConfig<TSchema, TChunk, TOutput>,
+  ): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, TChunk, never, 'client'> {
+    const meta = _makeMeta(config, 'client', z.object(config.input), config.output, config.chunkIn);
+    meta.call = (opts: any) => config.call({ input: opts.input, stream: opts.stream, meta: opts.meta });
+    return meta;
+  }
+
+  static bidiStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut>(
+    config: RpcImplBidiStreamConfig<TSchema, TChunkIn, TChunkOut>,
+  ): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TChunkOut, TChunkIn, TChunkOut, 'bidi'> {
+    const meta = _makeMeta(config, 'bidi', z.object(config.input), undefined, config.chunkIn, config.chunkOut);
+    meta.call = (opts: any) => config.call({ input: opts.input, stream: opts.stream, meta: opts.meta });
+    return meta;
+  }
 }
 
-function defineClientStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput>(
-  config: DefineClientStreamConfig<TSchema, TChunk, TOutput>,
-): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, TChunk, never, 'client'> {
-  return _makeMeta(config, 'client', z.object(config.input), config.output, config.chunkIn);
-}
-
-function defineBidiStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut>(
-  config: DefineBidiStreamConfig<TSchema, TChunkIn, TChunkOut>,
-): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TChunkOut, TChunkIn, TChunkOut, 'bidi'> {
-  return _makeMeta(config, 'bidi', z.object(config.input), undefined, config.chunkIn, config.chunkOut);
-}
+// ═══════════════════════════════════════════════════
+//  内部工厂底层
+// ═══════════════════════════════════════════════════
 
 function _makeMeta(
   config: { summary?: string; description?: string },
@@ -207,59 +246,6 @@ function _makeMeta(
   };
   return meta;
 }
-
-// ═══════════════════════════════════════════════════
-//  Impl 工厂函数（含 call，保持向后兼容 + 新增 output）
-// ═══════════════════════════════════════════════════
-
-function unary<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
-  config: UnaryConfig<TSchema, TOutput>,
-): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, never, 'unary'> {
-  const meta = _makeMeta(config, 'unary', z.object(config.input), config.output);
-  meta.call = (opts: any) => config.call({ input: opts.input, meta: opts.meta });
-  return meta;
-}
-
-function serverStream<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
-  config: ServerStreamConfig<TSchema, TOutput>,
-): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, TOutput, 'server'> {
-  const meta = _makeMeta(config, 'server', z.object(config.input), config.output);
-  meta.call = (opts: any) => config.call({ input: opts.input, meta: opts.meta });
-  return meta;
-}
-
-function clientStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput>(
-  config: ClientStreamConfig<TSchema, TChunk, TOutput>,
-): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, TChunk, never, 'client'> {
-  const meta = _makeMeta(config, 'client', z.object(config.input), config.output, config.chunkIn);
-  meta.call = (opts: any) => config.call({ input: opts.input, stream: opts.stream, meta: opts.meta });
-  return meta;
-}
-
-function bidiStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut>(
-  config: BidiStreamConfig<TSchema, TChunkIn, TChunkOut>,
-): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TChunkOut, TChunkIn, TChunkOut, 'bidi'> {
-  const meta = _makeMeta(config, 'bidi', z.object(config.input), undefined, config.chunkIn, config.chunkOut);
-  meta.call = (opts: any) => config.call({ input: opts.input, stream: opts.stream, meta: opts.meta });
-  return meta;
-}
-
-// ═══════════════════════════════════════════════════
-//  rpc 命名空间导出
-// ═══════════════════════════════════════════════════
-
-export const rpc = {
-  // meta 工厂
-  defineUnary,
-  defineServerStream,
-  defineClientStream,
-  defineBidiStream,
-  // impl 工厂
-  unary,
-  serverStream,
-  clientStream,
-  bidiStream,
-};
 
 // ═══════════════════════════════════════════════════
 //  Router 工具
@@ -374,7 +360,7 @@ function _registerRouter(opts: {
     const mode = def._streamMode;
     const handler = opts.handlers.get(def) ?? (def as any).call;
     if (!handler) {
-      throw new Error(`[createHandler] No handler for procedure "${name}" — provide via .on() or use rpc.unary with call`);
+      throw new Error(`[createHandler] No handler for procedure "${name}" — provide via .on() or use RpcImpl with call`);
     }
 
     if (mode === 'unary') {
@@ -409,7 +395,7 @@ function _registerRouter(opts: {
 
 /**
  * 注册完整定义（含 call）的 router。
- * 所有 procedure 必须通过 rpc.unary/serverStream/... 提供 inline call。
+ * 所有 procedure 必须通过 RpcImpl.unary/serverStream/... 提供 inline call。
  */
 export function createHandler(opts: {
   router: Router;
@@ -424,7 +410,7 @@ export function createHandler(opts: {
 
 /**
  * 注册元信息 router（半完成态），需要先通过 .on() 绑定 handler。
- * handlers 由 defineUnary/... 返回的 meta 对象的 .on() 方法产生。
+ * handlers 由 RpcSchema.unary/... 返回的 meta 对象的 .on() 方法产生。
  */
 export function createMetaHandler(opts: {
   router: Router;

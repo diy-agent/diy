@@ -7,7 +7,7 @@
 
 import type { Transport, Envelope } from '../src/transport/types';
 import { Server, Client } from '../src/transport';
-import { rpc, router, createHandler, createClient } from '../src/rpc';
+import { RpcImpl, router, createHandler, createClient } from '../src/rpc';
 import { z } from 'zod';
 
 // ═══════════════════════════════════════════════════
@@ -175,13 +175,13 @@ async function main() {
     const client = new Client(txB);
 
     const app = router({
-      ping: rpc.unary({
+      ping: RpcImpl.unary({
         input: { msg: z.string() },
         output: z.string(),
         call: ({ input }) => `pong: ${input.msg}`,
       }),
 
-      nums: rpc.serverStream({
+      nums: RpcImpl.serverStream({
         input: { n: z.number() },
         output: z.number(),
         call: async function* ({ input }) {
@@ -192,7 +192,7 @@ async function main() {
         },
       }),
 
-      upload: rpc.clientStream({
+      upload: RpcImpl.clientStream({
         input: { tag: z.string() },
         chunkIn: z.number(),
         output: z.object({ tag: z.string(), sum: z.number() }),
@@ -203,7 +203,7 @@ async function main() {
         },
       }),
 
-      chat: rpc.bidiStream({
+      chat: RpcImpl.bidiStream({
         input: { room: z.string() },
         chunkIn: z.string(),
         chunkOut: z.string(),
