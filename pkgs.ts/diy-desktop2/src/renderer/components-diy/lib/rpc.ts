@@ -5,9 +5,6 @@ import type { ClientApi } from "../../../shared/client";
 declare global {
   interface Window {
     transport: Transport;
-    diy: {
-      onUiCommand: (cb: (cmd: unknown) => void) => () => void;
-    };
   }
 }
 

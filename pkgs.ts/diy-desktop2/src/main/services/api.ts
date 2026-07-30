@@ -5,7 +5,6 @@ import * as subject from "../core/subject";
 import * as state from "../core/state";
 import * as taskTree from "../core/task-tree";
 import * as health from "./health";
-import { notifyRenderer } from "./ui-bus";
 import { refList, checkRefPaths } from "../core/ref";
 import { syncRefs } from "./ref-sync";
 import { addSource, removeSource } from "./ref-config";
@@ -173,40 +172,6 @@ export const api = router({
         status: "ok",
         data: { pid: process.pid, uptime: process.uptime(), memory: process.memoryUsage().heapUsed },
       }),
-    }),
-
-    navigate: RpcImpl.unary({
-      input: {
-        page: z.string().cliArg({ desc: "目标页面" }),
-      },
-      output: z.object({ status: z.string(), data: z.object({ page: z.string() }), meta: z.object({ pushedToGui: z.any() }).optional() }),
-      call: async ({ input }) => {
-        const pushed = notifyRenderer({ type: "navigate", page: input.page });
-        return { status: "ok", data: { page: input.page }, meta: { pushedToGui: pushed } };
-      },
-    }),
-
-    focus: RpcImpl.unary({
-      input: {
-        uri: z.string().cliArg({ desc: "任务 URI" }),
-      },
-      output: z.object({ status: z.string(), data: z.object({ uri: z.string() }), meta: z.object({ pushedToGui: z.any() }).optional() }),
-      call: async ({ input }) => {
-        const pushed = notifyRenderer({ type: "focus", uri: input.uri });
-        return { status: "ok", data: { uri: input.uri }, meta: { pushedToGui: pushed } };
-      },
-    }),
-
-    toast: RpcImpl.unary({
-      input: {
-        message: z.string().cliArg({ desc: "通知内容" }),
-        level: z.enum(["info", "success", "error"]).optional().cliOption({ short: "l", desc: "级别" }),
-      },
-      output: z.object({ status: z.string(), data: z.object({ message: z.string(), level: z.string() }), meta: z.object({ pushedToGui: z.any() }).optional() }),
-      call: async ({ input }) => {
-        const pushed = notifyRenderer({ type: "toast", message: input.message, level: input.level ?? "info" });
-        return { status: "ok", data: { message: input.message, level: input.level ?? "info" }, meta: { pushedToGui: pushed } };
-      },
     }),
   }),
 

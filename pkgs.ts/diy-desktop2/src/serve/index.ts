@@ -20,7 +20,6 @@ import { WsTransport } from "@diy/rpc-transport";
 import { RawServer, RpcServer } from "@diy/rpc";
 import { api } from "../main/services/api";
 import { AppConfig } from "../main/core/app-config";
-import { setNotifyRenderer } from "../main/services/ui-bus";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -96,14 +95,6 @@ async function main() {
   wss.on("connection", (ws) => {
     const transport = new WsTransport(ws);
     const rpcServer = new RpcServer({ router: api, transport: new WsTransport(ws) });
-  });
-
-  // UI 推送：广播 notify 到所有连接的浏览器
-  setNotifyRenderer((cmd) => {
-    const msg = JSON.stringify({ type: "notify", method: "ui:command", params: cmd });
-    for (const client of wss.clients) {
-      if (client.readyState === 1) client.send(msg);
-    }
   });
 
   // ── 启动 ──

@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTaskStore } from "./components-diy/store/taskStore";
 import { useNotificationStore } from "./components-diy/store/notificationStore";
 import { Badge } from "@/components/ui/badge";
+import { setRendererActions, resetRendererActions } from "./components-diy/lib/renderer-actions";
 import {
   SidebarProvider,
   Sidebar,
@@ -40,29 +41,14 @@ function MainApp() {
   const { selectedUri, selectedTask, loadTree, selectTask } = useTaskStore();
   const addToast = useNotificationStore((s) => s.addToast);
 
-  // 监听主进程 UI 命令
+  // RPC handler 回调注册 — CLI 通过 RPC bridge 调用 Renderer UI 操作
   useEffect(() => {
-    const diy = (window as unknown as Record<string, unknown>).diy as
-      | {
-          onUiCommand: (
-            cb: (cmd: {
-              type: string;
-              page?: string;
-              uri?: string;
-              message?: string;
-              level?: string;
-            }) => void,
-          ) => () => void;
-        }
-      | undefined;
-    if (!diy?.onUiCommand) return;
-    const unsub = diy.onUiCommand((cmd) => {
-      if (cmd.type === "navigate" && cmd.page) setCurrentPage(cmd.page as NavPage);
-      if (cmd.type === "focus" && cmd.uri) selectTask(cmd.uri);
-      if (cmd.type === "toast" && cmd.message)
-        addToast((cmd.level as "info" | "success" | "error") || "info", cmd.message);
+    setRendererActions({
+      navigate: (page) => setCurrentPage(page as NavPage),
+      focus: (uri) => selectTask(uri),
+      toast: (msg, level) => addToast(level as 'info' | 'success' | 'error', msg),
     });
-    return unsub;
+    return () => resetRendererActions();
   }, [selectTask, addToast]);
 
   useEffect(() => {

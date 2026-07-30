@@ -20,7 +20,6 @@ import { RpcServer } from "@diy/rpc";
 import { createMainTransport } from "@diy/rpc-transport-electron";
 import { RpcPortService } from "./services/rpc-port";
 import { AppConfig } from "./core/app-config";
-import { setNotifyRenderer } from "./services/ui-bus";
 import { api } from "./services/api";
 import { homedir, hostname, platform, arch, release, totalmem, freemem } from "node:os";
 
@@ -134,13 +133,6 @@ function createWindow(): { server: RpcServer; ipcTransport: import("@diy/rpc").T
   // RPC Server — 渲染进程 ↔ 主进程通信
   const ipcTransport = createMainTransport(() => mainWindow!.webContents);
   const server = new RpcServer({ router: api, transport: ipcTransport });
-
-  // UI 总线：命令定义层 → 渲染进程
-  setNotifyRenderer((cmd) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("ui:command", cmd);
-    }
-  });
 
   mainWindow.once("ready-to-show", () => mainWindow?.show());
 
