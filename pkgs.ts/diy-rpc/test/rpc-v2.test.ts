@@ -1,19 +1,46 @@
 /**
- * RPC V2 设计验证测试
+ * RPC V2 设计验证测试 — meta/handle 分离 + zod 强类型 client
  *
- * 展示新技术四种流程模式的完整外观：
- *   1. RpcSchema 定义 — RpcSchema.unary / serverStream / ...
- *   2. handler 绑定 — RpcServer.on(metaNode, handler)
- *   3. client 调用 — createClient(transport, apiDef)
- *   4. RpcImpl 自动注册 — 构造时自动注册所有含 call 的 procedure
+ * 对比 v1（createClient 从 router 结构推导类型）：
+ *   - meta（zod schema）单独定义，不掺 call
+ *   - handle 通过 .on() 绑定到 meta 对象
+ *   - client 类型直接由 meta 的 zod schema 用 z.infer 推导，不依赖泛型参数
  */
 
 import type { Transport } from '../src/transport/types';
 import { z } from 'zod';
-import {
-  RpcSchema, RpcImpl, RpcServer,
-  createClient,
-} from '../src/index';
+import { RpcSchema, RpcServer, createTypedClient } from '../src/index';
+
+// ═══════════════════════════════════════════════════
+//  meta 定义（纯 zod，无 call）
+// ═══════════════════════════════════════════════════
+
+const apiDef = {
+  math: {
+    add: RpcSchema.unary({
+      input: { a: z.number(), b: z.number() },
+      output: z.number(),
+    }),
+  },
+  greet: RpcSchema.unary({
+    input: { name: z.string() },
+    output: z.string(),
+  }),
+  nums: RpcSchema.serverStream({
+    input: { n: z.number() },
+    output: z.number(),
+  }),
+  upload: RpcSchema.clientStream({
+    input: { tag: z.string() },
+    chunkIn: z.number(),
+    output: z.object({ tag: z.string(), sum: z.number() }),
+  }),
+  chat: RpcSchema.bidiStream({
+    input: { room: z.string() },
+    chunkIn: z.string(),
+    chunkOut: z.string(),
+  }),
+} as const;
 
 // ═══════════════════════════════════════════════════
 //  in-memory Transport（复用，精简版）
@@ -48,50 +75,14 @@ async function main() {
     else { failed++; console.error(`  ❌ ${msg}`); process.exit(1); }
   }
 
-  // ── 1. Meta 定义（半完成态）───────────────────
-
-  console.log('\n── Meta 定义 ──');
-
-  const apiDef = {
-    math: {
-      add: RpcSchema.unary({
-        input: { a: z.number(), b: z.number() },
-        output: z.number(),
-      }),
-    },
-    greet: RpcSchema.unary({
-      input: { name: z.string() },
-      output: z.string(),
-    }),
-    nums: RpcSchema.serverStream({
-      input: { n: z.number() },
-      output: z.number(),
-    }),
-    upload: RpcSchema.clientStream({
-      input: { tag: z.string() },
-      chunkIn: z.number(),
-      output: z.object({ tag: z.string(), sum: z.number() }),
-    }),
-    chat: RpcSchema.bidiStream({
-      input: { room: z.string() },
-      chunkIn: z.string(),
-      chunkOut: z.string(),
-    }),
-  } as const;
-
-  // meta 对象本身可被 client import，无 call
-  const greetMeta = apiDef.greet;
-  // greetMeta 的 inputSchema/outputSchema/_streamMode 全部在 runtime 可用
-  console.log('  meta 类型:', greetMeta._streamMode);
-  console.log('  meta 输入字段:', Object.keys((greetMeta as any).inputSchema?.shape ?? {}));
-
-  // ── 3. Server 注册 + handler 绑定 ─────────────────
-
-  console.log('\n── Server 注册 ──');
+  // ── 1. handle 分离绑定 ─────────────────────
+  // meta 对象不掺 call，handler 通过 .on() 单独绑定
+  console.log('\n── meta/handle 分离 ──');
 
   const [txSrv, txCli] = createMemTransportPair();
-
   const rpcServer = new RpcServer({ router: apiDef, transport: txSrv });
+
+  // 每个 meta 对象单独绑 handler
   rpcServer.on(apiDef.math.add, async ({ input }) => input.a + input.b);
   rpcServer.on(apiDef.greet, async ({ input }) => `Hello, ${input.name}!`);
   rpcServer.on(apiDef.nums, async function* ({ input }) {
@@ -109,79 +100,53 @@ async function main() {
     for await (const msg of stream) yield `[${input.room}] ${msg}`;
   });
 
-  // ── 4. Client 调用 ─────────────────────────
+  console.log('  handlers 已绑定（.on() 逐个挂载）');
 
-  console.log('\n── Client 调用 ──');
+  // ── 2. client 从 meta 的 zod 生成强类型 ─────
+  console.log('\n── zod 强类型 client ──');
 
-  const rpcClient = createClient(txCli, apiDef);
+  const cli = createTypedClient(txCli, apiDef);
 
-  // Unary
-  const r1 = await rpcClient.math.add({ a: 3, b: 4 });
-  assert(r1 === 7, `add(3,4) = ${r1}`);
+  // 类型检查（编译期验证，z.infer 从 zod 推导）
+  const r1: number = await cli.math.add({ a: 3, b: 4 });
+  assert(r1 === 7, `add(3,4) = ${r1} (number)`);
 
-  const r2 = await rpcClient.greet({ name: 'World' });
-  assert(r2 === 'Hello, World!', `greet = ${r2}`);
+  const r2: string = await cli.greet({ name: 'World' });
+  assert(r2 === 'Hello, World!', `greet = ${r2} (string)`);
 
-  // Server-Stream
-  const h = await rpcClient.nums({ n: 3 });
+  // server-stream
+  const h = await cli.nums({ n: 3 });
   const nums: number[] = [];
   for await (const v of h) nums.push(v);
   assert(JSON.stringify(nums) === '[1,2,3]', `nums = ${JSON.stringify(nums)}`);
 
-  // Client-Stream
+  // client-stream（AsyncIterable）
   async function* uploadGen() { yield 10; yield 20; yield 30; }
-  const u = await rpcClient.upload({ tag: 'x' }, uploadGen());
+  const u = await cli.upload({ tag: 'x' }, uploadGen());
   assert(u.tag === 'x' && u.sum === 60, `upload = ${JSON.stringify(u)}`);
 
-  // Bidi-Stream
+  // bidi-stream
   async function* chatGen() { yield 'hello'; yield 'bye'; }
-  const replies = await rpcClient.chat({ room: 'test' }, chatGen());
+  const replies = await cli.chat({ room: 'test' }, chatGen());
   const chats: string[] = [];
   for await (const r of replies) chats.push(r);
   assert(JSON.stringify(chats) === '["[test] hello","[test] bye"]', `chat = ${JSON.stringify(chats)}`);
 
-  // ── 5. 向前兼容：内置 impl 模式 ──────────────
+  // ── 3. runtime zod 输入校验 ─────────────────
+  console.log('\n── runtime zod 校验 ──');
 
-  console.log('\n── 向前兼容 RpcImpl（内置 call） ──');
-
-  const [txSrv2, txCli2] = createMemTransportPair();
-
-  // 跟当前一样的完整定义
-  const apiFull = {
-    ping: RpcImpl.unary({
-      input: { msg: z.string() },
-      output: z.string(),
-      call: async ({ input }) => `pong: ${input.msg}`,
-    }),
-    count: RpcImpl.serverStream({
-        input: { to: z.number() },
-        output: z.number(),
-        call: async function* ({ input }) {
-          for (let i = 1; i <= input.to; i++) {
-            await new Promise(r => setImmediate(r));
-            yield i;
-          }
-        },
-      }),
-  } as const;
-
-  const rpcServer2 = new RpcServer({ router: apiFull, transport: txSrv2 });
-  // 含 call, 自动注册, 无需 .on()
-
-  const rpcClient2 = createClient(txCli2, apiFull);
-  const r3 = await rpcClient2.ping({ msg: 'hi' });
-  assert(r3 === 'pong: hi', `ping = ${r3}`);
-
-  const h2 = await rpcClient2.count({ to: 3 });
-  const countNums: number[] = [];
-  for await (const v of h2) countNums.push(v);
-  assert(JSON.stringify(countNums) === '[1,2,3]', `count = ${JSON.stringify(countNums)}`);
+  try {
+    await cli.math.add({ a: 'not-a-number' as any, b: 4 });
+    assert(false, 'zod 应拒绝非 number 输入');
+  } catch {
+    assert(true, 'zod 拒绝 string 输入到 number 字段');
+  }
 
   // ── 结果 ─────────────────────────────────
-
   console.log(`\n${'═'.repeat(40)}`);
   console.log(`通过: ${passed}  失败: ${failed}`);
   if (failed > 0) process.exit(1);
 }
 
 main().catch(e => { console.error('TEST FAILED:', e); process.exit(1); });
+

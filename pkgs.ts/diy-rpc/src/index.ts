@@ -14,10 +14,11 @@ export { createMemTransportPair, createLoggedTransport } from './transport/trans
 export type { TransportLogHandler } from './transport/transport-builtin';
 export {
   RpcSchema, RpcImpl, RpcServer, router, createHandler, createMetaHandler, createClient, flattenRouter,
+  createTypedClient,
   isProcedure, buildRouteTree, routeLeaves, routeResolve, routeWalk,
 } from './rpc/index';
 export type {
-  ProcedureMeta, ProcedureDef, Router, ClientRouter,
+  ProcedureMeta, ProcedureDef, Router, ClientRouter, TypedClient,
   ProcNode, RouterNode, RouteNode,
   AnyProcedureMeta, AnyProcedureDef, AnyProcedure,
   HandlerBinding,

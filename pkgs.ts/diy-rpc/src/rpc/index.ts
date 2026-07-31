@@ -597,3 +597,10 @@ export function createClient<TRouter>(
 
   return buildProxy('') as ClientRouter<TRouter>;
 }
+
+// ═══════════════════════════════════════════════════
+//  从 meta 的 zod schema 推导强类型 client
+// ═══════════════════════════════════════════════════
+
+export { createTypedClient } from './typed-client';
+export type { TypedClient } from './typed-client';
