@@ -6,7 +6,8 @@ import { homedir, tmpdir } from "node:os";
 import { RawClient, RpcServer, createMemTransportPair } from "@diy/rpc";
 import { CliApp } from "@diy/rpc/cli";
 import { connectHttp2Rpc } from "@diy/rpc-transport";
-import { api } from "../main/services/api";
+import { apiDef } from "../main/services/api-def";
+import { bindApi } from "../main/services/api-impl";
 
 const isProduction = fileURLToPath(import.meta.url).includes("/out/cli/");
 
@@ -53,7 +54,7 @@ async function main() {
     name: "diy2",
     version: "0.1.0",
     description: "diy 管控台 CLI",
-    router: api,
+    router: apiDef,
     transport,
     groups: {
       task: "任务管理",
@@ -74,7 +75,7 @@ async function main() {
 
 function createLocalClient(): RawClient {
   const { serverTx, clientTx } = createMemTransportPair();
-  new RpcServer({ router: api, transport: serverTx });
+  bindApi(serverTx);
   return new RawClient(clientTx);
 }
 

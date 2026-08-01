@@ -30,7 +30,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   loadModels: async () => {
     try {
-      const result = await diyService.agent.listModels();
+      const result = await diyService.agent.listModels({});
       set({ models: result, activeModel: result[0]?.id ?? null });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : "加载模型失败" });

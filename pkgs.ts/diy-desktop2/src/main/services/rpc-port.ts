@@ -9,7 +9,7 @@
  */
 
 import { createHttp2RpcServer, type Http2Transport } from '@diy/rpc-transport';
-import { RpcServer, type Transport, type Router } from '@diy/rpc';
+import { RpcServer, type Transport } from '@diy/rpc';
 import type { AppConfig } from '../core/app-config';
 
 /** 传输层桥接：a 收到的消息转发给 b，b 收到的消息转发给 a */
@@ -34,11 +34,11 @@ export class RpcPortService {
   }
 
   /**
-   * @param router     Main 侧的 api router（task.*, subject.* 等）
+   * @param bindServer  Main 侧绑定工厂（bindApi），为每个 cli transport 创建已绑 handler 的 RpcServer
    * @param ipcTransport 主进程↔渲染进程的 IPC Transport（可选，用于桥接）
    */
   async start(
-    router: Router,
+    bindServer: (transport: Transport) => RpcServer,
     appConfig: AppConfig,
     preferredPort?: number,
     ipcTransport?: Transport,
@@ -48,7 +48,7 @@ export class RpcPortService {
     return new Promise<void>((resolve, reject) => {
       const { server } = createHttp2RpcServer((cliTx: Http2Transport) => {
         // 1. Main 侧 RpcServer — 处理 task.*, subject.*, agent.* 等
-        const mainServer = new RpcServer({ router, transport: cliTx });
+        const mainServer = bindServer(cliTx);
         this.servers.push(mainServer);
 
         // 2. Renderer 桥接 — component.*, page.* 等透传给 Renderer

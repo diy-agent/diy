@@ -1,7 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { RpcServer } from "@diy/rpc";
-import { rendererApi } from "./components-diy/lib/renderer-api";
+import { bindRendererApi } from "./components-diy/lib/renderer-api-impl";
 
 import "./index.css";
 import App from "./App";
@@ -11,7 +10,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 // Renderer 侧 RPC 服务端 — 处理来自 Main 进程或 CLI 的 RPC 调用
 // window.transport 由 preload/index.ts 暴露
 if (window.transport) {
-  const rendererServer = new RpcServer({ router: rendererApi, transport: window.transport });
+  const rendererServer = bindRendererApi(window.transport);
   // 页面卸载时清理
   window.addEventListener("beforeunload", () => rendererServer.destroy());
   console.log("[renderer] RpcServer started");

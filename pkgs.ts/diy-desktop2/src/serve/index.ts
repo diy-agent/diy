@@ -17,8 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { WsTransport } from "@diy/rpc-transport";
-import { RawServer, RpcServer } from "@diy/rpc";
-import { api } from "../main/services/api";
+import { bindApi } from "../main/services/api-impl";
 import { AppConfig } from "../main/core/app-config";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -93,8 +92,7 @@ async function main() {
   const wss = new WebSocketServer({ server: httpServer });
 
   wss.on("connection", (ws) => {
-    const transport = new WsTransport(ws);
-    const rpcServer = new RpcServer({ router: api, transport: new WsTransport(ws) });
+    bindApi(new WsTransport(ws));
   });
 
   // ── 启动 ──

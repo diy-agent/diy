@@ -1,8 +1,8 @@
 // Quick debug: test routeResolve with the actual API
 import { buildRouteTree, routeResolve } from "@diy/rpc";
-import { api } from "../src/main/services/api";
+import { apiDef } from "../src/main/services/api-def";
 
-const tree = buildRouteTree(api);
+const tree = buildRouteTree(apiDef);
 
 console.log("Root children:");
 for (const c of tree.children) {

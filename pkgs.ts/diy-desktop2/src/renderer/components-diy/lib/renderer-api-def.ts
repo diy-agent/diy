@@ -1,22 +1,21 @@
-import { RpcImpl, router } from '@diy/rpc';
+import { RpcSchema } from '@diy/rpc';
 import { z } from 'zod';
-import { getRendererActions } from './renderer-actions';
 
 /**
- * renderer-api.ts — Renderer 侧提供的 RPC 服务
+ * renderer-api-def.ts — Renderer 侧 RPC 纯定义（meta，无 call）
  *
  * 这些服务只在 Renderer 进程（浏览器）中运行，
  * 通过 Transport 桥接（pipe）暴露给 Main 进程和 CLI。
  * 完整限定名：diy.desktop.renderer.*
  */
 
-export const rendererApi = router({
+export const rendererApiDef = {
   diy: {
     desktop: {
       renderer: {
         /** 列出当前页面所有可用 UI 组件 */
         component: {
-          list: RpcImpl.unary({
+          list: RpcSchema.unary({
             input: {},
             output: z.object({
               status: z.string(),
@@ -28,23 +27,10 @@ export const rendererApi = router({
                 })),
               }),
             }),
-            call: async () => {
-              // TODO: 动态扫描注册的组件
-              return {
-                status: 'ok',
-                data: {
-                  components: [
-                    { name: 'taskTree', label: '任务树', description: '任务层级树形展示' },
-                    { name: 'logPanel', label: '日志面板', description: '实时日志输出面板' },
-                    { name: 'agentChat', label: 'Agent 对话', description: 'AI 代理对话面板' },
-                  ],
-                },
-              };
-            },
           }),
 
           /** 查询组件当前状态（参数因组件而异） */
-          status: RpcImpl.unary({
+          status: RpcSchema.unary({
             input: { name: z.string().describe('组件名称') },
             output: z.object({
               status: z.string(),
@@ -53,19 +39,12 @@ export const rendererApi = router({
                 state: z.string().optional(),
               }),
             }),
-            call: async ({ input }) => {
-              // TODO: 从组件 Store 读取真实状态
-              return {
-                status: 'ok',
-                data: { visible: true, state: 'ready' },
-              };
-            },
           }),
         },
 
         /** 页面级服务 */
         page: {
-          info: RpcImpl.unary({
+          info: RpcSchema.unary({
             input: {},
             output: z.object({
               status: z.string(),
@@ -75,47 +54,29 @@ export const rendererApi = router({
                 ready: z.boolean(),
               }),
             }),
-            call: async () => ({
-              status: 'ok',
-              data: {
-                title: document.title,
-                url: window.location.href,
-                ready: document.readyState === 'complete',
-              },
-            }),
           }),
 
           /** 导航到指定页面（通过回调触发 React state 变更） */
-          navigate: RpcImpl.unary({
+          navigate: RpcSchema.unary({
             input: { page: z.string().describe('目标页面名称') },
             output: z.object({ status: z.string() }),
-            call: async ({ input }) => {
-              getRendererActions().navigate?.(input.page);
-              return { status: 'ok' };
-            },
           }),
 
           /** 聚焦指定任务 */
-          focus: RpcImpl.unary({
+          focus: RpcSchema.unary({
             input: { uri: z.string().describe('任务 URI') },
             output: z.object({ status: z.string() }),
-            call: async ({ input }) => {
-              getRendererActions().focus?.(input.uri);
-              return { status: 'ok' };
-            },
           }),
 
           /** 显示 Toast 通知 */
-          toast: RpcImpl.unary({
+          toast: RpcSchema.unary({
             input: { message: z.string(), level: z.string().optional() },
             output: z.object({ status: z.string() }),
-            call: async ({ input }) => {
-              getRendererActions().toast?.(input.message, input.level ?? 'info');
-              return { status: 'ok' };
-            },
           }),
         },
       },
     },
   },
-});
+} as const;
+
+export type RendererApiDef = typeof rendererApiDef;
