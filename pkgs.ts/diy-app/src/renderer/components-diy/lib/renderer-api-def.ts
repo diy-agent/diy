@@ -6,12 +6,12 @@ import { z } from 'zod';
  *
  * 这些服务只在 Renderer 进程（浏览器）中运行，
  * 通过 Transport 桥接（pipe）暴露给 Main 进程和 CLI。
- * 完整限定名：diy.desktop.renderer.*
+ * 完整限定名：diy.app.renderer.*
  */
 
 export const rendererApiDef = {
   diy: {
-    desktop: {
+    app: {
       renderer: {
         /** 列出当前页面所有可用 UI 组件 */
         component: {

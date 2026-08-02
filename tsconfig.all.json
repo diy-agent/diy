@@ -4,6 +4,6 @@
     { "path": "pkgs.ts/diy-rpc" },
     { "path": "pkgs.ts/rpc-transport" },
     { "path": "pkgs.ts/rpc-transport-electron" },
-    { "path": "pkgs.ts/diy-desktop2" }
+    { "path": "pkgs.ts/diy-app" }
   ]
 }

@@ -51,7 +51,7 @@ async function main() {
   }
 
   await new CliApp({
-    name: "diy2",
+    name: "diy-app",
     version: "0.1.0",
     description: "diy 管控台 CLI",
     router: apiDef,

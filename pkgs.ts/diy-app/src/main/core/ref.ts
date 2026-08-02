@@ -158,7 +158,7 @@ export function refList(all: boolean = false): RefLockV5 | { error: string } {
   }
 
   const lock = loadRefLock(root.rootDir);
-  if (!lock) return { error: "未找到 ref.lock.yaml。运行 'diy2 ref sync' 生成。" };
+  if (!lock) return { error: "未找到 ref.lock.yaml。运行 'diy-app ref sync' 生成。" };
 
   const scope = all ? null : detectCurrentScope(process.cwd(), root);
   return filterByScope(lock, scope);

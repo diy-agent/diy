@@ -12,7 +12,7 @@ import { rendererApiDef } from './renderer-api-def';
 export function bindRendererApi(transport: Transport): RpcServer {
   const server = new RpcServer({ router: rendererApiDef, transport });
 
-  server.on(rendererApiDef.diy.desktop.renderer.component.list, async () => {
+  server.on(rendererApiDef.diy.app.renderer.component.list, async () => {
     // TODO: 动态扫描注册的组件
     return {
       status: 'ok',
@@ -26,7 +26,7 @@ export function bindRendererApi(transport: Transport): RpcServer {
     };
   });
 
-  server.on(rendererApiDef.diy.desktop.renderer.component.status, async () => {
+  server.on(rendererApiDef.diy.app.renderer.component.status, async () => {
     // TODO: 从组件 Store 读取真实状态
     return {
       status: 'ok',
@@ -34,7 +34,7 @@ export function bindRendererApi(transport: Transport): RpcServer {
     };
   });
 
-  server.on(rendererApiDef.diy.desktop.renderer.page.info, async () => ({
+  server.on(rendererApiDef.diy.app.renderer.page.info, async () => ({
     status: 'ok',
     data: {
       title: document.title,
@@ -43,17 +43,17 @@ export function bindRendererApi(transport: Transport): RpcServer {
     },
   }));
 
-  server.on(rendererApiDef.diy.desktop.renderer.page.navigate, async ({ input }) => {
+  server.on(rendererApiDef.diy.app.renderer.page.navigate, async ({ input }) => {
     getRendererActions().navigate?.(input.page);
     return { status: 'ok' };
   });
 
-  server.on(rendererApiDef.diy.desktop.renderer.page.focus, async ({ input }) => {
+  server.on(rendererApiDef.diy.app.renderer.page.focus, async ({ input }) => {
     getRendererActions().focus?.(input.uri);
     return { status: 'ok' };
   });
 
-  server.on(rendererApiDef.diy.desktop.renderer.page.toast, async ({ input }) => {
+  server.on(rendererApiDef.diy.app.renderer.page.toast, async ({ input }) => {
     getRendererActions().toast?.(input.message, input.level ?? 'info');
     return { status: 'ok' };
   });

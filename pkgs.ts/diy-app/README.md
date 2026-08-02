@@ -1,4 +1,4 @@
-# diy-desktop2
+# diy-app
 
 Vite 8 + Electron + shadcn/ui 桌面应用模板。
 

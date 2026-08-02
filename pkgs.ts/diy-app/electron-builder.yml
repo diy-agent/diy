@@ -1,7 +1,7 @@
 # electron-builder.yml
 # 🎯 diy 管控台 打包配置
 
-appId: com.diy.desktop2
+appId: com.diy.app
 productName: diy
 copyright: Copyright © 2026
 

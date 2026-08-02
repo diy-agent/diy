@@ -6,8 +6,8 @@
 //
 // 生产默认:
 //   diyHome:  ~/.diy                    ($DIY_HOME)
-//   cache:    ~/.cache/diy-desktop2     (Electron 默认可覆盖)
-//   userData: ~/.config/diy-desktop2    (Electron 默认可覆盖)
+//   cache:    ~/.cache/diy-app          (Electron 默认可覆盖)
+//   userData: ~/.config/diy-app         (Electron 默认可覆盖)
 //   port:     18888
 
 import { homedir, tmpdir } from "node:os";
@@ -36,8 +36,8 @@ export class AppConfig {
   static default(): AppConfig {
     return new AppConfig(
       process.env[ENV_HOME] ?? join(homedir(), ".diy"),
-      join(homedir(), ".cache", "diy-desktop2"),
-      join(homedir(), ".config", "diy-desktop2"),
+      join(homedir(), ".cache", "diy-app"),
+      join(homedir(), ".config", "diy-app"),
       false,
     );
   }

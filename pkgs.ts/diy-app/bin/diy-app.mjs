@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * bin/diy2.mjs — diy2 CLI 入口
+ * bin/diy-app.mjs — diy-app CLI 入口
  *
  * 入口查找策略（按优先级）：
  *   1. out/cli/index.js  — Vite 编译产物（生产环境）

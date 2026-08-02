@@ -1,4 +1,4 @@
-# diy-desktop2 开发规范
+# diy-app 开发规范
 
 ## 架构原则
 

@@ -1,9 +1,9 @@
 {
-  "name": "diy2",
+  "name": "diy-app",
   "version": "0.1.0",
   "private": true,
   "bin": {
-    "diy2": "bin/diy2.mjs"
+    "diy-app": "bin/diy-app.mjs"
   },
   "files": [
     "bin/",

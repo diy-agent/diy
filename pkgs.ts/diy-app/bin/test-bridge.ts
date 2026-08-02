@@ -6,8 +6,8 @@
  * 获得全类型推导客户端，替代 RawClient 字符串调用。
  *
  * 命名体系：
- *   diy.desktop.*            — Main 进程（RpcServer: bindApi）
- *   diy.desktop.renderer.*   — Renderer 进程（RpcServer: bindRendererApi, 桥接穿透）
+ *   diy.app.*            — Main 进程（RpcServer: bindApi）
+ *   diy.app.renderer.*   — Renderer 进程（RpcServer: bindRendererApi, 桥接穿透）
  *
  * 用法:
  *   PORT=18888 npm run test:bridge
@@ -72,25 +72,25 @@ async function main(): Promise<void> {
   console.log('\n── Renderer API（CLI → bridge → Renderer）───');
 
   try {
-    const cl = await cli.diy.desktop.renderer.component.list({});
-    if (cl.status === 'ok' && cl.data.components.length > 0) ok('diy.desktop.renderer.component.list');
-    else fail('diy.desktop.renderer.component.list', `no components: ${JSON.stringify(cl)}`);
+    const cl = await cli.diy.app.renderer.component.list({});
+    if (cl.status === 'ok' && cl.data.components.length > 0) ok('diy.app.renderer.component.list');
+    else fail('diy.app.renderer.component.list', `no components: ${JSON.stringify(cl)}`);
   } catch (e) {
     console.log(`  ⚠  ${(e as Error).message}（Renderer 未启动或未加载）`);
   }
 
   try {
-    const cs = await cli.diy.desktop.renderer.component.status({ name: 'taskTree' });
-    if (cs.status === 'ok') ok('diy.desktop.renderer.component.status');
-    else fail('diy.desktop.renderer.component.status', `unexpected: ${JSON.stringify(cs)}`);
+    const cs = await cli.diy.app.renderer.component.status({ name: 'taskTree' });
+    if (cs.status === 'ok') ok('diy.app.renderer.component.status');
+    else fail('diy.app.renderer.component.status', `unexpected: ${JSON.stringify(cs)}`);
   } catch (e) {
     console.log(`  ⚠  ${(e as Error).message}（Renderer 未启动或未加载）`);
   }
 
   try {
-    const pi = await cli.diy.desktop.renderer.page.info({});
-    if (pi.status === 'ok') ok('diy.desktop.renderer.page.info');
-    else fail('diy.desktop.renderer.page.info', `unexpected: ${JSON.stringify(pi)}`);
+    const pi = await cli.diy.app.renderer.page.info({});
+    if (pi.status === 'ok') ok('diy.app.renderer.page.info');
+    else fail('diy.app.renderer.page.info', `unexpected: ${JSON.stringify(pi)}`);
   } catch (e) {
     console.log(`  ⚠  ${(e as Error).message}（Renderer 未启动或未加载）`);
   }
