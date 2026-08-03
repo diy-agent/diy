@@ -6,8 +6,8 @@
  * 获得全类型推导客户端，替代 RawClient 字符串调用。
  *
  * 命名体系：
- *   diy.app.*            — Main 进程（RpcServer: bindApi）
- *   diy.app.renderer.*   — Renderer 进程（RpcServer: bindRendererApi, 桥接穿透）
+ *   diy.app.* — Main 进程（RpcServer: bindApi）
+ *   diy.ui.*  — Renderer 进程（RpcServer: bindRendererApi, 桥接穿透）
  *
  * 用法:
  *   PORT=18888 npm run test:bridge
@@ -21,12 +21,27 @@ import { rendererApiDef } from '../src/renderer/components-diy/lib/renderer-api-
 
 const PORT = parseInt(process.env['PORT'] ?? '18888', 10);
 
-// 合并两个 def — 同一 transport 上的 Main + Renderer RpcServer
-const app = {
-  ...apiDef,
-  ...rendererApiDef,
-} as const;
+// 深合并两个 def（都含 diy 根键，浅展开会互相覆盖）— 同一 transport 上的 Main + Renderer RpcServer
+function deepMerge<T extends object, U extends object>(a: T, b: U): T & U {
+  const out = { ...a } as Record<string, unknown>;
+  for (const [k, v] of Object.entries(b)) {
+    const existing = out[k];
+    if (
+      existing &&
+      typeof existing === "object" &&
+      typeof v === "object" &&
+      !Array.isArray(existing) &&
+      !Array.isArray(v)
+    ) {
+      out[k] = deepMerge(existing as object, v as object);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out as unknown as T & U;
+}
 
+const app = deepMerge(apiDef, rendererApiDef);
 // ═══════════════════════════════════════════════════
 //  测试运行
 // ═══════════════════════════════════════════════════
@@ -57,13 +72,13 @@ async function main(): Promise<void> {
   console.log('── Main API（CLI → Main RpcServer）───');
 
   try {
-    const doc = await cli.doctor({});
+    const doc = await cli.diy.app.doctor({});
     if (doc.status === 'ok') ok('doctor');
     else fail('doctor', `unexpected: ${JSON.stringify(doc)}`);
   } catch (e) { fail('doctor', e); }
 
   try {
-    const tl = await cli.task.list({ subject: undefined });
+    const tl = await cli.diy.app.task.list({ subject: undefined });
     if (tl.status === 'ok') ok('task.list');
     else fail('task.list', `unexpected: ${JSON.stringify(tl)}`);
   } catch (e) { fail('task.list', e); }
@@ -72,25 +87,25 @@ async function main(): Promise<void> {
   console.log('\n── Renderer API（CLI → bridge → Renderer）───');
 
   try {
-    const cl = await cli.diy.app.renderer.component.list({});
-    if (cl.status === 'ok' && cl.data.components.length > 0) ok('diy.app.renderer.component.list');
-    else fail('diy.app.renderer.component.list', `no components: ${JSON.stringify(cl)}`);
+    const cl = await cli.diy.ui.component.list({});
+    if (cl.status === 'ok' && cl.data.components.length > 0) ok('diy.ui.component.list');
+    else fail('diy.ui.component.list', `no components: ${JSON.stringify(cl)}`);
   } catch (e) {
     console.log(`  ⚠  ${(e as Error).message}（Renderer 未启动或未加载）`);
   }
 
   try {
-    const cs = await cli.diy.app.renderer.component.status({ name: 'taskTree' });
-    if (cs.status === 'ok') ok('diy.app.renderer.component.status');
-    else fail('diy.app.renderer.component.status', `unexpected: ${JSON.stringify(cs)}`);
+    const cs = await cli.diy.ui.component.status({ name: 'taskTree' });
+    if (cs.status === 'ok') ok('diy.ui.component.status');
+    else fail('diy.ui.component.status', `unexpected: ${JSON.stringify(cs)}`);
   } catch (e) {
     console.log(`  ⚠  ${(e as Error).message}（Renderer 未启动或未加载）`);
   }
 
   try {
-    const pi = await cli.diy.app.renderer.page.info({});
-    if (pi.status === 'ok') ok('diy.app.renderer.page.info');
-    else fail('diy.app.renderer.page.info', `unexpected: ${JSON.stringify(pi)}`);
+    const pi = await cli.diy.ui.page.info({});
+    if (pi.status === 'ok') ok('diy.ui.page.info');
+    else fail('diy.ui.page.info', `unexpected: ${JSON.stringify(pi)}`);
   } catch (e) {
     console.log(`  ⚠  ${(e as Error).message}（Renderer 未启动或未加载）`);
   }

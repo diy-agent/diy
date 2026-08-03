@@ -4,26 +4,8 @@
 
 import { existsSync, readdirSync, readlinkSync, statSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { diyHome, parseTaskFile, isStarred, loadState, TaskState } from "./state";
-
-// ═══════════════════════════════════════
-// 类型
-// ═══════════════════════════════════════
-
-export interface TaskNode {
-  kind: "subject" | "task";
-  uri?: string;
-  title?: string;
-  state?: TaskState;
-  subjectPath?: string;
-  parentUri?: string;
-  detail?: string;
-  body?: string;
-  created?: string;
-  updated?: string;
-  starred: boolean;
-  children: TaskNode[];
-}
+import { diyHome, parseTaskFile, isStarred, loadState } from "./state";
+import { TaskNode } from "./tree-format";
 
 // ═══════════════════════════════════════
 // 内部：扫描单个任务文件 → TaskNode
@@ -189,23 +171,7 @@ function buildParentLinks(tasks: TaskNode[]): TaskNode[] {
 }
 
 // ═══════════════════════════════════════
-// 文本渲染（CLI 输出用）
+// 文本渲染（CLI 输出用）— 定义见 tree-format.ts，这里 re-export 保持兼容
 // ═══════════════════════════════════════
 
-/** 将任务树渲染为缩进文本 */
-export function renderTreeText(nodes: TaskNode[], indent = ""): string {
-  const lines: string[] = [];
-  for (const n of nodes) {
-    if (n.kind === "subject") {
-      lines.push(`${indent}📁 ${n.title}`);
-    } else {
-      const star = n.starred ? " ⭐" : "";
-      const title = n.title ? ` ${n.title}` : "";
-      lines.push(`${indent}  ${n.uri}${title}${star}`);
-    }
-    if (n.children.length > 0) {
-      lines.push(renderTreeText(n.children, indent + "  "));
-    }
-  }
-  return lines.join("\n");
-}
+export { renderTreeText } from "./tree-format";

@@ -3,6 +3,7 @@
  *
  * 从 api-def.ts 导入纯 meta，通过 RpcServer.on() 逐个绑定实现。
  * 业务逻辑在这里，schema 定义在 api-def.ts。
+ * 命名体系：diy.app.*（Main 进程域）。
  */
 
 import { RpcServer, type Transport } from "@diy/rpc";
@@ -33,23 +34,25 @@ async function getLlmProxy() {
   return _llmProxyInstance;
 }
 
+const app = apiDef.diy.app;
+
 /** 绑定 Main 侧所有 handler 到给定 transport 上的 RpcServer */
 export function bindApi(transport: Transport): RpcServer {
   const server = new RpcServer({ router: apiDef, transport });
 
   // ── task ──
-  server.on(apiDef.task.create, async ({ input }) => {
+  server.on(app.task.create, async ({ input }) => {
     return { status: "ok", data: { uri: task.createTask(input as any) } };
   });
-  server.on(apiDef.task.list, async ({ input }) => {
+  server.on(app.task.list, async ({ input }) => {
     return { status: "ok", data: { tasks: task.listTasks(input.subject) } };
   });
-  server.on(apiDef.task.show, async ({ input }) => {
+  server.on(app.task.show, async ({ input }) => {
     const t = state.getTask(input.uri);
     if (!t) return { status: "error", msg: `任务 ${input.uri} 不存在` };
     return { status: "ok", data: t };
   });
-  server.on(apiDef.task.edit, async ({ input }) => {
+  server.on(app.task.edit, async ({ input }) => {
     const { uri, ...changes } = input;
     const filtered: Record<string, string> = {};
     for (const [k, v] of Object.entries(changes)) {
@@ -58,43 +61,40 @@ export function bindApi(transport: Transport): RpcServer {
     task.updateTask(uri, filtered);
     return { status: "ok", data: { uri } };
   });
-  server.on(apiDef.task.delete, async ({ input }) => {
+  server.on(app.task.delete, async ({ input }) => {
     task.deleteTask(input.uri);
     return { status: "ok", data: { uri: input.uri } };
   });
-  server.on(apiDef.task.star, async ({ input }) => {
+  server.on(app.task.star, async ({ input }) => {
     state.starTask(input.uri);
     return { status: "ok", data: { uri: input.uri, starred: true } };
   });
-  server.on(apiDef.task.unstar, async ({ input }) => {
+  server.on(app.task.unstar, async ({ input }) => {
     state.unstarTask(input.uri);
     return { status: "ok", data: { uri: input.uri, starred: false } };
   });
 
   // ── subject ──
-  server.on(apiDef.subject.add, async ({ input }) => {
+  server.on(app.subject.add, async ({ input }) => {
     subject.addSubject(input.path, input.label);
     return { status: "ok", data: { path: input.path } };
   });
-  server.on(apiDef.subject.list, async () => {
+  server.on(app.subject.list, async () => {
     return { status: "ok", data: { subjects: subject.listSubjects() } };
   });
-  server.on(apiDef.subject.remove, async ({ input }) => {
+  server.on(app.subject.remove, async ({ input }) => {
     subject.removeSubject(input.path);
     return { status: "ok", data: { path: input.path } };
   });
 
-  // ── ui ──
-  server.on(apiDef.ui.tree, async ({ input }) => {
-    return { status: "ok", data: taskTree.renderTreeText(taskTree.loadTaskTree(input.all)) };
-  });
-  server.on(apiDef.ui.status, () => ({
+  // ── getAppStatus（供 renderer diy.ui.status 反向调用）──
+  server.on(app.getAppStatus, () => ({
     status: "ok",
     data: { pid: process.pid, uptime: process.uptime(), memory: process.memoryUsage().heapUsed },
   }));
 
   // ── doctor ──
-  server.on(apiDef.doctor, async () => {
+  server.on(app.doctor, async () => {
     const issues = health.runHealthCheck();
     const home = state.diyHome();
     const { existsSync } = await import("node:fs");
@@ -112,53 +112,53 @@ export function bindApi(transport: Transport): RpcServer {
   });
 
   // ── loadTaskTree / getTask ──
-  server.on(apiDef.loadTaskTree, async ({ input }) => {
+  server.on(app.loadTaskTree, async ({ input }) => {
     return taskTree.loadTaskTree(input.allTasks);
   });
-  server.on(apiDef.getTask, async ({ input }) => {
+  server.on(app.getTask, async ({ input }) => {
     return state.getTask(input.uri);
   });
 
   // ── agent ──
-  server.on(apiDef.agent.chat, async ({ input }) => {
+  server.on(app.agent.chat, async ({ input }) => {
     const client = await getAgentClient();
     const result = await client.chat(input.model, input.messages);
     return { role: result.role, content: result.content };
   });
-  server.on(apiDef.agent.chatStream, async function* ({ input }) {
+  server.on(app.agent.chatStream, async function* ({ input }) {
     const client = await getAgentClient();
     for await (const delta of client.streamChat(input.model, input.messages)) {
       yield delta;
     }
   });
-  server.on(apiDef.agent.listModels, () => [
+  server.on(app.agent.listModels, () => [
     { id: "llama3.2", name: "Llama 3.2" },
     { id: "hermes", name: "Hermes Agent" },
   ]);
-  server.on(apiDef.agent.status, async ({ input }) => {
+  server.on(app.agent.status, async ({ input }) => {
     const client = await getAgentClient();
     const s = await client.getAgentStatus(input.agentId);
     return { agentId: s.agentId, state: s.state, model: s.model };
   });
 
   // ── llmProxy ──
-  server.on(apiDef.llmProxy.status, async () => {
+  server.on(app.llmProxy.status, async () => {
     const proxy = await getLlmProxy();
     return { running: proxy.isRunning, port: 8000 };
   });
-  server.on(apiDef.llmProxy.start, async () => {
+  server.on(app.llmProxy.start, async () => {
     const proxy = await getLlmProxy();
     proxy.start();
     return { status: "ok" };
   });
-  server.on(apiDef.llmProxy.stop, async () => {
+  server.on(app.llmProxy.stop, async () => {
     const proxy = await getLlmProxy();
     proxy.stop();
     return { status: "ok" };
   });
 
   // ── log ──
-  server.on(apiDef.log.read, async ({ input }) => {
+  server.on(app.log.read, async ({ input }) => {
     const { existsSync, readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const logPath = join(state.diyHome(), "app.log");
@@ -179,7 +179,7 @@ export function bindApi(transport: Transport): RpcServer {
   });
 
   // ── ref ──
-  server.on(apiDef.ref.sync, async ({ input }) => {
+  server.on(app.ref.sync, async ({ input }) => {
     const result = await syncRefs({
       all: input.all,
       scope: input.scope,
@@ -187,10 +187,10 @@ export function bindApi(transport: Transport): RpcServer {
     });
     return { status: "ok", data: result };
   });
-  server.on(apiDef.ref.list, async ({ input }) => {
+  server.on(app.ref.list, async ({ input }) => {
     return { status: "ok", data: refList(input.all) };
   });
-  server.on(apiDef.ref.status, async () => {
+  server.on(app.ref.status, async () => {
     const paths = checkRefPaths();
     const missing = paths.filter((p) => !p.exists);
     return {
@@ -198,10 +198,10 @@ export function bindApi(transport: Transport): RpcServer {
       data: { total: paths.length, missing: missing.length, paths },
     };
   });
-  server.on(apiDef.ref.add, async ({ input }) => {
+  server.on(app.ref.add, async ({ input }) => {
     return { status: "ok", data: { added: addSource(input.url) } };
   });
-  server.on(apiDef.ref.remove, async ({ input }) => {
+  server.on(app.ref.remove, async ({ input }) => {
     const removed = removeSource(input.name);
     if (!removed) return { status: "error", msg: `未找到 source: ${input.name}` };
     return { status: "ok", data: { removed } };

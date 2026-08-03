@@ -57,13 +57,7 @@ async function main() {
     router: apiDef,
     transport,
     groups: {
-      task: "任务管理",
-      subject: "Subject 管理",
-      ui: "GUI 控制",
-      agent: "Agent 对话",
-      llmProxy: "LLM 代理",
-      ref: "源码镜像",
-      log: "日志",
+      diy: "diy 管控台",
     },
   }).parse(argv);
 

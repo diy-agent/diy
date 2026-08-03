@@ -14,6 +14,6 @@ for (const c of tree.children) {
   }
 }
 
-console.log("\nresolve ref list:", routeResolve(tree, ["ref", "list"]));
-console.log("resolve task create:", routeResolve(tree, ["task", "create"]));
-console.log("resolve ref:", routeResolve(tree, ["ref"]));
+console.log("\nresolve ref list:", routeResolve(tree, ["diy", "app", "ref", "list"]));
+console.log("resolve task create:", routeResolve(tree, ["diy", "app", "task", "create"]));
+console.log("resolve ref:", routeResolve(tree, ["diy", "app", "ref"]));

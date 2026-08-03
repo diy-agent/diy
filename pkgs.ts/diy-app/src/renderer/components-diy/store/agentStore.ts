@@ -30,7 +30,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   loadModels: async () => {
     try {
-      const result = await diyService.agent.listModels({});
+      const result = await diyService.diy.app.agent.listModels({});
       set({ models: result, activeModel: result[0]?.id ?? null });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : "加载模型失败" });
@@ -48,7 +48,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     set({ messages: updated, sending: true, error: null, streamingContent: "" });
 
     try {
-      const handle = await diyService.agent.chatStream({
+      const handle = await diyService.diy.app.agent.chatStream({
         model: activeModel,
         messages: updated.map((m) => ({ role: m.role, content: m.content })),
       });
