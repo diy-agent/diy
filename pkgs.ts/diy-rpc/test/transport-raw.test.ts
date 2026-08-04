@@ -1,14 +1,12 @@
 /**
- * 四种流模式的独立测试
+ * 传输层 RawServer/RawClient 独立测试（四种流模式 + 取消）
  *
  * 用 in-memory Transport 替代 Electron IPC，
- * 直接验证 Server/Client 的信封协议和 RPC builder 的逻辑正确性。
+ * 直接验证 RawServer/RawClient 的信封协议和流处理逻辑。
  */
 
-import type { Transport, Envelope } from '../src/transport/types';
+import type { Transport } from '../src/transport/types';
 import { RawServer, RawClient } from '../src/transport';
-import { RpcImpl, RpcServer, router, createClient } from '../src/rpc';
-import { z } from 'zod';
 
 // ═══════════════════════════════════════════════════
 //  in-memory Transport
@@ -156,85 +154,12 @@ async function main() {
 
     // Use transport-level bidiStream directly (not rpc layer)
     const replies = await client.bidiStream<unknown, string, string>('echo', { input: {}, meta: {} }, msgs());
-    console.log('  bidiStream returned');
     const out: string[] = [];
-    for await (const r of replies) {
-      console.log('  got reply:', JSON.stringify(r));
-      out.push(r);
-    }
-    console.log('  replies done, out:', JSON.stringify(out));
+    for await (const r of replies) out.push(r);
     assert(JSON.stringify(out) === '["echo: hello","echo: world"]', `replies = ${JSON.stringify(out)}`);
   }
 
-  // ── 5. RPC 层集成测试 ─────────────────────────
-
-  console.log('\n── RPC 层 ──');
-  {
-    const [txA, txB] = createMemTransportPair();
-    const client = new RawClient(txB);
-
-    const app = router({
-      ping: RpcImpl.unary({
-        input: { msg: z.string() },
-        output: z.string(),
-        call: ({ input }) => `pong: ${input.msg}`,
-      }),
-
-      nums: RpcImpl.serverStream({
-        input: { n: z.number() },
-        output: z.number(),
-        call: async function* ({ input }) {
-          for (let i = 0; i < input.n; i++) {
-            await new Promise(r => setImmediate(r));
-            yield i;
-          }
-        },
-      }),
-
-      upload: RpcImpl.clientStream({
-        input: { tag: z.string() },
-        chunkIn: z.number(),
-        output: z.object({ tag: z.string(), sum: z.number() }),
-        call: async ({ input, stream }) => {
-          let sum = 0;
-          for await (const v of stream) sum += v;
-          return { tag: input.tag, sum };
-        },
-      }),
-
-      chat: RpcImpl.bidiStream({
-        input: { room: z.string() },
-        chunkIn: z.string(),
-        chunkOut: z.string(),
-        call: async function* ({ input, stream }) {
-          for await (const msg of stream) yield `[${input.room}] ${msg}`;
-        },
-      }),
-    });
-
-    const rpcServer = new RpcServer({ router: app, transport: txA });
-    const rpcClient = createClient(txB, app);
-
-    const p1 = await rpcClient.ping({ msg: 'hi' });
-    assert(p1 === 'pong: hi', `ping = ${p1}`);
-
-    const h = await rpcClient.nums({ n: 3 });
-    const nums: number[] = [];
-    for await (const v of h) nums.push(v);
-    assert(JSON.stringify(nums) === '[0,1,2]', `nums = ${JSON.stringify(nums)}`);
-
-    async function* uploadGen() { yield 10; yield 20; yield 30; }
-    const u = await rpcClient.upload({ tag: 'x' }, uploadGen());
-    assert(u.tag === 'x' && u.sum === 60, `upload = ${JSON.stringify(u)}`);
-
-    async function* chatGen() { yield 'hello'; yield 'bye'; }
-    const replies = await rpcClient.chat({ room: 'test' }, chatGen());
-    const chats: string[] = [];
-    for await (const r of replies) chats.push(r);
-    assert(JSON.stringify(chats) === '["[test] hello","[test] bye"]', `chat = ${JSON.stringify(chats)}`);
-  }
-
-  // ── 6. AbortController on unary ───────────────
+  // ── 5. AbortController on unary ───────────────
 
   console.log('\n── AbortController (unary) ──');
   {
