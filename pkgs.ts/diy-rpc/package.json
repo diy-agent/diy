@@ -12,7 +12,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "check:browser": "tsc --noEmit -p tsconfig.browser.json",
-    "test": "tsx test/transport-rpc.test.ts && tsx test/protocol-envelopes.test.ts"
+    "test": "tsx test/transport-rpc.test.ts && tsx test/protocol-envelopes.test.ts && tsx test/rpc-v2.test.ts && tsx test/rpc-typed-client.test.ts && tsx test/rpc-gateway.test.ts"
   },
   "dependencies": {
     "zod": "^4.4.3"

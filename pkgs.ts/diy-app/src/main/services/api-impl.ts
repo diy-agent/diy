@@ -7,6 +7,7 @@
  */
 
 import { RpcServer, type Transport } from "@diy/rpc";
+import { RawServer } from "@diy/rpc";
 import * as task from "../core/task";
 import * as subject from "../core/subject";
 import * as state from "../core/state";
@@ -36,9 +37,17 @@ async function getLlmProxy() {
 
 const app = apiDef.diy.app;
 
-/** 绑定 Main 侧所有 handler 到给定 transport 上的 RpcServer */
-export function bindApi(transport: Transport): RpcServer {
-  const server = new RpcServer({ router: apiDef, transport });
+let _appServer: RpcServer | null = null;
+
+/**
+ * 创建 Main 侧 handler 注册表（传输无关，scope = diy.app）。
+ *
+ * 所有 diy.app.* handler 在这里一次性绑定；RpcGateway.register(server)
+ * 把它挂到某个来源 transport。全局共享同一实例（单例）。
+ */
+export function createAppServer(): RpcServer {
+  if (_appServer) return _appServer;
+  const server = new RpcServer({ router: apiDef.diy.app, scope: "diy.app" });
 
   // ── task ──
   server.on(app.task.create, async ({ input }) => {
@@ -207,5 +216,13 @@ export function bindApi(transport: Transport): RpcServer {
     return { status: "ok", data: { removed } };
   });
 
+  _appServer = server;
+  return server;
+}
+
+/** 兼容旧用法：把 createAppServer 的 handler 直接挂到某 transport 上 */
+export function bindApi(transport: Transport): RpcServer {
+  const server = createAppServer();
+  server.registerInto(new RawServer(transport));
   return server;
 }

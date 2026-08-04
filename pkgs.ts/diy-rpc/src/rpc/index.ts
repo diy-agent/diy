@@ -14,6 +14,7 @@ import { RawClient, type CallOptions } from './raw-client';
 import type { Transport, StreamHandle } from '../transport/types';
 import { RpcError } from '../transport/types';
 import { RawServer } from './raw-server';
+import type { RpcBackend } from './gateway';
 
 // ═══════════════════════════════════════════════════
 //  类型基础
@@ -441,26 +442,37 @@ type HandlerForProc<T> =
 /**
  * 第3层 RPC 服务端。
  *
- * 构造时自动注册所有含 call 的 procedure（RpcImpl），
- * 不含 call 的（RpcSchema）通过 .on() 绑定 handler。
+ * 传输无关的纯 handler 注册表：
+ *   - 构造时不绑定 transport（可选传入 scope 前缀）
+ *   - 含 call 的 procedure（RpcImpl）构造时自动注册
+ *   - 不含 call 的（RpcSchema）通过 .on() 绑定 handler
+ *   - registerInto(raw) 把本注册表挂到某个 RawServer（供 RpcGateway 使用）
+ *   - 兼容旧用法：传入 transport 时自动 new RawServer 并挂载
  *
  * 替代手动组合 new RawServer() + createHandler()/createMetaHandler()。
  */
-export class RpcServer {
-  private _server: RawServer;
+export class RpcServer implements RpcBackend {
+  readonly scope: string;
+  private _raws: RawServer[] = [];
   private _metaToMethod = new Map<AnyProcedureMeta, string>();
+  private _handlers = new Map<AnyProcedureMeta, (params: unknown, stream?: unknown) => unknown>();
 
-  constructor(opts: { router: Router; transport: Transport }) {
-    this._server = new RawServer(opts.transport);
+  constructor(opts: { router: Router; scope?: string; transport?: Transport }) {
+    this.scope = opts.scope ?? '';
 
-    // 建立 meta → method 映射
+    // 建立 meta → method 映射（scope 前缀拼到完整方法名前）
     const flat = flattenRouter(opts.router);
     for (const [name, def] of Object.entries(flat)) {
-      this._metaToMethod.set(def, name);
+      this._metaToMethod.set(def, this.scope ? `${this.scope}.${name}` : name);
     }
 
     // 含 call 的 procedure 自动注册
     this._autoRegister();
+
+    // 兼容旧用法：给定 transport 时自动创建 RawServer 并挂载
+    if (opts.transport) {
+      this.registerInto(new RawServer(opts.transport));
+    }
   }
 
   /**
@@ -478,13 +490,36 @@ export class RpcServer {
         `did you pass the correct meta object?`,
       );
     }
-    this._register(proc, handler as any);
+    this._handlers.set(proc, handler as any);
+    for (const raw of this._raws) this._registerInto(raw, proc, handler as any);
   }
 
-  /** 销毁：清理内部 RawServer 所有监听和流 */
+  /**
+   * 把本注册表挂到给定 RawServer。
+   * RpcGateway.register(backend) 会调用它，把本 server 所有方法（全名）
+   * 注册到来源 transport 的 RawServer 上。
+   */
+  registerInto(raw: RawServer): void {
+    this._raws.push(raw);
+    for (const [def, handler] of this._handlers) {
+      this._registerInto(raw, def, handler);
+    }
+    // 含 call 但未显式 on 的也要挂载
+    for (const def of this._metaToMethod.keys()) {
+      if (this._handlers.has(def)) continue;
+      const callFn = (def as unknown as AnyProcedureDef).call;
+      if (typeof callFn === 'function') {
+        this._registerInto(raw, def, callFn as any);
+      }
+    }
+  }
+
+  /** 销毁：清理所有挂载的 RawServer 监听和流 */
   destroy(): void {
-    this._server.destroy();
+    for (const raw of this._raws) raw.destroy();
+    this._raws = [];
     this._metaToMethod.clear();
+    this._handlers.clear();
   }
 
   // ── 内部 ──────────────────────────────────────
@@ -493,37 +528,37 @@ export class RpcServer {
     for (const def of this._metaToMethod.keys()) {
       const callFn = (def as unknown as AnyProcedureDef).call;
       if (typeof callFn === 'function') {
-        this._register(def, callFn as unknown as (params: unknown, stream?: unknown) => unknown);
+        this._handlers.set(def, callFn as unknown as (params: unknown, stream?: unknown) => unknown);
       }
     }
   }
 
-  private _register(def: AnyProcedureMeta, handler: (params: unknown, stream?: unknown) => unknown): void {
+  private _registerInto(raw: RawServer, def: AnyProcedureMeta, handler: (params: unknown, stream?: unknown) => unknown): void {
     const name = this._metaToMethod.get(def)!;
     const mode = def._streamMode;
 
     if (mode === 'unary') {
-      this._server.onUnary(name, ((raw: unknown) => {
-        const { input, meta } = (raw ?? {}) as any;
+      raw.onUnary(name, ((rawParams: unknown) => {
+        const { input, meta } = (rawParams ?? {}) as any;
         const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
         return handler({ input: validated, meta: meta ?? {} });
       }) as any);
     } else if (mode === 'server') {
-      this._server.onServerStream(name, ((raw: unknown) => {
-        const { input, meta } = (raw ?? {}) as any;
+      raw.onServerStream(name, ((rawParams: unknown) => {
+        const { input, meta } = (rawParams ?? {}) as any;
         const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
         return handler({ input: validated, meta: meta ?? {} });
       }) as any);
     } else if (mode === 'client') {
-      this._server.onClientStream(name, ((raw: unknown, chunks: StreamHandle<any>) => {
-        const { input, meta } = (raw ?? {}) as any;
+      raw.onClientStream(name, ((rawParams: unknown, chunks: StreamHandle<any>) => {
+        const { input, meta } = (rawParams ?? {}) as any;
         const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
         const validatedChunks = def.chunkInSchema ? (chunks as any) : chunks;
         return handler({ input: validated, meta: meta ?? {}, stream: validatedChunks });
       }) as any);
     } else if (mode === 'bidi') {
-      this._server.onBidiStream(name, ((raw: unknown, incoming: StreamHandle<any>) => {
-        const { input, meta } = (raw ?? {}) as any;
+      raw.onBidiStream(name, ((rawParams: unknown, incoming: StreamHandle<any>) => {
+        const { input, meta } = (rawParams ?? {}) as any;
         const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
         const validatedChunks = def.chunkInSchema ? (incoming as any) : incoming;
         return handler({ input: validated, meta: meta ?? {}, stream: validatedChunks });
@@ -604,3 +639,7 @@ export function createClient<TRouter>(
 
 export { createTypedClient } from './typed-client';
 export type { TypedClient } from './typed-client';
+export { RpcGateway } from './gateway';
+export type { RpcBackend } from './gateway';
+export { RpcForward } from './forward';
+export type { RpcForwardOptions } from './forward';

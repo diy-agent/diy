@@ -20,7 +20,7 @@ import { RpcServer } from "@diy/rpc";
 import { createMainTransport } from "@diy/rpc-transport-electron";
 import { RpcPortService } from "./services/rpc-port";
 import { AppConfig } from "./core/app-config";
-import { bindApi } from "./services/api-impl";
+import { bindApi, createAppServer } from "./services/api-impl";
 import { homedir, hostname, platform, arch, release, totalmem, freemem } from "node:os";
 
 // ── 共享全局信息（给 IPC 用） ──
@@ -148,7 +148,7 @@ function createWindow(): { server: RpcServer; ipcTransport: import("@diy/rpc").T
 
 // ── RPC 端口服务（外部 CLI 接入） ──
 
-async function startRpcPort(bindServer: (transport: import("@diy/rpc").Transport) => import("@diy/rpc").RpcServer, ipcTransport: import("@diy/rpc").Transport): Promise<boolean> {
+async function startRpcPort(appServer: RpcServer, ipcTransport: import("@diy/rpc").Transport): Promise<boolean> {
   const preferredPort = overridePort ?? appConfig.readPort();
   console.log(
     `  Port:         ${preferredPort}${overridePort !== null ? ` (--port, conflict = kill or change)` : ` (from ${appConfig.diyHome}/app.port)`}`,
@@ -157,7 +157,7 @@ async function startRpcPort(bindServer: (transport: import("@diy/rpc").Transport
   rpcPort = new RpcPortService();
 
   try {
-    await rpcPort.start(bindServer, appConfig, preferredPort, ipcTransport);
+    await rpcPort.start(appServer, appConfig, preferredPort, ipcTransport);
     httpPort = rpcPort.port;
     return true;
   } catch (err: any) {
@@ -170,7 +170,7 @@ async function startRpcPort(bindServer: (transport: import("@diy/rpc").Transport
     }
     console.log("  → 尝试随机端口...");
     try {
-      await rpcPort.start(bindServer, appConfig, 0, ipcTransport);
+      await rpcPort.start(appServer, appConfig, 0, ipcTransport);
       httpPort = rpcPort.port;
       console.log(`  RPC Port:     http://127.0.0.1:${httpPort} (random)`);
       return true;
@@ -192,7 +192,7 @@ app.whenReady().then(async () => {
   const { server, ipcTransport } = createWindow();
   ipcRpcServer = server;
 
-  const ok = await startRpcPort(bindApi, ipcTransport);
+  const ok = await startRpcPort(createAppServer(), ipcTransport);
 
   if (ok) {
     loadMainApp();

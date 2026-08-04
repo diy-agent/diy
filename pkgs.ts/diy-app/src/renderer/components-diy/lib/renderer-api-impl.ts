@@ -1,21 +1,21 @@
 import { RpcServer, type Transport } from '@diy/rpc';
 import { getRendererActions } from './renderer-actions';
-import { rendererApiDef } from './renderer-api-def';
+import { apiDef } from '../../../main/services/api-def';
 import { diyService } from './rpc';
 import { renderTreeText, type TaskNode } from '../../../main/core/tree-format';
 
 /**
  * renderer-api-impl.ts — Renderer 侧 RPC handler 绑定（handle 分离）
  *
- * 从 renderer-api-def.ts 导入纯 meta，通过 RpcServer.on() 绑定实现。
+ * 从 api-def.ts 导入纯 meta（diy.ui 子树），通过 RpcServer.on() 绑定实现。
  * 命名体系：diy.ui.*（Renderer 进程域）。
  * 页面交互通过 renderer-actions 回调触发 React state 变更；
  * 进程级数据（diy.ui.tree/status）反向调 main 的 diy.app.* 获取。
  */
 
 export function bindRendererApi(transport: Transport): RpcServer {
-  const server = new RpcServer({ router: rendererApiDef, transport });
-  const ui = rendererApiDef.diy.ui;
+  const server = new RpcServer({ router: apiDef.diy.ui, scope: 'diy.ui', transport });
+  const ui = apiDef.diy.ui;
 
   server.on(ui.component.list, async () => {
     // TODO: 动态扫描注册的组件
