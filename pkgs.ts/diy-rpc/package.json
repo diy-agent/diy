@@ -7,18 +7,25 @@
   "exports": {
     ".": "./src/index.ts",
     "./http": "./src/rpc/http/index.ts",
+    "./ws": "./src/rpc/ws/index.ts",
+    "./electron": "./src/rpc/electron/index.ts",
     "./cli": "./src/cli.ts"
   },
   "files": ["src/"],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "check:browser": "tsc --noEmit -p tsconfig.browser.json",
-    "test": "tsx test/transport-raw.test.ts && tsx test/rpc-layer.test.ts && tsx test/protocol-envelopes.test.ts && tsx test/rpc-v2.test.ts && tsx test/rpc-typed-client.test.ts && tsx test/rpc-gateway.test.ts && tsx test/http-raw.test.ts"
+    "test": "tsx test/transport-raw.test.ts && tsx test/rpc-layer.test.ts && tsx test/protocol-envelopes.test.ts && tsx test/rpc-v2.test.ts && tsx test/rpc-typed-client.test.ts && tsx test/rpc-gateway.test.ts && tsx test/http-raw.test.ts && tsx test/ws-transport.test.ts"
   },
   "dependencies": {
+    "ws": "^8.21.0",
     "zod": "^4.4.3"
   },
+  "peerDependencies": {
+    "electron": ">=33"
+  },
   "devDependencies": {
+    "@types/ws": "^8.18.1",
     "typescript": "^6.0.3"
   }
 }

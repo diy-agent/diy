@@ -56,8 +56,14 @@ async function main() {
     description: "diy 管控台 CLI",
     router: apiDef,
     transport,
+    cliRootPath: ["diy.app", "!diy.ui"], // diy.app 摊平（task list）；diy.ui 保留命名空间（ui status）
     groups: {
-      diy: "diy 管控台",
+      task: "任务",
+      subject: "主题",
+      agent: "Agent",
+      llmProxy: "LLM 代理",
+      ref: "镜像引用",
+      ui: "界面",
     },
   }).parse(argv);
 

@@ -3,8 +3,8 @@
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
-import { RpcImpl, router, RpcServer, createClient, ChannelRawClient, ChannelRawServer } from '@diy/rpc';
-import { WsTransport } from '../src/websocket';
+import { RpcImpl, router, RpcServer, createClient, ChannelRawClient, ChannelRawServer } from '../src/index';
+import { WsTransport } from '../src/rpc/ws';
 import { z } from 'zod';
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));

@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import { builtinModules } from "node:module";
 
-const pkgDeps = ["@diy/rpc", "@diy/rpc-transport-electron", "@diy/rpc-transport"];
+const pkgDeps = ["@diy/rpc"];
 const external = ["electron", ...builtinModules, ...builtinModules.map((m) => `node:${m}`)];
 
 export default defineConfig({
@@ -14,7 +14,7 @@ export default defineConfig({
     },
     rollupOptions: {
       external: (id: string) =>
-        pkgDeps.includes(id) ? false
+        pkgDeps.some((p) => id === p || id.startsWith(`${p}/`)) ? false
           : external.some((e) => id === e || id.startsWith(`${e}/`)),
     },
     minify: false,

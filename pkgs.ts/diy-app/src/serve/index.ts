@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
-import { WsTransport } from "@diy/rpc-transport";
+import { WsTransport } from "@diy/rpc/ws";
 import { bindApi } from "../main/services/api-impl";
 import { AppConfig } from "../main/core/app-config";
 

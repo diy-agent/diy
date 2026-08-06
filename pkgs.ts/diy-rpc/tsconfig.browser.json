@@ -7,5 +7,5 @@
     "lib": ["ES2022", "DOM"]
   },
   "include": ["src/**/*"],
-  "exclude": ["test/**/*", "src/cli.ts", "src/rpc/cli-rpc/index.ts", "src/rpc/cli-rpc/parser.ts", "src/rpc/http/**"]
+  "exclude": ["test/**/*", "src/cli.ts", "src/rpc/cli-rpc/index.ts", "src/rpc/cli-rpc/parser.ts", "src/rpc/http/**", "src/rpc/ws/**", "src/rpc/electron/**"]
 }

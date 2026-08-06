@@ -4,7 +4,7 @@
  * 依赖：@diy/rpc（Transport 类型）+ ws
  */
 
-import type { Transport } from '@diy/rpc';
+import type { Transport } from '../../transport/types';
 
 type WsLike = {
   send(data: string | Buffer): void;

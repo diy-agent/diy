@@ -7,7 +7,7 @@
 
 import { ipcMain, ipcRenderer } from 'electron';
 import type { WebContents } from 'electron';
-import type { Transport, Envelope } from '@diy/rpc';
+import type { Transport, Envelope } from '../../transport/types';
 
 function makeMain(getWebContents: () => WebContents, channel = 'rpc'): Transport {
   return {

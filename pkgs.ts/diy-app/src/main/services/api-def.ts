@@ -287,19 +287,19 @@ export const apiDef = {
 
         /** 导航到指定页面（通过回调触发 React state 变更） */
         navigate: RpcSchema.unary({
-          input: { page: z.string().describe('目标页面名称') },
+          input: { page: z.string().cliArg({ desc: "目标页面名称" }) },
           output: z.object({ status: z.string() }),
         }),
 
         /** 聚焦指定任务 */
         focus: RpcSchema.unary({
-          input: { uri: z.string().describe('任务 URI') },
+          input: { uri: z.string().cliArg({ desc: "任务 URI" }) },
           output: z.object({ status: z.string() }),
         }),
 
         /** 显示 Toast 通知 */
         toast: RpcSchema.unary({
-          input: { message: z.string(), level: z.string().optional() },
+          input: { message: z.string().cliArg({ desc: "消息内容" }), level: z.string().optional().cliOption({ desc: "级别" }) },
           output: z.object({ status: z.string() }),
         }),
       },

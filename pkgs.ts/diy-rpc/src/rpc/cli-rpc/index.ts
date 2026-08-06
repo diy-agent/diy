@@ -20,6 +20,55 @@ export type { CliOptionMeta, CliArgMeta, ProcedureCliMeta } from "./meta";
 
 import "./meta";
 
+/** 按点分路径查找 RouterNode（如 'diy.app' → diy 下 app 节点），找不到返回 null */
+function findNodeByPath(
+  root: RouterNode,
+  path: string,
+): RouterNode | null {
+  const segs = path.split(".").filter(Boolean);
+  let node: RouterNode = root;
+  for (const seg of segs) {
+    const child = node.children.find((c) => c.name === seg);
+    if (!child) return null;
+    if (child.kind === "proc") return null; // cliRootPath 必须指向 router 层
+    node = child;
+  }
+  return node;
+}
+
+/**
+ * 根据 cliRootPath 决定 CLI 命令树：
+ *  - 空 → 整棵 router 树
+ *  - 单个路径 → 该子树（摊平 children 到顶层，命令 `task list`）
+ *  - 数组 → 合并多个子树到同一个虚拟根
+ *    - 普通路径（如 'diy.app'）→ 摊平 children 到顶层（命令 `task list`）
+ *    - `!` 前缀路径（如 '!diy.ui'）→ 保留该层命名空间为顶层组（命令 `ui status`）
+ * 每个子树的 proc 直接复用（path 仍是完整全名，routeResolve 按 name 匹配）。
+ */
+function resolveCliTree(
+  root: RouterNode,
+  cliRootPath?: string | string[],
+): RouterNode {
+  if (!cliRootPath) return root;
+  const paths = Array.isArray(cliRootPath) ? cliRootPath : [cliRootPath];
+  const flattened: RouteNode[] = [];
+  for (const p of paths) {
+    const keepNs = p.startsWith("!");
+    const segPath = keepNs ? p.slice(1) : p;
+    const sub = findNodeByPath(root, segPath);
+    if (!sub) continue;
+    if (keepNs) {
+      // 保留命名空间：包成一层 router（name = 子树最后一段，如 ui）
+      const nsName = segPath.split(".").pop() ?? segPath;
+      flattened.push({ kind: "router", name: nsName, path: segPath, parent: null, children: sub.children });
+    } else {
+      flattened.push(...sub.children);
+    }
+  }
+  if (flattened.length === 0) return root;
+  return { kind: "router", name: "", path: "", parent: null, children: flattened };
+}
+
 async function* stdinAsync(): AsyncGenerator<string> {
   const { createInterface } = await import("readline");
   const rl = createInterface({
@@ -40,15 +89,24 @@ export interface CliConfig<TRouter extends Router> {
   transport: RawClient;
   json?: boolean;
   groups?: Record<string, string>;
+  /**
+   * CLI 根路径裁剪：CLI 命令树从这里开始匹配（如 'diy.app' → 命令 `task show`），
+   * 但 RPC 调用方法名仍用完整 path（diy.app.task.show）。
+   * 支持数组（如 ['diy.app','diy.ui']）合并多个子树到一个命令树根。
+   * 默认空 = 全树匹配（命令 `diy app task show`）。
+   */
+  cliRootPath?: string | string[];
 }
 
 export class CliApp<TRouter extends Router> {
   private config: CliConfig<TRouter>;
   private tree: RouterNode;
+  private _jsonFlag = false;
 
   constructor(config: CliConfig<TRouter>) {
     this.config = config;
-    this.tree = buildRouteTree(config.router);
+    const root = buildRouteTree(config.router);
+    this.tree = resolveCliTree(root, config.cliRootPath);
     this._backfillParent(this.tree, null);
   }
 
@@ -63,7 +121,9 @@ export class CliApp<TRouter extends Router> {
   }
 
   async parse(rawArgv: string[]): Promise<void> {
-    const argv = [...rawArgv];
+    // 全局 --json flag：任意位置识别，剥离后进入命令解析；输出 JSON
+    this._jsonFlag = rawArgv.includes("--json");
+    const argv = rawArgv.filter((a) => a !== "--json");
 
     if (
       argv.length === 0 ||
@@ -97,8 +157,15 @@ export class CliApp<TRouter extends Router> {
 
     const proc = resolved;
     const def = proc.def;
-    const consumed = proc.path.split(".").length;
-    const remaining = argv.slice(consumed);
+    // CLI 命令树深度 = 从 proc 上溯到命令树根（path 为空的虚拟根）经过的段数，
+    // 命令树根本身不消费 argv，不计入。
+    let depth = 1;
+    let walk: RouteNode | null = proc;
+    while (walk && walk.parent && walk.parent.path !== "") {
+      walk = walk.parent;
+      depth++;
+    }
+    const remaining = argv.slice(depth);
 
     const desc =
       (def.cliDesc as ProcedureCliMeta | undefined)?.description ?? "";
@@ -157,7 +224,7 @@ export class CliApp<TRouter extends Router> {
       } else {
         const result = await tx.invoke(proc.path, { input });
         if (result === undefined) return;
-        if (this.config.json) {
+        if (this._jsonFlag || this.config.json) {
           console.log(JSON.stringify({ ok: true, data: result }));
         } else {
           const output =

@@ -17,7 +17,7 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { RpcServer } from "@diy/rpc";
-import { createMainTransport } from "@diy/rpc-transport-electron";
+import { createMainTransport } from "@diy/rpc/electron";
 import { RpcPortService } from "./services/rpc-port";
 import { AppConfig } from "./core/app-config";
 import { bindApi, createAppServer } from "./services/api-impl";
