@@ -10,7 +10,7 @@ import {
   routeResolve,
   routeWalk,
 } from "..";
-import type { RawClient } from "../raw-client";
+import type { RawClient } from "../raw";
 import type { AnyProcedureMeta } from "..";
 import { parseArgv, generateHelp, CliParseError } from "./parser";
 import type { ProcedureCliMeta } from "./meta";

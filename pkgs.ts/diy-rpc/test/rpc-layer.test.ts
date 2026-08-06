@@ -5,7 +5,7 @@
  */
 
 import type { Transport } from '../src/transport/types';
-import { RawClient } from '../src/transport';
+import { ChannelRawClient, ChannelRawServer } from '../src/transport';
 import { RpcImpl, RpcServer, router, createClient } from '../src/rpc';
 import { z } from 'zod';
 
@@ -45,7 +45,7 @@ async function main() {
   console.log('\n── RPC 层（unary / server-stream / client-stream / bidi-stream）──');
   {
     const [txA, txB] = createMemTransportPair();
-    const client = new RawClient(txB);
+    const client = new ChannelRawClient(txB);
 
     const app = router({
       ping: RpcImpl.unary({
@@ -86,8 +86,9 @@ async function main() {
       }),
     });
 
-    const rpcServer = new RpcServer({ router: app, transport: txA });
-    const rpcClient = createClient(txB, app);
+    const rpcServer = new RpcServer({ router: app });
+    rpcServer.registerInto(new ChannelRawServer(txA));
+    const rpcClient = createClient(new ChannelRawClient(txB), app);
 
     const p1 = await rpcClient.ping({ msg: 'hi' });
     assert(p1 === 'pong: hi', `ping = ${p1}`);

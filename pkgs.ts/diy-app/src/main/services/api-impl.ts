@@ -7,7 +7,7 @@
  */
 
 import { RpcServer, type Transport } from "@diy/rpc";
-import { RawServer } from "@diy/rpc";
+import { ChannelRawServer } from "@diy/rpc";
 import * as task from "../core/task";
 import * as subject from "../core/subject";
 import * as state from "../core/state";
@@ -223,6 +223,6 @@ export function createAppServer(): RpcServer {
 /** 兼容旧用法：把 createAppServer 的 handler 直接挂到某 transport 上 */
 export function bindApi(transport: Transport): RpcServer {
   const server = createAppServer();
-  server.registerInto(new RawServer(transport));
+  server.registerInto(new ChannelRawServer(transport));
   return server;
 }

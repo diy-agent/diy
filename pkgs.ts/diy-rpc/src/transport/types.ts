@@ -36,27 +36,11 @@ export interface StreamHandle<T> {
 }
 
 // ═══════════════════════════════════════════════════
-//  RpcError — 统一错误类型
-// ═══════════════════════════════════════════════════
-
-export class RpcError extends Error {
-  constructor(
-    public code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'RpcError';
-  }
-}
-
-// ═══════════════════════════════════════════════════
 //  信封类型（可辨识联合，type 为鉴别器）
+//  ErrorPayload 定义在 rpc/error.ts（统一错误模型）
 // ═══════════════════════════════════════════════════
 
-export interface ErrorPayload {
-  code: string;
-  message: string;
-}
+import type { ErrorPayload } from '../rpc/error';
 
 /** 调用请求/响应（含流 init-ack） */
 export interface CallMsg {
@@ -93,16 +77,5 @@ export interface NotifyMsg {
 
 export type Envelope = CallMsg | DataMsg | EndMsg | NotifyMsg;
 
-// ═══════════════════════════════════════════════════
-//  工具函数
-// ═══════════════════════════════════════════════════
-
-export function errMsg(err: unknown): ErrorPayload {
-  if (err instanceof RpcError) {
-    return { code: err.code, message: err.message };
-  }
-  if (err instanceof Error) {
-    return { code: (err as any).code || 'INTERNAL_ERROR', message: err.message };
-  }
-  return { code: 'INTERNAL_ERROR', message: String(err) };
-}
+// 错误模型（ErrorPayload / RpcError / toRpcError / toErrorPayload）见 ../rpc/error
+export type { ErrorPayload } from '../rpc/error';

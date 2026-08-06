@@ -14,7 +14,7 @@
 
 import { z } from 'zod';
 import {
-  RpcSchema, RpcServer, createClient, createTypedClient, RawClient,
+  RpcSchema, RpcServer, createClient, createTypedClient, ChannelRawClient, ChannelRawServer,
 } from '../src/index';
 import type { Transport } from '../src/transport/types';
 
@@ -78,7 +78,8 @@ const apiDef = {
 // ═══════════════════════════════════════════════════
 
 function startServer(txSrv: Transport): RpcServer {
-  const server = new RpcServer({ router: apiDef, transport: txSrv });
+  const server = new RpcServer({ router: apiDef });
+  server.registerInto(new ChannelRawServer(txSrv));
   server.on(apiDef.math.add, async ({ input }) => input.a + input.b);
   server.on(apiDef.greet, async ({ input }) => `Hello, ${input.name}!`);
   server.on(apiDef.slow, async ({ input }) => {
@@ -161,16 +162,16 @@ async function runScenarios(creator: (tx: Transport) => any, label: string) {
 
 async function main() {
   // ── 用 createClient 跑一遍（基线） ──
-  await runScenarios((tx) => createClient(tx, apiDef), 'createClient（基线）');
+  await runScenarios((tx) => createClient(new ChannelRawClient(tx), apiDef), 'createClient（基线）');
 
   // ── 用 createTypedClient 跑一遍（替代验证） ──
-  await runScenarios((tx) => createTypedClient(tx, apiDef), 'createTypedClient（替代）');
+  await runScenarios((tx) => createTypedClient(new ChannelRawClient(tx), apiDef), 'createTypedClient（替代）');
 
   // ── createTypedClient 独有：zod runtime 校验 ──
   console.log('\n── createTypedClient 独有：zod 校验 ──');
   const [txSrv, txCli] = createMemTransportPair();
   const server = startServer(txSrv);
-  const cli = createTypedClient(txCli, apiDef);
+  const cli = createTypedClient(new ChannelRawClient(txCli), apiDef);
   try {
     await cli.math.add({ a: 'bad' as any, b: 1 });
     assert(false, 'zod 应拒绝 string');

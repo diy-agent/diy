@@ -13,8 +13,7 @@
  *   - 零广播：每个方法由且仅由一个后端注册
  */
 
-import type { Transport } from '../transport/types';
-import { RawServer } from './raw-server';
+import type { RawServer } from './raw';
 
 /**
  * 一个能处理 RPC 方法的"后端"。
@@ -30,19 +29,16 @@ export interface RpcBackend {
 }
 
 /**
- * RpcGateway — 绑定来源 transport 的路由边界层。
+ * RpcGateway — 绑定来源 RawServer 的路由边界层。
  *
- * 拥有一个绑定到来源 transport 的 RawServer；每次 register 把后端的方法
- * 合并进它。收到来源消息时由 RawServer 按全名 method 分发给对应后端，
- * 响应回写到来源 transport。
+ * 拥有一个绑定到来源连接（channel / http2）的 RawServer；每次 register 把后端的方法
+ * 合并进它。收到来源请求时由 RawServer 按全名 method 分发给对应后端，响应回写到来源。
+ * 构造只接受 RawServer 端口（具体绑定由调用方按协议选择：ChannelRaw 或 HttpRaw）。
  */
 export class RpcGateway {
-  private _raw: RawServer;
   private _scopes = new Set<string>();
 
-  constructor(source: Transport) {
-    this._raw = new RawServer(source);
-  }
+  constructor(private _raw: RawServer) {}
 
   /** 注册一个后端；scope 前缀冲突时抛错 */
   register(backend: RpcBackend): this {

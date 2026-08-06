@@ -13,7 +13,7 @@
  *                     ↑_______↔_____↑
  */
 
-import { createMemTransportPair, RpcImpl, RpcServer, router, createClient } from '@diy/rpc';
+import { createMemTransportPair, RpcImpl, RpcServer, router, createClient, ChannelRawClient, ChannelRawServer } from '@diy/rpc';
 import { z } from 'zod';
 
 // ═══════════════════════════════════════════════════
@@ -77,14 +77,15 @@ const unsub2 = rendererA.on((msg) => {
 // ═══════════════════════════════════════════════════
 
 console.log('\n[Renderer] 启动 RpcServer...');
-const rendererServer = new RpcServer({ router: rendererApi, transport: rendererTx });
+const rendererServer = new RpcServer({ router: rendererApi });
+rendererServer.registerInto(new ChannelRawServer(rendererTx));
 
 // ═══════════════════════════════════════════════════
 //  4. CLI 侧：createClient 直通 Renderer
 // ═══════════════════════════════════════════════════
 
 console.log('\n[CLI] 创建客户端...');
-const cli = createClient(cliTx, rendererApi);
+const cli = createClient(new ChannelRawClient(cliTx), rendererApi);
 
 // ═══════════════════════════════════════════════════
 //  5. 调用测试

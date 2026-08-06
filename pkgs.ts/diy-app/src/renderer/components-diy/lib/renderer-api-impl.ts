@@ -1,4 +1,5 @@
 import { RpcServer, type Transport } from '@diy/rpc';
+import { ChannelRawServer } from '@diy/rpc';
 import { getRendererActions } from './renderer-actions';
 import { apiDef } from '../../../main/services/api-def';
 import { diyService } from './rpc';
@@ -14,7 +15,8 @@ import { renderTreeText, type TaskNode } from '../../../main/core/tree-format';
  */
 
 export function bindRendererApi(transport: Transport): RpcServer {
-  const server = new RpcServer({ router: apiDef.diy.ui, scope: 'diy.ui', transport });
+  const server = new RpcServer({ router: apiDef.diy.ui, scope: 'diy.ui' });
+  server.registerInto(new ChannelRawServer(transport));
   const ui = apiDef.diy.ui;
 
   server.on(ui.component.list, async () => {

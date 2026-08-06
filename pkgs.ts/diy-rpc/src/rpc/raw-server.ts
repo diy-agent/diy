@@ -1,9 +1,9 @@
 /**
- * raw-server.ts — 第2层 Raw API：RawServer 类
+ * raw-server.ts — ChannelRawServer：envelope 复用协议服务端（第2层绑定之一）
  *
- * 角色：在第1层 Transport 之上提供消息分发 + 流管理。
- *       只应在入口组装代码中使用（传给 createHandler），
- *       业务代码应使用第3层 RPC，不直接操作 RawServer。
+ * 在一条双向通道（mem/WS/IPC 等 Transport）上跑信封协议（id/streamId 复用），
+ * 实现 RawServer 端口。只应在入口组装代码中使用（传给 createHandler/RpcGateway），
+ * 业务代码应使用第3层 RPC。
  *
  * 四类 handler：
  *   onUnary        — unary（请求-响应）
@@ -13,9 +13,10 @@
  *   onNotify       — 单向通知
  */
 
-import type { Transport, StreamHandle, StreamMode, Envelope, ErrorPayload } from '../transport/types';
-import { errMsg } from '../transport/types';
+import type { Transport, StreamHandle, StreamMode, Envelope } from '../transport/types';
 import { AsyncQueue } from './async-queue';
+import { toErrorPayload, RpcError } from './error';
+import type { RawServer } from './raw';
 
 let _streamId = 0;
 
@@ -25,7 +26,7 @@ type ClientStreamHandler = (params: unknown, chunks: StreamHandle<unknown>) => P
 type BidiStreamHandler = (params: unknown, incoming: StreamHandle<unknown>) => AsyncGenerator<unknown>;
 type NotifyHandler = (params: unknown) => void | Promise<void>;
 
-export class RawServer {
+export class ChannelRawServer implements RawServer {
   private _unaries = new Map<string, UnaryHandler>();
   private _serverStreams = new Map<string, ServerStreamHandler>();
   private _clientStreams = new Map<string, ClientStreamHandler>();
@@ -91,8 +92,7 @@ export class RawServer {
     if (msg.type === 'call' && !msg.stream) {
       await this._handleUnary(msg);
     } else if (msg.type === 'call' && msg.stream === true) {
-      // Client 请求分配 streamId，从 params.method? 获取方法名
-      // 但此时 method 在 msg.method 上，stream=true 表示需要分配
+      // Client 请求分配 streamId，从 msg.method 获取方法名
       const mode = this._detectStreamMode(msg.method!);
       if (mode === 'server') this._startServerStream(msg);
       else if (mode === 'client') this._startClientStream(msg);
@@ -106,7 +106,7 @@ export class RawServer {
     } else if (msg.type === 'end') {
       const consumer = this._streamConsumers.get(msg.stream);
       if (consumer) {
-        if (msg.error) consumer.error(new Error(msg.error.message));
+        if (msg.error) consumer.error(new RpcError(msg.error.code, msg.error.message));
         else consumer.end();
         this._streamConsumers.delete(msg.stream);
       }
@@ -132,7 +132,7 @@ export class RawServer {
     try {
       this.tx.send({ type: 'call', id: msg.id, result: await fn(msg.params) });
     } catch (err: unknown) {
-      this.tx.send({ type: 'call', id: msg.id, error: errMsg(err) });
+      this.tx.send({ type: 'call', id: msg.id, error: toErrorPayload(err) });
     }
   }
 
@@ -156,7 +156,7 @@ export class RawServer {
         }
         if (!cancelled) this.tx.send({ type: 'end', stream: streamId });
       } catch (err: unknown) {
-        if (!cancelled) this.tx.send({ type: 'end', stream: streamId, error: errMsg(err) });
+        if (!cancelled) this.tx.send({ type: 'end', stream: streamId, error: toErrorPayload(err) });
       } finally {
         this._serverStreamCancellers.delete(streamId);
       }
@@ -179,7 +179,7 @@ export class RawServer {
       const result = await fn(msg.params, queue);
       this.tx.send({ type: 'call', id: msg.id, result });
     } catch (err: unknown) {
-      this.tx.send({ type: 'call', id: msg.id, error: errMsg(err) });
+      this.tx.send({ type: 'call', id: msg.id, error: toErrorPayload(err) });
     } finally {
       this._streamConsumers.delete(streamId);
     }
@@ -205,7 +205,7 @@ export class RawServer {
       }
       this.tx.send({ type: 'end', stream: streamId });
     } catch (err: unknown) {
-      this.tx.send({ type: 'end', stream: streamId, error: errMsg(err) });
+      this.tx.send({ type: 'end', stream: streamId, error: toErrorPayload(err) });
     } finally {
       this._streamConsumers.delete(streamId);
     }

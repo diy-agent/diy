@@ -13,9 +13,8 @@
  *   PORT=18888 npm run test:bridge
  */
 
-import { connectHttp2Rpc } from '@diy/rpc-transport';
-import type { Http2Transport } from '@diy/rpc-transport';
-import { createTypedClient, RawClient } from '@diy/rpc';
+import { HttpRawClient } from '@diy/rpc/http';
+import { createTypedClient } from '@diy/rpc';
 import { apiDef } from '../src/main/services/api-def';
 
 const PORT = parseInt(process.env['PORT'] ?? '18888', 10);
@@ -34,12 +33,13 @@ function fail(label: string, err: unknown) {
 }
 
 async function main(): Promise<void> {
-  console.log(`\n🔌 连接到 http://127.0.0.1:${PORT}/rpc ...`);
+  console.log(`\n🔌 连接到 http://127.0.0.1:${PORT} ...`);
 
-  const tx: Http2Transport = await connectHttp2Rpc(PORT);
+  const raw = new HttpRawClient(`http://127.0.0.1:${PORT}`);
+  await raw.ready();
 
   // ── 强类型客户端 — createTypedClient 从 meta zod 推导完整方法签名 ──
-  const cli = createTypedClient(tx, apiDef);
+  const cli = createTypedClient(raw, apiDef);
   console.log('  已连接\n');
 
   // ── Main API（CLI → Main RpcServer）───
@@ -88,11 +88,10 @@ async function main(): Promise<void> {
   console.log('\n── 负向测试 ───');
 
   try {
-    const raw = new RawClient(tx, 5000);
     const uk = await raw.invoke('nonexistent.method', { input: {}, meta: {} });
     console.log(`  ⚠  unknown method returned: ${JSON.stringify(uk)}（无 handler → 超时或 undefined）`);
   } catch (e) {
-    console.log(`  ⚠  unknown method 超时（预期行为）`);
+    console.log(`  ⚠  unknown method 报错（预期行为）：${(e as Error).message}`);
   }
 
   // ── 结果 ──
@@ -101,7 +100,7 @@ async function main(): Promise<void> {
   console.log(`  通过: ${passed}  失败: ${failed}  总计: ${total}`);
   console.log(`═══════════════════════════════════════`);
 
-  tx.close();
+  raw.dispose();
   process.exit(failed > 0 ? 1 : 0);
 }
 

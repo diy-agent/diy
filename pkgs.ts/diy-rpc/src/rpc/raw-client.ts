@@ -1,12 +1,10 @@
 import type { Transport, ErrorPayload, StreamHandle } from '../transport/types';
 import type { Envelope, CallMsg } from '../transport/types';
-import { RpcError } from '../transport/types';
+import { RpcError, fromErrorPayload } from './error';
+import type { CallOptions, RawClient } from './raw';
 import { AsyncQueue } from './async-queue';
 
-export interface CallOptions {
-  signal?: AbortSignal;
-  timeout?: number;
-}
+export type { CallOptions };
 
 interface PendingEntry {
   onMessage: (msg: CallMsg) => boolean;
@@ -18,7 +16,7 @@ interface StreamEntry {
   end: (error?: ErrorPayload) => void;
 }
 
-export class RawClient {
+export class ChannelRawClient implements RawClient {
   private _reqId = 0;
   private unsub: () => void;
   private pending = new Map<number, PendingEntry>();
@@ -79,7 +77,7 @@ export class RawClient {
     return new Promise<TRes>((resolve, reject) => {
       const entry: PendingEntry = {
         onMessage: (msg) => {
-          if (msg.error) reject(new RpcError(msg.error.code, msg.error.message));
+          if (msg.error) reject(fromErrorPayload(msg.error));
           else resolve(msg.result as TRes);
           return true;
         },
@@ -129,7 +127,7 @@ export class RawClient {
           if (msg.stream != null) {
             resolve(msg.stream as number);
           } else if (msg.error) {
-            reject(new RpcError(msg.error.code, msg.error.message));
+            reject(fromErrorPayload(msg.error));
           } else {
             reject(new RpcError('INVALID_ACK', 'Expected stream ack'));
           }
@@ -151,7 +149,7 @@ export class RawClient {
     this.streams.set(streamId, {
       push: (val) => queue.push(val as TYield),
       end: (err) => {
-        if (err) queue.error(new RpcError(err.code, err.message));
+        if (err) queue.error(fromErrorPayload(err));
         else queue.end();
       },
     });
@@ -190,7 +188,7 @@ export class RawClient {
             return false;
           }
           if (msg.error) {
-            reject(new RpcError(msg.error.code, msg.error.message));
+            reject(fromErrorPayload(msg.error));
             return true;
           }
           reject(new RpcError('INVALID_ACK', 'Expected stream ack'));
@@ -234,7 +232,7 @@ export class RawClient {
     return new Promise<TRes>((resolve, reject) => {
       const entry: PendingEntry = {
         onMessage: (msg) => {
-          if (msg.error) reject(new RpcError(msg.error.code, msg.error.message));
+          if (msg.error) reject(fromErrorPayload(msg.error));
           else resolve(msg.result as TRes);
           return true;
         },
@@ -263,7 +261,7 @@ export class RawClient {
           if (msg.stream != null) {
             resolve(msg.stream as number);
           } else if (msg.error) {
-            reject(new RpcError(msg.error.code, msg.error.message));
+            reject(fromErrorPayload(msg.error));
           } else {
             reject(new RpcError('INVALID_ACK', 'Expected stream ack'));
           }
@@ -285,7 +283,7 @@ export class RawClient {
     this.streams.set(streamId, {
       push: (val) => queue.push(val as TChunkOut),
       end: (err) => {
-        if (err) queue.error(new RpcError(err.code, err.message));
+        if (err) queue.error(fromErrorPayload(err));
         else queue.end();
       },
     });

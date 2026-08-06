@@ -9,8 +9,9 @@
  */
 
 import { z } from 'zod';
-import { RawClient, type CallOptions } from './raw-client';
-import type { Transport, StreamHandle } from '../transport/types';
+import type { CallOptions } from './raw-client';
+import type { StreamHandle } from '../transport/types';
+import type { RawClient } from './raw';
 import { flattenRouter } from './index';
 
 // ═══════════════════════════════════════════════════
@@ -61,8 +62,8 @@ function resolveChunks<T>(chunks: AsyncIterable<T> | (() => AsyncIterable<T>)): 
  *
  * 每次调用先做 zod input 校验，再发到 transport。
  */
-export function createTypedClient<const T>(transport: Transport, meta: T): TypedClient<T> {
-  const raw = new RawClient(transport);
+export function createTypedClient<const T>(client: RawClient, meta: T): TypedClient<T> {
+  const raw = client;
   const flat = flattenRouter(meta as Parameters<typeof flattenRouter>[0]);
   const modes: Record<string, string> = {};
   const schemas: Record<string, { input?: z.ZodType }> = {};

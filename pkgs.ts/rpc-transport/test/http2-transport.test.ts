@@ -2,7 +2,7 @@
  * http2-transport.test.ts — HTTP/2 Transport 测试
  */
 
-import { RpcImpl, router, RpcServer, createClient } from '@diy/rpc';
+import { RpcImpl, router, RpcServer, createClient, ChannelRawClient, ChannelRawServer } from '@diy/rpc';
 import { createHttp2RpcServer, connectHttp2Rpc } from '../src/http2';
 import { z } from 'zod';
 
@@ -59,7 +59,8 @@ async function main() {
   }
 
   const { server, port } = createHttp2RpcServer((transport) => {
-    new RpcServer({ router: app, transport });
+    const server = new RpcServer({ router: app });
+    server.registerInto(new ChannelRawServer(transport));
   });
   server.listen(0);
   await new Promise<void>(resolve => server.once('listening', resolve));
@@ -71,7 +72,7 @@ async function main() {
   console.log('\n── Unary ──');
   {
     const transport = await connect();
-    const rpcClient = createClient(transport, app);
+    const rpcClient = createClient(new ChannelRawClient(transport), app);
 
     const p = await rpcClient.ping({ msg: 'http2' });
     assert(p === 'pong: http2', `ping = ${JSON.stringify(p)}`);
@@ -85,7 +86,7 @@ async function main() {
   console.log('\n── Server-Stream ──');
   {
     const transport = await connect();
-    const rpcClient = createClient(transport, app);
+    const rpcClient = createClient(new ChannelRawClient(transport), app);
 
     const handle = await rpcClient.count({ n: 4 });
     const results: number[] = [];
@@ -96,7 +97,7 @@ async function main() {
   console.log('\n── Client-Stream ──');
   {
     const transport = await connect();
-    const rpcClient = createClient(transport, app);
+    const rpcClient = createClient(new ChannelRawClient(transport), app);
 
     async function* gen() { yield 10; yield 20; yield 30; }
     const result = await rpcClient.upload({ tag: 'sum' }, gen());
@@ -106,7 +107,7 @@ async function main() {
   console.log('\n── Multiplex (concurrent unary) ──');
   {
     const transport = await connect();
-    const rpcClient = createClient(transport, app);
+    const rpcClient = createClient(new ChannelRawClient(transport), app);
 
     const results = await Promise.all([
       rpcClient.slow({ delay: 30, id: 1 }),
@@ -121,7 +122,7 @@ async function main() {
   console.log('\n── Multiplex (unary + stream) ──');
   {
     const transport = await connect();
-    const rpcClient = createClient(transport, app);
+    const rpcClient = createClient(new ChannelRawClient(transport), app);
 
     const [pingResult, streamHandle] = await Promise.all([
       rpcClient.ping({ msg: 'mix' }),

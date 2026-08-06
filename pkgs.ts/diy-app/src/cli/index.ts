@@ -3,9 +3,9 @@ import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import { RawClient, RpcServer, createMemTransportPair } from "@diy/rpc";
+import { ChannelRawClient, RpcServer, createMemTransportPair, type RawClient } from "@diy/rpc";
+import { HttpRawClient } from "@diy/rpc/http";
 import { CliApp } from "@diy/rpc/cli";
-import { connectHttp2Rpc } from "@diy/rpc-transport";
 import { apiDef } from "../main/services/api-def";
 import { bindApi } from "../main/services/api-impl";
 
@@ -35,15 +35,15 @@ async function main() {
   const argv = process.argv.slice(2);
 
   let transport: RawClient;
-  let http2Tx: { close(): void } | null = null;
 
   const port = readPort();
   if (port !== null) {
+    const remote = new HttpRawClient(`http://127.0.0.1:${port}`);
     try {
-      const tx = await connectHttp2Rpc(port);
-      http2Tx = tx;
-      transport = new RawClient(tx);
+      await remote.ready(); // 探测端口可达性，失败回退本地
+      transport = remote;
     } catch {
+      remote.dispose();
       transport = createLocalClient();
     }
   } else {
@@ -63,14 +63,13 @@ async function main() {
 
   // 清理：关闭 RPC 连接，允许进程正常退出
   transport.dispose();
-  http2Tx?.close();
   process.exit(0);
 }
 
-function createLocalClient(): RawClient {
+function createLocalClient(): ChannelRawClient {
   const { serverTx, clientTx } = createMemTransportPair();
   bindApi(serverTx);
-  return new RawClient(clientTx);
+  return new ChannelRawClient(clientTx);
 }
 
 main().catch((e) => {

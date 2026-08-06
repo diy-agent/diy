@@ -10,10 +10,10 @@
  */
 
 import { z } from 'zod';
-import { RawClient, type CallOptions } from './raw-client';
-import type { Transport, StreamHandle } from '../transport/types';
-import { RpcError } from '../transport/types';
-import { RawServer } from './raw-server';
+import type { CallOptions } from './raw-client';
+import type { StreamHandle } from '../transport/types';
+import { toRpcError } from './error';
+import type { RawClient, RawServer } from './raw';
 import type { RpcBackend } from './gateway';
 
 // ═══════════════════════════════════════════════════
@@ -348,6 +348,16 @@ export function flattenRouter(r: Router): Record<string, AnyProcedureMeta> {
 //  createHandler / createMetaHandler
 // ═══════════════════════════════════════════════════
 
+/** 校验 input：zod parse 失败 → INVALID_ARGUMENT（非 INTERNAL） */
+function validateInput(def: AnyProcedureMeta, input: unknown): unknown {
+  if (!def.inputSchema) return input;
+  try {
+    return def.inputSchema.parse(input);
+  } catch (e) {
+    throw toRpcError(e); // ZodError → INVALID_ARGUMENT
+  }
+}
+
 /** 内部共享：遍历 router 树 + 注册 handler 到 transport */
 function _registerRouter(opts: {
   router: Router;
@@ -367,26 +377,26 @@ function _registerRouter(opts: {
     if (mode === 'unary') {
       tx.onUnary(name, ((raw: unknown) => {
         const { input, meta } = (raw ?? {}) as any;
-        const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
+        const validated = validateInput(def, input);
         return handler({ input: validated, meta: meta ?? {} });
       }) as any);
     } else if (mode === 'server') {
       tx.onServerStream(name, ((raw: unknown) => {
         const { input, meta } = (raw ?? {}) as any;
-        const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
+        const validated = validateInput(def, input);
         return handler({ input: validated, meta: meta ?? {} });
       }) as any);
     } else if (mode === 'client') {
       tx.onClientStream(name, ((raw: unknown, chunks: StreamHandle<any>) => {
         const { input, meta } = (raw ?? {}) as any;
-        const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
+        const validated = validateInput(def, input);
         const validatedChunks = def.chunkInSchema ? (chunks as any) : chunks;
         return handler({ input: validated, meta: meta ?? {}, stream: validatedChunks });
       }) as any);
     } else if (mode === 'bidi') {
       tx.onBidiStream(name, ((raw: unknown, incoming: StreamHandle<any>) => {
         const { input, meta } = (raw ?? {}) as any;
-        const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
+        const validated = validateInput(def, input);
         const validatedChunks = def.chunkInSchema ? (incoming as any) : incoming;
         return handler({ input: validated, meta: meta ?? {}, stream: validatedChunks });
       }) as any);
@@ -443,11 +453,10 @@ type HandlerForProc<T> =
  * 第3层 RPC 服务端。
  *
  * 传输无关的纯 handler 注册表：
- *   - 构造时不绑定 transport（可选传入 scope 前缀）
+ *   - 构造时不绑定 transport（只收 router + 可选 scope 前缀）
  *   - 含 call 的 procedure（RpcImpl）构造时自动注册
  *   - 不含 call 的（RpcSchema）通过 .on() 绑定 handler
  *   - registerInto(raw) 把本注册表挂到某个 RawServer（供 RpcGateway 使用）
- *   - 兼容旧用法：传入 transport 时自动 new RawServer 并挂载
  *
  * 替代手动组合 new RawServer() + createHandler()/createMetaHandler()。
  */
@@ -457,7 +466,7 @@ export class RpcServer implements RpcBackend {
   private _metaToMethod = new Map<AnyProcedureMeta, string>();
   private _handlers = new Map<AnyProcedureMeta, (params: unknown, stream?: unknown) => unknown>();
 
-  constructor(opts: { router: Router; scope?: string; transport?: Transport }) {
+  constructor(opts: { router: Router; scope?: string }) {
     this.scope = opts.scope ?? '';
 
     // 建立 meta → method 映射（scope 前缀拼到完整方法名前）
@@ -468,11 +477,6 @@ export class RpcServer implements RpcBackend {
 
     // 含 call 的 procedure 自动注册
     this._autoRegister();
-
-    // 兼容旧用法：给定 transport 时自动创建 RawServer 并挂载
-    if (opts.transport) {
-      this.registerInto(new RawServer(opts.transport));
-    }
   }
 
   /**
@@ -540,26 +544,26 @@ export class RpcServer implements RpcBackend {
     if (mode === 'unary') {
       raw.onUnary(name, ((rawParams: unknown) => {
         const { input, meta } = (rawParams ?? {}) as any;
-        const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
+        const validated = validateInput(def, input);
         return handler({ input: validated, meta: meta ?? {} });
       }) as any);
     } else if (mode === 'server') {
       raw.onServerStream(name, ((rawParams: unknown) => {
         const { input, meta } = (rawParams ?? {}) as any;
-        const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
+        const validated = validateInput(def, input);
         return handler({ input: validated, meta: meta ?? {} });
       }) as any);
     } else if (mode === 'client') {
       raw.onClientStream(name, ((rawParams: unknown, chunks: StreamHandle<any>) => {
         const { input, meta } = (rawParams ?? {}) as any;
-        const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
+        const validated = validateInput(def, input);
         const validatedChunks = def.chunkInSchema ? (chunks as any) : chunks;
         return handler({ input: validated, meta: meta ?? {}, stream: validatedChunks });
       }) as any);
     } else if (mode === 'bidi') {
       raw.onBidiStream(name, ((rawParams: unknown, incoming: StreamHandle<any>) => {
         const { input, meta } = (rawParams ?? {}) as any;
-        const validated = def.inputSchema ? def.inputSchema.parse(input) : input;
+        const validated = validateInput(def, input);
         const validatedChunks = def.chunkInSchema ? (incoming as any) : incoming;
         return handler({ input: validated, meta: meta ?? {}, stream: validatedChunks });
       }) as any);
@@ -594,10 +598,10 @@ export type ClientRouter<TRouter> = {
 // ═══════════════════════════════════════════════════
 
 export function createClient<TRouter>(
-  transport: Transport,
+  client: RawClient,
   router: TRouter,
 ): ClientRouter<TRouter> {
-  const tx = new RawClient(transport);
+  const tx = client;
   const flat = flattenRouter(router as any);
   const modes: Record<string, string> = {};
   for (const [name, def] of Object.entries(flat)) {

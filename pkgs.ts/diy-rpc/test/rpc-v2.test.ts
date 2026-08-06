@@ -9,7 +9,7 @@
 
 import type { Transport } from '../src/transport/types';
 import { z } from 'zod';
-import { RpcSchema, RpcServer, createTypedClient } from '../src/index';
+import { RpcSchema, RpcServer, createTypedClient, ChannelRawClient, ChannelRawServer } from '../src/index';
 
 // ═══════════════════════════════════════════════════
 //  meta 定义（纯 zod，无 call）
@@ -80,7 +80,8 @@ async function main() {
   console.log('\n── meta/handle 分离 ──');
 
   const [txSrv, txCli] = createMemTransportPair();
-  const rpcServer = new RpcServer({ router: apiDef, transport: txSrv });
+  const rpcServer = new RpcServer({ router: apiDef });
+  rpcServer.registerInto(new ChannelRawServer(txSrv));
 
   // 每个 meta 对象单独绑 handler
   rpcServer.on(apiDef.math.add, async ({ input }) => input.a + input.b);
@@ -105,7 +106,7 @@ async function main() {
   // ── 2. client 从 meta 的 zod 生成强类型 ─────
   console.log('\n── zod 强类型 client ──');
 
-  const cli = createTypedClient(txCli, apiDef);
+  const cli = createTypedClient(new ChannelRawClient(txCli), apiDef);
 
   // 类型检查（编译期验证，z.infer 从 zod 推导）
   const r1: number = await cli.math.add({ a: 3, b: 4 });

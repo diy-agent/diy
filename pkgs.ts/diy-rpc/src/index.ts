@@ -4,11 +4,15 @@ import './rpc/cli-rpc/meta';
 
 export type {
   Transport, StreamMode, StreamHandle, Envelope,
-  ErrorPayload, CallMsg, DataMsg, EndMsg, NotifyMsg,
+  CallMsg, DataMsg, EndMsg, NotifyMsg,
 } from './transport/types';
-export { errMsg, RpcError } from './transport/types';
-export { RawServer } from './rpc/raw-server';
-export { RawClient } from './rpc/raw-client';
+export type { ErrorPayload, ErrorProtocolExt } from './rpc/error';
+export { RpcError, toRpcError, toErrorPayload, fromErrorPayload } from './rpc/error';
+// 端口接口
+export type { RawServer, RawClient, CallOptions } from './rpc/raw';
+// 具体绑定
+export { ChannelRawServer } from './rpc/raw-server';
+export { ChannelRawClient } from './rpc/raw-client';
 export { AsyncQueue } from './rpc/async-queue';
 export { createMemTransportPair, createLoggedTransport } from './transport/transport-builtin';
 export type { TransportLogHandler } from './transport/transport-builtin';

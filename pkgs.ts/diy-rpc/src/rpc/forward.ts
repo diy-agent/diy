@@ -11,8 +11,8 @@
  */
 
 import type { Transport } from '../transport/types';
-import { RawServer } from './raw-server';
-import { RawClient } from './raw-client';
+import { ChannelRawClient } from './raw-client';
+import type { RawServer, RawClient } from './raw';
 import { flattenRouter, type Router } from './index';
 import type { RpcBackend } from './gateway';
 
@@ -40,7 +40,7 @@ export class RpcForward implements RpcBackend {
   constructor(transport: Transport, opts: RpcForwardOptions) {
     this.scope = opts.scope;
     this._router = opts.router;
-    this._client = new RawClient(transport);
+    this._client = new ChannelRawClient(transport);
   }
 
   registerInto(raw: RawServer): void {

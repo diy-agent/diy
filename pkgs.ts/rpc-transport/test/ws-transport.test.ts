@@ -3,7 +3,7 @@
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
-import { RpcImpl, router, RpcServer, createClient } from '@diy/rpc';
+import { RpcImpl, router, RpcServer, createClient, ChannelRawClient, ChannelRawServer } from '@diy/rpc';
 import { WsTransport } from '../src/websocket';
 import { z } from 'zod';
 
@@ -56,7 +56,8 @@ async function main() {
 
   wss.on('connection', (ws) => {
     const transport = new WsTransport(ws);
-    new RpcServer({ router: app, transport });
+    const server = new RpcServer({ router: app });
+    server.registerInto(new ChannelRawServer(transport));
   });
 
   function connect() {
@@ -70,7 +71,7 @@ async function main() {
     const { ws, ready } = connect();
     await ready;
     const transport = new WsTransport(ws);
-    const rpcClient = createClient(transport, app);
+    const rpcClient = createClient(new ChannelRawClient(transport), app);
 
     const p = await rpcClient.ping({ msg: 'hello' });
     assert(p === 'pong: hello', `ping = ${JSON.stringify(p)}`);
@@ -86,7 +87,7 @@ async function main() {
     const { ws, ready } = connect();
     await ready;
     const transport = new WsTransport(ws);
-    const rpcClient = createClient(transport, app);
+    const rpcClient = createClient(new ChannelRawClient(transport), app);
 
     const handle = await rpcClient.count({ n: 3 });
     const results: number[] = [];
@@ -101,7 +102,7 @@ async function main() {
     const { ws, ready } = connect();
     await ready;
     const transport = new WsTransport(ws);
-    const rpcClient = createClient(transport, app);
+    const rpcClient = createClient(new ChannelRawClient(transport), app);
 
     const results = await Promise.all([
       rpcClient.slow({ delay: 30, id: 1 }),
@@ -120,7 +121,7 @@ async function main() {
     const { ws, ready } = connect();
     await ready;
     const transport = new WsTransport(ws);
-    const rpcClient = createClient(transport, app);
+    const rpcClient = createClient(new ChannelRawClient(transport), app);
 
     const [pingResult, streamHandle] = await Promise.all([
       rpcClient.ping({ msg: 'concurrent' }),
@@ -141,8 +142,8 @@ async function main() {
     const c2 = connect();
     await Promise.all([c1.ready, c2.ready]);
 
-    const rpc1 = createClient(new WsTransport(c1.ws), app);
-    const rpc2 = createClient(new WsTransport(c2.ws), app);
+    const rpc1 = createClient(new ChannelRawClient(new WsTransport(c1.ws)), app);
+    const rpc2 = createClient(new ChannelRawClient(new WsTransport(c2.ws)), app);
 
     const [r1, r2] = await Promise.all([
       rpc1.ping({ msg: 'from 1' }),

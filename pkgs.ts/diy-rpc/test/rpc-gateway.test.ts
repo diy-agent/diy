@@ -12,7 +12,8 @@ import { z } from 'zod';
 import {
   RpcSchema, RpcServer, RpcGateway, RpcForward, createTypedClient,
 } from '../src/index';
-import { RawServer } from '../src/rpc/raw-server';
+import { ChannelRawServer } from '../src/rpc/raw-server';
+import { ChannelRawClient } from '../src/rpc/raw-client';
 
 // ═══════════════════════════════════════════════════
 //  def（模拟 app 层：diy.app 本地 + diy.ui 远端）
@@ -68,7 +69,7 @@ async function main() {
   const uiForward = new RpcForward(main2renderer, { router: appApiDef.diy.ui, scope: 'diy.ui' });
 
   // Main 侧：gateway 绑来源 cliTx，注册本地 + 转发两个后端
-  const gateway = new RpcGateway(gwTx)
+  const gateway = new RpcGateway(new ChannelRawServer(gwTx))
     .register(appServer)
     .register(uiForward);
 
@@ -76,10 +77,10 @@ async function main() {
   const rendererServer = new RpcServer({ router: appApiDef.diy.ui, scope: 'diy.ui' });
   rendererServer.on(appApiDef.diy.ui.tree, async ({ input }) => `tree:${input.all ?? false}`);
   rendererServer.on(appApiDef.diy.ui.status, async () => ({ pid: 42 }));
-  rendererServer.registerInto(new RawServer(renderer2main));
+  rendererServer.registerInto(new ChannelRawServer(renderer2main));
 
   // CLI 侧：全量 client（完整 def，能调 diy.app.* 和 diy.ui.*）
-  const cli = createTypedClient(cliTx, appApiDef);
+  const cli = createTypedClient(new ChannelRawClient(cliTx), appApiDef);
 
   // ── 断言 ──
   console.log('\n── 本地 diy.app.* ──');
@@ -95,7 +96,7 @@ async function main() {
   console.log('\n── scope 冲突报错 ──');
   let threw = false;
   try {
-    new RpcGateway(gwTx).register(appServer).register(appServer);
+    new RpcGateway(new ChannelRawServer(gwTx)).register(appServer).register(appServer);
   } catch (e) {
     threw = e instanceof Error && e.message.includes('已注册');
   }
