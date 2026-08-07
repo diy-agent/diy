@@ -4,7 +4,7 @@
 
 import type { Transport, StreamHandle } from '../src/transport/types';
 import { ChannelRawServer, ChannelRawClient } from '../src/transport';
-import { RpcImpl, RpcServer, RpcSchema, router, createClient } from '../src/rpc';
+import { RpcImpl, RpcServer, RpcSchema, router, createTypedClient } from '../src/rpc';
 import { z } from 'zod';
 
 const api = router({
@@ -240,7 +240,7 @@ async function testRpcLayerEnvelopes() {
 
   const rpcServer = new RpcServer({ router: app });
   rpcServer.registerInto(new ChannelRawServer(serverTx));
-  const rpcClient = createClient(new ChannelRawClient(clientTx), app);
+  const rpcClient = createTypedClient(new ChannelRawClient(clientTx), app);
 
   const pong = await rpcClient.ping({ msg: 'hi' });
   assert(pong === 'pong: hi', `ping = ${pong}`);

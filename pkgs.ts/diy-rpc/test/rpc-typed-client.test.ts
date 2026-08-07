@@ -1,20 +1,13 @@
 /**
- * rpc-typed-client.test.ts — createTypedClient 替代 createClient 的场景覆盖验证
+ * rpc-typed-client.test.ts — createTypedClient 场景覆盖验证
  *
- * 目标：证明 createTypedClient（zod 强类型 + zod 校验）覆盖 createClient 的所有能力。
- *
- * 覆盖场景：
- *   1. unary（普通 / 嵌套 router / 并发）
- *   2. server-stream
- *   3. client-stream（AsyncIterable 与 函数两种形式）
- *   4. bidi-stream
- *   5. CallOptions（signal / timeout）
- *   6. zod 校验（createTypedClient 独有增强）
+ * 覆盖场景：unary（普通 / 嵌套 router / 并发）、server-stream、client-stream
+ * （AsyncIterable 与 函数两种形式）、bidi-stream、CallOptions（signal/timeout）、zod 校验。
  */
 
 import { z } from 'zod';
 import {
-  RpcSchema, RpcServer, createClient, createTypedClient, ChannelRawClient, ChannelRawServer,
+  RpcSchema, RpcServer, createTypedClient, ChannelRawClient, ChannelRawServer,
 } from '../src/index';
 import type { Transport } from '../src/transport/types';
 
@@ -161,11 +154,8 @@ async function runScenarios(creator: (tx: Transport) => any, label: string) {
 }
 
 async function main() {
-  // ── 用 createClient 跑一遍（基线） ──
-  await runScenarios((tx) => createClient(new ChannelRawClient(tx), apiDef), 'createClient（基线）');
-
-  // ── 用 createTypedClient 跑一遍（替代验证） ──
-  await runScenarios((tx) => createTypedClient(new ChannelRawClient(tx), apiDef), 'createTypedClient（替代）');
+  // ── createTypedClient 跑一遍全部场景 ──
+  await runScenarios((tx) => createTypedClient(new ChannelRawClient(tx), apiDef), 'createTypedClient');
 
   // ── createTypedClient 独有：zod runtime 校验 ──
   console.log('\n── createTypedClient 独有：zod 校验 ──');

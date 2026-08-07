@@ -1,23 +1,5 @@
 import type { Transport, Envelope } from "./types";
 
-export type TransportLogHandler = (dir: "recv" | "send", envelope: unknown) => void;
-
-export function createLoggedTransport(
-  tx: Transport,
-  log: TransportLogHandler,
-): Transport {
-  tx.on((msg: unknown) => log("recv", msg));
-
-  return {
-    send: (payload) => {
-      log("send", payload);
-      tx.send(payload);
-    },
-    on: (h) => tx.on(h),
-    onClose: (cb) => tx.onClose(cb),
-  };
-}
-
 export function createMemTransportPair(): {
   serverTx: Transport;
   clientTx: Transport;

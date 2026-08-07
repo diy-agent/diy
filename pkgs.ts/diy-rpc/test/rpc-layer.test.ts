@@ -6,7 +6,7 @@
 
 import type { Transport } from '../src/transport/types';
 import { ChannelRawClient, ChannelRawServer } from '../src/transport';
-import { RpcImpl, RpcServer, router, createClient } from '../src/rpc';
+import { RpcImpl, RpcServer, router, createTypedClient } from '../src/rpc';
 import { z } from 'zod';
 
 // ═══════════════════════════════════════════════════
@@ -88,7 +88,7 @@ async function main() {
 
     const rpcServer = new RpcServer({ router: app });
     rpcServer.registerInto(new ChannelRawServer(txA));
-    const rpcClient = createClient(new ChannelRawClient(txB), app);
+    const rpcClient = createTypedClient(new ChannelRawClient(txB), app);
 
     const p1 = await rpcClient.ping({ msg: 'hi' });
     assert(p1 === 'pong: hi', `ping = ${p1}`);

@@ -1,9 +1,7 @@
 /**
  * typed-client.ts — 从 meta 的 zod schema 推导强类型 client
  *
- * 与 createClient（ClientRouter 从 router 泛型参数推导）不同，
- * 这里类型完全来自 meta 的 zod schema（z.infer），
- * 且每次调用做 runtime zod input 校验。
+ * 类型完全来自 meta 的 zod schema（z.infer），且每次调用做 runtime zod input 校验。
  *
  * 依赖：RawClient / flattenRouter（第2层），RpcSchema 定义的 meta（无 call）。
  */
@@ -12,7 +10,7 @@ import { z } from 'zod';
 import type { CallOptions } from './raw-client';
 import type { StreamHandle } from '../transport/types';
 import type { RawClient } from './raw';
-import { flattenRouter } from './index';
+import { flattenRouter } from './tree';
 
 // ═══════════════════════════════════════════════════
 //  类型工具 — 从 meta 的 zod schema 推导

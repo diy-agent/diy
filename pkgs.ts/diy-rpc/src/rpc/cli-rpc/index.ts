@@ -1,17 +1,13 @@
-import type {
-  Router,
-  AnyProcedure,
-  RouteNode,
-  RouterNode,
-  ProcNode,
-} from "..";
+import type { Router } from "../meta";
 import {
   buildRouteTree,
   routeResolve,
   routeWalk,
-} from "..";
+  type RouteNode,
+  type RouterNode,
+  type ProcNode,
+} from "../tree";
 import type { RawClient } from "../raw";
-import type { AnyProcedureMeta } from "..";
 import { parseArgv, generateHelp, CliParseError } from "./parser";
 import type { ProcedureCliMeta } from "./meta";
 
@@ -319,10 +315,4 @@ export class CliApp<TRouter extends Router> {
 
     console.log(lines.join("\n"));
   }
-}
-
-export function createCli<TRouter extends Router>(
-  config: CliConfig<TRouter>,
-): CliApp<TRouter> {
-  return new CliApp(config);
 }

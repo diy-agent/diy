@@ -13,7 +13,8 @@
 import type { Transport } from '../transport/types';
 import { ChannelRawClient } from './raw-client';
 import type { RawServer, RawClient } from './raw';
-import { flattenRouter, type Router } from './index';
+import { flattenRouter } from './tree';
+import type { Router } from './meta';
 import type { RpcBackend } from './gateway';
 
 export interface RpcForwardOptions {

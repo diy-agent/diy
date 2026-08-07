@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { AnyProcedureMeta } from '..';
+import type { AnyProcedureMeta } from '../meta';
 import { getCliOptionMeta, getCliArgMeta, inferTypeName, inferDefault, isOptional, unwrap } from './meta';
 
 export class CliParseError extends Error {

@@ -14,5 +14,4 @@ export type { RawServer, RawClient, CallOptions, ErrorProtocolExt } from '../rpc
 export { ChannelRawServer } from '../rpc/raw-server';
 export { ChannelRawClient } from '../rpc/raw-client';
 export { AsyncQueue } from '../rpc/async-queue';
-export { createMemTransportPair, createLoggedTransport } from './transport-builtin';
-export type { TransportLogHandler } from './transport-builtin';
+export { createMemTransportPair } from './transport-builtin';

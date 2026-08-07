@@ -1,7 +1,3 @@
-/**
- * http/index.ts — HTTP 绑定导出（Node-only，浏览器不可用）
- */
-
+// http/index.ts — @diy/rpc/http 子入口：HTTP/2 绑定
 export { HttpRawServer } from './raw-server';
 export { HttpRawClient } from './raw-client';
-export { normalizeCode, httpStatusForCode, codeForHttpStatus } from './codes';

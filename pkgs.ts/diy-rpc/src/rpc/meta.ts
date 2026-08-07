@@ -18,12 +18,6 @@ export interface ProcedureCliMeta {
   description?: string;
 }
 
-/** Handler 绑定：meta 对象 + 其原始 handler */
-export interface HandlerBinding {
-  meta: AnyProcedureMeta;
-  handler: (params: unknown, stream?: unknown) => unknown;
-}
-
 /** 从 ProcedureMeta 的类型参数推导 handler 签名 */
 type HandlerFor<TIn, TOut, TChIn, TChOut, TMode> =
   TMode extends 'unary'   ? (opts: { input: TIn }) => TOut | Promise<TOut> :
@@ -68,9 +62,6 @@ export interface ProcedureMeta<
    * 裸对象（未经 router()/RpcServer）无此字段。
    */
   readonly name?: string;
-
-  /** 绑定 handler，返回绑定对供 createMetaHandler 消费 */
-  on(handler: HandlerFor<TIn, TOut, TChIn, TChOut, TMode>): HandlerBinding;
 }
 
 // ═══════════════════════════════════════════════════

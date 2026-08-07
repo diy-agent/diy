@@ -2,7 +2,7 @@
  * raw-server.ts — ChannelRawServer：envelope 复用协议服务端（第2层绑定之一）
  *
  * 在一条双向通道（mem/WS/IPC 等 Transport）上跑信封协议（id/streamId 复用），
- * 实现 RawServer 端口。只应在入口组装代码中使用（传给 createHandler/RpcGateway），
+ * 实现 RawServer 端口。只应在入口组装代码中使用（传给 RpcServer/RpcGateway），
  * 业务代码应使用第3层 RPC。
  *
  * 四类 handler：
