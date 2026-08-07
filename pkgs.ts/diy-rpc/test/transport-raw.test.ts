@@ -3,10 +3,26 @@
  *
  * 用 in-memory Transport 替代 Electron IPC，
  * 直接验证 RawServer/RawClient 的信封协议和流处理逻辑。
+ * 注册以 meta 为键（onUnary(meta, handler)），client 调用带 { input, meta } 包装。
  */
 
+import { z } from 'zod';
 import type { Transport } from '../src/transport/types';
 import { ChannelRawServer, ChannelRawClient } from '../src/transport';
+import { router, RpcSchema } from '../src/index';
+
+const api = router({
+  greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
+  fail: RpcSchema.unary({ input: {}, output: z.unknown() }),
+  count: RpcSchema.serverStream({ input: { to: z.number() }, output: z.number() }),
+  upload: RpcSchema.clientStream({
+    input: { tag: z.string() }, chunkIn: z.string(),
+    output: z.object({ tag: z.string(), received: z.array(z.string()) }),
+  }),
+  limited: RpcSchema.clientStream({ input: {}, chunkIn: z.number(), output: z.object({ count: z.number() }) }),
+  echo: RpcSchema.bidiStream({ input: {}, chunkIn: z.string(), chunkOut: z.string() }),
+  slow: RpcSchema.unary({ input: {}, output: z.string() }),
+} as const);
 
 // ═══════════════════════════════════════════════════
 //  in-memory Transport
@@ -51,14 +67,14 @@ async function main() {
     const server = new ChannelRawServer(txA);
     const client = new ChannelRawClient(txB);
 
-    server.onUnary('greet', (params: { name: string }) => `Hello, ${params.name}!`);
-    server.onUnary('fail', () => { throw new Error('boom'); });
+    server.onUnary(api.greet, ({ input }) => `Hello, ${input.name}!`);
+    server.onUnary(api.fail, () => { throw new Error('boom'); });
 
-    const r1 = await client.invoke<{ name: string }, string>('greet', { name: 'World' });
+    const r1 = await client.invoke<{ input: { name: string }; meta: unknown }, string>('greet', { input: { name: 'World' }, meta: {} });
     assert(r1 === 'Hello, World!', `greet = ${JSON.stringify(r1)}`);
 
     try {
-      await client.invoke('fail', {});
+      await client.invoke('fail', { input: {}, meta: {} });
       assert(false, 'should have thrown');
     } catch (e: any) {
       assert(e.message === 'boom', `fail error = ${e.message}`);
@@ -73,14 +89,14 @@ async function main() {
     const server = new ChannelRawServer(txA);
     const client = new ChannelRawClient(txB);
 
-    server.onServerStream('count', async function* (p: { to: number }) {
-      for (let i = 1; i <= p.to; i++) {
+    server.onServerStream(api.count, async function* ({ input }) {
+      for (let i = 1; i <= input.to; i++) {
         await new Promise(r => setImmediate(r));
         yield i;
       }
     });
 
-    const handle = await client.serverStream<{ to: number }, number>('count', { to: 3 });
+    const handle = await client.serverStream<{ input: { to: number }; meta: unknown }, number>('count', { input: { to: 3 }, meta: {} });
     const results: number[] = [];
     for await (const v of handle) results.push(v);
     assert(JSON.stringify(results) === '[1,2,3]', `count = ${JSON.stringify(results)}`);
@@ -94,16 +110,16 @@ async function main() {
     const server = new ChannelRawServer(txA);
     const client = new ChannelRawClient(txB);
 
-    server.onClientStream('upload', async (params: { tag: string }, chunks: AsyncIterable<string>) => {
+    server.onClientStream(api.upload, async ({ input, stream }) => {
       let received: string[] = [];
-      for await (const c of chunks) received.push(c);
-      return { tag: params.tag, received };
+      for await (const c of stream) received.push(c);
+      return { tag: input.tag, received };
     });
 
     async function* gen() { yield 'a'; yield 'b'; yield 'c'; }
 
-    const result = await client.clientStream<{ tag: string }, string, { tag: string; received: string[] }>(
-      'upload', { tag: 'demo' }, gen(),
+    const result = await client.clientStream<{ input: { tag: string }; meta: unknown }, string, { tag: string; received: string[] }>(
+      'upload', { input: { tag: 'demo' }, meta: {} }, gen(),
     );
     assert(result.tag === 'demo', `result.tag = ${result.tag}`);
     assert(JSON.stringify(result.received) === '["a","b","c"]', `result.received = ${JSON.stringify(result.received)}`);
@@ -117,9 +133,9 @@ async function main() {
     const server = new ChannelRawServer(txA);
     const client = new ChannelRawClient(txB);
 
-    server.onClientStream('limited', async (_params: {}, chunks: AsyncIterable<number>) => {
+    server.onClientStream(api.limited, async ({ stream }) => {
       let count = 0;
-      for await (const _ of chunks) {
+      for await (const _ of stream) {
         count++;
       }
       return { count };
@@ -131,7 +147,7 @@ async function main() {
     // Abort after a short delay
     setTimeout(() => ac.abort(), 30);
 
-    const result = await client.clientStream<{}, number, { count: number }>('limited', {}, many(), { signal: ac.signal });
+    const result = await client.clientStream<{ input: Record<string, never>; meta: unknown }, number, { count: number }>('limited', { input: {}, meta: {} }, many(), { signal: ac.signal });
     assert(result.count >= 1, `got ${result.count} items before abort`);
   }
 
@@ -143,8 +159,8 @@ async function main() {
     const server = new ChannelRawServer(txA);
     const client = new ChannelRawClient(txB);
 
-    server.onBidiStream('echo', async function* (_params: {}, incoming: any) {
-      for await (const msg of incoming) {
+    server.onBidiStream(api.echo, async function* ({ stream }) {
+      for await (const msg of stream) {
         await sleep(1);
         yield `echo: ${msg}`;
       }
@@ -152,8 +168,7 @@ async function main() {
 
     async function* msgs() { yield 'hello'; yield 'world'; }
 
-    // Use transport-level bidiStream directly (not rpc layer)
-    const replies = await client.bidiStream<unknown, string, string>('echo', { input: {}, meta: {} }, msgs());
+    const replies = await client.bidiStream<{ input: Record<string, never>; meta: unknown }, string, string>('echo', { input: {}, meta: {} }, msgs());
     const out: string[] = [];
     for await (const r of replies) out.push(r);
     assert(JSON.stringify(out) === '["echo: hello","echo: world"]', `replies = ${JSON.stringify(out)}`);
@@ -167,7 +182,7 @@ async function main() {
     const server = new ChannelRawServer(txA);
     const client = new ChannelRawClient(txB);
 
-    server.onUnary('slow', async (_: any) => {
+    server.onUnary(api.slow, async () => {
       await sleep(1000);
       return 'done';
     });
@@ -176,7 +191,7 @@ async function main() {
     setTimeout(() => ac.abort(), 10);
 
     try {
-      await client.invoke('slow', {}, { signal: ac.signal });
+      await client.invoke('slow', { input: {}, meta: {} }, { signal: ac.signal });
       assert(false, 'should have aborted');
     } catch (e: any) {
       assert(e.code === 'ABORTED', `code = ${e.code}`);

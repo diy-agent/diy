@@ -80,16 +80,6 @@ export class HttpRawClient implements RawClient {
     return parseResult<TRes>(resp);
   }
 
-  // ── notify ───────────────────────────────────────
-
-  send<TReq = unknown>(method: string, params?: TReq): void {
-    if (this.disposed) return;
-    const stream = this.request(method, 'application/json');
-    stream.write(JSON.stringify(params ?? {}));
-    stream.end();
-    stream.on('error', () => { /* fire-and-forget，忽略响应 */ });
-  }
-
   // ── serverStream ─────────────────────────────────
 
   async serverStream<TReq = unknown, TYield = unknown>(

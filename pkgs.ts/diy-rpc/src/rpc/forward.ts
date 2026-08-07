@@ -23,11 +23,13 @@ export interface RpcForwardOptions {
   router: Router;
 }
 
+/** RpcForward 转发 handler 需要的参数（无需 stream，当前只转发 unary/server） */
+type FwdOpts = { input: unknown; meta: unknown };
+
 /**
  * 转发后端：把 scope 下每个方法注册为转发 handler。
  *
- * registerInto 遍历 scope 子树，对每个 procedure 按全名（scope.method）
- * 注册 unary / serverStream 转发：
+ * registerInto 遍历 scope 子树，对每个 procedure 以 meta 注册（def.name = 完整全名）：
  *   - unary       → 调远端 rawClient.invoke，返回结果
  *   - serverStream → 返回 AsyncGenerator，远端逐块产出
  * client/bidi 暂不支持转发（当前无此类远端方法）。
@@ -47,17 +49,15 @@ export class RpcForward implements RpcBackend {
     const flat = flattenRouter(this._router);
     for (const [name, def] of Object.entries(flat)) {
       const full = `${this.scope}.${name}`;
+      (def as { name?: string }).name = full; // 完整全名回写进 meta.name
       const mode = def._streamMode;
 
       if (mode === 'unary') {
-        raw.onUnary(full, (params) => {
-          const { input, meta } = (params ?? {}) as any;
-          return this._client.invoke(full, { input, meta: meta ?? {} });
-        });
+        raw.onUnary(def, ((opts: FwdOpts) =>
+          this._client.invoke(full, { input: opts.input, meta: opts.meta })) as any);
       } else if (mode === 'server') {
-        raw.onServerStream(full, (params) =>
-          this._forwardServerStream(full, params),
-        );
+        raw.onServerStream(def, ((opts: FwdOpts) =>
+          this._forwardServerStream(full, opts)) as any);
       } else if (mode === 'client' || mode === 'bidi') {
         throw new Error(`[RpcForward] ${full}: client/bidi 转发暂不支持`);
       } else {
@@ -66,9 +66,8 @@ export class RpcForward implements RpcBackend {
     }
   }
 
-  private async *_forwardServerStream(full: string, params: unknown): AsyncGenerator<unknown> {
-    const { input, meta } = (params ?? {}) as any;
-    const handle = await this._client.serverStream(full, { input, meta: meta ?? {} });
+  private async *_forwardServerStream(full: string, opts: { input: unknown; meta: unknown }): AsyncGenerator<unknown> {
+    const handle = await this._client.serverStream(full, { input: opts.input, meta: opts.meta });
     for await (const chunk of handle) yield chunk;
   }
 }

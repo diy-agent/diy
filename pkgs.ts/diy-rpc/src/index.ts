@@ -4,7 +4,7 @@ import './rpc/cli-rpc/meta';
 
 export type {
   Transport, StreamMode, StreamHandle, Envelope,
-  CallMsg, DataMsg, EndMsg, NotifyMsg,
+  CallMsg, DataMsg, EndMsg,
 } from './transport/types';
 export type { ErrorPayload, ErrorProtocolExt } from './rpc/error';
 export { RpcError, toRpcError, toErrorPayload, fromErrorPayload } from './rpc/error';

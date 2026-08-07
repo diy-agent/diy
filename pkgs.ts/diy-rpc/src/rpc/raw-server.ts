@@ -17,6 +17,7 @@ import type { Transport, StreamHandle, StreamMode, Envelope } from '../transport
 import { AsyncQueue } from './async-queue';
 import { toErrorPayload, RpcError } from './error';
 import type { RawServer } from './raw';
+import { validateInput, type AnyProcedureMeta, type HandlerForProc } from './meta';
 
 let _streamId = 0;
 
@@ -24,14 +25,20 @@ type UnaryHandler = (params: unknown) => unknown;
 type ServerStreamHandler = (params: unknown) => AsyncGenerator<unknown>;
 type ClientStreamHandler = (params: unknown, chunks: StreamHandle<unknown>) => Promise<unknown>;
 type BidiStreamHandler = (params: unknown, incoming: StreamHandle<unknown>) => AsyncGenerator<unknown>;
-type NotifyHandler = (params: unknown) => void | Promise<void>;
+/** 各 onXxx 内部 handler 形态：收 { input, meta, stream? }（与 HandlerForProc 一致） */
+type HandlerFn = (opts: { input: unknown; meta: unknown; stream?: unknown }) => unknown;
+
+/** 从 envelope params 解包出 { input, meta }，并对 input 做 zod 校验 */
+function unwrap(meta: AnyProcedureMeta, params: unknown, stream?: unknown): { input: unknown; meta: unknown; stream?: unknown } {
+  const { input, meta: m } = (params ?? {}) as { input?: unknown; meta?: unknown };
+  return { input: validateInput(meta, input), meta: m ?? {}, stream };
+}
 
 export class ChannelRawServer implements RawServer {
   private _unaries = new Map<string, UnaryHandler>();
   private _serverStreams = new Map<string, ServerStreamHandler>();
   private _clientStreams = new Map<string, ClientStreamHandler>();
   private _bidiStreams = new Map<string, BidiStreamHandler>();
-  private _notifies = new Map<string, NotifyHandler>();
 
   /** server-stream 取消器，按 streamId */
   private _serverStreamCancellers = new Map<number, () => void>();
@@ -42,6 +49,15 @@ export class ChannelRawServer implements RawServer {
 
   constructor(private tx: Transport) {
     this._unsub = tx.on((msg) => this._dispatch(msg));
+  }
+
+  /** 从 meta 取方法全名；未经 router()/RpcServer 回写（无 name）则明确报错 */
+  private _nameOf(meta: AnyProcedureMeta): string {
+    const name = meta.name;
+    if (!name) {
+      throw new Error('[ChannelRawServer] meta 无 name — 请用 router() 包裹 apiDef 或经 RpcServer 注册');
+    }
+    return name;
   }
 
   /** 销毁：解除消息监听，清理所有流 */
@@ -55,35 +71,33 @@ export class ChannelRawServer implements RawServer {
     this._serverStreams.clear();
     this._clientStreams.clear();
     this._bidiStreams.clear();
-    this._notifies.clear();
   }
 
   // ── 注册方法 ────────────────────────────────────
 
-  onUnary<TReq = unknown, TRes = unknown>(name: string, fn: (params: TReq) => TRes | Promise<TRes>) {
-    this._unaries.set(name, fn as UnaryHandler);
+  onUnary<M extends AnyProcedureMeta & { _streamMode: 'unary' }>(meta: M, handler: HandlerForProc<M>): void {
+    this._unaries.set(this._nameOf(meta), (params) => (handler as HandlerFn)(unwrap(meta, params)));
   }
 
-  onServerStream<TReq = unknown, TYield = unknown>(name: string, fn: (params: TReq) => AsyncGenerator<TYield>) {
-    this._serverStreams.set(name, fn as ServerStreamHandler);
+  onServerStream<M extends AnyProcedureMeta & { _streamMode: 'server' }>(meta: M, handler: HandlerForProc<M>): void {
+    this._serverStreams.set(
+      this._nameOf(meta),
+      (params) => (handler as HandlerFn)(unwrap(meta, params)) as AsyncGenerator<unknown>,
+    );
   }
 
-  onClientStream<TReq = unknown, TChunk = unknown, TRes = unknown>(
-    name: string,
-    fn: (params: TReq, chunks: StreamHandle<TChunk>) => TRes | Promise<TRes>,
-  ) {
-    this._clientStreams.set(name, fn as ClientStreamHandler);
+  onClientStream<M extends AnyProcedureMeta & { _streamMode: 'client' }>(meta: M, handler: HandlerForProc<M>): void {
+    this._clientStreams.set(
+      this._nameOf(meta),
+      (params, chunks) => (handler as HandlerFn)(unwrap(meta, params, chunks)) as Promise<unknown>,
+    );
   }
 
-  onBidiStream<TReq = unknown, TChunkIn = unknown, TChunkOut = unknown>(
-    name: string,
-    fn: (params: TReq, incoming: StreamHandle<TChunkIn>) => AsyncGenerator<TChunkOut>,
-  ) {
-    this._bidiStreams.set(name, fn as BidiStreamHandler);
-  }
-
-  onNotify<TReq = unknown>(name: string, fn: (params: TReq) => void) {
-    this._notifies.set(name, fn as NotifyHandler);
+  onBidiStream<M extends AnyProcedureMeta & { _streamMode: 'bidi' }>(meta: M, handler: HandlerForProc<M>): void {
+    this._bidiStreams.set(
+      this._nameOf(meta),
+      (params, incoming) => (handler as HandlerFn)(unwrap(meta, params, incoming)) as AsyncGenerator<unknown>,
+    );
   }
 
   // ── 单一分发器 ──────────────────────────────────
@@ -97,9 +111,6 @@ export class ChannelRawServer implements RawServer {
       if (mode === 'server') this._startServerStream(msg);
       else if (mode === 'client') this._startClientStream(msg);
       else if (mode === 'bidi') this._startBidiStream(msg);
-    } else if (msg.type === 'notify') {
-      const fn = this._notifies.get(msg.method!);
-      if (fn) await fn(msg.params);
     } else if (msg.type === 'data') {
       const consumer = this._streamConsumers.get(msg.stream);
       if (consumer) consumer.push(msg.value);

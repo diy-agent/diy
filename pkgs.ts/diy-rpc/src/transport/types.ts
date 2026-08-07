@@ -68,14 +68,7 @@ export interface EndMsg {
   error?: ErrorPayload;
 }
 
-/** 通知 */
-export interface NotifyMsg {
-  type: 'notify';
-  method: string;
-  params?: unknown;
-}
-
-export type Envelope = CallMsg | DataMsg | EndMsg | NotifyMsg;
+export type Envelope = CallMsg | DataMsg | EndMsg;
 
 // 错误模型（ErrorPayload / RpcError / toRpcError / toErrorPayload）见 ../rpc/error
 export type { ErrorPayload } from '../rpc/error';

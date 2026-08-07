@@ -2,20 +2,20 @@
  * http/raw-server.ts — HttpRawServer：HTTP 常态绑定的服务端（第2层绑定之一）
  *
  * 每个 http2 stream = 一个 RPC：`:path` 即方法全名（/diy.app.task.list），
- * 按协议常态实现四种语义 + notify，curl 可直接访问。
+ * 按协议常态实现四种语义（unary/serverStream/clientStream/bidi），curl 可直接访问。
  *
  * wire 约定（JSON，无 protobuf）：
- *   unary/serverStream/notify   params 在请求 body（JSON）；clientStream/bidi 的
- *                               params 在 header `x-diy-params`，body 是 NDJSON chunk 流
+ *   unary/serverStream   params 在请求 body（JSON）；clientStream/bidi 的
+ *                        params 在 header `x-diy-params`，body 是 NDJSON chunk 流
  *   单值响应  {"result": …}                    200 + application/json
  *   错误响应  {code,message,details,ext:{http:{status}}}   映射后的 HTTP 状态
  *   流式响应  NDJSON：{"v": <chunk>} 数据帧 / {"e": {…}} 终止错误帧
- *   通知      204，无 body
  *   取消      server-stream：客户端 RST_STREAM（http2 原生流取消）
  *             client-stream：客户端写保留帧 {"__cancel":true} 再 end（http 的 RST
  *             无法让服务端可靠识别 client-stream 取消，用协议内取消帧确定性送达 CANCELLED）
  *             （注意：__cancel 是保留帧键，业务 chunk 不应使用）
  *
+ * 注册以 meta 为键（onUnary(meta, handler)），方法全名取 meta.name（router()/RpcServer 回写）。
  * 单例 + handleStream：注册表启动时建一次，所有 stream 共享；每请求状态
  * （读 body / 写响应 / 取消）都是 handleStream 调用栈里的局部量。
  */
@@ -26,14 +26,13 @@ import { AsyncQueue } from '../async-queue';
 import { RpcError, toErrorPayload, type ErrorPayload } from '../error';
 import { httpStatusForCode } from './codes';
 import type { RawServer } from '../raw';
-import { validateInput, type AnyProcedureMeta, type HandlerForProc } from '../index';
+import { validateInput, type AnyProcedureMeta, type HandlerForProc } from '../meta';
 
 type UnaryHandler = (params: unknown) => unknown;
 type ServerStreamHandler = (params: unknown) => AsyncGenerator<unknown>;
 type ClientStreamHandler = (params: unknown, chunks: StreamHandle<unknown>) => Promise<unknown>;
 type BidiStreamHandler = (params: unknown, incoming: StreamHandle<unknown>) => AsyncGenerator<unknown>;
-type NotifyHandler = (params: unknown) => void | Promise<void>;
-/** onUnary/onServerStream/... 的 meta 重载内部 handler 形态：收 { input, meta, stream? } */
+/** 各 onXxx 内部 handler 形态：收 { input, meta, stream? }（与 HandlerForProc 一致） */
 type HandlerFn = (opts: { input: unknown; meta: unknown; stream?: unknown }) => unknown;
 
 /** 从 envelope params 解包出 { input, meta }，并对 input 做 zod 校验 */
@@ -47,78 +46,39 @@ export class HttpRawServer implements RawServer {
   private _serverStreams = new Map<string, ServerStreamHandler>();
   private _clientStreams = new Map<string, ClientStreamHandler>();
   private _bidiStreams = new Map<string, BidiStreamHandler>();
-  private _notifies = new Map<string, NotifyHandler>();
 
-  onUnary<TReq = unknown, TRes = unknown>(name: string, fn: (params: TReq) => TRes | Promise<TRes>): void;
-  /** 按 meta 注册（类型化）：handler 收 { input }，类型从 meta 推导，input 经 zod 校验 */
-  onUnary<M extends AnyProcedureMeta & { _streamMode: 'unary' }>(meta: M, handler: HandlerForProc<M>): void;
-  onUnary(nameOrMeta: string | AnyProcedureMeta, fn: any): void {
-    if (typeof nameOrMeta === 'string') {
-      this._unaries.set(nameOrMeta, fn as UnaryHandler);
-      return;
-    }
-    this._unaries.set(this._nameOf(nameOrMeta), (params) => (fn as HandlerFn)(unwrap(nameOrMeta, params)));
-  }
-
-  onServerStream<TReq = unknown, TYield = unknown>(name: string, fn: (params: TReq) => AsyncGenerator<TYield>): void;
-  /** 按 meta 注册（类型化）：handler 收 { input }，类型从 meta 推导，input 经 zod 校验 */
-  onServerStream<M extends AnyProcedureMeta & { _streamMode: 'server' }>(meta: M, handler: HandlerForProc<M>): void;
-  onServerStream(nameOrMeta: string | AnyProcedureMeta, fn: any): void {
-    if (typeof nameOrMeta === 'string') {
-      this._serverStreams.set(nameOrMeta, fn as ServerStreamHandler);
-      return;
-    }
-    this._serverStreams.set(
-      this._nameOf(nameOrMeta),
-      (params) => (fn as HandlerFn)(unwrap(nameOrMeta, params)) as AsyncGenerator<unknown>,
-    );
-  }
-
-  onClientStream<TReq = unknown, TChunk = unknown, TRes = unknown>(
-    name: string,
-    fn: (params: TReq, chunks: StreamHandle<TChunk>) => TRes | Promise<TRes>,
-  ): void;
-  /** 按 meta 注册（类型化）：handler 收 { input, stream }，类型从 meta 推导，input 经 zod 校验 */
-  onClientStream<M extends AnyProcedureMeta & { _streamMode: 'client' }>(meta: M, handler: HandlerForProc<M>): void;
-  onClientStream(nameOrMeta: string | AnyProcedureMeta, fn: any): void {
-    if (typeof nameOrMeta === 'string') {
-      this._clientStreams.set(nameOrMeta, fn as ClientStreamHandler);
-      return;
-    }
-    this._clientStreams.set(
-      this._nameOf(nameOrMeta),
-      (params, chunks) => (fn as HandlerFn)(unwrap(nameOrMeta, params, chunks)) as Promise<unknown>,
-    );
-  }
-
-  onBidiStream<TReq = unknown, TChIn = unknown, TChOut = unknown>(
-    name: string,
-    fn: (params: TReq, incoming: StreamHandle<TChIn>) => AsyncGenerator<TChOut>,
-  ): void;
-  /** 按 meta 注册（类型化）：handler 收 { input, stream }，类型从 meta 推导，input 经 zod 校验 */
-  onBidiStream<M extends AnyProcedureMeta & { _streamMode: 'bidi' }>(meta: M, handler: HandlerForProc<M>): void;
-  onBidiStream(nameOrMeta: string | AnyProcedureMeta, fn: any): void {
-    if (typeof nameOrMeta === 'string') {
-      this._bidiStreams.set(nameOrMeta, fn as BidiStreamHandler);
-      return;
-    }
-    this._bidiStreams.set(
-      this._nameOf(nameOrMeta),
-      (params, incoming) => (fn as HandlerFn)(unwrap(nameOrMeta, params, incoming)) as AsyncGenerator<unknown>,
-    );
-  }
-
-  onNotify<TReq = unknown>(name: string, fn: (params: TReq) => void | Promise<void>) {
-    this._notifies.set(name, fn as NotifyHandler);
-  }
-
-  /** 从 meta 取方法全名；未经 router() 包裹（无 name）则明确报错 */
+  /** 从 meta 取方法全名；未经 router()/RpcServer 回写（无 name）则明确报错 */
   private _nameOf(meta: AnyProcedureMeta): string {
     const name = meta.name;
     if (!name) {
-      throw new Error('[HttpRawServer] meta 无 name — 请用 router() 包裹 apiDef 以回写方法全名');
+      throw new Error('[HttpRawServer] meta 无 name — 请用 router() 包裹 apiDef 或经 RpcServer 注册');
     }
     return name;
+  }
+
+  onUnary<M extends AnyProcedureMeta & { _streamMode: 'unary' }>(meta: M, handler: HandlerForProc<M>): void {
+    this._unaries.set(this._nameOf(meta), (params) => (handler as HandlerFn)(unwrap(meta, params)));
+  }
+
+  onServerStream<M extends AnyProcedureMeta & { _streamMode: 'server' }>(meta: M, handler: HandlerForProc<M>): void {
+    this._serverStreams.set(
+      this._nameOf(meta),
+      (params) => (handler as HandlerFn)(unwrap(meta, params)) as AsyncGenerator<unknown>,
+    );
+  }
+
+  onClientStream<M extends AnyProcedureMeta & { _streamMode: 'client' }>(meta: M, handler: HandlerForProc<M>): void {
+    this._clientStreams.set(
+      this._nameOf(meta),
+      (params, chunks) => (handler as HandlerFn)(unwrap(meta, params, chunks)) as Promise<unknown>,
+    );
+  }
+
+  onBidiStream<M extends AnyProcedureMeta & { _streamMode: 'bidi' }>(meta: M, handler: HandlerForProc<M>): void {
+    this._bidiStreams.set(
+      this._nameOf(meta),
+      (params, incoming) => (handler as HandlerFn)(unwrap(meta, params, incoming)) as AsyncGenerator<unknown>,
+    );
   }
 
   destroy(): void {
@@ -126,7 +86,6 @@ export class HttpRawServer implements RawServer {
     this._serverStreams.clear();
     this._clientStreams.clear();
     this._bidiStreams.clear();
-    this._notifies.clear();
   }
 
   // ── 每请求入口 ──────────────────────────────────
@@ -138,7 +97,6 @@ export class HttpRawServer implements RawServer {
     if (this._serverStreams.has(method)) return this._handleServerStream(stream, method);
     if (this._clientStreams.has(method)) return this._handleClientStream(stream, method, headers);
     if (this._bidiStreams.has(method)) return this._handleBidiStream(stream, method, headers);
-    if (this._notifies.has(method)) return this._handleNotify(stream, method);
 
     // 未注册 → UNIMPLEMENTED
     respondError(stream, toErrorPayload(new RpcError('UNIMPLEMENTED', `No handler for "${method}"`)));
@@ -237,20 +195,6 @@ export class HttpRawServer implements RawServer {
       }
     } finally {
       stream.removeListener('close', onClose);
-    }
-  }
-
-  // ── Notify ───────────────────────────────────────
-
-  private async _handleNotify(stream: ServerHttp2Stream, method: string): Promise<void> {
-    const fn = this._notifies.get(method)!;
-    try {
-      const body = await readBody(stream);
-      await fn(parseBodyParams(body));
-      stream.respond({ ':status': 204 });
-      stream.end();
-    } catch (e) {
-      respondError(stream, e);
     }
   }
 }

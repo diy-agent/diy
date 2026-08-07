@@ -1,10 +1,10 @@
 /**
- * http-raw.test.ts — HttpRawServer/HttpRawClient 绑定层验证（raw 层，不依赖第3层类型化 API）
+ * http-raw.test.ts — HttpRawServer 绑定层验证（以 meta 强类型注册）
  *
- * 真实 http2 server + HttpRawServer，handler 用原始 onXxx 接口直接注册，
+ * 真实 http2 server + HttpRawServer，handler 用 onUnary(meta, handler) 等强类型注册，
  * 验证 HttpRaw 绑定本身的 wire 行为：
  *   - curl 可访问 unary / server-stream（HTTP 常态，motivating case）
- *   - 四模式 + notify 往返
+ *   - 四模式往返
  *   - 错误映射：RpcError code → HTTP status（codes.ts）+ ext.http.status 透传；未注册 → 501
  *   - 两流取消：server-stream abort（RST_STREAM→生成器 finally）、client-stream abort（incoming CANCELLED）
  *
@@ -15,7 +15,8 @@
 import * as http2 from 'node:http2';
 import { exec as execCb } from 'node:child_process';
 import { promisify } from 'node:util';
-import { RpcError } from '../src/index';
+import { z } from 'zod';
+import { router, RpcSchema, RpcError } from '../src/index';
 import { HttpRawServer } from '../src/rpc/http/raw-server';
 import { HttpRawClient } from '../src/rpc/http/raw-client';
 
@@ -23,45 +24,60 @@ const exec = promisify(execCb);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ═══════════════════════════════════════════════════
-//  handler 用 HttpRawServer 原始接口直接注册（不经过 RpcServer/RpcGateway）
+//  handler 用 HttpRawServer 强类型注册（onUnary(meta, handler) 等）
 // ═══════════════════════════════════════════════════
+
+const apiDef = router({
+  diy: {
+    app: {
+      greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
+      fail: RpcSchema.unary({ input: {}, output: z.unknown() }),
+      invalid: RpcSchema.unary({ input: {}, output: z.unknown() }),
+      count: RpcSchema.serverStream({ input: { to: z.number() }, output: z.number() }),
+      slow: RpcSchema.serverStream({ input: {}, output: z.number() }),
+      upload: RpcSchema.clientStream({
+        input: { tag: z.string() }, chunkIn: z.string(),
+        output: z.object({ tag: z.string(), items: z.array(z.string()) }),
+      }),
+      recv: RpcSchema.clientStream({ input: {}, chunkIn: z.unknown(), output: z.object({ errCode: z.unknown() }) }),
+      echo: RpcSchema.bidiStream({ input: {}, chunkIn: z.unknown(), chunkOut: z.unknown() }),
+    },
+  },
+} as const);
 
 let slowCleanup = false;
 let csCancelled: string | null = null;
 
 const httpRaw = new HttpRawServer();
 // unary
-httpRaw.onUnary('diy.app.greet', async (p) => `Hello, ${(p as { input: { name: string } }).input.name}!`);
-httpRaw.onUnary('diy.app.fail', async () => { throw new RpcError('PERMISSION_DENIED', 'no access'); });
-httpRaw.onUnary('diy.app.invalid', async () => {
+httpRaw.onUnary(apiDef.diy.app.greet, async ({ input }) => `Hello, ${input.name}!`);
+httpRaw.onUnary(apiDef.diy.app.fail, async () => { throw new RpcError('PERMISSION_DENIED', 'no access'); });
+httpRaw.onUnary(apiDef.diy.app.invalid, async () => {
   throw new RpcError('INVALID_ARGUMENT', 'Invalid input', { details: [{ path: ['name'], message: 'bad' }] });
 });
 // server-stream
-httpRaw.onServerStream('diy.app.count', async function* (p) {
-  for (let i = 1; i <= (p as { input: { to: number } }).input.to; i++) yield i;
+httpRaw.onServerStream(apiDef.diy.app.count, async function* ({ input }) {
+  for (let i = 1; i <= input.to; i++) yield i;
 });
-httpRaw.onServerStream('diy.app.slow', async function* () {
+httpRaw.onServerStream(apiDef.diy.app.slow, async function* () {
   try { for (let i = 0; ; i++) { yield i; await sleep(1); } }
   finally { slowCleanup = true; }
 });
 // client-stream
-httpRaw.onClientStream('diy.app.upload', async (p, incoming) => {
+httpRaw.onClientStream(apiDef.diy.app.upload, async ({ input, stream }) => {
   const items: string[] = [];
-  for await (const c of incoming) items.push(c as string);
-  return { tag: (p as { input: { tag: string } }).input.tag, items };
+  for await (const c of stream) items.push(c as string);
+  return { tag: input.tag, items };
 });
-httpRaw.onClientStream('diy.app.recv', async (_p, incoming) => {
-  try { for await (const _ of incoming) {} }
+httpRaw.onClientStream(apiDef.diy.app.recv, async ({ stream }) => {
+  try { for await (const _ of stream) {} }
   catch (e: unknown) { csCancelled = (e as RpcError).code ?? null; }
   return { errCode: csCancelled };
 });
 // bidi-stream
-httpRaw.onBidiStream('diy.app.echo', async function* (_p, incoming) {
-  for await (const m of incoming) yield `echo: ${m}`;
+httpRaw.onBidiStream(apiDef.diy.app.echo, async function* ({ stream }) {
+  for await (const m of stream) yield `echo: ${m}`;
 });
-// notify
-let notified = '';
-httpRaw.onNotify('diy.app.toast', (p) => { notified = (p as { text: string }).text; });
 
 async function main() {
   let passed = 0;
@@ -107,20 +123,14 @@ async function main() {
   for await (const v of sh) got.push(v as number);
   assert(JSON.stringify(got) === '[1,2,3]', `count = ${JSON.stringify(got)}`);
 
-  // ── 5. notify（fire-and-forget）──
-  console.log('\n── notify ──');
-  cli.send('diy.app.toast', { text: 'hi' });
-  await sleep(60);
-  assert(notified === 'hi', `notify 送达 = ${notified}`);
-
-  // ── 6. client-stream ──
+  // ── 5. client-stream ──
   console.log('\n── client-stream ──');
   async function* uploadGen() { yield 'a'; yield 'b'; }
   const upRaw = await cli.clientStream('diy.app.upload', { input: { tag: 'demo' }, meta: {} }, uploadGen());
   const up = upRaw as { tag: string; items: string[] };
   assert(up.tag === 'demo' && JSON.stringify(up.items) === '["a","b"]', `upload = ${JSON.stringify(up)}`);
 
-  // ── 7. bidi-stream ──
+  // ── 6. bidi-stream ──
   console.log('\n── bidi-stream ──');
   async function* msgs() { yield 'hello'; yield 'world'; }
   const replies = await cli.bidiStream('diy.app.echo', { input: {}, meta: {} }, msgs());
@@ -128,9 +138,7 @@ async function main() {
   for await (const r of replies) out.push(r as string);
   assert(JSON.stringify(out) === '["echo: hello","echo: world"]', `echo = ${JSON.stringify(out)}`);
 
-  // ── 8. 错误映射：RpcError INVALID_ARGUMENT → 400 + ext.http.status 透传 ──
-  //    注意：这是 raw 层对 RpcError code → HTTP status 的映射（codes.ts），
-  //    不含 zod 校验（zod→INVALID_ARGUMENT 是第3层 validateInput 的职责）。
+  // ── 7. 错误映射：RpcError INVALID_ARGUMENT → 400 + ext.http.status 透传 ──
   console.log('\n── 错误映射 (RpcError → 400) ──');
   try {
     await cli.invoke('diy.app.invalid', { input: {}, meta: {} });
@@ -142,7 +150,7 @@ async function main() {
     assert(Array.isArray(r.details), `details 透传`);
   }
 
-  // ── 9. 错误映射：自定义 RpcError → PERMISSION_DENIED/403 ──
+  // ── 8. 错误映射：自定义 RpcError → PERMISSION_DENIED/403 ──
   console.log('\n── 错误映射 (RpcError → 403) ──');
   try {
     await cli.invoke('diy.app.fail', { input: {}, meta: {} });
@@ -153,7 +161,7 @@ async function main() {
     assert(r.ext?.http?.status === 403, `http status = ${r.ext?.http?.status}`);
   }
 
-  // ── 10. 未注册方法 → UNIMPLEMENTED/501 ──
+  // ── 9. 未注册方法 → UNIMPLEMENTED/501 ──
   console.log('\n── 错误映射 (unimplemented) ──');
   try {
     await cli.invoke('diy.app.nope', { input: {}, meta: {} });
@@ -163,7 +171,7 @@ async function main() {
     assert(r.code === 'UNIMPLEMENTED' && r.ext?.http?.status === 501, `code=${r.code} http=${r.ext?.http?.status}`);
   }
 
-  // ── 11. server-stream 取消：RST_STREAM → 生成器 finally 必跑 ──
+  // ── 10. server-stream 取消：RST_STREAM → 生成器 finally 必跑 ──
   console.log('\n── server-stream 取消 ──');
   const ac = new AbortController();
   const sh2 = await cli.serverStream('diy.app.slow', { input: {}, meta: {} }, { signal: ac.signal });
@@ -174,8 +182,7 @@ async function main() {
   await sleep(80);
   assert(slowCleanup, '服务端生成器 finally 在客户端 abort 后已执行');
 
-  // ── 12. client-stream 取消：incoming 以 CANCELLED 收尾 ──
-  // 用无限生成器保证取消在传输中打断（非已 flush 完的正常 end），服务端必见 CANCELLED
+  // ── 11. client-stream 取消：incoming 以 CANCELLED 收尾 ──
   console.log('\n── client-stream 取消 ──');
   const ac2 = new AbortController();
   async function* infiniteChunks() { for (let i = 0; ; i++) { await sleep(1); yield i; } }

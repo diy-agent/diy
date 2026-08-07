@@ -1,98 +1,34 @@
 /**
- * rpc/index.ts — 第3层 RPC：声明式 Procedure 定义
+ * rpc/index.ts — 第3层 RPC：声明式 Procedure 定义 + 服务端/客户端入口
  *
- * 两种定义形态，由两个静态工厂类提供：
- *   1. RpcSchema — 纯定义（不含 call），对应 ProcedureMeta
- *   2. RpcImpl   — 完整定义（含 call），对应 ProcedureDef
- *
- * 角色：在第2层 Client/Server 之上提供类型安全的声明式 API。
- *       应用程序代码只应该使用这层。
+ * 第2层（meta.ts + raw.ts + raw 绑定）提供 meta 类型与强类型端口；本文件在其上提供：
+ *   - RpcSchema / RpcImpl 定义工厂（两种形态）
+ *   - router / flattenRouter 等组合工具（回写 meta.name）
+ *   - RpcServer / createHandler / RpcGateway / RpcForward 服务端入口（以 meta 注册进 raw）
+ *   - createClient / createTypedClient 客户端入口
  */
 
 import { z } from 'zod';
 import type { CallOptions } from './raw-client';
 import type { StreamHandle } from '../transport/types';
-import { toRpcError } from './error';
 import type { RawClient, RawServer } from './raw';
 import type { RpcBackend } from './gateway';
+import {
+  validateInput,
+  type HandlerForProc, type ProcedureMeta, type ProcedureDef,
+  type AnyProcedureMeta, type AnyProcedureDef, type AnyProcedure, type Router,
+  type HandlerBinding,
+} from './meta';
 
 // ═══════════════════════════════════════════════════
-//  类型基础
+//  第2层 meta 类型 re-export（保导出面）
 // ═══════════════════════════════════════════════════
 
-type ProcedureMode = 'unary' | 'server' | 'client' | 'bidi';
-
-export interface ProcedureCliMeta {
-  description?: string;
-}
-
-/** Handler 绑定：meta 对象 + 其原始 handler */
-export interface HandlerBinding {
-  meta: AnyProcedureMeta;
-  handler: (params: unknown, stream?: unknown) => unknown;
-}
-
-/** 从 ProcedureMeta 的类型参数推导 handler 签名 */
-type HandlerFor<TIn, TOut, TChIn, TChOut, TMode> =
-  TMode extends 'unary'   ? (opts: { input: TIn }) => TOut | Promise<TOut> :
-  TMode extends 'server'  ? (opts: { input: TIn }) => AsyncGenerator<TOut> :
-  TMode extends 'client'  ? (opts: { input: TIn; stream: StreamHandle<TChIn> }) => TOut | Promise<TOut> :
-  TMode extends 'bidi'    ? (opts: { input: TIn; stream: StreamHandle<TChIn> }) => AsyncGenerator<TChOut> :
-  never;
-
-// ═══════════════════════════════════════════════════
-//  ProcedureMeta — 元信息形式（半完成态）
-// ═══════════════════════════════════════════════════
-
-export interface ProcedureMeta<
-  TIn = unknown,
-  TOut = unknown,
-  TChIn = never,
-  TChOut = never,
-  TMode extends string = 'unary',
-> {
-  readonly _type: 'procedure';
-  readonly _input: TIn;
-  readonly _output: TOut;
-  readonly _chunkIn: TChIn;
-  readonly _chunkOut: TChOut;
-  readonly _streamMode: TMode;
-  inputSchema?: z.ZodType<TIn>;
-  outputSchema?: z.ZodType<TOut>;
-  chunkInSchema?: z.ZodType<TChIn>;
-  chunkOutSchema?: z.ZodType<TChOut>;
-  summary?: string;
-  description?: string;
-  cliDesc?: ProcedureCliMeta;
-  /**
-   * 方法全名（相对路径，如 'math.add'）。由 router() 包裹时遍历回写。
-   * 裸对象（未经 router()）无此字段；scope 前缀由 RpcServer.registerInto 另行拼接。
-   */
-  readonly name?: string;
-
-  /** 绑定 handler，返回绑定对供 createMetaHandler 消费 */
-  on(handler: HandlerFor<TIn, TOut, TChIn, TChOut, TMode>): HandlerBinding;
-}
-
-// ═══════════════════════════════════════════════════
-//  ProcedureDef — 完整形式（含 call）
-// ═══════════════════════════════════════════════════
-
-export interface ProcedureDef<
-  TIn = unknown,
-  TOut = unknown,
-  TChIn = never,
-  TChOut = never,
-  TMode extends string = 'unary',
-> extends ProcedureMeta<TIn, TOut, TChIn, TChOut, TMode> {
-  call: (opts: { input: TIn; meta?: unknown }) => unknown;
-}
-
-export type AnyProcedureMeta = ProcedureMeta<any, any, any, any, any>;
-export type AnyProcedureDef = ProcedureDef<any, any, any, any, any>;
-/** @deprecated 用 AnyProcedureMeta */
-export type AnyProcedure = AnyProcedureDef;
-export interface Router { [key: string]: AnyProcedureMeta | Router; }
+export { validateInput } from './meta';
+export type {
+  ProcedureMeta, ProcedureDef, AnyProcedureMeta, AnyProcedureDef, AnyProcedure,
+  Router, HandlerForProc, HandlerBinding, ProcedureCliMeta,
+} from './meta';
 
 // ═══════════════════════════════════════════════════
 //  RpcSchema 配置类型（纯定义，无 call）
@@ -337,7 +273,7 @@ export function routeWalk(
 }
 
 export function router<T extends Router>(def: T): T {
-  // 遍历整树回写方法全名（相对路径）到每个 meta.name，供 raw server 的 on(meta, handler) 直接使用。
+  // 遍历整树回写方法全名（相对路径）到每个 meta.name，供 raw 绑定 onXxx(meta, handler) 直接使用。
   for (const { path, def: meta } of routeLeaves(buildRouteTree(def))) {
     (meta as { name?: string }).name = path;
   }
@@ -354,62 +290,41 @@ export function flattenRouter(r: Router): Record<string, AnyProcedureMeta> {
 }
 
 // ═══════════════════════════════════════════════════
-//  createHandler / createMetaHandler
+//  createHandler / createMetaHandler（底层备用）
 // ═══════════════════════════════════════════════════
 
-/** 校验 input：zod parse 失败 → INVALID_ARGUMENT（非 INTERNAL） */
-export function validateInput(def: AnyProcedureMeta, input: unknown): unknown {
-  if (!def.inputSchema) return input;
-  try {
-    return def.inputSchema.parse(input);
-  } catch (e) {
-    throw toRpcError(e); // ZodError → INVALID_ARGUMENT
+type HandlerFn = (opts: { input: unknown; meta: unknown; stream?: unknown }) => unknown;
+
+/** 按 def 的 stream mode 注册到 raw（handler 收 { input, meta, stream? }） */
+function _registerMode(raw: RawServer, def: AnyProcedureMeta, handler: HandlerFn): void {
+  const mode = def._streamMode;
+  if (mode === 'unary') {
+    raw.onUnary(def, handler as any);
+  } else if (mode === 'server') {
+    raw.onServerStream(def, handler as any);
+  } else if (mode === 'client') {
+    raw.onClientStream(def, handler as any);
+  } else if (mode === 'bidi') {
+    raw.onBidiStream(def, handler as any);
   }
 }
 
-/** 内部共享：遍历 router 树 + 注册 handler 到 transport */
+/** 内部共享：遍历 router 树 + 注册 handler 到 raw */
 function _registerRouter(opts: {
   router: Router;
   transport: RawServer;
-  handlers: Map<AnyProcedureMeta, (params: unknown, stream?: unknown) => unknown>;
+  handlers: Map<AnyProcedureMeta, HandlerFn>;
 }) {
   const { transport: tx } = opts;
   const flat = flattenRouter(opts.router);
 
   for (const [name, def] of Object.entries(flat)) {
-    const mode = def._streamMode;
     const handler = opts.handlers.get(def) ?? (def as any).call;
     if (!handler) {
       throw new Error(`[createHandler] No handler for procedure "${name}" — provide via .on() or use RpcImpl with call`);
     }
-
-    if (mode === 'unary') {
-      tx.onUnary(name, ((raw: unknown) => {
-        const { input, meta } = (raw ?? {}) as any;
-        const validated = validateInput(def, input);
-        return handler({ input: validated, meta: meta ?? {} });
-      }) as any);
-    } else if (mode === 'server') {
-      tx.onServerStream(name, ((raw: unknown) => {
-        const { input, meta } = (raw ?? {}) as any;
-        const validated = validateInput(def, input);
-        return handler({ input: validated, meta: meta ?? {} });
-      }) as any);
-    } else if (mode === 'client') {
-      tx.onClientStream(name, ((raw: unknown, chunks: StreamHandle<any>) => {
-        const { input, meta } = (raw ?? {}) as any;
-        const validated = validateInput(def, input);
-        const validatedChunks = def.chunkInSchema ? (chunks as any) : chunks;
-        return handler({ input: validated, meta: meta ?? {}, stream: validatedChunks });
-      }) as any);
-    } else if (mode === 'bidi') {
-      tx.onBidiStream(name, ((raw: unknown, incoming: StreamHandle<any>) => {
-        const { input, meta } = (raw ?? {}) as any;
-        const validated = validateInput(def, input);
-        const validatedChunks = def.chunkInSchema ? (incoming as any) : incoming;
-        return handler({ input: validated, meta: meta ?? {}, stream: validatedChunks });
-      }) as any);
-    }
+    (def as { name?: string }).name = name; // 写相对路径全名
+    _registerMode(tx, def, handler as HandlerFn);
   }
 }
 
@@ -437,9 +352,9 @@ export function createMetaHandler(opts: {
   transport: RawServer;
   handlers: HandlerBinding[];
 }) {
-  const handlerMap = new Map<AnyProcedureMeta, (params: unknown, stream?: unknown) => unknown>();
+  const handlerMap = new Map<AnyProcedureMeta, HandlerFn>();
   for (const b of opts.handlers) {
-    handlerMap.set(b.meta, b.handler);
+    handlerMap.set(b.meta, b.handler as HandlerFn);
   }
   _registerRouter({
     router: opts.router,
@@ -452,20 +367,14 @@ export function createMetaHandler(opts: {
 //  RpcServer — 第3层服务端统一入口
 // ═══════════════════════════════════════════════════
 
-/** 从 ProcedureMeta 类型参数推导 handler 签名 */
-export type HandlerForProc<T> =
-  T extends ProcedureMeta<infer TIn, infer TOut, infer TChIn, infer TChOut, infer TMode>
-    ? HandlerFor<TIn, TOut, TChIn, TChOut, TMode>
-    : never;
-
 /**
  * 第3层 RPC 服务端。
  *
  * 传输无关的纯 handler 注册表：
- *   - 构造时不绑定 transport（只收 router + 可选 scope 前缀）
+ *   - 构造时不绑定 transport（只收 router + 可选 scope 前缀），并把完整方法名回写进 meta.name
  *   - 含 call 的 procedure（RpcImpl）构造时自动注册
  *   - 不含 call 的（RpcSchema）通过 .on() 绑定 handler
- *   - registerInto(raw) 把本注册表挂到某个 RawServer（供 RpcGateway 使用）
+ *   - registerInto(raw) 把本注册表挂到某个 RawServer（以 meta 强类型注册）
  *
  * 替代手动组合 new RawServer() + createHandler()/createMetaHandler()。
  */
@@ -473,15 +382,17 @@ export class RpcServer implements RpcBackend {
   readonly scope: string;
   private _raws: RawServer[] = [];
   private _metaToMethod = new Map<AnyProcedureMeta, string>();
-  private _handlers = new Map<AnyProcedureMeta, (params: unknown, stream?: unknown) => unknown>();
+  private _handlers = new Map<AnyProcedureMeta, HandlerFn>();
 
   constructor(opts: { router: Router; scope?: string }) {
     this.scope = opts.scope ?? '';
 
-    // 建立 meta → method 映射（scope 前缀拼到完整方法名前）
+    // 建立 meta → method 映射（scope 前缀拼到完整方法名前），并把完整名回写进 meta.name
     const flat = flattenRouter(opts.router);
     for (const [name, def] of Object.entries(flat)) {
-      this._metaToMethod.set(def, this.scope ? `${this.scope}.${name}` : name);
+      const method = this.scope ? `${this.scope}.${name}` : name;
+      this._metaToMethod.set(def, method);
+      (def as { name?: string }).name = method;
     }
 
     // 含 call 的 procedure 自动注册
@@ -522,7 +433,7 @@ export class RpcServer implements RpcBackend {
       if (this._handlers.has(def)) continue;
       const callFn = (def as unknown as AnyProcedureDef).call;
       if (typeof callFn === 'function') {
-        this._registerInto(raw, def, callFn as any);
+        this._registerInto(raw, def, callFn as HandlerFn);
       }
     }
   }
@@ -541,42 +452,13 @@ export class RpcServer implements RpcBackend {
     for (const def of this._metaToMethod.keys()) {
       const callFn = (def as unknown as AnyProcedureDef).call;
       if (typeof callFn === 'function') {
-        this._handlers.set(def, callFn as unknown as (params: unknown, stream?: unknown) => unknown);
+        this._handlers.set(def, callFn as HandlerFn);
       }
     }
   }
 
-  private _registerInto(raw: RawServer, def: AnyProcedureMeta, handler: (params: unknown, stream?: unknown) => unknown): void {
-    const name = this._metaToMethod.get(def)!;
-    const mode = def._streamMode;
-
-    if (mode === 'unary') {
-      raw.onUnary(name, ((rawParams: unknown) => {
-        const { input, meta } = (rawParams ?? {}) as any;
-        const validated = validateInput(def, input);
-        return handler({ input: validated, meta: meta ?? {} });
-      }) as any);
-    } else if (mode === 'server') {
-      raw.onServerStream(name, ((rawParams: unknown) => {
-        const { input, meta } = (rawParams ?? {}) as any;
-        const validated = validateInput(def, input);
-        return handler({ input: validated, meta: meta ?? {} });
-      }) as any);
-    } else if (mode === 'client') {
-      raw.onClientStream(name, ((rawParams: unknown, chunks: StreamHandle<any>) => {
-        const { input, meta } = (rawParams ?? {}) as any;
-        const validated = validateInput(def, input);
-        const validatedChunks = def.chunkInSchema ? (chunks as any) : chunks;
-        return handler({ input: validated, meta: meta ?? {}, stream: validatedChunks });
-      }) as any);
-    } else if (mode === 'bidi') {
-      raw.onBidiStream(name, ((rawParams: unknown, incoming: StreamHandle<any>) => {
-        const { input, meta } = (rawParams ?? {}) as any;
-        const validated = validateInput(def, input);
-        const validatedChunks = def.chunkInSchema ? (incoming as any) : incoming;
-        return handler({ input: validated, meta: meta ?? {}, stream: validatedChunks });
-      }) as any);
-    }
+  private _registerInto(raw: RawServer, def: AnyProcedureMeta, handler: HandlerFn): void {
+    _registerMode(raw, def, handler);
   }
 }
 

@@ -103,11 +103,6 @@ export class ChannelRawClient implements RawClient {
     });
   }
 
-  send<TReq = unknown>(method: string, params?: TReq): void {
-    if (this.disposed) return;
-    this.transport.send({ type: 'notify', method, params });
-  }
-
   async serverStream<TReq = unknown, TYield = unknown>(
     method: string,
     params?: TReq,

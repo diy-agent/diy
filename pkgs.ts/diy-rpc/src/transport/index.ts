@@ -3,7 +3,7 @@
  */
 
 export type { Transport, StreamMode, StreamHandle, Envelope } from './types';
-export type { CallMsg, DataMsg, EndMsg, NotifyMsg } from './types';
+export type { CallMsg, DataMsg, EndMsg } from './types';
 export type { ErrorPayload } from '../rpc/error';
 export { RpcError, toRpcError, toErrorPayload, fromErrorPayload } from '../rpc/error';
 
