@@ -64,6 +64,11 @@ export interface ProcedureMeta<
   summary?: string;
   description?: string;
   cliDesc?: ProcedureCliMeta;
+  /**
+   * 方法全名（相对路径，如 'math.add'）。由 router() 包裹时遍历回写。
+   * 裸对象（未经 router()）无此字段；scope 前缀由 RpcServer.registerInto 另行拼接。
+   */
+  readonly name?: string;
 
   /** 绑定 handler，返回绑定对供 createMetaHandler 消费 */
   on(handler: HandlerFor<TIn, TOut, TChIn, TChOut, TMode>): HandlerBinding;
@@ -332,6 +337,10 @@ export function routeWalk(
 }
 
 export function router<T extends Router>(def: T): T {
+  // 遍历整树回写方法全名（相对路径）到每个 meta.name，供 raw server 的 on(meta, handler) 直接使用。
+  for (const { path, def: meta } of routeLeaves(buildRouteTree(def))) {
+    (meta as { name?: string }).name = path;
+  }
   return def;
 }
 
@@ -349,7 +358,7 @@ export function flattenRouter(r: Router): Record<string, AnyProcedureMeta> {
 // ═══════════════════════════════════════════════════
 
 /** 校验 input：zod parse 失败 → INVALID_ARGUMENT（非 INTERNAL） */
-function validateInput(def: AnyProcedureMeta, input: unknown): unknown {
+export function validateInput(def: AnyProcedureMeta, input: unknown): unknown {
   if (!def.inputSchema) return input;
   try {
     return def.inputSchema.parse(input);
@@ -444,7 +453,7 @@ export function createMetaHandler(opts: {
 // ═══════════════════════════════════════════════════
 
 /** 从 ProcedureMeta 类型参数推导 handler 签名 */
-type HandlerForProc<T> =
+export type HandlerForProc<T> =
   T extends ProcedureMeta<infer TIn, infer TOut, infer TChIn, infer TChOut, infer TMode>
     ? HandlerFor<TIn, TOut, TChIn, TChOut, TMode>
     : never;

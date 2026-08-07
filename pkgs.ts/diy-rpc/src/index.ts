@@ -18,7 +18,7 @@ export { createMemTransportPair, createLoggedTransport } from './transport/trans
 export type { TransportLogHandler } from './transport/transport-builtin';
 export {
   RpcSchema, RpcImpl, RpcServer, router, createHandler, createMetaHandler, createClient, flattenRouter,
-  createTypedClient,
+  createTypedClient, validateInput,
   RpcGateway, RpcForward,
   isProcedure, buildRouteTree, routeLeaves, routeResolve, routeWalk,
 } from './rpc/index';
@@ -26,7 +26,7 @@ export type {
   ProcedureMeta, ProcedureDef, Router, ClientRouter, TypedClient,
   ProcNode, RouterNode, RouteNode,
   AnyProcedureMeta, AnyProcedureDef, AnyProcedure,
-  HandlerBinding,
+  HandlerBinding, HandlerForProc,
   RpcBackend, RpcForwardOptions,
   RpcImplUnaryConfig, RpcImplServerStreamConfig, RpcImplClientStreamConfig, RpcImplBidiStreamConfig,
   RpcSchemaUnaryConfig, RpcSchemaServerStreamConfig, RpcSchemaClientStreamConfig, RpcSchemaBidiStreamConfig,

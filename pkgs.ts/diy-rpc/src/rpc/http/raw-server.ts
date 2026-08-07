@@ -26,12 +26,21 @@ import { AsyncQueue } from '../async-queue';
 import { RpcError, toErrorPayload, type ErrorPayload } from '../error';
 import { httpStatusForCode } from './codes';
 import type { RawServer } from '../raw';
+import { validateInput, type AnyProcedureMeta, type HandlerForProc } from '../index';
 
 type UnaryHandler = (params: unknown) => unknown;
 type ServerStreamHandler = (params: unknown) => AsyncGenerator<unknown>;
 type ClientStreamHandler = (params: unknown, chunks: StreamHandle<unknown>) => Promise<unknown>;
 type BidiStreamHandler = (params: unknown, incoming: StreamHandle<unknown>) => AsyncGenerator<unknown>;
 type NotifyHandler = (params: unknown) => void | Promise<void>;
+/** onUnary/onServerStream/... 的 meta 重载内部 handler 形态：收 { input, meta, stream? } */
+type HandlerFn = (opts: { input: unknown; meta: unknown; stream?: unknown }) => unknown;
+
+/** 从 envelope params 解包出 { input, meta }，并对 input 做 zod 校验 */
+function unwrap(meta: AnyProcedureMeta, params: unknown, stream?: unknown): { input: unknown; meta: unknown; stream?: unknown } {
+  const { input, meta: m } = (params ?? {}) as { input?: unknown; meta?: unknown };
+  return { input: validateInput(meta, input), meta: m ?? {}, stream };
+}
 
 export class HttpRawServer implements RawServer {
   private _unaries = new Map<string, UnaryHandler>();
@@ -40,30 +49,76 @@ export class HttpRawServer implements RawServer {
   private _bidiStreams = new Map<string, BidiStreamHandler>();
   private _notifies = new Map<string, NotifyHandler>();
 
-  onUnary<TReq = unknown, TRes = unknown>(name: string, fn: (params: TReq) => TRes | Promise<TRes>) {
-    this._unaries.set(name, fn as UnaryHandler);
+  onUnary<TReq = unknown, TRes = unknown>(name: string, fn: (params: TReq) => TRes | Promise<TRes>): void;
+  /** 按 meta 注册（类型化）：handler 收 { input }，类型从 meta 推导，input 经 zod 校验 */
+  onUnary<M extends AnyProcedureMeta & { _streamMode: 'unary' }>(meta: M, handler: HandlerForProc<M>): void;
+  onUnary(nameOrMeta: string | AnyProcedureMeta, fn: any): void {
+    if (typeof nameOrMeta === 'string') {
+      this._unaries.set(nameOrMeta, fn as UnaryHandler);
+      return;
+    }
+    this._unaries.set(this._nameOf(nameOrMeta), (params) => (fn as HandlerFn)(unwrap(nameOrMeta, params)));
   }
 
-  onServerStream<TReq = unknown, TYield = unknown>(name: string, fn: (params: TReq) => AsyncGenerator<TYield>) {
-    this._serverStreams.set(name, fn as ServerStreamHandler);
+  onServerStream<TReq = unknown, TYield = unknown>(name: string, fn: (params: TReq) => AsyncGenerator<TYield>): void;
+  /** 按 meta 注册（类型化）：handler 收 { input }，类型从 meta 推导，input 经 zod 校验 */
+  onServerStream<M extends AnyProcedureMeta & { _streamMode: 'server' }>(meta: M, handler: HandlerForProc<M>): void;
+  onServerStream(nameOrMeta: string | AnyProcedureMeta, fn: any): void {
+    if (typeof nameOrMeta === 'string') {
+      this._serverStreams.set(nameOrMeta, fn as ServerStreamHandler);
+      return;
+    }
+    this._serverStreams.set(
+      this._nameOf(nameOrMeta),
+      (params) => (fn as HandlerFn)(unwrap(nameOrMeta, params)) as AsyncGenerator<unknown>,
+    );
   }
 
   onClientStream<TReq = unknown, TChunk = unknown, TRes = unknown>(
     name: string,
     fn: (params: TReq, chunks: StreamHandle<TChunk>) => TRes | Promise<TRes>,
-  ) {
-    this._clientStreams.set(name, fn as ClientStreamHandler);
+  ): void;
+  /** 按 meta 注册（类型化）：handler 收 { input, stream }，类型从 meta 推导，input 经 zod 校验 */
+  onClientStream<M extends AnyProcedureMeta & { _streamMode: 'client' }>(meta: M, handler: HandlerForProc<M>): void;
+  onClientStream(nameOrMeta: string | AnyProcedureMeta, fn: any): void {
+    if (typeof nameOrMeta === 'string') {
+      this._clientStreams.set(nameOrMeta, fn as ClientStreamHandler);
+      return;
+    }
+    this._clientStreams.set(
+      this._nameOf(nameOrMeta),
+      (params, chunks) => (fn as HandlerFn)(unwrap(nameOrMeta, params, chunks)) as Promise<unknown>,
+    );
   }
 
   onBidiStream<TReq = unknown, TChIn = unknown, TChOut = unknown>(
     name: string,
     fn: (params: TReq, incoming: StreamHandle<TChIn>) => AsyncGenerator<TChOut>,
-  ) {
-    this._bidiStreams.set(name, fn as BidiStreamHandler);
+  ): void;
+  /** 按 meta 注册（类型化）：handler 收 { input, stream }，类型从 meta 推导，input 经 zod 校验 */
+  onBidiStream<M extends AnyProcedureMeta & { _streamMode: 'bidi' }>(meta: M, handler: HandlerForProc<M>): void;
+  onBidiStream(nameOrMeta: string | AnyProcedureMeta, fn: any): void {
+    if (typeof nameOrMeta === 'string') {
+      this._bidiStreams.set(nameOrMeta, fn as BidiStreamHandler);
+      return;
+    }
+    this._bidiStreams.set(
+      this._nameOf(nameOrMeta),
+      (params, incoming) => (fn as HandlerFn)(unwrap(nameOrMeta, params, incoming)) as AsyncGenerator<unknown>,
+    );
   }
 
   onNotify<TReq = unknown>(name: string, fn: (params: TReq) => void | Promise<void>) {
     this._notifies.set(name, fn as NotifyHandler);
+  }
+
+  /** 从 meta 取方法全名；未经 router() 包裹（无 name）则明确报错 */
+  private _nameOf(meta: AnyProcedureMeta): string {
+    const name = meta.name;
+    if (!name) {
+      throw new Error('[HttpRawServer] meta 无 name — 请用 router() 包裹 apiDef 以回写方法全名');
+    }
+    return name;
   }
 
   destroy(): void {
