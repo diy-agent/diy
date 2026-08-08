@@ -12,24 +12,13 @@ import { resolve } from "node:path";
 export default defineConfig({
   build: {
     outDir: "out/cli",
+    // SSR 模式（node 环境）：vite 自动外部化 node 内建 + node_modules 依赖，
+    // 无需手写 external 列表。见 https://vite.dev/guide/ssr
+    ssr: true,
     lib: {
       entry: resolve(__dirname, "src/cli/index.ts"),
       formats: ["es"],
       fileName: "index",
-    },
-    rollupOptions: {
-      // 外部化所有 node 内建模块（保持原生 import，避免 vite 替换成 __vite-browser-external
-      // 空 shim——CLI 经 @diy/rpc/http 依赖 node:http2，缺这个会运行时报
-      // `__vite_browser_external.connect is not a function`）。
-      external: [
-        /^node:/,
-        "zod",
-        "fastify",
-        "@fastify/cors",
-        "@fastify/http-proxy",
-        "chokidar",
-        "js-yaml",
-      ],
     },
     minify: false,
     sourcemap: false,
