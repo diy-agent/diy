@@ -13,7 +13,7 @@
 
 import { z } from 'zod';
 import type { CallOptions } from './raw-client';
-import type { StreamHandle } from '../transport/types';
+import type { StreamHandle } from './types';
 import type { RawClient, RawServer } from './raw';
 import type { RpcBackend } from './gateway';
 import { flattenRouter, buildRouteTree, routeLeaves } from './tree';

@@ -7,8 +7,8 @@
  */
 
 import { z } from 'zod';
-import type { Transport } from '../src/transport/types';
-import { ChannelRawServer, ChannelRawClient } from '../src/transport';
+import type { Transport } from '../src/core/types';
+import { ChannelRawServer, ChannelRawClient } from '../src/core';
 import { router, RpcSchema } from '../src/index';
 
 const api = router({

@@ -8,7 +8,7 @@
 
 import { z } from 'zod';
 import type { CallOptions } from './raw-client';
-import type { StreamHandle } from '../transport/types';
+import type { StreamHandle } from './types';
 import type { RawClient } from './raw';
 import { flattenRouter } from './tree';
 

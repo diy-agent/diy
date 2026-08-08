@@ -7,7 +7,7 @@
  *   - client 类型直接由 meta 的 zod schema 用 z.infer 推导，不依赖泛型参数
  */
 
-import type { Transport } from '../src/transport/types';
+import type { Transport } from '../src/core/types';
 import { z } from 'zod';
 import { RpcSchema, RpcServer, createTypedClient, ChannelRawClient, ChannelRawServer } from '../src/index';
 

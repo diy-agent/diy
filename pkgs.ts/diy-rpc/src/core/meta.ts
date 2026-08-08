@@ -9,10 +9,8 @@
  */
 
 import { z } from 'zod';
-import type { StreamHandle } from '../transport/types';
+import type { StreamHandle } from './types';
 import { toRpcError } from './error';
-
-type ProcedureMode = 'unary' | 'server' | 'client' | 'bidi';
 
 export interface ProcedureCliMeta {
   description?: string;

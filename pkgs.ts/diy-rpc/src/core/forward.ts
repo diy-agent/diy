@@ -10,7 +10,7 @@
  * 加 remote server 同理：register(new RpcForward(remoteTransport, { router, scope }))。
  */
 
-import type { Transport } from '../transport/types';
+import type { Transport } from './types';
 import { ChannelRawClient } from './raw-client';
 import type { RawServer, RawClient } from './raw';
 import { flattenRouter } from './tree';

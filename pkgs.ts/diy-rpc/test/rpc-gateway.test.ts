@@ -7,13 +7,13 @@
  * 验证：路由归属清晰、无广播、scope 冲突报错。
  */
 
-import type { Transport } from '../src/transport/types';
+import type { Transport } from '../src/core/types';
 import { z } from 'zod';
 import {
   RpcSchema, RpcServer, RpcGateway, RpcForward, createTypedClient,
 } from '../src/index';
-import { ChannelRawServer } from '../src/rpc/raw-server';
-import { ChannelRawClient } from '../src/rpc/raw-client';
+import { ChannelRawServer } from '../src/core/raw-server';
+import { ChannelRawClient } from '../src/core/raw-client';
 
 // ═══════════════════════════════════════════════════
 //  def（模拟 app 层：diy.app 本地 + diy.ui 远端）

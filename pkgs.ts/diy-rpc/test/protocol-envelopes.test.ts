@@ -2,9 +2,9 @@
  * 协议信封层测试：验证调用 API 时实际收发的原始 Envelope 序列
  */
 
-import type { Transport, StreamHandle } from '../src/transport/types';
-import { ChannelRawServer, ChannelRawClient } from '../src/transport';
-import { RpcImpl, RpcServer, RpcSchema, router, createTypedClient } from '../src/rpc';
+import type { Transport, StreamHandle } from '../src/core/types';
+import { ChannelRawServer, ChannelRawClient } from '../src/core';
+import { RpcImpl, RpcServer, RpcSchema, router, createTypedClient } from '../src/core';
 import { z } from 'zod';
 
 const api = router({

@@ -8,7 +8,7 @@
  * 第3层（RpcServer/RpcGateway/createClient）只依赖本接口，不感知具体绑定。
  */
 
-import type { StreamHandle } from '../transport/types';
+import type { StreamHandle } from './types';
 import type { ErrorPayload, ErrorProtocolExt } from './error';
 import type { AnyProcedureMeta, HandlerForProc } from './meta';
 

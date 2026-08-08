@@ -11,10 +11,10 @@
 
 import * as http2 from 'node:http2';
 import type { ClientHttp2Session, ClientHttp2Stream } from 'node:http2';
-import type { StreamHandle } from '../../transport/types';
-import { AsyncQueue } from '../async-queue';
-import { RpcError, fromErrorPayload, type ErrorPayload } from '../error';
-import type { CallOptions, RawClient } from '../raw';
+import type { StreamHandle } from '../../core/types';
+import { AsyncQueue } from '../../core/async-queue';
+import { RpcError, fromErrorPayload, type ErrorPayload } from '../../core/error';
+import type { CallOptions, RawClient } from '../../core/raw';
 import { codeForHttpStatus } from './codes';
 
 interface HttpResp {

@@ -13,7 +13,7 @@
  *   onNotify       — 单向通知
  */
 
-import type { Transport, StreamHandle, StreamMode, Envelope } from '../transport/types';
+import type { Transport, StreamHandle, StreamMode, Envelope } from './types';
 import { AsyncQueue } from './async-queue';
 import { toErrorPayload, RpcError } from './error';
 import type { RawServer } from './raw';

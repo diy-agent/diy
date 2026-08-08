@@ -17,8 +17,8 @@ import { exec as execCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import { router, RpcSchema, RpcError } from '../src/index';
-import { HttpRawServer } from '../src/rpc/http/raw-server';
-import { HttpRawClient } from '../src/rpc/http/raw-client';
+import { HttpRawServer } from '../src/transport/http/raw-server';
+import { HttpRawClient } from '../src/transport/http/raw-client';
 
 const exec = promisify(execCb);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

@@ -9,7 +9,7 @@ import { z } from 'zod';
 import {
   RpcSchema, RpcServer, createTypedClient, ChannelRawClient, ChannelRawServer,
 } from '../src/index';
-import type { Transport } from '../src/transport/types';
+import type { Transport } from '../src/core/types';
 
 // ═══════════════════════════════════════════════════
 //  in-memory Transport

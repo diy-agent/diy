@@ -1,5 +1,5 @@
-import type { Transport, ErrorPayload, StreamHandle } from '../transport/types';
-import type { Envelope, CallMsg } from '../transport/types';
+import type { Transport, ErrorPayload, StreamHandle } from './types';
+import type { Envelope, CallMsg } from './types';
 import { RpcError, fromErrorPayload } from './error';
 import type { CallOptions, RawClient } from './raw';
 import { AsyncQueue } from './async-queue';

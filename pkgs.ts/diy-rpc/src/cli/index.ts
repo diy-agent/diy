@@ -1,4 +1,4 @@
-import type { Router } from "../meta";
+import type { Router } from "../core/meta";
 import {
   buildRouteTree,
   routeResolve,
@@ -6,15 +6,15 @@ import {
   type RouteNode,
   type RouterNode,
   type ProcNode,
-} from "../tree";
-import type { RawClient } from "../raw";
+} from "../core/tree";
+import type { RawClient } from "../core/raw";
 import { parseArgv, generateHelp, CliParseError } from "./parser";
-import type { ProcedureCliMeta } from "./meta";
+import type { ProcedureCliMeta } from "../core/cli-meta";
 
-export { getCliOptionMeta, getCliArgMeta, hasCliMeta } from "./meta";
-export type { CliOptionMeta, CliArgMeta, ProcedureCliMeta } from "./meta";
+export { getCliOptionMeta, getCliArgMeta, hasCliMeta } from "../core/cli-meta";
+export type { CliOptionMeta, CliArgMeta, ProcedureCliMeta } from "../core/cli-meta";
 
-import "./meta";
+import "../core/cli-meta";
 
 /** 按点分路径查找 RouterNode（如 'diy.app' → diy 下 app 节点），找不到返回 null */
 function findNodeByPath(

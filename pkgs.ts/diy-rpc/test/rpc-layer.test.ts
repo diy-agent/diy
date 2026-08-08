@@ -4,9 +4,9 @@
  * 在传输层之上验证 RPC builder 的逻辑正确性。
  */
 
-import type { Transport } from '../src/transport/types';
-import { ChannelRawClient, ChannelRawServer } from '../src/transport';
-import { RpcImpl, RpcServer, router, createTypedClient } from '../src/rpc';
+import type { Transport } from '../src/core/types';
+import { ChannelRawClient, ChannelRawServer } from '../src/core';
+import { RpcImpl, RpcServer, router, createTypedClient } from '../src/core';
 import { z } from 'zod';
 
 // ═══════════════════════════════════════════════════

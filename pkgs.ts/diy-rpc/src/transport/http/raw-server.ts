@@ -21,12 +21,12 @@
  */
 
 import type { ServerHttp2Stream, IncomingHttpHeaders } from 'node:http2';
-import type { StreamHandle } from '../../transport/types';
-import { AsyncQueue } from '../async-queue';
-import { RpcError, toErrorPayload, type ErrorPayload } from '../error';
+import type { StreamHandle } from '../../core/types';
+import { AsyncQueue } from '../../core/async-queue';
+import { RpcError, toErrorPayload, type ErrorPayload } from '../../core/error';
 import { httpStatusForCode } from './codes';
-import type { RawServer } from '../raw';
-import { validateInput, type AnyProcedureMeta, type HandlerForProc } from '../meta';
+import type { RawServer } from '../../core/raw';
+import { validateInput, type AnyProcedureMeta, type HandlerForProc } from '../../core/meta';
 
 type UnaryHandler = (params: unknown) => unknown;
 type ServerStreamHandler = (params: unknown) => AsyncGenerator<unknown>;
