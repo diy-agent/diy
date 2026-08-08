@@ -13,7 +13,8 @@
 //  流模式（内部路由用，非协议字段）
 // ═══════════════════════════════════════════════════
 
-export type StreamMode = 'server' | 'client' | 'bidi';
+/** @internal */
+export type _StreamMode = 'server' | 'client' | 'bidi';
 
 // ═══════════════════════════════════════════════════
 //  Transport 接口
@@ -22,7 +23,7 @@ export type StreamMode = 'server' | 'client' | 'bidi';
 export interface Transport {
   send(payload: unknown): void;
   /** 注册消息处理器，返回解除注册函数 */
-  on(handler: (msg: Envelope) => void): () => void;
+  on(handler: (msg: _Envelope) => void): () => void;
   /** 注册连接断开回调 */
   onClose(cb: () => void): () => void;
 }
@@ -37,38 +38,43 @@ export interface StreamHandle<T> {
 
 // ═══════════════════════════════════════════════════
 //  信封类型（可辨识联合，type 为鉴别器）
-//  ErrorPayload 定义在 rpc/error.ts（统一错误模型）
+//  _ErrorPayload 定义在 rpc/error.ts（统一错误模型）
 // ═══════════════════════════════════════════════════
 
-import type { ErrorPayload } from './error';
+import type { _ErrorPayload } from './error';
 
 /** 调用请求/响应（含流 init-ack） */
-export interface CallMsg {
+/** @internal */
+export interface _CallMsg {
   type: 'call';
   id: number;
   method?: string;
   params?: unknown;
   result?: unknown;
-  error?: ErrorPayload;
+  error?: _ErrorPayload;
   /** undefined/false=unary, true=请求分配 streamId, number=携带 streamId */
   stream?: true | number;
 }
 
 /** 流数据块 */
-export interface DataMsg {
+/** @internal */
+export interface _DataMsg {
   type: 'data';
   stream: number;
   value: unknown;
 }
 
 /** 流结束（可带错误，替代独立的 stream-error） */
-export interface EndMsg {
+/** @internal */
+export interface _EndMsg {
   type: 'end';
   stream: number;
-  error?: ErrorPayload;
+  error?: _ErrorPayload;
 }
 
-export type Envelope = CallMsg | DataMsg | EndMsg;
+/** @internal */
+export type _Envelope = _CallMsg | _DataMsg | _EndMsg;
 
-// 错误模型（ErrorPayload / RpcError / toRpcError / toErrorPayload）见 ./error
-export type { ErrorPayload } from './error';
+// 错误模型（_ErrorPayload / RpcError / toRpcError / _toErrorPayload）见 ./error
+/** @internal */
+export type { _ErrorPayload } from './error';

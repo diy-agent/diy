@@ -14,32 +14,35 @@
 import { z } from 'zod';
 import type { StreamHandle } from './types';
 import type { RawServer } from './raw';
-import type { RpcBackend } from './gateway';
-import { flattenRouter, buildRouteTree, routeLeaves } from './tree';
+import type { _RpcBackend } from './gateway';
+import { _flattenRouter, _buildRouteTree, _routeLeaves } from './tree';
 import {
-  type HandlerForProc, type ProcedureMeta, type ProcedureDef,
-  type AnyProcedureMeta, type AnyProcedureDef, type Router,
+  type _HandlerForProc, type ProcedureMeta, type ProcedureDef,
+  type _AnyProcedureMeta, type _AnyProcedureDef, type _Router,
 } from './meta';
 
 // ═══════════════════════════════════════════════════
 //  RpcSchema 配置类型（纯定义，无 call）
 // ═══════════════════════════════════════════════════
 
-export interface RpcSchemaUnaryConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput> {
+/** @internal */
+export interface _RpcSchemaUnaryConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput> {
   summary?: string;
   description?: string;
   input: TSchema;
   output: z.ZodType<TOutput>;
 }
 
-export interface RpcSchemaServerStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput> {
+/** @internal */
+export interface _RpcSchemaServerStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput> {
   summary?: string;
   description?: string;
   input: TSchema;
   output: z.ZodType<TOutput>;
 }
 
-export interface RpcSchemaClientStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput> {
+/** @internal */
+export interface _RpcSchemaClientStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput> {
   summary?: string;
   description?: string;
   input: TSchema;
@@ -47,7 +50,8 @@ export interface RpcSchemaClientStreamConfig<TSchema extends Record<string, z.Zo
   output: z.ZodType<TOutput>;
 }
 
-export interface RpcSchemaBidiStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut> {
+/** @internal */
+export interface _RpcSchemaBidiStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut> {
   summary?: string;
   description?: string;
   input: TSchema;
@@ -59,23 +63,27 @@ export interface RpcSchemaBidiStreamConfig<TSchema extends Record<string, z.ZodT
 //  RpcImpl 配置类型（含 call）
 // ═══════════════════════════════════════════════════
 
-export interface RpcImplUnaryConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput>
-  extends RpcSchemaUnaryConfig<TSchema, TOutput> {
+/** @internal */
+export interface _RpcImplUnaryConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput>
+  extends _RpcSchemaUnaryConfig<TSchema, TOutput> {
   call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; meta?: unknown }) => TOutput | Promise<TOutput>;
 }
 
-export interface RpcImplServerStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput>
-  extends RpcSchemaServerStreamConfig<TSchema, TOutput> {
+/** @internal */
+export interface _RpcImplServerStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput>
+  extends _RpcSchemaServerStreamConfig<TSchema, TOutput> {
   call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; meta?: unknown }) => AsyncGenerator<TOutput>;
 }
 
-export interface RpcImplClientStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput>
-  extends RpcSchemaClientStreamConfig<TSchema, TChunk, TOutput> {
+/** @internal */
+export interface _RpcImplClientStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput>
+  extends _RpcSchemaClientStreamConfig<TSchema, TChunk, TOutput> {
   call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; stream: StreamHandle<TChunk>; meta?: unknown }) => TOutput | Promise<TOutput>;
 }
 
-export interface RpcImplBidiStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut>
-  extends RpcSchemaBidiStreamConfig<TSchema, TChunkIn, TChunkOut> {
+/** @internal */
+export interface _RpcImplBidiStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut>
+  extends _RpcSchemaBidiStreamConfig<TSchema, TChunkIn, TChunkOut> {
   call: (opts: { input: { [K in keyof TSchema]: z.output<TSchema[K]> }; stream: StreamHandle<TChunkIn>; meta?: unknown }) => AsyncGenerator<TChunkOut>;
 }
 
@@ -85,25 +93,25 @@ export interface RpcImplBidiStreamConfig<TSchema extends Record<string, z.ZodTyp
 
 export class RpcSchema {
   static unary<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
-    config: RpcSchemaUnaryConfig<TSchema, TOutput>,
+    config: _RpcSchemaUnaryConfig<TSchema, TOutput>,
   ): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, never, 'unary'> {
     return _makeMeta(config, 'unary', z.object(config.input), config.output);
   }
 
   static serverStream<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
-    config: RpcSchemaServerStreamConfig<TSchema, TOutput>,
+    config: _RpcSchemaServerStreamConfig<TSchema, TOutput>,
   ): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, TOutput, 'server'> {
     return _makeMeta(config, 'server', z.object(config.input), config.output);
   }
 
   static clientStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput>(
-    config: RpcSchemaClientStreamConfig<TSchema, TChunk, TOutput>,
+    config: _RpcSchemaClientStreamConfig<TSchema, TChunk, TOutput>,
   ): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, TChunk, never, 'client'> {
     return _makeMeta(config, 'client', z.object(config.input), config.output, config.chunkIn);
   }
 
   static bidiStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut>(
-    config: RpcSchemaBidiStreamConfig<TSchema, TChunkIn, TChunkOut>,
+    config: _RpcSchemaBidiStreamConfig<TSchema, TChunkIn, TChunkOut>,
   ): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TChunkOut, TChunkIn, TChunkOut, 'bidi'> {
     return _makeMeta(config, 'bidi', z.object(config.input), undefined, config.chunkIn, config.chunkOut);
   }
@@ -115,7 +123,7 @@ export class RpcSchema {
 
 export class RpcImpl {
   static unary<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
-    config: RpcImplUnaryConfig<TSchema, TOutput>,
+    config: _RpcImplUnaryConfig<TSchema, TOutput>,
   ): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, never, 'unary'> {
     const meta = _makeMeta(config, 'unary', z.object(config.input), config.output);
     meta.call = (opts: any) => config.call({ input: opts.input, meta: opts.meta });
@@ -123,7 +131,7 @@ export class RpcImpl {
   }
 
   static serverStream<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
-    config: RpcImplServerStreamConfig<TSchema, TOutput>,
+    config: _RpcImplServerStreamConfig<TSchema, TOutput>,
   ): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, TOutput, 'server'> {
     const meta = _makeMeta(config, 'server', z.object(config.input), config.output);
     meta.call = (opts: any) => config.call({ input: opts.input, meta: opts.meta });
@@ -131,7 +139,7 @@ export class RpcImpl {
   }
 
   static clientStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput>(
-    config: RpcImplClientStreamConfig<TSchema, TChunk, TOutput>,
+    config: _RpcImplClientStreamConfig<TSchema, TChunk, TOutput>,
   ): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, TChunk, never, 'client'> {
     const meta = _makeMeta(config, 'client', z.object(config.input), config.output, config.chunkIn);
     meta.call = (opts: any) => config.call({ input: opts.input, stream: opts.stream, meta: opts.meta });
@@ -139,7 +147,7 @@ export class RpcImpl {
   }
 
   static bidiStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut>(
-    config: RpcImplBidiStreamConfig<TSchema, TChunkIn, TChunkOut>,
+    config: _RpcImplBidiStreamConfig<TSchema, TChunkIn, TChunkOut>,
   ): ProcedureDef<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TChunkOut, TChunkIn, TChunkOut, 'bidi'> {
     const meta = _makeMeta(config, 'bidi', z.object(config.input), undefined, config.chunkIn, config.chunkOut);
     meta.call = (opts: any) => config.call({ input: opts.input, stream: opts.stream, meta: opts.meta });
@@ -178,12 +186,13 @@ function _makeMeta(
 }
 
 // ═══════════════════════════════════════════════════
-//  Router 组合工具
+//  _Router 组合工具
 // ═══════════════════════════════════════════════════
 
-export function router<T extends Router>(def: T): T {
+/** @internal */
+export function router<T extends _Router>(def: T): T {
   // 遍历整树回写方法全名（相对路径）到每个 meta.name，供 raw 绑定 onXxx(meta, handler) 直接使用。
-  for (const { path, def: meta } of routeLeaves(buildRouteTree(def))) {
+  for (const { path, def: meta } of _routeLeaves(_buildRouteTree(def))) {
     (meta as { name?: string }).name = path;
   }
   return def;
@@ -196,7 +205,7 @@ export function router<T extends Router>(def: T): T {
 type HandlerFn = (opts: { input: unknown; meta: unknown; stream?: unknown }) => unknown;
 
 /** 按 def 的 stream mode 注册到 raw（handler 收 { input, meta, stream? }） */
-function _registerMode(raw: RawServer, def: AnyProcedureMeta, handler: HandlerFn): void {
+function _registerMode(raw: RawServer, def: _AnyProcedureMeta, handler: HandlerFn): void {
   const mode = def._streamMode;
   if (mode === 'unary') {
     raw.onUnary(def, handler as any);
@@ -218,17 +227,18 @@ function _registerMode(raw: RawServer, def: AnyProcedureMeta, handler: HandlerFn
  *   - 不含 call 的（RpcSchema）通过 .on() 绑定 handler
  *   - registerInto(raw) 把本注册表挂到某个 RawServer（以 meta 强类型注册）
  */
-export class RpcServer implements RpcBackend {
+/** @internal */
+export class RpcServer implements _RpcBackend {
   readonly scope: string;
   private _raws: RawServer[] = [];
-  private _metaToMethod = new Map<AnyProcedureMeta, string>();
-  private _handlers = new Map<AnyProcedureMeta, HandlerFn>();
+  private _metaToMethod = new Map<_AnyProcedureMeta, string>();
+  private _handlers = new Map<_AnyProcedureMeta, HandlerFn>();
 
-  constructor(opts: { router: Router; scope?: string }) {
+  constructor(opts: { router: _Router; scope?: string }) {
     this.scope = opts.scope ?? '';
 
     // 建立 meta → method 映射（scope 前缀拼到完整方法名前），并把完整名回写进 meta.name
-    const flat = flattenRouter(opts.router);
+    const flat = _flattenRouter(opts.router);
     for (const [name, def] of Object.entries(flat)) {
       const method = this.scope ? `${this.scope}.${name}` : name;
       this._metaToMethod.set(def, method);
@@ -243,9 +253,9 @@ export class RpcServer implements RpcBackend {
    * 绑定 handler 到某个 procedure。
    * 同时适用于 RpcSchema（必须调）和 RpcImpl（可选覆盖）。
    */
-  on<T extends AnyProcedureMeta>(
+  on<T extends _AnyProcedureMeta>(
     proc: T,
-    handler: HandlerForProc<T>,
+    handler: _HandlerForProc<T>,
   ): void {
     const method = this._metaToMethod.get(proc);
     if (!method) {
@@ -271,7 +281,7 @@ export class RpcServer implements RpcBackend {
     // 含 call 但未显式 on 的也要挂载
     for (const def of this._metaToMethod.keys()) {
       if (this._handlers.has(def)) continue;
-      const callFn = (def as unknown as AnyProcedureDef).call;
+      const callFn = (def as unknown as _AnyProcedureDef).call;
       if (typeof callFn === 'function') {
         this._registerInto(raw, def, callFn as HandlerFn);
       }
@@ -290,14 +300,14 @@ export class RpcServer implements RpcBackend {
 
   private _autoRegister(): void {
     for (const def of this._metaToMethod.keys()) {
-      const callFn = (def as unknown as AnyProcedureDef).call;
+      const callFn = (def as unknown as _AnyProcedureDef).call;
       if (typeof callFn === 'function') {
         this._handlers.set(def, callFn as HandlerFn);
       }
     }
   }
 
-  private _registerInto(raw: RawServer, def: AnyProcedureMeta, handler: HandlerFn): void {
+  private _registerInto(raw: RawServer, def: _AnyProcedureMeta, handler: HandlerFn): void {
     _registerMode(raw, def, handler);
   }
 }
@@ -309,6 +319,8 @@ export class RpcServer implements RpcBackend {
 export { createTypedClient } from './typed-client';
 export type { TypedClient } from './typed-client';
 export { RpcGateway } from './gateway';
-export type { RpcBackend } from './gateway';
+/** @internal */
+export type { _RpcBackend } from './gateway';
 export { RpcForward } from './forward';
-export type { RpcForwardOptions } from './forward';
+/** @internal */
+export type { _RpcForwardOptions } from './forward';

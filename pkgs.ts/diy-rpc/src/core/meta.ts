@@ -3,8 +3,8 @@
  *
  * 作为第2层的一部分（与 RawServer/RawClient 端口、各 raw 绑定同层）：
  *   - ProcedureMeta 描述一个 RPC 过程的 schema（input/output/chunk + stream mode）
- *   - HandlerForProc 从 meta 推导 handler 签名（收 { input, meta, stream? }）
- *   - validateInput 做 zod 校验（ZodError → INVALID_ARGUMENT）
+ *   - _HandlerForProc 从 meta 推导 handler 签名（收 { input, meta, stream? }）
+ *   - _validateInput 做 zod 校验（ZodError → INVALID_ARGUMENT）
  * raw 绑定用这些类型实现强类型注册（onUnary(meta, handler) 等）；第3层（index.ts）import 本文件。
  */
 
@@ -12,7 +12,8 @@ import { z } from 'zod';
 import type { StreamHandle } from './types';
 import { toRpcError } from './error';
 
-export interface ProcedureCliMeta {
+/** @internal */
+export interface _ProcedureCliMeta {
   description?: string;
 }
 
@@ -25,7 +26,8 @@ type HandlerFor<TIn, TOut, TChIn, TChOut, TMode> =
   never;
 
 /** 从 ProcedureMeta 类型参数推导 handler 签名（供 onXxx / RpcServer.on 使用） */
-export type HandlerForProc<T> =
+/** @internal */
+export type _HandlerForProc<T> =
   T extends ProcedureMeta<infer TIn, infer TOut, infer TChIn, infer TChOut, infer TMode>
     ? HandlerFor<TIn, TOut, TChIn, TChOut, TMode>
     : never;
@@ -53,7 +55,7 @@ export interface ProcedureMeta<
   chunkOutSchema?: z.ZodType<TChOut>;
   summary?: string;
   description?: string;
-  cliDesc?: ProcedureCliMeta;
+  cliDesc?: _ProcedureCliMeta;
   /**
    * 方法全名（相对路径，如 'math.add'）。由 router() 包裹时遍历回写；
    * RpcServer 构造时按 scope 覆盖为完整全名（如 'diy.app.task.create'）。
@@ -76,18 +78,23 @@ export interface ProcedureDef<
   call: (opts: { input: TIn; meta?: unknown }) => unknown;
 }
 
-export type AnyProcedureMeta = ProcedureMeta<any, any, any, any, any>;
-export type AnyProcedureDef = ProcedureDef<any, any, any, any, any>;
-/** @deprecated 用 AnyProcedureMeta */
-export type AnyProcedure = AnyProcedureDef;
-export interface Router { [key: string]: AnyProcedureMeta | Router; }
+/** @internal */
+export type _AnyProcedureMeta = ProcedureMeta<any, any, any, any, any>;
+/** @internal */
+export type _AnyProcedureDef = ProcedureDef<any, any, any, any, any>;
+/** @deprecated 用 _AnyProcedureMeta */
+/** @internal */
+export type _AnyProcedure = _AnyProcedureDef;
+/** @internal */
+export interface _Router { [key: string]: _AnyProcedureMeta | _Router; }
 
 // ═══════════════════════════════════════════════════
 //  zod 校验
 // ═══════════════════════════════════════════════════
 
 /** 校验 input：zod parse 失败 → INVALID_ARGUMENT（非 INTERNAL） */
-export function validateInput(def: AnyProcedureMeta, input: unknown): unknown {
+/** @internal */
+export function _validateInput(def: _AnyProcedureMeta, input: unknown): unknown {
   if (!def.inputSchema) return input;
   try {
     return def.inputSchema.parse(input);

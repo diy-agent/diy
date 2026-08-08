@@ -21,7 +21,8 @@ import type { RawServer } from './raw';
  * RpcServer（本地，本进程直接处理）与 RpcForward（转发，经某 transport
  * 调远端进程）都实现此接口。网关不区分二者，统一 register。
  */
-export interface RpcBackend {
+/** @internal */
+export interface _RpcBackend {
   /** 本后端拥有的方法前缀（如 diy.app / diy.ui） */
   readonly scope: string;
   /** 把本后端所有方法（全名，含 scope 前缀）注册到给定 RawServer */
@@ -41,7 +42,7 @@ export class RpcGateway {
   constructor(private _raw: RawServer) {}
 
   /** 注册一个后端；scope 前缀冲突时抛错 */
-  register(backend: RpcBackend): this {
+  register(backend: _RpcBackend): this {
     if (this._scopes.has(backend.scope)) {
       throw new Error(
         `[RpcGateway] scope "${backend.scope}" 已注册 — 方法前缀冲突，每个前缀只能归属一个后端`,

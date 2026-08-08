@@ -5,7 +5,8 @@
  * error() 会 reject 正在挂起的 next()，让消费方（for-await）抛错而非干净结束。
  */
 
-export class AsyncQueue<T> {
+/** @internal */
+export class _AsyncQueue<T> {
   private _queue: T[] = [];
   private _resolveWait: ((item: IteratorResult<T>) => void) | null = null;
   private _rejectWait: ((err: Error) => void) | null = null;

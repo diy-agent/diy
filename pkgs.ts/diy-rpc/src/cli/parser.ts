@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import type { AnyProcedureMeta } from '../core/meta';
-import { getCliOptionMeta, getCliArgMeta } from '../core/cli-meta';
+import type { _AnyProcedureMeta } from '../core/meta';
+import { _getCliOptionMeta, _getCliArgMeta } from '../core/cli-meta';
 
 // ═══════════════════════════════════════════════════
 //  Schema 反射工具（CLI 专用）
@@ -52,7 +52,8 @@ export interface ParsedInput {
   helpRequested: boolean;
 }
 
-export function parseArgv(def: AnyProcedureMeta, argv: string[]): ParsedInput {
+/** @internal */
+export function parseArgv(def: _AnyProcedureMeta, argv: string[]): ParsedInput {
   const schema = def.inputSchema;
   if (!(schema instanceof z.ZodObject)) {
     throw new CliParseError('Procedure has no input schema');
@@ -70,8 +71,8 @@ export function parseArgv(def: AnyProcedureMeta, argv: string[]): ParsedInput {
   const argOrder: string[] = [];                   // 位置参数顺序
 
   for (const [key, field] of Object.entries(shape)) {
-    const optMeta = getCliOptionMeta(field);
-    const argMeta = getCliArgMeta(field);
+    const optMeta = _getCliOptionMeta(field);
+    const argMeta = _getCliArgMeta(field);
     if (optMeta) {
       optionNames.set(key, key);
       if (optMeta.short) shortAliases.set(optMeta.short, key);
@@ -154,7 +155,8 @@ export function parseArgv(def: AnyProcedureMeta, argv: string[]): ParsedInput {
   }
 }
 
-export function generateHelp(def: AnyProcedureMeta, cmdName: string, description?: string): string {
+/** @internal */
+export function generateHelp(def: _AnyProcedureMeta, cmdName: string, description?: string): string {
   const schema = def.inputSchema;
   if (!(schema instanceof z.ZodObject)) return '';
 
@@ -164,8 +166,8 @@ export function generateHelp(def: AnyProcedureMeta, cmdName: string, description
   if (description) lines.push(description, '');
 
   // 位置参数
-  const args: [string, ReturnType<typeof getCliArgMeta>][] =
-    Object.entries(shape).map(([k, f]) => [k, getCliArgMeta(f)] as any)
+  const args: [string, ReturnType<typeof _getCliArgMeta>][] =
+    Object.entries(shape).map(([k, f]) => [k, _getCliArgMeta(f)] as any)
       .filter(([, m]) => m);
 
   if (args.length > 0) {
@@ -181,8 +183,8 @@ export function generateHelp(def: AnyProcedureMeta, cmdName: string, description
   }
 
   // 命名选项
-  const opts: [string, ReturnType<typeof getCliOptionMeta>][] =
-    Object.entries(shape).map(([k, f]) => [k, getCliOptionMeta(f)] as any)
+  const opts: [string, ReturnType<typeof _getCliOptionMeta>][] =
+    Object.entries(shape).map(([k, f]) => [k, _getCliOptionMeta(f)] as any)
       .filter(([, m]) => m);
 
   if (opts.length > 0) {

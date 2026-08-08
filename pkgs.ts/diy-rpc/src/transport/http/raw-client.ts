@@ -12,8 +12,8 @@
 import * as http2 from 'node:http2';
 import type { ClientHttp2Session, ClientHttp2Stream } from 'node:http2';
 import type { StreamHandle } from '../../core/types';
-import { AsyncQueue } from '../../core/async-queue';
-import { RpcError, fromErrorPayload, type ErrorPayload } from '../../core/error';
+import { _AsyncQueue } from '../../core/async-queue';
+import { RpcError, _fromErrorPayload, type _ErrorPayload } from '../../core/error';
 import type { CallOptions, RawClient } from '../../core/raw';
 import { codeForHttpStatus } from './codes';
 
@@ -248,7 +248,7 @@ function parseResult<T>(resp: HttpResp): T {
 }
 
 function parseError(status: number, data: Buffer): RpcError {
-  let body: Partial<ErrorPayload> = {};
+  let body: Partial<_ErrorPayload> = {};
   try { body = JSON.parse(data.toString() || '{}'); } catch { /* 非 JSON 错误体 */ }
   const code = body.code ?? codeForHttpStatus(status);
   return new RpcError(
@@ -258,9 +258,9 @@ function parseError(status: number, data: Buffer): RpcError {
   );
 }
 
-/** 把流式响应（NDJSON {"v"}/{"e"}）桥接成 AsyncQueue；AbortSignal → RST_STREAM */
-function createNdjsonStream(stream: ClientHttp2Stream, options?: CallOptions): AsyncQueue<unknown> {
-  const q = new AsyncQueue<unknown>();
+/** 把流式响应（NDJSON {"v"}/{"e"}）桥接成 _AsyncQueue；AbortSignal → RST_STREAM */
+function createNdjsonStream(stream: ClientHttp2Stream, options?: CallOptions): _AsyncQueue<unknown> {
+  const q = new _AsyncQueue<unknown>();
   let buf = '';
 
   stream.on('data', (c: Buffer) => {
@@ -270,10 +270,10 @@ function createNdjsonStream(stream: ClientHttp2Stream, options?: CallOptions): A
       const line = buf.slice(0, idx).trim();
       buf = buf.slice(idx + 1);
       if (!line) continue;
-      let f: { v?: unknown; e?: ErrorPayload } | null = null;
+      let f: { v?: unknown; e?: _ErrorPayload } | null = null;
       try { f = JSON.parse(line); } catch { continue; }
       if (!f) continue;
-      if (f.e) { q.error(fromErrorPayload(f.e)); return; }
+      if (f.e) { q.error(_fromErrorPayload(f.e)); return; }
       if ('v' in f) q.push(f.v);
     }
   });

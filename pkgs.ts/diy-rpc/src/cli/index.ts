@@ -1,27 +1,24 @@
-import type { Router } from "../core/meta";
+import type { _Router } from "../core/meta";
 import {
-  buildRouteTree,
-  routeResolve,
-  routeWalk,
-  type RouteNode,
-  type RouterNode,
+  _buildRouteTree,
+  _routeResolve,
+  _routeWalk,
+  type _RouteNode,
+  type _RouterNode,
 } from "../core/tree";
 import type { RawClient } from "../core/raw";
 import { parseArgv, generateHelp, CliParseError } from "./parser";
-import type { ProcedureCliMeta } from "../core/cli-meta";
-
-export { getCliOptionMeta, getCliArgMeta, hasCliMeta } from "../core/cli-meta";
-export type { CliOptionMeta, CliArgMeta, ProcedureCliMeta } from "../core/cli-meta";
+import type { _ProcedureCliMeta } from "../core/cli-meta";
 
 import "../core/cli-meta";
 
-/** 按点分路径查找 RouterNode（如 'diy.app' → diy 下 app 节点），找不到返回 null */
+/** 按点分路径查找 _RouterNode（如 'diy.app' → diy 下 app 节点），找不到返回 null */
 function findNodeByPath(
-  root: RouterNode,
+  root: _RouterNode,
   path: string,
-): RouterNode | null {
+): _RouterNode | null {
   const segs = path.split(".").filter(Boolean);
-  let node: RouterNode = root;
+  let node: _RouterNode = root;
   for (const seg of segs) {
     const child = node.children.find((c) => c.name === seg);
     if (!child) return null;
@@ -38,15 +35,15 @@ function findNodeByPath(
  *  - 数组 → 合并多个子树到同一个虚拟根
  *    - 普通路径（如 'diy.app'）→ 摊平 children 到顶层（命令 `task list`）
  *    - `!` 前缀路径（如 '!diy.ui'）→ 保留该层命名空间为顶层组（命令 `ui status`）
- * 每个子树的 proc 直接复用（path 仍是完整全名，routeResolve 按 name 匹配）。
+ * 每个子树的 proc 直接复用（path 仍是完整全名，_routeResolve 按 name 匹配）。
  */
 function resolveCliTree(
-  root: RouterNode,
+  root: _RouterNode,
   cliRootPath?: string | string[],
-): RouterNode {
+): _RouterNode {
   if (!cliRootPath) return root;
   const paths = Array.isArray(cliRootPath) ? cliRootPath : [cliRootPath];
-  const flattened: RouteNode[] = [];
+  const flattened: _RouteNode[] = [];
   for (const p of paths) {
     const keepNs = p.startsWith("!");
     const segPath = keepNs ? p.slice(1) : p;
@@ -76,7 +73,8 @@ async function* stdinAsync(): AsyncGenerator<string> {
   rl.close();
 }
 
-export interface CliConfig<TRouter extends Router> {
+/** @internal */
+export interface CliConfig<TRouter extends _Router> {
   name: string;
   version?: string;
   description?: string;
@@ -93,23 +91,24 @@ export interface CliConfig<TRouter extends Router> {
   cliRootPath?: string | string[];
 }
 
-export class CliApp<TRouter extends Router> {
+/** @internal */
+export class CliApp<TRouter extends _Router> {
   private config: CliConfig<TRouter>;
-  private tree: RouterNode;
+  private tree: _RouterNode;
   private _jsonFlag = false;
 
   constructor(config: CliConfig<TRouter>) {
     this.config = config;
-    const root = buildRouteTree(config.router);
+    const root = _buildRouteTree(config.router);
     this.tree = resolveCliTree(root, config.cliRootPath);
     this._backfillParent(this.tree, null);
   }
 
   private _backfillParent(
-    node: RouteNode,
-    parent: RouterNode | null,
+    node: _RouteNode,
+    parent: _RouterNode | null,
   ): void {
-    (node as { parent: RouterNode | null }).parent = parent;
+    (node as { parent: _RouterNode | null }).parent = parent;
     if (node.kind === "router") {
       for (const c of node.children) this._backfillParent(c, node);
     }
@@ -136,7 +135,7 @@ export class CliApp<TRouter extends Router> {
       return;
     }
 
-    const resolved = routeResolve(this.tree, argv);
+    const resolved = _routeResolve(this.tree, argv);
 
     if (!resolved || resolved.kind !== "proc") {
       if (resolved && resolved.kind === "router") {
@@ -155,7 +154,7 @@ export class CliApp<TRouter extends Router> {
     // CLI 命令树深度 = 从 proc 上溯到命令树根（path 为空的虚拟根）经过的段数，
     // 命令树根本身不消费 argv，不计入。
     let depth = 1;
-    let walk: RouteNode | null = proc;
+    let walk: _RouteNode | null = proc;
     while (walk && walk.parent && walk.parent.path !== "") {
       walk = walk.parent;
       depth++;
@@ -163,7 +162,7 @@ export class CliApp<TRouter extends Router> {
     const remaining = argv.slice(depth);
 
     const desc =
-      (def.cliDesc as ProcedureCliMeta | undefined)?.description ?? "";
+      (def.cliDesc as _ProcedureCliMeta | undefined)?.description ?? "";
 
     try {
       const { input, helpRequested } = parseArgv(def, remaining);
@@ -261,7 +260,7 @@ export class CliApp<TRouter extends Router> {
       if (child.kind === "proc") {
         const def = child.def;
         const desc =
-          (def.cliDesc as ProcedureCliMeta | undefined)?.description ??
+          (def.cliDesc as _ProcedureCliMeta | undefined)?.description ??
           "";
         if (!topLevel.has(TOP)) topLevel.set(TOP, { title: "", items: [] });
         topLevel.get(TOP)!.items.push({
@@ -279,11 +278,11 @@ export class CliApp<TRouter extends Router> {
       }
       const group = topLevel.get(groupKey)!;
 
-      routeWalk(child, (node) => {
+      _routeWalk(child, (node) => {
         if (node.kind !== "proc") return;
         const def = node.def;
         const desc =
-          (def.cliDesc as ProcedureCliMeta | undefined)?.description ??
+          (def.cliDesc as _ProcedureCliMeta | undefined)?.description ??
           "";
         group.items.push({
           name: node.path,

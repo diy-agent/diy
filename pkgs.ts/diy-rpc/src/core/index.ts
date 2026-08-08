@@ -9,9 +9,9 @@
 // Zod 扩展：cliArg / cliOption（side-effect import，必须在任何 schema 定义前执行）
 import './cli-meta';
 
-// 传输类型（消费者可见的最小面：信封内部类型 Envelope/CallMsg/DataMsg/EndMsg/StreamMode 不外泄）
+// 传输类型（消费者可见的最小面：信封内部类型 _Envelope/_CallMsg/_DataMsg/_EndMsg/_StreamMode 不外泄）
 export type { Transport, StreamHandle } from './types';
-// 错误（跨线抛出的公共错误类型；序列化内部件 toErrorPayload/fromErrorPayload 不外泄）
+// 错误（跨线抛出的公共错误类型；序列化内部件 _toErrorPayload/_fromErrorPayload 不外泄）
 export { RpcError, toRpcError } from './error';
 // 端口接口
 export type { RawServer, RawClient, CallOptions } from './raw';

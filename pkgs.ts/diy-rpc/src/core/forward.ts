@@ -13,15 +13,16 @@
 import type { Transport } from './types';
 import { ChannelRawClient } from './raw-client';
 import type { RawServer, RawClient } from './raw';
-import { flattenRouter } from './tree';
-import type { Router } from './meta';
-import type { RpcBackend } from './gateway';
+import { _flattenRouter } from './tree';
+import type { _Router } from './meta';
+import type { _RpcBackend } from './gateway';
 
-export interface RpcForwardOptions {
+/** @internal */
+export interface _RpcForwardOptions {
   /** 本转发后端拥有的方法前缀（如 diy.ui） */
   scope: string;
   /** scope 下的路由子树（如 apiDef.diy.ui） */
-  router: Router;
+  router: _Router;
 }
 
 /** RpcForward 转发 handler 需要的参数（无需 stream，当前只转发 unary/server） */
@@ -35,19 +36,20 @@ type FwdOpts = { input: unknown; meta: unknown };
  *   - serverStream → 返回 AsyncGenerator，远端逐块产出
  * client/bidi 暂不支持转发（当前无此类远端方法）。
  */
-export class RpcForward implements RpcBackend {
+/** @internal */
+export class RpcForward implements _RpcBackend {
   readonly scope: string;
-  private _router: Router;
+  private _router: _Router;
   private _client: RawClient;
 
-  constructor(transport: Transport, opts: RpcForwardOptions) {
+  constructor(transport: Transport, opts: _RpcForwardOptions) {
     this.scope = opts.scope;
     this._router = opts.router;
     this._client = new ChannelRawClient(transport);
   }
 
   registerInto(raw: RawServer): void {
-    const flat = flattenRouter(this._router);
+    const flat = _flattenRouter(this._router);
     for (const [name, def] of Object.entries(flat)) {
       const full = `${this.scope}.${name}`;
       (def as { name?: string }).name = full; // 完整全名回写进 meta.name

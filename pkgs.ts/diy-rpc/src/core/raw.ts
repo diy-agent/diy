@@ -9,8 +9,8 @@
  */
 
 import type { StreamHandle } from './types';
-import type { ErrorPayload, ErrorProtocolExt } from './error';
-import type { AnyProcedureMeta, HandlerForProc } from './meta';
+import type { _ErrorPayload, _ErrorProtocolExt } from './error';
+import type { _AnyProcedureMeta, _HandlerForProc } from './meta';
 
 // ═══════════════════════════════════════════════════
 //  CallOptions — 通用调用选项（取消/超时）
@@ -22,23 +22,23 @@ export interface CallOptions {
 }
 
 /** 仅接受特定 stream mode 的 meta */
-type UnaryMeta = AnyProcedureMeta & { _streamMode: 'unary' };
-type ServerMeta = AnyProcedureMeta & { _streamMode: 'server' };
-type ClientMeta = AnyProcedureMeta & { _streamMode: 'client' };
-type BidiMeta = AnyProcedureMeta & { _streamMode: 'bidi' };
+type UnaryMeta = _AnyProcedureMeta & { _streamMode: 'unary' };
+type ServerMeta = _AnyProcedureMeta & { _streamMode: 'server' };
+type ClientMeta = _AnyProcedureMeta & { _streamMode: 'client' };
+type BidiMeta = _AnyProcedureMeta & { _streamMode: 'bidi' };
 
 // ═══════════════════════════════════════════════════
 //  RawServer — 服务端端口（以 meta 为键强类型注册）
 // ═══════════════════════════════════════════════════
 
 export interface RawServer {
-  onUnary<M extends UnaryMeta>(meta: M, handler: HandlerForProc<M>): void;
+  onUnary<M extends UnaryMeta>(meta: M, handler: _HandlerForProc<M>): void;
 
-  onServerStream<M extends ServerMeta>(meta: M, handler: HandlerForProc<M>): void;
+  onServerStream<M extends ServerMeta>(meta: M, handler: _HandlerForProc<M>): void;
 
-  onClientStream<M extends ClientMeta>(meta: M, handler: HandlerForProc<M>): void;
+  onClientStream<M extends ClientMeta>(meta: M, handler: _HandlerForProc<M>): void;
 
-  onBidiStream<M extends BidiMeta>(meta: M, handler: HandlerForProc<M>): void;
+  onBidiStream<M extends BidiMeta>(meta: M, handler: _HandlerForProc<M>): void;
 
   destroy(): void;
 }
@@ -78,4 +78,5 @@ export interface RawClient {
 }
 
 // re-export 供第3层/绑定用，避免重复 import 路径
-export type { ErrorPayload, ErrorProtocolExt };
+/** @internal */
+export type { _ErrorPayload, _ErrorProtocolExt };

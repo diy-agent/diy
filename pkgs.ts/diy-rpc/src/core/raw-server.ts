@@ -13,11 +13,11 @@
  *   onNotify       — 单向通知
  */
 
-import type { Transport, StreamHandle, StreamMode, Envelope } from './types';
-import { AsyncQueue } from './async-queue';
-import { toErrorPayload, RpcError } from './error';
+import type { Transport, StreamHandle, _StreamMode, _Envelope } from './types';
+import { _AsyncQueue } from './async-queue';
+import { _toErrorPayload, RpcError } from './error';
 import type { RawServer } from './raw';
-import { validateInput, type AnyProcedureMeta, type HandlerForProc } from './meta';
+import { _validateInput, type _AnyProcedureMeta, type _HandlerForProc } from './meta';
 
 let _streamId = 0;
 
@@ -25,13 +25,13 @@ type UnaryHandler = (params: unknown) => unknown;
 type ServerStreamHandler = (params: unknown) => AsyncGenerator<unknown>;
 type ClientStreamHandler = (params: unknown, chunks: StreamHandle<unknown>) => Promise<unknown>;
 type BidiStreamHandler = (params: unknown, incoming: StreamHandle<unknown>) => AsyncGenerator<unknown>;
-/** 各 onXxx 内部 handler 形态：收 { input, meta, stream? }（与 HandlerForProc 一致） */
+/** 各 onXxx 内部 handler 形态：收 { input, meta, stream? }（与 _HandlerForProc 一致） */
 type HandlerFn = (opts: { input: unknown; meta: unknown; stream?: unknown }) => unknown;
 
 /** 从 envelope params 解包出 { input, meta }，并对 input 做 zod 校验 */
-function unwrap(meta: AnyProcedureMeta, params: unknown, stream?: unknown): { input: unknown; meta: unknown; stream?: unknown } {
+function unwrap(meta: _AnyProcedureMeta, params: unknown, stream?: unknown): { input: unknown; meta: unknown; stream?: unknown } {
   const { input, meta: m } = (params ?? {}) as { input?: unknown; meta?: unknown };
-  return { input: validateInput(meta, input), meta: m ?? {}, stream };
+  return { input: _validateInput(meta, input), meta: m ?? {}, stream };
 }
 
 export class ChannelRawServer implements RawServer {
@@ -43,7 +43,7 @@ export class ChannelRawServer implements RawServer {
   /** server-stream 取消器，按 streamId */
   private _serverStreamCancellers = new Map<number, () => void>();
   /** client/bidi 流的消费队列，按 streamId */
-  private _streamConsumers = new Map<number, AsyncQueue<any>>();
+  private _streamConsumers = new Map<number, _AsyncQueue<any>>();
 
   private _unsub: () => void;
 
@@ -52,7 +52,7 @@ export class ChannelRawServer implements RawServer {
   }
 
   /** 从 meta 取方法全名；未经 router()/RpcServer 回写（无 name）则明确报错 */
-  private _nameOf(meta: AnyProcedureMeta): string {
+  private _nameOf(meta: _AnyProcedureMeta): string {
     const name = meta.name;
     if (!name) {
       throw new Error('[ChannelRawServer] meta 无 name — 请用 router() 包裹 apiDef 或经 RpcServer 注册');
@@ -75,25 +75,25 @@ export class ChannelRawServer implements RawServer {
 
   // ── 注册方法 ────────────────────────────────────
 
-  onUnary<M extends AnyProcedureMeta & { _streamMode: 'unary' }>(meta: M, handler: HandlerForProc<M>): void {
+  onUnary<M extends _AnyProcedureMeta & { _streamMode: 'unary' }>(meta: M, handler: _HandlerForProc<M>): void {
     this._unaries.set(this._nameOf(meta), (params) => (handler as HandlerFn)(unwrap(meta, params)));
   }
 
-  onServerStream<M extends AnyProcedureMeta & { _streamMode: 'server' }>(meta: M, handler: HandlerForProc<M>): void {
+  onServerStream<M extends _AnyProcedureMeta & { _streamMode: 'server' }>(meta: M, handler: _HandlerForProc<M>): void {
     this._serverStreams.set(
       this._nameOf(meta),
       (params) => (handler as HandlerFn)(unwrap(meta, params)) as AsyncGenerator<unknown>,
     );
   }
 
-  onClientStream<M extends AnyProcedureMeta & { _streamMode: 'client' }>(meta: M, handler: HandlerForProc<M>): void {
+  onClientStream<M extends _AnyProcedureMeta & { _streamMode: 'client' }>(meta: M, handler: _HandlerForProc<M>): void {
     this._clientStreams.set(
       this._nameOf(meta),
       (params, chunks) => (handler as HandlerFn)(unwrap(meta, params, chunks)) as Promise<unknown>,
     );
   }
 
-  onBidiStream<M extends AnyProcedureMeta & { _streamMode: 'bidi' }>(meta: M, handler: HandlerForProc<M>): void {
+  onBidiStream<M extends _AnyProcedureMeta & { _streamMode: 'bidi' }>(meta: M, handler: _HandlerForProc<M>): void {
     this._bidiStreams.set(
       this._nameOf(meta),
       (params, incoming) => (handler as HandlerFn)(unwrap(meta, params, incoming)) as AsyncGenerator<unknown>,
@@ -102,7 +102,7 @@ export class ChannelRawServer implements RawServer {
 
   // ── 单一分发器 ──────────────────────────────────
 
-  private _dispatch = async (msg: Envelope) => {
+  private _dispatch = async (msg: _Envelope) => {
     if (msg.type === 'call' && !msg.stream) {
       await this._handleUnary(msg);
     } else if (msg.type === 'call' && msg.stream === true) {
@@ -128,7 +128,7 @@ export class ChannelRawServer implements RawServer {
   };
 
   /** 根据 method 名从已注册 handler 推断 stream mode */
-  private _detectStreamMode(method: string): StreamMode | null {
+  private _detectStreamMode(method: string): _StreamMode | null {
     if (this._serverStreams.has(method)) return 'server';
     if (this._clientStreams.has(method)) return 'client';
     if (this._bidiStreams.has(method)) return 'bidi';
@@ -137,19 +137,19 @@ export class ChannelRawServer implements RawServer {
 
   // ── Unary ────────────────────────────────────────
 
-  private async _handleUnary(msg: Envelope & { type: 'call' }) {
+  private async _handleUnary(msg: _Envelope & { type: 'call' }) {
     const fn = this._unaries.get(msg.method!);
     if (!fn) return;
     try {
       this.tx.send({ type: 'call', id: msg.id, result: await fn(msg.params) });
     } catch (err: unknown) {
-      this.tx.send({ type: 'call', id: msg.id, error: toErrorPayload(err) });
+      this.tx.send({ type: 'call', id: msg.id, error: _toErrorPayload(err) });
     }
   }
 
   // ── Server-Stream ────────────────────────────────
 
-  private _startServerStream(msg: Envelope & { type: 'call' }) {
+  private _startServerStream(msg: _Envelope & { type: 'call' }) {
     const fn = this._serverStreams.get(msg.method!);
     if (!fn) return;
 
@@ -167,7 +167,7 @@ export class ChannelRawServer implements RawServer {
         }
         if (!cancelled) this.tx.send({ type: 'end', stream: streamId });
       } catch (err: unknown) {
-        if (!cancelled) this.tx.send({ type: 'end', stream: streamId, error: toErrorPayload(err) });
+        if (!cancelled) this.tx.send({ type: 'end', stream: streamId, error: _toErrorPayload(err) });
       } finally {
         this._serverStreamCancellers.delete(streamId);
       }
@@ -176,12 +176,12 @@ export class ChannelRawServer implements RawServer {
 
   // ── Client-Stream ────────────────────────────────
 
-  private async _startClientStream(msg: Envelope & { type: 'call' }) {
+  private async _startClientStream(msg: _Envelope & { type: 'call' }) {
     const fn = this._clientStreams.get(msg.method!);
     if (!fn) return;
 
     const streamId = ++_streamId;
-    const queue = new AsyncQueue<any>();
+    const queue = new _AsyncQueue<any>();
     this._streamConsumers.set(streamId, queue);
 
     this.tx.send({ type: 'call', id: msg.id, stream: streamId });
@@ -190,7 +190,7 @@ export class ChannelRawServer implements RawServer {
       const result = await fn(msg.params, queue);
       this.tx.send({ type: 'call', id: msg.id, result });
     } catch (err: unknown) {
-      this.tx.send({ type: 'call', id: msg.id, error: toErrorPayload(err) });
+      this.tx.send({ type: 'call', id: msg.id, error: _toErrorPayload(err) });
     } finally {
       this._streamConsumers.delete(streamId);
     }
@@ -198,12 +198,12 @@ export class ChannelRawServer implements RawServer {
 
   // ── Bidi-Stream ───────────────────────────────────
 
-  private async _startBidiStream(msg: Envelope & { type: 'call' }) {
+  private async _startBidiStream(msg: _Envelope & { type: 'call' }) {
     const fn = this._bidiStreams.get(msg.method!);
     if (!fn) return;
 
     const streamId = ++_streamId;
-    const queue = new AsyncQueue<any>();
+    const queue = new _AsyncQueue<any>();
     this._streamConsumers.set(streamId, queue);
 
     // bidi 不注册 cancellation：客户端 end 仅表示上游已完成，
@@ -216,7 +216,7 @@ export class ChannelRawServer implements RawServer {
       }
       this.tx.send({ type: 'end', stream: streamId });
     } catch (err: unknown) {
-      this.tx.send({ type: 'end', stream: streamId, error: toErrorPayload(err) });
+      this.tx.send({ type: 'end', stream: streamId, error: _toErrorPayload(err) });
     } finally {
       this._streamConsumers.delete(streamId);
     }

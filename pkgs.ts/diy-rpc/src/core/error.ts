@@ -4,22 +4,24 @@
  * code 用 grpc canonical 名（'INVALID_ARGUMENT'|'INTERNAL'|…）；
  * ext 是协议扩展袋，各协议把原始数据放自己的命名空间（http.status…），互不打架。
  *
- * 转换链：handler/zod 抛出的任意东西 → toRpcError → RpcError → toErrorPayload → wire。
+ * 转换链：handler/zod 抛出的任意东西 → toRpcError → RpcError → _toErrorPayload → wire。
  */
 
 // ═══════════════════════════════════════════════════
 //  协议扩展袋（各协议各自的原始数据，命名空间隔离）
 // ═══════════════════════════════════════════════════
 
-export interface ErrorProtocolExt {
+/** @internal */
+export interface _ErrorProtocolExt {
   http?: { status: number; statusText?: string; headers?: Record<string, string> };
   grpc?: { code: number };
   ws?: { closeCode?: number };
 }
 
-export interface RpcErrorOptions {
+/** @internal */
+export interface _RpcErrorOptions {
   details?: unknown;
-  ext?: ErrorProtocolExt;
+  ext?: _ErrorProtocolExt;
 }
 
 // ═══════════════════════════════════════════════════
@@ -30,7 +32,7 @@ export class RpcError extends Error {
   constructor(
     public code: string,
     message: string,
-    public opts?: RpcErrorOptions,
+    public opts?: _RpcErrorOptions,
   ) {
     super(message);
     this.name = 'RpcError';
@@ -40,7 +42,7 @@ export class RpcError extends Error {
     return this.opts?.details;
   }
 
-  get ext(): ErrorProtocolExt | undefined {
+  get ext(): _ErrorProtocolExt | undefined {
     return this.opts?.ext;
   }
 }
@@ -49,11 +51,12 @@ export class RpcError extends Error {
 //  wire 错误载荷（可序列化）
 // ═══════════════════════════════════════════════════
 
-export interface ErrorPayload {
+/** @internal */
+export interface _ErrorPayload {
   code: string;
   message: string;
   details?: unknown;
-  ext?: ErrorProtocolExt;
+  ext?: _ErrorProtocolExt;
 }
 
 // ═══════════════════════════════════════════════════
@@ -92,13 +95,15 @@ export function toRpcError(err: unknown): RpcError {
   );
 }
 
-/** RpcError → wire ErrorPayload（保留 details + ext） */
-export function toErrorPayload(err: unknown): ErrorPayload {
+/** RpcError → wire _ErrorPayload（保留 details + ext） */
+/** @internal */
+export function _toErrorPayload(err: unknown): _ErrorPayload {
   const r = toRpcError(err);
   return { code: r.code, message: r.message, details: r.details, ext: r.ext };
 }
 
-/** 从 wire ErrorPayload 还原 RpcError（保留 details + ext） */
-export function fromErrorPayload(p: ErrorPayload): RpcError {
+/** 从 wire _ErrorPayload 还原 RpcError（保留 details + ext） */
+/** @internal */
+export function _fromErrorPayload(p: _ErrorPayload): RpcError {
   return new RpcError(p.code, p.message, { details: p.details, ext: p.ext });
 }

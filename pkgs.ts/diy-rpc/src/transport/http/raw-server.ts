@@ -22,23 +22,23 @@
 
 import type { ServerHttp2Stream, IncomingHttpHeaders } from 'node:http2';
 import type { StreamHandle } from '../../core/types';
-import { AsyncQueue } from '../../core/async-queue';
-import { RpcError, toErrorPayload, type ErrorPayload } from '../../core/error';
+import { _AsyncQueue } from '../../core/async-queue';
+import { RpcError, _toErrorPayload, type _ErrorPayload } from '../../core/error';
 import { httpStatusForCode } from './codes';
 import type { RawServer } from '../../core/raw';
-import { validateInput, type AnyProcedureMeta, type HandlerForProc } from '../../core/meta';
+import { _validateInput, type _AnyProcedureMeta, type _HandlerForProc } from '../../core/meta';
 
 type UnaryHandler = (params: unknown) => unknown;
 type ServerStreamHandler = (params: unknown) => AsyncGenerator<unknown>;
 type ClientStreamHandler = (params: unknown, chunks: StreamHandle<unknown>) => Promise<unknown>;
 type BidiStreamHandler = (params: unknown, incoming: StreamHandle<unknown>) => AsyncGenerator<unknown>;
-/** 各 onXxx 内部 handler 形态：收 { input, meta, stream? }（与 HandlerForProc 一致） */
+/** 各 onXxx 内部 handler 形态：收 { input, meta, stream? }（与 _HandlerForProc 一致） */
 type HandlerFn = (opts: { input: unknown; meta: unknown; stream?: unknown }) => unknown;
 
 /** 从 envelope params 解包出 { input, meta }，并对 input 做 zod 校验 */
-function unwrap(meta: AnyProcedureMeta, params: unknown, stream?: unknown): { input: unknown; meta: unknown; stream?: unknown } {
+function unwrap(meta: _AnyProcedureMeta, params: unknown, stream?: unknown): { input: unknown; meta: unknown; stream?: unknown } {
   const { input, meta: m } = (params ?? {}) as { input?: unknown; meta?: unknown };
-  return { input: validateInput(meta, input), meta: m ?? {}, stream };
+  return { input: _validateInput(meta, input), meta: m ?? {}, stream };
 }
 
 export class HttpRawServer implements RawServer {
@@ -48,7 +48,7 @@ export class HttpRawServer implements RawServer {
   private _bidiStreams = new Map<string, BidiStreamHandler>();
 
   /** 从 meta 取方法全名；未经 router()/RpcServer 回写（无 name）则明确报错 */
-  private _nameOf(meta: AnyProcedureMeta): string {
+  private _nameOf(meta: _AnyProcedureMeta): string {
     const name = meta.name;
     if (!name) {
       throw new Error('[HttpRawServer] meta 无 name — 请用 router() 包裹 apiDef 或经 RpcServer 注册');
@@ -56,25 +56,25 @@ export class HttpRawServer implements RawServer {
     return name;
   }
 
-  onUnary<M extends AnyProcedureMeta & { _streamMode: 'unary' }>(meta: M, handler: HandlerForProc<M>): void {
+  onUnary<M extends _AnyProcedureMeta & { _streamMode: 'unary' }>(meta: M, handler: _HandlerForProc<M>): void {
     this._unaries.set(this._nameOf(meta), (params) => (handler as HandlerFn)(unwrap(meta, params)));
   }
 
-  onServerStream<M extends AnyProcedureMeta & { _streamMode: 'server' }>(meta: M, handler: HandlerForProc<M>): void {
+  onServerStream<M extends _AnyProcedureMeta & { _streamMode: 'server' }>(meta: M, handler: _HandlerForProc<M>): void {
     this._serverStreams.set(
       this._nameOf(meta),
       (params) => (handler as HandlerFn)(unwrap(meta, params)) as AsyncGenerator<unknown>,
     );
   }
 
-  onClientStream<M extends AnyProcedureMeta & { _streamMode: 'client' }>(meta: M, handler: HandlerForProc<M>): void {
+  onClientStream<M extends _AnyProcedureMeta & { _streamMode: 'client' }>(meta: M, handler: _HandlerForProc<M>): void {
     this._clientStreams.set(
       this._nameOf(meta),
       (params, chunks) => (handler as HandlerFn)(unwrap(meta, params, chunks)) as Promise<unknown>,
     );
   }
 
-  onBidiStream<M extends AnyProcedureMeta & { _streamMode: 'bidi' }>(meta: M, handler: HandlerForProc<M>): void {
+  onBidiStream<M extends _AnyProcedureMeta & { _streamMode: 'bidi' }>(meta: M, handler: _HandlerForProc<M>): void {
     this._bidiStreams.set(
       this._nameOf(meta),
       (params, incoming) => (handler as HandlerFn)(unwrap(meta, params, incoming)) as AsyncGenerator<unknown>,
@@ -99,7 +99,7 @@ export class HttpRawServer implements RawServer {
     if (this._bidiStreams.has(method)) return this._handleBidiStream(stream, method, headers);
 
     // 未注册 → UNIMPLEMENTED
-    respondError(stream, toErrorPayload(new RpcError('UNIMPLEMENTED', `No handler for "${method}"`)));
+    respondError(stream, _toErrorPayload(new RpcError('UNIMPLEMENTED', `No handler for "${method}"`)));
   }
 
   // ── Unary ────────────────────────────────────────
@@ -140,7 +140,7 @@ export class HttpRawServer implements RawServer {
       if (!aborted) safeEnd(stream);
     } catch (e) {
       if (!aborted) {
-        safeWrite(stream, JSON.stringify({ e: toErrorPayload(e) }) + '\n');
+        safeWrite(stream, JSON.stringify({ e: _toErrorPayload(e) }) + '\n');
         safeEnd(stream);
       }
     } finally {
@@ -190,7 +190,7 @@ export class HttpRawServer implements RawServer {
       if (!aborted) safeEnd(stream);
     } catch (e) {
       if (!aborted) {
-        safeWrite(stream, JSON.stringify({ e: toErrorPayload(e) }) + '\n');
+        safeWrite(stream, JSON.stringify({ e: _toErrorPayload(e) }) + '\n');
         safeEnd(stream);
       }
     } finally {
@@ -237,9 +237,9 @@ function parseBodyParams(body: Buffer): unknown {
   }
 }
 
-/** 把请求 body 的 NDJSON chunk 流桥接成 AsyncQueue（StreamHandle） */
-function createBodyReader(stream: ServerHttp2Stream): AsyncQueue<unknown> {
-  const q = new AsyncQueue<unknown>();
+/** 把请求 body 的 NDJSON chunk 流桥接成 _AsyncQueue（StreamHandle） */
+function createBodyReader(stream: ServerHttp2Stream): _AsyncQueue<unknown> {
+  const q = new _AsyncQueue<unknown>();
   let buf = '';
   let finished = false;
 
@@ -298,9 +298,9 @@ function respondResult(stream: ServerHttp2Stream, result: unknown): void {
 
 function respondError(stream: ServerHttp2Stream, err: unknown): void {
   try {
-    const p: ErrorPayload = toErrorPayload(err);
+    const p: _ErrorPayload = _toErrorPayload(err);
     const status = httpStatusForCode(p.code);
-    const body: ErrorPayload = { ...p, ext: { ...p.ext, http: { status } } };
+    const body: _ErrorPayload = { ...p, ext: { ...p.ext, http: { status } } };
     stream.respond({ ':status': status, 'content-type': 'application/json' });
     stream.end(JSON.stringify(body));
   } catch { /* 客户端已断开则忽略 */ }

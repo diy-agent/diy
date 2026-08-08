@@ -1,5 +1,5 @@
 /**
- * 协议信封层测试：验证调用 API 时实际收发的原始 Envelope 序列
+ * 协议信封层测试：验证调用 API 时实际收发的原始 _Envelope 序列
  */
 
 import type { Transport } from '../src/core/types';
@@ -85,17 +85,17 @@ function assertLog(logs: EnvelopeLog[], expected: LogPattern): void {
   if (logs.length !== expected.length) {
     const e = JSON.stringify(expected.map(e => `${e.dir} ${e.type || e.kind}`));
     const a = JSON.stringify(logs.map(l => `${l.dir} ${l.envelope.type}`));
-    throw new Error(`Envelope count mismatch:\n  expected ${expected.length}: ${e}\n  got ${logs.length}: ${a}`);
+    throw new Error(`_Envelope count mismatch:\n  expected ${expected.length}: ${e}\n  got ${logs.length}: ${a}`);
   }
   for (let i = 0; i < expected.length; i++) {
     const exp = expected[i];
     const actual = logs[i];
     if (actual.dir !== exp.dir) {
-      throw new Error(`Envelope #${i}: expected dir=${exp.dir} but got ${actual.dir}`);
+      throw new Error(`_Envelope #${i}: expected dir=${exp.dir} but got ${actual.dir}`);
     }
     if (!matchEnvelope(actual.envelope, exp)) {
       throw new Error(
-        `Envelope #${i} mismatch:\n  expected: ${JSON.stringify(exp)}\n  actual:   ${JSON.stringify(actual.envelope)}`
+        `_Envelope #${i} mismatch:\n  expected: ${JSON.stringify(exp)}\n  actual:   ${JSON.stringify(actual.envelope)}`
       );
     }
   }
