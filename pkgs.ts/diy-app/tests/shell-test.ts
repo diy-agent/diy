@@ -15,9 +15,7 @@
 //   sh.close()   // 释放 session
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, mkdirSync } from "node:fs";
 
 // ═══════════════════════════════════════════════════
 //  持久 bash Session（对齐 python Session）

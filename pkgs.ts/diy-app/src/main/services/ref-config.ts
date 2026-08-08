@@ -4,10 +4,10 @@
 // 注意：diy.yaml 只是 ref 配置，不作为项目边界。
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join, resolve, dirname } from "node:path";
+import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import * as yaml from "js-yaml";
-import { findProjectRoot, loadRefConfig } from "../core/ref-project";
+import { findProjectRoot } from "../core/ref-project";
 import type { ProjectRoot } from "../core/ref-project";
 
 /** 与 loadRefConfig 同优先级搜索 diy.yaml：cwd → 项目根 → 上层（非 diy 项目） */

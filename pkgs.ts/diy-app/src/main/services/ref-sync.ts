@@ -16,7 +16,7 @@ import * as yaml from "js-yaml";
 import { findProjectRoot, detectCurrentScope, loadRefConfig } from "../core/ref-project";
 import { diyHome } from "../core/state";
 import type { ProjectRoot, WorkspaceInfo, RefConfig } from "../core/ref-project";
-import type { RefLockV5, CategoryRefs } from "../core/ref";
+import type { RefLockV5 } from "../core/ref";
 
 // ═══════════════════════════════════════
 // 类型

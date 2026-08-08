@@ -128,7 +128,7 @@ export function checkRefPaths(rootDir?: string): RefStatus[] {
     if (!scopes) continue;
 
     for (const categories of Object.values(scopes)) {
-      for (const [catKey, deps] of Object.entries(categories)) {
+      for (const [_catKey, deps] of Object.entries(categories)) {
         if (!deps) continue;
         for (const [pkg, path] of Object.entries(deps)) {
           results.push({
