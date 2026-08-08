@@ -5,6 +5,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { RpcImpl, router, RpcServer, createTypedClient, ChannelRawClient, ChannelRawServer } from '../src/index';
 import { WsTransport } from '../src/transport/ws';
+import { it } from 'vitest';
 import { z } from 'zod';
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -46,7 +47,7 @@ async function main() {
 
   function assert(cond: boolean, msg: string) {
     if (cond) { passed++; console.log(`  ✅ ${msg}`); }
-    else { failed++; console.error(`  ❌ ${msg}`); process.exit(1); }
+    else { failed++; throw new Error(msg); }
   }
 
   const PORT = 18923 + Math.floor(Math.random() * 1000);
@@ -160,7 +161,7 @@ async function main() {
 
   console.log(`\n${'═'.repeat(40)}`);
   console.log(`通过: ${passed}  失败: ${failed}`);
-  if (failed > 0) process.exit(1);
+
 }
 
-main().catch(e => { console.error('TEST FAILED:', e); process.exit(1); });
+it('ws-transport: WsTransport', async () => { await main(); });

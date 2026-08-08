@@ -8,6 +8,7 @@
  */
 
 import type { Transport } from '../src/core/types';
+import { it } from 'vitest';
 import { z } from 'zod';
 import { RpcSchema, RpcServer, createTypedClient, ChannelRawClient, ChannelRawServer } from '../src/index';
 
@@ -72,7 +73,7 @@ async function main() {
 
   function assert(cond: boolean, msg: string) {
     if (cond) { passed++; console.log(`  ✅ ${msg}`); }
-    else { failed++; console.error(`  ❌ ${msg}`); process.exit(1); }
+    else { failed++; throw new Error(msg); }
   }
 
   // ── 1. handle 分离绑定 ─────────────────────
@@ -146,8 +147,8 @@ async function main() {
   // ── 结果 ─────────────────────────────────
   console.log(`\n${'═'.repeat(40)}`);
   console.log(`通过: ${passed}  失败: ${failed}`);
-  if (failed > 0) process.exit(1);
+
 }
 
-main().catch(e => { console.error('TEST FAILED:', e); process.exit(1); });
+it('rpc-v2: 类型化 + zod 校验', async () => { await main(); });
 

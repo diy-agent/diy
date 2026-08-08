@@ -7,6 +7,7 @@
 import type { Transport } from '../src/core/types';
 import { ChannelRawClient, ChannelRawServer } from '../src/core';
 import { RpcImpl, RpcServer, router, createTypedClient } from '../src/core';
+import { it } from 'vitest';
 import { z } from 'zod';
 
 // ═══════════════════════════════════════════════════
@@ -37,7 +38,7 @@ async function main() {
 
   function assert(cond: boolean, msg: string) {
     if (cond) { passed++; console.log(`  ✅ ${msg}`); }
-    else { failed++; console.error(`  ❌ ${msg}`); process.exit(1); }
+    else { failed++; throw new Error(msg); }
   }
 
   // ── RPC 层四种流模式 ─────────────────────────
@@ -45,7 +46,6 @@ async function main() {
   console.log('\n── RPC 层（unary / server-stream / client-stream / bidi-stream）──');
   {
     const [txA, txB] = createMemTransportPair();
-    const client = new ChannelRawClient(txB);
 
     const app = router({
       ping: RpcImpl.unary({
@@ -111,7 +111,7 @@ async function main() {
 
   console.log(`\n${'═'.repeat(40)}`);
   console.log(`通过: ${passed}  失败: ${failed}`);
-  if (failed > 0) process.exit(1);
+
 }
 
-main().catch(e => { console.error('TEST FAILED:', e); process.exit(1); });
+it('rpc-layer: 四种流模式', async () => { await main(); });

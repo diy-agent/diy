@@ -2,9 +2,10 @@
  * 协议信封层测试：验证调用 API 时实际收发的原始 Envelope 序列
  */
 
-import type { Transport, StreamHandle } from '../src/core/types';
+import type { Transport } from '../src/core/types';
 import { ChannelRawServer, ChannelRawClient } from '../src/core';
 import { RpcImpl, RpcServer, RpcSchema, router, createTypedClient } from '../src/core';
+import { it } from 'vitest';
 import { z } from 'zod';
 
 const api = router({
@@ -107,7 +108,7 @@ let failed = 0;
 
 function assert(cond: boolean, msg: string) {
   if (cond) { passed++; console.log(`  ✅ ${msg}`); }
-  else { failed++; console.error(`  ❌ ${msg}`); }
+  else { failed++; throw new Error(msg); }
 }
 
 async function testUnaryEnvelopes() {
@@ -270,7 +271,7 @@ async function main() {
 
   console.log(`\n${'═'.repeat(40)}`);
   console.log(`通过: ${passed}  失败: ${failed}`);
-  if (failed > 0) process.exit(1);
+
 }
 
-main().catch(e => { console.error('FATAL:', e); process.exit(1); });
+it('protocol-envelopes: 信封序列', async () => { await main(); });

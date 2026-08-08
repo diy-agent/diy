@@ -15,7 +15,14 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "check:browser": "tsc --noEmit -p tsconfig.browser.json",
-    "test": "tsx test/transport-raw.test.ts && tsx test/rpc-layer.test.ts && tsx test/protocol-envelopes.test.ts && tsx test/rpc-v2.test.ts && tsx test/rpc-typed-client.test.ts && tsx test/rpc-gateway.test.ts && tsx test/http-raw.test.ts && tsx test/ws-transport.test.ts"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "oxlint src/ test/",
+    "lint:fix": "oxlint --fix src/ test/",
+    "fmt": "oxfmt --check src/ test/",
+    "fmt:fix": "oxfmt --write src/ test/",
+    "check": "npm run typecheck && npm run lint && npm run check:browser",
+    "fix": "npm run fmt:fix && npm run lint:fix"
   },
   "dependencies": {
     "ws": "^8.21.0",
@@ -26,6 +33,32 @@
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",
-    "typescript": "^6.0.3"
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "oxfmt": {
+    "indent": 2,
+    "lineWidth": 100,
+    "quotes": "single",
+    "ignore": [
+      "node_modules/"
+    ]
+  },
+  "oxlint": {
+    "rules": {
+      "no-unused-vars": "warn",
+      "no-console": "off",
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          "argsIgnorePattern": "^_"
+        }
+      ]
+    },
+    "ignorePatterns": [
+      "node_modules/"
+    ]
   }
 }

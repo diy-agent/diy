@@ -5,6 +5,7 @@
  * （AsyncIterable 与 函数两种形式）、bidi-stream、CallOptions（signal/timeout）、zod 校验。
  */
 
+import { it } from 'vitest';
 import { z } from 'zod';
 import {
   RpcSchema, RpcServer, createTypedClient, ChannelRawClient, ChannelRawServer,
@@ -102,7 +103,7 @@ let failed = 0;
 
 function assert(cond: boolean, msg: string) {
   if (cond) { passed++; console.log(`  ✅ ${msg}`); }
-  else { failed++; console.error(`  ❌ ${msg}`); process.exit(1); }
+  else { failed++; throw new Error(msg); }
 }
 
 async function runScenarios(creator: (tx: Transport) => any, label: string) {
@@ -172,7 +173,7 @@ async function main() {
 
   console.log(`\n${'═'.repeat(40)}`);
   console.log(`通过: ${passed}  失败: ${failed}`);
-  if (failed > 0) process.exit(1);
+
 }
 
-main().catch(e => { console.error('TEST FAILED:', e); process.exit(1); });
+it('rpc-typed-client: createTypedClient 场景', async () => { await main(); });

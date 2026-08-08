@@ -5,7 +5,6 @@ import {
   routeWalk,
   type RouteNode,
   type RouterNode,
-  type ProcNode,
 } from "../core/tree";
 import type { RawClient } from "../core/raw";
 import { parseArgv, generateHelp, CliParseError } from "./parser";

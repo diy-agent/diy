@@ -15,6 +15,7 @@
 import * as http2 from 'node:http2';
 import { exec as execCb } from 'node:child_process';
 import { promisify } from 'node:util';
+import { it } from 'vitest';
 import { z } from 'zod';
 import { router, RpcSchema, RpcError } from '../src/index';
 import { HttpRawServer } from '../src/transport/http/raw-server';
@@ -84,7 +85,7 @@ async function main() {
   let failed = 0;
   function assert(cond: boolean, msg: string) {
     if (cond) { passed++; console.log(`  ✅ ${msg}`); }
-    else { failed++; console.error(`  ❌ ${msg}`); }
+    else { failed++; throw new Error(msg); }
   }
 
   const srv = http2.createServer();
@@ -200,7 +201,7 @@ async function main() {
   console.log(`\n${'═'.repeat(40)}`);
   console.log(`通过: ${passed}  失败: ${failed}`);
   console.log(`${'═'.repeat(40)}`);
-  if (failed > 0) process.exit(1);
+
 }
 
-main().catch((e) => { console.error('TEST FAILED:', e); process.exit(1); });
+it('http-raw: HttpRaw 绑定', async () => { await main(); });

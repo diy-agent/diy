@@ -6,6 +6,7 @@
  * 注册以 meta 为键（onUnary(meta, handler)），client 调用带 { input, meta } 包装。
  */
 
+import { it } from 'vitest';
 import { z } from 'zod';
 import type { Transport } from '../src/core/types';
 import { ChannelRawServer, ChannelRawClient } from '../src/core';
@@ -56,7 +57,7 @@ async function main() {
 
   function assert(cond: boolean, msg: string) {
     if (cond) { passed++; console.log(`  ✅ ${msg}`); }
-    else { failed++; console.error(`  ❌ ${msg}`); process.exit(1); }
+    else { failed++; throw new Error(msg); }
   }
 
   // ── 1. Unary ──────────────────────────────────
@@ -200,7 +201,7 @@ async function main() {
 
   console.log(`\n${'═'.repeat(40)}`);
   console.log(`通过: ${passed}  失败: ${failed}`);
-  if (failed > 0) process.exit(1);
+
 }
 
-main().catch(e => { console.error('TEST FAILED:', e); process.exit(1); });
+it('transport-raw: ChannelRawServer/Client 端口', async () => { await main(); });

@@ -8,6 +8,7 @@
  */
 
 import type { Transport } from '../src/core/types';
+import { it } from 'vitest';
 import { z } from 'zod';
 import {
   RpcSchema, RpcServer, RpcGateway, RpcForward, createTypedClient,
@@ -52,7 +53,7 @@ async function main() {
   let failed = 0;
   function assert(cond: boolean, msg: string) {
     if (cond) { passed++; console.log(`  ✅ ${msg}`); }
-    else { failed++; console.error(`  ❌ ${msg}`); }
+    else { failed++; throw new Error(msg); }
   }
 
   // ── 拓扑：cliTx ─ gateway → [本地 appServer] + [forward → rendererTx] ──
@@ -109,10 +110,7 @@ async function main() {
   console.log(`\n════════════════════════════════════════`);
   console.log(`  通过: ${passed}  失败: ${failed}`);
   console.log(`════════════════════════════════════════`);
-  process.exit(failed > 0 ? 1 : 0);
+
 }
 
-main().catch((err) => {
-  console.error('❌', err);
-  process.exit(1);
-});
+it('rpc-gateway: 路由归属', async () => { await main(); });
