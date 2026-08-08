@@ -22,9 +22,9 @@
 
 import type { ServerHttp2Stream, IncomingHttpHeaders } from 'node:http2';
 import type { StreamHandle } from '../../core/types';
-import { _AsyncQueue } from '../../core/async-queue';
+import { _AsyncQueue } from '../../core/_async-queue';
 import { RpcError, _toErrorPayload, type _ErrorPayload } from '../../core/error';
-import { httpStatusForCode } from './codes';
+import { httpStatusForCode } from './_codes';
 import type { RawServer } from '../../core/raw';
 import { _validateInput, type _AnyProcedureMeta, type _HandlerForProc } from '../../core/meta';
 

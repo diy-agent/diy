@@ -5,12 +5,12 @@ import {
   _routeWalk,
   type _RouteNode,
   type _RouterNode,
-} from "../core/tree";
+} from "../core/_tree";
 import type { RawClient } from "../core/raw";
-import { parseArgv, generateHelp, CliParseError } from "./parser";
-import type { _ProcedureCliMeta } from "../core/cli-meta";
+import { parseArgv, generateHelp, CliParseError } from "./_parser";
+import type { _ProcedureCliMeta } from "../core/_cli-meta";
 
-import "../core/cli-meta";
+import "../core/_cli-meta";
 
 /** 按点分路径查找 _RouterNode（如 'diy.app' → diy 下 app 节点），找不到返回 null */
 function findNodeByPath(

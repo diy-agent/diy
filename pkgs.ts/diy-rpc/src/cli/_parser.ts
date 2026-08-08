@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { _AnyProcedureMeta } from '../core/meta';
-import { _getCliOptionMeta, _getCliArgMeta } from '../core/cli-meta';
+import { _getCliOptionMeta, _getCliArgMeta } from '../core/_cli-meta';
 
 // ═══════════════════════════════════════════════════
 //  Schema 反射工具（CLI 专用）

@@ -12,10 +12,10 @@
 import * as http2 from 'node:http2';
 import type { ClientHttp2Session, ClientHttp2Stream } from 'node:http2';
 import type { StreamHandle } from '../../core/types';
-import { _AsyncQueue } from '../../core/async-queue';
+import { _AsyncQueue } from '../../core/_async-queue';
 import { RpcError, _fromErrorPayload, type _ErrorPayload } from '../../core/error';
 import type { CallOptions, RawClient } from '../../core/raw';
-import { codeForHttpStatus } from './codes';
+import { codeForHttpStatus } from './_codes';
 
 interface HttpResp {
   status: number;

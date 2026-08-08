@@ -14,7 +14,7 @@
  */
 
 import type { Transport, StreamHandle, _StreamMode, _Envelope } from './types';
-import { _AsyncQueue } from './async-queue';
+import { _AsyncQueue } from './_async-queue';
 import { _toErrorPayload, RpcError } from './error';
 import type { RawServer } from './raw';
 import { _validateInput, type _AnyProcedureMeta, type _HandlerForProc } from './meta';

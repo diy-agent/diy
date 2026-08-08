@@ -15,7 +15,7 @@ import { z } from 'zod';
 import type { StreamHandle } from './types';
 import type { RawServer } from './raw';
 import type { _RpcBackend } from './gateway';
-import { _flattenRouter, _buildRouteTree, _routeLeaves } from './tree';
+import { _flattenRouter, _buildRouteTree, _routeLeaves } from './_tree';
 import {
   type _HandlerForProc, type ProcedureMeta, type ProcedureDef,
   type _AnyProcedureMeta, type _AnyProcedureDef, type _Router,

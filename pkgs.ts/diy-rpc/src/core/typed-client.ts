@@ -10,7 +10,7 @@ import { z } from 'zod';
 import type { CallOptions } from './raw-client';
 import type { StreamHandle } from './types';
 import type { RawClient } from './raw';
-import { _flattenRouter } from './tree';
+import { _flattenRouter } from './_tree';
 
 // ═══════════════════════════════════════════════════
 //  类型工具 — 从 meta 的 zod schema 推导

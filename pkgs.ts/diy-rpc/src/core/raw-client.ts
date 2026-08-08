@@ -2,7 +2,7 @@ import type { Transport, _ErrorPayload, StreamHandle } from './types';
 import type { _Envelope, _CallMsg } from './types';
 import { RpcError, _fromErrorPayload } from './error';
 import type { CallOptions, RawClient } from './raw';
-import { _AsyncQueue } from './async-queue';
+import { _AsyncQueue } from './_async-queue';
 
 export type { CallOptions };
 

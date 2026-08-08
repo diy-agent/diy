@@ -7,7 +7,7 @@
  */
 
 // Zod 扩展：cliArg / cliOption（side-effect import，必须在任何 schema 定义前执行）
-import './cli-meta';
+import './_cli-meta';
 
 // 传输类型（消费者可见的最小面：信封内部类型 _Envelope/_CallMsg/_DataMsg/_EndMsg/_StreamMode 不外泄）
 export type { Transport, StreamHandle } from './types';
