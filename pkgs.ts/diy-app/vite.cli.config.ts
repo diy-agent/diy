@@ -18,14 +18,11 @@ export default defineConfig({
       fileName: "index",
     },
     rollupOptions: {
+      // 外部化所有 node 内建模块（保持原生 import，避免 vite 替换成 __vite-browser-external
+      // 空 shim——CLI 经 @diy/rpc/http 依赖 node:http2，缺这个会运行时报
+      // `__vite_browser_external.connect is not a function`）。
       external: [
-        "node:fs",
-        "node:path",
-        "node:os",
-        "node:events",
-        "node:stream",
-        "node:url",
-        "node:child_process",
+        /^node:/,
         "zod",
         "fastify",
         "@fastify/cors",

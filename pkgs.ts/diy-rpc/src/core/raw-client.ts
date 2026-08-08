@@ -210,6 +210,23 @@ export class ChannelRawClient implements RawClient {
       }, { once: true });
     }
 
+    // 先注册结果 pending，再发 chunk——避免服务端在循环期间提前回包时该 id 无
+    // pending entry 而被丢（_dispatch 查不到直接忽略），导致 result promise 永不
+    // 落定（并发负载下 setTimeout/setImmediate 时序错位会触发此竞态而挂起）。
+    let resolveResult: (v: TRes) => void = () => {};
+    let rejectResult: (e: unknown) => void = () => {};
+    const resultPromise = new Promise<TRes>((resolve, reject) => {
+      resolveResult = resolve;
+      rejectResult = reject;
+    });
+    this.pending.set(id, {
+      onMessage: (msg) => {
+        if (msg.error) rejectResult(fromErrorPayload(msg.error));
+        else resolveResult(msg.result as TRes);
+        return true;
+      },
+    });
+
     try {
       for await (const val of chunks) {
         if (signal?.aborted) break;
@@ -224,16 +241,7 @@ export class ChannelRawClient implements RawClient {
       this.transport.send({ type: 'end', stream: streamId });
     }
 
-    return new Promise<TRes>((resolve, reject) => {
-      const entry: PendingEntry = {
-        onMessage: (msg) => {
-          if (msg.error) reject(fromErrorPayload(msg.error));
-          else resolve(msg.result as TRes);
-          return true;
-        },
-      };
-      this.pending.set(id, entry);
-    });
+    return resultPromise;
   }
 
   async bidiStream<TReq = unknown, TChunkIn = unknown, TChunkOut = unknown>(
