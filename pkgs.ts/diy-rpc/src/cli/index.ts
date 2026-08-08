@@ -65,7 +65,7 @@ function resolveCliTree(
 }
 
 async function* stdinAsync(): AsyncGenerator<string> {
-  const { createInterface } = await import("readline");
+  const { createInterface } = await import("node:readline");
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
