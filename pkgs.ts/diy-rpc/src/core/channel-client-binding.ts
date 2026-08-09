@@ -1,7 +1,7 @@
-import type { Transport, _ErrorPayload, StreamHandle } from './types';
+import type { EnvelopeTransport, _ErrorPayload, StreamHandle } from './types';
 import type { _Envelope, _CallMsg } from './types';
 import { RpcError, _fromErrorPayload } from './error';
-import type { CallOptions, RawClient } from './raw';
+import type { CallOptions, ClientBinding } from './server-binding';
 import { _AsyncQueue } from './_async-queue';
 
 export type { CallOptions };
@@ -16,7 +16,7 @@ interface StreamEntry {
   end: (error?: _ErrorPayload) => void;
 }
 
-export class ChannelRawClient implements RawClient {
+export class ChannelClientBinding implements ClientBinding {
   private _reqId = 0;
   private unsub: () => void;
   private pending = new Map<number, PendingEntry>();
@@ -24,7 +24,7 @@ export class ChannelRawClient implements RawClient {
   private disposed = false;
 
   constructor(
-    private transport: Transport,
+    private transport: EnvelopeTransport,
     private defaultTimeout?: number,
   ) {
     this.unsub = this.transport.on((msg: _Envelope) => {

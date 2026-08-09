@@ -1,45 +1,22 @@
 /**
- * raw-server.ts — ChannelRawServer：envelope 复用协议服务端（第2层绑定之一）
+ * channel-server-binding.ts — ChannelServerBinding：envelope 复用协议服务端（第2层绑定之一）
  *
- * 在一条双向通道（mem/WS/IPC 等 Transport）上跑信封协议（id/streamId 复用），
- * 实现 RawServer 端口。只应在入口组装代码中使用（传给 RpcServer/RpcGateway），
+ * 在一条双向通道（mem/WS/IPC 等 EnvelopeTransport）上跑信封协议（id/streamId 复用），
+ * 实现 ServerBinding 端口。注册逻辑（meta 强类型注册 + zod 校验）继承自 ServerBindingCore，
+ * 这里只写 envelope dispatch。只应在入口组装代码中使用（传给 RpcServer/RpcGateway），
  * 业务代码应使用第3层 RPC。
- *
- * 四类 handler：
- *   onUnary        — unary（请求-响应）
- *   onServerStream — 服务端流（返回 AsyncGenerator）
- *   onClientStream — 客户端流（接收 StreamHandle，返回 Promise）
- *   onBidiStream   — 双向流（接收 StreamHandle，返回 AsyncGenerator）
- *   onNotify       — 单向通知
  */
 
-import type { Transport, StreamHandle, _StreamMode, _Envelope } from './types';
+import type { _Envelope } from './types';
 import { _AsyncQueue } from './_async-queue';
 import { _toErrorPayload, RpcError } from './error';
-import type { RawServer } from './raw';
-import { _validateInput, type _AnyProcedureMeta, type _HandlerForProc } from './meta';
+import type { ServerBinding } from './server-binding';
+import type { EnvelopeTransport } from './types';
+import { ServerBindingCore } from './server-binding-core';
 
 let _streamId = 0;
 
-type UnaryHandler = (params: unknown) => unknown;
-type ServerStreamHandler = (params: unknown) => AsyncGenerator<unknown>;
-type ClientStreamHandler = (params: unknown, chunks: StreamHandle<unknown>) => Promise<unknown>;
-type BidiStreamHandler = (params: unknown, incoming: StreamHandle<unknown>) => AsyncGenerator<unknown>;
-/** 各 onXxx 内部 handler 形态：收 { input, meta, stream? }（与 _HandlerForProc 一致） */
-type HandlerFn = (opts: { input: unknown; meta: unknown; stream?: unknown }) => unknown;
-
-/** 从 envelope params 解包出 { input, meta }，并对 input 做 zod 校验 */
-function unwrap(meta: _AnyProcedureMeta, params: unknown, stream?: unknown): { input: unknown; meta: unknown; stream?: unknown } {
-  const { input, meta: m } = (params ?? {}) as { input?: unknown; meta?: unknown };
-  return { input: _validateInput(meta, input), meta: m ?? {}, stream };
-}
-
-export class ChannelRawServer implements RawServer {
-  private _unaries = new Map<string, UnaryHandler>();
-  private _serverStreams = new Map<string, ServerStreamHandler>();
-  private _clientStreams = new Map<string, ClientStreamHandler>();
-  private _bidiStreams = new Map<string, BidiStreamHandler>();
-
+export class ChannelServerBinding extends ServerBindingCore implements ServerBinding {
   /** server-stream 取消器，按 streamId */
   private _serverStreamCancellers = new Map<number, () => void>();
   /** client/bidi 流的消费队列，按 streamId */
@@ -47,57 +24,19 @@ export class ChannelRawServer implements RawServer {
 
   private _unsub: () => void;
 
-  constructor(private tx: Transport) {
+  constructor(private tx: EnvelopeTransport) {
+    super();
     this._unsub = tx.on((msg) => this._dispatch(msg));
-  }
-
-  /** 从 meta 取方法全名；未经 router()/RpcServer 回写（无 name）则明确报错 */
-  private _nameOf(meta: _AnyProcedureMeta): string {
-    const name = meta.name;
-    if (!name) {
-      throw new Error('[ChannelRawServer] meta 无 name — 请用 router() 包裹 apiDef 或经 RpcServer 注册');
-    }
-    return name;
   }
 
   /** 销毁：解除消息监听，清理所有流 */
   destroy(): void {
+    super._clear();
     this._unsub();
     this._serverStreamCancellers.forEach(c => c());
     this._serverStreamCancellers.clear();
     this._streamConsumers.forEach(q => q.end());
     this._streamConsumers.clear();
-    this._unaries.clear();
-    this._serverStreams.clear();
-    this._clientStreams.clear();
-    this._bidiStreams.clear();
-  }
-
-  // ── 注册方法 ────────────────────────────────────
-
-  onUnary<M extends _AnyProcedureMeta & { _streamMode: 'unary' }>(meta: M, handler: _HandlerForProc<M>): void {
-    this._unaries.set(this._nameOf(meta), (params) => (handler as HandlerFn)(unwrap(meta, params)));
-  }
-
-  onServerStream<M extends _AnyProcedureMeta & { _streamMode: 'server' }>(meta: M, handler: _HandlerForProc<M>): void {
-    this._serverStreams.set(
-      this._nameOf(meta),
-      (params) => (handler as HandlerFn)(unwrap(meta, params)) as AsyncGenerator<unknown>,
-    );
-  }
-
-  onClientStream<M extends _AnyProcedureMeta & { _streamMode: 'client' }>(meta: M, handler: _HandlerForProc<M>): void {
-    this._clientStreams.set(
-      this._nameOf(meta),
-      (params, chunks) => (handler as HandlerFn)(unwrap(meta, params, chunks)) as Promise<unknown>,
-    );
-  }
-
-  onBidiStream<M extends _AnyProcedureMeta & { _streamMode: 'bidi' }>(meta: M, handler: _HandlerForProc<M>): void {
-    this._bidiStreams.set(
-      this._nameOf(meta),
-      (params, incoming) => (handler as HandlerFn)(unwrap(meta, params, incoming)) as AsyncGenerator<unknown>,
-    );
   }
 
   // ── 单一分发器 ──────────────────────────────────
@@ -107,7 +46,7 @@ export class ChannelRawServer implements RawServer {
       await this._handleUnary(msg);
     } else if (msg.type === 'call' && msg.stream === true) {
       // Client 请求分配 streamId，从 msg.method 获取方法名
-      const mode = this._detectStreamMode(msg.method!);
+      const mode = this._modeOf(msg.method!);
       if (mode === 'server') this._startServerStream(msg);
       else if (mode === 'client') this._startClientStream(msg);
       else if (mode === 'bidi') this._startBidiStream(msg);
@@ -127,18 +66,10 @@ export class ChannelRawServer implements RawServer {
     }
   };
 
-  /** 根据 method 名从已注册 handler 推断 stream mode */
-  private _detectStreamMode(method: string): _StreamMode | null {
-    if (this._serverStreams.has(method)) return 'server';
-    if (this._clientStreams.has(method)) return 'client';
-    if (this._bidiStreams.has(method)) return 'bidi';
-    return null;
-  }
-
   // ── Unary ────────────────────────────────────────
 
   private async _handleUnary(msg: _Envelope & { type: 'call' }) {
-    const fn = this._unaries.get(msg.method!);
+    const fn = this._getUnary(msg.method!);
     if (!fn) return;
     try {
       this.tx.send({ type: 'call', id: msg.id, result: await fn(msg.params) });
@@ -150,7 +81,7 @@ export class ChannelRawServer implements RawServer {
   // ── Server-Stream ────────────────────────────────
 
   private _startServerStream(msg: _Envelope & { type: 'call' }) {
-    const fn = this._serverStreams.get(msg.method!);
+    const fn = this._getServer(msg.method!);
     if (!fn) return;
 
     const streamId = ++_streamId;
@@ -177,7 +108,7 @@ export class ChannelRawServer implements RawServer {
   // ── Client-Stream ────────────────────────────────
 
   private async _startClientStream(msg: _Envelope & { type: 'call' }) {
-    const fn = this._clientStreams.get(msg.method!);
+    const fn = this._getClient(msg.method!);
     if (!fn) return;
 
     const streamId = ++_streamId;
@@ -199,7 +130,7 @@ export class ChannelRawServer implements RawServer {
   // ── Bidi-Stream ───────────────────────────────────
 
   private async _startBidiStream(msg: _Envelope & { type: 'call' }) {
-    const fn = this._bidiStreams.get(msg.method!);
+    const fn = this._getBidi(msg.method!);
     if (!fn) return;
 
     const streamId = ++_streamId;

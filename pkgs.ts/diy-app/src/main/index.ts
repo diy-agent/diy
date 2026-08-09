@@ -118,7 +118,7 @@ function loadMainApp(): void {
   }
 }
 
-function createWindow(): { server: RpcServer; ipcTransport: import("@diy/rpc").Transport } {
+function createWindow(): { server: RpcServer; ipcTransport: import("@diy/rpc").EnvelopeTransport } {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -148,7 +148,7 @@ function createWindow(): { server: RpcServer; ipcTransport: import("@diy/rpc").T
 
 // ── RPC 端口服务（外部 CLI 接入） ──
 
-async function startRpcPort(appServer: RpcServer, ipcTransport: import("@diy/rpc").Transport): Promise<boolean> {
+async function startRpcPort(appServer: RpcServer, ipcTransport: import("@diy/rpc").EnvelopeTransport): Promise<boolean> {
   const preferredPort = overridePort ?? appConfig.readPort();
   console.log(
     `  Port:         ${preferredPort}${overridePort !== null ? ` (--port, conflict = kill or change)` : ` (from ${appConfig.diyHome}/app.port)`}`,

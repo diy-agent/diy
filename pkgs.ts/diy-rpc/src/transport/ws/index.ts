@@ -1,10 +1,10 @@
 /**
- * websocket/index.ts — WebSocket Transport 实现（第1层）
+ * websocket/index.ts — WebSocket EnvelopeTransport 实现（第1层）
  *
- * 依赖：@diy/rpc（Transport 类型）+ ws
+ * 依赖：@diy/rpc（EnvelopeTransport 类型）+ ws
  */
 
-import type { Transport } from '../../core/types';
+import type { EnvelopeTransport } from '../../core/types';
 
 type WsLike = {
   send(data: string | Buffer): void;
@@ -13,7 +13,7 @@ type WsLike = {
   on(event: string, cb: (...args: any[]) => void): void;
 };
 
-export class WsTransport implements Transport {
+export class WsTransport implements EnvelopeTransport {
   private handlers = new Set<(msg: any) => void>();
   private closeHandlers = new Set<() => void>();
 

@@ -3,8 +3,8 @@ import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import { ChannelRawClient, createMemTransportPair, type RawClient } from "@diy/rpc";
-import { HttpRawClient } from "@diy/rpc/http";
+import { ChannelClientBinding, createMemTransportPair, type ClientBinding } from "@diy/rpc";
+import { HttpClientBinding } from "@diy/rpc/http";
 import { CliApp } from "@diy/rpc/cli";
 import { apiDef } from "../main/services/api-def";
 import { bindApi } from "../main/services/api-impl";
@@ -34,11 +34,11 @@ function readPort(): number | null {
 async function main() {
   const argv = process.argv.slice(2);
 
-  let transport: RawClient;
+  let transport: ClientBinding;
 
   const port = readPort();
   if (port !== null) {
-    const remote = new HttpRawClient(`http://127.0.0.1:${port}`);
+    const remote = new HttpClientBinding(`http://127.0.0.1:${port}`);
     try {
       await remote.ready(); // 探测端口可达性，失败回退本地
       transport = remote;
@@ -72,10 +72,10 @@ async function main() {
   process.exit(0);
 }
 
-function createLocalClient(): ChannelRawClient {
+function createLocalClient(): ChannelClientBinding {
   const { serverTx, clientTx } = createMemTransportPair();
   bindApi(serverTx);
-  return new ChannelRawClient(clientTx);
+  return new ChannelClientBinding(clientTx);
 }
 
 main().catch((e) => {

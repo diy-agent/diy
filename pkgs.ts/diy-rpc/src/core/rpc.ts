@@ -1,7 +1,7 @@
 /**
  * rpc/index.ts — 第3层 RPC：声明式 Procedure 定义 + 服务端/客户端入口
  *
- * 第2层（meta.ts + raw.ts + tree.ts + raw 绑定）提供 meta 类型、router 树工具
+ * 第2层（meta.ts + server-binding.ts + tree.ts + ServerBinding 绑定）提供 meta 类型、router 树工具
  * 与强类型端口；本文件在其上提供：
  *   - RpcSchema / RpcImpl 定义工厂（两种形态）
  *   - router 组合工具（回写 meta.name）
@@ -13,7 +13,7 @@
 
 import { z } from 'zod';
 import type { StreamHandle } from './types';
-import type { RawServer } from './raw';
+import type { ServerBinding } from './server-binding';
 import type { _RpcBackend } from './gateway';
 import { _flattenRouter, _buildRouteTree, _routeLeaves } from './_tree';
 import {
@@ -205,7 +205,7 @@ export function router<T extends _Router>(def: T): T {
 type HandlerFn = (opts: { input: unknown; meta: unknown; stream?: unknown }) => unknown;
 
 /** 按 def 的 stream mode 注册到 raw（handler 收 { input, meta, stream? }） */
-function _registerMode(raw: RawServer, def: _AnyProcedureMeta, handler: HandlerFn): void {
+function _registerMode(raw: ServerBinding, def: _AnyProcedureMeta, handler: HandlerFn): void {
   const mode = def._streamMode;
   if (mode === 'unary') {
     raw.onUnary(def, handler as any);
@@ -225,12 +225,12 @@ function _registerMode(raw: RawServer, def: _AnyProcedureMeta, handler: HandlerF
  *   - 构造时不绑定 transport（只收 router + 可选 scope 前缀），并把完整方法名回写进 meta.name
  *   - 含 call 的 procedure（RpcImpl）构造时自动注册
  *   - 不含 call 的（RpcSchema）通过 .on() 绑定 handler
- *   - registerInto(raw) 把本注册表挂到某个 RawServer（以 meta 强类型注册）
+ *   - registerInto(raw) 把本注册表挂到某个 ServerBinding（以 meta 强类型注册）
  */
 /** @internal */
 export class RpcServer implements _RpcBackend {
   readonly scope: string;
-  private _raws: RawServer[] = [];
+  private _raws: ServerBinding[] = [];
   private _metaToMethod = new Map<_AnyProcedureMeta, string>();
   private _handlers = new Map<_AnyProcedureMeta, HandlerFn>();
 
@@ -269,11 +269,11 @@ export class RpcServer implements _RpcBackend {
   }
 
   /**
-   * 把本注册表挂到给定 RawServer。
+   * 把本注册表挂到给定 ServerBinding。
    * RpcGateway.register(backend) 会调用它，把本 server 所有方法（全名）
-   * 注册到来源 transport 的 RawServer 上。
+   * 注册到来源 transport 的 ServerBinding 上。
    */
-  registerInto(raw: RawServer): void {
+  registerInto(raw: ServerBinding): void {
     this._raws.push(raw);
     for (const [def, handler] of this._handlers) {
       this._registerInto(raw, def, handler);
@@ -288,7 +288,7 @@ export class RpcServer implements _RpcBackend {
     }
   }
 
-  /** 销毁：清理所有挂载的 RawServer 监听和流 */
+  /** 销毁：清理所有挂载的 ServerBinding 监听和流 */
   destroy(): void {
     for (const raw of this._raws) raw.destroy();
     this._raws = [];
@@ -307,7 +307,7 @@ export class RpcServer implements _RpcBackend {
     }
   }
 
-  private _registerInto(raw: RawServer, def: _AnyProcedureMeta, handler: HandlerFn): void {
+  private _registerInto(raw: ServerBinding, def: _AnyProcedureMeta, handler: HandlerFn): void {
     _registerMode(raw, def, handler);
   }
 }

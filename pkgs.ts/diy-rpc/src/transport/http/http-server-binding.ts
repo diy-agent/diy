@@ -1,8 +1,9 @@
 /**
- * http/raw-server.ts — HttpRawServer：HTTP 常态绑定的服务端（第2层绑定之一）
+ * http/http-server-binding.ts — HttpServerBinding：HTTP 常态绑定的服务端（第2层绑定之一）
  *
  * 每个 http2 stream = 一个 RPC：`:path` 即方法全名（/diy.app.task.list），
  * 按协议常态实现四种语义（unary/serverStream/clientStream/bidi），curl 可直接访问。
+ * 注册逻辑继承自 ServerBindingCore（meta 强类型注册 + zod 校验），这里只写 http2 dispatch。
  *
  * wire 约定（JSON，无 protobuf）：
  *   unary/serverStream   params 在请求 body（JSON）；clientStream/bidi 的
@@ -15,77 +16,20 @@
  *             无法让服务端可靠识别 client-stream 取消，用协议内取消帧确定性送达 CANCELLED）
  *             （注意：__cancel 是保留帧键，业务 chunk 不应使用）
  *
- * 注册以 meta 为键（onUnary(meta, handler)），方法全名取 meta.name（router()/RpcServer 回写）。
  * 单例 + handleStream：注册表启动时建一次，所有 stream 共享；每请求状态
  * （读 body / 写响应 / 取消）都是 handleStream 调用栈里的局部量。
  */
 
 import type { ServerHttp2Stream, IncomingHttpHeaders } from 'node:http2';
-import type { StreamHandle } from '../../core/types';
 import { _AsyncQueue } from '../../core/_async-queue';
 import { RpcError, _toErrorPayload, type _ErrorPayload } from '../../core/error';
 import { httpStatusForCode } from './_codes';
-import type { RawServer } from '../../core/raw';
-import { _validateInput, type _AnyProcedureMeta, type _HandlerForProc } from '../../core/meta';
+import type { ServerBinding } from '../../core/server-binding';
+import { ServerBindingCore } from '../../core/server-binding-core';
 
-type UnaryHandler = (params: unknown) => unknown;
-type ServerStreamHandler = (params: unknown) => AsyncGenerator<unknown>;
-type ClientStreamHandler = (params: unknown, chunks: StreamHandle<unknown>) => Promise<unknown>;
-type BidiStreamHandler = (params: unknown, incoming: StreamHandle<unknown>) => AsyncGenerator<unknown>;
-/** 各 onXxx 内部 handler 形态：收 { input, meta, stream? }（与 _HandlerForProc 一致） */
-type HandlerFn = (opts: { input: unknown; meta: unknown; stream?: unknown }) => unknown;
-
-/** 从 envelope params 解包出 { input, meta }，并对 input 做 zod 校验 */
-function unwrap(meta: _AnyProcedureMeta, params: unknown, stream?: unknown): { input: unknown; meta: unknown; stream?: unknown } {
-  const { input, meta: m } = (params ?? {}) as { input?: unknown; meta?: unknown };
-  return { input: _validateInput(meta, input), meta: m ?? {}, stream };
-}
-
-export class HttpRawServer implements RawServer {
-  private _unaries = new Map<string, UnaryHandler>();
-  private _serverStreams = new Map<string, ServerStreamHandler>();
-  private _clientStreams = new Map<string, ClientStreamHandler>();
-  private _bidiStreams = new Map<string, BidiStreamHandler>();
-
-  /** 从 meta 取方法全名；未经 router()/RpcServer 回写（无 name）则明确报错 */
-  private _nameOf(meta: _AnyProcedureMeta): string {
-    const name = meta.name;
-    if (!name) {
-      throw new Error('[HttpRawServer] meta 无 name — 请用 router() 包裹 apiDef 或经 RpcServer 注册');
-    }
-    return name;
-  }
-
-  onUnary<M extends _AnyProcedureMeta & { _streamMode: 'unary' }>(meta: M, handler: _HandlerForProc<M>): void {
-    this._unaries.set(this._nameOf(meta), (params) => (handler as HandlerFn)(unwrap(meta, params)));
-  }
-
-  onServerStream<M extends _AnyProcedureMeta & { _streamMode: 'server' }>(meta: M, handler: _HandlerForProc<M>): void {
-    this._serverStreams.set(
-      this._nameOf(meta),
-      (params) => (handler as HandlerFn)(unwrap(meta, params)) as AsyncGenerator<unknown>,
-    );
-  }
-
-  onClientStream<M extends _AnyProcedureMeta & { _streamMode: 'client' }>(meta: M, handler: _HandlerForProc<M>): void {
-    this._clientStreams.set(
-      this._nameOf(meta),
-      (params, chunks) => (handler as HandlerFn)(unwrap(meta, params, chunks)) as Promise<unknown>,
-    );
-  }
-
-  onBidiStream<M extends _AnyProcedureMeta & { _streamMode: 'bidi' }>(meta: M, handler: _HandlerForProc<M>): void {
-    this._bidiStreams.set(
-      this._nameOf(meta),
-      (params, incoming) => (handler as HandlerFn)(unwrap(meta, params, incoming)) as AsyncGenerator<unknown>,
-    );
-  }
-
+export class HttpServerBinding extends ServerBindingCore implements ServerBinding {
   destroy(): void {
-    this._unaries.clear();
-    this._serverStreams.clear();
-    this._clientStreams.clear();
-    this._bidiStreams.clear();
+    super._clear();
   }
 
   // ── 每请求入口 ──────────────────────────────────
@@ -93,10 +37,10 @@ export class HttpRawServer implements RawServer {
   async handleStream(stream: ServerHttp2Stream, headers: IncomingHttpHeaders): Promise<void> {
     const method = String(headers[':path'] ?? '').replace(/^\//, '');
 
-    if (this._unaries.has(method)) return this._handleUnary(stream, method);
-    if (this._serverStreams.has(method)) return this._handleServerStream(stream, method);
-    if (this._clientStreams.has(method)) return this._handleClientStream(stream, method, headers);
-    if (this._bidiStreams.has(method)) return this._handleBidiStream(stream, method, headers);
+    if (this._getUnary(method)) return this._handleUnary(stream, method);
+    if (this._getServer(method)) return this._handleServerStream(stream, method);
+    if (this._getClient(method)) return this._handleClientStream(stream, method, headers);
+    if (this._getBidi(method)) return this._handleBidiStream(stream, method, headers);
 
     // 未注册 → UNIMPLEMENTED
     respondError(stream, _toErrorPayload(new RpcError('UNIMPLEMENTED', `No handler for "${method}"`)));
@@ -105,7 +49,7 @@ export class HttpRawServer implements RawServer {
   // ── Unary ────────────────────────────────────────
 
   private async _handleUnary(stream: ServerHttp2Stream, method: string): Promise<void> {
-    const fn = this._unaries.get(method)!;
+    const fn = this._getUnary(method)!;
     try {
       const body = await readBody(stream);
       respondResult(stream, await fn(parseBodyParams(body)));
@@ -117,7 +61,7 @@ export class HttpRawServer implements RawServer {
   // ── Server-Stream ────────────────────────────────
 
   private async _handleServerStream(stream: ServerHttp2Stream, method: string): Promise<void> {
-    const fn = this._serverStreams.get(method)!;
+    const fn = this._getServer(method)!;
     let g: AsyncGenerator<unknown>;
     try {
       const body = await readBody(stream);
@@ -155,7 +99,7 @@ export class HttpRawServer implements RawServer {
     method: string,
     headers: IncomingHttpHeaders,
   ): Promise<void> {
-    const fn = this._clientStreams.get(method)!;
+    const fn = this._getClient(method)!;
     const params = paramsFromHeader(headers);
     const incoming = createBodyReader(stream);
 
@@ -173,7 +117,7 @@ export class HttpRawServer implements RawServer {
     method: string,
     headers: IncomingHttpHeaders,
   ): Promise<void> {
-    const fn = this._bidiStreams.get(method)!;
+    const fn = this._getBidi(method)!;
     const params = paramsFromHeader(headers);
     const incoming = createBodyReader(stream);
 

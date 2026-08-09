@@ -1,7 +1,7 @@
 /**
  * codes.ts — grpc/connectrpc 错误码 ↔ HTTP 状态映射
  *
- * wire 上 code 用 grpc canonical 名；HttpRaw 绑定负责把 code 归一化并映射到 HTTP 状态码。
+ * wire 上 code 用 grpc canonical 名；HttpServerBinding 负责把 code 归一化并映射到 HTTP 状态码。
  * 内部自定义 code（TIMEOUT/ABORTED/…）在 http 上归一化为 grpc canonical，让 HTTP 语义对齐。
  */
 

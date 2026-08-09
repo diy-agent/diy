@@ -4,16 +4,16 @@
  * 核心：handle/call 函数脱离 transport（纯 handler 注册表），
  * 路由决策从 RpcServer 上收到这里。RpcGateway 是唯一绑定来源
  * transport 的层，通过 register(backend) 把多个后端（本地 RpcServer
- * / 转发 RpcClient）的方法按前缀注册进同一个 RawServer。
+ * / 转发 RpcClient）的方法按前缀注册进同一个 ServerBinding。
  *
  * 职责：
  *   - 绑定来源 transport（cliTx / ipcTransport），只此一处
- *   - register(backend) 把后端的方法（全名）注册进内部 RawServer
+ *   - register(backend) 把后端的方法（全名）注册进内部 ServerBinding
  *   - 路由归属 = 各后端声明的 scope，集中可见；scope 冲突即报错
  *   - 零广播：每个方法由且仅由一个后端注册
  */
 
-import type { RawServer } from './raw';
+import type { ServerBinding } from './server-binding';
 
 /**
  * 一个能处理 RPC 方法的"后端"。
@@ -25,21 +25,21 @@ import type { RawServer } from './raw';
 export interface _RpcBackend {
   /** 本后端拥有的方法前缀（如 diy.app / diy.ui） */
   readonly scope: string;
-  /** 把本后端所有方法（全名，含 scope 前缀）注册到给定 RawServer */
-  registerInto(raw: RawServer): void;
+  /** 把本后端所有方法（全名，含 scope 前缀）注册到给定 ServerBinding */
+  registerInto(raw: ServerBinding): void;
 }
 
 /**
- * RpcGateway — 绑定来源 RawServer 的路由边界层。
+ * RpcGateway — 绑定来源 ServerBinding 的路由边界层。
  *
- * 拥有一个绑定到来源连接（channel / http2）的 RawServer；每次 register 把后端的方法
- * 合并进它。收到来源请求时由 RawServer 按全名 method 分发给对应后端，响应回写到来源。
- * 构造只接受 RawServer 端口（具体绑定由调用方按协议选择：ChannelRaw 或 HttpRaw）。
+ * 拥有一个绑定到来源连接（channel / http2）的 ServerBinding；每次 register 把后端的方法
+ * 合并进它。收到来源请求时由 ServerBinding 按全名 method 分发给对应后端，响应回写到来源。
+ * 构造只接受 ServerBinding 端口（具体绑定由调用方按协议选择：ChannelServerBinding 或 HttpServerBinding）。
  */
 export class RpcGateway {
   private _scopes = new Set<string>();
 
-  constructor(private _raw: RawServer) {}
+  constructor(private _raw: ServerBinding) {}
 
   /** 注册一个后端；scope 前缀冲突时抛错 */
   register(backend: _RpcBackend): this {

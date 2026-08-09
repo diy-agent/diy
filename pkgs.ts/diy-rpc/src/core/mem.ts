@@ -1,8 +1,8 @@
-import type { Transport, _Envelope } from "./types";
+import type { EnvelopeTransport, _Envelope } from "./types";
 
 export function createMemTransportPair(): {
-  serverTx: Transport;
-  clientTx: Transport;
+  serverTx: EnvelopeTransport;
+  clientTx: EnvelopeTransport;
 } {
   const qServer: unknown[] = [];
   const qClient: unknown[] = [];

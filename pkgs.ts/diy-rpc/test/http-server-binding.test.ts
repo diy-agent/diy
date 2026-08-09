@@ -1,8 +1,8 @@
 /**
- * http-raw.test.ts — HttpRawServer 绑定层验证（以 meta 强类型注册）
+ * http-server-binding.test.ts — HttpServerBinding 绑定层验证（以 meta 强类型注册）
  *
- * 真实 http2 server + HttpRawServer，handler 用 onUnary(meta, handler) 等强类型注册，
- * 验证 HttpRaw 绑定本身的 wire 行为：
+ * 真实 http2 server + HttpServerBinding，handler 用 onUnary(meta, handler) 等强类型注册，
+ * 验证 HttpServerBinding 本身的 wire 行为：
  *   - curl 可访问 unary / server-stream（HTTP 常态，motivating case）
  *   - 四模式往返
  *   - 错误映射：RpcError code → HTTP status（codes.ts）+ ext.http.status 透传；未注册 → 501
@@ -18,14 +18,14 @@ import { promisify } from 'node:util';
 import { it } from 'vitest';
 import { z } from 'zod';
 import { router, RpcSchema, RpcError } from '../src/index';
-import { HttpRawServer } from '../src/transport/http/raw-server';
-import { HttpRawClient } from '../src/transport/http/raw-client';
+import { HttpServerBinding } from '../src/transport/http/http-server-binding';
+import { HttpClientBinding } from '../src/transport/http/http-client-binding';
 
 const exec = promisify(execCb);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ═══════════════════════════════════════════════════
-//  handler 用 HttpRawServer 强类型注册（onUnary(meta, handler) 等）
+//  handler 用 HttpServerBinding 强类型注册（onUnary(meta, handler) 等）
 // ═══════════════════════════════════════════════════
 
 const apiDef = router({
@@ -49,7 +49,7 @@ const apiDef = router({
 let slowCleanup = false;
 let csCancelled: string | null = null;
 
-const httpRaw = new HttpRawServer();
+const httpRaw = new HttpServerBinding();
 // unary
 httpRaw.onUnary(apiDef.diy.app.greet, async ({ input }) => `Hello, ${input.name}!`);
 httpRaw.onUnary(apiDef.diy.app.fail, async () => { throw new RpcError('PERMISSION_DENIED', 'no access'); });
@@ -93,7 +93,7 @@ async function main() {
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
   const port = (srv.address() as { port: number }).port;
   const base = `http://127.0.0.1:${port}`;
-  const cli = new HttpRawClient(base);
+  const cli = new HttpClientBinding(base);
 
   // ── 1. curl 打 unary（motivating case：像正常 http 那样 curl）──
   console.log('\n── curl unary ──');
@@ -104,7 +104,7 @@ async function main() {
   const curlParsed = JSON.parse(curlOut);
   assert(curlParsed.result === 'Hello, Curl!', `curl unary → ${curlOut.trim()}`);
 
-  // ── 2. HttpRawClient unary ──
+  // ── 2. HttpClientBinding unary ──
   console.log('\n── unary ──');
   const g = await cli.invoke('diy.app.greet', { input: { name: 'World' }, meta: {} });
   assert(g === 'Hello, World!', `greet = ${JSON.stringify(g)}`);
@@ -117,7 +117,7 @@ async function main() {
   );
   assert(curlSrv.includes('{"v":1}') && curlSrv.includes('{"v":3}'), `curl server-stream → ${JSON.stringify(curlSrv)}`);
 
-  // ── 4. server-stream（HttpRawClient）──
+  // ── 4. server-stream（HttpClientBinding）──
   console.log('\n── server-stream ──');
   const sh = await cli.serverStream('diy.app.count', { input: { to: 3 }, meta: {} });
   const got: number[] = [];
@@ -204,4 +204,4 @@ async function main() {
 
 }
 
-it('http-raw: HttpRaw 绑定', async () => { await main(); });
+it('http-server-binding: HttpServerBinding', async () => { await main(); });

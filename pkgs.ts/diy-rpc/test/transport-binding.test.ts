@@ -1,15 +1,15 @@
 /**
- * 传输层 RawServer/RawClient 独立测试（四种流模式 + 取消）
+ * 传输层 ServerBinding/ClientBinding 独立测试（四种流模式 + 取消）
  *
- * 用 in-memory Transport 替代 Electron IPC，
- * 直接验证 RawServer/RawClient 的信封协议和流处理逻辑。
+ * 用 in-memory EnvelopeTransport 替代 Electron IPC，
+ * 直接验证 ServerBinding/ClientBinding 的信封协议和流处理逻辑。
  * 注册以 meta 为键（onUnary(meta, handler)），client 调用带 { input, meta } 包装。
  */
 
 import { it } from 'vitest';
 import { z } from 'zod';
-import type { Transport } from '../src/core/types';
-import { ChannelRawServer, ChannelRawClient } from '../src/core';
+import type { EnvelopeTransport } from '../src/core/types';
+import { ChannelServerBinding, ChannelClientBinding } from '../src/core';
 import { router, RpcSchema } from '../src/index';
 
 const api = router({
@@ -26,10 +26,10 @@ const api = router({
 } as const);
 
 // ═══════════════════════════════════════════════════
-//  in-memory Transport
+//  in-memory EnvelopeTransport
 // ═══════════════════════════════════════════════════
 
-function createMemTransportPair(): [Transport, Transport] {
+function createMemTransportPair(): [EnvelopeTransport, EnvelopeTransport] {
   const qServer: unknown[] = [];    // server → client messages
   const qClient: unknown[] = [];    // client → server messages
   const serverListeners = new Set<Function>();
@@ -65,8 +65,8 @@ async function main() {
   console.log('\n── Unary ──');
   {
     const [txA, txB] = createMemTransportPair();
-    const server = new ChannelRawServer(txA);
-    const client = new ChannelRawClient(txB);
+    const server = new ChannelServerBinding(txA);
+    const client = new ChannelClientBinding(txB);
 
     server.onUnary(api.greet, ({ input }) => `Hello, ${input.name}!`);
     server.onUnary(api.fail, () => { throw new Error('boom'); });
@@ -87,8 +87,8 @@ async function main() {
   console.log('\n── Server-Stream ──');
   {
     const [txA, txB] = createMemTransportPair();
-    const server = new ChannelRawServer(txA);
-    const client = new ChannelRawClient(txB);
+    const server = new ChannelServerBinding(txA);
+    const client = new ChannelClientBinding(txB);
 
     server.onServerStream(api.count, async function* ({ input }) {
       for (let i = 1; i <= input.to; i++) {
@@ -108,8 +108,8 @@ async function main() {
   console.log('\n── Client-Stream ──');
   {
     const [txA, txB] = createMemTransportPair();
-    const server = new ChannelRawServer(txA);
-    const client = new ChannelRawClient(txB);
+    const server = new ChannelServerBinding(txA);
+    const client = new ChannelClientBinding(txB);
 
     server.onClientStream(api.upload, async ({ input, stream }) => {
       let received: string[] = [];
@@ -131,8 +131,8 @@ async function main() {
   console.log('\n── Client-Stream (abort) ──');
   {
     const [txA, txB] = createMemTransportPair();
-    const server = new ChannelRawServer(txA);
-    const client = new ChannelRawClient(txB);
+    const server = new ChannelServerBinding(txA);
+    const client = new ChannelClientBinding(txB);
 
     server.onClientStream(api.limited, async ({ stream }) => {
       let count = 0;
@@ -157,8 +157,8 @@ async function main() {
   console.log('\n── Bidi-Stream ──');
   {
     const [txA, txB] = createMemTransportPair();
-    const server = new ChannelRawServer(txA);
-    const client = new ChannelRawClient(txB);
+    const server = new ChannelServerBinding(txA);
+    const client = new ChannelClientBinding(txB);
 
     server.onBidiStream(api.echo, async function* ({ stream }) {
       for await (const msg of stream) {
@@ -180,8 +180,8 @@ async function main() {
   console.log('\n── AbortController (unary) ──');
   {
     const [txA, txB] = createMemTransportPair();
-    const server = new ChannelRawServer(txA);
-    const client = new ChannelRawClient(txB);
+    const server = new ChannelServerBinding(txA);
+    const client = new ChannelClientBinding(txB);
 
     server.onUnary(api.slow, async () => {
       await sleep(1000);
@@ -204,4 +204,4 @@ async function main() {
 
 }
 
-it('transport-raw: ChannelRawServer/Client 端口', async () => { await main(); });
+it('transport-binding: ChannelServerBinding/ChannelClientBinding 端口', async () => { await main(); });

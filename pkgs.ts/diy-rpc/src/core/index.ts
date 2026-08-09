@@ -10,16 +10,16 @@
 import './_cli-meta';
 
 // 传输类型（消费者可见的最小面：信封内部类型 _Envelope/_CallMsg/_DataMsg/_EndMsg/_StreamMode 不外泄）
-export type { Transport, StreamHandle } from './types';
+export type { EnvelopeTransport, StreamHandle } from './types';
 // 错误（跨线抛出的公共错误类型；序列化内部件 _toErrorPayload/_fromErrorPayload 不外泄）
 export { RpcError, toRpcError } from './error';
 // 端口接口
-export type { RawServer, RawClient, CallOptions } from './raw';
+export type { ServerBinding, ClientBinding, CallOptions } from './server-binding';
 // meta 类型：RpcSchema/RpcImpl 工厂的返回类型，消费方导出定义时被推断类型引用，必须可命名
 export type { ProcedureMeta, ProcedureDef } from './meta';
 // 具体绑定 + 内存通道
-export { ChannelRawServer } from './raw-server';
-export { ChannelRawClient } from './raw-client';
+export { ChannelServerBinding } from './channel-server-binding';
+export { ChannelClientBinding } from './channel-client-binding';
 export { createMemTransportPair } from './mem';
 // 第3层语义 API
 export {

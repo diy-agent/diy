@@ -3,13 +3,13 @@
  *
  * 类型完全来自 meta 的 zod schema（z.infer），且每次调用做 runtime zod input 校验。
  *
- * 依赖：RawClient / _flattenRouter（第2层），RpcSchema 定义的 meta（无 call）。
+ * 依赖：ClientBinding / _flattenRouter（第2层），RpcSchema 定义的 meta（无 call）。
  */
 
 import { z } from 'zod';
-import type { CallOptions } from './raw-client';
+import type { CallOptions } from './channel-client-binding';
 import type { StreamHandle } from './types';
-import type { RawClient } from './raw';
+import type { ClientBinding } from './server-binding';
 import { _flattenRouter } from './_tree';
 
 // ═══════════════════════════════════════════════════
@@ -60,7 +60,7 @@ function resolveChunks<T>(chunks: AsyncIterable<T> | (() => AsyncIterable<T>)): 
  *
  * 每次调用先做 zod input 校验，再发到 transport。
  */
-export function createTypedClient<const T>(client: RawClient, meta: T): TypedClient<T> {
+export function createTypedClient<const T>(client: ClientBinding, meta: T): TypedClient<T> {
   const raw = client;
   const flat = _flattenRouter(meta as Parameters<typeof _flattenRouter>[0]);
   const modes: Record<string, string> = {};

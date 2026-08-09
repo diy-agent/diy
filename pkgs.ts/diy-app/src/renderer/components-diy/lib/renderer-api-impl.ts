@@ -1,5 +1,5 @@
-import { RpcServer, type Transport } from '@diy/rpc';
-import { ChannelRawServer } from '@diy/rpc';
+import { RpcServer, type EnvelopeTransport } from '@diy/rpc';
+import { ChannelServerBinding } from '@diy/rpc';
 import { getRendererActions } from './renderer-actions';
 import { apiDef } from '../../../main/services/api-def';
 import { diyService } from './rpc';
@@ -14,9 +14,9 @@ import { renderTreeText, type TaskNode } from '../../../main/core/tree-format';
  * 进程级数据（diy.ui.tree/status）反向调 main 的 diy.app.* 获取。
  */
 
-export function bindRendererApi(transport: Transport): RpcServer {
+export function bindRendererApi(transport: EnvelopeTransport): RpcServer {
   const server = new RpcServer({ router: apiDef.diy.ui, scope: 'diy.ui' });
-  server.registerInto(new ChannelRawServer(transport));
+  server.registerInto(new ChannelServerBinding(transport));
   const ui = apiDef.diy.ui;
 
   server.on(ui.component.list, async () => {

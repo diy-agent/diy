@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * bin/diy3.mjs — Transport 桥接实验
+ * bin/diy3.mjs — EnvelopeTransport 桥接实验
  *
  * 验证：两个 createMemTransportPair 通过 pipe() 连接，
  * CLI 侧 createTypedClient → bridge → Renderer 侧 RpcServer，
@@ -13,7 +13,7 @@
  *                     ↑_______↔_____↑
  */
 
-import { createMemTransportPair, RpcImpl, RpcServer, router, createTypedClient, ChannelRawClient, ChannelRawServer } from '@diy/rpc';
+import { createMemTransportPair, RpcImpl, RpcServer, router, createTypedClient, ChannelClientBinding, ChannelServerBinding } from '@diy/rpc';
 import { z } from 'zod';
 
 // ═══════════════════════════════════════════════════
@@ -50,7 +50,7 @@ const rendererApi = router({
 });
 
 // ═══════════════════════════════════════════════════
-//  2. Transport 桥接
+//  2. EnvelopeTransport 桥接
 //
 //   │CLI txA│ ←──memA──→ │bridgeIn│
 //                           │ pipe() │
@@ -78,14 +78,14 @@ const unsub2 = rendererA.on((msg) => {
 
 console.log('\n[Renderer] 启动 RpcServer...');
 const rendererServer = new RpcServer({ router: rendererApi });
-rendererServer.registerInto(new ChannelRawServer(rendererTx));
+rendererServer.registerInto(new ChannelServerBinding(rendererTx));
 
 // ═══════════════════════════════════════════════════
 //  4. CLI 侧：createTypedClient 直通 Renderer
 // ═══════════════════════════════════════════════════
 
 console.log('\n[CLI] 创建客户端...');
-const cli = createTypedClient(new ChannelRawClient(cliTx), rendererApi);
+const cli = createTypedClient(new ChannelClientBinding(cliTx), rendererApi);
 
 // ═══════════════════════════════════════════════════
 //  5. 调用测试

@@ -1,15 +1,15 @@
 /**
- * electron/index.ts — Electron Transport 实现（第1层）
+ * electron/index.ts — Electron EnvelopeTransport 实现（第1层）
  *
- * 依赖：@diy/rpc（Transport/_Envelope 类型）+ electron
+ * 依赖：@diy/rpc（EnvelopeTransport/_Envelope 类型）+ electron
  * 只在 Electron 主进程和 preload 中使用。
  */
 
 import { ipcMain, ipcRenderer } from 'electron';
 import type { WebContents } from 'electron';
-import type { Transport, _Envelope } from '../../core/types';
+import type { EnvelopeTransport, _Envelope } from '../../core/types';
 
-function makeMain(getWebContents: () => WebContents, channel = 'rpc'): Transport {
+function makeMain(getWebContents: () => WebContents, channel = 'rpc'): EnvelopeTransport {
   return {
     send: (payload) => getWebContents().send(channel, payload),
     on: (h) => {
@@ -26,7 +26,7 @@ function makeMain(getWebContents: () => WebContents, channel = 'rpc'): Transport
   };
 }
 
-function makeRenderer(channel = 'rpc'): Transport {
+function makeRenderer(channel = 'rpc'): EnvelopeTransport {
   return {
     send: (payload) => ipcRenderer.send(channel, payload),
     on: (h) => {
@@ -41,10 +41,10 @@ function makeRenderer(channel = 'rpc'): Transport {
   };
 }
 
-export function createMainTransport(getWebContents: () => WebContents, channel?: string): Transport {
+export function createMainTransport(getWebContents: () => WebContents, channel?: string): EnvelopeTransport {
   return makeMain(getWebContents, channel);
 }
 
-export function createRendererTransport(channel?: string): Transport {
+export function createRendererTransport(channel?: string): EnvelopeTransport {
   return makeRenderer(channel);
 }

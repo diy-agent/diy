@@ -7,10 +7,10 @@
  *   - client 类型直接由 meta 的 zod schema 用 z.infer 推导，不依赖泛型参数
  */
 
-import type { Transport } from '../src/core/types';
+import type { EnvelopeTransport } from '../src/core/types';
 import { it } from 'vitest';
 import { z } from 'zod';
-import { RpcSchema, RpcServer, createTypedClient, ChannelRawClient, ChannelRawServer } from '../src/index';
+import { RpcSchema, RpcServer, createTypedClient, ChannelClientBinding, ChannelServerBinding } from '../src/index';
 
 // ═══════════════════════════════════════════════════
 //  meta 定义（纯 zod，无 call）
@@ -44,10 +44,10 @@ const apiDef = {
 } as const;
 
 // ═══════════════════════════════════════════════════
-//  in-memory Transport（复用，精简版）
+//  in-memory EnvelopeTransport（复用，精简版）
 // ═══════════════════════════════════════════════════
 
-function createMemTransportPair(): [Transport, Transport] {
+function createMemTransportPair(): [EnvelopeTransport, EnvelopeTransport] {
   const qSrv: unknown[] = [];
   const qCli: unknown[] = [];
   const srvListeners = new Set<Function>();
@@ -82,7 +82,7 @@ async function main() {
 
   const [txSrv, txCli] = createMemTransportPair();
   const rpcServer = new RpcServer({ router: apiDef });
-  rpcServer.registerInto(new ChannelRawServer(txSrv));
+  rpcServer.registerInto(new ChannelServerBinding(txSrv));
 
   // 每个 meta 对象单独绑 handler
   rpcServer.on(apiDef.math.add, async ({ input }) => input.a + input.b);
@@ -107,7 +107,7 @@ async function main() {
   // ── 2. client 从 meta 的 zod 生成强类型 ─────
   console.log('\n── zod 强类型 client ──');
 
-  const cli = createTypedClient(new ChannelRawClient(txCli), apiDef);
+  const cli = createTypedClient(new ChannelClientBinding(txCli), apiDef);
 
   // 类型检查（编译期验证，z.infer 从 zod 推导）
   const r1: number = await cli.math.add({ a: 3, b: 4 });

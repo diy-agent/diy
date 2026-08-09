@@ -8,15 +8,15 @@
 import { it } from 'vitest';
 import { z } from 'zod';
 import {
-  RpcSchema, RpcServer, createTypedClient, ChannelRawClient, ChannelRawServer,
+  RpcSchema, RpcServer, createTypedClient, ChannelClientBinding, ChannelServerBinding,
 } from '../src/index';
-import type { Transport } from '../src/core/types';
+import type { EnvelopeTransport } from '../src/core/types';
 
 // ═══════════════════════════════════════════════════
-//  in-memory Transport
+//  in-memory EnvelopeTransport
 // ═══════════════════════════════════════════════════
 
-function createMemTransportPair(): [Transport, Transport] {
+function createMemTransportPair(): [EnvelopeTransport, EnvelopeTransport] {
   const qSrv: unknown[] = [];
   const qCli: unknown[] = [];
   const srvListeners = new Set<Function>();
@@ -71,9 +71,9 @@ const apiDef = {
 //  server handler 绑定（handle 分离）
 // ═══════════════════════════════════════════════════
 
-function startServer(txSrv: Transport): RpcServer {
+function startServer(txSrv: EnvelopeTransport): RpcServer {
   const server = new RpcServer({ router: apiDef });
-  server.registerInto(new ChannelRawServer(txSrv));
+  server.registerInto(new ChannelServerBinding(txSrv));
   server.on(apiDef.math.add, async ({ input }) => input.a + input.b);
   server.on(apiDef.greet, async ({ input }) => `Hello, ${input.name}!`);
   server.on(apiDef.slow, async ({ input }) => {
@@ -106,7 +106,7 @@ function assert(cond: boolean, msg: string) {
   else { failed++; throw new Error(msg); }
 }
 
-async function runScenarios(creator: (tx: Transport) => any, label: string) {
+async function runScenarios(creator: (tx: EnvelopeTransport) => any, label: string) {
   console.log(`\n── ${label} ──`);
 
   const [txSrv, txCli] = createMemTransportPair();
@@ -156,13 +156,13 @@ async function runScenarios(creator: (tx: Transport) => any, label: string) {
 
 async function main() {
   // ── createTypedClient 跑一遍全部场景 ──
-  await runScenarios((tx) => createTypedClient(new ChannelRawClient(tx), apiDef), 'createTypedClient');
+  await runScenarios((tx) => createTypedClient(new ChannelClientBinding(tx), apiDef), 'createTypedClient');
 
   // ── createTypedClient 独有：zod runtime 校验 ──
   console.log('\n── createTypedClient 独有：zod 校验 ──');
   const [txSrv, txCli] = createMemTransportPair();
   const server = startServer(txSrv);
-  const cli = createTypedClient(new ChannelRawClient(txCli), apiDef);
+  const cli = createTypedClient(new ChannelClientBinding(txCli), apiDef);
   try {
     await cli.math.add({ a: 'bad' as any, b: 1 });
     assert(false, 'zod 应拒绝 string');

@@ -1,7 +1,7 @@
 /**
- * http/raw-client.ts — HttpRawClient：HTTP 常态绑定的客户端（第2层绑定之一）
+ * http/http-client-binding.ts — HttpClientBinding：HTTP 常态绑定的客户端（第2层绑定之一）
  *
- * 与 HttpRawServer 配对的 wire 约定：
+ * 与 HttpServerBinding 配对的 wire 约定：
  *   unary/serverStream/notify   params 在 body；clientStream/bidi 的 params 在
  *                               header `x-diy-params`，body 是 NDJSON chunk 流
  *   单值响应  {"result": …} / 错误 {code,message,details,ext:{http:{status}}}
@@ -14,7 +14,7 @@ import type { ClientHttp2Session, ClientHttp2Stream } from 'node:http2';
 import type { StreamHandle } from '../../core/types';
 import { _AsyncQueue } from '../../core/_async-queue';
 import { RpcError, _fromErrorPayload, type _ErrorPayload } from '../../core/error';
-import type { CallOptions, RawClient } from '../../core/raw';
+import type { CallOptions, ClientBinding } from '../../core/server-binding';
 import { codeForHttpStatus } from './_codes';
 
 interface HttpResp {
@@ -22,7 +22,7 @@ interface HttpResp {
   data: Buffer;
 }
 
-export class HttpRawClient implements RawClient {
+export class HttpClientBinding implements ClientBinding {
   private session: ClientHttp2Session;
   private disposed = false;
 

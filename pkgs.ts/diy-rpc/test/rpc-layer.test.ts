@@ -4,17 +4,17 @@
  * 在传输层之上验证 RPC builder 的逻辑正确性。
  */
 
-import type { Transport } from '../src/core/types';
-import { ChannelRawClient, ChannelRawServer } from '../src/core';
+import type { EnvelopeTransport } from '../src/core/types';
+import { ChannelClientBinding, ChannelServerBinding } from '../src/core';
 import { RpcImpl, RpcServer, router, createTypedClient } from '../src/core';
 import { it } from 'vitest';
 import { z } from 'zod';
 
 // ═══════════════════════════════════════════════════
-//  in-memory Transport
+//  in-memory EnvelopeTransport
 // ═══════════════════════════════════════════════════
 
-function createMemTransportPair(): [Transport, Transport] {
+function createMemTransportPair(): [EnvelopeTransport, EnvelopeTransport] {
   const qServer: unknown[] = [];    // server → client messages
   const qClient: unknown[] = [];    // client → server messages
   const serverListeners = new Set<Function>();
@@ -87,8 +87,8 @@ async function main() {
     });
 
     const rpcServer = new RpcServer({ router: app });
-    rpcServer.registerInto(new ChannelRawServer(txA));
-    const rpcClient = createTypedClient(new ChannelRawClient(txB), app);
+    rpcServer.registerInto(new ChannelServerBinding(txA));
+    const rpcClient = createTypedClient(new ChannelClientBinding(txB), app);
 
     const p1 = await rpcClient.ping({ msg: 'hi' });
     assert(p1 === 'pong: hi', `ping = ${p1}`);

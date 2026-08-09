@@ -7,14 +7,14 @@
  * 验证：路由归属清晰、无广播、scope 冲突报错。
  */
 
-import type { Transport } from '../src/core/types';
+import type { EnvelopeTransport } from '../src/core/types';
 import { it } from 'vitest';
 import { z } from 'zod';
 import {
   RpcSchema, RpcServer, RpcGateway, RpcForward, createTypedClient,
 } from '../src/index';
-import { ChannelRawServer } from '../src/core/raw-server';
-import { ChannelRawClient } from '../src/core/raw-client';
+import { ChannelServerBinding } from '../src/core/channel-server-binding';
+import { ChannelClientBinding } from '../src/core/channel-client-binding';
 
 // ═══════════════════════════════════════════════════
 //  def（模拟 app 层：diy.app 本地 + diy.ui 远端）
@@ -32,7 +32,7 @@ const appApiDef = {
   },
 } as const;
 
-function createMemTransportPair(): [Transport, Transport] {
+function createMemTransportPair(): [EnvelopeTransport, EnvelopeTransport] {
   const qSrv: unknown[] = [];
   const qCli: unknown[] = [];
   const srvListeners = new Set<Function>();
@@ -70,7 +70,7 @@ async function main() {
   const uiForward = new RpcForward(main2renderer, { router: appApiDef.diy.ui, scope: 'diy.ui' });
 
   // Main 侧：gateway 绑来源 cliTx，注册本地 + 转发两个后端
-  const gateway = new RpcGateway(new ChannelRawServer(gwTx))
+  const gateway = new RpcGateway(new ChannelServerBinding(gwTx))
     .register(appServer)
     .register(uiForward);
 
@@ -78,10 +78,10 @@ async function main() {
   const rendererServer = new RpcServer({ router: appApiDef.diy.ui, scope: 'diy.ui' });
   rendererServer.on(appApiDef.diy.ui.tree, async ({ input }) => `tree:${input.all ?? false}`);
   rendererServer.on(appApiDef.diy.ui.status, async () => ({ pid: 42 }));
-  rendererServer.registerInto(new ChannelRawServer(renderer2main));
+  rendererServer.registerInto(new ChannelServerBinding(renderer2main));
 
   // CLI 侧：全量 client（完整 def，能调 diy.app.* 和 diy.ui.*）
-  const cli = createTypedClient(new ChannelRawClient(cliTx), appApiDef);
+  const cli = createTypedClient(new ChannelClientBinding(cliTx), appApiDef);
 
   // ── 断言 ──
   console.log('\n── 本地 diy.app.* ──');
@@ -97,7 +97,7 @@ async function main() {
   console.log('\n── scope 冲突报错 ──');
   let threw = false;
   try {
-    new RpcGateway(new ChannelRawServer(gwTx)).register(appServer).register(appServer);
+    new RpcGateway(new ChannelServerBinding(gwTx)).register(appServer).register(appServer);
   } catch (e) {
     threw = e instanceof Error && e.message.includes('已注册');
   }

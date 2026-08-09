@@ -6,8 +6,8 @@
  * 命名体系：diy.app.*（Main 进程域）。
  */
 
-import { RpcServer, type Transport } from "@diy/rpc";
-import { ChannelRawServer } from "@diy/rpc";
+import { RpcServer, type EnvelopeTransport } from "@diy/rpc";
+import { ChannelServerBinding } from "@diy/rpc";
 import * as task from "../core/task";
 import * as subject from "../core/subject";
 import * as state from "../core/state";
@@ -221,8 +221,8 @@ export function createAppServer(): RpcServer {
 }
 
 /** 兼容旧用法：把 createAppServer 的 handler 直接挂到某 transport 上 */
-export function bindApi(transport: Transport): RpcServer {
+export function bindApi(transport: EnvelopeTransport): RpcServer {
   const server = createAppServer();
-  server.registerInto(new ChannelRawServer(transport));
+  server.registerInto(new ChannelServerBinding(transport));
   return server;
 }

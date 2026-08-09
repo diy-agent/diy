@@ -1,5 +1,5 @@
 /**
- * types.ts — Transport 接口 + 信封类型
+ * types.ts — EnvelopeTransport 接口 + 信封类型
  *
  * 协议消息（每个消息都有 type 鉴别器）：
  *   请求:      { type: 'call', id, method, params?, stream? }
@@ -17,10 +17,10 @@
 export type _StreamMode = 'server' | 'client' | 'bidi';
 
 // ═══════════════════════════════════════════════════
-//  Transport 接口
+//  EnvelopeTransport 接口
 // ═══════════════════════════════════════════════════
 
-export interface Transport {
+export interface EnvelopeTransport {
   send(payload: unknown): void;
   /** 注册消息处理器，返回解除注册函数 */
   on(handler: (msg: _Envelope) => void): () => void;

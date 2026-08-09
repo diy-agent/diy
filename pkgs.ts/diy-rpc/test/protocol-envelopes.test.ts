@@ -2,8 +2,8 @@
  * 协议信封层测试：验证调用 API 时实际收发的原始 _Envelope 序列
  */
 
-import type { Transport } from '../src/core/types';
-import { ChannelRawServer, ChannelRawClient } from '../src/core';
+import type { EnvelopeTransport } from '../src/core/types';
+import { ChannelServerBinding, ChannelClientBinding } from '../src/core';
 import { RpcImpl, RpcServer, RpcSchema, router, createTypedClient } from '../src/core';
 import { it } from 'vitest';
 import { z } from 'zod';
@@ -28,7 +28,7 @@ interface EnvelopeLog {
 }
 
 function createLoggedMemTransportPair(): {
-  serverTx: Transport; clientTx: Transport; logs: EnvelopeLog[];
+  serverTx: EnvelopeTransport; clientTx: EnvelopeTransport; logs: EnvelopeLog[];
 } {
   const logs: EnvelopeLog[] = [];
   const qServer: unknown[] = [], qClient: unknown[] = [];
@@ -114,8 +114,8 @@ function assert(cond: boolean, msg: string) {
 async function testUnaryEnvelopes() {
   console.log('\n── Unary 信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
-  const server = new ChannelRawServer(serverTx);
-  const client = new ChannelRawClient(clientTx);
+  const server = new ChannelServerBinding(serverTx);
+  const client = new ChannelClientBinding(clientTx);
 
   server.onUnary(api.greet, ({ input }) => `Hello ${input.name}!`);
 
@@ -131,8 +131,8 @@ async function testUnaryEnvelopes() {
 async function testServerStreamEnvelopes() {
   console.log('\n── Server-Stream 信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
-  const server = new ChannelRawServer(serverTx);
-  const client = new ChannelRawClient(clientTx);
+  const server = new ChannelServerBinding(serverTx);
+  const client = new ChannelClientBinding(clientTx);
 
   server.onServerStream(api.count, async function* ({ input }) {
     for (let i = 0; i < input.to; i++) {
@@ -158,8 +158,8 @@ async function testServerStreamEnvelopes() {
 async function testClientStreamEnvelopes() {
   console.log('\n── Client-Stream 信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
-  const server = new ChannelRawServer(serverTx);
-  const client = new ChannelRawClient(clientTx);
+  const server = new ChannelServerBinding(serverTx);
+  const client = new ChannelClientBinding(clientTx);
 
   server.onClientStream(api.upload, async ({ input, stream }) => {
     const items: string[] = [];
@@ -187,8 +187,8 @@ async function testClientStreamEnvelopes() {
 async function testBidiStreamEnvelopes() {
   console.log('\n── Bidi-Stream 信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
-  const server = new ChannelRawServer(serverTx);
-  const client = new ChannelRawClient(clientTx);
+  const server = new ChannelServerBinding(serverTx);
+  const client = new ChannelClientBinding(clientTx);
 
   server.onBidiStream(api.echo, async function* ({ input, stream }) {
     for await (const m of stream) {
@@ -240,8 +240,8 @@ async function testRpcLayerEnvelopes() {
   });
 
   const rpcServer = new RpcServer({ router: app });
-  rpcServer.registerInto(new ChannelRawServer(serverTx));
-  const rpcClient = createTypedClient(new ChannelRawClient(clientTx), app);
+  rpcServer.registerInto(new ChannelServerBinding(serverTx));
+  const rpcClient = createTypedClient(new ChannelClientBinding(clientTx), app);
 
   const pong = await rpcClient.ping({ msg: 'hi' });
   assert(pong === 'pong: hi', `ping = ${pong}`);

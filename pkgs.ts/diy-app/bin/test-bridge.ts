@@ -13,7 +13,7 @@
  *   PORT=18888 npm run test:bridge
  */
 
-import { HttpRawClient } from '@diy/rpc/http';
+import { HttpClientBinding } from '@diy/rpc/http';
 import { createTypedClient } from '@diy/rpc';
 import { apiDef } from '../src/main/services/api-def';
 
@@ -35,7 +35,7 @@ function fail(label: string, err: unknown) {
 async function main(): Promise<void> {
   console.log(`\n🔌 连接到 http://127.0.0.1:${PORT} ...`);
 
-  const raw = new HttpRawClient(`http://127.0.0.1:${PORT}`);
+  const raw = new HttpClientBinding(`http://127.0.0.1:${PORT}`);
   await raw.ready();
 
   // ── 强类型客户端 — createTypedClient 从 meta zod 推导完整方法签名 ──

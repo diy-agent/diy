@@ -6,7 +6,7 @@ import {
   type _RouteNode,
   type _RouterNode,
 } from "../core/_tree";
-import type { RawClient } from "../core/raw";
+import type { ClientBinding } from "../core/server-binding";
 import { parseArgv, generateHelp, CliParseError } from "./_parser";
 import type { _ProcedureCliMeta } from "../core/_cli-meta";
 
@@ -79,7 +79,7 @@ export interface CliConfig<TRouter extends _Router> {
   version?: string;
   description?: string;
   router: TRouter;
-  transport: RawClient;
+  transport: ClientBinding;
   json?: boolean;
   groups?: Record<string, string>;
   /**

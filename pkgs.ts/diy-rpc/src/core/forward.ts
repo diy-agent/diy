@@ -3,16 +3,16 @@
  *
  * 与本地 RpcServer 相对：RpcServer 在本进程直接处理 handler；
  * RpcForward 把 scope 下的每个方法注册为"转发 handler"——收到调用后经
- * 一个 RawClient 发到远端 transport（如 ipcTransport → renderer），
- * 拿回结果返回。网关的 RawServer 负责 id 映射与回写来源，转发方完全透明。
+ * 一个 ClientBinding 发到远端 transport（如 ipcTransport → renderer），
+ * 拿回结果返回。网关的 ServerBinding 负责 id 映射与回写来源，转发方完全透明。
  *
  * 用途：CLI → Main（gateway）→ Renderer 的 diy.ui.* 转发。
  * 加 remote server 同理：register(new RpcForward(remoteTransport, { router, scope }))。
  */
 
-import type { Transport } from './types';
-import { ChannelRawClient } from './raw-client';
-import type { RawServer, RawClient } from './raw';
+import type { EnvelopeTransport } from './types';
+import { ChannelClientBinding } from './channel-client-binding';
+import type { ServerBinding, ClientBinding } from './server-binding';
 import { _flattenRouter } from './_tree';
 import type { _Router } from './meta';
 import type { _RpcBackend } from './gateway';
@@ -40,15 +40,15 @@ type FwdOpts = { input: unknown; meta: unknown };
 export class RpcForward implements _RpcBackend {
   readonly scope: string;
   private _router: _Router;
-  private _client: RawClient;
+  private _client: ClientBinding;
 
-  constructor(transport: Transport, opts: _RpcForwardOptions) {
+  constructor(transport: EnvelopeTransport, opts: _RpcForwardOptions) {
     this.scope = opts.scope;
     this._router = opts.router;
-    this._client = new ChannelRawClient(transport);
+    this._client = new ChannelClientBinding(transport);
   }
 
-  registerInto(raw: RawServer): void {
+  registerInto(raw: ServerBinding): void {
     const flat = _flattenRouter(this._router);
     for (const [name, def] of Object.entries(flat)) {
       const full = `${this.scope}.${name}`;
