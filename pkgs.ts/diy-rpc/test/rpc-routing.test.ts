@@ -35,6 +35,7 @@ const appApiDef = router({
         output: z.object({ tag: z.string(), sum: z.number() }),
       }),
       echo: RpcSchema.bidiStream({ input: {}, chunkIn: z.string(), chunkOut: z.string() }),
+      ticks: RpcSchema.serverStream({ input: { n: z.number() }, output: z.number() }),
     },
   },
 });
@@ -86,6 +87,9 @@ async function main() {
   rendererBinding.on(appApiDef.diy.ui.echo, async function* ({ stream }) {
     for await (const m of stream) yield `echo:${m}`;
   });
+  rendererBinding.on(appApiDef.diy.ui.ticks, async function* ({ input }) {
+    for (let i = 1; i <= input.n; i++) yield i;
+  });
 
   // CLI 侧：全量 client（完整 def，能调 diy.app.* 和 diy.ui.*）
   const cli = createTypedClient(new ChannelClientBinding(cliTx), appApiDef);
@@ -100,6 +104,12 @@ async function main() {
   assert(tree === 'tree:true', `diy.ui.tree(转发) → ${tree}`);
   const status = await cli.diy.ui.status({});
   assert(status.pid === 42, `diy.ui.status(转发) → pid=${status.pid}`);
+
+  console.log('\n── 转发 server-stream（远端产出流式回写）──');
+  const tickH = await cli.diy.ui.ticks({ n: 3 });
+  const ticks: number[] = [];
+  for await (const t of tickH) ticks.push(t as number);
+  assert(ticks.join(',') === '1,2,3', `diy.ui.ticks(转发 server-stream) → ${ticks.join(',')}`);
 
   console.log('\n── 转发 client-stream / bidi（incoming 原样桥接）──');
   async function* upGen() { yield 10; yield 20; yield 30; }
