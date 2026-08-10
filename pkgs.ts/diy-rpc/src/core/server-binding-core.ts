@@ -114,8 +114,13 @@ export abstract class ServerBindingCore {
       } else if (mode === 'server') {
         this.on(def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown }) =>
           this._forwardServerStream(client, full, opts)) as any);
-      } else if (mode === 'client' || mode === 'bidi') {
-        throw new Error(`[ServerBinding] ${full}: client/bidi 转发暂不支持`);
+      } else if (mode === 'client') {
+        // 来源 incoming 流原样桥接给远端（StreamHandle 即 AsyncIterable）
+        this.on(def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown; stream?: unknown }) =>
+          client.clientStream(full, { input: opts.input, meta: opts.meta }, opts.stream as AsyncIterable<unknown>)) as any);
+      } else if (mode === 'bidi') {
+        this.on(def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown; stream?: unknown }) =>
+          this._forwardBidiStream(client, full, opts)) as any);
       } else {
         throw new Error(`[ServerBinding] ${full}: 未知 stream mode ${mode}`);
       }
@@ -128,6 +133,15 @@ export abstract class ServerBindingCore {
     opts: { input: unknown; meta: unknown },
   ): AsyncGenerator<unknown> {
     const handle = await client.serverStream(full, { input: opts.input, meta: opts.meta });
+    for await (const chunk of handle) yield chunk;
+  }
+
+  private async *_forwardBidiStream(
+    client: ClientBinding,
+    full: string,
+    opts: { input: unknown; meta: unknown; stream?: unknown },
+  ): AsyncGenerator<unknown> {
+    const handle = await client.bidiStream(full, { input: opts.input, meta: opts.meta }, opts.stream as AsyncIterable<unknown>);
     for await (const chunk of handle) yield chunk;
   }
 

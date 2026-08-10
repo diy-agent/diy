@@ -29,6 +29,12 @@ const appApiDef = router({
     ui: {
       tree: RpcSchema.unary({ input: { all: z.boolean().optional() }, output: z.string() }),
       status: RpcSchema.unary({ input: {}, output: z.object({ pid: z.number() }) }),
+      upload: RpcSchema.clientStream({
+        input: { tag: z.string() },
+        chunkIn: z.number(),
+        output: z.object({ tag: z.string(), sum: z.number() }),
+      }),
+      echo: RpcSchema.bidiStream({ input: {}, chunkIn: z.string(), chunkOut: z.string() }),
     },
   },
 });
@@ -72,6 +78,14 @@ async function main() {
   const rendererBinding = new ChannelServerBinding(renderer2main);
   rendererBinding.on(appApiDef.diy.ui.tree, async ({ input }) => `tree:${input.all ?? false}`);
   rendererBinding.on(appApiDef.diy.ui.status, async () => ({ pid: 42 }));
+  rendererBinding.on(appApiDef.diy.ui.upload, async ({ input, stream }) => {
+    let sum = 0;
+    for await (const v of stream) sum += v as number;
+    return { tag: input.tag, sum };
+  });
+  rendererBinding.on(appApiDef.diy.ui.echo, async function* ({ stream }) {
+    for await (const m of stream) yield `echo:${m}`;
+  });
 
   // CLI 侧：全量 client（完整 def，能调 diy.app.* 和 diy.ui.*）
   const cli = createTypedClient(new ChannelClientBinding(cliTx), appApiDef);
@@ -86,6 +100,17 @@ async function main() {
   assert(tree === 'tree:true', `diy.ui.tree(转发) → ${tree}`);
   const status = await cli.diy.ui.status({});
   assert(status.pid === 42, `diy.ui.status(转发) → pid=${status.pid}`);
+
+  console.log('\n── 转发 client-stream / bidi（incoming 原样桥接）──');
+  async function* upGen() { yield 10; yield 20; yield 30; }
+  const up = await cli.diy.ui.upload({ tag: 'x' }, upGen());
+  assert(up.sum === 60, `diy.ui.upload(转发 client-stream) → sum=${up.sum}`);
+
+  async function* msgs() { yield 'hello'; yield 'world'; }
+  const replies = await cli.diy.ui.echo({}, msgs());
+  const outs: string[] = [];
+  for await (const r of replies) outs.push(r as string);
+  assert(outs.join(',') === 'echo:hello,echo:world', `diy.ui.echo(转发 bidi) → ${outs.join(',')}`);
 
   console.log('\n── 方法名冲突报错（scope 冲突的实质）──');
   let threw = false;
