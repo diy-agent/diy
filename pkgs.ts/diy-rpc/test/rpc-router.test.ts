@@ -1,7 +1,7 @@
 /**
- * rpc-gateway.test.ts — RpcGateway 路由 + RpcForward 转发验证
+ * rpc-router.test.ts — RpcRouter 路由 + RpcForward 转发验证
  *
- * 场景：CLI → Main（gateway，本地 diy.app + 转发 diy.ui）→ Renderer
+ * 场景：CLI → Main（RpcRouter，本地 diy.app + 转发 diy.ui）→ Renderer
  *   - diy.app.* 由本进程 RpcServer 直接处理
  *   - diy.ui.* 由 RpcForward 转发到 renderer 侧 RpcServer
  * 验证：路由归属清晰、无广播、scope 冲突报错。
@@ -11,7 +11,7 @@ import type { EnvelopeTransport } from '../src/core/types';
 import { it } from 'vitest';
 import { z } from 'zod';
 import {
-  RpcSchema, RpcServer, RpcGateway, RpcForward, createTypedClient,
+  RpcSchema, RpcServer, RpcRouter, RpcForward, createTypedClient,
 } from '../src/index';
 import { ChannelServerBinding } from '../src/core/channel-server-binding';
 import { ChannelClientBinding } from '../src/core/channel-client-binding';
@@ -56,10 +56,10 @@ async function main() {
     else { failed++; throw new Error(msg); }
   }
 
-  // ── 拓扑：cliTx ─ gateway → [本地 appServer] + [forward → rendererTx] ──
+  // ── 拓扑：cliTx ─ router → [本地 appServer] + [forward → rendererTx] ──
   console.log('\n── 建立拓扑 ──');
 
-  const [cliTx, gwTx] = createMemTransportPair();       // CLI ↔ Main(gateway)
+  const [cliTx, gwTx] = createMemTransportPair();       // CLI ↔ Main(RpcRouter)
   const [main2renderer, renderer2main] = createMemTransportPair(); // Main ↔ Renderer
 
   // Main 侧：本地 app server（scope diy.app，脱 transport）
@@ -69,8 +69,8 @@ async function main() {
   // Main 侧：转发 diy.ui.* 到 renderer
   const uiForward = new RpcForward(main2renderer, { router: appApiDef.diy.ui, scope: 'diy.ui' });
 
-  // Main 侧：gateway 绑来源 cliTx，注册本地 + 转发两个后端
-  const gateway = new RpcGateway(new ChannelServerBinding(gwTx))
+  // Main 侧：RpcRouter 绑来源 cliTx，注册本地 + 转发两个后端
+  const router = new RpcRouter(new ChannelServerBinding(gwTx))
     .register(appServer)
     .register(uiForward);
 
@@ -96,10 +96,10 @@ async function main() {
 
   console.log('\n── scope 冲突报错 ──');
   let threw = false;
-  // 用独立 server 测 gateway 层 scope 冲突（appServer 已挂到 main gateway，不能复用）
+  // 用独立 server 测 RpcRouter 层 scope 冲突（appServer 已挂到 main router，不能复用）
   const conflictSrv = new RpcServer({ router: appApiDef.diy.app, scope: 'diy.app' });
   try {
-    new RpcGateway(new ChannelServerBinding(gwTx)).register(conflictSrv).register(conflictSrv);
+    new RpcRouter(new ChannelServerBinding(gwTx)).register(conflictSrv).register(conflictSrv);
   } catch (e) {
     threw = e instanceof Error && e.message.includes('已注册');
   }
@@ -116,7 +116,7 @@ async function main() {
   }
   assert(threw, '一个 RpcServer 重复 registerInto 抛错');
 
-  gateway.destroy();
+  router.destroy();
   appServer.destroy();
   rendererServer.destroy();
 
@@ -126,4 +126,4 @@ async function main() {
 
 }
 
-it('rpc-gateway: 路由归属', async () => { await main(); });
+it('rpc-router: 路由归属', async () => { await main(); });

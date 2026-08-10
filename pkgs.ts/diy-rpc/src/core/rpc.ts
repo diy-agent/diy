@@ -5,7 +5,7 @@
  * 与强类型端口；本文件在其上提供：
  *   - RpcSchema / RpcImpl 定义工厂（两种形态）
  *   - router 组合工具（回写 meta.name）
- *   - RpcServer / RpcGateway / RpcForward 服务端入口（以 meta 注册进 ServerBinding）
+ *   - RpcServer / RpcRouter / RpcForward 服务端入口（以 meta 注册进 ServerBinding）
  *   - createTypedClient 客户端入口
  *
  * 依赖方向：index(第3层) → meta/tree/server-binding(第2层) → transport(第1层)，无循环、分层不倒置。
@@ -14,7 +14,7 @@
 import { z } from 'zod';
 import type { StreamHandle } from './types';
 import type { ServerBinding } from './server-binding';
-import type { _RpcBackend } from './gateway';
+import type { _RpcBackend } from './router';
 import { _flattenRouter, _buildRouteTree, _routeLeaves } from './_tree';
 import {
   type _HandlerForProc, type ProcedureMeta, type ProcedureDef,
@@ -249,7 +249,7 @@ export class RpcServer implements _RpcBackend {
     // 含 call 的 procedure 自动注册
     this._autoRegister();
 
-    // 构造即挂载（直接使用场景）；gateway 场景不传，由 gateway.register 注入
+    // 构造即挂载（直接使用场景）；router 场景不传，由 RpcRouter.register 注入
     if (opts.binding) this.registerInto(opts.binding);
   }
 
@@ -274,7 +274,7 @@ export class RpcServer implements _RpcBackend {
 
   /**
    * 把本注册表挂到给定 ServerBinding。
-   * RpcGateway.register(backend) 会调用它，把本 server 所有方法（全名）
+   * RpcRouter.register(backend) 会调用它，把本 server 所有方法（全名）
    * 注册到来源 transport 的 ServerBinding 上。
    */
   registerInto(binding: ServerBinding): void {
@@ -327,9 +327,9 @@ export class RpcServer implements _RpcBackend {
 
 export { createTypedClient } from './typed-client';
 export type { TypedClient } from './typed-client';
-export { RpcGateway } from './gateway';
+export { RpcRouter } from './router';
 /** @internal */
-export type { _RpcBackend } from './gateway';
+export type { _RpcBackend } from './router';
 export { RpcForward } from './forward';
 /** @internal */
 export type { _RpcForwardOptions } from './forward';

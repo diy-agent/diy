@@ -1,21 +1,21 @@
 /**
  * rpc-port.ts — HTTP/2 RPC 端口服务（HttpServerBinding 路由版）
  *
- * 单例 HttpServerBinding + 单例 RpcGateway，注册本地 appServer + 转发 uiForward：
+ * 单例 HttpServerBinding + 单例 RpcRouter，注册本地 appServer + 转发 uiForward：
  *   - 每个 http2 stream = 一个 RPC，`:path` = 方法全名（curl 可直接访问）
  *   - 所有 CLI 连接共享同一个 HttpServerBinding（注册表一份），handleStream 做每请求路由
  *   - 路由归属集中在这两行 register，无 pipe 广播，方法归属一处可见
  */
 
 import * as http2 from 'node:http2';
-import { RpcGateway, RpcForward, type RpcServer } from '@diy/rpc';
+import { RpcRouter, RpcForward, type RpcServer } from '@diy/rpc';
 import { HttpServerBinding } from '@diy/rpc/http';
 import type { AppConfig } from '../core/app-config';
 import { apiDef } from './api-def';
 
 export class RpcPortService {
   private _httpRaw: HttpServerBinding | null = null;
-  private _gateway: RpcGateway | null = null;
+  private _router: RpcRouter | null = null;
   private _http2Server: http2.Http2Server | null = null;
   private _port = 0;
 
@@ -46,11 +46,11 @@ export class RpcPortService {
       ? new RpcForward(rendererTransport, { router: apiDef.diy.ui, scope: 'diy.ui' })
       : null;
 
-    // 单例 HttpServerBinding + 单例 gateway：注册一次，所有 stream 共享路由表
+    // 单例 HttpServerBinding + 单例 RpcRouter：注册一次，所有 stream 共享路由表
     this._httpRaw = new HttpServerBinding();
-    this._gateway = new RpcGateway(this._httpRaw)
+    this._router = new RpcRouter(this._httpRaw)
       .register(appServer); // diy.app.* → Main 本地
-    if (uiForward) this._gateway.register(uiForward); // diy.ui.* → Renderer
+    if (uiForward) this._router.register(uiForward); // diy.ui.* → Renderer
 
     return new Promise<void>((resolve, reject) => {
       const srv = http2.createServer();
@@ -76,8 +76,8 @@ export class RpcPortService {
   }
 
   stop(): void {
-    this._gateway?.destroy();
-    this._gateway = null;
+    this._router?.destroy();
+    this._router = null;
     this._httpRaw?.destroy();
     this._httpRaw = null;
     this._http2Server?.close();

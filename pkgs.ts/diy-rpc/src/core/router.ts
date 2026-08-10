@@ -1,14 +1,17 @@
 /**
- * gateway.ts — RpcGateway：多后端合并注册进单一 ServerBinding 的编排层
+ * router.ts — RpcRouter：多后端按 scope 前缀归并注册进单一 ServerBinding 的编排层
  *
  * 核心：把多个后端（本地 RpcServer / 转发 RpcForward）的方法按 scope 前缀
  * 合并进同一个 ServerBinding，scope 冲突（方法前缀重名）即报错，保证
  * 每个方法由且仅由一个后端注册（零广播）。
  *
  * 职责：
- *   - 拥有绑定来源 transport 的 ServerBinding（生命周期归 gateway）
+ *   - 拥有绑定来源 transport 的 ServerBinding（生命周期归 router）
  *   - register(backend) 把后端的方法（全名）注册进内部 ServerBinding
  *   - 路由归属 = 各后端声明的 scope，集中可见；scope 冲突即报错
+ *
+ * 与 router()（rpc.ts，构建声明式 procedure 树）区分：本类是运行期
+ * 把已定义好的后端归并到具体绑定上的编排器。
  */
 
 import type { ServerBinding } from './server-binding';
@@ -28,13 +31,13 @@ export interface _RpcBackend {
 }
 
 /**
- * RpcGateway — 多后端合并注册进单一 ServerBinding 的编排层。
+ * RpcRouter — 多后端按 scope 前缀归并注册进单一 ServerBinding 的编排层。
  *
  * 拥有一个 ServerBinding（具体绑定由调用方按协议选择：ChannelServerBinding
  * 或 HttpServerBinding）；每次 register 把后端的方法合并进它。请求分发由
- * ServerBinding 按全名 method 完成，本类不参与请求处理。
+ * ServerBinding 按全名 method 完成，本类不参与请求处理，只保证前缀归属唯一。
  */
-export class RpcGateway {
+export class RpcRouter {
   private _scopes = new Set<string>();
 
   constructor(private _binding: ServerBinding) {}
@@ -43,7 +46,7 @@ export class RpcGateway {
   register(backend: _RpcBackend): this {
     if (this._scopes.has(backend.scope)) {
       throw new Error(
-        `[RpcGateway] scope "${backend.scope}" 已注册 — 方法前缀冲突，每个前缀只能归属一个后端`,
+        `[RpcRouter] scope "${backend.scope}" 已注册 — 方法前缀冲突，每个前缀只能归属一个后端`,
       );
     }
     this._scopes.add(backend.scope);

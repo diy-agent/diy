@@ -42,7 +42,7 @@ let _appServer: RpcServer | null = null;
 /**
  * 创建 Main 侧 handler 注册表（传输无关，scope = diy.app）。
  *
- * 所有 diy.app.* handler 在这里一次性绑定；RpcGateway.register(server)
+ * 所有 diy.app.* handler 在这里一次性绑定；RpcRouter.register(server)
  * 把它挂到某个来源 transport。全局共享同一实例（单例）。
  */
 export function createAppServer(): RpcServer {
