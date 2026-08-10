@@ -6,18 +6,59 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./cli": "./src/cli.ts"
+    "./http": "./src/transport/http/index.ts",
+    "./ws": "./src/transport/ws/index.ts",
+    "./electron": "./src/transport/electron/index.ts",
+    "./cli": "./src/cli/index.ts"
   },
   "files": ["src/"],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "check:browser": "tsc --noEmit -p tsconfig.browser.json",
-    "test": "tsx test/transport-rpc.test.ts && tsx test/protocol-envelopes.test.ts"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "oxlint src/ test/",
+    "lint:fix": "oxlint --fix src/ test/",
+    "fmt": "oxfmt --check src/ test/",
+    "fmt:fix": "oxfmt --write src/ test/",
+    "check": "npm run typecheck && npm run lint && npm run check:browser",
+    "fix": "npm run fmt:fix && npm run lint:fix"
   },
   "dependencies": {
+    "ws": "^8.21.0",
     "zod": "^4.4.3"
   },
+  "peerDependencies": {
+    "electron": ">=33"
+  },
   "devDependencies": {
-    "typescript": "^6.0.3"
+    "@types/ws": "^8.18.1",
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "oxfmt": {
+    "indent": 2,
+    "lineWidth": 100,
+    "quotes": "single",
+    "ignore": [
+      "node_modules/"
+    ]
+  },
+  "oxlint": {
+    "rules": {
+      "no-unused-vars": "warn",
+      "no-console": "off",
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          "argsIgnorePattern": "^_"
+        }
+      ]
+    },
+    "ignorePatterns": [
+      "node_modules/"
+    ]
   }
 }

@@ -5,6 +5,8 @@
     "pkgs.ts/*"
   ],
   "scripts": {
+    "build": "npm --workspace diy-app run build && npm --workspace diy-app run build:cli",
+    "clean": "npm run clean --workspace diy-app",
     "typecheck": "tsc -b tsconfig.all.json --noEmit",
     "lint": "oxlint pkgs.ts/",
     "lint:fix": "oxlint --fix pkgs.ts/",

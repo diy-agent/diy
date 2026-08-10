@@ -1,25 +1,5 @@
-// ═══ Zod 扩展：cliArg / cliOption（side-effect import，必须在任何 schema 定义前执行）
-// meta 本身无 Node 依赖，浏览器 schema 也用它打标记
-import './rpc/cli-rpc/meta';
-
-export type {
-  Transport, StreamMode, StreamHandle, Envelope,
-  ErrorPayload, CallMsg, DataMsg, EndMsg, NotifyMsg,
-} from './transport/types';
-export { errMsg, RpcError } from './transport/types';
-export { Server } from './transport/server';
-export { Client } from './transport/client';
-export { AsyncQueue } from './transport/async-queue';
-export { createMemTransportPair, createLoggedTransport } from './transport/transport-builtin';
-export type { TransportLogHandler } from './transport/transport-builtin';
-export {
-  rpc, router, createHandler, createClient, flattenRouter,
-  isProcedure, buildRouteTree, routeLeaves, routeResolve, routeWalk,
-} from './rpc/index';
-export type {
-  ProcedureDef, Router, ClientRouter,
-  ProcNode, RouterNode, RouteNode,
-  AnyProcedure,
-  UnaryConfig, ServerStreamConfig, ClientStreamConfig, BidiStreamConfig,
-  ProcedureCliMeta,
-} from './rpc/index';
+// src/index.ts — @diy/rpc 根入口：加载 zod 扩展副作用 + 全量 re-export 平台无关核
+// 浏览器安全（core 纯 TS + zod，无 node/electron 依赖）。具体绑定见子路径
+// @diy/rpc/http、@diy/rpc/ws、@diy/rpc/electron、@diy/rpc/cli。
+import './core/_cli-meta';
+export * from './core';

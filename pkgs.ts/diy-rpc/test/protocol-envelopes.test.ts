@@ -1,11 +1,22 @@
 /**
- * 协议信封层测试：验证调用 API 时实际收发的原始 Envelope 序列
+ * 协议信封层测试：验证调用 API 时实际收发的原始 _Envelope 序列
  */
 
-import type { Transport, StreamHandle } from '../src/transport/types';
-import { Server, Client } from '../src/transport';
-import { rpc, router, createHandler, createClient } from '../src/rpc';
+import type { EnvelopeTransport } from '../src/core/types';
+import { ChannelServerBinding, ChannelClientBinding } from '../src/core';
+import { RpcImpl, RpcServer, RpcSchema, router, createTypedClient } from '../src/core';
+import { it } from 'vitest';
 import { z } from 'zod';
+
+const api = router({
+  greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
+  count: RpcSchema.serverStream({ input: { to: z.number() }, output: z.object({ val: z.number() }) }),
+  upload: RpcSchema.clientStream({
+    input: { tag: z.string() }, chunkIn: z.string(),
+    output: z.object({ tag: z.string(), items: z.array(z.string()) }),
+  }),
+  echo: RpcSchema.bidiStream({ input: { prefix: z.string() }, chunkIn: z.string(), chunkOut: z.string() }),
+} as const);
 
 // ═══════════════════════════════════════════════════
 //  传输层录制器
@@ -17,7 +28,7 @@ interface EnvelopeLog {
 }
 
 function createLoggedMemTransportPair(): {
-  serverTx: Transport; clientTx: Transport; logs: EnvelopeLog[];
+  serverTx: EnvelopeTransport; clientTx: EnvelopeTransport; logs: EnvelopeLog[];
 } {
   const logs: EnvelopeLog[] = [];
   const qServer: unknown[] = [], qClient: unknown[] = [];
@@ -74,17 +85,17 @@ function assertLog(logs: EnvelopeLog[], expected: LogPattern): void {
   if (logs.length !== expected.length) {
     const e = JSON.stringify(expected.map(e => `${e.dir} ${e.type || e.kind}`));
     const a = JSON.stringify(logs.map(l => `${l.dir} ${l.envelope.type}`));
-    throw new Error(`Envelope count mismatch:\n  expected ${expected.length}: ${e}\n  got ${logs.length}: ${a}`);
+    throw new Error(`_Envelope count mismatch:\n  expected ${expected.length}: ${e}\n  got ${logs.length}: ${a}`);
   }
   for (let i = 0; i < expected.length; i++) {
     const exp = expected[i];
     const actual = logs[i];
     if (actual.dir !== exp.dir) {
-      throw new Error(`Envelope #${i}: expected dir=${exp.dir} but got ${actual.dir}`);
+      throw new Error(`_Envelope #${i}: expected dir=${exp.dir} but got ${actual.dir}`);
     }
     if (!matchEnvelope(actual.envelope, exp)) {
       throw new Error(
-        `Envelope #${i} mismatch:\n  expected: ${JSON.stringify(exp)}\n  actual:   ${JSON.stringify(actual.envelope)}`
+        `_Envelope #${i} mismatch:\n  expected: ${JSON.stringify(exp)}\n  actual:   ${JSON.stringify(actual.envelope)}`
       );
     }
   }
@@ -97,18 +108,18 @@ let failed = 0;
 
 function assert(cond: boolean, msg: string) {
   if (cond) { passed++; console.log(`  ✅ ${msg}`); }
-  else { failed++; console.error(`  ❌ ${msg}`); }
+  else { failed++; throw new Error(msg); }
 }
 
 async function testUnaryEnvelopes() {
   console.log('\n── Unary 信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
-  const server = new Server(serverTx);
-  const client = new Client(clientTx);
+  const server = new ChannelServerBinding(serverTx);
+  const client = new ChannelClientBinding(clientTx);
 
-  server.onUnary('greet', (p: { name: string }) => `Hello ${p.name}!`);
+  server.onUnary(api.greet, ({ input }) => `Hello ${input.name}!`);
 
-  const res = await client.invoke<{ name: string }, string>('greet', { name: 'World' });
+  const res = await client.invoke<{ input: { name: string }; meta: unknown }, string>('greet', { input: { name: 'World' }, meta: {} });
   assert(res === 'Hello World!', `result = ${res}`);
 
   assertLog(logs, [
@@ -120,17 +131,17 @@ async function testUnaryEnvelopes() {
 async function testServerStreamEnvelopes() {
   console.log('\n── Server-Stream 信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
-  const server = new Server(serverTx);
-  const client = new Client(clientTx);
+  const server = new ChannelServerBinding(serverTx);
+  const client = new ChannelClientBinding(clientTx);
 
-  server.onServerStream('count', async function* (p: { to: number }) {
-    for (let i = 0; i < p.to; i++) {
-      await sleep(1);
+  server.onServerStream(api.count, async function* ({ input }) {
+    for (let i = 0; i < input.to; i++) {
+      await new Promise(r => setImmediate(r));
       yield { val: i };
     }
   });
 
-  const handle = await client.serverStream<{ to: number }, { val: number }>('count', { to: 2 });
+  const handle = await client.serverStream<{ input: { to: number }; meta: unknown }, { val: number }>('count', { input: { to: 2 }, meta: {} });
   const out: { val: number }[] = [];
   for await (const v of handle) out.push(v);
   assert(JSON.stringify(out) === '[{"val":0},{"val":1}]', `result = ${JSON.stringify(out)}`);
@@ -147,19 +158,19 @@ async function testServerStreamEnvelopes() {
 async function testClientStreamEnvelopes() {
   console.log('\n── Client-Stream 信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
-  const server = new Server(serverTx);
-  const client = new Client(clientTx);
+  const server = new ChannelServerBinding(serverTx);
+  const client = new ChannelClientBinding(clientTx);
 
-  server.onClientStream('upload', async (p: { tag: string }, chunks: StreamHandle<string>) => {
+  server.onClientStream(api.upload, async ({ input, stream }) => {
     const items: string[] = [];
-    for await (const c of chunks) items.push(c);
-    return { tag: p.tag, items };
+    for await (const c of stream) items.push(c);
+    return { tag: input.tag, items };
   });
 
   async function* gen() { yield 'a'; yield 'b'; }
 
-  const res = await client.clientStream<{ tag: string }, string, { tag: string; items: string[] }>(
-    'upload', { tag: 'demo' }, gen(),
+  const res = await client.clientStream<{ input: { tag: string }; meta: unknown }, string, { tag: string; items: string[] }>(
+    'upload', { input: { tag: 'demo' }, meta: {} }, gen(),
   );
   assert(JSON.stringify(res.items) === '["a","b"]', `result = ${JSON.stringify(res)}`);
 
@@ -176,19 +187,19 @@ async function testClientStreamEnvelopes() {
 async function testBidiStreamEnvelopes() {
   console.log('\n── Bidi-Stream 信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
-  const server = new Server(serverTx);
-  const client = new Client(clientTx);
+  const server = new ChannelServerBinding(serverTx);
+  const client = new ChannelClientBinding(clientTx);
 
-  server.onBidiStream('echo', async function* (p: { prefix: string }, incoming: StreamHandle<string>) {
-    for await (const m of incoming) {
+  server.onBidiStream(api.echo, async function* ({ input, stream }) {
+    for await (const m of stream) {
       await sleep(1);
-      yield `${p.prefix}: ${m}`;
+      yield `${input.prefix}: ${m}`;
     }
   });
 
   async function* gen() { yield 'hello'; yield 'bye'; }
 
-  const replies = await client.bidiStream<{ prefix: string }, string, string>('echo', { prefix: 'got' }, gen());
+  const replies = await client.bidiStream<{ input: { prefix: string }; meta: unknown }, string, string>('echo', { input: { prefix: 'got' }, meta: {} }, gen());
   const out: string[] = [];
   for await (const r of replies) out.push(r);
   assert(JSON.stringify(out) === '["got: hello","got: bye"]', `result = ${JSON.stringify(out)}`);
@@ -208,18 +219,18 @@ async function testBidiStreamEnvelopes() {
 async function testRpcLayerEnvelopes() {
   console.log('\n── RPC 层信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
-  const server = new Server(serverTx);
-  const client = new Client(clientTx);
 
   const app = router({
-    ping: rpc.unary({
+    ping: RpcImpl.unary({
       input: { msg: z.string() },
+      output: z.string(),
       call: ({ input }) => `pong: ${input.msg}`,
     }),
 
-    upload: rpc.clientStream({
+    upload: RpcImpl.clientStream({
       input: { tag: z.string() },
-      chunk: z.number(),
+      chunkIn: z.number(),
+      output: z.object({ tag: z.string(), sum: z.number() }),
       call: async ({ input, stream }) => {
         let sum = 0;
         for await (const v of stream) sum += v;
@@ -228,8 +239,9 @@ async function testRpcLayerEnvelopes() {
     }),
   });
 
-  createHandler({ router: app, transport: server, ctx: {} });
-  const rpcClient = createClient<typeof app>(client, app);
+  const rpcServer = new RpcServer({ router: app });
+  rpcServer.registerInto(new ChannelServerBinding(serverTx));
+  const rpcClient = createTypedClient(new ChannelClientBinding(clientTx), app);
 
   const pong = await rpcClient.ping({ msg: 'hi' });
   assert(pong === 'pong: hi', `ping = ${pong}`);
@@ -259,7 +271,7 @@ async function main() {
 
   console.log(`\n${'═'.repeat(40)}`);
   console.log(`通过: ${passed}  失败: ${failed}`);
-  if (failed > 0) process.exit(1);
+
 }
 
-main().catch(e => { console.error('FATAL:', e); process.exit(1); });
+it('protocol-envelopes: 信封序列', async () => { await main(); });
