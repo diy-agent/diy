@@ -61,7 +61,7 @@ function resolveChunks<T>(chunks: AsyncIterable<T> | (() => AsyncIterable<T>)): 
  * 每次调用先做 zod input 校验，再发到 transport。
  */
 export function createTypedClient<const T>(client: ClientBinding, meta: T): TypedClient<T> {
-  const raw = client;
+  const binding = client;
   const flat = _flattenRouter(meta as Parameters<typeof _flattenRouter>[0]);
   const modes: Record<string, string> = {};
   const schemas: Record<string, { input?: z.ZodType }> = {};
@@ -82,17 +82,17 @@ export function createTypedClient<const T>(client: ClientBinding, meta: T): Type
       if (!m) return buildProxy(name);
 
       if (m === 'server') {
-        return (input: any, options?: CallOptions) => raw.serverStream(name, { input: validate(name, input), meta: {} }, options);
+        return (input: any, options?: CallOptions) => binding.serverStream(name, { input: validate(name, input), meta: {} }, options);
       }
       if (m === 'client') {
         return (input: any, chunks: any, options?: CallOptions) =>
-          raw.clientStream(name, { input: validate(name, input), meta: {} }, resolveChunks(chunks), options);
+          binding.clientStream(name, { input: validate(name, input), meta: {} }, resolveChunks(chunks), options);
       }
       if (m === 'bidi') {
         return (input: any, chunks: any, options?: CallOptions) =>
-          raw.bidiStream(name, { input: validate(name, input), meta: {} }, resolveChunks(chunks), options);
+          binding.bidiStream(name, { input: validate(name, input), meta: {} }, resolveChunks(chunks), options);
       }
-      return (input: any, options?: CallOptions) => raw.invoke(name, { input: validate(name, input), meta: {} }, options);
+      return (input: any, options?: CallOptions) => binding.invoke(name, { input: validate(name, input), meta: {} }, options);
     },
   });
 

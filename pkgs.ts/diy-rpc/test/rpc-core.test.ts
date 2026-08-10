@@ -53,8 +53,7 @@ describe('RpcImpl 内联装配（router 带 call）', () => {
       }),
     });
 
-    const server = new RpcServer({ router: app });
-    server.registerInto(new ChannelServerBinding(txSrv));
+    const server = new RpcServer({ router: app, binding: new ChannelServerBinding(txSrv) });
     const cli = createTypedClient(new ChannelClientBinding(txCli), app);
 
     expect(await cli.ping({ msg: 'hi' })).toBe('pong: hi');
@@ -93,8 +92,7 @@ const apiDef = {
 } as const;
 
 function startServer(txSrv: EnvelopeTransport): RpcServer {
-  const server = new RpcServer({ router: apiDef });
-  server.registerInto(new ChannelServerBinding(txSrv));
+  const server = new RpcServer({ router: apiDef, binding: new ChannelServerBinding(txSrv) });
   // meta/handle 分离：RpcSchema 纯定义，handler 逐个 .on() 挂载
   server.on(apiDef.math.add, async ({ input }) => input.a + input.b);
   server.on(apiDef.greet, async ({ input }) => `Hello, ${input.name}!`);

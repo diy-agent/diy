@@ -239,8 +239,8 @@ async function testRpcLayerEnvelopes() {
     }),
   });
 
-  const rpcServer = new RpcServer({ router: app });
-  rpcServer.registerInto(new ChannelServerBinding(serverTx));
+  // 构造传 binding 直接挂载（本测试只验证线格式，不引用 server）
+  new RpcServer({ router: app, binding: new ChannelServerBinding(serverTx) });
   const rpcClient = createTypedClient(new ChannelClientBinding(clientTx), app);
 
   const pong = await rpcClient.ping({ msg: 'hi' });

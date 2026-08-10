@@ -48,7 +48,7 @@ export class RpcForward implements _RpcBackend {
     this._client = new ChannelClientBinding(transport);
   }
 
-  registerInto(raw: ServerBinding): void {
+  registerInto(binding: ServerBinding): void {
     const flat = _flattenRouter(this._router);
     for (const [name, def] of Object.entries(flat)) {
       const full = `${this.scope}.${name}`;
@@ -56,10 +56,10 @@ export class RpcForward implements _RpcBackend {
       const mode = def._streamMode;
 
       if (mode === 'unary') {
-        raw.onUnary(def, ((opts: FwdOpts) =>
+        binding.onUnary(def, ((opts: FwdOpts) =>
           this._client.invoke(full, { input: opts.input, meta: opts.meta })) as any);
       } else if (mode === 'server') {
-        raw.onServerStream(def, ((opts: FwdOpts) =>
+        binding.onServerStream(def, ((opts: FwdOpts) =>
           this._forwardServerStream(full, opts)) as any);
       } else if (mode === 'client' || mode === 'bidi') {
         throw new Error(`[RpcForward] ${full}: client/bidi 转发暂不支持`);

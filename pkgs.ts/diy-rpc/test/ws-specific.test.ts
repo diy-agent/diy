@@ -30,8 +30,10 @@ describe('ws-transport 协议特有', () => {
     await new Promise<void>((r) => wss.once('listening', () => r()));
 
     wss.on('connection', (ws) => {
-      const server = new RpcServer({ router: api });
-      server.registerInto(new ChannelServerBinding(new WsTransport(ws)));
+      const server = new RpcServer({
+        router: api,
+        binding: new ChannelServerBinding(new WsTransport(ws)),
+      });
       server.on(api.ping, async ({ input }) => `pong: ${input.msg}`);
       server.on(api.slow, async ({ input }) => { await sleep(input.delay); return { id: input.id }; });
       server.on(api.count, async function* ({ input }) {

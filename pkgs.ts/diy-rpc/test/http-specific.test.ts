@@ -37,8 +37,7 @@ describe('http-server-binding 协议特有', () => {
     let slowCleanup = false;
     let csCancelled: string | null = null;
 
-    const server = new RpcServer({ router: api.diy.app, scope: 'diy.app' });
-    server.registerInto(httpRaw);
+    const server = new RpcServer({ router: api.diy.app, scope: 'diy.app', binding: httpRaw });
     server.on(api.diy.app.greet, async ({ input }) => `Hello, ${input.name}!`);
     server.on(api.diy.app.fail, async () => { throw new RpcError('PERMISSION_DENIED', 'no access'); });
     server.on(api.diy.app.invalid, async () => {

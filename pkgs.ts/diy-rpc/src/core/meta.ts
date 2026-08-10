@@ -1,11 +1,11 @@
 /**
  * meta.ts — 第2层：Procedure 元信息类型 + handler 类型推导 + zod 校验
  *
- * 作为第2层的一部分（与 ServerBinding/ClientBinding 端口、各 raw 绑定同层）：
+ * 作为第2层的一部分（与 ServerBinding/ClientBinding 端口、各具体绑定同层）：
  *   - ProcedureMeta 描述一个 RPC 过程的 schema（input/output/chunk + stream mode）
  *   - _HandlerForProc 从 meta 推导 handler 签名（收 { input, meta, stream? }）
  *   - _validateInput 做 zod 校验（ZodError → INVALID_ARGUMENT）
- * raw 绑定用这些类型实现强类型注册（onUnary(meta, handler) 等）；第3层（index.ts）import 本文件。
+ * ServerBinding 用这些类型实现强类型注册（onUnary(meta, handler) 等）；第3层（index.ts）import 本文件。
  */
 
 import { z } from 'zod';
