@@ -3,7 +3,7 @@
  *
  * 在一条双向通道（mem/WS/IPC 等 EnvelopeTransport）上跑信封协议（id/streamId 复用），
  * 实现 ServerBinding 端口。注册逻辑（meta 强类型注册 + zod 校验）继承自 ServerBindingCore，
- * 这里只写 envelope dispatch。只应在入口组装代码中使用（传给 RpcServer/RpcRouter），
+ * 这里只写 envelope dispatch。只应在入口组装代码中使用（传给 RpcServer），
  * 业务代码应使用第3层 RPC。
  */
 

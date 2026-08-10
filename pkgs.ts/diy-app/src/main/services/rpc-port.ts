@@ -1,21 +1,21 @@
 /**
- * rpc-port.ts — HTTP/2 RPC 端口服务（HttpServerBinding 路由版）
+ * rpc-port.ts — HTTP/2 RPC 端口服务（HttpServerBinding 直编版）
  *
- * 单例 HttpServerBinding + 单例 RpcRouter，注册本地 appServer + 转发 uiForward：
+ * 单例 HttpServerBinding，本地 appServer + 转发 uiForward 直接 registerInto 共享它：
  *   - 每个 http2 stream = 一个 RPC，`:path` = 方法全名（curl 可直接访问）
  *   - 所有 CLI 连接共享同一个 HttpServerBinding（注册表一份），handleStream 做每请求路由
- *   - 路由归属集中在这两行 register，无 pipe 广播，方法归属一处可见
+ *   - 路由归属 = binding 的 method→handler 表：diy.app.* 本地处理，diy.ui.* 转发 Renderer
+ *   - 方法名冲突由 binding 层重复注册检查显式报错（scope 冲突的实质）
  */
 
 import * as http2 from 'node:http2';
-import { RpcRouter, RpcForward, type RpcServer } from '@diy/rpc';
+import { RpcForward, type RpcServer } from '@diy/rpc';
 import { HttpServerBinding } from '@diy/rpc/http';
 import type { AppConfig } from '../core/app-config';
 import { apiDef } from './api-def';
 
 export class RpcPortService {
   private _httpRaw: HttpServerBinding | null = null;
-  private _router: RpcRouter | null = null;
   private _http2Server: http2.Http2Server | null = null;
   private _port = 0;
 
@@ -41,16 +41,15 @@ export class RpcPortService {
   ): Promise<void> {
     const targetPort = preferredPort ?? appConfig.readPort() ?? 18888;
 
-    // diy.ui.* 转发后端（共享一个，所有 CLI 连接复用）
+    // diy.ui.* 转发后端（共享同一个 HttpServerBinding，所有 CLI 连接复用）
     const uiForward = rendererTransport
       ? new RpcForward(rendererTransport, { router: apiDef.diy.ui, scope: 'diy.ui' })
       : null;
 
-    // 单例 HttpServerBinding + 单例 RpcRouter：注册一次，所有 stream 共享路由表
+    // 单例 HttpServerBinding：本地 appServer + 转发 uiForward 直接共享注册表
     this._httpRaw = new HttpServerBinding();
-    this._router = new RpcRouter(this._httpRaw)
-      .register(appServer); // diy.app.* → Main 本地
-    if (uiForward) this._router.register(uiForward); // diy.ui.* → Renderer
+    appServer.registerInto(this._httpRaw); // diy.app.* → Main 本地
+    if (uiForward) uiForward.registerInto(this._httpRaw); // diy.ui.* → Renderer 转发
 
     return new Promise<void>((resolve, reject) => {
       const srv = http2.createServer();
@@ -76,8 +75,6 @@ export class RpcPortService {
   }
 
   stop(): void {
-    this._router?.destroy();
-    this._router = null;
     this._httpRaw?.destroy();
     this._httpRaw = null;
     this._http2Server?.close();

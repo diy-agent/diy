@@ -45,27 +45,49 @@ export abstract class ServerBindingCore {
     return name;
   }
 
+  /** 注册前检查方法全名是否已存在——重复注册（多后端 scope 冲突的实质）显式报错 */
+  private _assertNotRegistered(name: string): void {
+    if (
+      this._unaries.has(name) ||
+      this._serverStreams.has(name) ||
+      this._clientStreams.has(name) ||
+      this._bidiStreams.has(name)
+    ) {
+      throw new Error(
+        `[ServerBinding] 方法 "${name}" 已注册 — 每个方法只能归属一个后端（scope 冲突？）`,
+      );
+    }
+  }
+
   onUnary<M extends _AnyProcedureMeta & { _streamMode: 'unary' }>(meta: M, handler: _HandlerForProc<M>): void {
-    this._unaries.set(this._nameOf(meta), (params) => (handler as HandlerFn)(unwrap(meta, params)));
+    const name = this._nameOf(meta);
+    this._assertNotRegistered(name);
+    this._unaries.set(name, (params) => (handler as HandlerFn)(unwrap(meta, params)));
   }
 
   onServerStream<M extends _AnyProcedureMeta & { _streamMode: 'server' }>(meta: M, handler: _HandlerForProc<M>): void {
+    const name = this._nameOf(meta);
+    this._assertNotRegistered(name);
     this._serverStreams.set(
-      this._nameOf(meta),
+      name,
       (params) => (handler as HandlerFn)(unwrap(meta, params)) as AsyncGenerator<unknown>,
     );
   }
 
   onClientStream<M extends _AnyProcedureMeta & { _streamMode: 'client' }>(meta: M, handler: _HandlerForProc<M>): void {
+    const name = this._nameOf(meta);
+    this._assertNotRegistered(name);
     this._clientStreams.set(
-      this._nameOf(meta),
+      name,
       (params, chunks) => (handler as HandlerFn)(unwrap(meta, params, chunks)) as Promise<unknown>,
     );
   }
 
   onBidiStream<M extends _AnyProcedureMeta & { _streamMode: 'bidi' }>(meta: M, handler: _HandlerForProc<M>): void {
+    const name = this._nameOf(meta);
+    this._assertNotRegistered(name);
     this._bidiStreams.set(
-      this._nameOf(meta),
+      name,
       (params, incoming) => (handler as HandlerFn)(unwrap(meta, params, incoming)) as AsyncGenerator<unknown>,
     );
   }

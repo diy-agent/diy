@@ -24,6 +24,6 @@ export { createMemTransportPair } from './mem';
 // 第3层语义 API
 export {
   RpcSchema, RpcImpl, RpcServer, router,
-  createTypedClient, RpcRouter, RpcForward,
+  createTypedClient, RpcForward,
 } from './rpc';
 export type { TypedClient } from './rpc';

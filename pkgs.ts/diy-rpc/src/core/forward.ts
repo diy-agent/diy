@@ -6,8 +6,8 @@
  * 一个 ClientBinding 发到远端 transport（如 ipcTransport → renderer），
  * 拿回结果返回。网关的 ServerBinding 负责 id 映射与回写来源，转发方完全透明。
  *
- * 用途：CLI → Main（RpcRouter 归并）→ Renderer 的 diy.ui.* 转发。
- * 加 remote server 同理：register(new RpcForward(remoteTransport, { router, scope }))。
+ * 用途：CLI → Main → Renderer 的 diy.ui.* 转发（registerInto 到 Main 的来源 binding）。
+ * 加 remote server 同理：registerInto(来源 binding) 注册转发方法。
  */
 
 import type { EnvelopeTransport } from './types';
@@ -15,7 +15,6 @@ import { ChannelClientBinding } from './channel-client-binding';
 import type { ServerBinding, ClientBinding } from './server-binding';
 import { _flattenRouter } from './_tree';
 import type { _Router } from './meta';
-import type { _RpcBackend } from './router';
 
 /** @internal */
 export interface _RpcForwardOptions {
@@ -37,7 +36,7 @@ type FwdOpts = { input: unknown; meta: unknown };
  * client/bidi 暂不支持转发（当前无此类远端方法）。
  */
 /** @internal */
-export class RpcForward implements _RpcBackend {
+export class RpcForward {
   readonly scope: string;
   private _router: _Router;
   private _client: ClientBinding;
