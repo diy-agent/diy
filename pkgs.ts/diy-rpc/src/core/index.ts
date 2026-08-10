@@ -23,7 +23,7 @@ export { ChannelClientBinding } from './channel-client-binding';
 export { createMemTransportPair } from './mem';
 // 第3层语义 API
 export {
-  RpcSchema, RpcImpl, RpcServer, router,
-  createTypedClient, RpcForward,
+  RpcSchema, RpcImpl, router,
+  createTypedClient,
 } from './rpc';
 export type { TypedClient } from './rpc';

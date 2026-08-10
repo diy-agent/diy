@@ -5,7 +5,7 @@
  * （unary / serverStream / clientStream / bidiStream），以 meta 为注册键强类型化：
  *   - ServerBinding.onUnary(meta, handler) 等：handler 收 { input, meta, stream? }，类型从 meta 推导
  *   - 具体绑定（ChannelServerBinding / HttpServerBinding）各自把语义映射到协议常态
- * 第3层（RpcServer/createClient）只依赖本接口，不感知具体绑定。
+ * 第3层（createClient）只依赖本接口，不感知具体绑定。
  */
 
 import type { StreamHandle } from './types';

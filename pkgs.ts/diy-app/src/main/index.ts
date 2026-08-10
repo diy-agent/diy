@@ -16,16 +16,16 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { RpcServer } from "@diy/rpc";
+import type { ServerBinding } from "@diy/rpc";
 import { createMainTransport } from "@diy/rpc/electron";
 import { RpcPortService } from "./services/rpc-port";
 import { AppConfig } from "./core/app-config";
-import { bindApi, createAppServer } from "./services/api-impl";
+import { bindApi, bindAppHandlers } from "./services/api-impl";
 import { homedir, hostname, platform, arch, release, totalmem, freemem } from "node:os";
 
 // ── 共享全局信息（给 IPC 用） ──
 let rpcPort: RpcPortService | null = null;
-let ipcRpcServer: RpcServer | null = null;
+let ipcBinding: ServerBinding | null = null;
 let mainWindow: BrowserWindow | null = null;
 let appConfig: AppConfig;
 let httpPort = 0;
@@ -118,7 +118,7 @@ function loadMainApp(): void {
   }
 }
 
-function createWindow(): { server: RpcServer; ipcTransport: import("@diy/rpc").EnvelopeTransport } {
+function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy/rpc").EnvelopeTransport } {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -132,7 +132,7 @@ function createWindow(): { server: RpcServer; ipcTransport: import("@diy/rpc").E
 
   // RPC Server — 渲染进程 ↔ 主进程通信
   const ipcTransport = createMainTransport(() => mainWindow!.webContents);
-  const server = bindApi(ipcTransport);
+  const binding = bindApi(ipcTransport);
 
   mainWindow.once("ready-to-show", () => mainWindow?.show());
 
@@ -143,12 +143,12 @@ function createWindow(): { server: RpcServer; ipcTransport: import("@diy/rpc").E
     });
   }
 
-  return { server, ipcTransport };
+  return { binding, ipcTransport };
 }
 
 // ── RPC 端口服务（外部 CLI 接入） ──
 
-async function startRpcPort(appServer: RpcServer, ipcTransport: import("@diy/rpc").EnvelopeTransport): Promise<boolean> {
+async function startRpcPort(ipcTransport: import("@diy/rpc").EnvelopeTransport): Promise<boolean> {
   const preferredPort = overridePort ?? appConfig.readPort();
   console.log(
     `  Port:         ${preferredPort}${overridePort !== null ? ` (--port, conflict = kill or change)` : ` (from ${appConfig.diyHome}/app.port)`}`,
@@ -157,7 +157,7 @@ async function startRpcPort(appServer: RpcServer, ipcTransport: import("@diy/rpc
   rpcPort = new RpcPortService();
 
   try {
-    await rpcPort.start(appServer, appConfig, preferredPort, ipcTransport);
+    await rpcPort.start(bindAppHandlers, appConfig, preferredPort, ipcTransport);
     httpPort = rpcPort.port;
     return true;
   } catch (err: any) {
@@ -170,7 +170,7 @@ async function startRpcPort(appServer: RpcServer, ipcTransport: import("@diy/rpc
     }
     console.log("  → 尝试随机端口...");
     try {
-      await rpcPort.start(appServer, appConfig, 0, ipcTransport);
+      await rpcPort.start(bindAppHandlers, appConfig, 0, ipcTransport);
       httpPort = rpcPort.port;
       console.log(`  RPC Port:     http://127.0.0.1:${httpPort} (random)`);
       return true;
@@ -189,10 +189,10 @@ app.whenReady().then(async () => {
 
   // 先创建窗口（产生 IPC transport），再启动 HTTP/2 端口
   // CLI 连接时会桥接到 IPC transport，故 IPC 必须就绪
-  const { server, ipcTransport } = createWindow();
-  ipcRpcServer = server;
+  const { binding, ipcTransport } = createWindow();
+  ipcBinding = binding;
 
-  const ok = await startRpcPort(createAppServer(), ipcTransport);
+  const ok = await startRpcPort(ipcTransport);
 
   if (ok) {
     loadMainApp();
@@ -210,7 +210,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  ipcRpcServer?.destroy();
+  ipcBinding?.destroy();
   rpcPort?.stop();
   if (process.platform !== "darwin") app.quit();
 });

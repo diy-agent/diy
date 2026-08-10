@@ -5,7 +5,7 @@
  * 只在 binding.test.ts 里写一遍，通过 TransportHarness 参数化到每个传输上跑。
  *
  * TransportHarness.start() 返回：
- *   register(server)  把已装配好 handlers 的 RpcServer 接到服务端传输
+ *   binding            服务端 ServerBinding（start 返回时已就绪，可直接注册 handlers）
  *   client            客户端 ClientBinding（传给 createTypedClient）
  *   dispose()         关闭真实传输（http2 server / ws server 等）
  */
@@ -13,7 +13,6 @@ import * as http2 from 'node:http2';
 import { WebSocketServer, WebSocket } from 'ws';
 import { ChannelServerBinding, ChannelClientBinding } from '../src/core';
 import type { ServerBinding, ClientBinding } from '../src/core/server-binding';
-import type { RpcServer } from '../src/core';
 import { HttpServerBinding } from '../src/transport/http/http-server-binding';
 import { HttpClientBinding } from '../src/transport/http/http-client-binding';
 import { WsTransport } from '../src/transport/ws';
@@ -22,7 +21,7 @@ import { createMemTransportPair } from './helpers';
 export interface TransportHarness {
   name: string;
   start(): Promise<{
-    register: (server: RpcServer) => void;
+    binding: ServerBinding;
     client: ClientBinding;
     dispose: () => Promise<void>;
   }>;
@@ -34,7 +33,7 @@ export const channelHarness: TransportHarness = {
   async start() {
     const [txServer, txClient] = createMemTransportPair();
     return {
-      register: (server) => server.registerInto(new ChannelServerBinding(txServer)),
+      binding: new ChannelServerBinding(txServer),
       client: new ChannelClientBinding(txClient),
       dispose: async () => {},
     };
@@ -54,7 +53,7 @@ export const httpHarness: TransportHarness = {
     const cli = new HttpClientBinding(`http://127.0.0.1:${port}`);
     await cli.ready();
     return {
-      register: (server) => server.registerInto(httpRaw),
+      binding: httpRaw,
       client: cli,
       dispose: async () => {
         cli.dispose();
@@ -78,13 +77,13 @@ export const wsHarness: TransportHarness = {
       serverBinding = new ChannelServerBinding(new WsTransport(ws));
     });
 
-    // 客户端连接
+    // 客户端连接（open 后服务端 connection 已建立，serverBinding 已就绪）
     const ws = new WebSocket(`ws://127.0.0.1:${port}`);
     await new Promise<void>((r) => ws.once('open', () => r()));
     const client = new ChannelClientBinding(new WsTransport(ws));
 
     return {
-      register: (server) => server.registerInto(serverBinding!),
+      binding: serverBinding!,
       client,
       dispose: async () => {
         ws.close();

@@ -9,7 +9,7 @@
  */
 
 import * as http2 from 'node:http2';
-import { RpcForward, type RpcServer } from '@diy/rpc';
+import { ChannelClientBinding, type ServerBinding } from '@diy/rpc';
 import { HttpServerBinding } from '@diy/rpc/http';
 import type { AppConfig } from '../core/app-config';
 import { apiDef } from './api-def';
@@ -28,28 +28,25 @@ export class RpcPortService {
   }
 
   /**
-   * @param appServer    Main 侧本地 handler 注册表（createAppServer()，scope diy.app）
+   * @param bindApp    Main 侧 handler 绑定函数（bindAppHandlers，把 diy.app.* 绑到传入 binding）
    * @param appConfig    端口配置
    * @param preferredPort 首选端口
    * @param rendererTransport 主进程↔渲染进程 IPC EnvelopeTransport（可选，用于 diy.ui 转发）
    */
   async start(
-    appServer: RpcServer,
+    bindApp: (binding: ServerBinding) => void,
     appConfig: AppConfig,
     preferredPort?: number,
     rendererTransport?: import('@diy/rpc').EnvelopeTransport,
   ): Promise<void> {
     const targetPort = preferredPort ?? appConfig.readPort() ?? 18888;
 
-    // diy.ui.* 转发后端（共享同一个 HttpServerBinding，所有 CLI 连接复用）
-    const uiForward = rendererTransport
-      ? new RpcForward(rendererTransport, { router: apiDef.diy.ui, scope: 'diy.ui' })
-      : null;
-
-    // 单例 HttpServerBinding：本地 appServer + 转发 uiForward 直接共享注册表
+    // 单例 HttpServerBinding：本地 handler + 转发 diy.ui.* 直接共享注册表
     this._httpRaw = new HttpServerBinding();
-    appServer.registerInto(this._httpRaw); // diy.app.* → Main 本地
-    if (uiForward) uiForward.registerInto(this._httpRaw); // diy.ui.* → Renderer 转发
+    bindApp(this._httpRaw); // diy.app.* → Main 本地
+    if (rendererTransport) {
+      this._httpRaw.onForward(apiDef.diy.ui, new ChannelClientBinding(rendererTransport)); // diy.ui.* → Renderer 转发
+    }
 
     return new Promise<void>((resolve, reject) => {
       const srv = http2.createServer();

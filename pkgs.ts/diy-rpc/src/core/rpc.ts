@@ -5,7 +5,7 @@
  * 与强类型端口；本文件在其上提供：
  *   - RpcSchema / RpcImpl 定义工厂（两种形态）
  *   - router 组合工具（回写 meta.name）
- *   - RpcServer / RpcForward 服务端入口（以 meta 注册进 ServerBinding）
+ *   - ServerBinding 注册入口（onXxx / register / registerRouter / onForward）
  *   - createTypedClient 客户端入口
  *
  * 依赖方向：index(第3层) → meta/tree/server-binding(第2层) → transport(第1层)，无循环、分层不倒置。
@@ -13,12 +13,8 @@
 
 import { z } from 'zod';
 import type { StreamHandle } from './types';
-import type { ServerBinding } from './server-binding';
-import { _flattenRouter, _buildRouteTree, _routeLeaves } from './_tree';
-import {
-  type _HandlerForProc, type ProcedureMeta, type ProcedureDef,
-  type _AnyProcedureMeta, type _AnyProcedureDef, type _Router,
-} from './meta';
+import { _buildRouteTree, _routeLeaves } from './_tree';
+import { type ProcedureMeta, type ProcedureDef, type _Router } from './meta';
 
 // ═══════════════════════════════════════════════════
 //  RpcSchema 配置类型（纯定义，无 call）
@@ -198,134 +194,8 @@ export function router<T extends _Router>(def: T): T {
 }
 
 // ═══════════════════════════════════════════════════
-//  RpcServer — 第3层服务端统一入口
-// ═══════════════════════════════════════════════════
-
-type HandlerFn = (opts: { input: unknown; meta: unknown; stream?: unknown }) => unknown;
-
-/** 按 def 的 stream mode 注册到 binding（handler 收 { input, meta, stream? }） */
-function _registerMode(binding: ServerBinding, def: _AnyProcedureMeta, handler: HandlerFn): void {
-  const mode = def._streamMode;
-  if (mode === 'unary') {
-    binding.onUnary(def, handler as any);
-  } else if (mode === 'server') {
-    binding.onServerStream(def, handler as any);
-  } else if (mode === 'client') {
-    binding.onClientStream(def, handler as any);
-  } else if (mode === 'bidi') {
-    binding.onBidiStream(def, handler as any);
-  }
-}
-
-/**
- * 第3层 RPC 服务端。
- *
- * 传输无关的纯 handler 注册表：
- *   - 构造时不绑定 transport（只收 router + 可选 scope 前缀 + 可选 binding），并把完整方法名回写进 meta.name
- *   - 含 call 的 procedure（RpcImpl）构造时自动注册
- *   - 不含 call 的（RpcSchema）通过 .on() 绑定 handler
- *   - registerInto(binding) 把本注册表挂到某个 ServerBinding（以 meta 强类型注册）
- *   - 一个注册表恰好挂一个绑定；重复 registerInto 显式报错
- */
-/** @internal */
-export class RpcServer {
-  readonly scope: string;
-  private _binding?: ServerBinding;
-  private _metaToMethod = new Map<_AnyProcedureMeta, string>();
-  private _handlers = new Map<_AnyProcedureMeta, HandlerFn>();
-
-  constructor(opts: { router: _Router; scope?: string; binding?: ServerBinding }) {
-    this.scope = opts.scope ?? '';
-
-    // 建立 meta → method 映射（scope 前缀拼到完整方法名前），并把完整名回写进 meta.name
-    const flat = _flattenRouter(opts.router);
-    for (const [name, def] of Object.entries(flat)) {
-      const method = this.scope ? `${this.scope}.${name}` : name;
-      this._metaToMethod.set(def, method);
-      (def as { name?: string }).name = method;
-    }
-
-    // 含 call 的 procedure 自动注册
-    this._autoRegister();
-
-    // 构造即挂载（自持有 binding）；注入场景（binding 晚于 server 创建）不传，稍后 registerInto
-    if (opts.binding) this.registerInto(opts.binding);
-  }
-
-  /**
-   * 绑定 handler 到某个 procedure。
-   * 同时适用于 RpcSchema（必须调）和 RpcImpl（可选覆盖）。
-   */
-  on<T extends _AnyProcedureMeta>(
-    proc: T,
-    handler: _HandlerForProc<T>,
-  ): void {
-    const method = this._metaToMethod.get(proc);
-    if (!method) {
-      throw new Error(
-        `[RpcServer] Procedure not found in router — ` +
-        `did you pass the correct meta object?`,
-      );
-    }
-    this._handlers.set(proc, handler as any);
-    if (this._binding) this._registerInto(this._binding, proc, handler as any);
-  }
-
-  /**
-   * 把本注册表挂到给定 ServerBinding。
-   * 把本 server 所有方法（全名）注册到给定 ServerBinding 上。
-   * 用于 binding 晚于 server 创建的注入场景（如 rpc-port 共享一个 HttpServerBinding）。
-   */
-  registerInto(binding: ServerBinding): void {
-    if (this._binding) {
-      throw new Error(
-        `[RpcServer] 已挂载 ServerBinding — 一个注册表只能挂一个绑定`,
-      );
-    }
-    this._binding = binding;
-    for (const [def, handler] of this._handlers) {
-      this._registerInto(binding, def, handler);
-    }
-    // 含 call 但未显式 on 的也要挂载
-    for (const def of this._metaToMethod.keys()) {
-      if (this._handlers.has(def)) continue;
-      const callFn = (def as unknown as _AnyProcedureDef).call;
-      if (typeof callFn === 'function') {
-        this._registerInto(binding, def, callFn as HandlerFn);
-      }
-    }
-  }
-
-  /** 销毁：清理所有挂载的 ServerBinding 监听和流 */
-  destroy(): void {
-    this._binding?.destroy();
-    this._binding = undefined;
-    this._metaToMethod.clear();
-    this._handlers.clear();
-  }
-
-  // ── 内部 ──────────────────────────────────────
-
-  private _autoRegister(): void {
-    for (const def of this._metaToMethod.keys()) {
-      const callFn = (def as unknown as _AnyProcedureDef).call;
-      if (typeof callFn === 'function') {
-        this._handlers.set(def, callFn as HandlerFn);
-      }
-    }
-  }
-
-  private _registerInto(binding: ServerBinding, def: _AnyProcedureMeta, handler: HandlerFn): void {
-    _registerMode(binding, def, handler);
-  }
-}
-
-// ═══════════════════════════════════════════════════
 //  Client 工厂（typed）与转发
 // ═══════════════════════════════════════════════════
 
 export { createTypedClient } from './typed-client';
 export type { TypedClient } from './typed-client';
-export { RpcForward } from './forward';
-/** @internal */
-export type { _RpcForwardOptions } from './forward';

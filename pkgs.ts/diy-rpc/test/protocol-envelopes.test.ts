@@ -4,7 +4,7 @@
 
 import type { EnvelopeTransport } from '../src/core/types';
 import { ChannelServerBinding, ChannelClientBinding } from '../src/core';
-import { RpcImpl, RpcServer, RpcSchema, router, createTypedClient } from '../src/core';
+import { RpcImpl, RpcSchema, router, createTypedClient } from '../src/core';
 import { it } from 'vitest';
 import { z } from 'zod';
 
@@ -239,8 +239,8 @@ async function testRpcLayerEnvelopes() {
     }),
   });
 
-  // 构造传 binding 直接挂载（本测试只验证线格式，不引用 server）
-  new RpcServer({ router: app, binding: new ChannelServerBinding(serverTx) });
+  // RpcImpl 含 call 自动注册（本测试只验证线格式，不引用 binding）
+  new ChannelServerBinding(serverTx).registerRouter(app);
   const rpcClient = createTypedClient(new ChannelClientBinding(clientTx), app);
 
   const pong = await rpcClient.ping({ msg: 'hi' });

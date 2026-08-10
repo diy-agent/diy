@@ -6,8 +6,8 @@
  * createTypedClient 获得全类型推导客户端。
  *
  * 命名体系：
- *   diy.app.* — Main 进程（RpcServer: createAppServer，本地处理）
- *   diy.ui.*  — Renderer 进程（Main 经 RpcForward 转发）
+ *   diy.app.* — Main 进程（bindAppHandlers，本地处理）
+ *   diy.ui.*  — Renderer 进程（Main 经 onForward 转发）
  *
  * 用法:
  *   PORT=18888 npm run test:bridge
@@ -42,8 +42,8 @@ async function main(): Promise<void> {
   const cli = createTypedClient(raw, apiDef);
   console.log('  已连接\n');
 
-  // ── Main API（CLI → Main RpcServer）───
-  console.log('── Main API（CLI → Main RpcServer）───');
+  // ── Main API（CLI → Main）───
+  console.log('── Main API（CLI → Main）───');
 
   try {
     const doc = await cli.diy.app.doctor({});
@@ -57,7 +57,7 @@ async function main(): Promise<void> {
     else fail('task.list', `unexpected: ${JSON.stringify(tl)}`);
   } catch (e) { fail('task.list', e); }
 
-  // ── Renderer API（CLI → bridge → Renderer RpcServer）───
+  // ── Renderer API（CLI → bridge → Renderer）───
   console.log('\n── Renderer API（CLI → bridge → Renderer）───');
 
   try {

@@ -10,12 +10,12 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 // Renderer 侧 RPC 服务端 — 处理来自 Main 进程或 CLI 的 RPC 调用
 // window.transport 由 preload/index.ts 暴露
 if (window.transport) {
-  const rendererServer = bindRendererApi(window.transport);
+  const rendererBinding = bindRendererApi(window.transport);
   // 页面卸载时清理
-  window.addEventListener("beforeunload", () => rendererServer.destroy());
-  console.log("[renderer] RpcServer started");
+  window.addEventListener("beforeunload", () => rendererBinding.destroy());
+  console.log("[renderer] RPC binding started");
 } else {
-  console.warn("[renderer] window.transport not available — RpcServer disabled");
+  console.warn("[renderer] window.transport not available — RPC disabled");
 }
 
 createRoot(document.getElementById("root")!).render(

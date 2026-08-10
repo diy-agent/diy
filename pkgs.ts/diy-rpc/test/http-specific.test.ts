@@ -11,14 +11,14 @@ import * as http2 from 'node:http2';
 import { exec as execCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
-import { RpcSchema, RpcServer, RpcError } from '../src/index';
+import { RpcSchema, RpcError, router } from '../src/index';
 import { HttpServerBinding } from '../src/transport/http/http-server-binding';
 import { HttpClientBinding } from '../src/transport/http/http-client-binding';
 
 const exec = promisify(execCb);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const api = {
+const api = router({
   diy: {
     app: {
       greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
@@ -29,7 +29,7 @@ const api = {
       recv: RpcSchema.clientStream({ input: {}, chunkIn: z.unknown(), output: z.object({ errCode: z.unknown() }) }),
     },
   },
-} as const;
+});
 
 describe('http-server-binding 协议特有', () => {
   it('curl unary + server-stream（NDJSON）+ 错误映射 + 取消', async () => {
@@ -37,20 +37,20 @@ describe('http-server-binding 协议特有', () => {
     let slowCleanup = false;
     let csCancelled: string | null = null;
 
-    const server = new RpcServer({ router: api.diy.app, scope: 'diy.app', binding: httpRaw });
-    server.on(api.diy.app.greet, async ({ input }) => `Hello, ${input.name}!`);
-    server.on(api.diy.app.fail, async () => { throw new RpcError('PERMISSION_DENIED', 'no access'); });
-    server.on(api.diy.app.invalid, async () => {
+    const server = httpRaw;
+    server.onUnary(api.diy.app.greet, async ({ input }) => `Hello, ${input.name}!`);
+    server.onUnary(api.diy.app.fail, async () => { throw new RpcError('PERMISSION_DENIED', 'no access'); });
+    server.onUnary(api.diy.app.invalid, async () => {
       throw new RpcError('INVALID_ARGUMENT', 'Invalid input', { details: [{ path: ['name'], message: 'bad' }] });
     });
-    server.on(api.diy.app.count, async function* ({ input }) {
+    server.onServerStream(api.diy.app.count, async function* ({ input }) {
       for (let i = 1; i <= input.to; i++) yield i;
     });
-    server.on(api.diy.app.slow, async function* () {
+    server.onServerStream(api.diy.app.slow, async function* () {
       try { for (let i = 0; ; i++) { yield i; await sleep(1); } }
       finally { slowCleanup = true; }
     });
-    server.on(api.diy.app.recv, async ({ stream }) => {
+    server.onClientStream(api.diy.app.recv, async ({ stream }) => {
       try { for await (const _ of stream) {} }
       catch (e: unknown) { csCancelled = (e as RpcError).code ?? null; }
       return { errCode: csCancelled };

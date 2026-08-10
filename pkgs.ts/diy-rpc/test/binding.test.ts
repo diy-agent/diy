@@ -8,14 +8,14 @@
  */
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { RpcSchema, RpcServer, RpcError, createTypedClient } from '../src/index';
-import type { RpcServer as RpcServerType } from '../src/core';
+import { RpcSchema, RpcError, createTypedClient, router } from '../src/index';
+import type { ServerBinding } from '../src/core';
 import { channelHarness, httpHarness, wsHarness, type TransportHarness } from './harness';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** 四流模式共享 api 定义（纯 meta） */
-const api = {
+/** 四流模式共享 api 定义（纯 meta，router() 回写全名） */
+const api = router({
   greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
   fail: RpcSchema.unary({ input: {}, output: z.unknown() }),
   count: RpcSchema.serverStream({ input: { to: z.number() }, output: z.number() }),
@@ -24,20 +24,20 @@ const api = {
     output: z.object({ tag: z.string(), received: z.array(z.string()) }),
   }),
   echo: RpcSchema.bidiStream({ input: {}, chunkIn: z.string(), chunkOut: z.string() }),
-} as const;
+});
 
-function wireServer(server: RpcServerType) {
-  server.on(api.greet, async ({ input }) => `Hello, ${input.name}!`);
-  server.on(api.fail, async () => { throw new RpcError('INTERNAL', 'boom'); });
-  server.on(api.count, async function* ({ input }) {
+function wireBinding(binding: ServerBinding) {
+  binding.onUnary(api.greet, async ({ input }) => `Hello, ${input.name}!`);
+  binding.onUnary(api.fail, async () => { throw new RpcError('INTERNAL', 'boom'); });
+  binding.onServerStream(api.count, async function* ({ input }) {
     for (let i = 1; i <= input.to; i++) { await sleep(1); yield i; }
   });
-  server.on(api.upload, async ({ input, stream }) => {
+  binding.onClientStream(api.upload, async ({ input, stream }) => {
     const received: string[] = [];
     for await (const c of stream) received.push(c as string);
     return { tag: input.tag, received };
   });
-  server.on(api.echo, async function* ({ stream }) {
+  binding.onBidiStream(api.echo, async function* ({ stream }) {
     for await (const m of stream) yield `echo: ${m}`;
   });
 }
@@ -53,11 +53,9 @@ describe.each(harnesses.map((h) => [h.name, h] as const))(
   'binding: %s',
   (_name, h) => {
     it('四流模式往返 + 错误传播', async () => {
-      const { register, client, dispose } = await h.start();
+      const { binding, client, dispose } = await h.start();
       try {
-        const server = new RpcServer({ router: api });
-        register(server);
-        wireServer(server);
+        wireBinding(binding);
         const cli = createTypedClient(client, api);
 
         // 1. unary
@@ -85,7 +83,7 @@ describe.each(harnesses.map((h) => [h.name, h] as const))(
         for await (const r of replies) out.push(r);
         expect(out).toEqual(['echo: hello', 'echo: world']);
 
-        server.destroy();
+        binding.destroy();
       } finally {
         await dispose();
       }

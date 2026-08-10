@@ -7,16 +7,16 @@
 import { describe, it, expect } from 'vitest';
 import { WebSocketServer, WebSocket } from 'ws';
 import { z } from 'zod';
-import { RpcSchema, RpcServer, createTypedClient, ChannelClientBinding, ChannelServerBinding } from '../src/index';
+import { RpcSchema, createTypedClient, router, ChannelClientBinding, ChannelServerBinding } from '../src/index';
 import { WsTransport } from '../src/transport/ws';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const api = {
+const api = router({
   ping: RpcSchema.unary({ input: { msg: z.string() }, output: z.string() }),
   slow: RpcSchema.unary({ input: { delay: z.number(), id: z.number() }, output: z.object({ id: z.number() }) }),
   count: RpcSchema.serverStream({ input: { n: z.number() }, output: z.number() }),
-} as const;
+});
 
 function connect(url: string): Promise<WebSocket> {
   const ws = new WebSocket(url);
@@ -30,13 +30,10 @@ describe('ws-transport 协议特有', () => {
     await new Promise<void>((r) => wss.once('listening', () => r()));
 
     wss.on('connection', (ws) => {
-      const server = new RpcServer({
-        router: api,
-        binding: new ChannelServerBinding(new WsTransport(ws)),
-      });
-      server.on(api.ping, async ({ input }) => `pong: ${input.msg}`);
-      server.on(api.slow, async ({ input }) => { await sleep(input.delay); return { id: input.id }; });
-      server.on(api.count, async function* ({ input }) {
+      const server = new ChannelServerBinding(new WsTransport(ws));
+      server.onUnary(api.ping, async ({ input }) => `pong: ${input.msg}`);
+      server.onUnary(api.slow, async ({ input }) => { await sleep(input.delay); return { id: input.id }; });
+      server.onServerStream(api.count, async function* ({ input }) {
         for (let i = 0; i < input.n; i++) { await sleep(5); yield i; }
       });
     });

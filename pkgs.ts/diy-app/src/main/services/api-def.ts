@@ -7,10 +7,10 @@
  *
  * 命名体系：
  *   diy.app.*  — Main 进程域（本地处理）
- *   diy.ui.*   — Renderer 进程域（Main 经 RpcForward 转发，Renderer 本地处理）
+ *   diy.ui.*   — Renderer 进程域（Main 经 onForward 转发，Renderer 本地处理）
  */
 
-import { RpcSchema } from "@diy/rpc";
+import { RpcSchema, router } from "@diy/rpc";
 import { z } from "zod";
 
 // 任务状态枚举（内联，保持 api-def 无 Node 依赖、浏览器安全）
@@ -32,7 +32,7 @@ const StatusOk = z.object({ status: z.string() });
 
 const MessageParam = z.object({ role: z.string(), content: z.string() });
 
-export const apiDef = {
+export const apiDef = router({
   diy: {
     app: {
       task: {
@@ -239,7 +239,7 @@ export const apiDef = {
     // ═══════════════════════════════════════════
     //  diy.ui.* — Renderer 进程域
     //  这些服务只在 Renderer 进程（浏览器）中运行。Main 侧经
-    //  RpcForward 转发到 Renderer；Renderer 侧直接本地处理。
+    //  Main 侧 onForward 转发到 Renderer；Renderer 侧直接本地处理。
     // ═══════════════════════════════════════════
     ui: {
       /** 列出当前页面所有可用 UI 组件 */
@@ -329,6 +329,6 @@ export const apiDef = {
       }),
     },
   },
-} as const;
+});
 
 export type ApiDef = typeof apiDef;

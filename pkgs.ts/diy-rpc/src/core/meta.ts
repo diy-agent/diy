@@ -25,7 +25,7 @@ type HandlerFor<TIn, TOut, TChIn, TChOut, TMode> =
   TMode extends 'bidi'    ? (opts: { input: TIn; stream: StreamHandle<TChIn> }) => AsyncGenerator<TChOut> :
   never;
 
-/** 从 ProcedureMeta 类型参数推导 handler 签名（供 onXxx / RpcServer.on 使用） */
+/** 从 ProcedureMeta 类型参数推导 handler 签名（供 onXxx / register 使用） */
 /** @internal */
 export type _HandlerForProc<T> =
   T extends ProcedureMeta<infer TIn, infer TOut, infer TChIn, infer TChOut, infer TMode>
@@ -58,8 +58,8 @@ export interface ProcedureMeta<
   cliDesc?: _ProcedureCliMeta;
   /**
    * 方法全名（相对路径，如 'math.add'）。由 router() 包裹时遍历回写；
-   * RpcServer 构造时按 scope 覆盖为完整全名（如 'diy.app.task.create'）。
-   * 裸对象（未经 router()/RpcServer）无此字段。
+   * router() 回写完整全名（如 'diy.app.task.create'）。
+   * 裸对象（未经 router()）无此字段。
    */
   readonly name?: string;
 }

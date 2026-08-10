@@ -7,7 +7,9 @@
  */
 
 import type { StreamHandle } from './types';
-import { _validateInput, type _AnyProcedureMeta, type _HandlerForProc } from './meta';
+import type { ClientBinding } from './server-binding';
+import { _validateInput, type _AnyProcedureMeta, type _AnyProcedureDef, type _HandlerForProc, type _Router } from './meta';
+import { _flattenRouter } from './_tree';
 
 type UnaryHandler = (params: unknown) => unknown;
 type ServerStreamHandler = (params: unknown) => AsyncGenerator<unknown>;
@@ -36,11 +38,11 @@ export abstract class ServerBindingCore {
   protected _clientStreams = new Map<string, ClientStreamHandler>();
   protected _bidiStreams = new Map<string, BidiStreamHandler>();
 
-  /** 从 meta 取方法全名；未经 router()/RpcServer 回写（无 name）则明确报错 */
+  /** 从 meta 取方法全名；未经 router() 回写（无 name）则明确报错 */
   protected _nameOf(meta: _AnyProcedureMeta): string {
     const name = meta.name;
     if (!name) {
-      throw new Error('[ServerBinding] meta 无 name — 请用 router() 包裹 apiDef 或经 RpcServer 注册');
+      throw new Error('[ServerBinding] meta 无 name — 请用 router() 包裹 apiDef');
     }
     return name;
   }
@@ -98,6 +100,61 @@ export abstract class ServerBindingCore {
     this._serverStreams.clear();
     this._clientStreams.clear();
     this._bidiStreams.clear();
+  }
+
+  // ═══════════════════════════════════════════════════
+  //  注册辅助：按 mode 分发 / router 批量 / 转发
+  // ═══════════════════════════════════════════════════
+
+  /** 按 def 的 stream mode 注册（handler 收 { input, meta, stream? }），等价于 onXxx 的自动分派 */
+  register(def: _AnyProcedureMeta, handler: _HandlerForProc<_AnyProcedureMeta>): void {
+    const mode = def._streamMode;
+    const on = this as unknown as Record<string, (m: unknown, h: unknown) => void>;
+    if (mode === 'unary') on.onUnary(def, handler);
+    else if (mode === 'server') on.onServerStream(def, handler);
+    else if (mode === 'client') on.onClientStream(def, handler);
+    else if (mode === 'bidi') on.onBidiStream(def, handler);
+  }
+
+  /** 批量注册 router 树：含 call 的（RpcImpl）自动注册，无 call 的（RpcSchema）跳过等调用方 on */
+  registerRouter(router: _Router): void {
+    for (const [, def] of Object.entries(_flattenRouter(router))) {
+      const call = (def as _AnyProcedureDef).call;
+      if (typeof call === 'function') this.register(def as _AnyProcedureMeta, call as any);
+    }
+  }
+
+  /**
+   * 注册转发：把 router 树下的每个方法注册为转发 handler——收到调用后经
+   * client 发到远端（如 ipcTransport → renderer），拿回结果/逐块回写。
+   * def.name 必须是全名（router() 已回写），client 连远端进程。
+   */
+  onForward(router: _Router, client: ClientBinding): void {
+    for (const [name, def] of Object.entries(_flattenRouter(router))) {
+      const full = (def as { name?: string }).name ?? name;
+      const mode = def._streamMode;
+
+      if (mode === 'unary') {
+        (this.onUnary as any)(def, ((opts: { input: unknown; meta: unknown }) =>
+          client.invoke(full, { input: opts.input, meta: opts.meta })));
+      } else if (mode === 'server') {
+        (this.onServerStream as any)(def, ((opts: { input: unknown; meta: unknown }) =>
+          this._forwardServerStream(client, full, opts)));
+      } else if (mode === 'client' || mode === 'bidi') {
+        throw new Error(`[ServerBinding] ${full}: client/bidi 转发暂不支持`);
+      } else {
+        throw new Error(`[ServerBinding] ${full}: 未知 stream mode ${mode}`);
+      }
+    }
+  }
+
+  private async *_forwardServerStream(
+    client: ClientBinding,
+    full: string,
+    opts: { input: unknown; meta: unknown },
+  ): AsyncGenerator<unknown> {
+    const handle = await client.serverStream(full, { input: opts.input, meta: opts.meta });
+    for await (const chunk of handle) yield chunk;
   }
 
   // ── dispatch accessors：子类把 method 映射到线协议时按需取 handler ──
