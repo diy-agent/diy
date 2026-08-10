@@ -5,7 +5,7 @@
  * 与强类型端口；本文件在其上提供：
  *   - RpcSchema / RpcImpl 定义工厂（两种形态）
  *   - router 组合工具（回写 meta.name）
- *   - ServerBinding 注册入口（onXxx / register / registerRouter / onForward）
+ *   - ServerBinding 注册入口（on(meta, handler) / onForward）
  *   - createTypedClient 客户端入口
  *
  * 依赖方向：index(第3层) → meta/tree/server-binding(第2层) → transport(第1层)，无循环、分层不倒置。

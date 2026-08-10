@@ -8,7 +8,7 @@
 
 import type { StreamHandle } from './types';
 import type { ClientBinding } from './server-binding';
-import { _validateInput, type _AnyProcedureMeta, type _AnyProcedureDef, type _HandlerForProc, type _Router } from './meta';
+import { _validateInput, type _AnyProcedureMeta, type _HandlerForProc, type _Router } from './meta';
 import { _flattenRouter } from './_tree';
 
 type UnaryHandler = (params: unknown) => unknown;
@@ -95,16 +95,8 @@ export abstract class ServerBindingCore {
   }
 
   // ═══════════════════════════════════════════════════
-  //  注册辅助：router 批量 / 转发
+  //  注册辅助：转发
   // ═══════════════════════════════════════════════════
-
-  /** 批量注册 router 树：含 call 的（RpcImpl）自动注册，无 call 的（RpcSchema）跳过等调用方 on */
-  registerRouter(router: _Router): void {
-    for (const [, def] of Object.entries(_flattenRouter(router))) {
-      const call = (def as _AnyProcedureDef).call;
-      if (typeof call === 'function') this.on(def as _AnyProcedureMeta, call as any);
-    }
-  }
 
   /**
    * 注册转发：把 router 树下的每个方法注册为转发 handler——收到调用后经

@@ -239,8 +239,10 @@ async function testRpcLayerEnvelopes() {
     }),
   });
 
-  // RpcImpl 含 call 自动注册（本测试只验证线格式，不引用 binding）
-  new ChannelServerBinding(serverTx).registerRouter(app);
+  // RpcImpl 含 call：逐个 on(meta, meta.call)（本测试只验证线格式，不引用 binding）
+  const binding = new ChannelServerBinding(serverTx);
+  binding.on(app.ping, app.ping.call as any);
+  binding.on(app.upload, app.upload.call as any);
   const rpcClient = createTypedClient(new ChannelClientBinding(clientTx), app);
 
   const pong = await rpcClient.ping({ msg: 'hi' });

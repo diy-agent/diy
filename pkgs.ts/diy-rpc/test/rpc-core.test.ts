@@ -55,7 +55,11 @@ describe('RpcImpl 内联装配（router 带 call）', () => {
     });
 
     const binding = new ChannelServerBinding(txSrv);
-    binding.registerRouter(app); // RpcImpl 含 call，自动注册
+    // RpcImpl 含 call：逐个 on(meta, meta.call) 注册
+    binding.on(app.ping, app.ping.call as any);
+    binding.on(app.nums, app.nums.call as any);
+    binding.on(app.upload, app.upload.call as any);
+    binding.on(app.chat, app.chat.call as any);
     const cli = createTypedClient(new ChannelClientBinding(txCli), app);
 
     expect(await cli.ping({ msg: 'hi' })).toBe('pong: hi');
