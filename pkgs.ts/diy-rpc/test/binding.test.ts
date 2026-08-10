@@ -27,17 +27,17 @@ const api = router({
 });
 
 function wireBinding(binding: ServerBinding) {
-  binding.onUnary(api.greet, async ({ input }) => `Hello, ${input.name}!`);
-  binding.onUnary(api.fail, async () => { throw new RpcError('INTERNAL', 'boom'); });
-  binding.onServerStream(api.count, async function* ({ input }) {
+  binding.on(api.greet, async ({ input }) => `Hello, ${input.name}!`);
+  binding.on(api.fail, async () => { throw new RpcError('INTERNAL', 'boom'); });
+  binding.on(api.count, async function* ({ input }) {
     for (let i = 1; i <= input.to; i++) { await sleep(1); yield i; }
   });
-  binding.onClientStream(api.upload, async ({ input, stream }) => {
+  binding.on(api.upload, async ({ input, stream }) => {
     const received: string[] = [];
     for await (const c of stream) received.push(c as string);
     return { tag: input.tag, received };
   });
-  binding.onBidiStream(api.echo, async function* ({ stream }) {
+  binding.on(api.echo, async function* ({ stream }) {
     for await (const m of stream) yield `echo: ${m}`;
   });
 }

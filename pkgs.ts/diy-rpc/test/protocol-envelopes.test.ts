@@ -117,7 +117,7 @@ async function testUnaryEnvelopes() {
   const server = new ChannelServerBinding(serverTx);
   const client = new ChannelClientBinding(clientTx);
 
-  server.onUnary(api.greet, ({ input }) => `Hello ${input.name}!`);
+  server.on(api.greet, ({ input }) => `Hello ${input.name}!`);
 
   const res = await client.invoke<{ input: { name: string }; meta: unknown }, string>('greet', { input: { name: 'World' }, meta: {} });
   assert(res === 'Hello World!', `result = ${res}`);
@@ -134,7 +134,7 @@ async function testServerStreamEnvelopes() {
   const server = new ChannelServerBinding(serverTx);
   const client = new ChannelClientBinding(clientTx);
 
-  server.onServerStream(api.count, async function* ({ input }) {
+  server.on(api.count, async function* ({ input }) {
     for (let i = 0; i < input.to; i++) {
       await new Promise(r => setImmediate(r));
       yield { val: i };
@@ -161,7 +161,7 @@ async function testClientStreamEnvelopes() {
   const server = new ChannelServerBinding(serverTx);
   const client = new ChannelClientBinding(clientTx);
 
-  server.onClientStream(api.upload, async ({ input, stream }) => {
+  server.on(api.upload, async ({ input, stream }) => {
     const items: string[] = [];
     for await (const c of stream) items.push(c);
     return { tag: input.tag, items };
@@ -190,7 +190,7 @@ async function testBidiStreamEnvelopes() {
   const server = new ChannelServerBinding(serverTx);
   const client = new ChannelClientBinding(clientTx);
 
-  server.onBidiStream(api.echo, async function* ({ input, stream }) {
+  server.on(api.echo, async function* ({ input, stream }) {
     for await (const m of stream) {
       await sleep(1);
       yield `${input.prefix}: ${m}`;

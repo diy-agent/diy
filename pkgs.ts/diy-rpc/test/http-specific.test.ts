@@ -38,19 +38,19 @@ describe('http-server-binding 协议特有', () => {
     let csCancelled: string | null = null;
 
     const server = httpRaw;
-    server.onUnary(api.diy.app.greet, async ({ input }) => `Hello, ${input.name}!`);
-    server.onUnary(api.diy.app.fail, async () => { throw new RpcError('PERMISSION_DENIED', 'no access'); });
-    server.onUnary(api.diy.app.invalid, async () => {
+    server.on(api.diy.app.greet, async ({ input }) => `Hello, ${input.name}!`);
+    server.on(api.diy.app.fail, async () => { throw new RpcError('PERMISSION_DENIED', 'no access'); });
+    server.on(api.diy.app.invalid, async () => {
       throw new RpcError('INVALID_ARGUMENT', 'Invalid input', { details: [{ path: ['name'], message: 'bad' }] });
     });
-    server.onServerStream(api.diy.app.count, async function* ({ input }) {
+    server.on(api.diy.app.count, async function* ({ input }) {
       for (let i = 1; i <= input.to; i++) yield i;
     });
-    server.onServerStream(api.diy.app.slow, async function* () {
+    server.on(api.diy.app.slow, async function* () {
       try { for (let i = 0; ; i++) { yield i; await sleep(1); } }
       finally { slowCleanup = true; }
     });
-    server.onClientStream(api.diy.app.recv, async ({ stream }) => {
+    server.on(api.diy.app.recv, async ({ stream }) => {
       try { for await (const _ of stream) {} }
       catch (e: unknown) { csCancelled = (e as RpcError).code ?? null; }
       return { errCode: csCancelled };

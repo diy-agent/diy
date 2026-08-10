@@ -5,7 +5,7 @@
  *   - ProcedureMeta 描述一个 RPC 过程的 schema（input/output/chunk + stream mode）
  *   - _HandlerForProc 从 meta 推导 handler 签名（收 { input, meta, stream? }）
  *   - _validateInput 做 zod 校验（ZodError → INVALID_ARGUMENT）
- * ServerBinding 用这些类型实现强类型注册（onUnary(meta, handler) 等）；第3层（index.ts）import 本文件。
+ * ServerBinding 用这些类型实现强类型注册（on(meta, handler)）；第3层（index.ts）import 本文件。
  */
 
 import { z } from 'zod';
@@ -25,7 +25,7 @@ type HandlerFor<TIn, TOut, TChIn, TChOut, TMode> =
   TMode extends 'bidi'    ? (opts: { input: TIn; stream: StreamHandle<TChIn> }) => AsyncGenerator<TChOut> :
   never;
 
-/** 从 ProcedureMeta 类型参数推导 handler 签名（供 onXxx / register 使用） */
+/** 从 ProcedureMeta 类型参数推导 handler 签名（供 on() / onForward 使用） */
 /** @internal */
 export type _HandlerForProc<T> =
   T extends ProcedureMeta<infer TIn, infer TOut, infer TChIn, infer TChOut, infer TMode>

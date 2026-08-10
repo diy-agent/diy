@@ -31,9 +31,9 @@ describe('ws-transport 协议特有', () => {
 
     wss.on('connection', (ws) => {
       const server = new ChannelServerBinding(new WsTransport(ws));
-      server.onUnary(api.ping, async ({ input }) => `pong: ${input.msg}`);
-      server.onUnary(api.slow, async ({ input }) => { await sleep(input.delay); return { id: input.id }; });
-      server.onServerStream(api.count, async function* ({ input }) {
+      server.on(api.ping, async ({ input }) => `pong: ${input.msg}`);
+      server.on(api.slow, async ({ input }) => { await sleep(input.delay); return { id: input.id }; });
+      server.on(api.count, async function* ({ input }) {
         for (let i = 0; i < input.n; i++) { await sleep(5); yield i; }
       });
     });

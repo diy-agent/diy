@@ -1,11 +1,12 @@
 /**
  * server-binding.ts — 第2层端口：ClientBinding / ServerBinding 接口
  *
- * 与 meta.ts（第2层类型）同层。端口只描述 4 种调用语义
- * （unary / serverStream / clientStream / bidiStream），以 meta 为注册键强类型化：
- *   - ServerBinding.onUnary(meta, handler) 等：handler 收 { input, meta, stream? }，类型从 meta 推导
- *   - 具体绑定（ChannelServerBinding / HttpServerBinding）各自把语义映射到协议常态
- * 第3层（createClient）只依赖本接口，不感知具体绑定。
+ * 与 meta.ts（第2层类型）同层。端口描述 4 种调用语义
+ * （unary / serverStream / clientStream / bidiStream）：
+ *   - ServerBinding.on(meta, handler)：注册一个方法，handler 类型从 meta 的
+ *     _streamMode 推导（收 { input, meta, stream? }），meta 自带 mode 无需分开
+ *   - ClientBinding.invoke/serverStream/...：客户端按调用语义显式选择
+ * 具体绑定（ChannelServerBinding / HttpServerBinding）各自把语义映射到协议常态。
  */
 
 import type { StreamHandle } from './types';
@@ -21,24 +22,13 @@ export interface CallOptions {
   timeout?: number;
 }
 
-/** 仅接受特定 stream mode 的 meta */
-type UnaryMeta = _AnyProcedureMeta & { _streamMode: 'unary' };
-type ServerMeta = _AnyProcedureMeta & { _streamMode: 'server' };
-type ClientMeta = _AnyProcedureMeta & { _streamMode: 'client' };
-type BidiMeta = _AnyProcedureMeta & { _streamMode: 'bidi' };
-
 // ═══════════════════════════════════════════════════
 //  ServerBinding — 服务端端口（以 meta 为键强类型注册）
 // ═══════════════════════════════════════════════════
 
 export interface ServerBinding {
-  onUnary<M extends UnaryMeta>(meta: M, handler: _HandlerForProc<M>): void;
-
-  onServerStream<M extends ServerMeta>(meta: M, handler: _HandlerForProc<M>): void;
-
-  onClientStream<M extends ClientMeta>(meta: M, handler: _HandlerForProc<M>): void;
-
-  onBidiStream<M extends BidiMeta>(meta: M, handler: _HandlerForProc<M>): void;
+  /** 注册一个方法；handler 签名随 meta._streamMode 推导 */
+  on<M extends _AnyProcedureMeta>(meta: M, handler: _HandlerForProc<M>): void;
 
   destroy(): void;
 }

@@ -29,7 +29,7 @@ function unwrap(
 }
 
 /**
- * 服务端绑定共享核心。注册（onUnary/onServerStream/...）与 name 解析 / unwrap /
+ * 服务端绑定共享核心。注册（on(meta, handler)，按 _streamMode 分发）与 name 解析 / unwrap /
  * zod 校验在此一处实现；子类经受保护的 accessor 取 handler，把 method 映射到线协议。
  */
 export abstract class ServerBindingCore {
@@ -61,37 +61,29 @@ export abstract class ServerBindingCore {
     }
   }
 
-  onUnary<M extends _AnyProcedureMeta & { _streamMode: 'unary' }>(meta: M, handler: _HandlerForProc<M>): void {
+  /** 注册一个方法：按 meta._streamMode 存到对应表；重复注册（多后端 scope 冲突的实质）显式报错 */
+  on<M extends _AnyProcedureMeta>(meta: M, handler: _HandlerForProc<M>): void {
     const name = this._nameOf(meta);
     this._assertNotRegistered(name);
-    this._unaries.set(name, (params) => (handler as HandlerFn)(unwrap(meta, params)));
-  }
-
-  onServerStream<M extends _AnyProcedureMeta & { _streamMode: 'server' }>(meta: M, handler: _HandlerForProc<M>): void {
-    const name = this._nameOf(meta);
-    this._assertNotRegistered(name);
-    this._serverStreams.set(
-      name,
-      (params) => (handler as HandlerFn)(unwrap(meta, params)) as AsyncGenerator<unknown>,
-    );
-  }
-
-  onClientStream<M extends _AnyProcedureMeta & { _streamMode: 'client' }>(meta: M, handler: _HandlerForProc<M>): void {
-    const name = this._nameOf(meta);
-    this._assertNotRegistered(name);
-    this._clientStreams.set(
-      name,
-      (params, chunks) => (handler as HandlerFn)(unwrap(meta, params, chunks)) as Promise<unknown>,
-    );
-  }
-
-  onBidiStream<M extends _AnyProcedureMeta & { _streamMode: 'bidi' }>(meta: M, handler: _HandlerForProc<M>): void {
-    const name = this._nameOf(meta);
-    this._assertNotRegistered(name);
-    this._bidiStreams.set(
-      name,
-      (params, incoming) => (handler as HandlerFn)(unwrap(meta, params, incoming)) as AsyncGenerator<unknown>,
-    );
+    const mode = meta._streamMode;
+    if (mode === 'unary') {
+      this._unaries.set(name, (params) => (handler as HandlerFn)(unwrap(meta, params)));
+    } else if (mode === 'server') {
+      this._serverStreams.set(
+        name,
+        (params) => (handler as HandlerFn)(unwrap(meta, params)) as AsyncGenerator<unknown>,
+      );
+    } else if (mode === 'client') {
+      this._clientStreams.set(
+        name,
+        (params, chunks) => (handler as HandlerFn)(unwrap(meta, params, chunks)) as Promise<unknown>,
+      );
+    } else if (mode === 'bidi') {
+      this._bidiStreams.set(
+        name,
+        (params, incoming) => (handler as HandlerFn)(unwrap(meta, params, incoming)) as AsyncGenerator<unknown>,
+      );
+    }
   }
 
   /** 清空所有注册表（子类 destroy 复用） */
@@ -103,24 +95,14 @@ export abstract class ServerBindingCore {
   }
 
   // ═══════════════════════════════════════════════════
-  //  注册辅助：按 mode 分发 / router 批量 / 转发
+  //  注册辅助：router 批量 / 转发
   // ═══════════════════════════════════════════════════
-
-  /** 按 def 的 stream mode 注册（handler 收 { input, meta, stream? }），等价于 onXxx 的自动分派 */
-  register(def: _AnyProcedureMeta, handler: _HandlerForProc<_AnyProcedureMeta>): void {
-    const mode = def._streamMode;
-    const on = this as unknown as Record<string, (m: unknown, h: unknown) => void>;
-    if (mode === 'unary') on.onUnary(def, handler);
-    else if (mode === 'server') on.onServerStream(def, handler);
-    else if (mode === 'client') on.onClientStream(def, handler);
-    else if (mode === 'bidi') on.onBidiStream(def, handler);
-  }
 
   /** 批量注册 router 树：含 call 的（RpcImpl）自动注册，无 call 的（RpcSchema）跳过等调用方 on */
   registerRouter(router: _Router): void {
     for (const [, def] of Object.entries(_flattenRouter(router))) {
       const call = (def as _AnyProcedureDef).call;
-      if (typeof call === 'function') this.register(def as _AnyProcedureMeta, call as any);
+      if (typeof call === 'function') this.on(def as _AnyProcedureMeta, call as any);
     }
   }
 
@@ -135,11 +117,11 @@ export abstract class ServerBindingCore {
       const mode = def._streamMode;
 
       if (mode === 'unary') {
-        (this.onUnary as any)(def, ((opts: { input: unknown; meta: unknown }) =>
-          client.invoke(full, { input: opts.input, meta: opts.meta })));
+        this.on(def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown }) =>
+          client.invoke(full, { input: opts.input, meta: opts.meta })) as any);
       } else if (mode === 'server') {
-        (this.onServerStream as any)(def, ((opts: { input: unknown; meta: unknown }) =>
-          this._forwardServerStream(client, full, opts)));
+        this.on(def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown }) =>
+          this._forwardServerStream(client, full, opts)) as any);
       } else if (mode === 'client' || mode === 'bidi') {
         throw new Error(`[ServerBinding] ${full}: client/bidi 转发暂不支持`);
       } else {

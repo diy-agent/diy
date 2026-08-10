@@ -96,21 +96,21 @@ const apiDef = router({
 function startBinding(txSrv: EnvelopeTransport): ServerBinding {
   const binding = new ChannelServerBinding(txSrv);
   // meta/handle 分离：RpcSchema 纯定义，handler 逐个 onXxx 挂载
-  binding.onUnary(apiDef.math.add, async ({ input }) => input.a + input.b);
-  binding.onUnary(apiDef.greet, async ({ input }) => `Hello, ${input.name}!`);
-  binding.onUnary(apiDef.slow, async ({ input }) => {
+  binding.on(apiDef.math.add, async ({ input }) => input.a + input.b);
+  binding.on(apiDef.greet, async ({ input }) => `Hello, ${input.name}!`);
+  binding.on(apiDef.slow, async ({ input }) => {
     await sleep(input.delay);
     return { id: input.id };
   });
-  binding.onServerStream(apiDef.count, async function* ({ input }) {
+  binding.on(apiDef.count, async function* ({ input }) {
     for (let i = 0; i < input.n; i++) { await sleep(1); yield i; }
   });
-  binding.onClientStream(apiDef.upload, async ({ input, stream }) => {
+  binding.on(apiDef.upload, async ({ input, stream }) => {
     let sum = 0;
     for await (const v of stream) sum += v;
     return { tag: input.tag, sum };
   });
-  binding.onBidiStream(apiDef.chat, async function* ({ input, stream }) {
+  binding.on(apiDef.chat, async function* ({ input, stream }) {
     for await (const msg of stream) yield `[${input.room}] ${msg}`;
   });
   return binding;

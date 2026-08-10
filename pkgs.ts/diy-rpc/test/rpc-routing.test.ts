@@ -2,7 +2,7 @@
  * rpc-routing.test.ts — 多后端共享单一 binding 的路由归属验证
  *
  * 场景：CLI → Main（共享 ChannelServerBinding，本地 diy.app + 转发 diy.ui）→ Renderer
- *   - diy.app.* 由 Main 侧 binding.onUnary 本地处理
+ *   - diy.app.* 由 Main 侧 binding.on 本地处理
  *   - diy.ui.* 由 binding.onForward 转发到 renderer 侧 binding
  *   - 两个后端注册进同一个 binding，路由归属 = binding 的 method→handler 表
  * 验证：本地/转发各归其位、方法名冲突（scope 冲突实质）由 binding 层显式报错。
@@ -65,13 +65,13 @@ async function main() {
 
   // Main 侧：共享来源 binding，本地 + 转发两个后端都注册进它
   const gwBinding = new ChannelServerBinding(gwTx);
-  gwBinding.onUnary(appApiDef.diy.app.ping, async ({ input }) => `pong:${input.msg}`); // diy.app.* → 本地
+  gwBinding.on(appApiDef.diy.app.ping, async ({ input }) => `pong:${input.msg}`); // diy.app.* → 本地
   gwBinding.onForward(appApiDef.diy.ui, new ChannelClientBinding(main2renderer));       // diy.ui.* → 转发
 
   // Renderer 侧：本地 ui binding（diy.ui.* 直接处理）
   const rendererBinding = new ChannelServerBinding(renderer2main);
-  rendererBinding.onUnary(appApiDef.diy.ui.tree, async ({ input }) => `tree:${input.all ?? false}`);
-  rendererBinding.onUnary(appApiDef.diy.ui.status, async () => ({ pid: 42 }));
+  rendererBinding.on(appApiDef.diy.ui.tree, async ({ input }) => `tree:${input.all ?? false}`);
+  rendererBinding.on(appApiDef.diy.ui.status, async () => ({ pid: 42 }));
 
   // CLI 侧：全量 client（完整 def，能调 diy.app.* 和 diy.ui.*）
   const cli = createTypedClient(new ChannelClientBinding(cliTx), appApiDef);
@@ -91,7 +91,7 @@ async function main() {
   let threw = false;
   // 第二个后端注册同名方法 diy.app.ping → binding 层显式报错
   const clashBinding = new ChannelServerBinding(gwTx);
-  clashBinding.onUnary(appApiDef.diy.app.ping, async ({ input }) => `pong:${input.msg}`);
+  clashBinding.on(appApiDef.diy.app.ping, async ({ input }) => `pong:${input.msg}`);
   try {
     clashBinding.onForward(appApiDef.diy.app, new ChannelClientBinding(main2renderer));
   } catch (e) {
