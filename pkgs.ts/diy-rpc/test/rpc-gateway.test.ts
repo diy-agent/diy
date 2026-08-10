@@ -96,12 +96,25 @@ async function main() {
 
   console.log('\n── scope 冲突报错 ──');
   let threw = false;
+  // 用独立 server 测 gateway 层 scope 冲突（appServer 已挂到 main gateway，不能复用）
+  const conflictSrv = new RpcServer({ router: appApiDef.diy.app, scope: 'diy.app' });
   try {
-    new RpcGateway(new ChannelServerBinding(gwTx)).register(appServer).register(appServer);
+    new RpcGateway(new ChannelServerBinding(gwTx)).register(conflictSrv).register(conflictSrv);
   } catch (e) {
     threw = e instanceof Error && e.message.includes('已注册');
   }
   assert(threw, '重复 register 同一 scope 抛错');
+
+  console.log('\n── RpcServer 重复挂载报错 ──');
+  threw = false;
+  const dupSrv = new RpcServer({ router: appApiDef.diy.app, scope: 'diy.app' });
+  dupSrv.registerInto(new ChannelServerBinding(gwTx));
+  try {
+    dupSrv.registerInto(new ChannelServerBinding(gwTx));
+  } catch (e) {
+    threw = e instanceof Error && e.message.includes('已挂载');
+  }
+  assert(threw, '一个 RpcServer 重复 registerInto 抛错');
 
   gateway.destroy();
   appServer.destroy();

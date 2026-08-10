@@ -226,11 +226,12 @@ function _registerMode(raw: ServerBinding, def: _AnyProcedureMeta, handler: Hand
  *   - 含 call 的 procedure（RpcImpl）构造时自动注册
  *   - 不含 call 的（RpcSchema）通过 .on() 绑定 handler
  *   - registerInto(raw) 把本注册表挂到某个 ServerBinding（以 meta 强类型注册）
+ *   - 一个注册表恰好挂一个绑定；重复 registerInto 显式报错
  */
 /** @internal */
 export class RpcServer implements _RpcBackend {
   readonly scope: string;
-  private _raws: ServerBinding[] = [];
+  private _raw?: ServerBinding;
   private _metaToMethod = new Map<_AnyProcedureMeta, string>();
   private _handlers = new Map<_AnyProcedureMeta, HandlerFn>();
 
@@ -265,7 +266,7 @@ export class RpcServer implements _RpcBackend {
       );
     }
     this._handlers.set(proc, handler as any);
-    for (const raw of this._raws) this._registerInto(raw, proc, handler as any);
+    if (this._raw) this._registerInto(this._raw, proc, handler as any);
   }
 
   /**
@@ -274,7 +275,12 @@ export class RpcServer implements _RpcBackend {
    * 注册到来源 transport 的 ServerBinding 上。
    */
   registerInto(raw: ServerBinding): void {
-    this._raws.push(raw);
+    if (this._raw) {
+      throw new Error(
+        `[RpcServer] 已挂载 ServerBinding — 一个注册表只能挂一个绑定`,
+      );
+    }
+    this._raw = raw;
     for (const [def, handler] of this._handlers) {
       this._registerInto(raw, def, handler);
     }
@@ -290,8 +296,8 @@ export class RpcServer implements _RpcBackend {
 
   /** 销毁：清理所有挂载的 ServerBinding 监听和流 */
   destroy(): void {
-    for (const raw of this._raws) raw.destroy();
-    this._raws = [];
+    this._raw?.destroy();
+    this._raw = undefined;
     this._metaToMethod.clear();
     this._handlers.clear();
   }
