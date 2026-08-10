@@ -64,27 +64,8 @@ export interface ProcedureMeta<
   readonly name?: string;
 }
 
-// ═══════════════════════════════════════════════════
-//  ProcedureDef — 完整形式（含 call）
-// ═══════════════════════════════════════════════════
-
-export interface ProcedureDef<
-  TIn = unknown,
-  TOut = unknown,
-  TChIn = never,
-  TChOut = never,
-  TMode extends string = 'unary',
-> extends ProcedureMeta<TIn, TOut, TChIn, TChOut, TMode> {
-  call: (opts: { input: TIn; meta?: unknown }) => unknown;
-}
-
 /** @internal */
 export type _AnyProcedureMeta = ProcedureMeta<any, any, any, any, any>;
-/** @internal */
-export type _AnyProcedureDef = ProcedureDef<any, any, any, any, any>;
-/** @deprecated 用 _AnyProcedureMeta */
-/** @internal */
-export type _AnyProcedure = _AnyProcedureDef;
 /** @internal */
 export interface _Router { [key: string]: _AnyProcedureMeta | _Router; }
 

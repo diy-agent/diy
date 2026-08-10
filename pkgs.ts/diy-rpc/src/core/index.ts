@@ -15,15 +15,15 @@ export type { EnvelopeTransport, StreamHandle } from './types';
 export { RpcError, toRpcError } from './error';
 // 端口接口
 export type { ServerBinding, ClientBinding, CallOptions } from './server-binding';
-// meta 类型：RpcSchema/RpcImpl 工厂的返回类型，消费方导出定义时被推断类型引用，必须可命名
-export type { ProcedureMeta, ProcedureDef } from './meta';
+// meta 类型：RpcSchema 工厂的返回类型，消费方导出定义时被推断类型引用，必须可命名
+export type { ProcedureMeta } from './meta';
 // 具体绑定 + 内存通道
 export { ChannelServerBinding } from './channel-server-binding';
 export { ChannelClientBinding } from './channel-client-binding';
 export { createMemTransportPair } from './mem';
 // 第3层语义 API
 export {
-  RpcSchema, RpcImpl, router,
+  RpcSchema, router,
   createTypedClient,
 } from './rpc';
 export type { TypedClient } from './rpc';
