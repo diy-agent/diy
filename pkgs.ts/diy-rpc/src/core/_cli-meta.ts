@@ -17,11 +17,6 @@ export interface _CliArgMeta {
   placeholder?: string;
 }
 
-/** @internal */
-export interface _ProcedureCliMeta {
-  description?: string;
-}
-
 // ═══════════════════════════════════════════════════
 //  WeakMap Registry
 // ═══════════════════════════════════════════════════

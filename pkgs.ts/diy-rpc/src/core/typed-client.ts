@@ -39,9 +39,11 @@ export type TypedClient<T> = {
         ? (input: ProcInput<T[K]>, chunks: ProcChunks<T[K]>, options?: CallOptions) => Promise<ProcOutput<T[K]>>
         : T[K] extends { _type: 'procedure'; _streamMode: 'bidi' }
           ? (input: ProcInput<T[K]>, chunks: ProcChunks<T[K]>, options?: CallOptions) => Promise<StreamHandle<ProcChunkOut<T[K]>>>
-          : T[K] extends Record<string, unknown>
+          : T[K] extends { _type: 'procedure'; _streamMode: 'group' }
             ? TypedClient<T[K]>
-            : never;
+            : T[K] extends Record<string, unknown>
+              ? TypedClient<T[K]>
+              : never;
 };
 
 /** client/bidi stream 的 chunks 参数：AsyncIterable 或返回 AsyncIterable 的函数 */

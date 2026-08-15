@@ -9,7 +9,7 @@
 import type { StreamHandle } from './types';
 import type { ClientBinding } from './server-binding';
 import { _validateInput, type _AnyProcedureMeta, type _HandlerForProc, type _Router } from './meta';
-import { _flattenRouter } from './_tree';
+import { _flattenRouter, _isProcedure } from './_tree';
 
 type UnaryHandler = (params: unknown) => unknown;
 type ServerStreamHandler = (params: unknown) => AsyncGenerator<unknown>;
@@ -99,12 +99,15 @@ export abstract class ServerBindingCore {
   // ═══════════════════════════════════════════════════
 
   /**
-   * 注册转发：把 router 树下的每个方法注册为转发 handler——收到调用后经
-   * client 发到远端（如 ipcTransport → renderer），拿回结果/逐块回写。
-   * def.name 必须是全名（router() 已回写），client 连远端进程。
+   * 注册转发：把 router 子树（裸 _Router 或 RpcSchema.group 子树）下的每个方法注册为转发
+   * handler——收到调用后经 client 发到远端（如 ipcTransport → renderer），拿回结果/逐块回写。
+   * def.name 必须是全名（router() 已回写），client 连远端进程。group 子树自动解包 children。
    */
-  onForward(router: _Router, client: ClientBinding): void {
-    for (const [name, def] of Object.entries(_flattenRouter(router))) {
+  onForward(router: _Router | _AnyProcedureMeta, client: ClientBinding): void {
+    const subtree = _isProcedure(router) && router._streamMode === 'group'
+      ? (router.children as _Router)
+      : (router as _Router);
+    for (const [name, def] of Object.entries(_flattenRouter(subtree))) {
       const full = (def as { name?: string }).name ?? name;
       const mode = def._streamMode;
 

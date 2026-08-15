@@ -8,14 +8,14 @@
  */
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { RpcSchema, RpcError, createTypedClient, router } from '../src/index';
+import { RpcSchema, RpcError, createTypedClient } from '../src/index';
 import type { ServerBinding } from '../src/core';
 import { channelHarness, httpHarness, wsHarness, type TransportHarness } from './harness';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** 四流模式共享 api 定义（纯 meta，router() 回写全名） */
-const api = router({
+const api = RpcSchema.router({
   greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
   fail: RpcSchema.unary({ input: {}, output: z.unknown() }),
   count: RpcSchema.serverStream({ input: { to: z.number() }, output: z.number() }),

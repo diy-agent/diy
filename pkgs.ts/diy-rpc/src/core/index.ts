@@ -17,13 +17,16 @@ export { RpcError, toRpcError } from './error';
 export type { ServerBinding, ClientBinding, CallOptions } from './server-binding';
 // meta 类型：RpcSchema 工厂的返回类型，消费方导出定义时被推断类型引用，必须可命名
 export type { ProcedureMeta } from './meta';
+// _Router 是 ProcedureMeta.children 的类型（RpcSchema 返回类型被消费方导出值引用），
+// 不导出则消费方 `export const apiDef = router({...})` 触发 TS2883（与 ProcedureMeta 同理）。
+export type { _Router } from './meta';
 // 具体绑定 + 内存通道
 export { ChannelServerBinding } from './channel-server-binding';
 export { ChannelClientBinding } from './channel-client-binding';
 export { createMemTransportPair } from './mem';
 // 第3层语义 API
 export {
-  RpcSchema, router,
+  RpcSchema,
   createTypedClient,
 } from './rpc';
 export type { TypedClient } from './rpc';

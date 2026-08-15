@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "bin": {
-    "diy-app": "bin/diy-app.mjs"
+    "diy-app": "bin/diy.mjs"
   },
   "files": [
     "bin/",

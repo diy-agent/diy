@@ -163,9 +163,11 @@ export function generateHelp(def: _AnyProcedureMeta, cmdName: string, descriptio
   const shape = (schema as any).shape as Record<string, z.ZodTypeAny>;
   const lines: string[] = [];
 
-  if (description) lines.push(description, '');
+  // 命令描述：显式传入 > meta.desc（父命令描述由 showHelp 传入，叶子用 def.desc）
+  const cmdDesc = description ?? def.desc ?? '';
+  if (cmdDesc) lines.push(cmdDesc, '');
 
-  // 位置参数
+  // 位置参数 — 占位符默认用字段名（语义），可选加类型后缀
   const args: [string, ReturnType<typeof _getCliArgMeta>][] =
     Object.entries(shape).map(([k, f]) => [k, _getCliArgMeta(f)] as any)
       .filter(([, m]) => m);
@@ -174,10 +176,11 @@ export function generateHelp(def: _AnyProcedureMeta, cmdName: string, descriptio
     lines.push('Arguments:');
     for (const [key, meta] of args) {
       const typeName = inferTypeName(shape[key]);
-      const ph = meta!.placeholder ?? typeName;
+      const ph = meta!.placeholder ?? key;
       const opt = isOptional(shape[key]) ? `[${ph}]` : `<${ph}>`;
-      const help = meta!.desc ? `  ${meta!.desc}` : '';
-      lines.push(`  ${opt}${help}`);
+      const typeHint = typeName !== 'value' && typeName !== ph ? ` (${typeName})` : '';
+      const helpText = meta!.desc ? `  ${meta!.desc}` : '';
+      lines.push(`  ${opt}${typeHint}${helpText}`);
     }
     lines.push('');
   }
@@ -194,14 +197,14 @@ export function generateHelp(def: _AnyProcedureMeta, cmdName: string, descriptio
       const alias = meta!.short ? `-${meta!.short}, ` : '    ';
       const long = key.length > 1 ? `--${key}` : `-${key}`;
       const typeName = inferTypeName(field);
-      const ph = meta!.placeholder ?? typeName;
+      const ph = meta!.placeholder ?? key;
       const isBool = unwrap(field) instanceof z.ZodBoolean;
       const argDisplay = isBool ? '' : ` ${ph}`;
       const defVal = inferDefault(field);
       const defStr = defVal !== undefined ? ` (default: ${JSON.stringify(defVal)})` : '';
       const req = !isOptional(field) && defVal === undefined ? '  [required]' : '';
-      const help = meta!.desc ? `  ${meta!.desc}` : '';
-      lines.push(`  ${alias}${long}${argDisplay}${req}${defStr}${help}`);
+      const helpText = meta!.desc ? `  ${meta!.desc}` : '';
+      lines.push(`  ${alias}${long}${argDisplay}${req}${defStr}${helpText}`);
     }
     lines.push('');
   }

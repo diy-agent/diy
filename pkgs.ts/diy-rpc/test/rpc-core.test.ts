@@ -10,7 +10,7 @@ import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import {
   RpcSchema, createTypedClient,
-  ChannelClientBinding, ChannelServerBinding, router,
+  ChannelClientBinding, ChannelServerBinding,
 } from '../src/index';
 import type { EnvelopeTransport } from '../src/core/types';
 import type { ServerBinding } from '../src/core/server-binding';
@@ -18,7 +18,7 @@ import { createMemTransportPair } from './helpers';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const apiDef = router({
+const apiDef = RpcSchema.router({
   math: { add: RpcSchema.unary({ input: { a: z.number(), b: z.number() }, output: z.number() }) },
   greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
   slow: RpcSchema.unary({ input: { delay: z.number(), id: z.number() }, output: z.object({ id: z.number() }) }),

@@ -13,7 +13,7 @@
 
 import { z } from 'zod';
 import { _buildRouteTree, _routeLeaves } from './_tree';
-import { type ProcedureMeta, type _Router } from './meta';
+import { type ProcedureMeta, type _Router, type _AnyProcedureMeta } from './meta';
 
 // ═══════════════════════════════════════════════════
 //  RpcSchema 配置类型（纯定义，无 call）
@@ -21,36 +21,44 @@ import { type ProcedureMeta, type _Router } from './meta';
 
 /** @internal */
 export interface _RpcSchemaUnaryConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput> {
-  summary?: string;
-  description?: string;
+  desc?: string;
   input: TSchema;
   output: z.ZodType<TOutput>;
+  /** 父命令的子命令容器（可选）。有 children = 父命令 */
+  children?: _Router;
 }
 
 /** @internal */
 export interface _RpcSchemaServerStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput> {
-  summary?: string;
-  description?: string;
+  desc?: string;
   input: TSchema;
   output: z.ZodType<TOutput>;
+  children?: _Router;
 }
 
 /** @internal */
 export interface _RpcSchemaClientStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput> {
-  summary?: string;
-  description?: string;
+  desc?: string;
   input: TSchema;
   chunkIn: z.ZodType<TChunk>;
   output: z.ZodType<TOutput>;
+  children?: _Router;
 }
 
 /** @internal */
 export interface _RpcSchemaBidiStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut> {
-  summary?: string;
-  description?: string;
+  desc?: string;
   input: TSchema;
   chunkIn: z.ZodType<TChunkIn>;
   chunkOut: z.ZodType<TChunkOut>;
+}
+
+/** @internal */
+export interface _RpcSchemaGroupConfig {
+  /** 父命令描述 */
+  desc?: string;
+  /** 子命令容器 */
+  children: _Router;
 }
 
 
@@ -83,6 +91,39 @@ export class RpcSchema {
   ): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TChunkOut, TChunkIn, TChunkOut, 'bidi'> {
     return _makeMeta(config, 'bidi', z.object(config.input), undefined, config.chunkIn, config.chunkOut);
   }
+
+  /**
+   * 纯父命令工厂：只有 desc + children，无 input/output（不可执行，仅承载子命令与描述）。
+   * _streamMode 标记为 'group'，buildRouteTree 据此识别为父命令节点。
+   */
+  static group<const TChildren extends _Router>(
+    config: _RpcSchemaGroupConfig & { children: TChildren },
+  ): ProcedureMeta<unknown, unknown, never, never, 'group'> & TChildren {
+    return _makeMeta(config, 'group');
+  }
+
+  /**
+   * 组合整棵 router 树并回写方法全名（相对路径）到每个 meta.name，供 ServerBinding onXxx(meta, handler) 使用。
+   * 根为纯 router 容器（父命令用 RpcSchema.group 承载 desc），根描述由 CliConfig.desc 承载。
+   */
+  static router<T extends _Router | _AnyProcedureMeta>(def: T): T {
+    // 兼容最外层传入 RpcSchema.group（历史形态：把 children 摊平到 group meta 自身，
+    // 保留 apiDef.diy 访问路径，并取其 children 作为根树）。根定义推荐直接用纯 router 对象。
+    const isTopGroup = (def as any)?._streamMode === 'group';
+    if (isTopGroup) {
+      for (const [k, v] of Object.entries((def as any).children)) {
+        (def as any)[k] = v;
+      }
+    }
+    const root: _Router = isTopGroup ? (def as any).children : (def as _Router);
+    // 遍历整树：① 把父 meta 的 children 摊平到父 meta 自身（保留 app.task.create 访问路径，免 .children. 层）
+    // ② 回写方法全名到每个叶子 meta.name，供 ServerBinding onXxx(meta, handler) 使用。
+    _flattenChildren(root);
+    for (const { path, def: meta } of _routeLeaves(_buildRouteTree(root))) {
+      (meta as { name?: string }).name = path;
+    }
+    return def;
+  }
 }
 
 
@@ -92,9 +133,9 @@ export class RpcSchema {
 // ═══════════════════════════════════════════════════
 
 function _makeMeta(
-  config: { summary?: string; description?: string },
+  config: { desc?: string; children?: _Router },
   streamMode: string,
-  inputSchema: z.ZodTypeAny,
+  inputSchema?: z.ZodTypeAny,
   outputSchema?: z.ZodTypeAny,
   chunkInSchema?: z.ZodTypeAny,
   chunkOutSchema?: z.ZodTypeAny,
@@ -110,9 +151,8 @@ function _makeMeta(
     outputSchema,
     chunkInSchema,
     chunkOutSchema,
-    summary: config.summary,
-    description: config.description,
-    cliDesc: undefined,
+    desc: config.desc,
+    children: config.children,
   };
   return meta;
 }
@@ -121,13 +161,23 @@ function _makeMeta(
 //  _Router 组合工具
 // ═══════════════════════════════════════════════════
 
-/** @internal */
-export function router<T extends _Router>(def: T): T {
-  // 遍历整树回写方法全名（相对路径）到每个 meta.name，供 ServerBinding onXxx(meta, handler) 直接使用。
-  for (const { path, def: meta } of _routeLeaves(_buildRouteTree(def))) {
-    (meta as { name?: string }).name = path;
+/** 递归把每个父命令（RpcSchema.group）的 children 摊平到自身（保留 app.task.create 访问路径），
+ *  并保留 children 字段供 buildRouteTree 递归（叶/父判定靠 _streamMode==='group'）。 */
+function _flattenChildren(node: _Router): void {
+  for (const key of Object.keys(node)) {
+    const val = node[key];
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      const meta = val as _AnyProcedureMeta;
+      if (meta.children && typeof meta.children === 'object') {
+        for (const [ck, cv] of Object.entries(meta.children)) {
+          (meta as any)[ck] = cv;
+        }
+        // 不删 children：buildRouteTree 靠 val.children 识别父命令
+      }
+      // 递归子命令（children 或摊平键里的 meta）
+      _flattenChildren(meta as unknown as _Router);
+    }
   }
-  return def;
 }
 
 // ═══════════════════════════════════════════════════

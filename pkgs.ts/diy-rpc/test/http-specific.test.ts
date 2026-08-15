@@ -11,24 +11,30 @@ import * as http2 from 'node:http2';
 import { exec as execCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
-import { RpcSchema, RpcError, router } from '../src/index';
+import { RpcSchema, RpcError } from '../src/index';
 import { HttpServerBinding } from '../src/transport/http/http-server-binding';
 import { HttpClientBinding } from '../src/transport/http/http-client-binding';
 
 const exec = promisify(execCb);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const api = router({
-  diy: {
-    app: {
-      greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
-      fail: RpcSchema.unary({ input: {}, output: z.unknown() }),
-      invalid: RpcSchema.unary({ input: {}, output: z.unknown() }),
-      count: RpcSchema.serverStream({ input: { to: z.number() }, output: z.number() }),
-      slow: RpcSchema.serverStream({ input: {}, output: z.number() }),
-      recv: RpcSchema.clientStream({ input: {}, chunkIn: z.unknown(), output: z.object({ errCode: z.unknown() }) }),
+const api = RpcSchema.router({
+  diy: RpcSchema.group({
+    desc: "diy 命名空间",
+    children: {
+      app: RpcSchema.group({
+        desc: "Main 进程域",
+        children: {
+          greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
+          fail: RpcSchema.unary({ input: {}, output: z.unknown() }),
+          invalid: RpcSchema.unary({ input: {}, output: z.unknown() }),
+          count: RpcSchema.serverStream({ input: { to: z.number() }, output: z.number() }),
+          slow: RpcSchema.serverStream({ input: {}, output: z.number() }),
+          recv: RpcSchema.clientStream({ input: {}, chunkIn: z.unknown(), output: z.object({ errCode: z.unknown() }) }),
+        },
+      }),
     },
-  },
+  }),
 });
 
 describe('http-server-binding 协议特有', () => {

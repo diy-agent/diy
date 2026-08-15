@@ -7,12 +7,12 @@
 import { describe, it, expect } from 'vitest';
 import { WebSocketServer, WebSocket } from 'ws';
 import { z } from 'zod';
-import { RpcSchema, createTypedClient, router, ChannelClientBinding, ChannelServerBinding } from '../src/index';
+import { RpcSchema, createTypedClient, ChannelClientBinding, ChannelServerBinding } from '../src/index';
 import { WsTransport } from '../src/transport/ws';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const api = router({
+const api = RpcSchema.router({
   ping: RpcSchema.unary({ input: { msg: z.string() }, output: z.string() }),
   slow: RpcSchema.unary({ input: { delay: z.number(), id: z.number() }, output: z.object({ id: z.number() }) }),
   count: RpcSchema.serverStream({ input: { n: z.number() }, output: z.number() }),

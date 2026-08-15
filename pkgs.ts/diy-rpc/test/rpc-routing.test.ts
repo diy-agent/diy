@@ -12,7 +12,7 @@ import type { EnvelopeTransport } from '../src/core/types';
 import { it } from 'vitest';
 import { z } from 'zod';
 import {
-  RpcSchema, router, createTypedClient,
+  RpcSchema, createTypedClient,
 } from '../src/index';
 import { ChannelServerBinding } from '../src/core/channel-server-binding';
 import { ChannelClientBinding } from '../src/core/channel-client-binding';
@@ -21,23 +21,32 @@ import { ChannelClientBinding } from '../src/core/channel-client-binding';
 //  def（模拟 app 层：diy.app 本地 + diy.ui 远端，router() 回写全名）
 // ═══════════════════════════════════════════════════
 
-const appApiDef = router({
-  diy: {
-    app: {
-      ping: RpcSchema.unary({ input: { msg: z.string() }, output: z.string() }),
-    },
-    ui: {
-      tree: RpcSchema.unary({ input: { all: z.boolean().optional() }, output: z.string() }),
-      status: RpcSchema.unary({ input: {}, output: z.object({ pid: z.number() }) }),
-      upload: RpcSchema.clientStream({
-        input: { tag: z.string() },
-        chunkIn: z.number(),
-        output: z.object({ tag: z.string(), sum: z.number() }),
+const appApiDef = RpcSchema.router({
+  diy: RpcSchema.group({
+    desc: "diy 命名空间",
+    children: {
+      app: RpcSchema.group({
+        desc: "Main 进程域",
+        children: {
+          ping: RpcSchema.unary({ input: { msg: z.string() }, output: z.string() }),
+        },
       }),
-      echo: RpcSchema.bidiStream({ input: {}, chunkIn: z.string(), chunkOut: z.string() }),
-      ticks: RpcSchema.serverStream({ input: { n: z.number() }, output: z.number() }),
+      ui: RpcSchema.group({
+        desc: "Renderer 进程域",
+        children: {
+          tree: RpcSchema.unary({ input: { all: z.boolean().optional() }, output: z.string() }),
+          status: RpcSchema.unary({ input: {}, output: z.object({ pid: z.number() }) }),
+          upload: RpcSchema.clientStream({
+            input: { tag: z.string() },
+            chunkIn: z.number(),
+            output: z.object({ tag: z.string(), sum: z.number() }),
+          }),
+          echo: RpcSchema.bidiStream({ input: {}, chunkIn: z.string(), chunkOut: z.string() }),
+          ticks: RpcSchema.serverStream({ input: { n: z.number() }, output: z.number() }),
+        },
+      }),
     },
-  },
+  }),
 });
 
 function createMemTransportPair(): [EnvelopeTransport, EnvelopeTransport] {

@@ -28,6 +28,8 @@ export type _RouterNode = {
   kind: 'router';
   name: string;
   path: string;
+  /** 父命令描述（来自父命令 meta 的 desc）。叶子命令描述在 ProcedureMeta.desc */
+  desc?: string;
   children: _RouteNode[];
   parent: _RouterNode | null;
 };
@@ -42,6 +44,7 @@ export function _buildRouteTree(
   router: _Router,
   parent: _RouterNode | null = null,
   prefix = '',
+  desc?: string,
 ): _RouterNode {
   const name = prefix ? (prefix.split('.').pop() ?? ROOT_NAME) : ROOT_NAME;
   const path = prefix;
@@ -49,14 +52,19 @@ export function _buildRouteTree(
   const children: _RouteNode[] = [];
   for (const [key, val] of Object.entries(router)) {
     const childPath = prefix ? `${prefix}.${key}` : key;
-    if (_isProcedure(val)) {
+    if (_isProcedure(val) && val._streamMode === 'group') {
+      // 父命令（RpcSchema.group）：递归子命令，把父命令自身 desc 传给子 router 节点
+      children.push(_buildRouteTree(val.children as _Router, null as any, childPath, val.desc));
+    } else if (_isProcedure(val)) {
+      // 叶子命令（unary/serverStream/...）
       children.push({ kind: 'proc', name: key, path: childPath, def: val, parent: null as any });
     } else {
+      // 纯 router 节点（无 meta）：递归
       children.push(_buildRouteTree(val as _Router, null as any, childPath));
     }
   }
 
-  const node: _RouterNode = { kind: 'router', name, path, children, parent };
+  const node: _RouterNode = { kind: 'router', name, path, desc, children, parent };
   for (const c of children) (c as { parent: _RouterNode }).parent = node;
   return node;
 }

@@ -12,11 +12,6 @@ import { z } from 'zod';
 import type { StreamHandle } from './types';
 import { toRpcError } from './error';
 
-/** @internal */
-export interface _ProcedureCliMeta {
-  description?: string;
-}
-
 /** 从 ProcedureMeta 的类型参数推导 handler 签名 */
 type HandlerFor<TIn, TOut, TChIn, TChOut, TMode> =
   TMode extends 'unary'   ? (opts: { input: TIn }) => TOut | Promise<TOut> :
@@ -53,9 +48,13 @@ export interface ProcedureMeta<
   outputSchema?: z.ZodType<TOut>;
   chunkInSchema?: z.ZodType<TChIn>;
   chunkOutSchema?: z.ZodType<TChOut>;
-  summary?: string;
-  description?: string;
-  cliDesc?: _ProcedureCliMeta;
+  /** 命令描述（父命令与叶子命令统一） */
+  desc?: string;
+  /**
+   * 父命令的子命令容器（可选）。有 children = 父命令（可下钻子命令，无 call），
+   * 无 children = 叶子命令（可执行）。二者统一为 ProcedureMeta，desc 字段一致。
+   */
+  children?: _Router;
   /**
    * 方法全名（相对路径，如 'math.add'）。由 router() 包裹时遍历回写；
    * router() 回写完整全名（如 'diy.app.task.create'）。
@@ -66,6 +65,7 @@ export interface ProcedureMeta<
 
 /** @internal */
 export type _AnyProcedureMeta = ProcedureMeta<any, any, any, any, any>;
+
 /** @internal */
 export interface _Router { [key: string]: _AnyProcedureMeta | _Router; }
 

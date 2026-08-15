@@ -4,11 +4,11 @@
 
 import type { EnvelopeTransport } from '../src/core/types';
 import { ChannelServerBinding, ChannelClientBinding } from '../src/core';
-import { RpcSchema, router, createTypedClient } from '../src/core';
+import { RpcSchema, createTypedClient } from '../src/core';
 import { it } from 'vitest';
 import { z } from 'zod';
 
-const api = router({
+const api = RpcSchema.router({
   greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
   count: RpcSchema.serverStream({ input: { to: z.number() }, output: z.object({ val: z.number() }) }),
   upload: RpcSchema.clientStream({
@@ -220,7 +220,7 @@ async function testRpcLayerEnvelopes() {
   console.log('\n── RPC 层信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
 
-  const app = router({
+  const app = RpcSchema.router({
     ping: RpcSchema.unary({
       input: { msg: z.string() },
       output: z.string(),
