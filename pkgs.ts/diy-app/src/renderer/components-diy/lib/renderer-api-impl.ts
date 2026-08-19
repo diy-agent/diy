@@ -11,7 +11,7 @@ import { renderTreeText, type TaskNode } from '../../../main/core/tree-format';
  * 从 api-def.ts 导入纯 meta（diy.ui 子树），通过 binding.on(meta, handler) 绑定实现。
  * 命名体系：diy.ui.*（Renderer 进程域）。
  * 页面交互通过 renderer-actions 回调触发 React state 变更；
- * 进程级数据（diy.ui.tree/status）反向调 main 的 diy.app.* 获取。
+ * 进程级数据（diy.ui.tree/status）反向调 main 的 diy.* 获取。
  */
 
 export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
@@ -64,15 +64,15 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     return { status: 'ok' };
   });
 
-  // diy.ui.tree — 反向调 main 的 diy.app.loadTaskTree 取数据，本地渲染文本
+  // diy.ui.tree — 反向调 main 的 diy.loadTaskTree 取数据，本地渲染文本
   binding.on(ui.tree, async ({ input }) => {
-    const nodes = (await diyService.diy.app.loadTaskTree({ allTasks: input.all ?? false })) as TaskNode[];
+    const nodes = (await diyService.diy.loadTaskTree({ allTasks: input.all ?? false })) as TaskNode[];
     return { status: 'ok', data: renderTreeText(nodes) };
   });
 
-  // diy.ui.status — 进程数据反向调 main 的 diy.app.getAppStatus
+  // diy.ui.status — 进程数据反向调 main 的 diy.getAppStatus
   binding.on(ui.status, async () => {
-    const s = await diyService.diy.app.getAppStatus({});
+    const s = await diyService.diy.getAppStatus({});
     return { status: s.status, data: s.data };
   });
 

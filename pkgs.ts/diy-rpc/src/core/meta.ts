@@ -50,13 +50,15 @@ export interface ProcedureMeta<
   chunkOutSchema?: z.ZodType<TChOut>;
   /** 命令描述（父命令与叶子命令统一） */
   desc?: string;
+  /** 单行简介 = desc 首行（命令列表/父命令列表里展示）。_makeMeta 创建时从 desc 提取。 */
+  title?: string;
   /**
    * 父命令的子命令容器（可选）。有 children = 父命令（可下钻子命令，无 call），
    * 无 children = 叶子命令（可执行）。二者统一为 ProcedureMeta，desc 字段一致。
    */
   children?: _Router;
   /**
-   * 方法全名（相对路径，如 'math.add'）。由 router() 包裹时遍历回写；
+   * 方法全名（相对路径，如 'math.add'）。由 router() 包裹时遍历回写（父命令 group 与叶子都有）；
    * router() 回写完整全名（如 'diy.app.task.create'）。
    * 裸对象（未经 router()）无此字段。
    */

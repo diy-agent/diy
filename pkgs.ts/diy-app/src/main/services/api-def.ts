@@ -6,7 +6,7 @@
  * 命名与 py 侧 `diy <域> <命令>` 对齐。
  *
  * 命名体系：
- *   diy.app.*  — Main 进程域（本地处理）
+ *   diy.*      — Main 进程域（本地处理）
  *   diy.ui.*   — Renderer 进程域（Main 经 onForward 转发，Renderer 本地处理）
  *
  * 结构不变量：RPC 树的每个可见命令节点必须是 RpcSchema.group / unary / serverStream /
@@ -40,256 +40,255 @@ const MessageParam = z.object({ role: z.string(), content: z.string() });
 
 export const apiDef = RpcSchema.router({
   diy: RpcSchema.group({
-    desc: `diy 管控台 CLI
-           管控台命令行工具，提供任务管理、主题管理、Agent 对话、LLM 代理、日志查看等功能。
-           `,
+    desc: `
+    diy 管控台 CLI
+    管控台命令行工具，提供任务管理、主题管理、Agent 对话、LLM 代理、日志查看等功能。
+    `,
     children: {
-      app: {
-        task: RpcSchema.group({
-          desc: `任务管理`,
-          children: {
-            create: RpcSchema.unary({
-              desc: `创建任务`,
-              input: {
-                title: z.string().min(1, "标题不能为空").max(200).cliArg({ desc: "任务标题" }),
-                subject: z.string().cliArg({ desc: "所属 subject 路径" }),
-                parent: z.string().optional().cliOption({ short: "p", desc: "父任务 URI" }),
-                detail: z.string().optional().cliOption({ desc: "任务详情" }),
-                body: z.string().optional().cliOption({ desc: "任务正文" }),
-              },
-              output: StatusDataUri,
-            }),
-            list: RpcSchema.unary({
-              desc: `列出任务`,
-              input: {
-                subject: z.string().optional().cliOption({ short: "s", desc: "按 subject 筛选" }),
-              },
-              output: z.object({ status: z.string(), data: z.object({ tasks: z.any() }) }),
-            }),
-            show: RpcSchema.unary({
-              desc: `查看任务详情`,
-              input: {
-                uri: z.string().cliArg({ desc: "任务 URI" }),
-              },
-              output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
-            }),
-            edit: RpcSchema.unary({
-              desc: `编辑任务`,
-              input: {
-                uri: z.string().cliArg({ desc: "任务 URI" }),
-                title: z.string().optional().cliOption({ short: "t", desc: "新标题" }),
-                state: TaskStateSchema.optional().cliOption({ desc: "新状态" }),
-                detail: z.string().optional().cliOption({ desc: "新详情" }),
-              },
-              output: StatusDataUri,
-            }),
-            delete: RpcSchema.unary({
-              desc: `删除任务`,
-              input: {
-                uri: z.string().cliArg({ desc: "任务 URI" }),
-              },
-              output: StatusDataUri,
-            }),
-            star: RpcSchema.unary({
-              desc: `收藏任务`,
-              input: {
-                uri: z.string().cliArg({ desc: "任务 URI" }),
-              },
-              output: z.object({ status: z.string(), data: z.object({ uri: z.string(), starred: z.boolean() }) }),
-            }),
-            unstar: RpcSchema.unary({
-              desc: `取消收藏任务`,
-              input: {
-                uri: z.string().cliArg({ desc: "任务 URI" }),
-              },
-              output: z.object({ status: z.string(), data: z.object({ uri: z.string(), starred: z.boolean() }) }),
-            }),
-          },
-        }),
+      task: RpcSchema.group({
+        desc: `任务管理`,
+        children: {
+          create: RpcSchema.unary({
+            desc: `创建任务`,
+            input: {
+              title: z.string().min(1, "标题不能为空").max(200).cliArg({ desc: "任务标题" }),
+              subject: z.string().cliArg({ desc: "所属 subject 路径" }),
+              parent: z.string().optional().cliOption({ short: "p", desc: "父任务 URI" }),
+              detail: z.string().optional().cliOption({ desc: "任务详情" }),
+              body: z.string().optional().cliOption({ desc: "任务正文" }),
+            },
+            output: StatusDataUri,
+          }),
+          list: RpcSchema.unary({
+            desc: `列出任务`,
+            input: {
+              subject: z.string().optional().cliOption({ short: "s", desc: "按 subject 筛选" }),
+            },
+            output: z.object({ status: z.string(), data: z.object({ tasks: z.any() }) }),
+          }),
+          show: RpcSchema.unary({
+            desc: `查看任务详情`,
+            input: {
+              uri: z.string().cliArg({ desc: "任务 URI" }),
+            },
+            output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
+          }),
+          edit: RpcSchema.unary({
+            desc: `编辑任务`,
+            input: {
+              uri: z.string().cliArg({ desc: "任务 URI" }),
+              title: z.string().optional().cliOption({ short: "t", desc: "新标题" }),
+              state: TaskStateSchema.optional().cliOption({ desc: "新状态" }),
+              detail: z.string().optional().cliOption({ desc: "新详情" }),
+            },
+            output: StatusDataUri,
+          }),
+          delete: RpcSchema.unary({
+            desc: `删除任务`,
+            input: {
+              uri: z.string().cliArg({ desc: "任务 URI" }),
+            },
+            output: StatusDataUri,
+          }),
+          star: RpcSchema.unary({
+            desc: `收藏任务`,
+            input: {
+              uri: z.string().cliArg({ desc: "任务 URI" }),
+            },
+            output: z.object({ status: z.string(), data: z.object({ uri: z.string(), starred: z.boolean() }) }),
+          }),
+          unstar: RpcSchema.unary({
+            desc: `取消收藏任务`,
+            input: {
+              uri: z.string().cliArg({ desc: "任务 URI" }),
+            },
+            output: z.object({ status: z.string(), data: z.object({ uri: z.string(), starred: z.boolean() }) }),
+          }),
+        },
+      }),
 
-        subject: RpcSchema.group({
-          desc: `主题管理`,
-          children: {
-            add: RpcSchema.unary({
-              desc: `添加主题`,
-              input: {
-                path: z.string().min(1, "路径不能为空").cliArg({ desc: "subject 路径" }),
-                label: z.string().optional().cliOption({ short: "l", desc: "显示名称" }),
-              },
-              output: StatusDataPath,
-            }),
-            list: RpcSchema.unary({
-              desc: `列出主题`,
-              input: {},
-              output: z.object({ status: z.string(), data: z.object({ subjects: z.any() }) }),
-            }),
-            remove: RpcSchema.unary({
-              desc: `删除主题`,
-              input: {
-                path: z.string().cliArg({ desc: "subject 路径" }),
-              },
-              output: StatusDataPath,
-            }),
-          },
-        }),
+      subject: RpcSchema.group({
+        desc: `主题管理`,
+        children: {
+          add: RpcSchema.unary({
+            desc: `添加主题`,
+            input: {
+              path: z.string().min(1, "路径不能为空").cliArg({ desc: "subject 路径" }),
+              label: z.string().optional().cliOption({ short: "l", desc: "显示名称" }),
+            },
+            output: StatusDataPath,
+          }),
+          list: RpcSchema.unary({
+            desc: `列出主题`,
+            input: {},
+            output: z.object({ status: z.string(), data: z.object({ subjects: z.any() }) }),
+          }),
+          remove: RpcSchema.unary({
+            desc: `删除主题`,
+            input: {
+              path: z.string().cliArg({ desc: "subject 路径" }),
+            },
+            output: StatusDataPath,
+          }),
+        },
+      }),
 
-        /** Main 进程运行状态（供 renderer diy.ui.status 反向调用） */
-        getAppStatus: RpcSchema.unary({
-          desc: `主进程运行状态（pid/uptime/memory）`,
-          input: {},
-          output: z.object({
-            status: z.string(),
-            data: z.object({
-              pid: z.number(),
-              uptime: z.number(),
-              memory: z.number(),
-            }),
+      /** Main 进程运行状态（供 renderer diy.ui.status 反向调用） */
+      getAppStatus: RpcSchema.unary({
+        desc: `主进程运行状态（pid/uptime/memory）`,
+        input: {},
+        output: z.object({
+          status: z.string(),
+          data: z.object({
+            pid: z.number(),
+            uptime: z.number(),
+            memory: z.number(),
           }),
         }),
+      }),
 
-        doctor: RpcSchema.unary({
-          desc: `系统健康自检`,
-          input: {},
-          output: z.object({
-            status: z.string(),
-            data: z.object({
-              pid: z.number(),
-              home: z.string(),
-              state_exists: z.boolean(),
-              issues: z.array(z.string()),
-              healthy: z.boolean(),
-            }),
+      doctor: RpcSchema.unary({
+        desc: `系统健康自检`,
+        input: {},
+        output: z.object({
+          status: z.string(),
+          data: z.object({
+            pid: z.number(),
+            home: z.string(),
+            state_exists: z.boolean(),
+            issues: z.array(z.string()),
+            healthy: z.boolean(),
           }),
         }),
+      }),
 
-        loadTaskTree: RpcSchema.unary({
-          desc: `加载任务树（供 renderer 反向调用）`,
-          input: { allTasks: z.boolean().optional() },
-          output: z.any(),
-        }),
+      loadTaskTree: RpcSchema.unary({
+        desc: `加载任务树（供 renderer 反向调用）`,
+        input: { allTasks: z.boolean().optional() },
+        output: z.any(),
+      }),
 
-        getTask: RpcSchema.unary({
-          desc: `按 URI 获取任务（供 renderer 反向调用）`,
-          input: { uri: z.string() },
-          output: z.any(),
-        }),
+      getTask: RpcSchema.unary({
+        desc: `按 URI 获取任务（供 renderer 反向调用）`,
+        input: { uri: z.string() },
+        output: z.any(),
+      }),
 
-        agent: RpcSchema.group({
-          desc: `Agent 管理`,
-          children: {
-            chat: RpcSchema.unary({
-              desc: `与模型对话`,
-              input: {
-                model: z.string().cliArg({ desc: "模型名称" }),
-                messages: z.array(MessageParam).cliOption({ desc: "消息数组 JSON" }),
-              },
-              output: z.object({ role: z.string(), content: z.string() }),
-            }),
-            chatStream: RpcSchema.serverStream({
-              desc: `流式对话`,
-              input: {
-                model: z.string(),
-                messages: z.array(MessageParam),
-              },
-              output: z.any(),
-            }),
-            listModels: RpcSchema.unary({
-              desc: `列出可用模型`,
-              input: {},
-              output: z.array(z.object({ id: z.string(), name: z.string() })),
-            }),
-            status: RpcSchema.unary({
-              desc: `查询 Agent 状态`,
-              input: {
-                agentId: z.string().cliArg({ desc: "Agent ID" }),
-              },
-              output: z.object({ agentId: z.string(), state: z.string(), model: z.string() }),
-            }),
-          },
-        }),
+      agent: RpcSchema.group({
+        desc: `Agent 管理`,
+        children: {
+          chat: RpcSchema.unary({
+            desc: `与模型对话`,
+            input: {
+              model: z.string().cliArg({ desc: "模型名称" }),
+              messages: z.array(MessageParam).cliOption({ desc: "消息数组 JSON" }),
+            },
+            output: z.object({ role: z.string(), content: z.string() }),
+          }),
+          chatStream: RpcSchema.serverStream({
+            desc: `流式对话`,
+            input: {
+              model: z.string(),
+              messages: z.array(MessageParam),
+            },
+            output: z.any(),
+          }),
+          listModels: RpcSchema.unary({
+            desc: `列出可用模型`,
+            input: {},
+            output: z.array(z.object({ id: z.string(), name: z.string() })),
+          }),
+          status: RpcSchema.unary({
+            desc: `查询 Agent 状态`,
+            input: {
+              agentId: z.string().cliArg({ desc: "Agent ID" }),
+            },
+            output: z.object({ agentId: z.string(), state: z.string(), model: z.string() }),
+          }),
+        },
+      }),
 
-        llmProxy: RpcSchema.group({
-          desc: `LLM 代理`,
-          children: {
-            status: RpcSchema.unary({
-              desc: `查询 LLM 代理状态`,
-              input: {},
-              output: z.object({ running: z.boolean(), port: z.number() }),
-            }),
-            start: RpcSchema.unary({
-              desc: `启动 LLM 代理`,
-              input: {},
-              output: StatusOk,
-            }),
-            stop: RpcSchema.unary({
-              desc: `停止 LLM 代理`,
-              input: {},
-              output: StatusOk,
-            }),
-          },
-        }),
+      llmProxy: RpcSchema.group({
+        desc: `LLM 代理`,
+        children: {
+          status: RpcSchema.unary({
+            desc: `查询 LLM 代理状态`,
+            input: {},
+            output: z.object({ running: z.boolean(), port: z.number() }),
+          }),
+          start: RpcSchema.unary({
+            desc: `启动 LLM 代理`,
+            input: {},
+            output: StatusOk,
+          }),
+          stop: RpcSchema.unary({
+            desc: `停止 LLM 代理`,
+            input: {},
+            output: StatusOk,
+          }),
+        },
+      }),
 
-        log: RpcSchema.group({
-          desc: `日志`,
-          children: {
-            read: RpcSchema.unary({
-              desc: `读取日志`,
-              input: {
-                limit: z.number().optional().cliOption({ desc: "返回条目数" }),
-              },
-              output: z.array(z.any()),
-            }),
-          },
-        }),
+      log: RpcSchema.group({
+        desc: `日志`,
+        children: {
+          read: RpcSchema.unary({
+            desc: `读取日志`,
+            input: {
+              limit: z.number().optional().cliOption({ desc: "返回条目数" }),
+            },
+            output: z.array(z.any()),
+          }),
+        },
+      }),
 
-        ref: RpcSchema.group({
-          desc: `仓库引用管理`,
-          children: {
-            sync: RpcSchema.unary({
-              desc: `同步镜像引用`,
-              input: {
-                all: z.boolean().optional().cliOption({ short: "a", desc: "sync 所有 scope" }),
-                scope: z.string().optional().cliOption({ desc: "指定 scope 名称" }),
-                concurrency: z.number().default(4).optional().cliOption({ desc: "并发克隆数" }),
-              },
-              output: z.object({ status: z.string(), data: z.any() }),
-            }),
-            list: RpcSchema.unary({
-              desc: `列出镜像引用`,
-              input: {
-                all: z.boolean().optional().cliOption({ short: "a", desc: "显示所有 scope" }),
-              },
-              output: z.object({ status: z.string(), data: z.any() }),
-            }),
-            status: RpcSchema.unary({
-              desc: `查询引用状态`,
-              input: {},
-              output: z.object({
-                status: z.string(),
-                data: z.object({
-                  total: z.number(),
-                  missing: z.number(),
-                  paths: z.any(),
-                }),
+      ref: RpcSchema.group({
+        desc: `仓库引用管理`,
+        children: {
+          sync: RpcSchema.unary({
+            desc: `同步镜像引用`,
+            input: {
+              all: z.boolean().optional().cliOption({ short: "a", desc: "sync 所有 scope" }),
+              scope: z.string().optional().cliOption({ desc: "指定 scope 名称" }),
+              concurrency: z.number().default(4).optional().cliOption({ desc: "并发克隆数" }),
+            },
+            output: z.object({ status: z.string(), data: z.any() }),
+          }),
+          list: RpcSchema.unary({
+            desc: `列出镜像引用`,
+            input: {
+              all: z.boolean().optional().cliOption({ short: "a", desc: "显示所有 scope" }),
+            },
+            output: z.object({ status: z.string(), data: z.any() }),
+          }),
+          status: RpcSchema.unary({
+            desc: `查询引用状态`,
+            input: {},
+            output: z.object({
+              status: z.string(),
+              data: z.object({
+                total: z.number(),
+                missing: z.number(),
+                paths: z.any(),
               }),
             }),
-            add: RpcSchema.unary({
-              desc: `添加仓库引用`,
-              input: {
-                url: z.string().cliArg({ desc: "Git 仓库 URL" }),
-              },
-              output: z.object({ status: z.string(), data: z.object({ added: z.any() }) }),
-            }),
-            remove: RpcSchema.unary({
-              desc: `移除仓库引用`,
-              input: {
-                name: z.string().cliArg({ desc: "仓库标识（diy.yaml 中注册的 URL 或 host/owner/repo）" }),
-              },
-              output: z.object({ status: z.string(), data: z.object({ removed: z.any() }) }).or(z.object({ status: z.string(), msg: z.string() })),
-            }),
-          },
-        }),
-      },
+          }),
+          add: RpcSchema.unary({
+            desc: `添加仓库引用`,
+            input: {
+              url: z.string().cliArg({ desc: "Git 仓库 URL" }),
+            },
+            output: z.object({ status: z.string(), data: z.object({ added: z.any() }) }),
+          }),
+          remove: RpcSchema.unary({
+            desc: `移除仓库引用`,
+            input: {
+              name: z.string().cliArg({ desc: "仓库标识（diy.yaml 中注册的 URL 或 host/owner/repo）" }),
+            },
+            output: z.object({ status: z.string(), data: z.object({ removed: z.any() }) }).or(z.object({ status: z.string(), msg: z.string() })),
+          }),
+        },
+      }),
 
       // ═══════════════════════════════════════════
       //  diy.ui.* — Renderer 进程域
@@ -373,7 +372,7 @@ export const apiDef = RpcSchema.router({
             },
           }),
 
-          /** 渲染任务树文本（反向调 diy.app.loadTaskTree 取数据） */
+          /** 渲染任务树文本（反向调 diy.loadTaskTree 取数据） */
           tree: RpcSchema.unary({
             desc: `渲染任务树文本`,
             input: {
@@ -385,7 +384,7 @@ export const apiDef = RpcSchema.router({
             }),
           }),
 
-          /** Renderer UI 状态（进程信息反向调 diy.app.getAppStatus） */
+          /** Renderer UI 状态（进程信息反向调 diy.getAppStatus） */
           status: RpcSchema.unary({
             desc: `Renderer 进程状态`,
             input: {},

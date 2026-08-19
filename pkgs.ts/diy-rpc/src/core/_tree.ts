@@ -30,6 +30,8 @@ export type _RouterNode = {
   path: string;
   /** 父命令描述（来自父命令 meta 的 desc）。叶子命令描述在 ProcedureMeta.desc */
   desc?: string;
+  /** 父命令单行简介 = desc 首行（命令列表展示） */
+  title?: string;
   children: _RouteNode[];
   parent: _RouterNode | null;
 };
@@ -64,7 +66,7 @@ export function _buildRouteTree(
     }
   }
 
-  const node: _RouterNode = { kind: 'router', name, path, desc, children, parent };
+  const node: _RouterNode = { kind: 'router', name, path, desc, title: (desc ?? '').split('\n')[0]?.trim() ?? '', children, parent };
   for (const c of children) (c as { parent: _RouterNode }).parent = node;
   return node;
 }

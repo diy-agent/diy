@@ -51,7 +51,7 @@ function resolveCliTree(
     if (keepNs) {
       // 保留命名空间：包成一层 router（name = 子树最后一段，如 ui），并把该层的 desc（group 的 desc）透传
       const nsName = segPath.split(".").pop() ?? segPath;
-      flattened.push({ kind: "router", name: nsName, path: segPath, parent: null, desc: sub.desc, children: sub.children });
+      flattened.push({ kind: "router", name: nsName, path: segPath, parent: null, desc: sub.desc, title: sub.title, children: sub.children });
     } else {
       flattened.push(...sub.children);
     }
@@ -80,10 +80,18 @@ function procDesc(def: _AnyProcedureMeta): string {
   return def.desc ?? "";
 }
 
-/** 命令描述第一行（命令列表里的简介）。desc 多行时只取首行。 */
-function descFirstLine(desc: string): string {
-  const first = desc.split("\n")[0]?.trim() ?? "";
-  return first;
+/** 命令节点的单行简介：叶子用 meta.title，父命令用 router 节点.title（均 = desc 首行） */
+function nodeTitle(node: _RouteNode): string {
+  if (node.kind === "proc") return node.def.title ?? "";
+  return node.title ?? "";
+}
+
+/** 对齐输出命令列表：命令名列 padEnd 到最宽，描述列统一起列；无描述的条目不补尾随空格。 */
+function emitCommandList(lines: string[], items: { name: string; desc: string }[]): void {
+  const w = items.reduce((m, { name, desc }) => Math.max(m, desc ? name.length : 0), 0);
+  for (const { name, desc } of items) {
+    lines.push(desc ? `  ${name.padEnd(w)}  ${desc}` : `  ${name}`);
+  }
 }
 
 /** Levenshtein 编辑距离（用于 did-you-mean 拼写建议） */
@@ -165,15 +173,19 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
 
   constructor(config: CliConfig<TRouter>) {
     this.config = config;
-    // 最外层可为 RpcSchema.group（统一父命令形态）；解包取其 children 作为树根。
     const isTopGroup = (config.router as any)?._streamMode === 'group';
-    const routerDef: _Router = isTopGroup
-      ? (config.router as any).children
-      : (config.router as _Router);
-    const root = _buildRouteTree(routerDef);
-    // 根命令描述 = 顶层第一个 group/命名空间节点（如 diy）的 desc
-    const topRouter = root.children.find((c) => c.kind === "router");
-    this.rootDesc = topRouter ? (topRouter as _RouterNode).desc : undefined;
+    let root: _RouterNode;
+    if (isTopGroup) {
+      // 最外层是顶层 group（如 diy）：它即根命令，desc 直接作为根描述，children 作为命令树
+      const group = config.router as any;
+      this.rootDesc = group.desc;
+      root = _buildRouteTree(group.children as _Router);
+    } else {
+      root = _buildRouteTree(config.router as _Router);
+      // 根命令描述 = 顶层第一个 group/命名空间节点（如 diy）的 desc
+      const topRouter = root.children.find((c) => c.kind === "router");
+      this.rootDesc = topRouter ? (topRouter as _RouterNode).desc : undefined;
+    }
     this.tree = resolveCliTree(root, config.cliRootPath);
     this._backfillParent(this.tree, null);
   }
@@ -272,6 +284,9 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     const remaining = argv.slice(depth);
 
     const desc = procDesc(def);
+    // 路由键用 RPC 全名（def.name，router() 回写）。当 router 是最外层 group（如 diy）被解包时，
+    // proc.path 会丢失 "diy." 前缀，与 binding 注册的全名不匹配，故路由一律用 def.name。
+    const rpcName = def.name ?? proc.path;
 
     try {
       const { input, helpRequested } = parseArgv(def, remaining);
@@ -291,7 +306,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
       const mode = def._streamMode as string;
 
       if (mode === "server") {
-        const handle = await tx.serverStream(proc.path, { input });
+        const handle = await tx.serverStream(rpcName, { input });
         for await (const chunk of handle as any) {
           const line =
             typeof chunk === "object"
@@ -302,7 +317,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
       } else if (mode === "client") {
         const lines = stdinAsync();
         const result = await tx.clientStream(
-          proc.path,
+          rpcName,
           { input },
           lines as any,
         );
@@ -314,7 +329,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
         console.log(line);
       } else if (mode === "bidi") {
         const handle = await tx.bidiStream(
-          proc.path,
+          rpcName,
           { input },
           stdinAsync() as any,
         );
@@ -326,7 +341,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
           console.log(line);
         }
       } else {
-        const result = await tx.invoke(proc.path, { input });
+        const result = await tx.invoke(rpcName, { input });
         if (result === undefined) return;
         if (this._jsonFlag || this.config.json) {
           console.log(JSON.stringify({ ok: true, data: result }));
@@ -368,14 +383,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     lines.push(`Usage: ${this.config.name} ${shortCmd} <subcommand> [options]`);
     if (node.desc) lines.push("", node.desc);
     if (node.children.length > 0) lines.push("", "Commands:");
-    for (const child of node.children) {
-      const desc =
-        child.kind === "proc"
-          ? descFirstLine(procDesc(child.def))
-          : descFirstLine(child.desc ?? "");
-      if (desc) lines.push(`  ${child.name}  ${desc}`);
-      else lines.push(`  ${child.name}`);
-    }
+    emitCommandList(lines, node.children.map((child) => ({ name: child.name, desc: nodeTitle(child) })));
     console.log(lines.join("\n"));
   }
 
@@ -394,14 +402,14 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
         const def = child.def;
         items.push({
           name,
-          desc: descFirstLine(procDesc(def)),
+          desc: nodeTitle(child),
           mode: def._streamMode!,
         });
       } else {
-        // 父命令（router 节点）：显示自身 desc 第一行；其子命令在 `diy <name>` 查看
+        // 父命令（router 节点）：显示自身 title（desc 首行）；其子命令在 `diy <name>` 查看
         items.push({
           name,
-          desc: descFirstLine(child.desc ?? ""),
+          desc: nodeTitle(child),
           mode: "",
         });
       }
@@ -409,12 +417,10 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
 
     if (items.length > 0) lines.push("", "Commands:");
 
-    for (const { name, desc, mode } of items) {
-      const modeTag =
-        mode && mode !== "unary" ? ` (${mode})` : "";
-      if (desc) lines.push(`  ${name}${modeTag}  ${desc}`);
-      else lines.push(`  ${name}`);
-    }
+    emitCommandList(lines, items.map(({ name, desc, mode }) => {
+      const modeTag = mode && mode !== "unary" ? ` (${mode})` : "";
+      return { name: name + modeTag, desc };
+    }));
 
     lines.push("", "Options:");
     lines.push("  -h, --help     Show help");

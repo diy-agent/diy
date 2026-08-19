@@ -3,7 +3,7 @@
  *
  * 从 api-def.ts 导入纯 meta，通过 binding.on(meta, handler) 逐个绑定实现。
  * 业务逻辑在这里，schema 定义在 api-def.ts。
- * 命名体系：diy.app.*（Main 进程域）。
+ * 命名体系：diy.*（Main 进程域，本地处理）。diy.ui.* 由调用方 onForward 转发。
  */
 
 import type { ServerBinding } from "@diy/rpc";
@@ -36,10 +36,10 @@ async function getLlmProxy() {
   return _llmProxyInstance;
 }
 
-const app = apiDef.diy.app;
+const app = apiDef.diy;
 
 /**
- * 把 Main 侧所有 diy.app.* handler 绑定到给定 ServerBinding（传输无关）。
+ * 把 Main 侧所有 diy.* handler 绑定到给定 ServerBinding（传输无关）。
  *
  * apiDef 已 router() 包裹（全名回写），binding 可以是 HttpServerBinding（生产）
  * 或 ChannelServerBinding（测试）。转发 diy.ui.* 由调用方在 binding 上 onForward。

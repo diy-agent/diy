@@ -9,7 +9,7 @@ export function LlmPage() {
   const addToast = useNotificationStore((s) => s.addToast);
 
   const refresh = async () => {
-    const s = await diyService.diy.app.llmProxy.status({});
+    const s = await diyService.diy.llmProxy.status({});
     setRunning(s.running);
     setLoading(false);
   };
@@ -22,10 +22,10 @@ export function LlmPage() {
     setLoading(true);
     try {
       if (running) {
-        await diyService.diy.app.llmProxy.stop({});
+        await diyService.diy.llmProxy.stop({});
         addToast("success", "LLM 代理已停止");
       } else {
-        await diyService.diy.app.llmProxy.start({});
+        await diyService.diy.llmProxy.start({});
         addToast("success", "LLM 代理已启动");
       }
     } catch (e) {

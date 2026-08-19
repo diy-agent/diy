@@ -53,9 +53,8 @@ async function main() {
   await new CliApp({
     name: "diy",
     version: "0.1.0",
-    router: apiDef,
+    router: apiDef.diy,
     transport,
-    cliRootPath: ["diy.app", "!diy.ui"], // diy.app 摊平（task list）；diy.ui 保留命名空间（ui status）
   }).parse(argv);
 
   // 清理：关闭 RPC 连接，允许进程正常退出

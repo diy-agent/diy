@@ -17,7 +17,7 @@ export function LogPanel() {
   const [levelFilter, setLevelFilter] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const entries = await diyService.diy.app.log.read({ limit: 500 });
+    const entries = await diyService.diy.log.read({ limit: 500 });
     setLogs(entries);
   }, []);
 

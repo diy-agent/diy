@@ -174,14 +174,13 @@ export function generateHelp(def: _AnyProcedureMeta, cmdName: string, descriptio
 
   if (args.length > 0) {
     lines.push('Arguments:');
-    for (const [key, meta] of args) {
+    _emitAligned(lines, args.map(([key, meta]) => {
       const typeName = inferTypeName(shape[key]);
       const ph = meta!.placeholder ?? key;
       const opt = isOptional(shape[key]) ? `[${ph}]` : `<${ph}>`;
       const typeHint = typeName !== 'value' && typeName !== ph ? ` (${typeName})` : '';
-      const helpText = meta!.desc ? `  ${meta!.desc}` : '';
-      lines.push(`  ${opt}${typeHint}${helpText}`);
-    }
+      return [`${opt}${typeHint}`, meta!.desc ?? ''];
+    }));
     lines.push('');
   }
 
@@ -192,22 +191,29 @@ export function generateHelp(def: _AnyProcedureMeta, cmdName: string, descriptio
 
   if (opts.length > 0) {
     lines.push('Options:');
-    for (const [key, meta] of opts) {
+    _emitAligned(lines, opts.map(([key, meta]) => {
       const field = shape[key];
       const alias = meta!.short ? `-${meta!.short}, ` : '    ';
       const long = key.length > 1 ? `--${key}` : `-${key}`;
-      const typeName = inferTypeName(field);
       const ph = meta!.placeholder ?? key;
       const isBool = unwrap(field) instanceof z.ZodBoolean;
       const argDisplay = isBool ? '' : ` ${ph}`;
       const defVal = inferDefault(field);
-      const defStr = defVal !== undefined ? ` (default: ${JSON.stringify(defVal)})` : '';
-      const req = !isOptional(field) && defVal === undefined ? '  [required]' : '';
-      const helpText = meta!.desc ? `  ${meta!.desc}` : '';
-      lines.push(`  ${alias}${long}${argDisplay}${req}${defStr}${helpText}`);
-    }
+      const defStr = defVal !== undefined ? `(default: ${JSON.stringify(defVal)})` : '';
+      const req = !isOptional(field) && defVal === undefined ? '[required]' : '';
+      const right = [req, defStr, meta!.desc ?? ''].filter(Boolean).join(' ');
+      return [`${alias}${long}${argDisplay}`, right];
+    }));
     lines.push('');
   }
 
   return lines.join('\n');
+}
+
+/** 对齐输出：每行左侧列 padEnd 到最宽，右侧列统一起于第 w+2 列。 */
+function _emitAligned(lines: string[], rows: [string, string][]): void {
+  const w = rows.reduce((m, [c]) => Math.max(m, c.length), 0);
+  for (const [c, r] of rows) {
+    lines.push(r ? `  ${c.padEnd(w)}  ${r}` : `  ${c}`);
+  }
 }

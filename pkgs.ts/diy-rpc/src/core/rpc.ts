@@ -12,7 +12,6 @@
  */
 
 import { z } from 'zod';
-import { _buildRouteTree, _routeLeaves } from './_tree';
 import { type ProcedureMeta, type _Router, type _AnyProcedureMeta } from './meta';
 
 // ═══════════════════════════════════════════════════
@@ -117,11 +116,9 @@ export class RpcSchema {
     }
     const root: _Router = isTopGroup ? (def as any).children : (def as _Router);
     // 遍历整树：① 把父 meta 的 children 摊平到父 meta 自身（保留 app.task.create 访问路径，免 .children. 层）
-    // ② 回写方法全名到每个叶子 meta.name，供 ServerBinding onXxx(meta, handler) 使用。
+    // ② 回写方法全名到每个 meta.name（父命令 group 与叶子统一），供 ServerBinding onXxx(meta, handler) 使用。
     _flattenChildren(root);
-    for (const { path, def: meta } of _routeLeaves(_buildRouteTree(root))) {
-      (meta as { name?: string }).name = path;
-    }
+    _assignNames(root, '');
     return def;
   }
 }
@@ -140,6 +137,7 @@ function _makeMeta(
   chunkInSchema?: z.ZodTypeAny,
   chunkOutSchema?: z.ZodTypeAny,
 ): any {
+  const desc = config.desc ? dedent(config.desc) : undefined;
   const meta: any = {
     _type: 'procedure',
     _input: undefined,
@@ -151,10 +149,22 @@ function _makeMeta(
     outputSchema,
     chunkInSchema,
     chunkOutSchema,
-    desc: config.desc,
+    desc,
+    // 单行简介 = desc 首行（命令列表/父命令列表展示）
+    title: (desc ?? '').split('\n')[0]?.trim() ?? '',
     children: config.children,
   };
   return meta;
+}
+
+/** 多行模板字符串剥公共缩进：去首行空行与尾随空白，内容行按公共前导空格裁剪。
+ *  TS 模板字符串原样保留每行前导空格（源码缩进），为保持树形缩进写多行 desc 时会带出前导空格，
+ *  故在 meta 创建时统一 dedent（规范写法：反引号独立成行 + 内容行统一缩进）。 */
+function dedent(s: string): string {
+  const lines = s.replace(/^\n/, '').split('\n');
+  const indents = lines.filter((l) => l.trim()).map((l) => l.match(/^ */)?.[0].length ?? 0);
+  const min = indents.length ? Math.min(...indents) : 0;
+  return lines.map((l) => l.slice(min)).join('\n').trimEnd();
 }
 
 // ═══════════════════════════════════════════════════
@@ -176,6 +186,24 @@ function _flattenChildren(node: _Router): void {
       }
       // 递归子命令（children 或摊平键里的 meta）
       _flattenChildren(meta as unknown as _Router);
+    }
+  }
+}
+
+/** 递归给整棵 router 树（含父命令 group）的每个 meta 回写方法全名（相对路径）到 name。
+ *  父命令与叶子统一具备 name，供 ServerBinding onXxx(meta, handler) 与 CLI 命令树使用。 */
+function _assignNames(node: _Router, prefix: string): void {
+  for (const [key, val] of Object.entries(node)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    const meta = val as _AnyProcedureMeta;
+    if (meta && typeof meta === 'object' && (meta as any)._type === 'procedure') {
+      (meta as { name?: string }).name = path;
+      if (meta._streamMode === 'group' && meta.children) {
+        _assignNames(meta.children, path);
+      }
+    } else if (meta && typeof meta === 'object') {
+      // 裸 _Router 容器（无 meta 头）：继续下钻
+      _assignNames(meta as unknown as _Router, path);
     }
   }
 }
