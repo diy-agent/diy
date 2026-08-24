@@ -10,10 +10,11 @@
 ### 开发参数
 
 ```
-npm run dev                    # 生产模式（port 18888）
-npm run dev -- --temp          # 临时模式（独立目录 + 随机端口）
-npm run dev -- --temp --port 18888  # 指定端口（测试冲突）
+npm run dev                    # 默认 ./build/home + port 18888（与 ./diy.sh 同数据）
+npm run dev -- --port 18888    # 指定端口（测试端口冲突）
 ```
+
+数据隔离由 `DIY_HOME` 驱动（`diy.sh` / `electron-dev.mts` 默认 `./build/home`，测试用 `mkdtemp`），不再有 `--temp` flag。
 
 ### 组件分层
 

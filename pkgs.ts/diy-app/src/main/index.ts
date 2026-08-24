@@ -2,20 +2,15 @@
 // 🎯 Electron 主进程入口
 //
 // 启动流程:
-//   1. 检查 --temp 参数 → AppConfig.createTemp('dev') 或 AppConfig.default()
-//   2. app.setPath('userData')  → 仅 temp 模式（生产用 Electron 默认）
-//   3. app.setPath('cache')     → 仅 temp 模式
-//   4. requestSingleInstanceLock → 同 userData 只一个实例
-//   5. 创建窗口 + IPC transport
-//   6. 端口绑定 → 生产 18888，临时 0（随机）
-//
-// 生产 vs 临时:
-//   生产: userData/cache = Electron 默认, 锁基于 appName
-//   临时: userData/cache = /tmp/diy-xxx, 锁自然隔离
+//   1. AppConfig.default() → 读 DIY_HOME（diy.sh 设为 ./build/home，测试为 mkdtemp）
+//   2. requestSingleInstanceLock → 同 userData 只一个实例
+//   3. 创建窗口 + IPC transport
+//   4. 端口绑定 → 18888（或 --port 覆盖）
 
 import { app, BrowserWindow, ipcMain } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkdirSync } from "node:fs";
 import type { ServerBinding } from "@diy/rpc";
 import { createMainTransport } from "@diy/rpc/electron";
 import { RpcPortService } from "./services/rpc-port";
@@ -32,7 +27,7 @@ let httpPort = 0;
 
 function getAppInfo() {
   return {
-    mode: isTempMode ? "temp" : "production",
+    mode: appConfig.isTemp ? "temp" : "production",
     port: httpPort,
     diyHome: appConfig.diyHome,
     cache: appConfig.cache,
@@ -50,7 +45,6 @@ function getAppInfo() {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const devUrlArg = process.argv[2] || process.env.VITE_DEV_SERVER_URL || "";
 const isDev = !app.isPackaged && !!devUrlArg;
-const isTempMode = isDev && process.argv.includes("--temp");
 
 // 显式端口（覆盖缺省值，用于测试端口冲突）
 const portArg = process.argv.indexOf("--port");
@@ -58,14 +52,14 @@ const explicitPort = portArg >= 0 ? parseInt(process.argv[portArg + 1] ?? "", 10
 const overridePort = Number.isFinite(explicitPort) ? explicitPort : null;
 
 // ── 1. AppConfig ──
-if (isTempMode) {
-  appConfig = AppConfig.createTemp("dev");
-  app.setPath("userData", appConfig.electronUserData);
-  app.setPath("cache", appConfig.cache);
-} else {
-  appConfig = AppConfig.default();
-  // 生产模式不 setPath，保持 Electron 默认
+// 单根模型：所有数据落在 DIY_HOME 下（diy.sh: ./build/home，测试: mkdtemp）
+// 同时把 Electron 的 userData/cache 也指向该根，实现锁隔离。
+appConfig = AppConfig.default();
+for (const p of [appConfig.electronUserData, appConfig.cache, appConfig.diyHome]) {
+  mkdirSync(p, { recursive: true });
 }
+app.setPath("userData", appConfig.electronUserData);
+app.setPath("cache", appConfig.cache);
 
 // ── 系统信息 ──
 console.log("═══════════════════════════════════════");
@@ -84,7 +78,7 @@ console.log(
 );
 console.log(`  PID:          ${process.pid}`);
 console.log(`  CWD:          ${process.cwd()}`);
-console.log(`  Mode:         ${isTempMode ? "TEMP (--temp)" : "PRODUCTION"}`);
+console.log(`  Mode:         ${appConfig.isTemp ? "TEMP" : "PRODUCTION"} (${appConfig.diyHome})`);
 console.log("─── AppDir ────────────────────────────");
 console.log(`  diyHome:      ${appConfig.diyHome}`);
 console.log(`  cache:        ${appConfig.cache}`);

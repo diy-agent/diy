@@ -1,14 +1,13 @@
 // src/main/core/app-config.ts
 // 🎯 AppConfig — 应用目录配置（纯数据，不依赖 Electron）
 //
-// 统一管理 diyHome / cache / electronUserData 三条路径。
-// CLI、测试、Electron 主进程都用同一个类，不分裂。
+// 单根模型：所有数据落在 DIY_HOME 下，不再分散到 ~/.config / ~/.cache。
+//   diyHome:          ~/.diy 或 $DIY_HOME（worktree: ./build/home，测试: mkdtemp）
+//   electronUserData: <diyHome>/electron_user_data  ← app.setPath("userData")
+//   cache:            <diyHome>/cache               ← app.setPath("cache")
+//   port:             18888
 //
-// 生产默认:
-//   diyHome:  ~/.diy                    ($DIY_HOME)
-//   cache:    ~/.cache/diy-app          (Electron 默认可覆盖)
-//   userData: ~/.config/diy-app         (Electron 默认可覆盖)
-//   port:     18888
+// 旧路径 ~/.config/diy-app / ~/.cache/diy-app 已废弃，首次启动时如存在可手动迁移。
 
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,17 +31,18 @@ export class AppConfig {
     this.defaultPort = isTemp ? 0 : DEFAULT_PORT;
   }
 
-  /** 生产默认：基于 $DIY_HOME 或 ~/.diy */
+  /** 默认：基于 $DIY_HOME 或 ~/.diy，派生 cache/userData 到同一根下 */
   static default(): AppConfig {
+    const home = process.env[ENV_HOME] ?? join(homedir(), ".diy");
     return new AppConfig(
-      process.env[ENV_HOME] ?? join(homedir(), ".diy"),
-      join(homedir(), ".cache", "diy-app"),
-      join(homedir(), ".config", "diy-app"),
+      home,
+      join(home, "cache"),
+      join(home, "electron_user_data"),
       false,
     );
   }
 
-  /** 临时模式：/tmp/diy-<name>/{diy_home,cache,electron_user_data} */
+  /** 临时模式：/tmp/diy-<name>/{diy_home,cache,electron_user_data}（仅测试/隔离场景） */
   static createTemp(name: string): AppConfig {
     const root = join(tmpdir(), `diy-${name}`);
     const dirs = {
