@@ -34,15 +34,17 @@ export class AppConfig {
   /** 默认：基于 $DIY_HOME 或 ~/.diy，派生 cache/userData 到同一根下 */
   static default(): AppConfig {
     const home = process.env[ENV_HOME] ?? join(homedir(), ".diy");
+    // tmpdir 下视为临时隔离，端口用 0 随机，避免与生产 18888 冲突
+    const isTemp = home.startsWith(tmpdir() + "/");
     return new AppConfig(
       home,
       join(home, "cache"),
       join(home, "electron_user_data"),
-      false,
+      isTemp,
     );
   }
 
-  /** 临时模式：/tmp/diy-<name>/{diy_home,cache,electron_user_data}（仅测试/隔离场景） */
+  /** 临时模式：/tmp/diy-<name>/{diy_home,cache,electron_user_data}（仅测试/隔离场景，保留兼容） */
   static createTemp(name: string): AppConfig {
     const root = join(tmpdir(), `diy-${name}`);
     const dirs = {

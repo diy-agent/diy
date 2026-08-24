@@ -47,15 +47,19 @@ function delay(ms: number): Promise<void> {
 /** 探测某端口上是否已有可用的 diy app */
 async function probePort(port: number): Promise<boolean> {
   const c = new HttpClientBinding(`http://127.0.0.1:${port}`);
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
       c.ready(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 1500)),
+      new Promise((_, rej) => {
+        timer = setTimeout(() => rej(new Error("timeout")), 1500);
+      }),
     ]);
     return true;
   } catch {
     return false;
   } finally {
+    if (timer !== undefined) clearTimeout(timer);
     c.dispose();
   }
 }
@@ -79,10 +83,11 @@ function launchApp(): ChildProcess {
   const portArg = parsePortArg();
   if (portArg !== null) args.push("--port", portArg);
 
+  // 保留 stderr 供排障，stdout 丢弃；detached+unref 让 app 在 CLI 退出后继续存活
   const child = spawn(String(electronPath), args, {
     cwd: appDir,
     env: { ...process.env },
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "inherit"],
     detached: true,
   });
   child.unref();
@@ -106,14 +111,21 @@ async function ensureAppPort(): Promise<number> {
   });
 
   const deadline = Date.now() + APP_READY_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    const p = readPort();
-    if (p !== null) {
-      const ok = await Promise.race([probePort(p), spawnError]);
-      if (ok) return p;
+  try {
+    while (Date.now() < deadline) {
+      const p = readPort();
+      if (p !== null) {
+        const ok = await Promise.race([probePort(p), spawnError]);
+        if (ok) return p;
+      }
+      await Promise.race([delay(POLL_INTERVAL_MS), spawnError]);
     }
-    await Promise.race([delay(POLL_INTERVAL_MS), spawnError]);
+  } catch (e) {
+    // 启动期 spawn 失败，尝试清理孤儿进程
+    try { child.kill(); } catch { /* ignore */ }
+    throw e;
   }
+  try { child.kill(); } catch { /* ignore */ }
   throw new Error(`diy 管控台启动超时（${APP_READY_TIMEOUT_MS}ms）`);
 }
 

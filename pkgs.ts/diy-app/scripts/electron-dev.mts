@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import electronPath from "electron";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 
 // ── CLI 参数解析 ──
 const args = process.argv.slice(2);
