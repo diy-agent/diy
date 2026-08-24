@@ -92,23 +92,6 @@
       "dist/"
     ]
   },
-  "oxlint": {
-    "rules": {
-      "no-unused-vars": "warn",
-      "no-console": "off",
-      "@typescript-eslint/no-unused-vars": [
-        "warn",
-        {
-          "argsIgnorePattern": "^_"
-        }
-      ]
-    },
-    "ignorePatterns": [
-      "out/",
-      "node_modules/",
-      "dist/"
-    ]
-  },
   "main": "out/main/index.mjs",
   "description": "diy 管控台 — 任务管理桌面应用",
   "author": "ccc <ccc@users.noreply.github.com>"
