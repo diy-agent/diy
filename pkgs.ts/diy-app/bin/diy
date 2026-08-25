@@ -3,7 +3,7 @@
 #
 # 用途：跑编译产物 out/cli/index.js，数据根默认 ~/.diy（可由 DIY_HOME 覆盖）。
 # 定位：跟随 symlink 解析包根（发布后 bin/ 与 out/ 相邻同层）。
-# 注入：DIY_HOME、DIY_APP_ROOT — 供 JS 侧 src/runtime.ts readRuntimeConfig() 读取装配。
+# 注入：DIY_HOME — 供 JS 侧 src/runtime.ts readRuntimeConfig() 读取装配。
 set -euo pipefail
 
 # 跟随 symlink 解析到真实路径（仿 VSCode bin/code 的 app_realpath）

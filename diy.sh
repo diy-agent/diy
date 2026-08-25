@@ -2,7 +2,7 @@
 # diy.sh — worktree 开发入口（测试约定 ./diy.sh，cwd=仓库根）。
 #
 # 用途：跑未编译源码 CLI（tsx），数据隔离到本 worktree 的 build/home。
-# 注入：DIY_HOME、DIY_APP_ROOT — 供 JS 侧 src/runtime.ts readRuntimeConfig() 读取装配。
+# 注入：DIY_HOME — 供 JS 侧 src/runtime.ts readRuntimeConfig() 读取装配。
 # 发布/全局入口见 pkgs.ts/diy-app/bin/diy（跑编译产物）。
 set -euo pipefail
 
