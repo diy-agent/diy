@@ -43,7 +43,6 @@ function startElectron(url: string) {
     env: {
       ...process.env,
       DIY_DEV_SERVER_URL: url,
-      DIY_APP_ROOT: appDir,
     },
   });
 

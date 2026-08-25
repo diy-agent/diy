@@ -14,15 +14,16 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { WsTransport } from "@diy/rpc/ws";
 import { bindApi } from "../main/services/api-impl";
 import { AppConfig } from "../main/core/app-config";
 import { readRuntimeConfig } from "../runtime";
 
-// 运行配置由入口注入的环境变量装配（DIY_HOME / DIY_APP_ROOT / DIY_PORT）
+// 运行配置由入口注入的环境变量装配（DIY_HOME / DIY_PORT）
 const cfg = readRuntimeConfig();
-const ROOT = cfg.appRoot;
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const STATIC_DIR = path.resolve(ROOT, "out/renderer");
 
 const MIME: Record<string, string> = {

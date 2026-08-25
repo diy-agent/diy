@@ -30,11 +30,10 @@ npm run dev -- --port 18888    # 指定端口（测试端口冲突）
 | 变量 | 含义 | 缺省 |
 |------|------|------|
 | `DIY_HOME` | 数据根（state/task/**app.port**） | `~/.diy` |
-| `DIY_APP_ROOT` | 产物根（out/ 所在目录） | `import.meta.url` 上级（包根） |
 | `DIY_PORT` | 首选端口；测试注入 `0`（随机） | 无 → app.port 文件 → 兜底 18888 |
 | `DIY_DEV_SERVER_URL` | dev GUI 加载 Vite URL（`electron-dev.mts` 注入） | 无 → loadFile 产物 |
 
-端口优先级：`--port` flag > `DIY_PORT` > `app.port` 文件（上次实例） > 18888。
+端口优先级：`DIY_PORT` > `app.port` 文件（上次实例） > 18888。
 
 ### 组件分层
 

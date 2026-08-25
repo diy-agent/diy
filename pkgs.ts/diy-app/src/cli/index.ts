@@ -10,13 +10,14 @@
 //   2. CliApp: RPC 客户端，把 CLI 命令转发到 app（HTTP/2）
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
 import electronPath from "electron";
 import { HttpClientBinding } from "@diy/rpc/http";
 import { CliApp } from "@diy/rpc/cli";
 import { apiDef } from "../main/services/api-def";
-import { readRuntimeConfig, mainEntry, type RuntimeConfig } from "../runtime";
+import { readRuntimeConfig, type RuntimeConfig } from "../runtime";
 import { AppConfig } from "../main/core/app-config";
 
 /** app 就绪等待上限 */
@@ -52,16 +53,25 @@ async function probePort(port: number): Promise<boolean> {
   }
 }
 
+/** 定位 Electron 主进程产物入口（CLI spawn app 用） */
+function appRoot(): string {
+  return dirname(dirname(fileURLToPath(import.meta.url)));
+}
+
+function mainEntry(): string {
+  return join(appRoot(), "out", "main", "index.mjs");
+}
+
 /** 启动 diy 管控台（Electron 主进程产物），作为独立进程持续运行 */
 function launchApp(cfg: RuntimeConfig): ChildProcess {
-  const main = mainEntry(cfg);
+  const main = mainEntry();
   if (!existsSync(main)) {
     throw new Error(`diy 管控台未构建: ${main}（先 npm run build）`);
   }
 
   // 保留 stderr 供排障，stdout 丢弃；detached+unref 让 app 在 CLI 退出后继续存活
   const child = spawn(String(electronPath), [main], {
-    cwd: cfg.appRoot,
+    cwd: appRoot(),
     env: { ...process.env },
     stdio: ["ignore", "ignore", "inherit"],
     detached: true,

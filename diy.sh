@@ -12,5 +12,5 @@ HOME_DEFAULT="$SCRIPT_DIR/build/home"
 mkdir -p "$HOME_DEFAULT"
 
 cd "$APP_DIR"
-exec env DIY_HOME="${DIY_HOME:-$HOME_DEFAULT}" DIY_APP_ROOT="$APP_DIR" \
+exec env DIY_HOME="${DIY_HOME:-$HOME_DEFAULT}" \
   "$APP_DIR/../../node_modules/.bin/tsx" src/cli/index.ts "$@"
