@@ -252,7 +252,7 @@ function DetailPanel() {
   const uri = String(task["uri"] ?? "");
   const state = String(task["state"] ?? "");
   const title = String(task["title"] ?? "");
-  const subject = String(task["subject"] ?? "");
+  const project = String(task["project"] ?? "");
   const created = String(task["created"] ?? "");
   const body = String(task["body"] ?? "");
 
@@ -266,9 +266,9 @@ function DetailPanel() {
       {title && <h2 className="text-lg font-bold text-foreground mb-2">{title}</h2>}
 
       <div className="flex gap-1.5 flex-wrap mb-3">
-        {subject && (
+        {project && (
           <span className="inline-block bg-muted text-muted-foreground text-xs px-2 py-0.5 rounded">
-            📂 {subject}
+            📂 {project}
           </span>
         )}
         {created && (

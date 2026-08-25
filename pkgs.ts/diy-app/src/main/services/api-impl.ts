@@ -10,7 +10,7 @@ import type { ServerBinding } from "@diy/rpc";
 import { ChannelServerBinding } from "@diy/rpc";
 import type { EnvelopeTransport } from "@diy/rpc";
 import * as task from "../core/task";
-import * as subject from "../core/subject";
+import * as project from "../core/project";
 import * as state from "../core/state";
 import * as taskTree from "../core/task-tree";
 import * as health from "./health";
@@ -51,7 +51,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { status: "ok", data: { uri: task.createTask(input as any) } };
   });
   binding.on(app.task.list, async ({ input }) => {
-    return { status: "ok", data: { tasks: task.listTasks(input.subject) } };
+    return { status: "ok", data: { tasks: task.listTasks(input.project) } };
   });
   binding.on(app.task.show, async ({ input }) => {
     const t = state.getTask(input.uri);
@@ -80,17 +80,22 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { status: "ok", data: { uri: input.uri, starred: false } };
   });
 
-  // ── subject ──
-  binding.on(app.subject.add, async ({ input }) => {
-    subject.addSubject(input.path, input.label);
-    return { status: "ok", data: { path: input.path } };
+  // ── project ──
+  binding.on(app.project.create, async ({ input }) => {
+    project.createProject(input.id, {
+      label: input.label,
+      path: input.path,
+      desc: input.desc,
+      state: input.state,
+    });
+    return { status: "ok", data: { id: input.id } };
   });
-  binding.on(app.subject.list, async () => {
-    return { status: "ok", data: { subjects: subject.listSubjects() } };
+  binding.on(app.project.list, async () => {
+    return { status: "ok", data: { projects: project.listProjects() } };
   });
-  binding.on(app.subject.remove, async ({ input }) => {
-    subject.removeSubject(input.path);
-    return { status: "ok", data: { path: input.path } };
+  binding.on(app.project.remove, async ({ input }) => {
+    project.removeProject(input.id);
+    return { status: "ok", data: { id: input.id } };
   });
 
   // ── getAppStatus（供 renderer diy.ui.status 反向调用）──

@@ -34,7 +34,8 @@ export type TaskState =
 export interface TaskMeta {
   title?: string;
   state?: TaskState;
-  subject?: string;
+  /** 所属 project id。兼容读取旧字段 subject。 */
+  project?: string;
   parent?: string;
   detail?: string;
   body?: string;
@@ -61,9 +62,18 @@ export interface SubjectInfo {
   readonly desc?: string;
 }
 
+/** project 元数据。key = project id（短标识）。 */
+export interface ProjectInfo {
+  readonly label?: string;
+  readonly path?: string;
+  readonly desc?: string;
+  readonly state?: string;
+}
+
 export interface StateData {
   readonly profiles: Map<string, Profile>;
   readonly subjects: Map<string, SubjectInfo>;
+  readonly projects: Map<string, ProjectInfo>;
 }
 
 // ═══════════════════════════════════════
@@ -122,7 +132,10 @@ export function loadState(): StateData {
   const subjectsRaw = raw["subjects"] as Record<string, SubjectInfo> | undefined;
   const subjects = new Map<string, SubjectInfo>(Object.entries(subjectsRaw ?? {}));
 
-  return { profiles, subjects };
+  const projectsRaw = raw["projects"] as Record<string, ProjectInfo> | undefined;
+  const projects = new Map<string, ProjectInfo>(Object.entries(projectsRaw ?? {}));
+
+  return { profiles, subjects, projects };
 }
 
 /** 保存 state.yaml。原子写入（tmp → rename）。
@@ -133,6 +146,7 @@ export function loadState(): StateData {
 export function saveState(data: {
   profiles?: ReadonlyMap<string, Profile> | Record<string, Profile>;
   subjects?: ReadonlyMap<string, SubjectInfo> | Record<string, SubjectInfo>;
+  projects?: ReadonlyMap<string, ProjectInfo> | Record<string, ProjectInfo>;
 }): void {
   const current = loadState();
   const merged: Record<string, unknown> = {};
@@ -149,6 +163,13 @@ export function saveState(data: {
     merged["subjects"] = src;
   } else {
     merged["subjects"] = Object.fromEntries(current.subjects);
+  }
+
+  if (data.projects !== undefined) {
+    const src = data.projects instanceof Map ? Object.fromEntries(data.projects) : data.projects;
+    merged["projects"] = src;
+  } else {
+    merged["projects"] = Object.fromEntries(current.projects);
   }
 
   const p = stateFilePath();
@@ -178,7 +199,7 @@ export function parseTaskFile(raw: string): TaskMeta | null {
   return {
     title: front["title"] as string | undefined,
     state: front["state"] as TaskState | undefined,
-    subject: front["subject"] as string | undefined,
+    project: (front["project"] as string | undefined) ?? (front["subject"] as string | undefined),
     parent: front["parent"] as string | undefined,
     detail: front["detail"] as string | undefined,
     body,

@@ -16,11 +16,12 @@ export type TaskState =
 
 /** 任务树节点（纯数据，无 I/O） */
 export interface TaskNode {
-  kind: "subject" | "task";
+  kind: "project" | "task";
   uri?: string;
   title?: string;
   state?: TaskState;
-  subjectPath?: string;
+  /** 所属 project id（task 节点） */
+  project?: string;
   parentUri?: string;
   detail?: string;
   body?: string;
@@ -38,7 +39,7 @@ export interface TaskNode {
 export function renderTreeText(nodes: TaskNode[], indent = ""): string {
   const lines: string[] = [];
   for (const n of nodes) {
-    if (n.kind === "subject") {
+    if (n.kind === "project") {
       lines.push(`${indent}📁 ${n.title}`);
     } else {
       const star = n.starred ? " ⭐" : "";

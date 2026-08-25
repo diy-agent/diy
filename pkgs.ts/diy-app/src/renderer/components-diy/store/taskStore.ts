@@ -4,11 +4,11 @@ import { create } from "zustand";
 import { diyService } from "../lib/rpc";
 
 export interface TreeNode {
-  kind: "subject" | "task";
+  kind: "project" | "task";
   uri?: string;
   title?: string;
   state?: string;
-  subjectPath?: string;
+  project?: string;
   parentUri?: string;
   starred: boolean;
   children: TreeNode[];

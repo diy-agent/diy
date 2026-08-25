@@ -70,15 +70,24 @@ describe("parseTaskFile", () => {
     const raw = `---
 title: 测试任务
 state: active
-subject: ~/work
+project: work
 ---
 这是正文内容`;
     const meta = parseTaskFile(raw);
     expect(meta).not.toBeNull();
     expect(meta?.title).toBe("测试任务");
     expect(meta?.state).toBe("active");
-    expect(meta?.subject).toBe("~/work");
+    expect(meta?.project).toBe("work");
     expect(meta?.body).toBe("这是正文内容");
+  });
+
+  it("兼容读取旧字段 subject", () => {
+    const raw = `---
+title: 旧任务
+subject: legacy
+---`;
+    const meta = parseTaskFile(raw);
+    expect(meta?.project).toBe("legacy");
   });
 
   it("无 frontmatter 时返回 null", () => {

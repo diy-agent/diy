@@ -2,11 +2,11 @@
 // 🎯 任务 CRUD + 校验。纯函数，无全局状态。
 //    所有输入验证用 zod，收集全部错误再抛出（不短路）。
 
-import { existsSync, mkdirSync, writeFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readdirSync, rmSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { z } from "zod";
-import { getTask, taskDir, taskFilePath, starTask, diyHome, loadState } from "./state";
+import { getTask, taskDir, taskFilePath, starTask, diyHome, loadState, parseTaskFile } from "./state";
 import type { TaskMeta } from "./state";
 
 // ═══════════════════════════════════════
@@ -51,7 +51,8 @@ const FM_SEP = "---";
 
 export interface CreateTaskParams {
   title: string;
-  subject: string;
+  /** 所属 project id */
+  project: string;
   parent?: string;
   detail?: string;
   body?: string;
@@ -61,7 +62,7 @@ export interface CreateTaskParams {
 
 const CreateTaskSchema = z.object({
   title: z.string().min(1, "标题不能为空").max(200, "标题不超过 200 字符"),
-  subject: z.string().min(1, "subject 不能为空"),
+  project: z.string().min(1, "project 不能为空"),
   parent: z.string().optional(),
   detail: z.string().optional(),
   body: z.string().optional(),
@@ -84,13 +85,13 @@ export function createTask(params: CreateTaskParams): string {
     throw new ValidationError(errors);
   }
 
-  const { title, subject, parent, detail, body, source_type, source_uri } = parsed.data;
+  const { title, project, parent, detail, body, source_type, source_uri } = parsed.data;
 
-  // 校验 subject 是否注册
+  // 校验 project 是否注册
   const state = loadState();
-  if (!state.subjects.has(subject)) {
+  if (!state.projects.has(project)) {
     throw new ValidationError([
-      { field: "subject", code: "not_found", msg: `subject ${subject} 未注册` },
+      { field: "project", code: "not_found", msg: `project ${project} 未注册` },
     ]);
   }
 
@@ -111,7 +112,7 @@ export function createTask(params: CreateTaskParams): string {
   const now = new Date().toISOString();
   const meta: TaskMeta = {
     title,
-    subject,
+    project,
     state: "pending",
     parent,
     detail,
@@ -169,7 +170,7 @@ export function updateTask(uri: string, changes: UpdateTaskChanges): void {
     state: (parsed.data.state ?? existing.state) as TaskMeta["state"],
     detail: parsed.data.detail ?? existing.detail,
     body: parsed.data.body ?? existing.body,
-    subject: existing.subject,
+    project: existing.project,
     parent: existing.parent,
     created: existing.created,
     updated: now,
@@ -196,8 +197,8 @@ export function deleteTask(uri: string): void {
 // 列出任务
 // ═══════════════════════════════════════
 
-/** 列出所有任务 URI（可选按 subject 筛选） */
-export function listTasks(subject?: string): string[] {
+/** 列出所有任务 URI（可选按 project 筛选） */
+export function listTasks(project?: string): string[] {
   const taskRoot = join(diyHome(), "task");
   if (!existsSync(taskRoot)) return [];
 
@@ -212,10 +213,7 @@ export function listTasks(subject?: string): string[] {
       const agPath = join(fullPath, "AGENTS.md");
 
       if (existsSync(agPath)) {
-        // 按 subject 前缀过滤
-        if (subject === undefined || relPath.startsWith(subject)) {
-          uris.push(relPath);
-        }
+        uris.push(relPath);
       } else {
         // 递归往下找
         walk(fullPath, relPath);
@@ -224,5 +222,9 @@ export function listTasks(subject?: string): string[] {
   }
 
   walk(taskRoot, "");
-  return uris;
+  if (project === undefined) return uris;
+  return uris.filter((uri) => {
+    const meta = parseTaskFile(readFileSync(taskFilePath(uri), "utf-8"));
+    return meta?.project === project;
+  });
 }

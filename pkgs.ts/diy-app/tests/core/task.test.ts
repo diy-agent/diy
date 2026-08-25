@@ -15,10 +15,10 @@ import {
   ValidationError,
 } from "../../src/main/core/task";
 
-// Arrange: 所有测试共享的 subject 注册
-const SUBJECT = "~/test-work";
+// Arrange: 所有测试共享的 project 注册
+const PROJECT = "test-work";
 beforeAll(() => {
-  saveState({ subjects: new Map([[SUBJECT, { label: "测试工作" }]]) });
+  saveState({ projects: new Map([[PROJECT, { label: "测试工作" }]]) });
 });
 
 // ═══════════════════════════════════════
@@ -27,7 +27,7 @@ beforeAll(() => {
 
 describe("createTask", () => {
   it("创建后文件存在、内容正确、自动 star", () => {
-    const uri = createTask({ title: "测试任务", subject: SUBJECT });
+    const uri = createTask({ title: "测试任务", project: PROJECT });
 
     const fp = join(diyHome(), "task", uri, "AGENTS.md");
     expect(existsSync(fp)).toBe(true);
@@ -35,7 +35,7 @@ describe("createTask", () => {
     const content = readFileSync(fp, "utf-8");
     expect(content).toContain("title: 测试任务");
     expect(content).toContain("state: pending");
-    expect(content).toContain("subject: " + SUBJECT);
+    expect(content).toContain("project: " + PROJECT);
 
     // star symlink 已创建
     const starLink = join(diyHome(), "star", uri.replace(/\//g, "__"));
@@ -43,28 +43,28 @@ describe("createTask", () => {
   });
 
   it("uri 格式为 local/<base36-timestamp>", () => {
-    const uri = createTask({ title: "URI格式", subject: SUBJECT });
+    const uri = createTask({ title: "URI格式", project: PROJECT });
     expect(uri).toMatch(/^local\/[0-9a-z]+$/);
   });
 
   it("空标题抛出 ValidationError", () => {
-    expect(() => createTask({ title: "", subject: SUBJECT })).toThrow(ValidationError);
+    expect(() => createTask({ title: "", project: PROJECT })).toThrow(ValidationError);
   });
 
   it("title 超过 200 字符时报错", () => {
     const longTitle = "x".repeat(201);
-    expect(() => createTask({ title: longTitle, subject: SUBJECT })).toThrow(ValidationError);
+    expect(() => createTask({ title: longTitle, project: PROJECT })).toThrow(ValidationError);
   });
 
-  it("未注册的 subject 抛出错误", () => {
-    expect(() => createTask({ title: "任务", subject: "~/unknown" })).toThrow(ValidationError);
+  it("未注册的 project 抛出错误", () => {
+    expect(() => createTask({ title: "任务", project: "unknown" })).toThrow(ValidationError);
   });
 
   it("不存在的 parent 抛出错误", () => {
     expect(() =>
       createTask({
         title: "子任务",
-        subject: SUBJECT,
+        project: PROJECT,
         parent: "local/nonexist",
       }),
     ).toThrow(ValidationError);
@@ -73,7 +73,7 @@ describe("createTask", () => {
   it("detail 和 body 可正确写入", () => {
     const uri = createTask({
       title: "带详情",
-      subject: SUBJECT,
+      project: PROJECT,
       detail: "详细描述",
       body: "# Markdown 正文",
     });
@@ -85,7 +85,7 @@ describe("createTask", () => {
 
   it("ValidationError 包含全部错误字段", () => {
     try {
-      createTask({ title: "", subject: "" });
+      createTask({ title: "", project: "" });
       // 不应到达此处
       expect(true).toBe(false);
     } catch (e) {
@@ -94,7 +94,7 @@ describe("createTask", () => {
       expect(ve.errors.length).toBeGreaterThanOrEqual(2);
       const fields = ve.errors.map((e) => e.field);
       expect(fields).toContain("title");
-      expect(fields).toContain("subject");
+      expect(fields).toContain("project");
     }
   });
 });
@@ -107,7 +107,7 @@ describe("updateTask", () => {
   let uri: string;
 
   beforeAll(() => {
-    uri = createTask({ title: "原标题", subject: SUBJECT });
+    uri = createTask({ title: "原标题", project: PROJECT });
   });
 
   it("更新 title 后文件内容变更", () => {
@@ -140,7 +140,7 @@ describe("updateTask", () => {
 
 describe("deleteTask", () => {
   it("删除后目录和文件都不存在", () => {
-    const uri = createTask({ title: "待删除", subject: SUBJECT });
+    const uri = createTask({ title: "待删除", project: PROJECT });
     const dir = join(diyHome(), "task", uri);
     expect(existsSync(dir)).toBe(true);
 
@@ -159,21 +159,18 @@ describe("deleteTask", () => {
 // ═══════════════════════════════════════
 
 describe("listTasks", () => {
-  it("列出所有已创建的任务（不传 subject）", () => {
+  it("列出所有已创建的任务（不传 project）", () => {
     // 前面的 createTask 测试已经创建了若干任务
     const all = listTasks();
     expect(all.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("按 URI 前缀筛选", () => {
-    const all = listTasks("local");
+  it("按 project 筛选", () => {
+    const all = listTasks("test-work");
     expect(all.length).toBeGreaterThanOrEqual(1);
-    all.forEach((uri) => {
-      expect(uri.startsWith("local/")).toBe(true);
-    });
   });
 
-  it("不存在的 URI 前缀返回空数组", () => {
+  it("不存在的 project 返回空数组", () => {
     expect(listTasks("nonexistent")).toEqual([]);
   });
 });

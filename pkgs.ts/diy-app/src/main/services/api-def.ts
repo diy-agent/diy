@@ -33,7 +33,7 @@ const TaskStateSchema = z.enum([
 ]);
 
 const StatusDataUri = z.object({ status: z.string(), data: z.object({ uri: z.string() }) });
-const StatusDataPath = z.object({ status: z.string(), data: z.object({ path: z.string() }) });
+const StatusDataId = z.object({ status: z.string(), data: z.object({ id: z.string() }) });
 const StatusOk = z.object({ status: z.string() });
 
 const MessageParam = z.object({ role: z.string(), content: z.string() });
@@ -52,7 +52,7 @@ export const apiDef = RpcSchema.router({
             desc: `创建任务`,
             input: {
               title: z.string().min(1, "标题不能为空").max(200).cliArg({ desc: "任务标题" }),
-              subject: z.string().cliArg({ desc: "所属 subject 路径" }),
+              project: z.string().cliArg({ desc: "所属 project id" }),
               parent: z.string().optional().cliOption({ short: "p", desc: "父任务 URI" }),
               detail: z.string().optional().cliOption({ desc: "任务详情" }),
               body: z.string().optional().cliOption({ desc: "任务正文" }),
@@ -62,7 +62,7 @@ export const apiDef = RpcSchema.router({
           list: RpcSchema.unary({
             desc: `列出任务`,
             input: {
-              subject: z.string().optional().cliOption({ short: "s", desc: "按 subject 筛选" }),
+              project: z.string().optional().cliOption({ short: "p", desc: "按 project 筛选" }),
             },
             output: z.object({ status: z.string(), data: z.object({ tasks: z.any() }) }),
           }),
@@ -107,28 +107,46 @@ export const apiDef = RpcSchema.router({
         },
       }),
 
-      subject: RpcSchema.group({
-        desc: `主题管理`,
+      project: RpcSchema.group({
+        desc: `项目管理`,
         children: {
-          add: RpcSchema.unary({
-            desc: `添加主题`,
+          create: RpcSchema.unary({
+            desc: `创建项目`,
             input: {
-              path: z.string().min(1, "路径不能为空").cliArg({ desc: "subject 路径" }),
+              id: z.string().min(1, "id 不能为空").cliArg({ desc: "project id" }),
               label: z.string().optional().cliOption({ short: "l", desc: "显示名称" }),
+              path: z.string().optional().cliOption({ desc: "关联路径" }),
+              desc: z.string().optional().cliOption({ desc: "描述" }),
+              state: z.string().optional().cliOption({ desc: "状态" }),
             },
-            output: StatusDataPath,
+            output: StatusDataId,
           }),
           list: RpcSchema.unary({
-            desc: `列出主题`,
+            desc: `列出项目`,
             input: {},
-            output: z.object({ status: z.string(), data: z.object({ subjects: z.any() }) }),
+            output: z.object({
+              status: z.string(),
+              data: z.object({
+                projects: z.array(
+                  z.object({
+                    id: z.string(),
+                    info: z.object({
+                      label: z.string().optional(),
+                      path: z.string().optional(),
+                      desc: z.string().optional(),
+                      state: z.string().optional(),
+                    }),
+                  }),
+                ),
+              }),
+            }),
           }),
           remove: RpcSchema.unary({
-            desc: `删除主题`,
+            desc: `删除项目`,
             input: {
-              path: z.string().cliArg({ desc: "subject 路径" }),
+              id: z.string().cliArg({ desc: "project id" }),
             },
-            output: StatusDataPath,
+            output: StatusDataId,
           }),
         },
       }),

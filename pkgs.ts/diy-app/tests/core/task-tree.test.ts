@@ -17,7 +17,7 @@ function makeTask(
   overrides: Partial<{
     title: string;
     state: string;
-    subject: string;
+    project: string;
     parent: string;
     body: string;
   }> = {},
@@ -28,7 +28,7 @@ function makeTask(
   const lines = ["---"];
   if (overrides.title) lines.push(`title: ${overrides.title}`);
   if (overrides.state) lines.push(`state: ${overrides.state}`);
-  if (overrides.subject) lines.push(`subject: ${overrides.subject}`);
+  if (overrides.project) lines.push(`project: ${overrides.project}`);
   if (overrides.parent) lines.push(`parent: ${overrides.parent}`);
   lines.push("---");
   if (overrides.body) lines.push(overrides.body);
@@ -53,27 +53,27 @@ function makeStar(uri: string): void {
 
 beforeAll(() => {
   saveState({
-    subjects: new Map([
-      ["~/work", { label: "工作" }],
-      ["~/home", { label: "个人" }],
+    projects: new Map([
+      ["work", { label: "工作" }],
+      ["home", { label: "个人" }],
     ]),
   });
 
   // 创建任务，URI = 简单标识符
-  makeTask("local/task-1", { title: "写周报", state: "pending", subject: "~/work" });
+  makeTask("local/task-1", { title: "写周报", state: "pending", project: "work" });
   makeTask("local/task-2", {
     title: "修 Bug",
     state: "active",
-    subject: "~/work",
+    project: "work",
     parent: "local/task-1",
   });
   makeTask("local/task-3", {
     title: "发 PR",
     state: "done",
-    subject: "~/work",
+    project: "work",
     parent: "local/task-1",
   });
-  makeTask("local/task-4", { title: "缴费", state: "pending", subject: "~/home" });
+  makeTask("local/task-4", { title: "缴费", state: "pending", project: "home" });
 
   // Star 其中两个
   makeStar("local/task-1");
@@ -88,13 +88,13 @@ describe("loadTaskTree star 模式", () => {
   it("返回所有 subject 节点", () => {
     const tree = loadTaskTree(false);
     expect(tree.length).toBe(2);
-    expect(tree[0]?.kind).toBe("subject");
-    expect(tree[1]?.kind).toBe("subject");
+    expect(tree[0]?.kind).toBe("project");
+    expect(tree[1]?.kind).toBe("project");
   });
 
   it("只包含 star 过的任务，父子链接后分布在树中", () => {
     const tree = loadTaskTree(false);
-    const work = tree.find((n) => n.subjectPath === "~/work")!;
+    const work = tree.find((n) => n.project === "work")!;
     expect(work).toBeDefined();
 
     // task-1 无父任务，在顶层
@@ -111,7 +111,7 @@ describe("loadTaskTree star 模式", () => {
 
   it("starred 标记为 true", () => {
     const tree = loadTaskTree(false);
-    const work = tree.find((n) => n.subjectPath === "~/work")!;
+    const work = tree.find((n) => n.project === "work")!;
     const t1 = work.children.find((c) => c.uri === "local/task-1")!;
     expect(t1.starred).toBe(true);
     const t3 = t1.children.find((c) => c.uri === "local/task-3")!;
@@ -126,7 +126,7 @@ describe("loadTaskTree star 模式", () => {
 describe("loadTaskTree 全部模式", () => {
   it("返回 subject 下所有顶层任务（含子任务）", () => {
     const tree = loadTaskTree(true);
-    const work = tree.find((n) => n.subjectPath === "~/work")!;
+    const work = tree.find((n) => n.project === "work")!;
     // 顶层：只有 task-1（task-2 和 task-3 是 task-1 的子任务）
     expect(work!.children.length).toBe(1);
     // task-1 下有 2 个子任务
@@ -139,7 +139,7 @@ describe("loadTaskTree 全部模式", () => {
 
   it("starred 标记正确", () => {
     const tree = loadTaskTree(true);
-    const work = tree.find((n) => n.subjectPath === "~/work")!;
+    const work = tree.find((n) => n.project === "work")!;
     const t1 = work!.children.find((c) => c.uri === "local/task-1")!;
     const t2 = t1.children.find((c) => c.uri === "local/task-2")!;
     expect(t1.starred).toBe(true);
@@ -154,7 +154,7 @@ describe("loadTaskTree 全部模式", () => {
 describe("父子链接", () => {
   it("子任务挂在父任务下，不在 subject 顶层", () => {
     const tree = loadTaskTree(true);
-    const work = tree.find((n) => n.subjectPath === "~/work")!;
+    const work = tree.find((n) => n.project === "work")!;
 
     // task-2 和 task-3 的 parent = task-1，应在 task-1.children 下
     const t1 = work!.children.find((c) => c.uri === "local/task-1")!;
@@ -167,7 +167,7 @@ describe("父子链接", () => {
 
   it("无父任务的任务仍在 subject 顶层", () => {
     const tree = loadTaskTree(true);
-    const work = tree.find((n) => n.subjectPath === "~/work")!;
+    const work = tree.find((n) => n.project === "work")!;
     const topLevel = work!.children.filter((c) => c.parentUri === undefined || c.parentUri === "");
     expect(topLevel.length).toBe(1); // 只有 task-1
   });
@@ -202,13 +202,13 @@ describe("renderTreeText", () => {
 describe("home subject (no stars)", () => {
   it("star 模式下 home 的 children 为空", () => {
     const tree = loadTaskTree(false);
-    const home = tree.find((n) => n.subjectPath === "~/home")!;
+    const home = tree.find((n) => n.project === "home")!;
     expect(home.children.length).toBe(0);
   });
 
   it("全部模式下 home 有 task-4", () => {
     const tree = loadTaskTree(true);
-    const home = tree.find((n) => n.subjectPath === "~/home")!;
+    const home = tree.find((n) => n.project === "home")!;
     expect(home.children.length).toBe(1);
     expect(home.children[0]?.uri).toBe("local/task-4");
   });

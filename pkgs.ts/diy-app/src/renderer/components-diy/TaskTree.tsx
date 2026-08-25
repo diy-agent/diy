@@ -27,8 +27,8 @@ export function TaskTree() {
     <ScrollArea className="h-full">
       <div className="p-1">
         {nodes.map((node) => (
-          <SubjectNode
-            key={node.subjectPath ?? ""}
+          <ProjectNode
+            key={node.project ?? ""}
             node={node}
             depth={0}
             selectedUri={selectedUri}
@@ -43,7 +43,7 @@ export function TaskTree() {
   );
 }
 
-function SubjectNode({
+function ProjectNode({
   node,
   depth: _depth,
   selectedUri,

@@ -14,7 +14,7 @@
     "fmt:fix": "oxfmt --write pkgs.ts/",
     "check:browser": "npm --workspace @diy/rpc run check:browser",
     "check": "npm run typecheck && npm run lint && npm run check:browser",
-    "test": "vitest run",
+    "test": "npm run build && vitest run",
     "test:watch": "vitest"
   },
   "devDependencies": {

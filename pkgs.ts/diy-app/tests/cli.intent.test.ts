@@ -32,70 +32,68 @@ afterAll(async () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// subject — 先测，此时 state.yaml 尚未创建
+// project — 先测，此时 state.yaml 尚未创建
 // ═══════════════════════════════════════════════════════════════
 
-describe("subject", () => {
+describe("project", () => {
   it("list — 空列表", async () => {
-    await sh.assertJson("./diy.sh subject list", {
+    await sh.assertJson("./diy.sh project list", {
       ok: true,
-      data: { status: "ok", data: { subjects: [] } },
+      data: { status: "ok", data: { projects: [] } },
     });
   });
 
-  it("add — 注册新 subject", async () => {
-    await sh.assertJson("./diy.sh subject add ${HOME}/work --label 工作".replace("${HOME}", HOME), {
+  it("create — 注册新 project", async () => {
+    await sh.assertJson("./diy.sh project create work --label 工作", {
       ok: true,
-      data: { status: "ok", data: { path: `${HOME}/work` } },
+      data: { status: "ok", data: { id: "work" } },
     });
   });
 
-  it("add — 重复注册（覆盖 label）", async () => {
-    await sh.assertJson("./diy.sh subject add ${HOME}/work --label 工程".replace("${HOME}", HOME), {
+  it("create — 重复注册（覆盖 label）", async () => {
+    await sh.assertJson("./diy.sh project create work --label 工程", {
       ok: true,
-      data: { status: "ok", data: { path: `${HOME}/work` } },
+      data: { status: "ok", data: { id: "work" } },
     });
   });
 
-  it("list — 列出已注册 subject", async () => {
-    await sh.assertJson("./diy.sh subject list", {
+  it("list — 列出已注册 project", async () => {
+    await sh.assertJson("./diy.sh project list", {
       ok: true,
       data: {
         status: "ok",
         data: {
-          subjects: [
-            { path: `${HOME}/work`, info: { label: "工程" } },
-          ],
+          projects: [{ id: "work", info: { label: "工程" } }],
         },
       },
     });
   });
 
-  it("remove — 移除 subject", async () => {
-    await sh.assertJson("./diy.sh subject remove ${HOME}/work".replace("${HOME}", HOME), {
+  it("remove — 移除 project", async () => {
+    await sh.assertJson("./diy.sh project remove work", {
       ok: true,
-      data: { status: "ok", data: { path: `${HOME}/work` } },
+      data: { status: "ok", data: { id: "work" } },
     });
   });
 
-  it("remove — 移除不存在的 subject（幂等）", async () => {
-    await sh.assertJson("./diy.sh subject remove ${HOME}/work".replace("${HOME}", HOME), {
+  it("remove — 移除不存在的 project（幂等）", async () => {
+    await sh.assertJson("./diy.sh project remove work", {
       ok: true,
-      data: { status: "ok", data: { path: `${HOME}/work` } },
+      data: { status: "ok", data: { id: "work" } },
     });
   });
 
   it("list — 移除后为空", async () => {
-    await sh.assertJson("./diy.sh subject list", {
+    await sh.assertJson("./diy.sh project list", {
       ok: true,
-      data: { status: "ok", data: { subjects: [] } },
+      data: { status: "ok", data: { projects: [] } },
     });
   });
 
-  it("add — 空路径报错", async () => {
+  it("create — 空 id 报错", async () => {
     await sh.assertSession(`
-      $! ./diy.sh subject add ''
-      *路径不能为空*
+      $! ./diy.sh project create ''
+      *id 不能为空*
     `);
   });
 });
@@ -106,7 +104,7 @@ describe("subject", () => {
 
 describe("task", () => {
   beforeAll(async () => {
-    await sh.diy2("subject", "add", `${HOME}/tasks`, "--label", "任务");
+    await sh.diy2("project", "create", "tasks", "--label", "任务");
   });
 
   it("list — 空列表", async () => {
@@ -117,7 +115,7 @@ describe("task", () => {
   });
 
   it("create — 创建任务", async () => {
-    await sh.assertJson("./diy.sh task create 研究一下 ${HOME}/tasks".replace("${HOME}", HOME), {
+    await sh.assertJson("./diy.sh task create 研究一下 tasks", {
       ok: true,
       data: { status: "ok", data: { uri: "*" } },
     });
@@ -128,8 +126,7 @@ describe("task", () => {
     const parentUri = (list.data as any).data.tasks[0];
 
     await sh.assertJson(
-      "./diy.sh task create 子任务 ${HOME}/tasks --parent ${parentUri} --detail 这是详情"
-        .replace("${HOME}", HOME)
+      "./diy.sh task create 子任务 tasks --parent ${parentUri} --detail 这是详情"
         .replace("${parentUri}", parentUri),
       {
         ok: true,
@@ -162,7 +159,7 @@ describe("task", () => {
           uri,
           title: "研究一下",
           state: "pending",
-          subject: `${HOME}/tasks`,
+          project: "tasks",
           created: "*",
           updated: "*",
           body: "",
@@ -188,7 +185,7 @@ describe("task", () => {
           uri,
           title: "已修改",
           state: "pending",
-          subject: `${HOME}/tasks`,
+          project: "tasks",
           created: "*",
           updated: "*",
           body: "",
@@ -236,7 +233,7 @@ describe("task", () => {
 
   it("create — 空标题报错", async () => {
     await sh.assertSession(`
-      $! ./diy.sh task create '' ${HOME}/tasks
+      $! ./diy.sh task create '' tasks
       *标题不能为空*
     `);
   });
