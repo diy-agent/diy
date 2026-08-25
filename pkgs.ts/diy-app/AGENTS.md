@@ -10,10 +10,30 @@
 ### 开发参数
 
 ```
-npm run dev                    # 生产模式（port 18888）
-npm run dev -- --temp          # 临时模式（独立目录 + 随机端口）
-npm run dev -- --temp --port 18888  # 指定端口（测试冲突）
+npm run dev                    # 默认 ./build/home + port 18888（与 ./diy.sh 同数据）
+npm run dev -- --port 18888    # 指定端口（测试端口冲突）
 ```
+
+数据隔离由 `DIY_HOME` 驱动（`diy.sh` / `electron-dev.mts` 默认 `./build/home`，测试用 `mkdtemp`），不再有 `--temp` flag。
+
+### 入口与运行配置（环境变量契约）
+
+两个 CLI 入口只负责**注入环境变量**，业务侧统一由 `src/runtime.ts readRuntimeConfig()` 读取组装，不做路径/模式派生。
+
+| 入口 | 场景 | 跑什么 | 注入 |
+|------|------|--------|------|
+| `./diy.sh`（仓库根） | worktree 开发/测试 | `tsx src/cli/index.ts` | `DIY_HOME=./build/home`、`DIY_APP_ROOT=pkgs.ts/diy-app` |
+| `bin/diy` | 发布后（npm 全局/PATH） | `node out/cli/index.js` | `DIY_HOME=~/.diy`、`DIY_APP_ROOT=<自定位包根>` |
+
+环境变量契约（`src/runtime.ts`）：
+
+| 变量 | 含义 | 缺省 |
+|------|------|------|
+| `DIY_HOME` | 数据根（state/task/**app.port**） | `~/.diy` |
+| `DIY_PORT` | 首选端口；测试注入 `0`（随机） | 无 → app.port 文件 → 兜底 18888 |
+| `DIY_DEV_SERVER_URL` | dev GUI 加载 Vite URL（`electron-dev.mts` 注入） | 无 → loadFile 产物 |
+
+端口优先级：`DIY_PORT` > `app.port` 文件（上次实例） > 18888。
 
 ### 组件分层
 

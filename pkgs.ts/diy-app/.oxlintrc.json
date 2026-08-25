@@ -1,0 +1,52 @@
+{
+  "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "rules": {
+    "no-unused-vars": "warn",
+    "no-console": "off",
+    "@typescript-eslint/no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }]
+  },
+  "ignorePatterns": ["out/", "node_modules/", "dist/"],
+  "overrides": [
+    {
+      "files": ["src/renderer/**", "src/preload/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          { "name": "node:fs", "message": "UI 线程禁止直接导入 node:fs，请通过 window.transport RPC 调用 Main 进程" },
+          { "name": "fs", "message": "UI 线程禁止直接导入 fs，请通过 RPC" },
+          { "name": "node:fs/promises", "message": "UI 线程禁止直接导入 fs，请通过 RPC" },
+          { "name": "node:child_process", "message": "UI 线程禁止直接使用 child_process，请通过 Main 进程 RPC" },
+          { "name": "child_process", "message": "UI 线程禁止直接使用 child_process" }
+        ],
+        "no-restricted-properties": [
+          "error",
+          { "property": "existsSync", "message": "UI 禁止 Sync 阻塞操作，请用异步 RPC 代替" },
+          { "property": "readFileSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "writeFileSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "mkdirSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "readdirSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "statSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "lstatSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "readlinkSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "symlinkSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "unlinkSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "renameSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "rmSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "mkdtempSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "accessSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "appendFileSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "copyFileSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "cpSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "openSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "readSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "writeSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "opendirSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "realpathSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "execSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "execFileSync", "message": "UI 禁止 Sync 阻塞操作" },
+          { "property": "spawnSync", "message": "UI 禁止 Sync 阻塞操作" }
+        ]
+      }
+    }
+  ]
+}

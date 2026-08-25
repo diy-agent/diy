@@ -4,16 +4,27 @@
 import { build, createServer, type ViteDevServer, type Rollup } from "vite";
 import { spawn, type ChildProcess } from "node:child_process";
 import electronPath from "electron";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { mkdirSync } from "node:fs";
 
 // ── CLI 参数解析 ──
 const args = process.argv.slice(2);
-const isTemp = args.includes("--temp");
 const portIdx = args.indexOf("--port");
 const explicitPort = portIdx >= 0 ? args[portIdx + 1] : null;
 
 const electronArgs: string[] = [];
-if (isTemp) electronArgs.push("--temp");
 if (explicitPort) electronArgs.push("--port", explicitPort);
+
+// DIY_HOME 默认指向仓库根 build/home，与 diy.sh 保持一致
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const appDir = join(scriptDir, ".."); // pkgs.ts/diy-app
+const repoRoot = join(scriptDir, "..", "..", "..");
+const defaultHome = join(repoRoot, "build", "home");
+if (!process.env["DIY_HOME"]) {
+  mkdirSync(defaultHome, { recursive: true });
+  process.env["DIY_HOME"] = defaultHome;
+}
 
 let electronProc: ChildProcess | null = null;
 let rendererServer: ViteDevServer | null = null;
@@ -28,7 +39,11 @@ function startElectron(url: string) {
 
   electronProc = spawn(String(electronPath), ["out/main/index.mjs", url, ...electronArgs], {
     stdio: "inherit",
-    env: { ...process.env, VITE_DEV_SERVER_URL: url },
+    // 注入运行时契约变量（src/runtime.ts 读取）：dev 加载 URL + 产物根 + 数据根
+    env: {
+      ...process.env,
+      DIY_DEV_SERVER_URL: url,
+    },
   });
 
   electronProc.on("close", () => {

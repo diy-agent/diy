@@ -11,3 +11,5 @@ import { tmpdir } from "node:os";
 
 const testHome = mkdtempSync(join(tmpdir(), "diy-desktop-test-"));
 process.env["DIY_HOME"] = testHome;
+// 端口由入口注入，不再由 isTemp 派生：测试用 0=随机端口，避免与生产 18888 冲突
+process.env["DIY_PORT"] = "0";

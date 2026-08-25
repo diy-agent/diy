@@ -1,26 +1,27 @@
 // src/main/index.ts
 // 🎯 Electron 主进程入口
 //
-// 启动流程:
-//   1. 检查 --temp 参数 → AppConfig.createTemp('dev') 或 AppConfig.default()
-//   2. app.setPath('userData')  → 仅 temp 模式（生产用 Electron 默认）
-//   3. app.setPath('cache')     → 仅 temp 模式
-//   4. requestSingleInstanceLock → 同 userData 只一个实例
-//   5. 创建窗口 + IPC transport
-//   6. 端口绑定 → 生产 18888，临时 0（随机）
+// 运行配置统一由 src/runtime.ts readRuntimeConfig() 从入口注入的环境变量装配：
+//   DIY_HOME            → 数据根（.diy.sh: build/home，测试: mkdtemp，生产: ~/.diy）
+//   DIY_PORT            → 首选端口
+//   DIY_DEV_SERVER_URL  → dev 时加载 Vite URL；缺省 → loadFile 编译产物
 //
-// 生产 vs 临时:
-//   生产: userData/cache = Electron 默认, 锁基于 appName
-//   临时: userData/cache = /tmp/diy-xxx, 锁自然隔离
+// 启动流程:
+//   1. readRuntimeConfig + AppConfig.fromRuntime
+//   2. requestSingleInstanceLock → 同 userData 只一个实例
+//   3. 创建窗口 + IPC transport
+//   4. 端口绑定 → 18888（或 DIY_PORT 覆盖）
 
 import { app, BrowserWindow, ipcMain } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkdirSync } from "node:fs";
 import type { ServerBinding } from "@diy/rpc";
 import { createMainTransport } from "@diy/rpc/electron";
 import { RpcPortService } from "./services/rpc-port";
 import { AppConfig } from "./core/app-config";
 import { bindApi, bindAppHandlers } from "./services/api-impl";
+import { readRuntimeConfig } from "../runtime";
 import { homedir, hostname, platform, arch, release, totalmem, freemem } from "node:os";
 
 // ── 共享全局信息（给 IPC 用） ──
@@ -32,12 +33,10 @@ let httpPort = 0;
 
 function getAppInfo() {
   return {
-    mode: isTempMode ? "temp" : "production",
     port: httpPort,
     diyHome: appConfig.diyHome,
     cache: appConfig.cache,
     userData: appConfig.electronUserData,
-    isTemp: appConfig.isTemp,
     electron: process.versions.electron,
     node: process.versions.node,
     chrome: process.versions.chrome,
@@ -48,24 +47,20 @@ function getAppInfo() {
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const devUrlArg = process.argv[2] || process.env.VITE_DEV_SERVER_URL || "";
-const isDev = !app.isPackaged && !!devUrlArg;
-const isTempMode = isDev && process.argv.includes("--temp");
-
-// 显式端口（覆盖缺省值，用于测试端口冲突）
-const portArg = process.argv.indexOf("--port");
-const explicitPort = portArg >= 0 ? parseInt(process.argv[portArg + 1] ?? "", 10) : NaN;
-const overridePort = Number.isFinite(explicitPort) ? explicitPort : null;
+// dev GUI 加载 URL 由入口注入（electron-dev.mts），缺省 → loadFile 编译产物
+const cfg = readRuntimeConfig();
+const devUrlArg = cfg.devServerUrl ?? "";
+const isDev = !!devUrlArg;
 
 // ── 1. AppConfig ──
-if (isTempMode) {
-  appConfig = AppConfig.createTemp("dev");
-  app.setPath("userData", appConfig.electronUserData);
-  app.setPath("cache", appConfig.cache);
-} else {
-  appConfig = AppConfig.default();
-  // 生产模式不 setPath，保持 Electron 默认
+// 单根模型：所有数据落在 DIY_HOME 下（diy.sh: ./build/home，测试: mkdtemp）
+// 同时把 Electron 的 userData/cache 也指向该根，实现锁隔离。
+appConfig = AppConfig.fromRuntime(cfg);
+for (const p of [appConfig.electronUserData, appConfig.cache, appConfig.diyHome]) {
+  mkdirSync(p, { recursive: true });
 }
+app.setPath("userData", appConfig.electronUserData);
+app.setPath("cache", appConfig.cache);
 
 // ── 系统信息 ──
 console.log("═══════════════════════════════════════");
@@ -84,12 +79,11 @@ console.log(
 );
 console.log(`  PID:          ${process.pid}`);
 console.log(`  CWD:          ${process.cwd()}`);
-console.log(`  Mode:         ${isTempMode ? "TEMP (--temp)" : "PRODUCTION"}`);
+console.log(`  Home:         ${appConfig.diyHome}`);
 console.log("─── AppDir ────────────────────────────");
 console.log(`  diyHome:      ${appConfig.diyHome}`);
 console.log(`  cache:        ${appConfig.cache}`);
 console.log(`  userData:     ${appConfig.electronUserData}`);
-console.log(`  isTemp:       ${appConfig.isTemp}`);
 console.log("───────────────────────────────────────");
 
 // ── 2. 单实例锁 ──
@@ -149,9 +143,10 @@ function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy/rp
 // ── RPC 端口服务（外部 CLI 接入） ──
 
 async function startRpcPort(ipcTransport: import("@diy/rpc").EnvelopeTransport): Promise<boolean> {
-  const preferredPort = overridePort ?? appConfig.readPort();
+  // 优先级: DIY_PORT（入口注入） > app.port 文件（上次实例） > rpc 兜底 18888
+  const preferredPort = cfg.port ?? appConfig.readPort() ?? undefined;
   console.log(
-    `  Port:         ${preferredPort}${overridePort !== null ? ` (--port, conflict = kill or change)` : ` (from ${appConfig.diyHome}/app.port)`}`,
+    `  Port:         ${preferredPort ?? "auto"}${cfg.port !== undefined ? ` (DIY_PORT=${cfg.port})` : ` (from ${appConfig.diyHome}/app.port)`}`,
   );
 
   rpcPort = new RpcPortService();
@@ -163,10 +158,6 @@ async function startRpcPort(ipcTransport: import("@diy/rpc").EnvelopeTransport):
   } catch (err: any) {
     if (err?.code === "EADDRINUSE") {
       console.log(`  ⚠ Port ${preferredPort} 被占`);
-      if (overridePort !== null) {
-        console.error(`  ✗ --port ${preferredPort} 被占，无法启动`);
-        return false;
-      }
     }
     console.log("  → 尝试随机端口...");
     try {
@@ -197,8 +188,6 @@ app.whenReady().then(async () => {
   if (ok) {
     loadMainApp();
     console.log("═══════════════════════════════════════");
-  } else if (overridePort !== null) {
-    app.quit();
   } else {
     loadMainApp();
     console.warn("[diy] RPC 服务器启动失败，GUI 功能受限");

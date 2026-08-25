@@ -14,7 +14,6 @@ import {
 } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { homedir } from "node:os";
-import { resolveHome } from "./app-config";
 
 // ═══════════════════════════════════════
 // 类型定义
@@ -79,7 +78,7 @@ const DEFAULT_PROFILES: Record<string, Profile> = {
 
 /** 获取 DIY_HOME。测试环境通过 setup.ts 的 process.env.DIY_HOME 隔离。 */
 export function diyHome(): string {
-  return resolveHome();
+  return process.env["DIY_HOME"] ?? join(homedir(), ".diy");
 }
 
 function stateFilePath(): string {

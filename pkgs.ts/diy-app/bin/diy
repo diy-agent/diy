@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# bin/diy — 发布后的 CLI 入口（npm 全局 / 安装到 PATH 用）。
+#
+# 用途：跑编译产物 out/cli/index.js，数据根默认 ~/.diy（可由 DIY_HOME 覆盖）。
+# 定位：跟随 symlink 解析包根（发布后 bin/ 与 out/ 相邻同层）。
+# 注入：DIY_HOME — 供 JS 侧 src/runtime.ts readRuntimeConfig() 读取装配。
+set -euo pipefail
+
+# 跟随 symlink 解析到真实路径（仿 VSCode bin/code 的 app_realpath）
+_realpath() {
+  local src="$1" d
+  while [ -h "$src" ]; do
+    d="$(dirname "$src")"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$d/$src"
+  done
+  cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd
+}
+
+APP_DIR="$(dirname "$(_realpath "$0")")"
+CLI="$APP_DIR/out/cli/index.js"
+[[ -f "$CLI" ]] || { echo "diy 未构建/未安装: $CLI（先 npm run build:cli）" >&2; exit 1; }
+
+cd "$APP_DIR"
+exec env DIY_HOME="${DIY_HOME:-$HOME/.diy}" node "$CLI" "$@"

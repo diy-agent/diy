@@ -4,6 +4,7 @@
 appId: com.diy.app
 productName: diy
 copyright: Copyright © 2026
+electronVersion: "43.1.1"
 
 directories:
   output: release

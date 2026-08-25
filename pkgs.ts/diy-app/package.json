@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "bin": {
-    "diy-app": "bin/diy.mjs"
+    "diy-app": "bin/diy"
   },
   "files": [
     "bin/",
-    "src/"
+    "out/"
   ],
   "type": "module",
   "scripts": {
@@ -87,23 +87,6 @@
     "lineWidth": 100,
     "quotes": "single",
     "ignore": [
-      "out/",
-      "node_modules/",
-      "dist/"
-    ]
-  },
-  "oxlint": {
-    "rules": {
-      "no-unused-vars": "warn",
-      "no-console": "off",
-      "@typescript-eslint/no-unused-vars": [
-        "warn",
-        {
-          "argsIgnorePattern": "^_"
-        }
-      ]
-    },
-    "ignorePatterns": [
       "out/",
       "node_modules/",
       "dist/"
