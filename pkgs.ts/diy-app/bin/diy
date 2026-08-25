@@ -6,14 +6,18 @@
 # 注入：DIY_HOME、DIY_APP_ROOT — 供 JS 侧 src/runtime.ts readRuntimeConfig() 读取装配。
 set -euo pipefail
 
-src="$0"
-while [ -h "$src" ]; do
-  d="$(dirname "$src")"
-  src="$(readlink "$src")"
-  [[ "$src" != /* ]] && src="$d/$src"
-done
-APP_DIR="$(dirname "$(cd -P "$(dirname "$src")" && pwd)")"
+# 跟随 symlink 解析到真实路径（仿 VSCode bin/code 的 app_realpath）
+_realpath() {
+  local src="$1" d
+  while [ -h "$src" ]; do
+    d="$(dirname "$src")"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$d/$src"
+  done
+  cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd
+}
 
+APP_DIR="$(dirname "$(_realpath "$0")")"
 CLI="$APP_DIR/out/cli/index.js"
 [[ -f "$CLI" ]] || { echo "diy 未构建/未安装: $CLI（先 npm run build:cli）" >&2; exit 1; }
 
