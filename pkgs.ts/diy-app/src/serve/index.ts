@@ -14,14 +14,15 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { WsTransport } from "@diy/rpc/ws";
 import { bindApi } from "../main/services/api-impl";
 import { AppConfig } from "../main/core/app-config";
+import { readRuntimeConfig } from "../runtime";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, "..", "..");
+// 运行配置由入口注入的环境变量装配（DIY_HOME / DIY_APP_ROOT / DIY_PORT）
+const cfg = readRuntimeConfig();
+const ROOT = cfg.appRoot;
 const STATIC_DIR = path.resolve(ROOT, "out/renderer");
 
 const MIME: Record<string, string> = {
@@ -35,12 +36,13 @@ const MIME: Record<string, string> = {
   ".json": "application/json",
 };
 
-let port = 18888;
+// 端口优先级: --port flag > DIY_PORT（入口注入） > 兜底 18888
+let port = cfg.port ?? 18888;
 const args = process.argv.slice(2);
 const portIdx = args.indexOf("--port");
 if (portIdx >= 0) {
-  port = parseInt(args[portIdx + 1] ?? String(port), 10);
-  if (!Number.isFinite(port)) port = 18888;
+  const p = parseInt(args[portIdx + 1] ?? String(port), 10);
+  if (Number.isFinite(p)) port = p;
 }
 
 async function main() {
@@ -50,7 +52,7 @@ async function main() {
     process.exit(1);
   }
 
-  const appConfig = AppConfig.default();
+  const appConfig = AppConfig.fromRuntime(cfg);
 
   // 读取构建好的 index.html，注入 WebSocket bootstrap
   const indexHtml = fs.readFileSync(path.join(STATIC_DIR, "index.html"), "utf-8");

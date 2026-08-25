@@ -18,6 +18,7 @@ if (explicitPort) electronArgs.push("--port", explicitPort);
 
 // DIY_HOME 默认指向仓库根 build/home，与 diy.sh 保持一致
 const scriptDir = dirname(fileURLToPath(import.meta.url));
+const appDir = join(scriptDir, ".."); // pkgs.ts/diy-app
 const repoRoot = join(scriptDir, "..", "..", "..");
 const defaultHome = join(repoRoot, "build", "home");
 if (!process.env["DIY_HOME"]) {
@@ -38,7 +39,12 @@ function startElectron(url: string) {
 
   electronProc = spawn(String(electronPath), ["out/main/index.mjs", url, ...electronArgs], {
     stdio: "inherit",
-    env: { ...process.env, VITE_DEV_SERVER_URL: url },
+    // 注入运行时契约变量（src/runtime.ts 读取）：dev 加载 URL + 产物根 + 数据根
+    env: {
+      ...process.env,
+      DIY_DEV_SERVER_URL: url,
+      DIY_APP_ROOT: appDir,
+    },
   });
 
   electronProc.on("close", () => {

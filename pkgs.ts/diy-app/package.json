@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "bin": {
-    "diy-app": "bin/diy.mjs"
+    "diy-app": "bin/diy"
   },
   "files": [
     "bin/",
-    "src/"
+    "out/"
   ],
   "type": "module",
   "scripts": {

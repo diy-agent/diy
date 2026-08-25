@@ -16,15 +16,18 @@ diy 生态的核心仓库。历史为 `uv` 管理的 Python monorepo，现主线
 | `pkgs/diy-clirpc/` | CLI RPC 层（Python） | ⚠️ 已废弃 |
 | `pkgs/diy-test/` | Python 意图测试引擎 ShellTest | ⚠️ 已废弃 |
 | `pkgs/diy-ui/` | Panel 响应式 UI 框架（Signal/ScopeProxy） | ⚠️ 已废弃 |
-| `diy.sh` | 当前 worktree 的 dev CLI 入口（`DIY_HOME=./build/home` 隔离） | ✅ 主线 |
-| `pkgs.ts/diy-app/bin/diy.mjs` | `diy.sh` 调用的实际入口（`tsx` dev / `out/cli` prod） | ✅ 主线 |
+| `diy.sh` | 当前 worktree 的 dev CLI 入口（注入 `DIY_HOME=./build/home`，`src/runtime.ts` 读取） | ✅ 主线 |
+| `pkgs.ts/diy-app/bin/diy` | 发布后 CLI 入口（注入 `DIY_HOME=~/.diy`，`node out/cli/index.js`） | ✅ 主线 |
+| `pkgs.ts/diy-app/src/runtime.ts` | 运行时配置统一组装点（入口只注入 `DIY_*` 环境变量，CLI/main/serve 统一读取） | ✅ 主线 |
 | `scripts/` | 辅助脚本（doctor-env、lint-env、git-hook） | — |
 | `vendor/` | 外部依赖源码快照 | — |
 | `sha.sh` | 旧 Python 栈开发入口（`./sha.sh --help`） | ⚠️ 已废弃 |
 
 ## CLI
 
-**`./diy.sh`** — 当前 worktree 的 dev CLI 入口（替代全局 `diy`/`dai`）。`DIY_HOME` 默认 `./build/home`，每个 worktree 独立，不共享 `~/.diy`。测试直接跑 `./diy.sh task list` 等，无需拦截改写。
+**`./diy.sh`** — 当前 worktree 的 dev CLI 入口（替代全局 `diy`/`dai`）。跑 `tsx src/cli/index.ts`，注入 `DIY_HOME=./build/home`，每个 worktree 独立，不共享 `~/.diy`。测试直接跑 `./diy.sh task list` 等，无需拦截改写。
+
+**`pkgs.ts/diy-app/bin/diy`** — 发布后的 CLI 入口（npm 全局 / PATH），跑 `node out/cli/index.js`，注入 `DIY_HOME=~/.diy`。开发/发布共用 `src/runtime.ts` 的环境变量契约（`DIY_HOME`/`DIY_APP_ROOT`/`DIY_PORT`/`DIY_DEV_SERVER_URL`），无 dev/prod 模式字段。
 
 子命令分类（`./diy.sh --help`）：
 - `diy task/subject` — 任务/主体管理

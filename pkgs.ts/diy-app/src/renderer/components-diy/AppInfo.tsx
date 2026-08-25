@@ -2,12 +2,10 @@
 import { useEffect, useState } from "react";
 
 export interface AppInfoData {
-  mode: string;
   port: number;
   diyHome: string;
   cache: string;
   userData: string;
-  isTemp: boolean;
   electron: string;
   node: string;
   chrome: string;
@@ -32,11 +30,9 @@ export function AppInfo() {
 
   return (
     <div className="p-4 max-w-xl space-y-2 text-xs font-mono">
-      <Section label="运行模式">
-        <Row k="模式" v={info.mode} />
+      <Section label="运行">
         <Row k="端口" v={String(info.port)} />
         <Row k="PID" v={String(info.pid)} />
-        <Row k="临时" v={String(info.isTemp)} />
       </Section>
       <Section label="目录">
         <Row k="diyHome" v={info.diyHome} />

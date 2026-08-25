@@ -18,6 +18,17 @@ npm start        # 运行生产构建
 npm run clean    # 清理 out/
 ```
 
+## CLI 入口
+
+两个入口只注入环境变量，业务侧由 `src/runtime.ts readRuntimeConfig()` 统一读取（详见 `AGENTS.md` 环境变量契约）：
+
+```bash
+./diy.sh task list                    # worktree 开发（tsx 跑源码，数据根 ./build/home）
+bin/diy task list                     # 发布后（node 跑 out/cli/index.js，数据根 ~/.diy）
+```
+
+发布前先 `npm run build:cli` 生成 `out/cli/index.js`（生成 `bin/diy` 处自动 symlink 到 PATH 即可）。
+
 ## 开发模式快捷键
 
 - F12 — 切换 DevTools
