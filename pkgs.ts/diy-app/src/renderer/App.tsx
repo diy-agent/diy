@@ -71,26 +71,6 @@ function MainApp() {
             <header className="h-10 flex items-center gap-2 px-3 bg-card border-b select-none shrink-0">
               <SidebarTrigger />
               <span className="text-sm font-bold">diy</span>
-              <Tabs
-                value={currentPage}
-                onValueChange={(v: string) => setCurrentPage(v as NavPage)}
-                className="w-auto"
-              >
-                <TabsList className="h-8">
-                  <TabsTrigger value="task" className="text-xs px-3">
-                    📁 任务树
-                  </TabsTrigger>
-                  <TabsTrigger value="llm" className="text-xs px-3">
-                    🤖 LLM
-                  </TabsTrigger>
-                  <TabsTrigger value="agent" className="text-xs px-3">
-                    🤖 Agent
-                  </TabsTrigger>
-                  <TabsTrigger value="settings" className="text-xs px-3">
-                    ⚙️ 日志
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
               <div className="ml-auto flex gap-1">
                 <button
                   onClick={() => setDetailsOpen((v) => !v)}

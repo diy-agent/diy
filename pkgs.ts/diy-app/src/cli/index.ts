@@ -53,9 +53,12 @@ async function probePort(port: number): Promise<boolean> {
   }
 }
 
-/** 定位 Electron 主进程产物入口（CLI spawn app 用） */
+/** 定位 Electron 主进程产物入口（CLI spawn app 用）
+ *  src/cli/index.ts 与 out/cli/index.js 均为 appRoot 下 2 级（src/cli 或 out/cli），
+ *  需 3 次 dirname 才能回到 pkgs.ts/diy-app
+ */
 function appRoot(): string {
-  return dirname(dirname(fileURLToPath(import.meta.url)));
+  return dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 }
 
 function mainEntry(): string {
