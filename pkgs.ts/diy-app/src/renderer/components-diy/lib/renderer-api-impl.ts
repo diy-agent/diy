@@ -3,7 +3,6 @@ import { ChannelServerBinding } from '@diy/rpc';
 import { getRendererActions } from './renderer-actions';
 import { apiDef } from '../../../main/services/api-def';
 import { diyService } from './rpc';
-import { renderTreeText, type TaskNode } from '../../../main/core/tree-format';
 import { createProjectViaUi } from './create-project';
 
 /**
@@ -65,10 +64,10 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     return { status: 'ok' };
   });
 
-  // diy.ui.tree — 反向调 main 的 diy.loadTaskTree 取数据，本地渲染文本
+  // diy.ui.tree — 反向调 main 的 diy.loadTaskTree 取结构化数据
   binding.on(ui.tree, async ({ input }) => {
-    const nodes = (await diyService.diy.loadTaskTree({ allTasks: input.all ?? false })) as TaskNode[];
-    return { status: 'ok', data: renderTreeText(nodes) };
+    const nodes = await diyService.diy.loadTaskTree({ allTasks: input.all ?? false });
+    return { status: 'ok', data: nodes };
   });
 
   // diy.ui.status — 进程数据反向调 main 的 diy.getAppStatus

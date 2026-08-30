@@ -38,6 +38,37 @@ const StatusOk = z.object({ status: z.string() });
 
 const MessageParam = z.object({ role: z.string(), content: z.string() });
 
+/** 任务树节点 schema（递归，供 ui.tree 输出强类型） */
+const TaskNodeSchema: z.ZodType<{
+  kind: "project" | "task";
+  uri?: string;
+  title?: string;
+  state?: string;
+  project?: string;
+  parentUri?: string;
+  detail?: string;
+  body?: string;
+  created?: string;
+  updated?: string;
+  starred: boolean;
+  children: unknown[];
+}> = z.lazy(() =>
+  z.object({
+    kind: z.enum(["project", "task"]),
+    uri: z.string().optional(),
+    title: z.string().optional(),
+    state: TaskStateSchema.optional(),
+    project: z.string().optional(),
+    parentUri: z.string().optional(),
+    detail: z.string().optional(),
+    body: z.string().optional(),
+    created: z.string().optional(),
+    updated: z.string().optional(),
+    starred: z.boolean(),
+    children: z.array(TaskNodeSchema),
+  }),
+);
+
 export const apiDef = RpcSchema.router({
   diy: RpcSchema.group({
     desc: `
@@ -80,6 +111,7 @@ export const apiDef = RpcSchema.router({
               title: z.string().optional().cliOption({ short: "t", desc: "新标题" }),
               state: TaskStateSchema.optional().cliOption({ desc: "新状态" }),
               detail: z.string().optional().cliOption({ desc: "新详情" }),
+              parent: z.string().optional().cliOption({ desc: "父任务 URI（空字符串=取消父子关系）" }),
             },
             output: StatusDataUri,
           }),
@@ -402,15 +434,15 @@ export const apiDef = RpcSchema.router({
             },
           }),
 
-          /** 渲染任务树文本（反向调 diy.loadTaskTree 取数据） */
+          /** 任务树数据（结构化 JSON，供 CLI 和 UI 共用） */
           tree: RpcSchema.unary({
-            desc: `渲染任务树文本`,
+            desc: `加载任务树（结构化 JSON）`,
             input: {
               all: z.boolean().optional().describe('显示全部任务'),
             },
             output: z.object({
               status: z.string(),
-              data: z.string(),
+              data: z.array(TaskNodeSchema),
             }),
           }),
 

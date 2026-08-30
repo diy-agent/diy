@@ -156,6 +156,7 @@ export interface UpdateTaskChanges {
   state?: string;
   detail?: string;
   body?: string;
+  parent?: string;
 }
 
 const UpdateTaskSchema = z.object({
@@ -163,6 +164,7 @@ const UpdateTaskSchema = z.object({
   state: TaskStateSchema.optional(),
   detail: z.string().optional(),
   body: z.string().optional(),
+  parent: z.string().optional(),
 });
 
 /** 更新任务指定字段 */
@@ -181,13 +183,15 @@ export function updateTask(uri: string, changes: UpdateTaskChanges): void {
   }
 
   const now = new Date().toISOString();
+  // parent: 空字符串=取消父子关系，undefined=不改
+  const newParent = parsed.data.parent === "" ? undefined : parsed.data.parent;
   const updated: TaskMeta = {
     title: parsed.data.title ?? existing.title,
     state: (parsed.data.state ?? existing.state) as TaskMeta["state"],
     detail: parsed.data.detail ?? existing.detail,
     body: parsed.data.body ?? existing.body,
     project: existing.project,
-    parent: existing.parent,
+    parent: newParent ?? existing.parent,
     created: existing.created,
     updated: now,
   };
