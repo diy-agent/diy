@@ -1,13 +1,23 @@
 // src/main/core/task.ts
 // 🎯 任务 CRUD + 校验。纯函数，无全局状态。
+//    任务按项目聚合存放：$DIY_HOME/projects/<pid>/tasks/<tid>/AGENTS.md
 //    所有输入验证用 zod，收集全部错误再抛出（不短路）。
 
-import { existsSync, mkdirSync, writeFileSync, readdirSync, rmSync, statSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { z } from "zod";
-import { getTask, taskDir, taskFilePath, starTask, diyHome, loadState, parseTaskFile } from "./state";
+import {
+  getTask,
+  taskDir,
+  taskFilePath,
+  starTask,
+  projectsRoot,
+  projectDir,
+  nextNumericId,
+} from "./state";
 import type { TaskMeta } from "./state";
+import { projectExists } from "./project";
 
 // ═══════════════════════════════════════
 // 字段验证 schema
@@ -45,6 +55,13 @@ export class ValidationError extends Error {
 
 const FM_SEP = "---";
 
+/** 收集某 project 下现有 task 的数字 id（scan $DIY_HOME/projects/<pid>/tasks/） */
+function existingTaskIds(projectId: string): string[] {
+  const tasksDir = join(projectDir(projectId), "tasks");
+  if (!existsSync(tasksDir)) return [];
+  return readdirSync(tasksDir).filter((e) => /^\d+$/.test(e));
+}
+
 // ═══════════════════════════════════════
 // 创建任务
 // ═══════════════════════════════════════
@@ -71,7 +88,7 @@ const CreateTaskSchema = z.object({
 });
 
 /**
- * 创建一条任务，写入 AGENTS.md，自动 star。
+ * 创建一条任务，写入 projects/<pid>/tasks/<tid>/AGENTS.md，自动 star。
  * 抛出 ValidationError（校验失败）或 Error（业务冲突）。
  */
 export function createTask(params: CreateTaskParams): string {
@@ -87,9 +104,8 @@ export function createTask(params: CreateTaskParams): string {
 
   const { title, project, parent, detail, body, source_type, source_uri } = parsed.data;
 
-  // 校验 project 是否注册
-  const state = loadState();
-  if (!state.projects.has(project)) {
+  // 校验 project 是否注册（按项目数据目录）
+  if (!projectExists(project)) {
     throw new ValidationError([
       { field: "project", code: "not_found", msg: `project ${project} 未注册` },
     ]);
@@ -102,9 +118,9 @@ export function createTask(params: CreateTaskParams): string {
     ]);
   }
 
-  // 生成 URI：时间戳 base36
-  const ts = Date.now().toString(36);
-  const uri = `local/${ts}`;
+  // 生成 URI：数字自增 id（scan projects/<pid>/tasks/）
+  const tid = nextNumericId(existingTaskIds(project));
+  const uri = `projects/${project}/tasks/${tid}`;
 
   const dir = taskDir(uri);
   mkdirSync(dir, { recursive: true });
@@ -112,7 +128,6 @@ export function createTask(params: CreateTaskParams): string {
   const now = new Date().toISOString();
   const meta: TaskMeta = {
     title,
-    project,
     state: "pending",
     parent,
     detail,
@@ -120,6 +135,7 @@ export function createTask(params: CreateTaskParams): string {
     updated: now,
     source_type,
     source_uri,
+    // 不写 project frontmatter —— project 由 URI 路径推导（路径即分组）
   };
 
   const front = yaml.dump(meta, { indent: 2, noRefs: true });
@@ -197,34 +213,25 @@ export function deleteTask(uri: string): void {
 // 列出任务
 // ═══════════════════════════════════════
 
-/** 列出所有任务 URI（可选按 project 筛选） */
+/** 列出所有任务 URI（可选按 project 筛选），返回 projects/<pid>/tasks/<tid>。 */
 export function listTasks(project?: string): string[] {
-  const taskRoot = join(diyHome(), "task");
-  if (!existsSync(taskRoot)) return [];
+  const root = projectsRoot();
+  if (!existsSync(root)) return [];
 
   const uris: string[] = [];
+  for (const pid of readdirSync(root)) {
+    if (!/^\d+$/.test(pid)) continue;
+    if (project !== undefined && pid !== project) continue;
 
-  function walk(dir: string, prefix: string): void {
-    for (const entry of readdirSync(dir)) {
-      const fullPath = join(dir, entry);
-      if (!statSync(fullPath).isDirectory()) continue;
+    const tasksDir = join(projectDir(pid), "tasks");
+    if (!existsSync(tasksDir)) continue;
 
-      const relPath = prefix ? `${prefix}/${entry}` : entry;
-      const agPath = join(fullPath, "AGENTS.md");
-
-      if (existsSync(agPath)) {
-        uris.push(relPath);
-      } else {
-        // 递归往下找
-        walk(fullPath, relPath);
+    for (const tid of readdirSync(tasksDir)) {
+      if (!/^\d+$/.test(tid)) continue;
+      if (existsSync(join(tasksDir, tid, "AGENTS.md"))) {
+        uris.push(`projects/${pid}/tasks/${tid}`);
       }
     }
   }
-
-  walk(taskRoot, "");
-  if (project === undefined) return uris;
-  return uris.filter((uri) => {
-    const meta = parseTaskFile(readFileSync(taskFilePath(uri), "utf-8"));
-    return meta?.project === project;
-  });
+  return uris;
 }

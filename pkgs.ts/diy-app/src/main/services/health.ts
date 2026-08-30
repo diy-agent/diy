@@ -28,14 +28,14 @@ export function runHealthCheck(): HealthIssue[] {
     });
   }
 
-  // data root 可写
-  const taskDir = join(home, "task");
-  if (!existsSync(taskDir)) {
+  // data root 可写（项目数据目录）
+  const projDir = join(home, "projects");
+  if (!existsSync(projDir)) {
     issues.push({
-      code: "NO_TASK_DIR",
+      code: "NO_PROJECT_DIR",
       severity: "info",
-      message: "task/ 目录不存在（首次操作会自动创建）",
-      detail: taskDir,
+      message: "projects/ 目录不存在（首次创建项目会自动创建）",
+      detail: projDir,
     });
   }
 

@@ -82,13 +82,12 @@ export function bindAppHandlers(binding: ServerBinding): void {
 
   // ── project ──
   binding.on(app.project.create, async ({ input }) => {
-    project.createProject(input.id, {
+    const id = project.createProject(input.path, {
       label: input.label,
-      path: input.path,
       desc: input.desc,
       state: input.state,
     });
-    return { status: "ok", data: { id: input.id } };
+    return { status: "ok", data: { id } };
   });
   binding.on(app.project.list, async () => {
     return { status: "ok", data: { projects: project.listProjects() } };
@@ -128,6 +127,26 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
   binding.on(app.getTask, async ({ input }) => {
     return state.getTask(input.uri);
+  });
+
+  // ── pickProjectDirectory（renderer「选择目录」按钮反向调用）──
+  binding.on(app.pickProjectDirectory, async () => {
+    // dialog 是 Electron main 专属；serve(Web) 模式无 dialog，返回 canceled
+    try {
+      const { dialog } = await import("electron");
+      const r = await dialog.showOpenDialog({
+        title: "选择项目目录",
+        properties: ["openDirectory", "createDirectory"],
+      });
+      const path = r.filePaths?.[0];
+      if (r.canceled || !path) {
+        return { status: "ok", data: { canceled: true } };
+      }
+      return { status: "ok", data: { canceled: false, path } };
+    } catch (err) {
+      console.error(`[pickProjectDirectory] 打开目录选择器失败: ${err}`);
+      return { status: "ok", data: { canceled: true } };
+    }
   });
 
   // ── agent ──

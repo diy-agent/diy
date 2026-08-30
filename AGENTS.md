@@ -55,5 +55,5 @@ Python `dai`/`diy` 仅历史归档，不再作为入口。
 - **GPG 签名** — git 操作必须 GPG 签名，失败时停下求助，禁止 `--no-gpg-sign` 绕过
 - 代码注释用中文
 - 意图测试（Intent Test）是需求的定义者
-  - TS 主线：`pkgs.ts/diy-app/tests/cli.intent.test.ts`（`./diy.sh` + `ShellTest` + 隔离 Electron）
+  - TS 主线：`pkgs.ts/diy-app/tests/cli.intent.*.test.ts`（`./diy.sh` + `ShellTest` + 隔离 Electron；按领域拆文件：ui / doctor / project / task，每条用例自建自删 fixture）
   - Python 历史：`tests/` + `_diy/AGENTS.md`（已废弃，仅归档）

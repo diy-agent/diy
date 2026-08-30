@@ -1,12 +1,11 @@
 // tests/core/task.test.ts
 // 🎯 意图测试：任务 CRUD 全链路 + 校验逻辑
-//    所有数据在 /tmp/diy-desktop-test-xxx/，不碰生产
+//    所有数据在隔离 DIY_HOME（/tmp/...），不碰生产
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
-import { saveState } from "../../src/main/core/state";
 import {
   createTask,
   updateTask,
@@ -14,11 +13,12 @@ import {
   listTasks,
   ValidationError,
 } from "../../src/main/core/task";
+import { createProject } from "../../src/main/core/project";
 
-// Arrange: 所有测试共享的 project 注册
-const PROJECT = "test-work";
+// Arrange: 测试共享的真实 project（id 自动生成）
+let PROJECT = "1";
 beforeAll(() => {
-  saveState({ projects: new Map([[PROJECT, { label: "测试工作" }]]) });
+  PROJECT = createProject(join(diyHome(), "test-work"));
 });
 
 // ═══════════════════════════════════════
@@ -29,22 +29,24 @@ describe("createTask", () => {
   it("创建后文件存在、内容正确、自动 star", () => {
     const uri = createTask({ title: "测试任务", project: PROJECT });
 
-    const fp = join(diyHome(), "task", uri, "AGENTS.md");
+    const fp = join(diyHome(), uri, "AGENTS.md");
     expect(existsSync(fp)).toBe(true);
 
     const content = readFileSync(fp, "utf-8");
     expect(content).toContain("title: 测试任务");
     expect(content).toContain("state: pending");
-    expect(content).toContain("project: " + PROJECT);
+    // 新模型 frontmatter 不写 project（project 由 URI 路径推导）
+    expect(content).not.toContain("project:");
 
     // star symlink 已创建
     const starLink = join(diyHome(), "star", uri.replace(/\//g, "__"));
     expect(existsSync(starLink)).toBe(true);
   });
 
-  it("uri 格式为 local/<base36-timestamp>", () => {
+  it("uri 格式为 projects/<pid>/tasks/<tid>", () => {
     const uri = createTask({ title: "URI格式", project: PROJECT });
-    expect(uri).toMatch(/^local\/[0-9a-z]+$/);
+    expect(uri).toMatch(/^projects\/\d+\/tasks\/\d+$/);
+    expect(uri).toBe(`projects/${PROJECT}/tasks/` + uri.split("/").pop());
   });
 
   it("空标题抛出 ValidationError", () => {
@@ -57,7 +59,7 @@ describe("createTask", () => {
   });
 
   it("未注册的 project 抛出错误", () => {
-    expect(() => createTask({ title: "任务", project: "unknown" })).toThrow(ValidationError);
+    expect(() => createTask({ title: "任务", project: "999999" })).toThrow(ValidationError);
   });
 
   it("不存在的 parent 抛出错误", () => {
@@ -65,7 +67,7 @@ describe("createTask", () => {
       createTask({
         title: "子任务",
         project: PROJECT,
-        parent: "local/nonexist",
+        parent: "projects/1/tasks/999",
       }),
     ).toThrow(ValidationError);
   });
@@ -78,7 +80,7 @@ describe("createTask", () => {
       body: "# Markdown 正文",
     });
 
-    const content = readFileSync(join(diyHome(), "task", uri, "AGENTS.md"), "utf-8");
+    const content = readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8");
     expect(content).toContain("detail: 详细描述");
     expect(content).toContain("# Markdown 正文");
   });
@@ -113,7 +115,7 @@ describe("updateTask", () => {
   it("更新 title 后文件内容变更", () => {
     updateTask(uri, { title: "新标题" });
 
-    const content = readFileSync(join(diyHome(), "task", uri, "AGENTS.md"), "utf-8");
+    const content = readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8");
     expect(content).toContain("title: 新标题");
     expect(content).not.toContain("原标题");
   });
@@ -121,7 +123,7 @@ describe("updateTask", () => {
   it("更新 state 后文件内容变更", () => {
     updateTask(uri, { state: "done" });
 
-    const content = readFileSync(join(diyHome(), "task", uri, "AGENTS.md"), "utf-8");
+    const content = readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8");
     expect(content).toContain("state: done");
   });
 
@@ -141,7 +143,7 @@ describe("updateTask", () => {
 describe("deleteTask", () => {
   it("删除后目录和文件都不存在", () => {
     const uri = createTask({ title: "待删除", project: PROJECT });
-    const dir = join(diyHome(), "task", uri);
+    const dir = join(diyHome(), uri);
     expect(existsSync(dir)).toBe(true);
 
     deleteTask(uri);
@@ -166,7 +168,7 @@ describe("listTasks", () => {
   });
 
   it("按 project 筛选", () => {
-    const all = listTasks("test-work");
+    const all = listTasks(PROJECT);
     expect(all.length).toBeGreaterThanOrEqual(1);
   });
 

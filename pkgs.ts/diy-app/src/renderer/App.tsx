@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ListTree, Bot, Brain, Settings, ChevronLeft } from "lucide-react";
+import { ListTree, Bot, Brain, Settings, ChevronLeft, ChevronRight } from "lucide-react";
 import { TaskTree } from "./components-diy/TaskTree";
 import { AgentChatPanel } from "./components-diy/AgentChatPanel";
 import { LlmPage } from "./components-diy/LLmPage";
@@ -24,7 +24,6 @@ import {
   SidebarMenuItem,
   SidebarMenuButton,
   SidebarInset,
-  SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
 
@@ -69,7 +68,6 @@ function MainApp() {
           <SidebarInset>
             {/* TitleBar */}
             <header className="h-10 flex items-center gap-2 px-3 bg-card border-b select-none shrink-0">
-              <SidebarTrigger />
               <span className="text-sm font-bold">diy</span>
               <div className="ml-auto flex gap-1">
                 <button
@@ -144,7 +142,7 @@ function AppSidebar({
   currentPage: string;
   onPageChange: (page: NavPage) => void;
 }) {
-  const { state } = useSidebar();
+  const { state, toggleSidebar } = useSidebar();
   const isCollapsed = state === "collapsed";
 
   return (
@@ -205,8 +203,12 @@ function AppSidebar({
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton isActive={false} tooltip={state === "expanded" ? "收起" : "展开"}>
-              <ChevronLeft size={16} />
+            <SidebarMenuButton
+              isActive={false}
+              tooltip={isCollapsed ? "展开" : "收起"}
+              onClick={toggleSidebar}
+            >
+              {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
               {!isCollapsed && <span>收起</span>}
             </SidebarMenuButton>
           </SidebarMenuItem>

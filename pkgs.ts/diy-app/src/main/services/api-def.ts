@@ -111,11 +111,10 @@ export const apiDef = RpcSchema.router({
         desc: `项目管理`,
         children: {
           create: RpcSchema.unary({
-            desc: `创建项目`,
+            desc: `创建项目（path 必填，id 自动生成并返回 {id}）`,
             input: {
-              id: z.string().min(1, "id 不能为空").cliArg({ desc: "project id" }),
+              path: z.string().min(1, "path 不能为空").cliArg({ desc: "项目路径（映射到该目录下的 diy.yaml）" }),
               label: z.string().optional().cliOption({ short: "l", desc: "显示名称" }),
-              path: z.string().optional().cliOption({ desc: "关联路径" }),
               desc: z.string().optional().cliOption({ desc: "描述" }),
               state: z.string().optional().cliOption({ desc: "状态" }),
             },
@@ -190,6 +189,19 @@ export const apiDef = RpcSchema.router({
         desc: `按 URI 获取任务（供 renderer 反向调用）`,
         input: { uri: z.string() },
         output: z.any(),
+      }),
+
+      /** 弹出原生目录选择器（供 renderer「选择目录」按钮反向调用；Web/serve 模式无 Electron dialog 时返回 canceled） */
+      pickProjectDirectory: RpcSchema.unary({
+        desc: `弹出原生目录选择器，返回所选路径`,
+        input: {},
+        output: z.object({
+          status: z.string(),
+          data: z.object({
+            canceled: z.boolean(),
+            path: z.string().optional(),
+          }),
+        }),
       }),
 
       agent: RpcSchema.group({
@@ -414,6 +426,22 @@ export const apiDef = RpcSchema.router({
                 memory: z.number(),
               }),
             }),
+          }),
+
+          /** UI 侧项目操作（反向调 diy.project.* + 刷新树 + toast） */
+          project: RpcSchema.group({
+            desc: `项目`,
+            children: {
+              create: RpcSchema.unary({
+                desc: `创建项目（UI 入口，反向调 main + 刷新任务树 + toast）`,
+                input: {
+                  path: z.string().min(1, "path 不能为空").cliArg({ desc: "项目路径" }),
+                  label: z.string().optional().cliOption({ short: "l", desc: "显示名称" }),
+                  desc: z.string().optional().cliOption({ desc: "描述" }),
+                },
+                output: StatusDataId,
+              }),
+            },
           }),
         },
       }),

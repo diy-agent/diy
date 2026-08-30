@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useTaskStore, type TreeNode } from "./store/taskStore";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { CreateProjectSheet } from "./CreateProjectSheet";
 
 
 const stateColor: Record<string, string> = {
@@ -24,22 +25,28 @@ export function TaskTree() {
 
 
   return (
-    <ScrollArea className="h-full">
-      <div className="p-1">
-        {nodes.map((node) => (
-          <ProjectNode
-            key={node.project ?? ""}
-            node={node}
-            depth={0}
-            selectedUri={selectedUri}
-            onSelect={selectTask}
-          />
-        ))}
-        {!loading && nodes.length === 0 && (
-          <div className="text-sm text-muted-foreground p-4 text-center">暂无任务</div>
-        )}
+    <div className="h-full flex flex-col">
+      <div className="flex items-center justify-between px-2 py-1.5 border-b shrink-0">
+        <span className="text-sm font-semibold">项目</span>
+        <CreateProjectSheet />
       </div>
-    </ScrollArea>
+      <ScrollArea className="flex-1 overflow-hidden">
+        <div className="p-1">
+          {nodes.map((node) => (
+            <ProjectNode
+              key={node.project ?? ""}
+              node={node}
+              depth={0}
+              selectedUri={selectedUri}
+              onSelect={selectTask}
+            />
+          ))}
+          {!loading && nodes.length === 0 && (
+            <div className="text-sm text-muted-foreground p-4 text-center">暂无任务</div>
+          )}
+        </div>
+      </ScrollArea>
+    </div>
   );
 }
 

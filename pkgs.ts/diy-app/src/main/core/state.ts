@@ -1,6 +1,11 @@
 // src/main/core/state.ts
 // 🎯 纯文件 I/O 操作：state.yaml R/W、AGENTS.md 解析、star/unstar
 //    类型全显式，无 any，无 Record<string, unknown> 逃逸
+//
+//    数据布局（project 替代 subject）：
+//      $DIY_HOME/projects/<id>/meta.yaml   ← 项目权威注册表 {id, path, label, desc, state}
+//      $DIY_HOME/projects/<id>/tasks/<tid>/AGENTS.md  ← 任务数据（按项目聚合）
+//      任务 URI = projects/<pid>/tasks/<tid>，project 由路径推导
 
 import * as yaml from "js-yaml";
 import {
@@ -34,7 +39,7 @@ export type TaskState =
 export interface TaskMeta {
   title?: string;
   state?: TaskState;
-  /** 所属 project id。兼容读取旧字段 subject。 */
+  /** 所属 project id（历史兼容：旧 task 存在 frontmatter，新 task 由 URI 路径推导） */
   project?: string;
   parent?: string;
   detail?: string;
@@ -62,7 +67,7 @@ export interface SubjectInfo {
   readonly desc?: string;
 }
 
-/** project 元数据。key = project id（短标识）。 */
+/** project 元数据。key = 系统自动生成的数字自增 id。 */
 export interface ProjectInfo {
   readonly label?: string;
   readonly path?: string;
@@ -73,7 +78,6 @@ export interface ProjectInfo {
 export interface StateData {
   readonly profiles: Map<string, Profile>;
   readonly subjects: Map<string, SubjectInfo>;
-  readonly projects: Map<string, ProjectInfo>;
 }
 
 // ═══════════════════════════════════════
@@ -95,18 +99,29 @@ function stateFilePath(): string {
   return join(diyHome(), "state.yaml");
 }
 
-function dataRoot(): string {
-  const r = join(diyHome(), "task");
-  mkdirSync(r, { recursive: true });
-  return r;
+/** 项目注册表根：$DIY_HOME/projects/<id>/ */
+export function projectsRoot(): string {
+  return join(diyHome(), "projects");
 }
 
+/** 项目数据目录：$DIY_HOME/projects/<id>/ */
+export function projectDir(id: string): string {
+  return join(projectsRoot(), id);
+}
+
+/** 任务 URI = projects/<pid>/tasks/<tid>，目录即 $DIY_HOME/<uri> */
 export function taskDir(uri: string): string {
-  return join(dataRoot(), uri);
+  return join(diyHome(), uri);
 }
 
 export function taskFilePath(uri: string): string {
   return join(taskDir(uri), "AGENTS.md");
+}
+
+/** 从任务 URI 推导所属 project id：projects/<pid>/tasks/<tid> */
+export function projectFromUri(uri: string): string {
+  const m = uri.match(/^projects\/([^/]+)\/tasks\//);
+  return m?.[1] ?? "";
 }
 
 // ═══════════════════════════════════════
@@ -132,10 +147,7 @@ export function loadState(): StateData {
   const subjectsRaw = raw["subjects"] as Record<string, SubjectInfo> | undefined;
   const subjects = new Map<string, SubjectInfo>(Object.entries(subjectsRaw ?? {}));
 
-  const projectsRaw = raw["projects"] as Record<string, ProjectInfo> | undefined;
-  const projects = new Map<string, ProjectInfo>(Object.entries(projectsRaw ?? {}));
-
-  return { profiles, subjects, projects };
+  return { profiles, subjects };
 }
 
 /** 保存 state.yaml。原子写入（tmp → rename）。
@@ -146,7 +158,6 @@ export function loadState(): StateData {
 export function saveState(data: {
   profiles?: ReadonlyMap<string, Profile> | Record<string, Profile>;
   subjects?: ReadonlyMap<string, SubjectInfo> | Record<string, SubjectInfo>;
-  projects?: ReadonlyMap<string, ProjectInfo> | Record<string, ProjectInfo>;
 }): void {
   const current = loadState();
   const merged: Record<string, unknown> = {};
@@ -158,18 +169,12 @@ export function saveState(data: {
     merged["profiles"] = Object.fromEntries(current.profiles);
   }
 
+  // TODO subjects 应清理
   if (data.subjects !== undefined) {
     const src = data.subjects instanceof Map ? Object.fromEntries(data.subjects) : data.subjects;
     merged["subjects"] = src;
   } else {
     merged["subjects"] = Object.fromEntries(current.subjects);
-  }
-
-  if (data.projects !== undefined) {
-    const src = data.projects instanceof Map ? Object.fromEntries(data.projects) : data.projects;
-    merged["projects"] = src;
-  } else {
-    merged["projects"] = Object.fromEntries(current.projects);
   }
 
   const p = stateFilePath();
@@ -182,6 +187,21 @@ export function saveState(data: {
 // ═══════════════════════════════════════
 // AGENTS.md frontmatter 解析
 // ═══════════════════════════════════════
+
+/**
+ * 计算下一个自增数字 id：取传入现有 id 中数字 id 的最大值 + 1，从 start 起。
+ * 非数字 id（历史遗留字符串 key）忽略，不影响计数。
+ */
+export function nextNumericId(existing: Iterable<string>, start = 1): string {
+  let max = start - 1;
+  for (const key of existing) {
+    if (/^\d+$/.test(key)) {
+      const n = Number(key);
+      if (n > max) max = n;
+    }
+  }
+  return String(max + 1);
+}
 
 const FM_SEP = "---";
 
@@ -216,7 +236,9 @@ export function getTask(uri: string): TaskData | null {
   if (!existsSync(fp)) return null;
   const meta = parseTaskFile(readFileSync(fp, "utf-8"));
   if (!meta) return null;
-  return { uri, body: meta.body ?? "", ...meta };
+  // project 从 URI 路径推导（路径即分组）；历史任务回退 frontmatter
+  const derived = projectFromUri(uri);
+  return { uri, body: meta.body ?? "", ...meta, project: derived || meta.project };
 }
 
 /** 检查任务文件是否存在 */
