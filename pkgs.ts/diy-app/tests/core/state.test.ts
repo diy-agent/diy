@@ -70,15 +70,24 @@ describe("parseTaskFile", () => {
     const raw = `---
 title: 测试任务
 state: active
-subject: ~/work
+project: work
 ---
 这是正文内容`;
     const meta = parseTaskFile(raw);
     expect(meta).not.toBeNull();
     expect(meta?.title).toBe("测试任务");
     expect(meta?.state).toBe("active");
-    expect(meta?.subject).toBe("~/work");
+    expect(meta?.project).toBe("work");
     expect(meta?.body).toBe("这是正文内容");
+  });
+
+  it("兼容读取旧字段 subject", () => {
+    const raw = `---
+title: 旧任务
+subject: legacy
+---`;
+    const meta = parseTaskFile(raw);
+    expect(meta?.project).toBe("legacy");
   });
 
   it("无 frontmatter 时返回 null", () => {
@@ -116,7 +125,7 @@ title: 坏文件`;
 // ═══════════════════════════════════════
 
 describe("star / unstar", () => {
-  const uri = "test/star-unstar";
+  const uri = "projects/1/tasks/1";
 
   it("初始状态未 star", () => {
     // 清理可能遗留的 symlink
@@ -126,9 +135,9 @@ describe("star / unstar", () => {
 
   it("star 后 isStarred 为 true", () => {
     // 先创建任务目录（star 需要目标存在）
-    mkdirSync(join(diyHome(), "task", uri), { recursive: true });
+    mkdirSync(join(diyHome(), uri), { recursive: true });
     writeFileSync(
-      join(diyHome(), "task", uri, "AGENTS.md"),
+      join(diyHome(), uri, "AGENTS.md"),
       "---\ntitle: Star测试\nstate: new\n---",
     );
 
@@ -152,17 +161,17 @@ describe("star / unstar", () => {
 // ═══════════════════════════════════════
 
 describe("getTask & taskExists", () => {
-  const uri = "test/get-task";
+  const uri = "projects/1/tasks/2";
 
   beforeAll(() => {
-    const dir = join(diyHome(), "task", uri);
+    const dir = join(diyHome(), uri);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "AGENTS.md"), "---\ntitle: 获取测试\nstate: pending\n---\n正文内容");
   });
 
   it("不存在的任务返回 null", () => {
-    expect(getTask("nonexistent")).toBeNull();
-    expect(taskExists("nonexistent")).toBe(false);
+    expect(getTask("projects/9/tasks/9")).toBeNull();
+    expect(taskExists("projects/9/tasks/9")).toBe(false);
   });
 
   it("存在的任务返回完整数据", () => {
@@ -172,6 +181,7 @@ describe("getTask & taskExists", () => {
     expect(task!.title).toBe("获取测试");
     expect(task!.state).toBe("pending");
     expect(task!.body).toBe("正文内容");
+    expect(task!.project).toBe("1"); // 由 URI 路径推导
   });
 
   it("taskExists 返回 true", () => {
@@ -180,7 +190,7 @@ describe("getTask & taskExists", () => {
 
   it("taskFilePath 返回正确路径", () => {
     const fp = taskFilePath(uri);
-    expect(fp.endsWith("task/" + uri + "/AGENTS.md")).toBe(true);
+    expect(fp).toBe(join(diyHome(), uri, "AGENTS.md"));
   });
 });
 

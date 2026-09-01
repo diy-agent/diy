@@ -1,10 +1,13 @@
 // src/main/core/task-tree.ts
 // 🎯 从磁盘构建任务树 + 父子链接 + 文本渲染
 //    纯函数，读文件系统，无全局状态
+//    task 按项目聚合在 $DIY_HOME/projects/<pid>/tasks/<tid>/，
+//    project 分组由 URI 路径推导（不再依赖 frontmatter project）。
 
 import { existsSync, readdirSync, readlinkSync, statSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { diyHome, parseTaskFile, isStarred, loadState } from "./state";
+import { diyHome, parseTaskFile, isStarred, projectsRoot, projectFromUri } from "./state";
+import { listProjects } from "./project";
 import { TaskNode } from "./tree-format";
 
 // ═══════════════════════════════════════
@@ -12,7 +15,7 @@ import { TaskNode } from "./tree-format";
 // ═══════════════════════════════════════
 
 function readTaskNode(uri: string, starred: boolean): TaskNode | null {
-  const agPath = join(diyHome(), "task", uri, "AGENTS.md");
+  const agPath = join(diyHome(), uri, "AGENTS.md");
   if (!existsSync(agPath)) return null;
   const raw = readFileSync(agPath, "utf-8");
   const meta = parseTaskFile(raw);
@@ -23,7 +26,7 @@ function readTaskNode(uri: string, starred: boolean): TaskNode | null {
     uri,
     title: meta.title,
     state: meta.state,
-    subjectPath: meta.subject,
+    project: projectFromUri(uri) || meta.project,
     parentUri: meta.parent,
     detail: meta.detail,
     body: meta.body,
@@ -40,51 +43,53 @@ function readTaskNode(uri: string, starred: boolean): TaskNode | null {
 
 /**
  * 从磁盘加载任务树。
- * allTasks=true 时扫描全部 task/ 目录；
+ * allTasks=true 时扫描全部 projects/<pid>/tasks/；
  * 默认只加载 star 过的任务（用户关注视图）。
  */
 export function loadTaskTree(allTasks = false): TaskNode[] {
-  const { subjects } = loadState();
-  const starDir = join(diyHome(), "star");
-  const taskRoot = join(diyHome(), "task");
+  // 已注册项目（id → 显示名），保持 id 数值排序
+  const projects = new Map<string, { label?: string }>();
+  for (const p of listProjects()) projects.set(p.id, { label: p.info.label });
 
-  const allBySubject = new Map<string, TaskNode[]>();
+  const starDir = join(diyHome(), "star");
+  const taskRoot = projectsRoot();
+
+  const allByProject = new Map<string, TaskNode[]>();
 
   if (allTasks) {
-    // 全部模式：扫描 task/ 下所有 AGENTS.md
-    if (!existsSync(taskRoot)) return buildResult(allBySubject, subjects);
+    // 全部模式：扫描 projects/ 下所有 AGENTS.md（URI 前缀从 projects 起）
+    if (!existsSync(taskRoot)) return buildResult(allByProject, projects);
 
-    scanAllDirs(taskRoot, "", allBySubject);
+    scanAllDirs(taskRoot, "projects", allByProject);
   } else {
     // Star 模式：从 ~/.diy/star/ symlink 收集
-    if (!existsSync(starDir)) return buildResult(allBySubject, subjects);
+    if (!existsSync(starDir)) return buildResult(allByProject, projects);
 
     for (const link of readdirSync(starDir)) {
       const linkPath = join(starDir, link);
       if (!lstatSync(linkPath).isSymbolicLink()) continue;
 
-      // symlink target = task/ 下的相对路径
+      // symlink target = $DIY_HOME/projects/<pid>/tasks/<tid>
       const target = readlinkSync(linkPath);
-      // 从 taskRoot 中提取相对 URI
-      const relTarget = target.startsWith(taskRoot + "/")
-        ? target.slice(taskRoot.length + 1)
-        : target;
+      // 从 DIY_HOME 中提取相对 URI
+      const homePrefix = diyHome() + "/";
+      const relTarget = target.startsWith(homePrefix) ? target.slice(homePrefix.length) : target;
 
       const node = readTaskNode(relTarget, true);
       if (!node) continue;
 
-      const subj = node.subjectPath ?? "unknown";
-      const list = allBySubject.get(subj) ?? [];
+      const pid = node.project ?? "unknown";
+      const list = allByProject.get(pid) ?? [];
       list.push(node);
-      allBySubject.set(subj, list);
+      allByProject.set(pid, list);
     }
   }
 
-  return buildResult(allBySubject, subjects);
+  return buildResult(allByProject, projects);
 }
 
 /**
- * 递归扫描 task/ 下所有 URIs（跨两层：type/xxx）
+ * 递归扫描 projects/ 下所有 URIs（跨多层：projects/<pid>/tasks/<tid>）
  */
 function scanAllDirs(dir: string, prefix: string, result: Map<string, TaskNode[]>): void {
   for (const entry of readdirSync(dir)) {
@@ -99,10 +104,10 @@ function scanAllDirs(dir: string, prefix: string, result: Map<string, TaskNode[]
       const starred = isStarred(subPrefix);
       const node = readTaskNode(subPrefix, starred);
       if (node) {
-        const subj = node.subjectPath ?? "unknown";
-        const list = result.get(subj) ?? [];
+        const pid = node.project ?? "unknown";
+        const list = result.get(pid) ?? [];
         list.push(node);
-        result.set(subj, list);
+        result.set(pid, list);
       }
     } else {
       // 继续递归
@@ -111,37 +116,34 @@ function scanAllDirs(dir: string, prefix: string, result: Map<string, TaskNode[]
   }
 }
 
-/**
- * 将按 subject 分组的任务组装为 TaskNode[]，
- * 构建父子链接后返回。
- */
+/** 将按 project 分组的任务组装为 TaskNode[]，构建父子链接后返回。 */
 function buildResult(
-  bySubject: Map<string, TaskNode[]>,
-  subjects: Map<string, { label?: string }>,
+  byProject: Map<string, TaskNode[]>,
+  projects: Map<string, { label?: string }>,
 ): TaskNode[] {
   const result: TaskNode[] = [];
 
-  // 先遍历已注册的 subjects（保持排序）
-  for (const [subjPath, info] of subjects) {
-    const children = bySubject.get(subjPath) ?? [];
+  // 先遍历已注册的 projects（保持 id 数值排序）
+  for (const [pid, info] of projects) {
+    const children = byProject.get(pid) ?? [];
     const linked = buildParentLinks(children);
     result.push({
-      kind: "subject",
-      subjectPath: subjPath,
-      title: info.label ?? subjPath,
+      kind: "project",
+      project: pid,
+      title: info.label ?? pid,
       starred: false,
       children: linked,
     });
-    bySubject.delete(subjPath);
+    byProject.delete(pid);
   }
 
-  // 未注册 subject 的孤儿任务
-  for (const [subjPath, children] of bySubject) {
+  // 未注册 project 的孤儿任务
+  for (const [pid, children] of byProject) {
     if (children.length === 0) continue;
     result.push({
-      kind: "subject",
-      subjectPath: subjPath,
-      title: subjPath,
+      kind: "project",
+      project: pid,
+      title: pid,
       starred: false,
       children: buildParentLinks(children),
     });

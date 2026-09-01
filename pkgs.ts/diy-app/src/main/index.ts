@@ -12,7 +12,7 @@
 //   3. 创建窗口 + IPC transport
 //   4. 端口绑定 → 18888（或 DIY_PORT 覆盖）
 
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, screen } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
@@ -104,6 +104,40 @@ if (!gotLock) {
 
 // ── 窗口 ──
 
+/**
+ * 测试/开发时把窗口定位到「非主工作屏」，避免遮挡用户正在干活的屏幕。
+ * 仅在 DIY_MIRROR_DISPLAY=1 时生效；检测不到合适副屏则回退空对象（默认主屏定位）。
+ * 返回窗口 options 子集（width/height/x/y），尺寸自动适配目标屏 workArea。
+ */
+function mirrorWindowPos(
+  width: number,
+  height: number,
+): Record<string, number> {
+  if (process.env["DIY_MIRROR_DISPLAY"] !== "1") return {};
+  try {
+    const displays = screen.getAllDisplays();
+    const primaryId = screen.getPrimaryDisplay().id;
+    // 目标 = 非主屏：优先 Sidecar iPad（macOS），否则第一个非主屏（跨平台，内外置均可）。
+    // 「非主屏」是避开主工作屏的唯一可靠信号——主工作屏可能就是外接屏，故不按 internal 判断。
+    const target =
+      displays.find((d) => d.id !== primaryId && d.label.toLowerCase().includes("sidecar")) ??
+      displays.find((d) => d.id !== primaryId) ??
+      null;
+    if (!target) return {}; // 单屏：只有主屏，回退默认定位
+    const { x, y, width: w, height: h } = target.workArea;
+    const winW = Math.min(width, w);
+    const winH = Math.min(height, h);
+    return {
+      width: winW,
+      height: winH,
+      x: x + Math.max(0, Math.floor((w - winW) / 2)),
+      y: y + Math.max(0, Math.floor((h - winH) / 2)),
+    };
+  } catch {
+    return {}; // screen 不可用（如无显示器）时回退默认
+  }
+}
+
 function loadMainApp(): void {
   if (isDev && devUrlArg) {
     mainWindow?.loadURL(devUrlArg);
@@ -113,10 +147,13 @@ function loadMainApp(): void {
 }
 
 function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy/rpc").EnvelopeTransport } {
+  const WIDTH = 1200;
+  const HEIGHT = 800;
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: WIDTH,
+    height: HEIGHT,
     show: false,
+    ...mirrorWindowPos(WIDTH, HEIGHT),
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       contextIsolation: true,

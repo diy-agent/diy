@@ -33,10 +33,41 @@ const TaskStateSchema = z.enum([
 ]);
 
 const StatusDataUri = z.object({ status: z.string(), data: z.object({ uri: z.string() }) });
-const StatusDataPath = z.object({ status: z.string(), data: z.object({ path: z.string() }) });
+const StatusDataId = z.object({ status: z.string(), data: z.object({ id: z.string() }) });
 const StatusOk = z.object({ status: z.string() });
 
 const MessageParam = z.object({ role: z.string(), content: z.string() });
+
+/** 任务树节点 schema（递归，供 ui.tree 输出强类型） */
+const TaskNodeSchema: z.ZodType<{
+  kind: "project" | "task";
+  uri?: string;
+  title?: string;
+  state?: string;
+  project?: string;
+  parentUri?: string;
+  detail?: string;
+  body?: string;
+  created?: string;
+  updated?: string;
+  starred: boolean;
+  children: unknown[];
+}> = z.lazy(() =>
+  z.object({
+    kind: z.enum(["project", "task"]),
+    uri: z.string().optional(),
+    title: z.string().optional(),
+    state: TaskStateSchema.optional(),
+    project: z.string().optional(),
+    parentUri: z.string().optional(),
+    detail: z.string().optional(),
+    body: z.string().optional(),
+    created: z.string().optional(),
+    updated: z.string().optional(),
+    starred: z.boolean(),
+    children: z.array(TaskNodeSchema),
+  }),
+);
 
 export const apiDef = RpcSchema.router({
   diy: RpcSchema.group({
@@ -52,7 +83,7 @@ export const apiDef = RpcSchema.router({
             desc: `创建任务`,
             input: {
               title: z.string().min(1, "标题不能为空").max(200).cliArg({ desc: "任务标题" }),
-              subject: z.string().cliArg({ desc: "所属 subject 路径" }),
+              project: z.string().cliArg({ desc: "所属 project id" }),
               parent: z.string().optional().cliOption({ short: "p", desc: "父任务 URI" }),
               detail: z.string().optional().cliOption({ desc: "任务详情" }),
               body: z.string().optional().cliOption({ desc: "任务正文" }),
@@ -62,7 +93,7 @@ export const apiDef = RpcSchema.router({
           list: RpcSchema.unary({
             desc: `列出任务`,
             input: {
-              subject: z.string().optional().cliOption({ short: "s", desc: "按 subject 筛选" }),
+              project: z.string().optional().cliOption({ short: "p", desc: "按 project 筛选" }),
             },
             output: z.object({ status: z.string(), data: z.object({ tasks: z.any() }) }),
           }),
@@ -80,6 +111,15 @@ export const apiDef = RpcSchema.router({
               title: z.string().optional().cliOption({ short: "t", desc: "新标题" }),
               state: TaskStateSchema.optional().cliOption({ desc: "新状态" }),
               detail: z.string().optional().cliOption({ desc: "新详情" }),
+              parent: z.string().optional().cliOption({ desc: "父任务 URI（空字符串=取消父子关系）" }),
+            },
+            output: StatusDataUri,
+          }),
+          move: RpcSchema.unary({
+            desc: `移动任务（改变父级）`,
+            input: {
+              uri: z.string().cliArg({ desc: "任务 URI" }),
+              parent: z.string().cliArg({ desc: "新父任务 URI（空字符串=取消父子关系）" }),
             },
             output: StatusDataUri,
           }),
@@ -107,28 +147,45 @@ export const apiDef = RpcSchema.router({
         },
       }),
 
-      subject: RpcSchema.group({
-        desc: `主题管理`,
+      project: RpcSchema.group({
+        desc: `项目管理`,
         children: {
-          add: RpcSchema.unary({
-            desc: `添加主题`,
+          create: RpcSchema.unary({
+            desc: `创建项目（path 必填，id 自动生成并返回 {id}）`,
             input: {
-              path: z.string().min(1, "路径不能为空").cliArg({ desc: "subject 路径" }),
+              path: z.string().min(1, "path 不能为空").cliArg({ desc: "项目路径（映射到该目录下的 diy.yaml）" }),
               label: z.string().optional().cliOption({ short: "l", desc: "显示名称" }),
+              desc: z.string().optional().cliOption({ desc: "描述" }),
+              state: z.string().optional().cliOption({ desc: "状态" }),
             },
-            output: StatusDataPath,
+            output: StatusDataId,
           }),
           list: RpcSchema.unary({
-            desc: `列出主题`,
+            desc: `列出项目`,
             input: {},
-            output: z.object({ status: z.string(), data: z.object({ subjects: z.any() }) }),
+            output: z.object({
+              status: z.string(),
+              data: z.object({
+                projects: z.array(
+                  z.object({
+                    id: z.string(),
+                    info: z.object({
+                      label: z.string().optional(),
+                      path: z.string().optional(),
+                      desc: z.string().optional(),
+                      state: z.string().optional(),
+                    }),
+                  }),
+                ),
+              }),
+            }),
           }),
           remove: RpcSchema.unary({
-            desc: `删除主题`,
+            desc: `删除项目`,
             input: {
-              path: z.string().cliArg({ desc: "subject 路径" }),
+              id: z.string().cliArg({ desc: "project id" }),
             },
-            output: StatusDataPath,
+            output: StatusDataId,
           }),
         },
       }),
@@ -172,6 +229,19 @@ export const apiDef = RpcSchema.router({
         desc: `按 URI 获取任务（供 renderer 反向调用）`,
         input: { uri: z.string() },
         output: z.any(),
+      }),
+
+      /** 弹出原生目录选择器（供 renderer「选择目录」按钮反向调用；Web/serve 模式无 Electron dialog 时返回 canceled） */
+      pickProjectDirectory: RpcSchema.unary({
+        desc: `弹出原生目录选择器，返回所选路径`,
+        input: {},
+        output: z.object({
+          status: z.string(),
+          data: z.object({
+            canceled: z.boolean(),
+            path: z.string().optional(),
+          }),
+        }),
       }),
 
       agent: RpcSchema.group({
@@ -372,15 +442,15 @@ export const apiDef = RpcSchema.router({
             },
           }),
 
-          /** 渲染任务树文本（反向调 diy.loadTaskTree 取数据） */
+          /** 任务树数据（结构化 JSON，供 CLI 和 UI 共用） */
           tree: RpcSchema.unary({
-            desc: `渲染任务树文本`,
+            desc: `加载任务树（结构化 JSON）`,
             input: {
               all: z.boolean().optional().describe('显示全部任务'),
             },
             output: z.object({
               status: z.string(),
-              data: z.string(),
+              data: z.array(TaskNodeSchema),
             }),
           }),
 
@@ -396,6 +466,22 @@ export const apiDef = RpcSchema.router({
                 memory: z.number(),
               }),
             }),
+          }),
+
+          /** UI 侧项目操作（反向调 diy.project.* + 刷新树 + toast） */
+          project: RpcSchema.group({
+            desc: `项目`,
+            children: {
+              create: RpcSchema.unary({
+                desc: `创建项目（UI 入口，反向调 main + 刷新任务树 + toast）`,
+                input: {
+                  path: z.string().min(1, "path 不能为空").cliArg({ desc: "项目路径" }),
+                  label: z.string().optional().cliOption({ short: "l", desc: "显示名称" }),
+                  desc: z.string().optional().cliOption({ desc: "描述" }),
+                },
+                output: StatusDataId,
+              }),
+            },
           }),
         },
       }),

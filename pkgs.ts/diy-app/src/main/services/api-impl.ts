@@ -10,7 +10,7 @@ import type { ServerBinding } from "@diy/rpc";
 import { ChannelServerBinding } from "@diy/rpc";
 import type { EnvelopeTransport } from "@diy/rpc";
 import * as task from "../core/task";
-import * as subject from "../core/subject";
+import * as project from "../core/project";
 import * as state from "../core/state";
 import * as taskTree from "../core/task-tree";
 import * as health from "./health";
@@ -51,7 +51,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { status: "ok", data: { uri: task.createTask(input as any) } };
   });
   binding.on(app.task.list, async ({ input }) => {
-    return { status: "ok", data: { tasks: task.listTasks(input.subject) } };
+    return { status: "ok", data: { tasks: task.listTasks(input.project) } };
   });
   binding.on(app.task.show, async ({ input }) => {
     const t = state.getTask(input.uri);
@@ -67,6 +67,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
     task.updateTask(uri, filtered);
     return { status: "ok", data: { uri } };
   });
+  binding.on(app.task.move, async ({ input }) => {
+    task.moveTask(input.uri, input.parent);
+    return { status: "ok", data: { uri: input.uri } };
+  });
   binding.on(app.task.delete, async ({ input }) => {
     task.deleteTask(input.uri);
     return { status: "ok", data: { uri: input.uri } };
@@ -80,17 +84,21 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { status: "ok", data: { uri: input.uri, starred: false } };
   });
 
-  // ── subject ──
-  binding.on(app.subject.add, async ({ input }) => {
-    subject.addSubject(input.path, input.label);
-    return { status: "ok", data: { path: input.path } };
+  // ── project ──
+  binding.on(app.project.create, async ({ input }) => {
+    const id = project.createProject(input.path, {
+      label: input.label,
+      desc: input.desc,
+      state: input.state,
+    });
+    return { status: "ok", data: { id } };
   });
-  binding.on(app.subject.list, async () => {
-    return { status: "ok", data: { subjects: subject.listSubjects() } };
+  binding.on(app.project.list, async () => {
+    return { status: "ok", data: { projects: project.listProjects() } };
   });
-  binding.on(app.subject.remove, async ({ input }) => {
-    subject.removeSubject(input.path);
-    return { status: "ok", data: { path: input.path } };
+  binding.on(app.project.remove, async ({ input }) => {
+    project.removeProject(input.id);
+    return { status: "ok", data: { id: input.id } };
   });
 
   // ── getAppStatus（供 renderer diy.ui.status 反向调用）──
@@ -123,6 +131,26 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
   binding.on(app.getTask, async ({ input }) => {
     return state.getTask(input.uri);
+  });
+
+  // ── pickProjectDirectory（renderer「选择目录」按钮反向调用）──
+  binding.on(app.pickProjectDirectory, async () => {
+    // dialog 是 Electron main 专属；serve(Web) 模式无 dialog，返回 canceled
+    try {
+      const { dialog } = await import("electron");
+      const r = await dialog.showOpenDialog({
+        title: "选择项目目录",
+        properties: ["openDirectory", "createDirectory"],
+      });
+      const path = r.filePaths?.[0];
+      if (r.canceled || !path) {
+        return { status: "ok", data: { canceled: true } };
+      }
+      return { status: "ok", data: { canceled: false, path } };
+    } catch (err) {
+      console.error(`[pickProjectDirectory] 打开目录选择器失败: ${err}`);
+      return { status: "ok", data: { canceled: true } };
+    }
   });
 
   // ── agent ──

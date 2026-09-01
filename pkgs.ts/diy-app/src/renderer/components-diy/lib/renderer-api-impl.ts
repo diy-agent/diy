@@ -3,7 +3,7 @@ import { ChannelServerBinding } from '@diy/rpc';
 import { getRendererActions } from './renderer-actions';
 import { apiDef } from '../../../main/services/api-def';
 import { diyService } from './rpc';
-import { renderTreeText, type TaskNode } from '../../../main/core/tree-format';
+import { createProjectViaUi } from './create-project';
 
 /**
  * renderer-api-impl.ts — Renderer 侧 RPC handler 绑定（handle 分离）
@@ -64,16 +64,22 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     return { status: 'ok' };
   });
 
-  // diy.ui.tree — 反向调 main 的 diy.loadTaskTree 取数据，本地渲染文本
+  // diy.ui.tree — 反向调 main 的 diy.loadTaskTree 取结构化数据
   binding.on(ui.tree, async ({ input }) => {
-    const nodes = (await diyService.diy.loadTaskTree({ allTasks: input.all ?? false })) as TaskNode[];
-    return { status: 'ok', data: renderTreeText(nodes) };
+    const nodes = await diyService.diy.loadTaskTree({ allTasks: input.all ?? false });
+    return { status: 'ok', data: nodes };
   });
 
   // diy.ui.status — 进程数据反向调 main 的 diy.getAppStatus
   binding.on(ui.status, async () => {
     const s = await diyService.diy.getAppStatus({});
     return { status: s.status, data: s.data };
+  });
+
+  // diy.ui.project.create — 与 UI「创建项目」按钮共用同一入口
+  binding.on(ui.project.create, async ({ input }) => {
+    const id = await createProjectViaUi(input.path, input.label, input.desc);
+    return { status: 'ok', data: { id } };
   });
 
   return binding;

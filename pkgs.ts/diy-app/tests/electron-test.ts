@@ -6,6 +6,7 @@
 // 依赖：已构建产物（out/main + out/preload + out/renderer），由 npm run build 保证。
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { connect, type ClientHttp2Session } from "node:http2";
 import { mkdtempSync, symlinkSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
@@ -32,6 +33,39 @@ function waitForPort(home: string, timeoutMs = 30000): Promise<number> {
     };
     poll();
   });
+}
+
+/** 就绪探测：HTTP/2 连 port 发一次 diy.doctor，直到可服务或超时。
+ *  消化 app.port 文件出现但 RPC handler 尚未完全就绪、以及 HTTP/2 首连偶发失败的时序。
+ */
+function waitForRpcReady(port: number, timeoutMs = 15000): Promise<void> {
+  const start = Date.now();
+  const tryOnce = (): Promise<boolean> =>
+    new Promise((resolve) => {
+      const client: ClientHttp2Session = connect(`http://127.0.0.1:${port}`);
+      let settled = false;
+      const finish = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        client.destroy();
+        resolve(ok);
+      };
+      client.on("error", () => finish(false));
+      const req = client.request({ ":path": "/diy.doctor", ":method": "GET" });
+      req.on("response", () => finish(true));
+      req.on("error", () => finish(false));
+      req.end();
+      setTimeout(() => finish(false), 1000);
+    });
+
+  const loop = async () => {
+    for (;;) {
+      if (await tryOnce()) return;
+      if (Date.now() - start > timeoutMs) throw new Error(`RPC 就绪探测超时（port ${port}，${timeoutMs}ms）`);
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  };
+  return loop();
 }
 
 /** 隔离 HOME：临时目录 + symlink 必要配置（不写坏用户数据） */
@@ -68,7 +102,7 @@ export interface ElectronTest {
  */
 export async function startElectronTest(): Promise<ElectronTest> {
   const home = makeIsolatedHome();
-  const env = { ...process.env, HOME: home, DIY_HOME: home };
+  const env = { ...process.env, HOME: home, DIY_HOME: home, DIY_MIRROR_DISPLAY: "1" };
   const appDir = join(__dirname, "..");
 
   const proc: ChildProcess = spawn(String(electronPath), ["out/main/index.mjs"], {
@@ -79,6 +113,8 @@ export async function startElectronTest(): Promise<ElectronTest> {
 
   try {
     const port = await waitForPort(home);
+    // 端口文件出现后再等 RPC 真正可服务，避免首条 CLI 命令偶发空响应
+    await waitForRpcReady(port);
     return {
       home,
       port,
