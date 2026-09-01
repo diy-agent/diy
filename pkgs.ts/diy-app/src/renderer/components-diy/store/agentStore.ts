@@ -16,7 +16,7 @@ interface AgentState {
 
   loadModels: () => Promise<void>;
   setModel: (id: string) => void;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (taskUri: string, content: string) => Promise<void>;
   clearChat: () => void;
 }
 
@@ -39,7 +39,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   setModel: (id) => set({ activeModel: id }),
 
-  sendMessage: async (content) => {
+  sendMessage: async (taskUri: string, content: string) => {
     const { activeModel, messages } = get();
     if (!activeModel) return;
 
@@ -49,6 +49,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
     try {
       const handle = await diyService.diy.agent.chatStream({
+        taskUri,
         model: activeModel,
         messages: updated.map((m) => ({ role: m.role, content: m.content })),
       });

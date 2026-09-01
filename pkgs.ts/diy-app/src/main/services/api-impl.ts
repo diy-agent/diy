@@ -19,13 +19,13 @@ import { syncRefs } from "./ref-sync";
 import { addSource, removeSource } from "./ref-config";
 import { apiDef } from "./api-def";
 
-let _agentClient: any = null;
-async function getAgentClient() {
-  if (!_agentClient) {
-    const { AcpAgentClient } = await import("./acp-agent");
-    _agentClient = new AcpAgentClient();
+let _sessionPool: any = null;
+async function getSessionPool() {
+  if (!_sessionPool) {
+    const { AcpSessionPool } = await import("./acp-sessions");
+    _sessionPool = new AcpSessionPool();
   }
-  return _agentClient;
+  return _sessionPool;
 }
 let _llmProxyInstance: any = null;
 async function getLlmProxy() {
@@ -155,24 +155,25 @@ export function bindAppHandlers(binding: ServerBinding): void {
 
   // ── agent ──
   binding.on(app.agent.chat, async ({ input }) => {
-    const client = await getAgentClient();
-    const result = await client.chat(input.model, input.messages);
+    const pool = await getSessionPool();
+    const result = await pool.chat(input.taskUri, input.model, input.messages);
     return { role: result.role, content: result.content };
   });
   binding.on(app.agent.chatStream, async function* ({ input }) {
-    const client = await getAgentClient();
-    for await (const delta of client.streamChat(input.model, input.messages)) {
+    const pool = await getSessionPool();
+    for await (const delta of pool.streamChat(input.taskUri, input.model, input.messages)) {
       yield delta;
     }
   });
-  binding.on(app.agent.listModels, () => [
-    { id: "llama3.2", name: "Llama 3.2" },
-    { id: "hermes", name: "Hermes Agent" },
-  ]);
+  binding.on(app.agent.listModels, async () => {
+    const pool = await getSessionPool();
+    const models = await pool.listModels();
+    return models.map((m: { modelId: string; name?: string }) => ({ id: m.modelId, name: m.name ?? m.modelId }));
+  });
   binding.on(app.agent.status, async ({ input }) => {
-    const client = await getAgentClient();
-    const s = await client.getAgentStatus(input.agentId);
-    return { agentId: s.agentId, state: s.state, model: s.model };
+    const pool = await getSessionPool();
+    const s = await pool.status(input.taskUri);
+    return { taskUri: s.taskUri, state: s.state, model: s.model };
   });
 
   // ── llmProxy ──

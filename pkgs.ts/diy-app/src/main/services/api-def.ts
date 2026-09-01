@@ -248,16 +248,18 @@ export const apiDef = RpcSchema.router({
         desc: `Agent 管理`,
         children: {
           chat: RpcSchema.unary({
-            desc: `与模型对话`,
+            desc: `与模型对话（task 级：每 task 独立 ACP session）`,
             input: {
+              taskUri: z.string().describe('任务 URI（决定所属 project/session）'),
               model: z.string().cliArg({ desc: "模型名称" }),
               messages: z.array(MessageParam).cliOption({ desc: "消息数组 JSON" }),
             },
             output: z.object({ role: z.string(), content: z.string() }),
           }),
           chatStream: RpcSchema.serverStream({
-            desc: `流式对话`,
+            desc: `流式对话（task 级：每 task 独立 ACP session）`,
             input: {
+              taskUri: z.string().describe('任务 URI（决定所属 project/session）'),
               model: z.string(),
               messages: z.array(MessageParam),
             },
@@ -269,11 +271,11 @@ export const apiDef = RpcSchema.router({
             output: z.array(z.object({ id: z.string(), name: z.string() })),
           }),
           status: RpcSchema.unary({
-            desc: `查询 Agent 状态`,
+            desc: `查询任务会话状态`,
             input: {
-              agentId: z.string().cliArg({ desc: "Agent ID" }),
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
             },
-            output: z.object({ agentId: z.string(), state: z.string(), model: z.string() }),
+            output: z.object({ taskUri: z.string(), state: z.string(), model: z.string() }),
           }),
         },
       }),

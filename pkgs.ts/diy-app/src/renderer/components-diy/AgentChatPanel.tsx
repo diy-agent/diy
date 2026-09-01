@@ -1,6 +1,7 @@
 // src/renderer/components-diy/AgentChatPanel.tsx
 import { useEffect, useRef } from "react";
 import { useAgentStore } from "./store/agentStore";
+import { useTaskStore } from "./store/taskStore";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -17,6 +18,7 @@ export function AgentChatPanel() {
     sendMessage,
     clearChat,
   } = useAgentStore();
+  const selectedUri = useTaskStore((s) => s.selectedUri);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -33,7 +35,8 @@ export function AgentChatPanel() {
     const text = el.value.trim();
     if (!text) return;
     el.value = "";
-    sendMessage(text);
+    if (!selectedUri) return; // 未选中任务时不发送（task 级对话）
+    sendMessage(selectedUri, text);
   };
 
   return (
