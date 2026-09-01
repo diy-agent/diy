@@ -67,6 +67,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
     task.updateTask(uri, filtered);
     return { status: "ok", data: { uri } };
   });
+  binding.on(app.task.move, async ({ input }) => {
+    task.moveTask(input.uri, input.parent);
+    return { status: "ok", data: { uri: input.uri } };
+  });
   binding.on(app.task.delete, async ({ input }) => {
     task.deleteTask(input.uri);
     return { status: "ok", data: { uri: input.uri } };

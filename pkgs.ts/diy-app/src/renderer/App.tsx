@@ -57,7 +57,7 @@ function MainApp() {
   return (
     <>
       <SidebarProvider defaultOpen={true}>
-        <div className="h-screen flex bg-background text-foreground">
+        <div className="w-screen h-screen flex bg-background text-foreground">
           <AppSidebar currentPage={currentPage} onPageChange={setCurrentPage} />
 
           <SidebarInset>

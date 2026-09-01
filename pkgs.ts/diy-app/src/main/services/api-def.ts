@@ -115,6 +115,14 @@ export const apiDef = RpcSchema.router({
             },
             output: StatusDataUri,
           }),
+          move: RpcSchema.unary({
+            desc: `移动任务（改变父级）`,
+            input: {
+              uri: z.string().cliArg({ desc: "任务 URI" }),
+              parent: z.string().cliArg({ desc: "新父任务 URI（空字符串=取消父子关系）" }),
+            },
+            output: StatusDataUri,
+          }),
           delete: RpcSchema.unary({
             desc: `删除任务`,
             input: {

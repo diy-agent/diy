@@ -15,6 +15,7 @@ import {
   projectsRoot,
   projectDir,
   nextNumericId,
+  projectFromUri,
 } from "./state";
 import type { TaskMeta } from "./state";
 import { projectExists } from "./project";
@@ -183,15 +184,41 @@ export function updateTask(uri: string, changes: UpdateTaskChanges): void {
   }
 
   const now = new Date().toISOString();
-  // parent: 空字符串=取消父子关系，undefined=不改
-  const newParent = parsed.data.parent === "" ? undefined : parsed.data.parent;
+  // 父字段三态：显式取消(空串→undefined 父)、设新父、未指定(undefined→保持)
+  let newParent: string | undefined;
+  if (changes.parent === "") {
+    newParent = undefined; // 显式取消父子关系
+  } else if (changes.parent !== undefined) {
+    newParent = parsed.data.parent;
+  }
+  if (changes.parent !== undefined) {
+    // 唯一守卫点：父任务存在 + 同项目 + 防环（不能挂到自己子孙下，否则父子成环）
+    const parentProj = newParent ? projectFromUri(newParent) : "";
+    const uriProj = projectFromUri(uri);
+    if (newParent && uriProj && parentProj && uriProj !== parentProj) {
+      throw new Error(`只能在同一项目内设置父子关系 (${uriProj} ≠ ${parentProj})`);
+    }
+    if (newParent && !getTask(newParent)) throw new Error(`父任务 ${newParent} 不存在`);
+    if (newParent) {
+      let cur = newParent;
+      const seen = new Set<string>();
+      while (cur) {
+        if (seen.has(cur)) break; // 防御既有环
+        seen.add(cur);
+        if (cur === uri) throw new Error("不能设置自己的子任务为父级（会形成循环）");
+        const t = getTask(cur);
+        cur = t?.parent ?? "";
+      }
+    }
+  }
   const updated: TaskMeta = {
     title: parsed.data.title ?? existing.title,
     state: (parsed.data.state ?? existing.state) as TaskMeta["state"],
     detail: parsed.data.detail ?? existing.detail,
     body: parsed.data.body ?? existing.body,
     project: existing.project,
-    parent: newParent ?? existing.parent,
+    // 未指定 parent 保持原值；指定了（含空串取消）用 newParent 结果
+    parent: changes.parent === undefined ? existing.parent : newParent,
     created: existing.created,
     updated: now,
   };
@@ -199,6 +226,20 @@ export function updateTask(uri: string, changes: UpdateTaskChanges): void {
   const { body: b, ...front } = updated;
   const frontStr = yaml.dump(front, { indent: 2, noRefs: true });
   writeFileSync(taskFilePath(uri), `${FM_SEP}\n${frontStr}${FM_SEP}\n${b ?? ""}`, "utf-8");
+}
+
+// ═══════════════════════════════════════
+// 移动任务（改变父级）
+// ═══════════════════════════════════════
+
+/**
+ * 移动任务到新父级。与编辑隔离：语义上只改变父子关系，
+ * 全部校验（父存在 / 同项目 / 防环）收敛在 updateTask 内。
+ * parent 为空字符串 = 取消父子关系（提升为顶级）。
+ */
+export function moveTask(uri: string, parent: string): void {
+  if (!getTask(uri)) throw new Error(`任务 ${uri} 不存在`);
+  updateTask(uri, { parent });
 }
 
 // ═══════════════════════════════════════

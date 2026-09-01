@@ -107,6 +107,75 @@ describe("task", () => {
     await cleanupProj(pid);
   });
 
+  it("move — 改变父级后树反映新层级（移动已挂在父子关系下的任务）", async () => {
+    const pid = await freshProj("m1");
+    await fx.sh.run(`./diy.sh task create 祖父 ${pid}`);
+    const grand = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 父 ${pid} --parent ${grand}`);
+    const parent = `projects/${pid}/tasks/2`;
+    await fx.sh.run(`./diy.sh task create 子 ${pid} --parent ${parent}`);
+    const child = `projects/${pid}/tasks/3`;
+
+    // 把「父」从「祖父」移到「子」下 → 会形成环，move 应拒绝（CLI 抛错走 stderr）
+    await fx.sh.assertSession(`
+      $! ./diy.sh task move ${parent} ${child}
+      *不能设置自己的子任务为父级*
+    `);
+    // 把「子」从「父」移到「祖父」下 → 合法，子变父的兄弟
+    await fx.sh.assertJson(`./diy.sh task move ${child} ${grand}`, {
+      ok: true,
+      data: { status: "ok", data: { uri: child } },
+    });
+    // 移动后 show 反映新父级（chip 挂到祖父下）
+    await fx.sh.assertJson(`./diy.sh task show ${child}`, {
+      ok: true,
+      data: { status: "ok", data: { uri: child, title: "子", state: "pending", project: pid, parent: grand } },
+    });
+    await cleanupProj(pid);
+  });
+
+  it("move — 取消父子关系（空 target）提升为顶级", async () => {
+    const pid = await freshProj("m2");
+    await fx.sh.run(`./diy.sh task create 根 ${pid}`);
+    const root = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 子 ${pid} --parent ${root}`);
+    const child = `projects/${pid}/tasks/2`;
+
+    // 用空字符串 target 取消父子
+    await fx.sh.assertJson(`./diy.sh task move ${child} ''`, {
+      ok: true,
+      data: { status: "ok", data: { uri: child } },
+    });
+    // 取消后 show 不再含 parent 字段（提升为顶级）
+    await fx.sh.assertJson(`./diy.sh task show ${child}`, {
+      ok: true,
+      data: { status: "ok", data: { uri: child, title: "子", state: "pending", project: pid, body: "" } },
+    });
+    await cleanupProj(pid);
+  });
+
+  it("move — 目标不存在/跨项目/自环均拒绝", async () => {
+    const pid = await freshProj("m3");
+    await fx.sh.run(`./diy.sh task create 任务 ${pid}`);
+    const uri = `projects/${pid}/tasks/1`;
+
+    await fx.sh.assertSession(`
+      $! ./diy.sh task move ${uri} projects/${pid}/tasks/999
+      *父任务 projects/${pid}/tasks/999 不存在*
+    `);
+    const cpi = await freshProj("m4");
+    await fx.sh.assertSession(`
+      $! ./diy.sh task move ${uri} projects/${cpi}/tasks/1
+      *只能在同一项目内设置父子关系*
+    `);
+    await fx.sh.assertSession(`
+      $! ./diy.sh task move ${uri} ${uri}
+      *不能设置自己的子任务为父级*
+    `);
+    await cleanupProj(pid);
+    await cleanupProj(cpi);
+  });
+
   it("star/unstar — 关注然后取消", async () => {
     const pid = await freshProj("e");
     await fx.sh.run(`./diy.sh task create 关注 ${pid}`);
