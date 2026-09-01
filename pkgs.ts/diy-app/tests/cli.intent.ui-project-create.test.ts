@@ -34,9 +34,19 @@ afterAll(async () => {
   await fx?.electron?.stop();
 });
 
+/** 取 UI 树结构；ui.tree 返回结构化节点数组，递归收集可读文本供断言 */
+function collectText(nodes: any[], acc: string[] = []): string[] {
+  for (const n of nodes ?? []) {
+    if (n?.title) acc.push(String(n.title));
+    if (n?.uri) acc.push(String(n.uri));
+    if (n?.children) collectText(n.children, acc);
+  }
+  return acc;
+}
+
 async function treeText(): Promise<string> {
   const res = await fx.sh.getJson("./diy.sh ui tree");
-  return String((res.data as any)?.data ?? "");
+  return collectText((res.data as any)?.data ?? []).join("\n");
 }
 
 describe("ui project create", () => {

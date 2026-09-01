@@ -34,10 +34,24 @@ afterAll(async () => {
   await fx?.electron?.stop();
 });
 
-/** 取 UI 树文本（renderer 域命令，反向调 main 取数据再渲染） */
-async function treeText(): Promise<string> {
+/** 取 UI 树结构（renderer 域命令，反向调 main 取数据）；ui.tree 返回结构化节点数组而非文本 */
+async function treeData(): Promise<any[]> {
   const res = await fx.sh.getJson("./diy.sh ui tree");
-  return String((res.data as any)?.data ?? "");
+  return (res.data as any)?.data ?? [];
+}
+
+/** 递归收集树中所有可读文本（node.title + uri），供断言「某标签在 UI 树可见」 */
+function collectText(nodes: any[], acc: string[] = []): string[] {
+  for (const n of nodes ?? []) {
+    if (n?.title) acc.push(String(n.title));
+    if (n?.uri) acc.push(String(n.uri));
+    if (n?.children) collectText(n.children, acc);
+  }
+  return acc;
+}
+
+async function treeText(): Promise<string> {
+  return collectText(await treeData()).join("\n");
 }
 
 describe("ui display — core 创建的数据在 UI 树可见", () => {
