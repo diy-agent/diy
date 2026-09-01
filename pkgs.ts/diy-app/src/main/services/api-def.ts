@@ -483,6 +483,22 @@ export const apiDef = RpcSchema.router({
               }),
             },
           }),
+
+          /** UI 侧任务操作（反向调 diy.task.* + 刷新树 + toast） */
+          task: RpcSchema.group({
+            desc: `任务`,
+            children: {
+              create: RpcSchema.unary({
+                desc: `创建任务（UI 入口，反向调 main + 刷新任务树 + toast）`,
+                input: {
+                  title: z.string().min(1, "标题不能为空").max(200).cliArg({ desc: "任务标题" }),
+                  project: z.string().cliArg({ desc: "所属 project id" }),
+                  parent: z.string().optional().cliOption({ short: "p", desc: "父任务 URI" }),
+                },
+                output: StatusDataUri,
+              }),
+            },
+          }),
         },
       }),
     },

@@ -4,6 +4,7 @@ import { getRendererActions } from './renderer-actions';
 import { apiDef } from '../../../main/services/api-def';
 import { diyService } from './rpc';
 import { createProjectViaUi } from './create-project';
+import { createTaskViaUi } from './create-task';
 
 /**
  * renderer-api-impl.ts — Renderer 侧 RPC handler 绑定（handle 分离）
@@ -80,6 +81,12 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
   binding.on(ui.project.create, async ({ input }) => {
     const id = await createProjectViaUi(input.path, input.label, input.desc);
     return { status: 'ok', data: { id } };
+  });
+
+  // diy.ui.task.create — 与 UI「新增任务」按钮（CreateTaskSheet）共用同一入口
+  binding.on(ui.task.create, async ({ input }) => {
+    const uri = await createTaskViaUi(input.title, input.project, input.parent);
+    return { status: 'ok', data: { uri } };
   });
 
   return binding;

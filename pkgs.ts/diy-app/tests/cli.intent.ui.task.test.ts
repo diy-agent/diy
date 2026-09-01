@@ -1,10 +1,14 @@
-// tests/cli.intent.ui-display.test.ts
+// tests/cli.intent.ui.task.test.ts
 // ═══════════════════════════════════════════════════════════════
-// 🎯 cli→ui 显示链路验证 — core 创建的数据经 UI 取数路径可见
+// 🎯 task 创建链路验证 — 走 renderer 真实入口（CLI 驱动，同人类点按钮一套逻辑）
 //
-// 走法：diy <创建>（main/core 写数据）→ diy ui tree（CLI → renderer 反向调 main
-//   取树再渲染文本），验证创建的项目/任务出现在 UI 视图里。
-// 每条用例自建自删，只断言自己那一条数据。
+// 全部通过 CLI 的 diy.ui.* 驱动（renderer 域），模拟人类点 app 的操作序列：
+//   1. diy ui project create → 建项目（= 点「创建项目」按钮）
+//   2. diy ui task create     → 建任务（= 点项目行「+」按钮 → 填表单 → 提交）
+//   3. diy ui tree            → 取 UI 树，验证新任务出现在对应项目下
+//
+// 不用 diy task/project create（core 逻辑），保证走的是 renderer 入口——
+// 同一套代码既可被 CLI 自动测试，也可作为 agent 实验性探测的入口。
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
@@ -34,47 +38,79 @@ afterAll(async () => {
   await fx?.electron?.stop();
 });
 
-/** 取 UI 树结构（renderer 域命令，反向调 main 取数据）；ui.tree 返回结构化节点数组而非文本 */
+/** 取 UI 树结构（renderer 域命令，反向调 main）；ui.tree 返回结构化节点数组 */
 async function treeData(): Promise<any[]> {
   const res = await fx.sh.getJson("./diy.sh ui tree");
   return (res.data as any)?.data ?? [];
 }
 
-/** 递归收集树中所有可读文本（node.title + uri），供断言「某标签在 UI 树可见」 */
-function collectText(nodes: any[], acc: string[] = []): string[] {
-  for (const n of nodes ?? []) {
-    if (n?.title) acc.push(String(n.title));
-    if (n?.uri) acc.push(String(n.uri));
-    if (n?.children) collectText(n.children, acc);
-  }
-  return acc;
+/** 建一个项目（走 renderer 入口，返回 id） */
+async function createProjectViaUi(label: string): Promise<string> {
+  const repo = `${fx.HOME}/ui-${label}`;
+  const r = await fx.sh.getJson(`./diy.sh ui project create ${repo} --label ${label}`);
+  return String((r.data as any)?.data?.id);
 }
 
-async function treeText(): Promise<string> {
-  return collectText(await treeData()).join("\n");
+/** 清理：走 main 直删项目（ui 域无删除入口） */
+async function cleanupProj(pid: string): Promise<void> {
+  await fx.sh.run(`./diy.sh project remove ${pid}`);
 }
 
-describe("ui display — core 创建的数据在 UI 树可见", () => {
-  it("project create 后，ui tree 显示该项目节点", async () => {
-    const repo = `${fx.HOME}/ui-p`;
-    const r = await fx.sh.getJson(`./diy.sh project create ${repo} --label UI项目`);
-    const id = String((r.data as any)?.data?.id);
+/** 找某项目节点的直接子任务 title */
+function childTitles(pid: string, nodes: any[]): string[] {
+  const proj = nodes.find((n) => n?.project === pid);
+  return (proj?.children ?? []).map((c: any) => c?.title ?? "");
+}
 
-    expect(await treeText()).toContain("UI项目");
+describe("ui task — 经 renderer 入口创建任务（CLI 驱动，同人类点按钮一套逻辑）", () => {
+  it("在已建项目下，经 ui 入口创建任务 → 树直接子级可见", async () => {
+    // 1. 建项目（渲染入口）
+    const pid = await createProjectViaUi("任务项目A");
+    expect(pid).toMatch(/^\d+$/);
 
-    await fx.sh.run(`./diy.sh project remove ${id}`);
+    // 2. 建任务（渲染入口，= 点「+」填表提交）
+    const t = await fx.sh.getJson(`./diy.sh ui task create 界面任务 ${pid}`);
+    const uri = String((t.data as any)?.data?.uri);
+    expect(uri).toBe(`projects/${pid}/tasks/1`);
+
+    // 3. 验证树：任务出现在该项目节点的直接子级
+    const titles = childTitles(pid, await treeData());
+    expect(titles).toContain("界面任务");
+
+    await cleanupProj(pid);
   });
 
-  it("project + task create 后，ui tree 显示项目及其任务", async () => {
-    const repo = `${fx.HOME}/ui-t`;
-    const r = await fx.sh.getJson(`./diy.sh project create ${repo} --label UI任务项目`);
-    const pid = String((r.data as any)?.data?.id);
-    await fx.sh.run(`./diy.sh task create 界面可见任务 ${pid}`);
+  it("再建任务 → id 自增且同一项目直接子级下", async () => {
+    const pid = await createProjectViaUi("任务项目B");
+    expect(pid).toMatch(/^\d+$/);
 
-    const text = await treeText();
-    expect(text).toContain("UI任务项目");
-    expect(text).toContain("界面可见任务");
+    await fx.sh.getJson(`./diy.sh ui task create 首任务 ${pid}`);
+    await fx.sh.getJson(`./diy.sh ui task create 次任务 ${pid}`);
 
-    await fx.sh.run(`./diy.sh project remove ${pid}`);
+    const titles = childTitles(pid, await treeData());
+    expect(titles).toEqual(["首任务", "次任务"]);
+
+    await cleanupProj(pid);
+  });
+
+  it("建子任务（--parent）→ 挂到父任务下而非项目直接子级", async () => {
+    const pid = await createProjectViaUi("任务项目C");
+    expect(pid).toMatch(/^\d+$/);
+    const uri = `projects/${pid}/tasks/1`;
+
+    // 建父任务 + 子任务
+    await fx.sh.getJson(`./diy.sh ui task create 父任务 ${pid}`);
+    const sub = await fx.sh.getJson(`./diy.sh ui task create 子任务 ${pid} --parent ${uri}`);
+
+    // 验证任务出现在父任务 children 下，而非项目直接子级
+    const nodes = await treeData();
+    const proj = nodes.find((n) => n?.project === pid);
+    const parentNode = proj?.children?.find((c: any) => c?.uri === uri);
+    const subTitles = (parentNode?.children ?? []).map((c: any) => c?.title ?? "");
+    expect(subTitles).toContain("子任务");
+    // 项目直接子级只有父任务
+    expect(childTitles(pid, nodes)).toEqual(["父任务"]);
+
+    await cleanupProj(pid);
   });
 });
