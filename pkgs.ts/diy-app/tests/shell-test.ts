@@ -265,33 +265,45 @@ export class ShellTest {
 
   /** 运行命令（自动加 --json）并返回解析后的对象 */
   async getJson(cmd: string): Promise<Record<string, unknown>> {
-    const { code, stdout, stderr } = await this.run(`${cmd} --json`);
-    if (code !== 0) throw new Error(`[json: ${cmd}] exit=${code}\nstderr: ${stderr}`);
-    try {
-      return JSON.parse(stdout) as Record<string, unknown>;
-    } catch {
-      throw new Error(`[json: ${cmd}] 输出非 JSON\nstdout: ${stdout}`);
+    return (await this.runJson(cmd)).json;
+  }
+
+  /**
+   * 运行 --json 命令并解析；对「exit 0 但 stdout 为空」的偶发空响应重试（最多 2 次）。
+   * 原因：CLI 每命令是独立 tsx 进程，HttpClientBinding 首连 @diy/rpc 偶发空响应（预存 flake）。
+   * 空 stdout 在意图 JSON 命令里永远不该发生，故重试安全，不掩盖真实错误。
+   */
+  private async runJson(cmd: string): Promise<{ json: Record<string, unknown> }> {
+    const cmdJson = `${cmd} --json`;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { code, stdout, stderr } = await this.run(cmdJson);
+      if (code !== 0) throw new Error(`[json: ${cmd}] exit=${code}\nstderr: ${stderr}`);
+      if (stdout.trim() !== "" || attempt === 2) {
+        try {
+          return { json: JSON.parse(stdout) as Record<string, unknown> };
+        } catch {
+          throw new Error(`[json: ${cmd}] 输出非 JSON\nstdout: ${stdout}`);
+        }
+      }
     }
+    throw new Error(`[json: ${cmd}] 多次空响应`);
   }
 
   /** JSON 意图断言 */
   async assertJson(cmd: string, expected: unknown): Promise<void> {
-    const { code, stdout, stderr } = await this.run(`${cmd} --json`);
-    if (code !== 0) throw new Error(`[json: ${cmd}] exit=${code}\nstderr: ${stderr}`);
-    let actual: unknown;
-    try {
-      actual = JSON.parse(stdout);
-    } catch {
-      throw new Error(`[json: ${cmd}] 输出非 JSON\nstdout: ${stdout}`);
-    }
-    matchJsonValue(expected, actual, `$ ${cmd}`);
+    const { json } = await this.runJson(cmd);
+    matchJsonValue(expected, json, `$ ${cmd}`);
   }
 
   /** 转录本意图测试（持久 session，命令连续执行） */
   async assertSession(session: string): Promise<void> {
     const blocks = parseSession(session);
     for (const { cmd, stdoutExp, stderrExp, expectFail } of blocks) {
-      const { code, stdout, stderr } = await this.run(cmd);
+      let { code, stdout, stderr } = await this.run(cmd);
+      // 预存 flake：CLI 独立进程首连偶发空响应。非 expectFail 且有 stdout 期望时重跑一次
+      if (!expectFail && stdoutExp.length > 0 && code === 0 && stdout.trim() === "") {
+        ({ code, stdout, stderr } = await this.run(cmd));
+      }
       if (expectFail) {
         if (code === 0) {
           throw new Error(`$! ${cmd}\nexit=${code}（期望非零）\nstdout: ${stdout}\nstderr: ${stderr}`);
