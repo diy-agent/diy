@@ -1,19 +1,19 @@
 import { defineConfig } from "vite";
-import solid from "vite-plugin-solid";
+import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
 
 export default defineConfig({
-  root: "src/renderer_solid",
+  root: "src/renderer",
   base: "",
   build: {
     outDir: "../../out/renderer",
     emptyOutDir: true,
   },
-  plugins: [solid({ tsconfig: { compilerOptions: { jsx: "preserve", jsxImportSource: "solid-js" } } } as any), tailwindcss()],
+  plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
-      "@": resolve(__dirname, "src/renderer_solid"),
+      "@": resolve(__dirname, "src/renderer"),
     },
   },
 });
