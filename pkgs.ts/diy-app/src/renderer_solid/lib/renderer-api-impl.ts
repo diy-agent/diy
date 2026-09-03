@@ -99,16 +99,29 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
   // diy.ui.inspect — 遍历 DOM 生成无障碍树（agent 了解 UI 全貌的入口）
   binding.on(ui.inspect, async () => {
     const tree = buildA11yTree(document.body);
+    // 剥离内部字段（_count/_visible），保持输出干净
+    const clean = stripInternal(tree);
     return {
       status: "ok",
       data: {
-        tree,
-        stats: { totalNodes: tree._count || 0, visibleNodes: tree._visible || 0 },
+        tree: clean,
+        stats: { totalNodes: tree?._count || 0, visibleNodes: tree?._visible || 0 },
       },
     };
   });
 
   return binding;
+}
+
+/** 递归移除节点上的内部辅助字段（下划线前缀），仅输出对 agent 有用的字段 */
+function stripInternal(node: any): any {
+  if (!node) return null;
+  const clean: any = {};
+  for (const [k, v] of Object.entries(node)) {
+    if (k.startsWith("_")) continue;
+    clean[k] = Array.isArray(v) ? v.map(stripInternal) : v;
+  }
+  return clean;
 }
 
 /**

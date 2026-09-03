@@ -38,6 +38,8 @@ export default function App() {
 
     return (
         <div class="drawer lg:drawer-open">
+            {/* DaisyUI drawer 必须的 checkbox（控制开合，:checked 决定侧栏是否展开） */}
+            <input type="checkbox" id="sidebar-toggle" class="drawer-toggle" />
             {/* 主内容区 */}
             <div class="drawer-content flex flex-col h-screen">
                 {/* 顶栏 */}
