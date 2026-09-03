@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { createSignal, createMemo, onMount, For, Show } from "solid-js";
-import { DragDropProvider, DragOverlay, useDraggable, useDroppable } from "@dnd-kit/solid";
+import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSensor } from "@dnd-kit/solid";
 import { taskStore } from "../store/taskStore";
 import { notificationStore } from "../store/notificationStore";
 import { diyService } from "../lib/rpc";
@@ -92,7 +92,7 @@ export function TaskTree() {
     };
 
     return (
-        <DragDropProvider onDragEnd={handleDragEnd}>
+        <DragDropProvider onDragEnd={handleDragEnd} sensors={[PointerSensor]}>
             <div class="h-full flex flex-col">
                 <div class="flex items-center justify-between px-3 py-1.5 border-b shrink-0">
                     <span class="text-sm font-semibold">任务</span>
