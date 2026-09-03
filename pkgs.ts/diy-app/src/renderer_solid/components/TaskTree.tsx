@@ -146,6 +146,10 @@ export function TaskTree() {
                                                 <span class="truncate cursor-pointer" onClick={() => toggle(row.key)}>
                                                     {row.node.title}
                                                 </span>
+                                                <CreateTaskSheet
+                                                    projectId={row.projectId}
+                                                    projectLabel={row.node.title ?? ""}
+                                                />
                                             </span>
                                         </td>
                                         <td class="font-mono text-xs opacity-60">{row.node.project}</td>
