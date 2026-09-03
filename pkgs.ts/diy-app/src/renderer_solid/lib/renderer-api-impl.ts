@@ -96,5 +96,97 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     return { status: "ok", data: { uri } };
   });
 
+  // diy.ui.inspect — 遍历 DOM 生成无障碍树（agent 了解 UI 全貌的入口）
+  binding.on(ui.inspect, async () => {
+    const tree = buildA11yTree(document.body);
+    return {
+      status: "ok",
+      data: {
+        tree,
+        stats: { totalNodes: tree._count || 0, visibleNodes: tree._visible || 0 },
+      },
+    };
+  });
+
   return binding;
+}
+
+/**
+ * DOM → 无障碍树：递归遍历，提取 role / text / 位置 / 可见性。
+ * 返回结构化对象供 agent 消费：{ role, text, children[], rect, visible }
+ */
+function buildA11yTree(el: Element): any {
+  const style = getComputedStyle(el);
+  const isHidden = style.display === "none" || style.visibility === "hidden" || style.opacity === "0";
+  if (isHidden) return null;
+
+  const tag = el.tagName.toLowerCase();
+  const role =
+    el.getAttribute("role") ||
+    (tag === "button" ? "button" : tag === "input" || tag === "textarea" || tag === "select" ? "input" :
+     tag === "table" ? "table" : tag === "tr" ? "row" : tag === "td" || tag === "th" ? "cell" :
+     tag === "h1" || tag === "h2" || tag === "h3" || tag === "h4" || tag === "h5" || tag === "h6" ? "heading" :
+     tag === "a" ? "link" : tag === "img" ? "img" : tag === "ul" || tag === "ol" ? "list" :
+     tag === "li" ? "listitem" : tag === "nav" ? "navigation" : tag === "main" ? "main" :
+     tag === "header" ? "banner" : tag === "footer" ? "contentinfo" : tag === "aside" ? "complementary" :
+     tag === "dialog" ? "dialog" : tag);
+
+  // 文本内容：只取直接文本节点
+  let text = "";
+  for (const child of el.childNodes) {
+    if (child.nodeType === 3) {
+      const t = child.textContent?.trim() || "";
+      if (t) text += (text ? " " : "") + t;
+    }
+  }
+  // aria-label / title / placeholder 也取
+  const ariaLabel = el.getAttribute("aria-label") || "";
+  const title = el.getAttribute("title") || "";
+  const placeholder = (el as HTMLInputElement).placeholder || "";
+  if (!text && ariaLabel) text = ariaLabel;
+  else if (!text && title) text = title;
+  else if (!text && placeholder) text = `[placeholder: ${placeholder}]`;
+  text = text.substring(0, 80);
+
+  // 输入框的值
+  let value = "";
+  if (tag === "input" || tag === "textarea") {
+    value = (el as HTMLInputElement).value || "";
+    if (value) value = value.substring(0, 50);
+  }
+  if (tag === "select") {
+    const sel = el as HTMLSelectElement;
+    value = sel.options[sel.selectedIndex]?.text || "";
+  }
+
+  // 位置/尺寸
+  const rect = el.getBoundingClientRect();
+
+  // 子节点
+  const children: any[] = [];
+  let count = 1;
+  let visible = 1;
+  for (const child of el.children) {
+    const childTree = buildA11yTree(child);
+    if (childTree) {
+      children.push(childTree);
+      count += childTree._count || 0;
+      visible += childTree._visible || 0;
+    }
+  }
+
+  // 精简：如果 role 是 generic 且无文本无子节点，跳过
+  if (role === "generic" && !text && children.length === 0) return null;
+  // 精简：跳过 InlineTextBox / StaticText 等纯文本包装
+  if (tag === "span" && children.length === 0 && !text) return null;
+
+  const node: any = { role, text };
+  if (value) node.value = value;
+  if (rect.width > 0 && rect.height > 0) {
+    node.rect = { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) };
+  }
+  if (children.length > 0) node.children = children;
+  node._count = count;
+  node._visible = visible;
+  return node;
 }

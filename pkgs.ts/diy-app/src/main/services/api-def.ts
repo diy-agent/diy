@@ -499,6 +499,22 @@ export const apiDef = RpcSchema.router({
               }),
             },
           }),
+
+          /** UI 可见性诊断 — 遍历渲染器 DOM 生成无障碍树（agent 了解 UI 全貌的入口） */
+          inspect: RpcSchema.unary({
+            desc: `UI 诊断：生成当前页面的无障碍树（可见元素 + 角色 + 文本 + 层级）`,
+            input: {},
+            output: z.object({
+              status: z.string(),
+              data: z.object({
+                tree: z.any(),
+                stats: z.object({
+                  totalNodes: z.number(),
+                  visibleNodes: z.number(),
+                }),
+              }),
+            }),
+          }),
         },
       }),
     },
