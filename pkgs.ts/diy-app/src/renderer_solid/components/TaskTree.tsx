@@ -67,24 +67,46 @@ export function TaskTree() {
         if (selectable()[next]) taskStore.selectTask(selectable()[next]);
     };
 
-    // ── dnd-kit/solid 拖拽改父级（与 React dnd-kit 同源）──
+    // ── dnd-kit/solid 拖拽改父级 / 提升层级 ──
     const handleDragEnd = async (event: any) => {
         if (event.operation?.canceled) return;
-        const dragUri = event.operation?.source?.id;
-        const dropUri = event.operation?.target?.id;
+        const dragUri = String(event.operation?.source?.id ?? "");
+        const dropUri = String(event.operation?.target?.id ?? "");
         if (!dragUri || !dropUri || dragUri === dropUri) return;
-        const dragInfo = findTaskProject(taskStore.nodes as any, String(dragUri));
-        const dropInfo = findTaskProject(taskStore.nodes as any, String(dropUri));
-        if (!dragInfo || !dropInfo) return;
+        const dragInfo = findTaskProject(taskStore.nodes as any, dragUri);
+        if (!dragInfo) return;
+
+        // 拖到项目节点(proj:<pid>) → 取消父子层级，提升为该项目的一级任务
+        if (dropUri.startsWith("proj:")) {
+            const projId = dropUri.slice(5);
+            if (dragInfo.project !== projId) {
+                notificationStore.addToast("error", "只能移动到同一项目内");
+                return;
+            }
+            if (!dragInfo.parent) return; // 已是一级任务，无需操作
+            try {
+                await diyService.diy.task.move({ uri: dragUri, parent: "" });
+                await taskStore.loadTree();
+                setExpanded((prev) => new Set(prev).add(dropUri)); // 展开项目，一级任务可见
+                notificationStore.addToast("success", "已提升为一级任务");
+            } catch (e: any) {
+                notificationStore.addToast("error", `提升失败: ${e?.message ?? e}`);
+            }
+            return;
+        }
+
+        // 拖到任务 → 改为其子任务（改层级）
+        const dropInfo = findTaskProject(taskStore.nodes as any, dropUri);
+        if (!dropInfo) return;
         if (dragInfo.project !== dropInfo.project) {
             notificationStore.addToast("error", "只能在同一项目内拖动");
             return;
         }
-        if (String(dropUri) === dragInfo.parent) return; // 拖到直接父级：无需改动
+        if (dropUri === dragInfo.parent) return; // 拖到直接父级：无需改动
         try {
-            await diyService.diy.task.move({ uri: String(dragUri), parent: String(dropUri) });
+            await diyService.diy.task.move({ uri: dragUri, parent: dropUri });
             await taskStore.loadTree();
-            setExpanded((prev) => new Set(prev).add(String(dropUri))); // 展开 drop 目标，子级立即可见
+            setExpanded((prev) => new Set(prev).add(dropUri)); // 展开 drop 目标，子级立即可见
             notificationStore.addToast("success", "已调整层级");
         } catch (e: any) {
             notificationStore.addToast("error", `调整失败: ${e?.message ?? e}`);
@@ -146,8 +168,18 @@ export function TaskTree() {
 
 function ProjectRow(props: { row: any; expanded: Set<string>; onToggle: (k: string) => void }) {
     const { row } = props;
+    // 项目节点作为拖放目标：拖到其上 → 子任务提升为该项目一级任务
+    const drop = useDroppable({
+        get id() {
+            return row.key;
+        },
+    });
+    const ref = (el: Element | undefined) => drop.ref(el);
     return (
-        <tr class="bg-base-200 hover:bg-base-300 border-b">
+        <tr
+            ref={ref}
+            class={`bg-base-200 hover:bg-base-300 border-b transition-colors ${drop.isDropTarget() ? " ring-2 ring-primary/50 ring-inset" : ""}`}
+        >
             <td style={`padding-left:${8 + row.depth * 20}px`} class="font-semibold">
                 <span class="inline-flex items-center gap-1">
                     {row.node.children?.length ? (
