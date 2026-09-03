@@ -160,7 +160,20 @@ export function TaskTree() {
                                 ) : (
                                     <tr
                                         draggable={true}
-                                        onDragStart={() => setDragUri(row.key)}
+                                        onDragStart={(e) => {
+                                            setDragUri(row.key);
+                                            // 用小型幽灵替代默认拖拽图像（否则 mac 会拖出整行/整屏）
+                                            const title = row.node.title ?? row.key;
+                                            const ghost = document.createElement("div");
+                                            ghost.textContent = String(title);
+                                            ghost.style.cssText =
+                                                "position:fixed;top:0;left:0;padding:6px 12px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--color-base-100,#fff);border:1px solid #ccc;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.2);font-size:13px;z-index:9999;opacity:.9;";
+                                            document.body.appendChild(ghost);
+                                            ghost.getBoundingClientRect(); // 强制布局，确保可作拖拽图像
+                                            e.dataTransfer.setDragImage(ghost, 12, 12);
+                                            e.dataTransfer.effectAllowed = "move";
+                                            setTimeout(() => ghost.remove(), 0);
+                                        }}
                                         onDragEnd={() => {
                                             setDragUri(null);
                                             setDropOver(null);
