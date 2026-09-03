@@ -48,7 +48,13 @@ export default function App() {
                 </div>
 
                 {/* 内容区 */}
-                <main class="flex-1 relative overflow-hidden bg-base-100">
+                <main
+                    class="flex-1 relative overflow-hidden bg-base-100"
+                    onClick={() => {
+                        // 点击空白处关闭任务详情面板（任务行/面板自身已 stopPropagation 接管）
+                        if (taskStore.selectedUri) taskStore.selectTask(null);
+                    }}
+                >
                     <Show when={currentPage() === "task"}>
                         <TaskTree />
                     </Show>

@@ -11,12 +11,11 @@ export function TaskDetailPanel() {
 
     return (
         <Show when={!!taskStore.selectedUri}>
-            {/* 点击空白处(面板外左侧区域)取消显示 */}
             <div
-                class="absolute inset-0 z-30 bg-black/0 cursor-default"
-                onClick={() => taskStore.selectTask(null)}
-            />
-            <div class="card bg-base-100 border-l shadow-xl absolute inset-y-0 right-0 z-40 h-full" style="width:65%">
+                class="card bg-base-100 border-l shadow-xl absolute inset-y-0 right-0 z-40 h-full"
+                style="width:65%"
+                onClick={(e) => e.stopPropagation()}
+            >
                 {/* 卡片头部 */}
                 <div class="card-body p-0">
                     <div class="flex items-center justify-between px-4 py-2 border-b">

@@ -195,7 +195,10 @@ function TaskRow(props: { row: any; expanded: Set<string>; onToggle: (k: string)
             class={`border-b cursor-pointer transition-colors select-none ${
                 isSelected() ? "bg-primary/20" : "hover:bg-base-200" + (drop.isDropTarget() ? " ring-2 ring-primary/50 ring-inset" : "")
             }`}
-            onClick={() => taskStore.selectTask(row.key)}
+            onClick={(e) => {
+                e.stopPropagation();
+                taskStore.selectTask(row.key);
+            }}
         >
             <td style={`padding-left:${8 + row.depth * 20}px`}>
                 <span class="inline-flex items-center gap-1">
