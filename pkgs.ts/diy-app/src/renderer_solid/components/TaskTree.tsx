@@ -97,6 +97,8 @@ export function TaskTree() {
         try {
             await diyService.diy.task.move({ uri: drag, parent: dropUri });
             await taskStore.loadTree();
+            // 展开 drop 目标，让被移进去的子任务立即可见（否则进折叠父级仿佛"消失"）
+            setExpanded((prev) => new Set(prev).add(dropUri));
             notificationStore.addToast("success", "已调整层级");
         } catch (e: any) {
             notificationStore.addToast("error", `调整失败: ${e?.message ?? e}`);
@@ -172,7 +174,7 @@ export function TaskTree() {
                                             e.preventDefault();
                                             handleDrop(row.key);
                                         }}
-                                        class={`border-b cursor-pointer transition-colors ${
+                                        class={`border-b cursor-pointer transition-colors select-none ${
                                             taskStore.selectedUri === row.key
                                                 ? "bg-primary/20"
                                                 : "hover:bg-base-200" +
