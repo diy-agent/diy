@@ -7,7 +7,7 @@ export default defineConfig({
   root: "src/renderer_solid",
   base: "",
   build: {
-    outDir: "../../out/renderer",
+    outDir: "../../out/renderer_solid",
     emptyOutDir: true,
   },
   plugins: [solid({ tsconfig: { compilerOptions: { jsx: "preserve", jsxImportSource: "solid-js" } } } as any), tailwindcss()],

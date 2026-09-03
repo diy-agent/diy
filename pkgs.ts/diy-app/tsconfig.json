@@ -7,5 +7,6 @@
       "@/*": ["./src/renderer/*"]
     }
   },
+  "exclude": ["src/renderer_solid/**/*"],
   "include": ["src/**/*", "scripts/**/*", "tests/**/*"]
 }

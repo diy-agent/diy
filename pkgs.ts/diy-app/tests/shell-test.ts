@@ -92,9 +92,16 @@ export class Session {
     const cleanOut = this.outBuf.replace(/\r\n/g, "\n").replace(/\r/g, "").trim();
 
     if (!found) {
+      // 超时：挂死的前台 CLI 进程阻塞了 bash 会话，发 Ctrl+C 释放前台 + kill 旧 job
+      try {
+        this.proc.stdin?.write("\x03");
+        await new Promise((r) => setTimeout(r, 100));
+        this.proc.stdin?.write("kill %1 2>/dev/null; kill -9 %1 2>/dev/null\n");
+        await new Promise((r) => setTimeout(r, 200));
+      } catch { /* ignore */ }
       throw new Error(
         `[ShellTest] 未检测到命令完成 marker（超时 ${timeoutMs}ms）\n` +
-        `  cmd: ${cmd}\n  stdout: ${cleanOut}\n  stderr: ${cleanErr}`,
+          `  cmd: ${cmd}\n  stdout: ${cleanOut}\n  stderr: ${cleanErr}`,
       );
     }
 
@@ -285,6 +292,9 @@ export class ShellTest {
           throw new Error(`[json: ${cmd}] 输出非 JSON\nstdout: ${stdout}`);
         }
       }
+      // 预存 flake：CLI 独立进程冷启动首连偶发丢响应（exit 0 但空 stdout）。
+      // 重试间留间隔，跨过启动竞态窗口，避免连续空落。
+      await new Promise((r) => setTimeout(r, 150));
     }
     throw new Error(`[json: ${cmd}] 多次空响应`);
   }
