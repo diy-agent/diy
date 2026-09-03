@@ -71,6 +71,7 @@ renderer_solid/ 全部文件首行 `// @ts-nocheck`，根 `tsconfig.json` exclud
 - **`diy.ui.*`（handler 层）**：CLI 经 RPC 直接调 renderer 的共享入口函数（与按钮 onClick 同一批）。测行为/契约/状态，稳定适合 test:intent 基线；**测不到真实 DOM 事件链的 bug**。
 - **Playwright/CDP（真实事件层）**：Electron 开 `--remote-debugging-port`，Playwright `connect_over_cdp` 复用，用**真实鼠标事件**（mouse.move/down/up 分步）驱动真实 renderer。能抓 gesture bug（拖拽整屏被拖出、isDropTarget 高亮、点穿透、折叠状态），是目前唯一的验证手段——UI 交互改动后跑一遍。
 - `diy.ui.inspect`：renderer 内 DOM 遍历生成无障碍树，agent 可 `./diy.sh ui inspect` 看 UI 全貌。
+- 复用冒烟脚本：**`scripts/ui-smoke/dnd-smoke.py`** — 启动隔离 Electron + Playwright/CDP 真实拖拽（任务↔任务改层级、子任务→项目提升），断言层级 + 抓 console/pageerror，`python3 scripts/ui-smoke/dnd-smoke.py` 运行，exit 0 通过。UI 交互改动后跑它确认手势没破坏。
 
 ## Serve 模式（Web / 远程开发）
 
