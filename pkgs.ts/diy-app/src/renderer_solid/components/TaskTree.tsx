@@ -87,7 +87,12 @@ export function TaskTree() {
             try {
                 await diyService.diy.task.move({ uri: dragUri, parent: "" });
                 await taskStore.loadTree();
-                setExpanded((prev) => new Set(prev).add(dropUri)); // 展开项目，一级任务可见
+                // 项目默认展开(expanded 含 key=折叠)，delete 确保提升后保持展开、1级任务可见
+                setExpanded((prev) => {
+                    const n = new Set(prev);
+                    n.delete(dropUri);
+                    return n;
+                });
                 notificationStore.addToast("success", "已提升为一级任务");
             } catch (e: any) {
                 notificationStore.addToast("error", `提升失败: ${e?.message ?? e}`);
