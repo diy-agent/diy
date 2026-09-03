@@ -103,17 +103,19 @@ export default function App() {
             {/* 侧栏 - DaisyUI drawer */}
             <div class="drawer-side z-40">
                 <label for="sidebar-toggle" class="drawer-overlay" />
-                <div class="menu bg-base-200 w-56 min-h-full">
+                <div
+                    class={`menu bg-base-200 min-h-full transition-all duration-200 ${collapsed() ? "w-14" : "w-56"}`}
+                >
                     <div class="p-2 border-b font-bold h-12 flex items-center gap-2">
                         <span>◉</span>
                         {!collapsed() && <span>diy</span>}
                     </div>
                     <div class="p-2 space-y-1">
-                        <div class="text-xs opacity-60 px-2 py-1">
-                            {!collapsed() ? "导航" : ""}
-                        </div>
+                        {!collapsed() && (
+                            <div class="text-xs opacity-60 px-2 py-1">导航</div>
+                        )}
                         {navItems.map((item) => (
-                            <li>
+                            <li class={collapsed() ? "flex justify-center" : ""}>
                                 <button
                                     class={currentPage() === item.id ? "active" : ""}
                                     title={item.label}
@@ -126,8 +128,12 @@ export default function App() {
                         ))}
                     </div>
                     <div class="p-2 border-t">
-                        <button class="w-full" onClick={() => setCollapsed(!collapsed())}>
-                            {collapsed() ? "›" : "‹ 收起"}
+                        <button
+                            class="w-full flex justify-center"
+                            title={collapsed() ? "展开" : "收起"}
+                            onClick={() => setCollapsed(!collapsed())}
+                        >
+                            <span>{collapsed() ? "›" : "‹ 收起"}</span>
                         </button>
                     </div>
                 </div>
