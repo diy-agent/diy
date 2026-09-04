@@ -58,18 +58,36 @@ async function setup(): Promise<{ pid: string; t1: string; t2: string }> {
 }
 
 describe("agent session — task 级 ACP 会话隔离 + 持久化", () => {
-  it.skip("两个 task 触发会话，互相隔离且持久化到 meta.yaml", async () => {
-    // 依赖真实 hermes acp + 模型，默认跳过；本地验证用 --run 手动开启
-    const { pid, t1, t2 } = await setup();
+  // status 必须是纯读：曾经它内部调 ensure()，导致「查个状态」顺手建会话、起子进程、
+  // 写 meta.yaml。UI 每切换一次任务就调一次，等于浏览行为篡改了数据。
+  it.skip("status 只读：不创建会话、不写 meta.yaml", async () => {
+    const { pid, t1 } = await setup();
 
-    // 分别触发两个 task 的会话
-    await fx.sh.run(`./diy.sh agent status ${t1}`);
-    await fx.sh.run(`./diy.sh agent status ${t2}`);
+    const r = await fx.sh.getJson(`./diy.sh agent status ${t1}`);
+    expect((r as any).state ?? (r as any).data?.state).toBe("no_session");
+    // 未建会话 → meta.yaml 里不该出现该 task 的 acp_sessions 条目
+    expect(readSessions(pid)[t1]).toBeFalsy();
+
+    await fx.sh.run(`./diy.sh project remove ${pid}`);
+  }, 60000);
+
+  it.skip("两个 task 触发会话，互相隔离且持久化到 meta.yaml", async () => {
+    // 依赖真实 opencode acp + 模型，默认跳过；本地验证用 --run 手动开启
+    const { pid, t1, t2 } = await setup();
+    const msg = '--messages [{"role":"user","content":"hi"}]';
+
+    // 触发会话的正确方式是对话，不是查状态
+    await fx.sh.run(`./diy.sh agent chat ${t1} "" ${msg}`);
+    await fx.sh.run(`./diy.sh agent chat ${t2} "" ${msg}`);
 
     const sessions = readSessions(pid);
     expect(sessions[t1]).toBeTruthy();
     expect(sessions[t2]).toBeTruthy();
     expect(sessions[t1]).not.toBe(sessions[t2]); // 隔离
+
+    // 对话之后 status 才报 ready
+    const s1 = await fx.sh.getJson(`./diy.sh agent status ${t1}`);
+    expect((s1 as any).state ?? (s1 as any).data?.state).toBe("ready");
 
     // 清理
     await fx.sh.run(`./diy.sh project remove ${pid}`);

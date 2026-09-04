@@ -204,6 +204,27 @@ export const apiDef = RpcSchema.router({
         }),
       }),
 
+      // 运行环境详情：设置页「状态」标签用，同时天然可被 CLI 调用。
+      // 历史上它只是一条 ipcMain.handle("getAppInfo")，preload 没桥接、api-def 也没登记，
+      // 于是 Electron 里 window.diy 为 undefined（可选链短路，永远卡在「加载中…」）、
+      // serve 里方法不存在。走 RPC 后三种入口共用同一实现。
+      getAppInfo: RpcSchema.unary({
+        desc: `查询运行环境详情（端口/目录/版本/系统）`,
+        input: {},
+        output: z.object({
+          port: z.number(),
+          diyHome: z.string(),
+          cache: z.string(),
+          userData: z.string(),
+          electron: z.string(),
+          node: z.string(),
+          chrome: z.string(),
+          platform: z.string(),
+          pid: z.number(),
+          memory: z.string(),
+        }),
+      }),
+
       doctor: RpcSchema.unary({
         desc: `系统健康自检`,
         input: {},
@@ -250,7 +271,7 @@ export const apiDef = RpcSchema.router({
           chat: RpcSchema.unary({
             desc: `与模型对话（task 级：每 task 独立 ACP session）`,
             input: {
-              taskUri: z.string().describe('任务 URI（决定所属 project/session）'),
+              taskUri: z.string().cliArg({ desc: "任务 URI（决定所属 project/session）" }),
               model: z.string().cliArg({ desc: "模型名称" }),
               messages: z.array(MessageParam).cliOption({ desc: "消息数组 JSON" }),
             },
@@ -259,9 +280,9 @@ export const apiDef = RpcSchema.router({
           chatStream: RpcSchema.serverStream({
             desc: `流式对话（task 级：每 task 独立 ACP session）`,
             input: {
-              taskUri: z.string().describe('任务 URI（决定所属 project/session）'),
-              model: z.string(),
-              messages: z.array(MessageParam),
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+              model: z.string().cliArg({ desc: "模型名称" }),
+              messages: z.array(MessageParam).cliOption({ desc: "消息数组 JSON" }),
             },
             output: z.any(),
           }),
@@ -271,11 +292,39 @@ export const apiDef = RpcSchema.router({
             output: z.array(z.object({ id: z.string(), name: z.string() })),
           }),
           status: RpcSchema.unary({
-            desc: `查询任务会话状态`,
+            desc: `查询任务会话状态（只读，不会创建会话）`,
             input: {
               taskUri: z.string().cliArg({ desc: "任务 URI" }),
             },
-            output: z.object({ taskUri: z.string(), state: z.string(), model: z.string() }),
+            // model 可选：state=no_session 时无会话，也就没有模型
+            output: z.object({ taskUri: z.string(), state: z.string(), model: z.string().optional() }),
+          }),
+          getAutoApprove: RpcSchema.unary({
+            desc: `获取自动审批权限设置`,
+            input: {},
+            output: z.object({ enabled: z.boolean() }),
+          }),
+          setAutoApprove: RpcSchema.unary({
+            desc: `设置自动审批权限`,
+            input: {
+              enabled: z.boolean().cliArg({ desc: "是否自动审批" }),
+            },
+            output: z.object({ enabled: z.boolean() }),
+          }),
+          closeSession: RpcSchema.unary({
+            desc: `关闭任务会话`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+            },
+            output: z.object({ closed: z.boolean() }),
+          }),
+          setModel: RpcSchema.unary({
+            desc: `切换任务会话的模型`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+              model: z.string().cliArg({ desc: "模型 ID" }),
+            },
+            output: z.object({ success: z.boolean() }),
           }),
         },
       }),

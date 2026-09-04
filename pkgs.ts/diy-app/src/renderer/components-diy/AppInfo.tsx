@@ -1,5 +1,6 @@
 // src/renderer/components-diy/AppInfo.tsx
 import { useEffect, useState } from "react";
+import { diyService } from "./lib/rpc";
 
 export interface AppInfoData {
   port: number;
@@ -16,13 +17,30 @@ export interface AppInfoData {
 
 export function AppInfo() {
   const [info, setInfo] = useState<AppInfoData | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
 
   useEffect(() => {
-    const diy = (window as unknown as Record<string, unknown>).diy as
-      | { getAppInfo: () => Promise<AppInfoData> }
-      | undefined;
-    diy?.getAppInfo().then(setInfo);
+    // 走 RPC router（Electron / serve / CLI 同一实现）。
+    // 旧写法是 window.diy?.getAppInfo()：Electron 里 preload 只桥接了 transport，
+    // window.diy 为 undefined → 可选链短路 → .then 永不执行 → 界面无声卡在「加载中…」；
+    // serve 里 window.diy 存在但没这个方法 → TypeError。两端都拿不到数据。
+    let alive = true;
+    diyService.diy
+      .getAppInfo({})
+      .then((d) => {
+        if (alive) setInfo(d);
+      })
+      .catch((e: unknown) => {
+        if (alive) setFailed(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
+
+  if (failed) {
+    return <div className="p-4 text-sm text-destructive">获取运行信息失败：{failed}</div>;
+  }
 
   if (!info) {
     return <div className="p-4 text-sm text-muted-foreground">加载中…</div>;

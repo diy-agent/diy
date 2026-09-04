@@ -17,13 +17,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { WsTransport } from "@diy/rpc/ws";
-import { bindApi } from "../main/services/api-impl";
+import { bindApi, setRpcPort } from "../main/services/api-impl";
 import { AppConfig } from "../main/core/app-config";
+import { installDiagnostics } from "../main/services/diagnostics";
 import { readRuntimeConfig } from "../runtime";
 
 // 运行配置由入口注入的环境变量装配（DIY_HOME / DIY_PORT）
 const cfg = readRuntimeConfig();
-const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+// serve 是纯 Node 常驻进程，同样要防 EPIPE / 未捕获异常裸奔；日志独立落 serve.log
+installDiagnostics(cfg.home, "serve");
+// 计算项目根目录：从 src/serve/index.ts 向上两级到 pkgs.ts/diy-app/
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, "..", "..");
 const STATIC_DIR = path.resolve(ROOT, "out/renderer");
 
 const MIME: Record<string, string> = {
@@ -101,11 +106,15 @@ async function main() {
   // ── 启动 ──
   httpServer.listen(port, "127.0.0.1", () => {
     const home = appConfig.diyHome;
+    // 取实际绑定端口（--port 0 时由系统分配），getAppInfo 回报的必须是真值
+    const bound = httpServer.address();
+    const realPort = typeof bound === "object" && bound ? bound.port : port;
+    setRpcPort(realPort);
     console.log("═══════════════════════════════════════");
     console.log("  diy 管控台 — Web 模式");
     console.log("═══════════════════════════════════════");
-    console.log(`  地址:     http://127.0.0.1:${port}`);
-    console.log(`  Tailscale: http://<tailscale-host>:${port}`);
+    console.log(`  地址:     http://127.0.0.1:${realPort}`);
+    console.log(`  Tailscale: http://<tailscale-host>:${realPort}`);
     console.log(`  PID:      ${process.pid}`);
     console.log(`  DIY_HOME: ${home}`);
     console.log("───────────────────────────────────────");

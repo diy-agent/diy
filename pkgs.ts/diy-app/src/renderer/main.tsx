@@ -21,7 +21,11 @@ if (window.transport) {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <TooltipProvider>
-      <ThemeProvider>
+      {/* defaultTheme="dark"：主题不跟随 prefers-color-scheme。
+          "system" 会让 Playwright/Puppeteer 连 CDP 时注入的 colorScheme:'light'
+          默认仿真把界面刷成白底（见 scripts/cdp-colorscheme-demo.mts）。
+          用户显式选择的主题仍存 localStorage 优先，'d' 键可切换。 */}
+      <ThemeProvider defaultTheme="dark">
         <App />
       </ThemeProvider>
     </TooltipProvider>

@@ -13,10 +13,16 @@ export function AgentChatPanel() {
     messages,
     sending,
     error,
+    autoApprove,
     loadModels,
+    syncStatus,
     setModel,
     sendMessage,
     clearChat,
+    loadAutoApprove,
+    setAutoApprove,
+    closeSession,
+    switchModel,
   } = useAgentStore();
   const selectedUri = useTaskStore((s) => s.selectedUri);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -24,7 +30,13 @@ export function AgentChatPanel() {
 
   useEffect(() => {
     loadModels();
-  }, [loadModels]);
+    loadAutoApprove();
+  }, [loadModels, loadAutoApprove]);
+  // 切换任务时以主进程的真实会话状态为准刷新模型，避免界面显示伪造默认值
+  useEffect(() => {
+    if (selectedUri) void syncStatus(selectedUri);
+    else useAgentStore.setState({ activeModel: null });
+  }, [selectedUri, syncStatus]);
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -45,9 +57,16 @@ export function AgentChatPanel() {
       <div className="flex items-center gap-2 px-3 py-2 border-b shrink-0">
         <select
           value={activeModel ?? ""}
-          onChange={(e) => setModel(e.target.value)}
+          onChange={(e) => {
+            const id = e.target.value;
+            setModel(id);
+            // 空值 = 不指定，交给 agent 自己的默认模型；此时不发 set_model
+            if (id && selectedUri) switchModel(selectedUri, id);
+          }}
           className="h-8 rounded-md border bg-background px-2 text-xs"
         >
+          {/* 占位项：没有真实会话时不能预选任何模型，否则视觉上就是「伪造当前值」 */}
+          <option value="">（未指定 · 用 agent 默认模型）</option>
           {models.map((m) => (
             <option key={m.id} value={m.id}>
               {m.name}
@@ -56,6 +75,24 @@ export function AgentChatPanel() {
         </select>
         <Button variant="ghost" size="sm" className="text-xs" onClick={clearChat}>
           清空
+        </Button>
+        <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={autoApprove}
+            onChange={(e) => setAutoApprove(e.target.checked)}
+            className="h-3 w-3"
+          />
+          自动审批
+        </label>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-xs text-destructive"
+          onClick={() => selectedUri && closeSession(selectedUri)}
+          disabled={!selectedUri}
+        >
+          关闭会话
         </Button>
         <span className="ml-auto text-xs text-muted-foreground">
           {sending ? "思考中…" : `${messages.length} 条消息`}

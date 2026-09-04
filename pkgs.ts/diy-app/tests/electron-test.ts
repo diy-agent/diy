@@ -92,12 +92,44 @@ export interface ElectronTest {
   home: string;
   /** RPC 端口 */
   port: number;
+  /** CDP WebSocket 地址（可被 playwright-cli attach 连接） */
+  cdpUrl: string | null;
   /** 停止并清理 */
   stop(): Promise<void>;
 }
 
 /**
- * 启动隔离 Electron 实例。返回 { home, port, stop }。
+ * 等 Chromium 把实际 CDP 端口写入 <home>/electron_user_data/DevToolsActivePort。
+ *
+ * 为什么不用 stderr 里那句 "DevTools listening on ..."：取 CDP 地址一律走这个文件
+ * （见 AGENTS.md「硬性约束：不得管道化子进程 stdio」）。文件由 Chromium 自己写，
+ * 与 stdio 怎么接完全解耦，也就不需要为了抓一行日志去 pipe stderr。
+ *
+ * 拿不到不视为失败 —— 返回 null，测试照常跑（CDP 只是可观测性入口）。
+ */
+async function waitForCdpBase(home: string, timeoutMs = 8000): Promise<string | null> {
+  const file = join(home, "electron_user_data", "DevToolsActivePort");
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const lines = readFileSync(file, "utf-8").split("\n");
+      const port = parseInt(lines[0]?.trim() ?? "", 10);
+      const path = lines[1]?.trim();
+      if (Number.isFinite(port) && port > 0 && path) {
+        // 文件第二行就是 /devtools/browser/<id>，直接拼成 playwright-cli attach 需要的完整 URL
+        // （attach 只给 base 会 404，这是踩过的坑）
+        return `ws://127.0.0.1:${port}${path}`;
+      }
+    } catch {
+      /* 文件还没写出来，继续等 */
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return null;
+}
+
+/**
+ * 启动隔离 Electron 实例。返回 { home, port, cdpUrl, stop }。
  * 必须在测试后调用 stop() 释放进程。
  */
 export async function startElectronTest(): Promise<ElectronTest> {
@@ -105,19 +137,32 @@ export async function startElectronTest(): Promise<ElectronTest> {
   const env = { ...process.env, HOME: home, DIY_HOME: home, DIY_MIRROR_DISPLAY: "1" };
   const appDir = join(__dirname, "..");
 
-  const proc: ChildProcess = spawn(String(electronPath), ["out/main/index.mjs"], {
+  const proc: ChildProcess = spawn(String(electronPath), ["out/main/index.mjs", "--remote-debugging-port=0"], {
     cwd: appDir,
     env,
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  // stdout/stderr 保持 pipe，但**必须持续 drain** —— 只 pipe 不读会填满管道缓冲把子进程
+  // 卡在 write 上。这里不再为了抓 "DevTools listening" 而依赖它，只留一小段尾部用于
+  // 启动失败时定位（CDP 地址改由 DevToolsActivePort 文件获取）。
+  let stderrTail = "";
+  proc.stdout?.on("data", () => {
+    /* 纯排空 */
+  });
+  proc.stderr?.on("data", (chunk: Buffer) => {
+    stderrTail = (stderrTail + chunk.toString()).slice(-4000);
   });
 
   try {
     const port = await waitForPort(home);
     // 端口文件出现后再等 RPC 真正可服务，避免首条 CLI 命令偶发空响应
     await waitForRpcReady(port);
+    const cdpUrl = await waitForCdpBase(home);
     return {
       home,
       port,
+      cdpUrl,
       stop: () =>
         new Promise<void>((resolve) => {
           if (proc.exitCode !== null || proc.signalCode !== null) return resolve();
@@ -127,6 +172,9 @@ export async function startElectronTest(): Promise<ElectronTest> {
     };
   } catch (err) {
     proc.kill("SIGTERM");
+    if (stderrTail.trim()) {
+      console.error(`[electron-test] 启动失败，子进程 stderr 尾部：\n${stderrTail}`);
+    }
     throw err;
   }
 }

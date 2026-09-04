@@ -19,7 +19,7 @@ diy 生态的核心仓库。历史为 `uv` 管理的 Python monorepo，现主线
 | `diy.sh` | 当前 worktree 的 dev CLI 入口（注入 `DIY_HOME=./build/home`，`src/runtime.ts` 读取） | ✅ 主线 |
 | `pkgs.ts/diy-app/bin/diy` | 发布后 CLI 入口（注入 `DIY_HOME=~/.diy`，`node out/cli/index.js`） | ✅ 主线 |
 | `pkgs.ts/diy-app/src/runtime.ts` | 运行时配置统一组装点（入口只注入 `DIY_*` 环境变量，CLI/main/serve 统一读取） | ✅ 主线 |
-| `scripts/` | 辅助脚本（doctor-env、lint-env、git-hook） | — |
+| `scripts/` | 辅助脚本（doctor-env、lint-env、git-hook、cdp-colorscheme-demo、repro-epipe-dialog） | — |
 | `vendor/` | 外部依赖源码快照 | — |
 | `sha.sh` | 旧 Python 栈开发入口（`./sha.sh --help`） | ⚠️ 已废弃 |
 
@@ -54,6 +54,9 @@ Python `dai`/`diy` 仅历史归档，不再作为入口。
 
 - **GPG 签名** — git 操作必须 GPG 签名，失败时停下求助，禁止 `--no-gpg-sign` 绕过
 - 代码注释用中文
+- **UI 验证走 CDP** — CLI 的 RPC 返回成功不等于 renderer 渲染正确；界面行为必须用
+  `playwright-cli attach --cdp=...` 驱动真实 Electron 窗口验证
+  （流程与陷阱见 `pkgs.ts/diy-app/AGENTS.md` 的「UI 调试」节）
 - 意图测试（Intent Test）是需求的定义者
   - TS 主线：`pkgs.ts/diy-app/tests/cli.intent.*.test.ts`（`./diy.sh` + `ShellTest` + 隔离 Electron；按领域拆文件：ui / doctor / project / task，每条用例自建自删 fixture）
   - Python 历史：`tests/` + `_diy/AGENTS.md`（已废弃，仅归档）
