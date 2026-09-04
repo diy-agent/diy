@@ -35,44 +35,44 @@ npm run dev -- --port 18888    # 指定端口（测试端口冲突）
 
 端口优先级：`DIY_PORT` > `app.port` 文件（上次实例） > 18888。
 
-### 组件分层
+### Renderer 双框架（React → Solid 迁移中）
+
+电控台 renderer 正在从 React 迁移到 Solid：
+- **`renderer_solid/`（主线，构建默认）** — SolidJS 渲染层，改 UI 必改这里
+- **`renderer/`（React 遗留，仅参考）** — 老 UI；构建已切 `vite.renderer.config.ts`（root=`renderer_solid` + vite-plugin-solid），React 版另存 `vite.renderer.react.config.ts`
+
+### 组件分层（Solid 主线）
 
 ```
-components/ui/              ← shadcn 官方组件（通过 npx shadcn add 安装）
-                              禁止手动修改，会被脚本覆盖
-                              需要更新时：npx shadcn add <component> -o
-
-components-diy/             ← 我们自己的业务组件
-  ├── store/                ← zustand stores
-  ├── lib/                  ← 业务工具函数
-  └── App.tsx               ← 应用根组件（可引用 ui/ 和 diy/ 组件）
-
-lib/                        ← shadcn 官方工具（utils.ts 等）
-hooks/                      ← shadcn 官方 hooks
+renderer_solid/
+  ├── components/          ← 业务组件（daisyUI 高阶组件组合）
+  ├── store/               ← Solid signal 单例（「值 getter」暴露，别暴露裸 getter 函数）
+  ├── lib/                 ← rpc client / renderer-api-impl(diy.ui.* handler) / 共享入口
+  ├── main.tsx             ← render() + bind diy.ui.* handler
+  └── index.css/html
 ```
 
-### 通用 UI 组件策略
+- ✅ 业务组件用 daisyUI 高阶组件组合（drawer/navbar/card/modal/chat/tabs），JSX 少裸 Tailwind（接近 Flutter 只管结构）
+- ✅ store 「值 getter」单例：`get nodes(){return nodes()}` —— 否则组件 `for...of` 遍历 getter 函数 → 页面空白
+- ✅ 任务树拖拽用 `@dnd-kit/solid`（dnd-kit 官方 Solid 包），`sensors={[PointerSensor]}` 禁键盘拖拽
+- ❌ 不开发通用 UI 组件
 
-- ❌ 不自己开发通用 UI 组件
-- ✅ 优先使用 shadcn 官方组件（`components/ui/`）
-- ✅ 用官方组件组合成业务组件（放 `components-diy/`）
+renderer_solid/ 有独立 tsconfig（strict + jsxImportSource: solid-js），tsc 零报错。根 tsconfig.json 因 react-jsx 冲突仍 exclude，但类型检查由自身 tsconfig 覆盖。
 
 ### 样式策略
 
-- ❌ 不修改 `@import "shadcn/tailwind.css"` 官方主题
-- ❌ 不修改 `:root` / `.dark` 官方色值
-- ✅ 自定义颜色用 `diy-` 前缀，在 `@theme inline` 块末尾追加
-  - 例：`--color-diy-state-pending: #e5c07b;` → 用法 `bg-diy-state-pending`
-- ✅ 默认 dark 模式：`index.html` 写死 `class="dark"` + `ThemeProvider defaultTheme="dark"`（不改官方 `.dark` 块）
-  - ❌ 主题不得回落到 `prefers-color-scheme`（即 `defaultTheme` 不能是 `"system"`）——
-    Playwright 的 `colorScheme` 默认值是 `"light"`，attach CDP 时会覆盖系统外观把界面刷白
-  - ✅ 用户显式选择存 `localStorage.theme`，优先级高于 `defaultTheme`，`d` 键可切换
+- ✅ daisyUI 主题类管组件外观（card/modal/drawer/menu/chat）
+- ✅ 布局/间距仍用 Tailwind（`flex-1`/`w-56`/`absolute` 等）
+- ✅ 自定义色用 `diy-` 前缀，在 `@theme inline` 块末尾追加（例 `--color-diy-state-pending` → `bg-diy-state-pending`）
+- ⚠️ **主题不得回落到 `prefers-color-scheme`** —— Playwright 的 `colorScheme` 默认值是 `"light"`，attach CDP 时会覆盖系统外观把界面刷白（实测 `renderer_solid/index.css` 的 `dark --prefersdark` 会让 CDP attach 后界面闪白）；应改成 `dark --default` 或用 `data-theme` 显式锁定
+- 注意 daisyUI drawer 需渲染 `<input class="drawer-toggle">`，漏了侧栏 `visibility:hidden` 消失
 
-## UI 调试（CDP + playwright-cli）
+### UI 验证（两层，互补）
 
-Electron 启动时带 `--remote-debugging-port=0`（随机空闲端口），把真实窗口暴露成 CDP
-端点，`playwright-cli` 可直接 attach 驱动 —— 这是验证 renderer 行为的**唯一可靠手段**，
-CLI 的 RPC 返回成功不等于 UI 渲染正确。
+- **`diy.ui.*`（handler 层）**：CLI 经 RPC 直接调 renderer 的共享入口函数（与按钮 onClick 同一批）。测行为/契约/状态，稳定适合 test:intent 基线；**测不到真实 DOM 事件链的 bug**。
+- **Playwright/CDP（真实事件层）**：Electron 开 `--remote-debugging-port`，Playwright `connect_over_cdp` 复用，用**真实鼠标事件**（mouse.move/down/up 分步）驱动真实 renderer。能抓 gesture bug（拖拽整屏被拖出、isDropTarget 高亮、点穿透、折叠状态），是目前唯一的验证手段——UI 交互改动后跑一遍。
+- `diy.ui.inspect`：renderer 内 DOM 遍历生成无障碍树，agent 可 `./diy.sh ui inspect` 看 UI 全貌。
+- 复用冒烟脚本：**`scripts/ui-smoke/dnd-smoke.py`** — 启动隔离 Electron + Playwright/CDP 真实拖拽（任务↔任务改层级、子任务→项目提升），断言层级 + 抓 console/pageerror，`python3 scripts/ui-smoke/dnd-smoke.py` 运行，exit 0 通过。UI 交互改动后跑它确认手势没破坏。
 
 ### 取 CDP 地址
 
@@ -90,19 +90,7 @@ Chromium 把实际端口写入 `DIY_HOME/electron_user_data/DevToolsActivePort`�
 cat "$DIY_HOME/electron_user_data/DevToolsActivePort"    # 或 curl http://127.0.0.1:<port>/json/version
 ```
 
-### 标准测试流程
-
-```bash
-npm run dev                                   # 日志末尾给出 attach 命令
-playwright-cli attach --cdp=ws://127.0.0.1:<port>/devtools/browser/<id>
-playwright-cli snapshot                       # 拿 ref（每次交互后 ref 会变，需重拍）
-playwright-cli click <ref>                    # / fill / check / select / press
-playwright-cli eval "document.documentElement.className"   # 断言 DOM 状态
-playwright-cli console error                  # 查渲染层报错
-playwright-cli detach
-```
-
-### 陷阱
+### CDP 调试陷阱
 
 - ❌ **不要用 `playwright-cli open http://localhost:5173/`** 测 dev 界面。Vite URL 直开时
   没有 Electron preload，`window.transport` 不存在，`ChannelClientBinding` 抛

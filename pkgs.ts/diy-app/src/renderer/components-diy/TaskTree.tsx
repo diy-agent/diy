@@ -185,7 +185,7 @@ function ProjectRow({ node, depth, expanded, onToggle }: {
   const indent = 8 + depth * 20;
 
   return (
-    <tr className="bg-muted/30 hover:bg-muted/50 border-b">
+    <tr className="group bg-muted/30 hover:bg-muted/50 border-b">
       {/* 标题：缩进 + 箭头 + 图标 + 名称 */}
       <td className="px-2 py-1.5 font-semibold" style={{ paddingLeft: indent + "px" }}>
         <span className="inline-flex items-center gap-1">
@@ -196,6 +196,7 @@ function ProjectRow({ node, depth, expanded, onToggle }: {
           ) : <span className="w-5" />}
           <span className="mr-1">📁</span>
           <span className="truncate cursor-pointer" onClick={() => onToggle(key)}>{node.title}</span>
+          <CreateTaskSheet projectId={node.project ?? ""} projectLabel={node.title ?? ""} />
         </span>
       </td>
       <td className="px-2 py-1.5 text-muted-foreground font-mono text-xs">{node.project}</td>
@@ -226,7 +227,7 @@ function TaskRow({ node, depth, projectId, selectedUri, onSelect, expanded, onTo
     <tr
       ref={(el) => { setDragRef(el); setDropRef(el); }}
       className={cn(
-        "border-b cursor-pointer ",
+        "border-b cursor-pointer group ",
         isSelected && "bg-accent/90",
         isDragging && "opacity-40",
         isOver && "ring-1 ring-primary/50 ring-inset",

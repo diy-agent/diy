@@ -11,8 +11,7 @@ import {
   SheetDescription,
   SheetFooter,
 } from "@/components/ui/sheet";
-import { diyService } from "./lib/rpc";
-import { useTaskStore } from "./store/taskStore";
+import { createTaskViaUi } from "./lib/create-task";
 import { useNotificationStore } from "./store/notificationStore";
 
 interface Props {
@@ -28,7 +27,6 @@ export function CreateTaskSheet({ projectId, projectLabel, parentUri, compact }:
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
-  const loadTree = useTaskStore((s) => s.loadTree);
   const addToast = useNotificationStore((s) => s.addToast);
 
   const isSubtask = !!parentUri;
@@ -41,17 +39,9 @@ export function CreateTaskSheet({ projectId, projectLabel, parentUri, compact }:
     }
     setBusy(true);
     try {
-      await diyService.diy.task.create({
-        title: title.trim(),
-        project: projectId,
-        parent: parentUri ?? undefined,
-        detail: undefined,
-        body: undefined,
-      });
+      await createTaskViaUi(title.trim(), projectId, parentUri);
       setOpen(false);
       setTitle("");
-      await loadTree();
-      addToast("success", isSubtask ? "子任务已创建" : "任务已创建");
     } catch (e) {
       addToast("error", `创建失败: ${(e as Error).message}`);
     } finally {
@@ -62,7 +52,7 @@ export function CreateTaskSheet({ projectId, projectLabel, parentUri, compact }:
   return (
     <>
       <button
-        className="ml-auto text-muted-foreground hover:text-foreground text-xs px-1 opacity-0 group-hover:opacity-100 transition-opacity"
+        className="ml-auto text-muted-foreground hover:text-foreground text-xs px-1"
         onClick={(e) => {
           e.stopPropagation();
           setOpen(true);

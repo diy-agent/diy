@@ -8,7 +8,7 @@ diy 生态的核心仓库。历史为 `uv` 管理的 Python monorepo，现主线
 
 | 路径 | 说明 | 状态 |
 |------|------|------|
-| `pkgs.ts/diy-app/` | 管控台 — Electron + Vite 8 + shadcn（主线） | ✅ 主线 |
+| `pkgs.ts/diy-app/` | 管控台 — Electron + Vite 8 + SolidJS（主线，React 版仅参考比较） | ✅ 主线 |
 | `pkgs.ts/diy-rpc/` | RPC 协议与传输层（主线） | ✅ 主线 |
 | `pkgs/diy-core/` | 核心逻辑 — state/agent/task/subject 模型 | ⚠️ 已废弃 |
 | `pkgs/diy-app/` | PySide6 桌面管控台（MainWindow/GatewayCLI） | ⚠️ 已废弃 |
@@ -57,6 +57,7 @@ Python `dai`/`diy` 仅历史归档，不再作为入口。
 - **UI 验证走 CDP** — CLI 的 RPC 返回成功不等于 renderer 渲染正确；界面行为必须用
   `playwright-cli attach --cdp=...` 驱动真实 Electron 窗口验证
   （流程与陷阱见 `pkgs.ts/diy-app/AGENTS.md` 的「UI 调试」节）
+- **Solid 是重构方向** — `renderer_solid/` 是主线（构建默认入口），`renderer/`（React 版）仅作参考和比较代码使用，不追加功能
 - 意图测试（Intent Test）是需求的定义者
   - TS 主线：`pkgs.ts/diy-app/tests/cli.intent.*.test.ts`（`./diy.sh` + `ShellTest` + 隔离 Electron；按领域拆文件：ui / doctor / project / task，每条用例自建自删 fixture）
   - Python 历史：`tests/` + `_diy/AGENTS.md`（已废弃，仅归档）

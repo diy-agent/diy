@@ -158,10 +158,13 @@ export function bindAppHandlers(binding: ServerBinding): void {
 
   // ── loadTaskTree / getTask ──
   binding.on(app.loadTaskTree, async ({ input }) => {
-    return taskTree.loadTaskTree(input.allTasks);
+    return { status: "ok", data: taskTree.loadTaskTree(input.allTasks) };
   });
   binding.on(app.getTask, async ({ input }) => {
-    return state.getTask(input.uri);
+    const t = state.getTask(input.uri);
+    // 未找到 → data: null（truthy 的壳对象会让 renderer 守卫失效）
+    if (!t) return { status: "error", data: null };
+    return { status: "ok", data: { uri: t.uri, title: t.title, state: t.state, project: t.project, parent: t.parent, detail: t.detail, body: t.body, created: t.created, updated: t.updated } };
   });
 
   // ── pickProjectDirectory（renderer「选择目录」按钮反向调用）──

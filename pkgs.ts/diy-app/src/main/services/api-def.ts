@@ -39,7 +39,7 @@ const StatusOk = z.object({ status: z.string() });
 const MessageParam = z.object({ role: z.string(), content: z.string() });
 
 /** 任务树节点 schema（递归，供 ui.tree 输出强类型） */
-const TaskNodeSchema: z.ZodType<{
+export interface TaskNodeShape {
   kind: "project" | "task";
   uri?: string;
   title?: string;
@@ -51,8 +51,9 @@ const TaskNodeSchema: z.ZodType<{
   created?: string;
   updated?: string;
   starred: boolean;
-  children: unknown[];
-}> = z.lazy(() =>
+  children: TaskNodeShape[];
+}
+const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
   z.object({
     kind: z.enum(["project", "task"]),
     uri: z.string().optional(),
@@ -243,13 +244,27 @@ export const apiDef = RpcSchema.router({
       loadTaskTree: RpcSchema.unary({
         desc: `加载任务树（供 renderer 反向调用）`,
         input: { allTasks: z.boolean().optional() },
-        output: z.any(),
+        output: z.object({ status: z.string(), data: z.array(TaskNodeSchema) }),
       }),
 
       getTask: RpcSchema.unary({
-        desc: `按 URI 获取任务（供 renderer 反向调用）`,
+        desc: `按 URI 获取任务（供 renderer 反向调用；未找到时 data 为 null）`,
         input: { uri: z.string() },
-        output: z.any(),
+        output: z.object({
+          status: z.string(),
+          // 未找到 → data: null，renderer 侧 `if (r.data)` 守卫才能生效
+          data: z.object({
+            uri: z.string(),
+            title: z.string().optional(),
+            state: TaskStateSchema.optional(),
+            project: z.string().optional(),
+            parent: z.string().optional(),
+            detail: z.string().optional(),
+            body: z.string().optional(),
+            created: z.string().optional(),
+            updated: z.string().optional(),
+          }).nullable(),
+        }),
       }),
 
       /** 弹出原生目录选择器（供 renderer「选择目录」按钮反向调用；Web/serve 模式无 Electron dialog 时返回 canceled） */
@@ -284,7 +299,7 @@ export const apiDef = RpcSchema.router({
               model: z.string().cliArg({ desc: "模型名称" }),
               messages: z.array(MessageParam).cliOption({ desc: "消息数组 JSON" }),
             },
-            output: z.any(),
+            output: z.string(),
           }),
           listModels: RpcSchema.unary({
             desc: `列出可用模型`,
@@ -358,7 +373,12 @@ export const apiDef = RpcSchema.router({
             input: {
               limit: z.number().optional().cliOption({ desc: "返回条目数" }),
             },
-            output: z.array(z.any()),
+            output: z.array(z.object({
+              timestamp: z.string().optional(),
+              level: z.string().optional(),
+              message: z.string().optional(),
+              raw: z.string().optional(),
+            })),
           }),
         },
       }),
@@ -533,6 +553,38 @@ export const apiDef = RpcSchema.router({
                 output: StatusDataId,
               }),
             },
+          }),
+
+          /** UI 侧任务操作（反向调 diy.task.* + 刷新树 + toast） */
+          task: RpcSchema.group({
+            desc: `任务`,
+            children: {
+              create: RpcSchema.unary({
+                desc: `创建任务（UI 入口，反向调 main + 刷新任务树 + toast）`,
+                input: {
+                  title: z.string().min(1, "标题不能为空").max(200).cliArg({ desc: "任务标题" }),
+                  project: z.string().cliArg({ desc: "所属 project id" }),
+                  parent: z.string().optional().cliOption({ short: "p", desc: "父任务 URI" }),
+                },
+                output: StatusDataUri,
+              }),
+            },
+          }),
+
+          /** UI 可见性诊断 — 遍历渲染器 DOM 生成无障碍树（agent 了解 UI 全貌的入口） */
+          inspect: RpcSchema.unary({
+            desc: `UI 诊断：生成当前页面的无障碍树（可见元素 + 角色 + 文本 + 层级）`,
+            input: {},
+            output: z.object({
+              status: z.string(),
+              data: z.object({
+                tree: z.any(),
+                stats: z.object({
+                  totalNodes: z.number(),
+                  visibleNodes: z.number(),
+                }),
+              }),
+            }),
           }),
         },
       }),
