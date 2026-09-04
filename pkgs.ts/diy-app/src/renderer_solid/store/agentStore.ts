@@ -8,6 +8,7 @@ const [activeModel, setActiveModel] = createSignal<string | null>(null);
 const [messages, setMessages] = createSignal<ChatMessage[]>([]);
 const [sending, setSending] = createSignal(false);
 const [error, setError] = createSignal<string | null>(null);
+const [autoApprove, setAutoApproveSignal] = createSignal(true);
 
 export const agentStore = {
   get models() { return models(); },
@@ -15,6 +16,7 @@ export const agentStore = {
   get messages() { return messages(); },
   get sending() { return sending(); },
   get error() { return error(); },
+  get autoApprove() { return autoApprove(); },
   loadModels: async () => {
     try {
       const r = await diyService.diy.agent.listModels({});
@@ -70,5 +72,28 @@ export const agentStore = {
       void agentStore.syncStatus(taskUri);
     } catch (e) { setError(e instanceof Error ? e.message : "发送失败"); setSending(false); }
   },
+
+  loadAutoApprove: async () => {
+    try {
+      const r = await diyService.diy.agent.getAutoApprove({});
+      setAutoApproveSignal(r.enabled);
+    } catch { /* 静默 */ }
+  },
+
+  setAutoApprove: async (enabled: boolean) => {
+    try {
+      await diyService.diy.agent.setAutoApprove({ enabled });
+      setAutoApproveSignal(enabled);
+    } catch (e) { setError(e instanceof Error ? e.message : "设置失败"); }
+  },
+
+  closeSession: async (taskUri: string) => {
+    try {
+      await diyService.diy.agent.closeSession({ taskUri });
+      // 会话已销毁 → 当前模型不再存在，必须清空
+      setMessages([]); setError(null); setActiveModel(null);
+    } catch (e) { setError(e instanceof Error ? e.message : "关闭会话失败"); }
+  },
+
   clearChat: () => { setMessages([]); setError(null); },
 };

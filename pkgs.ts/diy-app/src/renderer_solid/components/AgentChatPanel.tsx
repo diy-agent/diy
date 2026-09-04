@@ -5,7 +5,7 @@ import { taskStore } from "../store/taskStore";
 export function AgentChatPanel() {
     let inputRef: HTMLTextAreaElement | undefined;
     let bottomRef: HTMLDivElement | undefined;
-    onMount(() => agentStore.loadModels());
+    onMount(() => { agentStore.loadModels(); agentStore.loadAutoApprove(); });
 
     // 切换任务时以主进程的真实会话状态为准刷新模型，避免界面显示伪造默认值
     createEffect(() => {
@@ -47,6 +47,22 @@ export function AgentChatPanel() {
                 </select>
                 <button class="btn btn-ghost btn-sm" onClick={() => agentStore.clearChat()}>
                     清空
+                </button>
+                <label class="flex items-center gap-1 text-xs opacity-60 cursor-pointer select-none">
+                    <input
+                        type="checkbox"
+                        checked={agentStore.autoApprove}
+                        onChange={(e) => agentStore.setAutoApprove(e.currentTarget.checked)}
+                        class="checkbox checkbox-xs"
+                    />
+                    自动审批
+                </label>
+                <button
+                    class="btn btn-ghost btn-sm text-error"
+                    onClick={() => { const uri = taskStore.selectedUri; if (uri) agentStore.closeSession(uri); }}
+                    disabled={!taskStore.selectedUri}
+                >
+                    关闭会话
                 </button>
                 <span class="ml-auto text-xs opacity-60">
                     {agentStore.sending ? "思考中…" : `${agentStore.messages.length} 条消息`}
