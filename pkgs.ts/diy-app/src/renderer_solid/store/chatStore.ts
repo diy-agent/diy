@@ -193,7 +193,14 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
     // ─── Agent 消息 ───
     case "agent_message_chunk": {
       const id = d?.messageId ?? `agent-${now}`;
-      ensureMessage(id, "assistant", now);
+      const existing = messages().find((m) => m.id === id);
+      if (existing && existing.type === "thought") {
+        // 同一个 messageId 先被 thought_chunk 创建为 type="thought"，
+        // 现在 message_chunk 到了 → 升级为 assistant，把已有内容移到 thought 字段
+        updateMessage(id, { type: "assistant", thought: existing.content || existing.thought, content: "", streaming: true });
+      } else {
+        ensureMessage(id, "assistant", now);
+      }
       const text = d?.content?.text ?? "";
       if (text) appendToMessage(id, text);
       break;
@@ -202,10 +209,20 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
       const id = d?.messageId ?? `agent-${now}`;
       const content = extractTextContent(d?.content);
       const existing = messages().find((m) => m.id === id);
-      updateMessage(id, {
-        content: content || existing?.content || "",
-        streaming: false,
-      });
+      if (existing && existing.type === "thought") {
+        // thought → assistant 升级
+        updateMessage(id, {
+          type: "assistant",
+          thought: existing.content || existing.thought,
+          content: content || "",
+          streaming: false,
+        });
+      } else {
+        updateMessage(id, {
+          content: content || existing?.content || "",
+          streaming: false,
+        });
+      }
       break;
     }
 
@@ -345,6 +362,29 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
         );
         setSending(false);
       }
+      break;
+    }
+
+    // ─── 会话结束 ───
+    case "stop": {
+      // agent 回合结束（ACP session/update 最后一条通知）
+      // 附上 usage（如果有）
+      if (d?.usage) {
+        const lastAssistant = [...messages()].reverse().find((m) => m.type === "assistant");
+        if (lastAssistant) {
+          updateMessage(lastAssistant.id, {
+            usage: {
+              input: d.usage.inputTokens,
+              output: d.usage.outputTokens,
+              total: d.usage.totalTokens,
+            },
+          });
+        }
+      }
+      setMessages((prev) =>
+        prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
+      );
+      setSending(false);
       break;
     }
 
