@@ -1,29 +1,46 @@
-import { onMount, For, Show } from "solid-js";
+import { onMount, createEffect, For, Show } from "solid-js";
 import { agentStore } from "../store/agentStore";
+import { taskStore } from "../store/taskStore";
 
 export function AgentChatPanel() {
     let inputRef: HTMLTextAreaElement | undefined;
     let bottomRef: HTMLDivElement | undefined;
     onMount(() => agentStore.loadModels());
 
+    // 切换任务时以主进程的真实会话状态为准刷新模型，避免界面显示伪造默认值
+    createEffect(() => {
+        const uri = taskStore.selectedUri;
+        if (uri) void agentStore.syncStatus(uri);
+        else agentStore.setModel("");
+    });
+
     const handleSend = () => {
         if (!inputRef || agentStore.sending) return;
         const t = inputRef.value.trim();
         if (!t) return;
+        const uri = taskStore.selectedUri;
+        if (!uri) return; // 未选中任务时不发送（task 级对话）
         inputRef.value = "";
-        agentStore.sendMessage(t);
+        agentStore.sendMessage(uri, t);
         setTimeout(() => bottomRef?.scrollIntoView({ behavior: "smooth" }), 50);
     };
 
     return (
         <div class="flex flex-col h-full">
-            {/* 顶栏 */}
+            {/* 顶栏：模型选择 + 操作 */}
             <div class="flex items-center gap-2 px-3 py-2 border-b shrink-0">
                 <select
                     value={agentStore.activeModel ?? ""}
-                    onChange={(e) => agentStore.setModel(e.currentTarget.value)}
+                    onChange={(e) => {
+                        const id = e.currentTarget.value;
+                        agentStore.setModel(id);
+                        const uri = taskStore.selectedUri;
+                        if (id && uri) agentStore.switchModel(uri, id);
+                    }}
                     class="select select-bordered select-sm"
                 >
+                    {/* 占位项：没有真实会话时不能预选任何模型 */}
+                    <option value="">（未指定 · 用 agent 默认模型）</option>
                     <For each={agentStore.models}>
                         {(m) => <option value={m.id}>{m.name}</option>}
                     </For>
