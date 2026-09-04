@@ -2,7 +2,6 @@ import { createSignal, onMount, onCleanup, Show } from "solid-js";
 import * as Tabs from "@kobalte/core/tabs";
 import { TaskTree } from "./components/TaskTree";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
-import { AgentChatPanel } from "./components/AgentChatPanel";
 import { LlmPage } from "./components/LlmPage";
 import { LogPanel } from "./components/LogPanel";
 import { AppInfo } from "./components/AppInfo";
@@ -11,7 +10,7 @@ import { taskStore } from "./store/taskStore";
 import { notificationStore, type ToastType } from "./store/notificationStore";
 import { setRendererActions, resetRendererActions } from "./lib/renderer-actions";
 
-type NavPage = "task" | "llm" | "agent" | "settings";
+type NavPage = "task" | "llm" | "settings";
 
 export default function App() {
     const [currentPage, setCurrentPage] = createSignal<NavPage>("task");
@@ -31,7 +30,6 @@ export default function App() {
     const navItems: Array<{ id: NavPage; label: string; icon: string }> = [
         { id: "task", label: "任务树", icon: "🌳" },
         { id: "llm", label: "LLM", icon: "🧠" },
-        { id: "agent", label: "Agent", icon: "🤖" },
         { id: "settings", label: "设置", icon: "⚙️" },
     ];
 
@@ -61,9 +59,6 @@ export default function App() {
                     </Show>
                     <Show when={currentPage() === "llm"}>
                         <LlmPage />
-                    </Show>
-                    <Show when={currentPage() === "agent"}>
-                        <AgentChatPanel />
                     </Show>
                     <Show when={currentPage() === "settings"}>
                         <div class="flex flex-col h-full">

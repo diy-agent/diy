@@ -12,7 +12,12 @@ function flattenTasks(nodes: TreeNode[]): TreeNode[] {
     return result;
 }
 
-export function AgentChatPanel() {
+/**
+ * Agent 对话面板。
+ * embedded=true 时嵌入任务详情面板（任务已选中，不显示任务选择器）；
+ * embedded=false 时独立使用（显示任务选择器）。
+ */
+export function AgentChatPanel(props: { embedded?: boolean } = {}) {
     let inputRef: HTMLTextAreaElement | undefined;
     let bottomRef: HTMLDivElement | undefined;
     onMount(() => { agentStore.loadModels(); agentStore.loadAutoApprove(); });
@@ -29,7 +34,7 @@ export function AgentChatPanel() {
         const t = inputRef.value.trim();
         if (!t) return;
         const uri = taskStore.selectedUri;
-        if (!uri) return; // 未选中任务时不发送（task 级对话）
+        if (!uri) return;
         inputRef.value = "";
         agentStore.sendMessage(uri, t);
         setTimeout(() => bottomRef?.scrollIntoView({ behavior: "smooth" }), 50);
@@ -37,19 +42,21 @@ export function AgentChatPanel() {
 
     return (
         <div class="flex flex-col h-full">
-            {/* 顶栏：任务选择 + 模型选择 + 操作 */}
+            {/* 顶栏：模型选择 + 操作 */}
             <div class="flex items-center gap-2 px-3 py-2 border-b shrink-0 flex-wrap">
-                {/* 任务选择器：在 Agent 页面内直接选任务，不用切到任务树 */}
-                <select
-                    value={taskStore.selectedUri ?? ""}
-                    onChange={(e) => taskStore.selectTask(e.currentTarget.value || null)}
-                    class="select select-bordered select-sm max-w-48"
-                >
-                    <option value="">— 选择任务 —</option>
-                    <For each={flattenTasks(taskStore.nodes)}>
-                        {(t) => <option value={t.uri}>{t.title ?? t.uri}</option>}
-                    </For>
-                </select>
+                {/* 独立模式才显示任务选择器；嵌入模式任务已由详情面板选中 */}
+                <Show when={!props.embedded}>
+                    <select
+                        value={taskStore.selectedUri ?? ""}
+                        onChange={(e) => taskStore.selectTask(e.currentTarget.value || null)}
+                        class="select select-bordered select-sm max-w-48"
+                    >
+                        <option value="">— 选择任务 —</option>
+                        <For each={flattenTasks(taskStore.nodes)}>
+                            {(t) => <option value={t.uri}>{t.title ?? t.uri}</option>}
+                        </For>
+                    </select>
+                </Show>
                 <select
                     value={agentStore.activeModel ?? ""}
                     onChange={(e) => {
@@ -60,7 +67,6 @@ export function AgentChatPanel() {
                     }}
                     class="select select-bordered select-sm"
                 >
-                    {/* 占位项：没有真实会话时不能预选任何模型 */}
                     <option value="">（未指定 · 用 agent 默认模型）</option>
                     <For each={agentStore.models}>
                         {(m) => <option value={m.id}>{m.name}</option>}
