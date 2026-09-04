@@ -158,6 +158,62 @@ export class TaskSessionPoolV2 {
     }
   }
 
+  /**
+   * 向某 task 的 session 流式对话：yield 完整 ACP 事件（JSON 字符串）。
+   * 与 streamChat 的区别：不只返回文本增量，而是返回所有 session/update 通知，
+   * 包括 agent_message_chunk、tool_call_update、agent_thought_chunk 等。
+   */
+  async *streamChatEvents(
+    taskUri: string,
+    model: string,
+    messages: Array<{ role: string; content: string }>,
+  ): AsyncGenerator<string> {
+    const session = await this.ensure(taskUri);
+
+    if (model && model !== session.currentModelId) {
+      try {
+        await session.setModel(model);
+      } catch (e) {
+        if ((e as { code?: number })?.code !== -32601) {
+          console.error(`[acp] 切换模型到 "${model}" 失败：${(e as Error)?.message ?? e}`);
+          throw e;
+        }
+        console.warn(`[acp] agent 不支持 session/set_model，保持原模型 ${session.currentModelId ?? "?"}`);
+      }
+    }
+
+    // 事件队列（JSON 字符串）+ 完成/唤醒信号
+    const queue: string[] = [];
+    let ended = false;
+    let wake: (() => void) | null = null;
+    const kick = () => { wake?.(); wake = null; };
+
+    // 订阅所有事件，序列化为 JSON yield
+    const unsub = session.onEvent((ev) => {
+      queue.push(JSON.stringify(ev));
+      kick();
+    });
+
+    try {
+      const promptText = messages.map((m) => m.content).join("\n");
+      const promptDone = session
+        .prompt(promptText)
+        .finally(() => { ended = true; kick(); });
+
+      while (true) {
+        while (queue.length > 0) yield queue.shift()!;
+        if (ended) break;
+        await new Promise<void>((r) => {
+          wake = r;
+          if (queue.length > 0 || ended) r();
+        });
+      }
+      await promptDone;
+    } finally {
+      unsub();
+    }
+  }
+
   /** 非流式对话：聚合流式增量为完整回复。 */
   async chat(
     taskUri: string,

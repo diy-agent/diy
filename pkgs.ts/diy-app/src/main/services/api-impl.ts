@@ -199,6 +199,12 @@ export function bindAppHandlers(binding: ServerBinding): void {
       yield delta;
     }
   });
+  binding.on(app.agent.chatStreamEvents, async function* ({ input }) {
+    const pool = await getSessionPool();
+    for await (const ev of pool.streamChatEvents(input.taskUri, input.model, input.messages)) {
+      yield ev;
+    }
+  });
   binding.on(app.agent.listModels, async () => {
     const pool = await getSessionPool();
     const models = await pool.listModels();

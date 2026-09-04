@@ -1,7 +1,7 @@
 ref:
   source:
-    - https://github.com/TanStack/router
     - https://github.com/anomalyco/opencode
+    - https://github.com/deepseek-ai/deepseek-harness
   node:
     include:
       - '@agentclientprotocol/sdk'

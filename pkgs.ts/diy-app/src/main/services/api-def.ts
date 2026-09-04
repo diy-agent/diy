@@ -301,6 +301,15 @@ export const apiDef = RpcSchema.router({
             },
             output: z.string(),
           }),
+          chatStreamEvents: RpcSchema.serverStream({
+            desc: `流式对话 — 完整 ACP 事件流（JSON 序列化的 session/update 通知）`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+              model: z.string().cliArg({ desc: "模型名称" }),
+              messages: z.array(MessageParam).cliOption({ desc: "消息数组 JSON" }),
+            },
+            output: z.string(),
+          }),
           listModels: RpcSchema.unary({
             desc: `列出可用模型`,
             input: {},
