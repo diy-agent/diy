@@ -32,8 +32,8 @@ export const useTaskStore = create<TaskStore>((set, _get) => ({
   loadTree: async () => {
     set({ loading: true });
     try {
-      const nodes = (await diyService.diy.loadTaskTree({ allTasks: true })) as TreeNode[];
-      set({ nodes, loading: false });
+      const r = await diyService.diy.loadTaskTree({ allTasks: true });
+      set({ nodes: r.data, loading: false });
     } catch {
       set({ loading: false });
     }
@@ -42,7 +42,7 @@ export const useTaskStore = create<TaskStore>((set, _get) => ({
   selectTask: async (uri: string | null) => {
     set({ selectedUri: uri, selectedTask: null });
     if (!uri) return;
-    const task = (await diyService.diy.getTask({ uri })) as Record<string, unknown> | null;
-    if (task) set({ selectedTask: task });
+    const r = await diyService.diy.getTask({ uri });
+    if (r.data) set({ selectedTask: r.data });
   },
 }));

@@ -1,6 +1,5 @@
-// @ts-nocheck
 import { onMount, onCleanup, Show } from "solid-js";
-import { taskStore } from "../store/taskStore";
+import { taskStore, type TaskDetail } from "../store/taskStore";
 
 export function TaskDetailPanel() {
     const onKey = (e: KeyboardEvent) => {
@@ -29,53 +28,55 @@ export function TaskDetailPanel() {
 
                     {/* 卡片内容 */}
                     <div class="p-4 overflow-auto">
-                        {!taskStore.selectedTask ? (
-                            <div class="opacity-60 text-sm">加载中…</div>
-                        ) : (() => {
-                            const t: any = taskStore.selectedTask;
-                            return (
-                                <div class="space-y-4">
-                                    <div>
-                                        <h2 class="text-lg font-bold mb-1">
-                                            {String(t["title"] ?? "") || t["uri"]}
-                                        </h2>
-                                        {t["state"] && <span class="badge badge-sm">{String(t["state"])}</span>}
-                                    </div>
-                                    <div class="flex gap-2 flex-wrap text-xs opacity-60">
-                                        {t["project"] && (
-                                            <span class="badge badge-outline">📂 {String(t["project"])}</span>
-                                        )}
-                                        {t["created"] && (
-                                            <span class="badge badge-outline">
-                                                🕐 {new Date(String(t["created"])).toLocaleString()}
-                                            </span>
-                                        )}
-                                        {t["updated"] && t["updated"] !== t["created"] && (
-                                            <span class="badge badge-outline">
-                                                ✏️ {new Date(String(t["updated"])).toLocaleString()}
-                                            </span>
-                                        )}
-                                    </div>
-                                    {t["detail"] && (
-                                        <div>
-                                            <h3 class="text-xs font-semibold opacity-60 mb-1">详情</h3>
-                                            <div class="text-sm whitespace-pre-wrap">{String(t["detail"])}</div>
-                                        </div>
-                                    )}
-                                    {t["body"] && (
-                                        <div>
-                                            <h3 class="text-xs font-semibold opacity-60 mb-1">正文</h3>
-                                            <div class="text-sm whitespace-pre-wrap leading-relaxed">
-                                                {String(t["body"])}
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        })()}
+                        <Show when={taskStore.selectedTask} fallback={<div class="opacity-60 text-sm">加载中…</div>}>
+                            {(t) => <TaskDetailView task={t()} />}
+                        </Show>
                     </div>
                 </div>
             </div>
         </Show>
+    );
+}
+
+function TaskDetailView(props: { task: TaskDetail }) {
+    const t = props.task;
+    return (
+        <div class="space-y-4">
+            <div>
+                <h2 class="text-lg font-bold mb-1">
+                    {t.title || t.uri}
+                </h2>
+                {t.state && <span class="badge badge-sm">{t.state}</span>}
+            </div>
+            <div class="flex gap-2 flex-wrap text-xs opacity-60">
+                {t.project && (
+                    <span class="badge badge-outline">📂 {t.project}</span>
+                )}
+                {t.created && (
+                    <span class="badge badge-outline">
+                        🕐 {new Date(t.created).toLocaleString()}
+                    </span>
+                )}
+                {t.updated && t.updated !== t.created && (
+                    <span class="badge badge-outline">
+                        ✏️ {new Date(t.updated).toLocaleString()}
+                    </span>
+                )}
+            </div>
+            {t.detail && (
+                <div>
+                    <h3 class="text-xs font-semibold opacity-60 mb-1">详情</h3>
+                    <div class="text-sm whitespace-pre-wrap">{t.detail}</div>
+                </div>
+            )}
+            {t.body && (
+                <div>
+                    <h3 class="text-xs font-semibold opacity-60 mb-1">正文</h3>
+                    <div class="text-sm whitespace-pre-wrap leading-relaxed">
+                        {t.body}
+                    </div>
+                </div>
+            )}
+        </div>
     );
 }

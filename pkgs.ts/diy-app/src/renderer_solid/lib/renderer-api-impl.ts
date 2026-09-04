@@ -1,7 +1,7 @@
-// @ts-nocheck
 import type { EnvelopeTransport, ServerBinding } from "@diy/rpc";
 import { ChannelServerBinding } from "@diy/rpc";
 import { getRendererActions } from "./renderer-actions";
+import type { ToastType } from "../store/notificationStore";
 import { apiDef } from "../../main/services/api-def";
 import { diyService } from "./rpc";
 import { createProjectViaUi } from "./create-project";
@@ -62,14 +62,13 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
   });
 
   binding.on(ui.page.toast, async ({ input }) => {
-    getRendererActions().toast?.(input.message, input.level ?? "info");
+    getRendererActions().toast?.(input.message, (input.level as ToastType) ?? "info");
     return { status: "ok" };
   });
 
   // diy.ui.tree — 反向调 main 的 diy.loadTaskTree 取结构化数据
   binding.on(ui.tree, async ({ input }) => {
-    const nodes = await diyService.diy.loadTaskTree({ allTasks: input.all ?? false });
-    return { status: "ok", data: nodes };
+    return diyService.diy.loadTaskTree({ allTasks: input.all ?? false });
   });
 
   // diy.ui.status — 进程数据反向调 main 的 diy.getAppStatus
@@ -90,8 +89,6 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
       title: input.title,
       project: input.project,
       parent: input.parent,
-      detail: input.detail,
-      body: input.body,
     });
     return { status: "ok", data: { uri } };
   });
@@ -113,22 +110,33 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
   return binding;
 }
 
+/** 无障碍树节点（含内部统计字段） */
+interface A11yNode {
+  role: string;
+  text: string;
+  value?: string;
+  rect?: { x: number; y: number; w: number; h: number };
+  children?: A11yNode[];
+  _count: number;
+  _visible: number;
+}
+
 /** 递归移除节点上的内部辅助字段（下划线前缀），仅输出对 agent 有用的字段 */
-function stripInternal(node: any): any {
+function stripInternal(node: A11yNode | null): Omit<A11yNode, "_count" | "_visible"> | null {
   if (!node) return null;
-  const clean: any = {};
+  const clean: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(node)) {
     if (k.startsWith("_")) continue;
-    clean[k] = Array.isArray(v) ? v.map(stripInternal) : v;
+    clean[k] = Array.isArray(v) ? v.map((c) => stripInternal(c as A11yNode | null)) : v;
   }
-  return clean;
+  return clean as Omit<A11yNode, "_count" | "_visible">;
 }
 
 /**
  * DOM → 无障碍树：递归遍历，提取 role / text / 位置 / 可见性。
  * 返回结构化对象供 agent 消费：{ role, text, children[], rect, visible }
  */
-function buildA11yTree(el: Element): any {
+function buildA11yTree(el: Element): A11yNode | null {
   const style = getComputedStyle(el);
   const isHidden = style.display === "none" || style.visibility === "hidden" || style.opacity === "0";
   if (isHidden) return null;
@@ -142,7 +150,7 @@ function buildA11yTree(el: Element): any {
      tag === "a" ? "link" : tag === "img" ? "img" : tag === "ul" || tag === "ol" ? "list" :
      tag === "li" ? "listitem" : tag === "nav" ? "navigation" : tag === "main" ? "main" :
      tag === "header" ? "banner" : tag === "footer" ? "contentinfo" : tag === "aside" ? "complementary" :
-     tag === "dialog" ? "dialog" : tag);
+     tag === "dialog" ? "dialog" : "generic");
 
   // 文本内容：只取直接文本节点
   let text = "";
@@ -176,7 +184,7 @@ function buildA11yTree(el: Element): any {
   const rect = el.getBoundingClientRect();
 
   // 子节点
-  const children: any[] = [];
+  const children: A11yNode[] = [];
   let count = 1;
   let visible = 1;
   for (const child of el.children) {
@@ -193,13 +201,11 @@ function buildA11yTree(el: Element): any {
   // 精简：跳过 InlineTextBox / StaticText 等纯文本包装
   if (tag === "span" && children.length === 0 && !text) return null;
 
-  const node: any = { role, text };
+  const node: A11yNode = { role, text, _count: count, _visible: visible };
   if (value) node.value = value;
   if (rect.width > 0 && rect.height > 0) {
     node.rect = { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) };
   }
   if (children.length > 0) node.children = children;
-  node._count = count;
-  node._visible = visible;
   return node;
 }

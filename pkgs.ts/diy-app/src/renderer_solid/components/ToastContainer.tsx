@@ -1,8 +1,7 @@
-// @ts-nocheck
 import { For } from "solid-js";
-import { notificationStore } from "../store/notificationStore";
+import { notificationStore, type ToastType } from "../store/notificationStore";
 
-const typeStyle: any = {
+const typeStyle: Record<ToastType, string> = {
     info: "alert-info",
     success: "alert-success",
     error: "alert-error",

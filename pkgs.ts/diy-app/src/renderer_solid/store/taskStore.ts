@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
 
@@ -13,16 +12,28 @@ export interface TreeNode {
   children: TreeNode[];
 }
 
+export interface TaskDetail {
+  uri: string;
+  title?: string;
+  state?: string;
+  project?: string;
+  parent?: string;
+  detail?: string;
+  body?: string;
+  created?: string;
+  updated?: string;
+}
+
 const [nodes, setNodes] = createSignal<TreeNode[]>([]);
 const [selectedUri, setSelectedUri] = createSignal<string | null>(null);
-const [selectedTask, setSelectedTask] = createSignal<Record<string, unknown> | null>(null);
+const [selectedTask, setSelectedTask] = createSignal<TaskDetail | null>(null);
 const [loading, setLoading] = createSignal(false);
 
 async function loadTree() {
   setLoading(true);
   try {
-    const n = (await diyService.diy.loadTaskTree({ allTasks: true })) as TreeNode[];
-    setNodes(n);
+    const r = await diyService.diy.loadTaskTree({ allTasks: true });
+    setNodes(r.data);
   } finally {
     setLoading(false);
   }
@@ -32,8 +43,8 @@ async function selectTask(uri: string | null) {
   setSelectedUri(uri);
   setSelectedTask(null);
   if (!uri) return;
-  const task = (await diyService.diy.getTask({ uri })) as Record<string, unknown> | null;
-  if (task) setSelectedTask(task);
+  const r = await diyService.diy.getTask({ uri });
+  if (r.data) setSelectedTask(r.data);
 }
 
 // 单例：以「值 getter」暴露信号（组件当值用）。读 taskStore.nodes 即读 nodes()，

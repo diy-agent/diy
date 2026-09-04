@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createSignal } from "solid-js";
 
 export type ToastType = "info" | "success" | "error";

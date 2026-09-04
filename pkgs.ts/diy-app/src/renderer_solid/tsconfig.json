@@ -6,6 +6,10 @@
     "jsx": "preserve",
     "jsxImportSource": "solid-js",
     "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noImplicitReturns": true,
+    "noImplicitOverride": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
@@ -14,5 +18,5 @@
     "types": ["node"],
     "paths": { "@/*": ["./*"] }
   },
-  "include": ["./**/*"]
+  "include": ["./**/*", "../env.d.ts"]
 }

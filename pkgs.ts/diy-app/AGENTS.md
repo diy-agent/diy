@@ -57,7 +57,7 @@ renderer_solid/
 - ✅ 任务树拖拽用 `@dnd-kit/solid`（dnd-kit 官方 Solid 包），`sensors={[PointerSensor]}` 禁键盘拖拽
 - ❌ 不开发通用 UI 组件
 
-renderer_solid/ 全部文件首行 `// @ts-nocheck`，根 `tsconfig.json` exclude `renderer_solid`（类型检查待还债）。
+renderer_solid/ 有独立 tsconfig（strict + jsxImportSource: solid-js），tsc 零报错。根 tsconfig.json 因 react-jsx 冲突仍 exclude，但类型检查由自身 tsconfig 覆盖。
 
 ### 样式策略
 

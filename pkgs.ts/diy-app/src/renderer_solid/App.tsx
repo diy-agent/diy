@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createSignal, onMount, onCleanup, Show } from "solid-js";
 import * as Tabs from "@kobalte/core/tabs";
 import { TaskTree } from "./components/TaskTree";
@@ -9,7 +8,7 @@ import { LogPanel } from "./components/LogPanel";
 import { AppInfo } from "./components/AppInfo";
 import { ToastContainer } from "./components/ToastContainer";
 import { taskStore } from "./store/taskStore";
-import { notificationStore } from "./store/notificationStore";
+import { notificationStore, type ToastType } from "./store/notificationStore";
 import { setRendererActions, resetRendererActions } from "./lib/renderer-actions";
 
 type NavPage = "task" | "llm" | "agent" | "settings";
@@ -24,7 +23,7 @@ export default function App() {
         setRendererActions({
             navigate: (page) => setCurrentPage(page as NavPage),
             focus: (uri) => taskStore.selectTask(uri),
-            toast: (msg, level) => notificationStore.addToast(level as any, msg),
+            toast: (msg, level) => notificationStore.addToast(level ?? "info", msg),
         });
     });
     onCleanup(() => resetRendererActions());
@@ -67,7 +66,7 @@ export default function App() {
                     <Show when={currentPage() === "settings"}>
                         <div class="flex flex-col h-full">
                             <div class="border-b px-3 py-2 shrink-0">
-                                <Tabs.Root value={subPage()} onValueChange={setSubPage}>
+                                <Tabs.Root value={subPage()} onChange={setSubPage}>
                                     <Tabs.List class="tabs tabs-box">
                                         <Tabs.Trigger value="info" class="tab">
                                             📊 状态

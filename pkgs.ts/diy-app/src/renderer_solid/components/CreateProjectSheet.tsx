@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createSignal } from "solid-js";
 import { createProjectViaUi } from "../lib/create-project";
 import { diyService } from "../lib/rpc";
@@ -19,11 +18,13 @@ export function CreateProjectSheet() {
 
     const pickDir = async () => {
         try {
-            const r: any = await diyService.diy.pickProjectDirectory({});
+            const r = await diyService.diy.pickProjectDirectory({});
             if (r.data.canceled || !r.data.path) return;
             setPath(r.data.path);
             if (!label().trim()) setLabel(basename(r.data.path));
-        } catch {}
+        } catch {
+            /* 打开选择器失败/无 Electron dialog，忽略 */
+        }
     };
 
     const submit = async () => {
@@ -36,8 +37,9 @@ export function CreateProjectSheet() {
             await createProjectViaUi(path().trim(), label().trim() || undefined, desc().trim() || undefined);
             setOpen(false);
             setPath(""); setLabel(""); setDesc("");
-        } catch (e: any) {
-            notificationStore.addToast("error", `创建失败: ${e.message}`);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            notificationStore.addToast("error", `创建失败: ${msg}`);
         } finally {
             setBusy(false);
         }

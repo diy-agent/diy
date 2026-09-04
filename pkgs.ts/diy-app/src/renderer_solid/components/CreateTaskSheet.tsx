@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createSignal } from "solid-js";
 import { createTaskViaUi } from "../lib/create-task";
 import { notificationStore } from "../store/notificationStore";
@@ -28,8 +27,9 @@ export function CreateTaskSheet(props: {
             });
             setOpen(false);
             setTitle("");
-        } catch (e: any) {
-            notificationStore.addToast("error", `创建失败: ${e.message}`);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            notificationStore.addToast("error", `创建失败: ${msg}`);
         } finally {
             setBusy(false);
         }

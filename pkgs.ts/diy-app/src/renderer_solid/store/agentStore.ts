@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
 
@@ -18,7 +17,7 @@ export const agentStore = {
   get error() { return error(); },
   loadModels: async () => {
     try {
-      const r: any = await diyService.diy.agent.listModels({});
+      const r = await diyService.diy.agent.listModels({});
       setModels(r);
       setActiveModel(r?.[0]?.id ?? null);
     } catch (e) { setError(e instanceof Error ? e.message : "加载模型失败"); }
@@ -31,7 +30,7 @@ export const agentStore = {
     setMessages((p) => [...p, userMsg]);
     setSending(true); setError(null);
     try {
-      const handle: any = await diyService.diy.agent.chatStream({ model: m, messages: [...messages()].map((x) => ({ role: x.role, content: x.content })) });
+      const handle = await diyService.diy.agent.chatStream({ model: m, messages: [...messages()].map((x) => ({ role: x.role, content: x.content })) });
       setMessages((p) => [...p, { role: "assistant", content: "" }]);
       let full = "";
       for await (const delta of handle) {

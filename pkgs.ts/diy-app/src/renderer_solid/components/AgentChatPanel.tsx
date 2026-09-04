@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { onMount, For, Show } from "solid-js";
 import { agentStore } from "../store/agentStore";
 

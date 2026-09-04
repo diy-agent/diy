@@ -1,13 +1,16 @@
-// @ts-nocheck
 import { createSignal, createMemo, onMount, For, Show } from "solid-js";
 import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSensor } from "@dnd-kit/solid";
-import { taskStore } from "../store/taskStore";
+import type { DragDropProviderProps } from "@dnd-kit/solid";
+import { taskStore, type TreeNode } from "../store/taskStore";
 import { notificationStore } from "../store/notificationStore";
 import { diyService } from "../lib/rpc";
 import { CreateProjectSheet } from "./CreateProjectSheet";
 import { CreateTaskSheet } from "./CreateTaskSheet";
 
-const stateColor: any = {
+// dnd-kit/solid 未直接导出 DragEndEvent，从 onDragEnd 回调参数提取
+type DragEndEvent = Parameters<NonNullable<DragDropProviderProps["onDragEnd"]>>[0];
+
+const stateColor: Record<string, string> = {
     pending: "bg-warning",
     active: "bg-info",
     done: "bg-success",
@@ -15,10 +18,18 @@ const stateColor: any = {
     cancelled: "bg-neutral",
 };
 
-function flattenTree(nodes: any[], expanded: Set<string>, depth = 0) {
-    const rows: any[] = [];
+interface FlatRow {
+    key: string;
+    kind: "project" | "task";
+    node: TreeNode;
+    depth: number;
+    projectId: string;
+}
+
+function flattenTree(nodes: TreeNode[], expanded: Set<string>, depth = 0): FlatRow[] {
+    const rows: FlatRow[] = [];
     for (const n of nodes) {
-        const key = n.kind === "project" ? `proj:${n.project}` : n.uri;
+        const key = n.kind === "project" ? `proj:${n.project}` : n.uri ?? "";
         rows.push({ key, kind: n.kind, node: n, depth, projectId: n.project ?? "" });
         const shouldExpand = n.kind === "project" ? !expanded.has(key) : expanded.has(key);
         if (shouldExpand && n.children?.length)
@@ -27,7 +38,12 @@ function flattenTree(nodes: any[], expanded: Set<string>, depth = 0) {
     return rows;
 }
 
-function findTaskProject(nodes: any[], uri: string) {
+interface TaskProjectInfo {
+    project: string;
+    parent: string | undefined;
+}
+
+function findTaskProject(nodes: TreeNode[], uri: string): TaskProjectInfo | null {
     for (const p of nodes) {
         if (p.kind !== "project") continue;
         const f = findInTree(p.children, uri);
@@ -35,7 +51,8 @@ function findTaskProject(nodes: any[], uri: string) {
     }
     return null;
 }
-function findInTree(children: any[], uri: string) {
+
+function findInTree(children: TreeNode[], uri: string): TreeNode | null {
     for (const c of children) {
         if (c.uri === uri) return c;
         const f = findInTree(c.children, uri);
@@ -47,11 +64,11 @@ function findInTree(children: any[], uri: string) {
 export function TaskTree() {
     const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
     onMount(() => taskStore.loadTree());
-    const rows = createMemo(() => flattenTree(taskStore.nodes as any, expanded()));
+    const rows = createMemo(() => flattenTree(taskStore.nodes, expanded()));
     const selectable = createMemo(() =>
         rows()
-            .filter((r: any) => r.kind === "task")
-            .map((r: any) => r.key),
+            .filter((r) => r.kind === "task")
+            .map((r) => r.key),
     );
     const toggle = (k: string) =>
         setExpanded((p) => {
@@ -68,12 +85,12 @@ export function TaskTree() {
     };
 
     // ── dnd-kit/solid 拖拽改父级 / 提升层级 ──
-    const handleDragEnd = async (event: any) => {
+    const handleDragEnd = async (event: DragEndEvent) => {
         if (event.operation?.canceled) return;
         const dragUri = String(event.operation?.source?.id ?? "");
         const dropUri = String(event.operation?.target?.id ?? "");
         if (!dragUri || !dropUri || dragUri === dropUri) return;
-        const dragInfo = findTaskProject(taskStore.nodes as any, dragUri);
+        const dragInfo = findTaskProject(taskStore.nodes, dragUri);
         if (!dragInfo) return;
 
         // 拖到项目节点(proj:<pid>) → 取消父子层级，提升为该项目的一级任务
@@ -94,14 +111,15 @@ export function TaskTree() {
                     return n;
                 });
                 notificationStore.addToast("success", "已提升为一级任务");
-            } catch (e: any) {
-                notificationStore.addToast("error", `提升失败: ${e?.message ?? e}`);
+            } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                notificationStore.addToast("error", `提升失败: ${msg}`);
             }
             return;
         }
 
         // 拖到任务 → 改为其子任务（改层级）
-        const dropInfo = findTaskProject(taskStore.nodes as any, dropUri);
+        const dropInfo = findTaskProject(taskStore.nodes, dropUri);
         if (!dropInfo) return;
         if (dragInfo.project !== dropInfo.project) {
             notificationStore.addToast("error", "只能在同一项目内拖动");
@@ -113,8 +131,9 @@ export function TaskTree() {
             await taskStore.loadTree();
             setExpanded((prev) => new Set(prev).add(dropUri)); // 展开 drop 目标，子级立即可见
             notificationStore.addToast("success", "已调整层级");
-        } catch (e: any) {
-            notificationStore.addToast("error", `调整失败: ${e?.message ?? e}`);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            notificationStore.addToast("error", `调整失败: ${msg}`);
         }
     };
 
@@ -136,7 +155,7 @@ export function TaskTree() {
                         </thead>
                         <tbody>
                             <For each={rows()}>
-                                {(row: any) =>
+                                {(row) =>
                                     row.kind === "project" ? (
                                         <ProjectRow row={row} expanded={expanded()} onToggle={toggle} />
                                     ) : (
@@ -158,7 +177,7 @@ export function TaskTree() {
 
             {/* dnd-kit DragOverlay：拖拽幽灵只显示任务标题 */}
             <DragOverlay>
-                {(source: any) =>
+                {(source) =>
                     source?.data?.title ? (
                         <div class="flex items-center px-3 py-1 text-sm bg-base-100 border rounded shadow-lg opacity-80 max-w-[200px] pointer-events-none select-none">
                             <span class="truncate">{String(source.data.title)}</span>
@@ -171,7 +190,7 @@ export function TaskTree() {
     );
 }
 
-function ProjectRow(props: { row: any; expanded: Set<string>; onToggle: (k: string) => void }) {
+function ProjectRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: string) => void }) {
     const { row } = props;
     // 项目节点作为拖放目标：拖到其上 → 子任务提升为该项目一级任务
     const drop = useDroppable({
@@ -207,7 +226,7 @@ function ProjectRow(props: { row: any; expanded: Set<string>; onToggle: (k: stri
     );
 }
 
-function TaskRow(props: { row: any; expanded: Set<string>; onToggle: (k: string) => void }) {
+function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: string) => void }) {
     const { row } = props;
     const isSelected = () => taskStore.selectedUri === row.key;
     const drag = useDraggable({
@@ -252,7 +271,7 @@ function TaskRow(props: { row: any; expanded: Set<string>; onToggle: (k: string)
                     ) : (
                         <span class="w-5" />
                     )}
-                    <span class={`w-2 h-2 rounded-full inline-block ${stateColor[row.node.state] ?? "bg-neutral"}`} />
+                    <span class={`w-2 h-2 rounded-full inline-block ${stateColor[row.node.state ?? ""] ?? "bg-neutral"}`} />
                     <span class="truncate font-medium">{row.node.title}</span>
                     {row.node.starred && <span>⭐</span>}
                     <CreateTaskSheet projectId={row.projectId} projectLabel={row.node.title ?? ""} parentUri={row.key} compact />

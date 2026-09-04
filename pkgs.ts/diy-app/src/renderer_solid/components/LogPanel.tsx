@@ -1,18 +1,27 @@
-// @ts-nocheck
 import { createSignal, onMount, For, createMemo } from "solid-js";
 import { diyService } from "../lib/rpc";
+
+export interface LogEntry {
+  timestamp?: string;
+  time?: string;
+  level?: string;
+  message?: string;
+  msg?: string;
+  raw?: string;
+}
+
 export function LogPanel() {
-    const [logs, setLogs] = createSignal<any[]>([]);
+    const [logs, setLogs] = createSignal<LogEntry[]>([]);
     const [filter, setFilter] = createSignal("");
     const [levelFilter, setLevelFilter] = createSignal<string | null>(null);
     const load = async () => {
-        const e: any = await diyService.diy.log.read({ limit: 500 });
+        const e = await diyService.diy.log.read({ limit: 500 });
         setLogs(e);
     };
     onMount(load);
     const filtered = createMemo(() =>
         logs().filter((e) => {
-            if (levelFilter() && e["level"] !== levelFilter()) return false;
+            if (levelFilter() && e.level !== levelFilter()) return false;
             if (filter() && !JSON.stringify(e).toLowerCase().includes(filter().toLowerCase()))
                 return false;
             return true;
@@ -20,7 +29,7 @@ export function LogPanel() {
     );
     const levels = createMemo(
         () =>
-            [...new Set(logs().map((e) => String(e["level"] ?? "")))]
+            [...new Set(logs().map((e) => e.level ?? ""))]
                 .filter(Boolean)
                 .sort() as string[],
     );

@@ -67,8 +67,7 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
 
   // diy.ui.tree — 反向调 main 的 diy.loadTaskTree 取结构化数据
   binding.on(ui.tree, async ({ input }) => {
-    const nodes = await diyService.diy.loadTaskTree({ allTasks: input.all ?? false });
-    return { status: 'ok', data: nodes };
+    return diyService.diy.loadTaskTree({ allTasks: input.all ?? false });
   });
 
   // diy.ui.status — 进程数据反向调 main 的 diy.getAppStatus

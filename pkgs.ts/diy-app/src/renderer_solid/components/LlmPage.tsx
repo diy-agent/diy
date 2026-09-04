@@ -1,12 +1,12 @@
-// @ts-nocheck
 import { createSignal, onMount, Show } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "../store/notificationStore";
+
 export function LlmPage() {
     const [running, setRunning] = createSignal(false);
     const [loading, setLoading] = createSignal(true);
     const refresh = async () => {
-        const s: any = await diyService.diy.llmProxy.status({});
+        const s = await diyService.diy.llmProxy.status({});
         setRunning(s.running);
         setLoading(false);
     };
@@ -21,8 +21,9 @@ export function LlmPage() {
                 await diyService.diy.llmProxy.start({});
                 notificationStore.addToast("success", "LLM 代理已启动");
             }
-        } catch (e: any) {
-            notificationStore.addToast("error", e.message ?? "操作失败");
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : "操作失败";
+            notificationStore.addToast("error", msg);
         }
         await refresh();
     };
