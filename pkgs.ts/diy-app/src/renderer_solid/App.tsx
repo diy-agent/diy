@@ -51,7 +51,9 @@ export default function App() {
                     class="flex-1 relative overflow-hidden bg-base-100"
                     onClick={() => {
                         // 点击空白处关闭任务详情面板（任务行/面板自身已 stopPropagation 接管）
-                        if (taskStore.selectedUri) taskStore.selectTask(null);
+                        // 只在任务树页面生效：其他页面（Agent/LLM/设置）点击不应取消选中任务，
+                        // 否则 Agent 面板里点输入框/发送按钮都会把 selectedUri 清掉 → 发不出消息
+                        if (currentPage() === "task" && taskStore.selectedUri) taskStore.selectTask(null);
                     }}
                 >
                     <Show when={currentPage() === "task"}>

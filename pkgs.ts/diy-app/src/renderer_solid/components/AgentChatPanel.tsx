@@ -1,6 +1,16 @@
 import { onMount, createEffect, For, Show } from "solid-js";
 import { agentStore } from "../store/agentStore";
-import { taskStore } from "../store/taskStore";
+import { taskStore, type TreeNode } from "../store/taskStore";
+
+/** 递归展平任务树，只保留有 uri 的 task 节点 */
+function flattenTasks(nodes: TreeNode[]): TreeNode[] {
+    const result: TreeNode[] = [];
+    for (const n of nodes) {
+        if (n.kind === "task" && n.uri) result.push(n);
+        if (n.children?.length) result.push(...flattenTasks(n.children));
+    }
+    return result;
+}
 
 export function AgentChatPanel() {
     let inputRef: HTMLTextAreaElement | undefined;
@@ -27,8 +37,19 @@ export function AgentChatPanel() {
 
     return (
         <div class="flex flex-col h-full">
-            {/* 顶栏：模型选择 + 操作 */}
-            <div class="flex items-center gap-2 px-3 py-2 border-b shrink-0">
+            {/* 顶栏：任务选择 + 模型选择 + 操作 */}
+            <div class="flex items-center gap-2 px-3 py-2 border-b shrink-0 flex-wrap">
+                {/* 任务选择器：在 Agent 页面内直接选任务，不用切到任务树 */}
+                <select
+                    value={taskStore.selectedUri ?? ""}
+                    onChange={(e) => taskStore.selectTask(e.currentTarget.value || null)}
+                    class="select select-bordered select-sm max-w-48"
+                >
+                    <option value="">— 选择任务 —</option>
+                    <For each={flattenTasks(taskStore.nodes)}>
+                        {(t) => <option value={t.uri}>{t.title ?? t.uri}</option>}
+                    </For>
+                </select>
                 <select
                     value={agentStore.activeModel ?? ""}
                     onChange={(e) => {
