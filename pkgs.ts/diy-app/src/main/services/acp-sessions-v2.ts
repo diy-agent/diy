@@ -14,42 +14,21 @@ import { readTaskSessionId, writeTaskSessionId, clearTaskSessionId } from "./acp
 import { createLogSink, getInstalledHome } from "./diagnostics";
 import { projectFromUri } from "../core/state";
 import { getProjectPath } from "../core/project";
+import { KeyedSerialQueue } from "../core/serial-queue";
 
 export class TaskSessionPoolV2 {
   private agent: AcpAgentV2;
   /** taskUri → session */
   private sessions = new Map<string, AcpSessionV2>();
-  /** taskUri → 正在进行的建/恢复 promise（并发去重） */
-  private ensuring = new Map<string, Promise<AcpSessionV2>>();
-  /** taskUri → 流式对话互斥链（整个事件流排他：订阅→prompt→收完 stop 才放行） */
-  private streamLocks = new Map<string, Promise<void>>();
+  /**
+   * 按 task 分队列（Go「单协程+channel」模式）：
+   * - ensure 的「同一 task 只建一个 session」用 run 串行去重
+   * - 流的「整个事件流排他」用 runGen
+   * 不同 task 互不阻塞。
+   */
+  private tasks = new KeyedSerialQueue();
   /** agent 崽溃回调 */
   private onCrashCallbacks = new Set<() => void>();
-
-  /**
-   * 以互斥方式跑一段 async 生成器：同一 task 的流式对话严格串行。
-   * 必须串到「整个流」而不是只串 prompt 发送 —— 事件泵是会话级广播，
-   * streamChatEvents 在发 prompt 前就订阅了，两个并发流会互相收到
-   * 对方回合的事件。串行订阅+收流才能保证归属性。
-   * 用法：yield* this.runExclusive(taskUri, async function* () { ... })
-   */
-  private async* runExclusive(
-    taskUri: string,
-    body: () => AsyncGenerator<string>,
-  ): AsyncGenerator<string> {
-    const prev = this.streamLocks.get(taskUri) ?? Promise.resolve();
-    let release!: () => void;
-    const gate = new Promise<void>((r) => { release = r; });
-    // 队列尾 = 上一个流收尾（gate 打开）后才轮到本次；上次失败的错误
-    // 已向调用方传播，这里不能让它污染链条（否则后续流全被同一个错误卡死）
-    this.streamLocks.set(taskUri, prev.then(() => gate, () => gate));
-    await prev.catch(() => undefined);
-    try {
-      yield* body();
-    } finally {
-      release();
-    }
-  }
 
   constructor(command = "opencode acp") {
     // agent stderr 独立落 <DIY_HOME>/log/acp.log：分文件是故意的 —— 对方的输出量
@@ -94,22 +73,17 @@ export class TaskSessionPoolV2 {
       throw new Error("ACP agent 进程已退出，无法创建 session");
     }
 
-    const existing = this.sessions.get(taskUri);
-    if (existing) return existing;
-
-    // 并发去重：check-act 之间有 await 缺口，两个并发请求都能通过上面的
-    // miss 检查 → 同一个 task 会建出两个 session（都写 meta.yaml、都塞 map，
-    // 先建的变孤儿）。这里用 inflight promise 合并：同 task 的建/恢复只跑一次。
-    let inFlight = this.ensuring.get(taskUri);
-    if (!inFlight) {
-      inFlight = this.loadOrCreate(taskUri).finally(() => {
-        this.ensuring.delete(taskUri);
-      });
-      this.ensuring.set(taskUri, inFlight);
-    }
-    const session = await inFlight;
-    this.sessions.set(taskUri, session);
-    return session;
+    // 按 task 串行（Go 单协程模式）：check-act 之间有 await 缺口，两个并发
+    // 请求都能通过 sessions.get 的 miss 检查 → 同一个 task 会建出两个 session
+    // （都写 meta.yaml、都塞 map，先建的变孤儿）。串行队列天然去重：
+    // 后到的 ensure 排到前一个完成之后，此时 sessions 里已有 → 直接复用。
+    return this.tasks.run(taskUri, async () => {
+      const existing = this.sessions.get(taskUri);
+      if (existing) return existing;
+      const session = await this.loadOrCreate(taskUri);
+      this.sessions.set(taskUri, session);
+      return session;
+    });
   }
 
   /** 按 project 目录建/恢复 session */
@@ -141,7 +115,7 @@ export class TaskSessionPoolV2 {
   /**
    * 向某 task 的 session 流式对话：yield 文本增量。
    * 多次调用同一 task 的 prompt，session 上下文连续。
-   * 整个流（订阅→prompt→收完 stop）在 runExclusive 互斥下串行：
+   * 整个流（订阅→prompt→收完 stop）在 KeyedSerialQueue.runGen 排他下串行：
    * 事件泵是会话级广播，只串 prompt 发送挡不住「B 流收到 A 回合事件」。
    */
   async *streamChat(
@@ -150,7 +124,7 @@ export class TaskSessionPoolV2 {
     messages: Array<{ role: string; content: string }>,
   ): AsyncGenerator<string> {
     const session = await this.ensure(taskUri);
-    yield* this.runExclusive(taskUri, async function* () {
+    yield* this.tasks.runGen(taskUri, async function* () {
       // 切模型。只有「agent 没实现这个方法」(-32601) 才允许静默保持原模型；
       // 其它失败（模型名写错、参数不合法…）必须冒出来 —— 以前一律 catch 掉，
       // 结果是用户以为切了、实际还在旧模型上跑，且不留任何痕迹。
@@ -204,7 +178,7 @@ export class TaskSessionPoolV2 {
    * 向某 task 的 session 流式对话：yield 完整 ACP 事件（JSON 字符串）。
    * 与 streamChat 的区别：不只返回文本增量，而是返回所有 session/update 通知，
    * 包括 agent_message_chunk、tool_call_update、agent_thought_chunk 等。
-   * 整个流（订阅→prompt→收完 stop）在 runExclusive 互斥下串行：
+   * 整个流（订阅→prompt→收完 stop）在 KeyedSerialQueue.runGen 排他下串行：
    * 事件泵是会话级广播，只串 prompt 发送挡不住「B 流收到 A 回合事件」。
    */
   async *streamChatEvents(
@@ -213,7 +187,7 @@ export class TaskSessionPoolV2 {
     messages: Array<{ role: string; content: string }>,
   ): AsyncGenerator<string> {
     const session = await this.ensure(taskUri);
-    yield* this.runExclusive(taskUri, async function* () {
+    yield* this.tasks.runGen(taskUri, async function* () {
       if (model && model !== session.currentModelId) {
         try {
           await session.setModel(model);
