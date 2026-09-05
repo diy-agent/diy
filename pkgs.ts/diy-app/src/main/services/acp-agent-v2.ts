@@ -89,6 +89,8 @@ export class AcpSessionV2 {
   private pumping = false;
   /** 等待本轮 prompt 结束（stop 到达）的解析器 */
   private stopResolvers: Array<() => void> = [];
+  /** prompt 互斥链：同一会话的 prompt 必须串行（SDK 明确要求按序调用） */
+  private promptChain: Promise<unknown> = Promise.resolve();
 
   /**
    * agent 通过 `config_option_update` 推送的最新全量配置（协议内的权威来源）。
@@ -143,25 +145,32 @@ export class AcpSessionV2 {
     return () => this.listeners.delete(fn);
   }
 
-  /** 发 prompt；完成信号由常驻泵派发 stop 时触发 */
+  /** 发 prompt；同一会话的并发 prompt 串行执行（互斥链）。完成信号由常驻泵派发 stop 时触发 */
   async prompt(text: string): Promise<{ stopReason?: string }> {
-    this.textBuf = "";
-    // 注册本轮的 stop 等待者（在发 prompt 之前注册，避免漏掉瞬时 stop）
-    let resolveStop!: () => void;
-    const stopPromise = new Promise<void>((r) => {
-      resolveStop = r;
+    // 排到互斥链尾部：上一个 prompt 完全结束（stop 派发完）后才发下一个。
+    // 否则两个回合的 agent_message_chunk 会交叉推送，事件无法归属到正确回合。
+    const run = this.promptChain.then(async () => {
+      this.textBuf = "";
+      // 注册本轮的 stop 等待者（在发 prompt 之前注册，避免漏掉瞬时 stop）
+      let resolveStop!: () => void;
+      const stopPromise = new Promise<void>((r) => {
+        resolveStop = r;
+      });
+      this.stopResolvers.push(resolveStop);
+      try {
+        const resp = await this.activeSession.prompt(text);
+        // 等常驻泵消费到本轮的 stop（所有事件已派发完毕），再返回
+        await stopPromise;
+        return { stopReason: resp.stopReason };
+      } finally {
+        // 出错路径：stop 永远不会来，摘掉自己的等待者，防止泄漏
+        const i = this.stopResolvers.indexOf(resolveStop);
+        if (i >= 0) this.stopResolvers.splice(i, 1);
+      }
     });
-    this.stopResolvers.push(resolveStop);
-    try {
-      const resp = await this.activeSession.prompt(text);
-      // 等常驻泵消费到本轮的 stop（所有事件已派发完毕），再返回
-      await stopPromise;
-      return { stopReason: resp.stopReason };
-    } finally {
-      // 出错路径：stop 永远不会来，摘掉自己的等待者，防止泄漏
-      const i = this.stopResolvers.indexOf(resolveStop);
-      if (i >= 0) this.stopResolvers.splice(i, 1);
-    }
+    // 链尾续上（没被吞掉的错误要在链尾吃掉，不能打断后续 prompt）
+    this.promptChain = run.catch(() => undefined);
+    return run;
   }
 
   /** 便捷：读文本直到 prompt turn 结束 */
