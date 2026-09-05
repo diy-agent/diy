@@ -298,15 +298,48 @@ function UsageBadge(props: { usage: ChatMessage["usage"] }) {
   );
 }
 
-// ─── 用户消息（右对齐气泡） ───
+// ─── 用户消息（右对齐气泡，带排队状态） ───
 
 function UserMessageView(props: { message: ChatMessage }) {
+  const msg = () => props.message;
+
+  // 排队/取消的可见状态（DeepSeek Web 式）：排队中显示徽标 + 可单独撤回
   return (
     <div class="flex flex-col items-end gap-1">
       <div class="text-xs opacity-40">你</div>
-      <div class="max-w-[70%] bg-primary/10 rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap">
+      <div
+        class={`max-w-[70%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
+          msg().queueStatus === "queued"
+            ? "bg-base-300 opacity-60"
+            : msg().queueStatus === "cancelled"
+              ? "bg-base-300 opacity-50 line-through decoration-1"
+              : "bg-primary/10"
+        }`}
+      >
         {props.message.content}
       </div>
+      <Show when={msg().queueStatus === "queued"}>
+        <div class="flex items-center gap-2 text-xs opacity-60">
+          <span class="loading loading-spinner loading-xs"></span>
+          <span>排队中…</span>
+          <button
+            class="btn btn-ghost btn-xs text-error"
+            onClick={() => chatStore.cancelMessage(msg().id)}
+            title="撤回这条排队消息"
+          >
+            ✕ 撤回
+          </button>
+        </div>
+      </Show>
+      <Show when={msg().queueStatus === "cancelled"}>
+        <div class="text-xs text-error/70">已撤回 / 已停止</div>
+      </Show>
+      <Show when={msg().queueStatus === "running"}>
+        <div class="flex items-center gap-1 text-xs opacity-60">
+          <span class="loading loading-dots loading-xs"></span>
+          <span>生成中…</span>
+        </div>
+      </Show>
     </div>
   );
 }
@@ -428,32 +461,28 @@ function InputArea(props: { taskUri: string | null }) {
             rows={2}
             placeholder={
               chatStore.sending
-                ? "生成中…（可发送下一条排队，或点停止）"
+                ? "生成中…继续输入将排队（消息会立即上屏）"
                 : "输入消息…（Enter 发送，Shift+Enter 换行）"
             }
             onKeyDown={handleKey}
           />
-          <Show
-            when={chatStore.sending}
-            fallback={
-              <button class="btn btn-primary self-end" onClick={handleSend} disabled={chatStore.sending}>
-                发送
-              </button>
-            }
-          >
-            {/* 生成中：停止当前 + 排队计数 */}
+          {/* 发送（生成中也保留：点了进队列排队，DeepSeek Web 式） */}
+          <button class="btn btn-primary self-end" onClick={handleSend}>
+            发送{chatStore.sending ? "（排队）" : ""}
+          </button>
+          <Show when={chatStore.sending}>
+            {/* 生成中：停止当前轮；排队消息各自在对话流里可单独撤回 */}
             <div class="flex flex-col gap-1 self-end items-center">
               <button
                 class="btn btn-error btn-sm"
-                onClick={() => {
-                  if (chatStore.pendingCount > 0) chatStore.cancelAll();
-                  else chatStore.cancel();
-                }}
-                title="停止生成（有排队时连排队一起取消）"
+                onClick={() => chatStore.cancel()}
+                title="停止当前生成（排队中的消息可各自在对话流里撤回）"
               >
-                ■ 停止{chatStore.pendingCount > 0 ? ` + 取消${chatStore.pendingCount}排队` : ""}
+                ■ 停止{chatStore.pendingCount > 0 ? `（${chatStore.pendingCount} 条排队中）` : ""}
               </button>
-              <span class="text-[10px] opacity-50">生成中…</span>
+              <span class="text-[10px] opacity-50">
+                {chatStore.pendingCount > 0 ? "排队消息请在对话流中管理" : "生成中…"}
+              </span>
             </div>
           </Show>
         </div>
