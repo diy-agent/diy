@@ -195,17 +195,20 @@ async function workerLoop() {
         broadcastPending();
         break;
       }
-      const task = pendingMessages[0];
+      // 取出即将执行的任务（立即出队）：执行中的消息不属于
+      // 「排队」——pendingList/pendingCount 只统计真正等待的，
+      // 执行中由 runningTask 单独持有（UI 显示「生成中…」而非排队）。
+      const task = pendingMessages.shift()!;
       runningTask = { taskUri: task.taskUri, msgId: task.id, text: task.text };
       activeCancelled = false;
       currentTurnAbort = { aborted: false };
+      setMessageQueueStatus(task.id, "running");
       setSending(true);
       broadcastPending();
       // 执行当前轮；流被 session/cancel 打断后自然结束（abort ≠ cancelled）
       await runOne(task.taskUri, task.text, task.id, currentTurnAbort);
       // 确认语义：最终状态由 loop 侧决定，worker 只做确认标记
       setMessageQueueStatus(task.id, activeCancelled ? "cancelled" : "completed");
-      pendingMessages.shift();
       broadcastPending();
       runningTask = null;
     }
