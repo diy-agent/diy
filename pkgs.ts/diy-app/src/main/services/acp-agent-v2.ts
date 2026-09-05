@@ -268,6 +268,16 @@ export class AcpSessionV2 {
     for (const r of this.stopResolvers.splice(0)) r();
     this.activeSession.dispose();
   }
+
+  /**
+   * 通知 agent 关闭此协议会话（session/close）。
+   * 与 dispose 的区别：dispose 只卸本地 update 路由；真正的会话关闭必须让
+   * agent 侧释放状态，否则会在 opencode 里堆积死会话（每次 closeSession +
+   * 再对话都在 agent 内留一个壳）。
+   */
+  async close(): Promise<void> {
+    await this.ctx.request(methods.agent.session.close, { sessionId: this.sessionId });
+  }
 }
 
 // ═══════════════════════════════════════
@@ -281,9 +291,12 @@ export class AcpAgentV2 {
   private readyPromise: Promise<void>;
   private sessions = new Map<string, AcpSessionV2>();
   private initResult: any = null;
-  private cachedModels: AcpModel[] | null = null;
   /** 进程是否已退出 */
   private exited = false;
+  /** 是否已显式关闭（dispose 后不允许再启） */
+  private disposed = false;
+  /** 正在进行的重建连接（崩溃自愈并发去重：多个调用共享同一次 spawn） */
+  private connectingPromise: Promise<void> | null = null;
   /** 进程退出回调 */
   private onExitCallbacks = new Set<(code: number | null) => void>();
   /** 实时 autoApprove 开关（handler 动态读取；初始取自 opts，可运行时切换） */
@@ -308,6 +321,38 @@ export class AcpAgentV2 {
   /** 等待连接就绪（connectWith + initialize 完成） */
   async ready(): Promise<void> {
     await this.readyPromise;
+  }
+
+  /**
+   * 崩溃自愈：若进程已退出则重建连接（重 spawn + initialize）。
+   * 返回是否发生了重建。轻量幂等 —— alive 时直接返回 false，无开销。
+   * dispose 之后调用抛错（显式关闭不允许复活）。
+   *
+   * 重建后会话凭据仍在：sessionId 持久化在 project meta.yaml，
+   * pool 的后续 ensure 会走 loadSession 恢复，上下文不丢。
+   */
+  async ensureConnected(): Promise<boolean> {
+    if (this.alive) return false;
+    if (this.disposed) {
+      throw new Error("ACP agent 已显式关闭，不允许重连");
+    }
+    // 并发去重：崩溃后多个 task 同时 ensure 会各自通过 alive 检查 →
+    // 每人 spawn 一个新进程。共享同一次重建，失败也共享同一个错误。
+    if (!this.connectingPromise) {
+      this.connectingPromise = (async () => {
+        this.sessions.clear();      // 旧进程的会话路由全部失效
+        this.exited = false;
+        this.readyPromise = this.connect();
+        await this.readyPromise;
+      })();
+    }
+    try {
+      await this.connectingPromise;
+    } finally {
+      // 无论成败都释放槽位：失败后下次调用可再重试，成功则后续走 alive 短路
+      this.connectingPromise = null;
+    }
+    return true;
   }
 
   /** 进程是否存活 */
@@ -468,32 +513,9 @@ export class AcpAgentV2 {
     } as any);
   }
 
-  /**
-   * 列出可用模型（agent 级能力）。
-   * 内部 lazy 建一个 probe session 获取模型列表并缓存；后续直接读缓存。
-   * 不依赖外部先建 session —— 因为创建 session 前就需要模型列表给用户选。
-   * refresh=true 时绕过缓存重新探测（provider 模型可能变化，如用户改了 opencode 配置）。
-   */
-  async listModels(refresh = false): Promise<AcpModel[]> {
-    if (this.cachedModels && !refresh) return this.cachedModels;
-    await this.ready();
-    // probe session：建一个即弃，只为拿 configOptions 模型列表
-    const probe = await this.ctx.buildSession(this.opts.cwd ?? process.cwd()).start();
-    const models = (probe as any).newSessionResponse?.configOptions
-      ?.find((o: any) => o.id === "model")?.options
-      ?.map((o: any) => ({ modelId: o.value, name: o.name })) ?? [];
-    probe.dispose();
-    // refresh 也刷新缓存；探测失败但已有旧缓存时保留旧缓存（不要用空列表覆盖）
-    if (models.length > 0) {
-      this.cachedModels = models;
-    } else if (!refresh) {
-      this.cachedModels = [{ modelId: "default", name: "Default" }];
-    }
-    return this.cachedModels!;
-  }
-
   /** 关闭连接 */
   async dispose(): Promise<void> {
+    this.disposed = true;
     for (const s of this.sessions.values()) s.dispose();
     this.sessions.clear();
     if (this.proc && this.proc.exitCode === null) {

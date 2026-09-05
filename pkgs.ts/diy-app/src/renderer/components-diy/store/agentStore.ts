@@ -38,7 +38,8 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   loadModels: async () => {
     try {
-      const result = await diyService.diy.agent.listModels({ refresh: false });
+      // React 遗留面板（仅参考）：新 RPC 按任务读快照，无任务传空串回空列表
+      const result = await diyService.diy.agent.listModels({ taskUri: "" });
       // 不再拿 result[0] 伪造「当前模型」：那不是真实状态，且发消息时会把这个假默认值
       // 真的切换过去。activeModel 只能来自 syncStatus 或用户显式选择。
       const stillValid = get().activeModel && result.some((m) => m.id === get().activeModel);

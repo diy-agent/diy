@@ -47,6 +47,19 @@ async function getLlmProxy() {
   return _llmProxyInstance;
 }
 
+/** 会话配置选项统一映射（ensureSession / getConfigOptions 共用） */
+function mapConfigOptions(
+  opts: Array<{ id: string; name?: string; category?: string; currentValue?: string; options?: Array<{ value: string; name?: string }> }>,
+) {
+  return opts.map((o) => ({
+    id: o.id,
+    name: o.name ?? o.id,
+    category: o.category,
+    currentValue: o.currentValue,
+    options: o.options?.map((opt) => ({ value: opt.value, name: opt.name ?? opt.value })),
+  }));
+}
+
 const app = apiDef.diy;
 
 /**
@@ -207,8 +220,17 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
   binding.on(app.agent.listModels, async ({ input }) => {
     const pool = await getSessionPool();
-    const models = await pool.listModels(input.refresh === true);
+    const models = pool.listModels(input.taskUri);
     return models.map((m: { modelId: string; name?: string }) => ({ id: m.modelId, name: m.name ?? m.modelId }));
+  });
+  binding.on(app.agent.ensureSession, async ({ input }) => {
+    const pool = await getSessionPool();
+    const session = await pool.ensure(input.taskUri);
+    return {
+      taskUri: input.taskUri,
+      model: session.currentModelId,
+      configOptions: mapConfigOptions(pool.getConfigOptions(input.taskUri)),
+    };
   });
   binding.on(app.agent.status, async ({ input }) => {
     const pool = await getSessionPool();
@@ -249,14 +271,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
   binding.on(app.agent.getConfigOptions, async ({ input }) => {
     const pool = await getSessionPool();
-    const opts = pool.getConfigOptions(input.taskUri);
-    return opts.map((o: { id: string; name?: string; category?: string; currentValue?: string; options?: Array<{ value: string; name?: string }> }) => ({
-      id: o.id,
-      name: o.name ?? o.id,
-      category: o.category,
-      currentValue: o.currentValue,
-      options: o.options?.map((opt: { value: string; name?: string }) => ({ value: opt.value, name: opt.name ?? opt.value })),
-    }));
+    return mapConfigOptions(pool.getConfigOptions(input.taskUri));
   });
 
   // ── llmProxy ──

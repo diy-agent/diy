@@ -11,7 +11,7 @@
  */
 
 import { createSignal, For, Show, createEffect, onMount } from "solid-js";
-import { chatStore, sendingAccessor, type ChatMessage, type ToolCall, type TerminalInfo } from "../store/chatStore";
+import { chatStore, sendingAccessor, type ChatMessage, type ToolCall, type TerminalInfo, type ConfigOptionSnapshot } from "../store/chatStore";
 import { agentStore } from "../store/agentStore";
 import { taskStore } from "../store/taskStore";
 import { diyService } from "../lib/rpc";
@@ -445,7 +445,7 @@ function InputArea(props: { taskUri: string | null }) {
   return (
     <div class="border-t border-base-300 bg-base-100 p-4 shrink-0">
       <Show when={!props.taskUri}>
-        <div class="text-center text-sm opacity-40 py-3">请先选择一个任务开始对话</div>
+        <div class="text-center text-sm opacity-40 py-3">请先在任务树中选择一个任务开始对话</div>
       </Show>
       <Show when={props.taskUri}>
         <div class="flex gap-3 max-w-3xl mx-auto">
@@ -480,24 +480,55 @@ function InputArea(props: { taskUri: string | null }) {
 
 // ─── 主页面 ───
 
-export function ChatPage(props: { embedded?: boolean } = {}) {
-  // 嵌入模式（TaskDetailPanel）：任务由选中态驱动；独立模式：本地下拉选择
-  const [localUri, setLocalUri] = createSignal<string | null>(null);
-  const taskUri = () =>
-    props.embedded ? (taskStore.selectedUri ?? null) : localUri();
+export function ChatPage() {
+  // 会话面向任务：任务由选中态驱动，进入任务详情即建会话开聊（无独立选任务逻辑）
+  const taskUri = () => taskStore.selectedUri ?? null;
   const [configOptions, setConfigOptions] = createSignal<ConfigOption[]>([]);
+  /** 会话初始化中（ensureSession 进行时锁定配置区，输入框不锁、消息照发） */
+  const [initializing, setInitializing] = createSignal(false);
   let chatContainerRef: HTMLDivElement | undefined;
   /** 请求序号，防止并发 load 覆盖 */
   let configLoadSeq = 0;
 
-  /** 加载配置选项（带请求序号防竞态） */
+  /** 配置快照归一化（RPC 已归一化；事件推送的裸数据补 name 回退） */
+  const normalizeOptions = (opts: ConfigOptionSnapshot[]): ConfigOption[] =>
+    opts.map((o) => ({
+      id: o.id,
+      name: o.name ?? o.id,
+      category: o.category,
+      currentValue: o.currentValue,
+      options: o.options?.map((p) => ({ value: p.value, name: p.name ?? p.value })),
+    }));
+
+  /** 加载配置选项（带请求序号防竞态；纯 main 内存读） */
   const loadConfigOptions = async (uri: string) => {
     const seq = ++configLoadSeq;
     try {
       const opts = await diyService.diy.agent.getConfigOptions({ taskUri: uri });
-      if (seq === configLoadSeq) setConfigOptions(opts);
+      if (seq === configLoadSeq) setConfigOptions(normalizeOptions(opts));
     } catch {
       if (seq === configLoadSeq) setConfigOptions([]);
+    }
+  };
+
+  /**
+   * 进入任务详情：确保会话存在（无则新建/恢复），一次性装配
+   * 模型（默认选中快照默认模型）+ effort/mode，下拉立即可见。
+   */
+  const ensureSessionAndLoad = async (uri: string) => {
+    const seq = ++configLoadSeq;
+    setInitializing(true);
+    try {
+      const r = await diyService.diy.agent.ensureSession({ taskUri: uri });
+      if (seq !== configLoadSeq) return;
+      setConfigOptions(normalizeOptions(r.configOptions));
+      chatStore.setModel(r.model ?? "");
+      await agentStore.loadModels(uri);
+    } catch (e) {
+      console.warn("[ChatPage] 会话初始化失败:", e);
+      if (seq === configLoadSeq) setConfigOptions([]);
+    } finally {
+      if (seq === configLoadSeq) setInitializing(false);
     }
   };
 
@@ -529,27 +560,37 @@ export function ChatPage(props: { embedded?: boolean } = {}) {
   /** 获取指定配置项的当前值 */
   const getConfig = (id: string) => configOptions().find((o) => o.id === id);
 
-  // session 创建后刷新配置选项
+  /** 切换模型：chatStore 乐观更新 + 协议切换，成功后重读一次配置（本地读，对齐可能推送） */
+  const handleModelChange = async (modelId: string) => {
+    const uri = taskUri();
+    await chatStore.switchModel(uri ?? "", modelId);
+    if (uri) void loadConfigOptions(uri);
+  };
+
   onMount(() => {
+    // 事件源：首轮流结束（session 落定）重读；对话中收到推送就地刷新
     chatStore.onSessionCreated(() => {
       const uri = taskUri();
-      if (uri) loadConfigOptions(uri);
+      if (uri) void loadConfigOptions(uri);
     });
-    // 加载模型列表 + 同步当前会话真实模型
-    agentStore.loadModels().catch(() => {});
-    const uri = taskUri();
-    if (uri) chatStore.syncStatus(uri);
+    chatStore.onConfigOptions(() => {
+      // 推送只当触发器：按当前任务重读（main 常驻泵已更新内存，本地读零成本）。
+      // 不直接用推送数据——切任务时旧流残留推送会污染新任务的 UI。
+      const uri = taskUri();
+      if (uri) void loadConfigOptions(uri);
+    });
     void agentStore.loadAutoApprove();
   });
 
-  // 选中任务时加载配置选项 + 同步会话状态（嵌入模式切换任务也走这里）
+  // 选中任务 = 进入详情：建会话 + 一次性装配（模型/配置/列表）
   createEffect(() => {
     const uri = taskUri();
     if (uri) {
-      loadConfigOptions(uri);
-      chatStore.syncStatus(uri);
+      void ensureSessionAndLoad(uri);
     } else {
+      configLoadSeq++;
       setConfigOptions([]);
+      setInitializing(false);
     }
   });
 
@@ -572,23 +613,14 @@ export function ChatPage(props: { embedded?: boolean } = {}) {
       {/* 顶栏 */}
       <div class="flex items-center gap-3 px-6 py-3 border-b border-base-300 shrink-0 flex-wrap">
         <span class="text-sm font-semibold">💬 Agent 聊天</span>
-        {/* 任务选择（嵌入模式由详情面板选中，隐藏选择器） */}
-        <Show when={!props.embedded}>
-          <select
-            value={localUri() ?? ""}
-            onChange={(e) => setLocalUri(e.currentTarget.value || null)}
-            class="select select-bordered select-sm max-w-48"
-          >
-            <option value="">— 选择任务 —</option>
-            <For each={flattenTasks(taskStore.nodes)}>
-              {(t) => <option value={t.uri}>{t.title ?? t.uri}</option>}
-            </For>
-          </select>
+        <Show when={initializing()}>
+          <span class="text-xs opacity-50">会话连接中…</span>
         </Show>
         {/* 模型选择（单一真相源：chatStore.activeModel，sendMessage 读的就是它） */}
         <select
           value={chatStore.activeModel ?? ""}
-          onChange={(e) => chatStore.switchModel(taskUri() ?? "", e.currentTarget.value)}
+          disabled={initializing()}
+          onChange={(e) => void handleModelChange(e.currentTarget.value)}
           class="select select-bordered select-sm max-w-64"
         >
           <option value="">（默认模型）</option>
@@ -599,7 +631,8 @@ export function ChatPage(props: { embedded?: boolean } = {}) {
         <button
           class="btn btn-ghost btn-sm"
           title="刷新模型列表"
-          onClick={() => agentStore.loadModels(true)}
+          disabled={initializing()}
+          onClick={() => { const uri = taskUri(); if (uri) void agentStore.loadModels(uri); }}
         >
           ⟳
         </button>
@@ -609,6 +642,7 @@ export function ChatPage(props: { embedded?: boolean } = {}) {
             <span class="text-xs opacity-50">🧠</span>
             <select
               value={getConfig("effort")!.currentValue ?? "default"}
+              disabled={initializing()}
               onChange={(e) => setConfig("effort", e.currentTarget.value)}
               class="select select-bordered select-xs"
             >
@@ -624,6 +658,7 @@ export function ChatPage(props: { embedded?: boolean } = {}) {
             <span class="text-xs opacity-50">⚙️</span>
             <select
               value={getConfig("mode")!.currentValue ?? "build"}
+              disabled={initializing()}
               onChange={(e) => setConfig("mode", e.currentTarget.value)}
               class="select select-bordered select-xs"
             >
@@ -679,17 +714,4 @@ export function ChatPage(props: { embedded?: boolean } = {}) {
       <InputArea taskUri={taskUri()} />
     </div>
   );
-}
-
-// ─── 工具函数 ───
-
-import type { TreeNode } from "../store/taskStore";
-
-function flattenTasks(nodes: TreeNode[]): TreeNode[] {
-  const result: TreeNode[] = [];
-  for (const n of nodes) {
-    if (n.kind === "task" && n.uri) result.push(n);
-    if (n.children?.length) result.push(...flattenTasks(n.children));
-  }
-  return result;
 }

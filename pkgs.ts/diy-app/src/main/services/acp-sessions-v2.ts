@@ -67,10 +67,15 @@ export class TaskSessionPoolV2 {
     await this.agent.ready();
   }
 
-  /** 取某 task 的 session：优先恢复，无则新建 */
+  /**
+   * 取某 task 的 session：优先恢复，无则新建。
+   * agent 进程崩溃后不自爆 —— 先 ensureConnected 重建连接（会话 ID 持久化在
+   * meta.yaml，loadOrCreate 会 loadSession 恢复上下文），重建失败（dispose 后）
+   * 才把错误抛出来。
+   */
   async ensure(taskUri: string): Promise<AcpSessionV2> {
     if (!this.alive) {
-      throw new Error("ACP agent 进程已退出，无法创建 session");
+      await this.agent.ensureConnected();
     }
 
     // 按 task 串行（Go 单协程模式）：check-act 之间有 await 缺口，两个并发
@@ -257,9 +262,14 @@ export class TaskSessionPoolV2 {
     return { taskUri, state: "ready", model: session.currentModelId };
   }
 
-  /** 列出可用模型（从 opencode configOptions 解析）；refresh=true 绕过缓存重新探测 */
-  async listModels(refresh = false): Promise<AcpModel[]> {
-    return this.agent.listModels(refresh);
+  /**
+   * 列出可用模型（读任务会话快照的 model 项）。
+   * 无 probe 会话：进入任务详情即 ensure，会话快照自带模型列表；
+   * 无 task 会话的调用不存在（调用方保证先 ensureSession）。
+   * 会话尚未建好时回空列表，不抛错（刷新按钮等只读入口可安全调用）。
+   */
+  listModels(taskUri: string): AcpModel[] {
+    return this.sessions.get(taskUri)?.availableModels ?? [];
   }
 
   /** 热切模型（opencode 会话级） */
@@ -296,10 +306,19 @@ export class TaskSessionPoolV2 {
     if (s) await s.cancel();
   }
 
-  /** 关闭某 task 的 session */
+  /**
+   * 关闭某 task 的 session：先协议层 session/close 让 agent 释放会话状态，
+   * 再卸本地路由 + 清持久化。只做本地 dispose 的话 agent 侧会留死会话。
+   */
   async closeSession(taskUri: string): Promise<void> {
     const s = this.sessions.get(taskUri);
     if (s) {
+      try {
+        await s.close();
+      } catch (e) {
+        // agent 不支持 session/close（-32601）或连接已断：不阻断本地清理
+        console.warn(`[acp] session/close 失败（${taskUri}）：${(e as Error)?.message ?? e}`);
+      }
       s.dispose();
       this.sessions.delete(taskUri);
     }

@@ -34,9 +34,9 @@ export function TaskDetailPanel() {
                         <Tabs.Trigger value="info" class="tab">📋 详情</Tabs.Trigger>
                     </Tabs.List>
 
-                    {/* Agent 对话 —— 完整聊天页（标记嵌入模式，任务由面板选中驱动） */}
+                    {/* Agent 对话 —— 完整聊天页（任务由面板选中驱动，进入即建会话开聊） */}
                     <Tabs.Content value="agent" class="flex-1 overflow-hidden">
-                        <ChatPage embedded />
+                        <ChatPage />
                     </Tabs.Content>
 
                     {/* 任务详情 —— 元信息 */}

@@ -311,11 +311,29 @@ export const apiDef = RpcSchema.router({
             output: z.string(),
           }),
           listModels: RpcSchema.unary({
-            desc: `列出可用模型`,
+            desc: `列出可用模型（读任务会话快照，无 probe 会话）`,
             input: {
-              refresh: z.boolean().optional().cliOption({ desc: `强制刷新缓存（默认 false 走缓存）` }),
+              taskUri: z.string().cliArg({ desc: "任务 URI（会话须已建，进入详情即建）" }),
             },
             output: z.array(z.object({ id: z.string(), name: z.string() })),
+          }),
+          ensureSession: RpcSchema.unary({
+            desc: `进入任务详情时确保会话存在（无则新建/恢复），一次性返回配置快照`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+            },
+            output: z.object({
+              taskUri: z.string(),
+              // 当前模型：快照 model.currentValue（opencode 默认模型）
+              model: z.string().optional(),
+              configOptions: z.array(z.object({
+                id: z.string(),
+                name: z.string(),
+                category: z.string().optional(),
+                currentValue: z.string().optional(),
+                options: z.array(z.object({ value: z.string(), name: z.string() })).optional(),
+              })),
+            }),
           }),
           status: RpcSchema.unary({
             desc: `查询任务会话状态（只读，不会创建会话）`,

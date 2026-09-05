@@ -19,10 +19,13 @@ export const agentStore = {
   get models() { return models(); },
   get autoApprove() { return autoApprove(); },
 
-  /** 加载模型列表；refresh=true 强制绕过缓存重新探测 */
-  loadModels: async (refresh = false) => {
+  /**
+   * 加载模型列表（读任务会话快照；进入详情即建会话，无 probe）。
+   * 会话尚未建好时回空列表，调用方（ensureSession 之后调）保证顺序。
+   */
+  loadModels: async (taskUri: string) => {
     try {
-      const r = await diyService.diy.agent.listModels({ refresh });
+      const r = await diyService.diy.agent.listModels({ taskUri });
       setModels(r);
     } catch (e) {
       console.warn("[agentStore] 加载模型失败:", e);

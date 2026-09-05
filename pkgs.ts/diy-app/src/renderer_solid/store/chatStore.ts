@@ -660,10 +660,30 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
       break;
     }
 
+    // ─── 配置推送（事件源：agent 改配置后推全量，UI 就地刷新，不轮询） ───
+    case "config_option_update": {
+      const opts = d?.configOptions;
+      if (Array.isArray(opts)) {
+        for (const fn of onConfigOptionsCallbacks) {
+          try { fn(opts as ConfigOptionSnapshot[]); } catch { /* 单个订阅者异常不影响其他 */ }
+        }
+      }
+      break;
+    }
+
     default:
-      // 忽略未知事件（config_option_update, available_commands_update 等）
+      // 忽略未知事件（available_commands_update 等）
       break;
   }
+}
+
+/** 会话配置快照项（ACP SessionConfigOption 子集，name 缺省时调用方回退为 id/value） */
+export interface ConfigOptionSnapshot {
+  id: string;
+  name?: string;
+  category?: string;
+  currentValue?: string;
+  options?: Array<{ value: string; name?: string }>;
 }
 
 /** 从 ContentBlock[] 提取文本 */
@@ -782,6 +802,14 @@ function onSessionCreated(fn: () => void): () => void {
   return () => onSessionCreatedCallbacks.delete(fn);
 }
 
+// ─── 配置推送订阅（事件源：config_option_update 到达时触发，调用方就地刷新） ───
+const onConfigOptionsCallbacks = new Set<(opts: ConfigOptionSnapshot[]) => void>();
+
+function onConfigOptions(fn: (opts: ConfigOptionSnapshot[]) => void): () => void {
+  onConfigOptionsCallbacks.add(fn);
+  return () => onConfigOptionsCallbacks.delete(fn);
+}
+
 function clearChat(): Promise<boolean> {
   return post({ type: "clear" });
 }
@@ -852,4 +880,6 @@ export const chatStore = {
   handleAcpEvent,
   /** session 创建后回调（configOptions 可用） */
   onSessionCreated,
+  /** 配置推送订阅（config_option_update 到达时触发） */
+  onConfigOptions,
 };
