@@ -194,6 +194,27 @@ export class AcpSessionV2 {
     this.appliedModelId = modelId;
   }
 
+  /**
+   * 设置会话配置选项（effort / model / mode 等）。
+   * opencode 实现 session/set_config_option → 返回更新后的 configOptions。
+   */
+  async setConfigOption(configId: string, value: string): Promise<SessionConfigOptionLike[]> {
+    const resp = await this.ctx.request("session/set_config_option" as any, {
+      sessionId: this.sessionId,
+      configId,
+      value,
+    } as any) as { configOptions?: SessionConfigOptionLike[] };
+    const opts = resp?.configOptions;
+    console.log(`[acp] setConfigOption(${configId}=${value}): resp=${JSON.stringify(resp).slice(0, 200)}`);
+    if (Array.isArray(opts)) this.liveConfigOptions = opts;
+    return opts ?? [];
+  }
+
+  /** 获取当前全部配置选项（effort / model / mode 等） */
+  getConfigOptions(): SessionConfigOptionLike[] {
+    return this.liveConfigOptions ?? this.snapshotConfigOptions();
+  }
+
   /** 取消当前生成 */
   async cancel(): Promise<void> {
     await this.ctx.request(methods.agent.session.cancel, { sessionId: this.sessionId });
@@ -366,6 +387,22 @@ export class AcpAgentV2 {
       sessionId,
       modelId,
     } as any);
+  }
+
+  /** 设置会话配置选项（effort / model / mode） */
+  async setConfigOption(sessionId: string, configId: string, value: string): Promise<SessionConfigOptionLike[]> {
+    const resp = await this.ctx.request("session/set_config_option" as any, {
+      sessionId,
+      configId,
+      value,
+    } as any) as { configOptions?: SessionConfigOptionLike[] };
+    return resp?.configOptions ?? [];
+  }
+
+  /** 获取会话配置选项 */
+  getConfigOptions(sessionId: string): SessionConfigOptionLike[] {
+    const sess = this.sessions.get(sessionId);
+    return sess?.getConfigOptions() ?? [];
   }
 
   /**

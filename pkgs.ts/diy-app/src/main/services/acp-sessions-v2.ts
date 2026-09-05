@@ -249,6 +249,18 @@ export class TaskSessionPoolV2 {
     await session.setModel(modelId);
   }
 
+  /** 设置会话配置选项（effort / mode 等） */
+  async setConfigOption(taskUri: string, configId: string, value: string): Promise<void> {
+    const session = await this.ensure(taskUri);
+    await session.setConfigOption(configId, value);
+  }
+
+  /** 获取会话配置选项 */
+  getConfigOptions(taskUri: string): Array<{ id: string; name?: string; category?: string; currentValue?: string; options?: Array<{ value: string; name?: string }> }> {
+    const s = this.sessions.get(taskUri);
+    return s?.getConfigOptions() ?? [];
+  }
+
   /** 关闭某 task 的 session */
   async closeSession(taskUri: string): Promise<void> {
     const s = this.sessions.get(taskUri);

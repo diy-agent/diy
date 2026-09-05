@@ -487,11 +487,21 @@ async function sendMessage(taskUri: string, content: string) {
     setMessages((prev) =>
       prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
     );
+    // 通知外部 session 已创建（configOptions 可用）
+    onSessionCreatedCallbacks.forEach((fn) => fn());
   } catch (e: any) {
     setError(e?.message ?? String(e));
   } finally {
     setSending(false);
   }
+}
+
+// ─── session 创建回调（供 ChatPage 刷新 configOptions） ───
+const onSessionCreatedCallbacks = new Set<() => void>();
+
+function onSessionCreated(fn: () => void): () => void {
+  onSessionCreatedCallbacks.add(fn);
+  return () => onSessionCreatedCallbacks.delete(fn);
 }
 
 function clearChat() {
@@ -515,4 +525,6 @@ export const chatStore = {
   setModel: setActiveModel,
   /** 直接注入 ACP 事件（供外部事件源使用） */
   handleAcpEvent,
+  /** session 创建后回调（configOptions 可用） */
+  onSessionCreated,
 };

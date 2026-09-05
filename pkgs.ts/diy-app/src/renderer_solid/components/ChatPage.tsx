@@ -14,6 +14,16 @@ import { createSignal, For, Show, createEffect, onMount } from "solid-js";
 import { chatStore, type ChatMessage, type ToolCall, type TerminalInfo } from "../store/chatStore";
 import { agentStore } from "../store/agentStore";
 import { taskStore } from "../store/taskStore";
+import { diyService } from "../lib/rpc";
+
+/** 配置选项类型 */
+interface ConfigOption {
+  id: string;
+  name: string;
+  category?: string;
+  currentValue?: string;
+  options?: Array<{ value: string; name: string }>;
+}
 
 // ─── Markdown 渲染（延迟加载） ───
 
@@ -439,18 +449,60 @@ function InputArea(props: { taskUri: string | null }) {
 
 export function ChatPage() {
   const [taskUri, setTaskUri] = createSignal<string | null>(null);
-  const [models, setModels] = createSignal<Array<{ id: string; name: string }>>([]);
+  const [configOptions, setConfigOptions] = createSignal<ConfigOption[]>([]);
   let chatContainerRef: HTMLDivElement | undefined;
 
-  // 加载模型列表
-  onMount(async () => {
+  /** 加载配置选项（effort / mode / model） */
+  const loadConfigOptions = async (uri: string) => {
     try {
-      const list = await agentStore.loadModels();
-      // agentStore.loadModels 内部已经更新了 agentStore.models
-      // 但我们也需要本地维护一份
-    } catch (e) {
-      console.warn("[ChatPage] 加载模型列表失败", e);
+      const opts = await diyService.diy.agent.getConfigOptions({ taskUri: uri });
+      setConfigOptions(opts);
+    } catch {
+      setConfigOptions([]);
     }
+  };
+
+  /** 设置配置选项（乐观更新 + 服务端确认） */
+  const setConfig = async (configId: string, value: string) => {
+    const uri = taskUri();
+    if (!uri) return;
+    // 乐观更新：立即改本地 signal，UI 即时响应
+    setConfigOptions((prev) =>
+      prev.map((o) => (o.id === configId ? { ...o, currentValue: value } : o)),
+    );
+    try {
+      const resp = await diyService.diy.agent.setConfigOption({ taskUri: uri, configId, value });
+      // 服务端确认后用服务端值覆盖（如果服务端拒绝了，回滚到旧值）
+      if (resp.success) {
+        // 等 opencode 内部同步后再拉一次确认值
+        await new Promise((r) => setTimeout(r, 300));
+        await loadConfigOptions(uri);
+      }
+    } catch (e) {
+      console.warn(`[ChatPage] 设置 ${configId} 失败:`, e);
+      // 回滚：重新从服务端拉
+      await loadConfigOptions(uri);
+    }
+  };
+
+  /** 获取指定配置项的当前值 */
+  const getConfig = (id: string) => configOptions().find((o) => o.id === id);
+
+  // session 创建后刷新配置选项
+  onMount(() => {
+    chatStore.onSessionCreated(() => {
+      const uri = taskUri();
+      if (uri) loadConfigOptions(uri);
+    });
+    // 加载模型列表
+    agentStore.loadModels().catch(() => {});
+  });
+
+  // 选中任务时加载配置选项
+  createEffect(() => {
+    const uri = taskUri();
+    if (uri) loadConfigOptions(uri);
+    else setConfigOptions([]);
   });
 
   // 自动滚动到底部（流式更新时持续触发）
@@ -470,8 +522,9 @@ export function ChatPage() {
   return (
     <div class="flex flex-col h-full bg-base-100">
       {/* 顶栏 */}
-      <div class="flex items-center gap-3 px-6 py-3 border-b border-base-300 shrink-0">
+      <div class="flex items-center gap-3 px-6 py-3 border-b border-base-300 shrink-0 flex-wrap">
         <span class="text-sm font-semibold">💬 Agent 聊天</span>
+        {/* 任务选择 */}
         <select
           value={taskUri() ?? ""}
           onChange={(e) => setTaskUri(e.currentTarget.value || null)}
@@ -482,6 +535,7 @@ export function ChatPage() {
             {(t) => <option value={t.uri}>{t.title ?? t.uri}</option>}
           </For>
         </select>
+        {/* 模型选择 */}
         <select
           value={agentStore.activeModel ?? ""}
           onChange={(e) => agentStore.switchModel(taskUri() ?? "", e.currentTarget.value)}
@@ -492,6 +546,36 @@ export function ChatPage() {
             {(m) => <option value={m.id}>{m.name}</option>}
           </For>
         </select>
+        {/* 思考深度 (effort) */}
+        <Show when={getConfig("effort")}>
+          <div class="flex items-center gap-1">
+            <span class="text-xs opacity-50">🧠</span>
+            <select
+              value={getConfig("effort")!.currentValue ?? "default"}
+              onChange={(e) => setConfig("effort", e.currentTarget.value)}
+              class="select select-bordered select-xs"
+            >
+              <For each={getConfig("effort")!.options ?? []}>
+                {(o) => <option value={o.value}>{o.name}</option>}
+              </For>
+            </select>
+          </div>
+        </Show>
+        {/* 会话模式 (mode) */}
+        <Show when={getConfig("mode")}>
+          <div class="flex items-center gap-1">
+            <span class="text-xs opacity-50">⚙️</span>
+            <select
+              value={getConfig("mode")!.currentValue ?? "build"}
+              onChange={(e) => setConfig("mode", e.currentTarget.value)}
+              class="select select-bordered select-xs"
+            >
+              <For each={getConfig("mode")!.options ?? []}>
+                {(o) => <option value={o.value}>{o.name}</option>}
+              </For>
+            </select>
+          </div>
+        </Show>
         <button class="btn btn-ghost btn-sm" onClick={() => chatStore.clearChat()}>
           清空
         </button>

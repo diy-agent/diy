@@ -235,6 +235,22 @@ export function bindAppHandlers(binding: ServerBinding): void {
     await pool.setModel(input.taskUri, input.model);
     return { success: true };
   });
+  binding.on(app.agent.setConfigOption, async ({ input }) => {
+    const pool = await getSessionPool();
+    await pool.setConfigOption(input.taskUri, input.configId, input.value);
+    return { success: true };
+  });
+  binding.on(app.agent.getConfigOptions, async ({ input }) => {
+    const pool = await getSessionPool();
+    const opts = pool.getConfigOptions(input.taskUri);
+    return opts.map((o) => ({
+      id: o.id,
+      name: o.name ?? o.id,
+      category: o.category,
+      currentValue: o.currentValue,
+      options: o.options?.map((opt) => ({ value: opt.value, name: opt.name ?? opt.value })),
+    }));
+  });
 
   // ── llmProxy ──
   binding.on(app.llmProxy.status, async () => {

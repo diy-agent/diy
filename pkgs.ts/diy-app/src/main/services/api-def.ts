@@ -350,6 +350,28 @@ export const apiDef = RpcSchema.router({
             },
             output: z.object({ success: z.boolean() }),
           }),
+          setConfigOption: RpcSchema.unary({
+            desc: `设置会话配置选项（effort / mode 等）`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+              configId: z.string().cliArg({ desc: "配置项 ID（effort / mode / model）" }),
+              value: z.string().cliArg({ desc: "配置值" }),
+            },
+            output: z.object({ success: z.boolean() }),
+          }),
+          getConfigOptions: RpcSchema.unary({
+            desc: `获取会话配置选项列表`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+            },
+            output: z.array(z.object({
+              id: z.string(),
+              name: z.string(),
+              category: z.string().optional(),
+              currentValue: z.string().optional(),
+              options: z.array(z.object({ value: z.string(), name: z.string() })).optional(),
+            })),
+          }),
         },
       }),
 
