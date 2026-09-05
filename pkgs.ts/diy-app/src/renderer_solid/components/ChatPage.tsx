@@ -11,7 +11,7 @@
  */
 
 import { createSignal, For, Show, createEffect, onMount } from "solid-js";
-import { chatStore, type ChatMessage, type ToolCall, type TerminalInfo } from "../store/chatStore";
+import { chatStore, sendingAccessor, type ChatMessage, type ToolCall, type TerminalInfo } from "../store/chatStore";
 import { agentStore } from "../store/agentStore";
 import { taskStore } from "../store/taskStore";
 import { diyService } from "../lib/rpc";
@@ -334,12 +334,6 @@ function UserMessageView(props: { message: ChatMessage }) {
       <Show when={msg().queueStatus === "cancelled"}>
         <div class="text-xs text-error/70">已撤回 / 已停止</div>
       </Show>
-      <Show when={msg().queueStatus === "running"}>
-        <div class="flex items-center gap-1 text-xs opacity-60">
-          <span class="loading loading-dots loading-xs"></span>
-          <span>生成中…</span>
-        </div>
-      </Show>
     </div>
   );
 }
@@ -460,31 +454,23 @@ function InputArea(props: { taskUri: string | null }) {
             class="textarea textarea-bordered flex-1 resize-none text-sm"
             rows={2}
             placeholder={
-              chatStore.sending
-                ? "生成中…继续输入将排队（消息会立即上屏）"
+              sendingAccessor()
+                ? "工作中…继续输入将排队（消息会立即上屏）"
                 : "输入消息…（Enter 发送，Shift+Enter 换行）"
             }
             onKeyDown={handleKey}
           />
-          {/* 发送（生成中也保留：点了进队列排队，DeepSeek Web 式） */}
-          <button class="btn btn-primary self-end" onClick={handleSend}>
-            发送{chatStore.sending ? "（排队）" : ""}
+          {/* 发送/停止 合并为一个状态按钮：idle → 发送，running → 停止 */}
+          <button
+            class={`btn self-end ${sendingAccessor() ? "btn-error" : "btn-primary"}`}
+            onClick={sendingAccessor()
+              ? () => chatStore.cancel()
+              : handleSend}
+          >
+            {sendingAccessor()
+              ? `■ 停止${chatStore.pendingCount > 0 ? `（${chatStore.pendingCount}）` : ""}`
+              : "发送"}
           </button>
-          <Show when={chatStore.sending}>
-            {/* 生成中：停止当前轮；排队消息各自在对话流里可单独撤回 */}
-            <div class="flex flex-col gap-1 self-end items-center">
-              <button
-                class="btn btn-error btn-sm"
-                onClick={() => chatStore.cancel()}
-                title="停止当前生成（排队中的消息可各自在对话流里撤回）"
-              >
-                ■ 停止{chatStore.pendingCount > 0 ? `（${chatStore.pendingCount} 条排队中）` : ""}
-              </button>
-              <span class="text-[10px] opacity-50">
-                {chatStore.pendingCount > 0 ? "排队消息请在对话流中管理" : "生成中…"}
-              </span>
-            </div>
-          </Show>
         </div>
       </Show>
       <div ref={bottomRef} />
@@ -674,6 +660,18 @@ export function ChatPage(props: { embedded?: boolean } = {}) {
               </div>
             )}
           </For>
+          {/* Assistant 侧：工作中… 指示器（DeepSeek/OpenCode 风格） */}
+          {sendingAccessor() && (
+            <div class="w-full">
+              <div class="flex flex-col gap-2">
+                <div class="flex items-center gap-2 text-xs opacity-40">
+                  <span>Agent</span>
+                  <span class="loading loading-dots loading-xs"></span>
+                </div>
+                <div class="text-sm opacity-50">工作中…</div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

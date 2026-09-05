@@ -826,6 +826,9 @@ function closeSession(taskUri: string): Promise<boolean> {
 // 导出
 // ═══════════════════════════════════════
 
+/** 导出 sending accessor 供组件直接追踪（chatStore getter 跨模块不可靠） */
+export { sending as sendingAccessor };
+
 export const chatStore = {
   get messages() { return messages(); },
   get sending() { return sending(); },
