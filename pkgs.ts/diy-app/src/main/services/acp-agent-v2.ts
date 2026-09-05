@@ -388,22 +388,6 @@ export class AcpAgentV2 {
     } as any);
   }
 
-  /** 设置会话配置选项（effort / model / mode） */
-  async setConfigOption(sessionId: string, configId: string, value: string): Promise<SessionConfigOptionLike[]> {
-    const resp = await this.ctx.request("session/set_config_option" as any, {
-      sessionId,
-      configId,
-      value,
-    } as any) as { configOptions?: SessionConfigOptionLike[] };
-    return resp?.configOptions ?? [];
-  }
-
-  /** 获取会话配置选项 */
-  getConfigOptions(sessionId: string): SessionConfigOptionLike[] {
-    const sess = this.sessions.get(sessionId);
-    return sess?.getConfigOptions() ?? [];
-  }
-
   /**
    * 列出可用模型（agent 级能力）。
    * 内部 lazy 建一个 probe session 获取模型列表并缓存；后续直接读缓存。
