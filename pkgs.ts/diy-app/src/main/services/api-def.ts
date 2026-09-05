@@ -312,7 +312,9 @@ export const apiDef = RpcSchema.router({
           }),
           listModels: RpcSchema.unary({
             desc: `列出可用模型`,
-            input: {},
+            input: {
+              refresh: z.boolean().optional().cliOption({ desc: `强制刷新缓存（默认 false 走缓存）` }),
+            },
             output: z.array(z.object({ id: z.string(), name: z.string() })),
           }),
           status: RpcSchema.unary({

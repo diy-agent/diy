@@ -551,6 +551,13 @@ export function ChatPage() {
             {(m) => <option value={m.id}>{m.name}</option>}
           </For>
         </select>
+        <button
+          class="btn btn-ghost btn-sm"
+          title="刷新模型列表"
+          onClick={() => agentStore.loadModels(true)}
+        >
+          ⟳
+        </button>
         {/* 思考深度 (effort) */}
         <Show when={getConfig("effort")}>
           <div class="flex items-center gap-1">

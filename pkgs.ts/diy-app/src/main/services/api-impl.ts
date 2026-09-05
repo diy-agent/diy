@@ -205,9 +205,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
       yield ev;
     }
   });
-  binding.on(app.agent.listModels, async () => {
+  binding.on(app.agent.listModels, async ({ input }) => {
     const pool = await getSessionPool();
-    const models = await pool.listModels();
+    const models = await pool.listModels(input.refresh === true);
     return models.map((m: { modelId: string; name?: string }) => ({ id: m.modelId, name: m.name ?? m.modelId }));
   });
   binding.on(app.agent.status, async ({ input }) => {

@@ -17,9 +17,9 @@ export const agentStore = {
   get sending() { return sending(); },
   get error() { return error(); },
   get autoApprove() { return autoApprove(); },
-  loadModels: async () => {
+  loadModels: async (refresh = false) => {
     try {
-      const r = await diyService.diy.agent.listModels({});
+      const r = await diyService.diy.agent.listModels({ refresh });
       setModels(r);
       // 不再拿 result[0] 伪造「当前模型」：那不是真实状态，且发消息时会把这个假默认值
       // 真的切换过去。activeModel 只能来自 syncStatus 或用户显式选择。

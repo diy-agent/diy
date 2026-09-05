@@ -238,9 +238,9 @@ export class TaskSessionPoolV2 {
     return { taskUri, state: "ready", model: session.currentModelId };
   }
 
-  /** 列出可用模型（从 opencode configOptions 解析） */
-  async listModels(): Promise<AcpModel[]> {
-    return this.agent.listModels();
+  /** 列出可用模型（从 opencode configOptions 解析）；refresh=true 绕过缓存重新探测 */
+  async listModels(refresh = false): Promise<AcpModel[]> {
+    return this.agent.listModels(refresh);
   }
 
   /** 热切模型（opencode 会话级） */

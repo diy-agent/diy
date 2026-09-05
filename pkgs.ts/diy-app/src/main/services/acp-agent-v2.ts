@@ -452,9 +452,10 @@ export class AcpAgentV2 {
    * 列出可用模型（agent 级能力）。
    * 内部 lazy 建一个 probe session 获取模型列表并缓存；后续直接读缓存。
    * 不依赖外部先建 session —— 因为创建 session 前就需要模型列表给用户选。
+   * refresh=true 时绕过缓存重新探测（provider 模型可能变化，如用户改了 opencode 配置）。
    */
-  async listModels(): Promise<AcpModel[]> {
-    if (this.cachedModels) return this.cachedModels;
+  async listModels(refresh = false): Promise<AcpModel[]> {
+    if (this.cachedModels && !refresh) return this.cachedModels;
     await this.ready();
     // probe session：建一个即弃，只为拿 configOptions 模型列表
     const probe = await this.ctx.buildSession(this.opts.cwd ?? process.cwd()).start();
@@ -462,7 +463,12 @@ export class AcpAgentV2 {
       ?.find((o: any) => o.id === "model")?.options
       ?.map((o: any) => ({ modelId: o.value, name: o.name })) ?? [];
     probe.dispose();
-    this.cachedModels = models.length > 0 ? models : [{ modelId: "default", name: "Default" }];
+    // refresh 也刷新缓存；探测失败但已有旧缓存时保留旧缓存（不要用空列表覆盖）
+    if (models.length > 0) {
+      this.cachedModels = models;
+    } else if (!refresh) {
+      this.cachedModels = [{ modelId: "default", name: "Default" }];
+    }
     return this.cachedModels!;
   }
 
