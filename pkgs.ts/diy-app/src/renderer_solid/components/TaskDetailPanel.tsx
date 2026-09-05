@@ -1,7 +1,7 @@
 import { onMount, onCleanup, Show } from "solid-js";
 import * as Tabs from "@kobalte/core/tabs";
 import { taskStore, type TaskDetail } from "../store/taskStore";
-import { AgentChatPanel } from "./AgentChatPanel";
+import { ChatPage } from "./ChatPage";
 
 export function TaskDetailPanel() {
     const onKey = (e: KeyboardEvent) => {
@@ -34,9 +34,9 @@ export function TaskDetailPanel() {
                         <Tabs.Trigger value="info" class="tab">📋 详情</Tabs.Trigger>
                     </Tabs.List>
 
-                    {/* Agent 对话 —— 主内容，占满剩余空间 */}
+                    {/* Agent 对话 —— 完整聊天页（标记嵌入模式，任务由面板选中驱动） */}
                     <Tabs.Content value="agent" class="flex-1 overflow-hidden">
-                        <AgentChatPanel embedded />
+                        <ChatPage embedded />
                     </Tabs.Content>
 
                     {/* 任务详情 —— 元信息 */}

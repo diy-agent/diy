@@ -513,6 +513,50 @@ function clearError() {
   setError(null);
 }
 
+// ═══════════════════════════════════════
+// 会话级操作（模型切换 / 状态同步 / 关闭会话）
+// 与 agentStore 的分工：这些是「某个 task 的会话」状态，只放 chatStore。
+// ═══════════════════════════════════════
+
+/** 向主进程查询该 task 会话的真实模型；无会话则清空选择 */
+async function syncStatus(taskUri: string) {
+  try {
+    const st = await diyService.diy.agent.status({ taskUri });
+    setActiveModel(st.state === "ready" ? (st.model ?? "") : "");
+  } catch { /* 查不到就维持现状 */ }
+}
+
+/** 切换会话模型（乐观更新，失败回滚） */
+async function switchModel(taskUri: string, modelId: string) {
+  const prev = activeModel();
+  setActiveModel(modelId);
+  if (!taskUri) return;
+  try {
+    await diyService.diy.agent.setModel({ taskUri, model: modelId });
+    await syncStatus(taskUri);
+  } catch (e) {
+    setActiveModel(prev);
+    setError(e instanceof Error ? e.message : "切换模型失败");
+  }
+}
+
+/** 关闭会话（消息也清空：会话没了，旧消息对应的 sessionId 已失效） */
+async function closeSession(taskUri: string) {
+  try {
+    await diyService.diy.agent.closeSession({ taskUri });
+    setMessages([]);
+    setSessionId(null);
+    setActiveModel("");
+    setError(null);
+  } catch (e) {
+    setError(e instanceof Error ? e.message : "关闭会话失败");
+  }
+}
+
+// ═══════════════════════════════════════
+// 导出
+// ═══════════════════════════════════════
+
 export const chatStore = {
   get messages() { return messages(); },
   get sending() { return sending(); },
@@ -522,6 +566,9 @@ export const chatStore = {
   sendMessage,
   clearChat,
   clearError,
+  switchModel,
+  syncStatus,
+  closeSession,
   setModel: setActiveModel,
   /** 直接注入 ACP 事件（供外部事件源使用） */
   handleAcpEvent,

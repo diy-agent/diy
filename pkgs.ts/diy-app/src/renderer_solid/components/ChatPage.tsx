@@ -447,8 +447,11 @@ function InputArea(props: { taskUri: string | null }) {
 
 // ─── 主页面 ───
 
-export function ChatPage() {
-  const [taskUri, setTaskUri] = createSignal<string | null>(null);
+export function ChatPage(props: { embedded?: boolean } = {}) {
+  // 嵌入模式（TaskDetailPanel）：任务由选中态驱动；独立模式：本地下拉选择
+  const [localUri, setLocalUri] = createSignal<string | null>(null);
+  const taskUri = () =>
+    props.embedded ? (taskStore.selectedUri ?? null) : localUri();
   const [configOptions, setConfigOptions] = createSignal<ConfigOption[]>([]);
   let chatContainerRef: HTMLDivElement | undefined;
   /** 请求序号，防止并发 load 覆盖 */
@@ -499,15 +502,22 @@ export function ChatPage() {
       const uri = taskUri();
       if (uri) loadConfigOptions(uri);
     });
-    // 加载模型列表
+    // 加载模型列表 + 同步当前会话真实模型
     agentStore.loadModels().catch(() => {});
+    const uri = taskUri();
+    if (uri) chatStore.syncStatus(uri);
+    void agentStore.loadAutoApprove();
   });
 
-  // 选中任务时加载配置选项
+  // 选中任务时加载配置选项 + 同步会话状态（嵌入模式切换任务也走这里）
   createEffect(() => {
     const uri = taskUri();
-    if (uri) loadConfigOptions(uri);
-    else setConfigOptions([]);
+    if (uri) {
+      loadConfigOptions(uri);
+      chatStore.syncStatus(uri);
+    } else {
+      setConfigOptions([]);
+    }
   });
 
   // 自动滚动到底部（流式更新时持续触发）
@@ -529,21 +539,23 @@ export function ChatPage() {
       {/* 顶栏 */}
       <div class="flex items-center gap-3 px-6 py-3 border-b border-base-300 shrink-0 flex-wrap">
         <span class="text-sm font-semibold">💬 Agent 聊天</span>
-        {/* 任务选择 */}
+        {/* 任务选择（嵌入模式由详情面板选中，隐藏选择器） */}
+        <Show when={!props.embedded}>
+          <select
+            value={localUri() ?? ""}
+            onChange={(e) => setLocalUri(e.currentTarget.value || null)}
+            class="select select-bordered select-sm max-w-48"
+          >
+            <option value="">— 选择任务 —</option>
+            <For each={flattenTasks(taskStore.nodes)}>
+              {(t) => <option value={t.uri}>{t.title ?? t.uri}</option>}
+            </For>
+          </select>
+        </Show>
+        {/* 模型选择（单一真相源：chatStore.activeModel，sendMessage 读的就是它） */}
         <select
-          value={taskUri() ?? ""}
-          onChange={(e) => setTaskUri(e.currentTarget.value || null)}
-          class="select select-bordered select-sm max-w-48"
-        >
-          <option value="">— 选择任务 —</option>
-          <For each={flattenTasks(taskStore.nodes)}>
-            {(t) => <option value={t.uri}>{t.title ?? t.uri}</option>}
-          </For>
-        </select>
-        {/* 模型选择 */}
-        <select
-          value={agentStore.activeModel ?? ""}
-          onChange={(e) => agentStore.switchModel(taskUri() ?? "", e.currentTarget.value)}
+          value={chatStore.activeModel ?? ""}
+          onChange={(e) => chatStore.switchModel(taskUri() ?? "", e.currentTarget.value)}
           class="select select-bordered select-sm max-w-64"
         >
           <option value="">（默认模型）</option>
