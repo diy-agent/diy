@@ -243,12 +243,12 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.agent.getConfigOptions, async ({ input }) => {
     const pool = await getSessionPool();
     const opts = pool.getConfigOptions(input.taskUri);
-    return opts.map((o) => ({
+    return opts.map((o: { id: string; name?: string; category?: string; currentValue?: string; options?: Array<{ value: string; name?: string }> }) => ({
       id: o.id,
       name: o.name ?? o.id,
       category: o.category,
       currentValue: o.currentValue,
-      options: o.options?.map((opt) => ({ value: opt.value, name: opt.name ?? opt.value })),
+      options: o.options?.map((opt: { value: string; name?: string }) => ({ value: opt.value, name: opt.name ?? opt.value })),
     }));
   });
 

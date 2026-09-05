@@ -205,7 +205,6 @@ export class AcpSessionV2 {
       value,
     } as any) as { configOptions?: SessionConfigOptionLike[] };
     const opts = resp?.configOptions;
-    console.log(`[acp] setConfigOption(${configId}=${value}): resp=${JSON.stringify(resp).slice(0, 200)}`);
     if (Array.isArray(opts)) this.liveConfigOptions = opts;
     return opts ?? [];
   }
