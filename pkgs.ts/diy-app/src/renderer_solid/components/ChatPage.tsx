@@ -451,37 +451,42 @@ export function ChatPage() {
   const [taskUri, setTaskUri] = createSignal<string | null>(null);
   const [configOptions, setConfigOptions] = createSignal<ConfigOption[]>([]);
   let chatContainerRef: HTMLDivElement | undefined;
+  /** 请求序号，防止并发 load 覆盖 */
+  let configLoadSeq = 0;
 
-  /** 加载配置选项（effort / mode / model） */
+  /** 加载配置选项（带请求序号防竞态） */
   const loadConfigOptions = async (uri: string) => {
+    const seq = ++configLoadSeq;
     try {
       const opts = await diyService.diy.agent.getConfigOptions({ taskUri: uri });
-      setConfigOptions(opts);
+      if (seq === configLoadSeq) setConfigOptions(opts);
     } catch {
-      setConfigOptions([]);
+      if (seq === configLoadSeq) setConfigOptions([]);
     }
   };
 
-  /** 设置配置选项（乐观更新 + 服务端确认） */
+  /** 设置配置选项（乐观更新，失败回滚） */
   const setConfig = async (configId: string, value: string) => {
     const uri = taskUri();
     if (!uri) return;
-    // 乐观更新：立即改本地 signal，UI 即时响应
+    // 记住旧值用于回滚
+    const oldValue = getConfig(configId)?.currentValue;
+    // 乐观更新：立即改本地 signal
     setConfigOptions((prev) =>
       prev.map((o) => (o.id === configId ? { ...o, currentValue: value } : o)),
     );
     try {
-      const resp = await diyService.diy.agent.setConfigOption({ taskUri: uri, configId, value });
-      // 服务端确认后用服务端值覆盖（如果服务端拒绝了，回滚到旧值）
-      if (resp.success) {
-        // 等 opencode 内部同步后再拉一次确认值
-        await new Promise((r) => setTimeout(r, 300));
-        await loadConfigOptions(uri);
-      }
+      await diyService.diy.agent.setConfigOption({ taskUri: uri, configId, value });
+      // opencode 不推 config_option_update，setConfigOption 响应也不含更新后值，
+      // 所以不做「服务端确认」——乐观值即终态。
     } catch (e) {
       console.warn(`[ChatPage] 设置 ${configId} 失败:`, e);
-      // 回滚：重新从服务端拉
-      await loadConfigOptions(uri);
+      // 回滚到旧值
+      if (oldValue !== undefined) {
+        setConfigOptions((prev) =>
+          prev.map((o) => (o.id === configId ? { ...o, currentValue: oldValue } : o)),
+        );
+      }
     }
   };
 
