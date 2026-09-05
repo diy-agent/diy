@@ -6,7 +6,7 @@
 // 无 state.yaml / 无 projects/ 时，应返回对应缺失提示且 healthy=false。
 // ═══════════════════════════════════════════════════════════════
 
-import { describe, it, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { join } from "node:path";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
@@ -55,5 +55,38 @@ describe("doctor", () => {
         },
       },
     });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// getAppInfo（设置页「状态」标签的数据源）
+//
+// 它原先只是主进程里一条 ipcMain.handle("getAppInfo")，preload 未桥接、api-def 未登记，
+// 所以没有任何调用方能真正拿到数据（界面永远停在「加载中…」）。迁移到 RPC 后
+// 用 CLI 就能验收 —— 三条入口（Electron / serve / CLI）共用同一实现。
+// ═══════════════════════════════════════════════════════════════
+describe("getAppInfo", () => {
+  it("返回端口/目录/版本/系统全部字段，且目录落在隔离 HOME 下", async () => {
+    await sh.assertJson("./diy.sh getAppInfo", {
+      ok: true,
+      data: {
+        port: "*",
+        diyHome: HOME,
+        cache: `${HOME}/cache`,
+        userData: `${HOME}/electron_user_data`,
+        electron: "*",
+        node: "*",
+        chrome: "*",
+        platform: "*",
+        pid: "*",
+        memory: "*total*",
+      },
+    });
+  });
+
+  it("port 是实际监听的 RPC 端口（非 0、非占位）", async () => {
+    const r = await sh.getJson("./diy.sh getAppInfo");
+    const port = Number((r as any).data?.port);
+    expect(Number.isFinite(port) && port > 0).toBe(true);
   });
 });

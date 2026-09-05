@@ -133,13 +133,17 @@ export function parseArgv(def: _AnyProcedureMeta, argv: string[]): ParsedInput {
     input[argOrder[i]] = positional[i];
   }
 
-  // 预转数字
+  // 预转数字 + JSON 数组 + boolean
   for (const [key, val] of Object.entries(input)) {
     if (typeof val !== 'string') continue;
     const field = shape[key];
     if (!field) continue;
     if (unwrap(field) instanceof z.ZodNumber) {
       input[key] = Number(val);
+    } else if (unwrap(field) instanceof z.ZodBoolean) {
+      input[key] = val === 'true' || val === '1';
+    } else if (unwrap(field) instanceof z.ZodArray) {
+      try { input[key] = JSON.parse(val); } catch { /* 保留原字符串，让 zod 报错 */ }
     }
   }
 

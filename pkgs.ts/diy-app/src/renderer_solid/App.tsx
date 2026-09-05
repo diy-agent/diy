@@ -2,7 +2,7 @@ import { createSignal, onMount, onCleanup, Show } from "solid-js";
 import * as Tabs from "@kobalte/core/tabs";
 import { TaskTree } from "./components/TaskTree";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
-import { AgentChatPanel } from "./components/AgentChatPanel";
+import { ChatPage } from "./components/ChatPage";
 import { LlmPage } from "./components/LlmPage";
 import { LogPanel } from "./components/LogPanel";
 import { AppInfo } from "./components/AppInfo";
@@ -11,7 +11,7 @@ import { taskStore } from "./store/taskStore";
 import { notificationStore, type ToastType } from "./store/notificationStore";
 import { setRendererActions, resetRendererActions } from "./lib/renderer-actions";
 
-type NavPage = "task" | "llm" | "agent" | "settings";
+type NavPage = "task" | "chat" | "llm" | "settings";
 
 export default function App() {
     const [currentPage, setCurrentPage] = createSignal<NavPage>("task");
@@ -30,8 +30,8 @@ export default function App() {
 
     const navItems: Array<{ id: NavPage; label: string; icon: string }> = [
         { id: "task", label: "任务树", icon: "🌳" },
+        { id: "chat", label: "聊天", icon: "💬" },
         { id: "llm", label: "LLM", icon: "🧠" },
-        { id: "agent", label: "Agent", icon: "🤖" },
         { id: "settings", label: "设置", icon: "⚙️" },
     ];
 
@@ -51,7 +51,9 @@ export default function App() {
                     class="flex-1 relative overflow-hidden bg-base-100"
                     onClick={() => {
                         // 点击空白处关闭任务详情面板（任务行/面板自身已 stopPropagation 接管）
-                        if (taskStore.selectedUri) taskStore.selectTask(null);
+                        // 只在任务树页面生效：其他页面（Agent/LLM/设置）点击不应取消选中任务，
+                        // 否则 Agent 面板里点输入框/发送按钮都会把 selectedUri 清掉 → 发不出消息
+                        if (currentPage() === "task" && taskStore.selectedUri) taskStore.selectTask(null);
                     }}
                 >
                     <Show when={currentPage() === "task"}>
@@ -60,8 +62,8 @@ export default function App() {
                     <Show when={currentPage() === "llm"}>
                         <LlmPage />
                     </Show>
-                    <Show when={currentPage() === "agent"}>
-                        <AgentChatPanel />
+                    <Show when={currentPage() === "chat"}>
+                        <ChatPage />
                     </Show>
                     <Show when={currentPage() === "settings"}>
                         <div class="flex flex-col h-full">

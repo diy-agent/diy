@@ -12,7 +12,7 @@
 //   3. 创建窗口 + IPC transport
 //   4. 端口绑定 → 18888（或 DIY_PORT 覆盖）
 
-import { app, BrowserWindow, ipcMain, screen } from "electron";
+import { app, BrowserWindow, screen } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
@@ -20,7 +20,8 @@ import type { ServerBinding } from "@diy/rpc";
 import { createMainTransport } from "@diy/rpc/electron";
 import { RpcPortService } from "./services/rpc-port";
 import { AppConfig } from "./core/app-config";
-import { bindApi, bindAppHandlers } from "./services/api-impl";
+import { bindApi, bindAppHandlers, setRpcPort } from "./services/api-impl";
+import { installDiagnostics } from "./services/diagnostics";
 import { readRuntimeConfig } from "../runtime";
 import { homedir, hostname, platform, arch, release, totalmem, freemem } from "node:os";
 
@@ -31,20 +32,8 @@ let mainWindow: BrowserWindow | null = null;
 let appConfig: AppConfig;
 let httpPort = 0;
 
-function getAppInfo() {
-  return {
-    port: httpPort,
-    diyHome: appConfig.diyHome,
-    cache: appConfig.cache,
-    userData: appConfig.electronUserData,
-    electron: process.versions.electron,
-    node: process.versions.node,
-    chrome: process.versions.chrome,
-    platform: `${platform()} ${arch()}`,
-    pid: process.pid,
-    memory: `${(totalmem() / 1024 / 1024 / 1024).toFixed(1)} GB total`,
-  };
-}
+// getAppInfo 已迁到 RPC（api-def / api-impl），Electron、serve、CLI 共用一份实现；
+// 这里只保留 httpPort 供启动横幅与端口复用逻辑使用。
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // dev GUI 加载 URL 由入口注入（electron-dev.mts），缺省 → loadFile 编译产物
@@ -61,6 +50,9 @@ for (const p of [appConfig.electronUserData, appConfig.cache, appConfig.diyHome]
 }
 app.setPath("userData", appConfig.electronUserData);
 app.setPath("cache", appConfig.cache);
+
+// 诊断设施必须早于任何 console 输出安装：EPIPE 防护 + 日志落 DIY_HOME/log/main.log
+installDiagnostics(appConfig.diyHome);
 
 // ── 系统信息 ──
 console.log("═══════════════════════════════════════");
@@ -191,15 +183,23 @@ async function startRpcPort(ipcTransport: import("@diy/rpc").EnvelopeTransport):
   try {
     await rpcPort.start(bindAppHandlers, appConfig, preferredPort, ipcTransport);
     httpPort = rpcPort.port;
+    setRpcPort(httpPort); // getAppInfo 走 RPC，端口需回填给 api-impl
     return true;
   } catch (err: any) {
     if (err?.code === "EADDRINUSE") {
       console.log(`  ⚠ Port ${preferredPort} 被占`);
     }
+    // TODO(端口竞争)：dev watcher 热重启时，旧 Electron 刚被 kill、18888 的 socket 还没
+    //   完全释放，新实例首次 bind 就 EADDRINUSE，于是**立刻**回落到随机端口 —— 实测
+    //   13 次热重启里有 3 次落到随机端口（见 main.log 的「→ 尝试随机端口」），
+    //   破坏了「dev 恒在 18888」的约定。CLI 靠 app.port 文件仍能找到，所以不致命但很烦。
+    //   修法：回落随机之前，对 preferredPort 做几轮短重试（如 5 × 200ms），
+    //   只在重试耗尽后才认定确有外部进程占用。注意别把「真的端口冲突」也拖成慢启动。
     console.log("  → 尝试随机端口...");
     try {
       await rpcPort.start(bindAppHandlers, appConfig, 0, ipcTransport);
       httpPort = rpcPort.port;
+      setRpcPort(httpPort);
       console.log(`  RPC Port:     http://127.0.0.1:${httpPort} (random)`);
       return true;
     } catch (e) {
@@ -212,9 +212,6 @@ async function startRpcPort(ipcTransport: import("@diy/rpc").EnvelopeTransport):
 // ── 生命周期 ──
 
 app.whenReady().then(async () => {
-  // 注册 app 信息 IPC（独立通道，不走 RPC router）
-  ipcMain.handle("getAppInfo", () => getAppInfo());
-
   // 先创建窗口（产生 IPC transport），再启动 HTTP/2 端口
   // CLI 连接时会桥接到 IPC transport，故 IPC 必须就绪
   const { binding, ipcTransport } = createWindow();

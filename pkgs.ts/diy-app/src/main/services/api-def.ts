@@ -205,6 +205,27 @@ export const apiDef = RpcSchema.router({
         }),
       }),
 
+      // 运行环境详情：设置页「状态」标签用，同时天然可被 CLI 调用。
+      // 历史上它只是一条 ipcMain.handle("getAppInfo")，preload 没桥接、api-def 也没登记，
+      // 于是 Electron 里 window.diy 为 undefined（可选链短路，永远卡在「加载中…」）、
+      // serve 里方法不存在。走 RPC 后三种入口共用同一实现。
+      getAppInfo: RpcSchema.unary({
+        desc: `查询运行环境详情（端口/目录/版本/系统）`,
+        input: {},
+        output: z.object({
+          port: z.number(),
+          diyHome: z.string(),
+          cache: z.string(),
+          userData: z.string(),
+          electron: z.string(),
+          node: z.string(),
+          chrome: z.string(),
+          platform: z.string(),
+          pid: z.number(),
+          memory: z.string(),
+        }),
+      }),
+
       doctor: RpcSchema.unary({
         desc: `系统健康自检`,
         input: {},
@@ -263,32 +284,120 @@ export const apiDef = RpcSchema.router({
         desc: `Agent 管理`,
         children: {
           chat: RpcSchema.unary({
-            desc: `与模型对话`,
+            desc: `与模型对话（task 级：每 task 独立 ACP session）`,
             input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI（决定所属 project/session）" }),
               model: z.string().cliArg({ desc: "模型名称" }),
               messages: z.array(MessageParam).cliOption({ desc: "消息数组 JSON" }),
             },
             output: z.object({ role: z.string(), content: z.string() }),
           }),
           chatStream: RpcSchema.serverStream({
-            desc: `流式对话`,
+            desc: `流式对话（task 级：每 task 独立 ACP session）`,
             input: {
-              model: z.string(),
-              messages: z.array(MessageParam),
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+              model: z.string().cliArg({ desc: "模型名称" }),
+              messages: z.array(MessageParam).cliOption({ desc: "消息数组 JSON" }),
+            },
+            output: z.string(),
+          }),
+          chatStreamEvents: RpcSchema.serverStream({
+            desc: `流式对话 — 完整 ACP 事件流（JSON 序列化的 session/update 通知）`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+              model: z.string().cliArg({ desc: "模型名称" }),
+              messages: z.array(MessageParam).cliOption({ desc: "消息数组 JSON" }),
             },
             output: z.string(),
           }),
           listModels: RpcSchema.unary({
-            desc: `列出可用模型`,
-            input: {},
+            desc: `列出可用模型（读任务会话快照，无 probe 会话）`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI（会话须已建，进入详情即建）" }),
+            },
             output: z.array(z.object({ id: z.string(), name: z.string() })),
           }),
-          status: RpcSchema.unary({
-            desc: `查询 Agent 状态`,
+          ensureSession: RpcSchema.unary({
+            desc: `进入任务详情时确保会话存在（无则新建/恢复），一次性返回配置快照`,
             input: {
-              agentId: z.string().cliArg({ desc: "Agent ID" }),
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
             },
-            output: z.object({ agentId: z.string(), state: z.string(), model: z.string() }),
+            output: z.object({
+              taskUri: z.string(),
+              // 当前模型：快照 model.currentValue（opencode 默认模型）
+              model: z.string().optional(),
+              configOptions: z.array(z.object({
+                id: z.string(),
+                name: z.string(),
+                category: z.string().optional(),
+                currentValue: z.string().optional(),
+                options: z.array(z.object({ value: z.string(), name: z.string() })).optional(),
+              })),
+            }),
+          }),
+          status: RpcSchema.unary({
+            desc: `查询任务会话状态（只读，不会创建会话）`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+            },
+            // model 可选：state=no_session 时无会话，也就没有模型
+            output: z.object({ taskUri: z.string(), state: z.string(), model: z.string().optional() }),
+          }),
+          getAutoApprove: RpcSchema.unary({
+            desc: `获取自动审批权限设置`,
+            input: {},
+            output: z.object({ enabled: z.boolean() }),
+          }),
+          setAutoApprove: RpcSchema.unary({
+            desc: `设置自动审批权限`,
+            input: {
+              enabled: z.boolean().cliArg({ desc: "是否自动审批" }),
+            },
+            output: z.object({ enabled: z.boolean() }),
+          }),
+          closeSession: RpcSchema.unary({
+            desc: `关闭任务会话`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+            },
+            output: z.object({ closed: z.boolean() }),
+          }),
+          cancel: RpcSchema.unary({
+            desc: `取消任务会话的当前生成（agent 停止本轮，队列中的下一条自动开始）`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+            },
+            output: z.object({ cancelled: z.boolean() }),
+          }),
+          setModel: RpcSchema.unary({
+            desc: `切换任务会话的模型`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+              model: z.string().cliArg({ desc: "模型 ID" }),
+            },
+            output: z.object({ success: z.boolean() }),
+          }),
+          setConfigOption: RpcSchema.unary({
+            desc: `设置会话配置选项（effort / mode 等）`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+              configId: z.string().cliArg({ desc: "配置项 ID（effort / mode / model）" }),
+              value: z.string().cliArg({ desc: "配置值" }),
+            },
+            output: z.object({ success: z.boolean() }),
+          }),
+          getConfigOptions: RpcSchema.unary({
+            desc: `获取会话配置选项列表`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+            },
+            output: z.array(z.object({
+              id: z.string(),
+              name: z.string(),
+              category: z.string().optional(),
+              currentValue: z.string().optional(),
+              options: z.array(z.object({ value: z.string(), name: z.string() })).optional(),
+            })),
           }),
         },
       }),

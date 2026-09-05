@@ -135,6 +135,13 @@ export function listProjects(): Array<{ id: string; info: ProjectInfo }> {
 }
 
 /** project 是否存在（task create 校验用） */
+/** 取 project 的目标仓库绝对路径（meta.yaml:path 展开后） */
+export function getProjectPath(id: string): string | undefined {
+  const meta = readYaml(join(projectDir(id), "meta.yaml"));
+  const p = meta["path"] as string | undefined;
+  return p ? expandPath(p) : undefined;
+}
+
 export function projectExists(id: string): boolean {
   return existsSync(projectDir(id));
 }

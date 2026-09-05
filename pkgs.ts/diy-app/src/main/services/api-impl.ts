@@ -13,19 +13,30 @@ import * as task from "../core/task";
 import * as project from "../core/project";
 import * as state from "../core/state";
 import * as taskTree from "../core/task-tree";
+import { AppConfig } from "../core/app-config";
+import { platform, arch, release, totalmem, freemem } from "node:os";
 import * as health from "./health";
 import { refList, checkRefPaths } from "../core/ref";
 import { syncRefs } from "./ref-sync";
 import { addSource, removeSource } from "./ref-config";
 import { apiDef } from "./api-def";
 
-let _agentClient: any = null;
-async function getAgentClient() {
-  if (!_agentClient) {
-    const { AcpAgentClient } = await import("./acp-agent");
-    _agentClient = new AcpAgentClient();
+let _sessionPool: any = null;
+/**
+ * 实际 RPC 监听端口，由入口在绑定完成后回填。
+ * 不能靠 app.port 文件推：serve 模式不写该文件，读到的会是 Electron 留下的陈旧值。
+ */
+let _rpcPort = 0;
+export function setRpcPort(port: number): void {
+  _rpcPort = port;
+}
+async function getSessionPool() {
+  if (!_sessionPool) {
+    const { TaskSessionPoolV2 } = await import("./acp-sessions-v2");
+    _sessionPool = new TaskSessionPoolV2();
+    await _sessionPool.ready();
   }
-  return _agentClient;
+  return _sessionPool;
 }
 let _llmProxyInstance: any = null;
 async function getLlmProxy() {
@@ -34,6 +45,19 @@ async function getLlmProxy() {
     _llmProxyInstance = new LlmProxy();
   }
   return _llmProxyInstance;
+}
+
+/** 会话配置选项统一映射（ensureSession / getConfigOptions 共用） */
+function mapConfigOptions(
+  opts: Array<{ id: string; name?: string; category?: string; currentValue?: string; options?: Array<{ value: string; name?: string }> }>,
+) {
+  return opts.map((o) => ({
+    id: o.id,
+    name: o.name ?? o.id,
+    category: o.category,
+    currentValue: o.currentValue,
+    options: o.options?.map((opt) => ({ value: opt.value, name: opt.name ?? opt.value })),
+  }));
 }
 
 const app = apiDef.diy;
@@ -107,6 +131,26 @@ export function bindAppHandlers(binding: ServerBinding): void {
     data: { pid: process.pid, uptime: process.uptime(), memory: process.memoryUsage().heapUsed },
   }));
 
+  // ── getAppInfo（Electron / serve / CLI 三处共用，版本字段对非 Electron 环境降级）──
+  binding.on(app.getAppInfo, () => {
+    const ac = new AppConfig(state.diyHome());
+    const gb = (n: number) => (n / 1024 / 1024 / 1024).toFixed(1);
+    return {
+      port: _rpcPort,
+      diyHome: ac.diyHome,
+      cache: ac.cache,
+      userData: ac.electronUserData,
+      // serve 模式是纯 Node，这两个版本字段不存在 —— 必须给可读的占位而不是 undefined，
+      // 否则 zod output 校验直接失败，界面又变成一片空白
+      electron: process.versions.electron ?? "—（非 Electron）",
+      node: process.versions.node,
+      chrome: process.versions.chrome ?? "—（非 Electron）",
+      platform: `${platform()} ${arch()} (${release()})`,
+      pid: process.pid,
+      memory: `${gb(totalmem())} GB total, ${gb(freemem())} GB free`,
+    };
+  });
+
   // ── doctor ──
   binding.on(app.doctor, async () => {
     const issues = health.runHealthCheck();
@@ -158,24 +202,76 @@ export function bindAppHandlers(binding: ServerBinding): void {
 
   // ── agent ──
   binding.on(app.agent.chat, async ({ input }) => {
-    const client = await getAgentClient();
-    const result = await client.chat(input.model, input.messages);
+    const pool = await getSessionPool();
+    const result = await pool.chat(input.taskUri, input.model, input.messages);
     return { role: result.role, content: result.content };
   });
   binding.on(app.agent.chatStream, async function* ({ input }) {
-    const client = await getAgentClient();
-    for await (const delta of client.streamChat(input.model, input.messages)) {
+    const pool = await getSessionPool();
+    for await (const delta of pool.streamChat(input.taskUri, input.model, input.messages)) {
       yield delta;
     }
   });
-  binding.on(app.agent.listModels, () => [
-    { id: "llama3.2", name: "Llama 3.2" },
-    { id: "hermes", name: "Hermes Agent" },
-  ]);
+  binding.on(app.agent.chatStreamEvents, async function* ({ input }) {
+    const pool = await getSessionPool();
+    for await (const ev of pool.streamChatEvents(input.taskUri, input.model, input.messages)) {
+      yield ev;
+    }
+  });
+  binding.on(app.agent.listModels, async ({ input }) => {
+    const pool = await getSessionPool();
+    const models = pool.listModels(input.taskUri);
+    return models.map((m: { modelId: string; name?: string }) => ({ id: m.modelId, name: m.name ?? m.modelId }));
+  });
+  binding.on(app.agent.ensureSession, async ({ input }) => {
+    const pool = await getSessionPool();
+    const session = await pool.ensure(input.taskUri);
+    return {
+      taskUri: input.taskUri,
+      model: session.currentModelId,
+      configOptions: mapConfigOptions(pool.getConfigOptions(input.taskUri)),
+    };
+  });
   binding.on(app.agent.status, async ({ input }) => {
-    const client = await getAgentClient();
-    const s = await client.getAgentStatus(input.agentId);
-    return { agentId: s.agentId, state: s.state, model: s.model };
+    const pool = await getSessionPool();
+    const s = await pool.status(input.taskUri);
+    return { taskUri: s.taskUri, state: s.state, model: s.model };
+  });
+
+  // autoApprovePermission 状态 —— 内存态保管在 agent 层（AcpAgentV2.autoApprove），
+  // 这里只做读写代理，重启重置为 true
+  binding.on(app.agent.getAutoApprove, async () => {
+    const pool = await getSessionPool();
+    return { enabled: pool.autoApprove };
+  });
+  binding.on(app.agent.setAutoApprove, async ({ input }) => {
+    const pool = await getSessionPool();
+    pool.setAutoApprove(input.enabled);
+    return { enabled: pool.autoApprove };
+  });
+  binding.on(app.agent.closeSession, async ({ input }) => {
+    const pool = await getSessionPool();
+    await pool.closeSession(input.taskUri);
+    return { closed: true };
+  });
+  binding.on(app.agent.cancel, async ({ input }) => {
+    const pool = await getSessionPool();
+    await pool.cancel(input.taskUri);
+    return { cancelled: true };
+  });
+  binding.on(app.agent.setModel, async ({ input }) => {
+    const pool = await getSessionPool();
+    await pool.setModel(input.taskUri, input.model);
+    return { success: true };
+  });
+  binding.on(app.agent.setConfigOption, async ({ input }) => {
+    const pool = await getSessionPool();
+    await pool.setConfigOption(input.taskUri, input.configId, input.value);
+    return { success: true };
+  });
+  binding.on(app.agent.getConfigOptions, async ({ input }) => {
+    const pool = await getSessionPool();
+    return mapConfigOptions(pool.getConfigOptions(input.taskUri));
   });
 
   // ── llmProxy ──

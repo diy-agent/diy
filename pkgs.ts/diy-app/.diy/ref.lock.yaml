@@ -1,0 +1,11 @@
+version: 5
+generated: '2026-09-04T14:07:26.998026Z'
+refs:
+  node:
+    diy-app:
+      dependencies:
+        '@agentclientprotocol/sdk': ~/.diy/ref/github.com/agentclientprotocol/typescript-sdk/v1.4.0
+  source:
+    .:
+      github.com/TanStack/router: ~/.diy/ref/github.com/TanStack/router/main
+      github.com/anomalyco/opencode: ~/.diy/ref/github.com/anomalyco/opencode/main

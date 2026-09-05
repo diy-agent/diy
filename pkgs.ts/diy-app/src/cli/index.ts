@@ -9,7 +9,7 @@
 //   1. ensureAppPort: 复用已运行 app（app.port 文件）或 spawn Electron 守护进程
 //   2. CliApp: RPC 客户端，把 CLI 命令转发到 app（HTTP/2）
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -19,6 +19,7 @@ import { CliApp } from "@diy/rpc/cli";
 import { apiDef } from "../main/services/api-def";
 import { readRuntimeConfig, type RuntimeConfig } from "../runtime";
 import { AppConfig } from "../main/core/app-config";
+import { installDiagnostics } from "../main/services/diagnostics";
 
 /** app 就绪等待上限 */
 const APP_READY_TIMEOUT_MS = 30_000;
@@ -71,15 +72,37 @@ function launchApp(cfg: RuntimeConfig): ChildProcess {
     throw new Error(`diy 管控台未构建: ${main}（先 npm run build）`);
   }
 
-  // 保留 stderr 供排障，stdout 丢弃；detached+unref 让 app 在 CLI 退出后继续存活
-  const child = spawn(String(electronPath), [main], {
+  // DIY_MIRROR_DISPLAY=1: 窗口定位到副屏（iPad Sidecar），避免遮挡主屏
+  // --remote-debugging-port=0: 暴露 CDP，支持 playwright-cli attach
+  //
+  // stdio 必须保持 inherit/ignore：本进程 detached+unref，CLI 随即退出，
+  // 一旦把 stdout/stderr 接成 pipe，读端消失后管道缓冲写满会反向阻塞
+  // Electron 主进程事件循环（表现为 RPC/CDP 全挂 + 系统「未响应」弹框）。
+  // CDP 地址改由 DevToolsActivePort 文件获取，见 printCdpHint()。
+  const child = spawn(String(electronPath), [main, "--remote-debugging-port=0"], {
     cwd: appRoot(),
-    env: { ...process.env },
+    env: { ...process.env, DIY_MIRROR_DISPLAY: "1" },
     stdio: ["ignore", "ignore", "inherit"],
     detached: true,
   });
+
   child.unref();
   return child;
+}
+
+/**
+ * app 就绪后提示 CDP 连接方式（供 playwright-cli 驱动真实 Electron 窗口）。
+ * 静默失败：CDP 未启用 / 文件未生成时不打扰正常输出，且绝不写 stdout 污染 --json。
+ */
+function printCdpHint(cfg: RuntimeConfig): void {
+  try {
+    const raw = readFileSync(join(cfg.home, "electron_user_data", "DevToolsActivePort"), "utf-8");
+    const [port, path] = raw.split("\n").map((s) => s.trim());
+    if (!port || !path) return;
+    console.error(`[diy] CDP: playwright-cli attach --cdp=ws://127.0.0.1:${port}${path}`);
+  } catch {
+    /* CDP 未启用，忽略 */
+  }
 }
 
 /**
@@ -104,7 +127,10 @@ async function ensureAppPort(cfg: RuntimeConfig): Promise<number> {
       const p = readPort(cfg);
       if (p !== null) {
         const ok = await Promise.race([probePort(p), spawnError]);
-        if (ok) return p;
+        if (ok) {
+          printCdpHint(cfg);
+          return p;
+        }
       }
       await Promise.race([delay(POLL_INTERVAL_MS), spawnError]);
     }
@@ -119,6 +145,9 @@ async function ensureAppPort(cfg: RuntimeConfig): Promise<number> {
 
 async function main() {
   const cfg = readRuntimeConfig();
+  // CLI 也走同一套诊断：stdout/stderr 断线不再升级成未捕获异常（父进程/终端消失时），
+  // 输出镜像到 <DIY_HOME>/log/cli.log，便于事后还原某次调用的真实行为。
+  installDiagnostics(cfg.home, "cli");
   const argv = process.argv.slice(2);
 
   const port = await ensureAppPort(cfg);
