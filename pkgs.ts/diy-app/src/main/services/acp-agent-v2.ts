@@ -82,8 +82,13 @@ export class AcpSessionV2 {
   private activeSession: ActiveSession;
   private listeners = new Set<(ev: AcpUpdateEvent) => void>();
   private history: AcpUpdateEvent[] = [];
-  private done = false;
   private textBuf = "";
+  /** 会话已释放（dispose 后更新流中断属正常，不再告警） */
+  private disposed = false;
+  /** 常驻更新泵是否已启动（幂等，防重复） */
+  private pumping = false;
+  /** 等待本轮 prompt 结束（stop 到达）的解析器 */
+  private stopResolvers: Array<() => void> = [];
 
   /**
    * agent 通过 `config_option_update` 推送的最新全量配置（协议内的权威来源）。
@@ -102,6 +107,9 @@ export class AcpSessionV2 {
     this.activeSession = activeSession;
     this.sessionId = activeSession.sessionId;
     this.cwd = cwd;
+    // 常驻更新泵：建会话/恢复会话后立即开始消费，agent 随时可能推事件
+    // （config_option_update 等），不能等第一个 prompt 才启动。
+    this.startPump();
   }
 
   /** session/new 返回的一次性配置快照（不会随切换更新） */
@@ -135,16 +143,24 @@ export class AcpSessionV2 {
     return () => this.listeners.delete(fn);
   }
 
-  /** 发 prompt，异步收流式事件；返回 prompt 最终响应 */
+  /** 发 prompt；完成信号由常驻泵派发 stop 时触发 */
   async prompt(text: string): Promise<{ stopReason?: string }> {
     this.textBuf = "";
-    const pump = this.pumpUpdates();
+    // 注册本轮的 stop 等待者（在发 prompt 之前注册，避免漏掉瞬时 stop）
+    let resolveStop!: () => void;
+    const stopPromise = new Promise<void>((r) => {
+      resolveStop = r;
+    });
+    this.stopResolvers.push(resolveStop);
     try {
       const resp = await this.activeSession.prompt(text);
+      // 等常驻泵消费到本轮的 stop（所有事件已派发完毕），再返回
+      await stopPromise;
       return { stopReason: resp.stopReason };
     } finally {
-      this.done = true;
-      await pump;
+      // 出错路径：stop 永远不会来，摘掉自己的等待者，防止泄漏
+      const i = this.stopResolvers.indexOf(resolveStop);
+      if (i >= 0) this.stopResolvers.splice(i, 1);
     }
   }
 
@@ -153,35 +169,42 @@ export class AcpSessionV2 {
     return this.activeSession.readText();
   }
 
-  /** 后台消费 nextUpdate → 触发事件 */
-  private async pumpUpdates(): Promise<void> {
-    try {
-      while (true) {
-        const msg = await this.activeSession.nextUpdate();
-        if (msg.kind === "stop") {
-          this.history.push({ kind: "stop", data: msg.response });
-          for (const fn of this.listeners) fn({ kind: "stop", data: msg.response });
-          break;
-        }
-        const ev: AcpUpdateEvent = { kind: msg.update.sessionUpdate, data: msg.notification.update };
-        this.history.push(ev);
-        if (ev.kind === "agent_message_chunk") {
-          const t = (ev.data?.content as any)?.text;
-          if (t) this.textBuf += t;
-        }
-        if (ev.kind === "config_option_update") {
-          // 协议规定这是「全量配置及其当前值」，收到即整体替换，不做增量合并
-          const opts = ev.data?.configOptions as SessionConfigOptionLike[] | undefined;
-          if (Array.isArray(opts)) this.liveConfigOptions = opts;
-        }
-        for (const fn of this.listeners) fn(ev);
-      }
-    } catch (e) {
-      // 正常结束走 done=true + break；能进到这里说明更新流意外断掉。
-      // 静默吞掉会让「agent 掉了但界面毫无反应」变成无法定位的问题。
-      if (!this.done) {
+  /** 后台常驻消费 nextUpdate → 触发事件；会话生命周期内一直运行 */
+  private startPump(): void {
+    if (this.pumping) return;
+    this.pumping = true;
+    // 不 await：泵与调用方并发；意外退出时记日志
+    void this.pumpUpdates().catch((e) => {
+      if (!this.disposed) {
         console.warn(`[acp] session ${this.sessionId} 更新流中断：${(e as Error)?.message ?? e}`);
       }
+    }).finally(() => {
+      this.pumping = false;
+    });
+  }
+
+  private async pumpUpdates(): Promise<void> {
+    while (true) {
+      const msg = await this.activeSession.nextUpdate();
+      if (msg.kind === "stop") {
+        this.history.push({ kind: "stop", data: msg.response });
+        for (const fn of this.listeners) fn({ kind: "stop", data: msg.response });
+        // 唤醒等待本轮 stop 的 prompt（可能多个串行调用，全部唤醒）
+        for (const r of this.stopResolvers.splice(0)) r();
+        continue; // 常驻：等下一轮
+      }
+      const ev: AcpUpdateEvent = { kind: msg.update.sessionUpdate, data: msg.notification.update };
+      this.history.push(ev);
+      if (ev.kind === "agent_message_chunk") {
+        const t = (ev.data?.content as any)?.text;
+        if (t) this.textBuf += t;
+      }
+      if (ev.kind === "config_option_update") {
+        // 协议规定这是「全量配置及其当前值」，收到即整体替换，不做增量合并
+        const opts = ev.data?.configOptions as SessionConfigOptionLike[] | undefined;
+        if (Array.isArray(opts)) this.liveConfigOptions = opts;
+      }
+      for (const fn of this.listeners) fn(ev);
     }
   }
 
@@ -221,6 +244,9 @@ export class AcpSessionV2 {
 
   /** 释放本会话的流式路由（不关协议会话） */
   dispose(): void {
+    this.disposed = true;
+    // 唤醒所有等待 stop 的 prompt（它们将因更新流中断而收尾）
+    for (const r of this.stopResolvers.splice(0)) r();
     this.activeSession.dispose();
   }
 }
