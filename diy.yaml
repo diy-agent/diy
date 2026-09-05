@@ -1,9 +1,12 @@
 ref:
   source:
-  - https://github.com/nodeca/js-yaml@4.1.1
-  - https://github.com/agentclientprotocol/agent-client-protocol@v0.11.3
-  - https://github.com/vitest-dev/docs-cn@v3
-  - https://github.com/github/docs@main
-  - https://github.com/connectrpc/connect-go
-  - https://deepwiki.com/brentyi/tyro
-  - https://github.com/anomalyco/opencode
+    - https://github.com/nodeca/js-yaml@4.1.1
+    - https://github.com/agentclientprotocol/agent-client-protocol@v0.11.3
+    - https://github.com/vitest-dev/docs-cn@v3
+    - https://github.com/github/docs@main
+    - https://github.com/connectrpc/connect-go
+    - https://deepwiki.com/brentyi/tyro
+    - https://github.com/anomalyco/opencode
+project:
+  id: '2'
+  name: diy-feat-acp

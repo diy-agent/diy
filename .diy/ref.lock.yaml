@@ -1,5 +1,5 @@
 version: 5
-generated: '2026-09-04T14:20:20.817Z'
+generated: '2026-09-05T00:26:29.742Z'
 ref:
   node:
     diy-app:
@@ -8,7 +8,6 @@ ref:
           ~/git/diy/diy-feat-acp/build/home/ref/github.com/agentclientprotocol/typescript-sdk/1.4.0
   source:
     .:
-      github.com/TanStack/router: ~/git/diy/diy-feat-acp/build/home/ref/github.com/TanStack/router/latest
       github.com/anomalyco/opencode: >-
         ~/git/diy/diy-feat-acp/build/home/ref/github.com/anomalyco/opencode/latest
       github.com/deepseek-ai/deepseek-harness: >-
