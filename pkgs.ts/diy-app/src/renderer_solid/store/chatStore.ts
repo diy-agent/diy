@@ -110,16 +110,240 @@ const [error, setError] = createSignal<string | null>(null);
 const [activeModel, setActiveModel] = createSignal<string>("");
 const [sessionId, setSessionId] = createSignal<string | null>(null);
 
-// ─── 发送队列（steer 排队：发第二条时不丢弃，排到 main 端串行执行） ───
+// ═══════════════════════════════════════
+// Actor 模型：命令邮箱 + 状态投影
+//
+// UI 永远不直接改状态，只 post 命令到 mailbox；actor loop 是
+// 「状态转换」的唯一权威（写走消息）。需要结果时 post 返回
+// Promise（ask 模式：loop 处理完该条命令后 resolve）。
+// UI 读状态一律走投影信号（messages/pendingList/sending/...）。
+// ═══════════════════════════════════════
+
+/** 命令类型：UI 能做的所有事 */
+type ChatCmd =
+  | { type: "send"; taskUri: string; text: string; reply?: (ok: boolean) => void }
+  | { type: "cancel-message"; msgId: string; reply?: (ok: boolean) => void }
+  | { type: "stop"; reply?: (ok: boolean) => void }           // 取消当前轮，队列继续
+  | { type: "stop-all"; reply?: (ok: boolean) => void }       // 取消当前轮 + 清空队列
+  | { type: "clear"; reply?: (ok: boolean) => void }          // 清空界面（含取消 in-flight）
+  | { type: "close-session"; taskUri: string; reply?: (ok: boolean) => void };
+
+/** 命令邮箱（FIFO） */
+const mailbox: ChatCmd[] = [];
+/** 空邮箱等待者（nextCmd 挂起时注册，post 时唤醒） */
+let mailboxWaiters: (() => void)[] = [];
+
+/** 投递命令（ask 模式：返回该命令处理结果） */
+function post(cmd: ChatCmd): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    cmd.reply = resolve;
+    mailbox.push(cmd);
+    // 唤醒等在 nextCmd 上的 loop（若 loop 此刻正处理长命令，等它下次取）
+    const w = mailboxWaiters;
+    mailboxWaiters = [];
+    w.forEach((fn) => fn());
+  });
+}
+
+/** actor loop 取下一条命令（空邮箱时挂起等待） */
+async function nextCmd(): Promise<ChatCmd> {
+  for (;;) {
+    const cmd = mailbox.shift();
+    if (cmd) return cmd;
+    await new Promise<void>((resolve) => mailboxWaiters.push(resolve));
+  }
+}
+
+// ─── 队列（loop/worker 共享，JS 单线程下天然串行） ───
 const [pendingCount, setPendingCount] = createSignal(0);
 /** 待发送任务（每条 = 一条已上屏的用户消息；执行中的不算在内） */
-const pendingMessages: { id: string; text: string }[] = [];
-/** 当前执行轮次的 taskUri（供 cancel 定位会话） */
-let activeTaskUri: string | null = null;
-/** 当前执行轮次的用户消息 id（供状态标记） */
-let activeMsgId: string | null = null;
+const pendingMessages: { id: string; text: string; taskUri: string }[] = [];
+/** 排队列表投影（UI 只读） */
+const [pendingList, setPendingList] = createSignal<{ id: string; text: string }[]>([]);
+/** 当前执行轮次（供 cancel 定位；loop 专用私有状态） */
+let runningTask: { taskUri: string; msgId: string; text: string } | null = null;
 /** 本轮是否被 cancel 请求过（决定最终状态是 completed 还是 cancelled） */
 let activeCancelled = false;
+/** stop-all/clear 后置位：worker 消费完当前轮即停，不接续队列 */
+let workerStop = false;
+/** worker 是否在跑（单实例防双 worker） */
+let workerActive = false;
+
+/** 广播排队投影 + 计数 */
+function broadcastPending() {
+  setPendingCount(pendingMessages.length);
+  setPendingList(pendingMessages.map(({ id, text }) => ({ id, text })));
+}
+
+/** 当前轮次的中止信号（loop 写入，worker 的事件循环检查：
+ *  被 stop/clear 中止后不再处理后续事件，避免「清空后又冒消息」） */
+let currentTurnAbort: { aborted: boolean } = { aborted: false };
+
+/**
+ * worker：串行消费队列，执行当前轮（for-await 事件流）。
+ * 由 loop 的 send 命令启动；stop-all/clear 置 workerStop + 发
+ * session/cancel 让当前流自然结束，worker 随后清空队列退出。
+ */
+async function workerLoop() {
+  workerActive = true;
+  try {
+    while (pendingMessages.length > 0) {
+      if (workerStop) {
+        // 停止请求：剩余排队全部标记 cancelled
+        for (const t of pendingMessages) setMessageQueueStatus(t.id, "cancelled");
+        pendingMessages.length = 0;
+        broadcastPending();
+        break;
+      }
+      const task = pendingMessages[0];
+      runningTask = { taskUri: task.taskUri, msgId: task.id, text: task.text };
+      activeCancelled = false;
+      currentTurnAbort = { aborted: false };
+      setSending(true);
+      broadcastPending();
+      // 执行当前轮；流被 session/cancel 打断后自然结束（abort ≠ cancelled）
+      await runOne(task.taskUri, task.text, task.id, currentTurnAbort);
+      // 确认语义：最终状态由 loop 侧决定，worker 只做确认标记
+      setMessageQueueStatus(task.id, activeCancelled ? "cancelled" : "completed");
+      pendingMessages.shift();
+      broadcastPending();
+      runningTask = null;
+    }
+  } finally {
+    workerActive = false;
+    workerStop = false;
+    runningTask = null;
+    setSending(false);
+  }
+}
+
+/** loop 发现无 worker 且队列非空时启动消费 */
+function maybeStartWorker() {
+  if (workerActive) return;
+  if (pendingMessages.length === 0) return;
+  void workerLoop();
+}
+
+/** 发 session/cancel 让 agent 停当前轮（fire-and-forget，流自然结束） */
+function cancelTurn(taskUri: string) {
+  void diyService.diy.agent.cancel({ taskUri }).catch(() => { /* 会话可能已关闭 */ });
+}
+
+/** actor loop：命令状态转换的唯一权威 */
+async function actorLoop() {
+  for (;;) {
+    const cmd = await nextCmd();
+    switch (cmd.type) {
+      case "send": {
+        const taskUri = cmd.taskUri;
+        const text = cmd.text.trim();
+        if (!text || !taskUri) {
+          cmd.reply?.(false);
+          break;
+        }
+        // 立即上屏用户消息（DeepSeek Web 式可见排队）
+        const userMsgId = `user-local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        setMessages((prev) => [
+          ...prev,
+          { id: userMsgId, type: "user", content: text, time: Date.now(), streaming: false, queueStatus: "queued" },
+        ]);
+        pendingMessages.push({ id: userMsgId, text, taskUri });
+        broadcastPending();
+        maybeStartWorker();
+        cmd.reply?.(true);
+        break;
+      }
+      case "cancel-message": {
+        const idx = pendingMessages.findIndex((p) => p.id === cmd.msgId);
+        if (idx >= 0) {
+          // 排队中：摘除 + 标记 cancelled
+          const [t] = pendingMessages.splice(idx, 1);
+          broadcastPending();
+          setMessageQueueStatus(t.id, "cancelled");
+          cmd.reply?.(true);
+        } else if (runningTask?.msgId === cmd.msgId) {
+          // 正在执行：中止事件处理 + 发 session/cancel 打断本轮
+          activeCancelled = true;
+          currentTurnAbort.aborted = true;
+          cancelTurn(runningTask.taskUri);
+          cmd.reply?.(true);
+        } else {
+          cmd.reply?.(false);
+        }
+        break;
+      }
+      case "stop": {
+        // 取消当前轮；排队中的下一条自动接续（steer 语义）
+        if (runningTask) {
+          activeCancelled = true;
+          currentTurnAbort.aborted = true;
+          cancelTurn(runningTask.taskUri);
+          cmd.reply?.(true);
+        } else {
+          cmd.reply?.(false);
+        }
+        break;
+      }
+      case "stop-all": {
+        // 取消当前轮 + 清空队列（剩余排队标记 cancelled）
+        for (const t of pendingMessages) setMessageQueueStatus(t.id, "cancelled");
+        pendingMessages.length = 0;
+        broadcastPending();
+        workerStop = true;
+        if (runningTask) {
+          activeCancelled = true;
+          currentTurnAbort.aborted = true;
+          cancelTurn(runningTask.taskUri);
+        }
+        cmd.reply?.(true);
+        break;
+      }
+      case "clear": {
+        // 清空界面：先中止 in-flight 事件流，再清状态（防清空后冒消息）
+        for (const t of pendingMessages) setMessageQueueStatus(t.id, "cancelled");
+        pendingMessages.length = 0;
+        broadcastPending();
+        workerStop = true;
+        if (runningTask) {
+          activeCancelled = true;
+          currentTurnAbort.aborted = true;
+          cancelTurn(runningTask.taskUri);
+        }
+        setMessages([]);
+        setError(null);
+        setSessionId(null);
+        cmd.reply?.(true);
+        break;
+      }
+      case "close-session": {
+        // 同 clear + 通知 main 关闭会话
+        for (const t of pendingMessages) setMessageQueueStatus(t.id, "cancelled");
+        pendingMessages.length = 0;
+        broadcastPending();
+        workerStop = true;
+        if (runningTask) {
+          activeCancelled = true;
+          currentTurnAbort.aborted = true;
+          cancelTurn(runningTask.taskUri);
+        }
+        setMessages([]);
+        setError(null);
+        setSessionId(null);
+        setActiveModel("");
+        try {
+          await diyService.diy.agent.closeSession({ taskUri: cmd.taskUri });
+          cmd.reply?.(true);
+        } catch {
+          cmd.reply?.(false);
+        }
+        break;
+      }
+    }
+  }
+}
+
+/** 启动 actor loop（模块加载即开始，常驻） */
+void actorLoop();
 
 /** 按 id 查找消息索引 */
 function findIndex(id: string): number {
@@ -374,11 +598,11 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
     // ─── 状态变更 ───
     case "state_update": {
       // agent 停止时标记所有流式消息为完成
+      // （sending 状态由 worker 权威管理，这里不碰）
       if (d?.status === "stopped" || d?.status === "idle") {
         setMessages((prev) =>
           prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
         );
-        setSending(false);
       }
       break;
     }
@@ -402,7 +626,6 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
       setMessages((prev) =>
         prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
       );
-      setSending(false);
       break;
     }
 
@@ -480,12 +703,8 @@ function setMessageQueueStatus(id: string, queueStatus: ChatMessage["queueStatus
 }
 
 /** 实际执行一轮对话（单条消息）；调用前必须已完成入队 */
-async function runOne(taskUri: string, content: string, msgId: string) {
-  activeTaskUri = taskUri;
-  activeMsgId = msgId;
-  activeCancelled = false;
-  setMessageQueueStatus(msgId, "running");
-  setSending(true);
+async function runOne(taskUri: string, content: string, msgId: string, turnAbort?: { aborted: boolean }) {
+  // 队列状态（queueStatus=sending）由 worker 管理；这里只跑流
   setError(null);
 
   try {
@@ -493,6 +712,9 @@ async function runOne(taskUri: string, content: string, msgId: string) {
     const stream = await diyService.diy.agent.chatStreamEvents({ taskUri, model: activeModel() || "", messages: [{ role: "user", content: content.trim() }] });
 
     for await (const raw of stream) {
+      // 被 stop/clear 中止后：跳过事件处理（防「清空后又冒消息」），
+      // 但继续消费流直到 stop 事件到达、流自然结束——结尾统一复位
+      if (turnAbort?.aborted) continue;
       // chatStreamEvents 返回 JSON 序列化的 ACP 事件
       try {
         const ev = typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -509,7 +731,8 @@ async function runOne(taskUri: string, content: string, msgId: string) {
       }
     }
 
-    // 流结束，标记所有流式消息为完成（agent 侧正常收尾）
+    // 流结束（含被中止的流：stop 事件已消费完），标记所有流式消息为完成。
+    // clear 后 messages 已空，map 是 no-op，不会误标新消息
     setMessages((prev) =>
       prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
     );
@@ -520,93 +743,32 @@ async function runOne(taskUri: string, content: string, msgId: string) {
     if (!(e?.message?.includes("取消") || e?.name === "AbortError")) {
       setError(e?.message ?? String(e));
     }
-  } finally {
-    // 最终状态由确认方决定：被 cancel 请求过 → cancelled，否则 completed
-    setMessageQueueStatus(msgId, activeCancelled ? "cancelled" : "completed");
-    setSending(false);
   }
+  // 队列状态（running→completed/cancelled、sending）由 worker 统一确认
 }
 
 /**
- * 发送消息（DeepSeek Web 式排队）：消息立即上屏标记「排队中」，
- * 进入统一消费队列，当前轮结束后自动执行下一条。main 端 runGen
- * 按 task 串行，天然支持。
+ * 发送消息（DeepSeek Web 式排队）：消息立即上屏标记「排队中」并进
+ * 队列；worker 串行消费，当前轮结束后自动执行下一条。main 端 runGen
+ * 按 task 串行，天然支持。返回是否成功入队（ask 模式）。
  */
-function sendMessage(taskUri: string, content: string) {
-  const text = content.trim();
-  if (!text || !taskUri) return;
-
-  // 立即上屏用户消息（无论排队还是执行）—— DeepSeek Web 式可见排队。
-  // 先标 queued，消费轮到它时 runOne 改成 running。
-  const userMsgId = `user-local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  setMessages((prev) => [
-    ...prev,
-    {
-      id: userMsgId,
-      type: "user",
-      content: text,
-      time: Date.now(),
-      streaming: false,
-      queueStatus: "queued",
-    },
-  ]);
-
-  pendingMessages.push({ id: userMsgId, text });
-  setPendingCount(pendingMessages.length);
-  drain(taskUri);
+function sendMessage(taskUri: string, content: string): Promise<boolean> {
+  return post({ type: "send", taskUri, text: content });
 }
 
-/** 串行消费队列：只有一个消费循环（同步锁防同 tick 双跑） */
-let draining = false;
-function drain(taskUri: string) {
-  if (draining) return;
-  draining = true;
-  void (async () => {
-    while (pendingMessages.length > 0) {
-      const task = pendingMessages.shift()!;
-      setPendingCount(pendingMessages.length);
-      await runOne(taskUri, task.text, task.id);
-    }
-    draining = false;
-    activeTaskUri = null;
-    activeMsgId = null;
-  })();
-}
-
-/** 取消单条排队中的消息（DeepSeek Web 式：排队任务可单独撤回） */
-function cancelMessage(msgId: string) {
-  // 排队中：从队列摘除 + 标记 cancelled；正在执行：走 agent.cancel
-  const idx = pendingMessages.findIndex((p) => p.id === msgId);
-  if (idx >= 0) {
-    pendingMessages.splice(idx, 1);
-    setPendingCount(pendingMessages.length);
-    setMessageQueueStatus(msgId, "cancelled");
-    return;
-  }
-  if (activeMsgId === msgId) {
-    void cancel();
-  }
-}
-
-/** 取消当前生成并清空排队（不执行剩余消息） */
-async function cancelAll() {
-  // 排队中的全部标记取消
-  for (const p of pendingMessages) setMessageQueueStatus(p.id, "cancelled");
-  pendingMessages.length = 0;
-  setPendingCount(0);
-  if (sending()) await cancel();
+/** 取消单条排队中的消息（排队中撤回 / 执行中中断本轮） */
+function cancelMessage(msgId: string): Promise<boolean> {
+  return post({ type: "cancel-message", msgId });
 }
 
 /** 取消当前生成：agent 停止本轮，排队中的下一条自动接续执行 */
-async function cancel() {
-  if (!sending() || !activeTaskUri) return;
-  activeCancelled = true;
-  // 忽略失败：会话可能已被关闭/agent 退出，取消尽力而为。
-  // ⚠️ 这里不能 setSending(false)：runOne 的 for-await 还在收尾，
-  // 提前置 false 会让用户紧接着发送走「空闲」路径 → 双 for-await 并发。
-  try {
-    await diyService.diy.agent.cancel({ taskUri: activeTaskUri });
-  } catch { /* 静默 */ }
+function cancel(): Promise<boolean> {
+  return post({ type: "stop" });
+}
+
+/** 取消当前生成并清空排队（不执行剩余消息） */
+function cancelAll(): Promise<boolean> {
+  return post({ type: "stop-all" });
 }
 
 // ─── session 创建回调（供 ChatPage 刷新 configOptions） ───
@@ -617,14 +779,8 @@ function onSessionCreated(fn: () => void): () => void {
   return () => onSessionCreatedCallbacks.delete(fn);
 }
 
-function clearChat() {
-  setMessages([]);
-  setError(null);
-  pendingMessages.length = 0;
-  setPendingCount(0);
-  activeTaskUri = null;
-  activeMsgId = null;
-  draining = false;
+function clearChat(): Promise<boolean> {
+  return post({ type: "clear" });
 }
 
 function clearError() {
@@ -659,21 +815,8 @@ async function switchModel(taskUri: string, modelId: string) {
 }
 
 /** 关闭会话（消息也清空：会话没了，旧消息对应的 sessionId 已失效） */
-async function closeSession(taskUri: string) {
-  try {
-    await diyService.diy.agent.closeSession({ taskUri });
-    setMessages([]);
-    setSessionId(null);
-    setActiveModel("");
-    setError(null);
-    pendingMessages.length = 0;
-    setPendingCount(0);
-    activeTaskUri = null;
-    activeMsgId = null;
-    draining = false;
-  } catch (e) {
-    setError(e instanceof Error ? e.message : "关闭会话失败");
-  }
+function closeSession(taskUri: string): Promise<boolean> {
+  return post({ type: "close-session", taskUri });
 }
 
 // ═══════════════════════════════════════
@@ -687,6 +830,8 @@ export const chatStore = {
   get activeModel() { return activeModel(); },
   get sessionId() { return sessionId(); },
   get pendingCount() { return pendingCount(); },
+  /** 排队中的消息列表投影（UI 只读，DeepSeek Web 式排队管理） */
+  get pendingList() { return pendingList(); },
   sendMessage,
   cancelMessage,
   cancel,
