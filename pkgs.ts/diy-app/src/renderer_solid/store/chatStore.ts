@@ -428,6 +428,14 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
       if (text) appendToMessage(id, text);
       break;
     }
+    case "user_message": {
+      // 标准 kind（非 chunk 的完整用户消息）：opencode 只发 chunk，走不到；
+      // 通用 handler 不跟单个 agent 行为绑定，留着给别的 agent
+      const id = d?.messageId ?? `user-${now}`;
+      const content = extractTextContent(d?.content);
+      updateMessage(id, { content, streaming: false });
+      break;
+    }
 
     // ─── Agent 消息 ───
     case "agent_message_chunk": {
@@ -442,6 +450,27 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
       }
       const text = d?.content?.text ?? "";
       if (text) appendToMessage(id, text);
+      break;
+    }
+    case "agent_message": {
+      // 标准 kind（非 chunk 的完整 agent 消息）：同上，留给非 chunk 型 agent
+      const id = d?.messageId ?? `agent-${now}`;
+      const content = extractTextContent(d?.content);
+      const existing = messages().find((m) => m.id === id);
+      if (existing && existing.type === "thought") {
+        // thought → assistant 升级
+        updateMessage(id, {
+          type: "assistant",
+          thought: existing.content || existing.thought,
+          content: content || "",
+          streaming: false,
+        });
+      } else {
+        updateMessage(id, {
+          content: content || existing?.content || "",
+          streaming: false,
+        });
+      }
       break;
     }
 
@@ -461,11 +490,17 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
       }
       break;
     }
+    case "agent_thought": {
+      // 标准 kind（非 chunk 的完整 thought）：同上，留给非 chunk 型 agent
+      const id = d?.messageId ?? `thought-${now}`;
+      const content = extractTextContent(d?.content);
+      updateMessage(id, { thought: content, streaming: false });
+      break;
+    }
 
     // ─── 工具调用 ───
-    // tool_call（初始调用）与 tool_call_update（状态/内容更新）结构相同（都含
-    // toolCallId/title/kind/status/rawInput/rawOutput），ensureToolCall 幂等，
-    // 共用一套处理。初始事件不带则工具只在 update 后才出现。
+    // 防御性保留：v2 union 里没有 tool_call（只有 update/content_chunk），
+    // opencode 不发；若有 agent 发则与 update 同构处理，ensureToolCall 幂等。
     case "tool_call":
     case "tool_call_update": {
       // tool_call_update 的 data 直接就是 ToolCallUpdate 结构
@@ -566,6 +601,18 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
           next[idx] = { ...next[idx], terminals: terms };
           return next;
         });
+      }
+      break;
+    }
+
+    // ─── 状态变更 ───
+    case "state_update": {
+      // 协议字段是 state（running/idle/requires_action），旧代码误读 status 成了死代码。
+      // agent 空闲时标记所有流式消息为完成（sending 由 worker 权威管理，这里不碰）
+      if (d?.state === "idle") {
+        setMessages((prev) =>
+          prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
+        );
       }
       break;
     }
@@ -796,11 +843,11 @@ async function syncStatus(taskUri: string) {
   } catch { /* 查不到就维持现状 */ }
 }
 
-/** 切换会话模型（乐观更新，失败回滚） */
+/** 切换会话模型（乐观更新，失败回滚）；空值 = 回到 agent 默认，不发 RPC */
 async function switchModel(taskUri: string, modelId: string) {
   const prev = activeModel();
   setActiveModel(modelId);
-  if (!taskUri) return;
+  if (!taskUri || !modelId) return;
   try {
     await diyService.diy.agent.setModel({ taskUri, model: modelId });
     await syncStatus(taskUri);

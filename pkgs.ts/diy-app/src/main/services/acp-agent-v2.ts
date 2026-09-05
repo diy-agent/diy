@@ -90,6 +90,15 @@ export class AcpSessionV2 {
   private pumping = false;
   /** 等待本轮 prompt 结束（stop 到达）的解析器 */
   private stopResolvers: Array<() => void> = [];
+  /**
+   * 会话死亡等待者（dispose/crash 时 reject）。
+   * stopResolvers 只守「prompt 已发出、等 stop」的第二段；agent 崩溃时若卡在
+   * `activeSession.prompt()` 第一阶段（SDK 不 resolve），光唤醒 stop 不够，
+   * 在途轮次永久悬挂、连停止按钮都救不了。这里给第一段加竞速。
+   */
+  private deadResolvers: Array<(e: Error) => void> = [];
+  /** 已死亡（dispose 后）：新 prompt 直接拒绝，不再进队列 */
+  private dead = false;
   /** prompt 串行队列：同一会话的 prompt 必须串行（SDK 明确要求按序调用） */
   private promptQueue = new SerialQueue();
 
@@ -151,6 +160,7 @@ export class AcpSessionV2 {
     // 排到串行队列尾部：上一个 prompt 完全结束（stop 派发完）后才发下一个。
     // 否则两个回合的 agent_message_chunk 会交叉推送，事件无法归属到正确回合。
     return this.promptQueue.run(async () => {
+      if (this.dead) throw new Error("ACP session 已释放，本轮取消");
       this.textBuf = "";
       // 注册本轮的 stop 等待者（在发 prompt 之前注册，避免漏掉瞬时 stop）
       let resolveStop!: () => void;
@@ -158,8 +168,14 @@ export class AcpSessionV2 {
         resolveStop = r;
       });
       this.stopResolvers.push(resolveStop);
+      // 注册死亡竞速（dispose/crash 时 reject，防卡在 prompt 第一阶段）
+      let rejectDead!: (e: Error) => void;
+      const deadPromise = new Promise<never>((_, rej) => {
+        rejectDead = rej;
+      });
+      this.deadResolvers.push(rejectDead);
       try {
-        const resp = await this.activeSession.prompt(text);
+        const resp = await Promise.race([this.activeSession.prompt(text), deadPromise]);
         // 等常驻泵消费到本轮的 stop（所有事件已派发完毕），再返回
         await stopPromise;
         return { stopReason: resp.stopReason };
@@ -167,6 +183,8 @@ export class AcpSessionV2 {
         // 出错路径：stop 永远不会来，摘掉自己的等待者，防止泄漏
         const i = this.stopResolvers.indexOf(resolveStop);
         if (i >= 0) this.stopResolvers.splice(i, 1);
+        const j = this.deadResolvers.indexOf(rejectDead);
+        if (j >= 0) this.deadResolvers.splice(j, 1);
       }
     });
   }
@@ -264,8 +282,12 @@ export class AcpSessionV2 {
   /** 释放本会话的流式路由（不关协议会话） */
   dispose(): void {
     this.disposed = true;
+    this.dead = true;
     // 唤醒所有等待 stop 的 prompt（它们将因更新流中断而收尾）
     for (const r of this.stopResolvers.splice(0)) r();
+    // 拒绝所有卡在 prompt 第一阶段的调用（crash 时 SDK 可能永不 resolve）
+    const err = new Error("ACP session 已释放，本轮取消");
+    for (const r of this.deadResolvers.splice(0)) r(err);
     this.activeSession.dispose();
   }
 

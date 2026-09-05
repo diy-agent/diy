@@ -594,9 +594,13 @@ export function ChatPage() {
     void agentStore.loadAutoApprove();
   });
 
-  // 选中任务 = 进入详情：建会话 + 一次性装配（模型/配置/列表）
+  // 选中任务 = 进入详情：先清空上个任务的界面状态（消息按任务隔离），
+  // 再建会话 + 一次性装配（模型/配置/列表）
   createEffect(() => {
     const uri = taskUri();
+    // worker 串行执行：clear 先排入邮箱，在途轮次中止、旧消息清空，
+    // 之后该任务的新发送才会执行，不会串台
+    void chatStore.clearChat();
     if (uri) {
       void ensureSessionAndLoad(uri);
     } else {

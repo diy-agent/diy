@@ -60,7 +60,7 @@ async function setup(): Promise<{ pid: string; t1: string; t2: string }> {
 describe("agent session — task 级 ACP 会话隔离 + 持久化", () => {
   // status 必须是纯读：曾经它内部调 ensure()，导致「查个状态」顺手建会话、起子进程、
   // 写 meta.yaml。UI 每切换一次任务就调一次，等于浏览行为篡改了数据。
-  it.skip("status 只读：不创建会话、不写 meta.yaml", async () => {
+  it("status 只读：不创建会话、不写 meta.yaml", async () => {
     const { pid, t1 } = await setup();
 
     const r = await fx.sh.getJson(`./diy.sh agent status ${t1}`);
