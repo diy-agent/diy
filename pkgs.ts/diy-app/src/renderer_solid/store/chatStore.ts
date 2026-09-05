@@ -89,8 +89,8 @@ export interface ChatMessage {
   time: number;
   /** 是否正在流式生成 */
   streaming?: boolean;
-  /** token 用量 */
-  usage?: { input?: number; output?: number; total?: number };
+  /** token 用量（单轮：input/output/total）+ 会话上下文占用（used/size/cost） */
+  usage?: { input?: number; output?: number; total?: number; used?: number; size?: number; cost?: { amount: number; currency?: string } };
   /**
    * 用户消息的队列状态（DeepSeek Web 式排队显示）：
    * queued=已上屏在排队 / running=正在执行 / completed=完成 /
@@ -428,12 +428,6 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
       if (text) appendToMessage(id, text);
       break;
     }
-    case "user_message": {
-      const id = d?.messageId ?? `user-${now}`;
-      const content = extractTextContent(d?.content);
-      updateMessage(id, { content, streaming: false });
-      break;
-    }
 
     // ─── Agent 消息 ───
     case "agent_message_chunk": {
@@ -448,26 +442,6 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
       }
       const text = d?.content?.text ?? "";
       if (text) appendToMessage(id, text);
-      break;
-    }
-    case "agent_message": {
-      const id = d?.messageId ?? `agent-${now}`;
-      const content = extractTextContent(d?.content);
-      const existing = messages().find((m) => m.id === id);
-      if (existing && existing.type === "thought") {
-        // thought → assistant 升级
-        updateMessage(id, {
-          type: "assistant",
-          thought: existing.content || existing.thought,
-          content: content || "",
-          streaming: false,
-        });
-      } else {
-        updateMessage(id, {
-          content: content || existing?.content || "",
-          streaming: false,
-        });
-      }
       break;
     }
 
@@ -487,14 +461,12 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
       }
       break;
     }
-    case "agent_thought": {
-      const id = d?.messageId ?? `thought-${now}`;
-      const content = extractTextContent(d?.content);
-      updateMessage(id, { thought: content, streaming: false });
-      break;
-    }
 
     // ─── 工具调用 ───
+    // tool_call（初始调用）与 tool_call_update（状态/内容更新）结构相同（都含
+    // toolCallId/title/kind/status/rawInput/rawOutput），ensureToolCall 幂等，
+    // 共用一套处理。初始事件不带则工具只在 update 后才出现。
+    case "tool_call":
     case "tool_call_update": {
       // tool_call_update 的 data 直接就是 ToolCallUpdate 结构
       const toolCallId = d?.toolCallId;
@@ -598,18 +570,6 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
       break;
     }
 
-    // ─── 状态变更 ───
-    case "state_update": {
-      // agent 停止时标记所有流式消息为完成
-      // （sending 状态由 worker 权威管理，这里不碰）
-      if (d?.status === "stopped" || d?.status === "idle") {
-        setMessages((prev) =>
-          prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
-        );
-      }
-      break;
-    }
-
     // ─── 会话结束 ───
     case "stop": {
       // agent 回合结束（ACP session/update 最后一条通知）
@@ -634,14 +594,15 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
 
     // ─── 用量统计 ───
     case "usage_update": {
-      // 找到最后一条 assistant 消息，附上用量
+      // 官方 UsageUpdate = { used, size, cost }（会话上下文窗口占用），
+      // 不是 input/output/total —— 原代码读错字段导致这里永远解析出 undefined。
       const lastAssistant = [...messages()].reverse().find((m) => m.type === "assistant");
       if (lastAssistant) {
         updateMessage(lastAssistant.id, {
           usage: {
-            input: d?.inputTokens ?? d?.promptTokens,
-            output: d?.outputTokens ?? d?.completionTokens,
-            total: d?.totalTokens,
+            used: d?.used,
+            size: d?.size,
+            cost: d?.cost,
           },
         });
       }
@@ -700,6 +661,10 @@ function mapToolStatus(s: unknown): ToolCallStatus | undefined {
   if (typeof s !== "string") return undefined;
   const map: Record<string, ToolCallStatus> = {
     pending: "pending",
+    // 官方枚举（@agentclientprotocol/sdk schema）：pending / in_progress / completed / failed。
+    // 原来漏了 in_progress → 工具执行中永远显示 pending（⏳），没有 running 态。
+    in_progress: "running",
+    // 以下为兼容 opencode 可能出现的扩展值，保留无害
     running: "running",
     completed: "completed",
     succeeded: "completed",

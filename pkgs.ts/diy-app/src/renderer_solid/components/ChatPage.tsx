@@ -294,6 +294,18 @@ function UsageBadge(props: { usage: ChatMessage["usage"] }) {
       <Show when={u.total !== undefined}>
         <span>Σ {u.total} tokens</span>
       </Show>
+      {/* 会话上下文窗口占用（usage_update 推送的 used/size/cost） */}
+      <Show when={u.used !== undefined && u.size !== undefined}>
+        <span
+          title={
+            u.cost?.amount !== undefined
+              ? `成本 ${u.cost.amount} ${u.cost.currency ?? ""}`.trim()
+              : undefined
+          }
+        >
+          🧠 {u.used}/{u.size} ctx
+        </span>
+      </Show>
     </div>
   );
 }

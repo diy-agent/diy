@@ -46,6 +46,11 @@ export class TaskSessionPoolV2 {
       if (code !== 0) {
         console.error(`[acp] agent 进程退出 (code=${code})`);
       }
+      // 崩溃自愈前提：清 map 之前先 dispose 每个 session —— 它内部会唤醒
+      // 在途 prompt 的 stopResolvers。否则崩溃瞬间正在跑的那一轮永久悬挂：
+      // sending 常亮、用户感知是「卡住」而不是「报错」，且不会自动复位。
+      // dispose 后该轮收尾报错，用户重发时 ensureConnected 已重建连接。
+      for (const s of this.sessions.values()) s.dispose();
       this.sessions.clear();
       for (const fn of this.onCrashCallbacks) fn();
     });
