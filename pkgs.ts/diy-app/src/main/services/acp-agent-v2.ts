@@ -427,8 +427,18 @@ export class AcpAgentV2 {
     } as any;
 
     // 3. 使用 SDK 内部 attachSession 创建 ActiveSession（设置 session/update 路由）
-    //    attachSession 是 private，通过类型断言访问
-    const activeSession = (this.ctx as any).attachSession(fakeResponse) as ActiveSession;
+    //    ⚠️ attachSession 是 private（v1 SDK 未公开「恢复会话」的公开入口），
+    //    通过类型断言访问。升级 SDK 前必须确认该方法仍在：
+    //    若被改名/移除，这里会拿到 undefined 并在调用的瞬间抛 TypeError，
+    //    错误信息不明所以 —— 所以先做能力探测，失败时给可定位的提示。
+    const rawCtx = this.ctx as unknown as { attachSession?: (response: unknown) => ActiveSession };
+    if (typeof rawCtx.attachSession !== "function") {
+      throw new Error(
+        "[acp] @agentclientprotocol/sdk 的 attachSession 私有方法不存在 —— " +
+        "SDK 版本变更破坏了 loadSession 恢复能力，请升级本代码或锁定 SDK 版本",
+      );
+    }
+    const activeSession = rawCtx.attachSession(fakeResponse);
 
     const sess = new AcpSessionV2(activeSession, cwd, this.ctx);
     this.sessions.set(sessionId, sess);
