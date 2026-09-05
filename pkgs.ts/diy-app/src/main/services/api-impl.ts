@@ -232,6 +232,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
     await pool.closeSession(input.taskUri);
     return { closed: true };
   });
+  binding.on(app.agent.cancel, async ({ input }) => {
+    const pool = await getSessionPool();
+    await pool.cancel(input.taskUri);
+    return { cancelled: true };
+  });
   binding.on(app.agent.setModel, async ({ input }) => {
     const pool = await getSessionPool();
     await pool.setModel(input.taskUri, input.model);

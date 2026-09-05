@@ -244,9 +244,21 @@ export class AcpSessionV2 {
     return this.liveConfigOptions ?? this.snapshotConfigOptions();
   }
 
-  /** 取消当前生成 */
+  /**
+   * 取消当前生成。
+   * session/cancel 是 notification（SDK 归类 AgentNotificationHandler），
+   * 不是 request —— 用 ctx.request 发会让 agent 走 request 通道，opencode
+   * 不予响应。协议约定 agent 收到后以 StopReason::Cancelled 结束本轮，
+   * 常驻泵会 push stop 并唤醒 stopResolvers。
+   * 兜底：立即唤醒等 stop 的调用者（若 agent 不按协议响应，队列也能续走）。
+   */
   async cancel(): Promise<void> {
-    await this.ctx.request(methods.agent.session.cancel, { sessionId: this.sessionId });
+    await this.ctx.notify(methods.agent.session.cancel as any, {
+      sessionId: this.sessionId,
+    } as any);
+    // 兜底唤醒：避免 agent 不响应 cancel 时 prompt 永久挂起。
+    // 已 push 的 stop 会让 pump 再次走 stop 分支（幂等：resolvers 已清空）。
+    for (const r of this.stopResolvers.splice(0)) r();
   }
 
   /** 释放本会话的流式路由（不关协议会话） */

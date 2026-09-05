@@ -397,12 +397,13 @@ function InputArea(props: { taskUri: string | null }) {
   let bottomRef: HTMLDivElement | undefined;
 
   const handleSend = () => {
-    if (!inputRef || chatStore.sending) return;
+    if (!inputRef) return;
     const text = inputRef.value.trim();
     if (!text) return;
     const uri = props.taskUri;
     if (!uri) return;
     inputRef.value = "";
+    // sendMessage 内部处理：生成中入队（steer），空闲直接执行
     chatStore.sendMessage(uri, text);
     setTimeout(() => bottomRef?.scrollIntoView({ behavior: "smooth" }), 100);
   };
@@ -425,19 +426,36 @@ function InputArea(props: { taskUri: string | null }) {
             ref={inputRef}
             class="textarea textarea-bordered flex-1 resize-none text-sm"
             rows={2}
-            placeholder="输入消息…（Enter 发送，Shift+Enter 换行）"
+            placeholder={
+              chatStore.sending
+                ? "生成中…（可发送下一条排队，或点停止）"
+                : "输入消息…（Enter 发送，Shift+Enter 换行）"
+            }
             onKeyDown={handleKey}
-            disabled={chatStore.sending}
           />
-          <button
-            class="btn btn-primary self-end"
-            onClick={handleSend}
-            disabled={chatStore.sending}
+          <Show
+            when={chatStore.sending}
+            fallback={
+              <button class="btn btn-primary self-end" onClick={handleSend} disabled={chatStore.sending}>
+                发送
+              </button>
+            }
           >
-            <Show when={chatStore.sending} fallback="发送">
-              <span class="loading loading-spinner loading-sm"></span>
-            </Show>
-          </button>
+            {/* 生成中：停止当前 + 排队计数 */}
+            <div class="flex flex-col gap-1 self-end items-center">
+              <button
+                class="btn btn-error btn-sm"
+                onClick={() => {
+                  if (chatStore.pendingCount > 0) chatStore.cancelAll();
+                  else chatStore.cancel();
+                }}
+                title="停止生成（有排队时连排队一起取消）"
+              >
+                ■ 停止{chatStore.pendingCount > 0 ? ` + 取消${chatStore.pendingCount}排队` : ""}
+              </button>
+              <span class="text-[10px] opacity-50">生成中…</span>
+            </div>
+          </Show>
         </div>
       </Show>
       <div ref={bottomRef} />

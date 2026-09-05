@@ -344,6 +344,13 @@ export const apiDef = RpcSchema.router({
             },
             output: z.object({ closed: z.boolean() }),
           }),
+          cancel: RpcSchema.unary({
+            desc: `取消任务会话的当前生成（agent 停止本轮，队列中的下一条自动开始）`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+            },
+            output: z.object({ cancelled: z.boolean() }),
+          }),
           setModel: RpcSchema.unary({
             desc: `切换任务会话的模型`,
             input: {

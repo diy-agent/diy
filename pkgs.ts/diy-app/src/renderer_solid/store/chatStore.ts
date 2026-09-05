@@ -103,6 +103,13 @@ const [error, setError] = createSignal<string | null>(null);
 const [activeModel, setActiveModel] = createSignal<string>("");
 const [sessionId, setSessionId] = createSignal<string | null>(null);
 
+// ─── 发送队列（steer 排队：发第二条时不丢弃，排到 main 端串行执行） ───
+const [pendingCount, setPendingCount] = createSignal(0);
+/** 待发送文本队列（每条依次执行；执行中的不算在内） */
+const pendingMessages: string[] = [];
+/** 当前执行轮次的 taskUri（供 cancel 定位会话） */
+let activeTaskUri: string | null = null;
+
 /** 按 id 查找消息索引 */
 function findIndex(id: string): number {
   return messages().findIndex((m) => m.id === id);
@@ -450,13 +457,14 @@ function mapToolStatus(s: unknown): ToolCallStatus | undefined {
 // 发送消息
 // ═══════════════════════════════════════
 
-async function sendMessage(taskUri: string, content: string) {
-  if (!content.trim() || sending()) return;
+/** 实际执行一轮对话（单条消息）；调用前必须已完成入队 */
+async function runOne(taskUri: string, content: string) {
+  activeTaskUri = taskUri;
   setSending(true);
   setError(null);
 
   // 立即显示用户消息
-  const userMsgId = `user-local-${Date.now()}`;
+  const userMsgId = `user-local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   setMessages((prev) => [
     ...prev,
     { id: userMsgId, type: "user", content: content.trim(), time: Date.now(), streaming: false },
@@ -490,10 +498,52 @@ async function sendMessage(taskUri: string, content: string) {
     // 通知外部 session 已创建（configOptions 可用）
     onSessionCreatedCallbacks.forEach((fn) => fn());
   } catch (e: any) {
-    setError(e?.message ?? String(e));
+    // 被取消的轮次不算错误（stop 流正常结束后也会走到这里）
+    if (!(e?.message?.includes("取消") || e?.name === "AbortError")) {
+      setError(e?.message ?? String(e));
+    }
   } finally {
     setSending(false);
   }
+}
+
+/**
+ * 发送消息（支持 steer 排队）：正在生成时再发，不丢弃而是排队，
+ * 当前轮结束后自动执行下一条。main 端 runGen 按 task 串行，天然支持。
+ */
+async function sendMessage(taskUri: string, content: string) {
+  if (!content.trim() || !taskUri) return;
+  if (sending()) {
+    // 会话中再发 → 排队（steer）而不是丢弃
+    pendingMessages.push(content.trim());
+    setPendingCount(pendingMessages.length);
+    return;
+  }
+  // 立即执行单条
+  await runOne(taskUri, content);
+  // 执行完接续排队中的下一条
+  while (pendingMessages.length > 0) {
+    const next = pendingMessages.shift()!;
+    setPendingCount(pendingMessages.length);
+    await runOne(taskUri, next);
+  }
+}
+
+/** 取消当前生成：agent 停止本轮，排队中的下一条自动接续执行 */
+async function cancel() {
+  if (!sending() || !activeTaskUri) return;
+  // 忽略失败：会话可能已被关闭/agent 退出，取消尽力而为
+  try {
+    await diyService.diy.agent.cancel({ taskUri: activeTaskUri });
+  } catch { /* 静默 */ }
+  setSending(false);
+}
+
+/** 取消当前生成并清空排队（不执行剩余消息） */
+async function cancelAll() {
+  pendingMessages.length = 0;
+  setPendingCount(0);
+  if (sending()) await cancel();
 }
 
 // ─── session 创建回调（供 ChatPage 刷新 configOptions） ───
@@ -507,6 +557,9 @@ function onSessionCreated(fn: () => void): () => void {
 function clearChat() {
   setMessages([]);
   setError(null);
+  pendingMessages.length = 0;
+  setPendingCount(0);
+  activeTaskUri = null;
 }
 
 function clearError() {
@@ -548,6 +601,9 @@ async function closeSession(taskUri: string) {
     setSessionId(null);
     setActiveModel("");
     setError(null);
+    pendingMessages.length = 0;
+    setPendingCount(0);
+    activeTaskUri = null;
   } catch (e) {
     setError(e instanceof Error ? e.message : "关闭会话失败");
   }
@@ -563,7 +619,10 @@ export const chatStore = {
   get error() { return error(); },
   get activeModel() { return activeModel(); },
   get sessionId() { return sessionId(); },
+  get pendingCount() { return pendingCount(); },
   sendMessage,
+  cancel,
+  cancelAll,
   clearChat,
   clearError,
   switchModel,

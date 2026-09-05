@@ -290,6 +290,12 @@ export class TaskSessionPoolV2 {
     return s?.getConfigOptions() ?? [];
   }
 
+  /** 取消某 task 会话的当前生成（stop 后排队中的下一个流自动开始） */
+  async cancel(taskUri: string): Promise<void> {
+    const s = this.sessions.get(taskUri);
+    if (s) await s.cancel();
+  }
+
   /** 关闭某 task 的 session */
   async closeSession(taskUri: string): Promise<void> {
     const s = this.sessions.get(taskUri);

@@ -7,6 +7,12 @@
 // TS 没有 goroutine，但单线程事件循环 + promise 链可以表达完全相同的语义：
 // 每个任务挂到队尾 promise（tail）上，严格按提交顺序 settle 后执行下一个。
 //
+// 取消（对应 Go 的 context.Context）：run/runGen 接受 AbortSignal。
+// - 排队中未执行的任务：轮到它时若已 abort → 跳过执行体（跳槽位），
+//   不做任何事直接 settle，队列继续推进 —— 顺序不变量保持。
+// - 正在执行的任务：队列层无法强停 JS 执行体（Go 里靠 goroutine 内
+//   select ctx.Done() 自行配合），由业务层拿同一个 signal 自行协作中断。
+//
 // 用法对照：
 //   Go:                             TS:
 //     ch := make(chan func())         const q = new SerialQueue()
@@ -15,10 +21,24 @@
 //     }()                             })
 //     ch <- fn                        q.run(fn)
 //
-// 三个典型场景：
+// 典型场景：
 //   - SerialQueue.run        —— 纯顺序操作（prompt 互斥链）
 //   - KeyedSerialQueue.run   —— 按实体内存去重/串行（ensure 防双会话）
 //   - KeyedSerialQueue.runGen—— 整个事件流排他（流式对话订阅→收完 stop）
+
+/** 队列任务可选的取消信号 */
+export interface QueueTaskOptions {
+  /** 取消信号：轮到执行时已 abort → 跳过执行体 */
+  signal?: AbortSignal;
+}
+
+/** 统一的取消错误 */
+export class QueueAbortError extends Error {
+  constructor() {
+    super("队列任务已取消");
+    this.name = "QueueAbortError";
+  }
+}
 
 /** 串行队列：任务严格按提交顺序逐个执行 */
 export class SerialQueue {
@@ -29,9 +49,14 @@ export class SerialQueue {
    * 提交一个任务，排到队尾顺序执行。
    * 前一个任务 settle（成功或失败）后，本任务才开始。
    * 错误不会打断队列：失败只向上冒泡给本任务调用方，后续任务照常排队。
+   * signal 已 abort → 跳过执行体，直接 reject QueueAbortError。
    */
-  run<T>(task: () => Promise<T> | T): Promise<T> {
-    const result = this.tail.then(task);
+  run<T>(task: () => Promise<T> | T, opts?: QueueTaskOptions): Promise<T> {
+    const { signal } = opts ?? {};
+    const result = this.tail.then(() => {
+      if (signal?.aborted) throw new QueueAbortError();
+      return task();
+    });
     // 链尾续接：吞掉错误，避免一个失败的任务卡死整条链
     this.tail = result.then(
       () => undefined,
@@ -53,9 +78,13 @@ export class SerialQueue {
    * 惰性执行体，首次 for-await 时等前一个任务收尾再展开。
    * 若创建后从不消费（不 for-await、不 return），队列会被永久占住。
    *
-   * 用法：yield* queue.runGen(async function* () { ... })
+   * signal：轮到消费时已 abort → 直接空流（跳过执行体），释放队列。
+   * 执行中的中断由业务层拿同一 signal 自行协作（如 agent.cancel）。
+   *
+   * 用法：yield* queue.runGen(async function* () { ... }, { signal })
    */
-  runGen<T>(gen: () => AsyncGenerator<T>): AsyncGenerator<T> {
+  runGen<T>(gen: () => AsyncGenerator<T>, opts?: QueueTaskOptions): AsyncGenerator<T> {
+    const { signal } = opts ?? {};
     // 立即占位：按提交顺序把 gate 挂到队尾
     const prev = this.tail;
     let release!: () => void;
@@ -71,6 +100,7 @@ export class SerialQueue {
     return (async function* () {
       await prev.catch(() => undefined);
       try {
+        if (signal?.aborted) return; // 已取消：跳过执行体，直接空流
         yield* gen();
       } finally {
         release();
@@ -94,12 +124,12 @@ export class KeyedSerialQueue {
   }
 
   /** 提交任务并按 key 串行执行 */
-  run<T>(key: string, task: () => Promise<T> | T): Promise<T> {
-    return this.for(key).run(task);
+  run<T>(key: string, task: () => Promise<T> | T, opts?: QueueTaskOptions): Promise<T> {
+    return this.for(key).run(task, opts);
   }
 
   /** 排他运行 async 生成器：整个生命周期独占该 key 的队列（见 SerialQueue.runGen） */
-  runGen<T>(key: string, gen: () => AsyncGenerator<T>): AsyncGenerator<T> {
-    return this.for(key).runGen(gen);
+  runGen<T>(key: string, gen: () => AsyncGenerator<T>, opts?: QueueTaskOptions): AsyncGenerator<T> {
+    return this.for(key).runGen(gen, opts);
   }
 }

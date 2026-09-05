@@ -2,7 +2,7 @@
 // 🎯 SerialQueue / KeyedSerialQueue —— Go「单协程+channel」顺序模式的验证
 
 import { describe, it, expect } from "vitest";
-import { SerialQueue, KeyedSerialQueue } from "../../src/main/core/serial-queue";
+import { SerialQueue, KeyedSerialQueue, QueueAbortError } from "../../src/main/core/serial-queue";
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 0));
 
@@ -161,10 +161,75 @@ describe("KeyedSerialQueue.runGen 流排他", () => {
     const consume = async () => {
       const it = stream[Symbol.asyncIterator]();
       await it.next();
-      await it.return(); // 提前结束
+      await it.return(undefined as any); // 提前结束
     };
     await Promise.all([consume(), runTask]);
     // finally 已跑 → gate 已打开 → run 任务才执行
     expect(order).toEqual(["gen-finally", "run"]);
+  });
+});
+
+describe("队列取消（AbortSignal）", () => {
+  it("run：排队中 abort → 跳过执行体，reject QueueAbortError", async () => {
+    const q = new SerialQueue();
+    const ac = new AbortController();
+    const order: string[] = [];
+
+    // 先占一个慢任务，让后提交的任务处于「排队中」
+    const slow = q.run(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      order.push("slow");
+    });
+    const cancelled = q.run(
+      async () => { order.push("cancelled-run"); },
+      { signal: ac.signal },
+    );
+    ac.abort(); // 在 cancelled 任务执行前取消
+
+    await slow;
+    await expect(cancelled).rejects.toThrow(QueueAbortError);
+    expect(order).toEqual(["slow"]); // 被取消的任务没执行
+  });
+
+  it("run：abort 不阻塞队列，后续任务照常执行", async () => {
+    const q = new SerialQueue();
+    const ac = new AbortController();
+    const order: string[] = [];
+
+    const cancelled = q.run(
+      async () => { order.push("should-not-run"); },
+      { signal: ac.signal },
+    );
+    const after = q.run(() => { order.push("after"); });
+    ac.abort();
+
+    await expect(cancelled).rejects.toThrow(QueueAbortError);
+    await after;
+    expect(order).toEqual(["after"]); // 队列未被取消卡死
+  });
+
+  it("runGen：排队中 abort → 空流（跳过执行体）且释放队列", async () => {
+    const q = new KeyedSerialQueue();
+    const ac = new AbortController();
+    const order: string[] = [];
+
+    const slow = q.run("t", async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      order.push("slow");
+    });
+    const stream = q.runGen(
+      "t",
+      async function* () { order.push("skip-me"); yield "x"; },
+      { signal: ac.signal },
+    );
+    const after = q.run("t", () => { order.push("after"); });
+    ac.abort();
+
+    await slow;
+    const got: string[] = [];
+    for await (const s of stream) got.push(s);
+    await after;
+    expect(got).toEqual([]); // 空流
+    expect(order).toEqual(["slow", "after"]); // 执行体被跳过，无死锁
   });
 });
