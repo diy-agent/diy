@@ -276,10 +276,23 @@ export class AcpAgentV2 {
   private exited = false;
   /** 进程退出回调 */
   private onExitCallbacks = new Set<(code: number | null) => void>();
+  /** 实时 autoApprove 开关（handler 动态读取；初始取自 opts，可运行时切换） */
+  private autoApprove: boolean;
 
   constructor(opts: AcpAgentV2Options) {
     this.opts = opts;
+    this.autoApprove = opts.autoApprovePermission ?? false;
     this.readyPromise = this.connect();
+  }
+
+  /** 运行时切换 autoApprove（以前是内存假开关，现在真正改 handler 行为） */
+  setAutoApprove(enabled: boolean): void {
+    this.autoApprove = enabled;
+  }
+
+  /** 当前 autoApprove 状态 */
+  get autoApprovePermission(): boolean {
+    return this.autoApprove;
   }
 
   /** 等待连接就绪（connectWith + initialize 完成） */
@@ -345,12 +358,24 @@ export class AcpAgentV2 {
 
       const app = client({ name: "diy-agent-v2" });
 
-      if (this.opts.autoApprovePermission) {
-        app.onRequest(
-          methods.client.session.requestPermission,
-          () => ({ outcome: { outcome: "selected", optionId: "allow" } }),
-        );
-      }
+      // 无条件注册权限处理：开关状态动态读取（this.autoApprove），
+      // 运行时 setAutoApprove 立即生效，不再是建连时的快照。
+      app.onRequest(
+        methods.client.session.requestPermission,
+        (req) => {
+          if (this.autoApprove) {
+            return { outcome: { outcome: "selected", optionId: "allow" } };
+          }
+          // 关闭时选择权限提供的第一个选项（通常是 deny），而不是直接拒绝请求：
+          // 直接抛错可能让 agent 认为客户端出错，用选项答复最符合协议预期。
+          const first = (req as any)?.permission?.options?.[0]?.id;
+          return {
+            outcome: first
+              ? { outcome: "selected", optionId: first }
+              : { outcome: "cancelled" },
+          };
+        },
+      );
 
       app
         .connectWith(stream, async (ctx) => {

@@ -216,14 +216,16 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { taskUri: s.taskUri, state: s.state, model: s.model };
   });
 
-  // autoApprovePermission 状态（内存态，重启重置为 true）
-  let _autoApprove = true;
+  // autoApprovePermission 状态 —— 内存态保管在 agent 层（AcpAgentV2.autoApprove），
+  // 这里只做读写代理，重启重置为 true
   binding.on(app.agent.getAutoApprove, async () => {
-    return { enabled: _autoApprove };
+    const pool = await getSessionPool();
+    return { enabled: pool.autoApprove };
   });
   binding.on(app.agent.setAutoApprove, async ({ input }) => {
-    _autoApprove = input.enabled;
-    return { enabled: _autoApprove };
+    const pool = await getSessionPool();
+    pool.setAutoApprove(input.enabled);
+    return { enabled: pool.autoApprove };
   });
   binding.on(app.agent.closeSession, async ({ input }) => {
     const pool = await getSessionPool();

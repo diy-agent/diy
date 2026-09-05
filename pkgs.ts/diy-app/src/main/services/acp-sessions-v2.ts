@@ -255,6 +255,16 @@ export class TaskSessionPoolV2 {
     await session.setConfigOption(configId, value);
   }
 
+  /** 运行切换 autoApprove（下放到 agent 的权限 handler，立即生效） */
+  setAutoApprove(enabled: boolean): void {
+    this.agent.setAutoApprove(enabled);
+  }
+
+  /** 当前 autoApprove 状态 */
+  get autoApprove(): boolean {
+    return this.agent.autoApprovePermission;
+  }
+
   /** 获取会话配置选项 */
   getConfigOptions(taskUri: string): Array<{ id: string; name?: string; category?: string; currentValue?: string; options?: Array<{ value: string; name?: string }> }> {
     const s = this.sessions.get(taskUri);
