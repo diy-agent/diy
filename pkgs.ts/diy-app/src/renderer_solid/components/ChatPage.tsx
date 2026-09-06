@@ -546,6 +546,8 @@ export function ChatPage() {
 
   // ─── debounce：防止快速连续切换同一配置项时发送多次 RPC ───
   const configTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** 旧值快照：首次切换时记录，debounce 完成后清理 */
+  const configOldValues = new Map<string, string | undefined>();
 
   /** 设置配置选项（乐观更新 + 300ms debounce，失败回滚） */
   const setConfig = (configId: string, value: string) => {
@@ -553,9 +555,9 @@ export function ChatPage() {
     if (!uri) return;
     // 记住旧值用于回滚（首次切换时快照）
     if (!configTimers.has(configId)) {
-      (setConfig as any)[`_old_${configId}`] = getConfig(configId)?.currentValue;
+      configOldValues.set(configId, getConfig(configId)?.currentValue);
     }
-    const oldValue = (setConfig as any)[`_old_${configId}`];
+    const oldValue = configOldValues.get(configId);
     // 乐观更新：立即改本地 signal
     setConfigOptions((prev) =>
       prev.map((o) => (o.id === configId ? { ...o, currentValue: value } : o)),
@@ -565,6 +567,7 @@ export function ChatPage() {
     if (prev) clearTimeout(prev);
     configTimers.set(configId, setTimeout(async () => {
       configTimers.delete(configId);
+      configOldValues.delete(configId);
       try {
         await diyService.diy.agent.setConfigOption({ taskUri: uri, configId, value });
         // opencode 不推 config_option_update，setConfigOption 响应也不含更新后值，
@@ -577,8 +580,6 @@ export function ChatPage() {
             prev.map((o) => (o.id === configId ? { ...o, currentValue: oldValue } : o)),
           );
         }
-      } finally {
-        delete (setConfig as any)[`_old_${configId}`];
       }
     }, 300));
   };
