@@ -14,24 +14,32 @@ import { TaskNode } from "./tree-format";
 // 内部：扫描单个任务文件 → TaskNode
 // ═══════════════════════════════════════
 
-function readTaskNode(uri: string, starred: boolean): TaskNode | null {
+function readTaskNode(
+  uri: string,
+  starred: boolean,
+  preg: ReadonlyMap<string, { label?: string; path?: string }>,
+): TaskNode | null {
   const agPath = join(diyHome(), uri, "AGENTS.md");
   if (!existsSync(agPath)) return null;
   const raw = readFileSync(agPath, "utf-8");
-  const meta = parseTaskFile(raw);
-  if (!meta) return null;
+  const fm = parseTaskFile(raw);
+  if (!fm) return null;
 
+  const pid = projectFromUri(uri) || fm.project;
+  const info = (pid && preg.get(pid)) || undefined;
   return {
     kind: "task",
     uri,
-    title: meta.title,
-    state: meta.state,
-    project: projectFromUri(uri) || meta.project,
-    parentUri: meta.parent,
-    detail: meta.detail,
-    body: meta.body,
-    created: meta.created,
-    updated: meta.updated,
+    title: fm.title,
+    state: fm.state,
+    project: pid,
+    project_path: info?.path,
+    project_label: info?.label,
+    parentUri: fm.parent,
+    detail: fm.detail,
+    body: fm.body,
+    created: fm.created,
+    updated: fm.updated,
     starred,
     children: [],
   };
@@ -47,9 +55,9 @@ function readTaskNode(uri: string, starred: boolean): TaskNode | null {
  * 默认只加载 star 过的任务（用户关注视图）。
  */
 export function loadTaskTree(allTasks = false): TaskNode[] {
-  // 已注册项目（id → 显示名），保持 id 数值排序
-  const projects = new Map<string, { label?: string }>();
-  for (const p of listProjects()) projects.set(p.id, { label: p.info.label });
+  // 已注册项目（id → 显示名/路径），保持 id 数值排序
+  const projects = new Map<string, { label?: string; path?: string }>();
+  for (const p of listProjects()) projects.set(p.id, { label: p.info.label, path: p.info.path });
 
   const starDir = join(diyHome(), "star");
   const taskRoot = projectsRoot();
@@ -60,7 +68,7 @@ export function loadTaskTree(allTasks = false): TaskNode[] {
     // 全部模式：扫描 projects/ 下所有 AGENTS.md（URI 前缀从 projects 起）
     if (!existsSync(taskRoot)) return buildResult(allByProject, projects);
 
-    scanAllDirs(taskRoot, "projects", allByProject);
+    scanAllDirs(taskRoot, "projects", allByProject, projects);
   } else {
     // Star 模式：从 ~/.diy/star/ symlink 收集
     if (!existsSync(starDir)) return buildResult(allByProject, projects);
@@ -75,7 +83,7 @@ export function loadTaskTree(allTasks = false): TaskNode[] {
       const homePrefix = diyHome() + "/";
       const relTarget = target.startsWith(homePrefix) ? target.slice(homePrefix.length) : target;
 
-      const node = readTaskNode(relTarget, true);
+      const node = readTaskNode(relTarget, true, projects);
       if (!node) continue;
 
       const pid = node.project ?? "unknown";
@@ -91,7 +99,12 @@ export function loadTaskTree(allTasks = false): TaskNode[] {
 /**
  * 递归扫描 projects/ 下所有 URIs（跨多层：projects/<pid>/tasks/<tid>）
  */
-function scanAllDirs(dir: string, prefix: string, result: Map<string, TaskNode[]>): void {
+function scanAllDirs(
+  dir: string,
+  prefix: string,
+  result: Map<string, TaskNode[]>,
+  preg: ReadonlyMap<string, { label?: string; path?: string }>,
+): void {
   for (const entry of readdirSync(dir)) {
     const fullPath = join(dir, entry);
     if (!statSync(fullPath).isDirectory()) continue;
@@ -102,7 +115,7 @@ function scanAllDirs(dir: string, prefix: string, result: Map<string, TaskNode[]
     if (existsSync(agPath)) {
       // 这是一个任务目录
       const starred = isStarred(subPrefix);
-      const node = readTaskNode(subPrefix, starred);
+      const node = readTaskNode(subPrefix, starred, preg);
       if (node) {
         const pid = node.project ?? "unknown";
         const list = result.get(pid) ?? [];
@@ -111,7 +124,7 @@ function scanAllDirs(dir: string, prefix: string, result: Map<string, TaskNode[]
       }
     } else {
       // 继续递归
-      scanAllDirs(fullPath, subPrefix, result);
+      scanAllDirs(fullPath, subPrefix, result, preg);
     }
   }
 }
@@ -119,7 +132,7 @@ function scanAllDirs(dir: string, prefix: string, result: Map<string, TaskNode[]
 /** 将按 project 分组的任务组装为 TaskNode[]，构建父子链接后返回。 */
 function buildResult(
   byProject: Map<string, TaskNode[]>,
-  projects: Map<string, { label?: string }>,
+  projects: Map<string, { label?: string; path?: string }>,
 ): TaskNode[] {
   const result: TaskNode[] = [];
 
@@ -131,6 +144,8 @@ function buildResult(
       kind: "project",
       project: pid,
       title: info.label ?? pid,
+      project_path: info.path,
+      project_label: info.label,
       starred: false,
       children: linked,
     });

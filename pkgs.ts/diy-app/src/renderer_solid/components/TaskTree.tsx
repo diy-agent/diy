@@ -220,7 +220,7 @@ function ProjectRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: 
                     <CreateTaskSheet projectId={row.projectId} projectLabel={row.node.title ?? ""} />
                 </span>
             </td>
-            <td class="font-mono text-xs opacity-60">{row.node.project}</td>
+            <td class="font-mono text-xs opacity-60">{row.node.project_path ?? row.node.title}</td>
             <td />
         </tr>
     );

@@ -137,7 +137,11 @@ export async function startElectronTest(): Promise<ElectronTest> {
   const env = { ...process.env, HOME: home, DIY_HOME: home, DIY_MIRROR_DISPLAY: "1" };
   const appDir = join(__dirname, "..");
 
-  const proc: ChildProcess = spawn(String(electronPath), ["out/main/index.mjs", "--remote-debugging-port=0"], {
+  const args = ["out/main/index.mjs", "--remote-debugging-port=0"];
+  // 受限环境（Chromium sandbox 初始化被拒，如沙箱/容器）置 DIY_NO_SANDBOX=1 跑通测试；
+  // 默认不传，与生产行为一致。
+  if (process.env["DIY_NO_SANDBOX"] === "1") args.push("--no-sandbox");
+  const proc: ChildProcess = spawn(String(electronPath), args, {
     cwd: appDir,
     env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -168,6 +172,18 @@ export async function startElectronTest(): Promise<ElectronTest> {
           if (proc.exitCode !== null || proc.signalCode !== null) return resolve();
           proc.once("exit", () => resolve());
           proc.kill("SIGTERM");
+          // SIGTERM 3s 后还没退出 → SIGKILL。残留 Electron 堆内存会把机器拖慢，
+          // 后续用例的 CLI 探活连带超时，造成全量跑级联失败。
+          setTimeout(() => {
+            if (proc.exitCode === null && proc.signalCode === null) {
+              try {
+                proc.kill("SIGKILL");
+              } catch {
+                /* 竞态：正好退出了 */
+              }
+            }
+            resolve();
+          }, 3000);
         }),
     };
   } catch (err) {

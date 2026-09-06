@@ -22,6 +22,7 @@ import { RpcPortService } from "./services/rpc-port";
 import { AppConfig } from "./core/app-config";
 import { bindApi, bindAppHandlers, setRpcPort } from "./services/api-impl";
 import { installDiagnostics } from "./services/diagnostics";
+import { installCrashReporting } from "./services/crash-reporting";
 import { readRuntimeConfig } from "../runtime";
 import { homedir, hostname, platform, arch, release, totalmem, freemem } from "node:os";
 
@@ -53,6 +54,8 @@ app.setPath("cache", appConfig.cache);
 
 // 诊断设施必须早于任何 console 输出安装：EPIPE 防护 + 日志落 DIY_HOME/log/main.log
 installDiagnostics(appConfig.diyHome);
+// 原生崩溃采集：Crashpad minidump → <DIY_HOME>/log/crashes + 子进程消亡日志进 main.log
+installCrashReporting(appConfig.diyHome);
 
 // ── 系统信息 ──
 console.log("═══════════════════════════════════════");

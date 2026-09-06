@@ -22,6 +22,11 @@ export interface TaskNode {
   state?: TaskState;
   /** 所属 project id（task 节点） */
   project?: string;
+  /** 所属 project 路径/展示名（task 节点由 task-tree 回填；project 节点为自身路径）。
+   *  显示规则：home 内显示 ~/…，之外显示绝对路径 —— 与 state.ts norm() 一致，
+   *  值来自 projects/<id>/meta.yaml，展示层直接用，不再各处展开。 */
+  project_path?: string;
+  project_label?: string;
   parentUri?: string;
   detail?: string;
   body?: string;

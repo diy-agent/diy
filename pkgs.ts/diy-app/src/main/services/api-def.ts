@@ -341,7 +341,8 @@ export const apiDef = RpcSchema.router({
               taskUri: z.string().cliArg({ desc: "任务 URI" }),
             },
             // model 可选：state=no_session 时无会话，也就没有模型
-            output: z.object({ taskUri: z.string(), state: z.string(), model: z.string().optional() }),
+            // cwd/additionalDirectories 可选：state=ready 时回填会话认定的主目录+附加目录
+            output: z.object({ taskUri: z.string(), state: z.string(), model: z.string().optional(), cwd: z.string().optional(), additionalDirectories: z.array(z.string()).optional() }),
           }),
           getAutoApprove: RpcSchema.unary({
             desc: `获取自动审批权限设置`,
