@@ -80,7 +80,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.task.show, async ({ input }) => {
     const t = state.getTask(input.uri);
     if (!t) return { status: "error", msg: `任务 ${input.uri} 不存在` };
-    return { status: "ok", data: t };
+    // project 只存 id；同时回填 path/label，CLI 才看得到原 subject 路径
+    const info = project.getProjectInfo(t.project ?? "");
+    return { status: "ok", data: { ...t, project_path: info?.path, project_label: info?.label } };
   });
   binding.on(app.task.edit, async ({ input }) => {
     const { uri, ...changes } = input;
@@ -177,7 +179,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const t = state.getTask(input.uri);
     // 未找到 → data: null（truthy 的壳对象会让 renderer 守卫失效）
     if (!t) return { status: "error", data: null };
-    return { status: "ok", data: { uri: t.uri, title: t.title, state: t.state, project: t.project, parent: t.parent, detail: t.detail, body: t.body, created: t.created, updated: t.updated } };
+    // project 只存 id（路径即分组）；同时回填 path/label，CLI/GUI 才看得到原 subject 路径
+    const pinfo = project.getProjectInfo(t.project ?? "");
+    return { status: "ok", data: { uri: t.uri, title: t.title, state: t.state, project: t.project, project_path: pinfo?.path, project_label: pinfo?.label, parent: t.parent, detail: t.detail, body: t.body, created: t.created, updated: t.updated } };
   });
 
   // ── pickProjectDirectory（renderer「选择目录」按钮反向调用）──
@@ -235,7 +239,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.agent.status, async ({ input }) => {
     const pool = await getSessionPool();
     const s = await pool.status(input.taskUri);
-    return { taskUri: s.taskUri, state: s.state, model: s.model };
+    return { taskUri: s.taskUri, state: s.state, model: s.model, cwd: s.cwd, additionalDirectories: s.additionalDirectories };
   });
 
   // autoApprovePermission 状态 —— 内存态保管在 agent 层（AcpAgentV2.autoApprove），

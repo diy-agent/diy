@@ -7,6 +7,8 @@ export interface TreeNode {
   title?: string;
   state?: string;
   project?: string;
+  project_path?: string;
+  project_label?: string;
   parentUri?: string;
   starred: boolean;
   children: TreeNode[];
@@ -17,6 +19,8 @@ export interface TaskDetail {
   title?: string;
   state?: string;
   project?: string;
+  project_path?: string;
+  project_label?: string;
   parent?: string;
   detail?: string;
   body?: string;

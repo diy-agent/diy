@@ -36,6 +36,8 @@ export interface AcpModel {
 export interface AcpSessionInfo {
   sessionId: string;
   cwd: string;
+  /** 建会话/load 时声明的额外目录（主 cwd 之外的文件 scope，不改相对路径基准） */
+  additionalDirectories?: string[];
   models: AcpModel[];
   currentModelId?: string;
 }
@@ -80,6 +82,8 @@ function childProcStreams(proc: ChildProcess): Stream {
 export class AcpSessionV2 {
   readonly sessionId: string;
   readonly cwd: string;
+  /** 建会话/load 时声明的额外目录（只读快照，供 status/诊断展示） */
+  readonly additionalDirectories: string[];
   private activeSession: ActiveSession;
   private listeners = new Set<(ev: AcpUpdateEvent) => void>();
   private history: AcpUpdateEvent[] = [];
@@ -115,10 +119,11 @@ export class AcpSessionV2 {
    */
   private appliedModelId?: string;
 
-  constructor(activeSession: ActiveSession, cwd: string, private ctx: ClientContext) {
+  constructor(activeSession: ActiveSession, cwd: string, private ctx: ClientContext, additionalDirectories: string[] = []) {
     this.activeSession = activeSession;
     this.sessionId = activeSession.sessionId;
     this.cwd = cwd;
+    this.additionalDirectories = additionalDirectories;
     // 常驻更新泵：建会话/恢复会话后立即开始消费，agent 随时可能推事件
     // （config_option_update 等），不能等第一个 prompt 才启动。
     this.startPump();
@@ -483,16 +488,21 @@ export class AcpAgentV2 {
     });
   }
 
-  /** 新建会话 */
-  async newSession(cwd: string): Promise<AcpSessionV2> {
-    const activeSession = await this.ctx.buildSession(cwd).start();
-    const sess = new AcpSessionV2(activeSession, cwd, this.ctx);
+  /** 新建会话（cwd=主目录；additionalDirectories=额外 scope，不改相对路径基准） */
+  async newSession(cwd: string, additionalDirectories: string[] = []): Promise<AcpSessionV2> {
+    const activeSession = await this.ctx
+      .buildSession(cwd)
+      .withAdditionalDirectories(additionalDirectories)
+      .start();
+    const sess = new AcpSessionV2(activeSession, cwd, this.ctx, additionalDirectories);
     this.sessions.set(sess.sessionId, sess);
     return sess;
   }
 
-  /** 恢复已有会话（loadSession） */
-  async loadSession(sessionId: string, cwd: string): Promise<AcpSessionV2> {
+  /** 恢复已有会话（loadSession）。
+   *  load 的 additionalDirectories 是**全量设置**（替换 agent 侧存量），
+   *  所以每次恢复都必须重带，否则之前声明的额外 scope 会丢。 */
+  async loadSession(sessionId: string, cwd: string, additionalDirectories: string[] = []): Promise<AcpSessionV2> {
     // 1. 调用 session/load 恢复 agent 侧会话
     //    响应体的 configOptions 必须留下来：恢复出来的会话若没有它，
     //    currentModelId / availableModels 全是空 —— 界面上就显示不出当前模型。
@@ -500,6 +510,7 @@ export class AcpAgentV2 {
       sessionId,
       cwd,
       mcpServers: [],
+      additionalDirectories,
     } as any)) as { configOptions?: SessionConfigOptionLike[] } | undefined;
 
     // 2. 构造包含 sessionId 的响应对象，用于 SDK 内部路由设置
@@ -523,7 +534,7 @@ export class AcpAgentV2 {
     }
     const activeSession = rawCtx.attachSession(fakeResponse);
 
-    const sess = new AcpSessionV2(activeSession, cwd, this.ctx);
+    const sess = new AcpSessionV2(activeSession, cwd, this.ctx, additionalDirectories);
     this.sessions.set(sessionId, sess);
     return sess;
   }
