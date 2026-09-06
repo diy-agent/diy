@@ -16,6 +16,18 @@ import { projectFromUri } from "../core/state";
 import { getProjectPath } from "../core/project";
 import { KeyedSerialQueue } from "../core/serial-queue";
 
+/**
+ * 从 messages 数组提取最后一条消息的文本内容。
+ * ACP 协议的 prompt 只接受当前轮用户消息，对话历史由 agent 侧 session 维护。
+ * messages=[] 时抛错——发空 prompt 无意义且行为未定义。
+ */
+function lastMessageText(messages: Array<{ role: string; content: string }>): string {
+  if (messages.length === 0) {
+    throw new Error("[acp] streamChat: messages 不能为空（ACP prompt 需要至少一条用户消息）");
+  }
+  return messages[messages.length - 1].content;
+}
+
 export class TaskSessionPoolV2 {
   private agent: AcpAgentV2;
   /** taskUri → session */
@@ -127,6 +139,9 @@ export class TaskSessionPoolV2 {
    * 多次调用同一 task 的 prompt，session 上下文连续。
    * 整个流（订阅→prompt→收完 stop）在 KeyedSerialQueue.runGen 排他下串行：
    * 事件泵是会话级广播，只串 prompt 发送挡不住「B 流收到 A 回合事件」。
+   *
+   * ⚠️ messages 只取最后一条：ACP 协议的 prompt 只接受当前轮的用户消息，
+   * 对话历史由 agent 侧 session 维护，不需要客户端传递完整历史。
    */
   async *streamChat(
     taskUri: string,
@@ -164,7 +179,8 @@ export class TaskSessionPoolV2 {
       });
 
       try {
-        const promptText = messages.map((m) => m.content).join("\n");
+        // ACP prompt 只接受当前轮用户消息，对话历史由 agent 侧 session 维护。
+        const promptText = lastMessageText(messages);
         const promptDone = session
           .prompt(promptText)
           .finally(() => { ended = true; kick(); });
@@ -190,6 +206,9 @@ export class TaskSessionPoolV2 {
    * 包括 agent_message_chunk、tool_call_update、agent_thought_chunk 等。
    * 整个流（订阅→prompt→收完 stop）在 KeyedSerialQueue.runGen 排他下串行：
    * 事件泵是会话级广播，只串 prompt 发送挡不住「B 流收到 A 回合事件」。
+   *
+   * ⚠️ messages 只取最后一条：ACP 协议的 prompt 只接受当前轮的用户消息，
+   * 对话历史由 agent 侧 session 维护，不需要客户端传递完整历史。
    */
   async *streamChatEvents(
     taskUri: string,
@@ -223,7 +242,8 @@ export class TaskSessionPoolV2 {
       });
 
       try {
-        const promptText = messages.map((m) => m.content).join("\n");
+        // ACP prompt 只接受当前轮用户消息，对话历史由 agent 侧 session 维护。
+        const promptText = lastMessageText(messages);
         const promptDone = session
           .prompt(promptText)
           .finally(() => { ended = true; kick(); });

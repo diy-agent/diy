@@ -10,7 +10,7 @@
  * - Markdown：solid-markdown + remark-gfm
  */
 
-import { createSignal, For, Show, createEffect, onMount } from "solid-js";
+import { createSignal, For, Show, createEffect, onMount, onCleanup } from "solid-js";
 import { chatStore, sendingAccessor, type ChatMessage, type ToolCall, type TerminalInfo, type ConfigOptionSnapshot } from "../store/chatStore";
 import { agentStore } from "../store/agentStore";
 import { taskStore } from "../store/taskStore";
@@ -544,30 +544,52 @@ export function ChatPage() {
     }
   };
 
-  /** 设置配置选项（乐观更新，失败回滚） */
-  const setConfig = async (configId: string, value: string) => {
+  // ─── debounce：防止快速连续切换同一配置项时发送多次 RPC ───
+  const configTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** 旧值快照：首次切换时记录，debounce 完成后清理 */
+  const configOldValues = new Map<string, string | undefined>();
+
+  /** 设置配置选项（乐观更新 + 300ms debounce，失败回滚） */
+  const setConfig = (configId: string, value: string) => {
     const uri = taskUri();
     if (!uri) return;
-    // 记住旧值用于回滚
-    const oldValue = getConfig(configId)?.currentValue;
+    // 记住旧值用于回滚（首次切换时快照）
+    if (!configTimers.has(configId)) {
+      configOldValues.set(configId, getConfig(configId)?.currentValue);
+    }
+    const oldValue = configOldValues.get(configId);
     // 乐观更新：立即改本地 signal
     setConfigOptions((prev) =>
       prev.map((o) => (o.id === configId ? { ...o, currentValue: value } : o)),
     );
-    try {
-      await diyService.diy.agent.setConfigOption({ taskUri: uri, configId, value });
-      // opencode 不推 config_option_update，setConfigOption 响应也不含更新后值，
-      // 所以不做「服务端确认」——乐观值即终态。
-    } catch (e) {
-      console.warn(`[ChatPage] 设置 ${configId} 失败:`, e);
-      // 回滚到旧值
-      if (oldValue !== undefined) {
-        setConfigOptions((prev) =>
-          prev.map((o) => (o.id === configId ? { ...o, currentValue: oldValue } : o)),
-        );
+    // debounce：清除前一个定时器，300ms 后发送 RPC
+    const prev = configTimers.get(configId);
+    if (prev) clearTimeout(prev);
+    configTimers.set(configId, setTimeout(async () => {
+      configTimers.delete(configId);
+      configOldValues.delete(configId);
+      // 切任务后旧 timer 不应再发 RPC 或回滚——闭包捕获的 uri 已过期
+      if (taskUri() !== uri) return;
+      try {
+        await diyService.diy.agent.setConfigOption({ taskUri: uri, configId, value });
+      } catch (e) {
+        console.warn(`[ChatPage] 设置 ${configId} 失败:`, e);
+        // 仅在任务未切换时回滚（切换后旧值无意义）
+        if (taskUri() === uri && oldValue !== undefined) {
+          setConfigOptions((prev) =>
+            prev.map((o) => (o.id === configId ? { ...o, currentValue: oldValue } : o)),
+          );
+        }
       }
-    }
+    }, 300));
   };
+
+  // 组件卸载时清理所有 pending timer
+  onCleanup(() => {
+    for (const t of configTimers.values()) clearTimeout(t);
+    configTimers.clear();
+    configOldValues.clear();
+  });
 
   /** 获取指定配置项的当前值 */
   const getConfig = (id: string) => configOptions().find((o) => o.id === id);
@@ -684,6 +706,19 @@ export function ChatPage() {
             </select>
           </div>
         </Show>
+        {/* 自动审批 (autoApprove) */}
+        <div class="flex items-center gap-1">
+          <span class="text-xs opacity-50">🔐</span>
+          <label class="flex items-center gap-1 cursor-pointer">
+            <input
+              type="checkbox"
+              class="checkbox checkbox-xs"
+              checked={agentStore.autoApprove}
+              onChange={(e) => void agentStore.setAutoApprove(e.currentTarget.checked)}
+            />
+            <span class="text-xs">自动审批</span>
+          </label>
+        </div>
         <button class="btn btn-ghost btn-sm" onClick={() => chatStore.clearChat()}>
           清空
         </button>
