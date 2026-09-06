@@ -2,9 +2,8 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "composite": true,
-    "jsx": "react-jsx",
     "paths": {
-      "@/*": ["./src/renderer/*"]
+      "@/*": ["./src/renderer_solid/*"]
     }
   },
   "exclude": ["src/renderer_solid/**/*"],
