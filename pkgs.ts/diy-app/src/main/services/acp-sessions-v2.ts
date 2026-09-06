@@ -12,9 +12,10 @@
 import { AcpAgentV2, AcpSessionV2, type AcpModel } from "./acp-agent-v2";
 import { readTaskSessionId, writeTaskSessionId, clearTaskSessionId } from "./acp-sessions-persist";
 import { createLogSink, getInstalledHome } from "./diagnostics";
-import { projectFromUri } from "../core/state";
+import { projectFromUri, taskDir } from "../core/state";
 import { getProjectPath } from "../core/project";
 import { KeyedSerialQueue } from "../core/serial-queue";
+import { existsSync } from "node:fs";
 
 /**
  * 从 messages 数组提取最后一条消息的文本内容。
@@ -108,18 +109,25 @@ export class TaskSessionPoolV2 {
     });
   }
 
-  /** 按 project 目录建/恢复 session */
+  /** 按 project 目录建/恢复 session。
+   *  目录模型（与 Claude --add-dir / Codex --add-dir 同构）：
+   *  - 主目录 cwd = project 路径：相对路径基准 + 会话定位键 + 默认操作区；
+   *  - 任务目录 taskDir(taskUri) 进 additionalDirectories：只扩展文件 scope，
+   *    不改相对基准。load 是全量语义，恢复时同样重带。
+   *  不存在的任务目录不声明（防 agent 建会话直接报错）。 */
   private async loadOrCreate(taskUri: string): Promise<AcpSessionV2> {
     await this.agent.ready();
 
     const pid = projectFromUri(taskUri);
     const cwd = (pid ? getProjectPath(pid) : undefined) ?? process.cwd();
+    const dir = taskDir(taskUri);
+    const additionalDirectories = existsSync(dir) ? [dir] : [];
 
     // 尝试恢复持久化的 sessionId
     const savedId = readTaskSessionId(taskUri);
     if (savedId) {
       try {
-        const sess = await this.agent.loadSession(savedId, cwd);
+        const sess = await this.agent.loadSession(savedId, cwd, additionalDirectories);
         this.sessions.set(taskUri, sess);
         return sess;
       } catch {
@@ -129,7 +137,7 @@ export class TaskSessionPoolV2 {
     }
 
     // 新建
-    const sess = await this.agent.newSession(cwd);
+    const sess = await this.agent.newSession(cwd, additionalDirectories);
     writeTaskSessionId(taskUri, sess.sessionId);
     return sess;
   }
@@ -281,10 +289,10 @@ export class TaskSessionPoolV2 {
    */
   async status(
     taskUri: string,
-  ): Promise<{ taskUri: string; state: "ready" | "no_session"; model?: string }> {
+  ): Promise<{ taskUri: string; state: "ready" | "no_session"; model?: string; cwd?: string; additionalDirectories?: string[] }> {
     const session = this.sessions.get(taskUri);
     if (!session) return { taskUri, state: "no_session" };
-    return { taskUri, state: "ready", model: session.currentModelId };
+    return { taskUri, state: "ready", model: session.currentModelId, cwd: session.cwd, additionalDirectories: session.additionalDirectories };
   }
 
   /**

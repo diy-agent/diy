@@ -28,7 +28,7 @@ export function TaskDetailPanel() {
                 </div>
 
                 {/* Tab 切换：Agent 对话（默认）/ 任务详情 */}
-                <Tabs.Root value="agent" class="flex flex-col flex-1 overflow-hidden">
+                <Tabs.Root defaultValue="agent" class="flex flex-col flex-1 overflow-hidden">
                     <Tabs.List class="tabs tabs-bordered tabs-sm px-4 shrink-0">
                         <Tabs.Trigger value="agent" class="tab">🤖 Agent</Tabs.Trigger>
                         <Tabs.Trigger value="info" class="tab">📋 详情</Tabs.Trigger>
@@ -63,7 +63,7 @@ function TaskInfoView(props: { task: TaskDetail }) {
             </div>
             <div class="flex gap-2 flex-wrap text-xs opacity-60">
                 {t.project && (
-                    <span class="badge badge-outline">📂 {t.project}</span>
+                    <span class="badge badge-outline">📂 {t.project_label ?? t.project_path ?? t.project}</span>
                 )}
                 {t.created && (
                     <span class="badge badge-outline">

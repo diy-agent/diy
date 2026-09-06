@@ -134,6 +134,12 @@ export function listProjects(): Array<{ id: string; info: ProjectInfo }> {
     });
 }
 
+/** 取 project 注册信息（展示用：path/label；未注册返回 undefined）。
+ *  调用方用它把裸 pid 解析成实际路径（home 内 ~/…，之外绝对路径，存盘时已由 norm 定好）。 */
+export function getProjectInfo(id: string): ProjectInfo | undefined {
+  return listProjects().find((p) => p.id === id)?.info;
+}
+
 /** project 是否存在（task create 校验用） */
 /** 取 project 的目标仓库绝对路径（meta.yaml:path 展开后） */
 export function getProjectPath(id: string): string | undefined {

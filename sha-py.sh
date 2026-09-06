@@ -22,7 +22,7 @@ cd "$ROOT_DIR"
 source sha.common.sh
 
 # _workspaces=(pkgs/*/)
-_workspaces=(pkgs.ts/*/)
+_workspaces=(pkgs/*/)
 _vendors=(vendor/*/)
 
 ####################################################################################
@@ -30,7 +30,7 @@ _vendors=(vendor/*/)
 # 应用项目补充的公共脚本，不在bake维护范围
 # 此位置以上的全都是bake工具脚本，copy走可以直接用，之下的为项目特定cmd，自己弄
 ####################################################################################
-
+#
 _ws_run() {
   for ws in "${_workspaces[@]}"; do
     (
@@ -45,7 +45,6 @@ _ws_run() {
 exec()  {  _ws_run command "$@"; }
 # build() {  _ws_run command ./sha.sh build; }
 # mono所有workspaced的clean,包括删除build/dist等
-#（各包 out/ 由自家 ./sha.sh clean 负责，见 pkgs.ts/*/sha.sh）
 clean() {
     run rm -rf ./build
     run rm -rf ./dist
@@ -56,31 +55,22 @@ clean() {
 
 # mono所有workspaced的sync,包括uv sync、ln软链接到全局执行文件等
 sync()  {
-    run npm i --workspaces
+    link
+    run uv sync --all-packages
+    # run npm i --workspaces
     run git submodule update --init --recursive
 
     _ws_run command ./sha.sh sync;
 }
-link() {      _ws_run command npm link; }
-unlink() {    _ws_run command npm unlink -g ; }
-# 全仓唯一检查入口：全项目类型 + 全仓 lint + rpc 浏览器安全
-#（子包目录下单用见 pkgs.ts/*/sha.sh check）
-check() {
-  run npx tsc -b tsconfig.all.json --noEmit
-  run npx oxlint pkgs.ts/
-  run npx tsc --noEmit -p pkgs.ts/diy-rpc/tsconfig.browser.json
-}
-# 全仓唯一自动修复入口：格式化 + lint 可修项，能修的全修
-fix() {
-  run npx oxfmt --write pkgs.ts/
-  run npx oxlint --fix pkgs.ts/
-}
-# 全部测试：两包快速单测 + 构建 + diy-app 意图测试（起隔离 Electron，最慢放最后）
-test() {
-  _ws_run command ./sha.sh test
-}
-# 编程中快速验证：两包单测，不构建、不起 Electron
-test-unit() {  _ws_run command ./sha.sh test-unit; }
+link() {  _ws_run command ./sha.sh unlink; }
+# mono所有workspace的代码检查(ruff等)
+check() {  _ws_run command ./sha.sh check; }
+# mono所有workspace的代码自动修复(ruff等)
+fix()   {  _ws_run command ./sha.sh fix; }
+# mono所有workspace的单元测试
+test()  {  _ws_run command ./sha.sh test; }
+# mono所有workspace项目的所有测试，包括浏览器测试
+test-all()  {  _ws_run command ./sha.sh test-all; }
 
 _vendors_run() {
   for submodule in "${_vendors[@]}"; do
@@ -113,17 +103,16 @@ vendor() {
   update() {  run git submodule update --init --recursive --remote --merge; }
 }
 
+
 ####################################################
 # Python 包发布
 ####################################################
 build() {
-    # 构建只在 diy-app（含 cli 产物），细节见 pkgs.ts/diy-app/sha.sh build
-    run ./pkgs.ts/diy-app/sha.sh build
+    run uv build --all-packages
 }
-
 ci() {
     clean
-    test
+    test-all
     build
     # test: 验证构建产物
     echo "${info}构建产物:${reset}"
@@ -131,15 +120,35 @@ ci() {
 }
 
 publish() {
-  :
-}
+  local token="${UV_PUBLISH_TOKEN:-$1}"
+  if [[ -z "$token" ]]; then
+    echo "${error}错误: 需要 UV_PUBLISH_TOKEN 环境变量或传入 token 参数${reset}"
+    echo "用法: ./sha.sh publish [:token <token>]"
+    return 1
+  fi
 
-# mono所有workspace的ci持续集成,包括check;test;
+  # 发布
+  echo "${info}发布到 PyPI...${reset}"
+  run uv publish --token "$token"
+
+  echo "${success}✓ 发布完成${reset}"
+}
+# mono所有workspace的ci持续集成,包括check;test-all;
 github-actions-cicd()    {
     # github actions 安装 playwright 依赖
     uv run playwright install chromium --with-deps
     ci
     publish
+}
+
+
+####################################################
+# 子项目命令
+####################################################
+
+# PySide6 管控台
+app() {
+  DIY_HOME="${DIY_HOME:-.diy-dev}" uv run python -m diy.app.main
 }
 
 ####################################################

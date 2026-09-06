@@ -4,21 +4,6 @@
   "workspaces": [
     "pkgs.ts/*"
   ],
-  "scripts": {
-    "build": "npm --workspace diy-app run build && npm --workspace diy-app run build:cli",
-    "clean": "npm run clean --workspace diy-app",
-    "typecheck": "tsc -b tsconfig.all.json --noEmit",
-    "lint": "oxlint pkgs.ts/",
-    "lint:fix": "oxlint --fix pkgs.ts/",
-    "fmt": "oxfmt --check pkgs.ts/",
-    "fmt:fix": "oxfmt --write pkgs.ts/",
-    "check:browser": "npm --workspace @diy/rpc run check:browser",
-    "check": "npm run typecheck && npm run lint && npm run check:browser",
-    "test": "npm run test:unit && npm run test:intent",
-    "test:unit": "npm --workspace @diy/rpc run test && npm --workspace diy-app run test:unit",
-    "test:intent": "npm --workspace diy-app run test:intent",
-    "test:watch": "vitest"
-  },
   "devDependencies": {
     "oxfmt": "^0.57.0",
     "oxlint": "^1.72.0",
