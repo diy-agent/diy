@@ -687,16 +687,17 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
     // ─── 会话结束 ───
     case "stop": {
       // agent 回合结束（ACP session/update 最后一条通知）
-      // 附上 usage（如果有）
-      const usageData = ev.data as AcpUsageData;
-      if (usageData.inputTokens !== undefined || usageData.outputTokens !== undefined) {
+      // 附上 usage（如果有）。stop 的 data 是 PromptResponse，usage 嵌套在 .usage 下。
+      const stopData = ev.data as { usage?: AcpUsageData };
+      const u = stopData.usage;
+      if (u?.inputTokens !== undefined || u?.outputTokens !== undefined) {
         const lastAssistant = [...messages()].reverse().find((m) => m.type === "assistant");
         if (lastAssistant) {
           updateMessage(lastAssistant.id, {
             usage: {
-              input: usageData.inputTokens,
-              output: usageData.outputTokens,
-              total: usageData.totalTokens,
+              input: u.inputTokens,
+              output: u.outputTokens,
+              total: u.totalTokens,
             },
           });
         }

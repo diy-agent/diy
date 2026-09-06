@@ -10,7 +10,7 @@
  * - Markdown：solid-markdown + remark-gfm
  */
 
-import { createSignal, For, Show, createEffect, onMount } from "solid-js";
+import { createSignal, For, Show, createEffect, onMount, onCleanup } from "solid-js";
 import { chatStore, sendingAccessor, type ChatMessage, type ToolCall, type TerminalInfo, type ConfigOptionSnapshot } from "../store/chatStore";
 import { agentStore } from "../store/agentStore";
 import { taskStore } from "../store/taskStore";
@@ -568,14 +568,14 @@ export function ChatPage() {
     configTimers.set(configId, setTimeout(async () => {
       configTimers.delete(configId);
       configOldValues.delete(configId);
+      // 切任务后旧 timer 不应再发 RPC 或回滚——闭包捕获的 uri 已过期
+      if (taskUri() !== uri) return;
       try {
         await diyService.diy.agent.setConfigOption({ taskUri: uri, configId, value });
-        // opencode 不推 config_option_update，setConfigOption 响应也不含更新后值，
-        // 所以不做「服务端确认」——乐观值即终态。
       } catch (e) {
         console.warn(`[ChatPage] 设置 ${configId} 失败:`, e);
-        // 回滚到旧值
-        if (oldValue !== undefined) {
+        // 仅在任务未切换时回滚（切换后旧值无意义）
+        if (taskUri() === uri && oldValue !== undefined) {
           setConfigOptions((prev) =>
             prev.map((o) => (o.id === configId ? { ...o, currentValue: oldValue } : o)),
           );
@@ -583,6 +583,13 @@ export function ChatPage() {
       }
     }, 300));
   };
+
+  // 组件卸载时清理所有 pending timer
+  onCleanup(() => {
+    for (const t of configTimers.values()) clearTimeout(t);
+    configTimers.clear();
+    configOldValues.clear();
+  });
 
   /** 获取指定配置项的当前值 */
   const getConfig = (id: string) => configOptions().find((o) => o.id === id);
