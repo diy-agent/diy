@@ -209,7 +209,13 @@ export class AcpSessionV2 {
   }
 
   private async pumpUpdates(): Promise<void> {
+    // eslint-disable-next-line no-constant-condition
     while (true) {
+      // 优雅退出：dispose 后不再等待 nextUpdate，直接结束泵循环。
+      // 否则 dispose 调用 activeSession.dispose() 后，nextUpdate 的 reject 可能延迟，
+      // 期间泵仍在消费事件，触发已 dispose 的 listener。
+      if (this.disposed) break;
+
       const msg = await this.activeSession.nextUpdate();
       if (msg.kind === "stop") {
         this.history.push({ kind: "stop", data: msg.response });
@@ -221,7 +227,7 @@ export class AcpSessionV2 {
       const ev: AcpUpdateEvent = { kind: msg.update.sessionUpdate, data: msg.notification.update };
       this.history.push(ev);
       if (ev.kind === "agent_message_chunk") {
-        const t = (ev.data?.content as any)?.text;
+        const t = (ev.data?.content as { text?: string })?.text;
         if (t) this.textBuf += t;
       }
       if (ev.kind === "config_option_update") {
@@ -504,7 +510,7 @@ export class AcpAgentV2 {
     } as any;
 
     // 3. 使用 SDK 内部 attachSession 创建 ActiveSession（设置 session/update 路由）
-    //    ⚠️ attachSession 是 private（v1 SDK 未公开「恢复会话」的公开入口），
+    //    ⚠️ attachSession 是 private（SDK v1 未公开「恢复会话」的公开入口），
     //    通过类型断言访问。升级 SDK 前必须确认该方法仍在：
     //    若被改名/移除，这里会拿到 undefined 并在调用的瞬间抛 TypeError，
     //    错误信息不明所以 —— 所以先做能力探测，失败时给可定位的提示。

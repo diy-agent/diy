@@ -127,6 +127,9 @@ export class TaskSessionPoolV2 {
    * 多次调用同一 task 的 prompt，session 上下文连续。
    * 整个流（订阅→prompt→收完 stop）在 KeyedSerialQueue.runGen 排他下串行：
    * 事件泵是会话级广播，只串 prompt 发送挡不住「B 流收到 A 回合事件」。
+   *
+   * ⚠️ messages 只取最后一条：ACP 协议的 prompt 只接受当前轮的用户消息，
+   * 对话历史由 agent 侧 session 维护，不需要客户端传递完整历史。
    */
   async *streamChat(
     taskUri: string,
@@ -164,7 +167,10 @@ export class TaskSessionPoolV2 {
       });
 
       try {
-        const promptText = messages.map((m) => m.content).join("\n");
+        // 只取最后一条消息：ACP prompt 只接受当前轮用户消息，
+        // 对话历史由 agent 侧 session 维护，无需客户端传递。
+        const lastMsg = messages[messages.length - 1];
+        const promptText = lastMsg?.content ?? "";
         const promptDone = session
           .prompt(promptText)
           .finally(() => { ended = true; kick(); });
@@ -190,6 +196,9 @@ export class TaskSessionPoolV2 {
    * 包括 agent_message_chunk、tool_call_update、agent_thought_chunk 等。
    * 整个流（订阅→prompt→收完 stop）在 KeyedSerialQueue.runGen 排他下串行：
    * 事件泵是会话级广播，只串 prompt 发送挡不住「B 流收到 A 回合事件」。
+   *
+   * ⚠️ messages 只取最后一条：ACP 协议的 prompt 只接受当前轮的用户消息，
+   * 对话历史由 agent 侧 session 维护，不需要客户端传递完整历史。
    */
   async *streamChatEvents(
     taskUri: string,
@@ -223,7 +232,10 @@ export class TaskSessionPoolV2 {
       });
 
       try {
-        const promptText = messages.map((m) => m.content).join("\n");
+        // 只取最后一条消息：ACP prompt 只接受当前轮用户消息，
+        // 对话历史由 agent 侧 session 维护，无需客户端传递。
+        const lastMsg = messages[messages.length - 1];
+        const promptText = lastMsg?.content ?? "";
         const promptDone = session
           .prompt(promptText)
           .finally(() => { ended = true; kick(); });

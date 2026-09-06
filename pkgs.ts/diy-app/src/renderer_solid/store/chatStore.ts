@@ -101,6 +101,68 @@ export interface ChatMessage {
 }
 
 // ═══════════════════════════════════════
+// ACP 事件数据类型（用于 handleAcpEvent 类型安全）
+// ═══════════════════════════════════════
+
+/** ACP 事件 data 基础结构（所有事件共有字段） */
+interface AcpEventData {
+  messageId?: string;
+  content?: { text?: string; type?: string } | ContentBlock[];
+  [k: string]: unknown;
+}
+
+/** ACP 工具调用事件 data */
+interface AcpToolCallData extends AcpEventData {
+  toolCallId?: string;
+  name?: string;
+  title?: string;
+  kind?: string;
+  status?: string;
+  rawInput?: unknown;
+  rawOutput?: unknown;
+}
+
+/** ACP 终端事件 data */
+interface AcpTerminalData extends AcpEventData {
+  terminalId?: string;
+  command?: string;
+  cwd?: string;
+  output?: { text?: string };
+  exitStatus?: { code: number };
+}
+
+/** ACP 用量事件 data */
+interface AcpUsageData {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  used?: number;
+  size?: number;
+  cost?: { amount: number; currency?: string };
+}
+
+/** ACP 状态更新事件 data */
+interface AcpStateData {
+  state?: "running" | "idle" | "requires_action";
+}
+
+/** ACP 压缩事件 data */
+interface AcpCompactionData extends AcpEventData {
+  summary?: string;
+}
+
+/** ACP 配置更新事件 data */
+interface AcpConfigData {
+  configOptions?: Array<{
+    id: string;
+    name?: string;
+    category?: string;
+    currentValue?: string;
+    options?: Array<{ value: string; name?: string }>;
+  }>;
+}
+
+// ═══════════════════════════════════════
 // Store
 // ═══════════════════════════════════════
 
@@ -416,30 +478,30 @@ function updateToolCall(msgId: string, toolCallId: string, patch: Partial<ToolCa
 
 /** 处理 ACP session/update 事件 */
 function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
-  const d = ev.data as any;
+  const d = ev.data as AcpEventData;
   const now = Date.now();
 
   switch (ev.kind) {
     // ─── 用户消息 ───
     case "user_message_chunk": {
-      const id = d?.messageId ?? `user-${now}`;
+      const id = d.messageId ?? `user-${now}`;
       ensureMessage(id, "user", now);
-      const text = d?.content?.text ?? "";
+      const text = (d.content as { text?: string })?.text ?? "";
       if (text) appendToMessage(id, text);
       break;
     }
     case "user_message": {
       // 标准 kind（非 chunk 的完整用户消息）：opencode 只发 chunk，走不到；
       // 通用 handler 不跟单个 agent 行为绑定，留着给别的 agent
-      const id = d?.messageId ?? `user-${now}`;
-      const content = extractTextContent(d?.content);
+      const id = d.messageId ?? `user-${now}`;
+      const content = extractTextContent(d.content);
       updateMessage(id, { content, streaming: false });
       break;
     }
 
     // ─── Agent 消息 ───
     case "agent_message_chunk": {
-      const id = d?.messageId ?? `agent-${now}`;
+      const id = d.messageId ?? `agent-${now}`;
       const existing = messages().find((m) => m.id === id);
       if (existing && existing.type === "thought") {
         // 同一个 messageId 先被 thought_chunk 创建为 type="thought"，
@@ -448,14 +510,14 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
       } else {
         ensureMessage(id, "assistant", now);
       }
-      const text = d?.content?.text ?? "";
+      const text = (d.content as { text?: string })?.text ?? "";
       if (text) appendToMessage(id, text);
       break;
     }
     case "agent_message": {
       // 标准 kind（非 chunk 的完整 agent 消息）：同上，留给非 chunk 型 agent
-      const id = d?.messageId ?? `agent-${now}`;
-      const content = extractTextContent(d?.content);
+      const id = d.messageId ?? `agent-${now}`;
+      const content = extractTextContent(d.content);
       const existing = messages().find((m) => m.id === id);
       if (existing && existing.type === "thought") {
         // thought → assistant 升级
@@ -476,9 +538,9 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
 
     // ─── 思考过程 ───
     case "agent_thought_chunk": {
-      const id = d?.messageId ?? `thought-${now}`;
+      const id = d.messageId ?? `thought-${now}`;
       ensureMessage(id, "thought", now);
-      const text = d?.content?.text ?? "";
+      const text = (d.content as { text?: string })?.text ?? "";
       if (text) {
         setMessages((prev) => {
           const idx = prev.findIndex((m) => m.id === id);
@@ -492,8 +554,8 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
     }
     case "agent_thought": {
       // 标准 kind（非 chunk 的完整 thought）：同上，留给非 chunk 型 agent
-      const id = d?.messageId ?? `thought-${now}`;
-      const content = extractTextContent(d?.content);
+      const id = d.messageId ?? `thought-${now}`;
+      const content = extractTextContent(d.content);
       updateMessage(id, { thought: content, streaming: false });
       break;
     }
@@ -504,7 +566,8 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
     case "tool_call":
     case "tool_call_update": {
       // tool_call_update 的 data 直接就是 ToolCallUpdate 结构
-      const toolCallId = d?.toolCallId;
+      const tcData = ev.data as AcpToolCallData;
+      const toolCallId = tcData.toolCallId;
       if (!toolCallId) break;
       // 新建一条 assistant 消息来承载工具调用（如果没有正在流式的）
       const streamingMsg = messages().find((m) => m.streaming && m.type === "assistant");
@@ -513,21 +576,22 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
 
       const tc = ensureToolCall(msgId, toolCallId);
       updateToolCall(msgId, toolCallId, {
-        name: d?.name ?? tc.name,
-        title: d?.title ?? tc.title,
-        kind: d?.kind ?? tc.kind,
-        status: mapToolStatus(d?.status) ?? tc.status,
-        rawInput: d?.rawInput ?? tc.rawInput,
-        rawOutput: d?.rawOutput ?? tc.rawOutput,
+        name: tcData.name ?? tc.name,
+        title: tcData.title ?? tc.title,
+        kind: tcData.kind ?? tc.kind,
+        status: mapToolStatus(tcData.status) ?? tc.status,
+        rawInput: tcData.rawInput ?? tc.rawInput,
+        rawOutput: tcData.rawOutput ?? tc.rawOutput,
       });
       break;
     }
     case "tool_call_content_chunk": {
-      const toolCallId = d?.toolCallId;
+      const tcData = ev.data as AcpToolCallData;
+      const toolCallId = tcData.toolCallId;
       if (!toolCallId) break;
       const streamingMsg = messages().find((m) => m.streaming && m.type === "assistant");
       if (!streamingMsg) break;
-      const text = d?.content?.text ?? "";
+      const text = (tcData.content as { text?: string })?.text ?? "";
       if (text) {
         setMessages((prev) => {
           const idx = prev.findIndex((m) => m.id === streamingMsg.id);
@@ -545,7 +609,8 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
 
     // ─── 终端输出 ───
     case "terminal_update": {
-      const termId = d?.terminalId;
+      const termData = ev.data as AcpTerminalData;
+      const termId = termData.terminalId;
       if (!termId) break;
       const streamingMsg = messages().find((m) => m.streaming && m.type === "assistant");
       const msgId = streamingMsg?.id ?? `term-${termId}`;
@@ -560,18 +625,18 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
         if (existing) {
           updated = {
             ...existing,
-            command: d?.command ?? existing.command,
-            cwd: d?.cwd ?? existing.cwd,
-            outputBuf: existing.outputBuf + (d?.output?.text ?? ""),
-            exitStatus: d?.exitStatus ?? existing.exitStatus,
+            command: termData.command ?? existing.command,
+            cwd: termData.cwd ?? existing.cwd,
+            outputBuf: existing.outputBuf + (termData.output?.text ?? ""),
+            exitStatus: termData.exitStatus ?? existing.exitStatus,
           };
         } else {
           updated = {
             id: termId,
-            command: d?.command,
-            cwd: d?.cwd,
-            outputBuf: d?.output?.text ?? "",
-            exitStatus: d?.exitStatus,
+            command: termData.command,
+            cwd: termData.cwd,
+            outputBuf: termData.output?.text ?? "",
+            exitStatus: termData.exitStatus,
           };
         }
         const next = [...prev];
@@ -585,11 +650,12 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
     }
     case "terminal_output_chunk": {
       // 增量输出
-      const termId = d?.terminalId;
+      const termData = ev.data as AcpTerminalData;
+      const termId = termData.terminalId;
       if (!termId) break;
       const streamingMsg = messages().find((m) => m.streaming);
       if (!streamingMsg) break;
-      const text = d?.output?.text ?? d?.text ?? "";
+      const text = termData.output?.text ?? (termData as { text?: string }).text ?? "";
       if (text) {
         setMessages((prev) => {
           const idx = prev.findIndex((m) => m.id === streamingMsg.id);
@@ -609,7 +675,8 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
     case "state_update": {
       // 协议字段是 state（running/idle/requires_action），旧代码误读 status 成了死代码。
       // agent 空闲时标记所有流式消息为完成（sending 由 worker 权威管理，这里不碰）
-      if (d?.state === "idle") {
+      const stateData = ev.data as AcpStateData;
+      if (stateData.state === "idle") {
         setMessages((prev) =>
           prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
         );
@@ -621,14 +688,15 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
     case "stop": {
       // agent 回合结束（ACP session/update 最后一条通知）
       // 附上 usage（如果有）
-      if (d?.usage) {
+      const usageData = ev.data as AcpUsageData;
+      if (usageData.inputTokens !== undefined || usageData.outputTokens !== undefined) {
         const lastAssistant = [...messages()].reverse().find((m) => m.type === "assistant");
         if (lastAssistant) {
           updateMessage(lastAssistant.id, {
             usage: {
-              input: d.usage.inputTokens,
-              output: d.usage.outputTokens,
-              total: d.usage.totalTokens,
+              input: usageData.inputTokens,
+              output: usageData.outputTokens,
+              total: usageData.totalTokens,
             },
           });
         }
@@ -643,13 +711,14 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
     case "usage_update": {
       // 官方 UsageUpdate = { used, size, cost }（会话上下文窗口占用），
       // 不是 input/output/total —— 原代码读错字段导致这里永远解析出 undefined。
+      const usageData = ev.data as AcpUsageData;
       const lastAssistant = [...messages()].reverse().find((m) => m.type === "assistant");
       if (lastAssistant) {
         updateMessage(lastAssistant.id, {
           usage: {
-            used: d?.used,
-            size: d?.size,
-            cost: d?.cost,
+            used: usageData.used,
+            size: usageData.size,
+            cost: usageData.cost,
           },
         });
       }
@@ -659,8 +728,9 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
     // ─── 上下文压缩 ───
     case "compaction_update":
     case "compaction_summary_chunk": {
+      const compData = ev.data as AcpCompactionData;
       const id = `compaction-${now}`;
-      const content = extractTextContent(d?.content) ?? d?.summary ?? "";
+      const content = extractTextContent(compData.content) ?? compData.summary ?? "";
       if (content) {
         ensureMessage(id, "compaction", now);
         updateMessage(id, { content, streaming: ev.kind === "compaction_summary_chunk" });
@@ -670,7 +740,8 @@ function handleAcpEvent(ev: { kind: string; data: Record<string, unknown> }) {
 
     // ─── 配置推送（事件源：agent 改配置后推全量，UI 就地刷新，不轮询） ───
     case "config_option_update": {
-      const opts = d?.configOptions;
+      const configData = ev.data as AcpConfigData;
+      const opts = configData.configOptions;
       if (Array.isArray(opts)) {
         for (const fn of onConfigOptionsCallbacks) {
           try { fn(opts as ConfigOptionSnapshot[]); } catch { /* 单个订阅者异常不影响其他 */ }
@@ -698,8 +769,8 @@ export interface ConfigOptionSnapshot {
 function extractTextContent(blocks: unknown): string {
   if (!Array.isArray(blocks)) return "";
   return blocks
-    .filter((b: any) => b?.type === "text" && typeof b.text === "string")
-    .map((b: any) => b.text)
+    .filter((b): b is TextBlock => b != null && typeof b === "object" && (b as ContentBlock).type === "text" && typeof (b as TextBlock).text === "string")
+    .map((b) => b.text)
     .join("");
 }
 
@@ -773,10 +844,11 @@ async function runOne(taskUri: string, content: string, msgId: string, turnAbort
     );
     // 通知外部 session 已创建（configOptions 可用）
     onSessionCreatedCallbacks.forEach((fn) => fn());
-  } catch (e: any) {
+  } catch (e: unknown) {
     // 被取消的轮次不算错误（stop 流正常结束后也会走到这里）
-    if (!(e?.message?.includes("取消") || e?.name === "AbortError")) {
-      setError(e?.message ?? String(e));
+    const err = e instanceof Error ? e : new Error(String(e));
+    if (!(err.message.includes("取消") || err.name === "AbortError")) {
+      setError(err.message);
     }
   }
   // 队列状态（running→completed/cancelled、sending）由 worker 统一确认

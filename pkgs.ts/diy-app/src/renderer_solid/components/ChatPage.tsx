@@ -544,29 +544,43 @@ export function ChatPage() {
     }
   };
 
-  /** 设置配置选项（乐观更新，失败回滚） */
-  const setConfig = async (configId: string, value: string) => {
+  // ─── debounce：防止快速连续切换同一配置项时发送多次 RPC ───
+  const configTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /** 设置配置选项（乐观更新 + 300ms debounce，失败回滚） */
+  const setConfig = (configId: string, value: string) => {
     const uri = taskUri();
     if (!uri) return;
-    // 记住旧值用于回滚
-    const oldValue = getConfig(configId)?.currentValue;
+    // 记住旧值用于回滚（首次切换时快照）
+    if (!configTimers.has(configId)) {
+      (setConfig as any)[`_old_${configId}`] = getConfig(configId)?.currentValue;
+    }
+    const oldValue = (setConfig as any)[`_old_${configId}`];
     // 乐观更新：立即改本地 signal
     setConfigOptions((prev) =>
       prev.map((o) => (o.id === configId ? { ...o, currentValue: value } : o)),
     );
-    try {
-      await diyService.diy.agent.setConfigOption({ taskUri: uri, configId, value });
-      // opencode 不推 config_option_update，setConfigOption 响应也不含更新后值，
-      // 所以不做「服务端确认」——乐观值即终态。
-    } catch (e) {
-      console.warn(`[ChatPage] 设置 ${configId} 失败:`, e);
-      // 回滚到旧值
-      if (oldValue !== undefined) {
-        setConfigOptions((prev) =>
-          prev.map((o) => (o.id === configId ? { ...o, currentValue: oldValue } : o)),
-        );
+    // debounce：清除前一个定时器，300ms 后发送 RPC
+    const prev = configTimers.get(configId);
+    if (prev) clearTimeout(prev);
+    configTimers.set(configId, setTimeout(async () => {
+      configTimers.delete(configId);
+      try {
+        await diyService.diy.agent.setConfigOption({ taskUri: uri, configId, value });
+        // opencode 不推 config_option_update，setConfigOption 响应也不含更新后值，
+        // 所以不做「服务端确认」——乐观值即终态。
+      } catch (e) {
+        console.warn(`[ChatPage] 设置 ${configId} 失败:`, e);
+        // 回滚到旧值
+        if (oldValue !== undefined) {
+          setConfigOptions((prev) =>
+            prev.map((o) => (o.id === configId ? { ...o, currentValue: oldValue } : o)),
+          );
+        }
+      } finally {
+        delete (setConfig as any)[`_old_${configId}`];
       }
-    }
+    }, 300));
   };
 
   /** 获取指定配置项的当前值 */
@@ -684,6 +698,19 @@ export function ChatPage() {
             </select>
           </div>
         </Show>
+        {/* 自动审批 (autoApprove) */}
+        <div class="flex items-center gap-1">
+          <span class="text-xs opacity-50">🔐</span>
+          <label class="flex items-center gap-1 cursor-pointer">
+            <input
+              type="checkbox"
+              class="checkbox checkbox-xs"
+              checked={agentStore.autoApprove}
+              onChange={(e) => void agentStore.setAutoApprove(e.currentTarget.checked)}
+            />
+            <span class="text-xs">自动审批</span>
+          </label>
+        </div>
         <button class="btn btn-ghost btn-sm" onClick={() => chatStore.clearChat()}>
           清空
         </button>
