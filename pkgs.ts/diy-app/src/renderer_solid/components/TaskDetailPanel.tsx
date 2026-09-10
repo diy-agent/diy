@@ -1,7 +1,6 @@
 import { onMount, onCleanup, Show } from "solid-js";
 import * as Tabs from "@kobalte/core/tabs";
 import { taskStore, type TaskDetail } from "../store/taskStore";
-import { ChatPage } from "./ChatPage";
 import { LocalChatPage } from "./LocalChatPage";
 
 export function TaskDetailPanel() {
@@ -31,17 +30,11 @@ export function TaskDetailPanel() {
                 {/* Tab 切换：Agent 对话（默认）/ 任务详情 */}
                 <Tabs.Root defaultValue="agent" class="flex flex-col flex-1 overflow-hidden">
                     <Tabs.List class="tabs tabs-bordered tabs-sm px-4 shrink-0">
-                        <Tabs.Trigger value="agent" class="tab">🤖 Agent</Tabs.Trigger>
                         <Tabs.Trigger value="local" class="tab">🧪 Local</Tabs.Trigger>
                         <Tabs.Trigger value="info" class="tab">📋 详情</Tabs.Trigger>
                     </Tabs.List>
 
-                    {/* Agent 对话 —— 完整聊天页（任务由面板选中驱动，进入即建会话开聊） */}
-                    <Tabs.Content value="agent" class="flex-1 overflow-hidden">
-                        <ChatPage />
-                    </Tabs.Content>
-
-                    {/* 本地自定义 agent（ai-sdk 块协议，独立会话；与 ACP 并行实验） */}
+                    {/* 本地自定义 agent（ai-sdk 块协议，独立会话） */}
                     <Tabs.Content value="local" class="flex-1 overflow-hidden">
                         <LocalChatPage />
                     </Tabs.Content>
