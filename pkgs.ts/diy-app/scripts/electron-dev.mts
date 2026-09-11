@@ -7,23 +7,8 @@ import electronPath from "electron";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
-import { execFileSync } from "node:child_process";
-
-/** GPU 能力检测：Metal GPUFamily < 3 时自动走 ANGLE/GL 后端 */
-function gpuCompatArgs(): string[] {
-  try {
-    const out = execFileSync("system_profiler", ["SPDisplaysDataType"], {
-      timeout: 3000, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
-    });
-    const m = out.match(/Metal GPUFamily macOS (\d+)/);
-    const family = m ? parseInt(m[1], 10) : 99;
-    if (family < 3) {
-      console.log(`[dev] [gpu] Metal GPUFamily macOS ${family} < 3，添加 --use-gl=angle`);
-      return ["--use-gl=angle"];
-    }
-  } catch { /* system_profiler 不可用则跳过 */ }
-  return [];
-}
+// 注：Chromium 开关（disable-features=RustPng / use-gl=angle）由 src/main/index.ts 经
+// app.commandLine.appendSwitch 生效，此处不再拼 argv（Chromium 不吃 app argv）。
 // ── CLI 参数解析 ──
 const args = process.argv.slice(2);
 const portIdx = args.indexOf("--port");
@@ -105,13 +90,14 @@ function startElectron(url: string) {
   const cdpArgs = ["--remote-debugging-port=0"];
   clearDevToolsActivePort();
 
-  const proc = spawn(String(electronPath), ["out/main/index.mjs", url, ...electronArgs, ...cdpArgs, ...gpuCompatArgs(), "--disable-features=RustPng"], {
+  // Chromium 开关由 src/main/index.ts 经 app.commandLine.appendSwitch 生效，此处不传 argv。
+  const proc = spawn(String(electronPath), ["out/main/index.mjs", url, ...electronArgs, ...cdpArgs], {
     stdio: "inherit",
     // 注入运行时契约变量（src/runtime.ts 读取）：dev 加载 URL + 产物根 + 数据根
     env: {
       ...process.env,
       DIY_DEV_SERVER_URL: url,
-      DIY_MIRROR_DISPLAY: "1",
+      _DIY_MIRROR_DISPLAY: "1",
     },
   });
   electronProc = proc;

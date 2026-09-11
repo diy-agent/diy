@@ -30,7 +30,12 @@ import { AppConfig } from "./core/app-config";
 import { bindApi, bindAppHandlers, setRpcPort } from "./services/api-impl";
 import { installDiagnostics } from "./services/diagnostics";
 import { installCrashReporting } from "./services/crash-reporting";
+import { detectGpu } from "./core/gpu-detect";
 import { readRuntimeConfig } from "../runtime";
+
+// Chromium 开关必须走 app.commandLine（ready 之前），跟在 app 路径后传 argv 无效。
+// 之前 cli/electron-dev 把 --disable-features=RustPng 放 spawn argv 里，Chromium 根本没吃到，rust_png 照崩。
+app.commandLine.appendSwitch("disable-features", "RustPng");
 import { homedir, hostname, platform, arch, release, totalmem, freemem } from "node:os";
 
 // ── 共享全局信息（给 IPC 用） ──
@@ -63,6 +68,11 @@ app.setPath("cache", appConfig.cache);
 installDiagnostics(appConfig.diyHome);
 // 原生崩溃采集：Crashpad minidump → <DIY_HOME>/log/crashes + 子进程消亡日志进 main.log
 installCrashReporting(appConfig.diyHome);
+
+// GPU 防御性开关：诊断设施就绪后再探测，保证 [gpu] 日志进 main.log。仍在 ready 之前，appendSwitch 有效。
+try {
+  if (detectGpu().shouldUseAngle) app.commandLine.appendSwitch("use-gl", "angle");
+} catch { /* GPU 探测失败就跳过，不挡启动 */ }
 
 // ── 系统信息 ──
 console.log("═══════════════════════════════════════");
@@ -108,14 +118,14 @@ if (!gotLock) {
 
 /**
  * 测试/开发时把窗口定位到「非主工作屏」，避免遮挡用户正在干活的屏幕。
- * 仅在 DIY_MIRROR_DISPLAY=1 时生效；检测不到合适副屏则回退空对象（默认主屏定位）。
+ * 仅在 _DIY_MIRROR_DISPLAY=1（内部变量）时生效；检测不到合适副屏则回退空对象（默认主屏定位）。
  * 返回窗口 options 子集（width/height/x/y），尺寸自动适配目标屏 workArea。
  */
 function mirrorWindowPos(
   width: number,
   height: number,
 ): Record<string, number> {
-  if (process.env["DIY_MIRROR_DISPLAY"] !== "1") return {};
+  if (process.env["_DIY_MIRROR_DISPLAY"] !== "1") return {};
   try {
     const displays = screen.getAllDisplays();
     const primaryId = screen.getPrimaryDisplay().id;

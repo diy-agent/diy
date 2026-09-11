@@ -134,7 +134,7 @@ async function waitForCdpBase(home: string, timeoutMs = 8000): Promise<string | 
  */
 export async function startElectronTest(): Promise<ElectronTest> {
   const home = makeIsolatedHome();
-  const env = { ...process.env, HOME: home, DIY_HOME: home, DIY_MIRROR_DISPLAY: "1" };
+  const env = { ...process.env, HOME: home, DIY_HOME: home, _DIY_MIRROR_DISPLAY: "1" };
   const appDir = join(__dirname, "..");
 
   const args = ["out/main/index.mjs", "--remote-debugging-port=0"];

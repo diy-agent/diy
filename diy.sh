@@ -37,5 +37,5 @@ if [[ -t 2 ]]; then
 fi
 
 cd "$APP_DIR"
-exec env DIY_HOME="${DIY_HOME:-$HOME_DEFAULT}" \
+exec env DIY_HOME="${DIY_HOME:-$HOME_DEFAULT}" _DIY_MIRROR_DISPLAY="${_DIY_MIRROR_DISPLAY:-1}" \
   "$APP_DIR/../../node_modules/.bin/tsx" src/cli/index.ts "$@"

@@ -64,6 +64,7 @@ renderer_solid/ 有独立 tsconfig（strict + jsxImportSource: solid-js），tsc
 - ✅ daisyUI 主题类管组件外观（card/modal/drawer/menu/chat）
 - ✅ 布局/间距仍用 Tailwind（`flex-1`/`w-56`/`absolute` 等）
 - ✅ 自定义色用 `diy-` 前缀，在 `@theme inline` 块末尾追加（例 `--color-diy-state-pending` → `bg-diy-state-pending`）
+- ✅ 主题：`index.css` 开 `light, dark --default` 双主题，`lib/theme.ts` 经 `data-theme` 显式锁定 + localStorage 持久（不跟随系统，避免 CDP colorScheme 仿真闪变）；设置页「🎨 外观」切换；任务标题链接用 `.diy-link`（`--color-diy-link` 按主题配，dark 提亮保证对比度，不直接用 `text-primary`）
 - ⚠️ **主题不得回落到 `prefers-color-scheme`** —— Playwright 的 `colorScheme` 默认值是 `"light"`，attach CDP 时会覆盖系统外观把界面刷白（实测 `renderer_solid/index.css` 的 `dark --prefersdark` 会让 CDP attach 后界面闪白）；应改成 `dark --default` 或用 `data-theme` 显式锁定
 - 注意 daisyUI drawer 需渲染 `<input class="drawer-toggle">`，漏了侧栏 `visibility:hidden` 消失
 
@@ -107,8 +108,8 @@ cat "$DIY_HOME/electron_user_data/DevToolsActivePort"    # 或 curl http://127.0
 
 ### 窗口定位副屏
 
-`DIY_MIRROR_DISPLAY=1` 时窗口居中到非主屏（优先 Sidecar iPad），避免遮挡开发用的主屏。
-`./sha.sh dev` / `./diy.sh` / 意图测试均已默认注入；单屏环境自动回退默认定位。
+`_DIY_MIRROR_DISPLAY=1`（内部变量）时窗口居中到非主屏（优先 Sidecar iPad），避免遮挡开发用的主屏。
+`./sha.sh dev` / `./diy.sh` 默认注入（`diy.sh` 兜底 1，`_DIY_MIRROR_DISPLAY=0 ./diy.sh ...` 可强制主屏）；意图测试强制 `1`（`tests/setup.ts` + `shell-test.ts`/`electron-test.ts` 硬编码，不受外层环境影响，避免频繁启动遮挡主屏）；全局 `diy`（`bin/diy`，含 `npm link`）不注入，默认主屏；单屏环境自动回退默认定位。
 
 ### 硬性约束：子进程 stdio 的 pipe 规则
 
@@ -268,8 +269,9 @@ ud2  (V8 assertion trap)
   ← Chromium render pipeline
 ```
 
-**规避方式**：升级 Electron 至 44+（Chromium 151+，修复了 rust_png 问题）。
-⚠️ 但 Chromium 151+ 要求 macOS 13+，当前 macOS 12 无法使用。
+**规避方式**：`src/main/index.ts` 经 `app.commandLine.appendSwitch("disable-features", "RustPng")` 关闭（ready 之前）。
+⚠️ 跟在 app 路径后拼 spawn argv 无效（Chromium 不吃 app argv），`cli`/`electron-dev` 不再传参。
+长期修复是升级 Electron 至 44+（Chromium 151+），但 Chromium 151+ 要求 macOS 13+，当前 macOS 12 无法使用。
 
 **诊断方法**：
 ```bash
