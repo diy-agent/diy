@@ -4,9 +4,6 @@
 // 注意：GPU 检测是防御性措施。渲染进程崩溃的已知根因是 Chromium 150 的 rust_png bug
 // （见 AGENTS.md），与 GPU/Metal 无关。--use-gl=angle 对 rust_png 崩溃无效。
 //
-// 生效方式：src/main/index.ts 经 app.commandLine.appendSwitch 应用。
-// 跟在 app 路径后拼 spawn argv 无效（Chromium 不吃 app argv），cli/electron-dev 不再传。
-//
 // 保留此检测的原因：
 //   1. Metal GPUFamily < 3 的旧 Mac 可能在未来遇到其他 GPU 渲染路径问题
 //   2. 作为环境诊断信息记录到 main.log，便于排查

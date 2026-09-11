@@ -4,6 +4,8 @@ import { getRendererActions } from "./renderer-actions";
 import type { ToastType } from "../store/notificationStore";
 import { apiDef } from "../../main/services/api-def";
 import { diyService } from "./rpc";
+import { taskStore } from "../store/taskStore";
+import { notificationStore } from "../store/notificationStore";
 import { createProjectViaUi } from "./create-project";
 import { createTaskViaUi } from "./create-task";
 import { taskStore } from "../store/taskStore";
@@ -108,6 +110,14 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     }
     getRendererActions().toast?.("任务已更新", "success");
     return { status: "ok", data: { uri } };
+  });
+
+  // diy.ui.task.setState — 在 tree 中直接修改任务状态
+  binding.on(ui.task.setState, async ({ input }) => {
+    await diyService.diy.task.edit({ uri: input.uri, state: input.state, title: undefined, detail: undefined, parent: undefined });
+    await taskStore.loadTree();
+    notificationStore.addToast("success", `状态已改为 ${input.state}`);
+    return { status: "ok", data: { uri: input.uri } };
   });
 
   // diy.ui.inspect — 遍历 DOM 生成无障碍树（agent 了解 UI 全貌的入口）

@@ -50,6 +50,10 @@ async function selectTask(uri: string | null) {
   if (r.data) setSelectedTask(r.data);
 }
 
+async function setState(uri: string, state: string) {
+  await diyService.diy.ui.task.setState({ uri, state: state as any });
+}
+
 // 单例：以「值 getter」暴露信号（组件当值用）。读 taskStore.nodes 即读 nodes()，
 // 在 JSX 模板 / createMemo 里读取会追踪该信号 → 响应式保持。
 export const taskStore = {
@@ -59,4 +63,5 @@ export const taskStore = {
   get loading() { return loading(); },
   loadTree,
   selectTask,
+  setState,
 };

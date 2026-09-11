@@ -64,18 +64,8 @@ renderer_solid/ 有独立 tsconfig（strict + jsxImportSource: solid-js），tsc
 - ✅ daisyUI 主题类管组件外观（card/modal/drawer/menu/chat）
 - ✅ 布局/间距仍用 Tailwind（`flex-1`/`w-56`/`absolute` 等）
 - ✅ 自定义色用 `diy-` 前缀，在 `@theme inline` 块末尾追加（例 `--color-diy-state-pending` → `bg-diy-state-pending`）
-- ✅ 主题：`index.css` 开 `light, dark --default` 双主题，`lib/theme.ts` 经 `data-theme` 显式锁定 + localStorage 持久（不跟随系统，避免 CDP colorScheme 仿真闪变）；设置页「🎨 外观」切换；任务标题链接用 `.diy-link`（`--color-diy-link` 按主题配，dark 提亮保证对比度，不直接用 `text-primary`）
 - ⚠️ **主题不得回落到 `prefers-color-scheme`** —— Playwright 的 `colorScheme` 默认值是 `"light"`，attach CDP 时会覆盖系统外观把界面刷白（实测 `renderer_solid/index.css` 的 `dark --prefersdark` 会让 CDP attach 后界面闪白）；应改成 `dark --default` 或用 `data-theme` 显式锁定
 - 注意 daisyUI drawer 需渲染 `<input class="drawer-toggle">`，漏了侧栏 `visibility:hidden` 消失
-
-### 界面状态（localStorage = 视图 cache，可清理）
-
-**localStorage 定位为「可清理的视图 cache」**：只放丢失无数据损失的界面状态（任务树展开/滚动位置、详情面板宽度、聊天密度、主题偏好等）。它是低重要性缓存数据，与业务数据（`$DIY_HOME` 文件、任务 frontmatter）严格分离。
-
-- ✅ localStorage 全部是「可清理的视图 cache」，唯一入口 `Caches` 对象（`renderer_solid/lib/ui-state.ts`）；属性名 = 存储 key 完全一致（`diy_<模块>_<组件>_<用途>` 下划线分隔，如 `Caches.diy_task_tree_expanded`），grep / devtools 反查零转换；禁止散落自定义 key、禁止 key 带 cache 段（无冗余）
-- ✅ 清理：`clearUiCache()`（枚举删 `diy.ui.*` + 兼容旧 key）+ 设置页「🎨 外观 → 重置界面状态」（清后 reload 回默认）
-- ⚠️ **禁止把有损数据写 localStorage**：丢失会造成数据/配置损失的（任务模型选择、未提交草稿、用户级默认配置）必须落 `$DIY_HOME` 文件/frontmatter（如任务模型选择 → 任务 `AGENTS.md` frontmatter `model` 字段），不能因为从 UI 生成就放浏览器存储
-- ⚠️ 不因「需要表/db/索引」升级到 IndexedDB：视图 cache 量级只有几个 key；未来出现多窗口共享/批量结构化视图状态等复杂需求，再评估 IndexedDB 或 `$DIY_HOME/cache/ui-state.json`（主进程 RPC 读写）
 
 ### UI 验证（两层，互补）
 
@@ -117,8 +107,8 @@ cat "$DIY_HOME/electron_user_data/DevToolsActivePort"    # 或 curl http://127.0
 
 ### 窗口定位副屏
 
-`_DIY_MIRROR_DISPLAY=1`（内部变量）时窗口居中到非主屏（优先 Sidecar iPad），避免遮挡开发用的主屏。
-`./sha.sh dev` / `./diy.sh` 默认注入（`diy.sh` 兜底 1，`_DIY_MIRROR_DISPLAY=0 ./diy.sh ...` 可强制主屏）；意图测试强制 `1`（`tests/setup.ts` + `shell-test.ts`/`electron-test.ts` 硬编码，不受外层环境影响，避免频繁启动遮挡主屏）；全局 `diy`（`bin/diy`，含 `npm link`）不注入，默认主屏；单屏环境自动回退默认定位。
+`DIY_MIRROR_DISPLAY=1` 时窗口居中到非主屏（优先 Sidecar iPad），避免遮挡开发用的主屏。
+`./sha.sh dev` / `./diy.sh` / 意图测试均已默认注入；单屏环境自动回退默认定位。
 
 ### 硬性约束：子进程 stdio 的 pipe 规则
 
@@ -278,9 +268,8 @@ ud2  (V8 assertion trap)
   ← Chromium render pipeline
 ```
 
-**规避方式**：`src/main/index.ts` 经 `app.commandLine.appendSwitch("disable-features", "RustPng")` 关闭（ready 之前）。
-⚠️ 跟在 app 路径后拼 spawn argv 无效（Chromium 不吃 app argv），`cli`/`electron-dev` 不再传参。
-长期修复是升级 Electron 至 44+（Chromium 151+），但 Chromium 151+ 要求 macOS 13+，当前 macOS 12 无法使用。
+**规避方式**：升级 Electron 至 44+（Chromium 151+，修复了 rust_png 问题）。
+⚠️ 但 Chromium 151+ 要求 macOS 13+，当前 macOS 12 无法使用。
 
 **诊断方法**：
 ```bash

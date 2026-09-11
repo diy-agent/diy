@@ -101,6 +101,61 @@ function findInTree(children: TreeNode[], uri: string): TreeNode | null {
     return null;
 }
 
+const allStates = ["pending", "active", "done", "cancelled", "blocked", "shelved", "new", "open", "closed"] as const;
+const stateLabel: Record<string, string> = {
+    pending: "待处理",
+    active: "进行中",
+    done: "已完成",
+    cancelled: "已取消",
+    blocked: "已阻塞",
+    shelved: "已搁置",
+    new: "新建",
+    open: "已打开",
+    closed: "已关闭",
+};
+
+function StateSelector(props: { uri: string; state: string }) {
+    const [open, setOpen] = createSignal(false);
+
+    const changeState = async (s: string, e: MouseEvent) => {
+        e.stopPropagation();
+        setOpen(false);
+        await taskStore.setState(props.uri, s);
+    };
+
+    return (
+        <span class="relative inline-block" onClick={(e) => e.stopPropagation()}>
+            <button
+                class={`btn btn-xs btn-ghost gap-1 normal-case font-normal ${stateColor[props.state] ? "text-current" : "text-base-content/60"}`}
+                onClick={() => setOpen((p) => !p)}
+            >
+                <span class={`w-2 h-2 rounded-full inline-block ${stateColor[props.state] ?? "bg-neutral"}`} />
+                {stateLabel[props.state] ?? props.state}
+            </button>
+            <Show when={open()}>
+                <ul
+                    class="menu bg-base-100 border border-base-300 rounded-box shadow-lg absolute left-0 top-full z-50 mt-1 w-32 p-1"
+                    onClick={() => setOpen(false)}
+                >
+                    <For each={allStates}>
+                        {(s) => (
+                            <li>
+                                <button
+                                    class={`text-xs gap-2 ${s === props.state ? "active font-bold" : ""}`}
+                                    onClick={(e) => changeState(s, e)}
+                                >
+                                    <span class={`w-2 h-2 rounded-full inline-block ${stateColor[s] ?? "bg-neutral"}`} />
+                                    {stateLabel[s]}
+                                </button>
+                            </li>
+                        )}
+                    </For>
+                </ul>
+            </Show>
+        </span>
+    );
+}
+
 export function TaskTree() {
     // 展开/滚动：视图 cache（lib/ui-state，localStorage 归一定位），可被清理入口清空
     const loadExpanded = (): Set<string> => {
@@ -371,7 +426,9 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                 </span>
             </td>
             <td class="font-mono text-xs opacity-60 truncate">{row.key}</td>
-            <td class="text-xs opacity-60">{row.node.state}</td>
+            <td class="text-xs">
+                <StateSelector uri={row.key} state={row.node.state ?? ""} />
+            </td>
         </tr>
     );
 }
