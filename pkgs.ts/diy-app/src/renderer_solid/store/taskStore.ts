@@ -51,7 +51,8 @@ async function selectTask(uri: string | null) {
 }
 
 async function setState(uri: string, state: string) {
-  await diyService.diy.ui.task.setState({ uri, state: state as any });
+  await diyService.diy.task.edit({ uri, state: state as any, title: undefined, detail: undefined, body: undefined, parent: undefined });
+  await loadTree();
 }
 
 // 单例：以「值 getter」暴露信号（组件当值用）。读 taskStore.nodes 即读 nodes()，

@@ -8,7 +8,6 @@ import { taskStore } from "../store/taskStore";
 import { notificationStore } from "../store/notificationStore";
 import { createProjectViaUi } from "./create-project";
 import { createTaskViaUi } from "./create-task";
-import { taskStore } from "../store/taskStore";
 
 /**
  * renderer-api-impl.ts — Renderer 侧 RPC handler 绑定（handle 分离）
@@ -114,7 +113,7 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
 
   // diy.ui.task.setState — 在 tree 中直接修改任务状态
   binding.on(ui.task.setState, async ({ input }) => {
-    await diyService.diy.task.edit({ uri: input.uri, state: input.state, title: undefined, detail: undefined, parent: undefined });
+    await diyService.diy.task.edit({ uri: input.uri, state: input.state, title: undefined, detail: undefined, body: undefined, parent: undefined });
     await taskStore.loadTree();
     notificationStore.addToast("success", `状态已改为 ${input.state}`);
     return { status: "ok", data: { uri: input.uri } };
