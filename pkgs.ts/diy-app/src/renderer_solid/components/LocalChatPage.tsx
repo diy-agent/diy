@@ -456,10 +456,19 @@ export function LocalChatPage() {
             }
         });
     };
-    // 首挂（切页面/组件重建，TaskState 在内存保留）：恢复当前任务阅读位置
+    // 首挂（切页面/组件重建，TaskState 在内存保留）：恢复当前任务阅读位置 + 输入框草稿
     onMount(() => {
         const u = uri();
-        if (u) restore(u);
+        if (u) {
+            restore(u);
+            const draft = localChatStore.getInputDraft(u);
+            if (draft && inputRef) inputRef.value = draft;
+        }
+    });
+    // 组件卸载（切 tab 到 info）前保存输入框草稿
+    onCleanup(() => {
+        const u = uri();
+        if (u && inputRef) localChatStore.setInputDraft(u, inputRef.value);
     });
     // 直播中的尾轮 turn id（running 时才有）：中断警告 gating 用
     const liveTurnId = () => {
@@ -479,10 +488,17 @@ export function LocalChatPage() {
 
     createEffect(
         on(uri, (u, prev) => {
-            // 切走前保存旧会话阅读位置（组件不卸载，滚动容器 DOM 还在）
-            if (prev && scrollRef) localChatStore.setScroll(prev, scrollRef.scrollTop);
-            // 进入新会话：内容恢复（历史重放）+ 阅读位置恢复
-            if (u) restore(u);
+            // 切走前保存旧会话阅读位置 + 输入框草稿（组件不卸载，滚动容器 DOM 还在）
+            if (prev) {
+                if (scrollRef) localChatStore.setScroll(prev, scrollRef.scrollTop);
+                if (inputRef) localChatStore.setInputDraft(prev, inputRef.value);
+            }
+            // 进入新会话：内容恢复（历史重放）+ 阅读位置恢复 + 输入框草稿恢复
+            if (u) {
+                restore(u);
+                const draft = localChatStore.getInputDraft(u);
+                if (inputRef) inputRef.value = draft;
+            }
         }),
     );
 
@@ -492,6 +508,7 @@ export function LocalChatPage() {
         const text = el.value.trim();
         if (!text || !uri() || localChatStore.running) return;
         el.value = "";
+        localChatStore.setInputDraft(uri()!, "");
         await localChatStore.send(uri()!, text);
     };
 
