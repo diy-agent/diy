@@ -231,7 +231,9 @@ function ProcessRow(props: {
     return (
         <div class="rounded-lg border border-base-300 bg-base-200/40 text-xs">
             <button
+                type="button"
                 class="flex items-center gap-2 cursor-pointer select-none px-2.5 py-1.5 w-full text-left"
+                onPointerDown={(e) => e.preventDefault()}
                 onClick={() => props.onToggle(n().id)}
             >
                 {statusMark(n())}
