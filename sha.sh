@@ -142,6 +142,9 @@ github-actions-cicd()    {
     publish
 }
 
+dev() { pkgs.ts/diy-app/sha.sh dev; }
+
+
 ####################################################
 # app entry script & _root cmd
 ####################################################
