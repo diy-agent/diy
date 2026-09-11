@@ -10,5 +10,5 @@ ref:
     - https://github.com/deepseek-ai/deepseek-harness
     - https://github.com/earendil-works/pi
 project:
-  id: '2'
-  name: diy-feat-acp
+  id: '1'
+  name: diy-ui-fine-tune
