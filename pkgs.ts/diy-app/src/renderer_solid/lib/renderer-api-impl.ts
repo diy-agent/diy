@@ -6,6 +6,7 @@ import { apiDef } from "../../main/services/api-def";
 import { diyService } from "./rpc";
 import { createProjectViaUi } from "./create-project";
 import { createTaskViaUi } from "./create-task";
+import { taskStore } from "../store/taskStore";
 
 /**
  * renderer-api-impl.ts — Renderer 侧 RPC handler 绑定（handle 分离）
@@ -90,6 +91,22 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
       project: input.project,
       parent: input.parent,
     });
+    return { status: "ok", data: { uri } };
+  });
+
+  // diy.ui.task.update — 编辑任务（标题 / 详情 / 正文），反向调 main + 刷新树 + toast
+  binding.on(ui.task.update, async ({ input }) => {
+    const { uri, ...changes } = input;
+    const filtered: Record<string, string> = {};
+    for (const [k, v] of Object.entries(changes)) {
+      if (v !== undefined) filtered[k] = v as string;
+    }
+    await diyService.diy.task.edit({ uri, title: filtered.title, state: filtered.state as any, detail: filtered.detail, body: filtered.body, parent: filtered.parent });
+    await taskStore.loadTree();
+    if (taskStore.selectedUri === uri) {
+      await taskStore.selectTask(uri);
+    }
+    getRendererActions().toast?.("任务已更新", "success");
     return { status: "ok", data: { uri } };
   });
 
