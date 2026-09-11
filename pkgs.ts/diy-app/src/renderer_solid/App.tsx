@@ -109,21 +109,23 @@ export default function App() {
             {/* 侧栏 - DaisyUI drawer */}
             <div class="drawer-side z-40">
                 <label for="sidebar-toggle" class="drawer-overlay" />
-                {/* 宽用内联 style：daisyUI .menu{width:fit-content} 是非分层样式，会压住 w-12/w-56 utility */}
+                {/* 宽用内联 style：daisyUI .menu{width:fit-content} 是非分层样式，会压住 w-12/w-56 utility
+                    收起态同步去掉 menu 的 8px 水平 padding（p-0），否则按钮内容超出 rail 被顶到右侧 */}
                 <div
-                    class="menu bg-base-200 min-h-full transition-all duration-200 whitespace-nowrap overflow-hidden"
-                    style={{ width: expanded() ? "14rem" : "3rem" }}
+                    class={`menu bg-base-200 min-h-full transition-all duration-200 whitespace-nowrap overflow-hidden ${expanded() ? "p-2" : "p-0"}`}
+                    style={{ width: expanded() ? "14rem" : "2.5rem" }}
                     onMouseEnter={() => setHovered(true)}
                     onMouseLeave={() => setHovered(false)}
                 >
                     <div class="border-b font-bold h-12 flex items-center justify-center">
                         <span title="diy">◉</span>
                     </div>
-                    <div class="p-1 space-y-1">
+                    <div class={`space-y-1 ${expanded() ? "p-1" : "py-2"}`}>
                         {navItems.map((item) => (
                             <li class="flex justify-center">
+                                {/* tab 式选中指示：当前页加高亮胶囊 + 左侧指示条，收起态也可见 */}
                                 <button
-                                    class={currentPage() === item.id ? "active" : ""}
+                                    class={`flex items-center gap-2 w-full transition-colors cursor-pointer ${expanded() ? "px-3 py-2 rounded-lg" : "h-8 w-8 rounded-lg justify-center"} ${currentPage() === item.id ? "bg-primary/30 text-base-content font-semibold ring-1 ring-primary/40" : "hover:bg-base-300"}`}
                                     title={item.label}
                                     onClick={() => {
                                         setCurrentPage(item.id);
