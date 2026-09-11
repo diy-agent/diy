@@ -1,24 +1,18 @@
-import { createSignal, createMemo, onMount, onCleanup, Show } from "solid-js";
+import { createSignal, createMemo, createEffect, on, onMount, onCleanup, Show } from "solid-js";
 import * as Tabs from "@kobalte/core/tabs";
 import * as Select from "@kobalte/core/select";
 import { taskStore, type TaskDetail } from "../store/taskStore";
+import { localChatStore } from "../store/localChatStore";
 import { diyService } from "../lib/rpc";
+import { Caches } from "../lib/ui-state";
 import { LocalChatPage } from "./LocalChatPage";
 
-const PANEL_W_KEY = "diy-detail-width";
 const PANEL_W_MIN = 360;
 const PANEL_W_MAX = 1000;
-const PANEL_W_DEFAULT = 560;
 
-/** 面板宽度（px 固定值，不用百分比；localStorage 持久） */
+/** 面板宽度（px 固定值，不用百分比；视图 cache：范围校验在字段 parse） */
 function loadPanelWidth(): number {
-    try {
-        const v = Number(localStorage.getItem(PANEL_W_KEY));
-        if (v >= PANEL_W_MIN && v <= PANEL_W_MAX) return v;
-    } catch {
-        /* 读失败用默认 */
-    }
-    return PANEL_W_DEFAULT;
+    return Caches.diy_task_detail_width.get();
 }
 
 export function TaskDetailPanel() {
@@ -28,6 +22,59 @@ export function TaskDetailPanel() {
     onMount(() => window.addEventListener("keydown", onKey));
     onCleanup(() => window.removeEventListener("keydown", onKey));
     const [panelW, setPanelW] = createSignal(loadPanelWidth());
+
+    // ── per-task 记忆：当前任务详情面板在哪个 tab + info 滚动位置（存 TaskState，切任务/重挂各自恢复） ──
+    const [tab, setTab] = createSignal<"local" | "info">(
+        taskStore.selectedUri ? localChatStore.getTab(taskStore.selectedUri) : "local",
+    );
+    let detailScrollRef: HTMLDivElement | undefined;
+    /** 详情滚动恢复标记：置位于「切任务/进入 info」，内容（selectedTask 异步加载）就绪后执行一次 */
+    let needsRestore = false;
+    // 切任务：保存旧任务的 tab → 恢复新任务（详情滚动由 info 容器 onScroll 实时记录，天然准确）
+    createEffect(
+        on(
+            () => taskStore.selectedUri,
+            (uri, prev) => {
+                if (prev) localChatStore.setTab(prev, tab());
+                const next = uri ? localChatStore.getTab(uri) : "local";
+                setTab(next);
+                if (next === "info") needsRestore = true;
+            },
+        ),
+    );
+    // 手动切到 info tab：同样置恢复标记
+    createEffect(
+        on(() => tab(), (t) => {
+            if (t === "info") needsRestore = true;
+        }),
+    );
+    // 首挂（任务详情 tab 时）也要恢复
+    onMount(() => {
+        if (tab() === "info") needsRestore = true;
+    });
+    // 内容就绪后恢复详情滚动（rAF 一帧后设，内容已渲染不会被 clamped）
+    createEffect(() => {
+        const t = taskStore.selectedTask;
+        const uri = taskStore.selectedUri;
+        if (!t || !uri || !needsRestore) return;
+        if (tab() !== "info" || !detailScrollRef) return;
+        needsRestore = false;
+        const p = localChatStore.getDetailScroll(uri);
+        if (p > 0) {
+            // 内容异步渲染：等 scrollHeight 展开（>clientHeight）再设，防 clamped；最多 5 帧尽力
+            let frames = 0;
+            const trySet = () => {
+                if (!detailScrollRef) return;
+                frames++;
+                if (frames <= 5 && detailScrollRef.scrollHeight <= detailScrollRef.clientHeight + 1) {
+                    requestAnimationFrame(trySet);
+                    return;
+                }
+                detailScrollRef.scrollTop = p;
+            };
+            requestAnimationFrame(trySet);
+        }
+    });
 
     // 左缘拖拽改宽：面板右锚定，宽 = 视口宽 - 鼠标 x；松开落盘
     const onGripDown = (e: MouseEvent) => {
@@ -40,7 +87,7 @@ export function TaskDetailPanel() {
             window.removeEventListener("mousemove", move);
             window.removeEventListener("mouseup", up);
             try {
-                localStorage.setItem(PANEL_W_KEY, String(panelW()));
+                Caches.diy_task_detail_width.set(panelW());
             } catch {
                 /* 存失败不影响本次 */
             }
@@ -71,8 +118,21 @@ export function TaskDetailPanel() {
                     </button>
                 </div>
 
-                {/* Tab 切换：Agent 对话（默认）/ 任务详情 */}
-                <Tabs.Root defaultValue="agent" class="flex flex-col flex-1 overflow-hidden">
+                {/* Tab 切换：Agent 对话（默认）/ 任务详情（受控：per-task 记忆，切任务各自恢复） */}
+                <Tabs.Root
+                    value={tab()}
+                    onChange={(v) => {
+                        const t = v === "info" ? "info" : "local";
+                        setTab(t);
+                        const uri = taskStore.selectedUri;
+                        if (uri) {
+                            localChatStore.setTab(uri, t);
+                            // 切出 info 前保存滚动位置（容器 DOM 还在）
+                            if (t === "local" && detailScrollRef) localChatStore.setDetailScroll(uri, detailScrollRef.scrollTop);
+                        }
+                    }}
+                    class="flex flex-col flex-1 overflow-hidden"
+                >
                     <Tabs.List class="tabs tabs-bordered tabs-sm px-4 shrink-0">
                         <Tabs.Trigger value="local" class="tab">🧪 Local</Tabs.Trigger>
                         <Tabs.Trigger value="info" class="tab">📋 详情</Tabs.Trigger>
@@ -84,7 +144,15 @@ export function TaskDetailPanel() {
                     </Tabs.Content>
 
                     {/* 任务详情 —— 元信息 */}
-                    <Tabs.Content value="info" class="flex-1 overflow-auto p-4">
+                    <Tabs.Content
+                        value="info"
+                        class="flex-1 overflow-auto p-4"
+                        ref={(el) => (detailScrollRef = el)}
+                        onScroll={(e) => {
+                            const u = taskStore.selectedUri;
+                            if (u) localChatStore.setDetailScroll(u, e.currentTarget.scrollTop);
+                        }}
+                    >
                         <Show when={taskStore.selectedTask} fallback={<div class="opacity-60 text-sm">加载中…</div>}>
                             {(t) => <TaskInfoView task={t()} />}
                         </Show>

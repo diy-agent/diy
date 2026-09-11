@@ -1,10 +1,11 @@
-import { createSignal, createMemo, onMount, For, Show } from "solid-js";
+import { createSignal, createMemo, For, Show } from "solid-js";
 import { createMutable } from "solid-js/store";
 import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSensor } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { taskStore, type TreeNode } from "../store/taskStore";
 import { notificationStore } from "../store/notificationStore";
 import { diyService } from "../lib/rpc";
+import { Caches } from "../lib/ui-state";
 import { CreateProjectSheet } from "./CreateProjectSheet";
 import { CreateTaskSheet } from "./CreateTaskSheet";
 
@@ -101,8 +102,34 @@ function findInTree(children: TreeNode[], uri: string): TreeNode | null {
 }
 
 export function TaskTree() {
-    const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
-    onMount(() => taskStore.loadTree());
+    // 展开/滚动：视图 cache（lib/ui-state，localStorage 归一定位），可被清理入口清空
+    const loadExpanded = (): Set<string> => {
+        try {
+            return new Set(Caches.diy_task_tree_expanded.get());
+        } catch {
+            return new Set();
+        }
+    };
+    const saveExpanded = (s: Set<string>) => {
+        try {
+            Caches.diy_task_tree_expanded.set([...s]);
+        } catch { /* 存储不可用忽略 */ }
+    };
+    const [expanded, setExpanded] = createSignal<Set<string>>(loadExpanded());
+    const scrollRef = (el: HTMLDivElement | undefined) => {
+        if (!el || el.dataset.scrollRestored === "1") return;
+        el.dataset.scrollRestored = "1";
+        // 等首次 loadTree 渲染完成再恢复滚动位置
+        void taskStore.loadTree().then(() => {
+            const v = Caches.diy_task_tree_scroll.get();
+            if (v > 0) el.scrollTop = v;
+        });
+    };
+    const onScroll = (e: Event) => {
+        try {
+            Caches.diy_task_tree_scroll.set((e.currentTarget as HTMLDivElement).scrollTop);
+        } catch { /* 存储不可用忽略 */ }
+    };
     const rows = createMemo(() => {
         const seen = new Set<string>();
         const out = flattenTree(taskStore.nodes, expanded(), seen);
@@ -119,6 +146,7 @@ export function TaskTree() {
         setExpanded((p) => {
             const n = new Set(p);
             n.has(k) ? n.delete(k) : n.add(k);
+            saveExpanded(n);
             return n;
         });
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -189,7 +217,7 @@ export function TaskTree() {
                     <span class="text-sm font-semibold">任务</span>
                     <CreateProjectSheet />
                 </div>
-                <div class="flex-1 overflow-auto min-w-0" tabindex={0} onKeyDown={handleKeyDown}>
+                <div class="flex-1 overflow-auto min-w-0" tabindex={0} onKeyDown={handleKeyDown} ref={scrollRef} onScroll={onScroll}>
                     <table class="table table-sm w-full">
                         <thead class="sticky top-0 bg-base-100 z-10">
                             <tr>

@@ -68,6 +68,15 @@ renderer_solid/ 有独立 tsconfig（strict + jsxImportSource: solid-js），tsc
 - ⚠️ **主题不得回落到 `prefers-color-scheme`** —— Playwright 的 `colorScheme` 默认值是 `"light"`，attach CDP 时会覆盖系统外观把界面刷白（实测 `renderer_solid/index.css` 的 `dark --prefersdark` 会让 CDP attach 后界面闪白）；应改成 `dark --default` 或用 `data-theme` 显式锁定
 - 注意 daisyUI drawer 需渲染 `<input class="drawer-toggle">`，漏了侧栏 `visibility:hidden` 消失
 
+### 界面状态（localStorage = 视图 cache，可清理）
+
+**localStorage 定位为「可清理的视图 cache」**：只放丢失无数据损失的界面状态（任务树展开/滚动位置、详情面板宽度、聊天密度、主题偏好等）。它是低重要性缓存数据，与业务数据（`$DIY_HOME` 文件、任务 frontmatter）严格分离。
+
+- ✅ localStorage 全部是「可清理的视图 cache」，唯一入口 `Caches` 对象（`renderer_solid/lib/ui-state.ts`）；属性名 = 存储 key 完全一致（`diy_<模块>_<组件>_<用途>` 下划线分隔，如 `Caches.diy_task_tree_expanded`），grep / devtools 反查零转换；禁止散落自定义 key、禁止 key 带 cache 段（无冗余）
+- ✅ 清理：`clearUiCache()`（枚举删 `diy.ui.*` + 兼容旧 key）+ 设置页「🎨 外观 → 重置界面状态」（清后 reload 回默认）
+- ⚠️ **禁止把有损数据写 localStorage**：丢失会造成数据/配置损失的（任务模型选择、未提交草稿、用户级默认配置）必须落 `$DIY_HOME` 文件/frontmatter（如任务模型选择 → 任务 `AGENTS.md` frontmatter `model` 字段），不能因为从 UI 生成就放浏览器存储
+- ⚠️ 不因「需要表/db/索引」升级到 IndexedDB：视图 cache 量级只有几个 key；未来出现多窗口共享/批量结构化视图状态等复杂需求，再评估 IndexedDB 或 `$DIY_HOME/cache/ui-state.json`（主进程 RPC 读写）
+
 ### UI 验证（两层，互补）
 
 - **`diy.ui.*`（handler 层）**：CLI 经 RPC 直接调 renderer 的共享入口函数（与按钮 onClick 同一批）。测行为/契约/状态，稳定适合 test:intent 基线；**测不到真实 DOM 事件链的 bug**。
