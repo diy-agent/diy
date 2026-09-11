@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 import { createTaskViaUi } from "../lib/create-task";
 import { notificationStore } from "../store/notificationStore";
+import { onEnterKey } from "../lib/on-enter";
 
 export function CreateTaskSheet(props: {
     projectId: string;
@@ -68,9 +69,7 @@ export function CreateTaskSheet(props: {
                             placeholder="输入任务标题"
                             value={title()}
                             onInput={(e) => setTitle(e.currentTarget.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === "Enter" && title().trim()) submit();
-                            }}
+                            onKeyDown={onEnterKey(() => { if (title().trim()) submit(); })}
                             autofocus
                         />
                     </div>

@@ -18,6 +18,7 @@ import { localChatStore } from "../store/localChatStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
 import { Caches, DENSITY_LEVEL, DENSITY_VALUES, type Density } from "../lib/ui-state";
+import { onEnterKey } from "../lib/on-enter";
 import type { BlockNode } from "../../main/services/local-blocks";
 
 // ─── 层级 ───────────────────────────────────────────
@@ -588,12 +589,7 @@ export function LocalChatPage() {
                         rows={2}
                         class="textarea textarea-bordered flex-1 resize-none text-sm"
                         placeholder="本地 agent（回车发送 / Shift+回车换行）…"
-                        onKeyDown={(e) => {
-                            if (e.key === "Enter" && !e.shiftKey) {
-                                e.preventDefault();
-                                void submit();
-                            }
-                        }}
+                        onKeyDown={onEnterKey(() => void submit(), { shiftNewline: true })}
                     />
                     <Show
                         when={!localChatStore.running}
