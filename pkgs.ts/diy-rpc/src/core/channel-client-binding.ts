@@ -19,6 +19,7 @@ interface StreamEntry {
 export class ChannelClientBinding implements ClientBinding {
   private _reqId = 0;
   private unsub: () => void;
+  private _onCloseUnsub: () => void;
   private pending = new Map<number, PendingEntry>();
   private streams = new Map<number, StreamEntry>();
   private disposed = false;
@@ -47,9 +48,13 @@ export class ChannelClientBinding implements ClientBinding {
         }
       }
     });
+    // 传输层关闭（对端死亡）→ 自动 dispose，所有 pending 调用收到 DISPOSED 错误
+    this._onCloseUnsub = this.transport.onClose(() => this.dispose());
   }
 
   dispose(): void {
+    if (this.disposed) return; // 幂等：避免 onClose + 显式调用双重触发
+    this._onCloseUnsub?.();
     this.disposed = true;
     this.unsub();
     for (const [id, entry] of this.pending) {

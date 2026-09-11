@@ -245,3 +245,40 @@ tailscale serve --bg --https 18888 http://127.0.0.1:18888
 - `npm update --save` 保持所有依赖 latest
 - 新增业务依赖（zod、js-yaml、chokidar 等）写入 `dependencies`
 - 构建工具依赖（vite、typescript 等）写入 `devDependencies`（当前已 latest）
+
+### 硬件与 Electron 兼容性约束
+
+#### macOS 版本
+
+- Electron 43.1.1 内含 Chrome 150，要求 **macOS 11+**（Big Sur）
+- **Chromium 151+ 将要求 macOS 13+（Ventura）—— 升级 Electron 前必须确认 macOS 版本**
+- 当前测试环境：macOS 12.7.6 (Monterey) ✅ 兼容 Electron 43
+
+#### 渲染进程崩溃（已知问题：rust_png）
+
+Electron 43 (Chrome 150) 的 Rust PNG 解码器 (`rust_png`) 存在已知 bug，
+在解码 PNG 图像时触发 V8 类型断言失败 (`v8::Value::IsUint8ClampedArray()`)，
+导致渲染进程 SIGTRAP (exitCode=5) 崩溃 + 白屏。
+
+崩溃特征（lldb 确认）：
+```
+ud2  (V8 assertion trap)
+  ← v8::Value::IsUint8ClampedArray()
+  ← cxxbridge1$box$rust_png$ResultOfReader$drop  ← Rust PNG decoder
+  ← Chromium render pipeline
+```
+
+**规避方式**：升级 Electron 至 44+（Chromium 151+，修复了 rust_png 问题）。
+⚠️ 但 Chromium 151+ 要求 macOS 13+，当前 macOS 12 无法使用。
+
+**诊断方法**：
+```bash
+# macOS 自带 lldb 可直接分析 minidump
+lldb -b   -o "target create --core ~/.diy/log/crashes/pending/<uuid>.dmp"   -o "thread select 1"   -o "bt 15"
+```
+
+崩溃日志位置：
+- 主进程日志：`~/.diy/log/main.log`
+- Minidump：`~/.diy/log/crashes/pending/*.dmp`
+- 渲染进程 console.error：`webContents.on("console-message")` → `main.log`
+  前缀 `[renderer:ERROR]` 或 `[renderer:WARN]`

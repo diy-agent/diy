@@ -20,7 +20,7 @@ import { apiDef } from "../main/services/api-def";
 import { readRuntimeConfig, type RuntimeConfig } from "../runtime";
 import { AppConfig } from "../main/core/app-config";
 import { installDiagnostics } from "../main/services/diagnostics";
-
+import { gpuCompatArgs } from "../main/core/gpu-detect";
 /** app 就绪等待上限 */
 const APP_READY_TIMEOUT_MS = 30_000;
 /** 轮询间隔 */
@@ -79,7 +79,7 @@ function launchApp(cfg: RuntimeConfig): ChildProcess {
   // 一旦把 stdout/stderr 接成 pipe，读端消失后管道缓冲写满会反向阻塞
   // Electron 主进程事件循环（表现为 RPC/CDP 全挂 + 系统「未响应」弹框）。
   // CDP 地址改由 DevToolsActivePort 文件获取，见 printCdpHint()。
-  const child = spawn(String(electronPath), [main, "--remote-debugging-port=0"], {
+  const child = spawn(String(electronPath), [main, "--remote-debugging-port=0", ...gpuCompatArgs(), "--disable-features=RustPng"], {
     cwd: appRoot(),
     env: { ...process.env, DIY_MIRROR_DISPLAY: "1" },
     stdio: ["ignore", "ignore", "inherit"],

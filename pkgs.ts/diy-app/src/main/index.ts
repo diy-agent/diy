@@ -169,6 +169,25 @@ function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy/rp
 
   mainWindow.once("ready-to-show", () => mainWindow?.show());
 
+  // ── 渲染进程 console 捕获 ──
+  // renderer 是独立上下文，未捕获异常 / console.error 不会进主进程诊断日志。
+  // 挂 console-message 只收 error/warning 级（节流 500ms），转写到 main.log。
+  let _lastRendererLog = 0;
+  mainWindow.webContents.on("console-message", (_ev, level, msg, line, sourceId) => {
+    // level: 0=verbose 1=info 2=warning 3=error
+    if (level < 2) return;
+    const now = Date.now();
+    if (now - _lastRendererLog < 500) return; // 节流：避免洪水
+    _lastRendererLog = now;
+    const tag = level === 3 ? "ERROR" : "WARN";
+    console.error(`[renderer:${tag}] ${msg} (${sourceId}:${line})`);
+  });
+
+  // 渲染进程崩溃/无响应诊断（render-process-gone 已在 crash-reporting 挂了，
+  // 这里补 unresponsive —— 长时间 JS 阻塞触发，通常意味着内存/GC 风暴）
+  mainWindow.webContents.on("unresponsive", () => {
+    console.error("[renderer] 进程无响应 (unresponsive) —— 可能 JS 长时间阻塞或 GC 风暴");
+  });
   if (isDev) {
     mainWindow.webContents.on("before-input-event", (_, input) => {
       if (input.key === "F12") mainWindow?.webContents.toggleDevTools();

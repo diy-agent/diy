@@ -58,7 +58,13 @@ export function installCrashReporting(home: string): void {
     );
   });
 
-  app.on("render-process-gone", (_event, _webContents, details) => {
-    console.error(`[crash] 渲染进程消亡 reason=${details.reason} exitCode=${details.exitCode}`);
+  app.on("render-process-gone", (_event, webContents, details) => {
+    const url = webContents?.getURL?.() ?? "unknown";
+    console.error(
+      `[crash] 渲染进程消亡 reason=${details.reason} exitCode=${details.exitCode} url=${url}`,
+    );
+    // 注：传输层（EnvelopeTransport.send）已内置 try-catch 防护，
+    // 渲染进程死亡后首次 send 失败会自动标记 dead → 触发 onClose →
+    // ChannelServerBinding 自动 destroy（取消所有流），无需在此额外处理。
   });
 }

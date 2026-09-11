@@ -5,6 +5,10 @@
  * 实现 ServerBinding 端口。注册逻辑（meta 强类型注册 + zod 校验）继承自 ServerBindingCore，
  * 这里只写 envelope dispatch。只应在入口组装代码中使用，
  * 业务代码应使用第3层 RPC。
+ *
+ * 传输层安全：
+ *   构造时自动订阅 tx.onClose()：传输层检测到对端死亡（如渲染进程崩溃）时，
+ *   自动 destroy — 取消所有流、清理所有消费者，避免向已死对端发送。
  */
 
 import type { _Envelope } from './types';
@@ -23,15 +27,18 @@ export class ChannelServerBinding extends ServerBindingCore implements ServerBin
   private _streamConsumers = new Map<number, _AsyncQueue<any>>();
 
   private _unsub: () => void;
+  private _onCloseUnsub: () => void;
 
   constructor(private tx: EnvelopeTransport) {
     super();
     this._unsub = tx.on((msg) => this._dispatch(msg));
+    // 传输层关闭（渲染进程崩溃 / 窗口关闭）→ 自动销毁，取消所有进行中的流
+    this._onCloseUnsub = tx.onClose(() => this.destroy());
   }
 
   /** 销毁：解除消息监听，清理所有流 */
   destroy(): void {
-    super._clear();
+    this._onCloseUnsub?.();
     this._unsub();
     this._serverStreamCancellers.forEach(c => c());
     this._serverStreamCancellers.clear();
