@@ -1,7 +1,11 @@
 import { render } from "solid-js/web";
 import { bindRendererApi } from "./lib/renderer-api-impl";
+import { applyTheme, getTheme } from "./lib/theme";
 import App from "./App";
 import "./index.css";
+
+// 主题先于首屏应用，避免深/浅闪烁（daisyUI 默认 dark，localStorage 有浅色偏好则覆盖）
+applyTheme(getTheme());
 
 declare global {
   interface Window {
