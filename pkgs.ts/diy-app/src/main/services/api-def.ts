@@ -679,6 +679,14 @@ export const apiDef = RpcSchema.router({
                 },
                 output: StatusDataUri,
               }),
+              setState: RpcSchema.unary({
+                desc: `修改任务状态（UI 入口，反向调 main + 刷新任务树 + toast）`,
+                input: {
+                  uri: z.string().cliArg({ desc: "任务 URI" }),
+                  state: TaskStateSchema.cliArg({ desc: "新状态" }),
+                },
+                output: StatusDataUri,
+              }),
             },
           }),
 
