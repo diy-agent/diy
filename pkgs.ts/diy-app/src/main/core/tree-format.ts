@@ -32,7 +32,6 @@ export interface TaskNode {
   body?: string;
   created?: string;
   updated?: string;
-  starred: boolean;
   children: TaskNode[];
 }
 

@@ -1,5 +1,5 @@
 // tests/core/state.test.ts
-// 🎯 核心意图测试：state.yaml 读写、AGENTS.md 解析、star/unstar
+// 🎯 核心意图测试：state.yaml 读写、AGENTS.md 解析
 //    所有测试数据在 /tmp/diy-desktop-test-xxx/ 下，不碰生产 ~/.diy/
 
 import { describe, it, expect, beforeAll } from "vitest";
@@ -11,9 +11,6 @@ import {
   saveState,
   parseTaskFile,
   getTask,
-  starTask,
-  unstarTask,
-  isStarred,
   taskExists,
   taskFilePath,
 } from "../../src/main/core/state";
@@ -117,42 +114,6 @@ state: pending
     const raw = `---
 title: 坏文件`;
     expect(parseTaskFile(raw)).toBeNull();
-  });
-});
-
-// ═══════════════════════════════════════
-// Star / Unstar
-// ═══════════════════════════════════════
-
-describe("star / unstar", () => {
-  const uri = "projects/1/tasks/1";
-
-  it("初始状态未 star", () => {
-    // 清理可能遗留的 symlink
-    unstarTask(uri);
-    expect(isStarred(uri)).toBe(false);
-  });
-
-  it("star 后 isStarred 为 true", () => {
-    // 先创建任务目录（star 需要目标存在）
-    mkdirSync(join(diyHome(), uri), { recursive: true });
-    writeFileSync(
-      join(diyHome(), uri, "AGENTS.md"),
-      "---\ntitle: Star测试\nstate: new\n---",
-    );
-
-    starTask(uri);
-    expect(isStarred(uri)).toBe(true);
-  });
-
-  it("unstar 后 isStarred 为 false", () => {
-    unstarTask(uri);
-    expect(isStarred(uri)).toBe(false);
-  });
-
-  it("重复 star 不抛异常", () => {
-    starTask(uri);
-    expect(() => starTask(uri)).not.toThrow();
   });
 });
 

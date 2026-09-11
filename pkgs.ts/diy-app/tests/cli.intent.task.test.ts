@@ -176,22 +176,6 @@ describe("task", () => {
     await cleanupProj(cpi);
   });
 
-  it("star/unstar — 关注然后取消", async () => {
-    const pid = await freshProj("e");
-    await fx.sh.run(`./diy.sh task create 关注 ${pid}`);
-    const uri = `projects/${pid}/tasks/1`;
-
-    await fx.sh.assertJson(`./diy.sh task star ${uri}`, {
-      ok: true,
-      data: { status: "ok", data: { uri, starred: true } },
-    });
-    await fx.sh.assertJson(`./diy.sh task unstar ${uri}`, {
-      ok: true,
-      data: { status: "ok", data: { uri, starred: false } },
-    });
-    await cleanupProj(pid);
-  });
-
   it("delete — 删除任务（幂等）", async () => {
     const pid = await freshProj("f");
     await fx.sh.run(`./diy.sh task create 待删 ${pid}`);

@@ -4,9 +4,9 @@
 //    task 按项目聚合在 $DIY_HOME/projects/<pid>/tasks/<tid>/，
 //    project 分组由 URI 路径推导（不再依赖 frontmatter project）。
 
-import { existsSync, readdirSync, readlinkSync, statSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { diyHome, parseTaskFile, isStarred, projectsRoot, projectFromUri } from "./state";
+import { diyHome, parseTaskFile, projectsRoot, projectFromUri } from "./state";
 import { listProjects } from "./project";
 import { TaskNode } from "./tree-format";
 
@@ -16,7 +16,6 @@ import { TaskNode } from "./tree-format";
 
 function readTaskNode(
   uri: string,
-  starred: boolean,
   preg: ReadonlyMap<string, { label?: string; path?: string }>,
 ): TaskNode | null {
   const agPath = join(diyHome(), uri, "AGENTS.md");
@@ -40,7 +39,6 @@ function readTaskNode(
     body: fm.body,
     created: fm.created,
     updated: fm.updated,
-    starred,
     children: [],
   };
 }
@@ -50,48 +48,19 @@ function readTaskNode(
 // ═══════════════════════════════════════
 
 /**
- * 从磁盘加载任务树。
- * allTasks=true 时扫描全部 projects/<pid>/tasks/；
- * 默认只加载 star 过的任务（用户关注视图）。
+ * 从磁盘加载全部任务树（扫 projects/ 下所有 AGENTS.md）。
  */
-export function loadTaskTree(allTasks = false): TaskNode[] {
+export function loadTaskTree(): TaskNode[] {
   // 已注册项目（id → 显示名/路径），保持 id 数值排序
   const projects = new Map<string, { label?: string; path?: string }>();
   for (const p of listProjects()) projects.set(p.id, { label: p.info.label, path: p.info.path });
 
-  const starDir = join(diyHome(), "star");
   const taskRoot = projectsRoot();
-
   const allByProject = new Map<string, TaskNode[]>();
 
-  if (allTasks) {
-    // 全部模式：扫描 projects/ 下所有 AGENTS.md（URI 前缀从 projects 起）
-    if (!existsSync(taskRoot)) return buildResult(allByProject, projects);
+  if (!existsSync(taskRoot)) return buildResult(allByProject, projects);
 
-    scanAllDirs(taskRoot, "projects", allByProject, projects);
-  } else {
-    // Star 模式：从 ~/.diy/star/ symlink 收集
-    if (!existsSync(starDir)) return buildResult(allByProject, projects);
-
-    for (const link of readdirSync(starDir)) {
-      const linkPath = join(starDir, link);
-      if (!lstatSync(linkPath).isSymbolicLink()) continue;
-
-      // symlink target = $DIY_HOME/projects/<pid>/tasks/<tid>
-      const target = readlinkSync(linkPath);
-      // 从 DIY_HOME 中提取相对 URI
-      const homePrefix = diyHome() + "/";
-      const relTarget = target.startsWith(homePrefix) ? target.slice(homePrefix.length) : target;
-
-      const node = readTaskNode(relTarget, true, projects);
-      if (!node) continue;
-
-      const pid = node.project ?? "unknown";
-      const list = allByProject.get(pid) ?? [];
-      list.push(node);
-      allByProject.set(pid, list);
-    }
-  }
+  scanAllDirs(taskRoot, "projects", allByProject, projects);
 
   return buildResult(allByProject, projects);
 }
@@ -114,8 +83,7 @@ function scanAllDirs(
 
     if (existsSync(agPath)) {
       // 这是一个任务目录
-      const starred = isStarred(subPrefix);
-      const node = readTaskNode(subPrefix, starred, preg);
+      const node = readTaskNode(subPrefix, preg);
       if (node) {
         const pid = node.project ?? "unknown";
         const list = result.get(pid) ?? [];
@@ -146,7 +114,6 @@ function buildResult(
       title: info.label ?? pid,
       project_path: info.path,
       project_label: info.label,
-      starred: false,
       children: linked,
     });
     byProject.delete(pid);
@@ -159,7 +126,6 @@ function buildResult(
       kind: "project",
       project: pid,
       title: pid,
-      starred: false,
       children: buildParentLinks(children),
     });
   }

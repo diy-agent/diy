@@ -3,7 +3,7 @@
 //    数据在隔离 DIY_HOME，不碰生产
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { existsSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
 import { loadTaskTree, renderTreeText } from "../../src/main/core/task-tree";
@@ -36,15 +36,6 @@ function makeTask(
   writeFileSync(join(dir, "AGENTS.md"), lines.join("\n"), "utf-8");
 }
 
-function makeStar(uri: string): void {
-  const starDir = join(diyHome(), "star");
-  mkdirSync(starDir, { recursive: true });
-  const link = join(starDir, uri.replace(/\//g, "__"));
-  if (!existsSync(link)) {
-    symlinkSync(join(diyHome(), uri), link);
-  }
-}
-
 // ═══════════════════════════════════════
 // Setup: 创建两个 project + 任务数据
 // ═══════════════════════════════════════
@@ -67,49 +58,6 @@ beforeAll(() => {
     parent: `projects/${WORK}/tasks/1`,
   });
   makeTask(`projects/${HOME}/tasks/1`, { title: "缴费", state: "pending" });
-
-  // Star 其中两个
-  makeStar(`projects/${WORK}/tasks/1`);
-  makeStar(`projects/${WORK}/tasks/3`);
-});
-
-// ═══════════════════════════════════════
-// loadTaskTree (star 模式)
-// ═══════════════════════════════════════
-
-describe("loadTaskTree star 模式", () => {
-  it("返回所有 project 节点（按 id 排序）", () => {
-    const tree = loadTaskTree(false);
-    expect(tree.length).toBe(2);
-    expect(tree[0]?.kind).toBe("project");
-    expect(tree[1]?.kind).toBe("project");
-  });
-
-  it("只包含 star 过的任务，父子链接后分布在树中", () => {
-    const tree = loadTaskTree(false);
-    const work = tree.find((n) => n.project === WORK)!;
-    expect(work).toBeDefined();
-
-    // task-1 无父任务，在顶层
-    const t1 = work.children.find((c) => c.uri === `projects/${WORK}/tasks/1`)!;
-    expect(t1).toBeDefined();
-
-    // task-3 的 parent=task-1，在 t1.children 下
-    const t3 = t1.children.find((c) => c.uri === `projects/${WORK}/tasks/3`)!;
-    expect(t3).toBeDefined();
-
-    // task-2 未 star，不在树中
-    expect(work.children.find((c) => c.uri === `projects/${WORK}/tasks/2`)).toBeUndefined();
-  });
-
-  it("starred 标记为 true", () => {
-    const tree = loadTaskTree(false);
-    const work = tree.find((n) => n.project === WORK)!;
-    const t1 = work.children.find((c) => c.uri === `projects/${WORK}/tasks/1`)!;
-    expect(t1.starred).toBe(true);
-    const t3 = t1.children.find((c) => c.uri === `projects/${WORK}/tasks/3`)!;
-    expect(t3.starred).toBe(true);
-  });
 });
 
 // ═══════════════════════════════════════
@@ -118,7 +66,7 @@ describe("loadTaskTree star 模式", () => {
 
 describe("loadTaskTree 全部模式", () => {
   it("返回 project 下所有顶层任务（含子任务）", () => {
-    const tree = loadTaskTree(true);
+    const tree = loadTaskTree();
     const work = tree.find((n) => n.project === WORK)!;
     // 顶层：只有 task-1（task-2 和 task-3 是 task-1 的子任务）
     expect(work!.children.length).toBe(1);
@@ -129,15 +77,6 @@ describe("loadTaskTree 全部模式", () => {
     expect(childUris).toContain(`projects/${WORK}/tasks/2`);
     expect(childUris).toContain(`projects/${WORK}/tasks/3`);
   });
-
-  it("starred 标记正确", () => {
-    const tree = loadTaskTree(true);
-    const work = tree.find((n) => n.project === WORK)!;
-    const t1 = work!.children.find((c) => c.uri === `projects/${WORK}/tasks/1`)!;
-    const t2 = t1.children.find((c) => c.uri === `projects/${WORK}/tasks/2`)!;
-    expect(t1.starred).toBe(true);
-    expect(t2.starred).toBe(false);
-  });
 });
 
 // ═══════════════════════════════════════
@@ -146,7 +85,7 @@ describe("loadTaskTree 全部模式", () => {
 
 describe("父子链接", () => {
   it("子任务挂在父任务下，不在 project 顶层", () => {
-    const tree = loadTaskTree(true);
+    const tree = loadTaskTree();
     const work = tree.find((n) => n.project === WORK)!;
 
     const t1 = work!.children.find((c) => c.uri === `projects/${WORK}/tasks/1`)!;
@@ -158,7 +97,7 @@ describe("父子链接", () => {
   });
 
   it("无父任务的任务仍在 project 顶层", () => {
-    const tree = loadTaskTree(true);
+    const tree = loadTaskTree();
     const work = tree.find((n) => n.project === WORK)!;
     const topLevel = work!.children.filter((c) => c.parentUri === undefined || c.parentUri === "");
     expect(topLevel.length).toBe(1); // 只有 task-1
@@ -171,35 +110,27 @@ describe("父子链接", () => {
 
 describe("renderTreeText", () => {
   it("渲染结果可读", () => {
-    const tree = loadTaskTree(false);
+    const tree = loadTaskTree();
     const text = renderTreeText(tree);
 
     // 包含 project 名称
     expect(text).toContain("工作");
     expect(text).toContain("个人");
 
-    // 包含 star 的任务
+    // 包含全部任务
     expect(text).toContain(`projects/${WORK}/tasks/1`);
+    expect(text).toContain(`projects/${WORK}/tasks/2`);
     expect(text).toContain(`projects/${WORK}/tasks/3`);
-
-    // 不包含未 star 的任务
-    expect(text).not.toContain(`projects/${WORK}/tasks/2`);
   });
 });
 
 // ═══════════════════════════════════════
-// home project（无 star 任务）
+// home project
 // ═══════════════════════════════════════
 
-describe("home project (no stars)", () => {
-  it("star 模式下 home 的 children 为空", () => {
-    const tree = loadTaskTree(false);
-    const home = tree.find((n) => n.project === HOME)!;
-    expect(home.children.length).toBe(0);
-  });
-
-  it("全部模式下 home 有 task-1", () => {
-    const tree = loadTaskTree(true);
+describe("home project", () => {
+  it("home 有 task-1", () => {
+    const tree = loadTaskTree();
     const home = tree.find((n) => n.project === HOME)!;
     expect(home.children.length).toBe(1);
     expect(home.children[0]?.uri).toBe(`projects/${HOME}/tasks/1`);

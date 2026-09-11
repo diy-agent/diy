@@ -26,7 +26,7 @@ beforeAll(() => {
 // ═══════════════════════════════════════
 
 describe("createTask", () => {
-  it("创建后文件存在、内容正确、自动 star", () => {
+  it("创建后文件存在、内容正确", () => {
     const uri = createTask({ title: "测试任务", project: PROJECT });
 
     const fp = join(diyHome(), uri, "AGENTS.md");
@@ -37,10 +37,6 @@ describe("createTask", () => {
     expect(content).toContain("state: pending");
     // 新模型 frontmatter 不写 project（project 由 URI 路径推导）
     expect(content).not.toContain("project:");
-
-    // star symlink 已创建
-    const starLink = join(diyHome(), "star", uri.replace(/\//g, "__"));
-    expect(existsSync(starLink)).toBe(true);
   });
 
   it("uri 格式为 projects/<pid>/tasks/<tid>", () => {

@@ -48,7 +48,6 @@ export interface TaskNodeShape {
   body?: string;
   created?: string;
   updated?: string;
-  starred: boolean;
   children: TaskNodeShape[];
 }
 const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
@@ -63,7 +62,6 @@ const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
     body: z.string().optional(),
     created: z.string().optional(),
     updated: z.string().optional(),
-    starred: z.boolean(),
     children: z.array(TaskNodeSchema),
   }),
 );
@@ -129,20 +127,6 @@ export const apiDef = RpcSchema.router({
               uri: z.string().cliArg({ desc: "任务 URI" }),
             },
             output: StatusDataUri,
-          }),
-          star: RpcSchema.unary({
-            desc: `收藏任务`,
-            input: {
-              uri: z.string().cliArg({ desc: "任务 URI" }),
-            },
-            output: z.object({ status: z.string(), data: z.object({ uri: z.string(), starred: z.boolean() }) }),
-          }),
-          unstar: RpcSchema.unary({
-            desc: `取消收藏任务`,
-            input: {
-              uri: z.string().cliArg({ desc: "任务 URI" }),
-            },
-            output: z.object({ status: z.string(), data: z.object({ uri: z.string(), starred: z.boolean() }) }),
           }),
         },
       }),
@@ -242,7 +226,7 @@ export const apiDef = RpcSchema.router({
 
       loadTaskTree: RpcSchema.unary({
         desc: `加载任务树（供 renderer 反向调用）`,
-        input: { allTasks: z.boolean().optional() },
+        input: {},
         output: z.object({ status: z.string(), data: z.array(TaskNodeSchema) }),
       }),
 

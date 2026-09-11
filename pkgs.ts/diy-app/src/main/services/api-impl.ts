@@ -79,14 +79,6 @@ export function bindAppHandlers(binding: ServerBinding): void {
     task.deleteTask(input.uri);
     return { status: "ok", data: { uri: input.uri } };
   });
-  binding.on(app.task.star, async ({ input }) => {
-    state.starTask(input.uri);
-    return { status: "ok", data: { uri: input.uri, starred: true } };
-  });
-  binding.on(app.task.unstar, async ({ input }) => {
-    state.unstarTask(input.uri);
-    return { status: "ok", data: { uri: input.uri, starred: false } };
-  });
 
   // ── project ──
   binding.on(app.project.create, async ({ input }) => {
@@ -150,8 +142,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
 
   // ── loadTaskTree / getTask ──
-  binding.on(app.loadTaskTree, async ({ input }) => {
-    return { status: "ok", data: taskTree.loadTaskTree(input.allTasks) };
+  binding.on(app.loadTaskTree, async () => {
+    return { status: "ok", data: taskTree.loadTaskTree() };
   });
   binding.on(app.getTask, async ({ input }) => {
     const t = state.getTask(input.uri);

@@ -11,7 +11,6 @@ import {
   getTask,
   taskDir,
   taskFilePath,
-  starTask,
   projectsRoot,
   projectDir,
   nextNumericId,
@@ -89,7 +88,7 @@ const CreateTaskSchema = z.object({
 });
 
 /**
- * 创建一条任务，写入 projects/<pid>/tasks/<tid>/AGENTS.md，自动 star。
+ * 创建一条任务，写入 projects/<pid>/tasks/<tid>/AGENTS.md。
  * 抛出 ValidationError（校验失败）或 Error（业务冲突）。
  */
 export function createTask(params: CreateTaskParams): string {
@@ -141,9 +140,6 @@ export function createTask(params: CreateTaskParams): string {
 
   const front = yaml.dump(meta, { indent: 2, noRefs: true });
   writeFileSync(taskFilePath(uri), `${FM_SEP}\n${front}${FM_SEP}\n${body ?? ""}`, "utf-8");
-
-  // 自动 star
-  starTask(uri);
 
   return uri;
 }

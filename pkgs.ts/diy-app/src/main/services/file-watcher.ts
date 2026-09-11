@@ -1,5 +1,5 @@
 // src/main/services/file-watcher.ts
-// 🎯 文件系统监控：监听 state.yaml / task/ / star/ / agents/ 变化，通过回调通知
+// 🎯 文件系统监控：监听 state.yaml / task/ / agents/ 变化，通过回调通知
 
 import { watch, FSWatcher } from "chokidar";
 import { join } from "node:path";
@@ -20,7 +20,7 @@ export class FileWatcher {
     const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
     this.watcher = watch(
-      [join(home, "state.yaml"), join(home, "task/"), join(home, "star/"), join(home, "agents/")],
+      [join(home, "state.yaml"), join(home, "task/"), join(home, "agents/")],
       {
         ignoreInitial: true,
         depth: 4,
@@ -43,11 +43,11 @@ export class FileWatcher {
     this.watcher
       .on("change", (p: string) => {
         if (p.endsWith("state.yaml")) debouncedEmit("state-change");
-        else if (p.includes("/task/") || p.includes("/star/")) debouncedEmit("task-change");
+        else if (p.includes("/task/")) debouncedEmit("task-change");
         else if (p.includes("/agents/")) debouncedEmit("agent-change");
       })
       .on("addDir", (p: string) => {
-        if (p.includes("/task/") || p.includes("/star/")) debouncedEmit("task-change");
+        if (p.includes("/task/")) debouncedEmit("task-change");
       });
   }
 

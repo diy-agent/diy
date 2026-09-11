@@ -10,7 +10,6 @@ export interface TreeNode {
   project_path?: string;
   project_label?: string;
   parentUri?: string;
-  starred: boolean;
   children: TreeNode[];
 }
 
@@ -36,7 +35,7 @@ const [loading, setLoading] = createSignal(false);
 async function loadTree() {
   setLoading(true);
   try {
-    const r = await diyService.diy.loadTaskTree({ allTasks: true });
+    const r = await diyService.diy.loadTaskTree({});
     setNodes(r.data);
   } finally {
     setLoading(false);
