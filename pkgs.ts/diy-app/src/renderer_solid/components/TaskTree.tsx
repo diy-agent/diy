@@ -333,7 +333,8 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                         class="truncate font-medium diy-link underline-offset-2 hover:underline cursor-pointer"
                         onClick={(e) => {
                             e.stopPropagation();
-                            taskStore.selectTask(row.key);
+                            // 再点同一个任务 → 收起面板；否则切到该任务
+                            taskStore.selectTask(taskStore.selectedUri === row.key ? null : row.key);
                         }}
                     >
                         {row.node.title}
