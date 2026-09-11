@@ -47,9 +47,8 @@ export function renderTreeText(nodes: TaskNode[], indent = ""): string {
     if (n.kind === "project") {
       lines.push(`${indent}📁 ${n.title}`);
     } else {
-      const star = n.starred ? " ⭐" : "";
       const title = n.title ? ` ${n.title}` : "";
-      lines.push(`${indent}  ${n.uri}${title}${star}`);
+      lines.push(`${indent}  ${n.uri}${title}`);
     }
     if (n.children.length > 0) {
       lines.push(renderTreeText(n.children, indent + "  "));

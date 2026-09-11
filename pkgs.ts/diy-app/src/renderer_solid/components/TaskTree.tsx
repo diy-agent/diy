@@ -253,7 +253,7 @@ function ProjectRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: 
                 <span class="inline-flex items-center gap-1">
                     {row.node.children?.length ? (
                         <button
-                            class="btn btn-ghost btn-xs p-0"
+                            class="btn btn-ghost btn-xs p-0 w-5 min-w-0 shrink-0 justify-center items-center"
                             onClick={(e) => {
                                 e.stopPropagation();
                                 props.onToggle(row.key);
@@ -317,7 +317,7 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                 <span class="inline-flex items-center gap-1">
                     {row.node.children?.length ? (
                         <button
-                            class="btn btn-ghost btn-xs p-0"
+                            class="btn btn-ghost btn-xs p-0 w-5 min-w-0 shrink-0 justify-center items-center"
                             onClick={(e) => {
                                 e.stopPropagation();
                                 props.onToggle(row.key);
@@ -338,7 +338,6 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                     >
                         {row.node.title}
                     </span>
-                    {row.node.starred && <span>⭐</span>}
                     <CreateTaskSheet projectId={row.projectId} projectLabel={row.node.title ?? ""} parentUri={row.key} compact />
                 </span>
             </td>
