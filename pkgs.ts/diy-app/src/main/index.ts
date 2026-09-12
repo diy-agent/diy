@@ -208,6 +208,29 @@ function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy/rp
   return { binding, ipcTransport };
 }
 
+// ── 渲染进程自愈 ──
+// renderer 被外部杀掉（例如 agent 的 bash 工具误杀宿主子进程，见 agent-guard.ts）
+// 后 Electron 不会自动重建 → 窗口永久白屏（用户说的"app 挂了"）。这里节流重载。
+const reloadStamps: number[] = [];
+app.on("render-process-gone", (_event, webContents, details) => {
+  if (webContents !== mainWindow?.webContents) return;
+  const now = Date.now();
+  while (reloadStamps.length > 0 && now - (reloadStamps[0] ?? 0) > 60_000) reloadStamps.shift();
+  if (reloadStamps.length >= 3) {
+    console.error("[renderer] 60s 内已重建 3 次，暂停自愈（疑似崩溃循环）");
+    return;
+  }
+  reloadStamps.push(now);
+  console.error(`[renderer] 进程消亡 reason=${details.reason}，500ms 后重载自愈`);
+  setTimeout(() => {
+    try {
+      mainWindow?.reload();
+    } catch (e) {
+      console.error("[renderer] 自愈重载失败:", e);
+    }
+  }, 500);
+});
+
 // ── RPC 端口服务（外部 CLI 接入） ──
 
 async function startRpcPort(ipcTransport: import("@diy/rpc").EnvelopeTransport): Promise<boolean> {

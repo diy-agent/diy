@@ -12,8 +12,20 @@
 // 约束：只在 Electron 主进程调。serve / CLI 是纯 Node，没有 crashReporter。
 
 import { join } from "node:path";
-import { mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync, readdirSync, appendFileSync } from "node:fs";
 import { app, crashReporter } from "electron";
+import { crashContext } from "./agent-audit";
+
+/** 进程级异常/信号落盘（崩溃诊断的主日志之外的结构化尾巴） */
+function appendExitLog(home: string, kind: string, detail: string): void {
+  try {
+    mkdirSync(join(home, "log"), { recursive: true });
+    const row = { ts: new Date().toISOString(), kind, pid: process.pid, detail };
+    appendFileSync(join(home, "log", "app-exit.jsonl"), `${JSON.stringify(row)}\n`, "utf-8");
+  } catch {
+    /* 退出路径上尽力而为 */
+  }
+}
 
 export function installCrashReporting(home: string): void {
   const crashDir = join(home, "log", "crashes");
@@ -56,6 +68,8 @@ export function installCrashReporting(home: string): void {
       `[crash] 子进程消亡 type=${details.type} reason=${details.reason} exitCode=${details.exitCode} ` +
         `service=${details.serviceName ?? "-"} name=${details.name ?? "-"}`,
     );
+    // 现场线索：被 SIGKILL 时进程自己写不了日志，靠 agent 执行前的 write-ahead 审计回溯
+    console.error(`[crash] 现场: ${crashContext(home)}`);
   });
 
   app.on("render-process-gone", (_event, webContents, details) => {
@@ -63,8 +77,28 @@ export function installCrashReporting(home: string): void {
     console.error(
       `[crash] 渲染进程消亡 reason=${details.reason} exitCode=${details.exitCode} url=${url}`,
     );
+    console.error(`[crash] 现场: ${crashContext(home)}`);
     // 注：传输层（EnvelopeTransport.send）已内置 try-catch 防护，
     // 渲染进程死亡后首次 send 失败会自动标记 dead → 触发 onClose →
     // ChannelServerBinding 自动 destroy（取消所有流），无需在此额外处理。
+  });
+
+  // ── 进程级退出留痕 ──
+  // kill -9 捕获不到（这也是本文件存在的理由，见 agent-audit.ts），
+  // 但 SIGTERM/SIGINT/未捕获异常都能留下退出原因。
+  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    process.on(sig, () => {
+      console.error(`[exit] 收到 ${sig}，准备退出（现场: ${crashContext(home)}）`);
+      appendExitLog(home, sig, crashContext(home));
+      app.quit();
+    });
+  }
+  process.on("uncaughtException", (err) => {
+    console.error(`[exit] 未捕获异常: ${err?.stack ?? err}`);
+    appendExitLog(home, "uncaughtException", `${err?.message ?? err}\n${err?.stack ?? ""}`);
+  });
+  process.on("unhandledRejection", (reason) => {
+    console.error(`[exit] 未处理的 Promise 拒绝: ${reason}`);
+    appendExitLog(home, "unhandledRejection", String(reason));
   });
 }
