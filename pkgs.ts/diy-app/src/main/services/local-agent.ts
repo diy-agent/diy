@@ -26,6 +26,8 @@ import { join } from "node:path";
 import { diyHome, projectFromUri, taskDir } from "../core/state";
 import { getProjectPath } from "../core/project";
 import { BlockStore, blocksToMessages, type Op, type JSONVal } from "./local-blocks";
+import { collectSelfInfo, judgeSelfKill, selfKillNotice } from "./agent-guard";
+import { appendAudit } from "./agent-audit";
 
 const DEFAULT_MODEL = "mimo-v2.5";
 
@@ -56,6 +58,9 @@ const SYSTEM = [
     "你是 diy 管控台的本地代码助手，运行在任务所属项目目录。",
     "需要查看文件、运行命令时优先使用工具；拿到结果后用中文简明总结。",
     "回答保持精炼，代码与命令原样引用。",
+    "硬规则：diy 自己就跑在 Electron 里，禁止执行会杀死宿主进程的命令",
+    "（如 pkill/killall Electron、kill 掉 diy 自身的 pid/进程组）。",
+    "需要重启 diy 时告诉用户手动操作，不要自己杀进程。",
 ].join("\n");
 
 /** 工具 cwd 解析：project 路径 → task 目录 → 进程 cwd，逐级存在性校验（~ 展开） */
@@ -212,13 +217,47 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
     });
 }
 
-function buildTools(cwd: string, limits: LocalAgentLimits) {
+function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: string) {
     return {
         bash: tool({
             description: "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
             inputSchema: z.object({ command: z.string().describe("要执行的 bash 命令") }),
-            execute: async ({ command }, opts) =>
-                runBash(command, cwd, limits, (opts as { abortSignal?: AbortSignal } | undefined)?.abortSignal),
+            execute: async ({ command }, opts) => {
+                const home = diyHome();
+                // ① 自杀护栏：执行前拦（kill -9 不可捕获，事后补救不可能）
+                const self = collectSelfInfo(home);
+                if (self) {
+                    const verdict = judgeSelfKill(command, self);
+                    if (verdict.blocked) {
+                        appendAudit(home, {
+                            phase: "bash-blocked",
+                            taskUri,
+                            cwd,
+                            command,
+                            result: verdict.reason,
+                        });
+                        return selfKillNotice(verdict);
+                    }
+                }
+                // ② write-ahead 审计：先落盘再执行，保证最后一幕不丢
+                appendAudit(home, { phase: "bash-start", taskUri, cwd, command });
+                const t0 = Date.now();
+                const out = await runBash(
+                    command,
+                    cwd,
+                    limits,
+                    (opts as { abortSignal?: AbortSignal } | undefined)?.abortSignal,
+                );
+                appendAudit(home, {
+                    phase: "bash-end",
+                    taskUri,
+                    cwd,
+                    command,
+                    ms: Date.now() - t0,
+                    result: clip(out, 500),
+                });
+                return out;
+            },
         }),
         read: tool({
             description: "读取文件的文本内容（相对路径按项目目录解析）。",
@@ -386,6 +425,13 @@ export class LocalAgentManager {
         }
         const turnId = `t${Date.now()}`;
         const uid = `${turnId}_u`;
+        appendAudit(diyHome(), {
+            phase: "turn-start",
+            taskUri,
+            model: model || DEFAULT_MODEL,
+            cwd: resolveCwd(taskUri),
+            command: message.slice(0, 300),
+        });
         // emission 即落盘：yield 前先过 sink，消费端断开也不丢尾
         const started = new Set<string>();
         const emit = function* (op: Op): Generator<Op, void, void> {
@@ -415,7 +461,7 @@ export class LocalAgentManager {
             model: this.provider(model || DEFAULT_MODEL),
             system: `${SYSTEM}\n当前项目目录：${cwd}`,
             messages: sent,
-            tools: buildTools(cwd, L),
+            tools: buildTools(cwd, L, taskUri),
             stopWhen: stepCountIs(L.maxSteps),
             abortSignal: signal,
             headers: { "x-opencode-session": sessionIdOf(taskUri) },
@@ -630,6 +676,13 @@ export class LocalAgentManager {
             // 收尾必闭合：step 先于 turn（stop 幂等，重复无害）
             if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
             if (!turnStopped) yield* emit({ op: "stop", id: turnId });
+            // 轮次审计收尾：崩溃后能区分"死在生成中"还是"生成已结束"
+            appendAudit(diyHome(), {
+                phase: "turn-end",
+                taskUri,
+                model: model || DEFAULT_MODEL,
+                result: `steps=${stepN} usage=${acc.in}/${acc.out}`,
+            });
         }
     }
 }

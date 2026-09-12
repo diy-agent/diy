@@ -282,3 +282,37 @@ lldb -b   -o "target create --core ~/.diy/log/crashes/pending/<uuid>.dmp"   -o "
 - Minidump：`~/.diy/log/crashes/pending/*.dmp`
 - 渲染进程 console.error：`webContents.on("console-message")` → `main.log`
   前缀 `[renderer:ERROR]` 或 `[renderer:WARN]`
+- agent 执行审计（write-ahead）：`~/.diy/log/agent-bash.jsonl`
+- 进程退出原因：`~/.diy/log/app-exit.jsonl`
+
+#### 被 SIGKILL 的"假崩溃"：agent 自杀（2026-09-12 实测）
+
+现象：一对话 app 就"挂掉"（白屏），但**没有 minidump**、主进程还活着。
+
+根因不在 Electron：本地 agent 的 `bash` 工具会执行
+`ps aux | grep Electron | ... | xargs kill -9`、`pkill -9 -f electron` 这类命令，
+把宿主自己的 GPU / NetworkService / Renderer 子进程杀掉（`exitCode=9` = SIGKILL），
+Electron 不会自动重建 renderer → 窗口永久白屏。
+触发场景：任务历史里 agent 早期为了"清理多余 Electron 实例"留下了这类命令，续聊时复现。
+
+**关键认识：SIGKILL 捕获不到，事后补救不可能 —— 只能执行前拦截 + 执行前落盘。**
+
+对应机制（三层，都在本节文件里）：
+
+| 层 | 位置 | 作用 |
+|----|------|------|
+| 拦截 | `services/agent-guard.ts` | `judgeSelfKill()` 纯函数判定，执行前拒绝会杀死自身进程树的命令，并把替代做法回给模型 |
+| 留痕 | `services/agent-audit.ts` | write-ahead：每次 bash 执行**前**落盘（task/model/cwd/command），`kill -9` 主进程也能查到最后一幕 |
+| 自愈 | `src/main/index.ts` | `render-process-gone` → 节流 reload（60s ≤3 次，防崩溃循环） |
+
+崩溃日志里的现场线索由 `crashContext(home)` 提供（最近轮次 + 最近一条命令）。
+
+排查步骤：
+```bash
+# 1. 看是否有子进程被 SIGKILL
+grep -E "exitCode=9|现场:" ~/.diy/log/main.log | tail
+# 2. 看最后一幕命令（含被拦截的）
+tail -n 20 ~/.diy/log/agent-bash.jsonl
+# 3. 确认 agent 是否尝试自杀（拦截记录）
+grep bash-blocked ~/.diy/log/agent-bash.jsonl
+```
