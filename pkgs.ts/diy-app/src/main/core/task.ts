@@ -11,7 +11,6 @@ import {
   getTask,
   taskDir,
   taskFilePath,
-  starTask,
   projectsRoot,
   projectDir,
   nextNumericId,
@@ -24,17 +23,9 @@ import { projectExists } from "./project";
 // 字段验证 schema
 // ═══════════════════════════════════════
 
-export const TaskStateSchema = z.enum([
-  "pending",
-  "active",
-  "done",
-  "cancelled",
-  "blocked",
-  "shelved",
-  "new",
-  "open",
-  "closed",
-]);
+// TaskStateSchema 单一真相源在 task-state.ts（此处 re-export 保持兼容） */
+export { TaskStateSchema } from "./task-state";
+import { TaskStateSchema } from "./task-state";
 
 // ═══════════════════════════════════════
 // 错误类型
@@ -89,7 +80,7 @@ const CreateTaskSchema = z.object({
 });
 
 /**
- * 创建一条任务，写入 projects/<pid>/tasks/<tid>/AGENTS.md，自动 star。
+ * 创建一条任务，写入 projects/<pid>/tasks/<tid>/AGENTS.md。
  * 抛出 ValidationError（校验失败）或 Error（业务冲突）。
  */
 export function createTask(params: CreateTaskParams): string {
@@ -141,9 +132,6 @@ export function createTask(params: CreateTaskParams): string {
 
   const front = yaml.dump(meta, { indent: 2, noRefs: true });
   writeFileSync(taskFilePath(uri), `${FM_SEP}\n${front}${FM_SEP}\n${body ?? ""}`, "utf-8");
-
-  // 自动 star
-  starTask(uri);
 
   return uri;
 }

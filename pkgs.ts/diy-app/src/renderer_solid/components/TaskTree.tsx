@@ -1,10 +1,13 @@
-import { createSignal, createMemo, onMount, For, Show } from "solid-js";
+import { createSignal, createMemo, For, Show } from "solid-js";
+import { createMutable } from "solid-js/store";
 import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSensor } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { taskStore, type TreeNode } from "../store/taskStore";
 import { notificationStore } from "../store/notificationStore";
 import { diyService } from "../lib/rpc";
+import { Caches } from "../lib/ui-state";
 import { CreateProjectSheet } from "./CreateProjectSheet";
+import { TASK_STATES } from "../../main/core/task-state";
 import { CreateTaskSheet } from "./CreateTaskSheet";
 
 // dnd-kit/solid 未直接导出 DragEndEvent，从 onDragEnd 回调参数提取
@@ -16,6 +19,10 @@ const stateColor: Record<string, string> = {
     done: "bg-success",
     blocked: "bg-error",
     cancelled: "bg-neutral",
+    shelved: "bg-neutral",
+    new: "bg-accent",
+    open: "bg-info",
+    closed: "bg-neutral",
 };
 
 interface FlatRow {
@@ -26,14 +33,48 @@ interface FlatRow {
     projectId: string;
 }
 
-function flattenTree(nodes: TreeNode[], expanded: Set<string>, depth = 0): FlatRow[] {
+/**
+ * 行对象缓存：key → 稳定的可变行（createMutable 代理，引用终身不变）。
+ *
+ * 为什么必须稳定：`<For>` 按「引用相等」复用 DOM（见 solid-js mapArray）。
+ * 若每次展开都新建行对象，全部行引用都变 → 整个 tbody 被销毁重建：
+ *   1. 滚动容器内容瞬间清空，scrollTop 被钳回 0（表现为「页面跳到最上面」）
+ *   2. 被点击的展开按钮随之销毁，焦点掉回 body（方向键导航失效）
+ * 缓存后展开/折叠只增删受影响的行，其余行 DOM 原样保留。
+ * node/depth/projectId 用赋值就地更新（Solid store 对相等赋值不触发通知），
+ * 所以 loadTree 刷新任务树时内容照常响应式更新，DOM 不重建。
+ */
+const rowCache = new Map<string, FlatRow>();
+
+function cachedRow(
+    key: string,
+    kind: "project" | "task",
+    node: TreeNode,
+    depth: number,
+    projectId: string,
+    seen: Set<string>,
+): FlatRow {
+    seen.add(key);
+    let row = rowCache.get(key);
+    if (!row) {
+        row = createMutable<FlatRow>({ key, kind, node, depth, projectId });
+        rowCache.set(key, row);
+    } else {
+        row.node = node;
+        row.depth = depth;
+        row.projectId = projectId;
+    }
+    return row;
+}
+
+function flattenTree(nodes: TreeNode[], expanded: Set<string>, seen: Set<string>, depth = 0): FlatRow[] {
     const rows: FlatRow[] = [];
     for (const n of nodes) {
         const key = n.kind === "project" ? `proj:${n.project}` : n.uri ?? "";
-        rows.push({ key, kind: n.kind, node: n, depth, projectId: n.project ?? "" });
+        rows.push(cachedRow(key, n.kind, n, depth, n.project ?? "", seen));
         const shouldExpand = n.kind === "project" ? !expanded.has(key) : expanded.has(key);
         if (shouldExpand && n.children?.length)
-            rows.push(...flattenTree(n.children, expanded, depth + 1));
+            rows.push(...flattenTree(n.children, expanded, seen, depth + 1));
     }
     return rows;
 }
@@ -61,10 +102,98 @@ function findInTree(children: TreeNode[], uri: string): TreeNode | null {
     return null;
 }
 
+// 状态全集来自单一真相源 task-state.ts（main 与 renderer 共用）
+const allStates: readonly string[] = TASK_STATES;
+const stateLabel: Record<string, string> = {
+    pending: "待处理",
+    active: "进行中",
+    done: "已完成",
+    cancelled: "已取消",
+    blocked: "已阻塞",
+    shelved: "已搁置",
+    new: "新建",
+    open: "已打开",
+    closed: "已关闭",
+};
+
+function StateSelector(props: { uri: string; state: string }) {
+    const [open, setOpen] = createSignal(false);
+
+    const changeState = async (s: string, e: MouseEvent) => {
+        e.stopPropagation();
+        setOpen(false);
+        await taskStore.setState(props.uri, s);
+    };
+
+    return (
+        <span class="relative inline-block" onClick={(e) => e.stopPropagation()}>
+            <button
+                class={`btn btn-xs btn-ghost gap-1 normal-case font-normal ${stateColor[props.state] ? "text-current" : "text-base-content/60"}`}
+                onClick={() => setOpen((p) => !p)}
+            >
+                <span class={`w-2 h-2 rounded-full inline-block ${stateColor[props.state] ?? "bg-neutral"}`} />
+                {stateLabel[props.state] ?? props.state}
+            </button>
+            <Show when={open()}>
+                <ul
+                    class="menu bg-base-100 border border-base-300 rounded-box shadow-lg absolute left-0 top-full z-50 mt-1 w-32 p-1"
+                    onClick={() => setOpen(false)}
+                >
+                    <For each={allStates}>
+                        {(s) => (
+                            <li>
+                                <button
+                                    class={`text-xs gap-2 ${s === props.state ? "active font-bold" : ""}`}
+                                    onClick={(e) => changeState(s, e)}
+                                >
+                                    <span class={`w-2 h-2 rounded-full inline-block ${stateColor[s] ?? "bg-neutral"}`} />
+                                    {stateLabel[s]}
+                                </button>
+                            </li>
+                        )}
+                    </For>
+                </ul>
+            </Show>
+        </span>
+    );
+}
+
 export function TaskTree() {
-    const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
-    onMount(() => taskStore.loadTree());
-    const rows = createMemo(() => flattenTree(taskStore.nodes, expanded()));
+    // 展开/滚动：视图 cache（lib/ui-state，localStorage 归一定位），可被清理入口清空
+    const loadExpanded = (): Set<string> => {
+        try {
+            return new Set(Caches.diy_task_tree_expanded.get());
+        } catch {
+            return new Set();
+        }
+    };
+    const saveExpanded = (s: Set<string>) => {
+        try {
+            Caches.diy_task_tree_expanded.set([...s]);
+        } catch { /* 存储不可用忽略 */ }
+    };
+    const [expanded, setExpanded] = createSignal<Set<string>>(loadExpanded());
+    const scrollRef = (el: HTMLDivElement | undefined) => {
+        if (!el || el.dataset.scrollRestored === "1") return;
+        el.dataset.scrollRestored = "1";
+        // 等首次 loadTree 渲染完成再恢复滚动位置
+        void taskStore.loadTree().then(() => {
+            const v = Caches.diy_task_tree_scroll.get();
+            if (v > 0) el.scrollTop = v;
+        });
+    };
+    const onScroll = (e: Event) => {
+        try {
+            Caches.diy_task_tree_scroll.set((e.currentTarget as HTMLDivElement).scrollTop);
+        } catch { /* 存储不可用忽略 */ }
+    };
+    const rows = createMemo(() => {
+        const seen = new Set<string>();
+        const out = flattenTree(taskStore.nodes, expanded(), seen);
+        // 回收本次不可见的行缓存（任务被删除/折叠），避免缓存无限增长
+        for (const k of rowCache.keys()) if (!seen.has(k)) rowCache.delete(k);
+        return out;
+    });
     const selectable = createMemo(() =>
         rows()
             .filter((r) => r.kind === "task")
@@ -74,6 +203,7 @@ export function TaskTree() {
         setExpanded((p) => {
             const n = new Set(p);
             n.has(k) ? n.delete(k) : n.add(k);
+            saveExpanded(n);
             return n;
         });
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -144,7 +274,7 @@ export function TaskTree() {
                     <span class="text-sm font-semibold">任务</span>
                     <CreateProjectSheet />
                 </div>
-                <div class="flex-1 overflow-auto min-w-0" tabindex={0} onKeyDown={handleKeyDown}>
+                <div class="flex-1 overflow-auto min-w-0" tabindex={0} onKeyDown={handleKeyDown} ref={scrollRef} onScroll={onScroll}>
                     <table class="table table-sm w-full">
                         <thead class="sticky top-0 bg-base-100 z-10">
                             <tr>
@@ -207,14 +337,26 @@ function ProjectRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: 
             <td style={`padding-left:${8 + row.depth * 20}px`} class="font-semibold">
                 <span class="inline-flex items-center gap-1">
                     {row.node.children?.length ? (
-                        <button class="btn btn-ghost btn-xs p-0" onClick={() => props.onToggle(row.key)}>
+                        <button
+                            class="btn btn-ghost btn-xs p-0 w-5 min-w-0 shrink-0 justify-center items-center"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                props.onToggle(row.key);
+                            }}
+                        >
                             {props.expanded.has(row.key) ? "›" : "⌄"}
                         </button>
                     ) : (
                         <span class="w-5" />
                     )}
                     <span>📁</span>
-                    <span class="truncate cursor-pointer" onClick={() => props.onToggle(row.key)}>
+                    <span
+                        class="truncate cursor-pointer"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            props.onToggle(row.key);
+                        }}
+                    >
                         {row.node.title}
                     </span>
                     <CreateTaskSheet projectId={row.projectId} projectLabel={row.node.title ?? ""} />
@@ -233,7 +375,11 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
         get id() {
             return row.key;
         },
-        data: { title: row.node.title ?? row.key, kind: "task" },
+        // getter：dnd-kit/solid 在 createEffect 里读 input.data，保持对 node 的追踪，
+        // 行对象缓存后改名能让拖拽幽灵标题跟着刷新（否则会停在首次构建时的标题）
+        get data() {
+            return { title: row.node.title ?? row.key, kind: "task" };
+        },
     });
     const drop = useDroppable({
         get id() {
@@ -248,19 +394,15 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
     return (
         <tr
             ref={ref}
-            class={`border-b cursor-pointer transition-colors select-none ${
+            class={`border-b transition-colors select-none ${
                 isSelected() ? "bg-primary/20" : "hover:bg-base-200" + (drop.isDropTarget() ? " ring-2 ring-primary/50 ring-inset" : "")
             }`}
-            onClick={(e) => {
-                e.stopPropagation();
-                taskStore.selectTask(row.key);
-            }}
         >
             <td style={`padding-left:${8 + row.depth * 20}px`}>
                 <span class="inline-flex items-center gap-1">
                     {row.node.children?.length ? (
                         <button
-                            class="btn btn-ghost btn-xs p-0"
+                            class="btn btn-ghost btn-xs p-0 w-5 min-w-0 shrink-0 justify-center items-center"
                             onClick={(e) => {
                                 e.stopPropagation();
                                 props.onToggle(row.key);
@@ -272,13 +414,23 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                         <span class="w-5" />
                     )}
                     <span class={`w-2 h-2 rounded-full inline-block ${stateColor[row.node.state ?? ""] ?? "bg-neutral"}`} />
-                    <span class="truncate font-medium">{row.node.title}</span>
-                    {row.node.starred && <span>⭐</span>}
+                    <span
+                        class="truncate font-medium diy-link underline-offset-2 hover:underline cursor-pointer"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            // 再点同一个任务 → 收起面板；否则切到该任务
+                            taskStore.selectTask(taskStore.selectedUri === row.key ? null : row.key);
+                        }}
+                    >
+                        {row.node.title}
+                    </span>
                     <CreateTaskSheet projectId={row.projectId} projectLabel={row.node.title ?? ""} parentUri={row.key} compact />
                 </span>
             </td>
             <td class="font-mono text-xs opacity-60 truncate">{row.key}</td>
-            <td class="text-xs opacity-60">{row.node.state}</td>
+            <td class="text-xs">
+                <StateSelector uri={row.key} state={row.node.state ?? ""} />
+            </td>
         </tr>
     );
 }

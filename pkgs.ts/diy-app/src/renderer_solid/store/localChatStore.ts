@@ -22,6 +22,14 @@ interface TaskState {
     setRunning: (v: boolean) => void;
     error: () => string | null;
     setError: (v: string | null) => void;
+    /** 阅读位置：会话块树滚动区 scrollTop（内存态，随会话保留；不落盘——重启后从最新看起） */
+    scroll: number;
+    /** 详情面板当前 tab（local=agent 对话 / info=任务详情），per-task 记忆 */
+    tab: "local" | "info";
+    /** 详情 tab 的滚动位置（info 滚动容器 scrollTop） */
+    detailScroll: number;
+    /** 输入框草稿（切任务/切 tab 保留，内存态不落盘） */
+    inputDraft: string;
 }
 
 const states = new Map<string, TaskState>();
@@ -33,7 +41,7 @@ function stateFor(taskUri: string): TaskState {
         const [trees, setTrees] = createSignal<BlockNode[]>([]);
         const [running, setRunning] = createSignal(false);
         const [error, setError] = createSignal<string | null>(null);
-        s = { store: new BlockStore(), loaded: false, trees, setTrees, running, setRunning, error, setError };
+        s = { store: new BlockStore(), loaded: false, trees, setTrees, running, setRunning, error, setError, scroll: 0, tab: "local", detailScroll: 0, inputDraft: "" };
         states.set(taskUri, s);
     }
     return s;
@@ -145,9 +153,51 @@ async function clear(taskUri: string) {
     st.store = new BlockStore();
     st.loaded = true; // 文件已删，不必重拉
     st.setError(null);
+    st.scroll = 0; // 会话清空，阅读位置一并归位
+    st.inputDraft = ""; // 输入框草稿一并归位
     refresh(st);
 }
 
+/** 记录某任务的阅读位置（切走会话时由组件保存滚动容器 scrollTop） */
+function setScroll(taskUri: string, v: number): void {
+    stateFor(taskUri).scroll = v;
+}
+
+/** 读取某任务的阅读位置（0=从未滚动过；只读不创建 state） */
+function getScroll(taskUri: string): number {
+    return states.get(taskUri)?.scroll ?? 0;
+}
+
+/** 记录某任务的详情面板 tab（切走时由面板保存） */
+function setTab(taskUri: string, v: "local" | "info"): void {
+    stateFor(taskUri).tab = v;
+}
+
+/** 读取某任务的详情面板 tab（未访问过 = local） */
+function getTab(taskUri: string): "local" | "info" {
+    return states.get(taskUri)?.tab ?? "local";
+}
+
+/** 记录某任务的详情 tab 滚动位置 */
+function setDetailScroll(taskUri: string, v: number): void {
+    stateFor(taskUri).detailScroll = v;
+}
+
+/** 读取某任务的详情 tab 滚动位置 */
+function getDetailScroll(taskUri: string): number {
+    return states.get(taskUri)?.detailScroll ?? 0;
+}
+
+
+/** 记录某任务的输入框草稿 */
+function setInputDraft(taskUri: string, v: string): void {
+    stateFor(taskUri).inputDraft = v;
+}
+
+/** 读取某任务的输入框草稿（空串=未输入过） */
+function getInputDraft(taskUri: string): string {
+    return states.get(taskUri)?.inputDraft ?? '';
+}
 export const localChatStore = {
     get trees() {
         return cur()?.trees() ?? [];
@@ -169,4 +219,12 @@ export const localChatStore = {
     send,
     cancel,
     clear,
+    setScroll,
+    getScroll,
+    setTab,
+    getTab,
+    setDetailScroll,
+    getDetailScroll,
+    setInputDraft,
+    getInputDraft,
 };

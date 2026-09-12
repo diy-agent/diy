@@ -17,22 +17,30 @@ import { createSignal, For, Show, createEffect, on, onMount, onCleanup } from "s
 import { localChatStore } from "../store/localChatStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
+import { Caches, DENSITY_LEVEL, DENSITY_VALUES, type Density } from "../lib/ui-state";
+import { onEnterKey } from "../lib/on-enter";
 import type { BlockNode } from "../../main/services/local-blocks";
+import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
 
 // ─── 层级 ───────────────────────────────────────────
 
-type Density = 1 | 2 | 3 | 4;
-const DENSITY_KEY = "diy-local-density";
-const DENSITY_LABEL: Record<Density, string> = { 1: "脉络", 2: "阅读", 3: "审计", 4: "取证" };
+const DENSITY_LABEL: Record<Density, string> = {
+    [DENSITY_LEVEL.OUTLINE]: "脉络",
+    [DENSITY_LEVEL.READ]: "阅读",
+    [DENSITY_LEVEL.AUDIT]: "审计",
+    [DENSITY_LEVEL.FORENSIC]: "取证",
+};
+const DENSITY_TITLE: Record<Density, string> = {
+    [DENSITY_LEVEL.OUTLINE]: "脉络：找自己说过啥",
+    [DENSITY_LEVEL.READ]: "阅读：读答案",
+    [DENSITY_LEVEL.AUDIT]: "审计：查过程",
+    [DENSITY_LEVEL.FORENSIC]: "取证：全展开",
+};
+/** 审计及以上（L3/L4：过程以标题行展示） */
+const isAuditPlus = (d: Density) => d === DENSITY_LEVEL.AUDIT || d === DENSITY_LEVEL.FORENSIC;
+
 function loadDensity(): Density {
-    try {
-        const v = Number(localStorage.getItem(DENSITY_KEY));
-        if (v >= 1 && v <= 4) return v as Density;
-    } catch (e) {
-        // 读偏好失败 → 回退默认是可接受降级，但要留痕（隐私模式/存储损坏可诊断）
-        console.warn("[localChat] 读 density 偏好失败，使用默认：", e);
-    }
-    return 2;
+    return Caches.diy_chat_density.get();
 }
 
 // ─── 小工具 ─────────────────────────────────────────
@@ -90,12 +98,14 @@ function descendants(n: BlockNode): BlockNode[] {
 const processOf = (turn: BlockNode) =>
     descendants(turn).filter((b) => b.tag === "think" || b.tag === "tool");
 /** 文档序拉平：叶子块（step 是纯容器，DFS 顺序 = 时间顺序）。
- *  渲染只按此序 + 密度决定可见性，绝不按 kind 重排（时序是协议的基本承诺）。 */
+ *  渲染只按此序 + 密度决定可见性，绝不按 kind 重排（时序是协议的基本承诺）。
+ *  兼底：任何带 children 的容器都向下递归，否则一旦数据里出现嵌套容器
+ *  （如旧日志中的嵌套 turn），整段子树会直接不渲染。 */
 function leavesOf(turn: BlockNode): BlockNode[] {
     const out: BlockNode[] = [];
     const walk = (n: BlockNode) => {
         for (const c of n.children) {
-            if (c.tag === "step") walk(c);
+            if (c.tag === "step" || c.children.length > 0) walk(c);
             else out.push(c);
         }
     };
@@ -109,7 +119,7 @@ function segments(density: Density, leaves: BlockNode[]): Seg[] {
         (b.tag === "think" || b.tag === "tool") &&
         b.stopped &&
         !(b.tag === "tool" && str(b.attrs.status) === "error");
-    if (density !== 2) return leaves.map((node) => ({ kind: "block", node }));
+    if (density !== DENSITY_LEVEL.READ) return leaves.map((node) => ({ kind: "block", node }));
     const out: Seg[] = [];
     let run: BlockNode[] = [];
     const flush = () => {
@@ -127,12 +137,27 @@ function segments(density: Density, leaves: BlockNode[]): Seg[] {
     return out;
 }
 
-/** 展开判定：error 恒开 → 手动 pin → L4 全开；其余默认折叠 */
+/**
+ * 中断的 tool 块：
+ *   ① 显式终态 status=interrupted（main 已收敛并写进 ops）→ 直接读，不靠推断
+ *   ② 兼容旧会话：未收 stop 且当前无轮次在跑（历史日志里还没收敛）
+ */
+function isInterruptedToolBlock(n: BlockNode): boolean {
+    if (n.tag !== "tool") return false;
+    const s = str(n.attrs.status);
+    if (s === "interrupted") return true;
+    if (n.stopped) return false;
+    if (s === "done" || s === "error") return false;
+    return !localChatStore.running;
+}
+
+/** 展开判定：error 恒开 → 中断的 tool 恒开（要让人一眼看到"最后一句断在哪"）→ 手动 pin → L4 全开 */
 function isOpen(n: BlockNode, density: Density, pin: Record<string, boolean>): boolean {
     if (n.tag === "error") return true;
     if (n.tag === "tool" && str(n.attrs.status) === "error") return true;
+    if (isInterruptedToolBlock(n)) return true;
     if (n.id in pin) return pin[n.id]!;
-    return density === 4;
+    return density === DENSITY_LEVEL.FORENSIC;
 }
 
 // ─── 行摘要与正文 ───────────────────────────────────
@@ -151,7 +176,7 @@ function summaryOf(n: BlockNode): string {
         return !n.stopped ? tailLine(t) : firstLine(t);
     }
     if (n.tag === "tool") {
-        return `${str(n.attrs.tool) || "tool"}${toolCommand(n) ? ` · ${firstLine(toolCommand(n))}` : ""}`;
+        return `${str(n.attrs.tool) || "tool"}${toolCommand(n) ? ` · ${firstLine(toolCommand(n))}` : ""}${isInterruptedToolBlock(n) ? " · ⊘ 中断" : ""}`;
     }
     return n.tag;
 }
@@ -167,6 +192,14 @@ function statusMark(n: BlockNode) {
     const s = str(n.attrs.status);
     if (s === "done") return <span class="text-success">✓</span>;
     if (s === "error") return <span class="text-error">✗</span>;
+    // 中断遗留（无 stop、无结果）：不能跟"正在执行"共用同一个点，否则用户看不出历史断在哪
+    if (isInterruptedToolBlock(n)) {
+        return (
+            <span class="text-warning" title="上一轮中断，没有结果（此行已被收敛为终态，正文与发往模型的同源）">
+                ⊘
+            </span>
+        );
+    }
     if (!n.stopped) return <span class="text-warning animate-pulse">●</span>;
     return <span class="opacity-50">○</span>;
 }
@@ -192,6 +225,12 @@ function ToolBody(props: {
                 <pre class="whitespace-pre-wrap max-h-72 overflow-auto bg-base-100/60 rounded p-2">
                     {pv().text}
                 </pre>
+            </Show>
+            {/* 中断遗留：正文显示与发往 LLM 完全同源的占位说明（不再是空白让人无从下手） */}
+            <Show when={isInterruptedToolBlock(n)}>
+                <div class="alert alert-warning alert-soft text-xs py-2 font-sans">
+                    <span class="whitespace-pre-wrap">{INTERRUPTED_TOOL_NOTICE}</span>
+                </div>
             </Show>
             <Show when={pv().omitted > 0}>
                 <button
@@ -222,9 +261,11 @@ function ProcessRow(props: {
         if (open() && !n().stopped && bodyRef) bodyRef.scrollTop = bodyRef.scrollHeight;
     });
     return (
-        <div class="rounded-lg border border-base-300 bg-base-200/40 text-xs">
+        <div class="rounded-lg border border-base-300 bg-base-200/40 text-xs" data-block-id={n().id} data-block-tag={n().tag}>
             <button
+                type="button"
                 class="flex items-center gap-2 cursor-pointer select-none px-2.5 py-1.5 w-full text-left"
+                onPointerDown={(e) => e.preventDefault()}
                 onClick={() => props.onToggle(n().id)}
             >
                 {statusMark(n())}
@@ -284,7 +325,7 @@ function LeafView(props: {
     }
     if (b.tag === "text") {
         // assistant 正文：L1 单行（直播取末行/定稿取首行），L2+ 全文（流式照常平铺）
-        if (props.density === 1) {
+        if (props.density === DENSITY_LEVEL.OUTLINE) {
             const t = str(b.attrs.content);
             return (
                 <div class="text-sm opacity-80 truncate">
@@ -300,7 +341,7 @@ function LeafView(props: {
     if (b.tag === "think" || b.tag === "tool") {
         const failed = b.tag === "tool" && str(b.attrs.status) === "error";
         // 直播中的过程块：所有密度都显示为进度行（静默的是内容，不是活动）
-        if (!b.stopped || failed || props.density >= 3) {
+        if (!b.stopped || failed || isAuditPlus(props.density)) {
             return (
                 <ProcessRow
                     node={b}
@@ -321,7 +362,7 @@ function LeafView(props: {
         );
     }
     if (b.tag === "plan") {
-        if (props.density === 1) return null;
+        if (props.density === DENSITY_LEVEL.OUTLINE) return null;
         return (
             <div class="text-xs opacity-70">
                 📋 计划：
@@ -363,7 +404,7 @@ function TurnView(props: {
                 }
             </For>
             {/* L1 页脚：被隐藏的过程给个计数，不展开内容 */}
-            <Show when={props.density === 1 && procCount() > 0}>
+            <Show when={props.density === DENSITY_LEVEL.OUTLINE && procCount() > 0}>
                 <div class="text-[11px] opacity-40">· {procCount()} 步</div>
             </Show>
             {/* 截断/步数耗尽提示：main 按生效 limits 写入，限制值动态非硬编码 */}
@@ -438,6 +479,32 @@ function FullscreenModal(props: { title: string; content: string; onClose: () =>
 export function LocalChatPage() {
     const uri = () => taskStore.selectedUri ?? null;
     let inputRef: HTMLTextAreaElement | undefined;
+    let scrollRef: HTMLDivElement | undefined;
+    /** 恢复某会话的阅读位置：open（含历史重放）完成后，等渲染帧再设 scrollTop */
+    const restore = (u: string) => {
+        void localChatStore.open(u).then(() => {
+            const p = localChatStore.getScroll(u);
+            if (p > 0) {
+                requestAnimationFrame(() => {
+                    if (scrollRef) scrollRef.scrollTop = p;
+                });
+            }
+        });
+    };
+    // 首挂（切页面/组件重建，TaskState 在内存保留）：恢复当前任务阅读位置 + 输入框草稿
+    onMount(() => {
+        const u = uri();
+        if (u) {
+            restore(u);
+            const draft = localChatStore.getInputDraft(u);
+            if (draft && inputRef) inputRef.value = draft;
+        }
+    });
+    // 组件卸载（切 tab 到 info）前保存输入框草稿
+    onCleanup(() => {
+        const u = uri();
+        if (u && inputRef) localChatStore.setInputDraft(u, inputRef.value);
+    });
     // 直播中的尾轮 turn id（running 时才有）：中断警告 gating 用
     const liveTurnId = () => {
         if (!localChatStore.running) return null;
@@ -448,20 +515,25 @@ export function LocalChatPage() {
     const [density, setDensityRaw] = createSignal<Density>(loadDensity());
     const setDensity = (d: Density) => {
         setDensityRaw(d);
-        try {
-            localStorage.setItem(DENSITY_KEY, String(d));
-        } catch (e) {
-            // 写偏好失败只影响下次默认值，不打扰用户；留痕即可
-            console.warn("[localChat] 持久化 density 失败：", e);
-        }
+        Caches.diy_chat_density.set(d);
     };
     const [pinned, setPinned] = createSignal<Record<string, boolean>>({});
     const togglePin = (id: string) => setPinned((p) => ({ ...p, [id]: !p[id] }));
     const [full, setFull] = createSignal<{ title: string; content: string } | null>(null);
 
     createEffect(
-        on(uri, (u) => {
-            if (u) void localChatStore.open(u);
+        on(uri, (u, prev) => {
+            // 切走前保存旧会话阅读位置 + 输入框草稿（组件不卸载，滚动容器 DOM 还在）
+            if (prev) {
+                if (scrollRef) localChatStore.setScroll(prev, scrollRef.scrollTop);
+                if (inputRef) localChatStore.setInputDraft(prev, inputRef.value);
+            }
+            // 进入新会话：内容恢复（历史重放）+ 阅读位置恢复 + 输入框草稿恢复
+            if (u) {
+                restore(u);
+                const draft = localChatStore.getInputDraft(u);
+                if (inputRef) inputRef.value = draft;
+            }
         }),
     );
 
@@ -471,6 +543,7 @@ export function LocalChatPage() {
         const text = el.value.trim();
         if (!text || !uri() || localChatStore.running) return;
         el.value = "";
+        localChatStore.setInputDraft(uri()!, "");
         await localChatStore.send(uri()!, text);
     };
 
@@ -479,11 +552,11 @@ export function LocalChatPage() {
             {/* 顶部：密度切换 + 模型选择 + 会话操作 */}
             <div class="flex items-center gap-2 px-4 py-2 border-b shrink-0 text-xs">
                 <div class="join">
-                    <For each={([1, 2, 3, 4] as Density[])}>
+                    <For each={[...DENSITY_VALUES]}>
                         {(d) => (
                             <button
                                 class={`btn btn-xs join-item ${density() === d ? "btn-active" : ""}`}
-                                title={["", "脉络：找自己说过啥", "阅读：读答案", "审计：查过程", "取证：全展开"][d]}
+                                title={DENSITY_TITLE[d]}
                                 onClick={() => setDensity(d)}
                             >
                                 {DENSITY_LABEL[d]}
@@ -515,7 +588,7 @@ export function LocalChatPage() {
             </div>
 
             {/* 块树滚动区 */}
-            <div class="flex-1 overflow-y-auto px-4 py-3">
+            <div ref={(el) => (scrollRef = el)} class="flex-1 overflow-y-auto px-4 py-3">
                 <div class="space-y-3">
                     <For each={localChatStore.trees}>
                         {(t) =>
@@ -550,12 +623,7 @@ export function LocalChatPage() {
                         rows={2}
                         class="textarea textarea-bordered flex-1 resize-none text-sm"
                         placeholder="本地 agent（回车发送 / Shift+回车换行）…"
-                        onKeyDown={(e) => {
-                            if (e.key === "Enter" && !e.shiftKey) {
-                                e.preventDefault();
-                                void submit();
-                            }
-                        }}
+                        onKeyDown={onEnterKey(() => void submit(), { shiftNewline: true })}
                     />
                     <Show
                         when={!localChatStore.running}

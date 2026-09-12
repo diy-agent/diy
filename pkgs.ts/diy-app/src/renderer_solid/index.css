@@ -1,4 +1,17 @@
 @import "tailwindcss";
 @plugin "daisyui" {
-  themes: dark --default;
+  themes: light, dark --default;
+}
+
+/* 任务标题链接色：daisyUI dark 默认 primary（oklch 58% 蓝紫）在黑底上对比不足，单独加亮。
+ * 自定义色按规范用 diy- 前缀；随主题切换（main.tsx 经 data-theme 显式锁定）。 */
+:root,
+[data-theme="dark"] {
+  --color-diy-link: oklch(87% 0.11 260);
+}
+[data-theme="light"] {
+  --color-diy-link: oklch(48% 0.22 277);
+}
+.diy-link {
+  color: var(--color-diy-link);
 }

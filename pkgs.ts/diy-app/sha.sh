@@ -50,6 +50,7 @@ sync() { :; }
 build() {
   run npx vite build --config vite.main.config.ts
   run npx vite build --config vite.preload.config.ts
+  run npx vite build --config vite.cli.config.ts
   build-renderer
 }
 

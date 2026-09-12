@@ -1,5 +1,5 @@
 // src/main/core/state.ts
-// 🎯 纯文件 I/O 操作：state.yaml R/W、AGENTS.md 解析、star/unstar
+// 🎯 纯文件 I/O 操作：state.yaml R/W、AGENTS.md 解析
 //    类型全显式，无 any，无 Record<string, unknown> 逃逸
 //
 //    数据布局（project 替代 subject）：
@@ -14,8 +14,6 @@ import {
   readFileSync,
   writeFileSync,
   renameSync,
-  unlinkSync,
-  symlinkSync,
 } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { homedir } from "node:os";
@@ -24,16 +22,9 @@ import { homedir } from "node:os";
 // 类型定义
 // ═══════════════════════════════════════
 
-export type TaskState =
-  | "pending"
-  | "active"
-  | "done"
-  | "cancelled"
-  | "blocked"
-  | "shelved"
-  | "new"
-  | "open"
-  | "closed";
+// TaskState 单一真相源在 task-state.ts（此处 re-export 保持兼容） */
+export type { TaskState } from "./task-state";
+import type { TaskState } from "./task-state";
 
 /** AGENTS.md frontmatter 字段（不含 body，body 单独提取） */
 export interface TaskMeta {
@@ -244,39 +235,6 @@ export function getTask(uri: string): TaskData | null {
 /** 检查任务文件是否存在 */
 export function taskExists(uri: string): boolean {
   return existsSync(taskFilePath(uri));
-}
-
-// ═══════════════════════════════════════
-// Star / Unstar（基于 symlink）
-// ═══════════════════════════════════════
-
-function starLinkName(uri: string): string {
-  return uri.replace(/\//g, "__");
-}
-
-function starLinkPath(uri: string): string {
-  return join(diyHome(), "star", starLinkName(uri));
-}
-
-/** 关注任务：在 ~/.diy/star/ 下创建 symlink */
-export function starTask(uri: string): void {
-  const starDir = join(diyHome(), "star");
-  mkdirSync(starDir, { recursive: true });
-  const link = starLinkPath(uri);
-  if (!existsSync(link)) {
-    symlinkSync(taskDir(uri), link);
-  }
-}
-
-/** 取消关注：删除 symlink，数据不动 */
-export function unstarTask(uri: string): void {
-  const link = starLinkPath(uri);
-  if (existsSync(link)) unlinkSync(link);
-}
-
-/** 检查任务是否被关注 */
-export function isStarred(uri: string): boolean {
-  return existsSync(starLinkPath(uri));
 }
 
 // ═══════════════════════════════════════

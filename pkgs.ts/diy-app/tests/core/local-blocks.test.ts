@@ -3,12 +3,30 @@
 
 import { describe, it, expect } from "vitest";
 import {
+    INTERRUPTED_STATUS,
+    INTERRUPTED_TOOL_NOTICE,
+    interruptedToolPatches,
     BlockStore,
     replay,
     toTree,
     blocksToMessages,
     type Op,
 } from "../../src/main/services/local-blocks";
+
+/** 复刻 UI 的 leavesOf（容器递归，叶子入列）——用于验证"整轮可渲染" */
+function leavesOfIds(store: BlockStore, rootId: string): string[] {
+    const out: string[] = [];
+    const walk = (id: string) => {
+        const b = store.blocks.get(id)!;
+        for (const cid of b.children) {
+            const c = store.blocks.get(cid)!;
+            if (c.kind === "step" || c.children.length > 0) walk(cid);
+            else out.push(cid);
+        }
+    };
+    walk(rootId);
+    return out;
+}
 
 const ops = (...ops: Op[]) => {
     const s = new BlockStore();
@@ -219,6 +237,69 @@ describe("历史重建的配对铁律", () => {
         expect(roles).toEqual(["user", "assistant", "tool"]);
         const toolMsg = msgs[2]!;
         const part = (toolMsg.content as Array<{ output: { value: string } }>)[0]!;
-        expect(part.output.value).toContain("未完成");
+        expect(part.output.value).toContain("已中断");
+        // 不得出现诱导重试的口号：旧文案"如有需要请重新发起"会让 agent 重启后自动重发被杀断的命令
+        expect(part.output.value).toContain("不要重试");
+        expect(part.output.value).not.toContain("重新发起");
+        // 单一来源：UI 与 request 必须同源（UI 直接 import 这个常量）
+        expect(part.output.value).toBe(INTERRUPTED_TOOL_NOTICE);
+    });
+});
+
+describe("turn 顶层不变式（被打断后不能嵌套）", () => {
+    it("上一轮 tool 未闭合时，下一轮 turn 仍是根（否则 UI 只渲染 root turn，整轮消失）", () => {
+        const s = ops(
+            { op: "start", id: "t1", kind: "turn" },
+            { op: "start", id: "t1_s1", kind: "step", parent: "t1" },
+            { op: "start", id: "call_1", kind: "tool", parent: "t1_s1", meta: { tool: "bash", status: "running" } },
+            // 这里被打断：call_1 / t1_s1 / t1 都没有 stop
+            { op: "start", id: "t2", kind: "turn" },
+            { op: "start", id: "t2_u", kind: "text", parent: "t2", meta: { role: "user" } },
+            { op: "delta", id: "t2_u", fields: { content: "新的一轮" } },
+            { op: "stop", id: "t2_u" },
+        );
+        const roots = s.roots().filter((b) => b.kind === "turn").map((b) => b.id);
+        expect(roots).toEqual(["t1", "t2"]);
+        // 旧日志兼容：重放时按新规则折叠，嵌套 turn 自动回到根
+        expect(s.blocks.get("t2")!.parent).toBeUndefined();
+        // 新 turn 的正文必须能作为叶子被取到（UI 渲染路径）
+        expect(leavesOfIds(s, "t2")).toEqual(["t2_u"]);
+    });
+});
+
+describe("中断 tool 的显式终态收敛（防止重载后重复发起）", () => {
+    const seq = (): Op[] => [
+        { op: "start", id: "t1", kind: "turn" },
+        { op: "start", id: "t1_s1", kind: "step", parent: "t1" },
+        { op: "start", id: "call_kill", kind: "tool", parent: "t1_s1",
+          meta: { tool: "bash", args: { command: "pkill -9 -f electron" }, status: "running" } },
+        // 到这里进程被 SIGKILL：call_kill / t1_s1 / t1 全部没收到 stop
+    ];
+
+    it("收敛出 patch+stop，且文案不含任何『重试』诱导", () => {
+        const s = ops(...seq());
+        const patches = interruptedToolPatches(s);
+        expect(patches).toHaveLength(2);
+        expect(patches[0]).toMatchObject({ op: "patch", id: "call_kill",
+            fields: { status: INTERRUPTED_STATUS, output: INTERRUPTED_TOOL_NOTICE } });
+        expect(patches[1]).toMatchObject({ op: "stop", id: "call_kill" });
+        expect(INTERRUPTED_TOOL_NOTICE).not.toContain("重新发起");
+        expect(INTERRUPTED_TOOL_NOTICE).toContain("不要重试");
+    });
+
+    it("幂等：收敛后再次调用不重复产出（重载会话不会反复写入）", () => {
+        const s = ops(...seq());
+        for (const op of interruptedToolPatches(s)) s.apply(op);
+        expect(interruptedToolPatches(s)).toEqual([]);
+    });
+
+    it("收敛后投影是纯翻译：直接用块自己的 output，不再现场造文案", () => {
+        const s = ops(...seq());
+        for (const op of interruptedToolPatches(s)) s.apply(op);
+        const msgs = blocksToMessages(s);
+        const toolMsg = msgs.find((m) => m.role === "tool")!;
+        const value = (toolMsg.content as Array<{ output: { value: string } }>)[0]!.output.value;
+        expect(value).toBe(INTERRUPTED_TOOL_NOTICE);
+        expect(value).not.toContain("重新发起");
     });
 });

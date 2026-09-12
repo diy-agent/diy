@@ -19,24 +19,12 @@
 import { RpcSchema } from "@diy/rpc";
 import { z } from "zod";
 
-// 任务状态枚举（内联，保持 api-def 无 Node 依赖、浏览器安全）
-const TaskStateSchema = z.enum([
-  "pending",
-  "active",
-  "done",
-  "cancelled",
-  "blocked",
-  "shelved",
-  "new",
-  "open",
-  "closed",
-]);
+// 任务状态枚举 — 单一真相源 task-state.ts（纯 zod，无 Node 依赖，浏览器安全） */
+import { TaskStateSchema } from "../core/task-state";
 
 const StatusDataUri = z.object({ status: z.string(), data: z.object({ uri: z.string() }) });
 const StatusDataId = z.object({ status: z.string(), data: z.object({ id: z.string() }) });
 const StatusOk = z.object({ status: z.string() });
-
-const MessageParam = z.object({ role: z.string(), content: z.string() });
 
 /** 任务树节点 schema（递归，供 ui.tree 输出强类型） */
 export interface TaskNodeShape {
@@ -50,7 +38,6 @@ export interface TaskNodeShape {
   body?: string;
   created?: string;
   updated?: string;
-  starred: boolean;
   children: TaskNodeShape[];
 }
 const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
@@ -65,7 +52,6 @@ const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
     body: z.string().optional(),
     created: z.string().optional(),
     updated: z.string().optional(),
-    starred: z.boolean(),
     children: z.array(TaskNodeSchema),
   }),
 );
@@ -112,6 +98,7 @@ export const apiDef = RpcSchema.router({
               title: z.string().optional().cliOption({ short: "t", desc: "新标题" }),
               state: TaskStateSchema.optional().cliOption({ desc: "新状态" }),
               detail: z.string().optional().cliOption({ desc: "新详情" }),
+              body: z.string().optional().cliOption({ desc: "新正文" }),
               parent: z.string().optional().cliOption({ desc: "父任务 URI（空字符串=取消父子关系）" }),
             },
             output: StatusDataUri,
@@ -130,20 +117,6 @@ export const apiDef = RpcSchema.router({
               uri: z.string().cliArg({ desc: "任务 URI" }),
             },
             output: StatusDataUri,
-          }),
-          star: RpcSchema.unary({
-            desc: `收藏任务`,
-            input: {
-              uri: z.string().cliArg({ desc: "任务 URI" }),
-            },
-            output: z.object({ status: z.string(), data: z.object({ uri: z.string(), starred: z.boolean() }) }),
-          }),
-          unstar: RpcSchema.unary({
-            desc: `取消收藏任务`,
-            input: {
-              uri: z.string().cliArg({ desc: "任务 URI" }),
-            },
-            output: z.object({ status: z.string(), data: z.object({ uri: z.string(), starred: z.boolean() }) }),
           }),
         },
       }),
@@ -243,7 +216,7 @@ export const apiDef = RpcSchema.router({
 
       loadTaskTree: RpcSchema.unary({
         desc: `加载任务树（供 renderer 反向调用）`,
-        input: { allTasks: z.boolean().optional() },
+        input: {},
         output: z.object({ status: z.string(), data: z.array(TaskNodeSchema) }),
       }),
 
@@ -283,123 +256,6 @@ export const apiDef = RpcSchema.router({
       agent: RpcSchema.group({
         desc: `Agent 管理`,
         children: {
-          chat: RpcSchema.unary({
-            desc: `与模型对话（task 级：每 task 独立 ACP session）`,
-            input: {
-              taskUri: z.string().cliArg({ desc: "任务 URI（决定所属 project/session）" }),
-              model: z.string().cliArg({ desc: "模型名称" }),
-              messages: z.array(MessageParam).cliOption({ desc: "消息数组 JSON" }),
-            },
-            output: z.object({ role: z.string(), content: z.string() }),
-          }),
-          chatStream: RpcSchema.serverStream({
-            desc: `流式对话（task 级：每 task 独立 ACP session）`,
-            input: {
-              taskUri: z.string().cliArg({ desc: "任务 URI" }),
-              model: z.string().cliArg({ desc: "模型名称" }),
-              messages: z.array(MessageParam).cliOption({ desc: "消息数组 JSON" }),
-            },
-            output: z.string(),
-          }),
-          chatStreamEvents: RpcSchema.serverStream({
-            desc: `流式对话 — 完整 ACP 事件流（JSON 序列化的 session/update 通知）`,
-            input: {
-              taskUri: z.string().cliArg({ desc: "任务 URI" }),
-              model: z.string().cliArg({ desc: "模型名称" }),
-              messages: z.array(MessageParam).cliOption({ desc: "消息数组 JSON" }),
-            },
-            output: z.string(),
-          }),
-          listModels: RpcSchema.unary({
-            desc: `列出可用模型（读任务会话快照，无 probe 会话）`,
-            input: {
-              taskUri: z.string().cliArg({ desc: "任务 URI（会话须已建，进入详情即建）" }),
-            },
-            output: z.array(z.object({ id: z.string(), name: z.string() })),
-          }),
-          ensureSession: RpcSchema.unary({
-            desc: `进入任务详情时确保会话存在（无则新建/恢复），一次性返回配置快照`,
-            input: {
-              taskUri: z.string().cliArg({ desc: "任务 URI" }),
-            },
-            output: z.object({
-              taskUri: z.string(),
-              // 当前模型：快照 model.currentValue（opencode 默认模型）
-              model: z.string().optional(),
-              configOptions: z.array(z.object({
-                id: z.string(),
-                name: z.string(),
-                category: z.string().optional(),
-                currentValue: z.string().optional(),
-                options: z.array(z.object({ value: z.string(), name: z.string() })).optional(),
-              })),
-            }),
-          }),
-          status: RpcSchema.unary({
-            desc: `查询任务会话状态（只读，不会创建会话）`,
-            input: {
-              taskUri: z.string().cliArg({ desc: "任务 URI" }),
-            },
-            // model 可选：state=no_session 时无会话，也就没有模型
-            // cwd/additionalDirectories 可选：state=ready 时回填会话认定的主目录+附加目录
-            output: z.object({ taskUri: z.string(), state: z.string(), model: z.string().optional(), cwd: z.string().optional(), additionalDirectories: z.array(z.string()).optional() }),
-          }),
-          getAutoApprove: RpcSchema.unary({
-            desc: `获取自动审批权限设置`,
-            input: {},
-            output: z.object({ enabled: z.boolean() }),
-          }),
-          setAutoApprove: RpcSchema.unary({
-            desc: `设置自动审批权限`,
-            input: {
-              enabled: z.boolean().cliArg({ desc: "是否自动审批" }),
-            },
-            output: z.object({ enabled: z.boolean() }),
-          }),
-          closeSession: RpcSchema.unary({
-            desc: `关闭任务会话`,
-            input: {
-              taskUri: z.string().cliArg({ desc: "任务 URI" }),
-            },
-            output: z.object({ closed: z.boolean() }),
-          }),
-          cancel: RpcSchema.unary({
-            desc: `取消任务会话的当前生成（agent 停止本轮，队列中的下一条自动开始）`,
-            input: {
-              taskUri: z.string().cliArg({ desc: "任务 URI" }),
-            },
-            output: z.object({ cancelled: z.boolean() }),
-          }),
-          setModel: RpcSchema.unary({
-            desc: `切换任务会话的模型`,
-            input: {
-              taskUri: z.string().cliArg({ desc: "任务 URI" }),
-              model: z.string().cliArg({ desc: "模型 ID" }),
-            },
-            output: z.object({ success: z.boolean() }),
-          }),
-          setConfigOption: RpcSchema.unary({
-            desc: `设置会话配置选项（effort / mode 等）`,
-            input: {
-              taskUri: z.string().cliArg({ desc: "任务 URI" }),
-              configId: z.string().cliArg({ desc: "配置项 ID（effort / mode / model）" }),
-              value: z.string().cliArg({ desc: "配置值" }),
-            },
-            output: z.object({ success: z.boolean() }),
-          }),
-          getConfigOptions: RpcSchema.unary({
-            desc: `获取会话配置选项列表`,
-            input: {
-              taskUri: z.string().cliArg({ desc: "任务 URI" }),
-            },
-            output: z.array(z.object({
-              id: z.string(),
-              name: z.string(),
-              category: z.string().optional(),
-              currentValue: z.string().optional(),
-              options: z.array(z.object({ value: z.string(), name: z.string() })).optional(),
-            })),
-          }),
 
           // —— 本地自定义 agent（ai-sdk 块协议，独立于 ACP 通道）——
           local: RpcSchema.group({
@@ -676,6 +532,24 @@ export const apiDef = RpcSchema.router({
                   title: z.string().min(1, "标题不能为空").max(200).cliArg({ desc: "任务标题" }),
                   project: z.string().cliArg({ desc: "所属 project id" }),
                   parent: z.string().optional().cliOption({ short: "p", desc: "父任务 URI" }),
+                },
+                output: StatusDataUri,
+              }),
+              update: RpcSchema.unary({
+                desc: `编辑任务（UI 入口，反向调 main + 刷新任务树 + toast）`,
+                input: {
+                  uri: z.string().cliArg({ desc: "任务 URI" }),
+                  title: z.string().optional().cliOption({ desc: "新标题" }),
+                  detail: z.string().optional().cliOption({ desc: "新详情" }),
+                  body: z.string().optional().cliOption({ desc: "新正文" }),
+                },
+                output: StatusDataUri,
+              }),
+              setState: RpcSchema.unary({
+                desc: `修改任务状态（UI 入口，反向调 main + 刷新任务树 + toast）`,
+                input: {
+                  uri: z.string().cliArg({ desc: "任务 URI" }),
+                  state: TaskStateSchema.cliArg({ desc: "新状态" }),
                 },
                 output: StatusDataUri,
               }),

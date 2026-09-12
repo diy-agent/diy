@@ -282,3 +282,63 @@ lldb -b   -o "target create --core ~/.diy/log/crashes/pending/<uuid>.dmp"   -o "
 - Minidump：`~/.diy/log/crashes/pending/*.dmp`
 - 渲染进程 console.error：`webContents.on("console-message")` → `main.log`
   前缀 `[renderer:ERROR]` 或 `[renderer:WARN]`
+- agent 执行审计（write-ahead）：`~/.diy/log/agent-bash.jsonl`
+- 进程退出原因：`~/.diy/log/app-exit.jsonl`
+
+#### 被 SIGKILL 的"假崩溃"：agent 自杀（2026-09-12 实测）
+
+现象：一对话 app 就"挂掉"（白屏），但**没有 minidump**、主进程还活着。
+
+根因不在 Electron：本地 agent 的 `bash` 工具会执行
+`ps aux | grep Electron | ... | xargs kill -9`、`pkill -9 -f electron` 这类命令，
+把宿主自己的 GPU / NetworkService / Renderer 子进程杀掉（`exitCode=9` = SIGKILL），
+Electron 不会自动重建 renderer → 窗口永久白屏。
+触发场景：任务历史里 agent 早期为了"清理多余 Electron 实例"留下了这类命令，续聊时复现。
+
+**关键认识：SIGKILL 捕获不到，事后补救不可能 —— 只能执行前拦截 + 执行前落盘。**
+
+对应机制（三层，都在本节文件里）：
+
+| 层 | 位置 | 作用 |
+|----|------|------|
+| 拦截 | `services/agent-guard.ts` | `judgeSelfKill()` 纯函数判定，执行前拒绝会杀死自身进程树的命令，并把替代做法回给模型 |
+| 留痕 | `services/agent-audit.ts` | write-ahead：每次 bash 执行**前**落盘（task/model/cwd/command），`kill -9` 主进程也能查到最后一幕 |
+| 自愈 | `src/main/index.ts` | `render-process-gone` → 节流 reload（60s ≤3 次，防崩溃循环） |
+
+崩溃日志里的现场线索由 `crashContext(home)` 提供（最近轮次 + 最近一条命令）。
+
+排查步骤：
+```bash
+# 1. 看是否有子进程被 SIGKILL
+grep -E "exitCode=9|现场:" ~/.diy/log/main.log | tail
+# 2. 看最后一幕命令（含被拦截的）
+tail -n 20 ~/.diy/log/agent-bash.jsonl
+# 3. 确认 agent 是否尝试自杀（拦截记录）
+grep bash-blocked ~/.diy/log/agent-bash.jsonl
+```
+
+#### 中断的 tool 调用：必须收敛成显式终态，不能在投影时现造
+
+发生在同一事故里的**第二条因果链**，比“杀进程”更隐蔽：
+
+1. SIGKILL 打断的那一次 tool 调用永远收不到 `stop` → 块停在 `running`；
+2. 重建 LLM 历史时（`blocksToMessages`）必须给每个 `tool-call` 配一个 `tool-result`
+   （否则 ai-sdk 抛 `MissingToolResultsError`，请求根本发不出去），于是**现场合成**一条占位结果；
+3. 占位文案旧版是“该调用在上一轮中断前未完成，**如有需要请重新发起**” ——
+   对模型而言这就是一句“待办”。重载会话（重启 app / renderer reload）历史一字不差地重生
+   → agent 重发那条命令 → 再次自杀（用户说“就算说千万不要 kill 也会挂”）
+   而在 90 万 token 的历史里，用户那句禁令盖不过它。
+
+**约定（改代码前请先读这段）：**
+
+| 规则 | 位置 |
+|------|------|
+| 中断块在**新一轮开始时**收敛为终态（`patch{status:"interrupted",output}` + `stop`），**写进 ops** | `local-blocks.ts` 的 `interruptedToolPatches()`，由 `local-agent.ts` 的 `chat()` 调用并落盘 |
+| 投影（`blocksToMessages`）只做**纯翻译**：用块自己的 output，不再自己造文案 | 同上 |
+| 文案必须是“已结束的历史事实”，**禁止**出现“未完成 / 请重新发起 / 可重试”这类待办语 | `INTERRUPTED_TOOL_NOTICE`（唯一来源，UI 与请求共用） |
+| UI 一律读显式 `status:"interrupted"`（仅兼容旧日志时才用 “未收 stop + 无轮次在跑” 去推断） | `LocalChatPage.tsx` 的 `isInterruptedToolBlock()` |
+| 收敛幂等：已收敛的块不再产出 op（重载不会反复写入） | 单测 `tests/core/local-blocks.test.ts` |
+
+为什么不能“投影时现造”（三条）：① 重载后重新生成，agent 会重复重试；
+② 造出来的数据在真相源（ops）里没有对应物，UI 看不到 → 存储/界面/请求三处不一致；
+③ 将来补字段或换存储时还要搬这堆逻辑。

@@ -2,10 +2,10 @@ import { createSignal, onMount, onCleanup, Show } from "solid-js";
 import * as Tabs from "@kobalte/core/tabs";
 import { TaskTree } from "./components/TaskTree";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
-import { ChatPage } from "./components/ChatPage";
 import { LlmPage } from "./components/LlmPage";
 import { LogPanel } from "./components/LogPanel";
 import { AppInfo } from "./components/AppInfo";
+import { ThemeSettings } from "./components/ThemeSettings";
 import { ToastContainer } from "./components/ToastContainer";
 import { taskStore } from "./store/taskStore";
 import { notificationStore, type ToastType } from "./store/notificationStore";
@@ -16,7 +16,10 @@ type NavPage = "task" | "chat" | "llm" | "settings";
 export default function App() {
     const [currentPage, setCurrentPage] = createSignal<NavPage>("task");
     const [subPage, setSubPage] = createSignal("info");
-    const [collapsed, setCollapsed] = createSignal(false);
+    // 侧栏默认紧缩（w-12 纯图标 rail 省空间）；悬停或锁定才展开 w-56，选导航后即回缩
+    const [pinned, setPinned] = createSignal(false);
+    const [hovered, setHovered] = createSignal(false);
+    const expanded = () => pinned() || hovered();
 
     onMount(() => {
         taskStore.loadTree();
@@ -30,7 +33,6 @@ export default function App() {
 
     const navItems: Array<{ id: NavPage; label: string; icon: string }> = [
         { id: "task", label: "任务树", icon: "🌳" },
-        { id: "chat", label: "聊天", icon: "💬" },
         { id: "llm", label: "LLM", icon: "🧠" },
         { id: "settings", label: "设置", icon: "⚙️" },
     ];
@@ -62,9 +64,6 @@ export default function App() {
                     <Show when={currentPage() === "llm"}>
                         <LlmPage />
                     </Show>
-                    <Show when={currentPage() === "chat"}>
-                        <ChatPage />
-                    </Show>
                     <Show when={currentPage() === "settings"}>
                         <div class="flex flex-col h-full">
                             <div class="border-b px-3 py-2 shrink-0">
@@ -76,6 +75,9 @@ export default function App() {
                                         <Tabs.Trigger value="logs" class="tab">
                                             📋 日志
                                         </Tabs.Trigger>
+                                        <Tabs.Trigger value="theme" class="tab">
+                                            🎨 外观
+                                        </Tabs.Trigger>
                                     </Tabs.List>
                                 </Tabs.Root>
                             </div>
@@ -84,6 +86,9 @@ export default function App() {
                             </Show>
                             <Show when={subPage() === "logs"}>
                                 <LogPanel />
+                            </Show>
+                            <Show when={subPage() === "theme"}>
+                                <ThemeSettings />
                             </Show>
                         </div>
                     </Show>
@@ -104,37 +109,42 @@ export default function App() {
             {/* 侧栏 - DaisyUI drawer */}
             <div class="drawer-side z-40">
                 <label for="sidebar-toggle" class="drawer-overlay" />
+                {/* 宽用内联 style：daisyUI .menu{width:fit-content} 是非分层样式，会压住 w-12/w-56 utility
+                    收起态同步去掉 menu 的 8px 水平 padding（p-0），否则按钮内容超出 rail 被顶到右侧 */}
                 <div
-                    class={`menu bg-base-200 min-h-full transition-all duration-200 ${collapsed() ? "w-14" : "w-56"}`}
+                    class={`menu bg-base-200 min-h-full transition-all duration-200 whitespace-nowrap overflow-hidden ${expanded() ? "p-2" : "p-0"}`}
+                    style={{ width: expanded() ? "14rem" : "2.5rem" }}
+                    onMouseEnter={() => setHovered(true)}
+                    onMouseLeave={() => setHovered(false)}
                 >
-                    <div class="p-2 border-b font-bold h-12 flex items-center gap-2">
-                        <span>◉</span>
-                        {!collapsed() && <span>diy</span>}
+                    <div class="border-b font-bold h-12 flex items-center justify-center">
+                        <span title="diy">◉</span>
                     </div>
-                    <div class="p-2 space-y-1">
-                        {!collapsed() && (
-                            <div class="text-xs opacity-60 px-2 py-1">导航</div>
-                        )}
+                    <div class={`space-y-1 ${expanded() ? "p-1" : "py-2"}`}>
                         {navItems.map((item) => (
-                            <li class={collapsed() ? "flex justify-center" : ""}>
+                            <li class="flex justify-center">
+                                {/* tab 式选中指示：当前页加高亮胶囊 + 左侧指示条，收起态也可见 */}
                                 <button
-                                    class={currentPage() === item.id ? "active" : ""}
+                                    class={`flex items-center gap-2 w-full transition-colors cursor-pointer ${expanded() ? "px-3 py-2 rounded-lg" : "h-8 w-8 rounded-lg justify-center"} ${currentPage() === item.id ? "bg-primary/30 text-base-content font-semibold ring-1 ring-primary/40" : "hover:bg-base-300"}`}
                                     title={item.label}
-                                    onClick={() => setCurrentPage(item.id)}
+                                    onClick={() => {
+                                        setCurrentPage(item.id);
+                                        setHovered(false);
+                                    }}
                                 >
                                     <span>{item.icon}</span>
-                                    {!collapsed() && <span>{item.label}</span>}
+                                    {expanded() && <span>{item.label}</span>}
                                 </button>
                             </li>
                         ))}
                     </div>
-                    <div class="p-2 border-t">
+                    <div class="p-1 border-t mt-auto">
                         <button
-                            class="w-full flex justify-center"
-                            title={collapsed() ? "展开" : "收起"}
-                            onClick={() => setCollapsed(!collapsed())}
+                            class="w-full flex justify-center opacity-60 hover:opacity-100"
+                            title={pinned() ? "取消锁定（恢复悬停展开）" : "锁定展开"}
+                            onClick={() => setPinned(!pinned())}
                         >
-                            <span>{collapsed() ? "›" : "‹ 收起"}</span>
+                            <span>{pinned() ? "📌" : "📍"}</span>
                         </button>
                     </div>
                 </div>

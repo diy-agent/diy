@@ -38,9 +38,13 @@ export class Session {
   private ready: Promise<void>;
 
   constructor(opts?: { cwd?: string; env?: Record<string, string> }) {
+    // 自动化测试强制副屏：避免频繁启动遮挡主屏工作
+    // - setup.ts 已把 process.env 设为 1，但外层 shell 可能导出 0；此处以 opts 显式传值为准，否则强制 1
+    const merged = { ...process.env, ...opts?.env } as Record<string, string>;
+    if (!opts?.env?.["_DIY_MIRROR_DISPLAY"]) merged["_DIY_MIRROR_DISPLAY"] = "1";
     this.proc = spawn("bash", ["--norc", "-i"], {
       cwd: opts?.cwd,
-      env: { ...process.env, ...opts?.env }, // 合并，保留 PATH 等
+      env: merged,
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.proc.stdout!.on("data", (d: Buffer) => { this.outBuf += d.toString(); });

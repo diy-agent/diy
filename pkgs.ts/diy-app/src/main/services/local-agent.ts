@@ -25,25 +25,42 @@ import {
 import { join } from "node:path";
 import { diyHome, projectFromUri, taskDir } from "../core/state";
 import { getProjectPath } from "../core/project";
-import { BlockStore, blocksToMessages, type Op, type JSONVal } from "./local-blocks";
+import { BlockStore, blocksToMessages, interruptedToolPatches, type Op, type JSONVal } from "./local-blocks";
+import { collectSelfInfo, judgeSelfKill, selfKillNotice } from "./agent-guard";
+import { appendAudit } from "./agent-audit";
 
 const DEFAULT_MODEL = "mimo-v2.5";
 
-/** 可选模型：zen/go 的 OpenAI-completions 子集（models-store 实查） */
+/**
+ * 可选模型：zen/go 的 OpenAI-completions 子集（2026-09-12 实查 /models + models.dev 价格）
+ * 价格单位为 $/1M tokens：input / output（cacheRead）
+ */
 export const LOCAL_MODELS = [
-    { id: "mimo-v2.5", name: "MiMo V2.5" },
-    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
-    { id: "glm-5.3", name: "GLM-5.3" },
-    { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
-    { id: "qwen3.7-plus", name: "Qwen3.7 Plus" },
-    { id: "muse-spark-1.2-contributor", name: "Muse Spark 1.2 Contributor (opencode-go)" },
-    { id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor (opencode-go)" },
+    { id: "mimo-v2.5", name: "MiMo V2.5" }, // 0.14 / 0.28 (0.0028)
+    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash" }, // 0.15 / 0.60 (0.003)
+    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" }, // 0.15 / 0.60 (0.003)
+    { id: "glm-5.3-flash", name: "GLM-5.3 Flash" }, // 0.15 / 0.50 (0.03)
+    { id: "qwen3.8-flash", name: "Qwen3.8 Flash" }, // 0.15 / 0.47 (0.016)
+    { id: "hy3", name: "Hy3" }, // 0.14 / 0.58 (0.035)
+    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna" }, // 0.20 / 1.20 (0.02)
+    { id: "minimax-m3", name: "MiniMax M3" }, // 0.30 / 1.20 (0.06)
+    { id: "minimax-m2.7", name: "MiniMax M2.7" }, // 0.30 / 1.20 (0.06)
+    { id: "longcat-2.0", name: "LongCat-2.0" }, // 0.30 / 1.20 (0.006)
+    { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro" }, // 0.435 / 0.87 (0.003625)
+    { id: "qwen3.7-plus", name: "Qwen3.7 Plus" }, // 0.40 / 1.60 (0.04)
+    { id: "glm-5.3", name: "GLM-5.3" }, // 1.40 / 4.40 (0.26)
+    { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" }, // 0.95 / 4.00 (0.19)
+    { id: "muse-spark-1.2-contributor", name: "Muse Spark 1.2 Contributor (opencode-go)" }, // 0.10 / 0.20
+    { id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor (opencode-go)" }, // 0.10 / 0.20
 ];
 
 const SYSTEM = [
     "你是 diy 管控台的本地代码助手，运行在任务所属项目目录。",
     "需要查看文件、运行命令时优先使用工具；拿到结果后用中文简明总结。",
     "回答保持精炼，代码与命令原样引用。",
+    "硬规则：diy 自己就跑在 Electron 里，禁止执行会杀死宿主进程的命令",
+    "（如 pkill/killall Electron、kill 掉 diy 自身的 pid/进程组）。",
+    "需要重启 diy 时告诉用户手动操作，不要自己杀进程。",
 ].join("\n");
 
 /** 工具 cwd 解析：project 路径 → task 目录 → 进程 cwd，逐级存在性校验（~ 展开） */
@@ -148,6 +165,16 @@ function llmFile(taskUri: string): string {
     return join(localDir(), `${keyOf(taskUri)}.llm.jsonl`);
 }
 
+/** 原始流 dump（仅 DIY_RAW_STREAM_DUMP=1 时写）：ai-sdk 的 part 原样落盘，用于研究“Op 是否漏信息” */
+function rawFile(taskUri: string): string {
+    return join(localDir(), `${keyOf(taskUri)}.raw.jsonl`);
+}
+
+/** 原始流开关（默认关；读取时快照一次，避免一处开一处关） */
+function rawDumpEnabled(): boolean {
+    return process.env["DIY_RAW_STREAM_DUMP"] === "1";
+}
+
 /** zen/go 会话亲和头：按 task 稳定（实测缺失会被 MissingSessionID 拒绝） */
 function sessionIdOf(taskUri: string): string {
     return `local-${keyOf(taskUri)}`;
@@ -200,13 +227,47 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
     });
 }
 
-function buildTools(cwd: string, limits: LocalAgentLimits) {
+function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: string) {
     return {
         bash: tool({
             description: "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
             inputSchema: z.object({ command: z.string().describe("要执行的 bash 命令") }),
-            execute: async ({ command }, opts) =>
-                runBash(command, cwd, limits, (opts as { abortSignal?: AbortSignal } | undefined)?.abortSignal),
+            execute: async ({ command }, opts) => {
+                const home = diyHome();
+                // ① 自杀护栏：执行前拦（kill -9 不可捕获，事后补救不可能）
+                const self = collectSelfInfo(home);
+                if (self) {
+                    const verdict = judgeSelfKill(command, self);
+                    if (verdict.blocked) {
+                        appendAudit(home, {
+                            phase: "bash-blocked",
+                            taskUri,
+                            cwd,
+                            command,
+                            result: verdict.reason,
+                        });
+                        return selfKillNotice(verdict);
+                    }
+                }
+                // ② write-ahead 审计：先落盘再执行，保证最后一幕不丢
+                appendAudit(home, { phase: "bash-start", taskUri, cwd, command });
+                const t0 = Date.now();
+                const out = await runBash(
+                    command,
+                    cwd,
+                    limits,
+                    (opts as { abortSignal?: AbortSignal } | undefined)?.abortSignal,
+                );
+                appendAudit(home, {
+                    phase: "bash-end",
+                    taskUri,
+                    cwd,
+                    command,
+                    ms: Date.now() - t0,
+                    result: clip(out, 500),
+                });
+                return out;
+            },
         }),
         read: tool({
             description: "读取文件的文本内容（相对路径按项目目录解析）。",
@@ -304,7 +365,7 @@ export class LocalAgentManager {
     clear(taskUri: string): boolean {
         this.cancel(taskUri);
         this.sessions.delete(taskUri);
-        for (const f of [opsFile(taskUri), llmFile(taskUri)]) {
+        for (const f of [opsFile(taskUri), llmFile(taskUri), rawFile(taskUri)]) {
             try {
                 rmSync(f, { force: true });
             } catch (e) {
@@ -336,6 +397,15 @@ export class LocalAgentManager {
                     console.error(`[local-agent] ops 落盘失败 ${fp}:`, e);
                 }
             };
+            // ── 先收敛上一轮遗留的中断 tool 块（写进 ops，而不是投影时现造）──
+            // 不收敛的后果：每次重建历史都现场合成一句「未完成→请重试」，agent 重载会话后
+            // 会把被截断的命令再跑一次（任务 92 的「一对话就自杀」）。落盘后它变成已结束的
+            // 历史事实，投影与 UI 都只是翻译它。
+            for (const op of interruptedToolPatches(sess.store)) {
+                sink(op);
+                sess.store.apply(op);
+                yield op;
+            }
             for await (const op of this.runTurn(taskUri, sess, message, model, ctrl.signal, key, sink)) {
                 sess.store.apply(op);
                 yield op;
@@ -374,6 +444,13 @@ export class LocalAgentManager {
         }
         const turnId = `t${Date.now()}`;
         const uid = `${turnId}_u`;
+        appendAudit(diyHome(), {
+            phase: "turn-start",
+            taskUri,
+            model: model || DEFAULT_MODEL,
+            cwd: resolveCwd(taskUri),
+            command: message.slice(0, 300),
+        });
         // emission 即落盘：yield 前先过 sink，消费端断开也不丢尾
         const started = new Set<string>();
         const emit = function* (op: Op): Generator<Op, void, void> {
@@ -399,11 +476,31 @@ export class LocalAgentManager {
         const L = this.getLimits();
         // store 此刻已含本轮 user 块（emit 即 apply）；重建历史自带 user，不再手工拼
         const sent: ModelMessage[] = blocksToMessages(sess.store) as unknown as ModelMessage[];
+        // 研究用：把“发给上游的 messages”与 fullStream 的每个 part 原样落盘
+        const raw = rawDumpEnabled() ? rawFile(taskUri) : null;
+        let rawSeq = 0;
+        const rawSink = (row: Record<string, unknown>): void => {
+            if (!raw) return;
+            try {
+                appendFileSync(raw, `${JSON.stringify(row)}\n`, "utf-8");
+            } catch (e) {
+                console.error(`[local-agent] raw dump 写入失败 ${raw}:`, e);
+            }
+        };
+        rawSink({
+            kind: "request",
+            ts: new Date().toISOString(),
+            model: model || DEFAULT_MODEL,
+            system: `${SYSTEM}\n当前项目目录：${cwd}`,
+            tools: Object.keys(buildTools(cwd, L, taskUri)),
+            settings: { maxSteps: L.maxSteps, maxOutputTokens: L.maxOutputTokens, maxRetries: 2 },
+            messages: sent,
+        });
         const result = streamText({
             model: this.provider(model || DEFAULT_MODEL),
             system: `${SYSTEM}\n当前项目目录：${cwd}`,
             messages: sent,
-            tools: buildTools(cwd, L),
+            tools: buildTools(cwd, L, taskUri),
             stopWhen: stepCountIs(L.maxSteps),
             abortSignal: signal,
             headers: { "x-opencode-session": sessionIdOf(taskUri) },
@@ -432,6 +529,7 @@ export class LocalAgentManager {
 
         try {
             for await (const part of result.fullStream) {
+                rawSink({ kind: "part", seq: ++rawSeq, ts: new Date().toISOString(), part });
                 switch (part.type) {
                     case "start-step":
                         stepN++;
@@ -618,6 +716,13 @@ export class LocalAgentManager {
             // 收尾必闭合：step 先于 turn（stop 幂等，重复无害）
             if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
             if (!turnStopped) yield* emit({ op: "stop", id: turnId });
+            // 轮次审计收尾：崩溃后能区分"死在生成中"还是"生成已结束"
+            appendAudit(diyHome(), {
+                phase: "turn-end",
+                taskUri,
+                model: model || DEFAULT_MODEL,
+                result: `steps=${stepN} usage=${acc.in}/${acc.out}`,
+            });
         }
     }
 }
