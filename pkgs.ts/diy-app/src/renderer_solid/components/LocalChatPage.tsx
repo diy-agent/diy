@@ -20,6 +20,7 @@ import { taskStore } from "../store/taskStore";
 import { Caches, DENSITY_LEVEL, DENSITY_VALUES, type Density } from "../lib/ui-state";
 import { onEnterKey } from "../lib/on-enter";
 import type { BlockNode } from "../../main/services/local-blocks";
+import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
 
 // ─── 层级 ───────────────────────────────────────────
 
@@ -97,12 +98,14 @@ function descendants(n: BlockNode): BlockNode[] {
 const processOf = (turn: BlockNode) =>
     descendants(turn).filter((b) => b.tag === "think" || b.tag === "tool");
 /** 文档序拉平：叶子块（step 是纯容器，DFS 顺序 = 时间顺序）。
- *  渲染只按此序 + 密度决定可见性，绝不按 kind 重排（时序是协议的基本承诺）。 */
+ *  渲染只按此序 + 密度决定可见性，绝不按 kind 重排（时序是协议的基本承诺）。
+ *  兼底：任何带 children 的容器都向下递归，否则一旦数据里出现嵌套容器
+ *  （如旧日志中的嵌套 turn），整段子树会直接不渲染。 */
 function leavesOf(turn: BlockNode): BlockNode[] {
     const out: BlockNode[] = [];
     const walk = (n: BlockNode) => {
         for (const c of n.children) {
-            if (c.tag === "step") walk(c);
+            if (c.tag === "step" || c.children.length > 0) walk(c);
             else out.push(c);
         }
     };
@@ -134,10 +137,22 @@ function segments(density: Density, leaves: BlockNode[]): Seg[] {
     return out;
 }
 
-/** 展开判定：error 恒开 → 手动 pin → L4 全开；其余默认折叠 */
+/**
+ * 中断遗留的 tool 块：未收 stop（流断裂）且当前无轮次在跑。
+ * 判定与 blocksToMessages 的"占位"条件对齐（done/error 不算中断）。
+ */
+function isInterruptedToolBlock(n: BlockNode): boolean {
+    if (n.tag !== "tool" || n.stopped) return false;
+    const s = str(n.attrs.status);
+    if (s === "done" || s === "error") return false;
+    return !localChatStore.running;
+}
+
+/** 展开判定：error 恒开 → 中断的 tool 恒开（要让人一眼看到"最后一句断在哪"）→ 手动 pin → L4 全开 */
 function isOpen(n: BlockNode, density: Density, pin: Record<string, boolean>): boolean {
     if (n.tag === "error") return true;
     if (n.tag === "tool" && str(n.attrs.status) === "error") return true;
+    if (isInterruptedToolBlock(n)) return true;
     if (n.id in pin) return pin[n.id]!;
     return density === DENSITY_LEVEL.FORENSIC;
 }
@@ -158,7 +173,7 @@ function summaryOf(n: BlockNode): string {
         return !n.stopped ? tailLine(t) : firstLine(t);
     }
     if (n.tag === "tool") {
-        return `${str(n.attrs.tool) || "tool"}${toolCommand(n) ? ` · ${firstLine(toolCommand(n))}` : ""}`;
+        return `${str(n.attrs.tool) || "tool"}${toolCommand(n) ? ` · ${firstLine(toolCommand(n))}` : ""}${isInterruptedToolBlock(n) ? " · ⊘ 中断" : ""}`;
     }
     return n.tag;
 }
@@ -174,6 +189,14 @@ function statusMark(n: BlockNode) {
     const s = str(n.attrs.status);
     if (s === "done") return <span class="text-success">✓</span>;
     if (s === "error") return <span class="text-error">✗</span>;
+    // 中断遗留（无 stop、无结果）：不能跟"正在执行"共用同一个点，否则用户看不出历史断在哪
+    if (isInterruptedToolBlock(n)) {
+        return (
+            <span class="text-warning" title="上一轮中断，未返回结果（发往模型的同一句见展开正文）">
+                ⊘
+            </span>
+        );
+    }
     if (!n.stopped) return <span class="text-warning animate-pulse">●</span>;
     return <span class="opacity-50">○</span>;
 }
@@ -199,6 +222,12 @@ function ToolBody(props: {
                 <pre class="whitespace-pre-wrap max-h-72 overflow-auto bg-base-100/60 rounded p-2">
                     {pv().text}
                 </pre>
+            </Show>
+            {/* 中断遗留：正文显示与发往 LLM 完全同源的占位说明（不再是空白让人无从下手） */}
+            <Show when={isInterruptedToolBlock(n)}>
+                <div class="alert alert-warning alert-soft text-xs py-2 font-sans">
+                    <span class="whitespace-pre-wrap">{INTERRUPTED_TOOL_NOTICE}</span>
+                </div>
             </Show>
             <Show when={pv().omitted > 0}>
                 <button
@@ -229,7 +258,7 @@ function ProcessRow(props: {
         if (open() && !n().stopped && bodyRef) bodyRef.scrollTop = bodyRef.scrollHeight;
     });
     return (
-        <div class="rounded-lg border border-base-300 bg-base-200/40 text-xs">
+        <div class="rounded-lg border border-base-300 bg-base-200/40 text-xs" data-block-id={n().id} data-block-tag={n().tag}>
             <button
                 type="button"
                 class="flex items-center gap-2 cursor-pointer select-none px-2.5 py-1.5 w-full text-left"

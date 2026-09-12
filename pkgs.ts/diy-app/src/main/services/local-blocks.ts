@@ -53,6 +53,25 @@ const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
     error: { source: "Flag", message: "Text" },
 };
 
+/**
+ * 中断的 tool 调用在历史重建时拿什么当结果。
+ *
+ * ⚠️ 这是唯一文案来源：UI 与发往 LLM 的 messages 共用它，保证"存储(ops) = 界面 = 请求"一致。
+ * 旧文案写的是"如有需要请重新发起"，而它恰好会被 agent 当成"待办"重发
+ * （任务 92 实例：被 SIGKILL 截断的就是 kill Electron，重发一次 app 再死一次）。
+ * 所以语气必须是"中性 + 明确禁自动重试"。
+ */
+export const INTERRUPTED_TOOL_NOTICE =
+    "[该调用在上一轮中断前未完成，结果未知；除用户明确要求外不要自动重新发起]";
+
+/**
+ * 落在协议上的"中断"信号：tool 块未收到 stop = 流断裂（SIGKILL/取消/断连）。
+ * 与 status 无关 —— status 可能停在 running，但 stopped 才是权威定稿标记。
+ */
+export function isInterruptedTool(b: { kind: BlockKind; stopped: boolean }): boolean {
+    return b.kind === "tool" && !b.stopped;
+}
+
 // ─── fold：Op 流 → 块树 ───────────────────────────────
 
 export interface FoldIssue {
@@ -80,7 +99,13 @@ export class BlockStore {
                     this.issues.push({ op, reason: `重复 start: ${op.id}` });
                     return;
                 }
-                const parent = op.parent ?? this.openStack[this.openStack.length - 1];
+                // turn 是会话的顶层容器：一律不挂 parent。
+                // 否则隐式 parent（openStack 顶部）会把新 turn 挂到上一轮**未闭合**的
+                // step/tool 块下面（被打断的调用收不到 stop），UI 只渲染 root turn
+                // → 整轮内容直接从界面消失（实测任务 92：26 轮里有 13 轮被藏起来，
+                // 包括最新那轮，用户因此“看不到最后一句”）。
+                const parent =
+                    op.kind === "turn" ? undefined : (op.parent ?? this.openStack[this.openStack.length - 1]);
                 if (parent !== undefined && !this.blocks.has(parent)) {
                     this.issues.push({ op, reason: `parent 不存在: ${parent}` });
                 }
@@ -304,7 +329,7 @@ export function blocksToMessages(store: BlockStore): LocalModelMessage[] {
                     ? b.output
                     : doneish
                       ? "（空结果）"
-                      : "[该调用在上一轮中断前未完成，结果未知；除用户明确要求外不要自动重新发起]";
+                      : INTERRUPTED_TOOL_NOTICE;
             out.push({
                 role: "tool",
                 content: [
