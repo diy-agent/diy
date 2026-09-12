@@ -23,17 +23,9 @@ import { projectExists } from "./project";
 // 字段验证 schema
 // ═══════════════════════════════════════
 
-export const TaskStateSchema = z.enum([
-  "pending",
-  "active",
-  "done",
-  "cancelled",
-  "blocked",
-  "shelved",
-  "new",
-  "open",
-  "closed",
-]);
+// TaskStateSchema 单一真相源在 task-state.ts（此处 re-export 保持兼容） */
+export { TaskStateSchema } from "./task-state";
+import { TaskStateSchema } from "./task-state";
 
 // ═══════════════════════════════════════
 // 错误类型

@@ -19,18 +19,8 @@
 import { RpcSchema } from "@diy/rpc";
 import { z } from "zod";
 
-// 任务状态枚举（内联，保持 api-def 无 Node 依赖、浏览器安全）
-const TaskStateSchema = z.enum([
-  "pending",
-  "active",
-  "done",
-  "cancelled",
-  "blocked",
-  "shelved",
-  "new",
-  "open",
-  "closed",
-]);
+// 任务状态枚举 — 单一真相源 task-state.ts（纯 zod，无 Node 依赖，浏览器安全） */
+import { TaskStateSchema } from "../core/task-state";
 
 const StatusDataUri = z.object({ status: z.string(), data: z.object({ uri: z.string() }) });
 const StatusDataId = z.object({ status: z.string(), data: z.object({ id: z.string() }) });

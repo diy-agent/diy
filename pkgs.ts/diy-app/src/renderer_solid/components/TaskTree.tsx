@@ -7,6 +7,7 @@ import { notificationStore } from "../store/notificationStore";
 import { diyService } from "../lib/rpc";
 import { Caches } from "../lib/ui-state";
 import { CreateProjectSheet } from "./CreateProjectSheet";
+import { TASK_STATES } from "../../main/core/task-state";
 import { CreateTaskSheet } from "./CreateTaskSheet";
 
 // dnd-kit/solid 未直接导出 DragEndEvent，从 onDragEnd 回调参数提取
@@ -101,7 +102,8 @@ function findInTree(children: TreeNode[], uri: string): TreeNode | null {
     return null;
 }
 
-const allStates = ["pending", "active", "done", "cancelled", "blocked", "shelved", "new", "open", "closed"] as const;
+// 状态全集来自单一真相源 task-state.ts（main 与 renderer 共用）
+const allStates: readonly string[] = TASK_STATES;
 const stateLabel: Record<string, string> = {
     pending: "待处理",
     active: "进行中",

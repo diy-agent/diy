@@ -22,16 +22,9 @@ import { homedir } from "node:os";
 // 类型定义
 // ═══════════════════════════════════════
 
-export type TaskState =
-  | "pending"
-  | "active"
-  | "done"
-  | "cancelled"
-  | "blocked"
-  | "shelved"
-  | "new"
-  | "open"
-  | "closed";
+// TaskState 单一真相源在 task-state.ts（此处 re-export 保持兼容） */
+export type { TaskState } from "./task-state";
+import type { TaskState } from "./task-state";
 
 /** AGENTS.md frontmatter 字段（不含 body，body 单独提取） */
 export interface TaskMeta {
