@@ -165,6 +165,16 @@ function llmFile(taskUri: string): string {
     return join(localDir(), `${keyOf(taskUri)}.llm.jsonl`);
 }
 
+/** 原始流 dump（仅 DIY_RAW_STREAM_DUMP=1 时写）：ai-sdk 的 part 原样落盘，用于研究“Op 是否漏信息” */
+function rawFile(taskUri: string): string {
+    return join(localDir(), `${keyOf(taskUri)}.raw.jsonl`);
+}
+
+/** 原始流开关（默认关；读取时快照一次，避免一处开一处关） */
+function rawDumpEnabled(): boolean {
+    return process.env["DIY_RAW_STREAM_DUMP"] === "1";
+}
+
 /** zen/go 会话亲和头：按 task 稳定（实测缺失会被 MissingSessionID 拒绝） */
 function sessionIdOf(taskUri: string): string {
     return `local-${keyOf(taskUri)}`;
@@ -355,7 +365,7 @@ export class LocalAgentManager {
     clear(taskUri: string): boolean {
         this.cancel(taskUri);
         this.sessions.delete(taskUri);
-        for (const f of [opsFile(taskUri), llmFile(taskUri)]) {
+        for (const f of [opsFile(taskUri), llmFile(taskUri), rawFile(taskUri)]) {
             try {
                 rmSync(f, { force: true });
             } catch (e) {
@@ -457,6 +467,26 @@ export class LocalAgentManager {
         const L = this.getLimits();
         // store 此刻已含本轮 user 块（emit 即 apply）；重建历史自带 user，不再手工拼
         const sent: ModelMessage[] = blocksToMessages(sess.store) as unknown as ModelMessage[];
+        // 研究用：把“发给上游的 messages”与 fullStream 的每个 part 原样落盘
+        const raw = rawDumpEnabled() ? rawFile(taskUri) : null;
+        let rawSeq = 0;
+        const rawSink = (row: Record<string, unknown>): void => {
+            if (!raw) return;
+            try {
+                appendFileSync(raw, `${JSON.stringify(row)}\n`, "utf-8");
+            } catch (e) {
+                console.error(`[local-agent] raw dump 写入失败 ${raw}:`, e);
+            }
+        };
+        rawSink({
+            kind: "request",
+            ts: new Date().toISOString(),
+            model: model || DEFAULT_MODEL,
+            system: `${SYSTEM}\n当前项目目录：${cwd}`,
+            tools: Object.keys(buildTools(cwd, L, taskUri)),
+            settings: { maxSteps: L.maxSteps, maxOutputTokens: L.maxOutputTokens, maxRetries: 2 },
+            messages: sent,
+        });
         const result = streamText({
             model: this.provider(model || DEFAULT_MODEL),
             system: `${SYSTEM}\n当前项目目录：${cwd}`,
@@ -490,6 +520,7 @@ export class LocalAgentManager {
 
         try {
             for await (const part of result.fullStream) {
+                rawSink({ kind: "part", seq: ++rawSeq, ts: new Date().toISOString(), part });
                 switch (part.type) {
                     case "start-step":
                         stepN++;
