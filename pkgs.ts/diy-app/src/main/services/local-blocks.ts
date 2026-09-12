@@ -54,18 +54,45 @@ const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
 };
 
 /**
- * 中断的 tool 调用在历史重建时拿什么当结果。
+ * 中断的 tool 调用写进 ops 的终态结果文案（唯一来源：UI 与发往 LLM 的 messages 共用）。
  *
- * ⚠️ 这是唯一文案来源：UI 与发往 LLM 的 messages 共用它，保证"存储(ops) = 界面 = 请求"一致。
- * 旧文案写的是"如有需要请重新发起"，而它恰好会被 agent 当成"待办"重发
- * （任务 92 实例：被 SIGKILL 截断的就是 kill Electron，重发一次 app 再死一次）。
- * 所以语气必须是"中性 + 明确禁自动重试"。
+ * 语意必须是「已结束的历史事实」，不能有一丝「待办」味道：
+ * 旧文案是「该调用在上一轮中断前未完成，如有需要请重新发起」，agent 重载会话后看到
+ * 这条历史，会把它当成未完成的任务而**重发**那条被杀断的命令 —— 任务 92 里被截断的
+ * 正是 `kill -9 Electron`，于是「一次对话 = 一次自杀」，用户那向「千万别 kill」
+ * 在 90 万 token 的历史里盖不过它。
  */
 export const INTERRUPTED_TOOL_NOTICE =
-    "[该调用在上一轮中断前未完成，结果未知；除用户明确要求外不要自动重新发起]";
+    "[此调用已中断（上一轮未跑完），没有结果；这是已结束的历史记录，不要重试]";
+
+/** 中断终态：收敛后才写进 ops；与 status 无关，未收 stop 也算（旧日志） */
+export const INTERRUPTED_STATUS = "interrupted";
 
 /**
- * 落在协议上的"中断"信号：tool 块未收到 stop = 流断裂（SIGKILL/取消/断连）。
+ * 把会话里遗留的中断 tool 块收敛成显式终态（patch + stop），供 main 落盘。
+ *
+ * 为什么必须写进 ops 而不能投影时现造：
+ *   1) 现在每次重建历史都现场合成一条「未完成」结果 → 重载后它重生，agent 重复重试；
+ *   2) 投影造的数据在真相源（ops）里找不到对应物，UI 看不到（三处不一致）；
+ *   3) 收敛后投影退化成纯翻译，将来补字段/换存储也不用改。
+ * 幂等：已收敛（status=interrupted 或已 stop）的块不再返回。
+ */
+export function interruptedToolPatches(store: BlockStore): Op[] {
+    const out: Op[] = [];
+    for (const b of store.blocks.values()) {
+        if (b.kind !== "tool") continue;
+        const status = String(b.status ?? "");
+        if (status === INTERRUPTED_STATUS) continue; // 已收敛
+        if (status === "done" || status === "error") continue; // 业务终态
+        if (b.stopped) continue; // 已正常定稿
+        out.push({ op: "patch", id: b.id, fields: { status: INTERRUPTED_STATUS, output: INTERRUPTED_TOOL_NOTICE } });
+        out.push({ op: "stop", id: b.id });
+    }
+    return out;
+}
+
+/**
+ * 落在协议上的「中断」信号：tool 块未收到 stop = 流断裂（SIGKILL/取消/断连）。
  * 与 status 无关 —— status 可能停在 running，但 stopped 才是权威定稿标记。
  */
 export function isInterruptedTool(b: { kind: BlockKind; stopped: boolean }): boolean {
@@ -316,14 +343,14 @@ export function blocksToMessages(store: BlockStore): LocalModelMessage[] {
                 ],
             });
             // 配对铁律：每个 tool-call 必有 tool-result，否则下一轮 provider 拒整个历史。
-            // 中断/未完成的块也要合成占位结果（真机：崩溃恢复后继续聊会 400）。
             //
-            // ⚠️ 文案必须"中性、不要诱导重试"：旧文案写的是
-            // "如有需要请重新发起"，结果重启后 agent 看到这条历史，会**自动重发**那条
-            // 被中断的命令（实测：任务 92 里被 SIGKILL 截断的正是 kill Electron，
-            // 重发一次就把 app 再杀一次）。用户的"千万别 kill"在长上下文里盖不过这句。
+            // 优先用块自己的 output：中断块在「新一轮开始」时已被 main 收敛成显式终态
+            // （interruptedToolPatches 写入 ops），所以这里绝大多数情况是**纯翻译**。
+            // 兼容分支（工具正在跑但历史已要发出）仍拿 INTERRUPTED_TOOL_NOTICE 兜底，
+            // 不另写文案 —— 保证 UI 与请求永远同源。
             const status = String(b.status ?? "");
-            const doneish = status === "done" || status === "error";
+            const doneish =
+                status === "done" || status === "error" || status === INTERRUPTED_STATUS;
             const value =
                 typeof b.output === "string" && b.output
                     ? b.output

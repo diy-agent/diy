@@ -25,7 +25,7 @@ import {
 import { join } from "node:path";
 import { diyHome, projectFromUri, taskDir } from "../core/state";
 import { getProjectPath } from "../core/project";
-import { BlockStore, blocksToMessages, type Op, type JSONVal } from "./local-blocks";
+import { BlockStore, blocksToMessages, interruptedToolPatches, type Op, type JSONVal } from "./local-blocks";
 import { collectSelfInfo, judgeSelfKill, selfKillNotice } from "./agent-guard";
 import { appendAudit } from "./agent-audit";
 
@@ -397,6 +397,15 @@ export class LocalAgentManager {
                     console.error(`[local-agent] ops 落盘失败 ${fp}:`, e);
                 }
             };
+            // ── 先收敛上一轮遗留的中断 tool 块（写进 ops，而不是投影时现造）──
+            // 不收敛的后果：每次重建历史都现场合成一句「未完成→请重试」，agent 重载会话后
+            // 会把被截断的命令再跑一次（任务 92 的「一对话就自杀」）。落盘后它变成已结束的
+            // 历史事实，投影与 UI 都只是翻译它。
+            for (const op of interruptedToolPatches(sess.store)) {
+                sink(op);
+                sess.store.apply(op);
+                yield op;
+            }
             for await (const op of this.runTurn(taskUri, sess, message, model, ctrl.signal, key, sink)) {
                 sess.store.apply(op);
                 yield op;

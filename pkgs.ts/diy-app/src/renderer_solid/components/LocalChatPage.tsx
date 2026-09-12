@@ -138,12 +138,15 @@ function segments(density: Density, leaves: BlockNode[]): Seg[] {
 }
 
 /**
- * 中断遗留的 tool 块：未收 stop（流断裂）且当前无轮次在跑。
- * 判定与 blocksToMessages 的"占位"条件对齐（done/error 不算中断）。
+ * 中断的 tool 块：
+ *   ① 显式终态 status=interrupted（main 已收敛并写进 ops）→ 直接读，不靠推断
+ *   ② 兼容旧会话：未收 stop 且当前无轮次在跑（历史日志里还没收敛）
  */
 function isInterruptedToolBlock(n: BlockNode): boolean {
-    if (n.tag !== "tool" || n.stopped) return false;
+    if (n.tag !== "tool") return false;
     const s = str(n.attrs.status);
+    if (s === "interrupted") return true;
+    if (n.stopped) return false;
     if (s === "done" || s === "error") return false;
     return !localChatStore.running;
 }
@@ -192,7 +195,7 @@ function statusMark(n: BlockNode) {
     // 中断遗留（无 stop、无结果）：不能跟"正在执行"共用同一个点，否则用户看不出历史断在哪
     if (isInterruptedToolBlock(n)) {
         return (
-            <span class="text-warning" title="上一轮中断，未返回结果（发往模型的同一句见展开正文）">
+            <span class="text-warning" title="上一轮中断，没有结果（此行已被收敛为终态，正文与发往模型的同源）">
                 ⊘
             </span>
         );

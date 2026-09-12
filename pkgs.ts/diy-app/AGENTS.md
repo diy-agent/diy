@@ -316,3 +316,29 @@ tail -n 20 ~/.diy/log/agent-bash.jsonl
 # 3. 确认 agent 是否尝试自杀（拦截记录）
 grep bash-blocked ~/.diy/log/agent-bash.jsonl
 ```
+
+#### 中断的 tool 调用：必须收敛成显式终态，不能在投影时现造
+
+发生在同一事故里的**第二条因果链**，比“杀进程”更隐蔽：
+
+1. SIGKILL 打断的那一次 tool 调用永远收不到 `stop` → 块停在 `running`；
+2. 重建 LLM 历史时（`blocksToMessages`）必须给每个 `tool-call` 配一个 `tool-result`
+   （否则 ai-sdk 抛 `MissingToolResultsError`，请求根本发不出去），于是**现场合成**一条占位结果；
+3. 占位文案旧版是“该调用在上一轮中断前未完成，**如有需要请重新发起**” ——
+   对模型而言这就是一句“待办”。重载会话（重启 app / renderer reload）历史一字不差地重生
+   → agent 重发那条命令 → 再次自杀（用户说“就算说千万不要 kill 也会挂”）
+   而在 90 万 token 的历史里，用户那句禁令盖不过它。
+
+**约定（改代码前请先读这段）：**
+
+| 规则 | 位置 |
+|------|------|
+| 中断块在**新一轮开始时**收敛为终态（`patch{status:"interrupted",output}` + `stop`），**写进 ops** | `local-blocks.ts` 的 `interruptedToolPatches()`，由 `local-agent.ts` 的 `chat()` 调用并落盘 |
+| 投影（`blocksToMessages`）只做**纯翻译**：用块自己的 output，不再自己造文案 | 同上 |
+| 文案必须是“已结束的历史事实”，**禁止**出现“未完成 / 请重新发起 / 可重试”这类待办语 | `INTERRUPTED_TOOL_NOTICE`（唯一来源，UI 与请求共用） |
+| UI 一律读显式 `status:"interrupted"`（仅兼容旧日志时才用 “未收 stop + 无轮次在跑” 去推断） | `LocalChatPage.tsx` 的 `isInterruptedToolBlock()` |
+| 收敛幂等：已收敛的块不再产出 op（重载不会反复写入） | 单测 `tests/core/local-blocks.test.ts` |
+
+为什么不能“投影时现造”（三条）：① 重载后重新生成，agent 会重复重试；
+② 造出来的数据在真相源（ops）里没有对应物，UI 看不到 → 存储/界面/请求三处不一致；
+③ 将来补字段或换存储时还要搬这堆逻辑。
