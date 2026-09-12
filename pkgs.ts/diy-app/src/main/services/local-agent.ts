@@ -29,15 +29,27 @@ import { BlockStore, blocksToMessages, type Op, type JSONVal } from "./local-blo
 
 const DEFAULT_MODEL = "mimo-v2.5";
 
-/** 可选模型：zen/go 的 OpenAI-completions 子集（models-store 实查） */
+/**
+ * 可选模型：zen/go 的 OpenAI-completions 子集（2026-09-12 实查 /models + models.dev 价格）
+ * 价格单位为 $/1M tokens：input / output（cacheRead）
+ */
 export const LOCAL_MODELS = [
-    { id: "mimo-v2.5", name: "MiMo V2.5" },
-    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
-    { id: "glm-5.3", name: "GLM-5.3" },
-    { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
-    { id: "qwen3.7-plus", name: "Qwen3.7 Plus" },
-    { id: "muse-spark-1.2-contributor", name: "Muse Spark 1.2 Contributor (opencode-go)" },
-    { id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor (opencode-go)" },
+    { id: "mimo-v2.5", name: "MiMo V2.5" }, // 0.14 / 0.28 (0.0028)
+    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash" }, // 0.15 / 0.60 (0.003)
+    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" }, // 0.15 / 0.60 (0.003)
+    { id: "glm-5.3-flash", name: "GLM-5.3 Flash" }, // 0.15 / 0.50 (0.03)
+    { id: "qwen3.8-flash", name: "Qwen3.8 Flash" }, // 0.15 / 0.47 (0.016)
+    { id: "hy3", name: "Hy3" }, // 0.14 / 0.58 (0.035)
+    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna" }, // 0.20 / 1.20 (0.02)
+    { id: "minimax-m3", name: "MiniMax M3" }, // 0.30 / 1.20 (0.06)
+    { id: "minimax-m2.7", name: "MiniMax M2.7" }, // 0.30 / 1.20 (0.06)
+    { id: "longcat-2.0", name: "LongCat-2.0" }, // 0.30 / 1.20 (0.006)
+    { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro" }, // 0.435 / 0.87 (0.003625)
+    { id: "qwen3.7-plus", name: "Qwen3.7 Plus" }, // 0.40 / 1.60 (0.04)
+    { id: "glm-5.3", name: "GLM-5.3" }, // 1.40 / 4.40 (0.26)
+    { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" }, // 0.95 / 4.00 (0.19)
+    { id: "muse-spark-1.2-contributor", name: "Muse Spark 1.2 Contributor (opencode-go)" }, // 0.10 / 0.20
+    { id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor (opencode-go)" }, // 0.10 / 0.20
 ];
 
 const SYSTEM = [
