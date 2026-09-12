@@ -2,17 +2,9 @@
 // 🎯 任务树纯类型 + 文本渲染（无 node 依赖，main 与 renderer 共用）
 //    纯类型与纯函数，浏览器安全，可被 renderer 进程安全 import。
 
-/** 任务状态（与 state.ts 保持一致） */
-export type TaskState =
-  | "pending"
-  | "active"
-  | "done"
-  | "cancelled"
-  | "blocked"
-  | "shelved"
-  | "new"
-  | "open"
-  | "closed";
+/** 任务状态 — 单一真相源 task-state.ts */
+export type { TaskState } from "./task-state";
+import type { TaskState } from "./task-state";
 
 /** 任务树节点（纯数据，无 I/O） */
 export interface TaskNode {
