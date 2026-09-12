@@ -220,5 +220,8 @@ describe("历史重建的配对铁律", () => {
         const toolMsg = msgs[2]!;
         const part = (toolMsg.content as Array<{ output: { value: string } }>)[0]!;
         expect(part.output.value).toContain("未完成");
+        // 不得出现诱导重试的口号：旧文案"如有需要请重新发起"会让 agent 重启后自动重发被杀断的命令
+        expect(part.output.value).toContain("不要自动重新发起");
+        expect(part.output.value).not.toContain("请重新发起");
     });
 });

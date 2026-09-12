@@ -292,6 +292,11 @@ export function blocksToMessages(store: BlockStore): LocalModelMessage[] {
             });
             // 配对铁律：每个 tool-call 必有 tool-result，否则下一轮 provider 拒整个历史。
             // 中断/未完成的块也要合成占位结果（真机：崩溃恢复后继续聊会 400）。
+            //
+            // ⚠️ 文案必须"中性、不要诱导重试"：旧文案写的是
+            // "如有需要请重新发起"，结果重启后 agent 看到这条历史，会**自动重发**那条
+            // 被中断的命令（实测：任务 92 里被 SIGKILL 截断的正是 kill Electron，
+            // 重发一次就把 app 再杀一次）。用户的"千万别 kill"在长上下文里盖不过这句。
             const status = String(b.status ?? "");
             const doneish = status === "done" || status === "error";
             const value =
@@ -299,7 +304,7 @@ export function blocksToMessages(store: BlockStore): LocalModelMessage[] {
                     ? b.output
                     : doneish
                       ? "（空结果）"
-                      : "[该调用在上一轮中断前未完成，如有需要请重新发起]";
+                      : "[该调用在上一轮中断前未完成，结果未知；除用户明确要求外不要自动重新发起]";
             out.push({
                 role: "tool",
                 content: [
