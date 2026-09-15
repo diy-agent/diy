@@ -251,3 +251,26 @@ export function norm(p: string): string {
   }
   return expanded;
 }
+
+// ═══════════════════════════════════════
+// 任务系统目录（.diy/）
+// ═══════════════════════════════════════
+
+/**
+ * 任务目录内的系统自留地：`$DIY_HOME/<uri>/.diy/`。
+ *
+ * 所有权分层（新增规矩，勿越界）：
+ *   AGENTS.md  ← 面向用户，允许直接编辑
+ *   .diy/**    ← 系统独占，仅 main 进程经 RPC 写入，不承诺格式稳定
+ *
+ * 为什么用点前缀而非 `data/`：
+ *   1. 仓库已有先例（pkgs.ts/diy-app/.diy/ref.lock.yaml，见 core/ref.ts）
+ *   2. `ls` / shell 通配 / Finder 默认跳过 dotfile → 用户脚本不会误吞系统文件
+ *   3. `$` 前缀目录名（如 `$data`）在 shell 里会展开，是事故隐患
+ *
+ * 扫描安全性：listTasks 按 `^\d+$` 过滤、task-tree 的 scanAllDirs 见 AGENTS.md 即停，
+ * 故任务目录内多一个 .diy/ 不会被误认成任务。
+ */
+export function taskSystemDir(uri: string): string {
+  return join(taskDir(uri), ".diy");
+}

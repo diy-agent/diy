@@ -28,8 +28,6 @@ interface TaskState {
     tab: "local" | "info";
     /** 详情 tab 的滚动位置（info 滚动容器 scrollTop） */
     detailScroll: number;
-    /** 输入框草稿（切任务/切 tab 保留，内存态不落盘） */
-    inputDraft: string;
 }
 
 const states = new Map<string, TaskState>();
@@ -41,7 +39,7 @@ function stateFor(taskUri: string): TaskState {
         const [trees, setTrees] = createSignal<BlockNode[]>([]);
         const [running, setRunning] = createSignal(false);
         const [error, setError] = createSignal<string | null>(null);
-        s = { store: new BlockStore(), loaded: false, trees, setTrees, running, setRunning, error, setError, scroll: 0, tab: "local", detailScroll: 0, inputDraft: "" };
+        s = { store: new BlockStore(), loaded: false, trees, setTrees, running, setRunning, error, setError, scroll: 0, tab: "local", detailScroll: 0 };
         states.set(taskUri, s);
     }
     return s;
@@ -154,7 +152,6 @@ async function clear(taskUri: string) {
     st.loaded = true; // 文件已删，不必重拉
     st.setError(null);
     st.scroll = 0; // 会话清空，阅读位置一并归位
-    st.inputDraft = ""; // 输入框草稿一并归位
     refresh(st);
 }
 
@@ -189,15 +186,9 @@ function getDetailScroll(taskUri: string): number {
 }
 
 
-/** 记录某任务的输入框草稿 */
-function setInputDraft(taskUri: string, v: string): void {
-    stateFor(taskUri).inputDraft = v;
-}
-
-/** 读取某任务的输入框草稿（空串=未输入过） */
-function getInputDraft(taskUri: string): string {
-    return states.get(taskUri)?.inputDraft ?? '';
-}
+// 输入框草稿已移出本 store：草稿是非缓存数据（丢了=用户白打），权威在任务目录
+// .diy/drafts.yaml，由 store/draftStore.ts 负责（经 RPC 落盘、随任务删除、跨模式可见）。
+// 本 store 只管会话（op 流，可重放重建）。
 export const localChatStore = {
     get trees() {
         return cur()?.trees() ?? [];
@@ -225,6 +216,4 @@ export const localChatStore = {
     getTab,
     setDetailScroll,
     getDetailScroll,
-    setInputDraft,
-    getInputDraft,
 };

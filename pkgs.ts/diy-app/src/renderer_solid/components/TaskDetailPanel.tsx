@@ -3,6 +3,7 @@ import * as Tabs from "@kobalte/core/tabs";
 import * as Select from "@kobalte/core/select";
 import { taskStore, type TaskDetail } from "../store/taskStore";
 import { localChatStore } from "../store/localChatStore";
+import { draftStore } from "../store/draftStore";
 import { diyService } from "../lib/rpc";
 import { Caches } from "../lib/ui-state";
 import { LocalChatPage } from "./LocalChatPage";
@@ -35,19 +36,33 @@ export function TaskDetailPanel() {
         on(
             () => taskStore.selectedUri,
             (uri, prev) => {
-                if (prev) localChatStore.setTab(prev, tab());
+                if (prev) {
+                    localChatStore.setTab(prev, tab());
+                    // 切走前冲掉上一个任务防抖中的草稿：详情面板的输入框会随任务切换立刻卸载，
+                    // 不等这一步，用户最后 600ms 内敲的字就丢了。
+                    // ⚠️ 必须在本组件（面板级）做，不能放进常驻于 <Show> 内的 TaskInfoView：
+                    // 那里读 props 会触发 Solid 的 "Stale read from <Show>"，中断 props 更新。
+                    void draftStore.flushNow(prev);
+                }
                 const next = uri ? localChatStore.getTab(uri) : "local";
                 setTab(next);
                 if (next === "info") needsRestore = true;
             },
         ),
     );
-    // 手动切到 info tab：同样置恢复标记
+    // 手动切到 info tab：同样置恢复标记；顺带冲一次草稿（切 tab 会卸载 / 挂载两个 Tabs.Content）
     createEffect(
         on(() => tab(), (t) => {
             if (t === "info") needsRestore = true;
+            const u = taskStore.selectedUri;
+            if (u) void draftStore.flushNow(u);
         }),
     );
+    // 面板整体卸载（切导航页 / 关闭面板）同样要冲
+    onCleanup(() => {
+        const u = taskStore.selectedUri;
+        if (u) void draftStore.flushNow(u);
+    });
     // 首挂（任务详情 tab 时）也要恢复
     onMount(() => {
         if (tab() === "info") needsRestore = true;
@@ -153,8 +168,13 @@ export function TaskDetailPanel() {
                             if (u) localChatStore.setDetailScroll(u, e.currentTarget.scrollTop);
                         }}
                     >
-                        <Show when={taskStore.selectedTask} fallback={<div class="opacity-60 text-sm">加载中…</div>}>
-                            {(t) => <TaskInfoView task={t()} />}
+                        {/* keyed：每个任务一个 TaskInfoView 实例。
+                            非 keyed 时组件实例会被复用到下一个任务，而编辑态/草稿是在构造时
+                            初始化的 —— 表现为「切回后显示上一个任务的标题」。
+                            代价：改状态会重取任务并重建面板，但编辑态由草稿驱动
+                            （draftStore.hasAny），只要用户改过内容就会自动恢复，无内容损失。 */}
+                        <Show when={taskStore.selectedTask} keyed fallback={<div class="opacity-60 text-sm">加载中…</div>}>
+                            {(t) => <TaskInfoView task={t} />}
                         </Show>
                     </Tabs.Content>
                 </Tabs.Root>
@@ -281,19 +301,45 @@ function StateSelect(props: { current?: string; saving: boolean; onSave: (v: str
 }
 
 function TaskInfoView(props: { task: TaskDetail }) {
-    const [editing, setEditing] = createSignal(false);
-    const [titleDraft, setTitleDraft] = createSignal("");
-    const [detailDraft, setDetailDraft] = createSignal("");
+    /**
+     * 编辑态与草稿都从 draftStore 恢复，而不是组件局部状态。
+     *
+     * 为什么：本组件在「切任务」时会被卸载重建（selectTask 先把 selectedTask 置空）、
+     * 在「切 tab」时也会被 Kobalte Tabs.Content 卸载 —— 局部 signal 一重建就没了，
+     * 表现为「编辑到一半切走再回来，输入全丢」。
+     *
+     * 恢复规则：有详情类草稿即视为编辑中（不需要额外存 editing 标记）。
+     */
+    const d = draftStore.fieldsOf(props.task.uri);
+    // 只认「详情编辑」这三个字段：agent 输入框的草稿是另一回事，
+    // 否则「聊天打到一半」会让详情面板一进来就是编辑态。
+    const [editing, setEditing] = createSignal(draftStore.hasAny(props.task.uri, ["title", "detail", "body"]));
+    const [titleDraft, setTitleDraft] = createSignal(d.title ?? props.task.title ?? "");
+    const [detailDraft, setDetailDraft] = createSignal(d.detail ?? props.task.detail ?? "");
     const [saving, setSaving] = createSignal(false);
 
+    /** 逐键写内存 + 防抖落盘（draftStore 内部 600ms debounce） */
+    const onTitleInput = (v: string) => {
+        setTitleDraft(v);
+        draftStore.set(props.task.uri, "title", v);
+    };
+    const onDetailInput = (v: string) => {
+        setDetailDraft(v);
+        draftStore.set(props.task.uri, "detail", v);
+    };
+
     const startEdit = () => {
-        setTitleDraft(props.task.title ?? "");
-        setDetailDraft(props.task.detail ?? "");
+        // 起点取「草稿优先」：上次编辑到一半的值不该被任务现值盖掉
+        const cur = draftStore.fieldsOf(props.task.uri);
+        setTitleDraft(cur.title ?? props.task.title ?? "");
+        setDetailDraft(cur.detail ?? props.task.detail ?? "");
         setEditing(true);
     };
 
+    /** 放弃编辑：草稿一并丢弃（留着会盖住任务现值） */
     const cancelEdit = () => {
         setEditing(false);
+        void draftStore.clear(props.task.uri, ["title", "detail"]);
     };
 
     // 不进入编辑态，直接改状态（类似 GitHub issue 的状态切换）
@@ -328,11 +374,15 @@ function TaskInfoView(props: { task: TaskDetail }) {
 
             if (Object.keys(changes).length === 0) {
                 setEditing(false);
+                // 无改动也算「本次编辑结束」：草稿没有存在意义了
+                void draftStore.clear(t.uri, ["title", "detail"]);
                 return;
             }
 
             await diyService.diy.task.edit({ uri: t.uri, title: changes.title, state: changes.state as any, detail: changes.detail, body: changes.body, parent: changes.parent });
             await taskStore.loadTree();
+            // 先清草稿再重取任务：否则重取回来的旧草稿会把刚保存的值当「编辑中」再显示一遍
+            await draftStore.clear(t.uri, ["title", "detail"]);
             await taskStore.selectTask(t.uri);
             setEditing(false);
         } catch (err: any) {
@@ -358,7 +408,7 @@ function TaskInfoView(props: { task: TaskDetail }) {
                         type="text"
                         class="input input-bordered input-sm flex-1 text-lg font-bold"
                         value={titleDraft()}
-                        onInput={(e) => setTitleDraft(e.currentTarget.value)}
+                        onInput={(e) => onTitleInput(e.currentTarget.value)}
                         placeholder="任务标题"
                     />
                 </Show>
@@ -420,7 +470,7 @@ function TaskInfoView(props: { task: TaskDetail }) {
                         class="textarea textarea-bordered w-full text-sm"
                         rows="4"
                         value={detailDraft()}
-                        onInput={(e) => setDetailDraft(e.currentTarget.value)}
+                        onInput={(e) => onDetailInput(e.currentTarget.value)}
                         placeholder="任务详情（可选）"
                     ></textarea>
                 </Show>

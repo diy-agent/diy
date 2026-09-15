@@ -15,6 +15,7 @@
 
 import { createSignal, For, Show, createEffect, on, onMount, onCleanup } from "solid-js";
 import { localChatStore } from "../store/localChatStore";
+import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
 import { Caches, DENSITY_LEVEL, DENSITY_VALUES, type Density } from "../lib/ui-state";
@@ -491,19 +492,23 @@ export function LocalChatPage() {
             }
         });
     };
+    /** 把草稿回填进 textarea（只在换任务 / 服务端草稿到达 / 首挂时调用，不逐键回写） */
+    const applyDraft = (u: string | null) => {
+        if (!inputRef) return;
+        inputRef.value = draftStore.get(u, "agent_input");
+    };
     // 首挂（切页面/组件重建，TaskState 在内存保留）：恢复当前任务阅读位置 + 输入框草稿
     onMount(() => {
         const u = uri();
         if (u) {
             restore(u);
-            const draft = localChatStore.getInputDraft(u);
-            if (draft && inputRef) inputRef.value = draft;
+            applyDraft(u);
         }
     });
-    // 组件卸载（切 tab 到 info）前保存输入框草稿
+    // 组件卸载（切 tab 到 info）前把防抖中的草稿落盘（内容在 input 事件里已写进 draftStore）
     onCleanup(() => {
         const u = uri();
-        if (u && inputRef) localChatStore.setInputDraft(u, inputRef.value);
+        if (u) void draftStore.flushNow(u);
     });
     // 直播中的尾轮 turn id（running 时才有）：中断警告 gating 用
     const liveTurnId = () => {
@@ -523,18 +528,25 @@ export function LocalChatPage() {
 
     createEffect(
         on(uri, (u, prev) => {
-            // 切走前保存旧会话阅读位置 + 输入框草稿（组件不卸载，滚动容器 DOM 还在）
+            // 切走前保存旧会话阅读位置（组件不卸载，滚动容器 DOM 还在）+ 冲掉待写草稿
             if (prev) {
                 if (scrollRef) localChatStore.setScroll(prev, scrollRef.scrollTop);
-                if (inputRef) localChatStore.setInputDraft(prev, inputRef.value);
+                void draftStore.flushNow(prev);
             }
             // 进入新会话：内容恢复（历史重放）+ 阅读位置恢复 + 输入框草稿恢复
             if (u) {
                 restore(u);
-                const draft = localChatStore.getInputDraft(u);
-                if (inputRef) inputRef.value = draft;
+                applyDraft(u);
             }
         }),
+    );
+    // 草稿从服务端到达（seed）后回填：getTask 是异步的，首挂时草稿可能还没到。
+    // 用 seedTick 而非 version —— version 每次输入都变，逐键回写会打断光标与输入法组词。
+    createEffect(
+        on(
+            () => draftStore.seedTick,
+            () => applyDraft(uri()),
+        ),
     );
 
     const submit = async () => {
@@ -543,7 +555,8 @@ export function LocalChatPage() {
         const text = el.value.trim();
         if (!text || !uri() || localChatStore.running) return;
         el.value = "";
-        localChatStore.setInputDraft(uri()!, "");
+        // 内容已作为消息发出，草稿使命结束：清掉，避免下次进入看到已发送的旧文本
+        void draftStore.clear(uri()!, ["agent_input"]);
         await localChatStore.send(uri()!, text);
     };
 
@@ -624,6 +637,11 @@ export function LocalChatPage() {
                         class="textarea textarea-bordered flex-1 resize-none text-sm"
                         placeholder="本地 agent（回车发送 / Shift+回车换行）…"
                         onKeyDown={onEnterKey(() => void submit(), { shiftNewline: true })}
+                        onInput={(e) => {
+                            // 逐键写内存 + 防抖落盘（draftStore 内部 600ms debounce）
+                            const u = uri();
+                            if (u) draftStore.set(u, "agent_input", e.currentTarget.value);
+                        }}
                     />
                     <Show
                         when={!localChatStore.running}

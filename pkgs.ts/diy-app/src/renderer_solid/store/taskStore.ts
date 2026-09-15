@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
+import { draftStore } from "./draftStore";
 
 export interface TreeNode {
   kind: "project" | "task";
@@ -25,6 +26,8 @@ export interface TaskDetail {
   body?: string;
   created?: string;
   updated?: string;
+  /** 未提交草稿（main 的 getTask/task.show 随任务一起返回，见 core/drafts.ts） */
+  ui_drafts?: { base_updated?: string; saved?: string; fields: Record<string, string> } | null;
 }
 
 const [nodes, setNodes] = createSignal<TreeNode[]>([]);
@@ -47,7 +50,11 @@ async function selectTask(uri: string | null) {
   setSelectedTask(null);
   if (!uri) return;
   const r = await diyService.diy.getTask({ uri });
-  if (r.data) setSelectedTask(r.data);
+  if (!r.data) return;
+  // 草稿先灌入再放行任务：详情面板是「选中任务即创建」的组件，构造时就要读到草稿
+  // 来判定是否恢复编辑态；反过来则会以「无草稿」初始化，表现为草稿丢失。
+  draftStore.seed(uri, r.data.ui_drafts ?? null, r.data.updated);
+  setSelectedTask(r.data);
 }
 
 async function setState(uri: string, state: string) {

@@ -8,6 +8,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
@@ -226,5 +227,127 @@ describe("task", () => {
       ok: true,
       data: { status: "error", msg: "任务 projects/99999/tasks/1 不存在" },
     });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// drafts — 未提交草稿（半编辑数据）
+//
+// 契约（见 src/main/core/drafts.ts 头注释）：
+//   位置 任务目录 .diy/drafts.yaml（随任务目录删除）
+//   语义 set 合并、""=清除该字段、清空即删文件
+//   形态 带 kind/version/task/base_updated/saved meta（丢不起的数据，不静默降级）
+// ═══════════════════════════════════════════════════════════════
+
+describe("task drafts（未提交草稿）", () => {
+  it("show — 无草稿时 data 为 null（不是空对象）", async () => {
+    const pid = await freshProj("d1");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 草稿任务 ${pid}`);
+    await fx.sh.assertJson(`./diy.sh task drafts show ${uri}`, {
+      ok: true,
+      data: { status: "ok", data: null },
+    });
+    await cleanupProj(pid);
+  });
+
+  it("set → show — 草稿写盘并可读回；task show 一并带回 ui_drafts", async () => {
+    const pid = await freshProj("d2");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 草稿任务 ${pid}`);
+    await fx.sh.run(`./diy.sh task drafts set ${uri} --title 半编辑标题 --agent_input 打到一半的话`);
+
+    const d = await fx.sh.getJson(`./diy.sh task drafts show ${uri}`);
+    const data = (d.data as any).data;
+    expect(data.fields.title).toBe("半编辑标题");
+    expect(data.fields.agent_input).toBe("打到一半的话");
+
+    // task show 必须同契约回填（renderer 只调 getTask 拿任务）
+    const t = await fx.sh.getJson(`./diy.sh task show ${uri}`);
+    expect((t.data as any).data.ui_drafts.fields.agent_input).toBe("打到一半的话");
+    await cleanupProj(pid);
+  });
+
+  it("set 合并语义 — 后写字段不冲掉先前字段", async () => {
+    const pid = await freshProj("d3");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 草稿任务 ${pid}`);
+    await fx.sh.run(`./diy.sh task drafts set ${uri} --title T`);
+    await fx.sh.run(`./diy.sh task drafts set ${uri} --detail D`);
+
+    const d = await fx.sh.getJson(`./diy.sh task drafts show ${uri}`);
+    const fields = (d.data as any).data.fields;
+    expect(fields).toEqual({ title: "T", detail: "D" });
+    await cleanupProj(pid);
+  });
+
+  it("set 空串 — 清除该字段，其余留存", async () => {
+    const pid = await freshProj("d4");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 草稿任务 ${pid}`);
+    await fx.sh.run(`./diy.sh task drafts set ${uri} --title T --detail D`);
+    await fx.sh.run(`./diy.sh task drafts set ${uri} --title ''`);
+
+    const d = await fx.sh.getJson(`./diy.sh task drafts show ${uri}`);
+    const fields = (d.data as any).data.fields;
+    expect(fields.title).toBeUndefined();
+    expect(fields.detail).toBe("D");
+    await cleanupProj(pid);
+  });
+
+  it("clear — 清空后 show 回 null（文件已删，不留空壳）", async () => {
+    const pid = await freshProj("d5");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 草稿任务 ${pid}`);
+    await fx.sh.run(`./diy.sh task drafts set ${uri} --title T`);
+    await fx.sh.run(`./diy.sh task drafts clear ${uri}`);
+
+    await fx.sh.assertJson(`./diy.sh task drafts show ${uri}`, {
+      ok: true,
+      data: { status: "ok", data: null },
+    });
+    await cleanupProj(pid);
+  });
+
+  it("clear --fields — 只清指定字段", async () => {
+    const pid = await freshProj("d6");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 草稿任务 ${pid}`);
+    await fx.sh.run(`./diy.sh task drafts set ${uri} --title T --agent_input A`);
+    // CLI 数组统一是 JSON 形式（parser 只对 ZodArray 做 JSON.parse）
+    await fx.sh.assertJson(`./diy.sh task drafts clear ${uri} --fields '["title"]'`, {
+      ok: true,
+      data: { status: "ok" },
+    });
+
+    const d = await fx.sh.getJson(`./diy.sh task drafts show ${uri}`);
+    const fields = (d.data as any).data.fields;
+    expect(fields.title).toBeUndefined();
+    expect(fields.agent_input).toBe("A");
+    await cleanupProj(pid);
+  });
+
+  it("生命周期 — 删任务后草稿随之消失（草稿在任务目录 .diy/ 内）", async () => {
+    const pid = await freshProj("d7");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 草稿任务 ${pid}`);
+    await fx.sh.run(`./diy.sh task drafts set ${uri} --title T`);
+    // 草稿确实落在任务目录内（而非别处），才能随 rmSync 一起消失
+    expect(existsSync(join(fx.HOME, uri, ".diy", "drafts.yaml"))).toBe(true);
+
+    await fx.sh.run(`./diy.sh task delete ${uri}`);
+    expect(existsSync(join(fx.HOME, uri, ".diy", "drafts.yaml"))).toBe(false);
+    await cleanupProj(pid);
+  });
+
+  it("草稿不影响任务树扫描（.diy/ 不被误认为任务）", async () => {
+    const pid = await freshProj("d8");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 草稿任务 ${pid}`);
+    await fx.sh.run(`./diy.sh task drafts set ${uri} --title T`);
+
+    const list = await fx.sh.getJson(`./diy.sh task list -p ${pid}`);
+    expect((list.data as any).data.tasks).toEqual([uri]);
+    await cleanupProj(pid);
   });
 });
