@@ -7,6 +7,8 @@ import { draftStore } from "../store/draftStore";
 import { diyService } from "../lib/rpc";
 import { Caches } from "../lib/ui-state";
 import { LocalChatPage } from "./LocalChatPage";
+import { MarkdownView } from "./MarkdownView";
+import { CodeBlock } from "./CodeBlock";
 
 const PANEL_W_MIN = 360;
 const PANEL_W_MAX = 1000;
@@ -300,7 +302,13 @@ function StateSelect(props: { current?: string; saving: boolean; onSave: (v: str
     );
 }
 
+/** 详情渲染模式：Markdown 富文本 / 原文（纯视图偏好，不落盘） */
+type DetailTab = "md" | "raw";
+
 function TaskInfoView(props: { task: TaskDetail }) {
+    /** 详情渲染模式：Markdown 富文本 / 原文。纯视图偏好，不落盘——
+     *  与草稿（draftStore，跨卸载恢复）不同，它丢了大不了回到默认富文本。 */
+    const [detailTab, setDetailTab] = createSignal<DetailTab>("md");
     /**
      * 编辑态与草稿都从 draftStore 恢复，而不是组件局部状态。
      *
@@ -463,7 +471,7 @@ function TaskInfoView(props: { task: TaskDetail }) {
                 )}
             </div>
 
-            {/* 详情 */}
+            {/* 详情：编辑态为文本框；只读态为 Markdown / 原文 双 tab（嵌套在外层 local|info 之内） */}
             <div>
                 <Show when={editing()}>
                     <textarea
@@ -475,26 +483,51 @@ function TaskInfoView(props: { task: TaskDetail }) {
                     ></textarea>
                 </Show>
                 <Show when={!editing()}>
-                    {props.task.detail ? (
-                        <>
-                            <h3 class="text-xs font-semibold opacity-60 mb-1">详情</h3>
-                            <div class="text-sm whitespace-pre-wrap">{props.task.detail}</div>
-                        </>
-                    ) : (
-                        <span class="text-xs opacity-40 italic">无详情</span>
-                    )}
+                    <Show
+                        when={props.task.detail || props.task.body}
+                        fallback={<span class="text-xs opacity-40 italic">无详情</span>}
+                    >
+                        {/* 内层不另开滚动容器：外层 Tabs.Content(value=info) 已是滚动容器，
+                            再套一层会截断高度、破坏其滚动位置恢复 */}
+                        <Tabs.Root value={detailTab()} onChange={(v) => setDetailTab(v as DetailTab)} class="w-full">
+                            <Tabs.List class="tabs tabs-bordered tabs-xs mb-2">
+                                <Tabs.Trigger value="md" class="tab">📖 Markdown</Tabs.Trigger>
+                                <Tabs.Trigger value="raw" class="tab">📄 原文</Tabs.Trigger>
+                            </Tabs.List>
+
+                            <Tabs.Content value="md" class="space-y-4">
+                                <Show when={props.task.detail}>
+                                    <div>
+                                        <h3 class="text-xs font-semibold opacity-60 mb-1">详情</h3>
+                                        <MarkdownView content={props.task.detail!} />
+                                    </div>
+                                </Show>
+                                <Show when={props.task.body}>
+                                    <div>
+                                        <h3 class="text-xs font-semibold opacity-60 mb-1">正文</h3>
+                                        <MarkdownView content={props.task.body!} />
+                                    </div>
+                                </Show>
+                            </Tabs.Content>
+
+                            <Tabs.Content value="raw" class="space-y-4">
+                                <Show when={props.task.detail}>
+                                    <div>
+                                        <h3 class="text-xs font-semibold opacity-60 mb-1">详情</h3>
+                                        <CodeBlock code={props.task.detail!} lang="markdown" />
+                                    </div>
+                                </Show>
+                                <Show when={props.task.body}>
+                                    <div>
+                                        <h3 class="text-xs font-semibold opacity-60 mb-1">正文</h3>
+                                        <CodeBlock code={props.task.body!} lang="markdown" />
+                                    </div>
+                                </Show>
+                            </Tabs.Content>
+                        </Tabs.Root>
+                    </Show>
                 </Show>
             </div>
-
-            {/* 正文 */}
-            <Show when={!editing() && props.task.body}>
-                <div>
-                    <h3 class="text-xs font-semibold opacity-60 mb-1">正文</h3>
-                    <div class="text-sm whitespace-pre-wrap leading-relaxed">
-                        {props.task.body}
-                    </div>
-                </div>
-            </Show>
         </div>
     );
 }

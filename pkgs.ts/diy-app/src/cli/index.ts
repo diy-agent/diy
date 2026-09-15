@@ -114,6 +114,17 @@ async function ensureAppPort(cfg: RuntimeConfig): Promise<number> {
   const existing = readPort(cfg);
   if (existing !== null && (await probePort(existing))) return existing;
 
+  // 测试环境：只允许复用，不允许自建。测试用 startElectronTest 启动实例并持有句柄，
+  // 此处若在探测超时（如并发抢 CPU 让 probePort 的 1500ms 落空）时另起 detached 实例，
+  // 该实例不在测试的句柄集合里，teardown 永远回收不到 → 泄露。
+  // 报错而非静默继续：把「app 未就绪」暴露成测试失败，而不是留一个没人管的进程。
+  if (cfg.noLaunch) {
+    throw new Error(
+      `DIY_NO_LAUNCH=1：app 未在 ${cfg.home} 就绪（app.port=${existing ?? "缺失"}）。` +
+        `测试环境禁止 CLI 自动拉起实例；请确认 startElectronTest() 已成功启动并传入了同一个 HOME。`,
+    );
+  }
+
   const child = launchApp(cfg);
   // spawn 失败（ENOENT 等）只发 error 事件，回调内 throw 无法进外层 catch；
   // 用 Promise 监听快速失败，避免空转 30s 才超时。

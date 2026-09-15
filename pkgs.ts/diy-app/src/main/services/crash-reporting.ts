@@ -14,7 +14,7 @@
 import { join } from "node:path";
 import { mkdirSync, readdirSync, appendFileSync } from "node:fs";
 import { app, crashReporter } from "electron";
-import { crashContext } from "./agent-audit";
+import { crashScene } from "./agent-audit";
 
 /** 进程级异常/信号落盘（崩溃诊断的主日志之外的结构化尾巴） */
 function appendExitLog(home: string, kind: string, detail: string): void {
@@ -69,7 +69,7 @@ export function installCrashReporting(home: string): void {
         `service=${details.serviceName ?? "-"} name=${details.name ?? "-"}`,
     );
     // 现场线索：被 SIGKILL 时进程自己写不了日志，靠 agent 执行前的 write-ahead 审计回溯
-    console.error(`[crash] 现场: ${crashContext(home)}`);
+    console.error(`[crash] 现场: ${crashScene(home)}`);
   });
 
   app.on("render-process-gone", (_event, webContents, details) => {
@@ -77,7 +77,7 @@ export function installCrashReporting(home: string): void {
     console.error(
       `[crash] 渲染进程消亡 reason=${details.reason} exitCode=${details.exitCode} url=${url}`,
     );
-    console.error(`[crash] 现场: ${crashContext(home)}`);
+    console.error(`[crash] 现场: ${crashScene(home)}`);
     // 注：传输层（EnvelopeTransport.send）已内置 try-catch 防护，
     // 渲染进程死亡后首次 send 失败会自动标记 dead → 触发 onClose →
     // ChannelServerBinding 自动 destroy（取消所有流），无需在此额外处理。
@@ -88,8 +88,8 @@ export function installCrashReporting(home: string): void {
   // 但 SIGTERM/SIGINT/未捕获异常都能留下退出原因。
   for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
     process.on(sig, () => {
-      console.error(`[exit] 收到 ${sig}，准备退出（现场: ${crashContext(home)}）`);
-      appendExitLog(home, sig, crashContext(home));
+      console.error(`[exit] 收到 ${sig}，准备退出（现场: ${crashScene(home)}）`);
+      appendExitLog(home, sig, crashScene(home));
       app.quit();
     });
   }

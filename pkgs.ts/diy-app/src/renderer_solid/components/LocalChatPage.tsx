@@ -19,6 +19,7 @@ import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
 import { Caches, DENSITY_LEVEL, DENSITY_VALUES, type Density } from "../lib/ui-state";
+import { MarkdownView } from "./MarkdownView";
 import { onEnterKey } from "../lib/on-enter";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
@@ -74,13 +75,35 @@ export function previewLines(text: string, head = 20, tail = 30): Preview {
     };
 }
 
-/** assistant 正文（纯文本呈现） */
+// ─── 滚动跟随（stick-to-bottom） ──────────────────────────────
+//
+// 语义：用户停在底部 → agent 出内容由我们主动滚到底（跟随）；
+//       用户往上翻阅读 → 立刻停止跟随，绝不打扰（跟随 effect 只看 stick）。
+//
+// 为什么不用 ResizeObserver：本页面改高度的不止 agent 输出（手动展开过程块、
+// 切 MD/原文 会重建 DOM、窗口 resize），布局驱动会把这些误判成"有新内容"，
+// 表现为"用户在翻历史，被一把拽到最新"。改用 localChatStore.trees 信号驱动，
+// 语义精确 = 真的产出了新块。
+// 为什么不开 overflow-anchor：它是"防上方内容变形顶走视口"的保险丝，且会与
+// 我们主动赋值 scrollTop 抢位置。当前 Markdown 只在本块内增长、历史块 memo
+// 稳定不变高，Shiki 同步无异步撑高 → 用不上，反而添乱。
+const STICK_PX = 32;
+/** 是否已贴底（容差内即算底部，避免差 1px 永远跟不住） */
+const nearBottom = (el: HTMLElement) =>
+    el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX;
+
+/** assistant 正文（纯文本呈现）：原文模式 + L1 单行摘要用 */
 function PlainText(props: { text: string; class?: string }) {
     return (
         <div class={`whitespace-pre-wrap break-words text-sm leading-relaxed ${props.class ?? ""}`}>
             {props.text}
         </div>
     );
+}
+
+/** assistant 正文（Markdown 富文本）：与原文模式共用同一数据源，仅渲染方式不同 */
+function MarkdownText(props: { text: string; streaming: boolean }) {
+    return <MarkdownView content={props.text} streaming={props.streaming} />;
 }
 
 // ─── 树工具（文档序） ───────────────────────────────
@@ -98,6 +121,14 @@ function descendants(n: BlockNode): BlockNode[] {
 }
 const processOf = (turn: BlockNode) =>
     descendants(turn).filter((b) => b.tag === "think" || b.tag === "tool");
+
+/** 本轮是否已出现助理侧内容（think/tool/text-assistant/error/plan）。
+ *  发送后到首个助理事件之间有一段真空期（握手 + 上游首 token 往返），
+ *  此时界面上只有 user 气泡，需要 loading 图标填充"正在处理"的反馈；
+ *  一旦助理内容出现即让位给真实消息（含流式思考过程）。 */
+function hasAssistantContent(turn: BlockNode): boolean {
+    return leavesOf(turn).some((n) => !(n.tag === "text" && str(n.attrs.role) === "user"));
+}
 /** 文档序拉平：叶子块（step 是纯容器，DFS 顺序 = 时间顺序）。
  *  渲染只按此序 + 密度决定可见性，绝不按 kind 重排（时序是协议的基本承诺）。
  *  兼底：任何带 children 的容器都向下递归，否则一旦数据里出现嵌套容器
@@ -314,13 +345,18 @@ function LeafView(props: {
     pin: Record<string, boolean>;
     onToggle: (id: string) => void;
     onFull: (title: string, content: string) => void;
+    /** 正文字段是否走 Markdown 富文本（全局开关） */
+    md: boolean;
 }) {
     const b = props.node;
     // user 发言：一切密度下都全文——它就是"我说过啥"的脉络本体
+    // 右对齐：外层用 flex justify-end（原先的 self-end 在 block 父链里完全无效）
     if (b.tag === "text" && str(b.attrs.role) === "user") {
         return (
-            <div class="max-w-[85%] self-end bg-primary/10 border border-primary/20 rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words">
-                {str(b.attrs.content)}
+            <div class="flex justify-end">
+                <div class="max-w-[85%] bg-primary/10 border border-primary/20 rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words">
+                    {str(b.attrs.content)}
+                </div>
             </div>
         );
     }
@@ -328,6 +364,8 @@ function LeafView(props: {
         // assistant 正文：L1 单行（直播取末行/定稿取首行），L2+ 全文（流式照常平铺）
         if (props.density === DENSITY_LEVEL.OUTLINE) {
             const t = str(b.attrs.content);
+            // L1 摘要恒为纯文本：截断出的半行 Markdown（断在 ** 、``` 、表格 | 中间）
+            // 会被解析成错乱结构，这里绝不能走 Markdown 渲染
             return (
                 <div class="text-sm opacity-80 truncate">
                     {b.stopped ? firstLine(t) : tailLine(t)}
@@ -337,7 +375,9 @@ function LeafView(props: {
                 </div>
             );
         }
-        return <PlainText text={str(b.attrs.content)} />;
+        const text = str(b.attrs.content);
+        if (!props.md) return <PlainText text={text} />;
+        return <MarkdownText text={text} streaming={!b.stopped} />;
     }
     if (b.tag === "think" || b.tag === "tool") {
         const failed = b.tag === "tool" && str(b.attrs.status) === "error";
@@ -381,6 +421,7 @@ function TurnView(props: {
     onToggle: (id: string) => void;
     onFull: (title: string, content: string) => void;
     liveTurnId: string | null;
+    md: boolean;
 }) {
     const t = props.node;
     const segs = () => segments(props.density, leavesOf(t));
@@ -400,6 +441,7 @@ function TurnView(props: {
                             pin={props.pin}
                             onToggle={props.onToggle}
                             onFull={props.onFull}
+                            md={props.md}
                         />
                     )
                 }
@@ -425,8 +467,12 @@ function TurnView(props: {
             <Show when={t.attrs.interrupted && !isLiveTurn()}>
                 <div class="text-[11px] text-warning">⚠ 本轮未完成（流中断/崩溃恢复）</div>
             </Show>
-            <Show when={isLiveTurn()}>
-                <div class="text-[11px] opacity-50 animate-pulse">生成中…</div>
+            {/* 等待助理首个事件：仅本轮生成中且尚无助理内容时显示。
+                首个事件到达即自动消失（isLiveTurn 或 hasAssistantContent 变化都会重算）。 */}
+            <Show when={isLiveTurn() && !hasAssistantContent(t)}>
+                <div class="flex items-center gap-2 text-primary py-0.5">
+                    <span class="loading loading-bars loading-sm" aria-label="等待响应" />
+                </div>
             </Show>
         </div>
     );
@@ -481,15 +527,36 @@ export function LocalChatPage() {
     const uri = () => taskStore.selectedUri ?? null;
     let inputRef: HTMLTextAreaElement | undefined;
     let scrollRef: HTMLDivElement | undefined;
-    /** 恢复某会话的阅读位置：open（含历史重放）完成后，等渲染帧再设 scrollTop */
+    /** 跟随态：true=贴底（新内容自动滚到底）；false=用户正在上方阅读（绝不打扰） */
+    const [stick, setStick] = createSignal(true);
+    /** 恢复中闸门：历史重放期间 trees 连发，须让位给 restore 的定位（否则被抢先滚到底） */
+    let restoring = false;
+
+    /** 滚到底并置跟随态 */
+    const gotoBottom = () => {
+        const el = scrollRef;
+        if (!el) return;
+        el.scrollTop = el.scrollHeight;
+        setStick(true);
+    };
+
+    /** 恢复某会话阅读位置：有记录（p>0）回到该处并按位置校准跟随态；
+     *  无记录（p=0，含新会话）→ 直接看最新，而不是停在顶部。 */
     const restore = (u: string) => {
-        void localChatStore.open(u).then(() => {
+        restoring = true;
+        void localChatStore.open(u).catch(() => undefined).then(() => {
             const p = localChatStore.getScroll(u);
-            if (p > 0) {
-                requestAnimationFrame(() => {
-                    if (scrollRef) scrollRef.scrollTop = p;
-                });
-            }
+            requestAnimationFrame(() => {
+                restoring = false;
+                const el = scrollRef;
+                if (!el) return;
+                if (p > 0) {
+                    el.scrollTop = p;
+                    setStick(nearBottom(el)); // 上次停在底部 → 继续跟随；否则尊重阅读位置
+                } else {
+                    gotoBottom();
+                }
+            });
         });
     };
     /** 把草稿回填进 textarea（只在换任务 / 服务端草稿到达 / 首挂时调用，不逐键回写） */
@@ -522,6 +589,12 @@ export function LocalChatPage() {
         setDensityRaw(d);
         Caches.diy_chat_density.set(d);
     };
+    // Markdown 渲染开关（视图 cache 持久化，与密度同级）：全局开关而非 per-message
+    const [md, setMdRaw] = createSignal<boolean>(Caches.diy_chat_md.get());
+    const setMd = (v: boolean) => {
+        setMdRaw(v);
+        Caches.diy_chat_md.set(v);
+    };
     const [pinned, setPinned] = createSignal<Record<string, boolean>>({});
     const togglePin = (id: string) => setPinned((p) => ({ ...p, [id]: !p[id] }));
     const [full, setFull] = createSignal<{ title: string; content: string } | null>(null);
@@ -549,6 +622,23 @@ export function LocalChatPage() {
         ),
     );
 
+    // 跟随：内容变化（trees 信号）→ 贴底则滚到底。
+    //
+    // 顺序要求：必须声明在上方 uri 切换 effect 之后——Solid 按创建顺序执行 effect，
+    //   切会话时 uri effect 先同步置 restoring 闸门，本 effect 才会让位给 restore 的定位。
+    // 时机：createEffect 在 DOM 写入之后运行，故 scrollHeight 已含新内容（同步赋值无闪帧）；
+    //   再补一帧 rAF 兜住布局后置变化。rAF 内重读 stick——期间用户若已上滚则放弃，不抢位置。
+    createEffect(() => {
+        void localChatStore.trees;
+        if (restoring || !stick()) return;
+        const el = scrollRef;
+        if (el) el.scrollTop = el.scrollHeight;
+        requestAnimationFrame(() => {
+            const e2 = scrollRef;
+            if (e2 && stick()) e2.scrollTop = e2.scrollHeight;
+        });
+    });
+
     const submit = async () => {
         const el = inputRef;
         if (!el) return;
@@ -557,6 +647,7 @@ export function LocalChatPage() {
         el.value = "";
         // 内容已作为消息发出，草稿使命结束：清掉，避免下次进入看到已发送的旧文本
         void draftStore.clear(uri()!, ["agent_input"]);
+        setStick(true); // 刚发出，必然想看回复：无视之前是否在上方阅读
         await localChatStore.send(uri()!, text);
     };
 
@@ -590,6 +681,15 @@ export function LocalChatPage() {
                 </select>
                 <span class="badge badge-outline badge-xs">ai-sdk local</span>
                 <div class="flex-1" />
+                <button
+                    class={`btn btn-xs ${md() ? "btn-active" : "btn-ghost"}`}
+                    title="在 Markdown 富文本与原文之间切换"
+                    aria-label="切换 Markdown 渲染"
+                    aria-pressed={md()}
+                    onClick={() => setMd(!md())}
+                >
+                    MD
+                </button>
                 <Show when={!localChatStore.running}>
                     <button
                         class="btn btn-ghost btn-xs"
@@ -601,7 +701,11 @@ export function LocalChatPage() {
             </div>
 
             {/* 块树滚动区 */}
-            <div ref={(el) => (scrollRef = el)} class="flex-1 overflow-y-auto px-4 py-3">
+            <div
+                ref={(el) => (scrollRef = el)}
+                class="flex-1 overflow-y-auto px-4 py-3"
+                onScroll={(e) => setStick(nearBottom(e.currentTarget))}
+            >
                 <div class="space-y-3">
                     <For each={localChatStore.trees}>
                         {(t) =>
@@ -613,6 +717,7 @@ export function LocalChatPage() {
                                     onToggle={togglePin}
                                     onFull={(title, content) => setFull({ title, content })}
                                     liveTurnId={liveTurnId()}
+                                    md={md()}
                                 />
                             ) : (
                                 <div class="text-xs opacity-40">[未知根 {t.tag}]</div>
@@ -621,9 +726,6 @@ export function LocalChatPage() {
                     </For>
                     <Show when={localChatStore.error}>
                         <div class="text-error text-xs">{localChatStore.error}</div>
-                    </Show>
-                    <Show when={localChatStore.running}>
-                        <div class="text-xs opacity-50 animate-pulse">生成中…</div>
                     </Show>
                 </div>
             </div>
@@ -643,15 +745,19 @@ export function LocalChatPage() {
                             if (u) draftStore.set(u, "agent_input", e.currentTarget.value);
                         }}
                     />
+                    {/* 按钮 aura 光环只在生成中挂载：停止=error 色跑动画表示"正在跑"，
+                        收完流回到"发送"时 aura 随 Show 分支一起卸载，动画自然停止 */}
                     <Show
                         when={!localChatStore.running}
                         fallback={
-                            <button
-                                class="btn btn-error btn-sm"
-                                onClick={() => uri() && void localChatStore.cancel(uri()!)}
-                            >
-                                停止
-                            </button>
+                            <div class="aura duration-[3s] text-error">
+                                <button
+                                    class="btn btn-error btn-sm"
+                                    onClick={() => uri() && void localChatStore.cancel(uri()!)}
+                                >
+                                    停止
+                                </button>
+                            </div>
                         }
                     >
                         <button class="btn btn-primary btn-sm" onClick={() => void submit()}>

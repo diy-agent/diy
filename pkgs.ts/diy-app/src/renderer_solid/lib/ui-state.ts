@@ -141,6 +141,12 @@ export const Caches = {
     serialize: (v) => v,
     defaultValue: DENSITY_LEVEL.READ,
   }),
+  /** 聊天正文渲染模式（true=Markdown 富文本，false=原文） */
+  diy_chat_md: field<boolean>("diy_chat_md", {
+    parse: (raw) => (raw === "1" ? true : raw === "0" ? false : null),
+    serialize: (v) => (v ? "1" : "0"),
+    defaultValue: true,
+  }),
   /** 主题偏好（白名单 dark/light） */
   diy_app_theme: field<DiyTheme>("diy_app_theme", {
     parse: (raw) => (raw === "dark" || raw === "light" ? raw : null),
@@ -165,6 +171,7 @@ const LEGACY_KEYS = [
   "diy.cache.ui.task.tree.scroll",
   "diy.cache.ui.task.detail.width",
   "diy.cache.ui.chat.density",
+  "diy.cache.ui.chat.md",
   "diy.cache.ui.app.theme",
   "diy.ui.cache.task-tree.expanded",
   "diy.ui.cache.task-tree.scroll",

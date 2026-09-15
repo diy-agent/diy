@@ -8,12 +8,14 @@
 // 文件：<DIY_HOME>/log/agent-bash.jsonl（每行一条 JSON，append-only，超 5MB 轮转一份 .1）
 // 用法：
 //   appendAudit(home, {...})        执行前/后各写一条
-//   crashContext(home)              崩溃日志里附上"最近一幕"（由 crash-reporting 调用）
+//   crashScene(home)                崩溃日志里附上"最近一幕"（由 crash-reporting 调用）
+//     组成：内存活跃轮次（权威，runtime-context） + 审计尾部（兜底，crashContext）
 //
 // 注意：appendFileSync 走 write(2)，数据进内核页缓存即可跨进程死亡存活
 // （只有断电/系统崩溃才会丢），对 SIGKILL 场景足够。
 
 import { appendFileSync, existsSync, mkdirSync, openSync, readSync, closeSync, renameSync, statSync } from "node:fs";
+import { activeTurnList, lastRenderer } from "./runtime-context";
 import { join } from "node:path";
 
 export type AuditPhase = "turn-start" | "turn-end" | "bash-start" | "bash-end" | "bash-blocked";
@@ -90,16 +92,64 @@ export function tailAudit(home: string, n = 20): AuditEntry[] {
  * 崩溃现场一行摘要：最近一轮任务 + 最近一条命令。
  * 供 child-process-gone / render-process-gone / 退出钩子直接附在日志里。
  */
+/**
+ * 崩溃现场（供崩溃钩子调用）：**内存优先，日志兜底**。
+ *
+ * 顺序即优先级，理由：
+ *   1. 活跃轮次是「此刻真在跑什么」的权威事实，渲染进程崩溃尤其需要它 ——
+ *      渲染进程死在 main 之外，agent 轮次照跑不误，日志尾部那条命令未必与之相关；
+ *   2. 渲染进程最后交互点回答「UI 死前在动哪个任务」，这是日志给不出的维度；
+ *   3. 都没有（如重启后回看上次崩溃）才退回审计尾部，且此时已按 taskUri 配对。
+ */
+export function crashScene(home: string): string {
+  const parts: string[] = [];
+  const turns = activeTurnList();
+  if (turns.length > 0) {
+    const desc = turns
+      .map((t) => `${t.taskUri}(model=${t.model ?? "?"} since=${t.since}${t.cwd ? ` cwd=${t.cwd}` : ""})`)
+      .join(", ");
+    parts.push(`活跃轮次 ${turns.length} 个: ${desc}`);
+  }
+  const touch = lastRenderer();
+  if (touch) {
+    parts.push(`渲染进程最后交互 ${touch.channel}${touch.taskUri ? ` task=${touch.taskUri}` : ""} @${touch.at}`);
+  }
+  if (parts.length === 0) return `无内存上下文（可能为启动期崩溃） | 审计尾部: ${crashContext(home)}`;
+  return `${parts.join(" | ")} | 审计尾部: ${crashContext(home)}`;
+}
+
+/**
+ * 崩溃现场一行摘要（**审计回退路径**）：最近一轮任务 + 该轮的最近一条命令。
+ * 配对规则（bug 修复点）：命令必须与轮次**同任务**才配得上。
+ * 旧实现把「最后一条 turn-start」与「最后一条 bash-*」各自全局取，两者可能来自不同任务，
+ * 多任务并发时拼出根本不存在的组合（实例见 runtime-context.ts 头注释）。
+ */
 export function crashContext(home: string): string {
   const rows = tailAudit(home, 40);
   if (rows.length === 0) return "无 agent 审计记录";
   const lastTurn = [...rows].reverse().find((r) => r.phase === "turn-start");
-  const lastCmd = [...rows].reverse().find((r) => r.phase === "bash-start" || r.phase === "bash-blocked" || r.phase === "bash-end");
   const parts: string[] = [];
-  if (lastTurn) parts.push(`轮次 task=${lastTurn.taskUri ?? "?"} model=${lastTurn.model ?? "?"} 起始=${lastTurn.ts}`);
-  if (lastCmd) {
-    const cmd = (lastCmd.command ?? "").replace(/\s+/g, " ").slice(0, 300);
-    parts.push(`最近命令[${lastCmd.phase}] ${lastCmd.ts} cwd=${lastCmd.cwd ?? "?"} :: ${cmd}`);
+  if (lastTurn) {
+    parts.push(`轮次 task=${lastTurn.taskUri ?? "?"} model=${lastTurn.model ?? "?"} 起始=${lastTurn.ts}`);
+    const sameTask = [...rows]
+      .reverse()
+      .find((r) => isBashPhase(r.phase) && (r.taskUri === lastTurn.taskUri || !r.taskUri));
+    if (sameTask) {
+      const cmd = (sameTask.command ?? "").replace(/\s+/g, " ").slice(0, 300);
+      parts.push(`最近命令[${sameTask.phase}] ${sameTask.ts} cwd=${sameTask.cwd ?? "?"} :: ${cmd}`);
+    } else {
+      parts.push("（该任务无命令记录）");
+    }
+  } else {
+    const lastCmd = [...rows].reverse().find((r) => isBashPhase(r.phase));
+    if (lastCmd) {
+      const cmd = (lastCmd.command ?? "").replace(/\s+/g, " ").slice(0, 300);
+      parts.push(`无轮次记录，最近命令[${lastCmd.phase}] task=${lastCmd.taskUri ?? "?"} ${lastCmd.ts} :: ${cmd}`);
+    }
   }
   return parts.join(" | ") || `${rows.length} 条审计但无轮次/命令`;
+}
+
+function isBashPhase(p: AuditPhase): boolean {
+  return p === "bash-start" || p === "bash-end" || p === "bash-blocked";
 }

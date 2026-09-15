@@ -31,6 +31,21 @@ if [[ ! -f "$APP_DIR/out/main/index.mjs" ]]; then
   exit 1
 fi
 
+# ── 生产数据保护 ──
+# agent / CI / 外层 shell 常导出 DIY_HOME=~/.diy。若直接透传，worktree 里一条
+# `./diy.sh project remove <id>` 就会操作生产数据（实测：removeProject 会按 meta.yaml
+# 的 path 去摘目标仓库的 diy.yaml 名片，那条路径是真实的 ~/git/...）。
+# 因此：继承到的 DIY_HOME 若指向生产数据根（$HOME/.diy），默认拒绝，改用本 worktree 的。
+# 测试不受影响：它们显式传 DIY_HOME=<临时目录>，不等于 $HOME/.diy，会正常透传。
+# 确实需要指向生产数据时显式 opt-in：DIY_ALLOW_PROD_HOME=1 ./diy.sh ...
+if [[ -n "${DIY_HOME:-}" && "${DIY_HOME}" == "${HOME}/.diy" && "${DIY_ALLOW_PROD_HOME:-}" != "1" ]]; then
+  # 变量一律用 ${} 界定：紧跟多字节字符时，非 UTF-8 locale 下 bash 会把字符首字节
+  # 并入变量名，set -u 下报 "unbound variable"（踩过）
+  echo "[diy.sh] 警告: 忽略继承的生产数据目录 DIY_HOME=${DIY_HOME}, 改用本 worktree 的 ${HOME_DEFAULT}" >&2
+  echo "[diy.sh] 警告: 确需操作生产数据请显式声明 DIY_ALLOW_PROD_HOME=1 ./diy.sh ..." >&2
+  unset DIY_HOME
+fi
+
 # 机制提示（仅交互终端输出到 stderr，不污染 --json 的 stdout）
 if [[ -t 2 ]]; then
   echo "[diy.sh] CLI=tsx源码 | GUI=out/main产物 | HOME=${DIY_HOME:-$HOME_DEFAULT} | 需先 build（dev 模式除外）" >&2

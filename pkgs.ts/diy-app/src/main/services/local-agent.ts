@@ -28,6 +28,7 @@ import { getProjectPath } from "../core/project";
 import { BlockStore, blocksToMessages, interruptedToolPatches, type Op, type JSONVal } from "./local-blocks";
 import { collectSelfInfo, judgeSelfKill, selfKillNotice } from "./agent-guard";
 import { appendAudit } from "./agent-audit";
+import { noteTurnEnd, noteTurnStart } from "./runtime-context";
 
 const DEFAULT_MODEL = "mimo-v2.5";
 
@@ -444,6 +445,7 @@ export class LocalAgentManager {
         }
         const turnId = `t${Date.now()}`;
         const uid = `${turnId}_u`;
+        noteTurnStart({ taskUri, model: model || DEFAULT_MODEL, cwd: resolveCwd(taskUri) });
         appendAudit(diyHome(), {
             phase: "turn-start",
             taskUri,
@@ -716,6 +718,7 @@ export class LocalAgentManager {
             // 收尾必闭合：step 先于 turn（stop 幂等，重复无害）
             if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
             if (!turnStopped) yield* emit({ op: "stop", id: turnId });
+            noteTurnEnd(taskUri);
             // 轮次审计收尾：崩溃后能区分"死在生成中"还是"生成已结束"
             appendAudit(diyHome(), {
                 phase: "turn-end",

@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { diyHome } from "../../src/main/core/state";
+import { diyHome, getTask } from "../../src/main/core/state";
 import {
   createTask,
   updateTask,
@@ -79,6 +79,24 @@ describe("createTask", () => {
     const content = readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8");
     expect(content).toContain("detail: 详细描述");
     expect(content).toContain("# Markdown 正文");
+  });
+
+  it("多行 detail 落盘为 |- 字面块且往返无损（防 >- 折叠回归）", () => {
+    const longLine = "1. 第一条描述特意写得很长以超过 js-yaml 默认的 80 列折叠宽度，确保旧配置会把这行拆成多行";
+    const detail = `# 需求\n\n${longLine}\n2. 第二条\n\n# 测试\n\n18/18 通过`;
+    const uri = createTask({ title: "字面块", project: PROJECT, detail });
+
+    const content = readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8");
+    expect(content).toContain("detail: |-\n");
+    expect(content).not.toContain("detail: >-");
+    // 往返无损：空行/换行原样还原，长行未被拆
+    expect(getTask(uri)?.detail).toBe(detail);
+
+    // update 路径同样保持字面块
+    updateTask(uri, { detail: detail + "\n\n# 补充\n\n新增段落同样很长以验证更新路径的序列化配置保持一致" });
+    const after = readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8");
+    expect(after).toContain("detail: |-\n");
+    expect(getTask(uri)?.detail).toContain("# 补充");
   });
 
   it("ValidationError 包含全部错误字段", () => {

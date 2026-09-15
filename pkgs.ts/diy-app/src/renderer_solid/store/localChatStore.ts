@@ -28,6 +28,8 @@ interface TaskState {
     tab: "local" | "info";
     /** 详情 tab 的滚动位置（info 滚动容器 scrollTop） */
     detailScroll: number;
+    /** 历史加载在途 promise：open() 并发去重（见 open 内注释） */
+    loading?: Promise<void>;
 }
 
 const states = new Map<string, TaskState>();
@@ -51,20 +53,48 @@ function cur(): TaskState | null {
     return u ? (states.get(u) ?? null) : null;
 }
 
-/** 块树快照刷新（op 粒度重建，demo 规模下开销可忽略） */
+/** 块树快照刷新（重建整棵树） */
 function refresh(st: TaskState) {
     st.setTrees(st.store.roots().map((r) => toTree(st.store, r.id)));
+}
+
+// ─── 渲染批处理（合并高频 op，落到每帧至多一次 refresh） ──────────
+//
+// 为什么必须做：上游 text-delta 是逐 token 一个 op（local-agent.ts），
+// 若每个 op 都 refresh，则 ①整棵树重建 O(块数) ②Markdown 全量 re-parse O(长度²)，
+// 两者叠加在长回答下会明显卡顿。
+// 为什么用 rAF 而非定时器：一次刷新即一次绘制，rAF 天然对齐帧率（≤60fps），
+// 30~60ms 的定时器在 60fps 下会白丢 2~4 帧，且与绘制节奏脱钩。
+// 定稿信号不受影响：stop op 改变的是块字段（stopped），与 refresh 时机无关，
+// 且 streaming 结束时的最后一次 refresh 一定执行（帧回调里取最新快照）。
+
+/** 待刷新的 task（同一 task 多 op 只记一次；跨 task 各自独立，不互相吞并） */
+const pendingRefresh = new Set<TaskState>();
+let rafId: number | null = null;
+
+function scheduleRefresh(st: TaskState) {
+    pendingRefresh.add(st);
+    if (rafId !== null) return;
+    rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const batch = [...pendingRefresh];
+        pendingRefresh.clear();
+        for (const s of batch) refresh(s);
+    });
+}
+
+/** 立即刷新并取消在途批（用于流结束/切会话等需要同步可见的时机） */
+function flushRefresh(st: TaskState) {
+    pendingRefresh.delete(st);
+    refresh(st);
 }
 
 const [models, setModels] = createSignal<Array<{ id: string; name: string }>>([]);
 const [activeModel, setActiveModel] = createSignal<string>("");
 
 /** 切换/进入会话：首次加载持久化 Op 日志；已加载过的直接复用（含在途流式） */
-async function open(taskUri: string) {
-    setCurrentUri(taskUri);
-    const st = stateFor(taskUri);
-    if (st.loaded) return;
-    st.setError(null);
+/** 拉历史并 fold 进块树（open 的实际加载体，被在途去重包裹） */
+async function loadHistory(st: TaskState, taskUri: string): Promise<void> {
     try {
         const ops = (await diyService.diy.agent.local.history({ taskUri })) as Op[];
         for (const op of ops) st.store.apply(op);
@@ -75,6 +105,23 @@ async function open(taskUri: string) {
         console.warn(`[localChat] 历史加载失败 ${taskUri}:`, e);
         notificationStore.addToast("error", "本地会话历史加载失败，将显示不完整并在下次进入时重试");
     }
+}
+
+async function open(taskUri: string) {
+    setCurrentUri(taskUri);
+    const st = stateFor(taskUri);
+    if (st.loaded) return;
+    // 并发去重（必需）：LocalChatPage 首挂时 onMount 与 uri 切换 effect 都会调 open，
+    // 而 loaded 只在 await 之后置位 —— 没有这道闸门，两次 history 会被先后 fold 进同一个
+    // store，表现为「每条消息内容整体重复一遍」。
+    // 失败时清掉在途标记（不置 loaded），保留「下次进入自动重试」的既有语义。
+    if (st.loading) return st.loading;
+    st.setError(null);
+    st.loading = loadHistory(st, taskUri).finally(() => {
+        st.loading = undefined;
+    });
+    await st.loading;
+
     if (models().length === 0) {
         try {
             const ms = await diyService.diy.agent.local.models({});
@@ -110,13 +157,17 @@ async function send(taskUri: string, text: string): Promise<boolean> {
                 continue;
             }
             st.store.apply(op);
-            refresh(st);
+            scheduleRefresh(st);
         }
         return true;
     } catch (e) {
         st.setError(e instanceof Error ? e.message : String(e));
         return false;
     } finally {
+        // 无论正常结束/报错/中断：丢弃在途批并同步落最终快照。
+        // 放在 finally 而非 try 尾部，是为保证取消与异常路径也不会丢掉最后一批 op
+        // （否则 stopped/error 等终态字段要等下一次 rAF 才可见）。
+        flushRefresh(st);
         st.setRunning(false);
     }
 }

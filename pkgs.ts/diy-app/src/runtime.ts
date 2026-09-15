@@ -8,6 +8,10 @@
 //   DIY_HOME            数据根（state/task/app.port 落此）
 //   DIY_PORT            首选端口（测试注入 0=随机；缺省时靠 app.port 文件 / rpc 兜底 18888）
 //   DIY_DEV_SERVER_URL  dev 时 GUI 加载的 Vite URL；缺省 → loadFile 编译产物
+//   DIY_NO_LAUNCH       1 = CLI 禁止自动拉起 app（只允许复用已运行实例；探测不到即报错）。
+//                       测试环境专用：测试自己用 startElectronTest 启动实例并持有句柄，
+//                       CLI 若在探测超时时另起一个 detached 实例，测试无法回收 → 进程泄露。
+//                       生产不设，保持「敲 diy 命令顺手把 app 带起来」的既有体验。
 //
 // 产物根（out/ 所在目录）由各进程自己通过 import.meta.url 计算，不需要环境变量注入。
 
@@ -21,6 +25,8 @@ export interface RuntimeConfig {
   port?: number;
   /** dev 时 GUI 加载的 Vite URL */
   devServerUrl?: string;
+  /** 禁止 CLI 自动拉起 app（测试注入，防实例逃逸） */
+  noLaunch: boolean;
 }
 
 export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -31,5 +37,6 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     home,
     port: port !== undefined && Number.isFinite(port) ? port : undefined,
     devServerUrl: env.DIY_DEV_SERVER_URL || undefined,
+    noLaunch: env.DIY_NO_LAUNCH === "1",
   };
 }
