@@ -331,6 +331,18 @@ export function blocksToMessages(store: BlockStore): LocalModelMessage[] {
             return;
         }
         if (b.kind === "tool") {
+            // 指令不全的 tool 调用不投影进 LLM 历史 —— 这是**废弃的半截消息**。
+            // args 是 Flag 字段，只有 ai-sdk 的 tool-call 事件（入参流式完成）才会 patch 它；
+            // args 为空 ⇒ tool-call 从未到达 ⇒ 停止按钮 / 断流 / 进程被杀发生在「模型正在
+            // 流式吐入参」的途中。此时这条指令既没下达完成、也没有执行，无从恢复：
+            //   · 硬发只能带 input:{} 的假指令，模型会以为「我下过一条空命令」并据此推理；
+            //   · 残缺的 input（Text 字段，delta 拼到一半）不是合法入参，也没有可靠补全方式。
+            // 与 tool-result 同处一个分支整体跳过，不破坏「每个 tool-call 必有 tool-result」铁律。
+            // UI 侧不受影响：中断态由 interruptedToolPatches 落进 ops，渲染走 toTree 块树，
+            // 用户照旧看得到「这条被截断了」——只是它不再进入发给模型的上下文。
+            // 对照组（必须保留）：args 有值但没跑完 = 指令已下达、命令可能真的执行过，
+            // 这时靠下面的 INTERRUPTED_TOOL_NOTICE 钉死「已结束、别重试」（任务 92 的教训）。
+            if (b.args == null) return;
             out.push({
                 role: "assistant",
                 content: [
@@ -338,11 +350,14 @@ export function blocksToMessages(store: BlockStore): LocalModelMessage[] {
                         type: "tool-call",
                         toolCallId: b.id,
                         toolName: String(b.tool ?? "bash"),
-                        input: (b.args as JSONVal) ?? {},
+                        // 上面已挡住 args 为空的半截指令，这里不再兜底成 {}：
+                        // 兜底正是「空指令混进历史」的元凶，留着它等于把 bug 藏起来
+                        input: b.args as JSONVal,
                     },
                 ],
             });
             // 配对铁律：每个 tool-call 必有 tool-result，否则下一轮 provider 拒整个历史。
+            // （只适用于走到这里的块 —— 指令已下达；半截指令在上面整体跳过了。）
             //
             // 优先用块自己的 output：中断块在「新一轮开始」时已被 main 收敛成显式终态
             // （interruptedToolPatches 写入 ops），所以这里绝大多数情况是**纯翻译**。

@@ -29,6 +29,9 @@ function readTaskNode(
   return {
     kind: "task",
     uri,
+    // 任务号取 uri 末段（projects/<pid>/tasks/<tid> → tid），在 main 侧算一次，
+    // 避免 UI/CLI 各自 split("/") 出偏差；uri 是权威，num 只是它的展示投影。
+    num: uri.split("/").pop(),
     title: fm.title,
     state: fm.state,
     project: pid,

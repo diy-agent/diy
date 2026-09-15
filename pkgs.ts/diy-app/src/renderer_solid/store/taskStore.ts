@@ -5,6 +5,8 @@ import { draftStore } from "./draftStore";
 export interface TreeNode {
   kind: "project" | "task";
   uri?: string;
+  /** 任务号（uri 末段，项目内自增；跨项目会重号）。由 main 的 task-tree 回填。 */
+  num?: string;
   title?: string;
   state?: string;
   project?: string;

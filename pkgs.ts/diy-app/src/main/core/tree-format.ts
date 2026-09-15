@@ -10,6 +10,10 @@ import type { TaskState } from "./task-state";
 export interface TaskNode {
   kind: "project" | "task";
   uri?: string;
+  /** 任务号 = uri 末段（projects/<pid>/tasks/<tid> 的 tid）。
+   *  项目内自增、从 1 起，**仅项目内唯一**（跨项目会重号）—— 展示层一律带项目分组用，
+   *  不要拿它当全局标识去索引（全局标识是 uri）。 */
+  num?: string;
   title?: string;
   state?: TaskState;
   /** 所属 project id（task 节点） */
@@ -39,7 +43,8 @@ export function renderTreeText(nodes: TaskNode[], indent = ""): string {
       lines.push(`${indent}📁 ${n.title}`);
     } else {
       const title = n.title ? ` ${n.title}` : "";
-      lines.push(`${indent}  ${n.uri}${title}`);
+      const num = n.num ? `#${n.num} ` : "";
+      lines.push(`${indent}  ${num}${n.uri}${title}`);
     }
     if (n.children.length > 0) {
       lines.push(renderTreeText(n.children, indent + "  "));

@@ -224,25 +224,56 @@ describe("touched 序号（turn 内当前进度）", () => {
     });
 });
 
-describe("历史重建的配对铁律", () => {
-    it("中断未完成的 tool 也合成占位 tool-result（防下一轮 provider 拒孤立 tool_call）", () => {
+describe("历史重建：中断 tool 的两种情形分流", () => {
+    /** 用户消息 + 一个中断的 tool 块；argsInStream=false 模拟入参没吐完就断 */
+    function interrupted(argsInStream: boolean): BlockStore {
         const s = new BlockStore();
         s.apply({ op: "start", id: "t1", kind: "turn" });
         s.apply({ op: "start", id: "u1", kind: "text", parent: "t1", meta: { role: "user" } });
         s.apply({ op: "delta", id: "u1", fields: { content: "hi" } });
         s.apply({ op: "stop", id: "u1" });
-        s.apply({ op: "start", id: "call_x", kind: "tool", parent: "t1", meta: { tool: "bash", status: "running" } });
+        s.apply({
+            op: "start",
+            id: "call_x",
+            kind: "tool",
+            parent: "t1",
+            meta: { tool: "bash", status: "running" },
+        });
+        if (argsInStream) {
+            // tool-call 事件已到达 = 指令下达完毕（可能已在执行）
+            s.apply({ op: "patch", id: "call_x", fields: { args: { command: "date" } } });
+        } else {
+            // 只在流式吐入参的中途落了几个 delta，tool-call 事件永远没来
+            s.apply({ op: "delta", id: "call_x", fields: { input: '{"command": "cd /use' } });
+        }
+        // main 侧「新一轮开始」的收敛（写进 ops，UI 与历史同源）
+        for (const op of interruptedToolPatches(s)) s.apply(op);
+        return s;
+    }
+
+    it("指令不全（args 未下达）= 废弃半截消息：不投影进 LLM 历史", () => {
+        const s = interrupted(false);
         const msgs = blocksToMessages(s);
-        const roles = msgs.map((m) => m.role);
-        expect(roles).toEqual(["user", "assistant", "tool"]);
-        const toolMsg = msgs[2]!;
-        const part = (toolMsg.content as Array<{ output: { value: string } }>)[0]!;
-        expect(part.output.value).toContain("已中断");
+        // 只剩 user —— 既不发 input:{} 的假指令，也不留配对的孤立 tool-result
+        expect(msgs.map((m) => m.role)).toEqual(["user"]);
+        // 但 UI 仍看得见它被截断：块树里有，且已收敛成 interrupted 终态（渲染走 toTree，不走投影）
+        expect(s.blocks.get("call_x")!.status).toBe(INTERRUPTED_STATUS);
+        expect(toTree(s, "t1").children.map((c) => c.id)).toContain("call_x");
+    });
+
+    it("指令已下达但没跑完：保留 call + 占位 result（防 provider 拒孤立 tool_call + 防重试）", () => {
+        const s = interrupted(true);
+        const msgs = blocksToMessages(s);
+        expect(msgs.map((m) => m.role)).toEqual(["user", "assistant", "tool"]);
+        const call = (msgs[1]!.content as Array<{ type: string; input: unknown }>)[0]!;
+        expect(call.input).toEqual({ command: "date" }); // 不是 {}
+        const value = (msgs[2]!.content as Array<{ output: { value: string } }>)[0]!.output.value;
         // 不得出现诱导重试的口号：旧文案"如有需要请重新发起"会让 agent 重启后自动重发被杀断的命令
-        expect(part.output.value).toContain("不要重试");
-        expect(part.output.value).not.toContain("重新发起");
+        expect(value).toContain("已中断");
+        expect(value).toContain("不要重试");
+        expect(value).not.toContain("重新发起");
         // 单一来源：UI 与 request 必须同源（UI 直接 import 这个常量）
-        expect(part.output.value).toBe(INTERRUPTED_TOOL_NOTICE);
+        expect(value).toBe(INTERRUPTED_TOOL_NOTICE);
     });
 });
 

@@ -612,6 +612,21 @@ export const apiDef = RpcSchema.router({
             },
           }),
 
+          /** 文件系统变更推送（serverStream：FileWatcher 检测到变化后实时 yield） */
+          watch: RpcSchema.group({
+            desc: `文件系统监控（projects/ 增删改 → 实时推送）`,
+            children: {
+              fileChange: RpcSchema.serverStream({
+                desc: `文件变更事件流 — 持续订阅，FileWatcher 检测到 projects/state.yaml/agents 下文件变更后 yield`,
+                input: {},
+                output: z.object({
+                  event: z.string().describe("变更类型：state-change / task-change / agent-change"),
+                  ts: z.number().describe("变更发生时间戳（ms）"),
+                }),
+              }),
+            },
+          }),
+
           /** UI 可见性诊断 — 遍历渲染器 DOM 生成无障碍树（agent 了解 UI 全貌的入口） */
           inspect: RpcSchema.unary({
             desc: `UI 诊断：生成当前页面的无障碍树（可见元素 + 角色 + 文本 + 层级）`,

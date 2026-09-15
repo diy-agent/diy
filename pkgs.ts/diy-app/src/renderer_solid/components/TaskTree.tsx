@@ -414,6 +414,11 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                         <span class="w-5" />
                     )}
                     <span class={`w-2 h-2 rounded-full inline-block ${stateColor[row.node.state ?? ""] ?? "bg-neutral"}`} />
+                    {/* 任务号前置：一眼定位「几号任务」，且与 URI 列的末段同源（都来自 main 的 num）。
+                        弱化成 mono/半透明，避免与标题抢视觉焦点；标题过长时它不参与 truncate。 */}
+                    <Show when={row.node.num}>
+                        <span class="shrink-0 font-mono text-xs opacity-50">#{row.node.num}</span>
+                    </Show>
                     <span
                         class="truncate font-medium diy-link underline-offset-2 hover:underline cursor-pointer"
                         onClick={(e) => {

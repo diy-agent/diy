@@ -219,6 +219,14 @@ export function bindAppHandlers(binding: ServerBinding): void {
     }
   });
 
+  // —— watch —— 文件系统变更推送（serverStream：FileWatcher → RPC → renderer）
+  binding.on(app.ui.watch.fileChange, async function* () {
+    const { fileWatcher } = await import("./file-watcher");
+    for await (const change of fileWatcher.subscribe()) {
+      yield change;
+    }
+  });
+
   // —— agent.local —— 本地自定义 agent（ai-sdk 块协议，与 ACP 独立）
   binding.on(app.agent.local.chat, async function* ({ input }) {
     const { getLocalAgent } = await import("./local-agent");

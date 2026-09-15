@@ -15,12 +15,20 @@
 import { app, BrowserWindow, screen } from "electron";
 import path from "node:path";
 import { setDefaultAutoSelectFamily } from "node:net";
+import { setDefaultResultOrder } from "node:dns";
 // ⚠️ 网络兜底：本机 Node 的 Happy Eyeballs（双栈竞态，autoSelectFamily 默认启用）
 // 对全部公网 HTTPS 地址 ETIMEDOUT，而单地址连接/其他栈（bun/curl/rawTCP）正常，
 // 实测 setDefaultAutoSelectFamily(false) 后恢复。只改地址选择策略，不改协议。
 // 全局行为变更必须留痕：启动日志明示，便于排查「为什么网络行为不同」。
 setDefaultAutoSelectFamily(false);
 console.log("[net] 已关闭 Happy Eyeballs（setDefaultAutoSelectFamily(false)）：本机双栈竞态致公网 HTTPS 超时，改回单地址顺序连接");
+// ⚠️ 与上一条配套（关掉 Happy Eyeballs 后只连 DNS 返回的第一个地址，顺序就成了单点故障）：
+// 本机没有 IPv6 出口（ping6 不通），而 opencode.ai 的 AAAA（2606:4700:78::/48）在解析结果里
+// 一直存在。默认顺序 verbatim 跟随解析器返回序，一旦 AAAA 排头就必连 ENETUNREACH、3 次重试
+// 全废：09-13~09-15 共 12 次，agent 表现为「突然聊不动了」，且与上下文大小无关，极易误判。
+// 钉死 v4 优先消除这个依赖；纯 v6 网络下没有 A 记录会自动回退 AAAA，不会因此断网。
+setDefaultResultOrder("ipv4first");
+console.log('[net] 已钉死 IPv4 优先（setDefaultResultOrder("ipv4first")）：本机无 IPv6 出口，避免 AAAA 排头时 ENETUNREACH');
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
 import type { ServerBinding } from "@diy/rpc";
