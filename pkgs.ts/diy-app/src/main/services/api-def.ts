@@ -454,6 +454,28 @@ export const apiDef = RpcSchema.router({
         },
       }),
 
+      /**
+       * 文件系统变更推送（Main 域）。
+       *
+       * ⚠️ 必须在 diy.* 而非 diy.ui.*：实现是 main 侧的 FileWatcher（renderer 只是订阅方），
+       * 而 rpc-port 会把 `diy.ui` 整棵子树 onForward 给 renderer —— 挂在 ui 下会让同一方法
+       * 被注册两次（本地 + 转发），ServerBinding 直接抛「已注册」使 RPC 服务器起不来。
+       * 判据：diy.* = Main 本地处理，diy.ui.* = 转发 Renderer（见本文件头注释）。
+       */
+      watch: RpcSchema.group({
+        desc: `文件系统监控（projects/ 增删改 → 实时推送）`,
+        children: {
+          fileChange: RpcSchema.serverStream({
+            desc: `文件变更事件流 — 持续订阅，FileWatcher 检测到 projects/ 下文件变更后 yield`,
+            input: {},
+            output: z.object({
+              event: z.string().describe("变更类型：task-change（projects/ 下任务树相关变更）"),
+              ts: z.number().describe("变更发生时间戳（ms）"),
+            }),
+          }),
+        },
+      }),
+
       // ═══════════════════════════════════════════
       //  diy.ui.* — Renderer 进程域
       //  这些服务只在 Renderer 进程（浏览器）中运行。Main 侧经
@@ -608,21 +630,6 @@ export const apiDef = RpcSchema.router({
                   state: TaskStateSchema.cliArg({ desc: "新状态" }),
                 },
                 output: StatusDataUri,
-              }),
-            },
-          }),
-
-          /** 文件系统变更推送（serverStream：FileWatcher 检测到变化后实时 yield） */
-          watch: RpcSchema.group({
-            desc: `文件系统监控（projects/ 增删改 → 实时推送）`,
-            children: {
-              fileChange: RpcSchema.serverStream({
-                desc: `文件变更事件流 — 持续订阅，FileWatcher 检测到 projects/state.yaml/agents 下文件变更后 yield`,
-                input: {},
-                output: z.object({
-                  event: z.string().describe("变更类型：state-change / task-change / agent-change"),
-                  ts: z.number().describe("变更发生时间戳（ms）"),
-                }),
               }),
             },
           }),

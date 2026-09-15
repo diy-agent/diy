@@ -220,7 +220,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
 
   // —— watch —— 文件系统变更推送（serverStream：FileWatcher → RPC → renderer）
-  binding.on(app.ui.watch.fileChange, async function* () {
+  // 在 diy.watch.*（Main 域）：diy.ui.* 会被 rpc-port 全量转发给 renderer，
+  // 挂那里会与本地注册冲突（ServerBinding 抛「已注册」→ RPC 起不来）。
+  binding.on(app.watch.fileChange, async function* () {
     const { fileWatcher } = await import("./file-watcher");
     for await (const change of fileWatcher.subscribe()) {
       yield change;
