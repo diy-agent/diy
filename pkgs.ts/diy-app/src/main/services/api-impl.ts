@@ -21,6 +21,7 @@ import { refList, checkRefPaths } from "../core/ref";
 import { syncRefs } from "./ref-sync";
 import { addSource, removeSource } from "./ref-config";
 import { apiDef } from "./api-def";
+import { noteRendererTouch } from "./runtime-context";
 
 /**
  * 实际 RPC 监听端口，由入口在绑定完成后回填。
@@ -231,20 +232,24 @@ export function bindAppHandlers(binding: ServerBinding): void {
 
   // —— agent.local —— 本地自定义 agent（ai-sdk 块协议，与 ACP 独立）
   binding.on(app.agent.local.chat, async function* ({ input }) {
+    noteRendererTouch("diy.agent.local.chat", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     for await (const op of getLocalAgent().chat(input.taskUri, input.message, input.model)) {
       yield JSON.stringify(op);
     }
   });
   binding.on(app.agent.local.cancel, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.cancel", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     return { cancelled: getLocalAgent().cancel(input.taskUri) };
   });
   binding.on(app.agent.local.history, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.history", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().history(input.taskUri);
   });
   binding.on(app.agent.local.clear, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.clear", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     return { cleared: getLocalAgent().clear(input.taskUri) };
   });

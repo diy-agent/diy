@@ -130,7 +130,9 @@ export function createTask(params: CreateTaskParams): string {
     // 不写 project frontmatter —— project 由 URI 路径推导（路径即分组）
   };
 
-  const front = yaml.dump(meta, { indent: 2, noRefs: true });
+    // lineWidth:-1 禁止折叠长行 → 多行 detail 稳定输出 |- 字面块（默认 80 会退化 >- 折叠，
+  // 空行翻倍、长句被拆行，非 js-yaml 的解析器/人读原文都易误读）
+  const front = yaml.dump(meta, { indent: 2, noRefs: true, lineWidth: -1 });
   writeFileSync(taskFilePath(uri), `${FM_SEP}\n${front}${FM_SEP}\n${body ?? ""}`, "utf-8");
 
   return uri;
@@ -212,7 +214,7 @@ export function updateTask(uri: string, changes: UpdateTaskChanges): void {
   };
 
   const { body: b, ...front } = updated;
-  const frontStr = yaml.dump(front, { indent: 2, noRefs: true });
+  const frontStr = yaml.dump(front, { indent: 2, noRefs: true, lineWidth: -1 });
   writeFileSync(taskFilePath(uri), `${FM_SEP}\n${frontStr}${FM_SEP}\n${b ?? ""}`, "utf-8");
 }
 

@@ -5,7 +5,8 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { killSegments, killTargetCandidates, judgeSelfKill, type SelfProcessInfo } from "../../src/main/services/agent-guard";
-import { appendAudit, auditFile, crashContext, tailAudit } from "../../src/main/services/agent-audit";
+import { appendAudit, auditFile, crashContext, crashScene, tailAudit } from "../../src/main/services/agent-audit";
+import { activeTurnList, noteRendererTouch, noteTurnEnd, noteTurnStart, resetRuntimeContext } from "../../src/main/services/runtime-context";
 import { diyHome } from "../../src/main/core/state";
 
 /** 构造"我"= pid 1000，pgid 1000，子进程 1001/1002，命令行含 Electron 特征 */
@@ -98,5 +99,63 @@ describe("write-ahead 审计", () => {
     // 原始文件确实是 JSONL（每行一条）
     const raw = readFileSync(auditFile(home), "utf-8").trim().split("\n");
     for (const line of raw) expect(() => JSON.parse(line)).not.toThrow();
+  });
+
+  // 回归：多任务并发时，命令必须与轮次**同任务**，不得张冠李戴
+  // （真实事故 2026-09-15 06:25：报出「task=100 的轮次 + task=113 的命令」这种不存在的组合）
+  it("多任务并发：命令不与轮次跨任务混搭", () => {
+    const home = diyHome();
+    const mine = "projects/9/tasks/100";
+    const other = "projects/9/tasks/113";
+    appendAudit(home, { phase: "turn-start", taskUri: mine, model: "mimo-v2.5", cwd: "/tmp" });
+    appendAudit(home, { phase: "bash-start", taskUri: other, cwd: "/tmp", command: "other 的命令不该出现在这里" });
+    appendAudit(home, { phase: "bash-end", taskUri: other, cwd: "/tmp", command: "other 的命令不该出现在这里" });
+
+    const ctx = crashContext(home);
+    expect(ctx).toContain(mine);
+    expect(ctx).not.toContain(other); // 关键：不得借用别的任务的命令
+    expect(ctx).not.toContain("other 的命令不该出现在这里");
+    expect(ctx).toContain("该任务无命令记录"); // 宁可缺失，不可误导
+  });
+});
+
+// ═══════════════════════════════════════
+// 崩溃现场：内存权威优先
+// ═══════════════════════════════════════
+
+describe("崩溃现场 crashScene", () => {
+  it("内存活跃轮次优先于审计尾部，且同时列出并发轮次", () => {
+    resetRuntimeContext();
+    const home = diyHome();
+    const a = "projects/9/tasks/100";
+    const b = "projects/9/tasks/113";
+    appendAudit(home, { phase: "turn-start", taskUri: a, model: "mimo-v2.5", cwd: "/tmp" });
+    noteTurnStart({ taskUri: a, model: "mimo-v2.5", cwd: "/tmp" });
+    noteTurnStart({ taskUri: b, model: "mimo-v2.5", cwd: "/tmp" });
+    noteRendererTouch("diy.agent.local.chat", a);
+
+    const scene = crashScene(home);
+    expect(scene).toContain("活跃轮次 2 个");
+    expect(scene).toContain(a);
+    expect(scene).toContain(b);
+    expect(scene).toContain("diy.agent.local.chat");
+
+    noteTurnEnd(a);
+    noteTurnEnd(b);
+    expect(activeTurnList()).toHaveLength(0);
+    resetRuntimeContext();
+  });
+
+  it("无内存上下文时退回审计尾部（启动期/重启后回看崩溃）", () => {
+    resetRuntimeContext();
+    const home = diyHome();
+    const uri = "projects/9/tasks/7";
+    appendAudit(home, { phase: "turn-start", taskUri: uri, model: "mimo-v2.5", cwd: "/tmp" });
+    appendAudit(home, { phase: "bash-start", taskUri: uri, cwd: "/tmp", command: "sleep 1" });
+
+    const scene = crashScene(home);
+    expect(scene).toContain("无内存上下文");
+    expect(scene).toContain(uri);
+    expect(scene).toContain("sleep 1");
   });
 });
