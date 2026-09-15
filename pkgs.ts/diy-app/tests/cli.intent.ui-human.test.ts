@@ -28,11 +28,15 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // 顺序要点：先停实例再跑清理。
+  // 反过来的话，清理这条 CLI 会在实例已不可用时触发 ensureAppPort 的 30s 轮询，
+  // 把 hookTimeout 吃光 → stop() 排不到 → 实例泄露。
+  // （测试环境已注入 DIY_NO_LAUNCH=1，现在即使走到这一步也会快速报错而非另起实例。）
+  await electron?.stop();
   // ui 域无删除命令，清理走 main 直删
   if (fixtureProj) {
     try { await sh.run(`./diy.sh project remove ${fixtureProj}`); } catch { /* 清理尽力而为 */ }
   }
-  await electron?.stop();
 });
 
 /** ui.tree 返回结构化节点数组，递归收集可读文本供断言 */
@@ -59,7 +63,9 @@ describe("ui 人类点击顺序（CLI diy.ui.*，agent 可复用）", () => {
     // ② 点击「创建项目」→ 填路径 → 提交（= ui.project.create，与按钮共用 createProjectViaUi）
     const repo = `${HOME}/uihuman`;
     const r = await sh.getJson(`./diy.sh ui project create ${repo} --label UI演示项目`);
-    fixtureProj = String((r.data as any)?.data?.id);
+    // 不写 String(...)：create 失败时 id 为 undefined，String() 会得到非空的 "undefined"，
+    // 让下方 if (fixtureProj) 判真 → 拿着假 id 去跑后续 CLI
+    fixtureProj = (r.data as any)?.data?.id ?? "";
     expect(fixtureProj).toMatch(/^\d+$/);
 
     // 反向验证项目已显示在任务树

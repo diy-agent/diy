@@ -71,7 +71,9 @@ function waitForRpcReady(port: number, timeoutMs = 15000): Promise<void> {
 /** 隔离 HOME：临时目录 + symlink 必要配置（不写坏用户数据） */
 function makeIsolatedHome(): string {
   const home = mkdtempSync(join(tmpdir(), "diy-app-test-"));
-  const real = homedir();
+  // 符号链接源头必须是真实家目录：setup.ts 已把 process.env.HOME 指向隔离目录，
+  // 此处的 homedir() 会跟着变，会把 home 链到自身。故用 setup.ts 留档的 DIY_REAL_HOME。
+  const real = process.env["DIY_REAL_HOME"] ?? homedir();
   for (const d of [".config", ".local", ".ssh", ".cache"]) {
     const src = join(real, d);
     if (existsSync(src)) {
@@ -85,6 +87,34 @@ function makeIsolatedHome(): string {
     }
   }
   return home;
+}
+
+/**
+ * 进程级兜底：vitest 因超时/异常掐断用例时，测试代码里的 stop() 可能来不了。
+ * 这里登记所有在途实例，在测试进程退出前尽力 SIGTERM——
+ * 防止测试 Electron 成为孤儿进程堆积（Teardown 泄露的实际教训）。
+ * 注：vitest worker 强杀时本兜底也可能不触发，它只是多一道防线，
+ * 治因是放宽 testTimeout 让 afterAll 正常走完。
+ */
+const liveInstances = new Set<ChildProcess>();
+let cleanupHooked = false;
+function registerForCleanup(proc: ChildProcess | null): void {
+  if (!proc) return;
+  liveInstances.add(proc);
+  if (!cleanupHooked) {
+    cleanupHooked = true;
+    const killAll = () => {
+      for (const p of liveInstances) {
+        if (p.exitCode === null && p.signalCode === null) {
+          try { p.kill("SIGKILL"); } catch { /* 已退出 */ }
+        }
+      }
+      liveInstances.clear();
+    };
+    process.once("exit", killAll);
+    process.once("SIGINT", () => { killAll(); process.exit(130); });
+    process.once("SIGTERM", () => { killAll(); process.exit(143); });
+  }
 }
 
 export interface ElectronTest {
@@ -146,6 +176,7 @@ export async function startElectronTest(): Promise<ElectronTest> {
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  registerForCleanup(proc);
 
   // stdout/stderr 保持 pipe，但**必须持续 drain** —— 只 pipe 不读会填满管道缓冲把子进程
   // 卡在 write 上。这里不再为了抓 "DevTools listening" 而依赖它，只留一小段尾部用于
@@ -167,8 +198,9 @@ export async function startElectronTest(): Promise<ElectronTest> {
       home,
       port,
       cdpUrl,
-      stop: () =>
-        new Promise<void>((resolve) => {
+      stop: () => {
+        liveInstances.delete(proc);
+        return new Promise<void>((resolve) => {
           if (proc.exitCode !== null || proc.signalCode !== null) return resolve();
           proc.once("exit", () => resolve());
           proc.kill("SIGTERM");
@@ -184,7 +216,8 @@ export async function startElectronTest(): Promise<ElectronTest> {
             }
             resolve();
           }, 3000);
-        }),
+        });
+      },
     };
   } catch (err) {
     proc.kill("SIGTERM");
