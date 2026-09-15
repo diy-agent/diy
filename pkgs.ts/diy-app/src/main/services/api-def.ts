@@ -56,6 +56,18 @@ const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
   }),
 );
 
+/** 草稿字段名白名单 — 单一真相源 core/drafts.ts 的 DRAFT_FIELDS */
+export const DraftFieldSchema = z.enum(["title", "detail", "body", "agent_input"]);
+/** 草稿字段映射（值一律字符串，原样保存不 trim；partial：未编辑的字段不出现） */
+export const DraftFieldsSchema = z.partialRecord(DraftFieldSchema, z.string());
+
+/** 草稿数据（含 meta，供 renderer 判定过期 / CLI 观察） */
+export const DraftsData = z.object({
+  base_updated: z.string().optional(),
+  saved: z.string().optional(),
+  fields: DraftFieldsSchema,
+});
+
 export const apiDef = RpcSchema.router({
   diy: RpcSchema.group({
     desc: `
@@ -85,11 +97,53 @@ export const apiDef = RpcSchema.router({
             output: z.object({ status: z.string(), data: z.object({ tasks: z.any() }) }),
           }),
           show: RpcSchema.unary({
-            desc: `查看任务详情`,
+            desc: `查看任务详情（含未提交草稿 ui_drafts）`,
             input: {
               uri: z.string().cliArg({ desc: "任务 URI" }),
             },
             output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
+          }),
+
+          /** 半编辑草稿：用户未提交的输入（agent 输入框 / 任务编辑框），落任务目录 .diy/drafts.yaml */
+          drafts: RpcSchema.group({
+            desc: `未提交草稿（agent 输入 / 任务编辑框；落任务目录 .diy/drafts.yaml）`,
+            children: {
+              show: RpcSchema.unary({
+                desc: `读取任务的未提交草稿（无草稿时 data 为 null）`,
+                input: {
+                  uri: z.string().cliArg({ desc: "任务 URI" }),
+                },
+                output: z.object({ status: z.string(), data: DraftsData.nullable() }),
+              }),
+              set: RpcSchema.unary({
+                desc: `
+                写入草稿（合并语义：只覆盖传入的字段）
+
+                字段按白名单平铺，不用 JSON 参数：白名单固定且短，平铺后 --help 逐字段可见，
+                也免去 shell 里 JSON 引号的层层转义。传空字符串（如 --title ""）= 清除该字段；
+                不传 = 保持原值。已提交（保存/取消）后应显式清除，否则草稿会盖住新数据。
+                `,
+                input: {
+                  uri: z.string().cliArg({ desc: "任务 URI" }),
+                  title: z.string().optional().cliOption({ desc: "标题草稿（空串=清除）" }),
+                  detail: z.string().optional().cliOption({ desc: "详情草稿（空串=清除）" }),
+                  body: z.string().optional().cliOption({ desc: "正文草稿（空串=清除）" }),
+                  agent_input: z.string().optional().cliOption({ desc: "agent 输入框草稿（空串=清除）" }),
+                  base_updated: z.string().optional().cliOption({ desc: "草稿基点：任务当前 updated（用于检测过期）" }),
+                },
+                output: z.object({ status: z.string(), data: DraftsData }),
+              }),
+              clear: RpcSchema.unary({
+                desc: `清除草稿（不传 fields 清空全部；清空后文件删除）`,
+                input: {
+                  uri: z.string().cliArg({ desc: "任务 URI" }),
+                  // CLI 数组统一走 JSON 形式（parser 只对 ZodArray 做 JSON.parse）：
+                  // 必须写 --fields '["title"]'，写 --fields title 会得到 "expected array"。renderer 侧传数组。
+                  fields: z.array(DraftFieldSchema).optional().cliOption({ desc: `只清指定字段（JSON 数组，如 '[\"title\"]'）` }),
+                },
+                output: StatusOk,
+              }),
+            },
           }),
           edit: RpcSchema.unary({
             desc: `编辑任务`,
@@ -236,6 +290,8 @@ export const apiDef = RpcSchema.router({
             body: z.string().optional(),
             created: z.string().optional(),
             updated: z.string().optional(),
+            // 未提交草稿：renderer 用它恢复编辑态与输入框（见 core/drafts.ts）
+            ui_drafts: DraftsData.nullable().optional(),
           }).nullable(),
         }),
       }),
@@ -398,6 +454,28 @@ export const apiDef = RpcSchema.router({
         },
       }),
 
+      /**
+       * 文件系统变更推送（Main 域）。
+       *
+       * ⚠️ 必须在 diy.* 而非 diy.ui.*：实现是 main 侧的 FileWatcher（renderer 只是订阅方），
+       * 而 rpc-port 会把 `diy.ui` 整棵子树 onForward 给 renderer —— 挂在 ui 下会让同一方法
+       * 被注册两次（本地 + 转发），ServerBinding 直接抛「已注册」使 RPC 服务器起不来。
+       * 判据：diy.* = Main 本地处理，diy.ui.* = 转发 Renderer（见本文件头注释）。
+       */
+      watch: RpcSchema.group({
+        desc: `文件系统监控（projects/ 增删改 → 实时推送）`,
+        children: {
+          fileChange: RpcSchema.serverStream({
+            desc: `文件变更事件流 — 持续订阅，FileWatcher 检测到 projects/ 下文件变更后 yield`,
+            input: {},
+            output: z.object({
+              event: z.string().describe("变更类型：task-change（projects/ 下任务树相关变更）"),
+              ts: z.number().describe("变更发生时间戳（ms）"),
+            }),
+          }),
+        },
+      }),
+
       // ═══════════════════════════════════════════
       //  diy.ui.* — Renderer 进程域
       //  这些服务只在 Renderer 进程（浏览器）中运行。Main 侧经
@@ -552,21 +630,6 @@ export const apiDef = RpcSchema.router({
                   state: TaskStateSchema.cliArg({ desc: "新状态" }),
                 },
                 output: StatusDataUri,
-              }),
-            },
-          }),
-
-          /** 文件系统变更推送（serverStream：FileWatcher 检测到变化后实时 yield） */
-          watch: RpcSchema.group({
-            desc: `文件系统监控（projects/ 增删改 → 实时推送）`,
-            children: {
-              fileChange: RpcSchema.serverStream({
-                desc: `文件变更事件流 — 持续订阅，FileWatcher 检测到 projects/state.yaml/agents 下文件变更后 yield`,
-                input: {},
-                output: z.object({
-                  event: z.string().describe("变更类型：state-change / task-change / agent-change"),
-                  ts: z.number().describe("变更发生时间戳（ms）"),
-                }),
               }),
             },
           }),

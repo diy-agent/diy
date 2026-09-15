@@ -10,6 +10,7 @@ import type { ServerBinding } from "@diy/rpc";
 import { ChannelServerBinding } from "@diy/rpc";
 import type { EnvelopeTransport } from "@diy/rpc";
 import * as task from "../core/task";
+import { DRAFT_FIELDS, clearDrafts, readDrafts, writeDrafts, type DraftField } from "../core/drafts";
 import * as project from "../core/project";
 import * as state from "../core/state";
 import * as taskTree from "../core/task-tree";
@@ -60,7 +61,17 @@ export function bindAppHandlers(binding: ServerBinding): void {
     if (!t) return { status: "error", msg: `任务 ${input.uri} 不存在` };
     // project 只存 id；同时回填 path/label，CLI 才看得到原 subject 路径
     const info = project.getProjectInfo(t.project ?? "");
-    return { status: "ok", data: { ...t, project_path: info?.path, project_label: info?.label } };
+    // 草稿随任务一并返回：renderer 少一次往返即拿到恢复所需的一切
+    const d = readDrafts(input.uri);
+    return {
+      status: "ok",
+      data: {
+        ...t,
+        project_path: info?.path,
+        project_label: info?.label,
+        ui_drafts: d ? { base_updated: d.base_updated, saved: d.saved, fields: d.fields } : null,
+      },
+    };
   });
   binding.on(app.task.edit, async ({ input }) => {
     const { uri, ...changes } = input;
@@ -76,8 +87,30 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { status: "ok", data: { uri: input.uri } };
   });
   binding.on(app.task.delete, async ({ input }) => {
+    // 草稿在任务目录 .diy/ 内，随 rmSync(dir, {recursive:true}) 一并删除，无需单独清理
     task.deleteTask(input.uri);
     return { status: "ok", data: { uri: input.uri } };
+  });
+
+  // ── 未提交草稿（半编辑数据：丢不起，故落盘且写失败必须冒泡）──
+  binding.on(app.task.drafts.show, async ({ input }) => {
+    const d = readDrafts(input.uri);
+    return { status: "ok", data: d ? { base_updated: d.base_updated, saved: d.saved, fields: d.fields } : null };
+  });
+  binding.on(app.task.drafts.set, async ({ input }) => {
+    // undefined = 未提供（保持原值）；"" = 清除该字段 —— 由 writeDrafts 的 splitFields 落地
+    const { uri, base_updated, ...rest } = input;
+    const fields: Partial<Record<DraftField, string>> = {};
+    for (const f of DRAFT_FIELDS) {
+      const v = (rest as Record<string, string | undefined>)[f];
+      if (v !== undefined) fields[f] = v;
+    }
+    const r = writeDrafts(uri, fields, base_updated);
+    return { status: "ok", data: { base_updated: r.base_updated, saved: r.saved, fields: r.fields } };
+  });
+  binding.on(app.task.drafts.clear, async ({ input }) => {
+    clearDrafts(input.uri, input.fields as DraftField[] | undefined);
+    return { status: "ok" };
   });
 
   // ── project ──
@@ -151,7 +184,19 @@ export function bindAppHandlers(binding: ServerBinding): void {
     if (!t) return { status: "error", data: null };
     // project 只存 id（路径即分组）；同时回填 path/label，CLI/GUI 才看得到原 subject 路径
     const pinfo = project.getProjectInfo(t.project ?? "");
-    return { status: "ok", data: { uri: t.uri, title: t.title, state: t.state, project: t.project, project_path: pinfo?.path, project_label: pinfo?.label, parent: t.parent, detail: t.detail, body: t.body, created: t.created, updated: t.updated } };
+    // 草稿随任务返回（与 diy.task.show 同一契约）：renderer 只调这一个接口拿任务，
+    // 少一次往返就少一处「忘记带草稿」的机会 —— 两个 handler 必须给同样的字段。
+    const d = readDrafts(input.uri);
+    return {
+      status: "ok",
+      data: {
+        uri: t.uri, title: t.title, state: t.state, project: t.project,
+        project_path: pinfo?.path, project_label: pinfo?.label,
+        parent: t.parent, detail: t.detail, body: t.body,
+        created: t.created, updated: t.updated,
+        ui_drafts: d ? { base_updated: d.base_updated, saved: d.saved, fields: d.fields } : null,
+      },
+    };
   });
 
   // ── pickProjectDirectory（renderer「选择目录」按钮反向调用）──
@@ -175,7 +220,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
 
   // —— watch —— 文件系统变更推送（serverStream：FileWatcher → RPC → renderer）
-  binding.on(app.ui.watch.fileChange, async function* () {
+  // 在 diy.watch.*（Main 域）：diy.ui.* 会被 rpc-port 全量转发给 renderer，
+  // 挂那里会与本地注册冲突（ServerBinding 抛「已注册」→ RPC 起不来）。
+  binding.on(app.watch.fileChange, async function* () {
     const { fileWatcher } = await import("./file-watcher");
     for await (const change of fileWatcher.subscribe()) {
       yield change;

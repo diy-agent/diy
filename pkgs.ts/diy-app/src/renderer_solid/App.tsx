@@ -34,7 +34,7 @@ export default function App() {
         // main 进程 FileWatcher 检测到文件变更后推送 "task-change"，
         // renderer 订阅后自动刷新任务树，覆盖 CLI/外部编辑器/agent 建任务等所有路径。
         fsAbort = new AbortController();
-        void diyService.diy.ui.watch.fileChange({}, { signal: fsAbort.signal }).then(async (stream) => {
+        void diyService.diy.watch.fileChange({}, { signal: fsAbort.signal }).then(async (stream) => {
             for await (const change of stream) {
                 if (change.event === "task-change") taskStore.loadTree();
             }

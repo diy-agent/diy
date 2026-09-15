@@ -59,6 +59,41 @@ renderer_solid/
 
 renderer_solid/ 有独立 tsconfig（strict + jsxImportSource: solid-js），tsc 零报错。根 tsconfig.json 因 react-jsx 冲突仍 exclude，但类型检查由自身 tsconfig 覆盖。
 
+### 数据落位：按「可重建性」分三类（改代码前先对照）
+
+同一份界面数据放哪，判据只有一条 —— **丢了能不能重建、重建有没有损失**：
+
+| 类别 | 例子 | 丢了会怎样 | 落位 |
+|------|------|-----------|------|
+| **视图 cache** | 任务树展开/滚动、面板宽度、聊天密度、主题 | 无损失，可重建 | 浏览器 `localStorage`（唯一入口 `renderer_solid/lib/ui-state.ts` 的 `Caches` 字段池，可被「重置界面状态」清空） |
+| **半编辑数据**（草稿） | agent 输入框草稿、任务编辑框（标题/详情/正文） | **用户白打，不可重建** | 任务目录 `.diy/drafts.yaml`（`src/main/core/drafts.ts`，经 RPC 读写） |
+| **会话日志** | `ops.jsonl` / `llm.jsonl` | 是权威但可重放重建、量大 | `$DIY_HOME/local/`（现状，勿搬） |
+
+- ❌ **禁止把草稿写 localStorage**：serve 模式与 Electron 模式各持一份 localStorage，同一条草稿在另一个模式看不到；且它属「有损数据」，被「重置界面状态」清掉就是真丢。
+- ✅ 草稿带 meta（`kind`/`version`/`base_updated`/`saved`）：丢不起的数据**不静默降级**，格式不符时留痕并返回 null；`base_updated` 用于检测「草稿期间任务被外部改过」。
+- ✅ 草稿写完即「提交/取消」，必须在保存与取消时显式清除，否则草稿会盖住新数据。
+
+### 任务目录所有权分层（`.diy/`）
+
+```
+$DIY_HOME/projects/<pid>/tasks/<tid>/
+  AGENTS.md      ← 面向用户，允许直接编辑
+  .diy/**        ← 系统独占，仅 main 进程经 RPC 写入，不承诺格式稳定
+```
+
+- 路径单一出口：`core/state.ts` 的 `taskSystemDir(uri)`，禁止各处拼字符串。
+- 用点前缀而非 `data/`：`ls` / shell 通配 / Finder 默认跳过 dotfile（用户脚本不会误吞系统文件）；仓库已有先例 `.diy/ref.lock.yaml`；`$` 前缀（如 `$data`）在 shell 里会展开，是事故隐患。
+- 生命周期随任务目录：`deleteTask` 已是 `rmSync(dir, {recursive:true})`，草稿自动随删（有测试锁定）。
+- 扫描安全：`listTasks` 按 `^\d+$` 过滤、`taskTree.scanAllDirs` 见 `AGENTS.md` 即停 → 任务目录内多一个 `.diy/` 不会被误认成任务。
+- ⚠️ renderer **永不直接写文件**，一律经 RPC（`diy.task.drafts.*`）。
+
+### 避免 Solid 陷阱：`<Show>` 内组件读 props 的卸载清理
+
+`TaskInfoView`（详情编辑）被 `keyed` 的 `<Show>` 包裹。**`onCleanup` 里读 `props.task` 会抛
+`Stale read from <Show>` 并中断 props 更新**（表现为切任务后面板显示上一个任务的标题）。
+需要「卸载前落盘」这类副作用，一律放在面板级组件（`TaskDetailPanel`）里做，它读的是
+`taskStore.selectedUri` 这类普通信号，不经过 Show 的派生 props。
+
 ### 样式策略
 
 - ✅ daisyUI 主题类管组件外观（card/modal/drawer/menu/chat）
