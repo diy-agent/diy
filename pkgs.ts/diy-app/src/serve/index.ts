@@ -13,9 +13,13 @@
 
 import http from "node:http";
 import { setDefaultAutoSelectFamily } from "node:net";
+import { setDefaultResultOrder } from "node:dns";
 // 同 main/index.ts：本机 Happy Eyeballs 双栈竞态 ETIMEDOUT，关 autoSelectFamily（留痕）
 setDefaultAutoSelectFamily(false);
 console.log("[serve][net] 已关闭 Happy Eyeballs（同 main，本机双栈竞态致公网 HTTPS 超时）");
+// 同 main/index.ts：本机无 IPv6 出口，钉死 v4 优先（否则 AAAA 排头必 ENETUNREACH）
+setDefaultResultOrder("ipv4first");
+console.log("[serve][net] 已钉死 IPv4 优先（同 main，本机无 IPv6 出口）");
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
