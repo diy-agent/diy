@@ -8,6 +8,7 @@ import { AppInfo } from "./components/AppInfo";
 import { ThemeSettings } from "./components/ThemeSettings";
 import { ToastContainer } from "./components/ToastContainer";
 import { taskStore } from "./store/taskStore";
+import { diyService } from "./lib/rpc";
 import { notificationStore, type ToastType } from "./store/notificationStore";
 import { setRendererActions, resetRendererActions } from "./lib/renderer-actions";
 
@@ -21,6 +22,8 @@ export default function App() {
     const [hovered, setHovered] = createSignal(false);
     const expanded = () => pinned() || hovered();
 
+    let fsAbort: AbortController | undefined;
+
     onMount(() => {
         taskStore.loadTree();
         setRendererActions({
@@ -28,8 +31,19 @@ export default function App() {
             focus: (uri) => taskStore.selectTask(uri),
             toast: (msg, level) => notificationStore.addToast(level ?? "info", msg),
         });
+        // main 进程 FileWatcher 检测到文件变更后推送 "task-change"，
+        // renderer 订阅后自动刷新任务树，覆盖 CLI/外部编辑器/agent 建任务等所有路径。
+        fsAbort = new AbortController();
+        void diyService.diy.ui.watch.fileChange({}, { signal: fsAbort.signal }).then(async (stream) => {
+            for await (const change of stream) {
+                if (change.event === "task-change") taskStore.loadTree();
+            }
+        });
     });
-    onCleanup(() => resetRendererActions());
+    onCleanup(() => {
+        fsAbort?.abort();
+        resetRendererActions();
+    });
 
     const navItems: Array<{ id: NavPage; label: string; icon: string }> = [
         { id: "task", label: "任务树", icon: "🌳" },
