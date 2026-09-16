@@ -216,6 +216,27 @@ function parsePsLine(line: string): PsRow | null {
   return { pid: Number(m[1]), ppid: Number(m[2]), pgid: Number(m[3]), command: m[4] ?? "" };
 }
 
+// ⚠️ 已知精度问题（2026-09-16 实测复现，先留痕，暂不改判定）：
+//   `pids` 是「保守超集」，有两类判据会把**并非同生共死**的进程也算进来，造成误拦：
+//   a) 同 pgid：agent 起的任何进程都继承宿主 main 的进程组（实测新起的隔离实例
+//      pgid === 宿主 pgid），于是一律进 pids。可 kill <pid> 收掉兄弟实例并不影响宿主
+//      （各自独立 Electron 进程树 / userData / RPC 端口）；真正危险的是负号形式
+//      `kill -<pgid>`，而它已由规则 1 的第二段单独覆盖 —— 这条属冗余的"过度包含"。
+//   b) marker `out/main/index.mjs`：本仓库任意 worktree 构建的 Electron 实例都命中，
+//      等于"凡本仓库产物皆宿主家人"。宿主的真实指纹是 DIY_HOME（userData / log /
+//      RPC 端口都由它派生）；crashpad 这类 ppid=1 的孤儿靠 `--database=<home>/log/crashes`
+//      即可覆盖。
+//   代价：开发者/agent 收不掉自己起的 dev/测试实例，只能请用户手动收（可接受）；
+//   收益方向仍对（保守优先：误拦只让模型换个做法，漏拦是白屏 + 无日志）。
+//   若要收紧：把 pids 拆成 selfPids（自身 + 祖先 + 直接子进程 + 按 DIY_HOME 命中）与
+//   pgidPids（同 pgid）；规则 1 的显式 pid 只查前者，负号组杀才查后者；并去掉裸
+//   `out/main/index.mjs` marker。改动必须带单测。
+//
+// ⚠️ 另一类误伤（同日实测 4 次）：规则 3 的候选词是从**整条 bash 命令串**里抽的，
+//   所以命令里只要"提到" kill（例如用 heredoc 写一个含该词的脚本/文档），候选词就可能
+//   命中 self.cmdlines（实测 `pid` / `pgid` 因 ps 命令行里有这俩词反复中招）→ 纯读操作
+//   也被拦。要写含该词的文本时，用拼接生成（命令行里不出现完整 token）或改走文件写入。
+
 /**
  * 采样自身进程信息。失败返回 null —— 调用方应退化为放行（护栏不能阻断正常开发）。
  * 判据（四类"同生共死"进程）：

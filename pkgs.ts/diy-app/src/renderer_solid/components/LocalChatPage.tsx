@@ -376,8 +376,15 @@ function LeafView(props: {
             );
         }
         const text = str(b.attrs.content);
-        if (!props.md) return <PlainText text={text} />;
-        return <MarkdownText text={text} streaming={!b.stopped} />;
+        // ⚠️ 必须用 <Show> 而不是 if：LeafView 是组件函数，只在创建时执行一次，
+        // 函数体里的 if 分支对 props 变化**不响应**。密度切换之所以看起来是好的，
+        // 是因为 segments(density) 变了 → <For> 重建节点；而切 md 不改变 segments，
+        // 旧分支会原样留在 DOM 里——现象就是点「MD 原文」正文纹丝不动（只在切任务/重挂载后才生效）。
+        return (
+            <Show when={props.md} fallback={<PlainText text={text} />}>
+                <MarkdownText text={text} streaming={!b.stopped} />
+            </Show>
+        );
     }
     if (b.tag === "think" || b.tag === "tool") {
         const failed = b.tag === "tool" && str(b.attrs.status) === "error";
@@ -482,10 +489,13 @@ function TurnView(props: {
 
 function FullscreenModal(props: { title: string; content: string; onClose: () => void }) {
     const onKey = (e: KeyboardEvent) => {
-        if (e.key === "Escape") props.onClose();
+        if (e.key === "Escape") {
+            e.stopPropagation(); // 同上：别让 TaskDetailPanel 的 Esc 顺手把面板也关了
+            props.onClose();
+        }
     };
-    onMount(() => window.addEventListener("keydown", onKey));
-    onCleanup(() => window.removeEventListener("keydown", onKey));
+    onMount(() => document.addEventListener("keydown", onKey, true));
+    onCleanup(() => document.removeEventListener("keydown", onKey, true));
     const copy = async () => {
         try {
             await navigator.clipboard.writeText(props.content);
@@ -516,6 +526,58 @@ function FullscreenModal(props: { title: string; content: string; onClose: () =>
                 <pre class="overflow-auto p-4 text-xs font-mono whitespace-pre-wrap break-all flex-1">
                     {props.content}
                 </pre>
+            </div>
+        </div>
+    );
+}
+
+// ─── 确认弹窗（破坏性操作前置确认） ─────────────────
+
+function ConfirmDialog(props: {
+    title: string;
+    message: string;
+    confirmLabel: string;
+    onCancel: () => void;
+    onConfirm: () => void;
+}) {
+    let cancelRef: HTMLButtonElement | undefined;
+    const onKey = (e: KeyboardEvent) => {
+        // 只拦 Esc；不拦 Enter —— 焦点默认在「取消」上，回车本就是取消（原生行为），
+        // 而 Tab 到「清空」后回车应能正常确认：全局拦 Enter 会把这条路一起掐掉。
+        if (e.key === "Escape") {
+            e.stopPropagation();
+            props.onCancel();
+        }
+    };
+    onMount(() => {
+        // ⚠️ 不能用 HTML autofocus：它只在文档加载时生效，动态插入的节点上无效
+        // （实测焦点留在原按钮上，回车会误触原按钮）。必须主动 focus。
+        cancelRef?.focus();
+        // 捕获阶段 + stopPropagation：弹窗开着时 Esc 只该关弹窗。
+        // TaskDetailPanel 也在 window 上监听 Esc 关整个详情面板（冒泡阶段），
+        // 不拦的话一次 Esc 会连面板一起关掉（弹窗和面板双杀）。
+        document.addEventListener("keydown", onKey, true);
+    });
+    onCleanup(() => document.removeEventListener("keydown", onKey, true));
+    return (
+        <div
+            class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6"
+            onClick={(e) => {
+                if (e.target === e.currentTarget) props.onCancel();
+            }}
+        >
+            <div class="bg-base-100 rounded-xl w-full max-w-sm flex flex-col">
+                <div class="px-4 py-3 border-b font-bold text-sm">{props.title}</div>
+                <div class="px-4 py-3 text-xs opacity-80">{props.message}</div>
+                <div class="px-4 py-2 border-t flex justify-end gap-2">
+                    {/* 焦点落在「取消」：回车/空格不会误触发不可恢复的删除 */}
+                    <button class="btn btn-xs" ref={(el) => (cancelRef = el)} onClick={props.onCancel}>
+                        取消
+                    </button>
+                    <button class="btn btn-error btn-xs" onClick={props.onConfirm}>
+                        {props.confirmLabel}
+                    </button>
+                </div>
             </div>
         </div>
     );
@@ -595,6 +657,8 @@ export function LocalChatPage() {
         setMdRaw(v);
         Caches.diy_chat_md.set(v);
     };
+    /** 清空确认：清空会删掉 main 侧 ops/llm 日志（rmSync，不可恢复），必须二次确认 */
+    const [confirmClear, setConfirmClear] = createSignal(false);
     const [pinned, setPinned] = createSignal<Record<string, boolean>>({});
     const togglePin = (id: string) => setPinned((p) => ({ ...p, [id]: !p[id] }));
     const [full, setFull] = createSignal<{ title: string; content: string } | null>(null);
@@ -653,8 +717,10 @@ export function LocalChatPage() {
 
     return (
         <div class="flex flex-col h-full overflow-hidden">
-            {/* 顶部：密度切换 + 模型选择 + 会话操作 */}
-            <div class="flex items-center gap-2 px-4 py-2 border-b shrink-0 text-xs">
+            {/* 顶部：密度切换 + 模型选择 + 会话操作
+                flex-wrap：窄窗口下宁可换行，也不能溢出——溢出时右侧按钮会被相邻按钮
+                盖住，点击命中错元素（实测「MD 渲染」被「清空」压住，点渲染=删历史）。 */}
+            <div class="flex flex-wrap items-center gap-x-2 gap-y-1 px-4 py-2 border-b shrink-0 text-xs">
                 <div class="join">
                     <For each={[...DENSITY_VALUES]}>
                         {(d) => (
@@ -670,7 +736,7 @@ export function LocalChatPage() {
                 </div>
                 <span class="opacity-60">模型</span>
                 <select
-                    class="select select-xs select-bordered max-w-[220px]"
+                    class="select select-xs select-bordered w-[180px] min-w-0 shrink"
                     value={localChatStore.activeModel}
                     disabled={localChatStore.running}
                     onChange={(e) => localChatStore.setActiveModel(e.currentTarget.value)}
@@ -681,21 +747,34 @@ export function LocalChatPage() {
                 </select>
                 <span class="badge badge-outline badge-xs">ai-sdk local</span>
                 <div class="flex-1" />
-                <button
-                    class={`btn btn-xs ${md() ? "btn-active" : "btn-ghost"}`}
-                    title="在 Markdown 富文本与原文之间切换"
-                    aria-label="切换 Markdown 渲染"
-                    aria-pressed={md()}
-                    onClick={() => setMd(!md())}
-                >
-                    MD
-                </button>
-                <Show when={!localChatStore.running}>
+                {/* 显示方式二选一：两个选项都可见，当前态高亮 —— 单按钮式「MD」看不出
+                    处于哪一态（切回去要猜），且与右侧破坏性按钮同形，易误点。 */}
+                <div class="join shrink-0" role="group" aria-label="Markdown 显示方式">
                     <button
-                        class="btn btn-ghost btn-xs"
-                        onClick={() => uri() && void localChatStore.clear(uri()!)}
+                        class={`btn btn-xs join-item ${md() ? "btn-ghost" : "btn-active"}`}
+                        title="原文：按纯文本显示，不做 Markdown 渲染"
+                        aria-pressed={!md()}
+                        onClick={() => setMd(false)}
                     >
-                        清空
+                        MD 原文
+                    </button>
+                    <button
+                        class={`btn btn-xs join-item ${md() ? "btn-active" : "btn-ghost"}`}
+                        title="渲染：按 Markdown 富文本显示"
+                        aria-pressed={md()}
+                        onClick={() => setMd(true)}
+                    >
+                        MD 渲染
+                    </button>
+                </div>
+                <Show when={!localChatStore.running}>
+                    {/* 破坏性操作独立成组：与「显示方式」用竖线隔开，避免相邻误点 */}
+                    <button
+                        class="btn btn-ghost btn-xs shrink-0 border-l border-base-300 rounded-none pl-3 whitespace-nowrap"
+                        title="删除本任务的全部本地对话历史（ops/llm 日志 + 界面），不可恢复"
+                        onClick={() => setConfirmClear(true)}
+                    >
+                        清空本对话历史消息
                     </button>
                 </Show>
             </div>
@@ -766,6 +845,20 @@ export function LocalChatPage() {
                     </Show>
                 </div>
             </div>
+
+            {/* 清空确认：破坏性且不可恢复，点击与执行之间隔一层确认 */}
+            <Show when={confirmClear()}>
+                <ConfirmDialog
+                    title="清空本对话历史消息？"
+                    message={`将删除「${uri() ?? ""}」的全部本地对话记录（消息、思考、工具调用过程），删除后无法恢复。`}
+                    confirmLabel="清空"
+                    onCancel={() => setConfirmClear(false)}
+                    onConfirm={() => {
+                        setConfirmClear(false);
+                        if (uri()) void localChatStore.clear(uri()!);
+                    }}
+                />
+            </Show>
 
             {/* 全屏输出 */}
             <Show when={full()}>

@@ -56,7 +56,8 @@ Python `dai`/`diy` 仅历史归档，不再作为入口。
 - 代码注释用中文
 - **UI 验证走 CDP** — CLI 的 RPC 返回成功不等于 renderer 渲染正确；界面行为必须用
   `playwright-cli attach --cdp=...` 驱动真实 Electron 窗口验证
-  （流程与陷阱见 `pkgs.ts/diy-app/AGENTS.md` 的「UI 调试」节）
+  （流程与陷阱见 `pkgs.ts/diy-app/AGENTS.md` 的「UI 验证」与
+  「交互自动化操作 App（agent 自测/演示用，实测经验）」两节）
 - **Solid 是重构方向** — `renderer_solid/` 是主线（构建默认入口），`renderer/`（React 版）仅作参考和比较代码使用，不追加功能
 - 意图测试（Intent Test）是需求的定义者
   - TS 主线：`pkgs.ts/diy-app/tests/cli.intent.*.test.ts`（`./diy.sh` + `ShellTest` + 隔离 Electron；按领域拆文件：ui / doctor / project / task，每条用例自建自删 fixture）
