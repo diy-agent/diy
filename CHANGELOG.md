@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.1.25](https://github.com/diy-agent/diy/compare/diy-v0.1.24...diy-v0.1.25) (2026-09-16)
+
+
+### Features
+
+* **agent:** 新增原始流 dump 开关（DIY_RAW_STREAM_DUMP=1） ([f3250e2](https://github.com/diy-agent/diy/commit/f3250e2a3aa52b8344181d2edd4d10bc54f54480))
+* **agent:** 本地 agent 模型清单补齐 zen/go 新的便宜模型 ([7d52f0c](https://github.com/diy-agent/diy/commit/7d52f0ce91134a0db30f70b92dc4451c94b1b32b))
+* **agent:** 本地 agent 自杀护栏 + write-ahead 执行审计 ([c65e535](https://github.com/diy-agent/diy/commit/c65e5350d516e753d0e3f52dd052a80ef554710a))
+* **cli:** root sha.sh add dev command ([8a36fd3](https://github.com/diy-agent/diy/commit/8a36fd38e5e3528e81066c2be85feb5bc99b5e3c))
+* **local-agent:** 按模型区分 maxOutputTokens（数据来源 models.dev/api.json） ([21b864a](https://github.com/diy-agent/diy/commit/21b864ad0ec15bf75a530d785184b94aae356252))
+* **task-ui:** 任务树标题前置任务号（#&lt;tid&gt;） ([70298f7](https://github.com/diy-agent/diy/commit/70298f7c4ce4a8ed0c524e510f59a1ac0a60e419))
+* **task:** 任务状态可在 tree 中直接修改 ([195e81b](https://github.com/diy-agent/diy/commit/195e81bbcb37f23b9c141d1b5e3678b096e814d5))
+* **ui:** UI 微调 + 本地 agent 崩溃防护与事件一致性修复 ([b3395a5](https://github.com/diy-agent/diy/commit/b3395a5e767c6c668ed6b28c2a032df3eb7e1730))
+* **ui:** 主题切换、链接对比度、紧凑侧栏、详情面板可拖宽 ([70fcdc0](https://github.com/diy-agent/diy/commit/70fcdc0665a0595713656b316bdde455eb166d2a))
+* **ui:** 任务标题点击切换详情面板 ([b6118f9](https://github.com/diy-agent/diy/commit/b6118f91ab7742309cee334b3e125522ff99b723))
+* **ui:** 任务详情和 agent 都增加 markdown 显示能力 ([#141](https://github.com/diy-agent/diy/issues/141)) ([ae9b617](https://github.com/diy-agent/diy/commit/ae9b61750bf4a12ff77b9d024a9edad707eabd03))
+* **ui:** 视图 cache 字段池 + per-task 会话视图记忆 + 任务树稳定化 ([83a19f5](https://github.com/diy-agent/diy/commit/83a19f569a43d6f85501c2b1756cb5be4ce1e80f))
+* **watch:** FileWatcher 修复路径 + RPC serverStream 文件变更推送 ([f207b09](https://github.com/diy-agent/diy/commit/f207b09445c23e27740a2a09043d8c42e2c02c4a))
+
+
+### Bug Fixes
+
+* **agent-ui:** 任务agent聊天输入框在任务tab或任务切换后内容丢失 ([9e07e9a](https://github.com/diy-agent/diy/commit/9e07e9af77c1d0a24e1cf5ee2f0f75fd28738fcc))
+* **agent:** 中断的 tool 占位结果不再诱导自动重发 ([ac2d1c6](https://github.com/diy-agent/diy/commit/ac2d1c64ca97a24be3fc23de4e9014a87e3c3ab4))
+* **agent:** 中断的 tool 调用收敛为显式终态，杜绝重载后重复发起 ([5bc9a65](https://github.com/diy-agent/diy/commit/5bc9a658ea3f3e663d8f2f044f2985c2185d6050))
+* **agent:** 废弃半截 tool 调用，不再投影进 LLM 历史 ([30a75f0](https://github.com/diy-agent/diy/commit/30a75f0a443148b273064cd1b9a3b754ab3c6182))
+* **build:** fix build , add cli build ([e4943dc](https://github.com/diy-agent/diy/commit/e4943dcc3f4c5ad6c2148b1ccec70856f282d33a))
+* **chat:** 中断的调用在 UI 可见，修复被打断后整轮从界面消失 ([a7ded46](https://github.com/diy-agent/diy/commit/a7ded4617843331642aea03aeecd24fb023bd9c1))
+* cherry-pick 渲染进程崩溃防护 + rust_png 诊断 ([340159c](https://github.com/diy-agent/diy/commit/340159c0f4b5b0a378f3df3239c6077ef4d8bbff))
+* **cli:** 生产入口默认主屏，rust_png 开关改走 app.commandLine ([0cc7928](https://github.com/diy-agent/diy/commit/0cc79284190617e80a4c2b01d1b5e2fd01dba3c1))
+* **crash:** 崩溃现场留痕 + 渲染进程被杀后自愈 + 退出原因落盘 ([bd24bdc](https://github.com/diy-agent/diy/commit/bd24bdc5874f14a432f66851e563a262d8aadbb6))
+* **dev:** dev 模式白屏 — 预打包 debug/dequal/extend，修 CJS→ESM interop 缺失 ([ab7286f](https://github.com/diy-agent/diy/commit/ab7286ff138258e56954c582631cbe2b1cd73912))
+* **net:** 钉死 IPv4 优先，消除 AAAA 排头导致的 ENETUNREACH ([76e213f](https://github.com/diy-agent/diy/commit/76e213f680f540f64a572d9002ecf5534e4c8955))
+* **rpc:** watch.fileChange 从 diy.ui.* 移到 diy.watch.*，修 RPC 起不来 ([df9919b](https://github.com/diy-agent/diy/commit/df9919b45285720aebf486f09edeb0e26fccb11f))
+* **task-tree:** 展开/折叠不再跳顶丢焦点，并补任务编辑接口 ([056b2eb](https://github.com/diy-agent/diy/commit/056b2eb7287d9507f4cd760ee91e6d0fa27d19f4))
+* **task-ui:** 未提交草稿落任务目录，切任务/切 tab/重启不再丢 ([6f92e02](https://github.com/diy-agent/diy/commit/6f92e02832f92cbfecf5faa8ff272dae53996166))
+* **task-ui:** 未提交草稿落任务目录，切任务/切 tab/重启不再丢 ([812aa15](https://github.com/diy-agent/diy/commit/812aa1501ba833ec7ef9d980925c778615504579))
+* **task-ui:** 草稿清除 await 落盘 + 修 dev 模式白屏（CJS interop） ([e5a40dc](https://github.com/diy-agent/diy/commit/e5a40dca3402a49671028d1938aa4534e9eb36ad))
+* **task-ui:** 草稿清除改 await 确保磁盘同步 + 去掉 saveEdit 中无意义的 as any ([a0f7204](https://github.com/diy-agent/diy/commit/a0f7204bdba85ccc8d54e7a20ca9d2fb1be3cbcd))
+* **task:** detail/project 字段下线 + updateTask 不再吃掉非托管字段 ([c842e95](https://github.com/diy-agent/diy/commit/c842e95edaa6d11292cbeeadc615a5a32b46bca9))
+* **task:** updateTask 就地合并 frontmatter，不再吃掉非托管字段 ([d34260b](https://github.com/diy-agent/diy/commit/d34260b9da76ab644fbf01ba22e5539c22b2ace7))
+* **ui:** agent 对话条「清空」改名并加确认，MD 改双态切换 ([d1a1f02](https://github.com/diy-agent/diy/commit/d1a1f02dd690ba23ebc04a0142969afc46cf4622))
+* **ui:** agent 对话条防误删（清空改名+二次确认）、MD 双态切换，并修 4 个 CDP 实测 bug ([3e7b5d2](https://github.com/diy-agent/diy/commit/3e7b5d23b838e5dd6a730ad6689e7c5c778880ca))
+* **ui:** CDP 实测暴露的 4 个真问题（MD 不生效 / 溢出误点 / 焦点 / Esc 双杀） ([d939a8f](https://github.com/diy-agent/diy/commit/d939a8f8484416ed0fa4927e21bdf1dd92cf2588))
+* **ui:** 侧栏收起态图标居中并收紧，导航加 tab 式选中态 ([de52103](https://github.com/diy-agent/diy/commit/de521034df845379fe4cc790640f33eaa2ef1c46))
+
 ## [0.1.24](https://github.com/diy-agent/diy/compare/diy-v0.1.23...diy-v0.1.24) (2026-09-10)
 
 
