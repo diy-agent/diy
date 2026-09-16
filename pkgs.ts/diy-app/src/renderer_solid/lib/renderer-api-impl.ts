@@ -102,7 +102,7 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     for (const [k, v] of Object.entries(changes)) {
       if (v !== undefined) filtered[k] = v as string;
     }
-    await diyService.diy.task.edit({ uri, title: filtered.title, state: filtered.state as any, detail: filtered.detail, body: filtered.body, parent: filtered.parent });
+    await diyService.diy.task.edit({ uri, title: filtered.title, state: filtered.state as any, body: filtered.body, parent: filtered.parent });
     await taskStore.loadTree();
     if (taskStore.selectedUri === uri) {
       await taskStore.selectTask(uri);
@@ -113,7 +113,7 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
 
   // diy.ui.task.setState — 在 tree 中直接修改任务状态
   binding.on(ui.task.setState, async ({ input }) => {
-    await diyService.diy.task.edit({ uri: input.uri, state: input.state, title: undefined, detail: undefined, body: undefined, parent: undefined });
+    await diyService.diy.task.edit({ uri: input.uri, state: input.state, title: undefined, body: undefined, parent: undefined });
     await taskStore.loadTree();
     notificationStore.addToast("success", `状态已改为 ${input.state}`);
     return { status: "ok", data: { uri: input.uri } };

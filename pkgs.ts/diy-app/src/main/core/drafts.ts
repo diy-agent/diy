@@ -33,15 +33,29 @@ import { taskSystemDir } from "./state";
 /** 文件格式标识（写时写入、读时校验，防止误读别的 yaml） */
 export const DRAFTS_KIND = "diy.ui-drafts";
 /** 格式版本。丢不起的数据：演进时宁可转换/报错，不许静默回默认值（与 cache 策略相反） */
-export const DRAFTS_VERSION = 1;
+export const DRAFTS_VERSION = 2;
 
 /**
  * 草稿字段名白名单。
  * 加字段必须同时改这里 —— 防止前端拼错字段名后静默写进文件（读侧永远读不出来）。
- * body 也允许存（编辑器可能改正文）。
  */
-export const DRAFT_FIELDS = ["title", "detail", "body", "agent_input"] as const;
+export const DRAFT_FIELDS = ["title", "body", "agent_input"] as const;
 export type DraftField = (typeof DRAFT_FIELDS)[number];
+
+/**
+ * 版本迁移表：旧版本号 → 升级函数（返回新对象，version 必须变成下一版）。
+ *
+ * v1 → v2：字段 detail 下线（任务模型只有 title + 内容，detail 是历史遗留的同义槽）。
+ *          草稿里的 detail 无处安放，直接丢弃；其余字段原样保留（丢不起的是别的字段）。
+ * 无法迁移的版本 → readDrafts 返回 null 并留痕（不静默降级）。
+ */
+const MIGRATIONS: Record<number, (o: Record<string, unknown>) => Record<string, unknown>> = {
+  1: (o) => {
+    const fields: Record<string, unknown> = { ...(o["fields"] as Record<string, unknown> | undefined) };
+    delete fields["detail"];
+    return { ...o, version: 2, fields };
+  },
+};
 
 export interface DraftsFile {
   /** 草稿落盘时 AGENTS.md 的 updated。用于检测「草稿期间任务被外部改过」 */
@@ -114,13 +128,20 @@ export function readDrafts(uri: string): ParsedDrafts | null {
     console.warn(`[drafts] kind 不符（${String(obj["kind"])}），忽略 ${fp}`);
     return null;
   }
-  const version = Number(obj["version"]);
-  if (version !== DRAFTS_VERSION) {
-    // 丢不起的数据：不静默降级，明确告知（将来在此加迁移）
-    console.warn(
-      `[drafts] 版本 ${String(obj["version"])} 与当前 ${DRAFTS_VERSION} 不符，忽略 ${fp}`,
-    );
-    return null;
+  // 版本迁移：能迁的升到当前版本（值仍在内存，下次落盘即为新版）；不能迁的忽略并留痕。
+  // 丢不起的数据不静默降级 —— 但「明确的、有损可查的迁移」比直接丢弃整份草稿好。
+  let version = Number(obj["version"]);
+  let guard = 0;
+  while (version !== DRAFTS_VERSION) {
+    const migrate = MIGRATIONS[version];
+    if (!migrate || guard++ > 16) {
+      console.warn(
+        `[drafts] 版本 ${String(obj["version"])} 无法迁移到 ${DRAFTS_VERSION}，忽略 ${fp}`,
+      );
+      return null;
+    }
+    Object.assign(obj, migrate(obj));
+    version = Number(obj["version"]);
   }
   const rawFields = obj["fields"];
   const fields: Partial<Record<DraftField, string>> = {};

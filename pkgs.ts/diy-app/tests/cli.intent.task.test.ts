@@ -62,7 +62,7 @@ describe("task", () => {
     await fx.sh.run(`./diy.sh task create 父任务 ${pid}`);
     const parent = `projects/${pid}/tasks/1`;
 
-    await fx.sh.assertJson(`./diy.sh task create 子任务 ${pid} --parent ${parent} --detail 详情`, {
+    await fx.sh.assertJson(`./diy.sh task create 子任务 ${pid} --parent ${parent} --body 内容`, {
       ok: true,
       data: { status: "ok", data: { uri: `projects/${pid}/tasks/2` } },
     });
@@ -273,11 +273,11 @@ describe("task drafts（未提交草稿）", () => {
     const uri = `projects/${pid}/tasks/1`;
     await fx.sh.run(`./diy.sh task create 草稿任务 ${pid}`);
     await fx.sh.run(`./diy.sh task drafts set ${uri} --title T`);
-    await fx.sh.run(`./diy.sh task drafts set ${uri} --detail D`);
+    await fx.sh.run(`./diy.sh task drafts set ${uri} --body B`);
 
     const d = await fx.sh.getJson(`./diy.sh task drafts show ${uri}`);
     const fields = (d.data as any).data.fields;
-    expect(fields).toEqual({ title: "T", detail: "D" });
+    expect(fields).toEqual({ title: "T", body: "B" });
     await cleanupProj(pid);
   });
 
@@ -285,13 +285,13 @@ describe("task drafts（未提交草稿）", () => {
     const pid = await freshProj("d4");
     const uri = `projects/${pid}/tasks/1`;
     await fx.sh.run(`./diy.sh task create 草稿任务 ${pid}`);
-    await fx.sh.run(`./diy.sh task drafts set ${uri} --title T --detail D`);
+    await fx.sh.run(`./diy.sh task drafts set ${uri} --title T --body B`);
     await fx.sh.run(`./diy.sh task drafts set ${uri} --title ''`);
 
     const d = await fx.sh.getJson(`./diy.sh task drafts show ${uri}`);
     const fields = (d.data as any).data.fields;
     expect(fields.title).toBeUndefined();
-    expect(fields.detail).toBe("D");
+    expect(fields.body).toBe("B");
     await cleanupProj(pid);
   });
 

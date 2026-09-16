@@ -3,7 +3,7 @@
 //    所有数据在隔离 DIY_HOME（/tmp/...），不碰生产
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { diyHome, getTask } from "../../src/main/core/state";
 import {
@@ -68,35 +68,49 @@ describe("createTask", () => {
     ).toThrow(ValidationError);
   });
 
-  it("detail 和 body 可正确写入", () => {
-    const uri = createTask({
-      title: "带详情",
-      project: PROJECT,
-      detail: "详细描述",
-      body: "# Markdown 正文",
-    });
+  it("内容（body）写在 frontmatter 之后的正文区", () => {
+    const uri = createTask({ title: "带内容", project: PROJECT, body: "# Markdown 正文" });
 
     const content = readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8");
-    expect(content).toContain("detail: 详细描述");
-    expect(content).toContain("# Markdown 正文");
+    // 内容在第二个 --- 之后（正文区），不在 frontmatter 里
+    const afterFrontmatter = content.split("---\n").slice(2).join("---\n");
+    expect(afterFrontmatter).toContain("# Markdown 正文");
+    expect(getTask(uri)?.body).toBe("# Markdown 正文");
   });
 
-  it("多行 detail 落盘为 |- 字面块且往返无损（防 >- 折叠回归）", () => {
-    const longLine = "1. 第一条描述特意写得很长以超过 js-yaml 默认的 80 列折叠宽度，确保旧配置会把这行拆成多行";
-    const detail = `# 需求\n\n${longLine}\n2. 第二条\n\n# 测试\n\n18/18 通过`;
-    const uri = createTask({ title: "字面块", project: PROJECT, detail });
-
+  it("不再写 detail 字段（同义的第二内容槽已下线）", () => {
+    const uri = createTask({ title: "只有内容", project: PROJECT, body: "内容" });
     const content = readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8");
-    expect(content).toContain("detail: |-\n");
-    expect(content).not.toContain("detail: >-");
-    // 往返无损：空行/换行原样还原，长行未被拆
-    expect(getTask(uri)?.detail).toBe(detail);
+    expect(content).not.toContain("detail");
+    expect(getTask(uri)?.body).toBe("内容");
+  });
 
-    // update 路径同样保持字面块
-    updateTask(uri, { detail: detail + "\n\n# 补充\n\n新增段落同样很长以验证更新路径的序列化配置保持一致" });
-    const after = readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8");
-    expect(after).toContain("detail: |-\n");
-    expect(getTask(uri)?.detail).toContain("# 补充");
+  it("多行内容往返无损（空行 / 长行 / 换行不被改写）", () => {
+    const longLine = "1. 第一条描述特意写得很长以超过 js-yaml 默认的 80 列折叠宽度，确保序列化不会把这行拆成多行";
+    const body = `# 需求\n\n${longLine}\n2. 第二条\n\n# 测试\n\n18/18 通过`;
+    const uri = createTask({ title: "多行内容", project: PROJECT, body });
+
+    expect(getTask(uri)?.body).toBe(body);
+
+    // update 路径同样无损
+    updateTask(uri, { body: body + "\n\n# 补充\n\n新增段落同样很长以验证更新路径的序列化配置保持一致" });
+    const got = getTask(uri)!.body;
+    expect(got).toContain("# 补充");
+    expect(got.startsWith("# 需求\n\n" + longLine)).toBe(true);
+  });
+
+  it("frontmatter 长行不被折叠（lineWidth:-1，保护用户自定义字段）", () => {
+    // yaml.dump 默认 80 列会把长标量折成多行，往返后值里被插入换行 —— 对用户写的数据是破坏
+    const long = "很长的一段备注".repeat(30);
+    const uri = createTask({ title: "长字段", project: PROJECT });
+    const fp = join(diyHome(), uri, "AGENTS.md");
+    writeFileSync(fp, `---\ntitle: 长字段\nstate: pending\nnote: ${long}\n---\n正文\n`, "utf-8");
+
+    updateTask(uri, { state: "done" });
+
+    const raw = readFileSync(fp, "utf-8");
+    const noteLine = raw.split("\n").find((l) => l.startsWith("note:"))!;
+    expect(noteLine).toContain(long); // 未被折成多行
   });
 
   it("ValidationError 包含全部错误字段", () => {
@@ -147,6 +161,85 @@ describe("updateTask", () => {
 
   it("无效 state 值抛出 ValidationError", () => {
     expect(() => updateTask(uri, { state: "invalid_state" })).toThrow(ValidationError);
+  });
+});
+
+// ═══════════════════════════════════════
+// updateTask 的字段保留原则
+//   我们只负责自己管的字段；其余（用户自定义 / 外部工具写的）无权删除。
+//   曾经的行为是「按白名单重建 frontmatter」，导致改一次 state 就吃掉
+//   tags/priority/note/source_* —— 静默丢用户数据，故这里锁死。
+// ═══════════════════════════════════════
+
+describe("updateTask 保留非托管字段", () => {
+  /** 直写一个带「用户自定义字段」的任务文件，模拟手工/外部工具创建 */
+  function writeRawTask(uri: string, extraFront: string): string {
+    const fp = join(diyHome(), uri, "AGENTS.md");
+    writeFileSync(
+      fp,
+      `---\ntitle: '手工任务'\nstate: pending\n${extraFront}created: '2026-01-01T00:00:00.000Z'\nupdated: '2026-01-01T00:00:00.000Z'\n---\n原始正文\n`,
+      "utf-8",
+    );
+    return fp;
+  }
+
+  it("用户自定义字段（tags / priority / note）在改 state 后仍在", () => {
+    const uri = createTask({ title: "占位", project: PROJECT });
+    const fp = writeRawTask(uri, "tags:\n  - important\n  - 前端\npriority: high\nnote: '自己加的备注'\n");
+
+    updateTask(uri, { state: "done" });
+
+    const content = readFileSync(fp, "utf-8");
+    expect(content).toContain("state: done");
+    expect(content).toContain("important");
+    expect(content).toContain("前端");
+    expect(content).toContain("priority: high");
+    expect(content).toContain("自己加的备注");
+  });
+
+  it("source_type / source_uri（GitHub 同步将要用到）不被吃掉", () => {
+    const uri = createTask({ title: "占位", project: PROJECT });
+    const fp = writeRawTask(uri, "source_type: local\nsource_uri: local/task/13\n");
+
+    updateTask(uri, { title: "改标题" });
+    updateTask(uri, { body: "改正文" });
+
+    const content = readFileSync(fp, "utf-8");
+    expect(content).toContain("source_type: local");
+    expect(content).toContain("source_uri: local/task/13");
+    expect(content).toContain("title: 改标题");
+    expect(content).toContain("改正文");
+  });
+
+  it("不再凭空写入 project（URI 是计算值，不落盘）", () => {
+    const uri = createTask({ title: "占位", project: PROJECT });
+    const fp = writeRawTask(uri, "");
+
+    updateTask(uri, { state: "active" });
+
+    expect(readFileSync(fp, "utf-8")).not.toContain("project:");
+  });
+
+  it("原有 project 字段（历史数据）也不会被本函数删掉", () => {
+    // 删除该字段属于一次性数据迁移的事，不该由例行编辑顺带做
+    const uri = createTask({ title: "占位", project: PROJECT });
+    const fp = writeRawTask(uri, "project: '9'\n");
+
+    updateTask(uri, { state: "done" });
+
+    expect(readFileSync(fp, "utf-8")).toContain("project: '9'");
+  });
+
+  it("改正文（body）时自定义字段同样保留", () => {
+    const uri = createTask({ title: "占位", project: PROJECT });
+    const fp = writeRawTask(uri, "priority: low\n");
+
+    updateTask(uri, { body: "换一段正文" });
+
+    const content = readFileSync(fp, "utf-8");
+    expect(content).toContain("priority: low");
+    expect(content).toContain("换一段正文");
+    expect(content).not.toContain("原始正文");
   });
 });
 

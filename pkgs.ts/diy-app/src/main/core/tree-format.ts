@@ -24,7 +24,6 @@ export interface TaskNode {
   project_path?: string;
   project_label?: string;
   parentUri?: string;
-  detail?: string;
   body?: string;
   created?: string;
   updated?: string;

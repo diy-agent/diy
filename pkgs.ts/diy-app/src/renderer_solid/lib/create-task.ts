@@ -6,7 +6,6 @@ export interface CreateTaskViaUiInput {
   title: string;
   project: string;
   parent?: string;
-  detail?: string;
   body?: string;
 }
 
@@ -17,7 +16,6 @@ export async function createTaskViaUi(input: CreateTaskViaUiInput): Promise<stri
     title: input.title,
     project: input.project,
     parent: input.parent,
-    detail: input.detail,
     body: input.body,
   });
   const uri: string = r?.data?.uri;

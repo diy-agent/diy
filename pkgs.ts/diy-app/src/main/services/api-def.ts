@@ -34,7 +34,6 @@ export interface TaskNodeShape {
   state?: string;
   project?: string;
   parentUri?: string;
-  detail?: string;
   body?: string;
   created?: string;
   updated?: string;
@@ -48,7 +47,6 @@ const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
     state: TaskStateSchema.optional(),
     project: z.string().optional(),
     parentUri: z.string().optional(),
-    detail: z.string().optional(),
     body: z.string().optional(),
     created: z.string().optional(),
     updated: z.string().optional(),
@@ -57,7 +55,7 @@ const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
 );
 
 /** 草稿字段名白名单 — 单一真相源 core/drafts.ts 的 DRAFT_FIELDS */
-export const DraftFieldSchema = z.enum(["title", "detail", "body", "agent_input"]);
+export const DraftFieldSchema = z.enum(["title", "body", "agent_input"]);
 /** 草稿字段映射（值一律字符串，原样保存不 trim；partial：未编辑的字段不出现） */
 export const DraftFieldsSchema = z.partialRecord(DraftFieldSchema, z.string());
 
@@ -84,8 +82,7 @@ export const apiDef = RpcSchema.router({
               title: z.string().min(1, "标题不能为空").max(200).cliArg({ desc: "任务标题" }),
               project: z.string().cliArg({ desc: "所属 project id" }),
               parent: z.string().optional().cliOption({ short: "p", desc: "父任务 URI" }),
-              detail: z.string().optional().cliOption({ desc: "任务详情" }),
-              body: z.string().optional().cliOption({ desc: "任务正文" }),
+              body: z.string().optional().cliOption({ desc: "任务内容" }),
             },
             output: StatusDataUri,
           }),
@@ -126,8 +123,7 @@ export const apiDef = RpcSchema.router({
                 input: {
                   uri: z.string().cliArg({ desc: "任务 URI" }),
                   title: z.string().optional().cliOption({ desc: "标题草稿（空串=清除）" }),
-                  detail: z.string().optional().cliOption({ desc: "详情草稿（空串=清除）" }),
-                  body: z.string().optional().cliOption({ desc: "正文草稿（空串=清除）" }),
+                  body: z.string().optional().cliOption({ desc: "内容草稿（空串=清除）" }),
                   agent_input: z.string().optional().cliOption({ desc: "agent 输入框草稿（空串=清除）" }),
                   base_updated: z.string().optional().cliOption({ desc: "草稿基点：任务当前 updated（用于检测过期）" }),
                 },
@@ -151,8 +147,7 @@ export const apiDef = RpcSchema.router({
               uri: z.string().cliArg({ desc: "任务 URI" }),
               title: z.string().optional().cliOption({ short: "t", desc: "新标题" }),
               state: TaskStateSchema.optional().cliOption({ desc: "新状态" }),
-              detail: z.string().optional().cliOption({ desc: "新详情" }),
-              body: z.string().optional().cliOption({ desc: "新正文" }),
+              body: z.string().optional().cliOption({ desc: "新内容" }),
               parent: z.string().optional().cliOption({ desc: "父任务 URI（空字符串=取消父子关系）" }),
             },
             output: StatusDataUri,
@@ -286,7 +281,6 @@ export const apiDef = RpcSchema.router({
             state: TaskStateSchema.optional(),
             project: z.string().optional(),
             parent: z.string().optional(),
-            detail: z.string().optional(),
             body: z.string().optional(),
             created: z.string().optional(),
             updated: z.string().optional(),
@@ -618,8 +612,7 @@ export const apiDef = RpcSchema.router({
                 input: {
                   uri: z.string().cliArg({ desc: "任务 URI" }),
                   title: z.string().optional().cliOption({ desc: "新标题" }),
-                  detail: z.string().optional().cliOption({ desc: "新详情" }),
-                  body: z.string().optional().cliOption({ desc: "新正文" }),
+                  body: z.string().optional().cliOption({ desc: "新内容" }),
                 },
                 output: StatusDataUri,
               }),

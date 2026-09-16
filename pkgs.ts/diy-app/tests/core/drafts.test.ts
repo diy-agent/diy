@@ -50,11 +50,11 @@ describe("drafts 读写", () => {
     expect(d.fields.title).toBe("半编辑标题");
   });
 
-  it("多字段共存（标题 + 详情 + agent 输入）", () => {
-    writeDrafts(URI, { title: "T", detail: "多行\n详情", agent_input: "打到一半" });
+  it("多字段共存（标题 + 内容 + agent 输入）", () => {
+    writeDrafts(URI, { title: "T", body: "多行\n内容", agent_input: "打到一半" });
     const d = readDrafts(URI)!;
     expect(d.fields.title).toBe("T");
-    expect(d.fields.detail).toBe("多行\n详情");
+    expect(d.fields.body).toBe("多行\n内容");
     expect(d.fields.agent_input).toBe("打到一半");
   });
 
@@ -68,7 +68,7 @@ describe("drafts 读写", () => {
 
   it("base_updated 保留首次落盘的值（不被后续写覆盖）", () => {
     writeDrafts(URI, { title: "T" }, "v1");
-    writeDrafts(URI, { detail: "D" }, "v2");
+    writeDrafts(URI, { body: "D" }, "v2");
     expect(readDrafts(URI)!.base_updated).toBe("v1");
   });
 
@@ -81,11 +81,11 @@ describe("drafts 读写", () => {
 
 describe("drafts 清理", () => {
   it("清单个字段：其余字段留存", () => {
-    writeDrafts(URI, { title: "T", detail: "D" });
+    writeDrafts(URI, { title: "T", body: "D" });
     clearDrafts(URI, ["title"]);
     const d = readDrafts(URI)!;
     expect(d.fields.title).toBeUndefined();
-    expect(d.fields.detail).toBe("D");
+    expect(d.fields.body).toBe("D");
   });
 
   it("清到无字段 → 文件消失（不留空壳）", () => {
@@ -96,7 +96,7 @@ describe("drafts 清理", () => {
   });
 
   it("不带 fields 清空 → 整个文件消失", () => {
-    writeDrafts(URI, { title: "T", detail: "D" });
+    writeDrafts(URI, { title: "T", body: "D" });
     clearDrafts(URI);
     expect(existsSync(draftsFilePath(URI))).toBe(false);
   });
@@ -107,10 +107,10 @@ describe("drafts 清理", () => {
   });
 
   it("写入空串等于清除该字段（不落空串）", () => {
-    writeDrafts(URI, { title: "T", detail: "D" });
-    writeDrafts(URI, { detail: "" });
+    writeDrafts(URI, { title: "T", body: "D" });
+    writeDrafts(URI, { body: "" });
     const d = readDrafts(URI)!;
-    expect(d.fields.detail).toBeUndefined();
+    expect(d.fields.body).toBeUndefined();
     expect(d.fields.title).toBe("T");
   });
 
@@ -133,9 +133,24 @@ describe("drafts 健壮性", () => {
     expect(readDrafts(URI)).toBeNull();
   });
 
-  it("version 不符 → 读回 null（丢不起的数据不静默降级）", () => {
+  it("version 不能迁移 → 读回 null（丢不起的数据不静默降级）", () => {
     writeRaw(`kind: ${DRAFTS_KIND}\nversion: 999\nfields:\n  title: X\n`);
     expect(readDrafts(URI)).toBeNull();
+  });
+
+  it("v1 草稿可迁移到当前版本：丢弃已下线的 detail，其余字段保留", () => {
+    // detail 是历史遗留的第二内容槽（任务模型只有 title + 内容），草稿里的它无处安放
+    writeRaw(
+      `kind: ${DRAFTS_KIND}\nversion: 1\ntask: ${URI}\nbase_updated: '2026-01-01T00:00:00.000Z'\n` +
+        `fields:\n  title: 旧标题\n  detail: 旧详情\n  body: 旧内容\n  agent_input: 打到一半\n`,
+    );
+    const d = readDrafts(URI)!;
+    expect(d.version).toBe(DRAFTS_VERSION);
+    expect(d.fields.title).toBe("旧标题");
+    expect(d.fields.body).toBe("旧内容");
+    expect(d.fields.agent_input).toBe("打到一半");
+    expect((d.fields as Record<string, unknown>)["detail"]).toBeUndefined();
+    expect(d.base_updated).toBe("2026-01-01T00:00:00.000Z");
   });
 
   it("未知字段被忽略（白名单外不落盘）", () => {

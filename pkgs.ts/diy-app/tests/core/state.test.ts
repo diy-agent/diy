@@ -67,24 +67,26 @@ describe("parseTaskFile", () => {
     const raw = `---
 title: 测试任务
 state: active
-project: work
 ---
 这是正文内容`;
     const meta = parseTaskFile(raw);
     expect(meta).not.toBeNull();
     expect(meta?.title).toBe("测试任务");
     expect(meta?.state).toBe("active");
-    expect(meta?.project).toBe("work");
     expect(meta?.body).toBe("这是正文内容");
   });
 
-  it("兼容读取旧字段 subject", () => {
+  it("不解析 project / subject —— project 由 URI 路径推导，不落盘", () => {
+    // 历史数据里的 project 字段是冗余副本（可能与实际路径不同步），故忽略。
+    // 读取属于哪个 project 走 getTask（由 URI 推导），见 state.test.ts 的 getTask 用例。
     const raw = `---
 title: 旧任务
+project: work
 subject: legacy
----`;
+---
+正文`;
     const meta = parseTaskFile(raw);
-    expect(meta?.project).toBe("legacy");
+    expect((meta as Record<string, unknown>)["project"]).toBeUndefined();
   });
 
   it("无 frontmatter 时返回 null", () => {
@@ -143,6 +145,16 @@ describe("getTask & taskExists", () => {
     expect(task!.state).toBe("pending");
     expect(task!.body).toBe("正文内容");
     expect(task!.project).toBe("1"); // 由 URI 路径推导
+  });
+
+  it("frontmatter 写了 project 也不认 —— 以 URI 路径为准（路径是唯一真相源）", () => {
+    const uri2 = "projects/1/tasks/77";
+    const dir2 = join(diyHome(), uri2);
+    mkdirSync(dir2, { recursive: true });
+    // 故意写一个与实际路径不一致的 project（冗余副本可能不同步）
+    writeFileSync(join(dir2, "AGENTS.md"), "---\ntitle: 不一致\nstate: pending\nproject: '999'\n---\n");
+
+    expect(getTask(uri2)!.project).toBe("1");
   });
 
   it("taskExists 返回 true", () => {
