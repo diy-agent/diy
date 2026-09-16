@@ -344,10 +344,10 @@ function TaskInfoView(props: { task: TaskDetail }) {
         setEditing(true);
     };
 
-    /** 放弃编辑：草稿一并丢弃（留着会盖住任务现值） */
-    const cancelEdit = () => {
+    /** 放弃编辑：草稿一并丢弃（留着会盖住任务现值）。await 确保磁盘同步删除 */
+    const cancelEdit = async () => {
         setEditing(false);
-        void draftStore.clear(props.task.uri, ["title", "detail"]);
+        await draftStore.clear(props.task.uri, ["title", "detail"]);
     };
 
     // 不进入编辑态，直接改状态（类似 GitHub issue 的状态切换）
@@ -383,11 +383,11 @@ function TaskInfoView(props: { task: TaskDetail }) {
             if (Object.keys(changes).length === 0) {
                 setEditing(false);
                 // 无改动也算「本次编辑结束」：草稿没有存在意义了
-                void draftStore.clear(t.uri, ["title", "detail"]);
+                await draftStore.clear(t.uri, ["title", "detail"]);
                 return;
             }
 
-            await diyService.diy.task.edit({ uri: t.uri, title: changes.title, state: changes.state as any, detail: changes.detail, body: changes.body, parent: changes.parent });
+            await diyService.diy.task.edit({ uri: t.uri, title: changes.title, state: undefined, detail: changes.detail, body: undefined, parent: undefined });
             await taskStore.loadTree();
             // 先清草稿再重取任务：否则重取回来的旧草稿会把刚保存的值当「编辑中」再显示一遍
             await draftStore.clear(t.uri, ["title", "detail"]);
