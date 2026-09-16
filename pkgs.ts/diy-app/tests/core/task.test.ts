@@ -3,7 +3,7 @@
 //    所有数据在隔离 DIY_HOME（/tmp/...），不碰生产
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { diyHome, getTask } from "../../src/main/core/state";
 import {
@@ -147,6 +147,85 @@ describe("updateTask", () => {
 
   it("无效 state 值抛出 ValidationError", () => {
     expect(() => updateTask(uri, { state: "invalid_state" })).toThrow(ValidationError);
+  });
+});
+
+// ═══════════════════════════════════════
+// updateTask 的字段保留原则
+//   我们只负责自己管的字段；其余（用户自定义 / 外部工具写的）无权删除。
+//   曾经的行为是「按白名单重建 frontmatter」，导致改一次 state 就吃掉
+//   tags/priority/note/source_* —— 静默丢用户数据，故这里锁死。
+// ═══════════════════════════════════════
+
+describe("updateTask 保留非托管字段", () => {
+  /** 直写一个带「用户自定义字段」的任务文件，模拟手工/外部工具创建 */
+  function writeRawTask(uri: string, extraFront: string): string {
+    const fp = join(diyHome(), uri, "AGENTS.md");
+    writeFileSync(
+      fp,
+      `---\ntitle: '手工任务'\nstate: pending\n${extraFront}created: '2026-01-01T00:00:00.000Z'\nupdated: '2026-01-01T00:00:00.000Z'\n---\n原始正文\n`,
+      "utf-8",
+    );
+    return fp;
+  }
+
+  it("用户自定义字段（tags / priority / note）在改 state 后仍在", () => {
+    const uri = createTask({ title: "占位", project: PROJECT });
+    const fp = writeRawTask(uri, "tags:\n  - important\n  - 前端\npriority: high\nnote: '自己加的备注'\n");
+
+    updateTask(uri, { state: "done" });
+
+    const content = readFileSync(fp, "utf-8");
+    expect(content).toContain("state: done");
+    expect(content).toContain("important");
+    expect(content).toContain("前端");
+    expect(content).toContain("priority: high");
+    expect(content).toContain("自己加的备注");
+  });
+
+  it("source_type / source_uri（GitHub 同步将要用到）不被吃掉", () => {
+    const uri = createTask({ title: "占位", project: PROJECT });
+    const fp = writeRawTask(uri, "source_type: local\nsource_uri: local/task/13\n");
+
+    updateTask(uri, { title: "改标题" });
+    updateTask(uri, { body: "改正文" });
+
+    const content = readFileSync(fp, "utf-8");
+    expect(content).toContain("source_type: local");
+    expect(content).toContain("source_uri: local/task/13");
+    expect(content).toContain("title: 改标题");
+    expect(content).toContain("改正文");
+  });
+
+  it("不再凭空写入 project（URI 是计算值，不落盘）", () => {
+    const uri = createTask({ title: "占位", project: PROJECT });
+    const fp = writeRawTask(uri, "");
+
+    updateTask(uri, { state: "active" });
+
+    expect(readFileSync(fp, "utf-8")).not.toContain("project:");
+  });
+
+  it("原有 project 字段（历史数据）也不会被本函数删掉", () => {
+    // 删除该字段属于一次性数据迁移的事，不该由例行编辑顺带做
+    const uri = createTask({ title: "占位", project: PROJECT });
+    const fp = writeRawTask(uri, "project: '9'\n");
+
+    updateTask(uri, { state: "done" });
+
+    expect(readFileSync(fp, "utf-8")).toContain("project: '9'");
+  });
+
+  it("改正文（body）时自定义字段同样保留", () => {
+    const uri = createTask({ title: "占位", project: PROJECT });
+    const fp = writeRawTask(uri, "priority: low\n");
+
+    updateTask(uri, { body: "换一段正文" });
+
+    const content = readFileSync(fp, "utf-8");
+    expect(content).toContain("priority: low");
+    expect(content).toContain("换一段正文");
+    expect(content).not.toContain("原始正文");
   });
 });
 

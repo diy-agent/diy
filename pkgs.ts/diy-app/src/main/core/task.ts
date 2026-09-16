@@ -3,12 +3,13 @@
 //    任务按项目聚合存放：$DIY_HOME/projects/<pid>/tasks/<tid>/AGENTS.md
 //    所有输入验证用 zod，收集全部错误再抛出（不短路）。
 
-import { existsSync, mkdirSync, writeFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { z } from "zod";
 import {
   getTask,
+  splitTaskFile,
   taskDir,
   taskFilePath,
   projectsRoot,
@@ -201,21 +202,37 @@ export function updateTask(uri: string, changes: UpdateTaskChanges): void {
       }
     }
   }
-  const updated: TaskMeta = {
-    title: parsed.data.title ?? existing.title,
-    state: (parsed.data.state ?? existing.state) as TaskMeta["state"],
-    detail: parsed.data.detail ?? existing.detail,
-    body: parsed.data.body ?? existing.body,
-    project: existing.project,
-    // 未指定 parent 保持原值；指定了（含空串取消）用 newParent 结果
-    parent: changes.parent === undefined ? existing.parent : newParent,
-    created: existing.created,
-    updated: now,
-  };
+  // ── 写回：在**原 frontmatter** 上就地覆盖，而不是按白名单字段重建 ──
+  //
+  // 重建（`{title, state, parent, created, updated}` 再整份 dump）会把认不出的键
+  // 整批丢掉：用户手工加的自定义字段（tags / priority / note…）、以及 source_type /
+  // source_uri 这类非本函数管理的字段，都会在任何一次编辑（哪怕只改 state）时静默
+  // 消失 —— 它们不归我们管，无权删除。故改为「读原始 frontmatter → 只覆盖我们负责
+  // 的键 → 其余原样写回」。
+  //
+  // 注意：不再从 existing 写回 project。那条路径会把 URI 派生值固化进文件，
+  // 让「本没有该字段」的任务凭空多出一个 project。
+  const fp = taskFilePath(uri);
+  const split = splitTaskFile(readFileSync(fp, "utf-8"));
+  if (!split) throw new Error(`任务文件格式非法（缺少 frontmatter）: ${fp}`);
+  const front: Record<string, unknown> = { ...split.front };
 
-  const { body: b, ...front } = updated;
+  /** undefined = 不写该键（键不存在则保持不存在），与我们「无权新增/删除用户字段」的原则一致 */
+  const setOrClear = (key: string, value: unknown): void => {
+    if (value === undefined) delete front[key];
+    else front[key] = value;
+  };
+  setOrClear("title", parsed.data.title ?? existing.title);
+  setOrClear("state", parsed.data.state ?? existing.state);
+  setOrClear("detail", parsed.data.detail ?? existing.detail);
+  // 未指定 parent 保持原值；指定了（含空串取消）用 newParent 结果
+  setOrClear("parent", changes.parent === undefined ? existing.parent : newParent);
+  setOrClear("created", existing.created);
+  front["updated"] = now;
+
   const frontStr = yaml.dump(front, { indent: 2, noRefs: true, lineWidth: -1 });
-  writeFileSync(taskFilePath(uri), `${FM_SEP}\n${frontStr}${FM_SEP}\n${b ?? ""}`, "utf-8");
+  const nextBody = parsed.data.body ?? split.body;
+  writeFileSync(fp, `${FM_SEP}\n${frontStr}${FM_SEP}\n${nextBody ? nextBody + "\n" : ""}`, "utf-8");
 }
 
 // ═══════════════════════════════════════

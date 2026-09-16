@@ -196,8 +196,15 @@ export function nextNumericId(existing: Iterable<string>, start = 1): string {
 
 const FM_SEP = "---";
 
-/** 从 AGENTS.md 原始文本中提取 frontmatter (YAML) + body (markdown)。 */
-export function parseTaskFile(raw: string): TaskMeta | null {
+/**
+ * 把 AGENTS.md 原始文本拆成「原始 frontmatter 对象 + body」，不做字段白名单过滤。
+ *
+ * 为什么单独导出原始 frontmatter：`updateTask` 必须能拿到**未过滤**的键集合，
+ * 才能做到「只覆盖我们管的字段，其余原样保留」（否则用户/外部工具加的自定义字段：
+ * tags / priority / note / source_type / source_uri… 会在任何一次编辑时被静默丢弃）。
+ * 解析逻辑只此一处，parseTaskFile 与 updateTask 共用，避免两处漂移。
+ */
+export function splitTaskFile(raw: string): { front: Record<string, unknown>; body: string } | null {
   if (!raw.startsWith(FM_SEP)) return null;
   const endIdx = raw.indexOf(FM_SEP, 3);
   if (endIdx === -1) return null;
@@ -205,7 +212,15 @@ export function parseTaskFile(raw: string): TaskMeta | null {
   const headRaw = raw.slice(3, endIdx).trim();
   const body = raw.slice(endIdx + 3).trim();
   // 空 frontmatter 是合法情况（yaml.load('') 返回 null）
-  const front = yaml.load(headRaw || "{}") as Record<string, unknown>;
+  const front = (yaml.load(headRaw || "{}") as Record<string, unknown>) ?? {};
+  return { front, body };
+}
+
+/** 从 AGENTS.md 原始文本中提取 frontmatter (YAML) + body (markdown)。 */
+export function parseTaskFile(raw: string): TaskMeta | null {
+  const split = splitTaskFile(raw);
+  if (!split) return null;
+  const { front, body } = split;
 
   return {
     title: front["title"] as string | undefined,
