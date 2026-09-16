@@ -64,7 +64,6 @@ export interface CreateTaskParams {
   /** 所属 project id */
   project: string;
   parent?: string;
-  detail?: string;
   body?: string;
   source_type?: string;
   source_uri?: string;
@@ -74,7 +73,6 @@ const CreateTaskSchema = z.object({
   title: z.string().min(1, "标题不能为空").max(200, "标题不超过 200 字符"),
   project: z.string().min(1, "project 不能为空"),
   parent: z.string().optional(),
-  detail: z.string().optional(),
   body: z.string().optional(),
   source_type: z.string().optional(),
   source_uri: z.string().optional(),
@@ -95,7 +93,7 @@ export function createTask(params: CreateTaskParams): string {
     throw new ValidationError(errors);
   }
 
-  const { title, project, parent, detail, body, source_type, source_uri } = parsed.data;
+  const { title, project, parent, body, source_type, source_uri } = parsed.data;
 
   // 校验 project 是否注册（按项目数据目录）
   if (!projectExists(project)) {
@@ -123,7 +121,6 @@ export function createTask(params: CreateTaskParams): string {
     title,
     state: "pending",
     parent,
-    detail,
     created: now,
     updated: now,
     source_type,
@@ -131,8 +128,8 @@ export function createTask(params: CreateTaskParams): string {
     // 不写 project frontmatter —— project 由 URI 路径推导（路径即分组）
   };
 
-    // lineWidth:-1 禁止折叠长行 → 多行 detail 稳定输出 |- 字面块（默认 80 会退化 >- 折叠，
-  // 空行翻倍、长句被拆行，非 js-yaml 的解析器/人读原文都易误读）
+  // lineWidth:-1 禁止折叠长行 → 多行 frontmatter 字段稳定输出 |- 字面块（默认 80 会退化 >-
+  // 折叠，空行翻倍、长句被拆行，非 js-yaml 的解析器/人读原文都易误读）
   const front = yaml.dump(meta, { indent: 2, noRefs: true, lineWidth: -1 });
   writeFileSync(taskFilePath(uri), `${FM_SEP}\n${front}${FM_SEP}\n${body ?? ""}`, "utf-8");
 
@@ -146,7 +143,6 @@ export function createTask(params: CreateTaskParams): string {
 export interface UpdateTaskChanges {
   title?: string;
   state?: string;
-  detail?: string;
   body?: string;
   parent?: string;
 }
@@ -154,7 +150,6 @@ export interface UpdateTaskChanges {
 const UpdateTaskSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   state: TaskStateSchema.optional(),
-  detail: z.string().optional(),
   body: z.string().optional(),
   parent: z.string().optional(),
 });
@@ -224,7 +219,8 @@ export function updateTask(uri: string, changes: UpdateTaskChanges): void {
   };
   setOrClear("title", parsed.data.title ?? existing.title);
   setOrClear("state", parsed.data.state ?? existing.state);
-  setOrClear("detail", parsed.data.detail ?? existing.detail);
+  // 注：detail 字段已下线（任务模型只有 title + 内容）。此处不主动删除它 —— 字段下线走显式
+  // 迁移（scripts/），例行编辑不动非托管键，见本函数上方注释。
   // 未指定 parent 保持原值；指定了（含空串取消）用 newParent 结果
   setOrClear("parent", changes.parent === undefined ? existing.parent : newParent);
   setOrClear("created", existing.created);

@@ -33,7 +33,6 @@ export interface TaskMeta {
   /** 所属 project id（历史兼容：旧 task 存在 frontmatter，新 task 由 URI 路径推导） */
   project?: string;
   parent?: string;
-  detail?: string;
   body?: string;
   created?: string;
   updated?: string;
@@ -227,7 +226,6 @@ export function parseTaskFile(raw: string): TaskMeta | null {
     state: front["state"] as TaskState | undefined,
     project: (front["project"] as string | undefined) ?? (front["subject"] as string | undefined),
     parent: front["parent"] as string | undefined,
-    detail: front["detail"] as string | undefined,
     body,
     created: front["created"] as string | undefined,
     updated: front["updated"] as string | undefined,

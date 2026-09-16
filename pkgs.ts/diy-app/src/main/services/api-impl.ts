@@ -193,7 +193,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
       data: {
         uri: t.uri, title: t.title, state: t.state, project: t.project,
         project_path: pinfo?.path, project_label: pinfo?.label,
-        parent: t.parent, detail: t.detail, body: t.body,
+        parent: t.parent, body: t.body,
         created: t.created, updated: t.updated,
         ui_drafts: d ? { base_updated: d.base_updated, saved: d.saved, fields: d.fields } : null,
       },

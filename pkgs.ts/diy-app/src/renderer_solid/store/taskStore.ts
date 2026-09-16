@@ -24,7 +24,6 @@ export interface TaskDetail {
   project_path?: string;
   project_label?: string;
   parent?: string;
-  detail?: string;
   body?: string;
   created?: string;
   updated?: string;
@@ -60,7 +59,7 @@ async function selectTask(uri: string | null) {
 }
 
 async function setState(uri: string, state: string) {
-  await diyService.diy.task.edit({ uri, state: state as any, title: undefined, detail: undefined, body: undefined, parent: undefined });
+  await diyService.diy.task.edit({ uri, state: state as any, title: undefined, body: undefined, parent: undefined });
   await loadTree();
 }
 

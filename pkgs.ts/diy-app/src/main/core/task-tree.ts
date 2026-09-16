@@ -38,7 +38,6 @@ function readTaskNode(
     project_path: info?.path,
     project_label: info?.label,
     parentUri: fm.parent,
-    detail: fm.detail,
     body: fm.body,
     created: fm.created,
     updated: fm.updated,

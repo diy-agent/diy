@@ -18,7 +18,7 @@ import { diyService } from "../lib/rpc";
 import { notificationStore } from "./notificationStore";
 
 /** 草稿字段白名单 — 与 main 侧 core/drafts.ts 的 DRAFT_FIELDS 保持一致 */
-export type DraftField = "title" | "detail" | "body" | "agent_input";
+export type DraftField = "title" | "body" | "agent_input";
 
 /** 服务端返回的草稿结构（task.show 的 ui_drafts 同形） */
 export interface DraftsPayload {
@@ -93,7 +93,6 @@ async function flush(uri: string) {
         const r = await diyService.diy.task.drafts.set({
             uri,
             title: pending.title,
-            detail: pending.detail,
             body: pending.body,
             agent_input: pending.agent_input,
             base_updated: st.base_updated,

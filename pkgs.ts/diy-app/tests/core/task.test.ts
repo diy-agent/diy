@@ -68,35 +68,49 @@ describe("createTask", () => {
     ).toThrow(ValidationError);
   });
 
-  it("detail 和 body 可正确写入", () => {
-    const uri = createTask({
-      title: "带详情",
-      project: PROJECT,
-      detail: "详细描述",
-      body: "# Markdown 正文",
-    });
+  it("内容（body）写在 frontmatter 之后的正文区", () => {
+    const uri = createTask({ title: "带内容", project: PROJECT, body: "# Markdown 正文" });
 
     const content = readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8");
-    expect(content).toContain("detail: 详细描述");
-    expect(content).toContain("# Markdown 正文");
+    // 内容在第二个 --- 之后（正文区），不在 frontmatter 里
+    const afterFrontmatter = content.split("---\n").slice(2).join("---\n");
+    expect(afterFrontmatter).toContain("# Markdown 正文");
+    expect(getTask(uri)?.body).toBe("# Markdown 正文");
   });
 
-  it("多行 detail 落盘为 |- 字面块且往返无损（防 >- 折叠回归）", () => {
-    const longLine = "1. 第一条描述特意写得很长以超过 js-yaml 默认的 80 列折叠宽度，确保旧配置会把这行拆成多行";
-    const detail = `# 需求\n\n${longLine}\n2. 第二条\n\n# 测试\n\n18/18 通过`;
-    const uri = createTask({ title: "字面块", project: PROJECT, detail });
-
+  it("不再写 detail 字段（同义的第二内容槽已下线）", () => {
+    const uri = createTask({ title: "只有内容", project: PROJECT, body: "内容" });
     const content = readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8");
-    expect(content).toContain("detail: |-\n");
-    expect(content).not.toContain("detail: >-");
-    // 往返无损：空行/换行原样还原，长行未被拆
-    expect(getTask(uri)?.detail).toBe(detail);
+    expect(content).not.toContain("detail");
+    expect(getTask(uri)?.body).toBe("内容");
+  });
 
-    // update 路径同样保持字面块
-    updateTask(uri, { detail: detail + "\n\n# 补充\n\n新增段落同样很长以验证更新路径的序列化配置保持一致" });
-    const after = readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8");
-    expect(after).toContain("detail: |-\n");
-    expect(getTask(uri)?.detail).toContain("# 补充");
+  it("多行内容往返无损（空行 / 长行 / 换行不被改写）", () => {
+    const longLine = "1. 第一条描述特意写得很长以超过 js-yaml 默认的 80 列折叠宽度，确保序列化不会把这行拆成多行";
+    const body = `# 需求\n\n${longLine}\n2. 第二条\n\n# 测试\n\n18/18 通过`;
+    const uri = createTask({ title: "多行内容", project: PROJECT, body });
+
+    expect(getTask(uri)?.body).toBe(body);
+
+    // update 路径同样无损
+    updateTask(uri, { body: body + "\n\n# 补充\n\n新增段落同样很长以验证更新路径的序列化配置保持一致" });
+    const got = getTask(uri)!.body;
+    expect(got).toContain("# 补充");
+    expect(got.startsWith("# 需求\n\n" + longLine)).toBe(true);
+  });
+
+  it("frontmatter 长行不被折叠（lineWidth:-1，保护用户自定义字段）", () => {
+    // yaml.dump 默认 80 列会把长标量折成多行，往返后值里被插入换行 —— 对用户写的数据是破坏
+    const long = "很长的一段备注".repeat(30);
+    const uri = createTask({ title: "长字段", project: PROJECT });
+    const fp = join(diyHome(), uri, "AGENTS.md");
+    writeFileSync(fp, `---\ntitle: 长字段\nstate: pending\nnote: ${long}\n---\n正文\n`, "utf-8");
+
+    updateTask(uri, { state: "done" });
+
+    const raw = readFileSync(fp, "utf-8");
+    const noteLine = raw.split("\n").find((l) => l.startsWith("note:"))!;
+    expect(noteLine).toContain(long); // 未被折成多行
   });
 
   it("ValidationError 包含全部错误字段", () => {

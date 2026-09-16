@@ -319,11 +319,11 @@ function TaskInfoView(props: { task: TaskDetail }) {
      * 恢复规则：有详情类草稿即视为编辑中（不需要额外存 editing 标记）。
      */
     const d = draftStore.fieldsOf(props.task.uri);
-    // 只认「详情编辑」这三个字段：agent 输入框的草稿是另一回事，
+    // 只认「任务编辑」这两个字段：agent 输入框的草稿是另一回事，
     // 否则「聊天打到一半」会让详情面板一进来就是编辑态。
-    const [editing, setEditing] = createSignal(draftStore.hasAny(props.task.uri, ["title", "detail", "body"]));
+    const [editing, setEditing] = createSignal(draftStore.hasAny(props.task.uri, ["title", "body"]));
     const [titleDraft, setTitleDraft] = createSignal(d.title ?? props.task.title ?? "");
-    const [detailDraft, setDetailDraft] = createSignal(d.detail ?? props.task.detail ?? "");
+    const [bodyDraft, setBodyDraft] = createSignal(d.body ?? props.task.body ?? "");
     const [saving, setSaving] = createSignal(false);
 
     /** 逐键写内存 + 防抖落盘（draftStore 内部 600ms debounce） */
@@ -331,23 +331,23 @@ function TaskInfoView(props: { task: TaskDetail }) {
         setTitleDraft(v);
         draftStore.set(props.task.uri, "title", v);
     };
-    const onDetailInput = (v: string) => {
-        setDetailDraft(v);
-        draftStore.set(props.task.uri, "detail", v);
+    const onBodyInput = (v: string) => {
+        setBodyDraft(v);
+        draftStore.set(props.task.uri, "body", v);
     };
 
     const startEdit = () => {
         // 起点取「草稿优先」：上次编辑到一半的值不该被任务现值盖掉
         const cur = draftStore.fieldsOf(props.task.uri);
         setTitleDraft(cur.title ?? props.task.title ?? "");
-        setDetailDraft(cur.detail ?? props.task.detail ?? "");
+        setBodyDraft(cur.body ?? props.task.body ?? "");
         setEditing(true);
     };
 
     /** 放弃编辑：草稿一并丢弃（留着会盖住任务现值）。await 确保磁盘同步删除 */
     const cancelEdit = async () => {
         setEditing(false);
-        await draftStore.clear(props.task.uri, ["title", "detail"]);
+        await draftStore.clear(props.task.uri, ["title", "body"]);
     };
 
     // 不进入编辑态，直接改状态（类似 GitHub issue 的状态切换）
@@ -359,7 +359,6 @@ function TaskInfoView(props: { task: TaskDetail }) {
                 uri: props.task.uri,
                 title: undefined,
                 state: next as any,
-                detail: undefined,
                 body: undefined,
                 parent: undefined,
             });
@@ -378,19 +377,19 @@ function TaskInfoView(props: { task: TaskDetail }) {
             const t = props.task;
             const changes: Record<string, string> = {};
             if (titleDraft() !== (t.title ?? "")) changes.title = titleDraft();
-            if (detailDraft() !== (t.detail ?? "")) changes.detail = detailDraft();
+            if (bodyDraft() !== (t.body ?? "")) changes.body = bodyDraft();
 
             if (Object.keys(changes).length === 0) {
                 setEditing(false);
                 // 无改动也算「本次编辑结束」：草稿没有存在意义了
-                await draftStore.clear(t.uri, ["title", "detail"]);
+                await draftStore.clear(t.uri, ["title", "body"]);
                 return;
             }
 
-            await diyService.diy.task.edit({ uri: t.uri, title: changes.title, state: undefined, detail: changes.detail, body: undefined, parent: undefined });
+            await diyService.diy.task.edit({ uri: t.uri, title: changes.title, state: undefined, body: changes.body, parent: undefined });
             await taskStore.loadTree();
             // 先清草稿再重取任务：否则重取回来的旧草稿会把刚保存的值当「编辑中」再显示一遍
-            await draftStore.clear(t.uri, ["title", "detail"]);
+            await draftStore.clear(t.uri, ["title", "body"]);
             await taskStore.selectTask(t.uri);
             setEditing(false);
         } catch (err: any) {
@@ -471,21 +470,24 @@ function TaskInfoView(props: { task: TaskDetail }) {
                 )}
             </div>
 
-            {/* 详情：编辑态为文本框；只读态为 Markdown / 原文 双 tab（嵌套在外层 local|info 之内） */}
+            {/* 内容：编辑态为文本框；只读态为 Markdown / 原文 双 tab（嵌套在外层 local|info 之内）。
+                任务模型只有「标题 + 内容」两个字段 —— 内容即 AGENTS.md frontmatter 之后的正文（body）。
+                曾经的 detail 字段是同义的第二内容槽（frontmatter 内），只读视图两节都渲染、编辑框却只绑
+                detail，导致「页面有内容、点编辑是空框，保存后内容出现两份」，已下线。 */}
             <div>
                 <Show when={editing()}>
                     <textarea
-                        class="textarea textarea-bordered w-full text-sm"
-                        rows="4"
-                        value={detailDraft()}
-                        onInput={(e) => onDetailInput(e.currentTarget.value)}
-                        placeholder="任务详情（可选）"
+                        class="textarea textarea-bordered w-full text-sm font-mono"
+                        rows="12"
+                        value={bodyDraft()}
+                        onInput={(e) => onBodyInput(e.currentTarget.value)}
+                        placeholder="任务内容（Markdown，可选）"
                     ></textarea>
                 </Show>
                 <Show when={!editing()}>
                     <Show
-                        when={props.task.detail || props.task.body}
-                        fallback={<span class="text-xs opacity-40 italic">无详情</span>}
+                        when={props.task.body}
+                        fallback={<span class="text-xs opacity-40 italic">无内容</span>}
                     >
                         {/* 内层不另开滚动容器：外层 Tabs.Content(value=info) 已是滚动容器，
                             再套一层会截断高度、破坏其滚动位置恢复 */}
@@ -495,34 +497,12 @@ function TaskInfoView(props: { task: TaskDetail }) {
                                 <Tabs.Trigger value="raw" class="tab">📄 原文</Tabs.Trigger>
                             </Tabs.List>
 
-                            <Tabs.Content value="md" class="space-y-4">
-                                <Show when={props.task.detail}>
-                                    <div>
-                                        <h3 class="text-xs font-semibold opacity-60 mb-1">详情</h3>
-                                        <MarkdownView content={props.task.detail!} />
-                                    </div>
-                                </Show>
-                                <Show when={props.task.body}>
-                                    <div>
-                                        <h3 class="text-xs font-semibold opacity-60 mb-1">正文</h3>
-                                        <MarkdownView content={props.task.body!} />
-                                    </div>
-                                </Show>
+                            <Tabs.Content value="md">
+                                <MarkdownView content={props.task.body!} />
                             </Tabs.Content>
 
-                            <Tabs.Content value="raw" class="space-y-4">
-                                <Show when={props.task.detail}>
-                                    <div>
-                                        <h3 class="text-xs font-semibold opacity-60 mb-1">详情</h3>
-                                        <CodeBlock code={props.task.detail!} lang="markdown" />
-                                    </div>
-                                </Show>
-                                <Show when={props.task.body}>
-                                    <div>
-                                        <h3 class="text-xs font-semibold opacity-60 mb-1">正文</h3>
-                                        <CodeBlock code={props.task.body!} lang="markdown" />
-                                    </div>
-                                </Show>
+                            <Tabs.Content value="raw">
+                                <CodeBlock code={props.task.body!} lang="markdown" />
                             </Tabs.Content>
                         </Tabs.Root>
                     </Show>
