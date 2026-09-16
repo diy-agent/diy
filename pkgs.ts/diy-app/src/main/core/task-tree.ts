@@ -24,7 +24,8 @@ function readTaskNode(
   const fm = parseTaskFile(raw);
   if (!fm) return null;
 
-  const pid = projectFromUri(uri) || fm.project;
+  // project 由 URI 路径推导（路径即分组）；不再读 frontmatter project（冗余副本，已由迁移清除）
+  const pid = projectFromUri(uri);
   const info = (pid && preg.get(pid)) || undefined;
   return {
     kind: "task",
