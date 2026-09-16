@@ -37,23 +37,29 @@ const DEFAULT_MODEL = "mimo-v2.5";
  * 价格单位为 $/1M tokens：input / output（cacheRead）
  */
 export const LOCAL_MODELS = [
-    { id: "mimo-v2.5", name: "MiMo V2.5" }, // 0.14 / 0.28 (0.0028)
-    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash" }, // 0.15 / 0.60 (0.003)
-    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" }, // 0.15 / 0.60 (0.003)
-    { id: "glm-5.3-flash", name: "GLM-5.3 Flash" }, // 0.15 / 0.50 (0.03)
-    { id: "qwen3.8-flash", name: "Qwen3.8 Flash" }, // 0.15 / 0.47 (0.016)
-    { id: "hy3", name: "Hy3" }, // 0.14 / 0.58 (0.035)
-    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna" }, // 0.20 / 1.20 (0.02)
-    { id: "minimax-m3", name: "MiniMax M3" }, // 0.30 / 1.20 (0.06)
-    { id: "minimax-m2.7", name: "MiniMax M2.7" }, // 0.30 / 1.20 (0.06)
-    { id: "longcat-2.0", name: "LongCat-2.0" }, // 0.30 / 1.20 (0.006)
-    { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro" }, // 0.435 / 0.87 (0.003625)
-    { id: "qwen3.7-plus", name: "Qwen3.7 Plus" }, // 0.40 / 1.60 (0.04)
-    { id: "glm-5.3", name: "GLM-5.3" }, // 1.40 / 4.40 (0.26)
-    { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" }, // 0.95 / 4.00 (0.19)
-    { id: "muse-spark-1.2-contributor", name: "Muse Spark 1.2 Contributor (opencode-go)" }, // 0.10 / 0.20
-    { id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor (opencode-go)" }, // 0.10 / 0.20
+    // maxOutputTokens 来源：models.dev/api.json limit.output（2026-09 实查）
+    { id: "mimo-v2.5", name: "MiMo V2.5", maxOutputTokens: 128000 }, // 0.14 / 0.28 (0.0028)
+    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", maxOutputTokens: 384000 }, // 0.15 / 0.60 (0.003)
+    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", maxOutputTokens: 384000 }, // 0.15 / 0.60 (0.003)
+    { id: "glm-5.3-flash", name: "GLM-5.3 Flash", maxOutputTokens: 131072 }, // 0.15 / 0.50 (0.03)
+    { id: "qwen3.8-flash", name: "Qwen3.8 Flash", maxOutputTokens: 131072 }, // 0.15 / 0.47 (0.016)
+    { id: "hy3", name: "Hy3", maxOutputTokens: 128000 }, // 0.14 / 0.58 (0.035)
+    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", maxOutputTokens: 128000 }, // 0.20 / 1.20 (0.02)
+    { id: "minimax-m3", name: "MiniMax M3", maxOutputTokens: 131072 }, // 0.30 / 1.20 (0.06)
+    { id: "minimax-m2.7", name: "MiniMax M2.7", maxOutputTokens: 131072 }, // 0.30 / 1.20 (0.06)
+    { id: "longcat-2.0", name: "LongCat-2.0", maxOutputTokens: 131072 }, // 0.30 / 1.20 (0.006)
+    { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro", maxOutputTokens: 128000 }, // 0.435 / 0.87 (0.003625)
+    { id: "qwen3.7-plus", name: "Qwen3.7 Plus", maxOutputTokens: 65536 }, // 0.40 / 1.60 (0.04)
+    { id: "glm-5.3", name: "GLM-5.3", maxOutputTokens: 131072 }, // 1.40 / 4.40 (0.26)
+    { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", maxOutputTokens: 262144 }, // 0.95 / 4.00 (0.19)
+    { id: "muse-spark-1.2-contributor", name: "Muse Spark 1.2 Contributor (opencode-go)", maxOutputTokens: 131072 }, // 0.10 / 0.20
+    { id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor (opencode-go)", maxOutputTokens: 131072 }, // 0.10 / 0.20
 ];
+
+/** 按 model id 查 maxOutputTokens，fallback 到全局 limits */
+function modelOutputTokens(modelId: string): number {
+    return LOCAL_MODELS.find(m => m.id === modelId)?.maxOutputTokens ?? DEFAULT_LIMITS.maxOutputTokens;
+}
 
 const SYSTEM = [
     "你是 diy 管控台的本地代码助手，运行在任务所属项目目录。",
@@ -476,6 +482,7 @@ export class LocalAgentManager {
 
         const cwd = resolveCwd(taskUri);
         const L = this.getLimits();
+        const modelMax = modelOutputTokens(model || DEFAULT_MODEL);
         // store 此刻已含本轮 user 块（emit 即 apply）；重建历史自带 user，不再手工拼
         const sent: ModelMessage[] = blocksToMessages(sess.store) as unknown as ModelMessage[];
         // 研究用：把“发给上游的 messages”与 fullStream 的每个 part 原样落盘
@@ -495,7 +502,7 @@ export class LocalAgentManager {
             model: model || DEFAULT_MODEL,
             system: `${SYSTEM}\n当前项目目录：${cwd}`,
             tools: Object.keys(buildTools(cwd, L, taskUri)),
-            settings: { maxSteps: L.maxSteps, maxOutputTokens: L.maxOutputTokens, maxRetries: 2 },
+            settings: { maxSteps: L.maxSteps, maxOutputTokens: modelMax, maxRetries: 2 },
             messages: sent,
         });
         const result = streamText({
@@ -506,7 +513,7 @@ export class LocalAgentManager {
             stopWhen: stepCountIs(L.maxSteps),
             abortSignal: signal,
             headers: { "x-opencode-session": sessionIdOf(taskUri) },
-            maxOutputTokens: L.maxOutputTokens, // 推理模型：reasoning 先吃预算
+            maxOutputTokens: modelMax, // 按模型硬上限（models.dev），reasoning 模型会先吃一部分
             maxRetries: 2,
         });
 
@@ -685,7 +692,7 @@ export class LocalAgentManager {
                         const fr = (part as { finishReason?: string }).finishReason;
                         let notice: string | undefined;
                         if (fr === "length") {
-                            notice = `输出达到 maxOutputTokens=${L.maxOutputTokens} 被截断，可再发一条消息接上`;
+                            notice = `输出达到 maxOutputTokens=${modelMax} 被截断（${model || DEFAULT_MODEL} 硬上限），可再发一条消息接上`;
                         } else if (stepN >= L.maxSteps && lastAct === "tool") {
                             notice = `达到 maxSteps=${L.maxSteps} 步上限，本轮强制收尾（模型仍在请求工具）；继续发消息可接力`;
                         }
