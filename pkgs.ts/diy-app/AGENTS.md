@@ -109,6 +109,72 @@ $DIY_HOME/projects/<pid>/tasks/<tid>/
 - `diy.ui.inspect`：renderer 内 DOM 遍历生成无障碍树，agent 可 `./diy.sh ui inspect` 看 UI 全貌。
 - 复用冒烟脚本：**`scripts/ui-smoke/dnd-smoke.py`** — 启动隔离 Electron + Playwright/CDP 真实拖拽（任务↔任务改层级、子任务→项目提升），断言层级 + 抓 console/pageerror，`python3 scripts/ui-smoke/dnd-smoke.py` 运行，exit 0 通过。UI 交互改动后跑它确认手势没破坏。
 
+### 交互自动化操作 App（agent 自测/演示用，实测经验）
+
+目标：让 agent 用 CLI 驱动真实界面做自测或演示。以下每条都是实测踩出来的。
+
+**提速是第一原则**：每次 `playwright-cli <cmd>` 都是独立进程冷启动（≈1~3s，内部还有固定
+500ms 稳定等待），逐条敲一个流程要几十秒。**把整个流程压进一次 `eval`**（async IIFE +
+`setTimeout` 等待 + 返回 JSON）——同一套「打开面板 + 三态切换 + 命中自检」从 ≈40s 降到 4s。
+
+```bash
+playwright-cli attach --cdp=http://127.0.0.1:<port>      # 会话默认名 default，后续用 --s=default
+playwright-cli --s=default eval "async () => { ... return JSON.stringify(R); }"
+```
+
+- ❌ **attach 模式下不要用 `goto`**：CDP 附加态不支持 `Target.createTarget`，一次 `goto` 就
+  把会话打坏（后续报 `Protocol error (Target.createTarget): Not supported`），必须重新 attach。
+  换页/重载用 `reload`。
+- ✅ **断言靠 `eval` 读 DOM，别靠截图**：截图要人眼看，`eval` 直接拿布尔/计数。
+- ✅ **点击前做命中自检**（抓「按钮溢出被相邻元素盖住」这类 bug 的唯一手段）：
+
+```js
+const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'MD 渲染');
+const r = b.getBoundingClientRect();
+document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === b;  // false = 被盖住/溢出
+```
+
+  真实案例：`MD 渲染` 的 `rect.x=1287` 已溢出视口，点它的坐标实际命中旁边的
+  `清空本对话历史消息` —— 用户「点渲染变成删历史」的物理成因。修法是工具栏 `flex-wrap`
+  + 危险按钮 `shrink-0` 并与显示方式组用竖线分隔。
+- ⚠️ `elementFromPoint` 只测坐标命中；要测**真实手势链**（拖拽、拖出、hover）仍用
+  `mouse.move/down/up` 分步（见 `scripts/ui-smoke/dnd-smoke.py`）。
+- ⚠️ 键盘要用 `playwright-cli press Escape`（真实事件）；`document.dispatchEvent(new
+  KeyboardEvent(...))` 只是合成等价物，能验证监听链但不能替代真实按键验收。
+
+**配套：造演示/回归数据（不连真实 LLM）**
+
+- 会话历史直接写 op 流即可：`$DIY_HOME/local/<keyOf(uri)>.ops.jsonl`；UI 与续聊都从它重放。
+- `keyOf(uri)` = `uri` 字符净化后前 64 字符 + `-` + `sha256(uri)` 前 12 位（`local-agent.ts`），
+  例：`projects/1/tasks/1` → `projects_1_tasks_1-9975ff48c629`。
+- 造完先 fold 自检，别让 UI 当调试器：`new BlockStore()` 逐行 `apply`，断言 `issues.length === 0`。
+- 要覆盖 Markdown/长文本/工具过程的渲染，就给 `text` 块塞含标题/表格/代码块/粗体的正文。
+- CLI 的 project/task 子命令**走 RPC，必须先有 app 实例在跑**（冷启动 10s+，超时给 60s）；
+  没有实例时会直接超时退出，不是命令写错。
+
+**隔离与清理**
+
+- 起隔离实例必须用**全新 `DIY_HOME`**（`mktemp -d`）并 `export HOME=$H DIY_HOME=$H`：
+  `SingletonLock` 写在 `electron_user_data/` 下（内容是 `hostname-pid`），**残留实例会抢锁**，
+  新实例会打印 `SingleInstanceLock: failed (second instance, quitting)` 后直接退出。
+  撞锁时最省事的做法是换一个新 home，别去动别人的进程。
+- ⚠️ **agent 起的进程会继承宿主 main 的进程组**（`pgid` 与 diy 自身相同），于是收尾
+  `kill <自己起的实例号>` 会命中 bash 自杀护栏被拒（判据见 `main/services/agent-guard.ts`
+  的 `collectSelfInfo`：同 pgid、或命令行含 `out/main/index.mjs`，都算「自身进程树」）。
+  **不要绕过护栏**：把「要收掉的实例号 + 用途」列给用户，由用户手动收。
+- 演示数据一律落 `/tmp`，不要写进用户的 `~/.diy`。
+
+**Solid 渲染的连带陷阱**（UI 自动化时最容易误判成"功能没生效"）
+
+- 组件函数体里的 `if (props.x) return A; return B;` **对 props 变化不响应**（函数体只执行一次）。
+  现象：点按钮后 DOM 纹丝不动，切任务/重载后才生效。必须用 `<Show when={...} fallback={...}>`。
+  注意有些地方"看着是好的"只是因为 `<For each={segs()}>` 顺手重建了节点，切 md 这类不改
+  分段列表的开关就会暴露。
+- HTML `autofocus` 对**动态插入**的节点无效（只在文档加载时生效）。弹窗要 `ref` + `onMount`
+  主动 `focus()`，否则焦点留在原按钮上，"回车确认"会误触原按钮。
+- 多个弹层各自在 `window` 上监听 Esc 会**双杀**（弹窗和它下面的面板一起关）。弹层统一
+  改 `document` **捕获阶段** + `stopPropagation`。
+
 ### 取 CDP 地址
 
 Chromium 把实际端口写入 `DIY_HOME/electron_user_data/DevToolsActivePort`（两行：端口、browser path）。
