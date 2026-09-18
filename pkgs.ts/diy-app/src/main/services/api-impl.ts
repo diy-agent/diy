@@ -290,11 +290,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     // 有任务场景即附带仿真请求体（走 runTurn 真实组装链，未发送）；无则只渲染文本
     if (!input.taskUri) return { ...base, requestBody: null, requestNote: "无任务场景" };
     const { previewSimulatedRequest } = await import("./local-agent");
-    const sim = await previewSimulatedRequest({
-      taskUri: input.taskUri,
-      system: base.system,
-      model: input.model,
-    });
+    const sim = await previewSimulatedRequest({ taskUri: input.taskUri, system: base.system });
     return { ...base, requestBody: sim.body, requestNote: sim.note };
   });
 

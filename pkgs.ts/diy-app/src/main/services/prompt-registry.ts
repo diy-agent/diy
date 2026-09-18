@@ -1,17 +1,19 @@
 // src/main/services/prompt-registry.ts
-// 🎯 提示词模版注册表（spike）：内置只读 + 项目级同路径覆盖 + dry-run 预览
+// 🎯 提示词模版注册表：内置只读 + 项目级同路径覆盖 + 装配渲染 + dry-run 预览
 //
 //   内置: prompts/defaults.ts（随版本走）
-//   覆盖: $DIY_HOME/projects/<id>/template/<relpath>（与 tasks/ 同级，listTasks 只扫 tasks/数字目录）
+//   覆盖: $DIY_HOME/projects/<id>/template/<relpath>（与 tasks/ 同级，listTasks 只扫 tasks/ 数字目录）
 //   元数据: template/.meta.yaml {<relpath>: {baseVersion}}（save 时记内置版本，供 stale 判定）
 // 解析 = 覆盖存在 ? 覆盖 : 内置；状态只有 builtin | overridden。
+// 装配 = 按 PROMPT_DEFAULTS 的键序拼接（文件名前缀定序），非 identity 节包同名标签，空节不进请求。
 // 本模块只做组装与渲染，不发任何 LLM 请求（试验场试跑 = dry-run，看请求长什么样）。
 
 import * as yaml from "js-yaml";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join, normalize } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, normalize, resolve, sep } from "node:path";
 import { PROMPT_DEFAULTS } from "../prompts/defaults";
-import { diyHome } from "../core/state";
+import { diyHome, parseTaskFile } from "../core/state";
 import { getProjectPath } from "../core/project";
 
 export interface PromptMeta {
@@ -36,28 +38,53 @@ export interface PromptEntry extends PromptMeta {
   stale: boolean;
 }
 
-export interface PreviewVars {
-  cwd: string;
+/** 装配变量（全部来自运行时事实，模板只做白名单替换） */
+export interface AssembleVars {
+  diy_cli: string;
+  diy_home: string;
   project_path: string;
-  project_label: string;
   task_uri: string;
-  model: string;
-  maxSteps: number;
-  maxOutputTokens: number;
+  task_title: string;
+  task_state: string;
+  task_body: string;
+  task_dir: string;
+  cwd: string;
+  /** 工作目录与项目目录不一致时的提示；一致时为空 */
+  cwd_note: string;
+  /** AGENTS.md 链渲染结果（见 projectInstructions） */
+  project_instructions: string;
   skills: string;
 }
 
-/** 变量白名单：只允许标量占位，未知变量原样保留 + 计数（不阻断） */
+/** 变量白名单：只允许这些占位符；未知变量原样保留 + 回报（不阻断） */
 const KNOWN_VARS = [
-  "cwd",
+  "diy_cli",
+  "diy_home",
   "project_path",
-  "project_label",
   "task_uri",
-  "model",
-  "maxSteps",
-  "maxOutputTokens",
+  "task_title",
+  "task_state",
+  "task_body",
+  "task_dir",
+  "cwd",
+  "cwd_note",
+  "project_instructions",
   "skills",
 ] as const;
+
+/** 节标签：文件名 → 包裹标签。identity 不包（整段替换，无需按名引用） */
+const SECTION_TAGS: Record<string, string> = {
+  "100-diy.md": "diy",
+  "200-project.md": "project_context",
+  "300-task.md": "task",
+  "400-rules.md": "rules",
+  "500-skills.md": "skills",
+  "_guard.md": "guard",
+};
+
+/** 系统上下文预算（字节）。超限即拒绝发送，不做自动截断。
+ *  TODO: 与模型上下文窗口挂钩（LOCAL_MODELS 目前只有 maxOutputTokens，需补 limit.context） */
+const SYSTEM_BUDGET_BYTES = 64 * 1024;
 
 const FM_SEP = "---";
 
@@ -169,17 +196,8 @@ export function restorePrompt(home: string, projectId: string, relpath: string):
 }
 
 /** 渲染 {{var}}：白名单内替换，未知原样保留并计数（返回 unknown 供 UI 提示） */
-export function renderTemplate(body: string, vars: PreviewVars): { text: string; unknown: string[] } {
-  const map: Record<string, string> = {
-    cwd: vars.cwd,
-    project_path: vars.project_path,
-    project_label: vars.project_label,
-    task_uri: vars.task_uri,
-    model: vars.model,
-    maxSteps: String(vars.maxSteps),
-    maxOutputTokens: String(vars.maxOutputTokens),
-    skills: vars.skills,
-  };
+export function renderTemplate(body: string, vars: AssembleVars): { text: string; unknown: string[] } {
+  const map = vars as unknown as Record<string, string>;
   const unknown = new Set<string>();
   const text = body.replace(/\{\{\s*([\w]+)\s*\}\}/g, (m, k: string) => {
     if ((KNOWN_VARS as readonly string[]).includes(k)) return map[k] ?? "";
@@ -189,65 +207,122 @@ export function renderTemplate(body: string, vars: PreviewVars): { text: string;
   return { text, unknown: [...unknown] };
 }
 
-export interface RequestPreview {
-  system: string;
-  unknownVars: string[];
-  tools: Array<{ name: string; description: string }>;
-  settings: { maxSteps: number; maxOutputTokens: number; maxRetries: number };
-  headers: { session: string };
-  cwd: string;
-  note: string;
+/**
+ * 工作目录解析（三级兜底：项目目录 → 任务目录 → 应用目录）。
+ * 与 local-agent 的工具 cwd 保持一致；不一致时给出提示 —— 模型按错的目录理解相对路径就读不到文件。
+ * TODO: 与 local-agent.resolveCwd 合并为一处实现（现为镜像逻辑，避免模块循环依赖）
+ */
+function resolveWorkingDir(home: string, projectId: string, taskUri: string): { cwd: string; note: string } {
+  const declared = getProjectPath(projectId);
+  if (declared) {
+    const abs = declared.startsWith("~/") ? join(homedir(), declared.slice(2)) : declared;
+    if (existsSync(abs)) return { cwd: abs, note: "" };
+  }
+  const td = taskUri ? join(home, taskUri) : "";
+  if (td && existsSync(td)) {
+    return { cwd: td, note: "\n注意：项目目录不存在，工具实际在任务目录下执行" };
+  }
+  return { cwd: process.cwd(), note: "\n注意：项目目录与任务目录都不存在，工具实际在应用目录下执行" };
+}
+
+/** 任务文件路径（home 参数权威：不用 state.taskFilePath，那走全局 diyHome，隔离失效） */
+function taskFileAt(home: string, taskUri: string): string {
+  return taskUri ? join(home, taskUri, "AGENTS.md") : "";
+}
+
+/** 读任务元信息与正文（不存在/缺 frontmatter 时返回 null） */
+function taskOf(home: string, taskUri: string): { title: string; state: string; body: string } | null {
+  const fp = taskFileAt(home, taskUri);
+  if (!fp || !existsSync(fp)) return null;
+  const meta = parseTaskFile(readFileSync(fp, "utf-8"));
+  if (!meta) return null;
+  return { title: meta.title ?? "", state: meta.state ?? "", body: meta.body ?? "" };
 }
 
 /**
- * dry-run 请求预览：只组装不发送（试验场核心）。
- * vars 允许调用方覆盖 params（调参即改即看，不写 limits.json）。
+ * AGENTS.md 链：从工作目录向上收到 home 为止（不进 / 、不进 /Users），外层在前、最深处在后。
+ * - 只看标准 AGENTS.md
+ * - 排除任务本体（tasks/<tid>/AGENTS.md 是任务正文，已由 300-task 渲染）
+ * - 工作目录不在 home 内时只取该目录自身一层（不猜测外部目录树的约定）
+ * - 另加 $DIY_HOME/AGENTS.md 作为应用级规范（存在才加）
+ */
+function projectInstructions(home: string, cwd: string, taskUri: string): string {
+  const homeDir = homedir();
+  const start = resolve(cwd);
+  const underHome = start === homeDir || start.startsWith(homeDir + sep);
+  const stop = underHome ? homeDir : start;
+  const ownTaskFile = taskFileAt(home, taskUri);
+  const skip = ownTaskFile ? resolve(ownTaskFile) : "";
+  const seen = new Set<string>();
+  const files: string[] = [];
+  for (let dir = start; ; dir = dirname(dir)) {
+    const fp = join(dir, "AGENTS.md");
+    if (fp !== skip && !seen.has(fp) && existsSync(fp)) {
+      seen.add(fp);
+      files.push(fp);
+    }
+    if (dir === stop || dir === dirname(dir)) break;
+  }
+  files.reverse();
+  const appLevel = join(home, "AGENTS.md");
+  if (!seen.has(appLevel) && existsSync(appLevel)) files.unshift(appLevel);
+  return files
+    .map((fp) => {
+      const content = readFileSync(fp, "utf-8").trim();
+      return `<project_instructions path="${fp}" scope="${dirname(fp)}">\n${content}\n</project_instructions>`;
+    })
+    .join("\n\n");
+}
+
+export interface RequestPreview {
+  system: string;
+  unknownVars: string[];
+  /** 非空即超预算：拒绝发送（本层不做自动截断/剔除） */
+  overBudget: { used: number; budget: number } | null;
+}
+
+/**
+ * 装配系统上下文 + dry-run 预览（只组装不发送，试验场核心）。
+ * drafts 允许覆盖未存盘草稿（relpath → 正文），做到所见即所得。
  */
 export function previewRequest(
   home: string,
   projectId: string,
-  opts: {
-    taskUri?: string;
-    model?: string;
-    maxSteps?: number;
-    maxOutputTokens?: number;
-    skills?: string;
-    /** 未存盘草稿（relpath → 正文）：命中则替存盘值，用于所见即所得，加法字段不改模型 */
-    drafts?: Record<string, string>;
-  } = {},
+  opts: { taskUri?: string; skills?: string; drafts?: Record<string, string> } = {},
 ): RequestPreview {
-  const bodyOf = (r: string): string => opts.drafts?.[r] ?? entryOf(home, projectId, r).current;
-  const system = bodyOf("system.md");
-  const context = bodyOf("context.md");
-  const bash = bodyOf("tools/bash.md");
-  const read = bodyOf("tools/read.md");
-  const rawPath = getProjectPath(projectId);
-  const cwd =
-    rawPath && existsSync(rawPath.startsWith("~/") ? join(home, "..", rawPath.slice(2)) : rawPath)
-      ? rawPath
-      : process.cwd();
-  const vars: PreviewVars = {
+  const taskUri = opts.taskUri ?? "";
+  const task = taskOf(home, taskUri);
+  const { cwd, note } = resolveWorkingDir(home, projectId, taskUri);
+  const vars: AssembleVars = {
+    diy_cli: process.env["DIY_CLI"] ?? "diy",
+    diy_home: home,
+    project_path: getProjectPath(projectId) ?? "",
+    task_uri: taskUri,
+    task_title: task?.title ?? "",
+    task_state: task?.state ?? "",
+    task_body: task?.body ?? "",
+    task_dir: taskUri ? join(home, taskUri) : "",
     cwd,
-    project_path: rawPath ?? "",
-    project_label: projectId,
-    task_uri: opts.taskUri ?? "",
-    model: opts.model ?? "mimo-v2.5",
-    maxSteps: opts.maxSteps ?? 60,
-    maxOutputTokens: opts.maxOutputTokens ?? 4000,
+    cwd_note: note,
+    project_instructions: projectInstructions(home, cwd, taskUri),
     skills: opts.skills ?? "",
   };
-  const r1 = renderTemplate(`${system}\n${context}`, vars);
+  const unknown = new Set<string>();
+  const blocks: string[] = [];
+  for (const relpath of Object.keys(PROMPT_DEFAULTS)) {
+    const body = opts.drafts?.[relpath] ?? entryOf(home, projectId, relpath).current;
+    const r = renderTemplate(body, vars);
+    r.unknown.forEach((u) => unknown.add(u));
+    if (!r.text.trim()) continue; // 空节不进请求
+    const tag = SECTION_TAGS[relpath];
+    blocks.push(tag ? `<${tag}>\n${r.text.trim()}\n</${tag}>` : r.text.trim());
+  }
+  const system = blocks.join("\n\n");
+  const used = Buffer.byteLength(system, "utf-8");
   return {
-    system: r1.text,
-    unknownVars: r1.unknown,
-    tools: [
-      { name: "bash", description: bash.trim() },
-      { name: "read", description: read.trim() },
-    ],
-    settings: { maxSteps: vars.maxSteps, maxOutputTokens: vars.maxOutputTokens, maxRetries: 2 },
-    headers: { session: `local-preview-${projectId}` },
-    cwd,
-    note: "dry-run：仅构造，未发送；试跑 agent 暂不执行工具",
+    system,
+    unknownVars: [...unknown],
+    overBudget: used > SYSTEM_BUDGET_BYTES ? { used, budget: SYSTEM_BUDGET_BYTES } : null,
   };
 }
 

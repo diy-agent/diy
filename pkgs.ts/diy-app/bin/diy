@@ -22,4 +22,5 @@ CLI="$APP_DIR/out/cli/index.js"
 [[ -f "$CLI" ]] || { echo "diy 未构建/未安装: $CLI（先 ./sha.sh build-cli）" >&2; exit 1; }
 
 cd "$APP_DIR"
-exec env DIY_HOME="${DIY_HOME:-$HOME/.diy}" node "$CLI" "$@"
+# DIY_CLI：当前生效的 CLI 入口（提示词模版 100-diy 消费，见 diy.sh 同名字段）
+exec env DIY_HOME="${DIY_HOME:-$HOME/.diy}" DIY_CLI="${DIY_CLI:-$0}" node "$CLI" "$@"

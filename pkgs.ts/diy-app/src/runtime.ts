@@ -6,6 +6,7 @@
 //
 // 环境变量契约：
 //   DIY_HOME            数据根（state/task/app.port 落此）
+//   DIY_CLI             当前生效的 CLI 入口绝对路径（提示词模版自述用；入口脚本自己注入）
 //   DIY_PORT            首选端口（测试注入 0=随机；缺省时靠 app.port 文件 / rpc 兜底 18888）
 //   DIY_DEV_SERVER_URL  dev 时 GUI 加载的 Vite URL；缺省 → loadFile 编译产物
 //   DIY_NO_LAUNCH       1 = CLI 禁止自动拉起 app（只允许复用已运行实例；探测不到即报错）。

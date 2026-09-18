@@ -398,13 +398,10 @@ export const apiDef = RpcSchema.router({
             output: z.any(),
           }),
           preview: RpcSchema.unary({
-            desc: `dry-run 请求预览（只组装不发送）`,
+            desc: `dry-run 预览：装配系统上下文 + 仿真请求体（只组装不发送）`,
             input: {
               project: z.string().cliArg({ desc: "project id" }),
-              taskUri: z.string().optional().cliOption({ desc: "任务 URI（变量渲染用）" }),
-              model: z.string().optional().cliOption({ desc: "模型" }),
-              maxSteps: z.number().optional().cliOption({ desc: "最大步数" }),
-              maxOutputTokens: z.number().optional().cliOption({ desc: "输出上限" }),
+              taskUri: z.string().optional().cliOption({ desc: "任务 URI（任务场景与工作目录从它推）" }),
               // 无 CLI 注解：CLI 解析器忽略，RPC 照传（未存盘草稿渲染用）
               drafts: z.record(z.string(), z.string()).optional().describe("未存盘草稿 relpath→正文"),
             },

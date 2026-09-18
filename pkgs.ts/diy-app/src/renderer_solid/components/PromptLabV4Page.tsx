@@ -174,7 +174,7 @@ function DirRow(props: {
 export function PromptLabV4Page() {
     const [entries, setEntries] = createSignal<PromptEntry[]>([]);
     const [drafts, setDrafts] = createSignal<Record<string, string>>({});
-    const [selPath, setSelPath] = createSignal<string>("system.md");
+    const [selPath, setSelPath] = createSignal<string>("000-identity.md");
     // 左右 Views 宽（拖拽可调，localStorage 持久化：纯视图缓存）
     const [leftW, setLeftW] = createSignal(loadW(LAB4_LEFT_KEY, 256, 180, 480));
     const [rightW, setRightW] = createSignal(loadW(LAB4_RIGHT_KEY, 384, 240, 640));
@@ -286,12 +286,8 @@ export function PromptLabV4Page() {
                     const p = (await diyService.diy.template.preview({
                         project: project(),
                         taskUri: taskUri().trim() || undefined,
-                        // 参数走服务端默认（UI 不再调）：显式 undefined 满足 RPC 入参形状
-                        model: undefined,
-                        maxSteps: undefined,
-                        maxOutputTokens: undefined,
-                        drafts: undefined,
-                        ...(Object.keys(d).length > 0 ? { drafts: d } : {}),
+                        // 草稿走 RPC（未存盘也进预览）
+                        drafts: Object.keys(d).length > 0 ? d : undefined,
                     })) as RequestPreview;
                     setPreview(p);
                 } catch (e) {
@@ -514,6 +510,12 @@ export function PromptLabV4Page() {
                     <Show when={preview()} fallback={<div class="text-xs opacity-60">渲染中…</div>}>
                         {(p) => (
                             <>
+                                <Show when={p().overBudget}>
+                                    <div class="alert alert-error text-xs py-1 mb-2">
+                                        超出预算：{(p().overBudget!.used / 1024).toFixed(1)} KB /{" "}
+                                        {(p().overBudget!.budget / 1024).toFixed(0)} KB —— 不会发送，请精简模版
+                                    </div>
+                                </Show>
                                 <Show when={p().unknownVars.length > 0}>
                                     <div class="alert alert-warning text-xs py-1 mb-2">
                                         未知变量：{p().unknownVars.join(", ")}

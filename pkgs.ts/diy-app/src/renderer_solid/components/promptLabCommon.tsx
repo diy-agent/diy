@@ -19,9 +19,8 @@ export interface PromptEntry {
 export interface RequestPreview {
     system: string;
     unknownVars: string[];
-    tools: Array<{ name: string; description: string }>;
-    settings: unknown;
-    note: string;
+    /** 非空即超出系统上下文预算：拒绝发送（不做自动截断） */
+    overBudget: { used: number; budget: number } | null;
     /** 仿真请求体（request.json 同形，有任务场景时才有） */
     requestBody?: Record<string, unknown> | null;
     requestNote?: string;
@@ -55,16 +54,6 @@ export function useHoverTip() {
     );
     return { show, hide, node };
 }
-
-export function groupOf(relpath: string): string {
-    if (relpath === "system.md") return "身份";
-    if (relpath === "context.md" || relpath === "skills.md") return "上下文";
-    if (relpath.startsWith("tools/")) return "工具";
-    if (relpath.startsWith("guard/")) return "护栏";
-    if (relpath.startsWith("protocol/")) return "协议";
-    return "其他";
-}
-export const GROUP_ORDER = ["身份", "上下文", "工具", "护栏", "协议", "其他"];
 
 /** 朴素行级 diff（LCS）：[{t:' '|'-'|'+', s}]，模版小文本够用 */
 export function lineDiff(a: string, b: string): Array<{ t: string; s: string }> {
