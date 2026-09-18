@@ -3,16 +3,17 @@ import * as Tabs from "@kobalte/core/tabs";
 import { TaskTree } from "./components/TaskTree";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { LlmPage } from "./components/LlmPage";
+import { PromptLabV4Page } from "./components/PromptLabV4Page";
 import { LogPanel } from "./components/LogPanel";
 import { AppInfo } from "./components/AppInfo";
 import { ThemeSettings } from "./components/ThemeSettings";
 import { ToastContainer } from "./components/ToastContainer";
 import { taskStore } from "./store/taskStore";
 import { diyService } from "./lib/rpc";
-import { notificationStore, type ToastType } from "./store/notificationStore";
+import { notificationStore } from "./store/notificationStore";
 import { setRendererActions, resetRendererActions } from "./lib/renderer-actions";
 
-type NavPage = "task" | "chat" | "llm" | "settings";
+type NavPage = "task" | "chat" | "llm" | "lab" | "settings";
 
 export default function App() {
     const [currentPage, setCurrentPage] = createSignal<NavPage>("task");
@@ -48,6 +49,7 @@ export default function App() {
     const navItems: Array<{ id: NavPage; label: string; icon: string }> = [
         { id: "task", label: "任务树", icon: "🌳" },
         { id: "llm", label: "LLM", icon: "🧠" },
+        { id: "lab", label: "试验场", icon: "🪟" },
         { id: "settings", label: "设置", icon: "⚙️" },
     ];
 
@@ -55,13 +57,8 @@ export default function App() {
         <div class="drawer lg:drawer-open">
             {/* DaisyUI drawer 必须的 checkbox（控制开合，:checked 决定侧栏是否展开） */}
             <input type="checkbox" id="sidebar-toggle" class="drawer-toggle" />
-            {/* 主内容区 */}
+            {/* 主内容区（顶栏/底栏已去：纯 chrome，占纵向空间，spike 先拿掉） */}
             <div class="drawer-content flex flex-col h-screen">
-                {/* 顶栏 */}
-                <div class="navbar bg-base-100 border-b shrink-0 h-12">
-                    <span class="text-sm font-bold">diy</span>
-                </div>
-
                 {/* 内容区 */}
                 <main
                     class="flex-1 relative overflow-hidden bg-base-100"
@@ -77,6 +74,9 @@ export default function App() {
                     </Show>
                     <Show when={currentPage() === "llm"}>
                         <LlmPage />
+                    </Show>
+                    <Show when={currentPage() === "lab"}>
+                        <PromptLabV4Page />
                     </Show>
                     <Show when={currentPage() === "settings"}>
                         <div class="flex flex-col h-full">
@@ -110,14 +110,6 @@ export default function App() {
                         <TaskDetailPanel />
                     </Show>
                 </main>
-
-                {/* 底栏 */}
-                <div class="footer bg-base-200 border-t text-xs opacity-60 h-7 px-3 shrink-0">
-                    <span>diy 管控台</span>
-                    <Show when={!!taskStore.selectedUri}>
-                        <span class="ml-2 truncate">{taskStore.selectedUri}</span>
-                    </Show>
-                </div>
             </div>
 
             {/* 侧栏 - DaisyUI drawer */}

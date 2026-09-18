@@ -127,14 +127,23 @@ export function TaskDetailPanel() {
                     class="absolute inset-y-0 left-0 w-1.5 cursor-col-resize hover:bg-primary/40 active:bg-primary/60 z-10"
                     onMouseDown={onGripDown}
                 />
-                {/* 卡片头部：URI + 关闭 */}
+                {/* 卡片头部：URI + 试验场 + 关闭 */}
                 <div class="flex items-center justify-between px-4 py-2 border-b shrink-0">
                     <span class="text-xs font-mono opacity-60 truncate max-w-[300px]">
                         {taskStore.selectedUri}
                     </span>
-                    <button class="btn btn-ghost btn-sm" onClick={() => taskStore.selectTask(null)}>
-                        ✕
-                    </button>
+                    <div class="flex items-center gap-1">
+                        <button
+                            class="btn btn-ghost btn-sm"
+                            title="带当前任务去试验场调模版"
+                            onClick={() => getRendererActions().navigate?.("lab")}
+                        >
+                            🪟
+                        </button>
+                        <button class="btn btn-ghost btn-sm" onClick={() => taskStore.selectTask(null)}>
+                            ✕
+                        </button>
+                    </div>
                 </div>
 
                 {/* Tab 切换：Agent 对话（默认）/ 任务详情（受控：per-task 记忆，切任务各自恢复） */}
@@ -307,7 +316,9 @@ function StateSelect(props: { current?: string; saving: boolean; onSave: (v: str
 /** 详情渲染模式：Markdown 富文本 / 原文（纯视图偏好，不落盘） */
 type DetailTab = "md" | "raw";
 
-function TaskInfoView(props: { task: TaskDetail }) {
+/** 任务详情全能力视图（标题编辑/状态切换/草稿/元信息/Markdown+原文双 tab）。
+ *  试验场任务 tab 直接复用本组件，与详情抽屉同源零分叉。 */
+export function TaskInfoView(props: { task: TaskDetail }) {
     /** 详情渲染模式：Markdown 富文本 / 原文。纯视图偏好，不落盘——
      *  与草稿（draftStore，跨卸载恢复）不同，它丢了大不了回到默认富文本。 */
     const [detailTab, setDetailTab] = createSignal<DetailTab>("md");
