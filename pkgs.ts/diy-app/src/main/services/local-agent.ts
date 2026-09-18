@@ -29,6 +29,7 @@ import { BlockStore, blocksToMessages, interruptedToolPatches, type Op, type JSO
 import { collectSelfInfo, judgeSelfKill, selfKillNotice } from "./agent-guard";
 import { appendAudit } from "./agent-audit";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
+import { assembleSystem } from "./prompt-registry";
 
 const DEFAULT_MODEL = "mimo-v2.5";
 
@@ -60,15 +61,6 @@ export const LOCAL_MODELS = [
 function modelOutputTokens(modelId: string): number {
     return LOCAL_MODELS.find(m => m.id === modelId)?.maxOutputTokens ?? DEFAULT_LIMITS.maxOutputTokens;
 }
-
-const SYSTEM = [
-    "你是 diy 管控台的本地代码助手，运行在任务所属项目目录。",
-    "需要查看文件、运行命令时优先使用工具；拿到结果后用中文简明总结。",
-    "回答保持精炼，代码与命令原样引用。",
-    "硬规则：diy 自己就跑在 Electron 里，禁止执行会杀死宿主进程的命令",
-    "（如 pkill/killall Electron、kill 掉 diy 自身的 pid/进程组）。",
-    "需要重启 diy 时告诉用户手动操作，不要自己杀进程。",
-].join("\n");
 
 /** 工具 cwd 解析：project 路径 → task 目录 → 进程 cwd，逐级存在性校验（~ 展开） */
 function resolveCwd(taskUri: string): string {
@@ -480,6 +472,25 @@ export class LocalAgentManager {
         yield* emit({ op: "delta", id: uid, fields: { content: message } });
         yield* emit({ op: "stop", id: uid });
 
+        let eN = 0;
+        const errorBlock = function* (source: string, text: string): Generator<Op, void, void> {
+            const id = `${turnId}_e${++eN}`;
+            yield* emit({ op: "start", id, kind: "error", parent: turnId, meta: { source } });
+            yield* emit({ op: "delta", id, fields: { message: text } });
+            yield* emit({ op: "stop", id });
+        };
+        // 系统上下文：分节装配（身份/自述/项目规范/任务/规则/护栏）——与试验场预览同一入口
+        const asm = assembleSystem(diyHome(), projectFromUri(taskUri), { taskUri });
+        if (asm.overBudget) {
+            const kb = (n: number) => (n / 1024).toFixed(1);
+            yield* errorBlock(
+                "budget",
+                `系统上下文超出预算（${kb(asm.overBudget.used)} KB > ${kb(asm.overBudget.budget)} KB），本轮未发送。` +
+                    `请精简提示词模版或项目 AGENTS.md。`,
+            );
+            return;
+        }
+
         const cwd = resolveCwd(taskUri);
         const L = this.getLimits();
         const modelMax = modelOutputTokens(model || DEFAULT_MODEL);
@@ -500,14 +511,14 @@ export class LocalAgentManager {
             kind: "request",
             ts: new Date().toISOString(),
             model: model || DEFAULT_MODEL,
-            system: `${SYSTEM}\n当前项目目录：${cwd}`,
+            system: asm.system,
             tools: Object.keys(buildTools(cwd, L, taskUri)),
             settings: { maxSteps: L.maxSteps, maxOutputTokens: modelMax, maxRetries: 2 },
             messages: sent,
         });
         const result = streamText({
             model: this.provider(model || DEFAULT_MODEL),
-            system: `${SYSTEM}\n当前项目目录：${cwd}`,
+            system: asm.system,
             messages: sent,
             tools: buildTools(cwd, L, taskUri),
             stopWhen: stepCountIs(L.maxSteps),
@@ -523,18 +534,11 @@ export class LocalAgentManager {
         let stepN = 0;
         let rN = 0;
         let aN = 0;
-        let eN = 0;
         // turn 级 usage 累加器（finish-step 逐轮累加；finish 到达时覆盖为权威值）
         const acc = { in: 0, out: 0, total: 0 };
         let turnStopped = false;
         // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
         let lastAct: "none" | "text" | "tool" = "none";
-        const errorBlock = function* (source: string, text: string): Generator<Op, void, void> {
-            const id = `${turnId}_e${++eN}`;
-            yield* emit({ op: "start", id, kind: "error", parent: turnId, meta: { source } });
-            yield* emit({ op: "delta", id, fields: { message: text } });
-            yield* emit({ op: "stop", id });
-        };
 
         try {
             for await (const part of result.fullStream) {

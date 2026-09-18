@@ -274,7 +274,7 @@ function projectInstructions(home: string, cwd: string, taskUri: string): string
     .join("\n\n");
 }
 
-export interface RequestPreview {
+export interface AssembledSystem {
   system: string;
   unknownVars: string[];
   /** 非空即超预算：拒绝发送（本层不做自动截断/剔除） */
@@ -282,14 +282,14 @@ export interface RequestPreview {
 }
 
 /**
- * 装配系统上下文 + dry-run 预览（只组装不发送，试验场核心）。
+ * 装配系统上下文（真发与预览共用同一入口）。
  * drafts 允许覆盖未存盘草稿（relpath → 正文），做到所见即所得。
  */
-export function previewRequest(
+export function assembleSystem(
   home: string,
   projectId: string,
   opts: { taskUri?: string; skills?: string; drafts?: Record<string, string> } = {},
-): RequestPreview {
+): AssembledSystem {
   const taskUri = opts.taskUri ?? "";
   const task = taskOf(home, taskUri);
   const { cwd, note } = resolveWorkingDir(home, projectId, taskUri);

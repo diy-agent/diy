@@ -284,9 +284,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return restorePrompt(diyHome(), input.project, input.relpath);
   });
   binding.on(app.template.preview, async ({ input }) => {
-    const { previewRequest } = await import("./prompt-registry");
+    const { assembleSystem } = await import("./prompt-registry");
     const { diyHome } = await import("../core/state");
-    const base = previewRequest(diyHome(), input.project, input);
+    const base = assembleSystem(diyHome(), input.project, input);
     // 有任务场景即附带仿真请求体（走 runTurn 真实组装链，未发送）；无则只渲染文本
     if (!input.taskUri) return { ...base, requestBody: null, requestNote: "无任务场景" };
     const { previewSimulatedRequest } = await import("./local-agent");

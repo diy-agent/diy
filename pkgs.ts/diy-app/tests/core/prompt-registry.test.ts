@@ -9,7 +9,7 @@ import {
   savePrompt,
   restorePrompt,
   renderTemplate,
-  previewRequest,
+  assembleSystem,
   type AssembleVars,
 } from "../../src/main/services/prompt-registry";
 
@@ -93,9 +93,9 @@ describe("renderTemplate", () => {
   });
 });
 
-describe("previewRequest 装配", () => {
+describe("assembleSystem 装配", () => {
   it("按序拼接：identity 裸文本，其余节带标签", () => {
-    const p = previewRequest(home, PID, { taskUri: TASK });
+    const p = assembleSystem(home, PID, { taskUri: TASK });
     expect(p.system.startsWith("你是 diy 管控台的本地 coding agent")).toBe(true);
     expect(p.system).toContain("<diy>");
     expect(p.system).toContain("<project_context>");
@@ -113,26 +113,26 @@ describe("previewRequest 装配", () => {
       `---\ntitle: 绑定验证任务\nstate: pending\n---\n任务正文内容\n`,
       "utf-8",
     );
-    const p = previewRequest(home, PID, { taskUri: TASK });
+    const p = assembleSystem(home, PID, { taskUri: TASK });
     expect(p.system).toContain("绑定验证任务");
     expect(p.system).toContain("任务正文内容");
     // 陷阱回归：tasks/<tid>/AGENTS.md 不得出现在 project_instructions 里
     expect(p.system).not.toContain(`<project_instructions path="${join(home, TASK, "AGENTS.md")}"`);
   });
   it("drafts 未存盘草稿替存盘值（所见即所得）", () => {
-    const p = previewRequest(home, PID, { drafts: { "000-identity.md": "草稿身份 {{diy_cli}}\n" } });
+    const p = assembleSystem(home, PID, { drafts: { "000-identity.md": "草稿身份 {{diy_cli}}\n" } });
     expect(p.system).toContain("草稿身份 /repo/diy.sh");
-    const q = previewRequest(home, PID, {});
+    const q = assembleSystem(home, PID, {});
     expect(q.system).not.toContain("草稿身份");
   });
   it("超预算即报错（不自动截断）", () => {
     const big = "x".repeat(70 * 1024);
-    const p = previewRequest(home, PID, { drafts: { "000-identity.md": big } });
+    const p = assembleSystem(home, PID, { drafts: { "000-identity.md": big } });
     expect(p.overBudget).not.toBeNull();
     expect(p.overBudget!.used).toBeGreaterThan(p.overBudget!.budget);
   });
   it("未知变量上报", () => {
-    const p = previewRequest(home, PID, { drafts: { "400-rules.md": "- {{nope}}\n" } });
+    const p = assembleSystem(home, PID, { drafts: { "400-rules.md": "- {{nope}}\n" } });
     expect(p.unknownVars).toEqual(["nope"]);
   });
 });
