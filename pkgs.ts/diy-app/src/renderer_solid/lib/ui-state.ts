@@ -126,7 +126,7 @@ export const Caches = {
   diy_task_detail_width: field("diy_task_detail_width", {
     parse: (raw) => {
       const v = Number(raw);
-      return v >= 360 && v <= 1000 ? v : null;
+      return v >= 360 && v <= 4000 ? v : null;
     },
     serialize: (v) => String(v),
     defaultValue: 560,

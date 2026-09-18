@@ -5,13 +5,15 @@ import { taskStore, type TaskDetail } from "../store/taskStore";
 import { localChatStore } from "../store/localChatStore";
 import { draftStore } from "../store/draftStore";
 import { diyService } from "../lib/rpc";
+import { getRendererActions } from "../lib/renderer-actions";
 import { Caches } from "../lib/ui-state";
 import { LocalChatPage } from "./LocalChatPage";
 import { MarkdownView } from "./MarkdownView";
 import { CodeBlock } from "./CodeBlock";
 
 const PANEL_W_MIN = 360;
-const PANEL_W_MAX = 1000;
+/** 上限相对窗口：至少给任务树留 200px，避免抽屉吃掉整页 */
+const panelMax = () => Math.max(PANEL_W_MIN + 100, window.innerWidth - 200);
 
 /** 面板宽度（px 固定值，不用百分比；视图 cache：范围校验在字段 parse） */
 function loadPanelWidth(): number {
@@ -98,7 +100,7 @@ export function TaskDetailPanel() {
         e.preventDefault();
         e.stopPropagation();
         const move = (ev: MouseEvent) => {
-            setPanelW(Math.min(PANEL_W_MAX, Math.max(PANEL_W_MIN, window.innerWidth - ev.clientX)));
+            setPanelW(Math.min(panelMax(), Math.max(PANEL_W_MIN, window.innerWidth - ev.clientX)));
         };
         const up = () => {
             window.removeEventListener("mousemove", move);
