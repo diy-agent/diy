@@ -361,6 +361,58 @@ export const apiDef = RpcSchema.router({
         },
       }),
 
+      // —— 提示词模版试验场（spike）：内置只读 + 项目级同路径覆盖 + dry-run 预览 ——
+      template: RpcSchema.group({
+        desc: `提示词模版（内置只读，项目级覆盖；仅构造请求，不发 LLM）`,
+        children: {
+          list: RpcSchema.unary({
+            desc: `列出全部模版（含状态/元数据，供树展示）`,
+            input: {
+              project: z.string().cliArg({ desc: "project id" }),
+            },
+            output: z.array(z.any()),
+          }),
+          get: RpcSchema.unary({
+            desc: `取单份模版（含内置/当前/stale）`,
+            input: {
+              project: z.string().cliArg({ desc: "project id" }),
+              relpath: z.string().cliArg({ desc: "模版相对路径" }),
+            },
+            output: z.any(),
+          }),
+          save: RpcSchema.unary({
+            desc: `保存项目级覆盖（不可覆盖项拒绝）`,
+            input: {
+              project: z.string().cliArg({ desc: "project id" }),
+              relpath: z.string().cliArg({ desc: "模版相对路径" }),
+              content: z.string().cliArg({ desc: "覆盖正文" }),
+            },
+            output: z.any(),
+          }),
+          restore: RpcSchema.unary({
+            desc: `一键恢复（删覆盖，回退内置）`,
+            input: {
+              project: z.string().cliArg({ desc: "project id" }),
+              relpath: z.string().cliArg({ desc: "模版相对路径" }),
+            },
+            output: z.any(),
+          }),
+          preview: RpcSchema.unary({
+            desc: `dry-run 请求预览（只组装不发送）`,
+            input: {
+              project: z.string().cliArg({ desc: "project id" }),
+              taskUri: z.string().optional().cliOption({ desc: "任务 URI（变量渲染用）" }),
+              model: z.string().optional().cliOption({ desc: "模型" }),
+              maxSteps: z.number().optional().cliOption({ desc: "最大步数" }),
+              maxOutputTokens: z.number().optional().cliOption({ desc: "输出上限" }),
+              // 无 CLI 注解：CLI 解析器忽略，RPC 照传（未存盘草稿渲染用）
+              drafts: z.record(z.string(), z.string()).optional().describe("未存盘草稿 relpath→正文"),
+            },
+            output: z.any(),
+          }),
+        },
+      }),
+
       llmProxy: RpcSchema.group({
         desc: `LLM 代理`,
         children: {

@@ -743,3 +743,73 @@ export function getLocalAgent(): LocalAgentManager {
     if (!_manager) _manager = new LocalAgentManager();
     return _manager;
 }
+
+// ─── 仿真预览：走真实组装链、发送前掐断 ─────────────────────────
+
+export interface SimulatedRequest {
+    /** 定稿 HTTP body（request.json 同形）；无任务场景时为 null */
+    body: Record<string, unknown> | null;
+    note: string;
+}
+
+/**
+ * 仿真预览请求：用与 runTurn 完全相同的参数调 streamText，
+ * 经 transformRequestBody 捕获定稿 body 后由 fetch 桩吞掉发送（一字节不出网）。
+ * 保真关键：system/tools/limits/headers 全走真实代码，只在最后一毫米掐断。
+ * 副作用：无（不写审计/日志，工具 execute 永不触发）。
+ */
+export async function previewSimulatedRequest(opts: {
+    taskUri: string;
+    /** 已渲染的 system 全文（调用方经 prompt-registry 模板链得到） */
+    system: string;
+    model?: string;
+    /** 历史消息；缺省空 = turn-001 */
+    messages?: ModelMessage[];
+}): Promise<SimulatedRequest> {
+    if (!opts.taskUri) {
+        return { body: null, note: "无任务场景：仅渲染 system 文本" };
+    }
+    const taskUri = opts.taskUri;
+    const model = opts.model || DEFAULT_MODEL;
+    const cwd = resolveCwd(taskUri);
+    const L = getLocalAgent().getLimits();
+    const modelMax = modelOutputTokens(model);
+    let body: Record<string, unknown> | null = null;
+    // 独立 provider 实例：单例的不带钩子，不能动
+    const simProvider = createOpenAICompatible({
+        name: "preview-sim",
+        baseURL: "http://127.0.0.1:1/unreachable",
+        apiKey: "preview-no-key",
+        transformRequestBody: (args) => {
+            body = args as Record<string, unknown>;
+            return args;
+        },
+        // fetch 桩：body 已在 hook 里捕获，这里吞掉发送（连错误都不抛给外层看）
+        fetch: (async () =>
+            new Response(JSON.stringify({ choices: [] }), { status: 200 })) as typeof fetch,
+    });
+    // ai-sdk 要求 messages 非空；预览无真实用户输入时用占位（body 如实标注，不冒充首轮）
+    const messages: ModelMessage[] = opts.messages?.length
+        ? opts.messages
+        : [{ role: "user", content: "[仿真占位]真实首轮此处为用户输入" }];
+    try {
+        const result = streamText({
+            model: simProvider.chatModel(model),
+            system: opts.system,
+            messages,
+            tools: buildTools(cwd, L, taskUri),
+            stopWhen: stepCountIs(L.maxSteps),
+            headers: { "x-opencode-session": sessionIdOf(taskUri) },
+            maxOutputTokens: modelMax,
+            maxRetries: 0,
+        });
+        // 消费流以触发 doStream；桩响应的解析错误在捕获之后，随它去（不读内容）
+        for await (const part of result.fullStream) void part;
+    } catch {
+        /* 预期内：桩响应非法，body 已到手 */
+    }
+    if (!body) {
+        return { body: null, note: "仿真未触达组装（SDK 行为变更？）" };
+    }
+    return { body, note: "dry-run：与真发同一条组装链，fetch 桩拦截未发送" };
+}

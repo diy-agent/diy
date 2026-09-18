@@ -262,6 +262,42 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return getLocalAgent().getLimits();
   });
 
+  // ── template（提示词模版试验场 spike）──
+  binding.on(app.template.list, async ({ input }) => {
+    const { listPrompts } = await import("./prompt-registry");
+    const { diyHome } = await import("../core/state");
+    return listPrompts(diyHome(), input.project);
+  });
+  binding.on(app.template.get, async ({ input }) => {
+    const { getPrompt } = await import("./prompt-registry");
+    const { diyHome } = await import("../core/state");
+    return getPrompt(diyHome(), input.project, input.relpath);
+  });
+  binding.on(app.template.save, async ({ input }) => {
+    const { savePrompt } = await import("./prompt-registry");
+    const { diyHome } = await import("../core/state");
+    return savePrompt(diyHome(), input.project, input.relpath, input.content);
+  });
+  binding.on(app.template.restore, async ({ input }) => {
+    const { restorePrompt } = await import("./prompt-registry");
+    const { diyHome } = await import("../core/state");
+    return restorePrompt(diyHome(), input.project, input.relpath);
+  });
+  binding.on(app.template.preview, async ({ input }) => {
+    const { previewRequest } = await import("./prompt-registry");
+    const { diyHome } = await import("../core/state");
+    const base = previewRequest(diyHome(), input.project, input);
+    // 有任务场景即附带仿真请求体（走 runTurn 真实组装链，未发送）；无则只渲染文本
+    if (!input.taskUri) return { ...base, requestBody: null, requestNote: "无任务场景" };
+    const { previewSimulatedRequest } = await import("./local-agent");
+    const sim = await previewSimulatedRequest({
+      taskUri: input.taskUri,
+      system: base.system,
+      model: input.model,
+    });
+    return { ...base, requestBody: sim.body, requestNote: sim.note };
+  });
+
   // ── llmProxy ──
   binding.on(app.llmProxy.status, async () => {
     const proxy = await getLlmProxy();
