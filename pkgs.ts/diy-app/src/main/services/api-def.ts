@@ -18,6 +18,7 @@
 
 import { RpcSchema } from "@diy/rpc";
 import { z } from "zod";
+import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-schema";
 
 // 任务状态枚举 — 单一真相源 task-state.ts（纯 zod，无 Node 依赖，浏览器安全） */
 import { TaskStateSchema } from "../core/task-state";
@@ -370,7 +371,7 @@ export const apiDef = RpcSchema.router({
             input: {
               project: z.string().cliArg({ desc: "project id" }),
             },
-            output: z.array(z.any()),
+            output: z.array(PromptEntrySchema),
           }),
           get: RpcSchema.unary({
             desc: `取单份模版（含内置/当前/stale）`,
@@ -378,7 +379,7 @@ export const apiDef = RpcSchema.router({
               project: z.string().cliArg({ desc: "project id" }),
               relpath: z.string().cliArg({ desc: "模版相对路径" }),
             },
-            output: z.any(),
+            output: PromptEntrySchema,
           }),
           save: RpcSchema.unary({
             desc: `保存项目级覆盖（不可覆盖项拒绝）`,
@@ -387,7 +388,7 @@ export const apiDef = RpcSchema.router({
               relpath: z.string().cliArg({ desc: "模版相对路径" }),
               content: z.string().cliArg({ desc: "覆盖正文" }),
             },
-            output: z.any(),
+            output: PromptEntrySchema,
           }),
           restore: RpcSchema.unary({
             desc: `一键恢复（删覆盖，回退内置）`,
@@ -395,17 +396,18 @@ export const apiDef = RpcSchema.router({
               project: z.string().cliArg({ desc: "project id" }),
               relpath: z.string().cliArg({ desc: "模版相对路径" }),
             },
-            output: z.any(),
+            output: PromptEntrySchema,
           }),
           preview: RpcSchema.unary({
             desc: `dry-run 预览：装配系统上下文 + 仿真请求体（只组装不发送）`,
             input: {
               project: z.string().cliArg({ desc: "project id" }),
-              taskUri: z.string().optional().cliOption({ desc: "任务 URI（任务场景与工作目录从它推）" }),
+              taskUri: z.string().optional().cliOption({ desc: "任务 URI（任务场景与工作目录从它推，并以其 project 为准）" }),
+              model: z.string().optional().cliOption({ desc: `模型 id（缺省 mimo-v2.5；应传会话实际选中的模型才算保真）` }),
               // 无 CLI 注解：CLI 解析器忽略，RPC 照传（未存盘草稿渲染用）
               drafts: z.record(z.string(), z.string()).optional().describe("未存盘草稿 relpath→正文"),
             },
-            output: z.any(),
+            output: RequestPreviewSchema,
           }),
         },
       }),

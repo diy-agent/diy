@@ -285,12 +285,22 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
   binding.on(app.template.preview, async ({ input }) => {
     const { assembleSystem } = await import("./prompt-registry");
-    const { diyHome } = await import("../core/state");
-    const base = assembleSystem(diyHome(), input.project, input);
-    // 有任务场景即附带仿真请求体（走 runTurn 真实组装链，未发送）；无则只渲染文本
-    if (!input.taskUri) return { ...base, requestBody: null, requestNote: "无任务场景" };
+    const { diyHome, projectFromUri } = await import("../core/state");
+    const { contextLimitOf, DEFAULT_MODEL } = await import("./local-agent");
+    // project 以 taskUri 为准：两者指向不同项目时（只有 CLI 能造成）system 与 tools/cwd 会错配
+    const project = input.taskUri ? projectFromUri(input.taskUri) || input.project : input.project;
+    const base = assembleSystem(diyHome(), project, {
+      taskUri: input.taskUri,
+      drafts: input.drafts,
+      // 预算随预览模型变（与真发同一套推导）
+      contextLimitTokens: contextLimitOf(input.model || DEFAULT_MODEL),
+    });
+    // 无任务场景：只渲染文本
+    if (!input.taskUri) {
+      return { ...base, requestBody: null, requestNote: "无任务场景：仅渲染 system 文本" };
+    }
     const { previewSimulatedRequest } = await import("./local-agent");
-    const sim = await previewSimulatedRequest({ taskUri: input.taskUri, system: base.system });
+    const sim = await previewSimulatedRequest({ taskUri: input.taskUri, system: base.system, model: input.model });
     return { ...base, requestBody: sim.body, requestNote: sim.note };
   });
 

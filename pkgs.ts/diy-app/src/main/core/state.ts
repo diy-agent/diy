@@ -111,11 +111,10 @@ export function taskFilePath(uri: string): string {
   return join(taskDir(uri), "AGENTS.md");
 }
 
-/** 从任务 URI 推导所属 project id：projects/<pid>/tasks/<tid> */
-export function projectFromUri(uri: string): string {
-  const m = uri.match(/^projects\/([^/]+)\/tasks\//);
-  return m?.[1] ?? "";
-}
+/** 从任务 URI 推导所属 project id：projects/<pid>/tasks/<tid>
+ *  实现在 shared/task-uri.ts（renderer 也用它，两份正则口径曾不一致）。 */
+import { projectFromUri } from "../../shared/task-uri";
+export { projectFromUri };
 
 // ═══════════════════════════════════════
 // state.yaml 读写
