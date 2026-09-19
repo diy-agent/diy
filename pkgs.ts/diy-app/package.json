@@ -19,6 +19,7 @@
     "@codemirror/state": "^6.7.5",
     "@codemirror/view": "^6.43.12",
     "@diy/rpc": "^0.1.0",
+    "@diy/template": "^0.1.0",
     "@dnd-kit/solid": "^0.5.0",
     "@fastify/cors": "^11.2.0",
     "@fastify/http-proxy": "^11.5.0",

@@ -1,8 +1,17 @@
 {
   "files": [],
   "references": [
-    { "path": "pkgs.ts/diy-rpc" },
-    { "path": "pkgs.ts/diy-app" },
-    { "path": "pkgs.ts/diy-dev" }
+    {
+      "path": "pkgs.ts/diy-template"
+    },
+    {
+      "path": "pkgs.ts/diy-rpc"
+    },
+    {
+      "path": "pkgs.ts/diy-app"
+    },
+    {
+      "path": "pkgs.ts/diy-dev"
+    }
   ]
 }
