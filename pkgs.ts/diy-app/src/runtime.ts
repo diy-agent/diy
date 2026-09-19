@@ -22,7 +22,9 @@ import { join } from "node:path";
 export interface RuntimeConfig {
   /** 数据根（state/task/app.port） */
   home: string;
-  /** 首选端口（入口注入；无则不固定，由 app.port 文件 / 兜底决定） */
+  /** 当前生效的 CLI 入口绝对路径（入口脚本注入；提示词模版 100-diy 消费） */
+  cli?: string;
+  /** 首选端口（入口注入；缺省时不固定，由 app.port 文件 / 兜底决定） */
   port?: number;
   /** dev 时 GUI 加载的 Vite URL */
   devServerUrl?: string;
@@ -36,6 +38,7 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   const port = portRaw !== undefined && portRaw !== "" ? Number(portRaw) : undefined;
   return {
     home,
+    cli: env.DIY_CLI || undefined,
     port: port !== undefined && Number.isFinite(port) ? port : undefined,
     devServerUrl: env.DIY_DEV_SERVER_URL || undefined,
     noLaunch: env.DIY_NO_LAUNCH === "1",

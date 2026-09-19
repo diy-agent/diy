@@ -23,61 +23,51 @@ import {
     writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { diyHome, projectFromUri, taskDir } from "../core/state";
-import { getProjectPath } from "../core/project";
+import { diyHome, projectFromUri } from "../core/state";
+import { resolveCwd as resolveCwdWithNote } from "../core/cwd";
 import { BlockStore, blocksToMessages, interruptedToolPatches, type Op, type JSONVal } from "./local-blocks";
 import { collectSelfInfo, judgeSelfKill, selfKillNotice } from "./agent-guard";
 import { appendAudit } from "./agent-audit";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
 import { assembleSystem } from "./prompt-registry";
 
-const DEFAULT_MODEL = "mimo-v2.5";
+export const DEFAULT_MODEL = "mimo-v2.5";
 
 /**
  * 可选模型：zen/go 的 OpenAI-completions 子集（2026-09-12 实查 /models + models.dev 价格）
  * 价格单位为 $/1M tokens：input / output（cacheRead）
  */
 export const LOCAL_MODELS = [
-    // maxOutputTokens 来源：models.dev/api.json limit.output（2026-09 实查）
-    { id: "mimo-v2.5", name: "MiMo V2.5", maxOutputTokens: 128000 }, // 0.14 / 0.28 (0.0028)
-    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", maxOutputTokens: 384000 }, // 0.15 / 0.60 (0.003)
-    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", maxOutputTokens: 384000 }, // 0.15 / 0.60 (0.003)
-    { id: "glm-5.3-flash", name: "GLM-5.3 Flash", maxOutputTokens: 131072 }, // 0.15 / 0.50 (0.03)
-    { id: "qwen3.8-flash", name: "Qwen3.8 Flash", maxOutputTokens: 131072 }, // 0.15 / 0.47 (0.016)
-    { id: "hy3", name: "Hy3", maxOutputTokens: 128000 }, // 0.14 / 0.58 (0.035)
-    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", maxOutputTokens: 128000 }, // 0.20 / 1.20 (0.02)
-    { id: "minimax-m3", name: "MiniMax M3", maxOutputTokens: 131072 }, // 0.30 / 1.20 (0.06)
-    { id: "minimax-m2.7", name: "MiniMax M2.7", maxOutputTokens: 131072 }, // 0.30 / 1.20 (0.06)
-    { id: "longcat-2.0", name: "LongCat-2.0", maxOutputTokens: 131072 }, // 0.30 / 1.20 (0.006)
-    { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro", maxOutputTokens: 128000 }, // 0.435 / 0.87 (0.003625)
-    { id: "qwen3.7-plus", name: "Qwen3.7 Plus", maxOutputTokens: 65536 }, // 0.40 / 1.60 (0.04)
-    { id: "glm-5.3", name: "GLM-5.3", maxOutputTokens: 131072 }, // 1.40 / 4.40 (0.26)
-    { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", maxOutputTokens: 262144 }, // 0.95 / 4.00 (0.19)
-    { id: "muse-spark-1.2-contributor", name: "Muse Spark 1.2 Contributor (opencode-go)", maxOutputTokens: 131072 }, // 0.10 / 0.20
-    { id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor (opencode-go)", maxOutputTokens: 131072 }, // 0.10 / 0.20
+    // maxOutputTokens / contextLimit 来源：models.dev/api.json 的 limit.output / limit.context（2026-09 实查，
+    // 取 opencode-go 或同名模型主 provider 的值）。contextLimit 用于推导系统上下文预算（见 prompt-registry）。
+    { id: "mimo-v2.5", name: "MiMo V2.5", contextLimit: 1048576, maxOutputTokens: 128000 }, // 0.14 / 0.28 (0.0028)
+    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", contextLimit: 1000000, maxOutputTokens: 384000 }, // 0.15 / 0.60 (0.003)
+    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", contextLimit: 1000000, maxOutputTokens: 384000 }, // 0.15 / 0.60 (0.003)
+    { id: "glm-5.3-flash", name: "GLM-5.3 Flash", contextLimit: 1000000, maxOutputTokens: 131072 }, // 0.15 / 0.50 (0.03)
+    { id: "qwen3.8-flash", name: "Qwen3.8 Flash", contextLimit: 1000000, maxOutputTokens: 131072 }, // 0.15 / 0.47 (0.016)
+    { id: "hy3", name: "Hy3", contextLimit: 256000, maxOutputTokens: 128000 }, // 0.14 / 0.58 (0.035)
+    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", contextLimit: 1050000, maxOutputTokens: 128000 }, // 0.20 / 1.20 (0.02)
+    { id: "minimax-m3", name: "MiniMax M3", contextLimit: 512000, maxOutputTokens: 131072 }, // 0.30 / 1.20 (0.06)
+    { id: "minimax-m2.7", name: "MiniMax M2.7", contextLimit: 204800, maxOutputTokens: 131072 }, // 0.30 / 1.20 (0.06)
+    { id: "longcat-2.0", name: "LongCat-2.0", contextLimit: 1048756, maxOutputTokens: 131072 }, // 0.30 / 1.20 (0.006)
+    { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro", contextLimit: 1048576, maxOutputTokens: 128000 }, // 0.435 / 0.87 (0.003625)
+    { id: "qwen3.7-plus", name: "Qwen3.7 Plus", contextLimit: 1000000, maxOutputTokens: 65536 }, // 0.40 / 1.60 (0.04)
+    { id: "glm-5.3", name: "GLM-5.3", contextLimit: 1000000, maxOutputTokens: 131072 }, // 1.40 / 4.40 (0.26)
+    { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", contextLimit: 262144, maxOutputTokens: 262144 }, // 0.95 / 4.00 (0.19)
+    { id: "muse-spark-1.2-contributor", name: "Muse Spark 1.2 Contributor (opencode-go)", contextLimit: 1048576, maxOutputTokens: 131072 }, // 0.10 / 0.20
+    { id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor (opencode-go)", contextLimit: 1048576, maxOutputTokens: 131072 }, // 0.10 / 0.20
 ];
+
+/** 按 model id 查上下文窗口（tokens）；未知返回 undefined（预算回退到硬上限） */
+export function contextLimitOf(modelId: string): number | undefined {
+    return LOCAL_MODELS.find(m => m.id === modelId)?.contextLimit;
+}
 
 /** 按 model id 查 maxOutputTokens，fallback 到全局 limits */
 function modelOutputTokens(modelId: string): number {
     return LOCAL_MODELS.find(m => m.id === modelId)?.maxOutputTokens ?? DEFAULT_LIMITS.maxOutputTokens;
 }
 
-/** 工具 cwd 解析：project 路径 → task 目录 → 进程 cwd，逐级存在性校验（~ 展开） */
-function resolveCwd(taskUri: string): string {
-    const raw = getProjectPath(projectFromUri(taskUri));
-    const candidates = [raw, taskDir(taskUri), process.cwd()];
-    for (const c of candidates) {
-        if (!c) continue;
-        const p = c.startsWith("~/") ? join(process.env.HOME ?? "", c.slice(2)) : c;
-        try {
-            if (existsSync(p)) return p;
-        } catch (e) {
-            // 无效路径回退可接受，但要留痕（如权限/非法字符导致 stat 抛错）
-            console.warn(`[local-agent] cwd 候选探测失败 ${p}:`, e);
-        }
-    }
-    return process.cwd();
-}
 
 // ─── 运行限制配置（默认值 < $DIY_HOME/local/limits.json < 环境变量 DIY_LOCAL_*）──
 export interface LocalAgentLimits {
@@ -443,12 +433,13 @@ export class LocalAgentManager {
         }
         const turnId = `t${Date.now()}`;
         const uid = `${turnId}_u`;
-        noteTurnStart({ taskUri, model: model || DEFAULT_MODEL, cwd: resolveCwd(taskUri) });
+        const cwd0 = resolveCwdWithNote(diyHome(), taskUri).cwd;
+        noteTurnStart({ taskUri, model: model || DEFAULT_MODEL, cwd: cwd0 });
         appendAudit(diyHome(), {
             phase: "turn-start",
             taskUri,
             model: model || DEFAULT_MODEL,
-            cwd: resolveCwd(taskUri),
+            cwd: cwd0,
             command: message.slice(0, 300),
         });
         // emission 即落盘：yield 前先过 sink，消费端断开也不丢尾
@@ -479,8 +470,39 @@ export class LocalAgentManager {
             yield* emit({ op: "delta", id, fields: { message: text } });
             yield* emit({ op: "stop", id });
         };
+        // part id → 块 id（think/text）；tool 块直接用 toolCallId
+        const partBlock = new Map<string, string>();
+        let stepId = turnId;
+        let stepN = 0;
+        let rN = 0;
+        let aN = 0;
+        // turn 级 usage 累加器（finish-step 逐轮累加；finish 到达时覆盖为权威值）
+        const acc = { in: 0, out: 0, total: 0 };
+        let turnStopped = false;
+        // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
+        let lastAct: "none" | "text" | "tool" = "none";
+
+        /** 收尾必闭合（幂等）：step 先于 turn，摘掉活跃轮次并落 turn-end 审计。
+         *  抽成生成器是为了让「超预算早退」也走同一套收尾 —— 历史 bug：早退的 return 在 try 之前，
+         *  绕过 finally → activeTurns 留僵尸轮次、落盘 ops 缺 turn 的 stop、审计缺 turn-end。 */
+        const closeTurn = function* (currentStepId: string, stopped: boolean, steps: number): Generator<Op, void, void> {
+            if (currentStepId !== turnId) yield* emit({ op: "stop", id: currentStepId });
+            if (!stopped) yield* emit({ op: "stop", id: turnId });
+            noteTurnEnd(taskUri);
+            appendAudit(diyHome(), {
+                phase: "turn-end",
+                taskUri,
+                model: model || DEFAULT_MODEL,
+                result: `steps=${steps} usage=${acc.in}/${acc.out}`,
+            });
+        };
+
         // 系统上下文：分节装配（身份/自述/项目规范/任务/规则/护栏）——与试验场预览同一入口
-        const asm = assembleSystem(diyHome(), projectFromUri(taskUri), { taskUri });
+        const asm = assembleSystem(diyHome(), projectFromUri(taskUri), {
+            taskUri,
+            // 预算与当前模型的上下文窗口挂钩（小窗口模型拿更小预算，大窗口封顶 64KB）
+            contextLimitTokens: contextLimitOf(model || DEFAULT_MODEL),
+        });
         if (asm.overBudget) {
             const kb = (n: number) => (n / 1024).toFixed(1);
             yield* errorBlock(
@@ -488,10 +510,12 @@ export class LocalAgentManager {
                 `系统上下文超出预算（${kb(asm.overBudget.used)} KB > ${kb(asm.overBudget.budget)} KB），本轮未发送。` +
                     `请精简提示词模版或项目 AGENTS.md。`,
             );
+            // 拒绝发送也是一轮完整生命周期：必须闭合，否则 UI/崩溃报告/审计三处都会认为它还在跑
+            yield* closeTurn(stepId, false, stepN);
             return;
         }
 
-        const cwd = resolveCwd(taskUri);
+        const cwd = cwd0;
         const L = this.getLimits();
         const modelMax = modelOutputTokens(model || DEFAULT_MODEL);
         // store 此刻已含本轮 user 块（emit 即 apply）；重建历史自带 user，不再手工拼
@@ -527,18 +551,6 @@ export class LocalAgentManager {
             maxOutputTokens: modelMax, // 按模型硬上限（models.dev），reasoning 模型会先吃一部分
             maxRetries: 2,
         });
-
-        // part id → 块 id（think/text）；tool 块直接用 toolCallId
-        const partBlock = new Map<string, string>();
-        let stepId = turnId;
-        let stepN = 0;
-        let rN = 0;
-        let aN = 0;
-        // turn 级 usage 累加器（finish-step 逐轮累加；finish 到达时覆盖为权威值）
-        const acc = { in: 0, out: 0, total: 0 };
-        let turnStopped = false;
-        // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
-        let lastAct: "none" | "text" | "tool" = "none";
 
         try {
             for await (const part of result.fullStream) {
@@ -726,17 +738,9 @@ export class LocalAgentManager {
             if (signal.aborted) yield* errorBlock("abort", "生成已取消");
             else yield* errorBlock("stream", errText(e));
         } finally {
-            // 收尾必闭合：step 先于 turn（stop 幂等，重复无害）
-            if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
-            if (!turnStopped) yield* emit({ op: "stop", id: turnId });
-            noteTurnEnd(taskUri);
+            // 收尾必闭合：step 先于 turn（stop 幂等，重复无害）；
             // 轮次审计收尾：崩溃后能区分"死在生成中"还是"生成已结束"
-            appendAudit(diyHome(), {
-                phase: "turn-end",
-                taskUri,
-                model: model || DEFAULT_MODEL,
-                result: `steps=${stepN} usage=${acc.in}/${acc.out}`,
-            });
+            yield* closeTurn(stepId, turnStopped, stepN);
         }
     }
 }
@@ -750,6 +754,59 @@ export function getLocalAgent(): LocalAgentManager {
 
 // ─── 仿真预览：走真实组装链、发送前掐断 ─────────────────────────
 
+/** 预览专用 provider（单例复用）：带 transformRequestBody 钩子的实例不能直接用业务单例，
+ *  但也不必每次预览新建一个 —— 进程内复用一个即可。 */
+let simProviderCache: ReturnType<typeof createOpenAICompatible> | null = null;
+/** 当前在飞预览的 body 收集器（单飞即可：试验场防抖 300ms，重叠时后一次覆盖前一次） */
+let simBodySink: ((b: Record<string, unknown>) => void) | null = null;
+
+function getSimProvider(model: string): ReturnType<typeof createOpenAICompatible> {
+    if (simProviderCache) return simProviderCache;
+    simProviderCache = createOpenAICompatible({
+        name: "preview-sim",
+        baseURL: "http://127.0.0.1:1/unreachable",
+        apiKey: "preview-no-key",
+        transformRequestBody: (args) => {
+            simBodySink?.(args as Record<string, unknown>);
+            return args;
+        },
+        // fetch 桩：body 已在 hook 里捕获，这里回一段合法 SSE 把流干干净净收尾
+        // （比 throw 更好：不打印 SDK 错误，dry-run 的「零副作用」才成立）
+        fetch: (async () => {
+            const sse = [
+                `data: ${JSON.stringify({
+                    id: "preview-sim",
+                    object: "chat.completion.chunk",
+                    created: Math.floor(Date.now() / 1000),
+                    model,
+                    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                })}\n\n`,
+                "data: [DONE]\n\n",
+            ].join("");
+            return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+        }) as typeof fetch,
+    });
+    return simProviderCache;
+}
+
+/** 预览包含的历史消息上限：**0 = 全量**（当前取值，让日常使用直接暴露真实数据量；
+ *  想省内存/渲染时间就改成正数，例如 40 —— note 会自动标注「截尾」）。 */
+const PREVIEW_HISTORY_MAX = 0;
+
+/** 上次真发落盘的 messages（llm.jsonl 就是 blocksToMessages 的转储）；无日志/解析失败则空 */
+function historyFromLog(taskUri: string, maxMessages: number): { messages: ModelMessage[]; total: number } {
+    try {
+        const fp = llmFile(taskUri);
+        if (!existsSync(fp)) return { messages: [], total: 0 };
+        const lines = readFileSync(fp, "utf-8").split("\n").filter((l) => l.trim() !== "");
+        const tail = maxMessages > 0 ? lines.slice(-maxMessages) : lines;
+        return { messages: tail.map((l) => JSON.parse(l) as ModelMessage), total: lines.length };
+    } catch (e) {
+        console.warn(`[local-agent] 预览历史读取失败 ${taskUri}:`, e);
+        return { messages: [], total: 0 };
+    }
+}
+
 export interface SimulatedRequest {
     /** 定稿 HTTP body（request.json 同形）；无任务场景时为 null */
     body: Record<string, unknown> | null;
@@ -759,15 +816,17 @@ export interface SimulatedRequest {
 /**
  * 仿真预览请求：用与 runTurn 完全相同的参数调 streamText，
  * 经 transformRequestBody 捕获定稿 body 后由 fetch 桩吞掉发送（一字节不出网）。
- * 保真关键：system/tools/limits/headers 全走真实代码，只在最后一毫米掐断。
- * 副作用：无（不写审计/日志，工具 execute 永不触发）。
+ * 保真关键：system/tools/limits/headers/messages 都走真实数据，只在最后一毫米掐断。
+ * - messages：缺省从任务的真实 LLM 日志（上次真发的那份）取历史，末尾补一条占位 user —— 这才是「下一轮会发出的请求」。
+ * - 无副作用：不写审计/日志，工具 execute 永不触发；桩返回**合法 SSE**，连 SDK 的 console.error 都不产生。
  */
 export async function previewSimulatedRequest(opts: {
     taskUri: string;
     /** 已渲染的 system 全文（调用方经 prompt-registry 模板链得到） */
     system: string;
+    /** 模型 id；缺省 DEFAULT_MODEL。试验场传当前会话选中的模型才算「真发的」 */
     model?: string;
-    /** 历史消息；缺省空 = turn-001 */
+    /** 历史消息；缺省 = 读任务 LLM 日志（无日志则仅占位，即首轮形态） */
     messages?: ModelMessage[];
 }): Promise<SimulatedRequest> {
     if (!opts.taskUri) {
@@ -775,27 +834,23 @@ export async function previewSimulatedRequest(opts: {
     }
     const taskUri = opts.taskUri;
     const model = opts.model || DEFAULT_MODEL;
-    const cwd = resolveCwd(taskUri);
+    const cwd = resolveCwdWithNote(diyHome(), taskUri).cwd;
     const L = getLocalAgent().getLimits();
     const modelMax = modelOutputTokens(model);
+    // 历史：优先用调用方传的，否则读上次真发落盘的 llm 日志（上限见 PREVIEW_HISTORY_MAX）
+    const hist = opts.messages?.length
+        ? { messages: opts.messages, total: opts.messages.length }
+        : historyFromLog(taskUri, PREVIEW_HISTORY_MAX);
+    const messages: ModelMessage[] = [
+        ...hist.messages,
+        { role: "user", content: "[仿真占位]真实下一轮此处为用户输入" },
+    ];
     let body: Record<string, unknown> | null = null;
-    // 独立 provider 实例：单例的不带钩子，不能动
-    const simProvider = createOpenAICompatible({
-        name: "preview-sim",
-        baseURL: "http://127.0.0.1:1/unreachable",
-        apiKey: "preview-no-key",
-        transformRequestBody: (args) => {
-            body = args as Record<string, unknown>;
-            return args;
-        },
-        // fetch 桩：body 已在 hook 里捕获，这里吞掉发送（连错误都不抛给外层看）
-        fetch: (async () =>
-            new Response(JSON.stringify({ choices: [] }), { status: 200 })) as typeof fetch,
-    });
-    // ai-sdk 要求 messages 非空；预览无真实用户输入时用占位（body 如实标注，不冒充首轮）
-    const messages: ModelMessage[] = opts.messages?.length
-        ? opts.messages
-        : [{ role: "user", content: "[仿真占位]真实首轮此处为用户输入" }];
+    simBodySink = (b) => {
+        body = b;
+    };
+    const simProvider = getSimProvider(model);
+    // 桩响应合法时不会走 catch；以下 catch 只为兼容 SDK 行为变化（body 已到手就算成功）
     try {
         const result = streamText({
             model: simProvider.chatModel(model),
@@ -807,13 +862,20 @@ export async function previewSimulatedRequest(opts: {
             maxOutputTokens: modelMax,
             maxRetries: 0,
         });
-        // 消费流以触发 doStream；桩响应的解析错误在捕获之后，随它去（不读内容）
         for await (const part of result.fullStream) void part;
     } catch {
-        /* 预期内：桩响应非法，body 已到手 */
+        /* 预期内：SDK 行为变化时仍可能抛，body 已到手就继续 */
+    } finally {
+        simBodySink = null;
     }
     if (!body) {
         return { body: null, note: "仿真未触达组装（SDK 行为变更？）" };
     }
-    return { body, note: "dry-run：与真发同一条组装链，fetch 桩拦截未发送" };
+    const histNote =
+        hist.messages.length === 0
+            ? "无历史：首轮形态"
+            : hist.total > hist.messages.length
+              ? `含历史 ${hist.messages.length}/${hist.total} 条（截尾；取自上次真发日志）`
+              : `含历史 ${hist.total} 条（全量，取自上次真发日志）`;
+    return { body, note: `dry-run：与真发同一条组装链，${histNote}；fetch 桩拦截未发送` };
 }

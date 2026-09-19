@@ -58,6 +58,13 @@ let httpPort = 0;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // dev GUI 加载 URL 由入口注入（electron-dev.mts），缺省 → loadFile 编译产物
+// 打包后的 app 没有自带 CLI 入口：electron-builder 只打 out/**（asar 内不可直接执行），bin/diy 也不在 files 里；
+// 生产用法的 CLI 是用户全局安装的 diy（PATH 解析）。这里显式声明成 "diy"，
+// 而不是让 prompt-registry 走「未注入」告警分支（那条告警只对 dev/worktree 有意义：那里裸 diy 会打到 ~/.diy）。
+if (app.isPackaged && !process.env["DIY_CLI"]) {
+  process.env["DIY_CLI"] = "diy";
+  console.log('[runtime] 打包模式未注入 DIY_CLI：显式回落为 PATH 上的 "diy"');
+}
 const cfg = readRuntimeConfig();
 const devUrlArg = cfg.devServerUrl ?? "";
 const isDev = !!devUrlArg;
