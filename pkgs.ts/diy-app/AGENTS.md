@@ -6,6 +6,22 @@
 
 - **无 electron-vite**，直接使用 Vite 8 三独立配置（main / preload / renderer）
 - `scripts/electron-dev.mts` 自有开发编排，不依赖 electron-vite 封装
+- **类型检查绝不 emit**（`tsconfig.json` 的 `noEmit: true`，唯一入口 `./sha.sh check`）：
+  tsconfig 的 `include` 覆盖 src/scripts/tests，一旦 emit，`.js/.jsx/.d.ts` 会**落在源码旁边**；
+  而 vite/vitest 的 `resolve.extensions` 里 `.js/.jsx` 排在 `.ts/.tsx` 之前 → dev/构建/单测
+  全部静默加载旧产物（症状：改了源码没反应、单测测的是产物、`git add -A` 把产物收进仓库）。
+  实测过的触发方式：裸 `npx tsc`、IDE 的 TS emit；护栏 = 各包 `noEmit: true` +
+  根 `.gitignore` 的 `pkgs.ts/**/*.{js,jsx,mjs,cjs,d.ts}`（新增包自动覆盖，无需逐包配）。
+  判断当前在跑什么：`curl -s localhost:5173/App.tsx | grep -o '"/components/[^"]*"'`
+  （dev 下 App 是 `.tsx`、子组件如果出现 `.jsx` 就是产物在跑）。
+- **改 `src/**` 会触发 dev watch 重启 Electron**（main/preload 都是 watch 构建）：
+  正在跑的本机 agent 轮次会被打断（表现为 ops 里 tool 被标 `interrupted`）。
+  想改文件同时不打断自己的轮次，就先把轮次跑完；别在轮次中拿源码当探针文件。
+- **dev 会话运行中，不要再并发跑 `tsc -b` / `vite build` / 全量 vitest**：会与 watcher 抢同一
+  `outDir` 并制造海量 FS 事件（尤其批量删产物），实测能让 watcher 卡死。
+  判断 watcher 死活：改一个 `src/main/**` 文件，看 `out/main/index.mjs` 的 mtime 是否变；
+  不变就只能重启 `./sha.sh dev`。注：删文件/删目录本身不会让 watcher 停（已实测：补回同名文件即恢复），
+  删 `out/` 也不影响（输出目录不在监听范围）。
 
 ### 开发参数
 
@@ -22,16 +38,21 @@
 
 | 入口 | 场景 | 跑什么 | 注入 |
 |------|------|--------|------|
-| `./diy.sh`（仓库根） | worktree 开发/测试 | `tsx src/cli/index.ts` | `DIY_HOME=./build/home`、`DIY_APP_ROOT=pkgs.ts/diy-app` |
-| `bin/diy` | 发布后（npm 全局/PATH） | `node out/cli/index.js` | `DIY_HOME=~/.diy`、`DIY_APP_ROOT=<自定位包根>` |
+| `./diy.sh`（仓库根） | worktree 开发/测试 | `tsx src/cli/index.ts` | `DIY_HOME=./build/home`、`DIY_APP_ROOT=pkgs.ts/diy-app`、`DIY_CLI=<仓库根>/diy.sh` |
+| `bin/diy` | 发布后（npm 全局/PATH） | `node out/cli/index.js` | `DIY_HOME=~/.diy`、`DIY_APP_ROOT=<自定位包根>`、`DIY_CLI=$0` |
+| `scripts/electron-dev.mts` | dev 拉起 GUI | `out/main/index.mjs` | `DIY_HOME`、`DIY_CLI=<仓库根>/diy.sh`、`DIY_DEV_SERVER_URL`、`DIY_MIRROR_DISPLAY` |
 
 环境变量契约（`src/runtime.ts`）：
 
 | 变量 | 含义 | 缺省 |
 |------|------|------|
 | `DIY_HOME` | 数据根（state/task/**app.port**） | `~/.diy` |
+| `DIY_CLI` | 当前生效的 CLI 入口绝对路径（提示词模版 100-diy 消费） | 无 → 提示词里告警（**不静默冒充 `diy`**） |
 | `DIY_PORT` | 首选端口；测试注入 `0`（随机） | 无 → app.port 文件 → 兜底 18888 |
 | `DIY_DEV_SERVER_URL` | dev GUI 加载 Vite URL（`electron-dev.mts` 注入） | 无 → loadFile 产物 |
+
+三个入口都必须注入 `DIY_CLI`：漏一个就会出现“GUI 拉起的会话告诉模型敲裸 `diy`”，
+在 worktree 里会打到生产数据根（`~/.diy`）。
 
 端口优先级：`DIY_PORT` > `app.port` 文件（上次实例） > 18888。
 
@@ -101,6 +122,40 @@ $DIY_HOME/projects/<pid>/tasks/<tid>/
 - ✅ 自定义色用 `diy-` 前缀，在 `@theme inline` 块末尾追加（例 `--color-diy-state-pending` → `bg-diy-state-pending`）
 - ⚠️ **主题不得回落到 `prefers-color-scheme`** —— Playwright 的 `colorScheme` 默认值是 `"light"`，attach CDP 时会覆盖系统外观把界面刷白（实测 `renderer_solid/index.css` 的 `dark --prefersdark` 会让 CDP attach 后界面闪白）；应改成 `dark --default` 或用 `data-theme` 显式锁定
 - 注意 daisyUI drawer 需渲染 `<input class="drawer-toggle">`，漏了侧栏 `visibility:hidden` 消失
+
+### 提示词模版与试验场（`template.*`）
+
+| 关注点 | 位置 / 约定 |
+|--------|-------------|
+| 内置模版唯一真相源 | `src/main/prompts/defaults.ts`（TS 常量，非 .md 资源；三处消费：CLI/RPC/打包） |
+| 注册表 + 装配 | `src/main/services/prompt-registry.ts`（`assembleSystem` 是**真发与预览的唯一入口**） |
+| 类型契约唯一源 | `src/shared/prompt-schema.ts`（zod；api-def 的 output schema 与 renderer 类型都从这里取） |
+| URI 解析唯一源 | `src/shared/task-uri.ts`（main 与 renderer 共用，禁止各自写正则） |
+| 工作目录唯一源 | `src/main/core/cwd.ts`（工具 cwd 与提示词里的「工作目录」同源；三级兜底 + note） |
+| 项目级覆盖落位 | `$DIY_HOME/projects/<pid>/template/<relpath>` + `.meta.yaml{relpath:{baseVersion}}`（原子写） |
+| AGENTS.md 链上界 | **$HOME 为止**（不进 `/`、不进 `/Users`）：`~/AGENTS.md`、`~/git/AGENTS.md` 这类用户全局规则逐层生效；不在 $HOME 下时只取工作目录自身一层 |
+| 预算 | `clamp(模型上下文窗口 × 4B × 5%, 16KB, 64KB)`（随模型变，不再是一个 64KB 魔法数）；超限拒发（不截断）；**早退也必须闭合轮次**（stop + `noteTurnEnd` + turn-end 审计） |
+| 试验场页面 | `PromptLabV4Page.tsx`（模板编辑 / 上下文与请求预览 / 任务会话 / 任务详情）；草稿按 project 分桶存 `Caches.diy_lab_drafts` |
+| 中断文案 | `_guard.md` **不得**复述 `INTERRUPTED_TOOL_NOTICE` —— 那段话的唯一来源是 `local-blocks.ts` 的常量 |
+| 意图测试 | `tests/cli.intent.template.test.ts`（list/get/save/restore/拒绝/preview/超预算闭合） |
+
+#### 系统上下文**全模版化**：每一段结构都能在模版里找到
+
+| 装配结果里的位置 | 来自哪里 |
+|------------------|----------|
+| 裸文本身份段 | `000-identity.md`（`tag: ""` → 不包标签） |
+| `<diy>` 段 | `100-diy.md`（`tag: diy`） |
+| `<project_context>` 段 | `200-project.md`（`tag: project_context`）+ 其中的 `{{project_instructions}}` |
+| 链上**每个** AGENTS.md 的包裹格式 | `_chain.md`（`fragment: true`）按 `path`/`scope`/`content` 渲染一次一层 |
+| `<task>` 段 | `300-task.md`（`tag: task`） |
+| `<rules>` 段 | `400-rules.md`（`tag: rules`） |
+|  `<skills>` 段 | `500-skills.md`（`tag: skills`；当前渲染为空 → 空节不进请求） |
+| `<guard>` 段 | `_guard.md`（`tag: guard`，不可覆盖） |
+| 变量值（`diy_cli` / `diy_home` / `task_*` / `cwd` / `cwd_note` / `skills`） | 运行时事实（代码注入，占位符写在模版里） |
+| 节序 / 空节跳过 / 预算判定 / 未注入告警 | 装配器行为（节序 = `PROMPT_DEFAULTS` 声明序） |
+
+frontmatter 字段：`title` / `desc` / `version` / `overridable{value,tip}` / **`tag`（包裹标签，空串=裸文本节）** / **`fragment`（片段模版，不进节拼接）**。
+所以「某个节会包在什么标签里」直接看模版 frontmatter（试验场标题栏也会标 `<tag>` 与 `🧩 片段`），代码里不再维护任何标签映射表。
 
 ### UI 验证（两层，互补）
 
@@ -190,6 +245,17 @@ Chromium 把实际端口写入 `DIY_HOME/electron_user_data/DevToolsActivePort`�
 ```bash
 cat "$DIY_HOME/electron_user_data/DevToolsActivePort"    # 或 curl http://127.0.0.1:<port>/json/version
 ```
+
+⚠️ **端口文件的内容不一定是当前实例的端口**：输给 `SingleInstanceLock` 的第二个实例也会先写自己的
+端口再退出（同一 userData）。实测踩过：文件写 50636、真实在 50633，`attach` 直接失败 → 三个自测
+agent 都被误导。**读文件后必须校验**：
+
+```bash
+curl -s --max-time 3 http://127.0.0.1:$(head -1 "$DIY_HOME/electron_user_data/DevToolsActivePort")/json/version
+# 不通就换：lsof -nP -iTCP -sTCP:LISTEN -a -p <electron pid>
+```
+
+`electron-dev.mts` 已内置该校验（读到死端口会继续轮询并提示“已跳过过期的端口”）。
 
 ### CDP 调试陷阱
 
