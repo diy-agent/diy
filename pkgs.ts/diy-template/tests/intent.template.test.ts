@@ -1,0 +1,437 @@
+// tests/intent.template.test.ts
+// ═══════════════════════════════════════════════════════════════
+// 🎯 提示词模版引擎「意图测试」—— 需求级（人类语言描述需求，不描述实现）
+//
+// 需求定义（本文件即契约，逐条对应 SPEC.md §1 的 R1–R12）：
+//   R1  逐字节原样：不转义、不 trim、不删行
+//   R2  插值：globals（a.b）与动态作用域（.x.y）真分离
+//   R3  属性内插值：<project_instructions path="{{.path}}">
+//   R4  条件：:if / :unless，真假值固定表
+//   R5  循环：:for + {{.index}} + {{.}}，支持嵌套（内层可见外层）
+//   R6  include：参数显式传递，动态作用域**不继承**（只看到参数），globals 全程可见
+//   R7  include 解析走宿主注册表；白名单 / 禁止 .. / 禁止绝对路径
+//   R8  include 循环检测 + 深度上限
+//   R9  未知路径 / 未知参数 / 少传参数 / 取值 undefined / 写表达式 → 全部报错（不静默）
+//   R10 静态分析：引用清单（globals / 动态 / include / 条件 / 循环）
+//   R11 结构 trace：每个节点的字节数 + 每个 :if 的真假与原因
+//   R12 装配形态：节标签与分隔由模版表达，不再是代码拼装
+//
+// 测试风格：**以真实提示词为素材**（链上 AGENTS.md、diy 自述、任务节、技能槽位），
+// 断言完整输出字符串（而不是断言内部实现），以「换引擎后模型看到的东西没变」为准。
+// ═══════════════════════════════════════════════════════════════
+
+import { describe, expect, it } from 'vitest';
+import {
+    TemplateError,
+    analyze,
+    render,
+    renderWithTrace,
+    type IncludeResolver,
+    type IncludeTarget,
+} from '../src/index';
+
+/** 用内存表当宿主注册表（真环境里是 prompt-registry：项目覆盖 > 内置 + 白名单） */
+function resolverOf(files: Record<string, IncludeTarget | string>): IncludeResolver {
+    return {
+        resolve(relpath) {
+            const hit = files[relpath];
+            if (hit === undefined) return null;
+            return typeof hit === 'string' ? { source: hit } : hit;
+        },
+    };
+}
+
+/** 捕获错误（断言分类 + 位置） */
+function caught(fn: () => unknown): TemplateError {
+    try {
+        fn();
+    } catch (e) {
+        if (e instanceof TemplateError) return e;
+        throw e;
+    }
+    throw new Error('预期抛 TemplateError，但没有抛');
+}
+
+// ── R1 逐字节原样 ────────────────────────────────────────────────────
+
+describe('R1 逐字节原样（不转义 / 不 trim / 不删行）', () => {
+    it('提示词里的 & < > 引号原样保留，不做 HTML 转义', () => {
+        const out = render('用 bash 处理 a\\<b && c>d；说 "中文" 与 \'单引号\'', {});
+        expect(out).toBe('用 bash 处理 a<b && c>d；说 "中文" 与 \'单引号\'');
+        expect(out).not.toContain('&lt;');
+        expect(out).not.toContain('&amp;');
+    });
+
+    it('行尾换行与空行原样保留（不 trim、不删行）', () => {
+        const out = render('第一行\n\n第二行\n', {});
+        expect(out).toBe('第一行\n\n第二行\n');
+    });
+
+    it('控制节点不产出任何字符（<template> 只做条件/循环）', () => {
+        const out = render('<template :if="diy.on">A</template>B', { globals: { diy: { on: true } } });
+        expect(out).toBe('AB');
+    });
+
+    it('正文要写字面量 {{ 或 <template 时有逃生舱：\\{{ 与 <raw>', () => {
+        expect(render('说明：\\{{diy.cli}} 是占位符写法', {})).toBe('说明：{{diy.cli}} 是占位符写法');
+        expect(render('示例：<raw><template :if="x">A</template></raw>', {})).toBe(
+            '示例：<template :if="x">A</template>',
+        );
+        // 正文里的 XML 形状文本（讲格式时常见）：\< 与 \</ 都是字面量
+        expect(render('格式：\\<project_instructions path="…">\\</project_instructions>', {})).toBe(
+            '格式：<project_instructions path="…"></project_instructions>',
+        );
+    });
+});
+
+// ── R2/R3 插值与属性 ─────────────────────────────────────────────────
+
+describe('R2/R3 插值：globals 与动态作用域真分离', () => {
+    it('globals 点路径取值（{{diy.cli}} / {{task.title}}）', () => {
+        const out = render('入口 {{diy.cli}}，任务 {{task.title}}', {
+            globals: { diy: { cli: '/repo/diy.sh' }, task: { title: '评审任务' } },
+        });
+        expect(out).toBe('入口 /repo/diy.sh，任务 评审任务');
+    });
+
+    it('属性里可以插值（链片段的真实写法）', () => {
+        const chain = `<project_instructions path="{{.path}}" scope="{{.scope}}">\n{{.content}}\n</project_instructions>`;
+        const out = render('<template :include="./_chain.md" path="diy.home" content="diy.note" scope="diy.scope" />', {
+            globals: { diy: { home: '/home/u/AGENTS.md', scope: '/home/u', note: '根规则' } },
+            dynamic: [{ vars: {} }],
+        }, { resolver: resolverOf({ './_chain.md': chain }) });
+        expect(out).toBe(
+            '<project_instructions path="/home/u/AGENTS.md" scope="/home/u">\n根规则\n</project_instructions>',
+        );
+    });
+
+    it('属性里的插值解析期就校验（写表达式直接报错，而不是发出一个坏属性）', () => {
+        const err = caught(() => render('<pi path="{{a == b}}">x</pi>', { globals: { a: 1, b: 1 } }));
+        expect(err.code).toBe('syntax');
+        expect(err.message).toContain('只支持路径');
+    });
+});
+
+// ── R4 条件 ──────────────────────────────────────────────────────────
+
+describe('R4 条件：:if / :unless 与固定真假值表', () => {
+    it('空数组为假 → 技能槽位整节不出现（今天由代码 if (!text.trim()) 决定）', () => {
+        const tpl = '<template :if="diy.skills"><skills>\n技能\n</skills>\n</template>';
+        expect(render(tpl, { globals: { diy: { skills: [] } } })).toBe('');
+        expect(render(tpl, { globals: { diy: { skills: ['a'] } } })).toBe('<skills>\n技能\n</skills>\n');
+    });
+
+    it(':unless 取反 → 「cwd 回退」提示只在回退时出现（今天由代码拼 "\n注意：…" 决定）', () => {
+        const tpl = '工作目录：{{diy.cwd}}<template :unless="diy.cwdIsProject">\n注意：项目目录不存在，工具实际在任务目录下执行</template>';
+        expect(render(tpl, { globals: { diy: { cwd: '/repo', cwdIsProject: false } } })).toBe(
+            '工作目录：/repo\n注意：项目目录不存在，工具实际在任务目录下执行',
+        );
+        expect(render(tpl, { globals: { diy: { cwd: '/repo', cwdIsProject: true } } })).toBe('工作目录：/repo');
+    });
+
+    it('真假值表：false/0/""/[]/null 为假；"false"/"0"/" "/{} 为真', () => {
+        const tpl = '<template :if="x">真</template><template :unless="x">假</template>';
+        expect(render(tpl, { globals: { x: false } })).toBe('假');
+        expect(render(tpl, { globals: { x: 0 } })).toBe('假');
+        expect(render(tpl, { globals: { x: '' } })).toBe('假');
+        expect(render(tpl, { globals: { x: [] } })).toBe('假');
+        expect(render(tpl, { globals: { x: null } })).toBe('假');
+        expect(render(tpl, { globals: { x: 'false' } })).toBe('真');
+        expect(render(tpl, { globals: { x: '0' } })).toBe('真');
+        expect(render(tpl, { globals: { x: ' ' } })).toBe('真');
+        expect(render(tpl, { globals: { x: {} } })).toBe('真');
+    });
+
+    it('条件还可以直接挂在输出元素上（少写一层 <template>）', () => {
+        const tpl = '<rules>\n<item :if="diy.strict">严格</item>\n</rules>';
+        expect(render(tpl, { globals: { diy: { strict: true } } })).toBe('<rules>\n<item>严格</item>\n</rules>');
+        expect(render(tpl, { globals: { diy: { strict: false } } })).toBe('<rules>\n\n</rules>');
+    });
+});
+
+// ── R5 循环 ──────────────────────────────────────────────────────────
+
+describe('R5 循环：:for + {{.index}} + {{.}}，支持嵌套', () => {
+    it('链上 4 层 AGENTS.md：由模版自己迭代（今天由代码循环）', () => {
+        const chain = `<project_instructions path="{{.path}}" scope="{{.scope}}">\n{{.content}}\n</project_instructions>`;
+        const tpl = '以下按 scope 生效：\n<template :for="item of diy.chain"><template :include="./_chain.md" path=".item.path" scope=".item.scope" content=".item.content" />\n</template>';
+        const out = render(tpl, {
+            globals: {
+                diy: {
+                    chain: [
+                        { path: '/Users/ccc/AGENTS.md', scope: '/Users/ccc', content: '根规则' },
+                        { path: '/repo/AGENTS.md', scope: '/repo', content: '仓库规则 & <x>' },
+                    ],
+                },
+            },
+        }, { resolver: resolverOf({ './_chain.md': chain }) });
+        expect(out).toBe(
+            '以下按 scope 生效：\n' +
+                '<project_instructions path="/Users/ccc/AGENTS.md" scope="/Users/ccc">\n根规则\n</project_instructions>\n' +
+                '<project_instructions path="/repo/AGENTS.md" scope="/repo">\n仓库规则 & <x>\n</project_instructions>\n',
+        );
+    });
+
+    it('下标用 {{.index}}，字符串数组用 {{.}}，空数组不产出任何字符', () => {
+        expect(render('<template :for="s of diy.list">{{.index}}:{{.}}|</template>', { globals: { diy: { list: ['a', 'b'] } } })).toBe(
+            '0:a|1:b|',
+        );
+        expect(render('<template :for="s of diy.list">{{.}}</template>', { globals: { diy: { list: [] } } })).toBe('');
+    });
+
+    it('分隔符不需要表达式：内建 {{.isFirst}} / {{.isLast}} / {{.index}}', () => {
+        // 等价于 join("\n\n")：除首项外，每项前加一个空行
+        const tpl = '<template :for="f of diy.list"><template :unless=".isFirst">\n\n</template>[{{.f}}]</template>';
+        expect(render(tpl, { globals: { diy: { list: ['a', 'b', 'c'] } } })).toBe('[a]\n\n[b]\n\n[c]');
+        expect(
+            render('<template :for="f of diy.list">{{.index}}:{{.f}} first={{.isFirst}} last={{.isLast}}|</template>', {
+                globals: { diy: { list: ['a', 'b'] } },
+            }),
+        ).toBe('0:a first=true last=false|1:b first=false last=true|');
+    });
+
+    it('嵌套循环：内层可读外层（作用域链）；同名则内层遮蔽', () => {
+        const tpl = '<template :for="g of diy.groups">{{.g.name}}:<template :for="g of .g.items">{{.g}}/{{.index}}|</template></template>';
+        const out = render(tpl, { globals: { diy: { groups: [{ name: 'A', items: ['x', 'y'] }] } } });
+        expect(out).toBe('A:x/0|y/1|');
+    });
+});
+
+// ── R6 include 隔离 ──────────────────────────────────────────────────
+
+describe('R6 include：参数显式传递，动态作用域不继承', () => {
+    const files = {
+        './a.md': '<A task="{{.task.title}}"><template :include="./b.md" task=".task" /></A>',
+        './b.md': '<B><template :include="./c.md" item=".task.item" /></B>',
+        './c.md': '<C item="{{.item}}" />',
+    };
+
+    it('三层调用：每层只看到自己拿到的参数（A→B→C，C 看不到 A 的 .task 全部）', () => {
+        const out = render('<template :include="./a.md" task="diy.task" />', {
+            globals: { diy: { task: { title: 'T', item: 'I' } } },
+        }, { resolver: resolverOf(files) });
+        expect(out).toBe('<A task="T"><B><C item="I" /></B></A>');
+    });
+
+    it('子模版看不到调用者的动态变量（隔离而非继承）', () => {
+        const err = caught(() =>
+            render('<template :for="t of diy.list"><template :include="./child.md" /></template>', {
+                globals: { diy: { list: [1] } },
+            }, { resolver: resolverOf({ './child.md': '{{.t}}' }) }),
+        );
+        // 先被「少传参数」静态预检拦下
+        expect(err.code).toBe('missing-arg');
+        expect(err.detail).toContain('.t');
+    });
+
+    it('globals 在 include 里继续可见（只有动态作用域被隔离）', () => {
+        const out = render('<template :include="./child.md" />', { globals: { diy: { cli: '/repo/diy.sh' } } }, {
+            resolver: resolverOf({ './child.md': 'CLI={{diy.cli}}' }),
+        });
+        expect(out).toBe('CLI=/repo/diy.sh');
+    });
+});
+
+// ── R7/R8 include 解析规则 ───────────────────────────────────────────
+
+describe('R7/R8 include 解析：注册表白名单 + 循环 + 深度 + 锁定', () => {
+    it('不在白名单（resolver 返回 null）→ 报错，而不是静默空', () => {
+        const err = caught(() => render('<template :include="./nope.md" />', {}, { resolver: resolverOf({}) }));
+        expect(err.code).toBe('include');
+        expect(err.message).toContain('不在白名单');
+    });
+
+    it('路径必须是 ./ 开头且不含 ..（穿越尝试直接拒绝）', () => {
+        expect(caught(() => render('<template :include="../secret.md" />', {})).message).toContain('include');
+        expect(caught(() => render('<template :include="/etc/passwd" />', {})).message).toContain('include');
+    });
+
+    it('循环引用 → 报错并给出完整链', () => {
+        const err = caught(() =>
+            render('<template :include="./a.md" />', {}, { resolver: resolverOf({ './a.md': '<template :include="./b.md" />', './b.md': '<template :include="./a.md" />' }) }),
+        );
+        expect(err.code).toBe('include-cycle');
+        expect(err.detail).toContain('./a.md → ./b.md → ./a.md');
+    });
+
+    it('深度超限 → 报错（默认 8 层）', () => {
+        const files: Record<string, string> = {};
+        for (let i = 0; i < 12; i++) files[`./l${i}.md`] = `<template :include="./l${i + 1}.md" />`;
+        files['./l12.md'] = 'end';
+        const err = caught(() => render('<template :include="./l0.md" />', {}, { resolver: resolverOf(files) }));
+        expect(err.code).toBe('depth');
+    });
+
+    it('锁定模版不可被可覆盖模版 include，但锁定入口可以 include 它', () => {
+        const files = { './_guard.md': { source: '禁止杀宿主进程', locked: true } };
+        expect(caught(() => render('<template :include="./_guard.md" />', {}, { resolver: resolverOf(files) })).code).toBe('locked');
+        expect(render('<template :include="./_guard.md" />', {}, { resolver: resolverOf(files), locked: true })).toBe('禁止杀宿主进程');
+    });
+});
+
+// ── R9 不静默 ────────────────────────────────────────────────────────
+
+describe('R9 错误不静默：全部带行列与原因', () => {
+    it('globals 名字写错 → 报错（不是输出空串）', () => {
+        const err = caught(() => render('入口 {{diy.clii}}\n', { globals: { diy: { cli: 'x' } } }));
+        expect(err.code).toBe('missing-value');
+        expect(err.file).toBe('<entry>');
+        // detail 提示这是路径写错（区别于「未声明」）
+        expect(err.message).toContain('diy.clii');
+    });
+
+    it('首段未声明 → unresolved-path，detail 列出可用 namespace', () => {
+        const err = caught(() => render('{{diyx.cli}}', { globals: { diy: { cli: 'x' } } }));
+        expect(err.code).toBe('unresolved-path');
+        expect(err.detail).toContain('diy');
+    });
+
+    it('动态变量未声明 → 报错，detail 列出当前作用域可用名', () => {
+        const err = caught(() =>
+            render('<template :include="./c.md" task="diy.task" />', { globals: { diy: { task: 1 } } }, {
+                resolver: resolverOf({ './c.md': '<C>{{.taskx}}</C>' }),
+            }),
+        );
+        expect(err.code).toBe('missing-arg');
+        expect(err.message).toContain('taskx');
+    });
+
+    it('include 参数拼错（:iff）→ unknown-arg（这正是我们最怕的静默类错误）', () => {
+        const err = caught(() =>
+            render('<enabled :iff="diy.on">true</enabled>', { globals: { diy: { on: true } } }),
+        );
+        expect(err.code).toBe('syntax');
+        expect(err.message).toContain(':iff');
+        const err2 = caught(() =>
+            render('<template :include="./x.md" iff="diy.on" note="diy.note" />', { globals: { diy: { on: 1, note: 'n' } } }, {
+                resolver: resolverOf({ './x.md': '{{.note}}' }),
+            }),
+        );
+        expect(err2.code).toBe('unknown-arg');
+        expect(err2.detail).toContain('note');
+    });
+
+    it('条件里写表达式 → 语法错并指出位置（阶段 1 明确不支持表达式）', () => {
+        const err = caught(() => render('<template :if="diy.a == 1">x</template>', { globals: { diy: { a: 1 } } }));
+        expect(err.code).toBe('syntax');
+        expect(err.line).toBe(1);
+        expect(err.message).toContain('不支持表达式');
+    });
+
+    it('插值取到 undefined → missing-value（可选值必须用 :if 守住）', () => {
+        const err = caught(() => render('{{diy.optional}}', { globals: { diy: {} } }));
+        expect(err.code).toBe('missing-value');
+    });
+
+    it(':for 的数据源不是数组 → not-iterable', () => {
+        const err = caught(() => render('<template :for="x of diy.obj">{{.x}}</template>', { globals: { diy: { obj: { a: 1 } } } }));
+        expect(err.code).toBe('not-iterable');
+    });
+});
+
+// ── R10 静态分析 ─────────────────────────────────────────────────────
+
+describe('R10 静态分析：引用清单（UI「变量 view」的数据源）', () => {
+    it('列出 globals / 动态 / include / 条件 / 循环', () => {
+        const src = [
+            '入口 {{diy.cli}}',
+            '<template :if="diy.hasSkills">',
+            '<template :for="s of diy.skills">{{.s}}@{{.index}}</template>',
+            '</template>',
+            '<template :include="./_chain.md" path="diy.home" content="diy.note" />',
+        ].join('\n');
+        const a = analyze(src, { file: 'system.md' });
+        expect(a.globals).toEqual(['diy']);
+        expect(a.paths.map((p) => p.path)).toContain('diy.hasSkills');
+        expect(a.conditions).toEqual([{ path: 'diy.hasSkills', negate: false, loc: expect.anything() }]);
+        expect(a.loops.map((l) => `${l.item} of ${l.source}`)).toEqual(['s of diy.skills']);
+        expect(a.includes.map((i) => i.relpath)).toEqual(['./_chain.md']);
+        expect(a.includes[0]!.args.map((x) => x.name)).toEqual(['path', 'content']);
+        // 定位到行：条件在第 2 行
+        expect(a.conditions[0]!.loc.line).toBe(2);
+    });
+
+    it('分析不需要任何数据，也不渲染（模版里写错也照样给出清单）', () => {
+        const a = analyze('{{diy.cli}} {{.unknown}}');
+        expect(a.globals).toEqual(['diy']);
+        expect(a.dynamics).toEqual(['unknown']);
+    });
+});
+
+// ── R11 结构 trace ───────────────────────────────────────────────────
+
+describe('R11 结构 trace：节点字节数 + 每个 :if 的真假与原因（试验场「结构树」）', () => {
+    it('给出 include/for 的字节数与迭代情况', () => {
+        const chain = '<project_instructions path="{{.path}}">{{.content}}</project_instructions>';
+        const { text, trace } = renderWithTrace('<template :include="./_chain.md" path="diy.p" content="diy.c" />', {
+            globals: { diy: { p: '/a/AGENTS.md', c: '规则' } },
+        }, { resolver: resolverOf({ './_chain.md': chain }), file: 'system.md' });
+        expect(text).toBe('<project_instructions path="/a/AGENTS.md">规则</project_instructions>');
+        const inc = trace.find((t) => t.kind === 'include')!;
+        expect(inc.name).toBe('./_chain.md');
+        expect(inc.bytes).toBe(Buffer.byteLength(text, 'utf-8'));
+    });
+
+    it('回答「这个 :if 为什么没进」：空数组 / 空串 / false 各有原因', () => {
+        const { trace } = renderWithTrace('<template :if="diy.skills">技能</template><template :if="diy.note">说明</template>', {
+            globals: { diy: { skills: [], note: 'x' } },
+        });
+        const ifs = trace.filter((t) => t.kind === 'if');
+        expect(ifs[0]!.result).toBe(false);
+        expect(ifs[0]!.reason).toContain('空数组');
+        expect(ifs[1]!.result).toBe(true);
+        expect(ifs[1]!.reason).toBe('值为真');
+    });
+});
+
+// ── R12 装配形态 ─────────────────────────────────────────────────────
+
+describe('R12 装配形态：节的标签/顺序/分隔都在模版里（代码不再拼装）', () => {
+    it('system.md 由 4 个 include 组成，输出与手写期望逐字节相同', () => {
+        const files = {
+            './000-identity.md': '你是 diy 管控台的本地 coding agent，在用户的任务里干活。\n\n',
+            './100-diy.md': '<diy>\ndiy 是 Electron 桌面管控台。入口 {{diy.cli}}。\n</diy>\n\n',
+            './500-skills.md': '<skills>\n<template :for="s of .list">{{.s}}\n</template></skills>\n\n',
+            './_guard.md': { source: '禁止执行会杀死宿主进程的命令。\n', locked: true },
+        };
+        // 节间分隔由**节模版自己的末尾空行**表达（引擎不 trim、不 join）；
+        // 之所以把 4 个 include 写在同一行：控制标签之间的换行也会进输出。
+        // 「每行一个 include」需要一条「独立控制行不输出」的规则 —— 属待拍板项（见 SPEC 未决问题 6）。
+        const system =
+            '<template :include="./000-identity.md" />' +
+            '<template :include="./100-diy.md" />' +
+            '<template :include="./500-skills.md" :if="diy.skills" list="diy.skills" />' +
+            '<template :include="./_guard.md" />';
+        const out = render(system, { globals: { diy: { cli: '/repo/diy.sh', skills: [] } } }, {
+            resolver: resolverOf(files),
+            file: 'system.md',
+            locked: true,
+        });
+        // 空节（skills）整节不出现，且不留残留字符
+        expect(out).toBe(
+            '你是 diy 管控台的本地 coding agent，在用户的任务里干活。\n\n' +
+                '<diy>\ndiy 是 Electron 桌面管控台。入口 /repo/diy.sh。\n</diy>\n\n' +
+                '禁止执行会杀死宿主进程的命令。\n',
+        );
+        // 有技能时该节出现在原位置
+        const out2 = render(system, { globals: { diy: { cli: '/repo/diy.sh', skills: ['a', 'b'] } } }, {
+            resolver: resolverOf(files),
+            file: 'system.md',
+            locked: true,
+        });
+        expect(out2).toContain('<skills>\na\nb\n</skills>\n\n');
+        expect(out2.indexOf('<skills>')).toBeLessThan(out2.indexOf('禁止执行'));
+    });
+
+    it('片段模版（fragment）不参与自动拼接：只有被 include 才渲染', () => {
+        const files = { './_chain.md': { source: '<pi path="{{.path}}">{{.content}}</pi>', fragment: true } };
+        const resolver = resolverOf(files);
+        // 直接渲染入口时，fragment 不会自己出现
+        const out = render('正文\n', {}, { resolver, file: 'system.md' });
+        expect(out).toBe('正文\n');
+        // include 才出现
+        expect(render('<template :include="./_chain.md" path="diy.p" content="diy.c" />', { globals: { diy: { p: 'p', c: 'c' } } }, { resolver })).toBe(
+            '<pi path="p">c</pi>',
+        );
+    });
+});
