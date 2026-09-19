@@ -3,28 +3,37 @@
 // 页面级自由布局案例：左 Views 区（场景/参数/模板树）+ 中央编辑器（标题栏+动作图标+普通/diff）
 // + 右 Views 区（实时预览）。单一编辑器模式：树上点开一份，dirty 在树行与标题栏两处标注，
 // 保存按钮两处都有。数据模型与 V1~V3 一致（同一套 template.* RPC）。
-import { createSignal, createEffect, on, onMount, For, Show } from "solid-js";
+import { createSignal, createEffect, on, For, Show } from "solid-js";
 import * as Tabs from "@kobalte/core/tabs";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
+import { localChatStore } from "../store/localChatStore";
 import { getRendererActions } from "../lib/renderer-actions";
+import { Caches } from "../lib/ui-state";
+import { projectFromUri } from "../../shared/task-uri";
 import { LocalChatPage } from "./LocalChatPage";
 import { TaskInfoView } from "./TaskDetailPanel";
 import { JsonTree } from "./JsonTree";
 import { MdEditor } from "./MdEditor";
-import { lineDiff, useHoverTip, type PromptEntry, type RequestPreview } from "./promptLabCommon";
+import { lineDiff, useHoverTip, type PromptEntry } from "./promptLabCommon";
+import type { RequestPreview } from "../../shared/prompt-schema";
 
-const LAB4_LEFT_KEY = "lab4.leftW";
-const LAB4_RIGHT_KEY = "lab4.rightW";
-function loadW(key: string, def: number, min: number, max: number): number {
-    try {
-        const v = Number(localStorage.getItem(key));
-        if (Number.isFinite(v) && v >= min && v <= max) return v;
-    } catch {
-        /* 无痕模式等：回默认，不阻断 */
-    }
-    return def;
+// 未存盘草稿放在模块级（按 project 分桶）：App.tsx 用 <Show> 挂页面，
+// 切到别的页就卸载组件，signal 里的半编辑内容会直接丢（历史问题）。
+// 落地在 Caches.diy_lab_drafts（localStorage 单入口），重启也能接着编。
+const [draftsByProject, setDraftsByProject] = createSignal<Record<string, Record<string, string>>>(
+    Caches.diy_lab_drafts.get(),
+);
+function patchDrafts(pid: string, mut: (d: Record<string, string>) => Record<string, string>): void {
+    setDraftsByProject((all) => {
+        const next = { ...all };
+        const bucket = mut(all[pid] ?? {});
+        if (Object.keys(bucket).length === 0) delete next[pid];
+        else next[pid] = bucket;
+        Caches.diy_lab_drafts.set(next);
+        return next;
+    });
 }
 
 /** relpath 数组 → 目录树（前端按路径派生，不做人工分类） */
@@ -95,7 +104,9 @@ function DirRow(props: {
                     onMouseLeave={props.hov.hide}
                 >
                     <span class="w-4 shrink-0" />
-                    <span class="w-4 shrink-0 text-center">{props.node.entry?.overridable === false ? "🔒" : "📄"}</span>
+                    <span class="w-4 shrink-0 text-center">
+                        {props.node.entry?.fragment ? "🧩" : props.node.entry?.overridable === false ? "🔒" : "📄"}
+                    </span>
                     <span class="flex-1 truncate">{props.node.name}</span>
                     <Show when={props.node.entry}>
                         {(e) => (
@@ -173,18 +184,18 @@ function DirRow(props: {
 
 export function PromptLabV4Page() {
     const [entries, setEntries] = createSignal<PromptEntry[]>([]);
-    const [drafts, setDrafts] = createSignal<Record<string, string>>({});
     const [selPath, setSelPath] = createSignal<string>("000-identity.md");
-    // 左右 Views 宽（拖拽可调，localStorage 持久化：纯视图缓存）
-    const [leftW, setLeftW] = createSignal(loadW(LAB4_LEFT_KEY, 256, 180, 480));
-    const [rightW, setRightW] = createSignal(loadW(LAB4_RIGHT_KEY, 384, 240, 640));
+    // 左右 Views 宽（拖拽可调，走 ui-state 字段池：范围校验定义即生效，「重置界面状态」能清）
+    const [leftW, setLeftW] = createSignal(Caches.diy_lab_left_width.get());
+    const [rightW, setRightW] = createSignal(Caches.diy_lab_right_width.get());
     let zoneRef: HTMLDivElement | undefined;
     // 目录折叠态（默认全开）
     const [openDirs, setOpenDirs] = createSignal<Record<string, boolean>>({});
     const dirOpen = (path: string) => openDirs()[path] !== false;
 
-    /** 拖拽条通用：按 clientX 相对容器算宽 */
-    function startDrag(e: MouseEvent, set: (v: number) => void, min: number, max: number, key: string, fromRight = false) {
+    /** 拖拽条通用：按 clientX 相对容器算宽。宽度落 Caches（localStorage 单入口），
+     *  不再裸写 localStorage（否则「重置界面状态」清不掉）。 */
+    function startDrag(e: MouseEvent, set: (v: number) => void, min: number, max: number, field: { set(v: number): void }, fromRight = false) {
         e.preventDefault();
         const rect = zoneRef?.getBoundingClientRect();
         if (!rect) return;
@@ -196,11 +207,7 @@ export function PromptLabV4Page() {
         const up = () => {
             window.removeEventListener("mousemove", move);
             window.removeEventListener("mouseup", up);
-            try {
-                localStorage.setItem(key, String(fromRight ? rightW() : leftW()));
-            } catch {
-                /* 忽略 */
-            }
+            field.set(fromRight ? rightW() : leftW());
         };
         window.addEventListener("mousemove", move);
         window.addEventListener("mouseup", up);
@@ -208,7 +215,9 @@ export function PromptLabV4Page() {
     const [mode, setMode] = createSignal<EditorMode>("normal");
     // 任务即场景：taskUri 恒等于当前选中任务，不再手填/跟随/解绑
     const taskUri = () => taskStore.selectedUri ?? "";
-    const project = () => taskUri().match(/^projects\/(\d+)\/tasks\/\d+$/)?.[1] ?? "";
+    // project 与 main 侧同一个解析函数（shared/task-uri）：两份正则口径不同曾导致
+    // 非数字 pid 在 renderer 侧退化成空串 → 覆盖写到 $DIY_HOME/projects/template
+    const project = () => projectFromUri(taskUri());
     const hov = useHoverTip();
     // 顶层 tab：任务会话 / 任务详情 / agent调参（默认会话，与任务详情抽屉一致）
     const [pageTab, setPageTab] = createSignal("chat");
@@ -231,27 +240,42 @@ export function PromptLabV4Page() {
         </button>
     );
     const sel = () => entries().find((e) => e.relpath === selPath()) ?? null;
+    // 草稿按 project 分桶：切项目不会看到/写入上一个项目的草稿（曾经的静默写错项目）
+    const drafts = () => draftsByProject()[project()] ?? {};
     const draftOf = (e: PromptEntry) => drafts()[e.relpath] ?? e.current;
     const dirtyOf = (e: PromptEntry) => drafts()[e.relpath] !== undefined && drafts()[e.relpath] !== e.current;
 
     async function load() {
+        const pid = project();
+        if (!pid) {
+            setEntries([]);
+            return;
+        }
         try {
-            const list = (await diyService.diy.template.list({ project: project() })) as PromptEntry[];
+            const list = (await diyService.diy.template.list({ project: pid })) as PromptEntry[];
             setEntries(list);
-            setDrafts({});
             if (!list.some((e) => e.relpath === selPath()) && list[0]) setSelPath(list[0].relpath);
         } catch (e) {
             notificationStore.addToast("error", `模版加载失败: ${e instanceof Error ? e.message : e}`);
         }
     }
 
+    // 切项目（选中另一个项目下的任务）→ 必须重载 + 丢掉上一个项目的草稿视图，
+    // 否则列表/编辑器还是 A 项目的状态，而 save/preview 用的是 B 的 project
+    createEffect(
+        on(project, () => {
+            void load();
+        }),
+    );
+
     async function save(relpath: string) {
         const content = drafts()[relpath];
         if (content === undefined) return;
+        const pid = project();
         try {
-            const full = (await diyService.diy.template.save({ project: project(), relpath, content })) as PromptEntry;
+            const full = (await diyService.diy.template.save({ project: pid, relpath, content })) as PromptEntry;
             setEntries((es) => es.map((e) => (e.relpath === relpath ? full : e)));
-            setDrafts((d) => {
+            patchDrafts(pid, (d) => {
                 const n = { ...d };
                 delete n[relpath];
                 return n;
@@ -263,10 +287,11 @@ export function PromptLabV4Page() {
     }
 
     async function restore(relpath: string) {
+        const pid = project();
         try {
-            const full = (await diyService.diy.template.restore({ project: project(), relpath })) as PromptEntry;
+            const full = (await diyService.diy.template.restore({ project: pid, relpath })) as PromptEntry;
             setEntries((es) => es.map((e) => (e.relpath === relpath ? full : e)));
-            setDrafts((d) => {
+            patchDrafts(pid, (d) => {
                 const n = { ...d };
                 delete n[relpath];
                 return n;
@@ -277,15 +302,17 @@ export function PromptLabV4Page() {
         }
     }
 
-    // 右预览：任一草稿变化 → 防抖自动重算（参数走服务端默认，不再调）
+    // 右预览：草稿/项目/任务/条目变化 → 防抖自动重算。
+    // model 传会话实际选的模型 —— 不传服务端只能退回 DEFAULT_MODEL，「试的就是真发的」就对不上。
     createEffect(
-        on([drafts, project, taskUri, entries], () => {
+        on([() => draftsByProject(), project, taskUri, entries], () => {
             const timer = setTimeout(async () => {
                 try {
                     const d = drafts();
                     const p = (await diyService.diy.template.preview({
                         project: project(),
                         taskUri: taskUri().trim() || undefined,
+                        model: localChatStore.activeModel || undefined,
                         // 草稿走 RPC（未存盘也进预览）
                         drafts: Object.keys(d).length > 0 ? d : undefined,
                     })) as RequestPreview;
@@ -298,9 +325,7 @@ export function PromptLabV4Page() {
         }),
     );
 
-    onMount(async () => {
-        await load();
-    });
+    // 首屏 + 切项目都靠上面那个 createEffect(on(project)) 触发 load()（Solid 首次 flush 即跑）
 
     return (
         <div class="flex flex-col h-full">
@@ -339,8 +364,9 @@ export function PromptLabV4Page() {
                 </Show>
                 <span class="opacity-60 ml-auto">
                     {entries().filter((e) => e.status === "overridden").length} 份覆盖
-                    <Show when={Object.keys(drafts()).length > 0}>
-                        <span class="text-info font-semibold"> · {Object.keys(drafts()).length} 未保存</span>
+                    {/* 口径与树行圆点一致（dirtyOf）：否则只浏览不改内容也会因为 drafts 有条目而误报「未保存」 */}
+                    <Show when={entries().some((e) => dirtyOf(e))}>
+                        <span class="text-info font-semibold"> · {entries().filter((e) => dirtyOf(e)).length} 未保存</span>
                     </Show>
                 </span>
             </div>
@@ -388,13 +414,9 @@ export function PromptLabV4Page() {
                     title="拖拽调整左栏宽度（双击恢复默认）"
                     onDblClick={() => {
                         setLeftW(256);
-                        try {
-                            localStorage.removeItem(LAB4_LEFT_KEY);
-                        } catch {
-                            /* 忽略 */
-                        }
+                        Caches.diy_lab_left_width.reset();
                     }}
-                    onMouseDown={(e) => startDrag(e, setLeftW, 180, 480, LAB4_LEFT_KEY)}
+                    onMouseDown={(e) => startDrag(e, setLeftW, 180, 480, Caches.diy_lab_left_width)}
                 />
                 {/* 中央编辑器 */}
                 <div class="flex-1 flex flex-col min-w-0">
@@ -412,6 +434,13 @@ export function PromptLabV4Page() {
                                     <span class="opacity-50">
                                         {s().title} v{s().version}
                                     </span>
+                                    {/* 结构也可视化：这个节会包在什么标签里 / 它是不是片段模版 */}
+                                    <Show when={s().tag}>
+                                        <span class="badge badge-xs badge-ghost font-mono">&lt;{s().tag}&gt;</span>
+                                    </Show>
+                                    <Show when={s().fragment}>
+                                        <span class="badge badge-xs badge-warning">片段</span>
+                                    </Show>
                                     <div class="ml-auto flex items-center gap-1">
                                         <button
                                             class={`btn btn-xs ${mode() === "diff" ? "btn-active" : "btn-ghost"}`}
@@ -454,7 +483,7 @@ export function PromptLabV4Page() {
                                                 <MdEditor
                                                     value={draftOf(s())}
                                                     editable={!!s().overridable}
-                                                    onChange={(v) => setDrafts((d) => ({ ...d, [s().relpath]: v }))}
+                                                    onChange={(v) => patchDrafts(project(), (d) => ({ ...d, [s().relpath]: v }))}
                                                 />
                                             </div>
                                         }
@@ -490,13 +519,9 @@ export function PromptLabV4Page() {
                     title="拖拽调整右栏宽度（双击恢复默认）"
                     onDblClick={() => {
                         setRightW(384);
-                        try {
-                            localStorage.removeItem(LAB4_RIGHT_KEY);
-                        } catch {
-                            /* 忽略 */
-                        }
+                        Caches.diy_lab_right_width.reset();
                     }}
-                    onMouseDown={(e) => startDrag(e, setRightW, 240, 640, LAB4_RIGHT_KEY, true)}
+                    onMouseDown={(e) => startDrag(e, setRightW, 240, 640, Caches.diy_lab_right_width, true)}
                 />
                 {/* 右：系统上下文 + 仿真请求体（request.json 同形，所见即所得） */}
                 <div class="shrink-0 overflow-auto p-1 space-y-1" style={{ width: `${rightW()}px` }}>
@@ -514,6 +539,13 @@ export function PromptLabV4Page() {
                                     <div class="alert alert-error text-xs py-1 mb-2">
                                         超出预算：{(p().overBudget!.used / 1024).toFixed(1)} KB /{" "}
                                         {(p().overBudget!.budget / 1024).toFixed(0)} KB —— 不会发送，请精简模版
+                                    </div>
+                                </Show>
+                                <Show when={p().warnings.length > 0}>
+                                    <div class="alert alert-warning text-xs py-1 mb-2">
+                                        {p().warnings.map((w) => (
+                                            <span>⚠️ {w}</span>
+                                        ))}
                                     </div>
                                 </Show>
                                 <Show when={p().unknownVars.length > 0}>
@@ -558,6 +590,9 @@ export function PromptLabV4Page() {
                             </span>
                         </div>
                         <Show when={views()["reqbody"]}>
+                            <Show when={preview()?.requestNote}>
+                                <div class="px-2 pt-1 text-[11px] opacity-60">{preview()!.requestNote}</div>
+                            </Show>
                         <div class="bg-base-200 px-2 py-2">
                     <Show when={preview()?.requestBody} fallback={<div class="text-xs opacity-60">随任务场景生成…</div>}>
                         {(b) => (

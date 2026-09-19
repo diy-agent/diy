@@ -27,6 +27,9 @@ export function TaskDetailPanel() {
     onMount(() => window.addEventListener("keydown", onKey));
     onCleanup(() => window.removeEventListener("keydown", onKey));
     const [panelW, setPanelW] = createSignal(loadPanelWidth());
+    // 渲染宽度一律过窗口上限：持久化的值可能来自更大的屏幕（上限 4000），
+    // 直接套用会把任务树挤没（历史问题：只有拖拽路径 clamp，渲染路径没 clamp）。
+    const renderW = () => Math.min(panelMax(), panelW());
 
     // ── per-task 记忆：当前任务详情面板在哪个 tab + info 滚动位置（存 TaskState，切任务/重挂各自恢复） ──
     const [tab, setTab] = createSignal<"local" | "info">(
@@ -119,7 +122,7 @@ export function TaskDetailPanel() {
         <Show when={!!taskStore.selectedUri}>
             <div
                 class="card bg-base-100 border-l shadow-xl absolute inset-y-0 right-0 z-40 h-full flex flex-col"
-                style={{ width: `${panelW()}px` }}
+                style={{ width: `${renderW()}px` }}
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* 左缘拖拽条 */}

@@ -57,8 +57,13 @@ export default function App() {
         <div class="drawer lg:drawer-open">
             {/* DaisyUI drawer 必须的 checkbox（控制开合，:checked 决定侧栏是否展开） */}
             <input type="checkbox" id="sidebar-toggle" class="drawer-toggle" />
-            {/* 主内容区（顶栏/底栏已去：纯 chrome，占纵向空间，spike 先拿掉） */}
+            {/* 主内容区 */}
             <div class="drawer-content flex flex-col h-screen">
+                {/* 顶栏 */}
+                <div class="navbar bg-base-100 border-b shrink-0 h-12">
+                    <span class="text-sm font-bold">diy</span>
+                </div>
+
                 {/* 内容区 */}
                 <main
                     class="flex-1 relative overflow-hidden bg-base-100"
@@ -110,6 +115,14 @@ export default function App() {
                         <TaskDetailPanel />
                     </Show>
                 </main>
+
+                {/* 底栏 */}
+                <div class="footer bg-base-200 border-t text-xs opacity-60 h-7 px-3 shrink-0">
+                    <span>diy 管控台</span>
+                    <Show when={!!taskStore.selectedUri}>
+                        <span class="ml-2 truncate">{taskStore.selectedUri}</span>
+                    </Show>
+                </div>
             </div>
 
             {/* 侧栏 - DaisyUI drawer */}

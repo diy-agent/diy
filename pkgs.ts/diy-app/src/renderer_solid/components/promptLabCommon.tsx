@@ -1,30 +1,8 @@
 // components/promptLabCommon.ts — 试验场页面共享（V4 用，V1~V3 不动）
-// 同一套 template.* RPC 的前端类型 + 行级 diff + 分组映射 + 即时悬浮提示。
+// 行级 diff + 即时悬浮提示；**类型一律从 shared/prompt-schema 取**（曾经手抄一份 PromptEntry，必然会漂移）。
 import { createSignal, Show } from "solid-js";
 
-export interface PromptEntry {
-    relpath: string;
-    title: string;
-    desc: string;
-    version: number;
-    overridable: boolean;
-    tip: string;
-    status: "builtin" | "overridden";
-    current: string;
-    builtin: string;
-    baseVersion: number | null;
-    stale: boolean;
-}
-
-export interface RequestPreview {
-    system: string;
-    unknownVars: string[];
-    /** 非空即超出系统上下文预算：拒绝发送（不做自动截断） */
-    overBudget: { used: number; budget: number } | null;
-    /** 仿真请求体（request.json 同形，有任务场景时才有） */
-    requestBody?: Record<string, unknown> | null;
-    requestNote?: string;
-}
+export type { PromptEntry, RequestPreview } from "../../shared/prompt-schema";
 
 /** 即时悬浮提示（viewport fixed）：daisyUI tooltip 在 overflow-auto 窗格里会被裁掉，
  * 原生 title 又有 OS 级延迟；这个悬停即显、永不裁剪，样式与 daisyUI tooltip 一致。
@@ -55,33 +33,5 @@ export function useHoverTip() {
     return { show, hide, node };
 }
 
-/** 朴素行级 diff（LCS）：[{t:' '|'-'|'+', s}]，模版小文本够用 */
-export function lineDiff(a: string, b: string): Array<{ t: string; s: string }> {
-    const A = a.split("\n");
-    const B = b.split("\n");
-    const n = A.length;
-    const m = B.length;
-    const dp: number[][] = Array.from({ length: n + 1 }, () => Array.from({ length: m + 1 }, () => 0));
-    for (let i = n - 1; i >= 0; i--)
-        for (let j = m - 1; j >= 0; j--)
-            dp[i]![j] = A[i] === B[j] ? (dp[i + 1]![j + 1] ?? 0) + 1 : Math.max(dp[i + 1]![j] ?? 0, dp[i]![j + 1] ?? 0);
-    const out: Array<{ t: string; s: string }> = [];
-    let i = 0;
-    let j = 0;
-    while (i < n && j < m) {
-        if (A[i] === B[j]) {
-            out.push({ t: " ", s: A[i]! });
-            i++;
-            j++;
-        } else if ((dp[i + 1]![j] ?? 0) >= (dp[i]![j + 1] ?? 0)) {
-            out.push({ t: "-", s: A[i]! });
-            i++;
-        } else {
-            out.push({ t: "+", s: B[j]! });
-            j++;
-        }
-    }
-    while (i < n) out.push({ t: "-", s: A[i++]! });
-    while (j < m) out.push({ t: "+", s: B[j++]! });
-    return out;
-}
+// diff 实现移入 shared/line-diff.ts（纯模块，可在 node 里跑基准）；这里保持原导出名不变
+export { lineDiff, type DiffLine } from "../../shared/line-diff";

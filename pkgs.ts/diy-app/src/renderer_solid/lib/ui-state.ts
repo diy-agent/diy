@@ -122,7 +122,7 @@ export const Caches = {
     serialize: (v) => String(v),
     defaultValue: 0,
   }),
-  /** 任务详情面板宽度（px，范围 360-1000） */
+  /** 任务详情面板宽度（px，范围 360-4000；渲染时另受窗口上限约束，见 TaskDetailPanel.panelMax） */
   diy_task_detail_width: field("diy_task_detail_width", {
     parse: (raw) => {
       const v = Number(raw);
@@ -152,6 +152,50 @@ export const Caches = {
     parse: (raw) => (raw === "dark" || raw === "light" ? raw : null),
     serialize: (v) => v,
     defaultValue: "dark",
+  }),
+  /** 试验场左栏宽（px，范围 180-480）。宽度类缓存一律走本文件，
+   *  否则「重置界面状态」清不掉（历史问题：试验场直写 localStorage 的 lab4.leftW）。 */
+  diy_lab_left_width: field<number>("diy_lab_left_width", {
+    parse: (raw) => {
+      const v = Number(raw);
+      return v >= 180 && v <= 480 ? v : null;
+    },
+    serialize: (v) => String(v),
+    defaultValue: 256,
+  }),
+  /** 试验场右栏宽（px，范围 240-640） */
+  diy_lab_right_width: field<number>("diy_lab_right_width", {
+    parse: (raw) => {
+      const v = Number(raw);
+      return v >= 240 && v <= 640 ? v : null;
+    },
+    serialize: (v) => String(v),
+    defaultValue: 384,
+  }),
+  /** 试验场未存盘草稿（project → { relpath → 正文 }）。
+   *  存这里而不是组件 signal：App.tsx 用 <Show> 挂死页面，切页即卸载 → 半编辑内容全丢。
+   *  按 project 分桶，切到别的项目不会看到/不会写入上一个项目的草稿。 */
+  diy_lab_drafts: field<Record<string, Record<string, string>>>("diy_lab_drafts", {
+    parse: (raw) => {
+      try {
+        const o: unknown = JSON.parse(raw);
+        if (!o || typeof o !== "object" || Array.isArray(o)) return null;
+        const out: Record<string, Record<string, string>> = {};
+        for (const [pid, bucket] of Object.entries(o as Record<string, unknown>)) {
+          if (!bucket || typeof bucket !== "object" || Array.isArray(bucket)) continue;
+          const m: Record<string, string> = {};
+          for (const [rel, body] of Object.entries(bucket as Record<string, unknown>)) {
+            if (typeof body === "string") m[rel] = body;
+          }
+          if (Object.keys(m).length > 0) out[pid] = m;
+        }
+        return out;
+      } catch {
+        return null;
+      }
+    },
+    serialize: (v) => JSON.stringify(v),
+    defaultValue: {},
   }),
 };
 
@@ -184,6 +228,9 @@ const LEGACY_KEYS = [
   "diy-detail-width",
   "diy-local-density",
   "diy-theme",
+  // 试验场早期直写的宽度 key（已收进字段池）
+  "lab4.leftW",
+  "lab4.rightW",
 ];
 
 /** 清空全部视图 cache：注册字段池 + 前缀兜底（防未来直写漏注册）+ 旧 key 兼容。返回删除条数。 */

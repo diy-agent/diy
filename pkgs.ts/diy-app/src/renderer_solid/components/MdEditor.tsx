@@ -27,6 +27,9 @@ export function MdEditor(props: { value: string; editable: boolean; onChange: (v
     let host: HTMLDivElement | undefined;
     let view: EditorView | undefined;
     const editableCx = new Compartment();
+    // 程序化换文档（切文件/保存/恢复）不回调 onChange：
+    // 否则切一份文件就等于「改了一次」，drafts 多一条脏值 → 头部错报「1 未保存」（脏点却是空的）
+    let silent = false;
 
     onMount(() => {
         view = new EditorView({
@@ -44,7 +47,7 @@ export function MdEditor(props: { value: string; editable: boolean; onChange: (v
                     editableCx.of(EditorView.editable.of(props.editable)),
                     labTheme,
                     EditorView.updateListener.of((u) => {
-                        if (u.docChanged) props.onChange(u.state.doc.toString());
+                        if (u.docChanged && !silent) props.onChange(u.state.doc.toString());
                     }),
                 ],
             }),
@@ -58,7 +61,12 @@ export function MdEditor(props: { value: string; editable: boolean; onChange: (v
         const vv = view;
         if (!vv) return;
         if (vv.state.doc.toString() !== v) {
-            vv.dispatch({ changes: { from: 0, to: vv.state.doc.length, insert: v } });
+            silent = true;
+            try {
+                vv.dispatch({ changes: { from: 0, to: vv.state.doc.length, insert: v } });
+            } finally {
+                silent = false;
+            }
         }
     });
     // 锁态切换（只读模板）→ 即时生效
