@@ -15,8 +15,8 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "types": ["node"],
+    "types": ["node", "vite/client"],
     "paths": { "@/*": ["./*"] }
   },
-  "include": ["./**/*", "../env.d.ts"]
+  "include": ["./**/*"]
 }
