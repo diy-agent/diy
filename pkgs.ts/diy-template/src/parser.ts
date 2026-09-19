@@ -259,34 +259,55 @@ class Parser {
         }
     }
 
-    /** 把属性值拆成「字面量 + {{path}}」片段（解析期校验，报错带位置） */
+    /**
+     * 把属性值拆成「字面量 + {{path}}」片段（解析期校验，报错带位置）。
+     * 与文本位置一致地支持逃生舱：`\{{` → 字面量 `{{`，`\<` → 字面量 `<`。
+     */
     private attrParts(attr: RawAttr): AttrPart[] {
         const parts: AttrPart[] = [];
-        let rest = attr.value;
-        let rel = 0;
-        for (;;) {
-            const open = rest.indexOf('{{');
-            if (open === -1) {
-                if (rest !== '') parts.push(rest);
-                return parts;
+        const v = attr.value;
+        let lit = '';
+        let i = 0;
+        const flush = (): void => {
+            if (lit !== '') {
+                parts.push(lit);
+                lit = '';
             }
-            if (open > 0) parts.push(rest.slice(0, open));
-            const close = rest.indexOf('}}', open + 2);
-            if (close === -1) {
-                this.err('syntax', `属性 ${attr.name} 里的插值未闭合`, attr.valueOffset + rel + open);
+        };
+        while (i < v.length) {
+            if (v.startsWith('\\{{', i)) {
+                lit += '{{';
+                i += 3;
+                continue;
             }
-            const rawPath = rest.slice(open + 2, close).trim();
-            if (rawPath !== '.' && !PATH_RE.test(rawPath)) {
-                this.err(
-                    'syntax',
-                    `属性 ${attr.name} 的插值只支持路径：{{${rawPath}}}`,
-                    attr.valueOffset + rel + open,
-                );
+            if (v.startsWith('\\<', i)) {
+                lit += '<';
+                i += 2;
+                continue;
             }
-            parts.push({ path: rawPath, loc: this.locAt(attr.valueOffset + rel + open) });
-            rel += close + 2;
-            rest = rest.slice(close + 2);
+            if (v.startsWith('{{', i)) {
+                const close = v.indexOf('}}', i + 2);
+                if (close === -1) {
+                    this.err('syntax', `属性 ${attr.name} 里的插值未闭合`, attr.valueOffset + i);
+                }
+                const rawPath = v.slice(i + 2, close).trim();
+                if (rawPath !== '.' && !PATH_RE.test(rawPath)) {
+                    this.err(
+                        'syntax',
+                        `属性 ${attr.name} 的插值只支持路径：{{${rawPath}}}`,
+                        attr.valueOffset + i,
+                    );
+                }
+                flush();
+                parts.push({ path: rawPath, loc: this.locAt(attr.valueOffset + i) });
+                i = close + 2;
+                continue;
+            }
+            lit += v[i];
+            i += 1;
         }
+        flush();
+        return parts;
     }
 
     // ── 控制节点 <template> ───────────────────────────────────────────

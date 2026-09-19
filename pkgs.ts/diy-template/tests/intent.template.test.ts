@@ -118,15 +118,39 @@ describe('R1 逐字节原样（不转义 / 不 trim / 不删行）', () => {
         expect(out).toBe('AB');
     });
 
-    it('正文要写字面量 {{ 或 XML 形状文本时有逃生舱：\\{{ 与 \\<，整段用 <raw>', () => {
+    it('逃生舱 \\{{ ：只吞掉紧随其后的 {{ ，后面的插值照常生效', () => {
         expect(render('说明：\\{{diy.cli}} 是占位符写法', {})).toBe('说明：{{diy.cli}} 是占位符写法');
-        expect(render('示例：<raw><template :if="x">A</template></raw>', {})).toBe(
-            '示例：<template :if="x">A</template>',
+        // 吃掉的是开头的两个大括号；后面的 }} 本来就不是语法
+        expect(render('\\{{ x }}{{diy.cli}}', { globals: { diy: { cli: 'V' } } })).toBe('{{ x }}V');
+        // 属性值里同样可用（否则属性里写不出字面量 {{）
+        expect(render('<pi path="\\{{a}}" />', {})).toBe('<pi path="{{a}}" />');
+    });
+
+    it('逃生舱 \\< ：写给模型看的 XML 形状文本；非良构或像控制节点时**必须**转义', () => {
+        // 必须转义 1：非良构（<pid> 没有闭合标签、a<b 会被当成元素开始）
+        expect(caught(() => render('<pid> 是任务号', {})).code).toBe('syntax');
+        expect(render('\\<pid> 是任务号', {})).toBe('<pid> 是任务号');
+        expect(caught(() => render('a<b', {})).code).toBe('syntax');
+        expect(render('a\\<b', {})).toBe('a<b');
+        // 必须转义 2：形状像控制节点，不转义会被**执行**
+        expect(render('<template :if="diy.on">X</template>', { globals: { diy: { on: true } } })).toBe('X');
+        expect(render('\\<template :if="diy.on">X\\</template>', { globals: { diy: { on: true } } })).toBe(
+            '<template :if="diy.on">X</template>',
         );
-        // 讲格式时常见：\< 与 \</ 都当字面量
-        expect(render('格式：\\<project_instructions path="…">\\</project_instructions>', {})).toBe(
-            '格式：<project_instructions path="…"></project_instructions>',
-        );
+        // 良构且属性用双引号时**不必需**转义（原样透传，输出相同），转义只是让语义更明确
+        const raw = '<project_instructions path="/repo/AGENTS.md">规则</project_instructions>';
+        expect(render(raw, {})).toBe(raw);
+        expect(render('\\<project_instructions path="/repo/AGENTS.md">规则\\</project_instructions>', {})).toBe(raw);
+        // 整段原样输出用 <raw>（不必逐处转义）
+        expect(render('<raw><template :if="x">A</template></raw>', {})).toBe('<template :if="x">A</template>');
+    });
+
+    it('反斜杠只在 {{ 或 < 前特殊；其它位置原样（Windows 路径不受影响）', () => {
+        expect(render('C:\\repo\\src', {})).toBe('C:\\repo\\src');
+        // 要输出字面量 \< ：写两个反斜杠（前一个原样输出，后一个触发转义）
+        expect(render('\\\\<', {})).toBe('\\<');
+        // 反斜杠 + 非 {{ / < ：原样
+        expect(render('regex: \\d+', {})).toBe('regex: \\d+');
     });
 });
 
