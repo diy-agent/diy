@@ -44,6 +44,8 @@ interface RawAttr {
     valueOffset: number;
     /** 源里是否写了 =（false = 无值属性） */
     hasValue: boolean;
+    /** 属性结束偏移（值之后的第一个字符），用于"剥掉控制属性、其余原样" */
+    endOffset: number;
 }
 
 interface RawTag {
@@ -52,7 +54,20 @@ interface RawTag {
     selfClosing: boolean;
     /** 属性与 `/>` 之间的原始空白 */
     closeSpace: string;
+    /** 标签头结束偏移（`>` 或 `/>` 之后） */
+    end: number;
     loc: Loc;
+}
+
+/** 标签头里的控制属性（判据 C：只有带它的标签才成为节点） */
+function controlAttrsOf(tag: RawTag): Record<string, RawAttr | undefined> {
+    const out: Record<string, RawAttr | undefined> = {};
+    for (const a of tag.attrs) {
+        if (!a.name.startsWith(':')) continue;
+        const key = a.name.slice(1);
+        if ((CONTROL_ATTRS as readonly string[]).includes(key)) out[key] = a;
+    }
+    return out;
 }
 
 /** 解析模版源 → 节点数组 */
@@ -62,6 +77,8 @@ export function parse(source: string, opts: ParseOptions = {}): Node[] {
 
 class Parser {
     private pos = 0;
+    /** 最近一次匹配到的闭合标签原文（容器原样输出用） */
+    private lastCloseText: string | undefined;
     /** 每行起始偏移，用于 O(log n) 行列换算 */
     private readonly lineStarts: number[] = [0];
 
@@ -119,6 +136,7 @@ class Parser {
                 const m = /^<\/([A-Za-z_][A-Za-z0-9_.-]*)\s*>/.exec(this.src.slice(this.pos));
                 if (m && m[1] === closeName) {
                     flush();
+                    this.lastCloseText = m[0];
                     this.pos += m[0].length;
                     return out;
                 }
@@ -164,7 +182,29 @@ class Parser {
                 this.pos = stop;
                 continue;
             }
-            // 其它一切（含 <diy>、<pid>、a<b、</project_instructions>）都是普通文本
+            // 判据 C：只有**带控制属性**的标签才是节点（<description :if="…">）；
+            // 其余一切标签头（<diy>、<pid>、a<b、vector<T>）都是普通文本，零碰撞。
+            const ch = this.src[this.pos]!;
+            if (ch === '<' && /[A-Za-z_]/.test(this.src[this.pos + 1] ?? '')) {
+                const save = this.pos;
+                let tag: RawTag | undefined;
+                try {
+                    tag = this.readTag();
+                } catch (e) {
+                    // 标签头不完整（正文里的 a<b、vector<T>）；只有看起来带控制属性时才上报
+                    const lookahead = this.src.slice(save, save + 300);
+                    if (/:[A-Za-z-]+\s*=/.test(lookahead)) throw e;
+                    tag = undefined;
+                }
+                const ctrl = tag ? controlAttrsOf(tag) : {};
+                if (tag && (ctrl['if'] || ctrl['unless'] || ctrl['for'])) {
+                    flush();
+                    out.push(...this.buildTagContainer(tag, ctrl));
+                    textStart = this.pos;
+                    continue;
+                }
+                this.pos = save; // 不是控制容器 → 原样当文本继续扫（属性里的 {{}} 仍会替换）
+            }
             text += this.src[this.pos]!;
             this.pos += 1;
         }
@@ -221,11 +261,11 @@ class Parser {
             if (this.pos >= this.src.length) this.err('syntax', `标签 <${name}> 未闭合`, start);
             if (this.startsWith('/>')) {
                 this.pos += 2;
-                return { name, attrs, selfClosing: true, closeSpace: lastWs, loc: this.locAt(start) };
+                return { name, attrs, selfClosing: true, closeSpace: lastWs, end: this.pos, loc: this.locAt(start) };
             }
             if (this.startsWith('>')) {
                 this.pos += 1;
-                return { name, attrs, selfClosing: false, closeSpace: '', loc: this.locAt(start) };
+                return { name, attrs, selfClosing: false, closeSpace: '', end: this.pos, loc: this.locAt(start) };
             }
             const attrStart = this.pos;
             const am = /^([A-Za-z_:@#][A-Za-z0-9_:.-]*)/.exec(this.src.slice(this.pos));
@@ -236,7 +276,7 @@ class Parser {
             // 把无值属性后的字符（如 `/>` 的 `/`）当成它的值吃掉。
             const eq = /^\s*=/.exec(this.src.slice(this.pos));
             if (!eq) {
-                attrs.push({ name: attrName, value: '', loc: this.locAt(attrStart), valueOffset: attrStart, hasValue: false });
+                attrs.push({ name: attrName, value: '', loc: this.locAt(attrStart), valueOffset: attrStart, hasValue: false, endOffset: this.pos });
                 continue;
             }
             this.pos += eq[0].length;
@@ -256,8 +296,49 @@ class Parser {
                 value = vm![0];
                 this.pos += value.length;
             }
-            attrs.push({ name: attrName, value, loc: this.locAt(attrStart), valueOffset, hasValue: true });
+            attrs.push({ name: attrName, value, loc: this.locAt(attrStart), valueOffset, hasValue: true, endOffset: this.pos });
         }
+    }
+
+    /** 取标签头里的控制属性（判据 C 的判别函数） */
+    /** 把"带控制属性的标签"构造成容器节点：按条件/循环渲染内部，并原样输出自身标签 */
+    private buildTagContainer(tag: RawTag, ctrl: Record<string, RawAttr | undefined>): Node[] {
+        if (ctrl['include']) {
+            this.err('syntax', ':include 只能用在 <template> 上', ctrl['include']!.loc.offset);
+        }
+        const ifAttr = ctrl['if'];
+        const unlessAttr = ctrl['unless'];
+        const forAttr = ctrl['for'];
+        if (ifAttr && unlessAttr) this.err('syntax', ':if 与 :unless 不能同时出现', ifAttr.loc.offset);
+
+        let children: Node[] = [];
+        let headClose = '';
+        if (!tag.selfClosing) {
+            children = this.readNodes(tag.name);
+            // 闭合标签原文（逐字节）；readNodes 找到了才设值
+            headClose = this.lastCloseText ?? `</${tag.name}>`;
+            this.lastCloseText = undefined;
+        }
+
+        // 标签头：剥掉控制属性的字符区间，其余原样（**不重新格式化**，保留引号/空白）
+        const cut = [ifAttr, unlessAttr, forAttr, ctrl['include']]
+            .filter((a): a is RawAttr => Boolean(a))
+            .map((a) => {
+                let start = a.loc.offset;
+                while (start > tag.loc.offset && /\s/.test(this.src[start - 1]!)) start -= 1;
+                return [start, a.endOffset] as [number, number];
+            })
+            .sort((a, b) => a[0] - b[0]);
+        let head = '';
+        let cursor = tag.loc.offset;
+        for (const [start, end] of cut) {
+            head += this.src.slice(cursor, start);
+            cursor = end;
+        }
+        head += this.src.slice(cursor, tag.end);
+
+        const node: Node = { type: 'tag', head, headClose, children, loc: tag.loc };
+        return this.wrapControl(forAttr, ifAttr, unlessAttr, [node]);
     }
 
     // ── 控制节点 <template> ───────────────────────────────────────────

@@ -32,4 +32,4 @@ export type { DynamicFrame, RenderContext } from './scope';
 export { analyze, analyzeNodes, collectDynamicRefs } from './analyze';
 export type { Analysis, ConditionRef, IncludeRef, LintIssue, LoopRef, PathRef } from './analyze';
 
-export type { ForNode, IfNode, IncludeArg, IncludeNode, InterpNode, Node, TextNode } from './ast';
+export type { ForNode, IfNode, IncludeArg, IncludeNode, InterpNode, Node, TagNode, TextNode } from './ast';

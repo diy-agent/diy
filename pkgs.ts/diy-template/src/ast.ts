@@ -3,6 +3,7 @@
 // 只有 5 类节点（保持最小）：
 //   text    原样文本（**输出标签也是 text**：<diy>、<project_instructions path="{{p}}">）
 //   interp  {{path}} 插值
+//   tag     带控制属性的标签容器（<description :if>…</description>）：标签原样，内部受控
 //   if      <template :if> / :unless
 //   for     <template :for>
 //   include <template :include="…" 参数… />
@@ -19,6 +20,17 @@ export interface InterpNode {
     type: 'interp';
     /** 路径：'.x' / '.x.y' 读动态作用域，'a.b' 读 globals，'.' 读当前循环项 */
     path: string;
+    loc: Loc;
+}
+
+/** 带控制属性的标签容器：head/headClose 原样输出，children 受 :if / :for 控制 */
+export interface TagNode {
+    type: 'tag';
+    /** 开标签原文（已剥掉控制属性，其余字符逐字节保留） */
+    head: string;
+    /** 闭合标签原文；自闭合为空串 */
+    headClose: string;
+    children: Node[];
     loc: Loc;
 }
 
@@ -57,4 +69,4 @@ export interface IncludeNode {
     loc: Loc;
 }
 
-export type Node = TextNode | InterpNode | IfNode | ForNode | IncludeNode;
+export type Node = TextNode | InterpNode | TagNode | IfNode | ForNode | IncludeNode;

@@ -111,17 +111,33 @@ describe('控制标记的语法（唯一严格的部分）', () => {
     });
 });
 
-describe('误用体检（lint，不阻断渲染但要显式提示）', () => {
-    it('控制属性写在普通标签上 → 提示改用 <template> 包裹（否则会原样漏进提示词）', () => {
-        const a = analyze('<rules>\n<item :if="diy.strict">严格</item>\n</rules>');
-        expect(a.lint).toHaveLength(1);
-        expect(a.lint[0]!.message).toContain(':if');
-        expect(a.lint[0]!.message).toContain('<template');
-        expect(a.lint[0]!.loc.line).toBe(2);
+describe('判据 C：带控制属性的标签即容器（其余标签一概是文本）', () => {
+    it('带 :if / :for 的标签成为容器，标签本身原样输出', () => {
+        const G = { globals: { diy: { on: true }, list: ['a', 'b'] } };
+        expect(render('<item :if="diy.on">严格</item>', G)).toBe('<item>严格</item>');
+        expect(render('<item :if="diy.on">严格</item>', { globals: { diy: { on: false } } })).toBe('');
+        expect(render('<skill :for="s of list">{{.s}}</skill>', G)).toBe('<skill>a</skill><skill>b</skill>');
     });
 
-    it('写到 <template> 上就不算误用', () => {
-        expect(analyze('<template :if="diy.strict">严格</template>').lint).toEqual([]);
+    it('不带控制属性的标签（哪怕配对）也是文本', () => {
+        expect(render('<b>bold</b> 与 <pid> 与 a<b 与 vector<T>', {})).toBe(
+            '<b>bold</b> 与 <pid> 与 a<b 与 vector<T>',
+        );
+    });
+
+    it('只剥控制属性，标签头其余字符逐字节保留（不重新格式化）', () => {
+        expect(render(`<pi path='x'  flag :if="on">y</pi>`, { globals: { on: true } })).toBe(`<pi path='x'  flag>y</pi>`);
+    });
+
+    it('带控制属性但没闭合 → 响亮报错（而不是静默当文本）', () => {
+        expect(code(() => parse('<item :if="x">严格'))).toBe('syntax');
+    });
+
+    it('正文里的 :if= / 拼错的 :iff= → lint 提示，不静默', () => {
+        const a = analyze('讲格式：条件写成 :if= 这样\n');
+        expect(a.lint).toHaveLength(1);
+        expect(a.lint[0]!.loc.line).toBe(1);
+        expect(analyze('<enabled :iff="a">x</enabled>').lint[0]!.message).toContain(':iff');
     });
 });
 

@@ -211,10 +211,10 @@ describe('R4 条件：:if / :unless 与固定真假值表', () => {
         }
     });
 
-    it('给某个输出标签加条件：用 <template> 包裹（控制标记不产出字符，包裹是免费的）', () => {
+    it('给某个标签加条件：直接写在标签上（带控制属性的标签即容器，标签原样输出）', () => {
         const tpl = block(`
             <rules>
-            <template :if="diy.strict"><item>严格</item></template>
+            <item :if="diy.strict">严格</item>
             </rules>
         `);
         expect(render(tpl, { globals: { diy: { strict: true } } })).toBe(block(`
@@ -222,13 +222,25 @@ describe('R4 条件：:if / :unless 与固定真假值表', () => {
             <item>严格</item>
             </rules>
         `));
+        // 条件为假：连标签一起不输出（只留布局自身的换行）
         expect(render(tpl, { globals: { diy: { strict: false } } })).toBe(block(`
             <rules>
 
             </rules>
         `));
-        // 误写成 <item :if> 时不会静默：lint 明确提示
-        expect(analyze('<item :if="diy.strict">严格</item>').lint[0]!.message).toContain('改用控制标记包裹');
+        // 等价写法：<template> 包裹（控制标记不产出字符）；两者字节一致
+        const wrapped = block(`
+            <rules>
+            <template :if="diy.strict"><item>严格</item></template>
+            </rules>
+        `);
+        expect(render(wrapped, { globals: { diy: { strict: true } } })).toBe(
+            render(tpl, { globals: { diy: { strict: true } } }),
+        );
+        // 循环也一样：<skill :for="s of list">
+        expect(render('<skill :for="s of diy.skills">{{.s}}</skill>', { globals: { diy: { skills: ['a', 'b'] } } })).toBe(
+            '<skill>a</skill><skill>b</skill>',
+        );
     });
 });
 

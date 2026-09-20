@@ -114,6 +114,9 @@ export function analyzeNodes(nodes: Node[]): Analysis {
                 case 'interp':
                     addPath(n.path, n.loc);
                     break;
+                case 'tag':
+                    walk(n.children);
+                    break;
                 case 'if':
                     addPath(n.path, n.loc);
                     out.conditions.push({ path: n.path, negate: n.negate, loc: n.loc });
@@ -156,6 +159,9 @@ export function collectDynamicRefs(nodes: Node[]): Set<string> {
                     break;
                 case 'interp':
                     add(n.path);
+                    break;
+                case 'tag':
+                    walk(n.children);
                     break;
                 case 'if':
                     add(n.path);

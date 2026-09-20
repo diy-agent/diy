@@ -44,7 +44,7 @@ export interface RenderOptions {
     maxDepth?: number;
 }
 
-export type TraceKind = 'text' | 'interp' | 'if' | 'for' | 'for-item' | 'include';
+export type TraceKind = 'text' | 'interp' | 'element' | 'if' | 'for' | 'for-item' | 'include';
 
 export interface TraceNode {
     kind: TraceKind;
@@ -125,6 +125,16 @@ class Renderer {
             case 'interp': {
                 const text = resolveForOutput(n.path, ctx, n.loc, this.currentFile());
                 sink?.push({ kind: 'interp', name: n.path, bytes: byteLength(text) });
+                return text;
+            }
+
+            case 'tag': {
+                const node: TraceNode = { kind: 'element', name: n.head.match(/^<([^\s>]+)/)?.[1], bytes: 0, children: [] };
+                const childSink: TraceNode[] = [];
+                const text = `${n.head}${this.renderNodes(n.children, ctx, childSink)}${n.headClose}`;
+                node.bytes = byteLength(text);
+                node.children = childSink;
+                sink?.push(node);
                 return text;
             }
 
