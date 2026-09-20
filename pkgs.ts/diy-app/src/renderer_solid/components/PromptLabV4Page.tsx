@@ -464,9 +464,11 @@ function VarTree(props: {
     /** 已发生的路径前缀（数组元素节点不参与路径拼接：chain 的 [ChainEntry] 仍属于 chain） */
     path: string;
     used: (path: string) => boolean;
-    /** 点变量名 → 在模版/预览里高亮它的所有出现处 */
-    onPick: (path: string) => void;
-    /** 当前选中的变量路径（画选中态） */
+    /** 元素类型行：这个数组的 item 类型在模版里被用到没有（决定蓝点） */
+    usedItem: (arrayPath: string) => boolean;
+    /** 点整行（任意列）→ 高亮它的所有出现处；元素类型行是独立的一种选择 */
+    onPick: (sel: { kind: "var"; path: string } | { kind: "item"; arrayPath: string; elName: string }) => void;
+    /** 当前选中的行（`var:chain` / `item:chain:[ChainEntry]`）——只亮一行 */
     picked?: string;
     open: Record<string, boolean>;
     onToggle: (k: string, open: boolean) => void;
@@ -478,12 +480,30 @@ function VarTree(props: {
                 const key = `${props.path}/${i()}`;
                 const isElement = n.name.startsWith("[");
                 const full = () => (props.path && !isElement ? `${props.path}.${n.name}` : props.path || n.name);
+                // 选中标识：元素行与它所属的数组行**必须不同**（否则一次点击两行同时亮）
+                const selKey = () => (isElement ? `item:${props.path}:${n.name}` : `var:${full()}`);
                 const kids = () => n.children ?? [];
                 const hasKids = () => kids().length > 0;
                 const isOpen = () => props.open[key] ?? true; // 树不大 → 默认全展开
                 return (
                     <>
-                        <tr class="hover:bg-base-300/40">
+                        <tr
+                            class={`cursor-pointer hover:bg-base-300/40 ${
+                                props.picked === selKey() ? "bg-primary/20" : ""
+                            }`}
+                            title={
+                                isElement
+                                    ? `点一下：高亮用到 ${n.name} 这个元素类型的文本`
+                                    : `点一下：高亮 ${full()} 的所有出现处`
+                            }
+                            onClick={() =>
+                                props.onPick(
+                                    isElement
+                                        ? { kind: "item", arrayPath: props.path, elName: n.name }
+                                        : { kind: "var", path: full() },
+                                )
+                            }
+                        >
                             {/* 单行不换行：table-fixed + truncate + title（完整信息靠 hover，不撑高行高、不出横向滚动条） */}
                             <td class="py-0.5 pr-2 align-top">
                                 <span
@@ -493,24 +513,19 @@ function VarTree(props: {
                                     <button
                                         class="w-3 shrink-0 text-left opacity-60 disabled:opacity-20"
                                         disabled={!hasKids()}
-                                        onClick={() => hasKids() && props.onToggle(key, isOpen())}
+                                        onClick={(e) => {
+                                            e.stopPropagation(); // 别连带把这一行也选中了
+                                            if (hasKids()) props.onToggle(key, isOpen());
+                                        }}
                                     >
                                         {hasKids() ? (isOpen() ? "▾" : "▸") : "·"}
                                     </button>
-                                    <Show when={!isElement && props.used(full())}>
+                                    <Show when={isElement ? props.usedItem(props.path) : props.used(full())}>
                                         <span class="shrink-0 text-info" title="本模版用到了">
                                             ●
                                         </span>
                                     </Show>
-                                    <button
-                                        class={`truncate font-mono hover:underline ${
-                                            props.picked === full() ? "text-primary" : ""
-                                        }`}
-                                        title={`${full()}（点一下：高亮它在模版/预览里的所有出现处）`}
-                                        onClick={() => !isElement && props.onPick(full())}
-                                    >
-                                        {n.name}
-                                    </button>
+                                    <span class="truncate font-mono">{n.name}</span>
                                     <span class="badge badge-xs badge-ghost shrink-0 font-mono">
                                         {n.type}
                                         {n.optional ? "?" : ""}
@@ -528,6 +543,7 @@ function VarTree(props: {
                                 nodes={kids()}
                                 path={isElement ? props.path : full()}
                                 used={props.used}
+                                usedItem={props.usedItem}
                                 onPick={props.onPick}
                                 picked={props.picked}
                                 open={props.open}
@@ -611,7 +627,11 @@ export function PromptLabV4Page() {
      * 预览随草稿重算后选区照样跟着走，不会指着过期的偏移。
      */
     const [hlSel, setHlSel] = createSignal<
-        { kind: "node"; key: string; file: string } | { kind: "var"; path: string } | null
+        | { kind: "node"; key: string; file: string }
+        | { kind: "var"; path: string }
+        /** 数组的 item 类型行：高亮"用到这个元素类型"的文本（循环体里对它的字段引用） */
+        | { kind: "item"; arrayPath: string; elName: string }
+        | null
     >(null);
 
     /**
@@ -645,6 +665,29 @@ export function PromptLabV4Page() {
         return e ? draftOf(e) : "";
     };
 
+    /**
+     * item 类型选择 → 相关循环的 `:as` 名。
+     * 语义：`chain` 是 array，item 是 ChainEntry；模版里"用到这个 item 类型"的地方
+     * 就是**以 chain 为源的那些循环体里对 `.f.value.*` 的引用**（引擎的静态分析给了这些动态路径）。
+     */
+    const itemAsNames = createMemo<string[]>(() => {
+        const cur = hlSel();
+        if (cur?.kind !== "item") return [];
+        const a = analysis()?.a;
+        if (!a) return [];
+        const hit = (p: string) => p === cur.arrayPath || p.startsWith(`${cur.arrayPath}.`);
+        return [...new Set(a.loops.filter((l) => hit(l.source)).map((l) => l.as))];
+    });
+    /** 该数组的 item 类型是否被用到（蓝点）：有循环且循环体里出现了 `.as.` 引用 */
+    const usedItem = (arrayPath: string): boolean => {
+        const a = analysis()?.a;
+        if (!a) return false;
+        const hit = (p: string) => p === arrayPath || p.startsWith(`${arrayPath}.`);
+        const names = a.loops.filter((l) => hit(l.source)).map((l) => l.as);
+        if (names.length === 0) return false;
+        return a.paths.some((p) => p.scope === "dynamic" && names.some((as) => p.path.startsWith(`.${as}.`) || p.path === `.${as}`));
+    };
+
     /** 模版侧：选中的"这一段"在所属模版里的所有出现处（区间） */
     const hlSrc = createMemo<HlSpan[]>(() => {
         const cur = hlSel();
@@ -655,12 +698,21 @@ export function PromptLabV4Page() {
         }
         const a = analysis()?.a;
         if (!a) return [];
+        if (cur.kind === "item") {
+            // 循环体里对 `.as.*` 的引用（就是"用到这个 item 类型"的地方）
+            const names = itemAsNames();
+            return a.paths
+                .filter((p) => p.scope === "dynamic" && names.some((as) => p.path.startsWith(`.${as}`)))
+                .map((p) => ({ from: p.loc.offset, to: p.end }));
+        }
         const hit = (p: string) => p === cur.path || p.startsWith(`${cur.path}.`);
-        return [
+        const all = [
             ...a.paths.filter((p) => hit(p.path)).map((p) => ({ from: p.loc.offset, to: p.end })),
             ...a.loops.filter((l) => hit(l.source)).map((l) => ({ from: l.loc.offset, to: l.end })),
             ...a.conditions.filter((c) => hit(c.path)).map((c) => ({ from: c.loc.offset, to: c.end })),
         ];
+        // `:for={{chain}}` 会同时进 paths（源表达式）与 loops（循环）→ 同一段文本去重，别算两处
+        return [...new Map(all.map((r) => [`${r.from}-${r.to}`, r])).values()].sort((x, y) => x.from - y.from);
     });
     /** 预览侧：所有解析它的节点的产出区间 */
     const hlOut = createMemo<HlSpan[]>(() => {
@@ -678,11 +730,29 @@ export function PromptLabV4Page() {
             }
         };
         walk(preview()?.trace ?? []);
+        if (cur.kind === "item") {
+            // 预览侧：这些 `.as.*` 引用的产出（就是"用到这个 item 类型"的文本）
+            const names = itemAsNames();
+            return flat
+                .filter(
+                    (n) =>
+                        n.kind === "interp" &&
+                        names.some((as) => (n.arg ?? "").startsWith(`.${as}`)) &&
+                        n.out &&
+                        n.out.to > n.out.from,
+                )
+                .map((n) => n.out!);
+        }
         const hit = (p: string) => p === cur.path || p.startsWith(`${cur.path}.`);
         return flat
             .filter((n) => {
                 const arg = n.kind === "for" ? (n.arg ?? "").split(" ")[0]! : (n.arg ?? "");
-                return (n.kind === "interp" || n.kind === "if" || n.kind === "for") && hit(arg) && n.out;
+                return (
+                    (n.kind === "interp" || n.kind === "if" || n.kind === "for") &&
+                    hit(arg) &&
+                    n.out &&
+                    n.out.to > n.out.from
+                );
             })
             .map((n) => n.out!);
     });
@@ -702,6 +772,7 @@ export function PromptLabV4Page() {
         const cur = hlSel();
         if (!cur) return null;
         if (cur.kind === "var") return `{{${cur.path}}}`;
+        if (cur.kind === "item") return `${cur.elName}（${cur.arrayPath} 的 item）`;
         const n = picked()?.node;
         return n ? `${n.name ?? n.kind}${n.arg ? ` ${n.arg}` : ""}` : null;
     });
@@ -713,7 +784,12 @@ export function PromptLabV4Page() {
         const file = picked()?.file ?? selPath();
         const text = bodyOf(file);
         const i = Math.min(focusAt().src, occ.length - 1);
-        return { lines: lineNumbersOf(text, occ), focusLines: lineNumbersOf(text, [occ[i]!]) };
+        return {
+            lines: lineNumbersOf(text, occ),
+            focusLines: lineNumbersOf(text, [occ[i]!]),
+            focusPos: occ[i]!.from, // 横向也要滚到位（长行不折行）
+            focusEnd: occ[i]!.to,
+        };
     });
     /** 预览侧高亮（整行）：同上 */
     const outHl = createMemo<HlLines | null>(() => {
@@ -721,7 +797,12 @@ export function PromptLabV4Page() {
         if (occ.length === 0) return null;
         const text = preview()?.system ?? "";
         const i = Math.min(focusAt().out, occ.length - 1);
-        return { lines: lineNumbersOf(text, occ), focusLines: lineNumbersOf(text, [occ[i]!]) };
+        return {
+            lines: lineNumbersOf(text, occ),
+            focusLines: lineNumbersOf(text, [occ[i]!]),
+            focusPos: occ[i]!.from,
+            focusEnd: occ[i]!.to,
+        };
     });
 
     /** 点结构树行：切到该节点所属模版（草稿按 project 存，切文件不丢内容），再选中 */
@@ -733,8 +814,16 @@ export function PromptLabV4Page() {
         if (file !== selPath() && entries().some((e) => e.relpath === file)) setSelPath(file);
         setHlSel({ kind: "node", key, file });
     };
-    const pickVar = (path: string) => {
-        setHlSel(hlSel()?.kind === "var" && (hlSel() as { path: string }).path === path ? null : { kind: "var", path });
+    /** 变量定义行的点击（整行）：同一行再点一次 = 取消 */
+    const pickVarRow = (sel: { kind: "var"; path: string } | { kind: "item"; arrayPath: string; elName: string }) => {
+        const cur = hlSel();
+        const same =
+            cur?.kind === sel.kind &&
+            (sel.kind === "var"
+                ? (cur as { path: string }).path === sel.path
+                : (cur as { elName: string }).elName === sel.elName &&
+                  (cur as { arrayPath: string }).arrayPath === sel.arrayPath);
+        setHlSel(same ? null : sel);
     };
 
     // 三张表的列宽（px，可拖可持久化；与容器宽度解耦 → 拖动左栏不改列宽）
@@ -960,8 +1049,8 @@ export function PromptLabV4Page() {
             <Tabs.Content value="lab" class="flex min-h-0 flex-1 flex-col">
             <div class="flex flex-1 min-h-0" ref={(el) => (zoneRef = el)}>
                 {/* 左：模板目录树（场景/参数已删：任务即场景，参数走服务端默认） */}
-                {/* 左栏：纵/横双向滚动。卡片按内容取宽（w-max）+ 列宽固定（px）→ 表比可视区宽时
-                    在这里出横向滚动条，拖动这个滚动条就能看全任何一列 */}
+                {/* 左栏：纵向滚动。宽度类滚动交给**表内容自己**（overflow-x-auto）——
+                    卡片（含标题栏）始终只占可见宽度，横向滚时标题不会被滚走 */}
                 <div
                     class="shrink-0 border-r overflow-x-auto overflow-y-auto text-xs p-1 space-y-1"
                     style={{ width: `${leftW()}px` }}
@@ -969,7 +1058,7 @@ export function PromptLabV4Page() {
                     <div class="flex items-center px-2 py-1">
                         <span class="text-[11px] font-bold tracking-widest opacity-70">模板</span>
                     </div>
-                    <div class="min-w-full w-max border border-base-300 rounded-lg">
+                    <div class="border border-base-300 rounded-lg">
                         {viewHeader(
                             "tree",
                             "模板",
@@ -995,10 +1084,16 @@ export function PromptLabV4Page() {
                         </Show>
                     </div>
                     {/* 变量定义 view：本模版引用的变量/循环/条件/include + lint（renderer 侧实时分析草稿） */}
-                    <div class="min-w-full w-max border border-base-300 rounded-lg">
+                    <div class="border border-base-300 rounded-lg">
                         {viewHeader("vars", "变量定义", sel() ? sel()!.relpath : "未选模版")}
                         <Show when={views()["vars"]}>
-                            <div class="bg-base-200 px-0 py-1 font-mono text-[11px]">
+                            <div class="bg-base-300/40 px-2 py-0.5 text-[10px] opacity-70">
+                                <span class="text-info">●</span> = 本模版用到；点整行 = 高亮它的所有出现处；点
+                                <span class="font-mono">[类型]</span> 行 = 高亮用到该类型的文本
+                            </div>
+                        </Show>
+                        <Show when={views()["vars"]}>
+                            <div class="overflow-x-auto bg-base-200 px-0 py-1 font-mono text-[11px]">
                                 <Show when={analysis()} fallback={<div class="px-2 py-1 opacity-60">左侧点开一份模版</div>}>
                                     {(an) => (
                                         <Show when={an().a} fallback={<div class="px-2 py-1 text-error">{an().error}</div>}>
@@ -1022,8 +1117,15 @@ export function PromptLabV4Page() {
                                                                 <VarTree
                                                                     nodes={VAR_TREE}
                                                                     path=""
-                                                                    onPick={pickVar}
-                                                                    picked={hlSel()?.kind === "var" ? (hlSel() as { path: string }).path : undefined}
+                                                                    onPick={pickVarRow}
+                                                                    usedItem={usedItem}
+                                                                    picked={(() => {
+                                                                        const cur = hlSel();
+                                                                        if (cur?.kind === "var") return `var:${cur.path}`;
+                                                                        if (cur?.kind === "item")
+                                                                            return `item:${cur.arrayPath}:${cur.elName}`;
+                                                                        return undefined;
+                                                                    })()}
                                                                     used={(path) =>
                                                                         a().paths.some(
                                                                             (pp) =>
@@ -1100,10 +1202,10 @@ export function PromptLabV4Page() {
                         </Show>
                     </div>
                     {/* 变量值 view：本次**实际注入**的 globals（值随任务/草稿变化；结构来自契约） */}
-                    <div class="min-w-full w-max border border-base-300 rounded-lg">
+                    <div class="border border-base-300 rounded-lg">
                         {viewHeader("vals", "变量值", "本次注入的实际值（随任务变化）")}
                         <Show when={views()["vals"]}>
-                            <div class="bg-base-200 px-0 py-1 text-[11px]">
+                            <div class="overflow-x-auto bg-base-200 px-0 py-1 text-[11px]">
                                 <Show
                                     when={preview()}
                                     fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}
@@ -1135,14 +1237,14 @@ export function PromptLabV4Page() {
                         </Show>
                     </div>
                     {/* 结构树 view：与预览同源的 trace（节点 | 参数 | 值 | 字节） */}
-                    <div class="min-w-full w-max border border-base-300 rounded-lg">
+                    <div class="border border-base-300 rounded-lg">
                         {viewHeader(
                             "trace",
                             "结构树",
                             preview()?.trace ? `${preview()!.trace!.length} 顶层节点` : "随预览重算",
                         )}
                         <Show when={views()["trace"]}>
-                            <div class="bg-base-200 px-0 py-1 text-[11px]">
+                            <div class="overflow-x-auto bg-base-200 px-0 py-1 text-[11px]">
                                 <Show when={preview()?.trace} fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}>
                                     {(tr) => (
                                         <table class="table table-xs table-fixed" style={{ width: tableW(cols.trace) }}>
@@ -1307,7 +1409,7 @@ export function PromptLabV4Page() {
                     <div class="flex items-center px-2 py-1">
                         <span class="text-[11px] font-bold tracking-widest opacity-70">预览</span>
                     </div>
-                    <div class="min-w-full w-max border border-base-300 rounded-lg">
+                    <div class="border border-base-300 rounded-lg">
                         {viewHeader("sysctx", "系统上下文预览", "随草稿自动重算")}
                         <Show when={views()["sysctx"]}>
                         <HlBar
@@ -1351,7 +1453,7 @@ export function PromptLabV4Page() {
                         </div>
                         </Show>
                     </div>
-                    <div class="min-w-full w-max border border-base-300 rounded-lg">
+                    <div class="border border-base-300 rounded-lg">
                         <div class="flex w-full items-center gap-1 bg-base-300 px-2 py-1 text-[11px] font-bold tracking-wide">
                             <button class="opacity-80 hover:opacity-100" onClick={() => toggleView("reqbody")}>
                                 {views()["reqbody"] ? "▾" : "▸"}

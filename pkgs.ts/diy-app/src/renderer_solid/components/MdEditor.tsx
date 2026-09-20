@@ -7,7 +7,15 @@ import {
     highlightActiveLine,
     type DecorationSet,
 } from "@codemirror/view";
-import { EditorState, Compartment, StateEffect, StateField, type Range } from "@codemirror/state";
+import {
+    EditorState,
+    EditorSelection,
+    Compartment,
+    StateEffect,
+    StateField,
+    type Range,
+    type SelectionRange,
+} from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
@@ -40,6 +48,13 @@ const labTheme = EditorView.theme(
 export interface HlLines {
     lines: number[];
     focusLines?: number[];
+    /**
+     * 焦点那一段的**字符区间** —— 滚动目标。
+     * 不能只滚到行号：不折行时长行会横向溢屏，只到行首的话焦点段仍在屏幕外。
+     * 用区间而不是单点：CM 按段的真实几何居中（含 CJK 双宽），横向纵向都到位。
+     */
+    focusPos?: number;
+    focusEnd?: number;
 }
 
 const setHl = StateEffect.define<HlLines | null>();
@@ -141,10 +156,19 @@ export function MdEditor(props: {
         const vv = view;
         if (!vv) return;
         const effects: StateEffect<unknown>[] = [setHl.of(spec)];
+        // 滚动目标优先用焦点段的字符位置（横向也要到位）；没有就退回焦点行行首
         const focusLine = spec?.focusLines?.[0] ?? spec?.lines?.[0];
-        if (focusLine !== undefined) {
-            const n = Math.min(Math.max(1, focusLine), vv.state.doc.lines);
-            effects.push(EditorView.scrollIntoView(vv.state.doc.line(n).from, { y: "center" }));
+        const docLen = vv.state.doc.length;
+        const pos =
+            spec?.focusPos !== undefined
+                ? Math.min(Math.max(0, spec.focusPos), docLen)
+                : focusLine !== undefined
+                  ? vv.state.doc.line(Math.min(Math.max(1, focusLine), vv.state.doc.lines)).from
+                  : undefined;
+        if (pos !== undefined) {
+            const to = spec?.focusEnd !== undefined ? Math.min(Math.max(pos, spec.focusEnd), docLen) : pos;
+            const target: number | SelectionRange = to > pos ? EditorSelection.range(pos, to) : pos;
+            effects.push(EditorView.scrollIntoView(target, { y: "center", x: "center" }));
         }
         vv.dispatch({ effects });
     });
