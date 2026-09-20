@@ -12,7 +12,9 @@ import * as yaml from "js-yaml";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
+import { render as renderDsl, type IncludeResolver } from "@diy/template";
 import { PROMPT_DEFAULTS } from "../prompts/defaults";
+import { PROMPT_DEFAULTS_DSL } from "../prompts/defaults-dsl";
 import { parseTaskFile } from "../core/state";
 import { resolveCwd } from "../core/cwd";
 import { getProjectPath } from "../core/project";
@@ -93,7 +95,13 @@ export function systemBudgetForContext(contextLimitTokens?: number): number {
 
 const FM_SEP = "---";
 
-function parseMd(raw: string): { meta: PromptMeta; body: string } {
+/**
+ * 解析模版：frontmatter + body。
+ * @param byteExact true = **模版源逐字节进引擎**（只去掉 frontmatter 后那一个换行）——
+ *        DSL 路径用它（决策：不再 trim、不再补 \n，末尾换行由模版自己负责）；
+ *        legacy 路径保持旧行为（trim + 补 \n），迁移期两套并存。
+ */
+export function parseMd(raw: string, opts: { byteExact?: boolean } = {}): { meta: PromptMeta; body: string } {
   const fallback: PromptMeta = {
     title: "",
     desc: "",
@@ -123,7 +131,7 @@ function parseMd(raw: string): { meta: PromptMeta; body: string } {
       tag: String(front["tag"] ?? ""),
       fragment: front["fragment"] === true,
     },
-    body: raw.slice(end + 3).trim() + "\n",
+    body: opts.byteExact ? raw.slice(end + 3).replace(/^\n/, "") : raw.slice(end + 3).trim() + "\n",
   };
 }
 
@@ -351,6 +359,61 @@ function projectInstructions(home: string, projectId: string, cwd: string, taskU
       return r.text.trim();
     })
     .join("\n\n");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DSL 装配路径（M4）：节标签内联在模版里、顺序与分隔写在 system.md 里
+//   与 legacy 的区别只有一处是"可见"的：**system 末尾多一个 \n**（模版源自带末尾换行）。
+//   验收见 tests/core/template-dsl-golden.test.ts（golden = 换引擎前的真实输出）。
+// ═══════════════════════════════════════════════════════════════
+
+/** DSL 装配变量（命名空间版）：模版里写 {{diy.cli}} / {{task.title}} / {{.path}} */
+export interface AssembleGlobals {
+    diy: { cli: string; home: string };
+    project: { path: string };
+    task: { uri: string; title: string; state: string; body: string; dir: string };
+    cwd: { path: string; note: string; isFallback: boolean; isTaskDir: boolean; isAppDir: boolean };
+    chain: Array<{ path: string; scope: string; content: string }>;
+    skills: Array<{ name: string; desc: string }>;
+}
+
+/** 从模板常量构建 include resolver（fragment / locked 由 frontmatter 声明） */
+export function makeTemplatesResolver(
+    templates: Record<string, string>,
+    overrides?: Record<string, string>,
+): IncludeResolver {
+    return {
+        resolve(relpath) {
+            // 模版内写的是 "./xxx.md"；注册表的键是不带 "./" 的 relpath
+            const key = relpath.replace(/^\.\//, '');
+            const raw = overrides?.[key] ?? templates[key];
+            if (raw === undefined) return null;
+            const { meta, body } = parseMd(raw, { byteExact: true });
+            return { source: body, fragment: meta.fragment, locked: !meta.overridable };
+        },
+    };
+}
+
+/**
+ * 用 DSL 引擎渲染 system.md（真发与预览共用）。
+ * templates 可注入（测试用），默认走内置 DSL 模版。
+ */
+export function renderSystemDsl(opts: {
+    globals: AssembleGlobals | Record<string, unknown>;
+    templates?: Record<string, string>;
+    overrides?: Record<string, string>;
+    entry?: string;
+}): string {
+    const templates = opts.templates ?? PROMPT_DEFAULTS_DSL;
+    const entry = opts.entry ?? 'system.md';
+    const raw = templates[entry];
+    if (raw === undefined) throw new Error(`缺少装配入口模版：${entry}`);
+    const { meta, body } = parseMd(raw, { byteExact: true });
+    return renderDsl(
+        body,
+        { globals: opts.globals as Record<string, unknown> },
+        { resolver: makeTemplatesResolver(templates, opts.overrides), file: entry, locked: !meta.overridable },
+    );
 }
 
 /**
