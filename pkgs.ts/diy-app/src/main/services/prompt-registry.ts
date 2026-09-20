@@ -14,7 +14,7 @@ import * as yaml from "js-yaml";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
-import { analyze, renderWithTrace, type IncludeResolver, type TraceNode } from "@diy/template";
+import { analyze, renderWithTrace, type IncludeResolver, type TraceNode, type VarSpec } from "@diy/template";
 import { PROMPT_DEFAULTS } from "../prompts/defaults";
 import { parseTaskFile } from "../core/state";
 import { resolveCwd } from "../core/cwd";
@@ -34,6 +34,30 @@ export interface PromptMeta {
   /** 锁定时展示给用户的理由 */
   lockTip: string;
 }
+
+/**
+ * 变量契约（单一真源 = 这里，因为这里是注入 globals 的那一处）：
+ * 模版作者用它知道"我能用什么、是什么类型"，试验场「可用变量」view 显示它，
+ * `analyze(src, { vars })` 用它做静态校验（未知路径 / :for 非数组 / 插值非集合）。
+ * 一致性由测试守护：注入的每个叶子路径都必须在此声明，且类型相符。
+ */
+export const SYSTEM_VARS: VarSpec[] = [
+  { path: "diy.cli", type: "string", desc: "本 worktree 的 CLI 入口（如 /repo/diy.sh）" },
+  { path: "diy.home", type: "string", desc: "数据根（dev 为 build/home，prd 为 ~/.diy）" },
+  { path: "project.path", type: "string", desc: "当前项目对应的工作目录" },
+  { path: "task.uri", type: "string", desc: "任务 URI（projects/<pid>/tasks/<tid>）" },
+  { path: "task.title", type: "string" },
+  { path: "task.state", type: "string", desc: "任务状态" },
+  { path: "task.body", type: "string", desc: "任务正文（AGENTS.md 的 body）" },
+  { path: "task.dir", type: "string", desc: "任务目录绝对路径" },
+  { path: "cwd.path", type: "string", desc: "工具执行目录（bash/read 的基准）" },
+  { path: "cwd.note", type: "string", desc: "cwd 回退原因（仅 isFallback 时展示）" },
+  { path: "cwd.isFallback", type: "boolean", desc: "工作目录不存在，已回退到任务目录" },
+  { path: "cwd.isTaskDir", type: "boolean" },
+  { path: "cwd.isAppDir", type: "boolean" },
+  { path: "chain", type: "array", desc: "AGENTS.md 链（元素 {path,scope,content}，用 :for 迭代）" },
+  { path: "skills", type: "array", desc: "技能清单（元素 {name,desc}；空数组为假，整节跳过）" },
+];
 
 /** 装配入口固定名（顺序与分隔的唯一真源） */
 export const ENTRY_RELPATH = "_system.md";
@@ -412,26 +436,11 @@ export function assembleSystem(
       "未注入 DIY_CLI（当前进程环境没有该变量）：提示词里的「命令行入口」会退化成裸 diy，在 worktree 里会打到生产数据根。检查启动脚本是否注入 DIY_CLI。",
     );
   }
-  const globals: AssembleGlobals = {
-    diy: { cli: diyCli || "diy（未注入 DIY_CLI，勿照抄）", home },
-    project: { path: getProjectPath(projectId) ?? "" },
-    task: {
-      uri: taskUri,
-      title: task?.title ?? "",
-      state: task?.state ?? "",
-      body: task?.body ?? "",
-      dir: taskUri ? join(home, taskUri) : "",
-    },
-    cwd: {
-      path: cwdRes.cwd,
-      note: cwdRes.note,
-      isFallback: cwdRes.isFallback,
-      isTaskDir: cwdRes.isTaskDir,
-      isAppDir: cwdRes.isAppDir,
-    },
-    chain: chainOf(home, cwdRes.cwd, taskUri),
-    skills: opts.skills ?? [],
-  };
+  const globals = assembleGlobals(home, projectId, {
+    taskUri,
+    skills: opts.skills,
+    diyCli,
+  });
 
   // include 解析：草稿 > 项目覆盖 > 内置；白名单 = 内置清单（assertRelpath 兜底）
   const resolveInclude: IncludeResolver["resolve"] = (relpath) => {
@@ -452,5 +461,39 @@ export function assembleSystem(
     overBudget: used > budget ? { used, budget } : null,
     warnings,
     trace: opts.trace ? rendered.trace : null,
+    vars: SYSTEM_VARS,
   };
+}
+
+/** 构造注入 globals（单一真源；与 SYSTEM_VARS 的一致性由测试守护） */
+export function assembleGlobals(
+  home: string,
+  projectId: string,
+  opts: { taskUri?: string; skills?: Array<{ name: string; desc: string }>; diyCli?: string } = {},
+): AssembleGlobals {
+  const taskUri = opts.taskUri ?? "";
+  const task = taskOf(home, taskUri);
+  const cwdRes = resolveCwd(home, taskUri);
+  const diyCli = opts.diyCli ?? readRuntimeConfig().cli ?? "";
+  const globals: AssembleGlobals = {
+    diy: { cli: diyCli || "diy（未注入 DIY_CLI，勿照抄）", home },
+    project: { path: getProjectPath(projectId) ?? "" },
+    task: {
+      uri: taskUri,
+      title: task?.title ?? "",
+      state: task?.state ?? "",
+      body: task?.body ?? "",
+      dir: taskUri ? join(home, taskUri) : "",
+    },
+    cwd: {
+      path: cwdRes.cwd,
+      note: cwdRes.note,
+      isFallback: cwdRes.isFallback,
+      isTaskDir: cwdRes.isTaskDir,
+      isAppDir: cwdRes.isAppDir,
+    },
+    chain: chainOf(home, cwdRes.cwd, taskUri),
+    skills: opts.skills ?? [],
+  };
+  return globals;
 }

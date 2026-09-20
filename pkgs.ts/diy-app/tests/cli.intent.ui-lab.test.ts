@@ -64,7 +64,9 @@ describe("试验场：可用变量 / 结构树 两个 view", () => {
     );
     expect(text).toContain("可用变量");
     expect(text).toContain("结构树");
-    // 可用变量 view：默认选中的模版（identity.md）引用情况由引擎分析给出
+    // 可用变量 view：宿主变量契约（类型 + 说明）与"本模版引用"都上屏
+    expect(text).toContain("宿主提供（契约");
+    expect(text).toContain("cwd.isFallback · boolean");
     expect(text).toContain("引用 globals");
     // 结构树 view：顶层是各节的 include（trace 的 name 就是 relpath）
     await fx.sh.getJson(`./diy.sh template preview ${pid} --taskUri ${uri}`);

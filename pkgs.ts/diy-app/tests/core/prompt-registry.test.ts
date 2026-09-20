@@ -9,6 +9,8 @@ import {
   savePrompt,
   restorePrompt,
   assembleSystem,
+  assembleGlobals,
+  SYSTEM_VARS,
   systemBudgetForContext,
   SYSTEM_BUDGET_CAP_BYTES,
 } from "../../src/main/services/prompt-registry";
@@ -275,5 +277,40 @@ describe("回归：评审修复项", () => {
       process.env["HOME"] = oldHome;
       rmSync(outer, { recursive: true, force: true });
     }
+  });
+
+  it("变量契约与实际注入双向一致（加了变量忘写契约会被抓）", () => {
+    writeFileSync(join(home, "AGENTS.md"), "根规则\n", "utf-8");
+    const g = assembleGlobals(home, PID, { taskUri: TASK, skills: [{ name: "s", desc: "d" }] }) as unknown as Record<string, unknown>;
+
+    const typeOf = (v: unknown): string => (Array.isArray(v) ? "array" : v === null ? "null" : typeof v);
+    const walk = (base: unknown, path: string): unknown => {
+      let cur = base;
+      for (const seg of path.split(".")) {
+        if (cur === null || cur === undefined || typeof cur !== "object") return undefined;
+        cur = (cur as Record<string, unknown>)[seg];
+      }
+      return cur;
+    };
+    // ① 契约 → 注入：每个声明路径都存在且类型相符
+    for (const spec of SYSTEM_VARS) {
+      expect(typeOf(walk(g, spec.path)), spec.path).toBe(spec.type);
+    }
+    // ② 注入 → 契约：注入里的每个叶子/集合路径都必须在契约里
+    const declared = new Set(SYSTEM_VARS.map((v) => v.path));
+    const missing: string[] = [];
+    const visit = (node: unknown, prefix: string): void => {
+      if (Array.isArray(node) || node === null || typeof node !== "object") {
+        if (!declared.has(prefix)) missing.push(prefix);
+        return;
+      }
+      for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+        visit(v, prefix ? `${prefix}.${k}` : k);
+      }
+    };
+    visit(g, "");
+    expect(missing).toEqual([]);
+    // 契约随装配结果下发（UI「可用变量」view 用）
+    expect(assembleSystem(home, PID, { taskUri: TASK }).vars).toEqual(SYSTEM_VARS);
   });
 });

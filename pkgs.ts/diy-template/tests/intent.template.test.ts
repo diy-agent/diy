@@ -685,3 +685,37 @@ describe('R14 属性值只有两种形态（引号不是语法，{{}} 才是求�
         expect(hit?.message).toContain('path={{.f.value.path}}');
     });
 });
+
+describe('R15 变量契约（宿主声明类型/说明 → 静态校验）', () => {
+    const VARS = [
+        { path: 'diy.cli', type: 'string' as const, desc: '命令行入口' },
+        { path: 'skills', type: 'array' as const, desc: '技能清单' },
+        { path: 'task.body', type: 'string' as const },
+        { path: 'diy.obj', type: 'object' as const },
+    ];
+
+    it('引用契约里没有的路径 → lint 提示（打错字不必等渲染）', () => {
+        const a = analyze('用 {{diy.nope}} 试试', { vars: VARS });
+        expect(a.lint.some((l) => l.message.includes('契约里没有这个变量：diy.nope'))).toBe(true);
+    });
+
+    it(':for 的源必须是数组；标量当源 → lint', () => {
+        expect(analyze('<template :for={{diy.cli}} :as="x">{{.x.value}}</template>', { vars: VARS }).lint.some((l) => l.message.includes('必须是数组'))).toBe(true);
+        // 合法用法不报
+        expect(analyze('<template :for={{skills}} :as="s">{{.s.value}}</template>', { vars: VARS }).lint).toHaveLength(0);
+    });
+
+    it('插值只能是标量：集合/对象 → lint；但作为条件/循环源/include 参数是合法的', () => {
+        expect(analyze('{{skills}}', { vars: VARS }).lint.some((l) => l.message.includes('是数组'))).toBe(true);
+        expect(analyze('{{diy.obj}}', { vars: VARS }).lint.some((l) => l.message.includes('是对象'))).toBe(true);
+        // 同一路径用在 :if / :for / include 参数上 → 不报
+        expect(analyze('<template :if={{skills}}>x</template>', { vars: VARS }).lint).toHaveLength(0);
+        expect(
+            analyze('<template :include="./a.md" list={{skills}}/>', { vars: VARS }).lint,
+        ).toHaveLength(0);
+    });
+
+    it('不给契约就不做类型校验（向后兼容）', () => {
+        expect(analyze('{{skills}}').lint).toHaveLength(0);
+    });
+});

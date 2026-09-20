@@ -31,6 +31,14 @@ export const PromptEntrySchema = z.object({
 });
 export type PromptEntry = z.infer<typeof PromptEntrySchema>;
 
+/** 变量契约条目（宿主注入的变量：路径 + 粗细类型 + 说明） */
+export const VarSpecSchema = z.object({
+  path: z.string(),
+  type: z.enum(["string", "number", "boolean", "array", "object"]),
+  desc: z.string().optional(),
+});
+export type VarSpec = z.infer<typeof VarSpecSchema>;
+
 /** 渲染结构 trace 节点（试验场「结构树」：每个节点的产出字节 + :if 真假原因 + 迭代次数） */
 export type TraceNode = {
   kind: string;
@@ -59,6 +67,8 @@ export const AssembledSystemSchema = z.object({
   warnings: z.array(z.string()),
   /** 结构 trace：仅预览请求时提供（真发不传，省一次分配） */
   trace: z.array(TraceNodeSchema).nullable(),
+  /** 变量契约：宿主注入的变量清单（模版作者可用的"输入面"） */
+  vars: z.array(VarSpecSchema),
 });
 export type AssembledSystem = z.infer<typeof AssembledSystemSchema>;
 

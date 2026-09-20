@@ -41,6 +41,23 @@ export interface LintIssue {
     loc: Loc;
 }
 
+/**
+ * 变量契约（宿主声明，单一真源 = 注入数据的那一处）：
+ * 让模版作者与静态检查都能回答"这个路径存在吗、是什么类型"。
+ * 类型只分粗细（不建模数组元素类型）：够拦住 `:for` 拿标量、`{{}}` 插集合这两类笔误。
+ */
+export interface VarSpec {
+    path: string;
+    type: 'string' | 'number' | 'boolean' | 'array' | 'object';
+    /** 给人看的说明（试验场「可用变量」view 显示） */
+    desc?: string;
+}
+
+export interface AnalyzeOptions extends ParseOptions {
+    /** 宿主变量契约：给了就做静态校验（未知路径 / :for 非数组 / 插值非标量） */
+    vars?: VarSpec[];
+}
+
 export interface Analysis {
     /** 全部路径引用（含属性内插值） */
     paths: PathRef[];
@@ -63,12 +80,64 @@ function locIn(text: string, start: Loc, index: number): Loc {
         : { line: start.line + lines.length - 1, col: lines[lines.length - 1]!.length + 1, offset: start.offset + index };
 }
 
-export function analyze(source: string, opts: ParseOptions = {}): Analysis {
+export function analyze(source: string, opts: AnalyzeOptions = {}): Analysis {
     const hints: LintIssue[] = [];
     const out = analyzeNodes(
         parse(source, { ...opts, onStyleHint: (message, loc) => hints.push({ message, loc }) }),
     );
     out.lint.push(...hints);
+    if (opts.vars) out.lint.push(...checkVars(out, opts.vars));
+    return out;
+}
+
+/**
+ * 契约静态校验（只在给了 vars 时跑）：
+ *   1. 引用的 globals 路径必须在契约里（打错字在这里就报，不必等渲染抛错）
+ *   2. `:for` 的源必须是数组（拿标量迭代是笔误）
+ *   3. 插值只能是标量：集合/对象要么迭代、要么取字段
+ * 注意：循环源 / 条件 / include 参数位置**允许**是集合，不能按"插值"判。
+ */
+function checkVars(a: Analysis, vars: VarSpec[]): LintIssue[] {
+    const byPath = new Map(vars.map((v) => [v.path, v]));
+    // 这些位置上的路径是"当表达式用"（可以是集合），不算插值
+    const asExpr = new Set<string>([
+        ...a.loops.map((l) => l.source),
+        ...a.conditions.map((c) => c.path),
+        ...a.includes.flatMap((inc) => inc.args.flatMap((g) => (g.value.kind === "expr" ? [g.value.path] : []))),
+    ]);
+    const out: LintIssue[] = [];
+    const seen = new Set<string>();
+    for (const p of a.paths) {
+        if (p.scope !== "global") continue;
+        const spec = byPath.get(p.path);
+        if (!spec) {
+            if (seen.has(p.path)) continue;
+            seen.add(p.path);
+            out.push({
+                message: `契约里没有这个变量：${p.path}（宿主注入清单见 registry 的 SYSTEM_VARS）`,
+                loc: p.loc,
+            });
+            continue;
+        }
+        if ((spec.type === "array" || spec.type === "object") && !asExpr.has(p.path)) {
+            out.push({
+                message:
+                    spec.type === "array"
+                        ? `{{${p.path}}} 是数组，不能直接插值：用 <template :for={{${p.path}}} :as="x"> 迭代（项 {{.x.value}}）`
+                        : `{{${p.path}}} 是对象，不能直接插值：取具体字段（{{${p.path}.field}}）`,
+                loc: p.loc,
+            });
+        }
+    }
+    for (const l of a.loops) {
+        const spec = byPath.get(l.source);
+        if (spec && spec.type !== "array") {
+            out.push({
+                message: `:for 的源必须是数组，契约里 ${l.source} 是 ${spec.type}`,
+                loc: l.loc,
+            });
+        }
+    }
     return out;
 }
 

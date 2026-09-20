@@ -267,7 +267,7 @@ renderWithTrace(source, ctx, { resolver, file, locked }): { text, trace }
 | 11 | 属性值里的 `"` 不转义 | ✅ 已解决：引号只是**值的边界**且与语义无关（`'` / `"` 均可，成对），变量一律写 `{{…}}` 裸值 |
 | 12 | 内建名冲突 / 嵌套循环外层不可达 | ✅ 已解决：`迭代信封`（`:as="f"` → `.f.value/.f.index/.f.isFirst/.f.isLast`），无碰撞、嵌套各自可访 |
 | 13 | 集合被直接插值 | ✅ 已解决：**`not-scalar` 硬错误**（旧行为是静默 `JSON.stringify`，与"集合只能迭代、标量才能插值"冲突） |
-| 14 | 变量契约（类型 + 描述） | ⏸ 阶段 2：`AssembleGlobals.vars` 供静态校验与试验场 view① 显示类型（见 §9） |
+| 14 | 变量契约（类型 + 描述） | ✅ 已落地：宿主声明 `SYSTEM_VARS`（registry 单一真源），`analyze(src, { vars })` 做静态校验（未知路径 / `:for` 非数组 / 插值非标量），试验场 view① 显示类型与说明 |
 
 ---
 
@@ -277,7 +277,7 @@ renderWithTrace(source, ctx, { resolver, file, locked }): { text, trace }
    - view① 「可用变量」：`analyze()` 的 globals / dynamics / loops / conditions / includes + lint
    - view② 「模版树」：`renderWithTrace()`（节点字节数、`:if` 真假与原因、迭代次数）
    - 顺带：把预览面板里已恒空的 `unknownVars` 展示换成 lint/warnings
-2. **变量契约**：`AssembleGlobals.vars`（类型 + 描述）→ 静态校验（`:for` 必须数组 / `{{}}` 必须标量 / 未知路径报错）+ view① 显示类型
+2. ~~变量契约~~ ✅ 已落地（见第 8 节第 14 条）。下一步可做：**数组元素类型**（`chain[].path`）→ 让 include 参数与循环内字段也能静态校验
 3. **阶段 2 可能扩展**（均非当下需求）：表达式语言（N1）、`:else`、动态 include、`encode`（XML 转义）、编辑器高亮/LSP
 
 > M4 已完成（本节原内容）：注册表切 DSL 引擎 ✅、9 份模版改写 ✅、`_system.md` 顶层装配 ✅、

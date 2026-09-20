@@ -361,7 +361,8 @@ export function PromptLabV4Page() {
         const s = sel();
         if (!s) return null;
         try {
-            return { a: analyze(draftOf(s), { file: s.relpath }) };
+            // 契约来自预览载荷（宿主注入清单）：给了就做类型/未知路径校验
+            return { a: analyze(draftOf(s), { file: s.relpath, vars: preview()?.vars }) };
         } catch (e) {
             return { error: e instanceof Error ? e.message : String(e) };
         }
@@ -541,6 +542,24 @@ export function PromptLabV4Page() {
                                         <Show when={an().a} fallback={<div class="px-2 py-1 text-error">{an().error}</div>}>
                                             {(a) => (
                                                 <>
+                                                    <Show when={preview()?.vars?.length}>
+                                                        <VarGroup title={`宿主提供（契约 ${preview()!.vars!.length} 项）`}>
+                                                            <For each={preview()!.vars!}>
+                                                                {(v) => (
+                                                                    <VarRow
+                                                                        name={`${v.path} · ${v.type}`}
+                                                                        note={
+                                                                            (a().paths.some(
+                                                                                (pp) => pp.path === v.path || pp.path.startsWith(`${v.path}.`),
+                                                                            )
+                                                                                ? "● 本模版用到  "
+                                                                                : "") + (v.desc ?? "")
+                                                                        }
+                                                                    />
+                                                                )}
+                                                            </For>
+                                                        </VarGroup>
+                                                    </Show>
                                                     <Show when={a().globals.length > 0} fallback={<VarGroup title="引用 globals"><div class="px-2 opacity-60">（无）</div></VarGroup>}>
                                                         <VarGroup title="引用 globals">
                                                             <For each={a().globals}>
