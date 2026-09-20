@@ -8,7 +8,10 @@
 //   3. 真实对话（zen/go + OPENCODE_ZEN_API_KEY）：turn/user/text 块 + usage
 //   4. 工具链路：tool 块带 args/output/status（toolCallId = 块 id）
 //
-// 无网络部分恒跑；真实 LLM 用例 skipIf 缺 key（联调用 ./diy.sh 手工跑）。
+// 无网络部分恒跑；**真实 LLM 用例默认不跑**（需 DIY_LLM_E2E=1 + key）：
+//   · 依赖外部模型 → 放默认套件里必然非确定（实测：模型偶尔不回 text delta，断言假红）
+//   · 一次全量会打真实请求、耗时 2~3 分钟
+// 联调：DIY_LLM_E2E=1 npx vitest run tests/cli.intent.agent-local.test.ts
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
@@ -17,7 +20,8 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 
-const HAS_KEY = !!process.env.OPENCODE_ZEN_API_KEY;
+// 真实 LLM 用例：默认关闭（见文件头）。缺 key 时即使开了开关也跳过。
+const RUN_LLM = process.env.DIY_LLM_E2E === "1" && !!process.env.OPENCODE_ZEN_API_KEY;
 
 interface ElectronFixture {
     sh: ShellTest;
@@ -97,7 +101,7 @@ describe("agent.local — 控制面（无网络）", () => {
 });
 
 describe("agent.local — 真实对话（zen/go mimo-v2.5）", () => {
-    it.skipIf(!HAS_KEY)(
+    it.skipIf(!RUN_LLM)(
         "纯文本轮：Op 流四动词齐全 + usage + 落盘重放一致",
         async () => {
             const uri = await setup("纯文本任务");
@@ -143,7 +147,7 @@ describe("agent.local — 真实对话（zen/go mimo-v2.5）", () => {
         200_000,
     );
 
-    it.skipIf(!HAS_KEY)(
+    it.skipIf(!RUN_LLM)(
         "工具轮：tool 块 args/output/status 完整（toolCallId=块 id）",
         async () => {
             const uri = await setup("工具任务");

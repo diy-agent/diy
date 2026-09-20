@@ -112,8 +112,14 @@ export function resolveForOutput(path: string, ctx: EvalContext, loc: Loc, file?
         });
     }
     if (typeof value === 'object') {
-        // 对象/数组直接插值几乎总是笔误（应当走 :for 或取具体字段）
-        return JSON.stringify(value) ?? '';
+        // 集合/对象直接插值 = 笔误（旧行为是静默 JSON.stringify，会静默产出 "[...]" 这种垃圾）
+        const kind = Array.isArray(value) ? '数组' : '对象';
+        throw new TemplateError('not-scalar', `插值 {{${path}}} 取到的是${kind}，不能直接插值`, loc, {
+            file,
+            detail: Array.isArray(value)
+                ? `集合请用 <template :for={{${path}}} :as="x"> 迭代（项 {{.x.value}}，序号 {{.x.index}}）`
+                : `请取具体字段（如 {{${path}.field}}）；确实要序列化时由调用方先物化成字符串`,
+        });
     }
     return String(value);
 }

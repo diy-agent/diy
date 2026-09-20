@@ -16,6 +16,8 @@ export type TemplateErrorCode =
     | 'missing-arg'
     /** 插值取了 undefined / null（可选值必须用 :if 守住，不允许静默输出空串） */
     | 'missing-value'
+    /** 插值取到集合/对象：集合只能迭代、标量才能插值（禁止静默 JSON 化） */
+    | 'not-scalar'
     /** include 路径非法（非 ./ 开头、含 ..、绝对路径）或模版不存在/不在白名单 */
     | 'include'
     /** include 循环引用 */

@@ -15,6 +15,7 @@ import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { join } from "node:path";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
+import { waitUntil } from "./wait";
 
 interface ElectronFixture {
   sh: ShellTest;
@@ -73,8 +74,12 @@ describe("ui task — 经 renderer 入口创建任务（CLI 驱动，同人类�
     const uri = String((t.data as any)?.data?.uri);
     expect(uri).toBe(`projects/${pid}/tasks/1`);
 
-    // 3. 验证树：任务出现在该项目节点的直接子级
-    const titles = childTitles(pid, await treeData());
+    // 3. 验证树：任务出现在该项目节点的直接子级（有界轮询：读树是另一次往返）
+    const titles = await waitUntil(
+      async () => childTitles(pid, await treeData()),
+      (t) => t.includes("界面任务"),
+      { label: "树出现 界面任务" },
+    );
     expect(titles).toContain("界面任务");
 
     await cleanupProj(pid);
@@ -87,7 +92,11 @@ describe("ui task — 经 renderer 入口创建任务（CLI 驱动，同人类�
     await fx.sh.getJson(`./diy.sh ui task create 首任务 ${pid}`);
     await fx.sh.getJson(`./diy.sh ui task create 次任务 ${pid}`);
 
-    const titles = childTitles(pid, await treeData());
+    const titles = await waitUntil(
+      async () => childTitles(pid, await treeData()),
+      (t) => t.length === 2,
+      { label: "树出现两个任务" },
+    );
     expect(titles).toEqual(["首任务", "次任务"]);
 
     await cleanupProj(pid);
@@ -103,7 +112,15 @@ describe("ui task — 经 renderer 入口创建任务（CLI 驱动，同人类�
     const sub = await fx.sh.getJson(`./diy.sh ui task create 子任务 ${pid} --parent ${uri}`);
 
     // 验证任务出现在父任务 children 下，而非项目直接子级
-    const nodes = await treeData();
+    const nodes = await waitUntil(
+      treeData,
+      (ns) => {
+        const proj = ns.find((n) => n?.project === pid);
+        const parentNode = proj?.children?.find((c: any) => c?.uri === uri);
+        return (parentNode?.children ?? []).some((c: any) => c?.title === "子任务");
+      },
+      { label: "子任务挂到父任务下" },
+    );
     const proj = nodes.find((n) => n?.project === pid);
     const parentNode = proj?.children?.find((c: any) => c?.uri === uri);
     const subTitles = (parentNode?.children ?? []).map((c: any) => c?.title ?? "");

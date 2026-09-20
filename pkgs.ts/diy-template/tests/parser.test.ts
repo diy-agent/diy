@@ -208,7 +208,28 @@ describe('作用域边界', () => {
         expect(code(() => render('{{diy.toString}}', { globals: { diy: { cli: 'x' } } }))).toBe('missing-value');
     });
 
-    it('对象被直接插值 → 序列化（并应尽量改用 :for 或取具体字段）', () => {
-        expect(render('{{diy.obj}}', { globals: { diy: { obj: { a: 1 } } } })).toBe('{"a":1}');
+    it('集合/对象被直接插值 → not-scalar（禁止静默 JSON 化）', () => {
+        const G = { globals: { diy: { obj: { a: 1 }, list: ['x'] } } };
+        const objErr = (() => {
+            try {
+                render('{{diy.obj}}', G);
+            } catch (err) {
+                return err as TemplateError;
+            }
+            return null;
+        })()!;
+        expect(objErr.code).toBe('not-scalar');
+        expect(objErr.detail).toContain('请取具体字段');
+        // 数组给的是迭代写法提示
+        const arrErr = (() => {
+            try {
+                render('{{diy.list}}', G);
+            } catch (err) {
+                return err as TemplateError;
+            }
+            return null;
+        })()!;
+        expect(arrErr.code).toBe('not-scalar');
+        expect(arrErr.detail).toContain(':for={{diy.list}}');
     });
 });
