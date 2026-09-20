@@ -29,14 +29,14 @@ export interface PromptMeta {
   title: string;
   desc: string;
   version: number;
-  overridable: boolean;
-  /** 不可覆盖时的禁用按钮 tooltip；可覆盖时为空串 */
-  tip: string;
-  /** 包裹标签名（空串 = 裸文本节，不包 <...>）：由模版 frontmatter 声明，代码里不再维护 map */
-  tag: string;
-  /** 片段模版：不参与节拼接，只供引用它的变量渲染（如 _chain.md 供 {{project_instructions}}） */
-  fragment: boolean;
+  /** 锁定 = 不可覆盖（命名约定：`_` 前缀 = 锁定，由 lint 保证一致） */
+  locked: boolean;
+  /** 锁定时展示给用户的理由 */
+  lockTip: string;
 }
+
+/** 装配入口固定名（顺序与分隔的唯一真源） */
+export const ENTRY_RELPATH = "_system.md";
 
 const FM_SEP = "---";
 
@@ -46,15 +46,7 @@ const FM_SEP = "---";
  * （末尾换行与节间分隔由模版自己负责）。
  */
 export function parseMd(raw: string): { meta: PromptMeta; body: string } {
-  const fallback: PromptMeta = {
-    title: "",
-    desc: "",
-    version: 1,
-    overridable: true,
-    tip: "",
-    tag: "",
-    fragment: false,
-  };
+  const fallback: PromptMeta = { title: "", desc: "", version: 1, locked: false, lockTip: "" };
   if (!raw.startsWith(FM_SEP)) return { meta: fallback, body: raw };
   const end = raw.indexOf(FM_SEP, 3);
   if (end === -1) return { meta: fallback, body: raw };
@@ -64,16 +56,13 @@ export function parseMd(raw: string): { meta: PromptMeta; body: string } {
   } catch {
     return { meta: fallback, body: raw.slice(end + 3).trim() };
   }
-  const ov = front["overridable"] as { value?: unknown; tip?: unknown } | undefined;
   return {
     meta: {
       title: String(front["title"] ?? ""),
       desc: String(front["desc"] ?? ""),
       version: Number(front["version"] ?? 1),
-      overridable: ov?.value !== false,
-      tip: String(ov?.tip ?? ""),
-      tag: String(front["tag"] ?? ""),
-      fragment: front["fragment"] === true,
+      locked: front["locked"] === true,
+      lockTip: String(front["lockTip"] ?? ""),
     },
     body: raw.slice(end + 3).replace(/^\n/, ""),
   };
@@ -154,6 +143,14 @@ function orphanOverrides(home: string, projectId: string): string[] {
   return out;
 }
 
+/** 该模版的角色：入口 / 节（被入口 include）/ 片段（其余）——单一真源是入口的 include 列表 */
+function roleOf(relpath: string): PromptEntry["role"] {
+  if (relpath === ENTRY_RELPATH) return "entry";
+  const entryBody = parseMd(PROMPT_DEFAULTS[ENTRY_RELPATH] ?? "").body;
+  const included = new Set(analyze(entryBody).includes.map((i) => i.relpath.replace(/^\.\//, "")));
+  return included.has(relpath) ? "section" : "fragment";
+}
+
 function entryOf(home: string, projectId: string, relpath: string, metaAll?: Record<string, { baseVersion: number }>): PromptEntry {
   assertRelpath(relpath);
   const { meta, body } = parseMd(PROMPT_DEFAULTS[relpath]!);
@@ -164,6 +161,7 @@ function entryOf(home: string, projectId: string, relpath: string, metaAll?: Rec
   return {
     ...meta,
     relpath,
+    role: roleOf(relpath),
     status: hasOverride ? "overridden" : "builtin",
     current,
     builtin: body,
@@ -188,7 +186,7 @@ export function getPrompt(home: string, projectId: string, relpath: string): Pro
  *  同时做体积校验：盖一个超大覆盖会让之后每一轮都被拒发（诊断成本很高），在写入前就拦住。 */
 export function savePrompt(home: string, projectId: string, relpath: string, content: string): PromptEntry {
   const cur = entryOf(home, projectId, relpath);
-  if (!cur.overridable) throw new Error(`模版 ${relpath} 不可覆盖：${cur.tip}`);
+  if (cur.locked) throw new Error(`模版 ${relpath} 已锁定：${cur.lockTip}`);
   const probe = assembleSystem(home, projectId, { drafts: { [relpath]: content } });
   if (probe.overBudget) {
     const kb = (n: number) => (n / 1024).toFixed(1);
@@ -306,7 +304,7 @@ export function makeTemplatesResolver(
       const raw = overrides?.[key] ?? templates[key];
       if (raw === undefined) return null;
       const { meta, body } = parseMd(raw);
-      return { source: body, fragment: meta.fragment, locked: !meta.overridable };
+      return { source: body, locked: meta.locked };
     },
   };
 }
@@ -323,7 +321,7 @@ export function renderSystemDsl(opts: {
   entry?: string;
 }): string {
   const templates = opts.templates ?? PROMPT_DEFAULTS;
-  const entry = opts.entry ?? "system.md";
+  const entry = opts.entry ?? ENTRY_RELPATH;
   const raw = templates[entry];
   if (raw === undefined) throw new Error(`缺少装配入口模版：${entry}`);
   const { meta, body } = parseMd(raw);
@@ -331,13 +329,27 @@ export function renderSystemDsl(opts: {
   return renderDsl(body, { globals: opts.globals as Record<string, unknown> }, {
     resolver,
     file: entry,
-    locked: !meta.overridable,
+    locked: meta.locked,
   });
 }
 
 /** 静态体检：把模版里的 lint（如控制属性误用）汇总成告警，不阻断装配 */
 function lintWarnings(home: string, projectId: string): string[] {
   const out: string[] = [];
+  // 命名约定：`_` 前缀 = 锁定，双向一致（否则名字会骗人）
+  for (const [relpath, raw] of Object.entries(PROMPT_DEFAULTS)) {
+    const { meta } = parseMd(raw);
+    const underscored = relpath.startsWith("_");
+    if (underscored !== meta.locked) {
+      out.push(
+        `命名与锁定不一致：${relpath} ${underscored ? "带 _ 前缀" : "不带 _ 前缀"}，但 locked=${meta.locked}` +
+          `（规则：_ 前缀 = 锁定）`,
+      );
+    }
+  }
+  if (!parseMd(PROMPT_DEFAULTS[ENTRY_RELPATH] ?? "").meta.locked) {
+    out.push(`装配入口 ${ENTRY_RELPATH} 必须锁定（改它会改节顺序与分隔）`);
+  }
   for (const relpath of Object.keys(PROMPT_DEFAULTS)) {
     const entry = entryOf(home, projectId, relpath);
     try {
@@ -413,7 +425,7 @@ export function assembleSystem(
     const draft = opts.drafts?.[key];
     const entry = entryOf(home, projectId, key);
     const source = draft !== undefined ? parseMd(draft).body : entry.current;
-    return { source, fragment: entry.fragment, locked: !entry.overridable };
+    return { source, locked: entry.locked };
   };
   const system = renderSystemDsl({ globals, resolve: resolveInclude });
   warnings.push(...lintWarnings(home, projectId));

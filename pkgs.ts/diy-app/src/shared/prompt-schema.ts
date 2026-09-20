@@ -17,12 +17,15 @@ export const PromptEntrySchema = z.object({
   title: z.string(),
   desc: z.string(),
   version: z.number(),
-  overridable: z.boolean(),
-  tip: z.string(),
+  /** 是否锁定（不可覆盖）；命名约定：`_` 前缀 = 锁定，由 lint 保证一致 */
+  locked: z.boolean(),
+  /** 锁定时展示给用户的理由 */
+  lockTip: z.string(),
   /** 包裹标签名（空串 = 裸文本节，不包 <...>）：来自模版 frontmatter */
-  tag: z.string(),
+  /** 角色：入口 / 节（被入口 include）/ 片段（只被引用）——由 `_system.md` 的 include 推导 */
+  role: z.enum(["entry", "section", "fragment"]),
   /** 片段模版（不进节拼接，供其它变量渲染，如 _chain.md） */
-  fragment: z.boolean(),
+
   status: z.enum(["builtin", "overridden"]),
   current: z.string(),
   builtin: z.string(),

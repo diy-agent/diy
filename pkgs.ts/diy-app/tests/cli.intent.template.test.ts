@@ -67,34 +67,41 @@ describe("template list/get", () => {
     it("list — 装配入口 + 七份节 + 链片段、全部 builtin、入口与 _guard 锁定", async () => {
         const pid = await freshProj("list");
         const r = await fx.sh.getJson(`./diy.sh template list ${pid}`);
-        const list = r.data as Array<{ relpath: string; status: string; overridable: boolean; tip: string; tag: string; fragment: boolean }>;
+        const list = r.data as Array<{
+            relpath: string;
+            status: string;
+            locked: boolean;
+            lockTip: string;
+            role: "entry" | "section" | "fragment";
+        }>;
         expect(list.map((e) => e.relpath)).toEqual([
-            "system.md",
-            "000-identity.md",
-            "100-diy.md",
-            "200-project.md",
-            "300-task.md",
-            "400-rules.md",
-            "500-skills.md",
-            "_chain.md",
+            "_system.md",
+            "identity.md",
+            "diy.md",
+            "project.md",
+            "task.md",
+            "rules.md",
+            "skills.md",
+            "chain.md",
             "_guard.md",
         ]);
         expect(list.every((e) => e.status === "builtin")).toBe(true);
-        // 结构（包裹标签 / 片段）由模版 frontmatter 声明，CLI 可见
-        expect(list.find((e) => e.relpath === "200-project.md")!.tag).toBe("project_context");
-        expect(list.find((e) => e.relpath === "_chain.md")!.fragment).toBe(true);
-        expect(list.find((e) => e.relpath === "100-diy.md")!.fragment).toBe(false);
+        // 角色由入口的 include 推导（不再由 frontmatter 声明，避免两处漂移）
+        expect(list.find((e) => e.relpath === "_system.md")!.role).toBe("entry");
+        expect(list.find((e) => e.relpath === "project.md")!.role).toBe("section");
+        expect(list.find((e) => e.relpath === "chain.md")!.role).toBe("fragment");
+        // 命名约定 `_` = 锁定：入口与保命契约都不可覆盖
         const guard = list.find((e) => e.relpath === "_guard.md")!;
-        expect(guard.overridable).toBe(false);
-        expect(guard.tip.length).toBeGreaterThan(0);
-        // 装配入口也锁定（改它就改节顺序与分隔）
-        expect(list.find((e) => e.relpath === "system.md")!.overridable).toBe(false);
+        expect(guard.locked).toBe(true);
+        expect(guard.lockTip.length).toBeGreaterThan(0);
+        expect(list.find((e) => e.relpath === "_system.md")!.locked).toBe(true);
+        expect(list.find((e) => e.relpath === "rules.md")!.locked).toBe(false);
         await cleanup(pid);
     });
 
     it("get — 单份模版含内置/当前/stale", async () => {
         const pid = await freshProj("get");
-        const r = await fx.sh.getJson(`./diy.sh template get ${pid} 100-diy.md`);
+        const r = await fx.sh.getJson(`./diy.sh template get ${pid} diy.md`);
         const e = r.data as Record<string, unknown>;
         expect(e["status"]).toBe("builtin");
         expect(e["current"]).toBe(e["builtin"]);
@@ -108,23 +115,23 @@ describe("template list/get", () => {
 describe("template save/restore", () => {
     it("save → overridden + 落盘 + sidecar；restore → 回 builtin 且不留残留", async () => {
         const pid = await freshProj("save");
-        await fx.sh.assertJson(`./diy.sh template save ${pid} 000-identity.md "定制身份行"`, {
+        await fx.sh.assertJson(`./diy.sh template save ${pid} identity.md "定制身份行"`, {
             ok: true,
             data: { status: "overridden", current: "定制身份行" },
         });
-        expect(existsSync(overridePath(pid, "000-identity.md"))).toBe(true);
+        expect(existsSync(overridePath(pid, "identity.md"))).toBe(true);
         expect(existsSync(join(fx.HOME, "projects", pid, "template", ".meta.yaml"))).toBe(true);
 
-        await fx.sh.assertJson(`./diy.sh template restore ${pid} 000-identity.md`, {
+        await fx.sh.assertJson(`./diy.sh template restore ${pid} identity.md`, {
             ok: true,
             data: { status: "builtin" },
         });
-        expect(existsSync(overridePath(pid, "000-identity.md"))).toBe(false);
+        expect(existsSync(overridePath(pid, "identity.md"))).toBe(false);
         // 恢复后 sidecar 不留空壳、目录不留空壳
         expect(existsSync(join(fx.HOME, "projects", pid, "template", ".meta.yaml"))).toBe(false);
         expect(existsSync(join(fx.HOME, "projects", pid, "template"))).toBe(false);
         // 幂等
-        await fx.sh.run(`./diy.sh template restore ${pid} 000-identity.md`);
+        await fx.sh.run(`./diy.sh template restore ${pid} identity.md`);
         await cleanup(pid);
     });
 
@@ -186,7 +193,7 @@ describe("template preview", () => {
         mkdirSync(join(fx.HOME, "projects", pid, "template"), { recursive: true });
         // 先放一个**合法**覆盖：frontmatter 必须不进请求
         writeFileSync(
-            overridePath(pid, "400-rules.md"),
+            overridePath(pid, "rules.md"),
             "---\ntitle: 手写覆盖\nversion: 9\n---\n<rules>\n- 我自己的规则\n</rules>\n",
             "utf-8",
         );
@@ -198,7 +205,7 @@ describe("template preview", () => {
 
         // 再放一个引用未知路径的覆盖：引擎严格 → 预览直接失败（旧行为是 unknownVars 软警告）
         writeFileSync(
-            overridePath(pid, "400-rules.md"),
+            overridePath(pid, "rules.md"),
             "---\ntitle: 手写覆盖\nversion: 9\n---\n<rules>\n- 规则 {{nope}}\n</rules>\n",
             "utf-8",
         );
@@ -206,7 +213,7 @@ describe("template preview", () => {
         expect(bad.code).not.toBe(0);
         expect(String(bad.stderr)).toContain("nope");
         // 手工放的覆盖（无 sidecar）也提示可能过期
-        const g = await fx.sh.getJson(`./diy.sh template get ${pid} 400-rules.md`);
+        const g = await fx.sh.getJson(`./diy.sh template get ${pid} rules.md`);
         expect((g.data as Record<string, unknown>)["stale"]).toBe(true);
         await cleanup(pid);
     });
@@ -217,7 +224,7 @@ describe("template preview", () => {
         const uri = `projects/${pid}/tasks/1`;
         // 直接放一份超大覆盖（> 64KB 预算）：走读路径即可，不必经 CLI 传 70KB 参数
         mkdirSync(join(fx.HOME, "projects", pid, "template"), { recursive: true });
-        writeFileSync(overridePath(pid, "000-identity.md"), "x".repeat(70 * 1024), "utf-8");
+        writeFileSync(overridePath(pid, "identity.md"), "x".repeat(70 * 1024), "utf-8");
 
         const r = await fx.sh.run(`./diy.sh agent local chat ${uri} "你好"`, 60_000);
         const ops = r.stdout

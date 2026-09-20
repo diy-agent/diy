@@ -26,34 +26,29 @@ beforeEach(() => {
 });
 
 describe("list/get", () => {
-  it("全部内置态：装配入口 system.md + 七个节 + 链片段", () => {
+  it("命名与角色：`_` = 锁定，role 由 _system.md 的 include 推导", () => {
     const all = listPrompts(home, PID);
     expect(all.map((e) => e.relpath)).toEqual([
-      "system.md",
-      "000-identity.md",
-      "100-diy.md",
-      "200-project.md",
-      "300-task.md",
-      "400-rules.md",
-      "500-skills.md",
-      "_chain.md",
+      "_system.md",
+      "identity.md",
+      "diy.md",
+      "project.md",
+      "task.md",
+      "rules.md",
+      "skills.md",
+      "chain.md",
       "_guard.md",
     ]);
-    // 装配入口锁定（改它就改结构）
-    expect(getPrompt(home, PID, "system.md").overridable).toBe(false);
-    expect(getPrompt(home, PID, "system.md").tip.length).toBeGreaterThan(0);
-    // 结构与标签也在模版里（不再藏代码）：tag 由 frontmatter 声明，_chain.md 是片段
-    expect(getPrompt(home, PID, "200-project.md").tag).toBe("project_context");
-    expect(getPrompt(home, PID, "000-identity.md").tag).toBe("");
-    expect(getPrompt(home, PID, "_chain.md").fragment).toBe(true);
-    expect(getPrompt(home, PID, "100-diy.md").fragment).toBe(false);
+    // 命名约定：`_` 前缀 = 锁定（双份：入口与保命契约）
+    expect(getPrompt(home, PID, "_system.md").locked).toBe(true);
+    expect(getPrompt(home, PID, "_system.md").lockTip.length).toBeGreaterThan(0);
+    expect(getPrompt(home, PID, "_guard.md").locked).toBe(true);
+    expect(getPrompt(home, PID, "rules.md").locked).toBe(false);
+    // 角色：入口 / 节（被入口 include）/ 片段（只被引用）
+    expect(getPrompt(home, PID, "_system.md").role).toBe("entry");
+    expect(getPrompt(home, PID, "project.md").role).toBe("section");
+    expect(getPrompt(home, PID, "chain.md").role).toBe("fragment");
     expect(all.every((e) => e.status === "builtin")).toBe(true);
-    expect(getPrompt(home, PID, "000-identity.md").overridable).toBe(true);
-  });
-  it("不可覆盖项自带 tip", () => {
-    const g = getPrompt(home, PID, "_guard.md");
-    expect(g.overridable).toBe(false);
-    expect(g.tip.length).toBeGreaterThan(0);
   });
   it("非法路径拒绝（含穿越）", () => {
     expect(() => getPrompt(home, PID, "../state")).toThrow();
@@ -63,7 +58,7 @@ describe("list/get", () => {
 
 describe("save/restore", () => {
   it("保存后状态翻转为 overridden", () => {
-    const after = savePrompt(home, PID, "000-identity.md", "定制身份\n");
+    const after = savePrompt(home, PID, "identity.md", "定制身份\n");
     expect(after.status).toBe("overridden");
     expect(after.current).toBe("定制身份\n");
     expect(after.stale).toBe(false);
@@ -72,11 +67,11 @@ describe("save/restore", () => {
     expect(() => savePrompt(home, PID, "_guard.md", "x")).toThrow();
   });
   it("恢复后回退内置（幂等）", () => {
-    savePrompt(home, PID, "000-identity.md", "定制\n");
-    const back = restorePrompt(home, PID, "000-identity.md");
+    savePrompt(home, PID, "identity.md", "定制\n");
+    const back = restorePrompt(home, PID, "identity.md");
     expect(back.status).toBe("builtin");
     expect(back.current).toContain("本地 coding agent");
-    expect(() => restorePrompt(home, PID, "000-identity.md")).not.toThrow();
+    expect(() => restorePrompt(home, PID, "identity.md")).not.toThrow();
   });
 });
 
@@ -107,14 +102,14 @@ describe("assembleSystem 装配", () => {
     expect(p.system).not.toContain(`<project_instructions path="${join(home, TASK, "AGENTS.md")}"`);
   });
   it("drafts 未存盘草稿替存盘值（所见即所得）", () => {
-    const p = assembleSystem(home, PID, { drafts: { "000-identity.md": "草稿身份 {{diy.cli}}\n" } });
+    const p = assembleSystem(home, PID, { drafts: { "identity.md": "草稿身份 {{diy.cli}}\n" } });
     expect(p.system).toContain("草稿身份 /repo/diy.sh");
     const q = assembleSystem(home, PID, {});
     expect(q.system).not.toContain("草稿身份");
   });
   it("超预算即报错（不自动截断）", () => {
     const big = "x".repeat(70 * 1024);
-    const p = assembleSystem(home, PID, { drafts: { "000-identity.md": big } });
+    const p = assembleSystem(home, PID, { drafts: { "identity.md": big } });
     expect(p.overBudget).not.toBeNull();
     expect(p.overBudget!.used).toBeGreaterThan(p.overBudget!.budget);
   });
@@ -133,25 +128,25 @@ describe("assembleSystem 装配", () => {
     const base = assembleSystem(home, PID, { contextLimitTokens: 1_000_000 });
     const room = SYSTEM_BUDGET_CAP_BYTES - Buffer.byteLength(base.system, "utf-8") - 1024;
     const draft = "y".repeat(room);
-    const big = assembleSystem(home, PID, { drafts: { "000-identity.md": draft }, contextLimitTokens: 1_000_000 });
-    const small = assembleSystem(home, PID, { drafts: { "000-identity.md": draft }, contextLimitTokens: 256_000 });
+    const big = assembleSystem(home, PID, { drafts: { "identity.md": draft }, contextLimitTokens: 1_000_000 });
+    const small = assembleSystem(home, PID, { drafts: { "identity.md": draft }, contextLimitTokens: 256_000 });
     expect(big.overBudget, "1M 窗口：填满到硬上限以内 → 不越框").toBeNull();
     expect(small.overBudget, "256k 窗口：同一份内容越框").not.toBeNull();
   });
   it("savePrompt 拒绝超限覆盖（避免写入后每一轮都被拒发）", () => {
-    expect(() => savePrompt(home, PID, "000-identity.md", "z".repeat(70 * 1024))).toThrow(/超限/);
+    expect(() => savePrompt(home, PID, "identity.md", "z".repeat(70 * 1024))).toThrow(/超限/);
     // 未写入：仍是内置态
-    expect(getPrompt(home, PID, "000-identity.md").status).toBe("builtin");
+    expect(getPrompt(home, PID, "identity.md").status).toBe("builtin");
   });
   it("未知路径不再静默：装配直接抛错（引擎严格模式，替代旧的 unknownVars 警告）", () => {
-    expect(() => assembleSystem(home, PID, { drafts: { "400-rules.md": "- {{diy.nope}}\n" } })).toThrow(
+    expect(() => assembleSystem(home, PID, { drafts: { "rules.md": "- {{diy.nope}}\n" } })).toThrow(
       /diy\.nope/,
     );
     // 正常装配不抛错，unknownVars 恒为空（没有"未知但放行"这条路）
     expect(assembleSystem(home, PID, { taskUri: TASK }).unknownVars).toEqual([]);
   });
 
-  it("片段模版不进节拼接；链的包裹格式由 _chain.md 决定（可覆盖）", () => {
+  it("片段模版不进节拼接；链的包裹格式由 chain.md 决定（可覆盖）", () => {
     // 无链 → 片段不出现任何痕迹
     const p0 = assembleSystem(home, PID, { taskUri: TASK });
     expect(p0.system).not.toContain("_chain");
@@ -164,9 +159,9 @@ describe("assembleSystem 装配", () => {
     expect(p1.system).toContain("scope=\"");
     expect(p1.system).toContain("应用级规范");
 
-    // 覆盖 _chain.md → markup 变了（证明这段结构确实模版化，而不是硬编码）
+    // 覆盖 chain.md → markup 变了（证明这段结构确实模版化，而不是硬编码）
     // DSL 写法：三个局部变量都带点；且必须都被引用（引擎会做参数双向校验）
-    savePrompt(home, PID, "_chain.md", "<<{{.scope}}>>\n{{.path}}\n{{.content}}\n<</{{.scope}}>>");
+    savePrompt(home, PID, "chain.md", "<<{{.scope}}>>\n{{.path}}\n{{.content}}\n<</{{.scope}}>>");
     const p2 = assembleSystem(home, PID, { taskUri: TASK });
     expect(p2.system).toContain(`<<${home}>>`);
     expect(p2.system).toContain("<</");
@@ -194,9 +189,9 @@ describe("回归：评审修复项", () => {
 
   it("restore 后不留空 sidecar / 空目录", () => {
     const meta = join(home, "projects", PID, "template", ".meta.yaml");
-    savePrompt(home, PID, "000-identity.md", "定制\n");
+    savePrompt(home, PID, "identity.md", "定制\n");
     expect(existsSync(meta)).toBe(true);
-    const back = restorePrompt(home, PID, "000-identity.md");
+    const back = restorePrompt(home, PID, "identity.md");
     expect(back.status).toBe("builtin");
     expect(existsSync(meta)).toBe(false);
     expect(existsSync(join(home, "projects", PID, "template"))).toBe(false);
@@ -205,8 +200,8 @@ describe("回归：评审修复项", () => {
   it("覆盖文件里的 frontmatter 不进请求；无 sidecar 的手工覆盖也算 stale", () => {
     const dir = join(home, "projects", PID, "template");
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "000-identity.md"), "---\ntitle: 手写\n---\n正文身份\n", "utf-8");
-    const e = getPrompt(home, PID, "000-identity.md");
+    writeFileSync(join(dir, "identity.md"), "---\ntitle: 手写\n---\n正文身份\n", "utf-8");
+    const e = getPrompt(home, PID, "identity.md");
     expect(e.current).toBe("正文身份\n");
     expect(e.stale).toBe(true); // 来源不可知 → 提示可能过期，不再永真 false
     const p = assembleSystem(home, PID, {});
@@ -229,13 +224,13 @@ describe("回归：评审修复项", () => {
   it("孤儿覆盖文件（relpath 已不在清单）上报告警，不静默失效", () => {
     const dir = join(home, "projects", PID, "template");
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "skills.md"), "旧路径遗留\n", "utf-8");
-    writeFileSync(join(dir, "000-identity.md"), "正文\n", "utf-8"); // 有效 relpath：不是孤儿
+    writeFileSync(join(dir, "gone-renamed.md"), "旧路径遗留\n", "utf-8");
+    writeFileSync(join(dir, "identity.md"), "正文\n", "utf-8"); // 有效 relpath：不是孤儿
     const p = assembleSystem(home, PID, {});
     const hit = p.warnings.filter((w) => w.includes("不再生效"));
     expect(hit).toHaveLength(1);
-    expect(hit[0]).toContain("skills.md");
-    expect(hit[0]).not.toContain("000-identity.md");
+    expect(hit[0]).toContain("gone-renamed.md");
+    expect(hit[0]).not.toContain("identity.md");
   });
 
   it("AGENTS.md 链逐层向上到 $HOME 为止（含 ~/AGENTS.md 这类全局规则），不越过 $HOME", () => {

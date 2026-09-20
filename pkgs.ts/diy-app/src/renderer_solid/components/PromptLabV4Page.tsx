@@ -105,7 +105,7 @@ function DirRow(props: {
                 >
                     <span class="w-4 shrink-0" />
                     <span class="w-4 shrink-0 text-center">
-                        {props.node.entry?.fragment ? "🧩" : props.node.entry?.overridable === false ? "🔒" : "📄"}
+                        {props.node.entry?.role === "entry" ? "🧭" : props.node.entry?.role === "fragment" ? "🧩" : props.node.entry?.locked ? "🔒" : "📄"}
                     </span>
                     <span class="flex-1 truncate">{props.node.name}</span>
                     <Show when={props.node.entry}>
@@ -180,6 +180,11 @@ function DirRow(props: {
             </Show>
         </Show>
     );
+}
+
+/** 从模版正文推断它包裹的标签（UI 只读展示；不再要求 frontmatter 维护 tag，避免两处漂移） */
+function wrapsTag(body: string): string | undefined {
+    return /(?:^|\n)<([a-z_][\w-]*)[\s>]/.exec(body)?.[1];
 }
 
 export function PromptLabV4Page() {
@@ -385,7 +390,7 @@ export function PromptLabV4Page() {
                         {viewHeader(
                             "tree",
                             "模板",
-                            `${entries().length} 份 · ${entries().filter((e) => !e.overridable).length} 只读`,
+                            `${entries().length} 份 · ${entries().filter((e) => e.locked).length} 只读`,
                         )}
                         <Show when={views()["tree"]}>
                             <div class="bg-base-200 px-1 py-1">
@@ -435,10 +440,10 @@ export function PromptLabV4Page() {
                                         {s().title} v{s().version}
                                     </span>
                                     {/* 结构也可视化：这个节会包在什么标签里 / 它是不是片段模版 */}
-                                    <Show when={s().tag}>
-                                        <span class="badge badge-xs badge-ghost font-mono">&lt;{s().tag}&gt;</span>
+                                    <Show when={wrapsTag(s().current)}>
+                                        <span class="badge badge-xs badge-ghost font-mono">&lt;{wrapsTag(s().current)}&gt;</span>
                                     </Show>
-                                    <Show when={s().fragment}>
+                                    <Show when={s().role === "fragment"}>
                                         <span class="badge badge-xs badge-warning">片段</span>
                                     </Show>
                                     <div class="ml-auto flex items-center gap-1">
@@ -451,8 +456,8 @@ export function PromptLabV4Page() {
                                         </button>
                                         <button
                                             class="btn btn-xs btn-ghost"
-                                            title={s().overridable ? `保存 ${s().relpath} 的覆盖` : s().tip}
-                                            disabled={!s().overridable || !dirtyOf(s())}
+                                            title={s().locked ? s().lockTip : `保存 ${s().relpath} 的覆盖`}
+                                            disabled={s().locked || !dirtyOf(s())}
                                             onClick={() => void save(s().relpath)}
                                         >
                                             💾
@@ -468,10 +473,10 @@ export function PromptLabV4Page() {
                                     </div>
                                 </div>
                                 {/* 锁卡说明条（不可编辑时顶置，不用悬浮找原因） */}
-                                <Show when={!s().overridable}>
+                                <Show when={s().locked}>
                                     <div class="alert alert-warning mx-3 mt-2 px-3 py-1.5 text-xs shrink-0">
                                         <span>🔒</span>
-                                        <span>{s().tip}</span>
+                                        <span>{s().lockTip}</span>
                                     </div>
                                 </Show>
                                 {/* 内容：普通（CodeMirror，内部滚动） / diff */}
@@ -482,7 +487,7 @@ export function PromptLabV4Page() {
                                             <div class="min-h-0 flex-1 overflow-hidden rounded border border-base-300">
                                                 <MdEditor
                                                     value={draftOf(s())}
-                                                    editable={!!s().overridable}
+                                                    editable={!s().locked}
                                                     onChange={(v) => patchDrafts(project(), (d) => ({ ...d, [s().relpath]: v }))}
                                                 />
                                             </div>

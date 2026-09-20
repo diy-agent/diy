@@ -562,10 +562,8 @@ describe('R12 装配形态：节的标签/顺序/分隔都在模版里（代码�
         expect(withSkills.indexOf('<skills>')).toBeLessThan(withSkills.indexOf('禁止执行'));
     });
 
-    it('片段模版（fragment）不参与自动拼接：只有被 include 才渲染', () => {
-        const resolver = resolverOf({
-            './_chain.md': { source: '<pi path="{{.path}}">{{.content}}</pi>', fragment: true },
-        });
+    it('片段模版（只被引用的模版）不参与自动拼接：只有被 include 才渲染', () => {
+        const resolver = resolverOf({ './_chain.md': { source: '<pi path="{{.path}}">{{.content}}</pi>' } });
         // 直接渲染入口时，fragment 不会自己出现
         expect(render('正文\n', {}, { resolver, file: 'system.md' })).toBe('正文\n');
         // include 才出现

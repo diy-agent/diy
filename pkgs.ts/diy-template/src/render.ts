@@ -23,8 +23,6 @@ import {
 /** include 目标（由宿主注册表提供：项目覆盖 > 内置 + 白名单） */
 export interface IncludeTarget {
     source: string;
-    /** 片段模版（不参与自动节拼接） */
-    fragment?: boolean;
     /** 锁定模版（不可被可覆盖模版 include） */
     locked?: boolean;
 }
