@@ -6,7 +6,7 @@
 //   R1  逐字节原样：不转义、不 trim、不删行
 //   R2  插值：globals（a.b）与动态作用域（.x.y）真分离
 //   R3  属性内插值：<project_instructions path="{{.path}}">
-//   R4  条件：:if / :unless，真假值固定表
+//   R4  条件：:if / :if-not，真假值固定表
 //   R5  循环：:for + {{.index}} + {{.}}，支持嵌套（内层可见外层）
 //   R6  include：参数显式传递，动态作用域**不继承**（只看到参数），globals 全程可见
 //   R7  include 解析走宿主注册表；白名单 / 禁止 .. / 禁止绝对路径
@@ -114,7 +114,7 @@ describe('R1 逐字节原样（不转义 / 不 trim / 不删行）', () => {
     });
 
     it('控制节点不产出任何字符（<template> 只做条件/循环）', () => {
-        const out = render('<template :if="diy.on">A</template>B', { globals: { diy: { on: true } } });
+        const out = render('<template :if={{diy.on}}>A</template>B', { globals: { diy: { on: true } } });
         expect(out).toBe('AB');
     });
 
@@ -134,7 +134,7 @@ describe('R1 逐字节原样（不转义 / 不 trim / 不删行）', () => {
         expect(render("<pi path='x'  flag>y</pi>", {})).toBe("<pi path='x'  flag>y</pi>");
         // 只有 <template 是控制标记：想写字面量时用 \<，整段用 <raw>，讲格式用代码围栏
         expect(render('讲格式：\\<template :if="x">A\\</template>', {})).toBe('讲格式：<template :if="x">A</template>');
-        expect(render('<raw><template :if="x">A</template></raw>', {})).toBe('<template :if="x">A</template>');
+        expect(render('<raw><template :if={{x}}>A</template></raw>', {})).toBe('<template :if={{x}}>A</template>');
     });
 
     it('反斜杠只在 {{ 或 < 前特殊；其它位置原样（Windows 路径不受影响）', () => {
@@ -158,7 +158,7 @@ describe('R2/R3 插值：globals 与动态作用域真分离', () => {
 
     it('属性里可以插值（链片段的真实写法）', () => {
         const out = render(
-            include('./_chain.md', ' path="diy.home" content="diy.note" scope="diy.scope"'),
+            include('./_chain.md', ' path={{diy.home}} content={{diy.note}} scope={{diy.scope}}'),
             { globals: { diy: { home: '/home/u/AGENTS.md', scope: '/home/u', note: '根规则' } } },
             { resolver: resolverOf({ './_chain.md': CHAIN_FRAGMENT }) },
         );
@@ -174,10 +174,10 @@ describe('R2/R3 插值：globals 与动态作用域真分离', () => {
 
 // ── R4 条件 ──────────────────────────────────────────────────────────
 
-describe('R4 条件：:if / :unless 与固定真假值表', () => {
+describe('R4 条件：:if / :if-not 与固定真假值表', () => {
     it('空数组为假 → 技能槽位整节不出现（今天由代码 if (!text.trim()) 决定）', () => {
         const tpl = block(`
-            <template :if="diy.skills"><skills>
+            <template :if={{diy.skills}}><skills>
             技能
             </skills>
             </template>
@@ -192,7 +192,7 @@ describe('R4 条件：:if / :unless 与固定真假值表', () => {
 
     it(':unless 取反 → 「cwd 回退」提示只在回退时出现（今天由代码拼 "\n注意：…" 决定）', () => {
         const tpl = block(`
-            工作目录：{{diy.cwd}}<template :unless="diy.cwdIsProject">
+            工作目录：{{diy.cwd}}<template :if-not={{diy.cwdIsProject}}>
             注意：项目目录不存在，工具实际在任务目录下执行</template>
         `);
         expect(render(tpl, { globals: { diy: { cwd: '/repo', cwdIsProject: false } } })).toBe(
@@ -202,7 +202,7 @@ describe('R4 条件：:if / :unless 与固定真假值表', () => {
     });
 
     it('真假值表：false/0/""/[]/null 为假；"false"/"0"/" "/{} 为真', () => {
-        const tpl = '<template :if="x">真</template><template :unless="x">假</template>';
+        const tpl = '<template :if={{x}}>真</template><template :if-not={{x}}>假</template>';
         for (const falsy of [false, 0, '', [], null]) {
             expect(render(tpl, { globals: { x: falsy } })).toBe('假');
         }
@@ -214,7 +214,7 @@ describe('R4 条件：:if / :unless 与固定真假值表', () => {
     it('给某个标签加条件：直接写在标签上（带控制属性的标签即容器，标签原样输出）', () => {
         const tpl = block(`
             <rules>
-            <item :if="diy.strict">严格</item>
+            <item :if={{diy.strict}}>严格</item>
             </rules>
         `);
         expect(render(tpl, { globals: { diy: { strict: true } } })).toBe(block(`
@@ -231,14 +231,14 @@ describe('R4 条件：:if / :unless 与固定真假值表', () => {
         // 等价写法：<template> 包裹（控制标记不产出字符）；两者字节一致
         const wrapped = block(`
             <rules>
-            <template :if="diy.strict"><item>严格</item></template>
+            <template :if={{diy.strict}}><item>严格</item></template>
             </rules>
         `);
         expect(render(wrapped, { globals: { diy: { strict: true } } })).toBe(
             render(tpl, { globals: { diy: { strict: true } } }),
         );
-        // 循环也一样：<skill :for="s of list">
-        expect(render('<skill :for="s of diy.skills">{{.s}}</skill>', { globals: { diy: { skills: ['a', 'b'] } } })).toBe(
+        // 循环也一样：<skill :for="s" :in={{list}}>
+        expect(render('<skill :for="s" :in={{diy.skills}}>{{.s}}</skill>', { globals: { diy: { skills: ['a', 'b'] } } })).toBe(
             '<skill>a</skill><skill>b</skill>',
         );
     });
@@ -250,7 +250,7 @@ describe('R5 循环：:for + {{.index}} + {{.}}，支持嵌套', () => {
     it('链上多层 AGENTS.md：由模版自己迭代（今天由代码循环）', () => {
         const tpl = block(`
             以下按 scope 生效：
-            <template :for="item of diy.chain"><template :include="./_chain.md" path=".item.path" scope=".item.scope" content=".item.content" />
+            <template :for="item" :in={{diy.chain}}><template :include="./_chain.md" path={{.item.path}} scope={{.item.scope}} content={{.item.content}} />
             </template>
         `);
         const out = render(
@@ -266,7 +266,7 @@ describe('R5 循环：:for + {{.index}} + {{.}}，支持嵌套', () => {
     });
 
     it('下标用 {{.index}}，字符串数组用 {{.}}，空数组不产出任何字符', () => {
-        const tpl = '<template :for="s of diy.list">{{.index}}:{{.}}|</template>';
+        const tpl = '<template :for="s" :in={{diy.list}}>{{.index}}:{{.}}|</template>';
         expect(render(tpl, { globals: { diy: { list: ['a', 'b'] } } })).toBe('0:a|1:b|');
         expect(render(tpl, { globals: { diy: { list: [] } } })).toBe('');
     });
@@ -274,13 +274,13 @@ describe('R5 循环：:for + {{.index}} + {{.}}，支持嵌套', () => {
     it('分隔符不需要表达式：内建 {{.isFirst}} / {{.isLast}} / {{.index}}', () => {
         // 等价于 join("\n\n")：除首项外，每项前加一个空行
         const tpl = block(`
-            <template :for="f of diy.list"><template :unless=".isFirst">
+            <template :for="f" :in={{diy.list}}><template :if-not={{.isFirst}}>
 
             </template>[{{.f}}]</template>
         `);
         expect(render(tpl, { globals: { diy: { list: ['a', 'b', 'c'] } } })).toBe('[a]\n\n[b]\n\n[c]');
         expect(
-            render('<template :for="f of diy.list">{{.index}}:{{.f}} first={{.isFirst}} last={{.isLast}}|</template>', {
+            render('<template :for="f" :in={{diy.list}}>{{.index}}:{{.f}} first={{.isFirst}} last={{.isLast}}|</template>', {
                 globals: { diy: { list: ['a', 'b'] } },
             }),
         ).toBe('0:a first=true last=false|1:b first=false last=true|');
@@ -288,7 +288,7 @@ describe('R5 循环：:for + {{.index}} + {{.}}，支持嵌套', () => {
 
     it('嵌套循环：内层可读外层（作用域链）；同名则内层遮蔽', () => {
         const tpl = block(`
-            <template :for="g of diy.groups">{{.g.name}}:<template :for="g of .g.items">{{.g}}/{{.index}}|</template></template>
+            <template :for="g" :in={{diy.groups}}>{{.g.name}}:<template :for="g" :in={{.g.items}}>{{.g}}/{{.index}}|</template></template>
         `);
         const out = render(tpl, { globals: { diy: { groups: [{ name: 'A', items: ['x', 'y'] }] } } });
         expect(out).toBe('A:x/0|y/1|');
@@ -299,14 +299,14 @@ describe('R5 循环：:for + {{.index}} + {{.}}，支持嵌套', () => {
 
 describe('R6 include：参数显式传递，动态作用域不继承', () => {
     const files = {
-        './a.md': '<A task="{{.task.title}}"><template :include="./b.md" task=".task" /></A>',
-        './b.md': '<B><template :include="./c.md" item=".task.item" /></B>',
+        './a.md': '<A task="{{.task.title}}"><template :include="./b.md" task={{.task}} /></A>',
+        './b.md': '<B><template :include="./c.md" item={{.task.item}} /></B>',
         './c.md': '<C item="{{.item}}" />',
     };
 
     it('三层调用：每层只看到自己拿到的参数（A→B→C，C 看不到 A 的 .task 全部）', () => {
         const out = render(
-            '<template :include="./a.md" task="diy.task" />',
+            '<template :include="./a.md" task={{diy.task}} />',
             { globals: { diy: { task: { title: 'T', item: 'I' } } } },
             { resolver: resolverOf(files) },
         );
@@ -316,7 +316,7 @@ describe('R6 include：参数显式传递，动态作用域不继承', () => {
     it('子模版看不到调用者的动态变量（隔离而非继承）', () => {
         const err = caught(() =>
             render(
-                '<template :for="t of diy.list"><template :include="./child.md" /></template>',
+                '<template :for="t" :in={{diy.list}}><template :include="./child.md" /></template>',
                 { globals: { diy: { list: [1] } } },
                 { resolver: resolverOf({ './child.md': '{{.t}}' }) },
             ),
@@ -395,7 +395,7 @@ describe('R9 错误不静默：全部带行列与原因', () => {
     it('动态变量未声明 → 报错，detail 列出当前作用域可用名', () => {
         const err = caught(() =>
             render(
-                '<template :include="./c.md" task="diy.task" />',
+                '<template :include="./c.md" task={{diy.task}} />',
                 { globals: { diy: { task: 1 } } },
                 { resolver: resolverOf({ './c.md': '<C>{{.taskx}}</C>' }) },
             ),
@@ -419,7 +419,8 @@ describe('R9 错误不静默：全部带行列与原因', () => {
     });
 
     it('条件里写表达式 → 语法错并指出位置（阶段 1 明确不支持表达式）', () => {
-        const err = caught(() => render('<template :if="diy.a == 1">x</template>', { globals: { diy: { a: 1 } } }));
+        // 含空格的表达式必须用引号包起来（裸值在空格处结束）
+        const err = caught(() => render('<template :if="{{diy.a == 1}}">x</template>', { globals: { diy: { a: 1 } } }));
         expect(err.code).toBe('syntax');
         expect(err.line).toBe(1);
         expect(err.message).toContain('不支持表达式');
@@ -432,7 +433,7 @@ describe('R9 错误不静默：全部带行列与原因', () => {
 
     it(':for 的数据源不是数组 → not-iterable', () => {
         const err = caught(() =>
-            render('<template :for="x of diy.obj">{{.x}}</template>', { globals: { diy: { obj: { a: 1 } } } }),
+            render('<template :for="x" :in={{diy.obj}}>{{.x}}</template>', { globals: { diy: { obj: { a: 1 } } } }),
         );
         expect(err.code).toBe('not-iterable');
     });
@@ -444,10 +445,10 @@ describe('R10 静态分析：引用清单（UI「变量 view」的数据源）',
     it('列出 globals / 动态 / include / 条件 / 循环', () => {
         const src = block(`
             入口 {{diy.cli}}
-            <template :if="diy.hasSkills">
-            <template :for="s of diy.skills">{{.s}}@{{.index}}</template>
+            <template :if={{diy.hasSkills}}>
+            <template :for="s" :in={{diy.skills}}>{{.s}}@{{.index}}</template>
             </template>
-            <template :include="./_chain.md" path="diy.home" content="diy.note" />
+            <template :include="./_chain.md" path={{diy.home}} content={{diy.note}} />
         `);
         const a = analyze(src, { file: 'system.md' });
         expect(a.globals).toEqual(['diy']);
@@ -475,7 +476,7 @@ describe('R11 结构 trace：节点字节数 + 每个 :if 的真假与原因（�
             <project_instructions path="{{.path}}">{{.content}}</project_instructions>
         `);
         const { text, trace } = renderWithTrace(
-            include('./_chain.md', ' path="diy.p" content="diy.c"'),
+            include('./_chain.md', ' path={{diy.p}} content={{diy.c}}'),
             { globals: { diy: { p: '/a/AGENTS.md', c: '规则' } } },
             { resolver: resolverOf({ './_chain.md': fragment }), file: 'system.md' },
         );
@@ -487,7 +488,7 @@ describe('R11 结构 trace：节点字节数 + 每个 :if 的真假与原因（�
 
     it('回答「这个 :if 为什么没进」：空数组 / 空串 / false 各有原因', () => {
         const { trace } = renderWithTrace(
-            '<template :if="diy.skills">技能</template><template :if="diy.note">说明</template>',
+            '<template :if={{diy.skills}}>技能</template><template :if={{diy.note}}>说明</template>',
             { globals: { diy: { skills: [], note: 'x' } } },
         );
         const ifs = trace.filter((t) => t.kind === 'if');
@@ -515,7 +516,7 @@ describe('R12 装配形态：节的标签/顺序/分隔都在模版里（代码�
     `);
     const skillsSection = block(`
         <skills>
-        <template :for="s of .list">{{.s}}
+        <template :for="s" :in={{.list}}>{{.s}}
         </template></skills>
     `);
     const guard = block(`
@@ -531,7 +532,7 @@ describe('R12 装配形态：节的标签/顺序/分隔都在模版里（代码�
     const system =
         include('./000-identity.md') +
         include('./100-diy.md') +
-        include('./500-skills.md', ' :if="diy.skills" list="diy.skills"') +
+        include('./500-skills.md', ' :if={{diy.skills}} list={{diy.skills}}') +
         include('./_guard.md');
 
     it('skills 为空时整节不出现且零残留；有技能时出现在原位置', () => {
@@ -568,7 +569,7 @@ describe('R12 装配形态：节的标签/顺序/分隔都在模版里（代码�
         expect(render('正文\n', {}, { resolver, file: 'system.md' })).toBe('正文\n');
         // include 才出现
         expect(
-            render(include('./_chain.md', ' path="diy.p" content="diy.c"'), { globals: { diy: { p: 'p', c: 'c' } } }, {
+            render(include('./_chain.md', ' path={{diy.p}} content={{diy.c}}'), { globals: { diy: { p: 'p', c: 'c' } } }, {
                 resolver,
             }),
         ).toBe('<pi path="p">c</pi>');
@@ -580,15 +581,15 @@ describe('R12 装配形态：节的标签/顺序/分隔都在模版里（代码�
 describe('R13 控制标记不占空间（standalone 默认开，无开关）', () => {
     it('内联：条件为假时，标记自身不留下任何字符（a<if>…</if>b → ab）', () => {
         const G = { globals: { diy: { off: false, on: true } } };
-        expect(render('a<template :if="diy.off"></template>b', G)).toBe('ab');
-        expect(render('a<template :if="diy.off">X</template>b', G)).toBe('ab');
-        expect(render('a<template :if="diy.on">X</template>b', G)).toBe('aXb');
+        expect(render('a<template :if={{diy.off}}></template>b', G)).toBe('ab');
+        expect(render('a<template :if={{diy.off}}>X</template>b', G)).toBe('ab');
+        expect(render('a<template :if={{diy.on}}>X</template>b', G)).toBe('aXb');
     });
 
     it('行级：独占一行的控制标记，连同它那一行的缩进与换行都不产出', () => {
         const src = [
             'A',
-            '    <template :if="diy.off">',
+            '    <template :if={{diy.off}}>',
             '</template>',
             'B',
         ].join('\n');
@@ -611,7 +612,7 @@ describe('R13 控制标记不占空间（standalone 默认开，无开关）', (
         };
         const layout = [
             '<template :include="./a.md"/>',
-            '<template :include="./c.md" :if="diy.skills"/>',
+            '<template :include="./c.md" :if={{diy.skills}}/>',
             '<template :include="./d.md"/>',
         ].join('\n');
         expect(render(layout, { globals: { diy: { skills: [] } } }, { resolver: resolverOf(files) })).toBe(
@@ -629,12 +630,57 @@ describe('R13 控制标记不占空间（standalone 默认开，无开关）', (
     });
 
     it('边界：带控制属性的"标签容器"会输出自身标签 → 它那一行照常保留（要整行消失就用 <template>）', () => {
-        const src = '<item :if="diy.on">x</item>\n';
+        const src = '<item :if={{diy.on}}>x</item>\n';
         expect(render(src, { globals: { diy: { on: true } } })).toBe('<item>x</item>\n');
         expect(render(src, { globals: { diy: { on: false } } })).toBe('\n'); // 标签没了，行还在
         // 想让它整行消失 → 用纯标记包裹（<template> 不产出字符）
-        const pure = '<template :if="diy.on"><item>x</item>\n</template>';
+        const pure = '<template :if={{diy.on}}><item>x</item>\n</template>';
         expect(render(pure, { globals: { diy: { on: false } } })).toBe('');
         expect(render(pure, { globals: { diy: { on: true } } })).toBe('<item>x</item>\n');
+    });
+});
+
+describe('R14 属性值只有两种形态（引号不是语法，{{}} 才是求值点）', () => {
+    const G = {
+        globals: {
+            skills: [
+                { name: 'a', desc: 'A' },
+                { name: 'b', desc: 'B' },
+            ],
+            n: 2,
+        },
+    };
+
+    it('整值单个插值 = 表达式：集合**不被字符串化**，原样传进 include', () => {
+        const files = { './list.md': '<template :for="s" :in={{.items}}>- {{.s.name}}\n</template>' };
+        const out = render('<template :include="./list.md" items={{skills}}/>', G, { resolver: resolverOf(files) });
+        expect(out).toBe('- a\n- b\n');
+    });
+
+    it('字符串字面量 vs 混合文本 vs 数字（文本一律字符串化，单插值保留类型）', () => {
+        const files = { './t.md': '[{{.title}}][{{.count}}]' };
+        const r = (attrs: string, ctx: typeof G = G) =>
+            render(`<template :include="./t.md" ${attrs}/>`, ctx, { resolver: resolverOf(files) });
+        expect(r('title="技能清单" count={{n}}')).toBe('[技能清单][2]');
+        expect(r('title="共 {{n}} 项" count={{n}}')).toBe('[共 2 项][2]');
+    });
+
+    it('引号与裸值语义等价（引号只是边界）', () => {
+        expect(render('<x :if={{n}}>y</x>', G)).toBe('<x>y</x>');
+        expect(render('<x :if="{{n}}">y</x>', G)).toBe('<x>y</x>');
+    });
+
+    it('裸值里插值后跟内容 → 报错（要求引号），不静默截断', () => {
+        const e = caught(() => render('<x :if={{n}}b>y</x>', G));
+        expect(e.code).toBe('syntax');
+        expect(e.message).toContain('引号');
+    });
+
+    it('两条 lint 提示：单插值别加引号；参数值像路径但是字面量（老写法的静默陷阱）', () => {
+        const a = analyze('<x :if="{{n}}">y</x>');
+        expect(a.lint.some((l) => l.message.includes('更清楚'))).toBe(true);
+        const b = analyze('<template :include="./a.md" path=".f.path"/>');
+        const hit = b.lint.find((l) => l.message.includes('字面量字符串'));
+        expect(hit?.message).toContain('path={{.f.path}}');
     });
 });

@@ -4,9 +4,9 @@
 //   text    原样文本（**输出标签也是 text**：<diy>、<project_instructions path="{{p}}">）
 //   interp  {{path}} 插值
 //   tag     带控制属性的标签容器（<description :if>…</description>）：标签原样，内部受控
-//   if      <template :if> / :unless
-//   for     <template :for>
-//   include <template :include="…" 参数… />
+//   if      <template :if> / :if-not
+//   for     <template :for="item" :in={{集合}}>
+//   include <template :include="./a.md" 参数… />
 
 import type { Loc } from './errors';
 
@@ -38,7 +38,7 @@ export interface IfNode {
     type: 'if';
     /** 条件路径（只允许 path，阶段 1 无表达式） */
     path: string;
-    /** true = :unless（取反） */
+    /** true = :if-not（取反） */
     negate: boolean;
     children: Node[];
     loc: Loc;
@@ -48,16 +48,25 @@ export interface ForNode {
     type: 'for';
     /** 循环变量名，进动态作用域（模版里用 {{.item}} 访问） */
     item: string;
-    /** 数据源路径 */
+    /** 数据源路径（来自 :in={{…}}） */
     source: string;
     children: Node[];
     loc: Loc;
 }
 
-/** include 参数：name 是被调模版里的动态名（模版里写 {{.name}}），path 在调用方求值 */
+/**
+ * 属性值（引号只是边界，不改变语义）：
+ *   · 整值恰好是一个插值 → 表达式，取值**保留原类型**（数组仍是数组、布尔仍是布尔）
+ *   · 其余 → 文本 + 插值点，渲染后字符串化
+ */
+export type ArgValue =
+    | { kind: 'expr'; path: string }
+    | { kind: 'text'; nodes: Node[] };
+
+/** include 参数：name 是被调模版里的动态名（模版里写 {{.name}}），value 在调用方求值 */
 export interface IncludeArg {
     name: string;
-    path: string;
+    value: ArgValue;
     loc: Loc;
 }
 

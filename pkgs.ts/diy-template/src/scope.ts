@@ -131,7 +131,7 @@ export function resolveForOutput(path: string, ctx: EvalContext, loc: Loc, file?
     if (value === null || value === undefined) {
         throw new TemplateError('missing-value', `插值 {{${path}}} 的值是 null/undefined`, loc, {
             file,
-            detail: '可选值请先用 :if / :unless 守住；若确实可能缺失，检查路径是否写错',
+            detail: '可选值请先用 :if / :if-not 守住；若确实可能缺失，检查路径是否写错',
         });
     }
     if (typeof value === 'object') {

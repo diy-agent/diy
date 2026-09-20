@@ -47,7 +47,7 @@ describe('逐字节边界（输出标签也是文本）', () => {
     });
 
     it('代码围栏 ``` 内一律不解析（{{}} 与 <template> 都是字面量）', () => {
-        const src = ['```md', '把 {{diy.cli}} 写进 <template :if="x">…</template>', '```'].join('\n');
+        const src = ['```md', '把 {{diy.cli}} 写进 <template :if={{x}}>…</template>', '```'].join('\n');
         expect(render(src, { globals: { diy: { cli: 'V' } } })).toBe(src);
     });
 });
@@ -60,7 +60,7 @@ describe('控制标记的语法（唯一严格的部分）', () => {
     it('控制标签未闭合', () => {
         const e = (() => {
             try {
-                parse('<template :if="diy.on">x');
+                parse('<template :if={{diy.on}}>x');
             } catch (err) {
                 return err as TemplateError;
             }
@@ -74,17 +74,45 @@ describe('控制标记的语法（唯一严格的部分）', () => {
         expect(code(() => parse('<raw>没关'))).toBe('syntax');
     });
 
-    it(':for 语法非法（缺 of）带修复提示', () => {
+    it(':for 缺 :in → 修复提示；旧写法 "item of 路径" → 提示已改写法', () => {
+        const errOf = (src: string): TemplateError => {
+            try {
+                parse(src);
+            } catch (err) {
+                return err as TemplateError;
+            }
+            throw new Error('应该报错');
+        };
+        const e1 = errOf('<template :for="x">a</template>');
+        expect(e1.code).toBe('syntax');
+        expect(e1.detail).toContain(':for="item" :in={{集合}}');
+        const e2 = errOf('<template :for="x of list">a</template>');
+        expect(e2.code).toBe('syntax');
+        expect(e2.detail).toContain('已改写法');
+    });
+
+    it(':if-not（取反）与 :if 不可同用；:unless 已改名 → 直接报错', () => {
+        expect(code(() => parse('<template :if={{a}} :if-not={{b}}>x</template>'))).toBe('syntax');
         const e = (() => {
             try {
-                parse('<template :for="x">a</template>');
+                parse('<template :unless="a">x</template>');
             } catch (err) {
                 return err as TemplateError;
             }
             return null;
         })()!;
         expect(e.code).toBe('syntax');
-        expect(e.detail).toContain(':for="item of 路径"');
+        expect(e.message).toContain(':if-not');
+    });
+
+    it('属性值：裸值/引号两种形式等价；插值后跟内容必须加引号', () => {
+        const G = { globals: { a: 'A' } };
+        expect(render('<x :if={{a}}>y</x>', G)).toBe('<x>y</x>');
+        expect(render('<x :if="{{a}}">y</x>', G)).toBe('<x>y</x>');
+        // 裸值里插值后还有内容 → 响亮报错（不静默截断）
+        expect(code(() => parse('<x :if={{a}}b>y</x>'))).toBe('syntax');
+        // 含空格的值用引号
+        expect(render('<x title="{{a}} 项">y</x>', G)).toBe('<x title="A 项">y</x>');
     });
 
     it('未知控制属性（<template :iff>）→ 报错', () => {
@@ -119,9 +147,9 @@ describe('控制标记的语法（唯一严格的部分）', () => {
 describe('判据 C：带控制属性的标签即容器（其余标签一概是文本）', () => {
     it('带 :if / :for 的标签成为容器，标签本身原样输出', () => {
         const G = { globals: { diy: { on: true }, list: ['a', 'b'] } };
-        expect(render('<item :if="diy.on">严格</item>', G)).toBe('<item>严格</item>');
-        expect(render('<item :if="diy.on">严格</item>', { globals: { diy: { on: false } } })).toBe('');
-        expect(render('<skill :for="s of list">{{.s}}</skill>', G)).toBe('<skill>a</skill><skill>b</skill>');
+        expect(render('<item :if={{diy.on}}>严格</item>', G)).toBe('<item>严格</item>');
+        expect(render('<item :if={{diy.on}}>严格</item>', { globals: { diy: { on: false } } })).toBe('');
+        expect(render('<skill :for="s" :in={{list}}>{{.s}}</skill>', G)).toBe('<skill>a</skill><skill>b</skill>');
     });
 
     it('不带控制属性的标签（哪怕配对）也是文本', () => {
@@ -131,11 +159,11 @@ describe('判据 C：带控制属性的标签即容器（其余标签一概是�
     });
 
     it('只剥控制属性，标签头其余字符逐字节保留（不重新格式化）', () => {
-        expect(render(`<pi path='x'  flag :if="on">y</pi>`, { globals: { on: true } })).toBe(`<pi path='x'  flag>y</pi>`);
+        expect(render(`<pi path='x'  flag :if={{on}}>y</pi>`, { globals: { on: true } })).toBe(`<pi path='x'  flag>y</pi>`);
     });
 
     it('带控制属性但没闭合 → 响亮报错（而不是静默当文本）', () => {
-        expect(code(() => parse('<item :if="x">严格'))).toBe('syntax');
+        expect(code(() => parse('<item :if={{x}}>严格'))).toBe('syntax');
     });
 
     it('正文里的 :if= / 拼错的 :iff= → lint 提示，不静默', () => {

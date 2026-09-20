@@ -50,7 +50,7 @@ export interface TraceNode {
     name?: string;
     /** 本节点产出字节数 */
     bytes: number;
-    /** :if / :unless 的实际结果 */
+    /** :if / :if-not 的实际结果 */
     result?: boolean;
     /** 结果原因（假值原因 / 迭代次数 / 被省略等） */
     reason?: string;
@@ -141,7 +141,7 @@ class Renderer {
                 const result = n.negate ? !isTruthy(value) : isTruthy(value);
                 const node: TraceNode = {
                     kind: 'if',
-                    name: `${n.negate ? ':' : ''}${n.negate ? 'unless' : 'if'}(${n.path})`,
+                    name: `${n.negate ? ':if-not' : ':if'}(${n.path})`,
                     bytes: 0,
                     result,
                     reason: result
@@ -169,7 +169,7 @@ class Renderer {
                         detail: `实际类型：${value === null ? 'null' : typeof value}`,
                     });
                 }
-                const node: TraceNode = { kind: 'for', name: `for ${n.item} of ${n.source}`, bytes: 0, children: [] };
+                const node: TraceNode = { kind: 'for', name: `for ${n.item} in ${n.source}`, bytes: 0, children: [] };
                 let out = '';
                 for (let i = 0; i < value.length; i++) {
                     const frame: DynamicFrame = {
@@ -236,9 +236,14 @@ class Renderer {
             });
         }
 
-        // 参数在**调用方**作用域求值
+        // 参数在**调用方**作用域求值：整值单个插值 → 原类型；文本 → 渲染成字符串
         const args: Record<string, unknown> = {};
-        for (const a of n.args) args[a.name] = resolvePath(a.path, ctx, a.loc, this.currentFile());
+        for (const a of n.args) {
+            args[a.name] =
+                a.value.kind === 'expr'
+                    ? resolvePath(a.value.path, ctx, a.loc, this.currentFile())
+                    : this.renderNodes(a.value.nodes, ctx, null);
+        }
 
         const { nodes, refs } = this.parseInclude(relpath, target.source);
         this.checkArgs(n, refs, relpath);
@@ -262,7 +267,7 @@ class Renderer {
             if (!passed.has(ref)) {
                 throw new TemplateError('missing-arg', `include ${relpath} 缺少参数 ${ref}`, n.loc, {
                     file: this.currentFile(),
-                    detail: `该模版引用了 .${ref}；请写成 ${ref}=".${ref}"（或传入合适的路径）`,
+                    detail: `该模版引用了 .${ref}；请写成 ${ref}={{.${ref}}}（或传入合适的值）`,
                 });
             }
         }

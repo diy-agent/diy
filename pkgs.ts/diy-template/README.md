@@ -22,13 +22,22 @@ render('<diy>{{diy.cli}}</diy>', { globals: { diy: { cli: '/repo/diy.sh' } } });
 {{.index}} {{.isFirst}} {{.isLast}} {{.}}      :for 内建量
 \{{   \<   <raw>…</raw>                       逃生舱：输出字面量 {{ / < / 整段原文
 
-<template :if="p">…</template>                 条件
-<template :unless="p">…</template>             取反（cwd 回退提示这类场景）
-<template :for="x of p">…</template>           循环
-<template :include="./_chain.md" path=".p" />  片段调用（非控制属性即参数，动态作用域硬隔离）
-<enabled :if="p">true</enabled>                控制属性也可挂在输出元素上
+<template :if={{p}}>…</template>              条件
+<template :if-not={{p}}>…</template>          取反（cwd 回退提示这类场景）
+<template :for="x" :in={{p}}>…</template>     循环（:for = 变量名，:in = 集合）
+<template :include="./_chain.md" path={{.p}}/>  片段调用（非控制属性即参数，动态作用域硬隔离）
+<enabled :if={{p}}>true</enabled>             控制属性也可挂在输出元素上
 <diy>…</diy>                                   任意标签原样进提示词
 ```
+
+**属性值只有两种形态**（引号只是边界，不改变语义 —— 与正文同一条规则）：
+
+| 写法 | 含义 |
+| --- | --- |
+| `attr={{x}}` | 整值单个插值 → **表达式**，取值保留原类型（数组仍是数组） |
+| `attr="text"` | 字符串字面量 |
+| `attr="共 {{n}} 项"` | 含插值的文本 → 字符串 |
+| `attr={{x}}b` | ❌ 裸值里插值后不能跟内容（用引号：`attr="{{x}}b"`） |
 
 ## 硬规则
 

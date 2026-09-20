@@ -5,7 +5,7 @@
 //   2. include 参数双向校验：传了没用的（unknown-arg）、用了没传的（missing-arg）
 //   3. 打错字体检：条件名 / 参数名写错在这里就能发现，不必等渲染时静默为假
 
-import type { Node } from './ast';
+import type { ArgValue, Node } from './ast';
 import type { Loc } from './errors';
 import { CONTROL_ATTRS, parse, type ParseOptions } from './parser';
 
@@ -18,7 +18,7 @@ export interface PathRef {
 
 export interface IncludeRef {
     relpath: string;
-    args: { name: string; path: string; loc: Loc }[];
+    args: { name: string; value: ArgValue; loc: Loc }[];
     loc: Loc;
 }
 
@@ -63,7 +63,12 @@ function locIn(text: string, start: Loc, index: number): Loc {
 }
 
 export function analyze(source: string, opts: ParseOptions = {}): Analysis {
-    return analyzeNodes(parse(source, opts));
+    const hints: LintIssue[] = [];
+    const out = analyzeNodes(
+        parse(source, { ...opts, onStyleHint: (message, loc) => hints.push({ message, loc }) }),
+    );
+    out.lint.push(...hints);
+    return out;
 }
 
 export function analyzeNodes(nodes: Node[]): Analysis {
@@ -128,7 +133,22 @@ export function analyzeNodes(nodes: Node[]): Analysis {
                     walk(n.children);
                     break;
                 case 'include':
-                    for (const a of n.args) addPath(a.path, a.loc);
+                    for (const a of n.args) {
+                        if (a.value.kind === 'expr') addPath(a.value.path, a.loc);
+                        else {
+                            walk(a.value.nodes);
+                            // 迁移提示：值看起来是路径，但现在是字面量字符串（老写法 path=".f.path"）
+                            const only = a.value.nodes.length === 1 && a.value.nodes[0]!.type === 'text' ? a.value.nodes[0]!.value : undefined;
+                            if (only !== undefined && /^(\.$|\.\w|[A-Za-z_$][\w$]*\.)/.test(only)) {
+                                out.lint.push({
+                                    message:
+                                        `参数 ${a.name}="${only}" 看起来是路径，但它是字面量字符串。` +
+                                        `要取值请写 ${a.name}={{${only}}}`,
+                                    loc: a.loc,
+                                });
+                            }
+                        }
+                    }
                     out.includes.push({ relpath: n.relpath, args: n.args.map((a) => ({ ...a })), loc: n.loc });
                     break;
             }
@@ -177,7 +197,13 @@ export function collectDynamicRefs(nodes: Node[]): Set<string> {
                 }
                 case 'include':
                     // 参数来源在**调用方**作用域求值，但被调模版看到的是 .name；这里只算本模版自身的引用
-                    for (const a of n.args) add(a.path);
+                    for (const a of n.args) {
+                        if (a.value.kind === 'expr') add(a.value.path);
+                        else
+                            for (const sub of a.value.nodes) {
+                                if (sub.type === 'interp') add(sub.path);
+                            }
+                    }
                     break;
             }
         }

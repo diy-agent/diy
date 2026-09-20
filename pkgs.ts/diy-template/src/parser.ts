@@ -12,27 +12,34 @@
 //   {{path}}                            插值（.x 读动态作用域，a.b 读 globals，. 读当前循环项）
 //   \{{                                 → 输出字面量 {{        （逃生舱 1）
 //   <raw>…</raw>                        → 内部原样输出          （逃生舱 2）
-//   <template :if="p">…</template>       条件
-//   <template :unless="p">…</template>   取反条件
-//   <template :for="x of p">…</template> 循环（{{.index}} 内建下标）
-//   <template :include="./a.md" task=".task" />   片段调用（非控制属性即参数）
+//   <template :if={{p}}>…</template>         条件
+//   <template :if-not={{p}}>…</template>     取反条件
+//   <template :for="x" :in={{p}}>…</template> 循环（{{.index}} 内建下标）
+//   <template :include="./a.md" task={{.task}} />  片段调用（非控制属性即参数）
 //   <anything …>…</anything>            输出元素：标签与属性原样进提示词
+//
+// 属性值只有两种形态（引号只是边界，不改变语义 —— 与正文同一条规则）：
+//   · 整值恰好是一个插值（{{x}} / "{{x}}"）→ **表达式**，取值保留原类型（数组仍是数组）
+//   · 其余 → 文本（其中的 {{}} 是插值点），结果字符串化
+//   例：list={{skills}}（集合）· title="技能清单"（字符串）· title="共 {{n}} 项"（混合）
 //
 // 空白规则：控制节点不产出任何字符；不做 trim、不删行（逐字节可预测）。
 
-import type { Node } from './ast';
+import type { ArgValue, InterpNode, Node } from './ast';
 import { TemplateError, type Loc, type TemplateErrorCode } from './errors';
 
-/** 已知控制属性；其余以 `:` 开头的属性一律报错（防 :iff 这类拼错静默生效） */
 /** 已知控制属性（供 lint 复用；omit-empty 已废弃，保留识别以便提示拼错） */
-export const CONTROL_ATTRS = ['if', 'unless', 'for', 'include', 'omit-empty'] as const;
+export const CONTROL_ATTRS = ['if', 'if-not', 'for', 'in', 'include', 'omit-empty'] as const;
 
 const PATH_RE = /^\.?[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z0-9_$]+)*$/;
-const FOR_RE = /^([A-Za-z_$][A-Za-z0-9_$]*)\s+of\s+(\.?[A-Za-z_$][A-Za-z0-9_$.]*)$/;
+/** 循环变量名（不是表达式） */
+const FOR_ITEM_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
 export interface ParseOptions {
     /** 模版 relpath（错误信息用） */
     file?: string;
+    /** 风格提示回调（不报错的那类提示，由 analyze 收集后进 lint） */
+    onStyleHint?: (message: string, loc: Loc) => void;
 }
 
 interface RawAttr {
@@ -44,6 +51,8 @@ interface RawAttr {
     valueOffset: number;
     /** 源里是否写了 =（false = 无值属性） */
     hasValue: boolean;
+    /** 值是否用引号包起来 */
+    quoted: boolean;
     /** 属性结束偏移（值之后的第一个字符），用于"剥掉控制属性、其余原样" */
     endOffset: number;
 }
@@ -72,7 +81,7 @@ function controlAttrsOf(tag: RawTag): Record<string, RawAttr | undefined> {
 
 /** 解析模版源 → 节点数组 */
 export function parse(source: string, opts: ParseOptions = {}): Node[] {
-    return new Parser(source, opts.file).parse();
+    return new Parser(source, opts).parse();
 }
 
 class Parser {
@@ -84,7 +93,7 @@ class Parser {
 
     constructor(
         private readonly src: string,
-        private readonly file: string | undefined,
+        private readonly options: ParseOptions = {},
     ) {
         for (let i = 0; i < src.length; i++) {
             if (src[i] === '\n') this.lineStarts.push(i + 1);
@@ -132,7 +141,7 @@ class Parser {
     }
 
     private err(code: TemplateErrorCode, msg: string, offset: number, detail?: string): never {
-        throw new TemplateError(code, msg, this.locAt(offset), { file: this.file, detail });
+        throw new TemplateError(code, msg, this.locAt(offset), { file: this.options.file, detail });
     }
 
     private startsWith(prefix: string, at = this.pos): boolean {
@@ -224,7 +233,7 @@ class Parser {
                 this.pos = stop;
                 continue;
             }
-            // 判据 C：只有**带控制属性**的标签才是节点（<description :if="…">）；
+            // 判据 C：只有**带控制属性**的标签才是节点（<description :if={{…}}>）；
             // 其余一切标签头（<diy>、<pid>、a<b、vector<T>）都是普通文本，零碰撞。
             const ch = this.src[this.pos]!;
             if (ch === '<' && /[A-Za-z_]/.test(this.src[this.pos + 1] ?? '')) {
@@ -311,14 +320,24 @@ class Parser {
             }
             const attrStart = this.pos;
             const am = /^([A-Za-z_:@#][A-Za-z0-9_:.-]*)/.exec(this.src.slice(this.pos));
-            if (!am) this.err('syntax', `标签 <${name}> 的属性名非法`, this.pos);
+            if (!am) {
+                this.err('syntax', `标签 <${name}> 的属性名非法`, this.pos, '值里如果有空格，请用引号包起来，如 title="共 {{n}} 项"');
+            }
             const attrName = am![1]!;
             this.pos += am![0].length;
             // 注意：必须显式匹配到 `=`，否则 `/^\s*=\s*/` 会零宽匹配成功，
             // 把无值属性后的字符（如 `/>` 的 `/`）当成它的值吃掉。
             const eq = /^\s*=/.exec(this.src.slice(this.pos));
             if (!eq) {
-                attrs.push({ name: attrName, value: '', loc: this.locAt(attrStart), valueOffset: attrStart, hasValue: false, endOffset: this.pos });
+                attrs.push({
+                    name: attrName,
+                    value: '',
+                    loc: this.locAt(attrStart),
+                    valueOffset: attrStart,
+                    hasValue: false,
+                    quoted: false,
+                    endOffset: this.pos,
+                });
                 continue;
             }
             this.pos += eq[0].length;
@@ -326,32 +345,126 @@ class Parser {
             const q = this.src[this.pos];
             let value: string;
             let valueOffset = this.pos;
+            let quoted = false;
             if (q === '"' || q === "'") {
+                quoted = true;
                 const close = this.src.indexOf(q, this.pos + 1);
                 if (close === -1) this.err('syntax', `属性 ${attrName} 的引号未闭合`, attrStart);
                 value = this.src.slice(this.pos + 1, close);
                 valueOffset = this.pos + 1;
                 this.pos = close + 1;
+            } else if (this.startsWith('{{', this.pos)) {
+                // 裸表达式：按括号扫描（否则 `:if={{x}}/>` 会把 `/>` 当成值的一部分）
+                const close = this.src.indexOf('}}', this.pos + 2);
+                if (close === -1) this.err('syntax', `属性 ${attrName} 的插值未闭合（缺少 }}）`, attrStart);
+                value = this.src.slice(this.pos, close + 2);
+                this.pos = close + 2;
+                const next = this.src[this.pos];
+                if (next !== undefined && !/[\s/>]/.test(next)) {
+                    this.err(
+                        'syntax',
+                        `属性 ${attrName} 的值里插值之后还有内容，请用引号包起来`,
+                        this.pos,
+                        '例：title="共 {{n}} 项"',
+                    );
+                }
             } else {
                 const vm = /^[^\s>]+/.exec(this.src.slice(this.pos));
                 if (!vm) this.err('syntax', `属性 ${attrName} 缺少值`, attrStart);
                 value = vm![0];
                 this.pos += value.length;
+                // 裸值末尾的 `/` 属于自闭合标记（`attr=./x/>`）；值确实以 / 结尾时用引号形式
+                if (this.src[this.pos] === '>' && value.endsWith('/')) {
+                    value = value.slice(0, -1);
+                    this.pos -= 1;
+                }
             }
-            attrs.push({ name: attrName, value, loc: this.locAt(attrStart), valueOffset, hasValue: true, endOffset: this.pos });
+            attrs.push({ name: attrName, value, loc: this.locAt(attrStart), valueOffset, hasValue: true, quoted, endOffset: this.pos });
         }
     }
 
-    /** 取标签头里的控制属性（判据 C 的判别函数） */
+    /**
+     * 属性值统一解析（与正文同一条规则：引号只是边界，`{{}}` 才是求值标记）：
+     *   · 整值恰好一个插值 → 表达式（取值保留原类型：数组仍是数组、布尔仍是布尔）
+     *   · 否则 → 文本节点序列（可含插值点；注释不产出字符）
+     */
+    private attrShape(a: RawAttr): ArgValue {
+        const raw = a.value;
+        const parts: Node[] = [];
+        let text = '';
+        let textBegin = 0;
+        let haveText = false;
+        let interps = 0;
+        const pushText = (s: string, at: number): void => {
+            if (!haveText) {
+                textBegin = at;
+                haveText = true;
+            }
+            text += s;
+        };
+        const flush = (): void => {
+            if (haveText) {
+                parts.push({ type: 'text', value: text, loc: this.locAt(a.valueOffset + textBegin) });
+                text = '';
+                haveText = false;
+            }
+        };
+        let i = 0;
+        while (i < raw.length) {
+            const open = raw.indexOf('{{', i);
+            if (open === -1) {
+                pushText(raw.slice(i), i);
+                break;
+            }
+            // 逃生：\{{ → 字面 {{（只吞紧随其后的 {{）
+            if (open > 0 && raw[open - 1] === '\\') {
+                pushText(raw.slice(i, open - 1) + '{{', i);
+                i = open + 2;
+                continue;
+            }
+            if (open > i) pushText(raw.slice(i, open), i);
+            const close = raw.indexOf('}}', open + 2);
+            if (close === -1) this.err('syntax', `属性 ${a.name} 的插值未闭合（缺少 }}）`, a.valueOffset + open);
+            const inner = raw.slice(open + 2, close).trim();
+            i = close + 2;
+            if (inner.startsWith('/*')) continue; // 注释：不产出字符
+            if (inner !== '.' && !PATH_RE.test(inner)) {
+                this.err(
+                    'syntax',
+                    `属性 ${a.name} 的插值只支持路径，阶段 1 不支持表达式：{{${inner}}}`,
+                    a.valueOffset + open,
+                    '允许形如 {{diy.cli}} / {{.task.name}} / {{.index}} / {{.}}',
+                );
+            }
+            flush();
+            parts.push({ type: 'interp', path: inner, loc: this.locAt(a.valueOffset + open) });
+            interps += 1;
+        }
+        flush();
+        if (interps === 1 && parts.length === 1) {
+            // 风格提示：单插值不必再包引号（引号在读者心里是"字符串"，避免与表达式叠在一起）
+            if (a.quoted) {
+                this.options.onStyleHint?.(
+                    `${a.name}="{{…}}" 的整值就是一个插值，直接写成 ${a.name}={{…}} 更清楚`,
+                    this.locAt(a.valueOffset),
+                );
+            }
+            return { kind: 'expr', path: (parts[0] as InterpNode).path };
+        }
+        return { kind: 'text', nodes: parts };
+    }
+
     /** 把"带控制属性的标签"构造成容器节点：按条件/循环渲染内部，并原样输出自身标签 */
     private buildTagContainer(tag: RawTag, ctrl: Record<string, RawAttr | undefined>): Node[] {
         if (ctrl['include']) {
             this.err('syntax', ':include 只能用在 <template> 上', ctrl['include']!.loc.offset);
         }
         const ifAttr = ctrl['if'];
-        const unlessAttr = ctrl['unless'];
+        const ifNotAttr = ctrl['if-not'];
         const forAttr = ctrl['for'];
-        if (ifAttr && unlessAttr) this.err('syntax', ':if 与 :unless 不能同时出现', ifAttr.loc.offset);
+        const inAttr = ctrl['in'];
+        if (ifAttr && ifNotAttr) this.err('syntax', ':if 与 :if-not 不能同时出现', ifAttr.loc.offset);
+        if (inAttr && !forAttr) this.err('syntax', ':in 只能与 :for 一起用', inAttr.loc.offset);
 
         let children: Node[] = [];
         let headClose = '';
@@ -363,7 +476,7 @@ class Parser {
         }
 
         // 标签头：剥掉控制属性的字符区间，其余原样（**不重新格式化**，保留引号/空白）
-        const cut = [ifAttr, unlessAttr, forAttr, ctrl['include']]
+        const cut = [ifAttr, ifNotAttr, forAttr, inAttr, ctrl['include']]
             .filter((a): a is RawAttr => Boolean(a))
             .map((a) => {
                 let start = a.loc.offset;
@@ -380,7 +493,7 @@ class Parser {
         head += this.src.slice(cursor, tag.end);
 
         const node: Node = { type: 'tag', head, headClose, children, loc: tag.loc };
-        return this.wrapControl(forAttr, ifAttr, unlessAttr, [node]);
+        return this.wrapControl(forAttr, inAttr, ifAttr, ifNotAttr, [node]);
     }
 
     // ── 控制节点 <template> ───────────────────────────────────────────
@@ -400,6 +513,14 @@ class Parser {
                 continue;
             }
             const key = a.name.slice(1);
+            if (key === 'unless') {
+                this.err(
+                    'syntax',
+                    ':unless 已改名为 :if-not',
+                    a.loc.offset,
+                    '取反条件写法：<template :if-not={{.isFirst}}>…</template>',
+                );
+            }
             if (!(CONTROL_ATTRS as readonly string[]).includes(key)) {
                 if (!hasInclude) {
                     this.err('syntax', `未知控制属性 ${a.name}`, a.loc.offset, `已知：${CONTROL_ATTRS.map((c) => ':' + c).join('、')}`);
@@ -416,31 +537,24 @@ class Parser {
         }
 
         const ifAttr = ctrl.get('if');
-        const unlessAttr = ctrl.get('unless');
+        const ifNotAttr = ctrl.get('if-not');
         const forAttr = ctrl.get('for');
+        const inAttr = ctrl.get('in');
         const includeAttr = ctrl.get('include');
-        if (ifAttr && unlessAttr) this.err('syntax', ':if 与 :unless 不能同时出现', ifAttr.loc.offset);
+        if (ifAttr && ifNotAttr) this.err('syntax', ':if 与 :if-not 不能同时出现', ifAttr.loc.offset);
 
         if (includeAttr) {
+            // 路径必须是**字面量**：禁用动态 include（路径要在静态分析里就确定）
             const relpath = includeAttr.value;
+            if (relpath.includes('{{')) {
+                this.err('syntax', `include 路径必须是字面量，不能是插值：${relpath}`, includeAttr.valueOffset);
+            }
             if (!relpath.startsWith('./') || relpath.includes('..')) {
                 this.err('include', `include 路径必须是以 ./ 开头且不含 .. 的相对路径：${relpath}`, includeAttr.loc.offset);
             }
-            const args = others.map((a) => {
-                // 参数值就是一条路径（不写 {{}}）：path="f.path"
-                const raw = a.value.trim();
-                if (raw !== '.' && !PATH_RE.test(raw)) {
-                    this.err(
-                        'syntax',
-                        `include 参数 ${a.name} 只支持单条路径：${a.value}`,
-                        a.valueOffset,
-                        '例：<template :include="./_chain.md" path="f.path" content="f.content" />',
-                    );
-                }
-                return { name: a.name, path: raw, loc: a.loc };
-            });
+            const args = others.map((a) => ({ name: a.name, value: this.attrShape(a), loc: a.loc }));
             const node: Node = { type: 'include', relpath, args, loc: tag.loc };
-            const nodes = this.wrapControl(forAttr, ifAttr, unlessAttr, [node]);
+            const nodes = this.wrapControl(forAttr, inAttr, ifAttr, ifNotAttr, [node]);
             if (tag.selfClosing) return { nodes, openStandalone, openEnd: tag.end };
             const closeStart = this.pos;
             const children = this.readNodes('template');
@@ -457,7 +571,7 @@ class Parser {
         const closeStart = this.pos;
         const children = this.readNodes('template');
         return {
-            nodes: this.wrapControl(forAttr, ifAttr, unlessAttr, children),
+            nodes: this.wrapControl(forAttr, inAttr, ifAttr, ifNotAttr, children),
             openStandalone,
             openEnd: tag.end,
             closeStart,
@@ -465,37 +579,63 @@ class Parser {
         };
     }
 
-    /** 依次包 :for（外）→ :if/:unless（内）；无控制属性则原样返回 children */
+    /** 依次包 :for（外）→ :if/:if-not（内）；无控制属性则原样返回 children */
     private wrapControl(
         forAttr: RawAttr | undefined,
+        inAttr: RawAttr | undefined,
         ifAttr: RawAttr | undefined,
-        unlessAttr: RawAttr | undefined,
+        ifNotAttr: RawAttr | undefined,
         children: Node[],
     ): Node[] {
         let node: Node | undefined;
-        if (forAttr) {
-            const m = FOR_RE.exec(forAttr.value.trim());
-            if (!m) {
+        if (forAttr || inAttr) {
+            const how = ':for="item" :in={{集合}}';
+            // 旧写法 "item of 路径" → 直接给出改名提示（比"缺 :in"更指向问题）
+            if (forAttr && /^[A-Za-z_$][\w$]*\s+of\s+/.test(forAttr.value.trim())) {
                 this.err(
                     'syntax',
-                    `:for 语法非法：${forAttr.value}`,
+                    `:for 不再支持 "item of 路径" 写法：${forAttr.value}`,
                     forAttr.loc.offset,
-                    '正确写法：:for="item of 路径"（下标固定为 {{.index}}）',
+                    `已改写法：${how}`,
                 );
             }
-            node = { type: 'for', item: m![1]!, source: m![2]!, children, loc: forAttr.loc };
-        }
-        const cond = ifAttr ?? unlessAttr;
-        if (cond) {
-            const p = cond.value.trim();
-            if (p !== '.' && !PATH_RE.test(p)) {
+            if (!forAttr) this.err('syntax', ':in 必须与 :for 一起用', inAttr!.loc.offset, `写法：${how}`);
+            if (!inAttr) this.err('syntax', ':for 缺少数据源 :in', forAttr!.loc.offset, `写法：${how}`);
+            const item = forAttr!.value.trim();
+            if (forAttr!.value.includes('{{')) {
+                this.err('syntax', `:for 的值是循环变量名，不能是表达式：${forAttr!.value}`, forAttr!.loc.offset, `写法：${how}`);
+            }
+            if (!FOR_ITEM_RE.test(item)) {
+                this.err('syntax', `:for 的循环变量名非法：${forAttr!.value}`, forAttr!.loc.offset, '变量名用字母/下划线开头，如 s、item');
+            }
+            const shape = this.attrShape(inAttr!);
+            if (shape.kind !== 'expr') {
                 this.err(
                     'syntax',
-                    `:${ifAttr ? 'if' : 'unless'} 只支持路径，阶段 1 不支持表达式：${cond.value}`,
+                    `:in 的值必须是单个插值（集合路径），如 :in={{skills}}：${inAttr!.value}`,
+                    inAttr!.loc.offset,
+                );
+            }
+            node = { type: 'for', item, source: shape.path, children, loc: forAttr!.loc };
+        }
+        const cond = ifAttr ?? ifNotAttr;
+        if (cond) {
+            const shape = this.attrShape(cond);
+            const name = ifAttr ? ':if' : ':if-not';
+            if (shape.kind !== 'expr') {
+                this.err(
+                    'syntax',
+                    `${name} 的值必须是单个插值（路径），如 ${name}={{skills}}：${cond.value}`,
                     cond.loc.offset,
                 );
             }
-            node = { type: 'if', path: p, negate: Boolean(unlessAttr), children: node ? [node] : children, loc: cond.loc };
+            node = {
+                type: 'if',
+                path: shape.path,
+                negate: Boolean(ifNotAttr),
+                children: node ? [node] : children,
+                loc: cond.loc,
+            };
         }
         return node ? [node] : children;
     }

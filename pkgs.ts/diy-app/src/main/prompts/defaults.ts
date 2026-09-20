@@ -38,7 +38,7 @@ lockTip: "装配入口是结构契约：改了会改变模型看到的节顺序�
 <template :include="./task.md"/>
 <template :include="./rules.md"/>
 {{/* 技能槽位：skills 为空数组时整节不出现（空数组为假） */}}
-<template :include="./skills.md" :if="skills" list="skills"/>
+<template :include="./skills.md" :if={{skills}} list={{skills}}/>
 <template :include="./_guard.md"/>
 `,
 
@@ -79,9 +79,9 @@ version: 1
 - 处理某个文件时，其所在目录链上最深的一层最特化；与更通用的描述冲突时以它为准
 
 {{/* 链上每一层用 _chain.md 渲染；除首层外前置一个空行（等价于旧代码的 join("\\n\\n")） */}}
-<template :for="f of chain"><template :unless=".isFirst">
+<template :for="f" :in={{chain}}><template :if-not={{.isFirst}}>
 
-</template><template :include="./chain.md" path=".f.path" scope=".f.scope" content=".f.content"/></template>
+</template><template :include="./chain.md" path={{.f.path}} scope={{.f.scope}} content={{.f.content}}/></template>
 </project_context>
 
 `,
@@ -95,7 +95,7 @@ version: 1
 任务：{{task.uri}} · {{task.title}}（状态：{{task.state}}）
 项目目录：{{project.path}}
 任务目录：{{task.dir}}
-工作目录：{{cwd.path}}（bash/read 的基准，相对路径按它解析）<template :if="cwd.isFallback">
+工作目录：{{cwd.path}}（bash/read 的基准，相对路径按它解析）<template :if={{cwd.isFallback}}>
 注意：{{cwd.note}}</template>
 
 {{task.body}}
@@ -123,7 +123,7 @@ desc: 尚未接入：本槽位当前渲染为空（skills 为空时整节不进�
 version: 1
 ---
 <skills>
-<template :for="s of .list">- {{.s.name}}：{{.s.desc}}
+<template :for="s" :in={{.list}}>- {{.s.name}}：{{.s.desc}}
 </template></skills>
 
 `,
