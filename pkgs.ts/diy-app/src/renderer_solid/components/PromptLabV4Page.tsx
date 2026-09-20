@@ -21,7 +21,6 @@ import { lineDiff, useHoverTip, type PromptEntry } from "./promptLabCommon";
 import type { RequestPreview, TraceNode } from "../../shared/prompt-schema";
 import { AssembleGlobalsSchema } from "../../shared/prompt-schema";
 import { buildValueTree, buildVarTree, flattenVars, type ValueNode, type VarNode } from "../../shared/var-tree";
-import { splitByRanges, type HlRange } from "../../shared/hl-segments";
 import type { HlSpan } from "./MdEditor";
 
 // 变量契约在 renderer 侧直接从 schema 派生（单一真源，零 RPC 往返）：
@@ -230,15 +229,6 @@ function Th(props: { label: string; cols: ColsState; index: number; right?: bool
                 }}
             />
         </th>
-    );
-}
-
-/** 预览按高亮区间切段渲染（<mark> 包住命中的那几段；区间来自 trace 的 out） */
-function HlText(props: { text: string; ranges: HlRange[] }) {
-    return (
-        <For each={splitByRanges(props.text, props.ranges)}>
-            {([text, hl]) => (hl ? <mark class="bg-warning/40 text-inherit">{text}</mark> : <>{text}</>)}
-        </For>
     );
 }
 
@@ -617,7 +607,7 @@ export function PromptLabV4Page() {
             ...a.conditions.filter((c) => hit(c.path)).map((c) => ({ from: c.loc.offset, to: c.end })),
         ];
     });
-    const hlOut = createMemo<HlRange[]>(() => {
+    const hlOut = createMemo<HlSpan[]>(() => {
         const cur = hlSel();
         if (!cur) return [];
         if (cur.kind === "node") {
@@ -749,6 +739,25 @@ export function PromptLabV4Page() {
         }),
     );
 
+    /**
+     * 全量刷新（debug UI 的主交互：**按需重算**，不订阅外部事件流）。
+     * 重新拉：任务树（外部 CLI 可能刚改过）→ 模版列表（覆盖/过期状态）→ 强制重算预览。
+     * 不动的：未保存草稿、当前选中模版、高亮选区 —— 选区只存"身份"，预览重算后自动跟着走。
+     */
+    const [tick, setTick] = createSignal(0);
+    const [refreshing, setRefreshing] = createSignal(false);
+    async function refresh() {
+        if (refreshing()) return;
+        setRefreshing(true);
+        try {
+            taskStore.loadTree();
+            await load();
+            setTick((n) => n + 1);
+        } finally {
+            setRefreshing(false);
+        }
+    }
+
     async function save(relpath: string) {
         const content = drafts()[relpath];
         if (content === undefined) return;
@@ -786,7 +795,7 @@ export function PromptLabV4Page() {
     // 右预览：草稿/项目/任务/条目变化 → 防抖自动重算。
     // model 传会话实际选的模型 —— 不传服务端只能退回 DEFAULT_MODEL，「试的就是真发的」就对不上。
     createEffect(
-        on([() => draftsByProject(), project, taskUri, entries], () => {
+        on([() => draftsByProject(), project, taskUri, entries, tick], () => {
             const timer = setTimeout(async () => {
                 try {
                     const d = drafts();
@@ -843,7 +852,15 @@ export function PromptLabV4Page() {
                         📌 {taskUri()}
                     </span>
                 </Show>
-                <span class="opacity-60 ml-auto">
+                <button
+                    class="btn btn-xs btn-ghost ml-auto"
+                    title="重新拉取：任务树 / 模版列表（覆盖与过期状态）/ 预览。未保存草稿与选中项保留"
+                    disabled={refreshing()}
+                    onClick={() => void refresh()}
+                >
+                    {refreshing() ? "⟳ 刷新中…" : "⟳ 刷新"}
+                </button>
+                <span class="opacity-60">
                     {entries().filter((e) => e.status === "overridden").length} 份覆盖
                     {/* 口径与树行圆点一致（dirtyOf）：否则只浏览不改内容也会因为 drafts 有条目而误报「未保存」 */}
                     <Show when={entries().some((e) => dirtyOf(e))}>
@@ -1225,9 +1242,16 @@ export function PromptLabV4Page() {
                                         ))}
                                     </div>
                                 </Show>
-                                <pre class="whitespace-pre-wrap rounded bg-base-200 p-2 font-mono text-xs leading-relaxed">
-                                    <HlText text={p().system} ranges={hlOut()} />
-                                </pre>
+                                {/* 与左边模版编辑器同一实现：行号 + 不折行 + 同一套高亮（区间来自 trace 的 out） */}
+                                <div class="h-[62vh] min-h-[220px] overflow-hidden rounded border border-base-300">
+                                    <MdEditor
+                                        value={p().system}
+                                        editable={false}
+                                        plain
+                                        onChange={() => {}}
+                                        highlight={hlOut()}
+                                    />
+                                </div>
                             </>
                         )}
                     </Show>

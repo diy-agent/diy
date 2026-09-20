@@ -57,6 +57,8 @@ describe("试验场：可用变量 / 结构树 两个 view", () => {
     await fx.sh.getJson(`./diy.sh ui page focus ${uri}`);
 
     // 3. 读 a11y 树：两个 view 的标题 + 引擎分析出的内容
+    //    （debug UI 主交互 = 手动刷新：按需重算，不订阅外部事件流）
+    expect((await waitUntil(a11yText, (s) => s.includes("⟳ 刷新")))).toContain("⟳ 刷新");
     const text = await waitUntil(
       a11yText,
       (s) => s.includes("可用变量") && s.includes("结构树"),

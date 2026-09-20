@@ -64,13 +64,21 @@ const hlField = StateField.define<DecorationSet>({
     provide: (f) => EditorView.decorations.from(f),
 });
 
-/** Markdown 模板编辑器（CodeMirror 6，受控：value 变化且与文档不一致时才替换）。 */
+/**
+ * 模版编辑器 / 只读预览（CodeMirror 6，受控：value 变化且与文档不一致时才替换）。
+ *
+ * 两块**同一实现同一外观**（行号 + 等宽 + **不自动折行**，长了就横向滚）：
+ *   · 模版编辑器：`plain={false}`（markdown 高亮）+ `editable` 随锁定状态
+ *   · 系统上下文预览：`plain`（纯文本，提示词不是 markdown）+ `editable={false}`
+ */
 export function MdEditor(props: {
     value: string;
     editable: boolean;
     onChange: (v: string) => void;
-    /** 要高亮的源码区间（结构树/变量行点中时传入；null = 清空） */
+    /** 要高亮的区间（结构树/变量行点中时传入；null = 清空） */
     highlight?: HlSpan[] | null;
+    /** 纯文本模式：不做 markdown 高亮、不画当前行（预览用） */
+    plain?: boolean;
 }) {
     let host: HTMLDivElement | undefined;
     let view: EditorView | undefined;
@@ -86,13 +94,13 @@ export function MdEditor(props: {
                 doc: props.value,
                 extensions: [
                     lineNumbers(),
-                    highlightActiveLine(),
+                    props.plain ? [] : highlightActiveLine(),
                     highlightSelectionMatches(),
                     history(),
                     keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
-                    markdown(),
+                    // 不自动折行：与预览一致，长了横向滚（折行会让"第几行"对不上行号）
+                    props.plain ? [] : markdown(),
                     hlField,
-                    EditorView.lineWrapping,
                     editableCx.of(EditorView.editable.of(props.editable)),
                     labTheme,
                     EditorView.updateListener.of((u) => {

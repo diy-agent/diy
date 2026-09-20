@@ -136,6 +136,8 @@ $DIY_HOME/projects/<pid>/tasks/<tid>/
 | AGENTS.md 链上界 | **$HOME 为止**（不进 `/`、不进 `/Users`）：`~/AGENTS.md`、`~/git/AGENTS.md` 这类用户全局规则逐层生效；不在 $HOME 下时只取工作目录自身一层 |
 | 预算 | `clamp(模型上下文窗口 × 4B × 5%, 16KB, 64KB)`（随模型变，不再是一个 64KB 魔法数）；超限拒发（不截断）；**早退也必须闭合轮次**（stop + `noteTurnEnd` + turn-end 审计） |
 | 试验场页面 | `PromptLabV4Page.tsx`（左栏 = 模板 / 可用变量（契约）/ 变量值（本次注入）/ 结构树（trace）；右栏 = 预览；`ui page navigate lab` 落 agent调参 tab）；草稿按 project 分桶存 `Caches.diy_lab_drafts` |
+| 试验场两块编辑器 | **同一实现同一外观**（`MdEditor` = CodeMirror 6）：左边模版编辑器（markdown 高亮 + 可编辑性随锁定状态）与右边「系统上下文预览」（`plain` + `editable={false}`）都有**行号**、都**不自动折行**（长了横向滚：折行会让「第几行」对不上行号）。高亮也是同一套（CM decoration），预览侧区间来自 trace 的 `out` |
+| 试验场刷新 | 顶栏「⟳ 刷新」= 全页面重拉（任务树 → 模版列表含覆盖/过期状态 → 强制重算预览）。**debug UI 用显式刷新代替事件流**：外部改了模版文件、CLI 建了任务，界面不会自己变（实测确认），按一下刷新即可；未保存草稿与高亮选区保留（选区只存身份，重算后自动跟随） |
 | 试验场高亮联动 | 点结构树行 → 高亮**模版那段源码**（区间相对所属模版 body）+ **预览那段产出**；点「可用变量」的变量名 → 高亮它在当前模版的**所有出现处** + 预览里所有解析它的节点产出；再点一次取消。区间由引擎给（`TraceNode.src/out`、`analyze().paths[].end`），UI 只存"身份"（结构树 key 链 / 变量路径）并按最新 trace 重算 → 草稿重算后选区跟着走。include 节点自己的 `src` 属于**调用方**文件，只有它的子节点才换成被调模版 |
 | 试验场表格列宽 | 三张表（vars/vals/trace）列宽是 **px 且可拖**（`Th` 右边缘把手，双击复位），存 `Caches.diy_lab_cols_*`。**列宽与容器宽度解耦**：拖左栏不改列宽；表比可视区宽时由左栏出横向滚动条（卡片必须 `min-w-full w-max` —— 用 `overflow-hidden` 会把超宽表格直接裁掉且不出滚动条） |
 | 变量契约与值 | `src/shared/prompt-schema.ts` 的 `AssembleGlobalsSchema`（zod 单一真源）→ `src/shared/var-tree.ts` 两种派生：`buildVarTree`（树形展示）/ `flattenVars`（引擎静态校验）；实际值随预览下发 `values`（结构树「值」列与「变量值」view 同源） |
@@ -168,6 +170,12 @@ $DIY_HOME/projects/<pid>/tasks/<tid>/
 - **`diy.ui.*`（handler 层）**：CLI 经 RPC 直接调 renderer 的共享入口函数（与按钮 onClick 同一批）。测行为/契约/状态，稳定适合 test:intent 基线；**测不到真实 DOM 事件链的 bug**。
 - **Playwright/CDP（真实事件层）**：Electron 开 `--remote-debugging-port`，Playwright `connect_over_cdp` 复用，用**真实鼠标事件**（mouse.move/down/up 分步）驱动真实 renderer。能抓 gesture bug（拖拽整屏被拖出、isDropTarget 高亮、点穿透、折叠状态），是目前唯一的验证手段——UI 交互改动后跑一遍。
 - `diy.ui.inspect`：renderer 内 DOM 遍历生成无障碍树，agent 可 `./diy.sh ui inspect` 看 UI 全貌。
+- **跑意图测试 / CDP 夹具前，shell 里不要 export `DIY_PORT` / `DIY_HOME`**：`ShellTest` 继承 `process.env`，
+  被污染的 `DIY_PORT` 会让测试里的每一条 `./diy.sh` 都去打**别的端口**，各拉一个新 app，与测试自己启的实例
+  互踢（单实例锁）→ 现象是"页面状态莫名漂移、CDP 会话反复掉线、模板列表忽空忽有"（实测踩了两小时）。
+  正确姿势：`env -u DIY_PORT -u DIY_HOME npx vitest run ...`，或用一个干净 shell。
+- 只想临时起一个实例看界面时，注意 CLI 启动的 app 是**子进程**（父 CLI 退出后可能被带走）；CDP 会话断线先看
+  进程还在不在。要长时间挂着观察，用测试夹具（`startElectronTest`）而不是 CLI 起。
 - 复用冒烟脚本：**`scripts/ui-smoke/dnd-smoke.py`** — 启动隔离 Electron + Playwright/CDP 真实拖拽（任务↔任务改层级、子任务→项目提升），断言层级 + 抓 console/pageerror，`python3 scripts/ui-smoke/dnd-smoke.py` 运行，exit 0 通过。UI 交互改动后跑它确认手势没破坏。
 
 ### 交互自动化操作 App（agent 自测/演示用，实测经验）
