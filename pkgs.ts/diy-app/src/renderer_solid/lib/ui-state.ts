@@ -154,14 +154,15 @@ export const Caches = {
     defaultValue: "dark",
   }),
   /** 试验场左栏宽（px，范围 180-480）。宽度类缓存一律走本文件，
-   *  否则「重置界面状态」清不掉（历史问题：试验场直写 localStorage 的 lab4.leftW）。 */
+   *  否则「重置界面状态」清不掉（历史问题：试验场直写 localStorage 的 lab4.leftW）。
+   *  默认 336：左栏现在有两列表格（可用变量 view 的 变量|说明），256 时说明列只剩 ~60px。 */
   diy_lab_left_width: field<number>("diy_lab_left_width", {
     parse: (raw) => {
       const v = Number(raw);
       return v >= 180 && v <= 480 ? v : null;
     },
     serialize: (v) => String(v),
-    defaultValue: 256,
+    defaultValue: 336,
   }),
   /** 试验场右栏宽（px，范围 240-640） */
   diy_lab_right_width: field<number>("diy_lab_right_width", {

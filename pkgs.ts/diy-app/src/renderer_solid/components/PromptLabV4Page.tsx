@@ -19,6 +19,13 @@ import { JsonTree } from "./JsonTree";
 import { MdEditor } from "./MdEditor";
 import { lineDiff, useHoverTip, type PromptEntry } from "./promptLabCommon";
 import type { RequestPreview, TraceNode } from "../../shared/prompt-schema";
+import { AssembleGlobalsSchema } from "../../shared/prompt-schema";
+import { buildVarTree, flattenVars, type VarNode } from "../../shared/var-tree";
+
+// 变量契约在 renderer 侧直接从 schema 派生（单一真源，零 RPC 往返）：
+//   SYSTEM_VARS → 引擎静态校验；VAR_TREE → 「可用变量」view 的二维树
+const SYSTEM_VARS = flattenVars(AssembleGlobalsSchema);
+const VAR_TREE = buildVarTree(AssembleGlobalsSchema);
 
 // 未存盘草稿放在模块级（按 project 分桶）：App.tsx 用 <Show> 挂页面，
 // 切到别的页就卸载组件，signal 里的半编辑内容会直接丢（历史问题）。
@@ -228,6 +235,81 @@ function traceLabel(n: TraceNode): string {
     }
 }
 
+/**
+ * 变量树（table-tree，2 列）：第 1 列 = 名字 + 类型徽标（可展开），第 2 列 = 说明。
+ * 每个路径段都是一个节点：diy → cli；chain → [ChainEntry] → path/scope/content。
+ */
+function VarTree(props: {
+    nodes: VarNode[];
+    /** 已发生的路径前缀（数组元素节点不参与路径拼接：chain 的 [ChainEntry] 仍属于 chain） */
+    path: string;
+    used: (path: string) => boolean;
+    open: Record<string, boolean>;
+    onToggle: (k: string, open: boolean) => void;
+    depth: number;
+}) {
+    return (
+        <For each={props.nodes}>
+            {(n, i) => {
+                const key = `${props.path}/${i()}`;
+                const isElement = n.name.startsWith("[");
+                const full = () => (props.path && !isElement ? `${props.path}.${n.name}` : props.path || n.name);
+                const kids = () => n.children ?? [];
+                const hasKids = () => kids().length > 0;
+                const isOpen = () => props.open[key] ?? true; // 树不大 → 默认全展开
+                return (
+                    <>
+                        <tr class="hover:bg-base-300/40">
+                            {/* 单行不换行：table-fixed + truncate + title（完整信息靠 hover，不撑高行高、不出横向滚动条） */}
+                            <td class="py-0.5 pr-2 align-top">
+                                <span
+                                    class="flex items-center gap-1 overflow-hidden whitespace-nowrap"
+                                    style={{ "padding-left": `${props.depth * 10}px` }}
+                                >
+                                    <button
+                                        class="w-3 shrink-0 text-left opacity-60 disabled:opacity-20"
+                                        disabled={!hasKids()}
+                                        onClick={() => hasKids() && props.onToggle(key, isOpen())}
+                                    >
+                                        {hasKids() ? (isOpen() ? "▾" : "▸") : "·"}
+                                    </button>
+                                    <Show when={!isElement && props.used(full())}>
+                                        <span class="shrink-0 text-info" title="本模版用到了">
+                                            ●
+                                        </span>
+                                    </Show>
+                                    <span class="truncate font-mono" title={full()}>
+                                        {n.name}
+                                    </span>
+                                    <span class="badge badge-xs badge-ghost shrink-0 font-mono">
+                                        {n.type}
+                                        {n.optional ? "?" : ""}
+                                    </span>
+                                </span>
+                            </td>
+                            <td class="w-full max-w-0 py-0.5 align-top text-[11px] opacity-70">
+                                <span class="block truncate" title={n.desc ?? ""}>
+                                    {n.desc ?? ""}
+                                </span>
+                            </td>
+                        </tr>
+                        <Show when={hasKids() && isOpen()}>
+                            <VarTree
+                                nodes={kids()}
+                                path={isElement ? props.path : full()}
+                                used={props.used}
+                                open={props.open}
+                                onToggle={props.onToggle}
+                                depth={props.depth + 1}
+                            />
+                        </Show>
+                    </>
+                );
+            }}
+        </For>
+    );
+}
+
 /** 可用变量 view 的分组标题 */
 function VarGroup(props: { title: string; children: unknown }) {
     return (
@@ -336,6 +418,8 @@ export function PromptLabV4Page() {
     const [views, setViews] = createSignal<Record<string, boolean>>({ tree: true, vars: true, sysctx: true, reqbody: true, trace: false });
     // 结构树展开态（key = 路径索引链，默认前两层展开）
     const [traceOpen, setTraceOpen] = createSignal<Record<string, boolean>>({});
+    // 变量树展开态（默认全展开）
+    const [varsOpen, setVarsOpen] = createSignal<Record<string, boolean>>({});
     // 请求体显示：树形 / 原文
     const [reqMode, setReqMode] = createSignal<"tree" | "raw">("tree");
     const toggleView = (k: string) => setViews((v) => ({ ...v, [k]: !v[k] }));
@@ -361,8 +445,8 @@ export function PromptLabV4Page() {
         const s = sel();
         if (!s) return null;
         try {
-            // 契约来自预览载荷（宿主注入清单）：给了就做类型/未知路径校验
-            return { a: analyze(draftOf(s), { file: s.relpath, vars: preview()?.vars }) };
+            // 契约从 shared schema 派生（单一真源）→ 静态校验随打字实时
+            return { a: analyze(draftOf(s), { file: s.relpath, vars: SYSTEM_VARS }) };
         } catch (e) {
             return { error: e instanceof Error ? e.message : String(e) };
         }
@@ -542,24 +626,35 @@ export function PromptLabV4Page() {
                                         <Show when={an().a} fallback={<div class="px-2 py-1 text-error">{an().error}</div>}>
                                             {(a) => (
                                                 <>
-                                                    <Show when={preview()?.vars?.length}>
-                                                        <VarGroup title={`宿主提供（契约 ${preview()!.vars!.length} 项）`}>
-                                                            <For each={preview()!.vars!}>
-                                                                {(v) => (
-                                                                    <VarRow
-                                                                        name={`${v.path} · ${v.type}`}
-                                                                        note={
-                                                                            (a().paths.some(
-                                                                                (pp) => pp.path === v.path || pp.path.startsWith(`${v.path}.`),
-                                                                            )
-                                                                                ? "● 本模版用到  "
-                                                                                : "") + (v.desc ?? "")
-                                                                        }
-                                                                    />
-                                                                )}
-                                                            </For>
-                                                        </VarGroup>
-                                                    </Show>
+                                                    <VarGroup title="宿主提供（变量契约，树形展开）">
+                                                        {/* 自适应列宽（不固定百分比）：名字列按内容自然宽，说明列吃满剩余 + 单行省略 */}
+                                                        <table class="table table-xs w-full">
+                                                            <thead>
+                                                                <tr>
+                                                                    <th>变量</th>
+                                                                    <th>说明</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                <VarTree
+                                                                    nodes={VAR_TREE}
+                                                                    path=""
+                                                                    used={(path) =>
+                                                                        a().paths.some(
+                                                                            (pp) =>
+                                                                                pp.path === path ||
+                                                                                pp.path.startsWith(`${path}.`),
+                                                                        )
+                                                                    }
+                                                                    open={varsOpen()}
+                                                                    onToggle={(k, open) =>
+                                                                        setVarsOpen((o) => ({ ...o, [k]: !open }))
+                                                                    }
+                                                                    depth={0}
+                                                                />
+                                                            </tbody>
+                                                        </table>
+                                                    </VarGroup>
                                                     <Show when={a().globals.length > 0} fallback={<VarGroup title="引用 globals"><div class="px-2 opacity-60">（无）</div></VarGroup>}>
                                                         <VarGroup title="引用 globals">
                                                             <For each={a().globals}>
@@ -626,7 +721,7 @@ export function PromptLabV4Page() {
                     class="w-1.5 shrink-0 cursor-col-resize hover:bg-primary/50 active:bg-primary"
                     title="拖拽调整左栏宽度（双击恢复默认）"
                     onDblClick={() => {
-                        setLeftW(256);
+                        setLeftW(336);
                         Caches.diy_lab_left_width.reset();
                     }}
                     onMouseDown={(e) => startDrag(e, setLeftW, 180, 480, Caches.diy_lab_left_width)}

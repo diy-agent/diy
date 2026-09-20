@@ -64,9 +64,19 @@ describe("试验场：可用变量 / 结构树 两个 view", () => {
     );
     expect(text).toContain("可用变量");
     expect(text).toContain("结构树");
-    // 可用变量 view：宿主变量契约（类型 + 说明）与"本模版引用"都上屏
-    expect(text).toContain("宿主提供（契约");
-    expect(text).toContain("cwd.isFallback · boolean");
+    // 可用变量 view：变量契约是**树形展开的 2 列表格**（变量 | 说明）
+    expect(text).toContain("宿主提供（变量契约，树形展开）");
+    expect(text).toContain("变量");
+    expect(text).toContain("说明");
+    // diy.cli 是 2 个节点（diy → cli），类型徽标上屏
+    expect(text).toContain("diy");
+    expect(text).toContain("cli");
+    expect(text).toContain("string");
+    // 数组展开为元素类型节点：chain → [ChainEntry] → path/scope/content；skills → [Skill]
+    expect(text).toContain("[ChainEntry]");
+    expect(text).toContain("[Skill]");
+    // 说明列有内容（zod .describe()）
+    expect(text).toContain("CLI 入口");
     expect(text).toContain("引用 globals");
     // 结构树 view：顶层是各节的 include（trace 的 name 就是 relpath）
     await fx.sh.getJson(`./diy.sh template preview ${pid} --taskUri ${uri}`);

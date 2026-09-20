@@ -31,13 +31,69 @@ export const PromptEntrySchema = z.object({
 });
 export type PromptEntry = z.infer<typeof PromptEntrySchema>;
 
-/** 变量契约条目（宿主注入的变量：路径 + 粗细类型 + 说明） */
-export const VarSpecSchema = z.object({
-  path: z.string(),
-  type: z.enum(["string", "number", "boolean", "array", "object"]),
-  desc: z.string().optional(),
+/** 技能条目（skills 的元素类型；命名供变量树显示为 [Skill]） */
+export const SkillSchema = z
+  .object({
+    name: z.string().describe("技能名"),
+    desc: z.string().describe("说明"),
+  })
+  .meta({ id: "Skill" });
+
+/** AGENTS.md 链的一层（chain 的元素类型） */
+export const ChainItemSchema = z
+  .object({
+    path: z.string().describe("AGENTS.md 路径"),
+    scope: z.string().describe("生效目录"),
+    content: z.string().describe("正文"),
+  })
+  .meta({ id: "ChainEntry" });
+
+/**
+ * 注入 globals 的**契约（单一真源）**：
+ *   · `flattenVars()` 派生出引擎静态校验用的扁平 VarSpec[]
+ *   · `buildVarTree()` 派生出试验场「可用变量」view 的二维树（名字/类型 + 说明）
+ *   · 装配时 `safeParse` 校验注入与契约是否漂移（漂移 → 上屏告警，不静默）
+ * 注意：只放 schema/类型，禁止 import node:fs（renderer 会打进包）。
+ */
+export const AssembleGlobalsSchema = z.object({
+  diy: z
+    .object({
+      cli: z.string().describe("CLI 入口"),
+      home: z.string().describe("数据根"),
+    })
+    .describe("diy 本体"),
+  project: z
+    .object({ path: z.string().describe("项目工作目录") })
+    .describe("项目"),
+  task: z
+    .object({
+      uri: z.string().describe("任务 URI"),
+      title: z.string(),
+      state: z.string().describe("状态"),
+      body: z.string().describe("正文"),
+      dir: z.string().describe("任务目录"),
+    })
+    .describe("当前任务"),
+  cwd: z
+    .object({
+      path: z.string().describe("工具执行目录"),
+      note: z.string().describe("回退原因"),
+      isFallback: z.boolean().describe("是否已回退"),
+      isTaskDir: z.boolean().describe("是否任务目录"),
+      isAppDir: z.boolean().describe("是否 diy 仓库"),
+    })
+    .describe("工作目录与回退"),
+  chain: z.array(ChainItemSchema).describe("AGENTS.md 链（逐层，用 :for 迭代）"),
+  skills: z.array(SkillSchema).describe("技能清单（空则整节跳过）"),
 });
-export type VarSpec = z.infer<typeof VarSpecSchema>;
+export type AssembleGlobals = z.infer<typeof AssembleGlobalsSchema>;
+
+/** 变量契约的扁平条目（引擎静态校验用；由 AssembleGlobalsSchema 派生） */
+export interface VarSpec {
+  path: string;
+  type: "string" | "number" | "boolean" | "array" | "object";
+  desc?: string;
+}
 
 /** 渲染结构 trace 节点（试验场「结构树」：每个节点的产出字节 + :if 真假原因 + 迭代次数） */
 export type TraceNode = {
@@ -68,7 +124,7 @@ export const AssembledSystemSchema = z.object({
   /** 结构 trace：仅预览请求时提供（真发不传，省一次分配） */
   trace: z.array(TraceNodeSchema).nullable(),
   /** 变量契约：宿主注入的变量清单（模版作者可用的"输入面"） */
-  vars: z.array(VarSpecSchema),
+  // 变量契约不再随载荷下发：renderer 直接从 AssembleGlobalsSchema 派生（单一真源，零漂移）
 });
 export type AssembledSystem = z.infer<typeof AssembledSystemSchema>;
 

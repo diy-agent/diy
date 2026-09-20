@@ -310,7 +310,9 @@ describe("回归：评审修复项", () => {
     };
     visit(g, "");
     expect(missing).toEqual([]);
-    // 契约随装配结果下发（UI「可用变量」view 用）
-    expect(assembleSystem(home, PID, { taskUri: TASK }).vars).toEqual(SYSTEM_VARS);
+    // 契约由 schema 派生（不再是手写清单）：抽查派生结果
+    expect(SYSTEM_VARS.find((v) => v.path === "chain")?.type).toBe("array");
+    expect(SYSTEM_VARS.find((v) => v.path === "cwd.isFallback")?.type).toBe("boolean");
+    expect(SYSTEM_VARS.some((v) => v.path === "diy")).toBe(true); // 对象自身也是一条（{{diy}} 会报"是对象"）
   });
 });

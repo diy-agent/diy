@@ -15,6 +15,11 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, r
 import { homedir } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { analyze, renderWithTrace, type IncludeResolver, type TraceNode, type VarSpec } from "@diy/template";
+import { AssembleGlobalsSchema, type AssembleGlobals } from "../../shared/prompt-schema";
+
+// 契约类型从 schema 推导（单一真源）；装配方按它注入，漂移由 safeParse 兜住
+export type { AssembleGlobals };
+import { flattenVars } from "../../shared/var-tree";
 import { PROMPT_DEFAULTS } from "../prompts/defaults";
 import { parseTaskFile } from "../core/state";
 import { resolveCwd } from "../core/cwd";
@@ -35,29 +40,8 @@ export interface PromptMeta {
   lockTip: string;
 }
 
-/**
- * 变量契约（单一真源 = 这里，因为这里是注入 globals 的那一处）：
- * 模版作者用它知道"我能用什么、是什么类型"，试验场「可用变量」view 显示它，
- * `analyze(src, { vars })` 用它做静态校验（未知路径 / :for 非数组 / 插值非集合）。
- * 一致性由测试守护：注入的每个叶子路径都必须在此声明，且类型相符。
- */
-export const SYSTEM_VARS: VarSpec[] = [
-  { path: "diy.cli", type: "string", desc: "本 worktree 的 CLI 入口（如 /repo/diy.sh）" },
-  { path: "diy.home", type: "string", desc: "数据根（dev 为 build/home，prd 为 ~/.diy）" },
-  { path: "project.path", type: "string", desc: "当前项目对应的工作目录" },
-  { path: "task.uri", type: "string", desc: "任务 URI（projects/<pid>/tasks/<tid>）" },
-  { path: "task.title", type: "string" },
-  { path: "task.state", type: "string", desc: "任务状态" },
-  { path: "task.body", type: "string", desc: "任务正文（AGENTS.md 的 body）" },
-  { path: "task.dir", type: "string", desc: "任务目录绝对路径" },
-  { path: "cwd.path", type: "string", desc: "工具执行目录（bash/read 的基准）" },
-  { path: "cwd.note", type: "string", desc: "cwd 回退原因（仅 isFallback 时展示）" },
-  { path: "cwd.isFallback", type: "boolean", desc: "工作目录不存在，已回退到任务目录" },
-  { path: "cwd.isTaskDir", type: "boolean" },
-  { path: "cwd.isAppDir", type: "boolean" },
-  { path: "chain", type: "array", desc: "AGENTS.md 链（元素 {path,scope,content}，用 :for 迭代）" },
-  { path: "skills", type: "array", desc: "技能清单（元素 {name,desc}；空数组为假，整节跳过）" },
-];
+/** 变量契约：由 shared/prompt-schema 的 AssembleGlobalsSchema 派生（单一真源在那里） */
+export const SYSTEM_VARS: VarSpec[] = flattenVars(AssembleGlobalsSchema);
 
 /** 装配入口固定名（顺序与分隔的唯一真源） */
 export const ENTRY_RELPATH = "_system.md";
@@ -307,14 +291,6 @@ function chainOf(home: string, cwd: string, taskUri: string): AssembleGlobals["c
 // ═══════════════════════════════════════════════════════════════
 
 /** DSL 装配变量（命名空间版）：模版里写 {{diy.cli}} / {{task.title}} / {{.path}} */
-export interface AssembleGlobals {
-  diy: { cli: string; home: string };
-  project: { path: string };
-  task: { uri: string; title: string; state: string; body: string; dir: string };
-  cwd: { path: string; note: string; isFallback: boolean; isTaskDir: boolean; isAppDir: boolean };
-  chain: Array<{ path: string; scope: string; content: string }>;
-  skills: Array<{ name: string; desc: string }>;
-}
 
 /** 从模板常量构建 include resolver（fragment / locked 由 frontmatter 声明） */
 export function makeTemplatesResolver(
@@ -390,7 +366,7 @@ function lintWarnings(home: string, projectId: string): string[] {
   for (const relpath of Object.keys(PROMPT_DEFAULTS)) {
     const entry = entryOf(home, projectId, relpath);
     try {
-      for (const issue of analyze(entry.current, { file: relpath }).lint) {
+      for (const issue of analyze(entry.current, { file: relpath, vars: SYSTEM_VARS }).lint) {
         out.push(`${relpath}:${issue.loc.line}:${issue.loc.col} ${issue.message}`);
       }
     } catch (e) {
@@ -451,6 +427,14 @@ export function assembleSystem(
     const source = draft !== undefined ? parseMd(draft).body : entry.current;
     return { source, locked: entry.locked };
   };
+  // 注入与变量契约漂移要响亮（schema 是单一真源，类型层面已保证；这里兜住运行时手改）
+  const check = AssembleGlobalsSchema.safeParse(globals);
+  if (!check.success) {
+    warnings.push(
+      `注入 globals 与变量契约（AssembleGlobalsSchema）不符：` +
+        check.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("；"),
+    );
+  }
   const rendered = renderSystemDslTraced({ globals, resolve: resolveInclude });
   const system = rendered.text;
   warnings.push(...lintWarnings(home, projectId));
@@ -461,7 +445,6 @@ export function assembleSystem(
     overBudget: used > budget ? { used, budget } : null,
     warnings,
     trace: opts.trace ? rendered.trace : null,
-    vars: SYSTEM_VARS,
   };
 }
 
