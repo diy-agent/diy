@@ -11,6 +11,11 @@
 //   · 其余都是可覆盖的节；`chain.md` 是**片段**（只被引用、不独立成节）
 //   · **装配顺序的唯一真源是 `_system.md` 的 include 顺序**（文件名不再表达顺序）
 //
+// 排版规则（改模版前必读）：
+//   · 控制标记 <template> 独占一行时不产出任何字符（连行尾换行也不产出）→ **可自由缩进，用来表达嵌套**
+//   · **输出文本必须顶格**：行首缩进会被当成正文写进提示词（除非该行紧跟一个独占一行的控制标记）
+//   · 空行是**内容**（不是排版）：节间分隔、层间空行都靠在模版里数换行来产出
+//
 // 写法约定（配合引擎语义）：
 //   · 控制标记不占空间：独占一行的 <template …> / 注释，连该行缩进与换行都不产出
 //   · 节间分隔由**节模版自己的末尾空行**表达（`_system.md` 里不写空行）
@@ -78,10 +83,14 @@ version: 1
 - 每层只适用于其 scope 目录下的文件
 - 处理某个文件时，其所在目录链上最深的一层最特化；与更通用的描述冲突时以它为准
 
-{{/* 链上每一层用 _chain.md 渲染；除首层外前置一个空行（等价于旧代码的 join("\\n\\n")） */}}
-<template :for="f" :in={{chain}}><template :if-not={{.isFirst}}>
+{{/* 链上每一层由 chain.md 渲染（片段自带结尾换行）；除首层外再前置一个换行 → 层间空一行
+    下面 :if-not 里的那个空行是**内容**（不是排版）：删了层间就会少一个换行 */}}
+<template :for="f" :in={{chain}}>
+    <template :if-not={{.isFirst}}>
 
-</template><template :include="./chain.md" path={{.f.path}} scope={{.f.scope}} content={{.f.content}}/></template>
+    </template>
+    <template :include="./chain.md" path={{.f.path}} scope={{.f.scope}} content={{.f.content}}/>
+</template>
 </project_context>
 
 `,
@@ -95,8 +104,10 @@ version: 1
 任务：{{task.uri}} · {{task.title}}（状态：{{task.state}}）
 项目目录：{{project.path}}
 任务目录：{{task.dir}}
-工作目录：{{cwd.path}}（bash/read 的基准，相对路径按它解析）<template :if={{cwd.isFallback}}>
-注意：{{cwd.note}}</template>
+工作目录：{{cwd.path}}（bash/read 的基准，相对路径按它解析）
+<template :if={{cwd.isFallback}}>
+注意：{{cwd.note}}
+</template>
 
 {{task.body}}
 </task>
@@ -123,20 +134,23 @@ desc: 尚未接入：本槽位当前渲染为空（skills 为空时整节不进�
 version: 1
 ---
 <skills>
-<template :for="s" :in={{.list}}>- {{.s.name}}：{{.s.desc}}
-</template></skills>
+<template :for="s" :in={{.list}}>
+- {{.s.name}}：{{.s.desc}}
+</template>
+</skills>
 
 `,
 
     // ── 片段：链上每一层的包裹格式（不带末尾换行）────────────────────
     'chain.md': `---
 title: AGENTS.md 链片段
-desc: 链上每个 AGENTS.md 的包裹格式（按 path/scope/content 渲染一次一层）。改这里就能改链的呈现方式。
+desc: 链上每个 AGENTS.md 的包裹格式（按 path/scope/content 渲染一次一层）。结尾换行是这一层的收尾（层间空行由 project.md 的 :if-not 补），改这里就能改链的呈现方式。
 version: 1
 ---
 <project_instructions path="{{.path}}" scope="{{.scope}}">
 {{.content}}
-</project_instructions>`,
+</project_instructions>
+`,
 
     // ── 内部规则（保命，锁定）────────────────────────────────────────
     '_guard.md': `---
