@@ -41,6 +41,11 @@ describe('逐字节边界（输出标签也是文本）', () => {
         expect(render('<templateX>hi</templateX>', {})).toBe('<templateX>hi</templateX>');
     });
 
+    it('注释 {{/* … */}} 不产出字符，且支持行内与独立行', () => {
+        expect(render('a{{/* 说明 */}}b', {})).toBe('ab');
+        expect(render('A\n{{/* 多行\n说明 */}}\nB', {})).toBe('A\nB');
+    });
+
     it('代码围栏 ``` 内一律不解析（{{}} 与 <template> 都是字面量）', () => {
         const src = ['```md', '把 {{diy.cli}} 写进 <template :if="x">…</template>', '```'].join('\n');
         expect(render(src, { globals: { diy: { cli: 'V' } } })).toBe(src);

@@ -108,6 +108,29 @@ class Parser {
         return { line: lo + 1, col: offset - this.lineStarts[lo]! + 1, offset };
     }
 
+    /** 该标记是否"独占一行"（行内除它以外只有空白） */
+    private isStandalone(from: number, to: number): boolean {
+        const lineStart = this.src.lastIndexOf('\n', from - 1) + 1;
+        if (this.src.slice(lineStart, from).trim() !== '') return false;
+        const lineEnd = this.src.indexOf('\n', to);
+        const tail = this.src.slice(to, lineEnd === -1 ? this.src.length : lineEnd);
+        return tail.trim() === '';
+    }
+
+    /** 跳到该行行尾换行之后（\r\n 也正确处理） */
+    private skipLineBreak(after: number): void {
+        let p = after;
+        while (p < this.src.length && (this.src[p] === ' ' || this.src[p] === '\t')) p += 1;
+        if (this.src[p] === '\r') p += 1;
+        if (this.src[p] === '\n') p += 1;
+        this.pos = p;
+    }
+
+    /** standalone 处理：返回剥掉行首缩进后的待输出文本 */
+    private stripIndent(text: string): string {
+        return text.replace(/[ \t]*$/, '');
+    }
+
     private err(code: TemplateErrorCode, msg: string, offset: number, detail?: string): never {
         throw new TemplateError(code, msg, this.locAt(offset), { file: this.file, detail });
     }
@@ -135,9 +158,14 @@ class Parser {
             if (closeName !== undefined && this.startsWith('</')) {
                 const m = /^<\/([A-Za-z_][A-Za-z0-9_.-]*)\s*>/.exec(this.src.slice(this.pos));
                 if (m && m[1] === closeName) {
+                    const closeEnd = this.pos + m[0].length;
+                    // 闭合标记独占一行 → 该行的缩进与换行都不产出（只对不产出字符的 </template>）
+                    const standalone = closeName === 'template' && this.isStandalone(this.pos, closeEnd);
+                    if (standalone) text = this.stripIndent(text);
                     flush();
                     this.lastCloseText = m[0];
-                    this.pos += m[0].length;
+                    this.pos = closeEnd;
+                    if (standalone) this.skipLineBreak(this.pos);
                     return out;
                 }
             }
@@ -162,6 +190,17 @@ class Parser {
                 textStart = this.pos;
                 continue;
             }
+            if (this.startsWith('{{/*')) {
+                const cStart = this.pos;
+                const end = this.src.indexOf('*/}}', this.pos + 4);
+                if (end === -1) this.err('syntax', '注释未闭合（缺少 */}} ）', cStart);
+                this.pos = end + 4;
+                if (this.isStandalone(cStart, this.pos)) {
+                    text = this.stripIndent(text);
+                    this.skipLineBreak(this.pos);
+                }
+                continue; // 注释不产出任何字符
+            }
             if (this.startsWith('{{')) {
                 flush();
                 out.push(this.readInterp());
@@ -169,8 +208,11 @@ class Parser {
                 continue;
             }
             if (this.isControlTagStart()) {
+                const res = this.readTemplateTag();
+                // 开标记独占一行 → 剥掉它前面的行首缩进（行尾换行已在 readTemplateTag 里消费）
+                if (res.openStandalone) text = this.stripIndent(text);
                 flush();
-                out.push(...this.readTemplateTag());
+                out.push(...res.nodes);
                 textStart = this.pos;
                 continue;
             }
@@ -343,8 +385,12 @@ class Parser {
 
     // ── 控制节点 <template> ───────────────────────────────────────────
 
-    private readTemplateTag(): Node[] {
+    private readTemplateTag(): { nodes: Node[]; openStandalone: boolean; openEnd: number; closeStart?: number; closeEnd?: number } {
         const tag = this.readTag();
+        // 开标签独占一行 → 它那一行的行尾换行不产出（必须在解析 children 之前消费，
+        // 否则这个换行会落进子节点文本里）
+        const openStandalone = this.isStandalone(tag.loc.offset, tag.end);
+        if (openStandalone) this.skipLineBreak(tag.end);
         const ctrl = new Map<string, RawAttr>();
         const others: RawAttr[] = [];
         const hasInclude = tag.attrs.some((a) => a.name === ':include');
@@ -380,12 +426,6 @@ class Parser {
             if (!relpath.startsWith('./') || relpath.includes('..')) {
                 this.err('include', `include 路径必须是以 ./ 开头且不含 .. 的相对路径：${relpath}`, includeAttr.loc.offset);
             }
-            if (!tag.selfClosing) {
-                const children = this.readNodes('template');
-                if (children.some((c) => c.type !== 'text' || c.value.trim() !== '')) {
-                    this.err('syntax', 'include 不能有子节点', tag.loc.offset);
-                }
-            }
             const args = others.map((a) => {
                 // 参数值就是一条路径（不写 {{}}）：path="f.path"
                 const raw = a.value.trim();
@@ -400,15 +440,29 @@ class Parser {
                 return { name: a.name, path: raw, loc: a.loc };
             });
             const node: Node = { type: 'include', relpath, args, loc: tag.loc };
-            const wrapped = this.wrapControl(forAttr, ifAttr, unlessAttr, [node]);
-            return wrapped;
+            const nodes = this.wrapControl(forAttr, ifAttr, unlessAttr, [node]);
+            if (tag.selfClosing) return { nodes, openStandalone, openEnd: tag.end };
+            const closeStart = this.pos;
+            const children = this.readNodes('template');
+            if (children.some((c) => c.type !== 'text' || c.value.trim() !== '')) {
+                this.err('syntax', 'include 不能有子节点', tag.loc.offset);
+            }
+            return { nodes, openStandalone, openEnd: tag.end, closeStart, closeEnd: this.pos };
         }
 
         if (others.length > 0) {
             this.err('syntax', `未知控制属性 :${others[0]!.name}`, others[0]!.loc.offset, `已知：${CONTROL_ATTRS.map((c) => ':' + c).join('、')}`);
         }
-        const children = tag.selfClosing ? [] : this.readNodes('template');
-        return this.wrapControl(forAttr, ifAttr, unlessAttr, children);
+        if (tag.selfClosing) return { nodes: [], openStandalone, openEnd: tag.end };
+        const closeStart = this.pos;
+        const children = this.readNodes('template');
+        return {
+            nodes: this.wrapControl(forAttr, ifAttr, unlessAttr, children),
+            openStandalone,
+            openEnd: tag.end,
+            closeStart,
+            closeEnd: this.pos,
+        };
     }
 
     /** 依次包 :for（外）→ :if/:unless（内）；无控制属性则原样返回 children */

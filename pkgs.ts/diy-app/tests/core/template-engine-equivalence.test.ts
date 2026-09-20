@@ -136,17 +136,18 @@ describe('换引擎零回归：把「包裹 + 空节 + join」搬进模版后，
     it('XML 化的模版 + system.md 装配 === 今天的 system', () => {
         // 迁移目标形态：标签内联、链在模版里迭代、末尾换行按"不 trim"规则去掉
         const files: Record<string, string> = {
-            './000-identity.md': dslize(bodyOf(PROMPT_DEFAULTS['000-identity.md']!).trimEnd()),
-            './100-diy.md': `<diy>\n${dslize(bodyOf(PROMPT_DEFAULTS['100-diy.md']!).trim())}\n</diy>`,
+            './000-identity.md': `${dslize(bodyOf(PROMPT_DEFAULTS['000-identity.md']!).trimEnd())}\n`,
+            './100-diy.md': `<diy>\n${dslize(bodyOf(PROMPT_DEFAULTS['100-diy.md']!).trim())}\n</diy>\n`,
             './200-project.md': `<project_context>\n${dslize(bodyOf(PROMPT_DEFAULTS['200-project.md']!).trim())
                 .replace(
                     '{{project_instructions}}',
                     '<template :for="f of chain"><template :unless=".isFirst">\n\n</template><template :include="./_chain.md" path=".f.path" scope=".f.scope" content=".f.content" /></template>',
-                )}\n</project_context>`,
-            './300-task.md': `<task>\n${dslize(bodyOf(PROMPT_DEFAULTS['300-task.md']!).trim())}\n</task>`,
+                )}\n</project_context>\n`,
+            './300-task.md': `<task>\n${dslize(bodyOf(PROMPT_DEFAULTS['300-task.md']!).trim())}\n</task>\n`,
+            // 片段不带末尾换行（legacy 每层是 .trim() 后 join("\n\n")）——迁移时片段按"无末尾换行"书写
             './_chain.md': dslize(bodyOf(PROMPT_DEFAULTS['_chain.md']!).trimEnd(), ['path', 'scope', 'content']),
-            './400-rules.md': `<rules>\n${dslize(bodyOf(PROMPT_DEFAULTS['400-rules.md']!).trim())}\n</rules>`,
-            './_guard.md': `<guard>\n${dslize(bodyOf(PROMPT_DEFAULTS['_guard.md']!).trim())}\n</guard>`,
+            './400-rules.md': `<rules>\n${dslize(bodyOf(PROMPT_DEFAULTS['400-rules.md']!).trim())}\n</rules>\n`,
+            './_guard.md': `<guard>\n${dslize(bodyOf(PROMPT_DEFAULTS['_guard.md']!).trim())}\n</guard>\n`,
         };
         const resolver = {
             resolve: (rel: string) =>
@@ -173,7 +174,9 @@ describe('换引擎零回归：把「包裹 + 空节 + join」搬进模版后，
             { globals: { ...(VARS as unknown as Record<string, unknown>), chain: CHAIN } },
             { resolver, file: 'system.md', locked: true },
         );
-        expect(next).toBe(legacySystem());
+        // 唯一的差异：模版源自带末尾换行（决策 "模版源逐字节进引擎"）→ 新 system 末尾多一个 \n；
+        // 内容与节间分隔（\n\n）逐字节相同
+        expect(next).toBe(`${legacySystem()}\n`);
         // 顺带证明链确实进了 system（不是空节被跳过）
         expect(next).toContain('<project_instructions path="/repo/AGENTS.md" scope="/repo">');
         expect(next).toContain('根规则 & 全局约定');

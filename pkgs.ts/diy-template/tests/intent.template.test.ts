@@ -576,3 +576,67 @@ describe('R12 装配形态：节的标签/顺序/分隔都在模版里（代码�
         ).toBe('<pi path="p">c</pi>');
     });
 });
+
+// ── R13 控制标记不占空间（standalone 默认开） ────────────────────────
+
+describe('R13 控制标记不占空间（standalone 默认开，无开关）', () => {
+    it('内联：条件为假时，标记自身不留下任何字符（a<if>…</if>b → ab）', () => {
+        const G = { globals: { diy: { off: false, on: true } } };
+        expect(render('a<template :if="diy.off"></template>b', G)).toBe('ab');
+        expect(render('a<template :if="diy.off">X</template>b', G)).toBe('ab');
+        expect(render('a<template :if="diy.on">X</template>b', G)).toBe('aXb');
+    });
+
+    it('行级：独占一行的控制标记，连同它那一行的缩进与换行都不产出', () => {
+        const src = [
+            'A',
+            '    <template :if="diy.off">',
+            '</template>',
+            'B',
+        ].join('\n');
+        expect(render(src, { globals: { diy: { off: false } } })).toBe('A\nB');
+        // 条件成立时也一样（标记本身不产出内容）
+        expect(render(src, { globals: { diy: { off: true } } })).toBe('A\nB');
+    });
+
+    it('include 独占一行 → 该行不产出，所以布局可以"每行一个 include"地写', () => {
+        const files = { './a.md': 'X\n' };
+        const src = ['A', '<template :include="./a.md"/>', 'B'].join('\n');
+        expect(render(src, {}, { resolver: resolverOf(files) })).toBe('A\nX\nB');
+    });
+
+    it('被跳过的节零残留：节自带末尾空行 + 每行一个 include（对比：不开 standalone 会多空行）', () => {
+        const files = {
+            './a.md': 'A\n\n',
+            './c.md': '<skills>\nC\n</skills>\n\n',
+            './d.md': '<guard>\nD\n</guard>\n',
+        };
+        const layout = [
+            '<template :include="./a.md"/>',
+            '<template :include="./c.md" :if="diy.skills"/>',
+            '<template :include="./d.md"/>',
+        ].join('\n');
+        expect(render(layout, { globals: { diy: { skills: [] } } }, { resolver: resolverOf(files) })).toBe(
+            'A\n\n<guard>\nD\n</guard>\n',
+        );
+        expect(render(layout, { globals: { diy: { skills: ['x'] } } }, { resolver: resolverOf(files) })).toBe(
+            'A\n\n<skills>\nC\n</skills>\n\n<guard>\nD\n</guard>\n',
+        );
+    });
+
+    it('注释 {{/* … */}} 不产出字符；独占一行时该行不产出；未闭合报错', () => {
+        expect(render('a{{/* 说明 */}}b', {})).toBe('ab');
+        expect(render(['A', '{{/* 为什么这么排 */}}', 'B'].join('\n'), {})).toBe('A\nB');
+        expect(caught(() => render('a{{/* 没关', {})).code).toBe('syntax');
+    });
+
+    it('边界：带控制属性的"标签容器"会输出自身标签 → 它那一行照常保留（要整行消失就用 <template>）', () => {
+        const src = '<item :if="diy.on">x</item>\n';
+        expect(render(src, { globals: { diy: { on: true } } })).toBe('<item>x</item>\n');
+        expect(render(src, { globals: { diy: { on: false } } })).toBe('\n'); // 标签没了，行还在
+        // 想让它整行消失 → 用纯标记包裹（<template> 不产出字符）
+        const pure = '<template :if="diy.on"><item>x</item>\n</template>';
+        expect(render(pure, { globals: { diy: { on: false } } })).toBe('');
+        expect(render(pure, { globals: { diy: { on: true } } })).toBe('<item>x</item>\n');
+    });
+});
