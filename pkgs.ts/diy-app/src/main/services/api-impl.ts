@@ -294,6 +294,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
       drafts: input.drafts,
       // 预算随预览模型变（与真发同一套推导）
       contextLimitTokens: contextLimitOf(input.model || DEFAULT_MODEL),
+      // 试验场「结构树」要 trace；真发（local-agent）不传
+      trace: true,
     });
     // 无任务场景：只渲染文本
     if (!input.taskUri) {

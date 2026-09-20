@@ -14,7 +14,7 @@ import * as yaml from "js-yaml";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
-import { analyze, render as renderDsl, type IncludeResolver } from "@diy/template";
+import { analyze, renderWithTrace, type IncludeResolver, type TraceNode } from "@diy/template";
 import { PROMPT_DEFAULTS } from "../prompts/defaults";
 import { parseTaskFile } from "../core/state";
 import { resolveCwd } from "../core/cwd";
@@ -313,6 +313,29 @@ export function makeTemplatesResolver(
  * 用 DSL 引擎渲染 system.md（真发与预览共用）。
  * @param resolve 自定义 include 解析（真环境用它接入项目覆盖与草稿）；缺省从 templates 取
  */
+/** 装配渲染（带结构 trace）：试验场「结构树」用它，真发只用 text */
+export function renderSystemDslTraced(opts: {
+  globals: AssembleGlobals | Record<string, unknown>;
+  templates?: Record<string, string>;
+  overrides?: Record<string, string>;
+  resolve?: IncludeResolver["resolve"];
+  entry?: string;
+}): { text: string; trace: TraceNode[] } {
+  const templates = opts.templates ?? PROMPT_DEFAULTS;
+  const entry = opts.entry ?? ENTRY_RELPATH;
+  const raw = templates[entry];
+  if (raw === undefined) throw new Error(`缺少装配入口模版：${entry}`);
+  const { meta, body } = parseMd(raw);
+  const resolver: IncludeResolver = { resolve: opts.resolve ?? makeTemplatesResolver(templates, opts.overrides).resolve };
+  const res = renderWithTrace(body, { globals: opts.globals as Record<string, unknown> }, {
+    resolver,
+    file: entry,
+    locked: meta.locked,
+  });
+  return { text: res.text, trace: res.trace };
+}
+
+/** 只取文本（真发路径；不分配 trace） */
 export function renderSystemDsl(opts: {
   globals: AssembleGlobals | Record<string, unknown>;
   templates?: Record<string, string>;
@@ -320,17 +343,7 @@ export function renderSystemDsl(opts: {
   resolve?: IncludeResolver["resolve"];
   entry?: string;
 }): string {
-  const templates = opts.templates ?? PROMPT_DEFAULTS;
-  const entry = opts.entry ?? ENTRY_RELPATH;
-  const raw = templates[entry];
-  if (raw === undefined) throw new Error(`缺少装配入口模版：${entry}`);
-  const { meta, body } = parseMd(raw);
-  const resolver: IncludeResolver = { resolve: opts.resolve ?? makeTemplatesResolver(templates, opts.overrides).resolve };
-  return renderDsl(body, { globals: opts.globals as Record<string, unknown> }, {
-    resolver,
-    file: entry,
-    locked: meta.locked,
-  });
+  return renderSystemDslTraced(opts).text;
 }
 
 /** 静态体检：把模版里的 lint（如控制属性误用）汇总成告警，不阻断装配 */
@@ -377,6 +390,8 @@ export function assembleSystem(
     drafts?: Record<string, string>;
     diyCli?: string;
     contextLimitTokens?: number;
+    /** 附带结构 trace（试验场「结构树」用；真发不传，省一次 trace 分配） */
+    trace?: boolean;
   } = {},
 ): AssembledSystem {
   const taskUri = opts.taskUri ?? "";
@@ -427,15 +442,15 @@ export function assembleSystem(
     const source = draft !== undefined ? parseMd(draft).body : entry.current;
     return { source, locked: entry.locked };
   };
-  const system = renderSystemDsl({ globals, resolve: resolveInclude });
+  const rendered = renderSystemDslTraced({ globals, resolve: resolveInclude });
+  const system = rendered.text;
   warnings.push(...lintWarnings(home, projectId));
   const used = Buffer.byteLength(system, "utf-8");
   const budget = systemBudgetForContext(opts.contextLimitTokens);
   return {
     system,
-    // DSL 引擎对未知路径/参数是**抛错**（响亮），不再用"警告 + 原样保留"那种静默降级
-    unknownVars: [],
     overBudget: used > budget ? { used, budget } : null,
     warnings,
+    trace: opts.trace ? rendered.trace : null,
   };
 }

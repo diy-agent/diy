@@ -21,11 +21,8 @@ export const PromptEntrySchema = z.object({
   locked: z.boolean(),
   /** 锁定时展示给用户的理由 */
   lockTip: z.string(),
-  /** 包裹标签名（空串 = 裸文本节，不包 <...>）：来自模版 frontmatter */
   /** 角色：入口 / 节（被入口 include）/ 片段（只被引用）——由 `_system.md` 的 include 推导 */
   role: z.enum(["entry", "section", "fragment"]),
-  /** 片段模版（不进节拼接，供其它变量渲染，如 _chain.md） */
-
   status: z.enum(["builtin", "overridden"]),
   current: z.string(),
   builtin: z.string(),
@@ -34,13 +31,34 @@ export const PromptEntrySchema = z.object({
 });
 export type PromptEntry = z.infer<typeof PromptEntrySchema>;
 
+/** 渲染结构 trace 节点（试验场「结构树」：每个节点的产出字节 + :if 真假原因 + 迭代次数） */
+export type TraceNode = {
+  kind: string;
+  name?: string;
+  bytes: number;
+  result?: boolean;
+  reason?: string;
+  children?: TraceNode[];
+};
+export const TraceNodeSchema: z.ZodType<TraceNode> = z.lazy(() =>
+  z.object({
+    kind: z.string(),
+    name: z.string().optional(),
+    bytes: z.number(),
+    result: z.boolean().optional(),
+    reason: z.string().optional(),
+    children: z.array(TraceNodeSchema).optional(),
+  }),
+);
+
 /** 系统上下文装配结果（真发与预览共用） */
 export const AssembledSystemSchema = z.object({
   system: z.string(),
-  unknownVars: z.array(z.string()),
   overBudget: z.object({ used: z.number(), budget: z.number() }).nullable(),
   /** 环境级告警（如未注入 DIY_CLI）：提示词会失真，但不算用户操作错误 */
   warnings: z.array(z.string()),
+  /** 结构 trace：仅预览请求时提供（真发不传，省一次分配） */
+  trace: z.array(TraceNodeSchema).nullable(),
 });
 export type AssembledSystem = z.infer<typeof AssembledSystemSchema>;
 

@@ -138,12 +138,24 @@ describe("assembleSystem 装配", () => {
     // 未写入：仍是内置态
     expect(getPrompt(home, PID, "identity.md").status).toBe("builtin");
   });
-  it("未知路径不再静默：装配直接抛错（引擎严格模式，替代旧的 unknownVars 警告）", () => {
+  it("未知路径不再静默：装配直接抛错（引擎严格模式，没有「未知但放行」这条路）", () => {
     expect(() => assembleSystem(home, PID, { drafts: { "rules.md": "- {{diy.nope}}\n" } })).toThrow(
       /diy\.nope/,
     );
-    // 正常装配不抛错，unknownVars 恒为空（没有"未知但放行"这条路）
-    expect(assembleSystem(home, PID, { taskUri: TASK }).unknownVars).toEqual([]);
+    expect(assembleSystem(home, PID, { taskUri: TASK }).system.length).toBeGreaterThan(0);
+  });
+
+  it("结构 trace 只在预览请求时产出（真发不分配）", () => {
+    const plain = assembleSystem(home, PID, { taskUri: TASK });
+    expect(plain.trace).toBeNull();
+    const traced = assembleSystem(home, PID, { taskUri: TASK, trace: true });
+    expect(traced.trace!.length).toBeGreaterThan(0);
+    // 顶层是各节的 include：名字是 relpath，且带产出字节
+    const names = traced.trace!.map((n) => n.name);
+    expect(names).toContain("./identity.md");
+    expect(traced.trace!.every((n) => typeof n.bytes === "number")).toBe(true);
+    // trace 不改变输出
+    expect(traced.system).toBe(plain.system);
   });
 
   it("片段模版不进节拼接；链的包裹格式由 chain.md 决定（可覆盖）", () => {
@@ -166,7 +178,6 @@ describe("assembleSystem 装配", () => {
     expect(p2.system).toContain(`<<${home}>>`);
     expect(p2.system).toContain("<</");
     expect(p2.system).not.toContain("<project_instructions");
-    expect(p2.unknownVars).toEqual([]);
   });
 });
 

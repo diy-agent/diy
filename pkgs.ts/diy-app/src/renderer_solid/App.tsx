@@ -3,7 +3,7 @@ import * as Tabs from "@kobalte/core/tabs";
 import { TaskTree } from "./components/TaskTree";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { LlmPage } from "./components/LlmPage";
-import { PromptLabV4Page } from "./components/PromptLabV4Page";
+import { PromptLabV4Page, setLabTab } from "./components/PromptLabV4Page";
 import { LogPanel } from "./components/LogPanel";
 import { AppInfo } from "./components/AppInfo";
 import { ThemeSettings } from "./components/ThemeSettings";
@@ -28,7 +28,12 @@ export default function App() {
     onMount(() => {
         taskStore.loadTree();
         setRendererActions({
-            navigate: (page) => setCurrentPage(page as NavPage),
+            // 导航到「试验场」时直接落到 agent调参 视图（否则会停在页面默认的「任务会话」，
+            // CLI/自动化拿到的 a11y 树里看不到模版/变量/结构树）
+            navigate: (page) => {
+                setCurrentPage(page as NavPage);
+                if (page === "lab") setLabTab("lab");
+            },
             focus: (uri) => taskStore.selectTask(uri),
             toast: (msg, level) => notificationStore.addToast(level ?? "info", msg),
         });

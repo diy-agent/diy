@@ -172,6 +172,13 @@ export const Caches = {
     serialize: (v) => String(v),
     defaultValue: 384,
   }),
+  /** 试验场内层 tab（chat/task/lab）。存这里的原因与草稿相同：页面卸载后要记住选择；
+   *  另一处用途是 CLI 导航 `ui page navigate lab` 要能直接落到「agent调参」视图。 */
+  diy_lab_tab: field<string>("diy_lab_tab", {
+    parse: (raw) => (raw === "chat" || raw === "task" || raw === "lab" ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "chat",
+  }),
   /** 试验场未存盘草稿（project → { relpath → 正文 }）。
    *  存这里而不是组件 signal：App.tsx 用 <Show> 挂死页面，切页即卸载 → 半编辑内容全丢。
    *  按 project 分桶，切到别的项目不会看到/不会写入上一个项目的草稿。 */

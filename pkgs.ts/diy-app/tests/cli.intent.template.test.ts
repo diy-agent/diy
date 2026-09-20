@@ -201,9 +201,12 @@ describe("template preview", () => {
         const okSystem = String((ok.data as Record<string, unknown>)["system"]);
         expect(okSystem).toContain("- 我自己的规则");
         expect(okSystem).not.toContain("title: 手写覆盖");
-        expect((ok.data as Record<string, unknown>)["unknownVars"]).toEqual([]);
+        // 预览带结构 trace（试验场「结构树」的数据源）；真发不带
+        const trace = (ok.data as Record<string, unknown>)["trace"] as Array<{ name?: string; bytes: number }>;
+        expect(Array.isArray(trace)).toBe(true);
+        expect(trace.some((n) => n.name === "./rules.md")).toBe(true);
 
-        // 再放一个引用未知路径的覆盖：引擎严格 → 预览直接失败（旧行为是 unknownVars 软警告）
+        // 再放一个引用未知路径的覆盖：引擎严格 → 预览直接失败（旧行为是"未知变量"软警告）
         writeFileSync(
             overridePath(pid, "rules.md"),
             "---\ntitle: 手写覆盖\nversion: 9\n---\n<rules>\n- 规则 {{nope}}\n</rules>\n",

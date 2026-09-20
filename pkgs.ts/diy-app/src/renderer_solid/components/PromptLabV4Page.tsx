@@ -3,7 +3,8 @@
 // 页面级自由布局案例：左 Views 区（场景/参数/模板树）+ 中央编辑器（标题栏+动作图标+普通/diff）
 // + 右 Views 区（实时预览）。单一编辑器模式：树上点开一份，dirty 在树行与标题栏两处标注，
 // 保存按钮两处都有。数据模型与 V1~V3 一致（同一套 template.* RPC）。
-import { createSignal, createEffect, on, For, Show } from "solid-js";
+import { createSignal, createMemo, createEffect, on, For, Show } from "solid-js";
+import { analyze } from "@diy/template";
 import * as Tabs from "@kobalte/core/tabs";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "../store/notificationStore";
@@ -17,7 +18,7 @@ import { TaskInfoView } from "./TaskDetailPanel";
 import { JsonTree } from "./JsonTree";
 import { MdEditor } from "./MdEditor";
 import { lineDiff, useHoverTip, type PromptEntry } from "./promptLabCommon";
-import type { RequestPreview } from "../../shared/prompt-schema";
+import type { RequestPreview, TraceNode } from "../../shared/prompt-schema";
 
 // 未存盘草稿放在模块级（按 project 分桶）：App.tsx 用 <Show> 挂页面，
 // 切到别的页就卸载组件，signal 里的半编辑内容会直接丢（历史问题）。
@@ -35,6 +36,10 @@ function patchDrafts(pid: string, mut: (d: Record<string, string>) => Record<str
         return next;
     });
 }
+
+/** 试验场内层 tab（chat=任务会话 / task=任务详情 / lab=agent调参）：模块级 + 落 Caches */
+export const [labTab, setLabTab] = createSignal(Caches.diy_lab_tab.get());
+createEffect(() => Caches.diy_lab_tab.set(labTab()));
 
 /** relpath 数组 → 目录树（前端按路径派生，不做人工分类） */
 interface DirNode {
@@ -187,9 +192,107 @@ function wrapsTag(body: string): string | undefined {
     return /(?:^|\n)<([a-z_][\w-]*)[\s>]/.exec(body)?.[1];
 }
 
+/**
+ * 可用变量 view 的一行（名字 + 说明）
+ */
+function VarRow(props: { name: string; note?: string }) {
+    return (
+        <div class="flex items-baseline gap-2 px-2 py-0.5">
+            <span class="font-mono text-info">{props.name}</span>
+            <Show when={props.note}>
+                <span class="truncate opacity-60">{props.note}</span>
+            </Show>
+        </div>
+    );
+}
+
+/** 结构树一行（trace 节点：名字 + 产出字节 + :if 真假/原因） */
+function traceLabel(n: TraceNode): string {
+    switch (n.kind) {
+        case "if":
+            return `${n.name ?? ":if"} ${n.result ? "✓" : "✗"}${n.reason ? ` ${n.reason}` : ""}`;
+        case "for":
+            return `${n.name ?? ":for"}（${n.reason ?? ""}）`;
+        case "for-item":
+            return `${n.name ?? "item"}${n.reason ? ` ${n.reason}` : ""}`;
+        case "include":
+            return `→ ${n.name ?? ""}`;
+        case "element":
+            return `<${n.name ?? "?"}>`;
+        case "interp":
+            return `{{${n.name ?? ""}}}`;
+        case "text":
+            return "文本";
+        default:
+            return n.name ?? n.kind;
+    }
+}
+
+/** 可用变量 view 的分组标题 */
+function VarGroup(props: { title: string; children: unknown }) {
+    return (
+        <>
+            <div class="px-2 pt-1.5 font-bold tracking-wide opacity-70">{props.title}</div>
+            {props.children as never}
+        </>
+    );
+}
+
+function TraceRows(props: {
+    nodes: TraceNode[];
+    depth: number;
+    path: string;
+    open: Record<string, boolean>;
+    onToggle: (k: string, open: boolean) => void;
+}) {
+    return (
+        <For each={props.nodes}>
+            {(n, i) => {
+                const key = `${props.path}/${i()}`;
+                const kids = () => n.children ?? [];
+                const hasKids = () => kids().length > 0;
+                // 默认展开前两层（入口 → 各节），再深就得手动点
+                const isOpen = () => props.open[key] ?? props.depth < 2;
+                return (
+                    <>
+                        <div
+                            class="flex items-baseline gap-1 hover:bg-base-300/40"
+                            style={{ "padding-left": `${props.depth * 10}px` }}
+                        >
+                            <button
+                                class="w-3 shrink-0 text-left opacity-60 disabled:opacity-20"
+                                disabled={!hasKids()}
+                                onClick={() => hasKids() && props.onToggle(key, isOpen())}
+                            >
+                                {hasKids() ? (isOpen() ? "▾" : "▸") : "·"}
+                            </button>
+                            <span
+                                class={`truncate ${n.kind === "if" && n.result === false ? "opacity-40" : ""}`}
+                                title={traceLabel(n)}
+                            >
+                                {traceLabel(n)}
+                            </span>
+                            <span class="ml-auto shrink-0 font-mono opacity-50">{n.bytes}B</span>
+                        </div>
+                        <Show when={hasKids() && isOpen()}>
+                            <TraceRows
+                                nodes={kids()}
+                                depth={props.depth + 1}
+                                path={key}
+                                open={props.open}
+                                onToggle={props.onToggle}
+                            />
+                        </Show>
+                    </>
+                );
+            }}
+        </For>
+    );
+}
+
 export function PromptLabV4Page() {
     const [entries, setEntries] = createSignal<PromptEntry[]>([]);
-    const [selPath, setSelPath] = createSignal<string>("000-identity.md");
+    const [selPath, setSelPath] = createSignal<string>("identity.md");
     // 左右 Views 宽（拖拽可调，走 ui-state 字段池：范围校验定义即生效，「重置界面状态」能清）
     const [leftW, setLeftW] = createSignal(Caches.diy_lab_left_width.get());
     const [rightW, setRightW] = createSignal(Caches.diy_lab_right_width.get());
@@ -225,10 +328,14 @@ export function PromptLabV4Page() {
     const project = () => projectFromUri(taskUri());
     const hov = useHoverTip();
     // 顶层 tab：任务会话 / 任务详情 / agent调参（默认会话，与任务详情抽屉一致）
-    const [pageTab, setPageTab] = createSignal("chat");
+    // 内层 tab 用模块级 signal（不是组件内）：页面卸载后要记住；且 CLI 导航要能直接切到 agent调参
+    const pageTab = labTab;
+    const setPageTab = setLabTab;
     const [preview, setPreview] = createSignal<RequestPreview | null>(null);
     // 各 View 折叠态（VSCode 式可收起，纯局部偏好）
-    const [views, setViews] = createSignal<Record<string, boolean>>({ tree: true, sysctx: true, reqbody: true });
+    const [views, setViews] = createSignal<Record<string, boolean>>({ tree: true, vars: true, sysctx: true, reqbody: true, trace: false });
+    // 结构树展开态（key = 路径索引链，默认前两层展开）
+    const [traceOpen, setTraceOpen] = createSignal<Record<string, boolean>>({});
     // 请求体显示：树形 / 原文
     const [reqMode, setReqMode] = createSignal<"tree" | "raw">("tree");
     const toggleView = (k: string) => setViews((v) => ({ ...v, [k]: !v[k] }));
@@ -249,6 +356,19 @@ export function PromptLabV4Page() {
     const drafts = () => draftsByProject()[project()] ?? {};
     const draftOf = (e: PromptEntry) => drafts()[e.relpath] ?? e.current;
     const dirtyOf = (e: PromptEntry) => drafts()[e.relpath] !== undefined && drafts()[e.relpath] !== e.current;
+    // 「可用变量」view 的数据源：对**当前草稿**做静态分析（renderer 侧直接跑引擎 → 随打字实时更新）
+    const analysis = createMemo(() => {
+        const s = sel();
+        if (!s) return null;
+        try {
+            return { a: analyze(draftOf(s), { file: s.relpath }) };
+        } catch (e) {
+            return { error: e instanceof Error ? e.message : String(e) };
+        }
+    });
+    /** globals 引用按 namespace 分组：namespace → 该 namespace 下的完整路径（去重） */
+    const globalPathsOf = (ns: string, paths: Array<{ path: string; scope: string }>): string[] =>
+        [...new Set(paths.filter((p) => p.scope === "global" && (p.path === ns || p.path.startsWith(`${ns}.`))).map((p) => p.path))];
 
     async function load() {
         const pid = project();
@@ -411,6 +531,75 @@ export function PromptLabV4Page() {
                             </div>
                         </Show>
                     </div>
+                    {/* 可用变量 view：本模版引用的变量/循环/条件/include + lint（renderer 侧实时分析草稿） */}
+                    <div class="border border-base-300 rounded-lg overflow-hidden">
+                        {viewHeader("vars", "可用变量", sel() ? sel()!.relpath : "未选模版")}
+                        <Show when={views()["vars"]}>
+                            <div class="bg-base-200 px-0 py-1 font-mono text-[11px]">
+                                <Show when={analysis()} fallback={<div class="px-2 py-1 opacity-60">左侧点开一份模版</div>}>
+                                    {(an) => (
+                                        <Show when={an().a} fallback={<div class="px-2 py-1 text-error">{an().error}</div>}>
+                                            {(a) => (
+                                                <>
+                                                    <Show when={a().globals.length > 0} fallback={<VarGroup title="引用 globals"><div class="px-2 opacity-60">（无）</div></VarGroup>}>
+                                                        <VarGroup title="引用 globals">
+                                                            <For each={a().globals}>
+                                                                {(ns) => (
+                                                                    <VarRow name={`${ns}.*`} note={globalPathsOf(ns, a().paths).join(" ")} />
+                                                                )}
+                                                            </For>
+                                                        </VarGroup>
+                                                    </Show>
+                                                    <Show when={a().dynamics.length > 0}>
+                                                        <VarGroup title="动态名（:for 信封 / include 参数）">
+                                                            <VarRow name={a().dynamics.map((d) => `.${d}`).join(" ")} />
+                                                        </VarGroup>
+                                                    </Show>
+                                                    <Show when={a().loops.length > 0}>
+                                                        <VarGroup title="循环">
+                                                            <For each={a().loops}>
+                                                                {(l) => <VarRow name={`:for={{${l.source}}}`} note={`:as="${l.as}"`} />}
+                                                            </For>
+                                                        </VarGroup>
+                                                    </Show>
+                                                    <Show when={a().conditions.length > 0}>
+                                                        <VarGroup title="条件">
+                                                            <For each={a().conditions}>
+                                                                {(c) => <VarRow name={`${c.negate ? ":if-not" : ":if"}({{${c.path}}})`} />}
+                                                            </For>
+                                                        </VarGroup>
+                                                    </Show>
+                                                    <Show when={a().includes.length > 0}>
+                                                        <VarGroup title="include">
+                                                            <For each={a().includes}>
+                                                                {(inc) => (
+                                                                    <VarRow
+                                                                        name={inc.relpath}
+                                                                        note={inc.args.length > 0 ? inc.args.map((g) => g.name).join(" ") : "无参数"}
+                                                                    />
+                                                                )}
+                                                            </For>
+                                                        </VarGroup>
+                                                    </Show>
+                                                    <Show when={a().lint.length > 0}>
+                                                        <VarGroup title="lint">
+                                                            <For each={a().lint}>
+                                                                {(is) => (
+                                                                    <div class="px-2 py-0.5 text-warning">
+                                                                        {is.loc.line}:{is.loc.col} {is.message}
+                                                                    </div>
+                                                                )}
+                                                            </For>
+                                                        </VarGroup>
+                                                    </Show>
+                                                </>
+                                            )}
+                                        </Show>
+                                    )}
+                                </Show>
+                            </div>
+                        </Show>
+                    </div>
                 </div>
 
                 {/* 拖拽条：左 Views 宽（双击回默认） */}
@@ -553,11 +742,6 @@ export function PromptLabV4Page() {
                                         ))}
                                     </div>
                                 </Show>
-                                <Show when={p().unknownVars.length > 0}>
-                                    <div class="alert alert-warning text-xs py-1 mb-2">
-                                        未知变量：{p().unknownVars.join(", ")}
-                                    </div>
-                                </Show>
                                 <pre class="whitespace-pre-wrap rounded bg-base-200 p-2 font-mono text-xs leading-relaxed">
                                     {p().system}
                                 </pre>
@@ -565,6 +749,24 @@ export function PromptLabV4Page() {
                         )}
                     </Show>
                         </div>
+                        </Show>
+                    </div>
+                    <div class="border border-base-300 rounded-lg overflow-hidden">
+                        {viewHeader("trace", "结构树", preview()?.trace ? `${preview()!.trace!.length} 顶层节点` : "随预览重算")}
+                        <Show when={views()["trace"]}>
+                            <div class="bg-base-200 px-1 py-1 text-[11px]">
+                                <Show when={preview()?.trace} fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}>
+                                    {(tr) => (
+                                        <TraceRows
+                                            nodes={tr()!}
+                                            depth={0}
+                                            path=""
+                                            open={traceOpen()}
+                                            onToggle={(k, open) => setTraceOpen((o) => ({ ...o, [k]: !open }))}
+                                        />
+                                    )}
+                                </Show>
+                            </div>
                         </Show>
                     </div>
                     <div class="border border-base-300 rounded-lg overflow-hidden">
