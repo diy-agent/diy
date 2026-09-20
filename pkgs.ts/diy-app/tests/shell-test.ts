@@ -29,10 +29,6 @@ interface RunResult {
 
 const markerPrefix = `__ST_${Date.now().toString(16)}_${Math.random().toString(16).slice(2, 8)}__`;
 const markerRe = new RegExp(`${markerPrefix}\\((\\d+)\\)__`);
-// stdout 收尾标记：marker（PS1）走 stderr，与 stdout 是两个 pipe、无顺序保证，
-// 输出大时会出现「PS1 已到、stdout 尾巴还没读到」→ 解析被截断的 JSON（曾误报"输出非 JSON"）。
-// 收尾标记与命令输出同走 stdout，一旦看到它就说明前面的字节全到了。
-const outDoneToken = `${markerPrefix}OUTDONE__`;
 
 export class Session {
   private proc: ChildProcess;
@@ -86,32 +82,20 @@ export class Session {
     });
   }
 
-  /** 等 stdout 收尾标记出现（同一 pipe 内有序 → 看到它就代表输出完整） */
-  private async _awaitStdoutDone(timeoutMs: number): Promise<void> {
-    const start = Date.now();
-    while (Date.now() - start < Math.min(timeoutMs, 5000)) {
-      if (this.outBuf.includes(outDoneToken)) return;
-      await new Promise((r) => setTimeout(r, 5));
-    }
-  }
-
   /** 执行一条命令，返回退出码 + stdout + stderr（持续同一 bash 进程） */
   async run(cmd: string, timeoutMs = 20000): Promise<RunResult> {
     await this.ready;
     this.outBuf = "";
     this.errBuf = "";
     // 包一层：命令 → 记录退出码 → 往 stdout 打收尾标记 → 让 `$?` 仍是命令的退出码（PS1 读到的）
-    this._write(`{ ${cmd}; }; __st=$?; printf '\\n%s\\n' '${outDoneToken}'; (exit $__st)`);
+    this._write(cmd);
     const { found, code } = await this._read(timeoutMs);
-    if (found) await this._awaitStdoutDone(timeoutMs);
+    // 实验：不等待收尾标记（模拟改造前的行为）
 
     // 清理 marker 行与收尾标记，还原真实输出
     const errLines = this.errBuf.split("\n").filter(Boolean);
     const cleanErr = errLines.filter((l) => !markerRe.test(l)).join("\n").trim();
-    const rawOut = (() => {
-      const i = this.outBuf.indexOf(outDoneToken);
-      return i === -1 ? this.outBuf : this.outBuf.slice(0, i).replace(/\n$/, "");
-    })();
+    const rawOut = this.outBuf;
     const cleanOut = rawOut.replace(/\r\n/g, "\n").replace(/\r/g, "").trim();
 
     if (!found) {

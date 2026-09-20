@@ -91,14 +91,6 @@ export function interruptedToolPatches(store: BlockStore): Op[] {
     return out;
 }
 
-/**
- * 落在协议上的「中断」信号：tool 块未收到 stop = 流断裂（SIGKILL/取消/断连）。
- * 与 status 无关 —— status 可能停在 running，但 stopped 才是权威定稿标记。
- */
-export function isInterruptedTool(b: { kind: BlockKind; stopped: boolean }): boolean {
-    return b.kind === "tool" && !b.stopped;
-}
-
 // ─── fold：Op 流 → 块树 ───────────────────────────────
 
 export interface FoldIssue {
@@ -392,61 +384,3 @@ export function blocksToMessages(store: BlockStore): LocalModelMessage[] {
 }
 
 
-/** ModelMessage[] → Op 流（启动时从旧日志恢复内存 messages 的双向一致性自检也可用） */
-export function messagesToOps(msgs: LocalModelMessage[]): Op[] {
-    const ops: Op[] = [];
-    let n = 0;
-    for (const m of msgs) {
-        if (m.role === "user") {
-            const id = `h_u_${n++}`;
-            ops.push({ op: "start", id, kind: "text", meta: { role: "user" } });
-            ops.push({
-                op: "delta",
-                id,
-                fields: { content: typeof m.content === "string" ? m.content : "" },
-            });
-            ops.push({ op: "stop", id });
-            continue;
-        }
-        if (m.role === "assistant" && typeof m.content === "string") {
-            const id = `h_a_${n++}`;
-            ops.push({ op: "start", id, kind: "text", meta: { role: "assistant" } });
-            ops.push({ op: "delta", id, fields: { content: m.content } });
-            ops.push({ op: "stop", id });
-            continue;
-        }
-        if (m.role === "assistant" && Array.isArray(m.content)) {
-            for (const p of m.content) {
-                if (p.type === "text") {
-                    const id = `h_a_${n++}`;
-                    ops.push({ op: "start", id, kind: "text", meta: { role: "assistant" } });
-                    ops.push({ op: "delta", id, fields: { content: p.text } });
-                    ops.push({ op: "stop", id });
-                } else if (p.type === "tool-call") {
-                    ops.push({
-                        op: "start",
-                        id: p.toolCallId,
-                        kind: "tool",
-                        meta: { tool: p.toolName },
-                    });
-                    ops.push({
-                        op: "patch",
-                        id: p.toolCallId,
-                        fields: { args: p.input, status: "done" },
-                    });
-                    ops.push({ op: "stop", id: p.toolCallId });
-                }
-            }
-            continue;
-        }
-        if (m.role === "tool" && Array.isArray(m.content)) {
-            for (const p of m.content) {
-                if (p.type === "tool-result") {
-                    ops.push({ op: "delta", id: p.toolCallId, fields: { output: p.output.value } });
-                    ops.push({ op: "stop", id: p.toolCallId });
-                }
-            }
-        }
-    }
-    return ops;
-}

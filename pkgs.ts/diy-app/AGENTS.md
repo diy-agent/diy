@@ -136,6 +136,7 @@ $DIY_HOME/projects/<pid>/tasks/<tid>/
 | AGENTS.md 链上界 | **$HOME 为止**（不进 `/`、不进 `/Users`）：`~/AGENTS.md`、`~/git/AGENTS.md` 这类用户全局规则逐层生效；不在 $HOME 下时只取工作目录自身一层 |
 | 预算 | `clamp(模型上下文窗口 × 4B × 5%, 16KB, 64KB)`（随模型变，不再是一个 64KB 魔法数）；超限拒发（不截断）；**早退也必须闭合轮次**（stop + `noteTurnEnd` + turn-end 审计） |
 | 试验场页面 | `PromptLabV4Page.tsx`（左栏 = 模板 / 可用变量（契约）/ 变量值（本次注入）/ 结构树（trace）；右栏 = 预览；`ui page navigate lab` 落 agent调参 tab）；草稿按 project 分桶存 `Caches.diy_lab_drafts` |
+| 试验场表格列宽 | 三张表（vars/vals/trace）列宽是 **px 且可拖**（`Th` 右边缘把手，双击复位），存 `Caches.diy_lab_cols_*`。**列宽与容器宽度解耦**：拖左栏不改列宽；表比可视区宽时由左栏出横向滚动条（卡片必须 `min-w-full w-max` —— 用 `overflow-hidden` 会把超宽表格直接裁掉且不出滚动条） |
 | 变量契约与值 | `src/shared/prompt-schema.ts` 的 `AssembleGlobalsSchema`（zod 单一真源）→ `src/shared/var-tree.ts` 两种派生：`buildVarTree`（树形展示）/ `flattenVars`（引擎静态校验）；实际值随预览下发 `values`（结构树「值」列与「变量值」view 同源） |
 | 中断文案 | `_guard.md` **不得**复述 `INTERRUPTED_TOOL_NOTICE` —— 那段话的唯一来源是 `local-blocks.ts` 的常量 |
 | 意图测试 | `tests/cli.intent.template.test.ts`（list/get/save/restore/拒绝/preview/超预算闭合） |

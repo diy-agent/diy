@@ -173,6 +173,12 @@ export const Caches = {
     serialize: (v) => String(v),
     defaultValue: 384,
   }),
+  /** 试验场表格列宽（px 数组，按表分字段）。**表的列宽必须与容器宽度解耦**：
+   *  否则拖动左栏会按比例缩放所有列，永远有列看不全；这里存下来后拖左栏不再改变列宽，
+   *  表比可视区宽就往左栏出横向滚动条。parse 只收合法数字并夹在 32-1200 之间。 */
+  diy_lab_cols_vars: jsonCols("diy_lab_cols_vars", [96, 224]),
+  diy_lab_cols_vals: jsonCols("diy_lab_cols_vals", [110, 210]),
+  diy_lab_cols_trace: jsonCols("diy_lab_cols_trace", [96, 96, 84, 48]),
   /** 试验场内层 tab（chat/task/lab）。存这里的原因与草稿相同：页面卸载后要记住选择；
    *  另一处用途是 CLI 导航 `ui page navigate lab` 要能直接落到「agent调参」视图。 */
   diy_lab_tab: field<string>("diy_lab_tab", {
@@ -206,6 +212,25 @@ export const Caches = {
     defaultValue: {},
   }),
 };
+
+/** 列宽数组字段：JSON 存整数数组（列宽 px），越界/脏数据回退默认值 */
+function jsonCols(key: string, fallback: number[]) {
+  return field<number[]>(key, {
+    parse: (raw) => {
+      try {
+        const o: unknown = JSON.parse(raw);
+        if (!Array.isArray(o) || o.length !== fallback.length) return null;
+        const nums = o.map((v) => (typeof v === "number" ? Math.round(v) : NaN));
+        if (nums.some((v) => !Number.isFinite(v) || v < 32 || v > 1200)) return null;
+        return nums;
+      } catch {
+        return null;
+      }
+    },
+    serialize: (v) => JSON.stringify(v),
+    defaultValue: fallback,
+  });
+}
 
 /** 已注册字段（clearUiCache 枚举用：字段池即全部，新增字段自动纳入） */
 const allFields: CacheField<unknown>[] = Object.values(Caches);

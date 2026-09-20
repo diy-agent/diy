@@ -11,7 +11,7 @@ import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
 import { localChatStore } from "../store/localChatStore";
 import { getRendererActions } from "../lib/renderer-actions";
-import { Caches } from "../lib/ui-state";
+import { Caches, type CacheField } from "../lib/ui-state";
 import { projectFromUri } from "../../shared/task-uri";
 import { LocalChatPage } from "./LocalChatPage";
 import { TaskInfoView } from "./TaskDetailPanel";
@@ -191,6 +191,43 @@ function DirRow(props: {
                 </For>
             </Show>
         </Show>
+    );
+}
+
+/** 一张表的列宽状态：本地 signal（拖动即时重渲染）+ Caches（持久化，重启/重置可控） */
+type ColsState = {
+    w: () => number[];
+    resize: (i: number, px: number) => void;
+    reset: (i: number) => void;
+};
+
+/**
+ * 可调列宽的表头单元：右边缘 3px 把手拖动改列宽（双击恢复默认）。
+ * 表宽 = 各列宽之和（px）→ **拖动左栏不会改变列宽**；表比可视区宽时左栏出横向滚动条。
+ */
+function Th(props: { label: string; cols: ColsState; index: number; right?: boolean }) {
+    return (
+        <th class={`relative select-none py-1 ${props.right ? "text-right" : ""}`}>
+            <span>{props.label}</span>
+            <span
+                class="absolute right-0 top-0 h-full w-[3px] cursor-col-resize hover:bg-primary/60 active:bg-primary"
+                title="拖动调整列宽（双击恢复默认）"
+                onDblClick={() => props.cols.reset(props.index)}
+                onMouseDown={(e) => {
+                    e.preventDefault();
+                    const startX = e.clientX;
+                    const startW = props.cols.w()[props.index] ?? 0;
+                    const move = (ev: MouseEvent) =>
+                        props.cols.resize(props.index, Math.round(startW + ev.clientX - startX));
+                    const up = () => {
+                        window.removeEventListener("mousemove", move);
+                        window.removeEventListener("mouseup", up);
+                    };
+                    window.addEventListener("mousemove", move);
+                    window.addEventListener("mouseup", up);
+                }}
+            />
+        </th>
     );
 }
 
@@ -491,6 +528,23 @@ export function PromptLabV4Page() {
         sysctx: true,
         reqbody: true,
     });
+    // 三张表的列宽（px，可拖可持久化；与容器宽度解耦 → 拖动左栏不改列宽）
+    const colsState = (field: CacheField<number[]>): ColsState => {
+        const [w, setW] = createSignal(field.get());
+        const resize = (i: number, px: number) => {
+            const next = [...w()];
+            next[i] = Math.min(1200, Math.max(32, px));
+            setW(next);
+            field.set(next);
+        };
+        return { w, resize, reset: (i) => resize(i, field.defaultValue[i] ?? 32) };
+    };
+    const cols = {
+        vars: colsState(Caches.diy_lab_cols_vars),
+        vals: colsState(Caches.diy_lab_cols_vals),
+        trace: colsState(Caches.diy_lab_cols_trace),
+    };
+    const tableW = (c: ColsState) => `${c.w().reduce((a, b) => a + b, 0)}px`;
     // 结构树展开态（key = 路径索引链，默认前两层展开）
     const [traceOpen, setTraceOpen] = createSignal<Record<string, boolean>>({});
     // 变量树展开态（默认全展开）
@@ -670,11 +724,16 @@ export function PromptLabV4Page() {
             <Tabs.Content value="lab" class="flex min-h-0 flex-1 flex-col">
             <div class="flex flex-1 min-h-0" ref={(el) => (zoneRef = el)}>
                 {/* 左：模板目录树（场景/参数已删：任务即场景，参数走服务端默认） */}
-                <div class="shrink-0 border-r overflow-auto text-xs p-1 space-y-1" style={{ width: `${leftW()}px` }}>
+                {/* 左栏：纵/横双向滚动。卡片按内容取宽（w-max）+ 列宽固定（px）→ 表比可视区宽时
+                    在这里出横向滚动条，拖动这个滚动条就能看全任何一列 */}
+                <div
+                    class="shrink-0 border-r overflow-x-auto overflow-y-auto text-xs p-1 space-y-1"
+                    style={{ width: `${leftW()}px` }}
+                >
                     <div class="flex items-center px-2 py-1">
                         <span class="text-[11px] font-bold tracking-widest opacity-70">模板</span>
                     </div>
-                    <div class="border border-base-300 rounded-lg overflow-hidden">
+                    <div class="min-w-full w-max border border-base-300 rounded-lg">
                         {viewHeader(
                             "tree",
                             "模板",
@@ -700,7 +759,7 @@ export function PromptLabV4Page() {
                         </Show>
                     </div>
                     {/* 可用变量 view：本模版引用的变量/循环/条件/include + lint（renderer 侧实时分析草稿） */}
-                    <div class="border border-base-300 rounded-lg overflow-hidden">
+                    <div class="min-w-full w-max border border-base-300 rounded-lg">
                         {viewHeader("vars", "可用变量", sel() ? sel()!.relpath : "未选模版")}
                         <Show when={views()["vars"]}>
                             <div class="bg-base-200 px-0 py-1 font-mono text-[11px]">
@@ -710,12 +769,17 @@ export function PromptLabV4Page() {
                                             {(a) => (
                                                 <>
                                                     <VarGroup title="宿主提供（变量契约，树形展开）">
-                                                        {/* 自适应列宽（不固定百分比）：名字列按内容自然宽，说明列吃满剩余 + 单行省略 */}
-                                                        <table class="table table-xs w-full">
+                                                        {/* 列宽固定（px，可拖）：拖动左栏不改列宽；表更宽时左栏横向滚动 */}
+                                                        <table class="table table-xs table-fixed" style={{ width: tableW(cols.vars) }}>
+                                                            <colgroup>
+                                                                <For each={cols.vars.w()}>
+                                                                    {(w) => <col style={{ width: `${w}px` }} />}
+                                                                </For>
+                                                            </colgroup>
                                                             <thead>
                                                                 <tr>
-                                                                    <th>变量</th>
-                                                                    <th>说明</th>
+                                                                    <Th label="变量" cols={cols.vars} index={0} />
+                                                                    <Th label="说明" cols={cols.vars} index={1} />
                                                                 </tr>
                                                             </thead>
                                                             <tbody>
@@ -798,7 +862,7 @@ export function PromptLabV4Page() {
                         </Show>
                     </div>
                     {/* 变量值 view：本次**实际注入**的 globals（值随任务/草稿变化；结构来自契约） */}
-                    <div class="border border-base-300 rounded-lg overflow-hidden">
+                    <div class="min-w-full w-max border border-base-300 rounded-lg">
                         {viewHeader("vals", "变量值", "本次注入的实际值（随任务变化）")}
                         <Show when={views()["vals"]}>
                             <div class="bg-base-200 px-0 py-1 text-[11px]">
@@ -806,15 +870,16 @@ export function PromptLabV4Page() {
                                     when={preview()}
                                     fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}
                                 >
-                                    <table class="table table-xs table-fixed w-full">
+                                    <table class="table table-xs table-fixed" style={{ width: tableW(cols.vals) }}>
                                         <colgroup>
-                                            <col class="w-[42%]" />
-                                            <col />
+                                            <For each={cols.vals.w()}>
+                                                {(w) => <col style={{ width: `${w}px` }} />}
+                                            </For>
                                         </colgroup>
                                         <thead>
                                             <tr>
-                                                <th>变量</th>
-                                                <th>值</th>
+                                                <Th label="变量" cols={cols.vals} index={0} />
+                                                <Th label="值" cols={cols.vals} index={1} />
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -832,7 +897,7 @@ export function PromptLabV4Page() {
                         </Show>
                     </div>
                     {/* 结构树 view：与预览同源的 trace（节点 | 参数 | 值 | 字节） */}
-                    <div class="border border-base-300 rounded-lg overflow-hidden">
+                    <div class="min-w-full w-max border border-base-300 rounded-lg">
                         {viewHeader(
                             "trace",
                             "结构树",
@@ -842,19 +907,18 @@ export function PromptLabV4Page() {
                             <div class="bg-base-200 px-0 py-1 text-[11px]">
                                 <Show when={preview()?.trace} fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}>
                                     {(tr) => (
-                                        <table class="table table-xs table-fixed w-full">
+                                        <table class="table table-xs table-fixed" style={{ width: tableW(cols.trace) }}>
                                             <colgroup>
-                                                <col class="w-[30%]" />
-                                                <col class="w-[30%]" />
-                                                <col class="w-[24%]" />
-                                                <col class="w-[16%]" />
+                                                <For each={cols.trace.w()}>
+                                                    {(w) => <col style={{ width: `${w}px` }} />}
+                                                </For>
                                             </colgroup>
                                             <thead>
                                                 <tr>
-                                                    <th>节点</th>
-                                                    <th>参数</th>
-                                                    <th>值</th>
-                                                    <th class="text-right">字节</th>
+                                                    <Th label="节点" cols={cols.trace} index={0} />
+                                                    <Th label="参数" cols={cols.trace} index={1} />
+                                                    <Th label="值" cols={cols.trace} index={2} />
+                                                    <Th label="字节" cols={cols.trace} index={3} right />
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -991,7 +1055,7 @@ export function PromptLabV4Page() {
                     <div class="flex items-center px-2 py-1">
                         <span class="text-[11px] font-bold tracking-widest opacity-70">预览</span>
                     </div>
-                    <div class="border border-base-300 rounded-lg overflow-hidden">
+                    <div class="min-w-full w-max border border-base-300 rounded-lg">
                         {viewHeader("sysctx", "系统上下文预览", "随草稿自动重算")}
                         <Show when={views()["sysctx"]}>
                         <div class="bg-base-200 px-2 py-2">
@@ -1020,7 +1084,7 @@ export function PromptLabV4Page() {
                         </div>
                         </Show>
                     </div>
-                    <div class="border border-base-300 rounded-lg overflow-hidden">
+                    <div class="min-w-full w-max border border-base-300 rounded-lg">
                         <div class="flex w-full items-center gap-1 bg-base-300 px-2 py-1 text-[11px] font-bold tracking-wide">
                             <button class="opacity-80 hover:opacity-100" onClick={() => toggleView("reqbody")}>
                                 {views()["reqbody"] ? "▾" : "▸"}

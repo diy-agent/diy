@@ -13,8 +13,3 @@ export function projectFromUri(uri: string): string {
   const m = uri.match(/^projects\/([^/]+)\/tasks\//);
   return m?.[1] ?? "";
 }
-
-/** 是否是合法任务 URI */
-export function isTaskUri(uri: string): boolean {
-  return TASK_URI_RE.test(uri);
-}

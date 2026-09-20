@@ -28,8 +28,8 @@
 import type { ArgValue, InterpNode, Node } from './ast';
 import { TemplateError, type Loc, type TemplateErrorCode } from './errors';
 
-/** 已知控制属性（供 lint 复用；omit-empty 已废弃，保留识别以便提示拼错） */
-export const CONTROL_ATTRS = ['if', 'if-not', 'for', 'as', 'include', 'omit-empty'] as const;
+/** 已知控制属性（供 lint 复用；写错会明确报"未知控制属性"+ 已知清单） */
+export const CONTROL_ATTRS = ['if', 'if-not', 'for', 'as', 'include'] as const;
 
 const PATH_RE = /^\.?[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z0-9_$]+)*$/;
 /** 循环变量名（:as="f"，名字不是表达式） */
@@ -536,9 +536,6 @@ class Parser {
                 // <template :include> 上：未知 `:xxx` 视为参数名（剥掉前导冒号）
                 others.push({ ...a, name: key });
                 continue;
-            }
-            if (key === 'omit-empty') {
-                this.err('syntax', ':omit-empty 只能用在输出元素上', a.loc.offset);
             }
             if (ctrl.has(key)) this.err('syntax', `重复的控制属性 :${key}`, a.loc.offset);
             ctrl.set(key, a);

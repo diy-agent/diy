@@ -29,18 +29,8 @@ export function logFile(diyHome: string, name = "main"): string {
   return path.join(diyHome, "log", `${name}.log`);
 }
 
-/** 主进程日志路径，等价于 logFile(diyHome, "main") */
-export function mainLogFile(diyHome: string): string {
-  return logFile(diyHome, "main");
-}
-
 let logFilePath = "";
 let installedHome = "";
-
-/** installDiagnostics() 记下的数据根；未安装则为 "" */
-export function getInstalledHome(): string {
-  return installedHome;
-}
 
 /**
  * 独立的文件日志汇。用于把**外部子进程**（如 ACP agent）的 stderr 转写落盘，

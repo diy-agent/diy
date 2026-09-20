@@ -698,4 +698,3 @@ export const apiDef = RpcSchema.router({
     },
   }),
 });
-export type ApiDef = typeof apiDef;
