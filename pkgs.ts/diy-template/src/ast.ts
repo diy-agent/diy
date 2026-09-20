@@ -5,7 +5,7 @@
 //   interp  {{path}} 插值
 //   tag     带控制属性的标签容器（<description :if>…</description>）：标签原样，内部受控
 //   if      <template :if> / :if-not
-//   for     <template :for="item" :in={{集合}}>
+//   for     <template :for={{集合}} :as="item">
 //   include <template :include="./a.md" 参数… />
 
 import type { Loc } from './errors';
@@ -18,7 +18,7 @@ export interface TextNode {
 
 export interface InterpNode {
     type: 'interp';
-    /** 路径：'.x' / '.x.y' 读动态作用域，'a.b' 读 globals，'.' 读当前循环项 */
+    /** 路径：'.x' / '.x.y' 读动态作用域（循环信封 / include 参数），'a.b' 读 globals */
     path: string;
     loc: Loc;
 }
@@ -46,9 +46,9 @@ export interface IfNode {
 
 export interface ForNode {
     type: 'for';
-    /** 循环变量名，进动态作用域（模版里用 {{.item}} 访问） */
-    item: string;
-    /** 数据源路径（来自 :in={{…}}） */
+    /** 循环变量名（:as="f"）：进动态作用域，其值为迭代信封 { value, index, isFirst, isLast } */
+    as: string;
+    /** 集合表达式（:for={{…}}） */
     source: string;
     children: Node[];
     loc: Loc;

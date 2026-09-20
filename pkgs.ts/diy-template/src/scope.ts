@@ -10,16 +10,9 @@
 
 import { TemplateError, type Loc } from './errors';
 
-/** 一层动态作用域。`:for` 提供 item/index；`:include` 提供参数集合 */
+/** 一层动态作用域。`:for` 绑定**一个名字**（值是一个迭代信封）；`:include` 绑定参数集合 */
 export interface DynamicFrame {
     vars: Record<string, unknown>;
-    /** 当前循环项（供 {{.}} 使用） */
-    item?: unknown;
-    /** 当前下标（供 {{.index}} 使用） */
-    index?: number;
-    /** 是否首项 / 末项（供 {{.isFirst}} / {{.isLast}} 使用）——分隔符场景不需要表达式 */
-    first?: boolean;
-    last?: boolean;
 }
 
 export interface RenderContext {
@@ -78,11 +71,10 @@ function dynamicNames(frames: DynamicFrame[]): string {
 /** 解析路径取值；首段不存在 → 抛 unresolved-path */
 export function resolvePath(path: string, ctx: EvalContext, loc: Loc, file?: string): unknown {
     if (path === '.') {
-        const top = ctx.frames[ctx.frames.length - 1];
-        if (!top) {
-            throw new TemplateError('unresolved-path', '{{.}} 只能用在 :for 循环体内', loc, { file });
-        }
-        return top.item;
+        throw new TemplateError('unresolved-path', '不再支持 {{.}}（歧义：哪一层循环？）', loc, {
+            file,
+            detail: '循环项写全：:for={{集合}} :as="f" 之后用 {{.f.value}}；序号 {{.f.index}}，首末 {{.f.isFirst}} / {{.f.isLast}}',
+        });
     }
 
     if (path.startsWith('.')) {
@@ -91,21 +83,6 @@ export function resolvePath(path: string, ctx: EvalContext, loc: Loc, file?: str
         for (let i = ctx.frames.length - 1; i >= 0; i--) {
             const f = ctx.frames[i]!;
             if (Object.hasOwn(f.vars, head)) return walk(f.vars[head], segs.slice(1));
-        }
-        if (head === 'index' || head === 'isFirst' || head === 'isLast') {
-            // 未被 :include 参数覆盖时，退化到最近的 :for 提供的循环内建量
-            for (let i = ctx.frames.length - 1; i >= 0; i--) {
-                const f = ctx.frames[i]!;
-                const builtin =
-                    head === 'index' ? f.index : head === 'isFirst' ? f.first : f.last;
-                if (builtin !== undefined) return builtin;
-            }
-            throw new TemplateError(
-                'unresolved-path',
-                `{{.${head}}} 只能用在 :for 循环体内（include 内需显式传参）`,
-                loc,
-                { file },
-            );
         }
         throw new TemplateError('unresolved-path', `动态变量 .${head} 未声明`, loc, {
             file,

@@ -85,11 +85,11 @@ version: 1
 
 {{/* 链上每一层由 chain.md 渲染（片段自带结尾换行）；除首层外再前置一个换行 → 层间空一行
     下面 :if-not 里的那个空行是**内容**（不是排版）：删了层间就会少一个换行 */}}
-<template :for="f" :in={{chain}}>
-    <template :if-not={{.isFirst}}>
+<template :for={{chain}} :as="f">
+    <template :if-not={{.f.isFirst}}>
 
     </template>
-    <template :include="./chain.md" path={{.f.path}} scope={{.f.scope}} content={{.f.content}}/>
+    <template :include="./chain.md" path={{.f.value.path}} scope={{.f.value.scope}} content={{.f.value.content}}/>
 </template>
 </project_context>
 
@@ -134,8 +134,8 @@ desc: 尚未接入：本槽位当前渲染为空（skills 为空时整节不进�
 version: 1
 ---
 <skills>
-<template :for="s" :in={{.list}}>
-- {{.s.name}}：{{.s.desc}}
+<template :for={{.list}} :as="s">
+- {{.s.value.name}}：{{.s.value.desc}}
 </template>
 </skills>
 

@@ -9,12 +9,12 @@
 // 为什么不用 XML parser 库：它们会规范化实体/属性引号/空白，破坏逐字节保真。
 //
 // 语法（阶段 1）：
-//   {{path}}                            插值（.x 读动态作用域，a.b 读 globals，. 读当前循环项）
+//   {{path}}                            插值（.x 读动态作用域：循环信封 / include 参数；a.b 读 globals）
 //   \{{                                 → 输出字面量 {{        （逃生舱 1）
 //   <raw>…</raw>                        → 内部原样输出          （逃生舱 2）
 //   <template :if={{p}}>…</template>         条件
 //   <template :if-not={{p}}>…</template>     取反条件
-//   <template :for="x" :in={{p}}>…</template> 循环（{{.index}} 内建下标）
+//   <template :for={{p}} :as="x">…</template> 循环：集合写在 :for，名字写在 :as
 //   <template :include="./a.md" task={{.task}} />  片段调用（非控制属性即参数）
 //   <anything …>…</anything>            输出元素：标签与属性原样进提示词
 //
@@ -29,10 +29,10 @@ import type { ArgValue, InterpNode, Node } from './ast';
 import { TemplateError, type Loc, type TemplateErrorCode } from './errors';
 
 /** 已知控制属性（供 lint 复用；omit-empty 已废弃，保留识别以便提示拼错） */
-export const CONTROL_ATTRS = ['if', 'if-not', 'for', 'in', 'include', 'omit-empty'] as const;
+export const CONTROL_ATTRS = ['if', 'if-not', 'for', 'as', 'include', 'omit-empty'] as const;
 
 const PATH_RE = /^\.?[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z0-9_$]+)*$/;
-/** 循环变量名（不是表达式） */
+/** 循环变量名（:as="f"，名字不是表达式） */
 const FOR_ITEM_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
 export interface ParseOptions {
@@ -462,9 +462,9 @@ class Parser {
         const ifAttr = ctrl['if'];
         const ifNotAttr = ctrl['if-not'];
         const forAttr = ctrl['for'];
-        const inAttr = ctrl['in'];
+        const asAttr = ctrl['as'];
         if (ifAttr && ifNotAttr) this.err('syntax', ':if 与 :if-not 不能同时出现', ifAttr.loc.offset);
-        if (inAttr && !forAttr) this.err('syntax', ':in 只能与 :for 一起用', inAttr.loc.offset);
+        if (asAttr && !forAttr) this.err('syntax', ':as 只能与 :for 一起用', asAttr.loc.offset);
 
         let children: Node[] = [];
         let headClose = '';
@@ -476,7 +476,7 @@ class Parser {
         }
 
         // 标签头：剥掉控制属性的字符区间，其余原样（**不重新格式化**，保留引号/空白）
-        const cut = [ifAttr, ifNotAttr, forAttr, inAttr, ctrl['include']]
+        const cut = [ifAttr, ifNotAttr, forAttr, asAttr, ctrl['include']]
             .filter((a): a is RawAttr => Boolean(a))
             .map((a) => {
                 let start = a.loc.offset;
@@ -493,7 +493,7 @@ class Parser {
         head += this.src.slice(cursor, tag.end);
 
         const node: Node = { type: 'tag', head, headClose, children, loc: tag.loc };
-        return this.wrapControl(forAttr, inAttr, ifAttr, ifNotAttr, [node]);
+        return this.wrapControl(forAttr, asAttr, ifAttr, ifNotAttr, [node]);
     }
 
     // ── 控制节点 <template> ───────────────────────────────────────────
@@ -521,6 +521,14 @@ class Parser {
                     '取反条件写法：<template :if-not={{.isFirst}}>…</template>',
                 );
             }
+            if (key === 'in') {
+                this.err(
+                    'syntax',
+                    ':in 已并入 :for（集合写在 :for，名字写在 :as）',
+                    a.loc.offset,
+                    '新写法：<template :for={{集合}} :as="item">…</template>',
+                );
+            }
             if (!(CONTROL_ATTRS as readonly string[]).includes(key)) {
                 if (!hasInclude) {
                     this.err('syntax', `未知控制属性 ${a.name}`, a.loc.offset, `已知：${CONTROL_ATTRS.map((c) => ':' + c).join('、')}`);
@@ -539,7 +547,7 @@ class Parser {
         const ifAttr = ctrl.get('if');
         const ifNotAttr = ctrl.get('if-not');
         const forAttr = ctrl.get('for');
-        const inAttr = ctrl.get('in');
+        const asAttr = ctrl.get('as');
         const includeAttr = ctrl.get('include');
         if (ifAttr && ifNotAttr) this.err('syntax', ':if 与 :if-not 不能同时出现', ifAttr.loc.offset);
 
@@ -554,7 +562,7 @@ class Parser {
             }
             const args = others.map((a) => ({ name: a.name, value: this.attrShape(a), loc: a.loc }));
             const node: Node = { type: 'include', relpath, args, loc: tag.loc };
-            const nodes = this.wrapControl(forAttr, inAttr, ifAttr, ifNotAttr, [node]);
+            const nodes = this.wrapControl(forAttr, asAttr, ifAttr, ifNotAttr, [node]);
             if (tag.selfClosing) return { nodes, openStandalone, openEnd: tag.end };
             const closeStart = this.pos;
             const children = this.readNodes('template');
@@ -571,7 +579,7 @@ class Parser {
         const closeStart = this.pos;
         const children = this.readNodes('template');
         return {
-            nodes: this.wrapControl(forAttr, inAttr, ifAttr, ifNotAttr, children),
+            nodes: this.wrapControl(forAttr, asAttr, ifAttr, ifNotAttr, children),
             openStandalone,
             openEnd: tag.end,
             closeStart,
@@ -582,15 +590,15 @@ class Parser {
     /** 依次包 :for（外）→ :if/:if-not（内）；无控制属性则原样返回 children */
     private wrapControl(
         forAttr: RawAttr | undefined,
-        inAttr: RawAttr | undefined,
+        asAttr: RawAttr | undefined,
         ifAttr: RawAttr | undefined,
         ifNotAttr: RawAttr | undefined,
         children: Node[],
     ): Node[] {
         let node: Node | undefined;
-        if (forAttr || inAttr) {
-            const how = ':for="item" :in={{集合}}';
-            // 旧写法 "item of 路径" → 直接给出改名提示（比"缺 :in"更指向问题）
+        if (forAttr || asAttr) {
+            const how = ':for={{集合}} :as="item"';
+            // 旧写法 "item of 路径" → 直接给出改名提示（比"缺 :as"更指向问题）
             if (forAttr && /^[A-Za-z_$][\w$]*\s+of\s+/.test(forAttr.value.trim())) {
                 this.err(
                     'syntax',
@@ -599,24 +607,26 @@ class Parser {
                     `已改写法：${how}`,
                 );
             }
-            if (!forAttr) this.err('syntax', ':in 必须与 :for 一起用', inAttr!.loc.offset, `写法：${how}`);
-            if (!inAttr) this.err('syntax', ':for 缺少数据源 :in', forAttr!.loc.offset, `写法：${how}`);
-            const item = forAttr!.value.trim();
-            if (forAttr!.value.includes('{{')) {
-                this.err('syntax', `:for 的值是循环变量名，不能是表达式：${forAttr!.value}`, forAttr!.loc.offset, `写法：${how}`);
-            }
-            if (!FOR_ITEM_RE.test(item)) {
-                this.err('syntax', `:for 的循环变量名非法：${forAttr!.value}`, forAttr!.loc.offset, '变量名用字母/下划线开头，如 s、item');
-            }
-            const shape = this.attrShape(inAttr!);
+            if (!forAttr) this.err('syntax', ':as 必须与 :for 一起用', asAttr!.loc.offset, `写法：${how}`);
+            if (!asAttr) this.err('syntax', ':for 缺少循环变量名 :as', forAttr!.loc.offset, `写法：${how}`);
+            const shape = this.attrShape(forAttr!);
             if (shape.kind !== 'expr') {
                 this.err(
                     'syntax',
-                    `:in 的值必须是单个插值（集合路径），如 :in={{skills}}：${inAttr!.value}`,
-                    inAttr!.loc.offset,
+                    `:for 的值必须是单个插值（集合路径），如 :for={{skills}}：${forAttr!.value}`,
+                    forAttr!.loc.offset,
                 );
             }
-            node = { type: 'for', item, source: shape.path, children, loc: forAttr!.loc };
+            const as = asAttr!.value.trim();
+            if (asAttr!.value.includes('{{') || !FOR_ITEM_RE.test(as)) {
+                this.err(
+                    'syntax',
+                    `:as 需要一个变量名（不是表达式）：${asAttr!.value}`,
+                    asAttr!.loc.offset,
+                    '例：:as="item"；循环内用 {{.item.value}} / {{.item.index}} / {{.item.isFirst}}',
+                );
+            }
+            node = { type: 'for', as, source: shape.path, children, loc: forAttr!.loc };
         }
         const cond = ifAttr ?? ifNotAttr;
         if (cond) {

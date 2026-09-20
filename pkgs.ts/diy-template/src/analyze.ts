@@ -29,7 +29,8 @@ export interface ConditionRef {
 }
 
 export interface LoopRef {
-    item: string;
+    /** 循环变量名（:as） */
+    as: string;
     source: string;
     loc: Loc;
 }
@@ -129,7 +130,7 @@ export function analyzeNodes(nodes: Node[]): Analysis {
                     break;
                 case 'for':
                     addPath(n.source, n.loc);
-                    out.loops.push({ item: n.item, source: n.source, loc: n.loc });
+                    out.loops.push({ as: n.as, source: n.source, loc: n.loc });
                     walk(n.children);
                     break;
                 case 'include':
@@ -190,7 +191,7 @@ export function collectDynamicRefs(nodes: Node[]): Set<string> {
                 case 'for': {
                     add(n.source);
                     const outer = bound;
-                    bound = new Set([...outer, n.item, 'index', 'isFirst', 'isLast']);
+                    bound = new Set([...outer, n.as]);
                     walk(n.children);
                     bound = outer;
                     break;

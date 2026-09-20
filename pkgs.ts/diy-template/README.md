@@ -18,13 +18,13 @@ render('<diy>{{diy.cli}}</diy>', { globals: { diy: { cli: '/repo/diy.sh' } } });
 
 ```xml
 {{diy.cli}}                                   globals 取值（点路径）
-{{.task.title}}                               动态作用域取值（. 前缀）
-{{.index}} {{.isFirst}} {{.isLast}} {{.}}      :for 内建量
+{{.task.title}}                               动态作用域取值（. 前缀：循环信封 / include 参数）
+{{.x.value}} {{.x.index}} {{.x.isFirst}}     循环信封（:for={{集合}} :as="x"）
 \{{   \<   <raw>…</raw>                       逃生舱：输出字面量 {{ / < / 整段原文
 
 <template :if={{p}}>…</template>              条件
 <template :if-not={{p}}>…</template>          取反（cwd 回退提示这类场景）
-<template :for="x" :in={{p}}>…</template>     循环（:for = 变量名，:in = 集合）
+<template :for={{p}} :as="x">…</template>     循环（:for = 集合，:as = 名字）
 <template :include="./_chain.md" path={{.p}}/>  片段调用（非控制属性即参数，动态作用域硬隔离）
 <enabled :if={{p}}>true</enabled>             控制属性也可挂在输出元素上
 <diy>…</diy>                                   任意标签原样进提示词

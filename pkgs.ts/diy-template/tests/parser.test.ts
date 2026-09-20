@@ -85,7 +85,7 @@ describe('控制标记的语法（唯一严格的部分）', () => {
         };
         const e1 = errOf('<template :for="x">a</template>');
         expect(e1.code).toBe('syntax');
-        expect(e1.detail).toContain(':for="item" :in={{集合}}');
+        expect(e1.detail).toContain(':for={{集合}} :as="item"');
         const e2 = errOf('<template :for="x of list">a</template>');
         expect(e2.code).toBe('syntax');
         expect(e2.detail).toContain('已改写法');
@@ -149,7 +149,7 @@ describe('判据 C：带控制属性的标签即容器（其余标签一概是�
         const G = { globals: { diy: { on: true }, list: ['a', 'b'] } };
         expect(render('<item :if={{diy.on}}>严格</item>', G)).toBe('<item>严格</item>');
         expect(render('<item :if={{diy.on}}>严格</item>', { globals: { diy: { on: false } } })).toBe('');
-        expect(render('<skill :for="s" :in={{list}}>{{.s}}</skill>', G)).toBe('<skill>a</skill><skill>b</skill>');
+        expect(render('<skill :for={{list}} :as="s">{{.s.value}}</skill>', G)).toBe('<skill>a</skill><skill>b</skill>');
     });
 
     it('不带控制属性的标签（哪怕配对）也是文本', () => {
@@ -175,21 +175,32 @@ describe('判据 C：带控制属性的标签即容器（其余标签一概是�
 });
 
 describe('作用域边界', () => {
-    it('{{.}} 不在循环里 → unresolved-path', () => {
-        expect(code(() => render('{{.}}', {}))).toBe('unresolved-path');
-    });
-
-    it('{{.index}} 不在循环里 → unresolved-path，提示需显式传参', () => {
+    it('{{.}} 已取消（歧义：哪一层循环）→ 报错并指向 .x.value 写法', () => {
         const e = (() => {
             try {
-                render('{{.index}}', {});
+                render('{{.}}', {});
             } catch (err) {
                 return err as TemplateError;
             }
             return null;
         })()!;
         expect(e.code).toBe('unresolved-path');
-        expect(e.message).toContain('include 内需显式传参');
+        expect(e.message).toContain('不再支持');
+        expect(e.detail).toContain('.f.value');
+    });
+
+    it('循环外引用信封（{{.f.index}}）→ unresolved-path，并列出可用动态名', () => {
+        const e = (() => {
+            try {
+                render('{{.f.index}}', {});
+            } catch (err) {
+                return err as TemplateError;
+            }
+            return null;
+        })()!;
+        expect(e.code).toBe('unresolved-path');
+        expect(e.message).toContain('未声明');
+        expect(e.detail).toContain('当前动态作用域可用');
     });
 
     it('首段用 Object.hasOwn 判定，原型链上的名字不算存在', () => {

@@ -169,22 +169,26 @@ class Renderer {
                         detail: `实际类型：${value === null ? 'null' : typeof value}`,
                     });
                 }
-                const node: TraceNode = { kind: 'for', name: `for ${n.item} in ${n.source}`, bytes: 0, children: [] };
+                const node: TraceNode = { kind: 'for', name: `for ${n.as} in ${n.source}`, bytes: 0, children: [] };
                 let out = '';
                 for (let i = 0; i < value.length; i++) {
+                    // 迭代信封：循环内一切都从这个名字下面取（.f.value/.f.index/.f.isFirst/.f.isLast）
                     const frame: DynamicFrame = {
-                        vars: { [n.item]: value[i] },
-                        item: value[i],
-                        index: i,
-                        first: i === 0,
-                        last: i === value.length - 1,
+                        vars: {
+                            [n.as]: {
+                                value: value[i],
+                                index: i,
+                                isFirst: i === 0,
+                                isLast: i === value.length - 1,
+                            },
+                        },
                     };
                     const iterCtx: EvalContext = { globals: ctx.globals, frames: [...ctx.frames, frame] };
                     const iterSink: TraceNode[] = [];
                     const text = this.renderNodes(n.children, iterCtx, iterSink);
                     node.children!.push({
                         kind: 'for-item',
-                        name: `${n.item}[${i}]`,
+                        name: `${n.as}[${i}]`,
                         bytes: byteLength(text),
                         children: iterSink,
                     });

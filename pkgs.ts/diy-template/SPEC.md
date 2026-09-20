@@ -100,13 +100,24 @@ encode = 我怎么输出字符串     ← 输出管线，属于调用方（不�
 | 控制标记 | 含义 |
 | --- | --- |
 | `<template :if={{p}}>` | 真值渲染 |
-| `<template :if-not={{p}}>` | 取反渲染（**不是** `:if-not`：没有表达式语言，否定只能靠关键词，而 `if-not` 与 `if` 同根对称） |
-| `<template :for="item" :in={{集合}}>` | 循环；`:for` 是**变量名**（不是表达式），`:in` 是**集合表达式** —— 名字与表达式在语法上分离 |
+| `<template :if-not={{p}}>` | 取反渲染（**不是** `:unless`：没有表达式语言，否定只能靠关键词，而 `if-not` 与 `if` 同根对称） |
+| `<template :for={{集合}} :as="item">` | 循环：**`:for` 的值是集合表达式，`:as` 的值是变量名** —— 每个控制属性的值语义单一（表达式），唯一的名字值属性是 `:as` |
 | `<template :include="./a.md" p={{x}} />` | 片段调用；路径必须是字面量（禁动态 include），参数在调用方求值后硬隔离传入 |
 
-**不选 `:for="x of p"`**：那会把名字与表达式塞进一个值里（旧写法，现已报错并给修复提示）。
+**循环内用「迭代信封」**：`:as="item"` 绑定的不是一个裸值，而是一个命名空间，一切都从它下面取：
 
-`<description :if={{…}}>` / `<skill :for="…" :in={{…}}>` 这类写法**不需要 `knownTags` 白名单**，判据是结构性的：
+| 写法 | 含义 |
+| --- | --- |
+| `{{.item.value}}` / `{{.item.value.path}}` | 当前项 / 它的字段（**无字段名碰撞**：项自己的 `index` 字段在 `.item.value.index`） |
+| `{{.item.index}}` | 序号（数组下标） |
+| `{{.item.isFirst}}` / `{{.item.isLast}}` | 首项 / 末项（分隔符场景不需要表达式） |
+
+嵌套循环各自独立：`.g.index` 与 `.it.index` 同时可访（旧设计里 `.index` 是游离名，外层会被内层遮蔽 → 外层下标不可达）。
+**已取消**：`{{.}}`（歧义：哪一层循环？）、游离的 `{{.index}}` / `{{.isFirst}}` / `{{.isLast}}`（同上）——用到时直接报错并给出 `.x.value` 写法。
+
+**不选 `:for="x of p"` / `:for="x" :in={{p}}`**：前者把名字与表达式塞进一个值里；后者让 `:for` 成为唯一的“名字值”控制属性（不一致）。现已报错并给修复提示。
+
+`<description :if={{…}}>` / `<skill :for={{…}} :as="…">` 这类写法**不需要 `knownTags` 白名单**，判据是结构性的：
 
 | 判据 | 实测碰撞（剔围栏，1703KB） | 维护成本 | 支持 `<description :if>` |
 | --- | ---: | --- | --- |
@@ -120,7 +131,7 @@ encode = 我怎么输出字符串     ← 输出管线，属于调用方（不�
    （`<diy>`、`<pid>`、`a<b`、`vector<T>`、`<b>bold</b>` 全部逐字节原样）。
 2. **当且仅当标签头里带控制属性**（`:if` / `:if-not` / `:for` / `:in`）时，它成为**容器节点**：
    必须找到配对的 `</name>`（找不到 → **报错**，不静默），作用是"按条件/循环渲染内部，并把自身的
-   开/闭合标签**原样**输出"。⇒ `<skill :for="s" :in={{skills}}>{{.s.name}}</skill>` → `<skill>a</skill><skill>b</skill>`。
+   开/闭合标签**原样**输出"。⇒ `<skill :for={{skills}} :as="s">{{.s.value.name}}</skill>` → `<skill>a</skill><skill>b</skill>`。
 3. **逐字节重发**：只按**字符区间**剥掉控制属性，其余字符（引号、空白、无值属性）原样保留
    （`<pi path='x'  flag :if={{on}}>` → `<pi path='x'  flag>`），**绝不重新格式化**。
 
@@ -141,7 +152,9 @@ interface RenderContext {
 ```
 
 - 路径分流：`.` 开头 → dynamic；否则 → globals。**不允许跨 scope 同名遮蔽**（前缀天然区分）。
-- 作用域链：同模版内嵌套 `:for` → 内层可见外层，同名内层遮蔽。
+- 作用域链：同模版内嵌套 `:for` → 内层可见外层（信封名不同则两者都能用；同名则内层遮蔽）。
+- `:for` 压入的帧里只有**一个名字**：其值是一个迭代信封 `{ value, index, isFirst, isLast }`
+  （信封就是普通嵌套对象，路径机器直接走 → 引擎里没有“内建名”特例代码）。
 - **`:include` 硬隔离**：不继承调用者的动态链，被调模版只有 `args` 一层；globals 全程可见
   （= `renderInclude(path, { globals, dynamic: args })`）。
 - 严格性：**首段必须存在**（否则 `unresolved-path`，detail 列出可用名）；深层字段缺失返回 `undefined`；
@@ -168,7 +181,7 @@ interface IncludeResolver {
 5. **参数双向静态校验**（阶段 1 用它替代 Zod）：
    - 被调模版引用了但没传 → `missing-arg`
    - 传了但被调模版从未引用（含 `:iff` 这类拼错）→ `unknown-arg`
-   - 被调模版的 `:for` 绑定名与 `index`/`isFirst`/`isLast` 自动排除，不算参数。
+   - 被调模版的 `:for` 绑定名（`:as`）自动排除，不算参数。
 
 ---
 
@@ -209,7 +222,7 @@ renderWithTrace(source, ctx, { resolver, file, locked }): { text, trace }
 - `pkgs.ts/diy-app/tests/core/template-engine-equivalence.test.ts` **10 例全绿**：
   - 8 份真实内置模版：新引擎 vs 现有 `renderTemplate` **逐字节相同**；
   - **整份 system 装配等价**：把「包裹标签 + 空节跳过 + `join("\n\n")`」全部搬进模版
-    （标签内联 + `:for` / `:in` + `:if-not={{.isFirst}}` + `:include`）后，输出与换引擎前的 system **逐字节相同**。
+    （标签内联 + `:for` / `:as` + `:if-not={{.f.isFirst}}` + `:include`）后，输出与换引擎前的 system **逐字节相同**。
 - `./sha.sh check` exit 0（含产物护栏）；diy-app core 测试 166 例全绿（无回归）。
 
 **代价与结论**：引擎本身**可行且不大**（≈1,260 行 / 2 天量级）；真正的成本在
@@ -265,8 +278,8 @@ renderWithTrace(source, ctx, { resolver, file, locked }): { text, trace }
 9. **trace / analyze 的 UI 形态**：左侧两个 view 的具体呈现（树粒度、是否显示字节数、是否可点跳转）未定。
 10. **打包形态**：`@diy/template` 需要在 `vite.main/preload/serve.config.ts` 的 `pkgDeps` 里内联（M4 时处理）。
 11. **属性值里的 `"` 不转义**：可能产出不良构 XML（值来自变量时）。是否限制/告警？
-12. **内建名冲突**：`.index` / `.isFirst` / `.isLast` 与 include 参数同名时的优先级
-    （当前规则：参数优先，未被参数覆盖时才退化到循环内建量）。确认即可。
+12. **已解决（迭代信封）**：旧设计里 `.index` / `.isFirst` / `.isLast` 是游离名，与 include 参数同名时靠“参数优先”兼容，
+    且嵌套循环时外层下标不可达。现改为 `:as="item"` 绑定一个信封（`.item.value/.index/.isFirst/.isLast`）：无碰撞、嵌套各自可访。
 
 ---
 
