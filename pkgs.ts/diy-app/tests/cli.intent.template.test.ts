@@ -64,11 +64,12 @@ function overridePath(pid: string, relpath: string): string {
 }
 
 describe("template list/get", () => {
-    it("list — 七份内置 + 一份片段、全部 builtin、_guard 锁定", async () => {
+    it("list — 装配入口 + 七份节 + 链片段、全部 builtin、入口与 _guard 锁定", async () => {
         const pid = await freshProj("list");
         const r = await fx.sh.getJson(`./diy.sh template list ${pid}`);
         const list = r.data as Array<{ relpath: string; status: string; overridable: boolean; tip: string; tag: string; fragment: boolean }>;
         expect(list.map((e) => e.relpath)).toEqual([
+            "system.md",
             "000-identity.md",
             "100-diy.md",
             "200-project.md",
@@ -86,6 +87,8 @@ describe("template list/get", () => {
         const guard = list.find((e) => e.relpath === "_guard.md")!;
         expect(guard.overridable).toBe(false);
         expect(guard.tip.length).toBeGreaterThan(0);
+        // 装配入口也锁定（改它就改节顺序与分隔）
+        expect(list.find((e) => e.relpath === "system.md")!.overridable).toBe(false);
         await cleanup(pid);
     });
 
@@ -96,8 +99,8 @@ describe("template list/get", () => {
         expect(e["status"]).toBe("builtin");
         expect(e["current"]).toBe(e["builtin"]);
         expect(e["stale"]).toBe(false);
-        // DIY_CLI 由入口注入 —— 渲染后的正文应带着绝对入口，而不是裸 diy
-        expect(String(e["builtin"])).toContain("{{diy_cli}}");
+        // 变量命名空间化（M4）：模版里写 {{diy.cli}}，由入口注入的绝对路径渲染
+        expect(String(e["builtin"])).toContain("{{diy.cli}}");
         await cleanup(pid);
     });
 });
@@ -178,20 +181,30 @@ describe("template preview", () => {
         await cleanup(pidB);
     });
 
-    it("覆盖只取 body（frontmatter 不进请求）+ 未知变量上报", async () => {
+    it("覆盖只取 body（frontmatter 不进请求）；未知路径响亮报错（不再静默上报）", async () => {
         const pid = await freshProj("frontmatter");
         mkdirSync(join(fx.HOME, "projects", pid, "template"), { recursive: true });
+        // 先放一个**合法**覆盖：frontmatter 必须不进请求
         writeFileSync(
             overridePath(pid, "400-rules.md"),
-            "---\ntitle: 手写覆盖\nversion: 9\n---\n- 规则 {{nope}}\n",
+            "---\ntitle: 手写覆盖\nversion: 9\n---\n<rules>\n- 我自己的规则\n</rules>\n",
             "utf-8",
         );
-        const r = await fx.sh.getJson(`./diy.sh template preview ${pid}`);
-        const p = r.data as Record<string, unknown>;
-        const system = String(p["system"]);
-        expect(system).toContain("- 规则 {{nope}}");
-        expect(system).not.toContain("title: 手写覆盖");
-        expect(p["unknownVars"]).toEqual(["nope"]);
+        const ok = await fx.sh.getJson(`./diy.sh template preview ${pid}`);
+        const okSystem = String((ok.data as Record<string, unknown>)["system"]);
+        expect(okSystem).toContain("- 我自己的规则");
+        expect(okSystem).not.toContain("title: 手写覆盖");
+        expect((ok.data as Record<string, unknown>)["unknownVars"]).toEqual([]);
+
+        // 再放一个引用未知路径的覆盖：引擎严格 → 预览直接失败（旧行为是 unknownVars 软警告）
+        writeFileSync(
+            overridePath(pid, "400-rules.md"),
+            "---\ntitle: 手写覆盖\nversion: 9\n---\n<rules>\n- 规则 {{nope}}\n</rules>\n",
+            "utf-8",
+        );
+        const bad = await fx.sh.run(`./diy.sh template preview ${pid}`);
+        expect(bad.code).not.toBe(0);
+        expect(String(bad.stderr)).toContain("nope");
         // 手工放的覆盖（无 sidecar）也提示可能过期
         const g = await fx.sh.getJson(`./diy.sh template get ${pid} 400-rules.md`);
         expect((g.data as Record<string, unknown>)["stale"]).toBe(true);

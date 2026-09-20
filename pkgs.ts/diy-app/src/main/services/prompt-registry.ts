@@ -5,16 +5,17 @@
 //   覆盖: $DIY_HOME/projects/<id>/template/<relpath>（与 tasks/ 同级，listTasks 只扫 tasks/ 数字目录）
 //   元数据: template/.meta.yaml {<relpath>: {baseVersion}}（save 时记内置版本，供 stale 判定）
 // 解析 = 覆盖存在 ? 覆盖 : 内置（覆盖文件只取 body，frontmatter 不算）；状态只有 builtin | overridden。
-// 装配 = 按 PROMPT_DEFAULTS 的对象键序拼接（声明顺序即装配顺序），非 identity 节包同名标签，空节不进请求。
+// 装配 = 以内置 system.md 为入口，交给 @diy/template 渲染：
+//   节顺序与节间分隔写在 system.md 里，节标签内联在各节模版里，include 经本模块的 resolver
+//   （项目覆盖 > 内置 + fragment/locked 标记 + 草稿）。
 // 本模块只做组装与渲染，不发任何 LLM 请求（试验场试跑 = dry-run，看请求长什么样）。
 
 import * as yaml from "js-yaml";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
-import { render as renderDsl, type IncludeResolver } from "@diy/template";
+import { analyze, render as renderDsl, type IncludeResolver } from "@diy/template";
 import { PROMPT_DEFAULTS } from "../prompts/defaults";
-import { PROMPT_DEFAULTS_DSL } from "../prompts/defaults-dsl";
 import { parseTaskFile } from "../core/state";
 import { resolveCwd } from "../core/cwd";
 import { getProjectPath } from "../core/project";
@@ -37,71 +38,14 @@ export interface PromptMeta {
   fragment: boolean;
 }
 
-/** 装配变量（全部来自运行时事实，模板只做白名单替换） */
-export interface AssembleVars {
-  diy_cli: string;
-  diy_home: string;
-  project_path: string;
-  task_uri: string;
-  task_title: string;
-  task_state: string;
-  task_body: string;
-  task_dir: string;
-  cwd: string;
-  /** 工作目录与项目目录不一致时的提示；一致时为空 */
-  cwd_note: string;
-  /** AGENTS.md 链渲染结果（见 projectInstructions） */
-  project_instructions: string;
-  skills: string;
-}
-
-/** 变量白名单：只允许这些占位符；未知变量原样保留 + 回报（不阻断） */
-const KNOWN_VARS = [
-  "diy_cli",
-  "diy_home",
-  "project_path",
-  "task_uri",
-  "task_title",
-  "task_state",
-  "task_body",
-  "task_dir",
-  "cwd",
-  "cwd_note",
-  "project_instructions",
-  "skills",
-] as const;
-
-/**
- * 系统上下文预算（字节）。
- *
- * 与模型上下文窗口挂钩（原来是一个 64KB 魔法数）：预算 = min(硬上限, 上下文窗口 × 份额)，
- * 份额取 5% —— 系统提示词只是上下文里的一部分，还要留出会话历史、工具结果与输出。
- * 小窗口模型（如 256k）因此拿到更小的预算，大窗口模型封顶在 64KB。
- */
-export const SYSTEM_BUDGET_CAP_BYTES = 64 * 1024;
-/** 系统提示词占上下文窗口的比例（5%） */
-export const SYSTEM_BUDGET_CONTEXT_SHARE = 0.05;
-/** 模型上下文窗口未知时的预算（等于硬上限，保持旧行为） */
-export const DEFAULT_SYSTEM_BUDGET_BYTES = SYSTEM_BUDGET_CAP_BYTES;
-
-/** 由模型上下文窗口（tokens）推导系统上下文预算（字节）；未知则用默认值 */
-export function systemBudgetForContext(contextLimitTokens?: number): number {
-  if (!contextLimitTokens || !Number.isFinite(contextLimitTokens) || contextLimitTokens <= 0) {
-    return DEFAULT_SYSTEM_BUDGET_BYTES;
-  }
-  const bytes = Math.floor(contextLimitTokens * 4 * SYSTEM_BUDGET_CONTEXT_SHARE); // 粗估 1 token ≈ 4 字节
-  return Math.max(16 * 1024, Math.min(SYSTEM_BUDGET_CAP_BYTES, bytes));
-}
-
 const FM_SEP = "---";
 
 /**
  * 解析模版：frontmatter + body。
- * @param byteExact true = **模版源逐字节进引擎**（只去掉 frontmatter 后那一个换行）——
- *        DSL 路径用它（决策：不再 trim、不再补 \n，末尾换行由模版自己负责）；
- *        legacy 路径保持旧行为（trim + 补 \n），迁移期两套并存。
+ * **模版源逐字节进引擎**：body 只去掉 frontmatter 后那一个换行，不 trim、不补 \n
+ * （末尾换行与节间分隔由模版自己负责）。
  */
-export function parseMd(raw: string, opts: { byteExact?: boolean } = {}): { meta: PromptMeta; body: string } {
+export function parseMd(raw: string): { meta: PromptMeta; body: string } {
   const fallback: PromptMeta = {
     title: "",
     desc: "",
@@ -131,7 +75,7 @@ export function parseMd(raw: string, opts: { byteExact?: boolean } = {}): { meta
       tag: String(front["tag"] ?? ""),
       fragment: front["fragment"] === true,
     },
-    body: opts.byteExact ? raw.slice(end + 3).replace(/^\n/, "") : raw.slice(end + 3).trim() + "\n",
+    body: raw.slice(end + 3).replace(/^\n/, ""),
   };
 }
 
@@ -277,28 +221,19 @@ export function restorePrompt(home: string, projectId: string, relpath: string):
   return entryOf(home, projectId, relpath);
 }
 
-/** 模版内的 {{var}} 渲染：白名单内替换，未知原样保留并计数（返回 unknown 供 UI 提示）。
- *  extra / known：片段模版自己的变量（如 _chain.md 的 path/scope/content）不许污染节模版的白名单。 */
-export function renderTemplate(
-  body: string,
-  vars: AssembleVars,
-  opts: { extra?: Record<string, string>; known?: readonly string[] } = {},
-): { text: string; unknown: string[] } {
-  const map = { ...(vars as unknown as Record<string, string>), ...(opts.extra ?? {}) };
-  const allowed = new Set<string>([...(KNOWN_VARS as readonly string[]), ...(opts.known ?? [])]);
-  const unknown = new Set<string>();
-  const text = body.replace(/\{\{\s*([\w]+)\s*\}\}/g, (m, k: string) => {
-    if (allowed.has(k)) return map[k] ?? "";
-    unknown.add(k);
-    return m;
-  });
-  return { text, unknown: [...unknown] };
-}
+/** 系统上下文预算（字节）：与模型上下文窗口挂钩（窗口 × 5%，clamp 16KB~64KB） */
+export const SYSTEM_BUDGET_CAP_BYTES = 64 * 1024;
+export const SYSTEM_BUDGET_CONTEXT_SHARE = 0.05;
+export const DEFAULT_SYSTEM_BUDGET_BYTES = SYSTEM_BUDGET_CAP_BYTES;
 
-/**
- * 工作目录解析：唯一实现在 core/cwd.ts（工具 cwd 与提示词里的「工作目录」必须同源，
- * 否则模型按提示词的相对路径操作就会操作错地方）。本文件只消费它的 note。
- */
+/** 由模型上下文窗口（tokens）推导系统上下文预算（字节）；未知则用默认值 */
+export function systemBudgetForContext(contextLimitTokens?: number): number {
+  if (!contextLimitTokens || !Number.isFinite(contextLimitTokens) || contextLimitTokens <= 0) {
+    return DEFAULT_SYSTEM_BUDGET_BYTES;
+  }
+  const bytes = Math.floor(contextLimitTokens * 4 * SYSTEM_BUDGET_CONTEXT_SHARE); // 粗估 1 token ≈ 4 字节
+  return Math.max(16 * 1024, Math.min(SYSTEM_BUDGET_CAP_BYTES, bytes));
+}
 
 /** 任务文件路径（home 参数权威：不用 state.taskFilePath，那走全局 diyHome，隔离失效） */
 function taskFileAt(home: string, taskUri: string): string {
@@ -314,22 +249,15 @@ function taskOf(home: string, taskUri: string): { title: string; state: string; 
   return { title: meta.title ?? "", state: meta.state ?? "", body: meta.body ?? "" };
 }
 
-/** AGENTS.md 链片段模版（frontmatter fragment: true）；可覆盖 → 改模版即改链的呈现 */
-export const CHAIN_FRAGMENT = "_chain.md";
-/** 片段模版缺失/为空的兜底包裹（与历史行为一致） */
-const DEFAULT_CHAIN_WRAPPER = `<project_instructions path="{{path}}" scope="{{scope}}">\n{{content}}\n</project_instructions>`;
-
 /**
  * AGENTS.md 链：从工作目录逐层向上，外层在前、最深处在后。
- * - 只看标准 AGENTS.md
- * - 排除任务本体（tasks/<tid>/AGENTS.md 是任务正文，已由 300-task 渲染）
+ * - 只看标准 AGENTS.md；排除任务本体（tasks/<tid>/AGENTS.md 是任务正文，已由 300-task 渲染）
  * - **上界 = $HOME**（不进 /、不进 /Users）：家里那几层（~/AGENTS.md、~/git/AGENTS.md …）
- *   是用户指定的全局规则与信息，就是要逐层生效到每个任务；缺了它们反而要靠模型猜。
- *   代价是体积（实测一条链 ~10KB），靠 64KB 预算与「链上有哪些文件」的可观测性兜底。
- * - 工作目录不在 $HOME 内时才只取该目录自身一层（不猜外部目录树的约定）
- * - 另加 $DIY_HOME/AGENTS.md 作为应用级规范（存在才加）
+ *   是用户指定的全局规则与信息，就是要逐层生效到每个任务
+ * - 工作目录不在 $HOME 内时才只取该目录自身一层；另加 $DIY_HOME/AGENTS.md 作为应用级规范
+ * 内容 trim（这是**数据准备**：链内容是变量值，不是模版源）
  */
-function projectInstructions(home: string, projectId: string, cwd: string, taskUri: string): string {
+function chainOf(home: string, cwd: string, taskUri: string): AssembleGlobals["chain"] {
   const homeDir = homedir();
   const start = resolve(cwd);
   const underHome = start === homeDir || start.startsWith(homeDir + sep);
@@ -349,71 +277,78 @@ function projectInstructions(home: string, projectId: string, cwd: string, taskU
   files.reverse();
   const appLevel = join(home, "AGENTS.md");
   if (!seen.has(appLevel) && existsSync(appLevel)) files.unshift(appLevel);
-  // 每层的包裹格式也来自模版（_chain.md 片段，变量 path/scope/content）：
-  // 改模版即改链的呈现（以前这段 markup 硬编码在代码里，用户在模版里找不到）。
-  const tpl = entryOf(home, projectId, CHAIN_FRAGMENT).current || DEFAULT_CHAIN_WRAPPER;
-  return files
-    .map((fp) => {
-      const content = readFileSync(fp, "utf-8").trim();
-      const r = renderTemplate(tpl, {} as AssembleVars, { known: ["path", "scope", "content"], extra: { path: fp, scope: dirname(fp), content } });
-      return r.text.trim();
-    })
-    .join("\n\n");
+  return files.map((fp) => ({ path: fp, scope: dirname(fp), content: readFileSync(fp, "utf-8").trim() }));
 }
 
 // ═══════════════════════════════════════════════════════════════
-// DSL 装配路径（M4）：节标签内联在模版里、顺序与分隔写在 system.md 里
-//   与 legacy 的区别只有一处是"可见"的：**system 末尾多一个 \n**（模版源自带末尾换行）。
-//   验收见 tests/core/template-dsl-golden.test.ts（golden = 换引擎前的真实输出）。
+// DSL 装配（M4 默认路径）：节标签内联在模版里、顺序与分隔写在 system.md 里
 // ═══════════════════════════════════════════════════════════════
 
 /** DSL 装配变量（命名空间版）：模版里写 {{diy.cli}} / {{task.title}} / {{.path}} */
 export interface AssembleGlobals {
-    diy: { cli: string; home: string };
-    project: { path: string };
-    task: { uri: string; title: string; state: string; body: string; dir: string };
-    cwd: { path: string; note: string; isFallback: boolean; isTaskDir: boolean; isAppDir: boolean };
-    chain: Array<{ path: string; scope: string; content: string }>;
-    skills: Array<{ name: string; desc: string }>;
+  diy: { cli: string; home: string };
+  project: { path: string };
+  task: { uri: string; title: string; state: string; body: string; dir: string };
+  cwd: { path: string; note: string; isFallback: boolean; isTaskDir: boolean; isAppDir: boolean };
+  chain: Array<{ path: string; scope: string; content: string }>;
+  skills: Array<{ name: string; desc: string }>;
 }
 
 /** 从模板常量构建 include resolver（fragment / locked 由 frontmatter 声明） */
 export function makeTemplatesResolver(
-    templates: Record<string, string>,
-    overrides?: Record<string, string>,
+  templates: Record<string, string>,
+  overrides?: Record<string, string>,
 ): IncludeResolver {
-    return {
-        resolve(relpath) {
-            // 模版内写的是 "./xxx.md"；注册表的键是不带 "./" 的 relpath
-            const key = relpath.replace(/^\.\//, '');
-            const raw = overrides?.[key] ?? templates[key];
-            if (raw === undefined) return null;
-            const { meta, body } = parseMd(raw, { byteExact: true });
-            return { source: body, fragment: meta.fragment, locked: !meta.overridable };
-        },
-    };
+  return {
+    resolve(relpath) {
+      // 模版内写的是 "./xxx.md"；注册表的键是不带 "./" 的 relpath
+      const key = relpath.replace(/^\.\//, "");
+      const raw = overrides?.[key] ?? templates[key];
+      if (raw === undefined) return null;
+      const { meta, body } = parseMd(raw);
+      return { source: body, fragment: meta.fragment, locked: !meta.overridable };
+    },
+  };
 }
 
 /**
  * 用 DSL 引擎渲染 system.md（真发与预览共用）。
- * templates 可注入（测试用），默认走内置 DSL 模版。
+ * @param resolve 自定义 include 解析（真环境用它接入项目覆盖与草稿）；缺省从 templates 取
  */
 export function renderSystemDsl(opts: {
-    globals: AssembleGlobals | Record<string, unknown>;
-    templates?: Record<string, string>;
-    overrides?: Record<string, string>;
-    entry?: string;
+  globals: AssembleGlobals | Record<string, unknown>;
+  templates?: Record<string, string>;
+  overrides?: Record<string, string>;
+  resolve?: IncludeResolver["resolve"];
+  entry?: string;
 }): string {
-    const templates = opts.templates ?? PROMPT_DEFAULTS_DSL;
-    const entry = opts.entry ?? 'system.md';
-    const raw = templates[entry];
-    if (raw === undefined) throw new Error(`缺少装配入口模版：${entry}`);
-    const { meta, body } = parseMd(raw, { byteExact: true });
-    return renderDsl(
-        body,
-        { globals: opts.globals as Record<string, unknown> },
-        { resolver: makeTemplatesResolver(templates, opts.overrides), file: entry, locked: !meta.overridable },
-    );
+  const templates = opts.templates ?? PROMPT_DEFAULTS;
+  const entry = opts.entry ?? "system.md";
+  const raw = templates[entry];
+  if (raw === undefined) throw new Error(`缺少装配入口模版：${entry}`);
+  const { meta, body } = parseMd(raw);
+  const resolver: IncludeResolver = { resolve: opts.resolve ?? makeTemplatesResolver(templates, opts.overrides).resolve };
+  return renderDsl(body, { globals: opts.globals as Record<string, unknown> }, {
+    resolver,
+    file: entry,
+    locked: !meta.overridable,
+  });
+}
+
+/** 静态体检：把模版里的 lint（如控制属性误用）汇总成告警，不阻断装配 */
+function lintWarnings(home: string, projectId: string): string[] {
+  const out: string[] = [];
+  for (const relpath of Object.keys(PROMPT_DEFAULTS)) {
+    const entry = entryOf(home, projectId, relpath);
+    try {
+      for (const issue of analyze(entry.current, { file: relpath }).lint) {
+        out.push(`${relpath}:${issue.loc.line}:${issue.loc.col} ${issue.message}`);
+      }
+    } catch (e) {
+      out.push(`${relpath} 语法检查失败：${(e as Error).message}`);
+    }
+  }
+  return out;
 }
 
 /**
@@ -426,7 +361,7 @@ export function assembleSystem(
   projectId: string,
   opts: {
     taskUri?: string;
-    skills?: string;
+    skills?: Array<{ name: string; desc: string }>;
     drafts?: Record<string, string>;
     diyCli?: string;
     contextLimitTokens?: number;
@@ -434,8 +369,7 @@ export function assembleSystem(
 ): AssembledSystem {
   const taskUri = opts.taskUri ?? "";
   const task = taskOf(home, taskUri);
-  const { cwd, note } = resolveCwd(home, taskUri);
-  // CLI 入口走 runtime 契约（不做裸 process.env 读）——prompt-registry 是 main 侧模块，可直接读
+  const cwdRes = resolveCwd(home, taskUri);
   const warnings: string[] = [];
   const orphans = orphanOverrides(home, projectId);
   if (orphans.length > 0) {
@@ -451,39 +385,44 @@ export function assembleSystem(
       "未注入 DIY_CLI（当前进程环境没有该变量）：提示词里的「命令行入口」会退化成裸 diy，在 worktree 里会打到生产数据根。检查启动脚本是否注入 DIY_CLI。",
     );
   }
-  const vars: AssembleVars = {
-    diy_cli: diyCli || "diy（未注入 DIY_CLI，勿照抄）",
-    diy_home: home,
-    project_path: getProjectPath(projectId) ?? "",
-    task_uri: taskUri,
-    task_title: task?.title ?? "",
-    task_state: task?.state ?? "",
-    task_body: task?.body ?? "",
-    task_dir: taskUri ? join(home, taskUri) : "",
-    cwd,
-    cwd_note: note,
-    project_instructions: projectInstructions(home, projectId, cwd, taskUri),
-    skills: opts.skills ?? "",
+  const globals: AssembleGlobals = {
+    diy: { cli: diyCli || "diy（未注入 DIY_CLI，勿照抄）", home },
+    project: { path: getProjectPath(projectId) ?? "" },
+    task: {
+      uri: taskUri,
+      title: task?.title ?? "",
+      state: task?.state ?? "",
+      body: task?.body ?? "",
+      dir: taskUri ? join(home, taskUri) : "",
+    },
+    cwd: {
+      path: cwdRes.cwd,
+      note: cwdRes.note,
+      isFallback: cwdRes.isFallback,
+      isTaskDir: cwdRes.isTaskDir,
+      isAppDir: cwdRes.isAppDir,
+    },
+    chain: chainOf(home, cwdRes.cwd, taskUri),
+    skills: opts.skills ?? [],
   };
-  const unknown = new Set<string>();
-  const blocks: string[] = [];
-  for (const relpath of Object.keys(PROMPT_DEFAULTS)) {
-    const entry = entryOf(home, projectId, relpath);
-    if (entry.fragment) continue; // 片段模版不进节拼接（由引用它的变量渲染）
-    const body = opts.drafts?.[relpath] ?? entry.current;
-    const r = renderTemplate(body, vars);
-    r.unknown.forEach((u) => unknown.add(u));
-    if (!r.text.trim()) continue; // 空节不进请求
-    // 包裹标签由模版 frontmatter 的 tag 声明（空串 = 裸文本节）
-    const tag = entry.tag;
-    blocks.push(tag ? `<${tag}>\n${r.text.trim()}\n</${tag}>` : r.text.trim());
-  }
-  const system = blocks.join("\n\n");
+
+  // include 解析：草稿 > 项目覆盖 > 内置；白名单 = 内置清单（assertRelpath 兜底）
+  const resolveInclude: IncludeResolver["resolve"] = (relpath) => {
+    const key = relpath.replace(/^\.\//, "");
+    if (!Object.hasOwn(PROMPT_DEFAULTS, key)) return null;
+    const draft = opts.drafts?.[key];
+    const entry = entryOf(home, projectId, key);
+    const source = draft !== undefined ? parseMd(draft).body : entry.current;
+    return { source, fragment: entry.fragment, locked: !entry.overridable };
+  };
+  const system = renderSystemDsl({ globals, resolve: resolveInclude });
+  warnings.push(...lintWarnings(home, projectId));
   const used = Buffer.byteLength(system, "utf-8");
   const budget = systemBudgetForContext(opts.contextLimitTokens);
   return {
     system,
-    unknownVars: [...unknown],
+    // DSL 引擎对未知路径/参数是**抛错**（响亮），不再用"警告 + 原样保留"那种静默降级
+    unknownVars: [],
     overBudget: used > budget ? { used, budget } : null,
     warnings,
   };

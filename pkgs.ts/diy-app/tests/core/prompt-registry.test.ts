@@ -8,11 +8,9 @@ import {
   getPrompt,
   savePrompt,
   restorePrompt,
-  renderTemplate,
   assembleSystem,
   systemBudgetForContext,
   SYSTEM_BUDGET_CAP_BYTES,
-  type AssembleVars,
 } from "../../src/main/services/prompt-registry";
 
 let home: string;
@@ -27,25 +25,11 @@ beforeEach(() => {
   writeFileSync(join(home, "projects", PID, "meta.yaml"), `id: '${PID}'\npath: /tmp/nonexist\n`, "utf-8");
 });
 
-const vars = (): AssembleVars => ({
-  diy_cli: "/repo/diy.sh",
-  diy_home: home,
-  project_path: "/tmp/nonexist",
-  task_uri: TASK,
-  task_title: "标题",
-  task_state: "pending",
-  task_body: "正文",
-  task_dir: join(home, TASK),
-  cwd: join(home, TASK),
-  cwd_note: "",
-  project_instructions: "",
-  skills: "",
-});
-
 describe("list/get", () => {
-  it("全部内置态，六节 + 一锁定节", () => {
+  it("全部内置态：装配入口 system.md + 七个节 + 链片段", () => {
     const all = listPrompts(home, PID);
     expect(all.map((e) => e.relpath)).toEqual([
+      "system.md",
       "000-identity.md",
       "100-diy.md",
       "200-project.md",
@@ -55,6 +39,9 @@ describe("list/get", () => {
       "_chain.md",
       "_guard.md",
     ]);
+    // 装配入口锁定（改它就改结构）
+    expect(getPrompt(home, PID, "system.md").overridable).toBe(false);
+    expect(getPrompt(home, PID, "system.md").tip.length).toBeGreaterThan(0);
     // 结构与标签也在模版里（不再藏代码）：tag 由 frontmatter 声明，_chain.md 是片段
     expect(getPrompt(home, PID, "200-project.md").tag).toBe("project_context");
     expect(getPrompt(home, PID, "000-identity.md").tag).toBe("");
@@ -93,14 +80,6 @@ describe("save/restore", () => {
   });
 });
 
-describe("renderTemplate", () => {
-  it("白名单变量替换，未知保留 + 上报", () => {
-    const r = renderTemplate("a={{cwd}} b={{nope}}", vars());
-    expect(r.text).toBe(`a=${join(home, TASK)} b={{nope}}`);
-    expect(r.unknown).toEqual(["nope"]);
-  });
-});
-
 describe("assembleSystem 装配", () => {
   it("按序拼接：identity 裸文本，其余节带标签", () => {
     const p = assembleSystem(home, PID, { taskUri: TASK });
@@ -128,7 +107,7 @@ describe("assembleSystem 装配", () => {
     expect(p.system).not.toContain(`<project_instructions path="${join(home, TASK, "AGENTS.md")}"`);
   });
   it("drafts 未存盘草稿替存盘值（所见即所得）", () => {
-    const p = assembleSystem(home, PID, { drafts: { "000-identity.md": "草稿身份 {{diy_cli}}\n" } });
+    const p = assembleSystem(home, PID, { drafts: { "000-identity.md": "草稿身份 {{diy.cli}}\n" } });
     expect(p.system).toContain("草稿身份 /repo/diy.sh");
     const q = assembleSystem(home, PID, {});
     expect(q.system).not.toContain("草稿身份");
@@ -164,9 +143,12 @@ describe("assembleSystem 装配", () => {
     // 未写入：仍是内置态
     expect(getPrompt(home, PID, "000-identity.md").status).toBe("builtin");
   });
-  it("未知变量上报", () => {
-    const p = assembleSystem(home, PID, { drafts: { "400-rules.md": "- {{nope}}\n" } });
-    expect(p.unknownVars).toEqual(["nope"]);
+  it("未知路径不再静默：装配直接抛错（引擎严格模式，替代旧的 unknownVars 警告）", () => {
+    expect(() => assembleSystem(home, PID, { drafts: { "400-rules.md": "- {{diy.nope}}\n" } })).toThrow(
+      /diy\.nope/,
+    );
+    // 正常装配不抛错，unknownVars 恒为空（没有"未知但放行"这条路）
+    expect(assembleSystem(home, PID, { taskUri: TASK }).unknownVars).toEqual([]);
   });
 
   it("片段模版不进节拼接；链的包裹格式由 _chain.md 决定（可覆盖）", () => {
@@ -183,12 +165,12 @@ describe("assembleSystem 装配", () => {
     expect(p1.system).toContain("应用级规范");
 
     // 覆盖 _chain.md → markup 变了（证明这段结构确实模版化，而不是硬编码）
-    savePrompt(home, PID, "_chain.md", '<<{{scope}}>>\n{{content}}\n<</{{scope}}>>\n');
+    // DSL 写法：三个局部变量都带点；且必须都被引用（引擎会做参数双向校验）
+    savePrompt(home, PID, "_chain.md", "<<{{.scope}}>>\n{{.path}}\n{{.content}}\n<</{{.scope}}>>");
     const p2 = assembleSystem(home, PID, { taskUri: TASK });
     expect(p2.system).toContain(`<<${home}>>`);
     expect(p2.system).toContain("<</");
     expect(p2.system).not.toContain("<project_instructions");
-    // 片段模版的变量白名单是独立的：不会把 path/scope/content 当成“未知变量”
     expect(p2.unknownVars).toEqual([]);
   });
 });

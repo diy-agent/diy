@@ -7,7 +7,10 @@
 // 与工具实际执行的目录不一致 —— 它按提示词里的相对路径去操作，就会操作错地方。
 //
 // 三级兜底（逐级存在性校验）：项目目录（state.yaml 登记 path）→ 任务目录 → 进程 cwd。
-// 返回值带 note：与项目目录不一致时给出提示，供提示词模版 `{{cwd_note}}` 渲染。
+//
+// DSL 版（M4）：这里只返回**事实**（哪个分支 + 一句原因文案），
+// 「注意：」这类措辞由模版负责（见 prompts/defaults.ts 的 300-task.md），
+// 因此 note 不带前缀、不带换行（旧版是 "\n注意：…"，那种拼装已由模版接管）。
 
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -18,8 +21,14 @@ import { projectFromUri } from "../../shared/task-uri";
 export interface ResolvedCwd {
   /** 工具实际执行目录（bash/read 的基准） */
   cwd: string;
-  /** 与项目目录不一致时的中文提示（一致时为空串）；进 `{{cwd_note}}` */
+  /** 回退原因（纯文案，不含前缀/换行）；未回退时为空串。模版里写「注意：{{cwd.note}}」 */
   note: string;
+  /** 是否发生了回退（项目目录不可用）——模版用它决定要不要提示 */
+  isFallback: boolean;
+  /** 是否退化到任务目录 */
+  isTaskDir: boolean;
+  /** 是否退化到应用目录（进程 cwd） */
+  isAppDir: boolean;
 }
 
 /** `~` 展开（只用 $HOME，不猜别的家目录来源） */
@@ -37,7 +46,7 @@ export function resolveCwd(home: string, taskUri: string): ResolvedCwd {
   if (declared) {
     const abs = expand(declared);
     try {
-      if (existsSync(abs)) return { cwd: abs, note: "" };
+      if (existsSync(abs)) return { cwd: abs, note: "", isFallback: false, isTaskDir: false, isAppDir: false };
     } catch (e) {
       // 无效路径回退可接受，但要留痕（如权限/非法字符导致 stat 抛错）
       console.warn(`[cwd] 项目目录探测失败 ${abs}:`, e);
@@ -47,11 +56,23 @@ export function resolveCwd(home: string, taskUri: string): ResolvedCwd {
   if (td) {
     try {
       if (existsSync(td)) {
-        return { cwd: td, note: "\n注意：项目目录不存在，工具实际在任务目录下执行" };
+        return {
+          cwd: td,
+          note: "项目目录不存在，工具实际在任务目录下执行",
+          isFallback: true,
+          isTaskDir: true,
+          isAppDir: false,
+        };
       }
     } catch (e) {
       console.warn(`[cwd] 任务目录探测失败 ${td}:`, e);
     }
   }
-  return { cwd: process.cwd(), note: "\n注意：项目目录与任务目录都不存在，工具实际在应用目录下执行" };
+  return {
+    cwd: process.cwd(),
+    note: "项目目录与任务目录都不存在，工具实际在应用目录下执行",
+    isFallback: true,
+    isTaskDir: false,
+    isAppDir: true,
+  };
 }
