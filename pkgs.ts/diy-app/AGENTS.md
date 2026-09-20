@@ -135,7 +135,8 @@ $DIY_HOME/projects/<pid>/tasks/<tid>/
 | 项目级覆盖落位 | `$DIY_HOME/projects/<pid>/template/<relpath>` + `.meta.yaml{relpath:{baseVersion}}`（原子写） |
 | AGENTS.md 链上界 | **$HOME 为止**（不进 `/`、不进 `/Users`）：`~/AGENTS.md`、`~/git/AGENTS.md` 这类用户全局规则逐层生效；不在 $HOME 下时只取工作目录自身一层 |
 | 预算 | `clamp(模型上下文窗口 × 4B × 5%, 16KB, 64KB)`（随模型变，不再是一个 64KB 魔法数）；超限拒发（不截断）；**早退也必须闭合轮次**（stop + `noteTurnEnd` + turn-end 审计） |
-| 试验场页面 | `PromptLabV4Page.tsx`（模板编辑 / 上下文与请求预览 / 任务会话 / 任务详情）；草稿按 project 分桶存 `Caches.diy_lab_drafts` |
+| 试验场页面 | `PromptLabV4Page.tsx`（左栏 = 模板 / 可用变量（契约）/ 变量值（本次注入）/ 结构树（trace）；右栏 = 预览；`ui page navigate lab` 落 agent调参 tab）；草稿按 project 分桶存 `Caches.diy_lab_drafts` |
+| 变量契约与值 | `src/shared/prompt-schema.ts` 的 `AssembleGlobalsSchema`（zod 单一真源）→ `src/shared/var-tree.ts` 两种派生：`buildVarTree`（树形展示）/ `flattenVars`（引擎静态校验）；实际值随预览下发 `values`（结构树「值」列与「变量值」view 同源） |
 | 中断文案 | `_guard.md` **不得**复述 `INTERRUPTED_TOOL_NOTICE` —— 那段话的唯一来源是 `local-blocks.ts` 的常量 |
 | 意图测试 | `tests/cli.intent.template.test.ts`（list/get/save/restore/拒绝/preview/超预算闭合） |
 
@@ -143,19 +144,22 @@ $DIY_HOME/projects/<pid>/tasks/<tid>/
 
 | 装配结果里的位置 | 来自哪里 |
 |------------------|----------|
-| 裸文本身份段 | `000-identity.md`（`tag: ""` → 不包标签） |
-| `<diy>` 段 | `100-diy.md`（`tag: diy`） |
-| `<project_context>` 段 | `200-project.md`（`tag: project_context`）+ 其中的 `{{project_instructions}}` |
-| 链上**每个** AGENTS.md 的包裹格式 | `_chain.md`（`fragment: true`）按 `path`/`scope`/`content` 渲染一次一层 |
-| `<task>` 段 | `300-task.md`（`tag: task`） |
-| `<rules>` 段 | `400-rules.md`（`tag: rules`） |
-|  `<skills>` 段 | `500-skills.md`（`tag: skills`；当前渲染为空 → 空节不进请求） |
-| `<guard>` 段 | `_guard.md`（`tag: guard`，不可覆盖） |
-| 变量值（`diy_cli` / `diy_home` / `task_*` / `cwd` / `cwd_note` / `skills`） | 运行时事实（代码注入，占位符写在模版里） |
-| 节序 / 空节跳过 / 预算判定 / 未注入告警 | 装配器行为（节序 = `PROMPT_DEFAULTS` 声明序） |
+| 裸文本身份段 | `identity.md`（不包标签） |
+| `<diy>` 段 | `diy.md` |
+| `<project_context>` 段 + 链上**每个** AGENTS.md 的包裹 | `project.md`（链的包装格式就在这一份里：`:for={{chain}}` 循环体自带收尾空行） |
+| `<task>` 段 | `task.md` |
+| `<rules>` 段 | `rules.md` |
+| `<skills>` 段 | `skills.md`（skills 为空 → 整节不进请求） |
+| `<guard>` 段 | `_guard.md`（锁定） |
+| 变量值（`diy.*` / `project.*` / `task.*` / `cwd.*` / `chain` / `skills`） | 运行时事实（`assembleGlobals` 注入；契约 = `AssembleGlobalsSchema`） |
+| 节序 / 空节跳过 / 预算判定 / 未注入告警 | 装配器行为（节序 = `_system.md` 的 include 顺序） |
 
-frontmatter 字段：`title` / `desc` / `version` / `overridable{value,tip}` / **`tag`（包裹标签，空串=裸文本节）** / **`fragment`（片段模版，不进节拼接）**。
-所以「某个节会包在什么标签里」直接看模版 frontmatter（试验场标题栏也会标 `<tag>` 与 `🧩 片段`），代码里不再维护任何标签映射表。
+- 模版 8 份，`_` 前缀 = 锁定（`_system.md` 装配入口、`_guard.md` 保命契约）；**没有"片段"角色**：链的包装
+  原来是独立片段 `chain.md`，现在直接写在 `project.md` 里（少一份文件、少一层参数传递）。
+- frontmatter 字段：`title` / `desc` / `version` / `locked?` / `lockTip?`；包裹标签由 UI 从正文首行 `<tag>` 推断，
+  `role`（entry/section）由入口 include 列表推导 —— 三者都不需要手工维护，避免两处漂移。
+- 排版规则（改模版前必读，写在 `src/main/prompts/defaults.ts` 头注）：控制标记可自由缩进（独占一行不产出字符）；
+  **输出文本必须顶格**（行首缩进会进提示词）；空行是内容。
 
 ### UI 验证（两层，互补）
 

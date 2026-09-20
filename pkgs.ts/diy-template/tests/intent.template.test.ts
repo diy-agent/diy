@@ -26,10 +26,12 @@ import { describe, expect, it } from 'vitest';
 import {
     TemplateError,
     analyze,
+    previewValue,
     render,
     renderWithTrace,
     type IncludeResolver,
     type IncludeTarget,
+    type TraceNode,
 } from '../src/index';
 
 /**
@@ -470,7 +472,7 @@ describe('R10 静态分析：引用清单（UI「变量 view」的数据源）',
 
 // ── R11 结构 trace ───────────────────────────────────────────────────
 
-describe('R11 结构 trace：节点字节数 + 每个 :if 的真假与原因（试验场「结构树」）', () => {
+describe('R11 结构 trace：节点字节数 + 参数/值 + 每个 :if 的真假与原因（试验场「结构树」）', () => {
     it('给出 include 的字节数与名字', () => {
         const fragment = block(`
             <project_instructions path="{{.path}}">{{.content}}</project_instructions>
@@ -482,8 +484,53 @@ describe('R11 结构 trace：节点字节数 + 每个 :if 的真假与原因（�
         );
         expect(text).toBe('<project_instructions path="/a/AGENTS.md">规则</project_instructions>');
         const inc = trace.find((t) => t.kind === 'include')!;
-        expect(inc.name).toBe('./_chain.md');
+        expect(inc.name).toBe('include');
+        expect(inc.arg).toBe('./_chain.md'); // 参数 = 模版里写的 relpath
         expect(inc.bytes).toBe(Buffer.byteLength(text, 'utf-8'));
+    });
+
+    it('每个节点都区分「参数」（模版里写的）与「值」（求值结果）', () => {
+        const { trace } = renderWithTrace(
+            [
+                'A',
+                '<template :if-not={{diy.off}}>',
+                '{{diy.cli}}',
+                '</template>',
+                '<template :for={{diy.list}} :as="f">{{.f.value}}</template>',
+            ].join('\n'),
+            { globals: { diy: { off: false, cli: '/repo/diy.sh', list: ['x', 'y'] } } },
+        );
+        const flat: TraceNode[] = [];
+        const walk = (ns: TraceNode[]): void => {
+            for (const n of ns) {
+                flat.push(n);
+                walk(n.children ?? []);
+            }
+        };
+        walk(trace);
+
+        const ifNode = flat.find((t) => t.kind === 'if')!;
+        expect([ifNode.name, ifNode.arg, ifNode.value, ifNode.result]).toEqual([':if-not', 'diy.off', 'false', true]);
+
+        const interp = flat.find((t) => t.kind === 'interp')!;
+        expect([interp.name, interp.arg, interp.value]).toEqual(['插值', 'diy.cli', '/repo/diy.sh']);
+
+        const forNode = flat.find((t) => t.kind === 'for')!;
+        expect([forNode.name, forNode.arg, forNode.value]).toEqual([':for', 'diy.list :as="f"', '数组 · 2 项']);
+        expect(forNode.children!.map((c) => [c.arg, c.value])).toEqual([
+            ['f[0]', 'x'],
+            ['f[1]', 'y'],
+        ]);
+        // 文本节点的参数就是它产出的字面量（换行显示为 ⏎）
+        expect(flat.find((t) => t.kind === 'text')!.arg).toBe('A⏎');
+    });
+
+    it('值列是单行紧凑文本：多行折叠、长文本截断、集合只给摘要', () => {
+        expect(previewValue('a\nb\tc')).toBe('a⏎b c');
+        expect(previewValue('x'.repeat(80), 10)).toBe('xxxxxxxxxx…');
+        expect(previewValue([])).toBe('空数组');
+        expect(previewValue({ a: 1, b: 2 })).toBe('对象 · a, b');
+        expect(previewValue(undefined)).toBe('未定义');
     });
 
     it('回答「这个 :if 为什么没进」：空数组 / 空串 / false 各有原因', () => {

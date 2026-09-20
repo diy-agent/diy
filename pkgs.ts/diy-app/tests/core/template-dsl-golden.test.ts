@@ -5,8 +5,10 @@
 // golden（tests/fixtures/system.golden.txt）是 M4 之前用 legacy 路径（正则替换 + 代码拼装）
 // 产出的 system，输入是下面这份合成数据（稳定、不依赖本机 AGENTS.md 内容）。
 //
-// 唯一允许的差异：**末尾一个 \n** —— 决策"模版源逐字节进引擎"意味着节模版自带末尾换行，
-// 而 legacy 的 blocks.join("\n\n") 不带。其它任何一处字节差异都是 bug。
+// 与 legacy 的差异（两处，都是有意为之，其余任何一处字节差异都是 bug）：
+//   ① 末尾多一个 \n —— "模版源逐字节进引擎"意味着节模版自带末尾换行，legacy 的 blocks.join("\n\n") 不带
+//   ② 链最后一层之后多一个 \n —— 简化模版时去掉"空 <template :if-not={{.f.isFirst}}>"把戏，
+//      改成**循环体自带收尾空行**（层间仍是空一行，只是最后多一个换行，语义无害）
 // ═══════════════════════════════════════════════════════════════
 
 import { readFileSync } from 'node:fs';
@@ -36,13 +38,13 @@ const GLOBALS: AssembleGlobals = {
     skills: [],
 };
 
-describe('DSL 装配 === 换引擎前的 system（逐字节，末尾换行除外）', () => {
+describe('DSL 装配 === 换引擎前的 system（逐字节，两处有意差异除外）', () => {
     it('整份 system 与 golden 相同', () => {
         const system = renderSystemDsl({ globals: GLOBALS });
         expect(system).toBe(`${golden}\n`);
     });
 
-    it('差异只有末尾那一个 \\n（把两边都去掉末尾换行后必须完全相等）', () => {
+    it('差异只有已知的两处换行（去掉它们后必须完全相等）', () => {
         const system = renderSystemDsl({ globals: GLOBALS });
         expect(system.replace(/\n$/, '')).toBe(golden);
     });
@@ -66,7 +68,7 @@ describe('DSL 装配 === 换引擎前的 system（逐字节，末尾换行除外
         expect(withSkills.indexOf('<skills>')).toBeLessThan(withSkills.indexOf('<guard>'));
     });
 
-    it('链上每层用 _chain.md 渲染，层间空行与旧 join("\\n\\n") 一致', () => {
+    it('链上每层一个 <project_instructions>，层间空行与旧 join("\\n\\n") 一致', () => {
         const system = renderSystemDsl({ globals: GLOBALS });
         expect(system).toContain(
             '<project_instructions path="/Users/ccc/AGENTS.md" scope="/Users/ccc">\n根规则 & 全局约定\n</project_instructions>' +

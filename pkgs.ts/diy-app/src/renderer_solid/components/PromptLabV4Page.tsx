@@ -20,7 +20,7 @@ import { MdEditor } from "./MdEditor";
 import { lineDiff, useHoverTip, type PromptEntry } from "./promptLabCommon";
 import type { RequestPreview, TraceNode } from "../../shared/prompt-schema";
 import { AssembleGlobalsSchema } from "../../shared/prompt-schema";
-import { buildVarTree, flattenVars, type VarNode } from "../../shared/var-tree";
+import { buildValueTree, buildVarTree, flattenVars, type ValueNode, type VarNode } from "../../shared/var-tree";
 
 // 变量契约在 renderer 侧直接从 schema 派生（单一真源，零 RPC 往返）：
 //   SYSTEM_VARS → 引擎静态校验；VAR_TREE → 「可用变量」view 的二维树
@@ -117,7 +117,7 @@ function DirRow(props: {
                 >
                     <span class="w-4 shrink-0" />
                     <span class="w-4 shrink-0 text-center">
-                        {props.node.entry?.role === "entry" ? "🧭" : props.node.entry?.role === "fragment" ? "🧩" : props.node.entry?.locked ? "🔒" : "📄"}
+                        {props.node.entry?.role === "entry" ? "🧭" : props.node.entry?.locked ? "🔒" : "📄"}
                     </span>
                     <span class="flex-1 truncate">{props.node.name}</span>
                     <Show when={props.node.entry}>
@@ -194,6 +194,12 @@ function DirRow(props: {
     );
 }
 
+/** 字节数格式化（结构树用） */
+function fmtBytes(n: number): string {
+    if (n < 1024) return `${n} B`;
+    return `${(n / 1024).toFixed(1)} KB`;
+}
+
 /** 从模版正文推断它包裹的标签（UI 只读展示；不再要求 frontmatter 维护 tag，避免两处漂移） */
 function wrapsTag(body: string): string | undefined {
     return /(?:^|\n)<([a-z_][\w-]*)[\s>]/.exec(body)?.[1];
@@ -213,26 +219,138 @@ function VarRow(props: { name: string; note?: string }) {
     );
 }
 
-/** 结构树一行（trace 节点：名字 + 产出字节 + :if 真假/原因） */
-function traceLabel(n: TraceNode): string {
-    switch (n.kind) {
-        case "if":
-            return `${n.name ?? ":if"} ${n.result ? "✓" : "✗"}${n.reason ? ` ${n.reason}` : ""}`;
-        case "for":
-            return `${n.name ?? ":for"}（${n.reason ?? ""}）`;
-        case "for-item":
-            return `${n.name ?? "item"}${n.reason ? ` ${n.reason}` : ""}`;
-        case "include":
-            return `→ ${n.name ?? ""}`;
-        case "element":
-            return `<${n.name ?? "?"}>`;
-        case "interp":
-            return `{{${n.name ?? ""}}}`;
-        case "text":
-            return "文本";
-        default:
-            return n.name ?? n.kind;
-    }
+/**
+ * 结构树（table-tree，4 列）：**节点 | 参数 | 值 | 字节**。
+ * 「参数」= 模版里写的（表达式/relpath/字面量），「值」= 求值后的结果 —— 这样
+ * `:if-not(.f.isFirst)` 为什么进/不进，一眼能对着参数与值看明白（原因放 hover）。
+ */
+function TraceRows(props: {
+    nodes: TraceNode[];
+    depth: number;
+    path: string;
+    open: Record<string, boolean>;
+    onToggle: (k: string, open: boolean) => void;
+}) {
+    return (
+        <For each={props.nodes}>
+            {(n, i) => {
+                const key = `${props.path}/${i()}`;
+                const kids = () => n.children ?? [];
+                const hasKids = () => kids().length > 0;
+                const isOpen = () => props.open[key] ?? props.depth < 2; // 默认展开两层
+                const skipped = () => n.kind === "if" && n.result === false;
+                return (
+                    <>
+                        <tr class={`hover:bg-base-300/40 ${skipped() ? "opacity-40" : ""}`}>
+                            <td class="py-0.5 pr-1 align-top">
+                                <span
+                                    class="flex items-center gap-1 overflow-hidden whitespace-nowrap"
+                                    style={{ "padding-left": `${props.depth * 10}px` }}
+                                >
+                                    <button
+                                        class="w-3 shrink-0 text-left opacity-60 disabled:opacity-20"
+                                        disabled={!hasKids()}
+                                        onClick={() => hasKids() && props.onToggle(key, isOpen())}
+                                    >
+                                        {hasKids() ? (isOpen() ? "▾" : "▸") : "·"}
+                                    </button>
+                                    <span class="truncate">{n.name ?? n.kind}</span>
+                                </span>
+                            </td>
+                            <td class="truncate py-0.5 pr-1 align-top font-mono" title={n.arg}>
+                                {n.arg ?? ""}
+                            </td>
+                            <td class="truncate py-0.5 pr-1 align-top font-mono" title={n.reason ?? n.value}>
+                                {n.value ?? ""}
+                                <Show when={n.result !== undefined}>
+                                    <span class={n.result ? "text-success" : "text-error"}>
+                                        {n.result ? " ✓" : " ✗"}
+                                    </span>
+                                </Show>
+                            </td>
+                            <td class="whitespace-nowrap py-0.5 text-right align-top opacity-50">
+                                {fmtBytes(n.bytes)}
+                            </td>
+                        </tr>
+                        <Show when={hasKids() && isOpen()}>
+                            <TraceRows
+                                nodes={kids()}
+                                depth={props.depth + 1}
+                                path={key}
+                                open={props.open}
+                                onToggle={props.onToggle}
+                            />
+                        </Show>
+                    </>
+                );
+            }}
+        </For>
+    );
+}
+
+/**
+ * 变量值（table-tree，2 列）：**变量 | 值**。结构来自契约（schema），值来自本次注入。
+ * 数组按实际元素展开（chain → [0]/[1] → path/scope/content），一眼能看出这次到底喂了什么。
+ */
+function ValueTree(props: {
+    nodes: ValueNode[];
+    path: string;
+    open: Record<string, boolean>;
+    onToggle: (k: string, open: boolean) => void;
+    depth: number;
+}) {
+    return (
+        <For each={props.nodes}>
+            {(n, i) => {
+                const key = `${props.path}/${i()}`;
+                const full = () => (props.path ? `${props.path}.${n.name}` : n.name);
+                const kids = () => n.children ?? [];
+                const hasKids = () => kids().length > 0;
+                const isOpen = () => props.open[key] ?? true;
+                return (
+                    <>
+                        <tr class="hover:bg-base-300/40">
+                            <td class="py-0.5 pr-1 align-top">
+                                <span
+                                    class="flex items-center gap-1 overflow-hidden whitespace-nowrap"
+                                    style={{ "padding-left": `${props.depth * 10}px` }}
+                                >
+                                    <button
+                                        class="w-3 shrink-0 text-left opacity-60 disabled:opacity-20"
+                                        disabled={!hasKids()}
+                                        onClick={() => hasKids() && props.onToggle(key, isOpen())}
+                                    >
+                                        {hasKids() ? (isOpen() ? "▾" : "▸") : "·"}
+                                    </button>
+                                    <span class={`truncate font-mono ${n.missing ? "opacity-50" : ""}`} title={full()}>
+                                        {n.name}
+                                    </span>
+                                    <span class="badge badge-xs badge-ghost shrink-0 font-mono">{n.type}</span>
+                                </span>
+                            </td>
+                            <td class="w-full max-w-0 py-0.5 align-top font-mono">
+                                <span
+                                    class={`block truncate ${n.missing ? "opacity-50" : ""}`}
+                                    title={n.desc ? `${n.desc}｜${n.value}` : n.value}
+                                >
+                                    {n.value}
+                                </span>
+                            </td>
+                        </tr>
+                        <Show when={hasKids() && isOpen()}>
+                            <ValueTree
+                                nodes={kids()}
+                                path={full()}
+                                open={props.open}
+                                onToggle={props.onToggle}
+                                depth={props.depth + 1}
+                            />
+                        </Show>
+                    </>
+                );
+            }}
+        </For>
+    );
 }
 
 /**
@@ -320,57 +438,6 @@ function VarGroup(props: { title: string; children: unknown }) {
     );
 }
 
-function TraceRows(props: {
-    nodes: TraceNode[];
-    depth: number;
-    path: string;
-    open: Record<string, boolean>;
-    onToggle: (k: string, open: boolean) => void;
-}) {
-    return (
-        <For each={props.nodes}>
-            {(n, i) => {
-                const key = `${props.path}/${i()}`;
-                const kids = () => n.children ?? [];
-                const hasKids = () => kids().length > 0;
-                // 默认展开前两层（入口 → 各节），再深就得手动点
-                const isOpen = () => props.open[key] ?? props.depth < 2;
-                return (
-                    <>
-                        <div
-                            class="flex items-baseline gap-1 hover:bg-base-300/40"
-                            style={{ "padding-left": `${props.depth * 10}px` }}
-                        >
-                            <button
-                                class="w-3 shrink-0 text-left opacity-60 disabled:opacity-20"
-                                disabled={!hasKids()}
-                                onClick={() => hasKids() && props.onToggle(key, isOpen())}
-                            >
-                                {hasKids() ? (isOpen() ? "▾" : "▸") : "·"}
-                            </button>
-                            <span
-                                class={`truncate ${n.kind === "if" && n.result === false ? "opacity-40" : ""}`}
-                                title={traceLabel(n)}
-                            >
-                                {traceLabel(n)}
-                            </span>
-                            <span class="ml-auto shrink-0 font-mono opacity-50">{n.bytes}B</span>
-                        </div>
-                        <Show when={hasKids() && isOpen()}>
-                            <TraceRows
-                                nodes={kids()}
-                                depth={props.depth + 1}
-                                path={key}
-                                open={props.open}
-                                onToggle={props.onToggle}
-                            />
-                        </Show>
-                    </>
-                );
-            }}
-        </For>
-    );
-}
 
 export function PromptLabV4Page() {
     const [entries, setEntries] = createSignal<PromptEntry[]>([]);
@@ -415,11 +482,21 @@ export function PromptLabV4Page() {
     const setPageTab = setLabTab;
     const [preview, setPreview] = createSignal<RequestPreview | null>(null);
     // 各 View 折叠态（VSCode 式可收起，纯局部偏好）
-    const [views, setViews] = createSignal<Record<string, boolean>>({ tree: true, vars: true, sysctx: true, reqbody: true, trace: false });
+    const [views, setViews] = createSignal<Record<string, boolean>>({
+        // 左栏：模板 / 可用变量（契约）/ 变量值（实际注入）/ 结构树（分析）；右栏：预览 / 请求
+        tree: true,
+        vars: true,
+        vals: true,
+        trace: true,
+        sysctx: true,
+        reqbody: true,
+    });
     // 结构树展开态（key = 路径索引链，默认前两层展开）
     const [traceOpen, setTraceOpen] = createSignal<Record<string, boolean>>({});
     // 变量树展开态（默认全展开）
     const [varsOpen, setVarsOpen] = createSignal<Record<string, boolean>>({});
+    // 变量值树展开态（默认全展开）
+    const [valsOpen, setValsOpen] = createSignal<Record<string, boolean>>({});
     // 请求体显示：树形 / 原文
     const [reqMode, setReqMode] = createSignal<"tree" | "raw">("tree");
     const toggleView = (k: string) => setViews((v) => ({ ...v, [k]: !v[k] }));
@@ -440,6 +517,12 @@ export function PromptLabV4Page() {
     const drafts = () => draftsByProject()[project()] ?? {};
     const draftOf = (e: PromptEntry) => drafts()[e.relpath] ?? e.current;
     const dirtyOf = (e: PromptEntry) => drafts()[e.relpath] !== undefined && drafts()[e.relpath] !== e.current;
+    // 「变量值」view 的数据源：契约（结构）+ 本次注入（值）
+    const valueTree = createMemo(() => {
+        const vals = preview()?.values;
+        return vals ? buildValueTree(AssembleGlobalsSchema, vals) : [];
+    });
+
     // 「可用变量」view 的数据源：对**当前草稿**做静态分析（renderer 侧直接跑引擎 → 随打字实时更新）
     const analysis = createMemo(() => {
         const s = sel();
@@ -714,6 +797,81 @@ export function PromptLabV4Page() {
                             </div>
                         </Show>
                     </div>
+                    {/* 变量值 view：本次**实际注入**的 globals（值随任务/草稿变化；结构来自契约） */}
+                    <div class="border border-base-300 rounded-lg overflow-hidden">
+                        {viewHeader("vals", "变量值", "本次注入的实际值（随任务变化）")}
+                        <Show when={views()["vals"]}>
+                            <div class="bg-base-200 px-0 py-1 text-[11px]">
+                                <Show
+                                    when={preview()}
+                                    fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}
+                                >
+                                    <table class="table table-xs table-fixed w-full">
+                                        <colgroup>
+                                            <col class="w-[42%]" />
+                                            <col />
+                                        </colgroup>
+                                        <thead>
+                                            <tr>
+                                                <th>变量</th>
+                                                <th>值</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <ValueTree
+                                                nodes={valueTree()}
+                                                path=""
+                                                open={valsOpen()}
+                                                onToggle={(k, open) => setValsOpen((o) => ({ ...o, [k]: !open }))}
+                                                depth={0}
+                                            />
+                                        </tbody>
+                                    </table>
+                                </Show>
+                            </div>
+                        </Show>
+                    </div>
+                    {/* 结构树 view：与预览同源的 trace（节点 | 参数 | 值 | 字节） */}
+                    <div class="border border-base-300 rounded-lg overflow-hidden">
+                        {viewHeader(
+                            "trace",
+                            "结构树",
+                            preview()?.trace ? `${preview()!.trace!.length} 顶层节点` : "随预览重算",
+                        )}
+                        <Show when={views()["trace"]}>
+                            <div class="bg-base-200 px-0 py-1 text-[11px]">
+                                <Show when={preview()?.trace} fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}>
+                                    {(tr) => (
+                                        <table class="table table-xs table-fixed w-full">
+                                            <colgroup>
+                                                <col class="w-[30%]" />
+                                                <col class="w-[30%]" />
+                                                <col class="w-[24%]" />
+                                                <col class="w-[16%]" />
+                                            </colgroup>
+                                            <thead>
+                                                <tr>
+                                                    <th>节点</th>
+                                                    <th>参数</th>
+                                                    <th>值</th>
+                                                    <th class="text-right">字节</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <TraceRows
+                                                    nodes={tr()!}
+                                                    depth={0}
+                                                    path=""
+                                                    open={traceOpen()}
+                                                    onToggle={(k, open) => setTraceOpen((o) => ({ ...o, [k]: !open }))}
+                                                />
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </Show>
+                            </div>
+                        </Show>
+                    </div>
                 </div>
 
                 {/* 拖拽条：左 Views 宽（双击回默认） */}
@@ -745,9 +903,6 @@ export function PromptLabV4Page() {
                                     {/* 结构也可视化：这个节会包在什么标签里 / 它是不是片段模版 */}
                                     <Show when={wrapsTag(s().current)}>
                                         <span class="badge badge-xs badge-ghost font-mono">&lt;{wrapsTag(s().current)}&gt;</span>
-                                    </Show>
-                                    <Show when={s().role === "fragment"}>
-                                        <span class="badge badge-xs badge-warning">片段</span>
                                     </Show>
                                     <div class="ml-auto flex items-center gap-1">
                                         <button
@@ -831,7 +986,7 @@ export function PromptLabV4Page() {
                     }}
                     onMouseDown={(e) => startDrag(e, setRightW, 240, 640, Caches.diy_lab_right_width, true)}
                 />
-                {/* 右：系统上下文 + 仿真请求体（request.json 同形，所见即所得） */}
+                {/* 右：预览（系统上下文 + 仿真请求体；结构化观察在左栏，这里只回答"发出去的是什么"） */}
                 <div class="shrink-0 overflow-auto p-1 space-y-1" style={{ width: `${rightW()}px` }}>
                     <div class="flex items-center px-2 py-1">
                         <span class="text-[11px] font-bold tracking-widest opacity-70">预览</span>
@@ -863,24 +1018,6 @@ export function PromptLabV4Page() {
                         )}
                     </Show>
                         </div>
-                        </Show>
-                    </div>
-                    <div class="border border-base-300 rounded-lg overflow-hidden">
-                        {viewHeader("trace", "结构树", preview()?.trace ? `${preview()!.trace!.length} 顶层节点` : "随预览重算")}
-                        <Show when={views()["trace"]}>
-                            <div class="bg-base-200 px-1 py-1 text-[11px]">
-                                <Show when={preview()?.trace} fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}>
-                                    {(tr) => (
-                                        <TraceRows
-                                            nodes={tr()!}
-                                            depth={0}
-                                            path=""
-                                            open={traceOpen()}
-                                            onToggle={(k, open) => setTraceOpen((o) => ({ ...o, [k]: !open }))}
-                                        />
-                                    )}
-                                </Show>
-                            </div>
                         </Show>
                     </div>
                     <div class="border border-base-300 rounded-lg overflow-hidden">

@@ -8,23 +8,23 @@
 //
 // 命名与顺序：
 //   · `_` 前缀 = **锁定**（不可覆盖）：`_system.md`（装配入口）、`_guard.md`（保命契约）
-//   · 其余都是可覆盖的节；`chain.md` 是**片段**（只被引用、不独立成节）
+//   · 其余都是可覆盖的节（每节 = 一份模版，自带包裹标签与结尾空行）
 //   · **装配顺序的唯一真源是 `_system.md` 的 include 顺序**（文件名不再表达顺序）
 //
 // 排版规则（改模版前必读）：
-//   · 控制标记 <template> 独占一行时不产出任何字符（连行尾换行也不产出）→ **可自由缩进，用来表达嵌套**
-//   · **输出文本必须顶格**：行首缩进会被当成正文写进提示词（除非该行紧跟一个独占一行的控制标记）
+//   · 控制标记 <template> 独占一行时不产出任何字符（连行尾换行也不产出）→ **标记可自由缩进，用来表达嵌套**
+//   · **输出文本必须顶格**（真实规则：行首缩进会原样进提示词，与上一行是不是控制标记无关）
 //   · 空行是**内容**（不是排版）：节间分隔、层间空行都靠在模版里数换行来产出
 //
 // 写法约定（配合引擎语义）：
 //   · 控制标记不占空间：独占一行的 <template …> / 注释，连该行缩进与换行都不产出
 //   · 节间分隔由**节模版自己的末尾空行**表达（`_system.md` 里不写空行）
-//   · 片段（_chain.md）**不带末尾换行**（它被 for 迭代，多一个换行就多一个空行）
-//   · 局部变量必须带点：{{.path}} / {{.scope}} / {{.content}}
+//   · 循环体自己收尾（末尾空行放在循环体里）→ 层间自然空一行，不需要 :if-not 判断"是不是第一项"
+//   · 局部变量必须带点：{{.f.value.path}} / {{.f.value.content}}（.f 是迭代信封）
 //   · 输出标签（<diy>…</diy>）是纯文本，不解析；正文里的 <pid> 等一律原样
 //
-// frontmatter 字段沿用（tag 仍声明本节包裹的标签，供 UI 徽标与阅读；装配不再使用它）：
-//   title / desc / version / overridable{value,tip} / tag / fragment
+// frontmatter 字段：title / desc / version / locked / lockTip
+//   （包裹的标签由 UI 从正文首行 <tag> 推断，不再单独维护；role 由 relpath 推导）
 
 export const PROMPT_DEFAULTS: Record<string, string> = {
     // ── 装配入口（锁定）：顺序即节顺序，空行即节间分隔 ──────────────
@@ -75,7 +75,7 @@ diy 是一个 Electron 桌面管控台。命令行入口 {{diy.cli}}，数据根
 
     'project.md': `---
 title: 项目规范
-desc: 按目录 scope 生效的 AGENTS.md 链（home 到工作目录逐层）。链由链片段在模版里迭代渲染。
+desc: 按目录 scope 生效的 AGENTS.md 链（home 到工作目录逐层）。层数由 chain 决定，链为空则本节只有说明文字。
 version: 1
 ---
 <project_context>
@@ -83,13 +83,14 @@ version: 1
 - 每层只适用于其 scope 目录下的文件
 - 处理某个文件时，其所在目录链上最深的一层最特化；与更通用的描述冲突时以它为准
 
-{{/* 链上每一层由 chain.md 渲染（片段自带结尾换行）；除首层外再前置一个换行 → 层间空一行
-    下面 :if-not 里的那个空行是**内容**（不是排版）：删了层间就会少一个换行 */}}
+{{/* 一层一个 <project_instructions>：包装格式就在这里，不再单独拆一份片段模版。
+    循环体末尾那个空行是**内容**（不是排版）：它让层与层之间空一行；去掉它层间就贴在一起。
+    输出文本顶格写：行首缩进会进提示词（控制标记不受影响，可以随便缩进） */}}
 <template :for={{chain}} :as="f">
-    <template :if-not={{.f.isFirst}}>
+<project_instructions path="{{.f.value.path}}" scope="{{.f.value.scope}}">
+{{.f.value.content}}
+</project_instructions>
 
-    </template>
-    <template :include="./chain.md" path={{.f.value.path}} scope={{.f.value.scope}} content={{.f.value.content}}/>
 </template>
 </project_context>
 
@@ -139,17 +140,6 @@ version: 1
 </template>
 </skills>
 
-`,
-
-    // ── 片段：链上每一层的包裹格式（不带末尾换行）────────────────────
-    'chain.md': `---
-title: AGENTS.md 链片段
-desc: 链上每个 AGENTS.md 的包裹格式（按 path/scope/content 渲染一次一层）。结尾换行是这一层的收尾（层间空行由 project.md 的 :if-not 补），改这里就能改链的呈现方式。
-version: 1
----
-<project_instructions path="{{.path}}" scope="{{.scope}}">
-{{.content}}
-</project_instructions>
 `,
 
     // ── 内部规则（保命，锁定）────────────────────────────────────────

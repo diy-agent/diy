@@ -22,6 +22,7 @@ diy 是一个 Electron 桌面管控台。命令行入口 /repo/diy.sh，数据�
 <project_instructions path="/repo/AGENTS.md" scope="/repo">
 仓库规则 <docs>
 </project_instructions>
+
 </project_context>
 
 <task>

@@ -23,7 +23,7 @@
 | `<${tag}>…</${tag}>` 包裹 | 标签内联在模版里 |
 | `blocks.join("\n\n")` 节间分隔 | 布局里的空行 / 片段里的前置分隔符 |
 | `if (!text.trim()) continue` 空节跳过 | `:if` / `:if-not` |
-| 循环渲染 `_chain.md` 拼链 | `<template :for>` + `<template :include>` |
+| 循环渲染链（一层一个 `<project_instructions>`） | `<template :for={{chain}} :as="f">`：包装格式就写在循环体里 |
 | `cwd_note` 在 `cwd.ts` 里拼中文提示 | `:if-not` + 模版里的文案 |
 | `diy_cli` 未注入时的兜底文案 | `:if` / `:if-not` |
 
@@ -168,7 +168,7 @@ interface RenderContext {
 
 ```ts
 interface IncludeResolver {
-  resolve(relpath: string): { source: string; fragment?: boolean; locked?: boolean } | null;
+  resolve(relpath: string): { source: string; locked?: boolean } | null;
 }
 ```
 
@@ -259,7 +259,7 @@ renderWithTrace(source, ctx, { resolver, file, locked }): { text, trace }
 | 3 | 变量命名空间（扁平 `{{diy_cli}}` → `{{diy.cli}}`） | ✅ 已改名（`diy.*` / `task.*` / `cwd.*` / `project.*`） |
 | 4 | 模版 body 的末尾换行 / trim | ✅ **已拍板**：注册表不再 `trim() + '\n'`，模版源逐字节进引擎；末尾换行与节间分隔全由模版自己完成 |
 | 5 | 节间分隔与空节 | ✅ **已拍板**：节模版自带末尾空行（方案 b）；末节（`_guard.md`）恒存在、永不跳过 |
-| 6 | `:else` 是否需要 | ❌ **不做**：正反两段（`<template :if>` + `<template :if-not>`）已够；现有 9 份模版 0 处需要 |
+| 6 | `:else` 是否需要 | ❌ **不做**：正反两段（`<template :if>` + `<template :if-not>`）已够；现有 8 份模版 0 处需要 |
 | 7 | 注释语法 | ✅ **已做**：`{{/* … */}}`（不产出字符；避开 `!` 与逻辑否定混淆） |
 | 8 | 谓词物化的边界 | ✅ **只提供原子布尔**（`cwd.isFallback` 等）；枚举查表（`when.<枚举>.<值>`）不做——需要时由调用方物化 |
 | 9 | trace / analyze 的 UI 形态 | ⏸ 引擎侧已就绪（`analyze()` / `renderWithTrace()`）；UI 两个 view 是 M5（见 §9） |
@@ -280,5 +280,5 @@ renderWithTrace(source, ctx, { resolver, file, locked }): { text, trace }
 2. ~~变量契约~~ ✅ 已落地（见第 8 节第 14 条）。下一步可做：**数组元素类型**（`chain[].path`）→ 让 include 参数与循环内字段也能静态校验
 3. **阶段 2 可能扩展**（均非当下需求）：表达式语言（N1）、`:else`、动态 include、`encode`（XML 转义）、编辑器高亮/LSP
 
-> M4 已完成（本节原内容）：注册表切 DSL 引擎 ✅、9 份模版改写 ✅、`_system.md` 顶层装配 ✅、
+> M4 已完成（本节原内容）：注册表切 DSL 引擎 ✅、8 份模版改写 ✅、`_system.md` 顶层装配 ✅、
 > 真发等价（golden 逐字节）✅、回退开关改为 **git revert + golden 守护**（而非 `PROMPT_ENGINE` 双世界）✅。

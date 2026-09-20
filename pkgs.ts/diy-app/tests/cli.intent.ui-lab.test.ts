@@ -78,9 +78,18 @@ describe("试验场：可用变量 / 结构树 两个 view", () => {
     // 说明列有内容（zod .describe()）
     expect(text).toContain("CLI 入口");
     expect(text).toContain("引用 globals");
-    // 结构树 view：顶层是各节的 include（trace 的 name 就是 relpath）
+    // 变量值 view：实际注入值（值随任务变化；结构和契约一致，数组按元素展开）
     await fx.sh.getJson(`./diy.sh template preview ${pid} --taskUri ${uri}`);
-    expect(await waitUntil(a11yText, (s) => s.includes("identity.md"))).toContain("identity.md");
+    const withValues = await waitUntil(a11yText, (s) => s.includes("变量值") && s.includes("本次注入的实际值"));
+    expect(withValues).toContain("空数组"); // 未接入 skills → 一眼看出这次没数据
+    expect(withValues).toContain(uri); // 任务 URI 是实际值
+    // 结构树 view（4 列：节点 | 参数 | 值 | 字节）：参数与值分列展示
+    expect(withValues).toContain("参数");
+    expect(withValues).toContain("节点");
+    expect(withValues).toContain(":for"); // 循环节点
+    expect(withValues).toContain("chain :as=\"f\""); // 参数 = 模版里写的
+    expect(withValues).toContain("数组"); // 值 = 求值结果
+    expect(withValues).toContain("./identity.md"); // include 的参数是 relpath
 
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 120_000);

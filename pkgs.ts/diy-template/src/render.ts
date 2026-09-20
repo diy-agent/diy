@@ -46,8 +46,12 @@ export type TraceKind = 'text' | 'interp' | 'element' | 'if' | 'for' | 'for-item
 
 export interface TraceNode {
     kind: TraceKind;
-    /** 元素名 / 路径 / relpath */
+    /** 节点显示名：控制标记（:if / :for / include）、标签名、插值路径 */
     name?: string;
+    /** **参数**（模版里写的东西，原样）：表达式 path、include 的 relpath、字面文本片段 */
+    arg?: string;
+    /** 参数求值后的**值**（单行紧凑文本，已截断）：true / 数组 · 2 项 / ../../../diy.sh */
+    value?: string;
     /** 本节点产出字节数 */
     bytes: number;
     /** :if / :if-not 的实际结果 */
@@ -63,6 +67,30 @@ export interface RenderResult {
 }
 
 const DEFAULT_MAX_DEPTH = 8;
+
+/** 值 → 单行紧凑文本（结构树「值」列；换行折成 ⏎，长文本截断） */
+export function previewValue(v: unknown, max = 60): string {
+    if (v === undefined) return '未定义';
+    if (v === null) return 'null';
+    if (typeof v === 'string') return clip(previewText(v), max);
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    if (Array.isArray(v)) return v.length === 0 ? '空数组' : `数组 · ${v.length} 项`;
+    if (typeof v === 'object') {
+        const keys = Object.keys(v as object);
+        return keys.length === 0 ? '空对象' : `对象 · ${keys.slice(0, 4).join(', ')}${keys.length > 4 ? '…' : ''}`;
+    }
+    return String(v);
+}
+
+/** 文本 → 单行（换行/多空白折成 ⏎ 或空格，便于在表格里一行显示） */
+function previewText(s: string): string {
+    return s.replace(/\r?\n/g, '⏎').replace(/\t/g, ' ');
+}
+
+function clip(s: string, max: number): string {
+    const t = s.trim();
+    return t.length <= max ? t : `${t.slice(0, max)}…`;
+}
 
 /** UTF-8 字节数（Node 与浏览器通用） */
 export function byteLength(text: string): number {
@@ -117,17 +145,27 @@ class Renderer {
     private renderNode(n: Node, ctx: EvalContext, sink: TraceNode[] | null): string {
         switch (n.type) {
             case 'text':
-                if (sink && n.value !== '') sink.push({ kind: 'text', bytes: byteLength(n.value) });
+                if (sink && n.value !== '') {
+                    // 文本节点的「参数」就是它自己（字面量）——能看清"这里到底产出了什么"
+                    sink.push({ kind: 'text', name: '文本', arg: clip(previewText(n.value), 40), bytes: byteLength(n.value) });
+                }
                 return n.value;
 
             case 'interp': {
                 const text = resolveForOutput(n.path, ctx, n.loc, this.currentFile());
-                sink?.push({ kind: 'interp', name: n.path, bytes: byteLength(text) });
+                sink?.push({
+                    kind: 'interp',
+                    name: '插值',
+                    arg: n.path,
+                    value: previewValue(text),
+                    bytes: byteLength(text),
+                });
                 return text;
             }
 
             case 'tag': {
-                const node: TraceNode = { kind: 'element', name: n.head.match(/^<([^\s>]+)/)?.[1], bytes: 0, children: [] };
+                const tag = n.head.match(/^<([^\s>]+)/)?.[1];
+                const node: TraceNode = { kind: 'element', name: '标签', arg: tag ? `<${tag}>` : undefined, bytes: 0, children: [] };
                 const childSink: TraceNode[] = [];
                 const text = `${n.head}${this.renderNodes(n.children, ctx, childSink)}${n.headClose}`;
                 node.bytes = byteLength(text);
@@ -141,7 +179,9 @@ class Renderer {
                 const result = n.negate ? !isTruthy(value) : isTruthy(value);
                 const node: TraceNode = {
                     kind: 'if',
-                    name: `${n.negate ? ':if-not' : ':if'}(${n.path})`,
+                    name: n.negate ? ':if-not' : ':if',
+                    arg: n.path,
+                    value: previewValue(value),
                     bytes: 0,
                     result,
                     reason: result
@@ -169,7 +209,14 @@ class Renderer {
                         detail: `实际类型：${value === null ? 'null' : typeof value}`,
                     });
                 }
-                const node: TraceNode = { kind: 'for', name: `for ${n.as} in ${n.source}`, bytes: 0, children: [] };
+                const node: TraceNode = {
+                    kind: 'for',
+                    name: ':for',
+                    arg: `${n.source} :as="${n.as}"`,
+                    value: `数组 · ${value.length} 项`,
+                    bytes: 0,
+                    children: [],
+                };
                 let out = '';
                 for (let i = 0; i < value.length; i++) {
                     // 迭代信封：循环内一切都从这个名字下面取（.f.value/.f.index/.f.isFirst/.f.isLast）
@@ -188,13 +235,14 @@ class Renderer {
                     const text = this.renderNodes(n.children, iterCtx, iterSink);
                     node.children!.push({
                         kind: 'for-item',
-                        name: `${n.as}[${i}]`,
+                        name: '迭代项',
+                        arg: `${n.as}[${i}]`,
+                        value: previewValue(value[i]),
                         bytes: byteLength(text),
                         children: iterSink,
                     });
                     out += text;
                 }
-                node.reason = `迭代 ${value.length} 次`;
                 node.bytes = byteLength(out);
                 sink?.push(node);
                 return out;
@@ -259,7 +307,7 @@ class Renderer {
         this.includeStack.pop();
         this.lockedStack.pop();
 
-        sink?.push({ kind: 'include', name: relpath, bytes: byteLength(text), children: trace });
+        sink?.push({ kind: 'include', name: 'include', arg: relpath, bytes: byteLength(text), children: trace });
         return text;
     }
 

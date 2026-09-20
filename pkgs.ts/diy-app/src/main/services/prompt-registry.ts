@@ -7,7 +7,7 @@
 // 解析 = 覆盖存在 ? 覆盖 : 内置（覆盖文件只取 body，frontmatter 不算）；状态只有 builtin | overridden。
 // 装配 = 以内置 system.md 为入口，交给 @diy/template 渲染：
 //   节顺序与节间分隔写在 system.md 里，节标签内联在各节模版里，include 经本模块的 resolver
-//   （项目覆盖 > 内置 + fragment/locked 标记 + 草稿）。
+//   （项目覆盖 > 内置 + locked 标记 + 草稿）。
 // 本模块只做组装与渲染，不发任何 LLM 请求（试验场试跑 = dry-run，看请求长什么样）。
 
 import * as yaml from "js-yaml";
@@ -151,12 +151,13 @@ function orphanOverrides(home: string, projectId: string): string[] {
   return out;
 }
 
-/** 该模版的角色：入口 / 节（被入口 include）/ 片段（其余）——单一真源是入口的 include 列表 */
+/**
+ * 该模版的角色：入口（`_system.md`）/ 节（被入口 include）——单一真源是入口的 include 列表。
+ * 不设"片段"角色：片段这个概念已经没有实例（原来只有 chain.md，已并入 project.md），
+ * 少一个状态就少一处漂移；将来真需要引用式片段，再加回来。
+ */
 function roleOf(relpath: string): PromptEntry["role"] {
-  if (relpath === ENTRY_RELPATH) return "entry";
-  const entryBody = parseMd(PROMPT_DEFAULTS[ENTRY_RELPATH] ?? "").body;
-  const included = new Set(analyze(entryBody).includes.map((i) => i.relpath.replace(/^\.\//, "")));
-  return included.has(relpath) ? "section" : "fragment";
+  return relpath === ENTRY_RELPATH ? "entry" : "section";
 }
 
 function entryOf(home: string, projectId: string, relpath: string, metaAll?: Record<string, { baseVersion: number }>): PromptEntry {
@@ -292,7 +293,7 @@ function chainOf(home: string, cwd: string, taskUri: string): AssembleGlobals["c
 
 /** DSL 装配变量（命名空间版）：模版里写 {{diy.cli}} / {{task.title}} / {{.path}} */
 
-/** 从模板常量构建 include resolver（fragment / locked 由 frontmatter 声明） */
+/** 从模板常量构建 include resolver（locked 由 frontmatter 声明） */
 export function makeTemplatesResolver(
   templates: Record<string, string>,
   overrides?: Record<string, string>,
@@ -445,6 +446,8 @@ export function assembleSystem(
     overBudget: used > budget ? { used, budget } : null,
     warnings,
     trace: opts.trace ? rendered.trace : null,
+    // 实际注入值原样回传：「变量值」view 与结构树的「值」列共用同一份事实
+    values: globals as unknown as Record<string, unknown>,
   };
 }
 

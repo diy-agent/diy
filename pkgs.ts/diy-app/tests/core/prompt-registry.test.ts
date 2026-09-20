@@ -38,7 +38,6 @@ describe("list/get", () => {
       "task.md",
       "rules.md",
       "skills.md",
-      "chain.md",
       "_guard.md",
     ]);
     // 命名约定：`_` 前缀 = 锁定（双份：入口与保命契约）
@@ -46,10 +45,10 @@ describe("list/get", () => {
     expect(getPrompt(home, PID, "_system.md").lockTip.length).toBeGreaterThan(0);
     expect(getPrompt(home, PID, "_guard.md").locked).toBe(true);
     expect(getPrompt(home, PID, "rules.md").locked).toBe(false);
-    // 角色：入口 / 节（被入口 include）/ 片段（只被引用）
+    // 角色：入口 / 节（其余都是被入口 include 的节）
     expect(getPrompt(home, PID, "_system.md").role).toBe("entry");
     expect(getPrompt(home, PID, "project.md").role).toBe("section");
-    expect(getPrompt(home, PID, "chain.md").role).toBe("fragment");
+    expect(all.every((e) => e.role === (e.relpath === "_system.md" ? "entry" : "section"))).toBe(true);
     expect(all.every((e) => e.status === "builtin")).toBe(true);
   });
   it("非法路径拒绝（含穿越）", () => {
@@ -152,33 +151,48 @@ describe("assembleSystem 装配", () => {
     expect(plain.trace).toBeNull();
     const traced = assembleSystem(home, PID, { taskUri: TASK, trace: true });
     expect(traced.trace!.length).toBeGreaterThan(0);
-    // 顶层是各节的 include：名字是 relpath，且带产出字节
-    const names = traced.trace!.map((n) => n.name);
-    expect(names).toContain("./identity.md");
+    // 顶层是各节的 include：参数是 relpath，且带产出字节
+    const args = traced.trace!.map((n) => n.arg);
+    expect(args).toContain("./identity.md");
     expect(traced.trace!.every((n) => typeof n.bytes === "number")).toBe(true);
     // trace 不改变输出
     expect(traced.system).toBe(plain.system);
   });
 
-  it("片段模版不进节拼接；链的包裹格式由 chain.md 决定（可覆盖）", () => {
-    // 无链 → 片段不出现任何痕迹
+  it("链的包裹格式由 project.md 决定（可覆盖，不是硬编码）", () => {
+    // 无链 → 本节只有说明文字，没有任何 <project_instructions>
     const p0 = assembleSystem(home, PID, { taskUri: TASK });
-    expect(p0.system).not.toContain("_chain");
     expect(p0.system).not.toContain("project_instructions");
 
     // 造一条链：home/AGENTS.md（应用级，会被 unshift）
     writeFileSync(join(home, "AGENTS.md"), "应用级规范\n", "utf-8");
     const p1 = assembleSystem(home, PID, { taskUri: TASK });
     expect(p1.system).toContain('<project_instructions path="');
-    expect(p1.system).toContain("scope=\"");
+    expect(p1.system).toContain('scope="');
     expect(p1.system).toContain("应用级规范");
 
-    // 覆盖 chain.md → markup 变了（证明这段结构确实模版化，而不是硬编码）
-    // DSL 写法：三个局部变量都带点；且必须都被引用（引擎会做参数双向校验）
-    savePrompt(home, PID, "chain.md", "<<{{.scope}}>>\n{{.path}}\n{{.content}}\n<</{{.scope}}>>");
+    // 覆盖 project.md → markup 变了（证明链的呈现确实模版化）
+    savePrompt(
+      home,
+      PID,
+      "project.md",
+      [
+        "---",
+        "title: 项目规范",
+        "desc: 测试覆盖",
+        "version: 1",
+        "---",
+        '<template :for={{chain}} :as="f">',
+        "<<{{.f.value.scope}}>>",
+        "{{.f.value.content}}",
+        "<</>>",
+        "</template>",
+        "",
+      ].join("\n"),
+    );
     const p2 = assembleSystem(home, PID, { taskUri: TASK });
     expect(p2.system).toContain(`<<${home}>>`);
-    expect(p2.system).toContain("<</");
+    expect(p2.system).toContain("<</>>");
     expect(p2.system).not.toContain("<project_instructions");
   });
 });

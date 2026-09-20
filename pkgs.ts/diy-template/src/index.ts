@@ -24,7 +24,7 @@ export type { Loc, TemplateErrorCode, TemplateErrorInit } from './errors';
 export { parse } from './parser';
 export type { ParseOptions } from './parser';
 
-export { render, renderWithTrace, byteLength } from './render';
+export { render, renderWithTrace, byteLength, previewValue } from './render';
 export type { IncludeResolver, IncludeTarget, RenderOptions, RenderResult, TraceKind, TraceNode } from './render';
 
 export { isTruthy, falsyReason, resolvePath, resolveForOutput } from './scope';

@@ -2,6 +2,7 @@
 // 🎯 变量契约（zod schema）→ 两种派生视图：
 //   1. buildVarTree：试验场「可用变量」view 的**树**（每个路径都是节点：diy → cli；chain → [ChainEntry] → path…）
 //   2. flattenVars：引擎静态校验用的**扁平清单**（路径 + 粗细类型）
+//   3. buildValueTree：试验场「变量值」view 的**值树**（同样结构，叶子挂本次注入的实际值）
 //
 // 为什么从 zod 反推而不是手写两份：手写清单与注入必然漂移（曾经就是靠测试才发现）；
 // 用 schema 当单一真源后，类型、嵌套、元素名、说明都在同一处。
@@ -10,6 +11,7 @@
 // 约定：本文件只放纯函数，禁止 import node:*（renderer 会打进包）。
 
 import type { ZodType } from "zod";
+import { previewValue } from "@diy/template";
 import type { VarSpec } from "./prompt-schema";
 
 /** 变量树节点（一个节点 = 路径上的一段） */
@@ -124,4 +126,81 @@ export function flattenVars(schema: ZodType, prefix = ""): VarSpec[] {
   }
   if (!self) return []; // unknown 之类不参与校验
   return [{ path: prefix, type: self, desc: descOf(inner) }];
+}
+
+// ── 值树（「变量值」view）───────────────────────────────────────────────
+// 契约（schema）给"有哪些变量、什么类型、什么含义"，值树给"这次到底注入了什么"。
+// 数组按**实际元素**展开（chain → [0]/[1] → path/scope/content），空数组不展开。
+
+/** 值树节点（结构来自契约，值来自本次注入） */
+export interface ValueNode {
+  /** 显示名：字段名；数组元素为 `[0]` */
+  name: string;
+  type: string;
+  desc?: string;
+  optional?: boolean;
+  /** 实际值的单行紧凑文本（截断由 previewValue 负责） */
+  value: string;
+  /** 值不存在（未定义 / 空数组）：灰显示，便于一眼看出"这次没数据" */
+  missing?: boolean;
+  children?: ValueNode[];
+}
+
+/** 值树：按契约的路径逐段展开，段落上的值来自 value */
+export function buildValueTree(schema: ZodType, value: unknown, name = ""): ValueNode[] {
+  const { schema: inner } = unwrap(schema);
+  const d = defOf(inner);
+  if (d.type === "object" && d.shape) {
+    return Object.entries(d.shape).map(([k, v]) => valueNodeOf(k, v, (value as Record<string, unknown>)?.[k]));
+  }
+  return name ? [valueNodeOf(name, inner, value)] : [];
+}
+
+function valueNodeOf(name: string, schema: ZodType, value: unknown): ValueNode {
+  const { schema: inner, optional } = unwrap(schema);
+  const d = defOf(inner);
+  const type = d.type ?? "unknown";
+  const desc = descOf(inner);
+  if (type === "object" && d.shape) {
+    const obj =
+      value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : undefined;
+    return {
+      name,
+      type: "object",
+      desc,
+      optional,
+      value: previewValue(value),
+      missing: obj === undefined,
+      children: Object.entries(d.shape).map(([k, v]) => valueNodeOf(k, v, obj?.[k])),
+    };
+  }
+  if (type === "array" && d.element) {
+    const arr = Array.isArray(value) ? value : [];
+    const el = unwrap(d.element).schema;
+    const elType = defOf(el).type ?? "unknown";
+    const elLabel = metaIdOf(el) ?? elType;
+    return {
+      name,
+      type: "array",
+      desc,
+      optional,
+      value: arr.length === 0 ? "空数组" : `${arr.length} 项`,
+      missing: arr.length === 0,
+      children: arr.map((item, i) => {
+        // 元素本身若还是对象 → 继续按契约展开它的字段（命名成 [0]/[1]，与"第几个"对上）
+        const node = valueNodeOf(`[${i}]`, d.element!, item);
+        return { ...node, name: `[${i}]`, type: node.type === "object" ? elLabel : node.type };
+      }),
+    };
+  }
+  return {
+    name,
+    type,
+    desc,
+    optional,
+    value: previewValue(value),
+    missing: value === undefined || value === null,
+  };
 }

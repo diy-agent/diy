@@ -72,7 +72,7 @@ describe("template list/get", () => {
             status: string;
             locked: boolean;
             lockTip: string;
-            role: "entry" | "section" | "fragment";
+            role: "entry" | "section";
         }>;
         expect(list.map((e) => e.relpath)).toEqual([
             "_system.md",
@@ -82,14 +82,13 @@ describe("template list/get", () => {
             "task.md",
             "rules.md",
             "skills.md",
-            "chain.md",
             "_guard.md",
         ]);
         expect(list.every((e) => e.status === "builtin")).toBe(true);
         // 角色由入口的 include 推导（不再由 frontmatter 声明，避免两处漂移）
         expect(list.find((e) => e.relpath === "_system.md")!.role).toBe("entry");
         expect(list.find((e) => e.relpath === "project.md")!.role).toBe("section");
-        expect(list.find((e) => e.relpath === "chain.md")!.role).toBe("fragment");
+        expect(list.every((e) => e.role === (e.relpath === "_system.md" ? "entry" : "section"))).toBe(true);
         // 命名约定 `_` = 锁定：入口与保命契约都不可覆盖
         const guard = list.find((e) => e.relpath === "_guard.md")!;
         expect(guard.locked).toBe(true);
@@ -202,9 +201,16 @@ describe("template preview", () => {
         expect(okSystem).toContain("- 我自己的规则");
         expect(okSystem).not.toContain("title: 手写覆盖");
         // 预览带结构 trace（试验场「结构树」的数据源）；真发不带
-        const trace = (ok.data as Record<string, unknown>)["trace"] as Array<{ name?: string; bytes: number }>;
+        const trace = (ok.data as Record<string, unknown>)["trace"] as Array<Record<string, unknown>>;
         expect(Array.isArray(trace)).toBe(true);
-        expect(trace.some((n) => n.name === "./rules.md")).toBe(true);
+        // 节点的「参数」= 模版里写的 relpath；「值」= 求值结果
+        expect(trace.some((n) => n["arg"] === "./rules.md")).toBe(true);
+        expect(trace.every((n) => typeof n["bytes"] === "number")).toBe(true);
+        // 实际注入值随预览一起下发（「变量值」view 的数据源）
+        const values = (ok.data as Record<string, unknown>)["values"] as Record<string, unknown>;
+        expect(Object.keys(values)).toEqual(
+            expect.arrayContaining(["diy", "project", "task", "cwd", "chain", "skills"]),
+        );
 
         // 再放一个引用未知路径的覆盖：引擎严格 → 预览直接失败（旧行为是"未知变量"软警告）
         writeFileSync(

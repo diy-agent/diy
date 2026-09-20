@@ -22,7 +22,8 @@ export const PromptEntrySchema = z.object({
   /** 锁定时展示给用户的理由 */
   lockTip: z.string(),
   /** 角色：入口 / 节（被入口 include）/ 片段（只被引用）——由 `_system.md` 的 include 推导 */
-  role: z.enum(["entry", "section", "fragment"]),
+  /** 入口（_system.md）/ 节（被入口 include）：由入口的 include 列表推导，不手工维护 */
+  role: z.enum(["entry", "section"]),
   status: z.enum(["builtin", "overridden"]),
   current: z.string(),
   builtin: z.string(),
@@ -98,7 +99,12 @@ export interface VarSpec {
 /** 渲染结构 trace 节点（试验场「结构树」：每个节点的产出字节 + :if 真假原因 + 迭代次数） */
 export type TraceNode = {
   kind: string;
+  /** 节点显示名：:if / :for / include / 标签 / 插值 / 文本 / 迭代项 */
   name?: string;
+  /** 参数 = 模版里写的（表达式、relpath、字面文本片段） */
+  arg?: string;
+  /** 值 = 参数求值后的单行紧凑文本 */
+  value?: string;
   bytes: number;
   result?: boolean;
   reason?: string;
@@ -108,6 +114,8 @@ export const TraceNodeSchema: z.ZodType<TraceNode> = z.lazy(() =>
   z.object({
     kind: z.string(),
     name: z.string().optional(),
+    arg: z.string().optional(),
+    value: z.string().optional(),
     bytes: z.number(),
     result: z.boolean().optional(),
     reason: z.string().optional(),
@@ -123,6 +131,8 @@ export const AssembledSystemSchema = z.object({
   warnings: z.array(z.string()),
   /** 结构 trace：仅预览请求时提供（真发不传，省一次分配） */
   trace: z.array(TraceNodeSchema).nullable(),
+  /** 本次**实际注入**的 globals 值（「变量值」view 的数据源；随任务/草稿变化） */
+  values: z.record(z.string(), z.unknown()),
   /** 变量契约：宿主注入的变量清单（模版作者可用的"输入面"） */
   // 变量契约不再随载荷下发：renderer 直接从 AssembleGlobalsSchema 派生（单一真源，零漂移）
 });
