@@ -1,6 +1,6 @@
 // src/shared/var-tree.ts
 // 🎯 变量契约（zod schema）→ 两种派生视图：
-//   1. buildVarTree：试验场「可用变量」view 的**树**（每个路径都是节点：diy → cli；chain → [ChainEntry] → path…）
+//   1. buildVarTree：试验场「变量定义」view 的**树**（每个路径都是节点：diy → cli；chain → [ChainEntry] → path…）
 //   2. flattenVars：引擎静态校验用的**扁平清单**（路径 + 粗细类型）
 //   3. buildValueTree：试验场「变量值」view 的**值树**（同样结构，叶子挂本次注入的实际值）
 //

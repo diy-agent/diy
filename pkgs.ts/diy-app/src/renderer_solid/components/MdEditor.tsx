@@ -24,40 +24,43 @@ const labTheme = EditorView.theme(
             opacity: "0.4",
         },
         ".cm-activeLine": { backgroundColor: "var(--color-base-200)" },
-        // 结构树/变量行点中时，模版里对应的那段源码
-        ".cm-lab-hl": {
-            backgroundColor: "var(--color-warning)",
-            opacity: "0.35",
-            borderRadius: "2px",
-        },
+        // 高亮：浅色 = 所有出现处；深色 = 当前焦点（同一色相加浓，暗色主题下更亮）
+        ".cm-lab-hl": { backgroundColor: "color-mix(in srgb, var(--color-warning) 16%, transparent)" },
+        ".cm-lab-hl-focus": { backgroundColor: "color-mix(in srgb, var(--color-warning) 48%, transparent)" },
         ".cm-activeLineGutter": { opacity: "0.9" },
     },
     { dark: true },
 );
 
-/** 高亮区间（源码字符偏移；来自引擎的 trace/analyze 区间） */
-export interface HlSpan {
-    from: number;
-    to: number;
+/**
+ * 高亮：**按整行**（行背景覆盖整行，扫读比给 token 上色容易），分两层颜色：
+ *   · `lines`      浅色 = 所有标出的"这一段"出现处
+ *   · `focusLines` 深色 = 当前焦点的那一处（上/下一个导航的目标）
+ */
+export interface HlLines {
+    lines: number[];
+    focusLines?: number[];
 }
 
-const setHl = StateEffect.define<HlSpan[] | null>();
+const setHl = StateEffect.define<HlLines | null>();
 
-/** 高亮用 Decoration（多条：点变量行时同一个变量的多处出现一起亮） */
+/** 高亮用行装饰（多层：浅色=全部出现处，深色=当前焦点） */
 const hlField = StateField.define<DecorationSet>({
     create: () => Decoration.none,
     update(deco, tr) {
         let next = deco.map(tr.changes);
         for (const e of tr.effects) {
             if (!e.is(setHl)) continue;
-            const ranges: Range<Decoration>[] = [];
-            for (const sp of e.value ?? []) {
-                // 空区间不画（Decoration 不允许 from==to）；越界夹回文档
-                const from = Math.max(0, Math.min(sp.from, tr.state.doc.length));
-                const to = Math.max(0, Math.min(sp.to, tr.state.doc.length));
-                if (to > from) ranges.push(Decoration.mark({ class: "cm-lab-hl" }).range(from, to));
+            const spec = e.value;
+            const decos: Range<Decoration>[] = [];
+            if (spec) {
+                const last = tr.state.doc.lines;
+                const at = (n: number): number => tr.state.doc.line(Math.min(Math.max(1, n), last)).from;
+                const focus = new Set(spec.focusLines ?? []);
+                for (const n of spec.lines) decos.push(Decoration.line({ class: "cm-lab-hl" }).range(at(n)));
+                for (const n of focus) decos.push(Decoration.line({ class: "cm-lab-hl-focus" }).range(at(n)));
             }
-            next = Decoration.set(ranges, true);
+            next = Decoration.set(decos, true);
         }
         return next;
     },
@@ -75,8 +78,8 @@ export function MdEditor(props: {
     value: string;
     editable: boolean;
     onChange: (v: string) => void;
-    /** 要高亮的区间（结构树/变量行点中时传入；null = 清空） */
-    highlight?: HlSpan[] | null;
+    /** 要高亮的行（结构树/变量定义行点中时传入；null = 清空） */
+    highlight?: HlLines | null;
     /** 纯文本模式：不做 markdown 高亮、不画当前行（预览用） */
     plain?: boolean;
 }) {
@@ -133,13 +136,17 @@ export function MdEditor(props: {
     // 高亮区间变化（点结构树/变量行）→ 重画 decoration 并把视线带过去；
     // 文档替换后也要重放一次（offset 是相对当前文档的）
     createEffect(() => {
-        const spans = props.highlight ?? null;
+        const spec = props.highlight ?? null;
         const v = props.value; // 依赖文档：换文件后按新文档重放
         const vv = view;
         if (!vv) return;
-        const effects: StateEffect<unknown>[] = [setHl.of(spans)];
-        if (spans && spans.length > 0) effects.push(EditorView.scrollIntoView(spans[0]!.from, { y: "center" }));
-        vv.dispatch({ effects: effects as StateEffect<DecorationSet>[] });
+        const effects: StateEffect<unknown>[] = [setHl.of(spec)];
+        const focusLine = spec?.focusLines?.[0] ?? spec?.lines?.[0];
+        if (focusLine !== undefined) {
+            const n = Math.min(Math.max(1, focusLine), vv.state.doc.lines);
+            effects.push(EditorView.scrollIntoView(vv.state.doc.line(n).from, { y: "center" }));
+        }
+        vv.dispatch({ effects });
     });
 
     return <div ref={(el) => (host = el)} class="h-full min-h-0 text-left" />;

@@ -13,7 +13,7 @@ function find<N extends { name: string; children?: N[] }>(nodes: N[], name: stri
   return undefined;
 }
 
-describe("变量树（可用变量 view 的数据源）", () => {
+describe("变量树（变量定义 view 的数据源）", () => {
   const tree = buildVarTree(AssembleGlobalsSchema);
 
   it("路径逐段成节点：diy → cli（两跳），而不是一行 diy.cli", () => {

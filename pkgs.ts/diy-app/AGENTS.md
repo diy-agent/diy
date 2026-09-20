@@ -138,7 +138,8 @@ $DIY_HOME/projects/<pid>/tasks/<tid>/
 | 试验场页面 | `PromptLabV4Page.tsx`（左栏 = 模板 / 可用变量（契约）/ 变量值（本次注入）/ 结构树（trace）；右栏 = 预览；`ui page navigate lab` 落 agent调参 tab）；草稿按 project 分桶存 `Caches.diy_lab_drafts` |
 | 试验场两块编辑器 | **同一实现同一外观**（`MdEditor` = CodeMirror 6）：左边模版编辑器（markdown 高亮 + 可编辑性随锁定状态）与右边「系统上下文预览」（`plain` + `editable={false}`）都有**行号**、都**不自动折行**（长了横向滚：折行会让「第几行」对不上行号）。高亮也是同一套（CM decoration），预览侧区间来自 trace 的 `out` |
 | 试验场刷新 | 顶栏「⟳ 刷新」= 全页面重拉（任务树 → 模版列表含覆盖/过期状态 → 强制重算预览）。**debug UI 用显式刷新代替事件流**：外部改了模版文件、CLI 建了任务，界面不会自己变（实测确认），按一下刷新即可；未保存草稿与高亮选区保留（选区只存身份，重算后自动跟随） |
-| 试验场高亮联动 | 点结构树行 → 高亮**模版那段源码**（区间相对所属模版 body）+ **预览那段产出**；点「可用变量」的变量名 → 高亮它在当前模版的**所有出现处** + 预览里所有解析它的节点产出；再点一次取消。区间由引擎给（`TraceNode.src/out`、`analyze().paths[].end`），UI 只存"身份"（结构树 key 链 / 变量路径）并按最新 trace 重算 → 草稿重算后选区跟着走。include 节点自己的 `src` 属于**调用方**文件，只有它的子节点才换成被调模版 |
+| 试验场高亮联动 | 点结构树行 → 高亮模版那段源码 + 预览那段产出；点「变量定义」的变量名 → 高亮它在当前模版的**所有出现处** + 预览里所有解析它的节点产出；再点一次取消。区间由引擎给（`TraceNode.src/out`、`analyze().paths[].end`），UI 只存"身份"（结构树 key 链 / 变量路径）并按最新 trace 重算 → 草稿重算后选区跟着走。include 节点自己的 `src` 属于**调用方**文件，只有它的子节点才换成被调模版 |
+| 高亮呈现与导航 | **按整行高亮**（行背景能覆盖整行，扫读比给 token 上色容易；行号也是两侧共同基准，`shared/hl-lines.ts` 把区间折成行号）：浅色 = 全部出现处，深色 = 当前焦点。两个编辑器**各一条 find-bar 形态的导航条**（`HlBar`：`join` 的 ↑/↓ + `1/3` 计数 + ✕）；两侧各自记焦点下标（同一变量在模版有 4 处、预览可能有别的段数）。**不用 daisyUI 的 `alert`**：它的语义是消息（`role=alert` + 彩色块），当工具栏会喧宾夺主、读屏还会当通知播报 |
 | 试验场表格列宽 | 三张表（vars/vals/trace）列宽是 **px 且可拖**（`Th` 右边缘把手，双击复位），存 `Caches.diy_lab_cols_*`。**列宽与容器宽度解耦**：拖左栏不改列宽；表比可视区宽时由左栏出横向滚动条（卡片必须 `min-w-full w-max` —— 用 `overflow-hidden` 会把超宽表格直接裁掉且不出滚动条） |
 | 变量契约与值 | `src/shared/prompt-schema.ts` 的 `AssembleGlobalsSchema`（zod 单一真源）→ `src/shared/var-tree.ts` 两种派生：`buildVarTree`（树形展示）/ `flattenVars`（引擎静态校验）；实际值随预览下发 `values`（结构树「值」列与「变量值」view 同源） |
 | 中断文案 | `_guard.md` **不得**复述 `INTERRUPTED_TOOL_NOTICE` —— 那段话的唯一来源是 `local-blocks.ts` 的常量 |

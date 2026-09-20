@@ -21,10 +21,11 @@ import { lineDiff, useHoverTip, type PromptEntry } from "./promptLabCommon";
 import type { RequestPreview, TraceNode } from "../../shared/prompt-schema";
 import { AssembleGlobalsSchema } from "../../shared/prompt-schema";
 import { buildValueTree, buildVarTree, flattenVars, type ValueNode, type VarNode } from "../../shared/var-tree";
-import type { HlSpan } from "./MdEditor";
+import type { HlLines } from "./MdEditor";
+import { lineNumbersOf, type HlSpan } from "../../shared/hl-lines";
 
 // 变量契约在 renderer 侧直接从 schema 派生（单一真源，零 RPC 往返）：
-//   SYSTEM_VARS → 引擎静态校验；VAR_TREE → 「可用变量」view 的二维树
+//   SYSTEM_VARS → 引擎静态校验；VAR_TREE → 「变量定义」view 的二维树
 const SYSTEM_VARS = flattenVars(AssembleGlobalsSchema);
 const VAR_TREE = buildVarTree(AssembleGlobalsSchema);
 
@@ -232,6 +233,53 @@ function Th(props: { label: string; cols: ColsState; index: number; right?: bool
     );
 }
 
+/**
+ * 高亮导航条（两个编辑器各一条）：上一个/下一个 在"这一段的所有出现处"之间跳焦点。
+ * 形态选 find-bar（细条 + join 按钮组 + 计数）而不是 daisyUI 的 alert：
+ * alert 的语义是"消息"（role=alert + 彩色块），当工具栏会喧宾夺主，读屏还会当通知播报。
+ */
+function HlBar(props: {
+    /** 选中的是什么（节点名 / 变量路径） */
+    label: string;
+    count: number;
+    index: number;
+    onPrev: () => void;
+    onNext: () => void;
+    onClear: () => void;
+}) {
+    return (
+        <div class="flex shrink-0 items-center gap-2 border-b bg-base-200/60 px-2 py-0.5 text-[11px]">
+            <span class="join join-horizontal">
+                <button
+                    class="btn btn-xs join-item"
+                    title="上一个（Shift+↑）"
+                    disabled={props.count === 0}
+                    onClick={props.onPrev}
+                >
+                    ↑
+                </button>
+                <button
+                    class="btn btn-xs join-item"
+                    title="下一个（Shift+↓）"
+                    disabled={props.count === 0}
+                    onClick={props.onNext}
+                >
+                    ↓
+                </button>
+            </span>
+            <span class="badge badge-xs badge-ghost font-mono" title="第几个 / 共几个">
+                {props.count === 0 ? "0/0" : `${props.index + 1}/${props.count}`}
+            </span>
+            <span class="truncate font-mono opacity-70" title={props.label}>
+                {props.label}
+            </span>
+            <button class="btn btn-xs btn-ghost ml-auto" title="清除高亮" onClick={props.onClear}>
+                ✕
+            </button>
+        </div>
+    );
+}
+
 /** 字节数格式化（结构树用） */
 function fmtBytes(n: number): string {
     if (n < 1024) return `${n} B`;
@@ -244,7 +292,7 @@ function wrapsTag(body: string): string | undefined {
 }
 
 /**
- * 可用变量 view 的一行（名字 + 说明）
+ * 变量定义 view 的一行（名字 + 说明）
  */
 function VarRow(props: { name: string; note?: string }) {
     return (
@@ -494,7 +542,7 @@ function VarTree(props: {
     );
 }
 
-/** 可用变量 view 的分组标题 */
+/** 变量定义 view 的分组标题 */
 function VarGroup(props: { title: string; children: unknown }) {
     return (
         <>
@@ -591,6 +639,13 @@ export function PromptLabV4Page() {
         return r ? { ...r, key: cur.key } : null;
     });
 
+    /** 该模版当前的正文（草稿优先）——区间是相对它的，行号也必须按它算 */
+    const bodyOf = (relpath: string): string => {
+        const e = entries().find((x) => x.relpath === relpath);
+        return e ? draftOf(e) : "";
+    };
+
+    /** 模版侧：选中的"这一段"在所属模版里的所有出现处（区间） */
     const hlSrc = createMemo<HlSpan[]>(() => {
         const cur = hlSel();
         if (!cur) return [];
@@ -607,6 +662,7 @@ export function PromptLabV4Page() {
             ...a.conditions.filter((c) => hit(c.path)).map((c) => ({ from: c.loc.offset, to: c.end })),
         ];
     });
+    /** 预览侧：所有解析它的节点的产出区间 */
     const hlOut = createMemo<HlSpan[]>(() => {
         const cur = hlSel();
         if (!cur) return [];
@@ -630,13 +686,42 @@ export function PromptLabV4Page() {
             })
             .map((n) => n.out!);
     });
+
+    /** 焦点：每个编辑器各自一个下标（两侧出现处个数可以不同），换选中就归零 */
+    const [focusAt, setFocusAt] = createSignal({ src: 0, out: 0 });
+    createEffect(
+        on(hlSel, () => {
+            setFocusAt({ src: 0, out: 0 });
+        }),
+    );
+    const step = (side: "src" | "out", delta: number, count: number): void => {
+        setFocusAt((f) => ({ ...f, [side]: count > 0 ? (f[side] + delta + count) % count : 0 }));
+    };
+
     const hlLabel = createMemo<string | null>(() => {
         const cur = hlSel();
         if (!cur) return null;
-        if (cur.kind === "var") return `{{${cur.path}}} · 模版 ${hlSrc().length} 处 / 预览 ${hlOut().length} 段`;
+        if (cur.kind === "var") return `{{${cur.path}}}`;
         const n = picked()?.node;
-        if (!n) return null;
-        return `${n.name ?? n.kind}${n.arg ? ` ${n.arg}` : ""} @ ${picked()!.file}`;
+        return n ? `${n.name ?? n.kind}${n.arg ? ` ${n.arg}` : ""}` : null;
+    });
+
+    /** 模版侧高亮（整行）：浅色 = 全部出现处，深色 = 焦点那一处 */
+    const srcHl = createMemo<HlLines | null>(() => {
+        const occ = hlSrc();
+        if (occ.length === 0) return null;
+        const file = picked()?.file ?? selPath();
+        const text = bodyOf(file);
+        const i = Math.min(focusAt().src, occ.length - 1);
+        return { lines: lineNumbersOf(text, occ), focusLines: lineNumbersOf(text, [occ[i]!]) };
+    });
+    /** 预览侧高亮（整行）：同上 */
+    const outHl = createMemo<HlLines | null>(() => {
+        const occ = hlOut();
+        if (occ.length === 0) return null;
+        const text = preview()?.system ?? "";
+        const i = Math.min(focusAt().out, occ.length - 1);
+        return { lines: lineNumbersOf(text, occ), focusLines: lineNumbersOf(text, [occ[i]!]) };
     });
 
     /** 点结构树行：切到该节点所属模版（草稿按 project 存，切文件不丢内容），再选中 */
@@ -701,7 +786,7 @@ export function PromptLabV4Page() {
         return vals ? buildValueTree(AssembleGlobalsSchema, vals) : [];
     });
 
-    // 「可用变量」view 的数据源：对**当前草稿**做静态分析（renderer 侧直接跑引擎 → 随打字实时更新）
+    // 「变量定义」view 的数据源：对**当前草稿**做静态分析（renderer 侧直接跑引擎 → 随打字实时更新）
     const analysis = createMemo(() => {
         const s = sel();
         if (!s) return null;
@@ -909,9 +994,9 @@ export function PromptLabV4Page() {
                             </div>
                         </Show>
                     </div>
-                    {/* 可用变量 view：本模版引用的变量/循环/条件/include + lint（renderer 侧实时分析草稿） */}
+                    {/* 变量定义 view：本模版引用的变量/循环/条件/include + lint（renderer 侧实时分析草稿） */}
                     <div class="min-w-full w-max border border-base-300 rounded-lg">
-                        {viewHeader("vars", "可用变量", sel() ? sel()!.relpath : "未选模版")}
+                        {viewHeader("vars", "变量定义", sel() ? sel()!.relpath : "未选模版")}
                         <Show when={views()["vars"]}>
                             <div class="bg-base-200 px-0 py-1 font-mono text-[11px]">
                                 <Show when={analysis()} fallback={<div class="px-2 py-1 opacity-60">左侧点开一份模版</div>}>
@@ -1058,14 +1143,6 @@ export function PromptLabV4Page() {
                         )}
                         <Show when={views()["trace"]}>
                             <div class="bg-base-200 px-0 py-1 text-[11px]">
-                                <Show when={hlLabel()}>
-                                    <div class="px-2 pb-1 text-[10px] text-info">
-                                        高亮：{hlLabel()}
-                                        <button class="ml-1 underline" onClick={() => setHlSel(null)}>
-                                            清除
-                                        </button>
-                                    </div>
-                                </Show>
                                 <Show when={preview()?.trace} fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}>
                                     {(tr) => (
                                         <table class="table table-xs table-fixed" style={{ width: tableW(cols.trace) }}>
@@ -1171,12 +1248,20 @@ export function PromptLabV4Page() {
                                         when={mode() === "diff"}
                                         fallback={
                                             <div class="min-h-0 flex-1 overflow-hidden rounded border border-base-300">
+                                                <HlBar
+                                                    label={hlLabel() ?? "（未选中：点结构树行或变量定义行）"}
+                                                    count={hlSrc().length}
+                                                    index={Math.min(focusAt().src, Math.max(0, hlSrc().length - 1))}
+                                                    onPrev={() => step("src", -1, hlSrc().length)}
+                                                    onNext={() => step("src", 1, hlSrc().length)}
+                                                    onClear={() => setHlSel(null)}
+                                                />
                                                 <MdEditor
                                                     value={draftOf(s())}
                                                     editable={!s().locked}
                                                     onChange={(v) => patchDrafts(project(), (d) => ({ ...d, [s().relpath]: v }))}
                                                     highlight={
-                                                        (picked()?.file ?? selPath()) === s().relpath ? hlSrc() : null
+                                                        (picked()?.file ?? selPath()) === s().relpath ? srcHl() : null
                                                     }
                                                 />
                                             </div>
@@ -1225,6 +1310,14 @@ export function PromptLabV4Page() {
                     <div class="min-w-full w-max border border-base-300 rounded-lg">
                         {viewHeader("sysctx", "系统上下文预览", "随草稿自动重算")}
                         <Show when={views()["sysctx"]}>
+                        <HlBar
+                            label={hlLabel() ?? "（未选中：点结构树行或变量定义行）"}
+                            count={hlOut().length}
+                            index={Math.min(focusAt().out, Math.max(0, hlOut().length - 1))}
+                            onPrev={() => step("out", -1, hlOut().length)}
+                            onNext={() => step("out", 1, hlOut().length)}
+                            onClear={() => setHlSel(null)}
+                        />
                         <div class="bg-base-200 px-2 py-2">
                     <Show when={preview()} fallback={<div class="text-xs opacity-60">渲染中…</div>}>
                         {(p) => (
@@ -1249,7 +1342,7 @@ export function PromptLabV4Page() {
                                         editable={false}
                                         plain
                                         onChange={() => {}}
-                                        highlight={hlOut()}
+                                        highlight={outHl()}
                                     />
                                 </div>
                             </>

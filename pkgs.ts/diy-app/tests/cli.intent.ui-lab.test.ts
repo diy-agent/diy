@@ -4,7 +4,7 @@
 //
 // AGENTS.md 的教训：CLI 的 RPC 返回成功 ≠ renderer 渲染正确。这里走
 //   ui page navigate lab → ui page focus <任务> → 读 a11y 树
-// 确认「可用变量」与「结构树」两块真的上了屏，且内容来自引擎的 analyze/trace。
+// 确认「变量定义 / 变量值 / 结构树」三块真的上了屏，且内容来自引擎的 analyze/trace。
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
@@ -43,8 +43,8 @@ async function a11yText(): Promise<string> {
   return collectText([(res.data as any)?.data?.tree]).join("\n");
 }
 
-describe("试验场：可用变量 / 结构树 两个 view", () => {
-  it("导航到试验场 → 两块 view 上屏，且内容来自 analyze/trace", async () => {
+describe("试验场：变量定义 / 变量值 / 结构树 三个 view + 高亮导航条", () => {
+  it("导航到试验场 → 三块 view 与高亮导航条上屏，内容来自 analyze/trace", async () => {
     // 1. 造一个项目 + 任务（试验场以选中任务为场景）
     const repo = `${fx.HOME}/lab`;
     const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 试验场`);
@@ -56,17 +56,23 @@ describe("试验场：可用变量 / 结构树 两个 view", () => {
     await fx.sh.getJson("./diy.sh ui page navigate lab");
     await fx.sh.getJson(`./diy.sh ui page focus ${uri}`);
 
-    // 3. 读 a11y 树：两个 view 的标题 + 引擎分析出的内容
+    // 3. 读 a11y 树：三个 view 的标题 + 引擎分析出的内容
     //    （debug UI 主交互 = 手动刷新：按需重算，不订阅外部事件流）
     expect((await waitUntil(a11yText, (s) => s.includes("⟳ 刷新")))).toContain("⟳ 刷新");
     const text = await waitUntil(
       a11yText,
-      (s) => s.includes("可用变量") && s.includes("结构树"),
+      (s) => s.includes("变量定义") && s.includes("变量值") && s.includes("结构树"),
       { label: "试验场两块 view 上屏" },
     );
-    expect(text).toContain("可用变量");
+    expect(text).toContain("变量定义"); // 原名「变量定义」
+    expect(text).toContain("变量值");
     expect(text).toContain("结构树");
-    // 可用变量 view：变量契约是**树形展开的 2 列表格**（变量 | 说明）
+    // 两个编辑器上方各一条高亮导航条（未选中时也常驻：↑ ↓ 0/0 ✕）
+    expect(text).toContain("0/0");
+    expect(text).toContain("↑");
+    expect(text).toContain("↓");
+    expect(text).toContain("✕");
+    // 变量定义 view：变量契约是**树形展开的 2 列表格**（变量 | 说明）
     expect(text).toContain("宿主提供（变量契约，树形展开）");
     expect(text).toContain("变量");
     expect(text).toContain("说明");

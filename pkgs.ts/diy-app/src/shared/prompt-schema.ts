@@ -52,7 +52,7 @@ export const ChainItemSchema = z
 /**
  * 注入 globals 的**契约（单一真源）**：
  *   · `flattenVars()` 派生出引擎静态校验用的扁平 VarSpec[]
- *   · `buildVarTree()` 派生出试验场「可用变量」view 的二维树（名字/类型 + 说明）
+ *   · `buildVarTree()` 派生出试验场「变量定义」view 的二维树（名字/类型 + 说明）
  *   · 装配时 `safeParse` 校验注入与契约是否漂移（漂移 → 上屏告警，不静默）
  * 注意：只放 schema/类型，禁止 import node:fs（renderer 会打进包）。
  */
