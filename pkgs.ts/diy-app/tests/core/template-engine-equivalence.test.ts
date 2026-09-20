@@ -35,12 +35,14 @@ function bodyOf(raw: string): string {
 }
 
 /**
- * 把"今天的模版正文"改写成 DSL 形态（迁移时逐份模版要做的事）：
- *   1. 正文里的 `<` 转义为 `\<` —— XML-native 语法的代价（实测本仓有 `<pid>` / `<tid>` 两处）
- *   2. 片段局部变量加 `.` 前缀 —— 新引擎里裸名 = globals，局部名必须显式用动态作用域
+ * 把"今天的模版正文"改写成 DSL 形态。
+ * 现在只剩一件事要做：**目标模版与今天的模版正文逐字节相同**——
+ * 输出标签（`<diy>`、`<project_instructions path="…">`）在新引擎里就是文本，
+ * `<pid>` / `<tid>` 也不需要任何转义（这正是这次收窄换来的）。
  */
 function dslize(body: string, locals: string[] = []): string {
-    let out = body.split('<').join('\\<');
+    // 唯一的改写：片段局部变量加 `.` 前缀（动态作用域）——今天的扁平名在新引擎里读的是 globals
+    let out = body;
     for (const name of locals) out = out.split(`{{${name}}}`).join(`{{.${name}}}`);
     return out;
 }

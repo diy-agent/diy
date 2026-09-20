@@ -5,7 +5,7 @@
 //   2. 报错是否**带位置**且**不静默**（未闭合、错配、非法绑定、非法控制属性）
 
 import { describe, expect, it } from 'vitest';
-import { TemplateError, parse, render } from '../src/index';
+import { TemplateError, analyze, parse, render } from '../src/index';
 
 function code(fn: () => unknown): string {
     try {
@@ -16,63 +16,57 @@ function code(fn: () => unknown): string {
     return '（没报错）';
 }
 
-describe('逐字节边界', () => {
+describe('逐字节边界（输出标签也是文本）', () => {
     it('CRLF 原样保留（不做换行归一化）', () => {
         expect(render('a\r\nb\r\n', {})).toBe('a\r\nb\r\n');
     });
 
-    it('无值属性原样输出（不补 =""）', () => {
+    it('输出标签的属性、引号、空白原样（不解析、不规范化）', () => {
+        expect(render("<pi path='x'  flag >y</pi>", {})).toBe("<pi path='x'  flag >y</pi>");
         expect(render('<br disabled/>', {})).toBe('<br disabled/>');
-        expect(render('<pi path="x" flag>x</pi>', {})).toBe('<pi path="x" flag>x</pi>');
+        expect(render('<project_instructions path="{{p}}">x</project_instructions>', { globals: { p: 'P' } })).toBe(
+            '<project_instructions path="P">x</project_instructions>',
+        );
     });
 
-    it('自闭合元素原样输出', () => {
-        expect(render('<hr/>', {})).toBe('<hr/>');
+    it('未闭合 / 错配的输出标签也只是文本（不再报错）', () => {
+        expect(render('<diy>x', {})).toBe('<diy>x');
+        expect(render('<diy>x</task>', {})).toBe('<diy>x</task>');
+        expect(render('x</diy>', {})).toBe('x</diy>');
+        expect(render('任务号 <pid> 是数字；a<b；vector<T>', {})).toBe('任务号 <pid> 是数字；a<b；vector<T>');
     });
 
-    it('注释样文本被当普通文本透传（本引擎没有注释语法）', () => {
+    it('注释样文本、<templateX> 都原样透传', () => {
         expect(render('<!-- 说明 -->', {})).toBe('<!-- 说明 -->');
-    });
-
-    it('<templateX> 不是控制节点，是普通元素（只有 <template 后面跟空白/:/>/ 才是）', () => {
         expect(render('<templateX>hi</templateX>', {})).toBe('<templateX>hi</templateX>');
     });
 
-    it('属性值统一用双引号输出（源里的单引号会被规范化）', () => {
-        expect(render("<pi path='x'>y</pi>", {})).toBe('<pi path="x">y</pi>');
-    });
-
-    it(':omit-empty="true" 时内容为空的元素连标签一起省略', () => {
-        const tpl = '<items :omit-empty="true"><template :for="x of diy.list">{{.x}}</template></items>';
-        expect(render(tpl, { globals: { diy: { list: [] } } })).toBe('');
-        expect(render(tpl, { globals: { diy: { list: ['a'] } } })).toBe('<items>a</items>');
+    it('代码围栏 ``` 内一律不解析（{{}} 与 <template> 都是字面量）', () => {
+        const src = ['```md', '把 {{diy.cli}} 写进 <template :if="x">…</template>', '```'].join('\n');
+        expect(render(src, { globals: { diy: { cli: 'V' } } })).toBe(src);
     });
 });
 
-describe('语法错误（必须带行列，不静默）', () => {
+describe('控制标记的语法（唯一严格的部分）', () => {
     it('插值未闭合', () => {
         expect(code(() => parse('a {{diy.cli'))).toBe('syntax');
     });
 
-    it('元素未闭合', () => {
+    it('控制标签未闭合', () => {
         const e = (() => {
             try {
-                parse('<diy>x');
+                parse('<template :if="diy.on">x');
             } catch (err) {
                 return err as TemplateError;
             }
             return null;
         })()!;
         expect(e.code).toBe('syntax');
-        expect(e.message).toContain('标签未闭合 <diy>');
+        expect(e.message).toContain('标签未闭合 <template>');
     });
 
-    it('结束标签错配', () => {
-        expect(code(() => parse('<diy>x</task>'))).toBe('syntax');
-    });
-
-    it('多余的结束标签', () => {
-        expect(code(() => parse('x</diy>'))).toBe('syntax');
+    it('<raw> 未闭合', () => {
+        expect(code(() => parse('<raw>没关'))).toBe('syntax');
     });
 
     it(':for 语法非法（缺 of）带修复提示', () => {
@@ -88,10 +82,10 @@ describe('语法错误（必须带行列，不静默）', () => {
         expect(e.detail).toContain(':for="item of 路径"');
     });
 
-    it('未知控制属性（:iff 这类拼错）→ 报错，不会静默当普通属性输出', () => {
+    it('未知控制属性（<template :iff>）→ 报错', () => {
         const e = (() => {
             try {
-                parse('<enabled :iff="a">x</enabled>');
+                parse('<template :iff="a">x</template>');
             } catch (err) {
                 return err as TemplateError;
             }
@@ -100,29 +94,34 @@ describe('语法错误（必须带行列，不静默）', () => {
         expect(e.code).toBe('syntax');
         expect(e.message).toContain(':iff');
         expect(e.line).toBe(1);
-        expect(e.col).toBeGreaterThan(1);
     });
 
-    it(':include 只能用在 <template> 上', () => {
-        expect(code(() => parse('<pi :include="./a.md" />'))).toBe('syntax');
+    it(':include 路径不是 ./ 开头 / 含 .. → include 错误', () => {
+        expect(code(() => parse('<template :include="a.md" />'))).toBe('include');
+        expect(code(() => parse('<template :include="../a.md" />'))).toBe('include');
     });
 
     it(':include 带子节点 → 报错', () => {
         expect(code(() => parse('<template :include="./a.md">x</template>'))).toBe('syntax');
     });
 
-    it(':include 路径不是 ./ 开头 → include 错误', () => {
-        expect(code(() => parse('<template :include="a.md" />'))).toBe('include');
-        expect(code(() => parse('<template :include="../a.md" />'))).toBe('include');
-    });
-
     it('插值路径非法（如 a..b / a[0]）→ 语法错', () => {
         expect(code(() => parse('{{a..b}}'))).toBe('syntax');
         expect(code(() => parse('{{a[0]}}'))).toBe('syntax');
     });
+});
 
-    it(':omit-empty 只接受 "true"', () => {
-        expect(code(() => parse('<a :omit-empty="yes">x</a>'))).toBe('syntax');
+describe('误用体检（lint，不阻断渲染但要显式提示）', () => {
+    it('控制属性写在普通标签上 → 提示改用 <template> 包裹（否则会原样漏进提示词）', () => {
+        const a = analyze('<rules>\n<item :if="diy.strict">严格</item>\n</rules>');
+        expect(a.lint).toHaveLength(1);
+        expect(a.lint[0]!.message).toContain(':if');
+        expect(a.lint[0]!.message).toContain('<template');
+        expect(a.lint[0]!.loc.line).toBe(2);
+    });
+
+    it('写到 <template> 上就不算误用', () => {
+        expect(analyze('<template :if="diy.strict">严格</template>').lint).toEqual([]);
     });
 });
 

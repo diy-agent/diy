@@ -1,26 +1,13 @@
 // ast.ts — 语法树类型
 //
 // 只有 5 类节点（保持最小）：
-//   text    原样文本
+//   text    原样文本（**输出标签也是 text**：<diy>、<project_instructions path="{{p}}">）
 //   interp  {{path}} 插值
-//   element 输出元素（标签原样透传给提示词）
-//   if      <template :if> / :unless，或挂在输出元素上的同名属性
-//   for     <template :for>，或挂在输出元素上的 :for
+//   if      <template :if> / :unless
+//   for     <template :for>
 //   include <template :include="…" 参数… />
 
 import type { Loc } from './errors';
-
-/** 属性值片段：字面量 或 {{path}} */
-export type AttrPart = string | { path: string; loc: Loc };
-
-/** 输出元素的属性（值里可以含 {{path}}，解析期就拆成片段，渲染时拼接） */
-export interface AttrNode {
-    name: string;
-    parts: AttrPart[];
-    loc: Loc;
-    /** 源里是无值属性（如 <br disabled>）→ 渲染时原样输出，不补 ="". */
-    bare: boolean;
-}
 
 export interface TextNode {
     type: 'text';
@@ -33,20 +20,6 @@ export interface InterpNode {
     /** 路径：'.x' / '.x.y' 读动态作用域，'a.b' 读 globals，'.' 读当前循环项 */
     path: string;
     loc: Loc;
-}
-
-export interface ElementNode {
-    type: 'element';
-    /** 标签名（原样输出） */
-    name: string;
-    attrs: AttrNode[];
-    selfClosing: boolean;
-    /** 自闭合时，属性与 `/>` 之间的原始空白（逐字节保真用） */
-    closeSpace: string;
-    children: Node[];
-    loc: Loc;
-    /** :omit-empty="true"：渲染后子文本为空/纯空白时连标签一起省略 */
-    omitEmpty: boolean;
 }
 
 export interface IfNode {
@@ -84,4 +57,4 @@ export interface IncludeNode {
     loc: Loc;
 }
 
-export type Node = TextNode | InterpNode | ElementNode | IfNode | ForNode | IncludeNode;
+export type Node = TextNode | InterpNode | IfNode | ForNode | IncludeNode;

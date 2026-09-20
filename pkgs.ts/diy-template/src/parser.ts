@@ -1,8 +1,12 @@
 // parser.ts — 词法 + 语法（自研，**不引入 XML parser 库**）
 //
-// 为什么不用 XML parser：
-//   1. 那些库会规范化实体、属性引号、空白 → 破坏「逐字节保真」（输出要进提示词）；
-//   2. 我们只需要识别一种控制节点 `<template …>`，其它标签一律**原样透传**。
+// 设计原则（见 SPEC §2.0）：模版**不是 XML 文档**，是"带控制标记的纯文本"。
+//   借 XML 的视觉结构（人读得懂、和输出同形），不借它的合规约束：
+//     · 输出标签永不解析 —— <diy> / <project_instructions path="{{p}}"> 都是文本，{{}} 照常替换
+//     · 只有两个控制标记是语法：<template …> 与 <raw>…</raw>
+//     · 不转义、不规范化、不 trim；因此 <pid>、a<b、vector<T>、{ }、& 全部原样
+//   唯一必须严格的是**控制标记的识别与报错**（否则会静默出错）。
+// 为什么不用 XML parser 库：它们会规范化实体/属性引号/空白，破坏逐字节保真。
 //
 // 语法（阶段 1）：
 //   {{path}}                            插值（.x 读动态作用域，a.b 读 globals，. 读当前循环项）
@@ -16,11 +20,12 @@
 //
 // 空白规则：控制节点不产出任何字符；不做 trim、不删行（逐字节可预测）。
 
-import type { AttrNode, AttrPart, Node } from './ast';
+import type { Node } from './ast';
 import { TemplateError, type Loc, type TemplateErrorCode } from './errors';
 
 /** 已知控制属性；其余以 `:` 开头的属性一律报错（防 :iff 这类拼错静默生效） */
-const CONTROL_ATTRS = ['if', 'unless', 'for', 'include', 'omit-empty'] as const;
+/** 已知控制属性（供 lint 复用；omit-empty 已废弃，保留识别以便提示拼错） */
+export const CONTROL_ATTRS = ['if', 'unless', 'for', 'include', 'omit-empty'] as const;
 
 const PATH_RE = /^\.?[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z0-9_$]+)*$/;
 const FOR_RE = /^([A-Za-z_$][A-Za-z0-9_$]*)\s+of\s+(\.?[A-Za-z_$][A-Za-z0-9_$.]*)$/;
@@ -109,15 +114,14 @@ class Parser {
         };
 
         while (this.pos < this.src.length) {
+            // 只有 `</template>` 是控制标记；`</skills>`、`</project_instructions>` 这类都是文本
             if (closeName !== undefined && this.startsWith('</')) {
                 const m = /^<\/([A-Za-z_][A-Za-z0-9_.-]*)\s*>/.exec(this.src.slice(this.pos));
-                if (!m) this.err('syntax', '结束标签格式非法', this.pos);
-                if (m![1] !== closeName) {
-                    this.err('syntax', `标签未闭合：期望 </${closeName}>，实际遇到 </${m![1]}>`, this.pos);
+                if (m && m[1] === closeName) {
+                    flush();
+                    this.pos += m[0].length;
+                    return out;
                 }
-                flush();
-                this.pos += m![0].length;
-                return out;
             }
             if (this.startsWith('\\{{')) {
                 text += '{{';
@@ -152,19 +156,16 @@ class Parser {
                 textStart = this.pos;
                 continue;
             }
-            if (this.startsWith('</')) {
-                const m = /^<\/([A-Za-z_][A-Za-z0-9_.-]*)\s*>/.exec(this.src.slice(this.pos));
-                this.err('syntax', `多余的结束标签 </${m?.[1] ?? '?'}>`, this.pos);
-            }
-            const ch = this.src[this.pos]!;
-            const next = this.src[this.pos + 1] ?? '';
-            if (ch === '<' && /[A-Za-z_]/.test(next)) {
-                flush();
-                out.push(this.readOutputElement());
-                textStart = this.pos;
+            // Markdown 代码围栏：``` 之间的内容完全原样（讲格式、贴代码样例不用任何转义）
+            if (this.startsWith('```') && (this.pos === 0 || this.src[this.pos - 1] === '\n')) {
+                const end = this.src.indexOf('\n```', this.pos + 3);
+                const stop = end === -1 ? this.src.length : end + 4;
+                text += this.src.slice(this.pos, stop);
+                this.pos = stop;
                 continue;
             }
-            text += ch;
+            // 其它一切（含 <diy>、<pid>、a<b、</project_instructions>）都是普通文本
+            text += this.src[this.pos]!;
             this.pos += 1;
         }
 
@@ -259,57 +260,6 @@ class Parser {
         }
     }
 
-    /**
-     * 把属性值拆成「字面量 + {{path}}」片段（解析期校验，报错带位置）。
-     * 与文本位置一致地支持逃生舱：`\{{` → 字面量 `{{`，`\<` → 字面量 `<`。
-     */
-    private attrParts(attr: RawAttr): AttrPart[] {
-        const parts: AttrPart[] = [];
-        const v = attr.value;
-        let lit = '';
-        let i = 0;
-        const flush = (): void => {
-            if (lit !== '') {
-                parts.push(lit);
-                lit = '';
-            }
-        };
-        while (i < v.length) {
-            if (v.startsWith('\\{{', i)) {
-                lit += '{{';
-                i += 3;
-                continue;
-            }
-            if (v.startsWith('\\<', i)) {
-                lit += '<';
-                i += 2;
-                continue;
-            }
-            if (v.startsWith('{{', i)) {
-                const close = v.indexOf('}}', i + 2);
-                if (close === -1) {
-                    this.err('syntax', `属性 ${attr.name} 里的插值未闭合`, attr.valueOffset + i);
-                }
-                const rawPath = v.slice(i + 2, close).trim();
-                if (rawPath !== '.' && !PATH_RE.test(rawPath)) {
-                    this.err(
-                        'syntax',
-                        `属性 ${attr.name} 的插值只支持路径：{{${rawPath}}}`,
-                        attr.valueOffset + i,
-                    );
-                }
-                flush();
-                parts.push({ path: rawPath, loc: this.locAt(attr.valueOffset + i) });
-                i = close + 2;
-                continue;
-            }
-            lit += v[i];
-            i += 1;
-        }
-        flush();
-        return parts;
-    }
-
     // ── 控制节点 <template> ───────────────────────────────────────────
 
     private readTemplateTag(): Node[] {
@@ -356,19 +306,17 @@ class Parser {
                 }
             }
             const args = others.map((a) => {
-                // 参数值就是一条路径：裸写（path=".path"）或插值形式（path="{{.path}}"）都接受
-                const parts = this.attrParts(a);
-                const only = parts.length === 1 ? parts[0] : undefined;
-                const raw = typeof only === 'string' ? only.trim() : only ? only.path : undefined;
-                if (raw === undefined || (raw !== '.' && !PATH_RE.test(raw))) {
+                // 参数值就是一条路径（不写 {{}}）：path="f.path"
+                const raw = a.value.trim();
+                if (raw !== '.' && !PATH_RE.test(raw)) {
                     this.err(
                         'syntax',
                         `include 参数 ${a.name} 只支持单条路径：${a.value}`,
-                        a.loc.offset,
-                        '例：<template :include="./_chain.md" path=".path" content=".content" />',
+                        a.valueOffset,
+                        '例：<template :include="./_chain.md" path="f.path" content="f.content" />',
                     );
                 }
-                return { name: a.name, path: raw!, loc: a.loc };
+                return { name: a.name, path: raw, loc: a.loc };
             });
             const node: Node = { type: 'include', relpath, args, loc: tag.loc };
             const wrapped = this.wrapControl(forAttr, ifAttr, unlessAttr, [node]);
@@ -419,49 +367,4 @@ class Parser {
 
     // ── 输出元素 ──────────────────────────────────────────────────────
 
-    private readOutputElement(): Node {
-        const tag = this.readTag();
-        const ctrl = new Map<string, RawAttr>();
-        const attrs: AttrNode[] = [];
-        let omitEmpty = false;
-        for (const a of tag.attrs) {
-            if (a.name.startsWith(':')) {
-                const key = a.name.slice(1);
-                if (!(CONTROL_ATTRS as readonly string[]).includes(key)) {
-                    this.err(
-                        'syntax',
-                        `未知控制属性 ${a.name}`,
-                        a.loc.offset,
-                        `已知：${CONTROL_ATTRS.map((c) => ':' + c).join('、')}；输出元素上带冒号的属性一律视为控制属性`,
-                    );
-                }
-                if (key === 'omit-empty') {
-                    if (a.value.trim() !== 'true') this.err('syntax', ':omit-empty 只接受 "true"', a.loc.offset);
-                    omitEmpty = true;
-                    continue;
-                }
-                if (key === 'include') this.err('syntax', ':include 只能用在 <template> 上', a.loc.offset);
-                if (ctrl.has(key)) this.err('syntax', `重复的控制属性 :${key}`, a.loc.offset);
-                ctrl.set(key, a);
-                continue;
-            }
-            attrs.push({ name: a.name, parts: this.attrParts(a), loc: a.loc, bare: !a.hasValue });
-        }
-        const ifAttr = ctrl.get('if');
-        const unlessAttr = ctrl.get('unless');
-        if (ifAttr && unlessAttr) this.err('syntax', ':if 与 :unless 不能同时出现', ifAttr.loc.offset);
-
-        const children = tag.selfClosing ? [] : this.readNodes(tag.name);
-        const element: Node = {
-            type: 'element',
-            name: tag.name,
-            attrs,
-            selfClosing: tag.selfClosing,
-            closeSpace: tag.closeSpace,
-            children,
-            loc: tag.loc,
-            omitEmpty,
-        };
-        return this.wrapControl(ctrl.get('for'), ifAttr, unlessAttr, [element])[0]!;
-    }
 }

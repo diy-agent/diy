@@ -30,6 +30,6 @@ export { isTruthy, falsyReason, resolvePath, resolveForOutput } from './scope';
 export type { DynamicFrame, RenderContext } from './scope';
 
 export { analyze, analyzeNodes, collectDynamicRefs } from './analyze';
-export type { Analysis, ConditionRef, IncludeRef, LoopRef, PathRef } from './analyze';
+export type { Analysis, ConditionRef, IncludeRef, LintIssue, LoopRef, PathRef } from './analyze';
 
-export type { AttrNode, AttrPart, ElementNode, ForNode, IfNode, IncludeArg, IncludeNode, InterpNode, Node, TextNode } from './ast';
+export type { ForNode, IfNode, IncludeArg, IncludeNode, InterpNode, Node, TextNode } from './ast';

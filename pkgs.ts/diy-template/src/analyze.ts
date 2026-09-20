@@ -7,7 +7,7 @@
 
 import type { Node } from './ast';
 import type { Loc } from './errors';
-import { parse, type ParseOptions } from './parser';
+import { CONTROL_ATTRS, parse, type ParseOptions } from './parser';
 
 export interface PathRef {
     path: string;
@@ -34,6 +34,12 @@ export interface LoopRef {
     loc: Loc;
 }
 
+/** 体检提示（不阻断渲染，但要显式报给作者） */
+export interface LintIssue {
+    message: string;
+    loc: Loc;
+}
+
 export interface Analysis {
     /** 全部路径引用（含属性内插值） */
     paths: PathRef[];
@@ -44,6 +50,16 @@ export interface Analysis {
     includes: IncludeRef[];
     conditions: ConditionRef[];
     loops: LoopRef[];
+    lint: LintIssue[];
+}
+
+/** 文本节点内的偏移 → 绝对行列（lint 定位用） */
+function locIn(text: string, start: Loc, index: number): Loc {
+    const before = text.slice(0, index);
+    const lines = before.split('\n');
+    return lines.length === 1
+        ? { line: start.line, col: start.col + index, offset: start.offset + index }
+        : { line: start.line + lines.length - 1, col: lines[lines.length - 1]!.length + 1, offset: start.offset + index };
 }
 
 export function analyze(source: string, opts: ParseOptions = {}): Analysis {
@@ -51,7 +67,7 @@ export function analyze(source: string, opts: ParseOptions = {}): Analysis {
 }
 
 export function analyzeNodes(nodes: Node[]): Analysis {
-    const out: Analysis = { paths: [], globals: [], dynamics: [], includes: [], conditions: [], loops: [] };
+    const out: Analysis = { paths: [], globals: [], dynamics: [], includes: [], conditions: [], loops: [], lint: [] };
     const seenGlobal = new Set<string>();
     const seenDynamic = new Set<string>();
 
@@ -81,17 +97,22 @@ export function analyzeNodes(nodes: Node[]): Analysis {
         for (const n of list) {
             switch (n.type) {
                 case 'text':
+                    // 普通文本里的 :name= —— 输出标签不解析，控制属性写在这里会原样漏进提示词
+                    for (const m of n.value.matchAll(/(?:^|\s):([a-z][\w-]*)\s*=/g)) {
+                        const name = m[1]!;
+                        const known = (CONTROL_ATTRS as readonly string[]).includes(name);
+                        out.lint.push({
+                            message: known
+                                ? `控制属性 :${name} 写在了普通文本/标签里，不会被解析，会原样进提示词。` +
+                                  `请改用控制标记包裹：<template :${name}="…">…</template>`
+                                : `疑似控制属性拼错：:${name}（已知：${CONTROL_ATTRS.map((c) => ':' + c).join('/')}）。` +
+                                  `它会被当普通文本原样进提示词`,
+                            loc: locIn(n.value, n.loc, m.index ?? 0),
+                        });
+                    }
                     break;
                 case 'interp':
                     addPath(n.path, n.loc);
-                    break;
-                case 'element':
-                    for (const a of n.attrs) {
-                        for (const part of a.parts) {
-                            if (typeof part !== 'string') addPath(part.path, part.loc);
-                        }
-                    }
-                    walk(n.children);
                     break;
                 case 'if':
                     addPath(n.path, n.loc);
@@ -135,12 +156,6 @@ export function collectDynamicRefs(nodes: Node[]): Set<string> {
                     break;
                 case 'interp':
                     add(n.path);
-                    break;
-                case 'element':
-                    for (const a of n.attrs) {
-                        for (const part of a.parts) if (typeof part !== 'string') add(part.path);
-                    }
-                    walk(n.children);
                     break;
                 case 'if':
                     add(n.path);

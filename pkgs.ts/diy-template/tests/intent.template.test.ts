@@ -126,22 +126,14 @@ describe('R1 逐字节原样（不转义 / 不 trim / 不删行）', () => {
         expect(render('<pi path="\\{{a}}" />', {})).toBe('<pi path="{{a}}" />');
     });
 
-    it('逃生舱 \\< ：写给模型看的 XML 形状文本；非良构或像控制节点时**必须**转义', () => {
-        // 必须转义 1：非良构（<pid> 没有闭合标签、a<b 会被当成元素开始）
-        expect(caught(() => render('<pid> 是任务号', {})).code).toBe('syntax');
-        expect(render('\\<pid> 是任务号', {})).toBe('<pid> 是任务号');
-        expect(caught(() => render('a<b', {})).code).toBe('syntax');
-        expect(render('a\\<b', {})).toBe('a<b');
-        // 必须转义 2：形状像控制节点，不转义会被**执行**
-        expect(render('<template :if="diy.on">X</template>', { globals: { diy: { on: true } } })).toBe('X');
-        expect(render('\\<template :if="diy.on">X\\</template>', { globals: { diy: { on: true } } })).toBe(
-            '<template :if="diy.on">X</template>',
+    it('写法一：< 完全不需要转义（输出标签、非良构文本、泛型、比较符都是文本）', () => {
+        expect(render('<pid> 是任务号；a<b；vector<T> 与 Map<K,V>', {})).toBe(
+            '<pid> 是任务号；a<b；vector<T> 与 Map<K,V>',
         );
-        // 良构且属性用双引号时**不必需**转义（原样透传，输出相同），转义只是让语义更明确
-        const raw = '<project_instructions path="/repo/AGENTS.md">规则</project_instructions>';
-        expect(render(raw, {})).toBe(raw);
-        expect(render('\\<project_instructions path="/repo/AGENTS.md">规则\\</project_instructions>', {})).toBe(raw);
-        // 整段原样输出用 <raw>（不必逐处转义）
+        // 输出标签也不解析：属性引号、空白都原样
+        expect(render("<pi path='x'  flag>y</pi>", {})).toBe("<pi path='x'  flag>y</pi>");
+        // 只有 <template 是控制标记：想写字面量时用 \<，整段用 <raw>，讲格式用代码围栏
+        expect(render('讲格式：\\<template :if="x">A\\</template>', {})).toBe('讲格式：<template :if="x">A</template>');
         expect(render('<raw><template :if="x">A</template></raw>', {})).toBe('<template :if="x">A</template>');
     });
 
@@ -219,10 +211,10 @@ describe('R4 条件：:if / :unless 与固定真假值表', () => {
         }
     });
 
-    it('条件还可以直接挂在输出元素上（少写一层 <template>）', () => {
+    it('给某个输出标签加条件：用 <template> 包裹（控制标记不产出字符，包裹是免费的）', () => {
         const tpl = block(`
             <rules>
-            <item :if="diy.strict">严格</item>
+            <template :if="diy.strict"><item>严格</item></template>
             </rules>
         `);
         expect(render(tpl, { globals: { diy: { strict: true } } })).toBe(block(`
@@ -235,6 +227,8 @@ describe('R4 条件：:if / :unless 与固定真假值表', () => {
 
             </rules>
         `));
+        // 误写成 <item :if> 时不会静默：lint 明确提示
+        expect(analyze('<item :if="diy.strict">严格</item>').lint[0]!.message).toContain('改用控制标记包裹');
     });
 });
 
@@ -399,9 +393,10 @@ describe('R9 错误不静默：全部带行列与原因', () => {
     });
 
     it('include 参数拼错（:iff）→ unknown-arg（这正是我们最怕的静默类错误）', () => {
-        const err = caught(() => render('<enabled :iff="diy.on">true</enabled>', { globals: { diy: { on: true } } }));
-        expect(err.code).toBe('syntax');
-        expect(err.message).toContain(':iff');
+        // 普通标签上的控制属性是"文本"，不报错但会被 lint 抓住（否则会原样漏进提示词）
+        const linted = analyze('<enabled :iff="diy.on">true</enabled>');
+        expect(linted.lint).toHaveLength(1);
+        expect(linted.lint[0]!.message).toContain(':iff');
         const err2 = caught(() =>
             render('<template :include="./x.md" iff="diy.on" note="diy.note" />', { globals: { diy: { on: 1, note: 'n' } } }, {
                 resolver: resolverOf({ './x.md': '{{.note}}' }),

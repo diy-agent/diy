@@ -6,7 +6,7 @@
 //   3. include 创建**新的**动态作用域（只含参数），不继承调用者的动态链；globals 全程可见
 
 import { analyzeNodes, collectDynamicRefs } from './analyze';
-import type { AttrNode, IncludeNode, Node } from './ast';
+import type { IncludeNode, Node } from './ast';
 import { TemplateError } from './errors';
 import { parse } from './parser';
 import {
@@ -44,7 +44,7 @@ export interface RenderOptions {
     maxDepth?: number;
 }
 
-export type TraceKind = 'text' | 'interp' | 'element' | 'if' | 'for' | 'for-item' | 'include';
+export type TraceKind = 'text' | 'interp' | 'if' | 'for' | 'for-item' | 'include';
 
 export interface TraceNode {
     kind: TraceKind;
@@ -128,32 +128,6 @@ class Renderer {
                 return text;
             }
 
-            case 'element': {
-                const node: TraceNode = { kind: 'element', name: n.name, bytes: 0, children: [] };
-                const childSink: TraceNode[] = [];
-                const attrsText = n.attrs
-                    .map((a) => (a.bare ? ` ${a.name}` : ` ${a.name}="${this.renderAttr(a, ctx)}"`))
-                    .join('');
-                const open = `<${n.name}${attrsText}${n.selfClosing ? `${n.closeSpace}/>` : '>'}`;
-                let text: string;
-                if (n.selfClosing) {
-                    text = open;
-                } else {
-                    const inner = this.renderNodes(n.children, ctx, childSink);
-                    if (n.omitEmpty && inner.trim() === '') {
-                        // :omit-empty="true"：渲染后为空/纯空白 → 连标签一起省略
-                        node.reason = '内容为空，按 :omit-empty 省略';
-                        sink?.push(node);
-                        return '';
-                    }
-                    text = `${open}${inner}</${n.name}>`;
-                }
-                node.bytes = byteLength(text);
-                node.children = childSink;
-                sink?.push(node);
-                return text;
-            }
-
             case 'if': {
                 const value = resolvePath(n.path, ctx, n.loc, this.currentFile());
                 const result = n.negate ? !isTruthy(value) : isTruthy(value);
@@ -217,12 +191,6 @@ class Renderer {
             case 'include':
                 return this.renderInclude(n, ctx, sink);
         }
-    }
-
-    private renderAttr(attr: AttrNode, ctx: EvalContext): string {
-        return attr.parts
-            .map((part) => (typeof part === 'string' ? part : resolveForOutput(part.path, ctx, part.loc, this.currentFile())))
-            .join('');
     }
 
     // ── include ───────────────────────────────────────────────────────
