@@ -87,7 +87,7 @@ function srcSpan(n: Node): Span {
     return { from, to: n.end };
 }
 
-/** 值 → 单行紧凑文本（结构树「值」列；换行折成 ⏎，长文本截断） */
+/** 值 → 单行紧凑文本（模版结构树「值」列；换行折成 ⏎，长文本截断） */
 export function previewValue(v: unknown, max = 60): string {
     if (v === undefined) return '未定义';
     if (v === null) return 'null';
@@ -122,7 +122,7 @@ export function render(source: string, ctx: RenderContext = {}, opts: RenderOpti
     return new Renderer(opts).renderEntry(source, ctx).text;
 }
 
-/** 渲染 + 结构 trace（试验场「结构树」用） */
+/** 渲染 + 结构 trace（试验场「模版结构树」用） */
 export function renderWithTrace(source: string, ctx: RenderContext = {}, opts: RenderOptions = {}): RenderResult {
     return new Renderer(opts).renderEntry(source, ctx);
 }

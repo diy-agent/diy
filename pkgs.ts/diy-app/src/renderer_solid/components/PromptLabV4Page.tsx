@@ -234,11 +234,15 @@ function Th(props: { label: string; cols: ColsState; index: number; right?: bool
 }
 
 /**
- * 高亮导航条（两个编辑器各一条）：上一个/下一个 在"这一段的所有出现处"之间跳焦点。
+ * **动态菜单条**（DynamicBar）—— 一种可复用的视图元素/技巧：
+ *   · 只在"有上下文"时存在（这里是：选中了模版里的某一段），没有上下文就**完全不渲染**
+ *     —— 不做"空条常驻"，否则取消选中后还留一条空横条，看着像坏了
+ *   · 内容随上下文变化（这里：↑/↓ 在出现处之间跳焦点 + `1/3` 计数 + 选中项名字 + ✕ 取消）
+ *   · 操作都是"针对当前上下文"的（清除 = 取消选中，也就等于关掉这条菜单条）
  * 形态选 find-bar（细条 + join 按钮组 + 计数）而不是 daisyUI 的 alert：
  * alert 的语义是"消息"（role=alert + 彩色块），当工具栏会喧宾夺主，读屏还会当通知播报。
  */
-function HlBar(props: {
+function DynamicBar(props: {
     /** 选中的是什么（节点名 / 变量路径） */
     label: string;
     count: number;
@@ -268,7 +272,7 @@ function HlBar(props: {
                 </button>
             </span>
             <span class="badge badge-xs badge-ghost font-mono" title="第几个 / 共几个">
-                {props.count === 0 ? "0/0" : `${props.index + 1}/${props.count}`}
+                {`${props.index + 1}/${props.count}`}
             </span>
             <span class="truncate font-mono opacity-70" title={props.label}>
                 {props.label}
@@ -280,7 +284,7 @@ function HlBar(props: {
     );
 }
 
-/** 字节数格式化（结构树用） */
+/** 字节数格式化（模版结构树用） */
 function fmtBytes(n: number): string {
     if (n < 1024) return `${n} B`;
     return `${(n / 1024).toFixed(1)} KB`;
@@ -306,7 +310,7 @@ function VarRow(props: { name: string; note?: string }) {
 }
 
 /**
- * 结构树（table-tree，4 列）：**节点 | 参数 | 值 | 字节**。
+ * 模版结构树（table-tree，4 列）：**节点 | 参数 | 值 | 字节**。
  * 「参数」= 模版里写的（表达式/relpath/字面量），「值」= 求值后的结果 —— 这样
  * `:if-not(.f.isFirst)` 为什么进/不进，一眼能对着参数与值看明白（原因放 hover）。
  */
@@ -335,9 +339,13 @@ function TraceRows(props: {
                 return (
                     <>
                         <tr
-                            class={`cursor-pointer hover:bg-base-300/40 ${
-                                skipped() ? "opacity-40" : ""
-                            } ${props.pickedKey === key ? "bg-primary/20" : ""}`}
+                            // 选中行必须自己给 hover 色：否则 hover 的 bg 会盖掉选中背景，
+                            // 看起来"选中的行"和"随便划过的行"一个样（曾因此误判选中没生效）
+                            class={`cursor-pointer ${
+                                props.pickedKey === key
+                                    ? "bg-primary/25 hover:bg-primary/40"
+                                    : "hover:bg-base-300/40"
+                            } ${skipped() ? "opacity-40" : ""}`}
                             onClick={() => props.onPick(n, props.file, key)}
                             title="点一下：高亮模版里这段源码与预览里这段产出"
                         >
@@ -488,8 +496,10 @@ function VarTree(props: {
                 return (
                     <>
                         <tr
-                            class={`cursor-pointer hover:bg-base-300/40 ${
-                                props.picked === selKey() ? "bg-primary/20" : ""
+                            class={`cursor-pointer ${
+                                props.picked === selKey()
+                                    ? "bg-primary/25 hover:bg-primary/40"
+                                    : "hover:bg-base-300/40"
                             }`}
                             title={
                                 isElement
@@ -613,7 +623,7 @@ export function PromptLabV4Page() {
     const [preview, setPreview] = createSignal<RequestPreview | null>(null);
     // 各 View 折叠态（VSCode 式可收起，纯局部偏好）
     const [views, setViews] = createSignal<Record<string, boolean>>({
-        // 左栏：模板 / 可用变量（契约）/ 变量值（实际注入）/ 结构树（分析）；右栏：预览 / 请求
+        // 左栏：模板 / 可用变量（契约）/ 变量值（实际注入）/ 模版结构树（分析）；右栏：预览 / 请求
         tree: true,
         vars: true,
         vals: true,
@@ -622,8 +632,8 @@ export function PromptLabV4Page() {
         reqbody: true,
     });
     /**
-     * 选中联动（正向：结构树 / 变量行 → 模版高亮 + 预览高亮）。
-     * 只存"身份"（结构树节点的 key 链 / 变量路径），区间每次从**最新** trace 与静态分析里重算：
+     * 选中联动（正向：模版结构树 / 变量行 → 模版高亮 + 预览高亮）。
+     * 只存"身份"（模版结构树节点的 key 链 / 变量路径），区间每次从**最新** trace 与静态分析里重算：
      * 预览随草稿重算后选区照样跟着走，不会指着过期的偏移。
      */
     const [hlSel, setHlSel] = createSignal<
@@ -805,7 +815,7 @@ export function PromptLabV4Page() {
         };
     });
 
-    /** 点结构树行：切到该节点所属模版（草稿按 project 存，切文件不丢内容），再选中 */
+    /** 点模版结构树行：切到该节点所属模版（草稿按 project 存，切文件不丢内容），再选中 */
     const pickTrace = (n: TraceNode, file: string, key: string) => {
         if (hlSel()?.kind === "node" && (hlSel() as { key: string }).key === key) {
             setHlSel(null); // 再点一次 = 取消
@@ -843,7 +853,7 @@ export function PromptLabV4Page() {
         trace: colsState(Caches.diy_lab_cols_trace),
     };
     const tableW = (c: ColsState) => `${c.w().reduce((a, b) => a + b, 0)}px`;
-    // 结构树展开态（key = 路径索引链，默认前两层展开）
+    // 模版结构树展开态（key = 路径索引链，默认前两层展开）
     const [traceOpen, setTraceOpen] = createSignal<Record<string, boolean>>({});
     // 变量树展开态（默认全展开）
     const [varsOpen, setVarsOpen] = createSignal<Record<string, boolean>>({});
@@ -1083,6 +1093,50 @@ export function PromptLabV4Page() {
                             </div>
                         </Show>
                     </div>
+                    {/* 模版结构树 view：与预览同源的 trace（节点 | 参数 | 值 | 字节） */}
+                    <div class="border border-base-300 rounded-lg">
+                        {viewHeader(
+                            "trace",
+                            "模版结构树",
+                            preview()?.trace ? `${preview()!.trace!.length} 顶层节点` : "随预览重算",
+                        )}
+                        <Show when={views()["trace"]}>
+                            <div class="overflow-x-auto bg-base-200 px-0 py-1 text-[11px]">
+                                <Show when={preview()?.trace} fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}>
+                                    {(tr) => (
+                                        <table class="table table-xs table-fixed" style={{ width: tableW(cols.trace) }}>
+                                            <colgroup>
+                                                <For each={cols.trace.w()}>
+                                                    {(w) => <col style={{ width: `${w}px` }} />}
+                                                </For>
+                                            </colgroup>
+                                            <thead>
+                                                <tr>
+                                                    <Th label="节点" cols={cols.trace} index={0} />
+                                                    <Th label="参数" cols={cols.trace} index={1} />
+                                                    <Th label="值" cols={cols.trace} index={2} />
+                                                    <Th label="字节" cols={cols.trace} index={3} right />
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <TraceRows
+                                                    nodes={tr()!}
+                                                    depth={0}
+                                                    path=""
+                                                    file="_system.md"
+                                                    pickedKey={hlSel()?.kind === "node" ? (hlSel() as { key: string }).key : undefined}
+                                                    onPick={pickTrace}
+                                                    open={traceOpen()}
+                                                    onToggle={(k, open) => setTraceOpen((o) => ({ ...o, [k]: !open }))}
+                                                />
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </Show>
+                            </div>
+                        </Show>
+                    </div>
+
                     {/* 变量定义 view：本模版引用的变量/循环/条件/include + lint（renderer 侧实时分析草稿） */}
                     <div class="border border-base-300 rounded-lg">
                         {viewHeader("vars", "变量定义", sel() ? sel()!.relpath : "未选模版")}
@@ -1236,49 +1290,6 @@ export function PromptLabV4Page() {
                             </div>
                         </Show>
                     </div>
-                    {/* 结构树 view：与预览同源的 trace（节点 | 参数 | 值 | 字节） */}
-                    <div class="border border-base-300 rounded-lg">
-                        {viewHeader(
-                            "trace",
-                            "结构树",
-                            preview()?.trace ? `${preview()!.trace!.length} 顶层节点` : "随预览重算",
-                        )}
-                        <Show when={views()["trace"]}>
-                            <div class="overflow-x-auto bg-base-200 px-0 py-1 text-[11px]">
-                                <Show when={preview()?.trace} fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}>
-                                    {(tr) => (
-                                        <table class="table table-xs table-fixed" style={{ width: tableW(cols.trace) }}>
-                                            <colgroup>
-                                                <For each={cols.trace.w()}>
-                                                    {(w) => <col style={{ width: `${w}px` }} />}
-                                                </For>
-                                            </colgroup>
-                                            <thead>
-                                                <tr>
-                                                    <Th label="节点" cols={cols.trace} index={0} />
-                                                    <Th label="参数" cols={cols.trace} index={1} />
-                                                    <Th label="值" cols={cols.trace} index={2} />
-                                                    <Th label="字节" cols={cols.trace} index={3} right />
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <TraceRows
-                                                    nodes={tr()!}
-                                                    depth={0}
-                                                    path=""
-                                                    file="_system.md"
-                                                    pickedKey={hlSel()?.kind === "node" ? (hlSel() as { key: string }).key : undefined}
-                                                    onPick={pickTrace}
-                                                    open={traceOpen()}
-                                                    onToggle={(k, open) => setTraceOpen((o) => ({ ...o, [k]: !open }))}
-                                                />
-                                            </tbody>
-                                        </table>
-                                    )}
-                                </Show>
-                            </div>
-                        </Show>
-                    </div>
                 </div>
 
                 {/* 拖拽条：左 Views 宽（双击回默认） */}
@@ -1350,14 +1361,16 @@ export function PromptLabV4Page() {
                                         when={mode() === "diff"}
                                         fallback={
                                             <div class="min-h-0 flex-1 overflow-hidden rounded border border-base-300">
-                                                <HlBar
-                                                    label={hlLabel() ?? "（未选中：点结构树行或变量定义行）"}
-                                                    count={hlSrc().length}
-                                                    index={Math.min(focusAt().src, Math.max(0, hlSrc().length - 1))}
-                                                    onPrev={() => step("src", -1, hlSrc().length)}
-                                                    onNext={() => step("src", 1, hlSrc().length)}
-                                                    onClear={() => setHlSel(null)}
-                                                />
+                                                <Show when={hlLabel() && hlSrc().length > 0}>
+                                                    <DynamicBar
+                                                        label={hlLabel()!}
+                                                        count={hlSrc().length}
+                                                        index={Math.min(focusAt().src, Math.max(0, hlSrc().length - 1))}
+                                                        onPrev={() => step("src", -1, hlSrc().length)}
+                                                        onNext={() => step("src", 1, hlSrc().length)}
+                                                        onClear={() => setHlSel(null)}
+                                                    />
+                                                </Show>
                                                 <MdEditor
                                                     value={draftOf(s())}
                                                     editable={!s().locked}
@@ -1412,14 +1425,16 @@ export function PromptLabV4Page() {
                     <div class="border border-base-300 rounded-lg">
                         {viewHeader("sysctx", "系统上下文预览", "随草稿自动重算")}
                         <Show when={views()["sysctx"]}>
-                        <HlBar
-                            label={hlLabel() ?? "（未选中：点结构树行或变量定义行）"}
-                            count={hlOut().length}
-                            index={Math.min(focusAt().out, Math.max(0, hlOut().length - 1))}
-                            onPrev={() => step("out", -1, hlOut().length)}
-                            onNext={() => step("out", 1, hlOut().length)}
-                            onClear={() => setHlSel(null)}
-                        />
+                        <Show when={hlLabel() && hlOut().length > 0}>
+                            <DynamicBar
+                                label={hlLabel()!}
+                                count={hlOut().length}
+                                index={Math.min(focusAt().out, Math.max(0, hlOut().length - 1))}
+                                onPrev={() => step("out", -1, hlOut().length)}
+                                onNext={() => step("out", 1, hlOut().length)}
+                                onClear={() => setHlSel(null)}
+                            />
+                        </Show>
                         <div class="bg-base-200 px-2 py-2">
                     <Show when={preview()} fallback={<div class="text-xs opacity-60">渲染中…</div>}>
                         {(p) => (

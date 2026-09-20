@@ -200,13 +200,13 @@ describe("template preview", () => {
         const okSystem = String((ok.data as Record<string, unknown>)["system"]);
         expect(okSystem).toContain("- 我自己的规则");
         expect(okSystem).not.toContain("title: 手写覆盖");
-        // 预览带结构 trace（试验场「结构树」的数据源）；真发不带
+        // 预览带结构 trace（试验场「模版结构树」的数据源）；真发不带
         const trace = (ok.data as Record<string, unknown>)["trace"] as Array<Record<string, unknown>>;
         expect(Array.isArray(trace)).toBe(true);
         // 节点的「参数」= 模版里写的 relpath；「值」= 求值结果
         expect(trace.some((n) => n["arg"] === "./rules.md")).toBe(true);
         expect(trace.every((n) => typeof n["bytes"] === "number")).toBe(true);
-        // 区间随预览下发：点结构树 → 高亮模版那段源码 + 预览那段产出（两个区间都在）
+        // 区间随预览下发：点模版结构树 → 高亮模版那段源码 + 预览那段产出（两个区间都在）
         const sys = String((ok.data as Record<string, unknown>)["system"]);
         for (const n of trace) {
             const src = n["src"] as { from: number; to: number };

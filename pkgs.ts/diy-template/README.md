@@ -52,7 +52,7 @@ render('<diy>{{diy.cli}}</diy>', { globals: { diy: { cli: '/repo/diy.sh' } } });
 ```ts
 parse(source, { file }): Node[]                          // 语法错抛 TemplateError（带 line/col）
 render(source, { globals, dynamic }, { resolver, file, locked, maxDepth }): string
-renderWithTrace(...): { text, trace }                    // 结构树：节点字节数 + :if 真假与原因
+renderWithTrace(...): { text, trace }                    // 模版结构树：节点字节数 + :if 真假与原因
 analyze(source, { file }): { paths, globals, dynamics, includes, conditions, loops }
 ```
 

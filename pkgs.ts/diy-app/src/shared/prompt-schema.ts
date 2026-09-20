@@ -96,7 +96,7 @@ export interface VarSpec {
   desc?: string;
 }
 
-/** 渲染结构 trace 节点（试验场「结构树」：每个节点的产出字节 + :if 真假原因 + 迭代次数） */
+/** 渲染结构 trace 节点（试验场「模版结构树」：每个节点的产出字节 + :if 真假原因 + 迭代次数） */
 export type TraceNode = {
   kind: string;
   /** 节点显示名：:if / :for / include / 标签 / 插值 / 文本 / 迭代项 */
@@ -106,9 +106,9 @@ export type TraceNode = {
   /** 值 = 参数求值后的单行紧凑文本 */
   value?: string;
   bytes: number;
-  /** 所属模版 body 里的源码区间（点结构树 → 高亮模版） */
+  /** 所属模版 body 里的源码区间（点模版结构树 → 高亮模版） */
   src?: { from: number; to: number };
-  /** 渲染结果里的字符区间（点结构树 → 高亮预览） */
+  /** 渲染结果里的字符区间（点模版结构树 → 高亮预览） */
   out?: { from: number; to: number };
   result?: boolean;
   reason?: string;

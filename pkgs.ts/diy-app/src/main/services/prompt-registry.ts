@@ -314,7 +314,7 @@ export function makeTemplatesResolver(
  * 用 DSL 引擎渲染 system.md（真发与预览共用）。
  * @param resolve 自定义 include 解析（真环境用它接入项目覆盖与草稿）；缺省从 templates 取
  */
-/** 装配渲染（带结构 trace）：试验场「结构树」用它，真发只用 text */
+/** 装配渲染（带结构 trace）：试验场「模版结构树」用它，真发只用 text */
 export function renderSystemDslTraced(opts: {
   globals: AssembleGlobals | Record<string, unknown>;
   templates?: Record<string, string>;
@@ -391,7 +391,7 @@ export function assembleSystem(
     drafts?: Record<string, string>;
     diyCli?: string;
     contextLimitTokens?: number;
-    /** 附带结构 trace（试验场「结构树」用；真发不传，省一次 trace 分配） */
+    /** 附带结构 trace（试验场「模版结构树」用；真发不传，省一次 trace 分配） */
     trace?: boolean;
   } = {},
 ): AssembledSystem {
@@ -446,7 +446,7 @@ export function assembleSystem(
     overBudget: used > budget ? { used, budget } : null,
     warnings,
     trace: opts.trace ? rendered.trace : null,
-    // 实际注入值原样回传：「变量值」view 与结构树的「值」列共用同一份事实
+    // 实际注入值原样回传：「变量值」view 与模版结构树的「值」列共用同一份事实
     values: globals as unknown as Record<string, unknown>,
   };
 }

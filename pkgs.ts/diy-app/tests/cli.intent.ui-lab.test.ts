@@ -4,7 +4,7 @@
 //
 // AGENTS.md 的教训：CLI 的 RPC 返回成功 ≠ renderer 渲染正确。这里走
 //   ui page navigate lab → ui page focus <任务> → 读 a11y 树
-// 确认「变量定义 / 变量值 / 结构树」三块真的上了屏，且内容来自引擎的 analyze/trace。
+// 确认「变量定义 / 变量值 / 模版结构树」三块真的上了屏，且内容来自引擎的 analyze/trace。
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
@@ -43,8 +43,8 @@ async function a11yText(): Promise<string> {
   return collectText([(res.data as any)?.data?.tree]).join("\n");
 }
 
-describe("试验场：变量定义 / 变量值 / 结构树 三个 view + 高亮导航条", () => {
-  it("导航到试验场 → 三块 view 与高亮导航条上屏，内容来自 analyze/trace", async () => {
+describe("试验场：变量定义 / 变量值 / 模版结构树 三个 view + 高亮导航条", () => {
+  it("导航到试验场 → 四块 view 上屏，内容来自 analyze/trace", async () => {
     // 1. 造一个项目 + 任务（试验场以选中任务为场景）
     const repo = `${fx.HOME}/lab`;
     const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 试验场`);
@@ -61,17 +61,18 @@ describe("试验场：变量定义 / 变量值 / 结构树 三个 view + 高亮�
     expect((await waitUntil(a11yText, (s) => s.includes("⟳ 刷新")))).toContain("⟳ 刷新");
     const text = await waitUntil(
       a11yText,
-      (s) => s.includes("变量定义") && s.includes("变量值") && s.includes("结构树"),
+      (s) => s.includes("变量定义") && s.includes("变量值") && s.includes("模版结构树"),
       { label: "试验场两块 view 上屏" },
     );
     expect(text).toContain("变量定义"); // 原名「变量定义」
     expect(text).toContain("变量值");
-    expect(text).toContain("结构树");
-    // 两个编辑器上方各一条高亮导航条（未选中时也常驻：↑ ↓ 0/0 ✕）
-    expect(text).toContain("0/0");
-    expect(text).toContain("↑");
-    expect(text).toContain("↓");
-    expect(text).toContain("✕");
+    expect(text).toContain("模版结构树");
+    // 动态菜单条：**无选中时不渲染**（避免取消选中后留一条空横条）
+    expect(text).not.toContain("0/0");
+    // 左栏顺序：模板 → 模版结构树 → 变量定义 → 变量值
+    const order = ["模板", "模版结构树", "变量定义", "变量值"].map((t) => text.indexOf(t));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
     // 变量定义 view：变量契约是**树形展开的 2 列表格**（变量 | 说明）
     expect(text).toContain("宿主提供（变量契约，树形展开）");
     expect(text).toContain("变量");
@@ -91,7 +92,7 @@ describe("试验场：变量定义 / 变量值 / 结构树 三个 view + 高亮�
     const withValues = await waitUntil(a11yText, (s) => s.includes("变量值") && s.includes("本次注入的实际值"));
     expect(withValues).toContain("空数组"); // 未接入 skills → 一眼看出这次没数据
     expect(withValues).toContain(uri); // 任务 URI 是实际值
-    // 结构树 view（4 列：节点 | 参数 | 值 | 字节）：参数与值分列展示
+    // 模版结构树 view（4 列：节点 | 参数 | 值 | 字节）：参数与值分列展示
     expect(withValues).toContain("参数");
     expect(withValues).toContain("节点");
     expect(withValues).toContain(":for"); // 循环节点

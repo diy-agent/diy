@@ -29,7 +29,7 @@ export default function App() {
         taskStore.loadTree();
         setRendererActions({
             // 导航到「试验场」时直接落到 agent调参 视图（否则会停在页面默认的「任务会话」，
-            // CLI/自动化拿到的 a11y 树里看不到模版/变量/结构树）
+            // CLI/自动化拿到的 a11y 树里看不到模版/变量/模版结构树）
             navigate: (page) => {
                 setCurrentPage(page as NavPage);
                 if (page === "lab") setLabTab("lab");
@@ -64,11 +64,6 @@ export default function App() {
             <input type="checkbox" id="sidebar-toggle" class="drawer-toggle" />
             {/* 主内容区 */}
             <div class="drawer-content flex flex-col h-screen">
-                {/* 顶栏 */}
-                <div class="navbar bg-base-100 border-b shrink-0 h-12">
-                    <span class="text-sm font-bold">diy</span>
-                </div>
-
                 {/* 内容区 */}
                 <main
                     class="flex-1 relative overflow-hidden bg-base-100"
@@ -121,13 +116,6 @@ export default function App() {
                     </Show>
                 </main>
 
-                {/* 底栏 */}
-                <div class="footer bg-base-200 border-t text-xs opacity-60 h-7 px-3 shrink-0">
-                    <span>diy 管控台</span>
-                    <Show when={!!taskStore.selectedUri}>
-                        <span class="ml-2 truncate">{taskStore.selectedUri}</span>
-                    </Show>
-                </div>
             </div>
 
             {/* 侧栏 - DaisyUI drawer */}

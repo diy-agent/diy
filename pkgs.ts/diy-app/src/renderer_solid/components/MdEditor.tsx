@@ -25,12 +25,14 @@ const labTheme = EditorView.theme(
     {
         "&": { height: "100%", fontSize: "12px", backgroundColor: "var(--color-base-100)" },
         ".cm-content": { fontFamily: "var(--font-mono)", caretColor: "var(--color-primary)" },
+        // 行号栏必须**不透明**：不折行时正文会横向滚动，透明的话字会从行号下面穿过去（压住行号）
         ".cm-gutters": {
-            backgroundColor: "transparent",
+            backgroundColor: "var(--color-base-100)",
             borderRight: "1px solid var(--color-base-300)",
             color: "var(--color-base-content)",
-            opacity: "0.4",
+            opacity: "0.55",
         },
+        ".cm-lineNumbers .cm-gutterElement": { padding: "0 6px 0 4px" },
         ".cm-activeLine": { backgroundColor: "var(--color-base-200)" },
         // 高亮：浅色 = 所有出现处；深色 = 当前焦点（同一色相加浓，暗色主题下更亮）
         ".cm-lab-hl": { backgroundColor: "color-mix(in srgb, var(--color-warning) 16%, transparent)" },
@@ -93,7 +95,7 @@ export function MdEditor(props: {
     value: string;
     editable: boolean;
     onChange: (v: string) => void;
-    /** 要高亮的行（结构树/变量定义行点中时传入；null = 清空） */
+    /** 要高亮的行（模版结构树/变量定义行点中时传入；null = 清空） */
     highlight?: HlLines | null;
     /** 纯文本模式：不做 markdown 高亮、不画当前行（预览用） */
     plain?: boolean;
@@ -148,7 +150,7 @@ export function MdEditor(props: {
     createEffect(() => {
         view?.dispatch({ effects: editableCx.reconfigure(EditorView.editable.of(props.editable)) });
     });
-    // 高亮区间变化（点结构树/变量行）→ 重画 decoration 并把视线带过去；
+    // 高亮区间变化（点模版结构树/变量行）→ 重画 decoration 并把视线带过去；
     // 文档替换后也要重放一次（offset 是相对当前文档的）
     createEffect(() => {
         const spec = props.highlight ?? null;
