@@ -44,6 +44,15 @@ export interface RenderOptions {
 
 export type TraceKind = 'text' | 'interp' | 'element' | 'if' | 'for' | 'for-item' | 'include';
 
+/**
+ * 源码区间：`src` = 该节点在**所属模版 body** 里的字符区间（哪个模版由 include 祖先决定），
+ * `out` = 该节点在**渲染结果**里的字符区间。两者都可能有空区间（产出为空 / 合成节点）。
+ */
+export interface Span {
+    from: number;
+    to: number;
+}
+
 export interface TraceNode {
     kind: TraceKind;
     /** 节点显示名：控制标记（:if / :for / include）、标签名、插值路径 */
@@ -52,8 +61,12 @@ export interface TraceNode {
     arg?: string;
     /** 参数求值后的**值**（单行紧凑文本，已截断）：true / 数组 · 2 项 / ../../../diy.sh */
     value?: string;
-    /** 本节点产出字节数 */
+    /** 本节点产出字节数（预算口径，UTF-8） */
     bytes: number;
+    /** 所属模版 body 里的源码区间（高亮模版用） */
+    src?: Span;
+    /** 渲染结果里的字符区间（高亮预览用；空区间 = 这次没产出） */
+    out?: Span;
     /** :if / :if-not 的实际结果 */
     result?: boolean;
     /** 结果原因（假值原因 / 迭代次数 / 被省略等） */
@@ -67,6 +80,12 @@ export interface RenderResult {
 }
 
 const DEFAULT_MAX_DEPTH = 8;
+
+/** 节点的源码区间：`:if`/`:for` 的 loc 指着控制属性，整段起点在 `from` 上 */
+function srcSpan(n: Node): Span {
+    const from = 'from' in n ? n.from : n.loc.offset;
+    return { from, to: n.end };
+}
 
 /** 值 → 单行紧凑文本（结构树「值」列；换行折成 ⏎，长文本截断） */
 export function previewValue(v: unknown, max = 60): string {
@@ -113,6 +132,8 @@ class Renderer {
     private readonly includeStack: string[] = [];
     private readonly lockedStack: boolean[] = [];
     private readonly cache = new Map<string, { source: string; nodes: Node[]; refs: Set<string> }>();
+    /** 输出字符游标：按渲染顺序单调前进（与 trace 顺序一致，深度优先） */
+    private cursor = 0;
     private readonly maxDepth: number;
 
     constructor(private readonly opts: RenderOptions) {
@@ -143,32 +164,53 @@ class Renderer {
     }
 
     private renderNode(n: Node, ctx: EvalContext, sink: TraceNode[] | null): string {
+        const outFrom = this.cursor;
         switch (n.type) {
             case 'text':
+                this.cursor = outFrom + n.value.length;
                 if (sink && n.value !== '') {
                     // 文本节点的「参数」就是它自己（字面量）——能看清"这里到底产出了什么"
-                    sink.push({ kind: 'text', name: '文本', arg: clip(previewText(n.value), 40), bytes: byteLength(n.value) });
+                    sink.push({
+                        kind: 'text',
+                        name: '文本',
+                        arg: clip(previewText(n.value), 40),
+                        bytes: byteLength(n.value),
+                        src: srcSpan(n),
+                        out: { from: outFrom, to: this.cursor },
+                    });
                 }
                 return n.value;
 
             case 'interp': {
                 const text = resolveForOutput(n.path, ctx, n.loc, this.currentFile());
+                this.cursor = outFrom + text.length;
                 sink?.push({
                     kind: 'interp',
                     name: '插值',
                     arg: n.path,
                     value: previewValue(text),
                     bytes: byteLength(text),
+                    src: srcSpan(n),
+                    out: { from: outFrom, to: this.cursor },
                 });
                 return text;
             }
 
             case 'tag': {
                 const tag = n.head.match(/^<([^\s>]+)/)?.[1];
-                const node: TraceNode = { kind: 'element', name: '标签', arg: tag ? `<${tag}>` : undefined, bytes: 0, children: [] };
+                const node: TraceNode = {
+                    kind: 'element',
+                    name: '标签',
+                    arg: tag ? `<${tag}>` : undefined,
+                    bytes: 0,
+                    src: srcSpan(n),
+                    children: [],
+                };
                 const childSink: TraceNode[] = [];
                 const text = `${n.head}${this.renderNodes(n.children, ctx, childSink)}${n.headClose}`;
+                this.cursor = outFrom + text.length;
                 node.bytes = byteLength(text);
+                node.out = { from: outFrom, to: this.cursor };
                 node.children = childSink;
                 sink?.push(node);
                 return text;
@@ -183,6 +225,7 @@ class Renderer {
                     arg: n.path,
                     value: previewValue(value),
                     bytes: 0,
+                    src: srcSpan(n),
                     result,
                     reason: result
                         ? n.negate
@@ -195,7 +238,9 @@ class Renderer {
                 };
                 const childSink: TraceNode[] = [];
                 const text = result ? this.renderNodes(n.children, ctx, childSink) : '';
+                this.cursor = outFrom + text.length;
                 node.bytes = byteLength(text);
+                node.out = { from: outFrom, to: this.cursor };
                 node.children = childSink;
                 sink?.push(node);
                 return text;
@@ -215,6 +260,7 @@ class Renderer {
                     arg: `${n.source} :as="${n.as}"`,
                     value: `数组 · ${value.length} 项`,
                     bytes: 0,
+                    src: srcSpan(n),
                     children: [],
                 };
                 let out = '';
@@ -232,6 +278,7 @@ class Renderer {
                     };
                     const iterCtx: EvalContext = { globals: ctx.globals, frames: [...ctx.frames, frame] };
                     const iterSink: TraceNode[] = [];
+                    const iterFrom = this.cursor;
                     const text = this.renderNodes(n.children, iterCtx, iterSink);
                     node.children!.push({
                         kind: 'for-item',
@@ -239,11 +286,16 @@ class Renderer {
                         arg: `${n.as}[${i}]`,
                         value: previewValue(value[i]),
                         bytes: byteLength(text),
+                        // 合成节点：源码区间取循环体（与 :for 同段），产出区间是**这一次**迭代
+                        src: srcSpan(n),
+                        out: { from: iterFrom, to: iterFrom + text.length },
                         children: iterSink,
                     });
                     out += text;
                 }
+                this.cursor = outFrom + out.length;
                 node.bytes = byteLength(out);
+                node.out = { from: outFrom, to: this.cursor };
                 sink?.push(node);
                 return out;
             }
@@ -303,11 +355,21 @@ class Renderer {
         this.includeStack.push(relpath);
         this.lockedStack.push(Boolean(target.locked));
         const trace: TraceNode[] = [];
+        const outFrom = this.cursor;
         const text = this.renderNodes(nodes, { globals: ctx.globals, frames: [{ vars: args }] }, trace);
+        this.cursor = outFrom + text.length;
         this.includeStack.pop();
         this.lockedStack.pop();
 
-        sink?.push({ kind: 'include', name: 'include', arg: relpath, bytes: byteLength(text), children: trace });
+        sink?.push({
+            kind: 'include',
+            name: 'include',
+            arg: relpath,
+            bytes: byteLength(text),
+            src: srcSpan(n),
+            out: { from: outFrom, to: this.cursor },
+            children: trace,
+        });
         return text;
     }
 

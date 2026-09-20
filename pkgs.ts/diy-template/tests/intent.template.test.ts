@@ -26,6 +26,7 @@ import { describe, expect, it } from 'vitest';
 import {
     TemplateError,
     analyze,
+    byteLength,
     previewValue,
     render,
     renderWithTrace,
@@ -455,18 +456,116 @@ describe('R10 静态分析：引用清单（UI「变量 view」的数据源）',
         const a = analyze(src, { file: 'system.md' });
         expect(a.globals).toEqual(['diy']);
         expect(a.paths.map((p) => p.path)).toContain('diy.hasSkills');
-        expect(a.conditions).toEqual([{ path: 'diy.hasSkills', negate: false, loc: expect.anything() }]);
+        expect(a.conditions).toEqual([
+            { path: 'diy.hasSkills', negate: false, loc: expect.anything(), end: expect.any(Number) },
+        ]);
         expect(a.loops.map((l) => `${l.as} in ${l.source}`)).toEqual(['s in diy.skills']);
         expect(a.includes.map((i) => i.relpath)).toEqual(['./_chain.md']);
         expect(a.includes[0]!.args.map((x) => x.name)).toEqual(['path', 'content']);
         // 定位到行：条件在模版的第 2 行
         expect(a.conditions[0]!.loc.line).toBe(2);
+        // 区间可回指源码（试验场高亮用）：插值区间恰是一个 {{}}；:if/:for 的区间是**整段构造**
+        const interp = analyze('A{{diy.cli}}B');
+        const ref = interp.paths.find((p) => p.path === 'diy.cli')!;
+        expect('A{{diy.cli}}B'.slice(ref.loc.offset, ref.end)).toBe('{{diy.cli}}');
+
+        const tmpl = '<template :if={{diy.hasSkills}}>\nX\n</template>';
+        const cond = analyze(tmpl).conditions[0]!;
+        expect(cond.end).toBe(tmpl.length);
+        expect(tmpl.slice(cond.loc.offset, cond.end)).toBe(':if={{diy.hasSkills}}>\nX\n</template>');
     });
 
     it('分析不需要任何数据，也不渲染（模版里写错也照样给出清单）', () => {
         const a = analyze('{{diy.cli}} {{.unknown}}');
         expect(a.globals).toEqual(['diy']);
         expect(a.dynamics).toEqual(['unknown']);
+    });
+});
+
+// ── R11b 源码/产出区间（试验场「点结构树 → 高亮模版 + 高亮预览」的数据基础）──
+
+describe('R11b 区间：每个 trace 节点都能回指源码与产出（双向可高亮）', () => {
+    /** 深度优先收集 trace 全部节点 */
+    const flatten = (ns: TraceNode[]): TraceNode[] =>
+        ns.flatMap((n) => [n, ...flatten(n.children ?? [])]);
+
+    it('产出区间自洽：子区间被父区间包住、根覆盖全文、src 落在源码内', () => {
+        const tmpl = [
+            'A {{diy.cli}} B',
+            '<template :if={{diy.on}}>',
+            'X{{diy.home}}',
+            '</template>',
+            '<template :for={{diy.list}} :as="f">{{.f.value}}-</template>',
+            'Z',
+        ].join('\n');
+        const { text, trace } = renderWithTrace(tmpl, {
+            globals: { diy: { cli: '/c', home: '/h', on: true, list: ['p', 'q'] } },
+        });
+        const all = flatten(trace);
+
+        // ① 根覆盖整个产出
+        expect(trace[0]!.out!.from).toBe(0);
+        expect(all.filter((n) => n.out!.to === text.length).length).toBeGreaterThan(0);
+        // ② 父包住子（按区间包含判断，深度优先顺序也单调）
+        const contains = (parent: TraceNode, child: TraceNode): boolean =>
+            parent.out!.from <= child.out!.from && child.out!.to <= parent.out!.to;
+        const check = (n: TraceNode): void => {
+            for (const c of n.children ?? []) {
+                expect(contains(n, c), `${n.name}/${n.arg} 不含子节点`).toBe(true);
+                check(c);
+            }
+        };
+        trace.forEach(check);
+        // ③ src 区间落在源码里，且非合成节点非空
+        for (const n of all) {
+            expect(n.src!.from).toBeGreaterThanOrEqual(0);
+            expect(n.src!.to).toBeLessThanOrEqual(tmpl.length);
+            expect(n.src!.to).toBeGreaterThan(n.src!.from);
+        }
+        // ④ 叶子节点：产出切片就是它自己的文本（字节数与 bytes 对得上）
+        const interp = all.find((n) => n.kind === 'interp' && n.arg === 'diy.home')!;
+        expect(text.slice(interp.out!.from, interp.out!.to)).toBe('/h');
+        expect(byteLength(text.slice(interp.out!.from, interp.out!.to))).toBe(interp.bytes);
+        // ⑤ 源码切片能直接回指：插值节点 = 那个 {{}}；:if 节点 = 整段构造
+        expect(tmpl.slice(interp.src!.from, interp.src!.to)).toBe('{{diy.home}}');
+        const ifNode = all.find((n) => n.kind === 'if')!;
+        // :if/:for 的区间 = 整段构造；末尾那个 \n 是 standalone 标记吞掉的行尾换行（也在源码里）
+        expect(tmpl.slice(ifNode.src!.from, ifNode.src!.to)).toBe(
+            '<template :if={{diy.on}}>\nX{{diy.home}}\n</template>\n',
+        );
+        const forNode = all.find((n) => n.kind === 'for')!;
+        expect(tmpl.slice(forNode.src!.from, forNode.src!.to)).toBe(
+            '<template :for={{diy.list}} :as="f">{{.f.value}}-</template>',
+        );
+    });
+
+    it('循环：每个迭代项各自一段产出（同一段源码）；被跳过的分支产出为空区间', () => {
+        const { text, trace } = renderWithTrace('<template :for={{diy.list}} :as="f">{{.f.value}}</template>', {
+            globals: { diy: { list: ['aa', 'b'] } },
+        });
+        const items = flatten(trace).filter((n) => n.kind === 'for-item');
+        expect(items.map((n) => text.slice(n.out!.from, n.out!.to))).toEqual(['aa', 'b']);
+        // 两次迭代的源码区间相同（都在循环体里）
+        expect(items[0]!.src).toEqual(items[1]!.src);
+
+        const skipped = renderWithTrace('<template :if={{diy.off}}>X</template>', { globals: { diy: { off: false } } });
+        const ifNode = flatten(skipped.trace).find((n) => n.kind === 'if')!;
+        expect(ifNode.out).toEqual({ from: 0, to: 0 }); // 没产出 → 空区间
+        expect(ifNode.src!.to).toBeGreaterThan(ifNode.src!.from); // 但源码还在
+    });
+
+    it('include：被调模版的节点区间相对**被调模版 body**（父 include 的 out 覆盖整段）', () => {
+        const inner = '内层 {{diy.cli}}\n';
+        const { text, trace } = renderWithTrace('前<template :include="./i.md"/>后', { globals: { diy: { cli: '/c' } } }, {
+            resolver: resolverOf({ './i.md': inner }),
+        });
+        const inc = flatten(trace).find((n) => n.kind === 'include')!;
+        expect(text.slice(inc.out!.from, inc.out!.to)).toBe('内层 /c\n'); // 产出是渲染后的文本
+        const innerInterp = flatten(inc.children!).find((n) => n.kind === 'interp')!;
+        // 子节点区间落在「被调模版 body」的坐标里（UI 据此切到那份模版再高亮）
+        expect(inner.slice(innerInterp.src!.from, innerInterp.src!.to)).toBe('{{diy.cli}}');
+        // 产出区间则是在**整个结果**的坐标里
+        expect(text.slice(innerInterp.out!.from, innerInterp.out!.to)).toBe('/c');
     });
 });
 

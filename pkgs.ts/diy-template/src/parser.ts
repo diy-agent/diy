@@ -157,7 +157,8 @@ class Parser {
         let textStart = this.pos;
         const flush = (): void => {
             if (text !== '') {
-                out.push({ type: 'text', value: text, loc: this.locAt(textStart) });
+                // 源码终点 = 当前扫描位置（standalone 被剥掉的行尾空白仍在源码里，区间含它）
+                out.push({ type: 'text', value: text, loc: this.locAt(textStart), end: this.pos });
                 text = '';
             }
         };
@@ -194,8 +195,9 @@ class Parser {
                 const start = this.pos;
                 const end = this.src.indexOf('</raw>', this.pos + 5);
                 if (end === -1) this.err('syntax', '逃生舱 <raw> 未闭合', start);
-                out.push({ type: 'text', value: this.src.slice(this.pos + 5, end), loc: this.locAt(start) });
-                this.pos = end + '</raw>'.length;
+                const rawEnd = end + '</raw>'.length;
+                out.push({ type: 'text', value: this.src.slice(this.pos + 5, end), loc: this.locAt(start), end: rawEnd });
+                this.pos = rawEnd;
                 textStart = this.pos;
                 continue;
             }
@@ -289,7 +291,7 @@ class Parser {
                 '允许形如 {{diy.cli}} / {{.task.name}} / {{.index}} / {{.}}',
             );
         }
-        return { type: 'interp', path, loc: this.locAt(start) };
+        return { type: 'interp', path, loc: this.locAt(start), end: this.pos };
     }
 
     // ── 标签头 ────────────────────────────────────────────────────────
@@ -393,18 +395,26 @@ class Parser {
         const parts: Node[] = [];
         let text = '';
         let textBegin = 0;
+        /** 当前文本段在 raw 里的源码终点（转义会吞字符，不能只按拼接后的长度算） */
+        let textEnd = 0;
         let haveText = false;
         let interps = 0;
-        const pushText = (s: string, at: number): void => {
+        const pushText = (s: string, at: number, srcEnd = at + s.length): void => {
             if (!haveText) {
                 textBegin = at;
                 haveText = true;
             }
             text += s;
+            textEnd = srcEnd;
         };
         const flush = (): void => {
             if (haveText) {
-                parts.push({ type: 'text', value: text, loc: this.locAt(a.valueOffset + textBegin) });
+                parts.push({
+                    type: 'text',
+                    value: text,
+                    loc: this.locAt(a.valueOffset + textBegin),
+                    end: a.valueOffset + textEnd,
+                });
                 text = '';
                 haveText = false;
             }
@@ -418,7 +428,7 @@ class Parser {
             }
             // 逃生：\{{ → 字面 {{（只吞紧随其后的 {{）
             if (open > 0 && raw[open - 1] === '\\') {
-                pushText(raw.slice(i, open - 1) + '{{', i);
+                pushText(raw.slice(i, open - 1) + '{{', i, open + 2); // 源码里还包含逃生的 \
                 i = open + 2;
                 continue;
             }
@@ -437,7 +447,7 @@ class Parser {
                 );
             }
             flush();
-            parts.push({ type: 'interp', path: inner, loc: this.locAt(a.valueOffset + open) });
+            parts.push({ type: 'interp', path: inner, loc: this.locAt(a.valueOffset + open), end: a.valueOffset + close + 2 });
             interps += 1;
         }
         flush();
@@ -492,8 +502,8 @@ class Parser {
         }
         head += this.src.slice(cursor, tag.end);
 
-        const node: Node = { type: 'tag', head, headClose, children, loc: tag.loc };
-        return this.wrapControl(forAttr, asAttr, ifAttr, ifNotAttr, [node]);
+        const node: Node = { type: 'tag', head, headClose, children, loc: tag.loc, end: this.pos };
+        return this.wrapControl(forAttr, asAttr, ifAttr, ifNotAttr, [node], tag.loc.offset);
     }
 
     // ── 控制节点 <template> ───────────────────────────────────────────
@@ -558,8 +568,8 @@ class Parser {
                 this.err('include', `include 路径必须是以 ./ 开头且不含 .. 的相对路径：${relpath}`, includeAttr.loc.offset);
             }
             const args = others.map((a) => ({ name: a.name, value: this.attrShape(a), loc: a.loc }));
-            const node: Node = { type: 'include', relpath, args, loc: tag.loc };
-            const nodes = this.wrapControl(forAttr, asAttr, ifAttr, ifNotAttr, [node]);
+            const node: Node = { type: 'include', relpath, args, loc: tag.loc, end: tag.selfClosing ? tag.end : this.pos };
+            const nodes = this.wrapControl(forAttr, asAttr, ifAttr, ifNotAttr, [node], tag.loc.offset);
             if (tag.selfClosing) return { nodes, openStandalone, openEnd: tag.end };
             const closeStart = this.pos;
             const children = this.readNodes('template');
@@ -576,7 +586,7 @@ class Parser {
         const closeStart = this.pos;
         const children = this.readNodes('template');
         return {
-            nodes: this.wrapControl(forAttr, asAttr, ifAttr, ifNotAttr, children),
+            nodes: this.wrapControl(forAttr, asAttr, ifAttr, ifNotAttr, children, tag.loc.offset),
             openStandalone,
             openEnd: tag.end,
             closeStart,
@@ -591,6 +601,8 @@ class Parser {
         ifAttr: RawAttr | undefined,
         ifNotAttr: RawAttr | undefined,
         children: Node[],
+        /** 开标签位置（整段源码起点） */
+        from: number,
     ): Node[] {
         let node: Node | undefined;
         if (forAttr || asAttr) {
@@ -623,7 +635,7 @@ class Parser {
                     '例：:as="item"；循环内用 {{.item.value}} / {{.item.index}} / {{.item.isFirst}}',
                 );
             }
-            node = { type: 'for', as, source: shape.path, children, loc: forAttr!.loc };
+            node = { type: 'for', as, source: shape.path, children, loc: forAttr!.loc, from, end: this.pos };
         }
         const cond = ifAttr ?? ifNotAttr;
         if (cond) {
@@ -642,6 +654,8 @@ class Parser {
                 negate: Boolean(ifNotAttr),
                 children: node ? [node] : children,
                 loc: cond.loc,
+                from,
+                end: this.pos,
             };
         }
         return node ? [node] : children;

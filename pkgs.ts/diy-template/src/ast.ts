@@ -7,6 +7,10 @@
 //   if      <template :if> / :if-not
 //   for     <template :for={{集合}} :as="item">
 //   include <template :include="./a.md" 参数… />
+//
+// **源码区间**：每个节点都带 `end`（源码偏移，闭区间端点）；除 `:if`/`:for` 外 `loc.offset` 就是起点。
+// `:if`/`:for` 的 `loc` 指向**控制属性**（报错要指到属性上），整段起点单列 `from`（开标签位置）。
+// 试验场据此把「结构树节点 ↔ 模版里那段源码 ↔ 预览里那段产出」连起来高亮。
 
 import type { Loc } from './errors';
 
@@ -14,6 +18,8 @@ export interface TextNode {
     type: 'text';
     value: string;
     loc: Loc;
+    /** 源码终点（偏移，不含）：起点是 loc.offset */
+    end: number;
 }
 
 export interface InterpNode {
@@ -21,6 +27,7 @@ export interface InterpNode {
     /** 路径：'.x' / '.x.y' 读动态作用域（循环信封 / include 参数），'a.b' 读 globals */
     path: string;
     loc: Loc;
+    end: number;
 }
 
 /** 带控制属性的标签容器：head/headClose 原样输出，children 受 :if / :for 控制 */
@@ -32,6 +39,7 @@ export interface TagNode {
     headClose: string;
     children: Node[];
     loc: Loc;
+    end: number;
 }
 
 export interface IfNode {
@@ -41,7 +49,12 @@ export interface IfNode {
     /** true = :if-not（取反） */
     negate: boolean;
     children: Node[];
+    /** 报错用：指向控制属性 */
     loc: Loc;
+    /** 整段起点（开标签位置）——高亮用 */
+    from: number;
+    /** 整段终点（闭合标记之后，含 standalone 吞掉的那个换行） */
+    end: number;
 }
 
 export interface ForNode {
@@ -51,7 +64,11 @@ export interface ForNode {
     /** 集合表达式（:for={{…}}） */
     source: string;
     children: Node[];
+    /** 报错用：指向控制属性 */
     loc: Loc;
+    /** 整段起点（开标签位置）——高亮用 */
+    from: number;
+    end: number;
 }
 
 /**
@@ -76,6 +93,7 @@ export interface IncludeNode {
     relpath: string;
     args: IncludeArg[];
     loc: Loc;
+    end: number;
 }
 
 export type Node = TextNode | InterpNode | TagNode | IfNode | ForNode | IncludeNode;

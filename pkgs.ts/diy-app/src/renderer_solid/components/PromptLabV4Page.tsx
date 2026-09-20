@@ -21,6 +21,8 @@ import { lineDiff, useHoverTip, type PromptEntry } from "./promptLabCommon";
 import type { RequestPreview, TraceNode } from "../../shared/prompt-schema";
 import { AssembleGlobalsSchema } from "../../shared/prompt-schema";
 import { buildValueTree, buildVarTree, flattenVars, type ValueNode, type VarNode } from "../../shared/var-tree";
+import { splitByRanges, type HlRange } from "../../shared/hl-segments";
+import type { HlSpan } from "./MdEditor";
 
 // 变量契约在 renderer 侧直接从 schema 派生（单一真源，零 RPC 往返）：
 //   SYSTEM_VARS → 引擎静态校验；VAR_TREE → 「可用变量」view 的二维树
@@ -231,6 +233,15 @@ function Th(props: { label: string; cols: ColsState; index: number; right?: bool
     );
 }
 
+/** 预览按高亮区间切段渲染（<mark> 包住命中的那几段；区间来自 trace 的 out） */
+function HlText(props: { text: string; ranges: HlRange[] }) {
+    return (
+        <For each={splitByRanges(props.text, props.ranges)}>
+            {([text, hl]) => (hl ? <mark class="bg-warning/40 text-inherit">{text}</mark> : <>{text}</>)}
+        </For>
+    );
+}
+
 /** 字节数格式化（结构树用） */
 function fmtBytes(n: number): string {
     if (n < 1024) return `${n} B`;
@@ -265,6 +276,11 @@ function TraceRows(props: {
     nodes: TraceNode[];
     depth: number;
     path: string;
+    /** 本层节点所属模版（顶层是 _system.md；进入 include 的子节点后换成被调模版） */
+    file: string;
+    /** 当前选中的 key 链（画选中态） */
+    pickedKey?: string;
+    onPick: (n: TraceNode, file: string, key: string) => void;
     open: Record<string, boolean>;
     onToggle: (k: string, open: boolean) => void;
 }) {
@@ -276,9 +292,17 @@ function TraceRows(props: {
                 const hasKids = () => kids().length > 0;
                 const isOpen = () => props.open[key] ?? props.depth < 2; // 默认展开两层
                 const skipped = () => n.kind === "if" && n.result === false;
+                // include 的子节点属于**被调模版**（源码区间相对那份 body）
+                const childFile = () => (n.kind === "include" && n.arg ? n.arg.replace(/^\.\//, "") : props.file);
                 return (
                     <>
-                        <tr class={`hover:bg-base-300/40 ${skipped() ? "opacity-40" : ""}`}>
+                        <tr
+                            class={`cursor-pointer hover:bg-base-300/40 ${
+                                skipped() ? "opacity-40" : ""
+                            } ${props.pickedKey === key ? "bg-primary/20" : ""}`}
+                            onClick={() => props.onPick(n, props.file, key)}
+                            title="点一下：高亮模版里这段源码与预览里这段产出"
+                        >
                             <td class="py-0.5 pr-1 align-top">
                                 <span
                                     class="flex items-center gap-1 overflow-hidden whitespace-nowrap"
@@ -314,6 +338,9 @@ function TraceRows(props: {
                                 nodes={kids()}
                                 depth={props.depth + 1}
                                 path={key}
+                                file={childFile()}
+                                pickedKey={props.pickedKey}
+                                onPick={props.onPick}
                                 open={props.open}
                                 onToggle={props.onToggle}
                             />
@@ -399,6 +426,10 @@ function VarTree(props: {
     /** 已发生的路径前缀（数组元素节点不参与路径拼接：chain 的 [ChainEntry] 仍属于 chain） */
     path: string;
     used: (path: string) => boolean;
+    /** 点变量名 → 在模版/预览里高亮它的所有出现处 */
+    onPick: (path: string) => void;
+    /** 当前选中的变量路径（画选中态） */
+    picked?: string;
     open: Record<string, boolean>;
     onToggle: (k: string, open: boolean) => void;
     depth: number;
@@ -433,9 +464,15 @@ function VarTree(props: {
                                             ●
                                         </span>
                                     </Show>
-                                    <span class="truncate font-mono" title={full()}>
+                                    <button
+                                        class={`truncate font-mono hover:underline ${
+                                            props.picked === full() ? "text-primary" : ""
+                                        }`}
+                                        title={`${full()}（点一下：高亮它在模版/预览里的所有出现处）`}
+                                        onClick={() => !isElement && props.onPick(full())}
+                                    >
                                         {n.name}
-                                    </span>
+                                    </button>
                                     <span class="badge badge-xs badge-ghost shrink-0 font-mono">
                                         {n.type}
                                         {n.optional ? "?" : ""}
@@ -453,6 +490,8 @@ function VarTree(props: {
                                 nodes={kids()}
                                 path={isElement ? props.path : full()}
                                 used={props.used}
+                                onPick={props.onPick}
+                                picked={props.picked}
                                 open={props.open}
                                 onToggle={props.onToggle}
                                 depth={props.depth + 1}
@@ -528,6 +567,101 @@ export function PromptLabV4Page() {
         sysctx: true,
         reqbody: true,
     });
+    /**
+     * 选中联动（正向：结构树 / 变量行 → 模版高亮 + 预览高亮）。
+     * 只存"身份"（结构树节点的 key 链 / 变量路径），区间每次从**最新** trace 与静态分析里重算：
+     * 预览随草稿重算后选区照样跟着走，不会指着过期的偏移。
+     */
+    const [hlSel, setHlSel] = createSignal<
+        { kind: "node"; key: string; file: string } | { kind: "var"; path: string } | null
+    >(null);
+
+    /**
+     * key 链（"/2/0"）在最新 trace 里找回节点，并算出**它自己**属于哪份模版。
+     * 注意 include 节点自己的 `src` 区间在**调用方**文件里（它只是那句 include 语句）；
+     * 只有它的**子节点**才换成被调模版 —— 这里按层记录，别把 include 自己也划过去。
+     */
+    const resolveNode = (key: string): { node: TraceNode; file: string } | null => {
+        let list: TraceNode[] = preview()?.trace ?? [];
+        let file = "_system.md";
+        let found: { node: TraceNode; file: string } | null = null;
+        for (const part of key.split("/").filter((x) => x !== "")) {
+            const node = list[Number(part)];
+            if (!node) return null;
+            found = { node, file };
+            list = node.children ?? [];
+            if (node.kind === "include" && node.arg) file = node.arg.replace(/^\.\//, "");
+        }
+        return found;
+    };
+    const picked = createMemo(() => {
+        const cur = hlSel();
+        if (!cur || cur.kind !== "node") return null;
+        const r = resolveNode(cur.key);
+        return r ? { ...r, key: cur.key } : null;
+    });
+
+    const hlSrc = createMemo<HlSpan[]>(() => {
+        const cur = hlSel();
+        if (!cur) return [];
+        if (cur.kind === "node") {
+            const n = picked()?.node;
+            return n?.src ? [n.src] : [];
+        }
+        const a = analysis()?.a;
+        if (!a) return [];
+        const hit = (p: string) => p === cur.path || p.startsWith(`${cur.path}.`);
+        return [
+            ...a.paths.filter((p) => hit(p.path)).map((p) => ({ from: p.loc.offset, to: p.end })),
+            ...a.loops.filter((l) => hit(l.source)).map((l) => ({ from: l.loc.offset, to: l.end })),
+            ...a.conditions.filter((c) => hit(c.path)).map((c) => ({ from: c.loc.offset, to: c.end })),
+        ];
+    });
+    const hlOut = createMemo<HlRange[]>(() => {
+        const cur = hlSel();
+        if (!cur) return [];
+        if (cur.kind === "node") {
+            const out = picked()?.node.out;
+            return out && out.to > out.from ? [out] : [];
+        }
+        const flat: TraceNode[] = [];
+        const walk = (ns: TraceNode[]): void => {
+            for (const n of ns) {
+                flat.push(n);
+                walk(n.children ?? []);
+            }
+        };
+        walk(preview()?.trace ?? []);
+        const hit = (p: string) => p === cur.path || p.startsWith(`${cur.path}.`);
+        return flat
+            .filter((n) => {
+                const arg = n.kind === "for" ? (n.arg ?? "").split(" ")[0]! : (n.arg ?? "");
+                return (n.kind === "interp" || n.kind === "if" || n.kind === "for") && hit(arg) && n.out;
+            })
+            .map((n) => n.out!);
+    });
+    const hlLabel = createMemo<string | null>(() => {
+        const cur = hlSel();
+        if (!cur) return null;
+        if (cur.kind === "var") return `{{${cur.path}}} · 模版 ${hlSrc().length} 处 / 预览 ${hlOut().length} 段`;
+        const n = picked()?.node;
+        if (!n) return null;
+        return `${n.name ?? n.kind}${n.arg ? ` ${n.arg}` : ""} @ ${picked()!.file}`;
+    });
+
+    /** 点结构树行：切到该节点所属模版（草稿按 project 存，切文件不丢内容），再选中 */
+    const pickTrace = (n: TraceNode, file: string, key: string) => {
+        if (hlSel()?.kind === "node" && (hlSel() as { key: string }).key === key) {
+            setHlSel(null); // 再点一次 = 取消
+            return;
+        }
+        if (file !== selPath() && entries().some((e) => e.relpath === file)) setSelPath(file);
+        setHlSel({ kind: "node", key, file });
+    };
+    const pickVar = (path: string) => {
+        setHlSel(hlSel()?.kind === "var" && (hlSel() as { path: string }).path === path ? null : { kind: "var", path });
+    };
+
     // 三张表的列宽（px，可拖可持久化；与容器宽度解耦 → 拖动左栏不改列宽）
     const colsState = (field: CacheField<number[]>): ColsState => {
         const [w, setW] = createSignal(field.get());
@@ -786,6 +920,8 @@ export function PromptLabV4Page() {
                                                                 <VarTree
                                                                     nodes={VAR_TREE}
                                                                     path=""
+                                                                    onPick={pickVar}
+                                                                    picked={hlSel()?.kind === "var" ? (hlSel() as { path: string }).path : undefined}
                                                                     used={(path) =>
                                                                         a().paths.some(
                                                                             (pp) =>
@@ -905,6 +1041,14 @@ export function PromptLabV4Page() {
                         )}
                         <Show when={views()["trace"]}>
                             <div class="bg-base-200 px-0 py-1 text-[11px]">
+                                <Show when={hlLabel()}>
+                                    <div class="px-2 pb-1 text-[10px] text-info">
+                                        高亮：{hlLabel()}
+                                        <button class="ml-1 underline" onClick={() => setHlSel(null)}>
+                                            清除
+                                        </button>
+                                    </div>
+                                </Show>
                                 <Show when={preview()?.trace} fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}>
                                     {(tr) => (
                                         <table class="table table-xs table-fixed" style={{ width: tableW(cols.trace) }}>
@@ -926,6 +1070,9 @@ export function PromptLabV4Page() {
                                                     nodes={tr()!}
                                                     depth={0}
                                                     path=""
+                                                    file="_system.md"
+                                                    pickedKey={hlSel()?.kind === "node" ? (hlSel() as { key: string }).key : undefined}
+                                                    onPick={pickTrace}
                                                     open={traceOpen()}
                                                     onToggle={(k, open) => setTraceOpen((o) => ({ ...o, [k]: !open }))}
                                                 />
@@ -1011,6 +1158,9 @@ export function PromptLabV4Page() {
                                                     value={draftOf(s())}
                                                     editable={!s().locked}
                                                     onChange={(v) => patchDrafts(project(), (d) => ({ ...d, [s().relpath]: v }))}
+                                                    highlight={
+                                                        (picked()?.file ?? selPath()) === s().relpath ? hlSrc() : null
+                                                    }
                                                 />
                                             </div>
                                         }
@@ -1076,7 +1226,7 @@ export function PromptLabV4Page() {
                                     </div>
                                 </Show>
                                 <pre class="whitespace-pre-wrap rounded bg-base-200 p-2 font-mono text-xs leading-relaxed">
-                                    {p().system}
+                                    <HlText text={p().system} ranges={hlOut()} />
                                 </pre>
                             </>
                         )}

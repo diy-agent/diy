@@ -14,18 +14,22 @@ export interface PathRef {
     /** global = 无前缀（读 globals）；dynamic = . 前缀（读动态作用域） */
     scope: 'global' | 'dynamic';
     loc: Loc;
+    /** 源码终点（起点 = loc.offset）——试验场按这个区间高亮模版 */
+    end: number;
 }
 
 export interface IncludeRef {
     relpath: string;
     args: { name: string; value: ArgValue; loc: Loc }[];
     loc: Loc;
+    end: number;
 }
 
 export interface ConditionRef {
     path: string;
     negate: boolean;
     loc: Loc;
+    end: number;
 }
 
 export interface LoopRef {
@@ -33,6 +37,7 @@ export interface LoopRef {
     as: string;
     source: string;
     loc: Loc;
+    end: number;
 }
 
 /** 体检提示（不阻断渲染，但要显式报给作者） */
@@ -146,14 +151,14 @@ export function analyzeNodes(nodes: Node[]): Analysis {
     const seenGlobal = new Set<string>();
     const seenDynamic = new Set<string>();
 
-    const addPath = (path: string, loc: Loc): void => {
+    const addPath = (path: string, loc: Loc, end: number): void => {
         if (path === '.') {
-            out.paths.push({ path, scope: 'dynamic', loc });
+            out.paths.push({ path, scope: 'dynamic', loc, end });
             return;
         }
         if (path.startsWith('.')) {
             const head = path.slice(1).split('.')[0]!;
-            out.paths.push({ path, scope: 'dynamic', loc });
+            out.paths.push({ path, scope: 'dynamic', loc, end });
             if (!seenDynamic.has(head)) {
                 seenDynamic.add(head);
                 out.dynamics.push(head);
@@ -161,7 +166,7 @@ export function analyzeNodes(nodes: Node[]): Analysis {
             return;
         }
         const head = path.split('.')[0]!;
-        out.paths.push({ path, scope: 'global', loc });
+        out.paths.push({ path, scope: 'global', loc, end });
         if (!seenGlobal.has(head)) {
             seenGlobal.add(head);
             out.globals.push(head);
@@ -187,24 +192,24 @@ export function analyzeNodes(nodes: Node[]): Analysis {
                     }
                     break;
                 case 'interp':
-                    addPath(n.path, n.loc);
+                    addPath(n.path, n.loc, n.end);
                     break;
                 case 'tag':
                     walk(n.children);
                     break;
                 case 'if':
-                    addPath(n.path, n.loc);
-                    out.conditions.push({ path: n.path, negate: n.negate, loc: n.loc });
+                    addPath(n.path, n.loc, n.end);
+                    out.conditions.push({ path: n.path, negate: n.negate, loc: n.loc, end: n.end });
                     walk(n.children);
                     break;
                 case 'for':
-                    addPath(n.source, n.loc);
-                    out.loops.push({ as: n.as, source: n.source, loc: n.loc });
+                    addPath(n.source, n.loc, n.end);
+                    out.loops.push({ as: n.as, source: n.source, loc: n.loc, end: n.end });
                     walk(n.children);
                     break;
                 case 'include':
                     for (const a of n.args) {
-                        if (a.value.kind === 'expr') addPath(a.value.path, a.loc);
+                        if (a.value.kind === 'expr') addPath(a.value.path, a.loc, a.loc.offset + a.name.length + 2 + a.value.path.length);
                         else {
                             walk(a.value.nodes);
                             // 迁移提示：值看起来是路径，但现在是字面量字符串（老写法 path=".f.path"）
@@ -219,7 +224,12 @@ export function analyzeNodes(nodes: Node[]): Analysis {
                             }
                         }
                     }
-                    out.includes.push({ relpath: n.relpath, args: n.args.map((a) => ({ ...a })), loc: n.loc });
+                    out.includes.push({
+                        relpath: n.relpath,
+                        args: n.args.map((a) => ({ ...a })),
+                        loc: n.loc,
+                        end: n.end,
+                    });
                     break;
             }
         }

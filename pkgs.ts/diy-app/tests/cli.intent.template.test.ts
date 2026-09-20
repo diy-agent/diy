@@ -206,6 +206,17 @@ describe("template preview", () => {
         // 节点的「参数」= 模版里写的 relpath；「值」= 求值结果
         expect(trace.some((n) => n["arg"] === "./rules.md")).toBe(true);
         expect(trace.every((n) => typeof n["bytes"] === "number")).toBe(true);
+        // 区间随预览下发：点结构树 → 高亮模版那段源码 + 预览那段产出（两个区间都在）
+        const sys = String((ok.data as Record<string, unknown>)["system"]);
+        for (const n of trace) {
+            const src = n["src"] as { from: number; to: number };
+            const out = n["out"] as { from: number; to: number };
+            expect(src, `src 区间缺失：${n["name"]}`).toBeTruthy();
+            expect(out, `out 区间缺失：${n["name"]}`).toBeTruthy();
+            expect(src.to).toBeGreaterThan(src.from);
+            expect(out.from).toBeLessThanOrEqual(out.to);
+            expect(out.to).toBeLessThanOrEqual(sys.length);
+        }
         // 实际注入值随预览一起下发（「变量值」view 的数据源）
         const values = (ok.data as Record<string, unknown>)["values"] as Record<string, unknown>;
         expect(Object.keys(values)).toEqual(

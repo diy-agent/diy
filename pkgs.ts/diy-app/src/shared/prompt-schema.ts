@@ -106,6 +106,10 @@ export type TraceNode = {
   /** 值 = 参数求值后的单行紧凑文本 */
   value?: string;
   bytes: number;
+  /** 所属模版 body 里的源码区间（点结构树 → 高亮模版） */
+  src?: { from: number; to: number };
+  /** 渲染结果里的字符区间（点结构树 → 高亮预览） */
+  out?: { from: number; to: number };
   result?: boolean;
   reason?: string;
   children?: TraceNode[];
@@ -117,6 +121,8 @@ export const TraceNodeSchema: z.ZodType<TraceNode> = z.lazy(() =>
     arg: z.string().optional(),
     value: z.string().optional(),
     bytes: z.number(),
+    src: z.object({ from: z.number(), to: z.number() }).optional(),
+    out: z.object({ from: z.number(), to: z.number() }).optional(),
     result: z.boolean().optional(),
     reason: z.string().optional(),
     children: z.array(TraceNodeSchema).optional(),
