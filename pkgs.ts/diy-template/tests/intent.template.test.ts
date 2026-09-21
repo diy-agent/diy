@@ -147,6 +147,14 @@ describe('R1 逐字节原样（不转义 / 不 trim / 不删行）', () => {
         // 反斜杠 + 非 {{ / < ：原样
         expect(render('regex: \\d+', {})).toBe('regex: \\d+');
     });
+
+    it('代码围栏 ``` 内一律不解析（R1 逐字节的另一逃生舱，讲格式/贴样例零转义）', () => {
+        const src = ['```md', '把 {{diy.cli}} 写进 <template :if={{x}}>…</template>', '```'].join('\n');
+        expect(render(src, { globals: { diy: { cli: 'V' } } })).toBe(src);
+        // 围栏内含插值与控制标记也原样（与 <raw> 互补：围栏是 Markdown 原生，<raw> 是行内）
+        const src2 = ['正文', '```', '{{diy.cli}} 与 <raw>A</raw>', '```', '结束'].join('\n');
+        expect(render(src2, { globals: { diy: { cli: 'V' } } })).toBe(src2);
+    });
 });
 
 // ── R2/R3 插值与属性 ─────────────────────────────────────────────────
@@ -204,9 +212,9 @@ describe('R4 条件：:if / :if-not 与固定真假值表', () => {
         expect(render(tpl, { globals: { diy: { cwd: '/repo', cwdIsProject: true } } })).toBe('工作目录：/repo');
     });
 
-    it('真假值表：false/0/""/[]/null 为假；"false"/"0"/" "/{} 为真', () => {
+    it('真假值表：false/0/""/[]/null/NaN 为假；"false"/"0"/" "/{} 为真', () => {
         const tpl = '<template :if={{x}}>真</template><template :if-not={{x}}>假</template>';
-        for (const falsy of [false, 0, '', [], null]) {
+        for (const falsy of [false, 0, '', [], null, NaN] as const) {
             expect(render(tpl, { globals: { x: falsy } })).toBe('假');
         }
         for (const truthy of ['false', '0', ' ', {}]) {

@@ -31,10 +31,10 @@ export function toEvalContext(ctx: RenderContext = {}): EvalContext {
     return { globals: ctx.globals ?? {}, frames: ctx.dynamic ? [...ctx.dynamic] : [] };
 }
 
-/** 真假值表（固定，见 SPEC §2.3）：false/null/undefined/""/[]/0 为假 */
+/** 真假值表（固定，见 SPEC §2.0/§3）：false/null/undefined/""/[]/0/NaN 为假；"false"/"0"/" "/{} 为真 */
 export function isTruthy(value: unknown): boolean {
     if (value === false || value === null || value === undefined) return false;
-    if (typeof value === 'number') return value !== 0 && !Number.isNaN(value);
+    if (typeof value === 'number') return value !== 0 && !Number.isNaN(value); // NaN 视为假（与 0 同级）
     if (typeof value === 'string') return value !== '';
     if (Array.isArray(value)) return value.length > 0;
     return true;
@@ -44,7 +44,7 @@ export function isTruthy(value: unknown): boolean {
 export function falsyReason(value: unknown): string {
     if (value === null || value === undefined) return '值为 null/undefined（字段缺失或未声明）';
     if (value === false) return '值为 false';
-    if (typeof value === 'number') return '值为 0';
+    if (typeof value === 'number') return Number.isNaN(value) ? '值为 NaN' : '值为 0';
     if (typeof value === 'string') return '值为空字符串';
     if (Array.isArray(value)) return '值为空数组';
     return '值为假值';

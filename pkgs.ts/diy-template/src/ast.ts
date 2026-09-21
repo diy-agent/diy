@@ -1,12 +1,12 @@
 // ast.ts — 语法树类型
 //
-// 只有 5 类节点（保持最小）：
+// 只有 6 类节点（保持最小）：
 //   text    原样文本（**输出标签也是 text**：<diy>、<project_instructions path="{{p}}">）
 //   interp  {{path}} 插值
 //   tag     带控制属性的标签容器（<description :if>…</description>）：标签原样，内部受控
-//   if      <template :if> / :if-not
-//   for     <template :for={{集合}} :as="item">
-//   include <template :include="./a.md" 参数… />
+//   if      <template :if> / :if-not（控制标记，不产出字符）
+//   for     <template :for={{集合}} :as="item">（迭代信封 .x.value/.index/.isFirst）
+//   include <template :include="./a.md" 参数… />（参数在调用方求值，硬隔离）
 //
 // **源码区间**：每个节点都带 `end`（源码偏移，闭区间端点）；除 `:if`/`:for` 外 `loc.offset` 就是起点。
 // `:if`/`:for` 的 `loc` 指向**控制属性**（报错要指到属性上），整段起点单列 `from`（开标签位置）。

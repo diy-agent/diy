@@ -1,31 +1,48 @@
 # @diy/template —— 提示词模版引擎（阶段 1）
 
-> 状态：**已接入 diy-app**（引擎 69 例 + diy-app 全量 218 例全绿；`./sha.sh check` exit 0）。
-> 本文是设计规格 + 原型结论 + 未决问题。
+> **本文档状态：意图测试为唯一真源** — `tests/intent.template.test.ts`（R1–R15）与 `tests/parser.test.ts` 已覆盖本 SPEC 全部可验证行为；本文保留作**决策记录与索引**，新增需求先写意图测试，再补实现。今后以意图测试为准，本文仅作索引与背景。
+>
+> 接入状态：已接入 `diy-app`（`./sha.sh check` ✅ / `./sha.sh test` 4 包全绿：`diy-template 83` + `diy-app 247+` + `diy-rpc 31` + `diy-dev 41`）。
+
+## 目录
+
+- [1. 为什么要换引擎](#1-为什么要换引擎需求来源)
+- [2. 设计原则与语法](#2-设计原则与语法)
+  - [2.0 原则](#20-设计原则先读这条它决定后面所有取舍)
+  - [2.1 parse/encode 正交](#21-两个正交概念parse-与-encode词汇表已定实现只做-parse)
+  - [2.2 属性值两种形态](#22-属性值只有两种形态引号不是语法)
+  - [2.3 控制属性与循环](#23-控制属性与循环语法)
+  - [2.4 源码区间与迭代信封](#24-源码区间loc--end--trace-的-src--out)
+  - [2.5 判据 C：带控制属性即容器](#25-判据-c带控制属性的标签才算节点)
+- [3. Context 模型](#3-context-模型)
+- [4. include 与宿主注册表](#4-include-与宿主注册表)
+- [5. 诊断能力](#5-诊断能力两个自说明视图的数据源)
+- [6. 实测结论](#6-实测结论)
+- [7. 明确不做](#7-明确不做阶段-1)
+- [8. 未决问题（已收口）](#8-未决问题已收口全部有结论)
+- [9. 下一步](#9-下一步)
 
 ---
 
 ## 1. 为什么要换引擎（需求来源）
 
-`pkgs.ts/diy-app/src/main/services/prompt-registry.ts` 现在用「正则白名单替换 + 代码拼装」渲染提示词。
-对 8 份内置模版 + 装配逻辑做逐条清点后，结论是：
+`pkgs.ts/diy-app/src/main/services/prompt-registry.ts` 原用「正则白名单替换 + 代码拼装」渲染提示词。对 8 份内置模版 + 装配逻辑清点后：
 
-**需要**：插值（含属性内插值）、`if` / `if-not`（取反）、`for`（含下标）、`include`（显式参数）、属性路径、**逐字节原样输出**。
-**不需要**：表达式语言（`==`/`&&`/`>`/算术/函数调用/`?.`/`??`）、filter、helper、`with`/`../`/`@root` 等隐式上下文。
+**需要**（已由 R1–R15 覆盖）：插值（含属性内插值）、`if` / `if-not`、`:for`（含下标/首末）、`include`（显式参数+硬隔离）、属性路径、判据 C 的标签容器、**逐字节原样**、standalone 不占空间、变量契约校验、trace 区间。  
+**不需要**：表达式语言（`==`/`&&`/`>`/算术/`?.`/`??`）、filter/helper/`with`/`../`/`@root` 等隐式上下文。
 
-依据：现存 7 处条件需求**全部**是「非空 / 存在 / 取反」，0 处比较；枚举型判断（任务状态、cwd 情形）
-用**谓词物化**（值即 key 查表）覆盖，不需要运算符。
+依据：现存条件**全部**是「非空/存在/取反」，0 处比较；枚举判断用**谓词物化**覆盖。
 
-现状里「藏在代码里、模版里看不到」的结构共 6 处，全部是这次要搬进模版的：
+现状里「藏在代码里」的 6 处结构已搬进模版：
 
 | 现状（代码） | 目标（模版） |
 | --- | --- |
 | `<${tag}>…</${tag}>` 包裹 | 标签内联在模版里 |
-| `blocks.join("\n\n")` 节间分隔 | 布局里的空行 / 片段里的前置分隔符 |
+| `blocks.join("\n\n")` 节间分隔 | 节模版末尾空行；布局每行一个 `include` |
 | `if (!text.trim()) continue` 空节跳过 | `:if` / `:if-not` |
-| 循环渲染链（一层一个 `<project_instructions>`） | `<template :for={{chain}} :as="f">`：包装格式就写在循环体里 |
-| `cwd_note` 在 `cwd.ts` 里拼中文提示 | `:if-not` + 模版里的文案 |
-| `diy_cli` 未注入时的兜底文案 | `:if` / `:if-not` |
+| 循环渲染链（一层一个 `<project_instructions>`） | `<template :for={{chain}} :as="f">` |
+| `cwd_note` 在 `cwd.ts` 里拼中文提示 | `:if-not` + 文案 |
+| `diy_cli` 未注入兜底文案 | `:if` / `:if-not` |
 
 ---
 
@@ -35,210 +52,150 @@
 
 > **模版不是 XML 文档，是"带控制标记的纯文本"。借 XML 的视觉结构，不借它的合规约束。**
 
-1. **输出标签永不解析**：`<diy>` / `<project_context>` / `<project_instructions path="…">` 都是普通文本
-   （`{{}}` 照常替换）；不做配对校验、不做属性解析、不做引号/空白规范化。
-   ⇒ `<pid>`、`a<b`、`vector<T>`、`{ }`、`&` **全部原样，零转义**（实测语料里 366 + 63 处 `<` 冲突）。
-2. **只有控制标记是语法**：`<template …>` 与 `<raw>…</raw>` 两个名字，其余一切 `<…` 都是文本。
-   ⇒ `<template>` 在 1708KB 语料里碰撞 **0 次**（纯 Markdown 里 0 次）。
-3. **唯一必须严格的是控制标记**：识别失败不能静默 —— 未闭合的控制标签、非法 `:for`、未知路径、
-   参数不匹配一律报错（带行列）；`<xxx :if>` 这类误用由 **lint** 明确提示（不阻断，但上屏）。
-4. **逐字节保真**：不转义、不 trim、不删行；末尾换行与节间分隔由模版自己负责（§8 已拍板项）。
-5. 生成的提示词本身是**伪 XML**，没有验证器 ⇒ 输出侧同样不需要为"良构"做任何妥协。
+1. **输出标签永不解析**：`<diy>` / `<project_context>` 等都是文本（`{{}}` 照常替换）；不配对、不校验、不规范化。⇒ `<pid>`、`a<b`、`vector<T>`、`&` 全原样（语料 366+63 处 `<` 冲突）。
+2. **只有控制标记是语法**：`<template>` / `<raw>` / **带控制属性的标签容器**（判据 C，见 §2.5）。⇒ `<template>` 碰撞 0 次。
+3. **唯一必须严格的是控制标记**：未闭合、非法 `:for`、未知路径、参数不匹配一律报错（带行列）；`<xxx :if>` 误用由 `lint` 提示。
+4. **逐字节保真**：不转义、不 trim、不删行；末尾换行与节间分隔由模版自己负责。
+5. **伪 XML 无验证器** ⇒ 输出侧无需为"良构"妥协。
+6. **代码围栏 ` ``` ` 内一律不解析**（讲格式、贴样例零转义，与 `<raw>` 互补）。
 
-由此**删除**（相对早期 XML-native 方案）：输出元素解析、属性解析与重序列化、`/>` 前空白、
-无值属性、标签闭合校验，以及"正文里 `<` 必须转义"（parser 少 150 行量级）。
+由此**删除**（相对 XML-native）：输出元素解析/重序列化、`/>` 前空白、无值属性、标签闭合校验、"正文 `<` 必须转义"。
 
-### 2.0.1 两个正交概念：`parse` 与 `encode`（**词汇表已定，实现只做 parse**）
+### 2.1 两个正交概念：`parse` 与 `encode`（**词汇表已定，实现只做 parse**）
 
 ```
 parse  = 我怎么理解源文本     ← 模版语义，属于引擎
-encode = 我怎么输出字符串     ← 输出管线，属于调用方（不是模版作者该决定的）
+encode = 我怎么输出字符串     ← 输出管线，属于调用方
 ```
 
 | 维度 | 取值 | 阶段 1 | 现状对应 |
 | --- | --- | --- | --- |
-| `parse` | `normal`（默认） | ✅ 已实现 | 识别控制标记 |
-| `parse` | `none` | ✅ 已实现 | `<raw>…</raw>`（**就是 parse=none 的既有形式**）；代码围栏则是 parser 级透明区（连控制标记都不看） |
-| `encode` | `none`（默认） | ✅（即不编码） | — |
-| `encode` | `xml` / `html` / `json` … | ❌ **不实现，等真实消费者** | — |
+| `parse` | `normal`（默认） | ✅ | 识别控制标记 |
+| `parse` | `none` | ✅ | `<raw>…</raw>`；围栏 ` ``` ` 为 parser 级透明区 |
+| `encode` | `none`（默认） | ✅ | — |
+| `encode` | `xml` / `html` / `json` … | ❌ 不实现 | — |
 
-**为什么 `encode` 今天不实现**（三条，都不是"以后再说"的空话）：
-1. **下游是 LLM，没有 XML 解码器**：`encode="xml"` 会把 `<diy>` 变成 `&lt;diy&gt;`，**改变模型看到的东西**，
-   正好毁掉我们刻意保留的视觉结构（原则 1）——今天它是负收益。
-2. **与验收基线冲突**：全部等价断言是"逐字节相同"；引入编码后每条都要加"编码后"的变体，而收益为 0。
-3. **交互面很大**：编码作用在块整体还是逐节点？`{{var}}` 注入的值要不要编码（注入内容被编码 = 危险）？
-   trace 的字节数按编码前还是后算？每条都要定，而今天 0 个消费者。
+**为什么 `encode` 不做**：下游是 LLM 无解码器；与逐字节基线冲突；交互面大（块 vs 节点、`{{}}` 是否编码、trace 字节口径）。触发条件：出现会 decode 的真实消费者时，放在 `RenderOptions { encode }` 而非模版属性。
 
-**触发条件**：出现第一个真的会 XML/HTML decode 我们输出的消费者（例如"让 Agent 生成模版给下游解析"）。
-到了那天，编码放在**调用方的 RenderOptions**（`render(src, ctx, { encode: 'xml' })`）而**不是模版属性**——
-同一个模版可能给不同消费者，内容作者不该决定编码方式。
-
-### 2.0.3 属性值：**只有两种形态，引号不是语法**
-
-属性值（任何属性的值，包括控制属性与 include 参数）只有两种形态：
+### 2.2 属性值：**只有两种形态，引号不是语法**
 
 | 写法 | 形态 | 取值 |
 | --- | --- | --- |
-| `attr={{x}}` / `attr="{{x}}"` | 整值恰好一个插值 → **表达式** | 原类型（数组仍是数组、布尔仍是布尔） |
-| `attr="text"` / `attr=text` | 其余 → **文本**（其中的 `{{}}` 是插值点） | 字符串 |
+| `attr={{x}}` / `attr="{{x}}"` | 整值恰好一个插值 → **表达式** | 原类型（数组/布尔保真） |
+| `attr="text"` / `attr=text` | 其余 → **文本**（含 `{{}}` 插值点） | 字符串 |
 
-**引号只是值的边界，不改变语义**（`attr={{x}}` 与 `attr="{{x}}"` 等价）——与我们"输出标签永不解析、不规范化"的原则一致。
-推荐写成 `attr={{x}}`（变量不加引号），理由：
+引号只定界，`attr={{x}}` 与 `attr="{{x}}"` 等价（推荐前者：`list={{skills}}` 比 `list="{{skills}}"` 更不绕）。约束：裸值不能含空格；`attr={{x}}b` 报错（需引号）。集合只能迭代、标量才能插值（引号不把集合字符串化）。
 
-1. **读者心里"引号 = 字符串"** —— `list="{{skills}}"` 把两个相反的心智符号叠在一起；`list={{skills}}` 一眼是变量。
-2. **生态先例**：JSX `href={url}`（表达式）vs `href="text"`（字面量）；Svelte `href={url}` 与 `href="{url}"` 等价但社区一致写前者。
-3. **不选单花括号 `{x}`**：那会造成"属性一套语法、正文一套语法"（正文用 `{{}}`），又回到不明确；统一 `{{}}` 后全文一条规则，逃生（`\{{`）也只是同一条。
-
-**词法约束（与 HTML/JSX 同）**：裸值不能含空格（含空格的值要用引号，如 `title="共 {{n}} 项"`）；
-裸值不允许"插值后跟内容"（`attr={{x}}b` → 报错，要求加引号）。含空格的表达式必须加引号。
-
-**与"类型纪律"的关系**：集合只能迭代（`:in` / `:for` 的源必须是数组，否则 `not-iterable` 报错），
-标量才能插值；**引号**不会把集合"字符串化"为 `"[]"`，所以 `list={{skills}}` 传的是真集合。
-
-### 2.0.4 控制属性与循环语法
+### 2.3 控制属性与循环语法
 
 | 控制标记 | 含义 |
 | --- | --- |
 | `<template :if={{p}}>` | 真值渲染 |
-| `<template :if-not={{p}}>` | 取反渲染（**不是** `:unless`：没有表达式语言，否定只能靠关键词，而 `if-not` 与 `if` 同根对称） |
-| `<template :for={{集合}} :as="item">` | 循环：**`:for` 的值是集合表达式，`:as` 的值是变量名** —— 每个控制属性的值语义单一（表达式），唯一的名字值属性是 `:as` |
-| `<template :include="./a.md" p={{x}} />` | 片段调用；路径必须是字面量（禁动态 include），参数在调用方求值后硬隔离传入 |
+| `<template :if-not={{p}}>` | 取反（`if-not` 与 `if` 同根对称，不叫 `:unless`） |
+| `<template :for={{集合}} :as="item">` | 循环：`:for` = 集合表达式，`:as` = 变量名 |
+| `<template :include="./a.md" p={{x}} />` | 片段调用；路径字面量，参数硬隔离 |
 
-### 2.0.5 源码区间（`loc` / `end` / trace 的 `src` / `out`）
+### 2.4 源码区间（`loc` / `end` / trace 的 `src` / `out`）
 
 | 概念 | 含义 |
 |------|------|
-| 节点 `loc` | 起点（line/col/offset）。`text`/`interp`/`tag`/`include` 的起点就是 `loc.offset` |
-| 节点 `end` | 源码终点（不含）。`:if`/`:for` 的 `loc` 指向**控制属性**（报错要指到属性上），整段起点单列 `from` |
-| trace `src` | 该节点在**所属模版 body** 里的区间（哪份模版由 include 祖先决定） |
-| trace `out` | 该节点在**渲染结果**里的**字符**区间（字节数 `bytes` 仍留给预算口径） |
+| `loc` | 起点（line/col/offset） |
+| `end` | 源码终点（不含）；`:if`/`:for` 的 `loc` 指控制属性，`from` 为整段起点 |
+| `src` | 所属模版 body 区间（由 include 祖先决定） |
+| `out` | 渲染结果字符区间（`bytes` 仍为预算口径） |
 
-用途：试验场点「模版结构树 / 变量行」→ 高亮模版里那段源码 + 预览里那段产出。区间是纯附加信息，
-不改变任何输出（golden 逐字节不变）。
-
-**循环内用「迭代信封」**：`:as="item"` 绑定的不是一个裸值，而是一个命名空间，一切都从它下面取：
+**迭代信封**：`:as="item"` 绑定命名空间：
 
 | 写法 | 含义 |
 | --- | --- |
-| `{{.item.value}}` / `{{.item.value.path}}` | 当前项 / 它的字段（**无字段名碰撞**：项自己的 `index` 字段在 `.item.value.index`） |
-| `{{.item.index}}` | 序号（数组下标） |
-| `{{.item.isFirst}}` / `{{.item.isLast}}` | 首项 / 末项（分隔符场景不需要表达式） |
+| `{{.item.value}}` / `{{.item.value.path}}` | 当前项 / 字段（无碰撞） |
+| `{{.item.index}}` | 下标 |
+| `{{.item.isFirst}}` / `{{.item.isLast}}` | 首/末（分隔符无需表达式） |
 
-嵌套循环各自独立：`.g.index` 与 `.it.index` 同时可访（旧设计里 `.index` 是游离名，外层会被内层遮蔽 → 外层下标不可达）。
-**已取消**：`{{.}}`（歧义：哪一层循环？）、游离的 `{{.index}}` / `{{.isFirst}}` / `{{.isLast}}`（同上）——用到时直接报错并给出 `.x.value` 写法。
+嵌套各自独立：`.g.index` 与 `.it.index` 同时可访。已取消：`{{.}}`、游离 `{{.index}}` 等（报错并提示 `.x.value`）。
 
-**不选 `:for="x of p"` / `:for="x" :in={{p}}`**：前者把名字与表达式塞进一个值里；后者让 `:for` 成为唯一的“名字值”控制属性（不一致）。现已报错并给修复提示。
+### 2.5 判据 C：带控制属性的标签才算节点
 
-`<description :if={{…}}>` / `<skill :for={{…}} :as="…">` 这类写法**不需要 `knownTags` 白名单**，判据是结构性的：
-
-| 判据 | 实测碰撞（剔围栏，1703KB） | 维护成本 | 支持 `<description :if>` |
+| 判据 | 碰撞（1703KB 语料） | 维护成本 | 支持 `<description :if>` |
 | --- | ---: | --- | --- |
 | A 只解析 `<template>` / `<raw>` | 0 | 无 | ❌ |
-| B 标签名白名单 | 白名单内名字的碰撞（`<diy>` 17、`<rules>` 10…） | 有：漏登记 → 静默变文本 | ✅ 限白名单内 |
-| **C 带控制属性的标签才算节点** | **0**（语料里带控制属性的标签头 62 次，**全部是我们自己的测试/文档**，`.md` 里 0 次） | **无** | ✅ 任意标签 |
+| B 标签名白名单 | 17/10… | 有 | ✅ 限白名单 |
+| **C 带控制属性即容器** | **0**（62 次全是测试/文档） | **无** | ✅ 任意标签 |
 
-**规则（3 条）**
+**3 条规则**
 
-1. 任何 `<name …>` / `</name>` 默认都是**文本**：不配对、不校验、不规范化、不转义
-   （`<diy>`、`<pid>`、`a<b`、`vector<T>`、`<b>bold</b>` 全部逐字节原样）。
-2. **当且仅当标签头里带控制属性**（`:if` / `:if-not` / `:for` / `:in`）时，它成为**容器节点**：
-   必须找到配对的 `</name>`（找不到 → **报错**，不静默），作用是"按条件/循环渲染内部，并把自身的
-   开/闭合标签**原样**输出"。⇒ `<skill :for={{skills}} :as="s">{{.s.value.name}}</skill>` → `<skill>a</skill><skill>b</skill>`。
-3. **逐字节重发**：只按**字符区间**剥掉控制属性，其余字符（引号、空白、无值属性）原样保留
-   （`<pi path='x'  flag :if={{on}}>` → `<pi path='x'  flag>`），**绝不重新格式化**。
+1. 任何 `<name …>` 默认文本：不配对、不校验、不转义。
+2. **当且仅当带控制属性**（`:if`/`:if-not`/`:for`）时成为容器：须配对 `</name>`（否则报错），并原样输出自身标签（只剥控制属性字符区间）。⇒ `<skill :for={{skills}} :as="s">{{.s.value}}</skill>` → `<skill>a</skill><skill>b</skill>`。
+3. 逐字节重发：只按区间剥属性，其余保留（`<pi path='x'  flag :if={{on}}>` → `<pi path='x'  flag>`）。
 
-`<template>` 是同判据的特例（`:if`/`:if-not`/`:for`），区别只在于**不输出自身标签**；
-`:include` 仍然只能用在 `<template>` 上（它是"调用片段"，不是"包裹一段"）；
-`<raw>` = `parse="none"`。
+`<template>` 是同判据特例（不输出标签）；`:include` 只能在 `<template>` 上；`<raw>` = `parse="none"`。误报（`:if=` / `:iff=`）由 `analyze().lint` 提示。
 
-**误报面**：正文里写 `:if=`（语料 3 次）或拼错的控制属性（`:iff=`）→ 由 `analyze().lint` 提示；
-"讲格式"的段落放进代码围栏即可。
+---
 
 ## 3. Context 模型
 
 ```ts
 interface RenderContext {
-  globals: Record<string, unknown>;   // 宿主提供：diy.* / task.* / …
+  globals: Record<string, unknown>;   // diy.* / task.* / …
   dynamic: DynamicFrame[];            // 由外到内的作用域链
 }
 ```
 
-- 路径分流：`.` 开头 → dynamic；否则 → globals。**不允许跨 scope 同名遮蔽**（前缀天然区分）。
-- 作用域链：同模版内嵌套 `:for` → 内层可见外层（信封名不同则两者都能用；同名则内层遮蔽）。
-- `:for` 压入的帧里只有**一个名字**：其值是一个迭代信封 `{ value, index, isFirst, isLast }`
-  （信封就是普通嵌套对象，路径机器直接走 → 引擎里没有“内建名”特例代码）。
-- **`:include` 硬隔离**：不继承调用者的动态链，被调模版只有 `args` 一层；globals 全程可见
-  （= `renderInclude(path, { globals, dynamic: args })`）。
-- 严格性：**首段必须存在**（否则 `unresolved-path`，detail 列出可用名）；深层字段缺失返回 `undefined`；
-  **插值取到 `undefined`/`null` → `missing-value` 报错**（可选值必须用 `:if` 守住，禁止静默空串）。
-- 真假值表（固定）：`false | null | undefined | "" | [] | 0` 为假；`"false" | "0" | " " | {}` 为真。
-  **约定：模版内不出现任何运算符**，比较一律由宿主物化成布尔/枚举路径。
+- 路径分流：`.` 开头 → dynamic，否则 → globals；**前缀隔离，禁同名遮蔽**。
+- 嵌套 `:for`：内层可见外层（同名则遮蔽）；信封为普通对象（路径机直走，无内建名特例）。
+- **`:include` 硬隔离**：`{ globals, dynamic: args }`，不继承调用者链。
+- 严格性：首段必须存在（`unresolved-path`）；深层缺失→`undefined`；插值 `undefined`/`null`→`missing-value`（需 `:if` 守住）。
+- 真假值表：`false|null|undefined|""|[]|0|NaN` 为假；`"false"|"0"|" "|{}` 为真。**模版内无运算符**，比较由宿主物化。
 
 ---
 
 ## 4. include 与宿主注册表
 
 ```ts
-interface IncludeResolver {
-  resolve(relpath: string): { source: string; locked?: boolean } | null;
-}
+interface IncludeResolver { resolve(relpath: string): { source: string; locked?: boolean } | null; }
 ```
 
-引擎强制（与 resolver 双保险）：
-
-1. 必须以 `./` 开头；禁止 `..`、绝对路径。
-2. 必须由 resolver 命中（= 宿主白名单 / 项目覆盖 > 内置）；未命中 → `include` 报错，不静默。
-3. **循环检测**（报错给完整链）+ 深度上限（默认 8）。
-4. 锁定模版（`_guard.md`）不可被可覆盖模版 include；锁定入口可以 include 它。
-5. **参数双向静态校验**（阶段 1 用它替代 Zod）：
-   - 被调模版引用了但没传 → `missing-arg`
-   - 传了但被调模版从未引用（含 `:iff` 这类拼错）→ `unknown-arg`
-   - 被调模版的 `:for` 绑定名（`:as`）自动排除，不算参数。
+1. 必须 `./` 开头，禁 `..` / 绝对路径。
+2. 须命中 resolver（白名单/项目覆盖>内置），否则 `include` 报错。
+3. 循环检测（完整链）+ 深度上限 8。
+4. 锁定模版（`_guard.md`）仅锁定入口可 include。
+5. **参数双向校验**：少传→`missing-arg`，多传→`unknown-arg`，`:as` 绑定名自动排除。
 
 ---
 
 ## 5. 诊断能力（两个"自说明"视图的数据源）
 
 ```ts
-analyze(source, { file }): { paths, globals, dynamics, includes, conditions, loops }
+analyze(source, { file, vars }): { paths, globals, dynamics, includes, conditions, loops, lint }
 renderWithTrace(source, ctx, { resolver, file, locked }): { text, trace }
-// trace 节点：{ kind, name, bytes, result?, reason?, children? }
+// trace: { kind, name, arg, value, bytes, src, out, result, reason, children }
 ```
 
-- `analyze` → 试验场「变量 view」：点变量反向索引到模版与行号；体检死变量/孤儿引用。
-- `renderWithTrace` → 试验场「模版结构树」：每个节点字节数 + **每个 `:if` 的真假与原因**
-  （"空数组 / 空字符串 / false / 字段缺失"），这是静默失败唯一的解药。
+- `analyze` → 变量 view：反向索引、lint、变量契约校验（未知路径/:for 非数组/插值非标量）。
+- `renderWithTrace` → 结构树：字节数、`:if` 真假与原因、迭代次数、双向区间。
 
 ---
 
-## 6. 原型实测结论（本次交付）
+## 6. 实测结论
 
-**代码量**（`pkgs.ts/diy-template/`）：
+**代码量**（`pkgs.ts/diy-template/`，零依赖、Node/浏览器通用）：
 
-| 文件 | 行数 | 说明 |
-| --- | --- | --- |
-| `src/parser.ts` | 370 | 词法 + 语法（控制标记 + 纯文本、围栏、位置换算） |
-| `src/render.ts` | 282 | 渲染 + trace + include 规则 |
-| `src/analyze.ts` | 181 | 静态分析 + 循环绑定扣除 + 误用 lint |
-| `src/scope.ts` | 142 | 作用域链、路径解析、真假值 |
-| `src/ast.ts` | 60 | 5 类节点 |
-| `src/errors.ts` | 70 | 9 类错误（全部带行列） |
-| `src/index.ts` | 35 | 公共 API |
-| **合计** | **≈1,140** | 零依赖、纯 TS、Node/浏览器通用 |
-| `tests/intent.template.test.ts` | 566 | **意图测试**：R1–R12 需求级（人类语言场景） |
-| `tests/parser.test.ts` | 154 | 边界单测：文本透传/围栏/控制标记报错/lint |
+| 文件 | 说明 |
+| --- | --- |
+| `src/parser.ts` | 词法+语法（控制标记/纯文本/围栏/位置） |
+| `src/render.ts` | 渲染+trace+include |
+| `src/analyze.ts` | 静态分析+lint |
+| `src/scope.ts` | 作用域链、路径、真假值 |
+| `src/ast.ts` | 6 类节点 |
+| `src/errors.ts` | 10 类错误（带行列） |
+| `tests/intent.template.test.ts` | 意图测试 R1–R15（需求级） |
+| `tests/parser.test.ts` | 边界单测（透传/围栏/报错/lint） |
 
 **验证**：
 
-- 新包 58 例全绿（意图 36 + 边界 22）。
-- `pkgs.ts/diy-app/tests/core/template-engine-equivalence.test.ts` **10 例全绿**：
-  - 8 份真实内置模版：新引擎 vs 现有 `renderTemplate` **逐字节相同**；
-  - **整份 system 装配等价**：把「包裹标签 + 空节跳过 + `join("\n\n")`」全部搬进模版
-    （标签内联 + `:for` / `:as` + `:if-not={{.f.isFirst}}` + `:include`）后，输出与换引擎前的 system **逐字节相同**。
-- `./sha.sh check` exit 0（含产物护栏）；diy-app core 测试 166 例全绿（无回归）。
-
-**代价与结论**：引擎本身**可行且不大**（≈1,260 行 / 2 天量级）；真正的成本在
-**迁移期的逐字节对齐**（下面第 8 节第 4、5 条），不在引擎实现。
+- `diy-template` 全绿（`intent` R1–R15 + `parser` 边界）。
+- `template-dsl-golden` 6 例：8 份内置模版与整份 `system` 装配与换引擎前逐字节一致（差异仅末尾换行，见测试注释）。
+- `./sha.sh check` ✅；全仓 `vitest` 4 包全绿。
 
 ---
 
@@ -246,51 +203,45 @@ renderWithTrace(source, ctx, { resolver, file, locked }): { text, trace }
 
 | # | 不做 | 说明 |
 | --- | --- | --- |
-| N1 | 表达式语言 | `== != > < && \|\| !` 算术 `?:` `??` `?.` 函数调用 数组下标 对象字面量 |
-| N2 | filter / pipe / helper / blockHelper / macro / 模板继承 | 一律不做 |
-| N3 | `#with` / `../` / `@root` 等隐式上下文 | 与显式 scope 隔离冲突 |
-| N4 | HTML 转义 / 自动转义 | 输出是纯文本提示词；转义=破坏逐字节 |
-| N5 | standalone 行剥离 / 自动 trim | 见未决问题 5 |
-| N6 | Zod schema 校验（Context / Args） | 阶段 1 用静态参数校验替代 |
-| N7 | 编辑器诊断 / 高亮 / 自动补全 / LSP | — |
-| N8 | i18n、异步、流式、增量、SSR、沙箱权限 | — |
-| N9 | 动态 include / 动态 partial 名 | 静态 include 足够（system.md 逐节 include） |
-| N10 | 引入 XML parser / 表达式 parser 库 | 自研词法级扫描器即可，且保证逐字节 |
-| N11 | 跨调用 AST 缓存（含失效策略） | 只做单次渲染内缓存 |
+| N1 | 表达式语言 | `== != > < && \|\| !` 算术 `?:` `??` `?.` 函数调用 下标 字面量 |
+| N2 | filter/pipe/helper/macro/继承 | 一律不做 |
+| N3 | `#with` / `../` / `@root` | 与显式 scope 隔离冲突 |
+| N4 | HTML 转义/自动转义 | 转义破坏逐字节 |
+| N5 | standalone 行剥离/自动 trim | 已由 standalone 默认开覆盖（见 §8.5） |
+| N6 | Zod schema 校验（Context/Args） | 用静态参数校验替代 |
+| N7 | 编辑器高亮/LSP | 阶段 2 候选 |
+| N8 | i18n/异步/流式/增量 | — |
+| N9 | 动态 include | 静态 include 足够 |
+| N10 | XML/表达式 parser 库 | 自研扫描器保逐字节 |
+| N11 | 跨调用 AST 缓存 | 仅单次渲染内缓存 |
 
 ---
 
-## 8. 未决问题（已收口：全部有结论）
-
-> 状态：**阶段 1 结束时的终态**。✅ = 已落地；❌ = 明确不做；⏸ = 留下一步（阶段 2 / 用户侧）。
+## 8. 未决问题（已收口）
 
 | # | 问题 | 结论 |
 | --- | --- | --- |
-| 1 | 旧 Handlebars 风格实现（`feat/template-engine` 分支） | ❌ **不用**（分支已删；本引擎取代它） |
-| 2 | 迁移基线的提交时机 | ✅ 已提交（分 20+ 个语义提交，含 M4 切默认） |
-| 3 | 变量命名空间（扁平 `{{diy_cli}}` → `{{diy.cli}}`） | ✅ 已改名（`diy.*` / `task.*` / `cwd.*` / `project.*`） |
-| 4 | 模版 body 的末尾换行 / trim | ✅ **已拍板**：注册表不再 `trim() + '\n'`，模版源逐字节进引擎；末尾换行与节间分隔全由模版自己完成 |
-| 5 | 节间分隔与空节 | ✅ **已拍板**：节模版自带末尾空行（方案 b）；末节（`_guard.md`）恒存在、永不跳过 |
-| 6 | `:else` 是否需要 | ❌ **不做**：正反两段（`<template :if>` + `<template :if-not>`）已够；现有 8 份模版 0 处需要 |
-| 7 | 注释语法 | ✅ **已做**：`{{/* … */}}`（不产出字符；避开 `!` 与逻辑否定混淆） |
-| 8 | 谓词物化的边界 | ✅ **只提供原子布尔**（`cwd.isFallback` 等）；枚举查表（`when.<枚举>.<值>`）不做——需要时由调用方物化 |
-| 9 | trace / analyze 的 UI 形态 | ⏸ 引擎侧已就绪（`analyze()` / `renderWithTrace()`）；UI 两个 view 是 M5（见 §9） |
-| 10 | 打包形态（`pkgDeps` 内联） | ✅ 已做（`vite.main/preload/serve.config.ts`） |
-| 11 | 属性值里的 `"` 不转义 | ✅ 已解决：引号只是**值的边界**且与语义无关（`'` / `"` 均可，成对），变量一律写 `{{…}}` 裸值 |
-| 12 | 内建名冲突 / 嵌套循环外层不可达 | ✅ 已解决：`迭代信封`（`:as="f"` → `.f.value/.f.index/.f.isFirst/.f.isLast`），无碰撞、嵌套各自可访 |
-| 13 | 集合被直接插值 | ✅ 已解决：**`not-scalar` 硬错误**（旧行为是静默 `JSON.stringify`，与"集合只能迭代、标量才能插值"冲突） |
-| 14 | 变量契约（类型 + 描述） | ✅ 已落地：宿主声明 `SYSTEM_VARS`（registry 单一真源），`analyze(src, { vars })` 做静态校验（未知路径 / `:for` 非数组 / 插值非标量），试验场 view① 显示类型与说明 |
+| 1 | 旧 Handlebars 分支 | ❌ 不用（已删） |
+| 2 | 迁移基线时机 | ✅ 20+ 语义提交，M4 切默认 |
+| 3 | 命名空间 `{{diy_cli}}` → `{{diy.cli}}` | ✅ 已改 |
+| 4 | 模版末尾换行/trim | ✅ 逐字节进引擎，末尾换行由模版负责 |
+| 5 | 节间分隔与空节 | ✅ 节自带末尾空行；`_guard` 恒存在 |
+| 6 | `:else` | ❌ 不做（`:if` + `:if-not` 已够） |
+| 7 | 注释 | ✅ `{{/* … */}}` |
+| 8 | 谓词物化边界 | ✅ 仅原子布尔 |
+| 9 | trace/analyze UI | ✅ 试验场两 view 已落地（M5） |
+| 10 | 打包形态 | ✅ `vite.*.config.ts` 内联 |
+| 11 | 属性值引号 | ✅ 引号仅定界，推荐裸值 |
+| 12 | 内建名冲突 | ✅ 迭代信封解决 |
+| 13 | 集合插值 | ✅ `not-scalar` 硬错 |
+| 14 | 变量契约 | ✅ `SYSTEM_VARS` + `analyze({vars})` 校验，试验场展示类型/说明 |
 
 ---
 
-## 9. 下一步（M5 / 阶段 2）
+## 9. 下一步
 
-1. **试验场两个 view**（引擎数据源已就绪）：
-   - view① 「可用变量」：`analyze()` 的 globals / dynamics / loops / conditions / includes + lint
-   - view② 「模版树」：`renderWithTrace()`（节点字节数、`:if` 真假与原因、迭代次数）
-   - 顺带：把预览面板里已恒空的 `unknownVars` 展示换成 lint/warnings
-2. ~~变量契约~~ ✅ 已落地（见第 8 节第 14 条）。下一步可做：**数组元素类型**（`chain[].path`）→ 让 include 参数与循环内字段也能静态校验
-3. **阶段 2 可能扩展**（均非当下需求）：表达式语言（N1）、`:else`、动态 include、`encode`（XML 转义）、编辑器高亮/LSP
+- [x] **M5 已完成**：试验场两 view（变量定义/变量值/结构树 + 高亮联动/区间/列宽）与变量契约落地。
+- [ ] **可做**：数组元素类型 `chain[].path` → 细化 `include` 参数与循环内字段校验。
+- **阶段 2 候选**（非当下需求）：表达式语言、`:else`、动态 include、`encode`、编辑器 LSP。
 
-> M4 已完成（本节原内容）：注册表切 DSL 引擎 ✅、8 份模版改写 ✅、`_system.md` 顶层装配 ✅、
-> 真发等价（golden 逐字节）✅、回退开关改为 **git revert + golden 守护**（而非 `PROMPT_ENGINE` 双世界）✅。
+> M4 已完成：注册表切 DSL ✅、8 份模版改写 ✅、`_system.md` 装配 ✅、真发等价（golden）✅、回退改为 `git revert + golden` ✅。
