@@ -146,12 +146,20 @@ export const Caches = {
     serialize: (v) => JSON.stringify(v),
     defaultValue: [] as string[],
   }),
-  /** 试验场（底部 devtools viewarea）是否展开。
-   *  这是「布局切换按钮」的状态，类似 VSCode 的面板开合 —— 与 view 内容无关。 */
-  diy_lab_open: field<boolean>("diy_lab_open", {
-    parse: (raw) => (raw === "1" ? true : raw === "0" ? false : null),
-    serialize: (v) => (v ? "1" : "0"),
-    defaultValue: false,
+  /** 各 page 的布局用户态（area 隐藏/最大化 + track 尺寸覆盖）。
+   *  视图 cache：丢了只是回到开发者默认布局，无数据损失。
+   *  key = pageId，结构见 store/layoutStore 的 PageLayoutState。 */
+  diy_layout_state: field<Record<string, unknown>>("diy_layout_state", {
+    parse: (raw) => {
+      try {
+        const o: unknown = JSON.parse(raw);
+        return o && typeof o === "object" && !Array.isArray(o) ? (o as Record<string, unknown>) : null;
+      } catch {
+        return null;
+      }
+    },
+    serialize: (v) => JSON.stringify(v),
+    defaultValue: {},
   }),
   /** 当前激活的 tab URI（不在 opened 里 = 回落到任务树） */
   diy_tabs_active: field<string>("diy_tabs_active", {
@@ -298,6 +306,7 @@ const LEGACY_KEYS = [
   // 试验场早期直写的宽度 key（已收进字段池）
   "lab4.leftW",
   "lab4.rightW",
+  "diy_lab_open",
 ];
 
 /** 清空全部视图 cache：注册字段池 + 前缀兜底（防未来直写漏注册）+ 旧 key 兼容。返回删除条数。 */

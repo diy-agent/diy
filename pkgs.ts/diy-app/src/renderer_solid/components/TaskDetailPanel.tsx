@@ -1,5 +1,4 @@
 import { createSignal, createMemo, createEffect, on, onMount, onCleanup, Show } from "solid-js";
-import * as Tabs from "@kobalte/core/tabs";
 import * as Select from "@kobalte/core/select";
 import { taskStore, type TaskDetail } from "../store/taskStore";
 import { localChatStore } from "../store/localChatStore";
@@ -7,7 +6,6 @@ import { draftStore } from "../store/draftStore";
 import { diyService } from "../lib/rpc";
 import { getRendererActions } from "../lib/renderer-actions";
 import { Caches } from "../lib/ui-state";
-import { LocalChatPage } from "./LocalChatPage";
 import { MarkdownView } from "./MarkdownView";
 import { CodeBlock } from "./CodeBlock";
 
@@ -31,55 +29,34 @@ export function TaskDetailPanel() {
     // 直接套用会把任务树挤没（历史问题：只有拖拽路径 clamp，渲染路径没 clamp）。
     const renderW = () => Math.min(panelMax(), panelW());
 
-    // ── per-task 记忆：当前任务详情面板在哪个 tab + info 滚动位置（存 TaskState，切任务/重挂各自恢复） ──
-    const [tab, setTab] = createSignal<"local" | "info">(
-        taskStore.selectedUri ? localChatStore.getTab(taskStore.selectedUri) : "local",
-    );
+    // ── per-task 记忆：详情滚动位置（存 TaskState，切任务/重挂各自恢复） ──
     let detailScrollRef: HTMLDivElement | undefined;
-    /** 详情滚动恢复标记：置位于「切任务/进入 info」，内容（selectedTask 异步加载）就绪后执行一次 */
+    /** 详情滚动恢复标记：切任务时置位，内容（selectedTask 异步加载）就绪后执行一次 */
     let needsRestore = false;
-    // 切任务：保存旧任务的 tab → 恢复新任务（详情滚动由 info 容器 onScroll 实时记录，天然准确）
+    // 切任务：冲掉旧任务防抖中的草稿（输入框随任务切换立刻卸载，不冲则最后 600ms 的字丢掉）
     createEffect(
         on(
             () => taskStore.selectedUri,
             (uri, prev) => {
-                if (prev) {
-                    localChatStore.setTab(prev, tab());
-                    // 切走前冲掉上一个任务防抖中的草稿：详情面板的输入框会随任务切换立刻卸载，
-                    // 不等这一步，用户最后 600ms 内敲的字就丢了。
-                    // ⚠️ 必须在本组件（面板级）做，不能放进常驻于 <Show> 内的 TaskInfoView：
-                    // 那里读 props 会触发 Solid 的 "Stale read from <Show>"，中断 props 更新。
-                    void draftStore.flushNow(prev);
-                }
-                const next = uri ? localChatStore.getTab(uri) : "local";
-                setTab(next);
-                if (next === "info") needsRestore = true;
+                if (prev) void draftStore.flushNow(prev);
+                if (uri) needsRestore = true;
             },
         ),
-    );
-    // 手动切到 info tab：同样置恢复标记；顺带冲一次草稿（切 tab 会卸载 / 挂载两个 Tabs.Content）
-    createEffect(
-        on(() => tab(), (t) => {
-            if (t === "info") needsRestore = true;
-            const u = taskStore.selectedUri;
-            if (u) void draftStore.flushNow(u);
-        }),
     );
     // 面板整体卸载（切导航页 / 关闭面板）同样要冲
     onCleanup(() => {
         const u = taskStore.selectedUri;
         if (u) void draftStore.flushNow(u);
     });
-    // 首挂（任务详情 tab 时）也要恢复
     onMount(() => {
-        if (tab() === "info") needsRestore = true;
+        if (taskStore.selectedUri) needsRestore = true;
     });
     // 内容就绪后恢复详情滚动（rAF 一帧后设，内容已渲染不会被 clamped）
     createEffect(() => {
         const t = taskStore.selectedTask;
         const uri = taskStore.selectedUri;
         if (!t || !uri || !needsRestore) return;
-        if (tab() !== "info" || !detailScrollRef) return;
+        if (!detailScrollRef) return;
         needsRestore = false;
         const p = localChatStore.getDetailScroll(uri);
         if (p > 0) {
@@ -136,54 +113,22 @@ export function TaskDetailPanel() {
                         {taskStore.selectedUri}
                     </span>
                     <div class="flex items-center gap-1">
-                        <button
-                            class="btn btn-ghost btn-sm"
-                            title="带当前任务去试验场调模版"
-                            onClick={() => getRendererActions().navigate?.("lab")}
-                        >
-                            🪟
-                        </button>
                         <button class="btn btn-ghost btn-sm" onClick={() => taskStore.selectTask(null)}>
                             ✕
                         </button>
                     </div>
                 </div>
 
-                {/* Tab 切换：Agent 对话（默认）/ 任务详情（受控：per-task 记忆，切任务各自恢复） */}
-                <Tabs.Root
-                    value={tab()}
-                    onChange={(v) => {
-                        const t = v === "info" ? "info" : "local";
-                        setTab(t);
-                        const uri = taskStore.selectedUri;
-                        if (uri) {
-                            localChatStore.setTab(uri, t);
-                            // 切出 info 前保存滚动位置（容器 DOM 还在）
-                            if (t === "local" && detailScrollRef) localChatStore.setDetailScroll(uri, detailScrollRef.scrollTop);
-                        }
+                {/* 任务详情（唯一内容）。**不再有 tab** —— 会话已移到任务执行页的
+                    chat area，这里只剩详情本身，故无需在两种东西之间切换。 */}
+                <div
+                    class="flex-1 overflow-auto p-4"
+                    ref={(el) => (detailScrollRef = el)}
+                    onScroll={(e) => {
+                        const u = taskStore.selectedUri;
+                        if (u) localChatStore.setDetailScroll(u, e.currentTarget.scrollTop);
                     }}
-                    class="flex flex-col flex-1 overflow-hidden"
                 >
-                    <Tabs.List class="tabs tabs-bordered tabs-sm px-4 shrink-0">
-                        <Tabs.Trigger value="local" class="tab">🧪 Local</Tabs.Trigger>
-                        <Tabs.Trigger value="info" class="tab">📋 详情</Tabs.Trigger>
-                    </Tabs.List>
-
-                    {/* 本地自定义 agent（ai-sdk 块协议，独立会话） */}
-                    <Tabs.Content value="local" class="flex-1 overflow-hidden">
-                        <LocalChatPage />
-                    </Tabs.Content>
-
-                    {/* 任务详情 —— 元信息 */}
-                    <Tabs.Content
-                        value="info"
-                        class="flex-1 overflow-auto p-4"
-                        ref={(el) => (detailScrollRef = el)}
-                        onScroll={(e) => {
-                            const u = taskStore.selectedUri;
-                            if (u) localChatStore.setDetailScroll(u, e.currentTarget.scrollTop);
-                        }}
-                    >
                         {/* keyed：每个任务一个 TaskInfoView 实例。
                             非 keyed 时组件实例会被复用到下一个任务，而编辑态/草稿是在构造时
                             初始化的 —— 表现为「切回后显示上一个任务的标题」。
@@ -192,8 +137,7 @@ export function TaskDetailPanel() {
                         <Show when={taskStore.selectedTask} keyed fallback={<div class="opacity-60 text-sm">加载中…</div>}>
                             {(t) => <TaskInfoView task={t} />}
                         </Show>
-                    </Tabs.Content>
-                </Tabs.Root>
+                </div>
 
                 {/* 大 FAB：一键进入任务执行页（= 开始/继续这个任务）。
                     与任务状态无关 —— 打开 tab 表示「我现在要做它」，不改状态
@@ -521,22 +465,30 @@ export function TaskInfoView(props: { task: TaskDetail }) {
                         when={props.task.body}
                         fallback={<span class="text-xs opacity-40 italic">无内容</span>}
                     >
-                        {/* 内层不另开滚动容器：外层 Tabs.Content(value=info) 已是滚动容器，
-                            再套一层会截断高度、破坏其滚动位置恢复 */}
-                        <Tabs.Root value={detailTab()} onChange={(v) => setDetailTab(v as DetailTab)} class="w-full">
-                            <Tabs.List class="tabs tabs-bordered tabs-xs mb-2">
-                                <Tabs.Trigger value="md" class="tab">📖 Markdown</Tabs.Trigger>
-                                <Tabs.Trigger value="raw" class="tab">📄 原文</Tabs.Trigger>
-                            </Tabs.List>
-
-                            <Tabs.Content value="md">
-                                <MarkdownView content={props.task.body!} />
-                            </Tabs.Content>
-
-                            <Tabs.Content value="raw">
-                                <CodeBlock code={props.task.body!} lang="markdown" />
-                            </Tabs.Content>
-                        </Tabs.Root>
+                        {/* Markdown / 原文不是两种对象，只是**渲染开关** —— 用 tab 表达会
+                            让人以为有两份内容（并多一层嵌套 tab）。这里用与 chat 一致的
+                            二选一按钮组：两态都可见，当前态高亮。
+                            不另开滚动容器：外层已是滚动容器，再套一层会截断高度、
+                            破坏滚动位置恢复。 */}
+                        <div class="join mb-2">
+                            <button
+                                class={`btn btn-xs join-item ${detailTab() === "md" ? "btn-active" : "btn-ghost"}`}
+                                aria-pressed={detailTab() === "md"}
+                                onClick={() => setDetailTab("md")}
+                            >
+                                📖 Markdown
+                            </button>
+                            <button
+                                class={`btn btn-xs join-item ${detailTab() === "raw" ? "btn-active" : "btn-ghost"}`}
+                                aria-pressed={detailTab() === "raw"}
+                                onClick={() => setDetailTab("raw")}
+                            >
+                                📄 原文
+                            </button>
+                        </div>
+                        <Show when={detailTab() === "md"} fallback={<CodeBlock code={props.task.body!} lang="markdown" />}>
+                            <MarkdownView content={props.task.body!} />
+                        </Show>
                     </Show>
                 </Show>
             </div>

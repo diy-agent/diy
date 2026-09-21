@@ -31,7 +31,7 @@ type Route =
 
 /** 顶级导航（一侧栏项 = 一类事情）。任务执行页不出现在这里，它是任务下的动态页面 */
 const NAV_ITEMS: Array<{ id: "task" | "llm" | "settings"; label: string; icon: string }> = [
-    { id: "task", label: "任务", icon: "📋" },
+    { id: "task", label: "任务管理", icon: "📋" },
     { id: "llm", label: "LLM", icon: "🧠" },
     { id: "settings", label: "设置", icon: "⚙️" },
 ];
@@ -60,9 +60,33 @@ export default function App() {
     const [hovered, setHovered] = createSignal(false);
     const expanded = () => pinned() || hovered();
 
-    /** 侧栏高亮：任务执行页归属「任务」组 */
-    const navActive = () =>
-        route().page === "task-run" ? "task" : (route() as { page: "task" | "llm" | "settings" }).page;
+    /**
+     * 侧栏高亮：**同一时刻只有一处**。
+     * 任务执行页时不高亮「任务管理」—— 高亮交给具体任务 tab（否则会同时亮两个，
+     * 让人分不清「当前在哪」）。
+     */
+    const navActive = (): string | null => {
+        const r = route();
+        return r.page === "task-run" ? null : r.page;
+    };
+
+    /** 当前激活的任务 tab（无则 null） */
+    const activeTab = () => {
+        const r = route();
+        return r.page === "task-run" ? r.uri : null;
+    };
+
+    /** tab 的状态圆点色 */
+    const tabDot = (uri: string) => {
+        const st = findNode(taskStore.nodes, uri)?.state;
+        return st === "done" ? "bg-success" : st === "blocked" ? "bg-error" : "bg-info";
+    };
+
+    /** tab 标题：优先任务标题，退化到 URI 末段 */
+    const tabLabel = (uri: string) => {
+        const n = findNode(taskStore.nodes, uri);
+        return n?.num ? `#${n.num} ${n.title ?? uri}` : (n?.title ?? uri);
+    };
 
     let fsAbort: AbortController | undefined;
 
@@ -82,9 +106,8 @@ export default function App() {
             focus: (uri) => taskStore.selectTask(uri),
             setView: (key, open) => setLabView(key, open),
             setViewArea: (area, open) => {
-                // 阶段 1 只有任务执行页的 bottom（试验场面板）可开合；
-                // 将来 area 尺寸进 layout 文档后，这里改为改 layout 而不是布尔
-                if (area === "bottom") layoutStore.setLabOpen(open);
+                // 阶段 1 只有任务执行页是多 area 的 page；area 开合即 hidden 取反
+                layoutStore.setAreaHidden("task-run", area, !open);
             },
             openTaskRun: (uri) => {
                 tabStore.open(uri);
@@ -222,63 +245,61 @@ export default function App() {
                                             {expanded() && <span>{item.label}</span>}
                                         </button>
                                     </li>
-                                    {/* 「任务」下方的动态页面：每个打开的任务一项（等同编辑器开 tab）。
-                                        只在展开态显示 —— 2.5rem 的 rail 装不下标题与关闭按钮。 */}
-                                    <Show when={item.id === "task" && expanded()}>
-                                        <li class="flex justify-center">
-                                            <button
-                                                class={`flex items-center gap-2 w-full pl-7 pr-2 py-1 rounded-lg text-xs transition-colors cursor-pointer ${
-                                                    route().page === "task" ? "bg-base-300 font-medium" : "hover:bg-base-300 opacity-80"
-                                                }`}
-                                                onClick={() => goSection("task")}
-                                            >
-                                                <span>🌳</span>
-                                                <span class="truncate">任务树</span>
-                                            </button>
-                                        </li>
+                                    {/* 「任务管理」下的动态页面：每个打开的任务一项（等同编辑器开 tab）。
+                                        **展开与收缩两态结构一致** —— 收缩态用「序号」图标承载同样的
+                                        层级与选中语义（收缩态不显示标题与关闭按钮，装不下）。 */}
+                                    <Show when={item.id === "task"}>
                                         <For each={tabStore.opened}>
                                             {(uri) => {
-                                                const isActive = () =>
-                                                    route().page === "task-run" &&
-                                                    (route() as { uri: string }).uri === uri;
-                                                const node = () => findNode(taskStore.nodes, uri);
+                                                const isActive = () => activeTab() === uri;
+                                                const num = () => findNode(taskStore.nodes, uri)?.num;
                                                 return (
                                                     <li class="flex justify-center">
-                                                        <div
-                                                            class={`group flex items-center gap-1 w-full pl-7 pr-1 py-1 rounded-lg text-xs cursor-pointer transition-colors ${
-                                                                isActive() ? "bg-primary/25 ring-1 ring-primary/30" : "hover:bg-base-300"
-                                                            }`}
-                                                            title={uri}
-                                                            onClick={() => {
-                                                                tabStore.activate(uri);
-                                                                setRoute({ page: "task-run", uri });
-                                                            }}
+                                                        <Show
+                                                            when={expanded()}
+                                                            fallback={
+                                                                <button
+                                                                    class={`relative flex items-center justify-center h-7 w-7 rounded-lg text-[10px] font-mono transition-colors cursor-pointer ${
+                                                                        isActive()
+                                                                            ? "bg-primary/30 ring-1 ring-primary/40 font-semibold"
+                                                                            : "hover:bg-base-300 opacity-70"
+                                                                    }`}
+                                                                    title={tabLabel(uri)}
+                                                                    onClick={() => {
+                                                                        tabStore.activate(uri);
+                                                                        setRoute({ page: "task-run", uri });
+                                                                    }}
+                                                                >
+                                                                    <span class={`absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full ${tabDot(uri)}`} />
+                                                                    {num() ?? "•"}
+                                                                </button>
+                                                            }
                                                         >
-                                                            <span
-                                                                class={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                                                                    node()?.state === "done"
-                                                                        ? "bg-success"
-                                                                        : node()?.state === "blocked"
-                                                                          ? "bg-error"
-                                                                          : "bg-info"
+                                                            <div
+                                                                class={`group flex items-center gap-1 w-full pl-7 pr-1 py-1 rounded-lg text-xs cursor-pointer transition-colors ${
+                                                                    isActive() ? "bg-primary/25 ring-1 ring-primary/30" : "hover:bg-base-300"
                                                                 }`}
-                                                            />
-                                                            <span class="truncate flex-1">
-                                                                {node()?.num ? `#${node()!.num} ` : ""}
-                                                                {node()?.title ?? uri}
-                                                            </span>
-                                                            {/* 关闭 = 暂时不理会该任务，与任务状态无关 */}
-                                                            <button
-                                                                class="btn btn-ghost btn-xs px-1 opacity-0 group-hover:opacity-70 hover:!opacity-100 shrink-0"
-                                                                title="关闭（暂时不理会，不影响任务状态）"
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    closeTab(uri);
+                                                                title={uri}
+                                                                onClick={() => {
+                                                                    tabStore.activate(uri);
+                                                                    setRoute({ page: "task-run", uri });
                                                                 }}
                                                             >
-                                                                ✕
-                                                            </button>
-                                                        </div>
+                                                                <span class={`w-1.5 h-1.5 rounded-full shrink-0 ${tabDot(uri)}`} />
+                                                                <span class="truncate flex-1">{tabLabel(uri)}</span>
+                                                                {/* 关闭 = 暂时不理会该任务，与任务状态无关 */}
+                                                                <button
+                                                                    class="btn btn-ghost btn-xs px-1 opacity-0 group-hover:opacity-70 hover:!opacity-100 shrink-0"
+                                                                    title="关闭（暂时不理会，不影响任务状态）"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        closeTab(uri);
+                                                                    }}
+                                                                >
+                                                                    ✕
+                                                                </button>
+                                                            </div>
+                                                        </Show>
                                                     </li>
                                                 );
                                             }}

@@ -73,13 +73,19 @@ describe("任务 tab —— 打开 / 聚焦 / 关闭", () => {
     )).toContain(uri);
     expect((await tabs()).active).toBe(uri);
 
-    // 渲染验证：执行页有 page 菜单条（试验场开关）+ 左栏任务详情 + 中栏输入框
-    const text = await waitUntil(a11yText, (s) => s.includes("试验场") && s.includes("任务详情"), {
+    // 渲染验证：执行页有 page 菜单条（每个 area 一个布局按钮）+ 左栏任务详情 + 中栏输入框
+    const text = await waitUntil(a11yText, (s) => s.includes("任务详情") && s.includes("① left"), {
       label: "任务执行页上屏",
     });
-    expect(text).toContain("🪟 试验场");
+    // 布局按钮：**本 page 有几个 area 就有几个**（不是只给试验场一个）
+    expect(text).toContain("① left");
+    expect(text).toContain("② center");
+    expect(text).toContain("③ right");
+    expect(text).toContain("④ bottom");
     expect(text).toContain("任务详情");
     expect(text).toContain("发送"); // chat 在
+    // 详情不再有 tab（会话已移到 chat area）
+    expect(text).not.toContain("🧪 Local");
   });
 
   it("重复打开同一任务 → 聚焦已有，不新开", async () => {
@@ -93,6 +99,17 @@ describe("任务 tab —— 打开 / 聚焦 / 关闭", () => {
     const t = await tabs();
     expect(t.opened).toEqual([]);
     expect(t.active).toBe("");
+  });
+});
+
+describe("侧栏：高亮唯一 + 收缩/展开结构一致", () => {
+  it("任务执行页时「任务管理」不高亮（高亮只落在具体 tab 上）", async () => {
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    const text = await waitUntil(a11yText, (s) => s.includes("任务详情"), { label: "执行页就位" });
+    // 侧栏项都在（且没有重复的「任务树」行 —— 它曾被冗余地塞在「任务」下面）
+    expect(text).toContain("任务管理");
+    expect(text).toContain("LLM");
+    expect(text).toContain("设置");
   });
 });
 
@@ -114,6 +131,9 @@ describe("非法 page 不得白屏（回归 137）", () => {
 describe("viewarea 开合（试验场面板）", () => {
   it("打开任务 tab 后展开 bottom → 试验场内容上屏；收起 → 消失", async () => {
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    // 先确认默认收起（bottom 属开发者默认隐藏的 area）
+    const before = await a11yText();
+    expect(before).not.toContain("变量定义");
     await fx.sh.getJson("./diy.sh ui viewarea set bottom open");
     const open = await waitUntil(a11yText, (s) => s.includes("变量定义") && s.includes("模版结构树"), {
       label: "试验场内容上屏",

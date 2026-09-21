@@ -3,8 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   LAYOUT_VERSION,
   areaCss,
+  areaTracks,
   cellCount,
+  colLineSegments,
+  collapsibleTracks,
   findArea,
+  ownerAt,
+  rowLineSegments,
   fr,
   px,
   trackCss,
@@ -154,5 +159,95 @@ describe("派生工具", () => {
   it("findArea 按 id 寻址（契约层不认坐标）", () => {
     expect(findArea(threeCol(), "chat")?.col).toBe(1);
     expect(findArea(threeCol(), "nope")).toBeUndefined();
+  });
+});
+
+describe("track 归属与可拖线段", () => {
+  const L = sixCells(); // A=[0,3] B=[1] C=[2] D=[4,5]（col0/col1/col2 × row0/row1）
+
+  it("ownerAt 按矩形找归属", () => {
+    expect(ownerAt(L, 0, 0)).toBe("A");
+    expect(ownerAt(L, 0, 1)).toBe("A");
+    expect(ownerAt(L, 1, 0)).toBe("B");
+    expect(ownerAt(L, 2, 1)).toBe("D");
+    expect(ownerAt(L, 5, 5)).toBeUndefined();
+  });
+
+  it("竖线线段：只取两侧 owner 不同的行（被跨列 area 覆盖的段不可拖）", () => {
+    // 竖线 1（col0|col1）：row0 A≠B 可拖；row1 A≠D 可拖 → 整条
+    expect(colLineSegments(L, 1)).toEqual([{ start: 0, span: 2 }]);
+    // 竖线 2（col1|col2）：row0 B≠C 可拖；row1 D=D（D 跨 col1+col2）不可拖 → 只有上半段
+    expect(colLineSegments(L, 2)).toEqual([{ start: 0, span: 1 }]);
+  });
+
+  it("横线线段：只取上下 owner 不同的列", () => {
+    // 横线 1（row0|row1）：col0 A=A 不可拖；col1 B≠D 可拖；col2 C≠D 可拖 → 右两列
+    expect(rowLineSegments(L, 1)).toEqual([{ start: 1, span: 2 }]);
+  });
+
+  it("areaTracks 给出 area 占据的 track 索引", () => {
+    expect(areaTracks(L, "A")).toEqual({ cols: [0], rows: [0, 1] });
+    expect(areaTracks(L, "D")).toEqual({ cols: [1, 2], rows: [1] });
+  });
+});
+
+describe("collapsibleTracks —— 隐藏 area 时哪些 track 能收（实测踩过的坑）", () => {
+  /** 真实的任务执行页布局：左/中/右 三列 + 底部横条（跨 3 列） */
+  const bar: Layout = {
+    version: LAYOUT_VERSION,
+    cols: [px(300), fr(1), px(0)],
+    rows: [fr(1), px(320)],
+    areas: [
+      { id: "left", col: 0, row: 0 },
+      { id: "center", col: 1, row: 0 },
+      { id: "right", col: 2, row: 0 },
+      { id: "bottom", col: 0, row: 1, colSpan: 3 },
+    ],
+  };
+
+  it("默认隐藏 right + bottom → 只收 col2 与 row1", () => {
+    // 反面教训：按「area 碰到的 track 全收」会把三列一起归零（网格塌成 0px）
+    expect(collapsibleTracks(bar, new Set(["right", "bottom"]))).toEqual({ cols: [2], rows: [1] });
+  });
+
+  it("最小化 left → 收 col0：bottom 跨 3 列属「穿过」，不算阻碍（col2 上还有可见的 right，故不收）", () => {
+    expect(collapsibleTracks(bar, new Set(["left", "bottom"]))).toEqual({ cols: [0], rows: [1] });
+    // 再把 right 也隐藏 → col2 才跟着收
+    expect(collapsibleTracks(bar, new Set(["left", "right", "bottom"]))).toEqual({
+      cols: [0, 2],
+      rows: [1],
+    });
+  });
+
+  it("最小化 center → 收 col1", () => {
+    expect(collapsibleTracks(bar, new Set(["center", "bottom"]))).toEqual({ cols: [1], rows: [1] });
+  });
+
+  it("只隐藏 bottom（三列都可见）→ 只收 row1，三列不动", () => {
+    expect(collapsibleTracks(bar, new Set(["bottom"]))).toEqual({ cols: [], rows: [1] });
+  });
+
+  it("只隐藏 left（bottom 可见）→ 收 col0", () => {
+    expect(collapsibleTracks(bar, new Set(["left"]))).toEqual({ cols: [0], rows: [] });
+  });
+
+  it("rowSpan 2 的竖条穿过 row1：隐藏 bottom 仍能收 row1（VSCode 式布局）", () => {
+    const vscode: Layout = {
+      version: LAYOUT_VERSION,
+      cols: [px(300), fr(1), px(0)],
+      rows: [fr(1), px(320)],
+      areas: [
+        { id: "left", col: 0, row: 0, rowSpan: 2 },
+        { id: "center", col: 1, row: 0 },
+        { id: "right", col: 2, row: 0, rowSpan: 2 },
+        { id: "bottom", col: 1, row: 1 },
+      ],
+    };
+    expect(collapsibleTracks(vscode, new Set(["bottom"]))).toEqual({ cols: [], rows: [1] });
+    expect(collapsibleTracks(vscode, new Set(["left"]))).toEqual({ cols: [0], rows: [] });
+  });
+
+  it("无隐藏 → 一个都不收", () => {
+    expect(collapsibleTracks(bar, new Set())).toEqual({ cols: [], rows: [] });
   });
 });

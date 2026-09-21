@@ -110,13 +110,18 @@ export const VIEWS: ViewDef[] = [
 export const TASK_RUN_LAYOUT: Layout = {
   version: 1,
   cols: [px(300), fr(1), px(0)], // 右栏初始 0（预留，未实现）
-  rows: [fr(1), px(0)], // 底栏初始 0（试验场默认收起，由布局按钮开合）
+  rows: [fr(1), px(320)], // 底栏高度；默认收起由 layoutStore 的 hidden 表达（不是把尺寸写 0）
   areas: [
     { id: "left", col: 0, row: 0 },
     { id: "center", col: 1, row: 0 },
     { id: "right", col: 2, row: 0 },
     { id: "bottom", col: 0, row: 1, colSpan: 3 },
   ],
+};
+
+/** 各 page 默认隐藏的 area（开发者默认布局的一部分：试验场是 devtools，默认不占地方） */
+export const DEFAULT_HIDDEN: Record<string, string[]> = {
+  "task-run": ["right", "bottom"],
 };
 
 export const PAGES: PageDef[] = [

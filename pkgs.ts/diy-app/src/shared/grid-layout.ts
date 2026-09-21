@@ -185,3 +185,121 @@ export function areaCss(a: AreaRect): { "grid-column": string; "grid-row": strin
 export function findArea(layout: Layout, id: string): AreaRect | undefined {
   return layout.areas.find((a) => a.id === id);
 }
+
+/** 某格块的 owner area id（无主返回 undefined） */
+export function ownerAt(layout: Layout, col: number, row: number): string | undefined {
+  for (const a of layout.areas) {
+    const cs = a.colSpan ?? 1;
+    const rs = a.rowSpan ?? 1;
+    if (col >= a.col && col < a.col + cs && row >= a.row && row < a.row + rs) return a.id;
+  }
+  return undefined;
+}
+
+/** 某 area 占据的 track 索引（去重、升序） */
+export function areaTracks(layout: Layout, areaId: string): { cols: number[]; rows: number[] } {
+  const a = findArea(layout, areaId);
+  if (!a) return { cols: [], rows: [] };
+  const cols: number[] = [];
+  const rows: number[] = [];
+  for (let i = a.col; i < a.col + (a.colSpan ?? 1); i++) cols.push(i);
+  for (let j = a.row; j < a.row + (a.rowSpan ?? 1); j++) rows.push(j);
+  return { cols, rows };
+}
+
+/** 一条可拖的分隔线线段（沿另一轴，从 start 起 span 格） */
+export interface LineSegment {
+  start: number;
+  span: number;
+}
+
+/**
+ * 竖线 lineIndex（1..cols-1）上**真正可拖**的段：
+ * 只取「左右两格 owner 不同」的连续行 —— 被跨列 area 覆盖的段没有分隔可言。
+ */
+export function colLineSegments(layout: Layout, lineIndex: number): LineSegment[] {
+  const out: LineSegment[] = [];
+  let run: number | null = null;
+  for (let r = 0; r < layout.rows.length; r++) {
+    const differs = ownerAt(layout, lineIndex - 1, r) !== ownerAt(layout, lineIndex, r);
+    if (differs) {
+      if (run === null) run = r;
+    } else if (run !== null) {
+      out.push({ start: run, span: r - run });
+      run = null;
+    }
+  }
+  if (run !== null) out.push({ start: run, span: layout.rows.length - run });
+  return out;
+}
+
+/** 横线 lineIndex（1..rows-1）上真正可拖的段（上下两格 owner 不同） */
+export function rowLineSegments(layout: Layout, lineIndex: number): LineSegment[] {
+  const out: LineSegment[] = [];
+  let run: number | null = null;
+  for (let c = 0; c < layout.cols.length; c++) {
+    const differs = ownerAt(layout, c, lineIndex - 1) !== ownerAt(layout, c, lineIndex);
+    if (differs) {
+      if (run === null) run = c;
+    } else if (run !== null) {
+      out.push({ start: run, span: c - run });
+      run = null;
+    }
+  }
+  if (run !== null) out.push({ start: run, span: layout.cols.length - run });
+  return out;
+}
+
+/**
+ * 哪些 track 可以因「area 被隐藏」而收成 0。
+ *
+ * 判据（区分「被包含」与「穿过」）：
+ *   对 track t 的每一格，其 owner 必须满足
+ *     ① 已隐藏（收掉它正是本意），或
+ *     ② **穿过** t —— 即在该轴的垂直方向跨了多格（列 track 看 colSpan>1，行 track 看 rowSpan>1），
+ *        它的尺寸来自别的 track，收掉 t 不会把它挤没
+ *   否则该 track 不可收。
+ *
+ * 为什么需要 ②：bottom 是跨 3 列的横条，它占着 col0 的 row1。若把它当作「阻碍」，
+ * 最小化 left 就永远收不掉 col0（实测踩到）。而 left/right 是 rowSpan 2 的竖条，
+ * 它们穿过 row1，故最小化 bottom 能正常收掉 row1。
+ *
+ * 反面教训（第一版实现）：按「area 碰到的 track 全收」，隐藏 bottom（colSpan 3）
+ * 会把三列全归零、隐藏 right 会连带 row0 → 整个网格塌成 0px。
+ */
+export function collapsibleTracks(layout: Layout, hidden: Set<string>): { cols: number[]; rows: number[] } {
+  const areaOf = (id: string | undefined) => (id ? findArea(layout, id) : undefined);
+
+  const cols: number[] = [];
+  for (let c = 0; c < layout.cols.length; c++) {
+    let ok = true;
+    let touched = false;
+    for (let r = 0; r < layout.rows.length; r++) {
+      const id = ownerAt(layout, c, r);
+      if (id === undefined) continue;
+      if (hidden.has(id)) { touched = true; continue; }
+      const a = areaOf(id);
+      if (a && (a.colSpan ?? 1) > 1) continue; // 穿过本列
+      ok = false;
+      break;
+    }
+    if (ok && touched) cols.push(c);
+  }
+
+  const rows: number[] = [];
+  for (let r = 0; r < layout.rows.length; r++) {
+    let ok = true;
+    let touched = false;
+    for (let c = 0; c < layout.cols.length; c++) {
+      const id = ownerAt(layout, c, r);
+      if (id === undefined) continue;
+      if (hidden.has(id)) { touched = true; continue; }
+      const a = areaOf(id);
+      if (a && (a.rowSpan ?? 1) > 1) continue; // 穿过本行
+      ok = false;
+      break;
+    }
+    if (ok && touched) rows.push(r);
+  }
+  return { cols, rows };
+}

@@ -12,7 +12,6 @@
 import { createSignal, Show } from "solid-js";
 import { taskStore } from "../store/taskStore";
 import { diyService } from "../lib/rpc";
-import { getRendererActions } from "../lib/renderer-actions";
 import { StateSelect } from "./TaskDetailPanel";
 import { MarkdownView } from "./MarkdownView";
 
@@ -41,20 +40,10 @@ export function TaskSideView(props: { uri: string }) {
         }
     };
 
-    /** 跳回任务页看/改完整详情（本视图不做编辑态） */
-    const openFull = () => {
-        const a = getRendererActions();
-        a.navigate?.("task");
-        a.focus?.(props.uri);
-    };
-
     return (
         <div class="flex flex-col h-full overflow-hidden">
             <div class="flex items-center gap-2 px-3 py-2 border-b shrink-0">
                 <span class="text-[11px] font-bold tracking-wide opacity-60">任务详情</span>
-                <button class="btn btn-ghost btn-xs ml-auto shrink-0" onClick={openFull} title="回到任务页看完整详情（含编辑）">
-                    ↗ 全部
-                </button>
             </div>
 
             <div class="flex-1 overflow-y-auto px-3 py-3 space-y-3 min-h-0">

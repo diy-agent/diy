@@ -10,9 +10,9 @@
  * 本组件不自己拼布局 —— 交给 ViewGrid 消费 layout + binding，
  * 加/减 view 只改 view 注册表，本文件不动。
  */
-import { onMount, createEffect, on } from "solid-js";
+import { onMount, createEffect, on, For } from "solid-js";
 import { findPage, defaultBinding } from "../../shared/view-registry";
-import { fr, px, type Layout } from "../../shared/grid-layout";
+import type { Layout } from "../../shared/grid-layout";
 import { ViewGrid } from "./ViewGrid";
 import { TaskSideView } from "./TaskSideView";
 import { LocalChatPage } from "./LocalChatPage";
@@ -21,8 +21,6 @@ import { taskStore } from "../store/taskStore";
 import { layoutStore } from "../store/layoutStore";
 
 const PAGE = findPage("task-run")!;
-/** 试验场展开时的高度（px）。它是 devtools，不该抢主区空间 */
-const LAB_HEIGHT = 320;
 
 export function TaskRunPage(props: { uri: string }) {
     // 子组件（chat / 试验场）当前沿用 taskStore.selectedUri；本页把「当前 tab」
@@ -35,18 +33,13 @@ export function TaskRunPage(props: { uri: string }) {
         ),
     );
 
-    const labOpen = () => layoutStore.labOpen;
+    /** 试验场（bottom area）默认收起：底部行初始 0，点布局按钮才展开 */
+    const areas = () => PAGE.layout.areas;
+    const layout = (): Layout => PAGE.layout;
+    const binding = () => defaultBinding(PAGE, props.uri);
 
-    /** 收起时行高为 0；同时把该 view 置为「隐藏」（binding = null），
-     *  而非从注册表删掉 —— 实例不被销毁重建，状态保留 */
-    const layout = (): Layout =>
-        labOpen() ? { ...PAGE.layout, rows: [fr(1), px(LAB_HEIGHT)] } : PAGE.layout;
-
-    const binding = () => {
-        const b = defaultBinding(PAGE, props.uri);
-        if (!labOpen()) b[`lab.workbench@${props.uri}`] = null;
-        return b;
-    };
+    /** area 序号（① ② ③ …）：布局按钮先用序号替代图标（动态绘制图标待定，见 133） */
+    const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
 
     return (
         <div class="flex flex-col h-full overflow-hidden">
@@ -57,14 +50,21 @@ export function TaskRunPage(props: { uri: string }) {
                     {props.uri}
                 </span>
                 <div class="flex-1" />
-                <button
-                    class={`btn btn-xs ${labOpen() ? "btn-active" : "btn-ghost"}`}
-                    title="试验场（底部面板）开合"
-                    aria-pressed={labOpen()}
-                    onClick={() => layoutStore.toggleLab()}
-                >
-                    🪟 试验场
-                </button>
+                {/* 布局切换：**本 page 有几个 area 就有几个按钮**（不是只给试验场一个）。
+                    点一下开合该 area。图标用序号替代 —— 动态绘制随 grid 结构变化的图标
+                    待定（见 133），序号先保证「结构可见、可操作」。 */}
+                <For each={areas()}>
+                    {(a, i) => (
+                        <button
+                            class={`btn btn-xs ${layoutStore.isHidden(PAGE.id, a.id) ? "btn-ghost opacity-50" : "btn-active"}`}
+                            title={`${a.id}（区域 ${i() + 1}）开合`}
+                            aria-pressed={!layoutStore.isHidden(PAGE.id, a.id)}
+                            onClick={() => layoutStore.toggleArea(PAGE.id, a.id)}
+                        >
+                            {CIRCLED[i()] ?? i() + 1} {a.id}
+                        </button>
+                    )}
+                </For>
             </div>
 
             <div class="flex-1 min-h-0">
