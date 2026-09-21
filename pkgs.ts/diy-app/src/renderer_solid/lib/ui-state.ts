@@ -164,6 +164,12 @@ export const Caches = {
     serialize: (v) => String(v),
     defaultValue: 336,
   }),
+  /** 试验场编辑器配色（见 lib/editor-theme 的清单；"diy" = 跟随应用主题） */
+  diy_lab_editor_theme: field<string>("diy_lab_editor_theme", {
+    parse: (raw) => (raw && raw.length < 40 ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "diy",
+  }),
   /** 试验场右栏宽（px，范围 240-640） */
   diy_lab_right_width: field<number>("diy_lab_right_width", {
     parse: (raw) => {

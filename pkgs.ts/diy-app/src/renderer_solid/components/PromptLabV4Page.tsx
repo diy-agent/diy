@@ -17,6 +17,8 @@ import { LocalChatPage } from "./LocalChatPage";
 import { TaskInfoView } from "./TaskDetailPanel";
 import { JsonTree } from "./JsonTree";
 import { MdEditor } from "./MdEditor";
+import { EditorThemePicker } from "./EditorThemePicker";
+import { collectTags } from "../../shared/xml-tags";
 import { lineDiff, useHoverTip, type PromptEntry } from "./promptLabCommon";
 import type { RequestPreview, TraceNode } from "../../shared/prompt-schema";
 import { AssembleGlobalsSchema } from "../../shared/prompt-schema";
@@ -713,6 +715,12 @@ export function PromptLabV4Page() {
         return r ? { ...r, key: cur.key } : null;
     });
 
+    /**
+     * 已知节标签集合：从**各模版正文**自动收集（草稿优先 → 刚写下还没保存的新标签也认）。
+     * 编辑器据此给输出侧伪 XML 标签着色；新增 `<diy-new>` 不需要改任何代码。
+     */
+    const knownTags = createMemo(() => collectTags(entries().map((e) => draftOf(e))));
+
     /** 该模版当前的正文（草稿优先）——区间是相对它的，行号也必须按它算 */
     const bodyOf = (relpath: string): string => {
         const e = entries().find((x) => x.relpath === relpath);
@@ -1382,6 +1390,7 @@ export function PromptLabV4Page() {
                                         {s().title} v{s().version}
                                     </span>
                                     <div class="ml-auto flex items-center gap-1">
+                                        <EditorThemePicker />
                                         <button
                                             class={`btn btn-xs ${mode() === "diff" ? "btn-active" : "btn-ghost"}`}
                                             title="普通 / diff 模式切换"
@@ -1437,6 +1446,7 @@ export function PromptLabV4Page() {
                                                     highlight={
                                                         (picked()?.file ?? selPath()) === s().relpath ? srcHl() : null
                                                     }
+                                                    tags={knownTags()}
                                                 />
                                             </div>
                                         }
@@ -1520,6 +1530,7 @@ export function PromptLabV4Page() {
                                         editable={false}
                                         onChange={() => {}}
                                         highlight={outHl()}
+                                        tags={knownTags()}
                                     />
                                 </div>
                             </div>
