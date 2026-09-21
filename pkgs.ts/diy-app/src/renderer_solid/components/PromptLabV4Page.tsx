@@ -313,10 +313,6 @@ function fmtBytes(n: number): string {
     return `${(n / 1024).toFixed(1)} KB`;
 }
 
-/** 从模版正文推断它包裹的标签（UI 只读展示；不再要求 frontmatter 维护 tag，避免两处漂移） */
-function wrapsTag(body: string): string | undefined {
-    return /(?:^|\n)<([a-z_][\w-]*)[\s>]/.exec(body)?.[1];
-}
 
 /**
  * 变量定义 view 的一行（名字 + 说明）
@@ -1385,10 +1381,6 @@ export function PromptLabV4Page() {
                                     <span class="opacity-50">
                                         {s().title} v{s().version}
                                     </span>
-                                    {/* 结构也可视化：这个节会包在什么标签里 / 它是不是片段模版 */}
-                                    <Show when={wrapsTag(s().current)}>
-                                        <span class="badge badge-xs badge-ghost font-mono">&lt;{wrapsTag(s().current)}&gt;</span>
-                                    </Show>
                                     <div class="ml-auto flex items-center gap-1">
                                         <button
                                             class={`btn btn-xs ${mode() === "diff" ? "btn-active" : "btn-ghost"}`}

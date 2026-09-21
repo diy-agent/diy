@@ -19,28 +19,21 @@ import {
     type SelectionRange,
 } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { tags as t } from "@lezer/highlight";
+import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
+import { themeSignal } from "../lib/theme";
 
 /**
- * markdown 语法着色（CM 默认只挂 class 不上色，必须给 HighlightStyle —— 之前"没有高亮"就是这个原因）。
- * 颜色一律走 daisyUI 的 CSS 变量，跟随应用主题（深/浅色都成立）。
+ * markdown 语法着色 —— 用**标准固定风格**，不再自拼配色：
+ *   · 暗色主题：Atom One Dark（`@codemirror/theme-one-dark` 官方包，社区最通用的固定风格）
+ *   · 亮色主题：CM 官方 `defaultHighlightStyle`（本来就是给亮底设计的）
+ * 自拼配色的问题（实测反馈「看着杂乱」）：我原来把 daisyUI 五个色相都用上
+ * （primary/accent/info/secondary/warning），而模版正文多是纯文本 → 满屏彩字。
+ * 固定风格只动"确实有语义"的 token，正文保持中性。
  */
-const labHighlight = HighlightStyle.define([
-    { tag: t.heading1, color: "var(--color-primary)", fontWeight: "bold", fontSize: "1.15em" },
-    { tag: [t.heading2, t.heading3], color: "var(--color-primary)", fontWeight: "bold" },
-    { tag: [t.heading4, t.heading5, t.heading6], color: "var(--color-primary)" },
-    { tag: t.strong, fontWeight: "bold", color: "var(--color-base-content)" },
-    { tag: t.emphasis, fontStyle: "italic" },
-    { tag: t.strikethrough, textDecoration: "line-through", opacity: "0.6" },
-    { tag: t.monospace, color: "var(--color-accent)" },
-    { tag: [t.link, t.url], color: "var(--color-info)", textDecoration: "underline" },
-    { tag: [t.list, t.contentSeparator], color: "var(--color-secondary)" },
-    { tag: t.quote, color: "var(--color-base-content)", opacity: "0.65", fontStyle: "italic" },
-    { tag: [t.processingInstruction, t.meta], color: "var(--color-warning)" },
-]);
+const darkHighlight = oneDarkHighlightStyle;
 
 /**
  * 模版 DSL 的"特殊显示"：markdown 语法不认识 `<template …>` / `{{插值}}`，
@@ -48,6 +41,19 @@ const labHighlight = HighlightStyle.define([
  */
 const dslMark = Decoration.mark({ class: "cm-dsl-interp" });
 const dslCtl = Decoration.mark({ class: "cm-dsl-ctl" });
+const xmlPunct = Decoration.mark({ class: "cm-xml-punct" });
+const xmlName = Decoration.mark({ class: "cm-xml-name" });
+const xmlAttr = Decoration.mark({ class: "cm-xml-attr" });
+/** 已知的节标签（输出侧伪 XML）：只给这些上色，免得把正文里的 `<pid>`、`a<b` 之类误染 */
+const KNOWN_TAGS = new Set([
+    "diy",
+    "project_context",
+    "project_instructions",
+    "task",
+    "rules",
+    "skills",
+    "guard",
+]);
 const dslPlugin = ViewPlugin.fromClass(
     class {
         decorations: DecorationSet;
@@ -68,6 +74,18 @@ const dslPlugin = ViewPlugin.fromClass(
                 // <template …> / </template> 控制标记（含属性）
                 for (const m of text.matchAll(/<\/?template\b[^>]*>/g)) {
                     out.push(dslCtl.range(from + m.index, from + m.index + m[0].length));
+                }
+                // 输出侧伪 XML 标签：`<diy>` / `</task>` / `<project_instructions path="…">`
+                // 只认已知节标签；标签名与属性分开着色（属性弱化）
+                for (const m of text.matchAll(/<\/?(\w[\w.-]*)((?:\s+[^>]*)?)>/g)) {
+                    if (!KNOWN_TAGS.has(m[1]!)) continue;
+                    const at = from + m.index;
+                    const closeAt = at + m[0].length - 1;
+                    const nameAt = at + (m[0].startsWith("</") ? 2 : 1);
+                    out.push(xmlPunct.range(at, nameAt));
+                    out.push(xmlName.range(nameAt, nameAt + m[1]!.length));
+                    out.push(xmlPunct.range(closeAt, closeAt + 1));
+                    if (m[2]) out.push(xmlAttr.range(nameAt + m[1]!.length, closeAt));
                 }
             }
             return Decoration.set(out, true);
@@ -96,8 +114,12 @@ const labTheme = EditorView.theme(
         ".cm-activeLine": { backgroundColor: "var(--color-base-200)" },
         // 高亮：浅色 = 所有出现处；深色 = 当前焦点（同一色相加浓，暗色主题下更亮）
         // 模版 DSL：插值 = 强调色，控制标记 = 主色（与 markdown 着色区分开，一眼认出模版语法）
-        ".cm-dsl-interp": { color: "var(--color-warning)", fontWeight: "bold" },
-        ".cm-dsl-ctl": { color: "var(--color-info)", fontWeight: "bold" },
+        // 只用两个色相（插值 = accent、控制标记/标签名 = primary），属性弱化 —— 不再满屏彩字
+        ".cm-dsl-interp": { color: "var(--color-accent)", fontWeight: "bold" },
+        ".cm-dsl-ctl": { color: "var(--color-primary)", fontWeight: "bold" },
+        ".cm-xml-name": { color: "var(--color-primary)", fontWeight: "bold" },
+        ".cm-xml-punct": { color: "var(--color-primary)", opacity: "0.6" },
+        ".cm-xml-attr": { color: "color-mix(in srgb, var(--color-base-content) 60%, transparent)" },
         ".cm-lab-hl": { backgroundColor: "color-mix(in srgb, var(--color-warning) 16%, transparent)" },
         ".cm-lab-hl-focus": { backgroundColor: "color-mix(in srgb, var(--color-warning) 48%, transparent)" },
         ".cm-activeLineGutter": {
@@ -167,6 +189,7 @@ export function MdEditor(props: {
     let host: HTMLDivElement | undefined;
     let view: EditorView | undefined;
     const editableCx = new Compartment();
+    const hlStyleCx = new Compartment();
     // 程序化换文档（切文件/保存/恢复）不回调 onChange：
     // 否则切一份文件就等于「改了一次」，drafts 多一条脏值 → 头部错报「1 未保存」（脏点却是空的）
     let silent = false;
@@ -184,7 +207,8 @@ export function MdEditor(props: {
                     keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
                     // 不自动折行：与预览一致，长了横向滚（折行会让"第几行"对不上行号）
                     markdown(),
-                    syntaxHighlighting(labHighlight),
+                    // 固定风格随主题切换：暗色 One Dark / 亮色 CM 官方默认
+                    hlStyleCx.of(syntaxHighlighting(themeSignal() === "dark" ? darkHighlight : defaultHighlightStyle)),
                     dslPlugin,
                     hlField,
                     editableCx.of(EditorView.editable.of(props.editable)),
@@ -211,6 +235,14 @@ export function MdEditor(props: {
                 silent = false;
             }
         }
+    });
+    // 主题切换（设置页）→ 换高亮风格
+    createEffect(() => {
+        view?.dispatch({
+            effects: hlStyleCx.reconfigure(
+                syntaxHighlighting(themeSignal() === "dark" ? darkHighlight : defaultHighlightStyle),
+            ),
+        });
     });
     // 锁态切换（只读模板）→ 即时生效
     createEffect(() => {
