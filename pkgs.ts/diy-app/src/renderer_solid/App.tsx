@@ -3,7 +3,7 @@ import * as Tabs from "@kobalte/core/tabs";
 import { TaskTree } from "./components/TaskTree";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { LlmPage } from "./components/LlmPage";
-import { PromptLabV4Page, setLabTab } from "./components/PromptLabV4Page";
+import { PromptLabV4Page, setLabTab, setLabView } from "./components/PromptLabV4Page";
 import { LogPanel } from "./components/LogPanel";
 import { AppInfo } from "./components/AppInfo";
 import { ThemeSettings } from "./components/ThemeSettings";
@@ -35,6 +35,7 @@ export default function App() {
                 if (page === "lab") setLabTab("lab");
             },
             focus: (uri) => taskStore.selectTask(uri),
+            setView: (key, open) => setLabView(key, open),
             toast: (msg, level) => notificationStore.addToast(level ?? "info", msg),
         });
         // main 进程 FileWatcher 检测到文件变更后推送 "task-change"，

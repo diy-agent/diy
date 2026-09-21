@@ -56,13 +56,17 @@ describe("试验场：变量定义 / 变量值 / 模版结构树 三个 view + �
     await fx.sh.getJson("./diy.sh ui page navigate lab");
     await fx.sh.getJson(`./diy.sh ui page focus ${uri}`);
 
-    // 3. 读 a11y 树：三个 view 的标题 + 引擎分析出的内容
+    // 3. 展开要看的 view（默认只展开「模板」；CLI 也能开，见 ui view set）
+    for (const key of ["trace", "vars", "vals"]) {
+      await fx.sh.getJson(`./diy.sh ui view set ${key} open`);
+    }
+    // 4. 读 a11y 树：四个 view 的标题 + 引擎分析出的内容
     //    （debug UI 主交互 = 手动刷新：按需重算，不订阅外部事件流）
     expect((await waitUntil(a11yText, (s) => s.includes("⟳ 刷新")))).toContain("⟳ 刷新");
     const text = await waitUntil(
       a11yText,
       (s) => s.includes("变量定义") && s.includes("变量值") && s.includes("模版结构树"),
-      { label: "试验场两块 view 上屏" },
+      { label: "试验场四块 view 上屏" },
     );
     expect(text).toContain("变量定义"); // 原名「变量定义」
     expect(text).toContain("变量值");

@@ -563,6 +563,21 @@ export const apiDef = RpcSchema.router({
             },
           }),
 
+          /** 试验场 view 的展开/折叠（默认只展开「模板」；自动化要看折叠 view 的内容时用） */
+          view: RpcSchema.group({
+            desc: `视图`,
+            children: {
+              set: RpcSchema.unary({
+                desc: `展开/折叠试验场 view`,
+                input: {
+                  key: z.string().cliArg({ desc: "view 名（tree/trace/vars/vals）" }),
+                  open: z.string().cliArg({ desc: "open 或 closed" }),
+                },
+                output: z.object({ status: z.string() }),
+              }),
+            },
+          }),
+
           /** 页面级服务 */
           page: RpcSchema.group({
             desc: `页面`,

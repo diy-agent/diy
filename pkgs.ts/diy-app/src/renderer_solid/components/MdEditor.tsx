@@ -25,19 +25,26 @@ const labTheme = EditorView.theme(
     {
         "&": { height: "100%", fontSize: "12px", backgroundColor: "var(--color-base-100)" },
         ".cm-content": { fontFamily: "var(--font-mono)", caretColor: "var(--color-primary)" },
-        // 行号栏必须**不透明**：不折行时正文会横向滚动，透明的话字会从行号下面穿过去（压住行号）
+        // 行号栏（CM 手册：gutters 是 sticky 的，正文横向滚时会滚到它下面）
+        //   · **不能**给 .cm-gutters 设 opacity —— 那会把背景一起变透明，正文从底下透出来"压住行号"
+        //     （弱化请用 color 的 alpha）
+        //   · `&light`/`&dark` 只能用在 `EditorView.baseTheme` 里（`buildTheme` 只给 baseTheme 传 scopes），
+        //     在 `EditorView.theme` 里写会抛 `Unsupported selector: &light` —— 而且是模块加载期抛，
+        //     整个 renderer 白屏。这里用普通选择器（实测能盖住 CM 基础主题的 gutter 背景）
         ".cm-gutters": {
             backgroundColor: "var(--color-base-100)",
+            color: "color-mix(in srgb, var(--color-base-content) 55%, transparent)",
             borderRight: "1px solid var(--color-base-300)",
-            color: "var(--color-base-content)",
-            opacity: "0.55",
         },
         ".cm-lineNumbers .cm-gutterElement": { padding: "0 6px 0 4px" },
         ".cm-activeLine": { backgroundColor: "var(--color-base-200)" },
         // 高亮：浅色 = 所有出现处；深色 = 当前焦点（同一色相加浓，暗色主题下更亮）
         ".cm-lab-hl": { backgroundColor: "color-mix(in srgb, var(--color-warning) 16%, transparent)" },
         ".cm-lab-hl-focus": { backgroundColor: "color-mix(in srgb, var(--color-warning) 48%, transparent)" },
-        ".cm-activeLineGutter": { opacity: "0.9" },
+        ".cm-activeLineGutter": {
+            backgroundColor: "var(--color-base-200)",
+            color: "var(--color-base-content)",
+        },
     },
     { dark: true },
 );

@@ -46,9 +46,25 @@ function patchDrafts(pid: string, mut: (d: Record<string, string>) => Record<str
     });
 }
 
-/** 试验场内层 tab（chat=任务会话 / task=任务详情 / lab=agent调参）：模块级 + 落 Caches */
+/** 试验场内层 tab（chat=任务会话 / task=任务详情 / lab=系统提示词 / req=请求预览）：模块级 + 落 Caches */
 export const [labTab, setLabTab] = createSignal(Caches.diy_lab_tab.get());
 createEffect(() => Caches.diy_lab_tab.set(labTab()));
+
+/**
+ * 各 view 的展开态（模块级：`ui view set` 可能在页面还没挂载时就设置）。
+ * 默认只展开「模板」，其余按需点开 —— 否则左栏一屏塞满、真正要看的表全在折叠下面。
+ */
+export const [labViews, setLabViews] = createSignal<Record<string, boolean>>({
+    tree: true,
+    trace: false,
+    vars: false,
+    vals: false,
+    sysctx: true,
+    reqbody: true,
+});
+export function setLabView(key: string, open: boolean): void {
+    setLabViews((v) => ({ ...v, [key]: open }));
+}
 
 /** relpath 数组 → 目录树（前端按路径派生，不做人工分类） */
 interface DirNode {
@@ -111,7 +127,12 @@ function DirRow(props: {
             when={props.node.dir}
             fallback={
                 <button
-                    class={`flex w-full items-center gap-1 px-2 py-1 text-left hover:bg-base-300 ${props.selPath === props.node.path ? "bg-primary/20" : ""}`}
+                    // 选中行自带 hover 色：否则 hover 的中性灰会盖掉选中背景（与表格里同一个坑）
+                    class={`flex w-full items-center gap-1 px-2 py-1 text-left ${
+                        props.selPath === props.node.path
+                            ? "bg-primary/25 hover:bg-primary/40"
+                            : "hover:bg-base-300"
+                    }`}
                     style={{ "padding-left": `${10 + props.depth * 16}px` }}
                     onClick={() => props.onPick(props.node.path)}
                     onMouseOver={(ev) => props.hov.show(props.node.entry?.desc ?? props.node.path, ev)}
@@ -252,7 +273,9 @@ function DynamicBar(props: {
     onClear: () => void;
 }) {
     return (
-        <div class="flex shrink-0 items-center gap-2 border-b bg-base-200/60 px-2 py-0.5 text-[11px]">
+        // 底色与"标注色"同系（高亮用 warning）→ 一眼看出这条菜单条是给高亮用的；
+        // 将来别的动态菜单条换别的色系即可互相区隔
+        <div class="flex shrink-0 items-center gap-2 border-b border-warning/30 bg-warning/15 px-2 py-0.5 text-[11px]">
             <span class="join join-horizontal">
                 <button
                     class="btn btn-xs join-item"
@@ -405,6 +428,10 @@ function TraceRows(props: {
 function ValueTree(props: {
     nodes: ValueNode[];
     path: string;
+    /** 点行 → 定位（普通行 = 该变量的所有出现处；`[i]` 行 = 第 i 次迭代的产出） */
+    onPick: (sel: { kind: "var"; path: string } | { kind: "iter"; arrayPath: string; index: number }) => void;
+    /** 当前选中的行标识（只亮一行） */
+    picked?: string;
     open: Record<string, boolean>;
     onToggle: (k: string, open: boolean) => void;
     depth: number;
@@ -413,13 +440,34 @@ function ValueTree(props: {
         <For each={props.nodes}>
             {(n, i) => {
                 const key = `${props.path}/${i()}`;
+                const isIndex = /^\[\d+\]$/.test(n.name);
                 const full = () => (props.path ? `${props.path}.${n.name}` : n.name);
+                const selKey = () =>
+                    isIndex ? `iter:${props.path}:${n.name}` : `var:${props.path || n.name}`;
                 const kids = () => n.children ?? [];
                 const hasKids = () => kids().length > 0;
                 const isOpen = () => props.open[key] ?? true;
                 return (
                     <>
-                        <tr class="hover:bg-base-300/40">
+                        <tr
+                            class={`cursor-pointer ${
+                                props.picked === selKey()
+                                    ? "bg-primary/25 hover:bg-primary/40"
+                                    : "hover:bg-base-300/40"
+                            }`}
+                            title={
+                                isIndex
+                                    ? `点一下：定位到第 ${n.name.slice(1, -1)} 次迭代的产出`
+                                    : `点一下：高亮 ${props.path || n.name} 的所有出现处`
+                            }
+                            onClick={() =>
+                                props.onPick(
+                                    isIndex
+                                        ? { kind: "iter", arrayPath: props.path, index: Number(n.name.slice(1, -1)) }
+                                        : { kind: "var", path: props.path || n.name },
+                                )
+                            }
+                        >
                             <td class="py-0.5 pr-1 align-top">
                                 <span
                                     class="flex items-center gap-1 overflow-hidden whitespace-nowrap"
@@ -428,7 +476,10 @@ function ValueTree(props: {
                                     <button
                                         class="w-3 shrink-0 text-left opacity-60 disabled:opacity-20"
                                         disabled={!hasKids()}
-                                        onClick={() => hasKids() && props.onToggle(key, isOpen())}
+                                        onClick={(e) => {
+                                            e.stopPropagation(); // 别连带把这一行也选中了
+                                            if (hasKids()) props.onToggle(key, isOpen());
+                                        }}
                                     >
                                         {hasKids() ? (isOpen() ? "▾" : "▸") : "·"}
                                     </button>
@@ -451,6 +502,8 @@ function ValueTree(props: {
                             <ValueTree
                                 nodes={kids()}
                                 path={full()}
+                                onPick={props.onPick}
+                                picked={props.picked}
                                 open={props.open}
                                 onToggle={props.onToggle}
                                 depth={props.depth + 1}
@@ -622,15 +675,8 @@ export function PromptLabV4Page() {
     const setPageTab = setLabTab;
     const [preview, setPreview] = createSignal<RequestPreview | null>(null);
     // 各 View 折叠态（VSCode 式可收起，纯局部偏好）
-    const [views, setViews] = createSignal<Record<string, boolean>>({
-        // 左栏：模板 / 可用变量（契约）/ 变量值（实际注入）/ 模版结构树（分析）；右栏：预览 / 请求
-        tree: true,
-        vars: true,
-        vals: true,
-        trace: true,
-        sysctx: true,
-        reqbody: true,
-    });
+    const views = labViews;
+    const setViews = setLabViews;
     /**
      * 选中联动（正向：模版结构树 / 变量行 → 模版高亮 + 预览高亮）。
      * 只存"身份"（模版结构树节点的 key 链 / 变量路径），区间每次从**最新** trace 与静态分析里重算：
@@ -641,6 +687,8 @@ export function PromptLabV4Page() {
         | { kind: "var"; path: string }
         /** 数组的 item 类型行：高亮"用到这个元素类型"的文本（循环体里对它的字段引用） */
         | { kind: "item"; arrayPath: string; elName: string }
+        /** 变量值里的 `[i]` 行：定位到"第 i 次迭代的产出"（模版侧仍是循环那一段） */
+        | { kind: "iter"; arrayPath: string; index: number }
         | null
     >(null);
 
@@ -715,7 +763,8 @@ export function PromptLabV4Page() {
                 .filter((p) => p.scope === "dynamic" && names.some((as) => p.path.startsWith(`.${as}`)))
                 .map((p) => ({ from: p.loc.offset, to: p.end }));
         }
-        const hit = (p: string) => p === cur.path || p.startsWith(`${cur.path}.`);
+        const path = cur.kind === "iter" ? cur.arrayPath : cur.path; // iter 与 var 同源（循环那段源码）
+        const hit = (p: string) => p === path || p.startsWith(`${path}.`);
         const all = [
             ...a.paths.filter((p) => hit(p.path)).map((p) => ({ from: p.loc.offset, to: p.end })),
             ...a.loops.filter((l) => hit(l.source)).map((l) => ({ from: l.loc.offset, to: l.end })),
@@ -740,6 +789,13 @@ export function PromptLabV4Page() {
             }
         };
         walk(preview()?.trace ?? []);
+        if (cur.kind === "iter") {
+            // 第 i 次迭代：找 `:for` 节点的第 i 个 for-item，只高亮它的产出
+            const hit = (p: string) => p === cur.arrayPath || p.startsWith(`${cur.arrayPath}.`);
+            const forNode = flat.find((n) => n.kind === "for" && hit((n.arg ?? "").split(" ")[0]!));
+            const item = forNode?.children?.[cur.index];
+            return item?.out && item.out.to > item.out.from ? [item.out] : [];
+        }
         if (cur.kind === "item") {
             // 预览侧：这些 `.as.*` 引用的产出（就是"用到这个 item 类型"的文本）
             const names = itemAsNames();
@@ -783,6 +839,7 @@ export function PromptLabV4Page() {
         if (!cur) return null;
         if (cur.kind === "var") return `{{${cur.path}}}`;
         if (cur.kind === "item") return `${cur.elName}（${cur.arrayPath} 的 item）`;
+        if (cur.kind === "iter") return `${cur.arrayPath}[${cur.index}]（第 ${cur.index} 次迭代）`;
         const n = picked()?.node;
         return n ? `${n.name ?? n.kind}${n.arg ? ` ${n.arg}` : ""}` : null;
     });
@@ -824,15 +881,17 @@ export function PromptLabV4Page() {
         if (file !== selPath() && entries().some((e) => e.relpath === file)) setSelPath(file);
         setHlSel({ kind: "node", key, file });
     };
-    /** 变量定义行的点击（整行）：同一行再点一次 = 取消 */
-    const pickVarRow = (sel: { kind: "var"; path: string } | { kind: "item"; arrayPath: string; elName: string }) => {
+    /** 变量定义 / 变量值 行的点击（整行）：同一行再点一次 = 取消 */
+    const pickVarRow = (
+        sel:
+            | { kind: "var"; path: string }
+            | { kind: "item"; arrayPath: string; elName: string }
+            | { kind: "iter"; arrayPath: string; index: number },
+    ) => {
         const cur = hlSel();
         const same =
             cur?.kind === sel.kind &&
-            (sel.kind === "var"
-                ? (cur as { path: string }).path === sel.path
-                : (cur as { elName: string }).elName === sel.elName &&
-                  (cur as { arrayPath: string }).arrayPath === sel.arrayPath);
+            JSON.stringify({ ...cur, kind: "" }) === JSON.stringify({ ...sel, kind: "" });
         setHlSel(same ? null : sel);
     };
 
@@ -1026,7 +1085,10 @@ export function PromptLabV4Page() {
                         任务详情
                     </Tabs.Trigger>
                     <Tabs.Trigger value="lab" class="tab">
-                        agent调参
+                        系统提示词
+                    </Tabs.Trigger>
+                    <Tabs.Trigger value="req" class="tab">
+                        请求预览
                     </Tabs.Trigger>
                 </Tabs.List>
                 <Show when={!!taskUri()} fallback={
@@ -1280,6 +1342,14 @@ export function PromptLabV4Page() {
                                             <ValueTree
                                                 nodes={valueTree()}
                                                 path=""
+                                                onPick={pickVarRow}
+                                                picked={(() => {
+                                                    const cur = hlSel();
+                                                    if (cur?.kind === "var") return `var:${cur.path}`;
+                                                    if (cur?.kind === "iter")
+                                                        return `iter:${cur.arrayPath}:[${cur.index}]`;
+                                                    return undefined;
+                                                })()}
                                                 open={valsOpen()}
                                                 onToggle={(k, open) => setValsOpen((o) => ({ ...o, [k]: !open }))}
                                                 depth={0}
@@ -1423,8 +1493,12 @@ export function PromptLabV4Page() {
                         <span class="text-[11px] font-bold tracking-widest opacity-70">预览</span>
                     </div>
                     <div class="border border-base-300 rounded-lg">
-                        {viewHeader("sysctx", "系统上下文预览", "随草稿自动重算")}
-                        <Show when={views()["sysctx"]}>
+                        {/* 右栏就是"一个编辑器"（与中间模版编辑器同模式）：标题栏固定 + 内容自己滚，
+                            不再做成可折叠 view */}
+                        <div class="flex w-full items-center gap-2 bg-base-300 px-2 py-1 text-[11px] font-bold tracking-wide">
+                            <span>系统提示词预览</span>
+                            <span class="ml-auto font-mono font-normal opacity-70">随草稿自动重算</span>
+                        </div>
                         <Show when={hlLabel() && hlOut().length > 0}>
                             <DynamicBar
                                 label={hlLabel()!}
@@ -1466,40 +1540,30 @@ export function PromptLabV4Page() {
                         )}
                     </Show>
                         </div>
-                        </Show>
                     </div>
-                    <div class="border border-base-300 rounded-lg">
-                        <div class="flex w-full items-center gap-1 bg-base-300 px-2 py-1 text-[11px] font-bold tracking-wide">
-                            <button class="opacity-80 hover:opacity-100" onClick={() => toggleView("reqbody")}>
-                                {views()["reqbody"] ? "▾" : "▸"}
-                            </button>
-                            <button
-                                class="opacity-80 hover:opacity-100"
-                                onClick={() => toggleView("reqbody")}
-                                title={preview()?.requestNote ?? ""}
-                            >
-                                请求预览
-                            </button>
-                            <span class="ml-auto join join-horizontal">
-                                <button
-                                    class={`btn btn-xs join-item ${reqMode() === "tree" ? "btn-active" : "btn-ghost"}`}
-                                    onClick={() => setReqMode("tree")}
-                                >
-                                    树
-                                </button>
-                                <button
-                                    class={`btn btn-xs join-item ${reqMode() === "raw" ? "btn-active" : "btn-ghost"}`}
-                                    onClick={() => setReqMode("raw")}
-                                >
-                                    原文
-                                </button>
-                            </span>
-                        </div>
-                        <Show when={views()["reqbody"]}>
-                            <Show when={preview()?.requestNote}>
-                                <div class="px-2 pt-1 text-[11px] opacity-60">{preview()!.requestNote}</div>
-                            </Show>
-                        <div class="bg-base-200 px-2 py-2">
+                </div>
+            </div>
+            </Tabs.Content>
+            <Tabs.Content value="req" class="flex min-h-0 flex-1 flex-col">
+                <div class="flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs">
+                    <span class="text-[11px] font-bold tracking-widest opacity-70">请求预览</span>
+                    <span class="opacity-60">{preview()?.requestNote ?? "随任务场景生成"}</span>
+                    <span class="ml-auto join join-horizontal">
+                        <button
+                            class={`btn btn-xs join-item ${reqMode() === "tree" ? "btn-active" : "btn-ghost"}`}
+                            onClick={() => setReqMode("tree")}
+                        >
+                            树
+                        </button>
+                        <button
+                            class={`btn btn-xs join-item ${reqMode() === "raw" ? "btn-active" : "btn-ghost"}`}
+                            onClick={() => setReqMode("raw")}
+                        >
+                            原文
+                        </button>
+                    </span>
+                </div>
+                <div class="min-h-0 flex-1 overflow-auto bg-base-200 p-2">
                     <Show when={preview()?.requestBody} fallback={<div class="text-xs opacity-60">随任务场景生成…</div>}>
                         {(b) => (
                             <>
@@ -1508,18 +1572,14 @@ export function PromptLabV4Page() {
                                     <JsonTree data={b()} />
                                 </div>
                                 <Show when={reqMode() === "raw"}>
-                                    <pre class="whitespace-pre-wrap rounded bg-base-200 p-2 font-mono text-[11px] leading-relaxed break-all">
+                                    <pre class="whitespace-pre-wrap break-all rounded bg-base-200 p-2 font-mono text-[11px] leading-relaxed">
                                         {JSON.stringify(b(), null, 1)}
                                     </pre>
                                 </Show>
                             </>
                         )}
                     </Show>
-                        </div>
-                        </Show>
-                    </div>
                 </div>
-            </div>
             </Tabs.Content>
             <Tabs.Content value="task" class="min-h-0 flex-1 overflow-auto p-4">
                 {/* 与详情抽屉同源：keyed 保证每任务独立编辑态/草稿 */}
