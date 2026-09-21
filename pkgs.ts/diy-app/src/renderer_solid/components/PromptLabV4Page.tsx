@@ -1120,16 +1120,13 @@ export function PromptLabV4Page() {
             </Tabs.Content>
             <Tabs.Content value="lab" class="flex min-h-0 flex-1 flex-col">
             <div class="flex flex-1 min-h-0" ref={(el) => (zoneRef = el)}>
-                {/* 左：模板目录树（场景/参数已删：任务即场景，参数走服务端默认） */}
+                {/* 左：视图区（一个 view area 放多个 view；编辑器只是一种特殊 view，通常一个 view area 放一个） */}
                 {/* 左栏：纵向滚动。宽度类滚动交给**表内容自己**（overflow-x-auto）——
                     卡片（含标题栏）始终只占可见宽度，横向滚时标题不会被滚走 */}
                 <div
                     class="shrink-0 border-r overflow-x-auto overflow-y-auto text-xs p-1 space-y-1"
                     style={{ width: `${leftW()}px` }}
                 >
-                    <div class="flex items-center px-2 py-1">
-                        <span class="text-[11px] font-bold tracking-widest opacity-70">模板</span>
-                    </div>
                     <div class="border border-base-300 rounded-lg">
                         {viewHeader(
                             "tree",
@@ -1487,60 +1484,55 @@ export function PromptLabV4Page() {
                     }}
                     onMouseDown={(e) => startDrag(e, setRightW, 240, 640, Caches.diy_lab_right_width, true)}
                 />
-                {/* 右：预览（系统上下文 + 仿真请求体；结构化观察在左栏，这里只回答"发出去的是什么"） */}
-                <div class="shrink-0 overflow-auto p-1 space-y-1" style={{ width: `${rightW()}px` }}>
-                    <div class="flex items-center px-2 py-1">
-                        <span class="text-[11px] font-bold tracking-widest opacity-70">预览</span>
+                {/* 右：视图区 = 一个编辑器 view（与中间完全同构：标题栏 + 编辑器本体，只是只读）。
+                    结构化观察在左栏；请求体在「请求预览」tab */}
+                <div class="flex min-h-0 shrink-0 flex-col overflow-hidden" style={{ width: `${rightW()}px` }}>
+                    <div class="flex items-center gap-1 border-b px-3 py-1.5 text-xs shrink-0">
+                        <span class="font-mono font-semibold">_system.md</span>
+                        <span class="opacity-50">（预览）</span>
+                        <span class="ml-auto font-mono text-[10px] opacity-60">
+                            <Show when={preview()} fallback="渲染中…">
+                                {(p) => `${(new TextEncoder().encode(p().system).length / 1024).toFixed(1)} KB`}
+                            </Show>
+                        </span>
                     </div>
-                    <div class="border border-base-300 rounded-lg">
-                        {/* 右栏就是"一个编辑器"（与中间模版编辑器同模式）：标题栏固定 + 内容自己滚，
-                            不再做成可折叠 view */}
-                        <div class="flex w-full items-center gap-2 bg-base-300 px-2 py-1 text-[11px] font-bold tracking-wide">
-                            <span>系统提示词预览</span>
-                            <span class="ml-auto font-mono font-normal opacity-70">随草稿自动重算</span>
-                        </div>
-                        <Show when={hlLabel() && hlOut().length > 0}>
-                            <DynamicBar
-                                label={hlLabel()!}
-                                count={hlOut().length}
-                                index={Math.min(focusAt().out, Math.max(0, hlOut().length - 1))}
-                                onPrev={() => step("out", -1, hlOut().length)}
-                                onNext={() => step("out", 1, hlOut().length)}
-                                onClear={() => setHlSel(null)}
-                            />
-                        </Show>
-                        <div class="bg-base-200 px-2 py-2">
-                    <Show when={preview()} fallback={<div class="text-xs opacity-60">渲染中…</div>}>
+                    <Show when={hlLabel() && hlOut().length > 0}>
+                        <DynamicBar
+                            label={hlLabel()!}
+                            count={hlOut().length}
+                            index={Math.min(focusAt().out, Math.max(0, hlOut().length - 1))}
+                            onPrev={() => step("out", -1, hlOut().length)}
+                            onNext={() => step("out", 1, hlOut().length)}
+                            onClear={() => setHlSel(null)}
+                        />
+                    </Show>
+                    <Show when={preview()} fallback={<div class="p-3 text-xs opacity-60">渲染中…</div>}>
                         {(p) => (
-                            <>
+                            <div class="flex min-h-0 flex-1 flex-col">
                                 <Show when={p().overBudget}>
-                                    <div class="alert alert-error text-xs py-1 mb-2">
+                                    <div class="alert alert-error m-2 shrink-0 text-xs py-1">
                                         超出预算：{(p().overBudget!.used / 1024).toFixed(1)} KB /{" "}
                                         {(p().overBudget!.budget / 1024).toFixed(0)} KB —— 不会发送，请精简模版
                                     </div>
                                 </Show>
                                 <Show when={p().warnings.length > 0}>
-                                    <div class="alert alert-warning text-xs py-1 mb-2">
+                                    <div class="alert alert-warning m-2 shrink-0 text-xs py-1">
                                         {p().warnings.map((w) => (
                                             <span>⚠️ {w}</span>
                                         ))}
                                     </div>
                                 </Show>
-                                {/* 与左边模版编辑器同一实现：行号 + 不折行 + 同一套高亮（区间来自 trace 的 out） */}
-                                <div class="h-[62vh] min-h-[220px] overflow-hidden rounded border border-base-300">
+                                <div class="min-h-0 flex-1">
                                     <MdEditor
                                         value={p().system}
                                         editable={false}
-                                        plain
                                         onChange={() => {}}
                                         highlight={outHl()}
                                     />
                                 </div>
-                            </>
+                            </div>
                         )}
                     </Show>
-                        </div>
-                    </div>
                 </div>
             </div>
             </Tabs.Content>

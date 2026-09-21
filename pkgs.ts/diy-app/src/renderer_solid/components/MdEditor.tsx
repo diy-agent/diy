@@ -2,10 +2,12 @@ import { onMount, onCleanup, createEffect } from "solid-js";
 import {
     EditorView,
     Decoration,
+    ViewPlugin,
     keymap,
     lineNumbers,
     highlightActiveLine,
     type DecorationSet,
+    type ViewUpdate,
 } from "@codemirror/view";
 import {
     EditorState,
@@ -17,8 +19,62 @@ import {
     type SelectionRange,
 } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { tags as t } from "@lezer/highlight";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
+
+/**
+ * markdown 语法着色（CM 默认只挂 class 不上色，必须给 HighlightStyle —— 之前"没有高亮"就是这个原因）。
+ * 颜色一律走 daisyUI 的 CSS 变量，跟随应用主题（深/浅色都成立）。
+ */
+const labHighlight = HighlightStyle.define([
+    { tag: t.heading1, color: "var(--color-primary)", fontWeight: "bold", fontSize: "1.15em" },
+    { tag: [t.heading2, t.heading3], color: "var(--color-primary)", fontWeight: "bold" },
+    { tag: [t.heading4, t.heading5, t.heading6], color: "var(--color-primary)" },
+    { tag: t.strong, fontWeight: "bold", color: "var(--color-base-content)" },
+    { tag: t.emphasis, fontStyle: "italic" },
+    { tag: t.strikethrough, textDecoration: "line-through", opacity: "0.6" },
+    { tag: t.monospace, color: "var(--color-accent)" },
+    { tag: [t.link, t.url], color: "var(--color-info)", textDecoration: "underline" },
+    { tag: [t.list, t.contentSeparator], color: "var(--color-secondary)" },
+    { tag: t.quote, color: "var(--color-base-content)", opacity: "0.65", fontStyle: "italic" },
+    { tag: [t.processingInstruction, t.meta], color: "var(--color-warning)" },
+]);
+
+/**
+ * 模版 DSL 的"特殊显示"：markdown 语法不认识 `<template …>` / `{{插值}}`，
+ * 但这两样才是模版里最该一眼认出来的东西。用正则给可见区域加装饰（只上色，不改文本）。
+ */
+const dslMark = Decoration.mark({ class: "cm-dsl-interp" });
+const dslCtl = Decoration.mark({ class: "cm-dsl-ctl" });
+const dslPlugin = ViewPlugin.fromClass(
+    class {
+        decorations: DecorationSet;
+        constructor(view: EditorView) {
+            this.decorations = this.build(view);
+        }
+        update(u: ViewUpdate) {
+            if (u.docChanged || u.viewportChanged) this.decorations = this.build(u.view);
+        }
+        build(view: EditorView): DecorationSet {
+            const out: Range<Decoration>[] = [];
+            for (const { from, to } of view.visibleRanges) {
+                const text = view.state.sliceDoc(from, to);
+                // {{…}} 插值
+                for (const m of text.matchAll(/\{\{[^}]*\}\}/g)) {
+                    out.push(dslMark.range(from + m.index, from + m.index + m[0].length));
+                }
+                // <template …> / </template> 控制标记（含属性）
+                for (const m of text.matchAll(/<\/?template\b[^>]*>/g)) {
+                    out.push(dslCtl.range(from + m.index, from + m.index + m[0].length));
+                }
+            }
+            return Decoration.set(out, true);
+        }
+    },
+    { decorations: (v) => v.decorations },
+);
 
 /** daisyUI 贴合主题：等宽 12px，行号弱显，纸面用 base-100 */
 const labTheme = EditorView.theme(
@@ -39,6 +95,9 @@ const labTheme = EditorView.theme(
         ".cm-lineNumbers .cm-gutterElement": { padding: "0 6px 0 4px" },
         ".cm-activeLine": { backgroundColor: "var(--color-base-200)" },
         // 高亮：浅色 = 所有出现处；深色 = 当前焦点（同一色相加浓，暗色主题下更亮）
+        // 模版 DSL：插值 = 强调色，控制标记 = 主色（与 markdown 着色区分开，一眼认出模版语法）
+        ".cm-dsl-interp": { color: "var(--color-warning)", fontWeight: "bold" },
+        ".cm-dsl-ctl": { color: "var(--color-info)", fontWeight: "bold" },
         ".cm-lab-hl": { backgroundColor: "color-mix(in srgb, var(--color-warning) 16%, transparent)" },
         ".cm-lab-hl-focus": { backgroundColor: "color-mix(in srgb, var(--color-warning) 48%, transparent)" },
         ".cm-activeLineGutter": {
@@ -95,8 +154,8 @@ const hlField = StateField.define<DecorationSet>({
  * 模版编辑器 / 只读预览（CodeMirror 6，受控：value 变化且与文档不一致时才替换）。
  *
  * 两块**同一实现同一外观**（行号 + 等宽 + **不自动折行**，长了就横向滚）：
- *   · 模版编辑器：`plain={false}`（markdown 高亮）+ `editable` 随锁定状态
- *   · 系统上下文预览：`plain`（纯文本，提示词不是 markdown）+ `editable={false}`
+ *   · 模版编辑器：`editable` 随锁定状态
+ *   · 系统提示词预览：同一个 view，只把 `editable` 关掉（两块完全同构：同着色、同行号、同不折行）
  */
 export function MdEditor(props: {
     value: string;
@@ -104,8 +163,6 @@ export function MdEditor(props: {
     onChange: (v: string) => void;
     /** 要高亮的行（模版结构树/变量定义行点中时传入；null = 清空） */
     highlight?: HlLines | null;
-    /** 纯文本模式：不做 markdown 高亮、不画当前行（预览用） */
-    plain?: boolean;
 }) {
     let host: HTMLDivElement | undefined;
     let view: EditorView | undefined;
@@ -121,12 +178,14 @@ export function MdEditor(props: {
                 doc: props.value,
                 extensions: [
                     lineNumbers(),
-                    props.plain ? [] : highlightActiveLine(),
+                    highlightActiveLine(),
                     highlightSelectionMatches(),
                     history(),
                     keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
                     // 不自动折行：与预览一致，长了横向滚（折行会让"第几行"对不上行号）
-                    props.plain ? [] : markdown(),
+                    markdown(),
+                    syntaxHighlighting(labHighlight),
+                    dslPlugin,
                     hlField,
                     editableCx.of(EditorView.editable.of(props.editable)),
                     labTheme,
