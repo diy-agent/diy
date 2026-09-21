@@ -1390,7 +1390,6 @@ export function PromptLabV4Page() {
                                         {s().title} v{s().version}
                                     </span>
                                     <div class="ml-auto flex items-center gap-1">
-                                        <EditorThemePicker />
                                         <button
                                             class={`btn btn-xs ${mode() === "diff" ? "btn-active" : "btn-ghost"}`}
                                             title="普通 / diff 模式切换"
@@ -1414,6 +1413,7 @@ export function PromptLabV4Page() {
                                         >
                                             ↩
                                         </button>
+                                        <EditorThemePicker />
                                     </div>
                                 </div>
                                 {/* 锁卡说明条（不可编辑时顶置，不用悬浮找原因） */}
@@ -1497,6 +1497,7 @@ export function PromptLabV4Page() {
                                 {(p) => `${(new TextEncoder().encode(p().system).length / 1024).toFixed(1)} KB`}
                             </Show>
                         </span>
+                        <EditorThemePicker />
                     </div>
                     <Show when={hlLabel() && hlOut().length > 0}>
                         <DynamicBar
