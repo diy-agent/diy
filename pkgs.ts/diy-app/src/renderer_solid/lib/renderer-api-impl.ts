@@ -5,6 +5,7 @@ import type { ToastType } from "../store/notificationStore";
 import { apiDef } from "../../main/services/api-def";
 import { diyService } from "./rpc";
 import { taskStore } from "../store/taskStore";
+import { tabStore } from "../store/tabStore";
 import { notificationStore } from "../store/notificationStore";
 import { createProjectViaUi } from "./create-project";
 import { createTaskViaUi } from "./create-task";
@@ -63,9 +64,36 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     return { status: "ok" };
   });
 
-  binding.on(ui.view.set, async ({ input }) => {
+  // view 内部折叠框的展开/折叠（与 viewarea 开合是两件事）
+  binding.on(ui.view.expand, async ({ input }) => {
     getRendererActions().setView?.(input.key, input.open !== "closed");
     return { status: "ok" };
+  });
+
+  // viewarea（面板）开合：有几何语义、无身份语义
+  binding.on(ui.viewarea.set, async ({ input }) => {
+    getRendererActions().setViewArea?.(input.area, input.open !== "closed");
+    return { status: "ok" };
+  });
+
+  // 任务 tab：打开/关闭/切换/列举（打开 = 我现在要做它，与任务状态无关）
+  binding.on(ui.tab.open, async ({ input }) => {
+    getRendererActions().openTaskRun?.(input.uri);
+    return { status: "ok", data: { uri: input.uri } };
+  });
+
+  binding.on(ui.tab.close, async ({ input }) => {
+    getRendererActions().closeTab?.(input.uri);
+    return { status: "ok", data: { uri: input.uri } };
+  });
+
+  binding.on(ui.tab.active, async ({ input }) => {
+    getRendererActions().activateTab?.(input.uri);
+    return { status: "ok", data: { uri: input.uri } };
+  });
+
+  binding.on(ui.tab.list, async () => {
+    return { status: "ok", data: { opened: tabStore.opened, active: tabStore.active } };
   });
 
   binding.on(ui.page.toast, async ({ input }) => {

@@ -563,17 +563,76 @@ export const apiDef = RpcSchema.router({
             },
           }),
 
-          /** 试验场 view 的展开/折叠（默认只展开「模板」；自动化要看折叠 view 的内容时用） */
+          /**
+           * view 的**内部**展开/折叠（折叠框）。
+           * ⚠️ 与 `viewarea.set`（view 所在面板的开合）是两件事，别混：
+           *    - expand 改的是 view 内部的折叠框（模板树 / 变量定义…）
+           *    - viewarea 改的是承载 view 的面板几何（实验场面板整体开合）
+           */
           view: RpcSchema.group({
             desc: `视图`,
             children: {
-              set: RpcSchema.unary({
-                desc: `展开/折叠试验场 view`,
+              expand: RpcSchema.unary({
+                desc: `展开/折叠 view 内部的折叠框`,
                 input: {
-                  key: z.string().cliArg({ desc: "view 名（tree/trace/vars/vals）" }),
+                  key: z.string().cliArg({ desc: "折叠框名（tree/trace/vars/vals/sysctx/reqbody）" }),
                   open: z.string().cliArg({ desc: "open 或 closed" }),
                 },
                 output: z.object({ status: z.string() }),
+              }),
+            },
+          }),
+
+          /**
+           * viewarea（承载 view 的面板）的开合。
+           * 有几何语义、无身份语义：不区分 devtools 与普通面板，只是位置不同。
+           */
+          viewarea: RpcSchema.group({
+            desc: `视图区域（面板）`,
+            children: {
+              set: RpcSchema.unary({
+                desc: `开合 viewarea`,
+                input: {
+                  area: z.string().cliArg({ desc: "area id（任务执行页：left/center/right/bottom）" }),
+                  open: z.string().cliArg({ desc: "open 或 closed" }),
+                },
+                output: z.object({ status: z.string() }),
+              }),
+            },
+          }),
+
+          /**
+           * 任务执行页的 tab（打开的任务）。等同浏览器/编辑器开 tab：
+           * 打开 = 我现在要做它；关闭 = 暂时不理会（**与任务状态无关**）。
+           */
+          tab: RpcSchema.group({
+            desc: `任务 tab`,
+            children: {
+              open: RpcSchema.unary({
+                desc: `打开（或聚焦）任务执行页`,
+                input: { uri: z.string().cliArg({ desc: "任务 URI" }) },
+                output: StatusDataUri,
+              }),
+              close: RpcSchema.unary({
+                desc: `关闭任务 tab（暂不理会，不改任务状态）`,
+                input: { uri: z.string().cliArg({ desc: "任务 URI" }) },
+                output: StatusDataUri,
+              }),
+              active: RpcSchema.unary({
+                desc: `切换到已打开的 tab`,
+                input: { uri: z.string().cliArg({ desc: "任务 URI" }) },
+                output: StatusDataUri,
+              }),
+              list: RpcSchema.unary({
+                desc: `已打开的任务 tab`,
+                input: {},
+                output: z.object({
+                  status: z.string(),
+                  data: z.object({
+                    opened: z.array(z.string()),
+                    active: z.string(),
+                  }),
+                }),
               }),
             },
           }),

@@ -194,6 +194,22 @@ export function TaskDetailPanel() {
                         </Show>
                     </Tabs.Content>
                 </Tabs.Root>
+
+                {/* 大 FAB：一键进入任务执行页（= 开始/继续这个任务）。
+                    与任务状态无关 —— 打开 tab 表示「我现在要做它」，不改状态
+                    （状态模型待重新设计，见 133）。面板内 absolute 定位，
+                    不随详情滚动走，始终够得着。 */}
+                <button
+                    class="btn btn-primary btn-lg absolute bottom-4 right-4 z-20 rounded-full shadow-xl gap-2"
+                    title="开始/继续这个任务（打开任务执行页）"
+                    onClick={() => {
+                        const uri = taskStore.selectedUri;
+                        if (uri) getRendererActions().openTaskRun?.(uri);
+                    }}
+                >
+                    <span>▶</span>
+                    <span>{taskStore.selectedTask?.state === "active" ? "继续" : "开始"}</span>
+                </button>
             </div>
         </Show>
     );
@@ -246,7 +262,7 @@ function stateDot(s?: string) {
  * GitHub 风格状态下拉：不进入编辑态，直接切换任务状态。
  * 选项带颜色圆点 + 状态英文值 + 中文标签，按组展示。
  */
-function StateSelect(props: { current?: string; saving: boolean; onSave: (v: string) => void }) {
+export function StateSelect(props: { current?: string; saving: boolean; onSave: (v: string) => void }) {
     // 防御：若当前状态不在任何组里，动态补入口保证可显示/可切回
     const options = createMemo(() => {
         const known = new Set(STATE_GROUPS.flatMap((g) => g.children.map((o) => o.value)));

@@ -1,0 +1,180 @@
+// tests/core/view-registry.test.ts — view 依赖倒置 + binding 解析
+import { describe, expect, it } from "vitest";
+import { validateLayout } from "../../src/shared/grid-layout";
+import {
+  PAGES,
+  TASK_RUN_LAYOUT,
+  VIEWS,
+  defaultBinding,
+  groupViewsByArea,
+  findPage,
+  placementOrder,
+  validateRegistry,
+  viewInstanceKey,
+  type PageDef,
+  type ViewDef,
+} from "../../src/shared/view-registry";
+
+describe("注册表自洽", () => {
+  it("内置注册表无错（id 唯一 / placement 指向存在的 page 与 area）", () => {
+    expect(validateRegistry()).toEqual([]);
+  });
+
+  it("每个 page 的 layout 本身合法", () => {
+    for (const p of PAGES) {
+      expect({ page: p.id, errs: validateLayout(p.layout) }).toEqual({ page: p.id, errs: [] });
+    }
+  });
+
+  it("placement 指向不存在的 area → 报错（依赖倒置的代价，靠本函数兜住）", () => {
+    const views: ViewDef[] = [
+      { id: "v.x", title: "X", instanceScope: "global", placement: { task: { area: "nope" } } },
+    ];
+    const errs = validateRegistry(views, PAGES);
+    expect(errs.some((e) => e.msg.includes("nope"))).toBe(true);
+  });
+
+  it("placement 指向不存在的 page → 报错", () => {
+    const views: ViewDef[] = [
+      { id: "v.x", title: "X", instanceScope: "global", placement: { ghost: { area: "main" } } },
+    ];
+    expect(validateRegistry(views, PAGES).some((e) => e.msg.includes("ghost"))).toBe(true);
+  });
+});
+
+describe("View vs ViewInstance —— 状态归属", () => {
+  it("global 实例键 = view id（单实例）", () => {
+    const tree = VIEWS.find((v) => v.id === "task.tree")!;
+    expect(viewInstanceKey(tree, null)).toBe("task.tree");
+    expect(viewInstanceKey(tree, "projects/4/tasks/133")).toBe("task.tree"); // 上下文被忽略
+  });
+
+  it("context 实例键带上下文（多任务 tab 同屏时各持一份状态）", () => {
+    const chat = VIEWS.find((v) => v.id === "chat.local")!;
+    expect(viewInstanceKey(chat, "projects/4/tasks/133")).toBe("chat.local@projects/4/tasks/133");
+    expect(viewInstanceKey(chat, "projects/4/tasks/137")).toBe("chat.local@projects/4/tasks/137");
+  });
+});
+
+describe("依赖倒置 —— 加 view 不必改 page", () => {
+  it("新 view 只要声明 placement 就出现在该 page 的 binding 里", () => {
+    const taskRun = findPage("task-run")!;
+    const before = defaultBinding(taskRun, "projects/4/tasks/1");
+
+    const extra: ViewDef = {
+      id: "agent.params",
+      title: "参数状态",
+      instanceScope: "context",
+      placement: { "task-run": { area: "right", order: 10 } },
+    };
+    const after = defaultBinding(taskRun, "projects/4/tasks/1", [...VIEWS, extra]);
+
+    expect(before["agent.params@projects/4/tasks/1"]).toBeUndefined();
+    expect(after["agent.params@projects/4/tasks/1"]).toBe("right");
+    // page 定义本身一个字都没改
+    expect(findPage("task-run")!.layout).toBe(TASK_RUN_LAYOUT);
+  });
+
+  it("page 白名单：view 未声明该 page → 不进 binding（数据隔离，不用 when 表达式）", () => {
+    const llm = findPage("llm")!;
+    const b = defaultBinding(llm, null);
+    expect(Object.keys(b)).toEqual(["llm.proxy"]); // chat.local 虽有 id 但没声明 llm
+    expect(b["chat.local"]).toBeUndefined();
+  });
+});
+
+describe("defaultBinding", () => {
+  it("任务执行页：4 个 area 各就位（含初始收起的 right/bottom）", () => {
+    const page = findPage("task-run")!;
+    const b = defaultBinding(page, "projects/4/tasks/133");
+    expect(b).toEqual({
+      "task.detail@projects/4/tasks/133": "left",
+      "chat.local@projects/4/tasks/133": "center",
+      "lab.workbench@projects/4/tasks/133": "bottom",
+    });
+  });
+
+  it("同 view 类型的两个 page 实例 → 两份独立 binding（互不干扰）", () => {
+    const page = findPage("task-run")!;
+    const a = defaultBinding(page, "projects/4/tasks/133");
+    const c = defaultBinding(page, "projects/4/tasks/137");
+    expect(Object.keys(a)).not.toEqual(Object.keys(c));
+    expect(a["chat.local@projects/4/tasks/133"]).toBe("center");
+    expect(c["chat.local@projects/4/tasks/137"]).toBe("center");
+  });
+
+  it("settings 的三个 view 同 area，order 决定顺序", () => {
+    const page: PageDef = findPage("settings")!;
+    const b = defaultBinding(page, null);
+    expect(b["settings.appinfo"]).toBe("main");
+    const ordered = Object.keys(b).sort(
+      (x, y) =>
+        placementOrder(VIEWS.find((v) => v.id === x)!, page.id) -
+        placementOrder(VIEWS.find((v) => v.id === y)!, page.id),
+    );
+    expect(ordered).toEqual(["settings.appinfo", "settings.logs", "settings.theme"]);
+  });
+});
+
+describe("试验场降级为底部 viewarea（不再依赖顶级 nav）", () => {
+  it("lab.workbench 只挂 task-run（依赖任务，本就不是全局页面）", () => {
+    const lab = VIEWS.find((v) => v.id === "lab.workbench")!;
+    expect(Object.keys(lab.placement)).toEqual(["task-run"]);
+    expect(lab.placement["task-run"].area).toBe("bottom");
+  });
+
+  it("任务执行页没有名为 lab 的顶级 page", () => {
+    expect(findPage("lab")).toBeUndefined();
+  });
+});
+
+describe("groupViewsByArea —— layout + binding → 实际要画什么", () => {
+  it("任务执行页：按 area 的几何顺序输出（left → center → bottom）", () => {
+    const page = findPage("task-run")!;
+    const ctx = "projects/4/tasks/133";
+    const groups = groupViewsByArea(page, ctx, defaultBinding(page, ctx));
+    expect(groups.map((g) => g.areaId)).toEqual(["left", "center", "bottom"]);
+    expect(groups[0].views.map((v) => v.id)).toEqual(["task.detail"]);
+    expect(groups[1].views.map((v) => v.id)).toEqual(["chat.local"]);
+  });
+
+  it("binding[key] = null → 隐藏（被删 area 的 view 不销毁实例）", () => {
+    const page = findPage("task-run")!;
+    const ctx = "projects/4/tasks/1";
+    const b = defaultBinding(page, ctx);
+    b[`lab.workbench@${ctx}`] = null; // 用户开了试验场又关掉
+    const groups = groupViewsByArea(page, ctx, b);
+    expect(groups.map((g) => g.areaId)).toEqual(["left", "center"]);
+  });
+
+  it("binding 改 area → 跟随（拖到右侧；右侧已是合法 area）", () => {
+    const page = findPage("task-run")!;
+    const ctx = "projects/4/tasks/1";
+    const b = defaultBinding(page, ctx);
+    b[`lab.workbench@${ctx}`] = "right";
+    const groups = groupViewsByArea(page, ctx, b);
+    expect(groups.find((g) => g.areaId === "right")?.views.map((v) => v.id)).toEqual(["lab.workbench"]);
+    expect(groups.some((g) => g.areaId === "bottom")).toBe(false);
+  });
+
+  it("同 area 多个 view 按 order 排序（设置页：状态 → 日志 → 外观）", () => {
+    const page = findPage("settings")!;
+    const groups = groupViewsByArea(page, null, defaultBinding(page, null));
+    expect(groups).toHaveLength(1);
+    expect(groups[0].views.map((v) => v.id)).toEqual([
+      "settings.appinfo",
+      "settings.logs",
+      "settings.theme",
+    ]);
+  });
+
+  it("指向不存在 area 的 binding 被忽略（不渲染出诡异画面）", () => {
+    const page = findPage("task-run")!;
+    const ctx = "projects/4/tasks/1";
+    const b = defaultBinding(page, ctx);
+    b[`chat.local@${ctx}`] = "ghost";
+    const groups = groupViewsByArea(page, ctx, b);
+    expect(groups.some((g) => g.areaId === "ghost")).toBe(false);
+    expect(groups.some((g) => g.areaId === "center")).toBe(false); // 该 view 本可落 center，被非法值挡掉
+  });
+});

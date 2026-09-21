@@ -13,8 +13,6 @@ import { localChatStore } from "../store/localChatStore";
 import { getRendererActions } from "../lib/renderer-actions";
 import { Caches, type CacheField } from "../lib/ui-state";
 import { projectFromUri } from "../../shared/task-uri";
-import { LocalChatPage } from "./LocalChatPage";
-import { TaskInfoView } from "./TaskDetailPanel";
 import { JsonTree } from "./JsonTree";
 import { MdEditor } from "./MdEditor";
 import { EditorThemePicker } from "./EditorThemePicker";
@@ -48,12 +46,15 @@ function patchDrafts(pid: string, mut: (d: Record<string, string>) => Record<str
     });
 }
 
-/** 试验场内层 tab（chat=任务会话 / task=任务详情 / lab=系统提示词 / req=请求预览）：模块级 + 落 Caches */
-export const [labTab, setLabTab] = createSignal(Caches.diy_lab_tab.get());
+/** 试验场内层 tab（lab=系统提示词 / req=请求预览）：模块级 + 落 Caches。
+ *  注：会话与任务详情已上移为 task-run page 的 area（不再是本视图内部的 tab） */
+export const [labTab, setLabTab] = createSignal<string>(
+    ["lab", "req"].includes(Caches.diy_lab_tab.get()) ? Caches.diy_lab_tab.get() : "lab",
+);
 createEffect(() => Caches.diy_lab_tab.set(labTab()));
 
 /**
- * 各 view 的展开态（模块级：`ui view set` 可能在页面还没挂载时就设置）。
+ * 各 view 的展开态（模块级：`ui view expand` 可能在页面还没挂载时就设置）。
  * 默认只展开「模板」，其余按需点开 —— 否则左栏一屏塞满、真正要看的表全在折叠下面。
  */
 export const [labViews, setLabViews] = createSignal<Record<string, boolean>>({
@@ -1082,12 +1083,6 @@ export function PromptLabV4Page() {
             <Tabs.Root value={pageTab()} onChange={setPageTab} class="flex min-h-0 flex-1 flex-col">
             <div class="flex items-center gap-2 border-b px-3 py-1.5 text-xs shrink-0">
                 <Tabs.List class="tabs tabs-box tabs-sm">
-                    <Tabs.Trigger value="chat" class="tab">
-                        任务会话
-                    </Tabs.Trigger>
-                    <Tabs.Trigger value="task" class="tab">
-                        任务详情
-                    </Tabs.Trigger>
                     <Tabs.Trigger value="lab" class="tab">
                         系统提示词
                     </Tabs.Trigger>
@@ -1119,9 +1114,6 @@ export function PromptLabV4Page() {
                 </span>
             </div>
 
-            <Tabs.Content value="chat" class="flex min-h-0 flex-1 flex-col">
-                <LocalChatPage />
-            </Tabs.Content>
             <Tabs.Content value="lab" class="flex min-h-0 flex-1 flex-col">
             <div class="flex flex-1 min-h-0" ref={(el) => (zoneRef = el)}>
                 {/* 左：视图区（一个 view area 放多个 view；编辑器只是一种特殊 view，通常一个 view area 放一个） */}
@@ -1576,16 +1568,6 @@ export function PromptLabV4Page() {
                         )}
                     </Show>
                 </div>
-            </Tabs.Content>
-            <Tabs.Content value="task" class="min-h-0 flex-1 overflow-auto p-4">
-                {/* 与详情抽屉同源：keyed 保证每任务独立编辑态/草稿 */}
-                <Show when={taskStore.selectedTask} keyed fallback={<div class="text-sm opacity-60">加载中…</div>}>
-                    {(t) => (
-                        <div class="max-w-3xl">
-                            <TaskInfoView task={t} />
-                        </div>
-                    )}
-                </Show>
             </Tabs.Content>
             </Tabs.Root>
             </Show>

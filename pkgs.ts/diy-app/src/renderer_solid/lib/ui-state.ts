@@ -131,6 +131,34 @@ export const Caches = {
     serialize: (v) => String(v),
     defaultValue: 560,
   }),
+  /** 打开的任务 tab（URI 数组，顺序即显示顺序）。
+   *  视图 cache：丢了只是「忘了开了哪些 tab」，无数据损失。
+   *  将来应归「任务特殊状态」（见 133），暂放这里。 */
+  diy_tabs_opened: field<string[]>("diy_tabs_opened", {
+    parse: (raw) => {
+      try {
+        const a = JSON.parse(raw);
+        return Array.isArray(a) ? (a.filter((x) => typeof x === "string") as string[]) : null;
+      } catch {
+        return null;
+      }
+    },
+    serialize: (v) => JSON.stringify(v),
+    defaultValue: [] as string[],
+  }),
+  /** 试验场（底部 devtools viewarea）是否展开。
+   *  这是「布局切换按钮」的状态，类似 VSCode 的面板开合 —— 与 view 内容无关。 */
+  diy_lab_open: field<boolean>("diy_lab_open", {
+    parse: (raw) => (raw === "1" ? true : raw === "0" ? false : null),
+    serialize: (v) => (v ? "1" : "0"),
+    defaultValue: false,
+  }),
+  /** 当前激活的 tab URI（不在 opened 里 = 回落到任务树） */
+  diy_tabs_active: field<string>("diy_tabs_active", {
+    parse: (raw) => (raw && raw.length > 0 ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "",
+  }),
   /** 本地聊天密度（枚举语义值 outline/read/audit/forensic，兼容旧数字 1-4） */
   diy_chat_density: field<Density>("diy_chat_density", {
     parse: (raw) => {
@@ -186,7 +214,7 @@ export const Caches = {
   diy_lab_cols_vals: jsonCols("diy_lab_cols_vals", [110, 210]),
   diy_lab_cols_trace: jsonCols("diy_lab_cols_trace", [96, 96, 84, 48]),
   /** 试验场内层 tab（chat/task/lab）。存这里的原因与草稿相同：页面卸载后要记住选择；
-   *  另一处用途是 CLI 导航 `ui page navigate lab` 要能直接落到「agent调参」视图。 */
+   *  另一处用途是 CLI 打开任务 tab 后要能直接落到「系统提示词」视图。 */
   diy_lab_tab: field<string>("diy_lab_tab", {
     parse: (raw) => (raw === "chat" || raw === "task" || raw === "lab" ? raw : null),
     serialize: (v) => v,
