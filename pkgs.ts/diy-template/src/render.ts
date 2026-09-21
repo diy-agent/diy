@@ -1,0 +1,409 @@
+// render.ts — 渲染（+ 结构 trace）
+//
+// 三条硬规则：
+//   1. **不做任何 trim / 不删行 / 不转义**：模版怎么写就怎么进提示词（逐字节可预测）
+//   2. 控制节点（<template>）不产出任何字符
+//   3. include 创建**新的**动态作用域（只含参数），不继承调用者的动态链；globals 全程可见
+
+import { analyzeNodes, collectDynamicRefs } from './analyze';
+import type { IncludeNode, Node } from './ast';
+import { TemplateError } from './errors';
+import { parse } from './parser';
+import {
+    falsyReason,
+    isTruthy,
+    resolveForOutput,
+    resolvePath,
+    toEvalContext,
+    type DynamicFrame,
+    type EvalContext,
+    type RenderContext,
+} from './scope';
+
+/** include 目标（由宿主注册表提供：项目覆盖 > 内置 + 白名单） */
+export interface IncludeTarget {
+    source: string;
+    /** 锁定模版（不可被可覆盖模版 include） */
+    locked?: boolean;
+}
+
+export interface IncludeResolver {
+    /** 返回 null = 不存在 / 不在白名单 */
+    resolve(relpath: string): IncludeTarget | null;
+}
+
+export interface RenderOptions {
+    /** 入口模版 relpath（错误定位用） */
+    file?: string;
+    /** 入口模版自身是否锁定（锁定模版可以 include 锁定模版） */
+    locked?: boolean;
+    resolver?: IncludeResolver;
+    /** include 嵌套上限（入口算 1 层），默认 8 */
+    maxDepth?: number;
+}
+
+export type TraceKind = 'text' | 'interp' | 'element' | 'if' | 'for' | 'for-item' | 'include';
+
+/**
+ * 源码区间：`src` = 该节点在**所属模版 body** 里的字符区间（哪个模版由 include 祖先决定），
+ * `out` = 该节点在**渲染结果**里的字符区间。两者都可能有空区间（产出为空 / 合成节点）。
+ */
+export interface Span {
+    from: number;
+    to: number;
+}
+
+export interface TraceNode {
+    kind: TraceKind;
+    /** 节点显示名：控制标记（:if / :for / include）、标签名、插值路径 */
+    name?: string;
+    /** **参数**（模版里写的东西，原样）：表达式 path、include 的 relpath、字面文本片段 */
+    arg?: string;
+    /** 参数求值后的**值**（单行紧凑文本，已截断）：true / 数组 · 2 项 / ../../../diy.sh */
+    value?: string;
+    /** 本节点产出字节数（预算口径，UTF-8） */
+    bytes: number;
+    /** 所属模版 body 里的源码区间（高亮模版用） */
+    src?: Span;
+    /** 渲染结果里的字符区间（高亮预览用；空区间 = 这次没产出） */
+    out?: Span;
+    /** :if / :if-not 的实际结果 */
+    result?: boolean;
+    /** 结果原因（假值原因 / 迭代次数 / 被省略等） */
+    reason?: string;
+    children?: TraceNode[];
+}
+
+export interface RenderResult {
+    text: string;
+    trace: TraceNode[];
+}
+
+const DEFAULT_MAX_DEPTH = 8;
+
+/** 节点的源码区间：`:if`/`:for` 的 loc 指着控制属性，整段起点在 `from` 上 */
+function srcSpan(n: Node): Span {
+    const from = 'from' in n ? n.from : n.loc.offset;
+    return { from, to: n.end };
+}
+
+/** 值 → 单行紧凑文本（模版结构树「值」列；换行折成 ⏎，长文本截断） */
+export function previewValue(v: unknown, max = 60): string {
+    if (v === undefined) return '未定义';
+    if (v === null) return 'null';
+    if (typeof v === 'string') return clip(previewText(v), max);
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    if (Array.isArray(v)) return v.length === 0 ? '空数组' : `数组 · ${v.length} 项`;
+    if (typeof v === 'object') {
+        const keys = Object.keys(v as object);
+        return keys.length === 0 ? '空对象' : `对象 · ${keys.slice(0, 4).join(', ')}${keys.length > 4 ? '…' : ''}`;
+    }
+    return String(v);
+}
+
+/** 文本 → 单行（换行/多空白折成 ⏎ 或空格，便于在表格里一行显示） */
+function previewText(s: string): string {
+    return s.replace(/\r?\n/g, '⏎').replace(/\t/g, ' ');
+}
+
+function clip(s: string, max: number): string {
+    const t = s.trim();
+    return t.length <= max ? t : `${t.slice(0, max)}…`;
+}
+
+/** UTF-8 字节数（Node 与浏览器通用） */
+export function byteLength(text: string): number {
+    if (typeof Buffer !== 'undefined') return Buffer.byteLength(text, 'utf-8');
+    return new TextEncoder().encode(text).length;
+}
+
+/** 渲染为字符串（不需要诊断信息时用这个） */
+export function render(source: string, ctx: RenderContext = {}, opts: RenderOptions = {}): string {
+    return new Renderer(opts).renderEntry(source, ctx).text;
+}
+
+/** 渲染 + 结构 trace（试验场「模版结构树」用） */
+export function renderWithTrace(source: string, ctx: RenderContext = {}, opts: RenderOptions = {}): RenderResult {
+    return new Renderer(opts).renderEntry(source, ctx);
+}
+
+class Renderer {
+    /** 当前模版链（entry 在最前），用于循环检测与错误定位 */
+    private readonly includeStack: string[] = [];
+    private readonly lockedStack: boolean[] = [];
+    private readonly cache = new Map<string, { source: string; nodes: Node[]; refs: Set<string> }>();
+    /** 输出字符游标：按渲染顺序单调前进（与 trace 顺序一致，深度优先） */
+    private cursor = 0;
+    private readonly maxDepth: number;
+
+    constructor(private readonly opts: RenderOptions) {
+        this.maxDepth = opts.maxDepth ?? DEFAULT_MAX_DEPTH;
+        this.includeStack.push(opts.file ?? '<entry>');
+        this.lockedStack.push(Boolean(opts.locked));
+    }
+
+    renderEntry(source: string, ctx: RenderContext): RenderResult {
+        const nodes = parse(source, { file: this.opts.file });
+        const trace: TraceNode[] = [];
+        const text = this.renderNodes(nodes, toEvalContext(ctx), trace);
+        return { text, trace };
+    }
+
+    // ── 渲染 ──────────────────────────────────────────────────────────
+
+    private currentFile(): string | undefined {
+        return this.includeStack[this.includeStack.length - 1];
+    }
+
+    private renderNodes(nodes: Node[], ctx: EvalContext, sink: TraceNode[] | null): string {
+        let out = '';
+        for (const n of nodes) {
+            out += this.renderNode(n, ctx, sink);
+        }
+        return out;
+    }
+
+    private renderNode(n: Node, ctx: EvalContext, sink: TraceNode[] | null): string {
+        const outFrom = this.cursor;
+        switch (n.type) {
+            case 'text':
+                this.cursor = outFrom + n.value.length;
+                if (sink && n.value !== '') {
+                    // 文本节点的「参数」就是它自己（字面量）——能看清"这里到底产出了什么"
+                    sink.push({
+                        kind: 'text',
+                        name: '文本',
+                        arg: clip(previewText(n.value), 40),
+                        bytes: byteLength(n.value),
+                        src: srcSpan(n),
+                        out: { from: outFrom, to: this.cursor },
+                    });
+                }
+                return n.value;
+
+            case 'interp': {
+                const text = resolveForOutput(n.path, ctx, n.loc, this.currentFile());
+                this.cursor = outFrom + text.length;
+                sink?.push({
+                    kind: 'interp',
+                    name: '插值',
+                    arg: n.path,
+                    value: previewValue(text),
+                    bytes: byteLength(text),
+                    src: srcSpan(n),
+                    out: { from: outFrom, to: this.cursor },
+                });
+                return text;
+            }
+
+            case 'tag': {
+                const tag = n.head.match(/^<([^\s>]+)/)?.[1];
+                const node: TraceNode = {
+                    kind: 'element',
+                    name: '标签',
+                    arg: tag ? `<${tag}>` : undefined,
+                    bytes: 0,
+                    src: srcSpan(n),
+                    children: [],
+                };
+                const childSink: TraceNode[] = [];
+                const text = `${n.head}${this.renderNodes(n.children, ctx, childSink)}${n.headClose}`;
+                this.cursor = outFrom + text.length;
+                node.bytes = byteLength(text);
+                node.out = { from: outFrom, to: this.cursor };
+                node.children = childSink;
+                sink?.push(node);
+                return text;
+            }
+
+            case 'if': {
+                const value = resolvePath(n.path, ctx, n.loc, this.currentFile());
+                const result = n.negate ? !isTruthy(value) : isTruthy(value);
+                const node: TraceNode = {
+                    kind: 'if',
+                    name: n.negate ? ':if-not' : ':if',
+                    arg: n.path,
+                    value: previewValue(value),
+                    bytes: 0,
+                    src: srcSpan(n),
+                    result,
+                    reason: result
+                        ? n.negate
+                            ? `取反后为真（${falsyReason(value)}）`
+                            : '值为真'
+                        : n.negate
+                          ? '值为真，取反后为假'
+                          : falsyReason(value),
+                    children: [],
+                };
+                const childSink: TraceNode[] = [];
+                const text = result ? this.renderNodes(n.children, ctx, childSink) : '';
+                this.cursor = outFrom + text.length;
+                node.bytes = byteLength(text);
+                node.out = { from: outFrom, to: this.cursor };
+                node.children = childSink;
+                sink?.push(node);
+                return text;
+            }
+
+            case 'for': {
+                const value = resolvePath(n.source, ctx, n.loc, this.currentFile());
+                if (!Array.isArray(value)) {
+                    throw new TemplateError('not-iterable', `:for 的数据源不是数组：${n.source}`, n.loc, {
+                        file: this.currentFile(),
+                        detail: `实际类型：${value === null ? 'null' : typeof value}`,
+                    });
+                }
+                const node: TraceNode = {
+                    kind: 'for',
+                    name: ':for',
+                    arg: `${n.source} :as="${n.as}"`,
+                    value: `数组 · ${value.length} 项`,
+                    bytes: 0,
+                    src: srcSpan(n),
+                    children: [],
+                };
+                let out = '';
+                for (let i = 0; i < value.length; i++) {
+                    // 迭代信封：循环内一切都从这个名字下面取（.f.value/.f.index/.f.isFirst/.f.isLast）
+                    const frame: DynamicFrame = {
+                        vars: {
+                            [n.as]: {
+                                value: value[i],
+                                index: i,
+                                isFirst: i === 0,
+                                isLast: i === value.length - 1,
+                            },
+                        },
+                    };
+                    const iterCtx: EvalContext = { globals: ctx.globals, frames: [...ctx.frames, frame] };
+                    const iterSink: TraceNode[] = [];
+                    const iterFrom = this.cursor;
+                    const text = this.renderNodes(n.children, iterCtx, iterSink);
+                    node.children!.push({
+                        kind: 'for-item',
+                        name: '迭代项',
+                        arg: `${n.as}[${i}]`,
+                        value: previewValue(value[i]),
+                        bytes: byteLength(text),
+                        // 合成节点：源码区间取循环体（与 :for 同段），产出区间是**这一次**迭代
+                        src: srcSpan(n),
+                        out: { from: iterFrom, to: iterFrom + text.length },
+                        children: iterSink,
+                    });
+                    out += text;
+                }
+                this.cursor = outFrom + out.length;
+                node.bytes = byteLength(out);
+                node.out = { from: outFrom, to: this.cursor };
+                sink?.push(node);
+                return out;
+            }
+
+            case 'include':
+                return this.renderInclude(n, ctx, sink);
+        }
+    }
+
+    // ── include ───────────────────────────────────────────────────────
+
+    private renderInclude(n: IncludeNode, ctx: EvalContext, sink: TraceNode[] | null): string {
+        const relpath = n.relpath;
+        // 双保险：解析期已校验，这里再校验一次（引擎不信任外部构造的 AST）
+        if (!relpath.startsWith('./') || relpath.includes('..') || relpath.startsWith('/')) {
+            throw new TemplateError('include', `include 路径非法：${relpath}`, n.loc, { file: this.currentFile() });
+        }
+        if (this.includeStack.includes(relpath)) {
+            throw new TemplateError('include-cycle', `include 循环引用：${relpath}`, n.loc, {
+                file: this.currentFile(),
+                detail: `链：${[...this.includeStack, relpath].join(' → ')}`,
+            });
+        }
+        if (this.includeStack.length >= this.maxDepth) {
+            throw new TemplateError('depth', `include 嵌套超过 ${this.maxDepth} 层`, n.loc, {
+                file: this.currentFile(),
+                detail: `链：${this.includeStack.join(' → ')}`,
+            });
+        }
+        const target = this.opts.resolver?.resolve(relpath) ?? null;
+        if (!target) {
+            throw new TemplateError('include', `模版不存在或不在白名单：${relpath}`, n.loc, {
+                file: this.currentFile(),
+                detail: 'include 必须由宿主注册表解析（项目覆盖 > 内置），且在白名单内',
+            });
+        }
+        const callerLocked = this.lockedStack[this.lockedStack.length - 1] ?? false;
+        if (target.locked && !callerLocked) {
+            throw new TemplateError('locked', `不可 include 锁定模版：${relpath}`, n.loc, {
+                file: this.currentFile(),
+                detail: '锁定模版（如 _guard.md）只能由同样锁定的入口模版 include',
+            });
+        }
+
+        // 参数在**调用方**作用域求值：整值单个插值 → 原类型；文本 → 渲染成字符串
+        const args: Record<string, unknown> = {};
+        for (const a of n.args) {
+            args[a.name] =
+                a.value.kind === 'expr'
+                    ? resolvePath(a.value.path, ctx, a.loc, this.currentFile())
+                    : this.renderNodes(a.value.nodes, ctx, null);
+        }
+
+        const { nodes, refs } = this.parseInclude(relpath, target.source);
+        this.checkArgs(n, refs, relpath);
+
+        this.includeStack.push(relpath);
+        this.lockedStack.push(Boolean(target.locked));
+        const trace: TraceNode[] = [];
+        const outFrom = this.cursor;
+        const text = this.renderNodes(nodes, { globals: ctx.globals, frames: [{ vars: args }] }, trace);
+        this.cursor = outFrom + text.length;
+        this.includeStack.pop();
+        this.lockedStack.pop();
+
+        sink?.push({
+            kind: 'include',
+            name: 'include',
+            arg: relpath,
+            bytes: byteLength(text),
+            src: srcSpan(n),
+            out: { from: outFrom, to: this.cursor },
+            children: trace,
+        });
+        return text;
+    }
+
+    /** include 参数双向校验：传了没用的 / 用了没传的 —— 都在这里报错，不静默 */
+    private checkArgs(n: IncludeNode, refs: Set<string>, relpath: string): void {
+        const passed = new Set(n.args.map((a) => a.name));
+        // 先报「少传」：它直接指向被调模版里那个没拿到的名字，最有指向性
+        for (const ref of refs) {
+            if (!passed.has(ref)) {
+                throw new TemplateError('missing-arg', `include ${relpath} 缺少参数 ${ref}`, n.loc, {
+                    file: this.currentFile(),
+                    detail: `该模版引用了 .${ref}；请写成 ${ref}={{.${ref}}}（或传入合适的值）`,
+                });
+            }
+        }
+        for (const a of n.args) {
+            if (!refs.has(a.name)) {
+                throw new TemplateError('unknown-arg', `include ${relpath} 没有引用参数 ${a.name}`, a.loc, {
+                    file: this.currentFile(),
+                    detail: `该模版引用的动态名：${refs.size > 0 ? [...refs].join('、') : '（无）'}`,
+                });
+            }
+        }
+    }
+
+    private parseInclude(relpath: string, source: string): { nodes: Node[]; refs: Set<string> } {
+        const hit = this.cache.get(relpath);
+        if (hit && hit.source === source) return hit;
+        const nodes = parse(source, { file: relpath });
+        const refs = collectDynamicRefs(nodes);
+        // 顺带做一次静态分析，保证 include 里的路径问题在解析期就暴露（analyzeNodes 会抛语法错）
+        analyzeNodes(nodes);
+        const entry = { source, nodes, refs };
+        this.cache.set(relpath, entry);
+        return entry;
+    }
+}

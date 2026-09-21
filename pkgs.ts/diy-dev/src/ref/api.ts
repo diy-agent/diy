@@ -107,4 +107,3 @@ export const refApi = RpcSchema.router({
         },
     }),
 });
-export type RefApi = typeof refApi;

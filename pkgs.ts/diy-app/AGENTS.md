@@ -1,11 +1,38 @@
 # diy-app 开发规范
 
+> 本文件是 `diy-app` 包的开发契约；全仓契约见根 `AGENTS.md`。意图测试为需求真源：`tests/cli.intent.*`（Electron 隔离）+ `tests/core/*`（单测）。
+
+## 目录
+
+- [架构原则](#架构原则) — 构建 / 入口 / Renderer / 数据落位 / 样式 / 提示词模版
+- [UI 验证](#ui-验证两层互补) — handler 层 vs CDP 真实事件
+- [交互自动化](#交互自动化操作-appagent-自测演示用实测经验) — 提速、命中自检、隔离清理、Solid 陷阱
+- [取 CDP 地址](#取-cdp-地址) / [CDP 调试陷阱](#cdp-调试陷阱) / [窗口副屏](#窗口定位副屏)
+- [硬性约束：stdio pipe](#硬性约束子进程-stdio-的-pipe-规则) / [可观测性](#常驻进程可观测性) / [ACP 实测](#acp-协议实测注意事项)
+- [Serve 模式](#serve-模式web--远程开发) / [依赖管理](#依赖管理) / [硬件与 Electron 兼容性](#硬件与-electron-兼容性约束)
+
 ## 架构原则
 
 ### 构建
 
 - **无 electron-vite**，直接使用 Vite 8 三独立配置（main / preload / renderer）
 - `scripts/electron-dev.mts` 自有开发编排，不依赖 electron-vite 封装
+- **类型检查绝不 emit**（`tsconfig.json` 的 `noEmit: true`，唯一入口 `./sha.sh check`）：
+  tsconfig 的 `include` 覆盖 src/scripts/tests，一旦 emit，`.js/.jsx/.d.ts` 会**落在源码旁边**；
+  而 vite/vitest 的 `resolve.extensions` 里 `.js/.jsx` 排在 `.ts/.tsx` 之前 → dev/构建/单测
+  全部静默加载旧产物（症状：改了源码没反应、单测测的是产物、`git add -A` 把产物收进仓库）。
+  实测过的触发方式：裸 `npx tsc`、IDE 的 TS emit；护栏 = 各包 `noEmit: true` +
+  根 `.gitignore` 的 `pkgs.ts/**/*.{js,jsx,mjs,cjs,d.ts}`（新增包自动覆盖，无需逐包配）。
+  判断当前在跑什么：`curl -s localhost:5173/App.tsx | grep -o '"/components/[^"]*"'`
+  （dev 下 App 是 `.tsx`、子组件如果出现 `.jsx` 就是产物在跑）。
+- **改 `src/**` 会触发 dev watch 重启 Electron**（main/preload 都是 watch 构建）：
+  正在跑的本机 agent 轮次会被打断（表现为 ops 里 tool 被标 `interrupted`）。
+  想改文件同时不打断自己的轮次，就先把轮次跑完；别在轮次中拿源码当探针文件。
+- **dev 会话运行中，不要再并发跑 `tsc -b` / `vite build` / 全量 vitest**：会与 watcher 抢同一
+  `outDir` 并制造海量 FS 事件（尤其批量删产物），实测能让 watcher 卡死。
+  判断 watcher 死活：改一个 `src/main/**` 文件，看 `out/main/index.mjs` 的 mtime 是否变；
+  不变就只能重启 `./sha.sh dev`。注：删文件/删目录本身不会让 watcher 停（已实测：补回同名文件即恢复），
+  删 `out/` 也不影响（输出目录不在监听范围）。
 
 ### 开发参数
 
@@ -22,16 +49,21 @@
 
 | 入口 | 场景 | 跑什么 | 注入 |
 |------|------|--------|------|
-| `./diy.sh`（仓库根） | worktree 开发/测试 | `tsx src/cli/index.ts` | `DIY_HOME=./build/home`、`DIY_APP_ROOT=pkgs.ts/diy-app` |
-| `bin/diy` | 发布后（npm 全局/PATH） | `node out/cli/index.js` | `DIY_HOME=~/.diy`、`DIY_APP_ROOT=<自定位包根>` |
+| `./diy.sh`（仓库根） | worktree 开发/测试 | `tsx src/cli/index.ts` | `DIY_HOME=./build/home`、`DIY_APP_ROOT=pkgs.ts/diy-app`、`DIY_CLI=<仓库根>/diy.sh` |
+| `bin/diy` | 发布后（npm 全局/PATH） | `node out/cli/index.js` | `DIY_HOME=~/.diy`、`DIY_APP_ROOT=<自定位包根>`、`DIY_CLI=$0` |
+| `scripts/electron-dev.mts` | dev 拉起 GUI | `out/main/index.mjs` | `DIY_HOME`、`DIY_CLI=<仓库根>/diy.sh`、`DIY_DEV_SERVER_URL`、`DIY_MIRROR_DISPLAY` |
 
 环境变量契约（`src/runtime.ts`）：
 
 | 变量 | 含义 | 缺省 |
 |------|------|------|
 | `DIY_HOME` | 数据根（state/task/**app.port**） | `~/.diy` |
+| `DIY_CLI` | 当前生效的 CLI 入口绝对路径（提示词模版 100-diy 消费） | 无 → 提示词里告警（**不静默冒充 `diy`**） |
 | `DIY_PORT` | 首选端口；测试注入 `0`（随机） | 无 → app.port 文件 → 兜底 18888 |
 | `DIY_DEV_SERVER_URL` | dev GUI 加载 Vite URL（`electron-dev.mts` 注入） | 无 → loadFile 产物 |
+
+三个入口都必须注入 `DIY_CLI`：漏一个就会出现“GUI 拉起的会话告诉模型敲裸 `diy`”，
+在 worktree 里会打到生产数据根（`~/.diy`）。
 
 端口优先级：`DIY_PORT` > `app.port` 文件（上次实例） > 18888。
 
@@ -102,11 +134,67 @@ $DIY_HOME/projects/<pid>/tasks/<tid>/
 - ⚠️ **主题不得回落到 `prefers-color-scheme`** —— Playwright 的 `colorScheme` 默认值是 `"light"`，attach CDP 时会覆盖系统外观把界面刷白（实测 `renderer_solid/index.css` 的 `dark --prefersdark` 会让 CDP attach 后界面闪白）；应改成 `dark --default` 或用 `data-theme` 显式锁定
 - 注意 daisyUI drawer 需渲染 `<input class="drawer-toggle">`，漏了侧栏 `visibility:hidden` 消失
 
+### 提示词模版与试验场（`template.*`）
+
+| 关注点 | 位置 / 约定 |
+|--------|-------------|
+| 内置模版唯一真相源 | `src/main/prompts/defaults.ts`（TS 常量，非 .md 资源；三处消费：CLI/RPC/打包） |
+| 注册表 + 装配 | `src/main/services/prompt-registry.ts`（`assembleSystem` 是**真发与预览的唯一入口**） |
+| 类型契约唯一源 | `src/shared/prompt-schema.ts`（zod；api-def 的 output schema 与 renderer 类型都从这里取） |
+| URI 解析唯一源 | `src/shared/task-uri.ts`（main 与 renderer 共用，禁止各自写正则） |
+| 工作目录唯一源 | `src/main/core/cwd.ts`（工具 cwd 与提示词里的「工作目录」同源；三级兜底 + note） |
+| 项目级覆盖落位 | `$DIY_HOME/projects/<pid>/template/<relpath>` + `.meta.yaml{relpath:{baseVersion}}`（原子写） |
+| AGENTS.md 链上界 | **$HOME 为止**（不进 `/`、不进 `/Users`）：`~/AGENTS.md`、`~/git/AGENTS.md` 这类用户全局规则逐层生效；不在 $HOME 下时只取工作目录自身一层 |
+| 预算 | `clamp(模型上下文窗口 × 4B × 5%, 16KB, 64KB)`（随模型变，不再是一个 64KB 魔法数）；超限拒发（不截断）；**早退也必须闭合轮次**（stop + `noteTurnEnd` + turn-end 审计） |
+| 试验场页面 | `PromptLabV4Page.tsx`（左栏 = 模板 / 可用变量（契约）/ 变量值（本次注入）/ 模版结构树（trace）；右栏 = 预览；`ui page navigate lab` 落 agent调参 tab）；草稿按 project 分桶存 `Caches.diy_lab_drafts` |
+| 编辑器着色 | CM **默认只给 token 挂 class、不上色**（所以"看着没高亮"）：必须给 `HighlightStyle` + `syntaxHighlighting()`（本仓 `labHighlight`，颜色全走 daisyUI CSS 变量 → 深/浅主题都成立）。另加一条 `ViewPlugin` 做**模版 DSL 特殊显示**：`{{插值}}`（warning 粗体）与 `<template …>`/`</template>`（info 粗体）——markdown 语法不认识它们，但这两样才是模版里最该一眼认出的东西（只加装饰，不改文本）。依赖 `@codemirror/language`、`@lezer/highlight` 已显式声明 |
+| CodeMirror 主题坑（实测） | ① `&light`/`&dark` **只能**用在 `EditorView.baseTheme`（`buildTheme` 只给 baseTheme 传 scopes）；写在 `EditorView.theme` 里会抛 `Unsupported selector: &light`，而且是**模块加载期**抛 → 整个 renderer 白屏（症状：app 起来但页面空、CLI `ui page navigate` 卡住超时）② 逗号组合选择器（`"&light X, &dark X"`）同样不支持 ③ **不要**给 `.cm-gutters` 设 `opacity`：那会把背景一起变透明，正文横向滚到 gutter 下面时透出来"压住行号"（弱化用 `color` 的 alpha）④ gutters 是 sticky 的，正文会滚到它下面，所以 gutter 背景必须不透明 |
+| 试验场布局（三个 view area） | **view area 里可以放一个或多个 view；编辑器只是一种特殊 view，通常一个 view area 放一个**。左 area = 多个 view（模板 / 模版结构树 / 变量定义 / 变量值，各自带标题栏，**area 本身不再有列标题**）；中 area = 模版编辑器 view；右 area = 系统提示词预览 view。中/右**完全同构**（同实现、同标题栏形态、同行号、同不折行、同着色），右栏标题写 `_system.md（预览）`，只读 —— 像 VS Code 把编辑器左右分屏 |
+| 试验场 view 展开态 | 默认**只展开「模板」**，其余（模版结构树 / 变量定义 / 变量值）折叠 —— 否则左栏一屏塞满、要看的表都在折叠下面。状态是模块级 signal（页面没挂载时也能设），CLI：`diy ui view set <tree\|trace\|vars\|vals> open\|closed`（意图测试要看折叠 view 的内容就靠它；与 `ui page navigate` 同一动机：自动化得能到达深层状态） |
+| 试验场内层 tab | `任务会话 / 任务详情 / 系统提示词（lab）/ 请求预览（req）`。请求预览原来挤在右栏当第三块 view，现已升为与任务会话同级的 tab；右栏只剩「系统提示词预览」，且与中间模版编辑器**同模式**（标题栏固定 + 内容自己滚），不再做成可折叠 view |
+| 试验场刷新 | 顶栏「⟳ 刷新」= 全页面重拉（任务树 → 模版列表含覆盖/过期状态 → 强制重算预览）。**debug UI 用显式刷新代替事件流**：外部改了模版文件、CLI 建了任务，界面不会自己变（实测确认），按一下刷新即可；未保存草稿与高亮选区保留（选区只存身份，重算后自动跟随） |
+| 试验场高亮联动 | 点模版结构树行 → 高亮模版那段源码 + 预览那段产出；点「变量定义」的变量名 → 高亮它在当前模版的**所有出现处** + 预览里所有解析它的节点产出；再点一次取消。区间由引擎给（`TraceNode.src/out`、`analyze().paths[].end`），UI 只存"身份"（模版结构树 key 链 / 变量路径）并按最新 trace 重算 → 草稿重算后选区跟着走。include 节点自己的 `src` 属于**调用方**文件，只有它的子节点才换成被调模版 |
+| 变量值的交互 | 行也可点（与变量定义同一套选择语义）：普通行 = 该变量的所有出现处；`[i]` 行 = **第 i 次迭代的产出**（预览侧只高亮那次迭代的 `for-item` 产出，模版侧仍是循环那段源码） |
+| 变量定义的交互 | **点整行**（不是只点变量名那一列）：普通行 = 高亮该路径的所有出现处；`[类型]` 行 = 高亮"用到这个 item 类型"的文本 —— 实现靠静态分析（数组 → 以它为源的循环 `:as` 名 → 循环体里 `.f.value.*` 的动态路径引用），无此信息则无从实现。**元素行与它所属数组行是两种选择**（`var:chain` vs `item:chain:[ChainEntry]`），否则一次点击两行同时亮。蓝点 `●` = 本模版用到了（数组的 item 行看"有没有 `.as.*` 引用"），图例写在卡片头上。`:for={{chain}}` 会同时进 `paths` 与 `loops` → 出现处按区间去重，别算两处 |
+| 动态菜单条（DynamicBar） | 一种可复用的视图元素/技巧：**只在有上下文时才存在**（这里是"选中了模版里某一段"），没上下文就完全不渲染 —— 不做空条常驻（否则取消选中后剩一条空横条，看着像坏了）；内容随上下文变化（↑/↓ 跳焦点 + `1/3` 计数 + 名字 + ✕ 取消），操作都针对当前上下文。形态用 find-bar（细条 + `join` 按钮组 + 计数），**不用 daisyUI `alert`**（语义是消息、`role=alert` 会被播报） |
+| 高亮呈现与导航 | **按整行高亮**（行背景能覆盖整行，扫读比给 token 上色容易；行号也是两侧共同基准，`shared/hl-lines.ts` 把区间折成行号）：浅色 = 全部出现处，深色 = 当前焦点。两个编辑器**各一条 find-bar 形态的导航条**（`HlBar`：`join` 的 ↑/↓ + `1/3` 计数 + ✕）；两侧各自记焦点下标（同一变量在模版有 4 处、预览可能有别的段数）。滚动目标用**焦点段的字符区间**（不是行首、也不只是行号）：不折行时长行会横向溢屏，只有把段区间交给 CM 居中（`x:"center"`，按真实几何含 CJK 双宽）才真的"滚到位"。**不用 daisyUI 的 `alert`**：它的语义是消息（`role=alert` + 彩色块），当工具栏会喧宾夺主、读屏还会当通知播报 |
+| 试验场表格列宽 | 三张表（vars/vals/trace）列宽是 **px 且可拖**（`Th` 右边缘把手，双击复位），存 `Caches.diy_lab_cols_*`。**列宽与容器宽度解耦**：拖左栏不改列宽；表比可视区宽时**由表内容自己横向滚**（容器 `overflow-x-auto`）—— 卡片**不能**用 `w-max`：那样标题栏会跟内容一起变宽、横向滚时连同标题一起滚走 |
+| 变量契约与值 | `src/shared/prompt-schema.ts` 的 `AssembleGlobalsSchema`（zod 单一真源）→ `src/shared/var-tree.ts` 两种派生：`buildVarTree`（树形展示）/ `flattenVars`（引擎静态校验）；实际值随预览下发 `values`（模版结构树「值」列与「变量值」view 同源） |
+| 中断文案 | `_guard.md` **不得**复述 `INTERRUPTED_TOOL_NOTICE` —— 那段话的唯一来源是 `local-blocks.ts` 的常量 |
+| 意图测试 | `tests/cli.intent.template.test.ts`（list/get/save/restore/拒绝/preview/超预算闭合） |
+
+#### 系统上下文**全模版化**：每一段结构都能在模版里找到
+
+| 装配结果里的位置 | 来自哪里 |
+|------------------|----------|
+| 裸文本身份段 | `identity.md`（不包标签） |
+| `<diy>` 段 | `diy.md` |
+| `<project_context>` 段 + 链上**每个** AGENTS.md 的包裹 | `project.md`（链的包装格式就在这一份里：`:for={{chain}}` 循环体自带收尾空行） |
+| `<task>` 段 | `task.md` |
+| `<rules>` 段 | `rules.md` |
+| `<skills>` 段 | `skills.md`（skills 为空 → 整节不进请求） |
+| `<guard>` 段 | `_guard.md`（锁定） |
+| 变量值（`diy.*` / `project.*` / `task.*` / `cwd.*` / `chain` / `skills`） | 运行时事实（`assembleGlobals` 注入；契约 = `AssembleGlobalsSchema`） |
+| 节序 / 空节跳过 / 预算判定 / 未注入告警 | 装配器行为（节序 = `_system.md` 的 include 顺序） |
+
+- 模版 8 份，`_` 前缀 = 锁定（`_system.md` 装配入口、`_guard.md` 保命契约）；**没有"片段"角色**：链的包装
+  原来是独立片段 `chain.md`，现在直接写在 `project.md` 里（少一份文件、少一层参数传递）。
+- frontmatter 字段：`title` / `desc` / `version` / `locked?` / `lockTip?`；包裹标签由 UI 从正文首行 `<tag>` 推断，
+  `role`（entry/section）由入口 include 列表推导 —— 三者都不需要手工维护，避免两处漂移。
+- 排版规则（改模版前必读，写在 `src/main/prompts/defaults.ts` 头注）：控制标记可自由缩进（独占一行不产出字符）；
+  **输出文本必须顶格**（行首缩进会进提示词）；空行是内容。
+
 ### UI 验证（两层，互补）
 
 - **`diy.ui.*`（handler 层）**：CLI 经 RPC 直接调 renderer 的共享入口函数（与按钮 onClick 同一批）。测行为/契约/状态，稳定适合 test:intent 基线；**测不到真实 DOM 事件链的 bug**。
 - **Playwright/CDP（真实事件层）**：Electron 开 `--remote-debugging-port`，Playwright `connect_over_cdp` 复用，用**真实鼠标事件**（mouse.move/down/up 分步）驱动真实 renderer。能抓 gesture bug（拖拽整屏被拖出、isDropTarget 高亮、点穿透、折叠状态），是目前唯一的验证手段——UI 交互改动后跑一遍。
 - `diy.ui.inspect`：renderer 内 DOM 遍历生成无障碍树，agent 可 `./diy.sh ui inspect` 看 UI 全貌。
+- **跑意图测试 / CDP 夹具前，shell 里不要 export `DIY_PORT` / `DIY_HOME`**：`ShellTest` 继承 `process.env`，
+  被污染的 `DIY_PORT` 会让测试里的每一条 `./diy.sh` 都去打**别的端口**，各拉一个新 app，与测试自己启的实例
+  互踢（单实例锁）→ 现象是"页面状态莫名漂移、CDP 会话反复掉线、模板列表忽空忽有"（实测踩了两小时）。
+  正确姿势：`env -u DIY_PORT -u DIY_HOME npx vitest run ...`，或用一个干净 shell。
+- 只想临时起一个实例看界面时，注意 CLI 启动的 app 是**子进程**（父 CLI 退出后可能被带走）；CDP 会话断线先看
+  进程还在不在。要长时间挂着观察，用测试夹具（`startElectronTest`）而不是 CLI 起。
 - 复用冒烟脚本：**`scripts/ui-smoke/dnd-smoke.py`** — 启动隔离 Electron + Playwright/CDP 真实拖拽（任务↔任务改层级、子任务→项目提升），断言层级 + 抓 console/pageerror，`python3 scripts/ui-smoke/dnd-smoke.py` 运行，exit 0 通过。UI 交互改动后跑它确认手势没破坏。
 
 ### 交互自动化操作 App（agent 自测/演示用，实测经验）
@@ -190,6 +278,17 @@ Chromium 把实际端口写入 `DIY_HOME/electron_user_data/DevToolsActivePort`�
 ```bash
 cat "$DIY_HOME/electron_user_data/DevToolsActivePort"    # 或 curl http://127.0.0.1:<port>/json/version
 ```
+
+⚠️ **端口文件的内容不一定是当前实例的端口**：输给 `SingleInstanceLock` 的第二个实例也会先写自己的
+端口再退出（同一 userData）。实测踩过：文件写 50636、真实在 50633，`attach` 直接失败 → 三个自测
+agent 都被误导。**读文件后必须校验**：
+
+```bash
+curl -s --max-time 3 http://127.0.0.1:$(head -1 "$DIY_HOME/electron_user_data/DevToolsActivePort")/json/version
+# 不通就换：lsof -nP -iTCP -sTCP:LISTEN -a -p <electron pid>
+```
+
+`electron-dev.mts` 已内置该校验（读到死端口会继续轮询并提示“已跳过过期的端口”）。
 
 ### CDP 调试陷阱
 

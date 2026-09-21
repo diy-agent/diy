@@ -18,6 +18,7 @@
 
 import { RpcSchema } from "@diy/rpc";
 import { z } from "zod";
+import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-schema";
 
 // 任务状态枚举 — 单一真相源 task-state.ts（纯 zod，无 Node 依赖，浏览器安全） */
 import { TaskStateSchema } from "../core/task-state";
@@ -361,6 +362,56 @@ export const apiDef = RpcSchema.router({
         },
       }),
 
+      // —— 提示词模版试验场（spike）：内置只读 + 项目级同路径覆盖 + dry-run 预览 ——
+      template: RpcSchema.group({
+        desc: `提示词模版（内置只读，项目级覆盖；仅构造请求，不发 LLM）`,
+        children: {
+          list: RpcSchema.unary({
+            desc: `列出全部模版（含状态/元数据，供树展示）`,
+            input: {
+              project: z.string().cliArg({ desc: "project id" }),
+            },
+            output: z.array(PromptEntrySchema),
+          }),
+          get: RpcSchema.unary({
+            desc: `取单份模版（含内置/当前/stale）`,
+            input: {
+              project: z.string().cliArg({ desc: "project id" }),
+              relpath: z.string().cliArg({ desc: "模版相对路径" }),
+            },
+            output: PromptEntrySchema,
+          }),
+          save: RpcSchema.unary({
+            desc: `保存项目级覆盖（不可覆盖项拒绝）`,
+            input: {
+              project: z.string().cliArg({ desc: "project id" }),
+              relpath: z.string().cliArg({ desc: "模版相对路径" }),
+              content: z.string().cliArg({ desc: "覆盖正文" }),
+            },
+            output: PromptEntrySchema,
+          }),
+          restore: RpcSchema.unary({
+            desc: `一键恢复（删覆盖，回退内置）`,
+            input: {
+              project: z.string().cliArg({ desc: "project id" }),
+              relpath: z.string().cliArg({ desc: "模版相对路径" }),
+            },
+            output: PromptEntrySchema,
+          }),
+          preview: RpcSchema.unary({
+            desc: `dry-run 预览：装配系统上下文 + 仿真请求体（只组装不发送）`,
+            input: {
+              project: z.string().cliArg({ desc: "project id" }),
+              taskUri: z.string().optional().cliOption({ desc: "任务 URI（任务场景与工作目录从它推，并以其 project 为准）" }),
+              model: z.string().optional().cliOption({ desc: `模型 id（缺省 mimo-v2.5；应传会话实际选中的模型才算保真）` }),
+              // 无 CLI 注解：CLI 解析器忽略，RPC 照传（未存盘草稿渲染用）
+              drafts: z.record(z.string(), z.string()).optional().describe("未存盘草稿 relpath→正文"),
+            },
+            output: RequestPreviewSchema,
+          }),
+        },
+      }),
+
       llmProxy: RpcSchema.group({
         desc: `LLM 代理`,
         children: {
@@ -512,6 +563,21 @@ export const apiDef = RpcSchema.router({
             },
           }),
 
+          /** 试验场 view 的展开/折叠（默认只展开「模板」；自动化要看折叠 view 的内容时用） */
+          view: RpcSchema.group({
+            desc: `视图`,
+            children: {
+              set: RpcSchema.unary({
+                desc: `展开/折叠试验场 view`,
+                input: {
+                  key: z.string().cliArg({ desc: "view 名（tree/trace/vars/vals）" }),
+                  open: z.string().cliArg({ desc: "open 或 closed" }),
+                },
+                output: z.object({ status: z.string() }),
+              }),
+            },
+          }),
+
           /** 页面级服务 */
           page: RpcSchema.group({
             desc: `页面`,
@@ -647,4 +713,3 @@ export const apiDef = RpcSchema.router({
     },
   }),
 });
-export type ApiDef = typeof apiDef;

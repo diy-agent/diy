@@ -262,6 +262,50 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return getLocalAgent().getLimits();
   });
 
+  // ── template（提示词模版试验场 spike）──
+  binding.on(app.template.list, async ({ input }) => {
+    const { listPrompts } = await import("./prompt-registry");
+    const { diyHome } = await import("../core/state");
+    return listPrompts(diyHome(), input.project);
+  });
+  binding.on(app.template.get, async ({ input }) => {
+    const { getPrompt } = await import("./prompt-registry");
+    const { diyHome } = await import("../core/state");
+    return getPrompt(diyHome(), input.project, input.relpath);
+  });
+  binding.on(app.template.save, async ({ input }) => {
+    const { savePrompt } = await import("./prompt-registry");
+    const { diyHome } = await import("../core/state");
+    return savePrompt(diyHome(), input.project, input.relpath, input.content);
+  });
+  binding.on(app.template.restore, async ({ input }) => {
+    const { restorePrompt } = await import("./prompt-registry");
+    const { diyHome } = await import("../core/state");
+    return restorePrompt(diyHome(), input.project, input.relpath);
+  });
+  binding.on(app.template.preview, async ({ input }) => {
+    const { assembleSystem } = await import("./prompt-registry");
+    const { diyHome, projectFromUri } = await import("../core/state");
+    const { contextLimitOf, DEFAULT_MODEL } = await import("./local-agent");
+    // project 以 taskUri 为准：两者指向不同项目时（只有 CLI 能造成）system 与 tools/cwd 会错配
+    const project = input.taskUri ? projectFromUri(input.taskUri) || input.project : input.project;
+    const base = assembleSystem(diyHome(), project, {
+      taskUri: input.taskUri,
+      drafts: input.drafts,
+      // 预算随预览模型变（与真发同一套推导）
+      contextLimitTokens: contextLimitOf(input.model || DEFAULT_MODEL),
+      // 试验场「模版结构树」要 trace；真发（local-agent）不传
+      trace: true,
+    });
+    // 无任务场景：只渲染文本
+    if (!input.taskUri) {
+      return { ...base, requestBody: null, requestNote: "无任务场景：仅渲染 system 文本" };
+    }
+    const { previewSimulatedRequest } = await import("./local-agent");
+    const sim = await previewSimulatedRequest({ taskUri: input.taskUri, system: base.system, model: input.model });
+    return { ...base, requestBody: sim.body, requestNote: sim.note };
+  });
+
   // ── llmProxy ──
   binding.on(app.llmProxy.status, async () => {
     const proxy = await getLlmProxy();

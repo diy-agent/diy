@@ -63,6 +63,11 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     return { status: "ok" };
   });
 
+  binding.on(ui.view.set, async ({ input }) => {
+    getRendererActions().setView?.(input.key, input.open !== "closed");
+    return { status: "ok" };
+  });
+
   binding.on(ui.page.toast, async ({ input }) => {
     getRendererActions().toast?.(input.message, (input.level as ToastType) ?? "info");
     return { status: "ok" };

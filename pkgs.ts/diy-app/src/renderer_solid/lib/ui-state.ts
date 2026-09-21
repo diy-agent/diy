@@ -122,11 +122,11 @@ export const Caches = {
     serialize: (v) => String(v),
     defaultValue: 0,
   }),
-  /** 任务详情面板宽度（px，范围 360-1000） */
+  /** 任务详情面板宽度（px，范围 360-4000；渲染时另受窗口上限约束，见 TaskDetailPanel.panelMax） */
   diy_task_detail_width: field("diy_task_detail_width", {
     parse: (raw) => {
       const v = Number(raw);
-      return v >= 360 && v <= 1000 ? v : null;
+      return v >= 360 && v <= 4000 ? v : null;
     },
     serialize: (v) => String(v),
     defaultValue: 560,
@@ -153,7 +153,90 @@ export const Caches = {
     serialize: (v) => v,
     defaultValue: "dark",
   }),
+  /** 试验场左栏宽（px，范围 180-480）。宽度类缓存一律走本文件，
+   *  否则「重置界面状态」清不掉（历史问题：试验场直写 localStorage 的 lab4.leftW）。
+   *  默认 336：左栏现在有两列表格（可用变量 view 的 变量|说明），256 时说明列只剩 ~60px。 */
+  diy_lab_left_width: field<number>("diy_lab_left_width", {
+    parse: (raw) => {
+      const v = Number(raw);
+      return v >= 180 && v <= 480 ? v : null;
+    },
+    serialize: (v) => String(v),
+    defaultValue: 336,
+  }),
+  /** 试验场编辑器配色（见 lib/editor-theme 的清单；"diy" = 跟随应用主题） */
+  diy_lab_editor_theme: field<string>("diy_lab_editor_theme", {
+    parse: (raw) => (raw && raw.length < 40 ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "diy",
+  }),
+  /** 试验场右栏宽（px，范围 240-640） */
+  diy_lab_right_width: field<number>("diy_lab_right_width", {
+    parse: (raw) => {
+      const v = Number(raw);
+      return v >= 240 && v <= 640 ? v : null;
+    },
+    serialize: (v) => String(v),
+    defaultValue: 384,
+  }),
+  /** 试验场表格列宽（px 数组，按表分字段）。**表的列宽必须与容器宽度解耦**：
+   *  否则拖动左栏会按比例缩放所有列，永远有列看不全；这里存下来后拖左栏不再改变列宽，
+   *  表比可视区宽就往左栏出横向滚动条。parse 只收合法数字并夹在 32-1200 之间。 */
+  diy_lab_cols_vars: jsonCols("diy_lab_cols_vars", [96, 224]),
+  diy_lab_cols_vals: jsonCols("diy_lab_cols_vals", [110, 210]),
+  diy_lab_cols_trace: jsonCols("diy_lab_cols_trace", [96, 96, 84, 48]),
+  /** 试验场内层 tab（chat/task/lab）。存这里的原因与草稿相同：页面卸载后要记住选择；
+   *  另一处用途是 CLI 导航 `ui page navigate lab` 要能直接落到「agent调参」视图。 */
+  diy_lab_tab: field<string>("diy_lab_tab", {
+    parse: (raw) => (raw === "chat" || raw === "task" || raw === "lab" ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "chat",
+  }),
+  /** 试验场未存盘草稿（project → { relpath → 正文 }）。
+   *  存这里而不是组件 signal：App.tsx 用 <Show> 挂死页面，切页即卸载 → 半编辑内容全丢。
+   *  按 project 分桶，切到别的项目不会看到/不会写入上一个项目的草稿。 */
+  diy_lab_drafts: field<Record<string, Record<string, string>>>("diy_lab_drafts", {
+    parse: (raw) => {
+      try {
+        const o: unknown = JSON.parse(raw);
+        if (!o || typeof o !== "object" || Array.isArray(o)) return null;
+        const out: Record<string, Record<string, string>> = {};
+        for (const [pid, bucket] of Object.entries(o as Record<string, unknown>)) {
+          if (!bucket || typeof bucket !== "object" || Array.isArray(bucket)) continue;
+          const m: Record<string, string> = {};
+          for (const [rel, body] of Object.entries(bucket as Record<string, unknown>)) {
+            if (typeof body === "string") m[rel] = body;
+          }
+          if (Object.keys(m).length > 0) out[pid] = m;
+        }
+        return out;
+      } catch {
+        return null;
+      }
+    },
+    serialize: (v) => JSON.stringify(v),
+    defaultValue: {},
+  }),
 };
+
+/** 列宽数组字段：JSON 存整数数组（列宽 px），越界/脏数据回退默认值 */
+function jsonCols(key: string, fallback: number[]) {
+  return field<number[]>(key, {
+    parse: (raw) => {
+      try {
+        const o: unknown = JSON.parse(raw);
+        if (!Array.isArray(o) || o.length !== fallback.length) return null;
+        const nums = o.map((v) => (typeof v === "number" ? Math.round(v) : NaN));
+        if (nums.some((v) => !Number.isFinite(v) || v < 32 || v > 1200)) return null;
+        return nums;
+      } catch {
+        return null;
+      }
+    },
+    serialize: (v) => JSON.stringify(v),
+    defaultValue: fallback,
+  });
+}
 
 /** 已注册字段（clearUiCache 枚举用：字段池即全部，新增字段自动纳入） */
 const allFields: CacheField<unknown>[] = Object.values(Caches);
@@ -184,6 +267,9 @@ const LEGACY_KEYS = [
   "diy-detail-width",
   "diy-local-density",
   "diy-theme",
+  // 试验场早期直写的宽度 key（已收进字段池）
+  "lab4.leftW",
+  "lab4.rightW",
 ];
 
 /** 清空全部视图 cache：注册字段池 + 前缀兜底（防未来直写漏注册）+ 旧 key 兼容。返回删除条数。 */

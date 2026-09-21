@@ -1,0 +1,29 @@
+{
+  "name": "@diy/template",
+  "version": "0.1.0",
+  "private": true,
+  "description": "diy 提示词模版引擎：XML 控制节点 + 属性路径，无表达式、不转义、逐字节保真",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src/"
+  ],
+  "dependencies": {},
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "oxfmt": {
+    "indent": 4,
+    "lineWidth": 120,
+    "quotes": "single",
+    "ignore": [
+      "node_modules/"
+    ]
+  }
+}

@@ -72,8 +72,3 @@ export function _getCliOptionMeta(schema: object): _CliOptionMeta | undefined {
 export function _getCliArgMeta(schema: object): _CliArgMeta | undefined {
   return _getRegistry(_argRegistry, schema);
 }
-
-/** @internal */
-export function _hasCliMeta(schema: object): boolean {
-  return !!(_getRegistry(_optionRegistry, schema) || _getRegistry(_argRegistry, schema));
-}

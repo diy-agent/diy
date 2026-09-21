@@ -13,6 +13,7 @@ import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { join } from "node:path";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
+import { waitUntil } from "./wait";
 
 let sh: ShellTest;
 let HOME: string;
@@ -69,7 +70,9 @@ describe("ui 人类点击顺序（CLI diy.ui.*，agent 可复用）", () => {
     expect(fixtureProj).toMatch(/^\d+$/);
 
     // 反向验证项目已显示在任务树
-    expect(await treeText()).toContain("UI演示项目");
+    expect(await waitUntil(treeText, (t) => t.includes("UI演示项目"), { label: "树出现 UI演示项目" })).toContain(
+      "UI演示项目",
+    );
   });
 
   // 测试1: 任务创建 — 在 fixture 已有 project 上点 ＋ → 填标题 → 提交
@@ -80,6 +83,8 @@ describe("ui 人类点击顺序（CLI diy.ui.*，agent 可复用）", () => {
     expect(uri).toMatch(/^projects\/.+\/tasks\/.+$/);
 
     // ④ ui.tree 反向验证新任务出现在任务树（层级归属）
-    expect(await treeText()).toContain("编写意图测试");
+    expect(
+      await waitUntil(treeText, (t) => t.includes("编写意图测试"), { label: "树出现 编写意图测试" }),
+    ).toContain("编写意图测试");
   });
 });

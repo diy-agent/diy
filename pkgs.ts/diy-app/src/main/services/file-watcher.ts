@@ -117,8 +117,14 @@ class FileWatcher {
     this.watcher
       .on("change", (p: string) => {
         if (p.endsWith("state.yaml")) this._emit("state-change");
-        else if (p.includes("/projects/")) this._emit("task-change");
-        else if (p.includes("/agents/")) this._emit("agent-change");
+        else if (p.includes("/projects/")) {
+          // 只有任务树真正依赖的路径才重载：项目元数据 / tasks/ 下的任务数据。
+          // 曾经的 catch-all（projects/ 下任何 change）会让「保存一次提示词模版」
+          // （projects/<id>/template/*.md）也触发任务树重载 —— 名不副实 + 日志噪音。
+          const isProjectMeta = /\/projects\/[^/]+\/meta\.yaml$/.test(p);
+          const isTaskDoc = p.endsWith("AGENTS.md") || p.includes("/tasks/");
+          if (isProjectMeta || isTaskDoc) this._emit("task-change");
+        } else if (p.includes("/agents/")) this._emit("agent-change");
       })
       .on("addDir", (p: string) => { if (p.includes("/projects/")) this._emit("task-change"); })
       .on("add",    (p: string) => { if (p.endsWith("AGENTS.md")) this._emit("task-change"); })

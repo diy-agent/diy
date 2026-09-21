@@ -52,5 +52,8 @@ if [[ -t 2 ]]; then
 fi
 
 cd "$APP_DIR"
-exec env DIY_HOME="${DIY_HOME:-$HOME_DEFAULT}" _DIY_MIRROR_DISPLAY="${_DIY_MIRROR_DISPLAY:-1}" \
+# DIY_CLI：当前生效的 CLI 入口（提示词模版 100-diy 用它告诉 agent 该敲哪个命令；
+# 少了它 agent 只能猜“diy”，在 worktree 里会打到生产数据根）
+exec env DIY_HOME="${DIY_HOME:-$HOME_DEFAULT}" DIY_CLI="${DIY_CLI:-$SCRIPT_DIR/diy.sh}" \
+  _DIY_MIRROR_DISPLAY="${_DIY_MIRROR_DISPLAY:-1}" \
   "$APP_DIR/../../node_modules/.bin/tsx" src/cli/index.ts "$@"

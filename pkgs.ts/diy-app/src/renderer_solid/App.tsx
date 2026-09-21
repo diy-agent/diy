@@ -3,16 +3,17 @@ import * as Tabs from "@kobalte/core/tabs";
 import { TaskTree } from "./components/TaskTree";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { LlmPage } from "./components/LlmPage";
+import { PromptLabV4Page, setLabTab, setLabView } from "./components/PromptLabV4Page";
 import { LogPanel } from "./components/LogPanel";
 import { AppInfo } from "./components/AppInfo";
 import { ThemeSettings } from "./components/ThemeSettings";
 import { ToastContainer } from "./components/ToastContainer";
 import { taskStore } from "./store/taskStore";
 import { diyService } from "./lib/rpc";
-import { notificationStore, type ToastType } from "./store/notificationStore";
+import { notificationStore } from "./store/notificationStore";
 import { setRendererActions, resetRendererActions } from "./lib/renderer-actions";
 
-type NavPage = "task" | "chat" | "llm" | "settings";
+type NavPage = "task" | "chat" | "llm" | "lab" | "settings";
 
 export default function App() {
     const [currentPage, setCurrentPage] = createSignal<NavPage>("task");
@@ -27,8 +28,14 @@ export default function App() {
     onMount(() => {
         taskStore.loadTree();
         setRendererActions({
-            navigate: (page) => setCurrentPage(page as NavPage),
+            // 导航到「试验场」时直接落到 agent调参 视图（否则会停在页面默认的「任务会话」，
+            // CLI/自动化拿到的 a11y 树里看不到模版/变量/模版结构树）
+            navigate: (page) => {
+                setCurrentPage(page as NavPage);
+                if (page === "lab") setLabTab("lab");
+            },
             focus: (uri) => taskStore.selectTask(uri),
+            setView: (key, open) => setLabView(key, open),
             toast: (msg, level) => notificationStore.addToast(level ?? "info", msg),
         });
         // main 进程 FileWatcher 检测到文件变更后推送 "task-change"，
@@ -48,6 +55,7 @@ export default function App() {
     const navItems: Array<{ id: NavPage; label: string; icon: string }> = [
         { id: "task", label: "任务树", icon: "🌳" },
         { id: "llm", label: "LLM", icon: "🧠" },
+        { id: "lab", label: "试验场", icon: "🪟" },
         { id: "settings", label: "设置", icon: "⚙️" },
     ];
 
@@ -57,11 +65,6 @@ export default function App() {
             <input type="checkbox" id="sidebar-toggle" class="drawer-toggle" />
             {/* 主内容区 */}
             <div class="drawer-content flex flex-col h-screen">
-                {/* 顶栏 */}
-                <div class="navbar bg-base-100 border-b shrink-0 h-12">
-                    <span class="text-sm font-bold">diy</span>
-                </div>
-
                 {/* 内容区 */}
                 <main
                     class="flex-1 relative overflow-hidden bg-base-100"
@@ -77,6 +80,9 @@ export default function App() {
                     </Show>
                     <Show when={currentPage() === "llm"}>
                         <LlmPage />
+                    </Show>
+                    <Show when={currentPage() === "lab"}>
+                        <PromptLabV4Page />
                     </Show>
                     <Show when={currentPage() === "settings"}>
                         <div class="flex flex-col h-full">
@@ -111,13 +117,6 @@ export default function App() {
                     </Show>
                 </main>
 
-                {/* 底栏 */}
-                <div class="footer bg-base-200 border-t text-xs opacity-60 h-7 px-3 shrink-0">
-                    <span>diy 管控台</span>
-                    <Show when={!!taskStore.selectedUri}>
-                        <span class="ml-2 truncate">{taskStore.selectedUri}</span>
-                    </Show>
-                </div>
             </div>
 
             {/* 侧栏 - DaisyUI drawer */}

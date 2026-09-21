@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import { builtinModules } from 'node:module'
 
-const pkgDeps = ['@diy/rpc']
+const pkgDeps = ['@diy/rpc', '@diy/template']
 const external = ['electron', ...builtinModules, ...builtinModules.map((m) => `node:${m}`)]
 
 export default defineConfig({

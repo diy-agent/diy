@@ -2,6 +2,8 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "composite": true,
+    // 类型检查不 emit：产物落在源码旁会被 bundler/test 的无扩展名解析优先命中（详见根 AGENTS.md）
+    "noEmit": true,
     "types": ["node"]
   },
   "include": ["src/**/*", "test/**/*"]

@@ -154,6 +154,23 @@ async function ensureAppPort(cfg: RuntimeConfig): Promise<number> {
   throw new Error(`diy 管控台启动超时（${APP_READY_TIMEOUT_MS}ms）`);
 }
 
+/**
+ * 等 stdout 排空再退出。
+ * 背景（实测）：stdout 是管道时 node 的写入是异步的，`process.exit()` 会丢掉还没交出去的字节
+ * —— 输出超过管道缓冲（65536）时表现为**JSON 被截成一半**（下游 `jq` / 脚本 / 意图测试全炸）。
+ * 重定向到文件时是同步写，所以只有管道才暴露。
+ */
+async function flushStdout(): Promise<void> {
+  if (process.stdout.writableLength === 0) return;
+  await new Promise<void>((resolve) => {
+    const t = setTimeout(resolve, 2000); // 兜底：管道另一端不读时别挂死
+    process.stdout.once("drain", () => {
+      clearTimeout(t);
+      resolve();
+    });
+  });
+}
+
 async function main() {
   const cfg = readRuntimeConfig();
   // CLI 也走同一套诊断：stdout/stderr 断线不再升级成未捕获异常（父进程/终端消失时），
@@ -174,11 +191,13 @@ async function main() {
 
   // 清理：关闭 RPC 连接，允许进程正常退出（app 保持运行）
   transport.dispose();
+  await flushStdout();
   process.exit(0);
 }
 
-main().catch((e) => {
+main().catch(async (e) => {
   const msg = e instanceof Error ? e.message : String(e);
   console.error(`致命错误: ${msg}`);
+  await flushStdout();
   process.exit(1);
 });

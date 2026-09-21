@@ -63,12 +63,14 @@ sync()  {
 }
 link() {      _ws_run command npm link; }
 unlink() {    _ws_run command npm unlink -g ; }
-# 全仓唯一检查入口：全项目类型 + 全仓 lint + rpc 浏览器安全
+# 全仓唯一检查入口：全项目类型 + 全仓 lint + rpc 浏览器安全 + 产物护栏
 #（子包目录下单用见 pkgs.ts/*/sha.sh check）
 check() {
   run npx tsc -b tsconfig.all.json --noEmit
   run npx oxlint pkgs.ts/
   run npx tsc --noEmit -p pkgs.ts/diy-rpc/tsconfig.browser.json
+  # 产物护栏：TS 包源码目录旁不得出现编译产物（实现见 scripts/check-no-emit.sh）
+  run bash scripts/check-no-emit.sh
 }
 # 全仓唯一自动修复入口：格式化 + lint 可修项，能修的全修
 fix() {

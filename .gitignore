@@ -13,13 +13,25 @@ __pycache__/
 dist/
 build/
 
+# 护栏：TS 包内不得出现编译产物（各包 tsconfig 已 noEmit:true，这里只做兜底）。
+# 为什么拦截：.js/.jsx/.d.ts 落在源码旁后，vite/vitest/node 的无扩展名解析会优先命中产物
+# → dev/构建/单测静默跑旧代码（症状：改了没反应）。详见根 AGENTS.md「关键约束」。
+# 为什么能一刀切：pkgs.ts/ 下全部是 TS 包，当前 0 个被跟踪的 .js/.jsx/.mjs/.cjs（已核对）。
+# 逃生口：某包真需要手写 .js/.d.ts（如 env.d.ts 那种）→ `git add -f`，或在该包 .gitignore 里 `!` 反选；
+# 已跟踪的文件不受 ignore 影响，新增包也不用改这里。
+pkgs.ts/**/*.js
+pkgs.ts/**/*.jsx
+pkgs.ts/**/*.mjs
+pkgs.ts/**/*.cjs
+pkgs.ts/**/*.d.ts
+
 # Env / OS
 .env
 .DS_Store
 
 tmp*
 
-# Logs
+# 日志
 logs/
 
 state/

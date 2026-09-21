@@ -2,8 +2,14 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "composite": true,
+    // 只做类型检查，绝不 emit：否则产物会落在 src/ 旁边（同级 .js/.jsx/.d.ts），
+    // 而 vite/vitest 的 resolve.extensions 里 .js/.jsx 优先于 .ts/.tsx → dev/单测会静默跑旧产物。
+    // 类型检查入口统一为 `./sha.sh check`（= tsc -b tsconfig.all.json --noEmit）。
+    "noEmit": true,
     "jsx": "preserve",
     "jsxImportSource": "solid-js",
+    // vite/client 提供 import.meta.env / ?raw / *.css 等环境类型（取代了原来的 src/env.d.ts）
+    "types": ["node", "vite/client"],
     "paths": {
       "@/*": ["./src/renderer_solid/*"]
     }

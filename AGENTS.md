@@ -1,64 +1,78 @@
 # diy — 主 monorepo
 
-> ⚠️ Python 栈已废弃：`pkgs/` 下所有 Python 包（`diy-core` / `diy-app` / `diy-cli` / `diy-clirpc` / `diy-test` / `diy-ui`）仅保留作归档/参考，不再维护与演进。当前主线在 `pkgs.ts/`（TypeScript + Electron）。
+> 主线：`pkgs.ts/`（TypeScript + Electron）；`pkgs/` Python 栈仅归档（见末节）。
 
-diy 生态的核心仓库。历史为 `uv` 管理的 Python monorepo，现主线为 `pkgs.ts/` 的 TS 栈。
+## 目录
+
+- [目录结构](#目录结构)
+- [CLI](#cli)
+- [依赖链](#依赖链)
+- [入口一览](#入口一览)
+- [关键约束](#关键约束)
+- [历史归档](#历史归档)
 
 ## 目录结构
 
 | 路径 | 说明 | 状态 |
 |------|------|------|
-| `pkgs.ts/diy-app/` | 管控台 — Electron + Vite 8 + SolidJS（主线，React 版仅参考比较） | ✅ 主线 |
-| `pkgs.ts/diy-rpc/` | RPC 协议与传输层（主线） | ✅ 主线 |
-| `pkgs/diy-core/` | 核心逻辑 — state/agent/task/subject 模型 | ⚠️ 已废弃 |
-| `pkgs/diy-app/` | PySide6 桌面管控台（MainWindow/GatewayCLI） | ⚠️ 已废弃 |
-| `pkgs/diy-cli/` | 统一 `diy` CLI 入口（Python） | ⚠️ 已废弃 |
-| `pkgs/diy-clirpc/` | CLI RPC 层（Python） | ⚠️ 已废弃 |
-| `pkgs/diy-test/` | Python 意图测试引擎 ShellTest | ⚠️ 已废弃 |
-| `pkgs/diy-ui/` | Panel 响应式 UI 框架（Signal/ScopeProxy） | ⚠️ 已废弃 |
-| `diy.sh` | 当前 worktree 的 dev CLI 入口（注入 `DIY_HOME=./build/home`，`src/runtime.ts` 读取） | ✅ 主线 |
-| `pkgs.ts/diy-app/bin/diy` | 发布后 CLI 入口（注入 `DIY_HOME=~/.diy`，`node out/cli/index.js`） | ✅ 主线 |
-| `pkgs.ts/diy-app/src/runtime.ts` | 运行时配置统一组装点（入口只注入 `DIY_*` 环境变量，CLI/main/serve 统一读取） | ✅ 主线 |
-| `scripts/` | 辅助脚本（doctor-env、lint-env、git-hook、cdp-colorscheme-demo、repro-epipe-dialog） | — |
-| `vendor/` | 外部依赖源码快照 | — |
-| `sha.sh` | 旧 Python 栈开发入口（`./sha.sh --help`） | ⚠️ 已废弃 |
+| `pkgs.ts/diy-app/` | 管控台 — Electron + Vite 8 + SolidJS（主线，React 版仅参考） | ✅ 主线 |
+| `pkgs.ts/diy-rpc/` | RPC 协议与传输层 | ✅ 主线 |
+| `pkgs.ts/diy-template/` | 提示词模版引擎 `@diy/template`（零依赖，意图测试为真源） | ✅ 主线 |
+| `pkgs.ts/diy-dev/` | dev CLI 辅助包 | ✅ 主线 |
+| `diy.sh` | worktree dev CLI（`DIY_HOME=./build/home`） | ✅ |
+| `pkgs.ts/diy-app/bin/diy` | 发布后 CLI（`DIY_HOME=~/.diy`） | ✅ |
+| `pkgs.ts/diy-app/src/runtime.ts` | 运行时配置统一组装（`DIY_*` 环境变量） | ✅ |
+| `scripts/` | 辅助脚本（doctor-env / cdp-colorscheme-demo 等） | — |
+| `vendor/` | 外部依赖快照 | — |
+| `pkgs/` | Python 栈归档（`diy-core`/`diy-app`/`diy-cli`/…） | ⚠️ 归档 |
 
 ## CLI
 
-**`./diy.sh`** — 当前 worktree 的 dev CLI 入口（替代全局 `diy`/`dai`）。跑 `tsx src/cli/index.ts`，注入 `DIY_HOME=./build/home`，每个 worktree 独立，不共享 `~/.diy`。测试直接跑 `./diy.sh task list` 等，无需拦截改写。
+- **`./diy.sh`** — worktree dev 入口，`tsx src/cli/index.ts`，`DIY_HOME=./build/home`，`DIY_CLI=<仓库根>/diy.sh`。测试直接跑 `./diy.sh task list`。
+- **`pkgs.ts/diy-app/bin/diy`** — 发布后入口，`node out/cli/index.js`，`DIY_HOME=~/.diy`。
 
-**`pkgs.ts/diy-app/bin/diy`** — 发布后的 CLI 入口（npm 全局 / PATH），跑 `node out/cli/index.js`，注入 `DIY_HOME=~/.diy`。开发/发布共用 `src/runtime.ts` 的环境变量契约（`DIY_HOME`/`DIY_PORT`/`DIY_DEV_SERVER_URL`），无 dev/prod 模式字段。
-
-子命令分类（`./diy.sh --help`）：
-- `diy task/subject` — 任务/主体管理
-- `diy ui *` — 管控台 UI 接口
-- `diy agent` — Agent 管理
-- `diy doctor` — 健康自检
-
-Python `dai`/`diy` 仅历史归档，不再作为入口。
+子命令：`diy task/subject` / `diy ui *` / `diy agent` / `diy template` / `diy doctor`（`./diy.sh --help`）。
 
 ## 依赖链
 
 ```
-主线（TS）:
-  diy-rpc (独立)
-  diy-app ─→ diy-rpc   (CLI → HTTP → Electron main)
-
-历史（Python，已废弃）:
-  diy-ui (独立, Panel)
-  diy-app ─→ diy-core
-    diy-cli ─→ diy-core  (CLI → socket → diy-app)
+diy-rpc (独立)
+diy-template (独立，零依赖)
+diy-app ─→ diy-rpc + diy-template   (CLI → HTTP → Electron)
 ```
+
+## 入口一览（改代码前先看）
+
+| 入口 | 何时用 | 实际跑什么 | 关键 env |
+|------|--------|-----------|----------|
+| `./diy.sh <域> <命令>` | 日常 CLI | `tsx src/cli/index.ts`（源码） | `DIY_HOME=./build/home`、`DIY_CLI`、`DIY_APP_ROOT` |
+| `./sha.sh check` | 提交前唯一检查 | `tsc -b` + oxlint + browser + 产物护栏 | — |
+| `./sha.sh test` | 全仓测试 | 各包 `vitest`（含意图测试） | — |
+| `./sha.sh dev` | 起 GUI（HMR） | `tsx scripts/electron-dev.mts` | `DIY_HOME`、`DIY_CLI`、`DIY_DEV_SERVER_URL` |
+| `pkgs.ts/diy-app/sha.sh dev/cli/build/test` | 单包动作 | 同名 | — |
+| `pkgs.ts/diy-app/tests/cli.intent.*.test.ts` | 意图测试（需求契约） | `./diy.sh` + 隔离 Electron | 不注入 `DIY_CLI`（测未注入分支） |
+| `playwright-cli attach --cdp=…` | 真实 UI 验证 | 附到已运行 app | — |
+
+**易踩前提**：
+
+1. CLI（源码）与 GUI（`out/main` 产物）是两进程；无 GUI 时 CLI 冷启动需先 `sha.sh build`。
+2. `DIY_CLI` 只能注入（`diy.sh`/`bin/diy`/`electron-dev.mts` 三处），漏一个会让提示词退化成裸 `diy`。
+3. `dev` 运行中勿并发 `tsc -b`/`vite build`/全量 `vitest`（抢 `outDir`，watcher 卡死）。
+4. `dev` 排障看 `$DIY_HOME/log/dev.jsonl`：`grep watch-stall-suspect` 判卡死；重启 `dev` 恢复。
 
 ## 关键约束
 
-- **GPG 签名** — git 操作必须 GPG 签名，失败时停下求助，禁止 `--no-gpg-sign` 绕过
-- 代码注释用中文
-- **UI 验证走 CDP** — CLI 的 RPC 返回成功不等于 renderer 渲染正确；界面行为必须用
-  `playwright-cli attach --cdp=...` 驱动真实 Electron 窗口验证
-  （流程与陷阱见 `pkgs.ts/diy-app/AGENTS.md` 的「UI 验证」与
-  「交互自动化操作 App（agent 自测/演示用，实测经验）」两节）
-- **Solid 是重构方向** — `renderer_solid/` 是主线（构建默认入口），`renderer/`（React 版）仅作参考和比较代码使用，不追加功能
-- 意图测试（Intent Test）是需求的定义者
-  - TS 主线：`pkgs.ts/diy-app/tests/cli.intent.*.test.ts`（`./diy.sh` + `ShellTest` + 隔离 Electron；按领域拆文件：ui / doctor / project / task，每条用例自建自删 fixture）
-  - Python 历史：`tests/` + `_diy/AGENTS.md`（已废弃，仅归档）
+- **GPG 签名** — 失败停下求助，禁 `--no-gpg-sign`
+- 注释用中文；对话精简
+- **类型检查只准 `./sha.sh check`**（`tsc -b tsconfig.all.json --noEmit` + 产物护栏）。各包 `noEmit:true`，产物落源码旁会被 `resolve.extensions` 优先命中（改了没反应）。
+- 新增包检查单：`tsconfig.json`（`composite+noEmit+include`）+ `tsconfig.all.json` references + `.gitignore` 已按 `pkgs.ts/**` 覆盖
+- 轮次中勿改 `src/**` 当探针（watch 重启打断）；探针写 `/tmp`
+- UI 验证走 CDP（`pkgs.ts/diy-app/AGENTS.md`「UI 验证」节）
+- `renderer_solid/` 主线，`renderer/` React 仅参考
+- 意图测试为需求定义者：`pkgs.ts/diy-app/tests/cli.intent.*` + `pkgs.ts/diy-template/tests/intent.*`；Python `tests/` 已归档
+
+## 历史归档
+
+- `pkgs/` 下 Python 包（`diy-core`/`diy-app`/`diy-cli`/`diy-clirpc`/`diy-test`/`diy-ui`）仅归档，不演进。
+- `sha.sh` 旧 Python 入口已废弃，主线用根 `sha.sh` + `pkgs.ts/*/sha.sh`。
+- 意图测试历史：`tests/` + `_diy/AGENTS.md`（归档）。

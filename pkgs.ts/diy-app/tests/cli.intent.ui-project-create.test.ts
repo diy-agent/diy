@@ -11,6 +11,7 @@ import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { join } from "node:path";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
+import { waitUntil } from "./wait";
 
 interface ElectronFixture {
   sh: ShellTest;
@@ -56,7 +57,10 @@ describe("ui project create", () => {
     const id = String((r.data as any)?.data?.id);
     expect(id).toMatch(/^\d+$/);
 
-    expect(await treeText()).toContain("UI创建");
+    // 树读取走 renderer→main 往返，负载高时可能慢一拍 → 有界轮询（慢与错分开）
+    expect(await waitUntil(treeText, (t) => t.includes("UI创建"), { label: "ui tree 出现 UI创建" })).toContain(
+      "UI创建",
+    );
 
     // 清理（ui 无删除入口，走 main 直删）
     await fx.sh.run(`./diy.sh project remove ${id}`);

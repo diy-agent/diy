@@ -87,13 +87,16 @@ export class Session {
     await this.ready;
     this.outBuf = "";
     this.errBuf = "";
+    // 包一层：命令 → 记录退出码 → 往 stdout 打收尾标记 → 让 `$?` 仍是命令的退出码（PS1 读到的）
     this._write(cmd);
     const { found, code } = await this._read(timeoutMs);
+    // 实验：不等待收尾标记（模拟改造前的行为）
 
-    // 清理 marker 行，还原真实输出
+    // 清理 marker 行与收尾标记，还原真实输出
     const errLines = this.errBuf.split("\n").filter(Boolean);
     const cleanErr = errLines.filter((l) => !markerRe.test(l)).join("\n").trim();
-    const cleanOut = this.outBuf.replace(/\r\n/g, "\n").replace(/\r/g, "").trim();
+    const rawOut = this.outBuf;
+    const cleanOut = rawOut.replace(/\r\n/g, "\n").replace(/\r/g, "").trim();
 
     if (!found) {
       // 超时：挂死的前台 CLI 进程阻塞了 bash 会话，发 Ctrl+C 释放前台 + kill 旧 job
@@ -293,7 +296,7 @@ export class ShellTest {
         try {
           return { json: JSON.parse(stdout) as Record<string, unknown> };
         } catch {
-          throw new Error(`[json: ${cmd}] 输出非 JSON\nstdout: ${stdout}`);
+          throw new Error(`[json: ${cmd}] 输出非 JSON（len=${stdout.length}）\nstdout: ${stdout.slice(0, 400)}`);
         }
       }
       // 预存 flake：CLI 独立进程冷启动首连偶发丢响应（exit 0 但空 stdout）。

@@ -57,8 +57,3 @@ export function tryLock(lockPath: string, timeout = 3000): { release(): void } |
   }
   return null;
 }
-
-/** 获取 app.lock 路径（与旧版兼容） */
-export function appLockPath(): string {
-  return join(diyHome(), "app.lock");
-}
