@@ -23,4 +23,5 @@ CLI="$APP_DIR/out/cli/index.js"
 
 cd "$APP_DIR"
 # DIY_CLI：当前生效的 CLI 入口（提示词模版 100-diy 消费，见 diy.sh 同名字段）
-exec env DIY_HOME="${DIY_HOME:-$HOME/.diy}" DIY_CLI="${DIY_CLI:-$0}" node "$CLI" "$@"
+# DIY_ENV=production：dev 便利能力全关（窗口副屏等）
+exec env DIY_HOME="${DIY_HOME:-$HOME/.diy}" DIY_CLI="${DIY_CLI:-$0}" DIY_ENV="production" node "$CLI" "$@"

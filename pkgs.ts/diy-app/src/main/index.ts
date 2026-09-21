@@ -133,14 +133,14 @@ if (!gotLock) {
 
 /**
  * 测试/开发时把窗口定位到「非主工作屏」，避免遮挡用户正在干活的屏幕。
- * 仅在 _DIY_MIRROR_DISPLAY=1（内部变量）时生效；检测不到合适副屏则回退空对象（默认主屏定位）。
+ * 仅当非 production（dev/test 就地判 cfg.env）时生效；检测不到合适副屏则回退空对象（默认主屏定位）。
  * 返回窗口 options 子集（width/height/x/y），尺寸自动适配目标屏 workArea。
  */
 function mirrorWindowPos(
   width: number,
   height: number,
 ): Record<string, number> {
-  if (process.env["_DIY_MIRROR_DISPLAY"] !== "1") return {};
+  if (cfg.env === "production") return {};
   try {
     const displays = screen.getAllDisplays();
     const primaryId = screen.getPrimaryDisplay().id;

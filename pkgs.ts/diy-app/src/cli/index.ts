@@ -20,7 +20,6 @@ import { apiDef } from "../main/services/api-def";
 import { readRuntimeConfig, type RuntimeConfig } from "../runtime";
 import { AppConfig } from "../main/core/app-config";
 import { installDiagnostics } from "../main/services/diagnostics";
-import { gpuCompatArgs } from "../main/core/gpu-detect";
 /** app 就绪等待上限 */
 const APP_READY_TIMEOUT_MS = 30_000;
 /** 轮询间隔 */
@@ -72,16 +71,19 @@ function launchApp(cfg: RuntimeConfig): ChildProcess {
     throw new Error(`diy 管控台未构建: ${main}（先 ./sha.sh build）`);
   }
 
-  // DIY_MIRROR_DISPLAY=1: 窗口定位到副屏（iPad Sidecar），避免遮挡主屏
+  // 副屏定位等 dev/test 专属能力由 DIY_ENV 派生（src/runtime.ts）：入口脚本声明环境，
+  // CLI 仅透传 process.env；生产入口 bin/diy 注入 production → 窗口默认落主屏，不切 iPad。
   // --remote-debugging-port=0: 暴露 CDP，支持 playwright-cli attach
+  // Chromium 开关（disable-features=RustPng / use-gl=angle）由 src/main/index.ts 经
+  // app.commandLine.appendSwitch 生效，跟在 app 路径后传 argv 无效，故此处不传。
   //
   // stdio 必须保持 inherit/ignore：本进程 detached+unref，CLI 随即退出，
   // 一旦把 stdout/stderr 接成 pipe，读端消失后管道缓冲写满会反向阻塞
   // Electron 主进程事件循环（表现为 RPC/CDP 全挂 + 系统「未响应」弹框）。
   // CDP 地址改由 DevToolsActivePort 文件获取，见 printCdpHint()。
-  const child = spawn(String(electronPath), [main, "--remote-debugging-port=0", ...gpuCompatArgs(), "--disable-features=RustPng"], {
+  const child = spawn(String(electronPath), [main, "--remote-debugging-port=0"], {
     cwd: appRoot(),
-    env: { ...process.env, DIY_MIRROR_DISPLAY: "1" },
+    env: { ...process.env },
     stdio: ["ignore", "ignore", "inherit"],
     detached: true,
   });

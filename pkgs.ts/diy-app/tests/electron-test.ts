@@ -164,7 +164,8 @@ async function waitForCdpBase(home: string, timeoutMs = 8000): Promise<string | 
  */
 export async function startElectronTest(): Promise<ElectronTest> {
   const home = makeIsolatedHome();
-  const env = { ...process.env, HOME: home, DIY_HOME: home, _DIY_MIRROR_DISPLAY: "1" };
+  // DIY_ENV=test：runtime.ts 派生副屏定位等测试专属能力，不遮挡主屏工作
+  const env = { ...process.env, HOME: home, DIY_HOME: home, DIY_ENV: "test" };
   const appDir = join(__dirname, "..");
 
   const args = ["out/main/index.mjs", "--remote-debugging-port=0"];

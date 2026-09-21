@@ -24,8 +24,8 @@ process.env["HOME"] = testHome;
 process.env["DIY_HOME"] = testHome;
 // 端口由入口注入，不再由 isTemp 派生：测试用 0=随机端口，避免与生产 18888 冲突
 process.env["DIY_PORT"] = "0";
-// 自动化测试窗口强制副屏，避免频繁启动遮挡主屏工作
-process.env["_DIY_MIRROR_DISPLAY"] = "1";
+// 声明测试环境：runtime.ts 据此派生 dev/test 专属能力（窗口定位副屏等），生产能力一律关闭
+process.env["DIY_ENV"] = "test";
 // 禁止 CLI 自动拉起 app：测试自己用 startElectronTest 启动实例并持有句柄，
 // CLI 若在端口探测超时时另起 detached 实例，测试无法回收 → 进程泄露。
 // 注入点选这里而非各测试文件：ShellTest 的 env = { ...process.env, ...opts.env }，

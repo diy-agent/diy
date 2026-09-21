@@ -28,8 +28,8 @@
 
 ## CLI
 
-- **`./diy.sh`** — worktree dev 入口，`tsx src/cli/index.ts`，`DIY_HOME=./build/home`，`DIY_CLI=<仓库根>/diy.sh`。测试直接跑 `./diy.sh task list`。
-- **`pkgs.ts/diy-app/bin/diy`** — 发布后入口，`node out/cli/index.js`，`DIY_HOME=~/.diy`。
+- **`./diy.sh`** — worktree dev 入口，`tsx src/cli/index.ts`，`DIY_HOME=./build/home`，`DIY_CLI=<仓库根>/diy.sh`，`DIY_ENV=development`。测试直接跑 `./diy.sh task list`。
+- **`pkgs.ts/diy-app/bin/diy`** — 发布后入口，`node out/cli/index.js`，`DIY_HOME=~/.diy`，`DIY_ENV=production`，`DIY_CLI=$0`。开发/发布共用 `src/runtime.ts` 的环境变量契约（`DIY_HOME`/`DIY_PORT`/`DIY_ENV`/`DIY_DEV_SERVER_URL`/`DIY_CLI`）；模式由入口**声明**（`DIY_ENV`，缺省 production、能力全关），不做运行时探测。
 
 子命令：`diy task/subject` / `diy ui *` / `diy agent` / `diy template` / `diy doctor`（`./diy.sh --help`）。
 

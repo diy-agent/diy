@@ -59,6 +59,7 @@
 |------|------|------|
 | `DIY_HOME` | 数据根（state/task/**app.port**） | `~/.diy` |
 | `DIY_CLI` | 当前生效的 CLI 入口绝对路径（提示词模版 100-diy 消费） | 无 → 提示词里告警（**不静默冒充 `diy`**） |
+| `DIY_ENV` | 运行环境 `production`/`development`/`test`，dev/test 专属能力（如副屏定位）的唯一判据（见「窗口定位副屏」） | `production`（未声明即生产，能力全关） |
 | `DIY_PORT` | 首选端口；测试注入 `0`（随机） | 无 → app.port 文件 → 兜底 18888 |
 | `DIY_DEV_SERVER_URL` | dev GUI 加载 Vite URL（`electron-dev.mts` 注入） | 无 → loadFile 产物 |
 
@@ -307,8 +308,11 @@ curl -s --max-time 3 http://127.0.0.1:$(head -1 "$DIY_HOME/electron_user_data/De
 
 ### 窗口定位副屏
 
-`DIY_MIRROR_DISPLAY=1` 时窗口居中到非主屏（优先 Sidecar iPad），避免遮挡开发用的主屏。
-`./sha.sh dev` / `./diy.sh` / 意图测试均已默认注入；单屏环境自动回退默认定位。
+`cfg.mirrorDisplay` 为真时窗口居中到非主屏（优先 Sidecar iPad），避免遮挡开发用的主屏。
+该能力**派生自 `DIY_ENV`**（src/runtime.ts）：`development` / `test` 自动开，`production` 永远关
+——没有独立开关变量（曾用过的 `_DIY_MIRROR_DISPLAY` 因 merge 回退成死变量无人察觉而废弃）。
+单屏环境自动回退默认定位。入口声明：`./diy.sh` / `electron-dev.mts` 注入 development，
+测试 harness 注入 test，`bin/diy` 注入 production；缺省（DIY_ENV 未设）按 production 处理。
 
 ### 硬性约束：子进程 stdio 的 pipe 规则
 

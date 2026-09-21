@@ -1,57 +1,11 @@
-version: 1
-generated: '2026-09-07T09:38:01.826Z'
-source:
-  github.com/nodeca/js-yaml:
-    key: github.com/nodeca/js-yaml
-    url: https://github.com/nodeca/js-yaml
-    version: 4.1.1
-    dir: ref/github.com/nodeca/js-yaml/4.1.1
-    lastSync: '2026-09-07T09:38:01.826Z'
-  github.com/agentclientprotocol/agent-client-protocol:
-    key: github.com/agentclientprotocol/agent-client-protocol
-    url: https://github.com/agentclientprotocol/agent-client-protocol
-    version: v0.11.3
-    dir: ref/github.com/agentclientprotocol/agent-client-protocol/v0.11.3
-    lastSync: '2026-09-07T09:38:01.826Z'
-  github.com/vitest-dev/docs-cn:
-    key: github.com/vitest-dev/docs-cn
-    url: https://github.com/vitest-dev/docs-cn
-    version: v3
-    dir: ref/github.com/vitest-dev/docs-cn/v3
-    lastSync: '2026-09-07T09:38:01.826Z'
-  github.com/github/docs:
-    key: github.com/github/docs
-    url: https://github.com/github/docs
-    version: main
-    dir: ref/github.com/github/docs/main
-    lastSync: '2026-09-07T09:38:01.826Z'
-  github.com/connectrpc/connect-go:
-    key: github.com/connectrpc/connect-go
-    url: https://github.com/connectrpc/connect-go
-    version: null
-    dir: ref/github.com/connectrpc/connect-go/main
-    lastSync: '2026-09-07T09:38:01.826Z'
-  github.com/anomalyco/opencode:
-    key: github.com/anomalyco/opencode
-    url: https://github.com/anomalyco/opencode
-    version: null
-    dir: ref/github.com/anomalyco/opencode/main
-    lastSync: '2026-09-07T09:38:01.826Z'
-  github.com/deepseek-ai/deepseek-harness:
-    key: github.com/deepseek-ai/deepseek-harness
-    url: https://github.com/deepseek-ai/deepseek-harness
-    version: null
-    dir: ref/github.com/deepseek-ai/deepseek-harness/main
-    lastSync: '2026-09-07T09:38:01.826Z'
-  github.com/vercel/ai:
-    key: github.com/vercel/ai
-    url: https://github.com/vercel/ai
-    version: null
-    dir: ref/github.com/vercel/ai/main
-    lastSync: '2026-09-07T09:38:01.826Z'
-  github.com/earendil-works/pi:
-    key: github.com/earendil-works/pi
-    url: https://github.com/earendil-works/pi
-    version: null
-    dir: ref/github.com/earendil-works/pi/main
-    lastSync: '2026-09-07T09:38:01.826Z'
+version: 5
+generated: '2026-09-18T09:45:30.304Z'
+ref:
+  node:
+    diy-app:
+      dependencies:
+        '@agentclientprotocol/sdk': ~/.diy/ref/github.com/agentclientprotocol/typescript-sdk/1.4.0
+  source:
+    .:
+      github.com/anomalyco/opencode: ~/.diy/ref/github.com/anomalyco/opencode/latest
+      github.com/deepseek-ai/deepseek-harness: ~/.diy/ref/github.com/deepseek-ai/deepseek-harness/latest

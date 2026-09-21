@@ -10,6 +10,7 @@
 #      起 Vite dev server 并注入 DIY_DEV_SERVER_URL，走 loadURL 热更新（HMR），无需 build
 #   4. 数据隔离：DIY_HOME 默认 ./build/home（本 worktree 独立），注入后由
 #      src/runtime.ts readRuntimeConfig() 统一读取；测试用 mkdtemp 隔离
+#      环境声明：DIY_ENV 默认 development（dev/test 专属能力的判据，缺省按 production）
 #   5. 发布入口：pkgs.ts/diy-app/bin/diy 跑编译产物 out/cli/index.js，数据落 ~/.diy
 #
 # 前置要求：首次使用或改动 main/preload/renderer 后，需先构建：
@@ -54,6 +55,6 @@ fi
 cd "$APP_DIR"
 # DIY_CLI：当前生效的 CLI 入口（提示词模版 100-diy 用它告诉 agent 该敲哪个命令；
 # 少了它 agent 只能猜“diy”，在 worktree 里会打到生产数据根）
-exec env DIY_HOME="${DIY_HOME:-$HOME_DEFAULT}" DIY_CLI="${DIY_CLI:-$SCRIPT_DIR/diy.sh}" \
-  _DIY_MIRROR_DISPLAY="${_DIY_MIRROR_DISPLAY:-1}" \
+# DIY_ENV：运行环境声明（development/test/production，缺省 production）
+exec env DIY_HOME="${DIY_HOME:-$HOME_DEFAULT}" DIY_CLI="${DIY_CLI:-$SCRIPT_DIR/diy.sh}" DIY_ENV="${DIY_ENV:-development}" \
   "$APP_DIR/../../node_modules/.bin/tsx" src/cli/index.ts "$@"
