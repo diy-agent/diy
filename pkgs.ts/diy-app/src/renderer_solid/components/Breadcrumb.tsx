@@ -46,11 +46,14 @@ const SECTIONS: Record<string, { label: string; icon: string }> = {
 //  面包屑路径计算
 // ═══════════════════════════════════════
 
+/** 面包屑点击动作（computeCrumbs 保持纯函数，落到哪个函数由组件按 props 决定） */
+type CrumbAction = { kind: "section"; id: string } | { kind: "tab"; key: string } | { kind: "none" };
+
 interface Crumb {
     label: string;
     icon?: string;
-    /** 点击：section 用 navigate，tab 用 activateTab + setRoute */
-    onClick: () => void;
+    /** 点击去哪。`none` = 当前页（渲染成 disabled，不该是「能点但没反应」） */
+    action: CrumbAction;
     /** ▾ 下拉的同级 tab 列表（null = 无下拉） */
     siblings: TabItem[] | null;
     isCurrent: boolean;
@@ -63,7 +66,7 @@ function computeCrumbs(activeKey: string, section: string): Crumb[] {
         return [{
             label: info.label,
             icon: info.icon,
-            onClick: () => {}, // 已在当前 section
+            action: { kind: "none" }, // 已在当前 section
             siblings: null,
             isCurrent: true,
         }];
@@ -94,7 +97,7 @@ function computeCrumbs(activeKey: string, section: string): Crumb[] {
     crumbs.push({
         label: secInfo.label,
         icon: secInfo.icon,
-        onClick: () => {}, // App 侧会处理
+        action: { kind: "section", id: section },
         siblings: taskRunTabs.length > 0 ? taskRunTabs : null,
         isCurrent: false,
     });
@@ -110,7 +113,7 @@ function computeCrumbs(activeKey: string, section: string): Crumb[] {
         });
         crumbs.push({
             label,
-            onClick: () => {}, // App 侧会处理
+            action: { kind: "tab", key: anc.key },
             siblings: siblings.length > 1 ? siblings : null,
             isCurrent: false,
         });
@@ -122,7 +125,7 @@ function computeCrumbs(activeKey: string, section: string): Crumb[] {
         const label = tab.pageId === "task-run" ? tabLabel(tab.ctx ?? "") : (def?.title ?? tab.pageId);
         crumbs.push({
             label,
-            onClick: () => {},
+            action: { kind: "none" }, // 当前页：下面按 isCurrent 渲染成 disabled
             siblings: null,
             isCurrent: true,
         });
@@ -239,12 +242,23 @@ export interface BreadcrumbProps {
 export function Breadcrumb(props: BreadcrumbProps) {
     const crumbs = () => computeCrumbs(props.activeKey, props.section);
 
+    /**
+     * 派发面包屑点击。
+     *
+     * ⚠️ 这里曾经是 `crumb.onClick()`，而 computeCrumbs 里三个分支都写成
+     * `onClick: () => {}`（注释「App 侧会处理」）—— 实际没人处理，于是
+     * 「点面包屑切父页面」在界面上是**点了没反应**（真实点击测试抓到的）。
+     * 现在 action 是显式数据，落到 props 的哪个回调由本函数决定。
+     */
     const handleClick = (crumb: Crumb, tab?: TabItem) => {
         if (tab) {
             props.gotoTab(tab.key);
-        } else {
-            crumb.onClick();
+            return;
         }
+        const a = crumb.action;
+        if (a.kind === "section") props.gotoSection(a.id);
+        else if (a.kind === "tab") props.gotoTab(a.key);
+        // kind === "none"：当前页，按钮已 disabled，走不到这里
     };
 
     return (

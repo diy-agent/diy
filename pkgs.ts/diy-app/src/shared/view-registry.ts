@@ -298,6 +298,70 @@ export function groupViewsByArea(
     }));
 }
 
+/**
+ * 校验一次「view 寻址」（CLI `ui view set` 的入参）。
+ *
+ * 为什么要独立成函数：依赖倒置的代价是「写错 view/page/ctx 都不会有类型错误」，
+ * 只能运行时拦住。返回 null = 合法，否则返回给用户看的错误消息。
+ * 放在 shared 是为了 CLI/渲染层用同一份判据（而不是各写一套 if）。
+ */
+export function checkViewTarget(
+  viewId: string,
+  pageId: string,
+  ctx: string | null,
+  views: ViewDef[] = VIEWS,
+  pages: PageDef[] = PAGES,
+): string | null {
+  const def = findView(viewId); // 注意：findView 只认真注册表，故此处不用 views 参数
+  if (!def) return `未知 view: ${viewId}`;
+  const page = pages.find((p) => p.id === pageId);
+  if (!page) return `未知 page: ${pageId}`;
+  if (!def.placement[pageId]) return `view ${viewId} 不允许放在 page ${pageId}`;
+  if (def.instanceScope === "context" && !ctx) {
+    return `view ${viewId} 是 context 型，必须给上下文键（--ctx，如任务 URI）`;
+  }
+  if (def.instanceScope === "global" && ctx) {
+    return `view ${viewId} 是 global 型，不该给 --ctx`;
+  }
+  return null;
+}
+
+/**
+ * 把「view 级隐藏」叠加到 binding 上：hidden 的键置 null（= 从 area 里拿掉，不销毁实例）。
+ *
+ * 为什么复用 binding 的 null 而不是让渲染层另加一层判断：null 的语义本来就是
+ * 「隐藏但保留实例」（见 groupViewsByArea 注释 1），多一条隐藏途径不该多一套语义。
+ * 纯函数，可单测、可被 CLI 复用。
+ */
+export function applyHiddenViews(binding: Binding, hiddenViews: Record<string, boolean>): Binding {
+  const hidden = Object.keys(hiddenViews).filter((k) => hiddenViews[k]);
+  if (hidden.length === 0) return binding;
+  const out: Binding = { ...binding };
+  for (const k of hidden) {
+    // 只对**本 binding 里存在**的键生效：脏数据里的陌生键不该凭空造出条目
+    if (k in out) out[k] = null;
+  }
+  return out;
+}
+
+/**
+ * 本 page 实例下**有 view 的 area id 集合**。
+ *
+ * 用途：page 菜单条只给「点了有反应」的 area 渲染开合按钮 —— 空 area 的按钮
+ * 点下去界面毫无变化，是纯粹的噪音（用户视角 = bug）。
+ *
+ * ⚠️ 已被最小化的 area **仍算有 view**：按钮正是把它开回来的唯一入口。
+ * 故本函数基于 groupViewsByArea（只看 binding 的隐藏/null 语义），不掺 area 开合态。
+ */
+export function areasWithViews(
+  page: PageDef,
+  ctx: string | null,
+  binding: Binding,
+  views: ViewDef[] = VIEWS,
+): Set<string> {
+  return new Set(groupViewsByArea(page, ctx, binding, views).map((g) => g.areaId));
+}
+
 // ═══════════════════════════════════════════
 // 校验（纯函数，可单测 / 可被 CLI 调用）
 // ═══════════════════════════════════════════

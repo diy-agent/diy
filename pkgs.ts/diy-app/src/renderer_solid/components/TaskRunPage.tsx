@@ -11,7 +11,7 @@
  * 加/减 view 只改 view 注册表，本文件不动。
  */
 import { onMount, createEffect, on, For } from "solid-js";
-import { findPage, defaultBinding } from "../../shared/view-registry";
+import { areasWithViews, findPage } from "../../shared/view-registry";
 import type { Layout } from "../../shared/grid-layout";
 import { ViewGrid } from "./ViewGrid";
 import { TaskSideView } from "./TaskSideView";
@@ -33,12 +33,23 @@ export function TaskRunPage(props: { uri: string }) {
         ),
     );
 
-    /** 试验场（bottom area）默认收起：底部行初始 0，点布局按钮才展开 */
-    const areas = () => PAGE.layout.areas;
     const layout = (): Layout => PAGE.layout;
-    const binding = () => defaultBinding(PAGE, props.uri);
+    const binding = () => layoutStore.bindingFor(PAGE, props.uri);
 
-    /** area 序号（① ② ③ …）：布局按钮先用序号替代图标（动态绘制图标待定，见 133） */
+    /**
+     * 菜单条上的 area 开合按钮 = **只列有点击价值的 area**（本 page 实例下有 view 的）。
+     * 本 page 的 right / bottom 还空着（right 预留 agent 参数状态、bottom 预留日志，见 133），
+     * 给它们渲染按钮就是「点了没反应」的噪音。
+     * idx 保留 area 在 layout.areas 里的原始序号 —— 序号表达「第几个区域」，与网格位置对应。
+     */
+    const menuAreas = () => {
+        const has = areasWithViews(PAGE, props.uri, binding());
+        return PAGE.layout.areas
+            .map((a, idx) => ({ area: a, idx }))
+            .filter((x) => has.has(x.area.id));
+    };
+
+    /** area 序号（① ② ③ …）：按钮先用序号替代图标（动态绘制图标待定，见 133） */
     const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
 
     return (
@@ -59,18 +70,17 @@ export function TaskRunPage(props: { uri: string }) {
                 >
                     🪟 提示词
                 </button>
-                {/* 布局切换：**本 page 有几个 area 就有几个按钮**（不是只给试验场一个）。
-                    点一下开合该 area。图标用序号替代 —— 动态绘制随 grid 结构变化的图标
-                    待定（见 133），序号先保证「结构可见、可操作」。 */}
-                <For each={areas()}>
-                    {(a, i) => (
+                {/* 布局切换：只给**有 view 的 area** 渲染按钮（空 area 点了没反应，见 menuAreas）。
+                    图标用序号替代 —— 动态绘制随 grid 结构变化的图标待定（见 133）。 */}
+                <For each={menuAreas()}>
+                    {({ area, idx }) => (
                         <button
-                            class={`btn btn-xs ${layoutStore.isHidden(PAGE.id, a.id) ? "btn-ghost opacity-50" : "btn-active"}`}
-                            title={`${a.id}（区域 ${i() + 1}）开合`}
-                            aria-pressed={!layoutStore.isHidden(PAGE.id, a.id)}
-                            onClick={() => layoutStore.toggleArea(PAGE.id, a.id)}
+                            class={`btn btn-xs ${layoutStore.isHidden(PAGE.id, area.id) ? "btn-ghost opacity-50" : "btn-active"}`}
+                            title={`${area.id}（区域 ${idx + 1}）开合`}
+                            aria-pressed={!layoutStore.isHidden(PAGE.id, area.id)}
+                            onClick={() => layoutStore.toggleArea(PAGE.id, area.id)}
                         >
-                            {CIRCLED[i()] ?? i() + 1} {a.id}
+                            {CIRCLED[idx] ?? idx + 1} {area.id}
                         </button>
                     )}
                 </For>

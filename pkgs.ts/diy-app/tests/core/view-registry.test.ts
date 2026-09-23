@@ -6,6 +6,9 @@ import {
   PAGES,
   TASK_RUN_LAYOUT,
   VIEWS,
+  applyHiddenViews,
+  areasWithViews,
+  checkViewTarget,
   defaultBinding,
   groupViewsByArea,
   findPage,
@@ -207,5 +210,94 @@ describe("子页面（一页一中心）", () => {
 
   it("lab 的默认隐藏：bottom（chat 是卫星，默认不占地方）", () => {
     expect(DEFAULT_HIDDEN.lab).toEqual(["bottom"]);
+  });
+});
+
+// ═══════════════════════════════════════════
+// view 级隐藏（ui view set）—— 与 area 开合、折叠框展开是三件事
+// ═══════════════════════════════════════════
+
+describe("applyHiddenViews —— 隐藏走 binding 的 null 语义", () => {
+  const page = findPage("task-run")!;
+  const ctx = "projects/4/tasks/133";
+
+  it("被隐藏的键置 null，其余不动（同一个 view 的其他实例不受影响）", () => {
+    const b = defaultBinding(page, ctx);
+    const out = applyHiddenViews(b, { [`chat.local@${ctx}`]: true });
+    expect(out[`chat.local@${ctx}`]).toBeNull();
+    expect(out[`task.detail@${ctx}`]).toBe("left");
+    // 原对象不被改写（纯函数）
+    expect(b[`chat.local@${ctx}`]).toBe("center");
+  });
+
+  it("空 hiddenViews → 原样返回（不制造新对象）", () => {
+    const b = defaultBinding(page, ctx);
+    expect(applyHiddenViews(b, {})).toBe(b);
+    expect(applyHiddenViews(b, { [`chat.local@${ctx}`]: false })).toBe(b);
+  });
+
+  it("陌生键不凭空造条目（脏数据不该让界面多出一个 view）", () => {
+    const b = defaultBinding(page, ctx);
+    const out = applyHiddenViews(b, { "ghost.view@x": true });
+    expect("ghost.view@x" in out).toBe(false);
+    expect(Object.keys(out)).toEqual(Object.keys(b));
+  });
+
+  it("隐藏后 groupViewsByArea 真的少一块（端到端语义）", () => {
+    const b = applyHiddenViews(defaultBinding(page, ctx), { [`task.detail@${ctx}`]: true });
+    expect(groupViewsByArea(page, ctx, b).map((g) => g.areaId)).toEqual(["center"]);
+  });
+});
+
+describe("areasWithViews —— 空 area 的按钮不该出现", () => {
+  it("任务执行页：只有 left / center 有 view（right / bottom 还空着）", () => {
+    const page = findPage("task-run")!;
+    const ctx = "projects/4/tasks/1";
+    expect([...areasWithViews(page, ctx, defaultBinding(page, ctx))].sort()).toEqual(["center", "left"]);
+  });
+
+  it("提示词页：四个 area 都有 view", () => {
+    const page = findPage("lab")!;
+    const ctx = "projects/4/tasks/1";
+    const got = [...areasWithViews(page, ctx, defaultBinding(page, ctx))].sort();
+    expect(got).toEqual(["bottom", "center", "left", "right"]);
+  });
+
+  it("view 被隐藏 → 该 area 随之空掉（按钮也应消失）", () => {
+    const page = findPage("task-run")!;
+    const ctx = "projects/4/tasks/1";
+    const b = applyHiddenViews(defaultBinding(page, ctx), {
+      [`chat.local@${ctx}`]: true,
+      [`task.detail@${ctx}`]: true,
+    });
+    expect([...areasWithViews(page, ctx, b)]).toEqual([]);
+  });
+
+  it("单实例 page 无 ctx 也正常（settings 三个 view 同 area）", () => {
+    const page = findPage("settings")!;
+    expect([...areasWithViews(page, null, defaultBinding(page, null))]).toEqual(["main"]);
+  });
+});
+
+describe("checkViewTarget —— 依赖倒置的运行时兜底", () => {
+  const ctx = "projects/4/tasks/1";
+
+  it("合法寻址返回 null", () => {
+    expect(checkViewTarget("chat.local", "task-run", ctx)).toBeNull();
+    expect(checkViewTarget("task.tree", "task", null)).toBeNull();
+  });
+
+  it("未知 view / 未知 page", () => {
+    expect(checkViewTarget("ghost", "task-run", ctx)).toContain("未知 view");
+    expect(checkViewTarget("task.tree", "ghost", null)).toContain("未知 page");
+  });
+
+  it("view 未声明该 page → 拒绝（白名单由 placement 承担）", () => {
+    expect(checkViewTarget("chat.local", "settings", ctx)).toContain("不允许放在");
+  });
+
+  it("context 型必须给 ctx，global 型不该给", () => {
+    expect(checkViewTarget("chat.local", "task-run", null)).toContain("必须给上下文键");
+    expect(checkViewTarget("task.tree", "task", ctx)).toContain("不该给");
   });
 });

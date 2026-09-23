@@ -10,8 +10,11 @@ import {
   findArea,
   ownerAt,
   rowLineSegments,
+  formatTracks,
   fr,
+  parseTracks,
   px,
+  resolveLayout,
   trackCss,
   unownedCells,
   validateLayout,
@@ -249,5 +252,81 @@ describe("collapsibleTracks —— 隐藏 area 时哪些 track 能收（实测�
 
   it("无隐藏 → 一个都不收", () => {
     expect(collapsibleTracks(bar, new Set())).toEqual({ cols: [], rows: [] });
+  });
+});
+
+// ═══════════════════════════════════════════
+// CLI 表达：track 串 ↔ TrackSize[]
+//   `ui layout set --cols 240,*,320` 是第一种测试能力（CLI 操纵 UI 状态）的入口，
+//   故解析/回显必须严格：非法 token 一律 null，不造默认值。
+// ═══════════════════════════════════════════
+
+describe("parseTracks", () => {
+  it("数字=px，*=fr(1)，裸数字与 px 等价", () => {
+    expect(parseTracks("240,*,320")).toEqual([px(240), fr(1), px(320)]);
+    expect(parseTracks("240px,320px")).toEqual([px(240), px(320)]);
+  });
+
+  it("显式 fr 值（2fr）", () => {
+    expect(parseTracks("240,2fr")).toEqual([px(240), fr(2)]);
+  });
+
+  it("允许 0px（新增线的初始尺寸就是 0）与空格", () => {
+    expect(parseTracks("0, 1fr , 200")).toEqual([px(0), fr(1), px(200)]);
+  });
+
+  it("非法 token → null（不静默退化）", () => {
+    for (const bad of ["", " ", "abc", "240,", ",240", "-5", "0fr", "-1fr", "240,,320", "1e3"]) {
+      expect(parseTracks(bad), bad).toBeNull();
+    }
+  });
+
+  it("formatTracks 与 parseTracks 互逆", () => {
+    for (const spec of ["240,*,320", "0,1fr,200", "300,2fr"]) {
+      expect(formatTracks(parseTracks(spec)!)).toBe(spec.replace("1fr", "*"));
+    }
+  });
+});
+
+// ═══════════════════════════════════════════
+// resolveLayout —— 有效布局（渲染与 CLI 必须同源）
+// ═══════════════════════════════════════════
+
+describe("resolveLayout", () => {
+  const base = () => threeCol();
+
+  it("无覆盖 → 与原布局等值（不共享可变数组）", () => {
+    const out = resolveLayout(base(), {});
+    expect(out.cols).toEqual([px(240), fr(1), px(320)]);
+    expect(out.cols).not.toBe(base().cols);
+  });
+
+  it("用户 track 覆盖生效；长度不符则忽略（防脏数据）", () => {
+    const out = resolveLayout(base(), { cols: [px(100), px(200), px(300)] });
+    expect(out.cols).toEqual([px(100), px(200), px(300)]);
+    const bad = resolveLayout(base(), { cols: [px(100)] });
+    expect(bad.cols).toEqual([px(240), fr(1), px(320)]);
+  });
+
+  it("隐藏 area → 其独占 track 归零（穿过它的 track 不受影响）", () => {
+    const l: Layout = {
+      version: LAYOUT_VERSION,
+      cols: [px(200), fr(1), px(300)],
+      rows: [fr(1), px(200)],
+      areas: [
+        { id: "left", col: 0, row: 0, rowSpan: 2 },
+        { id: "center", col: 1, row: 0 },
+        { id: "right", col: 2, row: 0, rowSpan: 2 },
+        { id: "bottom", col: 1, row: 1 },
+      ],
+    };
+    const out = resolveLayout(l, { hidden: { left: true } });
+    expect(out.cols[0]).toEqual(px(0)); // left 独占 col0
+    expect(out.cols[1]).toEqual(fr(1)); // center / bottom 还在
+  });
+
+  it("没有任何隐藏 → 尺寸原样（不误触归零）", () => {
+    const out = resolveLayout(base(), { hidden: { detail: false } });
+    expect(out.cols).toEqual([px(240), fr(1), px(320)]);
   });
 });

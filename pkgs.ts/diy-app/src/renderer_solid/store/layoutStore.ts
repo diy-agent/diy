@@ -11,11 +11,29 @@
  */
 import { createSignal } from "solid-js";
 import { Caches } from "../lib/ui-state";
-import { px, type TrackSize } from "../../shared/grid-layout";
+import { px, resolveLayout, type Layout, type TrackSize } from "../../shared/grid-layout";
+import {
+    applyHiddenViews,
+    defaultBinding,
+    type Binding,
+    type PageDef,
+} from "../../shared/view-registry";
 
 export interface PageLayoutState {
     /** areaId → 隐藏（最小化）。缺省 = 显示 */
     hidden: Record<string, boolean>;
+    /**
+     * viewInstanceKey → 隐藏（**view 级**，与上面的 area 级是两层，别混）。
+     *
+     * 语义与 binding 的 null 一致：隐藏 = 从 area 里拿掉，**实例状态保留**
+     * （滚回位置/草稿不丢），再显示时原样回来 —— 见 133「被删 area 上的 view 置
+     * binding = null 隐藏而非销毁」。
+     *
+     * 键是 viewInstanceKey（context 型 view 带 `@ctx`），故「这个任务页隐藏日志」
+     * 不会波及别的任务实例。同一 view 挂多个 page 时，各自独立（`chat.local` 在
+     * task-run 是中心、在 lab 是卫星，隐藏一个不影响另一个）。
+     */
+    hiddenViews: Record<string, boolean>;
     /** 被最大化的 area id；null = 正常网格 */
     maximized: string | null;
     /** 用户拖拽后的 track 覆盖（整份）。undefined = 用 page 默认 */
@@ -34,6 +52,7 @@ const defaultHidden = (pageId: string): Record<string, boolean> => {
 /** 无用户记录时的默认态（**不是**空态：空态会丢掉开发者默认布局） */
 const defaultState = (pageId: string): PageLayoutState => ({
     hidden: defaultHidden(pageId),
+    hiddenViews: {},
     maximized: null,
 });
 
@@ -61,8 +80,15 @@ function load(): Record<string, PageLayoutState> {
             }
             return ts;
         };
+        const hiddenViews: Record<string, boolean> = {};
+        if (o.hiddenViews && typeof o.hiddenViews === "object" && !Array.isArray(o.hiddenViews)) {
+            for (const [k, b] of Object.entries(o.hiddenViews as Record<string, unknown>)) {
+                if (b === true) hiddenViews[k] = true;
+            }
+        }
         out[pid] = {
             hidden,
+            hiddenViews,
             maximized: typeof o.maximized === "string" ? o.maximized : null,
             cols: tracks(o.cols),
             rows: tracks(o.rows),
@@ -112,6 +138,40 @@ export const layoutStore = {
         layoutStore.setAreaHidden(pageId, areaId, !layoutStore.isHidden(pageId, areaId));
     },
 
+    /**
+     * 本 page **实例**的有效 binding = 注册表默认 + 本页的 view 级隐藏覆盖。
+     * 渲染层直接用这个（不要再手拼 defaultBinding，否则 view 隐藏会失效）。
+     */
+    bindingFor(page: PageDef, ctx: string | null): Binding {
+        return applyHiddenViews(defaultBinding(page, ctx), layoutStore.pageState(page.id).hiddenViews);
+    },
+
+    /** 某 view 实例是否被隐藏（view 级，与 area 级 isHidden 是两层） */
+    isViewHidden(pageId: string, viewKey: string): boolean {
+        return layoutStore.pageState(pageId).hiddenViews[viewKey] === true;
+    },
+
+    /**
+     * 隐藏 / 显示某 view 实例。
+     *
+     * 与 `ui view expand`（折叠框展开）和 `viewarea.set`（area 开合）是三件不同的事：
+     *    expand    → view **内部**的折叠框（模板树 / 变量定义…）
+     *    viewarea  → view 所在的 area 整体开合
+     *    本方法    → 单个 **view 实例**在 area 里的去留
+     */
+    setViewHidden(pageId: string, viewKey: string, hidden: boolean): void {
+        patch(pageId, (s) => {
+            const h = { ...s.hiddenViews };
+            if (hidden) h[viewKey] = true;
+            else delete h[viewKey];
+            return { ...s, hiddenViews: h };
+        });
+    },
+
+    toggleViewHidden(pageId: string, viewKey: string): void {
+        layoutStore.setViewHidden(pageId, viewKey, !layoutStore.isViewHidden(pageId, viewKey));
+    },
+
     /** 最大化某 area（再点一次传 null 恢复） */
     setMaximized(pageId: string, areaId: string | null): void {
         patch(pageId, (s) => ({ ...s, maximized: areaId }));
@@ -145,7 +205,36 @@ export const layoutStore = {
         });
     },
 
-    /** 回到开发者默认布局（尺寸 + 开合 + 最大化） */
+    /**
+     * 有效布局（供渲染与 CLI `ui layout get`；两者必须同源）。
+     * `base` 由调用方给（page 的开发者默认），本 store 不知道 page 定义。
+     */
+    resolve(pageId: string, base: Layout): Layout {
+        return resolveLayout(base, layoutStore.pageState(pageId));
+    },
+
+    /** 一次性写多列/多行尺寸（CLI `ui layout set --cols a,b,c`）。undefined = 不动该轴 */
+    setTracks(pageId: string, cols: TrackSize[] | undefined, rows: TrackSize[] | undefined): void {
+        patch(pageId, (s) => ({
+            ...s,
+            cols: cols ?? s.cols,
+            rows: rows ?? s.rows,
+        }));
+    },
+
+    /** 批量收起 / 展开 area（CLI `ui layout set --hide a,b`） */
+    setAreasHidden(pageId: string, areaIds: string[], hidden: boolean): void {
+        patch(pageId, (s) => {
+            const h = { ...s.hidden };
+            for (const id of areaIds) {
+                if (hidden) h[id] = true;
+                else delete h[id];
+            }
+            return { ...s, hidden: h };
+        });
+    },
+
+    /** 回到开发者默认布局（尺寸 + 开合 + 最大化 + view 隐藏） */
     reset(pageId: string): void {
         patch(pageId, () => defaultState(pageId));
     },

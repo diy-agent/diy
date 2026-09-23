@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
+import { makeUiDriver, type A11yNode, type UiDriver } from "./ui-drive";
 
 let fx: { sh: ShellTest; HOME: string; electron: ElectronTest };
 let uri = "";
@@ -43,6 +44,19 @@ function collectText(nodes: any[], acc: string[] = []): string[] {
     if (n?.children) collectText(n.children, acc);
   }
   return acc;
+}
+
+
+/** 在 a11y 树里按谓词找节点（拿 rect 用；`ui inspect` 的输出带坐标） */
+function findNodeRect(nodes: any, pred: (n: any) => boolean): any | undefined {
+  const list = Array.isArray(nodes) ? nodes : [nodes];
+  for (const n of list) {
+    if (!n) continue;
+    if (pred(n)) return n.rect;
+    const hit = findNodeRect(n.children, pred);
+    if (hit) return hit;
+  }
+  return undefined;
 }
 
 async function a11yText(): Promise<string> {
@@ -79,11 +93,11 @@ describe("任务 tab —— 打开 / 聚焦 / 关闭", () => {
       label: "任务执行页上屏",
     });
     expect(text).toContain("🪟 提示词"); // 子页面入口
-    // 布局按钮：**本 page 有几个 area 就有几个**（不是只给试验场一个）
+    // 布局按钮：**只给有 view 的 area**（right / bottom 还是空的，按钮点了没反应）
     expect(text).toContain("① left");
     expect(text).toContain("② center");
-    expect(text).toContain("③ right");
-    expect(text).toContain("④ bottom");
+    expect(text).not.toContain("right");
+    expect(text).not.toContain("bottom");
     expect(text).toContain("任务详情");
     expect(text).toContain("发送"); // chat 在
     // 详情不再有 tab（会话已移到 chat area）
@@ -163,5 +177,203 @@ describe("提示词页 = 子页面（打开 / 生命周期）", () => {
     const after = await tabs();
     expect(after.opened.filter((k) => k.startsWith("lab:"))).toEqual([]); // 子页面连带关闭
     expect(after.opened).not.toContain(`task-run:${uri}`);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// view 级隐藏/显示（ui view set）—— 与 viewarea.set / view.expand 是三件事
+// ═══════════════════════════════════════════════════════════════
+
+describe("ui view set —— view 级隐藏/显示", () => {
+  it("任务执行页：空 area（right / bottom）不该有开合按钮", async () => {
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    const s = await waitUntil(a11yText, (t) => t.includes("任务详情"), { label: "任务执行页上屏" });
+    expect(s).toContain("① left");
+    expect(s).toContain("② center");
+    // right / bottom 在本 page 没有任何 view → 按钮点了没反应，不该出现
+    expect(s).not.toContain("right");
+    expect(s).not.toContain("bottom");
+  });
+
+  it("隐藏 chat.local → 其 area 空掉，按钮与内容一并消失；显示 → 原样回来", async () => {
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    await waitUntil(a11yText, (t) => t.includes("② center"), { label: "隐藏前的三栏" });
+
+    await fx.sh.getJson(`./diy.sh ui view set chat.local closed --ctx ${uri}`);
+    const hidden = await waitUntil(a11yText, (t) => !t.includes("② center"), {
+      label: "center 空掉",
+    });
+    expect(hidden).toContain("① left"); // 左侧详情仍在
+    expect(hidden).toContain("任务详情");
+
+    await fx.sh.getJson(`./diy.sh ui view set chat.local open --ctx ${uri}`);
+    const back = await waitUntil(a11yText, (t) => t.includes("② center"), { label: "恢复显示" });
+    expect(back).toContain("① left");
+  });
+
+  it("拒绝非法寻址（未知 view / view 不含该 page / context 型缺 ctx）", async () => {
+    await fx.sh.assertSession(`
+      $! ./diy.sh ui view set ghost.view closed --ctx ${uri}
+      *未知 view*
+    `);
+    await fx.sh.assertSession(`
+      $! ./diy.sh ui view set chat.local closed --page settings --ctx ${uri}
+      *不允许放在*
+    `);
+    await fx.sh.assertSession(`
+      $! ./diy.sh ui view set chat.local closed
+      *必须给上下文键*
+    `);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ui layout —— CLI 操纵 UI 状态（第一种测试能力的入口）
+//   验证链：CLI 写布局 → 有效布局变 → **界面上真的变**（不是只改了内存）
+// ═══════════════════════════════════════════════════════════════
+
+describe("ui layout —— 读 / 写 / 复位", () => {
+  async function layout(page = "task-run") {
+    const r = await fx.sh.getJson(`./diy.sh ui layout get ${page}`);
+    return (r.data as any)?.data;
+  }
+
+  it("get：返回有效布局 + 用户态偏离项", async () => {
+    await fx.sh.getJson("./diy.sh ui layout reset task-run");
+    const d = await layout();
+    expect(d.hidden).toEqual(["bottom", "right"]); // 开发者默认（DEFAULT_HIDDEN）
+    expect(d.hiddenViews).toEqual([]);
+    expect(d.maximized).toBeNull();
+    expect(d.layout.areas.map((a: any) => a.id)).toEqual(["left", "center", "right", "bottom"]);
+    // right / bottom 默认收起 → 它们的独占 track 归零
+    expect(d.layout.cols[2]).toEqual({ unit: "px", value: 0 });
+    expect(d.layout.rows[1]).toEqual({ unit: "px", value: 0 });
+  });
+
+  it("set --cols 改尺寸：有效布局反映，且**界面上列宽真的变**", async () => {
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    await fx.sh.getJson("./diy.sh ui layout reset task-run");
+
+    await fx.sh.getJson("./diy.sh ui layout set task-run --cols 420,*,0 --rows *,0 --show bottom");
+    const d = await layout();
+    expect(d.layout.cols[0]).toEqual({ unit: "px", value: 420 });
+    expect(d.hidden).toEqual(["right"]); // bottom 已被 --show 打开
+
+    // 界面侧：左栏容器宽度真的接近 420（不是只改了内存）
+    const w = await waitUntil(
+      async () => {
+        const res = await fx.sh.getJson("./diy.sh ui inspect");
+        const tree = (res.data as any)?.data?.tree;
+        return findNodeRect(tree, (n) => n.text === "任务详情")?.w ?? 0;
+      },
+      (v) => v > 380,
+      { label: "左栏宽度跟上" },
+    );
+    expect(w).toBeLessThan(470);
+  });
+
+  it("非法 --cols 被拒（不静默退化）", async () => {
+    await fx.sh.assertSession(`
+      $! ./diy.sh ui layout set task-run --cols abc
+      *--cols 格式非法*
+    `);
+  });
+
+  it("reset：回到开发者默认（尺寸 + 开合 + 最大化）", async () => {
+    await fx.sh.getJson("./diy.sh ui layout set task-run --cols 420,*,0 --maximize center");
+    expect((await layout()).maximized).toBe("center");
+
+    await fx.sh.getJson("./diy.sh ui layout reset task-run");
+    const d = await layout();
+    expect(d.maximized).toBeNull();
+    expect(d.hidden).toEqual(["bottom", "right"]);
+    expect(d.layout.cols[0]).toEqual({ unit: "px", value: 300 });
+  });
+
+  it("get 的 hiddenViews：不传 ctx = 看全貌，传 ctx = 只看本实例（不串台）", async () => {
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    await fx.sh.getJson(`./diy.sh ui view set chat.local closed --ctx ${uri}`);
+
+    // 不传 ctx → 全貌（排障用）
+    const all = await layout();
+    expect(all.hiddenViews).toContain(`chat.local@${uri}`);
+
+    // 传本实例 ctx → 有这条
+    const mine = await fx.sh.getJson(`./diy.sh ui layout get task-run --ctx ${uri}`);
+    expect((mine.data as any).data.hiddenViews).toEqual([`chat.local@${uri}`]);
+
+    // 传别的 ctx → 不该看到（view 隐藏按实例，不是按 page）
+    const other = await fx.sh.getJson("./diy.sh ui layout get task-run --ctx projects/1/tasks/999");
+    expect((other.data as any).data.hiddenViews).toEqual([]);
+
+    await fx.sh.getJson(`./diy.sh ui view set chat.local open --ctx ${uri}`);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 第二种测试能力：**真实 UI 操作**（CDP 注入原生鼠标事件）
+//
+// 与上面的 `ui tab open` / `ui layout set` 分工不同：
+//   上面验「核心能力」（状态机 / 契约 / 数据流），快且可断言细节；
+//   这里验「界面真的点得动」—— 事件走完整命中测试，与真人点击同路径。
+// 拖动只在拖线实现得稳时做，否则退化为「点全屏 / 开合」等核心交互。
+// ═══════════════════════════════════════════════════════════════
+
+describe("真实 UI 操作 —— 点击（第二种测试能力）", () => {
+  let ui: UiDriver;
+
+  beforeAll(async () => {
+    ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
+      const r = await fx.sh.getJson("./diy.sh ui inspect");
+      return (r.data as any)?.data?.tree as A11yNode | undefined;
+    });
+  });
+
+  afterAll(() => ui?.close());
+
+  it("点面包屑「任务管理」→ 真的回到任务树", async () => {
+    // 这条曾经是假绿：面包屑的祖先项 onClick 写成空函数（注释「App 侧会处理」，
+    // 实际没人处理），点击毫无反应 —— 但断言只查了「tab 列表」于是照样通过。
+    // 现在断言改查**界面**：主区不该再有「任务详情」。
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    await waitUntil(a11yText, (t) => t.includes("任务详情"), { label: "任务执行页上屏" });
+
+    await ui.click("任务管理");
+    const text = await waitUntil(a11yText, (t) => !t.includes("任务详情"), { label: "回到任务树" });
+    expect(text).toContain("创建项目"); // 任务管理页在
+    expect((await tabs()).active).toBe(""); // 状态与界面一致
+  });
+
+  it("点 area 开合按钮 → 界面真的收掉该区域，再点回来", async () => {
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    await fx.sh.getJson("./diy.sh ui layout reset task-run");
+    await waitUntil(a11yText, (t) => t.includes("① left") && t.includes("任务详情"), { label: "三栏就位" });
+
+    await ui.click("① left");
+    const closed = await waitUntil(a11yText, (t) => !t.includes("任务详情"), { label: "左栏收起" });
+    expect(closed).toContain("② center"); // chat 仍在
+
+    await ui.click("① left"); // 不是单向破坏，点得回来
+    expect(await waitUntil(a11yText, (t) => t.includes("任务详情"), { label: "左栏展开" })).toContain("任务详情");
+  });
+
+  it("点侧栏 tab 的 ✕ → 真的关掉该 tab", async () => {
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    expect((await tabs()).opened).toContain(`task-run:${uri}`);
+
+    // 侧栏默认是图标 rail（收起态装不下 ✕），先按真人路径锁定展开
+    await ui.clickSelector('button[title="锁定展开"]');
+    // ✕ 是 `opacity-0 group-hover:opacity-70`：a11y 树把它当不可见剔除（opacity:0），
+    // 且 CDP 注入的 mouseMoved 不会触发 CSS :hover（见 ui-drive 注释）。但它照样
+    // 命中测试正常 —— 故按 DOM 取坐标、用 CDP 原生事件真实点击。
+    await ui.clickSelector("button[title*='关闭']");
+    await new Promise((r) => setTimeout(r, 300));
+
+    const after = await waitUntil(tabs, (t) => !t.opened.includes(`task-run:${uri}`), {
+      label: "tab 被关掉",
+    });
+    expect(after.opened).not.toContain(`task-run:${uri}`);
+    expect(after.active).toBe("");
+    await ui.clickSelector('button[title*="取消锁定"]'); // 还原，别影响后续用例
   });
 });

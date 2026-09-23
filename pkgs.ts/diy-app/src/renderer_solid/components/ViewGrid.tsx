@@ -13,14 +13,12 @@
 import { For, Show, createMemo, type JSX } from "solid-js";
 import {
     areaCss,
-    collapsibleTracks,
     colLineSegments,
     findArea,
+    resolveLayout,
     rowLineSegments,
     trackCss,
-    px,
     type Layout,
-    type TrackSize,
 } from "../../shared/grid-layout";
 import { findPage, groupViewsByArea, type Binding } from "../../shared/view-registry";
 import { ViewBoundary } from "./ViewBoundary";
@@ -43,23 +41,9 @@ export function ViewGrid(props: {
 
     const st = () => layoutStore.pageState(props.pageId);
 
-    /** 有效布局 = 默认 + 用户 track 覆盖 + 隐藏 area 的 track 归零 */
-    const layout = createMemo<Layout>(() => {
-        const s = st();
-        const base = props.layout;
-        let cols: TrackSize[] = s.cols?.length === base.cols.length ? s.cols : base.cols;
-        let rows: TrackSize[] = s.rows?.length === base.rows.length ? s.rows : base.rows;
-        const hiddenIds = Object.keys(s.hidden).filter((id) => s.hidden[id]);
-        if (hiddenIds.length > 0) {
-            // 只收「该 track 的格子全属已隐藏 area」的那些（见 collapsibleTracks 的教训注释）
-            const col = collapsibleTracks(base, new Set(hiddenIds));
-            cols = [...cols];
-            rows = [...rows];
-            for (const i of col.cols) cols[i] = px(0);
-            for (const j of col.rows) rows[j] = px(0);
-        }
-        return { ...base, cols, rows };
-    });
+    /** 有效布局 = 默认 + 用户 track 覆盖 + 隐藏 area 的 track 归零。
+     *  算法在 shared（resolveLayout）—— 渲染与 CLI `ui layout get` 必须是同一份结果。 */
+    const layout = createMemo<Layout>(() => resolveLayout(props.layout, st()));
 
     /** 按 area 分组；隐藏的 area 不渲染（其 view 的实例状态由 store 保留） */
     const groups = createMemo(() => {

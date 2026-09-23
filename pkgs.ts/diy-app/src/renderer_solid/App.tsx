@@ -16,7 +16,7 @@ import { tabStore } from "./store/tabStore";
 import { layoutStore } from "./store/layoutStore";
 import { diyService } from "./lib/rpc";
 import { notificationStore } from "./store/notificationStore";
-import { findPage } from "../shared/view-registry";
+import { defaultBinding, findPage, findView, viewInstanceKey } from "../shared/view-registry";
 import { taskStateColor } from "../main/core/task-state";
 import { Breadcrumb } from "./components/Breadcrumb";
 import { setRendererActions, resetRendererActions, getRendererActions } from "./lib/renderer-actions";
@@ -106,6 +106,43 @@ export default function App() {
             focus: (uri) => taskStore.selectTask(uri),
             setView: (key, open) => setLabView(key, open),
             setViewArea: (pageId, area, open) => layoutStore.setAreaHidden(pageId, area, !open),
+            // view 级隐藏/显示：key = viewId@ctx（context 型）。global 型 view 没有 ctx 维度
+            getLayout: (pageId, ctx) => {
+                const page = findPage(pageId);
+                if (!page) return null;
+                const st = layoutStore.pageState(pageId);
+                const hidden = Object.keys(st.hidden).filter((k) => st.hidden[k]);
+                // hiddenViews：不传 ctx = 看全貌（排障用）；传了 ctx = 只列本实例的
+                // （本 page 在本 ctx 下**可能出现的** view 键 = binding 的键集）。
+                // 传 null 直接过滤会把 context 型 view 全滤掉（键是 `view@ctx`，空 ctx 对不上），
+                // 实测踩到 —— 故「没给 ctx」与「给了空 ctx」必须区分。
+                const hiddenViews =
+                    ctx === null
+                        ? Object.keys(st.hiddenViews).filter((k) => st.hiddenViews[k])
+                        : Object.keys(st.hiddenViews).filter(
+                              (k) => st.hiddenViews[k] && k in defaultBinding(page, ctx),
+                          );
+                return {
+                    layout: layoutStore.resolve(pageId, page.layout),
+                    hidden: hidden.sort(),
+                    hiddenViews: hiddenViews.sort(),
+                    maximized: st.maximized,
+                };
+            },
+            setLayout: (pageId, changes) => {
+                if (changes.cols || changes.rows) {
+                    layoutStore.setTracks(pageId, changes.cols, changes.rows);
+                }
+                if (changes.hide?.length) layoutStore.setAreasHidden(pageId, changes.hide, true);
+                if (changes.show?.length) layoutStore.setAreasHidden(pageId, changes.show, false);
+                if (changes.maximize !== undefined) layoutStore.setMaximized(pageId, changes.maximize);
+            },
+            resetLayout: (pageId) => layoutStore.reset(pageId),
+            setViewVisible: (pageId, viewId, ctx, visible) => {
+                const def = findView(viewId);
+                if (!def) return;
+                layoutStore.setViewHidden(pageId, viewInstanceKey(def, ctx), !visible);
+            },
             openTaskRun: (uri) => {
                 tabStore.open("task-run", uri);
                 setRoute({ kind: "tab", key: tabStore.active });

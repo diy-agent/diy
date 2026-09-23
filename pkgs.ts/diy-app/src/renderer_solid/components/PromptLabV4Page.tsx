@@ -11,7 +11,7 @@ import { taskStore } from "../store/taskStore";
 import { localChatStore } from "../store/localChatStore";
 import { ViewGrid } from "./ViewGrid";
 import type { JSX } from "solid-js";
-import { defaultBinding, findPage } from "../../shared/view-registry";
+import { areasWithViews, findPage } from "../../shared/view-registry";
 import { layoutStore } from "../store/layoutStore";
 import { Caches, type CacheField } from "../lib/ui-state";
 import { projectFromUri } from "../../shared/task-uri";
@@ -1038,8 +1038,19 @@ export function PromptLabV4Page() {
     /** 提示词页（子页面）的 page 定义 */
     const LAB_PAGE = findPage("lab")!;
     const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
-    /** 右栏 area 内的两个 view 互斥（tab 属于 area，不属于 page） */
-    const [rightTab, setRightTab] = createSignal<"system" | "request">("system");
+    /** 菜单条上的 area 按钮 = 只列本 page 实例下有 view 的 area（空 area 点了没反应） */
+    const menuAreas = () => {
+        const has = areasWithViews(LAB_PAGE, taskUri(), layoutStore.bindingFor(LAB_PAGE, taskUri()));
+        return LAB_PAGE.layout.areas.map((a, idx) => ({ area: a, idx })).filter((x) => has.has(x.area.id));
+    };
+    /** 右栏 area 内的两个 view 互斥（tab 属于 area，不属于 page）。
+     *  落 Caches：area 内 tab 是**用户选择**，切页/重开不该回到默认（模块级 signal 做不到
+     *  跨页面卸载保留，且「重置界面状态」要能一起清掉 —— 故走 ui-state 单一入口）。 */
+    const [rightTab, setRightTabSig] = createSignal<"system" | "request">(Caches.diy_lab_right_tab.get());
+    const setRightTab = (v: "system" | "request") => {
+        setRightTabSig(v);
+        Caches.diy_lab_right_tab.set(v);
+    };
 
     // 首屏 + 切项目都靠上面那个 createEffect(on(project)) 触发 load()（Solid 首次 flush 即跑）
 
@@ -1540,16 +1551,16 @@ export function PromptLabV4Page() {
                         </Show>
                     </span>
                     <div class="flex-1" />
-                    {/* 布局按钮：本 page 有几个 area 就有几个 */}
-                    <For each={LAB_PAGE.layout.areas}>
-                        {(a, i) => (
+                    {/* 布局按钮：只给有 view 的 area（空 area 点了没反应，见 menuAreas） */}
+                    <For each={menuAreas()}>
+                        {({ area, idx }) => (
                             <button
-                                class={`btn btn-xs ${layoutStore.isHidden("lab", a.id) ? "btn-ghost opacity-50" : "btn-active"}`}
-                                title={`${a.id}（区域 ${i() + 1}）开合`}
-                                aria-pressed={!layoutStore.isHidden("lab", a.id)}
-                                onClick={() => layoutStore.toggleArea("lab", a.id)}
+                                class={`btn btn-xs ${layoutStore.isHidden("lab", area.id) ? "btn-ghost opacity-50" : "btn-active"}`}
+                                title={`${area.id}（区域 ${idx + 1}）开合`}
+                                aria-pressed={!layoutStore.isHidden("lab", area.id)}
+                                onClick={() => layoutStore.toggleArea("lab", area.id)}
                             >
-                                {CIRCLED[i()] ?? i() + 1} {a.id}
+                                {CIRCLED[idx] ?? idx + 1} {area.id}
                             </button>
                         )}
                     </For>
@@ -1560,7 +1571,7 @@ export function PromptLabV4Page() {
                         pageId="lab"
                         ctx={taskUri()}
                         layout={LAB_PAGE.layout}
-                        binding={defaultBinding(LAB_PAGE, taskUri())}
+                        binding={layoutStore.bindingFor(LAB_PAGE, taskUri())}
                         renderView={(viewId) => parts[viewId]?.() ?? <div class="p-3 text-xs opacity-60">未注册的 view: {viewId}</div>}
                     />
                 </div>

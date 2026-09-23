@@ -303,3 +303,69 @@ export function collapsibleTracks(layout: Layout, hidden: Set<string>): { cols: 
   }
   return { cols, rows };
 }
+
+// ─── CLI 表达：track 串 ↔ TrackSize[] ─────────────────
+
+/**
+ * 解析 CLI 的 track 串：逗号分隔，数字 = px，`*` = fr(1)，`Nfr` = fr(N)。
+ * 例：`240,*,320` → [px(240), fr(1), px(320)]
+ *
+ * 为什么让 CLI 用这种简写而不是 JSON：布局数据 1:1 映射 CSS Grid，简写与
+ * `grid-template-columns` 的书写方式一致（`240px 1fr 320px` 的逗号版），
+ * 手输与断言都短。非法 token 返回 null，由调用方报错（不在解析里造默认值）。
+ */
+export function parseTracks(spec: string): TrackSize[] | null {
+  const out: TrackSize[] = [];
+  for (const raw of spec.split(",")) {
+    const t = raw.trim();
+    if (t === "") return null;
+    if (t === "*") {
+      out.push(fr(1));
+      continue;
+    }
+    const m = /^(\d+(?:\.\d+)?)(px|fr)?$/.exec(t);
+    if (!m) return null;
+    const v = Number(m[1]);
+    if (!Number.isFinite(v)) return null;
+    const unit = m[2] ?? "px"; // 裸数字按 px（布局尺寸的绝大多数写法）
+    if (unit === "px" ? v < 0 : v <= 0) return null;
+    out.push(unit === "px" ? px(v) : fr(v));
+  }
+  return out.length > 0 ? out : null;
+}
+
+/** track 串的单行回显（get 用；与 parseTracks 互逆） */
+export function formatTracks(tracks: TrackSize[]): string {
+  return tracks.map((t) => (t.unit === "fr" ? (t.value === 1 ? "*" : `${t.value}fr`) : String(t.value))).join(",");
+}
+
+// ─── 有效布局：默认 + 用户覆盖 ─────────────────────────
+
+/** 布局的用户态里，影响几何的部分（layoutStore 的结构子集；避免 shared 依赖 renderer） */
+export interface LayoutOverride {
+  cols?: TrackSize[];
+  rows?: TrackSize[];
+  /** areaId → 隐藏 */
+  hidden?: Record<string, boolean>;
+}
+
+/**
+ * 有效布局 = 开发者默认 + 用户 track 覆盖 + 隐藏 area 的 track 归零。
+ *
+ * 抽到 shared 的原因：渲染（ViewGrid）与 CLI（`ui layout get`）必须算出**同一份**
+ * 结果，否则测试断言的布局和界面上的布局是两回事。原先这段逻辑只活在 ViewGrid
+ * 的 createMemo 里。
+ */
+export function resolveLayout(base: Layout, override: LayoutOverride): Layout {
+  const cols = override.cols?.length === base.cols.length ? override.cols : base.cols;
+  const rows = override.rows?.length === base.rows.length ? override.rows : base.rows;
+  const hiddenIds = Object.keys(override.hidden ?? {}).filter((id) => override.hidden![id]);
+  if (hiddenIds.length === 0) return { ...base, cols, rows };
+  // 只收「该 track 的格子全属已隐藏 area」的那些（见 collapsibleTracks 的教训注释）
+  const fold = collapsibleTracks(base, new Set(hiddenIds));
+  const nextCols = [...cols];
+  const nextRows = [...rows];
+  for (const i of fold.cols) nextCols[i] = px(0);
+  for (const j of fold.rows) nextRows[j] = px(0);
+  return { ...base, cols: nextCols, rows: nextRows };
+}
