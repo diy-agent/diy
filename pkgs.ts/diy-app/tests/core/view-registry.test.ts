@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { validateLayout } from "../../src/shared/grid-layout";
 import {
+  DEFAULT_HIDDEN,
   PAGES,
   TASK_RUN_LAYOUT,
   VIEWS,
@@ -71,7 +72,7 @@ describe("依赖倒置 —— 加 view 不必改 page", () => {
 
     expect(before["agent.params@projects/4/tasks/1"]).toBeUndefined();
     expect(after["agent.params@projects/4/tasks/1"]).toBe("right");
-    // page 定义本身一个字都没改
+    // page 定义本身一个字都没改（同一个对象引用）
     expect(findPage("task-run")!.layout).toBe(TASK_RUN_LAYOUT);
   });
 
@@ -84,13 +85,12 @@ describe("依赖倒置 —— 加 view 不必改 page", () => {
 });
 
 describe("defaultBinding", () => {
-  it("任务执行页：4 个 area 各就位（含初始收起的 right/bottom）", () => {
+  it("任务执行页：只挂它自己的 view（lab 已提升为子页面，不再是它的 view）", () => {
     const page = findPage("task-run")!;
     const b = defaultBinding(page, "projects/4/tasks/133");
     expect(b).toEqual({
       "task.detail@projects/4/tasks/133": "left",
       "chat.local@projects/4/tasks/133": "center",
-      "lab.workbench@projects/4/tasks/133": "bottom",
     });
   });
 
@@ -116,45 +116,46 @@ describe("defaultBinding", () => {
   });
 });
 
-describe("试验场降级为底部 viewarea（不再依赖顶级 nav）", () => {
-  it("lab.workbench 只挂 task-run（依赖任务，本就不是全局页面）", () => {
-    const lab = VIEWS.find((v) => v.id === "lab.workbench")!;
-    expect(Object.keys(lab.placement)).toEqual(["task-run"]);
-    expect(lab.placement["task-run"].area).toBe("bottom");
+describe("提示词页 = 子页面（不是任务页的底部面板）", () => {
+  it("lab 声明了 parentPage（生命周期挂父 tab），且是 multi", () => {
+    const lab = findPage("lab")!;
+    expect(lab.parentPage).toBe("task-run");
+    expect(lab.multi).toBe(true);
   });
 
-  it("任务执行页没有名为 lab 的顶级 page", () => {
-    expect(findPage("lab")).toBeUndefined();
+  it("任务执行页不再挂 lab 的任何 view", () => {
+    const taskRunViews = VIEWS.filter((v) => v.placement["task-run"]).map((v) => v.id).sort();
+    expect(taskRunViews).toEqual(["chat.local", "task.detail"]);
   });
 });
 
 describe("groupViewsByArea —— layout + binding → 实际要画什么", () => {
-  it("任务执行页：按 area 的几何顺序输出（left → center → bottom）", () => {
+  it("任务执行页：按 area 的几何顺序输出（left → center）", () => {
     const page = findPage("task-run")!;
     const ctx = "projects/4/tasks/133";
     const groups = groupViewsByArea(page, ctx, defaultBinding(page, ctx));
-    expect(groups.map((g) => g.areaId)).toEqual(["left", "center", "bottom"]);
+    expect(groups.map((g) => g.areaId)).toEqual(["left", "center"]);
     expect(groups[0].views.map((v) => v.id)).toEqual(["task.detail"]);
     expect(groups[1].views.map((v) => v.id)).toEqual(["chat.local"]);
   });
 
-  it("binding[key] = null → 隐藏（被删 area 的 view 不销毁实例）", () => {
+  it("binding[key] = null → 隐藏（实例保留，不销毁重建）", () => {
     const page = findPage("task-run")!;
     const ctx = "projects/4/tasks/1";
     const b = defaultBinding(page, ctx);
-    b[`lab.workbench@${ctx}`] = null; // 用户开了试验场又关掉
+    b[`task.detail@${ctx}`] = null; // 用户最小化了左栏
     const groups = groupViewsByArea(page, ctx, b);
-    expect(groups.map((g) => g.areaId)).toEqual(["left", "center"]);
+    expect(groups.map((g) => g.areaId)).toEqual(["center"]);
   });
 
-  it("binding 改 area → 跟随（拖到右侧；右侧已是合法 area）", () => {
+  it("binding 改 area → 跟随（把任务详情拖到右侧）", () => {
     const page = findPage("task-run")!;
     const ctx = "projects/4/tasks/1";
     const b = defaultBinding(page, ctx);
-    b[`lab.workbench@${ctx}`] = "right";
+    b[`task.detail@${ctx}`] = "right";
     const groups = groupViewsByArea(page, ctx, b);
-    expect(groups.find((g) => g.areaId === "right")?.views.map((v) => v.id)).toEqual(["lab.workbench"]);
-    expect(groups.some((g) => g.areaId === "bottom")).toBe(false);
+    expect(groups.find((g) => g.areaId === "right")?.views.map((v) => v.id)).toEqual(["task.detail"]);
+    expect(groups.some((g) => g.areaId === "left")).toBe(false);
   });
 
   it("同 area 多个 view 按 order 排序（设置页：状态 → 日志 → 外观）", () => {
@@ -176,5 +177,35 @@ describe("groupViewsByArea —— layout + binding → 实际要画什么", () =
     const groups = groupViewsByArea(page, ctx, b);
     expect(groups.some((g) => g.areaId === "ghost")).toBe(false);
     expect(groups.some((g) => g.areaId === "center")).toBe(false); // 该 view 本可落 center，被非法值挡掉
+  });
+});
+
+describe("子页面（一页一中心）", () => {
+  it("lab 是 task-run 的子页面：声明 parentPage，不进顶级导航", () => {
+    const lab = findPage("lab")!;
+    expect(lab.parentPage).toBe("task-run");
+    expect(lab.multi).toBe(true);
+  });
+
+  it("lab 的 view 只在 lab 上（中心 = 编辑器，其余是卫星）", () => {
+    const byPage = (pid: string) =>
+      VIEWS.filter((v) => v.placement[pid]).map((v) => `${v.id}@${v.placement[pid]!.area}`);
+    expect(byPage("lab").sort()).toEqual([
+      "chat.local@bottom",     // 边聊边调：与任务页是同一个 view，只是换个 area
+      "lab.editor@center",     // 中心
+      "lab.inspector@left",
+      "lab.request@right",
+      "lab.system@right",      // 与 request 同 area → 区域内 tab 互斥
+    ]);
+  });
+
+  it("chat.local 同时挂在两个 page：靠 placement，不靠嵌套", () => {
+    const chat = VIEWS.find((v) => v.id === "chat.local")!;
+    expect(chat.placement["task-run"]!.area).toBe("center");
+    expect(chat.placement.lab!.area).toBe("bottom");
+  });
+
+  it("lab 的默认隐藏：bottom（chat 是卫星，默认不占地方）", () => {
+    expect(DEFAULT_HIDDEN.lab).toEqual(["bottom"]);
   });
 });

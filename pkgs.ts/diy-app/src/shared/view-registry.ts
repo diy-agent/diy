@@ -40,6 +40,8 @@ export interface PageDef {
   title: string;
   /** 是否可多开（任务执行页：每个任务一个实例，等同浏览器 tab） */
   multi?: boolean;
+  /** 父 page id：有值 = 子页面（不进顶级导航，生命周期挂父 tab） */
+  parentPage?: string;
   /** 开发者给的默认布局（用户覆盖是另一层数据） */
   layout: Layout;
 }
@@ -56,25 +58,49 @@ export const VIEWS: ViewDef[] = [
     placement: { task: { area: "main", order: 10 } },
   },
   {
-    id: "chat.local",
-    title: "对话",
-    instanceScope: "context", // 每个任务 tab 一个实例
-    placement: { "task-run": { area: "center", order: 10 } },
-  },
-  {
     id: "task.detail",
     title: "任务详情",
     instanceScope: "context",
     placement: { "task-run": { area: "left", order: 10 } },
   },
   {
-    // 阶段 1 的试验场整体是一个 view（内部仍是现有三栏）。
-    // 将来若要「把预览拖到右侧而不显示 devtools」，再拆成 lab.editor / lab.vars / …
-    // 独立 view —— 那时只需改本表与各自 placement，page 侧不动。
-    id: "lab.workbench",
-    title: "试验场",
+    // 提示词页的中心：编辑器。左树 / 右预览都是卫星
+    id: "lab.editor",
+    title: "编辑器",
     instanceScope: "context",
-    placement: { "task-run": { area: "bottom", order: 10 } },
+    placement: { lab: { area: "center", order: 10 } },
+  },
+  {
+    // 左侧一组折叠 view：模板树 / 结构树 / 变量定义 / 变量值
+    // （一个 area 装多个 view，用折叠框呈现 —— 与右栏的 tab 是同一机制的两个取值）
+    id: "lab.inspector",
+    title: "模板与变量",
+    instanceScope: "context",
+    placement: { lab: { area: "left", order: 10 } },
+  },
+  {
+    // 右栏：_system.md 渲染 + 请求体（两 view 在 area 内 tab 互斥）
+    id: "lab.system",
+    title: "系统提示词",
+    instanceScope: "context",
+    placement: { lab: { area: "right", order: 10 } },
+  },
+  {
+    id: "lab.request",
+    title: "请求预览",
+    instanceScope: "context",
+    placement: { lab: { area: "right", order: 20 } },
+  },
+  {
+    // 边聊边调：与任务执行页是**同一个 view**，只是换个 area（卫星）
+    // 这正是「靠 placement、不靠嵌套」的体现
+    id: "chat.local",
+    title: "对话",
+    instanceScope: "context",
+    placement: {
+      "task-run": { area: "center", order: 10 },
+      lab: { area: "bottom", order: 10 },
+    },
   },
   {
     id: "llm.proxy",
@@ -122,6 +148,7 @@ export const TASK_RUN_LAYOUT: Layout = {
 /** 各 page 默认隐藏的 area（开发者默认布局的一部分：试验场是 devtools，默认不占地方） */
 export const DEFAULT_HIDDEN: Record<string, string[]> = {
   "task-run": ["right", "bottom"],
+  lab: ["bottom"], // 提示词页的 chat 是卫星，默认不占地方
 };
 
 export const PAGES: PageDef[] = [
@@ -140,6 +167,25 @@ export const PAGES: PageDef[] = [
     title: "任务执行",
     multi: true, // 每个任务一个实例
     layout: TASK_RUN_LAYOUT,
+  },
+  {
+    // 提示词页：**子页面**（只能由任务执行页打开，不进顶级导航）。
+    // 中心 = 系统提示词编辑器；左右下都是卫星。
+    id: "lab",
+    title: "提示词",
+    multi: true, // 每个任务一个实例（上下文键 = 任务 URI）
+    parentPage: "task-run", // 子页面：关掉任务对话 → 提示词页一并关闭
+    layout: {
+      version: 1,
+      cols: [px(300), fr(1), px(384)],
+      rows: [fr(1), px(0)], // 底部 chat 默认收起（卫星，按需展开）
+      areas: [
+        { id: "left", col: 0, row: 0 },
+        { id: "center", col: 1, row: 0 },
+        { id: "right", col: 2, row: 0 },
+        { id: "bottom", col: 0, row: 1, colSpan: 3 },
+      ],
+    },
   },
   {
     id: "llm",

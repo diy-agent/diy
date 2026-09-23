@@ -593,8 +593,9 @@ export const apiDef = RpcSchema.router({
               set: RpcSchema.unary({
                 desc: `开合 viewarea`,
                 input: {
-                  area: z.string().cliArg({ desc: "area id（任务执行页：left/center/right/bottom）" }),
+                  area: z.string().cliArg({ desc: "area id（如 left/center/right/bottom）" }),
                   open: z.string().cliArg({ desc: "open 或 closed" }),
+                  page: z.string().optional().cliOption({ desc: "page id（缺省 task-run；同一 area 名在不同 page 上是不同的东西）" }),
                 },
                 output: z.object({ status: z.string() }),
               }),
@@ -609,18 +610,22 @@ export const apiDef = RpcSchema.router({
             desc: `任务 tab`,
             children: {
               open: RpcSchema.unary({
-                desc: `打开（或聚焦）任务执行页`,
-                input: { uri: z.string().cliArg({ desc: "任务 URI" }) },
+                desc: `打开（或聚焦）页面 tab`,
+                input: {
+                  uri: z.string().cliArg({
+                    desc: "任务 URI，或 <pageId>:<任务 URI>（如 lab:projects/1/tasks/1 打开提示词子页面）",
+                  }),
+                },
                 output: StatusDataUri,
               }),
               close: RpcSchema.unary({
-                desc: `关闭任务 tab（暂不理会，不改任务状态）`,
-                input: { uri: z.string().cliArg({ desc: "任务 URI" }) },
+                desc: `关闭页面 tab（关父连带关子；不改任务状态）`,
+                input: { uri: z.string().cliArg({ desc: "tab key，如 task-run:projects/1/tasks/1" }) },
                 output: StatusDataUri,
               }),
               active: RpcSchema.unary({
                 desc: `切换到已打开的 tab`,
-                input: { uri: z.string().cliArg({ desc: "任务 URI" }) },
+                input: { uri: z.string().cliArg({ desc: "tab key，如 task-run:projects/1/tasks/1" }) },
                 output: StatusDataUri,
               }),
               list: RpcSchema.unary({

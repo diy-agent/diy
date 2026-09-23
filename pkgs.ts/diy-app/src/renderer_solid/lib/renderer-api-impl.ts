@@ -72,13 +72,17 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
 
   // viewarea（面板）开合：有几何语义、无身份语义
   binding.on(ui.viewarea.set, async ({ input }) => {
-    getRendererActions().setViewArea?.(input.area, input.open !== "closed");
+    // pageId 由调用方给出（同一 area 名在不同 page 上是不同的东西）
+    getRendererActions().setViewArea?.(input.page ?? "task-run", input.area, input.open !== "closed");
     return { status: "ok" };
   });
 
   // 任务 tab：打开/关闭/切换/列举（打开 = 我现在要做它，与任务状态无关）
   binding.on(ui.tab.open, async ({ input }) => {
-    getRendererActions().openTaskRun?.(input.uri);
+    // 两种写法：`<任务 URI>`（= 任务执行页）或 `<pageId>:<任务 URI>`（如 `lab:projects/1/tasks/1`）
+    const m = input.uri.match(/^([a-z][a-z0-9-]*):(.+)$/);
+    if (m) getRendererActions().openTab?.(m[1]!, m[2]!);
+    else getRendererActions().openTab?.("task-run", input.uri);
     return { status: "ok", data: { uri: input.uri } };
   });
 
@@ -93,7 +97,8 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
   });
 
   binding.on(ui.tab.list, async () => {
-    return { status: "ok", data: { opened: tabStore.opened, active: tabStore.active } };
+    // 契约保持字符串数组（CLI/测试都按字符串用）：opened = tab key 列表
+    return { status: "ok", data: { opened: tabStore.opened.map((t) => t.key), active: tabStore.active } };
   });
 
   binding.on(ui.page.toast, async ({ input }) => {

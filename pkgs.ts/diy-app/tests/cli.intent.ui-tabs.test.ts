@@ -66,17 +66,19 @@ describe("任务 tab —— 打开 / 聚焦 / 关闭", () => {
 
   it("打开 → 出现在列表且成为 active；任务执行页真的上屏", async () => {
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    const KEY = `task-run:${uri}`;
     expect(await waitUntil(
       async () => JSON.stringify(await tabs()),
-      (s) => s.includes(uri),
+      (s) => s.includes(KEY),
       { label: "tab 出现在列表" },
-    )).toContain(uri);
-    expect((await tabs()).active).toBe(uri);
+    )).toContain(KEY);
+    expect((await tabs()).active).toBe(KEY);
 
     // 渲染验证：执行页有 page 菜单条（每个 area 一个布局按钮）+ 左栏任务详情 + 中栏输入框
     const text = await waitUntil(a11yText, (s) => s.includes("任务详情") && s.includes("① left"), {
       label: "任务执行页上屏",
     });
+    expect(text).toContain("🪟 提示词"); // 子页面入口
     // 布局按钮：**本 page 有几个 area 就有几个**（不是只给试验场一个）
     expect(text).toContain("① left");
     expect(text).toContain("② center");
@@ -91,11 +93,11 @@ describe("任务 tab —— 打开 / 聚焦 / 关闭", () => {
   it("重复打开同一任务 → 聚焦已有，不新开", async () => {
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
     const t = await tabs();
-    expect(t.opened).toEqual([uri]);
+    expect(t.opened).toEqual([`task-run:${uri}`]);
   });
 
   it("关闭 → 从列表移除并回到任务树（此时无 tab 可选）", async () => {
-    await fx.sh.getJson(`./diy.sh ui tab close ${uri}`);
+    await fx.sh.getJson(`./diy.sh ui tab close task-run:${uri}`);
     const t = await tabs();
     expect(t.opened).toEqual([]);
     expect(t.active).toBe("");
@@ -128,22 +130,38 @@ describe("非法 page 不得白屏（回归 137）", () => {
   });
 });
 
-describe("viewarea 开合（试验场面板）", () => {
-  it("打开任务 tab 后展开 bottom → 试验场内容上屏；收起 → 消失", async () => {
+describe("提示词页 = 子页面（打开 / 生命周期）", () => {
+  it("任务执行页有子页面入口；打开后 tab 列表出现 lab:<uri> 且调参 UI 上屏", async () => {
+    // ① 任务执行页：菜单条上有进入子页面的入口
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
-    // 先确认默认收起（bottom 属开发者默认隐藏的 area）
-    const before = await a11yText();
-    expect(before).not.toContain("变量定义");
-    await fx.sh.getJson("./diy.sh ui viewarea set bottom open");
-    const open = await waitUntil(a11yText, (s) => s.includes("变量定义") && s.includes("模版结构树"), {
-      label: "试验场内容上屏",
-    });
-    expect(open).toContain("系统提示词");
+    const taskRun = await waitUntil(a11yText, (s) => s.includes("🪟 提示词"), { label: "子页面入口" });
+    expect(taskRun).toContain("任务详情"); // 中心是 chat，左栏是详情
 
-    await fx.sh.getJson("./diy.sh ui viewarea set bottom closed");
-    const closed = await waitUntil(a11yText, (s) => !s.includes("变量定义"), {
-      label: "试验场收起",
+    // ② 打开子页面 → tab 列表出现 lab:<uri>，内容换成提示词调参（中心 = 编辑器）
+    await fx.sh.getJson(`./diy.sh ui tab open lab:${uri}`);
+    expect(await waitUntil(
+      async () => JSON.stringify(await tabs()),
+      (s) => s.includes(`lab:${uri}`),
+      { label: "子页面 tab 出现在列表" },
+    )).toContain(`lab:${uri}`);
+
+    const lab = await waitUntil(a11yText, (s) => s.includes("模板") && s.includes("模版结构树"), {
+      label: "提示词页上屏",
     });
-    expect(closed).toContain("任务详情"); // 执行页本身还在
+    expect(lab).toContain("⟳ 刷新");
+    expect(lab).toContain("① left"); // 本 page 的 area 开合按钮
+    expect(lab).not.toContain("任务详情"); // 不是任务执行页
+  });
+
+  it("关父 tab → 子页面一并关闭（生命周期挂在父上）", async () => {
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    await fx.sh.getJson(`./diy.sh ui tab open lab:${uri}`);
+    const before = await tabs();
+    expect(before.opened).toContain(`lab:${uri}`);
+
+    await fx.sh.getJson(`./diy.sh ui tab close task-run:${uri}`);
+    const after = await tabs();
+    expect(after.opened.filter((k) => k.startsWith("lab:"))).toEqual([]); // 子页面连带关闭
+    expect(after.opened).not.toContain(`task-run:${uri}`);
   });
 });

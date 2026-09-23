@@ -189,31 +189,11 @@ export const Caches = {
     serialize: (v) => v,
     defaultValue: "dark",
   }),
-  /** 试验场左栏宽（px，范围 180-480）。宽度类缓存一律走本文件，
-   *  否则「重置界面状态」清不掉（历史问题：试验场直写 localStorage 的 lab4.leftW）。
-   *  默认 336：左栏现在有两列表格（可用变量 view 的 变量|说明），256 时说明列只剩 ~60px。 */
-  diy_lab_left_width: field<number>("diy_lab_left_width", {
-    parse: (raw) => {
-      const v = Number(raw);
-      return v >= 180 && v <= 480 ? v : null;
-    },
-    serialize: (v) => String(v),
-    defaultValue: 336,
-  }),
   /** 试验场编辑器配色（见 lib/editor-theme 的清单；"diy" = 跟随应用主题） */
   diy_lab_editor_theme: field<string>("diy_lab_editor_theme", {
     parse: (raw) => (raw && raw.length < 40 ? raw : null),
     serialize: (v) => v,
     defaultValue: "diy",
-  }),
-  /** 试验场右栏宽（px，范围 240-640） */
-  diy_lab_right_width: field<number>("diy_lab_right_width", {
-    parse: (raw) => {
-      const v = Number(raw);
-      return v >= 240 && v <= 640 ? v : null;
-    },
-    serialize: (v) => String(v),
-    defaultValue: 384,
   }),
   /** 试验场表格列宽（px 数组，按表分字段）。**表的列宽必须与容器宽度解耦**：
    *  否则拖动左栏会按比例缩放所有列，永远有列看不全；这里存下来后拖左栏不再改变列宽，
@@ -221,13 +201,6 @@ export const Caches = {
   diy_lab_cols_vars: jsonCols("diy_lab_cols_vars", [96, 224]),
   diy_lab_cols_vals: jsonCols("diy_lab_cols_vals", [110, 210]),
   diy_lab_cols_trace: jsonCols("diy_lab_cols_trace", [96, 96, 84, 48]),
-  /** 试验场内层 tab（chat/task/lab）。存这里的原因与草稿相同：页面卸载后要记住选择；
-   *  另一处用途是 CLI 打开任务 tab 后要能直接落到「系统提示词」视图。 */
-  diy_lab_tab: field<string>("diy_lab_tab", {
-    parse: (raw) => (raw === "chat" || raw === "task" || raw === "lab" ? raw : null),
-    serialize: (v) => v,
-    defaultValue: "chat",
-  }),
   /** 试验场未存盘草稿（project → { relpath → 正文 }）。
    *  存这里而不是组件 signal：App.tsx 用 <Show> 挂死页面，切页即卸载 → 半编辑内容全丢。
    *  按 project 分桶，切到别的项目不会看到/不会写入上一个项目的草稿。 */

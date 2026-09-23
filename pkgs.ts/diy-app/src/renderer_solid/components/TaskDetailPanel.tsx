@@ -8,6 +8,7 @@ import { getRendererActions } from "../lib/renderer-actions";
 import { Caches } from "../lib/ui-state";
 import { MarkdownView } from "./MarkdownView";
 import { CodeBlock } from "./CodeBlock";
+import { taskStateColor } from "../../main/core/task-state";
 
 const PANEL_W_MIN = 360;
 /** 上限相对窗口：至少给任务树留 200px，避免抽屉吃掉整页 */
@@ -166,7 +167,6 @@ export function TaskDetailPanel() {
 interface StateOption {
     value: string;
     label: string;
-    dot: string;
 }
 interface StateGroup {
     label: string;
@@ -174,15 +174,15 @@ interface StateGroup {
 }
 
 const STATE_POOL: Record<string, StateOption> = {
-    pending: { value: "pending", label: "待处理", dot: "bg-warning" },
-    active: { value: "active", label: "进行中", dot: "bg-info" },
-    done: { value: "done", label: "已完成", dot: "bg-success" },
-    blocked: { value: "blocked", label: "阻塞", dot: "bg-error" },
-    cancelled: { value: "cancelled", label: "已取消", dot: "bg-neutral" },
-    shelved: { value: "shelved", label: "已搁置", dot: "bg-neutral" },
-    new: { value: "new", label: "新建", dot: "bg-info" },
-    open: { value: "open", label: "打开", dot: "bg-info" },
-    closed: { value: "closed", label: "已关闭", dot: "bg-neutral" },
+    pending: { value: "pending", label: "待处理" },
+    active: { value: "active", label: "进行中" },
+    done: { value: "done", label: "已完成" },
+    blocked: { value: "blocked", label: "阻塞" },
+    cancelled: { value: "cancelled", label: "已取消" },
+    shelved: { value: "shelved", label: "已搁置" },
+    new: { value: "new", label: "新建" },
+    open: { value: "open", label: "打开" },
+    closed: { value: "closed", label: "已关闭" },
 };
 
 /** 下拉分组：任务流程状态 / Issue 风格状态，避免平铺一长串难分辨 */
@@ -197,11 +197,6 @@ const STATE_GROUPS: StateGroup[] = [
     },
 ];
 
-function stateDot(s?: string) {
-    if (!s) return "bg-neutral";
-    return STATE_POOL[s]?.dot ?? "bg-neutral";
-}
-
 /**
  * GitHub 风格状态下拉：不进入编辑态，直接切换任务状态。
  * 选项带颜色圆点 + 状态英文值 + 中文标签，按组展示。
@@ -212,18 +207,14 @@ export function StateSelect(props: { current?: string; saving: boolean; onSave: 
         const known = new Set(STATE_GROUPS.flatMap((g) => g.children.map((o) => o.value)));
         if (props.current && !known.has(props.current)) {
             const groups = STATE_GROUPS.map((g) => ({ ...g, children: [...g.children] }));
-            groups[groups.length - 1].children.push({
-                value: props.current,
-                label: props.current,
-                dot: "bg-neutral",
-            });
+            groups[groups.length - 1].children.push({ value: props.current, label: props.current });
             return groups;
         }
         return STATE_GROUPS;
     });
     const selected = createMemo<StateOption>(() => {
         const cur = props.current ?? "";
-        return (cur && STATE_POOL[cur]) || { value: cur, label: cur, dot: stateDot(cur) };
+        return (cur && STATE_POOL[cur]) || { value: cur, label: cur };
     });
 
     return (
@@ -248,7 +239,7 @@ export function StateSelect(props: { current?: string; saving: boolean; onSave: 
                         item={p.item}
                         class="flex items-center gap-2 rounded px-2 py-1.5 text-xs cursor-pointer data-[highlighted]:bg-base-200 data-[selected]:bg-primary/10"
                     >
-                        <span class={`w-2 h-2 rounded-full inline-block shrink-0 ${opt().dot}`} />
+                        <span class={`w-2 h-2 rounded-full inline-block shrink-0 ${taskStateColor(opt().value)}`} />
                         <span class="font-mono">{opt().value}</span>
                         <span class="opacity-70">{opt().label}</span>
                     </Select.Item>
@@ -263,7 +254,7 @@ export function StateSelect(props: { current?: string; saving: boolean; onSave: 
             )}
         >
             <Select.Trigger class="btn btn-outline btn-xs border-base-300 px-2 cursor-pointer inline-flex items-center gap-2 disabled:opacity-50">
-                <span class={`w-2 h-2 rounded-full inline-block ${selected().dot}`} />
+                <span class={`w-2 h-2 rounded-full inline-block ${taskStateColor(selected().value)}`} />
                 <span class="font-mono">{props.current}</span>
                 <Select.Icon class="opacity-60 text-[10px]">▾</Select.Icon>
             </Select.Trigger>

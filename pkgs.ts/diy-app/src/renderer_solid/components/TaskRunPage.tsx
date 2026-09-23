@@ -16,9 +16,9 @@ import type { Layout } from "../../shared/grid-layout";
 import { ViewGrid } from "./ViewGrid";
 import { TaskSideView } from "./TaskSideView";
 import { LocalChatPage } from "./LocalChatPage";
-import { PromptLabV4Page } from "./PromptLabV4Page";
 import { taskStore } from "../store/taskStore";
 import { layoutStore } from "../store/layoutStore";
+import { getRendererActions } from "../lib/renderer-actions";
 
 const PAGE = findPage("task-run")!;
 
@@ -50,6 +50,15 @@ export function TaskRunPage(props: { uri: string }) {
                     {props.uri}
                 </span>
                 <div class="flex-1" />
+                {/* 打开提示词页（**子页面**：中心是系统提示词，挂在当前任务 tab 之下）。
+                    关掉本任务 tab 时它会一并关闭（tabStore 保证）。 */}
+                <button
+                    class="btn btn-xs btn-ghost"
+                    title="打开提示词页（调模版 / 看变量 / 请求预览）"
+                    onClick={() => getRendererActions().openLab?.(props.uri)}
+                >
+                    🪟 提示词
+                </button>
                 {/* 布局切换：**本 page 有几个 area 就有几个按钮**（不是只给试验场一个）。
                     点一下开合该 area。图标用序号替代 —— 动态绘制随 grid 结构变化的图标
                     待定（见 133），序号先保证「结构可见、可操作」。 */}
@@ -79,8 +88,6 @@ export function TaskRunPage(props: { uri: string }) {
                                 return <TaskSideView uri={props.uri} />;
                             case "chat.local":
                                 return <LocalChatPage />;
-                            case "lab.workbench":
-                                return <PromptLabV4Page />;
                             default:
                                 return <div class="p-3 text-xs opacity-60">未注册的 view: {viewId}</div>;
                         }
