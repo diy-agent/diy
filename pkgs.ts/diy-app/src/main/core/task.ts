@@ -147,10 +147,20 @@ export interface UpdateTaskChanges {
   parent?: string;
 }
 
+/** 正文最小长度。空值/误传（`--body ""`）会静默清空整篇正文且不可恢复（见任务 138），
+ *  故低于此长度一律拒绝 —— 宁可让调用方显式确认，也不让一次手滑毁掉内容。 */
+export const MIN_BODY_LENGTH = 10;
+
 const UpdateTaskSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   state: TaskStateSchema.optional(),
-  body: z.string().optional(),
+  // 只校验不 trim：正文首尾空白照原样写入（调用方给什么就存什么）
+  body: z
+    .string()
+    .optional()
+    .refine((v) => v === undefined || v.trim().length >= MIN_BODY_LENGTH, {
+      message: `正文至少 ${MIN_BODY_LENGTH} 个字符（拒绝空/过短输入，避免误清空正文）`,
+    }),
   parent: z.string().optional(),
 });
 

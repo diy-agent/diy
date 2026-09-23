@@ -148,7 +148,7 @@ export const apiDef = RpcSchema.router({
               uri: z.string().cliArg({ desc: "任务 URI" }),
               title: z.string().optional().cliOption({ short: "t", desc: "新标题" }),
               state: TaskStateSchema.optional().cliOption({ desc: "新状态" }),
-              body: z.string().optional().cliOption({ desc: "新内容" }),
+              body: z.string().optional().cliOption({ desc: "新内容（至少 10 字符，拒绝空/过短以免误清空正文）" }),
               parent: z.string().optional().cliOption({ desc: "父任务 URI（空字符串=取消父子关系）" }),
             },
             output: StatusDataUri,

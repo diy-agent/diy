@@ -215,6 +215,42 @@ describe("task", () => {
     await cleanupProj(pid);
   });
 
+  it("edit — 正文过短/空串被拒绝，且原正文不被清空（防误清空）", async () => {
+    const pid = await freshProj("b1");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 有正文的任务 ${pid}`);
+    await fx.sh.run(`./diy.sh task edit ${uri} --body 原始正文，长度足够通过校验`);
+
+    // 空串：正是当初误清空整篇正文的写法，必须被拒
+    await fx.sh.assertSession(`
+      $! ./diy.sh task edit ${uri} --body ''
+      *正文至少 10 个字符*
+    `);
+    // 纯空白同样被拒（按 trim 后长度判定）
+    await fx.sh.assertSession(`
+      $! ./diy.sh task edit ${uri} --body '          '
+      *正文至少 10 个字符*
+    `);
+
+    const t = await fx.sh.getJson(`./diy.sh task show ${uri}`);
+    expect((t.data as any).data.body).toContain("原始正文");
+    await cleanupProj(pid);
+  });
+
+  it("edit — 正文足够长时正常写入", async () => {
+    const pid = await freshProj("b2");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 占位 ${pid}`);
+
+    await fx.sh.assertJson(`./diy.sh task edit ${uri} --body 这是足够长的正文内容`, {
+      ok: true,
+      data: { status: "ok", data: { uri } },
+    });
+    const t = await fx.sh.getJson(`./diy.sh task show ${uri}`);
+    expect((t.data as any).data.body).toContain("足够长的正文内容");
+    await cleanupProj(pid);
+  });
+
   it("create — 未注册的 project 报错", async () => {
     await fx.sh.assertSession(`
       $! ./diy.sh task create 任务 99999

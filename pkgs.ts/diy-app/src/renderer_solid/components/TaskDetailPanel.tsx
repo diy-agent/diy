@@ -4,6 +4,7 @@ import * as Select from "@kobalte/core/select";
 import { taskStore, type TaskDetail } from "../store/taskStore";
 import { localChatStore } from "../store/localChatStore";
 import { draftStore } from "../store/draftStore";
+import { notificationStore } from "../store/notificationStore";
 import { diyService } from "../lib/rpc";
 import { getRendererActions } from "../lib/renderer-actions";
 import { Caches } from "../lib/ui-state";
@@ -409,7 +410,10 @@ export function TaskInfoView(props: { task: TaskDetail }) {
             await taskStore.selectTask(t.uri);
             setEditing(false);
         } catch (err: any) {
+            // 保存失败必须出声：校验拒绝（如正文过短/标题为空）若只 console.error，
+            // 用户看到的是「点了保存没反应、内容也没变」，无从判断原因
             console.error("[TaskInfoView] save failed:", err);
+            notificationStore.addToast("error", `保存失败: ${err?.message ?? String(err)}`);
         } finally {
             setSaving(false);
         }

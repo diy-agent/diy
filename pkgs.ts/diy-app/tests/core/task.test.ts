@@ -2,13 +2,14 @@
 // 🎯 意图测试：任务 CRUD 全链路 + 校验逻辑
 //    所有数据在隔离 DIY_HOME（/tmp/...），不碰生产
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { diyHome, getTask } from "../../src/main/core/state";
 import {
   createTask,
   updateTask,
+  MIN_BODY_LENGTH,
   deleteTask,
   listTasks,
   ValidationError,
@@ -165,6 +166,60 @@ describe("updateTask", () => {
 });
 
 // ═══════════════════════════════════════
+// 正文长度守卫（防误清空）
+//   实证事故：`task edit <uri> --body ""` 静默清空整篇正文且不可恢复。
+//   过短/空白一律拒绝；未指定 body 时不受影响（编辑其他字段照旧）。
+// ═══════════════════════════════════════
+
+describe("updateTask 正文最小长度", () => {
+  let uri: string;
+
+  beforeEach(() => {
+    uri = createTask({ title: "有正文的任务", project: PROJECT });
+    updateTask(uri, { body: "原始正文内容，足够长以通过校验" });
+  });
+
+  const readBody = () => readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8");
+
+  it("空串被拒绝，且原正文不被清空", () => {
+    expect(() => updateTask(uri, { body: "" })).toThrow(ValidationError);
+    expect(readBody()).toContain("原始正文内容");
+  });
+
+  it("纯空白被拒绝（按 trim 后长度判定）", () => {
+    expect(() => updateTask(uri, { body: " ".repeat(40) })).toThrow(ValidationError);
+    expect(() => updateTask(uri, { body: "\n\n\t  \n" })).toThrow(ValidationError);
+    expect(readBody()).toContain("原始正文内容");
+  });
+
+  it("长度 9 被拒，长度 10 通过（边界）", () => {
+    expect(() => updateTask(uri, { body: "123456789" })).toThrow(ValidationError);
+    updateTask(uri, { body: "1234567890" });
+    expect(readBody()).toContain("1234567890");
+  });
+
+  it("不传 body（只改标题/状态）不受守卫影响", () => {
+    updateTask(uri, { title: "改标题" });
+    updateTask(uri, { state: "done" });
+    const content = readBody();
+    expect(content).toContain("title: 改标题");
+    expect(content).toContain("state: done");
+    expect(content).toContain("原始正文内容");
+  });
+
+  it("报错信息里带上最小长度（调用方能自解释）", () => {
+    try {
+      updateTask(uri, { body: "短" });
+      throw new Error("应当抛出 ValidationError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ValidationError);
+      const msgs = (err as InstanceType<typeof ValidationError>).errors.map((e) => e.msg).join(" ");
+      expect(msgs).toContain(String(MIN_BODY_LENGTH));
+    }
+  });
+});
+
+// ═══════════════════════════════════════
 // updateTask 的字段保留原则
 //   我们只负责自己管的字段；其余（用户自定义 / 外部工具写的）无权删除。
 //   曾经的行为是「按白名单重建 frontmatter」，导致改一次 state 就吃掉
@@ -202,13 +257,13 @@ describe("updateTask 保留非托管字段", () => {
     const fp = writeRawTask(uri, "source_type: local\nsource_uri: local/task/13\n");
 
     updateTask(uri, { title: "改标题" });
-    updateTask(uri, { body: "改正文" });
+    updateTask(uri, { body: "改过的正文（足够长，通过最小长度校验）" });
 
     const content = readFileSync(fp, "utf-8");
     expect(content).toContain("source_type: local");
     expect(content).toContain("source_uri: local/task/13");
     expect(content).toContain("title: 改标题");
-    expect(content).toContain("改正文");
+    expect(content).toContain("改过的正文");
   });
 
   it("不再凭空写入 project（URI 是计算值，不落盘）", () => {
@@ -234,11 +289,11 @@ describe("updateTask 保留非托管字段", () => {
     const uri = createTask({ title: "占位", project: PROJECT });
     const fp = writeRawTask(uri, "priority: low\n");
 
-    updateTask(uri, { body: "换一段正文" });
+    updateTask(uri, { body: "换一段新的正文，长度足够通过校验" });
 
     const content = readFileSync(fp, "utf-8");
     expect(content).toContain("priority: low");
-    expect(content).toContain("换一段正文");
+    expect(content).toContain("换一段新的正文");
     expect(content).not.toContain("原始正文");
   });
 });
