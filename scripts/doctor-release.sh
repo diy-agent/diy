@@ -198,7 +198,7 @@ header "4. workflow 运行状态诊断"
 WORKFLOW_FILE=".github/workflows/release-please.yml"
 
 if [[ ! -f "$WORKFLOW_FILE" ]]; then
-  warn "workflow 文件不存在: $WORKFLOW_FILE（跳过远端运行状态检查）"
+  warn "workflow 文件不存在: ${WORKFLOW_FILE}（跳过远端运行状态检查）"
 else
   echo ""
   info "release-please 采用两步发布机制："
@@ -478,7 +478,7 @@ if [[ -f "$WORKFLOW_FILE" ]]; then
     done <<< "$REQUIRED_SECRETS"
   fi
 else
-  warn "workflow 文件不存在: $WORKFLOW_FILE（跳过凭证检查）"
+  warn "workflow 文件不存在: ${WORKFLOW_FILE}（跳过凭证检查）"
 fi
 
 # ================================================================

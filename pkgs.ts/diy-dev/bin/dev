@@ -19,7 +19,7 @@ _realpath() {
 
 APP_DIR="$(dirname "$(_realpath "$0")")"
 CLI="$APP_DIR/out/cli/index.js"
-[[ -f "$CLI" ]] || { echo "diy-dev 未构建: $CLI（先 ./sha.sh build）" >&2; exit 1; }
+[[ -f "$CLI" ]] || { echo "diy-dev 未构建: ${CLI}（先 ./sha.sh build）" >&2; exit 1; }
 
 # 注意：不要 cd 到 APP_DIR！diy-dev 语义是「cwd 即作用域」（diy.yaml 在哪个目录就在哪操作），
 # node 进程必须保持调用者当前目录。CLI 用绝对路径加载，不依赖 cwd。
