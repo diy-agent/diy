@@ -37,7 +37,6 @@ const limits: LocalAgentLimits = {
     outputClipChars: 10_000,
     bashTimeoutMs: 5_000,
     maxSteps: 1,
-    maxTurns: 1,
 };
 
 describe("read 工具 — 路径解析", () => {
