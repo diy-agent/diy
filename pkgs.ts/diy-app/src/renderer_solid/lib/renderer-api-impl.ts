@@ -1,10 +1,13 @@
 import type { EnvelopeTransport, ServerBinding } from "@diy/rpc";
 import { ChannelServerBinding } from "@diy/rpc";
-import { getRendererActions } from "./renderer-actions";
+import { getRendererActions, type LayoutChanges } from "./renderer-actions";
 import type { ToastType } from "../store/notificationStore";
 import { apiDef } from "../../main/services/api-def";
 import { diyService } from "./rpc";
 import { taskStore } from "../store/taskStore";
+import { tabStore } from "../store/tabStore";
+import { checkViewTarget } from "../../shared/view-registry";
+import { parseTracks } from "../../shared/grid-layout";
 import { notificationStore } from "../store/notificationStore";
 import { createProjectViaUi } from "./create-project";
 import { createTaskViaUi } from "./create-task";
@@ -63,9 +66,84 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     return { status: "ok" };
   });
 
-  binding.on(ui.view.set, async ({ input }) => {
+  // view 内部折叠框的展开/折叠（与 viewarea 开合是两件事）
+  binding.on(ui.view.expand, async ({ input }) => {
     getRendererActions().setView?.(input.key, input.open !== "closed");
     return { status: "ok" };
+  });
+
+  // 布局读 / 写 / 复位（CLI 操纵 UI 状态的第一种测试能力）
+  binding.on(ui.layout.get, async ({ input }) => {
+    const snap = getRendererActions().getLayout?.(input.page, input.ctx ?? null);
+    if (!snap) throw new Error(`未知 page: ${input.page}`);
+    return { status: "ok", data: { ...snap, layout: snap.layout as never } };
+  });
+
+  binding.on(ui.layout.set, async ({ input }) => {
+    const changes: LayoutChanges = {};
+    // cols/rows 在 renderer 侧解析成 TrackSize[]（CLI 只传简写串）
+    if (input.cols !== undefined) {
+      const t = parseTracks(input.cols);
+      if (!t) throw new Error(`--cols 格式非法: ${input.cols}（数字=px，*=fr，逗号分隔）`);
+      changes.cols = t;
+    }
+    if (input.rows !== undefined) {
+      const t = parseTracks(input.rows);
+      if (!t) throw new Error(`--rows 格式非法: ${input.rows}`);
+      changes.rows = t;
+    }
+    if (input.hide) changes.hide = input.hide.split(",").map((x) => x.trim()).filter(Boolean);
+    if (input.show) changes.show = input.show.split(",").map((x) => x.trim()).filter(Boolean);
+    if (input.maximize !== undefined) changes.maximize = input.maximize || null;
+    getRendererActions().setLayout?.(input.page, changes);
+    return { status: "ok" };
+  });
+
+  binding.on(ui.layout.reset, async ({ input }) => {
+    getRendererActions().resetLayout?.(input.page);
+    return { status: "ok" };
+  });
+
+  // view 级隐藏/显示（第三件事：某 view 实例在 area 里的去留）
+  binding.on(ui.view.set, async ({ input }) => {
+    const pageId = input.page ?? "task-run";
+    const ctx = input.ctx ?? null;
+    // 依赖倒置的代价：写错 view/page/ctx 没有类型错误，只能运行时拦（判据与渲染层共用）
+    const bad = checkViewTarget(input.view, pageId, ctx);
+    if (bad) throw new Error(bad);
+    getRendererActions().setViewVisible?.(pageId, input.view, ctx, input.open !== "closed");
+    return { status: "ok" };
+  });
+
+  // viewarea（面板）开合：有几何语义、无身份语义
+  binding.on(ui.viewarea.set, async ({ input }) => {
+    // pageId 由调用方给出（同一 area 名在不同 page 上是不同的东西）
+    getRendererActions().setViewArea?.(input.page ?? "task-run", input.area, input.open !== "closed");
+    return { status: "ok" };
+  });
+
+  // 任务 tab：打开/关闭/切换/列举（打开 = 我现在要做它，与任务状态无关）
+  binding.on(ui.tab.open, async ({ input }) => {
+    // 两种写法：`<任务 URI>`（= 任务执行页）或 `<pageId>:<任务 URI>`（如 `lab:projects/1/tasks/1`）
+    const m = input.uri.match(/^([a-z][a-z0-9-]*):(.+)$/);
+    if (m) getRendererActions().openTab?.(m[1]!, m[2]!);
+    else getRendererActions().openTab?.("task-run", input.uri);
+    return { status: "ok", data: { uri: input.uri } };
+  });
+
+  binding.on(ui.tab.close, async ({ input }) => {
+    getRendererActions().closeTab?.(input.uri);
+    return { status: "ok", data: { uri: input.uri } };
+  });
+
+  binding.on(ui.tab.active, async ({ input }) => {
+    getRendererActions().activateTab?.(input.uri);
+    return { status: "ok", data: { uri: input.uri } };
+  });
+
+  binding.on(ui.tab.list, async () => {
+    // 契约保持字符串数组（CLI/测试都按字符串用）：opened = tab key 列表
+    return { status: "ok", data: { opened: tabStore.opened.map((t) => t.key), active: tabStore.active } };
   });
 
   binding.on(ui.page.toast, async ({ input }) => {
