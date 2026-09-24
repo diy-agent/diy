@@ -12,6 +12,7 @@ import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "./notificationStore";
 import { BlockStore, toTree, type BlockNode, type Op } from "../../main/services/local-blocks";
+import type { ReasoningEffort } from "../../main/services/local-agent";
 
 interface TaskState {
     store: BlockStore;
@@ -89,8 +90,9 @@ function flushRefresh(st: TaskState) {
     refresh(st);
 }
 
-const [models, setModels] = createSignal<Array<{ id: string; name: string }>>([]);
+const [models, setModels] = createSignal<Array<{ id: string; name: string; reasoning: { supported: ReasoningEffort[]; default: ReasoningEffort } }>>([]);
 const [activeModel, setActiveModel] = createSignal<string>("");
+const [reasoningEffort, setReasoningEffort] = createSignal<ReasoningEffort>("medium");
 
 /** 切换/进入会话：首次加载持久化 Op 日志；已加载过的直接复用（含在途流式） */
 /** 拉历史并 fold 进块树（open 的实际加载体，被在途去重包裹） */
@@ -126,7 +128,10 @@ async function open(taskUri: string) {
         try {
             const ms = await diyService.diy.agent.local.models({});
             setModels(ms);
-            if (!activeModel() && ms.length) setActiveModel(ms[0]!.id);
+            if (!activeModel() && ms.length) {
+                setActiveModel(ms[0]!.id);
+                setReasoningEffort(ms[0]!.reasoning.default);
+            }
         } catch (e) {
             // 可观测降级：模型列表非关键路径，不阻塞对话；models() 仍空 → 下次 open 重试
             console.warn("[localChat] 模型列表加载失败（下次进入重试）:", e);
@@ -146,6 +151,7 @@ async function send(taskUri: string, text: string): Promise<boolean> {
             taskUri,
             message: msg,
             model: activeModel() || undefined,
+            reasoningEffort: reasoningEffort(),
         });
         for await (const raw of stream) {
             let op: Op;
@@ -256,6 +262,10 @@ export const localChatStore = {
     get activeModel() {
         return activeModel();
     },
+    get reasoningEffort() {
+        return reasoningEffort();
+    },
+    setReasoningEffort,
     setActiveModel,
     open,
     send,

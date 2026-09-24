@@ -318,6 +318,7 @@ export const apiDef = RpcSchema.router({
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
                   message: z.string().cliArg({ desc: "用户消息" }),
                   model: z.string().optional().cliOption({ desc: `模型（默认 mimo-v2.5，zen/go 子集见 agent local models）` }),
+                  reasoningEffort: z.string().optional().cliOption({ desc: "推理强度（按模型能力）" }),
                 },
                 output: z.string(),
               }),
@@ -352,6 +353,10 @@ export const apiDef = RpcSchema.router({
                     api: z.enum(["chat", "responses"]),
                     contextLimit: z.number(),
                     maxOutputTokens: z.number(),
+                    reasoning: z.object({
+                      supported: z.array(z.string()),
+                      default: z.string(),
+                    }),
                   }),
                 ),
               }),

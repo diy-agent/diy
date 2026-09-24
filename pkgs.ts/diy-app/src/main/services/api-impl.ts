@@ -236,7 +236,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.agent.local.chat, async function* ({ input }) {
     noteRendererTouch("diy.agent.local.chat", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
-    for await (const op of getLocalAgent().chat(input.taskUri, input.message, input.model)) {
+    for await (const op of getLocalAgent().chat(input.taskUri, input.message, input.model, input.reasoningEffort)) {
       yield JSON.stringify(op);
     }
   });

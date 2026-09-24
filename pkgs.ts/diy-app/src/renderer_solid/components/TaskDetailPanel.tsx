@@ -10,6 +10,7 @@ import { Caches } from "../lib/ui-state";
 import { MarkdownView } from "./MarkdownView";
 import { CodeBlock } from "./CodeBlock";
 import { taskStateColor } from "../../main/core/task-state";
+import { VIEW_BAR_H } from "../lib/layout-metrics";
 
 const PANEL_W_MIN = 360;
 /** 上限相对窗口：至少给任务树留 200px，避免抽屉吃掉整页 */
@@ -110,12 +111,12 @@ export function TaskDetailPanel() {
                     onMouseDown={onGripDown}
                 />
                 {/* 卡片头部：URI + 试验场 + 关闭 */}
-                <div class="flex items-center justify-between px-4 py-2 border-b shrink-0">
+                <div class={`flex items-center justify-between px-4 ${VIEW_BAR_H} border-b shrink-0`}>
                     <span class="text-xs font-mono opacity-60 truncate max-w-[300px]">
                         {taskStore.selectedUri}
                     </span>
                     <div class="flex items-center gap-1">
-                        <button class="btn btn-ghost btn-sm" onClick={() => taskStore.selectTask(null)}>
+                        <button class="btn btn-ghost btn-xs" onClick={() => taskStore.selectTask(null)}>
                             ✕
                         </button>
                     </div>

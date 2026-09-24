@@ -97,7 +97,10 @@ const labLayoutTheme = EditorView.theme(labLayout);
 /** daisyUI 贴合主题：等宽 12px，行号弱显，纸面用 base-100 */
 const labTheme = EditorView.theme(
     {
-        "&": { height: "100%", fontSize: "12px", backgroundColor: "var(--color-base-100)" },
+        // 纸面色走变量（带 daisyUI fallback）：默认是自带纸面的 base-100；
+        // 嵌进聊天输入框那种"自己有底色"的容器时，外层把 --md-bg 设成 transparent，
+        // 让容器底色透上来 —— 否则编辑器会糊一块白底，把容器的加深色割成两层。
+        "&": { height: "100%", fontSize: "12px", backgroundColor: "var(--md-bg, var(--color-base-100))" },
         ".cm-content": { fontFamily: "var(--font-mono)", caretColor: "var(--color-primary)" },
         // 行号栏（CM 手册：gutters 是 sticky 的，正文横向滚时会滚到它下面）
         //   · **不能**给 .cm-gutters 设 opacity —— 那会把背景一起变透明，正文从底下透出来"压住行号"
@@ -106,12 +109,13 @@ const labTheme = EditorView.theme(
         //     在 `EditorView.theme` 里写会抛 `Unsupported selector: &light` —— 而且是模块加载期抛，
         //     整个 renderer 白屏。这里用普通选择器（实测能盖住 CM 基础主题的 gutter 背景）
         ".cm-gutters": {
-            backgroundColor: "var(--color-base-100)",
+            backgroundColor: "var(--md-bg, var(--color-base-100))",
             color: "color-mix(in srgb, var(--color-base-content) 55%, transparent)",
             borderRight: "1px solid var(--color-base-300)",
         },
         ".cm-lineNumbers .cm-gutterElement": { padding: "0 6px 0 4px" },
-        ".cm-activeLine": { backgroundColor: "var(--color-base-200)" },
+        // 当前行：默认比纸面深一档（base-200）；内嵌时外层给 --md-active-line 再深一档
+        ".cm-activeLine": { backgroundColor: "var(--md-active-line, var(--color-base-200))" },
         // 高亮：浅色 = 所有出现处；深色 = 当前焦点（同一色相加浓，暗色主题下更亮）
         // 模版 DSL：插值 = 强调色，控制标记 = 主色（与 markdown 着色区分开，一眼认出模版语法）
         // 模版标记的装饰色：只用两个色相（插值 / 控制标记与标签名），属性弱化。
@@ -124,7 +128,7 @@ const labTheme = EditorView.theme(
         ".cm-lab-hl": { backgroundColor: "color-mix(in srgb, var(--color-warning) 16%, transparent)" },
         ".cm-lab-hl-focus": { backgroundColor: "color-mix(in srgb, var(--color-warning) 48%, transparent)" },
         ".cm-activeLineGutter": {
-            backgroundColor: "var(--color-base-200)",
+            backgroundColor: "var(--md-active-line, var(--color-base-200))",
             color: "var(--color-base-content)",
         },
     },
@@ -206,12 +210,25 @@ export function MdEditor(props: {
     highlight?: HlLines | null;
     /** 已知节标签（从模版正文自动收集）；新写的独占一行的标签也会着色，见 shared/xml-tags */
     tags?: ReadonlySet<string>;
+    /** 输入框回车提交；Shift+Enter 仍插入换行。 */
+    onEnter?: () => void;
+    /** 聊天输入框启用自动换行；模板编辑器保持不换行。 */
+    wrap?: boolean;
+    /** 是否显示行号；聊天普通输入默认关闭，全文编辑时开启。 */
+    lineNumbers?: boolean;
+    /**
+     * 嵌在**自有底色**的容器里（聊天输入框）：编辑器背景透明、当前行改用更深一档。
+     * 不设时保持自带纸面（模版编辑器 / 提示词预览的默认形态）。
+     */
+    embedded?: boolean;
+    class?: string;
 }) {
     let host: HTMLDivElement | undefined;
     let view: EditorView | undefined;
     const editableCx = new Compartment();
     const dslCx = new Compartment();
     const styleCx = new Compartment();
+    const lineNumbersCx = new Compartment();
     /** 第三方主题扩展（动态 import，选到才加载）；null = 还没加载好 → 先用内置方案 */
     const [themeExt, setThemeExt] = createSignal<Extension | null>(null);
     // 程序化换文档（切文件/保存/恢复）不回调 onChange：
@@ -224,13 +241,23 @@ export function MdEditor(props: {
             state: EditorState.create({
                 doc: props.value,
                 extensions: [
-                    lineNumbers(),
+                    lineNumbersCx.of(props.lineNumbers === false ? [] : lineNumbers()),
                     highlightActiveLine(),
                     highlightSelectionMatches(),
                     history(),
-                    keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+                    // keymap 比普通 DOM handler 更早处理 CM 的按键；自定义绑定放最前，
+                    // 否则 Enter 会被 CM 默认换行命令消费，聊天回调收不到。
+                    keymap.of([
+                        ...(props.onEnter
+                            ? [{ key: "Enter", run: () => { props.onEnter?.(); return true; } }]
+                            : []),
+                        ...defaultKeymap,
+                        ...historyKeymap,
+                        ...searchKeymap,
+                    ]),
                     // 不自动折行：与预览一致，长了横向滚（折行会让"第几行"对不上行号）
                     markdown(),
+                    ...(props.wrap ? [EditorView.lineWrapping] : []),
                     // 配色（含语法高亮）：内置方案 = daisyUI 纸面 + One Dark/CM 默认；第三方 = 主题自带
                     styleCx.of(styleExtensions()),
                     dslCx.of(makeDslPlugin(props.tags ?? EMPTY_TAGS)),
@@ -292,6 +319,10 @@ export function MdEditor(props: {
     createEffect(() => {
         view?.dispatch({ effects: editableCx.reconfigure(EditorView.editable.of(props.editable)) });
     });
+    // 普通聊天输入隐藏行号，进入全文编辑时即时显示。
+    createEffect(() => {
+        view?.dispatch({ effects: lineNumbersCx.reconfigure(props.lineNumbers === false ? [] : lineNumbers()) });
+    });
     // 高亮区间变化（点模版结构树/变量行）→ 重画 decoration 并把视线带过去；
     // 文档替换后也要重放一次（offset 是相对当前文档的）
     createEffect(() => {
@@ -321,14 +352,18 @@ export function MdEditor(props: {
     const decoVars = () => {
         const t = currentEditorTheme();
         const dark = t.key === "diy" ? themeSignal() === "dark" : t.dark;
-        return dark
+        const base = dark
             ? { "--lab-dsl-interp": "#d19a66", "--lab-dsl-ctl": "#c678dd", "--lab-dsl-attr": "#7f848e" }
             : { "--lab-dsl-interp": "#a35a1f", "--lab-dsl-ctl": "#8b3fa8", "--lab-dsl-attr": "#6b7280" };
+        if (!props.embedded) return base;
+        // 内嵌：背景交给容器（透明），当前行用比容器再深一档的 base-300 —— 容器是 base-200 时
+        // 仍能看出"光标在哪一行"，而整块又保持同一个底色（不会割出两层纸面）。
+        return { ...base, "--md-bg": "transparent", "--md-active-line": "var(--color-base-300)" };
     };
     return (
         <div
             ref={(el) => (host = el)}
-            class="h-full min-h-0 text-left"
+            class={`h-full min-h-0 text-left ${props.class ?? ""}`}
             style={decoVars() as Record<string, string>}
         />
     );

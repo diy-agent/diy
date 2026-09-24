@@ -9,6 +9,7 @@ import { Caches } from "../lib/ui-state";
 import { CreateProjectSheet } from "./CreateProjectSheet";
 import { TASK_STATES, taskStateColor } from "../../main/core/task-state";
 import { CreateTaskSheet } from "./CreateTaskSheet";
+import { VIEW_BAR_H } from "../lib/layout-metrics";
 
 // dnd-kit/solid 未直接导出 DragEndEvent，从 onDragEnd 回调参数提取
 type DragEndEvent = Parameters<NonNullable<DragDropProviderProps["onDragEnd"]>>[0];
@@ -259,7 +260,7 @@ export function TaskTree() {
     return (
         <DragDropProvider onDragEnd={handleDragEnd} sensors={[PointerSensor]}>
             <div class="h-full flex flex-col">
-                <div class="flex items-center justify-between px-3 py-1.5 border-b shrink-0">
+                <div class={`flex items-center justify-between px-3 ${VIEW_BAR_H} border-b shrink-0`}>
                     <span class="text-sm font-semibold">任务</span>
                     <CreateProjectSheet />
                 </div>

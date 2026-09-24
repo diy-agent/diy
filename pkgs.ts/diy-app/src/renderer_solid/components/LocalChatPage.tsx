@@ -20,24 +20,16 @@ import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
 import { Caches, DENSITY_LEVEL, DENSITY_VALUES, type Density } from "../lib/ui-state";
 import { MarkdownView } from "./MarkdownView";
-import { onEnterKey } from "../lib/on-enter";
+import { MdEditor } from "./MdEditor";
+import type { ReasoningEffort } from "../../main/services/local-agent";
+import { reasoningEffortLabel } from "../../shared/reasoning-effort";
+import { IconExpand, IconCompress } from "./icons";
+import { VIEW_BAR_H } from "../lib/layout-metrics";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
 
 // ─── 层级 ───────────────────────────────────────────
 
-const DENSITY_LABEL: Record<Density, string> = {
-    [DENSITY_LEVEL.OUTLINE]: "脉络",
-    [DENSITY_LEVEL.READ]: "阅读",
-    [DENSITY_LEVEL.AUDIT]: "审计",
-    [DENSITY_LEVEL.FORENSIC]: "取证",
-};
-const DENSITY_TITLE: Record<Density, string> = {
-    [DENSITY_LEVEL.OUTLINE]: "脉络：找自己说过啥",
-    [DENSITY_LEVEL.READ]: "阅读：读答案",
-    [DENSITY_LEVEL.AUDIT]: "审计：查过程",
-    [DENSITY_LEVEL.FORENSIC]: "取证：全展开",
-};
 /** 审计及以上（L3/L4：过程以标题行展示） */
 const isAuditPlus = (d: Density) => d === DENSITY_LEVEL.AUDIT || d === DENSITY_LEVEL.FORENSIC;
 
@@ -587,7 +579,10 @@ function ConfirmDialog(props: {
 
 export function LocalChatPage() {
     const uri = () => taskStore.selectedUri ?? null;
-    let inputRef: HTMLTextAreaElement | undefined;
+    const [inputValue, setInputValue] = createSignal("");
+    const [densityOpen, setDensityOpen] = createSignal(false);
+    const [modelMenuOpen, setModelMenuOpen] = createSignal(false);
+    const [fullscreen, setFullscreen] = createSignal(false);
     let scrollRef: HTMLDivElement | undefined;
     /** 跟随态：true=贴底（新内容自动滚到底）；false=用户正在上方阅读（绝不打扰） */
     const [stick, setStick] = createSignal(true);
@@ -623,11 +618,25 @@ export function LocalChatPage() {
     };
     /** 把草稿回填进 textarea（只在换任务 / 服务端草稿到达 / 首挂时调用，不逐键回写） */
     const applyDraft = (u: string | null) => {
-        if (!inputRef) return;
-        inputRef.value = draftStore.get(u, "agent_input");
+        setInputValue(draftStore.get(u, "agent_input"));
     };
     // 首挂（切页面/组件重建，TaskState 在内存保留）：恢复当前任务阅读位置 + 输入框草稿
     onMount(() => {
+        const closePopovers = (e: MouseEvent) => {
+            const target = e.target as Element;
+            if (!target.closest("[data-density-control]")) setDensityOpen(false);
+            if (!target.closest("[data-model-control]")) setModelMenuOpen(false);
+        };
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                setDensityOpen(false);
+                setModelMenuOpen(false);
+                setFullscreen(false);
+            }
+        };
+        document.addEventListener("click", closePopovers);
+        document.addEventListener("keydown", onKey, true);
+        onCleanup(() => { document.removeEventListener("click", closePopovers); document.removeEventListener("keydown", onKey, true); });
         const u = uri();
         if (u) {
             restore(u);
@@ -652,11 +661,7 @@ export function LocalChatPage() {
         Caches.diy_chat_density.set(d);
     };
     // Markdown 渲染开关（视图 cache 持久化，与密度同级）：全局开关而非 per-message
-    const [md, setMdRaw] = createSignal<boolean>(Caches.diy_chat_md.get());
-    const setMd = (v: boolean) => {
-        setMdRaw(v);
-        Caches.diy_chat_md.set(v);
-    };
+    const [md] = createSignal<boolean>(Caches.diy_chat_md.get());
     /** 清空确认：清空会删掉 main 侧 ops/llm 日志（rmSync，不可恢复），必须二次确认 */
     const [confirmClear, setConfirmClear] = createSignal(false);
     const [pinned, setPinned] = createSignal<Record<string, boolean>>({});
@@ -703,12 +708,33 @@ export function LocalChatPage() {
         });
     });
 
+    const selectModel = (modelId: string) => {
+        localChatStore.setActiveModel(modelId);
+        const model = localChatStore.models.find((m) => m.id === modelId);
+        if (model && !model.reasoning.supported.includes(localChatStore.reasoningEffort)) {
+            localChatStore.setReasoningEffort(model.reasoning.default);
+        }
+    };
+    const moveModelByKeyboard = (e: KeyboardEvent) => {
+        if (localChatStore.running || localChatStore.models.length === 0) return;
+        const index = localChatStore.models.findIndex((m) => m.id === localChatStore.activeModel);
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            const offset = e.key === "ArrowDown" ? 1 : -1;
+            const next = (index < 0 ? 0 : index + offset + localChatStore.models.length) % localChatStore.models.length;
+            selectModel(localChatStore.models[next]!.id);
+            setModelMenuOpen(true);
+        } else if (e.key === "Home" || e.key === "End") {
+            e.preventDefault();
+            selectModel(localChatStore.models[e.key === "Home" ? 0 : localChatStore.models.length - 1]!.id);
+            setModelMenuOpen(true);
+        }
+    };
+
     const submit = async () => {
-        const el = inputRef;
-        if (!el) return;
-        const text = el.value.trim();
+        const text = inputValue().trim();
         if (!text || !uri() || localChatStore.running) return;
-        el.value = "";
+        setInputValue("");
         // 内容已作为消息发出，草稿使命结束：清掉，避免下次进入看到已发送的旧文本
         void draftStore.clear(uri()!, ["agent_input"]);
         setStick(true); // 刚发出，必然想看回复：无视之前是否在上方阅读
@@ -717,66 +743,32 @@ export function LocalChatPage() {
 
     return (
         <div class="flex flex-col h-full overflow-hidden">
-            {/* 顶部：密度切换 + 模型选择 + 会话操作
-                flex-wrap：窄窗口下宁可换行，也不能溢出——溢出时右侧按钮会被相邻按钮
-                盖住，点击命中错元素（实测「MD 渲染」被「清空」压住，点渲染=删历史）。 */}
-            <div class="flex flex-wrap items-center gap-x-2 gap-y-1 px-4 py-2 border-b shrink-0 text-xs">
-                <div class="join">
-                    <For each={[...DENSITY_VALUES]}>
-                        {(d) => (
-                            <button
-                                class={`btn btn-xs join-item ${density() === d ? "btn-active" : ""}`}
-                                title={DENSITY_TITLE[d]}
-                                onClick={() => setDensity(d)}
-                            >
-                                {DENSITY_LABEL[d]}
-                            </button>
-                        )}
-                    </For>
+            {/* 顶部只保留紧凑的信息密度控制。
+                pr-16：ViewGrid 的 area 设施（最大化/最小化）浮在本区域**右上角**，
+                不预留这条空档，密度按钮会与它叠在同一坐标上（实测重叠）。 */}
+            <div class={`flex items-center justify-end pl-4 pr-16 ${VIEW_BAR_H} border-b shrink-0`}>
+                <div class="relative" data-density-control>
+                    <button
+                        class="btn btn-ghost btn-xs tooltip tooltip-bottom"
+                        data-tip="信息密度（拖到最右看全部过程）"
+                        aria-label="信息密度"
+                        onClick={(e) => { e.stopPropagation(); setDensityOpen((v) => !v); }}
+                    >
+                        ☷
+                    </button>
+                    <Show when={densityOpen()}>
+                        <div class="absolute right-0 top-full z-20 mt-1 w-48 rounded-box border border-base-300 bg-base-100 p-3 shadow-xl" data-density-control onClick={(e) => e.stopPropagation()}>
+                            <input
+                                type="range" min="1" max="4" step="1"
+                                class="range range-primary range-xs"
+                                value={DENSITY_VALUES.indexOf(density()) + 1}
+                                aria-label="信息密度"
+                                onInput={(e) => setDensity(DENSITY_VALUES[Number(e.currentTarget.value) - 1]!)}
+                            />
+                            <div class="mt-1 flex justify-between text-[10px] opacity-60"><span>简</span><span>详</span></div>
+                        </div>
+                    </Show>
                 </div>
-                <span class="opacity-60">模型</span>
-                <select
-                    class="select select-xs select-bordered w-[180px] min-w-0 shrink"
-                    value={localChatStore.activeModel}
-                    disabled={localChatStore.running}
-                    onChange={(e) => localChatStore.setActiveModel(e.currentTarget.value)}
-                >
-                    <For each={localChatStore.models}>
-                        {(m) => <option value={m.id}>{m.name}</option>}
-                    </For>
-                </select>
-                <span class="badge badge-outline badge-xs">ai-sdk local</span>
-                <div class="flex-1" />
-                {/* 显示方式二选一：两个选项都可见，当前态高亮 —— 单按钮式「MD」看不出
-                    处于哪一态（切回去要猜），且与右侧破坏性按钮同形，易误点。 */}
-                <div class="join shrink-0" role="group" aria-label="Markdown 显示方式">
-                    <button
-                        class={`btn btn-xs join-item ${md() ? "btn-ghost" : "btn-active"}`}
-                        title="原文：按纯文本显示，不做 Markdown 渲染"
-                        aria-pressed={!md()}
-                        onClick={() => setMd(false)}
-                    >
-                        MD 原文
-                    </button>
-                    <button
-                        class={`btn btn-xs join-item ${md() ? "btn-active" : "btn-ghost"}`}
-                        title="渲染：按 Markdown 富文本显示"
-                        aria-pressed={md()}
-                        onClick={() => setMd(true)}
-                    >
-                        MD 渲染
-                    </button>
-                </div>
-                <Show when={!localChatStore.running}>
-                    {/* 破坏性操作独立成组：与「显示方式」用竖线隔开，避免相邻误点 */}
-                    <button
-                        class="btn btn-ghost btn-xs shrink-0 border-l border-base-300 rounded-none pl-3 whitespace-nowrap"
-                        title="删除本任务的全部本地对话历史（ops/llm 日志 + 界面），不可恢复"
-                        onClick={() => setConfirmClear(true)}
-                    >
-                        清空本对话历史消息
-                    </button>
-                </Show>
             </div>
 
             {/* 块树滚动区 */}
@@ -809,40 +801,146 @@ export function LocalChatPage() {
                 </div>
             </div>
 
-            {/* 输入条 */}
+            {/* 输入框：Markdown 源码编辑、随内容增长，控制项置于框内底部。 */}
             <div class="border-t p-3 shrink-0">
-                <div class="flex gap-2 items-end">
-                    <textarea
-                        ref={(el) => (inputRef = el)}
-                        rows={2}
-                        class="textarea textarea-bordered flex-1 resize-none text-sm"
-                        placeholder="本地 agent（回车发送 / Shift+回车换行）…"
-                        onKeyDown={onEnterKey(() => void submit(), { shiftNewline: true })}
-                        onInput={(e) => {
-                            // 逐键写内存 + 防抖落盘（draftStore 内部 600ms debounce）
-                            const u = uri();
-                            if (u) draftStore.set(u, "agent_input", e.currentTarget.value);
-                        }}
-                    />
-                    {/* 按钮 aura 光环只在生成中挂载：停止=error 色跑动画表示"正在跑"，
-                        收完流回到"发送"时 aura 随 Show 分支一起卸载，动画自然停止 */}
-                    <Show
-                        when={!localChatStore.running}
-                        fallback={
-                            <div class="aura duration-[3s] text-error">
+                {/* 定位类必须二选一：Tailwind 里 `relative` 排在 `fixed` 之后，
+                    两个同时挂上会让 `fixed` 失效（实测全屏退化成原地 147px 高）。
+
+                    底色用 base-200 —— 也就是编辑器里"当前行"的那档加深色：整块（正文 + 底部
+                    工具条）连成一片，读起来是"一个凹进去的输入区"，而不是白底卡片上贴一条按钮。
+                    编辑器侧同步传 `embedded`，让它的纸面透明、当前行再深一档（base-300）。
+
+                    边框照抄 daisyUI `.input` 的 token 语义（它是 5.x 里唯一的**容器式**输入控件：
+                    `.input input { border:none }` + `:focus-within` 联动）。多行编辑器 + 底部工具条
+                    装不进 `.input`（单行 `height:var(--size)`）也装不进 `.textarea`（非 flex，且
+                    textarea 无子元素），故手写容器但复用同一套变量：
+                      · 静息：`--input-color` = base-content 20% → `border-base-content/20`
+                      · 聚焦：`--input-color` = base-content → `focus-within:border-base-content`
+                        **只变色、不加 outline**：outline 画在 border 外侧 2px，看着像"多了一圈
+                        边框"（实测双边框感），边框自己变色就够表达了。
+                      · 圆角：`--radius-field`（输入类控件语义，比 `--radius-box` 更方正） */}
+                <div class={`rounded-field border border-base-content/20 bg-base-200 transition-colors focus-within:border-base-content ${fullscreen() ? "fixed inset-4 z-40 flex min-h-0 flex-col p-4" : "relative"}`}>
+                    {/* 全文编辑开关：输入框**右上角**，daisyUI swap（小↔大 双向动画）。
+                        用 label+checkbox 而不是 button：swap 的语义就是「两种状态的开关」。 */}
+                    <label
+                        class="btn btn-ghost btn-xs swap swap-rotate absolute right-1 top-1 z-10 tooltip tooltip-left"
+                        data-tip={fullscreen() ? "退出全文编辑（Esc）" : "全文编辑（放大）"}
+                        aria-label={fullscreen() ? "退出全文编辑" : "全文编辑"}
+                    >
+                        <input
+                            type="checkbox"
+                            checked={fullscreen()}
+                            onChange={(e) => setFullscreen(e.currentTarget.checked)}
+                        />
+                        {/* 与 area chrome 共用同一套图标（四角外/内），不再内联重复 path */}
+                        <IconExpand class="swap-off h-4 w-4" />
+                        <IconCompress class="swap-on h-4 w-4" />
+                    </label>
+                    {/* pr-8：正文不要钻到右上角按钮底下 */}
+                    <div class={`min-h-0 overflow-auto px-2 pt-2 pr-8 ${fullscreen() ? "flex-1" : "min-h-[72px] max-h-[320px]"}`}>
+                        <MdEditor
+                            value={inputValue()}
+                            editable={!localChatStore.running}
+                            onChange={(v) => { setInputValue(v); const u = uri(); if (u) draftStore.set(u, "agent_input", v); }}
+                            onEnter={() => void submit()}
+                            wrap
+                            lineNumbers={fullscreen()}
+                            embedded
+                            class="min-h-[56px]"
+                        />
+                    </div>
+                    {/* 不再画分隔线：正文与工具条同底色（base-200），一条 border-base-300 的横线
+                        会在"一体化"的块里切出一道比底色更亮/更暗的缝，比没有线更显割裂。 */}
+                    <div class="flex shrink-0 items-center gap-2 px-2 py-2 text-xs">
+                        <div class="relative" data-model-control>
+                            <button
+                                class="btn btn-ghost btn-xs max-w-[240px] min-w-0 tooltip tooltip-top"
+                                data-tip="模型与推理强度（↑/↓ 切换模型）"
+                                aria-label="选择模型与推理强度"
+                                aria-expanded={modelMenuOpen()}
+                                disabled={localChatStore.running}
+                                onClick={(e) => { e.stopPropagation(); setModelMenuOpen((v) => !v); }}
+                                onKeyDown={moveModelByKeyboard}
+                            >
+                                <span class="truncate">
+                                    {(localChatStore.models.find((m) => m.id === localChatStore.activeModel)?.name ?? localChatStore.activeModel) || "选择模型"}
+                                    <span class="opacity-60">（{reasoningEffortLabel(localChatStore.reasoningEffort)}）</span>
+                                </span>
+                                <span class="opacity-50">▾</span>
+                            </button>
+                            <Show when={modelMenuOpen()}>
+                                <div
+                                    class="absolute bottom-full left-0 z-30 mb-2 grid w-[min(34rem,calc(100vw-2rem))] grid-cols-[minmax(0,1fr)_9rem] overflow-hidden rounded-box border border-base-300 bg-base-100 p-2 shadow-xl"
+                                    data-model-control
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    <div class="min-w-0 border-r border-base-300 pr-2">
+                                        <div class="px-2 pb-1 text-[10px] font-semibold uppercase opacity-50">模型</div>
+                                        <div class="max-h-64 overflow-y-auto">
+                                            <For each={localChatStore.models}>
+                                                {(m) => (
+                                                    <button
+                                                        class={`btn btn-ghost btn-xs w-full justify-start ${m.id === localChatStore.activeModel ? "bg-primary/15 text-primary" : ""}`}
+                                                        title={m.id}
+                                                        onClick={() => selectModel(m.id)}
+                                                    >
+                                                        <span class="truncate">{m.name}</span>
+                                                    </button>
+                                                )}
+                                            </For>
+                                        </div>
+                                    </div>
+                                    <div class="min-w-0 pl-2">
+                                        <div class="px-2 pb-1 text-[10px] font-semibold uppercase opacity-50">推理强度</div>
+                                        <div class="space-y-1">
+                                            <For each={localChatStore.models.find((m) => m.id === localChatStore.activeModel)?.reasoning.supported ?? ["none"]}>
+                                                {(level) => (
+                                                    <button
+                                                        class={`btn btn-ghost btn-xs w-full justify-start tooltip tooltip-left ${level === localChatStore.reasoningEffort ? "bg-primary/15 text-primary" : ""}`}
+                                                        data-tip={`推理强度：${level}`}
+                                                        aria-label={`推理强度: ${level}`}
+                                                        onClick={() => { localChatStore.setReasoningEffort(level as ReasoningEffort); setModelMenuOpen(false); }}
+                                                    >
+                                                        {reasoningEffortLabel(level as ReasoningEffort)}
+                                                    </button>
+                                                )}
+                                            </For>
+                                        </div>
+                                    </div>
+                                </div>
+                            </Show>
+                        </div>
+                        <div class="flex-1" />
+                        <Show when={!localChatStore.running}>
+                            <button
+                                class="btn btn-ghost btn-xs tooltip tooltip-top"
+                                data-tip="清空本对话历史（不可恢复）"
+                                onClick={() => setConfirmClear(true)}
+                            >
+                                清空
+                            </button>
+                        </Show>
+                        <Show
+                            when={!localChatStore.running}
+                            fallback={
                                 <button
-                                    class="btn btn-error btn-sm"
+                                    class="btn btn-error btn-sm tooltip tooltip-top"
+                                    data-tip="中断本轮生成（保留已产出内容）"
                                     onClick={() => uri() && void localChatStore.cancel(uri()!)}
                                 >
                                     停止
                                 </button>
-                            </div>
-                        }
-                    >
-                        <button class="btn btn-primary btn-sm" onClick={() => void submit()}>
-                            发送
-                        </button>
-                    </Show>
+                            }
+                        >
+                            <button
+                                class="btn btn-primary btn-sm tooltip tooltip-top"
+                                data-tip="发送（回车发送 / Shift+回车换行）"
+                                onClick={() => void submit()}
+                            >
+                                发送
+                            </button>
+                        </Show>
+                    </div>
                 </div>
             </div>
 
