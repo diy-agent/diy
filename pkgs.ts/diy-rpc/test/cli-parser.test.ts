@@ -24,6 +24,47 @@ const taskCreate = RpcSchema.unary({
   output: z.object({ status: z.string() }),
 });
 
+// 路径参数：resolvePath 标记的字段按**调用方** cwd 解析成绝对路径。
+// 动机（实测踩过）：命令的 handler 跑在 app 进程里，它的 cwd 是应用目录，
+// 而入口脚本（diy.sh / bin/diy）都会先 cd 到应用目录再 exec —— 两重叠加后
+// `cd /tmp && diy tool read a.txt` 会去应用目录找文件。解析必须发生在 CLI 侧。
+const fileRead = RpcSchema.unary({
+  desc: "读文件",
+  input: {
+    path: z.string().cliArg({ desc: "文件路径", resolvePath: true }),
+    note: z.string().optional().cliOption({ desc: "备注" }),
+    out: z.string().optional().cliOption({ desc: "输出路径", resolvePath: true }),
+  },
+  output: z.string(),
+});
+
+describe("parseArgv — resolvePath（路径参数按调用方 cwd 解析）", () => {
+  it("相对路径 → 绝对路径（基准 = opts.cwd）", () => {
+    const { input } = parseArgv(fileRead, ["src/a.ts"], { cwd: "/tmp/work" });
+    expect(input.path).toBe("/tmp/work/src/a.ts");
+  });
+
+  it("绝对路径 → 原样（resolve 是恒等）", () => {
+    const { input } = parseArgv(fileRead, ["/abs/b.ts"], { cwd: "/tmp/work" });
+    expect(input.path).toBe("/abs/b.ts");
+  });
+
+  it("option 上的 resolvePath 同样生效", () => {
+    const { input } = parseArgv(fileRead, ["a.ts", "--out", "dist/c.js"], { cwd: "/tmp/work" });
+    expect(input.out).toBe("/tmp/work/dist/c.js");
+  });
+
+  it("未标记的字段不受影响（普通字符串不当作路径）", () => {
+    const { input } = parseArgv(fileRead, ["a.ts", "--note", "some/relative/thing"], { cwd: "/tmp/work" });
+    expect(input.note).toBe("some/relative/thing");
+  });
+
+  it("缺省 opts.cwd → 用 process.cwd()", () => {
+    const { input } = parseArgv(fileRead, ["a.ts"]);
+    expect(input.path).toBe(`${process.cwd()}/a.ts`);
+  });
+});
+
 describe("parseArgv", () => {
   it("位置参数按序映射，命名选项独立", () => {
     const { input } = parseArgv(taskCreate, ["标题A", "/path/x", "--parent", "uri:1"]);

@@ -22,6 +22,8 @@ import { syncRefs } from "./ref-sync";
 import { addSource, removeSource } from "./ref-config";
 import { apiDef } from "./api-def";
 import { noteRendererTouch } from "./runtime-context";
+import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
+import { resolve as resolvePath } from "node:path";
 
 /**
  * 实际 RPC 监听端口，由入口在绑定完成后回填。
@@ -370,6 +372,32 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const removed = removeSource(input.name);
     if (!removed) return { status: "error", msg: `未找到 source: ${input.name}` };
     return { status: "ok", data: { removed } };
+  });
+
+  // ── tool ──
+  // 文件读取（行窗口 + 续读）：与内置 read 工具共用 core/file-read.ts。
+  // 相对路径由 CLI 侧 parser 按调用方 cwd 解析成绝对路径（见 api-def 的 resolvePath 注解）；
+  // 这里再 resolve 一次是给 renderer 等不走 parser 的调用方兜底（绝对路径 resolve 是恒等）。
+  binding.on(app.tool.read, async ({ input }) => {
+    const raw = (input.path ?? "").trim();
+    if (!raw) throw new Error("path 不能为空");
+    if (input.offset !== undefined && (!Number.isInteger(input.offset) || input.offset < 1)) {
+      throw new Error(`offset 必须是 >= 1 的整数（收到 ${input.offset}）`);
+    }
+    if (input.limit !== undefined && (!Number.isInteger(input.limit) || input.limit < 1)) {
+      throw new Error(`limit 必须是 >= 1 的整数（收到 ${input.limit}）`);
+    }
+    const abs = resolvePath(raw);
+    try {
+      const window = await readFileWindow(abs, abs, { offset: input.offset, limit: input.limit });
+      return formatReadOutput(window);
+    } catch (e) {
+      if (e instanceof ReadWindowError) throw new Error(e.message);
+      const code = (e as NodeJS.ErrnoException)?.code;
+      if (code === "ENOENT") throw new Error(`文件不存在：${abs}`);
+      if (code === "EISDIR") throw new Error(`${abs} 是目录（本命令只读文本文件；列目录请用 ls）`);
+      throw e;
+    }
   });
 
 }

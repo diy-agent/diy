@@ -9,12 +9,16 @@ export interface _CliOptionMeta {
   short?: string;
   desc?: string;
   placeholder?: string;
+  /** 值是路径：解析成绝对路径（基准 = 调用方进程的 cwd）。实现见 cli/_parser.ts */
+  resolvePath?: boolean;
 }
 
 /** @internal */
 export interface _CliArgMeta {
   desc?: string;
   placeholder?: string;
+  /** 值是路径：解析成绝对路径（基准 = 调用方进程的 cwd）。实现见 cli/_parser.ts */
+  resolvePath?: boolean;
 }
 
 // ═══════════════════════════════════════════════════

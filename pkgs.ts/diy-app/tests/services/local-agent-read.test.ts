@@ -1,10 +1,12 @@
 // tests/services/local-agent-read.test.ts
 // ═══════════════════════════════════════════════════════════════
-// 🎯 read 工具路径解析意图验证
+// 🎯 内置 read 工具意图验证
 //
-// 覆盖 bug #149：read 工具对绝对路径错误拼接项目目录（cwd）
-//   join(cwd, "/abs/path") → "/cwd/abs/path"（ENOENT）
-//   修复：path.resolve(cwd, filePath) — 绝对路径直接返回
+// 覆盖两块：
+//   #149 路径解析：绝对路径曾被错误拼接项目目录（cwd）→ "/cwd/abs/path"（ENOENT）
+//        修复：path.resolve(cwd, filePath) — 绝对路径直接返回
+//   #156 截断语义：曾用 clip(s, 6000) 取头尾丢中间；现接 core/file-read 的行窗口，
+//        输出带行号 + offset 续读入口（与 `diy tool read` 同源）
 //
 // 无网络、无 LLM、无 Electron — 纯函数级验证
 // ═══════════════════════════════════════════════════════════════
@@ -35,22 +37,32 @@ afterAll(() => {
 const limits: LocalAgentLimits = {
     ...DEFAULT_LIMITS,
     outputClipChars: 10_000,
+    readMaxBytes: 50 * 1024,
     bashTimeoutMs: 5_000,
     maxSteps: 1,
 };
 
-describe("read 工具 — 路径解析", () => {
+/** 从工具输出里剥出行号与尾部提示，取纯内容 */
+function bodyOf(out: string): string {
+    return out
+        .split("\n")
+        .filter((l) => /^\d+: /.test(l))
+        .map((l) => l.replace(/^\d+: /, ""))
+        .join("\n");
+}
+
+describe("read 工具 — 路径解析（#149）", () => {
     it("相对路径：拼 cwd 后可读", async () => {
         const tools = buildTools(workDir, limits, "test/task");
         const result = await (tools as any).read.execute({ path: "relative.txt" });
-        expect(result).toBe("relative-ok");
+        expect(bodyOf(result)).toBe("relative-ok");
     });
 
     it("绝对路径（项目外）：不拼 cwd，直接读取", async () => {
         const tools = buildTools(workDir, limits, "test/task");
         const absPath = join(outsideDir, "absolute.txt");
         const result = await (tools as any).read.execute({ path: absPath });
-        expect(result).toBe("absolute-ok");
+        expect(bodyOf(result)).toBe("absolute-ok");
     });
 
     it("绝对路径（项目外）：不包含 cwd 前缀", async () => {
@@ -67,5 +79,54 @@ describe("read 工具 — 路径解析", () => {
         const result = await (tools as any).read.execute({ path: "nonexistent.txt" });
         expect(result).toContain("[读取失败]");
         expect(result).toContain("ENOENT");
+    });
+});
+
+describe("read 工具 — 行窗口与续读（#156）", () => {
+    it("输出带文件真实行号 + 文件结束提示", async () => {
+        const tools = buildTools(workDir, limits, "test/task");
+        const result = await (tools as any).read.execute({ path: "relative.txt" });
+        expect(result).toContain("1: relative-ok");
+        expect(result).toContain("[文件结束，共 1 行]");
+    });
+
+    it("limit 收窄：尾部给出 offset 续读入口（旧 clip 没有这个出口）", async () => {
+        const p = join(workDir, "many.txt");
+        writeFileSync(p, Array.from({ length: 50 }, (_, i) => `row${i + 1}`).join("\n") + "\n", "utf-8");
+        const tools = buildTools(workDir, limits, "test/task");
+        const result = await (tools as any).read.execute({ path: "many.txt", limit: 10 });
+        expect(result).toContain("10: row10");
+        expect(result).not.toContain("11: row11");
+        expect(result).toContain("[已显示 1-10 行，共 50 行。续读：offset=11]");
+    });
+
+    it("offset 续读：接上一段，行号连续", async () => {
+        const tools = buildTools(workDir, limits, "test/task");
+        const result = await (tools as any).read.execute({ path: "many.txt", offset: 11, limit: 5 });
+        expect(result).toContain("11: row11");
+        expect(result).toContain("15: row15");
+    });
+
+    it("offset 越界：返回读取失败而非崩溃", async () => {
+        const tools = buildTools(workDir, limits, "test/task");
+        const result = await (tools as any).read.execute({ path: "many.txt", offset: 9999 });
+        expect(result).toContain("[读取失败]");
+        expect(result).toContain("超出文件范围");
+    });
+
+    it("超长单行原样返回（不砍半行 —— jsonl 一行一条记录）", async () => {
+        const p = join(workDir, "long.txt");
+        const line = "z".repeat(5000);
+        writeFileSync(p, line + "\n", "utf-8");
+        const tools = buildTools(workDir, limits, "test/task");
+        const result = await (tools as any).read.execute({ path: "long.txt" });
+        expect(bodyOf(result)).toBe(line);
+    });
+
+    it("readMaxBytes 生效：调小后按预算截断并给出续读入口", async () => {
+        const tools = buildTools(workDir, { ...limits, readMaxBytes: 40 }, "test/task");
+        const result = await (tools as any).read.execute({ path: "many.txt" });
+        expect(result).toContain("已达");
+        expect(result).toMatch(/续读：offset=\d+/);
     });
 });

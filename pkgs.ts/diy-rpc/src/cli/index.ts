@@ -161,6 +161,13 @@ export interface CliConfig<TRouter extends _Router | _AnyProcedureMeta> {
    * 默认空 = 全树匹配（命令 `diy app task show`）。
    */
   cliRootPath?: string | string[];
+  /**
+   * 解析路径参数（`resolvePath` 标记）的基准目录。
+   * 必须由入口传**调用者**的 cwd —— 入口脚本普遍先 cd 到应用目录再 exec
+   * （diy.sh / bin/diy 都这样），那时 process.cwd() 已不是用户敲命令的目录。
+   * 缺省 process.cwd()。
+   */
+  cwd?: string;
 }
 
 /** @internal */
@@ -289,7 +296,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     const rpcName = def.name ?? proc.path;
 
     try {
-      const { input, helpRequested } = parseArgv(def, remaining);
+      const { input, helpRequested } = parseArgv(def, remaining, { cwd: this.config.cwd });
 
       if (helpRequested) {
         // 命令级 Usage 用裁剪后的短命令名（用户实际输入的命令），非 RPC 全名

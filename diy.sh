@@ -52,6 +52,11 @@ if [[ -t 2 ]]; then
   echo "[diy.sh] CLI=tsx源码 | GUI=out/main产物 | HOME=${DIY_HOME:-$HOME_DEFAULT} | 需先 build（dev 模式除外）" >&2
 fi
 
+# DIY_CALLER_CWD：调用者敲命令时的目录。下面的 cd 会把它换掉，而 CLI 的路径参数
+# （如 `diy tool read <相对路径>`）必须按**用户的**目录解析 —— 所以先记下来传进去。
+# 缺了它，相对路径会落到应用目录（实测：`cd /tmp && diy tool read a.txt` 去找 <app>/a.txt）。
+export DIY_CALLER_CWD="$PWD"
+
 cd "$APP_DIR"
 # DIY_CLI：当前生效的 CLI 入口（提示词模版 100-diy 用它告诉 agent 该敲哪个命令；
 # 少了它 agent 只能猜“diy”，在 worktree 里会打到生产数据根）

@@ -31,6 +31,7 @@ import { collectSelfInfo, judgeSelfKill, selfKillNotice } from "./agent-guard";
 import { appendAudit } from "./agent-audit";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
 import { assembleSystem } from "./prompt-registry";
+import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
 
 export const DEFAULT_MODEL = "mimo-v2.5";
 
@@ -103,8 +104,10 @@ export interface LocalAgentLimits {
     maxOutputTokens: number;
     /** 单条 bash 命令超时 */
     bashTimeoutMs: number;
-    /** 工具输出回喂模型/展示的截断长度（字符） */
+    /** bash 输出回喂模型/展示的截断长度（字符） */
     outputClipChars: number;
+    /** read 工具单次返回的字节上限（见 core/file-read.ts） */
+    readMaxBytes: number;
 }
 
 export const DEFAULT_LIMITS: LocalAgentLimits = {
@@ -112,6 +115,7 @@ export const DEFAULT_LIMITS: LocalAgentLimits = {
     maxOutputTokens: 4000,
     bashTimeoutMs: 30_000,
     outputClipChars: 6000,
+    readMaxBytes: READ_MAX_BYTES,
 };
 
 function limitsFile(): string {
@@ -143,6 +147,7 @@ export function resolveLimits(
             envPosInt(env, "DIY_LOCAL_MAX_OUTPUT_TOKENS") ?? num(base.maxOutputTokens, DEFAULT_LIMITS.maxOutputTokens),
         bashTimeoutMs: envPosInt(env, "DIY_LOCAL_BASH_TIMEOUT_MS") ?? num(base.bashTimeoutMs, DEFAULT_LIMITS.bashTimeoutMs),
         outputClipChars: envPosInt(env, "DIY_LOCAL_OUTPUT_CLIP_CHARS") ?? num(base.outputClipChars, DEFAULT_LIMITS.outputClipChars),
+        readMaxBytes: envPosInt(env, "DIY_LOCAL_READ_MAX_BYTES") ?? num(base.readMaxBytes, DEFAULT_LIMITS.readMaxBytes),
     };
 }
 
@@ -285,12 +290,24 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
             },
         }),
         read: tool({
-            description: "读取文件的文本内容（相对路径按项目目录解析）。",
-            inputSchema: z.object({ path: z.string().describe("文件路径") }),
-            execute: async ({ path: filePath }) => {
+            description:
+                "读取文件的文本内容（带行号；相对路径按项目目录解析）。" +
+                `单次最多 ${READ_MAX_LINES} 行 / ${Math.round(READ_MAX_BYTES / 1024)}KB，` +
+                "超限时输出尾部会给出下一段 offset —— 用 offset 继续读，不要重复读同一段。",
+            inputSchema: z.object({
+                path: z.string().describe("文件路径"),
+                offset: z.number().optional().describe("起始行，1-based（缺省 1；续读时传上次提示的 offset）"),
+                limit: z.number().optional().describe("最大行数（缺省 2000）"),
+            }),
+            execute: async ({ path: filePath, offset, limit }) => {
+                const abs = path.resolve(cwd, filePath);
                 try {
-                    return clip(readFileSync(path.resolve(cwd, filePath), "utf-8"), limits.outputClipChars);
+                    // 与 `diy tool read` 共用同一实现：窗口语义只有一份（见 core/file-read.ts）
+                    const window = await readFileWindow(abs, abs, { offset, limit, maxBytes: limits.readMaxBytes });
+                    // style: "tool" —— 续读提示写成工具参数 offset=N（不是 shell 的 --offset）
+                    return formatReadOutput(window, { maxBytes: limits.readMaxBytes, style: "tool" });
                 } catch (e) {
+                    if (e instanceof ReadWindowError) return `[读取失败] ${e.message}`;
                     return `[读取失败] ${e instanceof Error ? e.message : e}`;
                 }
             },

@@ -189,6 +189,9 @@ async function main() {
     version: "0.1.0",
     router: apiDef.diy,
     transport,
+    // 路径参数（如 tool read 的 path）按**调用者**目录解析：入口脚本已 cd 到应用目录，
+    // 进程 cwd 不再可信，故由 DIY_CALLER_CWD 显式带过来（见 diy.sh / bin/diy）。
+    cwd: process.env["DIY_CALLER_CWD"] || process.cwd(),
   }).parse(argv);
 
   // 清理：关闭 RPC 连接，允许进程正常退出（app 保持运行）

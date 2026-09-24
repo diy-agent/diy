@@ -21,6 +21,9 @@ APP_DIR="$(dirname "$(_realpath "$0")")"
 CLI="$APP_DIR/out/cli/index.js"
 [[ -f "$CLI" ]] || { echo "diy 未构建/未安装: ${CLI}（先 ./sha.sh build-cli）" >&2; exit 1; }
 
+# DIY_CALLER_CWD：调用者敲命令时的目录（下面的 cd 会换掉它，见 diy.sh 同名注释）
+export DIY_CALLER_CWD="$PWD"
+
 cd "$APP_DIR"
 # DIY_CLI：当前生效的 CLI 入口（提示词模版 100-diy 消费，见 diy.sh 同名字段）
 # DIY_ENV=production：dev 便利能力全关（窗口副屏等）

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { resolve as resolvePath } from 'node:path';
 import type { _AnyProcedureMeta } from '../core/meta';
 import { _getCliOptionMeta, _getCliArgMeta } from '../core/_cli-meta';
 
@@ -52,8 +53,17 @@ export interface ParsedInput {
   helpRequested: boolean;
 }
 
+export interface ParseArgvOptions {
+  /**
+   * 解析路径参数（`resolvePath` 标记）用的基准目录。
+   * 缺省 `process.cwd()` —— 但**入口脚本常先 cd 到应用目录**（diy.sh / bin/diy 都这样），
+   * 那时进程 cwd 已不是用户敲命令的目录，必须由入口显式传入真实调用者 cwd。
+   */
+  cwd?: string;
+}
+
 /** @internal */
-export function parseArgv(def: _AnyProcedureMeta, argv: string[]): ParsedInput {
+export function parseArgv(def: _AnyProcedureMeta, argv: string[], opts: ParseArgvOptions = {}): ParsedInput {
   const schema = def.inputSchema;
   if (!(schema instanceof z.ZodObject)) {
     throw new CliParseError('Procedure has no input schema');
@@ -144,6 +154,14 @@ export function parseArgv(def: _AnyProcedureMeta, argv: string[]): ParsedInput {
       input[key] = val === 'true' || val === '1';
     } else if (unwrap(field) instanceof z.ZodArray) {
       try { input[key] = JSON.parse(val); } catch { /* 保留原字符串，让 zod 报错 */ }
+    } else if (_getCliOptionMeta(field)?.resolvePath || _getCliArgMeta(field)?.resolvePath) {
+      // 路径参数解析成绝对路径，基准是**调用方**（敲命令的那个 shell）的 cwd。
+      //
+      // 为什么必须在这里做：命令的 handler 跑在 app 进程（Electron main）里，
+      // 它的 cwd 是应用目录，不是用户敲命令的目录。不解析的话 `cd /tmp && diy tool read a.txt`
+      // 会去应用目录找文件（实测踩过）。在 parser 里解析，基准天然就是正确的那个。
+      // cli/ 不在 rpc 的浏览器检查范围内，故可用 node:path。
+      input[key] = resolvePath(opts.cwd ?? process.cwd(), val);
     }
   }
 
