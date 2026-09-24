@@ -377,3 +377,73 @@ describe("真实 UI 操作 —— 点击（第二种测试能力）", () => {
     await ui.clickSelector('button[title*="取消锁定"]'); // 还原，别影响后续用例
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// 任务层次的表达：同链相邻 + 子任务缩进
+//   场景：先开 a/b/c，再开 a —— 原先两个 task-run tab 平级并列，看不出父子。
+// ═══════════════════════════════════════════════════════════════
+
+describe("打开列表表达任务层次（排序 + 缩进）", () => {
+  let a = "";
+  let c = "";
+
+  it("setup: 造 a 与 a/b/c 三个任务", async () => {
+    const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/nest --label Nest`);
+    const pid = String((p.data as any)?.data?.id);
+    const r1 = await fx.sh.getJson(`./diy.sh task create 父任务 ${pid}`);
+    a = String((r1.data as any)?.data?.uri);
+    const r2 = await fx.sh.getJson(`./diy.sh task create 中任务 ${pid} --parent ${a}`);
+    const b = String((r2.data as any)?.data?.uri);
+    const r3 = await fx.sh.getJson(`./diy.sh task create 孙任务 ${pid} --parent ${b}`);
+    c = String((r3.data as any)?.data?.uri);
+    expect(a).toMatch(/tasks\/\d+$/);
+    expect(c).not.toBe(a);
+  });
+
+  it("先开孙、再开父 → 两者相邻且父在前（不是平级并列）", async () => {
+    await fx.sh.getJson(`./diy.sh ui tab close task-run:${uri}`);
+    await fx.sh.getJson(`./diy.sh ui tab open ${c}`); // 先开 a/b/c
+    await fx.sh.getJson(`./diy.sh ui tab open ${a}`); // 再开 a
+
+    const list = (await tabs()).opened;
+    const ia = list.indexOf(`task-run:${a}`);
+    const ic = list.indexOf(`task-run:${c}`);
+    expect(ia).toBeGreaterThanOrEqual(0);
+    expect(ic).toBe(ia + 1); // 紧跟父之后 —— 缩进才有意义
+  });
+
+  it("界面：孙任务比父任务更靠右（真的缩进了）", async () => {
+    await fx.sh.getJson(`./diy.sh ui tab open ${a}`);
+    // 侧栏默认收起，展开才能量缩进
+    const ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
+      const r = await fx.sh.getJson("./diy.sh ui inspect");
+      return (r.data as any)?.data?.tree as A11yNode | undefined;
+    });
+    try {
+      await ui.clickSelector('button[title="锁定展开"]');
+      // 量**内容**的左边界，不是元素本身：缩进走 padding-left，而
+      // getBoundingClientRect().x 是 border box（padding 不改它）—— 量错了会假绿。
+      const xOf = async (title: string) =>
+        ui.query<number | null>(`(() => {
+          const el = [...document.querySelectorAll('div[title]')].find(d => d.getAttribute('title') === ${JSON.stringify(title)});
+          if (!el) return null;
+          const inner = el.querySelector('span');
+          return inner ? inner.getBoundingClientRect().x : el.getBoundingClientRect().x;
+        })()`);
+      const xa = await waitUntil(() => xOf(a), (v) => v !== null, { label: "父 tab 上屏" });
+      const xc = await xOf(c);
+      expect(xa).not.toBeNull();
+      expect(xc).not.toBeNull();
+      expect(xc!).toBeGreaterThan(xa!); // 孙更靠右
+      await ui.clickSelector('button[title*="取消锁定"]');
+    } finally {
+      ui.close();
+    }
+  });
+
+  it("关父 tab 不影响子任务 tab（任务层次不承担生命周期）", async () => {
+    await fx.sh.getJson(`./diy.sh ui tab open ${a}`);
+    await fx.sh.getJson(`./diy.sh ui tab close task-run:${a}`);
+    expect((await tabs()).opened).toContain(`task-run:${c}`);
+  });
+});

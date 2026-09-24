@@ -17,6 +17,7 @@ import { layoutStore } from "./store/layoutStore";
 import { diyService } from "./lib/rpc";
 import { notificationStore } from "./store/notificationStore";
 import { defaultBinding, findPage, findView, viewInstanceKey } from "../shared/view-registry";
+import { taskIndentOf } from "../shared/tab-order";
 import { taskStateColor } from "../main/core/task-state";
 import { Breadcrumb } from "./components/Breadcrumb";
 import { setRendererActions, resetRendererActions, getRendererActions } from "./lib/renderer-actions";
@@ -53,6 +54,26 @@ function findNode(nodes: TreeNode[], uri: string): TreeNode | undefined {
         if (hit) return hit;
     }
     return undefined;
+}
+
+/**
+ * 某任务 URI 的祖先链（不含自己，从根到直接父）。
+ *
+ * 任务树才是父子关系的真相源 —— URI 路径（`projects/<pid>/tasks/<n>`）**不表达**
+ * 层级（a/b/c 是 parentUri 关系，不是路径关系），故必须查树。
+ * 结果存进 tab：持久化后仍能用于排序与缩进，不必每次重算。
+ */
+function taskAncestorsOf(uri: string | null): string[] | undefined {
+    if (!uri) return undefined;
+    const chain: string[] = [];
+    let cur = findNode(taskStore.nodes, uri)?.parentUri;
+    const seen = new Set<string>([uri]); // 防环（脏数据不该把这里转死）
+    while (cur && !seen.has(cur)) {
+        seen.add(cur);
+        chain.unshift(cur);
+        cur = findNode(taskStore.nodes, cur)?.parentUri;
+    }
+    return chain.length > 0 ? chain : undefined;
 }
 
 export default function App() {
@@ -144,14 +165,14 @@ export default function App() {
                 layoutStore.setViewHidden(pageId, viewInstanceKey(def, ctx), !visible);
             },
             openTaskRun: (uri) => {
-                tabStore.open("task-run", uri);
+                tabStore.open("task-run", uri, undefined, taskAncestorsOf(uri));
                 setRoute({ kind: "tab", key: tabStore.active });
             },
             openLab: (uri) => getRendererActions().openTab?.("lab", uri),
             openTab: (pageId, ctx) => {
                 const def = findPage(pageId);
                 const parent = def?.parentPage ? `${def.parentPage}:${ctx}` : undefined;
-                tabStore.open(pageId, ctx, parent);
+                tabStore.open(pageId, ctx, parent, taskAncestorsOf(ctx));
                 setRoute({ kind: "tab", key: tabStore.active });
             },
             activateTab: (key) => {
@@ -319,7 +340,10 @@ export default function App() {
                                         <For each={tabStore.opened}>
                                             {(t) => {
                                                 const isActive = () => activeKey() === t.key;
-                                                const isSub = () => !!t.parent || !!findPage(t.pageId)?.parentPage;
+                                                /** 页面层次的子页面（lab 挂 task-run 下） */
+                                                const isSubPage = () => !!t.parent || !!findPage(t.pageId)?.parentPage;
+                                                /** 任务层次的缩进层级（已打开的祖先任务个数；0 = 顶级） */
+                                                const taskIndent = () => taskIndentOf(t, tabStore.opened);
                                                 const num = () => (t.ctx ? findNode(taskStore.nodes, t.ctx)?.num : undefined);
                                                 const label = () =>
                                                     t.pageId === "lab"
@@ -330,6 +354,9 @@ export default function App() {
                                                     tabStore.activate(t.key);
                                                     setRoute({ kind: "tab", key: t.key });
                                                 };
+                                                /** 缩进：页面子页面一级 + 每个已打开的祖先任务一级 */
+                                                const indentPx = () => 28 + (isSubPage() ? 12 : 0) + taskIndent() * 14;
+                                                const isNested = () => isSubPage() || taskIndent() > 0;
                                                 return (
                                                     <li class="flex justify-center">
                                                         <Show
@@ -345,26 +372,31 @@ export default function App() {
                                                                     onClick={tabGoto}
                                                                 >
                                                                     {icon()}
+                                                                    {/* 收起态装不下缩进，用一个小角标表达「有父」 */}
+                                                                    <Show when={isNested()}>
+                                                                        <span class="absolute left-0.5 bottom-0.5 text-[8px] opacity-50">↳</span>
+                                                                    </Show>
                                                                 </button>
                                                             }
                                                         >
                                                             <div
                                                                 class={`group flex items-center gap-1 w-full pr-1 py-1 rounded-lg text-xs cursor-pointer transition-colors ${
-                                                                    isSub() ? "pl-10" : "pl-7"
-                                                                } ${isActive() ? "bg-primary/25 ring-1 ring-primary/30" : "hover:bg-base-300"}`}
+                                                                    isActive() ? "bg-primary/25 ring-1 ring-primary/30" : "hover:bg-base-300"
+                                                                }`}
+                                                                style={{ "padding-left": `${indentPx()}px` }}
                                                                 title={t.ctx ?? t.key}
                                                                 onClick={tabGoto}
                                                             >
-                                                                <Show
-                                                                    when={!isSub()}
-                                                                    fallback={<span class="w-1.5 shrink-0 opacity-40">↳</span>}
-                                                                >
-                                                                    <span class={`w-1.5 h-1.5 rounded-full shrink-0 ${taskStateColor(findNode(taskStore.nodes, t.ctx ?? "")?.state)}`} />
+                                                                {/* 缩进用竖线引导（比箭头更清楚地表示「挂在上面那项之下」）；
+                                                                    状态圆点始终保留 —— 缩进与状态是两件事，不该二选一 */}
+                                                                <Show when={isNested()}>
+                                                                    <span class="w-1.5 shrink-0 self-stretch border-l border-base-content/25" />
                                                                 </Show>
+                                                                <span class={`w-1.5 h-1.5 rounded-full shrink-0 ${taskStateColor(findNode(taskStore.nodes, t.ctx ?? "")?.state)}`} />
                                                                 <span class="truncate flex-1">{label()}</span>
                                                                 <button
                                                                     class="btn btn-ghost btn-xs px-1 opacity-0 group-hover:opacity-70 hover:!opacity-100 shrink-0"
-                                                                    title={isSub() ? "关闭该子页面" : "关闭（暂时不理会，不影响任务状态）"}
+                                                                    title={isSubPage() ? "关闭该子页面" : "关闭（暂时不理会，不影响任务状态）"}
                                                                     onClick={(e) => {
                                                                         e.stopPropagation();
                                                                         closeTab(t.key);

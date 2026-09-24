@@ -131,20 +131,26 @@ export const Caches = {
     serialize: (v) => String(v),
     defaultValue: 560,
   }),
-  /** 打开的任务 tab（URI 数组，顺序即显示顺序）。
-   *  视图 cache：丢了只是「忘了开了哪些 tab」，无数据损失。
-   *  将来应归「任务特殊状态」（见 133），暂放这里。 */
-  diy_tabs_opened: field<string[]>("diy_tabs_opened", {
+  /** 打开的 tab（**页面实例**数组，顺序即显示顺序；结构见 store/tabStore 的 TabItem）。
+   *
+   *  ⚠️ 这里只做「是数组吗」这一层判断，**不在这里过滤元素**：
+   *  元素级的清洗（结构不对的条目丢掉、旧格式纯 URI 字符串升级为 TabItem）在
+   *  tabStore.load() 里 —— 那里知道 TabItem 长什么样，本文件不知道。
+   *
+   *  曾经这里写 `a.filter(x => typeof x === "string")`，而 tabStore 已升级为写对象，
+   *  于是写进去的对象被读回时全被滤掉 → **重启后打开的 tab 清零**（真实故障）。
+   *  教训：视图 cache 的 parse 只该校验「整体形状」，别替下游做元素级业务判断。 */
+  diy_tabs_opened: field<unknown[]>("diy_tabs_opened", {
     parse: (raw) => {
       try {
-        const a = JSON.parse(raw);
-        return Array.isArray(a) ? (a.filter((x) => typeof x === "string") as string[]) : null;
+        const a: unknown = JSON.parse(raw);
+        return Array.isArray(a) ? a : null;
       } catch {
         return null;
       }
     },
     serialize: (v) => JSON.stringify(v),
-    defaultValue: [] as string[],
+    defaultValue: [] as unknown[],
   }),
   /** 各 page 的布局用户态（area 隐藏/最大化 + track 尺寸覆盖）。
    *  视图 cache：丢了只是回到开发者默认布局，无数据损失。
