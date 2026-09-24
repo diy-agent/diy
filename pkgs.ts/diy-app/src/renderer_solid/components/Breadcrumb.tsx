@@ -290,6 +290,22 @@ export function Breadcrumb(props: BreadcrumbProps) {
                     </span>
                 )}
             </For>
+
+            {/* 当前 tab 的关闭入口 —— 放在顶栏最右端（页面右上角）。
+                为什么导航侧栏已有 ✕ 还要这一个：侧栏 tab 的关闭按钮是 hover 才显形的
+                （opacity-0 group-hover:opacity-70），一旦侧栏收起（rail 态）就完全不可见；
+                而「关掉当前页面」是高频动作，应该在页面本体上有常显入口。
+                只在 tab 路由显示：section 页面（任务管理/LLM/设置）没有「当前 tab」可关。 */}
+            <Show when={!!props.activeKey}>
+                <button
+                    class="btn btn-ghost btn-xs ml-auto px-1.5 min-h-0 h-5 shrink-0 gap-1 text-base-content/60 hover:text-error"
+                    title="关闭当前页面（暂时不理会，不影响任务状态）"
+                    onClick={() => props.closeTab(props.activeKey)}
+                >
+                    <span class="text-[11px]">✕</span>
+                    <span class="text-[11px]">关闭</span>
+                </button>
+            </Show>
         </nav>
     );
 }

@@ -308,9 +308,16 @@ export default function App() {
             <div class="drawer-side z-40">
                 <label for="sidebar-toggle" class="drawer-overlay" />
                 {/* 宽用内联 style：daisyUI .menu{width:fit-content} 是非分层样式，会压住 w-12/w-56 utility
-                    收起态同步去掉 menu 的 8px 水平 padding（p-0），否则按钮内容超出 rail 被顶到右侧 */}
+                    收起态同步去掉 menu 的 8px 水平 padding（p-0），否则按钮内容超出 rail 被顶到右侧。
+
+                    `flex-nowrap` 是必需的，不是风格选择：daisyUI .menu 带 `flex-flow:column wrap`，
+                    而 **flex-wrap:wrap 容器的交叉轴尺寸取 items 的 max-content** —— 于是宽度从
+                    「打开的 tab」一路按内容撑开（实测长标题的 tab 行撑到 501px，侧栏只有 224px），
+                    行右侧的关闭按钮跑到侧栏外被 overflow-hidden 裁掉，`elementFromPoint` 命中的是
+                    主区内容（即「页面遮挡住关闭按钮、点不到」）。nowrap 让交叉轴回到容器宽度，
+                    再配合 `min-w-0` 保证内部的 truncate 能真正收缩。 */}
                 <div
-                    class={`menu bg-base-200 min-h-full transition-[width,padding] duration-200 whitespace-nowrap overflow-hidden ${expanded() ? "p-2" : "p-0"}`}
+                    class={`menu flex-nowrap bg-base-200 min-h-full transition-[width,padding] duration-200 whitespace-nowrap overflow-hidden ${expanded() ? "p-2" : "p-0"}`}
                     style={{ width: expanded() ? "14rem" : "2.5rem" }}
                     onMouseEnter={() => setHovered(true)}
                     onMouseLeave={() => setHovered(false)}
@@ -318,7 +325,7 @@ export default function App() {
                     <div class="border-b font-bold h-12 flex items-center justify-center">
                         <span title="diy">◉</span>
                     </div>
-                    <div class={`space-y-1 ${expanded() ? "p-1" : "py-2"}`}>
+                    <div class={`space-y-1 w-full min-w-0 ${expanded() ? "p-1" : "py-2"}`}>
                         <For each={NAV_ITEMS}>
                             {(item) => (
                                 <>
