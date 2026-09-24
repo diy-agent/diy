@@ -6,7 +6,6 @@
 import { createSignal, createMemo, createEffect, on, For, Show } from "solid-js";
 import { analyze } from "@diy/template";
 import { diyService } from "../lib/rpc";
-import { ContextPreviewView } from "./ContextPreviewView";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
 import { localChatStore } from "../store/localChatStore";
@@ -63,7 +62,6 @@ export const [labViews, setLabViews] = createSignal<Record<string, boolean>>({
     vals: false,
     sysctx: true,
     reqbody: false,
-    ctxpreview: false,
 });
 export function setLabView(key: string, open: boolean): void {
     setLabViews((v) => ({ ...v, [key]: open }));
@@ -1441,9 +1439,10 @@ export function PromptLabV4Page() {
             </>
         ),
         "lab.preview": () => (
-            /* 三个可折叠块**纵向堆叠** —— 与左侧 lab.inspector 同构（同一个机制，不分两套）。
+            /* 两块可折叠块**纵向堆叠** —— 与左侧 lab.inspector 同构（同一个机制，不分两套）。
                原来这里用 area 内互斥 tab：多一层页签，且每次只看得到一块、展开的块只剩一小条。
-               折叠块的做法把"看哪块"变成一次点击，展开的那块独占剩余高度。 */
+               折叠块把"看哪块"变成一次点击，展开的那块独占剩余高度。
+               注：上下文树试验场已独立成 ctxlab 子页面（示范数据不该混在真实预览里）。 */
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-xs">
                 {/* 展开的块 flex-1（独占剩余高度）并保底 160px；都展开时外层滚动，
                     不把每块压成一条 —— 这正是"tab 每块太小"要解决的问题 */}
@@ -1510,14 +1509,6 @@ export function PromptLabV4Page() {
                     {viewHeader("reqbody", "请求预览", preview()?.requestNote ?? "随任务场景生成")}
                     <Show when={views()["reqbody"]}>
                         <div class="min-h-0 flex-1">{reqBodyPane()}</div>
-                    </Show>
-                </div>
-                <div class="flex min-h-0 flex-col rounded-lg border border-base-300" classList={{ "flex-1 min-h-[160px]": !!views()["ctxpreview"] }}>
-                    {viewHeader("ctxpreview", "系统上下文", "Context Tree（只读）")}
-                    <Show when={views()["ctxpreview"]}>
-                        <div class="min-h-0 flex-1">
-                            <ContextPreviewView />
-                        </div>
                     </Show>
                 </div>
             </div>

@@ -88,6 +88,21 @@ export const VIEWS: ViewDef[] = [
     placement: { lab: { area: "right", order: 10 } },
   },
   {
+    // 上下文树试验场（**独立子页面**，见下 PAGES 的 ctxlab）：
+    // 左栏 = 变量树 + 划分规则（同一个 view 内两块折叠，与 lab.inspector 同构）
+    id: "ctxlab.left",
+    title: "变量与规则",
+    instanceScope: "context",
+    placement: { ctxlab: { area: "left", order: 10 } },
+  },
+  {
+    // 主栏 = 划分结果的三块：system 份 / runtime 份 / 合成消息
+    id: "ctxlab.delivery",
+    title: "投递",
+    instanceScope: "context",
+    placement: { ctxlab: { area: "main", order: 10 } },
+  },
+  {
     // 边聊边调：与任务执行页是**同一个 view**，只是换个 area（卫星）
     // 这正是「靠 placement、不靠嵌套」的体现
     id: "chat.local",
@@ -180,6 +195,24 @@ export const PAGES: PageDef[] = [
         { id: "center", col: 1, row: 0 },
         { id: "right", col: 2, row: 0 },
         { id: "bottom", col: 0, row: 1, colSpan: 3 },
+      ],
+    },
+  },
+  {
+    // 上下文树试验场：**独立子页面**，与提示词页（lab）平级挂在任务执行页之下。
+    // 单独开一个 tab 的理由：提示词页右栏已被既有 view 占满，塞进来会互抢空间、
+    // 也容易让人把"示范数据"误当成当前任务的真实上下文。
+    id: "ctxlab",
+    title: "上下文树",
+    multi: true, // 每个任务一个实例
+    parentPage: "task-run",
+    layout: {
+      version: 1,
+      cols: [px(320), fr(1)],
+      rows: [fr(1)],
+      areas: [
+        { id: "left", col: 0, row: 0 },
+        { id: "main", col: 1, row: 0 },
       ],
     },
   },

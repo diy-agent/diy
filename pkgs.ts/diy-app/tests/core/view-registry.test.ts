@@ -210,6 +210,15 @@ describe("子页面（一页一中心）", () => {
   it("lab 的默认隐藏：bottom（chat 是卫星，默认不占地方）", () => {
     expect(DEFAULT_HIDDEN.lab).toEqual(["bottom"]);
   });
+
+  it("ctxlab 是 task-run 的子页面，view 只在它自己身上", () => {
+    const ctxlab = findPage("ctxlab")!;
+    expect(ctxlab.parentPage).toBe("task-run");
+    expect(ctxlab.multi).toBe(true);
+    const byPage = (pid: string) =>
+      VIEWS.filter((v) => v.placement[pid]).map((v) => `${v.id}@${v.placement[pid]!.area}`);
+    expect(byPage("ctxlab").sort()).toEqual(["ctxlab.delivery@main", "ctxlab.left@left"]);
+  });
 });
 
 // ═══════════════════════════════════════════

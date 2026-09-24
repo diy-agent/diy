@@ -19,7 +19,7 @@
 import { RpcSchema } from "@diy/rpc";
 import { z } from "zod";
 import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-schema";
-import { ContextPreviewSchema } from "../../shared/context/schema";
+import { ContextLabSchema } from "../../shared/context/schema";
 
 // 任务状态枚举 — 单一真相源 task-state.ts（纯 zod，无 Node 依赖，浏览器安全） */
 import { TaskStateSchema } from "../core/task-state";
@@ -455,22 +455,19 @@ export const apiDef = RpcSchema.router({
       }),
 
       context: RpcSchema.group({
-        desc: `系统上下文（Context Tree）预览（只组装不发送）`,
+        desc: `上下文树试验场（示范数据，只组装不发送）`,
         children: {
           scenarios: RpcSchema.unary({
-            desc: `列出内置场景`,
+            desc: `列出示范场景`,
             input: {},
             output: z.array(z.object({ name: z.string(), title: z.string() })),
           }),
-          preview: RpcSchema.unary({
-            desc: `跑一个场景，返回树 + 每步投递动作（snapshot/patch/none/clear）`,
+          lab: RpcSchema.unary({
+            desc: `上下文树试验场数据：变量树 + 划分规则 + system/runtime 两份 + 合成消息`,
             input: {
-              scenario: z
-                .string()
-                .optional()
-                .cliOption({ desc: "场景名（basic/template/boundary，缺省 basic）" }),
+              scenario: z.string().optional().cliOption({ desc: "示范场景名（缺省 task）" }),
             },
-            output: ContextPreviewSchema,
+            output: ContextLabSchema,
           }),
         },
       }),

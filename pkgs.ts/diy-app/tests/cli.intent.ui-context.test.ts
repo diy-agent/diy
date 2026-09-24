@@ -1,11 +1,12 @@
 // tests/cli.intent.ui-context.test.ts
 // ═══════════════════════════════════════════════════════════════
-// 🎯 Context Tree 预览（任务 148）的**渲染**验证 + 原预览不受影响的回归。
+// 🎯 上下文树试验场（任务 148）的 RPC 契约 + **渲染**验证。
 //
-// 为什么要有这条：CLI 的 RPC 返回成功 ≠ renderer 渲染正确（AGENTS.md 的教训）。
-// 这里走「打开任务 → 打开提示词页 → 切右栏 tab」真实 UI 路径，读 a11y 树确认：
-//   1. 新增的「系统上下文」view 真的上屏（树/places/step 投递/system/runtime 四块）
-//   2. 切换 tab 能回到原来的 `_system.md` / `请求预览`（原能力一行未改）
+// 为什么要有渲染验证：CLI 的 RPC 返回成功 ≠ renderer 渲染正确（AGENTS.md 的教训）。
+// 这里走「打开任务 → 打开上下文树 tab → 读 a11y 树」真实路径，确认六个块真的上屏。
+//
+// 页面定位：**独立子页面**（与提示词页 lab 平级挂在 task-run 下），
+// 好处是与既有 view 互不干扰、且"示范数据"不会被误当成当前任务的真实上下文。
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
@@ -44,98 +45,96 @@ async function a11yText(): Promise<string> {
   return collectText([(res.data as any)?.data?.tree]).join("\n");
 }
 
-/** 展开/折叠右栏某个块（`ui view expand`，与左栏四个块同一个机制） */
+/** 展开/折叠试验场的某个块（key 带 ctx. 前缀，与提示词页的块分开命名空间） */
 async function fold(key: string, open: boolean): Promise<void> {
-  const res = await fx.sh.getJson(`./diy.sh ui view expand ${key} ${open ? "open" : "closed"}`);
+  const res = await fx.sh.getJson(`./diy.sh ui view expand ctx.${key} ${open ? "open" : "closed"}`);
   expect((res.data as any)?.status, `折叠 ${key} 失败: ${JSON.stringify(res.data)}`).toBe("ok");
 }
 
-describe("Context Tree 预览：RPC 契约", () => {
-  it("diy context scenarios / preview 可用，且返回树 + 每步投递", async () => {
-    // 注：CLI stdout = RPC 的 output 本体（`ui inspect` 的 output 自带 {status,data} 外壳，
-    // 而 context 域直接返回数据本身），故这里不再多剥一层
+describe("上下文树试验场：RPC 契约", () => {
+  it("diy context scenarios / lab 返回树 + 划分规则 + 两份投递 + 合成消息", async () => {
+    // CLI stdout = RPC 的 output 本体（context 域直接返回数据，无 {status,data} 外壳）
     const list = await fx.sh.getJson("./diy.sh context scenarios");
-    const names = ((list.data as unknown as any[]) ?? []).map((s: any) => s.name);
-    expect(names).toEqual(["basic", "template", "boundary"]);
+    const names = (list.data as unknown as any[]).map((s: any) => s.name);
+    expect(names).toEqual(["task"]);
 
-    const p = await fx.sh.getJson("./diy.sh context preview basic");
-    const d = p.data as any;
-    expect(d.scenario).toBe("basic");
+    const res = await fx.sh.getJson("./diy.sh context lab");
+    const d = res.data as any;
+
+    // ① 必须自报家门是示范数据（否则会被误当成当前任务的真实上下文）
+    expect(d.note).toContain("示范数据");
     expect(d.wireVersion).toMatch(/^[0-9a-f]{8}$/);
-    // places 与容器归属（basic 最后一步删掉了 tasks，故这是**终态**）
-    expect(d.places.map((x: any) => x.path)).toEqual(["diy", "instructions", "task"]);
-    expect(d.places.filter((x: any) => x.container === "system").map((x: any) => x.path)).toEqual([
-      "diy",
-      "instructions",
-      "task",
-    ]);
-    // 树节点带 valueHash
-    expect(d.nodes.some((n: any) => n.path === "diy.cli")).toBe(true);
-    // 逐步投递覆盖四种动作（runtime patch 的粒度是 **place**，不是叶子）
-    const deliveries = d.steps.map((s: any) => s.delivery).join(" | ");
-    expect(deliveries).toContain("snapshot（supersedes=all）");
-    expect(deliveries).toContain("set tasks");
-    expect(deliveries).toContain("不发（内容未变）");
-    expect(deliveries).toContain("clear（显式清空）");
-    // step-hash：删掉 tasks 后，父与子都记 1 次（不累加）
-    const clearStep = d.steps.at(-1);
-    expect(clearStep.changed).toContain("tasks");
-    expect(clearStep.changed).toContain("tasks.140.status");
-    // system 是模板渲染结果
-    expect(d.system).toContain("<p>项目：diy（/repo/diy.sh）</p>");
+
+    // ② 变量树：一棵树，含身份与易变两类变量
+    const paths = d.tree.map((n: any) => n.path);
+    expect(paths).toContain("diy.cli");
+    expect(paths).toContain("tasks.140.status");
+    expect(d.tree.every((n: any) => typeof n.valueHash === "string")).toBe(true);
+
+    // ③ ★核心：划分规则表 —— 每个单元都有归属 + 理由
+    const ruleMap = Object.fromEntries(d.rules.map((r: any) => [r.place, r]));
+    expect(ruleMap["diy"].container).toBe("system");
+    expect(ruleMap["tasks"].container).toBe("runtime");
+    expect(ruleMap["diy"].reason.length).toBeGreaterThan(4);
+    expect(ruleMap["tasks"].renders).toContain("tasks.140.status");
+
+    // ④ 两份投递各自有内容，且 system 里没有 runtime 的变量（划分真的生效）
+    expect(d.system.text).toContain("diy.cli");
+    expect(d.system.text).not.toContain("tasks.140.status");
+    expect(d.runtime.text).toContain("tasks.140.status");
+    expect(d.runtime.text).not.toContain("diy.cli");
+
+    // ⑤ 合成消息：system 进 messages[0]，runtime 进 messages[1] 的 user
+    expect(d.message.system).toBe(d.system.text);
+    expect(d.message.user).toContain(d.runtime.text);
   }, 60_000);
 });
 
-describe("Context Tree 预览：UI 上屏（右栏可折叠堆叠）", () => {
-  it("右栏三个块与左栏同构：默认只展开 _system.md，展开「系统上下文」四块内容上屏", async () => {
-    // 1. 造项目 + 任务（提示词页以选中任务为场景）
+describe("上下文树试验场：UI 上屏（独立子页面 + 折叠堆叠）", () => {
+  it("打开任务 → 打开上下文树 tab → 六个块上屏，与提示词页互不干扰", async () => {
     const repo = `${fx.HOME}/ctxlab`;
     const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 上下文试验场`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 上下文试验场任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
 
-    // 2. 打开任务执行页 → 打开其子页面（提示词页）
+    // 1. 打开任务执行页 → 打开其子页面（上下文树），**不打开**提示词页
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
-    await fx.sh.getJson(`./diy.sh ui tab open lab:${uri}`);
+    await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
 
-    // 3. 右栏三个块（折叠 header）先确认在，且**同构**：默认只展开 _system.md
-    const before = await waitUntil(
+    // 2. 默认展开态：变量树 / 划分规则 / 两份都有内容，合成消息默认折叠
+    const base = await waitUntil(
       a11yText,
-      (s) => s.includes("_system.md") && s.includes("请求预览") && s.includes("系统上下文"),
-      { label: "右栏三个折叠块上屏" },
+      (s) => s.includes("变量树") && s.includes("划分规则") && s.includes("system 份"),
+      { label: "试验场块上屏" },
     );
-    expect(before).not.toContain("PLACES（割点集合）"); // 系统上下文块默认是折叠的
+    expect(base).toContain("示范数据"); // 页头声明
+    expect(base).toContain("runtime 份");
+    expect(base).toContain("合成消息"); // header 在（折叠态）
+    expect(base).toContain("diy.cli");
+    expect(base).toContain("tasks.140.status");
+    // 划分规则里的「为什么」（人话，不是术语）
+    expect(base).toContain("进程身份");
+    expect(base).toContain("最典型的易变项");
+    expect(base).not.toContain("messages[1].user"); // 合成消息默认折叠
 
-    // 4. 展开「系统上下文」块
-    await fold("ctxpreview", true);
-    const ctx = await waitUntil(a11yText, (s) => s.includes("PLACES（割点集合）"), {
-      label: "系统上下文 view 上屏",
-    });
-    expect(ctx).toContain("TREE（");
-    expect(ctx).toContain("STEP 投递");
-    expect(ctx).toContain("SYSTEM（全量重建）");
-    expect(ctx).toContain("RUNTIME（增量投递内容）");
-    // 默认场景 basic 的实内容
-    expect(ctx).toContain("diy.cli");
-    expect(ctx).toContain("tasks.140.status");
-    expect(ctx).toContain("clear");
-    expect(ctx).toContain("rebaseline");
+    // 3. 提示词页的块**没有**被带过来（互不干扰：这是另一个 page）
+    expect(base).not.toContain("请求预览");
 
-    // 5. 展开「请求预览」块：原能力仍在（未受新增块影响），且与系统上下文**同时可见**
-    //    （这正是折叠堆叠相对互斥 tab 的收益：不缺互斥，能并排对照）
-    await fold("reqbody", true);
-    const both = await waitUntil(a11yText, (s) => s.includes("PLACES（割点集合）") && s.includes("请求预览"), {
-      label: "两块同时可见",
+    // 4. 展开「合成消息」→ 两份合成后的消息形态上屏
+    await fold("message", true);
+    const msg = await waitUntil(a11yText, (s) => s.includes("messages[1].user"), {
+      label: "合成消息上屏",
     });
-    expect(both).toContain("dry-run");
+    expect(msg).toContain("messages[0].system");
+    expect(msg).toContain("Current runtime context:");
 
-    // 6. 折回：折叠块能收起，内容随之消失
-    await fold("ctxpreview", false);
-    const folded = await waitUntil(a11yText, (s) => !s.includes("PLACES（割点集合）"), {
-      label: "系统上下文块折叠",
+    // 5. 折回 → 内容消失，header 还在（可再展开）
+    await fold("message", false);
+    const folded = await waitUntil(a11yText, (s) => !s.includes("messages[1].user"), {
+      label: "合成消息折叠",
     });
-    expect(folded).toContain("系统上下文"); // header 还在（可再展开）
+    expect(folded).toContain("合成消息");
 
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 180_000);

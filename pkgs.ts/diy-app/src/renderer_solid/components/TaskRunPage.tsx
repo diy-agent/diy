@@ -70,6 +70,14 @@ export function TaskRunPage(props: { uri: string }) {
                 >
                     🪟 提示词
                 </button>
+                {/* 打开上下文树试验场（**独立子页面**：示范数据，与提示词页互不干扰） */}
+                <button
+                    class="btn btn-xs btn-ghost"
+                    title="打开上下文树试验场（变量树 / 划分规则 / 两份投递，示范数据）"
+                    onClick={() => getRendererActions().openTab?.("ctxlab", props.uri)}
+                >
+                    🌲 上下文树
+                </button>
                 {/* 布局切换：只给**有 view 的 area** 渲染按钮（空 area 点了没反应，见 menuAreas）。
                     图标用序号替代 —— 动态绘制随 grid 结构变化的图标待定（见 133）。 */}
                 <For each={menuAreas()}>
