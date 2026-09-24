@@ -343,9 +343,17 @@ export const apiDef = RpcSchema.router({
                 output: z.object({ cleared: z.boolean() }),
               }),
               models: RpcSchema.unary({
-                desc: `列出本地 agent 可选模型（zen/go OpenAI-completions 子集）`,
+                desc: `列出本地 agent 可选模型（zen/go；api 面逐个标注，见 local-agent.ts apiOf）`,
                 input: {},
-                output: z.array(z.object({ id: z.string(), name: z.string() })),
+                output: z.array(
+                  z.object({
+                    id: z.string(),
+                    name: z.string(),
+                    api: z.enum(["chat", "responses"]),
+                    contextLimit: z.number(),
+                    maxOutputTokens: z.number(),
+                  }),
+                ),
               }),
               limits: RpcSchema.unary({
                 desc: `查询生效运行限制（默认值 < $DIY_HOME/local/limits.json < 环境变量 DIY_LOCAL_*）`,

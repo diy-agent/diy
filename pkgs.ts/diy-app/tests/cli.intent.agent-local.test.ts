@@ -148,6 +148,34 @@ describe("agent.local — 真实对话（zen/go mimo-v2.5）", () => {
     );
 
     it.skipIf(!RUN_LLM)(
+        "responses 面模型（gpt-5.6-luna）可用：不再 503，Op 流与 usage 正常",
+        async () => {
+            // 需求（projects/4/tasks/145）：responses-only 模型打到 /chat/completions 一律 503
+            // 「Endpoint is unavailable」；按 api 面分派后必须能正常出文本。
+            const uri = await setup("responses 面任务");
+            const r = await fx.sh.run(
+                `./diy.sh agent local chat ${uri} "只用两个字回答：你好" --model gpt-5.6-luna`,
+                180_000,
+            );
+            if (r.code !== 0) throw new Error(`cli exit=${r.code}\n${r.stderr}`);
+            const ops = r.stdout
+                .split("\n")
+                .filter((l) => l.trim().startsWith('{"op"'))
+                .map((l) => JSON.parse(l));
+            // 失败形态是 turn 里挂一个 error 块（source=llm）—— 它就是本 bug 的指纹
+            expect(ops.some((o) => o.op === "start" && o.kind === "error")).toBe(false);
+            expect(
+                ops.some(
+                    (o) => o.op === "delta" && typeof o.fields?.content === "string" && o.fields.content,
+                ),
+            ).toBe(true);
+            expect(ops.some((o) => o.op === "patch" && o.fields?.usage)).toBe(true);
+            await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+        },
+        200_000,
+    );
+
+    it.skipIf(!RUN_LLM)(
         "工具轮：tool 块 args/output/status 完整（toolCallId=块 id）",
         async () => {
             const uri = await setup("工具任务");

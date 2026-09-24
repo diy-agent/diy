@@ -8,8 +8,9 @@
 // 密钥/上游收敛在 main：renderer 不接触 key；zen/go 无 CORS，代理是硬约束。
 
 import { streamText, tool, stepCountIs } from "ai";
-import type { ModelMessage } from "ai";
+import type { LanguageModel, ModelMessage } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -33,30 +34,55 @@ import { assembleSystem } from "./prompt-registry";
 
 export const DEFAULT_MODEL = "mimo-v2.5";
 
+/** zen/go 基址：两个 API 面共用（chat/completions 与 responses 只是路径不同） */
+export const ZEN_BASE_URL = "https://opencode.ai/zen/go/v1";
+
 /**
- * 可选模型：zen/go 的 OpenAI-completions 子集（2026-09-12 实查 /models + models.dev 价格）
+ * 模型走的 API 面。**必须逐个模型标注**，因为 zen/go 的 `GET /models` 不返回 API 面信息
+ * （只有 id/object/created/owned_by），标错的表现是「上游 503 Endpoint is unavailable」：
+ * responses-only 模型打到 /chat/completions 一律 503（gpt-5.6-luna 2026-09-24 实测）。
+ * 真源：pi 的 ~/.pi/agent/models-store.json 的 `api` 字段（opencode-go provider）。
+ */
+export type LocalModelApi = "chat" | "responses";
+
+export interface LocalModel {
+    id: string;
+    name: string;
+    /** chat = /chat/completions（@ai-sdk/openai-compatible）；responses = /responses（@ai-sdk/openai） */
+    api: LocalModelApi;
+    contextLimit: number;
+    maxOutputTokens: number;
+}
+
+/**
+ * 可选模型（2026-09-24 实查 /models + models.dev 价格 + 两个 API 面逐个 curl 验证）
  * 价格单位为 $/1M tokens：input / output（cacheRead）
  */
-export const LOCAL_MODELS = [
+export const LOCAL_MODELS: LocalModel[] = [
     // maxOutputTokens / contextLimit 来源：models.dev/api.json 的 limit.output / limit.context（2026-09 实查，
     // 取 opencode-go 或同名模型主 provider 的值）。contextLimit 用于推导系统上下文预算（见 prompt-registry）。
-    { id: "mimo-v2.5", name: "MiMo V2.5", contextLimit: 1048576, maxOutputTokens: 128000 }, // 0.14 / 0.28 (0.0028)
-    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", contextLimit: 1000000, maxOutputTokens: 384000 }, // 0.15 / 0.60 (0.003)
-    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", contextLimit: 1000000, maxOutputTokens: 384000 }, // 0.15 / 0.60 (0.003)
-    { id: "glm-5.3-flash", name: "GLM-5.3 Flash", contextLimit: 1000000, maxOutputTokens: 131072 }, // 0.15 / 0.50 (0.03)
-    { id: "qwen3.8-flash", name: "Qwen3.8 Flash", contextLimit: 1000000, maxOutputTokens: 131072 }, // 0.15 / 0.47 (0.016)
-    { id: "hy3", name: "Hy3", contextLimit: 256000, maxOutputTokens: 128000 }, // 0.14 / 0.58 (0.035)
-    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", contextLimit: 1050000, maxOutputTokens: 128000 }, // 0.20 / 1.20 (0.02)
-    { id: "minimax-m3", name: "MiniMax M3", contextLimit: 512000, maxOutputTokens: 131072 }, // 0.30 / 1.20 (0.06)
-    { id: "minimax-m2.7", name: "MiniMax M2.7", contextLimit: 204800, maxOutputTokens: 131072 }, // 0.30 / 1.20 (0.06)
-    { id: "longcat-2.0", name: "LongCat-2.0", contextLimit: 1048756, maxOutputTokens: 131072 }, // 0.30 / 1.20 (0.006)
-    { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro", contextLimit: 1048576, maxOutputTokens: 128000 }, // 0.435 / 0.87 (0.003625)
-    { id: "qwen3.7-plus", name: "Qwen3.7 Plus", contextLimit: 1000000, maxOutputTokens: 65536 }, // 0.40 / 1.60 (0.04)
-    { id: "glm-5.3", name: "GLM-5.3", contextLimit: 1000000, maxOutputTokens: 131072 }, // 1.40 / 4.40 (0.26)
-    { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", contextLimit: 262144, maxOutputTokens: 262144 }, // 0.95 / 4.00 (0.19)
-    { id: "muse-spark-1.2-contributor", name: "Muse Spark 1.2 Contributor (opencode-go)", contextLimit: 1048576, maxOutputTokens: 131072 }, // 0.10 / 0.20
-    { id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor (opencode-go)", contextLimit: 1048576, maxOutputTokens: 131072 }, // 0.10 / 0.20
+    { id: "mimo-v2.5", name: "MiMo V2.5", api: "chat", contextLimit: 1048576, maxOutputTokens: 128000 }, // 0.14 / 0.28 (0.0028)
+    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", api: "chat", contextLimit: 1000000, maxOutputTokens: 384000 }, // 0.15 / 0.60 (0.003)
+    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", api: "chat", contextLimit: 1000000, maxOutputTokens: 384000 }, // 0.15 / 0.60 (0.003)
+    { id: "glm-5.3-flash", name: "GLM-5.3 Flash", api: "chat", contextLimit: 1000000, maxOutputTokens: 131072 }, // 0.15 / 0.50 (0.03)
+    { id: "qwen3.8-flash", name: "Qwen3.8 Flash", api: "chat", contextLimit: 1000000, maxOutputTokens: 131072 }, // 0.15 / 0.47 (0.016)
+    { id: "hy3", name: "Hy3", api: "chat", contextLimit: 256000, maxOutputTokens: 128000 }, // 0.14 / 0.58 (0.035)
+    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", api: "responses", contextLimit: 1050000, maxOutputTokens: 128000 }, // 0.20 / 1.20 (0.02)
+    { id: "minimax-m3", name: "MiniMax M3", api: "chat", contextLimit: 512000, maxOutputTokens: 131072 }, // 0.30 / 1.20 (0.06)
+    { id: "minimax-m2.7", name: "MiniMax M2.7", api: "chat", contextLimit: 204800, maxOutputTokens: 131072 }, // 0.30 / 1.20 (0.06)
+    { id: "longcat-2.0", name: "LongCat-2.0", api: "chat", contextLimit: 1048756, maxOutputTokens: 131072 }, // 0.30 / 1.20 (0.006)
+    { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro", api: "chat", contextLimit: 1048576, maxOutputTokens: 128000 }, // 0.435 / 0.87 (0.003625)
+    { id: "qwen3.7-plus", name: "Qwen3.7 Plus", api: "chat", contextLimit: 1000000, maxOutputTokens: 65536 }, // 0.40 / 1.60 (0.04)
+    { id: "glm-5.3", name: "GLM-5.3", api: "chat", contextLimit: 1000000, maxOutputTokens: 131072 }, // 1.40 / 4.40 (0.26)
+    { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", api: "chat", contextLimit: 262144, maxOutputTokens: 262144 }, // 0.95 / 4.00 (0.19)
+    { id: "muse-spark-1.2-contributor", name: "Muse Spark 1.2 Contributor (opencode-go)", api: "responses", contextLimit: 1048576, maxOutputTokens: 131072 }, // 0.10 / 0.20
+    { id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor (opencode-go)", api: "responses", contextLimit: 1048576, maxOutputTokens: 131072 }, // 0.10 / 0.20
 ];
+
+/** 按 model id 查 API 面；未知模型按 chat 处理（保持历史行为，不静默换面） */
+export function apiOf(modelId: string): LocalModelApi {
+    return LOCAL_MODELS.find(m => m.id === modelId)?.api ?? "chat";
+}
 
 /** 按 model id 查上下文窗口（tokens）；未知返回 undefined（预算回退到硬上限） */
 export function contextLimitOf(modelId: string): number | undefined {
@@ -301,8 +327,21 @@ function errText(e: unknown): string {
 
 export class LocalAgentManager {
     private sessions = new Map<string, LocalSession>();
+    /** chat 面 provider（/chat/completions）；与 responses 面各自单例，key 同生命周期 */
     private provider: ReturnType<typeof createOpenAICompatible> | null = null;
+    /** responses 面 provider（/responses）—— responses-only 模型打 chat 面必 503，见 apiOf 注释 */
+    private respProvider: ReturnType<typeof createOpenAI> | null = null;
     private _limits: LocalAgentLimits | null = null;
+
+    /** 按 API 面取语言模型：同一 baseURL，路径由 provider 决定（/chat/completions vs /responses） */
+    private modelFor(id: string, key: string): LanguageModel {
+        if (apiOf(id) === "responses") {
+            this.respProvider ??= createOpenAI({ name: "zen-go", baseURL: ZEN_BASE_URL, apiKey: key });
+            return this.respProvider.responses(id);
+        }
+        this.provider ??= createOpenAICompatible({ name: "zen-go", baseURL: ZEN_BASE_URL, apiKey: key });
+        return this.provider(id);
+    }
 
     /** 生效限制：首次使用读 limits.json 并缓存（改文件需重启应用，与 zen key 同生命周期语义） */
     getLimits(): LocalAgentLimits {
@@ -336,7 +375,7 @@ export class LocalAgentManager {
         return s;
     }
 
-    listModels(): Array<{ id: string; name: string }> {
+    listModels(): LocalModel[] {
         return LOCAL_MODELS;
     }
 
@@ -424,13 +463,6 @@ export class LocalAgentManager {
         key: string,
         sink: (op: Op) => void,
     ): AsyncGenerator<Op> {
-        if (!this.provider) {
-            this.provider = createOpenAICompatible({
-                name: "zen-go",
-                baseURL: "https://opencode.ai/zen/go/v1",
-                apiKey: key,
-            });
-        }
         const turnId = `t${Date.now()}`;
         const uid = `${turnId}_u`;
         const cwd0 = resolveCwdWithNote(diyHome(), taskUri).cwd;
@@ -541,7 +573,7 @@ export class LocalAgentManager {
             messages: sent,
         });
         const result = streamText({
-            model: this.provider(model || DEFAULT_MODEL),
+            model: this.modelFor(model || DEFAULT_MODEL, key),
             system: asm.system,
             messages: sent,
             tools: buildTools(cwd, L, taskUri),
@@ -757,6 +789,8 @@ export function getLocalAgent(): LocalAgentManager {
 /** 预览专用 provider（单例复用）：带 transformRequestBody 钩子的实例不能直接用业务单例，
  *  但也不必每次预览新建一个 —— 进程内复用一个即可。 */
 let simProviderCache: ReturnType<typeof createOpenAICompatible> | null = null;
+/** 预览专用 provider（responses 面）：无 transformRequestBody 钩子，body 改在 fetch 桩里捕获 */
+let simRespProviderCache: ReturnType<typeof createOpenAI> | null = null;
 /** 当前在飞预览的 body 收集器（单飞即可：试验场防抖 300ms，重叠时后一次覆盖前一次） */
 let simBodySink: ((b: Record<string, unknown>) => void) | null = null;
 
@@ -787,6 +821,52 @@ function getSimProvider(model: string): ReturnType<typeof createOpenAICompatible
         }) as typeof fetch,
     });
     return simProviderCache;
+}
+
+/** responses 面预览桩：SDK 没有 transformRequestBody 钩子，所以在 fetch 里读 init.body。
+ *  回一段最小合法 SSE（response.completed）把流干净收尾 —— 与 chat 面同样「零副作用」。 */
+function getSimResponsesProvider(model: string): ReturnType<typeof createOpenAI> {
+    if (simRespProviderCache) return simRespProviderCache;
+    simRespProviderCache = createOpenAI({
+        name: "preview-sim",
+        baseURL: "http://127.0.0.1:1/unreachable",
+        apiKey: "preview-no-key",
+        fetch: (async (_input: unknown, init?: { body?: unknown }) => {
+            try {
+                simBodySink?.(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+            } catch (e) {
+                console.warn("[local-agent] 预览 body 解析失败:", e);
+            }
+            const completed = {
+                type: "response.completed",
+                response: {
+                    id: "preview-sim",
+                    object: "response",
+                    created_at: Math.floor(Date.now() / 1000),
+                    status: "completed",
+                    model,
+                    output: [],
+                    error: null,
+                    incomplete_details: null,
+                    instructions: null,
+                    metadata: {},
+                    parallel_tool_calls: true,
+                    previous_response_id: null,
+                    reasoning: null,
+                    store: false,
+                    temperature: 1,
+                    tool_calls: [],
+                    top_p: 1,
+                    truncation: "disabled",
+                    usage: null,
+                    user: null,
+                },
+            };
+            const sse = `event: response.completed\ndata: ${JSON.stringify(completed)}\n\n`;
+            return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+        }) as typeof fetch,
+    });
+    return simRespProviderCache;
 }
 
 /** 预览包含的历史消息上限：**0 = 全量**（当前取值，让日常使用直接暴露真实数据量；
@@ -849,11 +929,15 @@ export async function previewSimulatedRequest(opts: {
     simBodySink = (b) => {
         body = b;
     };
-    const simProvider = getSimProvider(model);
+    // 按 API 面取预览模型：与真发同一条链（chat 面 transformRequestBody / responses 面 fetch 桩）
+    const simModel =
+        apiOf(model) === "responses"
+            ? getSimResponsesProvider(model).responses(model)
+            : getSimProvider(model).chatModel(model);
     // 桩响应合法时不会走 catch；以下 catch 只为兼容 SDK 行为变化（body 已到手就算成功）
     try {
         const result = streamText({
-            model: simProvider.chatModel(model),
+            model: simModel,
             system: opts.system,
             messages,
             tools: buildTools(cwd, L, taskUri),
@@ -877,5 +961,8 @@ export async function previewSimulatedRequest(opts: {
             : hist.total > hist.messages.length
               ? `含历史 ${hist.messages.length}/${hist.total} 条（截尾；取自上次真发日志）`
               : `含历史 ${hist.total} 条（全量，取自上次真发日志）`;
-    return { body, note: `dry-run：与真发同一条组装链，${histNote}；fetch 桩拦截未发送` };
+    return {
+        body,
+        note: `dry-run：与真发同一条组装链（${apiOf(model)} 面），${histNote}；fetch 桩拦截未发送`,
+    };
 }
