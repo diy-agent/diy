@@ -56,29 +56,17 @@ function patchDrafts(pid: string, mut: (d: Record<string, string>) => Record<str
  * 各 view 的展开态（模块级：`ui view expand` 可能在页面还没挂载时就设置）。
  * 默认只展开「模板」，其余按需点开 —— 否则左栏一屏塞满、真正要看的表全在折叠下面。
  */
-/** 右栏 tab 的模块级 signal（见 setLabRightTab 的说明） */
-const [labRightTab, setLabRightTabSig] = createSignal<LabRightTab>(Caches.diy_lab_right_tab.get());
-
 export const [labViews, setLabViews] = createSignal<Record<string, boolean>>({
     tree: true,
     trace: false,
     vars: false,
     vals: false,
     sysctx: true,
-    reqbody: true,
+    reqbody: false,
+    ctxpreview: false,
 });
 export function setLabView(key: string, open: boolean): void {
     setLabViews((v) => ({ ...v, [key]: open }));
-}
-
-/** 右栏互斥 tab 的选中项（system=渲染 / request=请求预览 / context=系统上下文）。
- *  模块级 + 落 Caches 的理由与 labViews 相同：`ui view tab` 可能在页面还没挂载时切过来，
- *  且切页/重开不该回到默认（area 内 tab 属于**用户选择**）。 */
-export type LabRightTab = "system" | "request" | "context";
-export function setLabRightTab(tab: string): void {
-    if (tab !== "system" && tab !== "request" && tab !== "context") return;
-    setLabRightTabSig(tab);
-    Caches.diy_lab_right_tab.set(tab);
 }
 
 /** relpath 数组 → 目录树（前端按路径派生，不做人工分类） */
@@ -1060,11 +1048,53 @@ export function PromptLabV4Page() {
     /** 右栏 area 内的两个 view 互斥（tab 属于 area，不属于 page）。
      *  落 Caches：area 内 tab 是**用户选择**，切页/重开不该回到默认（模块级 signal 做不到
      *  跨页面卸载保留，且「重置界面状态」要能一起清掉 —— 故走 ui-state 单一入口）。 */
-    // 右栏 tab 的选中项是**模块级**的（`ui view tab` 要在页面挂载前就能切），此处只读
-    const rightTab = labRightTab;
-    const setRightTab = setLabRightTab;
-
     // 首屏 + 切项目都靠上面那个 createEffect(on(project)) 触发 load()（Solid 首次 flush 即跑）
+
+    /** _system.md 渲染结果的字节数（折叠块 header 的右侧提示） */
+    const sysSize = () => {
+        const s = preview()?.system;
+        return s ? `${(new TextEncoder().encode(s).length / 1024).toFixed(1)} KB` : "渲染中…";
+    };
+
+    /** 请求预览的内容（树 / 原文切换）—— 作为右栏折叠块之一，不再自带标题栏 */
+    const reqBodyPane = () => (
+        <div class="flex min-h-0 flex-1 flex-col">
+<div class="flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs">
+    <span class="opacity-60">{preview()?.requestNote ?? "随任务场景生成"}</span>
+    <span class="ml-auto join join-horizontal">
+        <button
+            class={`btn btn-xs join-item ${reqMode() === "tree" ? "btn-active" : "btn-ghost"}`}
+            onClick={() => setReqMode("tree")}
+        >
+            树
+        </button>
+        <button
+            class={`btn btn-xs join-item ${reqMode() === "raw" ? "btn-active" : "btn-ghost"}`}
+            onClick={() => setReqMode("raw")}
+        >
+            原文
+        </button>
+    </span>
+</div>
+<div class="min-h-0 flex-1 overflow-auto bg-base-200 p-2">
+    <Show when={preview()?.requestBody} fallback={<div class="text-xs opacity-60">随任务场景生成…</div>}>
+        {(b) => (
+            <>
+                {/* 树常驻（hidden 藏），切原文不卸载 → 折叠态保留 */}
+                <div classList={{ hidden: reqMode() !== "tree" }}>
+                    <JsonTree data={b()} />
+                </div>
+                <Show when={reqMode() === "raw"}>
+                    <pre class="whitespace-pre-wrap break-all rounded bg-base-200 p-2 font-mono text-[11px] leading-relaxed">
+                        {JSON.stringify(b(), null, 1)}
+                    </pre>
+                </Show>
+            </>
+        )}
+    </Show>
+</div>
+            </div>
+    );
 
     /** area → 内容。四个 area 的内容都在本闭包内，共享全部状态（不拆 context） */
     const parts: Record<string, () => JSX.Element> = {
@@ -1410,43 +1440,16 @@ export function PromptLabV4Page() {
 </div>
             </>
         ),
-        "lab.system": () => (
-            <div class="flex flex-col h-full min-h-0">
-                {/* 右栏 area 内两个 view 互斥（tab 属于 area，不属于 page） */}
-                <div class="flex items-center gap-1 border-b px-2 py-1 text-xs shrink-0">
-                    <button
-                        class={`btn btn-xs ${rightTab() === "system" ? "btn-active" : "btn-ghost"}`}
-                        aria-pressed={rightTab() === "system"}
-                        onClick={() => setRightTab("system")}
-                    >
-                        _system.md
-                    </button>
-                    <button
-                        class={`btn btn-xs ${rightTab() === "request" ? "btn-active" : "btn-ghost"}`}
-                        aria-pressed={rightTab() === "request"}
-                        onClick={() => setRightTab("request")}
-                    >
-                        请求预览
-                    </button>
-                    <button
-                        class={`btn btn-xs ${rightTab() === "context" ? "btn-active" : "btn-ghost"}`}
-                        aria-pressed={rightTab() === "context"}
-                        onClick={() => setRightTab("context")}
-                    >
-                        系统上下文
-                    </button>
-                </div>
-                <div class="flex-1 min-h-0">
-                    <Show
-                        when={rightTab() === "system"}
-                        fallback={
-                            rightTab() === "context" ? (
-                                <ContextPreviewView />
-                            ) : (
-                                (parts["lab.request"]?.() as any)
-                            )
-                        }
-                    >
+        "lab.preview": () => (
+            /* 三个可折叠块**纵向堆叠** —— 与左侧 lab.inspector 同构（同一个机制，不分两套）。
+               原来这里用 area 内互斥 tab：多一层页签，且每次只看得到一块、展开的块只剩一小条。
+               折叠块的做法把"看哪块"变成一次点击，展开的那块独占剩余高度。 */
+            <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-xs">
+                {/* 展开的块 flex-1（独占剩余高度）并保底 160px；都展开时外层滚动，
+                    不把每块压成一条 —— 这正是"tab 每块太小"要解决的问题 */}
+                <div class="flex min-h-0 flex-col rounded-lg border border-base-300" classList={{ "flex-1 min-h-[160px]": !!views()["sysctx"] }}>
+                    {viewHeader("sysctx", "_system.md", sysSize())}
+                    <Show when={views()["sysctx"]}>
                         <div class="flex flex-col h-full min-h-0">
 {/* 右：视图区 = 一个编辑器 view（与中间完全同构：标题栏 + 编辑器本体，只是只读）。
     结构化观察在左栏；请求体在「请求预览」tab */}
@@ -1503,47 +1506,23 @@ export function PromptLabV4Page() {
                         </div>
                     </Show>
                 </div>
-            </div>
-        ),
-        "lab.request": () => (
-            <div class="flex flex-col h-full min-h-0">
-<div class="flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs">
-    <span class="text-[11px] font-bold tracking-widest opacity-70">请求预览</span>
-    <span class="opacity-60">{preview()?.requestNote ?? "随任务场景生成"}</span>
-    <span class="ml-auto join join-horizontal">
-        <button
-            class={`btn btn-xs join-item ${reqMode() === "tree" ? "btn-active" : "btn-ghost"}`}
-            onClick={() => setReqMode("tree")}
-        >
-            树
-        </button>
-        <button
-            class={`btn btn-xs join-item ${reqMode() === "raw" ? "btn-active" : "btn-ghost"}`}
-            onClick={() => setReqMode("raw")}
-        >
-            原文
-        </button>
-    </span>
-</div>
-<div class="min-h-0 flex-1 overflow-auto bg-base-200 p-2">
-    <Show when={preview()?.requestBody} fallback={<div class="text-xs opacity-60">随任务场景生成…</div>}>
-        {(b) => (
-            <>
-                {/* 树常驻（hidden 藏），切原文不卸载 → 折叠态保留 */}
-                <div classList={{ hidden: reqMode() !== "tree" }}>
-                    <JsonTree data={b()} />
+                <div class="flex min-h-0 flex-col rounded-lg border border-base-300" classList={{ "flex-1 min-h-[160px]": !!views()["reqbody"] }}>
+                    {viewHeader("reqbody", "请求预览", preview()?.requestNote ?? "随任务场景生成")}
+                    <Show when={views()["reqbody"]}>
+                        <div class="min-h-0 flex-1">{reqBodyPane()}</div>
+                    </Show>
                 </div>
-                <Show when={reqMode() === "raw"}>
-                    <pre class="whitespace-pre-wrap break-all rounded bg-base-200 p-2 font-mono text-[11px] leading-relaxed">
-                        {JSON.stringify(b(), null, 1)}
-                    </pre>
-                </Show>
-            </>
-        )}
-    </Show>
-</div>
+                <div class="flex min-h-0 flex-col rounded-lg border border-base-300" classList={{ "flex-1 min-h-[160px]": !!views()["ctxpreview"] }}>
+                    {viewHeader("ctxpreview", "系统上下文", "Context Tree（只读）")}
+                    <Show when={views()["ctxpreview"]}>
+                        <div class="min-h-0 flex-1">
+                            <ContextPreviewView />
+                        </div>
+                    </Show>
+                </div>
             </div>
         ),
+
     };
 
     return (

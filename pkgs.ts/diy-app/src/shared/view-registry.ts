@@ -79,17 +79,13 @@ export const VIEWS: ViewDef[] = [
     placement: { lab: { area: "left", order: 10 } },
   },
   {
-    // 右栏：_system.md 渲染 + 请求体（两 view 在 area 内 tab 互斥）
-    id: "lab.system",
-    title: "系统提示词",
+    // 右栏：_system.md 渲染 / 请求预览 / 系统上下文 —— **一个 view**，内部三个可折叠块
+    // （与左栏 lab.inspector 同构）。不做成 area 内多个 view 或互斥 tab：
+    // 前者会平分高度、后者多一层页签，两种都是"每块只剩一小条"。
+    id: "lab.preview",
+    title: "预览",
     instanceScope: "context",
     placement: { lab: { area: "right", order: 10 } },
-  },
-  {
-    id: "lab.request",
-    title: "请求预览",
-    instanceScope: "context",
-    placement: { lab: { area: "right", order: 20 } },
   },
   {
     // 边聊边调：与任务执行页是**同一个 view**，只是换个 area（卫星）

@@ -693,7 +693,7 @@ export const apiDef = RpcSchema.router({
               expand: RpcSchema.unary({
                 desc: `展开/折叠 view 内部的折叠框`,
                 input: {
-                  key: z.string().cliArg({ desc: "折叠框名（tree/trace/vars/vals/sysctx/reqbody）" }),
+                  key: z.string().cliArg({ desc: "折叠框名（左栏 tree/trace/vars/vals；右栏 sysctx/reqbody/ctxpreview）" }),
                   open: z.string().cliArg({ desc: "open 或 closed" }),
                 },
                 output: z.object({ status: z.string() }),
@@ -712,23 +712,6 @@ export const apiDef = RpcSchema.router({
                   open: z.string().cliArg({ desc: "open 或 closed" }),
                   page: z.string().optional().cliOption({ desc: "page id（缺省 task-run）" }),
                   ctx: z.string().optional().cliOption({ desc: "上下文键（context 型 view 必填，如任务 URI）" }),
-                },
-                output: z.object({ status: z.string() }),
-              }),
-              /**
-               * view 内部**互斥 tab** 的选中项（第四件事）。
-               *   expand  折叠框（可多个同时开）
-               *   viewarea area 整体开合
-               *   set      view 实例在 area 里的去留
-               *   tab      一个 view 内部只能选一个的页签（如右栏 _system.md / 请求预览 / 系统上下文）
-               * 存在的理由与 expand 相同：tab 是**用户选择**，测试/agent 需要可编程地切过去看。
-               */
-              tab: RpcSchema.unary({
-                desc: `切换 view 内部的互斥 tab（选中项）`,
-                input: {
-                  view: z.string().cliArg({ desc: "view id（当前支持 lab.system）" }),
-                  tab: z.string().cliArg({ desc: "tab 名（system/request/context）" }),
-                  page: z.string().optional().cliOption({ desc: "page id（缺省 lab）" }),
                 },
                 output: z.object({ status: z.string() }),
               }),

@@ -197,8 +197,7 @@ describe("子页面（一页一中心）", () => {
       "chat.local@bottom",     // 边聊边调：与任务页是同一个 view，只是换个 area
       "lab.editor@center",     // 中心
       "lab.inspector@left",
-      "lab.request@right",
-      "lab.system@right",      // 与 request 同 area → 区域内 tab 互斥
+      "lab.preview@right",     // 右栏一个 view，内部三个可折叠块（与左栏同构）
     ]);
   });
 

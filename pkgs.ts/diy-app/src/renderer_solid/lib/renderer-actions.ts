@@ -27,9 +27,6 @@ export interface RendererActions {
     toast?: (message: string, level: ToastType) => void;
     /** 展开/折叠**折叠框**（view 内部）。注意：与「view 在哪个 area / 是否隐藏」是两件事 */
     setView?: (key: string, open: boolean) => void;
-    /** 切换 view 内部**互斥 tab** 的选中项（如右栏 _system.md / 请求预览 / 系统上下文）。
-     *  与 setView（折叠框可多个同开）是同层但不同性质的状态。 */
-    setViewTab?: (pageId: string, viewId: string, tab: string) => void;
     /** 打开（或聚焦）任务执行 tab —— 等同点任务详情里的大 FAB */
     openTaskRun?: (uri: string) => void;
     /** 切到已打开的 tab（参数是 tab key：`task-run:<uri>` / `lab:<uri>`） */

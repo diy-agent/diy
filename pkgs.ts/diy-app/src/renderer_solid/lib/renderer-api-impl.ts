@@ -115,12 +115,6 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     return { status: "ok" };
   });
 
-  // view 内部互斥 tab 的选中项（与折叠框 expand 是两件事：tab 只能选一个）
-  binding.on(ui.view.tab, async ({ input }) => {
-    getRendererActions().setViewTab?.(input.page ?? "lab", input.view, input.tab);
-    return { status: "ok" };
-  });
-
   // viewarea（面板）开合：有几何语义、无身份语义
   binding.on(ui.viewarea.set, async ({ input }) => {
     // pageId 由调用方给出（同一 area 名在不同 page 上是不同的东西）

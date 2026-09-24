@@ -44,10 +44,10 @@ async function a11yText(): Promise<string> {
   return collectText([(res.data as any)?.data?.tree]).join("\n");
 }
 
-/** 切右栏互斥 tab（走 CLI 的可编程钩子，与 `ui view expand` 同一约定） */
-async function switchTab(tab: string): Promise<void> {
-  const res = await fx.sh.getJson(`./diy.sh ui view tab lab.system ${tab}`);
-  expect((res.data as any)?.status, `切 tab ${tab} 失败: ${JSON.stringify(res.data)}`).toBe("ok");
+/** 展开/折叠右栏某个块（`ui view expand`，与左栏四个块同一个机制） */
+async function fold(key: string, open: boolean): Promise<void> {
+  const res = await fx.sh.getJson(`./diy.sh ui view expand ${key} ${open ? "open" : "closed"}`);
+  expect((res.data as any)?.status, `折叠 ${key} 失败: ${JSON.stringify(res.data)}`).toBe("ok");
 }
 
 describe("Context Tree 预览：RPC 契约", () => {
@@ -86,8 +86,8 @@ describe("Context Tree 预览：RPC 契约", () => {
   }, 60_000);
 });
 
-describe("Context Tree 预览：UI 上屏与可切回", () => {
-  it("打开提示词页 → 切「系统上下文」→ 四块内容上屏；切回原 tab 仍正常", async () => {
+describe("Context Tree 预览：UI 上屏（右栏可折叠堆叠）", () => {
+  it("右栏三个块与左栏同构：默认只展开 _system.md，展开「系统上下文」四块内容上屏", async () => {
     // 1. 造项目 + 任务（提示词页以选中任务为场景）
     const repo = `${fx.HOME}/ctxlab`;
     const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 上下文试验场`);
@@ -99,14 +99,16 @@ describe("Context Tree 预览：UI 上屏与可切回", () => {
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
     await fx.sh.getJson(`./diy.sh ui tab open lab:${uri}`);
 
-    // 3. 原 tab 先确认在（默认 system）
-    const before = await waitUntil(a11yText, (s) => s.includes("请求预览") && s.includes("系统上下文"), {
-      label: "右栏三个 tab 上屏",
-    });
-    expect(before).toContain("_system.md");
+    // 3. 右栏三个块（折叠 header）先确认在，且**同构**：默认只展开 _system.md
+    const before = await waitUntil(
+      a11yText,
+      (s) => s.includes("_system.md") && s.includes("请求预览") && s.includes("系统上下文"),
+      { label: "右栏三个折叠块上屏" },
+    );
+    expect(before).not.toContain("PLACES（割点集合）"); // 系统上下文块默认是折叠的
 
-    // 4. 切到「系统上下文」
-    await switchTab("context");
+    // 4. 展开「系统上下文」块
+    await fold("ctxpreview", true);
     const ctx = await waitUntil(a11yText, (s) => s.includes("PLACES（割点集合）"), {
       label: "系统上下文 view 上屏",
     });
@@ -120,19 +122,20 @@ describe("Context Tree 预览：UI 上屏与可切回", () => {
     expect(ctx).toContain("clear");
     expect(ctx).toContain("rebaseline");
 
-    // 5. 切场景 → 内容跟着变（template 场景的「值变了但渲染没变」）
-
-    const tpl = await waitUntil(a11yText, (s) => s.includes("模板没引用"), {
-      label: "template 场景上屏",
+    // 5. 展开「请求预览」块：原能力仍在（未受新增块影响），且与系统上下文**同时可见**
+    //    （这正是折叠堆叠相对互斥 tab 的收益：不缺互斥，能并排对照）
+    await fold("reqbody", true);
+    const both = await waitUntil(a11yText, (s) => s.includes("PLACES（割点集合）") && s.includes("请求预览"), {
+      label: "两块同时可见",
     });
-    expect(tpl).toContain("不发（内容未变）");
+    expect(both).toContain("dry-run");
 
-    // 6. 切回「请求预览」：原能力仍在（未受新增 view 影响）
-    await switchTab("request");
-    const back = await waitUntil(a11yText, (s) => !s.includes("PLACES（割点集合）"), {
-      label: "切回请求预览",
+    // 6. 折回：折叠块能收起，内容随之消失
+    await fold("ctxpreview", false);
+    const folded = await waitUntil(a11yText, (s) => !s.includes("PLACES（割点集合）"), {
+      label: "系统上下文块折叠",
     });
-    expect(back).toContain("_system.md");
+    expect(folded).toContain("系统上下文"); // header 还在（可再展开）
 
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 180_000);

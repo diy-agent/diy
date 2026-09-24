@@ -6,7 +6,7 @@ import { TaskRunPage } from "./components/TaskRunPage";
 import { LabPage } from "./components/LabPage";
 import { LlmPage } from "./components/LlmPage";
 // 折叠框展开态仍是 lab view 内部的局部状态（与「view 在哪个 area」是两件事）
-import { setLabView, setLabRightTab } from "./components/PromptLabV4Page";
+import { setLabView } from "./components/PromptLabV4Page";
 import { AppInfo } from "./components/AppInfo";
 import { LogPanel } from "./components/LogPanel";
 import { ThemeSettings } from "./components/ThemeSettings";
@@ -126,10 +126,6 @@ export default function App() {
             },
             focus: (uri) => taskStore.selectTask(uri),
             setView: (key, open) => setLabView(key, open),
-            // 右栏的互斥 tab 是 lab.system view 的内部状态（CLI `ui view tab`）
-            setViewTab: (pageId, viewId, tab) => {
-                if (pageId === "lab" && viewId === "lab.system") setLabRightTab(tab);
-            },
             setViewArea: (pageId, area, open) => layoutStore.setAreaHidden(pageId, area, !open),
             // view 级隐藏/显示：key = viewId@ctx（context 型）。global 型 view 没有 ctx 维度
             getLayout: (pageId, ctx) => {
