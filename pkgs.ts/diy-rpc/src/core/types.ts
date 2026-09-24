@@ -29,7 +29,15 @@ export interface EnvelopeTransport {
 }
 
 // ═══════════════════════════════════════════════════
-//  StreamHandle — 消费端流接口（不可取消，取消由 AbortSignal 驱动）
+//  StreamHandle — 消费端流接口
+//
+//  取消有三条通路，各 binding 必须全部接上；少接一条，上游就会在无人消费时继续
+//  产出并占用资源（任务 149：renderer 被销毁后 main 侧 agent 多跑 1 分 45 秒，
+//  会话互斥锁直到那轮自然结束才释放）：
+//    1. AbortSignal             —— 调用方显式取消
+//    2. 迭代器 return()          —— for-await 的 break / 循环体抛错 / 外层 return
+//                                   （语言规范强制调用的清理路径）
+//    3. ClientBinding.dispose()  —— 消费端进程或页面消亡
 // ═══════════════════════════════════════════════════
 
 export interface StreamHandle<T> {

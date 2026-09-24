@@ -65,6 +65,22 @@ export class ChannelClientBinding implements ClientBinding {
     for (const [sid, entry] of this.streams) {
       this.streams.delete(sid);
       entry.end({ code: 'DISPOSED', message: 'Client disposed' });
+      // 本地收尾之外，还必须告知服务端「这条流我不要了」。
+      // 此前只做 entry.end()（纯本地队列操作），服务端收不到任何信号 ⇒ 继续白跑。
+      // 任务 149 现场：renderer 被 reload 销毁后，main 侧 agent 多跑了 1 分 45 秒
+      // 才自然结束，期间会话互斥锁一直被占，用户发消息全被拒。
+      this._sendCancel(sid);
+    }
+  }
+
+  /** 通知服务端取消某条流（end 帧即取消信号，见 ChannelServerBinding._dispatch）。
+   *  dispose 可能由 transport.onClose（对端已死）触发，此时发送注定失败 ——
+   *  取消是尽力而为，不该让 dispose 抛错。 */
+  private _sendCancel(streamId: number): void {
+    try {
+      this.transport.send({ type: 'end', stream: streamId });
+    } catch {
+      // 传输已断：对端 onClose 会自行清理，无需补救
     }
   }
 
@@ -154,11 +170,18 @@ export class ChannelClientBinding implements ClientBinding {
       },
     });
 
+    // 消费端提前退出（break / 组件卸载 / 外层 return）也要取消 —— 这条路径此前
+    // 完全不发帧，是最常见的「悄悄白跑」来源（AbortSignal 只是其中一条通路）。
+    // delete 的返回值兼作去重：服务端已 end 的流不在 map 里，不会重复发。
+    queue.onReturn(() => {
+      if (this.streams.delete(streamId)) this._sendCancel(streamId);
+    });
+
     if (signal) {
       signal.addEventListener('abort', () => {
         this.streams.delete(streamId);
         queue.end();
-        this.transport.send({ type: 'end', stream: streamId });
+        this._sendCancel(streamId);
       }, { once: true });
     }
 
@@ -296,11 +319,16 @@ export class ChannelClientBinding implements ClientBinding {
       },
     });
 
+    // 同 serverStream：消费端提前退出要通知服务端，否则下游停了、上游还在产出
+    queue.onReturn(() => {
+      if (this.streams.delete(streamId)) this._sendCancel(streamId);
+    });
+
     if (signal) {
       signal.addEventListener('abort', () => {
         this.streams.delete(streamId);
         queue.end();
-        this.transport.send({ type: 'end', stream: streamId });
+        this._sendCancel(streamId);
       }, { once: true });
     }
 

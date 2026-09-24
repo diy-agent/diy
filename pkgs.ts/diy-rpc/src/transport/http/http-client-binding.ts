@@ -25,6 +25,8 @@ interface HttpResp {
 export class HttpClientBinding implements ClientBinding {
   private session: ClientHttp2Session;
   private disposed = false;
+  /** 在飞的流：dispose 时要逐个 RST（优雅 close 会等它们自然结束，等于不取消） */
+  private activeStreams = new Set<ClientHttp2Stream>();
 
   constructor(private baseUrl: string) {
     this.session = http2.connect(baseUrl);
@@ -32,6 +34,19 @@ export class HttpClientBinding implements ClientBinding {
 
   dispose(): void {
     this.disposed = true;
+    // session.close() 是**优雅关闭**：它在等所有活跃流结束，对端感知不到「客户端不要了」。
+    // 必须先把在飞的流逐个 RST_STREAM —— 服务端 stream.on('close') 才会触发，
+    // 进而 g.return() 收尾生成器。否则服务端继续白跑（任务 149 的放大机制）。
+    for (const stream of this.activeStreams) {
+      if (!stream.closed && !stream.destroyed) {
+        try {
+          stream.close(http2.constants.NGHTTP2_CANCEL);
+        } catch {
+          // 流已在关闭途中：忽略，后面 session.close() 兜底
+        }
+      }
+    }
+    this.activeStreams.clear();
     this.session.close();
   }
 
@@ -177,7 +192,11 @@ export class HttpClientBinding implements ClientBinding {
       'content-type': contentType,
     };
     if (params !== undefined) headers['x-diy-params'] = JSON.stringify(params);
-    return this.session.request(headers);
+    const stream = this.session.request(headers);
+    // 统一登记所有流（unary 与流式）：dispose 时才能一个不漏地取消
+    this.activeStreams.add(stream);
+    stream.once('close', () => this.activeStreams.delete(stream));
+    return stream;
   }
 }
 
@@ -286,5 +305,13 @@ function createNdjsonStream(stream: ClientHttp2Stream, options?: CallOptions): _
       q.error(new RpcError('CANCELLED', 'Call aborted'));
     }, { once: true });
   }
+
+  // 消费端提前退出（break / 外层 return / 迭代器 return）→ 也发 RST_STREAM。
+  // 这条路径此前完全没有信号：AbortSignal 只是取消的通路之一，而 for-await 的
+  // break 走的是迭代器 return()，与此无关 —— 上游因此会在无人消费时继续产出。
+  q.onReturn(() => {
+    if (!stream.closed && !stream.destroyed) stream.close(http2.constants.NGHTTP2_CANCEL);
+  });
+
   return q;
 }
