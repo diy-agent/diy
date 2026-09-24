@@ -3,8 +3,12 @@
 // 🎯 试验场两个 view 的**渲染**验证（不是 RPC 契约验证）
 //
 // AGENTS.md 的教训：CLI 的 RPC 返回成功 ≠ renderer 渲染正确。这里走
-//   ui page navigate lab → ui page focus <任务> → 读 a11y 树
+//   ui tab open <任务> → ui tab open lab:<任务> → 读 a11y 树
 // 确认「变量定义 / 变量值 / 模版结构树」三块真的上了屏，且内容来自引擎的 analyze/trace。
+//
+// 契约变更（见 133「一页一中心」）：提示词页是**子页面**（中心 = 系统提示词），
+// 挂在某个任务的任务执行 tab 之下，不进顶级导航。故导航路径从
+// `ui page navigate lab` 改为「打开任务 tab → 打开其子页面 tab」。
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
@@ -52,13 +56,14 @@ describe("试验场：变量定义 / 变量值 / 模版结构树 三个 view + �
     const t = await fx.sh.getJson(`./diy.sh task create 试验场任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
 
-    // 2. 进试验场并选中任务（= 点左侧导航 + 点任务行）
-    await fx.sh.getJson("./diy.sh ui page navigate lab");
-    await fx.sh.getJson(`./diy.sh ui page focus ${uri}`);
+    // 2. 打开任务执行页（= 任务详情里点大 FAB）→ 再打开它的子页面（提示词页）
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    await fx.sh.getJson(`./diy.sh ui tab open lab:${uri}`);
 
-    // 3. 展开要看的 view（默认只展开「模板」；CLI 也能开，见 ui view set）
+    // 3. 展开要看的折叠框（默认只展开「模板」）。注意这是 view **内部**的展开态，
+    //    与上一步「viewarea 开合」是两件事（见 ui view expand / ui viewarea set 的区分）
     for (const key of ["trace", "vars", "vals"]) {
-      await fx.sh.getJson(`./diy.sh ui view set ${key} open`);
+      await fx.sh.getJson(`./diy.sh ui view expand ${key} open`);
     }
     // 4. 读 a11y 树：四个 view 的标题 + 引擎分析出的内容
     //    （debug UI 主交互 = 手动刷新：按需重算，不订阅外部事件流）
@@ -73,6 +78,8 @@ describe("试验场：变量定义 / 变量值 / 模版结构树 三个 view + �
     expect(text).toContain("模版结构树");
     // 动态菜单条：**无选中时不渲染**（避免取消选中后留一条空横条）
     expect(text).not.toContain("0/0");
+    // 子页面：菜单条上是本 page 的 area 开合按钮（中心 = 编辑器）
+    expect(text).toContain("② center");
     // 左栏顺序：模板 → 模版结构树 → 变量定义 → 变量值
     const order = ["模板", "模版结构树", "变量定义", "变量值"].map((t) => text.indexOf(t));
     expect(order.every((i) => i >= 0)).toBe(true);

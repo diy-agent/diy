@@ -571,17 +571,153 @@ export const apiDef = RpcSchema.router({
             },
           }),
 
-          /** 试验场 view 的展开/折叠（默认只展开「模板」；自动化要看折叠 view 的内容时用） */
+          /**
+           * 布局（layout）的读 / 写。
+           *
+           * 为什么要这个出口：布局的用户态（区段尺寸 / 哪些 area 收起 / 哪个最大化 /
+           * 哪些 view 隐藏）原本只活在 renderer 的 localStorage 里，CLI 读不到也改不了 ——
+           * 于是「设成某种布局再验证」只能手点，意图测试也只能去数 DOM 像素。
+           *
+           * 写入的是**偏离默认的那部分**（patch 语义），不是整份文档：
+           * 调用方只说自己关心的字段，其余保持用户现值。`reset` 才回到开发者默认。
+           *
+           * ⚠️ 分层：**几何**（track 尺寸 / area 开合 / 最大化）按 page 共享 —— 所有任务
+           * 的 task-run tab 用同一套；**view 的显隐**（hiddenViews）按 page 实例（带 ctx）。
+           * 故 get 收 ctx 只为过滤 hiddenViews，set 不收 ctx。
+           */
+          layout: RpcSchema.group({
+            desc: `布局`,
+            children: {
+              get: RpcSchema.unary({
+                desc: `读某 page 实例的布局态（有效值：默认已合并用户覆盖）`,
+                input: {
+                  page: z.string().cliArg({ desc: "page id（如 task-run / lab / settings）" }),
+                  ctx: z.string().optional().cliOption({ desc: "上下文键：把 hiddenViews 过滤到该实例（几何本身按 page 共享）" }),
+                },
+                output: z.object({
+                  status: z.string(),
+                  data: z.object({
+                    /** 有效布局（开发者默认 + 用户覆盖 + 隐藏 area 的 track 归零） */
+                    layout: z.any(),
+                    /** 用户态：隐藏的 area / 隐藏的 view / 最大化的 area */
+                    hidden: z.array(z.string()),
+                    hiddenViews: z.array(z.string()),
+                    maximized: z.string().nullable(),
+                  }),
+                }),
+              }),
+              set: RpcSchema.unary({
+                desc: `改布局（只改指定项，其余保持；track 尺寸传 px 数字，如 --cols 240,*,320）`,
+                input: {
+                  page: z.string().cliArg({ desc: "page id" }),
+                  cols: z.string().optional().cliOption({ desc: "列尺寸，逗号分隔：数字=px，* = fr(1)，如 240,*,320" }),
+                  rows: z.string().optional().cliOption({ desc: "行尺寸，同 cols" }),
+                  hide: z.string().optional().cliOption({ desc: "要收起的 area，逗号分隔" }),
+                  show: z.string().optional().cliOption({ desc: "要展开的 area，逗号分隔" }),
+                  maximize: z.string().optional().cliOption({ desc: "最大化的 area id（空字符串=取消）" }),
+                },
+                output: z.object({ status: z.string() }),
+              }),
+              reset: RpcSchema.unary({
+                desc: `回到开发者默认布局（尺寸 + 开合 + 最大化 + view 隐藏）`,
+                input: { page: z.string().cliArg({ desc: "page id" }) },
+                output: z.object({ status: z.string() }),
+              }),
+            },
+          }),
+
+          /**
+           * view 的**内部**展开/折叠（折叠框）。
+           * ⚠️ 与 `viewarea.set`（view 所在面板的开合）是两件事，别混：
+           *    - expand 改的是 view 内部的折叠框（模板树 / 变量定义…）
+           *    - viewarea 改的是承载 view 的面板几何（实验场面板整体开合）
+           */
           view: RpcSchema.group({
             desc: `视图`,
             children: {
-              set: RpcSchema.unary({
-                desc: `展开/折叠试验场 view`,
+              expand: RpcSchema.unary({
+                desc: `展开/折叠 view 内部的折叠框`,
                 input: {
-                  key: z.string().cliArg({ desc: "view 名（tree/trace/vars/vals）" }),
+                  key: z.string().cliArg({ desc: "折叠框名（tree/trace/vars/vals/sysctx/reqbody）" }),
                   open: z.string().cliArg({ desc: "open 或 closed" }),
                 },
                 output: z.object({ status: z.string() }),
+              }),
+              /**
+               * view 级**隐藏/显示**（把某个 view 实例从 area 里拿掉 / 放回）。
+               * 与 expand / viewarea.set 是三件事，别混：
+               *   expand    view 内部的折叠框（模板树 / 变量定义…）
+               *   viewarea  承载 view 的 area 整体开合
+               *   set       单个 view 实例在 area 里的去留（实例状态保留）
+               */
+              set: RpcSchema.unary({
+                desc: `隐藏/显示 view（view 级别，保留实例状态）`,
+                input: {
+                  view: z.string().cliArg({ desc: "view id（如 chat.local / task.detail / lab.editor，见 ui view list）" }),
+                  open: z.string().cliArg({ desc: "open 或 closed" }),
+                  page: z.string().optional().cliOption({ desc: "page id（缺省 task-run）" }),
+                  ctx: z.string().optional().cliOption({ desc: "上下文键（context 型 view 必填，如任务 URI）" }),
+                },
+                output: z.object({ status: z.string() }),
+              }),
+            },
+          }),
+
+          /**
+           * viewarea（承载 view 的面板）的开合。
+           * 有几何语义、无身份语义：不区分 devtools 与普通面板，只是位置不同。
+           */
+          viewarea: RpcSchema.group({
+            desc: `视图区域（面板）`,
+            children: {
+              set: RpcSchema.unary({
+                desc: `开合 viewarea`,
+                input: {
+                  area: z.string().cliArg({ desc: "area id（如 left/center/right/bottom）" }),
+                  open: z.string().cliArg({ desc: "open 或 closed" }),
+                  page: z.string().optional().cliOption({ desc: "page id（缺省 task-run；同一 area 名在不同 page 上是不同的东西）" }),
+                },
+                output: z.object({ status: z.string() }),
+              }),
+            },
+          }),
+
+          /**
+           * 任务执行页的 tab（打开的任务）。等同浏览器/编辑器开 tab：
+           * 打开 = 我现在要做它；关闭 = 暂时不理会（**与任务状态无关**）。
+           */
+          tab: RpcSchema.group({
+            desc: `任务 tab`,
+            children: {
+              open: RpcSchema.unary({
+                desc: `打开（或聚焦）页面 tab`,
+                input: {
+                  uri: z.string().cliArg({
+                    desc: "任务 URI，或 <pageId>:<任务 URI>（如 lab:projects/1/tasks/1 打开提示词子页面）",
+                  }),
+                },
+                output: StatusDataUri,
+              }),
+              close: RpcSchema.unary({
+                desc: `关闭页面 tab（关父连带关子；不改任务状态）`,
+                input: { uri: z.string().cliArg({ desc: "tab key，如 task-run:projects/1/tasks/1" }) },
+                output: StatusDataUri,
+              }),
+              active: RpcSchema.unary({
+                desc: `切换到已打开的 tab`,
+                input: { uri: z.string().cliArg({ desc: "tab key，如 task-run:projects/1/tasks/1" }) },
+                output: StatusDataUri,
+              }),
+              list: RpcSchema.unary({
+                desc: `已打开的任务 tab`,
+                input: {},
+                output: z.object({
+                  status: z.string(),
+                  data: z.object({
+                    opened: z.array(z.string()),
+                    active: z.string(),
+                  }),
+                }),
               }),
             },
           }),

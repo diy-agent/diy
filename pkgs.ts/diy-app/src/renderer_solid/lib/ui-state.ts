@@ -131,6 +131,48 @@ export const Caches = {
     serialize: (v) => String(v),
     defaultValue: 560,
   }),
+  /** 打开的 tab（**页面实例**数组，顺序即显示顺序；结构见 store/tabStore 的 TabItem）。
+   *
+   *  ⚠️ 这里只做「是数组吗」这一层判断，**不在这里过滤元素**：
+   *  元素级的清洗（结构不对的条目丢掉、旧格式纯 URI 字符串升级为 TabItem）在
+   *  tabStore.load() 里 —— 那里知道 TabItem 长什么样，本文件不知道。
+   *
+   *  曾经这里写 `a.filter(x => typeof x === "string")`，而 tabStore 已升级为写对象，
+   *  于是写进去的对象被读回时全被滤掉 → **重启后打开的 tab 清零**（真实故障）。
+   *  教训：视图 cache 的 parse 只该校验「整体形状」，别替下游做元素级业务判断。 */
+  diy_tabs_opened: field<unknown[]>("diy_tabs_opened", {
+    parse: (raw) => {
+      try {
+        const a: unknown = JSON.parse(raw);
+        return Array.isArray(a) ? a : null;
+      } catch {
+        return null;
+      }
+    },
+    serialize: (v) => JSON.stringify(v),
+    defaultValue: [] as unknown[],
+  }),
+  /** 各 page 的布局用户态（area 隐藏/最大化 + track 尺寸覆盖）。
+   *  视图 cache：丢了只是回到开发者默认布局，无数据损失。
+   *  key = pageId，结构见 store/layoutStore 的 PageLayoutState。 */
+  diy_layout_state: field<Record<string, unknown>>("diy_layout_state", {
+    parse: (raw) => {
+      try {
+        const o: unknown = JSON.parse(raw);
+        return o && typeof o === "object" && !Array.isArray(o) ? (o as Record<string, unknown>) : null;
+      } catch {
+        return null;
+      }
+    },
+    serialize: (v) => JSON.stringify(v),
+    defaultValue: {},
+  }),
+  /** 当前激活的 tab URI（不在 opened 里 = 回落到任务树） */
+  diy_tabs_active: field<string>("diy_tabs_active", {
+    parse: (raw) => (raw && raw.length > 0 ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "",
+  }),
   /** 本地聊天密度（枚举语义值 outline/read/audit/forensic，兼容旧数字 1-4） */
   diy_chat_density: field<Density>("diy_chat_density", {
     parse: (raw) => {
@@ -153,31 +195,19 @@ export const Caches = {
     serialize: (v) => v,
     defaultValue: "dark",
   }),
-  /** 试验场左栏宽（px，范围 180-480）。宽度类缓存一律走本文件，
-   *  否则「重置界面状态」清不掉（历史问题：试验场直写 localStorage 的 lab4.leftW）。
-   *  默认 336：左栏现在有两列表格（可用变量 view 的 变量|说明），256 时说明列只剩 ~60px。 */
-  diy_lab_left_width: field<number>("diy_lab_left_width", {
-    parse: (raw) => {
-      const v = Number(raw);
-      return v >= 180 && v <= 480 ? v : null;
-    },
-    serialize: (v) => String(v),
-    defaultValue: 336,
-  }),
   /** 试验场编辑器配色（见 lib/editor-theme 的清单；"diy" = 跟随应用主题） */
   diy_lab_editor_theme: field<string>("diy_lab_editor_theme", {
     parse: (raw) => (raw && raw.length < 40 ? raw : null),
     serialize: (v) => v,
     defaultValue: "diy",
   }),
-  /** 试验场右栏宽（px，范围 240-640） */
-  diy_lab_right_width: field<number>("diy_lab_right_width", {
-    parse: (raw) => {
-      const v = Number(raw);
-      return v >= 240 && v <= 640 ? v : null;
-    },
-    serialize: (v) => String(v),
-    defaultValue: 384,
+  /** 提示词页右栏 area 内互斥的 view（system = _system.md 渲染 / request = 请求预览）。
+   *  落这里的理由与草稿相同：area 内 tab 属于**用户选择**，切页或重开不该回到默认。
+   *  白名单校验：不在表内的值当没存过，退化到默认 system。 */
+  diy_lab_right_tab: field<"system" | "request">("diy_lab_right_tab", {
+    parse: (raw) => (raw === "system" || raw === "request" ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "system",
   }),
   /** 试验场表格列宽（px 数组，按表分字段）。**表的列宽必须与容器宽度解耦**：
    *  否则拖动左栏会按比例缩放所有列，永远有列看不全；这里存下来后拖左栏不再改变列宽，
@@ -185,13 +215,6 @@ export const Caches = {
   diy_lab_cols_vars: jsonCols("diy_lab_cols_vars", [96, 224]),
   diy_lab_cols_vals: jsonCols("diy_lab_cols_vals", [110, 210]),
   diy_lab_cols_trace: jsonCols("diy_lab_cols_trace", [96, 96, 84, 48]),
-  /** 试验场内层 tab（chat/task/lab）。存这里的原因与草稿相同：页面卸载后要记住选择；
-   *  另一处用途是 CLI 导航 `ui page navigate lab` 要能直接落到「agent调参」视图。 */
-  diy_lab_tab: field<string>("diy_lab_tab", {
-    parse: (raw) => (raw === "chat" || raw === "task" || raw === "lab" ? raw : null),
-    serialize: (v) => v,
-    defaultValue: "chat",
-  }),
   /** 试验场未存盘草稿（project → { relpath → 正文 }）。
    *  存这里而不是组件 signal：App.tsx 用 <Show> 挂死页面，切页即卸载 → 半编辑内容全丢。
    *  按 project 分桶，切到别的项目不会看到/不会写入上一个项目的草稿。 */
@@ -270,6 +293,7 @@ const LEGACY_KEYS = [
   // 试验场早期直写的宽度 key（已收进字段池）
   "lab4.leftW",
   "lab4.rightW",
+  "diy_lab_open",
 ];
 
 /** 清空全部视图 cache：注册字段池 + 前缀兜底（防未来直写漏注册）+ 旧 key 兼容。返回删除条数。 */

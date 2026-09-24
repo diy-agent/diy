@@ -7,23 +7,12 @@ import { notificationStore } from "../store/notificationStore";
 import { diyService } from "../lib/rpc";
 import { Caches } from "../lib/ui-state";
 import { CreateProjectSheet } from "./CreateProjectSheet";
-import { TASK_STATES } from "../../main/core/task-state";
+import { TASK_STATES, taskStateColor } from "../../main/core/task-state";
 import { CreateTaskSheet } from "./CreateTaskSheet";
 
 // dnd-kit/solid 未直接导出 DragEndEvent，从 onDragEnd 回调参数提取
 type DragEndEvent = Parameters<NonNullable<DragDropProviderProps["onDragEnd"]>>[0];
 
-const stateColor: Record<string, string> = {
-    pending: "bg-warning",
-    active: "bg-info",
-    done: "bg-success",
-    blocked: "bg-error",
-    cancelled: "bg-neutral",
-    shelved: "bg-neutral",
-    new: "bg-accent",
-    open: "bg-info",
-    closed: "bg-neutral",
-};
 
 interface FlatRow {
     key: string;
@@ -128,10 +117,10 @@ function StateSelector(props: { uri: string; state: string }) {
     return (
         <span class="relative inline-block" onClick={(e) => e.stopPropagation()}>
             <button
-                class={`btn btn-xs btn-ghost gap-1 normal-case font-normal ${stateColor[props.state] ? "text-current" : "text-base-content/60"}`}
+                class={"btn btn-xs btn-ghost gap-1 normal-case font-normal"}
                 onClick={() => setOpen((p) => !p)}
             >
-                <span class={`w-2 h-2 rounded-full inline-block ${stateColor[props.state] ?? "bg-neutral"}`} />
+                <span class={`w-2 h-2 rounded-full inline-block ${taskStateColor(props.state)}`} />
                 {stateLabel[props.state] ?? props.state}
             </button>
             <Show when={open()}>
@@ -146,7 +135,7 @@ function StateSelector(props: { uri: string; state: string }) {
                                     class={`text-xs gap-2 ${s === props.state ? "active font-bold" : ""}`}
                                     onClick={(e) => changeState(s, e)}
                                 >
-                                    <span class={`w-2 h-2 rounded-full inline-block ${stateColor[s] ?? "bg-neutral"}`} />
+                                    <span class={`w-2 h-2 rounded-full inline-block ${taskStateColor(s)}`} />
                                     {stateLabel[s]}
                                 </button>
                             </li>
@@ -413,7 +402,7 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                     ) : (
                         <span class="w-5" />
                     )}
-                    <span class={`w-2 h-2 rounded-full inline-block ${stateColor[row.node.state ?? ""] ?? "bg-neutral"}`} />
+                    <span class={`w-2 h-2 rounded-full inline-block ${taskStateColor(row.node.state)}`} />
                     {/* 任务号前置：一眼定位「几号任务」，且与 URI 列的末段同源（都来自 main 的 num）。
                         弱化成 mono/半透明，避免与标题抢视觉焦点；标题过长时它不参与 truncate。 */}
                     <Show when={row.node.num}>
