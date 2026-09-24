@@ -3,6 +3,14 @@
   themes: light, dark --default;
 }
 
+/* ── Tailwind 扫描范围补丁（状态色圆点必需） ──────────────────────
+ * 任务状态 → 颜色 class 的映射（bg-warning/bg-info/…）定义在 main 侧单一真相源
+ * src/main/core/task-state.ts，它不在 Vite root（src/renderer_solid）内，
+ * 而 Tailwind v4 的自动内容检测只覆盖 root → 这些 class 从未被生成，
+ * 于是各页面（任务树 / 面包屑 / 状态选择器 / 详情面板）的状态圆点全是透明方块。
+ * 显式 @source 把 main 纳入扫描，一处修复全部页面。 */
+@source "../main";
+
 /* 任务标题链接色：daisyUI dark 默认 primary（oklch 58% 蓝紫）在黑底上对比不足，单独加亮。
  * 自定义色按规范用 diy- 前缀；随主题切换（main.tsx 经 data-theme 显式锁定）。 */
 :root,
