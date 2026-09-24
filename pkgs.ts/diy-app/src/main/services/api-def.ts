@@ -19,6 +19,7 @@
 import { RpcSchema } from "@diy/rpc";
 import { z } from "zod";
 import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-schema";
+import { ContextPreviewSchema } from "../../shared/context/schema";
 
 // 任务状态枚举 — 单一真相源 task-state.ts（纯 zod，无 Node 依赖，浏览器安全） */
 import { TaskStateSchema } from "../core/task-state";
@@ -453,6 +454,27 @@ export const apiDef = RpcSchema.router({
         },
       }),
 
+      context: RpcSchema.group({
+        desc: `系统上下文（Context Tree）预览（只组装不发送）`,
+        children: {
+          scenarios: RpcSchema.unary({
+            desc: `列出内置场景`,
+            input: {},
+            output: z.array(z.object({ name: z.string(), title: z.string() })),
+          }),
+          preview: RpcSchema.unary({
+            desc: `跑一个场景，返回树 + 每步投递动作（snapshot/patch/none/clear）`,
+            input: {
+              scenario: z
+                .string()
+                .optional()
+                .cliOption({ desc: "场景名（basic/template/boundary，缺省 basic）" }),
+            },
+            output: ContextPreviewSchema,
+          }),
+        },
+      }),
+
       llmProxy: RpcSchema.group({
         desc: `LLM 代理`,
         children: {
@@ -690,6 +712,23 @@ export const apiDef = RpcSchema.router({
                   open: z.string().cliArg({ desc: "open 或 closed" }),
                   page: z.string().optional().cliOption({ desc: "page id（缺省 task-run）" }),
                   ctx: z.string().optional().cliOption({ desc: "上下文键（context 型 view 必填，如任务 URI）" }),
+                },
+                output: z.object({ status: z.string() }),
+              }),
+              /**
+               * view 内部**互斥 tab** 的选中项（第四件事）。
+               *   expand  折叠框（可多个同时开）
+               *   viewarea area 整体开合
+               *   set      view 实例在 area 里的去留
+               *   tab      一个 view 内部只能选一个的页签（如右栏 _system.md / 请求预览 / 系统上下文）
+               * 存在的理由与 expand 相同：tab 是**用户选择**，测试/agent 需要可编程地切过去看。
+               */
+              tab: RpcSchema.unary({
+                desc: `切换 view 内部的互斥 tab（选中项）`,
+                input: {
+                  view: z.string().cliArg({ desc: "view id（当前支持 lab.system）" }),
+                  tab: z.string().cliArg({ desc: "tab 名（system/request/context）" }),
+                  page: z.string().optional().cliOption({ desc: "page id（缺省 lab）" }),
                 },
                 output: z.object({ status: z.string() }),
               }),

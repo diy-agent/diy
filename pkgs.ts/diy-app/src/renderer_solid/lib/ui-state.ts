@@ -201,11 +201,12 @@ export const Caches = {
     serialize: (v) => v,
     defaultValue: "diy",
   }),
-  /** 提示词页右栏 area 内互斥的 view（system = _system.md 渲染 / request = 请求预览）。
-   *  落这里的理由与草稿相同：area 内 tab 属于**用户选择**，切页或重开不该回到默认。
+  /** 提示词页右栏 area 内互斥的 view（system = _system.md 渲染 / request = 请求预览 /
+   *  context = 系统上下文树预览）。落这里的理由与草稿相同：area 内 tab 属于**用户选择**，
+   *  切页或重开不该回到默认。
    *  白名单校验：不在表内的值当没存过，退化到默认 system。 */
-  diy_lab_right_tab: field<"system" | "request">("diy_lab_right_tab", {
-    parse: (raw) => (raw === "system" || raw === "request" ? raw : null),
+  diy_lab_right_tab: field<"system" | "request" | "context">("diy_lab_right_tab", {
+    parse: (raw) => (raw === "system" || raw === "request" || raw === "context" ? raw : null),
     serialize: (v) => v,
     defaultValue: "system",
   }),

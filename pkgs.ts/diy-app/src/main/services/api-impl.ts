@@ -308,6 +308,16 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { ...base, requestBody: sim.body, requestNote: sim.note };
   });
 
+  // ── context（Context Tree 试验场：纯内存场景，不落盘、不发 LLM）──
+  binding.on(app.context.scenarios, async () => {
+    const { SCENARIOS } = await import("../../shared/context/preview");
+    return SCENARIOS.map((s) => ({ name: s.name, title: s.title }));
+  });
+  binding.on(app.context.preview, async ({ input }) => {
+    const { runScenario, scenarioByName } = await import("../../shared/context/preview");
+    return runScenario(scenarioByName(input.scenario ?? "basic"));
+  });
+
   // ── llmProxy ──
   binding.on(app.llmProxy.status, async () => {
     const proxy = await getLlmProxy();

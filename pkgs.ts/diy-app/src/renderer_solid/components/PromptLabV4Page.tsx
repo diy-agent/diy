@@ -6,6 +6,7 @@
 import { createSignal, createMemo, createEffect, on, For, Show } from "solid-js";
 import { analyze } from "@diy/template";
 import { diyService } from "../lib/rpc";
+import { ContextPreviewView } from "./ContextPreviewView";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
 import { localChatStore } from "../store/localChatStore";
@@ -55,6 +56,9 @@ function patchDrafts(pid: string, mut: (d: Record<string, string>) => Record<str
  * 各 view 的展开态（模块级：`ui view expand` 可能在页面还没挂载时就设置）。
  * 默认只展开「模板」，其余按需点开 —— 否则左栏一屏塞满、真正要看的表全在折叠下面。
  */
+/** 右栏 tab 的模块级 signal（见 setLabRightTab 的说明） */
+const [labRightTab, setLabRightTabSig] = createSignal<LabRightTab>(Caches.diy_lab_right_tab.get());
+
 export const [labViews, setLabViews] = createSignal<Record<string, boolean>>({
     tree: true,
     trace: false,
@@ -65,6 +69,16 @@ export const [labViews, setLabViews] = createSignal<Record<string, boolean>>({
 });
 export function setLabView(key: string, open: boolean): void {
     setLabViews((v) => ({ ...v, [key]: open }));
+}
+
+/** 右栏互斥 tab 的选中项（system=渲染 / request=请求预览 / context=系统上下文）。
+ *  模块级 + 落 Caches 的理由与 labViews 相同：`ui view tab` 可能在页面还没挂载时切过来，
+ *  且切页/重开不该回到默认（area 内 tab 属于**用户选择**）。 */
+export type LabRightTab = "system" | "request" | "context";
+export function setLabRightTab(tab: string): void {
+    if (tab !== "system" && tab !== "request" && tab !== "context") return;
+    setLabRightTabSig(tab);
+    Caches.diy_lab_right_tab.set(tab);
 }
 
 /** relpath 数组 → 目录树（前端按路径派生，不做人工分类） */
@@ -1046,11 +1060,9 @@ export function PromptLabV4Page() {
     /** 右栏 area 内的两个 view 互斥（tab 属于 area，不属于 page）。
      *  落 Caches：area 内 tab 是**用户选择**，切页/重开不该回到默认（模块级 signal 做不到
      *  跨页面卸载保留，且「重置界面状态」要能一起清掉 —— 故走 ui-state 单一入口）。 */
-    const [rightTab, setRightTabSig] = createSignal<"system" | "request">(Caches.diy_lab_right_tab.get());
-    const setRightTab = (v: "system" | "request") => {
-        setRightTabSig(v);
-        Caches.diy_lab_right_tab.set(v);
-    };
+    // 右栏 tab 的选中项是**模块级**的（`ui view tab` 要在页面挂载前就能切），此处只读
+    const rightTab = labRightTab;
+    const setRightTab = setLabRightTab;
 
     // 首屏 + 切项目都靠上面那个 createEffect(on(project)) 触发 load()（Solid 首次 flush 即跑）
 
@@ -1416,9 +1428,25 @@ export function PromptLabV4Page() {
                     >
                         请求预览
                     </button>
+                    <button
+                        class={`btn btn-xs ${rightTab() === "context" ? "btn-active" : "btn-ghost"}`}
+                        aria-pressed={rightTab() === "context"}
+                        onClick={() => setRightTab("context")}
+                    >
+                        系统上下文
+                    </button>
                 </div>
                 <div class="flex-1 min-h-0">
-                    <Show when={rightTab() === "system"} fallback={parts["lab.request"]?.() as any}>
+                    <Show
+                        when={rightTab() === "system"}
+                        fallback={
+                            rightTab() === "context" ? (
+                                <ContextPreviewView />
+                            ) : (
+                                (parts["lab.request"]?.() as any)
+                            )
+                        }
+                    >
                         <div class="flex flex-col h-full min-h-0">
 {/* 右：视图区 = 一个编辑器 view（与中间完全同构：标题栏 + 编辑器本体，只是只读）。
     结构化观察在左栏；请求体在「请求预览」tab */}
