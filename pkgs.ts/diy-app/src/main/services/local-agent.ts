@@ -23,7 +23,7 @@ import {
     rmSync,
     writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import path from "node:path";
 import { diyHome, projectFromUri } from "../core/state";
 import { resolveCwd as resolveCwdWithNote } from "../core/cwd";
 import { BlockStore, blocksToMessages, interruptedToolPatches, type Op, type JSONVal } from "./local-blocks";
@@ -115,7 +115,7 @@ export const DEFAULT_LIMITS: LocalAgentLimits = {
 };
 
 function limitsFile(): string {
-    return join(localDir(), "limits.json");
+    return path.join(localDir(), "limits.json");
 }
 
 function envPosInt(env: NodeJS.ProcessEnv, key: string): number | undefined {
@@ -157,7 +157,7 @@ interface LocalSession {
 }
 
 function localDir(): string {
-    const d = join(diyHome(), "local");
+    const d = path.join(diyHome(), "local");
     mkdirSync(d, { recursive: true });
     return d;
 }
@@ -174,15 +174,15 @@ function keyOf(taskUri: string): string {
 }
 
 function opsFile(taskUri: string): string {
-    return join(localDir(), `${keyOf(taskUri)}.ops.jsonl`);
+    return path.join(localDir(), `${keyOf(taskUri)}.ops.jsonl`);
 }
 function llmFile(taskUri: string): string {
-    return join(localDir(), `${keyOf(taskUri)}.llm.jsonl`);
+    return path.join(localDir(), `${keyOf(taskUri)}.llm.jsonl`);
 }
 
 /** 原始流 dump（仅 DIY_RAW_STREAM_DUMP=1 时写）：ai-sdk 的 part 原样落盘，用于研究“Op 是否漏信息” */
 function rawFile(taskUri: string): string {
-    return join(localDir(), `${keyOf(taskUri)}.raw.jsonl`);
+    return path.join(localDir(), `${keyOf(taskUri)}.raw.jsonl`);
 }
 
 /** 原始流开关（默认关；读取时快照一次，避免一处开一处关） */
@@ -242,7 +242,7 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
     });
 }
 
-function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: string) {
+export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: string) {
     return {
         bash: tool({
             description: "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
@@ -287,9 +287,9 @@ function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: string) {
         read: tool({
             description: "读取文件的文本内容（相对路径按项目目录解析）。",
             inputSchema: z.object({ path: z.string().describe("文件路径") }),
-            execute: async ({ path }) => {
+            execute: async ({ path: filePath }) => {
                 try {
-                    return clip(readFileSync(join(cwd, path), "utf-8"), limits.outputClipChars);
+                    return clip(readFileSync(path.resolve(cwd, filePath), "utf-8"), limits.outputClipChars);
                 } catch (e) {
                     return `[读取失败] ${e instanceof Error ? e.message : e}`;
                 }
