@@ -10,7 +10,7 @@
  *                  不必再维护一张独立的"规则表"—— 契约本身就是那张表的骨架。
  *   · 中「预览」   system 份 / runtime 份（YAML，带语法高亮）
  *                  / 请求体（实际发出去的 JSON）
- *   · 右「变量」   投递单元清单（由结构树上的点选自动汇总）+ 当前任务的真实变量树
+ *   · 右「变量」   当前任务的真实变量树（归属在结构树上点开关切换）
  *
  * 选中联动：点结构树或变量树的一行 → 中间预览滚到并高亮**那一段**（行号映射与
  * 渲染同源，见 shared/context/render.ts 的 renderPathsTraced），右侧对应行也高亮。
@@ -94,6 +94,31 @@ function ContainerBadge(props: { c: "system" | "runtime" | null }) {
     );
 }
 
+/** 可点击的容器开关（结构树用）：显示当前归属，点一下在 system ⇄ runtime 间切 */
+function ContainerToggle(props: { c: "system" | "runtime" | null; onToggle: () => void }) {
+    const eff = (): "system" | "runtime" => props.c ?? "runtime";
+    return (
+        <button
+            class="btn btn-xs"
+            classList={{
+                "btn-primary": eff() === "system",
+                "btn-ghost opacity-60": eff() === "runtime",
+            }}
+            title={
+                eff() === "system"
+                    ? "当前：system（稳定份，进提示词开头）。点击改为 runtime"
+                    : "当前：runtime（易变份，进 user 消息）。点击改为 system"
+            }
+            onClick={(e) => {
+                e.stopPropagation();
+                props.onToggle();
+            }}
+        >
+            {eff()}
+        </button>
+    );
+}
+
 /** 结构树一行的高亮态（选中 + 容器色条） */
 const rowCls = (selected: boolean): string =>
     selected ? "bg-primary/20 ring-1 ring-primary/60" : "";
@@ -131,25 +156,12 @@ function StructureRows(props: {
                             </td>
                             <td class="opacity-60">{n.desc ?? ""}</td>
                             <td class="whitespace-nowrap text-right">
-                                <Show when={c()}>
-                                    <ContainerBadge c={c()} />
-                                </Show>
-                                {/* ⇄ = 换容器（把这个节点变成/撤出投递单元）。
-                                    只在"能成为单元"的节点上出现，否则整棵树都是按钮没法看：
-                                       · 本身已是单元 → 可撤销
-                                       · 祖先与后代都不是单元 → 可把它提为单元（任意粒度）
-                                    已有单元覆盖的子孙不显示 —— 它们要么跟着父走，要么先撤父。 */}
+                                {/* 容器开关：显示当前归属，**点一下切换**（system ⇄ runtime）。
+                                    未成为单元时显示默认的 runtime —— 点它就划进 system，
+                                    因为"没声明"与"声明为 runtime"在投递上等价，不必区分。
+                                    只在"能成为单元"的节点上出现（见 canSwap），否则满树按钮没法看。 */}
                                 <Show when={props.canSwap(path())}>
-                                    <button
-                                        class="btn btn-ghost btn-xs px-1"
-                                        title={c() ? "撤销这个投递单元" : "把这里设为投递单元（默认 runtime）"}
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            props.onSwap(path());
-                                        }}
-                                    >
-                                        ⇄
-                                    </button>
+                                    <ContainerToggle c={c()} onToggle={() => props.onSwap(path())} />
                                 </Show>
                             </td>
                         </tr>
@@ -204,15 +216,15 @@ export function ContextLabPage(props: { uri: string }) {
         setSystemPlaces(next);
         Caches.diy_ctxlab_system.set(next);
     };
-    /** 是否显示全部单元（默认只显示**投递单元**；打开后连叶子都列） */
-    const [showAll, setShowAll] = createSignal(false);
 
     /** 变更历史：每次重算都记一次，内容没变就不新增（144 的"内容未变不发"） */
     const [history, setHistory] = createSignal<ContextHistory>(emptyHistory());
     /** 选中的 step（null = 看当前） */
     const [pickedStep, setPickedStep] = createSignal<number | null>(null);
-    /** 是否自动观察（真实 step：开着页面就一直记） */
-    const [watching, setWatching] = createSignal(false);
+    /** 自动观察：默认开 —— 用户改任务正文/外部改动都能落到 step 列表，
+     *  不必先想起来点「刷新」。
+     *  老事件流没有 context 事件推送，所以是轮询；108 接上订阅后只换这几行。 */
+    const [watching, setWatching] = createSignal(true);
 
     const [meta] = createResource(async () => {
         return (await diyService.diy.context.candidates({})) as {
@@ -238,26 +250,33 @@ export function ContextLabPage(props: { uri: string }) {
         setHistory((h) => record(h, l.snapshot, new Date().toISOString()));
     });
 
+    // 有变化时自动选中**最新一步**（否则用户要先在列表里点一下才看得到内容）。
+    // 只在"当前没选中"时自动跳 —— 用户点了某一步就不打扰他。
+    createEffect(() => {
+        const steps = history().steps;
+        if (steps.length > 0 && pickedStep() === null) setPickedStep(steps[steps.length - 1]!.index);
+    });
+
     // 自动观察：开着时按间隔重算（真实数据变了就会多出 step）。
     // 老事件流还没有 context 事件推送，所以这里用轮询；108 之后换成订阅即可。
     createEffect(() => {
         if (!watching()) return;
-        const t = setInterval(() => void refetch(), 3000);
+        const t = setInterval(() => void refetch(), 2000);
         onCleanup(() => clearInterval(t));
     });
 
-    /** 换容器：新单元与已有单元互为祖先/后代时，先把重叠的摘掉（places 不许重叠） */
+    /**
+     * 切换容器（点一下开关）。
+     * 只维护 system 名单：在名单里 → 移出（回默认 runtime）；不在 → 加入。
+     * 新项与已有项互为祖先/后代时，先把重叠的摘掉（places 不许重叠）。
+     */
     const toggleUnit = (path: string): void => {
         const cur = effectiveSystem();
         if (cur.includes(path)) {
             persist(cur.filter((p) => p !== path));
             return;
         }
-        persist(
-            [...cur, path].filter(
-                (x) => x === path || !(path.startsWith(`${x}.`) || x.startsWith(`${path}.`)),
-            ),
-        );
+        persist([...cur, path].filter((x) => !(path.startsWith(`${x}.`) || x.startsWith(`${path}.`))));
     };
 
     /** 当前投递单元（path → 容器） */
@@ -265,13 +284,15 @@ export function ContextLabPage(props: { uri: string }) {
         new Map((lab()?.rules ?? []).map((r) => [r.place, r.container]));
     const containerOf = (path: string): "system" | "runtime" | null => unitMap().get(path) ?? null;
 
-    /** 该节点能否切换容器（⇄ 的显示规则，见 StructureRows 里的注释） */
+    /** 该节点能否切换容器（开关按钮的显示规则）：
+     *  已是单元 → 能；否则祖先与后代都不能是单元 → 能（任意粒度）。
+     *  已有单元覆盖的子孙不显示 —— 要么跟着父走，要么先撤父。 */
     const canSwap = (path: string): boolean => {
         const units = unitMap();
         if (units.has(path)) return true;
         for (const u of units.keys()) {
-            if (path.startsWith(`${u}.`)) return false; // 已被父单元覆盖
-            if (u.startsWith(`${path}.`)) return false; // 已把子孙拆成单元，先撤它们
+            if (path.startsWith(`${u}.`)) return false;
+            if (u.startsWith(`${path}.`)) return false;
         }
         return true;
     };
@@ -381,7 +402,7 @@ export function ContextLabPage(props: { uri: string }) {
         <div class="p-1">
             <div class="mb-1 flex items-center gap-1 px-1 opacity-70">
                 <span>{history().steps.length} 个变化 step</span>
-                <label class="ml-auto flex cursor-pointer items-center gap-1" title="开启后每 3 秒重算一次，真实数据变了就多一个 step">
+                <label class="ml-auto flex cursor-pointer items-center gap-1" title="每 2 秒重算一次；关掉则只在你点「⟳ 刷新」时记录">
                     <input
                         type="checkbox"
                         class="checkbox checkbox-xs"
@@ -393,7 +414,7 @@ export function ContextLabPage(props: { uri: string }) {
             </div>
             <Show
                 when={history().steps.length > 0}
-                fallback={<div class="p-2 opacity-60">还没有变化。改一下任务正文/标题，或开「观察」跑一会儿。</div>}
+                fallback={<div class="p-2 opacity-60">还没有变化。改一下任务正文/标题，或在别处改动后会自己出现。</div>}
             >
                 <ul class="menu menu-xs">
                     <For each={[...history().steps].reverse()}>
@@ -462,6 +483,13 @@ export function ContextLabPage(props: { uri: string }) {
         "ctxlab.delivery": () => (
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-xs">
                 <Fold
+                    k="change"
+                    label="变更详情"
+                    extra={pickedStep() !== null ? `step ${pickedStep()}` : "未选中"}
+                >
+                    {changePane()}
+                </Fold>
+                <Fold
                     k="system"
                     label="system 份（稳定 → 提示词开头）"
                     extra={lab() ? `${lab()!.system.places.length} 单元 · ${(lab()!.system.bytes / 1024).toFixed(1)} KB` : ""}
@@ -493,57 +521,9 @@ export function ContextLabPage(props: { uri: string }) {
             </div>
         ),
 
-        /** 右：投递单元清单 + 变量树 */
+        /** 右：变量树（真实值；归属在结构树上点开关改） */
         "ctxlab.vars": () => (
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-xs">
-                <Fold
-                    k="units"
-                    label="投递单元"
-                    extra={`${lab()?.rules.length ?? 0} 个`}
-                    right={
-                        <input
-                            type="checkbox"
-                            class="checkbox checkbox-xs"
-                            title="显示全部单元（含尚未成为单元的变量）"
-                            checked={showAll()}
-                            onChange={(e) => setShowAll(e.currentTarget.checked)}
-                        />
-                    }
-                >
-                    {/* 只是清单（由结构树上的点选自动汇总），不含任何开关按钮 */}
-                    <ul class="menu menu-xs">
-                        <For each={lab()?.rules ?? []}>
-                            {(r) => (
-                                <li>
-                                    <button
-                                        class={`flex items-center gap-2 ${rowCls(selected() === r.place)}`}
-                                        onClick={() => setSelected(r.place)}
-                                    >
-                                        <span class="font-mono">{r.place}</span>
-                                        <span class="ml-auto">
-                                            <ContainerBadge c={r.container} />
-                                        </span>
-                                    </button>
-                                </li>
-                            )}
-                        </For>
-                        <Show when={showAll()}>
-                            <For each={(lab()?.tree ?? []).filter((n) => !unitMap().has(n.path))}>
-                                {(n: LabTreeNode) => (
-                                    <li class="opacity-50">
-                                        <button
-                                            class="flex items-center gap-2"
-                                            title="还不是投递单元（在结构树上点 ⇄ 划入）"
-                                            onClick={() => setSelected(n.path)}
-                                        >
-                                            <span class="font-mono">{n.path}</span>
-                                        </button>
-                                    </li>
-                                )}
-                            </For>
-                        </Show>
-                    </ul>
-                </Fold>
                 <Fold k="tree" label="变量树" extra={`${lab()?.tree.length ?? 0} 个变量`}>
                     <table class="table table-xs">
                         <thead>

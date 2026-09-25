@@ -178,6 +178,8 @@ describe("上下文树：UI 上屏（三列 + 真实请求体）", () => {
 
     // 变更 view：左栏有 step 列表（初始无变化）
     expect(withChain).toContain("变更（step）");
+    // 「投递单元」view 已删（划分结果已在 system/runtime 预览里体现）
+    expect(withChain).not.toContain("投递单元");
 
     // 展开请求体 → 真实 JSON（与真发同一条构造链）
     await fold("request", true);
@@ -186,6 +188,20 @@ describe("上下文树：UI 上屏（三列 + 真实请求体）", () => {
     });
     expect(req).toContain("model");
     expect(req).toContain("messages");
+
+    // ★ 真实 step：改任务正文 → 自动观察（默认开）记录到变化里
+    const taskFile = join(fx.HOME, uri, "AGENTS.md");
+    const before = await fx.sh.run(`cat ${taskFile}`);
+    writeFileSync(taskFile, `${before.stdout}\n\n<!-- 意图测试改动 -->\n`);
+    const withChange = await waitUntil(
+      a11yText,
+      (s) => /变更（step）[\s\S]{0,200}?\btask\.body\b/.test(s) || /\[1\]/.test(s),
+      { label: "自动观察到 step 变化", timeoutMs: 20000 },
+    );
+    // 点开那一步 → 变更详情显示两份的归属判断与 diff
+    expect(withChange).toContain("变更详情");
+    expect(withChange).toContain("runtime");
+    expect(withChange).toContain("增量 patch");
 
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 180_000);
