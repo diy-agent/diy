@@ -19,6 +19,7 @@
 import { RpcSchema } from "@diy/rpc";
 import { z } from "zod";
 import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-schema";
+import { StepsSchema } from "../../shared/context/schema";
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
 
 // 任务状态枚举 — 单一真相源 task-state.ts（纯 zod，无 Node 依赖，浏览器安全） */
@@ -477,6 +478,18 @@ export const apiDef = RpcSchema.router({
               model: z.string().optional().cliOption({ desc: "模型 id（请求体预览用；缺省取默认模型）" }),
             },
             output: ContextLabSchema,
+          }),
+          steps: RpcSchema.unary({
+            desc: `每轮真发的投递快照（step）：值变化 + 两份容器的 diff（默认只给统计，--diff 给行内容）`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+              limit: z.number().optional().cliOption({ desc: "只看最近 N 步（缺省全部）" }),
+              diff: z
+                .boolean()
+                .optional()
+                .cliOption({ desc: "带上行级 diff 内容（默认只有增删统计，避免下发整份文本）" }),
+            },
+            output: StepsSchema,
           }),
         },
       }),

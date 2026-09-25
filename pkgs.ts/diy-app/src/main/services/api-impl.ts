@@ -305,7 +305,14 @@ export function bindAppHandlers(binding: ServerBinding): void {
     }
     const { previewSimulatedRequest } = await import("./local-agent");
     const sim = await previewSimulatedRequest({ taskUri: input.taskUri, system: base.system, model: input.model });
-    return { ...base, requestBody: sim.body, requestNote: sim.note };
+    // ⚠️ 这条链是**模版线**（assembleSystem 渲染 _system.md + AGENTS.md 链），
+    // 而真发已切到 Context Tree 投递（见 /diy.sh context lab 与 runTurn 的 buildDelivery）。
+    // 所以这里造出来的 body 只是"模版渲染出来的样子"，不是真发形态 —— note 必须说清，否则误导。
+    return {
+      ...base,
+      requestBody: sim.body,
+      requestNote: `${sim.note}（注：这是**模版链**的仿真；真发已切 Context Tree 投递，见上下文树页的请求预览）`,
+    };
   });
 
   // ── context（上下文树页：**当前任务的真实上下文**，不落盘、不发 LLM）──
@@ -338,11 +345,22 @@ export function bindAppHandlers(binding: ServerBinding): void {
         taskUri,
         system: lab.system.text,
         model,
-        lastUser: lab.runtime.text || "none",
+        // runtime 作为独立 user 消息插在末条之前 —— 与真发（runTurn 的 withRuntime）同形
+        runtime: lab.runtime.text,
       });
       request = { body: sim.body, note: sim.note, model };
     }
     return { ...lab, request };
+  });
+
+  binding.on(app.context.steps, async ({ input }) => {
+    const { readDeliverySteps } = await import("./local-agent");
+    const { summarizeSteps } = await import("../../shared/context/steps");
+    const records = readDeliverySteps(input.taskUri);
+    return {
+      total: records.length,
+      steps: summarizeSteps(records, { limit: input.limit, withDiff: input.diff === true }),
+    };
   });
 
   // ── llmProxy ──

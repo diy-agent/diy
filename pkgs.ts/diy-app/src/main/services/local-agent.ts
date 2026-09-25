@@ -30,7 +30,9 @@ import { BlockStore, blocksToMessages, interruptedToolPatches, type Op, type JSO
 import { collectSelfInfo, judgeSelfKill, selfKillNotice } from "./agent-guard";
 import { appendAudit } from "./agent-audit";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
-import { assembleSystem } from "./prompt-registry";
+import { buildDelivery, defaultSystemPlaces } from "../../shared/context/delivery";
+import type { DeliveryStepRecord } from "../../shared/context/steps";
+import { assembleGlobals, systemBudgetForContext } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
 
 export const DEFAULT_MODEL = "mimo-v2.5";
@@ -185,6 +187,11 @@ function llmFile(taskUri: string): string {
     return path.join(localDir(), `${keyOf(taskUri)}.llm.jsonl`);
 }
 
+/** 投递快照（每轮真发一条）：投递**事实**，与 raw 那种旁路观测不同 —— UI 的 step/diff 靠它 */
+function stepsFile(taskUri: string): string {
+    return path.join(localDir(), `${keyOf(taskUri)}.steps.jsonl`);
+}
+
 /** 原始流 dump（仅 DIY_RAW_STREAM_DUMP=1 时写）：ai-sdk 的 part 原样落盘，用于研究“Op 是否漏信息” */
 function rawFile(taskUri: string): string {
     return path.join(localDir(), `${keyOf(taskUri)}.raw.jsonl`);
@@ -198,6 +205,34 @@ function rawDumpEnabled(): boolean {
 /** zen/go 会话亲和头：按 task 稳定（实测缺失会被 MissingSessionID 拒绝） */
 function sessionIdOf(taskUri: string): string {
     return `local-${keyOf(taskUri)}`;
+}
+
+/**
+ * runtime 容器作为**尾部 user 消息**插在本轮输入之前（144 的投递设计）。
+ * 易变项（任务正文、技能清单等）放这里，稳定项在 system 参数里；两者合起来才是完整上下文。
+ * runtime 为空 → 原样返回（不硬塞空消息：白耗 token 且让模型困惑）。
+ */
+function withRuntime(hist: ModelMessage[], runtime: string): ModelMessage[] {
+    if (!runtime.trim()) return hist;
+    const last = hist[hist.length - 1];
+    if (last && last.role === "user") {
+        return [...hist.slice(0, -1), { role: "user", content: runtime }, last];
+    }
+    return [...hist, { role: "user", content: runtime }];
+}
+
+/** 读某任务的投递快照（时间正序；文件不存在 = 还没真发过） */
+export function readDeliverySteps(taskUri: string): DeliveryStepRecord[] {
+    return readJsonl<DeliveryStepRecord>(stepsFile(taskUri));
+}
+
+/** 追加一条投递快照（append-only；写失败只出声 —— 观测不能阻断发送） */
+function appendStep(fp: string, rec: DeliveryStepRecord): void {
+    try {
+        appendFileSync(fp, `${JSON.stringify(rec)}\n`, "utf-8");
+    } catch (e) {
+        console.error(`[local-agent] 投递快照写入失败 ${fp}:`, e);
+    }
 }
 
 function readJsonl<T>(path: string): T[] {
@@ -410,7 +445,7 @@ export class LocalAgentManager {
     clear(taskUri: string): boolean {
         this.cancel(taskUri);
         this.sessions.delete(taskUri);
-        for (const f of [opsFile(taskUri), llmFile(taskUri), rawFile(taskUri)]) {
+        for (const f of [opsFile(taskUri), llmFile(taskUri), rawFile(taskUri), stepsFile(taskUri)]) {
             try {
                 rmSync(f, { force: true });
             } catch (e) {
@@ -546,18 +581,22 @@ export class LocalAgentManager {
             });
         };
 
-        // 系统上下文：分节装配（身份/自述/项目规范/任务/规则/护栏）——与试验场预览同一入口
-        const asm = assembleSystem(diyHome(), projectFromUri(taskUri), {
-            taskUri,
-            // 预算与当前模型的上下文窗口挂钩（小窗口模型拿更小预算，大窗口封顶 64KB）
-            contextLimitTokens: contextLimitOf(model || DEFAULT_MODEL),
-        });
-        if (asm.overBudget) {
+        // 系统上下文：Context Tree 投递（稳定项 → system 参数；易变项 → 尾部 user 消息）。
+        // **与上下文树页的预览同一条链**（shared/context/delivery）：同一份 globals、同一份
+        // system 名单、同一套渲染 —— 于是"预览看到的字节"就是这里发出去的字节。
+        const globals = assembleGlobals(diyHome(), projectFromUri(taskUri), { taskUri }) as unknown as Record<
+            string,
+            unknown
+        >;
+        const delivery = buildDelivery(globals, defaultSystemPlaces());
+        // 预算与当前模型的上下文窗口挂钩（小窗口模型拿更小预算，大窗口封顶 64KB）
+        const sysBudget = systemBudgetForContext(contextLimitOf(model || DEFAULT_MODEL));
+        if (delivery.system.bytes > sysBudget) {
             const kb = (n: number) => (n / 1024).toFixed(1);
             yield* errorBlock(
                 "budget",
-                `系统上下文超出预算（${kb(asm.overBudget.used)} KB > ${kb(asm.overBudget.budget)} KB），本轮未发送。` +
-                    `请精简提示词模版或项目 AGENTS.md。`,
+                `系统上下文超出预算（${kb(delivery.system.bytes)} KB > ${kb(sysBudget)} KB），本轮未发送。` +
+                    `请精简项目 AGENTS.md，或在上下文树页把易变变量划到 runtime。`,
             );
             // 拒绝发送也是一轮完整生命周期：必须闭合，否则 UI/崩溃报告/审计三处都会认为它还在跑
             yield* closeTurn(stepId, false, stepN);
@@ -567,8 +606,11 @@ export class LocalAgentManager {
         const cwd = cwd0;
         const L = this.getLimits();
         const modelMax = modelOutputTokens(model || DEFAULT_MODEL);
-        // store 此刻已含本轮 user 块（emit 即 apply）；重建历史自带 user，不再手工拼
-        const sent: ModelMessage[] = blocksToMessages(sess.store) as unknown as ModelMessage[];
+        // store 此刻已含本轮 user 块（emit 即 apply）；重建历史自带 user。
+        // runtime 容器作为**尾部 user 消息**插在本轮输入之前：它不进块树（llm.jsonl 是块树的转储），
+        // 所以下一轮重建历史时不会带上它 —— 每轮只发当前这一份，不会累积。
+        const hist = blocksToMessages(sess.store) as unknown as ModelMessage[];
+        const sent = withRuntime(hist, delivery.runtime.text);
         // 研究用：把“发给上游的 messages”与 fullStream 的每个 part 原样落盘
         const raw = rawDumpEnabled() ? rawFile(taskUri) : null;
         let rawSeq = 0;
@@ -584,14 +626,27 @@ export class LocalAgentManager {
             kind: "request",
             ts: new Date().toISOString(),
             model: model || DEFAULT_MODEL,
-            system: asm.system,
+            system: delivery.system.text,
             tools: Object.keys(buildTools(cwd, L, taskUri)),
             settings: { maxSteps: L.maxSteps, maxOutputTokens: modelMax, maxRetries: 2 },
             messages: sent,
         });
+        // 投递快照（每轮真发一条）：投递事实，供 UI 的 step/diff 用（与 raw 那种旁路观测不同）。
+        // 落盘失败不阻断发送（它只是观测），但必须出声。
+        appendStep(stepsFile(taskUri), {
+            ts: new Date().toISOString(),
+            turnId,
+            model: model || DEFAULT_MODEL,
+            wireVersion: delivery.wireVersion,
+            systemPlaces: delivery.system.places,
+            runtimePlaces: delivery.runtime.places,
+            valueHashes: delivery.valueHashes,
+            systemText: delivery.system.text,
+            runtimeText: delivery.runtime.text,
+        });
         const result = streamText({
             model: this.modelFor(model || DEFAULT_MODEL, key),
-            system: asm.system,
+            system: delivery.system.text,
             messages: sent,
             tools: buildTools(cwd, L, taskUri),
             stopWhen: stepCountIs(L.maxSteps),
@@ -925,12 +980,13 @@ export async function previewSimulatedRequest(opts: {
     model?: string;
     /** 历史消息；缺省 = 读任务 LLM 日志（无日志则仅占位，即首轮形态） */
     messages?: ModelMessage[];
-    /**
-     * 末条 user 消息的正文（缺省是占位文案）。
-     * 上下文树页用它把 **runtime 份**放进来 —— 144 的设计就是「runtime 作为尾部 user 消息」，
-     * 这样预览出来的请求体与"实际会发出去的样子"一致。
-     */
+    /** 末条 user 消息的正文（缺省是占位文案） */
     lastUser?: string;
+    /**
+     * runtime 容器全文：作为**独立 user 消息**插在末条之前 —— 与真发同形
+     * （真发 = [...历史, {user: runtime}, {user: 本轮输入}]，见 runTurn 的 withRuntime）。
+     */
+    runtime?: string;
 }): Promise<SimulatedRequest> {
     if (!opts.taskUri) {
         return { body: null, note: "无任务场景：仅渲染 system 文本" };
@@ -946,6 +1002,7 @@ export async function previewSimulatedRequest(opts: {
         : historyFromLog(taskUri, PREVIEW_HISTORY_MAX);
     const messages: ModelMessage[] = [
         ...hist.messages,
+        ...(opts.runtime ? [{ role: "user" as const, content: opts.runtime }] : []),
         { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" },
     ];
     let body: Record<string, unknown> | null = null;

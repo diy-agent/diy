@@ -3,6 +3,7 @@
 
 import { z } from "zod";
 import type { ContextLab, PlaceCandidate } from "./preview";
+import type { StepSummary } from "./steps";
 
 const Container = z.enum(["system", "runtime"]);
 
@@ -63,4 +64,39 @@ export const ContextLabSchema: z.ZodType<ContextLab> = z.object({
         runtimeText: z.string(),
         runtimePlaces: z.array(z.string()),
     }),
+});
+
+/** 行级 diff 的一行（`@diy/line-diff` 的形状） */
+const diffLine = z.object({ t: z.string(), s: z.string() });
+
+/** 一步的摘要（见 shared/context/steps.ts 的 summarizeSteps） */
+export const StepSummarySchema: z.ZodType<StepSummary> = z.object({
+    index: z.number(),
+    ts: z.string(),
+    turnId: z.string(),
+    model: z.string(),
+    wireVersion: z.string(),
+    bytes: z.object({ system: z.number(), runtime: z.number() }),
+    systemPlaces: z.array(z.string()),
+    runtimePlaces: z.array(z.string()),
+    sincePrev: z
+        .object({
+            changed: z.array(z.string()),
+            systemDiffers: z.boolean(),
+            runtimeDiffers: z.boolean(),
+            systemDiff: z.array(diffLine),
+            runtimeDiff: z.array(diffLine),
+            incomparable: z.boolean(),
+            systemSize: z.object({ add: z.number(), del: z.number() }),
+            runtimeSize: z.object({ add: z.number(), del: z.number() }),
+        })
+        .nullable(),
+    diff: z.object({ system: z.array(diffLine), runtime: z.array(diffLine) }).nullable().optional(),
+});
+
+/** 真发投递快照列表（每轮一条；见 main 的 readDeliverySteps） */
+export const StepsSchema = z.object({
+    /** 磁盘上总条数（可能大于返回的 steps.length —— limit 截尾） */
+    total: z.number(),
+    steps: z.array(StepSummarySchema),
 });

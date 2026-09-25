@@ -11,6 +11,7 @@
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
@@ -91,14 +92,16 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     expect(d.runtime.text).toContain("body:");
     expect(d.system.text).toContain('title: "上下文树任务"');
 
-    // 请求体：与真发同一条构造链，messages 用「system 份 + runtime 份」
+    // 请求体：与真发同一条构造链。形态 = [system, ...历史, user(runtime), user(占位输入)]
+    // （真发同理：runtime 作为独立 user 消息插在**本轮输入之前**，见 runTurn 的 withRuntime）
     expect(d.request.body).toBeTruthy();
     const msgs = d.request.body.messages as any[];
     expect(msgs[0].role).toBe("system");
     expect(String(msgs[0].content)).toContain("家目录规范");
-    const lastUser = msgs[msgs.length - 1];
-    expect(lastUser.role).toBe("user");
-    expect(String(lastUser.content)).toContain("body:"); // runtime 份进了末条 user
+    const runtimeMsg = msgs[msgs.length - 2];
+    expect(runtimeMsg.role).toBe("user");
+    expect(String(runtimeMsg.content)).toContain("body:"); // runtime 份是倒数第二条 user
+    expect(msgs[msgs.length - 1].role).toBe("user"); // 末条是"下一轮真实输入"的占位
     expect(d.request.model).toBeTruthy();
 
     // 行号映射与文本同源（选中联动高亮靠它）
@@ -135,6 +138,74 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     // 变量树上的归属标记跟着变
     const row = moved.tree.find((n: any) => n.path === "task.body");
     expect(row.container).toBe("system");
+
+    await fx.sh.run(`./diy.sh project remove ${pid}`);
+  }, 90_000);
+});
+
+/** 与 main 的 keyOf 同算法（会话文件名的唯一性由 sha256 前 12 位负责） */
+function keyOf(taskUri: string): string {
+  const readable = taskUri.replace(/[^\w.-]+/g, "_").slice(0, 64);
+  const sum = createHash("sha256").update(taskUri).digest("hex").slice(0, 12);
+  return `${readable}-${sum}`;
+}
+
+describe("上下文树：投递快照（steps）", () => {
+  it("空会话 0 条；写入快照后能读出，且相邻 diff 算在 main 侧（默认只给统计）", async () => {
+    const repo = `${fx.HOME}/ctxlab-steps`;
+    mkdirSync(repo, { recursive: true });
+    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 快照`);
+    const pid = String((p.data as any)?.data?.id);
+    const t = await fx.sh.getJson(`./diy.sh task create 快照任务 ${pid}`);
+    const uri = String((t.data as any)?.data?.uri);
+
+    const empty = await fx.sh.getJson(`./diy.sh context steps ${uri}`);
+    expect((empty.data as any).total).toBe(0);
+    expect((empty.data as any).steps).toEqual([]);
+
+    // 手写两条快照（模拟两轮真发；真发本身需要 LLM key，故这里只验读取 + 汇总链路）
+    const rec = (over: Record<string, unknown>) => ({
+      ts: "2026-09-25T00:00:00.000Z",
+      turnId: "t1",
+      model: "mimo-v2.5",
+      wireVersion: "aaaa1111",
+      systemPlaces: ["diy"],
+      runtimePlaces: ["task.body"],
+      valueHashes: { diy: "h1", "task.body": "b1" },
+      systemText: "diy:\n  cli: /repo",
+      runtimeText: 'task:\n  body: "一"',
+      ...over,
+    });
+    const localDir = join(fx.HOME, "local");
+    mkdirSync(localDir, { recursive: true });
+    writeFileSync(
+      join(localDir, `${keyOf(uri)}.steps.jsonl`),
+      [
+        rec({}),
+        rec({ turnId: "t2", valueHashes: { diy: "h1", "task.body": "b2" }, runtimeText: 'task:\n  body: "二"' }),
+      ]
+        .map((r) => JSON.stringify(r))
+        .join("\n") + "\n",
+    );
+
+    const r = await fx.sh.getJson(`./diy.sh context steps ${uri} --diff`);
+    const d = r.data as any;
+    expect(d.total).toBe(2);
+    expect(d.steps.map((s: any) => s.index)).toEqual([1, 2]);
+    // 首步是 baseline：没有"上一步"
+    expect(d.steps[0].sincePrev).toBeNull();
+    // 第 2 步：只有 runtime 变（system 一份未变 → 可缓存）
+    expect(d.steps[1].sincePrev.changed).toEqual(["task.body"]);
+    expect(d.steps[1].sincePrev.systemDiffers).toBe(false);
+    expect(d.steps[1].sincePrev.runtimeDiffers).toBe(true);
+    expect(d.steps[1].sincePrev.incomparable).toBe(false);
+    // --diff 才带行内容；且原文（中文）能正确回传
+    expect(d.steps[1].diff.runtime.some((l: any) => l.t === "+" && l.s.includes("二"))).toBe(true);
+
+    // 默认不带行内容（避免下发整份文本）
+    const plain = await fx.sh.getJson(`./diy.sh context steps ${uri}`);
+    expect((plain.data as any).steps[1].diff).toBeUndefined();
+    expect((plain.data as any).steps[1].sincePrev.runtimeSize.add).toBeGreaterThan(0);
 
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 90_000);

@@ -6,7 +6,9 @@
 //   1. list/get：七份内置，_guard 锁定不可覆盖（带 tip）
 //   2. save/restore：项目级覆盖落盘 + sidecar 记 baseVersion；恢复后不留残留
 //   3. 拒绝：不可覆盖项 / 非白名单 relpath（含原型链键）/ 穿越
-//   4. preview：分节装配（空节不进请求）+ 仿真请求体（走真发组装链）+ 告警不回退成假值
+//   4. preview：分节装配（空节不进请求）+ 模版线仿真请求体 + 告警不回退成假值
+//      ⚠️ 真发已切 Context Tree 投递（见 tests/cli.intent.ui-context.test.ts 与 context-delivery.test.ts）；
+//      本文件的 preview 只覆盖**模版线**（模版编辑器看到的渲染结果），不代表真发形态。
 //   5. preview 的 project 以 taskUri 为准（两者指向不同项目时不静默错配）
 //   6. 超预算：拒绝发送，但**轮次必须闭合**（stop + turn-end 审计，不留僵尸轮次）
 //
@@ -145,7 +147,7 @@ describe("template save/restore", () => {
 });
 
 describe("template preview", () => {
-    it("分节装配 + 空节不进请求 + 仿真请求体走真发组装链", async () => {
+    it("分节装配 + 空节不进请求 + 模版线仿真请求体", async () => {
         const pid = await freshProj("preview");
         await fx.sh.run(`./diy.sh task create 预览任务 ${pid}`);
         const uri = `projects/${pid}/tasks/1`;
@@ -162,13 +164,15 @@ describe("template preview", () => {
         // DIY_CLI 注入后：渲染成绝对入口，且不再报「未注入」告警
         expect(system).toContain(String(process.env["DIY_CLI"]));
         expect(p["warnings"]).toEqual([]);
-        // 仿真请求体：与真发同一条链（messages[0] 是 system、带 tools/参数）
+        // 模版线仿真请求体（messages[0] 是模版渲染出来的 system、带 tools/参数）
         const body = p["requestBody"] as Record<string, unknown>;
         expect(body).toBeTruthy();
         const messages = body["messages"] as Array<Record<string, unknown>>;
         expect(messages[0]?.["role"]).toBe("system");
         expect(messages[0]?.["content"]).toBe(system);
         expect(body["tools"]).toBeTruthy();
+        // note 必须标明"这是模版线，不是真发形态"（两处预览只有一处是真发）
+        expect(String(p["requestNote"])).toContain("模版链");
         await cleanup(pid);
     });
 
@@ -242,9 +246,12 @@ describe("template preview", () => {
         const pid = await freshProj("budget");
         await fx.sh.run(`./diy.sh task create 超预算任务 ${pid}`);
         const uri = `projects/${pid}/tasks/1`;
-        // 直接放一份超大覆盖（> 64KB 预算）：走读路径即可，不必经 CLI 传 70KB 参数
-        mkdirSync(join(fx.HOME, "projects", pid, "template"), { recursive: true });
-        writeFileSync(overridePath(pid, "identity.md"), "x".repeat(70 * 1024), "utf-8");
+        // ⚠️ 真发已切 Context Tree 投递：预算按**投递**算（system 容器 = 稳定项，含 AGENTS.md 链），
+        // 模版覆盖（identity.md 那类）已不进真发 —— 所以超预算要给**链上**塞大内容。
+        // 一句话：这个用例测的是"真发投递超预算"，不再是"模版渲染超预算"。
+        const repo = join(fx.HOME, "tpl-budget");
+        mkdirSync(repo, { recursive: true }); // 目录不存在时 cwd 会回退到任务目录，链就取不到它
+        writeFileSync(join(repo, "AGENTS.md"), "x".repeat(70 * 1024), "utf-8");
 
         const r = await fx.sh.run(`./diy.sh agent local chat ${uri} "你好"`, 60_000);
         const ops = r.stdout

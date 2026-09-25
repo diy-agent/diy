@@ -8,15 +8,22 @@
 //
 // 规则表只声明 **system 名单**：没进名单的自动归 runtime（不是两套表，避免两边打架）。
 
-import { project as projectTree } from "./projection";
-import { applyFacts, createTree, setPlacement, setPlaces } from "./reducer";
-import { previewOf, renderPathsTraced } from "./render";
-import { CONTEXT_GUIDE } from "./guide";
+import { previewOf } from "./render";
 import { getValue, isPlainObject, placeOf, rendererOf } from "./tree";
-import { emptyCursor } from "./projection";
 import { hashValue } from "./hash";
-import { WIRE_VERSION } from "./wire";
-import type { ContextContainer, ContextFact, ContextPath, ContextTreeState } from "./types";
+import { emptyCursor, project as projectTree } from "./projection";
+import {
+    buildDelivery,
+    PLACE_CANDIDATES,
+    type Delivery,
+    type DeliveryPart,
+} from "./delivery";
+import type { ContextContainer, ContextPath, ContextTreeState } from "./types";
+
+// 划分策略与投递构造住在 delivery.ts（真发与预览共用那一条链），这里只做转出，
+// 让"页面数据"与"投递内容"两个概念在 import 处也分得清。
+export { PLACE_CANDIDATES, defaultSystemPlaces } from "./delivery";
+export type { PlaceCandidate, DeliveryPart as LabDelivery, Delivery } from "./delivery";
 
 /** 树节点（扁平列表；path 点分段自带层级，UI 按前缀缩进） */
 export interface LabTreeNode {
@@ -47,18 +54,6 @@ export interface LabRule {
     reason: string;
 }
 
-/** 一份投递内容 */
-export interface LabDelivery {
-    places: ContextPath[];
-    text: string;
-    bytes: number;
-    /**
-     * path → 该 path 在 `text` 里的行号区间（1 基闭区间）。
-     * 与 text 出自同一次渲染（`renderPathsTraced`），故高亮/滚动一定指得准。
-     */
-    lines: Record<ContextPath, { from: number; to: number }>;
-}
-
 /** 每步 diff 用到的快照（与 history.ts 的 StepSnapshot 同构） */
 export interface LabSnapshotInput {
     valueHashes: Record<string, string>;
@@ -76,8 +71,8 @@ export interface ContextLab {
     wireVersion: string;
     tree: LabTreeNode[];
     rules: LabRule[];
-    system: LabDelivery;
-    runtime: LabDelivery;
+    system: DeliveryPart;
+    runtime: DeliveryPart;
     /**
      * 实际会发出去的请求体（JSON）—— 与真发同一条构造链，只把 messages 换成
      * 「system 份 + runtime 份」，这样看到的就是"这棵树最后变成什么请求"。
@@ -87,60 +82,11 @@ export interface ContextLab {
     snapshot: LabSnapshotInput;
 }
 
-/** 候选投递单元（规则表里可选的行；不重叠） */
-export interface PlaceCandidate {
-    path: ContextPath;
-    /** 默认是否归 system */
-    system: boolean;
-    /** 稳定性判断（也就是"为什么"） */
-    reason: string;
-}
-
-const byteLen = (s: string): number => new TextEncoder().encode(s).length;
-
-/**
- * 候选投递单元 = 顶层字段 + 少数需要单独拆开的子字段。
- *
- * 为什么顶层之外还要拆：`task` 下面 `title/uri/state/dir` 在任务存续期内基本不变，
- * 而 `body` 每次编辑任务就变 —— 按第一层粗暴划分会把这两类塞进同一份，
- * 要么浪费 system 缓存，要么让易变内容污染 system。规则表的意义正在这里。
- */
-export const PLACE_CANDIDATES: PlaceCandidate[] = [
-    { path: "diy", system: true, reason: "进程身份（CLI / 数据根）：整个会话不变" },
-    { path: "project", system: true, reason: "项目路径：只在切项目时变" },
-    { path: "cwd", system: true, reason: "工作目录：任务存续期内固定" },
-    { path: "chain", system: true, reason: "AGENTS.md 链：只在目录/文件改动时变" },
-    { path: "task.title", system: true, reason: "任务标题：偶尔改一次" },
-    { path: "task.uri", system: true, reason: "任务 URI：不变" },
-    { path: "task.state", system: true, reason: "任务状态：偶尔改一次" },
-    { path: "task.dir", system: true, reason: "任务目录：不变" },
-    { path: "task.body", system: false, reason: "任务正文：每次编辑正文就变 → 放 runtime，不污染 system 缓存" },
-    { path: "skills", system: false, reason: "技能清单：安装/升级技能就变" },
-];
-
-/** 默认 system 名单 */
-export function defaultSystemPlaces(): ContextPath[] {
-    return PLACE_CANDIDATES.filter((c) => c.system).map((c) => c.path);
-}
-
+/** 该 place 为什么归这边（人话；未登记的给默认说明） */
 function reasonFor(path: ContextPath): string {
     const hit = PLACE_CANDIDATES.find((c) => c.path === path);
     if (hit) return hit.reason;
     return "未登记的单元：默认归 runtime";
-}
-
-/** 把 globals 灌成一棵 Context Tree（每个顶层字段一条事实） */
-export function treeOfGlobals(globals: Record<string, unknown>): ContextTreeState {
-    void emptyCursor;
-    let tree = createTree();
-    const facts: ContextFact[] = Object.entries(globals).map(([k, v]) => ({
-        type: "patch" as const,
-        path: k,
-        op: "set" as const,
-        value: v,
-    }));
-    tree = applyFacts(tree, facts).state;
-    return tree;
 }
 
 /** 树上的每一行（含中间容器；容器不显示值 —— 子树在下面几行里） */
@@ -184,7 +130,7 @@ function nodesOf(state: ContextTreeState): LabTreeNode[] {
     return out.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-/** 组装视图数据（真实 globals + system 名单） */
+/** 组装视图数据（真实 globals + system 名单；投递部分走 delivery.ts 的同一条链） */
 export function buildLab(
     globals: Record<string, unknown>,
     systemPlaces: readonly ContextPath[],
@@ -192,62 +138,30 @@ export function buildLab(
     /** 请求体（由 main 侧用真实 SDK 链 + 我们这两份内容构造；纯函数层不碰 SDK） */
     request: ContextLab["request"] = { body: null, note: "未构造请求体", model: "" },
 ): ContextLab {
-    // places 取「候选里存在的」+ system 名单（后者可能含候选外的手填 path）
-    const existing = new Set(Object.keys(globals));
-    const inTree = (p: ContextPath): boolean => existing.has(p.split(".")[0]);
-    const places = [...new Set([...PLACE_CANDIDATES.map((c) => c.path), ...systemPlaces])]
-        .filter(inTree)
-        .filter((p) => candidatesCompatible(p, systemPlaces))
-        .sort();
-
-    let tree = treeOfGlobals(globals);
-    tree = setPlaces(tree, places);
-    for (const p of places) {
-        tree = setPlacement(tree, p, systemPlaces.includes(p) ? "system" : "runtime");
-    }
-
-    const sysPlaces = tree.places.filter((p) => tree.placement[p] === "system").sort();
-    const runPlaces = tree.places.filter((p) => (tree.placement[p] ?? "runtime") === "runtime").sort();
-    // 文本与行号映射同出一次渲染 —— 高亮/滚动才不会指错行。
-    // system 份带说明头（结构 + 解读规则，纯文本，见 guide.ts）：
-    // 这就是"提示词"本体，所以要先说明这是什么、怎么读。
-    const sys = renderPathsTraced(tree, sysPlaces, CONTEXT_GUIDE);
-    const run = renderPathsTraced(tree, runPlaces);
-    const sysText = sys.text;
-    const runText = run.text;
-
-    const treeNodes = nodesOf(tree);
+    const d: Delivery = buildDelivery(globals, systemPlaces);
+    const treeNodes = nodesOf(d.tree);
     return {
         taskUri,
         source: "当前任务的真实上下文（assembleGlobals 的产物）",
-        wireVersion: WIRE_VERSION,
+        wireVersion: d.wireVersion,
         tree: treeNodes,
-        rules: tree.places.slice().sort().map((place) => ({
+        rules: d.tree.places.slice().sort().map((place) => ({
             place,
-            container: tree.placement[place] ?? "runtime",
-            renders: renderUnits(tree, place),
+            container: d.tree.placement[place] ?? "runtime",
+            renders: renderUnits(d.tree, place),
             reason: reasonFor(place),
         })),
-        system: { places: sysPlaces, text: sysText, bytes: byteLen(sysText), lines: sys.lines },
-        runtime: { places: runPlaces, text: runText, bytes: byteLen(runText), lines: run.lines },
+        system: d.system,
+        runtime: d.runtime,
         request,
         snapshot: {
-            valueHashes: Object.fromEntries(treeNodes.map((n) => [n.path, n.valueHash])),
-            systemText: sysText,
-            systemPlaces: sysPlaces,
-            runtimeText: runText,
-            runtimePlaces: runPlaces,
+            valueHashes: d.valueHashes,
+            systemText: d.system.text,
+            systemPlaces: d.system.places,
+            runtimeText: d.runtime.text,
+            runtimePlaces: d.runtime.places,
         },
     };
-}
-
-/** 候选兼容性：与已选 system 名单不得互为祖先/后代（places 的硬规则） */
-function candidatesCompatible(p: ContextPath, systemPlaces: readonly ContextPath[]): boolean {
-    for (const s of systemPlaces) {
-        if (s === p) continue;
-        if (s.startsWith(`${p}.`) || p.startsWith(`${s}.`)) return false;
-    }
-    return true;
 }
 
 /** 该 place 下会实际变成文本的 path */
