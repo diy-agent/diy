@@ -20,6 +20,8 @@ import {
     type SelectionRange,
 } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
+import { yaml } from "@codemirror/lang-yaml";
+import { json } from "@codemirror/lang-json";
 import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
@@ -175,6 +177,13 @@ const hlField = StateField.define<DecorationSet>({
 
 const EMPTY_TAGS: ReadonlySet<string> = new Set<string>();
 
+/** 语法扩展：markdown（模版）/ yaml（上下文树投递）/ json（请求体） */
+function languageOf(lang?: "markdown" | "yaml" | "json"): Extension {
+    if (lang === "yaml") return yaml();
+    if (lang === "json") return json();
+    return markdown();
+}
+
 /**
  * 编辑器配色扩展：
  *   · 内置（key = "diy"）：跟随应用主题 —— daisyUI 纸面 + One Dark / CM 默认高亮
@@ -206,11 +215,19 @@ export function MdEditor(props: {
     highlight?: HlLines | null;
     /** 已知节标签（从模版正文自动收集）；新写的独占一行的标签也会着色，见 shared/xml-tags */
     tags?: ReadonlySet<string>;
+    /**
+     * 语法：默认 markdown（模版正文）。上下文树预览要 yaml / json ——
+     * 用**同一个编辑器**而不是另写一个 `<pre>`，为的是两件事：
+     *   1. 「复制」拿到的是原始换行（HTML `<pre>` 的复制会因渲染方式丢换行 / 多空行）
+     *   2. 行高亮与滚动定位复用同一套装饰机制（选中结构树节点 → 滚到对应行）
+     */
+    lang?: "markdown" | "yaml" | "json";
 }) {
     let host: HTMLDivElement | undefined;
     let view: EditorView | undefined;
     const editableCx = new Compartment();
     const dslCx = new Compartment();
+    const langCx = new Compartment();
     const styleCx = new Compartment();
     /** 第三方主题扩展（动态 import，选到才加载）；null = 还没加载好 → 先用内置方案 */
     const [themeExt, setThemeExt] = createSignal<Extension | null>(null);
@@ -230,10 +247,11 @@ export function MdEditor(props: {
                     history(),
                     keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
                     // 不自动折行：与预览一致，长了横向滚（折行会让"第几行"对不上行号）
-                    markdown(),
+                    langCx.of(languageOf(props.lang)),
                     // 配色（含语法高亮）：内置方案 = daisyUI 纸面 + One Dark/CM 默认；第三方 = 主题自带
                     styleCx.of(styleExtensions()),
-                    dslCx.of(makeDslPlugin(props.tags ?? EMPTY_TAGS)),
+                    // 模版 DSL 装饰只在 markdown 下有意义（yaml/json 里没有 {{}} / <template>）
+                    dslCx.of((props.lang ?? "markdown") === "markdown" ? makeDslPlugin(props.tags ?? EMPTY_TAGS) : []),
                     hlField,
                     editableCx.of(EditorView.editable.of(props.editable)),
                     labTheme,
@@ -287,6 +305,11 @@ export function MdEditor(props: {
     createEffect(() => {
         const tags = props.tags ?? EMPTY_TAGS;
         view?.dispatch({ effects: dslCx.reconfigure(makeDslPlugin(tags)) });
+    });
+    // 语言切换（同一实例被复用到别处时）→ 重配语法
+    createEffect(() => {
+        const l = props.lang;
+        view?.dispatch({ effects: langCx.reconfigure(languageOf(l)) });
     });
     // 锁态切换（只读模板）→ 即时生效
     createEffect(() => {

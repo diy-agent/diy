@@ -70,10 +70,10 @@ export function TaskRunPage(props: { uri: string }) {
                 >
                     🪟 提示词
                 </button>
-                {/* 打开上下文树试验场（**独立子页面**：示范数据，与提示词页互不干扰） */}
+                {/* 打开上下文树页（**独立子页面**：真实上下文 + 划分规则，与提示词页互不干扰） */}
                 <button
                     class="btn btn-xs btn-ghost"
-                    title="打开上下文树试验场（变量树 / 划分规则 / 两份投递，示范数据）"
+                    title="打开上下文树页（变量树 / 划分规则 / system 与 runtime 两份投递）"
                     onClick={() => getRendererActions().openTab?.("ctxlab", props.uri)}
                 >
                     🌲 上下文树

@@ -203,6 +203,20 @@ export const Caches = {
   }),
   /** 上下文树试验场（ctxlab）的折叠块展开态：key = tree/rules/system/runtime/message。
    *  与提示词页 labViews 同性质（用户选择，切页/重开不该回到默认），故走同一入口。 */
+  /** 上下文树页的 **system 名单**（划分规则的输入；空数组 = 用推荐名单）。
+   *  与折叠态同性质：属于用户选择，切页/重开不该丢。 */
+  diy_ctxlab_system: field<string[]>("diy_ctxlab_system", {
+    parse: (raw) => {
+      try {
+        const o: unknown = JSON.parse(raw);
+        return Array.isArray(o) && o.every((x) => typeof x === "string") ? (o as string[]) : null;
+      } catch {
+        return null;
+      }
+    },
+    serialize: (v) => JSON.stringify(v),
+    defaultValue: [] as string[],
+  }),
   diy_ctxlab_fold: field<Record<string, boolean>>("diy_ctxlab_fold", {
     parse: (raw) => {
       try {
@@ -213,7 +227,7 @@ export const Caches = {
       }
     },
     serialize: (v) => JSON.stringify(v),
-    defaultValue: { tree: true, rules: true, system: true, runtime: true, message: false },
+    defaultValue: { units: true, tree: true, system: true, runtime: true, request: false },
   }),
   /** 试验场表格列宽（px 数组，按表分字段）。**表的列宽必须与容器宽度解耦**：
    *  否则拖动左栏会按比例缩放所有列，永远有列看不全；这里存下来后拖左栏不再改变列宽，

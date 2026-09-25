@@ -19,7 +19,7 @@
 import { RpcSchema } from "@diy/rpc";
 import { z } from "zod";
 import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-schema";
-import { ContextLabSchema } from "../../shared/context/schema";
+import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
 
 // 任务状态枚举 — 单一真相源 task-state.ts（纯 zod，无 Node 依赖，浏览器安全） */
 import { TaskStateSchema } from "../core/task-state";
@@ -455,17 +455,26 @@ export const apiDef = RpcSchema.router({
       }),
 
       context: RpcSchema.group({
-        desc: `上下文树试验场（示范数据，只组装不发送）`,
+        desc: `上下文树（当前任务的真实系统上下文；只组装不发送）`,
         children: {
-          scenarios: RpcSchema.unary({
-            desc: `列出示范场景`,
+          candidates: RpcSchema.unary({
+            desc: `列出候选投递单元与默认 system 名单`,
             input: {},
-            output: z.array(z.object({ name: z.string(), title: z.string() })),
+            output: z.object({
+              candidates: ContextPlaceCandidateSchema,
+              defaultSystem: z.array(z.string()),
+            }),
           }),
           lab: RpcSchema.unary({
-            desc: `上下文树试验场数据：变量树 + 划分规则 + system/runtime 两份 + 合成消息`,
+            desc: `上下文树数据：变量树 + 划分规则 + system/runtime 两份 + 合成消息`,
             input: {
-              scenario: z.string().optional().cliOption({ desc: "示范场景名（缺省 task）" }),
+              project: z.string().cliArg({ desc: "project id" }),
+              taskUri: z.string().optional().cliOption({ desc: "任务 URI（缺省则只有项目级上下文）" }),
+              systemPlaces: z
+                .array(z.string())
+                .optional()
+                .cliOption({ desc: "划入 system 的投递单元（JSON 数组；缺省用推荐名单，其余自动 runtime）" }),
+              model: z.string().optional().cliOption({ desc: "模型 id（请求体预览用；缺省取默认模型）" }),
             },
             output: ContextLabSchema,
           }),

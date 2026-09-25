@@ -1,18 +1,21 @@
 /**
- * ContextLabPage — 上下文树试验场（**独立子页面**，任务 148）。
+ * ContextLabPage — 上下文树页（**独立子页面**，任务 148）。
  *
- * 为什么独立成页、而不是塞进提示词页右栏：
- *   ① 提示词页既有 view 已很多，再挤会互抢空间；
- *   ② 本页是**示范数据**（非当前任务的真实上下文），和真实预览同屏会被误读。
+ * 一句话：系统上下文 = **一棵变量树**，按稳定性划成两份 ——
+ * 稳定的进 system 提示词开头（可缓存），易变的进 user 消息。
  *
- * 页面按「人怎么理解这件事」组织，六个块：
- *   左栏  · 变量树     —— 一棵树，作为系统上下文的全集（类似旧「变量」view）
- *         · 划分规则   —— ★核心：哪个变量归哪一份，为什么
- *   主栏  · system 份  —— 稳定那份的 render 结果（进提示词开头，可缓存）
- *         · runtime 份 —— 易变那份的 render 结果（进 user 消息）
- *         · 合成消息   —— 两份拼起来的实际形态
+ * 三列（左=输入，中=产出，右=当前真实值）：
+ *   · 左「结构树」 变量契约（zod），含类型/描述与无值变量。
+ *                  **划分操作就在这做**：点节点上的 ⇄ 换容器（system ⇄ runtime），
+ *                  不必再维护一张独立的"规则表"—— 契约本身就是那张表的骨架。
+ *   · 中「预览」   system 份 / runtime 份（YAML，带语法高亮）
+ *                  / 请求体（实际发出去的 JSON）
+ *   · 右「变量」   投递单元清单（由结构树上的点选自动汇总）+ 当前任务的真实变量树
  *
- * 数据来自 `diy.context.lab`（纯内存示范场景，不落盘、不发 LLM）。
+ * 选中联动：点结构树或变量树的一行 → 中间预览滚到并高亮**那一段**（行号映射与
+ * 渲染同源，见 shared/context/render.ts 的 renderPathsTraced），右侧对应行也高亮。
+ *
+ * 数据是**当前任务的真实上下文**（与真发同一条 assembleGlobals 链），不是编造的。
  */
 import { createResource, createSignal, For, onMount, Show, type JSX } from "solid-js";
 import { diyService } from "../lib/rpc";
@@ -21,7 +24,12 @@ import { ViewGrid } from "./ViewGrid";
 import { layoutStore } from "../store/layoutStore";
 import { findPage } from "../../shared/view-registry";
 import { Caches } from "../lib/ui-state";
-import type { ContextLab, LabTreeNode } from "../../shared/context/preview";
+import { projectFromUri } from "../../shared/task-uri";
+import { buildVarTree, type VarNode } from "../../shared/var-tree";
+import { AssembleGlobalsSchema } from "../../shared/prompt-schema";
+import { MdEditor, type HlLines } from "./MdEditor";
+import { JsonTree } from "./JsonTree";
+import type { ContextLab, LabTreeNode, PlaceCandidate } from "../../shared/context/preview";
 
 const PAGE = "ctxlab";
 
@@ -34,32 +42,28 @@ function setFold(key: string, open: boolean): void {
         return next;
     });
 }
-export function toggleCtxLabFold(key: string): void {
-    setFold(key, !fold()[key]);
-}
 /** 供 `ui view expand`（App.tsx 按 `ctx.` 前缀分派过来） */
 export function setCtxLabFold(key: string, open: boolean): void {
     setFold(key.replace(/^ctx\./, ""), open);
 }
-export const CTXLAB_FOLD_KEYS = ["tree", "rules", "system", "runtime", "message"] as const;
 
-/** 折叠块（与提示词页的 viewHeader 同一形态，只是数据源不同） */
-function Fold(props: { k: string; label: string; extra?: string; children: JSX.Element }) {
+/** 折叠块 */
+function Fold(props: { k: string; label: string; extra?: string; right?: JSX.Element; children: JSX.Element }) {
     return (
         <div
             class="flex min-h-0 flex-col rounded-lg border border-base-300"
-            classList={{ "flex-1 min-h-[160px]": !!fold()[props.k] }}
+            classList={{ "flex-1 min-h-[140px]": !!fold()[props.k] }}
         >
-            <button
-                class="flex w-full items-center gap-1 bg-base-300 px-2 py-1 text-[11px] font-bold tracking-wide opacity-80 hover:opacity-100"
-                onClick={() => toggleCtxLabFold(props.k)}
-            >
-                <span>{fold()[props.k] ? "▾" : "▸"}</span>
-                <span>{props.label}</span>
-                <Show when={props.extra}>
-                    <span class="ml-auto font-mono font-normal opacity-70">{props.extra}</span>
-                </Show>
-            </button>
+            <div class="flex w-full items-center gap-1 bg-base-300 px-2 py-1 text-[11px] font-bold tracking-wide">
+                <button class="flex items-center gap-1 opacity-80 hover:opacity-100" onClick={() => setFold(props.k, !fold()[props.k])}>
+                    <span>{fold()[props.k] ? "▾" : "▸"}</span>
+                    <span>{props.label}</span>
+                </button>
+                <span class="ml-auto flex items-center gap-1 font-mono font-normal opacity-70">
+                    {props.extra}
+                    {props.right}
+                </span>
+            </div>
             <Show when={fold()[props.k]}>
                 <div class="min-h-0 flex-1 overflow-auto bg-base-200 text-[11px]">{props.children}</div>
             </Show>
@@ -67,13 +71,15 @@ function Fold(props: { k: string; label: string; extra?: string; children: JSX.E
     );
 }
 
-/** 归属徽标（system / runtime） */
 function ContainerBadge(props: { c: "system" | "runtime" | null }) {
     return (
         <Show when={props.c} fallback={<span class="opacity-40">—</span>}>
             <span
-                class={`badge badge-sm ${props.c === "system" ? "badge-primary" : "badge-warning"}`}
-                classList={{ "badge-outline": true }}
+                class="badge badge-sm badge-outline"
+                classList={{
+                    "badge-primary": props.c === "system",
+                    "badge-warning": props.c === "runtime",
+                }}
             >
                 {props.c}
             </span>
@@ -81,181 +87,377 @@ function ContainerBadge(props: { c: "system" | "runtime" | null }) {
     );
 }
 
-/** 树行缩进：按点分段数（顶层 0） */
+/** 结构树一行的高亮态（选中 + 容器色条） */
+const rowCls = (selected: boolean): string =>
+    selected ? "bg-primary/20 ring-1 ring-primary/60" : "";
+
+/** 结构树节点：契约（类型/描述）+ 容器标记 + 换容器的 ⇄ */
+function StructureRows(props: {
+    nodes: VarNode[];
+    depth?: number;
+    prefix: string;
+    containerOf: (path: string) => "system" | "runtime" | null;
+    /** 该节点当前是否可切换容器（规则见 showSwap 的注释） */
+    canSwap: (path: string) => boolean;
+    selected: string | null;
+    onPick: (path: string) => void;
+    onSwap: (path: string) => void;
+}) {
+    return (
+        <For each={props.nodes}>
+            {(n) => {
+                const path = () => (props.prefix ? `${props.prefix}.${n.name}` : n.name);
+                const c = () => props.containerOf(path());
+                return (
+                    <>
+                        <tr
+                            class={`cursor-pointer hover:bg-base-300/60 ${rowCls(props.selected === path())}`}
+                            onClick={() => props.onPick(path())}
+                        >
+                            <td class="whitespace-nowrap font-mono">
+                                <span style={{ "padding-left": `${(props.depth ?? 0) * 12}px` }} />
+                                <span class={n.optional ? "opacity-70" : ""}>{n.name}</span>
+                                <span class="ml-1 opacity-50">{n.type}</span>
+                                <Show when={n.optional}>
+                                    <span class="opacity-40">?</span>
+                                </Show>
+                            </td>
+                            <td class="opacity-60">{n.desc ?? ""}</td>
+                            <td class="whitespace-nowrap text-right">
+                                <Show when={c()}>
+                                    <ContainerBadge c={c()} />
+                                </Show>
+                                {/* ⇄ = 换容器（把这个节点变成/撤出投递单元）。
+                                    只在"能成为单元"的节点上出现，否则整棵树都是按钮没法看：
+                                       · 本身已是单元 → 可撤销
+                                       · 祖先与后代都不是单元 → 可把它提为单元（任意粒度）
+                                    已有单元覆盖的子孙不显示 —— 它们要么跟着父走，要么先撤父。 */}
+                                <Show when={props.canSwap(path())}>
+                                    <button
+                                        class="btn btn-ghost btn-xs px-1"
+                                        title={c() ? "撤销这个投递单元" : "把这里设为投递单元（默认 runtime）"}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            props.onSwap(path());
+                                        }}
+                                    >
+                                        ⇄
+                                    </button>
+                                </Show>
+                            </td>
+                        </tr>
+                        <Show when={n.children && n.children.length > 0}>
+                            <StructureRows
+                                nodes={n.children!}
+                                depth={(props.depth ?? 0) + 1}
+                                prefix={path()}
+                                containerOf={props.containerOf}
+                                canSwap={props.canSwap}
+                                selected={props.selected}
+                                onPick={props.onPick}
+                                onSwap={props.onSwap}
+                            />
+                        </Show>
+                    </>
+                );
+            }}
+        </For>
+    );
+}
+
 const indentOf = (path: string): number => path.split(".").length - 1;
 const leafName = (path: string): string => path.split(".").slice(-1)[0];
+
+/** path → 该 path 在文本里的行区间（渲染时收集；这里做一次前缀包含判断） */
+function rangesFor(
+    lines: Record<string, { from: number; to: number }>,
+    path: string,
+): { from: number; to: number } | null {
+    if (lines[path]) return lines[path];
+    // 该 path 只在渲染单元里出现（模板节点 / 中间容器）→ 合并它所有后代的区间
+    const hits = Object.entries(lines)
+        .filter(([k]) => k.startsWith(`${path}.`))
+        .map(([, v]) => v);
+    if (hits.length === 0) return null;
+    return {
+        from: Math.min(...hits.map((h) => h.from)),
+        to: Math.max(...hits.map((h) => h.to)),
+    };
+}
 
 export function ContextLabPage(props: { uri: string }) {
     onMount(() => {
         if (taskStore.selectedUri !== props.uri) void taskStore.selectTask(props.uri);
     });
 
-    const [lab, { refetch }] = createResource(async () => {
-        return (await diyService.diy.context.lab({ scenario: "task" })) as ContextLab;
+    /** 选中的 path（结构树/变量树共用；中间预览据此滚动高亮） */
+    const [selected, setSelected] = createSignal<string | null>(null);
+    const [systemPlaces, setSystemPlaces] = createSignal<string[]>(Caches.diy_ctxlab_system.get());
+    const persist = (next: string[]): void => {
+        setSystemPlaces(next);
+        Caches.diy_ctxlab_system.set(next);
+    };
+    /** 是否显示全部单元（默认只显示**投递单元**；打开后连叶子都列） */
+    const [showAll, setShowAll] = createSignal(false);
+
+    const [meta] = createResource(async () => {
+        return (await diyService.diy.context.candidates({})) as {
+            candidates: PlaceCandidate[];
+            defaultSystem: string[];
+        };
+    });
+    const effectiveSystem = () => (systemPlaces().length > 0 ? systemPlaces() : (meta()?.defaultSystem ?? []));
+
+    const [lab, { refetch }] = createResource(effectiveSystem, async (sys) => {
+        return (await diyService.diy.context.lab({
+            project: projectFromUri(props.uri),
+            taskUri: props.uri,
+            systemPlaces: sys,
+            model: undefined,
+        })) as ContextLab;
     });
 
-    const treeRows = () => lab()?.tree ?? [];
+    /** 换容器：新单元与已有单元互为祖先/后代时，先把重叠的摘掉（places 不许重叠） */
+    const toggleUnit = (path: string): void => {
+        const cur = effectiveSystem();
+        if (cur.includes(path)) {
+            persist(cur.filter((p) => p !== path));
+            return;
+        }
+        persist(
+            [...cur, path].filter(
+                (x) => x === path || !(path.startsWith(`${x}.`) || x.startsWith(`${path}.`)),
+            ),
+        );
+    };
 
-    /** 左栏：变量树（一棵树作为系统上下文的全集） */
-    const varsPane = () => (
-        <table class="table table-xs">
-            <thead>
-                <tr>
-                    <th>变量路径</th>
-                    <th>渲染</th>
-                    <th>值</th>
-                    <th>归属</th>
-                </tr>
-            </thead>
-            <tbody>
-                <For each={treeRows()}>
-                    {(n: LabTreeNode) => (
-                        <tr classList={{ "font-semibold": n.isPlace }}>
-                            <td class="font-mono whitespace-nowrap">
-                                <span style={{ "padding-left": `${indentOf(n.path) * 12}px` }} />
-                                <span title={n.path}>{leafName(n.path)}</span>
-                                <Show when={n.isPlace}>
-                                    <span class="ml-1 badge badge-xs badge-ghost" title="投递单元（place）">
-                                        单元
-                                    </span>
-                                </Show>
-                            </td>
-                            <td class="opacity-60">{n.renderer}</td>
-                            <td class="max-w-xs truncate" title={n.preview}>
-                                {n.preview}
-                            </td>
-                            <td>
-                                <ContainerBadge c={n.container} />
-                            </td>
-                        </tr>
-                    )}
-                </For>
-            </tbody>
-        </table>
-    );
+    /** 当前投递单元（path → 容器） */
+    const unitMap = (): Map<string, "system" | "runtime"> =>
+        new Map((lab()?.rules ?? []).map((r) => [r.place, r.container]));
+    const containerOf = (path: string): "system" | "runtime" | null => unitMap().get(path) ?? null;
 
-    /** 左栏：划分规则（★核心 —— 哪些变量归哪份，为什么） */
-    const rulesPane = () => (
-        <table class="table table-xs">
-            <thead>
-                <tr>
-                    <th>投递单元</th>
-                    <th>归哪份</th>
-                    <th>含哪些渲染单元</th>
-                    <th>为什么</th>
-                </tr>
-            </thead>
-            <tbody>
-                <For each={lab()?.rules ?? []}>
-                    {(r) => (
-                        <tr>
-                            <td class="font-mono font-semibold">{r.place}</td>
-                            <td>
-                                <ContainerBadge c={r.container} />
-                            </td>
-                            <td class="font-mono opacity-70">{r.renders.join(", ") || "—"}</td>
-                            <td class="opacity-70">{r.reason}</td>
-                        </tr>
-                    )}
-                </For>
-            </tbody>
-        </table>
-    );
+    /** 该节点能否切换容器（⇄ 的显示规则，见 StructureRows 里的注释） */
+    const canSwap = (path: string): boolean => {
+        const units = unitMap();
+        if (units.has(path)) return true;
+        for (const u of units.keys()) {
+            if (path.startsWith(`${u}.`)) return false; // 已被父单元覆盖
+            if (u.startsWith(`${path}.`)) return false; // 已把子孙拆成单元，先撤它们
+        }
+        return true;
+    };
 
-    /** 主栏：一份投递（单元列表 + render 结果） */
-    const deliveryPane = (d: ContextLab["system"] | undefined, empty: string) => (
-        <Show when={d} fallback={<div class="p-2 opacity-60">计算中…</div>}>
-            <div class="p-2">
-                <div class="mb-1 opacity-70">
-                    单元：<span class="font-mono">{d!.places.join(", ") || "（无）"}</span>
-                </div>
-                <pre class="whitespace-pre-wrap rounded bg-base-100 p-2 font-mono leading-relaxed">
-                    {d!.text || empty}
-                </pre>
-            </div>
-        </Show>
-    );
+    const structure = () => buildVarTree(AssembleGlobalsSchema);
 
-    const mainPane = () => (
-        <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-xs">
-            {/* ★核心先露脸：划分规则 */}
-            <Fold
-                k="rules"
-                label="划分规则（核心）"
-                extra={`${lab()?.rules.length ?? 0} 个投递单元`}
-            >
-                {rulesPane()}
-            </Fold>
-            <Fold
-                k="system"
-                label="system 份（稳定 → 提示词开头）"
-                extra={lab() ? `${lab()!.system.places.length} 单元 · ${(lab()!.system.bytes / 1024).toFixed(1)} KB` : ""}
-            >
-                {deliveryPane(lab()?.system, "（空）")}
-            </Fold>
-            <Fold
-                k="runtime"
-                label="runtime 份（易变 → user 消息）"
-                extra={lab() ? `${lab()!.runtime.places.length} 单元 · ${(lab()!.runtime.bytes / 1024).toFixed(1)} KB` : ""}
-            >
-                {deliveryPane(lab()?.runtime, "（空）")}
-            </Fold>
-            <Fold k="message" label="合成消息" extra="两份拼起来的实际形态">
-                <Show when={lab()?.message} fallback={<div class="p-2 opacity-60">计算中…</div>}>
-                    {(m) => (
-                        <div class="space-y-2 p-2">
-                            <div class="opacity-70">{m().note}</div>
-                            <div>
-                                <div class="mb-1 font-bold opacity-70">messages[0].system</div>
-                                <pre class="whitespace-pre-wrap rounded bg-base-100 p-2 font-mono">
-                                    {m().system || "（空）"}
-                                </pre>
-                            </div>
-                            <div>
-                                <div class="mb-1 font-bold opacity-70">messages[1].user</div>
-                                <pre class="whitespace-pre-wrap rounded bg-base-100 p-2 font-mono">
-                                    {m().user || "（空）"}
-                                </pre>
-                            </div>
-                        </div>
-                    )}
-                </Show>
-            </Fold>
-        </div>
-    );
+    /** 预览：选中 path 落在哪一份（决定给哪个编辑器发高亮） */
+    const hlFor = (which: "system" | "runtime"): HlLines | null => {
+        const p = selected();
+        const d = lab()?.[which];
+        if (!p || !d) return null;
+        const r = rangesFor(d.lines, p);
+        if (!r) return null;
+        // 文本里的字符位置：用于横向也滚到位（不折行时长行会横向溢出）
+        const textLines = d.text.split("\n");
+        let pos = 0;
+        for (let i = 0; i < r.from - 1 && i < textLines.length; i++) pos += textLines[i]!.length + 1;
+        const end = pos + (r.to - r.from === 0 ? (textLines[r.from - 1]?.length ?? 0) : 1);
+        return { lines: [r.from, r.to], focusLines: [r.from], focusPos: pos, focusEnd: end };
+    };
+
+    /** 变量树：选中该行时把它滚进视野 */
+    const rowRef = (el: HTMLTableRowElement, path: string): void => {
+        if (selected() === path) el.scrollIntoView({ block: "center" });
+    };
+
+    const deliveryPane = (which: "system" | "runtime") => {
+        const d = () => lab()?.[which];
+        return (
+            <Show when={d()} fallback={<div class="p-2 opacity-60">计算中…</div>}>
+                <MdEditor
+                    value={d()!.text || ""}
+                    editable={false}
+                    onChange={() => {}}
+                    lang="yaml"
+                    highlight={hlFor(which)}
+                />
+            </Show>
+        );
+    };
 
     const parts: Record<string, () => JSX.Element> = {
-        "ctxlab.left": () => (
+        /** 左：结构树（契约 + 划分操作） */
+        "ctxlab.structure": () => (
+            <div class="h-full overflow-auto text-[11px]">
+                <table class="table table-xs">
+                    <thead>
+                        <tr>
+                            <th>变量（契约）</th>
+                            <th>说明</th>
+                            <th class="text-right">归属</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <StructureRows
+                            nodes={structure()}
+                            prefix=""
+                            containerOf={containerOf}
+                            canSwap={canSwap}
+                            selected={selected()}
+                            onPick={setSelected}
+                            onSwap={toggleUnit}
+                        />
+                    </tbody>
+                </table>
+            </div>
+        ),
+
+        /** 中：预览（两份 YAML + 请求体 JSON） */
+        "ctxlab.delivery": () => (
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-xs">
-                <Fold k="tree" label="变量树" extra={`${treeRows().length} 个变量`}>
-                    {varsPane()}
+                <Fold
+                    k="system"
+                    label="system 份（稳定 → 提示词开头）"
+                    extra={lab() ? `${lab()!.system.places.length} 单元 · ${(lab()!.system.bytes / 1024).toFixed(1)} KB` : ""}
+                >
+                    {deliveryPane("system")}
+                </Fold>
+                <Fold
+                    k="runtime"
+                    label="runtime 份（易变 → user 消息）"
+                    extra={lab() ? `${lab()!.runtime.places.length} 单元 · ${(lab()!.runtime.bytes / 1024).toFixed(1)} KB` : ""}
+                >
+                    {deliveryPane("runtime")}
+                </Fold>
+                <Fold k="request" label="请求体（实际发送格式）" extra={lab()?.request.model ?? ""}>
+                    <Show
+                        when={lab()?.request.body}
+                        fallback={<div class="p-2 opacity-60">{lab()?.request.note ?? "构造中…"}</div>}
+                    >
+                        {(b) => (
+                            <div class="p-2">
+                                <div class="mb-1 opacity-60">{lab()!.request.note}</div>
+                                <div class="max-h-[70vh] overflow-auto rounded bg-base-100 p-1">
+                                    <JsonTree data={b()} />
+                                </div>
+                            </div>
+                        )}
+                    </Show>
                 </Fold>
             </div>
         ),
-        "ctxlab.delivery": mainPane,
+
+        /** 右：投递单元清单 + 变量树 */
+        "ctxlab.vars": () => (
+            <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-xs">
+                <Fold
+                    k="units"
+                    label="投递单元"
+                    extra={`${lab()?.rules.length ?? 0} 个`}
+                    right={
+                        <input
+                            type="checkbox"
+                            class="checkbox checkbox-xs"
+                            title="显示全部单元（含尚未成为单元的变量）"
+                            checked={showAll()}
+                            onChange={(e) => setShowAll(e.currentTarget.checked)}
+                        />
+                    }
+                >
+                    {/* 只是清单（由结构树上的点选自动汇总），不含任何开关按钮 */}
+                    <ul class="menu menu-xs">
+                        <For each={lab()?.rules ?? []}>
+                            {(r) => (
+                                <li>
+                                    <button
+                                        class={`flex items-center gap-2 ${rowCls(selected() === r.place)}`}
+                                        onClick={() => setSelected(r.place)}
+                                    >
+                                        <span class="font-mono">{r.place}</span>
+                                        <span class="ml-auto">
+                                            <ContainerBadge c={r.container} />
+                                        </span>
+                                    </button>
+                                </li>
+                            )}
+                        </For>
+                        <Show when={showAll()}>
+                            <For each={(lab()?.tree ?? []).filter((n) => !unitMap().has(n.path))}>
+                                {(n: LabTreeNode) => (
+                                    <li class="opacity-50">
+                                        <button
+                                            class="flex items-center gap-2"
+                                            title="还不是投递单元（在结构树上点 ⇄ 划入）"
+                                            onClick={() => setSelected(n.path)}
+                                        >
+                                            <span class="font-mono">{n.path}</span>
+                                        </button>
+                                    </li>
+                                )}
+                            </For>
+                        </Show>
+                    </ul>
+                </Fold>
+                <Fold k="tree" label="变量树" extra={`${lab()?.tree.length ?? 0} 个变量`}>
+                    <table class="table table-xs">
+                        <thead>
+                            <tr>
+                                <th>变量</th>
+                                <th>值</th>
+                                <th>归属</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <For each={lab()?.tree ?? []}>
+                                {(n: LabTreeNode) => (
+                                    <tr
+                                        ref={(el) => rowRef(el, n.path)}
+                                        class={`cursor-pointer hover:bg-base-300/60 ${rowCls(selected() === n.path)}`}
+                                        onClick={() => setSelected(n.path)}
+                                    >
+                                        <td class="whitespace-nowrap font-mono">
+                                            <span style={{ "padding-left": `${indentOf(n.path) * 10}px` }} />
+                                            <span title={n.path}>{leafName(n.path)}</span>
+                                        </td>
+                                        {/* 父层级只表态：值在下面几行里，重复输出没有信息量 */}
+                                        <td class="max-w-[12rem] truncate" title={n.preview}>
+                                            <Show when={n.preview} fallback={<span class="opacity-30">—</span>}>
+                                                {n.preview}
+                                            </Show>
+                                        </td>
+                                        <td>
+                                            <ContainerBadge c={n.container} />
+                                        </td>
+                                    </tr>
+                                )}
+                            </For>
+                        </tbody>
+                    </table>
+                </Fold>
+            </div>
+        ),
     };
 
     const page = findPage(PAGE)!;
 
     return (
         <div class="flex h-full flex-col overflow-hidden">
-            {/* 页头：任务 + 刷新 + **示范数据**声明（防止被当成当前任务的真实上下文） */}
             <div class="flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs">
                 <span class="badge badge-info badge-sm" title={props.uri}>
                     📌 {props.uri}
                 </span>
-                <button
-                    class="btn btn-xs btn-ghost"
-                    title="重新计算（示范数据是纯内存的，刷新只是重跑一遍）"
-                    onClick={() => void refetch()}
-                >
+                <button class="btn btn-xs btn-ghost" title="重新计算（重跑真实数据组装链）" onClick={() => void refetch()}>
                     ⟳ 刷新
                 </button>
-                <span class="badge badge-warning badge-sm badge-outline" title={lab()?.note}>
-                    示范数据
-                </span>
-                <span class="opacity-60">{lab()?.title ?? "加载中…"}</span>
-                <span class="ml-auto font-mono text-[10px] opacity-50">wire {lab()?.wireVersion ?? "…"}</span>
+                <span class="opacity-60">{lab()?.source ?? "加载中…"}</span>
+                <Show when={selected()}>
+                    <span class="ml-auto flex items-center gap-1">
+                        <span class="opacity-60">选中</span>
+                        <span class="badge badge-sm font-mono">{selected()}</span>
+                        <button class="btn btn-ghost btn-xs px-1" title="取消选中" onClick={() => setSelected(null)}>
+                            ✕
+                        </button>
+                    </span>
+                </Show>
             </div>
 
             <div class="min-h-0 flex-1">

@@ -15,10 +15,10 @@ export const WIRE_ENCODING = {
     system: "full-text",
     /** runtime 容器：路径级增量 patch + 必要时全量 snapshot */
     runtime: "path-patch",
-    /** 渲染单元包裹格式 */
-    unit: '<context path="{path}">\\n{content}\\n</context>',
-    /** 单元分隔 */
-    separator: "\\n\\n",
+    /** 渲染格式：整份 YAML（不再套自创 XML 外壳；树形结构天然表达 path 归属） */
+    format: "yaml",
+    /** 多行文本（模版产出）用 YAML 块标量 */
+    multiline: "block-scalar",
     /** hash 口径 */
     hash: "sha256(canonical-json)",
 } as const;

@@ -308,14 +308,41 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { ...base, requestBody: sim.body, requestNote: sim.note };
   });
 
-  // ── context（上下文树试验场：全是示范数据，不落盘、不发 LLM）──
-  binding.on(app.context.scenarios, async () => {
-    const { SCENARIOS } = await import("../../shared/context/preview");
-    return SCENARIOS.map((s) => ({ name: s.name, title: s.title }));
+  // ── context（上下文树页：**当前任务的真实上下文**，不落盘、不发 LLM）──
+  binding.on(app.context.candidates, async () => {
+    const { PLACE_CANDIDATES, defaultSystemPlaces } = await import("../../shared/context/preview");
+    return { candidates: PLACE_CANDIDATES, defaultSystem: defaultSystemPlaces() };
   });
   binding.on(app.context.lab, async ({ input }) => {
-    const { runScenario, scenarioByName } = await import("../../shared/context/preview");
-    return runScenario(scenarioByName(input.scenario ?? "task"));
+    const { assembleGlobals } = await import("./prompt-registry");
+    const { diyHome, projectFromUri } = await import("../core/state");
+    const { buildLab, defaultSystemPlaces } = await import("../../shared/context/preview");
+    const taskUri = input.taskUri ?? "";
+    const project = projectFromUri(taskUri) || input.project;
+    // 真实数据：与真发同一条组装链（同样的 AGENTS.md 链、同样的 cwd 推导）
+    const globals = assembleGlobals(diyHome(), project, { taskUri }) as unknown as Record<string, unknown>;
+    // 空数组 = 调用方还没决定（UI 首帧）→ 用推荐名单；只有明确给了名单才尊重它
+    const systemPlaces = input.systemPlaces?.length ? input.systemPlaces : defaultSystemPlaces();
+    // 先按纯函数算出两份投递，再用**真发的构造链**把请求体拼出来：
+    // system = system 份；末条 user = runtime 份（144 的设计：runtime 作为尾部 user 消息）
+    const lab = buildLab(globals, systemPlaces, taskUri);
+    let request: { body: Record<string, unknown> | null; note: string; model: string } = {
+      body: null,
+      note: "无任务场景：仅组装上下文，未构造请求体",
+      model: "",
+    };
+    if (taskUri) {
+      const { previewSimulatedRequest, DEFAULT_MODEL } = await import("./local-agent");
+      const model = input.model || DEFAULT_MODEL;
+      const sim = await previewSimulatedRequest({
+        taskUri,
+        system: lab.system.text,
+        model,
+        lastUser: lab.runtime.text || "none",
+      });
+      request = { body: sim.body, note: sim.note, model };
+    }
+    return { ...lab, request };
   });
 
   // ── llmProxy ──

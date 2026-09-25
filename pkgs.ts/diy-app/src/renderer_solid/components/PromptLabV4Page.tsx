@@ -1442,7 +1442,7 @@ export function PromptLabV4Page() {
             /* 两块可折叠块**纵向堆叠** —— 与左侧 lab.inspector 同构（同一个机制，不分两套）。
                原来这里用 area 内互斥 tab：多一层页签，且每次只看得到一块、展开的块只剩一小条。
                折叠块把"看哪块"变成一次点击，展开的那块独占剩余高度。
-               注：上下文树试验场已独立成 ctxlab 子页面（示范数据不该混在真实预览里）。 */
+               注：上下文树已独立成 ctxlab 子页面（另一套组织方式，不挤在本页右栏）。 */
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-xs">
                 {/* 展开的块 flex-1（独占剩余高度）并保底 160px；都展开时外层滚动，
                     不把每块压成一条 —— 这正是"tab 每块太小"要解决的问题 */}

@@ -925,6 +925,12 @@ export async function previewSimulatedRequest(opts: {
     model?: string;
     /** 历史消息；缺省 = 读任务 LLM 日志（无日志则仅占位，即首轮形态） */
     messages?: ModelMessage[];
+    /**
+     * 末条 user 消息的正文（缺省是占位文案）。
+     * 上下文树页用它把 **runtime 份**放进来 —— 144 的设计就是「runtime 作为尾部 user 消息」，
+     * 这样预览出来的请求体与"实际会发出去的样子"一致。
+     */
+    lastUser?: string;
 }): Promise<SimulatedRequest> {
     if (!opts.taskUri) {
         return { body: null, note: "无任务场景：仅渲染 system 文本" };
@@ -940,7 +946,7 @@ export async function previewSimulatedRequest(opts: {
         : historyFromLog(taskUri, PREVIEW_HISTORY_MAX);
     const messages: ModelMessage[] = [
         ...hist.messages,
-        { role: "user", content: "[仿真占位]真实下一轮此处为用户输入" },
+        { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" },
     ];
     let body: Record<string, unknown> | null = null;
     simBodySink = (b) => {

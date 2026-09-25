@@ -1,16 +1,16 @@
 // tests/cli.intent.ui-context.test.ts
 // ═══════════════════════════════════════════════════════════════
-// 🎯 上下文树试验场（任务 148）的 RPC 契约 + **渲染**验证。
+// 🎯 上下文树页（任务 148）的 RPC 契约 + **渲染**验证。
 //
-// 为什么要有渲染验证：CLI 的 RPC 返回成功 ≠ renderer 渲染正确（AGENTS.md 的教训）。
-// 这里走「打开任务 → 打开上下文树 tab → 读 a11y 树」真实路径，确认六个块真的上屏。
+// 关键前提：数据是**当前任务的真实上下文**（与真发同一条 assembleGlobals 链），
+// 不是示范数据。所以这里先造真实的 AGENTS.md 链与任务，再断言它出现在投递里。
 //
-// 页面定位：**独立子页面**（与提示词页 lab 平级挂在 task-run 下），
-// 好处是与既有 view 互不干扰、且"示范数据"不会被误当成当前任务的真实上下文。
+// 页面是**独立子页面**（与提示词页 lab 平级），故还要验证互不干扰。
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
@@ -31,7 +31,6 @@ afterAll(async () => {
   await fx?.electron?.stop();
 });
 
-/** a11y 树文本（ui inspect 才是 DOM 树；ui tree 是任务树，别混） */
 function collectText(nodes: any[], acc: string[] = []): string[] {
   for (const n of nodes ?? []) {
     if (n?.text) acc.push(String(n.text));
@@ -45,96 +44,141 @@ async function a11yText(): Promise<string> {
   return collectText([(res.data as any)?.data?.tree]).join("\n");
 }
 
-/** 展开/折叠试验场的某个块（key 带 ctx. 前缀，与提示词页的块分开命名空间） */
+/** 展开/折叠该页的块（key 带 ctx. 前缀，与提示词页的块分开命名空间） */
 async function fold(key: string, open: boolean): Promise<void> {
   const res = await fx.sh.getJson(`./diy.sh ui view expand ctx.${key} ${open ? "open" : "closed"}`);
   expect((res.data as any)?.status, `折叠 ${key} 失败: ${JSON.stringify(res.data)}`).toBe("ok");
 }
 
-describe("上下文树试验场：RPC 契约", () => {
-  it("diy context scenarios / lab 返回树 + 划分规则 + 两份投递 + 合成消息", async () => {
-    // CLI stdout = RPC 的 output 本体（context 域直接返回数据，无 {status,data} 外壳）
-    const list = await fx.sh.getJson("./diy.sh context scenarios");
-    const names = (list.data as unknown as any[]).map((s: any) => s.name);
-    expect(names).toEqual(["task"]);
+describe("上下文树：RPC 契约（真实数据）", () => {
+  it("candidates 给出候选单元与推荐名单；lab 返回真实 globals 与两份投递", async () => {
+    const cand = await fx.sh.getJson("./diy.sh context candidates");
+    const c = cand.data as unknown as any;
+    const paths = c.candidates.map((x: any) => x.path);
+    expect(paths).toContain("diy");
+    expect(paths).toContain("task.body");
+    // task 的稳定字段与易变字段被拆成不同单元（否则"按第一层划分"的毛病就回来了）
+    expect(paths).toContain("task.title");
+    expect(c.defaultSystem).toContain("task.title");
+    expect(c.defaultSystem).not.toContain("task.body");
 
-    const res = await fx.sh.getJson("./diy.sh context lab");
-    const d = res.data as any;
-
-    // ① 必须自报家门是示范数据（否则会被误当成当前任务的真实上下文）
-    expect(d.note).toContain("示范数据");
-    expect(d.wireVersion).toMatch(/^[0-9a-f]{8}$/);
-
-    // ② 变量树：一棵树，含身份与易变两类变量
-    const paths = d.tree.map((n: any) => n.path);
-    expect(paths).toContain("diy.cli");
-    expect(paths).toContain("tasks.140.status");
-    expect(d.tree.every((n: any) => typeof n.valueHash === "string")).toBe(true);
-
-    // ③ ★核心：划分规则表 —— 每个单元都有归属 + 理由
-    const ruleMap = Object.fromEntries(d.rules.map((r: any) => [r.place, r]));
-    expect(ruleMap["diy"].container).toBe("system");
-    expect(ruleMap["tasks"].container).toBe("runtime");
-    expect(ruleMap["diy"].reason.length).toBeGreaterThan(4);
-    expect(ruleMap["tasks"].renders).toContain("tasks.140.status");
-
-    // ④ 两份投递各自有内容，且 system 里没有 runtime 的变量（划分真的生效）
-    expect(d.system.text).toContain("diy.cli");
-    expect(d.system.text).not.toContain("tasks.140.status");
-    expect(d.runtime.text).toContain("tasks.140.status");
-    expect(d.runtime.text).not.toContain("diy.cli");
-
-    // ⑤ 合成消息：system 进 messages[0]，runtime 进 messages[1] 的 user
-    expect(d.message.system).toBe(d.system.text);
-    expect(d.message.user).toContain(d.runtime.text);
-  }, 60_000);
-});
-
-describe("上下文树试验场：UI 上屏（独立子页面 + 折叠堆叠）", () => {
-  it("打开任务 → 打开上下文树 tab → 六个块上屏，与提示词页互不干扰", async () => {
+    // 造一个真实的项目目录 + AGENTS.md 链，让 chain 有内容
     const repo = `${fx.HOME}/ctxlab`;
-    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 上下文试验场`);
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(join(fx.HOME, "AGENTS.md"), "# 家目录规范\n- 中文回复\n");
+    writeFileSync(join(repo, "AGENTS.md"), "# 项目规范\n- 先读代码\n");
+    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 上下文树`);
     const pid = String((p.data as any)?.data?.id);
-    const t = await fx.sh.getJson(`./diy.sh task create 上下文试验场任务 ${pid}`);
+    const t = await fx.sh.getJson(`./diy.sh task create 上下文树任务 ${pid}`);
+    const uri = String((t.data as any)?.data?.uri);
+    await fx.sh.run(`./diy.sh task edit ${uri} --body $'任务正文第一行\\n正文第二行'`);
+
+    const res = await fx.sh.getJson(`./diy.sh context lab ${pid} --taskUri ${uri}`);
+    const d = res.data as any;
+    expect(d.taskUri).toBe(uri);
+    expect(d.source).toContain("真实上下文");
+
+    // 真实 AGENTS.md 链进了 system 份，内容以 YAML 块标量落盘
+    expect(d.system.text).toContain("chain:");
+    expect(d.system.text).toContain("家目录规范");
+    expect(d.system.text).toContain("项目规范");
+    expect(d.system.text).toContain("content: |"); // 多行文本用块标量
+    // 纯 YAML：不再有自创的 XML 外壳
+    expect(d.system.text).not.toContain("<context path=");
+
+    // 任务正文（易变）归 runtime；任务身份（稳定）归 system
+    expect(d.runtime.text).toContain("body:");
+    expect(d.system.text).toContain('title: "上下文树任务"');
+
+    // 请求体：与真发同一条构造链，messages 用「system 份 + runtime 份」
+    expect(d.request.body).toBeTruthy();
+    const msgs = d.request.body.messages as any[];
+    expect(msgs[0].role).toBe("system");
+    expect(String(msgs[0].content)).toContain("家目录规范");
+    const lastUser = msgs[msgs.length - 1];
+    expect(lastUser.role).toBe("user");
+    expect(String(lastUser.content)).toContain("body:"); // runtime 份进了末条 user
+    expect(d.request.model).toBeTruthy();
+
+    // 行号映射与文本同源（选中联动高亮靠它）
+    expect(d.system.lines["chain"]).toBeTruthy();
+    expect(d.runtime.lines["task.body"]).toBeTruthy();
+
+    // 变量树：父层级不显示值（值在下面几行里），容器标 hasValue
+    const root = d.tree.find((n: any) => n.path === "task");
+    expect(root.preview).toBe("");
+
+    await fx.sh.run(`./diy.sh project remove ${pid}`);
+  }, 90_000);
+
+  it("改 system 名单 → 归属随之变化（task.body 从 runtime 移到 system）", async () => {
+    const repo = `${fx.HOME}/ctxlab2`;
+    mkdirSync(repo, { recursive: true });
+    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 划分`);
+    const pid = String((p.data as any)?.data?.id);
+    const t = await fx.sh.getJson(`./diy.sh task create 划分任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
 
-    // 1. 打开任务执行页 → 打开其子页面（上下文树），**不打开**提示词页
+    const base = (await fx.sh.getJson(`./diy.sh context lab ${pid} --taskUri ${uri}`)).data as any;
+    expect(base.runtime.places).toContain("task.body");
+    expect(base.system.places).not.toContain("task.body");
+
+    // 把 task.body 划进 system（其余用推荐名单）
+    const sys = JSON.stringify([...base.system.places, "task.body"]);
+    const moved = (
+      await fx.sh.getJson(`./diy.sh context lab ${pid} --taskUri ${uri} --systemPlaces '${sys}'`)
+    ).data as any;
+    expect(moved.system.places).toContain("task.body");
+    expect(moved.runtime.places).not.toContain("task.body");
+    expect(moved.system.text).toContain("body:");
+    // 变量树上的归属标记跟着变
+    const row = moved.tree.find((n: any) => n.path === "task.body");
+    expect(row.container).toBe("system");
+
+    await fx.sh.run(`./diy.sh project remove ${pid}`);
+  }, 90_000);
+});
+
+describe("上下文树：UI 上屏（三列 + 真实请求体）", () => {
+  it("三列各自上屏；结构树标注归属；请求体是真实 JSON；与提示词页互不干扰", async () => {
+    const repo = `${fx.HOME}/ctxlab3`;
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(join(repo, "AGENTS.md"), "## 本项目的规范\n- 精简\n");
+    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 上屏`);
+    const pid = String((p.data as any)?.data?.id);
+    const t = await fx.sh.getJson(`./diy.sh task create 上屏任务 ${pid}`);
+    const uri = String((t.data as any)?.data?.uri);
+
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
     await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
 
-    // 2. 默认展开态：变量树 / 划分规则 / 两份都有内容，合成消息默认折叠
+    // 三列：结构树（左）/ 两份投递（中）/ 投递单元 + 变量树（右）
     const base = await waitUntil(
       a11yText,
-      (s) => s.includes("变量树") && s.includes("划分规则") && s.includes("system 份"),
-      { label: "试验场块上屏" },
+      (s) => s.includes("变量（契约）") && s.includes("system 份") && s.includes("投递单元"),
+      { label: "上下文树页三列上屏" },
     );
-    expect(base).toContain("示范数据"); // 页头声明
     expect(base).toContain("runtime 份");
-    expect(base).toContain("合成消息"); // header 在（折叠态）
-    expect(base).toContain("diy.cli");
-    expect(base).toContain("tasks.140.status");
-    // 划分规则里的「为什么」（人话，不是术语）
-    expect(base).toContain("进程身份");
-    expect(base).toContain("最典型的易变项");
-    expect(base).not.toContain("messages[1].user"); // 合成消息默认折叠
+    expect(base).toContain("变量树");
+    expect(base).toContain("真实上下文");
 
-    // 3. 提示词页的块**没有**被带过来（互不干扰：这是另一个 page）
-    expect(base).not.toContain("请求预览");
-
-    // 4. 展开「合成消息」→ 两份合成后的消息形态上屏
-    await fold("message", true);
-    const msg = await waitUntil(a11yText, (s) => s.includes("messages[1].user"), {
-      label: "合成消息上屏",
+    // 真实 AGENTS.md 内容上屏（等 RPC；首帧 system 名单还没加载完）
+    const withChain = await waitUntil(a11yText, (s) => s.includes("本项目的规范"), {
+      label: "真实 AGENTS.md 链上屏",
     });
-    expect(msg).toContain("messages[0].system");
-    expect(msg).toContain("Current runtime context:");
+    // 结构树是契约（含类型/描述与无值的变量）
+    expect(withChain).toContain("AGENTS.md 链");
+    expect(withChain).toContain("技能清单");
+    // 与提示词页互不干扰：另一个 page 的块不该出现
+    expect(withChain).not.toContain("_system.md");
 
-    // 5. 折回 → 内容消失，header 还在（可再展开）
-    await fold("message", false);
-    const folded = await waitUntil(a11yText, (s) => !s.includes("messages[1].user"), {
-      label: "合成消息折叠",
+    // 展开请求体 → 真实 JSON（与真发同一条构造链）
+    await fold("request", true);
+    const req = await waitUntil(a11yText, (s) => s.includes("tool_choice") || s.includes("max_tokens"), {
+      label: "请求体上屏",
     });
-    expect(folded).toContain("合成消息");
+    expect(req).toContain("model");
+    expect(req).toContain("messages");
 
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 180_000);

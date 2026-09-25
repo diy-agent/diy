@@ -101,7 +101,7 @@ describe("基础投递（用例 1~5）", () => {
     it("用例 1：初始树生成 system/runtime baseline（runtime=snapshot，supersedes=all）", () => {
         const t = baseTree();
         const { projection } = project(t, null);
-        expect(projection.system).toContain("<context path=\"diy.cli\">");
+        expect(projection.system).toContain("diy:");
         expect(projection.runtime.kind).toBe("snapshot");
         if (projection.runtime.kind === "snapshot") expect(projection.runtime.supersedes).toBe("all");
     });
@@ -371,13 +371,23 @@ describe("golden：同一组事实的投影稳定（108 换 adapter 后必须一
         t = setPlacement(t, "instructions", "runtime");
         t = setPlacement(t, "tasks", "runtime");
 
-        expect(systemText(t)).toBe('<context path="diy.cli">\n/repo/diy.sh\n</context>');
+        // 纯 YAML：不再套 <context path="…"> 外壳（树形结构已表达 path 归属）
+        expect(systemText(t)).toBe("diy:\n  cli: /repo/diy.sh");
         expect(project(t, emptyCursor()).projection.runtimeText).toBe(
             [
-                '<context path="env.os.soft">\n- playwright-cli\n- rg\n</context>',
-                '<context path="instructions.project">\n<p>/repo/diy.sh</p>\n</context>',
-                '<context path="tasks.140.status">\ndone\n</context>\n<context path="tasks.141.status">\ndoing\n</context>',
-            ].join("\n\n"),
+                "env:",
+                "  os:",
+                "    soft:",
+                "      - playwright-cli",
+                "      - rg",
+                "instructions:",
+                '  project: "<p>/repo/diy.sh</p>"',
+                "tasks:",
+                "  140:",
+                "    status: done",
+                "  141:",
+                "    status: doing",
+            ].join("\n"),
         );
     });
 

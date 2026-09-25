@@ -217,7 +217,12 @@ describe("子页面（一页一中心）", () => {
     expect(ctxlab.multi).toBe(true);
     const byPage = (pid: string) =>
       VIEWS.filter((v) => v.placement[pid]).map((v) => `${v.id}@${v.placement[pid]!.area}`);
-    expect(byPage("ctxlab").sort()).toEqual(["ctxlab.delivery@main", "ctxlab.left@left"]);
+    // 三列：结构树（输入）| 预览（产出）| 变量（真实值）
+    expect(byPage("ctxlab").sort()).toEqual([
+      "ctxlab.delivery@center",
+      "ctxlab.structure@left",
+      "ctxlab.vars@right",
+    ]);
   });
 });
 

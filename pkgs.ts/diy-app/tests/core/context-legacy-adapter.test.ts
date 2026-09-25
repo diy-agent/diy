@@ -164,6 +164,6 @@ describe("端到端 golden：换 adapter 后结果必须一致（108 回归网�
         const b = project(viaFacts(), null).projection;
         expect(a.system).toBe(b.system);
         expect(a.runtimeText).toBe(b.runtimeText);
-        expect(systemText(viaLegacy())).toBe('<context path="diy.cli">\n/repo/diy.sh\n</context>');
+        expect(systemText(viaLegacy())).toBe("diy:\n  cli: /repo/diy.sh");
     });
 });

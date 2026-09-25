@@ -1,16 +1,32 @@
 // src/shared/context/schema.ts
-// 🎯 上下文树试验场的 RPC 契约（zod；类型从 preview.ts 推导，两边不会漂移）。
+// 🎯 上下文树页的 RPC 契约（zod；类型从 preview.ts 推导，两边不会漂移）。
 
 import { z } from "zod";
-import type { ContextLab } from "./preview";
+import type { ContextLab, PlaceCandidate } from "./preview";
 
 const Container = z.enum(["system", "runtime"]);
 
-/** 试验场输出：树 + 划分规则 + 两份投递 + 合成消息（只组装，不发 LLM） */
+/** 一份投递：文本 + 每个 path 的行号区间（选中联动高亮用） */
+const delivery = z.object({
+    places: z.array(z.string()),
+    text: z.string(),
+    bytes: z.number(),
+    lines: z.record(z.string(), z.object({ from: z.number(), to: z.number() })),
+});
+
+/** 候选投递单元（规则表里可选的行） */
+export const ContextPlaceCandidateSchema: z.ZodType<PlaceCandidate[]> = z.array(
+    z.object({
+        path: z.string(),
+        system: z.boolean(),
+        reason: z.string(),
+    }),
+);
+
+/** 上下文树数据：**当前任务的真实上下文**（只组装，不发 LLM） */
 export const ContextLabSchema: z.ZodType<ContextLab> = z.object({
-    scenario: z.string(),
-    title: z.string(),
-    note: z.string(),
+    taskUri: z.string(),
+    source: z.string(),
     wireVersion: z.string(),
     tree: z.array(
         z.object({
@@ -21,6 +37,7 @@ export const ContextLabSchema: z.ZodType<ContextLab> = z.object({
             valueHash: z.string(),
             place: z.string().nullable(),
             container: Container.nullable(),
+            hasValue: z.boolean(),
         }),
     ),
     rules: z.array(
@@ -31,7 +48,11 @@ export const ContextLabSchema: z.ZodType<ContextLab> = z.object({
             reason: z.string(),
         }),
     ),
-    system: z.object({ places: z.array(z.string()), text: z.string(), bytes: z.number() }),
-    runtime: z.object({ places: z.array(z.string()), text: z.string(), bytes: z.number() }),
-    message: z.object({ system: z.string(), user: z.string(), note: z.string() }),
+    system: delivery,
+    runtime: delivery,
+    request: z.object({
+        body: z.record(z.string(), z.unknown()).nullable(),
+        note: z.string(),
+        model: z.string(),
+    }),
 });
