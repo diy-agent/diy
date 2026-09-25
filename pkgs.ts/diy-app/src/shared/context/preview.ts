@@ -58,6 +58,15 @@ export interface LabDelivery {
     lines: Record<ContextPath, { from: number; to: number }>;
 }
 
+/** 每步 diff 用到的快照（与 history.ts 的 StepSnapshot 同构） */
+export interface LabSnapshotInput {
+    valueHashes: Record<string, string>;
+    systemText: string;
+    systemPlaces: string[];
+    runtimeText: string;
+    runtimePlaces: string[];
+}
+
 export interface ContextLab {
     /** 这份上下文属于哪个任务 */
     taskUri: string;
@@ -73,6 +82,8 @@ export interface ContextLab {
      * 「system 份 + runtime 份」，这样看到的就是"这棵树最后变成什么请求"。
      */
     request: { body: Record<string, unknown> | null; note: string; model: string };
+    /** 供「变更」view 记 step（值 hash 表 + 两份文本） */
+    snapshot: LabSnapshotInput;
 }
 
 /** 候选投递单元（规则表里可选的行；不重叠） */
@@ -134,7 +145,13 @@ export function treeOfGlobals(globals: Record<string, unknown>): ContextTreeStat
 /** 树上的每一行（含中间容器；容器不显示值 —— 子树在下面几行里） */
 function nodesOf(state: ContextTreeState): LabTreeNode[] {
     const out: LabTreeNode[] = [];
-    const walk = (node: unknown, base: string): void => {
+    /**
+     * 递归成行。**数组也要展开** —— 否则 `chain`（AGENTS.md 链）只显示一行压缩摘要，
+     * 看着就和"没有数据"一样；而这些元素恰恰是稳定性各不相同的独立变量
+     * （`chain.0` = ~/AGENTS.md 很稳，`chain.3` = 项目 AGENTS.md 随项目变）。
+     * 元素用下标寻址（`chain.0`），与 JSONPath 的 `$..chain[0]` 一一对应。
+     */
+    const walk = (node: unknown, base: string, isContainer: boolean): void => {
         if (base) {
             const spec = rendererOf(state, base);
             const present = getValue(state, base) !== undefined;
@@ -143,17 +160,26 @@ function nodesOf(state: ContextTreeState): LabTreeNode[] {
                 path: base,
                 isPlace: state.places.includes(base),
                 renderer: spec.renderer,
-                preview: isPlainObject(node) ? "" : previewOf(state, base),
+                // 容器行（对象/数组）只表态：值在下面几行里，重复输出没有信息量
+                preview: isContainer ? "" : previewOf(state, base),
                 valueHash: hashValue(node).slice(0, 12),
                 place,
                 container: place ? (state.placement[place] ?? "runtime") : null,
                 hasValue: present,
             });
         }
-        if (!isPlainObject(node)) return;
-        for (const [k, v] of Object.entries(node)) walk(v, base ? `${base}.${k}` : k);
+        if (isPlainObject(node)) {
+            const entries = Object.entries(node);
+            for (const [k, v] of entries) {
+                walk(v, base ? `${base}.${k}` : k, isPlainObject(v) || Array.isArray(v));
+            }
+            return;
+        }
+        if (Array.isArray(node)) {
+            node.forEach((v, i) => walk(v, base ? `${base}.${i}` : String(i), isPlainObject(v) || Array.isArray(v)));
+        }
     };
-    walk(state.values, "");
+    walk(state.values, "", true);
     return out.sort((a, b) => a.path.localeCompare(b.path));
 }
 
@@ -187,11 +213,12 @@ export function buildLab(
     const sysText = sys.text;
     const runText = run.text;
 
+    const treeNodes = nodesOf(tree);
     return {
         taskUri,
         source: "当前任务的真实上下文（assembleGlobals 的产物）",
         wireVersion: WIRE_VERSION,
-        tree: nodesOf(tree),
+        tree: treeNodes,
         rules: tree.places.slice().sort().map((place) => ({
             place,
             container: tree.placement[place] ?? "runtime",
@@ -201,6 +228,13 @@ export function buildLab(
         system: { places: sysPlaces, text: sysText, bytes: byteLen(sysText), lines: sys.lines },
         runtime: { places: runPlaces, text: runText, bytes: byteLen(runText), lines: run.lines },
         request,
+        snapshot: {
+            valueHashes: Object.fromEntries(treeNodes.map((n) => [n.path, n.valueHash])),
+            systemText: sysText,
+            systemPlaces: sysPlaces,
+            runtimeText: runText,
+            runtimePlaces: runPlaces,
+        },
     };
 }
 

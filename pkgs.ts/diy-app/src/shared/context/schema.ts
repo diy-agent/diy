@@ -55,4 +55,12 @@ export const ContextLabSchema: z.ZodType<ContextLab> = z.object({
         note: z.string(),
         model: z.string(),
     }),
+    /** 记 step 用（值 hash 表 + 两份文本）；UI 侧据此算变更 */
+    snapshot: z.object({
+        valueHashes: z.record(z.string(), z.string()),
+        systemText: z.string(),
+        systemPlaces: z.array(z.string()),
+        runtimeText: z.string(),
+        runtimePlaces: z.array(z.string()),
+    }),
 });

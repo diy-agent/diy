@@ -23,13 +23,23 @@ export function emptyState(wireVersion: string): ContextTreeState {
 
 // ─── 值树读写 ───────────────────────────────────────────
 
-/** 按 path 取值树里的值；路径不存在返回 undefined */
+/**
+ * 按 path 取值树里的值；路径不存在返回 undefined。
+ * 数组用**下标段**寻址（`chain.0.content`）—— 与 JSONPath 的 `$..chain[0].content` 对应：
+ * 数组元素是独立变量（稳定性各不相同），必须能单独定位、单独投递。
+ */
 export function getValue(state: ContextTreeState, path: ContextPath): unknown {
     const segs = parsePath(path);
     if (!segs) return undefined;
     let cur: unknown = state.values;
     for (const s of segs) {
-        if (cur === null || typeof cur !== "object" || Array.isArray(cur)) return undefined;
+        if (cur === null || typeof cur !== "object") return undefined;
+        if (Array.isArray(cur)) {
+            const i = Number(s);
+            if (!Number.isInteger(i) || i < 0 || i >= cur.length) return undefined;
+            cur = cur[i];
+            continue;
+        }
         cur = (cur as Record<string, unknown>)[s];
     }
     return cur;
@@ -43,18 +53,31 @@ export function setValue(
 ): ContextTreeState {
     const segs = parsePath(path);
     if (!segs) return state;
-    return { ...state, values: writeNode(state.values, segs, value) };
+    const next = writeNode(state.values, segs, value);
+    return { ...state, values: isPlainObject(next) ? next : state.values };
 }
 
 function writeNode(
-    node: Record<string, unknown>,
+    node: Record<string, unknown> | unknown[],
     segs: readonly string[],
     value: unknown,
-): Record<string, unknown> {
+): Record<string, unknown> | unknown[] {
     const [head, ...rest] = segs;
+    if (Array.isArray(node)) {
+        const i = Number(head);
+        if (!Number.isInteger(i) || i < 0) return node;
+        const copy = node.slice();
+        if (rest.length === 0) {
+            copy[i] = value;
+            return copy;
+        }
+        const cur = copy[i];
+        copy[i] = writeNode(isPlainObject(cur) || Array.isArray(cur) ? cur : {}, rest, value);
+        return copy;
+    }
     if (rest.length === 0) return { ...node, [head]: value };
     const cur = node[head];
-    const base = isPlainObject(cur) ? cur : {};
+    const base = isPlainObject(cur) || Array.isArray(cur) ? cur : {};
     return { ...node, [head]: writeNode(base, rest, value) };
 }
 

@@ -172,6 +172,13 @@ describe("上下文树：UI 上屏（三列 + 真实请求体）", () => {
     // 与提示词页互不干扰：另一个 page 的块不该出现
     expect(withChain).not.toContain("_system.md");
 
+    // 数组展开：chain 的每一层（AGENTS.md 链）在变量树里是独立行，能单独定位
+    const withArray = await waitUntil(a11yText, (s) => s.includes("chain"), { label: "chain 上屏" });
+    expect(withArray).toContain("chain");
+
+    // 变更 view：左栏有 step 列表（初始无变化）
+    expect(withChain).toContain("变更（step）");
+
     // 展开请求体 → 真实 JSON（与真发同一条构造链）
     await fold("request", true);
     const req = await waitUntil(a11yText, (s) => s.includes("tool_choice") || s.includes("max_tokens"), {

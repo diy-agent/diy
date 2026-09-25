@@ -17,7 +17,7 @@
  *
  * 数据是**当前任务的真实上下文**（与真发同一条 assembleGlobals 链），不是编造的。
  */
-import { createResource, createSignal, For, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { taskStore } from "../store/taskStore";
 import { ViewGrid } from "./ViewGrid";
@@ -30,6 +30,13 @@ import { AssembleGlobalsSchema } from "../../shared/prompt-schema";
 import { MdEditor, type HlLines } from "./MdEditor";
 import { JsonTree } from "./JsonTree";
 import type { ContextLab, LabTreeNode, PlaceCandidate } from "../../shared/context/preview";
+import {
+    emptyHistory,
+    record,
+    diffStat,
+    type ContextHistory,
+    type ContextStep,
+} from "../../shared/context/history";
 
 const PAGE = "ctxlab";
 
@@ -200,6 +207,13 @@ export function ContextLabPage(props: { uri: string }) {
     /** 是否显示全部单元（默认只显示**投递单元**；打开后连叶子都列） */
     const [showAll, setShowAll] = createSignal(false);
 
+    /** 变更历史：每次重算都记一次，内容没变就不新增（144 的"内容未变不发"） */
+    const [history, setHistory] = createSignal<ContextHistory>(emptyHistory());
+    /** 选中的 step（null = 看当前） */
+    const [pickedStep, setPickedStep] = createSignal<number | null>(null);
+    /** 是否自动观察（真实 step：开着页面就一直记） */
+    const [watching, setWatching] = createSignal(false);
+
     const [meta] = createResource(async () => {
         return (await diyService.diy.context.candidates({})) as {
             candidates: PlaceCandidate[];
@@ -215,6 +229,21 @@ export function ContextLabPage(props: { uri: string }) {
             systemPlaces: sys,
             model: undefined,
         })) as ContextLab;
+    });
+
+    // 每次重算结果到手 → 记一次 step（纯函数，内容没变不新增）
+    createEffect(() => {
+        const l = lab();
+        if (!l) return;
+        setHistory((h) => record(h, l.snapshot, new Date().toISOString()));
+    });
+
+    // 自动观察：开着时按间隔重算（真实数据变了就会多出 step）。
+    // 老事件流还没有 context 事件推送，所以这里用轮询；108 之后换成订阅即可。
+    createEffect(() => {
+        if (!watching()) return;
+        const t = setInterval(() => void refetch(), 3000);
+        onCleanup(() => clearInterval(t));
     });
 
     /** 换容器：新单元与已有单元互为祖先/后代时，先把重叠的摘掉（places 不许重叠） */
@@ -284,10 +313,127 @@ export function ContextLabPage(props: { uri: string }) {
         );
     };
 
+    /** 变更详情：选中某步 → 看它改了什么（值变化 + 两份 diff） */
+    const changePane = () => {
+        const step = () => (lab()?.snapshot ? history().steps.find((x) => x.index === pickedStep()) : null);
+        return (
+            <Show
+                when={step()}
+                fallback={<div class="p-2 opacity-60">选一个变化的 step 看它改了什么</div>}
+            >
+                {(st: () => ContextStep) => (
+                    <div class="space-y-2 p-2">
+                        <div class="flex items-center gap-2">
+                            <span class="badge badge-sm">step {st().index}</span>
+                            <span class="opacity-60">{new Date(st().at).toLocaleTimeString()}</span>
+                        </div>
+                        <div>
+                            <div class="mb-1 font-bold opacity-70">变化的变量（{st().changed.length}）</div>
+                            <Show when={st().changed.length > 0} fallback={<div class="opacity-50">无（投递范围变了）</div>}>
+                                <div class="flex flex-wrap gap-1">
+                                    <For each={st().changed}>{(p) => <span class="badge badge-xs font-mono">{p}</span>}</For>
+                                </div>
+                            </Show>
+                        </div>
+                        <div>
+                            <div class="mb-1 font-bold opacity-70">落在哪一份</div>
+                            <div class="flex flex-col gap-1">
+                                <div>
+                                    <span class="badge badge-primary badge-xs badge-outline">system</span>{" "}
+                                    {st().systemDiffers ? "重建（全量）" : "未变"} · 涉及{" "}
+                                    <span class="font-mono">{st().systemTouched.join(", ") || "—"}</span>
+                                </div>
+                                <div>
+                                    <span class="badge badge-warning badge-xs badge-outline">runtime</span>{" "}
+                                    {st().runtimeDiffers ? "增量 patch" : "未变"} · 涉及{" "}
+                                    <span class="font-mono">{st().runtimeTouched.join(", ") || "—"}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <For each={[
+                            { name: "system 份变化内容", diff: st().systemDiff },
+                            { name: "runtime 份变化内容", diff: st().runtimeDiff },
+                        ]}>
+                            {(d) => (
+                                <Show when={d.diff.length > 0}>
+                                    <div>
+                                        <div class="mb-1 font-bold opacity-70">
+                                            {d.name}（+{diffStat(d.diff).add} / -{diffStat(d.diff).del}）
+                                        </div>
+                                        <pre class="max-h-64 overflow-auto rounded bg-base-100 p-1 font-mono">
+                                            {d.diff
+                                                .filter((l) => l.t !== " ")
+                                                .map((l) => `${l.t} ${l.s}`)
+                                                .join("\n") || "（无实质变化）"}
+                                        </pre>
+                                    </div>
+                                </Show>
+                            )}
+                        </For>
+                    </div>
+                )}
+            </Show>
+        );
+    };
+
+    /** 变更列表（只列**有变化**的 step） */
+    const stepsPane = () => (
+        <div class="p-1">
+            <div class="mb-1 flex items-center gap-1 px-1 opacity-70">
+                <span>{history().steps.length} 个变化 step</span>
+                <label class="ml-auto flex cursor-pointer items-center gap-1" title="开启后每 3 秒重算一次，真实数据变了就多一个 step">
+                    <input
+                        type="checkbox"
+                        class="checkbox checkbox-xs"
+                        checked={watching()}
+                        onChange={(e) => setWatching(e.currentTarget.checked)}
+                    />
+                    观察
+                </label>
+            </div>
+            <Show
+                when={history().steps.length > 0}
+                fallback={<div class="p-2 opacity-60">还没有变化。改一下任务正文/标题，或开「观察」跑一会儿。</div>}
+            >
+                <ul class="menu menu-xs">
+                    <For each={[...history().steps].reverse()}>
+                        {(st) => (
+                            <li>
+                                <button
+                                    class={`flex items-center gap-2 ${rowCls(pickedStep() === st.index)}`}
+                                    onClick={() => setPickedStep(pickedStep() === st.index ? null : st.index)}
+                                >
+                                    <span class="badge badge-xs">{st.index}</span>
+                                    <span class="truncate font-mono">
+                                        {st.changed.slice(0, 2).join(", ") || "投递范围变化"}
+                                        {st.changed.length > 2 ? ` +${st.changed.length - 2}` : ""}
+                                    </span>
+                                    <span class="ml-auto flex gap-1">
+                                        <Show when={st.systemDiffers}>
+                                            <span class="badge badge-primary badge-xs">sys</span>
+                                        </Show>
+                                        <Show when={st.runtimeDiffers}>
+                                            <span class="badge badge-warning badge-xs">run</span>
+                                        </Show>
+                                    </span>
+                                </button>
+                            </li>
+                        )}
+                    </For>
+                </ul>
+            </Show>
+        </div>
+    );
+
     const parts: Record<string, () => JSX.Element> = {
         /** 左：结构树（契约 + 划分操作） */
         "ctxlab.structure": () => (
-            <div class="h-full overflow-auto text-[11px]">
+            <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-[11px]">
+                {/* 变更列表：只列**有变化**的 step（真实数据；开「观察」就持续记录） */}
+                <Fold k="steps" label="变更（step）" extra={`${history().steps.length} 个`}>
+                    {stepsPane()}
+                </Fold>
+                <Fold k="structure" label="结构树（变量契约）" extra="含无值变量 · 类型与描述">
                 <table class="table table-xs">
                     <thead>
                         <tr>
@@ -308,10 +454,11 @@ export function ContextLabPage(props: { uri: string }) {
                         />
                     </tbody>
                 </table>
+                </Fold>
             </div>
         ),
 
-        /** 中：预览（两份 YAML + 请求体 JSON） */
+        /** 中：预览（两份 YAML + step 变更详情 + 请求体 JSON） */
         "ctxlab.delivery": () => (
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-xs">
                 <Fold

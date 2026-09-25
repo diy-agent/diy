@@ -227,7 +227,16 @@ export const Caches = {
       }
     },
     serialize: (v) => JSON.stringify(v),
-    defaultValue: { units: true, tree: true, system: true, runtime: true, request: false },
+    defaultValue: {
+      units: true,
+      tree: true,
+      system: true,
+      runtime: true,
+      request: false,
+      steps: true,
+      change: true,
+      structure: true,
+    },
   }),
   /** 试验场表格列宽（px 数组，按表分字段）。**表的列宽必须与容器宽度解耦**：
    *  否则拖动左栏会按比例缩放所有列，永远有列看不全；这里存下来后拖左栏不再改变列宽，
