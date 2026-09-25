@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { makeUiDriver, type UiDriver } from "./ui-drive";
+import { lockNavOpen } from "./nav-helper";
 
 let fx: { sh: ShellTest; HOME: string; electron: ElectronTest };
 let ui: UiDriver;
@@ -26,7 +27,6 @@ const GRIP = `.drawer-side [title^="拖动调整侧栏宽度"]`;
 
 /** 侧栏当前渲染宽度（px） */
 const navWidth = () => ui.query<number>(`${SIDEBAR}.getBoundingClientRect().width`);
-const pinBtn = `button[title="锁定展开"]`;
 
 /** 手柄中心点（拖拽起点） */
 const gripCenter = () =>
@@ -46,10 +46,9 @@ async function waitAppReady(): Promise<void> {
   throw new Error("[nav-width] 等侧栏渲染超时");
 }
 
-/** 锁定展开（默认是 hover 才展开的图标 rail，手柄只在展开态存在） */
+/** 锁定展开（手柄只在展开态存在；收起态直接点 pin 点不响，见 nav-helper） */
 async function pinOpen(): Promise<void> {
-  await ui.clickSelector(pinBtn);
-  await new Promise((r) => setTimeout(r, 400)); // 等宽度 transition 走完
+  await lockNavOpen(ui);
 }
 
 beforeAll(async () => {

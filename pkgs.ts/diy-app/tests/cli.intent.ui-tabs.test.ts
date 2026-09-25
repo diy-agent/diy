@@ -13,6 +13,7 @@ import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
 import { makeUiDriver, type A11yNode, type UiDriver } from "./ui-drive";
+import { lockNavOpen, unlockNav } from "./nav-helper";
 
 let fx: { sh: ShellTest; HOME: string; electron: ElectronTest };
 let uri = "";
@@ -361,8 +362,9 @@ describe("真实 UI 操作 —— 点击（第二种测试能力）", () => {
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
     expect((await tabs()).opened).toContain(`task-run:${uri}`);
 
-    // 侧栏默认是图标 rail（收起态装不下 ✕），先按真人路径锁定展开
-    await ui.clickSelector('button[title="锁定展开"]');
+    // 侧栏默认是图标 rail（收起态装不下 ✕），先按真人路径锁定展开（见 nav-helper：
+    // 收起态直接点 pin 点不响 —— 按下瞬间侧栏才展开、按钮已移位）
+    await lockNavOpen(ui);
     // ✕ 是 `opacity-0 group-hover:opacity-70`：a11y 树把它当不可见剔除（opacity:0），
     // 且 CDP 注入的 mouseMoved 不会触发 CSS :hover（见 ui-drive 注释）。但它照样
     // 命中测试正常 —— 故按 DOM 取坐标、用 CDP 原生事件真实点击。
@@ -374,7 +376,7 @@ describe("真实 UI 操作 —— 点击（第二种测试能力）", () => {
     });
     expect(after.opened).not.toContain(`task-run:${uri}`);
     expect(after.active).toBe("");
-    await ui.clickSelector('button[title*="取消锁定"]'); // 还原，别影响后续用例
+    await unlockNav(ui); // 还原，别影响后续用例
   });
 });
 
@@ -420,7 +422,7 @@ describe("打开列表表达任务层次（排序 + 缩进）", () => {
       return (r.data as any)?.data?.tree as A11yNode | undefined;
     });
     try {
-      await ui.clickSelector('button[title="锁定展开"]');
+      await lockNavOpen(ui);
       // 量**内容**的左边界，不是元素本身：缩进走 padding-left，而
       // getBoundingClientRect().x 是 border box（padding 不改它）—— 量错了会假绿。
       const xOf = async (title: string) =>
@@ -435,7 +437,7 @@ describe("打开列表表达任务层次（排序 + 缩进）", () => {
       expect(xa).not.toBeNull();
       expect(xc).not.toBeNull();
       expect(xc!).toBeGreaterThan(xa!); // 孙更靠右
-      await ui.clickSelector('button[title*="取消锁定"]');
+      await unlockNav(ui);
     } finally {
       ui.close();
     }
@@ -482,7 +484,7 @@ describe("任务被移动 → 导航结构实时跟随（165 回归）", () => {
       return (r.data as any)?.data?.tree as A11yNode | undefined;
     });
     try {
-      await ui.clickSelector('button[title="锁定展开"]');
+      await lockNavOpen(ui);
       // 量**内容**左边界：缩进走 padding-left，而 border box 的 x 不受 padding 影响
       const xOf = (title: string) =>
         ui.query<number | null>(`(() => {
@@ -507,7 +509,7 @@ describe("任务被移动 → 导航结构实时跟随（165 回归）", () => {
         { label: "缩进跟随新树（父与孙同层）" },
       );
       expect(aligned).toBe(true);
-      await ui.clickSelector('button[title*="取消锁定"]');
+      await unlockNav(ui);
     } finally {
       ui.close();
     }

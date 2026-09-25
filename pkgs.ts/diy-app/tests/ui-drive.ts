@@ -125,6 +125,21 @@ export interface UiDriver {
    */
   hover(text: TextMatch): Promise<void>;
   /**
+   * 让鼠标「进入」某元素：派发 DOM `mouseenter`（leaveSelector 则派发 `mouseleave`）。
+   *
+   * 为什么必须这样做（不是偷懒）：Chromium 由**真实输入设备位置**驱动 hover，
+   * `Input.dispatchMouseEvent` 只做命中测试与派发，**不更新 hover 事件链**（见上面
+   * `hover` 的注释）。于是「悬停才出现的 UI」（侧栏 hover 展开、悬停任务项的详情
+   * 面板）用 CDP 驱动不出来，只能派发原生事件。
+   * 作为补偿，调用方应同时断言目标 rect 非零且 `elementFromPoint` 命中它 ——
+   * 证明「这一项真的在鼠标可达处」，而不是只靠合成事件自说自话。
+   *
+   * 返回 false = 选择器没找到元素（调用方自行决定是否断言失败，不静默跳过）。
+   */
+  hoverSelector(selector: string, opts?: { nth?: number }): Promise<boolean>;
+  /** 派发 DOM `mouseleave`（与 hoverSelector 对称） */
+  leaveSelector(selector: string, opts?: { nth?: number }): Promise<boolean>;
+  /**
    * 按 CSS 选择器定位 → 在**元素中心真实派发**鼠标按下/抬起。
    *
    * 为什么需要（不是绕路）：`ui inspect` 的 a11y 树会剔除 `opacity: 0` 的元素，
@@ -163,6 +178,15 @@ export async function makeUiDriver(
       ...extra,
     });
 
+  /** 对某选择器命中的第 nth 个元素派发原生 hover 事件（见 hoverSelector 的说明） */
+  const fireMouse = (type: "mouseenter" | "mouseleave", selector: string, nth: number) =>
+    cdp.eval<boolean>(`(() => {
+      const el = document.querySelectorAll(${JSON.stringify(selector)})[${nth}];
+      if (!el) return false;
+      el.dispatchEvent(new MouseEvent(${JSON.stringify(type)}, { bubbles: false }));
+      return true;
+    })()`);
+
   /** 取树并按谓词定位（每次现取：上一步操作会让 rect 变） */
   const locate = async (target: TextMatch) => {
     const match =
@@ -194,6 +218,14 @@ export async function makeUiDriver(
       const target = await locate(text);
       await mouse("mouseMoved", target);
       await new Promise((r) => setTimeout(r, 150));
+    },
+
+    async hoverSelector(selector, opts = {}) {
+      return fireMouse("mouseenter", selector, opts.nth ?? 0);
+    },
+
+    async leaveSelector(selector, opts = {}) {
+      return fireMouse("mouseleave", selector, opts.nth ?? 0);
     },
 
     async clickSelector(selector, opts = {}) {
