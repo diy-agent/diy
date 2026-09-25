@@ -14,6 +14,7 @@ export * from "./hash";
 export * from "./wire";
 export * from "./tree";
 export * from "./render";
+export * from "./guide";
 export * from "./reducer";
 export * from "./projection";
 export * from "./legacy-adapter";

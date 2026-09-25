@@ -10,7 +10,8 @@
 // 所有 place 消失 → 必须发**显式清空**，不能只是「什么都不发」（用例 5）。
 
 import { hashText } from "./hash";
-import { placeText, renderPlaces } from "./render";
+import { placeText, renderPathsTraced, renderPlaces } from "./render";
+import { CONTEXT_GUIDE } from "./guide";
 import { placesIn } from "./tree";
 import { WIRE_VERSION } from "./wire";
 import type {
@@ -35,8 +36,21 @@ export function renderedHashes(state: ContextTreeState): Record<ContextPath, str
     return out;
 }
 
-/** system 容器全量文本（每次请求重建，无状态） */
+/**
+ * system 容器全量文本（每次请求重建，无状态）。
+ * **带说明头**（结构 + 解读规则，纯文本，见 guide.ts）：这段就是"提示词"本体，
+ * 要先告诉模型这是什么、怎么读，再给数据。
+ */
 export function systemText(state: ContextTreeState): string {
+    return renderPathsTraced(state, placesIn(state, "system"), CONTEXT_GUIDE).text;
+}
+
+/**
+ * system 的**纯数据部分**（不带说明头）。
+ * 存在的理由：说明头是固定长文，golden 比对/调试时只想看数据本身；
+ * 也让「说明头是否在位」可以单独断言（systemText 以 CONTEXT_GUIDE 开头）。
+ */
+export function systemData(state: ContextTreeState): string {
     return renderPlaces(state, placesIn(state, "system"));
 }
 

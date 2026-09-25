@@ -16,6 +16,7 @@ import {
     project,
     setPlacement,
     setPlaces,
+    systemData,
     systemText,
     type ContextFact,
     type ContextTreeState,
@@ -164,6 +165,6 @@ describe("端到端 golden：换 adapter 后结果必须一致（108 回归网�
         const b = project(viaFacts(), null).projection;
         expect(a.system).toBe(b.system);
         expect(a.runtimeText).toBe(b.runtimeText);
-        expect(systemText(viaLegacy())).toBe("diy:\n  cli: /repo/diy.sh");
+        expect(systemData(viaLegacy())).toBe("diy:\n  cli: /repo/diy.sh");
     });
 });

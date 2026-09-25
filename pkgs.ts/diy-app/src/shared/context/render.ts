@@ -74,24 +74,37 @@ function emitValue(v: unknown, indent: number, path: ContextPath, sink: EmitSink
         const from = sink.lines.length;
         if (v.length === 0) sink.lines.push(`${pad}[]`);
         else {
-            for (const item of v) {
+            v.forEach((item, idx) => {
+                // 元素用**下标段**寻址（`chain.0`），与 getValue/JSONPath 的口径一致
+                const childPath = path ? `${path}.${idx}` : String(idx);
+                const before = sink.lines.length;
+                const markItem = (): void => {
+                    sink.spans.set(childPath, { from: before + 1, to: sink.lines.length });
+                };
                 if (isMultiline(item)) {
                     const blk = "  ".repeat(indent + 1);
                     sink.lines.push(`${pad}- |`);
                     const body = item.endsWith("\n") ? item.slice(0, -1) : item;
                     for (const l of body.split("\n")) sink.lines.push(l.length > 0 ? blk + l : "");
+                    markItem();
                 } else if (isPlainObject(item) || (Array.isArray(item) && item.length > 0)) {
                     // 对象/序列项：首行并到 `- ` 之后，其余行缩进对齐（YAML 惯例写法）
                     const inner: EmitSink = { lines: [], spans: new Map() };
-                    emitValue(item, indent + 1, "", inner);
+                    emitValue(item, indent + 1, childPath, inner);
                     const head = inner.lines[0]!.slice((indent + 1) * 2);
                     sink.lines.push(`${pad}- ${head}`);
                     // 续行的自身缩进已是 (indent+1)*2（与 `- ` 后的首行对齐），原样保留
                     for (const l of inner.lines.slice(1)) sink.lines.push(l);
+                    // 临时 sink 的行号平移回全局：它第 1 行落在 before+1
+                    for (const [p, sp] of inner.spans) {
+                        sink.spans.set(p, { from: sp.from + before, to: sp.to + before });
+                    }
+                    markItem();
                 } else {
                     sink.lines.push(`${pad}- ${scalarYaml(item)}`);
+                    markItem();
                 }
-            }
+            });
         }
         mark(from);
         return;
@@ -271,9 +284,18 @@ export interface RenderedYaml {
 export function renderPathsTraced(
     state: ContextTreeState,
     paths: readonly ContextPath[],
+    /** 拼在最前面的纯文本说明（结构 / 解读规则）。见 guide.ts */
+    preamble?: string,
 ): RenderedYaml {
-    if (paths.length === 0) return { text: "", lines: {} };
+    if (paths.length === 0 && !preamble) return { text: "", lines: {} };
     const sink: EmitSink = { lines: [], spans: new Map() };
+
+    // 说明头先占位。**不需要额外偏移**：emitValue 记的行号本来就以 sink.lines 为准
+    // （它读的就是「此刻已推入多少行」），所以 preamble 已被自然计入。
+    if (preamble) {
+        sink.lines.push(...preamble.replace(/\n$/, "").split("\n"));
+        sink.lines.push("");
+    }
     emitValue(composeSubset(state, [...paths].sort()), 0, "", sink);
     return { text: sink.lines.join("\n"), lines: Object.fromEntries(sink.spans) };
 }

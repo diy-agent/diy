@@ -11,6 +11,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+    CONTEXT_GUIDE,
     applyFact,
     applyFacts,
     canonical,
@@ -21,11 +22,13 @@ import {
     placeOf,
     placesIn,
     project,
+    renderPathsTraced,
     renderPlace,
     setPlacement,
     setPlaces,
     sha256Hex,
     stepDelta,
+    systemData,
     systemText,
     validatePlaces,
     valueHashes,
@@ -317,7 +320,10 @@ describe("恢复与边界（用例 16~20）", () => {
         // 领域侧对应断言：未 apply 任何事实时树保持空，投影也不假装有内容。
         const t = createTree();
         const { projection } = project(t, null);
-        expect(projection.system).toBe("");
+        // 空树：说明头仍在位（它说明"这是什么"），但**没有任何变量数据** ——
+        // 中断的更新不会让投影假装有内容
+        expect(projection.system).toContain(CONTEXT_GUIDE.trim().split("\n")[0]!);
+        expect(systemData(t)).toBe("");
         expect(projection.runtime.kind).toBe("snapshot");
         if (projection.runtime.kind === "snapshot") expect(projection.runtime.text).toBe("");
     });
@@ -371,8 +377,11 @@ describe("golden：同一组事实的投影稳定（108 换 adapter 后必须一
         t = setPlacement(t, "instructions", "runtime");
         t = setPlacement(t, "tasks", "runtime");
 
-        // 纯 YAML：不再套 <context path="…"> 外壳（树形结构已表达 path 归属）
-        expect(systemText(t)).toBe("diy:\n  cli: /repo/diy.sh");
+        // 纯 YAML：不再套 <context path="…"> 外壳（树形结构已表达 path 归属）。
+        // systemData 是纯数据；systemText 在它前面多一段说明头（见 guide.ts）
+        expect(systemData(t)).toBe("diy:\n  cli: /repo/diy.sh");
+        expect(systemText(t).startsWith(CONTEXT_GUIDE.trimEnd())).toBe(true);
+        expect(systemText(t)).toContain("diy:\n  cli: /repo/diy.sh");
         expect(project(t, emptyCursor()).projection.runtimeText).toBe(
             [
                 "env:",
@@ -394,5 +403,58 @@ describe("golden：同一组事实的投影稳定（108 换 adapter 后必须一
     it("WIRE_VERSION 是稳定常量（由编码语义派生，不手工维护）", () => {
         expect(WIRE_VERSION).toMatch(/^[0-9a-f]{8}$/);
         expect(WIRE_VERSION).toBe(WIRE_VERSION);
+    });
+});
+
+describe("渲染行号映射（选中联动高亮的基础）", () => {
+    it("带说明头时，path 行号整体后移且**精确**指到那一行", () => {
+        let t = createTree();
+        t = build(t, [
+            { type: "patch", path: "diy.cli", op: "set", value: "/repo/diy.sh" },
+            { type: "patch", path: "chain", op: "set", value: [
+                { path: "/home/AGENTS.md", content: "第一层" },
+                { path: "/home/proj/AGENTS.md", content: "第二层" },
+            ] },
+        ]);
+        const traced = renderPathsTraced(t, ["chain", "diy"], CONTEXT_GUIDE);
+        const L = traced.text.split("\n");
+        const at = (p: string) => {
+            const r = traced.lines[p]!;
+            return L.slice(r.from - 1, r.to).join("\n");
+        };
+
+        // 说明头在位，且第一行数据（chain:）紧跟其后
+        expect(traced.text.startsWith("# 系统上下文")).toBe(true);
+        expect(traced.lines["chain"]!.from).toBeGreaterThan(CONTEXT_GUIDE.split("\n").length);
+
+        // ★ 精度：每个 path 的行区间必须**只含该 path 的内容**
+        expect(at("diy.cli")).toBe("  cli: /repo/diy.sh");
+        expect(at("chain.0.path")).toBe("  - path: /home/AGENTS.md");
+        expect(at("chain.1.path")).toBe("  - path: /home/proj/AGENTS.md");
+        expect(at("chain.1.content")).toContain("第二层");
+        expect(at("chain.1.content")).not.toContain("第二层\n"); // 不含下一段的行
+    });
+
+    it("不带说明头时行号从 1 开始（同一 path 不因有无头而错位）", () => {
+        let t = createTree();
+        t = build(t, [{ type: "patch", path: "diy.cli", op: "set", value: "x" }]);
+        const plain = renderPathsTraced(t, ["diy"]);
+        expect(plain.lines["diy.cli"]).toEqual({ from: 2, to: 2 });
+        const withGuide = renderPathsTraced(t, ["diy"], CONTEXT_GUIDE);
+        const offset = withGuide.lines["diy.cli"]!.from - plain.lines["diy.cli"]!.from;
+        expect(offset).toBeGreaterThan(0); // 说明头行数
+        expect(offset).toBe(withGuide.lines["diy"]!.from - plain.lines["diy"]!.from);
+    });
+
+    it("数组元素（下标段）有独立行号，可单独定位", () => {
+        let t = createTree();
+        t = build(t, [{ type: "patch", path: "list", op: "set", value: [
+            { name: "a", desc: "第一" },
+            { name: "b", desc: "第二" },
+        ] }]);
+        const traced = renderPathsTraced(t, ["list"]);
+        expect(traced.lines["list.0.name"]).toBeTruthy();
+        expect(traced.lines["list.1.name"]).toBeTruthy();
+        expect(traced.lines["list.0.name"]!.from).toBeLessThan(traced.lines["list.1.name"]!.from);
     });
 });

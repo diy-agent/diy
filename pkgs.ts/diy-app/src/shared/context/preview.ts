@@ -11,6 +11,7 @@
 import { project as projectTree } from "./projection";
 import { applyFacts, createTree, setPlacement, setPlaces } from "./reducer";
 import { previewOf, renderPathsTraced } from "./render";
+import { CONTEXT_GUIDE } from "./guide";
 import { getValue, isPlainObject, placeOf, rendererOf } from "./tree";
 import { emptyCursor } from "./projection";
 import { hashValue } from "./hash";
@@ -207,8 +208,10 @@ export function buildLab(
 
     const sysPlaces = tree.places.filter((p) => tree.placement[p] === "system").sort();
     const runPlaces = tree.places.filter((p) => (tree.placement[p] ?? "runtime") === "runtime").sort();
-    // 文本与行号映射同出一次渲染 —— 高亮/滚动才不会指错行
-    const sys = renderPathsTraced(tree, sysPlaces);
+    // 文本与行号映射同出一次渲染 —— 高亮/滚动才不会指错行。
+    // system 份带说明头（结构 + 解读规则，纯文本，见 guide.ts）：
+    // 这就是"提示词"本体，所以要先说明这是什么、怎么读。
+    const sys = renderPathsTraced(tree, sysPlaces, CONTEXT_GUIDE);
     const run = renderPathsTraced(tree, runPlaces);
     const sysText = sys.text;
     const runText = run.text;
