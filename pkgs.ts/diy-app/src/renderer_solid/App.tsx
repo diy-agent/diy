@@ -112,6 +112,9 @@ export default function App() {
     let fsAbort: AbortController | undefined;
 
     onMount(() => {
+        // 祖先链现算：任务树是父子关系的唯一真相源，tabStore 只存 { pageId, ctx }。
+        // 注入后树一变（loadTree / 文件监听 / 拖拽改父）→ opened 重算 → 排序与缩进自动跟上。
+        tabStore.setAncestorsResolver(taskAncestorsOf);
         taskStore.loadTree();
         setRendererActions({
             navigate: (page) => {
@@ -165,14 +168,12 @@ export default function App() {
                 layoutStore.setViewHidden(pageId, viewInstanceKey(def, ctx), !visible);
             },
             openTaskRun: (uri) => {
-                tabStore.open("task-run", uri, undefined, taskAncestorsOf(uri));
+                tabStore.open("task-run", uri);
                 setRoute({ kind: "tab", key: tabStore.active });
             },
             openLab: (uri) => getRendererActions().openTab?.("lab", uri),
             openTab: (pageId, ctx) => {
-                const def = findPage(pageId);
-                const parent = def?.parentPage ? `${def.parentPage}:${ctx}` : undefined;
-                tabStore.open(pageId, ctx, parent, taskAncestorsOf(ctx));
+                tabStore.open(pageId, ctx);
                 setRoute({ kind: "tab", key: tabStore.active });
             },
             activateTab: (key) => {

@@ -131,11 +131,15 @@ export const Caches = {
     serialize: (v) => String(v),
     defaultValue: 560,
   }),
-  /** 打开的 tab（**页面实例**数组，顺序即显示顺序；结构见 store/tabStore 的 TabItem）。
+  /** 打开的 tab。**只存真信息**：`{ pageId, ctx }[]`，顺序即显示顺序。
+   *
+   *  派生数据（key / parent / taskAncestors）**不落盘**，由 tabStore 从注册表与任务树
+   *  现算 —— 曾经它们被一起写进来，于是任务改父后导航结构永远显示旧快照（165）。
+   *  解析后的富视图见 store/tabStore 的 TabItem。
    *
    *  ⚠️ 这里只做「是数组吗」这一层判断，**不在这里过滤元素**：
-   *  元素级的清洗（结构不对的条目丢掉、旧格式纯 URI 字符串升级为 TabItem）在
-   *  tabStore.load() 里 —— 那里知道 TabItem 长什么样，本文件不知道。
+   *  元素级的清洗（结构不对的条目丢掉、旧格式纯 URI 字符串升级、派生字段丢弃）在
+   *  tabStore.load() 里 —— 那里知道条目长什么样，本文件不知道。
    *
    *  曾经这里写 `a.filter(x => typeof x === "string")`，而 tabStore 已升级为写对象，
    *  于是写进去的对象被读回时全被滤掉 → **重启后打开的 tab 清零**（真实故障）。
