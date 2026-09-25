@@ -20,6 +20,7 @@ import { defaultBinding, findPage, findView, viewInstanceKey } from "../shared/v
 import { taskIndentOf } from "../shared/tab-order";
 import { taskStateColor } from "../main/core/task-state";
 import { instanceTitle } from "../shared/instance-title";
+import { Caches, NAV_W_MIN, NAV_W_MAX, NAV_W_DEFAULT } from "./lib/ui-state";
 import { Breadcrumb } from "./components/Breadcrumb";
 import { setRendererActions, resetRendererActions, getRendererActions } from "./lib/renderer-actions";
 
@@ -83,10 +84,16 @@ export default function App() {
         tabStore.active ? { kind: "tab", key: tabStore.active } : { kind: "section", section: "task" },
     );
     const [subPage, setSubPage] = createSignal("info");
-    // 侧栏默认紧缩（w-12 纯图标 rail 省空间）；悬停或锁定才展开 w-56，选导航后即回缩
+    // 侧栏默认紧缩（2.5rem 纯图标 rail 省空间）；悬停或锁定才展开，选导航后即回缩
     const [pinned, setPinned] = createSignal(false);
     const [hovered, setHovered] = createSignal(false);
-    const expanded = () => pinned() || hovered();
+    // 展开宽度（px）：右缘可拖，落视图 cache（见 ui-state 的 diy_nav_width）
+    const [navW, setNavW] = createSignal(Caches.diy_nav_width.get());
+    // 拖拽中的标记：期间**必须强制展开**，否则鼠标一离开侧栏就 mouseleave 收拢，
+    // 宽度在「收拢 → 变宽 → 又展开」之间抖（见 onNavGripDown）
+    const [resizingNav, setResizingNav] = createSignal(false);
+    const expanded = () => pinned() || hovered() || resizingNav();
+    let navEl: HTMLDivElement | undefined;
 
     /**
      * 侧栏高亮：**同一时刻只有一处**。
@@ -209,6 +216,33 @@ export default function App() {
         resetRendererActions();
     });
 
+    /**
+     * 侧栏右缘拖拽改宽（松手落盘）。
+     *
+     * 三个细节都是必需的：
+     *  1. 宽度 = 鼠标 x - 侧栏左缘，不能裸用 clientX —— 侧栏不保证从 x=0 起
+     *  2. 拖拽期间强制展开（resizingNav）—— 侧栏平时是 hover 展开的，鼠标一移出
+     *     右缘就触发展开态收拢，宽度会跟着抖
+     *  3. 松手才落盘 —— 拖拽中每帧写 localStorage 是几十次无用写入
+     */
+    const onNavGripDown = (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const left = navEl?.getBoundingClientRect().left ?? 0;
+        setResizingNav(true);
+        const move = (ev: MouseEvent) => {
+            setNavW(Math.min(NAV_W_MAX, Math.max(NAV_W_MIN, Math.round(ev.clientX - left))));
+        };
+        const up = () => {
+            window.removeEventListener("mousemove", move);
+            window.removeEventListener("mouseup", up);
+            setResizingNav(false);
+            Caches.diy_nav_width.set(navW());
+        };
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
+    };
+
     const goSection = (id: Section) => {
         if (id === "task") {
             tabStore.showTree();
@@ -325,9 +359,12 @@ export default function App() {
                     行右侧的关闭按钮跑到侧栏外被 overflow-hidden 裁掉，`elementFromPoint` 命中的是
                     主区内容（即「页面遮挡住关闭按钮、点不到」）。nowrap 让交叉轴回到容器宽度，
                     再配合 `min-w-0` 保证内部的 truncate 能真正收缩。 */}
+                {/* 展开宽度可调（拖右缘 / 双击手柄复位）：宽度记在视图 cache，重启恢复。
+                    拖拽期间摘掉 transition —— 否则宽度在鼠标后面追，手感是"拖不动"。 */}
                 <div
-                    class={`menu flex-nowrap bg-base-200 min-h-full transition-[width,padding] duration-200 whitespace-nowrap overflow-hidden ${expanded() ? "p-2" : "p-0"}`}
-                    style={{ width: expanded() ? "14rem" : "2.5rem" }}
+                    ref={navEl}
+                    class={`menu flex-nowrap bg-base-200 min-h-full whitespace-nowrap overflow-hidden relative ${expanded() ? "p-2" : "p-0"} ${resizingNav() ? "" : "transition-[width,padding] duration-200"}`}
+                    style={{ width: expanded() ? `${navW()}px` : "2.5rem" }}
                     onMouseEnter={() => setHovered(true)}
                     onMouseLeave={() => setHovered(false)}
                 >
@@ -440,6 +477,18 @@ export default function App() {
                             <span>{pinned() ? "📌" : "📍"}</span>
                         </button>
                     </div>
+                    {/* 右缘拖拽条：调宽 + 双击复位。收起态（rail）没有可调的宽度，不渲染 */}
+                    <Show when={expanded()}>
+                        <div
+                            class="absolute inset-y-0 right-0 w-1.5 cursor-col-resize hover:bg-primary/40 active:bg-primary/60 z-10"
+                            title="拖动调整侧栏宽度（双击复位）"
+                            onMouseDown={onNavGripDown}
+                            onDblClick={() => {
+                                setNavW(NAV_W_DEFAULT);
+                                Caches.diy_nav_width.set(NAV_W_DEFAULT);
+                            }}
+                        />
+                    </Show>
                 </div>
             </div>
 
