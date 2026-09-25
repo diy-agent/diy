@@ -60,6 +60,18 @@ export const DraftFieldSchema = z.enum(["title", "body", "agent_input"]);
 /** 草稿字段映射（值一律字符串，原样保存不 trim；partial：未编辑的字段不出现） */
 export const DraftFieldsSchema = z.partialRecord(DraftFieldSchema, z.string());
 
+/**
+ * 插话项（对话中「插嘴」的待投递消息）。
+ * 与草稿同文件同生命周期（任务目录 .diy/drafts.yaml 的 steers 字段），
+ * 但语义是**队列**：FIFO，提交后等模型取走（step = 下一个模型步前；turn = 下一轮）。
+ */
+export const SteerItemSchema = z.object({
+  id: z.string(),
+  mode: z.enum(["step", "turn"]),
+  text: z.string(),
+  created: z.string(),
+});
+
 /** 草稿数据（含 meta，供 renderer 判定过期 / CLI 观察） */
 export const DraftsData = z.object({
   base_updated: z.string().optional(),
@@ -337,11 +349,56 @@ export const apiDef = RpcSchema.router({
                 output: z.array(z.any()),
               }),
               clear: RpcSchema.unary({
-                desc: `清空本地 agent 会话（中断生成并删除 Op/LLM 日志）`,
+                desc: `清空本地 agent 会话（中断生成、删除 Op/LLM 日志，并清空待投递的插话队列）`,
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
                 },
                 output: z.object({ cleared: z.boolean() }),
+              }),
+              /**
+               * 插话（steer）—— 对话进行中追加发言，不必等本轮跑完。
+               *
+               * 两种投递时机：step = 当前轮的下一个模型步之前；turn = 当前轮结束后的下一轮。
+               * 只在内存里排队是不够的：插话是「已提交但还没投递的用户输入」，进程重启/换模式
+               * （Electron ↔ serve）后必须还在 —— 故与聊天草稿同文件落盘（.diy/drafts.yaml）。
+               */
+              steer: RpcSchema.group({
+                desc: `插话：对话中追加发言（插入到下一步 / 下一次对话后），落任务目录 .diy/drafts.yaml`,
+                children: {
+                  list: RpcSchema.unary({
+                    desc: `列出待投递的插话（FIFO，顺序即投递顺序）`,
+                    input: {
+                      taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                    },
+                    output: z.array(SteerItemSchema),
+                  }),
+                  add: RpcSchema.unary({
+                    desc: `
+                    提交一条插话（只入队，不中断当前生成）
+
+                    正在跑的轮次会在下一个模型步（step）或本轮末尾（turn）取走；
+                    没有轮次在跑就先留在队列里，由聊天页上方横条展示（可取消）。
+                    `,
+                    input: {
+                      taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                      // 缺省 step（"插到下一步"是最常用的那个）；传非法值仍被契约拒绝，不静默降级
+                      mode: z
+                        .enum(["step", "turn"])
+                        .optional()
+                        .cliOption({ desc: `投递时机：step=插入到下一步（缺省）；turn=插入到下一次对话后` }),
+                      text: z.string().cliArg({ desc: "插话内容" }),
+                    },
+                    output: z.array(SteerItemSchema),
+                  }),
+                  cancel: RpcSchema.unary({
+                    desc: `取消一条待投递插话（幂等：id 不存在返回原队列）`,
+                    input: {
+                      taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                      id: z.string().cliArg({ desc: "插话 id（见 steer list）" }),
+                    },
+                    output: z.array(SteerItemSchema),
+                  }),
+                },
               }),
               models: RpcSchema.unary({
                 desc: `列出本地 agent 可选模型（zen/go；api 面逐个标注，见 local-agent.ts apiOf）`,

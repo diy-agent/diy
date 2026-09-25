@@ -135,6 +135,15 @@ export interface UiDriver {
   clickSelector(selector: string, opts?: { nth?: number }): Promise<void>;
   /** 读 DOM（拿 rect / 计算样式等；a11y 树看不到的东西用这个） */
   query<T>(expression: string): Promise<T>;
+  /**
+   * 在**当前焦点**处插入文本（CDP `Input.insertText`）。
+   *
+   * 为什么用 insertText 而不是逐键 dispatchKeyEvent：它是 Chromium 的原生"输入法提交"路径，
+   * 一次事件整段进入受控组件（CodeMirror 的 change 回调只触发一次），与真人粘贴/输入法上屏
+   * 同路径；逐键合成反而更容易踩到 IME/组合态。
+   * 前置：先用 clickSelector 把焦点落到输入区（否则文本进不去）。
+   */
+  type(text: string): Promise<void>;
   /** 按坐标拖拽（拖线用）；steps 让中间点也发出去，命中拖拽逻辑 */
   drag(from: { x: number; y: number }, to: { x: number; y: number }, steps?: number): Promise<void>;
   /** 在 renderer 里求值 */
@@ -236,6 +245,12 @@ export async function makeUiDriver(
     },
 
     query: (expression) => cdp.eval(expression),
+
+    async type(text) {
+      await cdp.send("Input.insertText", { text });
+      // 让 CodeMirror 的 updateListener → store 更新走完（受控组件下一帧才反映到 DOM 属性）
+      await new Promise((r) => setTimeout(r, 120));
+    },
 
     async drag(from, to, steps = 8) {
       await mouse("mousePressed", from);

@@ -255,6 +255,22 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent } = await import("./local-agent");
     return { cleared: getLocalAgent().clear(input.taskUri) };
   });
+  binding.on(app.agent.local.steer.list, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.steer.list", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().steerList(input.taskUri);
+  });
+  binding.on(app.agent.local.steer.add, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.steer.add", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    // 落盘失败必须冒泡（插话丢了=用户白打），不在这里吞成空数组
+    return getLocalAgent().steerAdd(input.taskUri, input.mode ?? "step", input.text);
+  });
+  binding.on(app.agent.local.steer.cancel, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.steer.cancel", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().steerCancel(input.taskUri, input.id);
+  });
   binding.on(app.agent.local.models, async () => {
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().listModels();

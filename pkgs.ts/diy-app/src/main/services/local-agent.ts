@@ -32,11 +32,30 @@ import { appendAudit } from "./agent-audit";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
 import { assembleSystem } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
+import { SteerQueue } from "../core/steer-queue";
+import type { SteerItem, SteerMode } from "../core/drafts";
 
 export const DEFAULT_MODEL = "gpt-5.6-luna";
 
-/** zen/go 基址：两个 API 面共用（chat/completions 与 responses 只是路径不同） */
-export const ZEN_BASE_URL = "https://opencode.ai/zen/go/v1";
+/**
+ * 一次 chat 调用里最多自动续多少轮（每轮由一条插话触发）。
+ *
+ * 为什么必须有上限：插话会触发新一轮，而新一轮里用户还能再插话 —— 没有闸门时
+ * "用户不停插嘴"能让单个 chat 流无限延续（CLI 侧更危险：一条命令永不返回）。
+ * 到顶后剩余的插话**留在队列里**（UI 横条照旧显示待发送），并写一条 error 块告知。
+ */
+export const MAX_STEER_ROUNDS = 8;
+
+/**
+ * zen/go 基址：两个 API 面共用（chat/completions 与 responses 只是路径不同）。
+ *
+ * `DIY_ZEN_BASE_URL` 是**测试/自建代理**的接缝：插话投递时机只与"步/轮边界"有关，
+ * 而真实上游无法保证边界何时到来（详见 tests/cli.intent.steer-ui.test.ts 的桩上游）。
+ * 缺省不设即官方 zen/go，生产行为不变。
+ */
+export function zenBaseUrl(): string {
+    return process.env["DIY_ZEN_BASE_URL"] || "https://opencode.ai/zen/go/v1";
+}
 
 /**
  * 模型走的 API 面。**必须逐个模型标注**，因为 zen/go 的 `GET /models` 不返回 API 面信息
@@ -353,19 +372,40 @@ function errText(e: unknown): string {
 
 export class LocalAgentManager {
     private sessions = new Map<string, LocalSession>();
+    /**
+     * 插话队列（「插入到下一步 / 下一次对话后」）。
+     *
+     * 权威落盘在任务目录 .diy/drafts.yaml（与聊天草稿同文件、同类数据：都是"丢了 = 用户白打"），
+     * 因此重启应用、切 Electron/serve 模式后队列仍在；本对象只是无状态门面（每次现读盘）。
+     */
+    private queue = new SteerQueue();
     /** chat 面 provider（/chat/completions）；与 responses 面各自单例，key 同生命周期 */
     private provider: ReturnType<typeof createOpenAICompatible> | null = null;
     /** responses 面 provider（/responses）—— responses-only 模型打 chat 面必 503，见 apiOf 注释 */
     private respProvider: ReturnType<typeof createOpenAI> | null = null;
     private _limits: LocalAgentLimits | null = null;
 
+    /**
+     * 语言模型解析的可注入出口（缺省按 API 面走 zen/go）。
+     *
+     * 存在理由：插话投递的时机（下一个模型步之前 / 下一轮）只能用**受控的上游**验证 ——
+     * 真实 LLM 无法保证"这一步一定调工具、下一步一定给答复"，断言会假红。单测注入桩
+     * 模型（`ai/test` 的 MockLanguageModelV3）后，步/轮边界变成确定事件，可逐条断言。
+     */
+    private readonly modelResolver?: (id: string, key: string) => LanguageModel;
+
+    constructor(modelResolver?: (id: string, key: string) => LanguageModel) {
+        this.modelResolver = modelResolver;
+    }
+
     /** 按 API 面取语言模型：同一 baseURL，路径由 provider 决定（/chat/completions vs /responses） */
     private modelFor(id: string, key: string): LanguageModel {
+        if (this.modelResolver) return this.modelResolver(id, key);
         if (apiOf(id) === "responses") {
-            this.respProvider ??= createOpenAI({ name: "zen-go", baseURL: ZEN_BASE_URL, apiKey: key });
+            this.respProvider ??= createOpenAI({ name: "zen-go", baseURL: zenBaseUrl(), apiKey: key });
             return this.respProvider.responses(id);
         }
-        this.provider ??= createOpenAICompatible({ name: "zen-go", baseURL: ZEN_BASE_URL, apiKey: key });
+        this.provider ??= createOpenAICompatible({ name: "zen-go", baseURL: zenBaseUrl(), apiKey: key });
         return this.provider(id);
     }
 
@@ -416,9 +456,35 @@ export class LocalAgentManager {
         return true;
     }
 
+    /**
+     * 提交一条插话（"插嘴"）。只入队，不唤醒任何东西：
+     * 正在跑的轮次会在下一个模型步（step）或本轮末尾（turn）取走；没有在跑就先留在队列里，
+     * 由 UI 横条展示（可取消），下一次对话开始后生效。
+     */
+    steerAdd(taskUri: string, mode: SteerMode, text: string): SteerItem[] {
+        return this.queue.add(taskUri, mode, text);
+    }
+
+    /** 当前待投递的插话（FIFO，顺序即投递顺序） */
+    steerList(taskUri: string): SteerItem[] {
+        return this.queue.list(taskUri);
+    }
+
+    /** 取消一条待投递插话（幂等：id 不存在就返回原队列） */
+    steerCancel(taskUri: string, id: string): SteerItem[] {
+        return this.queue.remove(taskUri, id);
+    }
+
     clear(taskUri: string): boolean {
         this.cancel(taskUri);
         this.sessions.delete(taskUri);
+        // 会话都要删了，排队中的插话无处可投 —— 一并清掉（否则横条会一直挂着"待发送"）
+        try {
+            this.queue.clear(taskUri);
+        } catch (e) {
+            console.error(`[local-agent] 清空插话队列失败 ${taskUri}:`, e);
+            return false;
+        }
         for (const f of [opsFile(taskUri), llmFile(taskUri), rawFile(taskUri)]) {
             try {
                 rmSync(f, { force: true });
@@ -431,7 +497,13 @@ export class LocalAgentManager {
         return true;
     }
 
-    /** 一轮对话：实时产出块协议 Op；op 即传即落盘（存储=传输）。同 task 并发拒绝。 */
+    /**
+     * 一轮对话：实时产出块协议 Op；op 即传即落盘（存储=传输）。同 task 并发拒绝。
+     *
+     * 「插嘴」在同一个流里投递：首轮用调用方的 message，本轮（及后续自动轮）由插话队列喂
+     * （见 MAX_STEER_ROUNDS）。对消费端（renderer 的 for await）而言始终只是一个流，
+     * 中途换没换轮次不需要它知道。
+     */
     async *chat(taskUri: string, message: string, model?: string, reasoningEffort?: ReasoningEffort): AsyncGenerator<Op> {
         const key = process.env.OPENCODE_ZEN_API_KEY;
         if (!key) throw new Error("缺少 OPENCODE_ZEN_API_KEY（main 进程环境变量）");
@@ -460,12 +532,78 @@ export class LocalAgentManager {
                 sess.store.apply(op);
                 yield op;
             }
-            for await (const op of this.runTurn(taskUri, sess, message, model, reasoningEffort, ctrl.signal, key, sink)) {
-                sess.store.apply(op);
-                yield op;
+
+            // ── 轮次循环：首轮 = 调用方消息，之后各轮 = 插话队列喂进来的消息 ──
+            // "插入到下一次对话后"（turn 模式）就是在这里落地的：本轮结束前发现队列非空，
+            // 自动接着开新一轮 —— 用户不必再敲一次回车。
+            let pending: { text: string; kind: "user" | SteerMode } | null = { text: message, kind: "user" };
+            for (let round = 0; pending && !ctrl.signal.aborted; round++) {
+                // 手动驱动内层生成器（而不是 `yield*` 委托）：委托会把 op 直接交给消费端，
+                // 跳过这里的 `sess.store.apply` —— 而 store 是本模块的**单一权威**
+                // （wire = store = UI = LLM），漏一次 apply 就会让下一段重建 messages 时看不到
+                // 刚发出的 user 块（实测症状：`InvalidPromptError: messages must not be empty`）。
+                // 手动驱动同时还能拿到内层的返回值（failed），for-await 会把它丢掉。
+                const inner = this.runTurn(
+                    taskUri, sess, pending.text, pending.kind, model, reasoningEffort, ctrl.signal, key, sink,
+                );
+                let failed = false;
+                try {
+                    for (;;) {
+                        const r = await inner.next();
+                        if (r.done) {
+                            failed = r.value.failed;
+                            break;
+                        }
+                        sess.store.apply(r.value);
+                        yield r.value;
+                    }
+                } finally {
+                    // 消费端提前断开（切页/停止）：把内层也关掉，别让它的收尾悬在半路
+                    await inner.return({ failed: false });
+                }
+                if (failed || ctrl.signal.aborted) break;
+                // 上限保护：插话会不断延长对话（每一轮都可能又冒出新的插话），没有上限时
+                // "用户不停插嘴 → 无限自我续命"（CLI 一条命令永不返回）。
+                // ⚠️ 必须**先判上限再取项**：取项是"取出即落盘删除"（投递的唯一入口），
+                // 取出来再丢弃就是真丢用户的话。故上限分支只读队列、不取项 —— 剩余插话留在盘上
+                // （UI 横条照旧显示待发送、可取消），并写显式 error 块，不静默吞。
+                let queued: SteerItem[];
+                try {
+                    queued = this.queue.list(taskUri);
+                } catch (e) {
+                    // 队列读不出来也不许静默：剩余的插话仍在盘上，只是本轮不再续
+                    console.error(`[local-agent] 插话队列读取失败，停止自动续轮 ${taskUri}:`, e);
+                    break;
+                }
+                if (queued.length === 0) break;
+                if (round + 1 >= MAX_STEER_ROUNDS) {
+                    const id = `${queued[0]!.id}-limit`;
+                    const msg = `连续插话已达 ${MAX_STEER_ROUNDS} 轮上限，剩余 ${queued.length} 条插话未投递（仍在队列里，可取消或再发一条消息触发）`;
+                    const ops: Op[] = [
+                        { op: "start", id, kind: "error", meta: { source: "steer" } },
+                        { op: "delta", id, fields: { message: msg } },
+                        { op: "stop", id },
+                    ];
+                    for (const op of ops) {
+                        sink(op);
+                        yield op;
+                    }
+                    break;
+                }
+                let item: SteerItem | undefined;
+                try {
+                    // turn 优先于 step：turn 模式的语义本就是"下一轮"；step 模式走到这里说明本轮
+                    // 已经收尾（模型给出了最终答复、或步数用尽），降级为下一轮 —— 否则它永远发不出去。
+                    item = this.queue.takeFirst(taskUri, "turn") ?? this.queue.takeFirst(taskUri, "step");
+                } catch (e) {
+                    console.error(`[local-agent] 插话取项失败，停止自动续轮 ${taskUri}:`, e);
+                    break;
+                }
+                if (!item) break;
+                pending = { text: item.text, kind: item.mode };
             }
             done = true;
-            // 轮末：从块树重建 LLM 历史（含本轮 user/tool 链路），整体覆盖 llm 日志
+            // 轮末：从块树重建 LLM 历史（含本轮 user/tool 链路与插话块），整体覆盖 llm 日志
             sess.messages = blocksToMessages(sess.store) as unknown as ModelMessage[];
             // dump 整文件覆盖 → tmp+rename 原子化：读取方永不见半文件（权威仍是 ops append-only）
             const dump = llmFile(taskUri);
@@ -479,17 +617,27 @@ export class LocalAgentManager {
         }
     }
 
-    /** 生成器本体：ai-sdk fullStream → Op。唯一认识 ai-sdk 事件名的地方。 */
+    /**
+     * 生成器本体：ai-sdk fullStream → Op。唯一认识 ai-sdk 事件名的地方。
+     *
+     * 分「段」（segment）跑：一段 = 一次 streamText 调用（内含若干模型步）。段在两种情况下
+     * 再来一段，都在同一个 turn 里：
+     *   ① 段内还有后续步 → prepareStep 把队列里的 step 插话插进那一步之前（最贴近"下一步"）；
+     *   ② 段已结束（模型不再请求工具）但队列里还有 step 插话 → 续一段把它们递出去
+     *      —— 等效于 dsh 的「turn-stopping 时有 steering 就再跑一步」，否则"模型直接给最终
+     *      答复"这种常见情形下，插话永远等不到下一步。
+     */
     private async *runTurn(
         taskUri: string,
         sess: LocalSession,
         message: string,
+        userKind: "user" | SteerMode,
         model: string | undefined,
         reasoningEffort: ReasoningEffort | undefined,
         signal: AbortSignal,
         key: string,
         sink: (op: Op) => void,
-    ): AsyncGenerator<Op> {
+    ): AsyncGenerator<Op, { failed: boolean }, void> {
         const turnId = `t${Date.now()}`;
         const uid = `${turnId}_u`;
         const cwd0 = resolveCwdWithNote(diyHome(), taskUri).cwd;
@@ -518,7 +666,15 @@ export class LocalAgentManager {
             if (!started.has(id)) yield* emit({ op: "start", id, kind, parent, meta });
         };
         yield* emit({ op: "start", id: turnId, kind: "turn", meta: { model: model || DEFAULT_MODEL } });
-        yield* emit({ op: "start", id: uid, kind: "text", parent: turnId, meta: { role: "user" } });
+        // user 块：插话带 steer 标记 —— UI 据此把这条标成"插嘴进来的"，
+        // 也是重放/续聊时唯一能区分"用户主动说"与"插嘴补一句"的线索
+        yield* emit({
+            op: "start",
+            id: uid,
+            kind: "text",
+            parent: turnId,
+            meta: { role: "user", ...(userKind === "user" ? {} : { steer: userKind }) },
+        });
         yield* emit({ op: "delta", id: uid, fields: { content: message } });
         yield* emit({ op: "stop", id: uid });
 
@@ -535,18 +691,61 @@ export class LocalAgentManager {
         let stepN = 0;
         let rN = 0;
         let aN = 0;
-        // turn 级 usage 累加器（finish-step 逐轮累加；finish 到达时覆盖为权威值）
+        let uN = 0;
+        // turn 级 usage 累加器（finish-step 逐轮累加；finish 到达时按段覆盖为权威值）
         const acc = { in: 0, out: 0, total: 0 };
-        let turnStopped = false;
         // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
         let lastAct: "none" | "text" | "tool" = "none";
 
+        // ── 插话投递 ─────────────────────────────────────────────
+        // prepareStep 是同步回调（不是生成器），只能先把 op 排队、由流循环 flush 出去
+        let pendingSteerOps: Op[] = [];
+        /** 插话的 user 块（三个 op）；parent 一律 = turn —— 该块在文档序上就是"某步之后、下一步之前" */
+        const steerBlockOps = (item: SteerItem): Op[] => {
+            const id = `${turnId}_su${++uN}`;
+            return [
+                { op: "start", id, kind: "text", parent: turnId, meta: { role: "user", steer: item.mode } },
+                { op: "delta", id, fields: { content: item.text } },
+                { op: "stop", id },
+            ];
+        };
+        /**
+         * 取出一条 step 模式插话：先落盘（+排队待 yield），返回文本供注入 messages；无则 null。
+         *
+         * 取不出来（队列写盘失败）就当没有 —— 绝不能"模型看见了、文件里还留着"：
+         * 那会让同一条插话在下一步被投递第二次。
+         */
+        const takeStepSteer = (): string | null => {
+            let item: SteerItem | undefined;
+            try {
+                item = this.queue.takeFirst(taskUri, "step");
+            } catch (e) {
+                console.error(`[local-agent] 插话队列取项失败 ${taskUri}：`, e);
+                return null;
+            }
+            if (!item) return null;
+            for (const op of steerBlockOps(item)) {
+                // 先落盘：即使随后流被中断，重放历史里仍有这条插话（谁也不会"没看见就没了"）
+                sink(op);
+                pendingSteerOps.push(op);
+            }
+            return item.text;
+        };
+        /** 把排队中的插话 op 交给消费端（必须在下一步开始前调用：块的落点决定消息顺序） */
+        const flushSteer = function* (): Generator<Op, void, void> {
+            if (pendingSteerOps.length === 0) return;
+            const ops = pendingSteerOps;
+            pendingSteerOps = [];
+            for (const op of ops) yield op;
+        };
+
         /** 收尾必闭合（幂等）：step 先于 turn，摘掉活跃轮次并落 turn-end 审计。
          *  抽成生成器是为了让「超预算早退」也走同一套收尾 —— 历史 bug：早退的 return 在 try 之前，
-         *  绕过 finally → activeTurns 留僵尸轮次、落盘 ops 缺 turn 的 stop、审计缺 turn-end。 */
-        const closeTurn = function* (currentStepId: string, stopped: boolean, steps: number): Generator<Op, void, void> {
+         *  绕过 finally → activeTurns 留僵尸轮次、落盘 ops 缺 turn 的 stop、审计缺 turn-end。
+         *  跨段之后 turn 的 stop 只能在这里发：只有走到这里才知道不会再续一段。 */
+        const closeTurn = function* (currentStepId: string, steps: number): Generator<Op, void, void> {
             if (currentStepId !== turnId) yield* emit({ op: "stop", id: currentStepId });
-            if (!stopped) yield* emit({ op: "stop", id: turnId });
+            yield* emit({ op: "stop", id: turnId });
             noteTurnEnd(taskUri);
             appendAudit(diyHome(), {
                 phase: "turn-end",
@@ -570,15 +769,13 @@ export class LocalAgentManager {
                     `请精简提示词模版或项目 AGENTS.md。`,
             );
             // 拒绝发送也是一轮完整生命周期：必须闭合，否则 UI/崩溃报告/审计三处都会认为它还在跑
-            yield* closeTurn(stepId, false, stepN);
-            return;
+            yield* closeTurn(stepId, stepN);
+            return { failed: false };
         }
 
         const cwd = cwd0;
         const L = this.getLimits();
         const modelMax = modelOutputTokens(model || DEFAULT_MODEL);
-        // store 此刻已含本轮 user 块（emit 即 apply）；重建历史自带 user，不再手工拼
-        const sent: ModelMessage[] = blocksToMessages(sess.store) as unknown as ModelMessage[];
         // 研究用：把“发给上游的 messages”与 fullStream 的每个 part 原样落盘
         const raw = rawDumpEnabled() ? rawFile(taskUri) : null;
         let rawSeq = 0;
@@ -590,224 +787,262 @@ export class LocalAgentManager {
                 console.error(`[local-agent] raw dump 写入失败 ${raw}:`, e);
             }
         };
-        rawSink({
-            kind: "request",
-            ts: new Date().toISOString(),
-            model: model || DEFAULT_MODEL,
-            system: asm.system,
-            tools: Object.keys(buildTools(cwd, L, taskUri)),
-            settings: { maxSteps: L.maxSteps, maxOutputTokens: modelMax, maxRetries: 2, reasoningEffort: reasoningEffort ?? "none" },
-            messages: sent,
-        });
-        const result = streamText({
-            model: this.modelFor(model || DEFAULT_MODEL, key),
-            system: asm.system,
-            messages: sent,
-            tools: buildTools(cwd, L, taskUri),
-            stopWhen: stepCountIs(L.maxSteps),
-            abortSignal: signal,
-            headers: { "x-opencode-session": sessionIdOf(taskUri) },
-            maxOutputTokens: modelMax, // 按模型硬上限（models.dev），reasoning 模型会先吃一部分
-            // none 用 AI SDK 标准关闭语义；其他值由 OpenAI-compatible provider 原样转发。
-            // provider 配置可以提供 minimal/xhigh/max 等非通用值，不能压缩成固定枚举。
-            ...(reasoningEffort === "none"
-                ? { reasoning: "none" as const }
-                : reasoningEffort
-                  ? { providerOptions: { openaiCompatible: { reasoningEffort } } }
-                  : {}),
-            maxRetries: 2,
-        });
 
-        try {
-            for await (const part of result.fullStream) {
-                rawSink({ kind: "part", seq: ++rawSeq, ts: new Date().toISOString(), part });
-                switch (part.type) {
-                    case "start-step":
-                        stepN++;
-                        stepId = `${turnId}_s${stepN}`;
-                        yield* emit({ op: "start", id: stepId, kind: "step", parent: turnId });
-                        break;
-                    case "reasoning-start": {
-                        const id = `${turnId}_r${++rN}`;
-                        partBlock.set(part.id, id);
-                        yield* emit({ op: "start", id, kind: "think", parent: stepId });
-                        break;
-                    }
-                    case "reasoning-delta": {
-                        let id = partBlock.get(part.id);
-                        if (!id) {
-                            id = `${turnId}_r${++rN}`;
+        let failed = false;
+        for (let seg = 0; !signal.aborted; seg++) {
+            // 每段都从块树重建 messages：上一段的产出 + 中途落下的插话块都在里面，
+            // 「wire = store = UI = LLM」这条链不能因为分段而破例
+            const sent: ModelMessage[] = blocksToMessages(sess.store) as unknown as ModelMessage[];
+            // 本段开始前的 usage 快照：段级 totalUsage 只代表本段，换算成 turn 累计要加它
+            const segStart = { ...acc };
+            rawSink({
+                kind: "request",
+                seg,
+                ts: new Date().toISOString(),
+                model: model || DEFAULT_MODEL,
+                system: asm.system,
+                tools: Object.keys(buildTools(cwd, L, taskUri)),
+                settings: { maxSteps: L.maxSteps, maxOutputTokens: modelMax, maxRetries: 2, reasoningEffort: reasoningEffort ?? "none" },
+                messages: sent,
+            });
+            const result = streamText({
+                model: this.modelFor(model || DEFAULT_MODEL, key),
+                system: asm.system,
+                messages: sent,
+                tools: buildTools(cwd, L, taskUri),
+                stopWhen: stepCountIs(L.maxSteps),
+                abortSignal: signal,
+                headers: { "x-opencode-session": sessionIdOf(taskUri) },
+                maxOutputTokens: modelMax, // 按模型硬上限（models.dev），reasoning 模型会先吃一部分
+                // none 用 AI SDK 标准关闭语义；其他值由 OpenAI-compatible provider 原样转发。
+                // provider 配置可以提供 minimal/xhigh/max 等非通用值，不能压缩成固定枚举。
+                ...(reasoningEffort === "none"
+                    ? { reasoning: "none" as const }
+                    : reasoningEffort
+                      ? { providerOptions: { openaiCompatible: { reasoningEffort } } }
+                      : {}),
+                maxRetries: 2,
+                // 每个模型步开始前的唯一钩子：把队列里的 step 插话插进这一步的 messages。
+                // 返回的 messages 会 carry forward 到后续步（SDK 语义），所以模型一开口就能看到插话。
+                //
+                // 只在第二步及之后注入（stepNumber > 0）：用户点的是"插到**下一步**" ——
+                // 本轮的第一个请求不是"下一步"，它是这一轮本身（在它之前插入等于把插话
+                // 当成了本轮开场的用户消息）。第一步之前的插话由段末续段逻辑递出，两条路径合起来
+                // 才能覆盖全部情形（见 runTurn 段循环末尾）。
+                prepareStep: ({ messages, stepNumber }) => {
+                    if (signal.aborted || stepNumber === 0) return {};
+                    const text = takeStepSteer();
+                    return text === null ? {} : { messages: [...messages, { role: "user" as const, content: text }] };
+                },
+            });
+
+            try {
+                for await (const part of result.fullStream) {
+                    // prepareStep 里落的插话 op 在这里递出去：此刻 start-step 还没发，
+                    // 所以块的文档序正确落在"上一步之后、这一步之前"
+                    yield* flushSteer();
+                    rawSink({ kind: "part", seg, seq: ++rawSeq, ts: new Date().toISOString(), part });
+                    switch (part.type) {
+                        case "start-step":
+                            stepN++;
+                            stepId = `${turnId}_s${stepN}`;
+                            yield* emit({ op: "start", id: stepId, kind: "step", parent: turnId });
+                            break;
+                        case "reasoning-start": {
+                            const id = `${turnId}_r${++rN}`;
                             partBlock.set(part.id, id);
-                            yield* ensure(id, "think", stepId);
+                            yield* emit({ op: "start", id, kind: "think", parent: stepId });
+                            break;
                         }
-                        yield* emit({ op: "delta", id, fields: { content: pick(part, "text", "delta") } });
-                        break;
-                    }
-                    case "reasoning-end": {
-                        const id = partBlock.get(part.id);
-                        if (id) yield* emit({ op: "stop", id });
-                        break;
-                    }
-                    case "text-start": {
-                        lastAct = "text";
-                        const id = `${turnId}_a${++aN}`;
-                        partBlock.set(part.id, id);
-                        yield* emit({ op: "start",
-                            id,
-                            kind: "text",
-                            parent: stepId,
-                            meta: { role: "assistant" },
-                        });
-                        break;
-                    }
-                    case "text-delta": {
-                        let id = partBlock.get(part.id);
-                        if (!id) {
-                            id = `${turnId}_a${++aN}`;
-                            partBlock.set(part.id, id);
-                            yield* ensure(id, "text", stepId, { role: "assistant" });
-                        }
-                        yield* emit({ op: "delta", id, fields: { content: pick(part, "text", "delta") } });
-                        break;
-                    }
-                    case "text-end": {
-                        const id = partBlock.get(part.id);
-                        if (id) yield* emit({ op: "stop", id });
-                        break;
-                    }
-                    case "tool-input-start":
-                        lastAct = "tool";
-                        partBlock.set(part.id, part.id);
-                        yield* emit({ op: "start",
-                            id: part.id,
-                            kind: "tool",
-                            parent: stepId,
-                            meta: { tool: part.toolName, status: "streaming" },
-                        });
-                        break;
-                    case "tool-input-delta": {
-                        const tid =
-                            (part as { id?: string; toolCallId?: string }).id
-                            ?? (part as { toolCallId?: string }).toolCallId
-                            ?? stepId;
-                        yield* ensure(tid, "tool", stepId, { tool: "tool", status: "streaming" });
-                        partBlock.set(tid, tid);
-                        yield* emit({ op: "delta",
-                            id: tid,
-                            fields: {
-                                input: pick(part, "text", "delta", "partialText", "inputTextDelta"),
-                            },
-                        });
-                        break;
-                    }
-                    case "tool-call": {
-                        yield* ensure(part.toolCallId, "tool", stepId, { tool: part.toolName, status: "streaming" });
-                        const input = (part as { input?: JSONVal }).input;
-                        const title =
-                            input &&
-                            typeof input === "object" &&
-                            !Array.isArray(input) &&
-                            "command" in input
-                                ? String((input as Record<string, unknown>).command)
-                                : JSON.stringify(input ?? "").slice(0, 120);
-                        yield* emit({ op: "patch",
-                            id: part.toolCallId,
-                            fields: {
-                                tool: part.toolName,
-                                input: JSON.stringify(input ?? {}),
-                                args: input ?? null,
-                                status: "running",
-                                title,
-                            },
-                        });
-                        break;
-                    }
-                    case "tool-result":
-                        yield* ensure(part.toolCallId, "tool", stepId, { tool: part.toolName ?? "tool" });
-                        yield* emit({ op: "delta",
-                            id: part.toolCallId,
-                            fields: { output: outText(part.output) },
-                        });
-                        yield* emit({ op: "patch", id: part.toolCallId, fields: { status: "done" } });
-                        yield* emit({ op: "stop", id: part.toolCallId });
-                        break;
-                    case "tool-error": {
-                        const id = (part as { toolCallId?: string }).toolCallId ?? stepId;
-                        if (id !== stepId) yield* ensure(id, "tool", stepId, { tool: "tool", status: "streaming" });
-                        yield* emit({ op: "delta",
-                            id,
-                            fields: { output: errText((part as { error?: unknown }).error) },
-                        });
-                        yield* emit({ op: "patch", id, fields: { status: "error" } });
-                        yield* emit({ op: "stop", id });
-                        break;
-                    }
-                    case "error":
-                        yield* errorBlock("llm", errText((part as { error?: unknown }).error));
-                        break;
-                    case "abort":
-                        yield* errorBlock("abort", "生成已取消");
-                        break;
-                    case "finish-step": {
-                        // 每步 usage 累加进 turn（zen 流尾 totalUsage 偶发缺失，双保险）
-                        const su = (part as unknown as { usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } }).usage;
-                        if (su) {
-                            acc.in += su.inputTokens ?? 0;
-                            acc.out += su.outputTokens ?? 0;
-                            acc.total += su.totalTokens ?? (su.inputTokens ?? 0) + (su.outputTokens ?? 0);
-                            yield* emit({ op: "patch", id: turnId, fields: { usage: { ...acc } } });
-                        }
-                        if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
-                        break;
-                    }
-                    case "finish": {
-                        const usage = (
-                            part as unknown as {
-                                totalUsage?: {
-                                    inputTokens?: number;
-                                    outputTokens?: number;
-                                    totalTokens?: number;
-                                };
+                        case "reasoning-delta": {
+                            let id = partBlock.get(part.id);
+                            if (!id) {
+                                id = `${turnId}_r${++rN}`;
+                                partBlock.set(part.id, id);
+                                yield* ensure(id, "think", stepId);
                             }
-                        ).totalUsage;
-                        // 截断/耗尽显式化：写进 turn.notice，UI 页脚展示（限制值来自动态配置）
-                        const fr = (part as { finishReason?: string }).finishReason;
-                        let notice: string | undefined;
-                        if (fr === "length") {
-                            notice = `输出达到 maxOutputTokens=${modelMax} 被截断（${model || DEFAULT_MODEL} 硬上限），可再发一条消息接上`;
-                        } else if (stepN >= L.maxSteps && lastAct === "tool") {
-                            notice = `达到 maxSteps=${L.maxSteps} 步上限，本轮强制收尾（模型仍在请求工具）；继续发消息可接力`;
+                            yield* emit({ op: "delta", id, fields: { content: pick(part, "text", "delta") } });
+                            break;
                         }
-                        if (notice) yield* emit({ op: "patch", id: turnId, fields: { notice } });
-                        if (usage) {
-                            yield* emit({ op: "patch",
-                                id: turnId,
+                        case "reasoning-end": {
+                            const id = partBlock.get(part.id);
+                            if (id) yield* emit({ op: "stop", id });
+                            break;
+                        }
+                        case "text-start": {
+                            lastAct = "text";
+                            const id = `${turnId}_a${++aN}`;
+                            partBlock.set(part.id, id);
+                            yield* emit({ op: "start",
+                                id,
+                                kind: "text",
+                                parent: stepId,
+                                meta: { role: "assistant" },
+                            });
+                            break;
+                        }
+                        case "text-delta": {
+                            let id = partBlock.get(part.id);
+                            if (!id) {
+                                id = `${turnId}_a${++aN}`;
+                                partBlock.set(part.id, id);
+                                yield* ensure(id, "text", stepId, { role: "assistant" });
+                            }
+                            yield* emit({ op: "delta", id, fields: { content: pick(part, "text", "delta") } });
+                            break;
+                        }
+                        case "text-end": {
+                            const id = partBlock.get(part.id);
+                            if (id) yield* emit({ op: "stop", id });
+                            break;
+                        }
+                        case "tool-input-start":
+                            lastAct = "tool";
+                            partBlock.set(part.id, part.id);
+                            yield* emit({ op: "start",
+                                id: part.id,
+                                kind: "tool",
+                                parent: stepId,
+                                meta: { tool: part.toolName, status: "streaming" },
+                            });
+                            break;
+                        case "tool-input-delta": {
+                            const tid =
+                                (part as { id?: string; toolCallId?: string }).id
+                                ?? (part as { toolCallId?: string }).toolCallId
+                                ?? stepId;
+                            yield* ensure(tid, "tool", stepId, { tool: "tool", status: "streaming" });
+                            partBlock.set(tid, tid);
+                            yield* emit({ op: "delta",
+                                id: tid,
                                 fields: {
-                                    usage: {
-                                        in: usage.inputTokens ?? 0,
-                                        out: usage.outputTokens ?? 0,
-                                        total: usage.totalTokens ?? 0,
-                                    },
+                                    input: pick(part, "text", "delta", "partialText", "inputTextDelta"),
                                 },
                             });
+                            break;
                         }
-                        yield* emit({ op: "stop", id: turnId });
-                        turnStopped = true;
-                        break;
+                        case "tool-call": {
+                            yield* ensure(part.toolCallId, "tool", stepId, { tool: part.toolName, status: "streaming" });
+                            const input = (part as { input?: JSONVal }).input;
+                            const title =
+                                input &&
+                                typeof input === "object" &&
+                                !Array.isArray(input) &&
+                                "command" in input
+                                    ? String((input as Record<string, unknown>).command)
+                                    : JSON.stringify(input ?? "").slice(0, 120);
+                            yield* emit({ op: "patch",
+                                id: part.toolCallId,
+                                fields: {
+                                    tool: part.toolName,
+                                    input: JSON.stringify(input ?? {}),
+                                    args: input ?? null,
+                                    status: "running",
+                                    title,
+                                },
+                            });
+                            break;
+                        }
+                        case "tool-result":
+                            yield* ensure(part.toolCallId, "tool", stepId, { tool: part.toolName ?? "tool" });
+                            yield* emit({ op: "delta",
+                                id: part.toolCallId,
+                                fields: { output: outText(part.output) },
+                            });
+                            yield* emit({ op: "patch", id: part.toolCallId, fields: { status: "done" } });
+                            yield* emit({ op: "stop", id: part.toolCallId });
+                            break;
+                        case "tool-error": {
+                            const id = (part as { toolCallId?: string }).toolCallId ?? stepId;
+                            if (id !== stepId) yield* ensure(id, "tool", stepId, { tool: "tool", status: "streaming" });
+                            yield* emit({ op: "delta",
+                                id,
+                                fields: { output: errText((part as { error?: unknown }).error) },
+                            });
+                            yield* emit({ op: "patch", id, fields: { status: "error" } });
+                            yield* emit({ op: "stop", id });
+                            break;
+                        }
+                        case "error":
+                            yield* errorBlock("llm", errText((part as { error?: unknown }).error));
+                            break;
+                        case "abort":
+                            yield* errorBlock("abort", "生成已取消");
+                            break;
+                        case "finish-step": {
+                            // 每步 usage 累加进 turn（zen 流尾 totalUsage 偶发缺失，双保险）
+                            const su = (part as unknown as { usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } }).usage;
+                            if (su) {
+                                acc.in += su.inputTokens ?? 0;
+                                acc.out += su.outputTokens ?? 0;
+                                acc.total += su.totalTokens ?? (su.inputTokens ?? 0) + (su.outputTokens ?? 0);
+                                yield* emit({ op: "patch", id: turnId, fields: { usage: { ...acc } } });
+                            }
+                            if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
+                            break;
+                        }
+                        case "finish": {
+                            const usage = (
+                                part as unknown as {
+                                    totalUsage?: {
+                                        inputTokens?: number;
+                                        outputTokens?: number;
+                                        totalTokens?: number;
+                                    };
+                                }
+                            ).totalUsage;
+                            // 截断/耗尽显式化：写进 turn.notice，UI 页脚展示（限制值来自动态配置）
+                            const fr = (part as { finishReason?: string }).finishReason;
+                            let notice: string | undefined;
+                            if (fr === "length") {
+                                notice = `输出达到 maxOutputTokens=${modelMax} 被截断（${model || DEFAULT_MODEL} 硬上限），可再发一条消息接上`;
+                            } else if (stepN >= L.maxSteps && lastAct === "tool") {
+                                notice = `达到 maxSteps=${L.maxSteps} 步上限，本轮强制收尾（模型仍在请求工具）；继续发消息可接力`;
+                            }
+                            if (notice) yield* emit({ op: "patch", id: turnId, fields: { notice } });
+                            if (usage) {
+                                // totalUsage 是**这一段**的权威值（不是整个 turn）：按段快照换算累计，
+                                // 直接覆盖会让后一段把前一段的用量抹掉
+                                acc.in = segStart.in + (usage.inputTokens ?? 0);
+                                acc.out = segStart.out + (usage.outputTokens ?? 0);
+                                acc.total =
+                                    segStart.total
+                                    + (usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0));
+                                yield* emit({ op: "patch", id: turnId, fields: { usage: { ...acc } } });
+                            }
+                            // turn 的 stop 不在这里发：可能还有下一段（插话），只有 closeTurn 知道是不是真的结束
+                            break;
+                        }
                     }
                 }
-            }
 
-            // LLM 历史由外层 chat() 从块树统一重建（见 chat 末尾），此处不操作
-        } catch (e) {
-            // 取消（消费端断开 / 停止按钮）与真实错误分流：前者是预期收尾，后者记 error 块
-            if (signal.aborted) yield* errorBlock("abort", "生成已取消");
-            else yield* errorBlock("stream", errText(e));
-        } finally {
-            // 收尾必闭合：step 先于 turn（stop 幂等，重复无害）；
-            // 轮次审计收尾：崩溃后能区分"死在生成中"还是"生成已结束"
-            yield* closeTurn(stepId, turnStopped, stepN);
+                // LLM 历史由外层 chat() 从块树统一重建（见 chat 末尾），此处不操作
+            } catch (e) {
+                // 取消（消费端断开 / 停止按钮）与真实错误分流：前者是预期收尾，后者记 error 块
+                if (signal.aborted) yield* errorBlock("abort", "生成已取消");
+                else {
+                    yield* errorBlock("stream", errText(e));
+                    failed = true;
+                }
+            }
+            // 段末兜底 flush：被中断的那段里 prepareStep 落过的插话 op 也要见天日
+            // （sink 已落盘，这里负责让当前会话的 UI 立刻看到）
+            yield* flushSteer();
+            if (failed || signal.aborted) break;
+            if (stepN >= L.maxSteps) break; // 步数用尽：剩下的插话留给下一轮（chat 外层会取走）
+            // 段已结束（模型不再请求工具）：若队列里还有 step 插话，续一段把它递出去。
+            // 不这么做的话，"模型一步一步做完直接给最终答复"这种最常见的情形下，插话永远
+            // 等不到下一个模型步 —— 用户点了"插入到下一步"却要等到下次对话才生效。
+            const text = takeStepSteer();
+            if (text === null) break;
+            // 立刻把插话块递给消费端：下一段要从 store 重建 messages，必须先由外层 apply 落进块树
+            yield* flushSteer();
         }
+
+        // 收尾必闭合：step 先于 turn（stop 幂等，重复无害）；
+        // 轮次审计收尾：崩溃后能区分"死在生成中"还是"生成已结束"
+        yield* closeTurn(stepId, stepN);
+        return { failed };
     }
 }
 

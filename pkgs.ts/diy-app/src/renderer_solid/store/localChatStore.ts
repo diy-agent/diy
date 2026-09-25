@@ -13,6 +13,9 @@ import { diyService } from "../lib/rpc";
 import { notificationStore } from "./notificationStore";
 import { BlockStore, toTree, type BlockNode, type Op } from "../../main/services/local-blocks";
 import type { ReasoningEffort } from "../../main/services/local-agent";
+// 插话队列项的类型在 core/drafts（与草稿同文件存储）；这里只要类型，故 type-only import
+//（不会把 node:fs 依赖带进 renderer）
+import type { SteerItem, SteerMode } from "../../main/core/drafts";
 
 interface TaskState {
     store: BlockStore;
@@ -23,6 +26,9 @@ interface TaskState {
     setRunning: (v: boolean) => void;
     error: () => string | null;
     setError: (v: string | null) => void;
+    /** 待投递的插话（FIFO）。权威在任务目录 .diy/drafts.yaml，这里只是当前快照 */
+    steers: () => SteerItem[];
+    setSteers: (v: SteerItem[]) => void;
     /** 阅读位置：会话块树滚动区 scrollTop（内存态，随会话保留；不落盘——重启后从最新看起） */
     scroll: number;
     /** 详情面板当前 tab（local=agent 对话 / info=任务详情），per-task 记忆 */
@@ -42,7 +48,8 @@ function stateFor(taskUri: string): TaskState {
         const [trees, setTrees] = createSignal<BlockNode[]>([]);
         const [running, setRunning] = createSignal(false);
         const [error, setError] = createSignal<string | null>(null);
-        s = { store: new BlockStore(), loaded: false, trees, setTrees, running, setRunning, error, setError, scroll: 0, tab: "local", detailScroll: 0 };
+        const [steers, setSteers] = createSignal<SteerItem[]>([]);
+        s = { store: new BlockStore(), loaded: false, trees, setTrees, running, setRunning, error, setError, steers, setSteers, scroll: 0, tab: "local", detailScroll: 0 };
         states.set(taskUri, s);
     }
     return s;
@@ -109,9 +116,27 @@ async function loadHistory(st: TaskState, taskUri: string): Promise<void> {
     }
 }
 
+/**
+ * 拉取插话队列快照。
+ *
+ * 失败**不抛**也不清空已有快照：队列是用户已提交的内容，界面上把横条抹掉比留着旧数据更糟
+ * （用户会以为自己的插话已经发出去了）。留旧值 + toast 告知。
+ */
+async function refreshSteers(taskUri: string): Promise<void> {
+    try {
+        const items = (await diyService.diy.agent.local.steer.list({ taskUri })) as SteerItem[];
+        stateFor(taskUri).setSteers(items);
+    } catch (e) {
+        console.error(`[localChat] 插话队列读取失败 ${taskUri}:`, e);
+        notificationStore.addToast("error", "插话队列读取失败，横条可能不是最新（详见控制台）");
+    }
+}
+
 async function open(taskUri: string) {
     setCurrentUri(taskUri);
     const st = stateFor(taskUri);
+    // 队列与历史独立：loaded 与否都要拉（横条反映的是"当前待投递"，与历史加载进度无关）
+    void refreshSteers(taskUri);
     if (st.loaded) return;
     // 并发去重（必需）：LocalChatPage 首挂时 onMount 与 uri 切换 effect 都会调 open，
     // 而 loaded 只在 await 之后置位 —— 没有这道闸门，两次 history 会被先后 fold 进同一个
@@ -175,6 +200,41 @@ async function send(taskUri: string, text: string): Promise<boolean> {
         // （否则 stopped/error 等终态字段要等下一次 rAF 才可见）。
         flushRefresh(st);
         st.setRunning(false);
+        // 轮次结束（含正常收尾/取消/报错）后对齐队列：本轮末尾可能投递了 turn 模式的插话，
+        // 不刷新的话横条会一直挂着"待发送"，而模型其实已经看见了
+        void refreshSteers(taskUri);
+    }
+}
+
+/**
+ * 提交一条插话（"插嘴"）：不打断当前生成，等模型在下一个模型步（step）
+ * 或本轮结束后的下一轮（turn）取走。
+ *
+ * 提交成功返回 true；失败返回 false 且**队列不本地改写**（以服务端返回为准，
+ * 免出现"界面显示已排队、盘上其实没写"的假成功）。落盘失败由调用方提示用户。
+ */
+async function submitSteer(taskUri: string, mode: SteerMode, text: string): Promise<boolean> {
+    const body = text.trim();
+    if (!body) return false;
+    try {
+        const items = (await diyService.diy.agent.local.steer.add({ taskUri, mode, text: body })) as SteerItem[];
+        stateFor(taskUri).setSteers(items);
+        return true;
+    } catch (e) {
+        console.error(`[localChat] 插话提交失败 ${taskUri}:`, e);
+        notificationStore.addToast("error", "插话提交失败（未能落盘），内容未排队");
+        return false;
+    }
+}
+
+/** 取消一条待投递插话（幂等；失败保留原快照，避免界面与盘上不一致） */
+async function cancelSteer(taskUri: string, id: string): Promise<void> {
+    try {
+        const items = (await diyService.diy.agent.local.steer.cancel({ taskUri, id })) as SteerItem[];
+        stateFor(taskUri).setSteers(items);
+    } catch (e) {
+        console.error(`[localChat] 插话取消失败 ${taskUri}#${id}:`, e);
+        notificationStore.addToast("error", "插话取消失败，仍在队列中");
     }
 }
 
@@ -208,6 +268,7 @@ async function clear(taskUri: string) {
     st.store = new BlockStore();
     st.loaded = true; // 文件已删，不必重拉
     st.setError(null);
+    st.setSteers([]); // 会话已清，排队中的插话也被 main 一并清掉（见 clear()）
     st.scroll = 0; // 会话清空，阅读位置一并归位
     refresh(st);
 }
@@ -265,11 +326,18 @@ export const localChatStore = {
     get reasoningEffort() {
         return reasoningEffort();
     },
+    /** 当前任务的待投递插话（FIFO） */
+    get steers(): SteerItem[] {
+        return cur()?.steers() ?? [];
+    },
     setReasoningEffort,
     setActiveModel,
     open,
     send,
     cancel,
+    submitSteer,
+    cancelSteer,
+    refreshSteers,
     clear,
     setScroll,
     getScroll,

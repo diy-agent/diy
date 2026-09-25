@@ -75,6 +75,109 @@ function hasOpsFile(taskUri: string): boolean {
     return findOpsFile(taskUri) !== undefined;
 }
 
+// ─── 插话（steer）：对话中插嘴 ───────────────────────
+//
+// 需求：生成中也能追加发言，两种时机（插入到下一步 / 插入到下一次对话后），
+// 且**必须持久化**（进程重启、切 Electron/serve 模式后队列仍在）——
+// 插话是"已提交但模型还没看见的用户输入"，丢了就是用户白打。
+// 存储与聊天草稿同文件（任务目录 .diy/drafts.yaml 的 steers），生命周期随任务删除。
+
+/** 取 CLI JSON 的 data 字段（getJson 返回 Record<string, unknown>，这里按用例收窄） */
+async function cliData<T>(cmd: string): Promise<T> {
+  const r = await fx.sh.getJson(cmd);
+  return r.data as T;
+}
+
+interface SteerRow {
+  id: string;
+  mode: string;
+  text: string;
+}
+
+describe("agent.local — 插话 steer（无网络）", () => {
+  it("add 入队 → list 可见 → cancel 取消", async () => {
+    const uri = await setup("插话任务");
+    const add = await cliData<SteerRow[]>(`./diy.sh agent local steer add ${uri} "插到下一步" --mode step`);
+    expect(add).toHaveLength(1);
+    expect(add[0]).toMatchObject({ mode: "step", text: "插到下一步" });
+
+    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+    expect(list.map((i) => i.text)).toEqual(["插到下一步"]);
+
+    const after = await cliData<SteerRow[]>(`./diy.sh agent local steer cancel ${uri} ${list[0]!.id}`);
+    expect(after).toEqual([]);
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+
+  it("不传 --mode 缺省 step（最常用的那个）；不静默接受非法值", async () => {
+    const uri = await setup("缺省模式");
+    const r = await cliData<SteerRow[]>(`./diy.sh agent local steer add ${uri} "没说时机"`);
+    expect(r[0]).toMatchObject({ mode: "step" });
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+
+  it("两种模式各自记住（step / turn 并存，FIFO 顺序即提交顺序）", async () => {
+    const uri = await setup("两种插话");
+    await fx.sh.getJson(`./diy.sh agent local steer add ${uri} "第一步插话" --mode step`);
+    await fx.sh.getJson(`./diy.sh agent local steer add ${uri} "下一轮插话" --mode turn`);
+    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+    expect(list.map((i) => [i.mode, i.text])).toEqual([
+      ["step", "第一步插话"],
+      ["turn", "下一轮插话"],
+    ]);
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+
+  it("取消不存在的 id 幂等（重复点 ✕ 不该报错）", async () => {
+    const uri = await setup("幂等取消");
+    const r = await cliData<SteerRow[]>(`./diy.sh agent local steer cancel ${uri} nope`);
+    expect(r).toEqual([]);
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+
+  it("空内容被拒（不落空插话：投进去只会污染提示词）", async () => {
+    const uri = await setup("空插话");
+    const r = await fx.sh.run(`./diy.sh agent local steer add ${uri} "   " --mode step`);
+    expect(r.code).not.toBe(0);
+    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+    expect(list).toEqual([]);
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+
+  it("非法 mode 被契约拒绝（不许静默当成 step）", async () => {
+    const uri = await setup("非法模式");
+    const r = await fx.sh.run(`./diy.sh agent local steer add ${uri} "内容" --mode next`);
+    expect(r.code).not.toBe(0);
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+
+  it("落盘在任务目录 .diy/drafts.yaml（与聊天草稿同文件，可被 CLI 直接观察）", async () => {
+    const uri = await setup("落盘检查");
+    await fx.sh.getJson(`./diy.sh agent local steer add ${uri} "持久化的话" --mode turn`);
+    const fp = join(fx.HOME, uri, ".diy", "drafts.yaml");
+    expect(existsSync(fp)).toBe(true);
+    const raw = readFileSync(fp, "utf-8");
+    expect(raw).toContain("steers");
+    expect(raw).toContain("持久化的话");
+    // 取消后队列空、字段也空 → 文件删除（不留空壳）
+    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+    await fx.sh.getJson(`./diy.sh agent local steer cancel ${uri} ${list[0]!.id}`);
+    expect(existsSync(fp)).toBe(false);
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+
+  it("与聊天草稿同文件互不干扰（清草稿不动插话）", async () => {
+    const uri = await setup("共存检查");
+    await fx.sh.getJson(`./diy.sh agent local steer add ${uri} "排队的插话" --mode step`);
+    await fx.sh.getJson(`./diy.sh task drafts set ${uri} --agent_input "打到一半的草稿"`);
+    // 清空草稿字段：插话队列必须还在（"清空输入框" ≠ "放弃排队中的插话"）
+    await fx.sh.getJson(`./diy.sh task drafts clear ${uri}`);
+    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+    expect(list.map((i) => i.text)).toEqual(["排队的插话"]);
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+});
+
 describe("agent.local — 控制面（无网络）", () => {
     it("models 列出 zen/go 子集", async () => {
         const r = await fx.sh.getJson(`./diy.sh agent local models`);

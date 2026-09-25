@@ -22,6 +22,8 @@ import { Caches, DENSITY_LEVEL, DENSITY_VALUES, type Density } from "../lib/ui-s
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
 import type { ReasoningEffort } from "../../main/services/local-agent";
+// 插话队列项：与草稿同文件存储（任务目录 .diy/drafts.yaml），类型只在 main 侧定义
+import type { SteerItem, SteerMode } from "../../main/core/drafts";
 import { reasoningEffortLabel } from "../../shared/reasoning-effort";
 import { IconExpand, IconCompress } from "./icons";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
@@ -344,9 +346,17 @@ function LeafView(props: {
     // user 发言：一切密度下都全文——它就是"我说过啥"的脉络本体
     // 右对齐：外层用 flex justify-end（原先的 self-end 在 block 父链里完全无效）
     if (b.tag === "text" && str(b.attrs.role) === "user") {
+        // steer 标记来自 main 写的块 meta（用户在生成中插的话）：标出来，才看得出
+        // "这句是在第几步之后插进去的"，而不是以为它是一次新对话的开头
+        const steer = str(b.attrs.steer) as SteerMode | "";
         return (
             <div class="flex justify-end">
                 <div class="max-w-[85%] bg-primary/10 border border-primary/20 rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words">
+                    <Show when={steer}>
+                        <span class="mb-0.5 block text-[10px] opacity-60">
+                            ⤵ 插话（{steerModeLabel(steer as SteerMode)}）{steerModeTip(steer as SteerMode)}
+                        </span>
+                    </Show>
                     {str(b.attrs.content)}
                 </div>
             </div>
@@ -474,6 +484,55 @@ function TurnView(props: {
                 </div>
             </Show>
         </div>
+    );
+}
+
+// ─── 待发送插话横条 ──────────────────────────────────
+//
+// 提交的插话在模型取走之前必须**看得见且可取消**：它已经离开输入框（内容进了队列），
+// 如果不显示，用户会以为"说过了"，实际可能还排在队列里等下一轮。
+// 位置固定在输入区上方一行（与 dsh web 的 queue dock 同语义：队列贴着 composer），
+// 而不是混进对话流里 —— 对话流是历史，这条是"还没发生的事"。
+
+/** 模式徽标文案：说出投递时机，而不是内部枚举名（step/turn 是给代码看的） */
+const steerModeLabel = (mode: SteerMode) => (mode === "step" ? "下一步后" : "下一轮后");
+const steerModeTip = (mode: SteerMode) =>
+    mode === "step"
+        ? "插入到下一步：模型下一次请求前就能看到这句话"
+        : "插入到下一次对话后：本轮跑完，自动接着开新一轮";
+
+function SteerBar(props: { items: SteerItem[]; onCancel: (id: string) => void }) {
+    return (
+        <Show when={props.items.length > 0}>
+            <div class="shrink-0 border-t bg-base-200/60 px-3 py-1.5 text-xs" data-steer-bar>
+                <div class="mb-1 flex items-center gap-2 opacity-60">
+                    <span>⏳ 待发送插话 {props.items.length} 条（模型取走后自动消失）</span>
+                </div>
+                <ul class="max-h-24 space-y-0.5 overflow-y-auto">
+                    <For each={props.items}>
+                        {(it) => (
+                            <li class="flex items-center gap-2" data-steer-id={it.id}>
+                                <span
+                                    class="badge badge-xs badge-outline shrink-0 tooltip tooltip-right"
+                                    data-tip={steerModeTip(it.mode)}
+                                >
+                                    {steerModeLabel(it.mode)}
+                                </span>
+                                <span class="min-w-0 flex-1 truncate" title={it.text}>{it.text}</span>
+                                <button
+                                    class="btn btn-ghost btn-xs shrink-0"
+                                    aria-label="取消这条插话"
+                                    data-tip="取消（不会发送）"
+                                    onClick={() => props.onCancel(it.id)}
+                                >
+                                    ✕
+                                </button>
+                            </li>
+                        )}
+                    </For>
+                </ul>
+            </div>
+        </Show>
     );
 }
 
@@ -741,6 +800,32 @@ export function LocalChatPage() {
         await localChatStore.send(uri()!, text);
     };
 
+    /**
+     * 提交插话：内容**不离开视野**——清空输入框，但队列横条立刻显示出这条待发送内容。
+     *
+     * 失败时保留输入框内容（用户的话不能既没进队列、又被打字清空）。
+     */
+    const submitSteer = async (mode: SteerMode) => {
+        const text = inputValue().trim();
+        const u = uri();
+        if (!text || !u) return;
+        if (!(await localChatStore.submitSteer(u, mode, text))) return;
+        setInputValue("");
+        // 已入队：草稿使命结束（草稿语义是"还没提交的输入"，这条已经提交了）
+        void draftStore.clear(u, ["agent_input"]);
+    };
+
+    /** 回车分流：生成中 = 插到下一步（与"再发一条"最接近的动作）；否则正常发送 */
+    const submitByEnter = () => {
+        if (localChatStore.running) void submitSteer("step");
+        else void submit();
+    };
+
+    const cancelSteer = (id: string) => {
+        const u = uri();
+        if (u) void localChatStore.cancelSteer(u, id);
+    };
+
     return (
         <div class="flex flex-col h-full overflow-hidden">
             {/* 顶部只保留紧凑的信息密度控制。
@@ -801,6 +886,12 @@ export function LocalChatPage() {
                 </div>
             </div>
 
+            {/* 待发送插话横条（正常态）：贴着输入区上方一行 —— 队列是"还没发生的事"，
+                不该混进上面的对话流（那里是历史） */}
+            <Show when={!fullscreen()}>
+                <SteerBar items={localChatStore.steers} onCancel={cancelSteer} />
+            </Show>
+
             {/* 输入框：Markdown 源码编辑、随内容增长，控制项置于框内底部。 */}
             <div class="border-t p-3 shrink-0">
                 {/* 定位类必须二选一：Tailwind 里 `relative` 排在 `fixed` 之后，
@@ -820,6 +911,13 @@ export function LocalChatPage() {
                         边框"（实测双边框感），边框自己变色就够表达了。
                       · 圆角：`--radius-field`（输入类控件语义，比 `--radius-box` 更方正） */}
                 <div class={`rounded-field border border-base-content/20 bg-base-200 transition-colors focus-within:border-base-content ${fullscreen() ? "fixed inset-4 z-40 flex min-h-0 flex-col p-4" : "relative"}`}>
+                    {/* 全屏时横条挪进这块 fixed 区域顶部：正常态那份被遮罩盖住看不见，
+                        同一时刻只有一处渲染（同一份数据不重复画） */}
+                    <Show when={fullscreen()}>
+                        <div class="rounded-field border border-base-300 mb-2">
+                            <SteerBar items={localChatStore.steers} onCancel={cancelSteer} />
+                        </div>
+                    </Show>
                     {/* 全文编辑开关：输入框**右上角**，daisyUI swap（小↔大 双向动画）。
                         用 label+checkbox 而不是 button：swap 的语义就是「两种状态的开关」。 */}
                     <label
@@ -840,9 +938,11 @@ export function LocalChatPage() {
                     <div class={`min-h-0 overflow-auto px-2 pt-2 pr-8 ${fullscreen() ? "flex-1" : "min-h-[72px] max-h-[320px]"}`}>
                         <MdEditor
                             value={inputValue()}
-                            editable={!localChatStore.running}
+                            /* 生成中也必须可编辑：插话（"插嘴"）的前提就是能打字 ——
+                               旧行为把输入框锁死，等于强迫用户等模型跑完，本轮次的插话需求无从表达 */
+                            editable
                             onChange={(v) => { setInputValue(v); const u = uri(); if (u) draftStore.set(u, "agent_input", v); }}
-                            onEnter={() => void submit()}
+                            onEnter={submitByEnter}
                             wrap
                             lineNumbers={fullscreen()}
                             embedded
@@ -920,18 +1020,35 @@ export function LocalChatPage() {
                                 清空
                             </button>
                         </Show>
-                        <Show
-                            when={!localChatStore.running}
-                            fallback={
+                        {/* 生成中：插话按钮与「停止」并列。
+                            只在**输入框有内容**时才出现 —— 没打字就没得插，空按钮只会占位。
+                            「停止」的外观/位置/行为一律不动：它是打断，不该因为新功能而变样。 */}
+                        <Show when={localChatStore.running}>
+                            <Show when={inputValue().trim()}>
                                 <button
-                                    class="btn btn-error btn-sm tooltip tooltip-top"
-                                    data-tip="中断本轮生成（保留已产出内容）"
-                                    onClick={() => uri() && void localChatStore.cancel(uri()!)}
+                                    class="btn btn-outline btn-xs tooltip tooltip-top"
+                                    data-tip="插话：插入到下一步（模型下一次请求前就能看到；回车同此）"
+                                    onClick={() => void submitSteer("step")}
                                 >
-                                    停止
+                                    插到下一步
                                 </button>
-                            }
-                        >
+                                <button
+                                    class="btn btn-outline btn-xs tooltip tooltip-top"
+                                    data-tip="插话：插入到下一次对话后（本轮跑完自动接着开新一轮）"
+                                    onClick={() => void submitSteer("turn")}
+                                >
+                                    插到下一轮
+                                </button>
+                            </Show>
+                            <button
+                                class="btn btn-error btn-sm tooltip tooltip-top"
+                                data-tip="中断本轮生成（保留已产出内容）"
+                                onClick={() => uri() && void localChatStore.cancel(uri()!)}
+                            >
+                                停止
+                            </button>
+                        </Show>
+                        <Show when={!localChatStore.running}>
                             <button
                                 class="btn btn-primary btn-sm tooltip tooltip-top"
                                 data-tip="发送（回车发送 / Shift+回车换行）"
