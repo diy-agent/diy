@@ -9,7 +9,8 @@
  *                  **划分操作就在这做**：点节点上的 ⇄ 换容器（system ⇄ runtime），
  *                  不必再维护一张独立的"规则表"—— 契约本身就是那张表的骨架。
  *   · 中「预览」   system 份 / runtime 份（YAML，带语法高亮）
- *                  / 请求体（实际发出去的 JSON）
+ *                  / 请求预览（**整份请求的大 YAML**：内嵌 system/runtime 文本就地解析展开；
+ *                    可切"原文"看真发 JSON —— wire 不变）
  *   · 右「变量」   当前任务的真实变量树（归属在结构树上点开关切换）
  *
  * 选中联动：点结构树或变量树的一行 → 中间预览滚到并高亮**那一段**（行号映射与
@@ -17,7 +18,7 @@
  *
  * 数据是**当前任务的真实上下文**（与真发同一条 assembleGlobals 链），不是编造的。
  */
-import { createEffect, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { taskStore } from "../store/taskStore";
 import { ViewGrid } from "./ViewGrid";
@@ -30,6 +31,7 @@ import { AssembleGlobalsSchema } from "../../shared/prompt-schema";
 import { MdEditor, type HlLines } from "./MdEditor";
 import { JsonTree } from "./JsonTree";
 import type { ContextLab, LabTreeNode, PlaceCandidate } from "../../shared/context/preview";
+import { requestYaml } from "../../shared/context/request";
 import {
     emptyHistory,
     record,
@@ -243,6 +245,19 @@ export function ContextLabPage(props: { uri: string }) {
         })) as ContextLab;
     });
 
+    /** 请求预览的形态：YAML（默认；内嵌 system/runtime 文本就地解析展开）/ 原文（真发 JSON） */
+    const [reqMode, setReqMode] = createSignal<"yaml" | "json">("yaml");
+    /**
+     * 请求预览的 YAML 文本 + 行号映射：由**真实请求体**现算（纯函数，见 shared/context/request）。
+     * 内嵌块由"与 system/runtime 两份文本逐字相等"判定 —— 解析的就是 body 里那段原文。
+     */
+    const reqView = createMemo(() => {
+        const l = lab();
+        const body = l?.request.body;
+        if (!body) return null;
+        return requestYaml(body, [l!.system.text, l!.runtime.text]);
+    });
+
     // 每次重算结果到手 → 记一次 step（纯函数，内容没变不新增）
     createEffect(() => {
         const l = lab();
@@ -299,20 +314,31 @@ export function ContextLabPage(props: { uri: string }) {
 
     const structure = () => buildVarTree(AssembleGlobalsSchema);
 
-    /** 预览：选中 path 落在哪一份（决定给哪个编辑器发高亮） */
-    const hlFor = (which: "system" | "runtime"): HlLines | null => {
-        const p = selected();
-        const d = lab()?.[which];
-        if (!p || !d) return null;
-        const r = rangesFor(d.lines, p);
+    /**
+     * 选中 path → 某份文本里的整行高亮。
+     * 行号取自与文本同源的渲染映射；滚动目标用**焦点段的字符区间**（不是行首）：
+     * 不折行时长行会横向溢屏，只到行首的话焦点段仍在屏幕外。
+     */
+    const hlOf = (
+        text: string | undefined,
+        lines: Record<string, { from: number; to: number }> | undefined,
+        p: string | null,
+    ): HlLines | null => {
+        if (!p || !text || !lines) return null;
+        const r = rangesFor(lines, p);
         if (!r) return null;
-        // 文本里的字符位置：用于横向也滚到位（不折行时长行会横向溢出）
-        const textLines = d.text.split("\n");
+        const textLines = text.split("\n");
         let pos = 0;
         for (let i = 0; i < r.from - 1 && i < textLines.length; i++) pos += textLines[i]!.length + 1;
         const end = pos + (r.to - r.from === 0 ? (textLines[r.from - 1]?.length ?? 0) : 1);
         return { lines: [r.from, r.to], focusLines: [r.from], focusPos: pos, focusEnd: end };
     };
+
+    /** 预览：选中 path 落在哪一份（决定给哪个编辑器发高亮） */
+    const hlFor = (which: "system" | "runtime"): HlLines | null =>
+        hlOf(lab()?.[which].text, lab()?.[which].lines, selected());
+    /** 请求预览（YAML 形态）：内嵌块的行号就在同一份映射里，无需换算 */
+    const hlForRequest = (): HlLines | null => hlOf(reqView()?.text, reqView()?.lines, selected());
 
     /** 变量树：选中该行时把它滚进视野 */
     const rowRef = (el: HTMLTableRowElement, path: string): void => {
@@ -503,17 +529,54 @@ export function ContextLabPage(props: { uri: string }) {
                 >
                     {deliveryPane("runtime")}
                 </Fold>
-                <Fold k="request" label="请求体（实际发送格式）" extra={lab()?.request.model ?? ""}>
+                <Fold
+                    k="request"
+                    label="请求预览（实际发送格式）"
+                    extra={lab()?.request.model ?? ""}
+                    right={
+                        <span class="join join-horizontal">
+                            <button
+                                class={`btn btn-xs join-item ${reqMode() === "yaml" ? "btn-active" : "btn-ghost"}`}
+                                title="整份请求渲染为 YAML：内嵌的 system/runtime 文本就地解析展开（解析的就是请求体里那段原文）"
+                                onClick={() => setReqMode("yaml")}
+                            >
+                                YAML
+                            </button>
+                            <button
+                                class={`btn btn-xs join-item ${reqMode() === "json" ? "btn-active" : "btn-ghost"}`}
+                                title="请求体的原始 JSON（真发格式，一字不改）"
+                                onClick={() => setReqMode("json")}
+                            >
+                                原文
+                            </button>
+                        </span>
+                    }
+                >
                     <Show
                         when={lab()?.request.body}
                         fallback={<div class="p-2 opacity-60">{lab()?.request.note ?? "构造中…"}</div>}
                     >
                         {(b) => (
-                            <div class="p-2">
-                                <div class="mb-1 opacity-60">{lab()!.request.note}</div>
-                                <div class="max-h-[70vh] overflow-auto rounded bg-base-100 p-1">
-                                    <JsonTree data={b()} />
-                                </div>
+                            <div class="flex h-full min-h-0 flex-col">
+                                <div class="shrink-0 px-2 py-1 text-[10px] opacity-60">{lab()!.request.note}</div>
+                                <Show
+                                    when={reqMode() === "yaml"}
+                                    fallback={
+                                        <div class="min-h-0 flex-1 overflow-auto p-2">
+                                            <JsonTree data={b()} />
+                                        </div>
+                                    }
+                                >
+                                    <div class="min-h-0 flex-1">
+                                        <MdEditor
+                                            value={reqView()?.text ?? ""}
+                                            editable={false}
+                                            onChange={() => {}}
+                                            lang="yaml"
+                                            highlight={hlForRequest()}
+                                        />
+                                    </div>
+                                </Show>
                             </div>
                         )}
                     </Show>

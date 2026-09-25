@@ -18,3 +18,4 @@ export * from "./guide";
 export * from "./reducer";
 export * from "./projection";
 export * from "./legacy-adapter";
+export * from "./request";

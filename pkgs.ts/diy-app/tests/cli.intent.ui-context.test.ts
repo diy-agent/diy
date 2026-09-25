@@ -14,6 +14,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
+import { makeUiDriver, type A11yNode } from "./ui-drive";
 
 let fx: { sh: ShellTest; HOME: string; electron: ElectronTest };
 
@@ -181,13 +182,41 @@ describe("上下文树：UI 上屏（三列 + 真实请求体）", () => {
     // 「投递单元」view 已删（划分结果已在 system/runtime 预览里体现）
     expect(withChain).not.toContain("投递单元");
 
-    // 展开请求体 → 真实 JSON（与真发同一条构造链）
+    // 请求预览（默认 YAML 形态）：内嵌的 system 文本**就地解析展开** ——
+    // 「`# 以下是…` 这类 token 只可能由（说明头 → 注释）产生」：整坨字符串/块标量下
+    // 这些行不带 `# ` 前缀，整段会是一个多行 token。这就是"展开"与"没展开"的判据。
     await fold("request", true);
-    const req = await waitUntil(a11yText, (s) => s.includes("tool_choice") || s.includes("max_tokens"), {
-      label: "请求体上屏",
+    const yamlView = await waitUntil(
+      a11yText,
+      (s) => s.includes("# 以下是本次会话的系统上下文，以 YAML 序列化的一棵变量树呈现。"),
+      { label: "请求预览 YAML 上屏（内嵌 system 已解析展开）" },
+    );
+    expect(yamlView).toContain("# 系统上下文（Context Tree）");
+    expect(yamlView).toContain("# - 顶层键是变量命名空间（如 diy / project / task / cwd / chain / skills）");
+    expect(yamlView).toContain("messages");
+    expect(yamlView).toContain("model");
+
+    // 切「原文」= 真发 JSON（wire 一字不改）：JSON 的顶层键进屏（tool_choice / stream 是 YAML 里
+    // 排在很后面的键，只有 JSON 折叠视图能一眼看到）；再切回 YAML 复原
+    const ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
+      const r = await fx.sh.getJson("./diy.sh ui inspect");
+      return (r.data as any)?.data?.tree as A11yNode | undefined;
     });
-    expect(req).toContain("model");
-    expect(req).toContain("messages");
+    try {
+      await ui.clickSelector('button[title*="原始 JSON"]');
+      const jsonView = await waitUntil(a11yText, (s) => s.includes("tool_choice"), {
+        label: "原文（真发 JSON）上屏",
+      });
+      expect(jsonView).toContain("max_tokens");
+      expect(jsonView).not.toContain("# - 顶层键是变量命名空间");
+      await ui.clickSelector('button[title*="内嵌的 system/runtime"]');
+      const back = await waitUntil(a11yText, (s) => s.includes("# - 顶层键是变量命名空间"), {
+        label: "切回 YAML 预览",
+      });
+      expect(back).toContain("# 系统上下文（Context Tree）");
+    } finally {
+      ui.close();
+    }
 
     // ★ 真实 step：改任务正文 → 自动观察（默认开）记录到变化里
     const taskFile = join(fx.HOME, uri, "AGENTS.md");

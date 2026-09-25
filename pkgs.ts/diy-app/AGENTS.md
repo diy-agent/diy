@@ -185,6 +185,20 @@ $DIY_HOME/projects/<pid>/tasks/<tid>/
 - 排版规则（改模版前必读，写在 `src/main/prompts/defaults.ts` 头注）：控制标记可自由缩进（独占一行不产出字符）；
   **输出文本必须顶格**（行首缩进会进提示词）；空行是内容。
 
+### 上下文树页（ctxlab，第二版上下文：任务 144/148）
+
+| 关注点 | 位置 / 约定 |
+|--------|-------------|
+| 领域模型（冻结契约） | `src/shared/context/types.ts`：事实（snapshot/replace/patch/remove）→ 树（值树 + 渲染声明 + places/placement + wireVersion）→ 投影（system 全量 / runtime 增量）。**两个 hash 别混用**：`valueHash`（原始值）/ `renderedHash`（渲染出来的文本，模板没引用到的值变了它不变） |
+| 读写与校验 | `tree.ts`（嵌套 JSON 值树 + 不可变写入 + places 两两不可嵌套）、`reducer.ts`（applyFact 一律不静默合并：baseHash 不匹配即拒绝并要求 rebaseline）、`projection.ts`（内容未变不发 / 全消失发显式 clear / 版本或 placement 变化发 snapshot） |
+| 纯 YAML 渲染 | `render.ts`：**自实现产出器**（不引 js-yaml 输出侧）——输出逐字节可预测（golden 拿它当基准）、shared/ 零 node 依赖；多行文本 = 块标量 `|`；空对象/空数组输出 `{}` / `[]`（与"没有这个值"区分）；`renderPathsTraced` 的**行号映射与文本同出一次产出**（选中联动定位必须同源，否则指错行比不高亮更糟） |
+| 说明头 | `guide.ts`：上下文 YAML 前面的纯文本说明（结构 + 解读规则）。**暂不模版化**（先看内容；要模版化时只换本文件，树/划分/投影不动）。它参与 renderedHash（改它 = 改 wire 语义） |
+| 页面数据 | `preview.ts`：真实 globals（`assembleGlobals` 的产物，不是示范数据）+ system 名单 → 树/规则/两份投递/请求体；`PLACE_CANDIDATES` 只声明 system 名单，其余自动 runtime（不是两套表）。**候选拆到子字段**（`task.title` 稳定 vs `task.body` 易变）——按第一层粗暴划分会让易变内容污染 system 缓存 |
+| 请求预览 | `request.ts`：**整份请求体渲染为一份大 YAML**（树形文本编辑器形态）。请求体里与 system/runtime 两份文本**逐字相等**的字符串，就地解析为 YAML 子节点展开（解析的是 body 里那段原文本身，不是另算的一份）——说明头按注释输出（内容不丢、整份仍是合法 YAML）；解析失败退回块标量原文，不强行展开。wire 一行不动，UI 提供「原文」切 JSON（真发格式） |
+| 页面与 view | `ContextLabPage.tsx` + registry 的 `ctxlab.*`（左=结构树/变更，中=预览，右=变量树）。块折叠态走 `Caches.diy_ctxlab_*`，CLI：`ui view expand ctx.<change\|system\|runtime\|request> open\|closed` |
+| 选中联动 | 点结构树/变量树一行 → 中间对应预览滚到并高亮**那几行**（行号由渲染同源收集）；请求预览里内嵌块的行号就在同一份映射里，无需换算 |
+| 意图测试 | `tests/cli.intent.ui-context.test.ts`（RPC 契约 + 三列上屏 + 请求预览 YAML/原文切换）；纯函数单测见 `tests/core/context-*.test.ts`（含 `context-request.test.ts` 的请求预览用例） |
+
 ### UI 验证（两层，互补）
 
 - **`diy.ui.*`（handler 层）**：CLI 经 RPC 直接调 renderer 的共享入口函数（与按钮 onClick 同一批）。测行为/契约/状态，稳定适合 test:intent 基线；**测不到真实 DOM 事件链的 bug**。

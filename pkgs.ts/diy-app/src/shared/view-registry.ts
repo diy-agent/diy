@@ -96,7 +96,7 @@ export const VIEWS: ViewDef[] = [
     placement: { ctxlab: { area: "left", order: 10 } },
   },
   {
-    // 中：预览 —— system 份 / runtime 份 / 请求体（实际发出去的格式）
+    // 中：预览 —— system 份 / runtime 份 / 请求预览（整份请求的大 YAML，内嵌文本就地解析展开；可切原文 JSON）
     id: "ctxlab.delivery",
     title: "预览",
     instanceScope: "context",

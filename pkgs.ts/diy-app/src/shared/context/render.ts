@@ -43,11 +43,36 @@ function scalarYaml(v: unknown): string {
     return plain ? v : JSON.stringify(v);
 }
 
+/**
+ * 内嵌 YAML 块（请求预览用，见 request.ts）：产出时遇到**与它逐字相等**的字符串，
+ * 就把它展开为解析结果。说明头（原样行）按注释输出 —— 它是"yaml 上面的解释文字"、不是数据，
+ * 注释是它在 YAML 里唯一合法的位置（内容不丢、整份仍是合法 YAML）。
+ */
+export interface EmbedSpec {
+    /** 说明头：逐行输出为注释（空行输出空行；`#` 开头的行原样，不叠成 `# #`） */
+    guide?: string[];
+    /** 解析后的结构（对象/数组） */
+    value: unknown;
+}
+
 /** 行式产出器：YAML 的唯一实现（`toYaml` 也走它），可选收集每个 path 的行号区间 */
 interface EmitSink {
     lines: string[];
     /** path → 行号区间（1 基闭区间） */
     spans: Map<ContextPath, { from: number; to: number }>;
+    /** 内嵌文本表（请求预览专用；缺省不启用） */
+    embeds?: ReadonlyMap<string, EmbedSpec>;
+}
+
+/** 内嵌块 → 若干行：说明头按注释、数据递归产出（行号映射随产出直接收集，与文本同源） */
+function emitEmbed(emb: EmbedSpec, indent: number, path: ContextPath, sink: EmitSink): void {
+    const pad = "  ".repeat(indent);
+    const start = sink.lines.length + 1;
+    for (const line of emb.guide ?? []) {
+        sink.lines.push(line.length === 0 ? "" : line.startsWith("#") ? `${pad}${line}` : `${pad}# ${line}`);
+    }
+    emitValue(emb.value, indent, "", sink);
+    if (path) sink.spans.set(path, { from: start, to: sink.lines.length });
 }
 
 /**
@@ -60,6 +85,12 @@ function emitValue(v: unknown, indent: number, path: ContextPath, sink: EmitSink
     const mark = (fromLine: number): void => {
         if (path) sink.spans.set(path, { from: fromLine + 1, to: sink.lines.length });
     };
+    // 内嵌 YAML 文本（请求预览）：就地展开为子节点 —— 解析的就是这段原文本身
+    const emb = typeof v === "string" ? sink.embeds?.get(v) : undefined;
+    if (emb) {
+        emitEmbed(emb, indent, path, sink);
+        return;
+    }
     // 多行字符串（模版产出）→ 块标量
     if (isMultiline(v)) {
         const from = sink.lines.length;
@@ -81,7 +112,13 @@ function emitValue(v: unknown, indent: number, path: ContextPath, sink: EmitSink
                 const markItem = (): void => {
                     sink.spans.set(childPath, { from: before + 1, to: sink.lines.length });
                 };
-                if (isMultiline(item)) {
+                const emb = typeof item === "string" ? sink.embeds?.get(item) : undefined;
+                if (emb) {
+                    // 序列元素是内嵌块：`-` 单独一行，块（注释 + 数据）缩进对齐
+                    sink.lines.push(`${pad}-`);
+                    emitEmbed(emb, indent + 1, "", sink);
+                    markItem();
+                } else if (isMultiline(item)) {
                     const blk = "  ".repeat(indent + 1);
                     sink.lines.push(`${pad}- |`);
                     const body = item.endsWith("\n") ? item.slice(0, -1) : item;
@@ -89,7 +126,7 @@ function emitValue(v: unknown, indent: number, path: ContextPath, sink: EmitSink
                     markItem();
                 } else if (isPlainObject(item) || (Array.isArray(item) && item.length > 0)) {
                     // 对象/序列项：首行并到 `- ` 之后，其余行缩进对齐（YAML 惯例写法）
-                    const inner: EmitSink = { lines: [], spans: new Map() };
+                    const inner: EmitSink = { lines: [], spans: new Map(), embeds: sink.embeds };
                     emitValue(item, indent + 1, childPath, inner);
                     const head = inner.lines[0]!.slice((indent + 1) * 2);
                     sink.lines.push(`${pad}- ${head}`);
@@ -118,6 +155,14 @@ function emitValue(v: unknown, indent: number, path: ContextPath, sink: EmitSink
                 const val = v[k];
                 const childPath = path ? `${path}.${k}` : k;
                 const childFrom = sink.lines.length;
+                const emb = typeof val === "string" ? sink.embeds?.get(val) : undefined;
+                if (emb) {
+                    // 内嵌块：key 独立一行，块内容（注释 + 解析结果）缩进一级
+                    sink.lines.push(`${pad}${k}:`);
+                    emitEmbed(emb, indent + 1, "", sink);
+                    sink.spans.set(childPath, { from: childFrom + 1, to: sink.lines.length });
+                    continue;
+                }
                 if (isMultiline(val)) {
                     const blk = "  ".repeat(indent + 1);
                     sink.lines.push(`${pad}${k}: |`);
@@ -150,6 +195,13 @@ export function toYaml(v: unknown, indent = 0): string {
     const sink: EmitSink = { lines: [], spans: new Map() };
     emitValue(v, indent, "", sink);
     return sink.lines.join("\n");
+}
+
+/** 通用产出：值 → YAML 文本 + 行号映射（请求预览用；`embeds` 见 request.ts） */
+export function emitYamlTraced(v: unknown, embeds?: ReadonlyMap<string, EmbedSpec>): RenderedYaml {
+    const sink: EmitSink = { lines: [], spans: new Map(), embeds };
+    emitValue(v, 0, "", sink);
+    return { text: sink.lines.join("\n"), lines: Object.fromEntries(sink.spans) };
 }
 
 /**
