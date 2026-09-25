@@ -447,3 +447,84 @@ describe("打开列表表达任务层次（排序 + 缩进）", () => {
     expect((await tabs()).opened).toContain(`task-run:${c}`);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// 任务被移动 → 导航结构实时跟随（165 回归）
+//
+// 场景：a → b → c 三级，三个 tab 都开着，然后把 c 改挂到 a 之下（跳过 b）。
+// 修复前：tab 里存着**打开那一刻**的祖先链快照，树变了导航照旧 —— 缩进仍指着旧父，
+// 顺序也不收拢，刷新页面同样无效（陈旧数据被原样读回）。
+// 现在：祖先链现算，缩进与顺序立刻跟随，不需要任何「reconcile」入口。
+// ═══════════════════════════════════════════════════════════════
+
+describe("任务被移动 → 导航结构实时跟随（165 回归）", () => {
+  let a = "", b = "", c = "", x = "", y = "";
+
+  it("setup: 造 a → b → c 三级，外加两个独立任务 x / y", async () => {
+    const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/move --label Move`);
+    const pid = String((p.data as any)?.data?.id);
+    const uriOf = (r: any) => String((r.data as any)?.data?.uri);
+    a = uriOf(await fx.sh.getJson(`./diy.sh task create 移动-祖父 ${pid}`));
+    b = uriOf(await fx.sh.getJson(`./diy.sh task create 移动-父 ${pid} --parent ${a}`));
+    c = uriOf(await fx.sh.getJson(`./diy.sh task create 移动-孙 ${pid} --parent ${b}`));
+    x = uriOf(await fx.sh.getJson(`./diy.sh task create 移动-独立X ${pid}`));
+    y = uriOf(await fx.sh.getJson(`./diy.sh task create 移动-独立Y ${pid}`));
+    expect(c).not.toBe(b);
+  });
+
+  it("缩进跟随：孙改挂到祖父之下 → 缩进从 2 级降为 1 级（与父同层）", async () => {
+    await fx.sh.getJson(`./diy.sh ui tab open ${c}`);
+    await fx.sh.getJson(`./diy.sh ui tab open ${b}`);
+    await fx.sh.getJson(`./diy.sh ui tab open ${a}`);
+
+    const ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
+      const r = await fx.sh.getJson("./diy.sh ui inspect");
+      return (r.data as any)?.data?.tree as A11yNode | undefined;
+    });
+    try {
+      await ui.clickSelector('button[title="锁定展开"]');
+      // 量**内容**左边界：缩进走 padding-left，而 border box 的 x 不受 padding 影响
+      const xOf = (title: string) =>
+        ui.query<number | null>(`(() => {
+          const el = [...document.querySelectorAll('div[title]')].find(d => d.getAttribute('title') === ${JSON.stringify(title)});
+          if (!el) return null;
+          const inner = el.querySelector('span');
+          return inner ? inner.getBoundingClientRect().x : el.getBoundingClientRect().x;
+        })()`);
+      const xb0 = await waitUntil(() => xOf(b), (v) => v !== null, { label: "父 tab 上屏" });
+      const xc0 = await xOf(c);
+      expect(xc0! > xb0!).toBe(true); // 移动前：孙比父更深一层
+
+      await fx.sh.getJson(`./diy.sh task move ${c} ${a}`); // 孙改挂到祖父之下（跳过父）
+
+      const aligned = await waitUntil(
+        async () => {
+          const xb = await xOf(b);
+          const xc = await xOf(c);
+          return xb === null || xc === null ? false : Math.abs(xc - xb) < 1;
+        },
+        (ok) => ok === true,
+        { label: "缩进跟随新树（父与孙同层）" },
+      );
+      expect(aligned).toBe(true);
+      await ui.clickSelector('button[title*="取消锁定"]');
+    } finally {
+      ui.close();
+    }
+  });
+
+  it("顺序跟随：把 y 移到 x 之下 → y 从 x 之前收拢到 x 之后", async () => {
+    await fx.sh.getJson(`./diy.sh ui tab close task-run:${a}`);
+    await fx.sh.getJson(`./diy.sh ui tab close task-run:${b}`);
+    await fx.sh.getJson(`./diy.sh ui tab close task-run:${c}`);
+    await fx.sh.getJson(`./diy.sh ui tab open ${y}`);
+    await fx.sh.getJson(`./diy.sh ui tab open ${x}`);
+    const mine = async () => (await tabs()).opened.filter((k) => k === `task-run:${x}` || k === `task-run:${y}`);
+    expect(await mine()).toEqual([`task-run:${y}`, `task-run:${x}`]); // 都是顶级：按打开顺序平级
+
+    await fx.sh.getJson(`./diy.sh task move ${y} ${x}`); // y 变成 x 的子任务
+
+    expect(await waitUntil(mine, (l) => l[0] === `task-run:${x}`, { label: "顺序收拢到父之后" }))
+      .toEqual([`task-run:${x}`, `task-run:${y}`]);
+  });
+});
