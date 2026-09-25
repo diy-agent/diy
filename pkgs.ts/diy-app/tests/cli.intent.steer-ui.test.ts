@@ -126,6 +126,16 @@ async function a11yText(): Promise<string> {
     return collectText([(res.data as any)?.data?.tree]).join("\n");
 }
 
+/**
+ * 点**按钮**（按文本，但限定 role=button）。
+ *
+ * 为什么不能只按文本：横条出现后，标题「⏳ 待发送插话 1 条」里就含「发送」二字，
+ * 而 ui-drive 的文本匹配取的是**文档序第一个**命中节点 —— 会点到横条标题上，
+ * 表现为「点了发送没反应」。真实用户点的是按钮，测试也必须点到按钮。
+ */
+const clickButton = (text: string) =>
+    ui.click((t, node) => node.role === "button" && t.includes(text));
+
 /** 草稿文件（插话与聊天草稿同文件：任务目录 .diy/drafts.yaml） */
 const draftsFile = () => join(fx.HOME, uri, ".diy", "drafts.yaml");
 const draftsRaw = () => (existsSync(draftsFile()) ? readFileSync(draftsFile(), "utf-8") : "");
@@ -155,7 +165,7 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
     });
 
     it("点「发送」→ 进入生成中（桩上游挂着不回）：停止在、插话按钮仍未出现（此时输入框空）", async () => {
-        await ui.click("发送");
+        await clickButton("发送");
         const running = await waitUntil(a11yText, (s) => s.includes("停止"), { label: "进入生成中" });
         expect(running).toContain("停止");
         // 上游确实收到了请求（桩记录）
@@ -179,7 +189,7 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
     });
 
     it("点「插到下一步」→ 上方横条出现该条 + 标注投递时机 + 已落盘", async () => {
-        await ui.click("插到下一步");
+        await clickButton("插到下一步");
         const text = await waitUntil(a11yText, (s) => s.includes("待发送插话"), { label: "横条出现" });
         expect(text).toContain("插一句：记得跑测试");
         expect(text).toContain("下一步后"); // 模式徽标（说人话，不是内部枚举 step）
@@ -198,7 +208,7 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
         await ui.clickSelector(".cm-content");
         await ui.type("再做一件事");
         await waitUntil(a11yText, (s) => s.includes("插到下一轮"), { label: "按钮再现" });
-        await ui.click("插到下一轮");
+        await clickButton("插到下一轮");
         const text = await waitUntil(a11yText, (s) => s.includes("下一轮后"), { label: "第二条进横条" });
         expect(text).toContain("插一句：记得跑测试");
         expect(text).toContain("再做一件事");
@@ -219,13 +229,42 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
         expect((after.data as any[]).map((i) => i.text)).toEqual(["再做一件事"]);
     });
 
-    it("「停止」照旧能中断（本轮结束，另一条仍留在队列里）", async () => {
-        await ui.click("停止");
+    it("「停止」照旧能中断（按钮不变；被中断的轮次不投递插话）", async () => {
+        await clickButton("停止");
         await waitUntil(a11yText, (s) => !s.includes("停止"), { label: "生成已停止" });
-        // 被中断的那一轮里 turn 插话没被投递：仍排在队列里（横条继续显示待发送）
+        // 本轮被中断 → turn 插话没被投递：仍排在队列里（横条继续显示待发送）
         const list = await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`);
         expect((list.data as any[]).map((i) => i.text)).toEqual(["再做一件事"]);
-        const text = await a11yText();
-        expect(text).toContain("待发送插话");
+        expect(await a11yText()).toContain("待发送插话");
     });
+
+    it("插话被投递后横条自动下架（模型看见后不再挂着「待发送」）", async () => {
+        // 再从界面发起一轮（顺带验证「停止之后仍能正常输入并发送」这条真实路径）
+        await ui.clickSelector(".cm-content");
+        await ui.type("再聊一句");
+        expect(await ui.query<string>("document.querySelector('.cm-content')?.textContent ?? ''")).toContain(
+            "再聊一句",
+        );
+        await clickButton("发送");
+        await waitUntil(a11yText, (s) => s.includes("停止"), { label: "新一轮跑起来" });
+
+        // 放开桩响应 → 本轮收尾 → 轮末取走 turn 插话并开新一轮（新一轮请求再次被桩挂住）
+        stub.release();
+        const text = await waitUntil(a11yText, (s) => !s.includes("待发送插话"), {
+            label: "投递后横条消失",
+            timeoutMs: 20_000,
+        });
+        expect(text).not.toContain("待发送插话");
+        // 服务端视角同源：队列真的空了（不是界面自己藏起来）
+        const list = await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`);
+        expect(list.data).toEqual([]);
+
+        // 投递留下的是对话流里的 user 块（带插话标记）+ 自动续起来的下一轮
+        const flow = await waitUntil(a11yText, (s) => s.includes("⤵ 插话") && s.includes("停止"), {
+            label: "插话进对话流且续起下一轮",
+            timeoutMs: 30_000,
+        });
+        expect(flow).toContain("再做一件事");
+        expect(flow).toContain("下一轮后"); // 标记说出投递时机
+    }, 120_000); // 本用例要跑完「一轮收尾 → 自动续轮」，且每次断言都要一次 CLI 往返：给足预算
 });

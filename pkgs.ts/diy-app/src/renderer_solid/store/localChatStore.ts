@@ -189,6 +189,9 @@ async function send(taskUri: string, text: string): Promise<boolean> {
             }
             st.store.apply(op);
             scheduleRefresh(st);
+            // 插话被投递：main 落了带 steer 标记的 user 块（见 local-agent 的 steerBlockOps）→
+            // 队列已经少了一条，立刻重拉快照。否则横条会一直挂着"待发送"，而模型其实已经看见了。
+            if (op.op === "start" && op.kind === "text" && op.meta?.["steer"]) void refreshSteers(taskUri);
         }
         return true;
     } catch (e) {
