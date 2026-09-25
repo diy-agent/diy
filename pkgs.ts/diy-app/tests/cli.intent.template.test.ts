@@ -162,12 +162,14 @@ describe("template preview", () => {
         // DIY_CLI 注入后：渲染成绝对入口，且不再报「未注入」告警
         expect(system).toContain(String(process.env["DIY_CLI"]));
         expect(p["warnings"]).toEqual([]);
-        // 仿真请求体：与真发同一条链（messages[0] 是 system、带 tools/参数）
+        // 仿真请求体：与真发同一条链（首条是 system 全文、带 tools/参数）。
+        // 形状随缺省模型的 API 面变：chat 面是 messages[0]=system；
+        // responses 面是 input[0]=developer（system 装在首项），两面都必须以 system 全文开头
         const body = p["requestBody"] as Record<string, unknown>;
         expect(body).toBeTruthy();
-        const messages = body["messages"] as Array<Record<string, unknown>>;
-        expect(messages[0]?.["role"]).toBe("system");
-        expect(messages[0]?.["content"]).toBe(system);
+        const items = (body["input"] ?? body["messages"]) as Array<Record<string, unknown>>;
+        expect(["system", "developer"]).toContain(items[0]?.["role"]);
+        expect(items[0]?.["content"]).toBe(system);
         expect(body["tools"]).toBeTruthy();
         await cleanup(pid);
     });

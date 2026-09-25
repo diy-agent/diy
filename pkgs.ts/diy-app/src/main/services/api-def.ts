@@ -317,7 +317,7 @@ export const apiDef = RpcSchema.router({
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
                   message: z.string().cliArg({ desc: "用户消息" }),
-                  model: z.string().optional().cliOption({ desc: `模型（默认 mimo-v2.5，zen/go 子集见 agent local models）` }),
+                  model: z.string().optional().cliOption({ desc: `模型（默认 gpt-5.6-luna，zen/go 子集见 agent local models）` }),
                   reasoningEffort: z.string().optional().cliOption({ desc: "推理强度（按模型能力）" }),
                 },
                 output: z.string(),
@@ -449,7 +449,7 @@ export const apiDef = RpcSchema.router({
             input: {
               project: z.string().cliArg({ desc: "project id" }),
               taskUri: z.string().optional().cliOption({ desc: "任务 URI（任务场景与工作目录从它推，并以其 project 为准）" }),
-              model: z.string().optional().cliOption({ desc: `模型 id（缺省 mimo-v2.5；应传会话实际选中的模型才算保真）` }),
+              model: z.string().optional().cliOption({ desc: `模型 id（缺省 gpt-5.6-luna；应传会话实际选中的模型才算保真）` }),
               // 无 CLI 注解：CLI 解析器忽略，RPC 照传（未存盘草稿渲染用）
               drafts: z.record(z.string(), z.string()).optional().describe("未存盘草稿 relpath→正文"),
             },

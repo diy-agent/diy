@@ -33,7 +33,7 @@ import { noteTurnEnd, noteTurnStart } from "./runtime-context";
 import { assembleSystem } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
 
-export const DEFAULT_MODEL = "mimo-v2.5";
+export const DEFAULT_MODEL = "gpt-5.6-luna";
 
 /** zen/go 基址：两个 API 面共用（chat/completions 与 responses 只是路径不同） */
 export const ZEN_BASE_URL = "https://opencode.ai/zen/go/v1";
@@ -41,7 +41,7 @@ export const ZEN_BASE_URL = "https://opencode.ai/zen/go/v1";
 /**
  * 模型走的 API 面。**必须逐个模型标注**，因为 zen/go 的 `GET /models` 不返回 API 面信息
  * （只有 id/object/created/owned_by），标错的表现是「上游 503 Endpoint is unavailable」：
- * responses-only 模型打到 /chat/completions 一律 503（gpt-5.6-luna 2026-09-24 实测）。
+ * responses-only 模型打到 /chat/completions 一律 503（gpt-5.6-luna / gpt-6-luna 2026-09-24 实测）。
  * 真源：pi 的 ~/.pi/agent/models-store.json 的 `api` 字段（opencode-go provider）。
  */
 export type LocalModelApi = "chat" | "responses";
@@ -66,26 +66,23 @@ export interface LocalModel {
 /**
  * 可选模型（2026-09-24 实查 /models + models.dev 价格 + 两个 API 面逐个 curl 验证）
  * 价格单位为 $/1M tokens：input / output（cacheRead）
+ *
+ * `reasoning.supported` 的真源是**上游自己的校验报错**（2026-09-24 逐模型探测）：
+ * 给 `reasoning_effort`（chat 面）/ `reasoning.effort`（responses 面）发一个非法值，
+ * 上游回 400 并列出 expected one of ...，再逐值实测确认 200 / 400。
+ * 实测差异：deepseek-v4.1-flash 多一个 `ultra` 档；两个 luna 都无 `minimal`；
+ * mimo-v2.6-flash 只认 none/low/medium/high（minimal/xhigh/max 一律 400 Invalid request parameters）。
+ * 注意：这与 pi 的 `thinkingLevelMap` 不同源 —— 那张表是「pi 档位 → 上游 thinking 字段」的映射，
+ * 对直传 reasoning_effort 的 diy 不适用（pi 隐藏的档位在 diy 路径上实测有效）。
  */
 export const LOCAL_MODELS: LocalModel[] = [
     // maxOutputTokens / contextLimit 来源：models.dev/api.json 的 limit.output / limit.context（2026-09 实查，
     // 取 opencode-go 或同名模型主 provider 的值）。contextLimit 用于推导系统上下文预算（见 prompt-registry）。
-    { id: "mimo-v2.5", name: "MiMo V2.5", api: "chat", contextLimit: 1048576, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high"], default: "medium" } }, // 0.14 / 0.28 (0.0028)
-    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", api: "chat", contextLimit: 1000000, maxOutputTokens: 384000 , reasoning: { supported: ["none", "low", "medium"], default: "medium" } }, // 0.15 / 0.60 (0.003)
-    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", api: "chat", contextLimit: 1000000, maxOutputTokens: 384000 , reasoning: { supported: ["none", "low", "medium"], default: "medium" } }, // 0.15 / 0.60 (0.003)
-    { id: "glm-5.3-flash", name: "GLM-5.3 Flash", api: "chat", contextLimit: 1000000, maxOutputTokens: 131072 , reasoning: { supported: ["none", "low", "medium"], default: "medium" } }, // 0.15 / 0.50 (0.03)
-    { id: "qwen3.8-flash", name: "Qwen3.8 Flash", api: "chat", contextLimit: 1000000, maxOutputTokens: 131072 , reasoning: { supported: ["none", "low", "medium"], default: "medium" } }, // 0.15 / 0.47 (0.016)
-    { id: "hy3", name: "Hy3", api: "chat", contextLimit: 256000, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high"], default: "medium" } }, // 0.14 / 0.58 (0.035)
-    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", api: "responses", contextLimit: 1050000, maxOutputTokens: 128000 , reasoning: { supported: ["low", "medium", "high"], default: "medium" } }, // 0.20 / 1.20 (0.02)
-    { id: "minimax-m3", name: "MiniMax M3", api: "chat", contextLimit: 512000, maxOutputTokens: 131072 , reasoning: { supported: ["none", "medium", "high"], default: "medium" } }, // 0.30 / 1.20 (0.06)
-    { id: "minimax-m2.7", name: "MiniMax M2.7", api: "chat", contextLimit: 204800, maxOutputTokens: 131072 , reasoning: { supported: ["none", "medium", "high"], default: "medium" } }, // 0.30 / 1.20 (0.06)
-    { id: "longcat-2.0", name: "LongCat-2.0", api: "chat", contextLimit: 1048756, maxOutputTokens: 131072 , reasoning: { supported: ["none", "low", "medium"], default: "medium" } }, // 0.30 / 1.20 (0.006)
-    { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro", api: "chat", contextLimit: 1048576, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high"], default: "high" } }, // 0.435 / 0.87 (0.003625)
-    { id: "qwen3.7-plus", name: "Qwen3.7 Plus", api: "chat", contextLimit: 1000000, maxOutputTokens: 65536 , reasoning: { supported: ["none", "low", "medium", "high"], default: "medium" } }, // 0.40 / 1.60 (0.04)
-    { id: "glm-5.3", name: "GLM-5.3", api: "chat", contextLimit: 1000000, maxOutputTokens: 131072 , reasoning: { supported: ["none", "low", "medium", "high"], default: "medium" } }, // 1.40 / 4.40 (0.26)
-    { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", api: "chat", contextLimit: 262144, maxOutputTokens: 262144 , reasoning: { supported: ["none", "low", "medium", "high"], default: "high" } }, // 0.95 / 4.00 (0.19)
-    { id: "muse-spark-1.2-contributor", name: "Muse Spark 1.2 Contributor (opencode-go)", api: "responses", contextLimit: 1048576, maxOutputTokens: 131072 , reasoning: { supported: ["low", "medium", "high"], default: "medium" } }, // 0.10 / 0.20
-    { id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor (opencode-go)", api: "responses", contextLimit: 1048576, maxOutputTokens: 131072 , reasoning: { supported: ["low", "medium", "high"], default: "medium" } }, // 0.10 / 0.20
+    // 首项 = UI 默认选中（localChatStore 取 ms[0]），必须与 DEFAULT_MODEL 一致。
+    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", api: "responses", contextLimit: 1050000, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high", "xhigh", "max"], default: "medium" } }, // 0.20 / 1.20 (0.02)
+    { id: "gpt-6-luna", name: "GPT 6 Luna", api: "responses", contextLimit: 1050000, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high", "xhigh", "max"], default: "medium" } }, // 0.10 / 0.50 (0.01)
+    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", api: "chat", contextLimit: 1000000, maxOutputTokens: 384000 , reasoning: { supported: ["none", "minimal", "low", "medium", "high", "xhigh", "ultra", "max"], default: "medium" } }, // 0.15 / 0.60 (0.003)
+    { id: "mimo-v2.6-flash", name: "MiMo V2.6 Flash", api: "chat", contextLimit: 1048576, maxOutputTokens: 131072 , reasoning: { supported: ["none", "low", "medium", "high"], default: "medium" } }, // 0.14 / 0.28 (0.0028)
 ];
 
 /** 按 model id 查 API 面；未知模型按 chat 处理（保持历史行为，不静默换面） */
