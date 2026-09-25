@@ -201,7 +201,7 @@ export const Caches = {
     serialize: (v) => v,
     defaultValue: "diy",
   }),
-  /** 上下文树试验场（ctxlab）的折叠块展开态：key = tree/rules/system/runtime/message。
+  /** 上下文树页（ctxlab）的折叠块展开态：key = steps/structure/request。
    *  与提示词页 labViews 同性质（用户选择，切页/重开不该回到默认），故走同一入口。 */
   /** 上下文树页的 **system 名单**（划分规则的输入；空数组 = 用推荐名单）。
    *  与折叠态同性质：属于用户选择，切页/重开不该丢。 */
@@ -228,14 +228,11 @@ export const Caches = {
     },
     serialize: (v) => JSON.stringify(v),
     defaultValue: {
-      units: true,
-      tree: true,
-      system: true,
-      runtime: true,
-      request: false,
-      steps: true,
-      change: true,
+      // 中栏只留请求预览 → 默认展开（它就是这一页的主角）
+      request: true,
+      // 左栏：结构树（划分操作）默认展开，变更列表收起（看变化时才展开）
       structure: true,
+      steps: false,
     },
   }),
   /** 试验场表格列宽（px 数组，按表分字段）。**表的列宽必须与容器宽度解耦**：

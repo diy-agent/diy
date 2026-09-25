@@ -4,17 +4,20 @@
  * 一句话：系统上下文 = **一棵变量树**，按稳定性划成两份 ——
  * 稳定的进 system 提示词开头（可缓存），易变的进 user 消息。
  *
- * 三列（左=输入，中=产出，右=当前真实值）：
+ * 两列（左=输入，中=产出）：
  *   · 左「结构树」 变量契约（zod），含类型/描述与无值变量。
  *                  **划分操作就在这做**：点节点上的 ⇄ 换容器（system ⇄ runtime），
  *                  不必再维护一张独立的"规则表"—— 契约本身就是那张表的骨架。
- *   · 中「预览」   system 份 / runtime 份（YAML，带语法高亮）
- *                  / 请求预览（**整份请求的大 YAML**：内嵌 system/runtime 文本就地解析展开；
- *                    可切"原文"看真发 JSON —— wire 不变）
- *   · 右「变量」   当前任务的真实变量树（归属在结构树上点开关切换）
+ *                  另有「变更（step）」列表：只列有变化的步骤。当前是**重算对比**打出来的观察
+ *                  （见 shared/context/history.ts），只展示不选中 —— 要做"步 vs 步"的 diff，
+ *                  缺的是**每轮真发的投递快照**（下一件事，不依赖事件协议）。
+ *   · 中「请求预览」 **整份请求的大 YAML**：内嵌 system/runtime 文本就地解析展开；
+ *                  可切"原文"看真发 JSON —— wire 不变。
+ *                  （system 份 / runtime 份两个单独 view 已删：它们的价值全部包含在
+ *                    请求预览里 —— 同一份文本的展开形态就在树里，不必看两遍）
  *
- * 选中联动：点结构树或变量树的一行 → 中间预览滚到并高亮**那一段**（行号映射与
- * 渲染同源，见 shared/context/render.ts 的 renderPathsTraced），右侧对应行也高亮。
+ * 选中联动：点结构树的一行 → 请求预览滚到并高亮**那一段**（行号映射与渲染同源，
+ * 见 shared/context/render.ts 的 renderPathsTraced / request.ts）。
  *
  * 数据是**当前任务的真实上下文**（与真发同一条 assembleGlobals 链），不是编造的。
  */
@@ -30,15 +33,9 @@ import { buildVarTree, type VarNode } from "../../shared/var-tree";
 import { AssembleGlobalsSchema } from "../../shared/prompt-schema";
 import { MdEditor, type HlLines } from "./MdEditor";
 import { JsonTree } from "./JsonTree";
-import type { ContextLab, LabTreeNode, PlaceCandidate } from "../../shared/context/preview";
+import type { ContextLab, PlaceCandidate } from "../../shared/context/preview";
 import { requestYaml } from "../../shared/context/request";
-import {
-    emptyHistory,
-    record,
-    diffStat,
-    type ContextHistory,
-    type ContextStep,
-} from "../../shared/context/history";
+import { emptyHistory, record, type ContextHistory } from "../../shared/context/history";
 
 const PAGE = "ctxlab";
 
@@ -77,22 +74,6 @@ function Fold(props: { k: string; label: string; extra?: string; right?: JSX.Ele
                 <div class="min-h-0 flex-1 overflow-auto bg-base-200 text-[11px]">{props.children}</div>
             </Show>
         </div>
-    );
-}
-
-function ContainerBadge(props: { c: "system" | "runtime" | null }) {
-    return (
-        <Show when={props.c} fallback={<span class="opacity-40">—</span>}>
-            <span
-                class="badge badge-sm badge-outline"
-                classList={{
-                    "badge-primary": props.c === "system",
-                    "badge-warning": props.c === "runtime",
-                }}
-            >
-                {props.c}
-            </span>
-        </Show>
     );
 }
 
@@ -186,9 +167,6 @@ function StructureRows(props: {
     );
 }
 
-const indentOf = (path: string): number => path.split(".").length - 1;
-const leafName = (path: string): string => path.split(".").slice(-1)[0];
-
 /** path → 该 path 在文本里的行区间（渲染时收集；这里做一次前缀包含判断） */
 function rangesFor(
     lines: Record<string, { from: number; to: number }>,
@@ -221,8 +199,6 @@ export function ContextLabPage(props: { uri: string }) {
 
     /** 变更历史：每次重算都记一次，内容没变就不新增（144 的"内容未变不发"） */
     const [history, setHistory] = createSignal<ContextHistory>(emptyHistory());
-    /** 选中的 step（null = 看当前） */
-    const [pickedStep, setPickedStep] = createSignal<number | null>(null);
     /** 自动观察：默认开 —— 用户改任务正文/外部改动都能落到 step 列表，
      *  不必先想起来点「刷新」。
      *  老事件流没有 context 事件推送，所以是轮询；108 接上订阅后只换这几行。 */
@@ -263,13 +239,6 @@ export function ContextLabPage(props: { uri: string }) {
         const l = lab();
         if (!l) return;
         setHistory((h) => record(h, l.snapshot, new Date().toISOString()));
-    });
-
-    // 有变化时自动选中**最新一步**（否则用户要先在列表里点一下才看得到内容）。
-    // 只在"当前没选中"时自动跳 —— 用户点了某一步就不打扰他。
-    createEffect(() => {
-        const steps = history().steps;
-        if (steps.length > 0 && pickedStep() === null) setPickedStep(steps[steps.length - 1]!.index);
     });
 
     // 自动观察：开着时按间隔重算（真实数据变了就会多出 step）。
@@ -315,115 +284,32 @@ export function ContextLabPage(props: { uri: string }) {
     const structure = () => buildVarTree(AssembleGlobalsSchema);
 
     /**
-     * 选中 path → 某份文本里的整行高亮。
-     * 行号取自与文本同源的渲染映射；滚动目标用**焦点段的字符区间**（不是行首）：
-     * 不折行时长行会横向溢屏，只到行首的话焦点段仍在屏幕外。
+     * 选中结构树一行 → 请求预览里对应那几行的整行高亮（点它才高亮，再点别的行就跟着换）。
+     * 行号取自**与文本同源的渲染映射**（`requestYaml` 边产出边收集）—— 内嵌的 system/runtime
+     * 子节点用的就是变量路径（`chain.0.path`），与结构树同名，所以无需任何换算。
+     * 滚动目标用**焦点段的字符区间**（不是行首）：不折行时长行会横向溢屏，只到行首的话焦点段仍在屏幕外。
      */
-    const hlOf = (
-        text: string | undefined,
-        lines: Record<string, { from: number; to: number }> | undefined,
-        p: string | null,
-    ): HlLines | null => {
-        if (!p || !text || !lines) return null;
-        const r = rangesFor(lines, p);
+    const hlForRequest = (): HlLines | null => {
+        const view = reqView();
+        const p = selected();
+        if (!p || !view) return null;
+        const r = rangesFor(view.lines, p);
         if (!r) return null;
-        const textLines = text.split("\n");
+        const textLines = view.text.split("\n");
         let pos = 0;
         for (let i = 0; i < r.from - 1 && i < textLines.length; i++) pos += textLines[i]!.length + 1;
         const end = pos + (r.to - r.from === 0 ? (textLines[r.from - 1]?.length ?? 0) : 1);
         return { lines: [r.from, r.to], focusLines: [r.from], focusPos: pos, focusEnd: end };
     };
 
-    /** 预览：选中 path 落在哪一份（决定给哪个编辑器发高亮） */
-    const hlFor = (which: "system" | "runtime"): HlLines | null =>
-        hlOf(lab()?.[which].text, lab()?.[which].lines, selected());
-    /** 请求预览（YAML 形态）：内嵌块的行号就在同一份映射里，无需换算 */
-    const hlForRequest = (): HlLines | null => hlOf(reqView()?.text, reqView()?.lines, selected());
-
-    /** 变量树：选中该行时把它滚进视野 */
-    const rowRef = (el: HTMLTableRowElement, path: string): void => {
-        if (selected() === path) el.scrollIntoView({ block: "center" });
-    };
-
-    const deliveryPane = (which: "system" | "runtime") => {
-        const d = () => lab()?.[which];
-        return (
-            <Show when={d()} fallback={<div class="p-2 opacity-60">计算中…</div>}>
-                <MdEditor
-                    value={d()!.text || ""}
-                    editable={false}
-                    onChange={() => {}}
-                    lang="yaml"
-                    highlight={hlFor(which)}
-                />
-            </Show>
-        );
-    };
-
-    /** 变更详情：选中某步 → 看它改了什么（值变化 + 两份 diff） */
-    const changePane = () => {
-        const step = () => (lab()?.snapshot ? history().steps.find((x) => x.index === pickedStep()) : null);
-        return (
-            <Show
-                when={step()}
-                fallback={<div class="p-2 opacity-60">选一个变化的 step 看它改了什么</div>}
-            >
-                {(st: () => ContextStep) => (
-                    <div class="space-y-2 p-2">
-                        <div class="flex items-center gap-2">
-                            <span class="badge badge-sm">step {st().index}</span>
-                            <span class="opacity-60">{new Date(st().at).toLocaleTimeString()}</span>
-                        </div>
-                        <div>
-                            <div class="mb-1 font-bold opacity-70">变化的变量（{st().changed.length}）</div>
-                            <Show when={st().changed.length > 0} fallback={<div class="opacity-50">无（投递范围变了）</div>}>
-                                <div class="flex flex-wrap gap-1">
-                                    <For each={st().changed}>{(p) => <span class="badge badge-xs font-mono">{p}</span>}</For>
-                                </div>
-                            </Show>
-                        </div>
-                        <div>
-                            <div class="mb-1 font-bold opacity-70">落在哪一份</div>
-                            <div class="flex flex-col gap-1">
-                                <div>
-                                    <span class="badge badge-primary badge-xs badge-outline">system</span>{" "}
-                                    {st().systemDiffers ? "重建（全量）" : "未变"} · 涉及{" "}
-                                    <span class="font-mono">{st().systemTouched.join(", ") || "—"}</span>
-                                </div>
-                                <div>
-                                    <span class="badge badge-warning badge-xs badge-outline">runtime</span>{" "}
-                                    {st().runtimeDiffers ? "增量 patch" : "未变"} · 涉及{" "}
-                                    <span class="font-mono">{st().runtimeTouched.join(", ") || "—"}</span>
-                                </div>
-                            </div>
-                        </div>
-                        <For each={[
-                            { name: "system 份变化内容", diff: st().systemDiff },
-                            { name: "runtime 份变化内容", diff: st().runtimeDiff },
-                        ]}>
-                            {(d) => (
-                                <Show when={d.diff.length > 0}>
-                                    <div>
-                                        <div class="mb-1 font-bold opacity-70">
-                                            {d.name}（+{diffStat(d.diff).add} / -{diffStat(d.diff).del}）
-                                        </div>
-                                        <pre class="max-h-64 overflow-auto rounded bg-base-100 p-1 font-mono">
-                                            {d.diff
-                                                .filter((l) => l.t !== " ")
-                                                .map((l) => `${l.t} ${l.s}`)
-                                                .join("\n") || "（无实质变化）"}
-                                        </pre>
-                                    </div>
-                                </Show>
-                            )}
-                        </For>
-                    </div>
-                )}
-            </Show>
-        );
-    };
-
-    /** 变更列表（只列**有变化**的 step） */
+    /**
+     * 变更列表（只列**有变化**的 step）。
+     * 当前是"重算对比"打出来的观察列表（2 秒轮询 + 值 hash 对比）：没有因果、关页面就丢、
+     * 也不对齐真实轮次，所以只做**展示**不做选中。选中→diff 需要"每轮真发的投递快照"
+     * （system/runtime 两份文本 + 值 hash 表 + 版本），那是下一步；有了它两处自然成立：
+     *   · 选中第 N 步 → 与第 N-1 步快照 diff
+     *   · 取消选中 → 当前变量树与最后一步快照 diff
+     */
     const stepsPane = () => (
         <div class="p-1">
             <div class="mb-1 flex items-center gap-1 px-1 opacity-70">
@@ -445,25 +331,20 @@ export function ContextLabPage(props: { uri: string }) {
                 <ul class="menu menu-xs">
                     <For each={[...history().steps].reverse()}>
                         {(st) => (
-                            <li>
-                                <button
-                                    class={`flex items-center gap-2 ${rowCls(pickedStep() === st.index)}`}
-                                    onClick={() => setPickedStep(pickedStep() === st.index ? null : st.index)}
-                                >
-                                    <span class="badge badge-xs">{st.index}</span>
-                                    <span class="truncate font-mono">
-                                        {st.changed.slice(0, 2).join(", ") || "投递范围变化"}
-                                        {st.changed.length > 2 ? ` +${st.changed.length - 2}` : ""}
-                                    </span>
-                                    <span class="ml-auto flex gap-1">
-                                        <Show when={st.systemDiffers}>
-                                            <span class="badge badge-primary badge-xs">sys</span>
-                                        </Show>
-                                        <Show when={st.runtimeDiffers}>
-                                            <span class="badge badge-warning badge-xs">run</span>
-                                        </Show>
-                                    </span>
-                                </button>
+                            <li class="flex items-center gap-2 px-2 py-0.5">
+                                <span class="badge badge-xs">{st.index}</span>
+                                <span class="truncate font-mono" title={st.changed.join(", ")}>
+                                    {st.changed.slice(0, 2).join(", ") || "投递范围变化"}
+                                    {st.changed.length > 2 ? ` +${st.changed.length - 2}` : ""}
+                                </span>
+                                <span class="ml-auto flex gap-1">
+                                    <Show when={st.systemDiffers}>
+                                        <span class="badge badge-primary badge-xs">sys</span>
+                                    </Show>
+                                    <Show when={st.runtimeDiffers}>
+                                        <span class="badge badge-warning badge-xs">run</span>
+                                    </Show>
+                                </span>
                             </li>
                         )}
                     </For>
@@ -505,30 +386,9 @@ export function ContextLabPage(props: { uri: string }) {
             </div>
         ),
 
-        /** 中：预览（两份 YAML + step 变更详情 + 请求体 JSON） */
+        /** 中：请求预览（整份请求 = 一份大 YAML；可切原文 JSON） */
         "ctxlab.delivery": () => (
-            <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-xs">
-                <Fold
-                    k="change"
-                    label="变更详情"
-                    extra={pickedStep() !== null ? `step ${pickedStep()}` : "未选中"}
-                >
-                    {changePane()}
-                </Fold>
-                <Fold
-                    k="system"
-                    label="system 份（稳定 → 提示词开头）"
-                    extra={lab() ? `${lab()!.system.places.length} 单元 · ${(lab()!.system.bytes / 1024).toFixed(1)} KB` : ""}
-                >
-                    {deliveryPane("system")}
-                </Fold>
-                <Fold
-                    k="runtime"
-                    label="runtime 份（易变 → user 消息）"
-                    extra={lab() ? `${lab()!.runtime.places.length} 单元 · ${(lab()!.runtime.bytes / 1024).toFixed(1)} KB` : ""}
-                >
-                    {deliveryPane("runtime")}
-                </Fold>
+            <div class="flex h-full min-h-0 flex-col gap-1 p-1 text-xs">
                 <Fold
                     k="request"
                     label="请求预览（实际发送格式）"
@@ -580,48 +440,6 @@ export function ContextLabPage(props: { uri: string }) {
                             </div>
                         )}
                     </Show>
-                </Fold>
-            </div>
-        ),
-
-        /** 右：变量树（真实值；归属在结构树上点开关改） */
-        "ctxlab.vars": () => (
-            <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-xs">
-                <Fold k="tree" label="变量树" extra={`${lab()?.tree.length ?? 0} 个变量`}>
-                    <table class="table table-xs">
-                        <thead>
-                            <tr>
-                                <th>变量</th>
-                                <th>值</th>
-                                <th>归属</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <For each={lab()?.tree ?? []}>
-                                {(n: LabTreeNode) => (
-                                    <tr
-                                        ref={(el) => rowRef(el, n.path)}
-                                        class={`cursor-pointer hover:bg-base-300/60 ${rowCls(selected() === n.path)}`}
-                                        onClick={() => setSelected(n.path)}
-                                    >
-                                        <td class="whitespace-nowrap font-mono">
-                                            <span style={{ "padding-left": `${indentOf(n.path) * 10}px` }} />
-                                            <span title={n.path}>{leafName(n.path)}</span>
-                                        </td>
-                                        {/* 父层级只表态：值在下面几行里，重复输出没有信息量 */}
-                                        <td class="max-w-[12rem] truncate" title={n.preview}>
-                                            <Show when={n.preview} fallback={<span class="opacity-30">—</span>}>
-                                                {n.preview}
-                                            </Show>
-                                        </td>
-                                        <td>
-                                            <ContainerBadge c={n.container} />
-                                        </td>
-                                    </tr>
-                                )}
-                            </For>
-                        </tbody>
-                    </table>
                 </Fold>
             </div>
         ),

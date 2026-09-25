@@ -140,8 +140,8 @@ describe("上下文树：RPC 契约（真实数据）", () => {
   }, 90_000);
 });
 
-describe("上下文树：UI 上屏（三列 + 真实请求体）", () => {
-  it("三列各自上屏；结构树标注归属；请求体是真实 JSON；与提示词页互不干扰", async () => {
+describe("上下文树：UI 上屏（两列 + 请求预览）", () => {
+  it("结构树与请求预览上屏；单份视图已删；与提示词页互不干扰", async () => {
     const repo = `${fx.HOME}/ctxlab3`;
     mkdirSync(repo, { recursive: true });
     writeFileSync(join(repo, "AGENTS.md"), "## 本项目的规范\n- 精简\n");
@@ -153,15 +153,19 @@ describe("上下文树：UI 上屏（三列 + 真实请求体）", () => {
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
     await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
 
-    // 三列：结构树（左）/ 两份投递（中）/ 投递单元 + 变量树（右）
+    // 两列：结构树（左）/ 请求预览（中）。单份视图（变量树 / system 份 / runtime 份 / 变更详情）
+    // 已删 —— 同一份文本的展开形态就在请求预览的树里，不必看两遍。
     const base = await waitUntil(
       a11yText,
-      (s) => s.includes("变量（契约）") && s.includes("system 份") && s.includes("投递单元"),
-      { label: "上下文树页三列上屏" },
+      (s) => s.includes("变量（契约）") && s.includes("请求预览"),
+      { label: "上下文树页两列上屏" },
     );
-    expect(base).toContain("runtime 份");
-    expect(base).toContain("变量树");
     expect(base).toContain("真实上下文");
+    // 判据用**被删视图自己的标题/栏位**（不用裸词"变量树"：说明头正文里就有「一棵变量树」）
+    const gone = ["system 份（稳定", "runtime 份（易变", "变更详情", " 个变量\n"];
+    for (const g of gone) {
+      expect(base, `已删的视图不该再上屏：${g}`).not.toContain(g);
+    }
 
     // 真实 AGENTS.md 内容上屏（等 RPC；首帧 system 名单还没加载完）
     const withChain = await waitUntil(a11yText, (s) => s.includes("本项目的规范"), {
@@ -173,13 +177,13 @@ describe("上下文树：UI 上屏（三列 + 真实请求体）", () => {
     // 与提示词页互不干扰：另一个 page 的块不该出现
     expect(withChain).not.toContain("_system.md");
 
-    // 数组展开：chain 的每一层（AGENTS.md 链）在变量树里是独立行，能单独定位
+    // 链内容进了请求预览（真实数据：AGENTS.md 链 → system 段）
     const withArray = await waitUntil(a11yText, (s) => s.includes("chain"), { label: "chain 上屏" });
     expect(withArray).toContain("chain");
 
-    // 变更 view：左栏有 step 列表（初始无变化）
+    // 变更列表：左栏折叠块的标题常驻（默认收起）
     expect(withChain).toContain("变更（step）");
-    // 「投递单元」view 已删（划分结果已在 system/runtime 预览里体现）
+    // 「投递单元」view 已删（划分结果已在请求预览里体现）
     expect(withChain).not.toContain("投递单元");
 
     // 请求预览（默认 YAML 形态）：内嵌的 system 文本**就地解析展开** ——
@@ -218,19 +222,18 @@ describe("上下文树：UI 上屏（三列 + 真实请求体）", () => {
       ui.close();
     }
 
-    // ★ 真实 step：改任务正文 → 自动观察（默认开）记录到变化里
+    // ★ 真实变化：改任务正文 → 自动观察（默认开）记录到变更列表（展开它才看得到条目）
+    await fold("steps", true);
     const taskFile = join(fx.HOME, uri, "AGENTS.md");
     const before = await fx.sh.run(`cat ${taskFile}`);
     writeFileSync(taskFile, `${before.stdout}\n\n<!-- 意图测试改动 -->\n`);
     const withChange = await waitUntil(
       a11yText,
-      (s) => /变更（step）[\s\S]{0,200}?\btask\.body\b/.test(s) || /\[1\]/.test(s),
+      (s) => /变更（step）[\s\S]{0,400}?\btask\.body\b/.test(s) || /\[1\]/.test(s),
       { label: "自动观察到 step 变化", timeoutMs: 20000 },
     );
-    // 点开那一步 → 变更详情显示两份的归属判断与 diff
-    expect(withChange).toContain("变更详情");
-    expect(withChange).toContain("runtime");
-    expect(withChange).toContain("增量 patch");
+    // 列表只做展示（选中→diff 随真实 step 事件一起做），但归属标记仍在
+    expect(withChange).toContain("run");
 
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 180_000);

@@ -20,12 +20,70 @@ import type { ContextPath, ContextTreeState } from "./types";
 
 const YAML_RESERVED = new Set(["true", "false", "null", "yes", "no", "on", "off", "~", ""]);
 
-/** 多行文本 → YAML 块标量（`|` 保留换行；空行不加缩进，避免尾随空格） */
-function blockScalar(text: string, indent: number): string {
-    const pad = "  ".repeat(indent);
-    const body = text.endsWith("\n") ? text.slice(0, -1) : text;
-    const lines = body.split("\n").map((l) => (l.length > 0 ? pad + l : ""));
-    return `|\n${lines.join("\n")}`;
+/** 前导空格数（块缩进判定用） */
+function leadingSpaces(s: string): number {
+    return s.length - s.replace(/^ +/, "").length;
+}
+
+/** 尾部换行数（决定块标量 chomping） */
+function trailingNewlines(s: string): number {
+    const m = /(\n+)$/.exec(s);
+    return m ? m[1]!.length : 0;
+}
+
+/**
+ * 多行文本 → YAML 块标量的**头标记 + 内容行**（空行不加缩进，避免尾随空格）。
+ *
+ * 两个实测踩坑（都会让整份 YAML 解析失败 / 悄悄改内容）：
+ *
+ * ① **缩进指示符**：内容行自身可能带前导空格（工具输出右对齐的行号、整段缩进的代码等）。
+ *   YAML 默认按"首个非空行"自动判定块缩进 —— 于是两种翻车（都在真实历史里踩到）：
+ *   · 首行缩进比后面的行深 → 后面的行掉出块，整份 YAML 解析报错
+ *     （`wc -l` 的 `   352 …` + `38556 …`，338 条历史的请求预览崩在 509 行）
+ *   · 整段有**公共缩进** → 那段缩进被当成块缩进削掉，回读丢内容（源码类工具输出）
+ *   两者都靠**首行有前导空格就给 `|2`** 解决（2 = 内容相对父级缩进 2 格，与本函数 `+1`
+ *   级一致；对象字段 / 序列项 / 顶层三种落位都验证过）。
+ *
+ * ② **chomping**：`|` 是 clip（回读必补一个尾换行）。原值尾换行为 0 时必须写 `|-`（strip），
+ *   否则回读值凭空多一个 `\n` —— 「解析的就是那段原文」就不成立了。≥2 个尾换行交回调用方
+ *   退回转义标量（罕见，且 `|+` 的构造易错）。
+ *
+ * 只在需要时才写指示符：常规文本仍是 `|`，与旧输出逐字节一致（golden 不受影响）。
+ */
+function blockScalarOf(text: string, indent: number): { marker: string; lines: string[] } {
+    const blk = "  ".repeat(indent + 1);
+    const k = trailingNewlines(text);
+    const chomp = k === 0 ? "-" : "";
+    const body = k >= 1 ? text.slice(0, -1) : text;
+    const lines = body.split("\n").map((l) => (l.length > 0 ? blk + l : ""));
+    const nonEmpty = lines.filter((l) => l.length > 0);
+    // 注意：判的是**内容自身**的前导空格（减掉统一加的 blk），不是渲染后的行缩进
+    const first = nonEmpty.length > 0 ? leadingSpaces(nonEmpty[0]!) - blk.length : 0;
+    // 首行**有**前导空格 → 必须 `|2`：自动判定会把「首行缩进」当成块缩进，
+    // 于是内容的公共缩进被悄悄削掉（整段代码缩进消失），或后续浅行直接掉出块。
+    const indicator = first === 0 ? "" : "2";
+    return { marker: `|${indicator}${chomp}`, lines };
+}
+
+/**
+ * 块标量**表达不了**的字符：YAML 只允许可打印字符（+ tab / 换行）。
+ * 终端 ANSI 色码（ESC）、\r、C0/C1 控制字符都只有双引号转义风格能承载。
+ */
+const BLOCK_UNSAFE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/;
+
+/**
+ * 多行文本 → YAML 落法（三种落位共用）：
+ *   · 常规 → 块标量（`|` / `|2`，见 blockScalarOf）
+ *   · 含控制字符 → **双引号转义标量**（JSON.stringify 的转义是 YAML 双引号转义的子集）
+ *     —— 实测：工具输出里的 ANSI 色码会让整份 YAML 解析报「non-printable characters」。
+ *   · 尾换行 ≥2 个 → 同样退回转义标量（块标量的 `|+` 构造易错，而这两种都罕见）
+ *     保真优先：仍是那段原文，只是转义写出来（想看可读形态切「原文」）。
+ * 返回值：`marker` 直接接在 `key: ` / `- ` / 裸位置之后；`lines` 是块标量的内容行。
+ */
+function multilineIn(text: string, indent: number): { marker: string; lines: string[] } {
+    if (BLOCK_UNSAFE.test(text)) return { marker: JSON.stringify(text), lines: [] };
+    if (trailingNewlines(text) >= 2) return { marker: JSON.stringify(text), lines: [] };
+    return blockScalarOf(text, indent);
 }
 
 /** 多行字符串 = 需要用块标量输出 */
@@ -94,10 +152,9 @@ function emitValue(v: unknown, indent: number, path: ContextPath, sink: EmitSink
     // 多行字符串（模版产出）→ 块标量
     if (isMultiline(v)) {
         const from = sink.lines.length;
-        const body = v.endsWith("\n") ? v.slice(0, -1) : v;
-        const blk = "  ".repeat(indent + 1);
-        sink.lines.push(`${pad}|`);
-        for (const l of body.split("\n")) sink.lines.push(l.length > 0 ? blk + l : "");
+        const { marker, lines } = multilineIn(v, indent);
+        sink.lines.push(`${pad}${marker}`);
+        sink.lines.push(...lines);
         mark(from);
         return;
     }
@@ -119,10 +176,9 @@ function emitValue(v: unknown, indent: number, path: ContextPath, sink: EmitSink
                     emitEmbed(emb, indent + 1, "", sink);
                     markItem();
                 } else if (isMultiline(item)) {
-                    const blk = "  ".repeat(indent + 1);
-                    sink.lines.push(`${pad}- |`);
-                    const body = item.endsWith("\n") ? item.slice(0, -1) : item;
-                    for (const l of body.split("\n")) sink.lines.push(l.length > 0 ? blk + l : "");
+                    const { marker, lines } = multilineIn(item, indent);
+                    sink.lines.push(`${pad}- ${marker}`);
+                    sink.lines.push(...lines);
                     markItem();
                 } else if (isPlainObject(item) || (Array.isArray(item) && item.length > 0)) {
                     // 对象/序列项：首行并到 `- ` 之后，其余行缩进对齐（YAML 惯例写法）
@@ -164,10 +220,9 @@ function emitValue(v: unknown, indent: number, path: ContextPath, sink: EmitSink
                     continue;
                 }
                 if (isMultiline(val)) {
-                    const blk = "  ".repeat(indent + 1);
-                    sink.lines.push(`${pad}${k}: |`);
-                    const body = val.endsWith("\n") ? val.slice(0, -1) : val;
-                    for (const l of body.split("\n")) sink.lines.push(l.length > 0 ? blk + l : "");
+                    const { marker, lines } = multilineIn(val, indent);
+                    sink.lines.push(`${pad}${k}: ${marker}`);
+                    sink.lines.push(...lines);
                     sink.spans.set(childPath, { from: childFrom + 1, to: sink.lines.length });
                     continue;
                 }

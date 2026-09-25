@@ -88,7 +88,7 @@ export const VIEWS: ViewDef[] = [
     placement: { lab: { area: "right", order: 10 } },
   },
   {
-    // 上下文树页（**独立子页面**，见下 PAGES 的 ctxlab）：三列 —— 结构树 | 预览 | 变量树
+    // 上下文树页（**独立子页面**，见下 PAGES 的 ctxlab）：两列 —— 结构树 | 请求预览
     // 左：结构树（变量契约）。划分操作就在这里做（点选换容器），不另开一个"规则表"view
     id: "ctxlab.structure",
     title: "结构树",
@@ -96,18 +96,11 @@ export const VIEWS: ViewDef[] = [
     placement: { ctxlab: { area: "left", order: 10 } },
   },
   {
-    // 中：预览 —— system 份 / runtime 份 / 请求预览（整份请求的大 YAML，内嵌文本就地解析展开；可切原文 JSON）
+    // 中：请求预览 —— 整份请求的大 YAML（内嵌 system/runtime 文本就地解析展开；可切原文 JSON）
     id: "ctxlab.delivery",
     title: "预览",
     instanceScope: "context",
     placement: { ctxlab: { area: "center", order: 10 } },
-  },
-  {
-    // 右：投递单元清单 + 变量树（当前真实变量；选中联动高亮）
-    id: "ctxlab.vars",
-    title: "变量",
-    instanceScope: "context",
-    placement: { ctxlab: { area: "right", order: 10 } },
   },
   {
     // 边聊边调：与任务执行页是**同一个 view**，只是换个 area（卫星）
@@ -215,13 +208,12 @@ export const PAGES: PageDef[] = [
     parentPage: "task-run",
     layout: {
       version: 1,
-      // 三列：结构树（输入）| 预览（产出）| 变量（当前真实值）
-      cols: [px(340), fr(1), px(360)],
+      // 两列：结构树（输入）| 请求预览（产出）
+      cols: [px(340), fr(1)],
       rows: [fr(1)],
       areas: [
         { id: "left", col: 0, row: 0 },
         { id: "center", col: 1, row: 0 },
-        { id: "right", col: 2, row: 0 },
       ],
     },
   },

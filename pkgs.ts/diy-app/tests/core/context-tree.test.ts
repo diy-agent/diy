@@ -10,12 +10,14 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, expect } from "vitest";
+import * as yaml from "js-yaml";
 import {
     CONTEXT_GUIDE,
     applyFact,
     applyFacts,
     canonical,
     createTree,
+    emitYamlTraced,
     emptyCursor,
     getValue,
     hashValue,
@@ -456,5 +458,60 @@ describe("渲染行号映射（选中联动高亮的基础）", () => {
         expect(traced.lines["list.0.name"]).toBeTruthy();
         expect(traced.lines["list.1.name"]).toBeTruthy();
         expect(traced.lines["list.0.name"]!.from).toBeLessThan(traced.lines["list.1.name"]!.from);
+    });
+});
+
+
+describe("渲染：块标量的保真（真实数据踩出的两个坑）", () => {
+    /** 用产出器渲染一个小请求体，回读并断言"解析的就是那段原文" */
+    const roundTrip = (content: string) => {
+        const out = emitYamlTraced({ messages: [{ role: "tool", content }] });
+        const loaded = yaml.load(out.text, { schema: yaml.JSON_SCHEMA }) as { messages: Array<{ content: string }> };
+        return { text: out.text, value: loaded.messages[0]!.content };
+    };
+
+    it("内容首行缩进比后面深（工具输出右对齐）→ 给缩进指示符 `|2`，否则整份 YAML 解析崩", () => {
+        // 真实实例：`wc -l` 的输出 —— 首行 3 空格对齐、后面 0 空格
+        const tool = "   352 /a.jsonl\n38556 /b.jsonl\n75188 total";
+        const { text, value } = roundTrip(tool);
+        expect(value).toBe(tool);
+        expect(text).toContain("content: |2");
+    });
+
+    it("整段有公共缩进（源码类工具输出）→ 也必须 `|2`，否则这段缩进被吞掉", () => {
+        const code = "        let turnStopped = false;\n        // 收尾原因追踪\n        let lastAct = \"none\";\n";
+        const { text, value } = roundTrip(code);
+        expect(value).toBe(code);
+        expect(text).toContain("content: |2");
+    });
+
+    it("尾换行 0 个 → `|-`（strip）；否则回读凭空多一个换行", () => {
+        const text0 = "第一行\n第二行"; // 无尾换行
+        expect(roundTrip(text0).value).toBe(text0);
+        expect(roundTrip(text0).text).toContain("content: |-");
+        // 尾换行 1 个：仍是老的 `|`（clip），回读也精确
+        const text1 = "第一行\n第二行\n";
+        expect(roundTrip(text1).value).toBe(text1);
+        expect(roundTrip(text1).text).toContain("content: |\n");
+    });
+
+    it("含控制字符（ANSI 色码）→ 块标量表达不了，退回双引号转义标量（仍保真）", () => {
+        const ansi = "\u001b[31m1 failed\u001b[39m\n第二行\n";
+        const { text, value } = roundTrip(ansi);
+        expect(value).toBe(ansi); // 回读一字不差
+        expect(text).not.toContain("\u001b"); // 原文里的 ESC 不以裸字节出现（YAML 不允许）
+        expect(text).toContain("\\u001b"); // 而是转义写出来
+    });
+
+    it("尾部 ≥2 个换行 → 同样退回转义标量（`|+` 构造易错，罕见路径保真优先）", () => {
+        const text2 = "第一行\n\n";
+        expect(roundTrip(text2).value).toBe(text2);
+        expect(roundTrip(text2).text).toContain('"第一行');
+    });
+
+    it("常规多行（尾换行 1、缩进正常）输出与旧版逐字节一致", () => {
+        const { text } = roundTrip("普通\n文本\n");
+        // 块内容末尾的换行由 YAML 的 clip 语义隐含，不在产出的行里
+        expect(text).toBe("messages:\n  - role: tool\n    content: |\n      普通\n      文本");
     });
 });
