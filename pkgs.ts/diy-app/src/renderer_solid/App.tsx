@@ -19,6 +19,7 @@ import { notificationStore } from "./store/notificationStore";
 import { defaultBinding, findPage, findView, viewInstanceKey } from "../shared/view-registry";
 import { taskIndentOf } from "../shared/tab-order";
 import { taskStateColor } from "../main/core/task-state";
+import { instanceTitle } from "../shared/instance-title";
 import { Breadcrumb } from "./components/Breadcrumb";
 import { setRendererActions, resetRendererActions, getRendererActions } from "./lib/renderer-actions";
 
@@ -186,6 +187,13 @@ export default function App() {
                 setRoute(next ? { kind: "tab", key: next } : { kind: "section", section: "task" });
             },
             toast: (msg, level) => notificationStore.addToast(level ?? "info", msg),
+        });
+        // 窗口标题 = 实例标识（与 main 创建窗口时那个值同源同格式，见 shared/instance-title）。
+        // main 侧拦了「页面标题 → 窗口标题」这条通路，故这里不是为了让窗口标题生效，
+        // 而是让 renderer 自己也持有一份：serve 模式的浏览器标签页标题、以及测试断言读它。
+        // 数据根在 renderer 里没有（拿不到 homedir 做缩写），故取 main 算好的展示形式。
+        void diyService.diy.getAppInfo({}).then((r) => {
+            document.title = instanceTitle(r.diyHomeDisplay, r.env);
         });
         // main 进程 FileWatcher 检测到文件变更后推送 "task-change"，
         // renderer 订阅后自动刷新任务树，覆盖 CLI/外部编辑器/agent 建任务等所有路径。
