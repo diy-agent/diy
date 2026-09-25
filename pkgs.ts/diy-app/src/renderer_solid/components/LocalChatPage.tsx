@@ -661,7 +661,11 @@ export function LocalChatPage() {
         Caches.diy_chat_density.set(d);
     };
     // Markdown 渲染开关（视图 cache 持久化，与密度同级）：全局开关而非 per-message
-    const [md] = createSignal<boolean>(Caches.diy_chat_md.get());
+    const [md, setMdRaw] = createSignal<boolean>(Caches.diy_chat_md.get());
+    const setMd = (v: boolean) => {
+        setMdRaw(v);
+        Caches.diy_chat_md.set(v);
+    };
     /** 清空确认：清空会删掉 main 侧 ops/llm 日志（rmSync，不可恢复），必须二次确认 */
     const [confirmClear, setConfirmClear] = createSignal(false);
     const [pinned, setPinned] = createSignal<Record<string, boolean>>({});
@@ -743,10 +747,10 @@ export function LocalChatPage() {
 
     return (
         <div class="flex flex-col h-full overflow-hidden">
-            {/* 顶部只保留紧凑的信息密度控制。
+            {/* 顶部：Markdown 显示方式（MD 原文 / MD 渲染，双态按钮组）+ 信息密度。
                 pr-16：ViewGrid 的 area 设施（最大化/最小化）浮在本区域**右上角**，
-                不预留这条空档，密度按钮会与它叠在同一坐标上（实测重叠）。 */}
-            <div class={`flex items-center justify-end pl-4 pr-16 ${VIEW_BAR_H} border-b shrink-0`}>
+                不预留这条空档，按钮会与它叠在同一坐标上（实测重叠）。 */}
+            <div class={`flex items-center justify-end gap-2 pl-4 pr-16 ${VIEW_BAR_H} border-b shrink-0`}>
                 <div class="relative" data-density-control>
                     <button
                         class="btn btn-ghost btn-xs tooltip tooltip-bottom"
@@ -768,6 +772,26 @@ export function LocalChatPage() {
                             <div class="mt-1 flex justify-between text-[10px] opacity-60"><span>简</span><span>详</span></div>
                         </div>
                     </Show>
+                </div>
+                {/* 显示方式二选一：两个选项都可见、当前态高亮 —— 单按钮式「MD」看不出
+                    处于哪一态（切回去要猜），且与破坏性按钮同形时易误点。 */}
+                <div class="join shrink-0" role="group" aria-label="Markdown 显示方式">
+                    <button
+                        class={`btn btn-xs join-item ${md() ? "btn-ghost" : "btn-active"}`}
+                        title="原文：按纯文本显示，不做 Markdown 渲染"
+                        aria-pressed={!md()}
+                        onClick={() => setMd(false)}
+                    >
+                        MD 原文
+                    </button>
+                    <button
+                        class={`btn btn-xs join-item ${md() ? "btn-active" : "btn-ghost"}`}
+                        title="渲染：按 Markdown 富文本显示"
+                        aria-pressed={md()}
+                        onClick={() => setMd(true)}
+                    >
+                        MD 渲染
+                    </button>
                 </div>
             </div>
 

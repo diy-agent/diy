@@ -187,7 +187,12 @@ function keyOf(taskUri: string): string {
     return `${readable}-${sum}`;
 }
 
-function opsFile(taskUri: string): string {
+/**
+ * 会话 Op 流文件路径。
+ * 导出供测试构造「历史对话已存在」的落盘状态：测试与产品共用同一路径实现
+ * （key = 可读前缀 + uri 哈希），不复制 key 算法到测试里。
+ */
+export function opsFile(taskUri: string): string {
     return path.join(localDir(), `${keyOf(taskUri)}.ops.jsonl`);
 }
 function llmFile(taskUri: string): string {
