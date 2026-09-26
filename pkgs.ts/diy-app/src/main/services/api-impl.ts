@@ -363,6 +363,58 @@ export function bindAppHandlers(binding: ServerBinding): void {
     };
   });
 
+  binding.on(app.context.diff, async ({ input }) => {
+    const { readDeliverySteps } = await import("./local-agent");
+    const { diffSteps } = await import("../../shared/context/steps");
+    const records = readDeliverySteps(input.taskUri);
+    if (records.length === 0) return null;
+    // 选中第 N 步：与第 N-1 步比（两侧都在文件里）
+    if (input.step !== undefined) {
+      const idx = Math.trunc(input.step);
+      const cur = records[idx - 1];
+      const prev = idx - 1 >= 1 ? records[idx - 2] : null;
+      if (!cur) return null;
+      const d = prev ? diffSteps(prev, cur) : null;
+      return {
+        mode: "step" as const,
+        base: prev ? { index: idx - 1, ts: prev.ts, turnId: prev.turnId } : null,
+        target: { index: idx, ts: cur.ts, turnId: cur.turnId, model: cur.model },
+        incomparable: d?.incomparable ?? false,
+        changed: d?.changed ?? Object.keys(cur.valueHashes).sort(),
+        systemDiffers: d?.systemDiffers ?? true,
+        runtimeDiffers: d?.runtimeDiffers ?? true,
+        systemDiff: d?.systemDiff ?? [],
+        runtimeDiff: d?.runtimeDiff ?? [],
+      };
+    }
+    // 未选中：**当前变量树** vs 最后一步（"我现在改的东西会带来什么变化"）
+    const { assembleGlobals } = await import("./prompt-registry");
+    const { diyHome, projectFromUri } = await import("../core/state");
+    const { buildDelivery, defaultSystemPlaces } = await import("../../shared/context/delivery");
+    const project = projectFromUri(input.taskUri) || input.project;
+    const globals = assembleGlobals(diyHome(), project, { taskUri: input.taskUri }) as unknown as Record<string, unknown>;
+    const now = buildDelivery(globals, input.systemPlaces?.length ? input.systemPlaces : defaultSystemPlaces());
+    const last = records[records.length - 1]!;
+    const d = diffSteps(last, {
+      ...last,
+      wireVersion: now.wireVersion,
+      valueHashes: now.valueHashes,
+      systemText: now.system.text,
+      runtimeText: now.runtime.text,
+    });
+    return {
+      mode: "live" as const,
+      base: { index: records.length, ts: last.ts, turnId: last.turnId },
+      target: null,
+      incomparable: d.incomparable,
+      changed: d.changed,
+      systemDiffers: d.systemDiffers,
+      runtimeDiffers: d.runtimeDiffers,
+      systemDiff: d.systemDiff,
+      runtimeDiff: d.runtimeDiff,
+    };
+  });
+
   // ── llmProxy ──
   binding.on(app.llmProxy.status, async () => {
     const proxy = await getLlmProxy();

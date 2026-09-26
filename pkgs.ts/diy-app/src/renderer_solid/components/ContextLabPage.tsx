@@ -8,9 +8,8 @@
  *   · 左「结构树」 变量契约（zod），含类型/描述与无值变量。
  *                  **划分操作就在这做**：点节点上的 ⇄ 换容器（system ⇄ runtime），
  *                  不必再维护一张独立的"规则表"—— 契约本身就是那张表的骨架。
- *                  另有「变更（step）」列表：只列有变化的步骤。当前是**重算对比**打出来的观察
- *                  （见 shared/context/history.ts），只展示不选中 —— 要做"步 vs 步"的 diff，
- *                  缺的是**每轮真发的投递快照**（下一件事，不依赖事件协议）。
+ *                  另有「变更（真发轮次）」列表：每轮真发落一条投递快照（读文件，不轮询），
+ *                  点一条 → 与上一轮比；取消选中 → 当前 vs 最后一轮。
  *   · 中「请求预览」 **整份请求的大 YAML**：内嵌 system/runtime 文本就地解析展开；
  *                  可切"原文"看真发 JSON —— wire 不变。
  *                  （system 份 / runtime 份两个单独 view 已删：它们的价值全部包含在
@@ -21,7 +20,7 @@
  *
  * 数据是**当前任务的真实上下文**（与真发同一条 assembleGlobals 链），不是编造的。
  */
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, on, onMount, Show, type JSX } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { taskStore } from "../store/taskStore";
 import { ViewGrid } from "./ViewGrid";
@@ -33,9 +32,13 @@ import { buildVarTree, type VarNode } from "../../shared/var-tree";
 import { AssembleGlobalsSchema } from "../../shared/prompt-schema";
 import { MdEditor, type HlLines } from "./MdEditor";
 import { JsonTree } from "./JsonTree";
+import { DynamicBar } from "./DynamicBar";
 import type { ContextLab, PlaceCandidate } from "../../shared/context/preview";
 import { requestYaml } from "../../shared/context/request";
-import { emptyHistory, record, type ContextHistory } from "../../shared/context/history";
+import { diffSize } from "../../shared/context/steps";
+import { lineRange, matchRanges, type LineRange } from "../../shared/context/match";
+import type { ContextDiff } from "../../shared/context/schema";
+import type { DiffLine } from "../../shared/line-diff";
 
 const PAGE = "ctxlab";
 
@@ -167,23 +170,6 @@ function StructureRows(props: {
     );
 }
 
-/** path → 该 path 在文本里的行区间（渲染时收集；这里做一次前缀包含判断） */
-function rangesFor(
-    lines: Record<string, { from: number; to: number }>,
-    path: string,
-): { from: number; to: number } | null {
-    if (lines[path]) return lines[path];
-    // 该 path 只在渲染单元里出现（模板节点 / 中间容器）→ 合并它所有后代的区间
-    const hits = Object.entries(lines)
-        .filter(([k]) => k.startsWith(`${path}.`))
-        .map(([, v]) => v);
-    if (hits.length === 0) return null;
-    return {
-        from: Math.min(...hits.map((h) => h.from)),
-        to: Math.max(...hits.map((h) => h.to)),
-    };
-}
-
 export function ContextLabPage(props: { uri: string }) {
     onMount(() => {
         if (taskStore.selectedUri !== props.uri) void taskStore.selectTask(props.uri);
@@ -197,12 +183,11 @@ export function ContextLabPage(props: { uri: string }) {
         Caches.diy_ctxlab_system.set(next);
     };
 
-    /** 变更历史：每次重算都记一次，内容没变就不新增（144 的"内容未变不发"） */
-    const [history, setHistory] = createSignal<ContextHistory>(emptyHistory());
-    /** 自动观察：默认开 —— 用户改任务正文/外部改动都能落到 step 列表，
-     *  不必先想起来点「刷新」。
-     *  老事件流没有 context 事件推送，所以是轮询；108 接上订阅后只换这几行。 */
-    const [watching, setWatching] = createSignal(true);
+    /**
+     * 选中的 step（null = 看"当前 vs 最后一步"）。
+     * 数据是真发落盘的投递快照（不是页面自己轮询攒的）—— 对齐真实轮次、关页面不丢。
+     */
+    const [pickedStep, setPickedStep] = createSignal<number | null>(null);
 
     const [meta] = createResource(async () => {
         return (await diyService.diy.context.candidates({})) as {
@@ -221,6 +206,60 @@ export function ContextLabPage(props: { uri: string }) {
         })) as ContextLab;
     });
 
+    /**
+     * 真发投递快照列表（每轮一条，读文件；没有实时推送，靠顶栏「⟳ 刷新」重拉）。
+     * 实时观测机制还没定结构 —— 暂用显式刷新（debug UI 用显式刷新代替事件流，
+     * 与提示词页同一取舍；外部改动界面不会自己变，按一下刷新）。
+     */
+    const [steps, { refetch: refetchSteps }] = createResource(
+        () => props.uri,
+        async (uri) => {
+            return (await diyService.diy.context.steps({ taskUri: uri, limit: undefined, diff: undefined })) as {
+                total: number;
+                steps: Array<{
+                    index: number;
+                    ts: string;
+                    turnId: string;
+                    model: string;
+                    bytes: { system: number; runtime: number };
+                    changed?: string[];
+                    sincePrev: {
+                        changed: string[];
+                        systemDiffers: boolean;
+                        runtimeDiffers: boolean;
+                        systemSize: { add: number; del: number };
+                        runtimeSize: { add: number; del: number };
+                    } | null;
+                }>;
+            };
+        },
+    );
+
+    /**
+     * 变更详情：选中某步 → 与上一步比；未选中 → 当前变量树 vs 最后一步（都在 main 侧算）。
+     * ⚠️ source 用**字符串**：createResource 对非函数 source 按 `===` 比较，传对象字面量的话
+     * 每次渲染都是新引用 → 无谓重拉（甚至把它变成一台 RPC 打桩机）。
+     */
+    const diffKey = (): string =>
+        `${props.uri}\u0000${pickedStep() ?? "live"}\u0000${effectiveSystem().join(",")}`;
+    const [diff, { refetch: refetchDiff }] = createResource(diffKey, async (k) => {
+        const [uri, step, sys] = k.split("\u0000");
+        if (!uri) return null;
+        return (await diyService.diy.context.diff({
+            project: projectFromUri(uri),
+            taskUri: uri,
+            step: step === "live" ? undefined : Number(step),
+            systemPlaces: sys ? sys.split(",") : undefined,
+        })) as ContextDiff | null;
+    });
+
+    /** 顶栏刷新：重拉三处（当前上下文 / 快照列表 / 变更详情）—— 没有实时推送，只有显式刷新 */
+    const refresh = (): void => {
+        void refetch();
+        void refetchSteps();
+        void refetchDiff();
+    };
+
     /** 请求预览的形态：YAML（默认；内嵌 system/runtime 文本就地解析展开）/ 原文（真发 JSON） */
     const [reqMode, setReqMode] = createSignal<"yaml" | "json">("yaml");
     /**
@@ -232,21 +271,6 @@ export function ContextLabPage(props: { uri: string }) {
         const body = l?.request.body;
         if (!body) return null;
         return requestYaml(body, [l!.system.text, l!.runtime.text]);
-    });
-
-    // 每次重算结果到手 → 记一次 step（纯函数，内容没变不新增）
-    createEffect(() => {
-        const l = lab();
-        if (!l) return;
-        setHistory((h) => record(h, l.snapshot, new Date().toISOString()));
-    });
-
-    // 自动观察：开着时按间隔重算（真实数据变了就会多出 step）。
-    // 老事件流还没有 context 事件推送，所以这里用轮询；108 之后换成订阅即可。
-    createEffect(() => {
-        if (!watching()) return;
-        const t = setInterval(() => void refetch(), 2000);
-        onCleanup(() => clearInterval(t));
     });
 
     /**
@@ -284,67 +308,92 @@ export function ContextLabPage(props: { uri: string }) {
     const structure = () => buildVarTree(AssembleGlobalsSchema);
 
     /**
-     * 选中结构树一行 → 请求预览里对应那几行的整行高亮（点它才高亮，再点别的行就跟着换）。
+     * 选中结构树一行 → 请求预览里**所有**匹配的位置（一个变量可以出现多处：system 段、runtime 段、
+     * 甚至同一段里的多次引用），配 ↑/↓ 在它们之间跳（与提示词页同一套交互）。
      * 行号取自**与文本同源的渲染映射**（`requestYaml` 边产出边收集）—— 内嵌的 system/runtime
-     * 子节点用的就是变量路径（`chain.0.path`），与结构树同名，所以无需任何换算。
-     * 滚动目标用**焦点段的字符区间**（不是行首）：不折行时长行会横向溢屏，只到行首的话焦点段仍在屏幕外。
+     * 子节点用的就是变量路径（`chain.0.path`），与结构树同名，所以无需任何换算；
+     * 集合元素走 `[ChainEntry]` → 数字下标段的通配（见 rangesFor）。
      */
-    const hlForRequest = (): HlLines | null => {
+    const hlMatches = createMemo<LineRange[]>(() => {
         const view = reqView();
         const p = selected();
-        if (!p || !view) return null;
-        const r = rangesFor(view.lines, p);
-        if (!r) return null;
+        if (!p || !view) return [];
+        return matchRanges(view.lines, p);
+    });
+    /** 焦点下标（换选中行时归零；↑/↓ 在匹配之间走） */
+    const [focusIdx, setFocusIdx] = createSignal(0);
+    createEffect(on(selected, () => setFocusIdx(0)));
+
+    const hlForRequest = (): HlLines | null => {
+        const view = reqView();
+        const ms = hlMatches();
+        const p = selected();
+        if (!p || !view || ms.length === 0) return null;
+        const idx = Math.min(Math.max(0, focusIdx()), ms.length - 1);
+        const r = ms[idx]!;
         const textLines = view.text.split("\n");
         let pos = 0;
         for (let i = 0; i < r.from - 1 && i < textLines.length; i++) pos += textLines[i]!.length + 1;
         const end = pos + (r.to - r.from === 0 ? (textLines[r.from - 1]?.length ?? 0) : 1);
-        return { lines: [r.from, r.to], focusLines: [r.from], focusPos: pos, focusEnd: end };
+        return {
+            // 浅色 = 全部匹配（每处的整行），深色 = 当前焦点那一处
+            lines: ms.flatMap((m) => lineRange(m)),
+            focusLines: lineRange(r),
+            focusPos: pos,
+            focusEnd: end,
+            focusKey: `${p}#${idx}`,
+        };
+    };
+    const stepFocus = (d: number): void => {
+        const n = hlMatches().length;
+        if (n === 0) return;
+        setFocusIdx((i) => (i + d + n) % n);
     };
 
     /**
-     * 变更列表（只列**有变化**的 step）。
-     * 当前是"重算对比"打出来的观察列表（2 秒轮询 + 值 hash 对比）：没有因果、关页面就丢、
-     * 也不对齐真实轮次，所以只做**展示**不做选中。选中→diff 需要"每轮真发的投递快照"
-     * （system/runtime 两份文本 + 值 hash 表 + 版本），那是下一步；有了它两处自然成立：
-     *   · 选中第 N 步 → 与第 N-1 步快照 diff
-     *   · 取消选中 → 当前变量树与最后一步快照 diff
+     * 变更列表 = **真发快照**（每轮一条，读文件）。
+     * 点一条 → 选中它（看"它相对上一步改了什么"）；再点一次取消 → 看"当前 vs 最后一步"。
+     * 首步没有"上一步"，选中它是给自己看全文（diff 为空，界面会说明）。
      */
     const stepsPane = () => (
         <div class="p-1">
             <div class="mb-1 flex items-center gap-1 px-1 opacity-70">
-                <span>{history().steps.length} 个变化 step</span>
-                <label class="ml-auto flex cursor-pointer items-center gap-1" title="每 2 秒重算一次；关掉则只在你点「⟳ 刷新」时记录">
-                    <input
-                        type="checkbox"
-                        class="checkbox checkbox-xs"
-                        checked={watching()}
-                        onChange={(e) => setWatching(e.currentTarget.checked)}
-                    />
-                    观察
-                </label>
+                <span>{steps()?.total ?? 0} 轮真发</span>
+                <span class="ml-auto">{pickedStep() === null ? "看：当前 vs 最后一步" : `看：第 ${pickedStep()} 步 vs 上一步`}</span>
             </div>
             <Show
-                when={history().steps.length > 0}
-                fallback={<div class="p-2 opacity-60">还没有变化。改一下任务正文/标题，或在别处改动后会自己出现。</div>}
+                when={(steps()?.total ?? 0) > 0}
+                fallback={
+                    <div class="p-2 opacity-60">
+                        还没有真发记录。在对话页发一轮，这里就会出现一条（每轮真发落一条投递快照）。
+                    </div>
+                }
             >
                 <ul class="menu menu-xs">
-                    <For each={[...history().steps].reverse()}>
+                    <For each={[...(steps()?.steps ?? [])].reverse()}>
                         {(st) => (
-                            <li class="flex items-center gap-2 px-2 py-0.5">
-                                <span class="badge badge-xs">{st.index}</span>
-                                <span class="truncate font-mono" title={st.changed.join(", ")}>
-                                    {st.changed.slice(0, 2).join(", ") || "投递范围变化"}
-                                    {st.changed.length > 2 ? ` +${st.changed.length - 2}` : ""}
-                                </span>
-                                <span class="ml-auto flex gap-1">
-                                    <Show when={st.systemDiffers}>
-                                        <span class="badge badge-primary badge-xs">sys</span>
-                                    </Show>
-                                    <Show when={st.runtimeDiffers}>
-                                        <span class="badge badge-warning badge-xs">run</span>
-                                    </Show>
-                                </span>
+                            <li>
+                                <button
+                                    class={`flex items-center gap-2 ${rowCls(pickedStep() === st.index)}`}
+                                    title="点一下：看这一步相对上一步改了什么；再点取消：看当前 vs 最后一步"
+                                    onClick={() => setPickedStep(pickedStep() === st.index ? null : st.index)}
+                                >
+                                    <span class="badge badge-xs">{st.index}</span>
+                                    <span class="truncate font-mono">
+                                        {(st.sincePrev?.changed ?? []).slice(0, 2).join(", ") || "baseline"}
+                                        {(st.sincePrev?.changed.length ?? 0) > 2
+                                            ? ` +${st.sincePrev!.changed.length - 2}`
+                                            : ""}
+                                    </span>
+                                    <span class="ml-auto flex gap-1">
+                                        <Show when={st.sincePrev?.systemDiffers}>
+                                            <span class="badge badge-primary badge-xs">sys</span>
+                                        </Show>
+                                        <Show when={st.sincePrev?.runtimeDiffers}>
+                                            <span class="badge badge-warning badge-xs">run</span>
+                                        </Show>
+                                    </span>
+                                </button>
                             </li>
                         )}
                     </For>
@@ -353,12 +402,97 @@ export function ContextLabPage(props: { uri: string }) {
         </div>
     );
 
+    /** 变更详情（main 侧算好的行级 diff）：选中步 → 步 vs 步；未选中 → 当前 vs 最后一步 */
+    const changePane = () => {
+        const d = () => diff();
+        return (
+            <Show when={d()} fallback={<div class="p-2 opacity-60">还没有真发记录，无从比较。</div>}>
+                {(dd) => (
+                    <div class="space-y-2 p-2">
+                        <div class="flex flex-wrap items-center gap-2 text-[11px]">
+                            <Show when={dd().base}>
+                                {(b) => (
+                                    <>
+                                        <span class="badge badge-sm">{`第 ${b().index} 步`}</span>
+                                        <span class="opacity-40">→</span>
+                                    </>
+                                )}
+                            </Show>
+                            <span class="badge badge-sm badge-primary">
+                                {dd().mode === "live" ? "当前（未发送）" : `第 ${dd().target!.index} 步`}
+                            </span>
+                            <span class="opacity-60">
+                                {dd().mode === "live" ? "相对最后一步的改动" : ""}
+                            </span>
+                            <Show when={dd().incomparable}>
+                                <span class="badge badge-warning badge-xs" title="投递编码版本不同，两份不可比">
+                                    编码版本不同（不可比）
+                                </span>
+                            </Show>
+                        </div>
+                        <div>
+                            <div class="mb-1 font-bold opacity-70">{`变化的变量（${dd().changed.length}）`}</div>
+                            <Show
+                                when={dd().changed.length > 0}
+                                fallback={
+                                    <div class="opacity-50">
+                                        {dd().systemDiffers || dd().runtimeDiffers
+                                            ? "无值变化（是投递范围或编码版本变了）"
+                                            : "没有变化：当前投递与最后一步一致"}
+                                    </div>
+                                }
+                            >
+                                <div class="flex flex-wrap gap-1">
+                                    <For each={dd().changed}>
+                                        {(p) => <span class="badge badge-xs font-mono">{p}</span>}
+                                    </For>
+                                </div>
+                            </Show>
+                        </div>
+                        <div class="flex flex-col gap-1 text-[11px]">
+                            <div>
+                                <span class="badge badge-primary badge-xs badge-outline">system</span>{" "}
+                                {dd().systemDiffers ? "重建（全量）" : "未变（可缓存）"}
+                            </div>
+                            <div>
+                                <span class="badge badge-warning badge-xs badge-outline">runtime</span>{" "}
+                                {dd().runtimeDiffers ? "增量 patch" : "未变"}
+                            </div>
+                        </div>
+                        <For
+                            each={[
+                                { name: "system 份变化", diff: dd().systemDiff as DiffLine[] },
+                                { name: "runtime 份变化", diff: dd().runtimeDiff as DiffLine[] },
+                            ]}
+                        >
+                            {(x) => (
+                                <Show when={x.diff.length > 0}>
+                                    <div>
+                                        <div class="mb-1 font-bold opacity-70">
+                                            {x.name}（+{diffSize(x.diff).add} / -{diffSize(x.diff).del}）
+                                        </div>
+                                        <pre class="max-h-64 overflow-auto rounded bg-base-100 p-1 font-mono text-[11px]">
+                                            {x.diff
+                                                .filter((l) => l.t !== " ")
+                                                .map((l) => `${l.t} ${l.s}`)
+                                                .join("\n") || "（无实质变化）"}
+                                        </pre>
+                                    </div>
+                                </Show>
+                            )}
+                        </For>
+                    </div>
+                )}
+            </Show>
+        );
+    };
+
     const parts: Record<string, () => JSX.Element> = {
         /** 左：结构树（契约 + 划分操作） */
         "ctxlab.structure": () => (
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-[11px]">
-                {/* 变更列表：只列**有变化**的 step（真实数据；开「观察」就持续记录） */}
-                <Fold k="steps" label="变更（step）" extra={`${history().steps.length} 个`}>
+                {/* 变更列表：真发快照（每轮一条；点一条看它改了什么） */}
+                <Fold k="steps" label="变更（真发轮次）" extra={`${steps()?.total ?? 0} 轮`}>
                     {stepsPane()}
                 </Fold>
                 <Fold k="structure" label="结构树（变量契约）" extra="含无值变量 · 类型与描述">
@@ -388,7 +522,19 @@ export function ContextLabPage(props: { uri: string }) {
 
         /** 中：请求预览（整份请求 = 一份大 YAML；可切原文 JSON） */
         "ctxlab.delivery": () => (
-            <div class="flex h-full min-h-0 flex-col gap-1 p-1 text-xs">
+            <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-xs">
+                {/* 变更详情：选中某轮 → 与上一轮比；未选中 → 当前 vs 最后一轮（main 侧算好的行级 diff） */}
+                <Fold
+                    k="change"
+                    label="变更详情"
+                    extra={
+                        pickedStep() === null
+                            ? "当前 vs 最后一步"
+                            : `第 ${pickedStep()} 步 vs 上一步`
+                    }
+                >
+                    {changePane()}
+                </Fold>
                 <Fold
                     k="request"
                     label="请求预览（实际发送格式）"
@@ -427,6 +573,17 @@ export function ContextLabPage(props: { uri: string }) {
                                         </div>
                                     }
                                 >
+                                    {/* 选中结构树一行 → 所有匹配处的导航条（↑/↓ 在它们之间跳；与提示词页同一套交互） */}
+                                    <Show when={selected() && hlMatches().length > 0}>
+                                        <DynamicBar
+                                            label={selected()!}
+                                            count={hlMatches().length}
+                                            index={Math.min(focusIdx(), Math.max(0, hlMatches().length - 1))}
+                                            onPrev={() => stepFocus(-1)}
+                                            onNext={() => stepFocus(1)}
+                                            onClear={() => setSelected(null)}
+                                        />
+                                    </Show>
                                     <div class="min-h-0 flex-1">
                                         <MdEditor
                                             value={reqView()?.text ?? ""}
@@ -453,7 +610,11 @@ export function ContextLabPage(props: { uri: string }) {
                 <span class="badge badge-info badge-sm" title={props.uri}>
                     📌 {props.uri}
                 </span>
-                <button class="btn btn-xs btn-ghost" title="重新计算（重跑真实数据组装链）" onClick={() => void refetch()}>
+                <button
+                    class="btn btn-xs btn-ghost"
+                    title="重新计算：当前上下文 + 真发快照列表 + 变更详情（没有实时推送，改动要按一下）"
+                    onClick={refresh}
+                >
                     ⟳ 刷新
                 </button>
                 <span class="opacity-60">{lab()?.source ?? "加载中…"}</span>

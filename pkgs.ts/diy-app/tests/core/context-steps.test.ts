@@ -70,10 +70,12 @@ describe("step 摘要列表", () => {
         expect(s[0]!.sincePrev!.runtimeDiffers).toBe(true);
     });
 
-    it("默认不下发全文，只给统计；withDiff 才带行内容", () => {
+    it("默认不下发行内容，只给统计；withDiff 才带行内容", () => {
         const plain = summarizeSteps(steps);
         expect(plain[1]!.diff).toBeUndefined();
         expect(plain[1]!.sincePrev!.runtimeSize.add).toBeGreaterThan(0);
+        // sincePrev 里**没有**行内容（列表一条都别带几十 KB 的 diff）
+        expect(Object.keys(plain[1]!.sincePrev!)).not.toContain("runtimeDiff");
         const full = summarizeSteps(steps, { withDiff: true });
         expect(full[1]!.diff!.runtime.length).toBeGreaterThan(0);
         expect(full[0]!.diff).toBeNull(); // 首步没有可比的

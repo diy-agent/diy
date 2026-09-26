@@ -56,14 +56,6 @@ export const ContextLabSchema: z.ZodType<ContextLab> = z.object({
         note: z.string(),
         model: z.string(),
     }),
-    /** 记 step 用（值 hash 表 + 两份文本）；UI 侧据此算变更 */
-    snapshot: z.object({
-        valueHashes: z.record(z.string(), z.string()),
-        systemText: z.string(),
-        systemPlaces: z.array(z.string()),
-        runtimeText: z.string(),
-        runtimePlaces: z.array(z.string()),
-    }),
 });
 
 /** 行级 diff 的一行（`@diy/line-diff` 的形状） */
@@ -84,8 +76,6 @@ export const StepSummarySchema: z.ZodType<StepSummary> = z.object({
             changed: z.array(z.string()),
             systemDiffers: z.boolean(),
             runtimeDiffers: z.boolean(),
-            systemDiff: z.array(diffLine),
-            runtimeDiff: z.array(diffLine),
             incomparable: z.boolean(),
             systemSize: z.object({ add: z.number(), del: z.number() }),
             runtimeSize: z.object({ add: z.number(), del: z.number() }),
@@ -100,3 +90,19 @@ export const StepsSchema = z.object({
     total: z.number(),
     steps: z.array(StepSummarySchema),
 });
+
+/** 行级 diff 结果（见 main 的 app.context.diff：main 侧算完，renderer 只画） */
+export const ContextDiffSchema = z.object({
+    /** step = 某步 vs 上一步；live = **当前变量树** vs 最后一步 */
+    mode: z.enum(["step", "live"]),
+    base: z.object({ index: z.number(), ts: z.string(), turnId: z.string() }).nullable(),
+    target: z.object({ index: z.number(), ts: z.string(), turnId: z.string(), model: z.string() }).nullable(),
+    /** wire 版本不同 → 不可比（不是"内容变了"） */
+    incomparable: z.boolean(),
+    changed: z.array(z.string()),
+    systemDiffers: z.boolean(),
+    runtimeDiffers: z.boolean(),
+    systemDiff: z.array(diffLine),
+    runtimeDiff: z.array(diffLine),
+});
+export type ContextDiff = z.infer<typeof ContextDiffSchema>;

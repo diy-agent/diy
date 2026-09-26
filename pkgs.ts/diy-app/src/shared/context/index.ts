@@ -21,3 +21,4 @@ export * from "./legacy-adapter";
 export * from "./request";
 export * from "./delivery";
 export * from "./steps";
+export * from "./match";

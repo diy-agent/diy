@@ -202,10 +202,41 @@ describe("上下文树：投递快照（steps）", () => {
     // --diff 才带行内容；且原文（中文）能正确回传
     expect(d.steps[1].diff.runtime.some((l: any) => l.t === "+" && l.s.includes("二"))).toBe(true);
 
-    // 默认不带行内容（避免下发整份文本）
+    // 默认不带行内容（避免下发整份文本；也不会塞进 sincePrev）
     const plain = await fx.sh.getJson(`./diy.sh context steps ${uri}`);
     expect((plain.data as any).steps[1].diff).toBeUndefined();
     expect((plain.data as any).steps[1].sincePrev.runtimeSize.add).toBeGreaterThan(0);
+    expect(Object.keys((plain.data as any).steps[1].sincePrev)).not.toContain("runtimeDiff");
+
+    // ── diff：两种模式（都在 main 侧算完） ──
+    // ① 选中某步 → 与上一步比
+    const stepDiff = await fx.sh.getJson(`./diy.sh context diff ${pid} ${uri} --step 2`);
+    const sd = stepDiff.data as any;
+    expect(sd.mode).toBe("step");
+    expect(sd.base.index).toBe(1);
+    expect(sd.target.index).toBe(2);
+    expect(sd.changed).toEqual(["task.body"]);
+    expect(sd.systemDiffers).toBe(false); // 稳定项没变 → 可缓存
+    expect(sd.runtimeDiffers).toBe(true);
+    expect(sd.runtimeDiff.some((l: any) => l.t === "+" && l.s.includes("二"))).toBe(true);
+
+    // ② 不给 --step → **当前变量树** vs 最后一步（"我现在改的会不会变"）
+    // （正文有 10 字下限：`task edit` 会拒绝过短输入，这里给足）
+    await fx.sh.run(`./diy.sh task edit ${uri} --body $'又改了一版正文\\n第三行也在这里'`);
+    const liveDiff = await fx.sh.getJson(`./diy.sh context diff ${pid} ${uri}`);
+    const ld = liveDiff.data as any;
+    expect(ld.mode).toBe("live");
+    expect(ld.base.index).toBe(2);
+    expect(ld.target).toBeNull();
+    expect(ld.changed).toContain("task.body");
+    expect(ld.runtimeDiff.some((l: any) => l.t === "+" && l.s.includes("第三行也在这里"))).toBe(true);
+
+    // 没有真发记录时 → null（界面显示"还没有真发记录"）
+    const other = await fx.sh.getJson(`./diy.sh task create 空任务 ${pid}`);
+    const none = await fx.sh.getJson(
+      `./diy.sh context diff ${pid} ${String((other.data as any).data.uri)}`,
+    );
+    expect(none.data).toBeNull();
 
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 90_000);
@@ -233,10 +264,11 @@ describe("上下文树：UI 上屏（两列 + 请求预览）", () => {
     );
     expect(base).toContain("真实上下文");
     // 判据用**被删视图自己的标题/栏位**（不用裸词"变量树"：说明头正文里就有「一棵变量树」）
-    const gone = ["system 份（稳定", "runtime 份（易变", "变更详情", " 个变量\n"];
-    for (const g of gone) {
+    for (const g of ["system 份（稳定", "runtime 份（易变", " 个变量\n"]) {
       expect(base, `已删的视图不该再上屏：${g}`).not.toContain(g);
     }
+    // 「变更详情」回来了（数据换成真发快照）：标题常驻，默认收起
+    expect(base).toContain("变更详情");
 
     // 真实 AGENTS.md 内容上屏（等 RPC；首帧 system 名单还没加载完）
     const withChain = await waitUntil(a11yText, (s) => s.includes("本项目的规范"), {
@@ -252,8 +284,8 @@ describe("上下文树：UI 上屏（两列 + 请求预览）", () => {
     const withArray = await waitUntil(a11yText, (s) => s.includes("chain"), { label: "chain 上屏" });
     expect(withArray).toContain("chain");
 
-    // 变更列表：左栏折叠块的标题常驻（默认收起）
-    expect(withChain).toContain("变更（step）");
+    // 变更列表：左栏折叠块的标题常驻（默认收起；数据来自**真发快照**）
+    expect(withChain).toContain("变更（真发轮次）");
     // 「投递单元」view 已删（划分结果已在请求预览里体现）
     expect(withChain).not.toContain("投递单元");
 
@@ -293,18 +325,64 @@ describe("上下文树：UI 上屏（两列 + 请求预览）", () => {
       ui.close();
     }
 
-    // ★ 真实变化：改任务正文 → 自动观察（默认开）记录到变更列表（展开它才看得到条目）
+    // ★ 变更列表读的是**真发快照文件**（不是页面自己轮询攒的）：
+    //   没有实时推送 —— 改任务文件后界面**不该自己变**（"不做轮询"的可观测判据），
+    //   按「⟳ 刷新」才会变。
     await fold("steps", true);
     const taskFile = join(fx.HOME, uri, "AGENTS.md");
     const before = await fx.sh.run(`cat ${taskFile}`);
     writeFileSync(taskFile, `${before.stdout}\n\n<!-- 意图测试改动 -->\n`);
-    const withChange = await waitUntil(
-      a11yText,
-      (s) => /变更（step）[\s\S]{0,400}?\btask\.body\b/.test(s) || /\[1\]/.test(s),
-      { label: "自动观察到 step 变化", timeoutMs: 20000 },
+    await new Promise((r) => setTimeout(r, 3000)); // 旧实现在这里是 2 秒轮询，改完 3 秒内必上屏
+    const noAuto = await a11yText();
+    expect(noAuto, "没有实时推送，界面不该自己变（轮询已删）").not.toContain("意图测试改动");
+    // 手写一条快照（真发需要 LLM key）→ 刷新后列表 + 变更详情都要到位
+    const localDir = join(fx.HOME, "local");
+    mkdirSync(localDir, { recursive: true });
+    const rec = (over: Record<string, unknown>) => ({
+      ts: new Date().toISOString(),
+      turnId: "t-intent",
+      model: "mimo-v2.5",
+      wireVersion: "aaaa1111",
+      systemPlaces: ["diy"],
+      runtimePlaces: ["task.body"],
+      valueHashes: { diy: "h1", "task.body": "b1" },
+      systemText: "diy:\n  cli: /repo",
+      runtimeText: 'task:\n  body: "一"',
+      ...over,
+    });
+    writeFileSync(
+      join(localDir, `${keyOf(uri)}.steps.jsonl`),
+      [
+        rec({}),
+        rec({ turnId: "t-intent-2", valueHashes: { diy: "h1", "task.body": "b2" }, runtimeText: 'task:\n  body: "二（意图测试）"' }),
+      ]
+        .map((r) => JSON.stringify(r))
+        .join("\n") + "\n",
     );
-    // 列表只做展示（选中→diff 随真实 step 事件一起做），但归属标记仍在
-    expect(withChange).toContain("run");
+    await fx.sh.getJson(`./diy.sh ui page navigate ctxlab:${uri}`); // 重挂页面 = 重拉资源
+    const withSteps = await waitUntil(a11yText, (s) => s.includes("2 轮真发"), {
+      label: "刷新后真发轮次上屏",
+    });
+    expect(withSteps).toContain("task.body");
+
+    // 点第 2 步 → 变更详情显示"第 2 步 vs 上一步"+ 行级 diff（详情块默认收起，先展开）
+    await fold("change", true);
+    const ui2 = await makeUiDriver(fx.electron.cdpUrl, async () => {
+      const r = await fx.sh.getJson("./diy.sh ui inspect");
+      return (r.data as any)?.data?.tree as A11yNode | undefined;
+    });
+    try {
+      // 变更列表里 reverse 过（最新在前）：nth=0 就是第 2 步那条
+      await ui2.clickSelector("ul.menu li button", { nth: 0 });
+      const detail = await waitUntil(a11yText, (s) => s.includes("第 2 步") && s.includes("第 1 步"), {
+        label: "变更详情（步 vs 步）上屏",
+      });
+      expect(detail).toContain("runtime 份变化");
+      expect(detail).toContain("二（意图测试）");
+      expect(detail).toContain("未变（可缓存）"); // system 份没变
+    } finally {
+      ui2.close();
+    }
 
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 180_000);

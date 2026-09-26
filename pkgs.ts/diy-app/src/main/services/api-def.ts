@@ -19,7 +19,7 @@
 import { RpcSchema } from "@diy/rpc";
 import { z } from "zod";
 import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-schema";
-import { StepsSchema } from "../../shared/context/schema";
+import { ContextDiffSchema, StepsSchema } from "../../shared/context/schema";
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
 
 // 任务状态枚举 — 单一真相源 task-state.ts（纯 zod，无 Node 依赖，浏览器安全） */
@@ -490,6 +490,19 @@ export const apiDef = RpcSchema.router({
                 .cliOption({ desc: "带上行级 diff 内容（默认只有增删统计，避免下发整份文本）" }),
             },
             output: StepsSchema,
+          }),
+          diff: RpcSchema.unary({
+            desc: `某步 vs 上一步的 diff；不给 --step 则是「当前变量树 vs 最后一步」（main 侧算完）`,
+            input: {
+              project: z.string().cliArg({ desc: "project id" }),
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+              step: z.number().optional().cliOption({ desc: "第几步（1 基）；缺省 = 当前 vs 最后一步" }),
+              systemPlaces: z
+                .array(z.string())
+                .optional()
+                .cliOption({ desc: "当前投递的 system 名单（缺省用推荐名单）" }),
+            },
+            output: ContextDiffSchema.nullable(),
           }),
         },
       }),

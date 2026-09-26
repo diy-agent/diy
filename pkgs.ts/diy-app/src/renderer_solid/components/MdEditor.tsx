@@ -148,6 +148,13 @@ export interface HlLines {
      */
     focusPos?: number;
     focusEnd?: number;
+    /**
+     * 焦点**身份**（如 `chain.0.scope#2`）。
+     * 为什么需要：`highlight` 是个对象，每次 effect 重跑都会新建一个 —— 若只比对象引用就只能
+     * 每次都"滚一下"，表现是**用户刚滚动编辑器就被拉回焦点位置**（实测踩到）。
+     * 有了它：身份没变 → 只重画装饰、不动视口；身份变了（换了选中行 / ↑↓ 换焦点）才滚。
+     */
+    focusKey?: string;
 }
 
 const setHl = StateEffect.define<HlLines | null>();
@@ -315,28 +322,36 @@ export function MdEditor(props: {
     createEffect(() => {
         view?.dispatch({ effects: editableCx.reconfigure(EditorView.editable.of(props.editable)) });
     });
-    // 高亮区间变化（点模版结构树/变量行）→ 重画 decoration 并把视线带过去；
-    // 文档替换后也要重放一次（offset 是相对当前文档的）
+    // 高亮区间变化（点结构树/变量行）→ 重画 decoration；**焦点身份变了**才把视线带过去。
+    // 每次都滚的后果：用户一滚编辑器就被拉回（同一身份反复 dispatch）；文档替换后按新文档重放一次。
+    let lastFocusKey: string | null = null;
+    let lastDoc = "";
     createEffect(() => {
         const spec = props.highlight ?? null;
         const v = props.value; // 依赖文档：换文件后按新文档重放
         const vv = view;
         if (!vv) return;
         const effects: StateEffect<unknown>[] = [setHl.of(spec)];
-        // 滚动目标优先用焦点段的字符位置（横向也要到位）；没有就退回焦点行行首
-        const focusLine = spec?.focusLines?.[0] ?? spec?.lines?.[0];
-        const docLen = vv.state.doc.length;
-        const pos =
-            spec?.focusPos !== undefined
-                ? Math.min(Math.max(0, spec.focusPos), docLen)
-                : focusLine !== undefined
-                  ? vv.state.doc.line(Math.min(Math.max(1, focusLine), vv.state.doc.lines)).from
-                  : undefined;
-        if (pos !== undefined) {
-            const to = spec?.focusEnd !== undefined ? Math.min(Math.max(pos, spec.focusEnd), docLen) : pos;
-            const target: number | SelectionRange = to > pos ? EditorSelection.range(pos, to) : pos;
-            effects.push(EditorView.scrollIntoView(target, { y: "center", x: "center" }));
+        const key = spec?.focusKey ?? (spec ? "focus" : null);
+        const docChanged = lastDoc !== v;
+        if (key !== null && (key !== lastFocusKey || docChanged)) {
+            // 滚动目标优先用焦点段的字符位置（横向也要到位）；没有就退回焦点行行首
+            const focusLine = spec?.focusLines?.[0] ?? spec?.lines?.[0];
+            const docLen = vv.state.doc.length;
+            const pos =
+                spec?.focusPos !== undefined
+                    ? Math.min(Math.max(0, spec.focusPos), docLen)
+                    : focusLine !== undefined
+                      ? vv.state.doc.line(Math.min(Math.max(1, focusLine), vv.state.doc.lines)).from
+                      : undefined;
+            if (pos !== undefined) {
+                const to = spec?.focusEnd !== undefined ? Math.min(Math.max(pos, spec.focusEnd), docLen) : pos;
+                const target: number | SelectionRange = to > pos ? EditorSelection.range(pos, to) : pos;
+                effects.push(EditorView.scrollIntoView(target, { y: "center", x: "center" }));
+            }
         }
+        lastFocusKey = key;
+        lastDoc = v;
         vv.dispatch({ effects });
     });
 

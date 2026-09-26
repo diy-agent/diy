@@ -18,7 +18,7 @@ import { CONTEXT_GUIDE } from "./guide";
 import { hashValue } from "./hash";
 import { WIRE_VERSION } from "./wire";
 import { isPlainObject } from "./tree";
-import type { ContextContainer, ContextFact, ContextPath, ContextTreeState } from "./types";
+import type { ContextFact, ContextPath, ContextTreeState } from "./types";
 import { emptyCursor } from "./projection";
 
 /** 候选投递单元（规则表里可选的行；不重叠） */

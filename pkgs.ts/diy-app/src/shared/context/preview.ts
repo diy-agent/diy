@@ -54,15 +54,6 @@ export interface LabRule {
     reason: string;
 }
 
-/** 每步 diff 用到的快照（与 history.ts 的 StepSnapshot 同构） */
-export interface LabSnapshotInput {
-    valueHashes: Record<string, string>;
-    systemText: string;
-    systemPlaces: string[];
-    runtimeText: string;
-    runtimePlaces: string[];
-}
-
 export interface ContextLab {
     /** 这份上下文属于哪个任务 */
     taskUri: string;
@@ -78,8 +69,6 @@ export interface ContextLab {
      * 「system 份 + runtime 份」，这样看到的就是"这棵树最后变成什么请求"。
      */
     request: { body: Record<string, unknown> | null; note: string; model: string };
-    /** 供「变更」view 记 step（值 hash 表 + 两份文本） */
-    snapshot: LabSnapshotInput;
 }
 
 /** 该 place 为什么归这边（人话；未登记的给默认说明） */
@@ -154,13 +143,6 @@ export function buildLab(
         system: d.system,
         runtime: d.runtime,
         request,
-        snapshot: {
-            valueHashes: d.valueHashes,
-            systemText: d.system.text,
-            systemPlaces: d.system.places,
-            runtimeText: d.runtime.text,
-            runtimePlaces: d.runtime.places,
-        },
     };
 }
 

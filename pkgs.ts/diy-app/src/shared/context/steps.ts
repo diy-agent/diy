@@ -99,8 +99,19 @@ export interface StepSummary {
     bytes: { system: number; runtime: number };
     systemPlaces: string[];
     runtimePlaces: string[];
-    /** 与**上一步**的比较；首步为 null（它是 baseline，没有"上一步"） */
-    sincePrev: (StepDiff & { incomparable: boolean; systemSize: { add: number; del: number }; runtimeSize: { add: number; del: number } }) | null;
+    /**
+     * 与**上一步**的比较；首步为 null（它是 baseline，没有"上一步"）。
+     * 只放**统计**+ 判定，不放行内容 —— 列表一条都别带几十 KB 的 diff
+     * （行内容在 `diff` 字段，只有 `withDiff` 时才带；详情走 `context diff`）。
+     */
+    sincePrev: {
+        changed: string[];
+        systemDiffers: boolean;
+        runtimeDiffers: boolean;
+        incomparable: boolean;
+        systemSize: { add: number; del: number };
+        runtimeSize: { add: number; del: number };
+    } | null;
     /** 行级 diff 内容（`withDiff` 时才带；默认只给统计，避免下发整份文本） */
     diff?: { system: DiffLine[]; runtime: DiffLine[] } | null;
 }
@@ -133,7 +144,10 @@ export function summarizeSteps(
             runtimePlaces: r.runtimePlaces,
             sincePrev: d
                 ? {
-                      ...d,
+                      changed: d.changed,
+                      systemDiffers: d.systemDiffers,
+                      runtimeDiffers: d.runtimeDiffers,
+                      incomparable: d.incomparable,
                       systemSize: diffSize(d.systemDiff),
                       runtimeSize: diffSize(d.runtimeDiff),
                   }
