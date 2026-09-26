@@ -327,6 +327,22 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
 
   // ── context（上下文树页：**当前任务的真实上下文**，不落盘、不发 LLM）──
+  binding.on(app.context.config, async () => {
+    const { loadSystemPlaces, contextConfigFile } = await import("../core/context-config");
+    const { defaultSystemPlaces } = await import("../../shared/context/delivery");
+    const { existsSync } = await import("node:fs");
+    const { diyHome } = await import("../core/state");
+    return {
+      systemPlaces: loadSystemPlaces(diyHome()),
+      defaults: defaultSystemPlaces(),
+      fromFile: existsSync(contextConfigFile(diyHome())),
+    };
+  });
+  binding.on(app.context.setConfig, async ({ input }) => {
+    const { saveSystemPlaces } = await import("../core/context-config");
+    const { diyHome } = await import("../core/state");
+    return { systemPlaces: saveSystemPlaces(diyHome(), input.systemPlaces) };
+  });
   binding.on(app.context.candidates, async () => {
     const { PLACE_CANDIDATES, defaultSystemPlaces } = await import("../../shared/context/preview");
     return { candidates: PLACE_CANDIDATES, defaultSystem: defaultSystemPlaces() };
@@ -334,13 +350,15 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.context.lab, async ({ input }) => {
     const { assembleGlobals } = await import("./prompt-registry");
     const { diyHome, projectFromUri } = await import("../core/state");
-    const { buildLab, defaultSystemPlaces } = await import("../../shared/context/preview");
+    const { loadSystemPlaces } = await import("../core/context-config");
+    const { buildLab } = await import("../../shared/context/preview");
     const taskUri = input.taskUri ?? "";
     const project = projectFromUri(taskUri) || input.project;
     // 真实数据：与真发同一条组装链（同样的 AGENTS.md 链、同样的 cwd 推导）
     const globals = assembleGlobals(diyHome(), project, { taskUri }) as unknown as Record<string, unknown>;
-    // 空数组 = 调用方还没决定（UI 首帧）→ 用推荐名单；只有明确给了名单才尊重它
-    const systemPlaces = input.systemPlaces?.length ? input.systemPlaces : defaultSystemPlaces();
+    // 空数组 = 调用方还没决定（UI 首帧）→ 读**真源**（与真发同一份）；
+    // 只有明确给了名单才尊重它（页面把开关状态传进来做即时预览）
+    const systemPlaces = input.systemPlaces?.length ? input.systemPlaces : loadSystemPlaces(diyHome());
     // 先按纯函数算出两份投递，再用**真发的构造链**把请求体拼出来：
     // system = system 份；末条 user = runtime 份（144 的设计：runtime 作为尾部 user 消息）
     const lab = buildLab(globals, systemPlaces, taskUri);
@@ -401,10 +419,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
     // 未选中：**当前变量树** vs 最后一步（"我现在改的东西会带来什么变化"）
     const { assembleGlobals } = await import("./prompt-registry");
     const { diyHome, projectFromUri } = await import("../core/state");
-    const { buildDelivery, defaultSystemPlaces } = await import("../../shared/context/delivery");
+    const { buildDelivery } = await import("../../shared/context/delivery");
+    const { loadSystemPlaces } = await import("../core/context-config");
     const project = projectFromUri(input.taskUri) || input.project;
     const globals = assembleGlobals(diyHome(), project, { taskUri: input.taskUri }) as unknown as Record<string, unknown>;
-    const now = buildDelivery(globals, input.systemPlaces?.length ? input.systemPlaces : defaultSystemPlaces());
+    const now = buildDelivery(globals, input.systemPlaces?.length ? input.systemPlaces : loadSystemPlaces(diyHome()));
     const last = records[records.length - 1]!;
     const d = diffSteps(last, {
       ...last,

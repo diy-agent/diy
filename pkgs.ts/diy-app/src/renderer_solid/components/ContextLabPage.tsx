@@ -8,6 +8,8 @@
  *   · 左「结构树」 变量契约（zod），含类型/描述与无值变量。
  *                  **划分操作就在这做**：点节点上的 ⇄ 换容器（system ⇄ runtime），
  *                  不必再维护一张独立的"规则表"—— 契约本身就是那张表的骨架。
+ *                  改动写进 `$DIY_HOME/context.yaml`（**真源**）：真发读同一份，
+ *                  所以页面上看到的划分就是下一轮会用的划分（不存 localStorage —— 那种页面会说谎）。
  *                  另有「变更（真发轮次）」列表：每轮真发落一条投递快照（读文件，不轮询），
  *                  点一条 → 与上一轮比；取消选中 → 当前 vs 最后一轮。
  *   · 中「请求预览」 **整份请求的大 YAML**：内嵌 system/runtime 文本就地解析展开；
@@ -33,6 +35,7 @@ import { AssembleGlobalsSchema } from "../../shared/prompt-schema";
 import { MdEditor, type HlLines } from "./MdEditor";
 import { JsonTree } from "./JsonTree";
 import { DynamicBar } from "./DynamicBar";
+import { notificationStore } from "../store/notificationStore";
 import type { ContextLab, PlaceCandidate } from "../../shared/context/preview";
 import { requestYaml } from "../../shared/context/request";
 import { diffSize } from "../../shared/context/steps";
@@ -92,9 +95,10 @@ function ContainerToggle(props: { c: "system" | "runtime" | null; onToggle: () =
                 "btn-ghost opacity-60": eff() === "runtime",
             }}
             title={
-                eff() === "system"
+                (eff() === "system"
                     ? "当前：system（稳定份，进提示词开头）。点击改为 runtime"
-                    : "当前：runtime（易变份，进 user 消息）。点击改为 system"
+                    : "当前：runtime（易变份，进 user 消息）。点击改为 system") +
+                " —— 改动写入 context.yaml，**下一轮真发**生效"
             }
             onClick={(e) => {
                 e.stopPropagation();
@@ -176,13 +180,14 @@ export function ContextLabPage(props: { uri: string }) {
         if (taskStore.selectedUri !== props.uri) void taskStore.selectTask(props.uri);
     });
 
-    /** 选中的 path（结构树/变量树共用；中间预览据此滚动高亮） */
+    /** 选中的 path（结构树那一列的选中行；请求预览据此滚动高亮） */
     const [selected, setSelected] = createSignal<string | null>(null);
-    const [systemPlaces, setSystemPlaces] = createSignal<string[]>(Caches.diy_ctxlab_system.get());
-    const persist = (next: string[]): void => {
-        setSystemPlaces(next);
-        Caches.diy_ctxlab_system.set(next);
-    };
+    /**
+     * 划分规则（哪些变量进 system）：**读 main 的真源**（$DIY_HOME/context.yaml），
+     * 不存 localStorage —— 存本地的话页面改完预览变了、真发却不理（界面说谎）。
+     * 改动经 RPC 写回真源，**下一轮真发生效**（本轮已发的请求不会回溯）。
+     */
+    const [systemPlaces, setSystemPlaces] = createSignal<string[] | null>(null);
 
     /**
      * 选中的 step（null = 看"当前 vs 最后一步"）。
@@ -196,7 +201,18 @@ export function ContextLabPage(props: { uri: string }) {
             defaultSystem: string[];
         };
     });
-    const effectiveSystem = () => (systemPlaces().length > 0 ? systemPlaces() : (meta()?.defaultSystem ?? []));
+
+    /** 划分规则真源（$DIY_HOME/context.yaml）+ 推荐名单；未加载完时先用推荐名单，避免空白 */
+    const [config, { refetch: refetchConfig }] = createResource(async () => {
+        return (await diyService.diy.context.config({})) as {
+            systemPlaces: string[];
+            defaults: string[];
+            fromFile: boolean;
+        };
+    });
+    /** 页面即时值：用户点过 ⇄ 就先用本地这份（不等 RPC 往返），否则用真源 */
+    const effectiveSystem = (): string[] =>
+        systemPlaces() ?? config()?.systemPlaces ?? meta()?.defaultSystem ?? [];
 
     const [lab, { refetch }] = createResource(effectiveSystem, async (sys) => {
         return (await diyService.diy.context.lab({
@@ -254,11 +270,13 @@ export function ContextLabPage(props: { uri: string }) {
         })) as ContextDiff | null;
     });
 
-    /** 顶栏刷新：重拉三处（当前上下文 / 快照列表 / 变更详情）—— 没有实时推送，只有显式刷新 */
+    /** 顶栏刷新：重拉四处（当前上下文 / 快照列表 / 变更详情 / 划分规则真源）——
+     *  没有实时推送，只有显式刷新（外部改了 context.yaml 也靠它捡回来） */
     const refresh = (): void => {
         void refetch();
         void refetchSteps();
         void refetchDiff();
+        void refetchConfig();
     };
 
     /** 请求预览的形态：YAML（默认；内嵌 system/runtime 文本就地解析展开）/ 原文（真发 JSON） */
@@ -281,11 +299,24 @@ export function ContextLabPage(props: { uri: string }) {
      */
     const toggleUnit = (path: string): void => {
         const cur = effectiveSystem();
-        if (cur.includes(path)) {
-            persist(cur.filter((p) => p !== path));
-            return;
-        }
-        persist([...cur, path].filter((x) => !(path.startsWith(`${x}.`) || x.startsWith(`${path}.`))));
+        const next = cur.includes(path)
+            ? cur.filter((p) => p !== path)
+            : [...cur, path].filter((x) => !(path.startsWith(`${x}.`) || x.startsWith(`${path}.`)));
+        // 即时反馈（不等 RPC）→ 写回真源；失败则回滚成真源的值并 toast
+        setSystemPlaces(next);
+        void (async () => {
+            try {
+                const r = await diyService.diy.context.setConfig({ systemPlaces: next });
+                setSystemPlaces(r.systemPlaces); // 服务端净化过的结果（可能与请求不同）
+                void refetchConfig();
+            } catch (e) {
+                setSystemPlaces(null);
+                notificationStore.addToast(
+                    "error",
+                    `划分规则写入失败：${e instanceof Error ? e.message : String(e)}`,
+                );
+            }
+        })();
     };
 
     /** 当前投递单元（path → 容器） */

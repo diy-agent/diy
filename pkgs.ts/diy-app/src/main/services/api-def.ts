@@ -506,6 +506,22 @@ export const apiDef = RpcSchema.router({
       context: RpcSchema.group({
         desc: `上下文树（当前任务的真实系统上下文；只组装不发送）`,
         children: {
+          config: RpcSchema.unary({
+            desc: `读划分规则（$DIY_HOME/context.yaml；真发与页面共用这一份）`,
+            input: {},
+            output: z.object({
+              systemPlaces: z.array(z.string()).describe("当前生效的 system 单元（其余自动 runtime）"),
+              defaults: z.array(z.string()).describe("推荐名单（文件缺失/清空时用它）"),
+              fromFile: z.boolean().describe("是否来自 context.yaml（false = 用推荐名单）"),
+            }),
+          }),
+          setConfig: RpcSchema.unary({
+            desc: `写划分规则（非法路径或互为祖先/后代一律拒绝；下一轮真发生效）`,
+            input: {
+              systemPlaces: z.array(z.string()).cliOption({ desc: "进 system 的单元（JSON 数组）" }),
+            },
+            output: z.object({ systemPlaces: z.array(z.string()) }),
+          }),
           candidates: RpcSchema.unary({
             desc: `列出候选投递单元与默认 system 名单`,
             input: {},

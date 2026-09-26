@@ -30,7 +30,8 @@ import { BlockStore, blocksToMessages, interruptedToolPatches, type Op, type JSO
 import { collectSelfInfo, judgeSelfKill, selfKillNotice } from "./agent-guard";
 import { appendAudit } from "./agent-audit";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
-import { buildDelivery, defaultSystemPlaces } from "../../shared/context/delivery";
+import { buildDelivery } from "../../shared/context/delivery";
+import { loadSystemPlaces } from "../core/context-config";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import { assembleGlobals, systemBudgetForContext } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
@@ -603,7 +604,9 @@ export class LocalAgentManager {
             string,
             unknown
         >;
-        const delivery = buildDelivery(globals, defaultSystemPlaces());
+        // 划分规则读**真源**（$DIY_HOME/context.yaml；缺失/损坏则推荐名单 + 出声）——
+        // 与上下文树页读的是同一份，所以页面上看到的 system/runtime 划分就是这里会用的划分。
+        const delivery = buildDelivery(globals, loadSystemPlaces(diyHome()));
         // 预算与当前模型的上下文窗口挂钩（小窗口模型拿更小预算，大窗口封顶 64KB）
         const sysBudget = systemBudgetForContext(contextLimitOf(model || DEFAULT_MODEL));
         if (delivery.system.bytes > sysBudget) {

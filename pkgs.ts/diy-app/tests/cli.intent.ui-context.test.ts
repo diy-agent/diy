@@ -10,7 +10,7 @@
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { join } from "node:path";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
@@ -160,6 +160,59 @@ function keyOf(taskUri: string): string {
   const sum = createHash("sha256").update(taskUri).digest("hex").slice(0, 12);
   return `${readable}-${sum}`;
 }
+
+describe("上下文树：划分规则（真源）", () => {
+  it("默认读推荐名单；setConfig 落盘成 context.yaml；lab 不传名单时读的也是它", async () => {
+    const repo = `${fx.HOME}/ctxlab-config`;
+    mkdirSync(repo, { recursive: true });
+    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 划分真源`);
+    const pid = String((p.data as any)?.data?.id);
+    const t = await fx.sh.getJson(`./diy.sh task create 划分任务 ${pid}`);
+    const uri = String((t.data as any)?.data?.uri);
+    // 正文有 10 字下限（`task edit` 会拒绝过短输入）
+    await fx.sh.run(`./diy.sh task edit ${uri} --body $'划分验证正文\\n第二行也在这里'`);
+
+    // ① 没有 context.yaml → 推荐名单（fromFile=false），且 task.body 不在 system
+    const base = (await fx.sh.getJson(`./diy.sh context config`)).data as any;
+    expect(base.fromFile).toBe(false);
+    expect(base.systemPlaces).toEqual(base.defaults);
+    expect(base.systemPlaces).not.toContain("task.body");
+
+    // ② lab **不传** systemPlaces → 读真源（与真发同一份）；task.body 在 runtime
+    const labBase = (await fx.sh.getJson(`./diy.sh context lab ${pid} --taskUri ${uri}`)).data as any;
+    expect(labBase.runtime.places).toContain("task.body");
+    expect(labBase.system.places).not.toContain("task.body");
+
+    // ③ 把它划进 system（页面 ⇄ 走的就是这条 RPC）
+    const next = [...base.systemPlaces, "task.body"];
+    const set = await fx.sh.getJson(
+      `./diy.sh context setConfig --systemPlaces '${JSON.stringify(next)}'`,
+    );
+    expect((set.data as any).systemPlaces).toContain("task.body");
+    // 落盘了（真源在文件里，不是页面内存）
+    const raw = readFileSync(join(fx.HOME, "context.yaml"), "utf-8");
+    expect(raw).toContain("task.body");
+    expect((await fx.sh.getJson(`./diy.sh context config`)).data as any).toMatchObject({ fromFile: true });
+
+    // ④ ★ 关键：lab 不传名单时**读真源** → 划分跟着变（真发走的是同一个 loadSystemPlaces）
+    const labMoved = (await fx.sh.getJson(`./diy.sh context lab ${pid} --taskUri ${uri}`)).data as any;
+    expect(labMoved.system.places).toContain("task.body");
+    expect(labMoved.runtime.places).not.toContain("task.body");
+    expect(labMoved.system.text).toContain("划分验证正文");
+
+    // ⑤ 非法输入被拒（写侧不允许存下坏数据）
+    const bad = await fx.sh.run(
+      `./diy.sh context setConfig --systemPlaces '["task","task.body"]'`,
+    );
+    expect(bad.code).not.toBe(0);
+    expect(bad.stderr + bad.stdout).toContain("非法投递单元");
+
+    await fx.sh.run(`./diy.sh project remove ${pid}`);
+    // ★ 清场：context.yaml 是**全局真源**（不属于某个项目/任务），留在共享 HOME 里会改掉
+    //   后续用例的默认划分 —— 实测让 steps 与 UI 两个用例失败（它们假定推荐名单）。
+    rmSync(join(fx.HOME, "context.yaml"), { force: true });
+  }, 120_000);
+});
 
 describe("上下文树：投递快照（steps）", () => {
   it("空会话 0 条；写入快照后能读出，且相邻 diff 算在 main 侧（默认只给统计）", async () => {

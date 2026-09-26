@@ -241,20 +241,6 @@ export const Caches = {
   }),
   /** 上下文树页（ctxlab）的折叠块展开态：key = steps/structure/request。
    *  与提示词页 labViews 同性质（用户选择，切页/重开不该回到默认），故走同一入口。 */
-  /** 上下文树页的 **system 名单**（划分规则的输入；空数组 = 用推荐名单）。
-   *  与折叠态同性质：属于用户选择，切页/重开不该丢。 */
-  diy_ctxlab_system: field<string[]>("diy_ctxlab_system", {
-    parse: (raw) => {
-      try {
-        const o: unknown = JSON.parse(raw);
-        return Array.isArray(o) && o.every((x) => typeof x === "string") ? (o as string[]) : null;
-      } catch {
-        return null;
-      }
-    },
-    serialize: (v) => JSON.stringify(v),
-    defaultValue: [] as string[],
-  }),
   diy_ctxlab_fold: field<Record<string, boolean>>("diy_ctxlab_fold", {
     parse: (raw) => {
       try {
