@@ -23,3 +23,4 @@ export * from "./delivery";
 export * from "./steps";
 export * from "./match";
 export * from "./config";
+export * from "./stats";

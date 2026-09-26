@@ -24,7 +24,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { diyHome, projectFromUri } from "../core/state";
+import { diyHome, projectDir, projectFromUri } from "../core/state";
 import { resolveCwd as resolveCwdWithNote } from "../core/cwd";
 import { BlockStore, blocksToMessages, interruptedToolPatches, type Op, type JSONVal } from "./local-blocks";
 import { collectSelfInfo, judgeSelfKill, selfKillNotice } from "./agent-guard";
@@ -32,6 +32,8 @@ import { appendAudit } from "./agent-audit";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
 import { buildDelivery } from "../../shared/context/delivery";
 import { loadSystemPlaces } from "../core/context-config";
+import { appendContextStat } from "../core/context-stats";
+import { statFromStep } from "../../shared/context/stats";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import { assembleGlobals, systemBudgetForContext } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
@@ -651,7 +653,8 @@ export class LocalAgentManager {
         });
         // 投递快照（每轮真发一条）：投递事实，供 UI 的 step/diff 用（与 raw 那种旁路观测不同）。
         // 落盘失败不阻断发送（它只是观测），但必须出声。
-        appendStep(stepsFile(taskUri), {
+        const prevStep = readDeliverySteps(taskUri).at(-1) ?? null; // 本任务的上一轮（用于算变化）
+        const step: DeliveryStepRecord = {
             ts: new Date().toISOString(),
             turnId,
             model: model || DEFAULT_MODEL,
@@ -661,7 +664,11 @@ export class LocalAgentManager {
             valueHashes: delivery.valueHashes,
             systemText: delivery.system.text,
             runtimeText: delivery.runtime.text,
-        });
+        };
+        appendStep(stepsFile(taskUri), step);
+        // 变更统计（**按项目**累计；只存变化路径 → 体积小、可长期留）。
+        // 用途：跑几天后回答"这个节点到底变了几次" —— 划分位置的判据（见 task 178）。
+        appendContextStat(projectDir(projectFromUri(taskUri)), statFromStep(step, prevStep?.valueHashes ?? null, taskUri));
         const result = streamText({
             model: this.modelFor(model || DEFAULT_MODEL, key),
             system: delivery.system.text,

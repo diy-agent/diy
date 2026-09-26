@@ -392,6 +392,19 @@ export function bindAppHandlers(binding: ServerBinding): void {
     };
   });
 
+  binding.on(app.context.stats, async ({ input }) => {
+    const { readContextStats } = await import("../core/context-stats");
+    const { summarizeStats } = await import("../../shared/context/stats");
+    const { projectDir, projectFromUri } = await import("../core/state");
+    // project 以 taskUri 为准（与 lab/diff 同一口径：两者不一致时只有 CLI 能造成）
+    const project = input.taskUri ? projectFromUri(input.taskUri) || input.project : input.project;
+    let records = readContextStats(projectDir(project));
+    if (input.taskUri) records = records.filter((r) => r.taskUri === input.taskUri);
+    const total = records.length;
+    if (input.limit && input.limit > 0) records = records.slice(-input.limit);
+    return { ...summarizeStats(records), records: total };
+  });
+
   binding.on(app.context.diff, async ({ input }) => {
     const { readDeliverySteps } = await import("./local-agent");
     const { diffSteps } = await import("../../shared/context/steps");

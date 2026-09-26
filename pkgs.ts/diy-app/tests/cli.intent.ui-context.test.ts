@@ -306,6 +306,60 @@ describe("上下文树：投递快照（steps）", () => {
   }, 90_000);
 });
 
+describe("上下文树：变更统计（按项目累计）", () => {
+  it("空项目 0 轮；手写统计后能聚合出变了几次/共多少轮；可按任务过滤", async () => {
+    const repo = `${fx.HOME}/ctxlab-stats`;
+    mkdirSync(repo, { recursive: true });
+    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 统计`);
+    const pid = String((p.data as any)?.data?.id);
+    const t1 = await fx.sh.getJson(`./diy.sh task create 统计任务一 ${pid}`);
+    const uri1 = String((t1.data as any)?.data?.uri);
+    const t2 = await fx.sh.getJson(`./diy.sh task create 统计任务二 ${pid}`);
+    const uri2 = String((t2.data as any)?.data?.uri);
+
+    const empty = await fx.sh.getJson(`./diy.sh context stats ${pid}`);
+    expect((empty.data as any).turns).toBe(0);
+    expect((empty.data as any).paths).toEqual([]);
+
+    // 手写统计（真发需要 LLM key）：任务一 3 轮（chain.0 变 2 次），任务二 1 轮
+    const stat = (ts: string, taskUri: string, changed: string[]) =>
+      JSON.stringify({ ts, taskUri, turnId: `t-${ts}`, changed });
+    const fp = join(fx.HOME, "projects", pid, "context-stats.jsonl");
+    mkdirSync(join(fx.HOME, "projects", pid), { recursive: true });
+    writeFileSync(
+      fp,
+      [
+        stat("2026-09-26T01:00:00.000Z", uri1, ["chain.0", "diy"]),
+        stat("2026-09-26T02:00:00.000Z", uri1, ["chain.0"]),
+        stat("2026-09-26T03:00:00.000Z", uri1, []),
+        stat("2026-09-26T04:00:00.000Z", uri2, ["task.body"]),
+      ].join("\n") + "\n",
+    );
+
+    // 整个项目累计：4 轮
+    const all = (await fx.sh.getJson(`./diy.sh context stats ${pid}`)).data as any;
+    expect(all.turns).toBe(4);
+    expect(all.since).toBe("2026-09-26T01:00:00.000Z");
+    expect(all.until).toBe("2026-09-26T04:00:00.000Z");
+    const chain = all.paths.find((x: any) => x.path === "chain.0");
+    expect(chain.changes).toBe(2);
+    expect(chain.rate).toBeCloseTo(0.5); // 分母是总轮数（含没变的那轮）
+    expect(chain.turns).toEqual([1, 2]);
+
+    // 按任务过滤：只有任务一的 3 轮
+    const only1 = (await fx.sh.getJson(`./diy.sh context stats ${pid} --taskUri ${uri1}`)).data as any;
+    expect(only1.turns).toBe(3);
+    expect(only1.paths.find((x: any) => x.path === "task.body")).toBeUndefined();
+
+    // limit 取最近 N 轮
+    const last2 = (await fx.sh.getJson(`./diy.sh context stats ${pid} --limit 2`)).data as any;
+    expect(last2.records).toBe(4); // 总数仍报 4（未被 limit 掩盖）
+    expect(last2.turns).toBe(2);
+
+    await fx.sh.run(`./diy.sh project remove ${pid}`);
+  }, 90_000);
+});
+
 describe("上下文树：UI 上屏（两列 + 请求预览）", () => {
   it("结构树与请求预览上屏；单份视图已删；与提示词页互不干扰", async () => {
     const repo = `${fx.HOME}/ctxlab3`;

@@ -106,3 +106,21 @@ export const ContextDiffSchema = z.object({
     runtimeDiff: z.array(diffLine),
 });
 export type ContextDiff = z.infer<typeof ContextDiffSchema>;
+
+/** 节点变更统计（见 shared/context/stats.ts 的 summarizeStats） */
+export const StatsSchema = z.object({
+    turns: z.number(),
+    records: z.number(),
+    since: z.string().nullable(),
+    until: z.string().nullable(),
+    paths: z.array(
+        z.object({
+            path: z.string(),
+            changes: z.number(),
+            rate: z.number(),
+            lastChanged: z.string().nullable(),
+            turns: z.array(z.number()),
+        }),
+    ),
+});
+export type Stats = z.infer<typeof StatsSchema>;

@@ -84,3 +84,53 @@ describe("结构树 path → 匹配区间", () => {
         expect(lineRange({ from: 6, to: 8 })).toEqual([6, 7, 8]);
     });
 });
+
+// ── 路径段：裸段 vs 引号段（map 化集合用稳定键寻址）──
+import { joinPath, parsePath, isValidPath } from "../../src/shared/context/path";
+
+describe("路径段语法（引号段）", () => {
+    it("裸段照旧（向后兼容）", () => {
+        expect(parsePath("diy.cli")).toEqual(["diy", "cli"]);
+        expect(parsePath("chain.0.content")).toEqual(["chain", "0", "content"]);
+        expect(joinPath(["diy", "cli"])).toBe("diy.cli");
+    });
+
+    it("★ 引号段：键含 `.` 与 `/`（AGENTS.md 路径）", () => {
+        const p = "chain['~/git/diy/AGENTS.md'].content";
+        expect(parsePath(p)).toEqual(["chain", "~/git/diy/AGENTS.md", "content"]);
+        expect(isValidPath(p)).toBe(true);
+        // 与 joinPath 严格互逆
+        expect(joinPath(parsePath(p)!)).toBe(p);
+    });
+
+    it("绝对路径键（HOME 之外）", () => {
+        const p = "chain['/var/xxx/AGENTS.md'].scope";
+        expect(parsePath(p)).toEqual(["chain", "/var/xxx/AGENTS.md", "scope"]);
+        expect(joinPath(parsePath(p)!)).toBe(p);
+    });
+
+    it("引号内的转义（`\\'` 与 `\\\\`）", () => {
+        expect(parsePath("a['it\\'s'].b")).toEqual(["a", "it's", "b"]);
+        expect(parsePath('a["plain quote"].b')).toEqual(["a", "plain quote", "b"]);
+    });
+
+    it("需要引号的段自动加引号（joinPath 侧）", () => {
+        expect(joinPath(["chain", "~/a.md"])).toBe("chain['~/a.md']");
+        expect(joinPath(["a", "plain", "b"])).toBe("a.plain.b");
+    });
+
+    it("畸形路径一律非法（不静默猜）", () => {
+        for (const bad of ["", ".a", "a.", "a..b", "a['unclosed", "a['x']y", "a[''].b", "a b"]) {
+            expect(isValidPath(bad), bad).toBe(false);
+        }
+    });
+
+    it("★ 稳定键寻址：链首插入新文件后，原文件的路径不变", () => {
+        // 下标寻址：链首插入新文件 → 原来的 chain.0 变成 chain.1（无法表达"哪个文件变了"）
+        // 稳定键寻址：路径不变，仍指向同一个文件
+        const before = "chain['~/AGENTS.md'].content";
+        const after = "chain['~/AGENTS.md'].content";
+        expect(parsePath(before)).toEqual(parsePath(after));
+        expect(parsePath(before)![1]).toBe("~/AGENTS.md");
+    });
+});
