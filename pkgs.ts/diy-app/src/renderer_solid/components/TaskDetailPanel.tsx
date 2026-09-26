@@ -1,7 +1,8 @@
-import { createSignal, createMemo, createEffect, on, onMount, onCleanup, Show } from "solid-js";
+import { createSignal, createMemo, createEffect, on, onMount, onCleanup, Show, For } from "solid-js";
 import * as Select from "@kobalte/core/select";
 import { taskStore, type TaskDetail } from "../store/taskStore";
 import { localChatStore } from "../store/localChatStore";
+import { personaStore } from "../store/personaStore";
 import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { diyService } from "../lib/rpc";
@@ -275,6 +276,9 @@ type DetailTab = "md" | "raw";
 /** 任务详情全能力视图（标题编辑/状态切换/草稿/元信息/Markdown+原文双 tab）。
  *  试验场任务 tab 直接复用本组件，与详情抽屉同源零分叉。 */
 export function TaskInfoView(props: { task: TaskDetail }) {
+    // 人物/模型清单：本视图在会话页之外也会被渲染（详情抽屉、试验场任务 tab），
+    // 故这里也确保加载（load 幂等 + 并发去重，重复调用无成本）
+    onMount(() => void personaStore.load());
     /** 详情渲染模式：Markdown 富文本 / 原文。纯视图偏好，不落盘——
      *  与草稿（draftStore，跨卸载恢复）不同，它丢了大不了回到默认富文本。 */
     const [detailTab, setDetailTab] = createSignal<DetailTab>("md");
@@ -324,12 +328,15 @@ export function TaskInfoView(props: { task: TaskDetail }) {
         if (next === props.task.state) return;
         setSaving(true);
         try {
+            // persona 不在这里改（换人物走 personaStore 的专门入口，语义是换绑不是编辑字段）；
+            // 显式 undefined = 保持原绑定（RPC 契约里 optional 字段也是必填键）
             await diyService.diy.task.edit({
                 uri: props.task.uri,
                 title: undefined,
                 state: next as any,
                 body: undefined,
                 parent: undefined,
+                persona: undefined,
             });
             await taskStore.loadTree();      // 同步任务树状态
             await taskStore.selectTask(props.task.uri); // 刷新详情 state
@@ -355,7 +362,7 @@ export function TaskInfoView(props: { task: TaskDetail }) {
                 return;
             }
 
-            await diyService.diy.task.edit({ uri: t.uri, title: changes.title, state: undefined, body: changes.body, parent: undefined });
+            await diyService.diy.task.edit({ uri: t.uri, title: changes.title, state: undefined, body: changes.body, parent: undefined, persona: undefined });
             await taskStore.loadTree();
             // 先清草稿再重取任务：否则重取回来的旧草稿会把刚保存的值当「编辑中」再显示一遍
             await draftStore.clear(t.uri, ["title", "body"]);
@@ -426,6 +433,33 @@ export function TaskInfoView(props: { task: TaskDetail }) {
             </div>
 
             {/* 元信息 */}
+            {/* agent 人物：本任务"由谁干活"（决定模型/参数/口气）—— 任务属性，改完即存。
+                这里**只换绑**（续聊，会话一条不动）；改人物本身的模型走 CLI
+                `diy agent persona set`（那是全局的，影响所有引用它的任务）。 */}
+            <div class="flex items-center gap-3 flex-wrap">
+                <label class="flex items-center gap-1 text-xs">
+                    <span class="opacity-50">人物</span>
+                    <select
+                        class="select select-xs select-bordered"
+                        disabled={saving() || personaStore.personas.length === 0}
+                        value={props.task.persona ?? ""}
+                        onChange={(e) => void personaStore.setForTask(props.task.uri, e.currentTarget.value)}
+                    >
+                        {/* 手删过该字段的任务显示"未设置"，不静默显示第一个人物 */}
+                        <Show when={!props.task.persona}>
+                            <option value="">（未设置）</option>
+                        </Show>
+                        <For each={personaStore.personas}>
+                            {(p) => (
+                                <option value={p.name} title={p.desc}>
+                                    {p.name} · {personaStore.modelLabel(p.model)}
+                                </option>
+                            )}
+                        </For>
+                    </select>
+                </label>
+            </div>
+
             <div class="flex gap-2 flex-wrap text-xs opacity-60">
                 {props.task.project && (
                     <span class="badge badge-outline">📂 {props.task.project_label ?? props.task.project_path ?? props.task.project}</span>

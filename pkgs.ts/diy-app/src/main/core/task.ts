@@ -8,6 +8,7 @@ import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { z } from "zod";
 import {
+  diyHome,
   getTask,
   splitTaskFile,
   taskDir,
@@ -19,6 +20,8 @@ import {
 } from "./state";
 import type { TaskMeta } from "./state";
 import { projectExists } from "./project";
+// agent 人物：创建时物化缺省人物名，编辑时校验人物存在（人物定义见 core/persona.ts）
+import { defaultPersonaName, personaByName } from "./persona";
 
 // ═══════════════════════════════════════
 // 字段验证 schema
@@ -67,6 +70,8 @@ export interface CreateTaskParams {
   body?: string;
   source_type?: string;
   source_uri?: string;
+  /** agent 人物名；不传 = 当前缺省人物（创建时物化，之后改缺省不影响已有任务） */
+  persona?: string;
 }
 
 const CreateTaskSchema = z.object({
@@ -76,6 +81,7 @@ const CreateTaskSchema = z.object({
   body: z.string().optional(),
   source_type: z.string().optional(),
   source_uri: z.string().optional(),
+  persona: z.string().trim().min(1).optional(),
 });
 
 /**
@@ -93,7 +99,7 @@ export function createTask(params: CreateTaskParams): string {
     throw new ValidationError(errors);
   }
 
-  const { title, project, parent, body, source_type, source_uri } = parsed.data;
+  const { title, project, parent, body, source_type, source_uri, persona } = parsed.data;
 
   // 校验 project 是否注册（按项目数据目录）
   if (!projectExists(project)) {
@@ -103,6 +109,14 @@ export function createTask(params: CreateTaskParams): string {
   }
 
   // 校验父任务存在
+  // agent 人物：显式指定则校验存在；不指定则物化当前缺省人物（not null —— 读侧不必再兜底）
+  const personaName = persona ?? defaultPersonaName(diyHome());
+  if (!personaByName(diyHome(), personaName)) {
+    throw new ValidationError([
+      { field: "persona", code: "not_found", msg: `人物 ${personaName} 不存在（可用 diy agent persona list 查看）` },
+    ]);
+  }
+
   if (parent && !getTask(parent)) {
     throw new ValidationError([
       { field: "parent", code: "not_found", msg: `parent ${parent} 不存在` },
@@ -125,6 +139,8 @@ export function createTask(params: CreateTaskParams): string {
     updated: now,
     source_type,
     source_uri,
+    // 人物名必写（本任务由谁干活）——与上面的"缺省=不写键"相反：这是**绑定**不是偏好
+    persona: personaName,
     // 不写 project frontmatter —— project 由 URI 路径推导（路径即分组）
   };
 
@@ -145,6 +161,8 @@ export interface UpdateTaskChanges {
   state?: string;
   body?: string;
   parent?: string;
+  /** 人物名三态：不传=保持 / 必须是非空有效名（**不允许清除** —— 任务一定有人物，见 TaskMeta.persona） */
+  persona?: string;
 }
 
 /** 正文最小长度。空值/误传（`--body ""`）会静默清空整篇正文且不可恢复（见任务 138），
@@ -162,6 +180,8 @@ const UpdateTaskSchema = z.object({
       message: `正文至少 ${MIN_BODY_LENGTH} 个字符（拒绝空/过短输入，避免误清空正文）`,
     }),
   parent: z.string().optional(),
+  // 空串在这里**不是**"清除"语义（人物不可为空）：显式拒绝，避免调用方以为清掉了
+  persona: z.string().trim().min(1, "人物名不能为空（任务必须有一个人物）").optional(),
 });
 
 /** 更新任务指定字段 */
@@ -234,6 +254,16 @@ export function updateTask(uri: string, changes: UpdateTaskChanges): void {
   // 未指定 parent 保持原值；指定了（含空串取消）用 newParent 结果
   setOrClear("parent", changes.parent === undefined ? existing.parent : newParent);
   setOrClear("created", existing.created);
+  // 人物：只在显式指定时校验并改写（未指定 = 保持原绑定）
+  if (changes.persona !== undefined) {
+    const nextPersona = parsed.data.persona!;
+    if (!personaByName(diyHome(), nextPersona)) {
+      throw new ValidationError([
+        { field: "persona", code: "not_found", msg: `人物 ${nextPersona} 不存在（可用 diy agent persona list 查看）` },
+      ]);
+    }
+    front["persona"] = nextPersona;
+  }
   front["updated"] = now;
 
   const frontStr = yaml.dump(front, { indent: 2, noRefs: true, lineWidth: -1 });

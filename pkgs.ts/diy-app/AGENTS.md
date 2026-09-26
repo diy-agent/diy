@@ -4,7 +4,7 @@
 
 ## 目录
 
-- [架构原则](#架构原则) — 构建 / 入口 / Renderer / 数据落位 / 样式 / 提示词模版
+- [架构原则](#架构原则) — 构建 / 入口 / Renderer / 数据落位 / agent 人物 / 样式 / 提示词模版
 - [UI 验证](#ui-验证两层互补) — handler 层 vs CDP 真实事件
 - [交互自动化](#交互自动化操作-appagent-自测演示用实测经验) — 提速、命中自检、隔离清理、Solid 陷阱
 - [取 CDP 地址](#取-cdp-地址) / [CDP 调试陷阱](#cdp-调试陷阱) / [窗口副屏](#窗口定位副屏)
@@ -105,6 +105,42 @@ renderer_solid/ 有独立 tsconfig（strict + jsxImportSource: solid-js），tsc
 - ❌ **禁止把草稿写 localStorage**：serve 模式与 Electron 模式各持一份 localStorage，同一条草稿在另一个模式看不到；且它属「有损数据」，被「重置界面状态」清掉就是真丢。
 - ✅ 草稿带 meta（`kind`/`version`/`base_updated`/`saved`）：丢不起的数据**不静默降级**，格式不符时留痕并返回 null；`base_updated` 用于检测「草稿期间任务被外部改过」。
 - ✅ 草稿写完即「提交/取消」，必须在保存与取消时显式清除，否则草稿会盖住新数据。
+
+### agent 人物（persona）：模型配置的归属
+
+模型/参数**不属于会话，属于「人物」**；任务只持有引用（frontmatter `persona`）。这不是审美选择，
+而是两个互斥需求的唯一解：
+
+| 需求 | 旧实现（renderer 全局 `activeModel`） | 现在 |
+|------|--------------------------------------|------|
+| 改一次，所有会话跟着变 | ✅ 但**串台**（改 A 时 B 也变） | `diy agent persona set` → 所有引用者下一轮生效 |
+| 各会话用不同模型互不影响 | ❌ 同一份全局值 | 任务各持 persona 引用，换人只影响本任务 |
+| 重启后保持 | ❌ 回落硬编码 `DEFAULT_MODEL` | 定义落 `$DIY_HOME/personas.yaml`，绑定落任务 frontmatter |
+
+- 定义：`$DIY_HOME/personas.yaml`（全局一份；`default` = 新建任务的缺省人物）。契约在 `src/shared/persona.ts`，文件层在 `src/main/core/persona.ts`
+- 生效时机：**每轮开始解析**（改人物天然"下一轮生效"：在跑的轮次不打断，也不给用户一堆时机选项）
+- 绑定：任务 `persona` 字段**创建时物化**（not null 语义）；指向已删人物 → 回落缺省**并出声**（换模型不能不打招呼）
+- 配置增删：`diy agent persona list/set/remove/setDefault`；被任务引用的人物拒绝删除
+- 身份注入：`identity.md` 注入 `{{persona.name}}` + `{{persona.style}}`（口气的唯一入口，改口气不用改模版）
+- UI：会话页选的是**人物**（本任务绑定），模型/档位不在那里改 —— 两件事混一个菜单必误操作
+
+- 存量数据：`scripts/migrate-add-persona.mts`（一次性脚本，dry-run 默认 + `--apply` 先备份
+  `*.pre-persona.bak`；文本级只加一行，未命中文件逐字节不变）。已对全库 114 个任务补齐 ——
+  读侧的"缺字段回落缺省"因此只为**用户手删 AGENTS.md 字段**兜底，不是历史数据的兼容层（app 未发布，
+  不做版本兼容代码）
+- 契约单一真源：任务详情载荷见下节「任务详情载荷」
+
+多人对话（Room / 多会话流 / 上下文投影）不在本层：那要求 session key 从 `taskUri` 扩成
+`(taskUri, personaId)`（现在 key 同时决定文件名、Map key、zen 亲和头，见 `keyOf`），是下一阶段的事。
+
+### 任务详情载荷：字段清单单一真源（`getTask`）
+
+**RPC 载荷字段清单 = 单一真源**：任务详情载荷（`diy.getTask` 的 data）的契约与类型在
+`src/shared/task-detail.ts` 的 `TaskDetailSchema`，renderer 的 `TaskDetail` 从它推导。
+❌ 禁止在 handler 里手抄字段、再在 output schema 里抄第二遍 —— 两处漏一处就静默丢字段
+（RPC 输出经 schema strip，renderer 拿到 undefined 而数据其实在；`change_type` / `module` /
+`priority` / `persona` 都漏过，表现为详情面板一直显示"未设置"）。handler 用
+`TaskDetailSchema.parse({...t, ...回填})` 整份过一遍，加字段只改契约一处。
 
 ### 任务目录所有权分层（`.diy/`）
 

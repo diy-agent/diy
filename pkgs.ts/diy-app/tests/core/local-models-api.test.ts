@@ -25,7 +25,7 @@ describe("LOCAL_MODELS 的 api 面标注", () => {
         expect(apiOf("不存在的模型")).toBe("chat");
     });
 
-    it("首项即 UI 默认（localChatStore 取 ms[0]），且与 CLI 缺省 DEFAULT_MODEL 一致", () => {
+    it("首项与 DEFAULT_MODEL 一致（内置缺省人物的模型，两侧必须同源）", () => {
         expect(LOCAL_MODELS[0]!.id).toBe(DEFAULT_MODEL);
     });
 

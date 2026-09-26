@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
+import type { TaskDetail as ContractTaskDetail } from "../../shared/task-detail";
 import { draftStore } from "./draftStore";
 
 export interface TreeNode {
@@ -16,20 +17,15 @@ export interface TreeNode {
   children: TreeNode[];
 }
 
-export interface TaskDetail {
-  uri: string;
-  title?: string;
-  state?: string;
-  project?: string;
-  project_path?: string;
-  project_label?: string;
-  parent?: string;
-  body?: string;
-  created?: string;
-  updated?: string;
-  /** 未提交草稿（main 的 getTask/task.show 随任务一起返回，见 core/drafts.ts） */
-  ui_drafts?: { base_updated?: string; saved?: string; fields: Record<string, string> } | null;
-}
+/**
+ * 任务详情 —— 直接取 **RPC 契约的类型**（shared/task-detail.ts 的 TaskDetailSchema）。
+ *
+ * 为什么不再手抄一份 interface（真实教训）：这里曾经逐字段抄一遍，于是"契约加了字段、
+ * 这里忘了抄"就成了静默缺陷 —— 类型检查不会报（字段可选），界面只是显示不出来。
+ * 语料：change_type / module / priority / persona 都发生过（详情面板显示"未设置"，
+ * 而数据其实好好的）。用契约类型后不可能滞后：契约加字段这里自动有，加错会直接编译失败。
+ */
+export type TaskDetail = ContractTaskDetail;
 
 const [nodes, setNodes] = createSignal<TreeNode[]>([]);
 const [selectedUri, setSelectedUri] = createSignal<string | null>(null);
@@ -58,8 +54,23 @@ async function selectTask(uri: string | null) {
   setSelectedTask(r.data);
 }
 
+
+/**
+ * 重新拉当前任务详情（改了任务字段后用，如切换 agent 人物）。
+ * 与 selectTask 的差别：不清空选中的任务（不闪空态），也不动 uri。
+ * 期间用户切了任务就丢弃结果，避免把 A 的旧数据写回 B。
+ */
+async function refreshSelected(): Promise<void> {
+  const u = selectedUri();
+  if (!u) return;
+  const r = await diyService.diy.getTask({ uri: u });
+  if (!r.data || r.data.uri !== selectedUri()) return;
+  draftStore.seed(u, r.data.ui_drafts ?? null, r.data.updated);
+  setSelectedTask(r.data);
+}
+
 async function setState(uri: string, state: string) {
-  await diyService.diy.task.edit({ uri, state: state as any, title: undefined, body: undefined, parent: undefined });
+  await diyService.diy.task.edit({ uri, state: state as any, title: undefined, body: undefined, parent: undefined, persona: undefined });
   await loadTree();
 }
 
@@ -72,5 +83,6 @@ export const taskStore = {
   get loading() { return loading(); },
   loadTree,
   selectTask,
+  refreshSelected,
   setState,
 };

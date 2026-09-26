@@ -31,6 +31,7 @@ export function TaskSideView(props: { uri: string }) {
                 state: next as any,
                 body: undefined,
                 parent: undefined,
+                persona: undefined, // 保持原绑定（换人物走 personaStore）
             });
             await taskStore.loadTree();
             await taskStore.selectTask(props.uri);

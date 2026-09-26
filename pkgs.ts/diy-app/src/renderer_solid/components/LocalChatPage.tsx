@@ -15,6 +15,7 @@
 
 import { createSignal, For, Show, createEffect, on, onMount, onCleanup } from "solid-js";
 import { localChatStore } from "../store/localChatStore";
+import { personaStore } from "../store/personaStore";
 import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
@@ -581,7 +582,7 @@ export function LocalChatPage() {
     const uri = () => taskStore.selectedUri ?? null;
     const [inputValue, setInputValue] = createSignal("");
     const [densityOpen, setDensityOpen] = createSignal(false);
-    const [modelMenuOpen, setModelMenuOpen] = createSignal(false);
+    const [personaMenuOpen, setPersonaMenuOpen] = createSignal(false);
     const [fullscreen, setFullscreen] = createSignal(false);
     let scrollRef: HTMLDivElement | undefined;
     /** 跟随态：true=贴底（新内容自动滚到底）；false=用户正在上方阅读（绝不打扰） */
@@ -625,12 +626,12 @@ export function LocalChatPage() {
         const closePopovers = (e: MouseEvent) => {
             const target = e.target as Element;
             if (!target.closest("[data-density-control]")) setDensityOpen(false);
-            if (!target.closest("[data-model-control]")) setModelMenuOpen(false);
+            if (!target.closest("[data-persona-control]")) setPersonaMenuOpen(false);
         };
         const onKey = (e: KeyboardEvent) => {
             if (e.key === "Escape") {
                 setDensityOpen(false);
-                setModelMenuOpen(false);
+                setPersonaMenuOpen(false);
                 setFullscreen(false);
             }
         };
@@ -712,26 +713,34 @@ export function LocalChatPage() {
         });
     });
 
-    const selectModel = (modelId: string) => {
-        localChatStore.setActiveModel(modelId);
-        const model = localChatStore.models.find((m) => m.id === modelId);
-        if (model && !model.reasoning.supported.includes(localChatStore.reasoningEffort)) {
-            localChatStore.setReasoningEffort(model.reasoning.default);
+    // ─── agent 人物（模型/参数/口气都在人物定义里，这里只选"要谁干活"）───
+    /** 本任务当前人物：任务绑定是权威（清单在 personaStore，未加载完时先用缺省名，不显示空） */
+    const personaName = () => personaStore.nameForTask();
+    const personaDef = () => personaStore.defOf(personaName());
+
+    const selectPersona = async (name: string) => {
+        const u = uri();
+        if (!u || localChatStore.running || name === personaName()) {
+            setPersonaMenuOpen(false);
+            return;
         }
+        await personaStore.setForTask(u, name); // 失败已 toast，界面保持旧绑定
+        setPersonaMenuOpen(false);
     };
-    const moveModelByKeyboard = (e: KeyboardEvent) => {
-        if (localChatStore.running || localChatStore.models.length === 0) return;
-        const index = localChatStore.models.findIndex((m) => m.id === localChatStore.activeModel);
+    const movePersonaByKeyboard = (e: KeyboardEvent) => {
+        if (localChatStore.running || personaStore.personas.length === 0) return;
+        const list = personaStore.personas;
+        const index = list.findIndex((p) => p.name === personaName());
         if (e.key === "ArrowDown" || e.key === "ArrowUp") {
             e.preventDefault();
             const offset = e.key === "ArrowDown" ? 1 : -1;
-            const next = (index < 0 ? 0 : index + offset + localChatStore.models.length) % localChatStore.models.length;
-            selectModel(localChatStore.models[next]!.id);
-            setModelMenuOpen(true);
+            const next = (index < 0 ? 0 : index + offset + list.length) % list.length;
+            void selectPersona(list[next]!.name);
+            setPersonaMenuOpen(true);
         } else if (e.key === "Home" || e.key === "End") {
             e.preventDefault();
-            selectModel(localChatStore.models[e.key === "Home" ? 0 : localChatStore.models.length - 1]!.id);
-            setModelMenuOpen(true);
+            void selectPersona(list[e.key === "Home" ? 0 : list.length - 1]!.name);
+            setPersonaMenuOpen(true);
         }
     };
 
@@ -876,60 +885,53 @@ export function LocalChatPage() {
                     {/* 不再画分隔线：正文与工具条同底色（base-200），一条 border-base-300 的横线
                         会在"一体化"的块里切出一道比底色更亮/更暗的缝，比没有线更显割裂。 */}
                     <div class="flex shrink-0 items-center gap-2 px-2 py-2 text-xs">
-                        <div class="relative" data-model-control>
+                        {/* 人物选择器：**选谁干活**（本任务绑定）。模型与参数不在这里改 ——
+                            它们属于人物定义（全局），改的是"这个人怎么工作"，
+                            用的是 `diy agent persona set`；两件事混在一个菜单里必然误操作。 */}
+                        <div class="relative" data-persona-control>
                             <button
-                                class="btn btn-ghost btn-xs max-w-[240px] min-w-0 tooltip tooltip-top"
-                                data-tip="模型与推理强度（↑/↓ 切换模型）"
-                                aria-label="选择模型与推理强度"
-                                aria-expanded={modelMenuOpen()}
+                                class="btn btn-ghost btn-xs max-w-[280px] min-w-0 tooltip tooltip-top"
+                                data-tip="agent 人物（↑/↓ 切换）—— 模型与参数由人物决定"
+                                aria-label="选择 agent 人物"
+                                aria-expanded={personaMenuOpen()}
                                 disabled={localChatStore.running}
-                                onClick={(e) => { e.stopPropagation(); setModelMenuOpen((v) => !v); }}
-                                onKeyDown={moveModelByKeyboard}
+                                onClick={(e) => { e.stopPropagation(); setPersonaMenuOpen((v) => !v); }}
+                                onKeyDown={movePersonaByKeyboard}
                             >
                                 <span class="truncate">
-                                    {(localChatStore.models.find((m) => m.id === localChatStore.activeModel)?.name ?? localChatStore.activeModel) || "选择模型"}
-                                    <span class="opacity-60">（{reasoningEffortLabel(localChatStore.reasoningEffort)}）</span>
+                                    {personaName() || "选择人物"}
+                                    <span class="opacity-60">
+                                        （{personaDef() ? `${personaStore.modelLabel(personaDef()!.model)} · ${reasoningEffortLabel(personaDef()!.reasoningEffort as ReasoningEffort)}` : "未加载"}）
+                                    </span>
                                 </span>
                                 <span class="opacity-50">▾</span>
                             </button>
-                            <Show when={modelMenuOpen()}>
+                            <Show when={personaMenuOpen()}>
                                 <div
-                                    class="absolute bottom-full left-0 z-30 mb-2 grid w-[min(34rem,calc(100vw-2rem))] grid-cols-[minmax(0,1fr)_9rem] overflow-hidden rounded-box border border-base-300 bg-base-100 p-2 shadow-xl"
-                                    data-model-control
+                                    class="absolute bottom-full left-0 z-30 mb-2 w-[min(28rem,calc(100vw-2rem))] overflow-hidden rounded-box border border-base-300 bg-base-100 p-2 shadow-xl"
+                                    data-persona-control
                                     onClick={(e) => e.stopPropagation()}
                                 >
-                                    <div class="min-w-0 border-r border-base-300 pr-2">
-                                        <div class="px-2 pb-1 text-[10px] font-semibold uppercase opacity-50">模型</div>
-                                        <div class="max-h-64 overflow-y-auto">
-                                            <For each={localChatStore.models}>
-                                                {(m) => (
-                                                    <button
-                                                        class={`btn btn-ghost btn-xs w-full justify-start ${m.id === localChatStore.activeModel ? "bg-primary/15 text-primary" : ""}`}
-                                                        title={m.id}
-                                                        onClick={() => selectModel(m.id)}
-                                                    >
-                                                        <span class="truncate">{m.name}</span>
-                                                    </button>
-                                                )}
-                                            </For>
-                                        </div>
+                                    <div class="px-2 pb-1 text-[10px] font-semibold uppercase opacity-50">agent 人物</div>
+                                    <div class="max-h-64 overflow-y-auto">
+                                        <For each={personaStore.personas}>
+                                            {(p) => (
+                                                <button
+                                                    class={`btn btn-ghost btn-xs flex h-auto w-full flex-col items-start justify-start gap-0.5 py-1 ${p.name === personaName() ? "bg-primary/15 text-primary" : ""}`}
+                                                    title={p.desc || p.name}
+                                                    aria-label={`人物 ${p.name}`}
+                                                    onClick={() => void selectPersona(p.name)}
+                                                >
+                                                    <span class="truncate">{p.name}</span>
+                                                    <span class="text-[10px] opacity-60">
+                                                        {personaStore.modelLabel(p.model)} · {reasoningEffortLabel(p.reasoningEffort as ReasoningEffort)}
+                                                    </span>
+                                                </button>
+                                            )}
+                                        </For>
                                     </div>
-                                    <div class="min-w-0 pl-2">
-                                        <div class="px-2 pb-1 text-[10px] font-semibold uppercase opacity-50">推理强度</div>
-                                        <div class="space-y-1">
-                                            <For each={localChatStore.models.find((m) => m.id === localChatStore.activeModel)?.reasoning.supported ?? ["none"]}>
-                                                {(level) => (
-                                                    <button
-                                                        class={`btn btn-ghost btn-xs w-full justify-start tooltip tooltip-left ${level === localChatStore.reasoningEffort ? "bg-primary/15 text-primary" : ""}`}
-                                                        data-tip={`推理强度：${level}`}
-                                                        aria-label={`推理强度: ${level}`}
-                                                        onClick={() => { localChatStore.setReasoningEffort(level as ReasoningEffort); setModelMenuOpen(false); }}
-                                                    >
-                                                        {reasoningEffortLabel(level as ReasoningEffort)}
-                                                    </button>
-                                                )}
-                                            </For>
-                                        </div>
+                                    <div class="mt-1 border-t border-base-300 px-2 pt-1 text-[10px] opacity-50">
+                                        改人物的模型/参数：<code>diy agent persona set</code>（影响所有使用它的任务）
                                     </div>
                                 </div>
                             </Show>

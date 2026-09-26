@@ -7,6 +7,8 @@ export interface CreateTaskViaUiInput {
   project: string;
   parent?: string;
   body?: string;
+  /** agent 人物名：不传 = 当前缺省人物（人物决定模型/参数/口气，见 shared/persona.ts） */
+  persona?: string;
 }
 
 /** 创建任务（UI 入口）：与「项目行 ＋ 添加任务」按钮共用同一套逻辑。
@@ -17,6 +19,7 @@ export async function createTaskViaUi(input: CreateTaskViaUiInput): Promise<stri
     project: input.project,
     parent: input.parent,
     body: input.body,
+    persona: input.persona,
   });
   const uri: string = r?.data?.uri;
   await taskStore.loadTree();

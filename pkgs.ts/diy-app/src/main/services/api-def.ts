@@ -19,6 +19,10 @@
 import { RpcSchema } from "@diy/rpc";
 import { z } from "zod";
 import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-schema";
+// agent 人物契约（纯 zod，renderer 同源）——模型/参数/口气的配置实体
+import { PersonaSchema } from "../../shared/persona";
+// 草稿与任务详情载荷的契约（纯 zod，renderer 同源）
+import { DraftFieldSchema, DraftFieldsSchema, DraftsData, TaskDetailSchema } from "../../shared/task-detail";
 
 // 任务状态枚举 — 单一真相源 task-state.ts（纯 zod，无 Node 依赖，浏览器安全） */
 import { TaskStateSchema } from "../core/task-state";
@@ -55,17 +59,8 @@ const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
   }),
 );
 
-/** 草稿字段名白名单 — 单一真相源 core/drafts.ts 的 DRAFT_FIELDS */
-export const DraftFieldSchema = z.enum(["title", "body", "agent_input"]);
-/** 草稿字段映射（值一律字符串，原样保存不 trim；partial：未编辑的字段不出现） */
-export const DraftFieldsSchema = z.partialRecord(DraftFieldSchema, z.string());
-
-/** 草稿数据（含 meta，供 renderer 判定过期 / CLI 观察） */
-export const DraftsData = z.object({
-  base_updated: z.string().optional(),
-  saved: z.string().optional(),
-  fields: DraftFieldsSchema,
-});
+// 契约在 shared/task-detail.ts（单一真源）；re-export 保持既有引用路径不变
+export { DraftFieldSchema, DraftFieldsSchema, DraftsData, TaskDetailSchema };
 
 export const apiDef = RpcSchema.router({
   diy: RpcSchema.group({
@@ -84,6 +79,7 @@ export const apiDef = RpcSchema.router({
               project: z.string().cliArg({ desc: "所属 project id" }),
               parent: z.string().optional().cliOption({ short: "p", desc: "父任务 URI" }),
               body: z.string().optional().cliOption({ desc: "任务内容" }),
+              persona: z.string().optional().cliOption({ desc: "agent 人物名（不传=当前缺省人物；人物决定模型/参数/口气）" }),
             },
             output: StatusDataUri,
           }),
@@ -150,6 +146,8 @@ export const apiDef = RpcSchema.router({
               state: TaskStateSchema.optional().cliOption({ desc: "新状态" }),
               body: z.string().optional().cliOption({ desc: "新内容（至少 10 字符，拒绝空/过短以免误清空正文）" }),
               parent: z.string().optional().cliOption({ desc: "父任务 URI（空字符串=取消父子关系）" }),
+              // 人物不可清除（任务必须有人物）：空串会被写入侧拒绝，只允许换成另一个存在的人物
+              persona: z.string().optional().cliOption({ desc: "agent 人物名（换人=续聊，模型下一轮生效；不能为空）" }),
             },
             output: StatusDataUri,
           }),
@@ -272,22 +270,14 @@ export const apiDef = RpcSchema.router({
 
       getTask: RpcSchema.unary({
         desc: `按 URI 获取任务（供 renderer 反向调用；未找到时 data 为 null）`,
-        input: { uri: z.string() },
+        // cliArg：命令行可读（`diy getTask <uri>`）；renderer 走 RPC 不受影响
+        input: { uri: z.string().cliArg({ desc: "任务 URI" }) },
+        // 字段清单**不在此处手抄**：契约是 shared/task-detail.ts 的 TaskDetailSchema（单一真源，
+        // renderer 的 TaskDetail 类型也从它推导）。手抄两次的后果见该文件头注释（漏过字段）。
         output: z.object({
           status: z.string(),
           // 未找到 → data: null，renderer 侧 `if (r.data)` 守卫才能生效
-          data: z.object({
-            uri: z.string(),
-            title: z.string().optional(),
-            state: TaskStateSchema.optional(),
-            project: z.string().optional(),
-            parent: z.string().optional(),
-            body: z.string().optional(),
-            created: z.string().optional(),
-            updated: z.string().optional(),
-            // 未提交草稿：renderer 用它恢复编辑态与输入框（见 core/drafts.ts）
-            ui_drafts: DraftsData.nullable().optional(),
-          }).nullable(),
+          data: TaskDetailSchema.nullable(),
         }),
       }),
 
@@ -309,6 +299,51 @@ export const apiDef = RpcSchema.router({
         children: {
 
           // —— 本地自定义 agent（ai-sdk 块协议，独立于 ACP 通道）——
+          // —— agent 人物（persona）——
+          // 人物是**配置实体**：模型/参数/口气挂在这里，会话只持有引用（任务 frontmatter 的 persona）。
+          // 于是「改人物」= 所有引用它的任务下一轮统一生效；「换人物」= 只改本任务的绑定，不碰别人。
+          persona: RpcSchema.group({
+            desc: `agent 人物（模型 + 参数 + 口气）；任务持引用，改人物对使用它的会话下一轮生效`,
+            children: {
+              list: RpcSchema.unary({
+                desc: `列出全部人物与缺省人物`,
+                input: {},
+                output: z.object({
+                  default: z.string().describe("缺省人物名（新建任务用它）"),
+                  personas: z.array(PersonaSchema),
+                }),
+              }),
+              set: RpcSchema.unary({
+                desc: `新建/更新人物（未给的字段保持原值；新建时必须给 model）`,
+                input: {
+                  name: z.string().cliArg({ desc: "人物名" }),
+                  model: z.string().optional().cliOption({ desc: "模型 id（见 agent local models）" }),
+                  reasoningEffort: z
+                    .string()
+                    .optional()
+                    .cliOption({ desc: "推理强度档位（按该模型支持集，见 agent local models）" }),
+                  style: z.string().optional().cliOption({ desc: `口气（注入身份节；空串=不注入）` }),
+                  desc: z.string().optional().cliOption({ desc: "一句话说明（选择器展示用）" }),
+                },
+                output: PersonaSchema,
+              }),
+              remove: RpcSchema.unary({
+                desc: `删除人物（仍有任务引用它时拒绝；最后一个不可删）`,
+                input: {
+                  name: z.string().cliArg({ desc: "人物名" }),
+                },
+                output: z.object({ removed: z.boolean() }),
+              }),
+              setDefault: RpcSchema.unary({
+                desc: `设置缺省人物（只影响之后**新建**的任务，已有任务的绑定不变）`,
+                input: {
+                  name: z.string().cliArg({ desc: "人物名" }),
+                },
+                output: z.object({ default: z.string() }),
+              }),
+            },
+          }),
+
           local: RpcSchema.group({
             desc: `本地自定义 agent（ai-sdk，独立于 ACP 通道）`,
             children: {
@@ -317,8 +352,10 @@ export const apiDef = RpcSchema.router({
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
                   message: z.string().cliArg({ desc: "用户消息" }),
-                  model: z.string().optional().cliOption({ desc: `模型（默认 gpt-5.6-luna，zen/go 子集见 agent local models）` }),
-                  reasoningEffort: z.string().optional().cliOption({ desc: "推理强度（按模型能力）" }),
+                  // 下面两项是**本次临时覆盖**，不写配置：模型/参数的真源是任务绑定的人物
+                  // （diy agent persona …）。UI 不传，留着是给 CLI/调试临时试模型用。
+                  model: z.string().optional().cliOption({ desc: `临时覆盖模型（缺省 = 任务当前人物的模型）` }),
+                  reasoningEffort: z.string().optional().cliOption({ desc: "临时覆盖推理强度（缺省 = 人物配置）" }),
                 },
                 output: z.string(),
               }),

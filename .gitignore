@@ -1,5 +1,8 @@
 # nodejs
-node_modules/
+# 去尾斜杠：`node_modules/` 只匹配目录，而 linked worktree 里为省空间用的是
+# **符号链接**（node_modules -> <主仓库>/node_modules），符号链接不是目录 → 规则不生效
+# → git add -A 会把它当符号链接提交进去。无斜杠则目录与符号链接都覆盖（见 AGENTS.md）
+node_modules
 out/
 *.tsbuildinfo
 

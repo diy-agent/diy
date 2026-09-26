@@ -8,7 +8,6 @@ import { analyze } from "@diy/template";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
-import { localChatStore } from "../store/localChatStore";
 import { ViewGrid } from "./ViewGrid";
 import type { JSX } from "solid-js";
 import { areasWithViews, findPage } from "../../shared/view-registry";
@@ -1014,7 +1013,8 @@ export function PromptLabV4Page() {
     }
 
     // 右预览：草稿/项目/任务/条目变化 → 防抖自动重算。
-    // model 传会话实际选的模型 —— 不传服务端只能退回 DEFAULT_MODEL，「试的就是真发的」就对不上。
+    // 不传 model：服务端按**任务当前人物**的模型推导预算与仿真请求（模型归人物管，
+    // renderer 再存一份"当前模型"就又会出现两处真源打架）。
     createEffect(
         on([() => draftsByProject(), project, taskUri, entries, tick], () => {
             const timer = setTimeout(async () => {
@@ -1023,7 +1023,8 @@ export function PromptLabV4Page() {
                     const p = (await diyService.diy.template.preview({
                         project: project(),
                         taskUri: taskUri().trim() || undefined,
-                        model: localChatStore.activeModel || undefined,
+                        // 键必须出现：显式 undefined = 让 main 按任务当前人物的模型推导
+                        model: undefined,
                         // 草稿走 RPC（未存盘也进预览）
                         drafts: Object.keys(d).length > 0 ? d : undefined,
                     })) as RequestPreview;

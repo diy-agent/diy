@@ -21,6 +21,7 @@ import { refList, checkRefPaths } from "../core/ref";
 import { syncRefs } from "./ref-sync";
 import { addSource, removeSource } from "./ref-config";
 import { apiDef } from "./api-def";
+import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
 import { resolve as resolvePath } from "node:path";
@@ -190,15 +191,17 @@ export function bindAppHandlers(binding: ServerBinding): void {
     // 草稿随任务返回（与 diy.task.show 同一契约）：renderer 只调这一个接口拿任务，
     // 少一次往返就少一处「忘记带草稿」的机会 —— 两个 handler 必须给同样的字段。
     const d = readDrafts(input.uri);
+    // 不逐字段手抄：**整份摊开交给契约 schema**（多余键自动剥掉，缺字段也不会静默 —— 由 schema 决定）。
+    // 历史 bug：handler 手抄 + output 白名单两处各自维护，漏一处就静默丢字段（change_type /
+    // module / priority / persona 都漏过），界面显示"未设置"而数据其实在。
     return {
       status: "ok",
-      data: {
-        uri: t.uri, title: t.title, state: t.state, project: t.project,
-        project_path: pinfo?.path, project_label: pinfo?.label,
-        parent: t.parent, body: t.body,
-        created: t.created, updated: t.updated,
+      data: TaskDetailSchema.parse({
+        ...t,
+        project_path: pinfo?.path,
+        project_label: pinfo?.label,
         ui_drafts: d ? { base_updated: d.base_updated, saved: d.saved, fields: d.fields } : null,
-      },
+      }),
     };
   });
 
@@ -230,6 +233,75 @@ export function bindAppHandlers(binding: ServerBinding): void {
     for await (const change of fileWatcher.subscribe()) {
       yield change;
     }
+  });
+
+  // —— agent.persona —— 人物配置（模型/参数/口气的唯一真源；任务只持有引用）——
+  binding.on(app.agent.persona.list, async () => {
+    const { listPersonas, defaultPersonaName } = await import("../core/persona");
+    const { diyHome } = await import("../core/state");
+    const home = diyHome();
+    return { default: defaultPersonaName(home), personas: listPersonas(home) };
+  });
+
+  binding.on(app.agent.persona.set, async ({ input }) => {
+    const { loadPersonas, savePersonas, assertPersonaDef } = await import("../core/persona");
+    const { diyHome } = await import("../core/state");
+    const { reasoningOf } = await import("../../shared/models");
+    const home = diyHome();
+    const file = loadPersonas(home);
+    const cur = file.personas[input.name];
+    const model = input.model ?? cur?.model;
+    if (!model) throw new Error(`新建人物「${input.name}」必须指定 model（可选模型见 diy agent local models）`);
+    const def = {
+      model,
+      // 换模型时档位可能不在新模型的支持集内：未显式给档位就取新模型的默认档
+      // （沿用旧档会写出一个上游必拒的组合，写入侧直接拦住）
+      reasoningEffort:
+        input.reasoningEffort ?? (cur && cur.model === model ? cur.reasoningEffort : reasoningOf(model).default),
+      style: input.style ?? cur?.style ?? "",
+      desc: input.desc ?? cur?.desc ?? "",
+    };
+    assertPersonaDef(def);
+    savePersonas(home, { ...file, personas: { ...file.personas, [input.name]: def } });
+    return { name: input.name, ...def };
+  });
+
+  binding.on(app.agent.persona.remove, async ({ input }) => {
+    const { loadPersonas, savePersonas } = await import("../core/persona");
+    const { diyHome, getTask } = await import("../core/state");
+    const { listTasks } = await import("../core/task");
+    const home = diyHome();
+    const file = loadPersonas(home);
+    if (!Object.hasOwn(file.personas, input.name)) throw new Error(`人物「${input.name}」不存在`);
+    const rest = { ...file.personas };
+    delete rest[input.name];
+    const restNames = Object.keys(rest);
+    if (restNames.length === 0) throw new Error("至少要保留一个人物（系统必须有缺省人物）");
+    // 引用检查：人物没了而任务还指着它，那些任务会**静默回落**到缺省人物（换模型不打招呼）。
+    // 这里拒绝并报出引用者，让用户自己决定怎么改绑定 —— 顺手批量改写别人的任务不是本命令的职权。
+    const refs = listTasks().filter((u) => getTask(u)?.persona === input.name);
+    if (refs.length > 0) {
+      throw new Error(
+        `人物「${input.name}」仍被 ${refs.length} 个任务引用（${refs.slice(0, 3).join("、")}${
+          refs.length > 3 ? " 等" : ""
+        }），请先给这些任务改用其他人物（diy task edit <uri> --persona …）`,
+      );
+    }
+    savePersonas(home, {
+      default: file.default === input.name ? restNames[0]! : file.default,
+      personas: rest,
+    });
+    return { removed: true };
+  });
+
+  binding.on(app.agent.persona.setDefault, async ({ input }) => {
+    const { loadPersonas, savePersonas } = await import("../core/persona");
+    const { diyHome } = await import("../core/state");
+    const home = diyHome();
+    const file = loadPersonas(home);
+    if (!Object.hasOwn(file.personas, input.name)) throw new Error(`人物「${input.name}」不存在`);
+    savePersonas(home, { ...file, default: input.name });
+    return { default: input.name };
   });
 
   // —— agent.local —— 本地自定义 agent（ai-sdk 块协议，与 ACP 独立）
@@ -288,14 +360,15 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.template.preview, async ({ input }) => {
     const { assembleSystem } = await import("./prompt-registry");
     const { diyHome, projectFromUri } = await import("../core/state");
-    const { contextLimitOf, DEFAULT_MODEL } = await import("./local-agent");
+    const { contextLimitOf } = await import("./local-agent");
+    const { personaForTask } = await import("../core/persona");
     // project 以 taskUri 为准：两者指向不同项目时（只有 CLI 能造成）system 与 tools/cwd 会错配
     const project = input.taskUri ? projectFromUri(input.taskUri) || input.project : input.project;
     const base = assembleSystem(diyHome(), project, {
       taskUri: input.taskUri,
       drafts: input.drafts,
-      // 预算随预览模型变（与真发同一套推导）
-      contextLimitTokens: contextLimitOf(input.model || DEFAULT_MODEL),
+      // 预算随预览模型变（与真发同一套推导）：显式模型优先，否则按任务当前人物
+      contextLimitTokens: contextLimitOf(input.model ?? personaForTask(diyHome(), input.taskUri ?? "").model),
       // 试验场「模版结构树」要 trace；真发（local-agent）不传
       trace: true,
     });

@@ -23,6 +23,7 @@ import { flattenVars } from "../../shared/var-tree";
 import { PROMPT_DEFAULTS } from "../prompts/defaults";
 import { parseTaskFile } from "../core/state";
 import { resolveCwd } from "../core/cwd";
+import { personaForTask } from "../core/persona";
 import { getProjectPath } from "../core/project";
 import { readRuntimeConfig } from "../../runtime";
 // 契约类型唯一源（shared/prompt-schema.ts，纯 zod）——renderer 也用它，避免手抄第二份
@@ -461,7 +462,11 @@ export function assembleGlobals(
   const task = taskOf(home, taskUri);
   const cwdRes = resolveCwd(home, taskUri);
   const diyCli = opts.diyCli ?? readRuntimeConfig().cli ?? "";
+  // 当前人物（模型/参数/口气的真源是 personas.yaml；任务只持有引用）——预览与真发同一入口，
+  // 故试验场看到的身份节与实际请求一致，不会出现"预览里有口气、真发没有"的漂移
+  const persona = personaForTask(home, taskUri);
   const globals: AssembleGlobals = {
+    persona: { name: persona.name, style: persona.style },
     diy: { cli: diyCli || "diy（未注入 DIY_CLI，勿照抄）", home },
     project: { path: getProjectPath(projectId) ?? "" },
     task: {
