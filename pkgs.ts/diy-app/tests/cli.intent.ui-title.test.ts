@@ -50,6 +50,7 @@ afterAll(async () => {
 interface AppInfo {
   diyHome: string;
   diyHomeDisplay: string;
+  repoDisplay: string;
   env: string;
   branch: string;
   port: number;
@@ -90,6 +91,7 @@ describe("renderer 的 document.title = 实例标识", () => {
   it("标题 = 数据根 + [test] + 分支 + :端口 + pid PID", async () => {
     const info = await appInfo();
     const expected = instanceTitle({
+      repoDisplay: info.repoDisplay,
       homeDisplay: info.diyHomeDisplay,
       env: info.env,
       branch: info.branch,
@@ -115,6 +117,7 @@ describe("renderer 的 document.title = 实例标识", () => {
   it("main 侧设成了同一个标题，且带端口（证明端口就绪后重设过原生标题）", async () => {
     const info = await appInfo();
     const expected = instanceTitle({
+      repoDisplay: info.repoDisplay,
       homeDisplay: info.diyHomeDisplay,
       env: info.env,
       branch: info.branch,

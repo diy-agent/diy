@@ -21,18 +21,6 @@
 // 例：`diy(~/git/diy/_diy.worktrees/instance-title/build/home) [dev] feat/instance-title :18888 pid 4242`
 //     `diy(/tmp/diy-app-test-abc123) [test] feat/instance-title :52341 pid 53087`
 
-/** 应用名（标题前缀） */
-export const APP_NAME = "diy";
-
-/**
- * 非生产环境的后缀标签。生产不带后缀 —— 日常用的就是生产，多余文字只是噪音；
- * dev/test 必须露出来：它们的界面与生产几乎一样，但数据与某些能力完全不同。
- */
-const ENV_LABEL: Record<string, string> = {
-  development: "dev",
-  test: "test",
-};
-
 /**
  * 把数据根缩成 `~` 开头（省掉 /Users/<name> 这类无信息量的前缀）。
  *
@@ -55,9 +43,11 @@ export function abbrevHome(home: string, homeDir: string): string {
 
 /** 组装标题所需的事实。缺的字段直接不出现（`pid 0` / `:0` 这类占位比留白更难看） */
 export interface InstanceIdentity {
+  /** 当前代码仓库（或 worktree）的展示路径 */
+  repoDisplay: string;
   /** 数据根（DIY_HOME）的展示形式：绝对路径，或相对**真实家目录**的 `~/…` */
   homeDisplay: string;
-  /** 运行环境（production/development/test） */
+  /** 运行环境（兼容保留，不再显示） */
   env: string;
   /** 当前运行代码所在 git 分支（拿不到时省略） */
   branch?: string | null;
@@ -68,19 +58,16 @@ export interface InstanceIdentity {
 }
 
 /**
- * 组装窗口标题：
- *   `diy(<数据根>) [环境] <分支> :<端口> pid <PID>`
+ * 组装窗口标题：`<仓库>🔹<数据根>🔹port:<端口>🔹pid:<PID>`。
  *
- * 字段顺序 = 排查时的阅读顺序：先认出「哪个实例」（数据根 + 环境），
- * 再认出「哪份代码」（分支），最后拿到「哪个进程」（端口 + PID）。
- * 数据根为空时退化成 `diy(?)` —— 宁可显示一个显眼的问号，也不显示成像是生产默认值。
+ * 仓库路径用于识别哪份代码，数据根用于识别哪份运行数据；端口与 PID 用于定位实际实例。
+ * 字段缺失时显示 `?`，保持标题结构稳定。
  */
 export function instanceTitle(id: InstanceIdentity): string {
-  const parts = [`${APP_NAME}(${id.homeDisplay || "?"})`];
-  const label = ENV_LABEL[id.env];
-  if (label) parts.push(`[${label}]`);
-  if (id.branch) parts.push(id.branch);
-  if (id.port) parts.push(`:${id.port}`);
-  if (id.pid) parts.push(`pid ${id.pid}`);
-  return parts.join(" ");
+  return [
+    id.repoDisplay || "?",
+    id.homeDisplay || "?",
+    `port:${id.port ?? "?"}`,
+    `pid:${id.pid ?? "?"}`,
+  ].join("🔹");
 }

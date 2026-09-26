@@ -5,6 +5,7 @@ export interface AppInfoData {
   port: number;
   pid: number;
   diyHome: string;
+  repoDisplay?: string;
   /** 数据根的展示形式（相对真实家目录缩 `~`；临时根保持绝对路径） */
   diyHomeDisplay?: string;
   /** 当前运行代码所在 git 分支（打包/非仓库为空串） */

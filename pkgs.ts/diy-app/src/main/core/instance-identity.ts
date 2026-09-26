@@ -34,6 +34,12 @@ export function homeDisplayOf(diyHome: string): string {
   return abbrevHome(diyHome, realHomeDir());
 }
 
+/** 当前代码所在仓库的展示路径：worktree 也显示为它自己的具体目录。 */
+export function repoDisplayOf(startDir: string = HERE): string {
+  const root = findGitRoot(startDir);
+  return root ? abbrevHome(root, realHomeDir()) : "?";
+}
+
 /** 从 startDir 向上找含 .git 的目录。worktree 里 `.git` 是**文件**，故只判存在性、不判类型 */
 function findGitRoot(startDir: string): string | null {
   let dir = resolve(startDir);

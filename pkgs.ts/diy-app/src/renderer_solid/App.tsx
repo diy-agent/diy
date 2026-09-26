@@ -234,6 +234,7 @@ export default function App() {
         // 数据根展示形式/分支都在 renderer 里拿不到（要真实家目录与 git），故整份事实由 main 下发。
         void diyService.diy.getAppInfo({}).then((r) => {
             document.title = instanceTitle({
+                repoDisplay: r.repoDisplay,
                 homeDisplay: r.diyHomeDisplay,
                 env: r.env,
                 branch: r.branch,

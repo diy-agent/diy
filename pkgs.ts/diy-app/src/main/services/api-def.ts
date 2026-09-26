@@ -265,6 +265,8 @@ export const apiDef = RpcSchema.router({
            *  窗口标题与界面展示用 —— renderer 拿不到真实家目录，缩写规则只能由 main 侧算
            *  （见 shared/instance-title 的 abbrevHome + main/core/instance-identity.ts）。 */
           diyHomeDisplay: z.string(),
+          /** 当前代码仓库/ worktree 的展示路径（窗口标题用） */
+          repoDisplay: z.string(),
           /** 运行环境（production/development/test）。dev/test 的界面与生产几乎一样，
            *  必须能看出来，否则容易误改生产数据。 */
           env: z.string(),

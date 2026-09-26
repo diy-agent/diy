@@ -16,7 +16,7 @@ import * as state from "../core/state";
 import * as taskTree from "../core/task-tree";
 import { AppConfig } from "../core/app-config";
 import { platform, arch, release, totalmem, freemem } from "node:os";
-import { currentGitBranch, homeDisplayOf } from "../core/instance-identity";
+import { currentGitBranch, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
 import { readRuntimeConfig } from "../../runtime";
 import * as health from "./health";
 import { refList, checkRefPaths } from "../core/ref";
@@ -152,6 +152,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
       // 缩写基准是**真实家目录**（不是 $HOME）：隔离/测试实例的 DIY_HOME === $HOME，
       // 用 $HOME 缩会得到 `~`，把 /tmp 临时根伪装成用户家目录（见 core/instance-identity.ts）。
       diyHomeDisplay: homeDisplayOf(ac.diyHome),
+      repoDisplay: repoDisplayOf(),
       env: readRuntimeConfig().env,
       // 当前运行代码所在 git 分支：标题据此判断「哪个 worktree 的构建」，拿不到时空串
       branch: currentGitBranch() ?? "",

@@ -41,7 +41,7 @@ import { installCrashReporting } from "./services/crash-reporting";
 import { detectGpu } from "./core/gpu-detect";
 import { readRuntimeConfig } from "../runtime";
 import { instanceTitle } from "../shared/instance-title";
-import { currentGitBranch, homeDisplayOf } from "./core/instance-identity";
+import { homeDisplayOf, repoDisplayOf } from "./core/instance-identity";
 import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "./core/single-instance";
 
 // Chromium 开关必须走 app.commandLine（ready 之前），跟在 app 路径后传 argv 无效。
@@ -184,9 +184,9 @@ function loadMainApp(): void {
  */
 function windowTitle(port: number | null): string {
   return instanceTitle({
+    repoDisplay: repoDisplayOf(),
     homeDisplay: homeDisplayOf(appConfig.diyHome),
     env: cfg.env,
-    branch: currentGitBranch(),
     port,
     pid: process.pid,
   });
