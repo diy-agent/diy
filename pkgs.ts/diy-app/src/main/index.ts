@@ -40,7 +40,8 @@ import { installDiagnostics } from "./services/diagnostics";
 import { installCrashReporting } from "./services/crash-reporting";
 import { detectGpu } from "./core/gpu-detect";
 import { readRuntimeConfig } from "../runtime";
-import { abbrevHome, instanceTitle } from "../shared/instance-title";
+import { instanceTitle } from "../shared/instance-title";
+import { currentGitBranch, homeDisplayOf } from "./core/instance-identity";
 
 // Chromium 开关必须走 app.commandLine（ready 之前），跟在 app 路径后传 argv 无效。
 // 之前 cli/electron-dev 把 --disable-features=RustPng 放 spawn argv 里，Chromium 根本没吃到，rust_png 照崩。
@@ -174,13 +175,39 @@ function loadMainApp(): void {
   }
 }
 
+/**
+ * 「本实例是谁」的标题（与 renderer 的 document.title 同源同格式，见 shared/instance-title）。
+ * 端口未知时传 null（创建窗口那一刻 RPC 端口还没绑定）。
+ */
+function windowTitle(port: number | null): string {
+  return instanceTitle({
+    homeDisplay: homeDisplayOf(appConfig.diyHome),
+    env: cfg.env,
+    branch: currentGitBranch(),
+    port,
+    pid: process.pid,
+  });
+}
+
+/**
+ * 设置窗口标题并落一行日志。
+ *
+ * 为什么要日志：原生窗口标题只有人眼能看到（CDP 读到的 targetInfo.title 是页面标题），
+ * 不起眼地失效了没人发现。落进 main.log 后，意图测试能直接断言「main 真的设成了什么」。
+ */
+function applyWindowTitle(): void {
+  const title = windowTitle(httpPort || null);
+  mainWindow?.setTitle(title);
+  console.log(`[diy] 窗口标题: ${title}`);
+}
+
 function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy/rpc").EnvelopeTransport } {
   const WIDTH = 1200;
   const HEIGHT = 800;
-  // 窗口标题 = 实例标识（`diy(<数据根>) [dev|test]`，见 shared/instance-title）。
+  // 窗口标题 = 实例标识（`diy(<数据根>) [dev|test] <分支> :<端口> pid <PID>`）。
   // 放在 main 而非只靠 renderer：renderer 崩溃/加载失败时标题仍要能告诉你这是哪个实例
-  // —— 那正是最需要它的时候。
-  const title = instanceTitle(abbrevHome(appConfig.diyHome, homedir()), cfg.env);
+  // —— 那正是最需要它的时候。此刻端口尚未绑定，故先不带端口段，就绪后 applyWindowTitle() 补。
+  const title = windowTitle(httpPort || null);
   mainWindow = new BrowserWindow({
     width: WIDTH,
     height: HEIGHT,
@@ -312,6 +339,8 @@ app.whenReady().then(async () => {
   ipcBinding = binding;
 
   const ok = await startRpcPort(ipcTransport);
+  // 端口已定（含 EADDRINUSE 后的随机端口兜底）→ 重设标题补上 `:<port>`
+  applyWindowTitle();
 
   if (ok) {
     loadMainApp();

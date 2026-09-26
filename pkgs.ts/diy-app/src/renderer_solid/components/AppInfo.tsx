@@ -5,6 +5,10 @@ export interface AppInfoData {
   port: number;
   pid: number;
   diyHome: string;
+  /** 数据根的展示形式（相对真实家目录缩 `~`；临时根保持绝对路径） */
+  diyHomeDisplay?: string;
+  /** 当前运行代码所在 git 分支（打包/非仓库为空串） */
+  branch?: string;
   cache: string;
   userData: string;
   electron: string;
@@ -37,10 +41,12 @@ export function AppInfo() {
                                 <div class="font-bold mb-1">运行</div>
                                 <Row k="端口" v={String(i().port)} />
                                 <Row k="PID" v={String(i().pid)} />
+                                <Row k="分支" v={i().branch || "—（非 git 仓库）"} />
                             </div>
                             <div class="card bg-base-100 border p-3">
                                 <div class="font-bold mb-1">目录</div>
                                 <Row k="diyHome" v={i().diyHome} />
+                                <Row k="diyHome（展示）" v={i().diyHomeDisplay ?? i().diyHome} />
                                 <Row k="cache" v={i().cache} />
                                 <Row k="userData" v={i().userData} />
                             </div>
