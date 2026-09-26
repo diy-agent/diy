@@ -493,6 +493,10 @@ function TurnView(props: {
 // 如果不显示，用户会以为"说过了"，实际可能还排在队列里等下一轮。
 // 位置固定在输入区上方一行（与 dsh web 的 queue dock 同语义：队列贴着 composer），
 // 而不是混进对话流里 —— 对话流是历史，这条是"还没发生的事"。
+//
+// 形态：**只渲染插话条目本身**，不另起一行标题（"N 条待发送"这种说明是界面自己在解释自己：
+// 用户刚按下「插到下一步」，横条里就是那句话本身，含义不言自明）。条目自带全部必要信息 ——
+// 模式徽标（下一步后/下一轮后，悬停给出完整解释）+ 内容 + ✕。
 
 /** 模式徽标文案：说出投递时机，而不是内部枚举名（step/turn 是给代码看的） */
 const steerModeLabel = (mode: SteerMode) => (mode === "step" ? "下一步后" : "下一轮后");
@@ -508,10 +512,12 @@ const steerModeTip = (mode: SteerMode) =>
 function SteerBar(props: { items: SteerItem[]; onCancel: (id: string) => void }) {
     return (
         <Show when={props.items.length > 0}>
-            <div class="shrink-0 border-t bg-base-200/60 px-3 py-1.5 text-xs" data-steer-bar>
-                <div class="mb-1 flex items-center gap-2 opacity-60">
-                    <span>⏳ 待发送插话 {props.items.length} 条（模型取走后自动消失）</span>
-                </div>
+            <div
+                class="shrink-0 border-t bg-base-200/60 px-3 py-1.5 text-xs"
+                data-steer-bar
+                /* 无可见标题，语义交给 aria-label：读屏与自动化仍能识别这是"待发送的插话" */
+                aria-label={`待发送插话 ${props.items.length} 条`}
+            >
                 <ul class="max-h-24 space-y-0.5 overflow-y-auto">
                     <For each={props.items}>
                         {(it) => (

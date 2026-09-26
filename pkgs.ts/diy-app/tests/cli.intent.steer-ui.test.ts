@@ -129,12 +129,21 @@ async function a11yText(): Promise<string> {
 /**
  * 点**按钮**（按文本，但限定 role=button）。
  *
- * 为什么不能只按文本：横条出现后，标题「⏳ 待发送插话 1 条」里就含「发送」二字，
- * 而 ui-drive 的文本匹配取的是**文档序第一个**命中节点 —— 会点到横条标题上，
- * 表现为「点了发送没反应」。真实用户点的是按钮，测试也必须点到按钮。
+ * 为什么不能只按文本：ui-drive 的文本匹配取**文档序第一个**命中节点，可能落在
+ * 标签/容器上而非按钮；且同一句话可能同时出现在多处（工具提示、无障碍标签、对话流里的
+ * 旧消息）。真实用户点的是按钮，测试也必须点到按钮。
+ * （历史上这里踩过一次：横条标题含「发送」二字，点「发送」落到了标题上，表现为"点了没反应"。）
  */
 const clickButton = (text: string) =>
     ui.click((t, node) => node.role === "button" && t.includes(text));
+
+/**
+ * 横条里的插话条目数（DOM 直读）。
+ *
+ * 为什么不查文本：横条刻意**没有可见标题**（"N 条待发送"那种说明是界面自己解释自己）。
+ * 靠 `data-steer-id` 计数既精确又不受文案变动影响；"用户看得见内容"另由 a11y 文本断言覆盖。
+ */
+const steerBarRows = () => ui.query<number>("document.querySelectorAll('[data-steer-id]').length");
 
 /** 草稿文件（插话与聊天草稿同文件：任务目录 .diy/drafts.yaml） */
 const draftsFile = () => join(fx.HOME, uri, ".diy", "drafts.yaml");
@@ -174,7 +183,7 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
         expect(running).not.toContain("插到下一步");
         expect(running).not.toContain("插到下一轮");
         // 没有排队插话 → 横条不渲染（不做空条常驻）
-        expect(running).not.toContain("待发送插话");
+        expect(await steerBarRows()).toBe(0);
     });
 
     it("生成中打字 → 多出「插到下一步 / 插到下一轮」，「停止」保持不变", async () => {
@@ -190,7 +199,8 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
 
     it("点「插到下一步」→ 上方横条出现该条 + 标注投递时机 + 已落盘", async () => {
         await clickButton("插到下一步");
-        const text = await waitUntil(a11yText, (s) => s.includes("待发送插话"), { label: "横条出现" });
+        await waitUntil(steerBarRows, (n) => n === 1, { label: "横条出现（1 条）" });
+        const text = await a11yText();
         expect(text).toContain("插一句：记得跑测试");
         expect(text).toContain("下一步后"); // 模式徽标（说人话，不是内部枚举 step）
         // 输入框已清空 → 插话按钮随之收起（没内容就没得插）
@@ -235,7 +245,9 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
         // 本轮被中断 → turn 插话没被投递：仍排在队列里（横条继续显示待发送）
         const list = await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`);
         expect((list.data as any[]).map((i) => i.text)).toEqual(["再做一件事"]);
-        expect(await a11yText()).toContain("待发送插话");
+        // 横条仍在（界面与队列同源）
+        expect(await steerBarRows()).toBe(1);
+        expect(await a11yText()).toContain("再做一件事");
     });
 
     it("插话被投递后横条自动下架（模型看见后不再挂着「待发送」）", async () => {
@@ -250,11 +262,11 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
 
         // 放开桩响应 → 本轮收尾 → 轮末取走 turn 插话并开新一轮（新一轮请求再次被桩挂住）
         stub.release();
-        const text = await waitUntil(a11yText, (s) => !s.includes("待发送插话"), {
+        await waitUntil(steerBarRows, (n) => n === 0, {
             label: "投递后横条消失",
             timeoutMs: 20_000,
         });
-        expect(text).not.toContain("待发送插话");
+        expect(await steerBarRows()).toBe(0);
         // 服务端视角同源：队列真的空了（不是界面自己藏起来）
         const list = await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`);
         expect(list.data).toEqual([]);

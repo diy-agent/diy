@@ -123,7 +123,7 @@ renderer_solid/ 有独立 tsconfig（strict + jsxImportSource: solid-js），tsc
 | ops 格式影响 | 只给 user 的 `text` 块加 `meta.steer` / `meta.steerId`（块类型表里声明为 Flag）—— **没有新 op 动词、没有新块 kind、没有版本字段**，新旧日志双向兼容（契约锁定在 `tests/core/local-blocks-steer-compat.test.ts`） |
 | ops 记录 | 插话写成 `text` 块 + `meta.steer = step\|turn` + `meta.steerId = steer/N`（`parent = turn`；同轮内落在"第 N 步之后"，降级时它就是新一轮的开场 user 块）→ 重放/续聊都看得出谁插的话 |
 | 上限 | `MAX_STEER_ROUNDS`（一次 chat 最多自动续 8 轮，实算见 `tests/core/local-agent-steer.test.ts`）：先判上限**再取项**，剩余插话留在盘上（横条继续显示）并写显式 error 块 —— 取出来再丢就是真丢用户的话 |
-| UI | 生成中**输入框不再锁死**；「停止」外观/位置/行为不变，仅在**输入框有内容**时多出「插到下一步 / 插到下一轮」（回车 = step）；提交的插话在输入区上方一行横条（模式徽标 + ✕ 取消），全屏编辑时横条挪进 fixed 区域 |
+| UI | 生成中**输入框不再锁死**；「停止」外观/位置/行为不变，仅在**输入框有内容**时多出「插到下一步 / 插到下一轮」（回车 = step）；提交的插话在输入区上方一行横条，**只渲染插话条目本身**（模式徽标 + 内容 + ✕，不另起"N 条待发送"标题行 —— 那属于界面解释自己），全屏编辑时横条挪进 fixed 区域 |
 | 收尾（closeTurn）铁律 | ①必须在 `finally` 里（消费端断开时生成器以 return 展开，try 之后的顺序语句一律不执行）；②副作用（sink stop ops / `noteTurnEnd` / `turn-end` 审计）必须**同步做完且在任何 yield 之前**（return 展开下 finally 只执行到第一个 yield）。两条都有**回归测试**：`tests/core/local-agent-steer.test.ts` 的「消费端断开」两例（在"把 closeTurn 挪出 finally"的错误版本上会变红） |
 | 测试接缝 | `DIY_ZEN_BASE_URL`（指向桩上游，把"生成中"变成可保持的状态）；`LocalAgentManager(modelResolver)` 注入 `ai/test` 的 `MockLanguageModelV3`，断言口径是**上游实际收到的 messages** |
 | 真发用例用什么模型 | **`mimo-v2.6-flash`**（最便宜的带工具模型，价格表见仓库根 AGENTS.md「本地 agent 测试用什么模型」）。默认模型 `gpt-5.6-luna` 只在测它特有行为时用 |
