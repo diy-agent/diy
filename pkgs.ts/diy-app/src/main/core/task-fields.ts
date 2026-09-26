@@ -74,9 +74,12 @@ export const PrioritySchema = z.enum(PRIORITIES);
  * 允许 `/` 分层（`agent/ui`）——将来可按前缀聚合出轻量层级，
  * 从而减少对父子任务树的归类依赖（树只用来表达真实的分解关系，不再兼职分类）。
  *
- * 清单不是拍脑袋来的：由既有 111 条任务标题里的 scope 值收敛而来
- * （agent / agent-ui / agent-context / task / task-ui / nav / llm / cli …），
- * 其中 `agent-ui` → `agent/ui`。
+ * 清单不是拍脑袋来的：由既有任务标题里的 scope 值收敛而来，并已用一轮真实数据核对 ——
+ * 116 条任务的 `module` 全部由各自的 scope 落定（`agent-ui` → `agent/ui`、
+ * `task-tree` → `task/tree`、`tool-read` → `agent/tool`、`model` → `llm` …），
+ * 落完后本清单与数据一致（100% 命中，无一值在清单外）。
+ * 新增的 `agent/security`（原 scope 是 `agent-安全`）、`core`、`test` 即由那轮数据补入 ——
+ * 清单是**从真实用法长出来的**，不是先验设计。
  */
 export const MODULES = [
   "agent",
@@ -84,6 +87,7 @@ export const MODULES = [
   "agent/context",
   "agent/tool",
   "agent/local",
+  "agent/security",
   "task",
   "task/ui",
   "task/tree",
@@ -92,6 +96,8 @@ export const MODULES = [
   "llm",
   "cli",
   "arch",
+  "core",
+  "test",
   "docs",
 ] as const;
 
