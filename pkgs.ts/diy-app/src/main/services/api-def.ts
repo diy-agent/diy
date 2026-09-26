@@ -261,6 +261,12 @@ export const apiDef = RpcSchema.router({
         output: z.object({
           port: z.number(),
           diyHome: z.string(),
+          /** 数据根的展示形式（缩 `~`）。窗口标题与界面展示用 —— renderer 拿不到 homedir，
+           *  缩写规则只能由 main 侧算（见 shared/instance-title 的 abbrevHome）。 */
+          diyHomeDisplay: z.string(),
+          /** 运行环境（production/development/test）。dev/test 的界面与生产几乎一样，
+           *  必须能看出来，否则容易误改生产数据。 */
+          env: z.string(),
           cache: z.string(),
           userData: z.string(),
           electron: z.string(),

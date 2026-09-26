@@ -15,7 +15,9 @@ import * as project from "../core/project";
 import * as state from "../core/state";
 import * as taskTree from "../core/task-tree";
 import { AppConfig } from "../core/app-config";
-import { platform, arch, release, totalmem, freemem } from "node:os";
+import { platform, arch, release, totalmem, freemem, homedir } from "node:os";
+import { abbrevHome } from "../../shared/instance-title";
+import { readRuntimeConfig } from "../../runtime";
 import * as health from "./health";
 import { refList, checkRefPaths } from "../core/ref";
 import { syncRefs } from "./ref-sync";
@@ -146,6 +148,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return {
       port: _rpcPort,
       diyHome: ac.diyHome,
+      // 展示形式与运行环境：窗口标题（main 与 renderer 两侧同源）与设置页状态用
+      diyHomeDisplay: abbrevHome(ac.diyHome, homedir()),
+      env: readRuntimeConfig().env,
       cache: ac.cache,
       userData: ac.electronUserData,
       // serve 模式是纯 Node，这两个版本字段不存在 —— 必须给可读的占位而不是 undefined，

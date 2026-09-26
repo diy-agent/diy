@@ -9,25 +9,58 @@
  *
  * 状态两边都能改：状态是高频动作，跳回再改的代价明显高于就地改。
  */
-import { createSignal, Show } from "solid-js";
-import { taskStore } from "../store/taskStore";
+import { createSignal, createEffect, on, Show } from "solid-js";
+import { taskStore, type TaskDetail } from "../store/taskStore";
 import { editTask } from "../lib/task-edit";
+import { diyService } from "../lib/rpc";
 import { StateSelect } from "./TaskDetailPanel";
 import { MarkdownView } from "./MarkdownView";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 
 export function TaskSideView(props: { uri: string }) {
     const [saving, setSaving] = createSignal(false);
-    /** 只认属于本视图 uri 的任务（切 tab 期间 selectedTask 可能还是上一个） */
-    const task = () => (taskStore.selectedTask?.uri === props.uri ? taskStore.selectedTask : null);
+
+    /**
+     * 本实例**自己持**任务数据，不读 `taskStore.selectedTask`。
+     *
+     * 为什么必须这样（曾踩）：selectedTask 是**全局单例**，同一时刻只有一个值。
+     * 从前这里写 `taskStore.selectedTask?.uri === props.uri ? ... : null`，
+     * 于是本 view 的多个实例（任务执行页左栏 + 悬停任务项的覆盖层）只能有一个是活的：
+     * 用户在任务树点了别的任务 → selectedTask 变了 → 另一个实例的条件永远为假
+     * → 它的数据明明在内存里，界面却一直停在「加载中…」。
+     * props.uri 传入只解决了参数传递，数据源仍是单例 —— 故这里按 uri 各自取数。
+     */
+    const [task, setTask] = createSignal<TaskDetail | null>(null);
+
+    /** 按 uri 拉详情；响应回来时若 uri 已变（切得快）则丢弃，避免旧数据覆盖新的 */
+    const load = async (uri: string) => {
+        const r = await diyService.diy.getTask({ uri });
+        if (props.uri !== uri) return;
+        setTask(r.data ?? null);
+    };
+
+    // on(uri, defer=false)：挂载即取一次，之后 uri 变化重新取。
+    // 不用再配 onMount —— effect 首次就是同步执行的，加 onMount 会多发一次请求。
+    createEffect(
+        on(
+            () => props.uri,
+            (uri) => {
+                setTask(null);
+                void load(uri);
+            },
+        ),
+    );
 
     const changeState = async (next: string) => {
         if (next === task()?.state) return;
         setSaving(true);
         try {
+            // 编辑走 lib/task-edit 的统一入口（它负责补全 RPC 契约里「可选但键必须出现」
+            // 的那些字段）；改完只刷本实例 + 任务树，不动全局 selectedTask
             await editTask(props.uri, { state: next as any });
+            await load(props.uri);
+            // 任务树/导航上的状态圆点跟着更新（树是全局的，与「本 view 自己取数」不冲突）
             await taskStore.loadTree();
-            await taskStore.selectTask(props.uri);
         } catch (e) {
             console.error("[TaskSideView] change state failed:", e);
         } finally {

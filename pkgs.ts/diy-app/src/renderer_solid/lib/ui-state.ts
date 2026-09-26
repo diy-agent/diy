@@ -98,6 +98,14 @@ function field<T>(key: string, spec: CacheFieldSpec<T>): CacheField<T> {
 
 // ─── 字段池（属性名 = key 完全一致，单一事实来源） ─────────
 
+/** 侧栏（左侧导航）展开宽度边界（px）。
+ *  拖拽 clamp 与下面 cache 字段的 parse 必须是**同一对值**：一边宽一边窄就会出现
+ *  「存得进、读不回」（拖到 700 → 重启后悄悄回到默认），所以导出共用。 */
+export const NAV_W_MIN = 160;
+export const NAV_W_MAX = 640;
+/** 侧栏默认宽度（px）= 14rem，与可调宽之前的固定宽度一致 */
+export const NAV_W_DEFAULT = 224;
+
 /** 视图 cache 字段池：Caches.<模块>_<组件>_<用途>.get()/.set()/.reset() */
 export const Caches = {
   /** 任务树：展开节点集 */
@@ -146,6 +154,16 @@ export const Caches = {
     },
     serialize: (v) => String(v),
     defaultValue: 560,
+  }),
+  /** 侧栏（左侧导航）展开宽度（px）。拖动右缘调宽 / 双击手柄复位后落盘，重启恢复。
+   *  收起态 rail 宽度（2.5rem）不在这里 —— 那是固定几何，不是用户偏好。 */
+  diy_nav_width: field("diy_nav_width", {
+    parse: (raw) => {
+      const v = Number(raw);
+      return v >= NAV_W_MIN && v <= NAV_W_MAX ? v : null;
+    },
+    serialize: (v) => String(v),
+    defaultValue: NAV_W_DEFAULT,
   }),
   /** 打开的 tab。**只存真信息**：`{ pageId, ctx }[]`，顺序即显示顺序。
    *

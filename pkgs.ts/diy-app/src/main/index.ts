@@ -40,6 +40,7 @@ import { installDiagnostics } from "./services/diagnostics";
 import { installCrashReporting } from "./services/crash-reporting";
 import { detectGpu } from "./core/gpu-detect";
 import { readRuntimeConfig } from "../runtime";
+import { abbrevHome, instanceTitle } from "../shared/instance-title";
 
 // Chromium 开关必须走 app.commandLine（ready 之前），跟在 app 路径后传 argv 无效。
 // 之前 cli/electron-dev 把 --disable-features=RustPng 放 spawn argv 里，Chromium 根本没吃到，rust_png 照崩。
@@ -176,9 +177,14 @@ function loadMainApp(): void {
 function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy/rpc").EnvelopeTransport } {
   const WIDTH = 1200;
   const HEIGHT = 800;
+  // 窗口标题 = 实例标识（`diy(<数据根>) [dev|test]`，见 shared/instance-title）。
+  // 放在 main 而非只靠 renderer：renderer 崩溃/加载失败时标题仍要能告诉你这是哪个实例
+  // —— 那正是最需要它的时候。
+  const title = instanceTitle(abbrevHome(appConfig.diyHome, homedir()), cfg.env);
   mainWindow = new BrowserWindow({
     width: WIDTH,
     height: HEIGHT,
+    title,
     show: false,
     ...mirrorWindowPos(WIDTH, HEIGHT),
     webPreferences: {
@@ -187,6 +193,12 @@ function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy/rp
       nodeIntegration: false,
     },
   });
+
+  // 页面里的 <title>（静态的 "diy"）会在加载完成后把上面的窗口标题顶掉 ——
+  // 这里拦掉：「本窗口属于哪个实例」由 main 决定，不随页面内容变。
+  // （renderer 自己也设一份 document.title，同源同值：serve 模式的浏览器标签、
+  //   以及 CDP 断言都读它。此处拦掉的只是「页面 → 窗口标题」这条通路。）
+  mainWindow.on("page-title-updated", (e) => e.preventDefault());
 
   // RPC Server — 渲染进程 ↔ 主进程通信
   const ipcTransport = createMainTransport(() => mainWindow!.webContents);
