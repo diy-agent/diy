@@ -39,12 +39,38 @@ describe("steer-queue 入队", () => {
     expect(after.map((i) => i.mode)).toEqual(["step", "turn"]);
   });
 
-  it("id 唯一（同毫秒连续提交不撞）", () => {
+  it("id 形如 steer/1、steer/2…（给人看也给 agent 用，不用随机串）", () => {
     const q = new SteerQueue(memPort());
-    const now = new Date("2026-09-25T00:00:00.000Z");
-    const ids = [q.add(URI, "step", "a", now), q.add(URI, "step", "b", now), q.add(URI, "step", "c", now)]
+    const ids = [q.add(URI, "step", "a"), q.add(URI, "step", "b"), q.add(URI, "turn", "c")]
       .map((items) => items[items.length - 1]!.id);
-    expect(new Set(ids).size).toBe(3);
+    expect(ids).toEqual(["steer/1", "steer/2", "steer/3"]);
+  });
+
+  it("序号只增不回退：取消中间一条后，新提交不会复用它的号（队列内可定位）", () => {
+    const q = new SteerQueue(memPort());
+    q.add(URI, "step", "a");
+    q.add(URI, "step", "b");
+    q.remove(URI, "steer/1");
+    expect(q.list(URI).map((i) => i.id)).toEqual(["steer/2"]);
+    expect(q.add(URI, "step", "c").map((i) => i.id)).toEqual(["steer/2", "steer/3"]);
+  });
+
+  it("队列清空后再来 = 又从 steer/1 起（编号只需同一时刻唯一，不承诺跨时间唯一）", () => {
+    const q = new SteerQueue(memPort());
+    q.add(URI, "step", "a");
+    q.takeFirst(URI);
+    expect(q.add(URI, "step", "b").map((i) => i.id)).toEqual(["steer/1"]);
+  });
+
+  it("不认识的手写 id 不参与计数（旧随机 id 仍可读可取消，但不会把新号顶高）", () => {
+    const port = memPort([
+      { id: "s1abc", mode: "step", text: "旧格式的项", created: "" },
+      { id: "steer/7x", mode: "step", text: "畸形的项", created: "" },
+    ]);
+    const q = new SteerQueue(port);
+    expect(q.add(URI, "step", "新的").map((i) => i.id)).toEqual(["s1abc", "steer/7x", "steer/1"]);
+    // 旧 id 照样能取消（id 只是不透明字符串，没有解析逻辑）
+    expect(q.remove(URI, "s1abc").map((i) => i.id)).toEqual(["steer/7x", "steer/1"]);
   });
 
   it("内容 trim；空内容拒绝（空插话投进去只会污染提示词）", () => {
@@ -64,7 +90,7 @@ describe("steer-queue 入队", () => {
 describe("steer-queue 取出（投递的唯一入口）", () => {
   const seed = (): SteerQueuePort & { writes: SteerItem[][]; items: SteerItem[] } =>
     memPort([
-      { id: "a", mode: "turn", text: "A", created: "" },
+      { id: "a", mode: "turn", text: "A", created: "" }, // 手工 id：取出/取消只按字符串匹配
       { id: "b", mode: "step", text: "B", created: "" },
       { id: "c", mode: "step", text: "C", created: "" },
     ]);

@@ -39,10 +39,10 @@ type FieldKind = "Text" | "List" | "Flag";
 const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
     turn: { usage: "Flag", status: "Flag", notice: "Flag" },
     step: { model: "Flag", usage: "Flag", status: "Flag" },
-    // steer：用户"插嘴"写进对话流的标记（step|turn，缺省 = 本轮开场的那次发言）。
-    // 走 start 的 meta 落位（见 local-agent 的 steerBlockOps），声明在这里是给
-    // "它是 text 块的合法字段"一个正式出处 —— 否则将来谁拿 patch 写它会得到一条 issue。
-    text: { role: "Flag", content: "Text", steer: "Flag" },
+    // steer / steerId：用户"插嘴"写进对话流的标记（模式 step|turn，缺省 = 本轮开场的那次发言）
+    // 与队列项 id（steer/N，回查用）。走 start 的 meta 落位（见 local-agent 的 steerBlockOps），
+    // 声明在这里是给"它们是 text 块的合法字段"一个正式出处 —— 否则将来谁拿 patch 写它们会得到 issue。
+    text: { role: "Flag", content: "Text", steer: "Flag", steerId: "Flag" },
     think: { content: "Text" },
     tool: {
         tool: "Flag",

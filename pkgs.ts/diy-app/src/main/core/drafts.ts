@@ -58,7 +58,7 @@ export type SteerMode = (typeof STEER_MODES)[number];
  * 顺序即 FIFO 投递顺序（文本本身就是消息，不可重排、不可静默丢弃）。
  */
 export interface SteerItem {
-  /** 队列内唯一 id（取消定位 / 渲染 key） */
+  /** 队列内唯一 id，形如 `steer/1`（"实体/序号"；取消定位 / 渲染 key / CLI 参数） */
   id: string;
   mode: SteerMode;
   text: string;

@@ -181,6 +181,18 @@ export function resolveLimits(
 
 // ─── 会话与持久化 ─────────────────────────────────────
 
+/**
+ * 一次 runTurn 的输入。
+ *   kind="user"    —— 用户在对话里正常发的消息（本轮的开场）
+ *   kind="step"/"turn" —— 插话（steer）投递进来的话：投递时机只影响**标记与投递点**，
+ *                        块本身都是 user 发言；steerId 指回队列项（`steer/N`）供回查。
+ */
+interface TurnInput {
+    text: string;
+    kind: "user" | SteerMode;
+    steerId?: string;
+}
+
 interface LocalSession {
     /** 块树（Op 重放）：UI 与 fold 的唯一权威；llm.jsonl 只是观察 dump */
     store: BlockStore;
@@ -536,16 +548,14 @@ export class LocalAgentManager {
             // ── 轮次循环：首轮 = 调用方消息，之后各轮 = 插话队列喂进来的消息 ──
             // "插入到下一次对话后"（turn 模式）就是在这里落地的：本轮结束前发现队列非空，
             // 自动接着开新一轮 —— 用户不必再敲一次回车。
-            let pending: { text: string; kind: "user" | SteerMode } | null = { text: message, kind: "user" };
+            let pending: TurnInput | null = { text: message, kind: "user" };
             for (let round = 0; pending && !ctrl.signal.aborted; round++) {
                 // 手动驱动内层生成器（而不是 `yield*` 委托）：委托会把 op 直接交给消费端，
                 // 跳过这里的 `sess.store.apply` —— 而 store 是本模块的**单一权威**
-                // （wire = store = UI = LLM），漏一次 apply 就会让下一段重建 messages 时看不到
-                // 刚发出的 user 块（实测症状：`InvalidPromptError: messages must not be empty`）。
+                // （wire = store = UI = LLM），漏一次 apply 会让下一轮重建 messages 时看不到
+                // 上一轮的产出（实测症状：`InvalidPromptError: messages must not be empty`）。
                 // 手动驱动同时还能拿到内层的返回值（failed），for-await 会把它丢掉。
-                const inner = this.runTurn(
-                    taskUri, sess, pending.text, pending.kind, model, reasoningEffort, ctrl.signal, key, sink,
-                );
+                const inner = this.runTurn(taskUri, sess, pending, model, reasoningEffort, ctrl.signal, key, sink);
                 let failed = false;
                 try {
                     for (;;) {
@@ -564,6 +574,8 @@ export class LocalAgentManager {
                 if (failed || ctrl.signal.aborted) break;
                 // 上限保护：插话会不断延长对话（每一轮都可能又冒出新的插话），没有上限时
                 // "用户不停插嘴 → 无限自我续命"（CLI 一条命令永不返回）。
+                // 实算（10 条入队、上限 8）：第 1 次请求是用户自己的消息，第 2..8 次各投递一条
+                // 插话，第 8 轮末尾判到上限 → 剩 3 条留在盘上（见 core/local-agent-steer.test.ts）。
                 // ⚠️ 必须**先判上限再取项**：取项是"取出即落盘删除"（投递的唯一入口），
                 // 取出来再丢弃就是真丢用户的话。故上限分支只读队列、不取项 —— 剩余插话留在盘上
                 // （UI 横条照旧显示待发送、可取消），并写显式 error 块，不静默吞。
@@ -592,15 +604,18 @@ export class LocalAgentManager {
                 }
                 let item: SteerItem | undefined;
                 try {
-                    // turn 优先于 step：turn 模式的语义本就是"下一轮"；step 模式走到这里说明本轮
-                    // 已经收尾（模型给出了最终答复、或步数用尽），降级为下一轮 —— 否则它永远发不出去。
-                    item = this.queue.takeFirst(taskUri, "turn") ?? this.queue.takeFirst(taskUri, "step");
+                    // 按提交顺序取队首（不看模式）：走到这里说明本轮已收尾，两种模式此时都只能
+                    // 作为"下一轮的开场"投递 —— step 模式原本承诺的"下一步"已经不存在了
+                    // （模型没再请求工具/步数用尽）。若还按 turn 优先，会让后提交的插话插队，
+                    // 破坏"顺序即投递顺序"这条对用户的承诺。
+                    item = this.queue.takeFirst(taskUri);
                 } catch (e) {
                     console.error(`[local-agent] 插话取项失败，停止自动续轮 ${taskUri}:`, e);
                     break;
                 }
                 if (!item) break;
-                pending = { text: item.text, kind: item.mode };
+                // 带上队列项 id：它会进本轮开场 user 块的 meta.steerId（排障时回查是哪次插话）
+                pending = { text: item.text, kind: item.mode, steerId: item.id };
             }
             done = true;
             // 轮末：从块树重建 LLM 历史（含本轮 user/tool 链路与插话块），整体覆盖 llm 日志
@@ -620,24 +635,21 @@ export class LocalAgentManager {
     /**
      * 生成器本体：ai-sdk fullStream → Op。唯一认识 ai-sdk 事件名的地方。
      *
-     * 分「段」（segment）跑：一段 = 一次 streamText 调用（内含若干模型步）。段在两种情况下
-     * 再来一段，都在同一个 turn 里：
-     *   ① 段内还有后续步 → prepareStep 把队列里的 step 插话插进那一步之前（最贴近"下一步"）；
-     *   ② 段已结束（模型不再请求工具）但队列里还有 step 插话 → 续一段把它们递出去
-     *      —— 等效于 dsh 的「turn-stopping 时有 steering 就再跑一步」，否则"模型直接给最终
-     *      答复"这种常见情形下，插话永远等不到下一步。
+     * 一次 streamText 调用（内含若干模型步）：step 插话唯一的投递点是 prepareStep（下一步之前）。
+     * 模型不再请求工具 = 本轮结束：此时队列里剩下的插话由 chat() 作为**下一轮的开场白**投递，
+     * 不往本轮尾巴上续（理由见 prepareStep 处的注释）。
      */
     private async *runTurn(
         taskUri: string,
         sess: LocalSession,
-        message: string,
-        userKind: "user" | SteerMode,
+        input: TurnInput,
         model: string | undefined,
         reasoningEffort: ReasoningEffort | undefined,
         signal: AbortSignal,
         key: string,
         sink: (op: Op) => void,
     ): AsyncGenerator<Op, { failed: boolean }, void> {
+        const { text: message, kind: userKind, steerId: userSteerId } = input;
         const turnId = `t${Date.now()}`;
         const uid = `${turnId}_u`;
         const cwd0 = resolveCwdWithNote(diyHome(), taskUri).cwd;
@@ -673,7 +685,10 @@ export class LocalAgentManager {
             id: uid,
             kind: "text",
             parent: turnId,
-            meta: { role: "user", ...(userKind === "user" ? {} : { steer: userKind }) },
+            meta: {
+                role: "user",
+                ...(userKind === "user" ? {} : { steer: userKind, ...(userSteerId ? { steerId: userSteerId } : {}) }),
+            },
         });
         yield* emit({ op: "delta", id: uid, fields: { content: message } });
         yield* emit({ op: "stop", id: uid });
@@ -692,7 +707,7 @@ export class LocalAgentManager {
         let rN = 0;
         let aN = 0;
         let uN = 0;
-        // turn 级 usage 累加器（finish-step 逐轮累加；finish 到达时按段覆盖为权威值）
+        // turn 级 usage 累加器（finish-step 逐轮累加；finish 到达时用流尾权威值覆盖）
         const acc = { in: 0, out: 0, total: 0 };
         // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
         let lastAct: "none" | "text" | "tool" = "none";
@@ -702,9 +717,17 @@ export class LocalAgentManager {
         let pendingSteerOps: Op[] = [];
         /** 插话的 user 块（三个 op）；parent 一律 = turn —— 该块在文档序上就是"某步之后、下一步之前" */
         const steerBlockOps = (item: SteerItem): Op[] => {
+            // 块 id 沿用 turn 内局部序号风格（`<turnId>_suN`），另在 meta 里记 steerId 指回
+            // 队列项（`steer/N`）：排障时能对上"日志里这条块是哪次插话投的"
             const id = `${turnId}_su${++uN}`;
             return [
-                { op: "start", id, kind: "text", parent: turnId, meta: { role: "user", steer: item.mode } },
+                {
+                    op: "start",
+                    id,
+                    kind: "text",
+                    parent: turnId,
+                    meta: { role: "user", steer: item.mode, steerId: item.id },
+                },
                 { op: "delta", id, fields: { content: item.text } },
                 { op: "stop", id },
             ];
@@ -741,8 +764,7 @@ export class LocalAgentManager {
 
         /** 收尾必闭合（幂等）：step 先于 turn，摘掉活跃轮次并落 turn-end 审计。
          *  抽成生成器是为了让「超预算早退」也走同一套收尾 —— 历史 bug：早退的 return 在 try 之前，
-         *  绕过 finally → activeTurns 留僵尸轮次、落盘 ops 缺 turn 的 stop、审计缺 turn-end。
-         *  跨段之后 turn 的 stop 只能在这里发：只有走到这里才知道不会再续一段。 */
+         *  绕过 finally → activeTurns 留僵尸轮次、落盘 ops 缺 turn 的 stop、审计缺 turn-end。 */
         const closeTurn = function* (currentStepId: string, steps: number): Generator<Op, void, void> {
             if (currentStepId !== turnId) yield* emit({ op: "stop", id: currentStepId });
             yield* emit({ op: "stop", id: turnId });
@@ -789,15 +811,12 @@ export class LocalAgentManager {
         };
 
         let failed = false;
-        for (let seg = 0; !signal.aborted; seg++) {
-            // 每段都从块树重建 messages：上一段的产出 + 中途落下的插话块都在里面，
-            // 「wire = store = UI = LLM」这条链不能因为分段而破例
+        {
+            // 从块树重建 messages：本轮的 user 块 + 中途落下的插话块都在里面，
+            // 「wire = store = UI = LLM」这条链对每一步都成立（prepareStep 注入的就是它）
             const sent: ModelMessage[] = blocksToMessages(sess.store) as unknown as ModelMessage[];
-            // 本段开始前的 usage 快照：段级 totalUsage 只代表本段，换算成 turn 累计要加它
-            const segStart = { ...acc };
             rawSink({
                 kind: "request",
-                seg,
                 ts: new Date().toISOString(),
                 model: model || DEFAULT_MODEL,
                 system: asm.system,
@@ -826,9 +845,14 @@ export class LocalAgentManager {
                 // 返回的 messages 会 carry forward 到后续步（SDK 语义），所以模型一开口就能看到插话。
                 //
                 // 只在第二步及之后注入（stepNumber > 0）：用户点的是"插到**下一步**" ——
-                // 本轮的第一个请求不是"下一步"，它是这一轮本身（在它之前插入等于把插话
-                // 当成了本轮开场的用户消息）。第一步之前的插话由段末续段逻辑递出，两条路径合起来
-                // 才能覆盖全部情形（见 runTurn 段循环末尾）。
+                // 本轮的第一个请求不是"下一步"，它是这一轮本身（在它之前插入等于把插话当成
+                // 本轮开场的用户消息，那是 turn 模式的语义）。
+                //
+                // ⚠️ 不在这里、也不在任何地方"替模型续一步"（曾经有过段末续段 = dsh 的
+                // turn-stopping 语义）：模型给出最终答复就说明它认为做完了，此时再往同一轮里
+                // 塞一段，用户看到的是「总结 → 插话 → 又总结」的夹层；收益只是早一个**恰好会
+                // 立刻发生**的轮次边界生效。让这一轮干净地结束、由 chat() 开下一轮（插话就是
+                // 下一轮的开场白）语义更准，轮次结构/usage/停止边界也不用为夹层做特例。
                 prepareStep: ({ messages, stepNumber }) => {
                     if (signal.aborted || stepNumber === 0) return {};
                     const text = takeStepSteer();
@@ -841,7 +865,7 @@ export class LocalAgentManager {
                     // prepareStep 里落的插话 op 在这里递出去：此刻 start-step 还没发，
                     // 所以块的文档序正确落在"上一步之后、这一步之前"
                     yield* flushSteer();
-                    rawSink({ kind: "part", seg, seq: ++rawSeq, ts: new Date().toISOString(), part });
+                    rawSink({ kind: "part", seq: ++rawSeq, ts: new Date().toISOString(), part });
                     switch (part.type) {
                         case "start-step":
                             stepN++;
@@ -1001,16 +1025,14 @@ export class LocalAgentManager {
                             }
                             if (notice) yield* emit({ op: "patch", id: turnId, fields: { notice } });
                             if (usage) {
-                                // totalUsage 是**这一段**的权威值（不是整个 turn）：按段快照换算累计，
-                                // 直接覆盖会让后一段把前一段的用量抹掉
-                                acc.in = segStart.in + (usage.inputTokens ?? 0);
-                                acc.out = segStart.out + (usage.outputTokens ?? 0);
-                                acc.total =
-                                    segStart.total
-                                    + (usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0));
+                                // totalUsage 是整轮的权威值（一次 chat 只有一次 streamText）：
+                                // finish-step 的逐轮累加只是"流尾总量偶发缺失"的双保险
+                                acc.in = usage.inputTokens ?? acc.in;
+                                acc.out = usage.outputTokens ?? acc.out;
+                                acc.total = usage.totalTokens ?? (acc.in + acc.out);
                                 yield* emit({ op: "patch", id: turnId, fields: { usage: { ...acc } } });
                             }
-                            // turn 的 stop 不在这里发：可能还有下一段（插话），只有 closeTurn 知道是不是真的结束
+                            // turn 的 stop 由 closeTurn 发（finally 里那一处）：收尾必须闭合
                             break;
                         }
                     }
@@ -1025,17 +1047,8 @@ export class LocalAgentManager {
                     failed = true;
                 }
             }
-            // 段末兜底 flush：被中断的那段里 prepareStep 落过的插话 op 也要见天日
+            // 兜底 flush：被中断的流里 prepareStep 落过的插话 op 也要见天日
             // （sink 已落盘，这里负责让当前会话的 UI 立刻看到）
-            yield* flushSteer();
-            if (failed || signal.aborted) break;
-            if (stepN >= L.maxSteps) break; // 步数用尽：剩下的插话留给下一轮（chat 外层会取走）
-            // 段已结束（模型不再请求工具）：若队列里还有 step 插话，续一段把它递出去。
-            // 不这么做的话，"模型一步一步做完直接给最终答复"这种最常见的情形下，插话永远
-            // 等不到下一个模型步 —— 用户点了"插入到下一步"却要等到下次对话才生效。
-            const text = takeStepSteer();
-            if (text === null) break;
-            // 立刻把插话块递给消费端：下一段要从 store 重建 messages，必须先由外层 apply 落进块树
             yield* flushSteer();
         }
 

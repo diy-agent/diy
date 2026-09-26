@@ -140,22 +140,40 @@ describe("插话 step 模式：进入下一个模型步", () => {
     expect(new SteerQueue().list(uri)).toEqual([]);
   });
 
-  it("一步都没跑完就直接给答复时：自动续一步把插话递出去（否则永远等不到「下一步」）", async () => {
+  it("模型一步就给出最终答复时：**不往本轮尾巴续**，插话当下一轮的开场白", async () => {
+    // 这条是设计取舍的锁定：曾经有过"段末续段"（= dsh 的 turn-stopping 语义）——
+    // 模型写完最终答复后，再往**同一个 turn** 里塞一段把 step 插话递出去。
+    // 废除它的理由：模型说"做完了"就说明没有下一步了，硬续一段只会得到
+    // 「assistant 总结 → user 插话 → assistant 又总结」的夹层；收益仅是早一个
+    // **本来就会立刻发生**的轮次边界生效，代价是轮次结构/usage/停止边界都要为夹层做特例。
     const uri = newUri();
     new SteerQueue().add(uri, "step", "补一句：还要跑测试");
     const model = stubModel([textReply("我先答完"), textReply("收到插话后的答复")]);
 
     const ops = await run(uri, "问个问题", model);
 
-    expect(model.doStreamCalls).toHaveLength(2); // 续了一段
+    expect(model.doStreamCalls).toHaveLength(2);
     expect(promptText(model, 1)).toContain("补一句：还要跑测试");
-    // 续段仍在**同一轮**里：turn 只起过一次（step 模式不改轮次语义）
-    expect(idsOf(ops, "turn")).toHaveLength(1);
-    // 插话块带 steer 标记，UI/重放都看得出它在哪一步之后
-    const steerStart = ops.find(
-      (o) => o.op === "start" && o.kind === "text" && (o as { meta?: { steer?: string } }).meta?.steer === "step",
-    );
-    expect(steerStart).toBeTruthy();
+    // 两个**轮次**（不是同一个轮次里的两段）
+    const turns = ops.filter((o) => o.op === "start" && o.kind === "turn") as Array<{ id: string }>;
+    expect(turns).toHaveLength(2);
+    // 第一轮里没有插话块 —— 夹层必须不存在（这正是本条要钉住的）
+    const t1 = turns[0]!.id;
+    expect(
+      ops.some(
+        (o) =>
+          o.op === "start" && o.kind === "text" && (o as { parent?: string }).parent === t1
+            && (o as { meta?: { steer?: string } }).meta?.steer,
+      ),
+    ).toBe(false);
+    // 插话是第二轮的**开场** user 块（文档序第一）
+    const t2 = turns[1]!.id;
+    const opening = ops.find(
+      (o) => o.op === "start" && o.kind === "text" && (o as { parent?: string }).parent === t2,
+    ) as { meta?: { steer?: string; steerId?: string } };
+    expect(opening.meta?.steer).toBe("step");
+    // 块 meta 里带上队列项 id（steer/N），排障时能回查是哪次插话
+    expect(opening.meta?.steerId).toMatch(/^steer\/\d+$/);
     expect(new SteerQueue().list(uri)).toEqual([]);
   });
 
@@ -205,23 +223,23 @@ describe("插话 turn 模式：本轮结束后自动开下一轮", () => {
     expect(new SteerQueue().list(uri)).toEqual([]);
   });
 
-  it("两种模式同时排队：各按自己的时机投递（step 在本轮内，turn 在下一轮）", async () => {
+  it("两种模式同时排队：按提交顺序一条一条投（轮末 FIFO，不看模式）", async () => {
+    // 轮末已经收尾，"下一步"不复存在 → 两种模式此时都只能当下一轮的开场。
+    // 于是顺序只由**提交先后**决定（顺序即投递顺序）；若还按 turn 优先，后提交的会插队。
     const uri = newUri();
     const q = new SteerQueue();
-    q.add(uri, "step", "步插话");
-    q.add(uri, "turn", "轮插话");
+    q.add(uri, "step", "先提交的");
+    q.add(uri, "turn", "后提交的");
     const model = stubModel([textReply("答复1"), textReply("答复2"), textReply("答复3")]);
     const ops = await run(uri, "开始", model);
 
-    // 第 1 次请求 = 本轮的第一步（不该有插话）；第 2 次 = 段末续段，带上了 step 插话；
-    // 第 3 次 = turn 插话开启的新一轮
-    expect(promptText(model, 0)).not.toContain("步插话");
-    expect(promptText(model, 1)).toContain("步插话");
-    expect(promptText(model, 2)).toContain("轮插话");
-    // 两条都投递完，队列清空（谁也不吞谁）
+    expect(model.doStreamCalls).toHaveLength(3); // 首轮 + 两条插话各一轮
+    expect(promptText(model, 0)).not.toContain("先提交的");
+    expect(promptText(model, 1)).toContain("先提交的");
+    expect(promptText(model, 2)).toContain("后提交的");
     expect(new SteerQueue().list(uri)).toEqual([]);
-    // 轮次语义没被 step 插话污染：turn 只起过一个，step 有两个（首步 + 续步）
-    expect(idsOf(ops, "turn")).toHaveLength(2); // 第二轮由 turn 插话开启
+    // 三轮（每条插话各开一轮），模式只影响标记文案、不影响轮次结构
+    expect(idsOf(ops, "turn")).toHaveLength(3);
   });
 
   it("连续插话到轮次上限：剩余插话留在队列里 + 显式 error 块（不静默吞）", async () => {

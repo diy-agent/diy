@@ -115,6 +115,18 @@ describe("agent.local — 插话 steer（无网络）", () => {
     await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
   });
 
+  it("id 形如 steer/N（实体/序号）：CLI 里能直接手敲，不必复制粘贴随机串", async () => {
+    const uri = await setup("id 格式");
+    const a = await cliData<SteerRow[]>(`./diy.sh agent local steer add ${uri} "第一条"`);
+    const b = await cliData<SteerRow[]>(`./diy.sh agent local steer add ${uri} "第二条" --mode turn`);
+    expect(a[0]!.id).toBe("steer/1");
+    expect(b[1]!.id).toBe("steer/2");
+    // 用这个 id 取消（id 会进 shell，含 "/" 也没问题：它只做字符串匹配，不当路径解析）
+    const after = await cliData<SteerRow[]>(`./diy.sh agent local steer cancel ${uri} steer/1`);
+    expect(after.map((i) => i.id)).toEqual(["steer/2"]);
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+
   it("不传 --mode 缺省 step（最常用的那个）；不静默接受非法值", async () => {
     const uri = await setup("缺省模式");
     const r = await cliData<SteerRow[]>(`./diy.sh agent local steer add ${uri} "没说时机"`);

@@ -496,9 +496,13 @@ function TurnView(props: {
 
 /** 模式徽标文案：说出投递时机，而不是内部枚举名（step/turn 是给代码看的） */
 const steerModeLabel = (mode: SteerMode) => (mode === "step" ? "下一步后" : "下一轮后");
+/**
+ * 详细说明（tooltip）必须说清**降级**：点「插到下一步」时模型可能已经给出最终答复
+ * （没有下一步了），此时它会成为下一轮的开场白 —— 承诺"下一次请求前一定生效"就是撒谎。
+ */
 const steerModeTip = (mode: SteerMode) =>
     mode === "step"
-        ? "插入到下一步：模型下一次请求前就能看到这句话"
+        ? "插入到下一步：模型下一次模型步之前生效；本轮已收尾则作为下一轮的开场立刻发出"
         : "插入到下一次对话后：本轮跑完，自动接着开新一轮";
 
 function SteerBar(props: { items: SteerItem[]; onCancel: (id: string) => void }) {
@@ -815,7 +819,7 @@ export function LocalChatPage() {
         void draftStore.clear(u, ["agent_input"]);
     };
 
-    /** 回车分流：生成中 = 插到下一步（与"再发一条"最接近的动作）；否则正常发送 */
+    /** 回车分流：生成中 = 插到下一步（生成中无法"发送"，这是最接近的动作）；否则正常发送 */
     const submitByEnter = () => {
         if (localChatStore.running) void submitSteer("step");
         else void submit();
@@ -1027,7 +1031,7 @@ export function LocalChatPage() {
                             <Show when={inputValue().trim()}>
                                 <button
                                     class="btn btn-outline btn-xs tooltip tooltip-top"
-                                    data-tip="插话：插入到下一步（模型下一次请求前就能看到；回车同此）"
+                                    data-tip="插话：插入到下一步（模型下一次模型步之前生效；本轮已收尾则作为下一轮开场；回车同此）"
                                     onClick={() => void submitSteer("step")}
                                 >
                                     插到下一步
