@@ -42,6 +42,11 @@ function readTaskNode(
     body: fm.body,
     created: fm.created,
     updated: fm.updated,
+    // 三个结构化字段原样带出（不校验取值，见 state.parseTaskFile 注释）；
+    // 表格的列、筛选、排序都从这里取，不必逐任务再回读文件
+    change_type: fm.change_type,
+    module: fm.module,
+    priority: fm.priority,
     children: [],
   };
 }

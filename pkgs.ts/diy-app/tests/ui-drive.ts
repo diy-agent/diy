@@ -135,6 +135,17 @@ export interface UiDriver {
   clickSelector(selector: string, opts?: { nth?: number }): Promise<void>;
   /** 读 DOM（拿 rect / 计算样式等；a11y 树看不到的东西用这个） */
   query<T>(expression: string): Promise<T>;
+  /**
+   * 向**当前焦点元素**真实输入文本（`Input.insertText`）。
+   *
+   * 为什么不用 `el.value = x` 或派发合成 input 事件：那些绕过浏览器输入路径，
+   * 输入框不会经历真实的插入会话（而 Solid 的 onInput 绑在事件上，恰好会"看起来能过"）。
+   * 用 CDP 的 insertText 走的就是输入法/键盘最终落到的同一条路径。
+   * 注意：文本会插到**插入点**，不替换已有内容；要先 click 聚焦、必要时 `press("Meta+A")` 全选。
+   */
+  type(text: string): Promise<void>;
+  /** 真实按键（如 Enter / ArrowDown / Escape）。可带 Meta/Ctrl/Shift 修饰，如 `Meta+A` */
+  press(key: string): Promise<void>;
   /** 按坐标拖拽（拖线用）；steps 让中间点也发出去，命中拖拽逻辑 */
   drag(from: { x: number; y: number }, to: { x: number; y: number }, steps?: number): Promise<void>;
   /** 在 renderer 里求值 */
@@ -236,6 +247,44 @@ export async function makeUiDriver(
     },
 
     query: (expression) => cdp.eval(expression),
+
+    async type(text) {
+      await cdp.send("Input.insertText", { text });
+      await new Promise((r) => setTimeout(r, 120));
+    },
+
+    async press(key) {
+      // 常见键 → 键码。`Mod+K`（Meta/Ctrl）形式解析：修饰键只改 modifiers，主键照发。
+      const CODES: Record<string, { code: string; vk: number }> = {
+        ArrowDown: { code: "ArrowDown", vk: 40 },
+        ArrowUp: { code: "ArrowUp", vk: 38 },
+        Escape: { code: "Escape", vk: 27 },
+        Enter: { code: "Enter", vk: 13 },
+        Tab: { code: "Tab", vk: 9 },
+      };
+      const parts = key.split("+");
+      const main = parts.pop()!;
+      const modifiers = parts.reduce((acc, m) => {
+        if (m === "Meta") return acc | 4;
+        if (m === "Ctrl") return acc | 2;
+        if (m === "Shift") return acc | 8;
+        return acc;
+      }, 0);
+      const info = CODES[main] ?? { code: `Key${main.toUpperCase()}`, vk: main.toUpperCase().charCodeAt(0) };
+      // 单字母的 `key` 必须是小写（"a" 而不是 "A"）：带 Meta/Ctrl 的组合键，
+      // Chromium 按 `key` 值匹配快捷键，大写字母匹配不上（表现为「按了没反应」）。
+      const keyValue = main.length === 1 ? main.toLowerCase() : main;
+      const base = {
+        key: keyValue,
+        code: info.code,
+        windowsVirtualKeyCode: info.vk,
+        nativeVirtualKeyCode: info.vk,
+        modifiers,
+      };
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...base });
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+      await new Promise((r) => setTimeout(r, 120));
+    },
 
     async drag(from, to, steps = 8) {
       await mouse("mousePressed", from);

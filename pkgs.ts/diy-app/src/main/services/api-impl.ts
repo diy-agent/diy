@@ -190,13 +190,19 @@ export function bindAppHandlers(binding: ServerBinding): void {
     // 草稿随任务返回（与 diy.task.show 同一契约）：renderer 只调这一个接口拿任务，
     // 少一次往返就少一处「忘记带草稿」的机会 —— 两个 handler 必须给同样的字段。
     const d = readDrafts(input.uri);
+    // ⚠️ 这里是 `...t` 展开，**不是手写键清单**（曾经是）。手写清单的代价实测过：
+    // 它少了 change_type / module / priority，于是详情面板的编辑框恒显示"—"、
+    // 写入其实成功（数据在文件里），用户视角是"填了看不见、改完像没生效"。
+    // 同一段注释上方写着"两个 handler 必须给同样的字段"，而隔壁 task.show 用 `...t` 带全了 ——
+    // 手抄字段清单这事，只要人还写第二遍就一定会漏。展开后新增字段自动跟随。
+    // （api-def 的 output schema 白名单是第二处手抄，同样已补齐 —— 两处必须一致，
+    //   zod .object() 会 strip 未声明键，只补 handler 不补 schema 等于没补。）
     return {
       status: "ok",
       data: {
-        uri: t.uri, title: t.title, state: t.state, project: t.project,
-        project_path: pinfo?.path, project_label: pinfo?.label,
-        parent: t.parent, body: t.body,
-        created: t.created, updated: t.updated,
+        ...t,
+        project_path: pinfo?.path,
+        project_label: pinfo?.label,
         ui_drafts: d ? { base_updated: d.base_updated, saved: d.saved, fields: d.fields } : null,
       },
     };

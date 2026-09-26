@@ -1,4 +1,4 @@
-import { createSignal, createMemo, For, Show } from "solid-js";
+import { createSignal, createMemo, For, Show, onCleanup, onMount } from "solid-js";
 import { createMutable } from "solid-js/store";
 import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSensor } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
@@ -9,7 +9,19 @@ import { Caches } from "../lib/ui-state";
 import { CreateProjectSheet } from "./CreateProjectSheet";
 import { TASK_STATES, taskStateColor } from "../../main/core/task-state";
 import { CreateTaskSheet } from "./CreateTaskSheet";
+import { DynamicBar } from "./DynamicBar";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
+import {
+    SORT_KEYS,
+    buildTaskRows,
+    formatSort,
+    parseSort,
+    taskRowKey,
+    toggleSort,
+    type SortKey,
+    type SortSpec,
+    type SearchSnippet,
+} from "../../shared/task-list";
 
 // dnd-kit/solid 未直接导出 DragEndEvent，从 onDragEnd 回调参数提取
 type DragEndEvent = Parameters<NonNullable<DragDropProviderProps["onDragEnd"]>>[0];
@@ -21,6 +33,8 @@ interface FlatRow {
     node: TreeNode;
     depth: number;
     projectId: string;
+    /** 命中的正文片段（搜索态才有；标题命中时为 null）。就地赋值，行对象引用终身不变 */
+    snippet: SearchSnippet | null;
 }
 
 /**
@@ -33,6 +47,9 @@ interface FlatRow {
  * 缓存后展开/折叠只增删受影响的行，其余行 DOM 原样保留。
  * node/depth/projectId 用赋值就地更新（Solid store 对相等赋值不触发通知），
  * 所以 loadTree 刷新任务树时内容照常响应式更新，DOM 不重建。
+ *
+ * 排序同理：**排序只改行的顺序，不改行的身份** → `<For>` 移动 DOM 而不是重建，
+ * 展开状态/焦点/滚动位置都不会因点表头排序而丢失。
  */
 const rowCache = new Map<string, FlatRow>();
 
@@ -42,31 +59,21 @@ function cachedRow(
     node: TreeNode,
     depth: number,
     projectId: string,
+    snippet: SearchSnippet | null,
     seen: Set<string>,
 ): FlatRow {
     seen.add(key);
     let row = rowCache.get(key);
     if (!row) {
-        row = createMutable<FlatRow>({ key, kind, node, depth, projectId });
+        row = createMutable<FlatRow>({ key, kind, node, depth, projectId, snippet });
         rowCache.set(key, row);
     } else {
         row.node = node;
         row.depth = depth;
         row.projectId = projectId;
+        row.snippet = snippet;
     }
     return row;
-}
-
-function flattenTree(nodes: TreeNode[], expanded: Set<string>, seen: Set<string>, depth = 0): FlatRow[] {
-    const rows: FlatRow[] = [];
-    for (const n of nodes) {
-        const key = n.kind === "project" ? `proj:${n.project}` : n.uri ?? "";
-        rows.push(cachedRow(key, n.kind, n, depth, n.project ?? "", seen));
-        const shouldExpand = n.kind === "project" ? !expanded.has(key) : expanded.has(key);
-        if (shouldExpand && n.children?.length)
-            rows.push(...flattenTree(n.children, expanded, seen, depth + 1));
-    }
-    return rows;
 }
 
 interface TaskProjectInfo {
@@ -148,8 +155,60 @@ function StateSelector(props: { uri: string; state: string }) {
     );
 }
 
+// ═══════════════════════════════════════
+// 单元格渲染小工具
+// ═══════════════════════════════════════
+
+/** `2026-09-25T14:23:19.005Z` → `09-25 14:23`（本地时间）。
+ *  列宽有限，完整时刻放 title（hover 可见），也放详情面板。 */
+function fmtTime(iso: string | undefined): string {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** 可空字段的占位符：空值统一显示 "—"，让"没填"和"填了空"在视觉上一致地可辨 */
+function Dash() {
+    return <span class="opacity-30">—</span>;
+}
+
+/** 优先级色：P0 最紧急 → error；P1 warning；P2/P3 中性 */
+function priorityClass(p: string): string {
+    if (p === "P0") return "badge-error";
+    if (p === "P1") return "badge-warning";
+    return "badge-ghost";
+}
+
+/** 排序表头：点击切换。当前排序列带箭头（↑/↓），其余列 hover 才提示可点 */
+function SortableTh(props: {
+    sortKey: SortKey;
+    sort: SortSpec;
+    onSort: (k: SortKey) => void;
+    /** 额外的 th class（标题列要保底宽度，不然被长标题挤没） */
+    class?: string;
+}) {
+    const meta = SORT_KEYS.find((s) => s.key === props.sortKey)!;
+    const active = () => props.sort.key === props.sortKey;
+    return (
+        <th class={`py-1 ${props.class ?? ""}`}>
+            <button
+                class={`btn btn-ghost btn-xs px-1 min-h-0 h-5 font-semibold normal-case gap-0.5 ${
+                    active() ? "text-primary" : "opacity-70 hover:opacity-100"
+                }`}
+                title={`${meta.title}（点击排序）`}
+                onClick={() => props.onSort(props.sortKey)}
+            >
+                <span>{meta.label}</span>
+                <span class="text-[9px]">{active() ? (props.sort.dir === "asc" ? "▲" : "▼") : "⇅"}</span>
+            </button>
+        </th>
+    );
+}
+
 export function TaskTree() {
-    // 展开/滚动：视图 cache（lib/ui-state，localStorage 归一定位），可被清理入口清空
+    // 展开/滚动/排序/搜索：视图 cache（lib/ui-state，localStorage 归一定位），可被清理入口清空
     const loadExpanded = (): Set<string> => {
         try {
             return new Set(Caches.diy_task_tree_expanded.get());
@@ -163,6 +222,124 @@ export function TaskTree() {
         } catch { /* 存储不可用忽略 */ }
     };
     const [expanded, setExpanded] = createSignal<Set<string>>(loadExpanded());
+    const [sort, setSort] = createSignal<SortSpec>(parseSort(Caches.diy_task_tree_sort.get()));
+    const [query, setQuery] = createSignal<string>(Caches.diy_task_tree_query.get());
+    /** 搜索焦点：第几个命中（0 基）。换搜索词 → 归零 */
+    const [focusIdx, setFocusIdx] = createSignal(0);
+    let searchRef: HTMLInputElement | undefined;
+    const bindSearch = (el: HTMLInputElement) => { searchRef = el; };
+
+    const applySort = (key: SortKey) => {
+        const next = toggleSort(sort(), key);
+        setSort(next);
+        try {
+            Caches.diy_task_tree_sort.set(formatSort(next));
+        } catch { /* 存储不可用忽略 */ }
+    };
+    const applyQuery = (v: string) => {
+        setQuery(v);
+        setFocusIdx(0);
+        try {
+            Caches.diy_task_tree_query.set(v);
+        } catch { /* 存储不可用忽略 */ }
+    };
+
+    // 展开判定：**项目默认展开、任务默认折叠**（两种节点语义相反，故 key 的成员含义相反）
+    const isExpanded = (n: TreeNode): boolean =>
+        n.kind === "project" ? !expanded().has(taskRowKey(n)) : expanded().has(taskRowKey(n));
+
+    /** 搜索态：有查询词即为真（表格剪枝、动态条显示、命中高亮都由它决定） */
+    const searching = () => query().trim().length > 0;
+
+    /** 构建结果（含命中信息）。rows 与 hits 都从这里派生 —— 不让 hits 再匹配一遍：
+     *  匹配是 O(节点数 × 正文字符数) 的活，同一次渲染里做两遍纯属浪费。 */
+    const list = createMemo(() => buildTaskRows(taskStore.nodes, { sort: sort(), query: query(), isExpanded }));
+
+    const rows = createMemo(() => {
+        const seen = new Set<string>();
+        const out = list().map((r) =>
+            cachedRow(
+                taskRowKey(r.node),
+                r.node.kind,
+                r.node,
+                r.depth,
+                r.node.project ?? "",
+                r.match?.snippet ?? null,
+                seen,
+            ),
+        );
+        // 回收本次不可见的行缓存（任务被删除/折叠），避免缓存无限增长。
+        //
+        // **搜索态跳过回收**（否则每次敲字都把未命中行的身份丢掉）：搜索是剪枝，
+        // 未命中行只是"暂时不渲染"，不是消失；若顺手回收，清空搜索时那些行会被当作
+        // 新行重建 → `<For>` 销毁重建整块 tbody → 滚动位置被钳回 0、焦点掉回 body。
+        // 搜索期间不回收的代价可忽略：缓存以任务总数为上限（本项目百来条），
+        // 且清空搜索后这一行会立刻把不再存在的键收干净。
+        if (!searching()) {
+            for (const k of rowCache.keys()) if (!seen.has(k)) rowCache.delete(k);
+        }
+        return out;
+    });
+
+    /** 搜索结果集（按树序的任务命中行）：动态条的 ↑/↓ 与 N/M 计数都基于它。
+     *  `match !== null` 即命中（正文命中时 match 带片段，标题等字段命中时片段为 null）——
+     *  祖先行是被"保链"保下来的，match 恒为 null，不会混进命中集。 */
+    const hits = createMemo(() =>
+        searching()
+            ? list()
+                  .filter((r) => r.node.kind === "task" && r.match !== null)
+                  .map((r) => taskRowKey(r.node))
+            : [],
+    );
+    const focusUri = createMemo(() => hits()[Math.min(focusIdx(), Math.max(0, hits().length - 1))]);
+
+    /** 跳到第 i 个命中：选中它并滚动到可视区（行 DOM 用 data-uri 定位） */
+    const gotoHit = (i: number) => {
+        const list = hits();
+        if (list.length === 0) return;
+        const idx = ((i % list.length) + list.length) % list.length;
+        setFocusIdx(idx);
+        const uri = list[idx]!;
+        void taskStore.selectTask(uri);
+        requestAnimationFrame(() => {
+            document.querySelector(`[data-uri="${CSS.escape(uri)}"]`)?.scrollIntoView({ block: "nearest" });
+        });
+    };
+
+    const selectable = createMemo(() =>
+        rows()
+            .filter((r) => r.kind === "task")
+            .map((r) => r.key),
+    );
+    const toggle = (k: string) =>
+        setExpanded((p) => {
+            const n = new Set(p);
+            if (n.has(k)) n.delete(k);
+            else n.add(k);
+            saveExpanded(n);
+            return n;
+        });
+    const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+        e.preventDefault();
+        const cur = selectable().indexOf(taskStore.selectedUri as string);
+        const next = e.key === "ArrowDown" ? (cur < selectable().length - 1 ? cur + 1 : 0) : cur > 0 ? cur - 1 : selectable().length - 1;
+        if (selectable()[next]) taskStore.selectTask(selectable()[next]);
+    };
+
+    // ⌘/Ctrl+F 聚焦搜索框：与浏览器/编辑器一致的心智模型（Esc 清空）
+    onMount(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+                e.preventDefault();
+                searchRef?.focus();
+                searchRef?.select();
+            }
+        };
+        window.addEventListener("keydown", onKey);
+        onCleanup(() => window.removeEventListener("keydown", onKey));
+    });
+
     const scrollRef = (el: HTMLDivElement | undefined) => {
         if (!el || el.dataset.scrollRestored === "1") return;
         el.dataset.scrollRestored = "1";
@@ -176,32 +353,6 @@ export function TaskTree() {
         try {
             Caches.diy_task_tree_scroll.set((e.currentTarget as HTMLDivElement).scrollTop);
         } catch { /* 存储不可用忽略 */ }
-    };
-    const rows = createMemo(() => {
-        const seen = new Set<string>();
-        const out = flattenTree(taskStore.nodes, expanded(), seen);
-        // 回收本次不可见的行缓存（任务被删除/折叠），避免缓存无限增长
-        for (const k of rowCache.keys()) if (!seen.has(k)) rowCache.delete(k);
-        return out;
-    });
-    const selectable = createMemo(() =>
-        rows()
-            .filter((r) => r.kind === "task")
-            .map((r) => r.key),
-    );
-    const toggle = (k: string) =>
-        setExpanded((p) => {
-            const n = new Set(p);
-            n.has(k) ? n.delete(k) : n.add(k);
-            saveExpanded(n);
-            return n;
-        });
-    const handleKeyDown = (e: KeyboardEvent) => {
-        if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-        e.preventDefault();
-        const cur = selectable().indexOf(taskStore.selectedUri as string);
-        const next = e.key === "ArrowDown" ? (cur < selectable().length - 1 ? cur + 1 : 0) : cur > 0 ? cur - 1 : selectable().length - 1;
-        if (selectable()[next]) taskStore.selectTask(selectable()[next]);
     };
 
     // ── dnd-kit/solid 拖拽改父级 / 提升层级 ──
@@ -260,17 +411,71 @@ export function TaskTree() {
     return (
         <DragDropProvider onDragEnd={handleDragEnd} sensors={[PointerSensor]}>
             <div class="h-full flex flex-col">
-                <div class={`flex items-center justify-between px-3 ${VIEW_BAR_H} border-b shrink-0`}>
-                    <span class="text-sm font-semibold">任务</span>
-                    <CreateProjectSheet />
+                <div class={`flex items-center gap-2 px-3 ${VIEW_BAR_H} border-b shrink-0`}>
+                    <span class="text-sm font-semibold shrink-0">任务</span>
+                    {/* 搜索框：宽度随容器伸缩，但保底能看清几个词 */}
+                    <input
+                        ref={bindSearch}
+                        type="search"
+                        class="input input-bordered input-xs flex-1 min-w-24 max-w-72"
+                        placeholder="搜索标题 / 编号 / 正文…（⌘F）"
+                        value={query()}
+                        onInput={(e) => applyQuery(e.currentTarget.value)}
+                        onKeyDown={(e) => {
+                            // ↑/↓/Enter 在搜索框里 = 在命中之间跳（与编辑器 find bar 同）
+                            if (e.key === "Enter" || e.key === "ArrowDown") {
+                                e.preventDefault();
+                                gotoHit(focusIdx() + 1);
+                            } else if (e.key === "ArrowUp") {
+                                e.preventDefault();
+                                gotoHit(focusIdx() - 1);
+                            } else if (e.key === "Escape") {
+                                e.preventDefault();
+                                applyQuery("");
+                            }
+                        }}
+                    />
+                    <Show when={!searching()}>
+                        <span class="ml-auto">
+                            <CreateProjectSheet />
+                        </span>
+                    </Show>
                 </div>
+
+                {/* 搜索结果条：有搜索词就是"有上下文"，故搜索态下恒显示（含 0/0 无命中）。
+                    复用提示场的 DynamicBar 形态（find bar：↑ ↓ i/n + 当前项 + ✕）。 */}
+                <Show when={searching()}>
+                    <DynamicBar
+                        label={
+                            hits().length === 0
+                                ? `没有匹配「${query().trim()}」的任务`
+                                : (rows().find((r) => r.key === focusUri())?.node.title ?? focusUri())
+                        }
+                        count={hits().length}
+                        index={focusIdx()}
+                        onPrev={() => gotoHit(focusIdx() - 1)}
+                        onNext={() => gotoHit(focusIdx() + 1)}
+                        onClear={() => applyQuery("")}
+                    />
+                </Show>
+
                 <div class="flex-1 overflow-auto min-w-0" tabindex={0} onKeyDown={handleKeyDown} ref={scrollRef} onScroll={onScroll}>
                     <table class="table table-sm w-full">
                         <thead class="sticky top-0 bg-base-100 z-10">
+                            {/* 表头**整行由 SORT_KEYS 生成**：清单既是列顺序也是可排序键的唯一真相源。
+                                曾经这里逐列手写、标题列写死为不可排序的 <th>，而 SORT_KEYS 里偏偏
+                                有 title（SORT_KEY_SET 还额外手工补过一次）—— 两处真相源必然对不上。 */}
                             <tr>
-                                <th class="w-[50%]">标题</th>
-                                <th class="w-[30%]">URI</th>
-                                <th class="w-[20%]">状态</th>
+                                <For each={SORT_KEYS}>
+                                    {(col) => (
+                                        <SortableTh
+                                            sortKey={col.key}
+                                            sort={sort()}
+                                            onSort={applySort}
+                                            class={col.key === "title" ? "min-w-[220px]" : ""}
+                                        />
+                                    )}
+                                </For>
                             </tr>
                         </thead>
                         <tbody>
@@ -279,14 +484,19 @@ export function TaskTree() {
                                     row.kind === "project" ? (
                                         <ProjectRow row={row} expanded={expanded()} onToggle={toggle} />
                                     ) : (
-                                        <TaskRow row={row} expanded={expanded()} onToggle={toggle} />
+                                        <TaskRow
+                                            row={row}
+                                            expanded={expanded()}
+                                            onToggle={toggle}
+                                            focused={searching() && row.key === focusUri()}
+                                        />
                                     )
                                 }
                             </For>
                             <Show when={!taskStore.loading && rows().length === 0}>
                                 <tr>
-                                    <td colspan={3} class="text-center opacity-60 py-8">
-                                        暂无任务
+                                    <td colspan={SORT_KEYS.length} class="text-center opacity-60 py-8">
+                                        {searching() ? `没有匹配「${query().trim()}」的任务` : "暂无任务"}
                                     </td>
                                 </tr>
                             </Show>
@@ -352,13 +562,15 @@ function ProjectRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: 
                     <CreateTaskSheet projectId={row.projectId} projectLabel={row.node.title ?? ""} />
                 </span>
             </td>
-            <td class="font-mono text-xs opacity-60">{row.node.project_path ?? row.node.title}</td>
-            <td />
+            {/* 项目行的其余列：项目路径（原 URI 列的语义，项目自身没有任务字段） */}
+            <td colspan={7} class="font-mono text-xs opacity-60 truncate">
+                {row.node.project_path ?? ""}
+            </td>
         </tr>
     );
 }
 
-function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: string) => void }) {
+function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: string) => void; focused: boolean }) {
     const { row } = props;
     const isSelected = () => taskStore.selectedUri === row.key;
     const drag = useDraggable({
@@ -384,9 +596,12 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
     return (
         <tr
             ref={ref}
+            data-uri={row.key}
             class={`border-b transition-colors select-none ${
-                isSelected() ? "bg-primary/20" : "hover:bg-base-200" + (drop.isDropTarget() ? " ring-2 ring-primary/50 ring-inset" : "")
-            }`}
+                isSelected()
+                    ? "bg-primary/20"
+                    : "hover:bg-base-200" + (drop.isDropTarget() ? " ring-2 ring-primary/50 ring-inset" : "")
+            } ${props.focused ? " outline outline-1 outline-warning/70 -outline-offset-1" : ""}`}
         >
             <td style={`padding-left:${8 + row.depth * 20}px`}>
                 <span class="inline-flex items-center gap-1">
@@ -421,10 +636,45 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                     </span>
                     <CreateTaskSheet projectId={row.projectId} projectLabel={row.node.title ?? ""} parentUri={row.key} compact />
                 </span>
+                {/* 正文命中片段：行内第二行（不新增 <tr>，否则树的行序/键盘导航要重新定义）。
+                    纯文本单行展示——不做 Markdown 渲染：片段是"定位线索"，渲染只会增加噪音。 */}
+                <Show when={row.snippet}>
+                    {(s) => (
+                        <div class="text-xs opacity-60 truncate leading-tight" title={`${s().before}${s().match}${s().after}`}>
+                            <span>{s().before}</span>
+                            <mark class="bg-warning/40 text-inherit rounded-sm px-0.5">{s().match}</mark>
+                            <span>{s().after}</span>
+                            <Show when={s().count > 1}>
+                                <span class="ml-1 opacity-70">+{s().count - 1} 处</span>
+                            </Show>
+                        </div>
+                    )}
+                </Show>
             </td>
-            <td class="font-mono text-xs opacity-60 truncate">{row.key}</td>
+            <td class="text-xs">
+                <Show when={row.node.change_type} fallback={<Dash />}>
+                    {(v) => <span class="font-mono opacity-80">{v()}</span>}
+                </Show>
+            </td>
+            <td class="text-xs">
+                <Show when={row.node.module} fallback={<Dash />}>
+                    {(v) => <span class="font-mono opacity-80 truncate inline-block max-w-40 align-bottom">{v()}</span>}
+                </Show>
+            </td>
+            <td class="text-xs whitespace-nowrap">
+                <Show when={row.node.priority} fallback={<Dash />}>
+                    {(v) => <span class={`badge badge-sm font-mono ${priorityClass(v())}`}>{v()}</span>}
+                </Show>
+            </td>
             <td class="text-xs">
                 <StateSelector uri={row.key} state={row.node.state ?? ""} />
+            </td>
+            <td class="text-xs font-mono opacity-60">{row.node.num ?? ""}</td>
+            <td class="text-xs whitespace-nowrap opacity-70" title={row.node.created ?? ""}>
+                {fmtTime(row.node.created)}
+            </td>
+            <td class="text-xs whitespace-nowrap opacity-70" title={row.node.updated ?? ""}>
+                {fmtTime(row.node.updated)}
             </td>
         </tr>
     );

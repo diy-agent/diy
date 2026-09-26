@@ -120,6 +120,59 @@ $DIY_HOME/projects/<pid>/tasks/<tid>/
 - 扫描安全：`listTasks` 按 `^\d+$` 过滤、`taskTree.scanAllDirs` 见 `AGENTS.md` 即停 → 任务目录内多一个 `.diy/` 不会被误认成任务。
 - ⚠️ renderer **永不直接写文件**，一律经 RPC（`diy.task.drafts.*`）。
 
+### 任务字段与任务表格（列表视图）
+
+**任务结构化字段**（`change_type` / `module` / `priority`）单一真相源 = `src/main/core/task-fields.ts`
+（常量 → 类型 → zod schema，与 `task-state.ts` 同模式）。文件头写明是**临时硬编码**：
+diy 尚无「按项目自定义字段」机制，待该机制落地后本表降级为内置默认值。
+
+- 字段语义边界：`change_type` 是**变更性质**（抄 Conventional Commits 词表，故缺陷用 `fix`）；
+  `type` 一词留给将来的**任务类型扩展**（Epic/Bug 那种带字段集与生命周期的扩展点），别混用；
+  `kind` 已被 `TreeNode.kind` 占用。`priority` 缺省 = 未定级（不默认 P2，不替用户猜）。
+- **读侧宽容 / 写侧严格**：`state.parseTaskFile` 只读不校验（历史手写值如 `priority: high`、
+  `change_type: bug` 原样带出），枚举校验只在 `task.create` / `task.edit` 的 zod input。
+  理由：读侧严格会让脏值把整棵树的输出校验打挂，或在例行编辑里被静默改写（用户手写内容无授权不可动）。
+- 三态语义（与 `parent` 一致）：**不传 = 保持原值 / 空串 = 清除该字段 / 有值 = 设置**（`core/task.ts` 的 `triState`）。
+- renderer 侧改任务统一走 `renderer_solid/lib/task-edit.ts` 的 `editTask`（RPC input 每个键都必填，
+  收敛一处后新增字段只需改该文件）。
+
+**任务表格**（`components/TaskTree.tsx`）的排序 / 搜索 / 剪枝逻辑全在 `src/shared/task-list.ts`（纯函数、可单测）：
+
+- 表头整行由 `SORT_KEYS` 生成（清单 = 列顺序 = 可排序键的**唯一真相源**）；`title` 也在其中。
+- **点表头首次方向：除 `updated` 外一律升序**。依据是枚举按**声明序**排（`PRIORITIES` 里 P0 位次最小
+  → 升序 = P0 在前；`TASK_STATES` 同理 = 待处理在前），时间/编号/文本也是升序直觉；
+  `updated` 降序是唯一例外（"最近改了什么"）。⚠️ 曾经写成"其余降序"，与自身注释"先看最要紧的"
+  正好相反 —— 降序会把位次整体反转，首次点「优先级」得到 P3 在前。
+- 排序只在**同一父级的兄弟之间**（跨层会破坏父子结构）；项目分组不参与排序（分组容器）。
+  任务号按**数值**排（字典序会把 #9 排到 #100 之后）。未设置的字段**恒排最后**（升序降序都是：
+  "没填"不是"最小"，升序排最前会被误读成最低优先级）。
+- 搜索 = 单一关键词子串，范围是**看得见的列 + 正文**（正文随 `loadTaskTree` 全量下发，无需二次回读）；
+  搜索态剪枝为「命中行 + 其祖先」并**强制展开**（被折叠挡住等于搜不到）；项目名命中 → 整个项目展开。
+  正文命中在标题单元格内以**第二行片段**展示（不新增 `<tr>`：否则行序与键盘导航要重新定义）。
+- 排序规格与搜索词落 `Caches.diy_task_tree_sort` / `diy_task_tree_query`（视图 cache，见上节判据）。
+- 表格行对象走 `rowCache` 稳定引用（`<For>` 按引用复用 DOM）→ 重排只移动行、不重建，
+  展开态/焦点/滚动不丢；`node/snippet` 用就地赋值更新。
+- ⚠️ **搜索态跳过 rowCache 回收**：搜索是剪枝，未命中行只是"暂时不渲染"；若顺手回收，
+  清空搜索时它们会被当新行重建 → `<For>` 销毁重建 tbody → 滚动位置钳回 0、焦点掉回 body。
+- 行 key：任务 = uri，项目 = `proj:<id>`（`taskRowKey`，拖拽与缓存共用）。
+
+**`diy.getTask` 的字段在两处手抄（真踩过的坑）**：载荷字段由 api-impl 的 handler 与
+api-def 的 output schema **各自维护一份**，两处漏一处就静默丢字段（zod `.object()` 会 strip 未声明键，
+只补 handler 等于没补）。实测漏过 `change_type`/`module`/`priority` —— renderer 拿到 undefined，
+详情面板的编辑框恒显示 `—`，而写入其实成功，用户视角是「填了看不见、改完像没生效」。
+- 现状：handler 用 `...t` 展开（不是手写键清单）、output schema 已补齐，两处都留了 ⚠️ 注释
+- 治本：把载荷 schema 抽成单一真源（`shared/task-detail.ts` 的 `TaskDetailSchema`），
+  handler 直接 `Schema.parse({...t, ...回填})` —— 见任务 167
+- `diy getTask <uri>` 已加 `cliArg`，否则这条 RPC 无法从 CLI 调用，**只能靠跑 Electron 才验得到**
+  （契约漏字段的 bug 就更容易溜过）
+
+**任务树节点类型**：renderer 不再手抄一份 interface，直接用 RPC 契约的 `TaskNodeShape`
+（`store/taskStore.ts` 的 `TreeNode`）。曾经两处各定义一份，main 加了 `created/updated` 后
+renderer 那份没跟上，编译期才暴露 —— 用契约类型则不可能滞后。
+
+**DynamicBar**（`components/DynamicBar.tsx`）是跨页复用的「动态菜单条」：只在有上下文时渲染，
+`↑ ↓ i/n label ✕` 形态（任务表格的搜索结果跳转与试验场的出现处跳转共用）。
+
 ### 避免 Solid 陷阱：`<Show>` 内组件读 props 的卸载清理
 
 `TaskInfoView`（详情编辑）被 `keyed` 的 `<Show>` 包裹。**`onCleanup` 里读 `props.task` 会抛

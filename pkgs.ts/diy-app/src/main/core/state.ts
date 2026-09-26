@@ -36,6 +36,12 @@ export interface TaskMeta {
   updated?: string;
   source_type?: string;
   source_uri?: string;
+  /** 变更性质。词表见 task-fields.ts；类型是 string —— 读侧宽容，见 parseTaskFile */
+  change_type?: string;
+  /** 模块（`/` 分层自由字符串） */
+  module?: string;
+  /** 优先级 P0-P3；缺省 = 未定级。同上，读侧是 string */
+  priority?: string;
 }
 
 /** 完整任务数据（URI + frontmatter 字段 + body） */
@@ -232,6 +238,13 @@ export function parseTaskFile(raw: string): TaskMeta | null {
     updated: front["updated"] as string | undefined,
     source_type: front["source_type"] as string | undefined,
     source_uri: front["source_uri"] as string | undefined,
+    // 结构化字段：**只读不校验**，故类型是 string 而非 task-fields 的枚举 —— 值不在词表内
+    // （如历史手写的 priority: high）也原样带出，交给展示层兜底。这与「不改写用户手写内容」
+    // 的原则一致：若在此丢弃或归一化，用户手工写的值会在下一次编辑时被静默改写。
+    // 枚举校验只发生在**写入侧**（task.create / task.edit 的 zod input）。
+    change_type: front["change_type"] as string | undefined,
+    module: front["module"] as string | undefined,
+    priority: front["priority"] as string | undefined,
   };
 }
 

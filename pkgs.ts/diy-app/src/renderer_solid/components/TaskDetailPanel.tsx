@@ -1,15 +1,16 @@
-import { createSignal, createMemo, createEffect, on, onMount, onCleanup, Show } from "solid-js";
+import { createSignal, createMemo, createEffect, on, onMount, onCleanup, Show, For } from "solid-js";
 import * as Select from "@kobalte/core/select";
 import { taskStore, type TaskDetail } from "../store/taskStore";
 import { localChatStore } from "../store/localChatStore";
 import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
-import { diyService } from "../lib/rpc";
+import { editTask } from "../lib/task-edit";
 import { getRendererActions } from "../lib/renderer-actions";
 import { Caches } from "../lib/ui-state";
 import { MarkdownView } from "./MarkdownView";
 import { CodeBlock } from "./CodeBlock";
 import { taskStateColor } from "../../main/core/task-state";
+import { CHANGE_TYPES, MODULES, PRIORITIES } from "../../main/core/task-fields";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 
 const PANEL_W_MIN = 360;
@@ -269,6 +270,87 @@ export function StateSelect(props: { current?: string; saving: boolean; onSave: 
     );
 }
 
+/** 结构化字段的中文名（详情面板与表格共用同一套措辞） */
+const FIELD_LABELS: Record<string, string> = {
+    change_type: "类型",
+    module: "模块",
+    priority: "优先级",
+};
+
+/**
+ * 单个结构化字段的下拉编辑（GitHub issue 侧栏那套：**改完即存**，不进编辑态）。
+ *
+ * 为什么不做成"编辑态里一起保存"：这几个字段是**分类信息**，与标题/正文（有草稿、防误清空）
+ * 的性质不同 —— 它们要能在扫读任务时随手打标，多一次「进编辑态 → 保存」的往返就没人填了。
+ * 空值选项（"— 未设置"）对应清除（空字符串），与 core/task.ts 的 triState 语义一致。
+ */
+export function TaskFieldSelect(props: {
+    field: "change_type" | "priority";
+    value?: string;
+    saving: boolean;
+    onSave: (v: string) => void;
+}) {
+    const options = props.field === "change_type" ? CHANGE_TYPES : PRIORITIES;
+    // 历史手写值可能不在词表内（如 priority: high）：补一个入口显示出来，
+    // 否则 select 会显示成"未设置"，看着像数据丢了（与 StateSelect 的兜底同思路）
+    const unknown = () => !!props.value && !(options as readonly string[]).includes(props.value);
+    return (
+        <label class="flex items-center gap-1 text-xs">
+            <span class="opacity-50">{FIELD_LABELS[props.field]}</span>
+            <select
+                class="select select-xs select-bordered font-mono"
+                disabled={props.saving}
+                value={props.value ?? ""}
+                onChange={(e) => props.onSave(e.currentTarget.value)}
+            >
+                <option value="">—</option>
+                <Show when={unknown()}>
+                    <option value={props.value}>{props.value}</option>
+                </Show>
+                <For each={options}>{(v) => <option value={v}>{v}</option>}</For>
+            </select>
+        </label>
+    );
+}
+
+/**
+ * module 编辑：自由字符串 + 建议清单（datalist）。
+ * 不禁止自由输入 —— 取值还在演化，硬枚举会逼出「先塞进 test 再说」这种脏数据；
+ * 清单（task-fields.ts 的 MODULES）只作建议。
+ */
+export function TaskModuleInput(props: { value?: string; saving: boolean; onSave: (v: string) => void }) {
+    const [draft, setDraft] = createSignal(props.value ?? "");
+    // 任务切换/外部更新时同步（props.value 是真相源；用户正在输入时不覆盖）
+    createEffect(on(() => props.value, (v) => setDraft(v ?? ""), { defer: true }));
+    const commit = () => {
+        if (draft().trim() === (props.value ?? "")) return;
+        props.onSave(draft().trim());
+    };
+    return (
+        <label class="flex items-center gap-1 text-xs">
+            <span class="opacity-50">模块</span>
+            <input
+                class="input input-xs input-bordered font-mono w-28"
+                list="diy-task-modules"
+                placeholder="agent/ui"
+                value={draft()}
+                disabled={props.saving}
+                onInput={(e) => setDraft(e.currentTarget.value)}
+                onBlur={commit}
+                onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                        e.preventDefault();
+                        commit();
+                    }
+                }}
+            />
+            <datalist id="diy-task-modules">
+                <For each={MODULES}>{(m) => <option value={m} />}</For>
+            </datalist>
+        </label>
+    );
+}
+
 /** 详情渲染模式：Markdown 富文本 / 原文（纯视图偏好，不落盘） */
 type DetailTab = "md" | "raw";
 
@@ -324,17 +406,25 @@ export function TaskInfoView(props: { task: TaskDetail }) {
         if (next === props.task.state) return;
         setSaving(true);
         try {
-            await diyService.diy.task.edit({
-                uri: props.task.uri,
-                title: undefined,
-                state: next as any,
-                body: undefined,
-                parent: undefined,
-            });
+            await editTask(props.task.uri, { state: next as any });
             await taskStore.loadTree();      // 同步任务树状态
             await taskStore.selectTask(props.task.uri); // 刷新详情 state
         } catch (err: any) {
             console.error("[TaskInfoView] change state failed:", err);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    /** 改结构化字段：改完即存（不进编辑态）。失败要出声 —— 静默失败会被当成"点了没反应" */
+    const saveField = async (patch: Record<string, string>) => {
+        setSaving(true);
+        try {
+            await editTask(props.task.uri, patch);
+            await taskStore.loadTree();
+            await taskStore.selectTask(props.task.uri);
+        } catch (err: any) {
+            notificationStore.addToast("error", `保存失败: ${err?.message ?? String(err)}`);
         } finally {
             setSaving(false);
         }
@@ -355,7 +445,7 @@ export function TaskInfoView(props: { task: TaskDetail }) {
                 return;
             }
 
-            await diyService.diy.task.edit({ uri: t.uri, title: changes.title, state: undefined, body: changes.body, parent: undefined });
+            await editTask(t.uri, { title: changes.title, body: changes.body });
             await taskStore.loadTree();
             // 先清草稿再重取任务：否则重取回来的旧草稿会把刚保存的值当「编辑中」再显示一遍
             await draftStore.clear(t.uri, ["title", "body"]);
@@ -423,6 +513,28 @@ export function TaskInfoView(props: { task: TaskDetail }) {
                         </button>
                     </div>
                 </Show>
+            </div>
+
+            {/* 结构化字段：类型 / 模块 / 优先级。随时可改、改完即存 —— 表格里那几列
+                就是从这三个字段来的，没有这个入口列就永远是空的。 */}
+            <div class="flex items-center gap-3 flex-wrap">
+                <TaskFieldSelect
+                    field="change_type"
+                    value={props.task.change_type}
+                    saving={saving()}
+                    onSave={(v) => void saveField({ change_type: v })}
+                />
+                <TaskModuleInput
+                    value={props.task.module}
+                    saving={saving()}
+                    onSave={(v) => void saveField({ module: v })}
+                />
+                <TaskFieldSelect
+                    field="priority"
+                    value={props.task.priority}
+                    saving={saving()}
+                    onSave={(v) => void saveField({ priority: v })}
+                />
             </div>
 
             {/* 元信息 */}

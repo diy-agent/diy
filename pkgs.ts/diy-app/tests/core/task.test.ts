@@ -223,7 +223,9 @@ describe("updateTask 正文最小长度", () => {
 // updateTask 的字段保留原则
 //   我们只负责自己管的字段；其余（用户自定义 / 外部工具写的）无权删除。
 //   曾经的行为是「按白名单重建 frontmatter」，导致改一次 state 就吃掉
-//   tags/priority/note/source_* —— 静默丢用户数据，故这里锁死。
+//   tags/note/source_* —— 静默丢用户数据，故这里锁死。
+//   注：priority 后来升级为受管字段（change_type/module/priority 三兄弟），
+//   但「未指定该字段的编辑不动它」的规则照旧 —— 见下面的用例。
 // ═══════════════════════════════════════
 
 describe("updateTask 保留非托管字段", () => {
@@ -239,6 +241,8 @@ describe("updateTask 保留非托管字段", () => {
   }
 
   it("用户自定义字段（tags / priority / note）在改 state 后仍在", () => {
+    // priority 现已是受管字段：本用例额外锁死「词表外的手写值（high）不被清洗」——
+    // 例行编辑没资格改用户手写的值，只有显式传该字段才动它
     const uri = createTask({ title: "占位", project: PROJECT });
     const fp = writeRawTask(uri, "tags:\n  - important\n  - 前端\npriority: high\nnote: '自己加的备注'\n");
 
@@ -336,5 +340,111 @@ describe("listTasks", () => {
 
   it("不存在的 project 返回空数组", () => {
     expect(listTasks("nonexistent")).toEqual([]);
+  });
+});
+// ═══════════════════════════════════════
+// 结构化字段：change_type / module / priority
+//   词表真相源 = src/main/core/task-fields.ts
+// ═══════════════════════════════════════
+
+describe("结构化字段（change_type / module / priority）", () => {
+  it("create 时可写入三个字段", () => {
+    const uri = createTask({
+      title: "带字段的任务",
+      project: PROJECT,
+      change_type: "fix",
+      module: "agent/ui",
+      priority: "P1",
+    });
+    const t = getTask(uri)!;
+    expect(t.change_type).toBe("fix");
+    expect(t.module).toBe("agent/ui");
+    expect(t.priority).toBe("P1");
+    expect(readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8")).toContain("change_type: fix");
+  });
+
+  it("不传就不写键（缺省 = 未设置，靠键不存在表达，而非空值噪音）", () => {
+    const uri = createTask({ title: "没字段的任务", project: PROJECT });
+    const raw = readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8");
+    expect(raw).not.toContain("change_type:");
+    expect(raw).not.toContain("module:");
+    expect(raw).not.toContain("priority:");
+  });
+
+  it("module 纯空白 = 不写键（避免 `module: ''` 噪音）", () => {
+    const uri = createTask({ title: "空白模块", project: PROJECT, module: "   " });
+    expect(readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8")).not.toContain("module:");
+  });
+
+  it("module 两侧空白被 trim（手滑多打的空格不进数据）", () => {
+    const uri = createTask({ title: "带空格", project: PROJECT, module: "  agent/ui  " });
+    expect(getTask(uri)!.module).toBe("agent/ui");
+  });
+
+  it("change_type 只收词表内的值，其余报 ValidationError（写入侧严格）", () => {
+    expect(() => createTask({ title: "非法类型", project: PROJECT, change_type: "bug" })).toThrow(ValidationError);
+  });
+
+  it("priority 只收 P0-P3（'high' 这类人在写标题时会写的值进不来）", () => {
+    expect(() => createTask({ title: "非法优先级", project: PROJECT, priority: "high" })).toThrow(ValidationError);
+    expect(() => createTask({ title: "非法优先级", project: PROJECT, priority: "p0" })).toThrow(ValidationError);
+  });
+
+  it("module 超长被拒（挡住「整段贴进来」这类误用）", () => {
+    expect(() => createTask({ title: "超长模块", project: PROJECT, module: "x".repeat(200) })).toThrow(ValidationError);
+  });
+
+  it("update 可设置与清除（空字符串 = 清除，与 parent 的三态一致）", () => {
+    const uri = createTask({ title: "三态", project: PROJECT, change_type: "feat", priority: "P2" });
+
+    updateTask(uri, { change_type: "docs" });
+    expect(getTask(uri)!.change_type).toBe("docs");
+    expect(getTask(uri)!.priority).toBe("P2"); // 未指定的字段不动
+
+    updateTask(uri, { priority: "" }); // 清除 → 回未定级
+    expect(getTask(uri)!.priority).toBeUndefined();
+    expect(readFileSync(join(diyHome(), uri, "AGENTS.md"), "utf-8")).not.toContain("priority:");
+
+    updateTask(uri, { change_type: "" });
+    expect(getTask(uri)!.change_type).toBeUndefined();
+  });
+
+  it("清除 module（空白串同样视为清除）", () => {
+    const uri = createTask({ title: "清模块", project: PROJECT, module: "ui" });
+    updateTask(uri, { module: "  " });
+    expect(getTask(uri)!.module).toBeUndefined();
+  });
+
+  it("设置非法值时抛出 ValidationError（写入侧仍严格）", () => {
+    const uri = createTask({ title: "非法更新", project: PROJECT });
+    expect(() => updateTask(uri, { change_type: "nope" })).toThrow(ValidationError);
+    expect(() => updateTask(uri, { priority: "P9" })).toThrow(ValidationError);
+  });
+
+  it("词表外的手写值在只改别的字段时原样保留（读侧宽容的兑现）", () => {
+    const uri = createTask({ title: "手写值", project: PROJECT });
+    const fp = join(diyHome(), uri, "AGENTS.md");
+    writeFileSync(
+      fp,
+      `---\ntitle: '手工任务'\nstate: pending\npriority: high\nchange_type: bug\ncreated: '2026-01-01T00:00:00.000Z'\nupdated: '2026-01-01T00:00:00.000Z'\n---\n正文\n`,
+      "utf-8",
+    );
+
+    updateTask(uri, { state: "active" });
+
+    const raw = readFileSync(fp, "utf-8");
+    expect(raw).toContain("priority: high");
+    expect(raw).toContain("change_type: bug");
+    // 读侧也要读得到（否则表格里这几列显示为空，用户会以为数据丢了）
+    expect(getTask(uri)!.priority).toBe("high");
+    expect(getTask(uri)!.change_type).toBe("bug");
+  });
+
+  it("改结构化字段不动 created（updated 才刷新）", () => {
+    const uri = createTask({ title: "时间戳", project: PROJECT });
+    const before = getTask(uri)!.created;
+    updateTask(uri, { change_type: "perf" });
+    expect(getTask(uri)!.created).toBe(before);
+    expect(getTask(uri)!.updated).not.toBeUndefined();
   });
 });

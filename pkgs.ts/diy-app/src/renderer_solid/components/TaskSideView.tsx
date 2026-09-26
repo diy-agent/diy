@@ -11,7 +11,7 @@
  */
 import { createSignal, Show } from "solid-js";
 import { taskStore } from "../store/taskStore";
-import { diyService } from "../lib/rpc";
+import { editTask } from "../lib/task-edit";
 import { StateSelect } from "./TaskDetailPanel";
 import { MarkdownView } from "./MarkdownView";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
@@ -25,13 +25,7 @@ export function TaskSideView(props: { uri: string }) {
         if (next === task()?.state) return;
         setSaving(true);
         try {
-            await diyService.diy.task.edit({
-                uri: props.uri,
-                title: undefined,
-                state: next as any,
-                body: undefined,
-                parent: undefined,
-            });
+            await editTask(props.uri, { state: next as any });
             await taskStore.loadTree();
             await taskStore.selectTask(props.uri);
         } catch (e) {
@@ -55,6 +49,20 @@ export function TaskSideView(props: { uri: string }) {
 
                             <div class="flex items-center gap-2 flex-wrap">
                                 <StateSelect current={t().state} saving={saving()} onSave={changeState} />
+                            </div>
+
+                            {/* 结构化字段：只读。本视图定位是"执行时确认在做什么"，
+                                编辑仍跳回任务页（那里有统一的字段编辑入口）。 */}
+                            <div class="flex items-center gap-2 flex-wrap text-[11px]">
+                                <Show when={t().change_type}>
+                                    <span class="badge badge-sm badge-ghost font-mono">{t().change_type}</span>
+                                </Show>
+                                <Show when={t().module}>
+                                    <span class="badge badge-sm badge-ghost font-mono">{t().module}</span>
+                                </Show>
+                                <Show when={t().priority}>
+                                    <span class="badge badge-sm badge-ghost font-mono">{t().priority}</span>
+                                </Show>
                             </div>
 
                             <div class="flex flex-col gap-1 text-[11px] opacity-60">

@@ -113,6 +113,22 @@ export const Caches = {
     serialize: (v) => JSON.stringify(v),
     defaultValue: [] as string[],
   }),
+  /** 任务树：排序（`<键>:<asc|desc>`）。
+   *  parse 只校验**形状**（键名 + 方向），不校验键是否是我们认识的排序键 ——
+   *  键清单属于 TaskTree 的业务知识（`src/shared/task-list.ts`），
+   *  这里替下游做判断会重现「parse 越权过滤元素」的旧坑（见 diy_tabs_opened 注释）。
+   *  不认识的键由 TaskTree 回落默认排序。 */
+  diy_task_tree_sort: field<string>("diy_task_tree_sort", {
+    parse: (raw) => (/^[a-z_]+:(asc|desc)$/.test(raw) ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "created:asc",
+  }),
+  /** 任务树：搜索关键词（视图 cache：丢了只是清掉搜索框，无数据损失） */
+  diy_task_tree_query: field<string>("diy_task_tree_query", {
+    parse: (raw) => (raw.length <= 200 ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "",
+  }),
   /** 任务树：滚动容器 scrollTop（>=1 才恢复，0 表示未滚动过） */
   diy_task_tree_scroll: field("diy_task_tree_scroll", {
     parse: (raw) => {
