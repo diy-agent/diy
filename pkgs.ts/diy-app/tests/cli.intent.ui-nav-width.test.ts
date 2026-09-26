@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { makeUiDriver, type UiDriver } from "./ui-drive";
-import { lockNavOpen } from "./nav-helper";
+import { lockNavOpen, navLocked } from "./nav-helper";
 
 let fx: { sh: ShellTest; HOME: string; electron: ElectronTest };
 let ui: UiDriver;
@@ -74,6 +74,10 @@ afterAll(async () => {
 
 describe("侧栏宽度：可调 + 持久化", () => {
   it("默认 224px，拖右缘变宽并落盘 localStorage", async () => {
+    // 前置：必须已**锁定**展开。只靠 hover 展开是不够的 —— 下面会把鼠标拖到侧栏之外
+    // （那正是在拖宽度），鼠标一离开 hover 态就被 mouseleave 收拢成 rail。先断言这一点，
+    // 免得「没锁上」表现为后面莫名其妙的宽度断言失败（曾把排查方向带偏）。
+    expect(await navLocked(ui)).toBe(true);
     expect(await navWidth()).toBeCloseTo(224, 0);
 
     const grip = await gripCenter();
