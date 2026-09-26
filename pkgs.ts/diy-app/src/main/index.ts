@@ -192,7 +192,12 @@ function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy/rp
   const ipcTransport = createMainTransport(() => mainWindow!.webContents);
   const binding = bindApi(ipcTransport);
 
-  mainWindow.once("ready-to-show", () => mainWindow?.show());
+  // test：只渲染窗口不激活 app —— 测试实例不能抢走正在运行的生产 app 的焦点。
+  // dev/prod：保持 show()，用户自己起的窗口应当被激活。
+  mainWindow.once("ready-to-show", () => {
+    if (cfg.env === "test") mainWindow?.showInactive();
+    else mainWindow?.show();
+  });
 
   // ── 渲染进程 console 捕获 ──
   // renderer 是独立上下文，未捕获异常 / console.error 不会进主进程诊断日志。
