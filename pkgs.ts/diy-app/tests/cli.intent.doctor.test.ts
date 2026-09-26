@@ -72,6 +72,9 @@ describe("getAppInfo", () => {
       data: {
         port: "*",
         diyHome: HOME,
+        // 窗口标题组装用：数据根的展示形式（缩 `~`）与运行环境
+        diyHomeDisplay: "*",
+        env: "*",
         cache: `${HOME}/cache`,
         userData: `${HOME}/electron_user_data`,
         electron: "*",
