@@ -36,6 +36,7 @@ import { DynamicBar } from "./DynamicBar";
 import type { ContextLab, PlaceCandidate } from "../../shared/context/preview";
 import { requestYaml } from "../../shared/context/request";
 import { diffSize } from "../../shared/context/steps";
+import { fmtAgo, fmtShortTime } from "../../shared/date-format";
 import { lineRange, matchRanges, type LineRange } from "../../shared/context/match";
 import type { ContextDiff } from "../../shared/context/schema";
 import type { DiffLine } from "../../shared/line-diff";
@@ -359,7 +360,9 @@ export function ContextLabPage(props: { uri: string }) {
         <div class="p-1">
             <div class="mb-1 flex items-center gap-1 px-1 opacity-70">
                 <span>{steps()?.total ?? 0} 轮真发</span>
-                <span class="ml-auto">{pickedStep() === null ? "看：当前 vs 最后一步" : `看：第 ${pickedStep()} 步 vs 上一步`}</span>
+                <span class="ml-auto" title="列表里每行的时间是该轮真发的落盘时刻">
+                    {pickedStep() === null ? "看：当前 vs 最后一步" : `看：第 ${pickedStep()} 步 vs 上一步`}
+                </span>
             </div>
             <Show
                 when={(steps()?.total ?? 0) > 0}
@@ -379,6 +382,12 @@ export function ContextLabPage(props: { uri: string }) {
                                     onClick={() => setPickedStep(pickedStep() === st.index ? null : st.index)}
                                 >
                                     <span class="badge badge-xs">{st.index}</span>
+                                    <span
+                                        class="shrink-0 font-mono text-[10px] opacity-60"
+                                        title={`${st.ts}（第 ${st.index} 轮真发）`}
+                                    >
+                                        {fmtShortTime(st.ts)}
+                                    </span>
                                     <span class="truncate font-mono">
                                         {(st.sincePrev?.changed ?? []).slice(0, 2).join(", ") || "baseline"}
                                         {(st.sincePrev?.changed.length ?? 0) > 2
@@ -413,16 +422,25 @@ export function ContextLabPage(props: { uri: string }) {
                             <Show when={dd().base}>
                                 {(b) => (
                                     <>
-                                        <span class="badge badge-sm">{`第 ${b().index} 步`}</span>
+                                        <span class="badge badge-sm" title={b().ts}>
+                                            {`第 ${b().index} 步 · ${fmtShortTime(b().ts)}`}
+                                        </span>
                                         <span class="opacity-40">→</span>
                                     </>
                                 )}
                             </Show>
                             <span class="badge badge-sm badge-primary">
-                                {dd().mode === "live" ? "当前（未发送）" : `第 ${dd().target!.index} 步`}
+                                <Show
+                                    when={dd().target}
+                                    fallback={<>当前（未发送）</>}
+                                >
+                                    {(tg) => <>{`第 ${tg().index} 步 · ${fmtShortTime(tg().ts)}`}</>}
+                                </Show>
                             </span>
                             <span class="opacity-60">
-                                {dd().mode === "live" ? "相对最后一步的改动" : ""}
+                                <Show when={dd().mode === "live"} fallback={<>真发落盘时刻（点上方列表切换）</>}>
+                                    {`相对最后一步的改动（最后一步 ${fmtAgo(dd().base!.ts)}）`}
+                                </Show>
                             </span>
                             <Show when={dd().incomparable}>
                                 <span class="badge badge-warning badge-xs" title="投递编码版本不同，两份不可比">
