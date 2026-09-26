@@ -20,6 +20,7 @@ import { apiDef } from "../main/services/api-def";
 import { readRuntimeConfig, type RuntimeConfig } from "../runtime";
 import { AppConfig } from "../main/core/app-config";
 import { installDiagnostics } from "../main/services/diagnostics";
+import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "../main/core/single-instance";
 /** app 就绪等待上限 */
 const APP_READY_TIMEOUT_MS = 30_000;
 /** 轮询间隔 */
@@ -153,7 +154,16 @@ async function ensureAppPort(cfg: RuntimeConfig): Promise<number> {
     throw e;
   }
   try { child.kill(); } catch { /* ignore */ }
-  throw new Error(`diy 管控台启动超时（${APP_READY_TIMEOUT_MS}ms）`);
+  // 「启动超时」对任何成因（陈旧锁/端口被占/构建缺失/hang）都是黑盒 → 按处境给下一步。
+  // 锁诊断复用 core/single-instance（dev 与 main 同一套判定）。
+  const lockPath = join(new AppConfig(cfg.home).electronUserData, SINGLETON_LOCK);
+  const situation = classifyLock(readLock(lockPath));
+  throw new Error(
+    `diy 管控台启动超时（${APP_READY_TIMEOUT_MS}ms）` +
+      (situation.kind === "free"
+        ? `。不是单实例锁问题。下一步：看 $DIY_HOME/log/main.log（端口/构建/hang 任一种）`
+        : `。${lockAdvice(situation, lockPath).replace(/\n/g, " ")}`),
+  );
 }
 
 /**

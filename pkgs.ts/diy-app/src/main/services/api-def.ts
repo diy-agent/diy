@@ -261,12 +261,16 @@ export const apiDef = RpcSchema.router({
         output: z.object({
           port: z.number(),
           diyHome: z.string(),
-          /** 数据根的展示形式（缩 `~`）。窗口标题与界面展示用 —— renderer 拿不到 homedir，
-           *  缩写规则只能由 main 侧算（见 shared/instance-title 的 abbrevHome）。 */
+          /** 数据根的展示形式（相对**真实家目录**缩 `~`；隔离/临时根保持绝对路径）。
+           *  窗口标题与界面展示用 —— renderer 拿不到真实家目录，缩写规则只能由 main 侧算
+           *  （见 shared/instance-title 的 abbrevHome + main/core/instance-identity.ts）。 */
           diyHomeDisplay: z.string(),
           /** 运行环境（production/development/test）。dev/test 的界面与生产几乎一样，
            *  必须能看出来，否则容易误改生产数据。 */
           env: z.string(),
+          /** 当前运行代码所在 git 分支（打包/非仓库为空串）。窗口标题用它区分
+           *  「哪个 worktree 的构建」—— 数据根是 /tmp 或 build/home 时这是唯一来源线索。 */
+          branch: z.string(),
           cache: z.string(),
           userData: z.string(),
           electron: z.string(),
