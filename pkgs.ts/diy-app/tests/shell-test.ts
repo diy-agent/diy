@@ -62,13 +62,31 @@ export class Session {
     try { this.proc.stdin!.write(cmd + "\n"); } catch { /* 子进程已退出 */ }
   }
 
-  /** 读输出直到 marker 出现或超时。resolve [是否找到 marker, 退出码] */
+  /**
+   * 读输出直到 marker 出现**且 stdout 静默**，或超时。resolve [是否找到 marker, 退出码]。
+   *
+   * 为什么必须等 stdout 静默（不只是等 marker）：marker 走 stderr（PS1），stdout 是**另一个管道**。
+   * 两者到达顺序不保证 —— stdout 数据量大/命令慢时，marker 可能先到，此时 outBuf 还是空的或半截：
+   *   · 空 → runJson 判定"空响应"并重试，重试的那次读到的其实是**上一次的**输出 → 之后每条命令都错位
+   *     （实测症状：`persona set` 之后 `persona list` 拿到 set 的裸对象 → `r.data` undefined）。
+   *   · 半截 → JSON.parse 失败（报"输出非 JSON"）。
+   * 等 40ms 无新字节再收工，代价是每条命令 ~40ms，换来输出边界确定。
+   */
   private _read(timeoutMs: number): Promise<{ found: boolean; code: number }> {
     const start = Date.now();
+    const QUIET_MS = 40;
+    let lastLen = -1;
+    let lastChangeAt = Date.now();
     return new Promise((resolve) => {
       const check = () => {
+        const len = this.outBuf.length;
+        if (len !== lastLen) {
+          lastLen = len;
+          lastChangeAt = Date.now();
+        }
         const m = markerRe.exec(this.errBuf);
-        if (m) {
+        const quiet = Date.now() - lastChangeAt >= QUIET_MS;
+        if (m && quiet) {
           resolve({ found: true, code: parseInt(m[1], 10) });
           return;
         }
@@ -76,7 +94,7 @@ export class Session {
           resolve({ found: false, code: -1 });
           return;
         }
-        setTimeout(check, 10);
+        setTimeout(check, 5);
       };
       check();
     });

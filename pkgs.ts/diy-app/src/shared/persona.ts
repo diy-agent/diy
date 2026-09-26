@@ -27,6 +27,13 @@ export type PersonaDef = z.infer<typeof PersonaDefSchema>;
 export const PersonaSchema = PersonaDefSchema.extend({ name: z.string() });
 export type Persona = z.infer<typeof PersonaSchema>;
 
+/**
+ * 下发用的人物视图 = 定义 + **引用面**（多少任务在用它）。
+ * taskCount 不是存储的一部分，是 main 每次 list 时算的投影 —— 但界面必须有它：
+ * 改人物是"统一影响所有引用者"的动作，看不见影响面就等于盲改。
+ */
+export type PersonaView = Persona & { taskCount: number };
+
 /** personas.yaml 的结构（全局一份；default = 新建任务的缺省人物名） */
 export const PersonasFileSchema = z.object({
   default: z.string(),

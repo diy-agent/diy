@@ -339,11 +339,12 @@ export const apiDef = RpcSchema.router({
             desc: `agent 人物（模型 + 参数 + 口气）；任务持引用，改人物对使用它的会话下一轮生效`,
             children: {
               list: RpcSchema.unary({
-                desc: `列出全部人物与缺省人物`,
+                desc: `列出全部人物与缺省人物（含各人物被多少任务引用）`,
                 input: {},
                 output: z.object({
                   default: z.string().describe("缺省人物名（新建任务用它）"),
-                  personas: z.array(PersonaSchema),
+                  // taskCount = 引用面：改人物前必须先看见"会影响多少任务"（否则"统一修改"是盲改）
+                  personas: z.array(PersonaSchema.extend({ taskCount: z.number() })),
                 }),
               }),
               set: RpcSchema.unary({
@@ -360,13 +361,9 @@ export const apiDef = RpcSchema.router({
                 },
                 output: PersonaSchema,
               }),
-              remove: RpcSchema.unary({
-                desc: `删除人物（仍有任务引用它时拒绝；最后一个不可删）`,
-                input: {
-                  name: z.string().cliArg({ desc: "人物名" }),
-                },
-                output: z.object({ removed: z.boolean() }),
-              }),
+              // 暂不提供 remove：人物的价值是"可复用的配置实体"，删掉它所有引用者会静默回落缺省
+              // （换模型不打招呼）。要下线一个人物，改它的模型/口气即可（引用者原地跟随）；
+              // 真需要删除时再设计"引用迁移"（改绑 N 个任务）一起做，不做半截的删除。
               setDefault: RpcSchema.unary({
                 desc: `设置缺省人物（只影响之后**新建**的任务，已有任务的绑定不变）`,
                 input: {

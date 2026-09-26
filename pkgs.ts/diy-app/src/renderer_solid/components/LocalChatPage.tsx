@@ -16,6 +16,7 @@
 import { createSignal, For, Show, createEffect, on, onMount, onCleanup } from "solid-js";
 import { localChatStore } from "../store/localChatStore";
 import { personaStore } from "../store/personaStore";
+import { PersonaDrawer } from "./PersonaDrawer";
 import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
@@ -582,7 +583,7 @@ export function LocalChatPage() {
     const uri = () => taskStore.selectedUri ?? null;
     const [inputValue, setInputValue] = createSignal("");
     const [densityOpen, setDensityOpen] = createSignal(false);
-    const [personaMenuOpen, setPersonaMenuOpen] = createSignal(false);
+    const [personaPanelOpen, setPersonaPanelOpen] = createSignal(false);
     const [fullscreen, setFullscreen] = createSignal(false);
     let scrollRef: HTMLDivElement | undefined;
     /** 跟随态：true=贴底（新内容自动滚到底）；false=用户正在上方阅读（绝不打扰） */
@@ -626,12 +627,12 @@ export function LocalChatPage() {
         const closePopovers = (e: MouseEvent) => {
             const target = e.target as Element;
             if (!target.closest("[data-density-control]")) setDensityOpen(false);
-            if (!target.closest("[data-persona-control]")) setPersonaMenuOpen(false);
+            
         };
         const onKey = (e: KeyboardEvent) => {
             if (e.key === "Escape") {
                 setDensityOpen(false);
-                setPersonaMenuOpen(false);
+                setPersonaPanelOpen(false);
                 setFullscreen(false);
             }
         };
@@ -718,31 +719,8 @@ export function LocalChatPage() {
     const personaName = () => personaStore.nameForTask();
     const personaDef = () => personaStore.defOf(personaName());
 
-    const selectPersona = async (name: string) => {
-        const u = uri();
-        if (!u || localChatStore.running || name === personaName()) {
-            setPersonaMenuOpen(false);
-            return;
-        }
-        await personaStore.setForTask(u, name); // 失败已 toast，界面保持旧绑定
-        setPersonaMenuOpen(false);
-    };
-    const movePersonaByKeyboard = (e: KeyboardEvent) => {
-        if (localChatStore.running || personaStore.personas.length === 0) return;
-        const list = personaStore.personas;
-        const index = list.findIndex((p) => p.name === personaName());
-        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-            e.preventDefault();
-            const offset = e.key === "ArrowDown" ? 1 : -1;
-            const next = (index < 0 ? 0 : index + offset + list.length) % list.length;
-            void selectPersona(list[next]!.name);
-            setPersonaMenuOpen(true);
-        } else if (e.key === "Home" || e.key === "End") {
-            e.preventDefault();
-            void selectPersona(list[e.key === "Home" ? 0 : list.length - 1]!.name);
-            setPersonaMenuOpen(true);
-        }
-    };
+    // 换绑与改定义都在人物面板里做（那里能看见"影响多少任务"）——这里只负责打开它。
+    // 为什么不做成下拉快速切换：人物是**全局配置实体**，下拉只够"选"，看不见改动的波及面。
 
     const submit = async () => {
         const text = inputValue().trim();
@@ -756,6 +734,7 @@ export function LocalChatPage() {
 
     return (
         <div class="flex flex-col h-full overflow-hidden">
+            <PersonaDrawer open={personaPanelOpen()} onClose={() => setPersonaPanelOpen(false)} />
             {/* 顶部：Markdown 显示方式（MD 原文 / MD 渲染，双态按钮组）+ 信息密度。
                 pr-16：ViewGrid 的 area 设施（最大化/最小化）浮在本区域**右上角**，
                 不预留这条空档，按钮会与它叠在同一坐标上（实测重叠）。 */}
@@ -885,57 +864,23 @@ export function LocalChatPage() {
                     {/* 不再画分隔线：正文与工具条同底色（base-200），一条 border-base-300 的横线
                         会在"一体化"的块里切出一道比底色更亮/更暗的缝，比没有线更显割裂。 */}
                     <div class="flex shrink-0 items-center gap-2 px-2 py-2 text-xs">
-                        {/* 人物选择器：**选谁干活**（本任务绑定）。模型与参数不在这里改 ——
-                            它们属于人物定义（全局），改的是"这个人怎么工作"，
-                            用的是 `diy agent persona set`；两件事混在一个菜单里必然误操作。 */}
-                        <div class="relative" data-persona-control>
-                            <button
-                                class="btn btn-ghost btn-xs max-w-[280px] min-w-0 tooltip tooltip-top"
-                                data-tip="agent 人物（↑/↓ 切换）—— 模型与参数由人物决定"
-                                aria-label="选择 agent 人物"
-                                aria-expanded={personaMenuOpen()}
-                                disabled={localChatStore.running}
-                                onClick={(e) => { e.stopPropagation(); setPersonaMenuOpen((v) => !v); }}
-                                onKeyDown={movePersonaByKeyboard}
-                            >
-                                <span class="truncate">
-                                    {personaName() || "选择人物"}
-                                    <span class="opacity-60">
-                                        （{personaDef() ? `${personaStore.modelLabel(personaDef()!.model)} · ${reasoningEffortLabel(personaDef()!.reasoningEffort as ReasoningEffort)}` : "未加载"}）
-                                    </span>
+                        {/* 人物入口：打开人物面板（选/改/换绑都在那里）。
+                            按钮本身显示**本任务当前用谁 + 它的模型与档位** ——
+                            "我这条消息会发给哪个模型"必须一眼可见，不用点开才知道。 */}
+                        <button
+                            class="btn btn-ghost btn-xs max-w-[280px] min-w-0 tooltip tooltip-top"
+                            data-tip="agent 人物：选择、编辑模型与参数（改人物会影响所有引用它的任务）"
+                            aria-label="打开 agent 人物面板"
+                            onClick={(e) => { e.stopPropagation(); setPersonaPanelOpen(true); }}
+                        >
+                            <span class="truncate">
+                                {personaName() || "选择人物"}
+                                <span class="opacity-60">
+                                    （{personaDef() ? `${personaStore.modelLabel(personaDef()!.model)} · ${reasoningEffortLabel(personaDef()!.reasoningEffort as ReasoningEffort)}` : "未加载"}）
                                 </span>
-                                <span class="opacity-50">▾</span>
-                            </button>
-                            <Show when={personaMenuOpen()}>
-                                <div
-                                    class="absolute bottom-full left-0 z-30 mb-2 w-[min(28rem,calc(100vw-2rem))] overflow-hidden rounded-box border border-base-300 bg-base-100 p-2 shadow-xl"
-                                    data-persona-control
-                                    onClick={(e) => e.stopPropagation()}
-                                >
-                                    <div class="px-2 pb-1 text-[10px] font-semibold uppercase opacity-50">agent 人物</div>
-                                    <div class="max-h-64 overflow-y-auto">
-                                        <For each={personaStore.personas}>
-                                            {(p) => (
-                                                <button
-                                                    class={`btn btn-ghost btn-xs flex h-auto w-full flex-col items-start justify-start gap-0.5 py-1 ${p.name === personaName() ? "bg-primary/15 text-primary" : ""}`}
-                                                    title={p.desc || p.name}
-                                                    aria-label={`人物 ${p.name}`}
-                                                    onClick={() => void selectPersona(p.name)}
-                                                >
-                                                    <span class="truncate">{p.name}</span>
-                                                    <span class="text-[10px] opacity-60">
-                                                        {personaStore.modelLabel(p.model)} · {reasoningEffortLabel(p.reasoningEffort as ReasoningEffort)}
-                                                    </span>
-                                                </button>
-                                            )}
-                                        </For>
-                                    </div>
-                                    <div class="mt-1 border-t border-base-300 px-2 pt-1 text-[10px] opacity-50">
-                                        改人物的模型/参数：<code>diy agent persona set</code>（影响所有使用它的任务）
-                                    </div>
-                                </div>
-                            </Show>
-                        </div>
+                            </span>
+                            <span class="opacity-50">⚙</span>
+                        </button>
                         <div class="flex-1" />
                         <Show when={!localChatStore.running}>
                             <button

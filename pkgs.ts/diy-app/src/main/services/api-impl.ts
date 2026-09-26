@@ -247,9 +247,20 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // —— agent.persona —— 人物配置（模型/参数/口气的唯一真源；任务只持有引用）——
   binding.on(app.agent.persona.list, async () => {
     const { listPersonas, defaultPersonaName } = await import("../core/persona");
-    const { diyHome } = await import("../core/state");
+    const { diyHome, getTask } = await import("../core/state");
+    const { listTasks } = await import("../core/task");
     const home = diyHome();
-    return { default: defaultPersonaName(home), personas: listPersonas(home) };
+    // 引用计数：改人物是**影响所有引用者**的操作，界面必须先看得见影响面
+    // （否则「统一修改」退化成盲改）。一次全库扫描，只在打开面板时发生。
+    const counts = new Map<string, number>();
+    for (const uri of listTasks()) {
+      const name = getTask(uri)?.persona;
+      if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    return {
+      default: defaultPersonaName(home),
+      personas: listPersonas(home).map((p) => ({ ...p, taskCount: counts.get(p.name) ?? 0 })),
+    };
   });
 
   binding.on(app.agent.persona.set, async ({ input }) => {
@@ -273,34 +284,6 @@ export function bindAppHandlers(binding: ServerBinding): void {
     assertPersonaDef(def);
     savePersonas(home, { ...file, personas: { ...file.personas, [input.name]: def } });
     return { name: input.name, ...def };
-  });
-
-  binding.on(app.agent.persona.remove, async ({ input }) => {
-    const { loadPersonas, savePersonas } = await import("../core/persona");
-    const { diyHome, getTask } = await import("../core/state");
-    const { listTasks } = await import("../core/task");
-    const home = diyHome();
-    const file = loadPersonas(home);
-    if (!Object.hasOwn(file.personas, input.name)) throw new Error(`人物「${input.name}」不存在`);
-    const rest = { ...file.personas };
-    delete rest[input.name];
-    const restNames = Object.keys(rest);
-    if (restNames.length === 0) throw new Error("至少要保留一个人物（系统必须有缺省人物）");
-    // 引用检查：人物没了而任务还指着它，那些任务会**静默回落**到缺省人物（换模型不打招呼）。
-    // 这里拒绝并报出引用者，让用户自己决定怎么改绑定 —— 顺手批量改写别人的任务不是本命令的职权。
-    const refs = listTasks().filter((u) => getTask(u)?.persona === input.name);
-    if (refs.length > 0) {
-      throw new Error(
-        `人物「${input.name}」仍被 ${refs.length} 个任务引用（${refs.slice(0, 3).join("、")}${
-          refs.length > 3 ? " 等" : ""
-        }），请先给这些任务改用其他人物（diy task edit <uri> --persona …）`,
-      );
-    }
-    savePersonas(home, {
-      default: file.default === input.name ? restNames[0]! : file.default,
-      personas: rest,
-    });
-    return { removed: true };
   });
 
   binding.on(app.agent.persona.setDefault, async ({ input }) => {

@@ -15,7 +15,7 @@ import { diyService } from "../lib/rpc";
 import { editTask } from "../lib/task-edit";
 import { taskStore } from "./taskStore";
 import { notificationStore } from "./notificationStore";
-import type { Persona } from "../../shared/persona";
+import type { PersonaView } from "../../shared/persona";
 import type { ReasoningEffort } from "../../shared/models";
 
 /** 模型清单里本 store 用到的最小形状（展示用：id → 名字 / 推理档位支持集） */
@@ -25,15 +25,18 @@ interface ModelBrief {
     reasoning: { supported: ReasoningEffort[]; default: ReasoningEffort };
 }
 
-const [personas, setPersonas] = createSignal<Persona[]>([]);
+const [personas, setPersonas] = createSignal<PersonaView[]>([]);
 const [defaultPersona, setDefaultPersona] = createSignal<string>("");
 const [models, setModels] = createSignal<ModelBrief[]>([]);
 let loading: Promise<void> | null = null;
+/** 是否有一次 load 在途（面板据此显示"加载中…"，并避免在清单到达前做选中校准） */
+const [busy, setBusy] = createSignal(false);
 
 /** 加载清单（幂等 + 并发去重）。失败不抛：清单非关键路径，下次调用重试。 */
 async function load(force = false): Promise<void> {
     if (!force && personas().length > 0 && models().length > 0) return;
     if (loading) return loading;
+    setBusy(true);
     loading = (async () => {
         try {
             const r = await diyService.diy.agent.persona.list({});
@@ -49,6 +52,7 @@ async function load(force = false): Promise<void> {
         }
     })().finally(() => {
         loading = null;
+        setBusy(false);
     });
     return loading;
 }
@@ -74,6 +78,56 @@ async function setForTask(taskUri: string, name: string): Promise<boolean> {
     }
 }
 
+/**
+ * 保存人物定义（新建或更新；未给的字段保持原值 —— main 侧的三态语义）。
+ * 成功后 reload：引用计数与模型清单都可能变（新建后列表要出现它）。
+ */
+async function save(
+    name: string,
+    patch: { model?: string; reasoningEffort?: string; style?: string; desc?: string },
+): Promise<boolean> {
+    try {
+        await diyService.diy.agent.persona.set({
+            name,
+            model: patch.model,
+            reasoningEffort: patch.reasoningEffort,
+            style: patch.style,
+            desc: patch.desc,
+        });
+        await load(true);
+        return true;
+    } catch (e) {
+        // 失败必须发声（如未知模型/档位不支持）：静默会让用户以为改成功了
+        console.error(`[persona] 保存失败 ${name}:`, e);
+        notificationStore.addToast("error", `保存人物失败：${e instanceof Error ? e.message : String(e)}`);
+        return false;
+    }
+}
+
+/** 设为缺省人物（只影响之后新建的任务） */
+async function setDefault(name: string): Promise<boolean> {
+    try {
+        await diyService.diy.agent.persona.setDefault({ name });
+        await load(true);
+        notificationStore.addToast("success", `缺省人物已改为「${name}」（只影响之后新建的任务）`);
+        return true;
+    } catch (e) {
+        console.error("[persona] setDefault 失败:", e);
+        notificationStore.addToast("error", `设置缺省人物失败：${e instanceof Error ? e.message : String(e)}`);
+        return false;
+    }
+}
+
+/** 把**当前选中的任务**换绑到该人物（面板里的「用于本任务」） */
+async function bindCurrentTask(name: string): Promise<boolean> {
+    const uri = taskStore.selectedUri;
+    if (!uri) {
+        notificationStore.addToast("error", "没有选中的任务");
+        return false;
+    }
+    return setForTask(uri, name);
+}
+
 export const personaStore = {
     get personas() {
         return personas();
@@ -84,18 +138,29 @@ export const personaStore = {
     get models() {
         return models();
     },
+    /** 清单加载中（异步在途；面板显示加载态用） */
+    get loading() {
+        return busy();
+    },
     /** 当前任务的生效人物名：任务绑定优先，未加载完时先用缺省人物（避免显示空白） */
     nameForTask(): string {
         return taskStore.selectedTask?.persona || defaultPersona();
     },
-    /** 按名字取人物定义（未加载/已删时 null，调用方自己决定怎么显示） */
-    defOf(name: string): Persona | null {
+    /** 按名字取人物（含引用计数；未加载/不存在时 null，调用方自己决定怎么显示） */
+    defOf(name: string): PersonaView | null {
         return personas().find((p) => p.name === name) ?? null;
     },
     /** 模型 id → 人读名（清单未加载时退回 id 本身） */
     modelLabel(id: string): string {
         return models().find((m) => m.id === id)?.name ?? id;
     },
+    /** 某模型支持的思考级别（下拉候选；模型未知时给空数组，界面自己兜底显示） */
+    reasoningChoices(model: string): ReasoningEffort[] {
+        return models().find((m) => m.id === model)?.reasoning.supported ?? [];
+    },
     load,
+    save,
+    setDefault,
+    bindCurrentTask,
     setForTask,
 };
