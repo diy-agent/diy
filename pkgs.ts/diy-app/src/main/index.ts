@@ -272,7 +272,7 @@ function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy/rp
 // 后 Electron 不会自动重建 → 窗口永久白屏（用户说的"app 挂了"）。这里节流重载。
 const reloadStamps: number[] = [];
 app.on("render-process-gone", (_event, webContents, details) => {
-  if (webContents !== mainWindow?.webContents) return;
+  if (!mainWindow || webContents !== mainWindow.webContents) return; // 窗口已关闭：没什么可自愈
   const now = Date.now();
   while (reloadStamps.length > 0 && now - (reloadStamps[0] ?? 0) > 60_000) reloadStamps.shift();
   if (reloadStamps.length >= 3) {
@@ -350,13 +350,41 @@ app.whenReady().then(async () => {
     console.warn("[diy] RPC 服务器启动失败，GUI 功能受限");
   }
 
+  // macOS 惯例：窗口关掉后 app 仍在 Dock，点图标（activate）重建窗口。
+  // 重建的是窗口，RPC 服务一直在跑（见 window-all-closed），这里只需两件配套事：
+  //   1. 把 diy.ui.* 的转发目标换到新 webContents（旧通道已随旧窗口销毁）
+  //   2. 把新窗口的界面加载起来（首启时那句 loadMainApp 已经执行过，重建时得再来一次）
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      const { binding, ipcTransport } = createWindow();
+      ipcBinding = binding;
+      rpcPort?.setRendererTransport(ipcTransport);
+      loadMainApp();
+      console.log("[diy] 窗口已重建（diy.ui.* 转发已切到新窗口）");
+    }
   });
 });
 
+// ⚠️ 窗口关闭 ≠ 服务停止（这里曾经埋着一个僵尸实例的坑，改前务必读完）：
+// agent 会话跑在 main 进程里，CLI/RPC 是常驻服务，窗口只是视图。以前这里顺手
+// `rpcPort.stop()`，后果是留下一个「仍持单实例锁、但 RPC 端口已关」的进程：
+// 此后每条 `./diy.sh` 都 probe 失败 → 拉起新实例 → 新实例被那把单实例锁拒绝并退出
+// → CLI 死等 30s 报「启动超时」；用户视角是「app 明明还在跑，CLI 却说启动不了」。
+// 现在：窗口的 IPC 通道随 webContents 一起清掉（重建窗口时会新建），RPC 服务留到真正退出。
 app.on("window-all-closed", () => {
+  // 落一行日志：这条路径上「进程还在、界面没了」是个容易误判的状态
+  // （排查 ./diy.sh 超时时，先看这里有没有记录就知道窗口是不是被关过）
+  console.log("[diy] 所有窗口已关闭：RPC 服务继续运行（进程常驻，点 Dock 图标可重建窗口）");
   ipcBinding?.destroy();
-  rpcPort?.stop();
+  ipcBinding = null;
+  mainWindow = null;
+  // diy.ui.* 的转发目标随之失效：让「窗口没了还在调界面 RPC」立刻得到明确错误，
+  // 而不是等在死通道上超时（重建窗口时由 activate 换回新通道）
+  rpcPort?.clearRendererTransport();
   if (process.platform !== "darwin") app.quit();
+});
+
+// RPC 服务的停止点：真正退出前（非 darwin 由上面的 app.quit() 触发；darwin 由 Cmd+Q 触发）
+app.on("before-quit", () => {
+  rpcPort?.stop();
 });
