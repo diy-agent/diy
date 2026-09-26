@@ -42,6 +42,7 @@ import { detectGpu } from "./core/gpu-detect";
 import { readRuntimeConfig } from "../runtime";
 import { instanceTitle } from "../shared/instance-title";
 import { currentGitBranch, homeDisplayOf } from "./core/instance-identity";
+import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "./core/single-instance";
 
 // Chromium 开关必须走 app.commandLine（ready 之前），跟在 app 路径后传 argv 无效。
 // 之前 cli/electron-dev 把 --disable-features=RustPng 放 spawn argv 里，Chromium 根本没吃到，rust_png 照崩。
@@ -120,14 +121,16 @@ const gotLock = app.requestSingleInstanceLock();
 console.log(`  SingleInstanceLock: ${gotLock ? "acquired" : "failed (second instance, quitting)"}`);
 
 if (!gotLock) {
+  // 「被锁拒」不再沉默：告诉用户是谁占着、下一步干什么（诊断见 core/single-instance.ts）
+  const lockPath = path.join(appConfig.electronUserData, SINGLETON_LOCK);
+  console.error(`[diy] ${lockAdvice(classifyLock(readLock(lockPath)), lockPath)}`);
   app.quit();
 } else {
+  // 撞到第二个实例 = 用户想看到它（多半是「窗口已关 + 再启动一次」）。activate 与本处
+  // 同一个诉求：把窗口请出来。抽成 ensureWindow()，两条路共用（见其定义）。
   app.on("second-instance", () => {
-    const win = BrowserWindow.getAllWindows()[0];
-    if (win) {
-      if (win.isMinimized()) win.restore();
-      win.focus();
-    }
+    console.log(`[diy] 收到 second-instance（再启动一次）→ ensureWindow()`);
+    ensureWindow();
   });
 }
 
@@ -350,19 +353,8 @@ app.whenReady().then(async () => {
     console.warn("[diy] RPC 服务器启动失败，GUI 功能受限");
   }
 
-  // macOS 惯例：窗口关掉后 app 仍在 Dock，点图标（activate）重建窗口。
-  // 重建的是窗口，RPC 服务一直在跑（见 window-all-closed），这里只需两件配套事：
-  //   1. 把 diy.ui.* 的转发目标换到新 webContents（旧通道已随旧窗口销毁）
-  //   2. 把新窗口的界面加载起来（首启时那句 loadMainApp 已经执行过，重建时得再来一次）
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      const { binding, ipcTransport } = createWindow();
-      ipcBinding = binding;
-      rpcPort?.setRendererTransport(ipcTransport);
-      loadMainApp();
-      console.log("[diy] 窗口已重建（diy.ui.* 转发已切到新窗口）");
-    }
-  });
+  // macOS 惯例：窗口关掉后 app 仍在 Dock，点图标（activate）= 把窗口请出来
+  app.on("activate", () => ensureWindow());
 });
 
 // ⚠️ 窗口关闭 ≠ 服务停止（这里曾经埋着一个僵尸实例的坑，改前务必读完）：
@@ -384,7 +376,30 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-// RPC 服务的停止点：真正退出前（非 darwin 由上面的 app.quit() 触发；darwin 由 Cmd+Q 触发）
+// RPC 服务与窗口通道的停止点：真正退出前（非 darwin 由 window-all-closed 的 app.quit() 触发；
+// darwin 由 Cmd+Q 触发）。这里不 destroy ipcBinding —— 与关窗不同，进程正在退出，
+// 无需为「以后还要用」留口子（window-all-closed 才 destroy，因为那时进程还活着）。
 app.on("before-quit", () => {
   rpcPort?.stop();
 });
+
+/**
+ * 确保有窗口（没有就重建）。activate（点 Dock）与 second-instance（再启动一次）共用：
+ * 两者本质都是「用户想看到这个常驻实例」，若各自实现就会出现「补了一处漏一处」
+ * —— 本 bug 里 activate 补了、second-instance 漏了，正是实测到的「再启动一次没反应」。
+ * 窗口已存在时只聚焦；不存在时走完整重建（IPC 转发 + 加载界面）。
+ */
+function ensureWindow(): void {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+    return;
+  }
+  const { binding, ipcTransport } = createWindow();
+  ipcBinding = binding;
+  // 旧 webContents 已销毁，把 diy.ui.* 的转发目标换到新窗口，否则界面 RPC 归死人
+  rpcPort?.setRendererTransport(ipcTransport);
+  loadMainApp();
+  console.log("[diy] 窗口已重建（diy.ui.* 转发已切到新窗口）");
+}

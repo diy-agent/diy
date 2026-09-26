@@ -28,7 +28,8 @@ interface CdpTarget {
 class Cdp {
   private ws!: WebSocket;
   private seq = 1;
-  private pending = new Map<number, (v: unknown) => void>();
+  /** id → settle（含 resolve/reject）；连接断掉时全部 reject，避免 promise 永不 settle */
+  private pending = new Map<number, { res: (v: unknown) => void; rej: (e: Error) => void }>();
 
   static async attach(baseWsUrl: string): Promise<Cdp> {
     // 浏览器级 ws 不能直接 dispatch 输入事件 —— 要附到具体的 page target 上
@@ -46,29 +47,54 @@ class Cdp {
     cdp.ws.on("message", (raw) => {
       const msg = JSON.parse(raw.toString()) as { id?: number; result?: unknown };
       if (msg.id && cdp.pending.has(msg.id)) {
-        cdp.pending.get(msg.id)!(msg.result);
+        const p = cdp.pending.get(msg.id)!;
         cdp.pending.delete(msg.id);
+        p.res(msg.result);
       }
     });
+    // 连接断开（窗口销毁 / target 没了）→ 立刻 reject 所有等待中的调用。
+    // 缺这条，socket 已断时 send 的 promise 永不 settle → 用例静默挂到 30s 超时，
+    // 现象是「30s 后才失败、错误指向超时」而不是「target 已销毁」——误导排查。
+    const rejectAll = (why: string) => {
+      for (const p of cdp.pending.values()) p.rej(new Error(`[ui-drive] CDP 连接断开：${why}`));
+      cdp.pending.clear();
+    };
+    cdp.ws.on("close", () => rejectAll("ws closed（window 已销毁？）"));
+    cdp.ws.on("error", (e) => rejectAll(`ws error: ${e.message}`));
     return cdp;
   }
 
   send<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
     const id = this.seq++;
-    return new Promise<T>((res) => {
-      this.pending.set(id, (v) => res(v as T));
+    return new Promise<T>((res, rej) => {
+      // 连接不在 OPEN（窗口/页面已销毁）→ 立即失败，不进 pending（否则永远等不到回包）
+      if (this.ws.readyState !== WebSocket.OPEN) {
+        rej(new Error(`[ui-drive] CDP 连接未就绪（readyState=${this.ws.readyState}），method=${method}`));
+        return;
+      }
+      this.pending.set(id, { res: res as (v: unknown) => void, rej });
       this.ws.send(JSON.stringify({ id, method, params }));
     });
   }
 
-  /** 在 renderer 里求值（拿 DOM 尺寸、读状态用） */
-  async eval<T>(expression: string): Promise<T> {
-    const r = await this.send<{ result?: { value?: T } }>("Runtime.evaluate", {
-      expression,
-      returnByValue: true,
-      awaitPromise: true,
-    });
-    return r.result?.value as T;
+  /** 在 renderer 里求值（拿 DOM 尺寸、读状态用）。默认 5s 超时：死 target 不该吃掉整个用例预算 */
+  async eval<T>(expression: string, timeoutMs = 5000): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const r = await Promise.race([
+        this.send<{ result?: { value?: T } }>("Runtime.evaluate", {
+          expression,
+          returnByValue: true,
+          awaitPromise: true,
+        }),
+        new Promise<never>((_, rej) => {
+          timer = setTimeout(() => rej(new Error(`[ui-drive] eval 超时 ${timeoutMs}ms（target 可能已销毁）`)), timeoutMs);
+        }),
+      ]);
+      return r.result?.value as T;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   close(): void {

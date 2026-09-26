@@ -6,6 +6,12 @@ import { spawn, type ChildProcess } from "node:child_process";
 import electronPath from "electron";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  SINGLETON_LOCK,
+  classifyLock,
+  lockAdvice,
+  readLock,
+} from "../src/main/core/single-instance";
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, appendFileSync, type Dirent } from "node:fs";
 // 注：Chromium 开关（disable-features=RustPng / use-gl=angle）由 src/main/index.ts 经
 // app.commandLine.appendSwitch 生效，此处不再拼 argv（Chromium 不吃 app argv）。
@@ -241,6 +247,27 @@ function announceCdpEndpoint(timeoutMs = 20000): void {
   void poll();
 }
 
+// ── 单实例锁预检 ──
+// 为什么：关窗后实例**仍常驻持锁**（见 src/main/index.ts 的 window-all-closed）。
+// dev 是直接 spawn electron、不 probe app.port，撞锁的新进程会
+//   打印 `SingleInstanceLock: failed` 后 exit 0 → dev 收尾成
+//   `electron exited, shutting down...`，不说明原因（实测 dev.jsonl：spawn 紧跟 exit code:0）。
+// 所以 spawn 前读一次锁，把「谁占着 / 怎么办」打印出来；spawn 后 close 也再诊断一次
+// （锁可能在 watch 热重启的间隙被别的实例抢走）。
+function singletonLockPath(): string {
+  return join(process.env["DIY_HOME"]!, "electron_user_data", SINGLETON_LOCK);
+}
+
+function checkSingletonLock(phase: "spawn" | "exit"): void {
+  const lockPath = singletonLockPath();
+  const info = readLock(lockPath);
+  const situation = classifyLock(info);
+  devLog("singleton-lock", { phase, situation: situation.kind, lockPath, raw: info.raw, holderPid: info.holderPid });
+  if (situation.kind === "free") return; // 没锁问题，正常路径
+  // held/stale/... 都是「spawn 大概率会被拒/已」——给下一步，而不是静默 exit 0
+  console.error(`[dev] ⚠️ ${lockAdvice(situation, lockPath)}`);
+}
+
 function startElectron(url: string) {
   if (electronProc) {
     console.log("[dev] restarting electron...");
@@ -254,6 +281,7 @@ function startElectron(url: string) {
   // （后台任务/管道对端退出），写满管道缓冲会反向阻塞 Electron 主进程事件循环。
   const cdpArgs = ["--remote-debugging-port=0"];
   clearDevToolsActivePort();
+  checkSingletonLock("spawn"); // spawn 前：已知撞锁就把「谁占着/怎么办」说出来，别等 exit 0 再猜
 
   // Chromium 开关由 src/main/index.ts 经 app.commandLine.appendSwitch 生效，此处不传 argv。
   const proc = spawn(String(electronPath), ["out/main/index.mjs", url, ...electronArgs, ...cdpArgs], {
@@ -279,6 +307,7 @@ function startElectron(url: string) {
     electronProc = null;
     devLog("electron-exit", { pid: proc.pid, code, signal });
     console.log("[dev] electron exited, shutting down...");
+    checkSingletonLock("exit"); // exit 后再看一眼锁：多半是被锁拒秒退（否则这行日志查不到原因）
     cleanup();
   });
 
