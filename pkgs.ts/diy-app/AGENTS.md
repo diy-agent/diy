@@ -117,10 +117,12 @@ renderer_solid/ 有独立 tsconfig（strict + jsxImportSource: solid-js），tsc
 | step 的落地 | `runTurn` 的 `prepareStep` 注入（`stepNumber > 0` 才注入：第一个请求是本轮本身，"下一步"不含它）+ **段末续段**（模型直接给最终答复时把 step 插话递出，否则它永远等不到下一步） |
 | turn 的落地 | `chat()` 的轮次循环：轮末若队列非空则自动开下一轮；`turn` 优先于 `step`（step 走到轮末说明该轮已收尾，降级为下一轮） |
 | 队列存储 | `.diy/drafts.yaml` 的 `steers`（FIFO，整表替换）；取出即落盘（投递的一次性），失败**抛错**不静默 |
+| ops 格式影响 | 只给 user 的 `text` 块加 `meta.steer`（块类型表里声明为 Flag）—— **没有新 op 动词、没有新块 kind、没有版本字段**，新旧日志双向兼容（契约锁定在 `tests/core/local-blocks-steer-compat.test.ts`） |
 | ops 记录 | 插话写成 `text` 块 + `meta.steer = step\|turn`（`parent = turn`，文档序落在"第 N 步之后"）→ 重放/续聊都看得出谁插的话 |
 | 上限 | `MAX_STEER_ROUNDS`（一次 chat 最多自动续 8 轮）：先判上限**再取项**，剩余插话留在盘上（横条继续显示）并写显式 error 块 —— 取出来再丢就是真丢用户的话 |
 | UI | 生成中**输入框不再锁死**；「停止」外观/位置/行为不变，仅在**输入框有内容**时多出「插到下一步 / 插到下一轮」（回车 = step）；提交的插话在输入区上方一行横条（模式徽标 + ✕ 取消），全屏编辑时横条挪进 fixed 区域 |
 | 测试接缝 | `DIY_ZEN_BASE_URL`（指向桩上游，把"生成中"变成可保持的状态）；`LocalAgentManager(modelResolver)` 注入 `ai/test` 的 `MockLanguageModelV3`，断言口径是**上游实际收到的 messages** |
+| 真发用例用什么模型 | **`mimo-v2.6-flash`**（最便宜的带工具模型，价格表见仓库根 AGENTS.md「本地 agent 测试用什么模型」）。默认模型 `gpt-5.6-luna` 只在测它特有行为时用 |
 | 意图测试 | `tests/cli.intent.steer-ui.test.ts`（真实 UI + 桩上游）、`tests/cli.intent.agent-local.test.ts`（CLI/契约）、`tests/core/local-agent-steer.test.ts`（步/轮边界）、`tests/core/steer-queue.test.ts`、`tests/core/drafts.test.ts` |
 
 ### 任务目录所有权分层（`.diy/`）

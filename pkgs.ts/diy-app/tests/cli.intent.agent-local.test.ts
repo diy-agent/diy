@@ -12,6 +12,12 @@
 //   · 依赖外部模型 → 放默认套件里必然非确定（实测：模型偶尔不回 text delta，断言假红）
 //   · 一次全量会打真实请求、耗时 2~3 分钟
 // 联调：DIY_LLM_E2E=1 npx vitest run tests/cli.intent.agent-local.test.ts
+//
+// 真发用例**指定 `mimo-v2.6-flash`**（全表最便宜的带工具能力模型，见仓库根 AGENTS.md
+// 「本地 agent 测试用什么模型」）：这些用例只验协议链路，与模型强弱无关，
+// 用默认的 gpt-5.6-luna（output 0.28 → 1.20 $/1M，贵 4 倍）纯属浪费。
+// exceptions：responses 面那条**必须**用 gpt-5.6-luna —— 它测的就是"responses-only
+// 模型不能打到 chat 面"，换模型就测不到那个 api 面。
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
@@ -209,7 +215,7 @@ describe("agent.local — 真实对话（zen/go 缺省模型 gpt-5.6-luna）", (
         async () => {
             const uri = await setup("纯文本任务");
             const r = await fx.sh.run(
-                `./diy.sh agent local chat ${uri} "只用两个字回答：你好"`,
+                `./diy.sh agent local chat ${uri} "只用两个字回答：你好" --model mimo-v2.6-flash`,
                 180_000,
             );
             if (r.code !== 0) throw new Error(`cli exit=${r.code}\n${r.stderr}`);
@@ -283,7 +289,7 @@ describe("agent.local — 真实对话（zen/go 缺省模型 gpt-5.6-luna）", (
         async () => {
             const uri = await setup("工具任务");
             const r = await fx.sh.run(
-                `./diy.sh agent local chat ${uri} "用 bash 执行 echo hello-local，然后用一句话告诉我输出"`,
+                `./diy.sh agent local chat ${uri} "用 bash 执行 echo hello-local，然后用一句话告诉我输出" --model mimo-v2.6-flash`,
                 240_000,
             );
             if (r.code !== 0) throw new Error(`cli exit=${r.code}\n${r.stderr}`);

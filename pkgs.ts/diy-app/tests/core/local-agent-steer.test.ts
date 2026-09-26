@@ -232,10 +232,15 @@ describe("插话 turn 模式：本轮结束后自动开下一轮", () => {
 
     const ops = await run(uri, "开始", model);
 
-    // 上限生效：请求次数 = 1 首轮 + (上限-1) 个插话轮
+    // 算术（10 条入队，上限 8）：
+    //   第 1 次请求 = 用户自己的消息（不消耗队列）
+    //   第 2..8 次   = 7 条插话各自开一轮（每轮末尾取一条）
+    //   → 共 8 次请求 = MAX_STEER_ROUNDS；第 8 轮末尾判到上限，**不取项**直接收尾
+    //   → 队列剩 10 - 7 = 3 条
+    // 关键：上限分支只读队列不取项。取项 = 取出即落盘删除（投递的唯一入口），
+    // 取出来再丢弃就是真丢用户的话。
     expect(model.doStreamCalls).toHaveLength(MAX_STEER_ROUNDS);
-    // 剩下的仍在队列（界面横条照旧显示待发送，用户可取消）
-    expect(new SteerQueue().list(uri)).toHaveLength(3);
+    expect(new SteerQueue().list(uri).map((i) => i.text)).toEqual(["第7条", "第8条", "第9条"]);
     const err = ops.find((o) => o.op === "start" && o.kind === "error" && (o as { meta?: { source?: string } }).meta?.source === "steer");
     expect(err).toBeTruthy();
   });
