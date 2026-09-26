@@ -561,7 +561,7 @@ export function TaskInfoView(props: { task: TaskDetail }) {
                         <For each={personaStore.personas}>
                             {(p) => (
                                 <option value={p.id} title={`${p.name}（${p.id}）`}>
-                                    {p.name} · {personaStore.modelLabel(p.model)}
+                                    {p.name} · {p.model}
                                 </option>
                             )}
                         </For>

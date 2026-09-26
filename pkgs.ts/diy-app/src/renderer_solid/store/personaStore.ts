@@ -46,7 +46,8 @@ async function load(force = false): Promise<void> {
             console.warn("[persona] 人物清单加载失败（下次进入重试）:", e);
         }
         try {
-            setModels(await diyService.diy.agent.local.models({}));
+            const ms = await diyService.diy.agent.local.models({});
+            setModels(ms);
         } catch (e) {
             console.warn("[persona] 模型清单加载失败（下次进入重试）:", e);
         }
@@ -160,24 +161,34 @@ export const personaStore = {
     },
 
     /**
-     * 取人物，**找不到就补拉一次清单**（每 id 只补一次）。
+     * 取"这条消息实际会由谁回答"的人物 —— 面板/署名行都走它。
      *
-     * 为什么需要：清单是缓存，而人物可以被 CLI/另一个窗口改动（新建、改名）。缓存里没有的 id
-     * 不该直接显示成"Agent/加载中"——那是把"缓存陈旧"伪装成"功能坏了"。补拉一次即可自愈。
+     * 解析顺序刻意与 main 的 `personaForTask` 对齐（界面必须显示**真正会发生的事**）：
+     *   ① 按 id 命中 → 就用它（正常情况）
+     *   ② 按**名字**命中 → 旧数据把名字当引用（迁移前/手改）；main 侧按 id 找不到会回落缺省，
+     *      但界面能按名字认出人来更准确
+     *   ③ 都没有 → **缺省人物**（main 侧正是这么回落的，只是会出声告警）
+     *
+     * 为什么不能返回 null 了事：null 会让界面显示"选择人物/Agent"，
+     * 而实际上 main 照常解析出一个人物并回答问题 —— 这就是"界面说没准备好、功能却是好的"，
+     * 比不显示更糟（用户会以为配置丢了）。显示回落结果才是诚实的。
+     *
+     * 顺带自愈：清单是缓存，人物可被 CLI/另一窗口改动；找不到时补拉一次（每 key 只补一次，防循环）。
      */
-    defOfLive(id: string): PersonaView | null {
-        const hit = personas().find((p) => p.id === id);
+    defOfLive(key: string): PersonaView | null {
+        const list = personas();
+        const hit = list.find((p) => p.id === key) ?? list.find((p) => p.name === key);
         if (hit) return hit;
-        if (id && !refetchTried.has(id) && !loading) {
-            refetchTried.add(id);
+        if (key && !refetchTried.has(key) && !loading) {
+            refetchTried.add(key);
             void load(true);
         }
-        return null;
+        // 回落缺省（与 main 的 personaForTask 同一语义）：能显示就显示，不装作"没有"
+        return list.find((p) => p.id === defaultPersona()) ?? list[0] ?? null;
     },
-    /** 模型 id → 人读名（清单未加载时退回 id 本身） */
-    modelLabel(id: string): string {
-        return models().find((m) => m.id === id)?.name ?? id;
-    },
+    // 不提供"模型 id → 显示名"的映射：上游的显示名与 id 经常对不上（同一 id 在不同批次
+    // 叫法不同、或清单里的 name 是历史遗留），于是"界面显示 X、实际发的是 Y"。
+    // 模型一律**直接用 id** 展示 —— 它才是发给上游的那个值，也是配置里存的那个值。
     /** 某模型支持的思考级别（下拉候选；模型未知时给空数组，界面自己兜底显示） */
     reasoningChoices(model: string): ReasoningEffort[] {
         return models().find((m) => m.id === model)?.reasoning.supported ?? [];

@@ -93,7 +93,14 @@ for (const { key, def } of old.entries) {
         style: String(def.style ?? ""),
     };
 }
-const defaultId = keyToId.get(old.default) ?? Object.keys(personas)[0]!;
+// 名字 → id 的映射（含**已迁移**人物的 name）：用于"人物表已是新结构、任务还存名字"的半迁移状态。
+// 只看 key 会漏掉这种状态（key 已是 p1，任务里的"大副"就找不到对应）—— 实测踩到过。
+const nameToId = new Map<string, string>();
+for (const [id, def] of Object.entries(personas)) nameToId.set(def.name, id);
+/** 任务里的引用值 → id：先按 key（旧结构），再按名字（半迁移/手写名字） */
+const resolveRef = (value: string): string | undefined => keyToId.get(value) ?? nameToId.get(value);
+
+const defaultId = keyToId.get(old.default) ?? nameToId.get(old.default) ?? Object.keys(personas)[0]!;
 const newFile = yaml.dump(
     { default: defaultId, personas },
     { indent: 2, noRefs: true, lineWidth: -1 },
@@ -116,7 +123,7 @@ for (const file of files) {
     if (!m) continue; // 无该字段：由读侧回落（不在这里补，那是另一个迁移的事）
     const value = m[1]!.trim().replace(/^['"]|['"]$/g, "");
     if (/^p\d+$/.test(value)) continue; // 已是 id
-    const id = keyToId.get(value);
+    const id = resolveRef(value);
     if (!id) {
         skipped.push(`${file}：persona=${value} 不在人物表里（保持原样，读侧会回落并出声）`);
         continue;

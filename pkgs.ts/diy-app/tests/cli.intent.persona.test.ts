@@ -303,7 +303,8 @@ describe("UI：会话页看得见当前人物", () => {
         // 这里会退回显示缺省人物 —— 那正是"界面说的模型和实际用的不是一回事"）
         expect(text).toContain(名);
         // 人读模型名（不是 id）：人物决定模型，界面上要看得见是哪个
-        expect(text).toContain("MiMo V2.6 Flash");
+        // 显示的是**模型 id**（发给上游的那个值），不是上游的显示名 —— 两者经常对不上
+        expect(text).toContain("mimo-v2.6-flash");
     });
 });
 
@@ -398,7 +399,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         const pressed = await ui!.eval<string[]>(
             `Array.from(document.querySelectorAll('${sel(uri)} button[aria-pressed="true"]')).map(b => b.getAttribute('aria-label'))`,
         );
-        expect(pressed).toContain("MiMo V2.6 Flash");
+        expect(pressed).toContain("mimo-v2.6-flash");
     });
 
     it("点平铺按钮改模型 → 落盘 personas.yaml（改完即存）", async () => {
@@ -408,8 +409,8 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
         await openPanel(uri);
 
-        // 真实点击「GPT 6 Luna」按钮（不是派发合成 change —— 这里就是按钮，点得动）
-        await clickIn(`${sel(uri)} button[aria-label="GPT 6 Luna"]`);
+        // 真实点击模型按钮（按钮显示 id；不是派发合成 change —— 这里就是按钮，点得动）
+        await clickIn(`${sel(uri)} button[aria-label="gpt-6-luna"]`);
         const changed = await waitUntil(
             async () => (await personaList()).personas.find((p) => p.id === id)?.model,
             (m) => m === "gpt-6-luna",
@@ -432,7 +433,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
                 `Array.from(document.querySelectorAll('${sel(uri)} button[aria-pressed]')).map(b => b.getAttribute('aria-label'))`,
             );
         expect(await levelsOf()).not.toContain("超高"); // mimo 没有 xhigh
-        await clickIn(`${sel(uri)} button[aria-label="GPT 6 Luna"]`);
+        await clickIn(`${sel(uri)} button[aria-label="gpt-6-luna"]`);
         await waitUntil(async () => (await levelsOf()).includes("超高"), (v) => v === true, { label: "档位集跟着换" });
     });
 
@@ -454,6 +455,29 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
             (n) => n === 后,
             { label: "名字已存" },
         );
+    });
+
+    it("任务里存的是**旧名字**时，界面显示 main 实际会用的人物（而不是「选择人物」）", async () => {
+        // 半迁移状态：personas.yaml 已是新结构（p1），而任务还存着名字「大副」。
+        // main 侧按 id 找不到 → 回落缺省（能正常回答），所以界面必须显示**那个回落结果**；
+        // 若显示"选择人物/Agent"，就把"配置在、功能好"伪装成"配置丢了" —— 实测就是这个坑。
+        const uri = await setupTask("旧名字引用任务");
+        // 直接改文件模拟旧数据（RPC 侧只接受有效 id，写不进去）
+        const fp = join(fx.HOME, uri, "AGENTS.md");
+        writeFileSync(fp, readFileSync(fp, "utf-8").replace(/^persona: .+$/m, "persona: 大副"), "utf-8");
+
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        const text = await waitUntil(
+            async () => ui!.eval<string | null>(`document.querySelector('[aria-label="打开 agent 人物面板"]')?.textContent ?? null`),
+            (t) => !!t && !t.includes("选择人物") && !t.includes("加载中"),
+            { label: "人物按钮显示回落结果" },
+        );
+        // 按钮显示的是**按名字认出的那个人物**（比回落缺省更准），且模型用它的真实 id
+        // （不写死具体值：隔离数据根用的是内置人物，模型随内置默认走）
+        const pl = await personaList();
+        const byName = pl.personas.find((p) => p.name === "大副")!;
+        expect(text).toContain(byName.name);
+        expect(text).toContain(byName.model); // 模型按 id 显示（上游名字与 id 经常对不上）
     });
 
     it("每条 assistant 回复上方显示人物头像与名字（回复人可见）", async () => {
@@ -487,7 +511,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
             { label: "出现回复人署名" },
         );
         expect(byline).toContain(名);
-        expect(byline).toContain("MiMo V2.6 Flash");
+        expect(byline).toContain("mimo-v2.6-flash");
     });
 
     it("「用于本任务」= 换绑本任务（只改引用，不改任何人物配置）", async () => {

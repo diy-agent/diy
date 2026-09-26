@@ -343,7 +343,7 @@ function AssistantByline() {
             <span class="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-[12px]" aria-hidden="true">🤖</span>
             <span class="font-medium">{persona()?.name ?? "Agent"}</span>
             <span class="opacity-50">·</span>
-            <span class="opacity-60">{persona() ? personaStore.modelLabel(persona()!.model) : ""}</span>
+            <span class="opacity-60">{persona()?.model ?? ""}</span>
         </div>
     );
 }
@@ -901,7 +901,7 @@ export function LocalChatPage(props: { uri?: string }) {
                             <span class="truncate">
                                 {personaDef()?.name ?? "选择人物"}
                                 <span class="opacity-60">
-                                    （{personaDef() ? `${personaStore.modelLabel(personaDef()!.model)} · ${reasoningEffortLabel(personaDef()!.reasoningEffort as ReasoningEffort)}` : "加载中…"}）
+                                    （{personaDef() ? `${personaDef()!.model} · ${reasoningEffortLabel(personaDef()!.reasoningEffort as ReasoningEffort)}` : "加载中…"}）
                                 </span>
                             </span>
                             <span class="opacity-50">⚙</span>

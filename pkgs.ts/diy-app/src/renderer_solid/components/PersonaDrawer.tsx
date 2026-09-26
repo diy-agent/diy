@@ -192,7 +192,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                                 </Show>
                                             </span>
                                             <span class="w-full truncate text-[10px] opacity-60">
-                                                {personaStore.modelLabel(p.model)} · {reasoningEffortLabel(p.reasoningEffort)}
+                                                {p.model} · {reasoningEffortLabel(p.reasoningEffort)}
                                             </span>
                                             {/* 引用面：改人物前先看见会影响谁 */}
                                             <span class="text-[10px] opacity-40">
@@ -259,8 +259,9 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                         <For each={personaStore.models}>
                                             {(m) => (
                                                 <ChoiceButton
-                                                    label={m.name}
-                                                    hint={m.id}
+                                                    // 显示 **id**：那才是发给上游、也是存在配置里的值。
+                                                    // 上游的 name 与 id 经常对不上（"看着 GPT 5.6、实际发 mimo"）
+                                                    label={m.id}
                                                     active={current()?.model === m.id}
                                                     disabled={busy() || creating()}
                                                     onClick={() => void save({ model: m.id })}
