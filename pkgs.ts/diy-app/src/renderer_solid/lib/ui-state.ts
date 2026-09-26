@@ -98,6 +98,14 @@ function field<T>(key: string, spec: CacheFieldSpec<T>): CacheField<T> {
 
 // ─── 字段池（属性名 = key 完全一致，单一事实来源） ─────────
 
+/** 侧栏（左侧导航）展开宽度边界（px）。
+ *  拖拽 clamp 与下面 cache 字段的 parse 必须是**同一对值**：一边宽一边窄就会出现
+ *  「存得进、读不回」（拖到 700 → 重启后悄悄回到默认），所以导出共用。 */
+export const NAV_W_MIN = 160;
+export const NAV_W_MAX = 640;
+/** 侧栏默认宽度（px）= 14rem，与可调宽之前的固定宽度一致 */
+export const NAV_W_DEFAULT = 224;
+
 /** 视图 cache 字段池：Caches.<模块>_<组件>_<用途>.get()/.set()/.reset() */
 export const Caches = {
   /** 任务树：展开节点集 */
@@ -112,6 +120,22 @@ export const Caches = {
     },
     serialize: (v) => JSON.stringify(v),
     defaultValue: [] as string[],
+  }),
+  /** 任务树：排序（`<键>:<asc|desc>`）。
+   *  parse 只校验**形状**（键名 + 方向），不校验键是否是我们认识的排序键 ——
+   *  键清单属于 TaskTree 的业务知识（`src/shared/task-list.ts`），
+   *  这里替下游做判断会重现「parse 越权过滤元素」的旧坑（见 diy_tabs_opened 注释）。
+   *  不认识的键由 TaskTree 回落默认排序。 */
+  diy_task_tree_sort: field<string>("diy_task_tree_sort", {
+    parse: (raw) => (/^[a-z_]+:(asc|desc)$/.test(raw) ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "created:asc",
+  }),
+  /** 任务树：搜索关键词（视图 cache：丢了只是清掉搜索框，无数据损失） */
+  diy_task_tree_query: field<string>("diy_task_tree_query", {
+    parse: (raw) => (raw.length <= 200 ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "",
   }),
   /** 任务树：滚动容器 scrollTop（>=1 才恢复，0 表示未滚动过） */
   diy_task_tree_scroll: field("diy_task_tree_scroll", {
@@ -131,11 +155,25 @@ export const Caches = {
     serialize: (v) => String(v),
     defaultValue: 560,
   }),
-  /** 打开的 tab（**页面实例**数组，顺序即显示顺序；结构见 store/tabStore 的 TabItem）。
+  /** 侧栏（左侧导航）展开宽度（px）。拖动右缘调宽 / 双击手柄复位后落盘，重启恢复。
+   *  收起态 rail 宽度（2.5rem）不在这里 —— 那是固定几何，不是用户偏好。 */
+  diy_nav_width: field("diy_nav_width", {
+    parse: (raw) => {
+      const v = Number(raw);
+      return v >= NAV_W_MIN && v <= NAV_W_MAX ? v : null;
+    },
+    serialize: (v) => String(v),
+    defaultValue: NAV_W_DEFAULT,
+  }),
+  /** 打开的 tab。**只存真信息**：`{ pageId, ctx }[]`，顺序即显示顺序。
+   *
+   *  派生数据（key / parent / taskAncestors）**不落盘**，由 tabStore 从注册表与任务树
+   *  现算 —— 曾经它们被一起写进来，于是任务改父后导航结构永远显示旧快照（165）。
+   *  解析后的富视图见 store/tabStore 的 TabItem。
    *
    *  ⚠️ 这里只做「是数组吗」这一层判断，**不在这里过滤元素**：
-   *  元素级的清洗（结构不对的条目丢掉、旧格式纯 URI 字符串升级为 TabItem）在
-   *  tabStore.load() 里 —— 那里知道 TabItem 长什么样，本文件不知道。
+   *  元素级的清洗（结构不对的条目丢掉、旧格式纯 URI 字符串升级、派生字段丢弃）在
+   *  tabStore.load() 里 —— 那里知道条目长什么样，本文件不知道。
    *
    *  曾经这里写 `a.filter(x => typeof x === "string")`，而 tabStore 已升级为写对象，
    *  于是写进去的对象被读回时全被滤掉 → **重启后打开的 tab 清零**（真实故障）。

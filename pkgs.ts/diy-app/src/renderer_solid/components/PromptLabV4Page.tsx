@@ -18,6 +18,7 @@ import { projectFromUri } from "../../shared/task-uri";
 import { JsonTree } from "./JsonTree";
 import { MdEditor } from "./MdEditor";
 import { DynamicBar } from "./DynamicBar";
+import { VIEW_BAR_H } from "../lib/layout-metrics";
 import { EditorThemePicker } from "./EditorThemePicker";
 import { collectTags } from "../../shared/xml-tags";
 import { lineDiff, useHoverTip, type PromptEntry } from "./promptLabCommon";
@@ -1005,7 +1006,7 @@ export function PromptLabV4Page() {
     /** 请求预览的内容（树 / 原文切换）—— 作为右栏折叠块之一，不再自带标题栏 */
     const reqBodyPane = () => (
         <div class="flex min-h-0 flex-1 flex-col">
-<div class="flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs">
+<div class={`flex shrink-0 items-center gap-2 border-b px-3 ${VIEW_BAR_H} text-xs`}>
     <span class="opacity-60">{preview()?.requestNote ?? "随任务场景生成"}</span>
     <span class="ml-auto join join-horizontal">
         <button
@@ -1288,7 +1289,7 @@ export function PromptLabV4Page() {
         {(s) => (
             <>
                 {/* 标题栏：文件名 + dirty + 右侧动作图标 */}
-                <div class="flex items-center gap-1 border-b px-3 py-1.5 text-xs shrink-0">
+                <div class={`flex items-center gap-1 border-b px-3 ${VIEW_BAR_H} text-xs shrink-0`}>
                     <span class="font-mono font-semibold">
                         {s().relpath}
                         <Show when={dirtyOf(s())}>
@@ -1401,7 +1402,7 @@ export function PromptLabV4Page() {
 {/* 右：视图区 = 一个编辑器 view（与中间完全同构：标题栏 + 编辑器本体，只是只读）。
     结构化观察在左栏；请求体在「请求预览」tab */}
 <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-    <div class="flex items-center gap-1 border-b px-3 py-1.5 text-xs shrink-0">
+    <div class={`flex items-center gap-1 border-b px-3 ${VIEW_BAR_H} text-xs shrink-0`}>
         <span class="font-mono font-semibold">_system.md</span>
         <span class="opacity-50">（预览）</span>
         <span class="ml-auto font-mono text-[10px] opacity-60">
@@ -1476,7 +1477,7 @@ export function PromptLabV4Page() {
                 }
             >
                 {/* 顶：page 菜单条（任务即场景 + 刷新 + area 开合按钮） */}
-                <div class="flex items-center gap-2 border-b px-3 py-1.5 text-xs shrink-0">
+                <div class={`flex items-center gap-2 border-b px-3 ${VIEW_BAR_H} text-xs shrink-0`}>
                     <span class="badge badge-info badge-sm" title={taskUri()}>
                         📌 {taskUri()}
                     </span>

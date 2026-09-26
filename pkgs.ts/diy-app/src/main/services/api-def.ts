@@ -24,6 +24,7 @@ import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/cont
 
 // 任务状态枚举 — 单一真相源 task-state.ts（纯 zod，无 Node 依赖，浏览器安全） */
 import { TaskStateSchema } from "../core/task-state";
+import { ChangeTypeSchema, PrioritySchema } from "../core/task-fields";
 
 const StatusDataUri = z.object({ status: z.string(), data: z.object({ uri: z.string() }) });
 const StatusDataId = z.object({ status: z.string(), data: z.object({ id: z.string() }) });
@@ -33,26 +34,42 @@ const StatusOk = z.object({ status: z.string() });
 export interface TaskNodeShape {
   kind: "project" | "task";
   uri?: string;
+  /** 任务号 = uri 末段（项目内自增）。列表默认按它对同级排序，故必须在契约里 */
+  num?: string;
   title?: string;
   state?: string;
   project?: string;
+  /** 项目路径/显示名（main 的 task-tree 回填；运行时输出一直有，类型此前漏了） */
+  project_path?: string;
+  project_label?: string;
   parentUri?: string;
   body?: string;
   created?: string;
   updated?: string;
+  change_type?: string;
+  module?: string;
+  priority?: string;
   children: TaskNodeShape[];
 }
 const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
   z.object({
     kind: z.enum(["project", "task"]),
     uri: z.string().optional(),
+    num: z.string().optional(),
     title: z.string().optional(),
     state: TaskStateSchema.optional(),
     project: z.string().optional(),
+    project_path: z.string().optional(),
+    project_label: z.string().optional(),
     parentUri: z.string().optional(),
     body: z.string().optional(),
     created: z.string().optional(),
     updated: z.string().optional(),
+    // 刻意用 z.string() 而非 task-fields 的枚举：读侧一律宽容（历史手写值如 priority: high
+    // 不在词表内也要能显示出来），枚举校验只发生在写入侧（task.create / task.edit 的 input）。
+    change_type: z.string().optional(),
+    module: z.string().optional(),
+    priority: z.string().optional(),
     children: z.array(TaskNodeSchema),
   }),
 );
@@ -86,6 +103,9 @@ export const apiDef = RpcSchema.router({
               project: z.string().cliArg({ desc: "所属 project id" }),
               parent: z.string().optional().cliOption({ short: "p", desc: "父任务 URI" }),
               body: z.string().optional().cliOption({ desc: "任务内容" }),
+              change_type: ChangeTypeSchema.optional().cliOption({ desc: "变更性质（feat/fix/docs/…，见 conventional commits）" }),
+              module: z.string().optional().cliOption({ desc: "模块（可 `/` 分层，如 agent/ui）" }),
+              priority: PrioritySchema.optional().cliOption({ desc: "优先级 P0-P3（不传=未定级）" }),
             },
             output: StatusDataUri,
           }),
@@ -152,6 +172,9 @@ export const apiDef = RpcSchema.router({
               state: TaskStateSchema.optional().cliOption({ desc: "新状态" }),
               body: z.string().optional().cliOption({ desc: "新内容（至少 10 字符，拒绝空/过短以免误清空正文）" }),
               parent: z.string().optional().cliOption({ desc: "父任务 URI（空字符串=取消父子关系）" }),
+              change_type: z.string().optional().cliOption({ desc: "变更性质（feat/fix/…；空字符串=清除）" }),
+              module: z.string().optional().cliOption({ desc: "模块（空字符串=清除）" }),
+              priority: z.string().optional().cliOption({ desc: "优先级 P0-P3（空字符串=清除回未定级）" }),
             },
             output: StatusDataUri,
           }),
@@ -240,6 +263,12 @@ export const apiDef = RpcSchema.router({
         output: z.object({
           port: z.number(),
           diyHome: z.string(),
+          /** 数据根的展示形式（缩 `~`）。窗口标题与界面展示用 —— renderer 拿不到 homedir，
+           *  缩写规则只能由 main 侧算（见 shared/instance-title 的 abbrevHome）。 */
+          diyHomeDisplay: z.string(),
+          /** 运行环境（production/development/test）。dev/test 的界面与生产几乎一样，
+           *  必须能看出来，否则容易误改生产数据。 */
+          env: z.string(),
           cache: z.string(),
           userData: z.string(),
           electron: z.string(),
@@ -274,19 +303,33 @@ export const apiDef = RpcSchema.router({
 
       getTask: RpcSchema.unary({
         desc: `按 URI 获取任务（供 renderer 反向调用；未找到时 data 为 null）`,
-        input: { uri: z.string() },
+        // cliArg：不给它的话 `diy getTask <uri>` 完全没法从命令行调（"Unknown option"），
+        // 于是这条 RPC 的载荷**只能靠跑 Electron 才能验证** —— 契约漏字段的 bug 就更容易溜过。
+        input: { uri: z.string().cliArg({ desc: "任务 URI" }) },
         output: z.object({
           status: z.string(),
+          // ⚠️ 这份字段白名单是**第二处手抄**（第一处在 api-impl 的 handler 里）。
+          // 两处漏一处就静默丢字段：zod `.object()` 默认 strip 未声明的键，只补 handler
+          // 不补这里等于没补。实测漏过 change_type / module / priority —— renderer 拿到
+          // undefined，详情面板显示"—"，而数据其实好好的（写得到、读不回）。
+          // 改字段时**两处一起看**；根治办法是把载荷 schema 抽成单一真源（见任务 167 的方案）。
           // 未找到 → data: null，renderer 侧 `if (r.data)` 守卫才能生效
           data: z.object({
             uri: z.string(),
             title: z.string().optional(),
             state: TaskStateSchema.optional(),
             project: z.string().optional(),
+            // 项目路径/显示名（handler 回填：project 字段只存 id）
+            project_path: z.string().optional(),
+            project_label: z.string().optional(),
             parent: z.string().optional(),
             body: z.string().optional(),
             created: z.string().optional(),
             updated: z.string().optional(),
+            // 结构化字段：读侧宽容用 z.string()（历史手写值如 priority: high 也要能显示）
+            change_type: z.string().optional(),
+            module: z.string().optional(),
+            priority: z.string().optional(),
             // 未提交草稿：renderer 用它恢复编辑态与输入框（见 core/drafts.ts）
             ui_drafts: DraftsData.nullable().optional(),
           }).nullable(),
@@ -319,7 +362,8 @@ export const apiDef = RpcSchema.router({
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
                   message: z.string().cliArg({ desc: "用户消息" }),
-                  model: z.string().optional().cliOption({ desc: `模型（默认 mimo-v2.5，zen/go 子集见 agent local models）` }),
+                  model: z.string().optional().cliOption({ desc: `模型（默认 gpt-5.6-luna，zen/go 子集见 agent local models）` }),
+                  reasoningEffort: z.string().optional().cliOption({ desc: "推理强度（按模型能力）" }),
                 },
                 output: z.string(),
               }),
@@ -354,6 +398,10 @@ export const apiDef = RpcSchema.router({
                     api: z.enum(["chat", "responses"]),
                     contextLimit: z.number(),
                     maxOutputTokens: z.number(),
+                    reasoning: z.object({
+                      supported: z.array(z.string()),
+                      default: z.string(),
+                    }),
                   }),
                 ),
               }),
@@ -446,7 +494,7 @@ export const apiDef = RpcSchema.router({
             input: {
               project: z.string().cliArg({ desc: "project id" }),
               taskUri: z.string().optional().cliOption({ desc: "任务 URI（任务场景与工作目录从它推，并以其 project 为准）" }),
-              model: z.string().optional().cliOption({ desc: `模型 id（缺省 mimo-v2.5；应传会话实际选中的模型才算保真）` }),
+              model: z.string().optional().cliOption({ desc: `模型 id（缺省 gpt-5.6-luna；应传会话实际选中的模型才算保真）` }),
               // 无 CLI 注解：CLI 解析器忽略，RPC 照传（未存盘草稿渲染用）
               drafts: z.record(z.string(), z.string()).optional().describe("未存盘草稿 relpath→正文"),
             },
@@ -910,6 +958,9 @@ export const apiDef = RpcSchema.router({
                   uri: z.string().cliArg({ desc: "任务 URI" }),
                   title: z.string().optional().cliOption({ desc: "新标题" }),
                   body: z.string().optional().cliOption({ desc: "新内容" }),
+                  change_type: z.string().optional().cliOption({ desc: "变更性质（空字符串=清除）" }),
+                  module: z.string().optional().cliOption({ desc: "模块（空字符串=清除）" }),
+                  priority: z.string().optional().cliOption({ desc: "优先级（空字符串=清除）" }),
                 },
                 output: StatusDataUri,
               }),

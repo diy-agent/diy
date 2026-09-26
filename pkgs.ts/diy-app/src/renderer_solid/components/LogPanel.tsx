@@ -1,5 +1,6 @@
 import { createSignal, onMount, For, createMemo } from "solid-js";
 import { diyService } from "../lib/rpc";
+import { VIEW_BAR_H } from "../lib/layout-metrics";
 
 export interface LogEntry {
   timestamp?: string;
@@ -35,22 +36,22 @@ export function LogPanel() {
     );
     return (
         <div class="flex flex-col h-full">
-            <div class="flex items-center gap-2 px-3 py-2 border-b shrink-0">
+            <div class={`flex items-center gap-2 px-3 ${VIEW_BAR_H} border-b shrink-0`}>
                 <input
                     value={filter()}
                     onInput={(e) => setFilter(e.currentTarget.value)}
                     placeholder="搜索日志…"
-                    class="input input-bordered input-sm w-40"
+                    class="input input-bordered input-xs w-40"
                 />
                 <select
                     value={levelFilter() ?? ""}
                     onChange={(e) => setLevelFilter(e.currentTarget.value || null)}
-                    class="select select-bordered select-sm"
+                    class="select select-bordered select-xs"
                 >
                     <option value="">全部</option>
                     <For each={levels()}>{(lv) => <option value={lv}>{lv}</option>}</For>
                 </select>
-                <button class="btn btn-ghost btn-sm ml-auto" onClick={load}>
+                <button class="btn btn-ghost btn-xs ml-auto" onClick={load}>
                     刷新
                 </button>
                 <span class="text-xs opacity-60">{filtered().length} 条</span>

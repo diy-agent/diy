@@ -79,7 +79,7 @@ describe("agent.local — 控制面（无网络）", () => {
     it("models 列出 zen/go 子集", async () => {
         const r = await fx.sh.getJson(`./diy.sh agent local models`);
         const list = r.data as Array<{ id: string }>;
-        expect(list.some((m) => m.id === "mimo-v2.5")).toBe(true);
+        expect(list.some((m) => m.id === "mimo-v2.6-flash")).toBe(true);
     });
 
     it("history 空会话 = 空数组；cancel 无在途 = false", async () => {
@@ -100,7 +100,7 @@ describe("agent.local — 控制面（无网络）", () => {
     });
 });
 
-describe("agent.local — 真实对话（zen/go mimo-v2.5）", () => {
+describe("agent.local — 真实对话（zen/go 缺省模型 gpt-5.6-luna）", () => {
     it.skipIf(!RUN_LLM)(
         "纯文本轮：Op 流四动词齐全 + usage + 落盘重放一致",
         async () => {

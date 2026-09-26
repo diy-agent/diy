@@ -19,6 +19,7 @@ import { LocalChatPage } from "./LocalChatPage";
 import { taskStore } from "../store/taskStore";
 import { layoutStore } from "../store/layoutStore";
 import { getRendererActions } from "../lib/renderer-actions";
+import { VIEW_BAR_H } from "../lib/layout-metrics";
 
 const PAGE = findPage("task-run")!;
 
@@ -56,7 +57,7 @@ export function TaskRunPage(props: { uri: string }) {
         <div class="flex flex-col h-full overflow-hidden">
             {/* page 级菜单条：布局是页面级的事，切换入口放这里（不在任何 view 内部）。
                 与 VSCode 的布局切换同构：控制 viewarea 的开合，与 view 内容无关。 */}
-            <div class="flex items-center gap-2 border-b px-3 py-1.5 text-xs shrink-0">
+            <div class={`flex items-center gap-2 border-b px-3 ${VIEW_BAR_H} text-xs shrink-0`}>
                 <span class="font-mono opacity-60 truncate" title={props.uri}>
                     {props.uri}
                 </span>

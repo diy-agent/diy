@@ -23,6 +23,8 @@ import {
 import { findPage, groupViewsByArea, type Binding } from "../../shared/view-registry";
 import { ViewBoundary } from "./ViewBoundary";
 import { layoutStore } from "../store/layoutStore";
+import { VIEW_BAR_H } from "../lib/layout-metrics";
+import { IconExpand, IconCompress, IconCollapse } from "./icons";
 
 /** 拖线时两侧 track 的最小 px（防止把某块拖没，用户就再也抓不到线了） */
 const MIN_TRACK = 48;
@@ -100,33 +102,54 @@ export function ViewGrid(props: {
         window.addEventListener("mouseup", up);
     };
 
-    /** area 右上角的标准设施：最大化 / 最小化 */
-    const AreaChrome = (p: { areaId: string }) => (
-        <div class="absolute top-0 right-0 z-30 flex opacity-40 hover:opacity-100 transition-opacity">
-            <button
-                class="btn btn-ghost btn-xs px-1 min-h-0 h-5"
-                title={maximized() === p.areaId ? "还原" : "最大化"}
-                aria-label={maximized() === p.areaId ? "还原" : "最大化"}
-                onClick={(e) => {
-                    e.stopPropagation();
-                    layoutStore.toggleMaximized(props.pageId, p.areaId);
-                }}
+    /**
+     * area 右上角的标准设施：最大化 / 还原（swap 双向）+ 最小化。
+     *
+     * · 最大化是**真正的双态**（最大化 ⇄ 还原）→ 用 daisyUI `swap swap-rotate`：
+     *   两个图标叠放做旋转交替，点一下即动画切换，不需要重挂载。
+     * · 最小化是**单向动作**（收起后 chrome 随 area 一起消失，恢复入口在页面级
+     *   「区域开合」按钮里）→ 不做 swap，避免暗示"再点一次能还原"。
+     * · tooltip 用 daisyUI `tooltip` + `data-tip`（而非原生 title：title 有 OS 级延迟）。
+     *   方向取 `tooltip-bottom`：chrome 贴着 area 上沿，tooltip 落进 area 内部不会被
+     *   area 的 `overflow-hidden` 裁掉（tooltip-left/right 会顶到相邻 area 边界）。
+     */
+    const AreaChrome = (p: { areaId: string }) => {
+        const isMax = () => maximized() === p.areaId;
+        // 与 view 顶栏同高 + items-center：图标垂直居中，不再贴顶（原来只有 h-5 裸条）。
+        return (
+            <div
+                class={`absolute top-0 right-0 z-30 flex items-center ${VIEW_BAR_H} opacity-40 hover:opacity-100 transition-opacity`}
             >
-                {maximized() === p.areaId ? "🗗" : "⛶"}
-            </button>
-            <button
-                class="btn btn-ghost btn-xs px-1 min-h-0 h-5"
-                title="最小化（收起该区域）"
-                aria-label="最小化"
-                onClick={(e) => {
-                    e.stopPropagation();
-                    layoutStore.setAreaHidden(props.pageId, p.areaId, true);
-                }}
-            >
-                —
-            </button>
-        </div>
-    );
+                <label
+                    class="btn btn-ghost btn-xs px-1 min-h-0 swap swap-rotate tooltip tooltip-bottom"
+                    data-tip={isMax() ? "还原（退出最大化）" : "最大化（填满内容区）"}
+                    aria-label={isMax() ? "还原" : "最大化"}
+                >
+                    <input
+                        type="checkbox"
+                        checked={isMax()}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            layoutStore.toggleMaximized(props.pageId, p.areaId);
+                        }}
+                    />
+                    <IconExpand class="swap-off h-3.5 w-3.5" />
+                    <IconCompress class="swap-on h-3.5 w-3.5" />
+                </label>
+                <button
+                    class="btn btn-ghost btn-xs px-1 min-h-0 tooltip tooltip-bottom"
+                    data-tip="最小化（收起该区域）"
+                    aria-label="最小化"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        layoutStore.setAreaHidden(props.pageId, p.areaId, true);
+                    }}
+                >
+                    <IconCollapse class="h-3.5 w-3.5" />
+                </button>
+            </div>
+        );
+    };
 
     const renderArea = (areaId: string) => {
         const g = groups().find((x) => x.areaId === areaId);

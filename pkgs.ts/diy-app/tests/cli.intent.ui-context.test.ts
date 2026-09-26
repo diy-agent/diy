@@ -92,16 +92,27 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     expect(d.runtime.text).toContain("body:");
     expect(d.system.text).toContain('title: "上下文树任务"');
 
-    // 请求体：与真发同一条构造链。形态 = [system, ...历史, user(runtime), user(占位输入)]
+    // 请求体：与真发同一条构造链。形态 = [system 段, ...历史, user(runtime), user(占位输入)]
     // （真发同理：runtime 作为独立 user 消息插在**本轮输入之前**，见 runTurn 的 withRuntime）
+    //
+    // ⚠️ 形状随缺省模型的 **API 面** 变（缺省模型是 responses 面的 gpt-5.6-luna）：
+    //   chat 面      → messages[]，首项 role=system
+    //   responses 面 → input[]，首项 role=developer（system 装在首项）
+    // 断言两面都覆盖，别把测试绑死在 chat 面（main 的 template.test.ts 踩过同一个坑）。
     expect(d.request.body).toBeTruthy();
-    const msgs = d.request.body.messages as any[];
-    expect(msgs[0].role).toBe("system");
-    expect(String(msgs[0].content)).toContain("家目录规范");
-    const runtimeMsg = msgs[msgs.length - 2];
-    expect(runtimeMsg.role).toBe("user");
-    expect(String(runtimeMsg.content)).toContain("body:"); // runtime 份是倒数第二条 user
-    expect(msgs[msgs.length - 1].role).toBe("user"); // 末条是"下一轮真实输入"的占位
+    const items = (d.request.body.input ?? d.request.body.messages) as any[];
+    expect(items).toBeTruthy();
+    expect(["system", "developer"]).toContain(items[0].role);
+    expect(String(items[0].content)).toContain("家目录规范");
+    // 末两条 user：倒数第二条 = runtime 份，末条 = "下一轮真实输入"的占位
+    const lastUser = items[items.length - 1];
+    const runtimeUser = items[items.length - 2];
+    expect(lastUser.role).toBe("user");
+    expect(runtimeUser.role).toBe("user");
+    // responses 面里 user 的 content 是 [{type:"input_text",text}]，取文本要比出两种形状
+    const textOf = (m: any): string =>
+      typeof m.content === "string" ? m.content : (m.content ?? []).map((p: any) => p.text ?? "").join("");
+    expect(textOf(runtimeUser)).toContain("body:");
     expect(d.request.model).toBeTruthy();
 
     // 行号映射与文本同源（选中联动高亮靠它）
@@ -300,11 +311,15 @@ describe("上下文树：UI 上屏（两列 + 请求预览）", () => {
     );
     expect(yamlView).toContain("# 系统上下文（Context Tree）");
     expect(yamlView).toContain("# - 顶层键是变量命名空间（如 diy / project / task / cwd / chain / skills）");
-    expect(yamlView).toContain("messages");
+    // 顶层容器随 API 面变：chat 面 messages / responses 面 input（缺省模型是 responses）。
+    // ⚠️ 判据必须是**整行**：CM 编辑器的 a11y 树把 token 拆成独立节点（键与 `:` 各一行），
+    // 连写的 `messages:` 在 a11y 文本里根本不存在。
+    expect(/^(messages|input)$/m.test(yamlView)).toBe(true);
     expect(yamlView).toContain("model");
 
     // 切「原文」= 真发 JSON（wire 一字不改）：JSON 的顶层键进屏（tool_choice / stream 是 YAML 里
-    // 排在很后面的键，只有 JSON 折叠视图能一眼看到）；再切回 YAML 复原
+    // 排在很后面的键，只有 JSON 折叠视图能一眼看到）；再切回 YAML 复原。
+    // ⚠️ 键名随 API 面变（chat / responses 两套），下面两处断言都按两面写。
     const ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
       const r = await fx.sh.getJson("./diy.sh ui inspect");
       return (r.data as any)?.data?.tree as A11yNode | undefined;
@@ -314,7 +329,8 @@ describe("上下文树：UI 上屏（两列 + 请求预览）", () => {
       const jsonView = await waitUntil(a11yText, (s) => s.includes("tool_choice"), {
         label: "原文（真发 JSON）上屏",
       });
-      expect(jsonView).toContain("max_tokens");
+      // 输出上限键名同样随 API 面变：chat 面 max_tokens / responses 面 max_output_tokens
+      expect(["max_tokens", "max_output_tokens"].some((k) => jsonView.includes(k))).toBe(true);
       expect(jsonView).not.toContain("# - 顶层键是变量命名空间");
       await ui.clickSelector('button[title*="内嵌的 system/runtime"]');
       const back = await waitUntil(a11yText, (s) => s.includes("# - 顶层键是变量命名空间"), {

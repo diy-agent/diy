@@ -1,20 +1,18 @@
 import { createSignal } from "solid-js";
+import type { TaskNodeShape } from "../../main/services/api-def";
 import { diyService } from "../lib/rpc";
+import { editTask } from "../lib/task-edit";
 import { draftStore } from "./draftStore";
 
-export interface TreeNode {
-  kind: "project" | "task";
-  uri?: string;
-  /** 任务号（uri 末段，项目内自增；跨项目会重号）。由 main 的 task-tree 回填。 */
-  num?: string;
-  title?: string;
-  state?: string;
-  project?: string;
-  project_path?: string;
-  project_label?: string;
-  parentUri?: string;
-  children: TreeNode[];
-}
+/**
+ * 任务树节点 —— 直接取 **RPC 契约的形状**（api-def 的 TaskNodeShape），不在 renderer 复制一份。
+ *
+ * 教训（真实踩过）：这里曾经是手抄的一份 interface，main 给节点加 created/updated
+ * （表格要按时间排序要用）后它没跟上，编译期报「属性不存在」，一查才发现同一个概念定义了两遍。
+ * 用契约类型则不可能滞后：字段加了这里自动有，加了忘同步会直接编译失败。
+ * `import type` 编译期擦除，不会把 main 的依赖（zod schema 等）带进 renderer 包。
+ */
+export type TreeNode = TaskNodeShape;
 
 export interface TaskDetail {
   uri: string;
@@ -27,6 +25,11 @@ export interface TaskDetail {
   body?: string;
   created?: string;
   updated?: string;
+  // 结构化字段（task-list 任务在用：表格列 / 详情面板 / TaskSideView 的只读徽标）。
+  // 读侧宽容 —— 值不在词表内（手写的 priority: high）也照样显示。
+  change_type?: string;
+  module?: string;
+  priority?: string;
   /** 未提交草稿（main 的 getTask/task.show 随任务一起返回，见 core/drafts.ts） */
   ui_drafts?: { base_updated?: string; saved?: string; fields: Record<string, string> } | null;
 }
@@ -59,7 +62,7 @@ async function selectTask(uri: string | null) {
 }
 
 async function setState(uri: string, state: string) {
-  await diyService.diy.task.edit({ uri, state: state as any, title: undefined, body: undefined, parent: undefined });
+  await editTask(uri, { state: state as any });
   await loadTree();
 }
 

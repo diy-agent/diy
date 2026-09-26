@@ -4,6 +4,7 @@ import { getRendererActions, type LayoutChanges } from "./renderer-actions";
 import type { ToastType } from "../store/notificationStore";
 import { apiDef } from "../../main/services/api-def";
 import { diyService } from "./rpc";
+import { editTask } from "./task-edit";
 import { taskStore } from "../store/taskStore";
 import { tabStore } from "../store/tabStore";
 import { checkViewTarget } from "../../shared/view-registry";
@@ -181,11 +182,7 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
   // diy.ui.task.update — 编辑任务（标题 / 详情 / 正文），反向调 main + 刷新树 + toast
   binding.on(ui.task.update, async ({ input }) => {
     const { uri, ...changes } = input;
-    const filtered: Record<string, string> = {};
-    for (const [k, v] of Object.entries(changes)) {
-      if (v !== undefined) filtered[k] = v as string;
-    }
-    await diyService.diy.task.edit({ uri, title: filtered.title, state: filtered.state as any, body: filtered.body, parent: filtered.parent });
+    await editTask(uri, changes);
     await taskStore.loadTree();
     if (taskStore.selectedUri === uri) {
       await taskStore.selectTask(uri);
@@ -196,7 +193,7 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
 
   // diy.ui.task.setState — 在 tree 中直接修改任务状态
   binding.on(ui.task.setState, async ({ input }) => {
-    await diyService.diy.task.edit({ uri: input.uri, state: input.state, title: undefined, body: undefined, parent: undefined });
+    await editTask(input.uri, { state: input.state });
     await taskStore.loadTree();
     notificationStore.addToast("success", `状态已改为 ${input.state}`);
     return { status: "ok", data: { uri: input.uri } };

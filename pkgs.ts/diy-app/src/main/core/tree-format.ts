@@ -27,6 +27,12 @@ export interface TaskNode {
   body?: string;
   created?: string;
   updated?: string;
+  /** 变更性质（词表见 task-fields.ts）；缺省 = 未设置。读侧 string，写入侧才做枚举校验 */
+  change_type?: string;
+  /** 模块（`/` 分层自由字符串）；缺省 = 未设置 */
+  module?: string;
+  /** 优先级 P0-P3；缺省 = 未定级 */
+  priority?: string;
   children: TaskNode[];
 }
 
