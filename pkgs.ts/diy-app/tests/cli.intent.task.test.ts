@@ -295,8 +295,10 @@ describe("task drafts（未提交草稿）", () => {
     const pid = await freshProj("gt");
     const uri = `projects/${pid}/tasks/1`;
     await fx.sh.run(`./diy.sh task create 契约任务 ${pid}`);
-    await fx.sh.run(`./diy.sh agent persona set 契约人物 --model mimo-v2.6-flash`);
-    await fx.sh.run(`./diy.sh task edit ${uri} --persona 契约人物`);
+    // 人物引用存 **id**（名字只是标签，改名不该打断引用）：先建人物拿 id，再换绑
+    const pr = await fx.sh.getJson(`./diy.sh agent persona set --name 契约人物 --model mimo-v2.6-flash`);
+    const personaId = String((pr.data as any)?.id);
+    await fx.sh.run(`./diy.sh task edit ${uri} --persona ${personaId}`);
 
     const r = await fx.sh.getJson(`./diy.sh getTask ${uri}`);
     const d = (r.data as any)?.data;
@@ -304,7 +306,7 @@ describe("task drafts（未提交草稿）", () => {
     expect(d.uri).toBe(uri);
     expect(d.title).toBe("契约任务");
     expect(d.state).toBe("pending");
-    expect(d.persona).toBe("契约人物"); // 换绑后立即生效（下一轮用它的模型）
+    expect(d.persona).toBe(personaId); // 换绑后立即生效（下一轮用它的模型）
     expect(d.ui_drafts).toBeNull(); // 草稿字段也在契约里（无草稿 = null）
     await cleanupProj(pid);
   });

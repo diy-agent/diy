@@ -21,7 +21,7 @@ import {
 import type { TaskMeta } from "./state";
 import { projectExists } from "./project";
 // agent 人物：创建时物化缺省人物名，编辑时校验人物存在（人物定义见 core/persona.ts）
-import { defaultPersonaName, personaByName } from "./persona";
+import { defaultPersonaId, personaById } from "./persona";
 
 // ═══════════════════════════════════════
 // 字段验证 schema
@@ -72,7 +72,7 @@ export interface CreateTaskParams {
   body?: string;
   source_type?: string;
   source_uri?: string;
-  /** agent 人物名；不传 = 当前缺省人物（创建时物化，之后改缺省不影响已有任务） */
+  /** agent 人物 **id**；不传 = 当前缺省人物（创建时物化，之后改缺省不影响已有任务） */
   persona?: string;
   /** 变更性质（change_type），见 task-fields.ts */
   change_type?: string;
@@ -121,10 +121,11 @@ export function createTask(params: CreateTaskParams): string {
 
   // 校验父任务存在
   // agent 人物：显式指定则校验存在；不指定则物化当前缺省人物（not null —— 读侧不必再兜底）
-  const personaName = persona ?? defaultPersonaName(diyHome());
-  if (!personaByName(diyHome(), personaName)) {
+  // 存的是 **id**（引用键）：人物的显示名可以随时改，改名不该打断引用。
+  const personaId = persona ?? defaultPersonaId(diyHome());
+  if (!personaById(diyHome(), personaId)) {
     throw new ValidationError([
-      { field: "persona", code: "not_found", msg: `人物 ${personaName} 不存在（可用 diy agent persona list 查看）` },
+      { field: "persona", code: "not_found", msg: `人物 ${personaId} 不存在（可用 diy agent persona list 查看 id）` },
     ]);
   }
 
@@ -150,8 +151,8 @@ export function createTask(params: CreateTaskParams): string {
     updated: now,
     source_type,
     source_uri,
-    // 人物名必写（本任务由谁干活）——与上面的"缺省=不写键"相反：这是**绑定**不是偏好
-    persona: personaName,
+    // 人物 id 必写（本任务由谁干活）——与上面的"缺省=不写键"相反：这是**绑定**不是偏好
+    persona: personaId,
     // 结构化字段：未传则不写键（yaml.dump 跳过 undefined）——「缺省 = 未定级」靠的是
     // 字段不存在，而不是写一个空值，免得文件里堆一票 `priority: ''` 的噪音
     change_type,
@@ -177,7 +178,7 @@ export interface UpdateTaskChanges {
   state?: string;
   body?: string;
   parent?: string;
-  /** 人物名三态：不传=保持 / 必须是非空有效名（**不允许清除** —— 任务一定有人物，见 TaskMeta.persona） */
+  /** 人物 id：不传=保持 / 必须是非空有效 id（**不允许清除** —— 任务一定有人物，见 TaskMeta.persona） */
   persona?: string;
   /** 空字符串 = 清除该字段（与 parent 的三态一致：不传=保持 / ""=清除 / 值=设置） */
   change_type?: string;
@@ -201,7 +202,7 @@ const UpdateTaskSchema = z.object({
     }),
   parent: z.string().optional(),
   // 空串在这里**不是**"清除"语义（人物不可为空）：显式拒绝，避免调用方以为清掉了
-  persona: z.string().trim().min(1, "人物名不能为空（任务必须有一个人物）").optional(),
+  persona: z.string().trim().min(1, "人物不能为空（任务必须有一个人物）").optional(),
   // `.or(z.literal(""))`：空串是「清除」这一合法语义，要先过校验再在下面翻译成删键。
   // 若只写 .optional()，清除动作会被 schema 拦成 ValidationError。
   change_type: ChangeTypeSchema.or(z.literal("")).optional(),
@@ -291,13 +292,13 @@ export function updateTask(uri: string, changes: UpdateTaskChanges): void {
   setOrClear("created", existing.created);
   // 人物：只在显式指定时校验并改写（未指定 = 保持原绑定）
   if (changes.persona !== undefined) {
-    const nextPersona = parsed.data.persona!;
-    if (!personaByName(diyHome(), nextPersona)) {
+    const nextPersonaId = parsed.data.persona!;
+    if (!personaById(diyHome(), nextPersonaId)) {
       throw new ValidationError([
-        { field: "persona", code: "not_found", msg: `人物 ${nextPersona} 不存在（可用 diy agent persona list 查看）` },
+        { field: "persona", code: "not_found", msg: `人物 ${nextPersonaId} 不存在（可用 diy agent persona list 查看 id）` },
       ]);
     }
-    front["persona"] = nextPersona;
+    front["persona"] = nextPersonaId;
   }
   setOrClear("change_type", triState(changes.change_type, parsed.data.change_type, existing.change_type));
   setOrClear("module", triState(changes.module, parsed.data.module, existing.module));

@@ -63,16 +63,16 @@ async function load(force = false): Promise<void> {
  * 与「改人物定义」（CLI `diy agent persona set`）是两件事：这个方法影响**一个任务**，
  * 那个影响所有引用该人物的任务 —— 混在一起必然误操作，故界面上也分开（此处只换绑）。
  */
-async function setForTask(taskUri: string, name: string): Promise<boolean> {
+async function setForTask(taskUri: string, id: string): Promise<boolean> {
     try {
         // 只改 persona（未传的字段 = 保持原值，三态语义见 main/core/task.ts）；
         // 与「改人物定义」分离 —— 那条走 CLI `diy agent persona set`，影响所有引用者。
-        await editTask(taskUri, { persona: name });
+        await editTask(taskUri, { persona: id });
         // 只刷新当前选中任务的详情（不重拉整棵树：人物不影响树结构，且避免树刷新打断阅读位置）
         await taskStore.refreshSelected();
         return true;
     } catch (e) {
-        console.error(`[persona] 换绑失败 ${taskUri} → ${name}:`, e);
+        console.error(`[persona] 换绑失败 ${taskUri} → ${id}:`, e);
         notificationStore.addToast("error", `切换人物失败：${e instanceof Error ? e.message : String(e)}`);
         return false;
     }
@@ -83,32 +83,33 @@ async function setForTask(taskUri: string, name: string): Promise<boolean> {
  * 成功后 reload：引用计数与模型清单都可能变（新建后列表要出现它）。
  */
 async function save(
-    name: string,
-    patch: { model?: string; reasoningEffort?: string; style?: string; desc?: string },
-): Promise<boolean> {
+    patch: { id?: string; name?: string; model?: string; reasoningEffort?: string; style?: string },
+): Promise<string | null> {
     try {
-        await diyService.diy.agent.persona.set({
-            name,
+        // 不传 id = 新建（id 由 main 生成并返回）；传 id = 更新该人物
+        const r = await diyService.diy.agent.persona.set({
+            id: patch.id,
+            name: patch.name,
             model: patch.model,
             reasoningEffort: patch.reasoningEffort,
             style: patch.style,
-            desc: patch.desc,
         });
         await load(true);
-        return true;
+        return r.id;
     } catch (e) {
         // 失败必须发声（如未知模型/档位不支持）：静默会让用户以为改成功了
-        console.error(`[persona] 保存失败 ${name}:`, e);
+        console.error(`[persona] 保存失败 ${patch.id ?? "(新建)"}:`, e);
         notificationStore.addToast("error", `保存人物失败：${e instanceof Error ? e.message : String(e)}`);
-        return false;
+        return null;
     }
 }
 
 /** 设为缺省人物（只影响之后新建的任务） */
-async function setDefault(name: string): Promise<boolean> {
+async function setDefault(id: string): Promise<boolean> {
     try {
-        await diyService.diy.agent.persona.setDefault({ name });
+        await diyService.diy.agent.persona.setDefault({ id });
         await load(true);
+        const name = personas().find((p) => p.id === id)?.name ?? id;
         notificationStore.addToast("success", `缺省人物已改为「${name}」（只影响之后新建的任务）`);
         return true;
     } catch (e) {
@@ -119,13 +120,13 @@ async function setDefault(name: string): Promise<boolean> {
 }
 
 /** 把**当前选中的任务**换绑到该人物（面板里的「用于本任务」） */
-async function bindCurrentTask(name: string): Promise<boolean> {
+async function bindCurrentTask(id: string): Promise<boolean> {
     const uri = taskStore.selectedUri;
     if (!uri) {
         notificationStore.addToast("error", "没有选中的任务");
         return false;
     }
-    return setForTask(uri, name);
+    return setForTask(uri, id);
 }
 
 export const personaStore = {
@@ -142,13 +143,13 @@ export const personaStore = {
     get loading() {
         return busy();
     },
-    /** 当前任务的生效人物名：任务绑定优先，未加载完时先用缺省人物（避免显示空白） */
-    nameForTask(): string {
+    /** 当前任务绑定的**人物 id**：任务绑定优先，未加载完时先用缺省人物（避免显示空白） */
+    idForTask(): string {
         return taskStore.selectedTask?.persona || defaultPersona();
     },
-    /** 按名字取人物（含引用计数；未加载/不存在时 null，调用方自己决定怎么显示） */
-    defOf(name: string): PersonaView | null {
-        return personas().find((p) => p.name === name) ?? null;
+    /** 按 id 取人物（含引用计数；未加载/不存在时 null，调用方自己决定怎么显示） */
+    defOf(id: string): PersonaView | null {
+        return personas().find((p) => p.id === id) ?? null;
     },
     /** 模型 id → 人读名（清单未加载时退回 id 本身） */
     modelLabel(id: string): string {

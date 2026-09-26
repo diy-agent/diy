@@ -34,6 +34,8 @@ export class Session {
   private proc: ChildProcess;
   private outBuf = "";
   private errBuf = "";
+  /** 哨兵序号（每条命令一个，避免与命令输出/上一条哨兵混淆） */
+  private seq = 0;
   private closed = false;
   private ready: Promise<void>;
 
@@ -53,8 +55,8 @@ export class Session {
     // 设 PS1 marker（$? 捕获退出码），readonly 防覆盖
     this._write(`PS1='${markerPrefix}($?)__ '`);
     this._write("readonly PS1");
-    // 吞掉 bash 启动输出 + 首次 PS1
-    this.ready = this._read(5000).then(() => {});
+    // 吞掉 bash 启动输出 + 首次 PS1（无命令要跑，不需要 stdout 哨兵 → 传空串）
+    this.ready = this._read("", 5000).then(() => {});
   }
 
   private _write(cmd: string): void {
@@ -63,31 +65,27 @@ export class Session {
   }
 
   /**
-   * 读输出直到 marker 出现**且 stdout 静默**，或超时。resolve [是否找到 marker, 退出码]。
+   * 读输出直到 **marker 出现且 stdout 哨兵到达**，或超时。resolve [是否找到 marker, 退出码]。
    *
-   * 为什么必须等 stdout 静默（不只是等 marker）：marker 走 stderr（PS1），stdout 是**另一个管道**。
-   * 两者到达顺序不保证 —— stdout 数据量大/命令慢时，marker 可能先到，此时 outBuf 还是空的或半截：
-   *   · 空 → runJson 判定"空响应"并重试，重试的那次读到的其实是**上一次的**输出 → 之后每条命令都错位
-   *     （实测症状：`persona set` 之后 `persona list` 拿到 set 的裸对象 → `r.data` undefined）。
-   *   · 半截 → JSON.parse 失败（报"输出非 JSON"）。
-   * 等 40ms 无新字节再收工，代价是每条命令 ~40ms，换来输出边界确定。
+   * 为什么必须等 stdout 哨兵（不只是等 marker）：marker 走 stderr（PS1），stdout 是**另一个管道**，
+   * 两者的到达顺序**不保证**。只等 marker 时，stdout 可能还没到齐：
+   *   · 空 → runJson 判定"空响应"并重试，重试读到的是**上一次的**输出 → 之后每条命令都错位
+   *     （实测：`ui tree` 拿到上一条 `project create` 的 `{id}` → `data` 不是数组 → "not iterable"）
+   *   · 半截 → JSON.parse 失败（"输出非 JSON"）
+   * 做法（`run()` 在命令后追加 `printf` 哨兵，见那里）：**同一个管道的字节是有序的** ——
+   * 看到哨兵就证明它之前的 stdout 全部到齐。这比"等 40ms 没新字节"更硬：后者在负载下会误判
+   * （实测全量跑时仍偶发错位）。
    */
-  private _read(timeoutMs: number): Promise<{ found: boolean; code: number }> {
+  private _read(sentinel: string, timeoutMs: number): Promise<{ found: boolean; code: number }> {
     const start = Date.now();
-    const QUIET_MS = 40;
-    let lastLen = -1;
-    let lastChangeAt = Date.now();
+    const rcRe = sentinel ? new RegExp(`${sentinel}:(\\d+)`) : null;
     return new Promise((resolve) => {
       const check = () => {
-        const len = this.outBuf.length;
-        if (len !== lastLen) {
-          lastLen = len;
-          lastChangeAt = Date.now();
-        }
         const m = markerRe.exec(this.errBuf);
-        const quiet = Date.now() - lastChangeAt >= QUIET_MS;
-        if (m && quiet) {
-          resolve({ found: true, code: parseInt(m[1], 10) });
+        // 空哨兵（构造器）只等 prompt；否则等哨兵里的**原命令退出码**
+        const rc = rcRe ? rcRe.exec(this.outBuf) : ([] as unknown as RegExpExecArray | null);
+        if (m && (rcRe === null || rc)) {
+          resolve({ found: true, code: rc ? parseInt(rc[1]!, 10) : parseInt(m[1], 10) });
           return;
         }
         if (Date.now() - start > timeoutMs) {
@@ -105,16 +103,27 @@ export class Session {
     await this.ready;
     this.outBuf = "";
     this.errBuf = "";
-    // 包一层：命令 → 记录退出码 → 往 stdout 打收尾标记 → 让 `$?` 仍是命令的退出码（PS1 读到的）
+    // 命令 → 打 stdout 哨兵（证明前面输出到齐，且**带着原命令的退出码**）。
+    //
+    // 退出码为什么放在哨兵里而不是只靠 PS1 的 `$?`：PS1 是**这条 printf 之后**才打印的，
+    // 那时 `$?` 已经是 printf 自己的退出码（恒 0）—— 原命令的成败会被整个抹掉
+    // （实测：`--body ''` 该报错却 exit=0）。`$?` 在 printf 的参数展开时求值，正是原命令的退出码。
+    const sentinel = `${markerPrefix}DONE${++this.seq}`;
     this._write(cmd);
-    const { found, code } = await this._read(timeoutMs);
+    this._write(`printf '\\n%s:%d\\n' '${sentinel}' $?`);
+    const { found, code } = await this._read(sentinel, timeoutMs);
     // 实验：不等待收尾标记（模拟改造前的行为）
 
     // 清理 marker 行与收尾标记，还原真实输出
     const errLines = this.errBuf.split("\n").filter(Boolean);
     const cleanErr = errLines.filter((l) => !markerRe.test(l)).join("\n").trim();
     const rawOut = this.outBuf;
-    const cleanOut = rawOut.replace(/\r\n/g, "\n").replace(/\r/g, "").trim();
+    // 剥掉哨兵行（含退出码；它是协议开销，不是命令输出）
+    const cleanOut = rawOut
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "")
+      .replace(new RegExp(`${sentinel}:\\d+`, "g"), "")
+      .trim();
 
     if (!found) {
       // 超时：挂死的前台 CLI 进程阻塞了 bash 会话，发 Ctrl+C 释放前台 + kill 旧 job

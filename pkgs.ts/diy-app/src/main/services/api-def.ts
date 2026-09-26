@@ -336,41 +336,43 @@ export const apiDef = RpcSchema.router({
           // 人物是**配置实体**：模型/参数/口气挂在这里，会话只持有引用（任务 frontmatter 的 persona）。
           // 于是「改人物」= 所有引用它的任务下一轮统一生效；「换人物」= 只改本任务的绑定，不碰别人。
           persona: RpcSchema.group({
-            desc: `agent 人物（模型 + 参数 + 口气）；任务持引用，改人物对使用它的会话下一轮生效`,
+            desc: `agent 人物（模型 + 参数 + 口气）；任务持**引用（id）**，改人物对使用它的会话下一轮生效`,
             children: {
               list: RpcSchema.unary({
                 desc: `列出全部人物与缺省人物（含各人物被多少任务引用）`,
                 input: {},
                 output: z.object({
-                  default: z.string().describe("缺省人物名（新建任务用它）"),
+                  default: z.string().describe("缺省人物 id（新建任务物化它）"),
                   // taskCount = 引用面：改人物前必须先看见"会影响多少任务"（否则"统一修改"是盲改）
                   personas: z.array(PersonaSchema.extend({ taskCount: z.number() })),
                 }),
               }),
               set: RpcSchema.unary({
-                desc: `新建/更新人物（未给的字段保持原值；新建时必须给 model）`,
+                desc: `新建人物（不传 id）或更新人物（传 id）；未给的字段保持原值`,
                 input: {
-                  name: z.string().cliArg({ desc: "人物名" }),
-                  model: z.string().optional().cliOption({ desc: "模型 id（见 agent local models）" }),
+                  // 位置参数（可省略）：`diy agent persona set p3 --model …` 更新，不传 = 新建。
+                  // 位置参数给 id 而不是名字：脚本/自动化要的是稳定键；人按名字用 --name。
+                  id: z.string().optional().cliArg({ desc: "人物 id（更新时给；不传 = 新建人物）" }),
+                  name: z.string().optional().cliOption({ desc: "显示名（可改，引用不受影响）" }),
+                  model: z.string().optional().cliOption({ desc: "模型 id（见 agent local models；新建时必填）" }),
                   reasoningEffort: z
                     .string()
                     .optional()
                     .cliOption({ desc: "推理强度档位（按该模型支持集，见 agent local models）" }),
                   style: z.string().optional().cliOption({ desc: `口气（注入身份节；空串=不注入）` }),
-                  desc: z.string().optional().cliOption({ desc: "一句话说明（选择器展示用）" }),
                 },
                 output: PersonaSchema,
+              }),
+              setDefault: RpcSchema.unary({
+                desc: `设置缺省人物（只影响之后**新建**的任务，已有任务的绑定不变）`,
+                input: {
+                  id: z.string().cliArg({ desc: "人物 id（或显示名）" }),
+                },
+                output: z.object({ default: z.string() }),
               }),
               // 暂不提供 remove：人物的价值是"可复用的配置实体"，删掉它所有引用者会静默回落缺省
               // （换模型不打招呼）。要下线一个人物，改它的模型/口气即可（引用者原地跟随）；
               // 真需要删除时再设计"引用迁移"（改绑 N 个任务）一起做，不做半截的删除。
-              setDefault: RpcSchema.unary({
-                desc: `设置缺省人物（只影响之后**新建**的任务，已有任务的绑定不变）`,
-                input: {
-                  name: z.string().cliArg({ desc: "人物名" }),
-                },
-                output: z.object({ default: z.string() }),
-              }),
             },
           }),
 

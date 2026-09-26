@@ -716,8 +716,7 @@ export function LocalChatPage() {
 
     // ─── agent 人物（模型/参数/口气都在人物定义里，这里只选"要谁干活"）───
     /** 本任务当前人物：任务绑定是权威（清单在 personaStore，未加载完时先用缺省名，不显示空） */
-    const personaName = () => personaStore.nameForTask();
-    const personaDef = () => personaStore.defOf(personaName());
+    const personaDef = () => personaStore.defOf(personaStore.idForTask());
 
     // 换绑与改定义都在人物面板里做（那里能看见"影响多少任务"）——这里只负责打开它。
     // 为什么不做成下拉快速切换：人物是**全局配置实体**，下拉只够"选"，看不见改动的波及面。
@@ -874,7 +873,7 @@ export function LocalChatPage() {
                             onClick={(e) => { e.stopPropagation(); setPersonaPanelOpen(true); }}
                         >
                             <span class="truncate">
-                                {personaName() || "选择人物"}
+                                {personaDef()?.name ?? "选择人物"}
                                 <span class="opacity-60">
                                     （{personaDef() ? `${personaStore.modelLabel(personaDef()!.model)} · ${reasoningEffortLabel(personaDef()!.reasoningEffort as ReasoningEffort)}` : "未加载"}）
                                 </span>

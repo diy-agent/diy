@@ -124,39 +124,52 @@ git add -A -n | grep -c node_modules        # 干跑确认不会误收
 
 ### agent 人物（persona）：模型配置的归属
 
-模型/参数**不属于会话，属于「人物」**；任务只持有引用（frontmatter `persona`）。这不是审美选择，
+模型/参数**不属于会话，属于「人物」**；任务只持有**引用（id）**。这不是审美选择，
 而是两个互斥需求的唯一解：
 
 | 需求 | 旧实现（renderer 全局 `activeModel`） | 现在 |
 |------|--------------------------------------|------|
-| 改一次，所有会话跟着变 | ✅ 但**串台**（改 A 时 B 也变） | `diy agent persona set` → 所有引用者下一轮生效 |
+| 改一次，所有会话跟着变 | ✅ 但**串台**（改 A 时 B 也变） | `diy agent persona set <id> --model …` → 所有引用者下一轮生效 |
 | 各会话用不同模型互不影响 | ❌ 同一份全局值 | 任务各持 persona 引用，换人只影响本任务 |
 | 重启后保持 | ❌ 回落硬编码 `DEFAULT_MODEL` | 定义落 `$DIY_HOME/personas.yaml`，绑定落任务 frontmatter |
 
-- 定义：`$DIY_HOME/personas.yaml`（全局一份；`default` = 新建任务的缺省人物）。契约在 `src/shared/persona.ts`，文件层在 `src/main/core/persona.ts`
-- 生效时机：**每轮开始解析**（改人物天然"下一轮生效"：在跑的轮次不打断，也不给用户一堆时机选项）
-- 绑定：任务 `persona` 字段**创建时物化**（not null 语义）；指向已删人物 → 回落缺省**并出声**（换模型不能不打招呼）
-- 配置增删：`diy agent persona list/set/remove/setDefault`；被任务引用的人物拒绝删除
-- 身份注入：`identity.md` 注入 `{{persona.name}}` + `{{persona.style}}`（口气的唯一入口，改口气不用改模版）
-- UI：会话页选的是**人物**（本任务绑定），模型/档位不在那里改 —— 两件事混一个菜单必误操作
+**引用存 id，名字只是标签**（`shared/persona.ts` 文件头有完整理由）：
+`personas.yaml` 是 `{default: <id>, personas: {<id>: {name, model, reasoningEffort, style}}}`；
+任务 frontmatter 的 `persona` 存 **id**。名字可随时改（"大副"→"赫敏"）而不打断任何引用 ——
+若拿名字当引用键，改名就等于把所有引用断掉，引用者静默回落缺省人物（换模型不打招呼）。
+id 形如 `p1`（`nextPersonaId` 按现有 `p<n>` 最大值 +1，人可读）。
 
-- 存量数据：`scripts/migrate-add-persona.mts`（一次性脚本，dry-run 默认 + `--apply` 先备份
-  `*.pre-persona.bak`；文本级只加一行，未命中文件逐字节不变）。已对全库 114 个任务补齐 ——
-  读侧的"缺字段回落缺省"因此只为**用户手删 AGENTS.md 字段**兜底，不是历史数据的兼容层（app 未发布，
-  不做版本兼容代码）
-- 契约单一真源：任务详情载荷见下节「任务详情载荷」
+- 契约：`src/shared/persona.ts`（纯 zod）；文件层 `src/main/core/persona.ts`
+- 生效时机：**每轮开始解析**（改人物天然"下一轮生效"：在跑的轮次不打断，也不给用户时机选项）
+- 绑定：任务 `persona` 字段**创建时物化**；指向不存在的人物 → 回落缺省**并出声**
+- CLI：`diy agent persona list / set [id] / setDefault <id>`；**暂无 remove**（见下）
+- 身份注入：`identity.md` 注入 `{{persona.name}}` + `{{persona.style}}`
+- UI：会话页按钮显示"本任务用谁 + 模型 + 档位"→ 打开 **PersonaDrawer 人物面板**（见下节）
 
-多人对话（Room / 多会话流 / 上下文投影）不在本层：那要求 session key 从 `taskUri` 扩成
-`(taskUri, personaId)`（现在 key 同时决定文件名、Map key、zen 亲和头，见 `keyOf`），是下一阶段的事。
+**两个动作在界面上必须分开**（混在一起必然误操作）：
+- 「用于本任务」= 换绑本任务的引用（局部、随手改）
+- 面板右侧改属性 = 改人物定义（**全局**，所以旁边写着"影响 N 个任务"）
 
-### 任务详情载荷：字段清单单一真源（`getTask`）
+**人物面板（PersonaDrawer）的形态取舍**：
+- **贴顶 drawer、下方留白**：改人物时常要对着会话消息反复核对，把下半屏留给输入框与消息流
+- **模型与档位用平铺按钮，不用 `<select>`**：两三个选项的下拉要多一次"展开→找→点"，
+  且原生 select 的弹层由 OS 绘制（自动化点不进，只能派发合成事件）
+- 左列带**引用计数**（"N 个任务在用"）：改人物前先看见影响面，否则"统一修改"是盲改
+- 两个真实踩过的坑（都已修，别再犯）：
+  1. **受控 `<select>` 的 value 在选项异步到达时失效** —— Solid 在 options 未渲染时设置 value 无效，
+     浏览器回落第一个选项，之后不再对齐。症状是"选中 A 却显示 B 的模型"（看着一个模型、改另一个人物）。
+     现在面板不用 select；同类场景需把 value 与**选项来源**一起作为 effect 依赖
+  2. **面板 open 只在 false→true 跳变时刷新清单** —— 还开着就直接开，会看不到刚建的人物
 
-**RPC 载荷字段清单 = 单一真源**：任务详情载荷（`diy.getTask` 的 data）的契约与类型在
-`src/shared/task-detail.ts` 的 `TaskDetailSchema`，renderer 的 `TaskDetail` 从它推导。
-❌ 禁止在 handler 里手抄字段、再在 output schema 里抄第二遍 —— 两处漏一处就静默丢字段
-（RPC 输出经 schema strip，renderer 拿到 undefined 而数据其实在；`change_type` / `module` /
-`priority` / `persona` 都漏过，表现为详情面板一直显示"未设置"）。handler 用
-`TaskDetailSchema.parse({...t, ...回填})` 整份过一遍，加字段只改契约一处。
+**暂无「删除人物」**（API 也没有，不留半截能力）：删掉后所有引用者会**静默回落**缺省人物
+（换模型不打招呼）。要下线一个人物就改它的模型/口气（引用者原地跟随）；真需要删除时，
+得先设计"引用迁移"（把这 N 个任务改绑到别处）一起做。
+
+**存量数据迁移**（一次性脚本，dry-run 默认 + `--apply` 先备份；文本级只改目标行）：
+- `scripts/migrate-add-persona.mts`：给缺 `persona` 的任务补字段（已对全库执行）
+- `scripts/migrate-persona-ids.mts`：人名引用 → id（personas.yaml 结构 + 任务 frontmatter，已执行）
+读侧的"缺字段回落缺省"因此只为**用户手删 AGENTS.md 字段**兜底，不是历史数据的兼容层
+（app 未发布，不做版本兼容代码）。
 
 ### 任务目录所有权分层（`.diy/`）
 
@@ -299,6 +312,12 @@ renderer 那份没跟上，编译期才暴露 —— 用契约类型则不可能
   被污染的 `DIY_PORT` 会让测试里的每一条 `./diy.sh` 都去打**别的端口**，各拉一个新 app，与测试自己启的实例
   互踢（单实例锁）→ 现象是"页面状态莫名漂移、CDP 会话反复掉线、模板列表忽空忽有"（实测踩了两小时）。
   正确姿势：`env -u DIY_PORT -u DIY_HOME npx vitest run ...`，或用一个干净 shell。
+- **`ShellTest` 的输出边界 = stderr 上的 PS1 marker + stdout 上的哨兵**（`tests/shell-test.ts`）：marker 只证明
+  命令结束，stdout 是**另一个管道**、到达顺序不保证 —— 只等 marker 会读到空/半截输出，`runJson` 再触发
+  "空响应重试"读到**上一条命令**的输出，之后每条都错位（症状：`ui tree` 拿到上一条 `project create` 的
+  `{id}`，报 "not iterable"）。哨兵由 `run()` 追加的 `printf` 打出，**同一个管道字节有序** → 看到它即证明
+  前面输出到齐；退出码也放在哨兵里（PS1 的 `$?` 那时已是 printf 自己的 0）。改这块别退回"等 N 毫秒静默"：
+  负载下会误判（实测全量跑偶发）。
 - 只想临时起一个实例看界面时，注意 CLI 启动的 app 是**子进程**（父 CLI 退出后可能被带走）；CDP 会话断线先看
   进程还在不在。要长时间挂着观察，用测试夹具（`startElectronTest`）而不是 CLI 起。
 - 复用冒烟脚本：**`scripts/ui-smoke/dnd-smoke.py`** — 启动隔离 Electron + Playwright/CDP 真实拖拽（任务↔任务改层级、子任务→项目提升），断言层级 + 抓 console/pageerror，`python3 scripts/ui-smoke/dnd-smoke.py` 运行，exit 0 通过。UI 交互改动后跑它确认手势没破坏。

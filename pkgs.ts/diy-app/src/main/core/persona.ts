@@ -15,7 +15,6 @@ import * as yaml from "js-yaml";
 import { isKnownModel, reasoningOf } from "../../shared/models";
 import {
   BUILTIN_PERSONAS,
-  BUILTIN_PERSONA_NAME,
   PersonasFileSchema,
   type Persona,
   type PersonaDef,
@@ -29,11 +28,12 @@ export function personasFile(home: string): string {
 
 /** 内置默认（文件缺失/不可解析时的唯一权威） */
 function builtinFile(): PersonasFile {
-  return { default: BUILTIN_PERSONA_NAME, personas: BUILTIN_PERSONAS };
+  return BUILTIN_PERSONAS;
 }
 
 function builtinPersona(): Persona {
-  return { name: BUILTIN_PERSONA_NAME, ...BUILTIN_PERSONAS[BUILTIN_PERSONA_NAME]! };
+  const [id, def] = Object.entries(BUILTIN_PERSONAS.personas)[0]!;
+  return { id, ...def };
 }
 
 export function loadPersonas(home: string): PersonasFile {
@@ -69,47 +69,62 @@ export function savePersonas(home: string, file: PersonasFile): void {
 }
 
 /**
- * 生效的默认人物名：`default` 必须指向存在的人物；
- * 否则退到人物表里的第一个；再否则退到内置名（三条规则都只依赖文件本身，不含环境探测）。
+ * 生效的缺省人物 id：`default` 必须指向存在的人物；
+ * 否则退到人物表里的第一个；再否则退到内置 id（三条规则都只依赖文件本身，不含环境探测）。
  */
-export function defaultPersonaName(home: string): string {
+export function defaultPersonaId(home: string): string {
   const file = loadPersonas(home);
   if (Object.hasOwn(file.personas, file.default)) return file.default;
   const first = Object.keys(file.personas)[0];
-  return first ?? BUILTIN_PERSONA_NAME;
+  return first ?? Object.keys(BUILTIN_PERSONAS.personas)[0]!;
 }
 
 /** 列出全部人物（含内置兜底）；顺序 = 文件里的书写顺序（UI 选择器照此展示） */
 export function listPersonas(home: string): Persona[] {
   const file = loadPersonas(home);
-  return Object.entries(file.personas).map(([name, def]) => ({ name, ...def }));
+  return Object.entries(file.personas).map(([id, def]) => ({ id, ...def }));
 }
 
-export function personaByName(home: string, name: string): Persona | null {
-  const def = loadPersonas(home).personas[name];
-  return def ? { name, ...def } : null;
+/** 按 **id** 取人物（引用键；唯一可靠寻址方式） */
+export function personaById(home: string, id: string): Persona | null {
+  const def = loadPersonas(home).personas[id];
+  return def ? { id, ...def } : null;
 }
 
 /**
- * 任务当前生效的人物：任务 frontmatter 的 `persona` → 查定义 → 缺省人物。
- * 指向不存在的人物时**回落缺省并出声**（人物被删 / 手写文件写错名字），
+ * 按 id 或名字取人物 —— **CLI 便利入口**（人敲命令时记得的是名字，不是 id）。
+ * 名字不保证唯一（两个人物可以同名），命中多个时取第一个并出声。
+ */
+export function personaByIdOrName(home: string, key: string): Persona | null {
+  const direct = personaById(home, key);
+  if (direct) return direct;
+  const hits = listPersonas(home).filter((p) => p.name === key);
+  if (hits.length === 0) return null;
+  if (hits.length > 1) {
+    console.warn(`[persona] 名字「${key}」对应 ${hits.length} 个人物，取 ${hits[0]!.id}（同名不唯一，建议用 id）`);
+  }
+  return hits[0]!;
+}
+
+/**
+ * 任务当前生效的人物：任务 frontmatter 的 `persona`（**存 id**）→ 查定义 → 缺省人物。
+ * 指向不存在的 id 时**回落缺省并出声**（人物被删 / 手写文件写错 id），
  * 不允许静默换成某个"猜的"模型。
  */
 export function personaForTask(home: string, taskUri: string): Persona {
-  const fallback = (): Persona => personaByName(home, defaultPersonaName(home)) ?? builtinPersona();
+  const fallback = (): Persona => personaById(home, defaultPersonaId(home)) ?? builtinPersona();
   if (!taskUri) return fallback();
-  const name = getTask(taskUri)?.persona;
-  if (!name) {
-    // 正常情况不会走到这里（任务创建时物化 persona，存量数据已由
-    // scripts/migrate-add-persona.mts 补齐）。走到这里只可能是**手改**：
-    // AGENTS.md 是面向用户的文件，字段可以被删掉。回落缺省但不静默 ——
-    // 「这次用的模型是哪个」是必须可观测的事实。
-    console.warn(`[persona] 任务 ${taskUri} 没有 persona 字段（手改？），本轮用缺省「${defaultPersonaName(home)}」`);
+  const id = getTask(taskUri)?.persona;
+  if (!id) {
+    // 正常情况不会走到这里（任务创建时物化 persona，存量数据已由迁移脚本补齐）。
+    // 走到这里只可能是**手改**：AGENTS.md 是面向用户的文件，字段可以被删掉。
+    // 回落缺省但不静默 ——「这次用的模型是哪个」是必须可观测的事实。
+    console.warn(`[persona] 任务 ${taskUri} 没有 persona 字段（手改？），本轮用缺省「${fallback().name}」`);
     return fallback();
   }
-  const found = personaByName(home, name);
+  const found = personaById(home, id);
   if (found) return found;
-  console.warn(`[persona] 任务 ${taskUri} 指向不存在的人物「${name}」，本轮回落「${defaultPersonaName(home)}」`);
+  console.warn(`[persona] 任务 ${taskUri} 指向不存在的人物「${id}」，本轮回落「${fallback().name}」`);
   return fallback();
 }
 

@@ -244,56 +244,62 @@ export function bindAppHandlers(binding: ServerBinding): void {
     }
   });
 
-  // —— agent.persona —— 人物配置（模型/参数/口气的唯一真源；任务只持有引用）——
+  // —— agent.persona —— 人物配置（模型/参数/口气的唯一真源；任务只持有**引用（id）**）——
   binding.on(app.agent.persona.list, async () => {
-    const { listPersonas, defaultPersonaName } = await import("../core/persona");
+    const { listPersonas, defaultPersonaId } = await import("../core/persona");
     const { diyHome, getTask } = await import("../core/state");
     const { listTasks } = await import("../core/task");
     const home = diyHome();
     // 引用计数：改人物是**影响所有引用者**的操作，界面必须先看得见影响面
-    // （否则「统一修改」退化成盲改）。一次全库扫描，只在打开面板时发生。
+    // （否则「统一修改」退化成盲改）。一次全库扫描，只在打开面板/列表时发生。
     const counts = new Map<string, number>();
     for (const uri of listTasks()) {
-      const name = getTask(uri)?.persona;
-      if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
+      const id = getTask(uri)?.persona;
+      if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
     }
     return {
-      default: defaultPersonaName(home),
-      personas: listPersonas(home).map((p) => ({ ...p, taskCount: counts.get(p.name) ?? 0 })),
+      default: defaultPersonaId(home),
+      personas: listPersonas(home).map((p) => ({ ...p, taskCount: counts.get(p.id) ?? 0 })),
     };
   });
 
   binding.on(app.agent.persona.set, async ({ input }) => {
-    const { loadPersonas, savePersonas, assertPersonaDef } = await import("../core/persona");
+    const { loadPersonas, savePersonas, assertPersonaDef, personaByIdOrName } = await import("../core/persona");
     const { diyHome } = await import("../core/state");
     const { reasoningOf } = await import("../../shared/models");
+    const { nextPersonaId } = await import("../../shared/persona");
     const home = diyHome();
     const file = loadPersonas(home);
-    const cur = file.personas[input.name];
-    const model = input.model ?? cur?.model;
-    if (!model) throw new Error(`新建人物「${input.name}」必须指定 model（可选模型见 diy agent local models）`);
+    // id 优先、名字兜底（CLI 便利）：人记得的是名字，机器需要的是 id
+    const target = input.id ? personaByIdOrName(home, input.id) : null;
+    if (input.id && !target) throw new Error(`人物 ${input.id} 不存在（可用 diy agent persona list 查看）`);
+    const id = target?.id ?? nextPersonaId(Object.keys(file.personas));
+    const model = input.model ?? target?.model;
+    if (!model) throw new Error(`新建人物必须指定 model（可选模型见 diy agent local models）`);
     const def = {
+      name: input.name ?? target?.name ?? `人物${id}`,
       model,
       // 换模型时档位可能不在新模型的支持集内：未显式给档位就取新模型的默认档
       // （沿用旧档会写出一个上游必拒的组合，写入侧直接拦住）
       reasoningEffort:
-        input.reasoningEffort ?? (cur && cur.model === model ? cur.reasoningEffort : reasoningOf(model).default),
-      style: input.style ?? cur?.style ?? "",
-      desc: input.desc ?? cur?.desc ?? "",
+        input.reasoningEffort ??
+        (target && target.model === model ? target.reasoningEffort : reasoningOf(model).default),
+      style: input.style ?? target?.style ?? "",
     };
     assertPersonaDef(def);
-    savePersonas(home, { ...file, personas: { ...file.personas, [input.name]: def } });
-    return { name: input.name, ...def };
+    savePersonas(home, { ...file, personas: { ...file.personas, [id]: def } });
+    return { id, ...def };
   });
 
   binding.on(app.agent.persona.setDefault, async ({ input }) => {
-    const { loadPersonas, savePersonas } = await import("../core/persona");
+    const { loadPersonas, savePersonas, personaByIdOrName } = await import("../core/persona");
     const { diyHome } = await import("../core/state");
     const home = diyHome();
     const file = loadPersonas(home);
-    if (!Object.hasOwn(file.personas, input.name)) throw new Error(`人物「${input.name}」不存在`);
-    savePersonas(home, { ...file, default: input.name });
-    return { default: input.name };
+    const target = personaByIdOrName(home, input.id);
+    if (!target) throw new Error(`人物 ${input.id} 不存在（可用 diy agent persona list 查看）`);
+    savePersonas(home, { ...file, default: target.id });
+    return { default: target.id };
   });
 
   // —— agent.local —— 本地自定义 agent（ai-sdk 块协议，与 ACP 独立）
