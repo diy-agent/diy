@@ -1,5 +1,118 @@
 # Changelog
 
+## [0.1.25](https://github.com/diy-agent/diy/compare/diy-v0.1.24...diy-v0.1.25) (2026-09-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **template:** 循环改成「迭代信封」—— `:for={{集合}} :as="f"`，用 .f.value/.index/.isFirst
+* **template:** 属性值语法收敛 —— 引号=字面量、{{}}=求值；:unless→:if-not；:for/:in 分离
+* **prompt:** 命名与元数据收敛 —— `_` = 锁定、role 推导、去序号与冗余字段
+
+### Features
+
+* **agent-ui:** area 标准设施（开合/最大化/拖线）+ 侧栏与详情收敛 ([933a240](https://github.com/diy-agent/diy/commit/933a240c98f2a7fd35105d0785907a902917fadf))
+* **agent-ui:** page/viewarea/view 三级模型 + 任务执行页（多开 tab） ([7552333](https://github.com/diy-agent/diy/commit/75523331d0bf74cd7fd0d34fd7e638f49effdada))
+* **agent-ui:** view 隐藏/显示 + layout 读写契约 + 真实 UI 操作测试能力 ([d049a2d](https://github.com/diy-agent/diy/commit/d049a2d221e79be66100553736adb7e14ba23475))
+* **agent-ui:** 优化本地 agent 输入框 ([b41de00](https://github.com/diy-agent/diy/commit/b41de0030c158bd99068888946b9aea98069123c))
+* **agent-ui:** 页面流三级模型收尾 —— 导航面包屑、提示词子页面、状态色单一真相源 ([19bfc58](https://github.com/diy-agent/diy/commit/19bfc588e8638da9c265ab358f345ad0269fed69))
+* **agent-ui:** 页面流重构 —— page/viewarea/view 三级模型（133） ([53e56eb](https://github.com/diy-agent/diy/commit/53e56ebfaddf9f1dc29799cf3138d7b993929edc))
+* **agent:** runTurn 接入提示词模版 —— 试验场调的就是真发的 ([45ab3b8](https://github.com/diy-agent/diy/commit/45ab3b8f8166355d3825b1fc5ced83cfd7eca306))
+* **agent:** 提示词模板注册表与仿真请求预览 ([14dde3f](https://github.com/diy-agent/diy/commit/14dde3fe6304e3f0883cf886b1f8d72ddbe90649))
+* **agent:** 新增原始流 dump 开关（DIY_RAW_STREAM_DUMP=1） ([f3250e2](https://github.com/diy-agent/diy/commit/f3250e2a3aa52b8344181d2edd4d10bc54f54480))
+* **agent:** 更新本地模型清单与推理档位，缺省模型切到 gpt-5.6-luna ([16cefa3](https://github.com/diy-agent/diy/commit/16cefa33244021a1129d6560be99add57043b3af))
+* **agent:** 本地 agent 模型清单补齐 zen/go 新的便宜模型 ([7d52f0c](https://github.com/diy-agent/diy/commit/7d52f0ce91134a0db30f70b92dc4451c94b1b32b))
+* **agent:** 本地 agent 自杀护栏 + write-ahead 执行审计 ([c65e535](https://github.com/diy-agent/diy/commit/c65e5350d516e753d0e3f52dd052a80ef554710a))
+* **cli:** root sha.sh add dev command ([8a36fd3](https://github.com/diy-agent/diy/commit/8a36fd38e5e3528e81066c2be85feb5bc99b5e3c))
+* **local-agent:** 按模型区分 maxOutputTokens（数据来源 models.dev/api.json） ([21b864a](https://github.com/diy-agent/diy/commit/21b864ad0ec15bf75a530d785184b94aae356252))
+* **prompt-lab:** `…` 扩展菜单放到每个编辑器 view 标题栏最右；配色面板分「自动 / 暗色 / 亮色」并明示是否跟随 ([e6065d8](https://github.com/diy-agent/diy/commit/e6065d8e8555cc3bb48e53104f7920ee739b68fd))
+* **prompt-lab:** view 默认只展开模板；行号栏根治；动态菜单条同色系；请求预览升为 tab；变量值可定位 ([7a6b9e0](https://github.com/diy-agent/diy/commit/7a6b9e0149fdeab067a2f0951f2a68297f2793d0))
+* **prompt-lab:** 变量定义按行选择 + item 类型语义；卡片标题不随内容横滚；蓝点图例 ([ddc8bfe](https://github.com/diy-agent/diy/commit/ddc8bfec339d1d9e5a7f783556366e3b3744f14f))
+* **prompt-lab:** 右栏与中间编辑器完全同构（_system.md(预览)）；去掉 view area 列标题；编辑器上着色 ([c909b27](https://github.com/diy-agent/diy/commit/c909b27f3b5614336569fdb13a230bb7010c6984))
+* **prompt-lab:** 提示词模版引擎 @diy/template + 系统上下文全模版化 + 试验场 ([ab0d2e7](https://github.com/diy-agent/diy/commit/ab0d2e7c617cc5381fbed22445ac3b178bcec685))
+* **prompt-lab:** 模版结构树挪到第二位；动态菜单条（无上下文不渲染）；行号栏不透明；删顶/底横幅 ([45bdd08](https://github.com/diy-agent/diy/commit/45bdd082424dab5e1198071aa389b06671242607))
+* **prompt-lab:** 模版编辑器与系统上下文预览统一（都有行号、都不折行） ([d4e7186](https://github.com/diy-agent/diy/commit/d4e7186a81850d0d84035ebf83cd920167cf1798))
+* **prompt-lab:** 点结构树/变量行 → 高亮模版源码 + 预览产出（正向联动） ([af09463](https://github.com/diy-agent/diy/commit/af09463527c38a26403dc10b2633dbf43baaa663))
+* **prompt-lab:** 编辑器 `…` 面板（配色平铺直选）+ 伪 XML 标签着色改为自动收集（新增标签零改代码） ([0c84d18](https://github.com/diy-agent/diy/commit/0c84d18722f7b32312260af406f850a1e3fe84d7))
+* **prompt-lab:** 编辑器着色改用标准固定风格（One Dark）+ 伪 XML 节标签标注；去掉标题栏 &lt;tag&gt; 徽标 ([5a34938](https://github.com/diy-agent/diy/commit/5a34938d85aad38dec0e95cb53310e63bf041185))
+* **prompt-lab:** 表格列宽可拖且持久化（与容器解耦）；左栏出横向滚动条；清理死代码 ([8bde3e2](https://github.com/diy-agent/diy/commit/8bde3e2620409d4b0acb4a38a70969f93ef7b610))
+* **prompt-lab:** 高亮改整行 + 双色焦点 + 每个编辑器一条导航条；「可用变量」改名「变量定义」 ([bbf2c44](https://github.com/diy-agent/diy/commit/bbf2c44e92840d9dabbb96f21c822c01e192c71a))
+* **prompt:** DSL 版模版 + 装配入口 system.md，与换引擎前的 system 逐字节一致 ([b1cb081](https://github.com/diy-agent/diy/commit/b1cb081a01246dec7e457126f161fb8f371defab))
+* **prompt:** 变量契约（VarSpec）—— 宿主声明类型，引擎静态校验，试验场显示类型（C2） ([d9467ea](https://github.com/diy-agent/diy/commit/d9467ea109db5b9c86f842738a6171d384a42cff))
+* **prompt:** 变量契约改由 zod 派生（树形展开）+ 可用变量 view 改为 2 列 table-tree ([f13d224](https://github.com/diy-agent/diy/commit/f13d224432fcf207a36e6e799748ddbf5cf4a5dd))
+* **prompt:** 系统上下文全模版化、预算挂模型窗口、预览保真 ([e33bf19](https://github.com/diy-agent/diy/commit/e33bf19bd925629783527a30c04c10de9b3caae2))
+* **prompt:** 结构树/变量值改多列表格并归入左栏；变量契约由 zod 派生；模版去特化 ([ada37b7](https://github.com/diy-agent/diy/commit/ada37b78926a5a5fdb09f829a873bc72f2d6b83a))
+* **prompt:** 装配切到 DSL 引擎（M4）—— 删 legacy 引擎与旧模版 ([4338bc7](https://github.com/diy-agent/diy/commit/4338bc72fd5d132915f9c13334a1829f9a6ce1f4))
+* **prompt:** 试验场两个 view（可用变量 / 结构树）+ 删死代码 unknownVars（M5） ([10af8aa](https://github.com/diy-agent/diy/commit/10af8aae36d42e66c35200e2bb49ab5469f7d905))
+* **task-ui:** 任务树标题前置任务号（#&lt;tid&gt;） ([70298f7](https://github.com/diy-agent/diy/commit/70298f7c4ce4a8ed0c524e510f59a1ac0a60e419))
+* **task:** 任务状态可在 tree 中直接修改 ([195e81b](https://github.com/diy-agent/diy/commit/195e81bbcb37f23b9c141d1b5e3678b096e814d5))
+* **task:** 任务表格加排序/搜索 + change_type/module/priority 字段 ([7c2e253](https://github.com/diy-agent/diy/commit/7c2e253b919d60e1b712691bd9d96e7cf141b080))
+* **template:** standalone 默认开（控制标记不占空间）+ {{/* 注释 */}}；局部变量只认 {{.x}} ([68cc258](https://github.com/diy-agent/diy/commit/68cc2587efd5132f8c46a2d315041e6fa5073edf))
+* **template:** 判据 C —— 带控制属性的标签即容器（不需要白名单） ([2d695dd](https://github.com/diy-agent/diy/commit/2d695dd9194a0723b8c53e5347b63222e3a9e532))
+* **template:** 新增 @diy/template 提示词模版引擎 ([44de332](https://github.com/diy-agent/diy/commit/44de332fc21986a96b0c2225bc03631538df4acd))
+* **ui:** UI 微调 + 本地 agent 崩溃防护与事件一致性修复 ([b3395a5](https://github.com/diy-agent/diy/commit/b3395a5e767c6c668ed6b28c2a032df3eb7e1730))
+* **ui:** 主题切换、链接对比度、紧凑侧栏、详情面板可拖宽 ([70fcdc0](https://github.com/diy-agent/diy/commit/70fcdc0665a0595713656b316bdde455eb166d2a))
+* **ui:** 任务标题点击切换详情面板 ([b6118f9](https://github.com/diy-agent/diy/commit/b6118f91ab7742309cee334b3e125522ff99b723))
+* **ui:** 任务详情和 agent 都增加 markdown 显示能力 ([#141](https://github.com/diy-agent/diy/issues/141)) ([ae9b617](https://github.com/diy-agent/diy/commit/ae9b61750bf4a12ff77b9d024a9edad707eabd03))
+* **ui:** 侧栏顶栏对齐 viewbar（pin 上移）+ 悬停任务项弹出详情覆盖层 ([#150](https://github.com/diy-agent/diy/issues/150)) ([6493062](https://github.com/diy-agent/diy/commit/6493062c360af4446dfdab7ca879b40fd8c3f84c))
+* **ui:** 实例标题补分支/端口/PID + 关窗常驻实例的窗口恢复与锁诊断 ([#151](https://github.com/diy-agent/diy/issues/151)) ([909d57f](https://github.com/diy-agent/diy/commit/909d57f95037d9228b9bdd51053d8984de68d883))
+* **ui:** 视图 cache 字段池 + per-task 会话视图记忆 + 任务树稳定化 ([83a19f5](https://github.com/diy-agent/diy/commit/83a19f569a43d6f85501c2b1756cb5be4ce1e80f))
+* **ui:** 窗口标题写数据根 `diy(~/.diy)`，多实例一眼可辨 ([#149](https://github.com/diy-agent/diy/issues/149)) ([3b41372](https://github.com/diy-agent/diy/commit/3b41372ef1172d52cf43cc5786f26e830f25ada6))
+* **ui:** 试验场页面 —— 模板编辑 / 上下文与请求预览 / 任务会话与详情 ([9fec8d5](https://github.com/diy-agent/diy/commit/9fec8d59b2618d7fbbf62317f2f972bb0485f682))
+* **watch:** FileWatcher 修复路径 + RPC serverStream 文件变更推送 ([f207b09](https://github.com/diy-agent/diy/commit/f207b09445c23e27740a2a09043d8c42e2c02c4a))
+
+
+### Bug Fixes
+
+* **agent-ui:** 任务agent聊天输入框在任务tab或任务切换后内容丢失 ([9e07e9a](https://github.com/diy-agent/diy/commit/9e07e9af77c1d0a24e1cf5ee2f0f75fd28738fcc))
+* **agent-ui:** 任务改父后导航结构实时跟随（tab 只存真信息，派生数据现算） ([#147](https://github.com/diy-agent/diy/issues/147)) ([fe6ae2d](https://github.com/diy-agent/diy/commit/fe6ae2dce5135a140405a526f7c12aed24090c93))
+* **agent-ui:** 打开的 tab 重启后清零 + 打开列表表达任务层次 ([9a22f69](https://github.com/diy-agent/diy/commit/9a22f69668cc872df365cad3bf7d69b60d77e8e2))
+* **agent-ui:** 找回聊天正文的 MD 渲染/原文切换按钮 ([#148](https://github.com/diy-agent/diy/issues/148)) ([d57682f](https://github.com/diy-agent/diy/commit/d57682f993eddda860a3ee7189f8fdde536a4d49))
+* **agent:** read 工具绝对路径被错误拼接项目目录 ([7efdf99](https://github.com/diy-agent/diy/commit/7efdf991d685d4c3e49f26947acb9b9e4a4dd0f0))
+* **agent:** 中断的 tool 占位结果不再诱导自动重发 ([ac2d1c6](https://github.com/diy-agent/diy/commit/ac2d1c64ca97a24be3fc23de4e9014a87e3c3ab4))
+* **agent:** 中断的 tool 调用收敛为显式终态，杜绝重载后重复发起 ([5bc9a65](https://github.com/diy-agent/diy/commit/5bc9a658ea3f3e663d8f2f044f2985c2185d6050))
+* **agent:** 废弃半截 tool 调用，不再投影进 LLM 历史 ([30a75f0](https://github.com/diy-agent/diy/commit/30a75f0a443148b273064cd1b9a3b754ab3c6182))
+* **agent:** 按 API 面分派模型，修复 responses-only 模型（gpt-5.6-luna）不可用 ([b0f5952](https://github.com/diy-agent/diy/commit/b0f5952254a81ef9739a9e134607c33bb8457f2d))
+* **agent:** 轮次必闭合、DIY_CLI 注入契约、运行时不静默 ([34a7ab6](https://github.com/diy-agent/diy/commit/34a7ab6e4c578d26e4325c2addebe672dd5da70c))
+* **build:** fix build , add cli build ([e4943dc](https://github.com/diy-agent/diy/commit/e4943dcc3f4c5ad6c2148b1ccec70856f282d33a))
+* **build:** 类型检查禁止 emit，补产物护栏 ([bfd8768](https://github.com/diy-agent/diy/commit/bfd8768f6abbf5fb3bb1bcb621f3e9df535035d1))
+* **chat:** 中断的调用在 UI 可见，修复被打断后整轮从界面消失 ([a7ded46](https://github.com/diy-agent/diy/commit/a7ded4617843331642aea03aeecd24fb023bd9c1))
+* cherry-pick 渲染进程崩溃防护 + rust_png 诊断 ([340159c](https://github.com/diy-agent/diy/commit/340159c0f4b5b0a378f3df3239c6077ef4d8bbff))
+* **cli:** 生产入口默认主屏，rust_png 开关改走 app.commandLine ([0cc7928](https://github.com/diy-agent/diy/commit/0cc79284190617e80a4c2b01d1b5e2fd01dba3c1))
+* **crash:** 崩溃现场留痕 + 渲染进程被杀后自愈 + 退出原因落盘 ([bd24bdc](https://github.com/diy-agent/diy/commit/bd24bdc5874f14a432f66851e563a262d8aadbb6))
+* **dev:** dev 模式白屏 — 预打包 debug/dequal/extend，修 CJS→ESM interop 缺失 ([ab7286f](https://github.com/diy-agent/diy/commit/ab7286ff138258e56954c582631cbe2b1cd73912))
+* **nav-ui:** 导航 tab 关闭按钮被裁掉 —— 侧栏 flex-wrap 撑宽溢出 ([a264cb0](https://github.com/diy-agent/diy/commit/a264cb085c1ff25e0dcbf2445de86befab83004b))
+* **net:** 钉死 IPv4 优先，消除 AAAA 排头导致的 ENETUNREACH ([76e213f](https://github.com/diy-agent/diy/commit/76e213f680f540f64a572d9002ecf5534e4c8955))
+* **rpc:** watch.fileChange 从 diy.ui.* 移到 diy.watch.*，修 RPC 起不来 ([df9919b](https://github.com/diy-agent/diy/commit/df9919b45285720aebf486f09edeb0e26fccb11f))
+* **rpc:** 消费端离开时取消未传播 —— 补全三条取消通路 ([007f1d7](https://github.com/diy-agent/diy/commit/007f1d7b1f88f73b0b1ec0012b648d48a873d7fb))
+* **task-tree:** 展开/折叠不再跳顶丢焦点，并补任务编辑接口 ([056b2eb](https://github.com/diy-agent/diy/commit/056b2eb7287d9507f4cd760ee91e6d0fa27d19f4))
+* **task-ui:** 任务状态圆点无色 —— Tailwind 补扫 main 目录 ([aa2610d](https://github.com/diy-agent/diy/commit/aa2610d974f41ca3b7117d68a34e5127047b3be3))
+* **task-ui:** 未提交草稿落任务目录，切任务/切 tab/重启不再丢 ([6f92e02](https://github.com/diy-agent/diy/commit/6f92e02832f92cbfecf5faa8ff272dae53996166))
+* **task-ui:** 未提交草稿落任务目录，切任务/切 tab/重启不再丢 ([812aa15](https://github.com/diy-agent/diy/commit/812aa1501ba833ec7ef9d980925c778615504579))
+* **task-ui:** 草稿清除 await 落盘 + 修 dev 模式白屏（CJS interop） ([e5a40dc](https://github.com/diy-agent/diy/commit/e5a40dca3402a49671028d1938aa4534e9eb36ad))
+* **task-ui:** 草稿清除改 await 确保磁盘同步 + 去掉 saveEdit 中无意义的 as any ([a0f7204](https://github.com/diy-agent/diy/commit/a0f7204bdba85ccc8d54e7a20ca9d2fb1be3cbcd))
+* **task:** `task edit --body` 拒绝空/过短正文，避免静默清空 ([4a525ef](https://github.com/diy-agent/diy/commit/4a525eff9b9f15b27aa4388b7a07ba8cd5ecf07b))
+* **task:** detail/project 字段下线 + updateTask 不再吃掉非托管字段 ([c842e95](https://github.com/diy-agent/diy/commit/c842e95edaa6d11292cbeeadc615a5a32b46bca9))
+* **task:** updateTask 就地合并 frontmatter，不再吃掉非托管字段 ([d34260b](https://github.com/diy-agent/diy/commit/d34260b9da76ab644fbf01ba22e5539c22b2ace7))
+* **template:** 属性值支持逃生舱，并明确反斜杠语义 ([3eb56ea](https://github.com/diy-agent/diy/commit/3eb56ea02f9fe0491d478310c5ab58dbbb815353))
+* **template:** 补齐 @diy/template 的 sha.sh 包装 ([0f871a6](https://github.com/diy-agent/diy/commit/0f871a67d45a838f953bed66628f4bc4f1ca3d3c))
+* **test:** prevent test app from stealing focus ([4c0be33](https://github.com/diy-agent/diy/commit/4c0be33647f71c17697f7bad9cbcea0e1569363f))
+* **test:** read 工具测试里的 maxTurns 字段不存在 ([b989d9b](https://github.com/diy-agent/diy/commit/b989d9bd176f6e60d55abe1f41879d496a66d326))
+* **tool-read:** 用行窗口替代 clip 截断，内置 read 工具接上同一实现 ([f2f28f4](https://github.com/diy-agent/diy/commit/f2f28f4397f13fe9818b73b06d782c44430829ef))
+* **ui:** agent 对话条「清空」改名并加确认，MD 改双态切换 ([d1a1f02](https://github.com/diy-agent/diy/commit/d1a1f02dd690ba23ebc04a0142969afc46cf4622))
+* **ui:** agent 对话条防误删（清空改名+二次确认）、MD 双态切换，并修 4 个 CDP 实测 bug ([3e7b5d2](https://github.com/diy-agent/diy/commit/3e7b5d23b838e5dd6a730ad6689e7c5c778880ca))
+* **ui:** CDP 实测暴露的 4 个真问题（MD 不生效 / 溢出误点 / 焦点 / Esc 双杀） ([d939a8f](https://github.com/diy-agent/diy/commit/d939a8f8484416ed0fa4927e21bdf1dd92cf2588))
+* **ui:** 任务详情面板宽度上限随窗口自适应 ([d4e3c6c](https://github.com/diy-agent/diy/commit/d4e3c6ca6181c88016c0aa3bff9756b92298ed5c))
+* **ui:** 侧栏收起态图标居中并收紧，导航加 tab 式选中态 ([de52103](https://github.com/diy-agent/diy/commit/de521034df845379fe4cc790640f33eaa2ef1c46))
+* **ui:** 试验场按项目隔离、草稿分桶、徽章与宽度 ([bde2e03](https://github.com/diy-agent/diy/commit/bde2e035423cdcc90e915fe95d03811371b67f5d))
+
+
+### Code Refactoring
+
+* **prompt:** 命名与元数据收敛 —— `_` = 锁定、role 推导、去序号与冗余字段 ([46aff53](https://github.com/diy-agent/diy/commit/46aff53fdbd2f9c6438fa61373dd00b1d12f9952))
+* **template:** 属性值语法收敛 —— 引号=字面量、{{}}=求值；:unless→:if-not；:for/:in 分离 ([e0d36b5](https://github.com/diy-agent/diy/commit/e0d36b5009c3065df0e6201ca782633cce2d6652))
+* **template:** 循环改成「迭代信封」—— `:for={{集合}} :as="f"`，用 .f.value/.index/.isFirst ([814e7c7](https://github.com/diy-agent/diy/commit/814e7c7e8a3be71607c73027448fc7ff78f4adba))
+
 ## [0.1.24](https://github.com/diy-agent/diy/compare/diy-v0.1.23...diy-v0.1.24) (2026-09-10)
 
 
