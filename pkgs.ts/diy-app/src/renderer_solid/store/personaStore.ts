@@ -129,6 +129,13 @@ async function bindCurrentTask(id: string): Promise<boolean> {
     return setForTask(uri, id);
 }
 
+/**
+ * 已尝试过"补拉"的 id（避免未知 id 触发无限重拉）。
+ * 场景：CLI 新建/改名人物后，renderer 的清单是旧的 —— 界面会显示成"Agent/加载中"，
+ * 看着像功能坏了，其实只是缓存陈旧。这里对**用到的** id 补一次强制刷新。
+ */
+const refetchTried = new Set<string>();
+
 export const personaStore = {
     get personas() {
         return personas();
@@ -150,6 +157,22 @@ export const personaStore = {
     /** 按 id 取人物（含引用计数；未加载/不存在时 null，调用方自己决定怎么显示） */
     defOf(id: string): PersonaView | null {
         return personas().find((p) => p.id === id) ?? null;
+    },
+
+    /**
+     * 取人物，**找不到就补拉一次清单**（每 id 只补一次）。
+     *
+     * 为什么需要：清单是缓存，而人物可以被 CLI/另一个窗口改动（新建、改名）。缓存里没有的 id
+     * 不该直接显示成"Agent/加载中"——那是把"缓存陈旧"伪装成"功能坏了"。补拉一次即可自愈。
+     */
+    defOfLive(id: string): PersonaView | null {
+        const hit = personas().find((p) => p.id === id);
+        if (hit) return hit;
+        if (id && !refetchTried.has(id) && !loading) {
+            refetchTried.add(id);
+            void load(true);
+        }
+        return null;
     },
     /** 模型 id → 人读名（清单未加载时退回 id 本身） */
     modelLabel(id: string): string {

@@ -333,6 +333,21 @@ function HairSeg(props: { nodes: BlockNode[] }) {
     );
 }
 
+/** 回复身份：显示当前任务绑定的人物，而不是一个无名的 assistant 气泡。 */
+function AssistantByline() {
+    const id = () => taskStore.selectedTask?.persona ?? personaStore.idForTask();
+    // defOfLive：缓存里没有该 id 时补拉一次（CLI 新建/改名后 renderer 的清单会陈旧）
+    const persona = () => personaStore.defOfLive(id());
+    return (
+        <div class="mb-1 flex items-center gap-1.5 text-[11px] opacity-70" data-testid="assistant-byline">
+            <span class="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-[12px]" aria-hidden="true">🤖</span>
+            <span class="font-medium">{persona()?.name ?? "Agent"}</span>
+            <span class="opacity-50">·</span>
+            <span class="opacity-60">{persona() ? personaStore.modelLabel(persona()!.model) : ""}</span>
+        </div>
+    );
+}
+
 function LeafView(props: {
     node: BlockNode;
     density: Density;
@@ -361,11 +376,14 @@ function LeafView(props: {
             // L1 摘要恒为纯文本：截断出的半行 Markdown（断在 ** 、``` 、表格 | 中间）
             // 会被解析成错乱结构，这里绝不能走 Markdown 渲染
             return (
-                <div class="text-sm opacity-80 truncate">
-                    {b.stopped ? firstLine(t) : tailLine(t)}
+                <div>
+                    <AssistantByline />
+                    <div class="text-sm opacity-80 truncate">
+                        {b.stopped ? firstLine(t) : tailLine(t)}
                     <Show when={!b.stopped}>
                         <span class="animate-pulse">▋</span>
-                    </Show>
+                        </Show>
+                    </div>
                 </div>
             );
         }
@@ -375,9 +393,12 @@ function LeafView(props: {
         // 是因为 segments(density) 变了 → <For> 重建节点；而切 md 不改变 segments，
         // 旧分支会原样留在 DOM 里——现象就是点「MD 原文」正文纹丝不动（只在切任务/重挂载后才生效）。
         return (
-            <Show when={props.md} fallback={<PlainText text={text} />}>
-                <MarkdownText text={text} streaming={!b.stopped} />
-            </Show>
+            <div>
+                <AssistantByline />
+                <Show when={props.md} fallback={<PlainText text={text} />}>
+                    <MarkdownText text={text} streaming={!b.stopped} />
+                </Show>
+            </div>
         );
     }
     if (b.tag === "think" || b.tag === "tool") {
@@ -579,8 +600,10 @@ function ConfirmDialog(props: {
 
 // ─── 页面 ───────────────────────────────────────────
 
-export function LocalChatPage() {
-    const uri = () => taskStore.selectedUri ?? null;
+export function LocalChatPage(props: { uri?: string }) {
+    // 执行页显式传入 uri；不能依赖全局 selectedUri，否则任务详情还在异步加载时，
+    // 页面可能显示“选择任务”但聊天仍沿用上一个任务的会话，形成串台。
+    const uri = () => props.uri ?? taskStore.selectedUri ?? null;
     const [inputValue, setInputValue] = createSignal("");
     const [densityOpen, setDensityOpen] = createSignal(false);
     const [personaPanelOpen, setPersonaPanelOpen] = createSignal(false);
@@ -624,6 +647,9 @@ export function LocalChatPage() {
     };
     // 首挂（切页面/组件重建，TaskState 在内存保留）：恢复当前任务阅读位置 + 输入框草稿
     onMount(() => {
+        // 人物清单：按钮要显示"这条消息发给谁"；未加载时显示"加载中…"而不是"未加载"
+        // （后者看着像功能坏了，而其实会话完全可用 —— 自相矛盾的界面）
+        void personaStore.load();
         const closePopovers = (e: MouseEvent) => {
             const target = e.target as Element;
             if (!target.closest("[data-density-control]")) setDensityOpen(false);
@@ -716,7 +742,7 @@ export function LocalChatPage() {
 
     // ─── agent 人物（模型/参数/口气都在人物定义里，这里只选"要谁干活"）───
     /** 本任务当前人物：任务绑定是权威（清单在 personaStore，未加载完时先用缺省名，不显示空） */
-    const personaDef = () => personaStore.defOf(personaStore.idForTask());
+    const personaDef = () => personaStore.defOfLive(personaStore.idForTask());
 
     // 换绑与改定义都在人物面板里做（那里能看见"影响多少任务"）——这里只负责打开它。
     // 为什么不做成下拉快速切换：人物是**全局配置实体**，下拉只够"选"，看不见改动的波及面。
@@ -875,7 +901,7 @@ export function LocalChatPage() {
                             <span class="truncate">
                                 {personaDef()?.name ?? "选择人物"}
                                 <span class="opacity-60">
-                                    （{personaDef() ? `${personaStore.modelLabel(personaDef()!.model)} · ${reasoningEffortLabel(personaDef()!.reasoningEffort as ReasoningEffort)}` : "未加载"}）
+                                    （{personaDef() ? `${personaStore.modelLabel(personaDef()!.model)} · ${reasoningEffortLabel(personaDef()!.reasoningEffort as ReasoningEffort)}` : "加载中…"}）
                                 </span>
                             </span>
                             <span class="opacity-50">⚙</span>

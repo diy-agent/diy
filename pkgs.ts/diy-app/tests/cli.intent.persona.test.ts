@@ -456,6 +456,40 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         );
     });
 
+    it("每条 assistant 回复上方显示人物头像与名字（回复人可见）", async () => {
+        const 名 = uniq("发言人");
+        const id = await addPersona(名, "mimo-v2.6-flash");
+        const uri = await setupTask("回复人展示任务");
+        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
+        // 造一段"已定稿"的会话（不依赖真实 LLM）：turn + assistant 文本块
+        const ops = join(fx.HOME, "local", `${sessionKey(uri)}.ops.jsonl`);
+        mkdirSync(join(fx.HOME, "local"), { recursive: true });
+        const lines = [
+            { op: "start", id: "t1", kind: "turn", meta: { model: "mimo-v2.6-flash" } },
+            { op: "start", id: "t1_u", kind: "text", parent: "t1", meta: { role: "user" } },
+            { op: "delta", id: "t1_u", fields: { content: "你好" } },
+            { op: "stop", id: "t1_u" },
+            { op: "start", id: "t1_a", kind: "text", parent: "t1", meta: { role: "assistant" } },
+            { op: "delta", id: "t1_a", fields: { content: "收到，sir。" } },
+            { op: "stop", id: "t1_a" },
+            { op: "stop", id: "t1" },
+        ];
+        writeFileSync(ops, lines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf-8");
+
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        // 回复人 = 本任务绑定的人物（名字 + 模型），显示在消息**上方**
+        const byline = await waitUntil(
+            async () => ui!.eval<string | null>(`(() => {
+                const el = document.querySelector('[data-testid="assistant-byline"]');
+                return el ? el.textContent : null;
+            })()`),
+            (t) => !!t && t.includes("发言人"),
+            { label: "出现回复人署名" },
+        );
+        expect(byline).toContain(名);
+        expect(byline).toContain("MiMo V2.6 Flash");
+    });
+
     it("「用于本任务」= 换绑本任务（只改引用，不改任何人物配置）", async () => {
         const 候选名 = uniq("候选人");
         const 候选人 = await addPersona(候选名, "gpt-6-luna");
