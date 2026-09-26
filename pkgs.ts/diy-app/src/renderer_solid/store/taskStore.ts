@@ -1,21 +1,19 @@
 import { createSignal } from "solid-js";
+import type { TaskNodeShape } from "../../main/services/api-def";
 import { diyService } from "../lib/rpc";
 import type { TaskDetail as ContractTaskDetail } from "../../shared/task-detail";
+import { editTask } from "../lib/task-edit";
 import { draftStore } from "./draftStore";
 
-export interface TreeNode {
-  kind: "project" | "task";
-  uri?: string;
-  /** 任务号（uri 末段，项目内自增；跨项目会重号）。由 main 的 task-tree 回填。 */
-  num?: string;
-  title?: string;
-  state?: string;
-  project?: string;
-  project_path?: string;
-  project_label?: string;
-  parentUri?: string;
-  children: TreeNode[];
-}
+/**
+ * 任务树节点 —— 直接取 **RPC 契约的形状**（api-def 的 TaskNodeShape），不在 renderer 复制一份。
+ *
+ * 教训（真实踩过）：这里曾经是手抄的一份 interface，main 给节点加 created/updated
+ * （表格要按时间排序要用）后它没跟上，编译期报「属性不存在」，一查才发现同一个概念定义了两遍。
+ * 用契约类型则不可能滞后：字段加了这里自动有，加了忘同步会直接编译失败。
+ * `import type` 编译期擦除，不会把 main 的依赖（zod schema 等）带进 renderer 包。
+ */
+export type TreeNode = TaskNodeShape;
 
 /**
  * 任务详情 —— 直接取 **RPC 契约的类型**（shared/task-detail.ts 的 TaskDetailSchema）。
@@ -70,7 +68,7 @@ async function refreshSelected(): Promise<void> {
 }
 
 async function setState(uri: string, state: string) {
-  await diyService.diy.task.edit({ uri, state: state as any, title: undefined, body: undefined, parent: undefined, persona: undefined });
+  await editTask(uri, { state: state as any });
   await loadTree();
 }
 

@@ -12,6 +12,7 @@
 
 import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
+import { editTask } from "../lib/task-edit";
 import { taskStore } from "./taskStore";
 import { notificationStore } from "./notificationStore";
 import type { Persona } from "../../shared/persona";
@@ -60,16 +61,9 @@ async function load(force = false): Promise<void> {
  */
 async function setForTask(taskUri: string, name: string): Promise<boolean> {
     try {
-        // 直接走 RPC：契约里每个键都必须出现，未传的字段 = 保持原值（三态语义见 main/core/task.ts）。
-        // 这里只改 persona —— 与「改人物定义」分离（那条走 CLI，影响所有引用者）。
-        await diyService.diy.task.edit({
-            uri: taskUri,
-            title: undefined,
-            state: undefined,
-            body: undefined,
-            parent: undefined,
-            persona: name,
-        });
+        // 只改 persona（未传的字段 = 保持原值，三态语义见 main/core/task.ts）；
+        // 与「改人物定义」分离 —— 那条走 CLI `diy agent persona set`，影响所有引用者。
+        await editTask(taskUri, { persona: name });
         // 只刷新当前选中任务的详情（不重拉整棵树：人物不影响树结构，且避免树刷新打断阅读位置）
         await taskStore.refreshSelected();
         return true;

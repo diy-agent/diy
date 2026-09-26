@@ -125,6 +125,21 @@ export interface UiDriver {
    */
   hover(text: TextMatch): Promise<void>;
   /**
+   * 让鼠标「进入」某元素：派发 DOM `mouseenter`（leaveSelector 则派发 `mouseleave`）。
+   *
+   * 为什么必须这样做（不是偷懒）：Chromium 由**真实输入设备位置**驱动 hover，
+   * `Input.dispatchMouseEvent` 只做命中测试与派发，**不更新 hover 事件链**（见上面
+   * `hover` 的注释）。于是「悬停才出现的 UI」（侧栏 hover 展开、悬停任务项的详情
+   * 面板）用 CDP 驱动不出来，只能派发原生事件。
+   * 作为补偿，调用方应同时断言目标 rect 非零且 `elementFromPoint` 命中它 ——
+   * 证明「这一项真的在鼠标可达处」，而不是只靠合成事件自说自话。
+   *
+   * 返回 false = 选择器没找到元素（调用方自行决定是否断言失败，不静默跳过）。
+   */
+  hoverSelector(selector: string, opts?: { nth?: number }): Promise<boolean>;
+  /** 派发 DOM `mouseleave`（与 hoverSelector 对称） */
+  leaveSelector(selector: string, opts?: { nth?: number }): Promise<boolean>;
+  /**
    * 按 CSS 选择器定位 → 在**元素中心真实派发**鼠标按下/抬起。
    *
    * 为什么需要（不是绕路）：`ui inspect` 的 a11y 树会剔除 `opacity: 0` 的元素，
@@ -135,6 +150,17 @@ export interface UiDriver {
   clickSelector(selector: string, opts?: { nth?: number }): Promise<void>;
   /** 读 DOM（拿 rect / 计算样式等；a11y 树看不到的东西用这个） */
   query<T>(expression: string): Promise<T>;
+  /**
+   * 向**当前焦点元素**真实输入文本（`Input.insertText`）。
+   *
+   * 为什么不用 `el.value = x` 或派发合成 input 事件：那些绕过浏览器输入路径，
+   * 输入框不会经历真实的插入会话（而 Solid 的 onInput 绑在事件上，恰好会"看起来能过"）。
+   * 用 CDP 的 insertText 走的就是输入法/键盘最终落到的同一条路径。
+   * 注意：文本会插到**插入点**，不替换已有内容；要先 click 聚焦、必要时 `press("Meta+A")` 全选。
+   */
+  type(text: string): Promise<void>;
+  /** 真实按键（如 Enter / ArrowDown / Escape）。可带 Meta/Ctrl/Shift 修饰，如 `Meta+A` */
+  press(key: string): Promise<void>;
   /** 按坐标拖拽（拖线用）；steps 让中间点也发出去，命中拖拽逻辑 */
   drag(from: { x: number; y: number }, to: { x: number; y: number }, steps?: number): Promise<void>;
   /** 在 renderer 里求值 */
@@ -162,6 +188,15 @@ export async function makeUiDriver(
       clickCount: type === "mouseMoved" ? 0 : 1,
       ...extra,
     });
+
+  /** 对某选择器命中的第 nth 个元素派发原生 hover 事件（见 hoverSelector 的说明） */
+  const fireMouse = (type: "mouseenter" | "mouseleave", selector: string, nth: number) =>
+    cdp.eval<boolean>(`(() => {
+      const el = document.querySelectorAll(${JSON.stringify(selector)})[${nth}];
+      if (!el) return false;
+      el.dispatchEvent(new MouseEvent(${JSON.stringify(type)}, { bubbles: false }));
+      return true;
+    })()`);
 
   /** 取树并按谓词定位（每次现取：上一步操作会让 rect 变） */
   const locate = async (target: TextMatch) => {
@@ -194,6 +229,14 @@ export async function makeUiDriver(
       const target = await locate(text);
       await mouse("mouseMoved", target);
       await new Promise((r) => setTimeout(r, 150));
+    },
+
+    async hoverSelector(selector, opts = {}) {
+      return fireMouse("mouseenter", selector, opts.nth ?? 0);
+    },
+
+    async leaveSelector(selector, opts = {}) {
+      return fireMouse("mouseleave", selector, opts.nth ?? 0);
     },
 
     async clickSelector(selector, opts = {}) {
@@ -236,6 +279,44 @@ export async function makeUiDriver(
     },
 
     query: (expression) => cdp.eval(expression),
+
+    async type(text) {
+      await cdp.send("Input.insertText", { text });
+      await new Promise((r) => setTimeout(r, 120));
+    },
+
+    async press(key) {
+      // 常见键 → 键码。`Mod+K`（Meta/Ctrl）形式解析：修饰键只改 modifiers，主键照发。
+      const CODES: Record<string, { code: string; vk: number }> = {
+        ArrowDown: { code: "ArrowDown", vk: 40 },
+        ArrowUp: { code: "ArrowUp", vk: 38 },
+        Escape: { code: "Escape", vk: 27 },
+        Enter: { code: "Enter", vk: 13 },
+        Tab: { code: "Tab", vk: 9 },
+      };
+      const parts = key.split("+");
+      const main = parts.pop()!;
+      const modifiers = parts.reduce((acc, m) => {
+        if (m === "Meta") return acc | 4;
+        if (m === "Ctrl") return acc | 2;
+        if (m === "Shift") return acc | 8;
+        return acc;
+      }, 0);
+      const info = CODES[main] ?? { code: `Key${main.toUpperCase()}`, vk: main.toUpperCase().charCodeAt(0) };
+      // 单字母的 `key` 必须是小写（"a" 而不是 "A"）：带 Meta/Ctrl 的组合键，
+      // Chromium 按 `key` 值匹配快捷键，大写字母匹配不上（表现为「按了没反应」）。
+      const keyValue = main.length === 1 ? main.toLowerCase() : main;
+      const base = {
+        key: keyValue,
+        code: info.code,
+        windowsVirtualKeyCode: info.vk,
+        nativeVirtualKeyCode: info.vk,
+        modifiers,
+      };
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...base });
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+      await new Promise((r) => setTimeout(r, 120));
+    },
 
     async drag(from, to, steps = 8) {
       await mouse("mousePressed", from);

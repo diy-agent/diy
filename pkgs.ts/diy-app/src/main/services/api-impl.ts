@@ -15,7 +15,9 @@ import * as project from "../core/project";
 import * as state from "../core/state";
 import * as taskTree from "../core/task-tree";
 import { AppConfig } from "../core/app-config";
-import { platform, arch, release, totalmem, freemem } from "node:os";
+import { platform, arch, release, totalmem, freemem, homedir } from "node:os";
+import { abbrevHome } from "../../shared/instance-title";
+import { readRuntimeConfig } from "../../runtime";
 import * as health from "./health";
 import { refList, checkRefPaths } from "../core/ref";
 import { syncRefs } from "./ref-sync";
@@ -147,6 +149,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return {
       port: _rpcPort,
       diyHome: ac.diyHome,
+      // 展示形式与运行环境：窗口标题（main 与 renderer 两侧同源）与设置页状态用
+      diyHomeDisplay: abbrevHome(ac.diyHome, homedir()),
+      env: readRuntimeConfig().env,
       cache: ac.cache,
       userData: ac.electronUserData,
       // serve 模式是纯 Node，这两个版本字段不存在 —— 必须给可读的占位而不是 undefined，
@@ -191,9 +196,13 @@ export function bindAppHandlers(binding: ServerBinding): void {
     // 草稿随任务返回（与 diy.task.show 同一契约）：renderer 只调这一个接口拿任务，
     // 少一次往返就少一处「忘记带草稿」的机会 —— 两个 handler 必须给同样的字段。
     const d = readDrafts(input.uri);
-    // 不逐字段手抄：**整份摊开交给契约 schema**（多余键自动剥掉，缺字段也不会静默 —— 由 schema 决定）。
-    // 历史 bug：handler 手抄 + output 白名单两处各自维护，漏一处就静默丢字段（change_type /
-    // module / priority / persona 都漏过），界面显示"未设置"而数据其实在。
+    // **整份展开交给契约 schema**：既不是手写键清单，也不只是 `...t` 展开 ——
+    // 载荷形状由 shared/task-detail.ts 的 TaskDetailSchema（单一真源）决定，多余键自动剥掉。
+    //
+    // 历史教训（真实缺陷，两处手抄导致）：handler 里手抄一份键清单、api-def 的 output 白名单再抄一份，
+    // 漏一处就静默丢字段（zod .object() 会 strip 未声明键）。实测漏过 change_type / module /
+    // priority / persona —— 详情面板恒显示"未设置"、写入其实成功（数据在文件里），
+    // 用户视角是"填了看不见、改完像没生效"。结论：只要人还写第二遍就一定会漏，故收敛成单一真源。
     return {
       status: "ok",
       data: TaskDetailSchema.parse({
