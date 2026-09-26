@@ -92,6 +92,22 @@ renderer_solid/
 
 renderer_solid/ 有独立 tsconfig（strict + jsxImportSource: solid-js），tsc 零报错。根 tsconfig.json 因 react-jsx 冲突仍 exclude，但类型检查由自身 tsconfig 覆盖。
 
+### 多 worktree 开发：`.gitignore` 别给 node_modules 加尾斜杠
+
+本仓库既有做法是 `_diy.worktrees/<name>` + `feat/*` 分支。worktree 里为省空间常把
+`node_modules` 做成**指向主仓库的符号链接** —— 此时根 `.gitignore` 的 `node_modules/`
+（**尾斜杠只匹配目录**）不生效，`git add -A` 会把符号链接当文件提交
+（内容是绝对路径，别人 clone 直接坏）。**规则写 `node_modules`（无斜杠）**，目录与符号链接都覆盖。
+
+排查手法（两条都跑，别只看一条）：
+```bash
+git check-ignore -v node_modules            # 无输出 = 未被忽略
+git add -A -n | grep -c node_modules        # 干跑确认不会误收
+```
+注意 `$HOME`（`~/.git`）本身是个 repo 且把 `~/git/diy` 记成 gitlink，所以
+`git status` 在 worktree 里会**向上穿透**到 `~/.git` —— 看到几百个"改动"先确认
+命令到底作用在哪个 repo（`git rev-parse --show-toplevel --git-dir --git-common-dir`）。
+
 ### 数据落位：按「可重建性」分三类（改代码前先对照）
 
 同一份界面数据放哪，判据只有一条 —— **丢了能不能重建、重建有没有损失**：
