@@ -11,6 +11,7 @@
 // 而不是只查 ops/队列 —— 后者只能证明"我们记了一笔"，前者才证明"模型真的看见了"。
 
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { createHash } from "node:crypto";
 import type { LanguageModelV3StreamPart, LanguageModelV3StreamResult, LanguageModelV3Usage } from "@ai-sdk/provider";
 import { MockLanguageModelV3 } from "ai/test";
 import type { LanguageModel } from "ai";
@@ -19,6 +20,8 @@ import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { LocalAgentManager, MAX_STEER_ROUNDS } from "../../src/main/services/local-agent";
+import { activeTurnList } from "../../src/main/services/runtime-context";
+import { readFileSync, existsSync } from "node:fs";
 import { SteerQueue } from "../../src/main/core/steer-queue";
 import type { Op } from "../../src/main/services/local-blocks";
 
@@ -294,4 +297,170 @@ describe("插话不破坏既有会话语义", () => {
     await run(uri, "再来一次", model2, mgr2);
     expect(promptText(model2, 0)).not.toContain("只该出现一次");
   });
+});
+
+// ─── 消费端断开（切页/刷新/关窗/CLI 被杀）也要收尾 ─────
+//
+// 这条路径此前完全没测，所以一个"把 closeTurn 从 finally 挪到 try 之后"的重构
+// 能悄悄把收尾整段跳过：生成器在 return 展开下，try 之后的顺序语句一律不执行。
+// 后果三条（都不可自愈）：ops 缺 turn 的 stop（UI 显示"本轮未完成"）、
+// activeTurns 留僵尸轮次、审计缺 turn-end。
+//
+// 断言口径刻意选"**独立于生成器流本身**的落点"：磁盘上的 ops.jsonl 与内存里的
+// activeTurnList —— 断开之后没人再消费 op，只有这些副作用能证明收尾真的跑了。
+
+/** 该任务的 ops.jsonl 路径（keyOf 规则：字符净化前 64 + sha256 前 12） */
+function opsPathOf(uri: string): string {
+  const readable = uri.replace(/[^\w.-]+/g, "_").slice(0, 64);
+  const sum = createHash("sha256").update(uri).digest("hex").slice(0, 12);
+  return join(diyHome(), "local", `${readable}-${sum}.ops.jsonl`);
+}
+const opsFileOf = (uri: string): Promise<string> => Promise.resolve(opsPathOf(uri));
+
+/** 读该任务的 ops.jsonl 原始文本（不存在 = 空串） */
+function opsRaw(uri: string): string {
+  const fp = opsPathOf(uri);
+  return existsSync(fp) ? readFileSync(fp, "utf-8") : "";
+}
+
+/** 审计文件中该任务的 turn-end 条数 */
+function turnEndAuditCount(uri: string): number {
+  const fp = join(diyHome(), "log", "agent-bash.jsonl");
+  if (!existsSync(fp)) return 0;
+  return readFileSync(fp, "utf-8")
+    .split("\n")
+    .filter((l) => l.includes('"turn-end"') && l.includes(uri)).length;
+}
+
+/** 桩模型：流挂住不回（模拟"生成进行中"），由调用方决定何时断开 */
+function hangingModel() {
+  const stream = new ReadableStream<LanguageModelV3StreamPart>({
+    start(c) {
+      c.enqueue({ type: "stream-start", warnings: [] });
+      c.enqueue({ type: "text-start", id: "t" });
+      c.enqueue({ type: "text-delta", id: "t", delta: "开始" });
+      // 故意不 close：消费端会在流中途断开
+    },
+  });
+  return new MockLanguageModelV3({ provider: "stub", modelId: "stub", doStream: () => Promise.resolve({ stream }) });
+}
+
+describe("消费端断开（return 展开）也必须收尾", () => {
+  it("断开后：turn 的 stop 落盘、activeTurns 摘除、turn-end 审计留痕", async () => {
+    const uri = newUri();
+    const model = hangingModel();
+    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+
+    const it = mgr.chat(uri, "会中途断开的轮次");
+    // 消费几个 op（确保已进入流、turn 已 start），然后在流中途断开
+    for (let i = 0; i < 5; i++) {
+      const r = await it.next();
+      if (r.done) break;
+    }
+    expect(activeTurnList().some((t) => t.taskUri === uri)).toBe(true); // 断开前确实在跑
+
+    // 消费端断开：这正是 http-server-binding 的 stream.on('close') → g.return() 做的事
+    await it.return({ failed: false } as never);
+
+    // ① ops.jsonl 里有本轮 turn 的 stop（否则重放会被当成"未完成/中断轮"）
+    const fp = await opsFileOf(uri);
+    expect(existsSync(fp)).toBe(true);
+    const ops = readFileSync(fp, "utf-8")
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as { op: string; id: string; kind?: string });
+    const turn = ops.find((o) => o.op === "start" && o.kind === "turn")!;
+    expect(turn).toBeTruthy();
+    expect(ops.some((o) => o.op === "stop" && o.id === turn.id)).toBe(true);
+    // 活跃的 step 也收掉（否则它在块树里永远 streaming）
+    const steps = ops.filter((o) => o.op === "start" && o.kind === "step");
+    for (const st of steps) expect(ops.some((o) => o.op === "stop" && o.id === st.id)).toBe(true);
+
+    // ② activeTurns 摘除（否则崩溃现场会挂一个根本不存在的轮次）
+    expect(activeTurnList().some((t) => t.taskUri === uri)).toBe(false);
+
+    // ③ turn-end 审计留痕（崩溃后能区分"死在生成中"还是"生成已结束"）
+    expect(turnEndAuditCount(uri)).toBeGreaterThan(0);
+  });
+
+  it("断开时若队列还有插话：不出队、不落块（留待下一轮，绝不留成「两头都没有」）", async () => {
+    const uri = newUri();
+    new SteerQueue().add(uri, "step", "还没轮到投递就被断开了");
+    const model = hangingModel();
+    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+
+    const it = mgr.chat(uri, "会中途断开的轮次");
+    for (let i = 0; i < 5; i++) {
+      const r = await it.next();
+      if (r.done) break;
+    }
+    await it.return({ failed: false } as never);
+
+    // 本轮第一个请求走的是 stepNumber===0（不注入），插话既没投给模型也没落进 ops
+    // → 它必须还在队列里（用户可以取消、下一轮会被投递）
+    expect(new SteerQueue().list(uri).map((i) => i.text)).toEqual(["还没轮到投递就被断开了"]);
+    const fp = await opsFileOf(uri);
+    const ops = readFileSync(fp, "utf-8");
+    expect(ops).not.toContain("还没轮到投递就被断开了");
+  });
+});
+
+// ─── 插话的落位点：start-step，而不是 prepareStep ─────────
+//
+// 两条流不在同一时间轴上：认领发生在 SDK 内部的 prepareStep（同步回调），
+// 而那一刻消费端**可能还压着上一步的 part**（producer 已跑到第 N+1 步，consumer 还在第 N 步尾部）。
+// 若在 prepareStep 就 sink + 出队，插话块会插到上一步未完的内容**之前** ——
+// 这在真实运行里出现过（ops.jsonl 里 su1 排在 stop s1 之前，见任务 169 review）。
+//
+// 判据选"第二个请求发出那一刻的现场"：prepareStep(step2) 已跑完（消息已注入）、
+// step2 的首个 part（start-step）还没到。此刻新契约要求它**仍在队列里且未进 ops**（认领≠投递）。
+
+describe("插话认领与落位分离（落位点 = start-step）", () => {
+    it("step-2 请求发出时（prepareStep 已认领）：插话仍在队列、尚未落进 ops", async () => {
+        const uri = newUri();
+        const text = "等 start-step 才落位";
+        new SteerQueue().add(uri, "step", text);
+        /** 第二个请求发出那一刻的现场快照 */
+        let atSecondRequest: { queued: number; opsHasBlock: boolean } | null = null;
+
+        let call = 0;
+        const model = new MockLanguageModelV3({
+            provider: "stub",
+            modelId: "stub",
+            doStream: () => {
+                call++;
+                if (call === 2) {
+                    // 此刻：prepareStep(step2) 已跑完（插话文本已注入请求），但 step2 的 start-step 还没到
+                    atSecondRequest = {
+                        queued: new SteerQueue().list(uri).length,
+                        opsHasBlock: opsRaw(uri).includes(text),
+                    };
+                }
+                // step1 调工具（触发第二步）；step2 给答复
+                return Promise.resolve(call === 1 ? toolCallReply("c1", "echo x") : textReply("完成"));
+            },
+        });
+
+        const ops = await run(uri, "开始", model);
+
+        // 认领时刻：队列仍在（未出队）、ops 里也没有（未落位）—— 这正是崩溃安全的来源
+        expect(atSecondRequest).not.toBeNull();
+        expect(atSecondRequest!.queued).toBe(1);
+        expect(atSecondRequest!.opsHasBlock).toBe(false);
+
+        // 收尾：start-step 到了 → 已落位（进 ops）并出队
+        expect(new SteerQueue().list(uri)).toEqual([]);
+        expect(opsRaw(uri)).toContain(text);
+
+        // 结构不变式：插话块必须排在**第一个 step 的全部内容之后、第二个 step 开始之前**
+        const flat = ops.map((o) => ({ op: o.op, kind: (o as { kind?: string }).kind, id: (o as { id: string }).id }));
+        const steerIdx = flat.findIndex(
+            (o) => o.op === "start" && o.kind === "text"
+                && (ops[flat.indexOf(o)] as { meta?: { steer?: string } }).meta?.steer === "step",
+        );
+        const stepStarts = flat.map((o, i) => ({ ...o, i })).filter((o) => o.op === "start" && o.kind === "step");
+        expect(stepStarts).toHaveLength(2);
+        expect(steerIdx).toBeGreaterThan(stepStarts[0]!.i); // 不在第一步之前
+        expect(steerIdx).toBeLessThan(stepStarts[1]!.i); // 在第二步之前
+    });
 });

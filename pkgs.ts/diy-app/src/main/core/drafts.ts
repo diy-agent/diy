@@ -208,8 +208,10 @@ function parseSteers(raw: unknown): SteerItem[] {
     }
     const o = item as Record<string, unknown>;
     const mode = String(o["mode"] ?? "");
-    if (typeof o["id"] !== "string" || typeof o["text"] !== "string" || o["text"] === "") {
-      console.warn("[drafts] 忽略结构不完整的插话项（需要 id + 非空 text）");
+    // trim 后为空也算空：add 侧拒空靠 trim（steer-queue），读侧不设防就会出现
+    // "手写进文件的空白插话" —— 它投出去只会污染提示词（同一条不变式，两侧都要守）
+    if (typeof o["id"] !== "string" || typeof o["text"] !== "string" || o["text"].trim() === "") {
+      console.warn("[drafts] 忽略结构不完整的插话项（需要 id + 非空白 text）");
       continue;
     }
     if (!(STEER_MODES as readonly string[]).includes(mode)) {
@@ -299,6 +301,13 @@ function persist(
  * 只清 `fields`，**不动 steers**：插话队列是另一类数据（已提交、待投递），
  * 「清空输入框草稿」不该顺手把排队中的插话也删掉。整份文件只在两者皆空时删除。
  * 幂等：文件不存在不报错。
+ *
+ * 语义边界（与旧版不同，见 tests/core/drafts.test.ts 锁定）：
+ *   · 不传 fields          → 清空全部**字段**（队列保留）
+ *   · 传 ['title']         → 只清 title
+ *   · 传 []                → **什么都不清**（"按列出的字段清空"的中性结果）
+ * 旧版把空数组当"整份删除"，那正是引入 steers 后**必须**改掉的行为 ——
+ * 否则 CLI 传一次空数组就把用户排队中的插话一起删了。
  */
 export function clearDrafts(uri: string, fields?: DraftField[]): void {
   const existing = readDrafts(uri);

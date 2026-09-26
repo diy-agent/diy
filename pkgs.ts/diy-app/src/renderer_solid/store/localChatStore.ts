@@ -29,6 +29,17 @@ interface TaskState {
     /** 待投递的插话（FIFO）。权威在任务目录 .diy/drafts.yaml，这里只是当前快照 */
     steers: () => SteerItem[];
     setSteers: (v: SteerItem[]) => void;
+    /**
+     * 队列快照的提交序号（防乱序覆盖）。
+     *
+     * 三个入口都会拿全量快照回来（add/cancel 的返回值、以及被投递后的 list 刷新），
+     * 它们的响应可能**乱序到达**：例如「插话刚被投递→list 回来了新队列」之后，
+     * 早先发出的 add 响应才到（旧队列），界面就会回退成一条早已投递的"待发送"，
+     * 而用户会以为自己的话还没发出去。用递增序号只认最新一次发起的结果。
+     */
+    steerSeq: number;
+    /** 已落地的最新序号（小于它的响应一律丢弃） */
+    steerSettled: number;
     /** 阅读位置：会话块树滚动区 scrollTop（内存态，随会话保留；不落盘——重启后从最新看起） */
     scroll: number;
     /** 详情面板当前 tab（local=agent 对话 / info=任务详情），per-task 记忆 */
@@ -49,7 +60,7 @@ function stateFor(taskUri: string): TaskState {
         const [running, setRunning] = createSignal(false);
         const [error, setError] = createSignal<string | null>(null);
         const [steers, setSteers] = createSignal<SteerItem[]>([]);
-        s = { store: new BlockStore(), loaded: false, trees, setTrees, running, setRunning, error, setError, steers, setSteers, scroll: 0, tab: "local", detailScroll: 0 };
+        s = { store: new BlockStore(), loaded: false, trees, setTrees, running, setRunning, error, setError, steers, setSteers, steerSeq: 0, steerSettled: 0, scroll: 0, tab: "local", detailScroll: 0 };
         states.set(taskUri, s);
     }
     return s;
@@ -117,15 +128,35 @@ async function loadHistory(st: TaskState, taskUri: string): Promise<void> {
 }
 
 /**
+ * 落地一个队列快照（带乱序保护）。
+ *
+ * 返回 false 表示这次结果是**过期的**（期间已有更晚发起的请求落地），调用方据此跳过后续处理。
+ */
+function commitSteers(taskUri: string, seq: number, items: SteerItem[]): boolean {
+    const st = stateFor(taskUri);
+    if (seq < st.steerSettled) return false;
+    st.steerSettled = seq;
+    st.setSteers(items);
+    return true;
+}
+
+/** 领取一个提交序号（每次发起请求时调用，保证严格递增） */
+function nextSteerSeq(taskUri: string): number {
+    const st = stateFor(taskUri);
+    return ++st.steerSeq;
+}
+
+/**
  * 拉取插话队列快照。
  *
  * 失败**不抛**也不清空已有快照：队列是用户已提交的内容，界面上把横条抹掉比留着旧数据更糟
  * （用户会以为自己的插话已经发出去了）。留旧值 + toast 告知。
  */
 async function refreshSteers(taskUri: string): Promise<void> {
+    const seq = nextSteerSeq(taskUri);
     try {
         const items = (await diyService.diy.agent.local.steer.list({ taskUri })) as SteerItem[];
-        stateFor(taskUri).setSteers(items);
+        commitSteers(taskUri, seq, items);
     } catch (e) {
         console.error(`[localChat] 插话队列读取失败 ${taskUri}:`, e);
         notificationStore.addToast("error", "插话队列读取失败，横条可能不是最新（详见控制台）");
@@ -219,9 +250,11 @@ async function send(taskUri: string, text: string): Promise<boolean> {
 async function submitSteer(taskUri: string, mode: SteerMode, text: string): Promise<boolean> {
     const body = text.trim();
     if (!body) return false;
+    const seq = nextSteerSeq(taskUri);
     try {
         const items = (await diyService.diy.agent.local.steer.add({ taskUri, mode, text: body })) as SteerItem[];
-        stateFor(taskUri).setSteers(items);
+        // 入队**已经成功**（服务端是权威），过期快照只影响界面上一瞬的显示，故仍返回 true
+        commitSteers(taskUri, seq, items);
         return true;
     } catch (e) {
         console.error(`[localChat] 插话提交失败 ${taskUri}:`, e);
@@ -232,9 +265,10 @@ async function submitSteer(taskUri: string, mode: SteerMode, text: string): Prom
 
 /** 取消一条待投递插话（幂等；失败保留原快照，避免界面与盘上不一致） */
 async function cancelSteer(taskUri: string, id: string): Promise<void> {
+    const seq = nextSteerSeq(taskUri);
     try {
         const items = (await diyService.diy.agent.local.steer.cancel({ taskUri, id })) as SteerItem[];
-        stateFor(taskUri).setSteers(items);
+        commitSteers(taskUri, seq, items);
     } catch (e) {
         console.error(`[localChat] 插话取消失败 ${taskUri}#${id}:`, e);
         notificationStore.addToast("error", "插话取消失败，仍在队列中");
@@ -272,6 +306,9 @@ async function clear(taskUri: string) {
     st.loaded = true; // 文件已删，不必重拉
     st.setError(null);
     st.setSteers([]); // 会话已清，排队中的插话也被 main 一并清掉（见 clear()）
+    // 序号归零：会话已重置，旧的在途响应（若有）不该再影响新状态
+    st.steerSeq = 0;
+    st.steerSettled = 0;
     st.scroll = 0; // 会话清空，阅读位置一并归位
     refresh(st);
 }

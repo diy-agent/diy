@@ -143,7 +143,7 @@ export const apiDef = RpcSchema.router({
                 output: z.object({ status: z.string(), data: DraftsData }),
               }),
               clear: RpcSchema.unary({
-                desc: `清除草稿（不传 fields 清空全部；清空后文件删除）`,
+                desc: `清除草稿字段（不传 fields 清空全部字段；传 [] 什么都不清。只动草稿字段，不动待投递的插话队列；文件在字段与队列都空时才删除）`,
                 input: {
                   uri: z.string().cliArg({ desc: "任务 URI" }),
                   // CLI 数组统一走 JSON 形式（parser 只对 ZodArray 做 JSON.parse）：

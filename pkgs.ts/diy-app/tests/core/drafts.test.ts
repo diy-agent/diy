@@ -243,6 +243,23 @@ describe("drafts 插话队列", () => {
     expect(existsSync(draftsFilePath(URI))).toBe(true);
   });
 
+  it("clearDrafts(uri, []) 什么都不清（空数组 ≠ 整份删除：否则会顺手删掉排队中的插话）", () => {
+    writeDrafts(URI, { title: "T" });
+    writeSteers(URI, [{ id: "steer/1", mode: "step", text: "排队中", created: "" }]);
+    clearDrafts(URI, []);
+    const d = readDrafts(URI)!;
+    expect(d.fields.title).toBe("T");
+    expect(d.steers.map((i) => i.id)).toEqual(["steer/1"]);
+  });
+
+  it("纯空白的插话被读侧拒掉（与 add 侧 trim 拒空同一条不变式）", () => {
+    writeRaw(
+      `kind: ${DRAFTS_KIND}\nversion: ${DRAFTS_VERSION}\ntask: ${URI}\nfields: {}\n` +
+        `steers:\n  - id: steer/1\n    mode: step\n    text: '   '\n    created: ''\n`,
+    );
+    expect(readDrafts(URI)!.steers).toEqual([]);
+  });
+
   it("字段与队列都空 → 文件删除（不留空壳）", () => {
     writeSteers(URI, [{ id: "s1", mode: "step", text: "插嘴", created: "" }]);
     writeSteers(URI, []);

@@ -487,15 +487,23 @@ export class LocalAgentManager {
         return this.queue.remove(taskUri, id);
     }
 
+    /**
+     * 清空会话：中断在途生成 + 清插话队列 + 删 ops/llm/raw 日志。
+     *
+     * 顺序原则：**先把所有可失败的事做完，最后才丢内存态**。
+     * 反过来（先 sessions.delete 再删文件）一旦中途失败，内存里会话没了、盘上文件还在，
+     * 调用方拿到 false 而界面保留旧内容 —— 一次 reload 历史又全长回来，内存与盘上长期分叉。
+     * 现在：失败也照样丢内存态（下次进入从盘上重建，两边一致），返回值只表示「盘上是否清干净」。
+     */
     clear(taskUri: string): boolean {
         this.cancel(taskUri);
-        this.sessions.delete(taskUri);
+        let ok = true;
         // 会话都要删了，排队中的插话无处可投 —— 一并清掉（否则横条会一直挂着"待发送"）
         try {
             this.queue.clear(taskUri);
         } catch (e) {
             console.error(`[local-agent] 清空插话队列失败 ${taskUri}:`, e);
-            return false;
+            ok = false;
         }
         for (const f of [opsFile(taskUri), llmFile(taskUri), rawFile(taskUri)]) {
             try {
@@ -503,10 +511,12 @@ export class LocalAgentManager {
             } catch (e) {
                 // force:true 已吸收 ENOENT；能到这里的都是真故障（权限/只读盘），不能冒充成功
                 console.error(`[local-agent] 删除日志失败 ${f}:`, e);
-                return false;
+                ok = false;
             }
         }
-        return true;
+        // 内存态无论如何都丢：留着它才是真的不一致（盘上文件仍在 → 重进会重新加载）
+        this.sessions.delete(taskUri);
+        return ok;
     }
 
     /**
@@ -715,6 +725,8 @@ export class LocalAgentManager {
         // ── 插话投递 ─────────────────────────────────────────────
         // prepareStep 是同步回调（不是生成器），只能先把 op 排队、由流循环 flush 出去
         let pendingSteerOps: Op[] = [];
+        /** 已被 prepareStep 认领、但还没在流里落位的插话（认领≠投递，见 claimStepSteer 头注） */
+        let claimed: SteerItem | null = null;
         /** 插话的 user 块（三个 op）；parent 一律 = turn —— 该块在文档序上就是"某步之后、下一步之前" */
         const steerBlockOps = (item: SteerItem): Op[] => {
             // 块 id 沿用 turn 内局部序号风格（`<turnId>_suN`），另在 meta 里记 steerId 指回
@@ -733,26 +745,51 @@ export class LocalAgentManager {
             ];
         };
         /**
-         * 取出一条 step 模式插话：先落盘（+排队待 yield），返回文本供注入 messages；无则 null。
+         * 「认领」一条 step 插话：只读队列取队首，**不出队、不落盘**，返回文本供注入 messages。
          *
-         * 取不出来（队列写盘失败）就当没有 —— 绝不能"模型看见了、文件里还留着"：
-         * 那会让同一条插话在下一步被投递第二次。
+         * 为什么认领与落位要分两步 —— 两条流不在同一个时间轴上：
+         *   · 认领发生在 SDK 内部的 `prepareStep`（同步回调），此刻消费端**可能还压着上一步的 part**
+         *     （producer 已跑到第 N+1 步，consumer 还在处理第 N 步的尾部）；
+         *   · 若在这里就 sink + 出队，插话块的**落盘顺序与 yield 顺序都会插到上一步未完的内容之前**
+         *     —— 实测真实日志里出现过：`su1`(插话块) 排在 `stop s1`（上一步的 finish-step）之前。
+         * 所以这里只认领；真正落位在流里出现 `start-step` 时（见 landClaimedSteer），
+         * 那才是"上一步全部 part 都已处理完、下一步尚未开始"的唯一无歧义位置。
+         *
+         * 已认领则**复用同一条**（不取第二条）：prepareStep 因重试被再次调用时，注入的应是同一句话。
          */
-        const takeStepSteer = (): string | null => {
-            let item: SteerItem | undefined;
+        const claimStepSteer = (): string | null => {
+            if (claimed) return claimed.text;
             try {
-                item = this.queue.takeFirst(taskUri, "step");
+                claimed = this.queue.peekFirst(taskUri, "step") ?? null;
             } catch (e) {
-                console.error(`[local-agent] 插话队列取项失败 ${taskUri}：`, e);
+                console.error(`[local-agent] 插话队列读取失败 ${taskUri}：`, e);
                 return null;
             }
-            if (!item) return null;
+            return claimed?.text ?? null;
+        };
+
+        /**
+         * 「落位」已认领的插话：同步落盘（写进 ops）+ 出队，并把 op 排进待 yield 队列。
+         *
+         * 顺序不可换：**先 sink 再出队**。sink 是"这条插话进对话流"的权威，出队是"它不再是待办"。
+         * 反过来（先出队）一旦在两者之间崩溃，队列里没有、ops 里也没有 → 用户的话真丢。
+         * 现在这个顺序最坏是"重复投一遍"（可恢复）。两步都是同步文件操作、中间无 await，等价原子。
+         */
+        const landClaimedSteer = (): void => {
+            if (!claimed) return;
+            const item = claimed;
+            claimed = null;
             for (const op of steerBlockOps(item)) {
-                // 先落盘：即使随后流被中断，重放历史里仍有这条插话（谁也不会"没看见就没了"）
                 sink(op);
                 pendingSteerOps.push(op);
             }
-            return item.text;
+            try {
+                this.queue.remove(taskUri, item.id);
+            } catch (e) {
+                // 出队失败：ops 已有这条块（不会丢），但队列里还留着（可能被再投一遍）。
+                // 不能静默 —— 重复投递是用户可见的行为差异。
+                console.error(`[local-agent] 插话出队失败（已落盘，可能重复投递）${taskUri}#${item.id}:`, e);
+            }
         };
         /** 把排队中的插话 op 交给消费端（必须在下一步开始前调用：块的落点决定消息顺序） */
         const flushSteer = function* (): Generator<Op, void, void> {
@@ -762,12 +799,23 @@ export class LocalAgentManager {
             for (const op of ops) yield op;
         };
 
-        /** 收尾必闭合（幂等）：step 先于 turn，摘掉活跃轮次并落 turn-end 审计。
-         *  抽成生成器是为了让「超预算早退」也走同一套收尾 —— 历史 bug：早退的 return 在 try 之前，
-         *  绕过 finally → activeTurns 留僵尸轮次、落盘 ops 缺 turn 的 stop、审计缺 turn-end。 */
+        /**
+         * 收尾必闭合（幂等）：step 先于 turn，摘掉活跃轮次并落 turn-end 审计。
+         * 抽成生成器是为了让「超预算早退」也走同一套收尾 —— 历史 bug：早退的 return 在 try 之前，
+         * 绕过 finally → activeTurns 留僵尸轮次、落盘 ops 缺 turn 的 stop、审计缺 turn-end。
+         *
+         * ⚠️ 副作用必须**同步做完，且在任何 yield 之前**。原因：消费端断开（切页/刷新/关窗/
+         * CLI 被杀）时生成器以 return 展开，finally 里只执行到**第一个 yield** 就把控制权交回调用方
+         * —— 若把「落盘 stop / noteTurnEnd / 审计」写在 `yield* emit(...)` 之后，它们全都不会执行
+         * （实测：`{stop 落盘后 yield}` 的写法在 return 展开下只会执行到 yield，审计一行不跑）。
+         * 所以顺序固定为：① sink（同步落盘）② noteTurnEnd / 审计（同步）③ 尽力 yield 给还活着的消费端。
+         */
         const closeTurn = function* (currentStepId: string, steps: number): Generator<Op, void, void> {
-            if (currentStepId !== turnId) yield* emit({ op: "stop", id: currentStepId });
-            yield* emit({ op: "stop", id: turnId });
+            const ops: Op[] = [];
+            if (currentStepId !== turnId) ops.push({ op: "stop", id: currentStepId });
+            ops.push({ op: "stop", id: turnId });
+            // ① 同步副作用（无 await、无 yield）：无论走正常收尾还是 return 展开，这一段必定执行完
+            for (const op of ops) sink(op);
             noteTurnEnd(taskUri);
             appendAudit(diyHome(), {
                 phase: "turn-end",
@@ -775,6 +823,8 @@ export class LocalAgentManager {
                 model: model || DEFAULT_MODEL,
                 result: `steps=${steps} usage=${acc.in}/${acc.out}`,
             });
+            // ② 尽力投递：消费端还在就让它看到 stop；已断开则在此停住 —— 状态早已一致（①已完成）
+            for (const op of ops) yield op;
         };
 
         // 系统上下文：分节装配（身份/自述/项目规范/任务/规则/护栏）——与试验场预览同一入口
@@ -790,7 +840,9 @@ export class LocalAgentManager {
                 `系统上下文超出预算（${kb(asm.overBudget.used)} KB > ${kb(asm.overBudget.budget)} KB），本轮未发送。` +
                     `请精简提示词模版或项目 AGENTS.md。`,
             );
-            // 拒绝发送也是一轮完整生命周期：必须闭合，否则 UI/崩溃报告/审计三处都会认为它还在跑
+            // 拒绝发送也是一轮完整生命周期：必须闭合，否则 UI/崩溃报告/审计三处都会认为它还在跑。
+            // 这条 return 在 try 之前，不经过下面的 finally —— 收尾在这里显式做，且**只做一次**
+            // （closeTurn 的 sink 不幂等：重复调用会往 ops 里多写一条 stop，虽然无害但脏）。
             yield* closeTurn(stepId, stepN);
             return { failed: false };
         }
@@ -811,7 +863,7 @@ export class LocalAgentManager {
         };
 
         let failed = false;
-        {
+        try {
             // 从块树重建 messages：本轮的 user 块 + 中途落下的插话块都在里面，
             // 「wire = store = UI = LLM」这条链对每一步都成立（prepareStep 注入的就是它）
             const sent: ModelMessage[] = blocksToMessages(sess.store) as unknown as ModelMessage[];
@@ -855,19 +907,22 @@ export class LocalAgentManager {
                 // 下一轮的开场白）语义更准，轮次结构/usage/停止边界也不用为夹层做特例。
                 prepareStep: ({ messages, stepNumber }) => {
                     if (signal.aborted || stepNumber === 0) return {};
-                    const text = takeStepSteer();
+                    const text = claimStepSteer();
                     return text === null ? {} : { messages: [...messages, { role: "user" as const, content: text }] };
                 },
             });
 
             try {
                 for await (const part of result.fullStream) {
-                    // prepareStep 里落的插话 op 在这里递出去：此刻 start-step 还没发，
-                    // 所以块的文档序正确落在"上一步之后、这一步之前"
-                    yield* flushSteer();
                     rawSink({ kind: "part", seq: ++rawSeq, ts: new Date().toISOString(), part });
                     switch (part.type) {
                         case "start-step":
+                            // 插话落位点：**唯一无歧义的位置** —— start-step 在流里保证排在上一步的
+                            // 所有 part 之后，而"下一步"还没产出任何内容。认领发生在 prepareStep（可能
+                            // 早于消费端处理完上一步的 part），落位必须等到这里，否则插话块会插到
+                            // 上一步未完的内容前面（落盘顺序与 UI 顺序都会错）。
+                            landClaimedSteer();
+                            yield* flushSteer();
                             stepN++;
                             stepId = `${turnId}_s${stepN}`;
                             yield* emit({ op: "start", id: stepId, kind: "step", parent: turnId });
@@ -1047,14 +1102,16 @@ export class LocalAgentManager {
                     failed = true;
                 }
             }
-            // 兜底 flush：被中断的流里 prepareStep 落过的插话 op 也要见天日
-            // （sink 已落盘，这里负责让当前会话的 UI 立刻看到）
+            // 兜底 flush（安全网）：正常路径下 landClaimedSteer 之后紧接着就 flush 了，
+            // 走到这里通常为空；留着是为了"将来新增别的投递点"也不会漏给消费端。
             yield* flushSteer();
+        } finally {
+            // ⚠️ 收尾**必须在 finally 里**（历史 bug 的复现版）：消费端断开时生成器以 return 展开，
+            // try/catch 之后的顺序语句一律不执行 —— 那会留下未 stop 的 turn（UI 显示"本轮未完成"
+            // + 重放时被 interruptedToolPatches 当成中断轮）、僵尸 activeTurns、缺 turn-end 审计。
+            // closeTurn 内部先把副作用同步做完（见其头注），再尽力 yield，故 return 展开下也安全。
+            yield* closeTurn(stepId, stepN);
         }
-
-        // 收尾必闭合：step 先于 turn（stop 幂等，重复无害）；
-        // 轮次审计收尾：崩溃后能区分"死在生成中"还是"生成已结束"
-        yield* closeTurn(stepId, stepN);
         return { failed };
     }
 }

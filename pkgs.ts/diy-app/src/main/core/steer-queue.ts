@@ -1,7 +1,7 @@
 // src/main/core/steer-queue.ts
 // 🎯 插话队列（steer）— 用户「插嘴」提交的待投递消息，FIFO，落任务目录 .diy/drafts.yaml
 //
-// 两种投递时机（SteerMode，见 core/drafts.ts）：
+// 投递的两种时机（SteerMode，见 core/drafts.ts）：
 //   step —— 当前轮的下一个**模型步**之前注入（模型还在跑工具时最贴近"下一步"）；
 //           本轮已收尾（模型不再请求工具 / 步数用尽）则**降级**为下一轮的开场白
 //   turn —— 当前轮结束后的下一轮（模型已给出答复，只能等下一次对话）
@@ -91,6 +91,20 @@ export class SteerQueue {
     const items = this.list(uri).filter((it) => it.id !== id);
     this.port.write(uri, items);
     return items;
+  }
+
+  /**
+   * 只看队首，**不动队列**（"认领"用）。
+   *
+   * 与 takeFirst 的区别就是"删不删"：step 模式的插话要经两步 ——
+   * ① `prepareStep`（SDK 回调）认领并注入请求 messages；
+   * ② 流里出现 `start-step` 时才真正落位（写进 ops + 出队）。
+   * 两步之间**不能**提前出队：那一刻它还没进对话流，出队后就只剩"内存里的一份"，
+   * 进程在这中间挂掉就是真丢（用户白打）。留在队列里最坏是"下次再投一遍"（可恢复）。
+   */
+  peekFirst(uri: string, mode?: SteerMode): SteerItem | undefined {
+    const items = this.list(uri);
+    return mode === undefined ? items[0] : items.find((it) => it.mode === mode);
   }
 
   /**

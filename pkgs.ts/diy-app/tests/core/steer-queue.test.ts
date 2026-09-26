@@ -134,6 +134,33 @@ describe("steer-queue 取出（投递的唯一入口）", () => {
   });
 });
 
+describe("steer-queue 认领（peekFirst：只看不动）", () => {
+  it("只看不删：内容与队列都不变（step 模式要「认领 ≠ 投递」两段式）", () => {
+    const port = memPort([
+      { id: "steer/1", mode: "step", text: "A", created: "" },
+      { id: "steer/2", mode: "step", text: "B", created: "" },
+    ]);
+    const q = new SteerQueue(port);
+    expect(q.peekFirst(URI, "step")!.id).toBe("steer/1");
+    expect(q.list(URI).map((i) => i.id)).toEqual(["steer/1", "steer/2"]);
+    expect(port.writes).toHaveLength(0); // 一个字都没写盘
+  });
+
+  it("可按模式认领（跳过早于它的 turn 项）", () => {
+    const q = new SteerQueue(
+      memPort([
+        { id: "steer/1", mode: "turn", text: "轮", created: "" },
+        { id: "steer/2", mode: "step", text: "步", created: "" },
+      ]),
+    );
+    expect(q.peekFirst(URI, "step")!.id).toBe("steer/2");
+  });
+
+  it("空队列 → undefined", () => {
+    expect(new SteerQueue(memPort()).peekFirst(URI)).toBeUndefined();
+  });
+});
+
 describe("steer-queue 取消与清空", () => {
   it("按 id 取消，其余顺序不变", () => {
     const port = memPort([
