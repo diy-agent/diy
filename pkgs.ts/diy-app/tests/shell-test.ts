@@ -30,6 +30,19 @@ interface RunResult {
 const markerPrefix = `__ST_${Date.now().toString(16)}_${Math.random().toString(16).slice(2, 8)}__`;
 const markerRe = new RegExp(`${markerPrefix}\\((\\d+)\\)__`);
 
+/**
+ * **收尾标记**（走 stdout）：命令跑完后 `printf` 一行哨兵。
+ *
+ * 为什么必须有它（实测踩到，且只在机器负载高时复现）：
+ *   PS1 标记走 **stderr**，与命令输出走的 **stdout** 是两条独立管道 —— 到达顺序**无保证**。
+ *   只等 PS1 就返回时，上一条命令的大输出（如 read 的 50KB）可能还有数据没排空，
+ *   于是落进**下一次** `run()` 的缓冲区：表现为"这次命令读到的是上一条命令的输出"
+ *   （tool-read 的两个用例因此间歇性失败）。
+ *   哨兵写在命令之后、与输出同一条管道 → 它到了，就说明 stdout 真的排空了。
+ */
+const endPrefix = `__STE_${Date.now().toString(16)}_${Math.random().toString(16).slice(2, 8)}__`;
+const endRe = new RegExp(`^${endPrefix}$`, "m");
+
 export class Session {
   private proc: ChildProcess;
   private outBuf = "";
@@ -62,18 +75,17 @@ export class Session {
     try { this.proc.stdin!.write(cmd + "\n"); } catch { /* 子进程已退出 */ }
   }
 
-  /** 读输出直到 marker 出现或超时。resolve [是否找到 marker, 退出码] */
-  private _read(timeoutMs: number): Promise<{ found: boolean; code: number }> {
+  /** 轮询等待某个标记出现（resolve 是否在限时内出现） */
+  private _waitFor(re: RegExp, buf: () => string, timeoutMs: number): Promise<boolean> {
     const start = Date.now();
     return new Promise((resolve) => {
       const check = () => {
-        const m = markerRe.exec(this.errBuf);
-        if (m) {
-          resolve({ found: true, code: parseInt(m[1], 10) });
+        if (re.test(buf())) {
+          resolve(true);
           return;
         }
         if (Date.now() - start > timeoutMs) {
-          resolve({ found: false, code: -1 });
+          resolve(false);
           return;
         }
         setTimeout(check, 10);
@@ -82,23 +94,37 @@ export class Session {
     });
   }
 
+  /** 读输出直到 marker 出现或超时。resolve [是否找到 marker, 退出码] */
+  private async _read(timeoutMs: number): Promise<{ found: boolean; code: number }> {
+    const found = await this._waitFor(markerRe, () => this.errBuf, timeoutMs);
+    if (!found) return { found: false, code: -1 };
+    const m = markerRe.exec(this.errBuf)!;
+    return { found: true, code: parseInt(m[1], 10) };
+  }
+
   /** 执行一条命令，返回退出码 + stdout + stderr（持续同一 bash 进程） */
   async run(cmd: string, timeoutMs = 20000): Promise<RunResult> {
     await this.ready;
     this.outBuf = "";
     this.errBuf = "";
-    // 包一层：命令 → 记录退出码 → 往 stdout 打收尾标记 → 让 `$?` 仍是命令的退出码（PS1 读到的）
-    this._write(cmd);
-    const { found, code } = await this._read(timeoutMs);
-    // 实验：不等待收尾标记（模拟改造前的行为）
+    const started = Date.now();
+    // 包一层：命令 → 记退出码 → 往 stdout 打**收尾标记**（保证输出排空）→
+    // 用子 shell 还原 `$?`（PS1 读到的仍是命令自己的退出码，不是 printf 的 0）
+    // 哨兵**前面也补一个换行**：命令输出若不以 \n 结尾，哨兵会黏在最后一行上（匹配不到）；
+    // 输出最终会 trim，多一个换行无害。
+    this._write(`${cmd} ; __st=$? ; printf '\\n%s\\n' '${endPrefix}' ; (exit $__st)`);
+    const outDone = await this._waitFor(endRe, () => this.outBuf, timeoutMs);
+    // 哨兵到了 → PS1 标记随后（stderr）；给它一小段收尾时间（同一条命令的 prompt 紧随其后）
+    const left = Math.max(200, timeoutMs - (Date.now() - started));
+    const { found, code } = await this._read(outDone ? left : 0);
 
     // 清理 marker 行与收尾标记，还原真实输出
     const errLines = this.errBuf.split("\n").filter(Boolean);
     const cleanErr = errLines.filter((l) => !markerRe.test(l)).join("\n").trim();
     const rawOut = this.outBuf;
-    const cleanOut = rawOut.replace(/\r\n/g, "\n").replace(/\r/g, "").trim();
+    const cleanOut = rawOut.replace(endRe, "").replace(/\r\n/g, "\n").replace(/\r/g, "").trim();
 
-    if (!found) {
+    if (!found || !outDone) {
       // 超时：挂死的前台 CLI 进程阻塞了 bash 会话，发 Ctrl+C 释放前台 + kill 旧 job
       try {
         this.proc.stdin?.write("\x03");
