@@ -8,18 +8,19 @@
 // 此前标题只有 "diy solid"，切窗口 / macOS 标题栏 / dock 悬停全都认不出谁是谁，
 // 排查「我这条命令打到哪个实例的数据」时只能靠猜。
 //
-// 为什么还要分支 / 端口 / PID（任务 177）：只有数据根仍然不够用 ——
-//   · 数据根本身看不出「是哪个分支的代码在跑」（`./build/home`、`/tmp/diy-app-test-xxx` 尤其）
+// 为什么还要仓库路径 / 端口 / PID（任务 177）：只有数据根仍然不够用 ——
+//   · 数据根本身看不出「是哪份代码在跑」（`./build/home`、`/tmp/diy-app-test-xxx` 尤其），
+//     故把**仓库/worktree 路径**放最前（早先显示 git 分支；同分支不同代码时反而误导）
 //   · 同分支多实例、dev 热重启后端口会变（18888 ↔ 随机），端口是「命令打给谁」的直接抓手
 //   · PID 用来确认「眼前这个窗口 = 那个进程」，排查残留实例 / 单实例锁问题时必需
 //
 // 为什么数据根要先缩写（abbrevHome）：`/Users/<name>` 前缀无信息量。
 // ⚠️ 缩写基准必须是**真实家目录**（main 侧用 getpwuid 取，见 core/instance-identity.ts），
 // 不能直接用 $HOME —— 测试/隔离实例会把 HOME 指到临时目录，那时 DIY_HOME === $HOME，
-// 缩写产物是 `~`，标题变成 `diy(~) [test]`：看着像用户家目录，其实是个 /tmp 临时根。
+// 缩写产物是 `~`，标题里的数据根退化成 `~`：看着像用户家目录，其实是个 /tmp 临时根。
 //
-// 例：`diy(~/git/diy/_diy.worktrees/instance-title/build/home) [dev] feat/instance-title :18888 pid 4242`
-//     `diy(/tmp/diy-app-test-abc123) [test] feat/instance-title :52341 pid 53087`
+// 例：`~/git/diy/diy🔹~/git/diy/diy/build/home🔹port:18888🔹pid:4242`
+//     `~/git/diy/diy🔹/var/folders/…/diy-app-test-abc123🔹port:52341🔹pid:53087`
 
 /**
  * 把数据根缩成 `~` 开头（省掉 /Users/<name> 这类无信息量的前缀）。

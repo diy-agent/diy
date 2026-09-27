@@ -1,14 +1,16 @@
 // tests/cli.intent.ui-title.test.ts
 // ═══════════════════════════════════════════════════════════════
 // 🎯 窗口标题 = 实例标识
-//    `diy(<数据根>) [dev|test] <git 分支> :<端口> pid <PID>`
+//    `<仓库>🔹<数据根>🔹port:<端口>🔹pid:<PID>`
 //
 // 需求原文：「顺手给 app 标题增加当前 diy_home 目录：diy(~/.diy) 以区别不同实例」
 //          「test 时全是 `~` 是错误的，应该显示它打开的具体目录；还要显示所测分支
 //           （不然 /tmp/sdfsf 这种目录无法判断来源）+ 端口号 + PID」（任务 177）
+// 后续简化：环境标签与 git 分支已从标题移除（噪音大于信息），改用**仓库/worktree 路径**
+//          认出「哪份代码」，标题收敛为纯定位串（见 src/shared/instance-title.ts）。
 //
 // 契约：
-//   1. `getAppInfo` 回出：数据根展示形式、运行环境、git 分支、端口、PID ——
+//   1. `getAppInfo` 回出：仓库展示路径、数据根展示形式、运行环境、git 分支、端口、PID ——
 //      renderer 拿不到真实家目录与 git，这两样只能 main 侧算
 //   2. 隔离实例（测试/临时 HOME）的展示形式是**绝对路径**，不得缩成 `~`
 //      （`~` 指的是被改写的 $HOME，不是用户家目录 —— 那正是「测试时全是 ~」的 bug）
@@ -88,7 +90,7 @@ describe("getAppInfo：数据根展示形式 + 环境 + 分支 + 端口 + PID", 
 });
 
 describe("renderer 的 document.title = 实例标识", () => {
-  it("标题 = 数据根 + [test] + 分支 + :端口 + pid PID", async () => {
+  it("标题 = 仓库 + 数据根 + port + pid", async () => {
     const info = await appInfo();
     const expected = instanceTitle({
       repoDisplay: info.repoDisplay,
@@ -101,16 +103,15 @@ describe("renderer 的 document.title = 实例标识", () => {
 
     const title = await waitUntil(
       () => ui.eval<string>("document.title"),
-      (t) => t.startsWith("diy("),
+      (t) => t.includes("port:"),
       { label: "标题由 renderer 设上" },
     );
     expect(title).toBe(expected);
     // 逐段确认（同源同格式之外，还要真的"内容够充分"）
+    expect(title).toContain(info.repoDisplay); // 哪份代码（worktree 各有自己的路径）
     expect(title).toContain(info.diyHomeDisplay); // 具体目录，不是 `~`
-    expect(title).toContain("[test]");
-    expect(title).toContain(info.branch);
-    expect(title).toContain(`:${info.port}`);
-    expect(title).toContain(`pid ${info.pid}`);
+    expect(title).toContain(`port:${info.port}`);
+    expect(title).toContain(`pid:${info.pid}`);
     expect(title).not.toContain("diy solid");
   });
 
