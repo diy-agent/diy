@@ -95,6 +95,7 @@ export default function App() {
     // 宽度在「收拢 → 变宽 → 又展开」之间抖（见 onNavGripDown）
     const [resizingNav, setResizingNav] = createSignal(false);
     let navEl: HTMLDivElement | undefined;
+    let mainAreaEl: HTMLDivElement | undefined;
 
     /**
      * 悬停导航上的任务项时，在其右侧弹出的「任务详情」覆盖层（值是任务 uri）。
@@ -107,26 +108,39 @@ export default function App() {
      *     进覆盖层即取消（见 cancelHideHoverTask），否则手还没到面板就没了
      */
     const [hoverTaskUri, setHoverTaskUri] = createSignal<string | null>(null);
+    /** 任务树标题的单层预览 drawer：left 是相对 mainAreaEl 的 x，宽度取触发 view 的宽度 */
+    const [hoverTreeTask, setHoverTreeTask] = createSignal<{ uri: string; left: number; width: number } | null>(null);
     const HOVER_HIDE_MS = 180;
     let hoverHideTimer: ReturnType<typeof setTimeout> | undefined;
     const showHoverTask = (uri: string | null | undefined) => {
         if (!uri) return;
         clearTimeout(hoverHideTimer);
+        setHoverTreeTask(null);
         setHoverTaskUri(uri);
     };
     const scheduleHideHoverTask = () => {
         clearTimeout(hoverHideTimer);
-        hoverHideTimer = setTimeout(() => setHoverTaskUri(null), HOVER_HIDE_MS);
+        hoverHideTimer = setTimeout(() => {
+            setHoverTaskUri(null);
+            setHoverTreeTask(null);
+        }, HOVER_HIDE_MS);
     };
     const cancelHideHoverTask = () => clearTimeout(hoverHideTimer);
-    const hideHoverTask = () => {
-        clearTimeout(hoverHideTimer);
-        setHoverTaskUri(null);
-    };
-
     // 覆盖层可见期间强制保持展开：否则鼠标移向覆盖层时会离开侧栏 → 侧栏收拢
     // → drawer-content（以及贴在它左缘的覆盖层）跟着左移，画面抖一下。
+    // 注意：**不能**把 hoverTreeTask 也算作「该展开」—— tree drawer 是主区内的 overlay，
+    // 展开侧栏会让主区整体右移，把鼠标下的标题链接挪走（指针落到 nav 上）→ drawer 刚开就被收掉。
     const expanded = () => pinned() || hovered() || resizingNav() || !!hoverTaskUri();
+
+    /**
+     * 清空悬停覆盖层。**任何「切页面」的动作都要调它**：
+     * 点击那一刻鼠标并没有 leave，光靠 mouseleave 收拢会留下「页面已切走、面板还在」的残影。
+     */
+    const hideHoverLayers = () => {
+        clearTimeout(hoverHideTimer);
+        setHoverTaskUri(null);
+        setHoverTreeTask(null);
+    };
 
     /**
      * 侧栏高亮：**同一时刻只有一处**。
@@ -157,6 +171,60 @@ export default function App() {
         // 注入后树一变（loadTree / 文件监听 / 拖拽改父）→ opened 重算 → 排序与缩进自动跟上。
         tabStore.setAncestorsResolver(taskAncestorsOf);
         taskStore.loadTree();
+
+        // 任务树标题悬停 → 只开一层详情 drawer（复用 TaskSideView），贴在触发任务 view 右侧。
+        // 不在 drawer 里再开 drawer：overlay 实例禁用 hoverPreview，只保留一层。
+        const onTreePreview = (detail: { uri: string; rect: { left: number; right: number; width: number } }) => {
+            const host = mainAreaEl;
+            if (!detail?.uri || !host) return;
+            const main = host.getBoundingClientRect();
+            const width = Math.min(Math.round(detail.rect.width), Math.round(main.width));
+            const roomRight = main.right - detail.rect.right;
+            const roomLeft = detail.rect.left - main.left;
+            // 优先贴右边；右侧不够才放左侧。左右都放不下完整一层就不弹。
+            let left: number;
+            if (roomRight >= width) left = detail.rect.right - main.left;
+            else if (roomLeft >= width) left = detail.rect.left - main.left - width;
+            else return;
+            // mousemove 在行内连续派发：同一个 URI 已经是当前唯一 drawer 时不重设对象，
+            // 否则每帧都重建 TaskSideView，会把标题 tooltip / 鼠标 hover 连续打断。
+            const current = hoverTreeTask();
+            if (current?.uri === detail.uri) {
+                clearTimeout(hoverHideTimer);
+                return;
+            }
+            clearTimeout(hoverHideTimer);
+            setHoverTaskUri(null);
+            setHoverTreeTask({ uri: detail.uri, left: Math.max(0, Math.round(left)), width });
+        };
+        // 用 document 原生委托接 hover：链接藏在复用 view 的 For 节点内，
+        // per-node handler 容易被组件复用/重排的事件代理时序吞掉；data 属性只声明 URI，
+        // drawer 的单层状态仍统一由 App 管。
+        const onDocumentMouseOver = (ev: MouseEvent) => {
+            const target = ev.target;
+            if (!(target instanceof Element)) return;
+            const link = target.closest<HTMLElement>("[data-task-hover-uri]");
+            const uri = link?.dataset.taskHoverUri;
+            if (!uri) return;
+            const view = link.closest<HTMLElement>("[data-task-side-view]");
+            const rect = view?.getBoundingClientRect();
+            if (rect) onTreePreview({ uri, rect: { left: rect.left, right: rect.right, width: rect.width } });
+        };
+        const onDocumentMouseOut = (ev: MouseEvent) => {
+            const target = ev.target;
+            if (!(target instanceof Element)) return;
+            const link = target.closest<HTMLElement>("[data-task-hover-uri]");
+            if (!link) return;
+            const next = ev.relatedTarget;
+            if (next instanceof Node && link.contains(next)) return;
+            scheduleHideHoverTask();
+        };
+        document.addEventListener("mouseover", onDocumentMouseOver);
+        document.addEventListener("mouseout", onDocumentMouseOut);
+        onCleanup(() => {
+            document.removeEventListener("mouseover", onDocumentMouseOver);
+            document.removeEventListener("mouseout", onDocumentMouseOut);
+        });
         setRendererActions({
             navigate: (page) => {
                 if (!VALID_PAGES.has(page)) return;
@@ -284,6 +352,7 @@ export default function App() {
     };
 
     const goSection = (id: Section) => {
+        hideHoverLayers(); // 页面切走了，悬停层不能留着盖在屏幕上
         if (id === "task") {
             tabStore.showTree();
             setRoute({ kind: "section", section: "task" });
@@ -297,12 +366,14 @@ export default function App() {
 
     /** 打开/聚焦某个 tab（含子页面） */
     const goto = (key: string) => {
+        hideHoverLayers();
         tabStore.activate(key);
         setRoute({ kind: "tab", key });
     };
 
     /** 关闭 tab：与任务状态无关（= 暂时不理会）。关父连带关子 */
     const closeTab = (key: string) => {
+        hideHoverLayers();
         tabStore.close(key);
         const next = tabStore.active;
         setRoute(next ? { kind: "tab", key: next } : { kind: "section", section: "task" });
@@ -317,6 +388,7 @@ export default function App() {
                 <main
                     class="flex-1 flex flex-col relative overflow-hidden bg-base-100"
                     onClick={() => {
+                        hideHoverLayers(); // 空区域点击也顺手收掉悬停层
                         // 点击空白处关闭任务详情面板（任务行/面板自身已 stopPropagation 接管）
                         // 只在任务树页面生效：其他页面点击不应取消选中任务
                         if (route().kind === "section" && (route() as { section: Section }).section === "task" && taskStore.selectedUri) taskStore.selectTask(null);
@@ -328,16 +400,18 @@ export default function App() {
                         section={route().kind === "section" ? (route() as { kind: "section"; section: Section }).section : "task"}
                         activeKey={route().kind === "tab" ? (route() as { kind: "tab"; key: string }).key : ""}
                         gotoTab={(key) => {
+                            hideHoverLayers();
                             tabStore.activate(key);
                             setRoute({ kind: "tab", key });
                         }}
                         gotoSection={(id) => {
+                            hideHoverLayers();
                             if (id === "task") tabStore.showTree();
                             setRoute({ kind: "section", section: id as Section });
                         }}
                         closeTab={closeTab}
                     />
-                    <div class="flex-1 min-h-0 overflow-hidden relative">
+                    <div ref={(el) => (mainAreaEl = el)} class="flex-1 min-h-0 overflow-hidden relative">
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "task"}>
                         <TaskTree />
                         <TaskDetailPanel />
@@ -393,14 +467,28 @@ export default function App() {
                                     class="absolute inset-y-0 left-0 z-30 w-80 bg-base-100 border-r shadow-2xl flex flex-col"
                                     aria-label={`任务详情：${uri()}`}
                                     onMouseEnter={cancelHideHoverTask}
-                                    onMouseLeave={hideHoverTask}
+                                    onMouseLeave={hideHoverLayers}
                                     onClick={(e) => e.stopPropagation()}
                                 >
-                                    <TaskSideView uri={uri()} />
+                                    <TaskSideView uri={uri()} hoverPreview={false} />
                                 </aside>
                             )}
                         </Show>
-                                    </div>
+                        <Show when={hoverTreeTask()}>
+                            {(preview) => (
+                                <aside
+                                    class="absolute inset-y-0 z-30 bg-base-100 border-r shadow-2xl flex flex-col"
+                                    style={{ left: `${preview().left}px`, width: `${preview().width}px` }}
+                                    aria-label={`任务详情：${preview().uri}`}
+                                    onMouseEnter={cancelHideHoverTask}
+                                    onMouseLeave={scheduleHideHoverTask}
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    <TaskSideView uri={preview().uri} hoverPreview={false} />
+                                </aside>
+                            )}
+                        </Show>
+                    </div>
 </main>
             </div>
 
@@ -489,6 +577,7 @@ export default function App() {
                                                         : tabLabel(t.ctx ?? "");
                                                 const icon = () => (t.pageId === "lab" ? "L" : (num() ?? "•"));
                                                 const tabGoto = () => {
+                                                    hideHoverLayers();
                                                     tabStore.activate(t.key);
                                                     setRoute({ kind: "tab", key: t.key });
                                                 };

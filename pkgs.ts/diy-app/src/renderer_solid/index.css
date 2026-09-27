@@ -59,3 +59,88 @@
 .markdown-body img { max-width: 100%; }
 /* GFM 任务清单：[x] / [ ] */
 .markdown-body li > input[type="checkbox"] { margin-right: 0.4em; vertical-align: middle; }
+
+/* ── 任务内容三块的容器自适应布局（components/TaskDetailContent.tsx） ─────
+ * 容器窄（任务执行页左栏 ~276px / nav 悬停覆盖层 320px）→ 顺序一列；
+ * 容器宽（任务管理详情面板，默认 560px）→ 两列：左列（属性 + 任务树）固定宽，
+ * 正文吃剩余宽度。
+ *
+ * 用**容器查询**而不是视口媒体查询：同一个组件被放在宽度差很远的三处，
+ * 该跟的是容器自己的宽度，不是窗口宽度（窗口宽的时候左栏照样是窄的）。
+ *
+ * 左列宽走 CSS 变量 --task-flow-left（组件按视图 cache 的偏好值下发）：
+ * 结构切换（一列/两列、手柄显隐）是纯 CSS 的事，JS 只负责那个宽度值 ——
+ * 两条关注点分开，拖动时只更新一个变量，不动 DOM 结构。 */
+/* 任务属性 form 的固定 label 列：所有字段共用同一条竖线，
+   不再让「优先级 / 创建时间」的字数改变右侧控件起点。 */
+.task-field-row {
+    display: grid;
+    grid-template-columns: 4rem minmax(0, 1fr);
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    width: 100%;
+}
+.task-field-label {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.task-flow {
+    container-type: inline-size;
+    min-height: 100%;
+}
+.task-flow-grid {
+    position: relative; /* 拖宽手柄的定位上下文 */
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+.task-flow-left {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    min-width: 0;
+}
+.task-flow-body {
+    min-width: 0;
+}
+/* 单列时没有可调的宽度，手柄不渲染（display:none 的元素不会收到鼠标事件） */
+.task-flow-handle {
+    display: none;
+}
+@container (min-width: 480px) {
+    .task-flow-grid {
+        flex-direction: row;
+        align-items: flex-start;
+    }
+    .task-flow-left {
+        flex: 0 0 var(--task-flow-left, 320px);
+    }
+    .task-flow-body {
+        flex: 1 1 auto;
+    }
+    /* 手柄**绝对定位**覆盖在左列右缘（不是 flex 子项）：
+       作为 flex 子项时它自己要占 6px，中间还夹着 gap，中心必然偏离左列右缘 ——
+       视觉上「线不在栏边上」，拖的时候也难判断在对齐什么。
+       绝对定位后它的中心 = 左列右缘 = 正文左缘（gap 区间正好容纳这 6px 热区），
+       且不参与布局、不改变正文宽度。
+       （规格与 ViewGrid 的拖线一致：热区 6px、hover 变色、居中压线。） */
+    .task-flow-handle {
+        display: block;
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: var(--task-flow-left, 320px);
+        width: 6px;
+        margin-left: -3px;
+        z-index: 5;
+        cursor: col-resize;
+    }
+    .task-flow-handle:hover {
+        background-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
+    }
+}

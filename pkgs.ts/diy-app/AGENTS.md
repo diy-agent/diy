@@ -191,7 +191,7 @@ renderer 那份没跟上，编译期才暴露 —— 用契约类型则不可能
 
 ### 避免 Solid 陷阱：`<Show>` 内组件读 props 的卸载清理
 
-`TaskInfoView`（详情编辑）被 `keyed` 的 `<Show>` 包裹。**`onCleanup` 里读 `props.task` 会抛
+`TaskDetailContent`（任务内容三块：属性 / 父子树 / 正文）被 `keyed` 的 `<Show>` 包裹。**`onCleanup` 里读 `props.task` 会抛
 `Stale read from <Show>` 并中断 props 更新**（表现为切任务后面板显示上一个任务的标题）。
 需要「卸载前落盘」这类副作用，一律放在面板级组件（`TaskDetailPanel`）里做，它读的是
 `taskStore.selectedUri` 这类普通信号，不经过 Show 的派生 props。
@@ -259,13 +259,30 @@ renderer 那份没跟上，编译期才暴露 —— 用契约类型则不可能
 - **`diy.ui.*`（handler 层）**：CLI 经 RPC 直接调 renderer 的共享入口函数（与按钮 onClick 同一批）。测行为/契约/状态，稳定适合 test:intent 基线；**测不到真实 DOM 事件链的 bug**。
 - **Playwright/CDP（真实事件层）**：Electron 开 `--remote-debugging-port`，Playwright `connect_over_cdp` 复用，用**真实鼠标事件**（mouse.move/down/up 分步）驱动真实 renderer。能抓 gesture bug（拖拽整屏被拖出、isDropTarget 高亮、点穿透、折叠状态），是目前唯一的验证手段——UI 交互改动后跑一遍。
 - `diy.ui.inspect`：renderer 内 DOM 遍历生成无障碍树，agent 可 `./diy.sh ui inspect` 看 UI 全貌。
+- 查「哪些 app 实例在跑」：`ps -eo pid,ppid,command | grep 'MacOS/Electron .*index\.mjs'`，再对每个 pid
+  跑 `ps eww -p <pid> | tr ' ' '\n' | grep ^DIY_HOME=` 认出隔离实例（`DIY_HOME` 指向临时目录的即测试实例）。
+  **macOS 上别把 `-p` 与 `-eo` 写进同一条 ps** —— `-p` 会被静默忽略、输出全表，据此判断会得出错误结论。
 - **跑意图测试 / CDP 夹具前，shell 里不要 export `DIY_PORT` / `DIY_HOME`**：`ShellTest` 继承 `process.env`，
   被污染的 `DIY_PORT` 会让测试里的每一条 `./diy.sh` 都去打**别的端口**，各拉一个新 app，与测试自己启的实例
   互踢（单实例锁）→ 现象是"页面状态莫名漂移、CDP 会话反复掉线、模板列表忽空忽有"（实测踩了两小时）。
   正确姿势：`env -u DIY_PORT -u DIY_HOME npx vitest run ...`，或用一个干净 shell。
 - 只想临时起一个实例看界面时，注意 CLI 启动的 app 是**子进程**（父 CLI 退出后可能被带走）；CDP 会话断线先看
   进程还在不在。要长时间挂着观察，用测试夹具（`startElectronTest`）而不是 CLI 起。
-- 复用冒烟脚本：**`scripts/ui-smoke/dnd-smoke.py`** — 启动隔离 Electron + Playwright/CDP 真实拖拽（任务↔任务改层级、子任务→项目提升），断言层级 + 抓 console/pageerror，`python3 scripts/ui-smoke/dnd-smoke.py` 运行，exit 0 通过。UI 交互改动后跑它确认手势没破坏。
+- 复用冒烟脚本：
+  - **`scripts/ui-smoke/dnd-smoke.py`** — 启动隔离 Electron + Playwright/CDP 真实拖拽（任务↔任务改层级、子任务→项目提升），断言层级 + 抓 console/pageerror，`python3 scripts/ui-smoke/dnd-smoke.py` 运行，exit 0 通过。UI 交互改动后跑它确认手势没破坏。
+  - **`scripts/ui-smoke/task-detail-smoke.mjs`** — 任务内容三块（属性 / 父子树 / 正文）+ 悬停覆盖层：
+    三块齐全、折叠开合、窄容器单列 / 宽容器两列（左列固定宽、正文吃剩余）、**拖宽手柄真的改宽并落盘、
+    双击复位**、属性字段逐行且控件右缘对齐、「◀ 当前」紧跟标题、行内操作按钮右对齐、
+    任务名链接 + daisyUI tooltip「打开任务」、hover 出行内「对话」按钮、点链接=选中任务、
+    点按钮=打开对话 tab、FAB 文案为「对话」。`node scripts/ui-smoke/task-detail-smoke.mjs` 运行，exit 0 通过。
+    - 依赖 playwright，但本仓不装它：默认取 bun 全局安装，可用 `PLAYWRIGHT_MODULE=<路径> node …` 覆盖。
+    - **跑完必须确认实例真的没了**（脚本自己会打「测试实例已清理」）。只发一次 TERM 就退出，
+      遇 app 卡在退出流程或外层 `timeout` 打断，会留下没人管的实例 —— 实测跑十几轮攒出二十多个，
+      各占 70MB 主进程 + 300MB renderer，直接把内存吃光。收尾固定姿势：
+      TERM 整组 → 轮询存活 → 仍在则 KILL 整组 → 报错给人。
+  - ⚠️ **`dnd-smoke.py` 的收尾是 `pkill -f "out/main/index.mjs"`，会连你正在用的 diy 一起杀**
+    （该 pattern 匹配宿主进程命令行）。在「有正在使用的实例」的机器上跑它之前先改掉那段；
+    另外它需要 `pip install playwright`，本机没装，直接跑会 ModuleNotFoundError。
 
 ### 交互自动化操作 App（agent 自测/演示用，实测经验）
 
