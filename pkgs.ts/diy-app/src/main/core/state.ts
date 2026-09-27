@@ -36,6 +36,12 @@ export interface TaskMeta {
   updated?: string;
   source_type?: string;
   source_uri?: string;
+  /**
+   * agent 人物名（persona）：本任务由哪个「人物」干活（模型 + 参数 + 行为指令都由它决定）。
+   * 创建时物化成当时的缺省人物名（not null 语义：读到的任务一定有值）。
+   * 读侧宽容（类型 string）：指向不存在的人物时由 core/persona 回落缺省并出声，不静默换模型。
+   */
+  persona?: string;
   /** 变更性质。词表见 task-fields.ts；类型是 string —— 读侧宽容，见 parseTaskFile */
   change_type?: string;
   /** 模块（`/` 分层自由字符串） */
@@ -238,6 +244,7 @@ export function parseTaskFile(raw: string): TaskMeta | null {
     updated: front["updated"] as string | undefined,
     source_type: front["source_type"] as string | undefined,
     source_uri: front["source_uri"] as string | undefined,
+    persona: front["persona"] as string | undefined,
     // 结构化字段：**只读不校验**，故类型是 string 而非 task-fields 的枚举 —— 值不在词表内
     // （如历史手写的 priority: high）也原样带出，交给展示层兜底。这与「不改写用户手写内容」
     // 的原则一致：若在此丢弃或归一化，用户手工写的值会在下一次编辑时被静默改写。

@@ -98,7 +98,7 @@ export function TaskRunPage(props: { uri: string }) {
                             case "task.detail":
                                 return <TaskSideView uri={props.uri} hoverPreview={true} />;
                             case "chat.local":
-                                return <LocalChatPage />;
+                                return <LocalChatPage uri={props.uri} />;
                             default:
                                 return <div class="p-3 text-xs opacity-60">未注册的 view: {viewId}</div>;
                         }

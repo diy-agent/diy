@@ -287,6 +287,35 @@ describe("task drafts（未提交草稿）", () => {
     await cleanupProj(pid);
   });
 
+  it("getTask — 结构化字段必须回传（详情面板的数据来源，漏字段=界面显示未设置）", async () => {
+    // 这条锁的是一个真实缺陷：getTask 的载荷曾由「handler 手抄字段 + output 白名单」两处维护，
+    // 漏登记的字段被 RPC schema 静默 strip → renderer 拿到 undefined → 详情面板显示"未设置"，
+    // 而数据其实好好的（change_type / module / priority / persona 都漏过）。
+    // 契约现在单一真源（shared/task-detail.ts），本用例守它：接口回传 == 文件里的事实。
+    const pid = await freshProj("gt");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 契约任务 ${pid}`);
+    // 人物引用存 **id**（名字只是标签，改名不该打断引用）：先建人物拿 id，再换绑
+    const pr = await fx.sh.getJson(`./diy.sh agent persona set --name 契约人物 --model mimo-v2.6-flash`);
+    const personaId = String((pr.data as any)?.id);
+    await fx.sh.run(`./diy.sh task edit ${uri} --persona ${personaId}`);
+
+    const r = await fx.sh.getJson(`./diy.sh getTask ${uri}`);
+    const d = (r.data as any)?.data;
+    // 契约里的每个字段都要真的回传（而不是被 RPC schema 静默 strip）
+    expect(d.uri).toBe(uri);
+    expect(d.title).toBe("契约任务");
+    expect(d.state).toBe("pending");
+    expect(d.persona).toBe(personaId); // 换绑后立即生效（下一轮用它的模型）
+    expect(d.ui_drafts).toBeNull(); // 草稿字段也在契约里（无草稿 = null）
+    await cleanupProj(pid);
+  });
+
+  it("getTask — 未找到时 data 为 null（renderer 的守卫靠它）", async () => {
+    const r = await fx.sh.getJson(`./diy.sh getTask projects/999999/tasks/1`);
+    expect((r.data as any)?.data).toBeNull();
+  });
+
   it("set → show — 草稿写盘并可读回；task show 一并带回 ui_drafts", async () => {
     const pid = await freshProj("d2");
     const uri = `projects/${pid}/tasks/1`;

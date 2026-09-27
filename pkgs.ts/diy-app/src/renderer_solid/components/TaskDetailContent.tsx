@@ -21,8 +21,9 @@
  * （悬停覆盖层 + 执行页左栏 + 管理页详情面板），全局单例只有一份值，会让别的实例
  * 永远卡在「加载中…」（这个坑在本文件的前身 TaskSideView 里踩过）。
  */
-import { createSignal, createEffect, on, For, Show, type JSX } from "solid-js";
+import { createSignal, createEffect, on, onMount, For, Show, type JSX } from "solid-js";
 import { taskStore, type TaskDetail } from "../store/taskStore";
+import { personaStore } from "../store/personaStore";
 import { draftStore } from "../store/draftStore";
 import { editTask } from "../lib/task-edit";
 import { diyService } from "../lib/rpc";
@@ -118,6 +119,9 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
     const [editing, setEditing] = createSignal(draftStore.hasAny(props.uri, ["title"]));
     const [titleDraft, setTitleDraft] = createSignal(d.title ?? props.task.title ?? "");
     const [saving, setSaving] = createSignal(false);
+    // 人物/模型清单：本视图在会话页之外也会被渲染（详情抽屉、悬停覆盖层、试验场任务 tab），
+    // 故在此按需加载，不依赖会话页先打开过。
+    onMount(() => void personaStore.load());
 
     const onInput = (v: string) => {
         setTitleDraft(v);
@@ -230,6 +234,35 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                     saving={saving()}
                     onSave={(v) => void savePatch({ priority: v })}
                 />
+                {/* agent 人物：本任务"由谁干活"（决定模型/参数/行为指令）—— 任务属性，改完即存。
+                    这里**只换绑**（续聊，会话一条不动）；改人物本身的模型走 CLI
+                    `diy agent persona set`（那是全局的，影响所有引用它的任务）。 */}
+                <div class="task-field-row">
+                    <span class="task-field-label text-xs opacity-50">人物</span>
+                    <select
+                        class="select select-xs select-bordered min-w-0"
+                        disabled={saving() || personaStore.personas.length === 0}
+                        value={props.task.persona ?? ""}
+                        onChange={async (e) => {
+                            const ok = await personaStore.setForTask(
+                                props.task.uri,
+                                e.currentTarget.value,
+                            );
+                            if (ok) await props.refresh();
+                        }}
+                    >
+                        {/* 空值 = **跟随缺省**（新建任务的默认状态），不是一个"没设置"的残缺态：
+                            选项文案要写出"会跟随谁"，否则用户看到空值会以为配置缺了 */}
+                        <option value="">跟随缺省（{personaStore.defaultPersonaName()}）</option>
+                        <For each={personaStore.personas}>
+                            {(p) => (
+                                <option value={p.id} title={`${p.name}（${p.id}）`}>
+                                    {p.name} · {p.model}
+                                </option>
+                            )}
+                        </For>
+                    </select>
+                </div>
             </div>
 
             <div class="flex flex-col gap-1 text-[11px] opacity-60">

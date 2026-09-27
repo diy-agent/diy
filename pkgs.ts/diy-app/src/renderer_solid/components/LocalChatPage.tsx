@@ -15,6 +15,8 @@
 
 import { createSignal, For, Show, createEffect, on, onMount, onCleanup } from "solid-js";
 import { localChatStore } from "../store/localChatStore";
+import { personaStore } from "../store/personaStore";
+import { PersonaDrawer } from "./PersonaDrawer";
 import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
@@ -207,11 +209,7 @@ function summaryOf(n: BlockNode): string {
 
 function statusMark(n: BlockNode) {
     if (n.tag === "think") {
-        return !n.stopped ? (
-            <span class="text-warning animate-pulse">●</span>
-        ) : (
-            <span>💭</span>
-        );
+        return !n.stopped ? <span class="text-warning animate-pulse">●</span> : <span>💭</span>;
     }
     const s = str(n.attrs.status);
     if (s === "done") return <span class="text-success">✓</span>;
@@ -219,7 +217,10 @@ function statusMark(n: BlockNode) {
     // 中断遗留（无 stop、无结果）：不能跟"正在执行"共用同一个点，否则用户看不出历史断在哪
     if (isInterruptedToolBlock(n)) {
         return (
-            <span class="text-warning" title="上一轮中断，没有结果（此行已被收敛为终态，正文与发往模型的同源）">
+            <span
+                class="text-warning"
+                title="上一轮中断，没有结果（此行已被收敛为终态，正文与发往模型的同源）"
+            >
                 ⊘
             </span>
         );
@@ -232,10 +233,7 @@ function ThinkBody(props: { node: BlockNode }) {
     return <div class="whitespace-pre-wrap leading-relaxed">{str(props.node.attrs.content)}</div>;
 }
 
-function ToolBody(props: {
-    node: BlockNode;
-    onFull: (title: string, content: string) => void;
-}) {
+function ToolBody(props: { node: BlockNode; onFull: (title: string, content: string) => void }) {
     const n = props.node;
     const output = () => str(n.attrs.output);
     const pv = () => previewLines(output());
@@ -285,7 +283,11 @@ function ProcessRow(props: {
         if (open() && !n().stopped && bodyRef) bodyRef.scrollTop = bodyRef.scrollHeight;
     });
     return (
-        <div class="rounded-lg border border-base-300 bg-base-200/40 text-xs" data-block-id={n().id} data-block-tag={n().tag}>
+        <div
+            class="rounded-lg border border-base-300 bg-base-200/40 text-xs"
+            data-block-id={n().id}
+            data-block-tag={n().tag}
+        >
             <button
                 type="button"
                 class="flex items-center gap-2 cursor-pointer select-none px-2.5 py-1.5 w-full text-left"
@@ -293,7 +295,9 @@ function ProcessRow(props: {
                 onClick={() => props.onToggle(n().id)}
             >
                 {statusMark(n())}
-                <span class="font-medium text-base-content/80 truncate flex-1">{summaryOf(n())}</span>
+                <span class="font-medium text-base-content/80 truncate flex-1">
+                    {summaryOf(n())}
+                </span>
                 <span class="opacity-40 text-[11px]">{open() ? "▴" : "›"}</span>
             </button>
             <Show when={open()}>
@@ -331,6 +335,29 @@ function HairSeg(props: { nodes: BlockNode[] }) {
     );
 }
 
+/** 回复身份：显示当前任务绑定的人物，而不是一个无名的 assistant 气泡。 */
+function AssistantByline() {
+    const id = () => taskStore.selectedTask?.persona ?? personaStore.idForTask();
+    // defOfLive：缓存里没有该 id 时补拉一次（CLI 新建/改名后 renderer 的清单会陈旧）
+    const persona = () => personaStore.defOfLive(id());
+    return (
+        <div
+            class="mb-1 flex items-center gap-1.5 text-[11px] opacity-70"
+            data-testid="assistant-byline"
+        >
+            <span
+                class="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-[12px]"
+                aria-hidden="true"
+            >
+                🤖
+            </span>
+            <span class="font-medium">{persona()?.name ?? "Agent"}</span>
+            <span class="opacity-50">·</span>
+            <span class="opacity-60">{persona()?.model ?? ""}</span>
+        </div>
+    );
+}
+
 function LeafView(props: {
     node: BlockNode;
     density: Density;
@@ -359,11 +386,14 @@ function LeafView(props: {
             // L1 摘要恒为纯文本：截断出的半行 Markdown（断在 ** 、``` 、表格 | 中间）
             // 会被解析成错乱结构，这里绝不能走 Markdown 渲染
             return (
-                <div class="text-sm opacity-80 truncate">
-                    {b.stopped ? firstLine(t) : tailLine(t)}
-                    <Show when={!b.stopped}>
-                        <span class="animate-pulse">▋</span>
-                    </Show>
+                <div>
+                    <AssistantByline />
+                    <div class="text-sm opacity-80 truncate">
+                        {b.stopped ? firstLine(t) : tailLine(t)}
+                        <Show when={!b.stopped}>
+                            <span class="animate-pulse">▋</span>
+                        </Show>
+                    </div>
                 </div>
             );
         }
@@ -373,9 +403,12 @@ function LeafView(props: {
         // 是因为 segments(density) 变了 → <For> 重建节点；而切 md 不改变 segments，
         // 旧分支会原样留在 DOM 里——现象就是点「MD 原文」正文纹丝不动（只在切任务/重挂载后才生效）。
         return (
-            <Show when={props.md} fallback={<PlainText text={text} />}>
-                <MarkdownText text={text} streaming={!b.stopped} />
-            </Show>
+            <div>
+                <AssistantByline />
+                <Show when={props.md} fallback={<PlainText text={text} />}>
+                    <MarkdownText text={text} streaming={!b.stopped} />
+                </Show>
+            </div>
         );
     }
     if (b.tag === "think" || b.tag === "tool") {
@@ -406,7 +439,9 @@ function LeafView(props: {
         return (
             <div class="text-xs opacity-70">
                 📋 计划：
-                <For each={(b.attrs.items as unknown[]) ?? []}>{(it) => <div>• {str(it)}</div>}</For>
+                <For each={(b.attrs.items as unknown[]) ?? []}>
+                    {(it) => <div>• {str(it)}</div>}
+                </For>
             </div>
         );
     }
@@ -563,7 +598,11 @@ function ConfirmDialog(props: {
                 <div class="px-4 py-3 text-xs opacity-80">{props.message}</div>
                 <div class="px-4 py-2 border-t flex justify-end gap-2">
                     {/* 焦点落在「取消」：回车/空格不会误触发不可恢复的删除 */}
-                    <button class="btn btn-xs" ref={(el) => (cancelRef = el)} onClick={props.onCancel}>
+                    <button
+                        class="btn btn-xs"
+                        ref={(el) => (cancelRef = el)}
+                        onClick={props.onCancel}
+                    >
                         取消
                     </button>
                     <button class="btn btn-error btn-xs" onClick={props.onConfirm}>
@@ -577,11 +616,13 @@ function ConfirmDialog(props: {
 
 // ─── 页面 ───────────────────────────────────────────
 
-export function LocalChatPage() {
-    const uri = () => taskStore.selectedUri ?? null;
+export function LocalChatPage(props: { uri?: string }) {
+    // 执行页显式传入 uri；不能依赖全局 selectedUri，否则任务详情还在异步加载时，
+    // 页面可能显示“选择任务”但聊天仍沿用上一个任务的会话，形成串台。
+    const uri = () => props.uri ?? taskStore.selectedUri ?? null;
     const [inputValue, setInputValue] = createSignal("");
     const [densityOpen, setDensityOpen] = createSignal(false);
-    const [modelMenuOpen, setModelMenuOpen] = createSignal(false);
+    const [personaPanelOpen, setPersonaPanelOpen] = createSignal(false);
     const [fullscreen, setFullscreen] = createSignal(false);
     let scrollRef: HTMLDivElement | undefined;
     /** 跟随态：true=贴底（新内容自动滚到底）；false=用户正在上方阅读（绝不打扰） */
@@ -601,20 +642,23 @@ export function LocalChatPage() {
      *  无记录（p=0，含新会话）→ 直接看最新，而不是停在顶部。 */
     const restore = (u: string) => {
         restoring = true;
-        void localChatStore.open(u).catch(() => undefined).then(() => {
-            const p = localChatStore.getScroll(u);
-            requestAnimationFrame(() => {
-                restoring = false;
-                const el = scrollRef;
-                if (!el) return;
-                if (p > 0) {
-                    el.scrollTop = p;
-                    setStick(nearBottom(el)); // 上次停在底部 → 继续跟随；否则尊重阅读位置
-                } else {
-                    gotoBottom();
-                }
+        void localChatStore
+            .open(u)
+            .catch(() => undefined)
+            .then(() => {
+                const p = localChatStore.getScroll(u);
+                requestAnimationFrame(() => {
+                    restoring = false;
+                    const el = scrollRef;
+                    if (!el) return;
+                    if (p > 0) {
+                        el.scrollTop = p;
+                        setStick(nearBottom(el)); // 上次停在底部 → 继续跟随；否则尊重阅读位置
+                    } else {
+                        gotoBottom();
+                    }
+                });
             });
-        });
     };
     /** 把草稿回填进 textarea（只在换任务 / 服务端草稿到达 / 首挂时调用，不逐键回写） */
     const applyDraft = (u: string | null) => {
@@ -622,21 +666,26 @@ export function LocalChatPage() {
     };
     // 首挂（切页面/组件重建，TaskState 在内存保留）：恢复当前任务阅读位置 + 输入框草稿
     onMount(() => {
+        // 人物清单：按钮要显示"这条消息发给谁"；未加载时显示"加载中…"而不是"未加载"
+        // （后者看着像功能坏了，而其实会话完全可用 —— 自相矛盾的界面）
+        void personaStore.load();
         const closePopovers = (e: MouseEvent) => {
             const target = e.target as Element;
             if (!target.closest("[data-density-control]")) setDensityOpen(false);
-            if (!target.closest("[data-model-control]")) setModelMenuOpen(false);
         };
         const onKey = (e: KeyboardEvent) => {
             if (e.key === "Escape") {
                 setDensityOpen(false);
-                setModelMenuOpen(false);
+                setPersonaPanelOpen(false);
                 setFullscreen(false);
             }
         };
         document.addEventListener("click", closePopovers);
         document.addEventListener("keydown", onKey, true);
-        onCleanup(() => { document.removeEventListener("click", closePopovers); document.removeEventListener("keydown", onKey, true); });
+        onCleanup(() => {
+            document.removeEventListener("click", closePopovers);
+            document.removeEventListener("keydown", onKey, true);
+        });
         const u = uri();
         if (u) {
             restore(u);
@@ -712,28 +761,12 @@ export function LocalChatPage() {
         });
     });
 
-    const selectModel = (modelId: string) => {
-        localChatStore.setActiveModel(modelId);
-        const model = localChatStore.models.find((m) => m.id === modelId);
-        if (model && !model.reasoning.supported.includes(localChatStore.reasoningEffort)) {
-            localChatStore.setReasoningEffort(model.reasoning.default);
-        }
-    };
-    const moveModelByKeyboard = (e: KeyboardEvent) => {
-        if (localChatStore.running || localChatStore.models.length === 0) return;
-        const index = localChatStore.models.findIndex((m) => m.id === localChatStore.activeModel);
-        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-            e.preventDefault();
-            const offset = e.key === "ArrowDown" ? 1 : -1;
-            const next = (index < 0 ? 0 : index + offset + localChatStore.models.length) % localChatStore.models.length;
-            selectModel(localChatStore.models[next]!.id);
-            setModelMenuOpen(true);
-        } else if (e.key === "Home" || e.key === "End") {
-            e.preventDefault();
-            selectModel(localChatStore.models[e.key === "Home" ? 0 : localChatStore.models.length - 1]!.id);
-            setModelMenuOpen(true);
-        }
-    };
+    // ─── agent 人物（模型/参数/行为指令都在人物定义里，这里只选"要谁干活"）───
+    /** 本任务当前人物：任务绑定是权威（清单在 personaStore，未加载完时先用缺省名，不显示空） */
+    const personaDef = () => personaStore.defOfLive(personaStore.idForTask());
+
+    // 换绑与改定义都在人物面板里做（那里能看见"影响多少任务"）——这里只负责打开它。
+    // 为什么不做成下拉快速切换：人物是**全局配置实体**，下拉只够"选"，看不见改动的波及面。
 
     const submit = async () => {
         const text = inputValue().trim();
@@ -747,29 +780,47 @@ export function LocalChatPage() {
 
     return (
         <div class="flex flex-col h-full overflow-hidden">
+            <PersonaDrawer open={personaPanelOpen()} onClose={() => setPersonaPanelOpen(false)} />
             {/* 顶部：Markdown 显示方式（MD 原文 / MD 渲染，双态按钮组）+ 信息密度。
                 pr-16：ViewGrid 的 area 设施（最大化/最小化）浮在本区域**右上角**，
                 不预留这条空档，按钮会与它叠在同一坐标上（实测重叠）。 */}
-            <div class={`flex items-center justify-end gap-2 pl-4 pr-16 ${VIEW_BAR_H} border-b shrink-0`}>
+            <div
+                class={`flex items-center justify-end gap-2 pl-4 pr-16 ${VIEW_BAR_H} border-b shrink-0`}
+            >
                 <div class="relative" data-density-control>
                     <button
                         class="btn btn-ghost btn-xs tooltip tooltip-bottom"
                         data-tip="信息密度（拖到最右看全部过程）"
                         aria-label="信息密度"
-                        onClick={(e) => { e.stopPropagation(); setDensityOpen((v) => !v); }}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setDensityOpen((v) => !v);
+                        }}
                     >
                         ☷
                     </button>
                     <Show when={densityOpen()}>
-                        <div class="absolute right-0 top-full z-20 mt-1 w-48 rounded-box border border-base-300 bg-base-100 p-3 shadow-xl" data-density-control onClick={(e) => e.stopPropagation()}>
+                        <div
+                            class="absolute right-0 top-full z-20 mt-1 w-48 rounded-box border border-base-300 bg-base-100 p-3 shadow-xl"
+                            data-density-control
+                            onClick={(e) => e.stopPropagation()}
+                        >
                             <input
-                                type="range" min="1" max="4" step="1"
+                                type="range"
+                                min="1"
+                                max="4"
+                                step="1"
                                 class="range range-primary range-xs"
                                 value={DENSITY_VALUES.indexOf(density()) + 1}
                                 aria-label="信息密度"
-                                onInput={(e) => setDensity(DENSITY_VALUES[Number(e.currentTarget.value) - 1]!)}
+                                onInput={(e) =>
+                                    setDensity(DENSITY_VALUES[Number(e.currentTarget.value) - 1]!)
+                                }
                             />
-                            <div class="mt-1 flex justify-between text-[10px] opacity-60"><span>简</span><span>详</span></div>
+                            <div class="mt-1 flex justify-between text-[10px] opacity-60">
+                                <span>简</span>
+                                <span>详</span>
+                            </div>
                         </div>
                     </Show>
                 </div>
@@ -843,7 +894,9 @@ export function LocalChatPage() {
                         **只变色、不加 outline**：outline 画在 border 外侧 2px，看着像"多了一圈
                         边框"（实测双边框感），边框自己变色就够表达了。
                       · 圆角：`--radius-field`（输入类控件语义，比 `--radius-box` 更方正） */}
-                <div class={`rounded-field border border-base-content/20 bg-base-200 transition-colors focus-within:border-base-content ${fullscreen() ? "fixed inset-4 z-40 flex min-h-0 flex-col p-4" : "relative"}`}>
+                <div
+                    class={`rounded-field border border-base-content/20 bg-base-200 transition-colors focus-within:border-base-content ${fullscreen() ? "fixed inset-4 z-40 flex min-h-0 flex-col p-4" : "relative"}`}
+                >
                     {/* 全文编辑开关：输入框**右上角**，daisyUI swap（小↔大 双向动画）。
                         用 label+checkbox 而不是 button：swap 的语义就是「两种状态的开关」。 */}
                     <label
@@ -861,11 +914,17 @@ export function LocalChatPage() {
                         <IconCompress class="swap-on h-4 w-4" />
                     </label>
                     {/* pr-8：正文不要钻到右上角按钮底下 */}
-                    <div class={`min-h-0 overflow-auto px-2 pt-2 pr-8 ${fullscreen() ? "flex-1" : "min-h-[72px] max-h-[320px]"}`}>
+                    <div
+                        class={`min-h-0 overflow-auto px-2 pt-2 pr-8 ${fullscreen() ? "flex-1" : "min-h-[72px] max-h-[320px]"}`}
+                    >
                         <MdEditor
                             value={inputValue()}
                             editable={!localChatStore.running}
-                            onChange={(v) => { setInputValue(v); const u = uri(); if (u) draftStore.set(u, "agent_input", v); }}
+                            onChange={(v) => {
+                                setInputValue(v);
+                                const u = uri();
+                                if (u) draftStore.set(u, "agent_input", v);
+                            }}
                             onEnter={() => void submit()}
                             wrap
                             lineNumbers={fullscreen()}
@@ -876,64 +935,35 @@ export function LocalChatPage() {
                     {/* 不再画分隔线：正文与工具条同底色（base-200），一条 border-base-300 的横线
                         会在"一体化"的块里切出一道比底色更亮/更暗的缝，比没有线更显割裂。 */}
                     <div class="flex shrink-0 items-center gap-2 px-2 py-2 text-xs">
-                        <div class="relative" data-model-control>
-                            <button
-                                class="btn btn-ghost btn-xs max-w-[240px] min-w-0 tooltip tooltip-top"
-                                data-tip="模型与推理强度（↑/↓ 切换模型）"
-                                aria-label="选择模型与推理强度"
-                                aria-expanded={modelMenuOpen()}
-                                disabled={localChatStore.running}
-                                onClick={(e) => { e.stopPropagation(); setModelMenuOpen((v) => !v); }}
-                                onKeyDown={moveModelByKeyboard}
-                            >
-                                <span class="truncate">
-                                    {(localChatStore.models.find((m) => m.id === localChatStore.activeModel)?.name ?? localChatStore.activeModel) || "选择模型"}
-                                    <span class="opacity-60">（{reasoningEffortLabel(localChatStore.reasoningEffort)}）</span>
+                        {/* 人物入口：打开人物面板（选/改/换绑都在那里）。
+                            按钮本身显示**本任务当前用谁 + 它的模型与档位** ——
+                            "我这条消息会发给哪个模型"必须一眼可见，不用点开才知道。 */}
+                        <button
+                            class="btn btn-ghost btn-xs max-w-[280px] min-w-0 tooltip tooltip-top"
+                            data-tip="agent 人物：选择绑定 / 跟随缺省，编辑模型与参数（改人物会影响所有引用它的任务）"
+                            aria-label="打开 agent 人物面板"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setPersonaPanelOpen(true);
+                            }}
+                        >
+                            <span class="truncate">
+                                {/* 跟随缺省时显式写出来：「谁在干活」与「是不是我固定绑的」是两件事，
+                                    只显示人物名会让人以为"这个任务固定用了它"，而其实缺省一改就跟着变 */}
+                                <Show when={personaStore.isFollowing()}>
+                                    <span class="badge badge-xs badge-ghost mr-1">跟随缺省</span>
+                                </Show>
+                                {personaDef()?.name ?? "选择人物"}
+                                <span class="opacity-60">
+                                    （
+                                    {personaDef()
+                                        ? `${personaDef()!.model} · ${reasoningEffortLabel(personaDef()!.reasoningEffort as ReasoningEffort)}`
+                                        : "加载中…"}
+                                    ）
                                 </span>
-                                <span class="opacity-50">▾</span>
-                            </button>
-                            <Show when={modelMenuOpen()}>
-                                <div
-                                    class="absolute bottom-full left-0 z-30 mb-2 grid w-[min(34rem,calc(100vw-2rem))] grid-cols-[minmax(0,1fr)_9rem] overflow-hidden rounded-box border border-base-300 bg-base-100 p-2 shadow-xl"
-                                    data-model-control
-                                    onClick={(e) => e.stopPropagation()}
-                                >
-                                    <div class="min-w-0 border-r border-base-300 pr-2">
-                                        <div class="px-2 pb-1 text-[10px] font-semibold uppercase opacity-50">模型</div>
-                                        <div class="max-h-64 overflow-y-auto">
-                                            <For each={localChatStore.models}>
-                                                {(m) => (
-                                                    <button
-                                                        class={`btn btn-ghost btn-xs w-full justify-start ${m.id === localChatStore.activeModel ? "bg-primary/15 text-primary" : ""}`}
-                                                        title={m.id}
-                                                        onClick={() => selectModel(m.id)}
-                                                    >
-                                                        <span class="truncate">{m.name}</span>
-                                                    </button>
-                                                )}
-                                            </For>
-                                        </div>
-                                    </div>
-                                    <div class="min-w-0 pl-2">
-                                        <div class="px-2 pb-1 text-[10px] font-semibold uppercase opacity-50">推理强度</div>
-                                        <div class="space-y-1">
-                                            <For each={localChatStore.models.find((m) => m.id === localChatStore.activeModel)?.reasoning.supported ?? ["none"]}>
-                                                {(level) => (
-                                                    <button
-                                                        class={`btn btn-ghost btn-xs w-full justify-start tooltip tooltip-left ${level === localChatStore.reasoningEffort ? "bg-primary/15 text-primary" : ""}`}
-                                                        data-tip={`推理强度：${level}`}
-                                                        aria-label={`推理强度: ${level}`}
-                                                        onClick={() => { localChatStore.setReasoningEffort(level as ReasoningEffort); setModelMenuOpen(false); }}
-                                                    >
-                                                        {reasoningEffortLabel(level as ReasoningEffort)}
-                                                    </button>
-                                                )}
-                                            </For>
-                                        </div>
-                                    </div>
-                                </div>
-                            </Show>
-                        </div>
+                            </span>
+                            <span class="opacity-50">⚙</span>
+                        </button>
                         <div class="flex-1" />
                         <Show when={!localChatStore.running}>
                             <button
@@ -984,7 +1014,13 @@ export function LocalChatPage() {
 
             {/* 全屏输出 */}
             <Show when={full()}>
-                {(f) => <FullscreenModal title={f().title} content={f().content} onClose={() => setFull(null)} />}
+                {(f) => (
+                    <FullscreenModal
+                        title={f().title}
+                        content={f().content}
+                        onClose={() => setFull(null)}
+                    />
+                )}
             </Show>
         </div>
     );

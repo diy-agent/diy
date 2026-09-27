@@ -174,6 +174,14 @@ export interface UiDriver {
    * 定位用 DOM、发送用 CDP 原生事件 —— 命中测试那一层仍然是真的。
    */
   clickSelector(selector: string, opts?: { nth?: number }): Promise<void>;
+  /**
+   * 按 CSS 选择器定位 → **真实双击**（同上定位与命中路径）。
+   *
+   * 为什么不是"连点两次 clickSelector"：Chromium 的 `dblclick` 由**点击计数**驱动
+   * （同一坐标、`clickCount: 2` 的第二次 press/release），两次独立的单击只会产生
+   * 两个 `click`，`onDblClick` 一次都不会触发 —— 界面看着"点了没反应"。
+   */
+  dblclickSelector(selector: string, opts?: { nth?: number }): Promise<void>;
   /** 读 DOM（拿 rect / 计算样式等；a11y 树看不到的东西用这个） */
   query<T>(expression: string): Promise<T>;
   /**
@@ -224,6 +232,46 @@ export async function makeUiDriver(
       return true;
     })()`);
 
+  /**
+   * 取某选择器命中的第 nth 个元素的**稳定中心点**：等坐标连续两次一致再返回。
+   *
+   * 实测教训：侧栏展开是 `transition-[width] duration-200`，pin 之后立刻取坐标
+   * 拿到的是动画中间值，等事件派发到浏览器时按钮已经移走 —— 点击落到别处，
+   * 表现为「点了没反应」（tab 没关掉，但也没有报错）。真人不会点中途的元素。
+   * 找不到 / 零尺寸直接抛错（不静默跳过）。
+   */
+  const sampleStablePoint = async (selector: string, nth: number) => {
+    const sample = () =>
+      cdp.eval<{ x: number; y: number } | string>(
+        `(() => {
+           const els = document.querySelectorAll(${JSON.stringify(selector)});
+           const el = els[${nth}];
+           if (!el) return "NOT_FOUND";
+           const r = el.getBoundingClientRect();
+           if (r.width === 0 || r.height === 0) return "ZERO_SIZE";
+           return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+         })()`,
+      );
+
+    let point = await sample();
+    if (typeof point === "string") {
+      throw new Error(`[ui-drive] 选择器定位失败（${point}）: ${selector}[${nth}]`);
+    }
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 40));
+      const next = await sample();
+      if (typeof next === "string") {
+        throw new Error(`[ui-drive] 选择器定位失败（${next}）: ${selector}[${nth}]`);
+      }
+      if (Math.abs(next.x - point.x) < 1 && Math.abs(next.y - point.y) < 1) {
+        point = next;
+        break;
+      }
+      point = next;
+    }
+    return point;
+  };
+
   /** 取树并按谓词定位（每次现取：上一步操作会让 rect 变） */
   const locate = async (target: TextMatch) => {
     const match =
@@ -266,41 +314,20 @@ export async function makeUiDriver(
     },
 
     async clickSelector(selector, opts = {}) {
-      const nth = opts.nth ?? 0;
-      const sample = () =>
-        cdp.eval<{ x: number; y: number } | string>(
-          `(() => {
-             const els = document.querySelectorAll(${JSON.stringify(selector)});
-             const el = els[${nth}];
-             if (!el) return "NOT_FOUND";
-             const r = el.getBoundingClientRect();
-             if (r.width === 0 || r.height === 0) return "ZERO_SIZE";
-             return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-           })()`,
-        );
-
-      // 等坐标**连续两次一致**再点。
-      // 实测教训：侧栏展开是 `transition-[width] duration-200`，pin 之后立刻取坐标
-      // 拿到的是动画中间值，等事件派发到浏览器时按钮已经移走 —— 点击落到别处，
-      // 表现为「点了没反应」（tab 没关掉，但也没有报错）。真人不会点中途的元素。
-      let point = await sample();
-      if (typeof point === "string") {
-        throw new Error(`[ui-drive] 选择器定位失败（${point}）: ${selector}[${nth}]`);
-      }
-      for (let i = 0; i < 40; i++) {
-        await new Promise((r) => setTimeout(r, 40));
-        const next = await sample();
-        if (typeof next === "string") {
-          throw new Error(`[ui-drive] 选择器定位失败（${next}）: ${selector}[${nth}]`);
-        }
-        if (Math.abs(next.x - point.x) < 1 && Math.abs(next.y - point.y) < 1) {
-          point = next;
-          break;
-        }
-        point = next;
-      }
+      const point = await sampleStablePoint(selector, opts.nth ?? 0);
       await mouse("mousePressed", point);
       await mouse("mouseReleased", point);
+      await new Promise((r) => setTimeout(r, 120));
+    },
+
+    async dblclickSelector(selector, opts = {}) {
+      const point = await sampleStablePoint(selector, opts.nth ?? 0);
+      // 第二次带 clickCount: 2 —— 这才是 Chromium 判定 dblclick 的依据（见接口注释）
+      const at = (type: string, clickCount: number) => mouse(type, point, { clickCount });
+      await at("mousePressed", 1);
+      await at("mouseReleased", 1);
+      await at("mousePressed", 2);
+      await at("mouseReleased", 2);
       await new Promise((r) => setTimeout(r, 120));
     },
 
