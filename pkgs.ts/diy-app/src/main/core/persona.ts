@@ -108,6 +108,9 @@ export function personaByIdOrName(home: string, key: string): Persona | null {
 
 /**
  * 任务当前生效的人物：任务 frontmatter 的 `persona`（**存 id**）→ 查定义 → 缺省人物。
+ *
+ * `persona` 键**不存在 = 跟随缺省**（不固定绑定；改缺省时本任务下一轮跟着变）。
+ * 这是新建任务的默认状态，故缺字段不再出声 ——「这次用了哪个模型」由事件流每 step 记录（##164）。
  * 指向不存在的 id 时**回落缺省并出声**（人物被删 / 手写文件写错 id），
  * 不允许静默换成某个"猜的"模型。
  */
@@ -116,10 +119,9 @@ export function personaForTask(home: string, taskUri: string): Persona {
   if (!taskUri) return fallback();
   const id = getTask(taskUri)?.persona;
   if (!id) {
-    // 正常情况不会走到这里（任务创建时物化 persona，存量数据已由迁移脚本补齐）。
-    // 走到这里只可能是**手改**：AGENTS.md 是面向用户的文件，字段可以被删掉。
-    // 回落缺省但不静默 ——「这次用的模型是哪个」是必须可观测的事实。
-    console.warn(`[persona] 任务 ${taskUri} 没有 persona 字段（手改？），本轮用缺省「${fallback().name}」`);
+    // **正常情况**：任务没写 persona 键 = 跟随缺省（新建任务的默认状态）。
+    // 不再出声 —— 这是设计中的常态，不是异常（以前"创建时物化"才会有"字段缺失=异常"的假设）。
+    // 手删字段与"跟随缺省"因此在语义上**合一**：都是"不固定，用缺省"，无需区分。
     return fallback();
   }
   const found = personaById(home, id);

@@ -27,6 +27,8 @@ interface ModelBrief {
 
 const [personas, setPersonas] = createSignal<PersonaView[]>([]);
 const [defaultPersona, setDefaultPersona] = createSignal<string>("");
+/** 跟随缺省的任务数（改缺省会影响它们；不计入任何人的 taskCount，见 main 侧 list） */
+const [followCount, setFollowCount] = createSignal(0);
 const [models, setModels] = createSignal<ModelBrief[]>([]);
 let loading: Promise<void> | null = null;
 /** 是否有一次 load 在途（面板据此显示"加载中…"，并避免在清单到达前做选中校准） */
@@ -42,6 +44,7 @@ async function load(force = false): Promise<void> {
             const r = await diyService.diy.agent.persona.list({});
             setPersonas(r.personas);
             setDefaultPersona(r.default);
+            setFollowCount(r.followCount);
         } catch (e) {
             console.warn("[persona] 人物清单加载失败（下次进入重试）:", e);
         }
@@ -61,6 +64,9 @@ async function load(force = false): Promise<void> {
 /**
  * 把某个任务换绑到另一个人物（**续聊**：会话日志与上下文一律不动，下一轮起用新模型）。
  *
+ * `id` 传 `""`（`PERSONA_FOLLOW`）= **跟随缺省**：删掉任务的 persona 键，之后缺省变它就跟着变。
+ * 三态语义在 main/core/task.ts（不传=保持 / ""=跟随缺省 / 值=固定绑定）。
+ *
  * 与「改人物定义」（CLI `diy agent persona set`）是两件事：这个方法影响**一个任务**，
  * 那个影响所有引用该人物的任务 —— 混在一起必然误操作，故界面上也分开（此处只换绑）。
  */
@@ -74,7 +80,10 @@ async function setForTask(taskUri: string, id: string): Promise<boolean> {
         return true;
     } catch (e) {
         console.error(`[persona] 换绑失败 ${taskUri} → ${id}:`, e);
-        notificationStore.addToast("error", `切换人物失败：${e instanceof Error ? e.message : String(e)}`);
+        notificationStore.addToast(
+            "error",
+            `切换人物失败：${e instanceof Error ? e.message : String(e)}`,
+        );
         return false;
     }
 }
@@ -83,9 +92,13 @@ async function setForTask(taskUri: string, id: string): Promise<boolean> {
  * 保存人物定义（新建或更新；未给的字段保持原值 —— main 侧的三态语义）。
  * 成功后 reload：引用计数与模型清单都可能变（新建后列表要出现它）。
  */
-async function save(
-    patch: { id?: string; name?: string; model?: string; reasoningEffort?: string; style?: string },
-): Promise<string | null> {
+async function save(patch: {
+    id?: string;
+    name?: string;
+    model?: string;
+    reasoningEffort?: string;
+    instructions?: string;
+}): Promise<string | null> {
     try {
         // 不传 id = 新建（id 由 main 生成并返回）；传 id = 更新该人物
         const r = await diyService.diy.agent.persona.set({
@@ -93,14 +106,17 @@ async function save(
             name: patch.name,
             model: patch.model,
             reasoningEffort: patch.reasoningEffort,
-            style: patch.style,
+            instructions: patch.instructions,
         });
         await load(true);
         return r.id;
     } catch (e) {
         // 失败必须发声（如未知模型/档位不支持）：静默会让用户以为改成功了
         console.error(`[persona] 保存失败 ${patch.id ?? "(新建)"}:`, e);
-        notificationStore.addToast("error", `保存人物失败：${e instanceof Error ? e.message : String(e)}`);
+        notificationStore.addToast(
+            "error",
+            `保存人物失败：${e instanceof Error ? e.message : String(e)}`,
+        );
         return null;
     }
 }
@@ -115,7 +131,10 @@ async function setDefault(id: string): Promise<boolean> {
         return true;
     } catch (e) {
         console.error("[persona] setDefault 失败:", e);
-        notificationStore.addToast("error", `设置缺省人物失败：${e instanceof Error ? e.message : String(e)}`);
+        notificationStore.addToast(
+            "error",
+            `设置缺省人物失败：${e instanceof Error ? e.message : String(e)}`,
+        );
         return false;
     }
 }
@@ -147,13 +166,36 @@ export const personaStore = {
     get models() {
         return models();
     },
+    /** 跟随缺省的任务数（"改缺省会影响谁"的那批） */
+    get followCount() {
+        return followCount();
+    },
     /** 清单加载中（异步在途；面板显示加载态用） */
     get loading() {
         return busy();
     },
-    /** 当前任务绑定的**人物 id**：任务绑定优先，未加载完时先用缺省人物（避免显示空白） */
+    /**
+     * 当前任务是否**跟随缺省**（frontmatter 里没有 persona 键）。
+     *
+     * 「没写键」与「写了但指向缺省」是**两种不同状态**，界面必须分开显示：
+     * 前者改缺省会跟着变，后者不会。判据只看字段在不在（main 侧同一判据）。
+     */
+    isFollowing(): boolean {
+        return !taskStore.selectedTask?.persona;
+    },
+    /**
+     * 当前任务**实际生效**的人物 id。
+     *
+     * 跟随缺省时自然是缺省人物的 id；未加载完时也先用缺省（避免显示空白）。
+     * 注意这是"现在谁在干活"的解析结果，**不是**任务的绑定 —— 要判绑定用 isFollowing()。
+     */
     idForTask(): string {
         return taskStore.selectedTask?.persona || defaultPersona();
+    },
+    /** 缺省人物的名字（面板"跟随缺省"行显示"现在生效：X"；清单未到时回 id/占位） */
+    defaultPersonaName(): string {
+        const id = defaultPersona();
+        return personas().find((p) => p.id === id)?.name ?? (id || "加载中…");
     },
     /** 按 id 取人物（含引用计数；未加载/不存在时 null，调用方自己决定怎么显示） */
     defOf(id: string): PersonaView | null {
@@ -189,13 +231,37 @@ export const personaStore = {
     // 不提供"模型 id → 显示名"的映射：上游的显示名与 id 经常对不上（同一 id 在不同批次
     // 叫法不同、或清单里的 name 是历史遗留），于是"界面显示 X、实际发的是 Y"。
     // 模型一律**直接用 id** 展示 —— 它才是发给上游的那个值，也是配置里存的那个值。
-    /** 某模型支持的思考级别（下拉候选；模型未知时给空数组，界面自己兜底显示） */
+    /** 某模型支持的思考级别（平铺按钮候选；模型未知时给空数组，界面自己兜底显示） */
     reasoningChoices(model: string): ReasoningEffort[] {
         return models().find((m) => m.id === model)?.reasoning.supported ?? [];
+    },
+    /**
+     * 某模型的**默认**档位（null = 模型未知/清单未到）。
+     *
+     * 新建人物时要用：换模型后旧档位可能不在新模型的支持集内，此时必须落回**新模型的默认档**，
+     * 否则会写出一个上游必拒的组合（400 Invalid request parameters）—— 写入侧也会拦，但那是事后报错。
+     */
+    defaultReasoning(model: string): ReasoningEffort | null {
+        return models().find((m) => m.id === model)?.reasoning.default ?? null;
     },
     load,
     save,
     setDefault,
     bindCurrentTask,
     setForTask,
+    /** 本任务改为**跟随缺省**（取消固定绑定）。缺省变它就跟着变，模型由事件流每 step 记录。 */
+    async followDefault(): Promise<boolean> {
+        const uri = taskStore.selectedUri;
+        if (!uri) {
+            notificationStore.addToast("error", "没有选中的任务");
+            return false;
+        }
+        const ok = await setForTask(uri, "");
+        if (ok)
+            notificationStore.addToast(
+                "success",
+                "已改为跟随缺省人物（缺省改变时本任务下一轮跟着变）",
+            );
+        return ok;
+    },
 };

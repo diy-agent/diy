@@ -7,7 +7,7 @@ export interface CreateTaskViaUiInput {
   project: string;
   parent?: string;
   body?: string;
-  /** agent 人物名：不传 = 当前缺省人物（人物决定模型/参数/口气，见 shared/persona.ts） */
+  /** agent 人物名：不传 = 当前缺省人物（人物决定模型/参数/行为指令，见 shared/persona.ts） */
   persona?: string;
   /** 结构化字段：可在创建时就指定（不传 = 未设置，之后再在详情面板填） */
   change_type?: string;

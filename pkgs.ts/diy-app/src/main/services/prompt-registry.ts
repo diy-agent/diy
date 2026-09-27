@@ -462,11 +462,11 @@ export function assembleGlobals(
   const task = taskOf(home, taskUri);
   const cwdRes = resolveCwd(home, taskUri);
   const diyCli = opts.diyCli ?? readRuntimeConfig().cli ?? "";
-  // 当前人物（模型/参数/口气的真源是 personas.yaml；任务只持有引用）——预览与真发同一入口，
-  // 故试验场看到的身份节与实际请求一致，不会出现"预览里有口气、真发没有"的漂移
+  // 当前人物（模型/参数/行为指令的真源是 personas.yaml；任务只持有引用）——预览与真发同一入口，
+  // 故试验场看到的身份节与实际请求一致，不会出现"预览里有行为指令、真发没有"的漂移
   const persona = personaForTask(home, taskUri);
   const globals: AssembleGlobals = {
-    persona: { name: persona.name, style: persona.style },
+    persona: { name: persona.name, instructions: persona.instructions },
     diy: { cli: diyCli || "diy（未注入 DIY_CLI，勿照抄）", home },
     project: { path: getProjectPath(projectId) ?? "" },
     task: {

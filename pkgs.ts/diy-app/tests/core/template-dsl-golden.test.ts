@@ -9,7 +9,7 @@
 //   ① 末尾多一个 \n —— "模版源逐字节进引擎"意味着节模版自带末尾换行，legacy 的 blocks.join("\n\n") 不带
 //   ② 链最后一层之后多一个 \n —— 简化模版时去掉"空 <template :if-not={{.f.isFirst}}>"把戏，
 //      改成**循环体自带收尾空行**（层间仍是空一行，只是最后多一个换行，语义无害）
-//   ③ 身份节多一行人物名与一行口气 —— agent 人物（persona）注入，identity.md v2；
+//   ③ 身份节多一行人物名与一行行为指令 —— agent 人物（persona）注入，identity.md v2；
 //      golden 随之更新（golden 是"当前内置模版的逐字节快照"，模版演进时按此处说明同步）
 // ═══════════════════════════════════════════════════════════════
 
@@ -22,8 +22,8 @@ const golden = readFileSync(join(__dirname, '..', 'fixtures', 'system.golden.txt
 
 /** 与生成 golden 时完全相同的输入（只是换成命名空间版变量） */
 const GLOBALS: AssembleGlobals = {
-    // 人物段随 identity.md v2 加入；golden 用的是内置缺省人物的名字与口气
-    persona: { name: '大副', style: '每次回答前先称一声「sir」。' },
+    // 人物段随 identity.md v2 加入；golden 用的是内置缺省人物的名字与行为指令
+    persona: { name: '大副', instructions: '每次回答前先称一声「sir」。' },
     diy: { cli: '/repo/diy.sh', home: '/tmp/diy-home' },
     project: { path: '/repo' },
     task: {

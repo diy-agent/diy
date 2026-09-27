@@ -34,6 +34,7 @@ interface OldDef {
     name?: string;
     model?: string;
     reasoningEffort?: string;
+    instructions?: string;
     style?: string;
     desc?: string;
 }
@@ -68,12 +69,27 @@ if (!old) {
     process.exit(0);
 }
 
+const currentIdCount = old.entries.filter((e) => /^persona\/\d+$/.test(e.key)).length;
+if (currentIdCount > 0) {
+    if (currentIdCount === old.entries.length) {
+        console.log("人物表已使用 persona/<n> id，无需迁移。");
+        process.exit(0);
+    }
+    console.error("人物表混有 persona/<n> 与旧格式 id/名字；为避免改写绑定，迁移中止。");
+    process.exit(1);
+}
+
 // ── ① 人物表：名字键 → id ──
 // 已是新结构（键是 p<数字> 且 def.name 存在）时保持原 id；否则按顺序生成 p1, p2, …
 let next = 1;
-const usedIds = new Set(old.entries.filter((e) => /^p\d+$/.test(e.key)).map((e) => e.key));
+const usedIds = new Set(
+    old.entries.filter((e) => /^(?:p\d+|persona\/\d+)$/.test(e.key)).map((e) => e.key),
+);
 const keyToId = new Map<string, string>();
-const personas: Record<string, { name: string; model: string; reasoningEffort: string; style: string }> = {};
+const personas: Record<
+    string,
+    { name: string; model: string; reasoningEffort: string; instructions: string }
+> = {};
 
 for (const { key, def } of old.entries) {
     let id: string;
@@ -90,7 +106,7 @@ for (const { key, def } of old.entries) {
         name: def.name ?? key,
         model: String(def.model ?? ""),
         reasoningEffort: String(def.reasoningEffort ?? "medium"),
-        style: String(def.style ?? ""),
+        instructions: def.instructions ?? def.style ?? "",
     };
 }
 // 名字 → id 的映射（含**已迁移**人物的 name）：用于"人物表已是新结构、任务还存名字"的半迁移状态。
@@ -118,6 +134,10 @@ for (const file of files) {
         continue;
     }
     const endIdx = raw.indexOf(FM, 3);
+    if (endIdx < 0) {
+        skipped.push(`${file}（frontmatter 缺少结束分隔符）`);
+        continue;
+    }
     const fmText = raw.slice(3, endIdx);
     const m = /^persona:\s*(.+)$/m.exec(fmText);
     if (!m) continue; // 无该字段：由读侧回落（不在这里补，那是另一个迁移的事）

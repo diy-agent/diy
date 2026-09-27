@@ -34,8 +34,8 @@ function writeTask(uri: string, front: string): void {
 const TWO = {
     default: "p2",
     personas: {
-        p2: { name: "密探", model: "mimo-v2.6-flash", reasoningEffort: "low", style: "只回要点。" },
-        p1: { name: "大副", model: DEFAULT_MODEL, reasoningEffort: "medium", style: "" },
+        p2: { name: "密探", model: "mimo-v2.6-flash", reasoningEffort: "low", instructions: "只回要点。" },
+        p1: { name: "大副", model: DEFAULT_MODEL, reasoningEffort: "medium", instructions: "" },
     },
 };
 
@@ -94,13 +94,14 @@ describe("任务 → 人物解析（personaForTask）", () => {
         expect(personaForTask(diyHome(), "projects/9/tasks/1").model).toBe("mimo-v2.6-flash");
     });
 
-    it("任务缺 persona 字段（手删）：回落缺省人物**并出声**", () => {
-        // 正常数据不会缺该字段（创建时物化 + 存量已迁移）；缺只可能是用户手改 AGENTS.md。
-        // 回落但不静默：「这次用哪个模型」是必须可观测的事实。
+    it("任务缺 persona 字段 = **跟随缺省**（正常状态，不出声）", () => {
+        // 语义变更：缺字段不再是"数据缺失/手删"，而是新建任务的**默认状态**（不固定绑定）。
+        // 因此既不出声告警（它不是异常），也不影响解析（照样给出缺省人物）。
+        // 手删字段与"跟随缺省"在语义上合一，无需区分 —— 两种情况该做的就是同一件事。
         savePersonas(diyHome(), TWO);
         writeTask("projects/9/tasks/2", "title: 'b'\nstate: pending");
         expect(personaForTask(diyHome(), "projects/9/tasks/2").name).toBe("密探");
-        expect(warn).toHaveBeenCalled();
+        expect(warn).not.toHaveBeenCalled();
     });
 
     it("任务指向已不存在的人物：回落缺省**并出声**（换模型不能不打招呼）", () => {
@@ -133,7 +134,7 @@ describe("任务 → 人物解析（personaForTask）", () => {
 
 describe("定义校验（写入前拦住非法配置）", () => {
     it("未知模型被拒", () => {
-        expect(() => assertPersonaDef({ name: "x", model: "不存在的模型", reasoningEffort: "none", style: "" })).toThrow(
+        expect(() => assertPersonaDef({ name: "x", model: "不存在的模型", reasoningEffort: "none", instructions: "" })).toThrow(
             /未知模型/,
         );
     });
@@ -141,13 +142,13 @@ describe("定义校验（写入前拦住非法配置）", () => {
     it("档位不在该模型支持集内被拒（各模型词表不同）", () => {
         // mimo-v2.6-flash 不支持 xhigh（见 shared/models.ts 的实测注释）
         expect(() =>
-            assertPersonaDef({ name: "x", model: "mimo-v2.6-flash", reasoningEffort: "xhigh", style: "" }),
+            assertPersonaDef({ name: "x", model: "mimo-v2.6-flash", reasoningEffort: "xhigh", instructions: "" }),
         ).toThrow(/不支持推理强度/);
     });
 
     it("合法组合通过", () => {
         expect(() =>
-            assertPersonaDef({ name: "x", model: "mimo-v2.6-flash", reasoningEffort: "high", style: "sir" }),
+            assertPersonaDef({ name: "x", model: "mimo-v2.6-flash", reasoningEffort: "high", instructions: "sir" }),
         ).not.toThrow();
     });
 });

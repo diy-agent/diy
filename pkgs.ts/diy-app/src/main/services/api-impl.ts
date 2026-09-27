@@ -244,7 +244,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     }
   });
 
-  // —— agent.persona —— 人物配置（模型/参数/口气的唯一真源；任务只持有**引用（id）**）——
+  // —— agent.persona —— 人物配置（模型/参数/行为指令的唯一真源；任务只持有**引用（id）**）——
   binding.on(app.agent.persona.list, async () => {
     const { listPersonas, defaultPersonaId } = await import("../core/persona");
     const { diyHome, getTask } = await import("../core/state");
@@ -253,13 +253,18 @@ export function bindAppHandlers(binding: ServerBinding): void {
     // 引用计数：改人物是**影响所有引用者**的操作，界面必须先看得见影响面
     // （否则「统一修改」退化成盲改）。一次全库扫描，只在打开面板/列表时发生。
     const counts = new Map<string, number>();
+    let followCount = 0;
     for (const uri of listTasks()) {
       const id = getTask(uri)?.persona;
+      // 没有 persona 键 = **跟随缺省**（不写键就是跟随，见 core/task.ts 与 core/persona.ts）
       if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+      else followCount++;
     }
     return {
       default: defaultPersonaId(home),
       personas: listPersonas(home).map((p) => ({ ...p, taskCount: counts.get(p.id) ?? 0 })),
+      // 跟随者不属于任何具体人物，但对"改缺省会影响多少任务"是必须可见的事实
+      followCount,
     };
   });
 
@@ -284,7 +289,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
       reasoningEffort:
         input.reasoningEffort ??
         (target && target.model === model ? target.reasoningEffort : reasoningOf(model).default),
-      style: input.style ?? target?.style ?? "",
+      instructions: input.instructions ?? target?.instructions ?? "",
     };
     assertPersonaDef(def);
     savePersonas(home, { ...file, personas: { ...file.personas, [id]: def } });

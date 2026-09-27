@@ -49,7 +49,7 @@ export const TaskDetailSchema = z.object({
   change_type: z.string().optional(),
   module: z.string().optional(),
   priority: z.string().optional(),
-  /** agent 人物名：本任务由哪个「人物」干活（决定模型/参数/口气，见 shared/persona.ts） */
+  /** agent 人物名：本任务由哪个「人物」干活（决定模型/参数/行为指令，见 shared/persona.ts） */
   persona: z.string().optional(),
   /** 未提交草稿：renderer 用它恢复编辑态与输入框（见 core/drafts.ts） */
   ui_drafts: DraftsData.nullable().optional(),

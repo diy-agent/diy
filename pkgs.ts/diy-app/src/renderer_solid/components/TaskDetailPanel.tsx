@@ -1,4 +1,13 @@
-import { createSignal, createMemo, createEffect, on, onMount, onCleanup, Show, For } from "solid-js";
+import {
+    createSignal,
+    createMemo,
+    createEffect,
+    on,
+    onMount,
+    onCleanup,
+    Show,
+    For,
+} from "solid-js";
 import * as Select from "@kobalte/core/select";
 import { taskStore, type TaskDetail } from "../store/taskStore";
 import { localChatStore } from "../store/localChatStore";
@@ -70,7 +79,10 @@ export function TaskDetailPanel() {
             const trySet = () => {
                 if (!detailScrollRef) return;
                 frames++;
-                if (frames <= 5 && detailScrollRef.scrollHeight <= detailScrollRef.clientHeight + 1) {
+                if (
+                    frames <= 5 &&
+                    detailScrollRef.scrollHeight <= detailScrollRef.clientHeight + 1
+                ) {
                     requestAnimationFrame(trySet);
                     return;
                 }
@@ -113,12 +125,17 @@ export function TaskDetailPanel() {
                     onMouseDown={onGripDown}
                 />
                 {/* 卡片头部：URI + 试验场 + 关闭 */}
-                <div class={`flex items-center justify-between px-4 ${VIEW_BAR_H} border-b shrink-0`}>
+                <div
+                    class={`flex items-center justify-between px-4 ${VIEW_BAR_H} border-b shrink-0`}
+                >
                     <span class="text-xs font-mono opacity-60 truncate max-w-[300px]">
                         {taskStore.selectedUri}
                     </span>
                     <div class="flex items-center gap-1">
-                        <button class="btn btn-ghost btn-xs" onClick={() => taskStore.selectTask(null)}>
+                        <button
+                            class="btn btn-ghost btn-xs"
+                            onClick={() => taskStore.selectTask(null)}
+                        >
                             ✕
                         </button>
                     </div>
@@ -134,14 +151,18 @@ export function TaskDetailPanel() {
                         if (u) localChatStore.setDetailScroll(u, e.currentTarget.scrollTop);
                     }}
                 >
-                        {/* keyed：每个任务一个 TaskInfoView 实例。
+                    {/* keyed：每个任务一个 TaskInfoView 实例。
                             非 keyed 时组件实例会被复用到下一个任务，而编辑态/草稿是在构造时
                             初始化的 —— 表现为「切回后显示上一个任务的标题」。
                             代价：改状态会重取任务并重建面板，但编辑态由草稿驱动
                             （draftStore.hasAny），只要用户改过内容就会自动恢复，无内容损失。 */}
-                        <Show when={taskStore.selectedTask} keyed fallback={<div class="opacity-60 text-sm">加载中…</div>}>
-                            {(t) => <TaskInfoView task={t} />}
-                        </Show>
+                    <Show
+                        when={taskStore.selectedTask}
+                        keyed
+                        fallback={<div class="opacity-60 text-sm">加载中…</div>}
+                    >
+                        {(t) => <TaskInfoView task={t} />}
+                    </Show>
                 </div>
 
                 {/* 大 FAB：一键进入任务执行页（= 开始/继续这个任务）。
@@ -193,7 +214,9 @@ const STATE_POOL: Record<string, StateOption> = {
 const STATE_GROUPS: StateGroup[] = [
     {
         label: "任务状态",
-        children: ["pending", "active", "done", "blocked", "cancelled", "shelved"].map((v) => STATE_POOL[v]),
+        children: ["pending", "active", "done", "blocked", "cancelled", "shelved"].map(
+            (v) => STATE_POOL[v],
+        ),
     },
     {
         label: "Issue 状态",
@@ -205,7 +228,11 @@ const STATE_GROUPS: StateGroup[] = [
  * GitHub 风格状态下拉：不进入编辑态，直接切换任务状态。
  * 选项带颜色圆点 + 状态英文值 + 中文标签，按组展示。
  */
-export function StateSelect(props: { current?: string; saving: boolean; onSave: (v: string) => void }) {
+export function StateSelect(props: {
+    current?: string;
+    saving: boolean;
+    onSave: (v: string) => void;
+}) {
     // 防御：若当前状态不在任何组里，动态补入口保证可显示/可切回
     const options = createMemo(() => {
         const known = new Set(STATE_GROUPS.flatMap((g) => g.children.map((o) => o.value)));
@@ -243,7 +270,9 @@ export function StateSelect(props: { current?: string; saving: boolean; onSave: 
                         item={p.item}
                         class="flex items-center gap-2 rounded px-2 py-1.5 text-xs cursor-pointer data-[highlighted]:bg-base-200 data-[selected]:bg-primary/10"
                     >
-                        <span class={`w-2 h-2 rounded-full inline-block shrink-0 ${taskStateColor(opt().value)}`} />
+                        <span
+                            class={`w-2 h-2 rounded-full inline-block shrink-0 ${taskStateColor(opt().value)}`}
+                        />
                         <span class="font-mono">{opt().value}</span>
                         <span class="opacity-70">{opt().label}</span>
                     </Select.Item>
@@ -258,7 +287,9 @@ export function StateSelect(props: { current?: string; saving: boolean; onSave: 
             )}
         >
             <Select.Trigger class="btn btn-outline btn-xs border-base-300 px-2 cursor-pointer inline-flex items-center gap-2 disabled:opacity-50">
-                <span class={`w-2 h-2 rounded-full inline-block ${taskStateColor(selected().value)}`} />
+                <span
+                    class={`w-2 h-2 rounded-full inline-block ${taskStateColor(selected().value)}`}
+                />
                 <span class="font-mono">{props.current}</span>
                 <Select.Icon class="opacity-60 text-[10px]">▾</Select.Icon>
             </Select.Trigger>
@@ -319,10 +350,20 @@ export function TaskFieldSelect(props: {
  * 不禁止自由输入 —— 取值还在演化，硬枚举会逼出「先塞进 test 再说」这种脏数据；
  * 清单（task-fields.ts 的 MODULES）只作建议。
  */
-export function TaskModuleInput(props: { value?: string; saving: boolean; onSave: (v: string) => void }) {
+export function TaskModuleInput(props: {
+    value?: string;
+    saving: boolean;
+    onSave: (v: string) => void;
+}) {
     const [draft, setDraft] = createSignal(props.value ?? "");
     // 任务切换/外部更新时同步（props.value 是真相源；用户正在输入时不覆盖）
-    createEffect(on(() => props.value, (v) => setDraft(v ?? ""), { defer: true }));
+    createEffect(
+        on(
+            () => props.value,
+            (v) => setDraft(v ?? ""),
+            { defer: true },
+        ),
+    );
     const commit = () => {
         if (draft().trim() === (props.value ?? "")) return;
         props.onSave(draft().trim());
@@ -376,7 +417,9 @@ export function TaskInfoView(props: { task: TaskDetail }) {
     const d = draftStore.fieldsOf(props.task.uri);
     // 只认「任务编辑」这两个字段：agent 输入框的草稿是另一回事，
     // 否则「聊天打到一半」会让详情面板一进来就是编辑态。
-    const [editing, setEditing] = createSignal(draftStore.hasAny(props.task.uri, ["title", "body"]));
+    const [editing, setEditing] = createSignal(
+        draftStore.hasAny(props.task.uri, ["title", "body"]),
+    );
     const [titleDraft, setTitleDraft] = createSignal(d.title ?? props.task.title ?? "");
     const [bodyDraft, setBodyDraft] = createSignal(d.body ?? props.task.body ?? "");
     const [saving, setSaving] = createSignal(false);
@@ -411,7 +454,7 @@ export function TaskInfoView(props: { task: TaskDetail }) {
         setSaving(true);
         try {
             await editTask(props.task.uri, { state: next as any });
-            await taskStore.loadTree();      // 同步任务树状态
+            await taskStore.loadTree(); // 同步任务树状态
             await taskStore.selectTask(props.task.uri); // 刷新详情 state
         } catch (err: any) {
             console.error("[TaskInfoView] change state failed:", err);
@@ -506,7 +549,11 @@ export function TaskInfoView(props: { task: TaskDetail }) {
                             onClick={saveEdit}
                             disabled={saving()}
                         >
-                            {saving() ? <span class="loading loading-spinner loading-xs"></span> : "💾 保存"}
+                            {saving() ? (
+                                <span class="loading loading-spinner loading-xs"></span>
+                            ) : (
+                                "💾 保存"
+                            )}
                         </button>
                         <button
                             class="btn btn-ghost btn-xs"
@@ -542,7 +589,7 @@ export function TaskInfoView(props: { task: TaskDetail }) {
             </div>
 
             {/* 元信息 */}
-            {/* agent 人物：本任务"由谁干活"（决定模型/参数/口气）—— 任务属性，改完即存。
+            {/* agent 人物：本任务"由谁干活"（决定模型/参数/行为指令）—— 任务属性，改完即存。
                 这里**只换绑**（续聊，会话一条不动）；改人物本身的模型走 CLI
                 `diy agent persona set`（那是全局的，影响所有引用它的任务）。 */}
             <div class="flex items-center gap-3 flex-wrap">
@@ -552,12 +599,13 @@ export function TaskInfoView(props: { task: TaskDetail }) {
                         class="select select-xs select-bordered"
                         disabled={saving() || personaStore.personas.length === 0}
                         value={props.task.persona ?? ""}
-                        onChange={(e) => void personaStore.setForTask(props.task.uri, e.currentTarget.value)}
+                        onChange={(e) =>
+                            void personaStore.setForTask(props.task.uri, e.currentTarget.value)
+                        }
                     >
-                        {/* 手删过该字段的任务显示"未设置"，不静默显示第一个人物 */}
-                        <Show when={!props.task.persona}>
-                            <option value="">（未设置）</option>
-                        </Show>
+                        {/* 空值 = **跟随缺省**（新建任务的默认状态），不是一个"没设置"的残缺态：
+                            选项文案要写出"会跟随谁"，否则用户看到空值会以为配置缺了 */}
+                        <option value="">跟随缺省（{personaStore.defaultPersonaName()}）</option>
                         <For each={personaStore.personas}>
                             {(p) => (
                                 <option value={p.id} title={`${p.name}（${p.id}）`}>
@@ -571,7 +619,10 @@ export function TaskInfoView(props: { task: TaskDetail }) {
 
             <div class="flex gap-2 flex-wrap text-xs opacity-60">
                 {props.task.project && (
-                    <span class="badge badge-outline">📂 {props.task.project_label ?? props.task.project_path ?? props.task.project}</span>
+                    <span class="badge badge-outline">
+                        📂{" "}
+                        {props.task.project_label ?? props.task.project_path ?? props.task.project}
+                    </span>
                 )}
                 {props.task.created && (
                     <span class="badge badge-outline">
@@ -625,7 +676,10 @@ export function TaskInfoView(props: { task: TaskDetail }) {
                                 📄 原文
                             </button>
                         </div>
-                        <Show when={detailTab() === "md"} fallback={<CodeBlock code={props.task.body!} lang="markdown" />}>
+                        <Show
+                            when={detailTab() === "md"}
+                            fallback={<CodeBlock code={props.task.body!} lang="markdown" />}
+                        >
                             <MarkdownView content={props.task.body!} />
                         </Show>
                     </Show>

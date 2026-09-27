@@ -60,7 +60,7 @@ export const AssembleGlobalsSchema = z.object({
   persona: z
     .object({
       name: z.string().describe("当前人物名"),
-      style: z.string().describe("人物口气（空则不注入）"),
+      instructions: z.string().describe("人物行为指令（空则不注入）"),
     })
     .describe("agent 人物"),
   diy: z

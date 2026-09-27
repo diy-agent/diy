@@ -19,7 +19,7 @@
 import { RpcSchema } from "@diy/rpc";
 import { z } from "zod";
 import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-schema";
-// agent 人物契约（纯 zod，renderer 同源）——模型/参数/口气的配置实体
+// agent 人物契约（纯 zod，renderer 同源）——模型/参数/行为指令的配置实体
 import { PersonaSchema } from "../../shared/persona";
 // 草稿与任务详情载荷的契约（纯 zod，renderer 同源）
 import { DraftFieldSchema, DraftFieldsSchema, DraftsData, TaskDetailSchema } from "../../shared/task-detail";
@@ -96,7 +96,7 @@ export const apiDef = RpcSchema.router({
               project: z.string().cliArg({ desc: "所属 project id" }),
               parent: z.string().optional().cliOption({ short: "p", desc: "父任务 URI" }),
               body: z.string().optional().cliOption({ desc: "任务内容" }),
-              persona: z.string().optional().cliOption({ desc: "agent 人物名（不传=当前缺省人物；人物决定模型/参数/口气）" }),
+              persona: z.string().optional().cliOption({ desc: "agent 人物 id（不传 = 跟随缺省；传值 = 固定绑定，人物决定模型/参数/行为指令）" }),
               change_type: ChangeTypeSchema.optional().cliOption({ desc: "变更性质（feat/fix/docs/…，见 conventional commits）" }),
               module: z.string().optional().cliOption({ desc: "模块（可 `/` 分层，如 agent/ui）" }),
               priority: PrioritySchema.optional().cliOption({ desc: "优先级 P0-P3（不传=未定级）" }),
@@ -166,8 +166,12 @@ export const apiDef = RpcSchema.router({
               state: TaskStateSchema.optional().cliOption({ desc: "新状态" }),
               body: z.string().optional().cliOption({ desc: "新内容（至少 10 字符，拒绝空/过短以免误清空正文）" }),
               parent: z.string().optional().cliOption({ desc: "父任务 URI（空字符串=取消父子关系）" }),
-              // 人物不可清除（任务必须有人物）：空串会被写入侧拒绝，只允许换成另一个存在的人物
-              persona: z.string().optional().cliOption({ desc: "agent 人物名（换人=续聊，模型下一轮生效；不能为空）" }),
+              // 三态：不传=保持原绑定 / `default`（或空串）=**跟随缺省**（取消固定绑定）/ 值=换绑到该人物。
+              // 换绑是续聊（会话与上下文不动），新模型**下一轮**生效。
+              persona: z
+                .string()
+                .optional()
+                .cliOption({ desc: "agent 人物 id（不传=保持；default=跟随缺省；值=固定绑定，模型下一轮生效）" }),
               change_type: z.string().optional().cliOption({ desc: "变更性质（feat/fix/…；空字符串=清除）" }),
               module: z.string().optional().cliOption({ desc: "模块（空字符串=清除）" }),
               priority: z.string().optional().cliOption({ desc: "优先级 P0-P3（空字符串=清除回未定级）" }),
@@ -333,18 +337,21 @@ export const apiDef = RpcSchema.router({
 
           // —— 本地自定义 agent（ai-sdk 块协议，独立于 ACP 通道）——
           // —— agent 人物（persona）——
-          // 人物是**配置实体**：模型/参数/口气挂在这里，会话只持有引用（任务 frontmatter 的 persona）。
+          // 人物是**配置实体**：模型/参数/行为指令挂在这里，会话只持有引用（任务 frontmatter 的 persona）。
           // 于是「改人物」= 所有引用它的任务下一轮统一生效；「换人物」= 只改本任务的绑定，不碰别人。
           persona: RpcSchema.group({
-            desc: `agent 人物（模型 + 参数 + 口气）；任务持**引用（id）**，改人物对使用它的会话下一轮生效`,
+            desc: `agent 人物（模型 + 参数 + 行为指令）；任务持**引用（id）**，改人物对使用它的会话下一轮生效`,
             children: {
               list: RpcSchema.unary({
                 desc: `列出全部人物与缺省人物（含各人物被多少任务引用）`,
                 input: {},
                 output: z.object({
-                  default: z.string().describe("缺省人物 id（新建任务物化它）"),
+                  default: z.string().describe("缺省人物 id（跟随缺省的任务用它）"),
                   // taskCount = 引用面：改人物前必须先看见"会影响多少任务"（否则"统一修改"是盲改）
                   personas: z.array(PersonaSchema.extend({ taskCount: z.number() })),
+                  // followCount = **跟随缺省**的任务数（不写 persona 键，故不计入任何人的 taskCount）。
+                  // 改缺省影响的就是这批任务 —— 不给这个数，缺省人物在面板上会显示"暂无任务在用"。
+                  followCount: z.number().describe("跟随缺省的任务数（改缺省会影响它们）"),
                 }),
               }),
               set: RpcSchema.unary({
@@ -359,7 +366,7 @@ export const apiDef = RpcSchema.router({
                     .string()
                     .optional()
                     .cliOption({ desc: "推理强度档位（按该模型支持集，见 agent local models）" }),
-                  style: z.string().optional().cliOption({ desc: `口气（注入身份节；空串=不注入）` }),
+                  instructions: z.string().optional().cliOption({ desc: `行为指令（注入身份节；空串=不注入）` }),
                 },
                 output: PersonaSchema,
               }),
@@ -371,7 +378,7 @@ export const apiDef = RpcSchema.router({
                 output: z.object({ default: z.string() }),
               }),
               // 暂不提供 remove：人物的价值是"可复用的配置实体"，删掉它所有引用者会静默回落缺省
-              // （换模型不打招呼）。要下线一个人物，改它的模型/口气即可（引用者原地跟随）；
+              // （换模型不打招呼）。要下线一个人物，改它的模型/行为指令即可（引用者原地跟随）；
               // 真需要删除时再设计"引用迁移"（改绑 N 个任务）一起做，不做半截的删除。
             },
           }),

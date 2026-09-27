@@ -37,7 +37,7 @@ export interface TaskMeta {
   source_type?: string;
   source_uri?: string;
   /**
-   * agent 人物名（persona）：本任务由哪个「人物」干活（模型 + 参数 + 口气都由它决定）。
+   * agent 人物名（persona）：本任务由哪个「人物」干活（模型 + 参数 + 行为指令都由它决定）。
    * 创建时物化成当时的缺省人物名（not null 语义：读到的任务一定有值）。
    * 读侧宽容（类型 string）：指向不存在的人物时由 core/persona 回落缺省并出声，不静默换模型。
    */
