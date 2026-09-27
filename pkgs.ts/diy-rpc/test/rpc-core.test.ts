@@ -112,6 +112,26 @@ describe('meta/handle 分离 + createTypedClient', () => {
     binding.destroy();
   });
 
+  it('server-stream：ack 与首个 data 同批到达也不丢首值', async () => {
+    const [txSrv, txCli] = createMemTransportPair();
+    const binding = new ChannelServerBinding(txSrv);
+    // 首个值在 yield 前不 await：服务端在同一个 macrotask 内先发 ack、紧接的微任务里发
+    // 首个 data，两条信封于是**同批**到达客户端（真实形态：ws 同包多帧由 'message'
+    // 同步派发多次）。
+    // 此前客户端要等 `await` ack 之后才登记 streams，首个 data 落在登记之前
+    // → `streams.get(...)?.push()` 静默丢弃（实测：ws 下 count(3) 偶发只收到 [2,3]）。
+    binding.on(apiDef.count, async function* ({ input }) {
+      for (let i = 0; i < input.n; i++) yield i;
+    });
+    const cli = createTypedClient(new ChannelClientBinding(txCli), apiDef);
+
+    const nums: number[] = [];
+    for await (const v of await cli.count({ n: 3 })) nums.push(v);
+    expect(nums).toEqual([0, 1, 2]);
+
+    binding.destroy();
+  });
+
   it('CallOptions：signal abort', async () => {
     const [txSrv, txCli] = createMemTransportPair();
     const binding = startBinding(txSrv);

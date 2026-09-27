@@ -141,6 +141,17 @@ export class ChannelClientBinding implements ClientBinding {
       const entry: PendingEntry = {
         onMessage: (msg) => {
           if (msg.stream != null) {
+            // 登记必须发生在**收到 ack 的同一个 macrotask 内**：ack 与首个 data 帧可能
+            // 同时到达（ws 上同包多帧 → 'message' 同步派发多次），而 data 帧排在本次
+            // await 的微任务续体之前。等 await 之后再登记，首个值就会被
+            // `streams.get(...)?.push()` 静默丢弃（实测：ws 下 count(3) 偶发只收到 [2,3]）。
+            this.streams.set(msg.stream as number, {
+              push: (val) => queue.push(val as TYield),
+              end: (err) => {
+                if (err) queue.error(_fromErrorPayload(err));
+                else queue.end();
+              },
+            });
             resolve(msg.stream as number);
           } else if (msg.error) {
             reject(_fromErrorPayload(msg.error));
@@ -160,14 +171,6 @@ export class ChannelClientBinding implements ClientBinding {
 
       this.pending.set(id, entry);
       this.transport.send({ type: 'call', id, method, params, stream: true });
-    });
-
-    this.streams.set(streamId, {
-      push: (val) => queue.push(val as TYield),
-      end: (err) => {
-        if (err) queue.error(_fromErrorPayload(err));
-        else queue.end();
-      },
     });
 
     // 消费端提前退出（break / 组件卸载 / 外层 return）也要取消 —— 这条路径此前
@@ -290,6 +293,15 @@ export class ChannelClientBinding implements ClientBinding {
       const entry: PendingEntry = {
         onMessage: (msg) => {
           if (msg.stream != null) {
+            // 同 serverStream：必须在 ack 的同一 macrotask 内登记，否则同包到达的首个
+            // data 帧会先于 await 续体、被 `streams.get(...)?.push()` 静默丢弃。
+            this.streams.set(msg.stream as number, {
+              push: (val) => queue.push(val as TChunkOut),
+              end: (err) => {
+                if (err) queue.error(_fromErrorPayload(err));
+                else queue.end();
+              },
+            });
             resolve(msg.stream as number);
           } else if (msg.error) {
             reject(_fromErrorPayload(msg.error));
@@ -309,14 +321,6 @@ export class ChannelClientBinding implements ClientBinding {
 
       this.pending.set(id, entry);
       this.transport.send({ type: 'call', id, method, params, stream: true });
-    });
-
-    this.streams.set(streamId, {
-      push: (val) => queue.push(val as TChunkOut),
-      end: (err) => {
-        if (err) queue.error(_fromErrorPayload(err));
-        else queue.end();
-      },
     });
 
     // 同 serverStream：消费端提前退出要通知服务端，否则下游停了、上游还在产出
