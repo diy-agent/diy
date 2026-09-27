@@ -30,5 +30,7 @@ export async function editTask(uri: string, patch: TaskEditPatch): Promise<void>
     change_type: patch.change_type,
     module: patch.module,
     priority: patch.priority,
+    // agent 人物（换绑 = 只改本任务的引用；模型/参数由人物定义决定，见 shared/persona.ts）
+    persona: patch.persona,
   });
 }

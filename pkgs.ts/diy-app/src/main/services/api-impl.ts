@@ -23,6 +23,7 @@ import { refList, checkRefPaths } from "../core/ref";
 import { syncRefs } from "./ref-sync";
 import { addSource, removeSource } from "./ref-config";
 import { apiDef } from "./api-def";
+import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
 import { resolve as resolvePath } from "node:path";
@@ -199,21 +200,21 @@ export function bindAppHandlers(binding: ServerBinding): void {
     // 草稿随任务返回（与 diy.task.show 同一契约）：renderer 只调这一个接口拿任务，
     // 少一次往返就少一处「忘记带草稿」的机会 —— 两个 handler 必须给同样的字段。
     const d = readDrafts(input.uri);
-    // ⚠️ 这里是 `...t` 展开，**不是手写键清单**（曾经是）。手写清单的代价实测过：
-    // 它少了 change_type / module / priority，于是详情面板的编辑框恒显示"—"、
-    // 写入其实成功（数据在文件里），用户视角是"填了看不见、改完像没生效"。
-    // 同一段注释上方写着"两个 handler 必须给同样的字段"，而隔壁 task.show 用 `...t` 带全了 ——
-    // 手抄字段清单这事，只要人还写第二遍就一定会漏。展开后新增字段自动跟随。
-    // （api-def 的 output schema 白名单是第二处手抄，同样已补齐 —— 两处必须一致，
-    //   zod .object() 会 strip 未声明键，只补 handler 不补 schema 等于没补。）
+    // **整份展开交给契约 schema**：既不是手写键清单，也不只是 `...t` 展开 ——
+    // 载荷形状由 shared/task-detail.ts 的 TaskDetailSchema（单一真源）决定，多余键自动剥掉。
+    //
+    // 历史教训（真实缺陷，两处手抄导致）：handler 里手抄一份键清单、api-def 的 output 白名单再抄一份，
+    // 漏一处就静默丢字段（zod .object() 会 strip 未声明键）。实测漏过 change_type / module /
+    // priority / persona —— 详情面板恒显示"未设置"、写入其实成功（数据在文件里），
+    // 用户视角是"填了看不见、改完像没生效"。结论：只要人还写第二遍就一定会漏，故收敛成单一真源。
     return {
       status: "ok",
-      data: {
+      data: TaskDetailSchema.parse({
         ...t,
         project_path: pinfo?.path,
         project_label: pinfo?.label,
         ui_drafts: d ? { base_updated: d.base_updated, saved: d.saved, fields: d.fields } : null,
-      },
+      }),
     };
   });
 
@@ -245,6 +246,69 @@ export function bindAppHandlers(binding: ServerBinding): void {
     for await (const change of fileWatcher.subscribe()) {
       yield change;
     }
+  });
+
+  // —— agent.persona —— 人物配置（模型/参数/行为指令的唯一真源；任务只持有**引用（id）**）——
+  binding.on(app.agent.persona.list, async () => {
+    const { listPersonas, defaultPersonaId } = await import("../core/persona");
+    const { diyHome, getTask } = await import("../core/state");
+    const { listTasks } = await import("../core/task");
+    const home = diyHome();
+    // 引用计数：改人物是**影响所有引用者**的操作，界面必须先看得见影响面
+    // （否则「统一修改」退化成盲改）。一次全库扫描，只在打开面板/列表时发生。
+    const counts = new Map<string, number>();
+    let followCount = 0;
+    for (const uri of listTasks()) {
+      const id = getTask(uri)?.persona;
+      // 没有 persona 键 = **跟随缺省**（不写键就是跟随，见 core/task.ts 与 core/persona.ts）
+      if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+      else followCount++;
+    }
+    return {
+      default: defaultPersonaId(home),
+      personas: listPersonas(home).map((p) => ({ ...p, taskCount: counts.get(p.id) ?? 0 })),
+      // 跟随者不属于任何具体人物，但对"改缺省会影响多少任务"是必须可见的事实
+      followCount,
+    };
+  });
+
+  binding.on(app.agent.persona.set, async ({ input }) => {
+    const { loadPersonas, savePersonas, assertPersonaDef, personaByIdOrName } = await import("../core/persona");
+    const { diyHome } = await import("../core/state");
+    const { reasoningOf } = await import("../../shared/models");
+    const { nextPersonaId } = await import("../../shared/persona");
+    const home = diyHome();
+    const file = loadPersonas(home);
+    // id 优先、名字兜底（CLI 便利）：人记得的是名字，机器需要的是 id
+    const target = input.id ? personaByIdOrName(home, input.id) : null;
+    if (input.id && !target) throw new Error(`人物 ${input.id} 不存在（可用 diy agent persona list 查看）`);
+    const id = target?.id ?? nextPersonaId(Object.keys(file.personas));
+    const model = input.model ?? target?.model;
+    if (!model) throw new Error(`新建人物必须指定 model（可选模型见 diy agent local models）`);
+    const def = {
+      name: input.name ?? target?.name ?? `人物${id}`,
+      model,
+      // 换模型时档位可能不在新模型的支持集内：未显式给档位就取新模型的默认档
+      // （沿用旧档会写出一个上游必拒的组合，写入侧直接拦住）
+      reasoningEffort:
+        input.reasoningEffort ??
+        (target && target.model === model ? target.reasoningEffort : reasoningOf(model).default),
+      instructions: input.instructions ?? target?.instructions ?? "",
+    };
+    assertPersonaDef(def);
+    savePersonas(home, { ...file, personas: { ...file.personas, [id]: def } });
+    return { id, ...def };
+  });
+
+  binding.on(app.agent.persona.setDefault, async ({ input }) => {
+    const { loadPersonas, savePersonas, personaByIdOrName } = await import("../core/persona");
+    const { diyHome } = await import("../core/state");
+    const home = diyHome();
+    const file = loadPersonas(home);
+    const target = personaByIdOrName(home, input.id);
+    if (!target) throw new Error(`人物 ${input.id} 不存在（可用 diy agent persona list 查看）`);
+    savePersonas(home, { ...file, default: target.id });
+    return { default: target.id };
   });
 
   // —— agent.local —— 本地自定义 agent（ai-sdk 块协议，与 ACP 独立）
@@ -303,14 +367,15 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.template.preview, async ({ input }) => {
     const { assembleSystem } = await import("./prompt-registry");
     const { diyHome, projectFromUri } = await import("../core/state");
-    const { contextLimitOf, DEFAULT_MODEL } = await import("./local-agent");
+    const { contextLimitOf } = await import("./local-agent");
+    const { personaForTask } = await import("../core/persona");
     // project 以 taskUri 为准：两者指向不同项目时（只有 CLI 能造成）system 与 tools/cwd 会错配
     const project = input.taskUri ? projectFromUri(input.taskUri) || input.project : input.project;
     const base = assembleSystem(diyHome(), project, {
       taskUri: input.taskUri,
       drafts: input.drafts,
-      // 预算随预览模型变（与真发同一套推导）
-      contextLimitTokens: contextLimitOf(input.model || DEFAULT_MODEL),
+      // 预算随预览模型变（与真发同一套推导）：显式模型优先，否则按任务当前人物
+      contextLimitTokens: contextLimitOf(input.model ?? personaForTask(diyHome(), input.taskUri ?? "").model),
       // 试验场「模版结构树」要 trace；真发（local-agent）不传
       trace: true,
     });
