@@ -156,25 +156,35 @@ export class HttpClientBinding implements ClientBinding {
     const { signal } = options ?? {};
     const stream = this.request(method, 'application/x-ndjson', params);
 
-    // abort → 写取消帧 + 优雅结束（http 的 RST 无法让服务端可靠识别 client-stream 取消，
-    // 用协议内的 {"__cancel":true} 帧确定性送达 CANCELLED）
+    // abort → 写取消帧 + 优雅结束 + 上游 return() 通知（服务端收 __cancel 会同时
+    // error 输入队列并 abort 调用级 signal，与 channel 对齐，review P1）
+    const upstream = chunks[Symbol.asyncIterator]();
     const onAbort = () => {
       try { stream.write(JSON.stringify({ __cancel: true }) + '\n'); } catch { /* ignore */ }
       try { stream.end(); } catch { /* ignore */ }
+      try { void upstream.return?.(undefined)?.catch(() => {}); } catch { /* ignore */ }
     };
     if (signal) signal.addEventListener('abort', onAbort, { once: true });
 
-    try {
+    // 上传后台化（review P1）：上游 next() 不可取消地挂起时，调用落定不得被拖住 ——
+    // collectResponse 不等上传；abort 后服务端经 __cancel 立即收尾并回响应
+    void (async () => {
       try {
-        for await (const c of chunks) {
+        for (;;) {
+          const n = await upstream.next();
+          if (n.done) break;
           if (signal?.aborted) break;
-          if (!stream.write(JSON.stringify(c) + '\n')) await onceDrain(stream);
+          if (!stream.write(JSON.stringify(n.value) + '\n')) await onceDrain(stream);
         }
       } catch {
         /* 上游迭代出错则中止上传 */
       }
-      if (!signal?.aborted) stream.end();
+      if (!signal?.aborted) {
+        try { stream.end(); } catch { /* 已断开 */ }
+      }
+    })();
 
+    try {
       const resp = await this._track(collectResponse(stream, options));
       return parseResult<TRes>(resp);
     } finally {
@@ -193,25 +203,40 @@ export class HttpClientBinding implements ClientBinding {
     const { signal } = options ?? {};
     const stream = this.request(method, 'application/x-ndjson', params);
 
-    // 后台：边传 chunk 边读响应（http2 全双工）
-    (async () => {
+    // 上游 return() 尽力通知（review P1）：abort 后若上传正挂在 next()，发 return 唤醒清理；
+    // 随队列终态移除（onSettle），不残留共享 signal 上的 listener
+    const upstream = chunks[Symbol.asyncIterator]();
+    const onUpstreamAbort = () => {
+      try { void upstream.return?.(undefined)?.catch(() => {}); } catch { /* ignore */ }
+    };
+    if (signal) signal.addEventListener('abort', onUpstreamAbort, { once: true });
+
+    // 后台：边传 chunk 边读响应（http2 全双工）；上传不阻塞调用落定（review P1）
+    void (async () => {
       try {
-        for await (const c of chunks) {
+        for (;;) {
+          const n = await upstream.next();
+          if (n.done) break;
           if (signal?.aborted) break;
-          if (!stream.write(JSON.stringify(c) + '\n')) await onceDrain(stream);
+          if (!stream.write(JSON.stringify(n.value) + '\n')) await onceDrain(stream);
         }
       } catch {
         /* ignore */
       }
-      if (!signal?.aborted) stream.end();
+      if (!signal?.aborted) {
+        try { stream.end(); } catch { /* 已断开 */ }
+      }
     })();
 
     const status = await this._track(firstResponseStatus(stream, options));
     if (status !== 200) {
       const data = await readAll(stream, options);
+      if (signal) signal.removeEventListener('abort', onUpstreamAbort);
       throw parseError(status, data);
     }
-    return this._trackQueue(createNdjsonStream(stream, options)) as StreamHandle<TChOut>;
+    const queue = createNdjsonStream(stream, options);
+    queue.onSettle(() => signal?.removeEventListener('abort', onUpstreamAbort));
+    return this._trackQueue(queue) as StreamHandle<TChOut>;
   }
 
   // ── 内部 ─────────────────────────────────────────
@@ -279,15 +304,24 @@ function readAll(stream: ClientHttp2Stream, options?: CallOptions): Promise<Buff
   const signal = options?.signal;
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
+    let settled = false;
     const cleanup = () => { if (signal) signal.removeEventListener('abort', onAbort); };
     const onAbort = () => {
+      settled = true;
       cleanup();
       if (!stream.closed && !stream.destroyed) stream.close(http2.constants.NGHTTP2_CANCEL);
       reject(_reasonToRpcError(signal!.reason));
     };
     stream.on('data', (c: Buffer) => chunks.push(c));
-    stream.on('end', () => { cleanup(); resolve(Buffer.concat(chunks)); });
-    stream.on('error', (e) => { cleanup(); reject(e); });
+    stream.on('end', () => { settled = true; cleanup(); resolve(Buffer.concat(chunks)); });
+    stream.on('error', (e) => { settled = true; cleanup(); reject(e); });
+    // close 兑底（review P2）：流被销毁而未收到 end/error/abort 时，不留残留 listener、不悬死
+    stream.on('close', () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new RpcError('CANCELLED', 'Connection closed'));
+    });
     if (signal) {
       if (signal.aborted) { onAbort(); return; }
       signal.addEventListener('abort', onAbort, { once: true });

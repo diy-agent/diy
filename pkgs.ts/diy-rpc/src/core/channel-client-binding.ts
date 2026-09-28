@@ -101,8 +101,8 @@ export class ChannelClientBinding implements ClientBinding {
       // 才自然结束，期间会话互斥锁一直被占。
       this._sendCancel({ stream: sid });
     }
-    // 所有仍在飞的调用：移除 abort listener（幂等）
-    for (const c of [...this._cleanups]) c();
+    // 所有仍在飞的调用：移除 abort listener（幂等；cleanup 不会向 _cleanups 注册新项，直接迭代安全）
+    for (const c of this._cleanups) c();
     this._cleanups.clear();
   }
 
@@ -270,6 +270,9 @@ export class ChannelClientBinding implements ClientBinding {
     let streamId = 0;
     let rejectResult: (e: unknown) => void = () => {};
     let resultCreated = false;
+    // 上游迭代器的尽力清理（review P1）：abort 时对挂起的 next() 发 return() 通知；
+    // 声明提前于 onAbort，避免 await ack 期间 abort 触发 TDZ
+    let notifyUpstream: () => void = () => {};
 
     const onAbort = () => {
       const err = _reasonToRpcError(signal!.reason);
@@ -280,6 +283,7 @@ export class ChannelClientBinding implements ClientBinding {
         rejectInit(err);
         if (resultCreated) rejectResult(err);
       }
+      notifyUpstream();
       cleanup();
     };
     const cleanup = signal ? this._track(() => signal.removeEventListener('abort', onAbort)) : () => {};
@@ -293,6 +297,10 @@ export class ChannelClientBinding implements ClientBinding {
         onMessage: (msg) => {
           if (msg.stream != null) {
             streamId = msg.stream as number;
+            // init timeout 只约束 init：ack 后必须清掉旧 timer，否则它到点会
+            // `pending.delete(id)` 误删结果 entry（此 id 已指向结果）→ 服务端结果
+            // 被丢、resultPromise 悬死（review P1，probe3 实测挂起）
+            if (entry.timer != null) clearTimeout(entry.timer);
             resolve(streamId);
             return false; // 留在 pending：结果 entry 随后覆盖 set
           }
@@ -353,20 +361,30 @@ export class ChannelClientBinding implements ClientBinding {
       rejectResult(err);
     }
 
-    try {
-      for await (const val of chunks) {
-        if (signal?.aborted) break;
-        this._send({ type: 'data', stream: streamId, value: val });
+    // 上传后台化（review P1）：上游 next() 不可取消地挂起时，调用落定不得被它拖住
+    // —— 结果由 pending 的结果 entry 落定，与上传循环解耦。abort 时对上游发
+    // return() 通知（尽力而为，不强占在途 next）。
+    const upstream = chunks[Symbol.asyncIterator]();
+    notifyUpstream = () => {
+      try {
+        void upstream.return?.(undefined)?.catch(() => {});
+      } catch { /* ignore */ }
+    };
+    void (async () => {
+      try {
+        for (;;) {
+          const n = await upstream.next();
+          if (n.done) break;
+          if (signal?.aborted) break;
+          this._send({ type: 'data', stream: streamId, value: n.value as TChunk });
+        }
+      } catch {
+        this._send({ type: 'end', stream: streamId, error: { code: 'STREAM_ERROR', message: 'upstream error' } });
+        return;
       }
-    } catch (e: unknown) {
-      const err = e instanceof Error ? e : new Error(String(e));
-      this._send({ type: 'end', stream: streamId, error: { code: 'STREAM_ERROR', message: err.message } });
-    }
-
-    if (!signal?.aborted) {
-      this._send({ type: 'end', stream: streamId }); // 正常输入半关
-    }
-    // abort 路径已在 onAbort 发过 cancel 帧，这里不再补 end（end = 半关，不是取消）
+      if (!signal?.aborted) this._send({ type: 'end', stream: streamId }); // 正常输入半关
+      // abort 路径已在 onAbort 发过 cancel 帧，这里不再补 end（end = 半关，不是取消）
+    })();
 
     return resultPromise;
   }
@@ -385,6 +403,8 @@ export class ChannelClientBinding implements ClientBinding {
 
     const queue = new _AsyncQueue<TChunkOut>();
     let streamId = 0;
+    // 同 clientStream：上游尽力清理通知，声明提前避免 await 期间 abort 的 TDZ
+    let notifyUpstream: () => void = () => {};
 
     const onAbort = () => {
       const err = _reasonToRpcError(signal!.reason);
@@ -398,6 +418,7 @@ export class ChannelClientBinding implements ClientBinding {
         this._sendCancel({ id }, err);
         rejectInit(err);
       }
+      notifyUpstream();
       cleanup();
     };
     const cleanup = signal ? this._track(() => signal.removeEventListener('abort', onAbort)) : () => {};
@@ -449,17 +470,28 @@ export class ChannelClientBinding implements ClientBinding {
     // 同 serverStream：消费端提前退出要通知服务端，否则下游停了、上游还在产出
     queue.onReturn(() => {
       cleanup();
+      notifyUpstream();
       if (this.streams.delete(streamId)) this._sendCancel({ stream: streamId });
     });
 
-    (async () => {
+    // 上传后台化（review P1）：调用落定不等不可取消的上游 next()
+    const upstream = chunks[Symbol.asyncIterator]();
+    notifyUpstream = () => {
       try {
-        for await (const val of chunks) {
+        void upstream.return?.(undefined)?.catch(() => {});
+      } catch { /* ignore */ }
+    };
+    void (async () => {
+      try {
+        for (;;) {
+          const n = await upstream.next();
+          if (n.done) break;
           if (signal?.aborted) break;
-          this._send({ type: 'data', stream: streamId, value: val });
+          this._send({ type: 'data', stream: streamId, value: n.value as TChunkIn });
         }
       } catch {
         this._send({ type: 'end', stream: streamId, error: { code: 'STREAM_ERROR', message: 'upstream error' } });
+        return;
       }
       if (!signal?.aborted) this._send({ type: 'end', stream: streamId }); // 正常输入半关
     })();

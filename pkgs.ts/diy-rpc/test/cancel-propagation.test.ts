@@ -17,14 +17,19 @@
  * 断言刻意同时检查「finally 跑了」与「产出冻结」：用户可见症状是上游继续烧 token、
  * 锁不释放，那正是产出没停的直接投影；只断言 finally 会漏掉「收尾了但还在 yield」。
  *
- * 参数化到 channel 与 http 两条真实链路：renderer↔main 走 channel（Electron IPC），
- * CLI↔app 走 http2 —— 149 的故障发生在 channel 侧。
+ * 参数化到 channel 与 http 两条真实链路，后补 ws（ws 与 channel 共用 ChannelXxxBinding）。
+ * 事实边界：channelHarness 是内存 EnvelopeTransport 对（信封语义参照），并非真实
+ * Electron IPC 连接；`client.dispose()` 是显式关闭，不等同 renderer 崩溃时的
+ * transport onClose —— 生产中 renderer↔main 走 channel（Electron IPC）、CLI↔app
+ * 走 http2，149 的故障发生在 channel 侧。
  */
 import { describe, it, expect } from 'vitest';
 import { getEventListeners } from 'node:events';
 import { z } from 'zod';
 import { RpcSchema, RpcError } from '../src/index';
 import { channelHarness, httpHarness, wsHarness, type TransportHarness } from './harness';
+import { createMemTransportPair } from './helpers';
+import { ChannelServerBinding } from '../src/core';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -245,10 +250,14 @@ describe.each(harnesses.map((h) => [h.name, h] as const))('取消终态矩阵: %
     });
     try {
       const ac = new AbortController();
-      async function* idle() {
-        for (;;) await sleep(20); // 持续不结束的输入（服务端挂在输入循环）
-      }
-      const sh = await client.bidiStream('echo', params, idle(), { signal: ac.signal });
+      // 输入源：打开后永不产出也不结束（服务端挂起在输入循环）。刻意不用 generator：
+      // 空循环体会触发 require-yield lint，而产出任何 chunk 都会改变服务端状态
+      const idle: AsyncIterable<number> = {
+        [Symbol.asyncIterator]: () => ({
+          next: () => new Promise<IteratorResult<number>>(() => { /* 永挂 */ }),
+        }),
+      };
+      const sh = await client.bidiStream('echo', params, idle, { signal: ac.signal });
       const it = sh[Symbol.asyncIterator]();
       const pending = it.next(); // 服务端无产出 → 挂起
       ac.abort();
@@ -434,6 +443,205 @@ describe.each(harnesses.map((h) => [h.name, h] as const))('取消终态矩阵: %
       }
       // Node v24 默认不发 MaxListenersExceededWarning —— 必须直接数 listener（任务 185）
       expect(getEventListeners(ac.signal, 'abort'), '落定后仍挂着 abort listener').toHaveLength(0);
+    } finally {
+      await dispose();
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════
+//  Review 修复回归（2026-09-29：深度审查/R3 报告逐条处置后的验收）
+// ═══════════════════════════════════════════════════
+
+/** 永挂的上游：next() 永不 settle —— 验证调用落定不被不可取消的 next() 拖住 */
+function hangingIterable<T>(): AsyncIterable<T> {
+  return {
+    [Symbol.asyncIterator]: () => ({
+      next: () => new Promise<IteratorResult<T>>(() => { /* 永挂 */ }),
+    }),
+  };
+}
+
+describe('Review修复回归（2026-09-29）', () => {
+  const params = { input: {}, meta: {} };
+
+  it('channel: clientStream init timeout 不再误删 ack 后的结果 entry（P1）', async () => {
+    const { binding, client, dispose } = await channelHarness.start();
+    binding.on(api.drain, async ({ stream }) => {
+      for await (const _ of stream) { /* 吃到 end */ }
+      await sleep(200); // 结果晚于 init timeout
+      return 7;
+    });
+    try {
+      async function* ups() { yield 1; }
+      const p = client.clientStream('drain', params, ups(), { timeout: 80 });
+      // 修复前：ack 后旧 timer 仍活，到点删结果 entry → 结果被丢、永挂（probe3 TIMEOUT）
+      await expect(p).resolves.toBe(7);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it.each([
+    ['channel(in-memory)', channelHarness],
+    ['http2', httpHarness],
+  ] as const)('%s: 上游 next() 永挂时 abort → 立即 CANCELLED、服务端收尾（P1）', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const state = { started: false, finallyRan: false };
+    binding.on(api.drain, async ({ stream }) => {
+      state.started = true;
+      try {
+        for await (const _ of stream) { /* 挂在输入 */ }
+      } finally {
+        state.finallyRan = true;
+      }
+      return 0;
+    });
+    try {
+      const ac = new AbortController();
+      const p = client.clientStream('drain', params, hangingIterable<number>(), { signal: ac.signal });
+      expect(await waitFor(() => state.started), 'handler 未启动').toBe(true);
+      ac.abort();
+      // 修复前：上传循环卡在 next() → 调用永挂（resultPromise 已 reject 也到不了 return）
+      await expect(p).rejects.toMatchObject({ code: 'CANCELLED' });
+      expect(await waitFor(() => state.finallyRan), '服务端未收尾').toBe(true);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it.each([
+    ['channel(in-memory)', channelHarness],
+    ['http2', httpHarness],
+  ] as const)('%s: clientStream 上传中 dispose → DISPOSED + 服务端收尾（P3 覆盖缺口）', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const state = { received: 0, finallyRan: false };
+    binding.on(api.drain, async ({ stream }) => {
+      try {
+        for await (const _ of stream) state.received++;
+        return state.received;
+      } finally {
+        state.finallyRan = true;
+      }
+    });
+    try {
+      const p = client.clientStream('drain', params, (async function* () {
+        for (let i = 0; ; i++) { yield i; await sleep(5); }
+      })());
+      expect(await waitFor(() => state.received >= 2)).toBe(true);
+      client.dispose();
+      await expect(p).rejects.toMatchObject({ code: 'DISPOSED' });
+      expect(await waitFor(() => state.finallyRan), 'dispose 后服务端未收尾').toBe(true);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it.each([
+    ['channel(in-memory)', channelHarness],
+    ['http2', httpHarness],
+  ] as const)('%s: bidi 上传中 dispose → 消费端 DISPOSED + 服务端收尾（P3 覆盖缺口）', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const state = { got: 0, finallyRan: false };
+    binding.on(api.echo, async function* ({ stream }) {
+      try {
+        for await (const c of stream) { state.got++; yield c; }
+      } finally {
+        state.finallyRan = true;
+      }
+    });
+    try {
+      const sh = await client.bidiStream('echo', params, (async function* () {
+        for (let i = 0; ; i++) { yield i; await sleep(5); }
+      })());
+      const iter = sh[Symbol.asyncIterator]();
+      await iter.next(); // 收到回显 → 双向都在跑
+      expect(await waitFor(() => state.got >= 2)).toBe(true);
+      client.dispose();
+      await expect(iter.next()).rejects.toMatchObject({ code: 'DISPOSED' });
+      expect(await waitFor(() => state.finallyRan), 'dispose 后服务端未收尾').toBe(true);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it.each([
+    ['channel(in-memory)', channelHarness],
+    ['http2', httpHarness],
+  ] as const)('%s: 未知方法/模式不匹配 → UNIMPLEMENTED（P2，不再永久 pending）', async (_n, h) => {
+    const { client, dispose } = await h.start();
+    try {
+      await expect(client.invoke('nope', params)).rejects.toMatchObject({ code: 'UNIMPLEMENTED' });
+      await expect(client.serverStream('nope', params)).rejects.toMatchObject({ code: 'UNIMPLEMENTED' });
+    } finally {
+      await dispose();
+    }
+  });
+
+  it('http: client-stream 取消 → 只监听 signal（不消费输入）的 handler 也收到 abort（P1）', async () => {
+    const { binding, client, dispose } = await httpHarness.start();
+    const state = { started: false, observed: false };
+    // 审查指出的 handler 形态：完全不消费 incoming，只依赖 opts.signal
+    binding.on(api.drain, ({ signal }) => new Promise<number>((_res, rej) => {
+      state.started = true;
+      signal.addEventListener('abort', () => {
+        state.observed = true;
+        rej(signal.reason);
+      }, { once: true });
+    }));
+    try {
+      const ac = new AbortController();
+      const p = client.clientStream('drain', params, hangingIterable<number>(), { signal: ac.signal });
+      expect(await waitFor(() => state.started)).toBe(true);
+      ac.abort();
+      await expect(p).rejects.toMatchObject({ code: 'CANCELLED' });
+      expect(await waitFor(() => state.observed), '__cancel/RST 未触发 handler signal').toBe(true);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it('channel: legacy 兼容 —— 旧 client 的 server-stream「end=取消」仍被接收（P2）', async () => {
+    const [txServer, txClient] = createMemTransportPair();
+    const binding = new ChannelServerBinding(txServer);
+    const state: TickState & { acked: boolean } = { finallyRan: false, yields: 0, acked: false };
+    binding.on(api.tick, async function* () {
+      try {
+        for (let i = 0; ; i++) { state.yields++; yield i; await sleep(5); }
+      } finally {
+        state.finallyRan = true;
+      }
+    });
+    // 模拟旧协议 client：call → 收 ack → 发 end（旧语义：end = 取消），不发 cancel 帧
+    const sidP = new Promise<number>((resolve) => {
+      txClient.on((msg) => {
+        const m = msg as { type: string; stream?: number };
+        if (m.type === 'call' && m.stream != null) { state.acked = true; resolve(m.stream); }
+      });
+    });
+    txClient.send({ type: 'call', id: 1, method: 'tick', params: { input: {} }, stream: true });
+    const sid = await sidP;
+    txClient.send({ type: 'end', stream: sid });
+    // 修复前：end 对 server-stream 无人认领 → 忽略 → 白跑（yields 持续增长）
+    expect(await waitFor(() => state.finallyRan), 'legacy end 未被接收，服务端白跑').toBe(true);
+    const frozen = state.yields;
+    await sleep(80);
+    expect(state.yields).toBe(frozen);
+  });
+
+  it.each([
+    ['channel(in-memory)', channelHarness],
+    ['http2', httpHarness],
+  ] as const)('%s: 挂起调用 abort 终态后共享 signal 的 listener 归零（P1 清理补断言）', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    binding.on(api.wait, () => new Promise<boolean>(() => { /* 永挂 */ }));
+    try {
+      const ac = new AbortController();
+      const p = client.invoke('wait', params, { signal: ac.signal });
+      await sleep(20); // 确保 listener 已注册
+      ac.abort();
+      await expect(p).rejects.toMatchObject({ code: 'CANCELLED' });
+      expect(getEventListeners(ac.signal, 'abort'), 'abort 终态后仍挂着 listener').toHaveLength(0);
     } finally {
       await dispose();
     }

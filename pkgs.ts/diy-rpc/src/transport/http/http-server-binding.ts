@@ -79,14 +79,15 @@ export class HttpServerBinding extends ServerBindingCore implements ServerBindin
       stream.respond({ ':status': 200, 'content-type': 'application/x-ndjson' });
     } catch {
       // RST 竞态：客户端已断开（dispose-before-ack 窗口）—— 不 unhandledRejection，收尾生成器
-      void g.return?.(undefined);
+      // （return 的 finally 可能抛错 → 吸收，review P2）
+      void g.return?.(undefined).catch(() => {});
       return;
     }
     let aborted = false;
     const onClose = () => {
       aborted = true;
       ctrl.abort(new RpcError('CANCELLED', 'Client disconnected'));
-      void g.return?.(undefined);
+      void g.return?.(undefined).catch(() => {});
     };
     stream.on('close', onClose);
 
@@ -115,8 +116,10 @@ export class HttpServerBinding extends ServerBindingCore implements ServerBindin
   ): Promise<void> {
     const fn = this._getClient(method)!;
     const params = paramsFromHeader(headers);
-    const incoming = createBodyReader(stream);
     const ctrl = new AbortController();
+    // 协议取消帧 → 同时 abort 调用级 signal（review P1）：与 channel _handleCancel
+    //「error 输入队列 + abort controller」对齐；只监听 signal 不消费输入的 handler 也能收到
+    const incoming = createBodyReader(stream, () => ctrl.abort(new RpcError('CANCELLED', 'Client cancelled')));
     // RST/断开 → 调用级 signal；输入队列的 CANCELLED 由 createBodyReader 独立投递
     stream.once('close', () => ctrl.abort(new RpcError('CANCELLED', 'Client disconnected')));
 
@@ -136,10 +139,17 @@ export class HttpServerBinding extends ServerBindingCore implements ServerBindin
   ): Promise<void> {
     const fn = this._getBidi(method)!;
     const params = paramsFromHeader(headers);
-    const incoming = createBodyReader(stream);
     const ctrl = new AbortController();
+    const incoming = createBodyReader(stream, () => ctrl.abort(new RpcError('CANCELLED', 'Client cancelled')));
 
-    stream.respond({ ':status': 200, 'content-type': 'application/x-ndjson' });
+    try {
+      stream.respond({ ':status': 200, 'content-type': 'application/x-ndjson' });
+    } catch {
+      // RST 竞态（review P2，与 server-stream 对称）：client dispose-before-ack 时
+      // 已销毁流上 respond 抛 ERR_HTTP2_INVALID_STREAM；此时 fn 未调用，无生成器需收尾
+      ctrl.abort(new RpcError('CANCELLED', 'Client disconnected'));
+      return;
+    }
     let aborted = false;
     const onClose = () => {
       aborted = true;
@@ -203,7 +213,7 @@ function parseBodyParams(body: Buffer): unknown {
 }
 
 /** 把请求 body 的 NDJSON chunk 流桥接成 _AsyncQueue（StreamHandle） */
-function createBodyReader(stream: ServerHttp2Stream): _AsyncQueue<unknown> {
+function createBodyReader(stream: ServerHttp2Stream, onCancel?: () => void): _AsyncQueue<unknown> {
   const q = new _AsyncQueue<unknown>();
   let buf = '';
   let finished = false;
@@ -217,9 +227,11 @@ function createBodyReader(stream: ServerHttp2Stream): _AsyncQueue<unknown> {
       if (!line) continue;
       try {
         const v = JSON.parse(line);
-        // 保留帧：客户端取消 → incoming 以 CANCELLED 收尾（http 的 RST 服务端不可靠）
+        // 保留帧：客户端取消 → incoming 以 CANCELLED 收尾 + 调用级 signal abort
+        //（http 的 RST 服务端不可靠；只 error 队列会漏掉不消费输入的 handler，review P1）
         if (v !== null && typeof v === 'object' && (v as { __cancel?: boolean }).__cancel === true) {
           q.error(new RpcError('CANCELLED', 'Client cancelled'));
+          onCancel?.();
           return;
         }
         q.push(v);

@@ -93,6 +93,11 @@ export class ChannelServerBinding extends ServerBindingCore implements ServerBin
       if (mode === 'server') this._startServerStream(msg);
       else if (mode === 'client') this._startClientStream(msg);
       else if (mode === 'bidi') this._startBidiStream(msg);
+      else {
+        // 未知方法/模式不匹配：必须回错误，否则未设 timeout 的客户端永久 pending
+        // （对齐 http 侧的 UNIMPLEMENTED，review P2）
+        this._send({ type: 'call', id: msg.id, error: { code: 'UNIMPLEMENTED', message: `Unknown method or mode mismatch: ${msg.method}` } });
+      }
     } else if (msg.type === 'data') {
       const consumer = this._streamConsumers.get(msg.stream);
       if (consumer) consumer.push(msg.value);
@@ -104,6 +109,12 @@ export class ChannelServerBinding extends ServerBindingCore implements ServerBin
         if (msg.error) consumer.error(new RpcError(msg.error.code, msg.error.message));
         else consumer.end();
         this._streamConsumers.delete(msg.stream);
+      } else if (msg.stream != null && this._serverStreamCancellers.has(msg.stream)) {
+        // 旧协议兼容（review P2）：server-stream 没有输入半关，旧 client 发 end 即取消；
+        // 新 client 走 cancel 帧。不兼底则 CLI/app 版本错配时回到「白跑」回归。
+        this._serverStreamCancellers.get(msg.stream)!(
+          new RpcError('CANCELLED', 'Cancelled via legacy end frame'),
+        );
       }
     } else if (msg.type === 'cancel') {
       this._handleCancel(msg);
@@ -133,7 +144,11 @@ export class ChannelServerBinding extends ServerBindingCore implements ServerBin
 
   private async _handleUnary(msg: _Envelope & { type: 'call' }) {
     const fn = this._getUnary(msg.method!);
-    if (!fn) return;
+    if (!fn) {
+      // 未知方法：回 UNIMPLEMENTED 而非静默 return（review P2，对齐 http 侧）
+      this._send({ type: 'call', id: msg.id, error: { code: 'UNIMPLEMENTED', message: `Unknown method: ${msg.method}` } });
+      return;
+    }
     const ctrl = new AbortController();
     this._unaryAborts.set(msg.id, ctrl);
     try {
