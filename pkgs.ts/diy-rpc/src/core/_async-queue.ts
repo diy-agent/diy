@@ -13,6 +13,23 @@ export class _AsyncQueue<T> {
   private _ended = false;
   private _err: Error | null = null;
   private _onReturn: (() => void) | null = null;
+  private _onSettle: (() => void) | null = null;
+
+  /**
+   * 登记「队列终态」回调（end / error / 消费端 return 三处都触发一次），
+   * 用于资源清理（移除 AbortSignal listener 等，任务 185）。注册时已终态则立即回调。
+   */
+  onSettle(cb: () => void): void {
+    if (this._ended) { cb(); return; }
+    const prev = this._onSettle;
+    this._onSettle = prev ? () => { prev(); cb(); } : cb;
+  }
+
+  private _fireSettle(): void {
+    const cb = this._onSettle;
+    this._onSettle = null;
+    try { cb?.(); } catch { /* 清理失败不应影响队列语义 */ }
+  }
 
   /**
    * 注册「消费端提前终止」回调，用于把取消传播回上游。
@@ -41,6 +58,7 @@ export class _AsyncQueue<T> {
   end(): void {
     if (this._ended) return;
     this._ended = true;
+    this._fireSettle();
     if (this._resolveWait) {
       const r = this._resolveWait;
       this._resolveWait = null;
@@ -53,6 +71,7 @@ export class _AsyncQueue<T> {
     if (this._ended) return;
     this._err = err;
     this._ended = true;
+    this._fireSettle();
     if (this._resolveWait) {
       const rej = this._rejectWait;
       this._resolveWait = null;
@@ -87,6 +106,7 @@ export class _AsyncQueue<T> {
        */
       return: (value?: unknown): Promise<IteratorResult<T>> => {
         this._ended = true;
+        this._fireSettle();
         if (this._resolveWait) {
           const r = this._resolveWait;
           this._resolveWait = null;

@@ -50,9 +50,12 @@ export class HttpServerBinding extends ServerBindingCore implements ServerBindin
 
   private async _handleUnary(stream: ServerHttp2Stream, method: string): Promise<void> {
     const fn = this._getUnary(method)!;
+    const ctrl = new AbortController();
+    // 客户端断开/RST → 调用级 signal（handler 经 opts.signal 协作取消，任务 185）
+    stream.once('close', () => ctrl.abort(new RpcError('CANCELLED', 'Client disconnected')));
     try {
       const body = await readBody(stream);
-      respondResult(stream, await fn(parseBodyParams(body)));
+      respondResult(stream, await fn(parseBodyParams(body), ctrl.signal));
     } catch (e) {
       respondError(stream, e);
     }
@@ -62,18 +65,29 @@ export class HttpServerBinding extends ServerBindingCore implements ServerBindin
 
   private async _handleServerStream(stream: ServerHttp2Stream, method: string): Promise<void> {
     const fn = this._getServer(method)!;
+    const ctrl = new AbortController();
     let g: AsyncGenerator<unknown>;
     try {
       const body = await readBody(stream);
-      g = fn(parseBodyParams(body));
+      g = fn(parseBodyParams(body), ctrl.signal);
     } catch (e) {
       respondError(stream, e);
       return;
     }
 
-    stream.respond({ ':status': 200, 'content-type': 'application/x-ndjson' });
+    try {
+      stream.respond({ ':status': 200, 'content-type': 'application/x-ndjson' });
+    } catch {
+      // RST 竞态：客户端已断开（dispose-before-ack 窗口）—— 不 unhandledRejection，收尾生成器
+      void g.return?.(undefined);
+      return;
+    }
     let aborted = false;
-    const onClose = () => { aborted = true; void g.return?.(undefined); };
+    const onClose = () => {
+      aborted = true;
+      ctrl.abort(new RpcError('CANCELLED', 'Client disconnected'));
+      void g.return?.(undefined);
+    };
     stream.on('close', onClose);
 
     try {
@@ -102,9 +116,12 @@ export class HttpServerBinding extends ServerBindingCore implements ServerBindin
     const fn = this._getClient(method)!;
     const params = paramsFromHeader(headers);
     const incoming = createBodyReader(stream);
+    const ctrl = new AbortController();
+    // RST/断开 → 调用级 signal；输入队列的 CANCELLED 由 createBodyReader 独立投递
+    stream.once('close', () => ctrl.abort(new RpcError('CANCELLED', 'Client disconnected')));
 
     try {
-      respondResult(stream, await fn(params, incoming));
+      respondResult(stream, await fn(params, incoming, ctrl.signal));
     } catch (e) {
       respondError(stream, e);
     }
@@ -120,14 +137,18 @@ export class HttpServerBinding extends ServerBindingCore implements ServerBindin
     const fn = this._getBidi(method)!;
     const params = paramsFromHeader(headers);
     const incoming = createBodyReader(stream);
+    const ctrl = new AbortController();
 
     stream.respond({ ':status': 200, 'content-type': 'application/x-ndjson' });
     let aborted = false;
-    const onClose = () => { aborted = true; };
+    const onClose = () => {
+      aborted = true;
+      ctrl.abort(new RpcError('CANCELLED', 'Client disconnected'));
+    };
     stream.on('close', onClose);
 
     try {
-      for await (const out of fn(params, incoming)) {
+      for await (const out of fn(params, incoming, ctrl.signal)) {
         if (aborted) break;
         safeWrite(stream, JSON.stringify({ v: out }) + '\n');
       }

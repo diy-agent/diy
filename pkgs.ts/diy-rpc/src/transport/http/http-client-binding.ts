@@ -13,7 +13,7 @@ import * as http2 from 'node:http2';
 import type { ClientHttp2Session, ClientHttp2Stream } from 'node:http2';
 import type { StreamHandle } from '../../core/types';
 import { _AsyncQueue } from '../../core/_async-queue';
-import { RpcError, _fromErrorPayload, type _ErrorPayload } from '../../core/error';
+import { RpcError, _fromErrorPayload, _reasonToRpcError, type _ErrorPayload } from '../../core/error';
 import type { CallOptions, ClientBinding } from '../../core/server-binding';
 import { codeForHttpStatus } from './_codes';
 
@@ -27,13 +27,44 @@ export class HttpClientBinding implements ClientBinding {
   private disposed = false;
   /** 在飞的流：dispose 时要逐个 RST（优雅 close 会等它们自然结束，等于不取消） */
   private activeStreams = new Set<ClientHttp2Stream>();
+  /** 在飞调用的本地终态 guard：dispose → DISPOSED（含 ack 前挂起的 init，任务 185） */
+  private _settles = new Set<(e: unknown) => void>();
+  /** 已建立的流式队列：dispose → 本地 DISPOSED（与 channel 对齐，不再干净 done） */
+  private _queues = new Set<_AsyncQueue<unknown>>();
 
   constructor(private baseUrl: string) {
     this.session = http2.connect(baseUrl);
   }
 
+  /** 把 in-flight promise 纳入 dispose 落定：dispose → reject(DISPOSED)；正常 settle 自动移除 */
+  private _track<T>(p: Promise<T>): Promise<T> {
+    let rejectGuard!: (e: unknown) => void;
+    const guard = new Promise<never>((_, rej) => { rejectGuard = rej; });
+    const settle = (e: unknown) => rejectGuard(e);
+    this._settles.add(settle);
+    return Promise.race([p, guard]).finally(() => { this._settles.delete(settle); });
+  }
+
+  /** 登记已建立的流式队列：settle 自动移除，dispose 未 settle 的以 DISPOSED 收尾 */
+  private _trackQueue(q: _AsyncQueue<unknown>): _AsyncQueue<unknown> {
+    this._queues.add(q);
+    q.onSettle(() => { this._queues.delete(q); });
+    return q;
+  }
+
   dispose(): void {
+    if (this.disposed) return; // 幂等（与 ChannelClientBinding 一致）
     this.disposed = true;
+    // 本地终态先落定：所有在飞调用/流队列以 DISPOSED 收尾 —— 与 channel 对齐。
+    // 此前 dispose-after-ack 时本地队列干净结束（与 channel 的 DISPOSED 分叉）、
+    // dispose-before-ack 时 firstResponseStatus 永不落定（任务 185 实测挂起）。
+    const d = new RpcError('DISPOSED', 'Client disposed');
+    // 直接迭代：settle 的删除发生在微任务（Promise.finally），q.error 的 onSettle 删除
+    // 的是「刚取出的当前项」——对 Set 均安全
+    for (const s of this._settles) s(d);
+    this._settles.clear();
+    for (const q of this._queues) q.error(d);
+    this._queues.clear();
     // session.close() 是**优雅关闭**：它在等所有活跃流结束，对端感知不到「客户端不要了」。
     // 必须先把在飞的流逐个 RST_STREAM —— 服务端 stream.on('close') 才会触发，
     // 进而 g.return() 收尾生成器。否则服务端继续白跑（任务 149 的放大机制）。
@@ -91,7 +122,7 @@ export class HttpClientBinding implements ClientBinding {
     const stream = this.request(method, 'application/json');
     stream.write(JSON.stringify(params ?? {}));
     stream.end();
-    const resp = await collectResponse(stream, options);
+    const resp = await this._track(collectResponse(stream, options));
     return parseResult<TRes>(resp);
   }
 
@@ -106,12 +137,12 @@ export class HttpClientBinding implements ClientBinding {
     stream.write(JSON.stringify(params ?? {}));
     stream.end();
 
-    const status = await firstResponseStatus(stream, options);
+    const status = await this._track(firstResponseStatus(stream, options));
     if (status !== 200) {
-      const data = await readAll(stream);
+      const data = await readAll(stream, options);
       throw parseError(status, data);
     }
-    return createNdjsonStream(stream, options) as StreamHandle<TYield>;
+    return this._trackQueue(createNdjsonStream(stream, options)) as StreamHandle<TYield>;
   }
 
   // ── clientStream ─────────────────────────────────
@@ -144,7 +175,7 @@ export class HttpClientBinding implements ClientBinding {
       }
       if (!signal?.aborted) stream.end();
 
-      const resp = await collectResponse(stream, options);
+      const resp = await this._track(collectResponse(stream, options));
       return parseResult<TRes>(resp);
     } finally {
       if (signal) signal.removeEventListener('abort', onAbort);
@@ -175,12 +206,12 @@ export class HttpClientBinding implements ClientBinding {
       if (!signal?.aborted) stream.end();
     })();
 
-    const status = await firstResponseStatus(stream, options);
+    const status = await this._track(firstResponseStatus(stream, options));
     if (status !== 200) {
-      const data = await readAll(stream);
+      const data = await readAll(stream, options);
       throw parseError(status, data);
     }
-    return createNdjsonStream(stream, options) as StreamHandle<TChOut>;
+    return this._trackQueue(createNdjsonStream(stream, options)) as StreamHandle<TChOut>;
   }
 
   // ── 内部 ─────────────────────────────────────────
@@ -208,7 +239,7 @@ function onceDrain(stream: ClientHttp2Stream): Promise<void> {
   return new Promise((r) => stream.once('drain', r));
 }
 
-/** 等响应头，返回 :status */
+/** 等响应头，返回 :status（监听 close 兜底 + abort listener 随终态移除，任务 185） */
 function firstResponseStatus(stream: ClientHttp2Stream, options?: CallOptions): Promise<number> {
   const { signal, timeout } = options ?? {};
   return new Promise<number>((resolve, reject) => {
@@ -216,44 +247,58 @@ function firstResponseStatus(stream: ClientHttp2Stream, options?: CallOptions): 
     const cleanup = () => {
       stream.removeListener('response', onResp);
       stream.removeListener('error', onErr);
+      stream.removeListener('close', onClose);
+      if (signal) signal.removeEventListener('abort', onAbort);
       if (timer) clearTimeout(timer);
     };
     const onResp = (headers: Record<string, unknown>) => { cleanup(); resolve(Number(headers[':status'] ?? 0)); };
     const onErr = (e: Error) => { cleanup(); reject(e); };
+    // 流关闭但既无 response 也无 error（本地 dispose RST / 对端静默关流）→ 必须落定，
+    // 否则 init promise 永挂（任务 185 实测：dispose-before-ack TIMEOUT 未落定）
+    const onClose = () => { cleanup(); reject(new RpcError('CANCELLED', 'Stream closed before response')); };
+    const onAbort = () => {
+      cleanup(); stream.close(http2.constants.NGHTTP2_CANCEL);
+      reject(_reasonToRpcError(signal!.reason));
+    };
     stream.on('response', onResp);
     stream.on('error', onErr);
+    stream.on('close', onClose);
     if (timeout != null && timeout > 0) {
       timer = setTimeout(() => {
         cleanup(); stream.close(http2.constants.NGHTTP2_CANCEL);
         reject(new RpcError('TIMEOUT', `Response timed out after ${timeout}ms`));
       }, timeout);
     }
-    if (signal?.aborted) {
-      cleanup(); stream.close(http2.constants.NGHTTP2_CANCEL);
-      reject(new RpcError('CANCELLED', 'Call aborted'));
-      return;
-    }
-    signal?.addEventListener('abort', () => {
-      cleanup(); stream.close(http2.constants.NGHTTP2_CANCEL);
-      reject(new RpcError('CANCELLED', 'Call aborted'));
-    }, { once: true });
+    if (signal?.aborted) { onAbort(); return; }
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
-/** 读完整个响应 body */
-function readAll(stream: ClientHttp2Stream): Promise<Buffer> {
+/** 读完整个响应 body；abort → RST + 以 reason 落定（覆盖「响应头已到、body 未完」窗口） */
+function readAll(stream: ClientHttp2Stream, options?: CallOptions): Promise<Buffer> {
+  const signal = options?.signal;
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
+    const cleanup = () => { if (signal) signal.removeEventListener('abort', onAbort); };
+    const onAbort = () => {
+      cleanup();
+      if (!stream.closed && !stream.destroyed) stream.close(http2.constants.NGHTTP2_CANCEL);
+      reject(_reasonToRpcError(signal!.reason));
+    };
     stream.on('data', (c: Buffer) => chunks.push(c));
-    stream.on('end', () => resolve(Buffer.concat(chunks)));
-    stream.on('error', reject);
+    stream.on('end', () => { cleanup(); resolve(Buffer.concat(chunks)); });
+    stream.on('error', (e) => { cleanup(); reject(e); });
+    if (signal) {
+      if (signal.aborted) { onAbort(); return; }
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
   });
 }
 
 /** 收集单值响应（写 body 已由调用方完成，这里只读响应） */
 function collectResponse(stream: ClientHttp2Stream, options?: CallOptions): Promise<HttpResp> {
   return firstResponseStatus(stream, options).then((status) =>
-    readAll(stream).then((data) => ({ status, data })),
+    readAll(stream, options).then((data) => ({ status, data })),
   );
 }
 
@@ -299,17 +344,26 @@ function createNdjsonStream(stream: ClientHttp2Stream, options?: CallOptions): _
   stream.on('end', () => q.end());
   stream.on('error', (e) => q.error(e instanceof Error ? e : new Error(String(e))));
 
-  if (options?.signal) {
-    options.signal.addEventListener('abort', () => {
-      stream.close(http2.constants.NGHTTP2_CANCEL);
-      q.error(new RpcError('CANCELLED', 'Call aborted'));
-    }, { once: true });
+  const signal = options?.signal;
+  let onAbort: (() => void) | undefined;
+  if (signal) {
+    onAbort = () => {
+      cleanup();
+      if (!stream.closed && !stream.destroyed) stream.close(http2.constants.NGHTTP2_CANCEL);
+      q.error(_reasonToRpcError(signal.reason));
+    };
+    const cleanup = () => signal.removeEventListener('abort', onAbort!);
+    // listener 生命周期 = 队列终态（end/error/消费端 return），不随调用泄漏
+    q.onSettle(cleanup);
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
   }
 
   // 消费端提前退出（break / 外层 return / 迭代器 return）→ 也发 RST_STREAM。
   // 这条路径此前完全没有信号：AbortSignal 只是取消的通路之一，而 for-await 的
   // break 走的是迭代器 return()，与此无关 —— 上游因此会在无人消费时继续产出。
   q.onReturn(() => {
+    onAbort?.(); // 幂等：先移除 listener，再 RST（无 abort 时只 RST）
     if (!stream.closed && !stream.destroyed) stream.close(http2.constants.NGHTTP2_CANCEL);
   });
 

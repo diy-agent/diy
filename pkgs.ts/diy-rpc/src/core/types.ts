@@ -5,8 +5,13 @@
  *   请求:      { type: 'call', id, method, params?, stream? }
  *   响应:      { type: 'call', id, result? | error? }
  *   流数据:    { type: 'data', stream, value }
- *   流结束:    { type: 'end', stream, error? }
+ *   流结束:    { type: 'end', stream, error? }   —— 只表「完成/输入半关」，不兼职取消
+ *   取消:      { type: 'cancel', id? | stream?, reason? } —— 显式取消信封
  *   通知:      { type: 'notify', method, params? }
+ *
+ * end 与 cancel 语义分工（任务 185）：end 单义（server→client 完成、client→server
+ * 输入半关）；整条 RPC 取消一律走 cancel 帧——ack 前（含 unary 全程）按 call.id
+ * 寻址、ack 后按 streamId。旧版本收到 cancel 会忽略（无能力协商，CLI/app 同版本发布）。
  */
 
 // ═══════════════════════════════════════════════════
@@ -80,8 +85,20 @@ export interface _EndMsg {
   error?: _ErrorPayload;
 }
 
+/** 显式取消（ack 前按 id、ack 后按 stream；reason 限可序列化 code/message） */
 /** @internal */
-export type _Envelope = _CallMsg | _DataMsg | _EndMsg;
+export interface _CancelMsg {
+  type: 'cancel';
+  /** ack 前寻址：unary 全程 / 流 init 尚未拿到 streamId */
+  id?: number;
+  /** ack 后寻址 */
+  stream?: number;
+  /** 取消原因（有限字段，不传任意 Error）；缺省 = CANCELLED */
+  reason?: { code: string; message: string };
+}
+
+/** @internal */
+export type _Envelope = _CallMsg | _DataMsg | _EndMsg | _CancelMsg;
 
 // 错误模型（_ErrorPayload / RpcError / toRpcError / _toErrorPayload）见 ./error
 /** @internal */
