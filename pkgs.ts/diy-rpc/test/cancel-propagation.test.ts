@@ -686,30 +686,29 @@ describe('R5修复回归（2026-09-29）', () => {
     }
   });
 
-  it('http: bidi 客户端断开 → 忽略 signal 的 handler 也被生成器 return() 收尾（P2 对称性）', async () => {
-    const { binding, client, dispose } = await httpHarness.start();
-    const state = { yields: 0, finallyRan: false };
-    binding.on(api.echo, async function* () {
-      try {
-        for (;;) {
-          state.yields++;
-          yield state.yields;
-          await sleep(50);
-        }
-      } finally {
-        state.finallyRan = true;
-      }
-    });
+  it.each([
+    ['channel(in-memory)', channelHarness],
+    ['http2', httpHarness],
+  ] as const)('%s: bidi 断开 → self-iterable handler 立即收到 return()（P2 判别性）', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const state = { returnCalled: false };
+    // 运行时的 self-iterable（非 async generator）：next() 永挂、return() 可立即执行。
+    // async generator 的 return 请求会排队到下一个 yield（JS 语义，实测不可提前）；
+    // self-iterable 不受此限制 —— 若服务端仅靠 for-await break 兜底：next() 永挂、
+    // 无产出、无 break → return 永不调用（资源泄漏）；显式 return 则立即可达。
+    const selfIterable = {
+      next: () => new Promise<IteratorResult<number>>(() => { /* 永挂 */ }),
+      return: () => {
+        state.returnCalled = true;
+        return Promise.resolve({ done: true, value: undefined } as IteratorResult<number>);
+      },
+      [Symbol.asyncIterator]() { return this; },
+    } as unknown as AsyncGenerator<number>;
+    binding.on(api.echo, () => selfIterable);
     try {
-      const sh = await client.bidiStream('echo', params, hangingIterable<number>());
-      const iter = sh[Symbol.asyncIterator]();
-      await iter.next();
+      await client.bidiStream('echo', params, hangingIterable<number>());
       client.dispose();
-      // 修复前：onClose 只 abort signal → 忽略 signal 的生成器继续白跑、永不收尾
-      expect(await waitFor(() => state.finallyRan), 'close 后未对 handler 生成器收尾').toBe(true);
-      const frozen = state.yields;
-      await sleep(120);
-      expect(state.yields).toBe(frozen);
+      expect(await waitFor(() => state.returnCalled), 'close 后未调用 self-iterable 的 return()').toBe(true);
     } finally {
       await dispose();
     }
