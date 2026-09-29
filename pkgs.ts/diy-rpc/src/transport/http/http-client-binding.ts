@@ -205,6 +205,8 @@ export class HttpClientBinding implements ClientBinding {
       return parseResult<TRes>(resp);
     } finally {
       remoteSettled = true; // 终态（成功/错误/异常）后封锁上传
+      // 远端终态后仍需结束 request-side：仅停写会留下半开流，滞留 activeStreams（review R12 P1）
+      try { stream.end(); } catch { /* 已断开 */ }
       if (signal) signal.removeEventListener('abort', onAbort);
       // dispose 与正常 settle 都通知上游 iterator（review R5 P2；幂等）
       this._upstreamCleanups.delete(notifyUpstream);
@@ -267,6 +269,7 @@ export class HttpClientBinding implements ClientBinding {
     if (status !== 200) {
       const data = await readAll(stream, options);
       remoteEnded = true;
+      try { stream.end(); } catch { /* 已断开 */ } // 早错也是终态：结束 request-side（review R12 P1）
       if (signal) signal.removeEventListener('abort', onUpstreamAbort);
       this._upstreamCleanups.delete(onUpstreamAbort);
       onUpstreamAbort(); // 早错也是终态：通知上游 iterator（review R10 同族缺口，幂等）
@@ -275,6 +278,7 @@ export class HttpClientBinding implements ClientBinding {
     const queue = createNdjsonStream(stream, options);
     queue.onSettle(() => {
       remoteEnded = true; // 队列终态（正常结束/断开/dispose）
+      try { stream.end(); } catch { /* 已断开 */ } // 结束 request-side（review R12 P1）
       signal?.removeEventListener('abort', onUpstreamAbort);
       this._upstreamCleanups.delete(onUpstreamAbort);
       onUpstreamAbort(); // 队列终态（dispose/断开/正常结束）→ 通知上游 iterator（幂等）
@@ -303,8 +307,19 @@ export class HttpClientBinding implements ClientBinding {
 //  helpers
 // ═══════════════════════════════════════════════════
 
+/** 等 drain；流 close/error 也唤醒（终态后不得悬挂在背压等待中，review R12 P1） */
 function onceDrain(stream: ClientHttp2Stream): Promise<void> {
-  return new Promise((r) => stream.once('drain', r));
+  return new Promise((r) => {
+    const done = () => {
+      stream.removeListener('drain', done);
+      stream.removeListener('close', done);
+      stream.removeListener('error', done);
+      r();
+    };
+    stream.once('drain', done);
+    stream.once('close', done);
+    stream.once('error', done);
+  });
 }
 
 /** 等响应头，返回 :status（监听 close 兜底 + abort listener 随终态移除，任务 185） */
