@@ -52,11 +52,16 @@ export class HttpServerBinding extends ServerBindingCore implements ServerBindin
     const fn = this._getUnary(method)!;
     const ctrl = new AbortController();
     // 客户端断开/RST → 调用级 signal（handler 经 opts.signal 协作取消，任务 185）
-    stream.once('close', () => ctrl.abort(new RpcError('CANCELLED', 'Client disconnected')));
+    const onClose = () => ctrl.abort(new RpcError('CANCELLED', 'Client disconnected'));
+    stream.once('close', onClose);
     try {
       const body = await readBody(stream);
-      respondResult(stream, await fn(parseBodyParams(body), ctrl.signal));
+      const result = await fn(parseBodyParams(body), ctrl.signal);
+      // handler 已正常完成：此后 close（响应自然结束）不再代表取消（review R10 P1）
+      stream.removeListener('close', onClose);
+      respondResult(stream, result);
     } catch (e) {
+      stream.removeListener('close', onClose);
       respondError(stream, e);
     }
   }
@@ -121,11 +126,16 @@ export class HttpServerBinding extends ServerBindingCore implements ServerBindin
     //「error 输入队列 + abort controller」对齐；只监听 signal 不消费输入的 handler 也能收到
     const incoming = createBodyReader(stream, () => ctrl.abort(new RpcError('CANCELLED', 'Client cancelled')));
     // RST/断开 → 调用级 signal；输入队列的 CANCELLED 由 createBodyReader 独立投递
-    stream.once('close', () => ctrl.abort(new RpcError('CANCELLED', 'Client disconnected')));
+    const onClose = () => ctrl.abort(new RpcError('CANCELLED', 'Client disconnected'));
+    stream.once('close', onClose);
 
     try {
-      respondResult(stream, await fn(params, incoming, ctrl.signal));
+      const result = await fn(params, incoming, ctrl.signal);
+      // handler 已正常完成：此后 close（响应自然结束）不再代表取消（review R10 P1）
+      stream.removeListener('close', onClose);
+      respondResult(stream, result);
     } catch (e) {
+      stream.removeListener('close', onClose);
       respondError(stream, e);
     }
   }

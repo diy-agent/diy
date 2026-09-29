@@ -162,6 +162,8 @@ export class HttpClientBinding implements ClientBinding {
     const { signal } = options ?? {};
     const stream = this.request(method, 'application/x-ndjson', params);
 
+    /** 远端终态（响应 resolve/reject）已到——终态后不再发送上游数据（review R10 P1） */
+    let remoteSettled = false;
     // abort → 写取消帧 + 优雅结束 + 上游 return() 通知（服务端收 __cancel 会同时
     // error 输入队列并 abort 调用级 signal，与 channel 对齐，review P1）
     const upstream = chunks[Symbol.asyncIterator]();
@@ -186,13 +188,14 @@ export class HttpClientBinding implements ClientBinding {
         for (;;) {
           const n = await upstream.next();
           if (n.done) break;
-          if (signal?.aborted) break;
+          // 终态后不再拉取/发送（review R10 P1）：在途 next 无法撤销，但返回后必须停
+          if (signal?.aborted || remoteSettled) break;
           if (!stream.write(JSON.stringify(n.value) + '\n')) await onceDrain(stream);
         }
       } catch {
         /* 上游迭代出错则中止上传 */
       }
-      if (!signal?.aborted) {
+      if (!signal?.aborted && !remoteSettled) {
         try { stream.end(); } catch { /* 已断开 */ }
       }
     })();
@@ -201,6 +204,7 @@ export class HttpClientBinding implements ClientBinding {
       const resp = await this._track(collectResponse(stream, options));
       return parseResult<TRes>(resp);
     } finally {
+      remoteSettled = true; // 终态（成功/错误/异常）后封锁上传
       if (signal) signal.removeEventListener('abort', onAbort);
       // dispose 与正常 settle 都通知上游 iterator（review R5 P2；幂等）
       this._upstreamCleanups.delete(notifyUpstream);
@@ -219,6 +223,8 @@ export class HttpClientBinding implements ClientBinding {
     const { signal } = options ?? {};
     const stream = this.request(method, 'application/x-ndjson', params);
 
+    /** 远端终态（响应结束/队列 settle/早错）已到——终态后不再发送上游数据（review R10 P1） */
+    let remoteEnded = false;
     // 上游 return() 尽力通知（review P1）：abort 后若上传正挂在 next()，发 return 唤醒清理；
     // 随队列终态/调用 settle/dispose 移除（onSettle）——不残留共享 signal 上的 listener
     const upstream = chunks[Symbol.asyncIterator]();
@@ -245,13 +251,14 @@ export class HttpClientBinding implements ClientBinding {
         for (;;) {
           const n = await upstream.next();
           if (n.done) break;
-          if (signal?.aborted) break;
+          // 终态后不再拉取/发送（review R10 P1）：在途 next 无法撤销，但返回后必须停
+          if (signal?.aborted || remoteEnded) break;
           if (!stream.write(JSON.stringify(n.value) + '\n')) await onceDrain(stream);
         }
       } catch {
         /* ignore */
       }
-      if (!signal?.aborted) {
+      if (!signal?.aborted && !remoteEnded) {
         try { stream.end(); } catch { /* 已断开 */ }
       }
     })();
@@ -259,12 +266,15 @@ export class HttpClientBinding implements ClientBinding {
     const status = await this._track(firstResponseStatus(stream, options));
     if (status !== 200) {
       const data = await readAll(stream, options);
+      remoteEnded = true;
       if (signal) signal.removeEventListener('abort', onUpstreamAbort);
       this._upstreamCleanups.delete(onUpstreamAbort);
+      onUpstreamAbort(); // 早错也是终态：通知上游 iterator（review R10 同族缺口，幂等）
       throw parseError(status, data);
     }
     const queue = createNdjsonStream(stream, options);
     queue.onSettle(() => {
+      remoteEnded = true; // 队列终态（正常结束/断开/dispose）
       signal?.removeEventListener('abort', onUpstreamAbort);
       this._upstreamCleanups.delete(onUpstreamAbort);
       onUpstreamAbort(); // 队列终态（dispose/断开/正常结束）→ 通知上游 iterator（幂等）

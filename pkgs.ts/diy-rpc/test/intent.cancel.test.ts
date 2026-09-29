@@ -24,6 +24,8 @@
  *   C13 远端立即终态：服务端不消费输入就直接返回/抛错、或 bidi 立即结束时——
  *       调用必须正常落定（不得挂死）；终态后不再向 chunks 拉取数据；
  *       若上传曾启动（传输时序差异），必须尽力通知上游 return()
+ *   C14 正常完成不触发取消：调用正常成功后，服务端 handler 的 signal 不得被 abort
+ *       （close/RST 监听必须只反映真取消，不误伤正常结束）
  *
  *   N1  async generator 语义边界：return 请求不打断 await（至下一个 yield 才收尾）；
  *       服务端收尾最迟发生在下一帧产出点。self-iterable 不受此限（C7/C8 场景）
@@ -110,6 +112,24 @@ function trackedIterable<T>(s: { next: number; ret: number }): AsyncIterable<T> 
       return: () => {
         s.ret++;
         return Promise.resolve({ done: true, value: undefined });
+      },
+    }),
+  };
+}
+
+/** 延迟产出固定序列的可观测上游迭代器（C13b：上传已启动后远端终态场景） */
+function delayIterable<T>(s: { next: number; ret: number }, ms: number, vals: T[]): AsyncIterable<T> {
+  return {
+    [Symbol.asyncIterator]: () => ({
+      next: async () => {
+        s.next++;
+        await sleep(ms);
+        const i = s.next - 1;
+        return i < vals.length ? { done: false, value: vals[i] } : { done: true, value: undefined };
+      },
+      return: async () => {
+        s.ret++;
+        return { done: true, value: undefined };
       },
     }),
   };
@@ -603,6 +623,172 @@ describe('C13 远端立即终态：调用落定、不再拉取上游；已启动
       await sleep(80);
       expect(s, '终态后仍在拉取上游').toEqual(snap);
       if (s.next > 0) expect(s.ret, '上传已启动但未通知 return()').toBeGreaterThan(0);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it.each(transports)('%s: bidiStream——服务端立即抛错', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const cli = createTypedClient(client, api);
+    binding.on(api.chat, async function* () {
+      throw new RpcError('EARLY', '流未开始即失败');
+    });
+    const s = { next: 0, ret: 0 };
+    try {
+      const stream = await cli.chat({ room: 'r' }, trackedIterable<string>(s));
+      const it = stream[Symbol.asyncIterator]();
+      await expect(it.next()).rejects.toMatchObject({ code: 'EARLY' });
+      const snap = { ...s };
+      await sleep(80);
+      expect(s, '终态后仍在拉取上游').toEqual(snap);
+      if (s.next > 0) expect(s.ret, '上传已启动但未通知 return()').toBeGreaterThan(0);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it.each(transports)('%s: clientStream——服务端消费一个 chunk 后终态，后续 chunk 不得发送', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const cli = createTypedClient(client, api);
+    const extra: number[] = [];
+    binding.on(api.collect, async ({ stream }) => {
+      const it = stream[Symbol.asyncIterator]();
+      await it.next(); // 消费第一个 chunk 后返回（调用终态）
+      // 后台继续监听输入：终态后若有后续 chunk 被发送，能在此观测到
+      void (async () => {
+        try { for (;;) { const r = await it.next(); if (r.done) break; extra.push(r.value as number); } } catch { /* 队列关闭 */ }
+      })();
+      return { tag: 'one', sum: 1 };
+    });
+    const s = { next: 0, ret: 0 };
+    try {
+      expect(await cli.collect({ tag: 'one' }, delayIterable<number>(s, 60, [1, 7]))).toEqual({ tag: 'one', sum: 1 });
+      const snap = { ...s };
+      await sleep(200); // 跨过第二个 next（60ms）返回点
+      expect(s, '终态后仍在向已结束的调用拉取上游').toEqual(snap);
+      expect(extra, '远端终态后不得发送后续 chunk').toEqual([]);
+      // 上传已启动（handler 收到第一个 chunk）：必须通知 return()
+      expect(s.next, '上传应已启动').toBeGreaterThan(0);
+      expect(s.ret, '上传已启动但未通知 return()').toBeGreaterThan(0);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it.each(transports)('%s: bidiStream——服务端消费一个 chunk 后终态，后续 chunk 不得发送', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const cli = createTypedClient(client, api);
+    const extra: string[] = [];
+    binding.on(api.chat, async function* ({ stream }) {
+      const it = stream[Symbol.asyncIterator]();
+      const first = await it.next(); // 消费第一个 chunk 后结束
+      void (async () => {
+        try { for (;;) { const r = await it.next(); if (r.done) break; extra.push(r.value as string); } } catch { /* 队列关闭 */ }
+      })();
+      if (!first.done) yield first.value as string;
+    });
+    const s = { next: 0, ret: 0 };
+    try {
+      const stream = await cli.chat({ room: 'r' }, delayIterable<string>(s, 60, ['a', 'b']));
+      const got: string[] = [];
+      for await (const v of stream) got.push(v);
+      expect(got, '终态前已交付的 chunk').toEqual(['a']);
+      const snap = { ...s };
+      await sleep(200); // 跨过第二个 next（60ms）返回点
+      expect(s, '终态后仍在拉取上游').toEqual(snap);
+      expect(extra, '远端终态后不得发送后续 chunk').toEqual([]);
+      expect(s.next, '上传应已启动').toBeGreaterThan(0);
+      expect(s.ret, '上传已启动但未通知 return()').toBeGreaterThan(0);
+    } finally {
+      await dispose();
+    }
+  });
+}, 3000); // 立即终态若实现挂死：显式 deadline，不依赖全局默认
+
+describe('C14 正常完成不触发取消：handler 的 signal 保持未 abort', () => {
+  it.each(transports)('%s: unary 正常成功后 handler signal', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const cli = createTypedClient(client, api);
+    let captured: AbortSignal | undefined;
+    let aborts = 0;
+    binding.on(api.echo, async ({ input, signal }) => {
+      captured = signal;
+      signal?.addEventListener('abort', () => { aborts++; });
+      return input.v;
+    });
+    try {
+      expect(await cli.echo({ v: 5 })).toBe(5);
+      await sleep(100); // 等流自然关闭（close 事件）
+      expect(captured, 'handler 应收到 signal').toBeDefined();
+      expect(captured!.aborted, '正常完成不得 abort handler signal').toBe(false);
+      expect(aborts, '正常完成不得触发取消监听').toBe(0);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it.each(transports)('%s: clientStream 正常成功后 handler signal', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const cli = createTypedClient(client, api);
+    let captured: AbortSignal | undefined;
+    let aborts = 0;
+    binding.on(api.collect, async ({ signal }) => {
+      captured = signal;
+      signal?.addEventListener('abort', () => { aborts++; });
+      return { tag: 'ok', sum: 0 };
+    });
+    try {
+      await cli.collect({ tag: 'ok' }, (async function* () { /* 空输入 */ })());
+      await sleep(100);
+      expect(captured, 'handler 应收到 signal').toBeDefined();
+      expect(captured!.aborted, '正常完成不得 abort handler signal').toBe(false);
+      expect(aborts, '正常完成不得触发取消监听').toBe(0);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it.each(transports)('%s: serverStream 正常产出完毕后 handler signal', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const cli = createTypedClient(client, api);
+    let captured: AbortSignal | undefined;
+    let aborts = 0;
+    binding.on(api.tick, async function* ({ input, signal }) {
+      captured = signal;
+      signal?.addEventListener('abort', () => { aborts++; });
+      for (let i = 0; i < input.max; i++) yield i;
+    });
+    try {
+      const got: number[] = [];
+      for await (const v of await cli.tick({ interval: 1, max: 3 })) got.push(v);
+      expect(got).toEqual([0, 1, 2]);
+      await sleep(100);
+      expect(captured!.aborted, '正常完成不得 abort handler signal').toBe(false);
+      expect(aborts, '正常完成不得触发取消监听').toBe(0);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it.each(transports)('%s: bidiStream 正常产出完毕后 handler signal', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const cli = createTypedClient(client, api);
+    let captured: AbortSignal | undefined;
+    let aborts = 0;
+    binding.on(api.chat, async function* ({ signal }) {
+      captured = signal;
+      signal?.addEventListener('abort', () => { aborts++; });
+      yield 'bye';
+    });
+    try {
+      const stream = await cli.chat({ room: 'r' }, (async function* () { /* 空输入 */ })());
+      const got: string[] = [];
+      for await (const v of stream) got.push(v);
+      expect(got).toEqual(['bye']);
+      await sleep(100);
+      expect(captured!.aborted, '正常完成不得 abort handler signal').toBe(false);
+      expect(aborts, '正常完成不得触发取消监听').toBe(0);
     } finally {
       await dispose();
     }
