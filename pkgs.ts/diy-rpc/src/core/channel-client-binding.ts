@@ -270,10 +270,33 @@ export class ChannelClientBinding implements ClientBinding {
 
     let streamId = 0;
     let rejectResult: (e: unknown) => void = () => {};
+    let resolveResult: (v: TRes) => void = () => {};
     let resultCreated = false;
+    /** 结果/错误已由结果 entry 处理——用于「终态后不启动/停止上传」（review R8） */
+    let remoteSettled = false;
+    // 结果 promise 提前到 init 之前创建（review R8）：ack 与结果帧可能同批到达，
+    // ack 处理中同步置换 pending entry 后，紧随的结果帧必须能直接落定它。
+    const resultPromise = new Promise<TRes>((resolve, reject) => {
+      resolveResult = resolve;
+      rejectResult = reject;
+    });
+    // rejection 早于消费方 attach 会被判 unhandled（abort 可能在 upload 循环期间落定）：
+    // no-op 吸收；真正的消费方仍经 return 收到同一 rejection。
+    resultPromise.catch(() => {});
     // 上游迭代器的尽力清理（review P1）：abort 时对挂起的 next() 发 return() 通知；
     // 声明提前于 onAbort，避免 await ack 期间 abort 触发 TDZ
     let notifyUpstream: () => void = () => {};
+
+    /** 结果 entry：ack 处理中同步置换进 pending（同批结果帧不会漏） */
+    const resultEntry: PendingEntry = {
+      onMessage: (msg) => {
+        remoteSettled = true;
+        cleanup();
+        if (msg.error) rejectResult(_fromErrorPayload(msg.error));
+        else resolveResult(msg.result as TRes);
+        return true;
+      },
+    };
 
     const onAbort = () => {
       const err = _reasonToRpcError(signal!.reason);
@@ -306,8 +329,14 @@ export class ChannelClientBinding implements ClientBinding {
             // `pending.delete(id)` 误删结果 entry（此 id 已指向结果）→ 服务端结果
             // 被丢、resultPromise 悬死（review P1，probe3 实测挂起）
             if (entry.timer != null) clearTimeout(entry.timer);
+            // 同步置换为结果 entry（review R8）：ack 与结果/错误帧可能同批（同 macrotask
+            // / 同包多帧）到达——置换必须发生在本次 dispatch 内，否则紧随的结果帧会命中
+            // init entry 被当 INVALID_ACK 丢弃且 pending 被删 → 调用永挂（探针实测
+            // channel/ws HUNG）。
+            this.pending.set(id, resultEntry);
+            resultCreated = true;
             resolve(streamId);
-            return false; // 留在 pending：结果 entry 随后覆盖 set
+            return false; // 不删：结果 entry 已就位，等它落定
           }
           if (msg.error) {
             cleanup();
@@ -335,28 +364,6 @@ export class ChannelClientBinding implements ClientBinding {
 
     await streamIdPromise;
 
-    // 先注册结果 pending，再发 chunk——避免服务端在循环期间提前回包时该 id 无
-    // pending entry 而被丢（_dispatch 查不到直接忽略），导致 result promise 永不
-    // 落定（并发负载下 setTimeout/setImmediate 时序错位会触发此竞态而挂起）。
-    let resolveResult: (v: TRes) => void = () => {};
-    const resultPromise = new Promise<TRes>((resolve, reject) => {
-      resolveResult = resolve;
-      rejectResult = reject;
-    });
-    // onAbort 可能在 upload 循环期间触发 rejectResult，而本函数尚未执行到
-    // `return resultPromise`（upload break 还要等下一次迭代）—— rejection 早于消费方
-    // attach 会被判 unhandled。no-op 吸收：真正的消费方仍经 return 收到同一 rejection。
-    resultPromise.catch(() => {});
-    resultCreated = true;
-    this.pending.set(id, {
-      onMessage: (msg) => {
-        cleanup();
-        if (msg.error) rejectResult(_fromErrorPayload(msg.error));
-        else resolveResult(msg.result as TRes);
-        return true;
-      },
-    });
-
     // 复检：ack 已 resolve、abort 恰落在续体之前时，once 监听已被消费，没人再落定
     // result —— 这里补一刀（任务 185：await 后必须复检 signal.aborted）
     if (signal?.aborted) {
@@ -365,6 +372,11 @@ export class ChannelClientBinding implements ClientBinding {
       this._sendCancel({ stream: streamId }, err);
       rejectResult(err);
     }
+
+    // 门控（review R8）：远端在同批已落定（结果/错误先于本续体）或已 abort →
+    // 上传从未启动，不触碰上游 iterable —— 没有 iterator 需要通知 return()，
+    // 也避免无谓调用用户对象的 [Symbol.asyncIterator]。
+    if (remoteSettled || signal?.aborted) return resultPromise;
 
     // 上传后台化（review P1）：上游 next() 不可取消地挂起时，调用落定不得被它拖住
     // —— 结果由 pending 的结果 entry 落定，与上传循环解耦。abort 时对上游发
@@ -380,14 +392,16 @@ export class ChannelClientBinding implements ClientBinding {
         for (;;) {
           const n = await upstream.next();
           if (n.done) break;
-          if (signal?.aborted) break;
+          // 终态后不再拉取/发送（review R8）：在途 next 无法撤销，但返回后必须停
+          if (signal?.aborted || remoteSettled) break;
           this._send({ type: 'data', stream: streamId, value: n.value as TChunk });
         }
       } catch {
+        if (remoteSettled) return; // 调用已落定：不再补发错误帧
         this._send({ type: 'end', stream: streamId, error: { code: 'STREAM_ERROR', message: 'upstream error' } });
         return;
       }
-      if (!signal?.aborted) this._send({ type: 'end', stream: streamId }); // 正常输入半关
+      if (!signal?.aborted && !remoteSettled) this._send({ type: 'end', stream: streamId }); // 正常输入半关
       // abort 路径已在 onAbort 发过 cancel 帧，这里不再补 end（end = 半关，不是取消）
     })();
 
@@ -408,6 +422,8 @@ export class ChannelClientBinding implements ClientBinding {
 
     const queue = new _AsyncQueue<TChunkOut>();
     let streamId = 0;
+    /** 远端终态（正常 end / 错误帧）已到——用于「终态后不启动/停止上传」（review R8） */
+    let remoteEnded = false;
     // 同 clientStream：上游尽力清理通知，声明提前避免 await 期间 abort 的 TDZ
     let notifyUpstream: () => void = () => {};
 
@@ -445,6 +461,7 @@ export class ChannelClientBinding implements ClientBinding {
             this.streams.set(streamId, {
               push: (val) => queue.push(val as TChunkOut),
               end: (err, opts) => {
+                remoteEnded = true;
                 cleanup();
                 if (err) queue.error(_fromErrorPayload(err), opts);
                 else queue.end();
@@ -481,6 +498,11 @@ export class ChannelClientBinding implements ClientBinding {
       if (this.streams.delete(streamId)) this._sendCancel({ stream: streamId });
     });
 
+    // 门控（review R8）：ack 与 end 同批时 entry.end 已跑过 cleanup（彼时 notifyUpstream
+    // 还是 no-op）——上传从未启动，不触碰上游 iterable：没有 iterator 需要通知
+    // return()，也避免无谓调用用户对象的 [Symbol.asyncIterator]。
+    if (remoteEnded || signal?.aborted) return queue;
+
     // 上传后台化（review P1）：调用落定不等不可取消的上游 next()
     const upstream = chunks[Symbol.asyncIterator]();
     notifyUpstream = () => {
@@ -493,14 +515,16 @@ export class ChannelClientBinding implements ClientBinding {
         for (;;) {
           const n = await upstream.next();
           if (n.done) break;
-          if (signal?.aborted) break;
+          // 终态后不再拉取/发送（review R8）：在途 next 无法撤销，但返回后必须停
+          if (signal?.aborted || remoteEnded) break;
           this._send({ type: 'data', stream: streamId, value: n.value as TChunkIn });
         }
       } catch {
+        if (remoteEnded) return; // 调用已落定：不再补发错误帧
         this._send({ type: 'end', stream: streamId, error: { code: 'STREAM_ERROR', message: 'upstream error' } });
         return;
       }
-      if (!signal?.aborted) this._send({ type: 'end', stream: streamId }); // 正常输入半关
+      if (!signal?.aborted && !remoteEnded) this._send({ type: 'end', stream: streamId }); // 正常输入半关
     })();
 
     return queue;

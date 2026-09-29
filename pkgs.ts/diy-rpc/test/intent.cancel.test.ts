@@ -21,6 +21,9 @@
  *   C10 取消不污染后续：取消一个调用后，同一 client 的后续调用正常
  *   C11 取消幂等：重复 abort、或在调用已落定后 abort，均无副作用
  *   C12 传输一致：以上全部在 channel(in-memory) / http2 / ws 三种传输下相同
+ *   C13 远端立即终态：服务端不消费输入就直接返回/抛错、或 bidi 立即结束时——
+ *       调用必须正常落定（不得挂死）；终态后不再向 chunks 拉取数据；
+ *       若上传曾启动（传输时序差异），必须尽力通知上游 return()
  *
  *   N1  async generator 语义边界：return 请求不打断 await（至下一个 yield 才收尾）；
  *       服务端收尾最迟发生在下一帧产出点。self-iterable 不受此限（C7/C8 场景）
@@ -90,6 +93,22 @@ function hangWithReturn<T>(state: { returned: boolean }): AsyncIterable<T> {
       next: () => new Promise<IteratorResult<T>>(() => { /* 永挂 */ }),
       return: () => {
         state.returned = true;
+        return Promise.resolve({ done: true, value: undefined });
+      },
+    }),
+  };
+}
+
+/** 可观测的上游迭代器：记录 next/return 调用次数（C13 不变量断言用） */
+function trackedIterable<T>(s: { next: number; ret: number }): AsyncIterable<T> {
+  return {
+    [Symbol.asyncIterator]: () => ({
+      next: () => {
+        s.next++;
+        return new Promise<IteratorResult<T>>(() => { /* 永挂 */ });
+      },
+      return: () => {
+        s.ret++;
         return Promise.resolve({ done: true, value: undefined });
       },
     }),
@@ -526,6 +545,64 @@ describe('C11 取消幂等：重复 abort / 落定后 abort 均无副作用', ()
       ac.abort();
       await expect(p).rejects.toMatchObject({ code: 'CANCELLED' });
       expect(() => { ac.abort(); }).not.toThrow(); // 已落定后再次 abort
+    } finally {
+      await dispose();
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════
+//  C13 远端立即终态
+// ═══════════════════════════════════════════════════
+
+describe('C13 远端立即终态：调用落定、不再拉取上游；已启动则尽力通知', () => {
+  it.each(transports)('%s: clientStream——服务端不消费输入就直接返回', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const cli = createTypedClient(client, api);
+    binding.on(api.collect, async () => ({ tag: 'early', sum: 0 }));
+    const s = { next: 0, ret: 0 };
+    try {
+      expect(await cli.collect({ tag: 'early' }, trackedIterable<number>(s))).toEqual({ tag: 'early', sum: 0 });
+      const snap = { ...s };
+      await sleep(80);
+      expect(s, '终态后仍在拉取上游').toEqual(snap);
+      if (s.next > 0) expect(s.ret, '上传已启动但未通知 return()').toBeGreaterThan(0);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it.each(transports)('%s: clientStream——服务端立即抛错', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const cli = createTypedClient(client, api);
+    binding.on(api.collect, async () => { throw new RpcError('EARLY', '早退错误'); });
+    const s = { next: 0, ret: 0 };
+    try {
+      await expect(cli.collect({ tag: 'early' }, trackedIterable<number>(s))).rejects.toMatchObject({ code: 'EARLY' });
+      const snap = { ...s };
+      await sleep(80);
+      expect(s, '终态后仍在拉取上游').toEqual(snap);
+      if (s.next > 0) expect(s.ret, '上传已启动但未通知 return()').toBeGreaterThan(0);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it.each(transports)('%s: bidiStream——服务端立即结束', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const cli = createTypedClient(client, api);
+    binding.on(api.chat, async function* () {
+      /* 立即结束 */
+    });
+    const s = { next: 0, ret: 0 };
+    try {
+      const stream = await cli.chat({ room: 'r' }, trackedIterable<string>(s));
+      const it = stream[Symbol.asyncIterator]();
+      expect((await it.next()).done, 'bidi 应正常结束').toBe(true);
+      const snap = { ...s };
+      await sleep(80);
+      expect(s, '终态后仍在拉取上游').toEqual(snap);
+      if (s.next > 0) expect(s.ret, '上传已启动但未通知 return()').toBeGreaterThan(0);
     } finally {
       await dispose();
     }
