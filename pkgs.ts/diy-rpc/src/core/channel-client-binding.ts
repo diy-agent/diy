@@ -283,10 +283,14 @@ export class ChannelClientBinding implements ClientBinding {
         rejectInit(err);
         if (resultCreated) rejectResult(err);
       }
-      notifyUpstream();
-      cleanup();
+      cleanup(); // 含上游 notifyUpstream（幂等）
     };
-    const cleanup = signal ? this._track(() => signal.removeEventListener('abort', onAbort)) : () => {};
+    // 终态清理（settle 与 dispose 都经 _track 触发）：摘 abort listener + 通知上游
+    // iterator 尽力清理（review R5 P2：dispose 也必须通知，不能只挂在 onAbort 上）
+    const cleanup = this._track(() => {
+      signal?.removeEventListener('abort', onAbort);
+      notifyUpstream();
+    });
 
     let rejectInit: (e: unknown) => void = () => {};
     let entry: PendingEntry = { onMessage: () => false };
@@ -418,10 +422,13 @@ export class ChannelClientBinding implements ClientBinding {
         this._sendCancel({ id }, err);
         rejectInit(err);
       }
-      notifyUpstream();
-      cleanup();
+      cleanup(); // 含上游 notifyUpstream（幂等）
     };
-    const cleanup = signal ? this._track(() => signal.removeEventListener('abort', onAbort)) : () => {};
+    // 同 clientStream：dispose 也经 _track 通知上游 iterator（review R5 P2）
+    const cleanup = this._track(() => {
+      signal?.removeEventListener('abort', onAbort);
+      notifyUpstream();
+    });
 
     let rejectInit: (e: unknown) => void = () => {};
     let entry: PendingEntry = { onMessage: () => false };
@@ -469,8 +476,7 @@ export class ChannelClientBinding implements ClientBinding {
 
     // 同 serverStream：消费端提前退出要通知服务端，否则下游停了、上游还在产出
     queue.onReturn(() => {
-      cleanup();
-      notifyUpstream();
+      cleanup(); // 已含 notifyUpstream（review R5 P2）
       if (this.streams.delete(streamId)) this._sendCancel({ stream: streamId });
     });
 

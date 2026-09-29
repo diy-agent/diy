@@ -31,6 +31,8 @@ export class HttpClientBinding implements ClientBinding {
   private _settles = new Set<(e: unknown) => void>();
   /** 已建立的流式队列：dispose → 本地 DISPOSED（与 channel 对齐，不再干净 done） */
   private _queues = new Set<_AsyncQueue<unknown>>();
+  /** 后台上传的上游 iterator 清理（best-effort，幂等）：dispose 与 settle 都需通知（review R5 P2） */
+  private _upstreamCleanups = new Set<() => void>();
 
   constructor(private baseUrl: string) {
     this.session = http2.connect(baseUrl);
@@ -65,6 +67,10 @@ export class HttpClientBinding implements ClientBinding {
     this._settles.clear();
     for (const q of this._queues) q.error(d);
     this._queues.clear();
+    // 后台上传的上游 iterator：best-effort 通知清理（review R5 P2 —— dispose 不会
+    // abort 调用方 signal，必须在本路径主动通知；通知不能强制打断第三方 next()）
+    for (const f of this._upstreamCleanups) f();
+    this._upstreamCleanups.clear();
     // session.close() 是**优雅关闭**：它在等所有活跃流结束，对端感知不到「客户端不要了」。
     // 必须先把在飞的流逐个 RST_STREAM —— 服务端 stream.on('close') 才会触发，
     // 进而 g.return() 收尾生成器。否则服务端继续白跑（任务 149 的放大机制）。
@@ -159,10 +165,17 @@ export class HttpClientBinding implements ClientBinding {
     // abort → 写取消帧 + 优雅结束 + 上游 return() 通知（服务端收 __cancel 会同时
     // error 输入队列并 abort 调用级 signal，与 channel 对齐，review P1）
     const upstream = chunks[Symbol.asyncIterator]();
+    let notified = false;
+    const notifyUpstream = () => {
+      if (notified) return;
+      notified = true;
+      try { void upstream.return?.(undefined)?.catch(() => {}); } catch { /* ignore */ }
+    };
+    this._upstreamCleanups.add(notifyUpstream);
     const onAbort = () => {
       try { stream.write(JSON.stringify({ __cancel: true }) + '\n'); } catch { /* ignore */ }
       try { stream.end(); } catch { /* ignore */ }
-      try { void upstream.return?.(undefined)?.catch(() => {}); } catch { /* ignore */ }
+      notifyUpstream();
     };
     if (signal) signal.addEventListener('abort', onAbort, { once: true });
 
@@ -189,6 +202,9 @@ export class HttpClientBinding implements ClientBinding {
       return parseResult<TRes>(resp);
     } finally {
       if (signal) signal.removeEventListener('abort', onAbort);
+      // dispose 与正常 settle 都通知上游 iterator（review R5 P2；幂等）
+      this._upstreamCleanups.delete(notifyUpstream);
+      notifyUpstream();
     }
   }
 
@@ -204,11 +220,15 @@ export class HttpClientBinding implements ClientBinding {
     const stream = this.request(method, 'application/x-ndjson', params);
 
     // 上游 return() 尽力通知（review P1）：abort 后若上传正挂在 next()，发 return 唤醒清理；
-    // 随队列终态移除（onSettle），不残留共享 signal 上的 listener
+    // 随队列终态/调用 settle/dispose 移除（onSettle）——不残留共享 signal 上的 listener
     const upstream = chunks[Symbol.asyncIterator]();
+    let notified = false;
     const onUpstreamAbort = () => {
+      if (notified) return;
+      notified = true;
       try { void upstream.return?.(undefined)?.catch(() => {}); } catch { /* ignore */ }
     };
+    this._upstreamCleanups.add(onUpstreamAbort);
     if (signal) signal.addEventListener('abort', onUpstreamAbort, { once: true });
 
     // 后台：边传 chunk 边读响应（http2 全双工）；上传不阻塞调用落定（review P1）
@@ -232,10 +252,15 @@ export class HttpClientBinding implements ClientBinding {
     if (status !== 200) {
       const data = await readAll(stream, options);
       if (signal) signal.removeEventListener('abort', onUpstreamAbort);
+      this._upstreamCleanups.delete(onUpstreamAbort);
       throw parseError(status, data);
     }
     const queue = createNdjsonStream(stream, options);
-    queue.onSettle(() => signal?.removeEventListener('abort', onUpstreamAbort));
+    queue.onSettle(() => {
+      signal?.removeEventListener('abort', onUpstreamAbort);
+      this._upstreamCleanups.delete(onUpstreamAbort);
+      onUpstreamAbort(); // 队列终态（dispose/断开/正常结束）→ 通知上游 iterator（幂等）
+    });
     return this._trackQueue(queue) as StreamHandle<TChOut>;
   }
 

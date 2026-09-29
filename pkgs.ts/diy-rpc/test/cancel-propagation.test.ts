@@ -647,3 +647,71 @@ describe('Review修复回归（2026-09-29）', () => {
     }
   });
 });
+
+// ═══════════════════════════════════════════════════
+//  R5 修复回归（2026-09-29：dispose 通知上传 iterator / http bidi close 收尾）
+// ═══════════════════════════════════════════════════
+
+describe('R5修复回归（2026-09-29）', () => {
+  const params = { input: {}, meta: {} };
+
+  it.each([
+    ['channel(in-memory)', channelHarness],
+    ['http2', httpHarness],
+  ] as const)('%s: 上游 next() 永挂 + dispose → 上游 iterator 收到 return() 通知（P2）', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const state = { started: false, returnCalled: false };
+    binding.on(api.drain, () => {
+      state.started = true;
+      return new Promise<number>(() => { /* 永挂 */ });
+    });
+    const hang: AsyncIterable<number> = {
+      [Symbol.asyncIterator]: () => ({
+        next: () => new Promise<IteratorResult<number>>(() => { /* 永挂 */ }),
+        return: () => {
+          state.returnCalled = true;
+          return Promise.resolve({ done: true, value: undefined });
+        },
+      }),
+    };
+    try {
+      const p = client.clientStream('drain', params, hang);
+      expect(await waitFor(() => state.started), 'handler 未启动').toBe(true);
+      client.dispose();
+      await expect(p).rejects.toMatchObject({ code: 'DISPOSED' });
+      // 修复前：dispose 只落定调用，不通知上游 iterator（return 永不被调用）
+      expect(await waitFor(() => state.returnCalled), 'dispose 后未通知上游 iterator').toBe(true);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it('http: bidi 客户端断开 → 忽略 signal 的 handler 也被生成器 return() 收尾（P2 对称性）', async () => {
+    const { binding, client, dispose } = await httpHarness.start();
+    const state = { yields: 0, finallyRan: false };
+    binding.on(api.echo, async function* () {
+      try {
+        for (;;) {
+          state.yields++;
+          yield state.yields;
+          await sleep(50);
+        }
+      } finally {
+        state.finallyRan = true;
+      }
+    });
+    try {
+      const sh = await client.bidiStream('echo', params, hangingIterable<number>());
+      const iter = sh[Symbol.asyncIterator]();
+      await iter.next();
+      client.dispose();
+      // 修复前：onClose 只 abort signal → 忽略 signal 的生成器继续白跑、永不收尾
+      expect(await waitFor(() => state.finallyRan), 'close 后未对 handler 生成器收尾').toBe(true);
+      const frozen = state.yields;
+      await sleep(120);
+      expect(state.yields).toBe(frozen);
+    } finally {
+      await dispose();
+    }
+  });
+});

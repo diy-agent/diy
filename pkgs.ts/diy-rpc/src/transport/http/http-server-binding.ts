@@ -151,14 +151,19 @@ export class HttpServerBinding extends ServerBindingCore implements ServerBindin
       return;
     }
     let aborted = false;
+    let gen: AsyncGenerator<unknown> | undefined;
     const onClose = () => {
       aborted = true;
       ctrl.abort(new RpcError('CANCELLED', 'Client disconnected'));
+      // 与 channel 的 bidi canceller 对称（review R5 P2）：忽略 signal 的在跑 handler
+      // 也获得生成器收尾保证（return 排队到当前 await 结束，finally 必跑）
+      if (gen) void gen.return?.(undefined).catch(() => {});
     };
     stream.on('close', onClose);
 
     try {
-      for await (const out of fn(params, incoming, ctrl.signal)) {
+      gen = fn(params, incoming, ctrl.signal);
+      for await (const out of gen) {
         if (aborted) break;
         safeWrite(stream, JSON.stringify({ v: out }) + '\n');
       }
