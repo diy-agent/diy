@@ -223,7 +223,15 @@ export class HttpClientBinding implements ClientBinding {
     // 随队列终态/调用 settle/dispose 移除（onSettle）——不残留共享 signal 上的 listener
     const upstream = chunks[Symbol.asyncIterator]();
     let notified = false;
+    let sentCancel = false;
     const onUpstreamAbort = () => {
+      // signal abort 语义下补发显式取消帧（与 clientStream 对称）：Node http2 客户端 RST 在服务端
+      // 表现为 end→aborted→close，'end' 先到会被 body reader 误判为正常结束，已启动的 handler
+      // 观察不到取消（意图测试 C2：bidi handler signal.aborted）
+      if (!sentCancel && signal?.aborted) {
+        sentCancel = true;
+        try { stream.write('{"__cancel":true}\n'); } catch { /* 流已断 */ }
+      }
       if (notified) return;
       notified = true;
       try { void upstream.return?.(undefined)?.catch(() => {}); } catch { /* ignore */ }
@@ -396,12 +404,12 @@ function createNdjsonStream(stream: ClientHttp2Stream, options?: CallOptions): _
       let f: { v?: unknown; e?: _ErrorPayload } | null = null;
       try { f = JSON.parse(line); } catch { continue; }
       if (!f) continue;
-      if (f.e) { q.error(_fromErrorPayload(f.e)); return; }
+      if (f.e) { q.error(_fromErrorPayload(f.e), { drain: true }); return; }
       if ('v' in f) q.push(f.v);
     }
   });
   stream.on('end', () => q.end());
-  stream.on('error', (e) => q.error(e instanceof Error ? e : new Error(String(e))));
+  stream.on('error', (e) => q.error(e instanceof Error ? e : new Error(String(e)), { drain: true }));
 
   const signal = options?.signal;
   let onAbort: (() => void) | undefined;

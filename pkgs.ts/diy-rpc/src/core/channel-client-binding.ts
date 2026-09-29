@@ -15,7 +15,8 @@ interface PendingEntry {
 
 interface StreamEntry {
   push: (value: unknown) => void;
-  end: (error?: _ErrorPayload) => void;
+  /** `drain`：远端错误帧 = true（先交付已缓冲值再抛错）；本地终态（dispose）省略 */
+  end: (error?: _ErrorPayload, opts?: { drain?: boolean }) => void;
 }
 
 export class ChannelClientBinding implements ClientBinding {
@@ -50,7 +51,7 @@ export class ChannelClientBinding implements ClientBinding {
         const entry = this.streams.get(msg.stream);
         if (entry) {
           this.streams.delete(msg.stream);
-          entry.end(msg.error);
+          entry.end(msg.error, { drain: true });
         }
       }
       // 'cancel' 是 client→server 单向帧，客户端不收
@@ -212,9 +213,9 @@ export class ChannelClientBinding implements ClientBinding {
             streamId = msg.stream as number;
             this.streams.set(streamId, {
               push: (val) => queue.push(val as TYield),
-              end: (err) => {
+              end: (err, opts) => {
                 cleanup(); // 服务端终态（完成/错误）：移除 abort listener
-                if (err) queue.error(_fromErrorPayload(err));
+                if (err) queue.error(_fromErrorPayload(err), opts);
                 else queue.end();
               },
             });
@@ -443,9 +444,9 @@ export class ChannelClientBinding implements ClientBinding {
             streamId = msg.stream as number;
             this.streams.set(streamId, {
               push: (val) => queue.push(val as TChunkOut),
-              end: (err) => {
+              end: (err, opts) => {
                 cleanup();
-                if (err) queue.error(_fromErrorPayload(err));
+                if (err) queue.error(_fromErrorPayload(err), opts);
                 else queue.end();
               },
             });
