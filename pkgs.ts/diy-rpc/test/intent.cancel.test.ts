@@ -290,6 +290,37 @@ describe('C4 dispose 是「本地关闭」：以 DISPOSED 落定（与 CANCELLED
       await dispose();
     }
   });
+
+  it.each(transports)('%s: clientStream——上传挂起时 dispose → DISPOSED', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const cli = createTypedClient(client, api);
+    binding.on(api.collect, () => new Promise<{ tag: string; sum: number }>(() => { /* 永挂 */ }));
+    try {
+      const p = cli.collect({ tag: 'x' }, hangingIterable<number>());
+      await sleep(20);
+      client.dispose();
+      await expect(p).rejects.toMatchObject({ code: 'DISPOSED' });
+    } finally {
+      await dispose();
+    }
+  });
+
+  it.each(transports)('%s: bidiStream——双向进行中 dispose → 输出迭代以 DISPOSED 结束', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const cli = createTypedClient(client, api);
+    binding.on(api.chat, async function* ({ stream }) {
+      for await (const m of stream) yield m;
+    });
+    try {
+      const stream = await cli.chat({ room: 'r' }, hangingIterable<string>());
+      const iter = stream[Symbol.asyncIterator]();
+      await sleep(20);
+      client.dispose();
+      await expect(iter.next()).rejects.toMatchObject({ code: 'DISPOSED' });
+    } finally {
+      await dispose();
+    }
+  });
 });
 
 // ═══════════════════════════════════════════════════
