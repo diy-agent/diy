@@ -186,6 +186,9 @@ export class HttpClientBinding implements ClientBinding {
     void (async () => {
       try {
         for (;;) {
+          // 终态后不再拉取：drain 被 close/error 唤醒后在此止步，不回到下一次 next()
+          // （R16 P1：在途 next 不可撤销，终态后新拉取会让协程悬挂）
+          if (signal?.aborted || remoteSettled) break;
           const n = await upstream.next();
           if (n.done) break;
           // 终态后不再拉取/发送（review R10 P1）：在途 next 无法撤销，但返回后必须停
@@ -251,6 +254,9 @@ export class HttpClientBinding implements ClientBinding {
     void (async () => {
       try {
         for (;;) {
+          // 终态后不再拉取：drain 被 close/error 唤醒后在此止步，不回到下一次 next()
+          // （R16 P1：与 clientStream 对称）
+          if (signal?.aborted || remoteEnded) break;
           const n = await upstream.next();
           if (n.done) break;
           // 终态后不再拉取/发送（review R10 P1）：在途 next 无法撤销，但返回后必须停
@@ -323,8 +329,10 @@ export class HttpClientBinding implements ClientBinding {
 //  helpers
 // ═══════════════════════════════════════════════════
 
-/** 等 drain；流 close/error 也唤醒（终态后不得悬挂在背压等待中，review R12 P1） */
+/** 等 drain；流 close/error 也唤醒（终态后不得悬挂在背压等待中，review R12 P1）。注册前后
+ *  各查一次 closed/destroyed：同步代码内事件无法插入两检之间，夹住「事件先于注册」竞态（R16）。 */
 function onceDrain(stream: ClientHttp2Stream): Promise<void> {
+  if (stream.closed || stream.destroyed) return Promise.resolve();
   return new Promise((r) => {
     const done = () => {
       stream.removeListener('drain', done);
@@ -335,6 +343,7 @@ function onceDrain(stream: ClientHttp2Stream): Promise<void> {
     stream.once('drain', done);
     stream.once('close', done);
     stream.once('error', done);
+    if (stream.closed || stream.destroyed) done();
   });
 }
 

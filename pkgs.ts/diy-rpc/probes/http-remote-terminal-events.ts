@@ -28,13 +28,16 @@ async function main() {
   };
 
   try {
-    await client.clientStream('collect', { input: {}, meta: {} }, delayedChunks);
+    // 流引用与事件监听在 await 前挂载：终态收束同步移出集合后集合已空，
+    // 且 finish/end/close 事件在调用完成前就已发出（R16 §三 取流时机修正）
+    const pending = client.clientStream('collect', { input: {}, meta: {} }, delayedChunks);
     const stream = [...(client as unknown as { activeStreams: Set<http2.ClientHttp2Stream> }).activeStreams][0] as any;
     for (const event of ['finish', 'end', 'close', 'aborted', 'error']) {
       stream?.on(event, (error: Error & { code?: string }) => {
         console.log('[client event]', event, error?.code ?? '');
       });
     }
+    await pending;
     const snapshot = () => ({
       activeStreams: (client as unknown as { activeStreams: Set<unknown> }).activeStreams.size,
       closed: stream?.closed,

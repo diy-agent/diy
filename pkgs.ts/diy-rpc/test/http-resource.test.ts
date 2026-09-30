@@ -112,4 +112,47 @@ describe('HTTP 资源收束（实现级，review R12/R13）', () => {
       await dispose();
     }
   });
+
+  it('R16：write=false 后永无 drain，远端终态唤醒 → 不得再拉取上游', async () => {
+    const { binding, client, dispose } = await httpHarness.start();
+    const cli = createTypedClient(client, api);
+    binding.on(api.collect, async () => ({ tag: 'x', sum: 0 }));
+    // 强制第一次大写入返回 false 且永无 drain：唤醒只能来自远端终态的 close。
+    // 未修复实现：onceDrain 被 close 唤醒后回到 for 顶部再次 upstream.next()，
+    // 第二次拉取永挂 → 后台上传协程悬挂（R16 P1）。
+    const state = { forced: false, forcedCount: 0 };
+    const runtime = client as unknown as {
+      request: (...args: unknown[]) => { write: (chunk: string) => boolean };
+    };
+    const originalRequest = runtime.request.bind(client);
+    runtime.request = ((...args: unknown[]) => {
+      const stream = originalRequest(...args) as { write: (chunk: string) => boolean };
+      const write = stream.write.bind(stream);
+      stream.write = ((chunk: string) => {
+        const ok = write(chunk);
+        if (!state.forced && String(chunk).length > 1000) {
+          state.forced = true;
+          state.forcedCount++;
+          return false; // 背压信号，但不产生 drain 事件
+        }
+        return ok;
+      }) as typeof stream.write;
+      return stream;
+    }) as typeof runtime.request;
+    const s = { next: 0, ret: 0 };
+    const iter = trackedUpstream<string>(s, (n) =>
+      n === 1 ? { done: false, value: 'x'.repeat(4096) } : { done: false, value: HANG as unknown as string },
+    );
+    try {
+      const resp = (await (cli.collect as unknown as (p: { tag: string }, i: AsyncIterable<string>) => Promise<{ tag: string }>)({ tag: 'x' }, iter)) as { tag: string };
+      expect(resp.tag).toBe('x');
+      expect(state.forcedCount, '未进入强制背压窗口（write 未被强制 false）').toBe(1);
+      await sleep(300); // 给未修复实现发起第二次拉取的时间（R16 probe 同口径）
+      expect(s.next, 'drain 被终态唤醒后又拉取了上游（R16 P1 回归）').toBe(1);
+      expect(s.ret, '终态后上游未收到 return 通知').toBeGreaterThan(0);
+      expect(await waitFor(() => activeStreams(client).size === 0), '背压终态后 request stream 未收敛').toBe(true);
+    } finally {
+      await dispose();
+    }
+  });
 });
