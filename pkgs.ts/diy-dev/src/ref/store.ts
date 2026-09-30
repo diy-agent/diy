@@ -223,7 +223,8 @@ export function addSource(dir: string, spec: string): string {
 
 /** 按 owner/repo、完整 URL、或 diy.yaml 原字符串移除；找到返回其 spec，未找到返回 null。 */
 export function removeSource(dir: string, name: string): string | null {
-    ensureDiyYaml(dir);
+    // 不 ensureDiyYaml：无 diy.yaml 时直接「未找到」，不先建空文件（190 核对表 #10）
+    if (!existsSync(join(dir, "diy.yaml"))) return null;
     const specs = listSpecs(dir);
     const needle = name.trim();
     const hitIdx = specs.findIndex((s) => {
