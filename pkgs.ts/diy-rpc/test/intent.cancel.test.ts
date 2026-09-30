@@ -27,6 +27,9 @@
  *   C14 正常完成不触发取消：调用正常成功后，服务端 handler 的 signal 不得被 abort
  *       （close/RST 监听必须只反映真取消，不误伤正常结束）
  *
+ *   C15 上传源错误必须传播：chunks 迭代抛错 → 调用以 STREAM_ERROR 失败，不得伪成功
+ *       （传输无关：channel 经 end{error} 帧，HTTP 本地落定，断言码一致）
+ *
  *   N1  async generator 语义边界：return 请求不打断 await（至下一个 yield 才收尾）；
  *       服务端收尾最迟发生在下一帧产出点。self-iterable 不受此限（C7/C8 场景）
  *   N2  dispose 不 abort 调用方传入的 signal——signal 生命周期归调用方所有
@@ -356,6 +359,17 @@ describe('C4 dispose 是「本地关闭」：以 DISPOSED 落定（与 CANCELLED
       await sleep(20);
       client.dispose();
       await expect(iter.next()).rejects.toMatchObject({ code: 'DISPOSED' });
+    } finally {
+      await dispose();
+    }
+  });
+  it.each(transports)('%s: dispose 后发起新调用 → DISPOSED（新请求不得走线）', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const cli = createTypedClient(client, api);
+    binding.on(api.echo, ({ input }) => input.v);
+    try {
+      client.dispose();
+      await expect(cli.echo({ v: 1 })).rejects.toMatchObject({ code: 'DISPOSED' });
     } finally {
       await dispose();
     }
@@ -789,6 +803,34 @@ describe('C14 正常完成不触发取消：handler 的 signal 保持未 abort',
       await sleep(100);
       expect(captured!.aborted, '正常完成不得 abort handler signal').toBe(false);
       expect(aborts, '正常完成不得触发取消监听').toBe(0);
+    } finally {
+      await dispose();
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════
+//  C15 上传源错误传播（R19 P1-2）
+// ═══════════════════════════════════════════════════
+
+describe('C15 上传源错误必须传播：chunks 迭代抛错 → 调用失败，不得伪成功', () => {
+  it.each(transports)('%s: 上传源第二次拉取抛错 → 以 STREAM_ERROR 落定', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const cli = createTypedClient(client, api);
+    binding.on(api.collect, async ({ stream }) => {
+      let count = 0;
+      for await (const _ of stream) count++;
+      return { tag: 'src', sum: count };
+    });
+    try {
+      async function* broken(): AsyncGenerator<number> {
+        yield 1;
+        throw new Error('upload-source-failed');
+      }
+      // 服务端会正常处理已收到的 1 个 chunk——调用必须仍以错误落定
+      // （HTTP 缺陷：曾返回服务端成功的 sum=1，伪成功）
+      await expect(cli.collect({ tag: 'src' }, broken()))
+        .rejects.toMatchObject({ code: 'STREAM_ERROR' });
     } finally {
       await dispose();
     }

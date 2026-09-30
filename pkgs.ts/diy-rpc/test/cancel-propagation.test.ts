@@ -29,7 +29,8 @@ import { z } from 'zod';
 import { RpcSchema, RpcError } from '../src/index';
 import { channelHarness, httpHarness, wsHarness, type TransportHarness } from './harness';
 import { createMemTransportPair } from './helpers';
-import { ChannelServerBinding } from '../src/core';
+import { ChannelClientBinding, ChannelServerBinding } from '../src/core';
+import type { EnvelopeTransport, _Envelope } from '../src/core/types';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -711,6 +712,56 @@ describe('R5修复回归（2026-09-29）', () => {
       expect(await waitFor(() => state.returnCalled), 'close 后未调用 self-iterable 的 return()').toBe(true);
     } finally {
       await dispose();
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════
+//  init 窗口放弃（R19 P0/P1-1）
+// ═══════════════════════════════════════════════════
+
+describe('init 窗口放弃（TIMEOUT）也是消费端离开：服务端 handler 必须收尾', () => {
+  it('channel：ack 延迟超过 timeout → 客户端 TIMEOUT，服务端 signal abort + finally', async () => {
+    const [serverTx, clientTx] = createMemTransportPair();
+    // server→client 延迟 100ms：ack 落在 timeout=20ms 窗口之外（R19 P0 复现条件——
+    // init timeout 此前只落客户端：本地 TIMEOUT 拒绝，服务端 handler 继续白跑）
+    const delayed: EnvelopeTransport = {
+      send(payload: unknown) { setTimeout(() => serverTx.send(payload), 100); },
+      on(handler: (msg: _Envelope) => void) { return serverTx.on(handler); },
+      onClose(handler: () => void) { return serverTx.onClose(handler); },
+    };
+    const server = new ChannelServerBinding(delayed);
+    const client = new ChannelClientBinding(clientTx);
+    const state = { started: false, aborted: false, finallyRan: false, yields: 0 };
+    server.on(api.tick, async function* ({ signal }) {
+      state.started = true;
+      signal.addEventListener('abort', () => { state.aborted = true; }, { once: true });
+      try {
+        for (;;) {
+          state.yields++;
+          yield 1;
+          await sleep(10);
+        }
+      } finally {
+        state.finallyRan = true;
+      }
+    });
+    try {
+      let clientError = '';
+      await client
+        .serverStream('tick', { input: {}, meta: {} }, { timeout: 20 })
+        .catch((e: unknown) => { clientError = String((e as RpcError)?.code ?? e); });
+      expect(clientError, '客户端必须以 TIMEOUT 落定').toBe('TIMEOUT');
+      expect(state.started, '前提：服务端 handler 应已启动').toBe(true);
+      expect(
+        await waitFor(() => state.aborted && state.finallyRan, 900),
+        `init timeout 后服务端必须收尾（aborted=${state.aborted} finallyRan=${state.finallyRan}）`,
+      ).toBe(true);
+      await expectSettled(state, 'init timeout');
+    } finally {
+      server.destroy();
+      client.dispose();
+      await sleep(100);
     }
   });
 });

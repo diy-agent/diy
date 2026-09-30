@@ -10,6 +10,7 @@
  * 背压（write 返回 false）时上传协程还可能永久挂在 drain 等待。
  */
 import { describe, it, expect } from 'vitest';
+import * as http2 from 'node:http2';
 import { z } from 'zod';
 import { httpHarness } from './harness';
 import { RpcSchema } from '../src/core/rpc';
@@ -151,6 +152,53 @@ describe('HTTP 资源收束（实现级，review R12/R13）', () => {
       expect(s.next, 'drain 被终态唤醒后又拉取了上游（R16 P1 回归）').toBe(1);
       expect(s.ret, '终态后上游未收到 return 通知').toBeGreaterThan(0);
       expect(await waitFor(() => activeStreams(client).size === 0), '背压终态后 request stream 未收敛').toBe(true);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it('R18：write=false 后 close 先于响应终态唤醒 → 不得再拉取上游', async () => {
+    const { binding, client, dispose } = await httpHarness.start();
+    const cli = createTypedClient(client, api);
+    // 远端 handler 永不返回：没有正常响应终态，唤醒只能来自传输 close/error。
+    // 未修复实现：onceDrain 被 close 唤醒后 remoteSettled 仍为 false（拒绝传播
+    // 尚未走到 finally），顶部门控放行 → 再次 upstream.next() 永挂（R18 probe 实测 next=2）。
+    binding.on(api.collect, () => new Promise<{ tag: string; sum: number }>(() => { /* 永不返回 */ }));
+    const state = { forced: 0 };
+    const runtime = client as unknown as {
+      request: (...args: unknown[]) => http2.ClientHttp2Stream;
+    };
+    const originalRequest = runtime.request.bind(client);
+    runtime.request = ((...args: unknown[]) => {
+      const stream = originalRequest(...args);
+      const write = stream.write.bind(stream);
+      stream.write = ((chunk: string) => {
+        const ok = write(chunk);
+        if (state.forced === 0 && String(chunk).length > 10) {
+          state.forced++;
+          // close 发生在 onceDrain 注册之后、响应终态之前（R18 时序）
+          queueMicrotask(() => {
+            try { stream.close(http2.constants.NGHTTP2_CANCEL); } catch { /* 流已断 */ }
+          });
+          return false;
+        }
+        return ok;
+      }) as typeof stream.write;
+      return stream;
+    }) as typeof runtime.request;
+    const s = { next: 0, ret: 0 };
+    const iter = trackedUpstream<string>(s, (n) =>
+      n === 1 ? { done: false, value: 'x'.repeat(4096) } : { done: false, value: HANG as unknown as string },
+    );
+    try {
+      await expect(
+        (cli.collect as unknown as (p: { tag: string }, i: AsyncIterable<string>) => Promise<unknown>)({ tag: 'x' }, iter),
+      ).rejects.toMatchObject({ code: 'CANCELLED' });
+      expect(state.forced, '未进入强制背压窗口').toBe(1);
+      await sleep(300); // 给未修复实现发起第二次拉取的时间（R18 probe 同口径）
+      expect(s.next, 'close 唤醒后又拉取了上游（R18 P1 回归）').toBe(1);
+      expect(s.ret, 'close 后上游未收到 return 通知').toBeGreaterThan(0);
+      expect(await waitFor(() => activeStreams(client).size === 0), 'close 后 request stream 未收敛').toBe(true);
     } finally {
       await dispose();
     }

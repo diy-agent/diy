@@ -206,7 +206,13 @@ export class HttpClientBinding implements ClientBinding {
 
     try {
       const resp = await this._track(collectResponse(stream, options));
-      if (uploadErr) throw uploadErr;
+      if (uploadErr) {
+        // 上传源错误不得伪成功（R19 P1-2）：以 STREAM_ERROR 落定，与 channel 的
+        // end{error: STREAM_ERROR} 帧语义对齐；消息保留原始错误便于定位
+        throw uploadErr instanceof RpcError
+          ? uploadErr
+          : new RpcError('STREAM_ERROR', String((uploadErr as Error)?.message ?? uploadErr));
+      }
       return parseResult<TRes>(resp);
     } finally {
       remoteSettled = true; // 终态（成功/错误/异常）后封锁上传
