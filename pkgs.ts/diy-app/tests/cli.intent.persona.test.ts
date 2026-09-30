@@ -650,6 +650,76 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         expect(byline).toContain("mimo-v2.6-flash");
     });
 
+    it("署名以**该轮会话记录**为准，不是当前人物配置的投影（改绑定/改缺省不改写历史）", async () => {
+        // 任务 196：原先署名读"当前绑定人物/缺省"，于是改一次 personas.yaml 的 default，
+        // 全部历史回复的署名一起被改写 —— ops 里明明是 mimo，界面却署名大副。
+        // 本用例锁：每轮署名各自显示**该轮** turn.meta.model；无记录的旧轮次标注为推断。
+        const 名 = uniq("署名人");
+        const id = await addPersona(名, "mimo-v2.6-flash");
+        const uri = await setupTask("署名事实任务");
+        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
+        const ops = join(fx.HOME, "local", `${sessionKey(uri)}.ops.jsonl`);
+        mkdirSync(join(fx.HOME, "local"), { recursive: true });
+        const turn = (tid: string, model: string | undefined, say: string) => [
+            {
+                op: "start",
+                id: tid,
+                kind: "turn",
+                ...(model === undefined ? {} : { meta: { model } }),
+            },
+            { op: "start", id: `${tid}_u`, kind: "text", parent: tid, meta: { role: "user" } },
+            { op: "delta", id: `${tid}_u`, fields: { content: "你好" } },
+            { op: "stop", id: `${tid}_u` },
+            { op: "start", id: `${tid}_a`, kind: "text", parent: tid, meta: { role: "assistant" } },
+            { op: "delta", id: `${tid}_a`, fields: { content: say } },
+            { op: "stop", id: `${tid}_a` },
+            { op: "stop", id: tid },
+        ];
+        const lines = [
+            ...turn("t1", "mimo-v2.6-flash", "第一轮。"), // 与本任务绑定人物一致
+            ...turn("t2", "deepseek-v4.1-flash", "第二轮。"), // 换绑/改缺省之前的历史轮
+            ...turn("t3", undefined, "第三轮。"), // 旧格式：没有 model 记录
+        ];
+        writeFileSync(ops, lines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf-8");
+
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        const bylines = async () =>
+            ui!.eval<string[]>(`(() => {
+                return [...document.querySelectorAll('[data-testid="assistant-byline"]')]
+                    .map((el) => (el.textContent ?? "") + "|" + (el.getAttribute("data-inferred") ?? ""));
+            })()`);
+        const got = await waitUntil(bylines, (v) => v.length === 3, {
+            label: "三轮署名都渲染出来",
+        });
+
+        // ① 该轮 model 与当前人物一致 → 名字 + 该轮模型，且不是推断
+        expect(got[0]).toContain(名);
+        expect(got[0]).toContain("mimo-v2.6-flash");
+        expect(got[0]).not.toContain("|1"); // 无 data-inferred
+        // ② 该轮记录的是**另一个**模型 → 显示该轮模型；绝不显示当前人物的名字去顶替
+        expect(got[1]).toContain("deepseek-v4.1-flash");
+        expect(got[1]).not.toContain("mimo-v2.6-flash");
+        expect(got[1]).not.toContain(名);
+        // ③ 旧轮次无记录 → 回落当前人物，但**明确标注为推断**（不假装确定）
+        expect(got[2]).toContain(名);
+        expect(got[2]).toContain("当时人物未知");
+        expect(got[2]).toContain("|1");
+
+        // 反向护栏：任务绑定（换绑）不该改写**已发生**轮次的署名 —— 换到另一个模型的人物后重开
+        const 别 = await addPersona(uniq("别人"), "gpt-6-luna");
+        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${别}`);
+        await fx.sh.getJson(`./diy.sh ui tab close active`);
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        const after = await waitUntil(
+            bylines,
+            (v) => v.length === 3 && v[1]!.includes("deepseek-v4.1-flash"),
+            { label: "换绑后署名仍是各轮事实" },
+        );
+        expect(after[0]).toContain("mimo-v2.6-flash"); // t1 事实不变
+        expect(after[1]).toContain("deepseek-v4.1-flash"); // t2 事实不变
+        expect(after[1]).not.toContain("gpt-6-luna"); // 新绑定不得污染历史
+    });
+
     it("人物搜索：按字段过滤并高亮；Esc/清除恢复列表；无结果有提示", async () => {
         const 名 = uniq("搜索人物");
         await addPersona(
@@ -672,12 +742,15 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
                 `document.querySelectorAll('${root} button[aria-label^="人物 "]').length`,
             );
         await waitUntil(
-            async () => ui!.eval<boolean>(`!!document.querySelector('${root} [aria-label="人物 ${名}"]')`),
+            async () =>
+                ui!.eval<boolean>(`!!document.querySelector('${root} [aria-label="人物 ${名}"]')`),
             (visible) => visible,
             { label: "新建人物已出现在列表" },
         );
         const typeQuery = async (query: string) => {
-            const value = await ui!.eval<string>(`document.querySelector('${search}')?.value ?? ''`);
+            const value = await ui!.eval<string>(
+                `document.querySelector('${search}')?.value ?? ''`,
+            );
             if (value) await ui!.clickSelector(`${root} [aria-label="清除人物搜索"]`);
             await ui!.clickSelector(search);
             await ui!.type(query);
