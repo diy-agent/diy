@@ -205,8 +205,8 @@ export class HttpClientBinding implements ClientBinding {
       return parseResult<TRes>(resp);
     } finally {
       remoteSettled = true; // 终态（成功/错误/异常）后封锁上传
-      // 远端终态后仍需结束 request-side：仅停写会留下半开流，滞留 activeStreams（review R12 P1）
-      try { stream.end(); } catch { /* 已断开 */ }
+      // 远端终态后主动收束 request-side（review R12/R13）：仅停写/半关会留下半开流
+      this._settleStream(stream);
       if (signal) signal.removeEventListener('abort', onAbort);
       // dispose 与正常 settle 都通知上游 iterator（review R5 P2；幂等）
       this._upstreamCleanups.delete(notifyUpstream);
@@ -269,7 +269,7 @@ export class HttpClientBinding implements ClientBinding {
     if (status !== 200) {
       const data = await readAll(stream, options);
       remoteEnded = true;
-      try { stream.end(); } catch { /* 已断开 */ } // 早错也是终态：结束 request-side（review R12 P1）
+      this._settleStream(stream); // 早错也是终态：主动收束 request-side（review R12/R13）
       if (signal) signal.removeEventListener('abort', onUpstreamAbort);
       this._upstreamCleanups.delete(onUpstreamAbort);
       onUpstreamAbort(); // 早错也是终态：通知上游 iterator（review R10 同族缺口，幂等）
@@ -278,7 +278,7 @@ export class HttpClientBinding implements ClientBinding {
     const queue = createNdjsonStream(stream, options);
     queue.onSettle(() => {
       remoteEnded = true; // 队列终态（正常结束/断开/dispose）
-      try { stream.end(); } catch { /* 已断开 */ } // 结束 request-side（review R12 P1）
+      this._settleStream(stream); // 队列终态：主动收束 request-side（review R12/R13）
       signal?.removeEventListener('abort', onUpstreamAbort);
       this._upstreamCleanups.delete(onUpstreamAbort);
       onUpstreamAbort(); // 队列终态（dispose/断开/正常结束）→ 通知上游 iterator（幂等）
@@ -300,6 +300,22 @@ export class HttpClientBinding implements ClientBinding {
     this.activeStreams.add(stream);
     stream.once('close', () => this.activeStreams.delete(stream));
     return stream;
+  }
+
+  /**
+   * 终态主动收束 request-side（review R12/R13 验收）：RST_STREAM 关闭流并**同步**移出
+   * activeStreams —— 不依赖后续 HTTP/2 close 事件才收束。安全性：RPC 终态 = 响应已入队/
+   * 已解析完毕，此时主动 RST 不会丢弃调用方仍需要的数据。
+   */
+  private _settleStream(stream: ClientHttp2Stream): void {
+    this.activeStreams.delete(stream);
+    if (!stream.closed && !stream.destroyed) {
+      try {
+        stream.close(http2.constants.NGHTTP2_CANCEL);
+      } catch {
+        // 流已在关闭途中：忽略（close 事件兜底删除）
+      }
+    }
   }
 }
 
