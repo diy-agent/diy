@@ -183,20 +183,21 @@ export class HttpClientBinding implements ClientBinding {
 
     // 上传后台化（review P1）：上游 next() 不可取消地挂起时，调用落定不得被拖住 ——
     // collectResponse 不等上传；abort 后服务端经 __cancel 立即收尾并回响应
+    let uploadErr: unknown;
     void (async () => {
       try {
         for (;;) {
-          // 终态后不再拉取：drain 被 close/error 唤醒后在此止步，不回到下一次 next()
-          // （R16 P1：在途 next 不可撤销，终态后新拉取会让协程悬挂）
-          if (signal?.aborted || remoteSettled) break;
+          // 终态/流关闭后不再拉取：drain 被 close/error 唤醒后在此止步（R16 P1 + R18）
+          if (signal?.aborted || remoteSettled || stream.closed || stream.destroyed) break;
           const n = await upstream.next();
           if (n.done) break;
           // 终态后不再拉取/发送（review R10 P1）：在途 next 无法撤销，但返回后必须停
-          if (signal?.aborted || remoteSettled) break;
+          if (signal?.aborted || remoteSettled || stream.closed || stream.destroyed) break;
           if (!stream.write(JSON.stringify(n.value) + '\n')) await onceDrain(stream);
         }
-      } catch {
-        /* 上游迭代出错则中止上传 */
+      } catch (e) {
+        uploadErr = e;
+        // 上游迭代出错则中止上传（不吞错——R19 P1-2）
       }
       if (!signal?.aborted && !remoteSettled) {
         try { stream.end(); } catch { /* 已断开 */ }
@@ -205,6 +206,7 @@ export class HttpClientBinding implements ClientBinding {
 
     try {
       const resp = await this._track(collectResponse(stream, options));
+      if (uploadErr) throw uploadErr;
       return parseResult<TRes>(resp);
     } finally {
       remoteSettled = true; // 终态（成功/错误/异常）后封锁上传
@@ -254,13 +256,12 @@ export class HttpClientBinding implements ClientBinding {
     void (async () => {
       try {
         for (;;) {
-          // 终态后不再拉取：drain 被 close/error 唤醒后在此止步，不回到下一次 next()
-          // （R16 P1：与 clientStream 对称）
-          if (signal?.aborted || remoteEnded) break;
+          // 终态/流关闭后不再拉取：drain 被 close/error 唤醒后在此止步（R16 P1 + R18）
+          if (signal?.aborted || remoteEnded || stream.closed || stream.destroyed) break;
           const n = await upstream.next();
           if (n.done) break;
           // 终态后不再拉取/发送（review R10 P1）：在途 next 无法撤销，但返回后必须停
-          if (signal?.aborted || remoteEnded) break;
+          if (signal?.aborted || remoteEnded || stream.closed || stream.destroyed) break;
           if (!stream.write(JSON.stringify(n.value) + '\n')) await onceDrain(stream);
         }
       } catch {
@@ -295,6 +296,7 @@ export class HttpClientBinding implements ClientBinding {
   // ── 内部 ─────────────────────────────────────────
 
   private request(method: string, contentType: string, params?: unknown): ClientHttp2Stream {
+    if (this.disposed) throw new RpcError('DISPOSED', 'Client disposed');
     const headers: Record<string, string> = {
       ':path': `/${method}`,
       ':method': 'POST',

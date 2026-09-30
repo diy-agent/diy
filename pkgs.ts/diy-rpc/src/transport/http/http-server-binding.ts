@@ -250,7 +250,10 @@ function createBodyReader(stream: ServerHttp2Stream, onCancel?: () => void): _As
           return;
         }
         q.push(v);
-      } catch { /* 跳过非法行 */ }
+      } catch {
+        q.error(new RpcError('INVALID_ARGUMENT', 'Malformed NDJSON chunk'));
+        return;
+      }
     }
   });
   const onEnd = () => { finished = true; q.end(); };

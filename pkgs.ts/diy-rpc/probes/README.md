@@ -73,9 +73,57 @@ PASS: terminal drain wake-up stops before another upstream.next()
 
 定位：`src/transport/http/http-client-binding.ts` 的 clientStream 上传循环约 186–201 行、bidi 上传循环约 250–266 行，以及 `onceDrain` 约 326–338 行。修复应在每轮开始和 `onceDrain()` 返回后检查 `signal.aborted || remoteSettled/remoteEnded`，并保留 `stream.closed/destroyed` 的注册前后检查。
 
+## R18 close/error drain 竞态（当前应失败）
+
+精确复现脚本：
+
+```bash
+cd /Users/ccc/git/diy/_diy.worktrees/rpc-cancel/pkgs.ts/diy-rpc
+npx tsx probes/http-drain-close-before-response.ts
+```
+
+与 R16 的区别：这里 handler 不返回，RPC response 尚未正常终态；request stream 在 `write=false` 后先 close/error。当前缺陷代码可能输出：
+
+```text
+[drain-close-before-response] { next: 2, returned: 1, forcedWriteFalse: 1, clientError: 'CANCELLED' }
+[drain-close-before-response] expected next=1, returned>0: false
+FAIL: close/error wake-up started another upstream.next()
+```
+
+修复后必须输出 `next=1`、`returned>0` 并 PASS。原因是 close/error 本身就是上传不可继续的终态，即使 `remoteSettled` 尚未由正常 response 设置，也不能再次调用用户的 `upstream.next()`。
+
 ## 背压分支的一般语义
 
 `HttpClientBinding` 的上传循环在 `stream.write()` 返回 `false` 时进入 `await onceDrain(stream)`。终态/close/error 应唤醒等待；上传循环不得再拉取下一项、不得继续发送，且应调用上游 `return()`、收束 request stream、清空 `activeStreams`。不能只证明 `activeStreams` 最终归零，还要证明 `next` 次数没有越过终态边界。
+
+## R19 全量问题复现入口
+
+一次性运行当前已确认的问题 probe：
+
+```bash
+cd /Users/ccc/git/diy/_diy.worktrees/rpc-cancel/pkgs.ts/diy-rpc
+for p in \
+  channel-init-timeout-leak.ts \
+  http-upload-source-error.ts \
+  http-malformed-input.ts \
+  http-dispose-new-request.ts \
+  http-drain-close-before-response.ts; do
+  echo "=== $p ==="
+  npx tsx "probes/$p" || true
+done
+```
+
+当前 HEAD 的确认结果：
+
+| Probe | 当前结果 | 问题 |
+|---|---|---|
+| `channel-init-timeout-leak.ts` | FAIL，`TIMEOUT` 后 server `started=true/finallyRan=false/yields>0` | init timeout 只落客户端，服务端继续跑 |
+| `http-upload-source-error.ts` | FAIL，调用返回 `1` | 上传 AsyncIterable 异常被吞掉 |
+| `http-malformed-input.ts` | FAIL，非法 NDJSON chunk 返回 HTTP 200/result=0 | malformed chunk 被静默丢弃 |
+| `http-dispose-new-request.ts` | FAIL，返回 `ERR_HTTP2_GOAWAY_SESSION` | dispose 后新请求未统一为 `RpcError(DISPOSED)` |
+| `http-drain-close-before-response.ts` | FAIL，`next=2` | close/error 先于 response 时仍再次拉取 upstream |
+
+这些 probe 都是独立脚本，不属于 Vitest 正式套件；修复后应把对应场景转成正式回归，并要求输出 PASS。
 
 ## DeepSeek 复核步骤
 

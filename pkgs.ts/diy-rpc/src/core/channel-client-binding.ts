@@ -233,8 +233,9 @@ export class ChannelClientBinding implements ClientBinding {
 
       if (timeout != null && timeout > 0) {
         entry.timer = setTimeout(() => {
-          this.pending.delete(id);
+          const had = this.pending.delete(id);
           cleanup();
+          if (had) this._sendCancel({ id }, new RpcError('TIMEOUT', `Server stream init timed out after ${timeout}ms`));
           reject(new RpcError('TIMEOUT', `Server stream init timed out after ${timeout}ms`));
         }, timeout);
       }
@@ -351,8 +352,9 @@ export class ChannelClientBinding implements ClientBinding {
 
       if (timeout != null && timeout > 0) {
         entry.timer = setTimeout(() => {
-          this.pending.delete(id);
+          const had = this.pending.delete(id);
           cleanup();
+          if (had) this._sendCancel({ id }, new RpcError('TIMEOUT', `Client stream init timed out after ${timeout}ms`));
           reject(new RpcError('TIMEOUT', `Client stream init timed out after ${timeout}ms`));
         }, timeout);
       }
@@ -481,8 +483,9 @@ export class ChannelClientBinding implements ClientBinding {
 
       if (timeout != null && timeout > 0) {
         entry.timer = setTimeout(() => {
-          this.pending.delete(id);
+          const had = this.pending.delete(id);
           cleanup();
+          if (had) this._sendCancel({ id }, new RpcError('TIMEOUT', `Bidi stream init timed out after ${timeout}ms`));
           reject(new RpcError('TIMEOUT', `Bidi stream init timed out after ${timeout}ms`));
         }, timeout);
       }
