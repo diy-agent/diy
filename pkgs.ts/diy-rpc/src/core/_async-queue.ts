@@ -12,7 +12,25 @@ export class _AsyncQueue<T> {
   private _rejectWait: ((err: Error) => void) | null = null;
   private _ended = false;
   private _err: Error | null = null;
+  private _drainOnError = false;
   private _onReturn: (() => void) | null = null;
+  private _onSettle: (() => void) | null = null;
+
+  /**
+   * 登记「队列终态」回调（end / error / 消费端 return 三处都触发一次），
+   * 用于资源清理（移除 AbortSignal listener 等，任务 185）。注册时已终态则立即回调。
+   */
+  onSettle(cb: () => void): void {
+    if (this._ended) { cb(); return; }
+    const prev = this._onSettle;
+    this._onSettle = prev ? () => { prev(); cb(); } : cb;
+  }
+
+  private _fireSettle(): void {
+    const cb = this._onSettle;
+    this._onSettle = null;
+    try { cb?.(); } catch { /* 清理失败不应影响队列语义 */ }
+  }
 
   /**
    * 注册「消费端提前终止」回调，用于把取消传播回上游。
@@ -41,6 +59,7 @@ export class _AsyncQueue<T> {
   end(): void {
     if (this._ended) return;
     this._ended = true;
+    this._fireSettle();
     if (this._resolveWait) {
       const r = this._resolveWait;
       this._resolveWait = null;
@@ -49,15 +68,26 @@ export class _AsyncQueue<T> {
     }
   }
 
-  error(err: Error): void {
+  /**
+   * 以错误终结队列。
+   *
+   * - 默认（本地取消/dispose）：缓冲中未交付的值随取消一起丢弃——取消后零产出。
+   * - `drain: true`（远端错误帧 / 流异常）：已缓冲的值先交付，排空后再抛错——与 JS
+   *   generator 语义一致（yield 0 之后才 throw，0 不应被静默吞掉）。
+   */
+  error(err: Error, opts?: { drain?: boolean }): void {
     if (this._ended) return;
+    this._drainOnError = opts?.drain === true;
     this._err = err;
     this._ended = true;
+    this._fireSettle();
     if (this._resolveWait) {
       const rej = this._rejectWait;
       this._resolveWait = null;
       this._rejectWait = null;
       if (rej) rej(err); // 让挂起的 next() 抛错，而非干净结束
+    } else if (!this._drainOnError) {
+      this._queue.length = 0;
     }
   }
 
@@ -67,6 +97,11 @@ export class _AsyncQueue<T> {
     return {
       next: (): Promise<IteratorResult<T>> =>
         new Promise<IteratorResult<T>>((resolve, reject) => {
+          // drain 语义（远端错误帧）：已缓冲的值先交付，排空后由下方 _err 分支抛错
+          if (this._drainOnError && this._queue.length > 0) {
+            resolve({ value: this._queue.shift()!, done: false });
+            return;
+          }
           if (this._err) { reject(this._err); return; }
           if (this._queue.length > 0) {
             resolve({ value: this._queue.shift()!, done: false });
@@ -87,6 +122,7 @@ export class _AsyncQueue<T> {
        */
       return: (value?: unknown): Promise<IteratorResult<T>> => {
         this._ended = true;
+        this._fireSettle();
         if (this._resolveWait) {
           const r = this._resolveWait;
           this._resolveWait = null;

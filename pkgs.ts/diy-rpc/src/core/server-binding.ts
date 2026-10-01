@@ -18,7 +18,16 @@ import type { _AnyProcedureMeta, _HandlerForProc } from './meta';
 // ═══════════════════════════════════════════════════
 
 export interface CallOptions {
+  /**
+   * 取消信号。abort → 调用立即以 `CANCELLED` 落定（流式调用同时向服务端发 cancel
+   * 帧并 error 本地队列）；共享 signal 的 listener 随调用落定自动移除。
+   */
   signal?: AbortSignal;
+  /**
+   * **init/ack 窗口超时**（毫秒，非全调用 deadline）：仅约束「发出调用 → 收到 ack/
+   * 首个响应」，结果/流阶段的等待不设隐式超时（流式场景只约束 init，与 bidi 一致）。
+   * 需要整段 deadline 时用 `AbortSignal.timeout()`/`AbortSignal.any()` 配合 `signal`。
+   */
   timeout?: number;
 }
 
