@@ -5,6 +5,10 @@
 //   - 非 TTY（管道 / 日志）：只打里程碑行（信息行 / 阶段切换 / done），绝不输出 \r
 //   - 心跳：由 exec.ts 按「输出活动」驱动 waiting()，只提示不杀进程（默认不自动中断）
 // 条目行（P1.5）：begin 打 [i/N] 头行，done 打 ✓/✗ + 耗时 + 大小（done 行里的 bytes）。
+// F1：done({ noTiming:true }) 不显示耗时列（该条目没跑任何 git 命令，如 tag 固定直接跳过）。
+// F2：waiting 按「静默时长翻倍」降频（首报立即，5s→10s→20s→40s…）；feed/begin/info/drain
+//     视为输出活动、重置为下次首报。缓冲未完段的落盘不受节流影响（仍在心跳行之前执行）。
+// F5：done 幂等 —— 同条目重复收尾只出一行（impl 的 catch 在成功 done 之后抛错不重复打）。
 
 import { parseGitProgress } from "./progress";
 
@@ -27,6 +31,8 @@ export interface DoneEntry {
     note?: string;
     /** 失败原因（多行原样缩进输出） */
     fail?: string;
+    /** true = 本条目未执行任何 git 命令，不显示耗时列（如 tag 固定直接跳过 pull） */
+    noTiming?: boolean;
 }
 
 function fmtDuration(ms: number): string {
@@ -59,6 +65,10 @@ export class ProgressRenderer {
     /** 当前条目标签与起始时间 */
     private label = "";
     private startedAt = 0;
+    /** 最近一次 done 的标签（F5 幂等守卫：同条目重复收尾只出一行） */
+    private lastDoneLabel = "";
+    /** 下次心跳行所需的静默时长（F2 翻倍降频；0 = 首报立即） */
+    private nextWaitReport = 0;
 
     constructor(sink: Sink, opts: RendererOpts) {
         this.sink = sink;
@@ -75,6 +85,8 @@ export class ProgressRenderer {
         this.lastText = "";
         this.label = label;
         this.startedAt = this.now();
+        this.lastDoneLabel = "";
+        this.nextWaitReport = 0; // 新条目 = 新一轮输出活动，心跳恢复首报
         this.sink.write(`${label}\n`);
     }
 
@@ -84,20 +96,30 @@ export class ProgressRenderer {
      */
     feed(chunk: string): void {
         this.buf += chunk;
+        this.nextWaitReport = 0; // 有输出活动 → 下次静默首报（与 exec 的静默判据同源）
         const parts = this.buf.split(/[\r\n]/);
         this.buf = parts.pop() ?? "";
         for (const p of parts) this.emit(p);
     }
 
-    /** 停滞提示：距上次任何输出 ≥ silentMs 时由心跳驱动。只提示，不杀进程。 */
+    /**
+     * 停滞提示：距上次任何输出 ≥ silentMs 时由心跳驱动。只提示，不杀进程。
+     * 降频（F2）：首报立即（阈值 0），之后按静默时长翻倍再报（5s→10s→20s→40s…），
+     * 越久越稀疏；feed/begin/info/drain 视为输出活动会把阈值清零、恢复下次首报。
+     */
     waiting(silentMs: number, last?: string): void {
-        // 缓冲里的未完段（未遇 \r/\n）也是「最后输出」——静默前 git 常停在这种段上，先让它可见
+        // 缓冲里的未完段（未遇 \r/\n）也是「最后输出」——静默前 git 常停在这种段上，先让它可见。
+        // 这段落盘不受降频节流影响（节流只拦心跳行本身）。
         const pending = this.buf.trim();
         if (pending && pending !== this.pendingShown) {
             this.pendingShown = pending;
             if (this.isTTY) this.draw(pending);
             else this.sink.write(`${pending}\n`);
         }
+        if (silentMs < this.nextWaitReport) return; // 翻倍降频：未到下次报告阈值，本轮不刷行
+        // 阈值按整秒翻倍（5001ms → 10000ms），避免定时器漂移把 10s 报挤到 15s
+        const baseSec = Math.floor(silentMs / 1000) * 1000;
+        this.nextWaitReport = (baseSec || silentMs) * 2;
         const text = last ?? (pending || this.lastText || "(无输出)");
         this.flush();
         const dur = silentMs < 1000 ? `${silentMs}ms` : `${Math.round(silentMs / 1000)}s`;
@@ -106,11 +128,20 @@ export class ProgressRenderer {
         );
     }
 
-    /** 条目收尾：✓/✗ + 耗时 + 大小（done 行 bytes）+ 可选说明 / 失败详情。 */
+    /**
+     * 条目收尾：✓/✗ + 耗时 + 大小（done 行 bytes）+ 可选说明 / 失败详情。
+     * 幂等（F5）：同条目重复收尾只出一行；既未 begin 也无 label/fail 的空调用直接忽略。
+     * noTiming（F1）：无命令执行时不显示耗时列（标签行已由 begin 打过）。
+     */
     done(entry: DoneEntry): void {
-        this.flush();
         const label = entry.label ?? this.label;
-        const dur = this.startedAt > 0 ? fmtDuration(this.now() - this.startedAt) : "";
+        if (!label && !entry.fail) return; // 空标签且无详情：重复/无效调用，不打空行
+        if (label && label === this.lastDoneLabel) return; // 同条目第二次收尾：吞（幂等）
+        this.flush();
+        const dur =
+            entry.noTiming || this.startedAt === 0
+                ? ""
+                : fmtDuration(this.now() - this.startedAt);
         const symbol = entry.ok ? "✓" : "✗";
         const bytes = this.lastBytes ? `  ${this.lastBytes}` : "";
         const note = entry.note ? `  ${entry.note}` : "";
@@ -118,9 +149,11 @@ export class ProgressRenderer {
         if (entry.fail) {
             for (const line of entry.fail.split("\n")) this.sink.write(`  ${line}\n`);
         }
+        this.lastDoneLabel = label;
         this.label = "";
         this.startedAt = 0;
         this.lastBytes = undefined;
+        this.nextWaitReport = 0; // 条目收尾也是活动，心跳恢复首报
     }
 
     /** 普通信息行（如 `$ git clone …` 回显、pull 合并摘要），先落进行中的进度行。 */
@@ -128,6 +161,7 @@ export class ProgressRenderer {
         this.flush();
         this.sink.write(`${text}\n`);
         this.lastText = text;
+        this.nextWaitReport = 0; // 输出活动 → 下次静默首报
     }
 
     /** 一条命令结束：吐出残留缓冲段、落进行中行、复位阶段状态（条目状态留给 done）。 */
@@ -140,6 +174,7 @@ export class ProgressRenderer {
         this.flush();
         this.phase = null;
         this.phaseDone = false;
+        this.nextWaitReport = 0; // 一条命令结束 → 下一条命令心跳恢复首报
     }
 
     /** 单段渲染（已 trim）。 */

@@ -13,7 +13,7 @@ import type { ServerBinding } from "@diy/rpc";
 import { refApi, type RefEntry } from "./api";
 import * as store from "./store";
 import * as git from "./git";
-import { ProgressRenderer } from "./render";
+import { getDefaultRenderer } from "./render";
 
 /** ref 域运行时上下文：镜像根 home + 作用域 cwd */
 export interface RefRuntime {
@@ -71,10 +71,9 @@ export function bindRefHandlers(binding: ServerBinding, rt: RefRuntime): void {
         let tagSkipped = 0;
         const errors: SyncError[] = [];
 
-        // 进度渲染到本地 stderr（190 修正 1：不进 RPC 协议，帧结构照旧机器消费）
-        const prog = new ProgressRenderer(process.stderr, {
-            isTTY: process.stderr.isTTY === true && !process.env.NO_COLOR,
-        });
+        // 进度渲染到本地 stderr（190 修正 1：不进 RPC 协议，帧结构照旧机器消费）。
+        // 用进程级单例（F4）：与 git.ts 短命令 run() 内部取的是同一实例，curText/buf 状态不分裂
+        const prog = getDefaultRenderer();
 
         for (let i = 0; i < specs.length; i++) {
             const spec = specs[i]!;
@@ -106,7 +105,8 @@ export function bindRefHandlers(binding: ServerBinding, rt: RefRuntime): void {
                         pulled++;
                         yield { spec, action: "pulled" as const };
                     } else {
-                        prog.done({ ok: true, note: u.note });
+                        // F1：未执行任何 git 命令（tag 跳过）时不显示耗时列，标签头行仍由 begin 打过
+                        prog.done({ ok: true, note: u.note, noTiming: u.noTiming });
                         tagSkipped++;
                         yield { spec, action: "tagSkipped" as const, message: u.note };
                     }

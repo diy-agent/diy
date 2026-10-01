@@ -180,3 +180,119 @@ describe("waiting（两态）与 done 条目行", () => {
         expect(sink.out).toBe("$ git clone --progress -- https://x/y /tmp/z\n");
     });
 });
+
+describe("F1 · done noTiming：无命令执行不显示耗时列", () => {
+    it("noTiming:true 时耗时列不出现，标签头行仍打", () => {
+        const sink = makeSink();
+        let t = 1000;
+        const r = new ProgressRenderer(sink, { isTTY: false, now: () => t });
+        r.begin("[1/1] github.com/nodeca/js-yaml");
+        t = 1005; // 经过了 5ms，但该条目一条 git 命令都没跑
+        r.done({ ok: true, note: "tag 固定，跳过 pull", noTiming: true });
+        expect(sink.out).toBe(
+            "[1/1] github.com/nodeca/js-yaml\n" +
+                "✓ [1/1] github.com/nodeca/js-yaml  tag 固定，跳过 pull\n",
+        );
+    });
+
+    it("noTiming 缺省时耗时照常显示（对照）", () => {
+        const sink = makeSink();
+        let t = 1000;
+        const r = new ProgressRenderer(sink, { isTTY: false, now: () => t });
+        r.begin("[1/2] github.com/a/b");
+        t = 3400;
+        r.done({ ok: true });
+        expect(sink.out).toContain("✓ [1/2] github.com/a/b  2.4s");
+    });
+});
+
+describe("F2 · waiting 翻倍降频", () => {
+    it("首报立即，之后按静默时长翻倍（5s→10s→20s→40s），中间节流", () => {
+        const sink = makeSink();
+        const r = new ProgressRenderer(sink, { isTTY: false });
+        r.feed("Receiving objects:  45% (91/202)"); // 输出活动
+        r.waiting(5000); // 首报（阈值 0）
+        r.waiting(10000); // ≥ 10000 → 报
+        r.waiting(15000); // < 20000 → 节流
+        r.waiting(20000); // ≥ 20000 → 报
+        r.waiting(25000); // < 40000 → 节流
+        r.waiting(30000); // 节流
+        r.waiting(40000); // ≥ 40000 → 报
+        expect(count(sink.out, "! 已静默")).toBe(4); // 5s/10s/20s/40s 四行，非 7 行
+        expect(sink.out).not.toContain("! 已静默 15s");
+        expect(sink.out).not.toContain("! 已静默 25s");
+        expect(sink.out).not.toContain("! 已静默 30s");
+        expect(sink.out).not.toContain("\r"); // 非 TTY 不变量
+    });
+
+    it("阈值按整秒翻倍：首报 5001ms 不把 10000ms 挤到 15s", () => {
+        const sink = makeSink();
+        const r = new ProgressRenderer(sink, { isTTY: false });
+        r.waiting(5001); // 定时器漂移的首报 → 阈值 10000（不是 10002）
+        r.waiting(10000); // 节拍正好落在阈值上 → 必报
+        expect(count(sink.out, "! 已静默")).toBe(2);
+        expect(sink.out).toContain("! 已静默 10s");
+    });
+
+    it("feed 输出活动后阈值清零、恢复下次首报", () => {
+        const sink = makeSink();
+        const r = new ProgressRenderer(sink, { isTTY: false });
+        r.waiting(5000); // 首报 → 阈值 10000
+        r.waiting(6000); // 节流
+        expect(count(sink.out, "! 已静默")).toBe(1);
+        r.feed("Receiving objects: 100% (1/1), done.\r"); // 活动（产出里程碑行）
+        r.waiting(5000); // 新静默期 → 首报
+        expect(count(sink.out, "! 已静默")).toBe(2);
+        expect(sink.out).toContain("! 已静默 5s");
+    });
+
+    it("缓冲未完段先落盘、不受节流影响（193 既有行为保持）", () => {
+        const sink = makeSink();
+        const r = new ProgressRenderer(sink, { isTTY: false });
+        r.waiting(5000); // 首报 → 阈值 10000
+        // 未完段（无 \r/\n 终止符）在心跳行之前落盘可见
+        r.feed("Receiving objects:  46% (92/202)");
+        r.waiting(6000); // feed 已清阈值 → 本轮必报；未完段先落
+        const out = sink.out;
+        const pendingIdx = out.indexOf("Receiving objects:  46% (92/202)\n");
+        const waitIdx = out.indexOf("! 已静默 6s");
+        expect(pendingIdx).toBeGreaterThanOrEqual(0);
+        expect(waitIdx).toBeGreaterThan(pendingIdx); // 未完段在心跳行之前
+        expect(out).toContain("最后: Receiving objects:  46% (92/202)");
+    });
+});
+
+describe("F5 · done 幂等", () => {
+    it("同条目连续两次 done 只出一行（impl catch 场景）", () => {
+        const sink = makeSink();
+        const r = new ProgressRenderer(sink, { isTTY: false });
+        r.begin("[1/1] github.com/a/b");
+        r.done({ ok: true }); // 成功路径
+        r.done({ ok: false, label: "[1/1] github.com/a/b", fail: "后续语句抛错" }); // catch 补刀
+        const lines = sink.out.split("\n").filter((l) => l.startsWith("✓") || l.startsWith("✗"));
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toContain("✓ [1/1] github.com/a/b");
+        expect(sink.out).not.toContain("后续语句抛错");
+    });
+
+    it("无 label 的重复 done 不打空行", () => {
+        const sink = makeSink();
+        const r = new ProgressRenderer(sink, { isTTY: false });
+        r.begin("[1/1] x");
+        r.done({ ok: true });
+        r.done({ ok: true }); // label 已清空 → 吞
+        expect(count(sink.out, "✓")).toBe(1);
+        expect(sink.out).not.toContain("✓ \n");
+    });
+
+    it("不同条目 / 未 begin 的失败收尾仍照常打", () => {
+        const sink = makeSink();
+        const r = new ProgressRenderer(sink, { isTTY: false });
+        r.begin("[1/2] github.com/a/b");
+        r.done({ ok: true });
+        r.done({ ok: false, label: "[2/2] bad/spec", fail: "解析失败" }); // 新条目（label 不同）
+        expect(count(sink.out, "✓")).toBe(1);
+        expect(count(sink.out, "✗")).toBe(1);
+        expect(sink.out).toContain("解析失败");
+    });
+});

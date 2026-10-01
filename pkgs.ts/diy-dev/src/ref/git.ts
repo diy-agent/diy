@@ -6,7 +6,8 @@
 // 日志策略（193 重写）：
 //   - 长命令（clone / fetch / pull）走 exec.runStreaming + ProgressRenderer 实时渲染
 //     （TTY 原地重绘、非 TTY 里程碑行、静默心跳提示），替代旧 spawnSync「跑完才 dump」黑屏；
-//   - 短命令（--version / checkout / symbolic-ref）走 runBuffered 缓冲执行；
+//   - 短命令（--version / checkout / symbolic-ref）走 runBuffered 缓冲执行，
+//     输出同样经 ProgressRenderer.info()（193 遗留 F4：不再直写 stderr，避免双通道交错）；
 //   - 超时分级（190 第四节）：ls-remote 15s、单 ref fetch 60s；clone / pull 不设硬超时
 //     （5caf645 加过 clone 180s 被 8b2ae9e 故意删除——会误杀大仓库），卡住由 Ctrl+C 中断；
 //   - 统一注入 GIT_TERMINAL_PROMPT=0（见 exec.ts）。
@@ -40,16 +41,21 @@ function readable(s: string): string {
         .join("\n");
 }
 
-/** 短命令：回显 + 缓冲执行，结束后把命令回显 + 输出甩到 stderr。timeoutMs 可选（如 ls-remote 15s）。 */
+/**
+ * 短命令：回显 + 缓冲执行，结束后把命令回显 + 输出经 renderer 甩出（F4：与长命令同通道，
+ * 输出内容不变，只换通道；渲染器取进程级单例，与 impl 的 sync 进度共用同一份状态）。
+ * timeoutMs 可选（如 ls-remote 15s）。
+ */
 function run(args: string[], cwd?: string, timeoutMs?: number): GitRunResult {
-    process.stderr.write(`$ git ${args.join(" ")}${cwd ? `  # ${cwd}` : ""}\n`);
+    const prog = getDefaultRenderer();
+    prog.info(`$ git ${args.join(" ")}${cwd ? `  # ${cwd}` : ""}`);
     const r = runBuffered(args, { cwd, timeoutMs });
     const out = r.stdout.trim();
     const err = r.stderr.trim();
     // 成功也放出来：用户要看到 git 是否进行中，而不只是失败时
-    if (out) process.stderr.write(`${out}\n`);
-    if (err) process.stderr.write(`${err}\n`);
-    if (r.error) process.stderr.write(`${r.error}\n`);
+    if (out) prog.info(out);
+    if (err) prog.info(err);
+    if (r.error) prog.info(r.error);
     return { ok: r.ok, stdout: out, stderr: err, timedOut: r.timedOut };
 }
 
@@ -200,6 +206,8 @@ export interface UpdateOutcome {
     /** true=已执行 pull/更新；false=tag 固定未动 */
     updated: boolean;
     note?: string;
+    /** true=本条目未执行任何 git 命令（如 tag 直接跳过），调用方 done 时不显示耗时列（F1） */
+    noTiming?: boolean;
 }
 
 /**
@@ -214,7 +222,7 @@ export async function updateMirror(
     isTag: boolean,
     prog?: ProgressRenderer,
 ): Promise<UpdateOutcome> {
-    if (isTag) return { updated: false, note: "tag 固定，跳过 pull" };
+    if (isTag) return { updated: false, note: "tag 固定，跳过 pull", noTiming: true };
     if (!run(["-C", dir, "symbolic-ref", "-q", "HEAD"]).ok) {
         return { updated: false, note: "detached HEAD，跳过 pull" };
     }

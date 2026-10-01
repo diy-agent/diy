@@ -6,6 +6,10 @@
 //   - 中间进度行只有 % 与 (n/total)；bytes / 速率只在 done 行出现 → 容忍缺省
 //   - `remote:` 前缀是服务端阶段（Enumerating / Counting / Compressing / Total），
 //     与客户端阶段（Receiving / Resolving / Updating）用 remote 字段区分
+// F3 放宽：
+//   - 计数容忍千分位逗号（部分 git 版本/平台对 >999 加逗号，如 (1,234/5,678)），解析时去逗号
+//   - 体积与速率各自独立可选匹配（done 行可能只有体积无 " | 速率" 段，如
+//     "Receiving objects: 100% (13/13), 9.08 KiB"），不再把两者当整体
 
 export interface GitProgress {
     /** 阶段名（去 remote: 前缀与冒号），如 "Receiving objects"；Total 行无冒号单列 */
@@ -31,9 +35,17 @@ const PHASE_RE = /^([A-Z][A-Za-z]*(?: [A-Za-z]+)*):\s*([\s\S]*)$/;
 // "Total 12439 (delta 515), …"（remote: 侧汇总行，无冒号）
 const TOTAL_RE = /^Total\s+([\s\S]*)$/;
 const PCT_RE = /(\d{1,3})%/;
-const COUNT_RE = /\(\s*(\d+)\s*\/\s*(\d+)\s*\)/;
-const BYTES_RATE_RE = /([\d.]+ (?:[KMGT]iB|B))\s*\|\s*([\d.]+ (?:[KMGT]iB|B)\/s)/;
+// 计数容忍千分位逗号（1,234/5,678），解析时统一去逗号
+const COUNT_RE = /\(\s*([\d,]+)\s*\/\s*([\d,]+)\s*\)/;
+// 体积与速率独立匹配（各自可选）；体积的负先行排除 "x.y MiB/s" 被当成体积
+const BYTES_RE = /([\d.]+ (?:[KMGT]iB|B))(?!\s*\/)/;
+const RATE_RE = /([\d.]+ (?:[KMGT]iB|B)\/s)/;
 const DONE_RE = /done\.\s*$/;
+
+/** 数字解析：容忍千分位逗号（"1,234" → 1234） */
+function num(s: string): number {
+    return Number(s.replace(/,/g, ""));
+}
 
 /**
  * 解析单段 git 进度文本；不是进度行返回 null（如 "Cloning into '…'…"、warning 行）。
@@ -68,24 +80,26 @@ export function parseGitProgress(seg: string): GitProgress | null {
     const cnt = rest.match(COUNT_RE);
     if (pct) percent = Number(pct[1]);
     if (cnt) {
-        count = Number(cnt[1]);
-        total = Number(cnt[2]);
+        count = num(cnt[1]!);
+        total = num(cnt[2]!);
     }
     if (!pct && !cnt) {
         // Enumerating / Total 行：行首裸数字即总数（如 "202, done." / "12439 (delta 515)"）
-        const bare = rest.match(/^(\d+)/);
-        if (bare) total = Number(bare[1]);
+        const bare = rest.match(/^([\d,]+)/);
+        if (bare) total = num(bare[1]!);
     }
     // 无任何数字 → 非进度行（如 "warning: …"）
     if (percent === null && count === null && total === null) return null;
 
-    const br = rest.match(BYTES_RATE_RE);
+    const bytes = rest.match(BYTES_RE)?.[1];
+    const rate = rest.match(RATE_RE)?.[1];
     return {
         phase,
         percent,
         count,
         total,
-        ...(br ? { bytes: br[1]!, rate: br[2]! } : {}),
+        ...(bytes ? { bytes } : {}),
+        ...(rate ? { rate } : {}),
         done: DONE_RE.test(rest),
         remote,
     };
