@@ -2,7 +2,8 @@
  * ws-specific.test.ts — WebSocket transport 协议特有行为
  *
  * 四流模式已在 binding.test.ts 参数化覆盖（ws harness）。这里只测 ws 独有：单连接
- * 多路复用（并发 unary、unary+stream 同连）、以及两条独立连接的隔离。
+ * 多路复用（并发 unary、unary+stream 同连）、两条独立连接的隔离，以及
+ * 对端坏帧的关闭终态（R20 P1-A：JSON.parse 崩溃/悬挂回归）。
  */
 import { describe, it, expect } from 'vitest';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -25,7 +26,8 @@ function connect(url: string): Promise<WebSocket> {
 
 describe('ws-transport 协议特有', () => {
   it('单连接多路复用：并发 unary、unary+stream、两连接隔离', async () => {
-    const port = 18923 + Math.floor(Math.random() * 1000);
+    // 独立端口段（20923+）：与 wsHarness（18923–19922）及坏帧用例（21923+）互不相交，避免平行 worker 撞端口
+    const port = 20923 + Math.floor(Math.random() * 1000);
     const wss = new WebSocketServer({ port });
     await new Promise<void>((r) => wss.once('listening', () => r()));
 
@@ -73,6 +75,30 @@ describe('ws-transport 协议特有', () => {
       expect(r2).toBe('pong: from 2');
       ws1.close();
       ws2.close();
+    } finally {
+      await new Promise<void>((r) => wss.close(() => r()));
+    }
+  });
+
+  it('对端坏帧：传输关闭终态 + pending 调用 DISPOSED 落定（R20 P1-A）', async () => {
+    // 独立端口段（21923+）：避开 wsHarness/ws-specific 的 18923–19922 随机段，
+    // 平行 worker 下撞端口会导致 EADDRINUSE → 另一侧 start() 挂起超时
+    const port = 21923 + Math.floor(Math.random() * 1000);
+    const wss = new WebSocketServer({ port });
+    await new Promise<void>((r) => wss.once('listening', () => r()));
+    try {
+      const ws = await connect(`ws://127.0.0.1:${port}`);
+      const client = new ChannelClientBinding(new WsTransport(ws));
+      // 无服务端绑定：调用只能靠传输终态落定——坏帧前永挂，坏帧后必须 DISPOSED。
+      // 回归面（R20 P1-A）：JSON.parse 在 handler try/catch 外 → uncaughtException
+      // 崩进程且 onClose 不触发 → pending 永挂（或拖到 timeout 才 TIMEOUT）。
+      const pending: Promise<string> = client
+        .invoke('diy.x.y', {}, { timeout: 3000 })
+        .then(() => 'resolved', (e: { code?: string }) => `rejected:${e?.code}`);
+      await sleep(30);
+      wss.clients.forEach((peer) => peer.send('not-json'));
+      await expect(pending).resolves.toBe('rejected:DISPOSED');
+      ws.close();
     } finally {
       await new Promise<void>((r) => wss.close(() => r()));
     }

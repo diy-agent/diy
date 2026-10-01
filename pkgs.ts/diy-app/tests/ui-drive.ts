@@ -64,7 +64,12 @@ class Cdp {
     return cdp;
   }
 
-  send<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  /**
+   * 发送 CDP 命令。**带超时**：命令不响应（渲染进程卡住 / 连接半死）时抛出明确错误，
+   * 而不是让 Promise 永远挂着 —— 后者表现为"某测试 30s 超时"，看不出真正原因。
+   * 与上面的 rejectAll（连接断开）互补：那条管"socket 断了"，这条管"socket 活着但不回包"。
+   */
+  send<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs = 10_000): Promise<T> {
     const id = this.seq++;
     return new Promise<T>((res, rej) => {
       // 连接不在 OPEN（窗口/页面已销毁）→ 立即失败，不进 pending（否则永远等不到回包）
@@ -72,8 +77,27 @@ class Cdp {
         rej(new Error(`[ui-drive] CDP 连接未就绪（readyState=${this.ws.readyState}），method=${method}`));
         return;
       }
-      this.pending.set(id, { res: res as (v: unknown) => void, rej });
-      this.ws.send(JSON.stringify({ id, method, params }));
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        rej(new Error(`[ui-drive] CDP 命令超时（${timeoutMs}ms）: ${method}`));
+      }, timeoutMs);
+      this.pending.set(id, {
+        res: (v) => {
+          clearTimeout(timer);
+          res(v as T);
+        },
+        rej: (e) => {
+          clearTimeout(timer);
+          rej(e);
+        },
+      });
+      try {
+        this.ws.send(JSON.stringify({ id, method, params }));
+      } catch (e) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        rej(e as Error);
+      }
     });
   }
 

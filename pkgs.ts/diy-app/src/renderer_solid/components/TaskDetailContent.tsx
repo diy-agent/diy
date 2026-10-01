@@ -22,7 +22,9 @@
  * 永远卡在「加载中…」（这个坑在本文件的前身 TaskSideView 里踩过）。
  */
 import { createSignal, createEffect, on, onMount, For, Show, type JSX } from "solid-js";
+import { Portal } from "solid-js/web";
 import { taskStore, type TaskDetail } from "../store/taskStore";
+import { tabStore } from "../store/tabStore";
 import { personaStore } from "../store/personaStore";
 import { draftStore } from "../store/draftStore";
 import { editTask } from "../lib/task-edit";
@@ -80,24 +82,43 @@ function openChat(uri: string): void {
     getRendererActions().openTaskRun?.(uri);
 }
 
-/** 任务名链接：daisyUI tooltip「打开任务」，样式沿用 diy-link（深色主题下加亮过的链接色）。
+/**
+ * 任务名链接。
  *
- *  `preview=true` 在按钮上声明 `data-task-hover-uri` —— 这是 hover 详情 drawer 的**唯一触发点**，
- *  由 App 的 document mouseover 委托接住（per-node handler 会被组件复用/重排的时序吞掉）。
- *  overlay 实例（悬停覆盖层 / 自己弹出的 drawer）不声明 → 不递归开第二层。 */
+ * **不用 daisyUI 的 `tooltip`/`data-tip`**：它的提示是挂在元素上的 `::before` 伪元素，
+ * 会被祖先的 `overflow-hidden/auto` 裁掉 —— 树块处在「可滚动详情区 + 分栏 area」里，
+ * 靠底部的行提示直接被下边界切掉一半（不是 daisyUI 的 bug，是 CSS 裁剪的必然结果，
+ * 项目里 `promptLabCommon.tsx` 的 useHoverTip 早就为此另建了方案）。
+ * 这里同样改用 **viewport fixed 浮层**（Portal 到 body）：悬停即显、永不被裁。
+ *
+ * 位置用 `getBoundingClientRect` 现算，向上翻转的条件是「下方放不下」——
+ * 最底部那些行因此把提示显示在上方，不再贴着 view 边界被吃掉。
+ */
 function TaskNameLink(props: {
     uri: string;
     label: string;
     class?: string;
     preview?: boolean;
+    /** 该任务的对话是否已打开（打开态由调用方从 tabStore 现查） */
+    chatOpen?: boolean;
 }) {
+    const [tip, setTip] = createSignal<{ x: number; y: number; up: boolean } | null>(null);
+
+    const showTip = (el: HTMLElement) => {
+        const r = el.getBoundingClientRect();
+        const up = r.bottom + 44 > window.innerHeight; // 下方放不下 → 向上翻
+        setTip({ x: Math.round(r.left), y: Math.round(up ? r.top - 6 : r.bottom + 6), up });
+    };
+
     return (
-        // tooltip 挂在外层 span 上而不是链接上：链接要 truncate（overflow-hidden），
-        // 工具提示是它的伪元素，会被自己裁掉（实测踩过）。
-        <span class={`tooltip tooltip-bottom min-w-0 ${props.class ?? "flex-1"}`} data-tip="打开任务">
+        <>
             <button
-                class="diy-link block w-full truncate text-left underline-offset-2 hover:underline cursor-pointer"
+                class={`diy-link block w-full truncate text-left underline-offset-2 hover:underline cursor-pointer ${
+                    props.chatOpen ? "font-semibold" : ""
+                }`}
                 data-task-hover-uri={props.preview ? props.uri : undefined}
+                onMouseEnter={(e) => showTip(e.currentTarget)}
+                onMouseLeave={() => setTip(null)}
                 onClick={(e) => {
                     e.stopPropagation();
                     openTask(props.uri);
@@ -105,7 +126,23 @@ function TaskNameLink(props: {
             >
                 {props.label}
             </button>
-        </span>
+            <Show when={tip()}>
+                {(t) => (
+                    <Portal>
+                        <div
+                            class="pointer-events-none fixed z-[100] w-max max-w-64 rounded bg-neutral px-2 py-1 text-[11px] leading-relaxed text-neutral-content shadow-lg"
+                            style={{
+                                left: `${Math.min(t().x, Math.max(8, window.innerWidth - 268))}px`,
+                                top: `${t().up ? t().y : t().y}px`,
+                                transform: t().up ? "translateY(-100%)" : undefined,
+                            }}
+                        >
+                            {props.chatOpen ? "已在对话中打开 · 点击打开任务" : "打开任务"}
+                        </div>
+                    </Portal>
+                )}
+            </Show>
+        </>
     );
 }
 
@@ -297,6 +334,11 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
 function LineageBlock(props: { uri: string; hoverPreview?: boolean }) {
     /** 血缘行：树才是父子关系的真相源（URI 路径不表达层级），见 lib/task-lineage */
     const rows = () => lineageRows(taskStore.nodes, props.uri);
+    /**
+     * 该任务的对话是否**已经开在导航里**（tabStore.opened 是响应式 getter：
+     * 开/关 tab 会立即让这里的圆点与按钮态跟着变，不需要额外订阅）。
+     */
+    const chatOpen = (uri: string) => !!tabStore.find(`task-run:${uri}`);
     return (
         <div class="flex flex-col">
             <For each={rows()}>
@@ -314,23 +356,46 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean }) {
                         {/* 「◀ 当前」**紧跟标题**（不是行尾）：它是标题的补语，隔着一个
                             auto margin 飘到右边会读成「这一行整体是当前」。
                             标题 min-w-0 + truncate：长标题只截自己，不吃掉后面的标签。 */}
-                        <TaskNameLink uri={r.uri} label={r.title ?? r.uri} class="min-w-0 text-[11px]" preview={props.hoverPreview} />
+                        <TaskNameLink
+                            uri={r.uri}
+                            label={r.title ?? r.uri}
+                            class="min-w-0 text-[11px]"
+                            /* 已开在导航里的任务**不再弹 hover 详情**：
+                               nav 上那一项 hover 出来的就是同一个 view 的同一份详情，
+                               树里再弹一层等于把同样的东西显示两遍 —— 这个动作本来就只是
+                               「顺便看一眼」，重复弹反而让人以为点错了地方。
+                               那些任务的详情入口 = nav 项 hover（或点标题进任务管理页）。
+                               tabStore 是响应式的：关掉 tab 后这里立刻恢复可弹。 */
+                            preview={props.hoverPreview && !chatOpen(r.uri)}
+                            chatOpen={chatOpen(r.uri)}
+                        />
                         <Show when={r.current}>
                             <span class="shrink-0 text-[10px] opacity-60">◀ 当前</span>
                         </Show>
                         {/* 操作按钮**右对齐**（ml-auto），与上面「当前」各管一侧 —— 混在一起
                             会随标题长度左右漂，每行的按钮位置都不一样，扫不下去。
-                            「对话」= 打开该任务的任务执行页（与 nav 上点任务项同一个动作），
-                            平时不占地方，hover 该行才出现。 */}
+                            两态刻意不同：
+                              · 未打开 → hover 该行才显形（平时不占地方，行内保持安静）
+                              · **已打开在导航里** → 常态显示且高亮成「已开」态：这时它是
+                                「状态指示」而不只是动作入口，藏起来反而要去 nav 里核对
+                            文案随之变成「已打开」，避免和未打开态长得一样、「到底开没开」看不出来。 */}
                         <button
-                            class="btn btn-ghost btn-xs px-1 min-h-0 ml-auto shrink-0 opacity-0 group-hover:opacity-70 hover:!opacity-100"
-                            title={`打开 #${r.num ?? "?"} 的对话`}
+                            class={`btn btn-xs px-1 min-h-0 ml-auto shrink-0 ${
+                                chatOpen(r.uri)
+                                    ? "btn-ghost bg-primary/25 ring-1 ring-primary/40 text-base-content hover:bg-primary/40"
+                                    : "btn-ghost opacity-0 group-hover:opacity-70 hover:!opacity-100"
+                            }`}
+                            title={
+                                chatOpen(r.uri)
+                                    ? `#${r.num ?? "?"} 的对话已打开（点击切换到它）`
+                                    : `打开 #${r.num ?? "?"} 的对话`
+                            }
                             onClick={(e) => {
                                 e.stopPropagation();
                                 openChat(r.uri);
                             }}
                         >
-                            💬 对话
+                            {chatOpen(r.uri) ? "💬 已打开" : "💬 对话"}
                         </button>
                     </div>
                 )}
