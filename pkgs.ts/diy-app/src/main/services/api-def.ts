@@ -430,6 +430,26 @@ export const apiDef = RpcSchema.router({
                 },
                 output: z.object({ cancelled: z.boolean() }),
               }),
+              /**
+               * 运行态真值查询：renderer 的私有 `running` 只表示"我这轮在等自己的流"，
+               * 回答不了「别人（CLI/另一窗口）是否正在这个任务上跑」。
+               * 真相在主进程内存里（runtime-context 的 activeTurns —— LocalAgentManager 的 running 会话）：
+               * 把它查出来，UI 才不会把别人正在跑的轮次误判成「流中断」，也才谈得上给它一个停止入口。
+               */
+              running: RpcSchema.unary({
+                desc: `列出此刻真正在跑的本地 agent 轮次（主进程内存权威；UI 判「直播中/可停止」用它，不靠日志猜）`,
+                input: {},
+                output: z.object({
+                  active: z.array(
+                    z.object({
+                      taskUri: z.string(),
+                      model: z.string().optional(),
+                      cwd: z.string().optional(),
+                      since: z.string().describe("轮次起始 ISO 时间"),
+                    }),
+                  ),
+                }),
+              }),
               history: RpcSchema.unary({
                 desc: `读取本地 agent 会话的块协议 Op 日志（UI 重放用）`,
                 input: {

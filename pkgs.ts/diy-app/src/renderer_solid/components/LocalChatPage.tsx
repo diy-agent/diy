@@ -13,7 +13,7 @@
  * 定稿自动收敛：open = pinned ?? (L4 ? true : error? true : false)，直播块天然展开预览。
  */
 
-import { createSignal, For, Show, createEffect, on, onMount, onCleanup } from "solid-js";
+import { createSignal, For, Show, Switch, Match, createEffect, on, onMount, onCleanup } from "solid-js";
 import { localChatStore } from "../store/localChatStore";
 import { personaStore } from "../store/personaStore";
 import { PersonaDrawer } from "./PersonaDrawer";
@@ -174,7 +174,12 @@ function segments(density: Density, leaves: BlockNode[]): Seg[] {
 /**
  * 中断的 tool 块：
  *   ① 显式终态 status=interrupted（main 已收敛并写进 ops）→ 直接读，不靠推断
- *   ② 兼容旧会话：未收 stop 且当前无轮次在跑（历史日志里还没收敛）
+ *   ② 兼容旧会话：未收 stop 且该任务**此刻确实没有轮次在跑**（历史日志里还没收敛）
+ *
+ * ⚠️ 判据必须是 main 真值 `live`（含别人发起的轮次），不能用本地 `running`：
+ *    本地 running 只代表"我这轮在等自己的流" —— 拿它当整体运行态，会把 CLI 正在跑的
+ *    一轮判成"中断的历史"（任务 194 现象一）。也不能反过来把"未收 stop"当成直播中
+ *    （那会让真崩溃/中断的历史不再可见）。
  */
 function isInterruptedToolBlock(n: BlockNode): boolean {
     if (n.tag !== "tool") return false;
@@ -182,7 +187,7 @@ function isInterruptedToolBlock(n: BlockNode): boolean {
     if (s === "interrupted") return true;
     if (n.stopped) return false;
     if (s === "done" || s === "error") return false;
-    return !localChatStore.running;
+    return !localChatStore.live;
 }
 
 /** 展开判定：error 恒开 → 中断的 tool 恒开（要让人一眼看到"最后一句断在哪"）→ 手动 pin → L4 全开 */
@@ -886,6 +891,8 @@ export function LocalChatPage(props: { uri?: string }) {
     const [stick, setStick] = createSignal(true);
     /** 恢复中闸门：历史重放期间 trees 连发，须让位给 restore 的定位（否则被抢先滚到底） */
     let restoring = false;
+    /** 当前会话的运行态轮询停止函数（切会话/卸载时调用） */
+    let unwatch: (() => void) | null = null;
 
     /** 滚到底并置跟随态 */
     const gotoBottom = () => {
@@ -950,13 +957,18 @@ export function LocalChatPage(props: { uri?: string }) {
         }
     });
     // 组件卸载（切 tab 到 info）前把防抖中的草稿落盘（内容在 input 事件里已写进 draftStore）
+    // + 停掉运行态轮询（没人看就不该继续问 main）
     onCleanup(() => {
+        unwatch?.();
+        unwatch = null;
         const u = uri();
         if (u) void draftStore.flushNow(u);
     });
-    // 直播中的尾轮 turn id（running 时才有）：中断警告 gating 用
+    // 直播中的尾轮 turn id：中断警告 / 等待态 gating 用。
+    // 判据是 main 真值（localChatStore.live），不是本地 running —— 别人（CLI/另一窗口）
+    // 正在跑的轮次同样是"直播中"，否则那一轮的未收 stop 会被显示成"流中断/崩溃恢复"。
     const liveTurnId = () => {
-        if (!localChatStore.running) return null;
+        if (!localChatStore.live) return null;
         const turns = localChatStore.trees.filter((t) => t.tag === "turn");
         return turns.length ? turns[turns.length - 1]!.id : null;
     };
@@ -985,10 +997,15 @@ export function LocalChatPage(props: { uri?: string }) {
                 if (scrollRef) localChatStore.setScroll(prev, scrollRef.scrollTop);
                 void draftStore.flushNow(prev);
             }
+            // 切走：停掉上一个会话的运行态轮询（只轮询当前打开的会话）
+            unwatch?.();
+            unwatch = null;
             // 进入新会话：内容恢复（历史重放）+ 阅读位置恢复 + 输入框草稿恢复
+            // + 运行态真值轮询（别人在跑 → 界面必须知道，见 store.watch）
             if (u) {
                 restore(u);
                 applyDraft(u);
+                unwatch = localChatStore.watch(u);
             }
         }),
     );
@@ -1027,7 +1044,8 @@ export function LocalChatPage(props: { uri?: string }) {
 
     const submit = async () => {
         const text = inputValue().trim();
-        if (!text || !uri() || localChatStore.running) return;
+        // live（含别人正在跑）= main 会拒发（"正在生成中"），本地先拦：不发无效请求
+        if (!text || !uri() || localChatStore.live) return;
         setInputValue("");
         // 内容已作为消息发出，草稿使命结束：清掉，避免下次进入看到已发送的旧文本
         void draftStore.clear(uri()!, ["agent_input"]);
@@ -1052,7 +1070,7 @@ export function LocalChatPage(props: { uri?: string }) {
 
     /** 回车分流：生成中 = 留言，否则正常发送 */
     const submitByEnter = () => {
-        if (localChatStore.running) void submitSteer(DEFAULT_STEER_MODE);
+        if (localChatStore.view.busy) void submitSteer(DEFAULT_STEER_MODE); // 真值：别人的轮次在跑同样留言（回车分流同按钮）
         else void submit();
     };
 
@@ -1084,7 +1102,7 @@ export function LocalChatPage(props: { uri?: string }) {
                     危险按钮从输入区挪到这里：输入区那排是"发送/留言"的动作区，
                     清空历史与它们不同类（不是本轮动作，而是全会话的删除）。
                     生成中不显示：正跑着的会话不该在此时被清掉（原行为不变）。 */}
-                <Show when={!localChatStore.running}>
+                <Show when={!localChatStore.live}>
                     <button
                         class="btn btn-ghost btn-xs tooltip tooltip-bottom"
                         data-tip="清空本对话历史（不可恢复）"
@@ -1307,12 +1325,16 @@ export function LocalChatPage(props: { uri?: string }) {
                             <span class="opacity-50">⚙</span>
                         </button>
                         <div class="flex-1" />
-                        {/* 生成中：只有一个「留言」（+ 原「停止」）。
-                            只在**输入框有内容**时才出现 —— 没打字就没得留，空按钮只会占位。
-                            投递时机不在这里选：它是每条留言的去向，提交后到上方横条上切换
-                            （输入区多摆一个控件，等于每次发言前都逼用户先决定"投哪个"）。
-                            「停止」的外观/位置/行为一律不动：它是打断，不该因为新功能而变样。 */}
-                        <Show when={localChatStore.running}>
+                        {/* 生成中的可见性：别人（CLI/另一窗口）发起时本地 running 全程为 false，
+                            不显式说出来，界面看起来就像"什么都没发生"（任务 194 现象一的另一半） */}
+                        <Show when={localChatStore.view.busy && !localChatStore.sending}>
+                            <span class="text-[11px] text-primary" aria-label="其他端正在生成">
+                                其他端（CLI/窗口）正在生成…
+                            </span>
+                        </Show>
+                        {/* 留言（steer 插话）：只在**输入框有内容**时出现 —— 没打字就没得留。
+                            判据用真值 busy：别人的轮次在跑同样能排队留言。 */}
+                        <Show when={localChatStore.view.busy}>
                             <Show when={inputValue().trim()}>
                                 <button
                                     class="btn btn-outline btn-xs tooltip tooltip-top"
@@ -1322,25 +1344,55 @@ export function LocalChatPage(props: { uri?: string }) {
                                     留言
                                 </button>
                             </Show>
-                            <div class="aura text-error rounded-full" style={{ "--aura-padding": "2px", "--tw-duration": "2.4s" }}>
+                        </Show>
+                        {/* 三态：停止中（已请求停止、main 收尾）→ 生成中（可停止）→ 发送。
+                            停止按钮**不分谁发起的**：main 报告活跃就给入口（含 CLI 那轮）；
+                            外观沿用 steer 分支的 aura 装饰。 */}
+                        <Switch>
+                            <Match when={localChatStore.view.stopping}>
+                                {/* 收尾期间**不许**退回"生成中"：那样输入框会解锁、发送按钮出现，
+                                    而服务端仍会拒发（它眼里还在生成）—— 界面与服务端结论相反。
+                                    卡住（超过宽限期 main 仍报活跃）时不装死，给一个更强的出口：
+                                    再点一次 = 重发中断（main 侧 abort 幂等，可安全重复）。 */}
+                                <span class="text-[11px] opacity-60">
+                                    {localChatStore.view.stoppingStuck ? "已停止，仍在收尾（可强制中断）…" : "已停止，后台收尾中…"}
+                                </span>
+                                <div class="aura text-error rounded-full" style={{ "--aura-padding": "2px", "--tw-duration": "2.4s" }}>
+                                    <button
+                                        class="btn btn-error btn-sm tooltip tooltip-top"
+                                        data-tip={
+                                            localChatStore.view.stoppingStuck
+                                                ? "收尾超时；再点一次强制中断（可重复，main 侧幂等）"
+                                                : "正在收尾…"
+                                        }
+                                        disabled={!localChatStore.view.stoppingStuck}
+                                        onClick={() => uri() && void localChatStore.cancel(uri()!)}
+                                    >
+                                        {localChatStore.view.stoppingStuck ? "强制中断" : "停止中…"}
+                                    </button>
+                                </div>
+                            </Match>
+                            <Match when={localChatStore.view.busy}>
+                                <div class="aura text-error rounded-full" style={{ "--aura-padding": "2px", "--tw-duration": "2.4s" }}>
+                                    <button
+                                        class="btn btn-error btn-sm tooltip tooltip-top"
+                                        data-tip="中断本轮生成（保留已产出内容；由其他端发起的轮次同样可停）"
+                                        onClick={() => uri() && void localChatStore.cancel(uri()!)}
+                                    >
+                                        停止
+                                    </button>
+                                </div>
+                            </Match>
+                            <Match when={!localChatStore.live}>
                                 <button
-                                    class="btn btn-error btn-sm tooltip tooltip-top"
-                                    data-tip="中断本轮生成（保留已产出内容）"
-                                    onClick={() => uri() && void localChatStore.cancel(uri()!)}
+                                    class="btn btn-primary btn-sm tooltip tooltip-top"
+                                    data-tip="发送（回车发送 / Shift+回车换行）"
+                                    onClick={() => void submit()}
                                 >
-                                    停止
+                                    发送
                                 </button>
-                            </div>
-                        </Show>
-                        <Show when={!localChatStore.running}>
-                            <button
-                                class="btn btn-primary btn-sm tooltip tooltip-top"
-                                data-tip="发送（回车发送 / Shift+回车换行）"
-                                onClick={() => void submit()}
-                            >
-                                发送
-                            </button>
-                        </Show>
+                            </Match>
+                        </Switch>
                     </div>
                 </div>
             </div>

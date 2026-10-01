@@ -628,17 +628,37 @@ export class LocalAgentManager {
                 if (pending.length === 0) break;
             }
             done = true;
-            // 轮末：从块树重建 LLM 历史（含本轮 user/tool 链路与插话块），整体覆盖 llm 日志
-            sess.messages = blocksToMessages(sess.store) as unknown as ModelMessage[];
-            // dump 整文件覆盖 → tmp+rename 原子化：读取方永不见半文件（权威仍是 ops append-only）
-            const dump = llmFile(taskUri);
-            writeFileSync(`${dump}.tmp`, sess.messages.map((m) => JSON.stringify(m)).join("\n") + "\n", "utf-8");
-            renameSync(`${dump}.tmp`, dump);
+            // llm dump 移到 finally（见那里：链式 return 会截断 try 尾，finally 才是每条退出路径的保证）
         } finally {
             // 消费端提前断开（切 tab/刷新/杀 CLI）：停掉上游，不让 LLM/工具在无人处继续烧 token
             // （AbortController.abort() 按规范不抛错，此处无需 try/catch）
             if (!done) ctrl.abort();
             sess.running = null;
+            // 轮末 dump：从块树重建 LLM 历史（含本轮 user/tool 链路），整体覆盖 llm 日志。
+            // ⚠️ 必须在 finally、不能只放在 try 尾 —— 消费端取消（renderer 点停止 → end 帧 →
+            // channel-server-binding 的 if(cancelled) return → 链式 gen.return()）会把 try 的
+            // 后半段**整段截断**（任务 201 R1-S1：旧实现因此在主动停止后既缺 turn 的 stop、
+            // 也缺这份 dump）。finally 无 yield，不会被吞没，每条退出路径都能留下最后一轮。
+            // 空树跳过：装配期就抛错时块树未动，别拿空内容覆盖上一轮的可用 dump。
+            if (sess.store.roots().length > 0) {
+                try {
+                    sess.messages = blocksToMessages(sess.store) as unknown as ModelMessage[];
+                    // dump 整文件覆盖 → tmp+rename 原子化：读取方永不见半文件（权威仍是 ops append-only）
+                    const dump = llmFile(taskUri);
+                    writeFileSync(`${dump}.tmp`, sess.messages.map((m) => JSON.stringify(m)).join("\n") + "\n", "utf-8");
+                    renameSync(`${dump}.tmp`, dump);
+                } catch (e) {
+                    console.error(`[local-agent] llm dump 失败 ${llmFile(taskUri)}:`, e);
+                }
+            }
+            // ⚠️ 兜底注销活跃轮次 —— **不能只依赖 runTurn 的 closeTurn**：
+            //   runTurn 里 try{streamText} 之前的那些步骤（装配系统上下文、读模版、算 cwd）
+            //   都不在 try 覆盖内，任何一步抛错就等于跳过 closeTurn → activeTurns 留下僵尸条目。
+            //   以前这只影响"崩溃现场"的可读性（UI 看的是本地 running，异常时它会被复位）；
+            //   但现在 UI 把 agent.local.running 当**运行态真值**（session 194），僵尸会表现为
+            //   「永远显示生成中 + 停止按钮点了没反应」，用户只能重启。
+            //   noteTurnEnd 是 Map.delete，幂等：closeTurn 已注销过时，这里再删一次无害。
+            noteTurnEnd(taskUri);
         }
     }
 
@@ -805,7 +825,12 @@ export class LocalAgentManager {
             if (currentStepId !== turnId) ops.push({ op: "stop", id: currentStepId });
             ops.push({ op: "stop", id: turnId });
             // ① 同步副作用（无 await、无 yield）：无论走正常收尾还是 return 展开，这一段必定执行完
-            for (const op of ops) sink(op);
+            for (const op of ops) {
+                sink(op);
+                // 块树同步收敛（stop 幂等）：消费端断开时 chat() 的转发循环不会再 apply，
+                // 盘与内存权威（store）必须一致 —— 下一轮 blocksToMessages / 下降沿 reload 都读它
+                sess.store.apply(op);
+            }
             noteTurnEnd(taskUri);
             appendAudit(diyHome(), {
                 phase: "turn-end",
