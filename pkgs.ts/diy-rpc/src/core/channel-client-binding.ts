@@ -35,6 +35,10 @@ export class ChannelClientBinding implements ClientBinding {
     private defaultTimeout?: number,
   ) {
     this.unsub = this.transport.on((msg: _Envelope) => {
+      // 请求帧（有 method）归同端 ChannelServerBinding —— 双端同 transport 各挂
+      // server+client 时，对端 client 的请求帧也会到达本端 client；按 id 撞号时
+      // 会把请求帧误当响应 settle 掉在飞调用（任务 205），故忽略。
+      if (msg.type === 'call' && msg.method != null) return;
       if (msg.type === 'call' && msg.id != null) {
         const entry = this.pending.get(msg.id);
         if (entry) {

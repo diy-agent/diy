@@ -85,6 +85,13 @@ export class ChannelServerBinding extends ServerBindingCore implements ServerBin
   // ── 单一分发器 ──────────────────────────────────
 
   private _dispatch = async (msg: _Envelope) => {
+    // 响应/ack 帧（无 method：unary result/error、client-stream 结果、init-ack）——
+    // 双端在同一 transport 上各挂 server+client 时（main: bindApi + RendererForwarder，
+    // renderer: bindRendererApi + diyService），对端 server 发的响应帧也会到达本端 server。
+    // 这些帧归本端 ChannelClientBinding，server 必须忽略：误当请求回 UNIMPLEMENTED
+    // 会与对端 server 形成错误帧风暴，且错误帧 id 与在飞调用撞号 → 假
+    // 「Unknown method: undefined」（任务 205）。
+    if (msg.type === 'call' && msg.method == null) return;
     if (msg.type === 'call' && !msg.stream) {
       await this._handleUnary(msg);
     } else if (msg.type === 'call' && msg.stream === true) {
