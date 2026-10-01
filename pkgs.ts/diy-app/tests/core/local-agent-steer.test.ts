@@ -3,8 +3,8 @@
 //
 // 为什么要桩：真实 LLM 无法保证"这一步一定调工具、下一步一定给答复"，
 // 而插话的两种时机的差别**恰恰只在步/轮边界上**：
-//   step 模式 → 在下一个模型步开始前进入 messages（同一轮内）
-//   turn 模式 → 当前轮收尾后自动开新一轮
+//   next-step → 下一个模型步开始前把**队列里所有 next-step** 一次注入（同一轮内）
+//   next-turn → 当前轮收尾后自动开新一轮（与 next-step 一样整批投，差别只在投递点）
 // 桩模型把边界变成确定事件，于是每条断言都指向一个具体契约。
 //
 // 断言口径统一走"**上游实际收到的 messages**"（mock.doStreamCalls[i].prompt），
@@ -21,7 +21,7 @@ import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { LocalAgentManager, MAX_STEER_ROUNDS } from "../../src/main/services/local-agent";
 import { activeTurnList } from "../../src/main/services/runtime-context";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { SteerQueue } from "../../src/main/core/steer-queue";
 import type { Op } from "../../src/main/services/local-blocks";
 
@@ -124,10 +124,51 @@ beforeEach(() => {
   // 队列落盘在任务目录，每个用例用自己的任务 URI，无需清理
 });
 
-describe("插话 step 模式：进入下一个模型步", () => {
+describe("超预算早退：不记账、不投递（用户的话必须还在队列里）", () => {
+  it("系统上下文越框时不发请求：无开场块、插话未出队、轮次仍闭合", async () => {
+    const uri = newUri();
+    // 放一份超大覆盖 → 系统上下文越框（与 cli.intent.template 的超预算用例同一手法）
+    const tplDir = join(diyHome(), "projects", PROJECT, "template");
+    mkdirSync(tplDir, { recursive: true });
+    writeFileSync(join(tplDir, "identity.md"), "x".repeat(70 * 1024), "utf-8");
+    try {
+      const q = new SteerQueue();
+      q.add(uri, "next-turn", "排队等着的话");
+      const model = stubModel([textReply("答复")]);
+
+      const ops = await run(uri, "开始", model);
+
+      // 确实走了超预算分支，且**根本没发请求**
+      expect(
+        ops.some((o) => o.op === "start" && o.kind === "error" && (o as { meta?: { source?: string } }).meta?.source === "budget"),
+      ).toBe(true);
+      expect(model.doStreamCalls).toHaveLength(0);
+
+      // 回归 P1：插话**没有**被出队吞掉（曾经把出队放在判预算之前 → 用户的话凭空消失）
+      expect(new SteerQueue().list(uri).map((i) => i.text)).toEqual(["排队等着的话"]);
+
+      // 回归 P1：也不许留下开场 user 块（模型没见过的话不能进对话流，
+      // 否则 blocksToMessages 会把它当真实历史，发给后续每一轮）
+      expect(
+        ops.some(
+          (o) => o.op === "start" && o.kind === "text" && (o as { meta?: { role?: string } }).meta?.role === "user",
+        ),
+      ).toBe(false);
+
+      // 拒绝发送也是一轮完整生命周期：必须闭合，不留僵尸轮次
+      const turn = ops.find((o) => o.op === "start" && o.kind === "turn");
+      expect(turn).toBeTruthy();
+      expect(ops.some((o) => o.op === "stop" && o.id === turn!.id)).toBe(true);
+    } finally {
+      rmSync(join(tplDir, "identity.md"), { force: true });
+    }
+  });
+});
+
+describe("插话 next-step 模式：进入下一个模型步", () => {
   it("模型还在调工具时：下一步的请求里就带上了插话；本步的请求里没有", async () => {
     const uri = newUri();
-    new SteerQueue().add(uri, "step", "插一句：记得用 --no-gpg-sign");
+    new SteerQueue().add(uri, "next-step", "插一句：记得用 --no-gpg-sign");
     const model = stubModel([
       toolCallReply("c1", "echo one"),
       textReply("好了"),
@@ -150,7 +191,7 @@ describe("插话 step 模式：进入下一个模型步", () => {
     // 「assistant 总结 → user 插话 → assistant 又总结」的夹层；收益仅是早一个
     // **本来就会立刻发生**的轮次边界生效，代价是轮次结构/usage/停止边界都要为夹层做特例。
     const uri = newUri();
-    new SteerQueue().add(uri, "step", "补一句：还要跑测试");
+    new SteerQueue().add(uri, "next-step", "补一句：还要跑测试");
     const model = stubModel([textReply("我先答完"), textReply("收到插话后的答复")]);
 
     const ops = await run(uri, "问个问题", model);
@@ -174,7 +215,7 @@ describe("插话 step 模式：进入下一个模型步", () => {
     const opening = ops.find(
       (o) => o.op === "start" && o.kind === "text" && (o as { parent?: string }).parent === t2,
     ) as { meta?: { steer?: string; steerId?: string } };
-    expect(opening.meta?.steer).toBe("step");
+    expect(opening.meta?.steer).toBe("next-step");
     // 块 meta 里带上队列项 id（steer/N），排障时能回查是哪次插话
     expect(opening.meta?.steerId).toMatch(/^steer\/\d+$/);
     expect(new SteerQueue().list(uri)).toEqual([]);
@@ -189,7 +230,7 @@ describe("插话 step 模式：进入下一个模型步", () => {
 
   it("插话块写进 ops（崩溃/重启后重放仍看得到「谁插的话」）", async () => {
     const uri = newUri();
-    new SteerQueue().add(uri, "step", "落盘检查");
+    new SteerQueue().add(uri, "next-step", "落盘检查");
     const model = stubModel([toolCallReply("c1", "echo x"), textReply("done")]);
     const ops = await run(uri, "开始", model);
     const delta = ops.find(
@@ -201,16 +242,16 @@ describe("插话 step 模式：进入下一个模型步", () => {
     expect(
       ops.some(
         (o) => o.op === "start" && (o as { id?: string }).id === id
-          && (o as { meta?: { steer?: string } }).meta?.steer === "step",
+          && (o as { meta?: { steer?: string } }).meta?.steer === "next-step",
       ),
     ).toBe(true);
   });
 });
 
-describe("插话 turn 模式：本轮结束后自动开下一轮", () => {
+describe("插话 next-turn 模式：本轮结束后自动开下一轮", () => {
   it("本轮跑完 → 自动开新一轮，插话作为新一轮的 user 消息", async () => {
     const uri = newUri();
-    new SteerQueue().add(uri, "turn", "下一轮再做这件事");
+    new SteerQueue().add(uri, "next-turn", "下一轮再做这件事");
     const model = stubModel([textReply("第一轮答复"), textReply("第二轮答复")]);
 
     const ops = await run(uri, "先做第一件事", model);
@@ -220,48 +261,100 @@ describe("插话 turn 模式：本轮结束后自动开下一轮", () => {
     // 两个 turn：turn 模式的语义就是"新的一次对话"
     expect(idsOf(ops, "turn")).toHaveLength(2);
     const marks = ops.filter(
-      (o) => o.op === "start" && (o as { meta?: { steer?: string } }).meta?.steer === "turn",
+      (o) => o.op === "start" && (o as { meta?: { steer?: string } }).meta?.steer === "next-turn",
     );
     expect(marks).toHaveLength(1);
     expect(new SteerQueue().list(uri)).toEqual([]);
   });
 
-  it("两种模式同时排队：按提交顺序一条一条投（轮末 FIFO，不看模式）", async () => {
-    // 轮末已经收尾，"下一步"不复存在 → 两种模式此时都只能当下一轮的开场。
-    // 于是顺序只由**提交先后**决定（顺序即投递顺序）；若还按 turn 优先，后提交的会插队。
+  it("同一轮内多条 next-step：下一步一次性全投（不是一条一步）", async () => {
+    // 对齐 dsh 的 claim()：next-step 在步边界一次全取（多条合并成同一批）。
     const uri = newUri();
     const q = new SteerQueue();
-    q.add(uri, "step", "先提交的");
-    q.add(uri, "turn", "后提交的");
-    const model = stubModel([textReply("答复1"), textReply("答复2"), textReply("答复3")]);
+    q.add(uri, "next-step", "step 甲");
+    q.add(uri, "next-step", "step 乙");
+    const model = stubModel([toolCallReply("c1", "echo x"), textReply("完成")]);
     const ops = await run(uri, "开始", model);
 
-    expect(model.doStreamCalls).toHaveLength(3); // 首轮 + 两条插话各一轮
-    expect(promptText(model, 0)).not.toContain("先提交的");
-    expect(promptText(model, 1)).toContain("先提交的");
-    expect(promptText(model, 2)).toContain("后提交的");
+    // 两条都在**第二次请求**里（同一步），而不是各占一步
+    expect(model.doStreamCalls).toHaveLength(2);
+    expect(promptText(model, 0)).not.toContain("step 甲");
+    expect(promptText(model, 1)).toContain("step 甲");
+    expect(promptText(model, 1)).toContain("step 乙");
     expect(new SteerQueue().list(uri)).toEqual([]);
-    // 三轮（每条插话各开一轮），模式只影响标记文案、不影响轮次结构
-    expect(idsOf(ops, "turn")).toHaveLength(3);
+    // 两个插话块都在（各带 steer=next-step 标记）
+    const steerBlocks = ops.filter(
+      (o) => o.op === "start" && (o as { meta?: { steer?: string } }).meta?.steer === "next-step",
+    );
+    expect(steerBlocks).toHaveLength(2);
+  });
+
+  it("轮末整批：队列里剩下的全部（两种模式）作为下一轮开场一次性发出", async () => {
+    const uri = newUri();
+    const q = new SteerQueue();
+    q.add(uri, "next-step", "先提交的 step");
+    q.add(uri, "next-step", "再一条 step");
+    q.add(uri, "next-turn", "后提交的 turn");
+    const model = stubModel([textReply("答复1"), textReply("答复2")]);
+    const ops = await run(uri, "开始", model);
+
+    // 首轮一条请求；轮末把 3 条一次投进第二轮 → 共 2 次请求（不再"每轮一条"）
+    expect(model.doStreamCalls).toHaveLength(2);
+    const second = promptText(model, 1);
+    expect(second).toContain("先提交的 step");
+    expect(second).toContain("再一条 step");
+    expect(second).toContain("后提交的 turn");
+    expect(new SteerQueue().list(uri)).toEqual([]);
+    // 只开两轮：整批投递把多条合并进同一轮
+    expect(idsOf(ops, "turn")).toHaveLength(2);
+    // 三条都是第二轮的**开场块**（同一轮内多个 user 块，按队列顺序）
+    const opening = ops.filter(
+      (o) => o.op === "start" && o.kind === "text" && (o as { meta?: { role?: string } }).meta?.role === "user",
+    ) as Array<{ id: string }>;
+    const secondTurnId = idsOf(ops, "turn")[1]!;
+    expect(opening.filter((o) => o.id.startsWith(secondTurnId))).toHaveLength(3);
+  });
+
+  it("排队多条 next-turn：一次发完，不是一轮一条", async () => {
+    const uri = newUri();
+    const q = new SteerQueue();
+    q.add(uri, "next-turn", "第一句");
+    q.add(uri, "next-turn", "第二句");
+    q.add(uri, "next-turn", "第三句");
+    const model = stubModel([textReply("答复1"), textReply("答复2")]);
+    await run(uri, "开始", model);
+
+    // 关键：2 次请求（= 1 个续轮），而不是 4 次（每轮一条）
+    expect(model.doStreamCalls).toHaveLength(2);
+    const second = promptText(model, 1);
+    for (const t of ["第一句", "第二句", "第三句"]) expect(second).toContain(t);
+    expect(new SteerQueue().list(uri)).toEqual([]);
   });
 
   it("连续插话到轮次上限：剩余插话留在队列里 + 显式 error 块（不静默吞）", async () => {
     const uri = newUri();
     const q = new SteerQueue();
-    for (let i = 0; i < MAX_STEER_ROUNDS + 2; i++) q.add(uri, "turn", `第${i}条`);
-    const model = stubModel([textReply("答复")]);
+    q.add(uri, "next-turn", "第0条");
+    // 上限只在"本轮里又冒出新的插话"时才可能撞上：整批投递已经把轮末积压一次消化完，
+    // 所以让桩模型每次请求都再排一条（模拟用户在本轮里继续插话）。
+    let enqueued = 0;
+    const model = new MockLanguageModelV3({
+      provider: "stub",
+      modelId: "stub-model",
+      doStream: () => {
+        enqueued += 1;
+        q.add(uri, "next-turn", `第${enqueued}条`);
+        return Promise.resolve(textReply("答复"));
+      },
+    });
 
     const ops = await run(uri, "开始", model);
 
-    // 算术（10 条入队，上限 8）：
-    //   第 1 次请求 = 用户自己的消息（不消耗队列）
-    //   第 2..8 次   = 7 条插话各自开一轮（每轮末尾取一条）
-    //   → 共 8 次请求 = MAX_STEER_ROUNDS；第 8 轮末尾判到上限，**不取项**直接收尾
-    //   → 队列剩 10 - 7 = 3 条
-    // 关键：上限分支只读队列不取项。取项 = 取出即落盘删除（投递的唯一入口），
-    // 取出来再丢弃就是真丢用户的话。
+    // 第 1 次请求 = 用户自己的消息；第 2..8 次 = 每轮吃掉上一轮新排的那条
+    // → 共 MAX_STEER_ROUNDS 次请求；第 8 轮末尾判到上限，**什么都不取**直接收尾
     expect(model.doStreamCalls).toHaveLength(MAX_STEER_ROUNDS);
-    expect(new SteerQueue().list(uri).map((i) => i.text)).toEqual(["第7条", "第8条", "第9条"]);
+    // 上限那一刻新排的那条还在盘上（可取消 / 再发一条消息触发）
+    expect(new SteerQueue().list(uri).map((i) => i.text)).toEqual([`第${MAX_STEER_ROUNDS}条`]);
     const err = ops.find((o) => o.op === "start" && o.kind === "error" && (o as { meta?: { source?: string } }).meta?.source === "steer");
     expect(err).toBeTruthy();
   });
@@ -288,7 +381,7 @@ describe("插话不破坏既有会话语义", () => {
 
   it("投递过的插话不会在下一轮重复出现（取出即落盘删除）", async () => {
     const uri = newUri();
-    new SteerQueue().add(uri, "step", "只该出现一次");
+    new SteerQueue().add(uri, "next-step", "只该出现一次");
     const model = stubModel([toolCallReply("c1", "echo a"), textReply("完成")]);
     await run(uri, "开始", model);
     // 第二次对话（新 manager 实例 = 重启，队列从盘上读）
@@ -385,7 +478,7 @@ describe("消费端断开（return 展开）也必须收尾", () => {
 
   it("断开时若队列还有插话：不出队、不落块（留待下一轮，绝不留成「两头都没有」）", async () => {
     const uri = newUri();
-    new SteerQueue().add(uri, "step", "还没轮到投递就被断开了");
+    new SteerQueue().add(uri, "next-step", "还没轮到投递就被断开了");
     const model = hangingModel();
     const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
 
@@ -419,7 +512,7 @@ describe("插话认领与落位分离（落位点 = start-step）", () => {
     it("step-2 请求发出时（prepareStep 已认领）：插话仍在队列、尚未落进 ops", async () => {
         const uri = newUri();
         const text = "等 start-step 才落位";
-        new SteerQueue().add(uri, "step", text);
+        new SteerQueue().add(uri, "next-step", text);
         /** 第二个请求发出那一刻的现场快照 */
         let atSecondRequest: { queued: number; opsHasBlock: boolean } | null = null;
 
@@ -456,7 +549,7 @@ describe("插话认领与落位分离（落位点 = start-step）", () => {
         const flat = ops.map((o) => ({ op: o.op, kind: (o as { kind?: string }).kind, id: (o as { id: string }).id }));
         const steerIdx = flat.findIndex(
             (o) => o.op === "start" && o.kind === "text"
-                && (ops[flat.indexOf(o)] as { meta?: { steer?: string } }).meta?.steer === "step",
+                && (ops[flat.indexOf(o)] as { meta?: { steer?: string } }).meta?.steer === "next-step",
         );
         const stepStarts = flat.map((o, i) => ({ ...o, i })).filter((o) => o.op === "start" && o.kind === "step");
         expect(stepStarts).toHaveLength(2);

@@ -43,12 +43,29 @@ export const DRAFT_FIELDS = ["title", "body", "agent_input"] as const;
 export type DraftField = (typeof DRAFT_FIELDS)[number];
 
 /**
- * 插话（steer）的投递时机：
- *   step = 当前轮的下一个模型步之前（"插入到下一步"）
- *   turn = 当前轮结束后的下一轮（"插入到下一次对话后"）
+ * 插话（steer）的投递时机 —— 差别只在**投递点**，不在条数：
+ *   next-step = 下一个模型步边界之前（本轮内就生效）
+ *   next-turn = 本轮收尾后的下一轮开场
+ * 两者都是整批投：一次把队列里剩下的全部取出（多条合并成同一批），
+ * 排队多条的心愿就是"一起告诉它"。
  */
-export const STEER_MODES = ["step", "turn"] as const;
+export const STEER_MODES = ["next-step", "next-turn"] as const;
 export type SteerMode = (typeof STEER_MODES)[number];
+
+/**
+ * 历史 mode 值 → 现值。
+ *
+ * 枚举最初叫 `step` / `turn`，后改名成 `next-step` / `next-turn`（词表与 dsh 的两个 inbox 对齐）。
+ * 改名**没有**升 DRAFTS_VERSION，于是旧文件里的 `mode: step` 会撞上 parseSteers 的
+ * "未知模式 → 丢弃"分支 —— 排队中的留言凭空消失（实测复现）。这是「丢了 = 用户白打」的数据，
+ * 读侧必须兼容：映射不了的才丢。
+ *
+ * 与 LEGACY_DENSITY（1-4 → 语义值）同一手法：兼容放在**读**侧，写侧永远只写现值。
+ */
+const LEGACY_STEER_MODE: Record<string, SteerMode> = {
+  step: "next-step",
+  turn: "next-turn",
+};
 
 /**
  * 一条「已提交但尚未投递给模型」的插话 —— 也就是草稿机制里的第二份、第三份草稿。
@@ -207,7 +224,9 @@ function parseSteers(raw: unknown): SteerItem[] {
       continue;
     }
     const o = item as Record<string, unknown>;
-    const mode = String(o["mode"] ?? "");
+    // 先过历史值映射（step/turn → next-step/next-turn），再做合法性校验
+    const rawMode = String(o["mode"] ?? "");
+    const mode = LEGACY_STEER_MODE[rawMode] ?? rawMode;
     // trim 后为空也算空：add 侧拒空靠 trim（steer-queue），读侧不设防就会出现
     // "手写进文件的空白插话" —— 它投出去只会污染提示词（同一条不变式，两侧都要守）
     if (typeof o["id"] !== "string" || typeof o["text"] !== "string" || o["text"].trim() === "") {

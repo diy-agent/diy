@@ -25,7 +25,9 @@ import type { ReasoningEffort } from "../../main/services/local-agent";
 // 插话队列项：与草稿同文件存储（任务目录 .diy/drafts.yaml），类型只在 main 侧定义
 import type { SteerItem, SteerMode } from "../../main/core/drafts";
 import { reasoningEffortLabel } from "../../shared/reasoning-effort";
-import { IconExpand, IconCompress } from "./icons";
+import { DragDropProvider, DragOverlay, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/solid";
+import type { DragDropProviderProps } from "@dnd-kit/solid";
+import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt } from "./icons";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
@@ -348,13 +350,14 @@ function LeafView(props: {
     if (b.tag === "text" && str(b.attrs.role) === "user") {
         // steer 标记来自 main 写的块 meta（用户在生成中插的话）：标出来，才看得出
         // "这句是在第几步之后插进去的"，而不是以为它是一次新对话的开头
-        const steer = str(b.attrs.steer) as SteerMode | "";
+        // 注意类型是 string 而非 SteerMode：值域由**历史日志**决定（含改名前的 step/turn）
+        const steer = str(b.attrs.steer);
         return (
             <div class="flex justify-end">
                 <div class="max-w-[85%] bg-primary/10 border border-primary/20 rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words">
                     <Show when={steer}>
                         <span class="mb-0.5 block text-[10px] opacity-60">
-                            ⤵ 插话（{steerModeLabel(steer as SteerMode)}）{steerModeTip(steer as SteerMode)}
+                            ⤵ 插话（{steerModeLabel(steer)}）{steerModeTip(steer)}
                         </span>
                     </Show>
                     {str(b.attrs.content)}
@@ -495,54 +498,219 @@ function TurnView(props: {
 // 而不是混进对话流里 —— 对话流是历史，这条是"还没发生的事"。
 //
 // 形态：**只渲染插话条目本身**，不另起一行标题（"N 条待发送"这种说明是界面自己在解释自己：
-// 用户刚按下「插到下一步」，横条里就是那句话本身，含义不言自明）。条目自带全部必要信息 ——
-// 模式徽标（下一步后/下一轮后，悬停给出完整解释）+ 内容 + ✕。
+// 用户刚按下「留言」，横条里就是那句话本身，含义不言自明）。
+// 每行分三列：**最左 = 拖拽手柄**（图标，按住拖 = 改顺序），**中 = 留言内容**（占满剩余宽度，
+// 要发出去的就是这句话），**右 = 排队时机两态开关（时钟 ⇄ 闪电）+ ✕**。
+// 默认留言排到下一轮；右侧那个开关可切到下一步，也可再次切回排队。
+//
+// 顺序：队列是 FIFO 且**顺序即投递顺序**，所以拖拽改的是真实的投递次序（不是显示偏好），
+// 松手即落盘（`steer.reorder` 提交完整顺序）。拖拽只认手柄：整行可拖会让"想选中那句话"
+// 变成"拖走了它"，而手柄是明确的意图声明（与任务树整行可拖不同 —— 那里一行只有一个含义）。
 
-/** 模式徽标文案：说出投递时机，而不是内部枚举名（step/turn 是给代码看的） */
-const steerModeLabel = (mode: SteerMode) => (mode === "step" ? "下一步后" : "下一轮后");
 /**
- * 详细说明（tooltip）必须说清**降级**：点「插到下一步」时模型可能已经给出最终答复
+ * 历史 mode 值归一（读侧兼容）。
+ *
+ * 这两个函数的入参来自 **ops 日志里的块 meta**，而那份日志是 append-only 的史书：
+ * 枚举改名前的记录写的是 `step` / `turn`，改名后写 `next-step` / `next-turn`，两者会长期共存。
+ * 不归一就会把旧的 `step` 落进 else 分支 → 显示成「下一轮」，**语义正好相反**。
+ * 映射不了的（未来新值 / 手改的怪值）**原样呈现**，不猜 —— 显示得难看但不说谎。
+ */
+const normalizeSteerMode = (mode: string): string =>
+    mode === "step" ? "next-step" : mode === "turn" ? "next-turn" : mode;
+
+/** 投递时机的短标签：说出投递时机本身，而不是内部枚举名（next-step/next-turn 是给代码看的） */
+const steerModeLabel = (mode: string) => {
+    const m = normalizeSteerMode(mode);
+    return m === "next-step" ? "下一步" : m === "next-turn" ? "下一轮" : m;
+};
+
+/**
+ * 详细说明（tooltip）必须说清**降级**：选「下一步」时模型可能已经给出最终答复
  * （没有下一步了），此时它会成为下一轮的开场白 —— 承诺"下一次请求前一定生效"就是撒谎。
  */
-const steerModeTip = (mode: SteerMode) =>
-    mode === "step"
-        ? "插入到下一步：模型下一次模型步之前生效；本轮已收尾则作为下一轮的开场立刻发出"
-        : "插入到下一次对话后：本轮跑完，自动接着开新一轮";
+const steerModeTip = (mode: string) => {
+    const m = normalizeSteerMode(mode);
+    if (m === "next-step") {
+        return "插入到下一步：模型下一次模型步之前生效；本轮已收尾则作为下一轮的开场立刻发出";
+    }
+    if (m === "next-turn") {
+        return "插入到下一次对话后：本轮跑完，自动接着开新一轮";
+    }
+    return "";
+};
 
-function SteerBar(props: { items: SteerItem[]; onCancel: (id: string) => void }) {
+/** 「留言」按钮的缺省时机：排到下一轮（提交后可在横条上切换）。 */
+const DEFAULT_STEER_MODE: SteerMode = "next-turn";
+
+function SteerBar(props: {
+    items: SteerItem[];
+    onCancel: (id: string) => void;
+    onToggleMode: (id: string) => void;
+    onReorder: (ids: string[]) => void;
+}) {
+    /**
+     * 拖拽结束：把 source 放到 target 原来的位置，算出**完整的新顺序**再提交。
+     *
+     * 为什么自己算而不是读 dnd-kit 的 index：语义只看"拖到哪一行上"这一件事，
+     * 与 items 数组对得上（id → 下标）；dnd-kit 的 index 是它内部乐观排序后的视图，
+     * 拿来做 splice 基准反而要跟它的插件行为对齐。
+     */
+    const handleDragEnd: NonNullable<DragDropProviderProps["onDragEnd"]> = (event) => {
+        // source / target 都可能为 null（拖到空白处松手）：null 即"没落点"，直接放弃
+        const from = String(event.operation.source?.id ?? "");
+        const onto = String(event.operation.target?.id ?? "");
+        if (!from || !onto || from === onto) return;
+        const ids = props.items.map((it) => it.id);
+        const a = ids.indexOf(from);
+        const b = ids.indexOf(onto);
+        if (a < 0 || b < 0) return;
+        const next = [...ids];
+        next.splice(a, 1);
+        next.splice(b, 0, from);
+        if (next.every((id, i) => id === ids[i])) return; // 顺序没变，不打扰服务端
+        props.onReorder(next);
+    };
+
     return (
         <Show when={props.items.length > 0}>
-            <div
-                class="shrink-0 border-t bg-base-200/60 px-3 py-1.5 text-xs"
-                data-steer-bar
-                /* 无可见标题，语义交给 aria-label：读屏与自动化仍能识别这是"待发送的插话" */
-                aria-label={`待发送插话 ${props.items.length} 条`}
-            >
-                <ul class="max-h-24 space-y-0.5 overflow-y-auto">
-                    <For each={props.items}>
-                        {(it) => (
-                            <li class="flex items-center gap-2" data-steer-id={it.id}>
-                                <span
-                                    class="badge badge-xs badge-outline shrink-0 tooltip tooltip-right"
-                                    data-tip={steerModeTip(it.mode)}
-                                >
-                                    {steerModeLabel(it.mode)}
-                                </span>
-                                <span class="min-w-0 flex-1 truncate" title={it.text}>{it.text}</span>
-                                <button
-                                    class="btn btn-ghost btn-xs shrink-0"
-                                    aria-label="取消这条插话"
-                                    data-tip="取消（不会发送）"
-                                    onClick={() => props.onCancel(it.id)}
-                                >
-                                    ✕
-                                </button>
-                            </li>
-                        )}
-                    </For>
-                </ul>
-            </div>
+            {/* sensors 只给 PointerSensor：队列排序没有键盘等价操作，键盘传感器会喧宾夺主
+                （与任务树同一取舍）。 */}
+            <DragDropProvider onDragEnd={handleDragEnd} sensors={[PointerSensor]}>
+                <div
+                    class="shrink-0 border-t bg-base-200/60 px-3 py-1.5 text-xs"
+                    data-steer-bar
+                    /* 无可见标题，语义交给 aria-label：读屏与自动化仍能识别这是"待发送的插话" */
+                    aria-label={`待发送插话 ${props.items.length} 条`}
+                >
+                    <ul class="max-h-24 space-y-0.5 overflow-y-auto">
+                        <For each={props.items}>
+                            {(it) => (
+                                <SteerRow item={it} onCancel={props.onCancel} onToggleMode={props.onToggleMode} />
+                            )}
+                        </For>
+                    </ul>
+                </div>
+                {/* 拖拽幽灵：dnd-kit 的 DragOverlay 是"跟手的那一份"，原行留在原地（半透明）——
+                    必须给：不给的话反馈走 clone 分支，会在 DOM 里插一份带 data-steer-id 的克隆
+                    节点（列表断言与无障碍树都会被污染，实测踩过）。 */}
+                <DragOverlay>
+                    {(source) =>
+                        source?.data?.text ? (
+                            <div class="flex items-center gap-2 rounded border bg-base-100 px-2 py-1 text-xs shadow-lg opacity-90 select-none pointer-events-none">
+                                <IconGrip class="h-3.5 w-3.5 opacity-40" />
+                                <span class="max-w-[320px] truncate">{String(source.data.text)}</span>
+                            </div>
+                        ) : null
+                    }
+                </DragOverlay>
+            </DragDropProvider>
         </Show>
+    );
+}
+
+function SteerRow(props: {
+    item: SteerItem;
+    onCancel: (id: string) => void;
+    onToggleMode: (id: string) => void;
+}) {
+    // 行 = 拖拽源 + 放置目标；**只有手柄能发起拖拽**（整行可拖会让"想选中那句话"变成"拖走了它"）。
+    // ⚠️ 手柄必须用 handleRef（内部是 signal + effect 驱动），不能用 `handle: el` 那种普通变量：
+    // 首次渲染时它还是 undefined，之后的赋值不会让 dnd-kit 重新注册（没有响应式来源）。
+    const drag = useDraggable({
+        get id() {
+            return props.item.id;
+        },
+        // getter：拖拽幽灵要显示这句话本身，改名/换项时跟着刷新（与任务树同一写法）
+        get data() {
+            return { text: props.item.text };
+        },
+    });
+    const drop = useDroppable({
+        get id() {
+            return props.item.id;
+        },
+    });
+    const ref = (el: Element | undefined) => {
+        drag.ref(el);
+        drop.ref(el);
+    };
+    const it = () => props.item;
+    /** 时机开关的 DOM 引用：切换失败时用它把受控值写回 */
+    let toggleEl: HTMLInputElement | undefined;
+    // ⚠️ 这个 effect 必须建在**组件体**里（只建一次），不能塞进 ref 回调 ——
+    // ref 回调会被调用多次，每次都会多出一个 effect（泄漏 + 重复写 DOM）。
+    //
+    // 它存在的唯一理由：checkbox 是**受控**的，而用户点击时浏览器已经先改了 DOM。
+    // RPC 失败时快照不变 → Solid 算出的属性值跟上次相同 → 不写 DOM → 开关停在用户点出的
+    // 那一侧，而盘上仍是原值（界面"已加急"、实际排队中 —— 显示假值）。
+    // 订阅 steerToggleTick 让**失败时必定重跑**；正常路径下算出的值与真实一致，写回是无操作。
+    createEffect(() => {
+        localChatStore.steerToggleTick;
+        const el = toggleEl;
+        if (el) el.checked = props.item.mode === "next-step";
+    });
+    return (
+        <li
+            ref={ref}
+            class={`flex items-center gap-2 rounded transition-colors ${
+                drag.isDragSource() ? "opacity-40" : ""
+            } ${drop.isDropTarget() ? "bg-primary/10 ring-1 ring-primary/40 ring-inset" : ""}`}
+            data-steer-id={it().id}
+        >
+            {/* 最左：拖拽手柄（按住可拖，改投递顺序） */}
+            <span
+                ref={drag.handleRef}
+                class="tooltip tooltip-right shrink-0 cursor-grab text-base-content/40 hover:text-base-content/80 active:cursor-grabbing"
+                aria-label={`拖动调整顺序（${it().text}）`}
+                data-tip="拖动调整投递顺序"
+                data-steer-handle
+            >
+                <IconGrip class="h-3.5 w-3.5" />
+            </span>
+            {/* 中：留言本身 —— 占满剩余宽度，截断在尾部（要发出去的是这句话） */}
+            <span class="min-w-0 flex-1 truncate" title={it().text}>{it().text}</span>
+            {/* 右：排到哪一轮的两态开关（daisyUI swap，可逆）。
+                两态**同时改形状与颜色**，不能只换色 —— 小图标上"同一个形状换个颜色"扫一眼分不出：
+                  · 下一轮（默认）：时钟 + 弱色 = "还得等"
+                  · 下一步（加急）：闪电 + warning 高对比底色/描边 + 呼吸 = "马上插进去"
+                形状不同，不读 tooltip 也能分辨；动画只作用于图标，不动整行布局。 */}
+            <label
+                class={`btn btn-xs shrink-0 swap tooltip tooltip-left ${
+                    it().mode === "next-step"
+                        ? "border-warning/60 bg-warning/15 text-warning hover:bg-warning/25"
+                        : "btn-ghost text-base-content/45 hover:text-base-content/80"
+                }`}
+
+                data-tip={
+                    it().mode === "next-turn"
+                        ? "排到下一轮（点击改为马上插到下一步）"
+                        : "已加急：马上插到下一步（点击改回排队）"
+                }
+                aria-label={
+                    it().mode === "next-turn"
+                        ? "排到下一轮（点击改为马上插到下一步）"
+                        : "已加急：马上插到下一步（点击改回排队）"
+                }
+                data-steer-toggle={it().id}
+            >
+                <input
+                    type="checkbox"
+                    ref={(el) => (toggleEl = el)}
+                    checked={it().mode === "next-step"}
+                    onChange={() => props.onToggleMode(it().id)}
+                />
+                <IconClock class="swap-off h-4 w-4" />
+                <IconBolt class="swap-on h-4 w-4 animate-pulse drop-shadow" />
+            </label>
+            <button
+                class="btn btn-ghost btn-xs shrink-0"
+                aria-label="取消这条插话"
+                data-tip="取消（不会发送）"
+                onClick={() => props.onCancel(it().id)}
+            >
+                ✕
+            </button>
+        </li>
     );
 }
 
@@ -825,9 +993,9 @@ export function LocalChatPage() {
         void draftStore.clear(u, ["agent_input"]);
     };
 
-    /** 回车分流：生成中 = 插到下一步（生成中无法"发送"，这是最接近的动作）；否则正常发送 */
+    /** 回车分流：生成中 = 留言，否则正常发送 */
     const submitByEnter = () => {
-        if (localChatStore.running) void submitSteer("step");
+        if (localChatStore.running) void submitSteer(DEFAULT_STEER_MODE);
         else void submit();
     };
 
@@ -836,12 +1004,36 @@ export function LocalChatPage() {
         if (u) void localChatStore.cancelSteer(u, id);
     };
 
+    const toggleSteerMode = (id: string) => {
+        const u = uri();
+        if (u) void localChatStore.toggleSteerMode(u, id);
+    };
+
+    const reorderSteers = (ids: string[]) => {
+        const u = uri();
+        if (u) void localChatStore.reorderSteers(u, ids);
+    };
+
     return (
         <div class="flex flex-col h-full overflow-hidden">
-            {/* 顶部只保留紧凑的信息密度控制。
+            {/* 顶部：对话 view 的**视图级控制**（信息密度 + 清空本会话历史）。
                 pr-16：ViewGrid 的 area 设施（最大化/最小化）浮在本区域**右上角**，
                 不预留这条空档，密度按钮会与它叠在同一坐标上（实测重叠）。 */}
-            <div class={`flex items-center justify-end pl-4 pr-16 ${VIEW_BAR_H} border-b shrink-0`}>
+            <div class={`flex items-center justify-end gap-1 pl-4 pr-16 ${VIEW_BAR_H} border-b shrink-0`}>
+                {/* 清空本对话历史：破坏性且不可恢复 —— 只给图标（配 tooltip）+ 二次确认，
+                    危险按钮从输入区挪到这里：输入区那排是"发送/留言"的动作区，
+                    清空历史与它们不同类（不是本轮动作，而是全会话的删除）。
+                    生成中不显示：正跑着的会话不该在此时被清掉（原行为不变）。 */}
+                <Show when={!localChatStore.running}>
+                    <button
+                        class="btn btn-ghost btn-xs tooltip tooltip-bottom"
+                        data-tip="清空本对话历史（不可恢复）"
+                        aria-label="清空本对话历史"
+                        onClick={() => setConfirmClear(true)}
+                    >
+                        <IconTrash class="h-4 w-4" />
+                    </button>
+                </Show>
                 <div class="relative" data-density-control>
                     <button
                         class="btn btn-ghost btn-xs tooltip tooltip-bottom"
@@ -899,7 +1091,12 @@ export function LocalChatPage() {
             {/* 待发送插话横条（正常态）：贴着输入区上方一行 —— 队列是"还没发生的事"，
                 不该混进上面的对话流（那里是历史） */}
             <Show when={!fullscreen()}>
-                <SteerBar items={localChatStore.steers} onCancel={cancelSteer} />
+                <SteerBar
+                    items={localChatStore.steers}
+                    onCancel={cancelSteer}
+                    onToggleMode={toggleSteerMode}
+                    onReorder={reorderSteers}
+                />
             </Show>
 
             {/* 输入框：Markdown 源码编辑、随内容增长，控制项置于框内底部。 */}
@@ -925,7 +1122,12 @@ export function LocalChatPage() {
                         同一时刻只有一处渲染（同一份数据不重复画） */}
                     <Show when={fullscreen()}>
                         <div class="rounded-field border border-base-300 mb-2">
-                            <SteerBar items={localChatStore.steers} onCancel={cancelSteer} />
+                            <SteerBar
+                                items={localChatStore.steers}
+                                onCancel={cancelSteer}
+                                onToggleMode={toggleSteerMode}
+                                onReorder={reorderSteers}
+                            />
                         </div>
                     </Show>
                     {/* 全文编辑开关：输入框**右上角**，daisyUI swap（小↔大 双向动画）。
@@ -1021,42 +1223,30 @@ export function LocalChatPage() {
                             </Show>
                         </div>
                         <div class="flex-1" />
-                        <Show when={!localChatStore.running}>
-                            <button
-                                class="btn btn-ghost btn-xs tooltip tooltip-top"
-                                data-tip="清空本对话历史（不可恢复）"
-                                onClick={() => setConfirmClear(true)}
-                            >
-                                清空
-                            </button>
-                        </Show>
-                        {/* 生成中：插话按钮与「停止」并列。
-                            只在**输入框有内容**时才出现 —— 没打字就没得插，空按钮只会占位。
+                        {/* 生成中：只有一个「留言」（+ 原「停止」）。
+                            只在**输入框有内容**时才出现 —— 没打字就没得留，空按钮只会占位。
+                            投递时机不在这里选：它是每条留言的去向，提交后到上方横条上切换
+                            （输入区多摆一个控件，等于每次发言前都逼用户先决定"投哪个"）。
                             「停止」的外观/位置/行为一律不动：它是打断，不该因为新功能而变样。 */}
                         <Show when={localChatStore.running}>
                             <Show when={inputValue().trim()}>
                                 <button
                                     class="btn btn-outline btn-xs tooltip tooltip-top"
-                                    data-tip="插话：插入到下一步（模型下一次模型步之前生效；本轮已收尾则作为下一轮开场；回车同此）"
-                                    onClick={() => void submitSteer("step")}
+                                    data-tip="留言：排到下一轮（回车同此）。想让它马上生效，提交后点上方那条的闪电图标"
+                                    onClick={() => void submitSteer(DEFAULT_STEER_MODE)}
                                 >
-                                    插到下一步
-                                </button>
-                                <button
-                                    class="btn btn-outline btn-xs tooltip tooltip-top"
-                                    data-tip="插话：插入到下一次对话后（本轮跑完自动接着开新一轮）"
-                                    onClick={() => void submitSteer("turn")}
-                                >
-                                    插到下一轮
+                                    留言
                                 </button>
                             </Show>
-                            <button
-                                class="btn btn-error btn-sm tooltip tooltip-top"
-                                data-tip="中断本轮生成（保留已产出内容）"
-                                onClick={() => uri() && void localChatStore.cancel(uri()!)}
-                            >
-                                停止
-                            </button>
+                            <div class="aura text-error rounded-full" style={{ "--aura-padding": "2px", "--tw-duration": "2.4s" }}>
+                                <button
+                                    class="btn btn-error btn-sm tooltip tooltip-top"
+                                    data-tip="中断本轮生成（保留已产出内容）"
+                                    onClick={() => uri() && void localChatStore.cancel(uri()!)}
+                                >
+                                    停止
+                                </button>
+                            </div>
                         </Show>
                         <Show when={!localChatStore.running}>
                             <button

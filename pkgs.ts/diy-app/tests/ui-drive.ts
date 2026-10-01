@@ -50,14 +50,43 @@ class Cdp {
         cdp.pending.delete(msg.id);
       }
     });
+    // 连接断掉时必须让在途命令**失败**而不是永远挂着：
+    // 挂着的 Promise 只会把测试拖到 testTimeout 才报错（症状是"某测试超时"，看不出是 CDP 断了）。
+    cdp.ws.on("close", () => cdp.failAll("CDP 连接已关闭"));
+    cdp.ws.on("error", (e) => cdp.failAll(`CDP 连接错误: ${String(e)}`));
     return cdp;
   }
 
-  send<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  /** 让所有在途命令失败（连接断掉时调用） */
+  private failAll(reason: string): void {
+    for (const [, resolve] of this.pending) resolve({ __cdpError: reason });
+    this.pending.clear();
+  }
+
+  /**
+   * 发送 CDP 命令。**带超时**：命令不响应（渲染进程卡住 / 连接半死）时抛出明确错误，
+   * 而不是让 Promise 永远挂着 —— 后者表现为"某测试 30s 超时"，看不出真正原因。
+   */
+  send<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs = 10_000): Promise<T> {
     const id = this.seq++;
-    return new Promise<T>((res) => {
-      this.pending.set(id, (v) => res(v as T));
-      this.ws.send(JSON.stringify({ id, method, params }));
+    return new Promise<T>((res, rej) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        rej(new Error(`[ui-drive] CDP 命令超时（${timeoutMs}ms）: ${method}`));
+      }, timeoutMs);
+      this.pending.set(id, (v) => {
+        clearTimeout(timer);
+        const err = (v as { __cdpError?: string } | undefined)?.__cdpError;
+        if (err) rej(new Error(`[ui-drive] ${err}`));
+        else res(v as T);
+      });
+      try {
+        this.ws.send(JSON.stringify({ id, method, params }));
+      } catch (e) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        rej(e as Error);
+      }
     });
   }
 
@@ -253,14 +282,26 @@ export async function makeUiDriver(
     },
 
     async drag(from, to, steps = 8) {
+      // 事件之间必须有**真实时间 + 至少一帧渲染**流逝：
+      // ① CDP 的 dispatchMouseEvent 是瞬时的，全流程压进同一批任务时，dnd-kit 这类库的
+      //    "按下 → 激活（异步等一帧）→ 移动 → 落下"来不及走完激活 —— 实测不给延迟时
+      //    拖拽完全不生效，而 DOM 一切正常（很难查）；
+      // ② 高负载下光给 setTimeout 还不够（帧被拖后，激活仍可能没跑完），故每步显式等一帧。
+      // 真人拖拽本身也是每步几十毫秒，这里照此。
+      const frame = () => cdp.eval("new Promise((r) => requestAnimationFrame(() => r(1)))");
       await mouse("mousePressed", from);
+      await frame();
       for (let i = 1; i <= steps; i++) {
         const x = from.x + ((to.x - from.x) * i) / steps;
         const y = from.y + ((to.y - from.y) * i) / steps;
         await mouse("mouseMoved", { x, y });
+        await new Promise((r) => setTimeout(r, 25));
+        await frame();
       }
+      await new Promise((r) => setTimeout(r, 60)); // 落点先停一拍：让库算出 drop 目标
+      await frame();
       await mouse("mouseReleased", to);
-      await new Promise((r) => setTimeout(r, 120));
+      await new Promise((r) => setTimeout(r, 200));
     },
 
     eval: (expr) => cdp.eval(expr),

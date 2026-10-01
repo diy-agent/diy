@@ -63,11 +63,11 @@ export const DraftFieldsSchema = z.partialRecord(DraftFieldSchema, z.string());
 /**
  * 插话项（对话中「插嘴」的待投递消息）。
  * 与草稿同文件同生命周期（任务目录 .diy/drafts.yaml 的 steers 字段），
- * 但语义是**队列**：FIFO，提交后等模型取走（step = 下一个模型步前；turn = 下一轮）。
+ * 但语义是**队列**：FIFO，提交后等模型取走（next-step = 下一个模型步前全投；next-turn = 下一轮投一条）。
  */
 export const SteerItemSchema = z.object({
   id: z.string(),
-  mode: z.enum(["step", "turn"]),
+  mode: z.enum(["next-step", "next-turn"]),
   text: z.string(),
   created: z.string(),
 });
@@ -329,6 +329,10 @@ export const apiDef = RpcSchema.router({
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
                   message: z.string().cliArg({ desc: "用户消息" }),
+                  mode: z
+                    .enum(["next-step", "next-turn"])
+                    .optional()
+                    .cliOption({ desc: "给出则把消息入队（next-step=下一个模型步前全投；next-turn=下一轮投一条）；省略则立即开一轮" }),
                   model: z.string().optional().cliOption({ desc: `模型（默认 gpt-5.6-luna，zen/go 子集见 agent local models）` }),
                   reasoningEffort: z.string().optional().cliOption({ desc: "推理强度（按模型能力）" }),
                 },
@@ -355,15 +359,9 @@ export const apiDef = RpcSchema.router({
                 },
                 output: z.object({ cleared: z.boolean() }),
               }),
-              /**
-               * 插话（steer）—— 对话进行中追加发言，不必等本轮跑完。
-               *
-               * 两种投递时机：step = 当前轮的下一个模型步之前；turn = 当前轮结束后的下一轮。
-               * 只在内存里排队是不够的：插话是「已提交但还没投递的用户输入」，进程重启/换模式
-               * （Electron ↔ serve）后必须还在 —— 故与聊天草稿同文件落盘（.diy/drafts.yaml）。
-               */
+              /** 插话队列管理（入队走 `chat --mode`）。step=下一个模型步前；turn=本轮结束后的下一轮。 */
               steer: RpcSchema.group({
-                desc: `插话：对话中追加发言（插入到下一步 / 下一次对话后），落任务目录 .diy/drafts.yaml`,
+                desc: `插话队列：对话中追加的发言（入队走 chat --mode），落任务目录 .diy/drafts.yaml`,
                 children: {
                   list: RpcSchema.unary({
                     desc: `列出待投递的插话（FIFO，顺序即投递顺序）`,
@@ -372,29 +370,29 @@ export const apiDef = RpcSchema.router({
                     },
                     output: z.array(SteerItemSchema),
                   }),
-                  add: RpcSchema.unary({
-                    desc: `
-                    提交一条插话（只入队，不中断当前生成）
-
-                    正在跑的轮次会在下一个模型步（step）或本轮末尾（turn）取走；
-                    没有轮次在跑就先留在队列里，由聊天页上方横条展示（可取消）。
-                    `,
-                    input: {
-                      taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                      // 缺省 step（"插到下一步"是最常用的那个）；传非法值仍被契约拒绝，不静默降级
-                      mode: z
-                        .enum(["step", "turn"])
-                        .optional()
-                        .cliOption({ desc: `投递时机：step=插入到下一步（缺省）；turn=插入到下一次对话后` }),
-                      text: z.string().cliArg({ desc: "插话内容" }),
-                    },
-                    output: z.array(SteerItemSchema),
-                  }),
                   cancel: RpcSchema.unary({
                     desc: `取消一条待投递插话（幂等：id 不存在返回原队列）`,
                     input: {
                       taskUri: z.string().cliArg({ desc: "任务 URI" }),
                       id: z.string().cliArg({ desc: "插话 id（见 steer list）" }),
+                    },
+                    output: z.array(SteerItemSchema),
+                  }),
+                  toggleMode: RpcSchema.unary({
+                    desc: `切换一条插话的投递时机（step ⇄ turn）`,
+                    input: {
+                      taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                      id: z.string().cliArg({ desc: "插话 id（见 steer list）" }),
+                    },
+                    output: z.array(SteerItemSchema),
+                  }),
+                  reorder: RpcSchema.unary({
+                    desc: `重排待投递插话的顺序（顺序即投递顺序；入参是期望的完整 id 顺序）`,
+                    input: {
+                      taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                      ids: z
+                        .array(z.string())
+                        .cliArg({ desc: `期望顺序（JSON 数组，如 '["steer/2","steer/1"]'）` }),
                     },
                     output: z.array(SteerItemSchema),
                   }),

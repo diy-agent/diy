@@ -108,6 +108,17 @@ function flushRefresh(st: TaskState) {
     refresh(st);
 }
 
+/**
+ * 时机切换失败的计数（纯 UI 用）。
+ *
+ * 为什么需要：横条上的开关是 `<input type=checkbox checked={...}>`，**受控**。用户点击时
+ * 浏览器已经把 DOM 的 checked 翻过去了；若这次 RPC 失败，快照不变 → Solid 的 attribute
+ * effect 重算出的值跟上次一样 → **不写 DOM** → 开关停在用户点出的那一侧，而盘上还是原值
+ * （界面显示"已加急"，实际仍在排队）。这不是"显示旧值"，是"显示假值"。
+ * 计数递增让订阅它的 effect 必定重跑，把 DOM 强制写回真实状态。
+ */
+const [steerToggleTick, setSteerToggleTick] = createSignal(0);
+
 const [models, setModels] = createSignal<Array<{ id: string; name: string; reasoning: { supported: ReasoningEffort[]; default: ReasoningEffort } }>>([]);
 const [activeModel, setActiveModel] = createSignal<string>("");
 const [reasoningEffort, setReasoningEffort] = createSignal<ReasoningEffort>("medium");
@@ -206,6 +217,8 @@ async function send(taskUri: string, text: string): Promise<boolean> {
         const stream = await diyService.diy.agent.local.chat({
             taskUri,
             message: msg,
+            // 客户端类型要求每个键都在场（可选键也要显式 undefined）；这里不给 mode = 开一轮
+            mode: undefined,
             model: activeModel() || undefined,
             reasoningEffort: reasoningEffort(),
         });
@@ -241,25 +254,61 @@ async function send(taskUri: string, text: string): Promise<boolean> {
 }
 
 /**
- * 提交一条插话（"插嘴"）：不打断当前生成，等模型在下一个模型步（step）
- * 或本轮结束后的下一轮（turn）取走。
+ * 提交一条插话：走 `chat --mode`，服务端只入队（不启动轮次），投递时机由 mode 决定。
  *
- * 提交成功返回 true；失败返回 false 且**队列不本地改写**（以服务端返回为准，
- * 免出现"界面显示已排队、盘上其实没写"的假成功）。落盘失败由调用方提示用户。
+ * 必须把流消费到结束：服务端先回 ACK 再执行入队，只 await 调用会在落盘前就 refresh，
+ * 横条会短暂看不到这条（见 channel-server-binding 的 _startServerStream）。
  */
 async function submitSteer(taskUri: string, mode: SteerMode, text: string): Promise<boolean> {
     const body = text.trim();
     if (!body) return false;
-    const seq = nextSteerSeq(taskUri);
     try {
-        const items = (await diyService.diy.agent.local.steer.add({ taskUri, mode, text: body })) as SteerItem[];
-        // 入队**已经成功**（服务端是权威），过期快照只影响界面上一瞬的显示，故仍返回 true
-        commitSteers(taskUri, seq, items);
+        // 客户端类型要求每个键都在场：模型/推理只在开一轮时用，队列路径给 undefined
+        const stream = await diyService.diy.agent.local.chat({
+            taskUri,
+            message: body,
+            mode,
+            model: undefined,
+            reasoningEffort: undefined,
+        });
+        for await (const op of stream) void op; // 队列路径不产 op，走到 end 即入队完成
+        await refreshSteers(taskUri);
         return true;
     } catch (e) {
         console.error(`[localChat] 插话提交失败 ${taskUri}:`, e);
         notificationStore.addToast("error", "插话提交失败（未能落盘），内容未排队");
         return false;
+    }
+}
+
+/** 切换留言的投递时机（下一轮 ⇄ 下一步）；失败保留原快照。 */
+async function toggleSteerMode(taskUri: string, id: string): Promise<void> {
+    const seq = nextSteerSeq(taskUri);
+    try {
+        const items = (await diyService.diy.agent.local.steer.toggleMode({ taskUri, id })) as SteerItem[];
+        commitSteers(taskUri, seq, items);
+    } catch (e) {
+        console.error(`[localChat] 插话时机切换失败 ${taskUri}#${id}:`, e);
+        notificationStore.addToast("error", "切换时机失败，留言仍保持原状态");
+        // 通知 UI 把受控开关写回真实状态（见 steerToggleTick 头注）
+        setSteerToggleTick((t) => t + 1);
+    }
+}
+
+/**
+ * 重排待投递插话的顺序（横条上的拖拽排序；顺序即投递顺序）。
+ *
+ * 提交**完整顺序**而非"从 i 移到 j"：服务端不必猜移除源项后的下标该怎么算，
+ * 界面也已经把目标排列算出来了。失败保留原快照（显示旧顺序 > 显示假顺序）。
+ */
+async function reorderSteers(taskUri: string, ids: string[]): Promise<void> {
+    const seq = nextSteerSeq(taskUri);
+    try {
+        const items = (await diyService.diy.agent.local.steer.reorder({ taskUri, ids })) as SteerItem[];
+        commitSteers(taskUri, seq, items);
+    } catch (e) {
+        console.error(`[localChat] 插话重排失败 ${taskUri}:`, e);
+        notificationStore.addToast("error", "调整顺序失败，队列顺序未变");
     }
 }
 
@@ -377,6 +426,12 @@ export const localChatStore = {
     cancel,
     submitSteer,
     cancelSteer,
+    toggleSteerMode,
+    reorderSteers,
+    /** 时机切换失败计数：UI 订阅它把受控开关写回真实状态（见其定义处头注） */
+    get steerToggleTick() {
+        return steerToggleTick();
+    },
     refreshSteers,
     clear,
     setScroll,

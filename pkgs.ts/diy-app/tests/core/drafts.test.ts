@@ -205,22 +205,22 @@ describe("drafts 插话队列", () => {
 
   it("写入后可读回，字段完整（id/mode/text/created）", () => {
     const items: SteerItem[] = [
-      { id: "s1", mode: "step", text: "插到下一步", created: "2026-09-25T00:00:00.000Z" },
+      { id: "s1", mode: "next-step", text: "插到下一步", created: "2026-09-25T00:00:00.000Z" },
     ];
     writeSteers(URI, items);
     expect(readDrafts(URI)!.steers).toEqual(items);
   });
 
   it("顺序即投递顺序（整表替换，不合并）", () => {
-    const mk = (id: string, mode: "step" | "turn"): SteerItem => ({ id, mode, text: id, created: "" });
-    writeSteers(URI, [mk("a", "step"), mk("b", "turn")]);
-    writeSteers(URI, [mk("c", "turn")]);
+    const mk = (id: string, mode: "next-step" | "next-turn"): SteerItem => ({ id, mode, text: id, created: "" });
+    writeSteers(URI, [mk("a", "next-step"), mk("b", "next-turn")]);
+    writeSteers(URI, [mk("c", "next-turn")]);
     expect(readDrafts(URI)!.steers.map((i) => i.id)).toEqual(["c"]);
   });
 
   it("插话与草稿字段互不干扰（同一个文件，各写各的）", () => {
     writeDrafts(URI, { agent_input: "打到一半" }, "v1");
-    writeSteers(URI, [{ id: "s1", mode: "step", text: "插嘴", created: "" }]);
+    writeSteers(URI, [{ id: "s1", mode: "next-step", text: "插嘴", created: "" }]);
     let d = readDrafts(URI)!;
     expect(d.fields.agent_input).toBe("打到一半");
     expect(d.steers).toHaveLength(1);
@@ -234,7 +234,7 @@ describe("drafts 插话队列", () => {
 
   it("清空草稿字段不动插话队列（清空输入框 ≠ 放弃排队中的插话）", () => {
     writeDrafts(URI, { agent_input: "草稿" });
-    writeSteers(URI, [{ id: "s1", mode: "turn", text: "插嘴", created: "" }]);
+    writeSteers(URI, [{ id: "s1", mode: "next-turn", text: "插嘴", created: "" }]);
     clearDrafts(URI);
     const d = readDrafts(URI)!;
     expect(d.fields).toEqual({});
@@ -245,7 +245,7 @@ describe("drafts 插话队列", () => {
 
   it("clearDrafts(uri, []) 什么都不清（空数组 ≠ 整份删除：否则会顺手删掉排队中的插话）", () => {
     writeDrafts(URI, { title: "T" });
-    writeSteers(URI, [{ id: "steer/1", mode: "step", text: "排队中", created: "" }]);
+    writeSteers(URI, [{ id: "steer/1", mode: "next-step", text: "排队中", created: "" }]);
     clearDrafts(URI, []);
     const d = readDrafts(URI)!;
     expect(d.fields.title).toBe("T");
@@ -255,13 +255,13 @@ describe("drafts 插话队列", () => {
   it("纯空白的插话被读侧拒掉（与 add 侧 trim 拒空同一条不变式）", () => {
     writeRaw(
       `kind: ${DRAFTS_KIND}\nversion: ${DRAFTS_VERSION}\ntask: ${URI}\nfields: {}\n` +
-        `steers:\n  - id: steer/1\n    mode: step\n    text: '   '\n    created: ''\n`,
+        `steers:\n  - id: steer/1\n    mode: next-step\n    text: '   '\n    created: ''\n`,
     );
     expect(readDrafts(URI)!.steers).toEqual([]);
   });
 
   it("字段与队列都空 → 文件删除（不留空壳）", () => {
-    writeSteers(URI, [{ id: "s1", mode: "step", text: "插嘴", created: "" }]);
+    writeSteers(URI, [{ id: "s1", mode: "next-step", text: "插嘴", created: "" }]);
     writeSteers(URI, []);
     expect(existsSync(draftsFilePath(URI))).toBe(false);
   });
@@ -279,7 +279,7 @@ describe("drafts 插话队列", () => {
   it("坏插话项被跳过并留痕，其余项照常读回（不因一条坏记录丢整队）", () => {
     writeRaw(
       `kind: ${DRAFTS_KIND}\nversion: ${DRAFTS_VERSION}\ntask: ${URI}\nfields: {}\n` +
-        `steers:\n  - id: s1\n    mode: step\n    text: 好的\n    created: ''\n` +
+        `steers:\n  - id: s1\n    mode: next-step\n    text: 好的\n    created: ''\n` +
         `  - id: s2\n    mode: 未知模式\n    text: 坏的\n` +
         `  - id: s3\n    mode: turn\n    text: ''\n` +
         `  - 这是字符串不是对象\n`,

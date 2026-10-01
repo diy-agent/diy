@@ -83,15 +83,19 @@ function hasOpsFile(taskUri: string): boolean {
 
 // ─── 插话（steer）：对话中插嘴 ───────────────────────
 //
-// 需求：生成中也能追加发言，两种时机（插入到下一步 / 插入到下一次对话后），
-// 且**必须持久化**（进程重启、切 Electron/serve 模式后队列仍在）——
-// 插话是"已提交但模型还没看见的用户输入"，丢了就是用户白打。
-// 存储与聊天草稿同文件（任务目录 .diy/drafts.yaml 的 steers），生命周期随任务删除。
+// 入队走 `chat --mode`（唯一的提交入口）：给出 --mode 只入队、不启动轮次；不带则开一轮。
+// 必须持久化（进程重启/切 Electron/serve 模式后队列仍在）—— 插话是"已提交但模型还没看见的
+// 用户输入"，丢了就是用户白打。存储与聊天草稿同文件（任务目录 .diy/drafts.yaml 的 steers）。
 
 /** 取 CLI JSON 的 data 字段（getJson 返回 Record<string, unknown>，这里按用例收窄） */
 async function cliData<T>(cmd: string): Promise<T> {
   const r = await fx.sh.getJson(cmd);
   return r.data as T;
+}
+
+/** 入队一条插话：走 chat --mode，命令退出即已落盘（队列路径不产 op） */
+async function enqueueSteer(uri: string, mode: string, text: string): Promise<void> {
+  await fx.sh.run(`./diy.sh agent local chat ${uri} ${JSON.stringify(text)} --mode ${mode}`);
 }
 
 interface SteerRow {
@@ -101,14 +105,12 @@ interface SteerRow {
 }
 
 describe("agent.local — 插话 steer（无网络）", () => {
-  it("add 入队 → list 可见 → cancel 取消", async () => {
+  it("chat --mode 入队 → list 可见 → cancel 取消", async () => {
     const uri = await setup("插话任务");
-    const add = await cliData<SteerRow[]>(`./diy.sh agent local steer add ${uri} "插到下一步" --mode step`);
-    expect(add).toHaveLength(1);
-    expect(add[0]).toMatchObject({ mode: "step", text: "插到下一步" });
-
+    await enqueueSteer(uri, "next-step", "插到下一步");
     const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
-    expect(list.map((i) => i.text)).toEqual(["插到下一步"]);
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ mode: "next-step", text: "插到下一步" });
 
     const after = await cliData<SteerRow[]>(`./diy.sh agent local steer cancel ${uri} ${list[0]!.id}`);
     expect(after).toEqual([]);
@@ -117,31 +119,24 @@ describe("agent.local — 插话 steer（无网络）", () => {
 
   it("id 形如 steer/N（实体/序号）：CLI 里能直接手敲，不必复制粘贴随机串", async () => {
     const uri = await setup("id 格式");
-    const a = await cliData<SteerRow[]>(`./diy.sh agent local steer add ${uri} "第一条"`);
-    const b = await cliData<SteerRow[]>(`./diy.sh agent local steer add ${uri} "第二条" --mode turn`);
-    expect(a[0]!.id).toBe("steer/1");
-    expect(b[1]!.id).toBe("steer/2");
+    await enqueueSteer(uri, "next-turn", "第一条");
+    await enqueueSteer(uri, "next-turn", "第二条");
+    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+    expect(list.map((i) => i.id)).toEqual(["steer/1", "steer/2"]);
     // 用这个 id 取消（id 会进 shell，含 "/" 也没问题：它只做字符串匹配，不当路径解析）
     const after = await cliData<SteerRow[]>(`./diy.sh agent local steer cancel ${uri} steer/1`);
     expect(after.map((i) => i.id)).toEqual(["steer/2"]);
     await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
   });
 
-  it("不传 --mode 缺省 step（最常用的那个）；不静默接受非法值", async () => {
-    const uri = await setup("缺省模式");
-    const r = await cliData<SteerRow[]>(`./diy.sh agent local steer add ${uri} "没说时机"`);
-    expect(r[0]).toMatchObject({ mode: "step" });
-    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
-  });
-
-  it("两种模式各自记住（step / turn 并存，FIFO 顺序即提交顺序）", async () => {
+  it("两种模式各自记住（next-step / next-turn 并存，FIFO 顺序即提交顺序）", async () => {
     const uri = await setup("两种插话");
-    await fx.sh.getJson(`./diy.sh agent local steer add ${uri} "第一步插话" --mode step`);
-    await fx.sh.getJson(`./diy.sh agent local steer add ${uri} "下一轮插话" --mode turn`);
+    await enqueueSteer(uri, "next-step", "第一步插话");
+    await enqueueSteer(uri, "next-turn", "下一轮插话");
     const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
     expect(list.map((i) => [i.mode, i.text])).toEqual([
-      ["step", "第一步插话"],
-      ["turn", "下一轮插话"],
+      ["next-step", "第一步插话"],
+      ["next-turn", "下一轮插话"],
     ]);
     await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
   });
@@ -155,23 +150,23 @@ describe("agent.local — 插话 steer（无网络）", () => {
 
   it("空内容被拒（不落空插话：投进去只会污染提示词）", async () => {
     const uri = await setup("空插话");
-    const r = await fx.sh.run(`./diy.sh agent local steer add ${uri} "   " --mode step`);
+    const r = await fx.sh.run(`./diy.sh agent local chat ${uri} "   " --mode next-step`);
     expect(r.code).not.toBe(0);
     const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
     expect(list).toEqual([]);
     await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
   });
 
-  it("非法 mode 被契约拒绝（不许静默当成 step）", async () => {
+  it("非法 mode 被契约拒绝（不许静默放行）", async () => {
     const uri = await setup("非法模式");
-    const r = await fx.sh.run(`./diy.sh agent local steer add ${uri} "内容" --mode next`);
+    const r = await fx.sh.run(`./diy.sh agent local chat ${uri} "内容" --mode next`);
     expect(r.code).not.toBe(0);
     await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
   });
 
   it("落盘在任务目录 .diy/drafts.yaml（与聊天草稿同文件，可被 CLI 直接观察）", async () => {
     const uri = await setup("落盘检查");
-    await fx.sh.getJson(`./diy.sh agent local steer add ${uri} "持久化的话" --mode turn`);
+    await enqueueSteer(uri, "next-turn", "持久化的话");
     const fp = join(fx.HOME, uri, ".diy", "drafts.yaml");
     expect(existsSync(fp)).toBe(true);
     const raw = readFileSync(fp, "utf-8");
@@ -186,7 +181,7 @@ describe("agent.local — 插话 steer（无网络）", () => {
 
   it("与聊天草稿同文件互不干扰（清草稿不动插话）", async () => {
     const uri = await setup("共存检查");
-    await fx.sh.getJson(`./diy.sh agent local steer add ${uri} "排队的插话" --mode step`);
+    await enqueueSteer(uri, "next-step", "排队的插话");
     await fx.sh.getJson(`./diy.sh task drafts set ${uri} --agent_input "打到一半的草稿"`);
     // 清空草稿字段：插话队列必须还在（"清空输入框" ≠ "放弃排队中的插话"）
     await fx.sh.getJson(`./diy.sh task drafts clear ${uri}`);
