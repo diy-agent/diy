@@ -37,78 +37,41 @@ import { statFromStep } from "../../shared/context/stats";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import { assembleGlobals, systemBudgetForContext } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
+import {
+    apiOf,
+    contextLimitOf,
+    DEFAULT_MODEL,
+    isKnownModel,
+    LOCAL_MODELS,
+    maxOutputTokensOf,
+    reasoningOf,
+    ZEN_BASE_URL,
+    type LocalModel,
+    type LocalModelApi,
+    type LocalModelReasoning,
+    type ReasoningEffort,
+} from "../../shared/models";
+import { personaForTask } from "../core/persona";
 
-export const DEFAULT_MODEL = "gpt-5.6-luna";
-
-/** zen/go 基址：两个 API 面共用（chat/completions 与 responses 只是路径不同） */
-export const ZEN_BASE_URL = "https://opencode.ai/zen/go/v1";
-
-/**
- * 模型走的 API 面。**必须逐个模型标注**，因为 zen/go 的 `GET /models` 不返回 API 面信息
- * （只有 id/object/created/owned_by），标错的表现是「上游 503 Endpoint is unavailable」：
- * responses-only 模型打到 /chat/completions 一律 503（gpt-5.6-luna / gpt-6-luna 2026-09-24 实测）。
- * 真源：pi 的 ~/.pi/agent/models-store.json 的 `api` 字段（opencode-go provider）。
- */
-export type LocalModelApi = "chat" | "responses";
-export type ReasoningEffort = string;
-
-/** 模型能力的临时手工登记；待模型管理功能接入后由远端配置替换。 */
-export interface LocalModelReasoning {
-    supported: ReasoningEffort[];
-    default: ReasoningEffort;
-}
-
-export interface LocalModel {
-    id: string;
-    name: string;
-    /** chat = /chat/completions（@ai-sdk/openai-compatible）；responses = /responses（@ai-sdk/openai） */
-    api: LocalModelApi;
-    contextLimit: number;
-    maxOutputTokens: number;
-    reasoning: LocalModelReasoning;
-}
-
-/**
- * 可选模型（2026-09-24 实查 /models + models.dev 价格 + 两个 API 面逐个 curl 验证）
- * 价格单位为 $/1M tokens：input / output（cacheRead）
- *
- * `reasoning.supported` 的真源是**上游自己的校验报错**（2026-09-24 逐模型探测）：
- * 给 `reasoning_effort`（chat 面）/ `reasoning.effort`（responses 面）发一个非法值，
- * 上游回 400 并列出 expected one of ...，再逐值实测确认 200 / 400。
- * 实测差异：deepseek-v4.1-flash 多一个 `ultra` 档；两个 luna 都无 `minimal`；
- * mimo-v2.6-flash 只认 none/low/medium/high（minimal/xhigh/max 一律 400 Invalid request parameters）。
- * 注意：这与 pi 的 `thinkingLevelMap` 不同源 —— 那张表是「pi 档位 → 上游 thinking 字段」的映射，
- * 对直传 reasoning_effort 的 diy 不适用（pi 隐藏的档位在 diy 路径上实测有效）。
- */
-export const LOCAL_MODELS: LocalModel[] = [
-    // maxOutputTokens / contextLimit 来源：models.dev/api.json 的 limit.output / limit.context（2026-09 实查，
-    // 取 opencode-go 或同名模型主 provider 的值）。contextLimit 用于推导系统上下文预算（见 prompt-registry）。
-    // 首项 = UI 默认选中（localChatStore 取 ms[0]），必须与 DEFAULT_MODEL 一致。
-    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", api: "responses", contextLimit: 1050000, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high", "xhigh", "max"], default: "medium" } }, // 0.20 / 1.20 (0.02)
-    { id: "gpt-6-luna", name: "GPT 6 Luna", api: "responses", contextLimit: 1050000, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high", "xhigh", "max"], default: "medium" } }, // 0.10 / 0.50 (0.01)
-    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", api: "chat", contextLimit: 1000000, maxOutputTokens: 384000 , reasoning: { supported: ["none", "minimal", "low", "medium", "high", "xhigh", "ultra", "max"], default: "medium" } }, // 0.15 / 0.60 (0.003)
-    { id: "mimo-v2.6-flash", name: "MiMo V2.6 Flash", api: "chat", contextLimit: 1048576, maxOutputTokens: 131072 , reasoning: { supported: ["none", "low", "medium", "high"], default: "medium" } }, // 0.14 / 0.28 (0.0028)
-];
-
-/** 按 model id 查 API 面；未知模型按 chat 处理（保持历史行为，不静默换面） */
-export function reasoningOf(modelId: string): LocalModelReasoning {
-    return LOCAL_MODELS.find(m => m.id === modelId)?.reasoning ?? { supported: ["none"], default: "none" };
-}
-
-export function apiOf(modelId: string): LocalModelApi {
-    return LOCAL_MODELS.find(m => m.id === modelId)?.api ?? "chat";
-}
-
-/** 按 model id 查上下文窗口（tokens）；未知返回 undefined（预算回退到硬上限） */
-export function contextLimitOf(modelId: string): number | undefined {
-    return LOCAL_MODELS.find(m => m.id === modelId)?.contextLimit;
-}
+// 模型清单（LOCAL_MODELS / apiOf / reasoningOf / contextLimitOf …）已抽到 shared/models.ts：
+//   core/persona 要「默认模型 + 能力查询」，而 core 不能被 services 反向依赖（会循环 import）。
+// 这里**原样 re-export**：历史引用路径（tests/…/local-models-*.test.ts）保持不变。
+export {
+    apiOf,
+    contextLimitOf,
+    DEFAULT_MODEL,
+    isKnownModel,
+    LOCAL_MODELS,
+    maxOutputTokensOf,
+    reasoningOf,
+    ZEN_BASE_URL,
+};
+export type { LocalModel, LocalModelApi, LocalModelReasoning, ReasoningEffort };
 
 /** 按 model id 查 maxOutputTokens，fallback 到全局 limits */
 function modelOutputTokens(modelId: string): number {
-    return LOCAL_MODELS.find(m => m.id === modelId)?.maxOutputTokens ?? DEFAULT_LIMITS.maxOutputTokens;
+    return maxOutputTokensOf(modelId) ?? DEFAULT_LIMITS.maxOutputTokens;
 }
-
 
 // ─── 运行限制配置（默认值 < $DIY_HOME/local/limits.json < 环境变量 DIY_LOCAL_*）──
 export interface LocalAgentLimits {
@@ -474,10 +437,23 @@ export class LocalAgentManager {
         return true;
     }
 
-    /** 一轮对话：实时产出块协议 Op；op 即传即落盘（存储=传输）。同 task 并发拒绝。 */
-    async *chat(taskUri: string, message: string, model?: string, reasoningEffort?: ReasoningEffort): AsyncGenerator<Op> {
+    /**
+     * 一轮对话：实时产出块协议 Op；op 即传即落盘（存储=传输）。同 task 并发拒绝。
+     *
+     * 模型与参数来自**任务绑定的人物**（personas.yaml），入参 model/reasoningEffort 只是
+     * 本次临时覆盖（CLI 调试用，UI 不传）——这是「配置真源唯一」的落点：旧实现由 renderer
+     * 传一个全局 activeModel，导致改一个会话所有会话跟着变、重启又回落硬编码默认值。
+     *
+     * 解析时机 = 每轮开始时。改人物因此天然是"下一轮生效"：在跑的轮次不受影响（不打断），
+     * 也不必给用户一堆"立即/下步/下轮"的时机选项（step 中途换模型在语义上就不成立）。
+     */
+    async *chat(taskUri: string, message: string, modelOverride?: string, reasoningEffortOverride?: ReasoningEffort): AsyncGenerator<Op> {
         const key = process.env.OPENCODE_ZEN_API_KEY;
         if (!key) throw new Error("缺少 OPENCODE_ZEN_API_KEY（main 进程环境变量）");
+        const persona = personaForTask(diyHome(), taskUri);
+        const model = modelOverride ?? persona.model;
+        // 手写 personas.yaml 可能把档位留空：兜底到该模型自己的默认档，不把空档发给上游
+        const reasoningEffort = reasoningEffortOverride ?? (persona.reasoningEffort || reasoningOf(model).default);
         const sess = this.getSession(taskUri);
         if (sess.running) throw new Error(`任务 ${taskUri} 的本地会话正在生成中`);
         const ctrl = new AbortController();
@@ -527,8 +503,8 @@ export class LocalAgentManager {
         taskUri: string,
         sess: LocalSession,
         message: string,
-        model: string | undefined,
-        reasoningEffort: ReasoningEffort | undefined,
+        model: string,
+        reasoningEffort: ReasoningEffort,
         signal: AbortSignal,
         key: string,
         sink: (op: Op) => void,
@@ -536,11 +512,11 @@ export class LocalAgentManager {
         const turnId = `t${Date.now()}`;
         const uid = `${turnId}_u`;
         const cwd0 = resolveCwdWithNote(diyHome(), taskUri).cwd;
-        noteTurnStart({ taskUri, model: model || DEFAULT_MODEL, cwd: cwd0 });
+        noteTurnStart({ taskUri, model: model, cwd: cwd0 });
         appendAudit(diyHome(), {
             phase: "turn-start",
             taskUri,
-            model: model || DEFAULT_MODEL,
+            model: model,
             cwd: cwd0,
             command: message.slice(0, 300),
         });
@@ -560,7 +536,7 @@ export class LocalAgentManager {
         ): Generator<Op, void, void> {
             if (!started.has(id)) yield* emit({ op: "start", id, kind, parent, meta });
         };
-        yield* emit({ op: "start", id: turnId, kind: "turn", meta: { model: model || DEFAULT_MODEL } });
+        yield* emit({ op: "start", id: turnId, kind: "turn", meta: { model: model } });
         yield* emit({ op: "start", id: uid, kind: "text", parent: turnId, meta: { role: "user" } });
         yield* emit({ op: "delta", id: uid, fields: { content: message } });
         yield* emit({ op: "stop", id: uid });
@@ -594,7 +570,7 @@ export class LocalAgentManager {
             appendAudit(diyHome(), {
                 phase: "turn-end",
                 taskUri,
-                model: model || DEFAULT_MODEL,
+                model: model,
                 result: `steps=${steps} usage=${acc.in}/${acc.out}`,
             });
         };
@@ -610,7 +586,7 @@ export class LocalAgentManager {
         // 与上下文树页读的是同一份，所以页面上看到的 system/runtime 划分就是这里会用的划分。
         const delivery = buildDelivery(globals, loadSystemPlaces(diyHome()));
         // 预算与当前模型的上下文窗口挂钩（小窗口模型拿更小预算，大窗口封顶 64KB）
-        const sysBudget = systemBudgetForContext(contextLimitOf(model || DEFAULT_MODEL));
+        const sysBudget = systemBudgetForContext(contextLimitOf(model));
         if (delivery.system.bytes > sysBudget) {
             const kb = (n: number) => (n / 1024).toFixed(1);
             yield* errorBlock(
@@ -625,7 +601,7 @@ export class LocalAgentManager {
 
         const cwd = cwd0;
         const L = this.getLimits();
-        const modelMax = modelOutputTokens(model || DEFAULT_MODEL);
+        const modelMax = modelOutputTokens(model);
         // store 此刻已含本轮 user 块（emit 即 apply）；重建历史自带 user。
         // runtime 容器作为**尾部 user 消息**插在本轮输入之前：它不进块树（llm.jsonl 是块树的转储），
         // 所以下一轮重建历史时不会带上它 —— 每轮只发当前这一份，不会累积。
@@ -645,7 +621,7 @@ export class LocalAgentManager {
         rawSink({
             kind: "request",
             ts: new Date().toISOString(),
-            model: model || DEFAULT_MODEL,
+            model: model,
             system: delivery.system.text,
             tools: Object.keys(buildTools(cwd, L, taskUri)),
             settings: { maxSteps: L.maxSteps, maxOutputTokens: modelMax, maxRetries: 2, reasoningEffort: reasoningEffort ?? "none" },
@@ -670,7 +646,7 @@ export class LocalAgentManager {
         // 用途：跑几天后回答"这个节点到底变了几次" —— 划分位置的判据（见 task 178）。
         appendContextStat(projectDir(projectFromUri(taskUri)), statFromStep(step, prevStep?.valueHashes ?? null, taskUri));
         const result = streamText({
-            model: this.modelFor(model || DEFAULT_MODEL, key),
+            model: this.modelFor(model, key),
             system: delivery.system.text,
             messages: sent,
             tools: buildTools(cwd, L, taskUri),
@@ -844,7 +820,7 @@ export class LocalAgentManager {
                         const fr = (part as { finishReason?: string }).finishReason;
                         let notice: string | undefined;
                         if (fr === "length") {
-                            notice = `输出达到 maxOutputTokens=${modelMax} 被截断（${model || DEFAULT_MODEL} 硬上限），可再发一条消息接上`;
+                            notice = `输出达到 maxOutputTokens=${modelMax} 被截断（${model} 硬上限），可再发一条消息接上`;
                         } else if (stepN >= L.maxSteps && lastAct === "tool") {
                             notice = `达到 maxSteps=${L.maxSteps} 步上限，本轮强制收尾（模型仍在请求工具）；继续发消息可接力`;
                         }
@@ -1008,7 +984,7 @@ export async function previewSimulatedRequest(opts: {
     taskUri: string;
     /** 已渲染的 system 全文（调用方经 prompt-registry 模板链得到） */
     system: string;
-    /** 模型 id；缺省 DEFAULT_MODEL。试验场传当前会话选中的模型才算「真发的」 */
+    /** 模型 id；缺省 = 任务当前人物的模型（与真发同源），显式传则覆盖（试模型用） */
     model?: string;
     /** 历史消息；缺省 = 读任务 LLM 日志（无日志则仅占位，即首轮形态） */
     messages?: ModelMessage[];
@@ -1024,7 +1000,8 @@ export async function previewSimulatedRequest(opts: {
         return { body: null, note: "无任务场景：仅渲染 system 文本" };
     }
     const taskUri = opts.taskUri;
-    const model = opts.model || DEFAULT_MODEL;
+    // 不传模型 = 按任务当前人物预览：这才是"下一轮真发会用的模型与上下文预算"
+    const model = opts.model ?? personaForTask(diyHome(), taskUri).model;
     const cwd = resolveCwdWithNote(diyHome(), taskUri).cwd;
     const L = getLocalAgent().getLimits();
     const modelMax = modelOutputTokens(model);

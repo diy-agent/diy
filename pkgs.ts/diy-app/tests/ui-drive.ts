@@ -28,7 +28,8 @@ interface CdpTarget {
 class Cdp {
   private ws!: WebSocket;
   private seq = 1;
-  private pending = new Map<number, (v: unknown) => void>();
+  /** id → settle（含 resolve/reject）；连接断掉时全部 reject，避免 promise 永不 settle */
+  private pending = new Map<number, { res: (v: unknown) => void; rej: (e: Error) => void }>();
 
   static async attach(baseWsUrl: string): Promise<Cdp> {
     // 浏览器级 ws 不能直接 dispatch 输入事件 —— 要附到具体的 page target 上
@@ -46,29 +47,54 @@ class Cdp {
     cdp.ws.on("message", (raw) => {
       const msg = JSON.parse(raw.toString()) as { id?: number; result?: unknown };
       if (msg.id && cdp.pending.has(msg.id)) {
-        cdp.pending.get(msg.id)!(msg.result);
+        const p = cdp.pending.get(msg.id)!;
         cdp.pending.delete(msg.id);
+        p.res(msg.result);
       }
     });
+    // 连接断开（窗口销毁 / target 没了）→ 立刻 reject 所有等待中的调用。
+    // 缺这条，socket 已断时 send 的 promise 永不 settle → 用例静默挂到 30s 超时，
+    // 现象是「30s 后才失败、错误指向超时」而不是「target 已销毁」——误导排查。
+    const rejectAll = (why: string) => {
+      for (const p of cdp.pending.values()) p.rej(new Error(`[ui-drive] CDP 连接断开：${why}`));
+      cdp.pending.clear();
+    };
+    cdp.ws.on("close", () => rejectAll("ws closed（window 已销毁？）"));
+    cdp.ws.on("error", (e) => rejectAll(`ws error: ${e.message}`));
     return cdp;
   }
 
   send<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
     const id = this.seq++;
-    return new Promise<T>((res) => {
-      this.pending.set(id, (v) => res(v as T));
+    return new Promise<T>((res, rej) => {
+      // 连接不在 OPEN（窗口/页面已销毁）→ 立即失败，不进 pending（否则永远等不到回包）
+      if (this.ws.readyState !== WebSocket.OPEN) {
+        rej(new Error(`[ui-drive] CDP 连接未就绪（readyState=${this.ws.readyState}），method=${method}`));
+        return;
+      }
+      this.pending.set(id, { res: res as (v: unknown) => void, rej });
       this.ws.send(JSON.stringify({ id, method, params }));
     });
   }
 
-  /** 在 renderer 里求值（拿 DOM 尺寸、读状态用） */
-  async eval<T>(expression: string): Promise<T> {
-    const r = await this.send<{ result?: { value?: T } }>("Runtime.evaluate", {
-      expression,
-      returnByValue: true,
-      awaitPromise: true,
-    });
-    return r.result?.value as T;
+  /** 在 renderer 里求值（拿 DOM 尺寸、读状态用）。默认 5s 超时：死 target 不该吃掉整个用例预算 */
+  async eval<T>(expression: string, timeoutMs = 5000): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const r = await Promise.race([
+        this.send<{ result?: { value?: T } }>("Runtime.evaluate", {
+          expression,
+          returnByValue: true,
+          awaitPromise: true,
+        }),
+        new Promise<never>((_, rej) => {
+          timer = setTimeout(() => rej(new Error(`[ui-drive] eval 超时 ${timeoutMs}ms（target 可能已销毁）`)), timeoutMs);
+        }),
+      ]);
+      return r.result?.value as T;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   close(): void {
@@ -148,6 +174,14 @@ export interface UiDriver {
    * 定位用 DOM、发送用 CDP 原生事件 —— 命中测试那一层仍然是真的。
    */
   clickSelector(selector: string, opts?: { nth?: number }): Promise<void>;
+  /**
+   * 按 CSS 选择器定位 → **真实双击**（同上定位与命中路径）。
+   *
+   * 为什么不是"连点两次 clickSelector"：Chromium 的 `dblclick` 由**点击计数**驱动
+   * （同一坐标、`clickCount: 2` 的第二次 press/release），两次独立的单击只会产生
+   * 两个 `click`，`onDblClick` 一次都不会触发 —— 界面看着"点了没反应"。
+   */
+  dblclickSelector(selector: string, opts?: { nth?: number }): Promise<void>;
   /** 读 DOM（拿 rect / 计算样式等；a11y 树看不到的东西用这个） */
   query<T>(expression: string): Promise<T>;
   /**
@@ -198,6 +232,46 @@ export async function makeUiDriver(
       return true;
     })()`);
 
+  /**
+   * 取某选择器命中的第 nth 个元素的**稳定中心点**：等坐标连续两次一致再返回。
+   *
+   * 实测教训：侧栏展开是 `transition-[width] duration-200`，pin 之后立刻取坐标
+   * 拿到的是动画中间值，等事件派发到浏览器时按钮已经移走 —— 点击落到别处，
+   * 表现为「点了没反应」（tab 没关掉，但也没有报错）。真人不会点中途的元素。
+   * 找不到 / 零尺寸直接抛错（不静默跳过）。
+   */
+  const sampleStablePoint = async (selector: string, nth: number) => {
+    const sample = () =>
+      cdp.eval<{ x: number; y: number } | string>(
+        `(() => {
+           const els = document.querySelectorAll(${JSON.stringify(selector)});
+           const el = els[${nth}];
+           if (!el) return "NOT_FOUND";
+           const r = el.getBoundingClientRect();
+           if (r.width === 0 || r.height === 0) return "ZERO_SIZE";
+           return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+         })()`,
+      );
+
+    let point = await sample();
+    if (typeof point === "string") {
+      throw new Error(`[ui-drive] 选择器定位失败（${point}）: ${selector}[${nth}]`);
+    }
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 40));
+      const next = await sample();
+      if (typeof next === "string") {
+        throw new Error(`[ui-drive] 选择器定位失败（${next}）: ${selector}[${nth}]`);
+      }
+      if (Math.abs(next.x - point.x) < 1 && Math.abs(next.y - point.y) < 1) {
+        point = next;
+        break;
+      }
+      point = next;
+    }
+    return point;
+  };
+
   /** 取树并按谓词定位（每次现取：上一步操作会让 rect 变） */
   const locate = async (target: TextMatch) => {
     const match =
@@ -240,41 +314,20 @@ export async function makeUiDriver(
     },
 
     async clickSelector(selector, opts = {}) {
-      const nth = opts.nth ?? 0;
-      const sample = () =>
-        cdp.eval<{ x: number; y: number } | string>(
-          `(() => {
-             const els = document.querySelectorAll(${JSON.stringify(selector)});
-             const el = els[${nth}];
-             if (!el) return "NOT_FOUND";
-             const r = el.getBoundingClientRect();
-             if (r.width === 0 || r.height === 0) return "ZERO_SIZE";
-             return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-           })()`,
-        );
-
-      // 等坐标**连续两次一致**再点。
-      // 实测教训：侧栏展开是 `transition-[width] duration-200`，pin 之后立刻取坐标
-      // 拿到的是动画中间值，等事件派发到浏览器时按钮已经移走 —— 点击落到别处，
-      // 表现为「点了没反应」（tab 没关掉，但也没有报错）。真人不会点中途的元素。
-      let point = await sample();
-      if (typeof point === "string") {
-        throw new Error(`[ui-drive] 选择器定位失败（${point}）: ${selector}[${nth}]`);
-      }
-      for (let i = 0; i < 40; i++) {
-        await new Promise((r) => setTimeout(r, 40));
-        const next = await sample();
-        if (typeof next === "string") {
-          throw new Error(`[ui-drive] 选择器定位失败（${next}）: ${selector}[${nth}]`);
-        }
-        if (Math.abs(next.x - point.x) < 1 && Math.abs(next.y - point.y) < 1) {
-          point = next;
-          break;
-        }
-        point = next;
-      }
+      const point = await sampleStablePoint(selector, opts.nth ?? 0);
       await mouse("mousePressed", point);
       await mouse("mouseReleased", point);
+      await new Promise((r) => setTimeout(r, 120));
+    },
+
+    async dblclickSelector(selector, opts = {}) {
+      const point = await sampleStablePoint(selector, opts.nth ?? 0);
+      // 第二次带 clickCount: 2 —— 这才是 Chromium 判定 dblclick 的依据（见接口注释）
+      const at = (type: string, clickCount: number) => mouse(type, point, { clickCount });
+      await at("mousePressed", 1);
+      await at("mouseReleased", 1);
+      await at("mousePressed", 2);
+      await at("mouseReleased", 2);
       await new Promise((r) => setTimeout(r, 120));
     },
 

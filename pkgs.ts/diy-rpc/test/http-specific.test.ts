@@ -142,4 +142,57 @@ describe('http-server-binding 协议特有', () => {
       await new Promise<void>((r) => srv.close(() => r()));
     }
   });
+
+  it('非法 wire 输入拒绝：bad body / bad params / 非法 NDJSON chunk → 报错（R19 P1-3）', async () => {
+    const httpRaw = new HttpServerBinding();
+    const rapi = RpcSchema.router({
+      uni: RpcSchema.unary({ input: {}, output: z.unknown() }),
+      strict: RpcSchema.clientStream({ input: {}, chunkIn: z.unknown(), output: z.number() }),
+    });
+    httpRaw.on(rapi.uni, async ({ input }) => input);
+    // 不吞输入错误的 consumer：非法 chunk 必须让 handler 以错误落定（伪成功防线）
+    httpRaw.on(rapi.strict, async ({ stream }) => {
+      let n = 0;
+      for await (const _ of stream) n++;
+      return n;
+    });
+    const srv = http2.createServer();
+    srv.on('stream', (s, h) => { void httpRaw.handleStream(s as http2.ServerHttp2Stream, h); });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+    const session = http2.connect(`http://127.0.0.1:${(srv.address() as { port: number }).port}`);
+    await new Promise<void>((r) => session.once('connect', () => r()));
+    const raw = (path: string, headers: Record<string, string>, body: string) =>
+      new Promise<{ status: number; body: string }>((res, rej) => {
+        const s = session.request({ ':method': 'POST', ':path': path, ...headers });
+        const chunks: Buffer[] = [];
+        let status = 0;
+        s.on('response', (h) => { status = Number(h[':status'] ?? 0); });
+        s.on('data', (c: Buffer) => chunks.push(c));
+        s.on('end', () => res({ status, body: Buffer.concat(chunks).toString() }));
+        s.on('error', rej);
+        s.end(body);
+      });
+    try {
+      const unaryBad = await raw('/uni', { 'content-type': 'application/json' }, '{not-json');
+      const badParams = await raw(
+        '/strict',
+        { 'content-type': 'application/x-ndjson', 'x-diy-params': '{not-json' },
+        '1\n',
+      );
+      const badChunk = await raw(
+        '/strict',
+        { 'content-type': 'application/x-ndjson', 'x-diy-params': JSON.stringify({ input: {}, meta: {} }) },
+        'not-json\n',
+      );
+      expect(unaryBad.status, '非法 JSON body 必须报错').toBe(400);
+      expect(badParams.status, '非法 params 必须报错').toBe(400);
+      // 缺陷：非法 chunk 曾被 body reader 静默跳过 → handler 读 0 个 chunk → 200 伪成功
+      expect(badChunk.status, '非法 NDJSON chunk 不得静默丢弃').not.toBe(200);
+      expect(badChunk.body, '非法 chunk 应以 INVALID_ARGUMENT 落定').toContain('INVALID_ARGUMENT');
+    } finally {
+      session.close();
+      httpRaw.destroy();
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
 });

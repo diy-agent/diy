@@ -57,6 +57,12 @@ export const ChainItemSchema = z
  * 注意：只放 schema/类型，禁止 import node:fs（renderer 会打进包）。
  */
 export const AssembleGlobalsSchema = z.object({
+  persona: z
+    .object({
+      name: z.string().describe("当前人物名"),
+      instructions: z.string().describe("人物行为指令（空则不注入）"),
+    })
+    .describe("agent 人物"),
   diy: z
     .object({
       cli: z.string().describe("CLI 入口"),

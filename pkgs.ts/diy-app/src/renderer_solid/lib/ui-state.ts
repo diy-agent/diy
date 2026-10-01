@@ -106,6 +106,11 @@ export const NAV_W_MAX = 640;
 /** 侧栏默认宽度（px）= 14rem，与可调宽之前的固定宽度一致 */
 export const NAV_W_DEFAULT = 224;
 
+/** 任务内容两列布局的左列宽度边界（px）。拖拽 clamp 与上面 cache 字段的 parse
+ *  必须是同一对值：一边宽一边窄就会出现「存得进、读不回」（拖到 600 → 重启悄悄回默认）。 */
+export const TASK_DETAIL_LEFT_MIN = 200;
+export const TASK_DETAIL_LEFT_MAX = 560;
+
 /** 视图 cache 字段池：Caches.<模块>_<组件>_<用途>.get()/.set()/.reset() */
 export const Caches = {
   /** 任务树：展开节点集 */
@@ -154,6 +159,20 @@ export const Caches = {
     },
     serialize: (v) => String(v),
     defaultValue: 560,
+  }),
+  /** 任务内容的两列布局里**左列**（属性 + 任务树）的宽度（px）。
+   *
+   *  左列是「查资料」性质的窄栏，宽度固定、由用户调；右列（正文）吃掉剩余宽度 ——
+   *  否则正文一长就把窄栏一起拉宽，两块都变成巨宽（视觉上很难受）。
+   *  窄容器（<480px：任务执行页左栏 / 悬停覆盖层）压根不走两列，此值不生效。 */
+  diy_task_detail_left_width: field("diy_task_detail_left_width", {
+    parse: (raw) => {
+      const v = Number(raw);
+      return v >= TASK_DETAIL_LEFT_MIN && v <= TASK_DETAIL_LEFT_MAX ? v : null;
+    },
+    serialize: (v) => String(v),
+    // 280 是「560px 面板里左列约一半」的取值：再宽正文就只剩一条缝了
+    defaultValue: 280,
   }),
   /** 侧栏（左侧导航）展开宽度（px）。拖动右缘调宽 / 双击手柄复位后落盘，重启恢复。
    *  收起态 rail 宽度（2.5rem）不在这里 —— 那是固定几何，不是用户偏好。 */

@@ -25,8 +25,22 @@ describe("LOCAL_MODELS 的 api 面标注", () => {
         expect(apiOf("不存在的模型")).toBe("chat");
     });
 
-    it("首项即 UI 默认（localChatStore 取 ms[0]），且与 CLI 缺省 DEFAULT_MODEL 一致", () => {
-        expect(LOCAL_MODELS[0]!.id).toBe(DEFAULT_MODEL);
+    it("DEFAULT_MODEL 在清单内（清单顺序 = 展示顺序，与「默认用哪个」不是同一件事）", () => {
+        // 这里曾经锁的是「首项 === DEFAULT_MODEL」。清单顺序改成"按价格从低到高"（便宜的先看见）后，
+        // 首项成了**展示顺序**的产物，而"默认用哪个模型"是内置 persona 的 model —— 两件事分开。
+        // 真正要防的是 DEFAULT_MODEL 写出清单外的 id（apiOf/reasoningOf 会 fallback 成"未知模型只能关闭"）。
+        expect(DEFAULT_MODEL).toBe("gpt-5.6-luna");
+        expect(LOCAL_MODELS.map((m) => m.id)).toContain(DEFAULT_MODEL);
+    });
+
+    it("清单顺序 = 展示顺序：便宜的先看见（mimo → deepseek → gpt-5.6 → gpt-6）", () => {
+        // UI 的模型平铺按钮按清单顺序渲染，顺序即"从便宜到贵"，这条防止有人无意间把它排回去。
+        expect(LOCAL_MODELS.map((m) => m.id)).toEqual([
+            "mimo-v2.6-flash",
+            "deepseek-v4.1-flash",
+            "gpt-5.6-luna",
+            "gpt-6-luna",
+        ]);
     });
 
     it("id 唯一（重复 id 会让 apiOf/contextLimitOf 命中先到者）", () => {

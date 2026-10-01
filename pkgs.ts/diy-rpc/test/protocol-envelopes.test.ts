@@ -155,6 +155,50 @@ async function testServerStreamEnvelopes() {
   ]);
 }
 
+/** 任务 185 / R3 P3：cancel 帧的信封序列与两种寻址（ack 前 call.id / ack 后 streamId） */
+async function testCancelEnvelopes() {
+  console.log('\n── Cancel 信封序列 ──');
+  const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
+  const server = new ChannelServerBinding(serverTx);
+  const client = new ChannelClientBinding(clientTx);
+
+  let finallyRan = false;
+  server.on(api.count, async function* ({ input }) {
+    try {
+      for (let i = 0; i < input.to; i++) {
+        await sleep(30);
+        yield { val: i };
+      }
+    } finally {
+      finallyRan = true;
+    }
+  });
+
+  // ① ack 后取消：消费端离开 → cancel{stream}（streamId 寻址），且取消后不得再流出 data/end
+  const handle = await client.serverStream<{ input: { to: number }; meta: unknown }, { val: number }>('count', { input: { to: 100 }, meta: {} });
+  const iter = handle[Symbol.asyncIterator]();
+  await iter.next(); // 收到第一帧（30ms 后）
+  await iter.return?.(undefined); // 消费端离开 → cancel{stream}
+  await sleep(120); // 等 handler 收尾
+  assert(finallyRan, 'cancel{stream} 后服务端 handler 收尾');
+  assertLog(logs, [
+    { dir: '>', type: 'call', method: 'count', stream: true },
+    { dir: '<', type: 'call', id: 'any', stream: 'any' },
+    { dir: '<', type: 'data', stream: 'any', value: { val: 0 } },
+    { dir: '>', type: 'cancel', stream: 'any' },
+  ]);
+
+  // ② ack 之前取消：cancel 只能按 call.id 寻址（服务端经 _callStreams 换算 streamId）
+  logs.length = 0;
+  finallyRan = false;
+  clientTx.send({ type: 'call', id: 7, method: 'count', params: { input: { to: 100 } }, stream: true });
+  clientTx.send({ type: 'cancel', id: 7 });
+  await sleep(120);
+  assert(finallyRan, 'ack 窗口 cancel{id} 也收尾 handler');
+  assert(!logs.some((l) => l.envelope.type === 'data'), 'ack 窗口取消不应流出 data');
+  assert(logs.some((l) => l.dir === '>' && l.envelope.type === 'cancel' && l.envelope.id === 7), 'cancel 帧携带 call.id');
+}
+
 async function testClientStreamEnvelopes() {
   console.log('\n── Client-Stream 信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
@@ -265,6 +309,7 @@ async function testRpcLayerEnvelopes() {
 async function main() {
   await testUnaryEnvelopes();
   await testServerStreamEnvelopes();
+  await testCancelEnvelopes();
   await testClientStreamEnvelopes();
   await testBidiStreamEnvelopes();
   await testRpcLayerEnvelopes();
