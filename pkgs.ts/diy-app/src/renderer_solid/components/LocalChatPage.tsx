@@ -23,6 +23,7 @@ import { taskStore } from "../store/taskStore";
 import { Caches, DENSITY_LEVEL, DENSITY_VALUES, type Density } from "../lib/ui-state";
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
+import { bylineOf } from "../lib/assistant-byline";
 import type { ReasoningEffort } from "../../main/services/local-agent";
 import { reasoningEffortLabel } from "../../shared/reasoning-effort";
 import { IconExpand, IconCompress } from "./icons";
@@ -335,15 +336,33 @@ function HairSeg(props: { nodes: BlockNode[] }) {
     );
 }
 
-/** 回复身份：显示当前任务绑定的人物，而不是一个无名的 assistant 气泡。 */
-function AssistantByline() {
+/**
+ * 回复身份：署名是**该轮事实**的投影，不是当前配置的投影。
+ *
+ * 原先这里读"当前任务绑定人物 / 缺省"——于是改一次 `personas.yaml` 的 default，
+ * 全部历史回复的署名一起被改写（任务 196 实测：ops 首行明明是 mimo-v2.6-flash，
+ * 界面却署名「大副 · deepseek-v4.1-flash」）。事实一直在数据里：main 把当轮 model
+ * 写进 turn start 的 meta → 落进 `turn.attrs.model`，渲染时读它即可。
+ *
+ * 旧会话（无该字段）回落到当前人物，但**显式标注为推断**——不假装确定。
+ * 与输入框旁那个「跟随缺省（X）」是两回事：那个回答"下一条发给谁"，仍读当前配置。
+ */
+function AssistantByline(props: { turnModel?: unknown }) {
     const id = () => taskStore.selectedTask?.persona ?? personaStore.idForTask();
     // defOfLive：缓存里没有该 id 时补拉一次（CLI 新建/改名后 renderer 的清单会陈旧）
     const persona = () => personaStore.defOfLive(id());
+    const info = () =>
+        bylineOf({
+            turnModel: props.turnModel,
+            personaName: persona()?.name ?? null,
+            personaModel: persona()?.model ?? null,
+        });
     return (
         <div
             class="mb-1 flex items-center gap-1.5 text-[11px] opacity-70"
             data-testid="assistant-byline"
+            data-inferred={info().inferred ? "1" : undefined}
+            title={info().title}
         >
             <span
                 class="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-[12px]"
@@ -351,15 +370,27 @@ function AssistantByline() {
             >
                 🤖
             </span>
-            <span class="font-medium">{persona()?.name ?? "Agent"}</span>
-            <span class="opacity-50">·</span>
-            <span class="opacity-60">{persona()?.model ?? ""}</span>
+            {/* 名字只在"当前人物的模型与该轮记录一致"时才敢写：否则宁可只报模型，
+                也不能拿别人的名字去顶替（那正是原 bug：署名成了当前配置的投影） */}
+            <Show when={info().name}>
+                <span class="font-medium">{info().name}</span>
+            </Show>
+            <Show when={info().model}>
+                <span class="opacity-50">·</span>
+                <span class="opacity-60">{info().model}</span>
+            </Show>
+            {/* 旧轮次没有模型记录：说清"这是按当前人物推断的"，别让用户以为界面知道当时是谁答的 */}
+            <Show when={info().inferred}>
+                <span class="opacity-40">（当时人物未知）</span>
+            </Show>
         </div>
     );
 }
 
 function LeafView(props: {
     node: BlockNode;
+    /** 本轮 turn 的 attrs.model（该轮事实；旧会话可能没有） */
+    turnModel?: unknown;
     density: Density;
     pin: Record<string, boolean>;
     onToggle: (id: string) => void;
@@ -387,7 +418,7 @@ function LeafView(props: {
             // 会被解析成错乱结构，这里绝不能走 Markdown 渲染
             return (
                 <div>
-                    <AssistantByline />
+                    <AssistantByline turnModel={props.turnModel} />
                     <div class="text-sm opacity-80 truncate">
                         {b.stopped ? firstLine(t) : tailLine(t)}
                         <Show when={!b.stopped}>
@@ -404,7 +435,7 @@ function LeafView(props: {
         // 旧分支会原样留在 DOM 里——现象就是点「MD 原文」正文纹丝不动（只在切任务/重挂载后才生效）。
         return (
             <div>
-                <AssistantByline />
+                <AssistantByline turnModel={props.turnModel} />
                 <Show when={props.md} fallback={<PlainText text={text} />}>
                     <MarkdownText text={text} streaming={!b.stopped} />
                 </Show>
@@ -471,6 +502,7 @@ function TurnView(props: {
                     ) : (
                         <LeafView
                             node={seg.node}
+                            turnModel={t.attrs.model}
                             density={props.density}
                             pin={props.pin}
                             onToggle={props.onToggle}
