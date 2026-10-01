@@ -9,6 +9,7 @@
 - [依赖链](#依赖链)
 - [入口一览](#入口一览)
 - [关键约束](#关键约束)
+- [本地 agent 测试用什么模型](#本地-agent-测试用什么模型)
 - [历史归档](#历史归档)
 
 ## 目录结构
@@ -70,6 +71,38 @@ diy-app ─→ diy-rpc + diy-template   (CLI → HTTP → Electron)
 - UI 验证走 CDP（`pkgs.ts/diy-app/AGENTS.md`「UI 验证」节）
 - `renderer_solid/` 主线，`renderer/` React 仅参考
 - 意图测试为需求定义者：`pkgs.ts/diy-app/tests/cli.intent.*` + `pkgs.ts/diy-template/tests/intent.*`；Python `tests/` 已归档
+
+## 本地 agent 测试用什么模型
+
+**默认用 `mimo-v2.6-flash`（opencode zen/go 的 `mimo-v2.6-flash`，api 面 = chat）。**
+贵模型（`gpt-5.6-luna` / `gpt-6-luna` / `deepseek-v4-pro` / `kimi-k3` 等）**只准**在必须
+验证"该模型特有行为"时用，且一次只跑一条用例。
+
+价格（`$ / 1M tokens`，取自 models.dev 的 `opencode-go` provider，2026-09-26 实查）：
+
+| 模型 id | input | output | cache_read | 上下文 | maxOutput |
+|---------|-------|--------|-----------|--------|-----------|
+| `mimo-v2.6-flash` | **0.14** | **0.28** | 0.0028 | 1,048,576 | 131,072 |
+| `deepseek-v4.1-flash` | 0.15 | 0.60 | 0.003 | 1,000,000 | 384,000 |
+| `glm-5.3-flash` | 0.15 | 0.50 | 0.03 | 1,000,000 | 131,072 |
+| `qwen3.8-flash` | 0.15 | 0.47 | 0.016 | 1,000,000 | 131,072 |
+| `gpt-6-luna` | 0.10 | 0.50 | 0.01 | 1,050,000 | 128,000 |
+| `gpt-5.6-luna`（当前 UI 默认） | 0.20 | 1.20 | 0.02 | 1,050,000 | 128,000 |
+| `mimo-v2.6-pro` | 0.435 | 0.87 | 0.0036 | 1,048,576 | 131,072 |
+| `space-bunny-free` | 0 | 0 | 0 | 1,048,576 | 524,288 |
+
+- **为什么是它**：输出价是 `gpt-5.6-luna` 的 1/4.3，而 agent 测试的 token 主要烧在输出与
+  多步历史重发上；它还是全表最便宜的**带工具调用能力**的模型（`space-bunny-free` 免费但
+  不保证稳定/可用，不能当默认）。
+- **`reasoning` 档位只有 `none/low/medium/high`**（实测上游 400 拒绝 `minimal/xhigh/max`）——
+  写测试时别传其它档。
+- 常用姿势（`chat()` 的第三参 = model id，第四参 = reasoning）：
+  `mimo-v2.6-flash` + `none`（测试不关心推理时，省时省钱）
+- **模型价目真源**：`curl -s https://models.dev/api.json`（查 `opencode-go` provider 的
+  `cost` 与 `limit`）；**可用模型清单**：`curl -s $ZEN/v1/models`（`zenBaseUrl()`，
+  `DIY_ZEN_BASE_URL` 可覆盖到桩上游）。
+- 新增/改动模型登记表时，价格与档位都要按上面两个真源**实查后**再写
+  （`pkgs.ts/diy-app/src/main/services/local-agent.ts` 的 `LOCAL_MODELS` 头注已有此约定）。
 
 ## 历史归档
 
