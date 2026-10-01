@@ -78,8 +78,21 @@ const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
   }),
 );
 
-// 契约在 shared/task-detail.ts（单一真源）；re-export 保持既有引用路径不变
+// 草稿契约在 shared/task-detail.ts（单一真源，renderer 同源）；re-export 保持既有引用路径不变
 export { DraftFieldSchema, DraftFieldsSchema, DraftsData, TaskDetailSchema };
+
+/**
+ * 插话项（对话中「插嘴」的待投递消息）。
+ * 与草稿同文件同生命周期（任务目录 .diy/drafts.yaml 的 steers 字段），
+ * 但语义是**队列**：FIFO，提交后等模型取走。两种模式**都是整批取走**（多条合并成同一批），
+ * 差别只在投递点：next-step = 下一个模型步边界之前（本轮内生效）；next-turn = 本轮收尾后的下一轮开场。
+ */
+export const SteerItemSchema = z.object({
+  id: z.string(),
+  mode: z.enum(["next-step", "next-turn"]),
+  text: z.string(),
+  created: z.string(),
+});
 
 export const apiDef = RpcSchema.router({
   diy: RpcSchema.group({
@@ -149,7 +162,7 @@ export const apiDef = RpcSchema.router({
                 output: z.object({ status: z.string(), data: DraftsData }),
               }),
               clear: RpcSchema.unary({
-                desc: `清除草稿（不传 fields 清空全部；清空后文件删除）`,
+                desc: `清除草稿字段（不传 fields 清空全部字段；传 [] 什么都不清。只动草稿字段，不动待投递的插话队列；文件在字段与队列都空时才删除）`,
                 input: {
                   uri: z.string().cliArg({ desc: "任务 URI" }),
                   // CLI 数组统一走 JSON 形式（parser 只对 ZodArray 做 JSON.parse）：
@@ -399,7 +412,13 @@ export const apiDef = RpcSchema.router({
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
                   message: z.string().cliArg({ desc: "用户消息" }),
-                  // 下面两项是**本次临时覆盖**，不写配置：模型/参数的真源是任务绑定的人物
+                  mode: z
+                    .enum(["next-step", "next-turn"])
+                    .optional()
+                    .cliOption({
+                      desc: "给出则把消息入队（next-step=下一个模型步前生效；next-turn=本轮收尾后的下一轮开场；两者都整批投）；省略则立即开一轮",
+                    }),
+                  // 下面两项是**临时覆盖**，不写配置：模型/参数的真源是任务绑定的人物
                   // （diy agent persona …）。UI 不传，留着是给 CLI/调试临时试模型用。
                   model: z.string().optional().cliOption({ desc: `临时覆盖模型（缺省 = 任务当前人物的模型）` }),
                   reasoningEffort: z.string().optional().cliOption({ desc: "临时覆盖推理强度（缺省 = 人物配置）" }),
@@ -413,6 +432,26 @@ export const apiDef = RpcSchema.router({
                 },
                 output: z.object({ cancelled: z.boolean() }),
               }),
+              /**
+               * 运行态真值查询：renderer 的私有 `running` 只表示"我这轮在等自己的流"，
+               * 回答不了「别人（CLI/另一窗口）是否正在这个任务上跑」。
+               * 真相在主进程内存里（runtime-context 的 activeTurns —— LocalAgentManager 的 running 会话）：
+               * 把它查出来，UI 才不会把别人正在跑的轮次误判成「流中断」，也才谈得上给它一个停止入口。
+               */
+              running: RpcSchema.unary({
+                desc: `列出此刻真正在跑的本地 agent 轮次（主进程内存权威；UI 判「直播中/可停止」用它，不靠日志猜）`,
+                input: {},
+                output: z.object({
+                  active: z.array(
+                    z.object({
+                      taskUri: z.string(),
+                      model: z.string().optional(),
+                      cwd: z.string().optional(),
+                      since: z.string().describe("轮次起始 ISO 时间"),
+                    }),
+                  ),
+                }),
+              }),
               history: RpcSchema.unary({
                 desc: `读取本地 agent 会话的块协议 Op 日志（UI 重放用）`,
                 input: {
@@ -421,11 +460,50 @@ export const apiDef = RpcSchema.router({
                 output: z.array(z.any()),
               }),
               clear: RpcSchema.unary({
-                desc: `清空本地 agent 会话（中断生成并删除 Op/LLM 日志）`,
+                desc: `清空本地 agent 会话（中断生成、删除 Op/LLM 日志，并清空待投递的插话队列）`,
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
                 },
                 output: z.object({ cleared: z.boolean() }),
+              }),
+              /** 插话队列管理（入队走 `chat --mode`）。step=下一个模型步前；turn=本轮结束后的下一轮。 */
+              steer: RpcSchema.group({
+                desc: `插话队列：对话中追加的发言（入队走 chat --mode），落任务目录 .diy/drafts.yaml`,
+                children: {
+                  list: RpcSchema.unary({
+                    desc: `列出待投递的插话（FIFO，顺序即投递顺序）`,
+                    input: {
+                      taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                    },
+                    output: z.array(SteerItemSchema),
+                  }),
+                  cancel: RpcSchema.unary({
+                    desc: `取消一条待投递插话（幂等：id 不存在返回原队列）`,
+                    input: {
+                      taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                      id: z.string().cliArg({ desc: "插话 id（见 steer list）" }),
+                    },
+                    output: z.array(SteerItemSchema),
+                  }),
+                  toggleMode: RpcSchema.unary({
+                    desc: `切换一条插话的投递时机（next-step ⇄ next-turn）`,
+                    input: {
+                      taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                      id: z.string().cliArg({ desc: "插话 id（见 steer list）" }),
+                    },
+                    output: z.array(SteerItemSchema),
+                  }),
+                  reorder: RpcSchema.unary({
+                    desc: `重排待投递插话的顺序（顺序即投递顺序；入参是期望的完整 id 顺序）`,
+                    input: {
+                      taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                      ids: z
+                        .array(z.string())
+                        .cliArg({ desc: `期望顺序（JSON 数组，如 '["steer/2","steer/1"]'）` }),
+                    },
+                    output: z.array(SteerItemSchema),
+                  }),
+                },
               }),
               models: RpcSchema.unary({
                 desc: `列出本地 agent 可选模型（zen/go；api 面逐个标注，见 local-agent.ts apiOf）`,

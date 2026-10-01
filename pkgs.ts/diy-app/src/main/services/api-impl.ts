@@ -316,7 +316,13 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.agent.local.chat, async function* ({ input }) {
     noteRendererTouch("diy.agent.local.chat", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
-    for await (const op of getLocalAgent().chat(input.taskUri, input.message, input.model, input.reasoningEffort)) {
+    const agent = getLocalAgent();
+    // --mode 给出 = 入队待投递（不启动轮次）；省略 = 立即开一轮。
+    if (input.mode) {
+      agent.steerAdd(input.taskUri, input.mode, input.message);
+      return;
+    }
+    for await (const op of agent.chat(input.taskUri, input.message, input.model, input.reasoningEffort)) {
       yield JSON.stringify(op);
     }
   });
@@ -324,6 +330,12 @@ export function bindAppHandlers(binding: ServerBinding): void {
     noteRendererTouch("diy.agent.local.cancel", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     return { cancelled: getLocalAgent().cancel(input.taskUri) };
+  });
+  // 运行态查询：不经 LocalAgentManager（它只在"这个 task 的会话被碰过"时才有 session），
+  // 直接读 runtime-context 的内存表 —— 那才是「此刻主进程真正在跑哪些轮次」的权威。
+  binding.on(app.agent.local.running, async () => {
+    const { activeTurnList } = await import("./runtime-context");
+    return { active: activeTurnList() };
   });
   binding.on(app.agent.local.history, async ({ input }) => {
     noteRendererTouch("diy.agent.local.history", input.taskUri);
@@ -334,6 +346,26 @@ export function bindAppHandlers(binding: ServerBinding): void {
     noteRendererTouch("diy.agent.local.clear", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     return { cleared: getLocalAgent().clear(input.taskUri) };
+  });
+  binding.on(app.agent.local.steer.list, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.steer.list", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().steerList(input.taskUri);
+  });
+  binding.on(app.agent.local.steer.cancel, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.steer.cancel", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().steerCancel(input.taskUri, input.id);
+  });
+  binding.on(app.agent.local.steer.toggleMode, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.steer.toggleMode", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().steerToggleMode(input.taskUri, input.id);
+  });
+  binding.on(app.agent.local.steer.reorder, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.steer.reorder", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().steerReorder(input.taskUri, input.ids);
   });
   binding.on(app.agent.local.models, async () => {
     const { getLocalAgent } = await import("./local-agent");

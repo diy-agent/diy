@@ -12,12 +12,18 @@
 //   · 依赖外部模型 → 放默认套件里必然非确定（实测：模型偶尔不回 text delta，断言假红）
 //   · 一次全量会打真实请求、耗时 2~3 分钟
 // 联调：DIY_LLM_E2E=1 npx vitest run tests/cli.intent.agent-local.test.ts
+//
+// 真发用例**指定 `mimo-v2.6-flash`**（全表最便宜的带工具能力模型，见仓库根 AGENTS.md
+// 「本地 agent 测试用什么模型」）：这些用例只验协议链路，与模型强弱无关，
+// 用默认的 gpt-5.6-luna（output 0.28 → 1.20 $/1M，贵 4 倍）纯属浪费。
+// exceptions：responses 面那条**必须**用 gpt-5.6-luna —— 它测的就是"responses-only
+// 模型不能打到 chat 面"，换模型就测不到那个 api 面。
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { join } from "node:path";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { ShellTest } from "./shell-test";
+import { ShellTest, Session } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 
 // 真实 LLM 用例：默认关闭（见文件头）。缺 key 时即使开了开关也跳过。
@@ -75,6 +81,116 @@ function hasOpsFile(taskUri: string): boolean {
     return findOpsFile(taskUri) !== undefined;
 }
 
+// ─── 插话（steer）：对话中插嘴 ───────────────────────
+//
+// 入队走 `chat --mode`（唯一的提交入口）：给出 --mode 只入队、不启动轮次；不带则开一轮。
+// 必须持久化（进程重启/切 Electron/serve 模式后队列仍在）—— 插话是"已提交但模型还没看见的
+// 用户输入"，丢了就是用户白打。存储与聊天草稿同文件（任务目录 .diy/drafts.yaml 的 steers）。
+
+/** 取 CLI JSON 的 data 字段（getJson 返回 Record<string, unknown>，这里按用例收窄） */
+async function cliData<T>(cmd: string): Promise<T> {
+  const r = await fx.sh.getJson(cmd);
+  return r.data as T;
+}
+
+/** 入队一条插话：走 chat --mode，命令退出即已落盘（队列路径不产 op） */
+async function enqueueSteer(uri: string, mode: string, text: string): Promise<void> {
+  await fx.sh.run(`./diy.sh agent local chat ${uri} ${JSON.stringify(text)} --mode ${mode}`);
+}
+
+interface SteerRow {
+  id: string;
+  mode: string;
+  text: string;
+}
+
+describe("agent.local — 插话 steer（无网络）", () => {
+  it("chat --mode 入队 → list 可见 → cancel 取消", async () => {
+    const uri = await setup("插话任务");
+    await enqueueSteer(uri, "next-step", "插到下一步");
+    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ mode: "next-step", text: "插到下一步" });
+
+    const after = await cliData<SteerRow[]>(`./diy.sh agent local steer cancel ${uri} ${list[0]!.id}`);
+    expect(after).toEqual([]);
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+
+  it("id 形如 steer/N（实体/序号）：CLI 里能直接手敲，不必复制粘贴随机串", async () => {
+    const uri = await setup("id 格式");
+    await enqueueSteer(uri, "next-turn", "第一条");
+    await enqueueSteer(uri, "next-turn", "第二条");
+    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+    expect(list.map((i) => i.id)).toEqual(["steer/1", "steer/2"]);
+    // 用这个 id 取消（id 会进 shell，含 "/" 也没问题：它只做字符串匹配，不当路径解析）
+    const after = await cliData<SteerRow[]>(`./diy.sh agent local steer cancel ${uri} steer/1`);
+    expect(after.map((i) => i.id)).toEqual(["steer/2"]);
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+
+  it("两种模式各自记住（next-step / next-turn 并存，FIFO 顺序即提交顺序）", async () => {
+    const uri = await setup("两种插话");
+    await enqueueSteer(uri, "next-step", "第一步插话");
+    await enqueueSteer(uri, "next-turn", "下一轮插话");
+    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+    expect(list.map((i) => [i.mode, i.text])).toEqual([
+      ["next-step", "第一步插话"],
+      ["next-turn", "下一轮插话"],
+    ]);
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+
+  it("取消不存在的 id 幂等（重复点 ✕ 不该报错）", async () => {
+    const uri = await setup("幂等取消");
+    const r = await cliData<SteerRow[]>(`./diy.sh agent local steer cancel ${uri} nope`);
+    expect(r).toEqual([]);
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+
+  it("空内容被拒（不落空插话：投进去只会污染提示词）", async () => {
+    const uri = await setup("空插话");
+    const r = await fx.sh.run(`./diy.sh agent local chat ${uri} "   " --mode next-step`);
+    expect(r.code).not.toBe(0);
+    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+    expect(list).toEqual([]);
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+
+  it("非法 mode 被契约拒绝（不许静默放行）", async () => {
+    const uri = await setup("非法模式");
+    const r = await fx.sh.run(`./diy.sh agent local chat ${uri} "内容" --mode next`);
+    expect(r.code).not.toBe(0);
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+
+  it("落盘在任务目录 .diy/drafts.yaml（与聊天草稿同文件，可被 CLI 直接观察）", async () => {
+    const uri = await setup("落盘检查");
+    await enqueueSteer(uri, "next-turn", "持久化的话");
+    const fp = join(fx.HOME, uri, ".diy", "drafts.yaml");
+    expect(existsSync(fp)).toBe(true);
+    const raw = readFileSync(fp, "utf-8");
+    expect(raw).toContain("steers");
+    expect(raw).toContain("持久化的话");
+    // 取消后队列空、字段也空 → 文件删除（不留空壳）
+    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+    await fx.sh.getJson(`./diy.sh agent local steer cancel ${uri} ${list[0]!.id}`);
+    expect(existsSync(fp)).toBe(false);
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+
+  it("与聊天草稿同文件互不干扰（清草稿不动插话）", async () => {
+    const uri = await setup("共存检查");
+    await enqueueSteer(uri, "next-step", "排队的插话");
+    await fx.sh.getJson(`./diy.sh task drafts set ${uri} --agent_input "打到一半的草稿"`);
+    // 清空草稿字段：插话队列必须还在（"清空输入框" ≠ "放弃排队中的插话"）
+    await fx.sh.getJson(`./diy.sh task drafts clear ${uri}`);
+    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+    expect(list.map((i) => i.text)).toEqual(["排队的插话"]);
+    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+  });
+});
+
 describe("agent.local — 控制面（无网络）", () => {
     it("models 列出 zen/go 子集", async () => {
         const r = await fx.sh.getJson(`./diy.sh agent local models`);
@@ -89,6 +205,13 @@ describe("agent.local — 控制面（无网络）", () => {
         const c = await fx.sh.getJson(`./diy.sh agent local cancel ${uri}`);
         expect(c.data).toEqual({ cancelled: false });
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
+
+    // 任务 194：UI 判"这一轮是否还活着"必须问 main（agent.local.running），
+    // 而不是靠自己的私有 running —— 别人（CLI/另一窗口）正在跑的轮次它看不见。
+    it("running 给出运行态真值：无在途时是空表（结构即契约）", async () => {
+        const r = await fx.sh.getJson(`./diy.sh agent local running`);
+        expect(r.data).toEqual({ active: [] });
     });
 
     it("clear 幂等删除（不存在也可清）", async () => {
@@ -106,7 +229,7 @@ describe("agent.local — 真实对话（zen/go 缺省模型 gpt-5.6-luna）", (
         async () => {
             const uri = await setup("纯文本任务");
             const r = await fx.sh.run(
-                `./diy.sh agent local chat ${uri} "只用两个字回答：你好"`,
+                `./diy.sh agent local chat ${uri} "只用两个字回答：你好" --model mimo-v2.6-flash`,
                 180_000,
             );
             if (r.code !== 0) throw new Error(`cli exit=${r.code}\n${r.stderr}`);
@@ -180,7 +303,7 @@ describe("agent.local — 真实对话（zen/go 缺省模型 gpt-5.6-luna）", (
         async () => {
             const uri = await setup("工具任务");
             const r = await fx.sh.run(
-                `./diy.sh agent local chat ${uri} "用 bash 执行 echo hello-local，然后用一句话告诉我输出"`,
+                `./diy.sh agent local chat ${uri} "用 bash 执行 echo hello-local，然后用一句话告诉我输出" --model mimo-v2.6-flash`,
                 240_000,
             );
             if (r.code !== 0) throw new Error(`cli exit=${r.code}\n${r.stderr}`);
@@ -219,6 +342,51 @@ describe("agent.local — 真实对话（zen/go 缺省模型 gpt-5.6-luna）", (
             const flat = JSON.stringify(llm);
             expect(flat.includes("tool-call") || flat.includes("tool-result")).toBe(true);
             await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+        },
+        260_000,
+    );
+
+    // 任务 194 的根因通路：renderer 过去无从知道"别人（CLI/另一窗口）正在这个任务上跑"
+    // —— main 内存里明明有 activeTurns，却没有查询口。这条用例钉住这个口子：
+    // 一轮真在跑时 running 必须报出来，收尾后必须消失（否则 UI 会一直显示"停止"或误报中断）。
+    it.skipIf(!RUN_LLM)(
+        "CLI 起一轮期间 running 报该任务活跃；收尾后消失（UI 真值来源）",
+        async () => {
+            const uri = await setup("运行态任务");
+            // 独立会话跑 chat（不 await）：模拟"另一端在跑"，主测试进程继续查真值
+            const chat = new Session({
+                cwd: join(__dirname, "..", "..", ".."),
+                env: { HOME: fx.HOME, DIY_HOME: fx.HOME },
+            });
+            const running = chat.run(
+                `./diy.sh agent local chat ${uri} "用 bash 执行 sleep 20，然后一句话说明结果"`,
+                240_000,
+            );
+            try {
+                const activeUris = async () => {
+                    const r = await fx.sh.getJson(`./diy.sh agent local running`);
+                    return ((r.data as { active?: Array<{ taskUri: string }> })?.active ?? []).map((t) => t.taskUri);
+                };
+                // 轮询（不给固定 sleep：上游首 token 往返时长不定）
+                let seen = false;
+                for (let i = 0; i < 40 && !seen; i++) {
+                    seen = (await activeUris()).includes(uri);
+                    if (!seen) await new Promise((r) => setTimeout(r, 500));
+                }
+                expect(seen, `running 应报 ${uri} 活跃`).toBe(true);
+
+                // 停止入口走的就是这个 RPC：对别人发起的轮次同样有效
+                const c = await fx.sh.getJson(`./diy.sh agent local cancel ${uri}`);
+                expect(c.data).toEqual({ cancelled: true });
+                await running;
+
+                // 收尾后必须不再活跃（UI 据此把按钮收回发送态）
+                expect(await activeUris()).not.toContain(uri);
+            } finally {
+                await fx.sh.run(`./diy.sh agent local cancel ${uri}`).catch(() => undefined);
+                chat.close();
+                await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+            }
         },
         260_000,
     );
