@@ -7,7 +7,6 @@
  *   流数据:    { type: 'data', stream, value }
  *   流结束:    { type: 'end', stream, error? }   —— 只表「完成/输入半关」，不兼职取消
  *   取消:      { type: 'cancel', id? | stream?, reason? } —— 显式取消信封
- *   通知:      { type: 'notify', method, params? }
  *
  * end 与 cancel 语义分工（任务 185）：end 单义（server→client 完成、client→server
  * 输入半关）；整条 RPC 取消一律走 cancel 帧——ack 前（含 unary 全程）按 call.id

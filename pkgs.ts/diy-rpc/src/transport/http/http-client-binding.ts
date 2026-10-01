@@ -2,7 +2,7 @@
  * http/http-client-binding.ts — HttpClientBinding：HTTP 常态绑定的客户端（第2层绑定之一）
  *
  * 与 HttpServerBinding 配对的 wire 约定：
- *   unary/serverStream/notify   params 在 body；clientStream/bidi 的 params 在
+ *   unary/serverStream        params 在 body；clientStream/bidi 的 params 在
  *                               header `x-diy-params`，body 是 NDJSON chunk 流
  *   单值响应  {"result": …} / 错误 {code,message,details,ext:{http:{status}}}
  *   流式响应  NDJSON：{"v"} 数据 / {"e"} 终止错误
@@ -207,11 +207,8 @@ export class HttpClientBinding implements ClientBinding {
     try {
       const resp = await this._track(collectResponse(stream, options));
       if (uploadErr) {
-        // 上传源错误不得伪成功（R19 P1-2）：以 STREAM_ERROR 落定，与 channel 的
-        // end{error: STREAM_ERROR} 帧语义对齐；消息保留原始错误便于定位
-        throw uploadErr instanceof RpcError
-          ? uploadErr
-          : new RpcError('STREAM_ERROR', String((uploadErr as Error)?.message ?? uploadErr));
+        // 上传源错误不得伪成功（R19 P1-2 / R20 P1-B）：与 channel end{error} 帧码对齐
+        throw toStreamError(uploadErr);
       }
       return parseResult<TRes>(resp);
     } finally {
@@ -259,6 +256,8 @@ export class HttpClientBinding implements ClientBinding {
     if (signal) signal.addEventListener('abort', onUpstreamAbort, { once: true });
 
     // 后台：边传 chunk 边读响应（http2 全双工）；上传不阻塞调用落定（review P1）
+    let uploadErr: unknown;
+    let outQueue: _AsyncQueue<unknown> | undefined;
     void (async () => {
       try {
         for (;;) {
@@ -270,8 +269,11 @@ export class HttpClientBinding implements ClientBinding {
           if (signal?.aborted || remoteEnded || stream.closed || stream.destroyed) break;
           if (!stream.write(JSON.stringify(n.value) + '\n')) await onceDrain(stream);
         }
-      } catch {
-        /* ignore */
+      } catch (e) {
+        // 上传源错误不得静默（R20 P1-B，与 clientStream/C15 对称）：输出队列以
+        // STREAM_ERROR 本地落定——与 channel 的 end{error} 帧跨传输语义一致
+        uploadErr = e;
+        outQueue?.error(toStreamError(e), { drain: true });
       }
       if (!signal?.aborted && !remoteEnded) {
         try { stream.end(); } catch { /* 已断开 */ }
@@ -289,6 +291,9 @@ export class HttpClientBinding implements ClientBinding {
       throw parseError(status, data);
     }
     const queue = createNdjsonStream(stream, options);
+    outQueue = queue;
+    // 上传错误先于队列建立时补发（R20 P1-B：队列已在 catch 中落定则 error 幂等）
+    if (uploadErr) queue.error(toStreamError(uploadErr), { drain: true });
     queue.onSettle(() => {
       remoteEnded = true; // 队列终态（正常结束/断开/dispose）
       this._settleStream(stream); // 队列终态：主动收束 request-side（review R12/R13）
@@ -425,6 +430,11 @@ function collectResponse(stream: ClientHttp2Stream, options?: CallOptions): Prom
   return firstResponseStatus(stream, options).then((status) =>
     readAll(stream, options).then((data) => ({ status, data })),
   );
+}
+
+/** 上传源错误 → RpcError：非 RpcError 包装为 STREAM_ERROR（与 channel end{error} 帧码对齐） */
+function toStreamError(e: unknown): RpcError {
+  return e instanceof RpcError ? e : new RpcError('STREAM_ERROR', String((e as Error)?.message ?? e));
 }
 
 /** 解析单值响应：200 → result；否则抛 RpcError（保留 ext.http） */

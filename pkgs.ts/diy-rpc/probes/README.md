@@ -96,9 +96,9 @@ FAIL: close/error wake-up started another upstream.next()
 
 `HttpClientBinding` 的上传循环在 `stream.write()` 返回 `false` 时进入 `await onceDrain(stream)`。终态/close/error 应唤醒等待；上传循环不得再拉取下一项、不得继续发送，且应调用上游 `return()`、收束 request stream、清空 `activeStreams`。不能只证明 `activeStreams` 最终归零，还要证明 `next` 次数没有越过终态边界。
 
-## R19 全量问题复现入口
+## 全量探针入口（R19 修复后 + R20 新增）
 
-一次性运行当前已确认的问题 probe：
+一次性运行（除 `electron-transport-close.ts` 需 esbuild+node，见下）：
 
 ```bash
 cd /Users/ccc/git/diy/_diy.worktrees/rpc-cancel/pkgs.ts/diy-rpc
@@ -107,23 +107,44 @@ for p in \
   http-upload-source-error.ts \
   http-malformed-input.ts \
   http-dispose-new-request.ts \
-  http-drain-close-before-response.ts; do
+  http-drain-close-before-response.ts \
+  http-drain-terminal-race.ts \
+  http-remote-terminal-resources.ts \
+  ws-malformed-frame.ts \
+  ws-malformed-full-chain.ts \
+  bidi-upload-source-error.ts \
+  http-body-reader-listeners.ts \
+  notify-matrix.ts; do
   echo "=== $p ==="
   npx tsx "probes/$p" || true
 done
 ```
 
-当前 HEAD 的确认结果：
-
-| Probe | 当前结果 | 问题 |
+| Probe | 现状 | 说明 |
 |---|---|---|
-| `channel-init-timeout-leak.ts` | FAIL，`TIMEOUT` 后 server `started=true/finallyRan=false/yields>0` | init timeout 只落客户端，服务端继续跑 |
-| `http-upload-source-error.ts` | FAIL，调用返回 `1` | 上传 AsyncIterable 异常被吞掉 |
-| `http-malformed-input.ts` | FAIL，非法 NDJSON chunk 返回 HTTP 200/result=0 | malformed chunk 被静默丢弃 |
-| `http-dispose-new-request.ts` | FAIL，返回 `ERR_HTTP2_GOAWAY_SESSION` | dispose 后新请求未统一为 `RpcError(DISPOSED)` |
-| `http-drain-close-before-response.ts` | FAIL，`next=2` | close/error 先于 response 时仍再次拉取 upstream |
+| `channel-init-timeout-leak.ts` | PASS | R19 P0/P1-1：init timeout 已向服务端发 cancel，server finally 执行 |
+| `http-upload-source-error.ts` | PASS | R19 P1-2（clientStream）：上传源错误传播 `STREAM_ERROR` |
+| `http-malformed-input.ts` | PASS | R19 P1-3：非法 NDJSON → HTTP 400 `INVALID_ARGUMENT` |
+| `http-dispose-new-request.ts` | PASS | R19 P1-4：dispose 后新请求 → `RpcError DISPOSED` |
+| `http-drain-close-before-response.ts` | PASS | R19 P1-5/R18：close 先于 response 不再多拉 upstream |
+| `http-drain-terminal-race.ts` | PASS | R16：终态 drain 唤醒后不再多拉 upstream |
+| `http-remote-terminal-resources.ts` | PASS | R12/R13：request-side 流收敛 |
+| `ws-malformed-frame.ts` | **FAIL（P1-A）** | 对端坏帧 → `uncaughtException`（旧版为假 PASS，已修正） |
+| `ws-malformed-full-chain.ts` | **FAIL（P1-A）** | 坏帧 + pending 调用永久悬挂 |
+| `bidi-upload-source-error.ts` | **FAIL（P1-B）** | HTTP bidi 吞掉上传错误（channel 已传播，跨传输分叉） |
+| `http-body-reader-listeners.ts` | PASS（NOTE） | P3-2：listener 无 per-chunk 增长；终态依赖 GC |
+| `notify-matrix.ts` | FAIL（P3-1） | 文档声称 notify 但类型联合无成员（记录项，非阻断） |
 
-这些 probe 都是独立脚本，不属于 Vitest 正式套件；修复后应把对应场景转成正式回归，并要求输出 PASS。
+`electron-transport-close.ts`（P3-3，需 esbuild + node，因 electron 命名导出在 tsx 下不可解析）：
+
+```bash
+npx esbuild probes/electron-transport-close.ts --bundle --platform=node --format=cjs \
+  --alias:electron=./probes/.stub/electron.ts --outfile=probes/.build/electron-transport-close.cjs
+node probes/.build/electron-transport-close.cjs
+# PASS: electron main transport fires onClose on send-failure and webContents destroy
+```
+
+这些 probe 都是独立脚本，不属于 Vitest 正式套件；P1-A / P1-B 修复后应把对应场景转成正式回归，并要求输出 PASS。
 
 ## DeepSeek 复核步骤
 

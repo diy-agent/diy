@@ -27,8 +27,9 @@
  *   C14 正常完成不触发取消：调用正常成功后，服务端 handler 的 signal 不得被 abort
  *       （close/RST 监听必须只反映真取消，不误伤正常结束）
  *
- *   C15 上传源错误必须传播：chunks 迭代抛错 → 调用以 STREAM_ERROR 失败，不得伪成功
- *       （传输无关：channel 经 end{error} 帧，HTTP 本地落定，断言码一致）
+ *   C15 上传源错误必须传播：chunks 迭代抛错 → clientStream 调用 / bidi 输出迭代
+ *       以 STREAM_ERROR 失败，不得伪成功（传输无关：channel/ws 经 end{error} 帧，
+ *       HTTP 本地落定，断言码一致）
  *
  *   N1  async generator 语义边界：return 请求不打断 await（至下一个 yield 才收尾）；
  *       服务端收尾最迟发生在下一帧产出点。self-iterable 不受此限（C7/C8 场景）
@@ -813,8 +814,8 @@ describe('C14 正常完成不触发取消：handler 的 signal 保持未 abort',
 //  C15 上传源错误传播（R19 P1-2）
 // ═══════════════════════════════════════════════════
 
-describe('C15 上传源错误必须传播：chunks 迭代抛错 → 调用失败，不得伪成功', () => {
-  it.each(transports)('%s: 上传源第二次拉取抛错 → 以 STREAM_ERROR 落定', async (_n, h) => {
+describe('C15 上传源错误必须传播：chunks 迭代抛错 → 调用/流不得伪成功', () => {
+  it.each(transports)('%s: clientStream——上传源第二次拉取抛错 → 以 STREAM_ERROR 落定', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
     binding.on(api.collect, async ({ stream }) => {
@@ -830,6 +831,27 @@ describe('C15 上传源错误必须传播：chunks 迭代抛错 → 调用失败
       // 服务端会正常处理已收到的 1 个 chunk——调用必须仍以错误落定
       // （HTTP 缺陷：曾返回服务端成功的 sum=1，伪成功）
       await expect(cli.collect({ tag: 'src' }, broken()))
+        .rejects.toMatchObject({ code: 'STREAM_ERROR' });
+    } finally {
+      await dispose();
+    }
+  });
+
+  it.each(transports)('%s: bidi——上传源第二次拉取抛错 → 输出迭代以 STREAM_ERROR 结束', async (_n, h) => {
+    const { binding, client, dispose } = await h.start();
+    const cli = createTypedClient(client, api);
+    binding.on(api.chat, async function* ({ stream }) {
+      for await (const v of stream) yield v as string;
+    });
+    try {
+      async function* broken(): AsyncGenerator<string> {
+        yield 'a';
+        throw new Error('upload-source-failed');
+      }
+      const handle = await cli.chat({ room: 'r' }, broken());
+      // HTTP 缺陷（R20 P1-B）：上传 catch 吞错 → 静默 completed；
+      // channel/ws 经 end{error} 往返传播。契约：错误结束，永不静默完成
+      await expect((async () => { for await (const _v of handle) { /* 消费到终态 */ } })())
         .rejects.toMatchObject({ code: 'STREAM_ERROR' });
     } finally {
       await dispose();
