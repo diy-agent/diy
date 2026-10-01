@@ -359,7 +359,12 @@ renderer 那份没跟上，编译期才暴露 —— 用契约类型则不可能
     双击复位**、属性字段逐行且控件右缘对齐、「◀ 当前」紧跟标题、行内操作按钮右对齐、
     任务名链接 + daisyUI tooltip「打开任务」、hover 出行内「对话」按钮、点链接=选中任务、
     点按钮=打开对话 tab、FAB 文案为「对话」。`node scripts/ui-smoke/task-detail-smoke.mjs` 运行，exit 0 通过。
-    - 依赖 playwright，但本仓不装它：默认取 bun 全局安装，可用 `PLAYWRIGHT_MODULE=<路径> node …` 覆盖。
+    - 依赖 `playwright-core`，声明在**仓库根的 devDependencies**（脚本自身就在 `<repo>/scripts/` 下，
+      声明跟着脚本走；落在 `pkgs.ts/diy-app` 里只是碰巧被 npm 提升到根 `node_modules` 才能解析 ——
+      换 pnpm（严格 node_modules）或出现版本冲突就会当场断）。
+      选它而不是 `playwright`：`playwright-core` 是纯 CDP 协议库、postinstall **不下载浏览器**，
+      而本脚本只用 `connectOverCDP` 连 Electron 自带的 CDP，不需要浏览器二进制。
+      脚本内**不写任何机器绝对路径**，路径一律相对脚本自身推导；缺依赖时直接提示跑 `npm install`。
     - **跑完必须确认实例真的没了**（脚本自己会打「测试实例已清理」）。只发一次 TERM 就退出，
       遇 app 卡在退出流程或外层 `timeout` 打断，会留下没人管的实例 —— 实测跑十几轮攒出二十多个，
       各占 70MB 主进程 + 300MB renderer，直接把内存吃光。收尾固定姿势：
@@ -371,6 +376,11 @@ renderer 那份没跟上，编译期才暴露 —— 用契约类型则不可能
 ### 交互自动化操作 App（agent 自测/演示用，实测经验）
 
 目标：让 agent 用 CLI 驱动真实界面做自测或演示。以下每条都是实测踩出来的。
+
+- `playwright-cli` 命令来自 npm 包 **`@playwright/cli`**（依赖 `playwright` 全家桶，安装时会
+  postinstall 下载浏览器）。要让它随项目固定版本，可把它也装成 devDependency（配合
+  `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` 可省掉浏览器，仅用 attach/连 CDP 的场景够用）；
+  本仓目前**不装**它 —— 库（`playwright-core`）已内装给冒烟脚本，命令侧沿用机器上现成的 `playwright-cli`。
 
 **提速是第一原则**：每次 `playwright-cli <cmd>` 都是独立进程冷启动（≈1~3s，内部还有固定
 500ms 稳定等待），逐条敲一个流程要几十秒。**把整个流程压进一次 `eval`**（async IIFE +

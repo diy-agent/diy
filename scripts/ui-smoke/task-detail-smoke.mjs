@@ -6,15 +6,32 @@
 //       宽 → 两列（正文靠右）；任务管理详情里的 FAB 文案为「对话」。
 //
 // 用法：node scripts/ui-smoke/task-detail-smoke.mjs
-// 依赖：已 `./sha.sh build`；playwright 用 PLAYWRIGHT_MODULE 指定（默认 bun 全局安装）。
+// 依赖：`npm install`（playwright-core 是 devDependency）+ `./sha.sh build`。
 import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-const PW_MODULE = process.env.PLAYWRIGHT_MODULE ?? "/Users/ccc/.bun/install/global/node_modules/playwright/index.mjs";
-const { chromium } = await import(PW_MODULE);
 
+// playwright 是 pkgs.ts/diy-app 的 devDependency（playwright-core：纯协议库，
+// postinstall **不下载浏览器** —— 本脚本只用 connectOverCDP 连 Electron 自带的 CDP，
+// 不需要 playwright 的浏览器二进制，故不用 `playwright` 那个包）。
+// 没装依赖时给一句明确的下一步，而不是抛一堆模块解析栈。
+let chromium;
+try {
+    ({ chromium } = await import("playwright-core"));
+} catch (e) {
+    console.error(
+        [
+            "找不到 playwright-core（冒烟未执行）。在仓库根跑一次依赖安装即可：",
+            "  npm install",
+            `（原始错误：${e?.code ?? e?.message ?? e}）`,
+        ].join("\n"),
+    );
+    process.exit(2);
+}
+
+// 路径全部相对**脚本自身**推导（仓库根 = 本文件上溯两级）：换机器 / 换 checkout 位置都不影响。
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const APP = join(REPO, "pkgs.ts/diy-app");
 const ELECTRON = join(REPO, "node_modules/electron/dist/Electron.app/Contents/MacOS/Electron");
@@ -28,8 +45,54 @@ const proc = spawn(ELECTRON, ["out/main/index.mjs", `--remote-debugging-port=${p
 const diy = (args) => JSON.parse(execFileSync("tsx", ["src/cli/index.ts", ...args], { cwd: APP, env, encoding: "utf8" }));
 
 let ok = false, step = "boot";
+/** 当前页（在 try 块里连上 CDP 后赋值）；下面的辅助函数在模块作用域，需要通过它拿 page */
+let pg;
 const fail = [];
 const need = (cond, label) => { if (!cond) fail.push(label); return cond; };
+
+/**
+ * 按文案找**真正可见且可 hover** 的标题链接。
+ *
+ * 为什么要挑：同一时刻文档里可能有两个 TaskDetailContent 实例（执行页左栏 + 悬停覆盖层 +
+ * 管理页详情面板），`querySelectorAll(...)[0]` 可能命中已隐藏/离屏的那个 ——
+ * 拿它的 rect 去 hover，坐标落在别的元素上，事件不会派发到目标（实测踩过）。
+ * 判据 = 尺寸非零 && `elementFromPoint` 命中它或其后代。
+ */
+const visibleLinkRect = (text) =>
+    pg.evaluate((t) => {
+        for (const link of document.querySelectorAll("button.diy-link")) {
+            if (!link.innerText.includes(t)) continue;
+            const r = link.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0) continue;
+            const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+            if (hit && (hit === link || link.contains(hit))) {
+                return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+            }
+        }
+        return null;
+    }, text);
+
+/** 该行内「对话 / 已打开」按钮的可见信息（同样只认可见实例） */
+const rowButtonInfo = (text) =>
+    pg.evaluate((t) => {
+        for (const row of document.querySelectorAll(".group")) {
+            if (!row.innerText.includes(t)) continue;
+            const btn = [...row.querySelectorAll("button")].find(
+                (b) => b.innerText.includes("对话") || b.innerText.includes("已打开"),
+            );
+            if (!btn) continue;
+            const r = btn.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0) continue;
+            return {
+                text: btn.innerText.trim(),
+                opacity: getComputedStyle(btn).opacity,
+                title: btn.title,
+                cx: r.x + r.width / 2,
+                cy: r.y + r.height / 2,
+            };
+        }
+        return null;
+    }, text);
 
 try {
   await sleep(9000);
@@ -43,7 +106,7 @@ try {
   diy(["task", "edit", B, "--body", "## 正文\n\n这是**正文**内容。"]);
 
   const b = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-  const pg = b.contexts()[0].pages()[0];
+  pg = b.contexts()[0].pages()[0];
   const errors = [];
   pg.on("console", (m) => m.type() === "error" && errors.push(`[${step}] ${m.text()}`));
   pg.on("pageerror", (e) => errors.push(`[${step}] ${String(e)}`));
@@ -270,57 +333,113 @@ try {
   await sleep(350);
   need(await pg.locator('aside[aria-label^="任务详情"]').count() === 0, "④a 离开后 drawer 收起");
 
-  // ── 悬停任务名 → daisyUI tooltip「打开任务」；行右侧出现「对话」按钮 ──
+  // ── ④b 已开在 nav 的任务：hover 其标题**不弹** drawer（nav 项 hover 已是同一份详情） ──
+  step = "④b 已开在 nav 的任务不弹 drawer";
+  // 此刻「父亲任务」的对话已打开在 nav（③ 点的那个按钮），它就在同一棵树里。
+  const openedRowHover = await pg.evaluate(() => {
+    const side = document.querySelector("[data-task-side-view]");
+    for (const link of side.querySelectorAll(".group button.diy-link")) {
+      if (!link.innerText.includes("父亲任务")) continue;
+      const r = link.getBoundingClientRect();
+      return {
+        x: r.x + r.width / 2,
+        y: r.y + r.height / 2,
+        hasPreviewAttr: link.hasAttribute("data-task-hover-uri"),
+      };
+    }
+    return null;
+  });
+  console.log("④b 已开在 nav 的行:", JSON.stringify(openedRowHover));
+  need(openedRowHover, "④b 找到「父亲任务」行");
+  need(openedRowHover?.hasPreviewAttr === false, "④b 已开在 nav 的任务不声明 hover-preview 触发点");
+  await pg.mouse.move(openedRowHover.x, openedRowHover.y, { steps: 8 });
+  await sleep(500);
+  need(
+    await pg.locator('aside[aria-label^="任务详情"]').count() === 0,
+    "④b hover 已开在 nav 的任务 → 不弹 drawer",
+  );
+  // 反向确认：同一棵树里未打开的任务照样能弹（不是整块失效）
+  const untouchedRow = await visibleLinkRect("祖父任务");
+  await pg.mouse.move(untouchedRow.x, untouchedRow.y, { steps: 8 });
+  await sleep(500);
+  need(
+    await pg.locator('aside[aria-label^="任务详情"]').count() === 1,
+    "④b 同树里未打开的任务仍能弹 drawer",
+  );
+  await pg.mouse.move(760, 700);
+  await sleep(350);
+
+  // ── 悬停任务名 → viewport 浮层 tooltip；行右侧出现「对话」按钮 ──
   step = "④ 树行的链接/tooltip/对话按钮";
+  const tipProbe = () =>
+    pg.evaluate(() => {
+      // tooltip 是 Portal 到 body 的 fixed 浮层（不是 daisyUI 的 ::before 伪元素）：
+      // 伪元素会被祖先 overflow-hidden/auto 裁掉，靠底部的行提示只剩一半。
+      // Portal 会先插一层无 class 的 wrapper div（solid-js/web 的 Portal 实现），
+      // 故不能写 `body > div.fixed`；按 fixed 定位 + 文案过滤最稳。
+      const tips = [...document.querySelectorAll("div.fixed")].filter(
+        (d) => /打开任务|已在对话中打开/.test(d.innerText) && d.children.length === 0,
+      );
+      const t = tips[0];
+      return {
+        count: tips.length,
+        text: t?.innerText?.trim() ?? null,
+        position: t ? getComputedStyle(t).position : null,
+        // 是否超出视口（被裁的等价判据）：fixed 浮层必须完整落在视口内
+        inView: t
+          ? (() => {
+              const r = t.getBoundingClientRect();
+              return r.top >= 0 && r.bottom <= window.innerHeight + 1 && r.left >= 0;
+            })()
+          : null,
+        rect: t ? t.getBoundingClientRect().toJSON() : null,
+      };
+    });
+
   const linkReport = await pg.evaluate(() => {
     const link = [...document.querySelectorAll("button.diy-link")].find((b) => b.innerText.includes("祖父任务"));
     if (!link) return null;
     const wrap = link.closest("span.tooltip");
     const row = link.closest(".group");
-    const btn = [...row.querySelectorAll("button")].find((b) => b.innerText.includes("对话"));
+    const btn = [...row.querySelectorAll("button")].find((b) => b.innerText.includes("对话") || b.innerText.includes("已打开"));
     return {
       isLink: link.classList.contains("diy-link"),
-      dataTip: wrap?.getAttribute("data-tip"),
-      tipContent: wrap ? getComputedStyle(wrap, "::before").content : null,
-      tipDisplay: wrap ? getComputedStyle(wrap).display : null,
+      daisyTooltipGone: !wrap, // 不再用 data-tip 伪元素
       chatBtnBeforeOpacity: getComputedStyle(btn).opacity,
+      chatBtnText: btn.innerText.trim(),
       chatBtnTitle: btn.title,
     };
   });
-  console.log("④ 链接/tooltip/对话:", JSON.stringify(linkReport));
-  need(linkReport?.dataTip === "打开任务", "④ tooltip 文案");
-  need(!!linkReport && linkReport.tipContent.includes("打开任务"), "④ tooltip ::before 内容 " + linkReport?.tipContent);
-  need(linkReport?.chatBtnBeforeOpacity === "0", "④ 对话按钮平时不显示");
+  console.log("④ 链接/按钮（未打开态）:", JSON.stringify(linkReport));
+  need(linkReport?.isLink, "④ 标题仍是链接");
+  need(linkReport?.daisyTooltipGone, "④ 已不再用 daisyUI data-tip 伪元素");
+  need(linkReport?.chatBtnBeforeOpacity === "0", "④ 未打开时对话按钮平时不显示");
+  need(linkReport?.chatBtnText.includes("对话"), "④ 未打开时按钮文案是「对话」 " + linkReport?.chatBtnText);
 
-  // 真实鼠标 hover 该行 → 对话按钮显形（opacity:0 的元素在 a11y 树里是隐藏的，必须真 hover）
-  // hover 目标必须是**标题链接本身**：行的中心点现在可能落在标题右侧的空白里
-  // （标题不再 flex-1 撑满），落在那儿不会触发链接上的 tooltip。
-  const rowBox = await pg.evaluate(() => {
-    const link = [...document.querySelectorAll("button.diy-link")].find((b) => b.innerText.includes("祖父任务"));
-    const r = link.getBoundingClientRect();
-    const btn = [...link.closest(".group").querySelectorAll("button")].find((b) => b.innerText.includes("对话"));
-    const br = btn.getBoundingClientRect();
-    return {
-      x: r.x + r.width / 2, y: r.y + r.height / 2,
-      btnX: br.x + br.width / 2, btnY: br.y + br.height / 2,
-    };
-  });
+  // hover 标题链接本身（行的中心可能落在标题右侧空白，不触发链接上的 hover）
+  const rowBox = await visibleLinkRect("祖父任务");
+  need(rowBox, "④ 找到可见的「祖父任务」链接");
+  const btnBox = await rowButtonInfo("祖父任务");
+  need(btnBox, "④ 找到该行的对话按钮");
+  rowBox.btnX = btnBox?.cx ?? rowBox.x;
+  rowBox.btnY = btnBox?.cy ?? rowBox.y;
   await pg.mouse.move(rowBox.x, rowBox.y, { steps: 8 });
   await sleep(600);
+  const tip1 = await tipProbe();
   const hoverReport = await pg.evaluate(() => {
     const row = [...document.querySelectorAll(".group")].find((g) => g.innerText.includes("祖父任务"));
-    const btn = [...row.querySelectorAll("button")].find((b) => b.innerText.includes("对话"));
-    const link = [...row.querySelectorAll("button.diy-link")][0];
-    const tip = link.closest("span.tooltip");
+    const btn = [...row.querySelectorAll("button")].find((b) => b.innerText.includes("对话") || b.innerText.includes("已打开"));
     return {
       btnOpacity: getComputedStyle(btn).opacity,
-      tipVisible: getComputedStyle(tip, "::before").opacity,
       hit: document.elementFromPoint(btn.getBoundingClientRect().x + 4, btn.getBoundingClientRect().y + 4)?.closest("button")?.innerText?.trim(),
     };
   });
-  console.log("④ hover 后:", JSON.stringify(hoverReport));
+  console.log("④ hover 后（浮层）:", JSON.stringify(tip1), "按钮:", JSON.stringify(hoverReport));
+  need(tip1.count === 1, "④ hover 出现提示浮层（且只有一层） " + tip1.count);
+  need(tip1.position === "fixed", "④ 提示浮层是 position:fixed（不被祖先裁） " + tip1.position);
+  need(tip1.text.includes("打开任务"), "④ 提示文案 " + tip1.text);
+  need(tip1.inView === true, "④ 提示浮层完整落在视口内（未被裁） " + JSON.stringify(tip1.rect));
   need(parseFloat(hoverReport.btnOpacity) > 0.5, "④ hover 显示对话按钮 " + hoverReport.btnOpacity);
-  need(parseFloat(hoverReport.tipVisible) > 0.5, "④ hover 显示 tooltip " + hoverReport.tipVisible);
   need(hoverReport.hit?.includes("对话"), "④ 对话按钮可被鼠标命中 " + hoverReport.hit);
 
   // ── 点对话按钮 → 打开/聚焦该任务的对话 tab ──
@@ -330,6 +449,41 @@ try {
   const afterChat = await pg.evaluate(() => ({ tabs: JSON.parse(localStorage.getItem("diy_tabs_opened") || "[]").map((t) => t.ctx) }));
   console.log("⑤ 打开的 tab:", JSON.stringify(afterChat.tabs));
   need(afterChat.tabs.includes(A), "⑤ 对话按钮打开祖父任务的 tab");
+
+  // ── ⑤b 已打开态：该行按钮常态显示、文案变「已打开」、提示改为「已在对话中打开」 ──
+  step = "⑤b 已打开态";
+  await pg.mouse.move(10, 10); // 先离开该行，证明常态可见不是 hover 效果
+  await sleep(400);
+  const openedState = await rowButtonInfo("祖父任务");
+  console.log("⑤b 已打开态:", JSON.stringify(openedState));
+  need(openedState, "⑤b 找到已打开行的按钮");
+  need(openedState?.text.includes("已打开"), "⑤b 按钮文案变「已打开」 " + openedState?.text);
+  need(parseFloat(openedState?.opacity) > 0.5, "⑤b 已打开时按钮常态可见（无需 hover） " + openedState?.opacity);
+
+  // 提示语也跟着换成「已在对话中打开」。
+  // 这条**用事件触发而非真实鼠标**：hover 后布局会变（drawer 开合会推挤排版），
+  // 先前算好的坐标在鼠标真正到位时可能已落在滚动容器空白上（实测踩过）；
+  // 而「真实 hover → 浮层不被裁」已由 ④ 用真鼠标验过，这里只需确定性地验文案随状态变化。
+  const tip2 = await pg.evaluate(async () => {
+    const row = [...document.querySelectorAll(".group")].find(
+      (g) => g.innerText.includes("祖父任务") && /已打开/.test(g.innerText),
+    );
+    const link = row?.querySelector("button.diy-link");
+    if (!link) return { found: false };
+    link.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+    await new Promise((r) => setTimeout(r, 120));
+    const tips = [...document.querySelectorAll("div.fixed")].filter(
+      (d) => /打开任务|已在对话中打开/.test(d.innerText) && d.children.length === 0,
+    );
+    const out = { found: true, count: tips.length, text: tips[0]?.innerText?.trim() ?? null };
+    link.dispatchEvent(new MouseEvent("mouseleave", { bubbles: false }));
+    return out;
+  });
+  console.log("⑤b 已打开时的提示:", JSON.stringify(tip2));
+  need(tip2.found, "⑤b 找到已打开行的标题链接");
+  need(tip2.text?.includes("已在对话中打开"), "⑤b 提示体现已打开状态 " + tip2.text);
+  await sleep(200);
+
 
   // ── 点任务名链接 → 回到任务管理并选中该任务 ──
   step = "⑥ 点任务名链接";
