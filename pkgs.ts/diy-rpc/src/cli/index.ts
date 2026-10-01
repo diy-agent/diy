@@ -2,7 +2,6 @@ import type { _Router, _AnyProcedureMeta } from "../core/meta";
 import {
   _buildRouteTree,
   _routeResolve,
-  _routeLeaves,
   type _RouteNode,
   type _RouterNode,
 } from "../core/_tree";
@@ -117,22 +116,45 @@ function editDistance(a: string, b: string): number {
 }
 
 /**
- * did-you-mean：对未知命令做编辑距离匹配，返回距离 ≤2 的候选短命令名。
- * 只匹配命令树的顶层段名（argv[0] 定位到子树），返回其下叶子命令。
+ * did-you-mean：对未知命令段做编辑距离匹配，返回距离 ≤2 的候选命令名。
+ * 只在**失败段的同级兄弟**（所在节点的 children）里匹配 —— 整树叶子路径匹配会把
+ * 输入自己回显回来（如 `ui view open …` 的 "Did you mean: ui?"，任务 205），
+ * 且跨层候选（任意深度的段名）对定位失败点没有意义。
  */
-function suggestCommand(root: _RouterNode, input: string): string[] {
+function suggestCommand(siblings: _RouteNode[], input: string): string[] {
   const candidates: { name: string; dist: number }[] = [];
-  for (const leaf of _routeLeaves(root)) {
-    // 取叶子路径的首段作为候选命令名（如 diy.app.task.create → task）
-    const segs = leaf.path.split(".");
-    for (const seg of segs) {
-      const dist = editDistance(input, seg);
-      if (dist <= 2) candidates.push({ name: seg, dist });
-    }
+  for (const c of siblings) {
+    const dist = editDistance(input, c.name);
+    if (dist <= 2) candidates.push({ name: c.name, dist });
   }
   // 按距离排序，去重，取最近 3 个
   candidates.sort((a, b) => a.dist - b.dist);
   return [...new Set(candidates.map((c) => c.name))].slice(0, 3);
+}
+
+/**
+ * 定位 argv 中第一个在命令树上匹配不到的段（_routeResolve 返回 null 时必存在）。
+ * 返回 { idx: 失败段下标, parent: 失败段所在节点（建议器在其 children 里匹配）}。
+ * 报错必须报到这里 —— 否则 `diy ui view open …`（view 下只有 expand/set、没有 open）
+ * 会退化成 "Unknown command: ui"（argv[0]），把合法的前缀段当成未知命令（任务 205）。
+ */
+function firstUnmatched(
+  root: _RouterNode,
+  args: string[],
+): { idx: number; parent: _RouterNode } {
+  let node = root;
+  for (let i = 0; i < args.length; i++) {
+    const child = node.children.find((c) => c.name === args[i]);
+    if (!child) return { idx: i, parent: node };
+    if (child.kind === "proc") {
+      // 叶子后跟的是参数而非命令段；_routeResolve 遇 proc 直接返回（不会走到 null），
+      // 走到这里说明 resolved 异常 —— 按该段失败处理
+      return { idx: i, parent: node };
+    }
+    node = child;
+  }
+  // 全部段匹配却仍为 null：不可能（末段必返回 child），兜底报最后一段
+  return { idx: Math.max(0, args.length - 1), parent: root };
 }
 
 async function* stdinAsync(): AsyncGenerator<string> {
@@ -265,8 +287,12 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
         this.showNodeHelp(resolved);
         return;
       } else {
-        const input = argv[0] ?? "";
-        const sugg = suggestCommand(this.tree, input);
+        // resolved 为 null = 某段在树上匹配不到。报**第一个失败段**（含前缀路径），
+        // 而非 argv[0]：`ui view open …` 中 ui/view 都合法，只有 open 不存在，
+        // 报 "Unknown command: ui" 会把合法前缀当未知命令，建议器还会回显自己（任务 205）。
+        const { idx, parent } = firstUnmatched(this.tree, argv);
+        const input = argv.slice(0, idx + 1).join(" ");
+        const sugg = suggestCommand(parent.children, argv[idx] ?? "");
         if (sugg.length > 0) {
           console.error(`Unknown command: ${input}`);
           console.error(`Did you mean: ${sugg.join(", ")}?`);
