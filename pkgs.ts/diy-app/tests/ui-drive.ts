@@ -28,7 +28,8 @@ interface CdpTarget {
 class Cdp {
   private ws!: WebSocket;
   private seq = 1;
-  private pending = new Map<number, (v: unknown) => void>();
+  /** id → settle（含 resolve/reject）；连接断掉时全部 reject，避免 promise 永不 settle */
+  private pending = new Map<number, { res: (v: unknown) => void; rej: (e: Error) => void }>();
 
   static async attach(baseWsUrl: string): Promise<Cdp> {
     // 浏览器级 ws 不能直接 dispatch 输入事件 —— 要附到具体的 page target 上
@@ -46,39 +47,49 @@ class Cdp {
     cdp.ws.on("message", (raw) => {
       const msg = JSON.parse(raw.toString()) as { id?: number; result?: unknown };
       if (msg.id && cdp.pending.has(msg.id)) {
-        cdp.pending.get(msg.id)!(msg.result);
+        const p = cdp.pending.get(msg.id)!;
         cdp.pending.delete(msg.id);
+        p.res(msg.result);
       }
     });
-    // 连接断掉时必须让在途命令**失败**而不是永远挂着：
-    // 挂着的 Promise 只会把测试拖到 testTimeout 才报错（症状是"某测试超时"，看不出是 CDP 断了）。
-    cdp.ws.on("close", () => cdp.failAll("CDP 连接已关闭"));
-    cdp.ws.on("error", (e) => cdp.failAll(`CDP 连接错误: ${String(e)}`));
+    // 连接断开（窗口销毁 / target 没了）→ 立刻 reject 所有等待中的调用。
+    // 缺这条，socket 已断时 send 的 promise 永不 settle → 用例静默挂到 30s 超时，
+    // 现象是「30s 后才失败、错误指向超时」而不是「target 已销毁」——误导排查。
+    const rejectAll = (why: string) => {
+      for (const p of cdp.pending.values()) p.rej(new Error(`[ui-drive] CDP 连接断开：${why}`));
+      cdp.pending.clear();
+    };
+    cdp.ws.on("close", () => rejectAll("ws closed（window 已销毁？）"));
+    cdp.ws.on("error", (e) => rejectAll(`ws error: ${e.message}`));
     return cdp;
-  }
-
-  /** 让所有在途命令失败（连接断掉时调用） */
-  private failAll(reason: string): void {
-    for (const [, resolve] of this.pending) resolve({ __cdpError: reason });
-    this.pending.clear();
   }
 
   /**
    * 发送 CDP 命令。**带超时**：命令不响应（渲染进程卡住 / 连接半死）时抛出明确错误，
    * 而不是让 Promise 永远挂着 —— 后者表现为"某测试 30s 超时"，看不出真正原因。
+   * 与上面的 rejectAll（连接断开）互补：那条管"socket 断了"，这条管"socket 活着但不回包"。
    */
   send<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs = 10_000): Promise<T> {
     const id = this.seq++;
     return new Promise<T>((res, rej) => {
+      // 连接不在 OPEN（窗口/页面已销毁）→ 立即失败，不进 pending（否则永远等不到回包）
+      if (this.ws.readyState !== WebSocket.OPEN) {
+        rej(new Error(`[ui-drive] CDP 连接未就绪（readyState=${this.ws.readyState}），method=${method}`));
+        return;
+      }
       const timer = setTimeout(() => {
         this.pending.delete(id);
         rej(new Error(`[ui-drive] CDP 命令超时（${timeoutMs}ms）: ${method}`));
       }, timeoutMs);
-      this.pending.set(id, (v) => {
-        clearTimeout(timer);
-        const err = (v as { __cdpError?: string } | undefined)?.__cdpError;
-        if (err) rej(new Error(`[ui-drive] ${err}`));
-        else res(v as T);
+      this.pending.set(id, {
+        res: (v) => {
+          clearTimeout(timer);
+          res(v as T);
+        },
+        rej: (e) => {
+          clearTimeout(timer);
+          rej(e);
+        },
       });
       try {
         this.ws.send(JSON.stringify({ id, method, params }));
@@ -90,14 +101,24 @@ class Cdp {
     });
   }
 
-  /** 在 renderer 里求值（拿 DOM 尺寸、读状态用） */
-  async eval<T>(expression: string): Promise<T> {
-    const r = await this.send<{ result?: { value?: T } }>("Runtime.evaluate", {
-      expression,
-      returnByValue: true,
-      awaitPromise: true,
-    });
-    return r.result?.value as T;
+  /** 在 renderer 里求值（拿 DOM 尺寸、读状态用）。默认 5s 超时：死 target 不该吃掉整个用例预算 */
+  async eval<T>(expression: string, timeoutMs = 5000): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const r = await Promise.race([
+        this.send<{ result?: { value?: T } }>("Runtime.evaluate", {
+          expression,
+          returnByValue: true,
+          awaitPromise: true,
+        }),
+        new Promise<never>((_, rej) => {
+          timer = setTimeout(() => rej(new Error(`[ui-drive] eval 超时 ${timeoutMs}ms（target 可能已销毁）`)), timeoutMs);
+        }),
+      ]);
+      return r.result?.value as T;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   close(): void {
@@ -154,6 +175,21 @@ export interface UiDriver {
    */
   hover(text: TextMatch): Promise<void>;
   /**
+   * 让鼠标「进入」某元素：派发 DOM `mouseenter`（leaveSelector 则派发 `mouseleave`）。
+   *
+   * 为什么必须这样做（不是偷懒）：Chromium 由**真实输入设备位置**驱动 hover，
+   * `Input.dispatchMouseEvent` 只做命中测试与派发，**不更新 hover 事件链**（见上面
+   * `hover` 的注释）。于是「悬停才出现的 UI」（侧栏 hover 展开、悬停任务项的详情
+   * 面板）用 CDP 驱动不出来，只能派发原生事件。
+   * 作为补偿，调用方应同时断言目标 rect 非零且 `elementFromPoint` 命中它 ——
+   * 证明「这一项真的在鼠标可达处」，而不是只靠合成事件自说自话。
+   *
+   * 返回 false = 选择器没找到元素（调用方自行决定是否断言失败，不静默跳过）。
+   */
+  hoverSelector(selector: string, opts?: { nth?: number }): Promise<boolean>;
+  /** 派发 DOM `mouseleave`（与 hoverSelector 对称） */
+  leaveSelector(selector: string, opts?: { nth?: number }): Promise<boolean>;
+  /**
    * 按 CSS 选择器定位 → 在**元素中心真实派发**鼠标按下/抬起。
    *
    * 为什么需要（不是绕路）：`ui inspect` 的 a11y 树会剔除 `opacity: 0` 的元素，
@@ -162,17 +198,27 @@ export interface UiDriver {
    * 定位用 DOM、发送用 CDP 原生事件 —— 命中测试那一层仍然是真的。
    */
   clickSelector(selector: string, opts?: { nth?: number }): Promise<void>;
+  /**
+   * 按 CSS 选择器定位 → **真实双击**（同上定位与命中路径）。
+   *
+   * 为什么不是"连点两次 clickSelector"：Chromium 的 `dblclick` 由**点击计数**驱动
+   * （同一坐标、`clickCount: 2` 的第二次 press/release），两次独立的单击只会产生
+   * 两个 `click`，`onDblClick` 一次都不会触发 —— 界面看着"点了没反应"。
+   */
+  dblclickSelector(selector: string, opts?: { nth?: number }): Promise<void>;
   /** 读 DOM（拿 rect / 计算样式等；a11y 树看不到的东西用这个） */
   query<T>(expression: string): Promise<T>;
   /**
-   * 在**当前焦点**处插入文本（CDP `Input.insertText`）。
+   * 向**当前焦点元素**真实输入文本（`Input.insertText`）。
    *
-   * 为什么用 insertText 而不是逐键 dispatchKeyEvent：它是 Chromium 的原生"输入法提交"路径，
-   * 一次事件整段进入受控组件（CodeMirror 的 change 回调只触发一次），与真人粘贴/输入法上屏
-   * 同路径；逐键合成反而更容易踩到 IME/组合态。
-   * 前置：先用 clickSelector 把焦点落到输入区（否则文本进不去）。
+   * 为什么不用 `el.value = x` 或派发合成 input 事件：那些绕过浏览器输入路径，
+   * 输入框不会经历真实的插入会话（而 Solid 的 onInput 绑在事件上，恰好会"看起来能过"）。
+   * 用 CDP 的 insertText 走的就是输入法/键盘最终落到的同一条路径。
+   * 注意：文本会插到**插入点**，不替换已有内容；要先 click 聚焦、必要时 `press("Meta+A")` 全选。
    */
   type(text: string): Promise<void>;
+  /** 真实按键（如 Enter / ArrowDown / Escape）。可带 Meta/Ctrl/Shift 修饰，如 `Meta+A` */
+  press(key: string): Promise<void>;
   /** 按坐标拖拽（拖线用）；steps 让中间点也发出去，命中拖拽逻辑 */
   drag(from: { x: number; y: number }, to: { x: number; y: number }, steps?: number): Promise<void>;
   /** 在 renderer 里求值 */
@@ -200,6 +246,55 @@ export async function makeUiDriver(
       clickCount: type === "mouseMoved" ? 0 : 1,
       ...extra,
     });
+
+  /** 对某选择器命中的第 nth 个元素派发原生 hover 事件（见 hoverSelector 的说明） */
+  const fireMouse = (type: "mouseenter" | "mouseleave", selector: string, nth: number) =>
+    cdp.eval<boolean>(`(() => {
+      const el = document.querySelectorAll(${JSON.stringify(selector)})[${nth}];
+      if (!el) return false;
+      el.dispatchEvent(new MouseEvent(${JSON.stringify(type)}, { bubbles: false }));
+      return true;
+    })()`);
+
+  /**
+   * 取某选择器命中的第 nth 个元素的**稳定中心点**：等坐标连续两次一致再返回。
+   *
+   * 实测教训：侧栏展开是 `transition-[width] duration-200`，pin 之后立刻取坐标
+   * 拿到的是动画中间值，等事件派发到浏览器时按钮已经移走 —— 点击落到别处，
+   * 表现为「点了没反应」（tab 没关掉，但也没有报错）。真人不会点中途的元素。
+   * 找不到 / 零尺寸直接抛错（不静默跳过）。
+   */
+  const sampleStablePoint = async (selector: string, nth: number) => {
+    const sample = () =>
+      cdp.eval<{ x: number; y: number } | string>(
+        `(() => {
+           const els = document.querySelectorAll(${JSON.stringify(selector)});
+           const el = els[${nth}];
+           if (!el) return "NOT_FOUND";
+           const r = el.getBoundingClientRect();
+           if (r.width === 0 || r.height === 0) return "ZERO_SIZE";
+           return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+         })()`,
+      );
+
+    let point = await sample();
+    if (typeof point === "string") {
+      throw new Error(`[ui-drive] 选择器定位失败（${point}）: ${selector}[${nth}]`);
+    }
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 40));
+      const next = await sample();
+      if (typeof next === "string") {
+        throw new Error(`[ui-drive] 选择器定位失败（${next}）: ${selector}[${nth}]`);
+      }
+      if (Math.abs(next.x - point.x) < 1 && Math.abs(next.y - point.y) < 1) {
+        point = next;
+        break;
+      }
+      point = next;
+    }
+    return point;
+  };
 
   /** 取树并按谓词定位（每次现取：上一步操作会让 rect 变） */
   const locate = async (target: TextMatch) => {
@@ -234,42 +329,29 @@ export async function makeUiDriver(
       await new Promise((r) => setTimeout(r, 150));
     },
 
-    async clickSelector(selector, opts = {}) {
-      const nth = opts.nth ?? 0;
-      const sample = () =>
-        cdp.eval<{ x: number; y: number } | string>(
-          `(() => {
-             const els = document.querySelectorAll(${JSON.stringify(selector)});
-             const el = els[${nth}];
-             if (!el) return "NOT_FOUND";
-             const r = el.getBoundingClientRect();
-             if (r.width === 0 || r.height === 0) return "ZERO_SIZE";
-             return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-           })()`,
-        );
+    async hoverSelector(selector, opts = {}) {
+      return fireMouse("mouseenter", selector, opts.nth ?? 0);
+    },
 
-      // 等坐标**连续两次一致**再点。
-      // 实测教训：侧栏展开是 `transition-[width] duration-200`，pin 之后立刻取坐标
-      // 拿到的是动画中间值，等事件派发到浏览器时按钮已经移走 —— 点击落到别处，
-      // 表现为「点了没反应」（tab 没关掉，但也没有报错）。真人不会点中途的元素。
-      let point = await sample();
-      if (typeof point === "string") {
-        throw new Error(`[ui-drive] 选择器定位失败（${point}）: ${selector}[${nth}]`);
-      }
-      for (let i = 0; i < 40; i++) {
-        await new Promise((r) => setTimeout(r, 40));
-        const next = await sample();
-        if (typeof next === "string") {
-          throw new Error(`[ui-drive] 选择器定位失败（${next}）: ${selector}[${nth}]`);
-        }
-        if (Math.abs(next.x - point.x) < 1 && Math.abs(next.y - point.y) < 1) {
-          point = next;
-          break;
-        }
-        point = next;
-      }
+    async leaveSelector(selector, opts = {}) {
+      return fireMouse("mouseleave", selector, opts.nth ?? 0);
+    },
+
+    async clickSelector(selector, opts = {}) {
+      const point = await sampleStablePoint(selector, opts.nth ?? 0);
       await mouse("mousePressed", point);
       await mouse("mouseReleased", point);
+      await new Promise((r) => setTimeout(r, 120));
+    },
+
+    async dblclickSelector(selector, opts = {}) {
+      const point = await sampleStablePoint(selector, opts.nth ?? 0);
+      // 第二次带 clickCount: 2 —— 这才是 Chromium 判定 dblclick 的依据（见接口注释）
+      const at = (type: string, clickCount: number) => mouse(type, point, { clickCount });
+      await at("mousePressed", 1);
+      await at("mouseReleased", 1);
+      await at("mousePressed", 2);
+      await at("mouseReleased", 2);
       await new Promise((r) => setTimeout(r, 120));
     },
 
@@ -277,31 +359,51 @@ export async function makeUiDriver(
 
     async type(text) {
       await cdp.send("Input.insertText", { text });
-      // 让 CodeMirror 的 updateListener → store 更新走完（受控组件下一帧才反映到 DOM 属性）
+      await new Promise((r) => setTimeout(r, 120));
+    },
+
+    async press(key) {
+      // 常见键 → 键码。`Mod+K`（Meta/Ctrl）形式解析：修饰键只改 modifiers，主键照发。
+      const CODES: Record<string, { code: string; vk: number }> = {
+        ArrowDown: { code: "ArrowDown", vk: 40 },
+        ArrowUp: { code: "ArrowUp", vk: 38 },
+        Escape: { code: "Escape", vk: 27 },
+        Enter: { code: "Enter", vk: 13 },
+        Tab: { code: "Tab", vk: 9 },
+      };
+      const parts = key.split("+");
+      const main = parts.pop()!;
+      const modifiers = parts.reduce((acc, m) => {
+        if (m === "Meta") return acc | 4;
+        if (m === "Ctrl") return acc | 2;
+        if (m === "Shift") return acc | 8;
+        return acc;
+      }, 0);
+      const info = CODES[main] ?? { code: `Key${main.toUpperCase()}`, vk: main.toUpperCase().charCodeAt(0) };
+      // 单字母的 `key` 必须是小写（"a" 而不是 "A"）：带 Meta/Ctrl 的组合键，
+      // Chromium 按 `key` 值匹配快捷键，大写字母匹配不上（表现为「按了没反应」）。
+      const keyValue = main.length === 1 ? main.toLowerCase() : main;
+      const base = {
+        key: keyValue,
+        code: info.code,
+        windowsVirtualKeyCode: info.vk,
+        nativeVirtualKeyCode: info.vk,
+        modifiers,
+      };
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...base });
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
       await new Promise((r) => setTimeout(r, 120));
     },
 
     async drag(from, to, steps = 8) {
-      // 事件之间必须有**真实时间 + 至少一帧渲染**流逝：
-      // ① CDP 的 dispatchMouseEvent 是瞬时的，全流程压进同一批任务时，dnd-kit 这类库的
-      //    "按下 → 激活（异步等一帧）→ 移动 → 落下"来不及走完激活 —— 实测不给延迟时
-      //    拖拽完全不生效，而 DOM 一切正常（很难查）；
-      // ② 高负载下光给 setTimeout 还不够（帧被拖后，激活仍可能没跑完），故每步显式等一帧。
-      // 真人拖拽本身也是每步几十毫秒，这里照此。
-      const frame = () => cdp.eval("new Promise((r) => requestAnimationFrame(() => r(1)))");
       await mouse("mousePressed", from);
-      await frame();
       for (let i = 1; i <= steps; i++) {
         const x = from.x + ((to.x - from.x) * i) / steps;
         const y = from.y + ((to.y - from.y) * i) / steps;
         await mouse("mouseMoved", { x, y });
-        await new Promise((r) => setTimeout(r, 25));
-        await frame();
       }
-      await new Promise((r) => setTimeout(r, 60)); // 落点先停一拍：让库算出 drop 目标
-      await frame();
       await mouse("mouseReleased", to);
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 120));
     },
 
     eval: (expr) => cdp.eval(expr),

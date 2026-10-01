@@ -98,6 +98,19 @@ function field<T>(key: string, spec: CacheFieldSpec<T>): CacheField<T> {
 
 // ─── 字段池（属性名 = key 完全一致，单一事实来源） ─────────
 
+/** 侧栏（左侧导航）展开宽度边界（px）。
+ *  拖拽 clamp 与下面 cache 字段的 parse 必须是**同一对值**：一边宽一边窄就会出现
+ *  「存得进、读不回」（拖到 700 → 重启后悄悄回到默认），所以导出共用。 */
+export const NAV_W_MIN = 160;
+export const NAV_W_MAX = 640;
+/** 侧栏默认宽度（px）= 14rem，与可调宽之前的固定宽度一致 */
+export const NAV_W_DEFAULT = 224;
+
+/** 任务内容两列布局的左列宽度边界（px）。拖拽 clamp 与上面 cache 字段的 parse
+ *  必须是同一对值：一边宽一边窄就会出现「存得进、读不回」（拖到 600 → 重启悄悄回默认）。 */
+export const TASK_DETAIL_LEFT_MIN = 200;
+export const TASK_DETAIL_LEFT_MAX = 560;
+
 /** 视图 cache 字段池：Caches.<模块>_<组件>_<用途>.get()/.set()/.reset() */
 export const Caches = {
   /** 任务树：展开节点集 */
@@ -112,6 +125,22 @@ export const Caches = {
     },
     serialize: (v) => JSON.stringify(v),
     defaultValue: [] as string[],
+  }),
+  /** 任务树：排序（`<键>:<asc|desc>`）。
+   *  parse 只校验**形状**（键名 + 方向），不校验键是否是我们认识的排序键 ——
+   *  键清单属于 TaskTree 的业务知识（`src/shared/task-list.ts`），
+   *  这里替下游做判断会重现「parse 越权过滤元素」的旧坑（见 diy_tabs_opened 注释）。
+   *  不认识的键由 TaskTree 回落默认排序。 */
+  diy_task_tree_sort: field<string>("diy_task_tree_sort", {
+    parse: (raw) => (/^[a-z_]+:(asc|desc)$/.test(raw) ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "created:asc",
+  }),
+  /** 任务树：搜索关键词（视图 cache：丢了只是清掉搜索框，无数据损失） */
+  diy_task_tree_query: field<string>("diy_task_tree_query", {
+    parse: (raw) => (raw.length <= 200 ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "",
   }),
   /** 任务树：滚动容器 scrollTop（>=1 才恢复，0 表示未滚动过） */
   diy_task_tree_scroll: field("diy_task_tree_scroll", {
@@ -130,6 +159,30 @@ export const Caches = {
     },
     serialize: (v) => String(v),
     defaultValue: 560,
+  }),
+  /** 任务内容的两列布局里**左列**（属性 + 任务树）的宽度（px）。
+   *
+   *  左列是「查资料」性质的窄栏，宽度固定、由用户调；右列（正文）吃掉剩余宽度 ——
+   *  否则正文一长就把窄栏一起拉宽，两块都变成巨宽（视觉上很难受）。
+   *  窄容器（<480px：任务执行页左栏 / 悬停覆盖层）压根不走两列，此值不生效。 */
+  diy_task_detail_left_width: field("diy_task_detail_left_width", {
+    parse: (raw) => {
+      const v = Number(raw);
+      return v >= TASK_DETAIL_LEFT_MIN && v <= TASK_DETAIL_LEFT_MAX ? v : null;
+    },
+    serialize: (v) => String(v),
+    // 280 是「560px 面板里左列约一半」的取值：再宽正文就只剩一条缝了
+    defaultValue: 280,
+  }),
+  /** 侧栏（左侧导航）展开宽度（px）。拖动右缘调宽 / 双击手柄复位后落盘，重启恢复。
+   *  收起态 rail 宽度（2.5rem）不在这里 —— 那是固定几何，不是用户偏好。 */
+  diy_nav_width: field("diy_nav_width", {
+    parse: (raw) => {
+      const v = Number(raw);
+      return v >= NAV_W_MIN && v <= NAV_W_MAX ? v : null;
+    },
+    serialize: (v) => String(v),
+    defaultValue: NAV_W_DEFAULT,
   }),
   /** 打开的 tab。**只存真信息**：`{ pageId, ctx }[]`，顺序即显示顺序。
    *

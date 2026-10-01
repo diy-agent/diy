@@ -19,6 +19,10 @@ import { notificationStore } from "./store/notificationStore";
 import { defaultBinding, findPage, findView, viewInstanceKey } from "../shared/view-registry";
 import { taskIndentOf } from "../shared/tab-order";
 import { taskStateColor } from "../main/core/task-state";
+import { instanceTitle } from "../shared/instance-title";
+import { Caches, NAV_W_MIN, NAV_W_MAX, NAV_W_DEFAULT } from "./lib/ui-state";
+import { VIEW_BAR_H } from "./lib/layout-metrics";
+import { TaskSideView } from "./components/TaskSideView";
 import { Breadcrumb } from "./components/Breadcrumb";
 import { setRendererActions, resetRendererActions, getRendererActions } from "./lib/renderer-actions";
 
@@ -82,10 +86,61 @@ export default function App() {
         tabStore.active ? { kind: "tab", key: tabStore.active } : { kind: "section", section: "task" },
     );
     const [subPage, setSubPage] = createSignal("info");
-    // 侧栏默认紧缩（w-12 纯图标 rail 省空间）；悬停或锁定才展开 w-56，选导航后即回缩
+    // 侧栏默认紧缩（2.5rem 纯图标 rail 省空间）；悬停或锁定才展开，选导航后即回缩
     const [pinned, setPinned] = createSignal(false);
     const [hovered, setHovered] = createSignal(false);
-    const expanded = () => pinned() || hovered();
+    // 展开宽度（px）：右缘可拖，落视图 cache（见 ui-state 的 diy_nav_width）
+    const [navW, setNavW] = createSignal(Caches.diy_nav_width.get());
+    // 拖拽中的标记：期间**必须强制展开**，否则鼠标一离开侧栏就 mouseleave 收拢，
+    // 宽度在「收拢 → 变宽 → 又展开」之间抖（见 onNavGripDown）
+    const [resizingNav, setResizingNav] = createSignal(false);
+    let navEl: HTMLDivElement | undefined;
+    let mainAreaEl: HTMLDivElement | undefined;
+
+    /**
+     * 悬停导航上的任务项时，在其右侧弹出的「任务详情」覆盖层（值是任务 uri）。
+     *
+     * 三个刻意的选择：
+     *  1. **覆盖层**（absolute，不挤压主区）—— 这是「顺便看一眼」的动作，鼠标移开就还原；
+     *     若做成分栏挤压，看一眼的代价是整页内容跳一下
+     *  2. 展开态与收起态（rail）都能触发 —— 收起态只有序号图标，同样需要看一眼确认
+     *  3. 离开导航项后**延迟**隐藏（HOVER_HIDE_MS），鼠标要时间跨到覆盖层上；
+     *     进覆盖层即取消（见 cancelHideHoverTask），否则手还没到面板就没了
+     */
+    const [hoverTaskUri, setHoverTaskUri] = createSignal<string | null>(null);
+    /** 任务树标题的单层预览 drawer：left 是相对 mainAreaEl 的 x，宽度取触发 view 的宽度 */
+    const [hoverTreeTask, setHoverTreeTask] = createSignal<{ uri: string; left: number; width: number } | null>(null);
+    const HOVER_HIDE_MS = 180;
+    let hoverHideTimer: ReturnType<typeof setTimeout> | undefined;
+    const showHoverTask = (uri: string | null | undefined) => {
+        if (!uri) return;
+        clearTimeout(hoverHideTimer);
+        setHoverTreeTask(null);
+        setHoverTaskUri(uri);
+    };
+    const scheduleHideHoverTask = () => {
+        clearTimeout(hoverHideTimer);
+        hoverHideTimer = setTimeout(() => {
+            setHoverTaskUri(null);
+            setHoverTreeTask(null);
+        }, HOVER_HIDE_MS);
+    };
+    const cancelHideHoverTask = () => clearTimeout(hoverHideTimer);
+    // 覆盖层可见期间强制保持展开：否则鼠标移向覆盖层时会离开侧栏 → 侧栏收拢
+    // → drawer-content（以及贴在它左缘的覆盖层）跟着左移，画面抖一下。
+    // 注意：**不能**把 hoverTreeTask 也算作「该展开」—— tree drawer 是主区内的 overlay，
+    // 展开侧栏会让主区整体右移，把鼠标下的标题链接挪走（指针落到 nav 上）→ drawer 刚开就被收掉。
+    const expanded = () => pinned() || hovered() || resizingNav() || !!hoverTaskUri();
+
+    /**
+     * 清空悬停覆盖层。**任何「切页面」的动作都要调它**：
+     * 点击那一刻鼠标并没有 leave，光靠 mouseleave 收拢会留下「页面已切走、面板还在」的残影。
+     */
+    const hideHoverLayers = () => {
+        clearTimeout(hoverHideTimer);
+        setHoverTaskUri(null);
+        setHoverTreeTask(null);
+    };
 
     /**
      * 侧栏高亮：**同一时刻只有一处**。
@@ -116,6 +171,60 @@ export default function App() {
         // 注入后树一变（loadTree / 文件监听 / 拖拽改父）→ opened 重算 → 排序与缩进自动跟上。
         tabStore.setAncestorsResolver(taskAncestorsOf);
         taskStore.loadTree();
+
+        // 任务树标题悬停 → 只开一层详情 drawer（复用 TaskSideView），贴在触发任务 view 右侧。
+        // 不在 drawer 里再开 drawer：overlay 实例禁用 hoverPreview，只保留一层。
+        const onTreePreview = (detail: { uri: string; rect: { left: number; right: number; width: number } }) => {
+            const host = mainAreaEl;
+            if (!detail?.uri || !host) return;
+            const main = host.getBoundingClientRect();
+            const width = Math.min(Math.round(detail.rect.width), Math.round(main.width));
+            const roomRight = main.right - detail.rect.right;
+            const roomLeft = detail.rect.left - main.left;
+            // 优先贴右边；右侧不够才放左侧。左右都放不下完整一层就不弹。
+            let left: number;
+            if (roomRight >= width) left = detail.rect.right - main.left;
+            else if (roomLeft >= width) left = detail.rect.left - main.left - width;
+            else return;
+            // mousemove 在行内连续派发：同一个 URI 已经是当前唯一 drawer 时不重设对象，
+            // 否则每帧都重建 TaskSideView，会把标题 tooltip / 鼠标 hover 连续打断。
+            const current = hoverTreeTask();
+            if (current?.uri === detail.uri) {
+                clearTimeout(hoverHideTimer);
+                return;
+            }
+            clearTimeout(hoverHideTimer);
+            setHoverTaskUri(null);
+            setHoverTreeTask({ uri: detail.uri, left: Math.max(0, Math.round(left)), width });
+        };
+        // 用 document 原生委托接 hover：链接藏在复用 view 的 For 节点内，
+        // per-node handler 容易被组件复用/重排的事件代理时序吞掉；data 属性只声明 URI，
+        // drawer 的单层状态仍统一由 App 管。
+        const onDocumentMouseOver = (ev: MouseEvent) => {
+            const target = ev.target;
+            if (!(target instanceof Element)) return;
+            const link = target.closest<HTMLElement>("[data-task-hover-uri]");
+            const uri = link?.dataset.taskHoverUri;
+            if (!uri) return;
+            const view = link.closest<HTMLElement>("[data-task-side-view]");
+            const rect = view?.getBoundingClientRect();
+            if (rect) onTreePreview({ uri, rect: { left: rect.left, right: rect.right, width: rect.width } });
+        };
+        const onDocumentMouseOut = (ev: MouseEvent) => {
+            const target = ev.target;
+            if (!(target instanceof Element)) return;
+            const link = target.closest<HTMLElement>("[data-task-hover-uri]");
+            if (!link) return;
+            const next = ev.relatedTarget;
+            if (next instanceof Node && link.contains(next)) return;
+            scheduleHideHoverTask();
+        };
+        document.addEventListener("mouseover", onDocumentMouseOver);
+        document.addEventListener("mouseout", onDocumentMouseOut);
+        onCleanup(() => {
+            document.removeEventListener("mouseover", onDocumentMouseOver);
+            document.removeEventListener("mouseout", onDocumentMouseOut);
+        });
         setRendererActions({
             navigate: (page) => {
                 if (!VALID_PAGES.has(page)) return;
@@ -187,6 +296,20 @@ export default function App() {
             },
             toast: (msg, level) => notificationStore.addToast(level ?? "info", msg),
         });
+        // 窗口标题 = 实例标识（与 main 创建窗口时那个值同源同格式，见 shared/instance-title）。
+        // main 侧拦了「页面标题 → 窗口标题」这条通路，故这里不是为了让窗口标题生效，
+        // 而是让 renderer 自己也持有一份：serve 模式的浏览器标签页标题、以及测试断言读它。
+        // 数据根展示形式/分支都在 renderer 里拿不到（要真实家目录与 git），故整份事实由 main 下发。
+        void diyService.diy.getAppInfo({}).then((r) => {
+            document.title = instanceTitle({
+                repoDisplay: r.repoDisplay,
+                homeDisplay: r.diyHomeDisplay,
+                env: r.env,
+                branch: r.branch,
+                port: r.port,
+                pid: r.pid,
+            });
+        });
         // main 进程 FileWatcher 检测到文件变更后推送 "task-change"，
         // renderer 订阅后自动刷新任务树，覆盖 CLI/外部编辑器/agent 建任务等所有路径。
         fsAbort = new AbortController();
@@ -201,7 +324,35 @@ export default function App() {
         resetRendererActions();
     });
 
+    /**
+     * 侧栏右缘拖拽改宽（松手落盘）。
+     *
+     * 三个细节都是必需的：
+     *  1. 宽度 = 鼠标 x - 侧栏左缘，不能裸用 clientX —— 侧栏不保证从 x=0 起
+     *  2. 拖拽期间强制展开（resizingNav）—— 侧栏平时是 hover 展开的，鼠标一移出
+     *     右缘就触发展开态收拢，宽度会跟着抖
+     *  3. 松手才落盘 —— 拖拽中每帧写 localStorage 是几十次无用写入
+     */
+    const onNavGripDown = (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const left = navEl?.getBoundingClientRect().left ?? 0;
+        setResizingNav(true);
+        const move = (ev: MouseEvent) => {
+            setNavW(Math.min(NAV_W_MAX, Math.max(NAV_W_MIN, Math.round(ev.clientX - left))));
+        };
+        const up = () => {
+            window.removeEventListener("mousemove", move);
+            window.removeEventListener("mouseup", up);
+            setResizingNav(false);
+            Caches.diy_nav_width.set(navW());
+        };
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
+    };
+
     const goSection = (id: Section) => {
+        hideHoverLayers(); // 页面切走了，悬停层不能留着盖在屏幕上
         if (id === "task") {
             tabStore.showTree();
             setRoute({ kind: "section", section: "task" });
@@ -215,12 +366,14 @@ export default function App() {
 
     /** 打开/聚焦某个 tab（含子页面） */
     const goto = (key: string) => {
+        hideHoverLayers();
         tabStore.activate(key);
         setRoute({ kind: "tab", key });
     };
 
     /** 关闭 tab：与任务状态无关（= 暂时不理会）。关父连带关子 */
     const closeTab = (key: string) => {
+        hideHoverLayers();
         tabStore.close(key);
         const next = tabStore.active;
         setRoute(next ? { kind: "tab", key: next } : { kind: "section", section: "task" });
@@ -235,6 +388,7 @@ export default function App() {
                 <main
                     class="flex-1 flex flex-col relative overflow-hidden bg-base-100"
                     onClick={() => {
+                        hideHoverLayers(); // 空区域点击也顺手收掉悬停层
                         // 点击空白处关闭任务详情面板（任务行/面板自身已 stopPropagation 接管）
                         // 只在任务树页面生效：其他页面点击不应取消选中任务
                         if (route().kind === "section" && (route() as { section: Section }).section === "task" && taskStore.selectedUri) taskStore.selectTask(null);
@@ -246,16 +400,18 @@ export default function App() {
                         section={route().kind === "section" ? (route() as { kind: "section"; section: Section }).section : "task"}
                         activeKey={route().kind === "tab" ? (route() as { kind: "tab"; key: string }).key : ""}
                         gotoTab={(key) => {
+                            hideHoverLayers();
                             tabStore.activate(key);
                             setRoute({ kind: "tab", key });
                         }}
                         gotoSection={(id) => {
+                            hideHoverLayers();
                             if (id === "task") tabStore.showTree();
                             setRoute({ kind: "section", section: id as Section });
                         }}
                         closeTab={closeTab}
                     />
-                    <div class="flex-1 min-h-0 overflow-hidden">
+                    <div ref={(el) => (mainAreaEl = el)} class="flex-1 min-h-0 overflow-hidden relative">
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "task"}>
                         <TaskTree />
                         <TaskDetailPanel />
@@ -301,7 +457,38 @@ export default function App() {
                             </Show>
                         </div>
                     </Show>
-                                    </div>
+                        {/* 悬停导航任务项 → 任务详情覆盖层（overlay，**不挤压主区**）。
+                            定位取 left-0 是「nav 右缘」：本容器正是 DaisyUI drawer 的
+                            drawer-content，天然紧贴侧栏右缘，不需要手算 nav 宽度。
+                            宽度固定 320px（w-80）：它随鼠标出现、跟着鼠标消失，拖宽无意义。 */}
+                        <Show when={hoverTaskUri()}>
+                            {(uri) => (
+                                <aside
+                                    class="absolute inset-y-0 left-0 z-30 w-80 bg-base-100 border-r shadow-2xl flex flex-col"
+                                    aria-label={`任务详情：${uri()}`}
+                                    onMouseEnter={cancelHideHoverTask}
+                                    onMouseLeave={hideHoverLayers}
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    <TaskSideView uri={uri()} hoverPreview={false} />
+                                </aside>
+                            )}
+                        </Show>
+                        <Show when={hoverTreeTask()}>
+                            {(preview) => (
+                                <aside
+                                    class="absolute inset-y-0 z-30 bg-base-100 border-r shadow-2xl flex flex-col"
+                                    style={{ left: `${preview().left}px`, width: `${preview().width}px` }}
+                                    aria-label={`任务详情：${preview().uri}`}
+                                    onMouseEnter={cancelHideHoverTask}
+                                    onMouseLeave={scheduleHideHoverTask}
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    <TaskSideView uri={preview().uri} hoverPreview={false} />
+                                </aside>
+                            )}
+                        </Show>
+                    </div>
 </main>
             </div>
 
@@ -317,14 +504,45 @@ export default function App() {
                     行右侧的关闭按钮跑到侧栏外被 overflow-hidden 裁掉，`elementFromPoint` 命中的是
                     主区内容（即「页面遮挡住关闭按钮、点不到」）。nowrap 让交叉轴回到容器宽度，
                     再配合 `min-w-0` 保证内部的 truncate 能真正收缩。 */}
+                {/* 展开宽度可调（拖右缘 / 双击手柄复位）：宽度记在视图 cache，重启恢复。
+                    拖拽期间摘掉 transition —— 否则宽度在鼠标后面追，手感是"拖不动"。 */}
                 <div
-                    class={`menu flex-nowrap bg-base-200 min-h-full transition-[width,padding] duration-200 whitespace-nowrap overflow-hidden ${expanded() ? "p-2" : "p-0"}`}
-                    style={{ width: expanded() ? "14rem" : "2.5rem" }}
+                    ref={(el) => (navEl = el)}
+                    class={`menu flex-nowrap bg-base-200 min-h-full whitespace-nowrap overflow-hidden relative ${expanded() ? "p-2" : "p-0"} ${resizingNav() ? "" : "transition-[width,padding] duration-200"}`}
+                    style={{ width: expanded() ? `${navW()}px` : "2.5rem" }}
                     onMouseEnter={() => setHovered(true)}
                     onMouseLeave={() => setHovered(false)}
                 >
-                    <div class="border-b font-bold h-12 flex items-center justify-center">
-                        <span title="diy">◉</span>
+                    {/* 顶栏 = 与面包屑 / 各 view 顶栏同高的 viewbar（VIEW_BAR_H）。
+                        原先这里是 h-12 且只有 ◉，而 pin 按钮独占底部一行 —— 两处都与
+                        「一律 32px 高、按钮区在右」的统一规格不符。现改为：左 ◉、右按钮区。
+                        收起态（rail 40px）装不下按钮区，只留 ◉ 居中。 */}
+                    <div
+                        class={`flex items-center ${VIEW_BAR_H} border-b shrink-0 ${expanded() ? "justify-between px-2" : "justify-center"}`}
+                    >
+                        <Show
+                            when={expanded()}
+                            fallback={
+                                /* 收起态（rail 40px）只留品牌图标：按钮区放不下（◉ + 📍 挤在 40px 里），
+                                   也没有必要 —— 鼠标移到侧栏即展开，按钮区随之出现，「锁定」是一步之遥。
+                                   顺带避开一个陷阱：在收起态放 pin 按钮，点击的按下瞬间侧栏才展开、
+                                   按钮已经移位，down/up 落在不同元素上 → 点击不成立（真实点击测试抓到过）。 */
+                                <span class="font-bold" title="diy">
+                                    ◉
+                                </span>
+                            }
+                        >
+                            <span class="font-bold" title="diy">
+                                ◉
+                            </span>
+                            <button
+                                class="btn btn-ghost btn-xs px-1 min-h-0 opacity-60 hover:opacity-100"
+                                title={pinned() ? "取消锁定（恢复悬停展开）" : "锁定展开"}
+                                onClick={() => setPinned(!pinned())}
+                            >
+                                <span>{pinned() ? "📌" : "📍"}</span>
+                            </button>
+                        </Show>
                     </div>
                     <div class={`space-y-1 w-full min-w-0 ${expanded() ? "p-1" : "py-2"}`}>
                         <For each={NAV_ITEMS}>
@@ -359,6 +577,7 @@ export default function App() {
                                                         : tabLabel(t.ctx ?? "");
                                                 const icon = () => (t.pageId === "lab" ? "L" : (num() ?? "•"));
                                                 const tabGoto = () => {
+                                                    hideHoverLayers();
                                                     tabStore.activate(t.key);
                                                     setRoute({ kind: "tab", key: t.key });
                                                 };
@@ -378,6 +597,8 @@ export default function App() {
                                                                     }`}
                                                                     title={label()}
                                                                     onClick={tabGoto}
+                                                                    onMouseEnter={() => showHoverTask(t.ctx)}
+                                                                    onMouseLeave={scheduleHideHoverTask}
                                                                 >
                                                                     {icon()}
                                                                     {/* 收起态装不下缩进，用一个小角标表达「有父」 */}
@@ -394,6 +615,8 @@ export default function App() {
                                                                 style={{ "padding-left": `${indentPx()}px` }}
                                                                 title={t.ctx ?? t.key}
                                                                 onClick={tabGoto}
+                                                                onMouseEnter={() => showHoverTask(t.ctx)}
+                                                                onMouseLeave={scheduleHideHoverTask}
                                                             >
                                                                 {/* 缩进用竖线引导（比箭头更清楚地表示「挂在上面那项之下」）；
                                                                     状态圆点始终保留 —— 缩进与状态是两件事，不该二选一 */}
@@ -423,15 +646,18 @@ export default function App() {
                             )}
                         </For>
                     </div>
-                    <div class="p-1 border-t mt-auto">
-                        <button
-                            class="w-full flex justify-center opacity-60 hover:opacity-100"
-                            title={pinned() ? "取消锁定（恢复悬停展开）" : "锁定展开"}
-                            onClick={() => setPinned(!pinned())}
-                        >
-                            <span>{pinned() ? "📌" : "📍"}</span>
-                        </button>
-                    </div>
+                    {/* 右缘拖拽条：调宽 + 双击复位。收起态（rail）没有可调的宽度，不渲染 */}
+                    <Show when={expanded()}>
+                        <div
+                            class="absolute inset-y-0 right-0 w-1.5 cursor-col-resize hover:bg-primary/40 active:bg-primary/60 z-10"
+                            title="拖动调整侧栏宽度（双击复位）"
+                            onMouseDown={onNavGripDown}
+                            onDblClick={() => {
+                                setNavW(NAV_W_DEFAULT);
+                                Caches.diy_nav_width.set(NAV_W_DEFAULT);
+                            }}
+                        />
+                    </Show>
                 </div>
             </div>
 

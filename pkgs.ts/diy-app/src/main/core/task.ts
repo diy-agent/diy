@@ -8,6 +8,7 @@ import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { z } from "zod";
 import {
+  diyHome,
   getTask,
   splitTaskFile,
   taskDir,
@@ -19,6 +20,9 @@ import {
 } from "./state";
 import type { TaskMeta } from "./state";
 import { projectExists } from "./project";
+// agent 人物：不传 = **跟随缺省**（不写键），传值则校验存在后固定绑定（人物定义见 core/persona.ts）
+import { personaById } from "./persona";
+import { isPersonaFollow } from "../../shared/persona";
 
 // ═══════════════════════════════════════
 // 字段验证 schema
@@ -27,6 +31,8 @@ import { projectExists } from "./project";
 // TaskStateSchema 单一真相源在 task-state.ts（此处 re-export 保持兼容） */
 export { TaskStateSchema } from "./task-state";
 import { TaskStateSchema } from "./task-state";
+// 结构化字段单一真相源在 task-fields.ts（硬编码临时方案，见该文件注释）
+import { ChangeTypeSchema, PrioritySchema, MODULE_MAX_LENGTH } from "./task-fields";
 
 // ═══════════════════════════════════════
 // 错误类型
@@ -67,6 +73,14 @@ export interface CreateTaskParams {
   body?: string;
   source_type?: string;
   source_uri?: string;
+  /** agent 人物 **id**；不传 = 当前缺省人物（创建时物化，之后改缺省不影响已有任务） */
+  persona?: string;
+  /** 变更性质（change_type），见 task-fields.ts */
+  change_type?: string;
+  /** 模块（`/` 分层自由字符串） */
+  module?: string;
+  /** 优先级 P0-P3；不传 = 未定级 */
+  priority?: string;
 }
 
 const CreateTaskSchema = z.object({
@@ -76,6 +90,11 @@ const CreateTaskSchema = z.object({
   body: z.string().optional(),
   source_type: z.string().optional(),
   source_uri: z.string().optional(),
+  // 传值 = 固定绑定到该人物；不传（或传 default/空串）= **跟随缺省**（新建默认）
+  persona: z.string().optional(),
+  change_type: ChangeTypeSchema.optional(),
+  module: z.string().trim().max(MODULE_MAX_LENGTH).optional(),
+  priority: PrioritySchema.optional(),
 });
 
 /**
@@ -93,7 +112,7 @@ export function createTask(params: CreateTaskParams): string {
     throw new ValidationError(errors);
   }
 
-  const { title, project, parent, body, source_type, source_uri } = parsed.data;
+  const { title, project, parent, body, source_type, source_uri, persona, change_type, module, priority } = parsed.data;
 
   // 校验 project 是否注册（按项目数据目录）
   if (!projectExists(project)) {
@@ -103,6 +122,23 @@ export function createTask(params: CreateTaskParams): string {
   }
 
   // 校验父任务存在
+  // agent 人物：**不传 = 跟随缺省**（不写 persona 键），显式指定则校验存在后固定绑定。
+  //
+  // 为什么新建默认"跟随缺省"而不是"物化当时的缺省 id"：用户说"新建任务没选人物"时，
+  // 心里想的就是"用我的缺省人物"，而不是"此刻拷一份当时的缺省配置"。物化会让
+  // 「后来把缺省改成 B」这件事对老任务完全不可见 —— 用户以为改了缺省全场生效，实际只有新任务生效。
+  // 跟随是**引用**而非快照：改缺省，跟随者下一轮一起变（与「改人物影响所有引用者」同一套心智）。
+  // 「这一刻到底用了哪个模型」由事件流每 step 记录（见 ##164），不靠 frontmatter 快照保证可观测。
+  let personaId: string | undefined;
+  if (persona !== undefined && !isPersonaFollow(persona)) {
+    if (!personaById(diyHome(), persona)) {
+      throw new ValidationError([
+        { field: "persona", code: "not_found", msg: `人物 ${persona} 不存在（可用 diy agent persona list 查看 id）` },
+      ]);
+    }
+    personaId = persona;
+  }
+
   if (parent && !getTask(parent)) {
     throw new ValidationError([
       { field: "parent", code: "not_found", msg: `parent ${parent} 不存在` },
@@ -125,6 +161,14 @@ export function createTask(params: CreateTaskParams): string {
     updated: now,
     source_type,
     source_uri,
+    // 人物 id：**不写键 = 跟随缺省**（新建的默认）。与 priority 同一套「缺省 = 字段不存在」约定，
+    // 免得文件里堆一票 `persona: ''` 噪音
+    persona: personaId,
+    // 结构化字段：未传则不写键（yaml.dump 跳过 undefined）——「缺省 = 未定级」靠的是
+    // 字段不存在，而不是写一个空值，免得文件里堆一票 `priority: ''` 的噪音
+    change_type,
+    module: module || undefined, // 空白串不落键，避免 `module: ''` 噪音
+    priority,
     // 不写 project frontmatter —— project 由 URI 路径推导（路径即分组）
   };
 
@@ -145,6 +189,15 @@ export interface UpdateTaskChanges {
   state?: string;
   body?: string;
   parent?: string;
+  /**
+   * 人物 id：三态 —— 不传=保持 / `""`（或 `default`）=**跟随缺省**（删掉该键）/ 值=固定绑定到该人物。
+   * 空值不再是"非法"，而是"取消固定绑定"这一合法动作（新建任务的默认状态）。
+   */
+  persona?: string;
+  /** 空字符串 = 清除该字段（与 parent 的三态一致：不传=保持 / ""=清除 / 值=设置） */
+  change_type?: string;
+  module?: string;
+  priority?: string;
 }
 
 /** 正文最小长度。空值/误传（`--body ""`）会静默清空整篇正文且不可恢复（见任务 138），
@@ -162,6 +215,14 @@ const UpdateTaskSchema = z.object({
       message: `正文至少 ${MIN_BODY_LENGTH} 个字符（拒绝空/过短输入，避免误清空正文）`,
     }),
   parent: z.string().optional(),
+  // 空串（或 `default`）= 跟随缺省：先过校验，再在下面翻译成"删键"。
+  // 若写成 .min(1)，取消固定绑定这个合法动作会被 schema 拦成 ValidationError。
+  persona: z.string().optional(),
+  // `.or(z.literal(""))`：空串是「清除」这一合法语义，要先过校验再在下面翻译成删键。
+  // 若只写 .optional()，清除动作会被 schema 拦成 ValidationError。
+  change_type: ChangeTypeSchema.or(z.literal("")).optional(),
+  module: z.string().trim().max(MODULE_MAX_LENGTH).or(z.literal("")).optional(),
+  priority: PrioritySchema.or(z.literal("")).optional(),
 });
 
 /** 更新任务指定字段 */
@@ -180,6 +241,16 @@ export function updateTask(uri: string, changes: UpdateTaskChanges): void {
   }
 
   const now = new Date().toISOString();
+  /**
+   * 三态字段求值：`undefined` 未指定→保持原值 / `""` 清除→undefined / 有值→用新值。
+   * 与 parent 的语义对齐，让所有可清除字段共用一套规则。
+   */
+  const triState = <T>(next: string | undefined, parsedValue: T | undefined, existing: T | undefined): T | undefined => {
+    if (next === undefined) return existing;
+    // 空白串按清除处理：否则 `--module "  "` 会写下一个空值键，与「缺省=未设置」不一致
+    if (next.trim() === "") return undefined;
+    return parsedValue;
+  };
   // 父字段三态：显式取消(空串→undefined 父)、设新父、未指定(undefined→保持)
   let newParent: string | undefined;
   if (changes.parent === "") {
@@ -210,7 +281,7 @@ export function updateTask(uri: string, changes: UpdateTaskChanges): void {
   // ── 写回：在**原 frontmatter** 上就地覆盖，而不是按白名单字段重建 ──
   //
   // 重建（`{title, state, parent, created, updated}` 再整份 dump）会把认不出的键
-  // 整批丢掉：用户手工加的自定义字段（tags / priority / note…）、以及 source_type /
+  // 整批丢掉：用户手工加的自定义字段（tags / note / 任意自造键…）、以及 source_type /
   // source_uri 这类非本函数管理的字段，都会在任何一次编辑（哪怕只改 state）时静默
   // 消失 —— 它们不归我们管，无权删除。故改为「读原始 frontmatter → 只覆盖我们负责
   // 的键 → 其余原样写回」。
@@ -234,6 +305,24 @@ export function updateTask(uri: string, changes: UpdateTaskChanges): void {
   // 未指定 parent 保持原值；指定了（含空串取消）用 newParent 结果
   setOrClear("parent", changes.parent === undefined ? existing.parent : newParent);
   setOrClear("created", existing.created);
+  // 人物：三态（未指定 = 保持原绑定）
+  if (changes.persona !== undefined) {
+    if (isPersonaFollow(changes.persona)) {
+      // 跟随缺省 = 删键（与 priority/change_type 的"缺省 = 不写键"同构）。
+      // 必须在 setOrClear 之前 model 化：下面 setOrClear 会按需删掉空值键
+      delete front["persona"];
+    } else {
+      if (!personaById(diyHome(), changes.persona)) {
+        throw new ValidationError([
+          { field: "persona", code: "not_found", msg: `人物 ${changes.persona} 不存在（可用 diy agent persona list 查看 id）` },
+        ]);
+      }
+      front["persona"] = changes.persona;
+    }
+  }
+  setOrClear("change_type", triState(changes.change_type, parsed.data.change_type, existing.change_type));
+  setOrClear("module", triState(changes.module, parsed.data.module, existing.module));
+  setOrClear("priority", triState(changes.priority, parsed.data.priority, existing.priority));
   front["updated"] = now;
 
   const frontStr = yaml.dump(front, { indent: 2, noRefs: true, lineWidth: -1 });

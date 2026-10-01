@@ -21,6 +21,12 @@ function makeTask(
     state: string;
     parent: string;
     body: string;
+    change_type: string;
+    module: string;
+    priority: string;
+    created: string;
+    /** 直写进 frontmatter 的额外行（测"词表外的手写值"这类脏数据） */
+    extraFront: string;
   }> = {},
 ): void {
   const dir = join(diyHome(), uri);
@@ -30,6 +36,11 @@ function makeTask(
   if (overrides.title) lines.push(`title: ${overrides.title}`);
   if (overrides.state) lines.push(`state: ${overrides.state}`);
   if (overrides.parent) lines.push(`parent: ${overrides.parent}`);
+  if (overrides.change_type) lines.push(`change_type: ${overrides.change_type}`);
+  if (overrides.module) lines.push(`module: ${overrides.module}`);
+  if (overrides.priority) lines.push(`priority: ${overrides.priority}`);
+  if (overrides.created) lines.push(`created: '${overrides.created}'`);
+  if (overrides.extraFront) lines.push(overrides.extraFront);
   lines.push("---");
   if (overrides.body) lines.push(overrides.body);
 
@@ -101,6 +112,56 @@ describe("父子链接", () => {
     const work = tree.find((n) => n.project === WORK)!;
     const topLevel = work!.children.filter((c) => c.parentUri === undefined || c.parentUri === "");
     expect(topLevel.length).toBe(1); // 只有 task-1
+  });
+});
+
+// ═══════════════════════════════════════
+// 结构化字段进入树节点
+//   表格的列/排序/搜索都直接吃 TaskNode，故字段必须在树的构建阶段就带上，
+//   否则 UI 要为每个任务再回读一次文件。
+// ═══════════════════════════════════════
+
+describe("结构化字段随树带回", () => {
+  let FIELD_PROJ = "";
+  beforeAll(() => {
+    FIELD_PROJ = createProject(join(diyHome(), "repos", "field-project"), { label: "字段" });
+    makeTask(`projects/${FIELD_PROJ}/tasks/1`, {
+      title: "带字段",
+      change_type: "fix",
+      module: "agent/ui",
+      priority: "P1",
+      created: "2026-09-01T00:00:00.000Z",
+    });
+    makeTask(`projects/${FIELD_PROJ}/tasks/2`, { title: "没字段" });
+    // 词表外的手写值：读侧宽容，必须读得出来（否则表格里这几列显示为空，像数据丢了）
+    makeTask(`projects/${FIELD_PROJ}/tasks/3`, { title: "手写值", extraFront: "priority: high\nchange_type: bug" });
+  });
+
+  it("三个字段原样进节点", () => {
+    const tree = loadTaskTree();
+    const proj = tree.find((n) => n.project === FIELD_PROJ)!;
+    const t1 = proj.children.find((c) => c.num === "1")!;
+    expect(t1.change_type).toBe("fix");
+    expect(t1.module).toBe("agent/ui");
+    expect(t1.priority).toBe("P1");
+    expect(t1.created).toBe("2026-09-01T00:00:00.000Z");
+  });
+
+  it("没写字段的任务：值为 undefined（不是空串 —— 展示层据此显示占位符）", () => {
+    const tree = loadTaskTree();
+    const proj = tree.find((n) => n.project === FIELD_PROJ)!;
+    const t2 = proj.children.find((c) => c.num === "2")!;
+    expect(t2.change_type).toBeUndefined();
+    expect(t2.module).toBeUndefined();
+    expect(t2.priority).toBeUndefined();
+  });
+
+  it("词表外的手写值不被过滤（读侧宽容）", () => {
+    const tree = loadTaskTree();
+    const proj = tree.find((n) => n.project === FIELD_PROJ)!;
+    const t3 = proj.children.find((c) => c.num === "3")!;
+    expect(t3.priority).toBe("high");
+    expect(t3.change_type).toBe("bug");
   });
 });
 

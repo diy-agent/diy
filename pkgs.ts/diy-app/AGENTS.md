@@ -4,7 +4,7 @@
 
 ## 目录
 
-- [架构原则](#架构原则) — 构建 / 入口 / Renderer / 数据落位 / 样式 / 提示词模版
+- [架构原则](#架构原则) — 构建 / 入口 / Renderer / 数据落位 / agent 人物 / 样式 / 提示词模版
 - [UI 验证](#ui-验证两层互补) — handler 层 vs CDP 真实事件
 - [交互自动化](#交互自动化操作-appagent-自测演示用实测经验) — 提速、命中自检、隔离清理、Solid 陷阱
 - [取 CDP 地址](#取-cdp-地址) / [CDP 调试陷阱](#cdp-调试陷阱) / [窗口副屏](#窗口定位副屏)
@@ -92,6 +92,22 @@ renderer_solid/
 
 renderer_solid/ 有独立 tsconfig（strict + jsxImportSource: solid-js），tsc 零报错。根 tsconfig.json 因 react-jsx 冲突仍 exclude，但类型检查由自身 tsconfig 覆盖。
 
+### 多 worktree 开发：`.gitignore` 别给 node_modules 加尾斜杠
+
+本仓库既有做法是 `_diy.worktrees/<name>` + `feat/*` 分支。worktree 里为省空间常把
+`node_modules` 做成**指向主仓库的符号链接** —— 此时根 `.gitignore` 的 `node_modules/`
+（**尾斜杠只匹配目录**）不生效，`git add -A` 会把符号链接当文件提交
+（内容是绝对路径，别人 clone 直接坏）。**规则写 `node_modules`（无斜杠）**，目录与符号链接都覆盖。
+
+排查手法（两条都跑，别只看一条）：
+```bash
+git check-ignore -v node_modules            # 无输出 = 未被忽略
+git add -A -n | grep -c node_modules        # 干跑确认不会误收
+```
+注意 `$HOME`（`~/.git`）本身是个 repo 且把 `~/git/diy` 记成 gitlink，所以
+`git status` 在 worktree 里会**向上穿透**到 `~/.git` —— 看到几百个"改动"先确认
+命令到底作用在哪个 repo（`git rev-parse --show-toplevel --git-dir --git-common-dir`）。
+
 ### 数据落位：按「可重建性」分三类（改代码前先对照）
 
 同一份界面数据放哪，判据只有一条 —— **丢了能不能重建、重建有没有损失**：
@@ -144,6 +160,84 @@ renderer_solid/ 有独立 tsconfig（strict + jsxImportSource: solid-js），tsc
 | 「停止」按钮位 | 三态 `Switch`（停止中/生成中/发送），`stopping` 有 3s 宽限期 | 本分支把「清空」从输入区挪走、加了 `aura` 环绕 | 合并后按钮图：`aura` 包裹的停止按钮 + 三态文案；宽限期**不要**退回 `busy`（见 `shared/session-view.ts` 的 `stoppingStuck`） |
 | 输入区按钮 | 「留言」+ 时机开关（已删） | 现在只有一个「留言」+ 停止 | 以本分支为准；那边的「其他端正在生成…」提示保留 |
 
+### agent 人物（persona）：模型配置的归属
+
+模型/参数**不属于会话，属于「人物」**；任务只持有**引用（id）**。这不是审美选择，
+而是两个互斥需求的唯一解：
+
+| 需求 | 旧实现（renderer 全局 `activeModel`） | 现在 |
+|------|--------------------------------------|------|
+| 改一次，所有会话跟着变 | ✅ 但**串台**（改 A 时 B 也变） | `diy agent persona set <id> --model …` → 所有引用者下一轮生效 |
+| 各会话用不同模型互不影响 | ❌ 同一份全局值 | 任务各持 persona 引用，换人只影响本任务 |
+| 重启后保持 | ❌ 回落硬编码 `DEFAULT_MODEL` | 定义落 `$DIY_HOME/personas.yaml`，绑定落任务 frontmatter |
+
+**引用存 id，名字只是标签**（`shared/persona.ts` 文件头有完整理由）：
+`personas.yaml` 是 `{default: <id>, personas: {<id>: {name, model, reasoningEffort, style}}}`；
+任务 frontmatter 的 `persona` 存 **id**。名字可随时改（"大副"→"赫敏"）而不打断任何引用 ——
+若拿名字当引用键，改名就等于把所有引用断掉，引用者静默回落缺省人物（换模型不打招呼）。
+id 形如 `p1`（`nextPersonaId` 按现有 `p<n>` 最大值 +1，人可读）。
+
+- 契约：`src/shared/persona.ts`（纯 zod）；文件层 `src/main/core/persona.ts`
+- 生效时机：**每轮开始解析**（改人物天然"下一轮生效"：在跑的轮次不打断，也不给用户时机选项）
+- 绑定（**两种状态**，落盘上分得清）：
+  - **跟随缺省** = frontmatter **不写 `persona` 键**（**新建任务默认**）。改缺省，跟随者下一轮跟着变
+  - **固定绑定** = 写了某个 id（即使恰好等于当前缺省，语义也不同：缺省变了它不跟）
+  - 指向不存在的 id → 回落缺省**并出声**；缺键**不出声**（那是正常状态）
+- id 格式 `persona/<n>`（实体/序号，与任务 URI 同一读法）；`personas.yaml` 的 key 与任务引用同名
+- CLI 三态：`--persona <id>` 固定绑定 / `--persona default`（或空串）= 跟随缺省 / 不传 = 保持
+- 「改缺省影响谁」= `followCount`（跟随者） + 该人物的 `taskCount`（固定绑定者），两者都要显示
+- CLI：`diy agent persona list / set [id] / setDefault <id>`；**暂无 remove**（见下）
+- 身份注入：`identity.md` 注入 `{{persona.name}}` + `{{persona.instructions}}`
+- UI：会话页按钮显示"本任务用谁 + 模型 + 档位"→ 打开 **PersonaDrawer 人物面板**（见下节）
+
+**两个动作在界面上必须分开**（混在一起必然误操作）：
+- **双击左列某一行**（人物或「跟随缺省」）= 本任务改用它 + 关面板（局部动作，一次点击闭环）
+- 面板右侧改属性 = 改人物定义（**全局**，影响面写在面板内的 info 条上）
+
+为什么是双击而不是「用于本任务」按钮：换绑是"选人干活"的终点，本该一次点击完事；
+按钮形态逼着"单击选中 → 找按钮 → 点它 → 再关面板"四步，还容易误点别人那个面板。
+提示用 daisyUI `tooltip`（`<div class="tooltip-content">` 而非 `data-tip`：后者是 `:before`
+伪元素，**测不到**）。左列是 `overflow-y-auto`，容器末端留 `pb-9` 否则贴底那项的提示被裁。
+
+**人物面板（PersonaDrawer）的形态取舍**：
+- **贴顶 drawer、下方留白**：改人物时常要对着会话消息反复核对，把下半屏留给输入框与消息流
+- **模型与档位用平铺按钮，不用 `<select>`**：两三个选项的下拉要多一次"展开→找→点"，
+  且原生 select 的弹层由 OS 绘制（自动化点不进，只能派发合成事件）
+- 左列带**引用计数**（"N 个任务在用"）：改人物前先看见影响面，否则"统一修改"是盲改
+- 左列**第一行是「跟随缺省」**（分隔线隔开，它**不是人物**而是绑定模式）：不给入口用户就没法
+  "改回跟随"，也看不出"我这任务到底固定没有"。单击它右侧进**说明态**（**不给编辑器** ——
+  跟随态下改模型改的是缺省人物的全局定义，会误伤所有跟随者，那种动作必须回"选中那个人物再改"）
+- **影响面写在面板内的 info 条**（紧贴头部 view bar 之下，与 DynamicBar 同族的细条），
+  不要放到动作按钮旁边 —— 那句话描述的是**整个右侧区域**的后果，挨着「设为缺省人物」
+  会被读成"这个按钮会影响 N 个任务"（歧义）。新建态不显示（那时还没有"会影响谁"可言）
+- 人物列表不显示任务信息（不在人物条目混入「本任务」/引用数）；影响面统一看上方 info 条。
+  每个条目：左内容（名字/标签/模型·档位/行为指令一行截断）+ 右动作
+  （「缺省」按钮，`btn-secondary`，hover 条目才显形）。「缺省」标签取 `badge-secondary badge-soft`
+  —— 与按钮**同色系但更浅**（标签是状态、按钮是动作）
+- 列表顶部搜索框覆盖名字 / 模型 / 思考级别（原值与中文名）/ 行为指令，匹配项过滤，命中片段高亮
+- 「跟随缺省」行显示当前缺省人物的名字、模型与档位，并用 `↳` 表示解析方向；右侧 `↗` 用 daisyUI tooltip
+  指向实际缺省人物，点击可跳转到其定义。
+- 新建人物**连同模型/档位/行为指令一起填**：main 的 `persona.set` 里 model 必填，
+  "只能填名字"的新建实际建不出来；三块属性在新建态用本地草稿（不逐项写盘）
+- 两个真实踩过的坑（都已修，别再犯）：
+  1. **受控 `<select>` 的 value 在选项异步到达时失效** —— Solid 在 options 未渲染时设置 value 无效，
+     浏览器回落第一个选项，之后不再对齐。症状是"选中 A 却显示 B 的模型"（看着一个模型、改另一个人物）。
+     现在面板不用 select；同类场景需把 value 与**选项来源**一起作为 effect 依赖
+  2. **面板 open 只在 false→true 跳变时刷新清单** —— 还开着就直接开，会看不到刚建的人物
+
+**暂无「删除人物」**（API 也没有，不留半截能力）：删掉后所有引用者会**静默回落**缺省人物
+（换模型不打招呼）。要下线一个人物就改它的模型/行为指令（引用者原地跟随）；真需要删除时，
+得先设计"引用迁移"（把这 N 个任务改绑到别处）一起做。
+
+**存量数据迁移**（一次性脚本，dry-run 默认 + `--apply` 先备份；文本级只改目标行）：
+- `scripts/migrate-add-persona.mts`：给缺 `persona` 的任务补字段（已对全库执行）
+- `scripts/migrate-persona-ids.mts`：人名引用 → id（personas.yaml 结构 + 任务 frontmatter，已执行）
+- `scripts/migrate-persona-instructions.mts`：人物字段 `style` → `instructions`（已执行）
+- `scripts/migrate-persona-id-prefix.mts`：id `p<n>` → `persona/<n>`（已执行；默认只改写法，
+  `--tasks-follow` 才把"绑定当前缺省"的任务改成跟随缺省 —— 那是语义变更，得分开做）
+读侧的"缺字段回落缺省"因此只为**用户手删 AGENTS.md 字段**兜底，不是历史数据的兼容层
+（app 未发布，不做版本兼容代码）。
+
 ### 任务目录所有权分层（`.diy/`）
 
 ```
@@ -158,9 +252,62 @@ $DIY_HOME/projects/<pid>/tasks/<tid>/
 - 扫描安全：`listTasks` 按 `^\d+$` 过滤、`taskTree.scanAllDirs` 见 `AGENTS.md` 即停 → 任务目录内多一个 `.diy/` 不会被误认成任务。
 - ⚠️ renderer **永不直接写文件**，一律经 RPC（`diy.task.drafts.*`）。
 
+### 任务字段与任务表格（列表视图）
+
+**任务结构化字段**（`change_type` / `module` / `priority`）单一真相源 = `src/main/core/task-fields.ts`
+（常量 → 类型 → zod schema，与 `task-state.ts` 同模式）。文件头写明是**临时硬编码**：
+diy 尚无「按项目自定义字段」机制，待该机制落地后本表降级为内置默认值。
+
+- 字段语义边界：`change_type` 是**变更性质**（抄 Conventional Commits 词表，故缺陷用 `fix`）；
+  `type` 一词留给将来的**任务类型扩展**（Epic/Bug 那种带字段集与生命周期的扩展点），别混用；
+  `kind` 已被 `TreeNode.kind` 占用。`priority` 缺省 = 未定级（不默认 P2，不替用户猜）。
+- **读侧宽容 / 写侧严格**：`state.parseTaskFile` 只读不校验（历史手写值如 `priority: high`、
+  `change_type: bug` 原样带出），枚举校验只在 `task.create` / `task.edit` 的 zod input。
+  理由：读侧严格会让脏值把整棵树的输出校验打挂，或在例行编辑里被静默改写（用户手写内容无授权不可动）。
+- 三态语义（与 `parent` 一致）：**不传 = 保持原值 / 空串 = 清除该字段 / 有值 = 设置**（`core/task.ts` 的 `triState`）。
+- renderer 侧改任务统一走 `renderer_solid/lib/task-edit.ts` 的 `editTask`（RPC input 每个键都必填，
+  收敛一处后新增字段只需改该文件）。
+
+**任务表格**（`components/TaskTree.tsx`）的排序 / 搜索 / 剪枝逻辑全在 `src/shared/task-list.ts`（纯函数、可单测）：
+
+- 表头整行由 `SORT_KEYS` 生成（清单 = 列顺序 = 可排序键的**唯一真相源**）；`title` 也在其中。
+- **点表头首次方向：除 `updated` 外一律升序**。依据是枚举按**声明序**排（`PRIORITIES` 里 P0 位次最小
+  → 升序 = P0 在前；`TASK_STATES` 同理 = 待处理在前），时间/编号/文本也是升序直觉；
+  `updated` 降序是唯一例外（"最近改了什么"）。⚠️ 曾经写成"其余降序"，与自身注释"先看最要紧的"
+  正好相反 —— 降序会把位次整体反转，首次点「优先级」得到 P3 在前。
+- 排序只在**同一父级的兄弟之间**（跨层会破坏父子结构）；项目分组不参与排序（分组容器）。
+  任务号按**数值**排（字典序会把 #9 排到 #100 之后）。未设置的字段**恒排最后**（升序降序都是：
+  "没填"不是"最小"，升序排最前会被误读成最低优先级）。
+- 搜索 = 单一关键词子串，范围是**看得见的列 + 正文**（正文随 `loadTaskTree` 全量下发，无需二次回读）；
+  搜索态剪枝为「命中行 + 其祖先」并**强制展开**（被折叠挡住等于搜不到）；项目名命中 → 整个项目展开。
+  正文命中在标题单元格内以**第二行片段**展示（不新增 `<tr>`：否则行序与键盘导航要重新定义）。
+- 排序规格与搜索词落 `Caches.diy_task_tree_sort` / `diy_task_tree_query`（视图 cache，见上节判据）。
+- 表格行对象走 `rowCache` 稳定引用（`<For>` 按引用复用 DOM）→ 重排只移动行、不重建，
+  展开态/焦点/滚动不丢；`node/snippet` 用就地赋值更新。
+- ⚠️ **搜索态跳过 rowCache 回收**：搜索是剪枝，未命中行只是"暂时不渲染"；若顺手回收，
+  清空搜索时它们会被当新行重建 → `<For>` 销毁重建 tbody → 滚动位置钳回 0、焦点掉回 body。
+- 行 key：任务 = uri，项目 = `proj:<id>`（`taskRowKey`，拖拽与缓存共用）。
+
+**`diy.getTask` 的字段在两处手抄（真踩过的坑）**：载荷字段由 api-impl 的 handler 与
+api-def 的 output schema **各自维护一份**，两处漏一处就静默丢字段（zod `.object()` 会 strip 未声明键，
+只补 handler 等于没补）。实测漏过 `change_type`/`module`/`priority` —— renderer 拿到 undefined，
+详情面板的编辑框恒显示 `—`，而写入其实成功，用户视角是「填了看不见、改完像没生效」。
+- 现状：handler 用 `...t` 展开（不是手写键清单）、output schema 已补齐，两处都留了 ⚠️ 注释
+- 治本：把载荷 schema 抽成单一真源（`shared/task-detail.ts` 的 `TaskDetailSchema`），
+  handler 直接 `Schema.parse({...t, ...回填})` —— 见任务 167
+- `diy getTask <uri>` 已加 `cliArg`，否则这条 RPC 无法从 CLI 调用，**只能靠跑 Electron 才验得到**
+  （契约漏字段的 bug 就更容易溜过）
+
+**任务树节点类型**：renderer 不再手抄一份 interface，直接用 RPC 契约的 `TaskNodeShape`
+（`store/taskStore.ts` 的 `TreeNode`）。曾经两处各定义一份，main 加了 `created/updated` 后
+renderer 那份没跟上，编译期才暴露 —— 用契约类型则不可能滞后。
+
+**DynamicBar**（`components/DynamicBar.tsx`）是跨页复用的「动态菜单条」：只在有上下文时渲染，
+`↑ ↓ i/n label ✕` 形态（任务表格的搜索结果跳转与试验场的出现处跳转共用）。
+
 ### 避免 Solid 陷阱：`<Show>` 内组件读 props 的卸载清理
 
-`TaskInfoView`（详情编辑）被 `keyed` 的 `<Show>` 包裹。**`onCleanup` 里读 `props.task` 会抛
+`TaskDetailContent`（任务内容三块：属性 / 父子树 / 正文）被 `keyed` 的 `<Show>` 包裹。**`onCleanup` 里读 `props.task` 会抛
 `Stale read from <Show>` 并中断 props 更新**（表现为切任务后面板显示上一个任务的标题）。
 需要「卸载前落盘」这类副作用，一律放在面板级组件（`TaskDetailPanel`）里做，它读的是
 `taskStore.selectedUri` 这类普通信号，不经过 Show 的派生 props。
@@ -228,17 +375,50 @@ $DIY_HOME/projects/<pid>/tasks/<tid>/
 - **`diy.ui.*`（handler 层）**：CLI 经 RPC 直接调 renderer 的共享入口函数（与按钮 onClick 同一批）。测行为/契约/状态，稳定适合 test:intent 基线；**测不到真实 DOM 事件链的 bug**。
 - **Playwright/CDP（真实事件层）**：Electron 开 `--remote-debugging-port`，Playwright `connect_over_cdp` 复用，用**真实鼠标事件**（mouse.move/down/up 分步）驱动真实 renderer。能抓 gesture bug（拖拽整屏被拖出、isDropTarget 高亮、点穿透、折叠状态），是目前唯一的验证手段——UI 交互改动后跑一遍。
 - `diy.ui.inspect`：renderer 内 DOM 遍历生成无障碍树，agent 可 `./diy.sh ui inspect` 看 UI 全貌。
+- 查「哪些 app 实例在跑」：`ps -eo pid,ppid,command | grep 'MacOS/Electron .*index\.mjs'`，再对每个 pid
+  跑 `ps eww -p <pid> | tr ' ' '\n' | grep ^DIY_HOME=` 认出隔离实例（`DIY_HOME` 指向临时目录的即测试实例）。
+  **macOS 上别把 `-p` 与 `-eo` 写进同一条 ps** —— `-p` 会被静默忽略、输出全表，据此判断会得出错误结论。
 - **跑意图测试 / CDP 夹具前，shell 里不要 export `DIY_PORT` / `DIY_HOME`**：`ShellTest` 继承 `process.env`，
   被污染的 `DIY_PORT` 会让测试里的每一条 `./diy.sh` 都去打**别的端口**，各拉一个新 app，与测试自己启的实例
   互踢（单实例锁）→ 现象是"页面状态莫名漂移、CDP 会话反复掉线、模板列表忽空忽有"（实测踩了两小时）。
   正确姿势：`env -u DIY_PORT -u DIY_HOME npx vitest run ...`，或用一个干净 shell。
+- **`ShellTest` 的输出边界 = stderr 上的 PS1 marker + stdout 上的哨兵**（`tests/shell-test.ts`）：marker 只证明
+  命令结束，stdout 是**另一个管道**、到达顺序不保证 —— 只等 marker 会读到空/半截输出，`runJson` 再触发
+  "空响应重试"读到**上一条命令**的输出，之后每条都错位（症状：`ui tree` 拿到上一条 `project create` 的
+  `{id}`，报 "not iterable"）。哨兵由 `run()` 追加的 `printf` 打出，**同一个管道字节有序** → 看到它即证明
+  前面输出到齐；退出码也放在哨兵里（PS1 的 `$?` 那时已是 printf 自己的 0）。改这块别退回"等 N 毫秒静默"：
+  负载下会误判（实测全量跑偶发）。
 - 只想临时起一个实例看界面时，注意 CLI 启动的 app 是**子进程**（父 CLI 退出后可能被带走）；CDP 会话断线先看
   进程还在不在。要长时间挂着观察，用测试夹具（`startElectronTest`）而不是 CLI 起。
-- 复用冒烟脚本：**`scripts/ui-smoke/dnd-smoke.py`** — 启动隔离 Electron + Playwright/CDP 真实拖拽（任务↔任务改层级、子任务→项目提升），断言层级 + 抓 console/pageerror，`python3 scripts/ui-smoke/dnd-smoke.py` 运行，exit 0 通过。UI 交互改动后跑它确认手势没破坏。
+- 复用冒烟脚本：
+  - **`scripts/ui-smoke/dnd-smoke.py`** — 启动隔离 Electron + Playwright/CDP 真实拖拽（任务↔任务改层级、子任务→项目提升），断言层级 + 抓 console/pageerror，`python3 scripts/ui-smoke/dnd-smoke.py` 运行，exit 0 通过。UI 交互改动后跑它确认手势没破坏。
+  - **`scripts/ui-smoke/task-detail-smoke.mjs`** — 任务内容三块（属性 / 父子树 / 正文）+ 悬停覆盖层：
+    三块齐全、折叠开合、窄容器单列 / 宽容器两列（左列固定宽、正文吃剩余）、**拖宽手柄真的改宽并落盘、
+    双击复位**、属性字段逐行且控件右缘对齐、「◀ 当前」紧跟标题、行内操作按钮右对齐、
+    任务名链接 + daisyUI tooltip「打开任务」、hover 出行内「对话」按钮、点链接=选中任务、
+    点按钮=打开对话 tab、FAB 文案为「对话」。`node scripts/ui-smoke/task-detail-smoke.mjs` 运行，exit 0 通过。
+    - 依赖 `playwright-core`，声明在**仓库根的 devDependencies**（脚本自身就在 `<repo>/scripts/` 下，
+      声明跟着脚本走；落在 `pkgs.ts/diy-app` 里只是碰巧被 npm 提升到根 `node_modules` 才能解析 ——
+      换 pnpm（严格 node_modules）或出现版本冲突就会当场断）。
+      选它而不是 `playwright`：`playwright-core` 是纯 CDP 协议库、postinstall **不下载浏览器**，
+      而本脚本只用 `connectOverCDP` 连 Electron 自带的 CDP，不需要浏览器二进制。
+      脚本内**不写任何机器绝对路径**，路径一律相对脚本自身推导；缺依赖时直接提示跑 `npm install`。
+    - **跑完必须确认实例真的没了**（脚本自己会打「测试实例已清理」）。只发一次 TERM 就退出，
+      遇 app 卡在退出流程或外层 `timeout` 打断，会留下没人管的实例 —— 实测跑十几轮攒出二十多个，
+      各占 70MB 主进程 + 300MB renderer，直接把内存吃光。收尾固定姿势：
+      TERM 整组 → 轮询存活 → 仍在则 KILL 整组 → 报错给人。
+  - ⚠️ **`dnd-smoke.py` 的收尾是 `pkill -f "out/main/index.mjs"`，会连你正在用的 diy 一起杀**
+    （该 pattern 匹配宿主进程命令行）。在「有正在使用的实例」的机器上跑它之前先改掉那段；
+    另外它需要 `pip install playwright`，本机没装，直接跑会 ModuleNotFoundError。
 
 ### 交互自动化操作 App（agent 自测/演示用，实测经验）
 
 目标：让 agent 用 CLI 驱动真实界面做自测或演示。以下每条都是实测踩出来的。
+
+- `playwright-cli` 命令来自 npm 包 **`@playwright/cli`**（依赖 `playwright` 全家桶，安装时会
+  postinstall 下载浏览器）。要让它随项目固定版本，可把它也装成 devDependency（配合
+  `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` 可省掉浏览器，仅用 attach/连 CDP 的场景够用）；
+  本仓目前**不装**它 —— 库（`playwright-core`）已内装给冒烟脚本，命令侧沿用机器上现成的 `playwright-cli`。
 
 **提速是第一原则**：每次 `playwright-cli <cmd>` 都是独立进程冷启动（≈1~3s，内部还有固定
 500ms 稳定等待），逐条敲一个流程要几十秒。**把整个流程压进一次 `eval`**（async IIFE +
