@@ -157,6 +157,10 @@ function nextSteerSeq(taskUri: string): number {
     return ++st.steerSeq;
 }
 
+/** 该 task 的队列拉取是否在途 / 在途期间是否又需要重拉（见 refreshSteers 的在途合并） */
+const steerRefreshInflight = new Set<string>();
+const steerRefreshDirty = new Set<string>();
+
 /**
  * 拉取插话队列快照。
  *
@@ -164,13 +168,30 @@ function nextSteerSeq(taskUri: string): number {
  * （用户会以为自己的插话已经发出去了）。留旧值 + toast 告知。
  */
 async function refreshSteers(taskUri: string): Promise<void> {
-    const seq = nextSteerSeq(taskUri);
+    // 在途合并：一轮里可能**整批**投递多条插话（每条落一个带 steer 的 start op），
+    // 逐个拉就是 N 次 RPC + N 次快照提交，而只有最后一次的结果有意义。
+    // 已有拉取在途时不排队再来一次，只记「还得再拉」—— 在途那次回来后再补一趟，
+    // 这样既不丢最新快照，又把 N 次压到 2 次；也不引入时间片延迟（横条该下架时立刻下架）。
+    if (steerRefreshInflight.has(taskUri)) {
+        steerRefreshDirty.add(taskUri);
+        return;
+    }
+    steerRefreshInflight.add(taskUri);
     try {
-        const items = (await diyService.diy.agent.local.steer.list({ taskUri })) as SteerItem[];
-        commitSteers(taskUri, seq, items);
-    } catch (e) {
-        console.error(`[localChat] 插话队列读取失败 ${taskUri}:`, e);
-        notificationStore.addToast("error", "插话队列读取失败，横条可能不是最新（详见控制台）");
+        do {
+            steerRefreshDirty.delete(taskUri);
+            const seq = nextSteerSeq(taskUri);
+            try {
+                const items = (await diyService.diy.agent.local.steer.list({ taskUri })) as SteerItem[];
+                commitSteers(taskUri, seq, items);
+            } catch (e) {
+                console.error(`[localChat] 插话队列读取失败 ${taskUri}:`, e);
+                notificationStore.addToast("error", "插话队列读取失败，横条可能不是最新（详见控制台）");
+            }
+            // 期间又有投递（dirty 被置上）→ 再拉一次对齐；没有则退出
+        } while (steerRefreshDirty.has(taskUri));
+    } finally {
+        steerRefreshInflight.delete(taskUri);
     }
 }
 
@@ -354,10 +375,13 @@ async function clear(taskUri: string) {
     st.store = new BlockStore();
     st.loaded = true; // 文件已删，不必重拉
     st.setError(null);
-    st.setSteers([]); // 会话已清，排队中的插话也被 main 一并清掉（见 clear()）
-    // 序号归零：会话已重置，旧的在途响应（若有）不该再影响新状态
-    st.steerSeq = 0;
-    st.steerSettled = 0;
+    st.setSteers([]); // 会话已清，排队中的插话也被 main 一并清掉（见 local-agent 的 clear()）
+    // ⚠️ 序号**不归零**：归零 = 把乱序保护的挡板撤掉 —— clear 之前发出的在途 `list` 响应带着
+    // 旧序号（`commitSteers` 的判据是 `seq < steerSettled` 就丢弃），归零后它反而"比挡板新"
+    // → 被接收 → 把已清空的队列写回界面（横条复活已清的插话，盘上其实已删）。
+    // 保持序号单调递增，旧响应才会一律被判过期；再用一次真实拉取把界面与盘上对齐
+    // （盘上此刻确实是空队列；刷新走自己的新序号，于是它在途里的旧响应全部作废）。
+    void refreshSteers(taskUri);
     st.scroll = 0; // 会话清空，阅读位置一并归位
     refresh(st);
 }

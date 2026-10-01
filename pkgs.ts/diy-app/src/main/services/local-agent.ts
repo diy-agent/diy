@@ -483,7 +483,7 @@ export class LocalAgentManager {
         return this.queue.remove(taskUri, id);
     }
 
-    /** 切换一条插话的投递时机（step ⇄ turn）。 */
+    /** 切换一条插话的投递时机（next-step ⇄ next-turn；差别只在投递点，两者都整批投）。 */
     steerToggleMode(taskUri: string, id: string): SteerItem[] {
         return this.queue.toggleMode(taskUri, id);
     }
@@ -573,11 +573,14 @@ export class LocalAgentManager {
                 // 手动驱动同时还能拿到内层的返回值（failed），for-await 会把它丢掉。
                 const inner = this.runTurn(taskUri, sess, pending, model, reasoningEffort, ctrl.signal, key, sink);
                 let failed = false;
+                // 本轮 turn 块 id：上限提示要挂进**这一轮**（见下方上限分支），故从内层带回
+                let turnId = "";
                 try {
                     for (;;) {
                         const r = await inner.next();
                         if (r.done) {
                             failed = r.value.failed;
+                            turnId = r.value.turnId;
                             break;
                         }
                         sess.store.apply(r.value);
@@ -585,7 +588,7 @@ export class LocalAgentManager {
                     }
                 } finally {
                     // 消费端提前断开（切页/停止）：把内层也关掉，别让它的收尾悬在半路
-                    await inner.return({ failed: false });
+                    await inner.return({ failed: false, turnId: "" });
                 }
                 if (failed || ctrl.signal.aborted) break;
                 // 上限保护：插话会不断延长对话（本轮里用户又可能继续插话），没有上限时
@@ -602,15 +605,27 @@ export class LocalAgentManager {
                 }
                 if (queued.length === 0) break;
                 if (round + 1 >= MAX_STEER_ROUNDS) {
-                    const id = `${queued[0]!.id}-limit`;
+                    // ⚠️ 提示块必须挂进**本轮 turn**（parent = turnId），不能做根块：
+                    //   · turn 块此刻已 stop、openStack 已空 → 无 parent 时它 fold 成**根块**，
+                    //     而 UI 的根渲染分支只认 turn（LocalChatPage 的 trees 循环），
+                    //     显示成「[未知根 error]」—— 设计承诺的"显式提示、不静默吞"当场落空。
+                    //   · id 必须**每次都不同**：turnId 天然唯一（`t` + 时间戳）。若沿用
+                    //     `queued[0].id + "-limit"`，同任务二次撞上限且队列首条未变时 id 撞车 →
+                    //     BlockStore 报「重复 start」丢弃 start，随后的 delta 却累加到**旧块**，
+                    //     文案变成两条拼接（见 local-blocks 的 Text 累加）。
+                    const id = `${turnId || "steer"}-limit`;
                     const msg = `连续插话已达 ${MAX_STEER_ROUNDS} 轮上限，剩余 ${queued.length} 条插话未投递（仍在队列里，可取消或再发一条消息触发）`;
                     const ops: Op[] = [
-                        { op: "start", id, kind: "error", meta: { source: "steer" } },
+                        { op: "start", id, kind: "error", parent: turnId || undefined, meta: { source: "steer" } },
                         { op: "delta", id, fields: { message: msg } },
                         { op: "stop", id },
                     ];
+                    // 与 chat() 其余两处 yield 点同一节奏：sink（落盘）→ store.apply（内存权威）→
+                    // yield。少了 apply 会让内存 store 与 wire/盘上分叉 —— store 是本模块的单一权威
+                    // （见上方"手动驱动内层生成器"的注释）。
                     for (const op of ops) {
                         sink(op);
+                        sess.store.apply(op);
                         yield op;
                     }
                     break;
@@ -660,7 +675,7 @@ export class LocalAgentManager {
         signal: AbortSignal,
         key: string,
         sink: (op: Op) => void,
-    ): AsyncGenerator<Op, { failed: boolean }, void> {
+    ): AsyncGenerator<Op, { failed: boolean; turnId: string }, void> {
         const turnId = `t${Date.now()}`;
         const cwd0 = resolveCwdWithNote(diyHome(), taskUri).cwd;
         noteTurnStart({ taskUri, model: model || DEFAULT_MODEL, cwd: cwd0 });
@@ -845,7 +860,7 @@ export class LocalAgentManager {
             // 这条 return 在 try 之前，不经过下面的 finally —— 收尾在这里显式做，且**只做一次**
             // （closeTurn 的 sink 不幂等：重复调用会往 ops 里多写一条 stop，虽然无害但脏）。
             yield* closeTurn(stepId, stepN);
-            return { failed: false };
+            return { failed: false, turnId };
         }
 
         // 开场 user 块：轮首批量可能多条（轮末队列里的全部，见 chat() 轮末）。
@@ -1144,7 +1159,7 @@ export class LocalAgentManager {
             // closeTurn 内部先把副作用同步做完（见其头注），再尽力 yield，故 return 展开下也安全。
             yield* closeTurn(stepId, stepN);
         }
-        return { failed };
+        return { failed, turnId };
     }
 }
 

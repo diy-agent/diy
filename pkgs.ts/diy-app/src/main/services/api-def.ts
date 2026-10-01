@@ -63,7 +63,8 @@ export const DraftFieldsSchema = z.partialRecord(DraftFieldSchema, z.string());
 /**
  * 插话项（对话中「插嘴」的待投递消息）。
  * 与草稿同文件同生命周期（任务目录 .diy/drafts.yaml 的 steers 字段），
- * 但语义是**队列**：FIFO，提交后等模型取走（next-step = 下一个模型步前全投；next-turn = 下一轮投一条）。
+ * 但语义是**队列**：FIFO，提交后等模型取走。两种模式**都是整批取走**（多条合并成同一批），
+ * 差别只在投递点：next-step = 下一个模型步边界之前（本轮内生效）；next-turn = 本轮收尾后的下一轮开场。
  */
 export const SteerItemSchema = z.object({
   id: z.string(),
@@ -332,7 +333,9 @@ export const apiDef = RpcSchema.router({
                   mode: z
                     .enum(["next-step", "next-turn"])
                     .optional()
-                    .cliOption({ desc: "给出则把消息入队（next-step=下一个模型步前全投；next-turn=下一轮投一条）；省略则立即开一轮" }),
+                    .cliOption({
+                      desc: "给出则把消息入队（next-step=下一个模型步前生效；next-turn=本轮收尾后的下一轮开场；两者都整批投）；省略则立即开一轮",
+                    }),
                   model: z.string().optional().cliOption({ desc: `模型（默认 gpt-5.6-luna，zen/go 子集见 agent local models）` }),
                   reasoningEffort: z.string().optional().cliOption({ desc: "推理强度（按模型能力）" }),
                 },
@@ -379,7 +382,7 @@ export const apiDef = RpcSchema.router({
                     output: z.array(SteerItemSchema),
                   }),
                   toggleMode: RpcSchema.unary({
-                    desc: `切换一条插话的投递时机（step ⇄ turn）`,
+                    desc: `切换一条插话的投递时机（next-step ⇄ next-turn）`,
                     input: {
                       taskUri: z.string().cliArg({ desc: "任务 URI" }),
                       id: z.string().cliArg({ desc: "插话 id（见 steer list）" }),

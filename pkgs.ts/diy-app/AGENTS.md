@@ -121,14 +121,16 @@ renderer_solid/ 有独立 tsconfig（strict + jsxImportSource: solid-js），tsc
 | 认领≠落位（**别合并这两步**） | 两条流不在同一时间轴：`prepareStep` 由 SDK 内部调用时，消费端**可能还压着上一步的 part**（producer 已到第 N+1 步、consumer 还在第 N 步尾部）。在 `prepareStep` 就 sink+出队，插话块会插到上一步未完的内容**之前** —— 实测真实日志出现过（`su1` 排在 `stop s1` 之前）。`start-step` 是"上一步全部 part 已处理、下一步尚未开始"的唯一无歧义位置。崩溃安全靠**先 sink 再出队**（两步都是同步文件操作、无 await）：最坏是重复投一遍，不会丢 |
 | 队列项 id | `steer/N`（"实体/序号"）：序号 = 队列内最大序号 + 1；只保证**同一时刻队列内唯一**，取消/投递后不回退，清空后重新从 1 起。块 meta 另带 `steerId` 指回队列项 |
 | 队列存储 | `.diy/drafts.yaml` 的 `steers`（FIFO，整表替换）；**移除即落盘**（`remove` 是唯一的"投递完成"信号），失败**抛错**不静默。旧格式 id（随机串）仍可读可取消（id 只是不透明字符串） |
+| 队列快照刷新 | UI 侧 `refreshSteers` 做**在途合并**：一轮整批投递会连发多个带 `steer` 的 start op，逐个拉就是 N 次 RPC + N 次快照（只有最后一次有意义）。在途时不排队、只记 dirty，在途那次回来后再补一趟 → N 次压到 2 次，且不引入时间片延迟（横条该下架时立刻下架）。乱序保护靠 `steerSeq/steerSettled` 单调递增：`clear()` 后**不归零**（归零 = 撤掉挡板，在途旧响应反而被接收 → 横条复活已清插话），改为刷新一次对齐盘上真值 |
 | 时机切换（`toggleMode`） | 横条右侧的开关用 daisyUI `swap` 双向切换 `next-turn` ⇄ `next-step`（可逆，不是单向加急）。两态**同时改形状与颜色**：时钟 + 弱色 = 还得等；闪电 + `warning` 高对比底色/描边 + `animate-pulse` = 马上插。只换颜色不够 —— 小图标上同一形状换色一眼分不出 |
 | 拖拽排序（`reorder`） | 横条最左手柄可拖（顺序即投递顺序，拖完松手即落盘）。入参是**期望的完整顺序**（id 列表），不是"移到第 N 位"——那类相对指令在移除源项后要猜落点，是 off-by-one 温床。服务端以盘上队列为权威收敛：未知 id 忽略（可能刚被投递），未提到的项按原顺序追加到尾部（可能是别处刚入队的）—— 两条都保证一次拖拽不丢用户的话 |
 | ops 格式影响 | 只给 user 的 `text` 块加 `meta.steer` / `meta.steerId`（块类型表里声明为 Flag）—— **没有新 op 动词、没有新块 kind、没有版本字段**，新旧日志双向兼容（契约锁定在 `tests/core/local-blocks-steer-compat.test.ts`） |
 | ops 记录 | 插话写成 `text` 块 + `meta.steer = next-step\|next-turn` + `meta.steerId = steer/N`（`parent = turn`；同轮内落在"第 N 步之后"，降级时它就是新一轮的开场 user 块）→ 重放/续聊都看得出谁插的话 |
 | 上限 | `MAX_STEER_ROUNDS`（一次 chat 最多自动续 8 轮）。整批投递已经消化掉"轮末积压"，所以这个上限只在**本轮里用户还在继续插话**时才可能撞上（测试用"每次请求都再排一条"的桩模型复现）。上限分支**什么都不取**，剩余插话留在盘上（横条继续显示、可取消）并写显式 error 块 |
+| 上限提示的落位 | error 块必须**挂进本轮 turn**（`parent = turnId`）且 id 唯一（`<turnId>-limit`）。教训：曾经不带 parent —— 发射时 turn 已 stop、`openStack` 已空 → fold 成**根块**，而 UI 根渲染分支只认 turn → 显示成「[未知根 error]」，提示等于没写；id 曾取「队列首条 id + `-limit`」，同任务二次撞上限且首条未变时撞车 → 「重复 start」被丢、delta 却累进旧块（文案拼接）。`LocalChatPage` 的根分支另留 `ErrorBox` 兜底，用于重放**已存在**的旧日志（旧根块改不掉） |
 | UI（输入区） | 生成中**输入框不再锁死**；「停止」外观/位置/行为不变，仅在**输入框有内容**时多出**一个**「留言」按钮（回车同此）—— 发送侧始终只有"发送 / 留言"这一个主按钮。留言默认进入 `next-turn`（排队到下一轮），不把投递时机暴露成选择题 |
 | UI（待发送横条） | 位置在输入区上方一行（全屏编辑时挪进 fixed 区域）；**只渲染插话条目本身**（不另起"N 条待发送"标题行 —— 那属于界面解释自己），每行**三列**：左 = **拖拽手柄**（六点图标，只有手柄能发起拖拽），中 = 留言内容，右 = **可逆时机开关**（时钟 ⇄ 闪电；`next-turn` 态 tooltip=`排到下一轮（点击改为马上插到下一步）`，`next-step` 态高对比 + 呼吸，tooltip=`已加急：马上插到下一步（点击改回排队）`）+ ✕ 取消。拖拽用 `@dnd-kit/solid`（`DragDropProvider` + `useDraggable`/`useDroppable` + `DragOverlay` 跟手幽灵） |
-| UI（清空历史） | 「清空本对话历史」在对话 view **上方**与信息密度（☷）同排：破坏性且不可恢复，故只给垃圾桶图标 + tooltip + `aria-label`，点击后仍是二次确认；生成中不显示（正跑着的会话不该在此时被清掉） |
+| UI（清空历史） | 「清空本对话历史」在对话 view **上方**与信息密度（☷）同排：破坏性且不可恢复，故只给垃圾桶图标 + tooltip + `aria-label`，点击后仍是二次确认；生成中不显示（正跑着的会话不该在此时被清掉）。⚠️ 确认文案**必须点明「排队中的 N 条插话也会删」** —— main 的 `clear()` 会连带 `queue.clear()`，而插话与草稿同级（丢了 = 用户白打），只写「对话记录」会让用户在不知情下丢字 |
 | 收尾（closeTurn）铁律 | ①必须在 `finally` 里（消费端断开时生成器以 return 展开，try 之后的顺序语句一律不执行）；②副作用（sink stop ops / `noteTurnEnd` / `turn-end` 审计）必须**同步做完且在任何 yield 之前**（return 展开下 finally 只执行到第一个 yield）。两条都有**回归测试**：`tests/core/local-agent-steer.test.ts` 的「消费端断开」两例（在"把 closeTurn 挪出 finally"的错误版本上会变红） |
 | 测试接缝 | `DIY_ZEN_BASE_URL`（指向桩上游，把"生成中"变成可保持的状态）；`LocalAgentManager(modelResolver)` 注入 `ai/test` 的 `MockLanguageModelV3`，断言口径是**上游实际收到的 messages** |
 | 真发用例用什么模型 | **`mimo-v2.6-flash`**（最便宜的带工具模型，价格表见仓库根 AGENTS.md「本地 agent 测试用什么模型」）。默认模型 `gpt-5.6-luna` 只在测它特有行为时用 |

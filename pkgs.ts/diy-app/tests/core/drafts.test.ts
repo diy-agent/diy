@@ -287,6 +287,32 @@ describe("drafts 插话队列", () => {
     expect(readDrafts(URI)!.steers.map((i) => i.id)).toEqual(["s1"]);
   });
 
+  it("历史 mode 值可读回：step/turn + 非空文本 → next-step/next-turn（丢了 = 用户白打）", () => {
+    // 枚举最初叫 step/turn，改名时**没有**升 DRAFTS_VERSION → 旧文件里的 `mode: step` 会撞上
+    // "未知模式 → 丢弃"分支，排队中的留言凭空消失。映射必须钉死正向路径 ——
+    // 上面那条"坏插话项"用例里的 `mode: turn` 走不到这里（它的 text 是空串，
+    // 被更早的"非空白 text"校验先拦掉），所以删掉映射它照样绿。
+    writeRaw(
+      `kind: ${DRAFTS_KIND}\nversion: ${DRAFTS_VERSION}\ntask: ${URI}\nfields: {}\n` +
+        `steers:\n  - id: s1\n    mode: step\n    text: 甲\n    created: ''\n` +
+        `  - id: s2\n    mode: turn\n    text: 乙\n    created: ''\n`,
+    );
+    // 断言 mode 本身（而不只是条数）：映射错了 id 照样在，只有 mode 会说谎
+    expect(readDrafts(URI)!.steers.map((i) => [i.id, i.mode])).toEqual([
+      ["s1", "next-step"],
+      ["s2", "next-turn"],
+    ]);
+  });
+
+  it("已是现值的 mode 原样读回（映射不改写新值）", () => {
+    writeRaw(
+      `kind: ${DRAFTS_KIND}\nversion: ${DRAFTS_VERSION}\ntask: ${URI}\nfields: {}\n` +
+        `steers:\n  - id: s1\n    mode: next-step\n    text: 甲\n    created: ''\n` +
+        `  - id: s2\n    mode: next-turn\n    text: 乙\n    created: ''\n`,
+    );
+    expect(readDrafts(URI)!.steers.map((i) => i.mode)).toEqual(["next-step", "next-turn"]);
+  });
+
   it("steers 不是数组 → 按空队列处理", () => {
     writeRaw(`kind: ${DRAFTS_KIND}\nversion: ${DRAFTS_VERSION}\nfields:\n  title: T\nsteers: 乱写\n`);
     expect(readDrafts(URI)!.steers).toEqual([]);

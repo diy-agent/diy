@@ -23,7 +23,7 @@ import { LocalAgentManager, MAX_STEER_ROUNDS } from "../../src/main/services/loc
 import { activeTurnList } from "../../src/main/services/runtime-context";
 import { readFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { SteerQueue } from "../../src/main/core/steer-queue";
-import type { Op } from "../../src/main/services/local-blocks";
+import { BlockStore, type Op } from "../../src/main/services/local-blocks";
 
 let PROJECT = "1";
 beforeAll(() => {
@@ -355,8 +355,29 @@ describe("插话 next-turn 模式：本轮结束后自动开下一轮", () => {
     expect(model.doStreamCalls).toHaveLength(MAX_STEER_ROUNDS);
     // 上限那一刻新排的那条还在盘上（可取消 / 再发一条消息触发）
     expect(new SteerQueue().list(uri).map((i) => i.text)).toEqual([`第${MAX_STEER_ROUNDS}条`]);
-    const err = ops.find((o) => o.op === "start" && o.kind === "error" && (o as { meta?: { source?: string } }).meta?.source === "steer");
+    const err = ops.find((o) => o.op === "start" && o.kind === "error" && (o as { meta?: { source?: string } }).meta?.source === "steer") as
+      | { op: "start"; id: string; parent?: string }
+      | undefined;
     expect(err).toBeTruthy();
+
+    // ── 呈现断言：提示必须**挂在本轮 turn 下**，不能是根块 ──
+    // 只断言"op 存在"不够：曾经这条 op 不带 parent，fold 后成了**根块**，而 UI 的根渲染
+    // 分支只认 turn → 用户看到的是「[未知根 error]」，等于提示没写（设计承诺的
+    // "显式提示、不静默吞"落空）。所以这里按 UI 的读法（fold 后的块树）断言归属。
+    const store = new BlockStore();
+    for (const op of ops) store.apply(op);
+    expect(err!.parent).toBeTruthy();
+    const errBlock = store.blocks.get(err!.id)!;
+    expect(errBlock.parent).toBe(err!.parent);
+    expect(store.blocks.get(errBlock.parent!)!.kind).toBe("turn");
+    // 且它是**最后一个** turn 的下挂块（提示属于撞上限的那一轮，不是首轮）
+    const roots = store.roots();
+    expect(roots.every((r) => r.kind === "turn")).toBe(true);
+    expect(roots[roots.length - 1]!.id).toBe(errBlock.parent);
+    // id 唯一性 / 折叠无 issue：曾经 id 用「队列首条 id + -limit」，同任务二次撞上限
+    // 且首条未变时会撞车 → 「重复 start」被丢弃、随后的 delta 却累进旧块（文案拼接）
+    expect(err!.id).toContain("limit");
+    expect(store.issues).toEqual([]);
   });
 
   it("没有插话就不多开轮（单轮结束即止）", async () => {

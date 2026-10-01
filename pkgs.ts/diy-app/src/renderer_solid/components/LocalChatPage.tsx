@@ -31,6 +31,9 @@ import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt } fr
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
+// 历史 mode 值归一与文案放 shared（纯函数、可单测）：ops 日志是 append-only 的史书，
+// 枚举改名前的 step/turn 与现值长期共存，读侧必须归一（详见 shared/steer-mode.ts）
+import { steerModeLabel, steerModeTip } from "../../shared/steer-mode";
 
 // ─── 层级 ───────────────────────────────────────────
 
@@ -335,6 +338,22 @@ function HairSeg(props: { nodes: BlockNode[] }) {
     );
 }
 
+/**
+ * error 块的外观（唯一出处）。
+ *
+ * 两个调用点共用：① turn 内的叶子（llm 报错 / 中断 / 超预算）；② **根级** error 块 ——
+ * 后者只出现在历史日志里（旧版上限提示没写 parent，fold 后成了根块），
+ * 不在这里兜底的话，根渲染分支只会吐一句「[未知根 error]」，用户看不到
+ * "还有 N 条插话没投出去"这种关键信息。
+ */
+function ErrorBox(props: { node: BlockNode }) {
+    return (
+        <div class="rounded-lg border border-error/40 bg-error/10 px-3 py-2 text-xs text-error whitespace-pre-wrap">
+            {`❌ [${str(props.node.attrs.source)}] ${str(props.node.attrs.message)}`}
+        </div>
+    );
+}
+
 function LeafView(props: {
     node: BlockNode;
     density: Density;
@@ -408,11 +427,7 @@ function LeafView(props: {
         return null; // L1/L2 定稿过程：L1 隐藏；L2 由 HairSeg 聚合（segments 合并过，单块即一段）
     }
     if (b.tag === "error") {
-        return (
-            <div class="rounded-lg border border-error/40 bg-error/10 px-3 py-2 text-xs text-error whitespace-pre-wrap">
-                {`❌ [${str(b.attrs.source)}] ${str(b.attrs.message)}`}
-            </div>
-        );
+        return <ErrorBox node={b} />;
     }
     if (b.tag === "plan") {
         if (props.density === DENSITY_LEVEL.OUTLINE) return null;
@@ -506,38 +521,6 @@ function TurnView(props: {
 // 顺序：队列是 FIFO 且**顺序即投递顺序**，所以拖拽改的是真实的投递次序（不是显示偏好），
 // 松手即落盘（`steer.reorder` 提交完整顺序）。拖拽只认手柄：整行可拖会让"想选中那句话"
 // 变成"拖走了它"，而手柄是明确的意图声明（与任务树整行可拖不同 —— 那里一行只有一个含义）。
-
-/**
- * 历史 mode 值归一（读侧兼容）。
- *
- * 这两个函数的入参来自 **ops 日志里的块 meta**，而那份日志是 append-only 的史书：
- * 枚举改名前的记录写的是 `step` / `turn`，改名后写 `next-step` / `next-turn`，两者会长期共存。
- * 不归一就会把旧的 `step` 落进 else 分支 → 显示成「下一轮」，**语义正好相反**。
- * 映射不了的（未来新值 / 手改的怪值）**原样呈现**，不猜 —— 显示得难看但不说谎。
- */
-const normalizeSteerMode = (mode: string): string =>
-    mode === "step" ? "next-step" : mode === "turn" ? "next-turn" : mode;
-
-/** 投递时机的短标签：说出投递时机本身，而不是内部枚举名（next-step/next-turn 是给代码看的） */
-const steerModeLabel = (mode: string) => {
-    const m = normalizeSteerMode(mode);
-    return m === "next-step" ? "下一步" : m === "next-turn" ? "下一轮" : m;
-};
-
-/**
- * 详细说明（tooltip）必须说清**降级**：选「下一步」时模型可能已经给出最终答复
- * （没有下一步了），此时它会成为下一轮的开场白 —— 承诺"下一次请求前一定生效"就是撒谎。
- */
-const steerModeTip = (mode: string) => {
-    const m = normalizeSteerMode(mode);
-    if (m === "next-step") {
-        return "插入到下一步：模型下一次模型步之前生效；本轮已收尾则作为下一轮的开场立刻发出";
-    }
-    if (m === "next-turn") {
-        return "插入到下一次对话后：本轮跑完，自动接着开新一轮";
-    }
-    return "";
-};
 
 /** 「留言」按钮的缺省时机：排到下一轮（提交后可在横条上切换）。 */
 const DEFAULT_STEER_MODE: SteerMode = "next-turn";
@@ -645,6 +628,10 @@ function SteerRow(props: {
     // 那一侧，而盘上仍是原值（界面"已加急"、实际排队中 —— 显示假值）。
     // 订阅 steerToggleTick 让**失败时必定重跑**；正常路径下算出的值与真实一致，写回是无操作。
     createEffect(() => {
+        // 这一行是**故意的**响应式订阅（不是笔误）：tick 变化 → effect 重跑 → 把 DOM 写回真实
+        // 状态。裸表达式没有别的用途，故显式豁免该 lint 规则 —— 换成 `void` 或赋给变量都会
+        // 换来另一条 warning（no-unused-vars），反而更绕。
+        // oxlint-disable-next-line no-unused-expressions
         localChatStore.steerToggleTick;
         const el = toggleEl;
         if (el) el.checked = props.item.mode === "next-step";
@@ -1077,6 +1064,11 @@ export function LocalChatPage() {
                                     liveTurnId={liveTurnId()}
                                     md={md()}
                                 />
+                            ) : t.tag === "error" ? (
+                                /* 遗留的**根级** error 块（历史日志：旧版上限提示未挂 parent）。
+                                   新日志已把提示挂进 turn（见 local-agent 的上限分支），但重放旧
+                                   ops.jsonl 时根块仍会出现 —— 必须能读懂，不能只吐「[未知根 error]」 */
+                                <ErrorBox node={t} />
                             ) : (
                                 <div class="text-xs opacity-40">[未知根 {t.tag}]</div>
                             )
@@ -1265,7 +1257,14 @@ export function LocalChatPage() {
             <Show when={confirmClear()}>
                 <ConfirmDialog
                     title="清空本对话历史消息？"
-                    message={`将删除「${uri() ?? ""}」的全部本地对话记录（消息、思考、工具调用过程），删除后无法恢复。`}
+                    /* ⚠️ 必须点明插话也被删：main 的 clear() 会一并清空插话队列
+                       （local-agent 的 queue.clear），而插话与草稿同级 —— 属"丢了 = 用户白打"的
+                       不可重建数据。只写"对话记录"会让用户在不知情下丢掉排队中的留言。 */
+                    message={`将删除「${uri() ?? ""}」的全部本地对话记录（消息、思考、工具调用过程）${
+                        localChatStore.steers.length > 0
+                            ? `，以及排队中的 ${localChatStore.steers.length} 条插话`
+                            : ""
+                    }，删除后无法恢复。`}
                     confirmLabel="清空"
                     onCancel={() => setConfirmClear(false)}
                     onConfirm={() => {
