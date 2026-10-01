@@ -446,17 +446,37 @@ export class LocalAgentManager {
                 yield op;
             }
             done = true;
-            // 轮末：从块树重建 LLM 历史（含本轮 user/tool 链路），整体覆盖 llm 日志
-            sess.messages = blocksToMessages(sess.store) as unknown as ModelMessage[];
-            // dump 整文件覆盖 → tmp+rename 原子化：读取方永不见半文件（权威仍是 ops append-only）
-            const dump = llmFile(taskUri);
-            writeFileSync(`${dump}.tmp`, sess.messages.map((m) => JSON.stringify(m)).join("\n") + "\n", "utf-8");
-            renameSync(`${dump}.tmp`, dump);
+            // llm dump 移到 finally（见那里）
         } finally {
             // 消费端提前断开（切 tab/刷新/杀 CLI）：停掉上游，不让 LLM/工具在无人处继续烧 token
             // （AbortController.abort() 按规范不抛错，此处无需 try/catch）
             if (!done) ctrl.abort();
             sess.running = null;
+            // 轮末 dump：从块树重建 LLM 历史（含本轮 user/tool 链路），整体覆盖 llm 日志。
+            // ⚠️ 必须在 finally、不能只放在 try 尾 —— 消费端取消（renderer 点停止 → end 帧 →
+            // channel-server-binding 的 if(cancelled) return → 链式 gen.return()）会把 try 的
+            // 后半段**整段截断**（任务 201 R1-S1：旧实现因此在主动停止后既缺 turn 的 stop、
+            // 也缺这份 dump）。finally 无 yield，不会被吞没，每条退出路径都能留下最后一轮。
+            // 空树跳过：装配期就抛错时块树未动，别拿空内容覆盖上一轮的可用 dump。
+            if (sess.store.roots().length > 0) {
+                try {
+                    sess.messages = blocksToMessages(sess.store) as unknown as ModelMessage[];
+                    // dump 整文件覆盖 → tmp+rename 原子化：读取方永不见半文件（权威仍是 ops append-only）
+                    const dump = llmFile(taskUri);
+                    writeFileSync(`${dump}.tmp`, sess.messages.map((m) => JSON.stringify(m)).join("\n") + "\n", "utf-8");
+                    renameSync(`${dump}.tmp`, dump);
+                } catch (e) {
+                    console.error(`[local-agent] llm dump 失败 ${llmFile(taskUri)}:`, e);
+                }
+            }
+            // ⚠️ 兜底注销活跃轮次 —— **不能只依赖 runTurn 的 closeTurn**：
+            //   runTurn 里 try{streamText} 之前的那些步骤（装配系统上下文、读模版、算 cwd）
+            //   都不在 try 覆盖内，任何一步抛错就等于跳过 closeTurn → activeTurns 留下僵尸条目。
+            //   以前这只影响"崩溃现场"的可读性（UI 看的是本地 running，异常时它会被复位）；
+            //   但现在 UI 把 agent.local.running 当**运行态真值**（session 194），僵尸会表现为
+            //   「永远显示生成中 + 停止按钮点了没反应」，用户只能重启。
+            //   noteTurnEnd 是 Map.delete，幂等：closeTurn 已注销过时，这里再删一次无害。
+            noteTurnEnd(taskUri);
         }
     }
 
@@ -522,12 +542,35 @@ export class LocalAgentManager {
         // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
         let lastAct: "none" | "text" | "tool" = "none";
 
-        /** 收尾必闭合（幂等）：step 先于 turn，摘掉活跃轮次并落 turn-end 审计。
-         *  抽成生成器是为了让「超预算早退」也走同一套收尾 —— 历史 bug：早退的 return 在 try 之前，
-         *  绕过 finally → activeTurns 留僵尸轮次、落盘 ops 缺 turn 的 stop、审计缺 turn-end。 */
-        const closeTurn = function* (currentStepId: string, stopped: boolean, steps: number): Generator<Op, void, void> {
-            if (currentStepId !== turnId) yield* emit({ op: "stop", id: currentStepId });
-            if (!stopped) yield* emit({ op: "stop", id: turnId });
+        /**
+         * 收尾必闭合（幂等）：step 先于 turn，摘掉活跃轮次并落 turn-end 审计。
+         * 超预算早退与正常收尾走同一套（历史 bug：早退的 return 在 try 之前绕过 finally，
+         * activeTurns 留僵尸轮次、落盘 ops 缺 turn 的 stop、审计缺 turn-end）。
+         *
+         * ⚠️ 终态三件事必须**先同步做完、再**把 op 尽力 yield 给消费端（任务 201 R1-S1）：
+         *   消费端取消（renderer 点停止 → end 帧 → channel-server-binding 的
+         *   `if (cancelled) return` → 链式 gen.return()）会从当前 yield 处截断生成器 ——
+         *   JS 语义：finally 里第一个 yield 吐出后，后续代码再也不会执行
+         *   （probes/session-running/gen-return-swallows-finally.mjs 可复现）。
+         *   旧结构「先 yield 再 noteTurnEnd/审计」在主动停止路径下把这三件事全部吞掉：
+         *   turn 的 stop 永远不落 ops → toTree 重放 interrupted=true → UI 永久显示
+         *   「⚠ 本轮未完成（流中断/崩溃恢复）」，且 turn-end 审计丢失、崩溃现场误判。
+         *   yield 此时只负责「尽力转发给还活着的消费端」—— 被截断也无所谓，事实已在盘上。
+         *
+         * 返回 op 列表（不再自产自销）：sink/apply 由本函数做一次，yield 交给调用方；
+         * chat() 的转发层只会 apply（不重复 sink），块树侧 stop 幂等（重复 apply 无害）。
+         */
+        const closeTurn = (currentStepId: string, stopped: boolean, steps: number): Op[] => {
+            const ops: Op[] = [];
+            if (currentStepId !== turnId) ops.push({ op: "stop", id: currentStepId });
+            if (!stopped) ops.push({ op: "stop", id: turnId });
+            // ① 终态先落：盘（sink）+ 块树（内存，stop 幂等）
+            for (const op of ops) {
+                sink(op);
+                sess.store.apply(op);
+            }
+            // ② 注销活跃轮次 + 审计（都在 ① 之后：active 归零 ⇒ 盘上必已终态，
+            //    renderer 的下降沿 reload 永远不会读到「半截 turn」）
             noteTurnEnd(taskUri);
             appendAudit(diyHome(), {
                 phase: "turn-end",
@@ -535,6 +578,8 @@ export class LocalAgentManager {
                 model: model,
                 result: `steps=${steps} usage=${acc.in}/${acc.out}`,
             });
+            // ③ 尽力转发（可被链式 return 截断，不影响 ①②）
+            return ops;
         };
 
         // 系统上下文：分节装配（身份/自述/项目规范/任务/规则/护栏）——与试验场预览同一入口
@@ -551,7 +596,7 @@ export class LocalAgentManager {
                     `请精简提示词模版或项目 AGENTS.md。`,
             );
             // 拒绝发送也是一轮完整生命周期：必须闭合，否则 UI/崩溃报告/审计三处都会认为它还在跑
-            yield* closeTurn(stepId, false, stepN);
+            for (const op of closeTurn(stepId, false, stepN)) yield op;
             return;
         }
 
@@ -786,8 +831,10 @@ export class LocalAgentManager {
             else yield* errorBlock("stream", errText(e));
         } finally {
             // 收尾必闭合：step 先于 turn（stop 幂等，重复无害）；
-            // 轮次审计收尾：崩溃后能区分"死在生成中"还是"生成已结束"
-            yield* closeTurn(stepId, turnStopped, stepN);
+            // 轮次审计收尾：崩溃后能区分"死在生成中"还是"生成已结束"。
+            // 注意：closeTurn 内部先同步落盘/注销/审计，这里的 yield 只是尽力转发 ——
+            // 消费端取消触发的链式 return 会截断后续 yield，但不再伤到终态（见 closeTurn 注释）
+            for (const op of closeTurn(stepId, turnStopped, stepN)) yield op;
         }
     }
 }

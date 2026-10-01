@@ -17,7 +17,7 @@
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { join } from "node:path";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { ShellTest } from "./shell-test";
+import { ShellTest, Session } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 
 // 真实 LLM 用例：默认关闭（见文件头）。缺 key 时即使开了开关也跳过。
@@ -89,6 +89,13 @@ describe("agent.local — 控制面（无网络）", () => {
         const c = await fx.sh.getJson(`./diy.sh agent local cancel ${uri}`);
         expect(c.data).toEqual({ cancelled: false });
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
+
+    // 任务 194：UI 判"这一轮是否还活着"必须问 main（agent.local.running），
+    // 而不是靠自己的私有 running —— 别人（CLI/另一窗口）正在跑的轮次它看不见。
+    it("running 给出运行态真值：无在途时是空表（结构即契约）", async () => {
+        const r = await fx.sh.getJson(`./diy.sh agent local running`);
+        expect(r.data).toEqual({ active: [] });
     });
 
     it("clear 幂等删除（不存在也可清）", async () => {
@@ -219,6 +226,51 @@ describe("agent.local — 真实对话（zen/go 缺省模型 gpt-5.6-luna）", (
             const flat = JSON.stringify(llm);
             expect(flat.includes("tool-call") || flat.includes("tool-result")).toBe(true);
             await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+        },
+        260_000,
+    );
+
+    // 任务 194 的根因通路：renderer 过去无从知道"别人（CLI/另一窗口）正在这个任务上跑"
+    // —— main 内存里明明有 activeTurns，却没有查询口。这条用例钉住这个口子：
+    // 一轮真在跑时 running 必须报出来，收尾后必须消失（否则 UI 会一直显示"停止"或误报中断）。
+    it.skipIf(!RUN_LLM)(
+        "CLI 起一轮期间 running 报该任务活跃；收尾后消失（UI 真值来源）",
+        async () => {
+            const uri = await setup("运行态任务");
+            // 独立会话跑 chat（不 await）：模拟"另一端在跑"，主测试进程继续查真值
+            const chat = new Session({
+                cwd: join(__dirname, "..", "..", ".."),
+                env: { HOME: fx.HOME, DIY_HOME: fx.HOME },
+            });
+            const running = chat.run(
+                `./diy.sh agent local chat ${uri} "用 bash 执行 sleep 20，然后一句话说明结果"`,
+                240_000,
+            );
+            try {
+                const activeUris = async () => {
+                    const r = await fx.sh.getJson(`./diy.sh agent local running`);
+                    return ((r.data as { active?: Array<{ taskUri: string }> })?.active ?? []).map((t) => t.taskUri);
+                };
+                // 轮询（不给固定 sleep：上游首 token 往返时长不定）
+                let seen = false;
+                for (let i = 0; i < 40 && !seen; i++) {
+                    seen = (await activeUris()).includes(uri);
+                    if (!seen) await new Promise((r) => setTimeout(r, 500));
+                }
+                expect(seen, `running 应报 ${uri} 活跃`).toBe(true);
+
+                // 停止入口走的就是这个 RPC：对别人发起的轮次同样有效
+                const c = await fx.sh.getJson(`./diy.sh agent local cancel ${uri}`);
+                expect(c.data).toEqual({ cancelled: true });
+                await running;
+
+                // 收尾后必须不再活跃（UI 据此把按钮收回发送态）
+                expect(await activeUris()).not.toContain(uri);
+            } finally {
+                await fx.sh.run(`./diy.sh agent local cancel ${uri}`).catch(() => undefined);
+                chat.close();
+                await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+            }
         },
         260_000,
     );

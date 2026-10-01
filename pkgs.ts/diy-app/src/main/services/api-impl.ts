@@ -325,6 +325,12 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent } = await import("./local-agent");
     return { cancelled: getLocalAgent().cancel(input.taskUri) };
   });
+  // 运行态查询：不经 LocalAgentManager（它只在"这个 task 的会话被碰过"时才有 session），
+  // 直接读 runtime-context 的内存表 —— 那才是「此刻主进程真正在跑哪些轮次」的权威。
+  binding.on(app.agent.local.running, async () => {
+    const { activeTurnList } = await import("./runtime-context");
+    return { active: activeTurnList() };
+  });
   binding.on(app.agent.local.history, async ({ input }) => {
     noteRendererTouch("diy.agent.local.history", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
