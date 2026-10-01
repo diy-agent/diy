@@ -556,10 +556,14 @@ function TurnView(props: {
             </Show>
             <Show when={t.attrs.usage}>
                 {(() => {
-                    const u = t.attrs.usage as { in?: number; out?: number; total?: number };
+                    const u = t.attrs.usage as { in?: number; out?: number; cached?: number; total?: number };
                     return (
                         <div class="text-[11px] opacity-50">
                             tokens ↑{u.in ?? 0} ↓{u.out ?? 0}（Σ{u.total ?? 0}）
+                            {/* 缓存命中（暖输入）：划分策略是否省到钱的唯一硬指标，见 shared/context/delivery */}
+                            <Show when={(u.cached ?? 0) > 0}>
+                                <span class="ml-1 text-success">⇄{u.cached}</span>
+                            </Show>
                         </div>
                     );
                 })()}

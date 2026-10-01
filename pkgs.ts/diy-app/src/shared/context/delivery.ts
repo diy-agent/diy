@@ -46,6 +46,14 @@ export const PLACE_CANDIDATES: PlaceCandidate[] = [
     { path: "task.uri", system: true, reason: "任务 URI：不变" },
     { path: "task.state", system: true, reason: "任务状态：偶尔改一次" },
     { path: "task.dir", system: true, reason: "任务目录：不变" },
+    // ── 模版节（identity / rules / guard，值是模版渲染结果；见 prompt-registry 的 DELIVERED_SECTIONS）──
+    // 为什么必须有：它们此前**完全不在投递里**（名单没有 = 两个容器都不投）—— 真发于是丢掉
+    // 人物行为指令、行为规范与保命契约（209 review P0-1 实测：persona/身份/<rules>/<guard> 全 false）。
+    // 为什么不列 persona：身份节（identity.md）里已经有「人物是「X」」+ 行为指令，
+    // 再列 persona 会把同一段指令投两遍（浪费前缀缓存、也让人分不清哪份为准）。
+    { path: "identity", system: true, reason: "身份：人物名 + 行为指令（模版节渲染结果）；任务存续期内不变 → 可缓存" },
+    { path: "rules", system: true, reason: "行为规范：静态文本，只在改模版时变" },
+    { path: "guard", system: true, reason: "保命契约：静态文本，丢了模型可能换写法杀宿主进程" },
     { path: "task.body", system: false, reason: "任务正文：每次编辑正文就变 → 放 runtime，不污染 system 缓存" },
     { path: "skills", system: false, reason: "技能清单：安装/升级技能就变" },
 ];

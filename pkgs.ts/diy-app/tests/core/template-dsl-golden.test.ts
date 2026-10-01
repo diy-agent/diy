@@ -40,6 +40,12 @@ const GLOBALS: AssembleGlobals = {
         { path: '/repo/AGENTS.md', scope: '/repo', content: '仓库规则 <docs>' },
     ],
     skills: [],
+    // 模版节的渲染结果（真发投递节点，见 prompt-registry 的 DELIVERED_SECTIONS）：
+    // 本用例只走模版线（renderSystemDsl 渲染 _system.md），不读这三项 —— 它们的真实渲染
+    // 由 assembleGlobals 产出（覆盖见 tests/core/prompt-registry.test.ts 与 context-delivery.test.ts）。
+    identity: '',
+    rules: '',
+    guard: '',
 };
 
 describe('DSL 装配 === 换引擎前的 system（逐字节，两处有意差异除外）', () => {

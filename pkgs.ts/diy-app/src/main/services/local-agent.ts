@@ -30,6 +30,7 @@ import { BlockStore, blocksToMessages, interruptedToolPatches, type Op, type JSO
 import { collectSelfInfo, judgeSelfKill, selfKillNotice } from "./agent-guard";
 import { appendAudit } from "./agent-audit";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
+import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
 import { buildDelivery } from "../../shared/context/delivery";
 import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
@@ -762,8 +763,9 @@ export class LocalAgentManager {
         let rN = 0;
         let aN = 0;
         let uN = 0;
-        // turn 级 usage 累加器（finish-step 逐轮累加；finish 到达时用流尾权威值覆盖）
-        const acc = { in: 0, out: 0, total: 0 };
+        // turn 级 usage 账本（口径与来源全在 services/turn-usage.ts，那里也解释了
+        // 为什么 cached 必须单独记：它是"缓存有没有真的生效"的唯一硬指标，##140 的验收标准）
+        const acc = newUsageAcc();
         // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
         let lastAct: "none" | "text" | "tool" = "none";
 
@@ -874,7 +876,7 @@ export class LocalAgentManager {
                 phase: "turn-end",
                 taskUri,
                 model: model,
-                result: `steps=${steps} usage=${acc.in}/${acc.out}`,
+                result: `steps=${steps} usage=${acc.in}/${acc.out} cached=${acc.cached}`,
             });
             // ② 尽力投递：消费端还在就让它看到 stop；已断开则在此停住 —— 状态早已一致（①已完成）
             for (const op of ops) yield op;
@@ -1169,26 +1171,16 @@ export class LocalAgentManager {
                             break;
                         case "finish-step": {
                             // 每步 usage 累加进 turn（zen 流尾 totalUsage 偶发缺失，双保险）
-                            const su = (part as unknown as { usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } }).usage;
+                            const su = (part as unknown as { usage?: TurnUsage }).usage;
                             if (su) {
-                                acc.in += su.inputTokens ?? 0;
-                                acc.out += su.outputTokens ?? 0;
-                                acc.total += su.totalTokens ?? (su.inputTokens ?? 0) + (su.outputTokens ?? 0);
+                                addStepUsage(acc, su);
                                 yield* emit({ op: "patch", id: turnId, fields: { usage: { ...acc } } });
                             }
                             if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
                             break;
                         }
                         case "finish": {
-                            const usage = (
-                                part as unknown as {
-                                    totalUsage?: {
-                                        inputTokens?: number;
-                                        outputTokens?: number;
-                                        totalTokens?: number;
-                                    };
-                                }
-                            ).totalUsage;
+                            const usage = (part as unknown as { totalUsage?: TurnUsage }).totalUsage;
                             // 截断/耗尽显式化：写进 turn.notice，UI 页脚展示（限制值来自动态配置）
                             const fr = (part as { finishReason?: string }).finishReason;
                             let notice: string | undefined;
@@ -1201,9 +1193,7 @@ export class LocalAgentManager {
                             if (usage) {
                                 // totalUsage 是整轮的权威值（一次 chat 只有一次 streamText）：
                                 // finish-step 的逐轮累加只是"流尾总量偶发缺失"的双保险
-                                acc.in = usage.inputTokens ?? acc.in;
-                                acc.out = usage.outputTokens ?? acc.out;
-                                acc.total = usage.totalTokens ?? (acc.in + acc.out);
+                                setTurnUsage(acc, usage);
                                 yield* emit({ op: "patch", id: turnId, fields: { usage: { ...acc } } });
                             }
                             // turn 的 stop 由 closeTurn 发（finally 里那一处）：收尾必须闭合

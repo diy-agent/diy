@@ -22,7 +22,8 @@ export const CONTEXT_GUIDE = `# 系统上下文（Context Tree）
 
 ## 结构
 
-- 顶层键是变量命名空间（如 diy / project / task / cwd / chain / skills）
+- 顶层键分两类：**行为契约**（\`identity\` / \`rules\` / \`guard\`）与**环境数据**（diy / project / task / cwd / chain / skills）
+- \`identity\` = 你的身份与当前人物；\`rules\` = 行为规范；\`guard\` = 保命边界。三者是给你的直接指令，照做
 - 嵌套层级与变量路径一一对应：\`task.title\` 即 \`task:\` 下的 \`title:\`
 - 多行文本用 YAML 块标量（\`|\`），保留换行与缩进
 - \`[]\` / \`{}\` 表示"该变量存在但为空"，与"没有这个变量"不是一回事

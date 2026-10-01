@@ -361,6 +361,40 @@ export function renderSystemDsl(opts: {
   return renderSystemDslTraced(opts).text;
 }
 
+/**
+ * 项目级 include 解析（草稿 > 项目覆盖 > 内置；白名单 = 内置清单，`assertRelpath` 兜底）。
+ * 装配（`assembleSystem`）与「模版节 → 投递节点」（`assembleGlobals`）**共用同一份**，
+ * 否则"页面上改的 identity.md"与"真发投出去的身份节"会各读各的（界面说谎的老毛病）。
+ */
+export function projectIncludeResolver(
+  home: string,
+  projectId: string,
+  drafts?: Record<string, string>,
+): IncludeResolver["resolve"] {
+  return (relpath) => {
+    const key = relpath.replace(/^\.\//, "");
+    if (!Object.hasOwn(PROMPT_DEFAULTS, key)) return null;
+    const draft = drafts?.[key];
+    const entry = entryOf(home, projectId, key);
+    const source = draft !== undefined ? parseMd(draft).body : entry.current;
+    return { source, locked: entry.locked };
+  };
+}
+
+/**
+ * 投递 system 是否超预算（真发与模版线预览**同一判据**：超了就整轮不发请求）。
+ * 抽出来是为了能单测这条边界（209 review P1-3：预算分支无覆盖）——
+ * "等于预算"必须放行，只有**严格大于**才拒发。
+ */
+export function systemOverBudget(
+  usedBytes: number,
+  contextLimitTokens?: number,
+): { used: number; budget: number } | null {
+  const used = Math.floor(usedBytes);
+  const budget = systemBudgetForContext(contextLimitTokens);
+  return used > budget ? { used, budget } : null;
+}
+
 /** 静态体检：把模版里的 lint（如控制属性误用）汇总成告警，不阻断装配 */
 function lintWarnings(home: string, projectId: string): string[] {
   const out: string[] = [];
@@ -431,17 +465,11 @@ export function assembleSystem(
     taskUri,
     skills: opts.skills,
     diyCli,
+    // 草稿也要进"节渲染"：模版编辑器里没保存的 identity.md 改动，预览与投递都该立刻反映
+    drafts: opts.drafts,
   });
 
-  // include 解析：草稿 > 项目覆盖 > 内置；白名单 = 内置清单（assertRelpath 兜底）
-  const resolveInclude: IncludeResolver["resolve"] = (relpath) => {
-    const key = relpath.replace(/^\.\//, "");
-    if (!Object.hasOwn(PROMPT_DEFAULTS, key)) return null;
-    const draft = opts.drafts?.[key];
-    const entry = entryOf(home, projectId, key);
-    const source = draft !== undefined ? parseMd(draft).body : entry.current;
-    return { source, locked: entry.locked };
-  };
+  const resolveInclude = projectIncludeResolver(home, projectId, opts.drafts);
   // 注入与变量契约漂移要响亮（schema 是单一真源，类型层面已保证；这里兜住运行时手改）
   const check = AssembleGlobalsSchema.safeParse(globals);
   if (!check.success) {
@@ -454,10 +482,10 @@ export function assembleSystem(
   const system = rendered.text;
   warnings.push(...lintWarnings(home, projectId));
   const used = Buffer.byteLength(system, "utf-8");
-  const budget = systemBudgetForContext(opts.contextLimitTokens);
+  const overBudget = systemOverBudget(used, opts.contextLimitTokens ? opts.contextLimitTokens : undefined);
   return {
     system,
-    overBudget: used > budget ? { used, budget } : null,
+    overBudget,
     warnings,
     trace: opts.trace ? rendered.trace : null,
     // 实际注入值原样回传：「变量值」view 与模版结构树的「值」列共用同一份事实
@@ -465,11 +493,24 @@ export function assembleSystem(
   };
 }
 
+/** 投递出去的模版节：`globals` 的键名 → 模版 relpath（键名就是它在投递里的节点名） */
+export const DELIVERED_SECTIONS = {
+  identity: "identity.md",
+  rules: "rules.md",
+  guard: "_guard.md",
+} as const;
+
 /** 构造注入 globals（单一真源；与 SYSTEM_VARS 的一致性由测试守护） */
 export function assembleGlobals(
   home: string,
   projectId: string,
-  opts: { taskUri?: string; skills?: Array<{ name: string; desc: string }>; diyCli?: string } = {},
+  opts: {
+    taskUri?: string;
+    skills?: Array<{ name: string; desc: string }>;
+    diyCli?: string;
+    /** 未存盘草稿（relpath → 正文）：模版编辑器里没保存的改动也即时反映到投递 */
+    drafts?: Record<string, string>;
+  } = {},
 ): AssembleGlobals {
   const taskUri = opts.taskUri ?? "";
   const task = taskOf(home, taskUri);
@@ -478,7 +519,7 @@ export function assembleGlobals(
   // 当前人物（模型/参数/行为指令的真源是 personas.yaml；任务只持有引用）——预览与真发同一入口，
   // 故试验场看到的身份节与实际请求一致，不会出现"预览里有行为指令、真发没有"的漂移
   const persona = personaForTask(home, taskUri);
-  const globals: AssembleGlobals = {
+  const core = {
     persona: { name: persona.name, instructions: persona.instructions },
     diy: { cli: diyCli || "diy（未注入 DIY_CLI，勿照抄）", home },
     project: { path: getProjectPath(projectId) ?? "" },
@@ -499,5 +540,26 @@ export function assembleGlobals(
     chain: chainOf(home, cwdRes.cwd, taskUri, cwdRes.isAppDir),
     skills: opts.skills ?? [],
   };
-  return globals;
+  // ── 模版节 → 投递节点（144「模版即节点」方向的第一步）──
+  // 真发要的不只是 `persona` 的**值**，而是模版渲染出来的**整节**：identity.md 是
+  // 「你是 … 人物是「X」」+ 人物行为指令，rules.md 是行为规范，_guard.md 是保命契约。
+  // 不在这里渲染，真发就一样不投（209 review P0-1 实测：真发 system 里 persona/身份/
+  // <rules>/<guard> 全 false → 合并后模型收不到人物指令，保命契约也没了）。
+  //
+  // 用 `core`（不含本节）当渲染变量：identity.md 只引用 persona，不引用自己。
+  const resolve = projectIncludeResolver(home, projectId, opts.drafts);
+  // 渲染时**必须走 resolver 取本节正文**（草稿 > 项目覆盖 > 内置），不能直接用 PROMPT_DEFAULTS：
+  // renderSystemDsl 的 entry 本体是 `templates[entry]`，把内置当默认值传进去就等于
+  // "项目里改过的 identity/rules 不进真发"（正是划分规则当年踩过的"页面改了真发不理"）。
+  const section = (relpath: string): string => {
+    const hit = resolve(`./${relpath}`);
+    if (!hit) throw new Error(`缺少模版节：${relpath}`);
+    return renderSystemDsl({ globals: core, templates: { [relpath]: hit.source }, entry: relpath, resolve });
+  };
+  return {
+    ...core,
+    identity: section(DELIVERED_SECTIONS.identity),
+    rules: section(DELIVERED_SECTIONS.rules),
+    guard: section(DELIVERED_SECTIONS.guard),
+  };
 }

@@ -22,6 +22,10 @@ const globals = {
     chain: [{ path: "/home/u/AGENTS.md", scope: "/home/u", content: "家目录规范\n" }],
     task: { uri: "projects/1/tasks/1", title: "投递任务", state: "pending", dir: "/home/u/.diy/projects/1/tasks/1", body: "正文一\n正文二" },
     skills: [],
+    // 模版节（行为契约）：真发必须投它们，否则模型收不到人物指令/规范/保命契约（P0-1）
+    identity: "你是 diy 管控台的本地 coding agent。你现在的人物是「大副」。\n每次回答前先称一声「大王」。\n",
+    rules: "<rules>\n- 用中文回答\n</rules>\n",
+    guard: "<guard>\n禁止执行会杀死宿主进程的命令\n</guard>\n",
 };
 
 describe("投递构造：两个容器", () => {
@@ -74,6 +78,40 @@ describe("投递构造：两个容器", () => {
     it("list 里只有候选（没有人手填的怪路径）", () => {
         expect(PLACE_CANDIDATES.every((c) => typeof c.path === "string" && c.reason.length > 0)).toBe(true);
         expect(defaultSystemPlaces()).not.toContain("task.body");
+    });
+});
+
+describe("行为契约（identity / rules / guard）默认归 system", () => {
+    it("★ 三节默认在 system 名单里，且落在 system 容器（不在名单 = 两个容器都不投）", () => {
+        const sys = defaultSystemPlaces();
+        for (const name of ["identity", "rules", "guard"]) {
+            expect(sys, name).toContain(name);
+        }
+        const d = buildDelivery(globals, sys);
+        for (const name of ["identity", "rules", "guard"]) {
+            expect(d.system.places, name).toContain(name);
+            expect(d.runtime.places, name).not.toContain(name);
+        }
+        expect(d.system.text).toContain("每次回答前先称一声「大王」。");
+        expect(d.system.text).toContain("<rules>");
+        expect(d.system.text).toContain("<guard>");
+    });
+
+    it("persona **值**不单独投（身份节里已含人物名与指令，重复投会白占前缀缓存）", () => {
+        const withPersona = { ...globals, persona: { name: "大副", instructions: "每次回答前先称一声「大王」。" } };
+        const d = buildDelivery(withPersona, defaultSystemPlaces());
+        expect(d.tree.places).not.toContain("persona");
+        expect(d.system.text).not.toContain("persona:");
+        expect(d.runtime.text).not.toContain("persona:");
+        // 但指令本身必须在（来自 identity 节）
+        expect(d.system.text).toContain("每次回答前先称一声「大王」。");
+    });
+
+    it("把行为契约划到 runtime → 它们从 system 消失、出现在 runtime（名单真源说了算）", () => {
+        const sys = defaultSystemPlaces().filter((p) => p !== "guard");
+        const d = buildDelivery(globals, sys);
+        expect(d.system.text).not.toContain("<guard>");
+        expect(d.runtime.text).toContain("<guard>");
     });
 });
 

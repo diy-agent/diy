@@ -20,7 +20,7 @@ import {
   type PersonaDef,
   type PersonasFile,
 } from "../../shared/persona";
-import { getTask } from "./state";
+import { parseTaskFile } from "./state";
 
 export function personasFile(home: string): string {
   return join(home, "personas.yaml");
@@ -107,6 +107,24 @@ export function personaByIdOrName(home: string, key: string): Persona | null {
 }
 
 /**
+ * 任务 frontmatter 里的 `persona` 引用（id）。
+ *
+ * 走 **home 权威路径**（`join(home, taskUri, "AGENTS.md")`）而不是 `getTask(uri)` ——
+ * 后者内部用全局 `diyHome()` 拼路径，在隔离实例/测试里会读到**生产任务文件**
+ * （与 `chainOf` 那条 `isAppDir` 修复同一类病灶：home 参数传进来了却没用，隔离静默失效）。
+ */
+function taskPersonaId(home: string, taskUri: string): string | undefined {
+  const fp = join(home, taskUri, "AGENTS.md");
+  if (!existsSync(fp)) return undefined;
+  try {
+    return parseTaskFile(readFileSync(fp, "utf-8"))?.persona;
+  } catch (e) {
+    console.warn(`[persona] ${fp} 解析失败，按「跟随缺省」处理:`, e);
+    return undefined;
+  }
+}
+
+/**
  * 任务当前生效的人物：任务 frontmatter 的 `persona`（**存 id**）→ 查定义 → 缺省人物。
  *
  * `persona` 键**不存在 = 跟随缺省**（不固定绑定；改缺省时本任务下一轮跟着变）。
@@ -117,7 +135,7 @@ export function personaByIdOrName(home: string, key: string): Persona | null {
 export function personaForTask(home: string, taskUri: string): Persona {
   const fallback = (): Persona => personaById(home, defaultPersonaId(home)) ?? builtinPersona();
   if (!taskUri) return fallback();
-  const id = getTask(taskUri)?.persona;
+  const id = taskPersonaId(home, taskUri);
   if (!id) {
     // **正常情况**：任务没写 persona 键 = 跟随缺省（新建任务的默认状态）。
     // 不再出声 —— 这是设计中的常态，不是异常（以前"创建时物化"才会有"字段缺失=异常"的假设）。

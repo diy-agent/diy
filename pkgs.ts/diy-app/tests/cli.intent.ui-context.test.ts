@@ -417,7 +417,11 @@ describe("上下文树：UI 上屏（两列 + 请求预览）", () => {
       { label: "请求预览 YAML 上屏（内嵌 system 已解析展开）" },
     );
     expect(yamlView).toContain("# 系统上下文（Context Tree）");
-    expect(yamlView).toContain("# - 顶层键是变量命名空间（如 diy / project / task / cwd / chain / skills）");
+    // 说明头（guide.ts）的结构行：它随 wire 语义变（本次加了 behavior-contract 三个顶层键），
+    // 断言的是"说明头 → YAML 注释"这条渲染机制，故跟着说明头同步即可。
+    // ⚠️ 只断言到反引号之前：CM 的 a11y 树把 `` ` `` 拆成独立 token（行内代码会插进分隔节点），
+    // 带反引号的整行在 a11y 文本里不存在 —— 与下面 messages/input 那条"判据必须是整行"同一类坑。
+    expect(yamlView).toContain("# - 顶层键分两类");
     // 顶层容器随 API 面变：chat 面 messages / responses 面 input（缺省模型是 responses）。
     // ⚠️ 判据必须是**整行**：CM 编辑器的 a11y 树把 token 拆成独立节点（键与 `:` 各一行），
     // 连写的 `messages:` 在 a11y 文本里根本不存在。
