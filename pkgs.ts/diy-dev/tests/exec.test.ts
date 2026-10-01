@@ -61,9 +61,11 @@ describe("runStreaming", () => {
         expect(chunks.join("")).toContain("first");
         expect(chunks.join("")).toContain("second");
         expect(res.stdout).toContain("out-line"); // stdout 同时收集
-        expect(secondAt - firstAt).toBeGreaterThan(900); // ≈ sleep 1.2s
-        expect(tEnd - secondAt).toBeLessThan(900); // second 已到末尾，之后很快退出
-    });
+        // 放宽到 600ms 级（review §二#4）：仍足以判别旧行为 —— spawnSync 收尾 dump 的
+        // 两回调间隔 ≈ 0ms，600ms 不可能误过；高负载下 sleep 漂移也不会再假失败
+        expect(secondAt - firstAt).toBeGreaterThan(600); // ≈ sleep 1.2s（余量 600ms）
+        expect(tEnd - secondAt).toBeLessThan(3000); // second 已到末尾，之后很快退出（正常 <100ms，余量给负载）
+    }, 8000); // 高负载防 runner 假失败
 
     it("心跳：stderr 静默 ≥ heartbeatMs 触发 onIdle，携带静默时长", async () => {
         writeGit(`echo "x" >&2\nsleep 0.8\necho "y" >&2\n`);
@@ -74,23 +76,32 @@ describe("runStreaming", () => {
             onIdle: (ms) => idles.push(ms),
         });
         expect(res.ok).toBe(true);
-        // 0.8s 静默、150ms 节拍 → 至少 3 次；恢复输出后（close 前）不再误触发收敛于次数上界
-        expect(idles.length).toBeGreaterThanOrEqual(3);
+        // 0.8s 静默、150ms 节拍 → 至少 2 次（下界放宽见 review §二#4）。
+        // 不设次数上界：进程被负载拖长时心跳本就该多报，上界无判别力
+        // （2026-10-01 并发复跑实测 14 次假失败 —— review 点名的 L64/65/L78 下界当时全绿，
+        //  真正脆的是这里，见 193 任务 body 的 review 处理回复 #4）
+        expect(idles.length).toBeGreaterThanOrEqual(2);
         for (const ms of idles) expect(ms).toBeGreaterThanOrEqual(150);
-        expect(idles.length).toBeLessThanOrEqual(8);
     });
 
     it("心跳判据是输出活动：stdout 持续输出期间不触发（190 修正 2）", async () => {
-        writeGit(`i=0\nwhile [ $i -lt 14 ]; do echo "tick$i"; i=$((i+1)); sleep 0.1; done\n`);
+        // 预热：先跑一次同 env 的快速调用，摊薄 fork/exec/页缓存冷启动 —— 否则高负载下
+        // 「spawn→首行输出」可超 1s，会被当成真静默误报（review §二#4 负载敏感点之一）
+        writeGit(`echo warm\n`);
+        await runStreaming([], { env: fakeEnv(), heartbeatMs: 1000, onIdle: () => {} });
+        // 寿命 4.2s（14×0.3s）≥ 3×hb：若 stdout 不算活动（bug），按 1s 节拍必报 ≥3 次；
+        // 算活动则正常 0 次。断言 ≤2 —— 容忍高负载下 spawn/循环抖动造成的 ≤2 次伪报
+        // （2026-10-01 实测 load≈27 时伪报形态为 [1000] 启动延迟 1 次；判别窗口 3 vs ≤2）
+        writeGit(`i=0\nwhile [ $i -lt 14 ]; do echo "tick$i"; i=$((i+1)); sleep 0.3; done\n`);
         const idles: number[] = [];
         const res = await runStreaming([], {
             env: fakeEnv(),
-            heartbeatMs: 1000, // 静默阈值 1000ms ≫ 输出间隔 100ms（也覆盖首行前的 shell 启动抖动）
+            heartbeatMs: 1000,
             onIdle: (ms) => idles.push(ms),
         });
         expect(res.ok).toBe(true);
-        expect(idles).toHaveLength(0); // stdout 也算活动 → 不该有停滞提示
-    });
+        expect(idles.length).toBeLessThanOrEqual(2); // stdout 持续活动 → 不该有停滞提示（负载伪报 ≤2 容忍）
+    }, 15000);
 
     it("超时分级：timeoutMs 到点杀进程，timedOut/ok 标记正确", async () => {
         writeGit(`exec sleep 10\n`);
@@ -99,15 +110,16 @@ describe("runStreaming", () => {
         const elapsed = Date.now() - t0;
         expect(res.timedOut).toBe(true);
         expect(res.ok).toBe(false);
-        expect(elapsed).toBeLessThan(3000);
-    });
+        // 正常 spawn+杀 ≈ 0.4s；高负载 spawn 可 >2s 放宽到 4s（bug=不杀会跑满 sleep 10s）
+        expect(elapsed).toBeLessThan(4000);
+    }, 8000);
 
     it("缺省无硬超时：慢命令跑完仍成功（clone 严禁加超时的取舍）", async () => {
         writeGit(`exec sleep 1.2\n`);
         const res = await runStreaming([], { env: fakeEnv() }); // 不传 timeoutMs
         expect(res.ok).toBe(true);
         expect(res.timedOut).toBe(false);
-    }, 5000);
+    }, 10000); // 高负载下 spawn+sleep1.2 可 >5s，防 runner 假失败
 
     it("统一注入 GIT_TERMINAL_PROMPT=0", async () => {
         writeGit(`echo "P=$GIT_TERMINAL_PROMPT"\n`);

@@ -153,6 +153,16 @@ describe("waiting（两态）与 done 条目行", () => {
         expect(sink.out).toContain("✓ [1/2] github.com/a/b  2.4s  tag 固定，跳过 pull");
     });
 
+    it("begin() 清缓冲未完段：旧条目残段不跨条目泄漏（review §二#3a 探针）", () => {
+        const sink = makeSink();
+        const r = new ProgressRenderer(sink, { isTTY: false });
+        r.feed("Receiving objects:  21% (2613/12439)"); // 无终止符 → 停在 buf
+        r.begin("[2/2] github.com/x/y");
+        r.waiting(5000); // buf 已被 begin 清掉 → 旧段不出现、心跳显示「无输出」
+        expect(sink.out).not.toContain("2613");
+        expect(sink.out).toContain("（最后: (无输出)）");
+    });
+
     it("done：失败行 ✗ + 多行 fail 原样缩进", () => {
         const sink = makeSink();
         const r = new ProgressRenderer(sink, { isTTY: false });

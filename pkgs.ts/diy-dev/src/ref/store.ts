@@ -98,7 +98,9 @@ function splitSpec(raw: string): { url: string; version: string | null } {
     if (m && parseRepoUrl(m[1]!)) return { url: m[1]!, version: m[2]!.toLowerCase() };
 
     // 文件页 / 功能页：ref 边界离线无法确定，明确拒绝并指路
-    const page = t.match(/\/(blob|pull|compare|commits|actions|issues|discussions|wiki|releases)(\/|$)/);
+    const page = t.match(
+        /\/(blob|pull|compare|commits|actions|issues|discussions|wiki|releases)(\/|$)/,
+    );
     if (page) {
         throw new Error(
             `不支持的页面 URL（/${page[1]}）：请复制仓库根或 /tree/ 分支页地址，或用 @版本 形式\n  ${raw.trim()}`,

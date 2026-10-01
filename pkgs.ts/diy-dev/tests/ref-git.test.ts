@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { cloneMirror, updateMirror, requireGit } from "../src/ref/git";
+import { ProgressRenderer, getDefaultRenderer, setDefaultRendererForTest } from "../src/ref/render";
 
 let root: string;
 let src: string;
@@ -121,6 +122,26 @@ describe("updateMirror", () => {
         const after = g(["rev-parse", "HEAD"], dir);
         expect(after).not.toBe(before);
         expect(existsSync(join(dir, "b.txt"))).toBe(true);
+    });
+});
+
+describe("短命令输出通道（review §二#5 探针）", () => {
+    it("run() 回显走 getDefaultRenderer().info()（F4 统一通道），且可复位", () => {
+        const writes: string[] = [];
+        const fake = new ProgressRenderer(
+            { write: (s: string) => void writes.push(s) },
+            { isTTY: false },
+        );
+        setDefaultRendererForTest(fake);
+        try {
+            requireGit(); // git --version：本套测试前提（beforeEach 也调它）
+            const out = writes.join("");
+            expect(out).toContain("$ git --version"); // 回显进了注入的 renderer
+            expect(out).toContain("git version"); // stdout 原样透传
+        } finally {
+            setDefaultRendererForTest(null); // 复位单例，别污染后续用例
+        }
+        expect(getDefaultRenderer()).not.toBe(fake); // null 后重建为进程级单例
     });
 });
 

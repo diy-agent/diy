@@ -89,10 +89,21 @@ export function bindRefHandlers(binding: ServerBinding, rt: RefRuntime): void {
                 const rel = store.mirrorRelDir(p.info, norm);
                 const dirAbs = join(rt.home, rel);
 
+                // lock 记录先于 done 收尾行：done 之后不再放可抛语句（review §二#3b），
+                // 避免「✓ 行已打、catch 又记失败」的理论矛盾
+                const lockEntry: store.LockEntry = {
+                    key: p.key,
+                    url: p.url,
+                    version: p.version,
+                    dir: rel,
+                    lastSync: now,
+                };
+
                 if (!existsSync(`${dirAbs}/.git`)) {
                     // 首次 clone（含按 tag/分支检出），进度实时渲染
                     prog.begin(label);
                     await git.cloneMirror({ dir: dirAbs, url: p.url, version: p.version, prog });
+                    sourceMap[p.key] = lockEntry;
                     prog.done({ ok: true });
                     cloned++;
                     yield { spec, action: "cloned" as const };
@@ -100,6 +111,7 @@ export function bindRefHandlers(binding: ServerBinding, rt: RefRuntime): void {
                     // 增量：tag 不动、分支 pull
                     prog.begin(label);
                     const u = await git.updateMirror(dirAbs, isTag, prog);
+                    sourceMap[p.key] = lockEntry;
                     if (u.updated) {
                         prog.done({ ok: true });
                         pulled++;
@@ -111,13 +123,6 @@ export function bindRefHandlers(binding: ServerBinding, rt: RefRuntime): void {
                         yield { spec, action: "tagSkipped" as const, message: u.note };
                     }
                 }
-                sourceMap[p.key] = {
-                    key: p.key,
-                    url: p.url,
-                    version: p.version,
-                    dir: rel,
-                    lastSync: now,
-                };
             } catch (e) {
                 const message = e instanceof Error ? e.message : String(e);
                 prog.done({ ok: false, label, fail: message });

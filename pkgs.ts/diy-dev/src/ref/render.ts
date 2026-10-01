@@ -83,6 +83,9 @@ export class ProgressRenderer {
         this.phaseDone = false;
         this.lastBytes = undefined;
         this.lastText = "";
+        // 条目边界自洁：残段不该跨条目（正常路径都经 drain() 清过，这里兜住未来新增的不 drain 路径）
+        this.buf = "";
+        this.pendingShown = "";
         this.label = label;
         this.startedAt = this.now();
         this.lastDoneLabel = "";
@@ -139,9 +142,7 @@ export class ProgressRenderer {
         if (label && label === this.lastDoneLabel) return; // 同条目第二次收尾：吞（幂等）
         this.flush();
         const dur =
-            entry.noTiming || this.startedAt === 0
-                ? ""
-                : fmtDuration(this.now() - this.startedAt);
+            entry.noTiming || this.startedAt === 0 ? "" : fmtDuration(this.now() - this.startedAt);
         const symbol = entry.ok ? "✓" : "✗";
         const bytes = this.lastBytes ? `  ${this.lastBytes}` : "";
         const note = entry.note ? `  ${entry.note}` : "";
@@ -225,6 +226,14 @@ export class ProgressRenderer {
 }
 
 let defaultRenderer: ProgressRenderer | null = null;
+
+/**
+ * 测试钩子（review §二#5）：注入/复位进程级单例 —— 非 null=替换，null=下次取用时重建。
+ * 仅测试断言短命令输出通道（run() → info()）用；生产路径禁用。
+ */
+export function setDefaultRendererForTest(r: ProgressRenderer | null): void {
+    defaultRenderer = r;
+}
 
 /** 进程级默认渲染器：stderr，TTY 判定 process.stderr.isTTY && !NO_COLOR。 */
 export function getDefaultRenderer(): ProgressRenderer {

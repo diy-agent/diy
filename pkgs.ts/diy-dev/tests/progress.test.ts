@@ -149,7 +149,14 @@ const cases: Case[] = [
     {
         name: "F3 千分位裸数字（Enumerating）",
         seg: "remote: Enumerating objects: 12,439, done.",
-        want: { phase: "Enumerating objects", percent: null, count: null, total: 12439, done: true, remote: true },
+        want: {
+            phase: "Enumerating objects",
+            percent: null,
+            count: null,
+            total: 12439,
+            done: true,
+            remote: true,
+        },
     },
     {
         name: "F3 仅体积无速率（bytes 不丢）",
