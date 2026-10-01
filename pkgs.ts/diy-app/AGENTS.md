@@ -115,12 +115,50 @@ git add -A -n | grep -c node_modules        # 干跑确认不会误收
 | 类别 | 例子 | 丢了会怎样 | 落位 |
 |------|------|-----------|------|
 | **视图 cache** | 任务树展开/滚动、面板宽度、聊天密度、主题 | 无损失，可重建 | 浏览器 `localStorage`（唯一入口 `renderer_solid/lib/ui-state.ts` 的 `Caches` 字段池，可被「重置界面状态」清空） |
-| **半编辑数据**（草稿） | agent 输入框草稿、任务编辑框（标题/详情/正文） | **用户白打，不可重建** | 任务目录 `.diy/drafts.yaml`（`src/main/core/drafts.ts`，经 RPC 读写） |
+| **半编辑数据**（草稿 + 插话队列） | agent 输入框草稿、任务编辑框（标题/详情/正文）、**待投递的插话**（steer） | **用户白打，不可重建** | 任务目录 `.diy/drafts.yaml`（`src/main/core/drafts.ts` 的 `fields` 与 `steers` 两块；插话队列逻辑在 `core/steer-queue.ts`，经 RPC 读写） |
 | **会话日志** | `ops.jsonl` / `llm.jsonl` | 是权威但可重放重建、量大 | `$DIY_HOME/local/`（现状，勿搬） |
 
 - ❌ **禁止把草稿写 localStorage**：serve 模式与 Electron 模式各持一份 localStorage，同一条草稿在另一个模式看不到；且它属「有损数据」，被「重置界面状态」清掉就是真丢。
 - ✅ 草稿带 meta（`kind`/`version`/`base_updated`/`saved`）：丢不起的数据**不静默降级**，格式不符时留痕并返回 null；`base_updated` 用于检测「草稿期间任务被外部改过」。
 - ✅ 草稿写完即「提交/取消」，必须在保存与取消时显式清除，否则草稿会盖住新数据。
+- ⚠️ 同文件的 `fields`（草稿）与 `steers`（插话队列）**互不干涉**，各自只写自己那块：清空输入框草稿 ≠ 放弃排队中的插话（反之亦然）。两者皆空才删文件。
+
+### 对话中插话（steer）——「下一步 / 下一轮」
+
+需求：agent 跑轮次时用户能追加发言，不必等它跑完；提交的话必须**持久化且看得见**。
+
+| 关注点 | 约定 |
+|--------|------|
+| 入口（**唯一**） | 入队走 `chat --mode next-step\|next-turn`：给出 mode 则只入队、不启动轮次；不带 mode 则立即开一轮。`steer` 组只做队列管理（list/cancel/toggleMode/reorder）。词表统一为 `next-step`/`next-turn`（`core/drafts.ts` 的 `STEER_MODES`） |
+| 两种投递时机 | 差别只在**投递点**，不在条数：`next-step` = 下一个模型步边界之前（本轮内就生效）；`next-turn` = 本轮收尾后的下一轮开场。**两者都整批投** —— 一次把队列里符合时机的全部取出（多条合并成同一批）。排队 3 条的心愿是"这三句一起告诉它"，拆成 3 轮只会多 3 次请求、3 个轮次边界（dsh 的 next-turn 每轮只 claim 一条，我们**不跟**这一条）。UI 文案说人话：`下一步` / `下一轮` |
+| next-step 的落地 | 两段式：**认领**在 `runTurn` 的 `prepareStep`（只读队列 `peekMode`，把**整批**文本注入请求 messages，`stepNumber > 0` 才做 —— 第一个请求是本轮本身，其批量已由开场消息承载）；**落位**在流里出现 `start-step` 时（`landClaimedSteers`：逐条 sink 写进 ops + 出队） |
+| 轮末开场（**不续段**） | `chat()` 的轮次循环：轮末若队列非空就**把队列整体**（两种模式都算，按 FIFO）作为下一轮的开场消息 —— 多条 = 同一轮里的多条 user 块（`<turnId>_u`、`<turnId>_u2` …），用户不必再敲回车。⚠️ 这一步**只读不取**（`queue.list`）：真正的出队发生在 `runTurn` 开场块 sink 之后（**先记账再出队**），中途崩掉最坏是重复投一遍，不会丢 |
+| 为什么不做 turn-stopping 续段 | dsh 的 `agent/turn-stopping` 是给 **hook/插件**用的（模型想收工前否决并强制续一步，如 CI 未过）。我们没有 hook 系统；对**用户插话**而言，往同一轮尾巴续一段只会得到「assistant 总结 → user 插话 → assistant 又总结」的夹层，而收益仅是早一个**本来就会立刻发生**的轮次边界生效 —— 代价是轮次结构 / usage / 停止边界都要为夹层做特例。故：模型给出最终答复就干净收尾，插话作为下一轮开场 |
+| 认领≠落位（**别合并这两步**） | 两条流不在同一时间轴：`prepareStep` 由 SDK 内部调用时，消费端**可能还压着上一步的 part**（producer 已到第 N+1 步、consumer 还在第 N 步尾部）。在 `prepareStep` 就 sink+出队，插话块会插到上一步未完的内容**之前** —— 实测真实日志出现过（`su1` 排在 `stop s1` 之前）。`start-step` 是"上一步全部 part 已处理、下一步尚未开始"的唯一无歧义位置。崩溃安全靠**先 sink 再出队**（两步都是同步文件操作、无 await）：最坏是重复投一遍，不会丢 |
+| 队列项 id | `steer/N`（"实体/序号"）：序号 = 队列内最大序号 + 1；只保证**同一时刻队列内唯一**，取消/投递后不回退，清空后重新从 1 起。块 meta 另带 `steerId` 指回队列项 |
+| 队列存储 | `.diy/drafts.yaml` 的 `steers`（FIFO，整表替换）；**移除即落盘**（`remove` 是唯一的"投递完成"信号），失败**抛错**不静默。旧格式 id（随机串）仍可读可取消（id 只是不透明字符串） |
+| 队列快照刷新 | UI 侧 `refreshSteers` 做**在途合并**：一轮整批投递会连发多个带 `steer` 的 start op，逐个拉就是 N 次 RPC + N 次快照（只有最后一次有意义）。在途时不排队、只记 dirty，在途那次回来后再补一趟 → N 次压到 2 次，且不引入时间片延迟（横条该下架时立刻下架）。乱序保护靠 `steerSeq/steerSettled` 单调递增：`clear()` 后**不归零**（归零 = 撤掉挡板，在途旧响应反而被接收 → 横条复活已清插话），改为刷新一次对齐盘上真值 |
+| 时机切换（`toggleMode`） | 横条右侧的开关用 daisyUI `swap` 双向切换 `next-turn` ⇄ `next-step`（可逆，不是单向加急）。两态**同时改形状与颜色**：时钟 + 弱色 = 还得等；闪电 + `warning` 高对比底色/描边 + `animate-pulse` = 马上插。只换颜色不够 —— 小图标上同一形状换色一眼分不出 |
+| 拖拽排序（`reorder`） | 横条最左手柄可拖（顺序即投递顺序，拖完松手即落盘）。入参是**期望的完整顺序**（id 列表），不是"移到第 N 位"——那类相对指令在移除源项后要猜落点，是 off-by-one 温床。服务端以盘上队列为权威收敛：未知 id 忽略（可能刚被投递），未提到的项按原顺序追加到尾部（可能是别处刚入队的）—— 两条都保证一次拖拽不丢用户的话 |
+| ops 格式影响 | 只给 user 的 `text` 块加 `meta.steer` / `meta.steerId`（块类型表里声明为 Flag）—— **没有新 op 动词、没有新块 kind、没有版本字段**，新旧日志双向兼容（契约锁定在 `tests/core/local-blocks-steer-compat.test.ts`） |
+| ops 记录 | 插话写成 `text` 块 + `meta.steer = next-step\|next-turn` + `meta.steerId = steer/N`（`parent = turn`；同轮内落在"第 N 步之后"，降级时它就是新一轮的开场 user 块）→ 重放/续聊都看得出谁插的话 |
+| 上限 | `MAX_STEER_ROUNDS`（一次 chat 最多自动续 8 轮）。整批投递已经消化掉"轮末积压"，所以这个上限只在**本轮里用户还在继续插话**时才可能撞上（测试用"每次请求都再排一条"的桩模型复现）。上限分支**什么都不取**，剩余插话留在盘上（横条继续显示、可取消）并写显式 error 块 |
+| 上限提示的落位 | error 块必须**挂进本轮 turn**（`parent = turnId`）且 id 唯一（`<turnId>-limit`）。教训：曾经不带 parent —— 发射时 turn 已 stop、`openStack` 已空 → fold 成**根块**，而 UI 根渲染分支只认 turn → 显示成「[未知根 error]」，提示等于没写；id 曾取「队列首条 id + `-limit`」，同任务二次撞上限且首条未变时撞车 → 「重复 start」被丢、delta 却累进旧块（文案拼接）。`LocalChatPage` 的根分支另留 `ErrorBox` 兜底，用于重放**已存在**的旧日志（旧根块改不掉） |
+| UI（输入区） | 生成中**输入框不再锁死**；「停止」外观/位置/行为不变，仅在**输入框有内容**时多出**一个**「留言」按钮（回车同此）—— 发送侧始终只有"发送 / 留言"这一个主按钮。留言默认进入 `next-turn`（排队到下一轮），不把投递时机暴露成选择题 |
+| UI（待发送横条） | 位置在输入区上方一行（全屏编辑时挪进 fixed 区域）；**只渲染插话条目本身**（不另起"N 条待发送"标题行 —— 那属于界面解释自己），每行**三列**：左 = **拖拽手柄**（六点图标，只有手柄能发起拖拽），中 = 留言内容，右 = **可逆时机开关**（时钟 ⇄ 闪电；`next-turn` 态 tooltip=`排到下一轮（点击改为马上插到下一步）`，`next-step` 态高对比 + 呼吸，tooltip=`已加急：马上插到下一步（点击改回排队）`）+ ✕ 取消。拖拽用 `@dnd-kit/solid`（`DragDropProvider` + `useDraggable`/`useDroppable` + `DragOverlay` 跟手幽灵） |
+| UI（清空历史） | 「清空本对话历史」在对话 view **上方**与信息密度（☷）同排：破坏性且不可恢复，故只给垃圾桶图标 + tooltip + `aria-label`，点击后仍是二次确认；生成中不显示（正跑着的会话不该在此时被清掉）。⚠️ 确认文案**必须点明「排队中的 N 条插话也会删」** —— main 的 `clear()` 会连带 `queue.clear()`，而插话与草稿同级（丢了 = 用户白打），只写「对话记录」会让用户在不知情下丢字 |
+| 收尾（closeTurn）铁律 | ①必须在 `finally` 里（消费端断开时生成器以 return 展开，try 之后的顺序语句一律不执行）；②副作用（sink stop ops / `noteTurnEnd` / `turn-end` 审计）必须**同步做完且在任何 yield 之前**（return 展开下 finally 只执行到第一个 yield）。两条都有**回归测试**：`tests/core/local-agent-steer.test.ts` 的「消费端断开」两例（在"把 closeTurn 挪出 finally"的错误版本上会变红） |
+| 测试接缝 | `DIY_ZEN_BASE_URL`（指向桩上游，把"生成中"变成可保持的状态）；`LocalAgentManager(modelResolver)` 注入 `ai/test` 的 `MockLanguageModelV3`，断言口径是**上游实际收到的 messages** |
+| 真发用例用什么模型 | **`mimo-v2.6-flash`**（最便宜的带工具模型，价格表见仓库根 AGENTS.md「本地 agent 测试用什么模型」）。默认模型 `gpt-5.6-luna` 只在测它特有行为时用 |
+| 意图测试 | `tests/cli.intent.steer-ui.test.ts`（真实 UI + 桩上游）、`tests/cli.intent.agent-local.test.ts`（CLI/契约）、`tests/core/local-agent-steer.test.ts`（步/轮边界）、`tests/core/steer-queue.test.ts`、`tests/core/drafts.test.ts` |
+
+**与 `fix/session-running-truth`（任务 194）的合并注意**（**git 不会报**的语义冲突，合并时按此处理）：
+
+| 位置 | 那条分支的写法 | 本分支要求 | 结论 |
+|------|----------------|------------|------|
+| `MdEditor` 的 `editable` | `editable={!localChatStore.live}`（生成中锁输入框） | 生成中**必须可编辑**（否则无法留言插话） | **取可编辑**：锁输入框只是视觉暗示，真正守门的是 `submit()` 的 `if (view.live) return` 与 main 侧并发拒发。那边已同步改成 `editable` 并写明理由，合并时应无冲突 |
+| 「停止」按钮位 | 三态 `Switch`（停止中/生成中/发送），`stopping` 有 3s 宽限期 | 本分支把「清空」从输入区挪走、加了 `aura` 环绕 | 合并后按钮图：`aura` 包裹的停止按钮 + 三态文案；宽限期**不要**退回 `busy`（见 `shared/session-view.ts` 的 `stoppingStuck`） |
+| 输入区按钮 | 「留言」+ 时机开关（已删） | 现在只有一个「留言」+ 停止 | 以本分支为准；那边的「其他端正在生成…」提示保留 |
 
 ### agent 人物（persona）：模型配置的归属
 
@@ -359,7 +397,12 @@ renderer 那份没跟上，编译期才暴露 —— 用契约类型则不可能
     双击复位**、属性字段逐行且控件右缘对齐、「◀ 当前」紧跟标题、行内操作按钮右对齐、
     任务名链接 + daisyUI tooltip「打开任务」、hover 出行内「对话」按钮、点链接=选中任务、
     点按钮=打开对话 tab、FAB 文案为「对话」。`node scripts/ui-smoke/task-detail-smoke.mjs` 运行，exit 0 通过。
-    - 依赖 playwright，但本仓不装它：默认取 bun 全局安装，可用 `PLAYWRIGHT_MODULE=<路径> node …` 覆盖。
+    - 依赖 `playwright-core`，声明在**仓库根的 devDependencies**（脚本自身就在 `<repo>/scripts/` 下，
+      声明跟着脚本走；落在 `pkgs.ts/diy-app` 里只是碰巧被 npm 提升到根 `node_modules` 才能解析 ——
+      换 pnpm（严格 node_modules）或出现版本冲突就会当场断）。
+      选它而不是 `playwright`：`playwright-core` 是纯 CDP 协议库、postinstall **不下载浏览器**，
+      而本脚本只用 `connectOverCDP` 连 Electron 自带的 CDP，不需要浏览器二进制。
+      脚本内**不写任何机器绝对路径**，路径一律相对脚本自身推导；缺依赖时直接提示跑 `npm install`。
     - **跑完必须确认实例真的没了**（脚本自己会打「测试实例已清理」）。只发一次 TERM 就退出，
       遇 app 卡在退出流程或外层 `timeout` 打断，会留下没人管的实例 —— 实测跑十几轮攒出二十多个，
       各占 70MB 主进程 + 300MB renderer，直接把内存吃光。收尾固定姿势：
@@ -371,6 +414,11 @@ renderer 那份没跟上，编译期才暴露 —— 用契约类型则不可能
 ### 交互自动化操作 App（agent 自测/演示用，实测经验）
 
 目标：让 agent 用 CLI 驱动真实界面做自测或演示。以下每条都是实测踩出来的。
+
+- `playwright-cli` 命令来自 npm 包 **`@playwright/cli`**（依赖 `playwright` 全家桶，安装时会
+  postinstall 下载浏览器）。要让它随项目固定版本，可把它也装成 devDependency（配合
+  `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` 可省掉浏览器，仅用 attach/连 CDP 的场景够用）；
+  本仓目前**不装**它 —— 库（`playwright-core`）已内装给冒烟脚本，命令侧沿用机器上现成的 `playwright-cli`。
 
 **提速是第一原则**：每次 `playwright-cli <cmd>` 都是独立进程冷启动（≈1~3s，内部还有固定
 500ms 稳定等待），逐条敲一个流程要几十秒。**把整个流程压进一次 `eval`**（async IIFE +
@@ -398,6 +446,12 @@ document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === b;  // fals
   + 危险按钮 `shrink-0` 并与显示方式组用竖线分隔。
 - ⚠️ `elementFromPoint` 只测坐标命中；要测**真实手势链**（拖拽、拖出、hover）仍用
   `mouse.move/down/up` 分步（见 `scripts/ui-smoke/dnd-smoke.py`）。
+- ⚠️ **拖拽必须给真实时间 + 至少一帧**（`tests/ui-drive.ts` 的 `drag` 已内置：每步 25ms +
+  `requestAnimationFrame` 等一帧）。CDP 的 `dispatchMouseEvent` 是瞬时的，把"按下→移动→抬起"
+  压进同一批任务时，dnd-kit 这类库的**异步激活**（按下后等一帧）来不及走完 —— 现象是
+  "拖拽完全不生效，而 DOM/坐标/命中全正常"，极难查（实测：无延迟 0 次生效，加帧等待必成）。
+  同文件里 `Cdp.send` 也带超时（10s）并在连接断开时让在途命令失败：否则半死的 CDP 只会把
+  测试拖到 `testTimeout`，看不出真正原因。
 - ⚠️ 键盘要用 `playwright-cli press Escape`（真实事件）；`document.dispatchEvent(new
   KeyboardEvent(...))` 只是合成等价物，能验证监听链但不能替代真实按键验收。
 

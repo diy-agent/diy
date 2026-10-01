@@ -107,3 +107,37 @@ export function _toErrorPayload(err: unknown): _ErrorPayload {
 export function _fromErrorPayload(p: _ErrorPayload): RpcError {
   return new RpcError(p.code, p.message, { details: p.details, ext: p.ext });
 }
+
+// ═══════════════════════════════════════════════
+//  AbortSignal.reason 映射（取消语义，任务 185）
+// ═══════════════════════════════════════════════
+
+/**
+ * signal.reason → 本地终态 RpcError。
+ * 契约：默认取消码是 CANCELLED（跨传输 canonical）；调用方显式给出 RpcError 时透传
+ * （reason 是调用方自己的表达）；其余（DOMException AbortError、字符串等）归一
+ * CANCELLED 并保留 message，调用方能看到取消来源。
+ */
+/** @internal */
+export function _reasonToRpcError(reason: unknown): RpcError {
+  if (reason instanceof RpcError) return reason;
+  if (reason instanceof Error) return new RpcError('CANCELLED', reason.message || 'Call cancelled');
+  if (typeof reason === 'string') return new RpcError('CANCELLED', reason);
+  return new RpcError('CANCELLED', 'Call cancelled');
+}
+
+/**
+ * signal.reason → 可序列化 wire reason（只保留 code/message，不传任意 Error）。
+ * RpcError 保其 code（调用方显式表达）；其余归一 CANCELLED。
+ */
+/** @internal */
+export function _reasonToWire(reason: unknown): { code: string; message: string } {
+  const r = _reasonToRpcError(reason);
+  return { code: r.code, message: r.message };
+}
+
+/** wire reason → RpcError（对端取消原因入本地终态） */
+/** @internal */
+export function _wireToReason(w?: { code: string; message: string }): RpcError {
+  return w ? new RpcError(w.code, w.message) : new RpcError('CANCELLED', 'Call cancelled');
+}

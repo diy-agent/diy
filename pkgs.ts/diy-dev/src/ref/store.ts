@@ -98,7 +98,9 @@ function splitSpec(raw: string): { url: string; version: string | null } {
     if (m && parseRepoUrl(m[1]!)) return { url: m[1]!, version: m[2]!.toLowerCase() };
 
     // 文件页 / 功能页：ref 边界离线无法确定，明确拒绝并指路
-    const page = t.match(/\/(blob|pull|compare|commits|actions|issues|discussions|wiki|releases)(\/|$)/);
+    const page = t.match(
+        /\/(blob|pull|compare|commits|actions|issues|discussions|wiki|releases)(\/|$)/,
+    );
     if (page) {
         throw new Error(
             `不支持的页面 URL（/${page[1]}）：请复制仓库根或 /tree/ 分支页地址，或用 @版本 形式\n  ${raw.trim()}`,
@@ -223,7 +225,8 @@ export function addSource(dir: string, spec: string): string {
 
 /** 按 owner/repo、完整 URL、或 diy.yaml 原字符串移除；找到返回其 spec，未找到返回 null。 */
 export function removeSource(dir: string, name: string): string | null {
-    ensureDiyYaml(dir);
+    // 不 ensureDiyYaml：无 diy.yaml 时直接「未找到」，不先建空文件（190 核对表 #10）
+    if (!existsSync(join(dir, "diy.yaml"))) return null;
     const specs = listSpecs(dir);
     const needle = name.trim();
     const hitIdx = specs.findIndex((s) => {

@@ -159,6 +159,28 @@ describe("assembleSystem 装配", () => {
     expect(traced.system).toBe(plain.system);
   });
 
+  it("cwd 回退到应用目录时不注入启动目录的 AGENTS.md 链（shell 的偶然位置不是任务规范）", () => {
+    // 无 taskUri + 项目路径不存在 → cwd = process.cwd()（= 应用/测试进程被启动的目录）。
+    // 那时若去爬它的 AGENTS.md 链，注入的既不是任务的项目规范、也不是应用规范，
+    // 且该目录恰是大仓库时（本仓库 pkgs.ts/diy-app/AGENTS.md 70 KB）会把 system 预算吃光
+    // —— 连"保存一条模版覆盖"都会被体积校验拒绝（实测 2026-10-01 合并后 5 例红）。
+    const noTask = assembleSystem(home, PID, {});
+    const v = noTask.values as { cwd: { isAppDir: boolean }; chain: Array<{ path: string }> };
+    expect(v.cwd.isAppDir).toBe(true);
+    expect(v.chain).toEqual([]);
+
+    // 应用级规范（$DIY_HOME/AGENTS.md）仍然注入：它不是"启动目录的偶然位置"
+    writeFileSync(join(home, "AGENTS.md"), "应用级规范\n", "utf-8");
+    const withApp = assembleSystem(home, PID, {});
+    expect((withApp.values as { chain: Array<{ path: string }> }).chain.map((c) => c.path)).toEqual([
+      join(home, "AGENTS.md"),
+    ]);
+
+    // 有任务时行为不变：cwd = 任务目录（项目路径不存在 → 回退任务目录），不是应用目录
+    const withTask = assembleSystem(home, PID, { taskUri: TASK });
+    expect((withTask.values as { cwd: { isAppDir: boolean } }).cwd.isAppDir).toBe(false);
+  });
+
   it("链的包裹格式由 project.md 决定（可覆盖，不是硬编码）", () => {
     // 无链 → 本节只有说明文字，没有任何 <project_instructions>
     const p0 = assembleSystem(home, PID, { taskUri: TASK });

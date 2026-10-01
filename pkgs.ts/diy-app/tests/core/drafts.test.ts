@@ -13,6 +13,8 @@ import {
   draftsFilePath,
   readDrafts,
   writeDrafts,
+  writeSteers,
+  type SteerItem,
 } from "../../src/main/core/drafts";
 
 const URI = "projects/901/tasks/1";
@@ -184,5 +186,136 @@ describe("drafts 存储位置", () => {
     const fp = draftsFilePath(URI);
     expect(fp).toBe(join(diyHome(), URI, ".diy", "drafts.yaml"));
     expect(taskSystemDir(URI)).toBe(join(taskDir(URI), ".diy"));
+  });
+});
+
+// ─── 插话队列（与草稿同文件的第二类数据） ─────────────
+//
+// 需求：插话（"插到下一步 / 插到下一次对话后"）必须持久化 —— 它是「已提交但还没投递的
+// 用户输入」，丢了同样是用户白打。与草稿同一个文件、同一份生命周期（随任务目录删除），
+// 但语义不同：草稿按字段合并，队列是整表替换（顺序 = 投递顺序）。
+
+describe("drafts 插话队列", () => {
+  it("无文件时读回空队列（不是 null）", () => {
+    expect(readDrafts(URI)).toBeNull();
+    // 有草稿但没插话：steers 恒为数组，调用方不必判空
+    writeDrafts(URI, { title: "T" });
+    expect(readDrafts(URI)!.steers).toEqual([]);
+  });
+
+  it("写入后可读回，字段完整（id/mode/text/created）", () => {
+    const items: SteerItem[] = [
+      { id: "s1", mode: "next-step", text: "插到下一步", created: "2026-09-25T00:00:00.000Z" },
+    ];
+    writeSteers(URI, items);
+    expect(readDrafts(URI)!.steers).toEqual(items);
+  });
+
+  it("顺序即投递顺序（整表替换，不合并）", () => {
+    const mk = (id: string, mode: "next-step" | "next-turn"): SteerItem => ({ id, mode, text: id, created: "" });
+    writeSteers(URI, [mk("a", "next-step"), mk("b", "next-turn")]);
+    writeSteers(URI, [mk("c", "next-turn")]);
+    expect(readDrafts(URI)!.steers.map((i) => i.id)).toEqual(["c"]);
+  });
+
+  it("插话与草稿字段互不干扰（同一个文件，各写各的）", () => {
+    writeDrafts(URI, { agent_input: "打到一半" }, "v1");
+    writeSteers(URI, [{ id: "s1", mode: "next-step", text: "插嘴", created: "" }]);
+    let d = readDrafts(URI)!;
+    expect(d.fields.agent_input).toBe("打到一半");
+    expect(d.steers).toHaveLength(1);
+    // 反向：写草稿不该冲掉队列
+    writeDrafts(URI, { title: "T" });
+    d = readDrafts(URI)!;
+    expect(d.steers.map((i) => i.id)).toEqual(["s1"]);
+    // base_updated 也不能被插话写入覆盖（草稿的基点是草稿的）
+    expect(d.base_updated).toBe("v1");
+  });
+
+  it("清空草稿字段不动插话队列（清空输入框 ≠ 放弃排队中的插话）", () => {
+    writeDrafts(URI, { agent_input: "草稿" });
+    writeSteers(URI, [{ id: "s1", mode: "next-turn", text: "插嘴", created: "" }]);
+    clearDrafts(URI);
+    const d = readDrafts(URI)!;
+    expect(d.fields).toEqual({});
+    expect(d.steers.map((i) => i.id)).toEqual(["s1"]);
+    // 字段与队列皆空才删文件；此处队列非空 → 文件仍在
+    expect(existsSync(draftsFilePath(URI))).toBe(true);
+  });
+
+  it("clearDrafts(uri, []) 什么都不清（空数组 ≠ 整份删除：否则会顺手删掉排队中的插话）", () => {
+    writeDrafts(URI, { title: "T" });
+    writeSteers(URI, [{ id: "steer/1", mode: "next-step", text: "排队中", created: "" }]);
+    clearDrafts(URI, []);
+    const d = readDrafts(URI)!;
+    expect(d.fields.title).toBe("T");
+    expect(d.steers.map((i) => i.id)).toEqual(["steer/1"]);
+  });
+
+  it("纯空白的插话被读侧拒掉（与 add 侧 trim 拒空同一条不变式）", () => {
+    writeRaw(
+      `kind: ${DRAFTS_KIND}\nversion: ${DRAFTS_VERSION}\ntask: ${URI}\nfields: {}\n` +
+        `steers:\n  - id: steer/1\n    mode: next-step\n    text: '   '\n    created: ''\n`,
+    );
+    expect(readDrafts(URI)!.steers).toEqual([]);
+  });
+
+  it("字段与队列都空 → 文件删除（不留空壳）", () => {
+    writeSteers(URI, [{ id: "s1", mode: "next-step", text: "插嘴", created: "" }]);
+    writeSteers(URI, []);
+    expect(existsSync(draftsFilePath(URI))).toBe(false);
+  });
+
+  it("v2 草稿（无 steers）可迁移：版本升到 v3、字段保留、队列为空", () => {
+    writeRaw(
+      `kind: ${DRAFTS_KIND}\nversion: 2\ntask: ${URI}\nfields:\n  agent_input: 旧草稿\n`,
+    );
+    const d = readDrafts(URI)!;
+    expect(d.version).toBe(DRAFTS_VERSION);
+    expect(d.fields.agent_input).toBe("旧草稿");
+    expect(d.steers).toEqual([]);
+  });
+
+  it("坏插话项被跳过并留痕，其余项照常读回（不因一条坏记录丢整队）", () => {
+    writeRaw(
+      `kind: ${DRAFTS_KIND}\nversion: ${DRAFTS_VERSION}\ntask: ${URI}\nfields: {}\n` +
+        `steers:\n  - id: s1\n    mode: next-step\n    text: 好的\n    created: ''\n` +
+        `  - id: s2\n    mode: 未知模式\n    text: 坏的\n` +
+        `  - id: s3\n    mode: turn\n    text: ''\n` +
+        `  - 这是字符串不是对象\n`,
+    );
+    expect(readDrafts(URI)!.steers.map((i) => i.id)).toEqual(["s1"]);
+  });
+
+  it("历史 mode 值可读回：step/turn + 非空文本 → next-step/next-turn（丢了 = 用户白打）", () => {
+    // 枚举最初叫 step/turn，改名时**没有**升 DRAFTS_VERSION → 旧文件里的 `mode: step` 会撞上
+    // "未知模式 → 丢弃"分支，排队中的留言凭空消失。映射必须钉死正向路径 ——
+    // 上面那条"坏插话项"用例里的 `mode: turn` 走不到这里（它的 text 是空串，
+    // 被更早的"非空白 text"校验先拦掉），所以删掉映射它照样绿。
+    writeRaw(
+      `kind: ${DRAFTS_KIND}\nversion: ${DRAFTS_VERSION}\ntask: ${URI}\nfields: {}\n` +
+        `steers:\n  - id: s1\n    mode: step\n    text: 甲\n    created: ''\n` +
+        `  - id: s2\n    mode: turn\n    text: 乙\n    created: ''\n`,
+    );
+    // 断言 mode 本身（而不只是条数）：映射错了 id 照样在，只有 mode 会说谎
+    expect(readDrafts(URI)!.steers.map((i) => [i.id, i.mode])).toEqual([
+      ["s1", "next-step"],
+      ["s2", "next-turn"],
+    ]);
+  });
+
+  it("已是现值的 mode 原样读回（映射不改写新值）", () => {
+    writeRaw(
+      `kind: ${DRAFTS_KIND}\nversion: ${DRAFTS_VERSION}\ntask: ${URI}\nfields: {}\n` +
+        `steers:\n  - id: s1\n    mode: next-step\n    text: 甲\n    created: ''\n` +
+        `  - id: s2\n    mode: next-turn\n    text: 乙\n    created: ''\n`,
+    );
+    expect(readDrafts(URI)!.steers.map((i) => i.mode)).toEqual(["next-step", "next-turn"]);
+  });
+
+  it("steers 不是数组 → 按空队列处理", () => {
+    writeRaw(`kind: ${DRAFTS_KIND}\nversion: ${DRAFTS_VERSION}\nfields:\n  title: T\nsteers: 乱写\n`);
+    expect(readDrafts(URI)!.steers).toEqual([]);
+    expect(readDrafts(URI)!.fields.title).toBe("T");
   });
 });

@@ -263,11 +263,24 @@ function taskOf(home: string, taskUri: string): { title: string; state: string; 
  * - **上界 = $HOME**（不进 /、不进 /Users）：家里那几层（~/AGENTS.md、~/git/AGENTS.md …）
  *   是用户指定的全局规则与信息，就是要逐层生效到每个任务
  * - 工作目录不在 $HOME 内时才只取该目录自身一层；另加 $DIY_HOME/AGENTS.md 作为应用级规范
+ * - ⚠️ **isAppDir 回退（项目目录与任务目录都不存在）时整条链为空**：那时的 cwd 是
+ *   `process.cwd()`，即「应用进程恰好被启动在哪个目录」—— 它既不是任务的项目、也不是
+ *   应用自己的规范，注入它等于把"启动 shell 的偶然位置"当成任务规范；而且该目录若正好
+ *   是个大仓库（如本仓库的 `pkgs.ts/diy-app/AGENTS.md` 有 70 KB），还会把 system 预算吃光
+ *   → 连"保存一条模版覆盖"都会被体积校验拒绝（savePrompt 的探针同样走这里）。
+ *   项目/任务目录任一存在时行为不变。
  * 内容 trim（这是**数据准备**：链内容是变量值，不是模版源）
  */
-function chainOf(home: string, cwd: string, taskUri: string): AssembleGlobals["chain"] {
+function chainOf(home: string, cwd: string, taskUri: string, isAppDir = false): AssembleGlobals["chain"] {
   const homeDir = homedir();
   const start = resolve(cwd);
+  if (isAppDir) {
+    // 只保留应用级规范（$DIY_HOME/AGENTS.md），不爬 process.cwd() 的链
+    const only = join(home, "AGENTS.md");
+    return existsSync(only)
+      ? [{ path: only, scope: dirname(only), content: readFileSync(only, "utf-8").trim() }]
+      : [];
+  }
   const underHome = start === homeDir || start.startsWith(homeDir + sep);
   const stop = underHome ? homeDir : start;
   const ownTaskFile = taskFileAt(home, taskUri);
@@ -483,7 +496,7 @@ export function assembleGlobals(
       isTaskDir: cwdRes.isTaskDir,
       isAppDir: cwdRes.isAppDir,
     },
-    chain: chainOf(home, cwdRes.cwd, taskUri),
+    chain: chainOf(home, cwdRes.cwd, taskUri, cwdRes.isAppDir),
     skills: opts.skills ?? [],
   };
   return globals;

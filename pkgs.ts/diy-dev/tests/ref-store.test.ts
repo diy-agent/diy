@@ -4,7 +4,7 @@
  * 纯逻辑 + tmpdir 文件操作，不触网、不调 git。
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -125,6 +125,13 @@ describe("diy.yaml source 读写", () => {
         const raw = readFileSync(join(dir, "diy.yaml"), "utf-8");
         expect(raw).toContain("https://github.com/a/x");
     });
+
+    it("remove 在无 diy.yaml 目录 → null 且不创建文件（190 核对表 #10）", () => {
+        expect(existsSync(join(dir, "diy.yaml"))).toBe(false);
+        expect(removeSource(dir, "org/repo")).toBeNull();
+        // 不允许先建空文件再报「未找到」
+        expect(existsSync(join(dir, "diy.yaml"))).toBe(false);
+    });
 });
 
 describe("ref.lock.yaml 往返", () => {
@@ -181,9 +188,7 @@ describe("parseSpec / 浏览器地址形式", () => {
     it("/tree/ 尾部斜杠与 fragment 剥离", () => {
         expect(parseSpec("https://github.com/org/repo/tree/main/").version).toBe("main");
         expect(parseSpec("https://github.com/org/repo/tree/main#readme").version).toBe("main");
-        expect(parseSpec("https://github.com/org/repo/tree/v1.0.0?plain=1").version).toBe(
-            "v1.0.0",
-        );
+        expect(parseSpec("https://github.com/org/repo/tree/v1.0.0?plain=1").version).toBe("v1.0.0");
     });
 
     it("/releases/tag/ 按 tag", () => {

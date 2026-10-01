@@ -139,7 +139,8 @@ describe('meta/handle 分离 + createTypedClient', () => {
 
     const ac = new AbortController();
     ac.abort();
-    await expect(cli.slow({ delay: 1000, id: 1 }, { signal: ac.signal })).rejects.toMatchObject({ code: 'ABORTED' });
+    // 规范终态：abort → CANCELLED（不再 ABORTED；message 取自 signal.reason，任务 185）
+    await expect(cli.slow({ delay: 1000, id: 1 }, { signal: ac.signal })).rejects.toMatchObject({ code: 'CANCELLED' });
 
     binding.destroy();
   });
