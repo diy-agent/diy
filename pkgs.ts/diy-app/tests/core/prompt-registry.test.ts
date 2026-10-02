@@ -1,6 +1,6 @@
 // tests/core/prompt-registry.test.ts — 注册表单测（隔离 HOME，不碰 ~/.diy）
 import { describe, expect, it, beforeEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -59,6 +59,14 @@ describe("list/get", () => {
 });
 
 describe("systemOverBudget（真发与模版线共用的唯一预算判据）", () => {
+  it("★ 两条链路都真的调它（源码护栏：真发曾内联 `bytes > budget`，两处口径会悄悄分叉）", () => {
+    const src = readFileSync(join(__dirname, "..", "..", "src", "main", "services", "local-agent.ts"), "utf-8");
+    expect(src).toContain("systemOverBudget(");
+    // 真发侧不得再自己算预算（systemBudgetForContext 只该在 prompt-registry 内部出现）
+    expect(src).not.toContain("systemBudgetForContext(");
+    expect(src).not.toMatch(/\.system\.bytes\s*>\s*sysBudget/);
+  });
+
   it("★ 正好等于预算 → 放行（只有严格大于才拒发；边界错了会把刚好合格的提示词拒掉）", () => {
     const budget = systemBudgetForContext(256_000);
     expect(systemOverBudget(budget, 256_000)).toBeNull();

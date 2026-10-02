@@ -36,7 +36,7 @@ import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
 import { statFromStep } from "../../shared/context/stats";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
-import { assembleGlobals, systemBudgetForContext } from "./prompt-registry";
+import { assembleGlobals, systemOverBudget } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
 import { SteerQueue } from "../core/steer-queue";
 import type { SteerItem, SteerMode } from "../core/drafts";
@@ -901,13 +901,15 @@ export class LocalAgentManager {
         // 划分规则读**真源**（$DIY_HOME/context.yaml；缺失/损坏则推荐名单 + 出声）——
         // 与上下文树页读的是同一份，所以页面上看到的 system/runtime 划分就是这里会用的划分。
         const delivery = buildDelivery(globals, loadSystemPlaces(diyHome()));
-        // 预算与当前模型的上下文窗口挂钩（小窗口模型拿更小预算，大窗口封顶 64KB）
-        const sysBudget = systemBudgetForContext(contextLimitOf(model));
-        if (delivery.system.bytes > sysBudget) {
+        // 预算判据与模版线**共用同一个函数**（services/prompt-registry 的 systemOverBudget）：
+        // 曾经这里是内联的 `bytes > budget`，逻辑等价但两处各写一遍 —— 日后任何一侧改口径
+        // （比如"等于预算算不算超"）都会悄悄分叉，而单测只覆盖得到被调用的那一侧（209 第 3 轮 R-1）。
+        const over = systemOverBudget(delivery.system.bytes, contextLimitOf(model));
+        if (over) {
             const kb = (n: number) => (n / 1024).toFixed(1);
             yield* errorBlock(
                 "budget",
-                `系统上下文超出预算（${kb(delivery.system.bytes)} KB > ${kb(sysBudget)} KB），本轮未发送。` +
+                `系统上下文超出预算（${kb(over.used)} KB > ${kb(over.budget)} KB），本轮未发送。` +
                     `请精简项目 AGENTS.md，或在上下文树页把易变变量划到 runtime。`,
             );
             // 拒绝发送也是一轮完整生命周期：必须闭合，否则 UI/崩溃报告/审计三处都会认为它还在跑。
