@@ -103,6 +103,8 @@ function TaskNameLink(props: {
     chatOpen?: boolean;
     /** 长标题换行显示全（详情面板标题用，188①）；缺省单行 truncate（树内嵌入场景） */
     wrap?: boolean;
+    /** 点击语义：task = 去任务管理看详情（缺省）；chat = 打开/切换对话（血缘树，C-2 调换） */
+    act?: "task" | "chat";
 }) {
     const [tip, setTip] = createSignal<{ x: number; y: number; up: boolean } | null>(null);
 
@@ -123,7 +125,11 @@ function TaskNameLink(props: {
                 onMouseLeave={() => setTip(null)}
                 onClick={(e) => {
                     e.stopPropagation();
-                    openTask(props.uri);
+                    /* C-2（改 ##183 的既定交互）：血缘树点标题 = 打开对话 ——
+                       用户在树里点标题的意图几乎都是「进这个任务的会话」，
+                       原「去任务管理」常点错，真正的任务管理入口交给行内按钮。 */
+                    if (props.act === "chat") openChat(props.uri);
+                    else openTask(props.uri);
                 }}
             >
                 {props.label}
@@ -139,7 +145,13 @@ function TaskNameLink(props: {
                                 transform: t().up ? "translateY(-100%)" : undefined,
                             }}
                         >
-                            {props.chatOpen ? "已在对话中打开 · 点击打开任务" : "打开任务"}
+                            {props.act === "chat"
+                                ? props.chatOpen
+                                    ? "已在对话中打开 · 点击切换到对话"
+                                    : "打开对话"
+                                : props.chatOpen
+                                  ? "已在对话中打开 · 点击打开任务"
+                                  : "打开任务"}
                         </div>
                     </Portal>
                 )}
@@ -362,6 +374,7 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean }) {
                             uri={r.uri}
                             label={r.title ?? r.uri}
                             class="min-w-0 text-body"
+                            act="chat"
                             /* 已开在导航里的任务**不再弹 hover 详情**：
                                nav 上那一项 hover 出来的就是同一个 view 的同一份详情，
                                树里再弹一层等于把同样的东西显示两遍 —— 这个动作本来就只是
@@ -381,23 +394,23 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean }) {
                               · **已打开在导航里** → 常态显示且高亮成「已开」态：这时它是
                                 「状态指示」而不只是动作入口，藏起来反而要去 nav 里核对
                             文案随之变成「已打开」，避免和未打开态长得一样、「到底开没开」看不出来。 */}
+                        {/* C-2 调换后按钮 = 「去任务管理」入口（原 openTask 动作）：
+                            标题已接管「打开对话」，按钮补回被调走的任务详情入口。
+                            未开对话时 hover 才显形（行内安静）；已开对话常态显示做
+                            状态指示 —— 与标题的 font-semibold 一起回答「开没开」。 */}
                         <button
                             class={`btn btn-xs px-1 min-h-0 ml-auto shrink-0 ${
                                 chatOpen(r.uri)
                                     ? "btn-ghost bg-primary/25 ring-1 ring-primary/40 text-base-content hover:bg-primary/40"
                                     : "btn-ghost opacity-0 group-hover:opacity-70 hover:!opacity-100"
                             }`}
-                            title={
-                                chatOpen(r.uri)
-                                    ? `#${r.num ?? "?"} 的对话已打开（点击切换到它）`
-                                    : `打开 #${r.num ?? "?"} 的对话`
-                            }
+                            title={`#${r.num ?? "?"} 任务详情（去任务管理）`}
                             onClick={(e) => {
                                 e.stopPropagation();
-                                openChat(r.uri);
+                                openTask(r.uri);
                             }}
                         >
-                            {chatOpen(r.uri) ? "💬 已打开" : "💬 对话"}
+                            {chatOpen(r.uri) ? "💬 已打开 · 📋" : "📋 查看任务"}
                         </button>
                     </div>
                 )}

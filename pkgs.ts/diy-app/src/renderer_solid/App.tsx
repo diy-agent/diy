@@ -148,6 +148,10 @@ export default function App() {
     let hoverHideTimer: ReturnType<typeof setTimeout> | undefined;
     const showHoverTask = (uri: string | null | undefined) => {
         if (!uri) return;
+        /* 已开在 nav 的任务不弹详情覆盖层（##183 同语义，C-1）：
+           该任务的 tab 里左栏本来就是同一份详情，hover 再弹一层 = 同屏两份，
+           「顺便看一眼」变成重复噪音。tabStore 响应式：关掉 tab 立刻恢复可弹。 */
+        if (tabStore.find(`task-run:${uri}`)) return;
         clearTimeout(hoverHideTimer);
         setHoverTreeTask(null);
         setHoverTaskUri(uri);
