@@ -30,6 +30,18 @@ import { BlockStore, blocksToMessages, interruptedToolPatches, type Op, type JSO
 import { appendAudit } from "./agent-audit";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
+import {
+    bucketsOf,
+    costBreakdown,
+    snapshotUsage,
+    sumBuckets,
+    sumCosts,
+    turnUsagePatch,
+    type CostBreakdown,
+    type StepUsageRecord,
+    type UsageBuckets,
+    type UsageLike,
+} from "../../shared/usage";
 import { buildDelivery } from "../../shared/context/delivery";
 import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
@@ -43,7 +55,9 @@ import type { SteerItem, SteerMode } from "../core/drafts";
 import {
     apiOf,
     contextLimitOf,
+    costOf,
     DEFAULT_MODEL,
+    MODEL_COST_AS_OF,
     isKnownModel,
     LOCAL_MODELS,
     maxOutputTokensOf,
@@ -205,6 +219,30 @@ function llmFile(taskUri: string): string {
 /** 投递快照（每轮真发一条）：投递**事实**，与 raw 那种旁路观测不同 —— UI 的 step/diff 靠它 */
 function stepsFile(taskUri: string): string {
     return path.join(localDir(), `${keyOf(taskUri)}.steps.jsonl`);
+}
+
+/**
+ * 逐步用量账本（每步一行；见 ##211 §六）。
+ * **独立文件**：不塞进 steps.jsonl —— 那份是「投递事实」（UI 的 step/diff 靠它），
+ * 掺进观测数据会让「投递了什么」与「花了多少」两件事互相污染（一个写失败拖累另一个）。
+ */
+function usageFile(taskUri: string): string {
+    return path.join(localDir(), `${keyOf(taskUri)}.usage.jsonl`);
+}
+
+/** 读取某任务的逐步用量（时间正序；文件不存在 = 还没实现落盘之前的会话） */
+export function readStepUsages(taskUri: string): StepUsageRecord[] {
+    return readJsonl<StepUsageRecord>(usageFile(taskUri));
+}
+
+/** 追加一条用量记录（append-only；写失败只出声 —— 观测不能阻断会话） */
+function appendUsage(taskUri: string, rec: StepUsageRecord): void {
+    const fp = usageFile(taskUri);
+    try {
+        appendFileSync(fp, `${JSON.stringify(rec)}\n`, "utf-8");
+    } catch (e) {
+        console.error(`[local-agent] 用量记录写入失败 ${fp}:`, e);
+    }
 }
 
 /** 原始流 dump（仅 DIY_RAW_STREAM_DUMP=1 时写）：ai-sdk 的 part 原样落盘，用于研究“Op 是否漏信息” */
@@ -582,7 +620,13 @@ export class LocalAgentManager {
                 // （wire = store = UI = LLM），漏一次 apply 会让下一轮重建 messages 时看不到
                 // 上一轮的产出（实测症状：`InvalidPromptError: messages must not be empty`）。
                 // 手动驱动同时还能拿到内层的返回值（failed），for-await 会把它丢掉。
-                const inner = this.runTurn(taskUri, sess, pending, model, reasoningEffort, ctrl.signal, key, sink);
+                // 逐步用量记录的身份字段：这几项 chat() 时已知，但不进任何日志就答不出
+                // 「哪种配置更省」（##211 §六.2）—— 尤其同一会话换模型/换面时。
+                const inner = this.runTurn(taskUri, sess, pending, model, reasoningEffort, ctrl.signal, key, sink, {
+                    persona: persona.id,
+                    apiFace: apiOf(model),
+                    contextLimit: contextLimitOf(model),
+                });
                 let failed = false;
                 // 本轮 turn 块 id：上限提示要挂进**这一轮**（见下方上限分支），故从内层带回
                 let turnId = "";
@@ -706,6 +750,8 @@ export class LocalAgentManager {
         signal: AbortSignal,
         key: string,
         sink: (op: Op) => void,
+        /** 落盘身份（人物/面/窗口）：同一会话可换模型，故它是**行**的属性（##211 §六b.6） */
+        identity: { persona: string; apiFace: LocalModelApi; contextLimit?: number },
     ): AsyncGenerator<Op, { failed: boolean; turnId: string }, void> {
         const turnId = `t${Date.now()}`;
         const cwd0 = resolveCwdWithNote(diyHome(), taskUri).cwd;
@@ -755,6 +801,12 @@ export class LocalAgentManager {
         // turn 级 usage 账本（口径与来源全在 services/turn-usage.ts，那里也解释了
         // 为什么 cached 必须单独记：它是"缓存有没有真的生效"的唯一硬指标，##140 的验收标准）
         const acc = newUsageAcc();
+        // 本轮四桶累计（页脚「总输入(非缓存+读+写) / 总输出(文本+思考)」）+ 最后一步快照
+        // （窗口占用 = **最后一步** 的总输入+总输出，不是累加 —— 口径三分见 ##211 §三）
+        // 与累计金额（每步按各自生效单价算好再加，tier 每一步都可能不同）。
+        let turnBuckets: UsageBuckets = { noCache: 0, cacheRead: 0, cacheWrite: null, text: 0, reasoning: 0, outputTotal: 0, inputTotal: 0, total: 0 };
+        let lastStepBuckets: UsageBuckets | null = null;
+        let turnCost: CostBreakdown = { noCache: 0, cacheRead: 0, cacheWrite: null, text: 0, reasoning: 0, total: 0 };
         // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
         let lastAct: "none" | "text" | "tool" = "none";
 
@@ -1161,11 +1213,48 @@ export class LocalAgentManager {
                             yield* errorBlock("abort", "生成已取消");
                             break;
                         case "finish-step": {
-                            // 每步 usage 累加进 turn（zen 流尾 totalUsage 偶发缺失，双保险）
-                            const su = (part as unknown as { usage?: TurnUsage }).usage;
+                            // 每步 usage：① 落一条独立账（usage.jsonl，逐步明细/金额的唯一来源）
+                            // ② 累加进本轮桶（对话流页脚）
+                            // zen 流尾 totalUsage 偶发缺失，逐步累加同时是双保险（见 finish 分支）。
+                            const fsPart = part as unknown as {
+                                usage?: UsageLike;
+                                performance?: StepUsageRecord["performance"];
+                                response?: { id?: string; modelId?: string };
+                                finishReason?: string;
+                            };
+                            const su = fsPart.usage;
                             if (su) {
-                                addStepUsage(acc, su);
-                                yield* emit({ op: "patch", id: turnId, fields: { usage: { ...acc } } });
+                                addStepUsage(acc, su as TurnUsage);
+                                const b = bucketsOf(su);
+                                turnBuckets = sumBuckets([turnBuckets, b]);
+                                lastStepBuckets = b;
+                                // **按 response.modelId 查价**：上游可能路由改写模型（##211 §四.4.4）
+                                const priceModel = fsPart.response?.modelId ?? model;
+                                const rates = costOf(priceModel, b.inputTotal);
+                                const cost = rates ? costBreakdown(rates, b) : null;
+                                turnCost = sumCosts([turnCost, cost ?? { noCache: 0, cacheRead: 0, cacheWrite: b.cacheWrite == null ? null : 0, text: 0, reasoning: 0, total: 0 }]);
+                                appendUsage(taskUri, {
+                                    ts: new Date().toISOString(),
+                                    turnId,
+                                    step: stepN,
+                                    persona: identity.persona,
+                                    model,
+                                    apiFace: identity.apiFace,
+                                    reasoningEffort,
+                                    ...(identity.contextLimit ? { contextLimit: identity.contextLimit } : {}),
+                                    ...(fsPart.response?.id ? { responseId: fsPart.response.id } : {}),
+                                    ...(fsPart.response?.modelId ? { responseModel: fsPart.response.modelId } : {}),
+                                    ...(fsPart.finishReason ? { finishReason: fsPart.finishReason } : {}),
+                                    usage: snapshotUsage(su)!,
+                                    ...(fsPart.performance ? { performance: fsPart.performance } : {}),
+                                    rates: rates ? { ...rates, asOf: MODEL_COST_AS_OF } : null,
+                                    cost,
+                                });
+                                yield* emit({
+                                    op: "patch",
+                                    id: turnId,
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit) },
+                                });
                             }
                             if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
                             break;
@@ -1184,8 +1273,13 @@ export class LocalAgentManager {
                             if (usage) {
                                 // totalUsage 是整轮的权威值（一次 chat 只有一次 streamText）：
                                 // finish-step 的逐轮累加只是"流尾总量偶发缺失"的双保险
-                                setTurnUsage(acc, usage);
-                                yield* emit({ op: "patch", id: turnId, fields: { usage: { ...acc } } });
+                                setTurnUsage(acc, usage as TurnUsage);
+                                // 页脚仍用四桶视图：窗口占用取**最后一步**（累加值只解释"这一轮为什么贵"）
+                                yield* emit({
+                                    op: "patch",
+                                    id: turnId,
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit) },
+                                });
                             }
                             // turn 的 stop 由 closeTurn 发（finally 里那一处）：收尾必须闭合
                             break;
