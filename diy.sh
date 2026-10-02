@@ -55,6 +55,11 @@ fi
 # 缺了它，相对路径会落到应用目录（实测：`cd /tmp && diy tool read a.txt` 去找 <app>/a.txt）。
 export DIY_CALLER_CWD="$PWD"
 
+# CLI 执行方式默认值：必须在下面 http 块**之前**设 —— diy.sh 开了 `set -u`，
+# 未赋值就引用 `"$DIY_CLI_MODE"` 会立刻 "unbound variable" 退出（实测踩过：
+# 测试跑 ./diy.sh 从不显式设置该变量 → 每条命令秒败，全量测试大面积红）。
+DIY_CLI_MODE="${DIY_CLI_MODE:-auto}"
+
 # ── DIY_CLI_MODE=http：经 app server 的 /cli 端点执行（任务 223 性能原型）──
 # 机制：POST http://127.0.0.1:<port>/cli  body={"argv":[...],"cwd":...}
 #       server 进程内跑同一份 CliApp；响应 body=stdout，x-diy-exit=退出码，
@@ -127,9 +132,8 @@ cd "$APP_DIR"
 #   任一打包源（diy-app/src、diy-rpc/src、diy-template/src —— cli bundle 的输入）
 #   比产物新（刚改完码没重新 build）→ 回退 tsx 源码，保住「改完即生效」。
 #   新鲜度检查实测 ~14ms，远小于省下的 ~390ms。
-# DIY_CLI_MODE=auto|compiled|tsx：compiled 强制产物（测试/CI 跑 build 后用）、tsx 强制源码。
+# DIY_CLI_MODE 默认值见文件上部（已设）；此处只定位产物路径。
 CLI_JS="$APP_DIR/out/cli/index.js"
-DIY_CLI_MODE="${DIY_CLI_MODE:-auto}"
 DIY_CLI_EFFECTIVE="tsx"
 if [[ "$DIY_CLI_MODE" != "tsx" && -f "$CLI_JS" ]]; then
   if [[ "$DIY_CLI_MODE" == "compiled" ]]; then
