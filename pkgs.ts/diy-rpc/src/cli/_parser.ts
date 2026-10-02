@@ -62,6 +62,17 @@ export interface ParseArgvOptions {
   cwd?: string;
 }
 
+/**
+ * camelCase 字段名 → kebab-case 选项名（`byAgent` → `by-agent`）。
+ *
+ * 为什么需要：选项名默认取 schema 字段名（TS 侧是 camelCase），但 CLI 惯例是 kebab —
+ * 让用户去猜"这个选项是大写还是小写、有没有连字符"是不必要的认知负担。故**两种写法都接受**，
+ * help 里统一显示 kebab。已有的下划线命名（`change_type`）不受影响（只转大写字母）。
+ */
+function kebabOf(key: string): string {
+  return key.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+}
+
 /** @internal */
 export function parseArgv(def: _AnyProcedureMeta, argv: string[], opts: ParseArgvOptions = {}): ParsedInput {
   const schema = def.inputSchema;
@@ -85,6 +96,9 @@ export function parseArgv(def: _AnyProcedureMeta, argv: string[], opts: ParseArg
     const argMeta = _getCliArgMeta(field);
     if (optMeta) {
       optionNames.set(key, key);
+      // kebab 别名：`--by-agent` 与 `--byAgent` 等价（见 kebabOf）
+      const kebab = kebabOf(key);
+      if (kebab !== key) optionNames.set(kebab, key);
       if (optMeta.short) shortAliases.set(optMeta.short, key);
     }
     if (argMeta) {
@@ -234,7 +248,7 @@ export function generateHelp(def: _AnyProcedureMeta, cmdName: string, descriptio
     _emitAligned(lines, opts.map(([key, meta]) => {
       const field = shape[key];
       const alias = meta!.short ? `-${meta!.short}, ` : '    ';
-      const long = key.length > 1 ? `--${key}` : `-${key}`;
+      const long = key.length > 1 ? `--${kebabOf(key)}` : `-${key}`;
       const ph = meta!.placeholder ?? key;
       const isBool = unwrap(field) instanceof z.ZodBoolean;
       const argDisplay = isBool ? '' : ` ${ph}`;

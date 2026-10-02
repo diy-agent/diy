@@ -338,13 +338,20 @@ export interface StepUsageRecord {
     cost?: CostBreakdown | null;
 }
 
-/** 对话流 turn 页脚用的紧凑视图（main 在 finish-step 时 patch 进块属性） */
+/**
+ * 对话流 turn 页脚用的紧凑视图（main 每步 patch 进块属性）。
+ *
+ * 命名一律用四桶口径的名字（`inputTotal` / `cacheRead` …），不再用旧的 in/out/cached ——
+ * 旧名字正是「把含缓存的 input 当总量累加」那次口径事故的残留；历史 ops.jsonl 里的旧形状
+ * 由读侧单独识别降级（见 UsagePanel 的 isLegacyUsage），不必让新结构背这个包袱。
+ */
 export type TurnUsagePatch = {
-    /** 旧的窄字段（兼容历史消费者）：总输入 / 总输出 / 缓存读 / 总量 —— 均为**本轮累计** */
-    in: number;
-    out: number;
-    cached: number;
-    total: number;
+    /** 本轮累计：总输入（= 非缓存 + 缓存读 + 缓存写） */
+    inputTotal: number;
+    /** 本轮累计：总输出（= 文本 + 思考） */
+    outputTotal: number;
+    /** 本轮累计：缓存读 */
+    cacheRead: number;
     /** 本轮累计：非缓存输入 */
     noCache: number;
     /** 本轮累计：缓存写（全轮都不可测 → null） */
@@ -353,6 +360,8 @@ export type TurnUsagePatch = {
     text: number;
     /** 本轮累计：思考输出（总输出的子集） */
     reasoning: number;
+    /** 本轮累计：总输入 + 总输出（各步之和，用于解释"这一轮为什么贵"） */
+    total: number;
     /** 窗口占用分子：**本步（最后一步）**的总输入+总输出 —— 上下文压力口径 */
     windowTotal: number;
     /** 上下文窗口上限（未知 → null；UI 显示「—」而不是编一个百分比） */
@@ -364,9 +373,9 @@ export type TurnUsagePatch = {
 /** 由累计桶 + 最后一步桶 + 累计金额 → turn 页脚视图 */
 export function turnUsagePatch(cumulative: UsageBuckets, lastStep: Pick<UsageBuckets, "total"> | null, cost: CostBreakdown | null, contextLimit?: number): TurnUsagePatch {
     return {
-        in: cumulative.inputTotal,
-        out: cumulative.outputTotal,
-        cached: cumulative.cacheRead,
+        inputTotal: cumulative.inputTotal,
+        outputTotal: cumulative.outputTotal,
+        cacheRead: cumulative.cacheRead,
         total: cumulative.total,
         noCache: cumulative.noCache,
         cacheWrite: cumulative.cacheWrite,

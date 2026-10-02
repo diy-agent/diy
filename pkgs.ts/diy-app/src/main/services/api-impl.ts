@@ -386,7 +386,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { readUsage, renderUsageSteps, renderUsageByAgent } = await import("./usage-report");
     const steps = readUsage(input.task);
     return input.byAgent
-      ? renderUsageByAgent(steps)
+      ? renderUsageByAgent(steps, { last: input.last })
       : renderUsageSteps(steps, { last: input.last, cost: input.cost });
   });
 

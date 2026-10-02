@@ -64,13 +64,17 @@ export interface UsageTableOpts {
 export function renderUsageSteps(steps: StepUsageRecord[], opts: UsageTableOpts = {}): string {
     const list = opts.last && opts.last > 0 ? steps.slice(-opts.last) : steps;
     if (list.length === 0) return "（还没有用量记录：跑一轮本地 agent 后写入 <key>.usage.jsonl）";
-    const header = ["步", "人物", "模型", "面", "档位", "非缓存输入", "缓存读", "缓存写", "总输出(文本+思考)", "耗时", "TTFT", "窗口%", "合计$"];
+    // 步标识用「轮.步」而不是全局序号：序号与盘上的 turnId 对不上时，
+    // 排查「这一步到底属于哪一轮」要来回数——而那正是最常问的问题。
+    const turnNo = new Map<string, number>();
+    for (const r of steps) if (!turnNo.has(r.turnId)) turnNo.set(r.turnId, turnNo.size + 1);
+    const header = ["轮.步", "人物", "模型", "面", "档位", "非缓存输入", "缓存读", "缓存写", "总输出(文本+思考)", "耗时", "TTFT", "窗口%", "合计$"];
     if (opts.cost) header.splice(13, 0, "非缓存$", "缓存读$", "缓存写$", "文本$", "思考$");
-    const rows = list.map((r, i) => {
+    const rows = list.map((r) => {
         const v = stepView(r);
         const b = v.buckets;
         const cells = [
-            String(i + 1),
+            `${turnNo.get(r.turnId) ?? "?"}.${r.step}`,
             r.persona ?? "—",
             r.model,
             r.apiFace === "responses" ? "resp" : "chat",
@@ -99,9 +103,14 @@ export function renderUsageSteps(steps: StepUsageRecord[], opts: UsageTableOpts 
     return table(header, rows);
 }
 
-/** 会话汇总表：按「人物+模型+面+档位」分行（`--by-agent`） */
-export function renderUsageByAgent(steps: StepUsageRecord[]): string {
-    const groups = groupByAgent(steps);
+/**
+ * 会话汇总表：按「人物+模型+面+档位」分行（`--by-agent`）。
+ * `--last N` 同样生效（只统计最近 N 步）：两个模式的口径必须一致，
+ * 否则"看最近几步的花费"换一个模式就给出别的数，比不支持还坏。
+ */
+export function renderUsageByAgent(steps: StepUsageRecord[], opts: UsageTableOpts = {}): string {
+    const list = opts.last && opts.last > 0 ? steps.slice(-opts.last) : steps;
+    const groups = groupByAgent(list);
     if (groups.length === 0) return "（还没有用量记录）";
     const header = ["人物", "模型", "面", "档位", "步", "总输入(非缓存+读+写)", "总输出(文本+思考)", "非缓存$", "缓存读$", "缓存写$", "文本$", "思考$", "合计$", "单价依据"];
     const rows = groups.map((g) => [

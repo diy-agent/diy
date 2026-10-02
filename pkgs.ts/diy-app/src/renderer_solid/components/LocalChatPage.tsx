@@ -17,6 +17,7 @@ import { createSignal, For, Show, Switch, Match, createEffect, on, onMount, onCl
 import { localChatStore } from "../store/localChatStore";
 import { personaStore } from "../store/personaStore";
 import { PersonaDrawer } from "./PersonaDrawer";
+import { TurnUsageFooter, UsageDrawer } from "./UsagePanel";
 import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
@@ -554,19 +555,10 @@ function TurnView(props: {
             <Show when={str(t.attrs.notice)}>
                 <div class="text-[11px] text-warning">⚠ {str(t.attrs.notice)}</div>
             </Show>
+            {/* 本轮用量页脚：两个主体（总输入/总输出）+ 窗口占用 + 金额，点开看逐步明细。
+                数字来自 main 每步 patch 的块属性 —— 实时就有，不依赖账本文件读盘。 */}
             <Show when={t.attrs.usage}>
-                {(() => {
-                    const u = t.attrs.usage as { in?: number; out?: number; cached?: number; total?: number };
-                    return (
-                        <div class="text-[11px] opacity-50">
-                            tokens ↑{u.in ?? 0} ↓{u.out ?? 0}（Σ{u.total ?? 0}）
-                            {/* 缓存命中（暖输入）：划分策略是否省到钱的唯一硬指标，见 shared/context/delivery */}
-                            <Show when={(u.cached ?? 0) > 0}>
-                                <span class="ml-1 text-success">⇄{u.cached}</span>
-                            </Show>
-                        </div>
-                    );
-                })()}
+                <TurnUsageFooter turnId={t.id} usage={t.attrs.usage} />
             </Show>
             <Show when={t.attrs.interrupted && !isLiveTurn()}>
                 <div class="text-[11px] text-warning">⚠ 本轮未完成（流中断/崩溃恢复）</div>
@@ -946,6 +938,7 @@ export function LocalChatPage(props: { uri?: string }) {
                 setDensityOpen(false);
                 setPersonaPanelOpen(false);
                 setFullscreen(false);
+                setUsageOpen(false);
             }
         };
         document.addEventListener("click", closePopovers);
@@ -993,6 +986,8 @@ export function LocalChatPage(props: { uri?: string }) {
     const [pinned, setPinned] = createSignal<Record<string, boolean>>({});
     const togglePin = (id: string) => setPinned((p) => ({ ...p, [id]: !p[id] }));
     const [full, setFull] = createSignal<{ title: string; content: string } | null>(null);
+    /** 会话用量看板开关 */
+    const [usageOpen, setUsageOpen] = createSignal(false);
 
     createEffect(
         on(uri, (u, prev) => {
@@ -1096,6 +1091,8 @@ export function LocalChatPage(props: { uri?: string }) {
     return (
         <div class="flex flex-col h-full overflow-hidden">
             <PersonaDrawer open={personaPanelOpen()} onClose={() => setPersonaPanelOpen(false)} />
+            {/* 打开时顺手对一次账本（轮次间隙别人跑的那几轮不该漏） */}
+            <UsageDrawer open={usageOpen()} uri={uri()} onClose={() => setUsageOpen(false)} />
             {/* 顶部：对话 view 的**视图级控制**（Markdown 显示方式 + 信息密度 + 清空本会话历史）。
                 pr-16：ViewGrid 的 area 设施（最大化/最小化）浮在本区域**右上角**，
                 不预留这条空档，按钮会与它叠在同一坐标上（实测重叠）。 */}
@@ -1106,6 +1103,16 @@ export function LocalChatPage(props: { uri?: string }) {
                     危险按钮从输入区挪到这里：输入区那排是"发送/留言"的动作区，
                     清空历史与它们不同类（不是本轮动作，而是全会话的删除）。
                     生成中不显示：正跑着的会话不该在此时被清掉（原行为不变）。 */}
+                {/* 会话用量看板入口：窗口占用（何时该重置）、花费、缓存命中率都在里面。
+                    常驻（不因生成中隐藏）：看用量与"正在跑"不冲突，且跑的时候正是要看它涨到哪。 */}
+                <button
+                    class="btn btn-ghost btn-xs tooltip tooltip-bottom"
+                    data-tip="会话用量：窗口占用 / 花费 / 缓存命中 / 逐步明细"
+                    aria-label="会话用量看板"
+                    onClick={() => setUsageOpen(true)}
+                >
+                    ▤ 用量
+                </button>
                 <Show when={!localChatStore.live}>
                     <button
                         class="btn btn-ghost btn-xs tooltip tooltip-bottom"
