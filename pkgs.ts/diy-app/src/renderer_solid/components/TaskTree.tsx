@@ -666,7 +666,9 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                     {(v) => <span class={`badge badge-sm font-mono ${priorityClass(v())}`}>{v()}</span>}
                 </Show>
             </td>
-            <td class="text-body">
+            {/* whitespace-nowrap：列窄时「待处理」会被中文逐字竖排（188②），
+                状态文字固定 3 字，锁单行让 table 保住该列的 min-content */}
+            <td class="text-body whitespace-nowrap">
                 <StateSelector uri={row.key} state={row.node.state ?? ""} />
             </td>
             <td class="text-body font-mono opacity-60">{row.node.num ?? ""}</td>

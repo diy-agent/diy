@@ -101,6 +101,8 @@ function TaskNameLink(props: {
     preview?: boolean;
     /** 该任务的对话是否已打开（打开态由调用方从 tabStore 现查） */
     chatOpen?: boolean;
+    /** 长标题换行显示全（详情面板标题用，188①）；缺省单行 truncate（树内嵌入场景） */
+    wrap?: boolean;
 }) {
     const [tip, setTip] = createSignal<{ x: number; y: number; up: boolean } | null>(null);
 
@@ -113,9 +115,9 @@ function TaskNameLink(props: {
     return (
         <>
             <button
-                class={`text-body diy-link block w-full truncate text-left underline-offset-2 hover:underline cursor-pointer ${
-                    props.chatOpen ? "font-semibold" : ""
-                }`}
+                class={`text-body diy-link block w-full text-left underline-offset-2 hover:underline cursor-pointer ${
+                    props.wrap ? "whitespace-normal" : "truncate"
+                } ${props.chatOpen ? "font-semibold" : ""}`}
                 data-task-hover-uri={props.preview ? props.uri : undefined}
                 onMouseEnter={(e) => showTip(e.currentTarget)}
                 onMouseLeave={() => setTip(null)}
@@ -218,7 +220,7 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                         when={editing()}
                         fallback={
                             <h3 class="min-w-0 flex-1 text-title font-bold">
-                                <TaskNameLink uri={props.uri} label={props.task.title || props.uri} class="block" />
+                                <TaskNameLink uri={props.uri} label={props.task.title || props.uri} class="block" wrap />
                             </h3>
                         }
                     >
