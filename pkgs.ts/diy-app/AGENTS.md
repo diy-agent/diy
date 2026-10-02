@@ -64,6 +64,7 @@
 - `pit.ctx-two-lines` — **上下文树页**（ctxlab）的请求预览是**真发形态**（走 `buildDelivery`）；**提示词页**（lab）是**模版线**（`assembleSystem`）。两者不是同一条链，改动别互推
 - `pit.one-prompt-source` — `_guard.md` 不得复述 `INTERRUPTED_TOOL_NOTICE`；该文案唯一来源是 `local-blocks.ts` 的常量
 - `pit.localstorage` — **禁止把草稿写 localStorage**（属有损数据，且 serve 与 Electron 各持一份）：草稿 + 插话队列落任务目录 `.diy/drafts.yaml`，会话日志落 `$DIY_HOME/local/`
+- `pit.ref-lock` — `ref-sync.ts` 写 **v5** 格式的 `.diy/ref.lock.yaml`（`ref.{python,node}.{scope}.{category}`），而 `pkgs.ts/diy-dev/src/ref/store.ts` 写 **v1**（`source.{key}`）到**同一个文件** → 后写覆盖前者，且两者**互读为空、不报错**（读侧各自 `?? 5` / `?? 1` 兜底）。改这个文件前先确认哪边是活的
 - `pit.ownership` — 任务目录内 `AGENTS.md` 面向用户可编辑，`.diy/**` 系统独占（仅 main 经 RPC 写）；路径单一出口 `src/main/core/state.ts` 的 `taskSystemDir(uri)`
 - `pit.agent-history` — 本地 agent 的 `bash` 工具若执行批量杀进程命令（按名字匹配 electron 的一类），会杀掉宿主自己的 renderer → 永久白屏且进程被杀事件捕获不到：只能**执行前拦截 + 执行前落盘**（`src/main/services/agent-guard.ts` / `agent-audit.ts`）
 
