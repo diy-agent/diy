@@ -1,5 +1,7 @@
 # cli_rpc — CLI-as-API over ConnectRPC
 
+> ⚠️ 本文件属 **Python 归档区**（`pkgs/`）：代码保留，**能力已放弃**，一切以 TS 实现为准。以下内容仅供历史参考。
+
 ## 定位
 
 CLI 命令为一等 API。`diy subcmd arg --opt` = RPC 调用语义。

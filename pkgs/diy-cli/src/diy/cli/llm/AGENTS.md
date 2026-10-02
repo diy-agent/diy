@@ -1,5 +1,7 @@
 # diy llm — LLM Provider 配置同步
 
+> ⚠️ 本文件属 **Python 归档区**（`pkgs/`）：代码保留，**能力已放弃**，一切以 TS 实现为准。以下内容仅供历史参考。
+
 `diy llm` 统一管理多个上游渠道（TokenHub、DeepSeek 等），把 provider 配置同步到下游 PI agent 和 Hermes。
 
 CLI → credential pool → model sync → export。
