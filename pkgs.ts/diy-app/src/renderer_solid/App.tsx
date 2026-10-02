@@ -416,7 +416,8 @@ export default function App() {
     };
 
     return (
-        <div class="drawer lg:drawer-open">
+        // diy-nav-pinned：pin 锁定时窄窗也占布局列（199），覆盖规则见 index.css
+        <div class={`drawer lg:drawer-open ${pinned() ? "diy-nav-pinned" : ""}`}>
             {/* DaisyUI drawer 必须的 checkbox（控制开合，:checked 决定侧栏是否展开） */}
             <input type="checkbox" id="sidebar-toggle" class="drawer-toggle" />
             {/* 主内容区 */}

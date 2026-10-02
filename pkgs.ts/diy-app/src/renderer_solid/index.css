@@ -41,6 +41,29 @@
   color: var(--color-diy-link);
 }
 
+/* ── nav pin 窄窗也占布局列（任务 199） ────────────────────────────
+ * daisyUI 把「侧栏占位列」绑在 @media(width>=1024) 的 .lg:drawer-open 分支
+ * （side 切 position:sticky 参与 grid、content 留第 2 列）；窄窗 side 恒为
+ * position:fixed 浮层 —— 不占 grid 列，JS 的 pinned 只能改 nav 宽度，
+ * 展开后盖在 view 上不让位（pin 形同虚设）。
+ * pin 锁定的语义就是「占一列」：在 <1024 复刻 lg 分支的占位属性，
+ * overlay 同 lg 置透明（占位态不该压 40% 黑罩）。hover 未 pin 保持浮层不变。 */
+@media (width < 1024px) {
+  .diy-nav-pinned > .drawer-side {
+    position: sticky;
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+    width: auto;
+    display: block;
+    translate: 0%;
+  }
+  .diy-nav-pinned > .drawer-side > .drawer-overlay {
+    cursor: default;
+    background-color: transparent;
+  }
+}
+
 /* ── Markdown 正文排版（components/MarkdownView.tsx） ──────────────
  * 不引入 @tailwindcss/typography：只需覆盖几个标签，插件体积与定制成本不划算。
  * 颜色全部走 daisyUI 主题变量，深浅主题自动跟随。 */
