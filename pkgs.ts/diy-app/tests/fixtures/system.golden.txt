@@ -4,6 +4,14 @@
 <diy>
 diy 是一个 Electron 桌面管控台。命令行入口 /repo/diy.sh，数据根 /tmp/diy-home。
 
+**入口辨析**（别把三者混了）：
+
+- 上面这个入口是**当前生效的 CLI 客户端** —— 它连的是已运行的 app（读数据根下的 app.port），
+  **不启动应用**。数据根见上（worktree 里是隔离目录，不是 ~/.diy）。
+- **纯 diy（不带路径）通常是全局安装的生产版**：跑编译产物 + 数据根 ~/.diy。
+  **在 worktree 里不要用它**（会操作生产数据），一律用上面那个入口。
+- **要起 GUI** 不是用 CLI，而是 ./sha.sh dev（HMR 开发）；或 pkgs.ts/diy-app/sha.sh build 构建后由 CLI 拉起。
+
 - state.yaml 由运行中的应用独占写入 —— 不要直接编辑，改任务/项目一律走 CLI
 - projects/<pid>/tasks/<tid>/AGENTS.md 是任务本体（frontmatter + 正文）
 - local/*.jsonl 是会话与 LLM 日志，只读
@@ -40,7 +48,7 @@ diy 是一个 Electron 桌面管控台。命令行入口 /repo/diy.sh，数据�
 - 回答精炼，代码与命令原样引用，不臆造不改写
 - 用中文回答
 - 需要看文件、跑命令时优先用工具，不凭猜测作答
-- 用 bash 做文件操作（ls / rg / find / sed）
+- 文件操作优先 fd / rg（替代 find / grep）
 </rules>
 
 <guard>

@@ -352,3 +352,17 @@ describe("回归：评审修复项", () => {
     expect(SYSTEM_VARS.some((v) => v.path === "diy")).toBe(true); // 对象自身也是一条（{{diy}} 会报"是对象"）
   });
 });
+
+describe("diy.md 入口辨析（防回退）", () => {
+  it("必须讲清 diy / diy.sh / sha dev 的区别 —— 这是 agent 反复混淆的点", () => {
+    const t = getPrompt(home, PID, "diy.md").builtin;
+    // 四个关键概念，缺任一都会让 agent 重新分不清
+    expect(t).toContain("入口辨析");
+    expect(t).toContain("不启动应用"); // 它是客户端，不是"启动 app"
+    expect(t).toContain("生产"); // 纯 diy = 生产版 + ~/.diy
+    expect(t).toContain("worktree"); // worktree 里别用裸 diy
+    expect(t).toContain("要起 GUI"); // 起 GUI 走 sha.sh dev，不是 CLI
+    // 模版里不得出现裸反引号（会截断 TS 模版字符串）
+    expect(t).not.toContain("\\`");
+  });
+});
