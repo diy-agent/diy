@@ -8,6 +8,9 @@
 // 平级 tab，看不出关系。本文件把两套规则写在一起，并保证**缩进有排序兜底**：
 // 缩进若不能配相邻，那缩进就是在撒谎（子 tab 上面坐着的不是它的父）。
 //
+// 任务层次的「父」= **最近的已打开祖先**（不一定是直接父）：直接父的 tab 关了，
+// 子 tab 归更远的开着祖先管（226 的教训：判据一松一紧，孤儿就会挂到无关 tab 下）。
+//
 // 依赖方向：本文件只认数据（TabLike + 祖先链），不 import 任何 store ——
 // taskStore 与 tabStore 都不依赖对方，祖先链由调用方算好传进来。
 
@@ -114,6 +117,9 @@ export function normalizeOrder(
   const out: TabLike[] = [];
   const placed = new Set<string>();
   const byKey = new Map(opened.map((t) => [t.key, t]));
+  // 「哪些祖先已打开」的判据必须与根判定、isChildOf 共用同一份 —— 曾各算各的：
+  // 根判定认「任一开着祖先」而子判定只认直接父，直接父已关的孤儿两头不靠 → 掉兜底垫底（226）
+  const openCtx = new Set(opened.map((t) => t.ctx));
 
   /** 深度优先：先放自己，再放自己的后代（页面子页面 + 任务子任务） */
   const emit = (t: TabLike) => {
@@ -123,7 +129,7 @@ export function normalizeOrder(
     // 后代顺序 = 原列表顺序（稳定）
     for (const c of opened) {
       if (placed.has(c.key)) continue;
-      if (isChildOf(c, t, parentPageOf, byKey)) emit(c);
+      if (isChildOf(c, t, parentPageOf, byKey, openCtx)) emit(c);
     }
   };
 
@@ -131,7 +137,7 @@ export function normalizeOrder(
   for (const t of opened) {
     const pageParent = pageParentKeyOf(t, parentPageOf);
     const hasPageParent = !!pageParent && byKey.has(pageParent);
-    const hasTaskAncestor = (t.taskAncestors ?? []).some((a) => opened.some((o) => o.ctx === a));
+    const hasTaskAncestor = (t.taskAncestors ?? []).some((a) => openCtx.has(a));
     if (!hasPageParent && !hasTaskAncestor) emit(t);
   }
   // 兜底：环或异常数据导致的未放置项，按原顺序补上（绝不丢 tab）
@@ -139,16 +145,30 @@ export function normalizeOrder(
   return out;
 }
 
-/** c 是否是 t 的直接子（页面层次优先，其次任务层次） */
+/**
+ * c 是否归 t 管（页面层次优先，其次任务层次）。
+ *
+ * 任务层次的判据 = **t 是 c 的祖先、且是「最近的已打开祖先」**（与 insertionIndex ②
+ * 同语义）：直接父开着时它就是最近的那个；直接父已关而更远的祖先开着时，由那个
+ * 最近的开着祖先认领 —— 缩进（=开着的祖先数）指着的正是它上方那项。
+ * 曾经这里只认直接父，而根判定认「任一开着祖先」→ 孤儿两头不靠、掉进兜底排到
+ * 所有根之后，配上仍在的缩进，视觉上挂到无关任务下面（226）。
+ */
 function isChildOf(
   c: TabLike,
   t: TabLike,
   parentPageOf: (pageId: string) => string | undefined,
   byKey: Map<string, TabLike>,
+  openCtx: Set<string | null>,
 ): boolean {
   const pageParent = pageParentKeyOf(c, parentPageOf);
   if (pageParent && byKey.has(pageParent)) return pageParent === t.key;
-  // 任务层次：直接父就是 t 的 ctx
+  // 任务层次：t.ctx 必须在祖先链里，且 t 之后（更靠近 c）没有更近的已打开祖先
   const ancestors = c.taskAncestors ?? [];
-  return ancestors.length > 0 && ancestors[ancestors.length - 1] === t.ctx;
+  const ti = t.ctx ? ancestors.indexOf(t.ctx) : -1;
+  if (ti < 0) return false;
+  for (let k = ti + 1; k < ancestors.length; k++) {
+    if (openCtx.has(ancestors[k]!)) return false;
+  }
+  return true;
 }

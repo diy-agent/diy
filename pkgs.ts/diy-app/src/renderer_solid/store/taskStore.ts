@@ -30,13 +30,18 @@ const [selectedUri, setSelectedUri] = createSignal<string | null>(null);
 const [selectedTask, setSelectedTask] = createSignal<TaskDetail | null>(null);
 const [loading, setLoading] = createSignal(false);
 
+let loadSeq = 0;
 async function loadTree() {
+  const seq = ++loadSeq;
   setLoading(true);
   try {
     const r = await diyService.diy.loadTaskTree({});
+    // 过期响应丢弃：watch 的 task-change 可能连发触发并发 loadTree，旧请求后到会
+    // 把树覆盖回旧快照 —— 树「短暂回退」会让下游的 diff（如 tab 清理）误判任务消失
+    if (seq !== loadSeq) return;
     setNodes(r.data);
   } finally {
-    setLoading(false);
+    if (seq === loadSeq) setLoading(false);
   }
 }
 

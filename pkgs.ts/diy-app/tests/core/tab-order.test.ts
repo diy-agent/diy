@@ -149,6 +149,57 @@ describe("normalizeOrder —— 历史数据也要规范化", () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════
+// 关父 tab 后的「孤儿项」（226 回归）
+//
+// 场景：祖 a、父 b、孙 c 都开着，另有无关的顶级 x（后开 → 排队尾）。
+// 关掉 b 的 tab 后，c 的直接父不在列表里，但 a 仍开着：
+//   - 根判定 `ancestors.some(开着)` → c **不算根**（a 开着）
+//   - isChildOf 只认**直接父** → a 也**不认领** c（a 只是远祖先）
+//   - 两头都不放 → 兜底把 c 垫到**所有根之后** = x 之后，而缩进仍算上 a
+// 修复前：out = [a, x, c]（c 缩进 1 级挂到无关的 x 下面）—— 正是用户实测的现象。
+// 正确行为：c 紧跟仍开着的远祖先 a，无关根 x 排后面。
+// ═══════════════════════════════════════════════════════════
+
+describe("关父 tab 后：孤儿项紧跟仍开着的祖先，不挂到无关任务下（226 回归）", () => {
+  it("直接父已关、祖父仍开 → 孙插在祖父之后、无关根之前", () => {
+    const a = task(A);
+    const c = task(C, [A, B]); // 父 B 已关（不在 opened 里），A 仍开
+    const x = task(X);
+    // 顺序 = 关 B 后落盘的 entries：A 族在前，X 后开在队尾
+    const out = normalizeOrder([a, c, x], parentPageOf);
+    expect(out.map((t) => t.ctx)).toEqual([A, C, X]);
+  });
+
+  it("缩进不说谎：孙的上一项必须是它开着的祖先", () => {
+    const a = task(A);
+    const c = task(C, [A, B]);
+    const x = task(X);
+    const out = normalizeOrder([a, c, x], parentPageOf);
+    expect(taskIndentOf(c, out)).toBe(1); // A 开着 → 1 级
+    const ic = out.findIndex((t) => t.ctx === C);
+    expect(ic).toBeGreaterThan(0);
+    expect(out[ic - 1]!.ctx).toBe(A); // 缩进指着的正是它上方那项
+  });
+
+  it("多个孤儿按原顺序成串，不与无关根交错", () => {
+    const a = task(A);
+    const c = task(C, [A, B]);
+    const y: TabLike = { key: `task-run:${X}2`, pageId: "task-run", ctx: `${X}2`, taskAncestors: [A, B] };
+    const x = task(X);
+    const out = normalizeOrder([a, c, y, x], parentPageOf);
+    expect(out.map((t) => t.ctx)).toEqual([A, C, `${X}2`, X]);
+  });
+
+  it("对照：祖父也没开 → 孤儿是顶级项，按原顺序、不缩进", () => {
+    const c = task(C, [A, B]);
+    const x = task(X);
+    const out = normalizeOrder([c, x], parentPageOf);
+    expect(out.map((t) => t.ctx)).toEqual([C, X]);
+    expect(taskIndentOf(c, out)).toBe(0);
+  });
+});
+
 describe("pageParentKeyOf —— 页面层次判据（与排序同源）", () => {
   it("显式 parent 优先", () => {
     expect(pageParentKeyOf(lab(A), parentPageOf)).toBe(`task-run:${A}`);

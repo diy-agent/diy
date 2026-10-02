@@ -90,8 +90,15 @@ function load(): TabEntry[] {
     return out;
 }
 
-const [entries, setEntries] = createSignal<TabEntry[]>(load());
-const [active, setActiveSignal] = createSignal<string>(Caches.diy_tabs_active.get());
+const restored = load();
+const restoredActive = Caches.diy_tabs_active.get();
+const [entries, setEntries] = createSignal<TabEntry[]>(restored);
+/** active 必须落在打开列表里：悬空的 active → 启动 route 指向不存在的 tab →
+ *  主区所有 page 的 Show 都为 false = 白屏（137「非法 page 不得白屏」的孪生路径）。
+ *  产生路径：entries 与 active 两次写盘之间被中断（close 只改 entries 后崩）、外部改 cache。 */
+const [active, setActiveSignal] = createSignal<string>(
+    restored.some((e) => keyOf(e.pageId, e.ctx) === restoredActive) ? restoredActive : "",
+);
 
 /**
  * 任务祖先链解析器（由 App 注入：taskAncestorsOf）。
@@ -250,12 +257,20 @@ export const tabStore = {
         persist({ active: "" });
     },
 
-    /** 任务被删除时的清理：该任务的所有 tab（含子页面）一起摘掉 */
+    /** 任务被删除时的清理：该任务的所有 tab（含子页面）一起摘掉。
+     *  接线在 App：任务树刷新后 diff「从树里消失的 uri」逐个调进来（曾是零调用的死代码，
+     *  删除任务后导航残留幽灵 tab）。active 被摘时取**原位右邻**（与 close 同语义）。 */
     dropCtx(ctx: string): void {
         const cur = entries();
         if (!cur.some((e) => e.ctx === ctx)) return;
         const next = cur.filter((e) => e.ctx !== ctx);
-        const nextActive = next.some((e) => keyOf(e.pageId, e.ctx) === active()) ? active() : (next[0] ? keyOf(next[0].pageId, next[0].ctx) : "");
+        let nextActive = active();
+        if (!next.some((e) => keyOf(e.pageId, e.ctx) === nextActive)) {
+            // active 正是被摘的：下标取自摘之前的列表，右邻优先、其次左邻
+            const i = cur.findIndex((e) => keyOf(e.pageId, e.ctx) === active());
+            const pick = next[Math.min(i, next.length - 1)] ?? next[i - 1];
+            nextActive = pick ? keyOf(pick.pageId, pick.ctx) : "";
+        }
         persist({ entries: next, active: nextActive });
     },
 };

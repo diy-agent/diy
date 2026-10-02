@@ -530,3 +530,127 @@ describe("任务被移动 → 导航结构实时跟随（165 回归）", () => {
       .toEqual([`task-run:${x}`, `task-run:${y}`]);
   });
 });
+
+// ═══════════════════════════════════════════════════════════
+// 关父 tab 后，孤儿子任务不得挂到无关任务下（226 回归）
+//
+// 场景还原：祖 g、父 p、孙 s 三级 + 无关的顶级 u（后开 → 队尾）。
+// 关掉 p 的 tab 后，s 的直接父不在列表、但 g 仍开着 —— s 必须紧跟 g（缩进 1 级），
+// 不得被垫到 u 之后（视觉上就成了 u 的子任务，用户实测现象）。
+// 修复前：s 掉进 normalizeOrder 兜底 → 排在所有根之后 = u 之后，且缩进仍是 1 级。
+// ═══════════════════════════════════════════════════════════
+
+describe("关父 tab 后孤儿子任务不挂错（226 回归）", () => {
+  let g = "";
+  let p = "";
+  let s = "";
+  let u = "";
+
+  it("setup: 造 祖→父→孙 三级 + 无关顶级任务，开满后关父", async () => {
+    const pr = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/orphan --label Orphan`);
+    const pid = String((pr.data as any)?.data?.id);
+    const uriOf = (r: any) => String((r.data as any)?.data?.uri);
+    g = uriOf(await fx.sh.getJson(`./diy.sh task create 孤-祖父 ${pid}`));
+    p = uriOf(await fx.sh.getJson(`./diy.sh task create 孤-父 ${pid} --parent ${g}`));
+    s = uriOf(await fx.sh.getJson(`./diy.sh task create 孤-孙 ${pid} --parent ${p}`));
+    u = uriOf(await fx.sh.getJson(`./diy.sh task create 孤-无关 ${pid}`));
+    expect(s).not.toBe(p);
+
+    // 清掉前几个 describe 遗留的 tab，保证本例的打开顺序确定
+    for (const k of (await tabs()).opened) {
+      await fx.sh.getJson(`./diy.sh ui tab close ${k}`);
+    }
+    expect((await tabs()).opened).toEqual([]);
+
+    await fx.sh.getJson(`./diy.sh ui tab open ${g}`);
+    await fx.sh.getJson(`./diy.sh ui tab open ${p}`);
+    await fx.sh.getJson(`./diy.sh ui tab open ${s}`);
+    await fx.sh.getJson(`./diy.sh ui tab open ${u}`); // 后开 → 队尾（无关根排最后）
+    expect((await tabs()).opened).toEqual([`task-run:${g}`, `task-run:${p}`, `task-run:${s}`, `task-run:${u}`]);
+
+    await fx.sh.getJson(`./diy.sh ui tab close task-run:${p}`); // 关父：任务层次不连带关子
+  });
+
+  it("顺序：孙紧跟祖父之后，在无关任务之前（修复前：被垫到无关任务之后）", async () => {
+    const list = (await tabs()).opened;
+    const ig = list.indexOf(`task-run:${g}`);
+    const is = list.indexOf(`task-run:${s}`);
+    const iu = list.indexOf(`task-run:${u}`);
+    expect(ig).toBeGreaterThanOrEqual(0);
+    expect(list).not.toContain(`task-run:${p}`); // 父已关
+    expect(is).toBe(ig + 1); // 孤儿紧跟仍开着的祖父
+    expect(is).toBeLessThan(iu); // 不得排到无关根之后
+  });
+
+  it("界面：孙的缩进与位置都说真话（在祖父之下、无关任务之上）", async () => {
+    const ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
+      const r = await fx.sh.getJson("./diy.sh ui inspect");
+      return (r.data as any)?.data?.tree as A11yNode | undefined;
+    });
+    try {
+      await lockNavOpen(ui);
+      // 量**内容**左边界（x，缩进走 padding-left）+ 元素纵向位置（y，判断上下相邻）
+      // 只在**侧栏**（.drawer-side）里找：主区也有 title=uri 的 div（如任务详情），
+      // 不限定作用域会量到别的元素 → 假绿（226 实测踩过）
+      const rectOf = (title: string) =>
+        ui.query<{ x: number; y: number } | null>(`(() => {
+          const side = document.querySelector('.drawer-side');
+          const el = side ? [...side.querySelectorAll('div[title]')].find(d => d.getAttribute('title') === ${JSON.stringify(title)}) : undefined;
+          if (!el) return null;
+          const inner = el.querySelector('span');
+          const r = (inner ?? el).getBoundingClientRect();
+          return { x: r.x, y: r.y };
+        })()`);
+      const rg = await waitUntil(() => rectOf(g), (v) => v !== null, { label: "祖父 tab 上屏" });
+      const rs = await rectOf(s);
+      const ru = await rectOf(u);
+      expect(rs).not.toBeNull();
+      expect(ru).not.toBeNull();
+      // 位置：孙在祖父之下、无关任务之上（修复前孙排到无关任务之后 → 这里红）
+      expect(rs!.y).toBeGreaterThan(rg!.y);
+      expect(rs!.y).toBeLessThan(ru!.y);
+      // 缩进：孙比祖父靠右（祖父开着 → 1 级）
+      expect(rs!.x).toBeGreaterThan(rg!.x);
+      await unlockNav(ui);
+    } finally {
+      ui.close();
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// 删除任务 → 导航摘掉幽灵 tab（dropCtx 接线回归，226 关联）
+//
+// 删除走 CLI `task delete` → watch task-change → loadTree；摘 tab 的 dropCtx
+// 曾是零调用的死代码 —— 删除后导航残留幽灵 tab（label 退化成 URI、点开空白页）。
+// 接线在 App：树刷新后 diff「从树里消失的 uri」→ dropCtx。
+// ═══════════════════════════════════════════════════════════
+
+describe("删除任务 → 打开列表摘掉幽灵 tab（dropCtx 接线）", () => {
+  let t = "";
+
+  it("setup: 造任务并打开 tab（它同时是 active）", async () => {
+    const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/ghost --label Ghost`);
+    const pid = String((p.data as any)?.data?.id);
+    const tr = await fx.sh.getJson(`./diy.sh task create 幽灵任务 ${pid}`);
+    t = String((tr.data as any)?.data?.uri);
+    expect(t).toMatch(/tasks\/\d+$/);
+    await fx.sh.getJson(`./diy.sh ui tab open ${t}`);
+    const cur = await tabs();
+    expect(cur.opened).toContain(`task-run:${t}`);
+    expect(cur.active).toBe(`task-run:${t}`);
+  });
+
+  it("task delete → tab 从打开列表消失，active 不悬空（修复前：残留幽灵 tab）", async () => {
+    await fx.sh.getJson(`./diy.sh task delete ${t}`);
+    const st = await waitUntil(
+      async () => await tabs(),
+      (x) => !x.opened.includes(`task-run:${t}`),
+      { label: "幽灵 tab 被摘" },
+    );
+    expect(st.opened).not.toContain(`task-run:${t}`);
+    expect(st.active).not.toBe(`task-run:${t}`); // active 落到右邻或 ""
+    // active 要么落在仍存在的 tab 上，要么是空（回任务树）——不得悬空
+    if (st.active) expect(st.opened).toContain(st.active);
+  });
+});

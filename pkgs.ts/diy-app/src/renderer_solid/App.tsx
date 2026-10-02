@@ -1,4 +1,4 @@
-import { createSignal, onMount, onCleanup, Show, For } from "solid-js";
+import { createSignal, createEffect, onMount, onCleanup, untrack, Show, For } from "solid-js";
 import * as Tabs from "@kobalte/core/tabs";
 import { TaskTree } from "./components/TaskTree";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
@@ -96,6 +96,39 @@ export default function App() {
     const [resizingNav, setResizingNav] = createSignal(false);
     let navEl: HTMLDivElement | undefined;
     let mainAreaEl: HTMLDivElement | undefined;
+
+    /**
+     * 树刷新后清理「已从树里消失的任务」的 tab（226 关联：dropCtx 接线）。
+     *
+     * 删除任务（CLI `task delete` / 删目录）走 watch → loadTree，但摘 tab 的
+     * `tabStore.dropCtx` 曾是零调用的死代码 —— 导航残留幽灵 tab（label 退化成 URI、
+     * 点开是空白页）。diff 只认「上一轮在、这一轮不在」：首轮 prev 为空，启动时树
+     * 未加载完（nodes=[]）不会把恢复出来的 tab 清光。树响应的乱序由 taskStore.loadTree
+     * 的过期丢弃守住，防止旧快照让这里误判「任务消失」。
+     */
+    let prevUris = new Set<string>();
+    createEffect(() => {
+        const cur = new Set<string>();
+        const walk = (ns: TreeNode[]) => {
+            for (const n of ns) {
+                if (n.uri) cur.add(n.uri); // 项目节点没有 uri，成不了 tab，跳过
+                walk(n.children ?? []);
+            }
+        };
+        walk(taskStore.nodes);
+        const gone = [...prevUris].filter((u) => !cur.has(u));
+        prevUris = cur;
+        if (gone.length === 0) return;
+        for (const u of gone) tabStore.dropCtx(u);
+        // 被摘的恰是当前 route → route 悬空（主区所有 page 的 Show 全 false = 白屏）→ 跟随 active
+        untrack(() => {
+            const r = route();
+            if (r.kind === "tab" && !tabStore.find(r.key)) {
+                const k = tabStore.active;
+                setRoute(k ? { kind: "tab", key: k } : { kind: "section", section: "task" });
+            }
+        });
+    });
 
     /**
      * 悬停导航上的任务项时，在其右侧弹出的「任务详情」覆盖层（值是任务 uri）。
