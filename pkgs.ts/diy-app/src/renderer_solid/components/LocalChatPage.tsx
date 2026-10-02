@@ -149,6 +149,34 @@ function leavesOf(turn: BlockNode): BlockNode[] {
 }
 /** L2 专用：连续已定稿的 think/tool 段合并成一条发丝线；失败/直播块打断分组 */
 type Seg = { kind: "block"; node: BlockNode } | { kind: "hair"; nodes: BlockNode[] };
+
+/**
+ * 段序列的**身份复用**：与 `toTree` 的缓存同一思路，但作用在渲染层。
+ *
+ * 为什么还要这一层：`toTree` 让"未变的轮次"整体复用，但**正在直播的那一轮**其根节点
+ * 每帧都是新的 → 该轮的 `segments()` 重算 → `<For>` 拿到全新 Seg 数组 → 这一轮里
+ * **所有**历史块（完成的文本/工具/思考）跟着重建 + Markdown 全量 re-parse。
+ * 一段长会话里每帧重解析几十条已完成消息，就是"长回答卡顿"的主要来源。
+ *
+ * 复用判据：段类型相同、且其内部节点**逐个同引用**（`toTree` 已保证未变的块同引用，
+ * 于是引用相等就是"内容没变"的充分判据）。
+ */
+function sameSeg(a: Seg, b: Seg): boolean {
+    if (a.kind !== b.kind) return false;
+    if (a.kind === "block" && b.kind === "block") return a.node === b.node;
+    if (a.kind === "hair" && b.kind === "hair") {
+        return a.nodes.length === b.nodes.length && a.nodes.every((n, i) => n === b.nodes[i]);
+    }
+    return false;
+}
+
+/** 按位复用同形段（新数组，但元素尽量沿用旧对象 —— 元素的引用相等正是 `<For>` 的 diff 依据） */
+function reuseSegs(prev: Seg[], next: Seg[]): Seg[] {
+    return next.map((s, i) => {
+        const p = prev[i];
+        return p && sameSeg(p, s) ? p : s;
+    });
+}
 function segments(density: Density, leaves: BlockNode[]): Seg[] {
     const isHairable = (b: BlockNode) =>
         (b.tag === "think" || b.tag === "tool") &&
@@ -527,7 +555,13 @@ function TurnView(props: {
     onToggleUsage: (id: string) => void;
 }) {
     const t = props.node;
-    const segs = () => segments(props.density, leavesOf(t));
+    // 上帧的段序列：跨次渲染复用未变的段（见 reuseSegs 头注）。
+    // 放在组件闭包里而不是信号里：它是纯缓存，不参与响应式追踪。
+    let prevSegs: Seg[] = [];
+    const segs = () => {
+        prevSegs = reuseSegs(prevSegs, segments(props.density, leavesOf(t)));
+        return prevSegs;
+    };
     const procCount = () => processOf(t).length;
     const isLiveTurn = () => props.liveTurnId != null && props.liveTurnId === t.id;
     return (

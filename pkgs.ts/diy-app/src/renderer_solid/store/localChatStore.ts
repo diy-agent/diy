@@ -20,7 +20,7 @@
 import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "./notificationStore";
-import { BlockStore, toTree, type BlockNode, type Op } from "../../main/services/local-blocks";
+import { BlockStore, toForest, type BlockNode, type Op } from "../../main/services/local-blocks";
 // 插话队列项的类型在 core/drafts（与草稿同文件存储）；这里只要类型，故 type-only import
 //（不会把 node:fs 依赖带进 renderer）
 import type { SteerItem, SteerMode } from "../../main/core/drafts";
@@ -107,9 +107,16 @@ function cur(): TaskState | null {
     return u ? (states.get(u) ?? null) : null;
 }
 
-/** 块树快照刷新（重建整棵树） */
+/**
+ * 块树快照刷新。
+ *
+ * ⚠️ 不是"重建整棵树"了：`toForest` 对**未被 op 触碰过**的子树返回同一对象（身份缓存，
+ * 见 local-blocks 的 TreeCache 头注），于是 Solid 的 `<For>` 只更新真正变化的那一轮，
+ * 其余轮次的组件（连同其折叠态与 Markdown 解析结果）原地保留。
+ * 这是任务 236 的治本点：以前每帧全量重建 → 折叠态被清、点击无响应、长回答卡顿。
+ */
 function refresh(st: TaskState) {
-    st.setTrees(st.store.roots().map((r) => toTree(st.store, r.id)));
+    st.setTrees(toForest(st.store));
 }
 
 // ─── 渲染批处理（合并高频 op，落到每帧至多一次 refresh） ──────────
