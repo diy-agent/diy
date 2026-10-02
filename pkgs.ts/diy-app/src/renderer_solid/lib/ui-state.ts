@@ -258,13 +258,25 @@ export const Caches = {
     serialize: (v) => v,
     defaultValue: "diy",
   }),
-  /** 提示词页右栏 area 内互斥的 view（system = _system.md 渲染 / request = 请求预览）。
-   *  落这里的理由与草稿相同：area 内 tab 属于**用户选择**，切页或重开不该回到默认。
-   *  白名单校验：不在表内的值当没存过，退化到默认 system。 */
-  diy_lab_right_tab: field<"system" | "request">("diy_lab_right_tab", {
-    parse: (raw) => (raw === "system" || raw === "request" ? raw : null),
-    serialize: (v) => v,
-    defaultValue: "system",
+  /** 上下文树页（ctxlab）的折叠块展开态：key = steps/structure/request。
+   *  与提示词页 labViews 同性质（用户选择，切页/重开不该回到默认），故走同一入口。 */
+  diy_ctxlab_fold: field<Record<string, boolean>>("diy_ctxlab_fold", {
+    parse: (raw) => {
+      try {
+        const o: unknown = JSON.parse(raw);
+        return o && typeof o === "object" && !Array.isArray(o) ? (o as Record<string, boolean>) : null;
+      } catch {
+        return null;
+      }
+    },
+    serialize: (v) => JSON.stringify(v),
+    defaultValue: {
+      // 中栏只留请求预览 → 默认展开（它就是这一页的主角）
+      request: true,
+      // 左栏：结构树（划分操作）默认展开，变更列表收起（看变化时才展开）
+      structure: true,
+      steps: false,
+    },
   }),
   /** 试验场表格列宽（px 数组，按表分字段）。**表的列宽必须与容器宽度解耦**：
    *  否则拖动左栏会按比例缩放所有列，永远有列看不全；这里存下来后拖左栏不再改变列宽，

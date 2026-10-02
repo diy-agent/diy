@@ -7,6 +7,7 @@ import { LabPage } from "./components/LabPage";
 import { LlmPage } from "./components/LlmPage";
 // 折叠框展开态仍是 lab view 内部的局部状态（与「view 在哪个 area」是两件事）
 import { setLabView } from "./components/PromptLabV4Page";
+import { ContextLabPage, setCtxLabFold } from "./components/ContextLabPage";
 import { AppInfo } from "./components/AppInfo";
 import { LogPanel } from "./components/LogPanel";
 import { ThemeSettings } from "./components/ThemeSettings";
@@ -270,7 +271,9 @@ export default function App() {
                 setRoute({ kind: "section", section: page as Section });
             },
             focus: (uri) => taskStore.selectTask(uri),
-            setView: (key, open) => setLabView(key, open),
+            // 折叠块展开态按前缀分派：`ctx.*` 归上下文树试验场，其余归提示词页
+            setView: (key, open) =>
+                key.startsWith("ctx.") ? setCtxLabFold(key, open) : setLabView(key, open),
             setViewArea: (pageId, area, open) => layoutStore.setAreaHidden(pageId, area, !open),
             // view 级隐藏/显示：key = viewId@ctx（context 型）。global 型 view 没有 ctx 维度
             getLayout: (pageId, ctx) => {
@@ -457,6 +460,11 @@ export default function App() {
                     <Show when={route().kind === "tab" && activeTabItem()?.pageId === "lab"}>
                         <Show when={activeTabItem()} keyed>
                             {(t) => <LabPage uri={t.ctx ?? ""} />}
+                        </Show>
+                    </Show>
+                    <Show when={route().kind === "tab" && activeTabItem()?.pageId === "ctxlab"}>
+                        <Show when={activeTabItem()} keyed>
+                            {(t) => <ContextLabPage uri={t.ctx ?? ""} />}
                         </Show>
                     </Show>
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "llm"}>

@@ -92,6 +92,19 @@ export const AssembleGlobalsSchema = z.object({
     .describe("工作目录与回退"),
   chain: z.array(ChainItemSchema).describe("AGENTS.md 链（逐层，用 :for 迭代）"),
   skills: z.array(SkillSchema).describe("技能清单（空则整节跳过）"),
+  /**
+   * 模版节的**渲染结果**（144「模版即节点」方向的第一步）。
+   *
+   * 为什么放进 globals：真发（Context Tree 投递）要的不只是 `persona` 的**值**，
+   * 而是模版渲染出来的**整节文本** —— identity.md 里有身份行 + 人物行为指令，
+   * rules.md 是行为规范，_guard.md 是保命契约（禁止自杀式命令）。它们不在这里，
+   * 真发就一样不投（209 review P0-1：真发 system 里 persona/身份/<rules>/<guard> 全 false）。
+   * 渲染结果进 globals 而不是在投递处另拼一段：投递构造保持**单一入口**（buildDelivery），
+   * 页面结构树/规则表也能看见这三个节点（否则页面上会多出一段"无来源"的文本）。
+   */
+  identity: z.string().describe("身份节（identity.md 渲染结果：身份行 + 人物行为指令）"),
+  rules: z.string().describe("规范节（rules.md 渲染结果）"),
+  guard: z.string().describe("保命契约（_guard.md 渲染结果，模版锁定）"),
 });
 export type AssembleGlobals = z.infer<typeof AssembleGlobalsSchema>;
 
