@@ -79,17 +79,28 @@ export const VIEWS: ViewDef[] = [
     placement: { lab: { area: "left", order: 10 } },
   },
   {
-    // 右栏：_system.md 渲染 + 请求体（两 view 在 area 内 tab 互斥）
-    id: "lab.system",
-    title: "系统提示词",
+    // 右栏：_system.md 渲染 / 请求预览 / 系统上下文 —— **一个 view**，内部三个可折叠块
+    // （与左栏 lab.inspector 同构）。不做成 area 内多个 view 或互斥 tab：
+    // 前者会平分高度、后者多一层页签，两种都是"每块只剩一小条"。
+    id: "lab.preview",
+    title: "预览",
     instanceScope: "context",
     placement: { lab: { area: "right", order: 10 } },
   },
   {
-    id: "lab.request",
-    title: "请求预览",
+    // 上下文树页（**独立子页面**，见下 PAGES 的 ctxlab）：两列 —— 结构树 | 请求预览
+    // 左：结构树（变量契约）。划分操作就在这里做（点选换容器），不另开一个"规则表"view
+    id: "ctxlab.structure",
+    title: "结构树",
     instanceScope: "context",
-    placement: { lab: { area: "right", order: 20 } },
+    placement: { ctxlab: { area: "left", order: 10 } },
+  },
+  {
+    // 中：请求预览 —— 整份请求的大 YAML（内嵌 system/runtime 文本就地解析展开；可切原文 JSON）
+    id: "ctxlab.delivery",
+    title: "预览",
+    instanceScope: "context",
+    placement: { ctxlab: { area: "center", order: 10 } },
   },
   {
     // 边聊边调：与任务执行页是**同一个 view**，只是换个 area（卫星）
@@ -184,6 +195,25 @@ export const PAGES: PageDef[] = [
         { id: "center", col: 1, row: 0 },
         { id: "right", col: 2, row: 0 },
         { id: "bottom", col: 0, row: 1, colSpan: 3 },
+      ],
+    },
+  },
+  {
+    // 上下文树页：**独立子页面**，与提示词页（lab）平级挂在任务执行页之下。
+    // 单独开一个 tab 的理由：提示词页右栏已被既有 view 占满，塞进来会互抢空间、
+    // 也避免上下文树（整页是真实数据的另一种组织）与提示词预览互相抢空间。
+    id: "ctxlab",
+    title: "上下文树",
+    multi: true, // 每个任务一个实例
+    parentPage: "task-run",
+    layout: {
+      version: 1,
+      // 两列：结构树（输入）| 请求预览（产出）
+      cols: [px(340), fr(1)],
+      rows: [fr(1)],
+      areas: [
+        { id: "left", col: 0, row: 0 },
+        { id: "center", col: 1, row: 0 },
       ],
     },
   },

@@ -19,6 +19,8 @@
 import { RpcSchema } from "@diy/rpc";
 import { z } from "zod";
 import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-schema";
+import { ContextDiffSchema, StatsSchema, StepsSchema } from "../../shared/context/schema";
+import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
 // agent 人物契约（纯 zod，renderer 同源）——模型/参数/行为指令的配置实体
 import { PersonaSchema } from "../../shared/persona";
 // 草稿与任务详情载荷的契约（纯 zod，renderer 同源）
@@ -618,6 +620,83 @@ export const apiDef = RpcSchema.router({
         },
       }),
 
+      context: RpcSchema.group({
+        desc: `上下文树（当前任务的真实系统上下文；只组装不发送）`,
+        children: {
+          config: RpcSchema.unary({
+            desc: `读划分规则（$DIY_HOME/context.yaml；真发与页面共用这一份）`,
+            input: {},
+            output: z.object({
+              systemPlaces: z.array(z.string()).describe("当前生效的 system 单元（其余自动 runtime）"),
+              defaults: z.array(z.string()).describe("推荐名单（文件缺失/清空时用它）"),
+              fromFile: z.boolean().describe("是否来自 context.yaml（false = 用推荐名单）"),
+            }),
+          }),
+          setConfig: RpcSchema.unary({
+            desc: `写划分规则（非法路径或互为祖先/后代一律拒绝；下一轮真发生效）`,
+            input: {
+              systemPlaces: z.array(z.string()).cliOption({ desc: "进 system 的单元（JSON 数组）" }),
+            },
+            output: z.object({ systemPlaces: z.array(z.string()) }),
+          }),
+          candidates: RpcSchema.unary({
+            desc: `列出候选投递单元与默认 system 名单`,
+            input: {},
+            output: z.object({
+              candidates: ContextPlaceCandidateSchema,
+              defaultSystem: z.array(z.string()),
+            }),
+          }),
+          lab: RpcSchema.unary({
+            desc: `上下文树数据：变量树 + 划分规则 + system/runtime 两份 + 合成消息`,
+            input: {
+              project: z.string().cliArg({ desc: "project id" }),
+              taskUri: z.string().optional().cliOption({ desc: "任务 URI（缺省则只有项目级上下文）" }),
+              systemPlaces: z
+                .array(z.string())
+                .optional()
+                .cliOption({ desc: "划入 system 的投递单元（JSON 数组；缺省用推荐名单，其余自动 runtime）" }),
+              model: z.string().optional().cliOption({ desc: "模型 id（请求体预览用；缺省取默认模型）" }),
+            },
+            output: ContextLabSchema,
+          }),
+          steps: RpcSchema.unary({
+            desc: `每轮真发的投递快照（step）：值变化 + 两份容器的 diff（默认只给统计，--diff 给行内容）`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+              limit: z.number().optional().cliOption({ desc: "只看最近 N 步（缺省全部）" }),
+              diff: z
+                .boolean()
+                .optional()
+                .cliOption({ desc: "带上行级 diff 内容（默认只有增删统计，避免下发整份文本）" }),
+            },
+            output: StepsSchema,
+          }),
+          stats: RpcSchema.unary({
+            desc: `节点变更统计（按项目累计；回答"用了几天，某节点变了几次"）`,
+            input: {
+              project: z.string().cliArg({ desc: "project id" }),
+              taskUri: z.string().optional().cliOption({ desc: "只算某个任务（缺省：整个项目累计）" }),
+              limit: z.number().optional().cliOption({ desc: "只看最近 N 轮（缺省全部）" }),
+            },
+            output: StatsSchema,
+          }),
+          diff: RpcSchema.unary({
+            desc: `某步 vs 上一步的 diff；不给 --step 则是「当前变量树 vs 最后一步」（main 侧算完）`,
+            input: {
+              project: z.string().cliArg({ desc: "project id" }),
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+              step: z.number().optional().cliOption({ desc: "第几步（1 基）；缺省 = 当前 vs 最后一步" }),
+              systemPlaces: z
+                .array(z.string())
+                .optional()
+                .cliOption({ desc: "当前投递的 system 名单（缺省用推荐名单）" }),
+            },
+            output: ContextDiffSchema.nullable(),
+          }),
+        },
+      }),
+
       llmProxy: RpcSchema.group({
         desc: `LLM 代理`,
         children: {
@@ -836,7 +915,7 @@ export const apiDef = RpcSchema.router({
               expand: RpcSchema.unary({
                 desc: `展开/折叠 view 内部的折叠框`,
                 input: {
-                  key: z.string().cliArg({ desc: "折叠框名（tree/trace/vars/vals/sysctx/reqbody）" }),
+                  key: z.string().cliArg({ desc: "折叠框名（左栏 tree/trace/vars/vals；右栏 sysctx/reqbody/ctxpreview）" }),
                   open: z.string().cliArg({ desc: "open 或 closed" }),
                 },
                 output: z.object({ status: z.string() }),

@@ -370,6 +370,16 @@ renderer 那份没跟上，编译期才暴露 —— 用契约类型则不可能
 - 排版规则（改模版前必读，写在 `src/main/prompts/defaults.ts` 头注）：控制标记可自由缩进（独占一行不产出字符）；
   **输出文本必须顶格**（行首缩进会进提示词）；空行是内容。
 
+### 上下文树页（ctxlab，第二版上下文：任务 144/148）
+
+完整约定表（领域模型 / 投递构造 / 划分真源 / step 快照 / 渲染与块标量踩坑 / 页面与 view）见 `src/shared/context/README.md`。三条最易踩的：
+
+- **投递构造唯一入口** = `shared/context/delivery.ts` 的 `buildDelivery`：真发（`runTurn`）与上下文树页预览同源，划分策略 `PLACE_CANDIDATES` 也住这里
+- **划分规则真源** = `$DIY_HOME/context.yaml`（契约 `shared/context/config.ts`、I/O `main/core/context-config.ts`）：页面改完**下一轮真发**生效
+- 只有**上下文树页**的请求预览是真发形态；**提示词页**（lab）是模版线（`assembleSystem`），别混
+
+> ⚠️ `AGENTS.md` 本身会被 `chainOf` 注入 system（预算 64KB）：详细长文写进 README/独立文档，别往这里堆。
+
 ### UI 验证（两层，互补）
 
 - **`diy.ui.*`（handler 层）**：CLI 经 RPC 直接调 renderer 的共享入口函数（与按钮 onClick 同一批）。测行为/契约/状态，稳定适合 test:intent 基线；**测不到真实 DOM 事件链的 bug**。

@@ -20,6 +20,8 @@ import {
     type SelectionRange,
 } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
+import { yaml } from "@codemirror/lang-yaml";
+import { json } from "@codemirror/lang-json";
 import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
@@ -150,6 +152,13 @@ export interface HlLines {
      */
     focusPos?: number;
     focusEnd?: number;
+    /**
+     * 焦点**身份**（如 `chain.0.scope#2`）。
+     * 为什么需要：`highlight` 是个对象，每次 effect 重跑都会新建一个 —— 若只比对象引用就只能
+     * 每次都"滚一下"，表现是**用户刚滚动编辑器就被拉回焦点位置**（实测踩到）。
+     * 有了它：身份没变 → 只重画装饰、不动视口；身份变了（换了选中行 / ↑↓ 换焦点）才滚。
+     */
+    focusKey?: string;
 }
 
 const setHl = StateEffect.define<HlLines | null>();
@@ -178,6 +187,13 @@ const hlField = StateField.define<DecorationSet>({
 });
 
 const EMPTY_TAGS: ReadonlySet<string> = new Set<string>();
+
+/** 语法扩展：markdown（模版/聊天输入）/ yaml（Context Tree 投递与请求预览）/ json（请求体原文） */
+function languageOf(lang?: "markdown" | "yaml" | "json"): Extension {
+    if (lang === "yaml") return yaml();
+    if (lang === "json") return json();
+    return markdown();
+}
 
 /**
  * 编辑器配色扩展：
@@ -222,6 +238,13 @@ export function MdEditor(props: {
      */
     embedded?: boolean;
     class?: string;
+    /**
+     * 语法：默认 markdown（模版正文 / 聊天输入）。Context Tree 的预览要 yaml / json ——
+     * 用**同一个编辑器**而不是另写一个 `<pre>`，为的是两件事：
+     *   1. 「复制」拿到的是原始换行（HTML `<pre>` 的复制会因渲染方式丢换行 / 多空行）
+     *   2. 行高亮与滚动定位复用同一套装饰机制（选中结构树节点 → 滚到对应行）
+     */
+    lang?: "markdown" | "yaml" | "json";
 }) {
     let host: HTMLDivElement | undefined;
     let view: EditorView | undefined;
@@ -229,6 +252,7 @@ export function MdEditor(props: {
     const dslCx = new Compartment();
     const styleCx = new Compartment();
     const lineNumbersCx = new Compartment();
+    const langCx = new Compartment();
     /** 第三方主题扩展（动态 import，选到才加载）；null = 还没加载好 → 先用内置方案 */
     const [themeExt, setThemeExt] = createSignal<Extension | null>(null);
     // 程序化换文档（切文件/保存/恢复）不回调 onChange：
@@ -256,11 +280,12 @@ export function MdEditor(props: {
                         ...searchKeymap,
                     ]),
                     // 不自动折行：与预览一致，长了横向滚（折行会让"第几行"对不上行号）
-                    markdown(),
+                    langCx.of(languageOf(props.lang)),
                     ...(props.wrap ? [EditorView.lineWrapping] : []),
                     // 配色（含语法高亮）：内置方案 = daisyUI 纸面 + One Dark/CM 默认；第三方 = 主题自带
                     styleCx.of(styleExtensions()),
-                    dslCx.of(makeDslPlugin(props.tags ?? EMPTY_TAGS)),
+                    // 模版 DSL 装饰只在 markdown 下有意义（yaml/json 里没有 {{}} / <template>）
+                    dslCx.of((props.lang ?? "markdown") === "markdown" ? makeDslPlugin(props.tags ?? EMPTY_TAGS) : []),
                     hlField,
                     editableCx.of(EditorView.editable.of(props.editable)),
                     labTheme,
@@ -319,32 +344,45 @@ export function MdEditor(props: {
     createEffect(() => {
         view?.dispatch({ effects: editableCx.reconfigure(EditorView.editable.of(props.editable)) });
     });
+    // 语言切换（同一实例被复用到别处时）→ 重配语法
+    createEffect(() => {
+        const l = props.lang;
+        view?.dispatch({ effects: langCx.reconfigure(languageOf(l)) });
+    });
     // 普通聊天输入隐藏行号，进入全文编辑时即时显示。
     createEffect(() => {
         view?.dispatch({ effects: lineNumbersCx.reconfigure(props.lineNumbers === false ? [] : lineNumbers()) });
     });
-    // 高亮区间变化（点模版结构树/变量行）→ 重画 decoration 并把视线带过去；
-    // 文档替换后也要重放一次（offset 是相对当前文档的）
+    // 高亮区间变化（点结构树/变量行）→ 重画 decoration；**焦点身份变了**才把视线带过去。
+    // 每次都滚的后果：用户一滚编辑器就被拉回（同一身份反复 dispatch）；文档替换后按新文档重放一次。
+    let lastFocusKey: string | null = null;
+    let lastDoc = "";
     createEffect(() => {
         const spec = props.highlight ?? null;
         const v = props.value; // 依赖文档：换文件后按新文档重放
         const vv = view;
         if (!vv) return;
         const effects: StateEffect<unknown>[] = [setHl.of(spec)];
-        // 滚动目标优先用焦点段的字符位置（横向也要到位）；没有就退回焦点行行首
-        const focusLine = spec?.focusLines?.[0] ?? spec?.lines?.[0];
-        const docLen = vv.state.doc.length;
-        const pos =
-            spec?.focusPos !== undefined
-                ? Math.min(Math.max(0, spec.focusPos), docLen)
-                : focusLine !== undefined
-                  ? vv.state.doc.line(Math.min(Math.max(1, focusLine), vv.state.doc.lines)).from
-                  : undefined;
-        if (pos !== undefined) {
-            const to = spec?.focusEnd !== undefined ? Math.min(Math.max(pos, spec.focusEnd), docLen) : pos;
-            const target: number | SelectionRange = to > pos ? EditorSelection.range(pos, to) : pos;
-            effects.push(EditorView.scrollIntoView(target, { y: "center", x: "center" }));
+        const key = spec?.focusKey ?? (spec ? "focus" : null);
+        const docChanged = lastDoc !== v;
+        if (key !== null && (key !== lastFocusKey || docChanged)) {
+            // 滚动目标优先用焦点段的字符位置（横向也要到位）；没有就退回焦点行行首
+            const focusLine = spec?.focusLines?.[0] ?? spec?.lines?.[0];
+            const docLen = vv.state.doc.length;
+            const pos =
+                spec?.focusPos !== undefined
+                    ? Math.min(Math.max(0, spec.focusPos), docLen)
+                    : focusLine !== undefined
+                      ? vv.state.doc.line(Math.min(Math.max(1, focusLine), vv.state.doc.lines)).from
+                      : undefined;
+            if (pos !== undefined) {
+                const to = spec?.focusEnd !== undefined ? Math.min(Math.max(pos, spec.focusEnd), docLen) : pos;
+                const target: number | SelectionRange = to > pos ? EditorSelection.range(pos, to) : pos;
+                effects.push(EditorView.scrollIntoView(target, { y: "center", x: "center" }));
+            }
         }
+        lastFocusKey = key;
+        lastDoc = v;
         vv.dispatch({ effects });
     });
 

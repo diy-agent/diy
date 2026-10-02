@@ -24,13 +24,19 @@ import {
     writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { diyHome, projectFromUri } from "../core/state";
+import { diyHome, projectDir, projectFromUri } from "../core/state";
 import { resolveCwd as resolveCwdWithNote } from "../core/cwd";
 import { BlockStore, blocksToMessages, interruptedToolPatches, type Op, type JSONVal } from "./local-blocks";
 import { collectSelfInfo, judgeSelfKill, selfKillNotice } from "./agent-guard";
 import { appendAudit } from "./agent-audit";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
-import { assembleSystem } from "./prompt-registry";
+import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
+import { buildDelivery } from "../../shared/context/delivery";
+import { loadSystemPlaces } from "../core/context-config";
+import { appendContextStat } from "../core/context-stats";
+import { statFromStep } from "../../shared/context/stats";
+import type { DeliveryStepRecord } from "../../shared/context/steps";
+import { assembleGlobals, systemOverBudget } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
 import { SteerQueue } from "../core/steer-queue";
 import type { SteerItem, SteerMode } from "../core/drafts";
@@ -197,6 +203,11 @@ function llmFile(taskUri: string): string {
     return path.join(localDir(), `${keyOf(taskUri)}.llm.jsonl`);
 }
 
+/** 投递快照（每轮真发一条）：投递**事实**，与 raw 那种旁路观测不同 —— UI 的 step/diff 靠它 */
+function stepsFile(taskUri: string): string {
+    return path.join(localDir(), `${keyOf(taskUri)}.steps.jsonl`);
+}
+
 /** 原始流 dump（仅 DIY_RAW_STREAM_DUMP=1 时写）：ai-sdk 的 part 原样落盘，用于研究“Op 是否漏信息” */
 function rawFile(taskUri: string): string {
     return path.join(localDir(), `${keyOf(taskUri)}.raw.jsonl`);
@@ -210,6 +221,34 @@ function rawDumpEnabled(): boolean {
 /** zen/go 会话亲和头：按 task 稳定（实测缺失会被 MissingSessionID 拒绝） */
 function sessionIdOf(taskUri: string): string {
     return `local-${keyOf(taskUri)}`;
+}
+
+/**
+ * runtime 容器作为**尾部 user 消息**插在本轮输入之前（144 的投递设计）。
+ * 易变项（任务正文、技能清单等）放这里，稳定项在 system 参数里；两者合起来才是完整上下文。
+ * runtime 为空 → 原样返回（不硬塞空消息：白耗 token 且让模型困惑）。
+ */
+function withRuntime(hist: ModelMessage[], runtime: string): ModelMessage[] {
+    if (!runtime.trim()) return hist;
+    const last = hist[hist.length - 1];
+    if (last && last.role === "user") {
+        return [...hist.slice(0, -1), { role: "user", content: runtime }, last];
+    }
+    return [...hist, { role: "user", content: runtime }];
+}
+
+/** 读某任务的投递快照（时间正序；文件不存在 = 还没真发过） */
+export function readDeliverySteps(taskUri: string): DeliveryStepRecord[] {
+    return readJsonl<DeliveryStepRecord>(stepsFile(taskUri));
+}
+
+/** 追加一条投递快照（append-only；写失败只出声 —— 观测不能阻断发送） */
+function appendStep(fp: string, rec: DeliveryStepRecord): void {
+    try {
+        appendFileSync(fp, `${JSON.stringify(rec)}\n`, "utf-8");
+    } catch (e) {
+        console.error(`[local-agent] 投递快照写入失败 ${fp}:`, e);
+    }
 }
 
 function readJsonl<T>(path: string): T[] {
@@ -483,7 +522,7 @@ export class LocalAgentManager {
             console.error(`[local-agent] 清空插话队列失败 ${taskUri}:`, e);
             ok = false;
         }
-        for (const f of [opsFile(taskUri), llmFile(taskUri), rawFile(taskUri)]) {
+        for (const f of [opsFile(taskUri), llmFile(taskUri), rawFile(taskUri), stepsFile(taskUri)]) {
             try {
                 rmSync(f, { force: true });
             } catch (e) {
@@ -724,8 +763,9 @@ export class LocalAgentManager {
         let rN = 0;
         let aN = 0;
         let uN = 0;
-        // turn 级 usage 累加器（finish-step 逐轮累加；finish 到达时用流尾权威值覆盖）
-        const acc = { in: 0, out: 0, total: 0 };
+        // turn 级 usage 账本（口径与来源全在 services/turn-usage.ts，那里也解释了
+        // 为什么 cached 必须单独记：它是"缓存有没有真的生效"的唯一硬指标，##140 的验收标准）
+        const acc = newUsageAcc();
         // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
         let lastAct: "none" | "text" | "tool" = "none";
 
@@ -836,7 +876,7 @@ export class LocalAgentManager {
                 phase: "turn-end",
                 taskUri,
                 model: model,
-                result: `steps=${steps} usage=${acc.in}/${acc.out}`,
+                result: `steps=${steps} usage=${acc.in}/${acc.out} cached=${acc.cached}`,
             });
             // ② 尽力投递：消费端还在就让它看到 stop；已断开则在此停住 —— 状态早已一致（①已完成）
             for (const op of ops) yield op;
@@ -851,18 +891,26 @@ export class LocalAgentManager {
         //   · 投递了插话（出队）→ 那句话既没进对话流（下一轮 issue 未修正前）也没留在队列，
         //     用户白打（review P1 实测）。
         // 顺序固定为：装配 → 判预算 → 记账（开场块 + 出队）→ 请求。
-        // 系统上下文：分节装配（身份/自述/项目规范/任务/规则/护栏）——与试验场预览同一入口
-        const asm = assembleSystem(diyHome(), projectFromUri(taskUri), {
-            taskUri,
-            // 预算与当前模型的上下文窗口挂钩（小窗口模型拿更小预算，大窗口封顶 64KB）
-            contextLimitTokens: contextLimitOf(model),
-        });
-        if (asm.overBudget) {
+        // 系统上下文：Context Tree 投递（稳定项 → system 参数；易变项 → 尾部 user 消息）。
+        // **与上下文树页的预览同一条链**（shared/context/delivery）：同一份 globals、同一份
+        // system 名单、同一套渲染 —— 于是"预览看到的字节"就是这里发出去的字节。
+        const globals = assembleGlobals(diyHome(), projectFromUri(taskUri), { taskUri }) as unknown as Record<
+            string,
+            unknown
+        >;
+        // 划分规则读**真源**（$DIY_HOME/context.yaml；缺失/损坏则推荐名单 + 出声）——
+        // 与上下文树页读的是同一份，所以页面上看到的 system/runtime 划分就是这里会用的划分。
+        const delivery = buildDelivery(globals, loadSystemPlaces(diyHome()));
+        // 预算判据与模版线**共用同一个函数**（services/prompt-registry 的 systemOverBudget）：
+        // 曾经这里是内联的 `bytes > budget`，逻辑等价但两处各写一遍 —— 日后任何一侧改口径
+        // （比如"等于预算算不算超"）都会悄悄分叉，而单测只覆盖得到被调用的那一侧（209 第 3 轮 R-1）。
+        const over = systemOverBudget(delivery.system.bytes, contextLimitOf(model));
+        if (over) {
             const kb = (n: number) => (n / 1024).toFixed(1);
             yield* errorBlock(
                 "budget",
-                `系统上下文超出预算（${kb(asm.overBudget.used)} KB > ${kb(asm.overBudget.budget)} KB），本轮未发送。` +
-                    `请精简提示词模版或项目 AGENTS.md。`,
+                `系统上下文超出预算（${kb(over.used)} KB > ${kb(over.budget)} KB），本轮未发送。` +
+                    `请精简项目 AGENTS.md，或在上下文树页把易变变量划到 runtime。`,
             );
             // 拒绝发送也是一轮完整生命周期：必须闭合，否则 UI/崩溃报告/审计三处都会认为它还在跑。
             // 这条 return 在 try 之前，不经过下面的 finally —— 收尾在这里显式做，且**只做一次**
@@ -918,20 +966,40 @@ export class LocalAgentManager {
         let failed = false;
         try {
             // 从块树重建 messages：本轮的 user 块 + 中途落下的插话块都在里面，
-            // 「wire = store = UI = LLM」这条链对每一步都成立（prepareStep 注入的就是它）
-            const sent: ModelMessage[] = blocksToMessages(sess.store) as unknown as ModelMessage[];
+            // 「wire = store = UI = LLM」这条链对每一步都成立（prepareStep 注入的就是它）。
+            // runtime 容器作为**尾部 user 消息**插在本轮输入之前：它不进块树（llm.jsonl 是块树的转储），
+            // 所以下一轮重建历史时不会带上它 —— 每轮只发当前这一份，不会累积。
+            const sent: ModelMessage[] = withRuntime(blocksToMessages(sess.store) as unknown as ModelMessage[], delivery.runtime.text);
             rawSink({
                 kind: "request",
                 ts: new Date().toISOString(),
                 model: model,
-                system: asm.system,
+                system: delivery.system.text,
                 tools: Object.keys(buildTools(cwd, L, taskUri)),
                 settings: { maxSteps: L.maxSteps, maxOutputTokens: modelMax, maxRetries: 2, reasoningEffort: reasoningEffort ?? "none" },
                 messages: sent,
             });
+            // 投递快照（每轮真发一条）：投递事实，供 UI 的 step/diff 用（与 raw 那种旁路观测不同）。
+            // 落盘失败不阻断发送（它只是观测），但必须出声。
+            const prevStep = readDeliverySteps(taskUri).at(-1) ?? null; // 本任务的上一轮（用于算变化）
+            const step: DeliveryStepRecord = {
+                ts: new Date().toISOString(),
+                turnId,
+                model,
+                wireVersion: delivery.wireVersion,
+                systemPlaces: delivery.system.places,
+                runtimePlaces: delivery.runtime.places,
+                valueHashes: delivery.valueHashes,
+                systemText: delivery.system.text,
+                runtimeText: delivery.runtime.text,
+            };
+            appendStep(stepsFile(taskUri), step);
+            // 变更统计（**按项目**累计；只存变化路径 → 体积小、可长期留）。
+            // 用途：跑几天后回答"这个节点到底变了几次" —— 划分位置的判据（见 task 178）。
+            appendContextStat(projectDir(projectFromUri(taskUri)), statFromStep(step, prevStep?.valueHashes ?? null, taskUri));
             const result = streamText({
                 model: this.modelFor(model, key),
-                system: asm.system,
+                system: delivery.system.text,
                 messages: sent,
                 tools: buildTools(cwd, L, taskUri),
                 stopWhen: stepCountIs(L.maxSteps),
@@ -1105,26 +1173,16 @@ export class LocalAgentManager {
                             break;
                         case "finish-step": {
                             // 每步 usage 累加进 turn（zen 流尾 totalUsage 偶发缺失，双保险）
-                            const su = (part as unknown as { usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } }).usage;
+                            const su = (part as unknown as { usage?: TurnUsage }).usage;
                             if (su) {
-                                acc.in += su.inputTokens ?? 0;
-                                acc.out += su.outputTokens ?? 0;
-                                acc.total += su.totalTokens ?? (su.inputTokens ?? 0) + (su.outputTokens ?? 0);
+                                addStepUsage(acc, su);
                                 yield* emit({ op: "patch", id: turnId, fields: { usage: { ...acc } } });
                             }
                             if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
                             break;
                         }
                         case "finish": {
-                            const usage = (
-                                part as unknown as {
-                                    totalUsage?: {
-                                        inputTokens?: number;
-                                        outputTokens?: number;
-                                        totalTokens?: number;
-                                    };
-                                }
-                            ).totalUsage;
+                            const usage = (part as unknown as { totalUsage?: TurnUsage }).totalUsage;
                             // 截断/耗尽显式化：写进 turn.notice，UI 页脚展示（限制值来自动态配置）
                             const fr = (part as { finishReason?: string }).finishReason;
                             let notice: string | undefined;
@@ -1137,9 +1195,7 @@ export class LocalAgentManager {
                             if (usage) {
                                 // totalUsage 是整轮的权威值（一次 chat 只有一次 streamText）：
                                 // finish-step 的逐轮累加只是"流尾总量偶发缺失"的双保险
-                                acc.in = usage.inputTokens ?? acc.in;
-                                acc.out = usage.outputTokens ?? acc.out;
-                                acc.total = usage.totalTokens ?? (acc.in + acc.out);
+                                setTurnUsage(acc, usage);
                                 yield* emit({ op: "patch", id: turnId, fields: { usage: { ...acc } } });
                             }
                             // turn 的 stop 由 closeTurn 发（finally 里那一处）：收尾必须闭合
@@ -1302,6 +1358,13 @@ export async function previewSimulatedRequest(opts: {
     model?: string;
     /** 历史消息；缺省 = 读任务 LLM 日志（无日志则仅占位，即首轮形态） */
     messages?: ModelMessage[];
+    /** 末条 user 消息的正文（缺省是占位文案） */
+    lastUser?: string;
+    /**
+     * runtime 容器全文：作为**独立 user 消息**插在末条之前 —— 与真发同形
+     * （真发 = [...历史, {user: runtime}, {user: 本轮输入}]，见 runTurn 的 withRuntime）。
+     */
+    runtime?: string;
 }): Promise<SimulatedRequest> {
     if (!opts.taskUri) {
         return { body: null, note: "无任务场景：仅渲染 system 文本" };
@@ -1318,7 +1381,8 @@ export async function previewSimulatedRequest(opts: {
         : historyFromLog(taskUri, PREVIEW_HISTORY_MAX);
     const messages: ModelMessage[] = [
         ...hist.messages,
-        { role: "user", content: "[仿真占位]真实下一轮此处为用户输入" },
+        ...(opts.runtime ? [{ role: "user" as const, content: opts.runtime }] : []),
+        { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" },
     ];
     let body: Record<string, unknown> | null = null;
     simBodySink = (b) => {
