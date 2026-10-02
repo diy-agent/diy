@@ -646,6 +646,10 @@ export const localChatStore = {
     get usage(): StepUsageRecord[] {
         return cur()?.usage() ?? [];
     },
+    /** 当前打开的会话 URI（null = 没选任务）。供组件触发 refreshUsage 时用 */
+    get currentUri(): string | null {
+        return currentUri();
+    },
     /** 手动刷新用量账本（看板打开/调试用） */
     refreshUsage,
     open,

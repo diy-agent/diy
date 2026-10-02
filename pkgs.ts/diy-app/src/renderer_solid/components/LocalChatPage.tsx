@@ -522,6 +522,9 @@ function TurnView(props: {
     onFull: (title: string, content: string) => void;
     liveTurnId: string | null;
     md: boolean;
+    /** 展开的用量明细（按块 id 索引）——与 pin 同为"组件外状态"，重建可恢复 */
+    usageOpen: Record<string, boolean>;
+    onToggleUsage: (id: string) => void;
 }) {
     const t = props.node;
     const segs = () => segments(props.density, leavesOf(t));
@@ -555,10 +558,18 @@ function TurnView(props: {
             <Show when={str(t.attrs.notice)}>
                 <div class="text-[11px] text-warning">⚠ {str(t.attrs.notice)}</div>
             </Show>
-            {/* 本轮用量页脚：两个主体（总输入/总输出）+ 窗口占用 + 金额，点开看逐步明细。
-                数字来自 main 每步 patch 的块属性 —— 实时就有，不依赖账本文件读盘。 */}
+            {/* 本轮用量页脚：上下文（窗口%）与成本（累计）两行分开，点整行展开逐步明细。
+                数字来自 main 每步 patch 的块属性 —— 实时就有，不依赖账本文件读盘。
+                展开态**存在 TurnView 之外**（usageOpen，按 id 索引）：块树每帧重建，
+                组件内 signal 会被清掉（D3 的"点开又自动合上"）。 */}
             <Show when={t.attrs.usage}>
-                <TurnUsageFooter turnId={t.id} usage={t.attrs.usage} />
+                <TurnUsageFooter
+                    turnId={t.id}
+                    usage={t.attrs.usage}
+                    live={isLiveTurn()}
+                    open={props.usageOpen[t.id] ?? false}
+                    onToggle={props.onToggleUsage}
+                />
             </Show>
             <Show when={t.attrs.interrupted && !isLiveTurn()}>
                 <div class="text-[11px] text-warning">⚠ 本轮未完成（流中断/崩溃恢复）</div>
@@ -938,7 +949,7 @@ export function LocalChatPage(props: { uri?: string }) {
                 setDensityOpen(false);
                 setPersonaPanelOpen(false);
                 setFullscreen(false);
-                setUsageOpen(false);
+                setUsageBoard(false);
             }
         };
         document.addEventListener("click", closePopovers);
@@ -985,9 +996,13 @@ export function LocalChatPage(props: { uri?: string }) {
     const [confirmClear, setConfirmClear] = createSignal(false);
     const [pinned, setPinned] = createSignal<Record<string, boolean>>({});
     const togglePin = (id: string) => setPinned((p) => ({ ...p, [id]: !p[id] }));
+    // 用量明细的展开态：与 pinned 同构（按块 id 索引，存组件外）。为什么不放 TurnUsageFooter 内：
+    // 块树每帧全量重建（D4），组件局部 signal 会随之复位 —— 实测症状就是"点开又被自动折叠"。
+    const [usageOpen, setUsageOpen] = createSignal<Record<string, boolean>>({});
+    const toggleUsage = (id: string) => setUsageOpen((p) => ({ ...p, [id]: !p[id] }));
     const [full, setFull] = createSignal<{ title: string; content: string } | null>(null);
-    /** 会话用量看板开关 */
-    const [usageOpen, setUsageOpen] = createSignal(false);
+    /** 会话用量看板（抽屉）开关 */
+    const [usageBoard, setUsageBoard] = createSignal(false);
 
     createEffect(
         on(uri, (u, prev) => {
@@ -1092,7 +1107,7 @@ export function LocalChatPage(props: { uri?: string }) {
         <div class="flex flex-col h-full overflow-hidden">
             <PersonaDrawer open={personaPanelOpen()} onClose={() => setPersonaPanelOpen(false)} />
             {/* 打开时顺手对一次账本（轮次间隙别人跑的那几轮不该漏） */}
-            <UsageDrawer open={usageOpen()} uri={uri()} onClose={() => setUsageOpen(false)} />
+            <UsageDrawer open={usageBoard()} uri={uri()} onClose={() => setUsageBoard(false)} />
             {/* 顶部：对话 view 的**视图级控制**（Markdown 显示方式 + 信息密度 + 清空本会话历史）。
                 pr-16：ViewGrid 的 area 设施（最大化/最小化）浮在本区域**右上角**，
                 不预留这条空档，按钮会与它叠在同一坐标上（实测重叠）。 */}
@@ -1109,7 +1124,7 @@ export function LocalChatPage(props: { uri?: string }) {
                     class="btn btn-ghost btn-xs tooltip tooltip-bottom"
                     data-tip="会话用量：窗口占用 / 花费 / 缓存命中 / 逐步明细"
                     aria-label="会话用量看板"
-                    onClick={() => setUsageOpen(true)}
+                    onClick={() => setUsageBoard(true)}
                 >
                     ▤ 用量
                 </button>
@@ -1200,6 +1215,8 @@ export function LocalChatPage(props: { uri?: string }) {
                                     onFull={(title, content) => setFull({ title, content })}
                                     liveTurnId={liveTurnId()}
                                     md={md()}
+                                    usageOpen={usageOpen()}
+                                    onToggleUsage={toggleUsage}
                                 />
                             ) : t.tag === "error" ? (
                                 /* 遗留的**根级** error 块（历史日志：旧版上限提示未挂 parent）。

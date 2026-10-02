@@ -150,6 +150,24 @@ describe("窗口占用 / 缓存命中率", () => {
         expect(cacheHitRate({ cacheRead: 0, inputTotal: 0 })).toBeNull();
     });
 
+    it("页脚两种口径并存且**不可相除**：累加值（重发成本）≠ 窗口分子（上下文）", () => {
+        // 实测场景（2026-10-02）：一轮 40 步，累加 986k，而真实上下文只有最后一步的 44k。
+        // 界面上这两个数并排显示 —— 不标注范围就会被读成"窗口 96%"。
+        const step = (n: number) => bucketsOf({
+            inputTokens: n, inputTokenDetails: { noCacheTokens: 1000, cacheReadTokens: n - 1000 }, outputTokens: 100,
+        });
+        const cumulative = sumBuckets([step(20_000), step(24_000)]);
+        const patch = turnUsagePatch(cumulative, step(24_000), null, 1_000_000, 2);
+        expect(patch.inputTotal).toBe(44_000);      // 累加（解释"这轮为什么贵"）
+        expect(patch.windowTotal).toBe(24_100);     // 最后一步（上下文压力）
+        expect(patch.lastInputTotal).toBe(24_000);
+        expect(patch.lastOutputTotal).toBe(100);
+        expect(patch.steps).toBe(2);
+        // 上限是同一个，但两个分子差一倍以上 —— 混用得出的是假象
+        expect(windowRate({ total: patch.windowTotal }, patch.contextLimit!)).toBeCloseTo(0.0241, 6);
+        expect(windowRate({ total: patch.total }, patch.contextLimit!)).toBeCloseTo(0.0442, 6);
+    });
+
     it("窗口占用分子**不是**累加值：最后一步才是上下文压力", () => {
         const cumulative = sumBuckets([
             bucketsOf({ inputTokens: 1000, inputTokenDetails: { noCacheTokens: 1000 }, outputTokens: 100 }),

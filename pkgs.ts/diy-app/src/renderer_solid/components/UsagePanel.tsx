@@ -76,9 +76,19 @@ function isLegacyUsage(u: unknown): boolean {
     return !!r && typeof r["noCache"] !== "number";
 }
 
-export function TurnUsageFooter(props: { turnId: string; usage: unknown }) {
-    const [open, setOpen] = createSignal(false);
-    /** 本轮的逐步明细（按 turnId 从账本快照里取；未落到账本时为空） */
+export function TurnUsageFooter(props: {
+    turnId: string;
+    usage: unknown;
+    /** 本轮是否正在直播（main 报活跃）。决定"账本还没写全"是正常态还是异常态 */
+    live: boolean;
+    /** 展开态**存在组件外**（按 turnId 索引，像 pinned 那样）：块树每帧全量重建，
+     *  组件局部 signal 会被清掉 —— 存里面就会出现"点开又自动合上/点了没反应"。
+     *  根因（D4）另立 ##236，但展开态这条本任务内就得对。 */
+    open: boolean;
+    onToggle: (turnId: string) => void;
+}) {
+    const toggle = () => props.onToggle(props.turnId);
+    /** 本轮的逐步明细（按 turnId 从账本快照里取） */
     const rows = (): StepUsageRecord[] => localChatStore.usage.filter((r) => r.turnId === props.turnId);
 
     const u = (): TurnUsagePatch | null =>
@@ -91,66 +101,98 @@ export function TurnUsageFooter(props: { turnId: string; usage: unknown }) {
         return p ? windowRate({ total: p.windowTotal }, p.contextLimit ?? undefined) : null;
     };
 
+    // 展开时对齐账本：明细读的是 `<key>.usage.jsonl` 的镜像快照，而它只在
+    // 进会话 / 轮末 / 打开看板时刷新 —— 少了这一下，会话未停时展开明细会扑空
+    // （页脚已有数字、明细却说"没有记录"，D1 的自相矛盾）。
+    // 只在"展开"这一动作上刷新：用户主动动作 + 一次 RPC，代价可接受；不做轮询。
+    createEffect(() => {
+        const u = localChatStore.currentUri;
+        if (props.open && u) void localChatStore.refreshUsage(u);
+    });
+
     return (
         <div class="text-[11px]">
-            {/* 收起态一行：两个**主体**（总输入/总输出）+ 窗口占用 + 金额 + 明细入口。
-                上下对称（↑输入 ↓输出），组成项跟在主体后的括号里 —— 不做并列句式。 */}
-            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 opacity-60">
+            {/* 页脚两行，**两个口径各占一行、并标明范围**（这是必须的，不是啰嗦）：
+                  行1 = 上下文压力（取**最后一步**，与窗口占用同源，相除自洽）；
+                  行2 = 本轮成本（**各步累加**，解释"这轮为什么贵"）。
+                40 步的一轮里，累加能到 1M 而真实上下文只有 44k —— 两者并排不标注，
+                用户相除必然得出"窗口 96%"的假象（实测踩过）。 */}
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5">
                 <Show
                     when={u()}
                     fallback={
                         /* 旧记录降级：无四桶字段，按当时的口径原样呈现（不假装能拆开） */
-                        <span>
+                        <span class="opacity-60">
                             tokens ↑{legacy().in ?? 0} ↓{legacy().out ?? 0}（Σ{legacy().total ?? 0}）
-                            <span class="ml-1 opacity-60">（旧记录：无四桶/金额）</span>
+                            <span class="ml-1">（旧记录：无四桶/金额）</span>
                         </span>
                     }
                 >
                     {(p) => (
-                        <>
-                            <span title="总输入 = 非缓存输入 + 缓存读 + 缓存写（本轮各步累加）">
-                                ↑总输入 {fmtTokens(p().inputTotal)}（{inputCompose(p())}）
-                            </span>
-                            <span title="总输出 = 文本输出 + 思考输出；思考是总输出的子集，不另加价">
-                                ↓总输出 {fmtTokens(p().outputTotal)}（{outputCompose(p())}）
-                            </span>
-                            <span class={pctClass(rate())} title="窗口占用 = 本步总输入 + 总输出 ÷ 模型上下文上限">
-                                窗口 {pctText(rate())}
-                            </span>
-                            <span title="本轮累计金额（各步按各自生效单价计算后相加）">
-                                {p().cost ? `$${fmtCost(p().cost!.total)}` : "金额 n/a"}
-                            </span>
-                        </>
+                        <button
+                            type="button"
+                            class="w-full cursor-pointer select-none text-left"
+                            aria-expanded={props.open}
+                            aria-label="展开本轮逐步用量"
+                            onPointerDown={(e) => e.preventDefault()}
+                            onClick={toggle}
+                        >
+                            {/* 行1：上下文（与窗口%同源，两数可相除） */}
+                            <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 opacity-70">
+                                <span class={pctClass(rate())} title="窗口占用 = 最后一步的总输入 + 总输出 ÷ 模型上下文上限">
+                                    窗口 {pctText(rate())}
+                                </span>
+                                <span title="当前上下文大小 = 最后一步的总输入 + 总输出（不是各步累加）">
+                                    当前上下文 {fmtTokens(p().windowTotal)}
+                                    {p().contextLimit ? ` / ${fmtTokens(p().contextLimit!)}` : ""}
+                                    {/* 老会话没有分步输入/输出字段 → 只给总数，不编算式 */}
+                                    <Show when={p().lastInputTotal != null && p().lastOutputTotal != null}>
+                                        （= 总输入 {fmtTokens(p().lastInputTotal!)} + 总输出{" "}
+                                        {fmtTokens(p().lastOutputTotal!)}）
+                                    </Show>
+                                </span>
+                            </div>
+                            {/* 行2：本轮成本（累加口径，标明它解释什么） */}
+                            <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 opacity-60">
+                                <span title="本轮各步的总输入之和：每一步都要重发整个上下文，故它衡量的是「这轮重发成本」">
+                                    本轮{p().steps != null ? ` ${p().steps} 步` : ""}累计 ↑总输入{" "}
+                                    {fmtTokens(p().inputTotal)}（{inputCompose(p())}）
+                                </span>
+                                <span title="总输出 = 文本输出 + 思考输出；思考是总输出的子集，不另加价">
+                                    ↓总输出 {fmtTokens(p().outputTotal)}（{outputCompose(p())}）
+                                </span>
+                                <span title="本轮累计金额（各步按各自生效单价计算后相加）">
+                                    {p().cost ? `$${fmtCost(p().cost!.total)}` : "金额 n/a"}
+                                </span>
+                                <span class="opacity-70">{props.open ? "▴ 明细" : "› 明细"}</span>
+                            </div>
+                        </button>
                     )}
                 </Show>
-                <button
-                    class="btn btn-ghost btn-xs h-5 min-h-0 px-1 opacity-70"
-                    aria-label="展开本轮逐步用量"
-                    aria-expanded={open()}
-                    onClick={() => setOpen((v) => !v)}
-                >
-                    <IconExpand class={`h-3 w-3 transition-transform ${open() ? "" : "-rotate-90"}`} />
-                    明细
-                </button>
             </div>
 
-            <Show when={open()}>
-                <TurnUsageDetail turnId={props.turnId} rows={rows()} />
+            <Show when={props.open}>
+                <TurnUsageDetail turnId={props.turnId} rows={rows()} live={props.live} />
             </Show>
         </div>
     );
 }
 
 /** 本轮逐步明细（每行自带人物/模型/面/档位：同一会话里这些会变，不能挂在标题上） */
-function TurnUsageDetail(props: { turnId: string; rows: StepUsageRecord[] }) {
+function TurnUsageDetail(props: { turnId: string; rows: StepUsageRecord[]; live: boolean }) {
     const turns = () => groupByTurn(localChatStore.usage).filter((g) => g.turnId === props.turnId);
     return (
         <div class="mt-1 overflow-x-auto rounded-box border border-base-300 bg-base-100 p-2">
             <Show
                 when={props.rows.length > 0}
                 fallback={
+                    /* 两种"还没有记录"必须分开说 —— 把正常态说成故障会让人白查一圈（D1）：
+                       · 本轮还在跑：账本按步追加，此刻可能确实还没落到文件 → 正常，等一下；
+                       · 本轮已停：确实没有记录（会话早于用量落盘上线，或写入失败）。 */
                     <div class="text-[11px] opacity-50">
-                        本轮没有逐步记录（旧会话未落盘，或用量写入失败 —— 见 $DIY_HOME/log）
+                        {props.live
+                            ? "本轮还在进行中，逐步账本按步写入，稍后即可见。"
+                            : "这一轮没有逐步记录（该会话早于用量落盘上线，或账本写入失败）。"}
                     </div>
                 }
             >

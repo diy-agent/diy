@@ -362,8 +362,21 @@ export type TurnUsagePatch = {
     reasoning: number;
     /** 本轮累计：总输入 + 总输出（各步之和，用于解释"这一轮为什么贵"） */
     total: number;
-    /** 窗口占用分子：**本步（最后一步）**的总输入+总输出 —— 上下文压力口径 */
+    /**
+     * 窗口占用分子：**最后一步**的总输入 + 总输出 —— 上下文压力口径。
+     * ⚠️ 与上面的累计字段（`inputTotal`/`outputTotal`）**不是同一个数**，也绝不能相除：
+     * 40 步的累加能到 1M，而真实上下文只有最后一步的 44k。混用会得出"窗口 96%"这种假象。
+     */
     windowTotal: number;
+    /**
+     * 最后一步的总输入 / 总输出（组成窗口占用，UI 用它摊开算式）。
+     * ⚠️ optional：ops.jsonl 是 append-only 的史书，老会话里没有这几个字段
+     * （它们是"口径标注"这一版才加的）—— 读侧必须能降级，不能因为缺字段就整轮不显示。
+     */
+    lastInputTotal?: number;
+    lastOutputTotal?: number;
+    /** 本轮步数（解释"为什么累计远大于窗口"：每一步都要重发整个上下文）；同上 optional */
+    steps?: number;
     /** 上下文窗口上限（未知 → null；UI 显示「—」而不是编一个百分比） */
     contextLimit: number | null;
     /** 本轮累计金额 */
@@ -371,7 +384,13 @@ export type TurnUsagePatch = {
 };
 
 /** 由累计桶 + 最后一步桶 + 累计金额 → turn 页脚视图 */
-export function turnUsagePatch(cumulative: UsageBuckets, lastStep: Pick<UsageBuckets, "total"> | null, cost: CostBreakdown | null, contextLimit?: number): TurnUsagePatch {
+export function turnUsagePatch(
+    cumulative: UsageBuckets,
+    lastStep: UsageBuckets | null,
+    cost: CostBreakdown | null,
+    contextLimit?: number,
+    steps = 0,
+): TurnUsagePatch {
     return {
         inputTotal: cumulative.inputTotal,
         outputTotal: cumulative.outputTotal,
@@ -382,6 +401,9 @@ export function turnUsagePatch(cumulative: UsageBuckets, lastStep: Pick<UsageBuc
         text: cumulative.text,
         reasoning: cumulative.reasoning,
         windowTotal: lastStep?.total ?? cumulative.total,
+        lastInputTotal: lastStep?.inputTotal ?? cumulative.inputTotal,
+        lastOutputTotal: lastStep?.outputTotal ?? cumulative.outputTotal,
+        steps,
         contextLimit: contextLimit ?? null,
         cost,
     };
