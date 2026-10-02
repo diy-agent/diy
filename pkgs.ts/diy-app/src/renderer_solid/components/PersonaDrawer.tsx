@@ -362,8 +362,8 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                 >
                     {/* 头部 */}
                     <div class="flex shrink-0 items-center gap-2 border-b border-base-300 px-4 py-2">
-                        <span class="text-sm font-semibold">agent 人物</span>
-                        <span class="text-[11px] opacity-50">
+                        <span class="text-title font-semibold">agent 人物</span>
+                        <span class="text-body opacity-50">
                             人物决定模型与参数；改它会影响所有引用它的任务（下一轮生效）
                         </span>
                         <button
@@ -381,7 +381,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                         而这是常驻的语境说明。 */}
                     <Show when={!creating()}>
                         <div
-                            class="flex shrink-0 items-center gap-2 border-b border-info/30 bg-info/15 px-4 py-1 text-[11px]"
+                            class="flex shrink-0 items-center gap-2 border-b border-info/30 bg-info/15 px-4 py-1 text-body"
                             data-testid="persona-impact-bar"
                         >
                             <span class="opacity-70" aria-hidden="true">
@@ -418,7 +418,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                         }}
                                     />
                                     <Show when={search().trim()}>
-                                        <span class="shrink-0 text-[10px] opacity-60">
+                                        <span class="shrink-0 text-caption opacity-60">
                                             {filteredPersonas().length} 个人物
                                         </span>
                                         <button
@@ -454,14 +454,14 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                                 onDblClick={() => void pickForTask(FOLLOW_DEFAULT)}
                                             >
                                                 <span class="flex w-full items-center gap-1">
-                                                    <span class="truncate text-xs font-medium">
+                                                    <span class="truncate text-body font-medium">
                                                         跟随缺省
                                                     </span>
                                                 </span>
-                                                <span class="w-full truncate text-[10px] opacity-60">
+                                                <span class="w-full truncate text-caption opacity-60">
                                                     缺省改变时，本任务下一轮跟着变
                                                 </span>
-                                                <span class="flex w-full items-center gap-1 truncate text-[10px] opacity-70">
+                                                <span class="flex w-full items-center gap-1 truncate text-caption opacity-70">
                                                     <span class="shrink-0">↳ 当前缺省：</span>
                                                     <span class="truncate font-medium">
                                                         <HighlightText
@@ -508,10 +508,10 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                 <div class="my-1.5 border-t border-base-300" />
 
                                 <Show when={personaStore.loading}>
-                                    <div class="px-2 py-1 text-[11px] opacity-50">加载中…</div>
+                                    <div class="px-2 py-1 text-body opacity-50">加载中…</div>
                                 </Show>
                                 <Show when={!personaStore.loading && search().trim() && !followMatchesSearch() && filteredPersonas().length === 0}>
-                                    <div class="px-2 py-3 text-center text-xs opacity-60">
+                                    <div class="px-2 py-3 text-center text-body opacity-60">
                                         没有匹配「{search().trim()}」的人物
                                     </div>
                                 </Show>
@@ -541,7 +541,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                                     onDblClick={() => void pickForTask(p.id)}
                                                 >
                                                     <span class="flex w-full items-center gap-1">
-                                                        <span class="truncate text-xs font-medium">
+                                                        <span class="truncate text-body font-medium">
                                                             <HighlightText text={p.name} query={search} />
                                                         </span>
                                                         <Show
@@ -554,7 +554,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                                             </span>
                                                         </Show>
                                                     </span>
-                                                    <span class="w-full truncate text-[10px] opacity-60">
+                                                    <span class="w-full truncate text-caption opacity-60">
                                                         <HighlightText
                                                             text={p.model}
                                                             query={search}
@@ -569,7 +569,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                                     </span>
                                                     {/* 行为指令：每个人物下面只占一行，过长自然截断；空值也保留位置避免条目跳动 */}
                                                     <span
-                                                        class="block w-full truncate text-[10px] opacity-50"
+                                                        class="block w-full truncate text-caption opacity-50"
                                                         title={p.instructions || "未设置行为指令"}
                                                     >
                                                         <HighlightText
@@ -623,11 +623,11 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                     <Show
                                         when={editingFollow()}
                                         fallback={
-                                            <div class="text-xs opacity-60">没有可用人物。</div>
+                                            <div class="text-body opacity-60">没有可用人物。</div>
                                         }
                                     >
                                         <div
-                                            class="max-w-[46rem] space-y-2 text-xs"
+                                            class="max-w-[46rem] space-y-2 text-body"
                                             data-testid="persona-follow-pane"
                                         >
                                             <div class="flex items-center gap-2">
@@ -677,7 +677,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                             >
                                 {/* 名字：可改（引用用 id，改名不影响任何任务的绑定） */}
                                 <div class="mb-3 flex items-center gap-2">
-                                    <span class="w-14 shrink-0 text-[11px] opacity-60">名字</span>
+                                    <span class="w-14 shrink-0 text-body opacity-60">名字</span>
                                     <Show
                                         when={creating()}
                                         fallback={
@@ -698,7 +698,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                                         }
                                                     }}
                                                 />
-                                                <span class="text-[10px] opacity-40">
+                                                <span class="text-caption opacity-40">
                                                     改名不影响引用（任务存的是 id {editing()}）
                                                 </span>
                                             </>
@@ -716,7 +716,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
 
                                 {/* 模型：平铺按钮（一眼全见，一次命中；下拉要多一次展开） */}
                                 <div class="mb-3 flex items-start gap-2">
-                                    <span class="mt-1 w-14 shrink-0 text-[11px] opacity-60">
+                                    <span class="mt-1 w-14 shrink-0 text-body opacity-60">
                                         模型
                                     </span>
                                     <div class="flex flex-wrap gap-1">
@@ -735,7 +735,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                             )}
                                         </For>
                                         <Show when={creating() && personaStore.models.length === 0}>
-                                            <span class="self-center text-[10px] opacity-50">
+                                            <span class="self-center text-caption opacity-50">
                                                 模型清单未加载，稍候（人物必须指定模型）
                                             </span>
                                         </Show>
@@ -744,7 +744,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
 
                                 {/* 思考级别：候选集由**该模型**决定（各家词表不同，见 shared/models.ts） */}
                                 <div class="mb-3 flex items-start gap-2">
-                                    <span class="mt-1 w-14 shrink-0 text-[11px] opacity-60">
+                                    <span class="mt-1 w-14 shrink-0 text-body opacity-60">
                                         思考级别
                                     </span>
                                     <div class="flex flex-wrap gap-1">
@@ -766,7 +766,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                     命名为「行为指令」而不是「口气」：这里能写的不只是措辞语气，
                                     还有回答结构、专业程度、输出约束（`style`/`tone` 都太窄）。 */}
                                 <div class="mb-3 flex items-start gap-2">
-                                    <span class="mt-1 w-14 shrink-0 text-[11px] opacity-60">
+                                    <span class="mt-1 w-14 shrink-0 text-body opacity-60">
                                         行为指令
                                     </span>
                                     <textarea
@@ -804,7 +804,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                             用户得先确认"右侧编辑的是谁"才敢点。它已经挂在每个条目右侧（hover 显形），
                             那里"点它 = 改这一条"毫无歧义。 */}
                         <Show when={!creating()}>
-                            <span class="text-[11px] opacity-60">
+                            <span class="text-body opacity-60">
                                 {editingFollow()
                                     ? personaStore.isFollowing()
                                         ? "本任务正在跟随缺省"
@@ -813,7 +813,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                       ? "本任务正在用它"
                                       : "双击 = 本任务改用它"}
                             </span>
-                            <span class="ml-auto text-[11px] opacity-50">
+                            <span class="ml-auto text-body opacity-50">
                                 悬停人物条目 = 「缺省」按钮
                             </span>
                         </Show>

@@ -67,7 +67,7 @@ function Fold(props: { k: string; label: string; extra?: string; right?: JSX.Ele
             class="flex min-h-0 flex-col rounded-lg border border-base-300"
             classList={{ "flex-1 min-h-[140px]": !!fold()[props.k] }}
         >
-            <div class="flex w-full items-center gap-1 bg-base-300 px-2 py-1 text-[11px] font-bold tracking-wide">
+            <div class="flex w-full items-center gap-1 bg-base-300 px-2 py-1 text-body font-bold tracking-wide">
                 <button class="flex items-center gap-1 opacity-80 hover:opacity-100" onClick={() => setFold(props.k, !fold()[props.k])}>
                     <span>{fold()[props.k] ? "▾" : "▸"}</span>
                     <span>{props.label}</span>
@@ -78,7 +78,7 @@ function Fold(props: { k: string; label: string; extra?: string; right?: JSX.Ele
                 </span>
             </div>
             <Show when={fold()[props.k]}>
-                <div class="min-h-0 flex-1 overflow-auto bg-base-200 text-[11px]">{props.children}</div>
+                <div class="min-h-0 flex-1 overflow-auto bg-base-200 text-body">{props.children}</div>
             </Show>
         </div>
     );
@@ -414,7 +414,7 @@ export function ContextLabPage(props: { uri: string }) {
                                 >
                                     <span class="badge badge-xs">{st.index}</span>
                                     <span
-                                        class="shrink-0 font-mono text-[10px] opacity-60"
+                                        class="shrink-0 font-mono text-caption opacity-60"
                                         title={`${st.ts}（第 ${st.index} 轮真发）`}
                                     >
                                         {fmtShortTime(st.ts)}
@@ -449,7 +449,7 @@ export function ContextLabPage(props: { uri: string }) {
             <Show when={d()} fallback={<div class="p-2 opacity-60">还没有真发记录，无从比较。</div>}>
                 {(dd) => (
                     <div class="space-y-2 p-2">
-                        <div class="flex flex-wrap items-center gap-2 text-[11px]">
+                        <div class="flex flex-wrap items-center gap-2 text-body">
                             <Show when={dd().base}>
                                 {(b) => (
                                     <>
@@ -498,7 +498,7 @@ export function ContextLabPage(props: { uri: string }) {
                                 </div>
                             </Show>
                         </div>
-                        <div class="flex flex-col gap-1 text-[11px]">
+                        <div class="flex flex-col gap-1 text-body">
                             <div>
                                 <span class="badge badge-primary badge-xs badge-outline">system</span>{" "}
                                 {dd().systemDiffers ? "重建（全量）" : "未变（可缓存）"}
@@ -520,7 +520,7 @@ export function ContextLabPage(props: { uri: string }) {
                                         <div class="mb-1 font-bold opacity-70">
                                             {x.name}（+{diffSize(x.diff).add} / -{diffSize(x.diff).del}）
                                         </div>
-                                        <pre class="max-h-64 overflow-auto rounded bg-base-100 p-1 font-mono text-[11px]">
+                                        <pre class="max-h-64 overflow-auto rounded bg-base-100 p-1 font-mono text-body">
                                             {x.diff
                                                 .filter((l) => l.t !== " ")
                                                 .map((l) => `${l.t} ${l.s}`)
@@ -539,7 +539,7 @@ export function ContextLabPage(props: { uri: string }) {
     const parts: Record<string, () => JSX.Element> = {
         /** 左：结构树（契约 + 划分操作） */
         "ctxlab.structure": () => (
-            <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-[11px]">
+            <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-body">
                 {/* 变更列表：真发快照（每轮一条；点一条看它改了什么） */}
                 <Fold k="steps" label="变更（真发轮次）" extra={`${steps()?.total ?? 0} 轮`}>
                     {stepsPane()}
@@ -571,7 +571,7 @@ export function ContextLabPage(props: { uri: string }) {
 
         /** 中：请求预览（整份请求 = 一份大 YAML；可切原文 JSON） */
         "ctxlab.delivery": () => (
-            <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-xs">
+            <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-body">
                 {/* 变更详情：选中某轮 → 与上一轮比；未选中 → 当前 vs 最后一轮（main 侧算好的行级 diff） */}
                 <Fold
                     k="change"
@@ -613,7 +613,7 @@ export function ContextLabPage(props: { uri: string }) {
                     >
                         {(b) => (
                             <div class="flex h-full min-h-0 flex-col">
-                                <div class="shrink-0 px-2 py-1 text-[10px] opacity-60">{lab()!.request.note}</div>
+                                <div class="shrink-0 px-2 py-1 text-caption opacity-60">{lab()!.request.note}</div>
                                 <Show
                                     when={reqMode() === "yaml"}
                                     fallback={
@@ -655,7 +655,7 @@ export function ContextLabPage(props: { uri: string }) {
 
     return (
         <div class="flex h-full flex-col overflow-hidden">
-            <div class="flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs">
+            <div class="flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-body">
                 <span class="badge badge-info badge-sm" title={props.uri}>
                     📌 {props.uri}
                 </span>
@@ -685,7 +685,7 @@ export function ContextLabPage(props: { uri: string }) {
                     layout={page.layout}
                     binding={layoutStore.bindingFor(page, props.uri)}
                     renderView={(viewId) =>
-                        parts[viewId]?.() ?? <div class="p-3 text-xs opacity-60">未注册的 view: {viewId}</div>
+                        parts[viewId]?.() ?? <div class="p-3 text-body opacity-60">未注册的 view: {viewId}</div>
                     }
                 />
             </div>

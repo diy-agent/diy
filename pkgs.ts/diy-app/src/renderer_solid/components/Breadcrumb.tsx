@@ -177,7 +177,7 @@ function CrumbDropdown(props: {
             <button
                 ref={btnRef}
                 tabindex={0}
-                class="btn btn-ghost btn-xs px-0.5 min-h-0 h-4 text-[10px] leading-none opacity-40 hover:opacity-100"
+                class="btn btn-ghost btn-xs px-0.5 min-h-0 h-4 text-caption leading-none opacity-40 hover:opacity-100"
                 onClick={(e) => { e.stopPropagation(); setOpen(!open()); watchOpen(); }}
             >
                 ▾
@@ -186,7 +186,7 @@ function CrumbDropdown(props: {
                 <ul
                     ref={menuRef}
                     tabindex={0}
-                    class="dropdown-content menu p-1 shadow-lg bg-base-200 rounded-box w-52 text-xs z-50 max-h-60 overflow-y-auto"
+                    class="dropdown-content menu p-1 shadow-lg bg-base-200 rounded-box w-52 text-body z-50 max-h-60 overflow-y-auto"
                     onClick={dismiss}
                 >
                     <For each={props.items}>
@@ -205,9 +205,9 @@ function CrumbDropdown(props: {
                                             <span class={`w-1.5 h-1.5 rounded-full shrink-0 ${taskStateColor(findNode(taskStore.nodes, t.ctx ?? "")?.state)}`} />
                                         </Show>
                                         <span class="flex-1 truncate">{labelOf(t)}</span>
-                                        {isCur && <span class="text-primary text-[10px]">◀</span>}
+                                        {isCur && <span class="text-primary text-caption">◀</span>}
                                         <button
-                                            class="btn btn-ghost btn-xs px-0.5 min-h-0 h-4 opacity-0 hover:!opacity-100 text-[10px]"
+                                            class="btn btn-ghost btn-xs px-0.5 min-h-0 h-4 opacity-0 hover:!opacity-100 text-caption"
                                             title="关闭"
                                             onClick={(e) => { e.stopPropagation(); props.onClose(t.key); }}
                                         >
@@ -262,11 +262,11 @@ export function Breadcrumb(props: BreadcrumbProps) {
     };
 
     return (
-        <nav class="flex items-center gap-0.5 px-3 py-1 text-[13px] border-b border-base-300/60 bg-base-200/30 shrink-0 select-none min-h-[2rem]">
+        <nav class="flex items-center gap-0.5 px-3 py-1 text-body border-b border-base-300/60 bg-base-200/30 shrink-0 select-none min-h-[2rem]">
             <For each={crumbs()}>
                 {(crumb, i) => (
                     <span class="flex items-center gap-0.5 shrink-0">
-                        {i() > 0 && <span class="text-base-content/25 mx-1 text-[11px]">›</span>}
+                        {i() > 0 && <span class="text-base-content/25 mx-1 text-body">›</span>}
                         <button
                             class={`btn btn-ghost btn-xs px-1.5 min-h-0 h-5 normal-case font-normal whitespace-nowrap ${
                                 crumb.isCurrent
@@ -276,7 +276,7 @@ export function Breadcrumb(props: BreadcrumbProps) {
                             onClick={() => handleClick(crumb)}
                             disabled={crumb.isCurrent}
                         >
-                            {crumb.icon && <span class="text-[12px]">{crumb.icon}</span>}
+                            {crumb.icon && <span class="text-body">{crumb.icon}</span>}
                             {crumb.label}
                         </button>
                         <Show when={crumb.siblings && crumb.siblings.length > 0}>
@@ -302,8 +302,8 @@ export function Breadcrumb(props: BreadcrumbProps) {
                     title="关闭当前页面（暂时不理会，不影响任务状态）"
                     onClick={() => props.closeTab(props.activeKey)}
                 >
-                    <span class="text-[11px]">✕</span>
-                    <span class="text-[11px]">关闭</span>
+                    <span class="text-body">✕</span>
+                    <span class="text-body">关闭</span>
                 </button>
             </Show>
         </nav>

@@ -140,7 +140,7 @@ function StateSelector(props: { uri: string; state: string }) {
                         {(s) => (
                             <li>
                                 <button
-                                    class={`text-xs gap-2 ${s === props.state ? "active font-bold" : ""}`}
+                                    class={`text-body gap-2 ${s === props.state ? "active font-bold" : ""}`}
                                     onClick={(e) => changeState(s, e)}
                                 >
                                     <span class={`w-2 h-2 rounded-full inline-block ${taskStateColor(s)}`} />
@@ -201,7 +201,7 @@ function SortableTh(props: {
                 onClick={() => props.onSort(props.sortKey)}
             >
                 <span>{meta.label}</span>
-                <span class="text-[9px]">{active() ? (props.sort.dir === "asc" ? "▲" : "▼") : "⇅"}</span>
+                <span class="text-caption">{active() ? (props.sort.dir === "asc" ? "▲" : "▼") : "⇅"}</span>
             </button>
         </th>
     );
@@ -412,7 +412,7 @@ export function TaskTree() {
         <DragDropProvider onDragEnd={handleDragEnd} sensors={[PointerSensor]}>
             <div class="h-full flex flex-col">
                 <div class={`flex items-center gap-2 px-3 ${VIEW_BAR_H} border-b shrink-0`}>
-                    <span class="text-sm font-semibold shrink-0">任务</span>
+                    <span class="text-title font-semibold shrink-0">任务</span>
                     {/* 搜索框：宽度随容器伸缩，但保底能看清几个词 */}
                     <input
                         ref={bindSearch}
@@ -509,9 +509,9 @@ export function TaskTree() {
             <DragOverlay>
                 {(source) =>
                     source?.data?.title ? (
-                        <div class="flex items-center px-3 py-1 text-sm bg-base-100 border rounded shadow-lg opacity-80 max-w-[200px] pointer-events-none select-none">
+                        <div class="flex items-center px-3 py-1 text-prose bg-base-100 border rounded shadow-lg opacity-80 max-w-[200px] pointer-events-none select-none">
                             <span class="truncate">{String(source.data.title)}</span>
-                            <span class="ml-2 text-xs opacity-60">拖放改层级</span>
+                            <span class="ml-2 text-body opacity-60">拖放改层级</span>
                         </div>
                     ) : null
                 }
@@ -534,7 +534,7 @@ function ProjectRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: 
             ref={ref}
             class={`bg-base-200 hover:bg-base-300 border-b transition-colors ${drop.isDropTarget() ? " ring-2 ring-primary/50 ring-inset" : ""}`}
         >
-            <td style={`padding-left:${8 + row.depth * 20}px`} class="font-semibold">
+            <td style={`padding-left:${8 + row.depth * 20}px`} class="font-semibold text-body">
                 <span class="inline-flex items-center gap-1">
                     {row.node.children?.length ? (
                         <button
@@ -563,7 +563,7 @@ function ProjectRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: 
                 </span>
             </td>
             {/* 项目行的其余列：项目路径（原 URI 列的语义，项目自身没有任务字段） */}
-            <td colspan={7} class="font-mono text-xs opacity-60 truncate">
+            <td colspan={7} class="font-mono text-body opacity-60 truncate">
                 {row.node.project_path ?? ""}
             </td>
         </tr>
@@ -603,7 +603,7 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                     : "hover:bg-base-200" + (drop.isDropTarget() ? " ring-2 ring-primary/50 ring-inset" : "")
             } ${props.focused ? " outline outline-1 outline-warning/70 -outline-offset-1" : ""}`}
         >
-            <td style={`padding-left:${8 + row.depth * 20}px`}>
+            <td style={`padding-left:${8 + row.depth * 20}px`} class="text-body">
                 <span class="inline-flex items-center gap-1">
                     {row.node.children?.length ? (
                         <button
@@ -622,7 +622,7 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                     {/* 任务号前置：一眼定位「几号任务」，且与 URI 列的末段同源（都来自 main 的 num）。
                         弱化成 mono/半透明，避免与标题抢视觉焦点；标题过长时它不参与 truncate。 */}
                     <Show when={row.node.num}>
-                        <span class="shrink-0 font-mono text-xs opacity-50">#{row.node.num}</span>
+                        <span class="shrink-0 font-mono text-body opacity-50">#{row.node.num}</span>
                     </Show>
                     <span
                         class="truncate font-medium diy-link underline-offset-2 hover:underline cursor-pointer"
@@ -640,7 +640,7 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                     纯文本单行展示——不做 Markdown 渲染：片段是"定位线索"，渲染只会增加噪音。 */}
                 <Show when={row.snippet}>
                     {(s) => (
-                        <div class="text-xs opacity-60 truncate leading-tight" title={`${s().before}${s().match}${s().after}`}>
+                        <div class="text-body opacity-60 truncate leading-tight" title={`${s().before}${s().match}${s().after}`}>
                             <span>{s().before}</span>
                             <mark class="bg-warning/40 text-inherit rounded-sm px-0.5">{s().match}</mark>
                             <span>{s().after}</span>
@@ -651,29 +651,29 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                     )}
                 </Show>
             </td>
-            <td class="text-xs">
+            <td class="text-body">
                 <Show when={row.node.change_type} fallback={<Dash />}>
                     {(v) => <span class="font-mono opacity-80">{v()}</span>}
                 </Show>
             </td>
-            <td class="text-xs">
+            <td class="text-body">
                 <Show when={row.node.module} fallback={<Dash />}>
                     {(v) => <span class="font-mono opacity-80 truncate inline-block max-w-40 align-bottom">{v()}</span>}
                 </Show>
             </td>
-            <td class="text-xs whitespace-nowrap">
+            <td class="text-body whitespace-nowrap">
                 <Show when={row.node.priority} fallback={<Dash />}>
                     {(v) => <span class={`badge badge-sm font-mono ${priorityClass(v())}`}>{v()}</span>}
                 </Show>
             </td>
-            <td class="text-xs">
+            <td class="text-body">
                 <StateSelector uri={row.key} state={row.node.state ?? ""} />
             </td>
-            <td class="text-xs font-mono opacity-60">{row.node.num ?? ""}</td>
-            <td class="text-xs whitespace-nowrap opacity-70" title={row.node.created ?? ""}>
+            <td class="text-body font-mono opacity-60">{row.node.num ?? ""}</td>
+            <td class="text-body whitespace-nowrap opacity-70" title={row.node.created ?? ""}>
                 {fmtTime(row.node.created)}
             </td>
-            <td class="text-xs whitespace-nowrap opacity-70" title={row.node.updated ?? ""}>
+            <td class="text-body whitespace-nowrap opacity-70" title={row.node.updated ?? ""}>
                 {fmtTime(row.node.updated)}
             </td>
         </tr>

@@ -11,6 +11,23 @@
  * 显式 @source 把 main 纳入扫描，一处修复全部页面。 */
 @source "../main";
 
+/* ── 语义排版档（任务 229，##228 A 组）──────────────────────────────
+ * 全 UI 只允许这 5 档字号 —— 新代码禁用 text-[Npx] / text-xs / text-sm / text-lg：
+ *   caption 10px  微标注：角标、排序箭头、状态角标
+ *   body   11px  紧凑 UI 默认正文：表格行、导航项、表单、列表、元数据
+ *   prose  14px  阅读区正文：markdown、聊天气泡、说明段落
+ *   title  14px  区块/面板标题：面板头、详情 h3、modal 头、设置节标题
+ *   display 18px  大标题：页面 h2、创建 sheet h3
+ * 档位按「角色」命名、按值独立调整：改字号只动这一处。
+ * 层级感用 weight/opacity/indent 表达，不用字号表达树层级（任务 208 的教训）。 */
+@theme {
+  --text-caption: 0.625rem;
+  --text-body: 0.6875rem;
+  --text-prose: 0.875rem;
+  --text-title: 0.875rem;
+  --text-display: 1.125rem;
+}
+
 /* 任务标题链接色：daisyUI dark 默认 primary（oklch 58% 蓝紫）在黑底上对比不足，单独加亮。
  * 自定义色按规范用 diy- 前缀；随主题切换（main.tsx 经 data-theme 显式锁定）。 */
 :root,

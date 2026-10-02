@@ -29,16 +29,16 @@ export function LlmPage() {
     };
     return (
         <div class="flex flex-col gap-4 p-4 max-w-xl">
-            <h2 class="text-base font-bold">LLM 代理</h2>
+            <h2 class="text-display font-bold">LLM 代理</h2>
             <div class="card border p-4 bg-base-100">
                 <div class="flex items-center justify-between mb-3">
-                    <span class="text-sm font-medium">运行状态</span>
+                    <span class="text-title font-medium">运行状态</span>
                     <span class={`badge ${running() ? "badge-success" : "badge-ghost"}`}>
                         {loading() ? "检查中…" : running() ? "运行中" : "已停止"}
                     </span>
                 </div>
                 <Show when={running()}>
-                    <div class="text-xs opacity-60 space-y-1">
+                    <div class="text-body opacity-60 space-y-1">
                         <div>
                             端口: <code>8000</code>
                         </div>

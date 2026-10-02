@@ -15,7 +15,7 @@ export function TaskSideView(props: { uri: string; hoverPreview?: boolean }) {
     return (
         <div data-task-side-view class="flex flex-col h-full overflow-hidden">
             <div class={`flex items-center gap-2 px-3 ${VIEW_BAR_H} border-b shrink-0`}>
-                <span class="text-[11px] font-bold tracking-wide opacity-60">任务详情</span>
+                <span class="text-body font-bold tracking-wide opacity-60">任务详情</span>
             </div>
             <div class="flex-1 overflow-y-auto px-3 py-3 min-h-0">
                 <TaskDetailContent uri={props.uri} hoverPreview={props.hoverPreview ?? true} />

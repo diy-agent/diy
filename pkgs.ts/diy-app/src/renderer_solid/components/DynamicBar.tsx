@@ -29,7 +29,7 @@ export function DynamicBar(props: {
     return (
         // 底色与"标注色"同系（高亮用 warning）→ 一眼看出这条菜单条是给高亮用的；
         // 将来别的动态菜单条换别的色系即可互相区隔
-        <div class="flex shrink-0 items-center gap-2 border-b border-warning/30 bg-warning/15 px-2 py-0.5 text-[11px]">
+        <div class="flex shrink-0 items-center gap-2 border-b border-warning/30 bg-warning/15 px-2 py-0.5 text-body">
             <span class="join join-horizontal">
                 <button
                     class="btn btn-xs join-item"

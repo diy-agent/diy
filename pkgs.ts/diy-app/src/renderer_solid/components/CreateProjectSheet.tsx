@@ -54,14 +54,14 @@ export function CreateProjectSheet() {
             {/* DaisyUI Modal */}
             <dialog class="modal" open={open()}>
                 <div class="modal-box w-96">
-                    <h3 class="font-bold text-lg">创建项目</h3>
-                    <p class="text-xs opacity-60 py-2">
+                    <h3 class="font-bold text-display">创建项目</h3>
+                    <p class="text-body opacity-60 py-2">
                         选择要映射的目录（会在其中写 diy.yaml 名片）
                     </p>
 
                     <div class="form-control py-1">
                         <label class="label">
-                            <span class="label-text">项目目录</span>
+                            <span class="label-text text-body">项目目录</span>
                         </label>
                         <div class="join">
                             <input
@@ -78,7 +78,7 @@ export function CreateProjectSheet() {
 
                     <div class="form-control py-1">
                         <label class="label">
-                            <span class="label-text">显示名称</span>
+                            <span class="label-text text-body">显示名称</span>
                         </label>
                         <input
                             class="input input-bordered input-sm"
@@ -90,7 +90,7 @@ export function CreateProjectSheet() {
 
                     <div class="form-control py-1">
                         <label class="label">
-                            <span class="label-text">描述（可选）</span>
+                            <span class="label-text text-body">描述（可选）</span>
                         </label>
                         <input
                             class="input input-bordered input-sm"
@@ -112,7 +112,7 @@ export function CreateProjectSheet() {
                     </div>
                 </div>
                 <form method="dialog" class="modal-backdrop">
-                    <button onClick={() => setOpen(false)}>close</button>
+                    <button class="text-body" onClick={() => setOpen(false)}>close</button>
                 </form>
             </dialog>
         </>

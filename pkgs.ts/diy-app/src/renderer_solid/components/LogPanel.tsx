@@ -54,15 +54,15 @@ export function LogPanel() {
                 <button class="btn btn-ghost btn-xs ml-auto" onClick={load}>
                     刷新
                 </button>
-                <span class="text-xs opacity-60">{filtered().length} 条</span>
+                <span class="text-body opacity-60">{filtered().length} 条</span>
             </div>
             <div class="flex-1 overflow-auto">
                 {filtered().length === 0 ? (
-                    <div class="flex items-center justify-center h-full opacity-60 text-xs">
+                    <div class="flex items-center justify-center h-full opacity-60 text-body">
                         无日志
                     </div>
                 ) : (
-                    <div class="font-mono text-xs leading-relaxed">
+                    <div class="font-mono text-body leading-relaxed">
                         <For each={filtered()}>
                             {(entry) => {
                                 const level = String(entry["level"] ?? "");

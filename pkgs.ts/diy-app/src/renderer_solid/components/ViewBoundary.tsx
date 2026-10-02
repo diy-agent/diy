@@ -12,7 +12,7 @@ export function ViewBoundary(props: { viewId: string; children: JSX.Element }) {
     return (
         <ErrorBoundary
             fallback={(err, reset) => (
-                <div class="flex flex-col gap-2 items-start p-3 text-xs overflow-auto">
+                <div class="flex flex-col gap-2 items-start p-3 text-body overflow-auto">
                     <div class="font-bold text-error">view「{props.viewId}」渲染失败</div>
                     <pre class="whitespace-pre-wrap opacity-70">
                         {err instanceof Error ? err.message : String(err)}

@@ -57,7 +57,7 @@ export function TaskRunPage(props: { uri: string }) {
         <div class="flex flex-col h-full overflow-hidden">
             {/* page 级菜单条：布局是页面级的事，切换入口放这里（不在任何 view 内部）。
                 与 VSCode 的布局切换同构：控制 viewarea 的开合，与 view 内容无关。 */}
-            <div class={`flex items-center gap-2 border-b px-3 ${VIEW_BAR_H} text-xs shrink-0`}>
+            <div class={`flex items-center gap-2 border-b px-3 ${VIEW_BAR_H} text-body shrink-0`}>
                 <span class="font-mono opacity-60 truncate" title={props.uri}>
                     {props.uri}
                 </span>
@@ -108,7 +108,7 @@ export function TaskRunPage(props: { uri: string }) {
                             case "chat.local":
                                 return <LocalChatPage uri={props.uri} />;
                             default:
-                                return <div class="p-3 text-xs opacity-60">未注册的 view: {viewId}</div>;
+                                return <div class="p-3 text-body opacity-60">未注册的 view: {viewId}</div>;
                         }
                     }}
                 />

@@ -54,7 +54,7 @@ function Block(props: { k: string; title: string; extra?: string; children: JSX.
     return (
         <section class="border border-base-300 rounded-lg overflow-hidden min-w-0">
             <button
-                class="flex w-full items-center gap-1 bg-base-300 px-2 py-1 text-[11px] font-bold tracking-wide opacity-80 hover:opacity-100"
+                class="flex w-full items-center gap-1 bg-base-300 px-2 py-1 text-body font-bold tracking-wide opacity-80 hover:opacity-100"
                 aria-expanded={blockOpen(props.k)}
                 onClick={() => setBlocks((v) => ({ ...v, [props.k]: !blockOpen(props.k) }))}
             >
@@ -113,7 +113,7 @@ function TaskNameLink(props: {
     return (
         <>
             <button
-                class={`diy-link block w-full truncate text-left underline-offset-2 hover:underline cursor-pointer ${
+                class={`text-body diy-link block w-full truncate text-left underline-offset-2 hover:underline cursor-pointer ${
                     props.chatOpen ? "font-semibold" : ""
                 }`}
                 data-task-hover-uri={props.preview ? props.uri : undefined}
@@ -130,7 +130,7 @@ function TaskNameLink(props: {
                 {(t) => (
                     <Portal>
                         <div
-                            class="pointer-events-none fixed z-[100] w-max max-w-64 rounded bg-neutral px-2 py-1 text-[11px] leading-relaxed text-neutral-content shadow-lg"
+                            class="pointer-events-none fixed z-[100] w-max max-w-64 rounded bg-neutral px-2 py-1 text-body leading-relaxed text-neutral-content shadow-lg"
                             style={{
                                 left: `${Math.min(t().x, Math.max(8, window.innerWidth - 268))}px`,
                                 top: `${t().up ? t().y : t().y}px`,
@@ -212,19 +212,19 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
     return (
         <div class="space-y-3">
             <div class="task-field-row">
-                <span class="task-field-label text-xs opacity-50">标题</span>
+                <span class="task-field-label text-body opacity-50">标题</span>
                 <div class="flex min-w-0 items-center gap-1">
                     <Show
                         when={editing()}
                         fallback={
-                            <h3 class="min-w-0 flex-1 text-sm font-bold">
+                            <h3 class="min-w-0 flex-1 text-title font-bold">
                                 <TaskNameLink uri={props.uri} label={props.task.title || props.uri} class="block" />
                             </h3>
                         }
                     >
                         <input
                             type="text"
-                            class="input input-bordered input-sm min-w-0 flex-1 text-sm font-bold"
+                            class="input input-bordered input-sm min-w-0 flex-1 text-title font-bold"
                             value={titleDraft()}
                             onInput={(e) => onInput(e.currentTarget.value)}
                             placeholder="任务标题"
@@ -244,7 +244,7 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                 控件右缘对齐成一条线，扫读时值在哪里是可预期的。 */}
             <div class="flex flex-col gap-1.5">
                 <div class="task-field-row">
-                    <span class="task-field-label text-xs opacity-50">状态</span>
+                    <span class="task-field-label text-body opacity-50">状态</span>
                     <div class="flex min-w-0 items-center gap-1">
                         <StateSelect current={props.task.state} saving={saving()} onSave={(v) => void savePatch({ state: v })} />
                         <Show when={editing()}>
@@ -275,7 +275,7 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                     这里**只换绑**（续聊，会话一条不动）；改人物本身的模型走 CLI
                     `diy agent persona set`（那是全局的，影响所有引用它的任务）。 */}
                 <div class="task-field-row">
-                    <span class="task-field-label text-xs opacity-50">人物</span>
+                    <span class="task-field-label text-body opacity-50">人物</span>
                     <select
                         class="select select-xs select-bordered min-w-0"
                         disabled={saving() || personaStore.personas.length === 0}
@@ -302,7 +302,7 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                 </div>
             </div>
 
-            <div class="flex flex-col gap-1 text-[11px] opacity-60">
+            <div class="flex flex-col gap-1 text-body opacity-60">
                 <Show when={props.task.project}>
                     <div class="task-field-row">
                         <span class="task-field-label">项目</span>
@@ -352,14 +352,14 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean }) {
                         onClick={() => openTask(r.uri)}
                     >
                         <span class={`w-1.5 h-1.5 rounded-full shrink-0 ${taskStateColor(r.state)}`} />
-                        <span class="font-mono shrink-0 text-[11px] opacity-60">#{r.num ?? "?"}</span>
+                        <span class="font-mono shrink-0 text-body opacity-60">#{r.num ?? "?"}</span>
                         {/* 「◀ 当前」**紧跟标题**（不是行尾）：它是标题的补语，隔着一个
                             auto margin 飘到右边会读成「这一行整体是当前」。
                             标题 min-w-0 + truncate：长标题只截自己，不吃掉后面的标签。 */}
                         <TaskNameLink
                             uri={r.uri}
                             label={r.title ?? r.uri}
-                            class="min-w-0 text-[11px]"
+                            class="min-w-0 text-body"
                             /* 已开在导航里的任务**不再弹 hover 详情**：
                                nav 上那一项 hover 出来的就是同一个 view 的同一份详情，
                                树里再弹一层等于把同样的东西显示两遍 —— 这个动作本来就只是
@@ -370,7 +370,7 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean }) {
                             chatOpen={chatOpen(r.uri)}
                         />
                         <Show when={r.current}>
-                            <span class="shrink-0 text-[10px] opacity-60">◀ 当前</span>
+                            <span class="shrink-0 text-caption opacity-60">◀ 当前</span>
                         </Show>
                         {/* 操作按钮**右对齐**（ml-auto），与上面「当前」各管一侧 —— 混在一起
                             会随标题长度左右漂，每行的按钮位置都不一样，扫不下去。
@@ -478,7 +478,7 @@ function BodyBlock(props: { uri: string; task: TaskDetail; refresh: () => Promis
                 }
             >
                 <textarea
-                    class="textarea textarea-bordered w-full text-xs font-mono"
+                    class="textarea textarea-bordered w-full text-body font-mono"
                     rows="14"
                     value={draft()}
                     onInput={(e) => onInput(e.currentTarget.value)}
@@ -495,7 +495,7 @@ function BodyBlock(props: { uri: string; task: TaskDetail; refresh: () => Promis
             </Show>
 
             <Show when={!editing()}>
-                <Show when={props.task.body} fallback={<span class="text-xs opacity-40 italic">无内容</span>}>
+                <Show when={props.task.body} fallback={<span class="text-body opacity-40 italic">无内容</span>}>
                     <Show when={tab() === "md"} fallback={<CodeBlock code={props.task.body!} lang="markdown" />}>
                         <MarkdownView content={props.task.body!} />
                     </Show>
@@ -587,7 +587,7 @@ export function TaskDetailContent(props: { uri: string; task?: TaskDetail; hover
     };
 
     return (
-        <Show when={task()} fallback={<div class="text-xs opacity-60 p-1">加载中…</div>}>
+        <Show when={task()} fallback={<div class="text-body opacity-60 p-1">加载中…</div>}>
             {(t) => (
                 <div class="task-flow">
                     {/* 左列宽度用 CSS 变量下发（只改宽度，不改结构：结构由容器查询按实测宽度切换）。

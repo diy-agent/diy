@@ -72,7 +72,7 @@ export function MarkdownView(props: {
 }) {
   const components = makeComponents(() => !!props.streaming);
   return (
-    <div class={`markdown-body text-sm leading-relaxed break-words ${props.class ?? ""}`}>
+    <div class={`markdown-body text-prose leading-relaxed break-words ${props.class ?? ""}`}>
       <SolidMarkdown
         children={props.content}
         remarkPlugins={remarkPlugins}

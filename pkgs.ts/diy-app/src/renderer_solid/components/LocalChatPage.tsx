@@ -97,7 +97,7 @@ const nearBottom = (el: HTMLElement) =>
 /** assistant 正文（纯文本呈现）：原文模式 + L1 单行摘要用 */
 function PlainText(props: { text: string; class?: string }) {
     return (
-        <div class={`whitespace-pre-wrap break-words text-sm leading-relaxed ${props.class ?? ""}`}>
+        <div class={`whitespace-pre-wrap break-words text-prose leading-relaxed ${props.class ?? ""}`}>
             {props.text}
         </div>
     );
@@ -263,7 +263,7 @@ function ToolBody(props: { node: BlockNode; onFull: (title: string, content: str
             </Show>
             {/* 中断遗留：正文显示与发往 LLM 完全同源的占位说明（不再是空白让人无从下手） */}
             <Show when={isInterruptedToolBlock(n)}>
-                <div class="alert alert-warning alert-soft text-xs py-2 font-sans">
+                <div class="alert alert-warning alert-soft text-body py-2 font-sans">
                     <span class="whitespace-pre-wrap">{INTERRUPTED_TOOL_NOTICE}</span>
                 </div>
             </Show>
@@ -297,7 +297,7 @@ function ProcessRow(props: {
     });
     return (
         <div
-            class="rounded-lg border border-base-300 bg-base-200/40 text-xs"
+            class="rounded-lg border border-base-300 bg-base-200/40 text-body"
             data-block-id={n().id}
             data-block-tag={n().tag}
         >
@@ -311,7 +311,7 @@ function ProcessRow(props: {
                 <span class="font-medium text-base-content/80 truncate flex-1">
                     {summaryOf(n())}
                 </span>
-                <span class="opacity-40 text-[11px]">{open() ? "▴" : "›"}</span>
+                <span class="opacity-40 text-body">{open() ? "▴" : "›"}</span>
             </button>
             <Show when={open()}>
                 <div ref={(el) => (bodyRef = el)} class="px-3 pb-2 max-h-72 overflow-auto">
@@ -337,7 +337,7 @@ function HairSeg(props: { nodes: BlockNode[] }) {
     const tools = () => props.nodes.filter((b) => b.tag === "tool").length;
     const thinks = () => props.nodes.filter((b) => b.tag === "think").length;
     return (
-        <div class="flex items-center gap-2 text-[11px] opacity-40 select-none py-0.5">
+        <div class="flex items-center gap-2 text-body opacity-40 select-none py-0.5">
             <span class="flex-1 border-t border-base-300" />
             <span>
                 <Show when={tools()}>⚙ {tools()} </Show>
@@ -358,7 +358,7 @@ function HairSeg(props: { nodes: BlockNode[] }) {
  */
 function ErrorBox(props: { node: BlockNode }) {
     return (
-        <div class="rounded-lg border border-error/40 bg-error/10 px-3 py-2 text-xs text-error whitespace-pre-wrap">
+        <div class="rounded-lg border border-error/40 bg-error/10 px-3 py-2 text-body text-error whitespace-pre-wrap">
             {`❌ [${str(props.node.attrs.source)}] ${str(props.node.attrs.message)}`}
         </div>
     );
@@ -388,13 +388,13 @@ function AssistantByline(props: { turnModel?: unknown }) {
         });
     return (
         <div
-            class="mb-1 flex items-center gap-1.5 text-[11px] opacity-70"
+            class="mb-1 flex items-center gap-1.5 text-body opacity-70"
             data-testid="assistant-byline"
             data-inferred={info().inferred ? "1" : undefined}
             title={info().title}
         >
             <span
-                class="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-[12px]"
+                class="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-body"
                 aria-hidden="true"
             >
                 🤖
@@ -437,9 +437,9 @@ function LeafView(props: {
         const steer = str(b.attrs.steer);
         return (
             <div class="flex justify-end">
-                <div class="max-w-[85%] bg-primary/10 border border-primary/20 rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words">
+                <div class="max-w-[85%] bg-primary/10 border border-primary/20 rounded-2xl px-3.5 py-2 text-prose whitespace-pre-wrap break-words">
                     <Show when={steer}>
-                        <span class="mb-0.5 block text-[10px] opacity-60">
+                        <span class="mb-0.5 block text-caption opacity-60">
                             ⤵ 插话（{steerModeLabel(steer)}）{steerModeTip(steer)}
                         </span>
                     </Show>
@@ -457,7 +457,7 @@ function LeafView(props: {
             return (
                 <div>
                     <AssistantByline turnModel={props.turnModel} />
-                    <div class="text-sm opacity-80 truncate">
+                    <div class="text-prose opacity-80 truncate">
                         {b.stopped ? firstLine(t) : tailLine(t)}
                         <Show when={!b.stopped}>
                             <span class="animate-pulse">▋</span>
@@ -502,7 +502,7 @@ function LeafView(props: {
     if (b.tag === "plan") {
         if (props.density === DENSITY_LEVEL.OUTLINE) return null;
         return (
-            <div class="text-xs opacity-70">
+            <div class="text-body opacity-70">
                 📋 计划：
                 <For each={(b.attrs.items as unknown[]) ?? []}>
                     {(it) => <div>• {str(it)}</div>}
@@ -510,7 +510,7 @@ function LeafView(props: {
             </div>
         );
     }
-    return <div class="text-xs opacity-40">[未知块 {b.tag}]</div>;
+    return <div class="text-body opacity-40">[未知块 {b.tag}]</div>;
 }
 
 function TurnView(props: {
@@ -548,17 +548,17 @@ function TurnView(props: {
             </For>
             {/* L1 页脚：被隐藏的过程给个计数，不展开内容 */}
             <Show when={props.density === DENSITY_LEVEL.OUTLINE && procCount() > 0}>
-                <div class="text-[11px] opacity-40">· {procCount()} 步</div>
+                <div class="text-body opacity-40">· {procCount()} 步</div>
             </Show>
             {/* 截断/步数耗尽提示：main 按生效 limits 写入，限制值动态非硬编码 */}
             <Show when={str(t.attrs.notice)}>
-                <div class="text-[11px] text-warning">⚠ {str(t.attrs.notice)}</div>
+                <div class="text-body text-warning">⚠ {str(t.attrs.notice)}</div>
             </Show>
             <Show when={t.attrs.usage}>
                 {(() => {
                     const u = t.attrs.usage as { in?: number; out?: number; cached?: number; total?: number };
                     return (
-                        <div class="text-[11px] opacity-50">
+                        <div class="text-body opacity-50">
                             tokens ↑{u.in ?? 0} ↓{u.out ?? 0}（Σ{u.total ?? 0}）
                             {/* 缓存命中（暖输入）：划分策略是否省到钱的唯一硬指标，见 shared/context/delivery */}
                             <Show when={(u.cached ?? 0) > 0}>
@@ -569,7 +569,7 @@ function TurnView(props: {
                 })()}
             </Show>
             <Show when={t.attrs.interrupted && !isLiveTurn()}>
-                <div class="text-[11px] text-warning">⚠ 本轮未完成（流中断/崩溃恢复）</div>
+                <div class="text-body text-warning">⚠ 本轮未完成（流中断/崩溃恢复）</div>
             </Show>
             {/* 等待助理首个事件：仅本轮生成中且尚无助理内容时显示。
                 首个事件到达即自动消失（isLiveTurn 或 hasAssistantContent 变化都会重算）。 */}
@@ -637,7 +637,7 @@ function SteerBar(props: {
                 （与任务树同一取舍）。 */}
             <DragDropProvider onDragEnd={handleDragEnd} sensors={[PointerSensor]}>
                 <div
-                    class="shrink-0 border-t bg-base-200/60 px-3 py-1.5 text-xs"
+                    class="shrink-0 border-t bg-base-200/60 px-3 py-1.5 text-body"
                     data-steer-bar
                     /* 无可见标题，语义交给 aria-label：读屏与自动化仍能识别这是"待发送的插话" */
                     aria-label={`待发送插话 ${props.items.length} 条`}
@@ -656,7 +656,7 @@ function SteerBar(props: {
                 <DragOverlay>
                     {(source) =>
                         source?.data?.text ? (
-                            <div class="flex items-center gap-2 rounded border bg-base-100 px-2 py-1 text-xs shadow-lg opacity-90 select-none pointer-events-none">
+                            <div class="flex items-center gap-2 rounded border bg-base-100 px-2 py-1 text-body shadow-lg opacity-90 select-none pointer-events-none">
                                 <IconGrip class="h-3.5 w-3.5 opacity-40" />
                                 <span class="max-w-[320px] truncate">{String(source.data.text)}</span>
                             </div>
@@ -808,7 +808,7 @@ function FullscreenModal(props: { title: string; content: string; onClose: () =>
         >
             <div class="bg-base-100 rounded-xl w-full max-w-4xl max-h-full flex flex-col">
                 <div class="flex items-center gap-2 px-4 py-2 border-b shrink-0">
-                    <span class="font-mono text-xs truncate flex-1">{props.title}</span>
+                    <span class="font-mono text-body truncate flex-1">{props.title}</span>
                     <button class="btn btn-ghost btn-xs" onClick={copy}>
                         复制
                     </button>
@@ -816,7 +816,7 @@ function FullscreenModal(props: { title: string; content: string; onClose: () =>
                         ✕
                     </button>
                 </div>
-                <pre class="overflow-auto p-4 text-xs font-mono whitespace-pre-wrap break-all flex-1">
+                <pre class="overflow-auto p-4 text-body font-mono whitespace-pre-wrap break-all flex-1">
                     {props.content}
                 </pre>
             </div>
@@ -860,8 +860,8 @@ function ConfirmDialog(props: {
             }}
         >
             <div class="bg-base-100 rounded-xl w-full max-w-sm flex flex-col">
-                <div class="px-4 py-3 border-b font-bold text-sm">{props.title}</div>
-                <div class="px-4 py-3 text-xs opacity-80">{props.message}</div>
+                <div class="px-4 py-3 border-b font-bold text-title">{props.title}</div>
+                <div class="px-4 py-3 text-body opacity-80">{props.message}</div>
                 <div class="px-4 py-2 border-t flex justify-end gap-2">
                     {/* 焦点落在「取消」：回车/空格不会误触发不可恢复的删除 */}
                     <button
@@ -1146,7 +1146,7 @@ export function LocalChatPage(props: { uri?: string }) {
                                     setDensity(DENSITY_VALUES[Number(e.currentTarget.value) - 1]!)
                                 }
                             />
-                            <div class="mt-1 flex justify-between text-[10px] opacity-60">
+                            <div class="mt-1 flex justify-between text-caption opacity-60">
                                 <span>简</span>
                                 <span>详</span>
                             </div>
@@ -1200,12 +1200,12 @@ export function LocalChatPage(props: { uri?: string }) {
                                    ops.jsonl 时根块仍会出现 —— 必须能读懂，不能只吐「[未知根 error]」 */
                                 <ErrorBox node={t} />
                             ) : (
-                                <div class="text-xs opacity-40">[未知根 {t.tag}]</div>
+                                <div class="text-body opacity-40">[未知根 {t.tag}]</div>
                             )
                         }
                     </For>
                     <Show when={localChatStore.error}>
-                        <div class="text-error text-xs">{localChatStore.error}</div>
+                        <div class="text-error text-body">{localChatStore.error}</div>
                     </Show>
                 </div>
             </div>
@@ -1298,7 +1298,7 @@ export function LocalChatPage(props: { uri?: string }) {
                     </div>
                     {/* 不再画分隔线：正文与工具条同底色（base-200），一条 border-base-300 的横线
                         会在"一体化"的块里切出一道比底色更亮/更暗的缝，比没有线更显割裂。 */}
-                    <div class="flex shrink-0 items-center gap-2 px-2 py-2 text-xs">
+                    <div class="flex shrink-0 items-center gap-2 px-2 py-2 text-body">
                         {/* 人物入口：打开人物面板（选/改/换绑都在那里）。
                             按钮本身显示**本任务当前用谁 + 它的模型与档位** ——
                             "我这条消息会发给哪个模型"必须一眼可见，不用点开才知道。 */}
@@ -1332,7 +1332,7 @@ export function LocalChatPage(props: { uri?: string }) {
                         {/* 生成中的可见性：别人（CLI/另一窗口）发起时本地 running 全程为 false，
                             不显式说出来，界面看起来就像"什么都没发生"（任务 194 现象一的另一半） */}
                         <Show when={localChatStore.view.busy && !localChatStore.sending}>
-                            <span class="text-[11px] text-primary" aria-label="其他端正在生成">
+                            <span class="text-body text-primary" aria-label="其他端正在生成">
                                 其他端（CLI/窗口）正在生成…
                             </span>
                         </Show>
@@ -1358,7 +1358,7 @@ export function LocalChatPage(props: { uri?: string }) {
                                     而服务端仍会拒发（它眼里还在生成）—— 界面与服务端结论相反。
                                     卡住（超过宽限期 main 仍报活跃）时不装死，给一个更强的出口：
                                     再点一次 = 重发中断（main 侧 abort 幂等，可安全重复）。 */}
-                                <span class="text-[11px] opacity-60">
+                                <span class="text-body opacity-60">
                                     {localChatStore.view.stoppingStuck ? "已停止，仍在收尾（可强制中断）…" : "已停止，后台收尾中…"}
                                 </span>
                                 <div class="aura text-error rounded-full" style={{ "--aura-padding": "2px", "--tw-duration": "2.4s" }}>

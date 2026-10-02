@@ -631,7 +631,7 @@ export default function App() {
                                                             when={expanded()}
                                                             fallback={
                                                                 <button
-                                                                    class={`relative flex items-center justify-center h-8 w-8 rounded-lg text-[10px] font-mono transition-colors cursor-pointer ${
+                                                                    class={`relative flex items-center justify-center h-8 w-8 rounded-lg text-caption font-mono transition-colors cursor-pointer ${
                                                                         isActive()
                                                                             ? "bg-primary/30 ring-1 ring-primary/40 font-semibold"
                                                                             : "hover:bg-base-300 opacity-70"
@@ -644,13 +644,13 @@ export default function App() {
                                                                     {icon()}
                                                                     {/* 收起态装不下缩进，用一个小角标表达「有父」 */}
                                                                     <Show when={isNested()}>
-                                                                        <span class="absolute left-0.5 bottom-0.5 text-[8px] opacity-50">↳</span>
+                                                                        <span class="absolute left-0.5 bottom-0.5 text-caption opacity-50">↳</span>
                                                                     </Show>
                                                                 </button>
                                                             }
                                                         >
                                                             <div
-                                                                class={`group flex items-center gap-1 w-full pr-1 py-1 rounded-lg text-xs cursor-pointer transition-colors ${
+                                                                class={`group flex items-center gap-1 w-full pr-1 py-1 rounded-lg text-body cursor-pointer transition-colors ${
                                                                     isActive() ? "bg-primary/25 ring-1 ring-primary/30" : "hover:bg-base-300"
                                                                 }`}
                                                                 style={{ "padding-left": `${indentPx()}px` }}

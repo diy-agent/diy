@@ -22,7 +22,7 @@ export function useHoverTip() {
         <Show when={tip()}>
             {(t) => (
                 <div
-                    class="pointer-events-none fixed z-[100] max-w-64 rounded bg-neutral px-2 py-1 text-xs leading-relaxed text-neutral-content shadow-lg"
+                    class="pointer-events-none fixed z-[100] max-w-64 rounded bg-neutral px-2 py-1 text-body leading-relaxed text-neutral-content shadow-lg"
                     style={{ left: `${t().x}px`, top: `${t().y}px` }}
                 >
                     {t().text}

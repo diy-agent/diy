@@ -91,7 +91,7 @@ export function StateSelect(props: { current?: string; saving: boolean; onSave: 
                 return (
                     <Select.Item
                         item={p.item}
-                        class="flex items-center gap-2 rounded px-2 py-1.5 text-xs cursor-pointer data-[highlighted]:bg-base-200 data-[selected]:bg-primary/10"
+                        class="flex items-center gap-2 rounded px-2 py-1.5 text-body cursor-pointer data-[highlighted]:bg-base-200 data-[selected]:bg-primary/10"
                     >
                         <span class={`w-2 h-2 rounded-full inline-block shrink-0 ${taskStateColor(opt().value)}`} />
                         <span class="font-mono">{opt().value}</span>
@@ -101,16 +101,16 @@ export function StateSelect(props: { current?: string; saving: boolean; onSave: 
             }}
             sectionComponent={(s) => (
                 <Select.Section class="contents">
-                    <div class="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide opacity-50">
+                    <div class="px-2 py-1 text-caption font-semibold uppercase tracking-wide opacity-50">
                         {(s.section.rawValue as StateGroup).label}
                     </div>
                 </Select.Section>
             )}
         >
-            <Select.Trigger class="btn btn-outline btn-xs w-full min-w-0 border-base-300 px-2 cursor-pointer inline-flex items-center gap-2 disabled:opacity-50">
+            <Select.Trigger class="btn btn-outline btn-xs w-full min-w-0 border-base-300 px-2 cursor-pointer inline-flex justify-start items-center gap-2 disabled:opacity-50">
                 <span class={`w-2 h-2 rounded-full inline-block ${taskStateColor(selected().value)}`} />
                 <span class="font-mono truncate">{props.current}</span>
-                <Select.Icon class="opacity-60 text-[10px]">▾</Select.Icon>
+                <Select.Icon class="opacity-60 text-caption">▾</Select.Icon>
             </Select.Trigger>
             <Select.Portal>
                 <Select.Content class="z-[60] min-w-[180px] rounded-lg border border-base-300 bg-base-100 p-1 shadow-xl">
@@ -146,7 +146,7 @@ export function TaskFieldSelect(props: {
     // 否则 select 会显示成"未设置"，看着像数据丢了（与 StateSelect 的兜底同思路）
     const unknown = () => !!props.value && !(options as readonly string[]).includes(props.value);
     return (
-        <label class="task-field-row text-xs">
+        <label class="task-field-row text-body">
             <span class="shrink-0 whitespace-nowrap opacity-50">{FIELD_LABELS[props.field]}</span>
             <select
                 class="select select-xs select-bordered w-full min-w-0 flex-1 font-mono"
@@ -178,7 +178,7 @@ export function TaskModuleInput(props: { value?: string; saving: boolean; onSave
         props.onSave(draft().trim());
     };
     return (
-        <label class="task-field-row text-xs">
+        <label class="task-field-row text-body">
             <span class="shrink-0 whitespace-nowrap opacity-50">模块</span>
             <input
                 class="input input-xs input-bordered w-full min-w-0 flex-1 font-mono"
