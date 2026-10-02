@@ -23,7 +23,7 @@
 
 | 入口 | 跑什么 | 注入 |
 |------|--------|------|
-| `./diy.sh`（仓库根） | `tsx src/cli/index.ts` | `DIY_HOME=./build/home`、`DIY_APP_ROOT`、`DIY_CLI` |
+| `./diy.sh`（仓库根） | `auto`：`out/cli/index.js` 优先，打包源比产物新回退 `tsx src/cli/index.ts`（`DIY_CLI_MODE`） | `DIY_HOME=./build/home`、`DIY_APP_ROOT`、`DIY_CLI` |
 | `bin/diy` | `node out/cli/index.js` | `DIY_HOME=~/.diy`、`DIY_APP_ROOT`、`DIY_CLI=$0`、`DIY_ENV=production` |
 | `scripts/electron-dev.mts` | `out/main/index.mjs` | `DIY_HOME`、`DIY_CLI`、`DIY_DEV_SERVER_URL`、`DIY_ENV=development` |
 
