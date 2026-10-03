@@ -30,6 +30,36 @@ interface RunResult {
 const markerPrefix = `__ST_${Date.now().toString(16)}_${Math.random().toString(16).slice(2, 8)}__`;
 const markerRe = new RegExp(`${markerPrefix}\\((\\d+)\\)__`);
 
+/**
+ * 清理 stderr：剥离 PS1 marker 与收尾哨兵，还原真实输出。
+ *
+ * ⚠️ 必须**按子串剥离** marker，不能「整行过滤」（真实踩过，t223 定点复现，ShellTest 丢 ~2%）：
+ * PS1 以空格结尾（不以换行结尾），于是**命令的 stderr 会和它前面的 prompt 落在同一行**：
+ *     "__ST_…__(0)__ Error: 未知模型 …"
+ * 旧写法（整行 `filter(!markerRe.test(l))`）会把这**含真实错误**的整行一起丢掉 → stderr 变空
+ * → 错误路径断言 `expected '' to match /…/` 偶发红且 retry 无效。
+ * 导出为纯函数是为了让回归**确定性可测**（tests/shell-test-clean.test.ts），不依赖偶发复现。
+ */
+export function stripStderrNoise(raw: string, markerPrefix: string, sentinel: string): string {
+  const stripMarkerRe = new RegExp(`${markerPrefix}\\(\\d+\\)__ ?`, "g");
+  const errSentinelRe = new RegExp(`${sentinel}E`, "g");
+  return raw
+    .split("\n")
+    .map((l) => l.replace(stripMarkerRe, "").replace(errSentinelRe, "").trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+/** 清理 stdout：剥掉协议哨兵行与 （哨兵是协议开销，不是命令输出） */
+export function stripStdoutNoise(raw: string, sentinel: string): string {
+  return raw
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "")
+    .replace(new RegExp(`${sentinel}:\\d+`, "g"), "")
+    .trim();
+}
+
 export class Session {
   private proc: ChildProcess;
   private outBuf = "";
@@ -132,21 +162,8 @@ export class Session {
     //     "__ST_…__(0)__ Error: 未知模型 …"
     // 旧写法 `errLines.filter(l => !markerRe.test(l))` 会把这**含真实错误**的整行一起丢掉 →
     // stderr 变空 → 错误路径断言 `expected '' to match /…/` 偶发红（~2%）且 retry 无效。
-    const errSentinelRe = new RegExp(`${sentinel}E`, "g");
-    const stripMarkerRe = new RegExp(`${markerPrefix}\\(\\d+\\)__ ?`, "g");
-    const cleanErr = this.errBuf
-      .split("\n")
-      .map((l) => l.replace(stripMarkerRe, "").replace(errSentinelRe, "").trim())
-      .filter(Boolean)
-      .join("\n")
-      .trim();
-    const rawOut = this.outBuf;
-    // 剥掉哨兵行（含退出码；它是协议开销，不是命令输出）
-    const cleanOut = rawOut
-      .replace(/\r\n/g, "\n")
-      .replace(/\r/g, "")
-      .replace(new RegExp(`${sentinel}:\\d+`, "g"), "")
-      .trim();
+    const cleanErr = stripStderrNoise(this.errBuf, markerPrefix, sentinel);
+    const cleanOut = stripStdoutNoise(this.outBuf, sentinel);
 
     if (!found) {
       // 超时：挂死的前台 CLI 进程阻塞了 bash 会话，发 Ctrl+C 释放前台 + kill 旧 job
