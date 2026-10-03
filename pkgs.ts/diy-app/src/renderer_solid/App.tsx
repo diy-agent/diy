@@ -343,13 +343,21 @@ export default function App() {
             if (next instanceof Node && el.contains(next)) return; // 仍在同一元素内
             setTip(null);
         };
+        // 按下即隐：tooltip 与下拉菜单同位（都在触发元素正下方），若点击后仍驻留，
+        // fixed z-200 会把 absolute z-20 的菜单盖住 —— 用户「点了没反应，没子菜单」
+        // （任务 242 实测：⋯ 菜单 rect 与 tooltip rect 逐像素重叠）。一按下就收，交互即隐。
+        const onTipDown = () => {
+            if (tip()) setTip(null);
+        };
         document.addEventListener("mouseover", onTipOver);
         document.addEventListener("mouseout", onTipOut);
+        document.addEventListener("pointerdown", onTipDown);
         onCleanup(() => {
             document.removeEventListener("mouseover", onDocumentMouseOver);
             document.removeEventListener("mouseout", onDocumentMouseOut);
             document.removeEventListener("mouseover", onTipOver);
             document.removeEventListener("mouseout", onTipOut);
+            document.removeEventListener("pointerdown", onTipDown);
         });
         setRendererActions({
             navigate: (page) => {

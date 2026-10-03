@@ -1110,6 +1110,7 @@ export function LocalChatPage(props: { uri?: string }) {
                         onClick={(e) => {
                             e.stopPropagation();
                             setDensityOpen((v) => !v);
+                            setMoreOpen(false); // 与「⋯」互斥（stopPropagation 挡住了 document 关闭）
                         }}
                     >
                         ☷
@@ -1174,6 +1175,7 @@ export function LocalChatPage(props: { uri?: string }) {
                             onClick={(e) => {
                                 e.stopPropagation();
                                 setMoreOpen((v) => !v);
+                            setDensityOpen(false); // 与密度弹层互斥
                             }}
                         >
                             <span class="text-body leading-none">⋯</span>
