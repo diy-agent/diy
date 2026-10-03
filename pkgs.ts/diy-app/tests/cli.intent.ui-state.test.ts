@@ -11,8 +11,9 @@
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { join } from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
-import { createInterface } from "node:readline";
+import { HttpClientBinding } from "@diy/rpc/http";
+import { createTypedClient } from "@diy/rpc";
+import { apiDef } from "../src/main/services/api-def";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
@@ -91,20 +92,26 @@ describe("diy.ui.state — 单读快照", () => {
 
 describe("diy.ui.watch.uiState — 事件流", () => {
   it("订阅即得当前态；本地 UI 写与跨进程数据链都各推一帧（uiRev / dataRev 前进）", async () => {
-    const child: ChildProcess = spawn("./diy.sh", ["ui", "watch", "uiState"], {
-      cwd: join(__dirname, "..", "..", ".."),
-      env: { ...process.env, HOME: fx.HOME, DIY_HOME: fx.HOME, DIY_ENV: "test" },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    // 用**进程内 RPC 客户端**直接连 app 的 HTTP/2 端口订阅流：
+    // 不起子进程、无 CLI 冷启动、无 JSON 行解析 —— 只测 serverStream 传输本身，
+    // 在机器繁忙/全量套件下也稳定（曾用 `./diy.sh ui watch uiState` 子进程，负载下首帧 >8s 而假红）。
+    const binding = new HttpClientBinding(`http://127.0.0.1:${fx.electron.port}`);
+    await binding.ready();
+    const client = createTypedClient(binding, apiDef);
+
     const frames: Snap[] = [];
-    createInterface({ input: child.stdout! }).on("line", (line) => {
+    const handle: any = await (client as any).diy.ui.watch.uiState({});
+    const pump = (async () => {
       try {
-        const o = JSON.parse(line);
-        if (o?.data && typeof o.data.rev === "number") frames.push(o.data as Snap);
+        for await (const frame of handle) {
+          const d = (frame as any)?.data;
+          if (d && typeof d.rev === "number") frames.push(d as Snap);
+        }
       } catch {
-        /* 非 JSON 行（警告等）忽略 */
+        /* 流结束/dispose：忽略 */
       }
-    });
+    })();
+
     const latest = () => frames.at(-1);
     const waitLatest = async (ok: (s: Snap) => boolean, label: string, ms = 8000): Promise<Snap> => {
       const v = await waitUntil(async () => latest(), (x) => !!x && ok(x), { timeoutMs: ms, label });
@@ -122,7 +129,7 @@ describe("diy.ui.watch.uiState — 事件流", () => {
       const pid = String((p.data as any)?.data?.id);
       const t = await fx.sh.getJson(`./diy.sh task create 流任务 ${pid}`);
       const uri = String((t.data as any)?.data?.uri);
-      const beforeUi = await waitLatest((s) => s.dataRev >= 0, "订阅稳定");
+      const beforeUi = latest()!;
 
       await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
       const afterUi = await waitLatest((s) => s.tabs.some((x) => x.ctx === uri), "tab 出现在快照");
@@ -146,7 +153,13 @@ describe("diy.ui.watch.uiState — 事件流", () => {
       );
       expect(afterData.dataRev).toBeGreaterThan(beforeData.dataRev);
     } finally {
-      child.kill("SIGTERM");
+      try {
+        await handle?.return?.();
+      } catch {
+        /* ignore */
+      }
+      binding.dispose();
+      void pump;
     }
   }, 60000);
 });
