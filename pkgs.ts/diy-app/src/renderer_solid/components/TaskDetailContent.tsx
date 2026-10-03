@@ -21,9 +21,9 @@
  * （悬停覆盖层 + 执行页左栏 + 管理页详情面板），全局单例只有一份值，会让别的实例
  * 永远卡在「加载中…」（这个坑在本文件的前身 TaskSideView 里踩过）。
  */
-import { createSignal, createEffect, on, onMount, For, Show, type JSX } from "solid-js";
+import { createSignal, createEffect, on, onMount, onCleanup, For, Show, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
-import { taskStore, type TaskDetail } from "../store/taskStore";
+import { taskStore, type TaskDetail, type TreeNode } from "../store/taskStore";
 import { tabStore } from "../store/tabStore";
 import { personaStore } from "../store/personaStore";
 import { draftStore } from "../store/draftStore";
@@ -71,15 +71,30 @@ function Block(props: { k: string; title: string; extra?: string; children: JSX.
     );
 }
 
-/** 打开任务 = 任务管理表格里点任务名的那个动作（选中它、看它的详情）。 */
+/** 打开任务 = 任务管理内选中它、看它的详情，并**带动下面任务表展开定位**（reveal，##160 机制）。 */
 function openTask(uri: string): void {
     void taskStore.selectTask(uri);
     getRendererActions().navigate?.("task");
+    getRendererActions().revealTask?.(uri);
 }
 
 /** 打开对话 = nav 上点任务项那个动作（开/聚焦任务执行页 tab） */
 function openChat(uri: string): void {
     getRendererActions().openTaskRun?.(uri);
+}
+
+/** 在任务树里找节点及其直接父标题（管理面板 hover 信息卡的数据源） */
+function findNodeInfo(
+    nodes: readonly TreeNode[],
+    uri: string,
+    parentTitle?: string,
+): { node: TreeNode; parentTitle?: string } | null {
+    for (const n of nodes ?? []) {
+        if (n.kind === "task" && n.uri === uri) return { node: n, parentTitle };
+        const f = findNodeInfo(n.children ?? [], uri, n.kind === "task" ? (n.title ?? n.uri) : parentTitle);
+        if (f) return f;
+    }
+    return null;
 }
 
 /**
@@ -148,10 +163,8 @@ function TaskNameLink(props: {
                             {props.act === "chat"
                                 ? props.chatOpen
                                     ? "已在对话中打开 · 点击切换到对话"
-                                    : "打开对话"
-                                : props.chatOpen
-                                  ? "已在对话中打开 · 点击打开任务"
-                                  : "打开任务"}
+                                    : "打开对话（就近）"
+                                : "在任务管理中查看 · 展开任务表定位"}
                         </div>
                     </Portal>
                 )}
@@ -317,6 +330,14 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
             </div>
 
             <div class="flex flex-col gap-1 text-body opacity-60">
+                {/* 任务 URI：原在任务执行页 page 菜单条上，A 方案（2026-10-03）移入属性 ——
+                    page 条只留页面级入口（提示词/上下文树/area 开合），信息字段归属性面板 */}
+                <div class="task-field-row">
+                    <span class="task-field-label">URI</span>
+                    <span class="min-w-0 truncate font-mono" title={props.uri}>
+                        {props.uri}
+                    </span>
+                </div>
                 <Show when={props.task.project}>
                     <div class="task-field-row">
                         <span class="task-field-label">项目</span>
@@ -345,7 +366,34 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
 // ═══════════════════════════════════════════
 // 块 2：任务树（当前任务所在根任务下的**整颗树**，含兄弟分支；当前任务高亮定位）
 // ═══════════════════════════════════════════
-function LineageBlock(props: { uri: string; hoverPreview?: boolean }) {
+function LineageBlock(props: { uri: string; hoverPreview?: boolean; host?: "manage" | "chat" }) {
+    /** 管理宿主：树点标题 = 就近选中；hover 出「左侧并排信息卡」而非弹覆盖层 */
+    const isManage = () => props.host === "manage";
+    /** 就近语义：manage 宿主就近 = 去任务管理看它；chat 宿主就近 = 打开它的对话 */
+    const act = () => (isManage() ? "task" : "chat") as "task" | "chat";
+    /**
+     * 管理面板树 hover 的并排信息卡（2026-10-03 用户指令：
+     * 「任务管理的任务详情的任务树 hover 附着一个左侧并排的任务信息 view，方便快速对比」）。
+     * 贴**面板左缘外侧** fixed —— 面板在屏右，卡在面板左边 = 两个任务同屏并排对比；
+     * 不盖面板（覆盖层是「弹走」，这个是「并排」）。移向卡有 250ms 宽限，不会一闪而过。
+     */
+    const [peek, setPeek] = createSignal<{ uri: string; right: number; top: number } | null>(null);
+    let peekTimer: ReturnType<typeof setTimeout> | undefined;
+    const cancelPeekClose = () => clearTimeout(peekTimer);
+    const schedulePeekClose = () => {
+        clearTimeout(peekTimer);
+        peekTimer = setTimeout(() => setPeek(null), 250);
+    };
+    const openPeek = (uri: string, el: HTMLElement) => {
+        if (!isManage()) return;
+        clearTimeout(peekTimer);
+        const panel = el.closest("[data-task-detail-panel]")?.getBoundingClientRect();
+        const r = el.getBoundingClientRect();
+        if (!panel) return;
+        const top = Math.max(8, Math.min(r.top, window.innerHeight - 260));
+        setPeek({ uri, right: Math.max(8, window.innerWidth - panel.left + 8), top });
+    };
+    onCleanup(() => clearTimeout(peekTimer));
     /**
      * 任务树行：树才是父子关系的真相源（URI 路径不表达层级）。
      *
@@ -393,7 +441,11 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean }) {
                         }`}
                         style={{ "padding-left": `${r.depth * 12 + 4}px` }}
                         title={r.uri}
-                        onClick={() => openTask(r.uri)}
+                        /* 主链接就近（2026-10-03）：管理宿主 = 管理内选中 + 任务表定位；
+                           对话宿主 = 打开对话（原行点击硬编码 openTask = 跑去任务管理，是「跑远」） */
+                        onClick={() => (isManage() ? openTask(r.uri) : openChat(r.uri))}
+                        onMouseEnter={(e) => openPeek(r.uri, e.currentTarget)}
+                        onMouseLeave={schedulePeekClose}
                     >
                         <span class={`w-1.5 h-1.5 rounded-full shrink-0 ${taskStateColor(r.state)}`} />
                         <span class="font-mono shrink-0 text-body opacity-60">#{r.num ?? "?"}</span>
@@ -404,11 +456,10 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean }) {
                             uri={r.uri}
                             label={r.title ?? r.uri}
                             class="min-w-0 text-body"
-                            act="chat"
-                            /* hover 预览：只跳过「该任务正是此刻在看的那一个」（详情已在屏上），
-                               其余一律可弹（##183 C-1 原意；原写成「凡是开在 nav 里的都跳」
-                               导致 hover 大量失效，见 tabStore.isTaskDisplayed）。 */
-                            preview={props.hoverPreview && !tabStore.isTaskDisplayed(r.uri)}
+                            act={act()}
+                            /* hover 预览（chat 宿主）：只跳过「该任务正是此刻在看的那一个」。
+                               manage 宿主不走覆盖层 —— hover 改为「左侧并排信息卡」（下方 Portal）。 */
+                            preview={!isManage() && props.hoverPreview && !tabStore.isTaskDisplayed(r.uri)}
                             chatOpen={chatOpen(r.uri)}
                         />
                         {/* 「◀ 当前」标记已删（2026-10-03 用户指令）：当前行的高亮底色 +
@@ -423,6 +474,57 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean }) {
                     </div>
                 )}
             </For>
+            {/* 管理面板树 hover 的并排信息卡：fixed 在面板左缘外（与面板并排、可同屏对比） */}
+            <Show when={peek()}>
+                {(pk) => {
+                    const info = () => findNodeInfo(taskStore.nodes, pk().uri);
+                    return (
+                        <Portal>
+                            <div
+                                class="fixed z-[150] w-72 rounded-box border border-base-300 bg-base-100 p-3 shadow-xl"
+                                style={{ right: `${pk().right}px`, top: `${pk().top}px` }}
+                                data-find-skip
+                                onMouseEnter={cancelPeekClose}
+                                onMouseLeave={schedulePeekClose}
+                            >
+                                <Show when={info()} fallback={<div class="text-body opacity-60">加载中…</div>}>
+                                    {(f) => (
+                                        <div class="flex flex-col gap-1.5 text-body min-w-0">
+                                            <div class="flex items-baseline gap-1.5 min-w-0">
+                                                <span class="font-mono opacity-60 shrink-0">#{f().node.num ?? "?"}</span>
+                                                <span class="font-semibold min-w-0 break-all">{f().node.title ?? f().node.uri}</span>
+                                            </div>
+                                            <div class="flex items-center gap-1.5 opacity-70">
+                                                <span
+                                                    class={`w-2 h-2 rounded-full inline-block ${taskStateColor(f().node.state)}`}
+                                                />
+                                                <span>{f().node.state ?? "—"}</span>
+                                            </div>
+                                            <Show when={f().parentTitle}>
+                                                <div class="min-w-0 opacity-70">
+                                                    父级：<span class="min-w-0 break-all">{f().parentTitle}</span>
+                                                </div>
+                                            </Show>
+                                            <Show when={f().node.created}>
+                                                <div class="opacity-60">🕐 {new Date(f().node.created!).toLocaleString()}</div>
+                                            </Show>
+                                            <Show when={f().node.updated && f().node.updated !== f().node.created}>
+                                                <div class="opacity-60">✏️ {new Date(f().node.updated!).toLocaleString()}</div>
+                                            </Show>
+                                            <Show when={f().node.body}>
+                                                <div class="opacity-50 border-t border-base-300 pt-1.5 line-clamp-4 whitespace-pre-wrap break-all">
+                                                    {f().node.body}
+                                                </div>
+                                            </Show>
+                                            <div class="opacity-40 text-caption">并排对比 · 点标题=就近操作</div>
+                                        </div>
+                                    )}
+                                </Show>
+                            </div>
+                        </Portal>
+                    );
+                }}
+            </Show>
         </div>
     );
 }
@@ -531,7 +633,18 @@ function BodyBlock(props: { uri: string; task: TaskDetail; refresh: () => Promis
 // ═══════════════════════════════════════════
 // 容器：三块的流式排布
 // ═══════════════════════════════════════════
-export function TaskDetailContent(props: { uri: string; task?: TaskDetail; hoverPreview?: boolean }) {
+export function TaskDetailContent(props: {
+    uri: string;
+    task?: TaskDetail;
+    hoverPreview?: boolean;
+    /**
+     * 宿主语义（用户 2026-10-03 重捋，取代 183/C-2 的一刀切）：
+     *   manage = 任务管理详情面板 —— 树点标题**就近**（管理内选中 + 任务表展开定位）；
+     *   chat   = 执行页左栏 / 悬停覆盖层 —— 树点标题**就近**（打开对话）。
+     * 「主链接就近、远跳交给面板大按钮/入口」是总原则（见 ##228 七节）。
+     */
+    host?: "manage" | "chat";
+}) {
     /** 自取的那份（没给 props.task 时用；覆盖层 / 执行页左栏走这条路） */
     const [own, setOwn] = createSignal<TaskDetail | null>(null);
     /**
@@ -621,7 +734,7 @@ export function TaskDetailContent(props: { uri: string; task?: TaskDetail; hover
                                 <AttrsBlock uri={props.uri} task={t()} refresh={refresh} />
                             </Block>
                             <Block k="lineage" title="任务树">
-                                <LineageBlock uri={props.uri} hoverPreview={props.hoverPreview} />
+                                <LineageBlock uri={props.uri} hoverPreview={props.hoverPreview} host={props.host ?? "chat"} />
                             </Block>
                         </div>
                         {/* 拖宽手柄：只在两列布局下显示（窄容器里单列，拖它没有语义）。

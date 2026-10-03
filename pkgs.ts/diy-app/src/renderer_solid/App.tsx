@@ -195,8 +195,8 @@ export default function App() {
      * 两者都没有（首次进 app、纯任务管理操作）时什么都不做 —— 不定位总比乱定位好。
      * **必须在 `tabStore.showTree()` 之前调用**（active 清空后就取不到 ctx 了）。
      */
-    const requestTreeReveal = () => {
-        const uri = tabStore.activeTab()?.ctx ?? taskStore.selectedUri;
+    const requestTreeReveal = (explicit?: string) => {
+        const uri = explicit ?? tabStore.activeTab()?.ctx ?? taskStore.selectedUri;
         if (!uri) return;
         setTreeReveal({ uri, nonce: (treeReveal()?.nonce ?? 0) + 1 });
     };
@@ -253,7 +253,7 @@ export default function App() {
     // → drawer-content（以及贴在它左缘的覆盖层）跟着左移，画面抖一下。
     // 注意：**不能**把 hoverTreeTask 也算作「该展开」—— tree drawer 是主区内的 overlay，
     // 展开侧栏会让主区整体右移，把鼠标下的标题链接挪走（指针落到 nav 上）→ drawer 刚开就被收掉。
-    const expanded = () => pinned() || hovered() || resizingNav() || !!hoverTaskUri();
+    const expanded = () => pinned() || hovered() || resizingNav() || !!hoverTaskUri() || navDragging();
 
     /**
      * 清空悬停覆盖层。**任何「切页面」的动作都要调它**：
@@ -463,6 +463,7 @@ export default function App() {
                 setRoute({ kind: "tab", key: tabStore.active });
             },
             openLab: (uri) => getRendererActions().openTab?.("lab", uri),
+            revealTask: (uri) => requestTreeReveal(uri),
             openTab: (pageId, ctx) => {
                 tabStore.open(pageId, ctx);
                 setRoute({ kind: "tab", key: tabStore.active });

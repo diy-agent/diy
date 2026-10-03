@@ -58,9 +58,8 @@ export function TaskRunPage(props: { uri: string }) {
             {/* page 级菜单条：布局是页面级的事，切换入口放这里（不在任何 view 内部）。
                 与 VSCode 的布局切换同构：控制 viewarea 的开合，与 view 内容无关。 */}
             <div class={`flex items-center gap-2 border-b px-3 ${VIEW_BAR_H} text-body shrink-0`}>
-                <span class="font-mono opacity-60 truncate" title={props.uri}>
-                    {props.uri}
-                </span>
+                {/* 任务 URI 已移进「任务属性」view（2026-10-03 用户拍板 A 方案：
+                    page 菜单条只留页面级入口，信息性字段归属性面板） */}
                 <div class="flex-1" />
                 {/* 打开提示词页（**子页面**：中心是系统提示词，挂在当前任务 tab 之下）。
                     关掉本任务 tab 时它会一并关闭（tabStore 保证）。 */}

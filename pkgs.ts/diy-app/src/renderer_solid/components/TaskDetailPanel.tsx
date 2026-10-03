@@ -96,6 +96,7 @@ export function TaskDetailPanel() {
     return (
         <Show when={!!taskStore.selectedUri}>
             <div
+                data-task-detail-panel
                 class="card bg-base-100 border-l shadow-xl absolute inset-y-0 right-0 z-40 h-full flex flex-col"
                 style={{ width: `${renderW()}px` }}
                 onClick={(e) => e.stopPropagation()}
@@ -135,7 +136,7 @@ export function TaskDetailPanel() {
                             内容本体与任务执行页左栏 / nav 悬停覆盖层**同一个组件**：
                             这里宽度够（默认 560px），流式布局自动排成两列。 */}
                         <Show when={taskStore.selectedTask} keyed fallback={<div class="opacity-60 text-prose">加载中…</div>}>
-                            {(t) => <TaskDetailContent uri={t.uri} task={t} />}
+                            {(t) => <TaskDetailContent uri={t.uri} task={t} host="manage" />}
                         </Show>
                 </div>
 

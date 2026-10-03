@@ -647,7 +647,6 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
         <tr
             ref={ref}
             data-uri={row.key}
-            data-task-hover-uri={row.key}
             class={`border-b transition-colors select-none ${
                 isSelected()
                     ? "bg-primary/20"

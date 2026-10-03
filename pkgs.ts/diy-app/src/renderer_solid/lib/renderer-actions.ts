@@ -46,6 +46,8 @@ export interface RendererActions {
     resetLayout?: (pageId: string) => void;
     /** 打开提示词页（**子页面**，挂在同任务的任务执行 tab 之下） */
     openLab?: (uri: string) => void;
+    /** 任务表（TaskTree）展开该任务的祖先链并定位高亮（##160 机制；缺省 uri = 当前 tab/选中） */
+    revealTask?: (uri?: string) => void;
     /** 通用：打开任意 page 的 tab（CLI `ui tab open [<pageId>:]<uri>` 用）。
      *  子页面会自动挂到同 ctx 的父 page tab 之下。 */
     openTab?: (pageId: string, ctx: string) => void;
