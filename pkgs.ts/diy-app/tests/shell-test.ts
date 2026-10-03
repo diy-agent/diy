@@ -65,28 +65,36 @@ export class Session {
   }
 
   /**
-   * 读输出直到 **marker 出现且 stdout 哨兵到达**，或超时。resolve [是否找到 marker, 退出码]。
+   * 读输出直到**两个哨兵都到达**（stdout 的 `SENTINEL:<code>` + stderr 的 `SENTINEL_E`），
+   * 或超时。resolve [是否找到, 退出码]。
    *
-   * 为什么必须等 stdout 哨兵（不只是等 marker）：marker 走 stderr（PS1），stdout 是**另一个管道**，
-   * 两者的到达顺序**不保证**。只等 marker 时，stdout 可能还没到齐：
-   *   · 空 → runJson 判定"空响应"并重试，重试读到的是**上一次的**输出 → 之后每条命令都错位
-   *     （实测：`ui tree` 拿到上一条 `project create` 的 `{id}` → `data` 不是数组 → "not iterable"）
-   *   · 半截 → JSON.parse 失败（"输出非 JSON"）
-   * 做法（`run()` 在命令后追加 `printf` 哨兵，见那里）：**同一个管道的字节是有序的** ——
-   * 看到哨兵就证明它之前的 stdout 全部到齐。这比"等 40ms 没新字节"更硬：后者在负载下会误判
-   * （实测全量跑时仍偶发错位）。
+   * 为什么必须等哨兵（不能等 PS1 marker）：
+   *   1. stdout 与 stderr 是**两条管道**，到达顺序不保证 —— 只等 stderr marker 时 stdout 可能没到齐
+   *      （实测：`ui tree` 拿到上一条 `project create` 的 `{id}` → "not iterable"）。故 stdout 用哨兵。
+   *   2. **PS1 marker 不能作为完成信号**（真实踩过，t223 定点复现 ShellTest 丢 ~7%）：`run()` 让 bash
+   *      连续执行「命令」「printf 哨兵」两条，于是打印**两个** prompt marker。第二个 marker 常在下一条
+   *      命令的缓冲区里才到达 —— 若下一条 `_read` 看到这个**陈旧 marker** 且 stdout 哨兵恰好先到（两条
+   *      管道乱序），就提前 resolve，此时该条命令的 stderr（含错误信息）还没到 → 读到空 stderr。
+   *      现象：错误路径断言 `expected '' to match /.../` 偶发红且 retry 无效。
+   * 修法：完成信号改成**携带唯一序号的两个哨兵**（stdout 一个、stderr 一个）—— 唯一 → 不会被陈旧信号
+   * 误判；stderr 哨兵与命令 stderr 同管道 → 有序，看到它即证明命令 stderr 到齐。
    */
   private _read(sentinel: string, timeoutMs: number): Promise<{ found: boolean; code: number }> {
     const start = Date.now();
     const rcRe = sentinel ? new RegExp(`${sentinel}:(\\d+)`) : null;
+    const errRe = sentinel ? new RegExp(`${sentinel}E`) : null;
     return new Promise((resolve) => {
       const check = () => {
-        const m = markerRe.exec(this.errBuf);
-        // 空哨兵（构造器）只等 prompt；否则等哨兵里的**原命令退出码**
-        const rc = rcRe ? rcRe.exec(this.outBuf) : ([] as unknown as RegExpExecArray | null);
-        if (m && (rcRe === null || rc)) {
-          resolve({ found: true, code: rc ? parseInt(rc[1]!, 10) : parseInt(m[1], 10) });
-          return;
+        // 空哨兵（构造器）只等 prompt；否则必须两个唯一哨兵都到
+        if (rcRe === null) {
+          const m = markerRe.exec(this.errBuf);
+          if (m) { resolve({ found: true, code: parseInt(m[1], 10) }); return; }
+        } else {
+          const rc = rcRe.exec(this.outBuf);
+          if (rc && errRe!.test(this.errBuf)) {
+            resolve({ found: true, code: parseInt(rc[1]!, 10) });
+            return;
+          }
         }
         if (Date.now() - start > timeoutMs) {
           resolve({ found: false, code: -1 });
@@ -110,13 +118,28 @@ export class Session {
     // （实测：`--body ''` 该报错却 exit=0）。`$?` 在 printf 的参数展开时求值，正是原命令的退出码。
     const sentinel = `${markerPrefix}DONE${++this.seq}`;
     this._write(cmd);
+    // 两个唯一哨兵：stdout 带原命令退出码（`$?` 在 printf 参数展开时求值 = 原命令退出码），
+    // stderr 用于「命令 stderr 已到齐」的完成信号（与命令 stderr 同管道，有序）。
     this._write(`printf '\\n%s:%d\\n' '${sentinel}' $?`);
+    this._write(`printf '%s\\n' '${sentinel}E' >&2`);
     const { found, code } = await this._read(sentinel, timeoutMs);
     // 实验：不等待收尾标记（模拟改造前的行为）
 
-    // 清理 marker 行与收尾标记，还原真实输出
-    const errLines = this.errBuf.split("\n").filter(Boolean);
-    const cleanErr = errLines.filter((l) => !markerRe.test(l)).join("\n").trim();
+    // 清理 PS1 marker 与收尾哨兵，还原真实输出。
+    //
+    // ⚠️ 必须**按子串剥离** marker，不能「整行过滤」（真实踩过，t223 定点复现）：
+    // PS1 以空格结尾（不以换行结尾），于是**命令的 stderr 会和它前面的 prompt 落在同一行**：
+    //     "__ST_…__(0)__ Error: 未知模型 …"
+    // 旧写法 `errLines.filter(l => !markerRe.test(l))` 会把这**含真实错误**的整行一起丢掉 →
+    // stderr 变空 → 错误路径断言 `expected '' to match /…/` 偶发红（~2%）且 retry 无效。
+    const errSentinelRe = new RegExp(`${sentinel}E`, "g");
+    const stripMarkerRe = new RegExp(`${markerPrefix}\\(\\d+\\)__ ?`, "g");
+    const cleanErr = this.errBuf
+      .split("\n")
+      .map((l) => l.replace(stripMarkerRe, "").replace(errSentinelRe, "").trim())
+      .filter(Boolean)
+      .join("\n")
+      .trim();
     const rawOut = this.outBuf;
     // 剥掉哨兵行（含退出码；它是协议开销，不是命令输出）
     const cleanOut = rawOut
