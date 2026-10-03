@@ -884,6 +884,8 @@ export function LocalChatPage(props: { uri?: string }) {
     const uri = () => props.uri ?? taskStore.selectedUri ?? null;
     const [inputValue, setInputValue] = createSignal("");
     const [densityOpen, setDensityOpen] = createSignal(false);
+    /** 「⋯」溢出菜单：低频/危险操作（清空历史）默认不显示，点开才露出（VSCode 附加菜单式） */
+    const [moreOpen, setMoreOpen] = createSignal(false);
     const [personaPanelOpen, setPersonaPanelOpen] = createSignal(false);
     const [fullscreen, setFullscreen] = createSignal(false);
     let scrollRef: HTMLDivElement | undefined;
@@ -936,10 +938,12 @@ export function LocalChatPage(props: { uri?: string }) {
         const closePopovers = (e: MouseEvent) => {
             const target = e.target as Element;
             if (!target.closest("[data-density-control]")) setDensityOpen(false);
+            if (!target.closest("[data-more-control]")) setMoreOpen(false);
         };
         const onKey = (e: KeyboardEvent) => {
             if (e.key === "Escape") {
                 setDensityOpen(false);
+                setMoreOpen(false);
                 setPersonaPanelOpen(false);
                 setFullscreen(false);
             }
@@ -1098,20 +1102,6 @@ export function LocalChatPage(props: { uri?: string }) {
             <div
                 class={`flex items-center justify-end gap-2 pl-4 pr-16 ${VIEW_BAR_H} border-b shrink-0`}
             >
-                {/* 清空本对话历史：破坏性且不可恢复 —— 只给图标（配 tooltip）+ 二次确认，
-                    危险按钮从输入区挪到这里：输入区那排是"发送/留言"的动作区，
-                    清空历史与它们不同类（不是本轮动作，而是全会话的删除）。
-                    生成中不显示：正跑着的会话不该在此时被清掉（原行为不变）。 */}
-                <Show when={!localChatStore.live}>
-                    <button
-                        class="btn btn-ghost btn-xs"
-                        data-tip="清空本对话历史（不可恢复）"
-                        aria-label="清空本对话历史"
-                        onClick={() => setConfirmClear(true)}
-                    >
-                        <IconTrash class="h-4 w-4" />
-                    </button>
-                </Show>
                 <div class="relative" data-density-control>
                     <button
                         class="btn btn-ghost btn-xs"
@@ -1169,6 +1159,46 @@ export function LocalChatPage(props: { uri?: string }) {
                         MD 渲染
                     </button>
                 </div>
+                {/* 「⋯」溢出菜单：低频/危险操作的收容处（学 VSCode 视图栏的 ... 附加菜单）。
+                    清空历史破坏且不可恢复，常驻图标太显眼（防误删已改三轮：改名/确认/挪位，
+                    本轮诉求是**位置/层级**）—— 收进来，点开才露出。
+                    生成中整个菜单不显示：正跑着的会话不该在此时被清掉（沿用原行为）。
+                    二次确认仍保留（ConfirmDialog 在下方），菜单只解决「太显眼」。 */}
+                <Show when={!localChatStore.live}>
+                    <div class="relative shrink-0" data-more-control>
+                        <button
+                            class="btn btn-ghost btn-xs"
+                            data-tip="更多操作（低频 / 危险动作）"
+                            aria-label="更多操作"
+                            aria-expanded={moreOpen()}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setMoreOpen((v) => !v);
+                            }}
+                        >
+                            <span class="text-body leading-none">⋯</span>
+                        </button>
+                        <Show when={moreOpen()}>
+                            <div
+                                class="absolute right-0 top-full z-20 mt-1 w-48 rounded-box border border-base-300 bg-base-100 p-1 shadow-xl"
+                                data-more-control
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                <button
+                                    class="btn btn-ghost btn-xs w-full justify-start gap-2 normal-case font-normal"
+                                    aria-label="清空本对话历史"
+                                    onClick={() => {
+                                        setMoreOpen(false);
+                                        setConfirmClear(true);
+                                    }}
+                                >
+                                    <IconTrash class="h-4 w-4 text-error" />
+                                    清空本对话历史
+                                </button>
+                            </div>
+                        </Show>
+                    </div>
+                </Show>
             </div>
 
             {/* 块树滚动区 */}
