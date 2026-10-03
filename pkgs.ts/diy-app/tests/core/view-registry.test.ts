@@ -197,8 +197,7 @@ describe("子页面（一页一中心）", () => {
       "chat.local@bottom",     // 边聊边调：与任务页是同一个 view，只是换个 area
       "lab.editor@center",     // 中心
       "lab.inspector@left",
-      "lab.request@right",
-      "lab.system@right",      // 与 request 同 area → 区域内 tab 互斥
+      "lab.preview@right",     // 右栏一个 view，内部三个可折叠块（与左栏同构）
     ]);
   });
 
@@ -210,6 +209,19 @@ describe("子页面（一页一中心）", () => {
 
   it("lab 的默认隐藏：bottom（chat 是卫星，默认不占地方）", () => {
     expect(DEFAULT_HIDDEN.lab).toEqual(["bottom"]);
+  });
+
+  it("ctxlab 是 task-run 的子页面，view 只在它自己身上", () => {
+    const ctxlab = findPage("ctxlab")!;
+    expect(ctxlab.parentPage).toBe("task-run");
+    expect(ctxlab.multi).toBe(true);
+    const byPage = (pid: string) =>
+      VIEWS.filter((v) => v.placement[pid]).map((v) => `${v.id}@${v.placement[pid]!.area}`);
+    // 两列：结构树（输入）| 请求预览（产出）—— 单份视图已删（内容全在请求预览的树里）
+    expect(byPage("ctxlab").sort()).toEqual([
+      "ctxlab.delivery@center",
+      "ctxlab.structure@left",
+    ]);
   });
 });
 

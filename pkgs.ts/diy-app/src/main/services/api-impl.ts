@@ -418,7 +418,146 @@ export function bindAppHandlers(binding: ServerBinding): void {
     }
     const { previewSimulatedRequest } = await import("./local-agent");
     const sim = await previewSimulatedRequest({ taskUri: input.taskUri, system: base.system, model: input.model });
-    return { ...base, requestBody: sim.body, requestNote: sim.note };
+    // ⚠️ 这条链是**模版线**（assembleSystem 渲染 _system.md + AGENTS.md 链），
+    // 而真发已切到 Context Tree 投递（见 /diy.sh context lab 与 runTurn 的 buildDelivery）。
+    // 所以这里造出来的 body 只是"模版渲染出来的样子"，不是真发形态 —— note 必须说清，否则误导。
+    return {
+      ...base,
+      requestBody: sim.body,
+      requestNote: `${sim.note}（注：这是**模版链**的仿真；真发已切 Context Tree 投递，见上下文树页的请求预览）`,
+    };
+  });
+
+  // ── context（上下文树页：**当前任务的真实上下文**，不落盘、不发 LLM）──
+  binding.on(app.context.config, async () => {
+    const { loadSystemPlaces, contextConfigFile } = await import("../core/context-config");
+    const { defaultSystemPlaces } = await import("../../shared/context/delivery");
+    const { existsSync } = await import("node:fs");
+    const { diyHome } = await import("../core/state");
+    return {
+      systemPlaces: loadSystemPlaces(diyHome()),
+      defaults: defaultSystemPlaces(),
+      fromFile: existsSync(contextConfigFile(diyHome())),
+    };
+  });
+  binding.on(app.context.setConfig, async ({ input }) => {
+    const { saveSystemPlaces } = await import("../core/context-config");
+    const { diyHome } = await import("../core/state");
+    return { systemPlaces: saveSystemPlaces(diyHome(), input.systemPlaces) };
+  });
+  binding.on(app.context.candidates, async () => {
+    const { PLACE_CANDIDATES, defaultSystemPlaces } = await import("../../shared/context/preview");
+    return { candidates: PLACE_CANDIDATES, defaultSystem: defaultSystemPlaces() };
+  });
+  binding.on(app.context.lab, async ({ input }) => {
+    const { assembleGlobals } = await import("./prompt-registry");
+    const { diyHome, projectFromUri } = await import("../core/state");
+    const { loadSystemPlaces } = await import("../core/context-config");
+    const { buildLab } = await import("../../shared/context/preview");
+    const taskUri = input.taskUri ?? "";
+    const project = projectFromUri(taskUri) || input.project;
+    // 真实数据：与真发同一条组装链（同样的 AGENTS.md 链、同样的 cwd 推导）
+    const globals = assembleGlobals(diyHome(), project, { taskUri }) as unknown as Record<string, unknown>;
+    // 空数组 = 调用方还没决定（UI 首帧）→ 读**真源**（与真发同一份）；
+    // 只有明确给了名单才尊重它（页面把开关状态传进来做即时预览）
+    const systemPlaces = input.systemPlaces?.length ? input.systemPlaces : loadSystemPlaces(diyHome());
+    // 先按纯函数算出两份投递，再用**真发的构造链**把请求体拼出来：
+    // system = system 份；末条 user = runtime 份（144 的设计：runtime 作为尾部 user 消息）
+    const lab = buildLab(globals, systemPlaces, taskUri);
+    let request: { body: Record<string, unknown> | null; note: string; model: string } = {
+      body: null,
+      note: "无任务场景：仅组装上下文，未构造请求体",
+      model: "",
+    };
+    if (taskUri) {
+      const { previewSimulatedRequest, DEFAULT_MODEL } = await import("./local-agent");
+      const model = input.model || DEFAULT_MODEL;
+      const sim = await previewSimulatedRequest({
+        taskUri,
+        system: lab.system.text,
+        model,
+        // runtime 作为独立 user 消息插在末条之前 —— 与真发（runTurn 的 withRuntime）同形
+        runtime: lab.runtime.text,
+      });
+      request = { body: sim.body, note: sim.note, model };
+    }
+    return { ...lab, request };
+  });
+
+  binding.on(app.context.steps, async ({ input }) => {
+    const { readDeliverySteps } = await import("./local-agent");
+    const { summarizeSteps } = await import("../../shared/context/steps");
+    const records = readDeliverySteps(input.taskUri);
+    return {
+      total: records.length,
+      steps: summarizeSteps(records, { limit: input.limit, withDiff: input.diff === true }),
+    };
+  });
+
+  binding.on(app.context.stats, async ({ input }) => {
+    const { readContextStats } = await import("../core/context-stats");
+    const { summarizeStats } = await import("../../shared/context/stats");
+    const { projectDir, projectFromUri } = await import("../core/state");
+    // project 以 taskUri 为准（与 lab/diff 同一口径：两者不一致时只有 CLI 能造成）
+    const project = input.taskUri ? projectFromUri(input.taskUri) || input.project : input.project;
+    let records = readContextStats(projectDir(project));
+    if (input.taskUri) records = records.filter((r) => r.taskUri === input.taskUri);
+    const total = records.length;
+    if (input.limit && input.limit > 0) records = records.slice(-input.limit);
+    return { ...summarizeStats(records), records: total };
+  });
+
+  binding.on(app.context.diff, async ({ input }) => {
+    const { readDeliverySteps } = await import("./local-agent");
+    const { diffSteps } = await import("../../shared/context/steps");
+    const records = readDeliverySteps(input.taskUri);
+    if (records.length === 0) return null;
+    // 选中第 N 步：与第 N-1 步比（两侧都在文件里）
+    if (input.step !== undefined) {
+      const idx = Math.trunc(input.step);
+      const cur = records[idx - 1];
+      const prev = idx - 1 >= 1 ? records[idx - 2] : null;
+      if (!cur) return null;
+      const d = prev ? diffSteps(prev, cur) : null;
+      return {
+        mode: "step" as const,
+        base: prev ? { index: idx - 1, ts: prev.ts, turnId: prev.turnId } : null,
+        target: { index: idx, ts: cur.ts, turnId: cur.turnId, model: cur.model },
+        incomparable: d?.incomparable ?? false,
+        changed: d?.changed ?? Object.keys(cur.valueHashes).sort(),
+        systemDiffers: d?.systemDiffers ?? true,
+        runtimeDiffers: d?.runtimeDiffers ?? true,
+        systemDiff: d?.systemDiff ?? [],
+        runtimeDiff: d?.runtimeDiff ?? [],
+      };
+    }
+    // 未选中：**当前变量树** vs 最后一步（"我现在改的东西会带来什么变化"）
+    const { assembleGlobals } = await import("./prompt-registry");
+    const { diyHome, projectFromUri } = await import("../core/state");
+    const { buildDelivery } = await import("../../shared/context/delivery");
+    const { loadSystemPlaces } = await import("../core/context-config");
+    const project = projectFromUri(input.taskUri) || input.project;
+    const globals = assembleGlobals(diyHome(), project, { taskUri: input.taskUri }) as unknown as Record<string, unknown>;
+    const now = buildDelivery(globals, input.systemPlaces?.length ? input.systemPlaces : loadSystemPlaces(diyHome()));
+    const last = records[records.length - 1]!;
+    const d = diffSteps(last, {
+      ...last,
+      wireVersion: now.wireVersion,
+      valueHashes: now.valueHashes,
+      systemText: now.system.text,
+      runtimeText: now.runtime.text,
+    });
+    return {
+      mode: "live" as const,
+      base: { index: records.length, ts: last.ts, turnId: last.turnId },
+      target: null,
+      incomparable: d.incomparable,
+      changed: d.changed,
+      systemDiffers: d.systemDiffers,
+      runtimeDiffers: d.runtimeDiffers,
+      systemDiff: d.systemDiff,
+      runtimeDiff: d.runtimeDiff,
+    };
   });
 
   // ── llmProxy ──

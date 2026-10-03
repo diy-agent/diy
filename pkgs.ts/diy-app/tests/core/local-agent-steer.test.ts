@@ -21,7 +21,7 @@ import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { LocalAgentManager, MAX_STEER_ROUNDS } from "../../src/main/services/local-agent";
 import { activeTurnList } from "../../src/main/services/runtime-context";
-import { readFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import { SteerQueue } from "../../src/main/core/steer-queue";
 import { BlockStore, type Op } from "../../src/main/services/local-blocks";
 
@@ -127,10 +127,12 @@ beforeEach(() => {
 describe("超预算早退：不记账、不投递（用户的话必须还在队列里）", () => {
   it("系统上下文越框时不发请求：无开场块、插话未出队、轮次仍闭合", async () => {
     const uri = newUri();
-    // 放一份超大覆盖 → 系统上下文越框（与 cli.intent.template 的超预算用例同一手法）
-    const tplDir = join(diyHome(), "projects", PROJECT, "template");
-    mkdirSync(tplDir, { recursive: true });
-    writeFileSync(join(tplDir, "identity.md"), "x".repeat(70 * 1024), "utf-8");
+    // ⚠️ 真发已切 Context Tree 投递：预算按**投递**的 system 容器算（稳定项，含 AGENTS.md 链），
+    // 模版覆盖（identity.md 那类）已不进真发 —— 与 cli.intent.template 的超预算用例同手法：
+    // 给链上塞大内容。链必含 $DIY_HOME/AGENTS.md（appLevel 无条件进链；任务自己的 AGENTS.md
+    // 被 chainOf skip，写任务目录不生效）。
+    const agentsFile = join(diyHome(), "AGENTS.md");
+    writeFileSync(agentsFile, "x".repeat(70 * 1024), "utf-8");
     try {
       const q = new SteerQueue();
       q.add(uri, "next-turn", "排队等着的话");
@@ -160,7 +162,7 @@ describe("超预算早退：不记账、不投递（用户的话必须还在队�
       expect(turn).toBeTruthy();
       expect(ops.some((o) => o.op === "stop" && o.id === turn!.id)).toBe(true);
     } finally {
-      rmSync(join(tplDir, "identity.md"), { force: true });
+      rmSync(agentsFile, { force: true });
     }
   });
 });

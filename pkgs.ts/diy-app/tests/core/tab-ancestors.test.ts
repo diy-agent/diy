@@ -23,6 +23,7 @@ const store = new Map<string, string>();
 
 const A = "projects/1/tasks/a";
 const C = "projects/1/tasks/c";
+const X = "projects/1/tasks/x"; // 无关的顶级任务
 
 /** 每个用例一份全新 store 单例（模块级 signal/memo 只初始化一次） */
 async function freshStore() {
@@ -102,5 +103,108 @@ describe("任务被移动 → 导航结构跟随（165 的回归点）", () => {
             expect(tabStore.opened).toHaveLength(2);
         }
         expect(persisted().map((e) => e.ctx).sort()).toEqual([A, C].sort()); // 盘上仍是两条真信息
+    });
+});
+
+describe("关父 tab 后导航不挂错（226 的回归点）", () => {
+    beforeEach(() => store.clear());
+
+    /**
+     * 场景还原（226 实测）：祖 P、父 B、子 C 都开着，无关的顶级 X 后开（队尾）。
+     * 关掉 B 的 tab 后，C 的直接父不在列表，但 P 仍开着 —— C 必须紧跟 P，
+     * 不得被兜底垫到 X 之后（那样视觉上就成了 X 的子任务）。
+     */
+    it("关父后：孤儿子任务紧跟仍开着的祖父，不挂到无关任务下", async () => {
+        const tabStore = await freshStore();
+        const P = "projects/1/tasks/p"; // 祖（148）
+        const Buri = "projects/1/tasks/bt"; // 父（225，待关闭）
+        const Curi = "projects/1/tasks/ct"; // 子（163）
+        const X = "projects/1/tasks/xt"; // 无关根（222）
+        const rel: Record<string, string[] | undefined> = {
+            [P]: undefined, // 顶级
+            [Buri]: [P],
+            [Curi]: [P, Buri],
+            [X]: undefined, // 无关的顶级任务
+        };
+        tabStore.setAncestorsResolver((ctx) => rel[ctx]);
+
+        tabStore.open("task-run", P);
+        tabStore.open("task-run", Buri);
+        tabStore.open("task-run", Curi);
+        tabStore.open("task-run", X); // 后开 → insertionIndex 队尾
+        expect(tabStore.opened.map((t) => t.ctx)).toEqual([P, Buri, Curi, X]);
+
+        tabStore.close(`task-run:${Buri}`); // 关父：任务层次不连带关子（C 留着）
+
+        expect(tabStore.opened.map((t) => t.ctx)).toEqual([P, Curi, X]); // 实测（修复前）：[P, X, Curi]
+        const c = tabStore.opened.find((t) => t.ctx === Curi)!;
+        expect(taskIndentOf(c, tabStore.opened)).toBe(1); // P 开着 → 缩进 1 级
+        // 缩进指着的必须是它上方那项（P），而不是无关的 X
+        const ic = tabStore.opened.findIndex((t) => t.ctx === Curi);
+        expect(tabStore.opened[ic - 1]?.ctx).toBe(P);
+    });
+});
+
+describe("active 悬空回落 —— 启动不得指向不存在的 tab（白屏防线）", () => {
+    beforeEach(() => store.clear());
+
+    it("active 指向不在打开列表里的 tab → 启动回落 ''", async () => {
+        store.set("diy_tabs_opened", JSON.stringify([{ pageId: "task-run", ctx: A }]));
+        store.set("diy_tabs_active", "task-run:projects/1/tasks/gone");
+        const tabStore = await freshStore();
+        expect(tabStore.active).toBe("");
+    });
+
+    it("active 在打开列表里 → 原样保留", async () => {
+        store.set("diy_tabs_opened", JSON.stringify([{ pageId: "task-run", ctx: A }]));
+        store.set("diy_tabs_active", `task-run:${A}`);
+        const tabStore = await freshStore();
+        expect(tabStore.active).toBe(`task-run:${A}`);
+    });
+
+    it("列表为空 → active ''", async () => {
+        store.set("diy_tabs_active", `task-run:${A}`);
+        const tabStore = await freshStore();
+        expect(tabStore.active).toBe("");
+    });
+});
+
+describe("dropCtx —— 删除任务后的 tab 清理（226 关联：曾是零调用的死代码）", () => {
+    beforeEach(() => store.clear());
+
+    it("摘掉该任务的所有页面 tab（task-run 与 lab 同 ctx 一起走）", async () => {
+        const tabStore = await freshStore();
+        tabStore.setAncestorsResolver(() => undefined);
+        tabStore.open("task-run", A);
+        tabStore.open("lab", A); // 子页面，ctx 相同
+        tabStore.open("task-run", C);
+        expect(tabStore.opened.map((t) => t.key)).toEqual([`task-run:${A}`, `lab:${A}`, `task-run:${C}`]);
+
+        tabStore.dropCtx(A);
+        expect(tabStore.opened.map((t) => t.key)).toEqual([`task-run:${C}`]);
+        expect(tabStore.active).toBe(`task-run:${C}`);
+    });
+
+    it("被摘的恰是 active → 激活原位右邻（不是列表第一个）", async () => {
+        const tabStore = await freshStore();
+        tabStore.setAncestorsResolver(() => undefined);
+        tabStore.open("task-run", A);
+        tabStore.open("task-run", C);
+        tabStore.open("task-run", X);
+        tabStore.activate(`task-run:${C}`); // active 在中间
+        expect(tabStore.active).toBe(`task-run:${C}`);
+
+        tabStore.dropCtx(C);
+        expect(tabStore.active).toBe(`task-run:${X}`); // 右邻；旧实现跳 next[0] = A
+        expect(tabStore.opened.map((t) => t.ctx)).toEqual([A, X]);
+    });
+
+    it("ctx 不在打开列表 → 无副作用", async () => {
+        const tabStore = await freshStore();
+        tabStore.setAncestorsResolver(() => undefined);
+        tabStore.open("task-run", A);
+        tabStore.dropCtx(C);
+        expect(tabStore.opened.map((t) => t.ctx)).toEqual([A]);
+        expect(tabStore.active).toBe(`task-run:${A}`);
     });
 });

@@ -1,5 +1,3 @@
-# diy-app 开发规范
-
 > 全仓契约见**仓库根 `AGENTS.md`**。本文件只写**包内定位**（去哪找）与**代码看不出来的坑**。
 > UI 文案、字段清单、实现步骤等易变细节**不在此外** —— 现场 `rg`。意图测试是需求真源：`tests/cli.intent.*` + `tests/core/*`。
 
@@ -11,6 +9,7 @@
 - `find.cli` — `src/cli/index.ts` CLI 入口（命令定义与 RPC 调用）
 - `find.renderer` — `src/renderer_solid/`（Solid，主线）：`components/` 业务组件 · `store/` signal 单例 · `lib/` rpc client 与 `diy.ui.*` handler · `App.tsx` / `main.tsx`
 - `find.shared` — `src/shared/` **跨层契约**（zod schema / 纯函数，main 与 renderer 共用，禁止各处重写）：`task-uri.ts`（URI 解析）· `task-detail.ts` · `task-list.ts`（排序搜索）· `persona.ts` · `prompt-schema.ts` · `session-view.ts`
+- `find.context` — `src/shared/context/` 上下文树与投递：`README.md` 是**完整约定表**（领域模型 / 投递构造 / 划分真源 / step 快照 / 渲染坑）；投递构造唯一入口 `delivery.ts` 的 `buildDelivery`；划分真源 `$DIY_HOME/context.yaml`（契约 `config.ts`、I/O `src/main/core/context-config.ts`）
 - `find.serve` — `src/serve/index.ts` 纯 Web 模式（无 Electron）
 - `find.tests` — `tests/`：`cli.intent.*` 意图测试（真实 UI / 隔离 Electron）· `core/` `services/` 单测 · 夹具 `electron-test.ts` · `ui-drive.ts` · `shell-test.ts` · `setup.ts`
 - `find.scripts` — 仓库 `scripts/`：`ui-smoke/`（CDP 冒烟）· `cdp-colorscheme-demo.mts` · `repro-epipe-dialog.mts` · `doctor-env.sh`
@@ -43,6 +42,7 @@
 - `rule.agents-chain` — AGENTS.md 链**上界到 `$HOME` 为止**（不进 `/`、`/Users`）；不在 `$HOME` 下时只取工作目录一层
 - `rule.budget` — 系统提示词预算 `clamp(模型上下文 × 4B × 5%, 16KB, 64KB)`；超限**拒发不截断**，且早退也必须闭合轮次（stop + noteTurnEnd + 审计）
 - `rule.golden` — 改内置模版（`src/main/prompts/defaults.ts`）**必须同步** `tests/fixtures/system.golden.txt`（当前内置模版的逐字节快照）。⚠️ `./sha.sh check` **不含 vitest**，不会替你抓到这类失效 —— 改完模版跑 `npx vitest run tests/core/template-dsl-golden.test.ts`
+- `rule.agents-injected` — **本文件会被 `chainOf` 注入 system 提示词**（受 64KB 预算 `SYSTEM_BUDGET_CAP_BYTES` 约束）：长文写 README / 独立文档，这里只留指针
 - `rule.no-silent-catch` — 不要静默吞异常（如切模型曾一律 `catch {}` → 用户以为切了其实没切）
 
 ## pit — 坑（反直觉，代码看不出来）
@@ -61,8 +61,10 @@
 - `pit.theme` — 主题**不得回落 `prefers-color-scheme`**：Playwright 的 `colorScheme` 默认 `"light"`，attach CDP 会覆盖系统外观把界面刷白
 - `pit.daisyui-drawer` — drawer 需渲染 `<input class="drawer-toggle">`，漏了侧栏 `visibility:hidden` 直接消失
 - `pit.hl-token` — CodeMirror 默认**只给 token 挂 class、不上色**：必须配 `HighlightStyle` + `syntaxHighlighting()`。`&light`/`&dark` **只能**用在 `EditorView.baseTheme`，写在 `EditorView.theme` 里是**模块加载期**抛错 → 整个 renderer 白屏
+- `pit.ctx-two-lines` — **上下文树页**（ctxlab）的请求预览是**真发形态**（走 `buildDelivery`）；**提示词页**（lab）是**模版线**（`assembleSystem`）。两者不是同一条链，改动别互推
 - `pit.one-prompt-source` — `_guard.md` 不得复述 `INTERRUPTED_TOOL_NOTICE`；该文案唯一来源是 `local-blocks.ts` 的常量
 - `pit.localstorage` — **禁止把草稿写 localStorage**（属有损数据，且 serve 与 Electron 各持一份）：草稿 + 插话队列落任务目录 `.diy/drafts.yaml`，会话日志落 `$DIY_HOME/local/`
+- `pit.ref-lock` — `ref-sync.ts` 写 **v5** 格式的 `.diy/ref.lock.yaml`（`ref.{python,node}.{scope}.{category}`），而 `pkgs.ts/diy-dev/src/ref/store.ts` 写 **v1**（`source.{key}`）到**同一个文件** → 后写覆盖前者，且两者**互读为空、不报错**（读侧各自 `?? 5` / `?? 1` 兜底）。改这个文件前先确认哪边是活的
 - `pit.ownership` — 任务目录内 `AGENTS.md` 面向用户可编辑，`.diy/**` 系统独占（仅 main 经 RPC 写）；路径单一出口 `src/main/core/state.ts` 的 `taskSystemDir(uri)`
 - `pit.agent-history` — 本地 agent 的 `bash` 工具若执行批量杀进程命令（按名字匹配 electron 的一类），会杀掉宿主自己的 renderer → 永久白屏且进程被杀事件捕获不到：只能**执行前拦截 + 执行前落盘**（`src/main/services/agent-guard.ts` / `agent-audit.ts`）
 

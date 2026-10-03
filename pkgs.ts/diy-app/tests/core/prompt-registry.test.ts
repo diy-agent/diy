@@ -1,6 +1,6 @@
 // tests/core/prompt-registry.test.ts — 注册表单测（隔离 HOME，不碰 ~/.diy）
 import { describe, expect, it, beforeEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -12,6 +12,7 @@ import {
   assembleGlobals,
   SYSTEM_VARS,
   systemBudgetForContext,
+  systemOverBudget,
   SYSTEM_BUDGET_CAP_BYTES,
 } from "../../src/main/services/prompt-registry";
 
@@ -54,6 +55,32 @@ describe("list/get", () => {
   it("非法路径拒绝（含穿越）", () => {
     expect(() => getPrompt(home, PID, "../state")).toThrow();
     expect(() => getPrompt(home, PID, "nope.md")).toThrow();
+  });
+});
+
+describe("systemOverBudget（真发与模版线共用的唯一预算判据）", () => {
+  it("★ 两条链路都真的调它（源码护栏：真发曾内联 `bytes > budget`，两处口径会悄悄分叉）", () => {
+    const src = readFileSync(join(__dirname, "..", "..", "src", "main", "services", "local-agent.ts"), "utf-8");
+    expect(src).toContain("systemOverBudget(");
+    // 真发侧不得再自己算预算（systemBudgetForContext 只该在 prompt-registry 内部出现）
+    expect(src).not.toContain("systemBudgetForContext(");
+    expect(src).not.toMatch(/\.system\.bytes\s*>\s*sysBudget/);
+  });
+
+  it("★ 正好等于预算 → 放行（只有严格大于才拒发；边界错了会把刚好合格的提示词拒掉）", () => {
+    const budget = systemBudgetForContext(256_000);
+    expect(systemOverBudget(budget, 256_000)).toBeNull();
+  });
+  it("超 1 字节 → 拒发，并回传 used/budget 供错误文案使用", () => {
+    const budget = systemBudgetForContext(256_000);
+    expect(systemOverBudget(budget + 1, 256_000)).toEqual({ used: budget + 1, budget });
+  });
+  it("未知模型窗口 → 用硬上限兜底（不因缺参数而放行一切）", () => {
+    expect(systemOverBudget(SYSTEM_BUDGET_CAP_BYTES + 1, undefined)).toEqual({
+      used: SYSTEM_BUDGET_CAP_BYTES + 1,
+      budget: SYSTEM_BUDGET_CAP_BYTES,
+    });
+    expect(systemOverBudget(1024, 0)).toBeNull();
   });
 });
 
@@ -351,6 +378,47 @@ describe("回归：评审修复项", () => {
     expect(SYSTEM_VARS.find((v) => v.path === "cwd.isFallback")?.type).toBe("boolean");
     expect(SYSTEM_VARS.some((v) => v.path === "diy")).toBe(true); // 对象自身也是一条（{{diy}} 会报"是对象"）
   });
+});
+
+describe("投递节点（模版节 → Context Tree）", () => {
+    it("★ 投递节点（模版节）由 assembleGlobals 渲染产出：identity/rules/guard 都在，且是模版渲染结果", () => {
+      const g = assembleGlobals(home, PID, { taskUri: TASK, diyCli: "/repo/diy.sh" }) as unknown as Record<string, string>;
+      // 身份节：身份行 + 人物（缺省人物来自内置 personas）——这就是真发 system 里那一段
+      expect(g["identity"]).toContain("你是 diy 管控台的本地 coding agent");
+      expect(g["identity"]).toContain("你现在的人物是");
+      // 规范与保命契约：模版正文原样渲染（含标签）
+      expect(g["rules"]).toContain("<rules>");
+      expect(g["guard"]).toContain("<guard>");
+      expect(g["guard"]).toContain("禁止执行会杀死宿主进程的命令");
+      // 与模版线（assembleSystem）同源：同一份模版渲染，不是另写一段
+      const tpl = assembleSystem(home, PID, { taskUri: TASK, diyCli: "/repo/diy.sh" }).system;
+      for (const needle of ["<rules>", "<guard>", "你现在的人物是"]) {
+        expect(tpl.includes(needle), `模版线缺 ${needle}`).toBe(true);
+        expect(g["identity"].includes(needle) || g["rules"].includes(needle) || g["guard"].includes(needle)).toBe(true);
+      }
+    });
+
+    it("项目级覆盖（projects/<id>/template/identity.md）也进投递节点", () => {
+      mkdirSync(join(home, "projects", PID, "template"), { recursive: true });
+      writeFileSync(
+        join(home, "projects", PID, "template", "identity.md"),
+        "你是本项目专属 agent，只回答一个字。\n",
+        "utf-8",
+      );
+      const g = assembleGlobals(home, PID, { taskUri: TASK, diyCli: "/repo/diy.sh" }) as unknown as Record<string, string>;
+      expect(g["identity"]).toContain("本项目专属 agent");
+      expect(g["identity"]).not.toContain("diy 管控台的本地 coding agent");
+    });
+
+    it("草稿（未存盘的模版编辑）也进投递节点：预览与真发看到同一份", () => {
+      const g = assembleGlobals(home, PID, {
+        taskUri: TASK,
+        diyCli: "/repo/diy.sh",
+        drafts: { "rules.md": "<rules>\n- 只回答一个字\n</rules>\n" },
+      }) as unknown as Record<string, string>;
+      expect(g["rules"]).toContain("只回答一个字");
+      expect(g["rules"]).not.toContain("用中文回答");
+    });
 });
 
 describe("diy.md 入口辨析（防回退）", () => {
