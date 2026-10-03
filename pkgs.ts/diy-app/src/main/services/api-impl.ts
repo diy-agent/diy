@@ -375,6 +375,20 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().getLimits();
   });
+  // 逐步用量账本：结构化直出（分组/汇总在 shared/usage 的纯函数里，两端同一套口径）
+  binding.on(app.agent.local.usage, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.usage", input.taskUri);
+    const { readUsage } = await import("./usage-report");
+    return readUsage(input.taskUri);
+  });
+  // 会话用量报表（人读表格）：与 UI 同源同口径，只是在这里渲染成等宽文本
+  binding.on(app.agent.usage, async ({ input }) => {
+    const { readUsage, renderUsageSteps, renderUsageByAgent } = await import("./usage-report");
+    const steps = readUsage(input.task);
+    return input.byAgent
+      ? renderUsageByAgent(steps, { last: input.last })
+      : renderUsageSteps(steps, { last: input.last, cost: input.cost });
+  });
 
   // ── template（提示词模版试验场 spike）──
   binding.on(app.template.list, async ({ input }) => {

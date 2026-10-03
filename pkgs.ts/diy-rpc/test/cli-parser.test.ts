@@ -65,6 +65,33 @@ describe("parseArgv — resolvePath（路径参数按调用方 cwd 解析）", (
   });
 });
 
+describe("parseArgv — kebab 选项别名（camelCase 字段名的 CLI 惯例写法）", () => {
+  // 选项名默认取字段名（TS 是 camelCase），但用户按 CLI 惯例敲 kebab：
+  // 两种写法必须等价，且 help 里显示 kebab（否则用户只能从 help 抄出 camelCase）。
+  const withCamel = RpcSchema.unary({
+    desc: "含 camelCase 选项的命令",
+    input: {
+      byAgent: z.boolean().default(false).cliOption({ desc: "按 agent 汇总" }),
+      someValue: z.string().optional().cliOption({ desc: "某值" }),
+    },
+    output: z.string(),
+  });
+
+  it("`--by-agent` 与 `--byAgent` 都解析到同一字段", () => {
+    expect(parseArgv(withCamel, ["--by-agent"]).input.byAgent).toBe(true);
+    expect(parseArgv(withCamel, ["--byAgent"]).input.byAgent).toBe(true);
+    expect(parseArgv(withCamel, ["--some-value", "x"]).input.someValue).toBe("x");
+    expect(parseArgv(withCamel, ["--someValue", "x"]).input.someValue).toBe("x");
+  });
+
+  it("help 里显示 kebab 形式", () => {
+    const help = generateHelp(withCamel, "demo");
+    expect(help).toContain("--by-agent");
+    expect(help).toContain("--some-value");
+    expect(help).not.toContain("--byAgent");
+  });
+});
+
 describe("parseArgv", () => {
   it("位置参数按序映射，命名选项独立", () => {
     const { input } = parseArgv(taskCreate, ["标题A", "/path/x", "--parent", "uri:1"]);

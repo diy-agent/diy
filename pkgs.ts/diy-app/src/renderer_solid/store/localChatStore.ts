@@ -20,12 +20,14 @@
 import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "./notificationStore";
-import { BlockStore, toTree, type BlockNode, type Op } from "../../main/services/local-blocks";
+import { BlockStore, toForest, type BlockNode, type Op } from "../../main/services/local-blocks";
 // 插话队列项的类型在 core/drafts（与草稿同文件存储）；这里只要类型，故 type-only import
 //（不会把 node:fs 依赖带进 renderer）
 import type { SteerItem, SteerMode } from "../../main/core/drafts";
 import { personaStore } from "./personaStore";
 import { sessionView, type SessionView } from "../../shared/session-view";
+// 用量账本类型：与 main 落盘、CLI 报表、看板共用同一份形状（shared/usage 是唯一口径处）
+import type { StepUsageRecord } from "../../shared/usage";
 
 interface TaskState {
     store: BlockStore;
@@ -66,6 +68,13 @@ interface TaskState {
     detailScroll: number;
     /** 历史加载在途 promise：open() 并发去重（见 open 内注释） */
     loading?: Promise<void>;
+    /**
+     * 逐步用量账本（`<key>.usage.jsonl` 的结构化镜像）。
+     * 权威在盘上；这里是快照，打开会话时拉一次，轮次收尾（含别人的轮次）时再拉一次。
+     * 对话流页脚**不依赖它**（页脚用 turn 块属性，实时就有）——它服务于明细与看板。
+     */
+    usage: () => StepUsageRecord[];
+    setUsage: (v: StepUsageRecord[]) => void;
 }
 
 const states = new Map<string, TaskState>();
@@ -80,10 +89,11 @@ function stateFor(taskUri: string): TaskState {
         const [stopRequestedAt, setStopRequestedAt] = createSignal<number | null>(null);
         const [error, setError] = createSignal<string | null>(null);
         const [steers, setSteers] = createSignal<SteerItem[]>([]);
+        const [usage, setUsage] = createSignal<StepUsageRecord[]>([]);
         s = {
             store: new BlockStore(), loaded: false, trees, setTrees, running, setRunning,
             active, setActive, stopRequestedAt, setStopRequestedAt, abort: null,
-            error, setError, steers, setSteers, steerSeq: 0, steerSettled: 0,
+            error, setError, steers, setSteers, usage, setUsage, steerSeq: 0, steerSettled: 0,
             scroll: 0, tab: "local", detailScroll: 0,
         };
         states.set(taskUri, s);
@@ -97,9 +107,16 @@ function cur(): TaskState | null {
     return u ? (states.get(u) ?? null) : null;
 }
 
-/** 块树快照刷新（重建整棵树） */
+/**
+ * 块树快照刷新。
+ *
+ * ⚠️ 不是"重建整棵树"了：`toForest` 对**未被 op 触碰过**的子树返回同一对象（身份缓存，
+ * 见 local-blocks 的 TreeCache 头注），于是 Solid 的 `<For>` 只更新真正变化的那一轮，
+ * 其余轮次的组件（连同其折叠态与 Markdown 解析结果）原地保留。
+ * 这是任务 236 的治本点：以前每帧全量重建 → 折叠态被清、点击无响应、长回答卡顿。
+ */
 function refresh(st: TaskState) {
-    st.setTrees(st.store.roots().map((r) => toTree(st.store, r.id)));
+    st.setTrees(toForest(st.store));
 }
 
 // ─── 渲染批处理（合并高频 op，落到每帧至多一次 refresh） ──────────
@@ -210,13 +227,45 @@ async function refreshActive(taskUri: string): Promise<void> {
         st.setActive(active);
         // main 说这轮已收尾 → 停止请求使命结束（否则宽限期后会把"停止中"又说成"正在生成"）
         if (!active) st.setStopRequestedAt(null);
-        // 下降沿：main 刚收尾一轮 —— 它的 op 我这条流收不到，主动重放让树追上终态
-        if (was && !active) await reload(taskUri);
+        // 下降沿：main 刚收尾一轮 —— 它的 op 我这条流收不到，主动重放让树追上终态；
+        // 用量账本同理（别人跑的轮次也要在看板/明细里看见，不能只有自己发的才算数）
+        if (was && !active) {
+            await reload(taskUri);
+            void refreshUsage(taskUri);
+        }
     } catch (e) {
         // 查询失败不改既有判断：宁可留着上一次的真值，也不能当作"没人跑"（那正是误报中断的成因）
         console.warn(`[localChat] 运行态查询失败 ${taskUri}:`, e);
     }
     setNowMs(Date.now());
+}
+
+/**
+ * 拉用量的在途合并标记（同一 task 只保留一次在途请求）。
+ * 与 refreshSteers 同一理由：轮末下降沿 / send 收尾 / open 首载三处都可能同时触发，
+ * 而盘上的账是同一份 —— 重复拉只浪费 RPC。
+ */
+const usageInflight = new Set<string>();
+
+/**
+ * 拉取逐步用量账本（`<key>.usage.jsonl` 的结构化镜像）。
+ *
+ * 失败**不抛**也不清空：用量是观测数据，拉不到时界面应保留上一份快照（并把"可能不是最新"
+ * 说出来），而不是把看板清成空表 —— 空表会被读成"这个会话没花过钱"，是假事实。
+ */
+async function refreshUsage(taskUri: string): Promise<void> {
+    const st = states.get(taskUri);
+    if (!st) return;
+    if (usageInflight.has(taskUri)) return;
+    usageInflight.add(taskUri);
+    try {
+        const rows = (await diyService.diy.agent.local.usage({ taskUri })) as StepUsageRecord[];
+        st.setUsage(Array.isArray(rows) ? rows : []);
+    } catch (e) {
+        console.warn(`[localChat] 用量账本读取失败 ${taskUri}:`, e);
+    } finally {
+        usageInflight.delete(taskUri);
+    }
 }
 
 /** 会话页挂载期间持续对真值；返回停止函数（组件 cleanup 调用） */
@@ -325,6 +374,8 @@ async function open(taskUri: string) {
     void refreshActive(taskUri); // 进入会话立刻对一次真值，不等轮询第一拍
     // 队列与历史独立：loaded 与否都要拉（横条反映的是"当前待投递"，与历史加载进度无关）
     void refreshSteers(taskUri);
+    // 用量账本同理独立：看板/明细要的是"这个会话花过多少"，与块树加载进度无关
+    void refreshUsage(taskUri);
     if (st.loaded) return;
     // 并发去重（必需）：LocalChatPage 首挂时 onMount 与 uri 切换 effect 都会调 open，
     // 而 loaded 只在 await 之后置位 —— 没有这道闸门，两次 history 会被先后 fold 进同一个
@@ -404,6 +455,8 @@ async function send(taskUri: string, text: string): Promise<boolean> {
         // 轮次结束（含正常收尾/取消/报错）后对齐队列：本轮末尾可能投递了 turn 模式的插话，
         // 不刷新的话横条会一直挂着"待发送"，而模型其实已经看见了
         void refreshSteers(taskUri);
+        // 用量同理：本轮的逐步账已写完，刷新让明细/看板立刻含上这一轮
+        void refreshUsage(taskUri);
     }
 }
 
@@ -522,6 +575,7 @@ async function clear(taskUri: string) {
     st.loaded = true; // 文件已删，不必重拉
     st.setError(null);
     st.setSteers([]); // 会话已清，排队中的插话也被 main 一并清掉（见 local-agent 的 clear()）
+    st.setUsage([]); // 用量账本随会话日志一并删除（否则看板会把已清会话的花费继续算着）
     // ⚠️ 序号**不归零**：归零 = 把乱序保护的挡板撤掉 —— clear 之前发出的在途 `list` 响应带着
     // 旧序号（`commitSteers` 的判据是 `seq < steerSettled` 就丢弃），归零后它反而"比挡板新"
     // → 被接收 → 把已清空的队列写回界面（横条复活已清的插话，盘上其实已删）。
@@ -595,6 +649,16 @@ export const localChatStore = {
     get steers(): SteerItem[] {
         return cur()?.steers() ?? [];
     },
+    /** 当前任务的逐步用量账本（快照；权威在盘上，见 refreshUsage） */
+    get usage(): StepUsageRecord[] {
+        return cur()?.usage() ?? [];
+    },
+    /** 当前打开的会话 URI（null = 没选任务）。供组件触发 refreshUsage 时用 */
+    get currentUri(): string | null {
+        return currentUri();
+    },
+    /** 手动刷新用量账本（看板打开/调试用） */
+    refreshUsage,
     open,
     send,
     cancel,

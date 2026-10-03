@@ -553,7 +553,36 @@ export const apiDef = RpcSchema.router({
                   readMaxBytes: z.number(),
                 }),
               }),
+              /**
+               * 逐步用量账本（`<key>.usage.jsonl`）：结构化返回，UI 的明细/看板与 CLI 走**同一份数据**。
+               * 不做服务端预聚合 —— 分组/汇总在 shared/usage.ts 里（纯函数），两端同一套口径。
+               */
+              usage: RpcSchema.unary({
+                desc: `读取本地 agent 的逐步用量账本（每步四桶 + raw + 身份 + 单价快照 + 金额）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                },
+                output: z.array(z.any()),
+              }),
             },
+          }),
+
+          /**
+           * 会话用量报表（人看的口径）：CLI 直出的等宽表格。
+           *
+           * 为什么不复用 agent.local.usage：那条给 UI 结构化数据；这条是**人读**的渲染
+           * （对齐、单位、n/a 表达都在 main 里做一次）。两者共用同一份账（usage.jsonl）
+           * 与同一套聚合（shared/usage），不是两套统计。
+           */
+          usage: RpcSchema.unary({
+            desc: `查看任务会话的 token 用量与金额（逐步明细 / --by-agent 按人物+模型+面+档位汇总）`,
+            input: {
+              task: z.string().cliArg({ desc: "任务 URI" }),
+              last: z.number().optional().cliOption({ desc: "只看最近 N 步" }),
+              cost: z.boolean().optional().cliOption({ desc: "展开金额细分列（非缓存/缓存读/缓存写/文本/思考）" }),
+              byAgent: z.boolean().optional().cliOption({ desc: "按人物+模型+面+档位汇总（多 agent 多行）" }),
+            },
+            output: z.string(),
           }),
         },
       }),
