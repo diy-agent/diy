@@ -18,8 +18,8 @@
 | | `diy`（全局命令） | `./diy.sh` | `./sha.sh dev` |
 |---|---|---|---|
 | 本质 | 发布版 CLI **客户端** | worktree 版 CLI **客户端** | **GUI 启动器** |
-| 跑什么 | `node out/cli/index.js`（编译产物） | `tsx src/cli/index.ts`（源码，改完即生效） | Vite dev server + watch main/preload + Electron |
-| 要构建吗 | 是（`out/` 必须存在） | CLI 不用；拉起的 GUI 要 `out/main` | 不用（HMR 走 `loadURL`） |
+| 跑什么 | `node out/cli/index.js`（编译产物） | `auto`：`out/cli/index.js` 优先（打包源比产物新→回退 `tsx` 源码，`DIY_CLI_MODE=auto\|compiled\|tsx`） | Vite dev server + watch main/preload + Electron |
+| 要构建吗 | 是（`out/` 必须存在） | CLI 可选（auto 无产物/产物旧→tsx 兜底）；拉起的 GUI 要 `out/main` | 不用（HMR 走 `loadURL`） |
 | 数据根 | `~/.diy`（**生产**） | `./build/home`（worktree 隔离） | 同 `diy.sh` |
 | `DIY_ENV` | `production` | `development` | `development` |
 | 连哪个 app | 探测/拉起自己的实例 | 同 worktree 实例 | **它自己拉起的实例** |
@@ -48,8 +48,8 @@
 
 ## model — 本地 agent 测试用什么模型
 
-- `model.default` — **`mimo-v2.6-flash`**（opencode-go，chat 面）：全表最便宜的带工具模型，$0.14 / $0.28 per 1M tokens
-- `model.expensive` — 贵模型（`gpt-5.6-luna` 等）**只准**在必须验证「该模型特有行为」时用，且一次只跑一条用例
+- `model.allowed` — **测试只准用 `mimo-v2.6-flash` 与 `deepseek-v4.1-flash`**；其他模型一律不用（太贵）。确需验证某模型特有行为时，先取得用户许可再跑，且一次只跑一条用例
+- `model.default` — 缺省用 **`mimo-v2.6-flash`**（opencode-go，chat 面）：全表最便宜的带工具模型，$0.14 / $0.28 per 1M tokens
 - `model.reasoning` — 档位只有 `none/low/medium/high`（上游 400 拒绝 `minimal`/`xhigh`/`max`）
 - `model.truth` — 价目真源 `https://models.dev/api.json`（`opencode-go` 的 cost/limit）；可用清单 `$ZEN/v1/models`
 

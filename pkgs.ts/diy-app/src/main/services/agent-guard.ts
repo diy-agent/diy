@@ -1,6 +1,12 @@
 // src/main/services/agent-guard.ts
 // 🎯 本地 agent 的 bash 自杀护栏：执行前判定"这条命令会不会把 diy 自己干掉"
 //
+// ⛔ 当前已停用（2026-10-02）：调用点已从 local-agent.ts 移除，本模块与单测保留。
+//    原因：判据是**命令文本**，无法区分「宿主进程」与「agent 自己起的实例」。
+//    实测两类误拦（见下方 collectSelfInfo 的「已知精度问题」）会把本仓库任意
+//    worktree/测试实例都算成宿主家人 → agent 连自己起的实例都收不掉。
+//    改判据或改走沙箱的方向也记在该注释里；重新启用 = 恢复 local-agent.ts 的调用。
+//
 // 背景（2026-09-12 实测复现，任务 projects/4/tasks/92）：
 //   agent 想"清理多余的 Electron 实例"，于是反复执行
 //     ps aux | grep Electron | ... | xargs kill -9

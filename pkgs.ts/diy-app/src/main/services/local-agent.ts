@@ -27,7 +27,6 @@ import path from "node:path";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
 import { resolveCwd as resolveCwdWithNote } from "../core/cwd";
 import { BlockStore, blocksToMessages, interruptedToolPatches, type Op, type JSONVal } from "./local-blocks";
-import { collectSelfInfo, judgeSelfKill, selfKillNotice } from "./agent-guard";
 import { appendAudit } from "./agent-audit";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
@@ -305,22 +304,12 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
             inputSchema: z.object({ command: z.string().describe("要执行的 bash 命令") }),
             execute: async ({ command }, opts) => {
                 const home = diyHome();
-                // ① 自杀护栏：执行前拦（kill -9 不可捕获，事后补救不可能）
-                const self = collectSelfInfo(home);
-                if (self) {
-                    const verdict = judgeSelfKill(command, self);
-                    if (verdict.blocked) {
-                        appendAudit(home, {
-                            phase: "bash-blocked",
-                            taskUri,
-                            cwd,
-                            command,
-                            result: verdict.reason,
-                        });
-                        return selfKillNotice(verdict);
-                    }
-                }
-                // ② write-ahead 审计：先落盘再执行，保证最后一幕不丢
+                // 自杀护栏（agent-guard.ts）已停用（2026-10-02）：
+                // 判据是命令文本，无法区分「宿主进程」与「agent 自己起的实例」——
+                // 实测两类误拦（同 pgid、命令行含 out/main/index.mjs）把本仓库任意
+                // worktree/测试实例都算宿主家人，连 agent 收自己起的实例都被拒。
+                // 恢复方式：还原本处调用 + import（模块与单测均保留，见 agent-guard.ts）。
+                // 现仅保留 write-ahead 审计：先落盘再执行，保证最后一幕不丢
                 appendAudit(home, { phase: "bash-start", taskUri, cwd, command });
                 const t0 = Date.now();
                 const out = await runBash(

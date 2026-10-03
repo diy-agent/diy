@@ -12,6 +12,7 @@ import { parseTracks } from "../../shared/grid-layout";
 import { notificationStore } from "../store/notificationStore";
 import { createProjectViaUi } from "./create-project";
 import { createTaskViaUi } from "./create-task";
+import { uiWatchStream, currentSnapshot } from "./ui-watch";
 
 /**
  * renderer-api-impl.ts — Renderer 侧 RPC handler 绑定（handle 分离）
@@ -58,8 +59,11 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
   }));
 
   binding.on(ui.page.navigate, async ({ input }) => {
-    getRendererActions().navigate?.(input.page);
-    return { status: "ok" };
+    const nav = getRendererActions().navigate;
+    if (!nav) return { status: "error", data: { reason: "renderer actions 未就绪" } };
+    nav(input.page);
+    const snap = currentSnapshot();
+    return { status: "ok", data: { rev: snap.rev, uiRev: snap.uiRev, active: snap.active } };
   });
 
   binding.on(ui.page.focus, async ({ input }) => {
@@ -127,22 +131,42 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
   binding.on(ui.tab.open, async ({ input }) => {
     // 两种写法：`<任务 URI>`（= 任务执行页）或 `<pageId>:<任务 URI>`（如 `lab:projects/1/tasks/1`）
     const m = input.uri.match(/^([a-z][a-z0-9-]*):(.+)$/);
-    if (m) getRendererActions().openTab?.(m[1]!, m[2]!);
-    else getRendererActions().openTab?.("task-run", input.uri);
-    return { status: "ok", data: { uri: input.uri } };
+    const pageId = m ? m[1]! : "task-run";
+    const ctx = m ? m[2]! : input.uri;
+    const tabKey = `${pageId}:${ctx}`;
+    const openTab = getRendererActions().openTab;
+    if (!openTab) return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
+    // 顺序/缩进依赖任务层次：先确保树里有这个 ctx（缺则按需重载一次，覆盖 fileChange 防抖窗口）
+    await taskStore.ensureTasks([ctx]);
+    openTab(pageId, ctx);
+    // 写后回读：本地 UI 写是同步 flush，这里立刻能读到后置状态。把「是否真的达到该状态」
+    // 回给调用方（原实现无条件 return ok，写没生效也报 ok，调用方无法自检）。
+    const snap = currentSnapshot();
+    const ok = snap.tabs.some((t) => t.key === tabKey);
+    return { status: ok ? "ok" : "error", data: { uri: input.uri, rev: snap.rev, uiRev: snap.uiRev, active: snap.active, reason: ok ? undefined : "打开后未在快照中看到该 tab" } };
   });
 
   binding.on(ui.tab.close, async ({ input }) => {
-    getRendererActions().closeTab?.(input.uri);
-    return { status: "ok", data: { uri: input.uri } };
+    const closeTab = getRendererActions().closeTab;
+    if (!closeTab) return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
+    closeTab(input.uri);
+    const snap = currentSnapshot();
+    const ok = !snap.tabs.some((t) => t.key === input.uri);
+    return { status: ok ? "ok" : "error", data: { uri: input.uri, rev: snap.rev, uiRev: snap.uiRev, reason: ok ? undefined : "关闭后该 tab 仍在快照中" } };
   });
 
   binding.on(ui.tab.active, async ({ input }) => {
-    getRendererActions().activateTab?.(input.uri);
-    return { status: "ok", data: { uri: input.uri } };
+    const activate = getRendererActions().activateTab;
+    if (!activate) return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
+    activate(input.uri);
+    const snap = currentSnapshot();
+    const ok = snap.active === input.uri;
+    return { status: ok ? "ok" : "error", data: { uri: input.uri, rev: snap.rev, uiRev: snap.uiRev, reason: ok ? undefined : `激活后 active=${snap.active}` } };
   });
 
   binding.on(ui.tab.list, async () => {
+    // opened 的顺序由任务层次现算：读之前确保树含所有已开 tab 的 ctx（缺则按需重载一次）
+    await taskStore.ensureTasks(tabStore.opened.map((t) => t.ctx));
     // 契约保持字符串数组（CLI/测试都按字符串用）：opened = tab key 列表
     return { status: "ok", data: { opened: tabStore.opened.map((t) => t.key), active: tabStore.active } };
   });
@@ -213,7 +237,17 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     };
   });
 
-  return binding;
+  // diy.ui.state —— UI 状态单读（与流同形状）。用于「读现状 → 操作 → 再读」的一次性调用。
+  binding.on(ui.state, async () => ({ status: "ok", data: currentSnapshot() }));
+
+  // diy.ui.watch.uiState —— 业务级 UI 快照流（renderer 侧事件源，见 lib/ui-watch.ts）
+  binding.on(ui.watch.uiState, async function* () {
+    for await (const snap of uiWatchStream()) {
+      yield { status: "ok", data: snap };
+    }
+  });
+
+return binding;
 }
 
 /** 无障碍树节点（含内部统计字段） */
