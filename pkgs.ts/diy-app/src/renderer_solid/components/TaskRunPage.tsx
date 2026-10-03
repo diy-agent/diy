@@ -104,7 +104,7 @@ export function TaskRunPage(props: { uri: string }) {
                     renderView={(viewId) => {
                         switch (viewId) {
                             case "task.detail":
-                                return <TaskSideView uri={props.uri} hoverPreview={true} />;
+                                return <TaskSideView uri={props.uri} hoverPreview={true} chromeGap={true} />;
                             case "chat.local":
                                 return <LocalChatPage uri={props.uri} />;
                             default:

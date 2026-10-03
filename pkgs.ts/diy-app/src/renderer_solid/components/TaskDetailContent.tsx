@@ -405,43 +405,22 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean }) {
                             label={r.title ?? r.uri}
                             class="min-w-0 text-body"
                             act="chat"
-                            /* 已开在导航里的任务**不再弹 hover 详情**：
-                               nav 上那一项 hover 出来的就是同一个 view 的同一份详情，
-                               树里再弹一层等于把同样的东西显示两遍 —— 这个动作本来就只是
-                               「顺便看一眼」，重复弹反而让人以为点错了地方。
-                               那些任务的详情入口 = nav 项 hover（或点标题进任务管理页）。
-                               tabStore 是响应式的：关掉 tab 后这里立刻恢复可弹。 */
-                            preview={props.hoverPreview && !chatOpen(r.uri)}
+                            /* hover 预览：只跳过「该任务正是此刻在看的那一个」（详情已在屏上），
+                               其余一律可弹（##183 C-1 原意；原写成「凡是开在 nav 里的都跳」
+                               导致 hover 大量失效，见 tabStore.isTaskDisplayed）。 */
+                            preview={props.hoverPreview && !tabStore.isTaskDisplayed(r.uri)}
                             chatOpen={chatOpen(r.uri)}
                         />
                         <Show when={r.current}>
                             <span class="shrink-0 text-caption opacity-60">◀ 当前</span>
                         </Show>
-                        {/* 操作按钮**右对齐**（ml-auto），与上面「当前」各管一侧 —— 混在一起
-                            会随标题长度左右漂，每行的按钮位置都不一样，扫不下去。
-                            两态刻意不同：
-                              · 未打开 → hover 该行才显形（平时不占地方，行内保持安静）
-                              · **已打开在导航里** → 常态显示且高亮成「已开」态：这时它是
-                                「状态指示」而不只是动作入口，藏起来反而要去 nav 里核对
-                            文案随之变成「已打开」，避免和未打开态长得一样、「到底开没开」看不出来。 */}
-                        {/* C-2 调换后按钮 = 「去任务管理」入口（原 openTask 动作）：
-                            标题已接管「打开对话」，按钮补回被调走的任务详情入口。
-                            未开对话时 hover 才显形（行内安静）；已开对话常态显示做
-                            状态指示 —— 与标题的 font-semibold 一起回答「开没开」。 */}
-                        <button
-                            class={`btn btn-xs px-1 min-h-0 ml-auto shrink-0 ${
-                                chatOpen(r.uri)
-                                    ? "btn-ghost bg-primary/25 ring-1 ring-primary/40 text-base-content hover:bg-primary/40"
-                                    : "btn-ghost opacity-0 group-hover:opacity-70 hover:!opacity-100"
-                            }`}
-                            title={`#${r.num ?? "?"} 任务详情（去任务管理）`}
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                openTask(r.uri);
-                            }}
-                        >
-                            {chatOpen(r.uri) ? "💬 已打开 · 📋" : "📋 查看任务"}
-                        </button>
+                        {/* 「已打开在对话里」= **单个图标**（2026-10-03 用户指令）：原来是一颗
+                            两图标 + 文字的操作按钮，噪音大。**跳转任务管理**的入口已从树里删掉、
+                            统一收在「任务详情」view 的 bar 上（见 TaskSideView），故这里只留
+                            状态指示：已打开显示 💬，未打开不显示任何图标。 */}
+                        <Show when={chatOpen(r.uri)}>
+                            <span class="ml-auto shrink-0 text-body" title="已在对话中打开">💬</span>
+                        </Show>
                     </div>
                 )}
             </For>

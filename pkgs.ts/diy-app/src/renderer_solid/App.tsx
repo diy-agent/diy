@@ -170,13 +170,17 @@ export default function App() {
     /** 任务树标题的单层预览 drawer：left 是相对 mainAreaEl 的 x，宽度取触发 view 的宽度 */
     const [hoverTreeTask, setHoverTreeTask] = createSignal<{ uri: string; left: number; width: number } | null>(null);
     const HOVER_HIDE_MS = 180;
+    /** 任务管理表格行 hover 预览的固定宽度（行本身接近整页宽，不能按行宽铺开） */
+    const HOVER_TREE_W = 320;
     let hoverHideTimer: ReturnType<typeof setTimeout> | undefined;
     const showHoverTask = (uri: string | null | undefined) => {
         if (!uri) return;
-        /* 已开在 nav 的任务不弹详情覆盖层（##183 同语义，C-1）：
-           该任务的 tab 里左栏本来就是同一份详情，hover 再弹一层 = 同屏两份，
-           「顺便看一眼」变成重复噪音。tabStore 响应式：关掉 tab 立刻恢复可弹。 */
-        if (tabStore.find(`task-run:${uri}`)) return;
+        /* 只有「该任务正是此刻在看的那一个」才不弹详情覆盖层（##183 C-1 的原意）：
+           它的详情已在屏上，hover 再弹一层 = 同屏两份。
+           ⚠️ 不能写成 `find(task-run:<uri>)`（凡是开在 nav 里的都跳）—— 那样
+           「已开但没在看」的任务 hover 也全没了（用户反馈「导航 hover 丢了」）。
+           判据见 tabStore.isTaskDisplayed（响应式：切走/关掉立刻恢复可弹）。 */
+        if (tabStore.isTaskDisplayed(uri)) return;
         clearTimeout(hoverHideTimer);
         setHoverTreeTask(null);
         setHoverTaskUri(uri);
@@ -235,7 +239,8 @@ export default function App() {
         tabStore.setAncestorsResolver(taskAncestorsOf);
         taskStore.loadTree();
 
-        // 任务树标题悬停 → 只开一层详情 drawer（复用 TaskSideView），贴在触发任务 view 右侧。
+        // 任务「血缘树 / 任务管理表格行」悬停 → 只开一层详情 drawer（复用 TaskSideView），
+        // 尽力贴在触发行/所在 view 的右侧（贴不下就放左侧，两侧都不行贴主区右缘）。
         // 不在 drawer 里再开 drawer：overlay 实例禁用 hoverPreview，只保留一层。
         const onTreePreview = (detail: { uri: string; rect: { left: number; right: number; width: number } }) => {
             const host = mainAreaEl;
@@ -244,11 +249,12 @@ export default function App() {
             const width = Math.min(Math.round(detail.rect.width), Math.round(main.width));
             const roomRight = main.right - detail.rect.right;
             const roomLeft = detail.rect.left - main.left;
-            // 优先贴右边；右侧不够才放左侧。左右都放不下完整一层就不弹。
+            // 优先贴右边；右侧不够才放左侧。
             let left: number;
             if (roomRight >= width) left = detail.rect.right - main.left;
             else if (roomLeft >= width) left = detail.rect.left - main.left - width;
-            else return;
+            // 两侧都放不下（如任务管理表格行几乎占满主区）→ 贴主区右缘，别直接不弹
+            else left = Math.max(0, Math.round(main.width - width));
             // mousemove 在行内连续派发：同一个 URI 已经是当前唯一 drawer 时不重设对象，
             // 否则每帧都重建 TaskSideView，会把标题 tooltip / 鼠标 hover 连续打断。
             const current = hoverTreeTask();
@@ -269,9 +275,13 @@ export default function App() {
             const link = target.closest<HTMLElement>("[data-task-hover-uri]");
             const uri = link?.dataset.taskHoverUri;
             if (!uri) return;
+            // 锚点：血缘树里是所在 view（宽度取 view 宽）；任务管理表格行是所在行，
+            // 宽度固定 HOVER_TREE_W（行接近整页宽，按行宽会铺满整屏）。
             const view = link.closest<HTMLElement>("[data-task-side-view]");
-            const rect = view?.getBoundingClientRect();
-            if (rect) onTreePreview({ uri, rect: { left: rect.left, right: rect.right, width: rect.width } });
+            const anchor = view ?? link.closest<HTMLElement>("tr[data-uri]") ?? link;
+            const r = anchor.getBoundingClientRect();
+            const width = view ? r.width : HOVER_TREE_W;
+            onTreePreview({ uri, rect: { left: r.left, right: r.right, width } });
         };
         const onDocumentMouseOut = (ev: MouseEvent) => {
             const target = ev.target;

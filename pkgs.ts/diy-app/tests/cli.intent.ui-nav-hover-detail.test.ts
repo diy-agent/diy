@@ -13,6 +13,9 @@
 //   3. 鼠标移走 → 覆盖层消失
 //   4. 覆盖层与任务执行页左栏**两个实例并存**：各自取数，不因全局 selectedTask
 //      指向别的任务而卡在「加载中…」（这正是 TaskSideView 从单例改独立取数的回归）
+//   5. **只跳过「正在看的那一个」**：悬停已开在 nav 里但**非激活**的任务（a）要弹；
+//      悬停**当前激活**的任务（b）不弹 —— 它的详情已在屏上，再弹就是同屏两份（##183 C-1）。
+//      ⚠️ 回归教训：C-1 曾写成「凡是开在 nav 里的都跳过」→ nav hover 大面积失效
 //
 // 交互模拟的说明：真实鼠标 hover 无法由 CDP 注入复现（`Input.dispatchMouseEvent`
 // 不更新 hover 状态，详见 tests/ui-drive.ts 注释），故这里派发原生 mouseenter/
@@ -58,7 +61,8 @@ beforeAll(async () => {
   uriA = String((rA.data as any)?.data?.uri);
   const rB = await fx.sh.getJson(`./diy.sh task create 另一个任务B ${pid}`);
   uriB = String((rB.data as any)?.data?.uri);
-  // 两个都打开成 tab（nav 上才会出现），且**最后激活 b** → 全局 selectedTask 指向 b
+  // 两个都打开成 tab（nav 上才会出现），且**最后激活 b** → b 是「正在看的那一个」，
+  // 全局 selectedTask 指向 b；a 已开但非激活 —— 正好覆盖 C-1 的两种情形
   await fx.sh.getJson(`./diy.sh ui tab open ${uriA}`);
   await fx.sh.getJson(`./diy.sh ui tab open ${uriB}`);
   // 展开侧栏：展开态的任务项 title 才是 uri（收起态 title 是短标签）
@@ -155,11 +159,23 @@ describe("悬停导航任务项 → 任务详情覆盖层", () => {
     await waitUntil(hoverPanel, (p) => p === null, { label: "覆盖层消失" });
   });
 
-  it("悬停 b → 覆盖层换成 b 的详情（不是 a 的残留）", async () => {
-    await hoverNavItem(uriB);
+  it("悬停 a（已开但**非激活**）→ 覆盖层换成 a 的详情（不是 b 的残留）", async () => {
+    await hoverNavItem(uriA);
     const panel = await waitUntil(hoverPanel, (p) => p !== null, { label: "覆盖层出现" });
     expect(panel).not.toBeNull();
-    expect(panel!.text).toContain("另一个任务B");
-    expect(panel!.text).not.toContain(titleA);
+    expect(panel!.text).toContain(titleA);
+    expect(panel!.text).not.toContain("另一个任务B");
+  });
+
+  it("悬停 b（**当前激活**任务）→ 不弹覆盖层（详情已在屏上，##183 C-1）", async () => {
+    // 先确保无激活干扰：激活 b（它本就是最后打开的 active）
+    await fx.sh.getJson(`./diy.sh ui tab active task-run:${uriB}`);
+    await leaveNavItem(uriA);
+    await waitUntil(hoverPanel, (p) => p === null, { label: "覆盖层先清空" });
+
+    await hoverNavItem(uriB);
+    // 给足 180ms 延迟 + 余量：若会被弹，这段时间早该出现
+    await new Promise((r) => setTimeout(r, 400));
+    expect(await hoverPanel(), "悬停当前激活任务不该弹覆盖层").toBeNull();
   });
 });

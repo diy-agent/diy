@@ -328,18 +328,9 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
         if (selectable()[next]) taskStore.selectTask(selectable()[next]);
     };
 
-    // ⌘/Ctrl+F 聚焦搜索框：与浏览器/编辑器一致的心智模型（Esc 清空）
-    onMount(() => {
-        const onKey = (e: KeyboardEvent) => {
-            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
-                e.preventDefault();
-                searchRef?.focus();
-                searchRef?.select();
-            }
-        };
-        window.addEventListener("keydown", onKey);
-        onCleanup(() => window.removeEventListener("keydown", onKey));
-    });
+    // ⌘/Ctrl+F 曾是「聚焦任务搜索框」的局部绑定（##109）。2026-10-03 用户指令去掉：
+    // 全局 ⌘F 应为**页内查找**（##234），任务搜索改由点击搜索框进入（不再抢快捷键）。
+    // 保留 Esc 清空（搜索框自身的 onKeyDown，与快捷键归属无关）。
 
     // ── 外部定位请求（##160）：切回「任务管理」页时展开当前任务的祖先并定位到它 ──
     /** 定位后的高亮：把目标行闪一下（2s 自动消失，不留常驻噪音；行本身若被选中另有底色） */
@@ -473,7 +464,7 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
                         ref={bindSearch}
                         type="search"
                         class="input input-bordered input-xs flex-1 min-w-24 max-w-72"
-                        placeholder="搜索标题 / 编号 / 正文…（⌘F）"
+                        placeholder="搜索标题 / 编号 / 正文…"
                         value={query()}
                         onInput={(e) => applyQuery(e.currentTarget.value)}
                         onKeyDown={(e) => {
@@ -584,6 +575,9 @@ function ProjectRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: 
         },
     });
     const ref = (el: Element | undefined) => drop.ref(el);
+    // 悬停该行 → App 的 document 委托弹一层任务详情覆盖层（与 nav 项 / 血缘树同源）。
+    // 锚点放 <tr> 上 = 整行都是热区；行内交互控件（状态选择等）自身 stopPropagation，
+    // 且委托按 target.closest 取最近的 [data-task-hover-uri]，子控件仍命中本 tr。
     return (
         <tr
             ref={ref}
@@ -652,6 +646,7 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
         <tr
             ref={ref}
             data-uri={row.key}
+            data-task-hover-uri={row.key}
             class={`border-b transition-colors select-none ${
                 isSelected()
                     ? "bg-primary/20"
