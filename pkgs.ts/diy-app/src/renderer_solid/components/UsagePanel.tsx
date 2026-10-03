@@ -272,11 +272,11 @@ function UsageTableTree(props: { m: UsageModel }) {
     const totCost = () => c()?.total ?? null;
     return (
         <table class="table table-xs w-full">
-            <caption class="caption-bottom pt-1 text-left text-[10px] opacity-50">
+            <caption class="caption-bottom pt-1 text-left text-caption opacity-50">
                 占比 = 总量占比（子项 ÷ 总词元 / ÷ 总金额$），只算子项；组行与合计不计占比
             </caption>
             <thead>
-                <tr class="text-[10px]">
+                <tr class="text-caption">
                     <th>类型</th>
                     <th class="text-right">词元</th>
                     <th title="该子项词元 ÷ 总词元">词元占比</th>
@@ -284,7 +284,7 @@ function UsageTableTree(props: { m: UsageModel }) {
                     <th title="该子项金额 ÷ 总金额$">花费占比</th>
                 </tr>
             </thead>
-            <tbody class="text-[11px]">
+            <tbody class="text-body">
                 {groupRow("总输入", m().inputTotal, input$(), "= 非缓存 + 缓存读 + 缓存写 的金额")}
                 {childRow(
                     "├ 非缓存输入", m().noCache, "未命中前缀缓存、按全价计（本轮各步累计）",
@@ -329,7 +329,7 @@ function UsageTableTree(props: { m: UsageModel }) {
 /** 旧记录降级：四桶/金额都拆不出，只给 4 行简单列表（不假装能拆） */
 function LegacyRows(props: { m: UsageModel }) {
     return (
-        <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[11px]">
+        <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-body">
             <dt class="opacity-60">总输入</dt><dd class="text-right tabular-nums" title="旧记录：无四桶拆分">{optCell(props.m.inputTotal)}</dd>
             <dt class="opacity-60">总输出</dt><dd class="text-right tabular-nums" title="旧记录：无四桶拆分">{optCell(props.m.outputTotal)}</dd>
             <dt class="opacity-60">缓存读</dt><dd class="text-right tabular-nums">{optCell(props.m.cacheRead)}</dd>
@@ -404,7 +404,7 @@ function RingBar(props: { rate: number; size: string; thickness: string; center?
             <div class="radial-progress absolute left-0 top-0 text-base-300" style={base} />
             <div class={`radial-progress absolute left-0 top-0 ${ringClass(props.rate)}`} style={prog} />
             <Show when={props.center != null}>
-                <span class="absolute inset-0 flex items-center justify-center text-[10px] font-medium tabular-nums">
+                <span class="absolute inset-0 flex items-center justify-center text-caption font-medium tabular-nums">
                     {props.center}
                 </span>
             </Show>
@@ -504,7 +504,7 @@ export function WindowRing() {
                         }}
                     >
                         <RingBar rate={x().rate} size="1.5rem" thickness="3px" />
-                        <span class="text-[11px] tabular-nums opacity-70">{pctText(x().rate)}</span>
+                        <span class="text-body tabular-nums opacity-70">{pctText(x().rate)}</span>
                     </button>
                 )}
             </Show>
@@ -521,7 +521,7 @@ export function WindowRing() {
                         onPointerLeave={armClose}
                     >
                         <div class="flex items-center justify-between gap-2 border-b border-base-300 px-3 py-1.5">
-                            <span class="text-[11px] font-medium">上下文构成 · 估算</span>
+                            <span class="text-body font-medium">上下文构成 · 估算</span>
                             <button
                                 type="button"
                                 class="btn btn-ghost btn-xs"
@@ -534,12 +534,12 @@ export function WindowRing() {
                             </button>
                         </div>
                         {/* 三列：数量 ~N + 独立占比列（该段 ÷ prompt；2026-10-03 用户定，与 L3 报表同口径） */}
-                        <div class="grid grid-cols-[auto_1fr_auto] gap-x-3 px-3 pt-2 text-[9px] opacity-40">
+                        <div class="grid grid-cols-[auto_1fr_auto] gap-x-3 px-3 pt-2 text-caption opacity-40">
                             <span />
                             <span class="block text-right">数量</span>
                             <span class="block text-right">占比</span>
                         </div>
-                        <dl class="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-1 px-3 py-1 text-[11px]">
+                        <dl class="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-1 px-3 py-1 text-body">
                             {(() => {
                                 const p = partsOf(w()!);
                                 const pct = (v: number | null) =>
@@ -571,7 +571,7 @@ export function WindowRing() {
                                 );
                             })()}
                         </dl>
-                        <div class="border-t border-base-300 px-3 py-1 text-[10px] opacity-50">
+                        <div class="border-t border-base-300 px-3 py-1 text-caption opacity-50">
                             ~ = 字节 ÷ 4 估算；占比 = 该段 ÷ prompt；– = 该轮未落盘构成（本版前的记录）
                         </div>
                     </div>
@@ -635,7 +635,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
     /** 分组表头（两行：跨行键列 + 数量/占比两组）；两表共用 */
     const headRows = (keyCols: { label: string; cls?: string; title?: string }[], tailCols: { label: string; title?: string }[]) => (
         <>
-            <tr class="text-[10px]">
+            <tr class="text-caption">
                 {keyCols.map((c) => (
                     <th rowspan={2} class={c.cls ?? ""} title={c.title}>{c.label}</th>
                 ))}
@@ -645,7 +645,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                     <th rowspan={2} class="text-right" title={c.title}>{c.label}</th>
                 ))}
             </tr>
-            <tr class="text-[10px]">
+            <tr class="text-caption">
                 <th class="text-right">系统提示词</th>
                 <th class="text-right">工具定义</th>
                 <th class="text-right">历史消息</th>
@@ -680,9 +680,9 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                     onClick={(e) => e.stopPropagation()}
                 >
                     <div class={`flex shrink-0 items-center gap-2 border-b px-4 ${VIEW_BAR_H}`}>
-                        <div class="truncate text-sm font-medium">
+                        <div class="truncate text-title font-medium">
                             窗口构成
-                            <span class="ml-2 text-xs font-normal opacity-60">为 agent 优化：该动谁（提示词 / 历史 / 工具）</span>
+                            <span class="ml-2 text-body font-normal opacity-60">为 agent 优化：该动谁（提示词 / 历史 / 工具）</span>
                         </div>
                         <div class="join ml-auto shrink-0" role="group" aria-label="报表粒度">
                             <button
@@ -707,7 +707,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                     <div class="min-h-0 flex-1 overflow-auto p-4">
                         <Show
                             when={steps().length > 0}
-                            fallback={<div class="text-xs opacity-60">还没有用量记录（跑一轮后每步写入账本）。</div>}
+                            fallback={<div class="text-body opacity-60">还没有用量记录（跑一轮后每步写入账本）。</div>}
                         >
                             <Show
                                 when={view() === "total"}
@@ -733,7 +733,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                                         return (
                                                             <tr>
                                                                 <td class="text-right tabular-nums" title={r.ts}>{stepStamp(r.ts)}</td>
-                                                                <td class="text-right font-mono text-[10px] opacity-70">{r.turnId}</td>
+                                                                <td class="text-right font-mono text-caption opacity-70">{r.turnId}</td>
                                                                 <td class="text-right tabular-nums">s{r.step}</td>
                                                                 <td class="text-right tabular-nums">{fmtInt(v.buckets.inputTotal)}</td>
                                                                 {cellsOf(r.contextParts, v.buckets.inputTotal)}
@@ -765,7 +765,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                                 {(g) => (
                                                     <tr>
                                                         <td class="text-right tabular-nums" title={g.turnId}>{turnStamp(g.turnId) ?? g.turnId}</td>
-                                                        <td class="text-right font-mono text-[10px] opacity-70">{g.turnId}</td>
+                                                        <td class="text-right font-mono text-caption opacity-70">{g.turnId}</td>
                                                         <td class="text-right">{g.steps.length}</td>
                                                         {cellsOf(g.last.record.contextParts, g.last.buckets.inputTotal)}
                                                     </tr>
@@ -788,7 +788,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                     </table>
                                 </div>
                             </Show>
-                            <div class="mt-2 text-[10px] opacity-60">
+                            <div class="mt-2 text-caption opacity-60">
                                 ~ = 字节 ÷ 4 估算（中英混排会偏差）；历史消息 = 同行 prompt（账本精确）− 系统 − 工具；
                                 占比 = 该段 ÷ 同行 prompt（合计 = Σ段 ÷ Σprompt）。
                                 <br />
@@ -919,7 +919,7 @@ export function UsageHoverCard(props: {
                 >
                     {/* viewbar：标题左、「明细」右 —— L2→L3 的唯一入口 */}
                     <div class="flex items-center justify-between gap-2 border-b border-base-300 px-3 py-1.5">
-                        <span class="text-[11px] font-medium">{title()}</span>
+                        <span class="text-body font-medium">{title()}</span>
                         <button
                             type="button"
                             class="btn btn-ghost btn-xs"
@@ -933,7 +933,7 @@ export function UsageHoverCard(props: {
                         {(x) => (
                             <div class="flex items-center gap-3 border-b border-base-300 px-3 py-2">
                                 <RingBar rate={x().rate} size="3rem" thickness="5px" center={pctText(x().rate)} />
-                                <div class="text-[11px] leading-tight">
+                                <div class="text-body leading-tight">
                                     <div class="opacity-60">当前上下文（最后一步口径）</div>
                                     <div class="tabular-nums">
                                         {fmtTokens(x().total)} / {fmtTokens(x().contextLimit)}
@@ -946,7 +946,7 @@ export function UsageHoverCard(props: {
                         )}
                     </Show>
                     <Show when={model()} fallback={
-                        <div class="px-3 py-2 text-[11px] opacity-60">暂无用量记录（该会话还没跑出带用量的轮次）</div>
+                        <div class="px-3 py-2 text-body opacity-60">暂无用量记录（该会话还没跑出带用量的轮次）</div>
                     }>
                         {(m) => (
                             <div class="px-3 py-2" classList={{ "opacity-70": m().legacy }}>
@@ -981,7 +981,7 @@ export function TurnUsageBar(props: {
     if (isLegacyUsage(props.usage)) {
         const l = props.usage as { in?: number; out?: number; total?: number };
         return (
-            <div class="text-[11px] opacity-60">
+            <div class="text-body opacity-60">
                 tokens ↑{fmtInt(l.in ?? 0)} ↓{fmtInt(l.out ?? 0)}（Σ{fmtInt(l.total ?? 0)}）
                 <span class="ml-1">（旧记录：无四桶/金额）</span>
             </div>
@@ -992,7 +992,7 @@ export function TurnUsageBar(props: {
     return (
         <button
             type="button"
-            class="flex w-max cursor-pointer select-none items-center gap-x-3 rounded px-1 text-[11px] opacity-70 transition-opacity hover:bg-base-200 hover:opacity-100"
+            class="flex w-max cursor-pointer select-none items-center gap-x-3 rounded px-1 text-body opacity-70 transition-opacity hover:bg-base-200 hover:opacity-100"
             aria-haspopup="dialog"
             aria-expanded={props.hover}
             aria-label="本轮用量（悬停看汇总，点击开逐步明细）"
@@ -1093,7 +1093,7 @@ function FmtBody(props: { text: () => string }) {
                     复制
                 </button>
             </div>
-            <pre class="whitespace-pre overflow-x-auto rounded-box border border-base-300 bg-base-200 p-3 font-mono text-[10px] leading-relaxed">{props.text()}</pre>
+            <pre class="whitespace-pre overflow-x-auto rounded-box border border-base-300 bg-base-200 p-3 font-mono text-caption leading-relaxed">{props.text()}</pre>
         </div>
     );
 }
@@ -1106,7 +1106,7 @@ const moneyCell = (v: number | null, total: number | null) =>
         <div class="leading-tight">
             <div>{fmtCost(v)}</div>
             <Show when={total != null && total > 0}>
-                <div class="text-[9px] tabular-nums opacity-50" title="占表内总金额比例">{costShare(v, total)}</div>
+                <div class="text-caption tabular-nums opacity-50" title="占表内总金额比例">{costShare(v, total)}</div>
             </Show>
         </div>
     );
@@ -1190,7 +1190,7 @@ function TurnDetailTable(props: { rows: StepUsageRecord[] }) {
     return (
         <table class="table table-xs w-full whitespace-nowrap">
             <thead>
-                <tr class="text-[10px]">
+                <tr class="text-caption">
                     <th colspan="5" class="text-center font-medium opacity-60">身份</th>
                     <th colspan="7" class="text-center font-medium opacity-60">Token 桶</th>
                     <th colspan="3" class="text-center font-medium opacity-60">性能</th>
@@ -1281,9 +1281,9 @@ function TurnDetailSummary(props: { group: TurnGroup | null }) {
                 统计行（步数/命中/合计）随附在块内 —— 数字横排不给图是两页不一致的来源。 */}
             <div class="mb-3 rounded-box border border-base-300 p-3">
                 <div class="mb-1 flex items-baseline justify-between">
-                    <span class="text-xs opacity-70">窗口占用（= 总输入 + 总输出，最后一步）</span>
+                    <span class="text-body opacity-70">窗口占用（= 总输入 + 总输出，最后一步）</span>
                     <span
-                        class={`text-sm font-medium ${pctClass(rate())}`}
+                        class={`text-prose font-medium ${pctClass(rate())}`}
                         title="该步 总输入+总输出 ÷ 模型上下文上限"
                     >
                         {pctText(rate())}
@@ -1294,7 +1294,7 @@ function TurnDetailSummary(props: { group: TurnGroup | null }) {
                     value={Math.min(100, (rate() ?? 0) * 100)}
                     max="100"
                 />
-                <div class="mt-1 text-[11px] opacity-60">
+                <div class="mt-1 text-body opacity-60">
                     {total() != null
                         ? `${fmtInt(total()!)} / ${limit() != null ? fmtInt(limit()!) : "—"} tokens（= 总输入 ${fmtInt(inputT()!)} + 总输出 ${fmtInt(outputT()!)}）`
                         : "—"}
@@ -1302,7 +1302,7 @@ function TurnDetailSummary(props: { group: TurnGroup | null }) {
                         <span class="ml-1">· 距上限还有 {fmtInt(Math.max(0, limit()! - total()!))} tokens</span>
                     </Show>
                 </div>
-                <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+                <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-body">
                     <span>
                         <span class="opacity-60">步数</span> <span class="font-medium tabular-nums">{g()!.steps.length}</span>
                     </span>
@@ -1352,10 +1352,10 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
                     onClick={(e) => e.stopPropagation()}
                 >
                     <div class={`flex shrink-0 items-center gap-2 border-b px-4 ${VIEW_BAR_H}`}>
-                        <div class="truncate text-sm font-medium">
+                        <div class="truncate text-title font-medium">
                             本轮逐步用量
                             <Show when={clock()}>
-                                <span class="ml-2 text-xs font-normal opacity-60">{clock()}</span>
+                                <span class="ml-2 text-body font-normal opacity-60">{clock()}</span>
                             </Show>
                         </div>
                         <div class="ml-auto">
@@ -1373,7 +1373,7 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
                             /* 两种"还没有记录"必须分开说 —— 把正常态说成故障会让人白查一圈（D1）：
                                · 本轮还在跑：账本按步追加，此刻可能确实还没落到文件 → 正常，等一下；
                                · 本轮已停：确实没有记录（会话早于用量落盘上线，或写入失败）。 */
-                            <div class="text-[11px] opacity-50">
+                            <div class="text-body opacity-50">
                                 {props.live
                                     ? "本轮还在进行中，逐步账本按步写入，稍后即可见。"
                                     : "这一轮没有逐步记录（该会话早于用量落盘上线，或账本写入失败）。"}
@@ -1385,7 +1385,7 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
                             <TurnDetailTable rows={rows()} />
                         </div>
                         {/* 合计句式：等式写法是口径规范（禁止"输出 X · 思考 Y"并列句） */}
-                        <div class="mt-2 text-[10px] opacity-60">
+                        <div class="mt-2 text-caption opacity-60">
                             合计$ = 非缓存$ + 缓存读$ + 缓存写$ + 文本$ + 思考$；思考是总输出的拆解子项，
                             <span class="font-medium">不重复加</span>。缓存写 `n/a` = 该 API 面不可测（不是 0）。
                             单价按**每步**当时的生效档算（同一轮内 tier 也可能翻档），故逐行给快照。
@@ -1416,7 +1416,7 @@ function SessionUsageTable(props: { groups: AgentGroup[] }) {
     return (
         <table class="table table-xs w-full whitespace-nowrap">
             <thead>
-                <tr class="text-[10px]">
+                <tr class="text-caption">
                     <th colspan="2" class="text-center font-medium opacity-60">身份</th>
                     <th colspan="8" class="text-center font-medium opacity-60">Token 桶（累计）</th>
                     <th colspan="6" class="text-center font-medium opacity-60" title="各项金额下方小字 = 占会话总金额比例">金额（$）· 占比</th>
@@ -1525,7 +1525,7 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
                     onClick={(e) => e.stopPropagation()}
                 >
                     <div class={`flex shrink-0 items-center gap-2 border-b px-4 ${VIEW_BAR_H}`}>
-                        <div class="text-sm font-medium">会话用量</div>
+                        <div class="text-title font-medium">会话用量</div>
                         <div class="ml-auto">
                             <FmtToggle view={fmtView()} onView={toggleFmt} />
                         </div>
@@ -1538,7 +1538,7 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
                     <Show
                         when={steps().length > 0}
                         fallback={
-                            <div class="text-xs opacity-60">
+                            <div class="text-body opacity-60">
                                 还没有用量记录。跑一轮本地 agent 后，每步会写入用量账本（详见应用日志）。
                             </div>
                         }
@@ -1546,15 +1546,15 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
                         {/* 窗口占用：用户点名的「最重要的一个数」——距上限多远、何时该重置 */}
                         <div class="mb-3 rounded-box border border-base-300 p-3">
                             <div class="mb-1 flex items-baseline justify-between">
-                                <span class="text-xs opacity-70">窗口占用（= 总输入 + 总输出，取最近一步）</span>
-                                <span class={`text-sm font-medium ${pctClass(rate())}`}>{pctText(rate())}</span>
+                                <span class="text-body opacity-70">窗口占用（= 总输入 + 总输出，取最近一步）</span>
+                                <span class={`text-prose font-medium ${pctClass(rate())}`}>{pctText(rate())}</span>
                             </div>
                             <progress
                                 class={`progress w-full ${rate() != null && rate()! >= 0.9 ? "progress-error" : rate() != null && rate()! >= 0.75 ? "progress-warning" : "progress-success"}`}
                                 value={Math.min(100, (rate() ?? 0) * 100)}
                                 max="100"
                             />
-                            <div class="mt-1 text-[11px] opacity-60">
+                            <div class="mt-1 text-body opacity-60">
                                 {last()
                                     ? `${fmtInt(last()!.buckets.total)} / ${last()!.record.contextLimit ? fmtInt(last()!.record.contextLimit!) : "—"} tokens（= 总输入 ${fmtInt(last()!.buckets.inputTotal)} + 总输出 ${fmtInt(last()!.buckets.outputTotal)}）`
                                     : "—"}
@@ -1569,12 +1569,12 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
                         </div>
 
                         {/* 按人物分行（模型/面/档位是步级属性，不进分组键）；token 与金额一张表（双表头），tfoot 带合计 */}
-                        <div class="mb-2 text-xs opacity-70">按人物分行（模型/面/档位会随步变化，步级身份看轮明细）</div>
+                        <div class="mb-2 text-body opacity-70">按人物分行（模型/面/档位会随步变化，步级身份看轮明细）</div>
                         <div class="overflow-x-auto">
                             <SessionUsageTable groups={groupByAgent(steps())} />
                         </div>
 
-                        <div class="mt-2 text-[10px] opacity-60">
+                        <div class="mt-2 text-caption opacity-60">
                             单价依据 models.dev
                             {steps().find((r) => r.rates?.asOf)?.rates?.asOf
                                 ? `@${steps().find((r) => r.rates?.asOf)!.rates!.asOf}`
