@@ -132,6 +132,31 @@ export default function App() {
     });
 
     /**
+     * 切回「任务管理」页时，要求在树里**展开定位**到某个任务（##160）。
+     *
+     * 为什么需要外部下发而不是 TaskTree 自己推：树是「当前在哪」的索引，但切页那一刻
+     * 路由已经离开 tab —— `tabStore.showTree()` 把 active 清空后，树无从知道
+     * 「刚才是从哪个任务的会话回来的」。故由切页动作**在清空之前**把目标夺下来交给树。
+     *
+     * nonce 用于「重复点同一个导航项也要重新定位」：只比对 uri 的话，第二次点击
+     * （比如用户在树里滚跑后想回到当前任务）不会触发任何变化。
+     */
+    const [treeReveal, setTreeReveal] = createSignal<{ uri: string; nonce: number } | null>(null);
+
+    /**
+     * 记下「切页前的当前任务」并请求树定位它。
+     *
+     * 取值优先级：正在看的 tab 的任务（会话页/提示词页的 ctx）→ 树里选中的任务。
+     * 两者都没有（首次进 app、纯任务管理操作）时什么都不做 —— 不定位总比乱定位好。
+     * **必须在 `tabStore.showTree()` 之前调用**（active 清空后就取不到 ctx 了）。
+     */
+    const requestTreeReveal = () => {
+        const uri = tabStore.activeTab()?.ctx ?? taskStore.selectedUri;
+        if (!uri) return;
+        setTreeReveal({ uri, nonce: (treeReveal()?.nonce ?? 0) + 1 });
+    };
+
+    /**
      * 悬停导航上的任务项时，在其右侧弹出的「任务详情」覆盖层（值是任务 uri）。
      *
      * 三个刻意的选择：
@@ -271,7 +296,10 @@ export default function App() {
                     setRoute(t ? { kind: "tab", key: t.key } : { kind: "section", section: "task" });
                     return;
                 }
-                if (page === "task") tabStore.showTree();
+                if (page === "task") {
+                    requestTreeReveal();
+                    tabStore.showTree();
+                }
                 setRoute({ kind: "section", section: page as Section });
             },
             focus: (uri) => taskStore.selectTask(uri),
@@ -394,6 +422,7 @@ export default function App() {
     const goSection = (id: Section) => {
         hideHoverLayers(); // 页面切走了，悬停层不能留着盖在屏幕上
         if (id === "task") {
+            requestTreeReveal(); // 取 ctx 要在 showTree 清空 active 之前（##160）
             tabStore.showTree();
             setRoute({ kind: "section", section: "task" });
             return;
@@ -414,9 +443,17 @@ export default function App() {
     /** 关闭 tab：与任务状态无关（= 暂时不理会）。关父连带关子 */
     const closeTab = (key: string) => {
         hideHoverLayers();
+        // 关闭前记下它的 ctx：关掉最后一个 tab 会落回任务树，那时也应在树里定位到它（##160），
+        // 但 tabStore.close 之后 activeTab 已变，取不到了
+        const closedCtx = key.includes(":") ? key.slice(key.indexOf(":") + 1) : null;
         tabStore.close(key);
         const next = tabStore.active;
-        setRoute(next ? { kind: "tab", key: next } : { kind: "section", section: "task" });
+        if (next) {
+            setRoute({ kind: "tab", key: next });
+            return;
+        }
+        if (closedCtx) setTreeReveal({ uri: closedCtx, nonce: (treeReveal()?.nonce ?? 0) + 1 });
+        setRoute({ kind: "section", section: "task" });
     };
 
     return (
@@ -447,14 +484,17 @@ export default function App() {
                         }}
                         gotoSection={(id) => {
                             hideHoverLayers();
-                            if (id === "task") tabStore.showTree();
+                            if (id === "task") {
+                                requestTreeReveal();
+                                tabStore.showTree();
+                            }
                             setRoute({ kind: "section", section: id as Section });
                         }}
                         closeTab={closeTab}
                     />
                     <div ref={(el) => (mainAreaEl = el)} class="flex-1 min-h-0 overflow-hidden relative">
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "task"}>
-                        <TaskTree />
+                        <TaskTree reveal={treeReveal()} />
                         <TaskDetailPanel />
                     </Show>
                     <Show when={route().kind === "tab" && activeTabItem()?.pageId === "task-run"}>

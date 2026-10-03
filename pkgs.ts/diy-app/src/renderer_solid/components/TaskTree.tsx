@@ -1,4 +1,4 @@
-import { createSignal, createMemo, For, Show, onCleanup, onMount } from "solid-js";
+import { createSignal, createEffect, createMemo, on, For, Show, onCleanup, onMount } from "solid-js";
 import { createMutable } from "solid-js/store";
 import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSensor } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
@@ -10,6 +10,7 @@ import { CreateProjectSheet } from "./CreateProjectSheet";
 import { TASK_STATES, taskStateColor } from "../../main/core/task-state";
 import { CreateTaskSheet } from "./CreateTaskSheet";
 import { DynamicBar } from "./DynamicBar";
+import { findNode } from "../lib/task-lineage";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 import {
     SORT_KEYS,
@@ -207,7 +208,7 @@ function SortableTh(props: {
     );
 }
 
-export function TaskTree() {
+export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null } = {}) {
     // 展开/滚动/排序/搜索：视图 cache（lib/ui-state，localStorage 归一定位），可被清理入口清空
     const loadExpanded = (): Set<string> => {
         try {
@@ -339,6 +340,60 @@ export function TaskTree() {
         window.addEventListener("keydown", onKey);
         onCleanup(() => window.removeEventListener("keydown", onKey));
     });
+
+    // ── 外部定位请求（##160）：切回「任务管理」页时展开当前任务的祖先并定位到它 ──
+    /** 定位后的高亮：把目标行闪一下（2s 自动消失，不留常驻噪音；行本身若被选中另有底色） */
+    const [revealFlash, setRevealFlash] = createSignal<string | null>(null);
+    let revealFlashTimer: ReturnType<typeof setTimeout> | undefined;
+
+    /**
+     * 展开 uri 的**全部任务祖先**（沿 parentUri 上溯）+ 滚动到位 + 闪高亮。
+     *
+     * 只展开祖先、不展开任务自身：目的是「让这一行可见」，展开它自己的子树是另一件事。
+     * `seen` 防环（脏数据互相认父不该把这里转死），与 taskAncestorsOf / lineageRows 同款。
+     */
+    const revealTask = (uri: string) => {
+        const chain: string[] = [];
+        let cur = findNode(taskStore.nodes, uri)?.parentUri;
+        const seen = new Set<string>([uri]);
+        while (cur && !seen.has(cur)) {
+            seen.add(cur);
+            chain.push(cur);
+            cur = findNode(taskStore.nodes, cur)?.parentUri;
+        }
+        if (chain.length > 0) {
+            setExpanded((prev) => {
+                const n = new Set(prev);
+                for (const k of chain) n.add(k); // 任务节点：入集 = 展开（项目节点语义相反，不在此列）
+                saveExpanded(n);
+                return n;
+            });
+        }
+        // 展开后立即滚（Solid 的 setSignal → DOM 更新是同步的，展开行此刻已在 DOM 里）。
+        // **不用 requestAnimationFrame**：Electron 窗口被遮挡/最小化时 rAF 会被节流甚至暂停，
+        // 定位会「点完没反应、几秒后才滚」（实测踩到）；直接同步执行不依赖渲染帧。
+        document.querySelector(`[data-uri="${CSS.escape(uri)}"]`)?.scrollIntoView({ block: "center" });
+        setRevealFlash(uri);
+        clearTimeout(revealFlashTimer);
+        revealFlashTimer = setTimeout(() => setRevealFlash(null), 2000);
+    };
+
+    /**
+     * 消费外部定位请求。树数据可能尚未加载（首进 app / 刚建任务）→ 先补齐再定位。
+     * `on` 默认首跑：TaskTree 正是切页时挂载的，故挂载即消费挂载前下发的请求。
+     */
+    createEffect(
+        on(
+            () => props.reveal?.nonce,
+            () => {
+                const uri = props.reveal?.uri;
+                if (!uri) return;
+                if (findNode(taskStore.nodes, uri)) revealTask(uri);
+                else void taskStore.loadTree().then(() => revealTask(uri));
+            },
+        ),
+    );
+    onCleanup(() => clearTimeout(revealFlashTimer));
 
     const scrollRef = (el: HTMLDivElement | undefined) => {
         if (!el || el.dataset.scrollRestored === "1") return;
@@ -488,7 +543,7 @@ export function TaskTree() {
                                             row={row}
                                             expanded={expanded()}
                                             onToggle={toggle}
-                                            focused={searching() && row.key === focusUri()}
+                                            focused={(searching() && row.key === focusUri()) || row.key === revealFlash()}
                                         />
                                     )
                                 }
