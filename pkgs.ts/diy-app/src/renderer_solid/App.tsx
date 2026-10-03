@@ -28,6 +28,9 @@ import { Breadcrumb } from "./components/Breadcrumb";
 import { FindBar } from "./components/FindBar";
 import { findStore } from "./store/findStore";
 import { setRendererActions, resetRendererActions, getRendererActions } from "./lib/renderer-actions";
+import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSensor } from "@dnd-kit/solid";
+import type { DragDropProviderProps } from "@dnd-kit/solid";
+import { findTaskProject } from "./components/TaskTree";
 
 /**
  * 路由（page 一级 + 任务执行页的实例）。
@@ -42,6 +45,9 @@ type Section = "task" | "llm" | "settings";
  * 任务执行页与提示词页都是 tab —— 后者是前者的子页面（见 133「一页一中心」）。
  */
 type Route = { kind: "section"; section: Section } | { kind: "tab"; key: string };
+
+// dnd-kit/solid 未直接导出 DragEndEvent，从 onDragEnd 回调参数提取（TaskTree 同款）
+type DragEndEvent = Parameters<NonNullable<DragDropProviderProps["onDragEnd"]>>[0];
 
 /** 顶级导航（一侧栏项 = 一类事情）。任务执行页不出现在这里，它是任务下的动态页面 */
 const NAV_ITEMS: Array<{ id: "task" | "llm" | "settings"; label: string; icon: string }> = [
@@ -97,7 +103,44 @@ export default function App() {
     // 拖拽中的标记：期间**必须强制展开**，否则鼠标一离开侧栏就 mouseleave 收拢，
     // 宽度在「收拢 → 变宽 → 又展开」之间抖（见 onNavGripDown）
     const [resizingNav, setResizingNav] = createSignal(false);
+    // nav 拖拽改父子（任务 242 / ##87）：拖拽期间屏蔽 hover 详情层（否则幽灵经过别的项
+    // 就弹层，界面乱），松手即恢复
+    const [navDragging, setNavDragging] = createSignal(false);
+    const [navDragLabel, setNavDragLabel] = createSignal("");
     let navEl: HTMLDivElement | undefined;
+
+    /**
+     * nav 任务项拖拽 → 改父子（**只在 nav 项之间拖**，不跨 view/page —— 用户 2026-10-03 澄清）。
+     * 语义与任务管理树一致（TaskTree handleDragEnd 同款）：拖到某任务上 = 成为其子任务；
+     * dnd id 用 tab key（同一任务可开 task-run/ctxlab 多个 tab，uri 会撞），落点换算回任务 uri。
+     */
+    const handleNavDragEnd = async (event: DragEndEvent) => {
+        if (event.operation?.canceled) return;
+        const dragKey = String(event.operation?.source?.id ?? "");
+        const dropKey = String(event.operation?.target?.id ?? "");
+        if (!dragKey || !dropKey || dragKey === dropKey) return;
+        const dragTab = tabStore.opened.find((t) => t.key === dragKey);
+        const dropTab = tabStore.opened.find((t) => t.key === dropKey);
+        const dragUri = dragTab?.ctx;
+        const dropUri = dropTab?.ctx;
+        if (!dragUri || !dropUri || dragUri === dropUri) return; // 同任务多 tab：互拖无意义
+        const dragInfo = findTaskProject(taskStore.nodes, dragUri);
+        const dropInfo = findTaskProject(taskStore.nodes, dropUri);
+        if (!dragInfo || !dropInfo) return;
+        if (dragInfo.project !== dropInfo.project) {
+            notificationStore.addToast("error", "只能在同一项目内拖动");
+            return;
+        }
+        if (dropUri === dragInfo.parent) return; // 拖到直接父级：无需改动
+        try {
+            await diyService.diy.task.move({ uri: dragUri, parent: dropUri });
+            await taskStore.loadTree(); // 树变 → tabStore 祖先链重算 → nav 缩进/顺序自动跟上（##159 链路）
+            notificationStore.addToast("success", "已调整层级");
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            notificationStore.addToast("error", `调整失败: ${msg}`);
+        }
+    };
     let mainAreaEl: HTMLDivElement | undefined;
 
     /**
@@ -675,7 +718,20 @@ export default function App() {
 </main>
             </div>
 
-            {/* 侧栏 - DaisyUI drawer */}
+            {/* 侧栏 - DaisyUI drawer。
+                DragDropProvider 是纯 context（不产生 DOM），包住侧栏让任务项的
+                useDraggable/useDroppable 拿到管理器 —— nav 拖拽改父子（任务 242）。 */}
+            <DragDropProvider
+                sensors={[PointerSensor]}
+                onDragStart={() => {
+                    setNavDragging(true);
+                    hideHoverLayers(); // 拖拽中不再弹 hover 详情层（幽灵经过别的项会乱）
+                }}
+                onDragEnd={(e) => {
+                    setNavDragging(false);
+                    return handleNavDragEnd(e);
+                }}
+            >
             <div class="drawer-side z-40">
                 <label for="sidebar-toggle" class="drawer-overlay" />
                 {/* 宽用内联 style：daisyUI .menu{width:fit-content} 是非分层样式，会压住 w-12/w-56 utility
@@ -767,6 +823,26 @@ export default function App() {
                                                 /** 缩进：页面子页面一级 + 每个已打开的祖先任务一级 */
                                                 const indentPx = () => 28 + (isSubPage() ? 12 : 0) + taskIndent() * 14;
                                                 const isNested = () => isSubPage() || taskIndent() > 0;
+                                                // nav 拖拽改父子（任务 242）：带任务上下文的 tab 都可拖/可放
+                                                // （lab 提示词页也有 ctx=挂的任务；dnd id 用 tab key —— 同一任务
+                                                // 可开多个 tab，uri 会撞 id）。只挂展开态（收起态看不出标题，不支持拖）。
+                                                const drag = useDraggable({
+                                                    get id() {
+                                                        return t.key;
+                                                    },
+                                                    get data() {
+                                                        return { title: label(), kind: "nav-task" };
+                                                    },
+                                                });
+                                                const drop = useDroppable({
+                                                    get id() {
+                                                        return t.key;
+                                                    },
+                                                });
+                                                const dndRef = (el: Element | undefined) => {
+                                                    drag.ref(el);
+                                                    drop.ref(el);
+                                                };
                                                 return (
                                                     <li class="flex justify-center">
                                                         <Show
@@ -780,7 +856,9 @@ export default function App() {
                                                                     }`}
                                                                     title={label()}
                                                                     onClick={tabGoto}
-                                                                    onMouseEnter={() => showHoverTask(t.ctx)}
+                                                                    onMouseEnter={() => {
+                                                                        if (!navDragging()) showHoverTask(t.ctx);
+                                                                    }}
                                                                     onMouseLeave={scheduleHideHoverTask}
                                                                 >
                                                                     {icon()}
@@ -792,13 +870,16 @@ export default function App() {
                                                             }
                                                         >
                                                             <div
+                                                                ref={dndRef}
                                                                 class={`group flex items-center gap-1 w-full pr-1 py-1 rounded-lg text-body cursor-pointer transition-colors ${
                                                                     isActive() ? "bg-primary/25 ring-1 ring-primary/30" : "hover:bg-base-300"
-                                                                }`}
+                                                                } ${drop.isDropTarget() ? "ring-2 ring-primary/60 ring-inset" : ""}`}
                                                                 style={{ "padding-left": `${indentPx()}px` }}
                                                                 title={t.ctx ?? t.key}
                                                                 onClick={tabGoto}
-                                                                onMouseEnter={() => showHoverTask(t.ctx)}
+                                                                onMouseEnter={() => {
+                                                                    if (!navDragging()) showHoverTask(t.ctx);
+                                                                }}
                                                                 onMouseLeave={scheduleHideHoverTask}
                                                             >
                                                                 {/* 缩进用竖线引导（比箭头更清楚地表示「挂在上面那项之下」）；
@@ -843,6 +924,18 @@ export default function App() {
                     </Show>
                 </div>
             </div>
+            {/* 拖拽幽灵：跟随光标显示「正在拖的任务标题」（TaskTree 同款视觉） */}
+            <DragOverlay>
+                {(source) =>
+                    source?.data?.title ? (
+                        <div class="flex items-center px-3 py-1 text-prose bg-base-100 border rounded shadow-lg opacity-80 max-w-[200px] pointer-events-none select-none">
+                            <span class="truncate">{String(source.data.title)}</span>
+                            <span class="ml-2 text-body opacity-60">拖放改层级</span>
+                        </div>
+                    ) : null
+                }
+            </DragOverlay>
+            </DragDropProvider>
 
             <ToastContainer />
         </div>

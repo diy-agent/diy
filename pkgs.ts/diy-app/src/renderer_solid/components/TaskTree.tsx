@@ -77,12 +77,13 @@ function cachedRow(
     return row;
 }
 
-interface TaskProjectInfo {
+export interface TaskProjectInfo {
     project: string;
     parent: string | undefined;
 }
 
-function findTaskProject(nodes: TreeNode[], uri: string): TaskProjectInfo | null {
+/** 从任务树找 {项目, 直接父} —— 拖拽改层级的同项目/同父校验用（nav 拖拽复用，故导出） */
+export function findTaskProject(nodes: TreeNode[], uri: string): TaskProjectInfo | null {
     for (const p of nodes) {
         if (p.kind !== "project") continue;
         const f = findInTree(p.children, uri);
