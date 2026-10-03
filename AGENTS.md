@@ -48,8 +48,8 @@
 
 ## model — 本地 agent 测试用什么模型
 
-- `model.default` — **`mimo-v2.6-flash`**（opencode-go，chat 面）：全表最便宜的带工具模型，$0.14 / $0.28 per 1M tokens
-- `model.expensive` — 贵模型（`gpt-5.6-luna` 等）**只准**在必须验证「该模型特有行为」时用，且一次只跑一条用例
+- `model.allowed` — **测试只准用 `mimo-v2.6-flash` 与 `deepseek-v4.1-flash`**；其他模型一律不用（太贵）。确需验证某模型特有行为时，先取得用户许可再跑，且一次只跑一条用例
+- `model.default` — 缺省用 **`mimo-v2.6-flash`**（opencode-go，chat 面）：全表最便宜的带工具模型，$0.14 / $0.28 per 1M tokens
 - `model.reasoning` — 档位只有 `none/low/medium/high`（上游 400 拒绝 `minimal`/`xhigh`/`max`）
 - `model.truth` — 价目真源 `https://models.dev/api.json`（`opencode-go` 的 cost/limit）；可用清单 `$ZEN/v1/models`
 
