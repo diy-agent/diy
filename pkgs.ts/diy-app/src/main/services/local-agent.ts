@@ -1010,13 +1010,21 @@ export class LocalAgentManager {
             // 「wire = store = UI = LLM」这条链对每一步都成立（prepareStep 注入的就是它）。
             // runtime 容器作为**尾部 user 消息**插在本轮输入之前：它不进块树（llm.jsonl 是块树的转储），
             // 所以下一轮重建历史时不会带上它 —— 每轮只发当前这一份，不会累积。
+            // 真发 tools 只构建一次（raw dump / 构成字节 / streamText 共用）；
+            // 构成字节 = 环形构成卡与构成报表的数据源（system 容器精确字节 + tools JSON 字节，
+            // 消息段由账本每步 prompt 减法导出 —— 见 shared/usage StepUsageRecord.contextParts）。
+            const tools = buildTools(cwd, L, taskUri);
+            const ctxParts = {
+                systemBytes: delivery.system.bytes,
+                toolsBytes: JSON.stringify(tools).length,
+            };
             const sent: ModelMessage[] = withRuntime(blocksToMessages(sess.store) as unknown as ModelMessage[], delivery.runtime.text);
             rawSink({
                 kind: "request",
                 ts: new Date().toISOString(),
                 model: model,
                 system: delivery.system.text,
-                tools: Object.keys(buildTools(cwd, L, taskUri)),
+                tools: Object.keys(tools),
                 settings: { maxSteps: L.maxSteps, maxOutputTokens: modelMax, maxRetries: 2, reasoningEffort: reasoningEffort ?? "none" },
                 messages: sent,
             });
@@ -1042,7 +1050,7 @@ export class LocalAgentManager {
                 model: this.modelFor(model, key),
                 system: delivery.system.text,
                 messages: sent,
-                tools: buildTools(cwd, L, taskUri),
+                tools,
                 stopWhen: stepCountIs(L.maxSteps),
                 abortSignal: signal,
                 headers: { "x-opencode-session": sessionIdOf(taskUri) },
@@ -1249,11 +1257,12 @@ export class LocalAgentManager {
                                     ...(fsPart.performance ? { performance: fsPart.performance } : {}),
                                     rates: rates ? { ...rates, asOf: MODEL_COST_AS_OF } : null,
                                     cost,
+                                    contextParts: ctxParts,
                                 });
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
-                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN) },
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts) },
                                 });
                             }
                             if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
@@ -1278,7 +1287,7 @@ export class LocalAgentManager {
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
-                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN) },
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts) },
                                 });
                             }
                             // turn 的 stop 由 closeTurn 发（finally 里那一处）：收尾必须闭合

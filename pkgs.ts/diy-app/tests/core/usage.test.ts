@@ -211,7 +211,7 @@ describe("聚合（UI 明细/看板与 CLI 报表共用）", () => {
         expect(groups[0]!.cost!.total).toBeCloseTo(groups[0]!.steps.reduce((s, v) => s + v.cost!.total, 0), 12);
     });
 
-    it("按 人物+模型+面+档位 分行（同一会话换模型 → 多行）", () => {
+    it("按 人物 分行（模型/面/档位是步级属性，不进分组键）", () => {
         const rows = [
             priced(rec({ persona: "persona/1", model: "gpt-6-luna", apiFace: "responses", reasoningEffort: "medium" })),
             priced(rec({ persona: "persona/1", model: "gpt-6-luna", apiFace: "responses", reasoningEffort: "medium" })),

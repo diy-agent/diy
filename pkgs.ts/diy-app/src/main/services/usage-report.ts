@@ -104,7 +104,9 @@ export function renderUsageSteps(steps: StepUsageRecord[], opts: UsageTableOpts 
 }
 
 /**
- * 会话汇总表：按「人物+模型+面+档位」分行（`--by-agent`）。
+ * 会话汇总表：按**人物**分行（`--by-agent`）。
+ * 不带模型/面/档位列 —— 同一人物的各步可能换模型/面/档位（步级属性不能当分组键，
+ * 见 shared/usage.ts keyOfGroup）；步级身份看 `--last` 的逐步表。
  * `--last N` 同样生效（只统计最近 N 步）：两个模式的口径必须一致，
  * 否则"看最近几步的花费"换一个模式就给出别的数，比不支持还坏。
  */
@@ -112,12 +114,9 @@ export function renderUsageByAgent(steps: StepUsageRecord[], opts: UsageTableOpt
     const list = opts.last && opts.last > 0 ? steps.slice(-opts.last) : steps;
     const groups = groupByAgent(list);
     if (groups.length === 0) return "（还没有用量记录）";
-    const header = ["人物", "模型", "面", "档位", "步", "总输入(非缓存+读+写)", "总输出(文本+思考)", "非缓存$", "缓存读$", "缓存写$", "文本$", "思考$", "合计$", "单价依据"];
+    const header = ["人物", "步", "总输入(非缓存+读+写)", "总输出(文本+思考)", "非缓存$", "缓存读$", "缓存写$", "文本$", "思考$", "合计$", "单价依据"];
     const rows = groups.map((g) => [
         g.persona,
-        g.model,
-        g.apiFace === "responses" ? "resp" : "chat",
-        g.reasoningEffort,
         String(g.stepCount),
         `${fmtTokens(g.buckets.inputTotal)}(${fmtTokens(g.buckets.noCache)}+${fmtTokens(g.buckets.cacheRead)}+${cellOpt(g.buckets.cacheWrite)})`,
         `${fmtTokens(g.buckets.outputTotal)}(${fmtTokens(g.buckets.text)}+${fmtTokens(g.buckets.reasoning)})`,

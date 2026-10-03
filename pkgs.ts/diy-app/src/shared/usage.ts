@@ -336,6 +336,12 @@ export interface StepUsageRecord {
     rates?: (EffectiveRates & { asOf?: string }) | null;
     /** 金额分解（$）；不可测桶为 null */
     cost?: CostBreakdown | null;
+    /**
+     * 该步真发的构成字节（UTF-8）：系统提示词容器 + tools 定义 JSON。
+     * 窗口构成报表（按轮/按步）的数据源；消息段由「该步 prompt（精确）− 前两段÷4 估算」导出。
+     * optional：本版上线前的账本没有 → 三段显示 `–`（不编 0）。
+     */
+    contextParts?: { systemBytes: number; toolsBytes: number };
 }
 
 /**
@@ -381,6 +387,8 @@ export type TurnUsagePatch = {
     contextLimit: number | null;
     /** 本轮累计金额 */
     cost: CostBreakdown | null;
+    /** 该轮真发的构成字节（轮内各步相同；L2 构成卡实时源）。optional：老记录没有 → 三段 – */
+    contextParts?: { systemBytes: number; toolsBytes: number };
 };
 
 /** 由累计桶 + 最后一步桶 + 累计金额 → turn 页脚视图 */
@@ -390,6 +398,7 @@ export function turnUsagePatch(
     cost: CostBreakdown | null,
     contextLimit?: number,
     steps = 0,
+    contextParts?: { systemBytes: number; toolsBytes: number },
 ): TurnUsagePatch {
     return {
         inputTotal: cumulative.inputTotal,
@@ -406,6 +415,7 @@ export function turnUsagePatch(
         steps,
         contextLimit: contextLimit ?? null,
         cost,
+        ...(contextParts ? { contextParts } : {}),
     };
 }
 
@@ -471,9 +481,7 @@ export function groupByTurn(steps: StepUsageRecord[]): TurnGroup[] {
 /** 按「人物 + 模型 + 面 + 档位」分行（同一会话可换模型/换面 → 一行一个身份，##211 §六b.6） */
 export interface AgentGroup {
     persona: string;
-    model: string;
-    apiFace: string;
-    reasoningEffort: string;
+    // 注意：不带 model/apiFace/reasoningEffort —— 分组内各步可能不同（见 keyOfGroup 头注）
     stepCount: number;
     buckets: UsageBuckets;
     cost: CostBreakdown | null;
@@ -482,8 +490,14 @@ export interface AgentGroup {
     tiers: string[];
 }
 
-const keyOfGroup = (r: StepUsageRecord): string =>
-    [r.persona ?? "—", r.model, r.apiFace, r.reasoningEffort ?? "—"].join("\u0000");
+/**
+ * 分组键 = 人物（唯一跨步稳定的维度）。
+ * 模型 / 面 / 档位是**步级**属性：同一轮的多个 step 可能换模型（实测：mimo 的请求被上游
+ * 路由到 gpt-6-luna；切人物、子 agent 也换）——拿它们当分组键会把同一个人物拆成多行，
+ * 看板反而看不出「谁花了多少」（2026-10-03 用户纠正：这是错误的 group by）。
+ * 需要步级身份时看 L3 轮明细（每行一步，模型/面/档位如实展示）。
+ */
+const keyOfGroup = (r: StepUsageRecord): string => r.persona ?? "—";
 
 export function groupByAgent(steps: StepUsageRecord[]): AgentGroup[] {
     const map = new Map<string, StepView[]>();
@@ -499,9 +513,6 @@ export function groupByAgent(steps: StepUsageRecord[]): AgentGroup[] {
         const tiers = [...new Set(views.map((v) => v.record.rates?.tier).filter((t): t is string => !!t))];
         return {
             persona: r0.persona ?? "—",
-            model: r0.model,
-            apiFace: r0.apiFace,
-            reasoningEffort: r0.reasoningEffort ?? "—",
             stepCount: views.length,
             buckets: sumBuckets(views.map((v) => v.buckets)),
             cost: priced.length ? sumCosts(priced) : null,

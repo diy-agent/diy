@@ -17,7 +17,17 @@ import { createSignal, For, Show, Switch, Match, createEffect, on, onMount, onCl
 import { localChatStore } from "../store/localChatStore";
 import { personaStore } from "../store/personaStore";
 import { PersonaDrawer } from "./PersonaDrawer";
-import { TurnUsageFooter, UsageDrawer } from "./UsagePanel";
+import {
+    TurnUsageBar,
+    TurnUsageDetailDrawer,
+    SessionUsageChip,
+    WindowRing,
+    UsageDrawer,
+    UsageHoverCard,
+    armHoverClose,
+    cancelHoverClose,
+    type UsageHoverState,
+} from "./UsagePanel";
 import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
@@ -550,9 +560,13 @@ function TurnView(props: {
     onFull: (title: string, content: string) => void;
     liveTurnId: string | null;
     md: boolean;
-    /** 展开的用量明细（按块 id 索引）——与 pin 同为"组件外状态"，重建可恢复 */
-    usageOpen: Record<string, boolean>;
-    onToggleUsage: (id: string) => void;
+    /** 用量 hover 卡（页面级状态：块树重建不丢） */
+    usageHover: UsageHoverState | null;
+    onHoverUsage: (id: string, el: HTMLElement) => void;
+    onHoverEndUsage: () => void;
+    /** 用量明细抽屉（打开的 turnId；页面级，单实例覆盖式） */
+    usageDetail: string | null;
+    onDetailUsage: (id: string) => void;
 }) {
     const t = props.node;
     // 上帧的段序列：跨次渲染复用未变的段（见 reuseSegs 头注）。
@@ -592,17 +606,17 @@ function TurnView(props: {
             <Show when={str(t.attrs.notice)}>
                 <div class="text-[11px] text-warning">⚠ {str(t.attrs.notice)}</div>
             </Show>
-            {/* 本轮用量页脚：上下文（窗口%）与成本（累计）两行分开，点整行展开逐步明细。
-                数字来自 main 每步 patch 的块属性 —— 实时就有，不依赖账本文件读盘。
-                展开态**存在 TurnView 之外**（usageOpen，按 id 索引）：块树每帧重建，
-                组件内 signal 会被清掉（D3 的"点开又自动合上"）。 */}
+            {/* L1 turn 底 bar：时刻 · 总token累计 · $（实时，来自 main 每步 patch 的块属性）。
+                hover 出 L2 汇总卡、点击开 L3 明细抽屉 —— 两个状态（hover/detail）都存
+                页面级：块树每帧重建，组件内 signal 会被清掉（D3 的"点开又自动合上"）。 */}
             <Show when={t.attrs.usage}>
-                <TurnUsageFooter
+                <TurnUsageBar
                     turnId={t.id}
                     usage={t.attrs.usage}
-                    live={isLiveTurn()}
-                    open={props.usageOpen[t.id] ?? false}
-                    onToggle={props.onToggleUsage}
+                    hover={props.usageHover?.id === t.id}
+                    onHover={(el) => props.onHoverUsage(t.id, el)}
+                    onHoverEnd={props.onHoverEndUsage}
+                    onDetail={() => props.onDetailUsage(t.id)}
                 />
             </Show>
             <Show when={t.attrs.interrupted && !isLiveTurn()}>
@@ -984,6 +998,9 @@ export function LocalChatPage(props: { uri?: string }) {
                 setPersonaPanelOpen(false);
                 setFullscreen(false);
                 setUsageBoard(false);
+                cancelHoverClose();
+                setUsageHover(null);
+                setUsageDetail(null);
             }
         };
         document.addEventListener("click", closePopovers);
@@ -1030,10 +1047,24 @@ export function LocalChatPage(props: { uri?: string }) {
     const [confirmClear, setConfirmClear] = createSignal(false);
     const [pinned, setPinned] = createSignal<Record<string, boolean>>({});
     const togglePin = (id: string) => setPinned((p) => ({ ...p, [id]: !p[id] }));
-    // 用量明细的展开态：与 pinned 同构（按块 id 索引，存组件外）。为什么不放 TurnUsageFooter 内：
-    // 块树每帧全量重建（D4），组件局部 signal 会随之复位 —— 实测症状就是"点开又被自动折叠"。
-    const [usageOpen, setUsageOpen] = createSignal<Record<string, boolean>>({});
-    const toggleUsage = (id: string) => setUsageOpen((p) => ({ ...p, [id]: !p[id] }));
+    // 用量两级交互状态（hover 卡 + 明细抽屉）：与 pinned 同构，**存页面级组件外** ——
+    // 块树每帧重建，组件局部 signal 会随之复位（D3 的"点开又被自动合上"就是这么来的）。
+    const [usageHover, setUsageHover] = createSignal<UsageHoverState | null>(null);
+    const [usageDetail, setUsageDetail] = createSignal<string | null>(null);
+    /** hover 进入：记下触发元素与坐标（卡片 Portal 定位用）；离开走延迟关闭（160ms 跨间隙） */
+    const hoverUsageIn = (id: string, el: HTMLElement) => {
+        cancelHoverClose();
+        const r = el.getBoundingClientRect();
+        setUsageHover({
+            id,
+            anchor: el,
+            left: Math.round(r.left),
+            top: Math.round(r.top),
+            bottom: Math.round(r.bottom),
+            above: r.top > 280, // 上方放不下 → 卡翻到下方
+        });
+    };
+    const hoverUsageOut = () => armHoverClose(() => setUsageHover(null));
     const [full, setFull] = createSignal<{ title: string; content: string } | null>(null);
     /** 会话用量看板（抽屉）开关 */
     const [usageBoard, setUsageBoard] = createSignal(false);
@@ -1142,6 +1173,24 @@ export function LocalChatPage(props: { uri?: string }) {
             <PersonaDrawer open={personaPanelOpen()} onClose={() => setPersonaPanelOpen(false)} />
             {/* 打开时顺手对一次账本（轮次间隙别人跑的那几轮不该漏） */}
             <UsageDrawer open={usageBoard()} uri={uri()} onClose={() => setUsageBoard(false)} />
+            {/* L3：本轮逐步明细抽屉（覆盖式；turnId 页面级，单实例） */}
+            <TurnUsageDetailDrawer
+                turnId={usageDetail()}
+                live={liveTurnId() === usageDetail()}
+                onClose={() => setUsageDetail(null)}
+            />
+            {/* L2：用量汇总 hover 卡（Portal 到 body，滚动容器裁不到） */}
+            <UsageHoverCard
+                state={usageHover()}
+                onEnter={cancelHoverClose}
+                onLeave={hoverUsageOut}
+                onDetail={(id) => {
+                    cancelHoverClose();
+                    setUsageHover(null);
+                    if (id === "session") setUsageBoard(true);
+                    else setUsageDetail(id);
+                }}
+            />
             {/* 顶部：对话 view 的**视图级控制**（Markdown 显示方式 + 信息密度 + 清空本会话历史）。
                 pr-16：ViewGrid 的 area 设施（最大化/最小化）浮在本区域**右上角**，
                 不预留这条空档，按钮会与它叠在同一坐标上（实测重叠）。 */}
@@ -1152,16 +1201,6 @@ export function LocalChatPage(props: { uri?: string }) {
                     危险按钮从输入区挪到这里：输入区那排是"发送/留言"的动作区，
                     清空历史与它们不同类（不是本轮动作，而是全会话的删除）。
                     生成中不显示：正跑着的会话不该在此时被清掉（原行为不变）。 */}
-                {/* 会话用量看板入口：窗口占用（何时该重置）、花费、缓存命中率都在里面。
-                    常驻（不因生成中隐藏）：看用量与"正在跑"不冲突，且跑的时候正是要看它涨到哪。 */}
-                <button
-                    class="btn btn-ghost btn-xs tooltip tooltip-bottom"
-                    data-tip="会话用量：窗口占用 / 花费 / 缓存命中 / 逐步明细"
-                    aria-label="会话用量看板"
-                    onClick={() => setUsageBoard(true)}
-                >
-                    ▤ 用量
-                </button>
                 <Show when={!localChatStore.live}>
                     <button
                         class="btn btn-ghost btn-xs tooltip tooltip-bottom"
@@ -1249,8 +1288,11 @@ export function LocalChatPage(props: { uri?: string }) {
                                     onFull={(title, content) => setFull({ title, content })}
                                     liveTurnId={liveTurnId()}
                                     md={md()}
-                                    usageOpen={usageOpen()}
-                                    onToggleUsage={toggleUsage}
+                                    usageHover={usageHover()}
+                                    onHoverUsage={(id, el) => hoverUsageIn(id, el)}
+                                    onHoverEndUsage={hoverUsageOut}
+                                    usageDetail={usageDetail()}
+                                    onDetailUsage={(id) => setUsageDetail((d) => (d === id ? null : id))}
                                 />
                             ) : t.tag === "error" ? (
                                 /* 遗留的**根级** error 块（历史日志：旧版上限提示未挂 parent）。
@@ -1386,6 +1428,16 @@ export function LocalChatPage(props: { uri?: string }) {
                             </span>
                             <span class="opacity-50">⚙</span>
                         </button>
+                        {/* L1② 会话累计 chip（紧贴人物右侧的空白区）：hover 出 L2 汇总卡，
+                            卡上「明细」开 L3 看板。页面级状态，与 turn 底 bar 同构。 */}
+                        <SessionUsageChip
+                            hover={usageHover()?.id === "session"}
+                            onHover={(el) => hoverUsageIn("session", el)}
+                            onHoverEnd={hoverUsageOut}
+                            onDetail={() => setUsageBoard(true)}
+                        />
+                        {/* L1 窗口占用环（chip 的 token/金额总量右侧）：hover chip 的 title/环自身 title 给明细 */}
+                        <WindowRing />
                         <div class="flex-1" />
                         {/* 生成中的可见性：别人（CLI/另一窗口）发起时本地 running 全程为 false，
                             不显式说出来，界面看起来就像"什么都没发生"（任务 194 现象一的另一半） */}
