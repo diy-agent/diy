@@ -256,18 +256,85 @@ export interface BlockNode {
     children: BlockNode[];
 }
 
-export function toTree(store: BlockStore, rootId: string): BlockNode {
-    const b = store.blocks.get(rootId)!;
-    const { id, kind, children, stopped, touched, ...attrs } = b;
+/**
+ * 树导出的**身份缓存**（按 store 隔离，store 被换掉即随 GC 走）。
+ *
+ * 为什么必须做（任务 236 的根因）：UI 的 `<For each={trees}>` 在 Solid 里**按引用 diff**。
+ * 原来的实现每次返回全新对象 → 每帧刷新都把**每一轮**的 TurnView/LeafView 销毁重建
+ * （连带全量 Markdown re-parse）→ 三个实测症状：折叠态被清、点击像没反应、长回答卡顿。
+ * 这里让「没有任何 op 触碰过的子树」返回**同一对象**，于是重建退化成"只有变化的那一轮更新"。
+ *
+ * 判据（为什么这样判是完备的）：
+ *   · 块内字段的一切写入都走 `touch()`（start/stop/delta/patch 四条路径），
+ *     故 `touched` 不变 ⇒ 该块自身字段不变；
+ *   · 子节点数量变化（新增/减少）由 `children` 长度比较捕捉 —— 新子块挂上去时
+ *     **父块的 touched 不会变**（`start` 只 push 到父的 children），漏了这条会丢掉新内容；
+ *   · 子孙里的变化会让某个祖先的 children 或 touched 不同 → 递归比较能逐层发现。
+ */
+interface TreeCache {
+    node: BlockNode;
+}
+const treeCaches = new WeakMap<BlockStore, Map<string, TreeCache>>();
+
+function cacheOf(store: BlockStore): Map<string, TreeCache> {
+    let c = treeCaches.get(store);
+    if (!c) {
+        c = new Map();
+        treeCaches.set(store, c);
+    }
+    return c;
+}
+
+/** 两串子节点是否逐一同引用（同引用 ⇒ 那一支整棵未变，可整块复用） */
+function sameNodes(a: readonly BlockNode[], b: readonly BlockNode[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+}
+
+function buildNode(store: BlockStore, rootId: string, cache: Map<string, TreeCache>): BlockNode {
+    const b = store.blocks.get(rootId);
+    if (!b) {
+        // 原实现用 `!` 断言。此处显式兜底：ops 是 append-only 的史书，读侧不该因
+        // 一条悬挂引用（理论上不该出现）整棵树崩掉 —— 给一个最小的占位节点并出声。
+        console.warn(`[local-blocks] toTree：块不存在 ${rootId}`);
+        return { tag: "error", id: rootId, stopped: true, touched: 0, attrs: {}, children: [] };
+    }
+    const children = b.children.map((c) => buildNode(store, c, cache));
+    const prev = cache.get(rootId)?.node;
+    // 自身未变（touched/stopped）且子节点逐个同引用 → 整棵复用（**不新建任何对象**）
+    if (prev && prev.touched === b.touched && prev.stopped === b.stopped && sameNodes(prev.children, children)) {
+        return prev;
+    }
+    const { id, kind, children: _kids, stopped, touched, ...attrs } = b;
     delete (attrs as Record<string, unknown>).parent; // parent 由 children 树表达，不进 attrs
-    return {
+    const node: BlockNode = {
         tag: kind,
         id,
         stopped,
         touched,
         attrs: { ...attrs, ...(stopped ? {} : { interrupted: true }) },
-        children: children.map((c) => toTree(store, c)),
+        children,
     };
+    cache.set(rootId, { node });
+    return node;
+}
+
+/**
+ * 导出块树。**同一次未变的子树返回同一对象**（见上方 TreeCache 的理由），
+ * 调用方可安全用引用相等做 diff。
+ */
+export function toTree(store: BlockStore, rootId: string): BlockNode {
+    return buildNode(store, rootId, cacheOf(store));
+}
+
+/**
+ * 导出全部根（turn）树。与逐个 `toTree` 等价，只是把「取根」这一步也收进来，
+ * 免得调用方各自 `roots().map(...)`（两处写法就会有两套缓存语义）。
+ */
+export function toForest(store: BlockStore): BlockNode[] {
+    const cache = cacheOf(store);
+    return store.roots().map((r) => buildNode(store, r.id, cache));
 }
 
 // ─── 块 ↔ ModelMessage（历史重建，供 LLM 续聊）────────

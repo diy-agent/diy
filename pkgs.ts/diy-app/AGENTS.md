@@ -5,10 +5,10 @@
 
 - `find.main` — `src/main/index.ts` 主进程入口（窗口 / 诊断 / 单实例）
 - `find.core` — `src/main/core/` 状态与文件落位：`state.ts`（数据根/任务路径单一出口）· `task*.ts`（任务读写与字段）· `tree-format.ts` · `drafts.ts`（草稿 + 插话队列）· `steer-queue.ts` · `persona.ts` · `cwd.ts` · `ref*.ts`（引用仓库同步）
-- `find.svc` — `src/main/services/` RPC 与业务：`api-def.ts`（**契约**）· `api-impl.ts`（**实现**）· `local-agent.ts`（本地 agent 循环）· `local-blocks.ts`（op 流）· `prompt-registry.ts`（提示词装配）· `agent-guard.ts`（自毁命令拦截）· `diagnostics.ts`（日志/异常兜底）
+- `find.svc` — `src/main/services/` RPC 与业务：`api-def.ts`（**契约**）· `api-impl.ts`（**实现**）· `local-agent.ts`（本地 agent 循环）· `local-blocks.ts`（op 流）· `usage-report.ts`（用量账本读取 + CLI 报表渲染，与 UI 同源）· `prompt-registry.ts`（提示词装配）· `agent-guard.ts`（自毁命令拦截）· `diagnostics.ts`（日志/异常兜底）
 - `find.cli` — `src/cli/index.ts` CLI 入口（命令定义与 RPC 调用）
 - `find.renderer` — `src/renderer_solid/`（Solid，主线）：`components/` 业务组件 · `store/` signal 单例 · `lib/` rpc client 与 `diy.ui.*` handler · `App.tsx` / `main.tsx`
-- `find.shared` — `src/shared/` **跨层契约**（zod schema / 纯函数，main 与 renderer 共用，禁止各处重写）：`task-uri.ts`（URI 解析）· `task-detail.ts` · `task-list.ts`（排序搜索）· `persona.ts` · `prompt-schema.ts` · `session-view.ts`
+- `find.shared` — `src/shared/` **跨层契约**（zod schema / 纯函数，main 与 renderer 共用，禁止各处重写）：`task-uri.ts`（URI 解析）· `task-detail.ts` · `task-list.ts`（排序搜索）· `persona.ts` · `prompt-schema.ts` · `session-view.ts` · `usage.ts`（**token 四桶 / 单价 / 金额的唯一口径处**，含 tier 选价与聚合）
 - `find.context` — `src/shared/context/` 上下文树与投递：`README.md` 是**完整约定表**（领域模型 / 投递构造 / 划分真源 / step 快照 / 渲染坑）；投递构造唯一入口 `delivery.ts` 的 `buildDelivery`；划分真源 `$DIY_HOME/context.yaml`（契约 `config.ts`、I/O `src/main/core/context-config.ts`）
 - `find.serve` — `src/serve/index.ts` 纯 Web 模式（无 Electron）
 - `find.tests` — `tests/`：`cli.intent.*` 意图测试（真实 UI / 隔离 Electron）· `core/` `services/` 单测 · 夹具 `electron-test.ts` · `ui-drive.ts` · `shell-test.ts` · `setup.ts`
@@ -70,6 +70,8 @@
 
 - `pit.steer-two-phase` — 插话的「认领」（`prepareStep` 只读队列、注入请求 messages）与「落位」（流里出现 `start-step` 时才 sink + 出队）**不能合并**：两条流不同一时间轴，提前 sink 会把插话插到上一步未完内容之前。轮末开场则**只读不取**（先记账再出队），中途崩掉最坏重复投一遍、不会丢。理由见 `local-agent.ts` 的 `claimStepSteers` 头注
 - `pit.persona-id` — persona 引用**存 id 不存名字**：名字只是标签（可随时改），拿名字当引用键则改名 = 打断所有引用（引用者静默回落缺省人物）。理由见 `src/shared/persona.ts` 头注
+- `pit.usage-buckets` — 用量口径三条硬约束（`shared/usage.ts` 是唯一实现，别在别处另算）：① **思考输出是总输出的子集**，展示可拆、计价**不另加**（照抄 opencode 公式即重复计费）；② **不可测桶写 `null` 不写 0**（`api:"chat"` 面拿不到 cacheWrite，记 0 = 静默低估成钱）；③ **窗口占用取最后一步**（总输入+总输出），累加值只解释「这轮为什么贵」。单价快照随每行落盘（单价会变，历史账不能漂）
+- `pit.cli-kebab` — CLI 选项名默认取 schema 字段名（camelCase），parser 另注册 kebab 别名并**在 help 里显示 kebab**（`--by-agent`），两种写法都接受 —— 新增 camelCase 选项无需额外处理
 - `pit.head-note` — **关键设计理由都写在各自文件头注**（`src/main/core/steer-queue.ts` / `persona.ts` / `drafts.ts` / `src/main/services/local-agent.ts`）：改动前先读头注，别只看函数名
 
 ## tool — 验证与调试

@@ -8,6 +8,8 @@
 //
 // 约定：本文件禁止 import node:*（renderer 会打进包）。
 
+import { ratesOf, type EffectiveRates, type ModelCost } from "./usage";
+
 export const DEFAULT_MODEL = "gpt-5.6-luna";
 
 /** zen/go 基址：两个 API 面共用（chat/completions 与 responses 只是路径不同） */
@@ -38,7 +40,15 @@ export interface LocalModel {
     contextLimit: number;
     maxOutputTokens: number;
     reasoning: LocalModelReasoning;
+    /** 单价（$/1M tokens，真源 models.dev，抓取日期见 MODEL_COST_AS_OF）；缺失 = 无价目，不算钱 */
+    cost?: ModelCost;
 }
+
+/**
+ * 价格表抓取日期。**单价会变**：金额落盘时要把这份日期一起写进快照，
+ * 否则日后翻旧账会拿新单价去解释旧消耗（##211 §四.4.6）。
+ */
+export const MODEL_COST_AS_OF = "2026-10-02";
 
 /**
  * 可选模型（2026-09-24 实查 /models + models.dev 价格 + 两个 API 面逐个 curl 验证）
@@ -58,10 +68,10 @@ export const LOCAL_MODELS: LocalModel[] = [
     // 排列顺序 = UI 平铺按钮的展示顺序，按**价格从低到高**（便宜的先看见）。
     // 注意：首项**不再**等于内置默认 persona 的模型（DEFAULT_MODEL）—— 模型选择已归 persona，
     // 界面/代码都不该再"取列表首项当默认"（那正是"看着一个模型、用的是另一个"的来源）。
-    { id: "mimo-v2.6-flash", name: "MiMo V2.6 Flash", api: "chat", contextLimit: 1048576, maxOutputTokens: 131072 , reasoning: { supported: ["none", "low", "medium", "high"], default: "medium" } }, // 0.14 / 0.28 (0.0028)
-    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", api: "chat", contextLimit: 1000000, maxOutputTokens: 384000 , reasoning: { supported: ["none", "minimal", "low", "medium", "high", "xhigh", "ultra", "max"], default: "medium" } }, // 0.15 / 0.60 (0.003)
-    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", api: "responses", contextLimit: 1050000, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high", "xhigh", "max"], default: "medium" } }, // 0.20 / 1.20 (0.02)
-    { id: "gpt-6-luna", name: "GPT 6 Luna", api: "responses", contextLimit: 1050000, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high", "xhigh", "max"], default: "medium" } }, // 0.10 / 0.50 (0.01)
+    { id: "mimo-v2.6-flash", name: "MiMo V2.6 Flash", api: "chat", contextLimit: 1048576, maxOutputTokens: 131072 , reasoning: { supported: ["none", "low", "medium", "high"], default: "medium" }, cost: { input: 0.14, output: 0.28, cacheRead: 0.0028 } },
+    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", api: "chat", contextLimit: 1000000, maxOutputTokens: 384000 , reasoning: { supported: ["none", "minimal", "low", "medium", "high", "xhigh", "ultra", "max"], default: "medium" }, cost: { input: 0.15, output: 0.6, cacheRead: 0.003 } },
+    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", api: "responses", contextLimit: 1050000, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high", "xhigh", "max"], default: "medium" }, cost: { input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25, tiers: [{ above: 272000, input: 0.4, output: 1.8, cacheRead: 0.04, cacheWrite: 0.5 }] } },
+    { id: "gpt-6-luna", name: "GPT 6 Luna", api: "responses", contextLimit: 1050000, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high", "xhigh", "max"], default: "medium" }, cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125, tiers: [{ above: 272000, input: 0.2, output: 0.75, cacheRead: 0.02, cacheWrite: 0.25 }] } }
 ];
 
 /** 按 model id 查 API 面；未知模型按 chat 处理（保持历史行为，不静默换面） */
@@ -82,6 +92,14 @@ export function contextLimitOf(modelId: string): number | undefined {
 /** 按 model id 查 maxOutputTokens；未知返回 undefined（调用方决定 fallback） */
 export function maxOutputTokensOf(modelId: string): number | undefined {
     return LOCAL_MODELS.find(m => m.id === modelId)?.maxOutputTokens;
+}
+
+/**
+ * 取**生效单价**（含选中 tier）；模型不在表里或表中无价 → null（调用方决定怎么提示）。
+ * tier 按「总输入 token」选（含缓存读/写），取满足条件的最大阈值 —— 见 shared/usage.ts。
+ */
+export function costOf(modelId: string, promptTokens: number): EffectiveRates | null {
+    return ratesOf(LOCAL_MODELS.find(m => m.id === modelId)?.cost, promptTokens);
 }
 
 /** 该 id 是否在清单内（persona 校验用：写配置时就拦住打错的模型名） */
