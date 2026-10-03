@@ -22,7 +22,7 @@ export function ThemeSettings() {
 
   return (
     <div class="p-4 space-y-3">
-      <div class="text-sm font-bold">🎨 外观</div>
+      <div class="text-title font-bold">🎨 外观</div>
       <div class="join">
         <button
           class={`btn btn-sm join-item ${theme() === "dark" ? "btn-active" : ""}`}
@@ -37,14 +37,14 @@ export function ThemeSettings() {
           ☀️ 浅色
         </button>
       </div>
-      <div class="text-xs opacity-60">深色为默认；浅色下任务链接自动用深蓝，保证对比度。</div>
+      <div class="text-body opacity-60">深色为默认；浅色下任务链接自动用深蓝，保证对比度。</div>
 
       <div class="divider"></div>
-      <div class="text-sm font-bold">🧹 视图缓存</div>
+      <div class="text-title font-bold">🧹 视图缓存</div>
       <button class="btn btn-sm btn-outline btn-error" onClick={reset}>
         重置界面状态
       </button>
-      <div class="text-xs opacity-60">
+      <div class="text-body opacity-60">
         清空 localStorage 中的视图缓存（任务树展开/滚动位置、详情面板宽度、聊天密度、
         主题偏好），刷新后全部回默认。只清理界面状态，不影响任何任务数据。
       </div>

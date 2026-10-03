@@ -88,21 +88,21 @@ const makeDslPlugin = (knownTags: ReadonlySet<string>) =>
     { decorations: (v) => v.decorations },
 );
 
-/** 版式（与配色无关）：等宽 12px、行号栏弱显 —— 第三方主题也保留这套版式 */
+/** 版式（与配色无关）：等宽 body 档、行号栏弱显 —— 第三方主题也保留这套版式 */
 const labLayout = {
-    "&": { height: "100%", fontSize: "12px" },
+    "&": { height: "100%", fontSize: "var(--text-body)" },
     ".cm-content": { fontFamily: "var(--font-mono)" },
     ".cm-lineNumbers .cm-gutterElement": { padding: "0 6px 0 4px" },
 } as const;
 const labLayoutTheme = EditorView.theme(labLayout);
 
-/** daisyUI 贴合主题：等宽 12px，行号弱显，纸面用 base-100 */
+/** daisyUI 贴合主题：等宽 body 档，行号弱显，纸面用 base-100 */
 const labTheme = EditorView.theme(
     {
         // 纸面色走变量（带 daisyUI fallback）：默认是自带纸面的 base-100；
         // 嵌进聊天输入框那种"自己有底色"的容器时，外层把 --md-bg 设成 transparent，
         // 让容器底色透上来 —— 否则编辑器会糊一块白底，把容器的加深色割成两层。
-        "&": { height: "100%", fontSize: "12px", backgroundColor: "var(--md-bg, var(--color-base-100))" },
+        "&": { height: "100%", fontSize: "var(--text-body)", backgroundColor: "var(--md-bg, var(--color-base-100))" },
         ".cm-content": { fontFamily: "var(--font-mono)", caretColor: "var(--color-primary)" },
         // 行号栏（CM 手册：gutters 是 sticky 的，正文横向滚时会滚到它下面）
         //   · **不能**给 .cm-gutters 设 opacity —— 那会把背景一起变透明，正文从底下透出来"压住行号"

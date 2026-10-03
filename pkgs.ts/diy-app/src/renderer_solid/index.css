@@ -11,6 +11,23 @@
  * 显式 @source 把 main 纳入扫描，一处修复全部页面。 */
 @source "../main";
 
+/* ── 语义排版档（任务 229，##228 A 组）──────────────────────────────
+ * 全 UI 只允许这 5 档字号 —— 新代码禁用裸 px 字号与 xs/sm/lg 档：
+ *   caption 10px  微标注：角标、排序箭头、状态角标
+ *   body   11px  紧凑 UI 默认正文：表格行、导航项、表单、列表、元数据
+ *   prose  14px  阅读区正文：markdown、聊天气泡、说明段落
+ *   title  14px  区块/面板标题：面板头、详情 h3、modal 头、设置节标题
+ *   display 18px  大标题：页面 h2、创建 sheet h3
+ * 档位按「角色」命名、按值独立调整：改字号只动这一处。
+ * 层级感用 weight/opacity/indent 表达，不用字号表达树层级（任务 208 的教训）。 */
+@theme {
+  --text-caption: 0.625rem;
+  --text-body: 0.6875rem;
+  --text-prose: 0.875rem;
+  --text-title: 0.875rem;
+  --text-display: 1.125rem;
+}
+
 /* 任务标题链接色：daisyUI dark 默认 primary（oklch 58% 蓝紫）在黑底上对比不足，单独加亮。
  * 自定义色按规范用 diy- 前缀；随主题切换（main.tsx 经 data-theme 显式锁定）。 */
 :root,
@@ -22,6 +39,29 @@
 }
 .diy-link {
   color: var(--color-diy-link);
+}
+
+/* ── nav pin 窄窗也占布局列（任务 199） ────────────────────────────
+ * daisyUI 把「侧栏占位列」绑在 @media(width>=1024) 的 .lg:drawer-open 分支
+ * （side 切 position:sticky 参与 grid、content 留第 2 列）；窄窗 side 恒为
+ * position:fixed 浮层 —— 不占 grid 列，JS 的 pinned 只能改 nav 宽度，
+ * 展开后盖在 view 上不让位（pin 形同虚设）。
+ * pin 锁定的语义就是「占一列」：在 <1024 复刻 lg 分支的占位属性，
+ * overlay 同 lg 置透明（占位态不该压 40% 黑罩）。hover 未 pin 保持浮层不变。 */
+@media (width < 1024px) {
+  .diy-nav-pinned > .drawer-side {
+    position: sticky;
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+    width: auto;
+    display: block;
+    translate: 0%;
+  }
+  .diy-nav-pinned > .drawer-side > .drawer-overlay {
+    cursor: default;
+    background-color: transparent;
+  }
 }
 
 /* ── Markdown 正文排版（components/MarkdownView.tsx） ──────────────
@@ -143,4 +183,16 @@
     .task-flow-handle:hover {
         background-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
     }
+}
+
+/* ── 页内查找高亮（##234，CSS Custom Highlight API）────────────────────
+ * 不动 DOM、由浏览器绘制（Solid 流式重渲染不会把它们冲掉）。
+ * 全部命中用半亮色，当前命中用高对比（与 DynamicBar 的 warning 系同色系）。 */
+::highlight(diy-find) {
+  background-color: color-mix(in oklab, var(--color-warning) 40%, transparent);
+  color: inherit;
+}
+::highlight(diy-find-active) {
+  background-color: var(--color-warning);
+  color: var(--color-warning-content);
 }

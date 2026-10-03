@@ -540,7 +540,7 @@ function VarTree(props: {
                                     </span>
                                 </span>
                             </td>
-                            <td class="w-full max-w-0 py-0.5 align-top text-[11px] opacity-70">
+                            <td class="w-full max-w-0 py-0.5 align-top text-body opacity-70">
                                 <span class="block truncate" title={n.desc ?? ""}>
                                     {n.desc ?? ""}
                                 </span>
@@ -848,7 +848,7 @@ export function PromptLabV4Page() {
     const toggleView = (k: string) => setViews((v) => ({ ...v, [k]: !v[k] }));
     const viewHeader = (key: string, label: string, extra?: string) => (
         <button
-            class="flex w-full items-center gap-1 bg-base-300 px-2 py-1 text-[11px] font-bold tracking-wide opacity-80 hover:opacity-100"
+            class="flex w-full items-center gap-1 bg-base-300 px-2 py-1 text-body font-bold tracking-wide opacity-80 hover:opacity-100"
             onClick={() => toggleView(key)}
         >
             <span>{views()[key] ? "▾" : "▸"}</span>
@@ -1007,7 +1007,7 @@ export function PromptLabV4Page() {
     /** 请求预览的内容（树 / 原文切换）—— 作为右栏折叠块之一，不再自带标题栏 */
     const reqBodyPane = () => (
         <div class="flex min-h-0 flex-1 flex-col">
-<div class={`flex shrink-0 items-center gap-2 border-b px-3 ${VIEW_BAR_H} text-xs`}>
+<div class={`flex shrink-0 items-center gap-2 border-b px-3 ${VIEW_BAR_H} text-body`}>
     <span class="opacity-60">{preview()?.requestNote ?? "随任务场景生成"}</span>
     <span class="ml-auto join join-horizontal">
         <button
@@ -1025,7 +1025,7 @@ export function PromptLabV4Page() {
     </span>
 </div>
 <div class="min-h-0 flex-1 overflow-auto bg-base-200 p-2">
-    <Show when={preview()?.requestBody} fallback={<div class="text-xs opacity-60">随任务场景生成…</div>}>
+    <Show when={preview()?.requestBody} fallback={<div class="text-body opacity-60">随任务场景生成…</div>}>
         {(b) => (
             <>
                 {/* 树常驻（hidden 藏），切原文不卸载 → 折叠态保留 */}
@@ -1033,7 +1033,7 @@ export function PromptLabV4Page() {
                     <JsonTree data={b()} />
                 </div>
                 <Show when={reqMode() === "raw"}>
-                    <pre class="whitespace-pre-wrap break-all rounded bg-base-200 p-2 font-mono text-[11px] leading-relaxed">
+                    <pre class="whitespace-pre-wrap break-all rounded bg-base-200 p-2 font-mono text-body leading-relaxed">
                         {JSON.stringify(b(), null, 1)}
                     </pre>
                 </Show>
@@ -1048,7 +1048,7 @@ export function PromptLabV4Page() {
     const parts: Record<string, () => JSX.Element> = {
         "lab.inspector": () => (
             <>
-<div class="h-full overflow-x-auto overflow-y-auto text-xs p-1 space-y-1">
+<div class="h-full overflow-x-auto overflow-y-auto text-body p-1 space-y-1">
     <div class="border border-base-300 rounded-lg">
         {viewHeader(
             "tree",
@@ -1082,7 +1082,7 @@ export function PromptLabV4Page() {
             preview()?.trace ? `${preview()!.trace!.length} 顶层节点` : "随预览重算",
         )}
         <Show when={views()["trace"]}>
-            <div class="overflow-x-auto bg-base-200 px-0 py-1 text-[11px]">
+            <div class="overflow-x-auto bg-base-200 px-0 py-1 text-body">
                 <Show when={preview()?.trace} fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}>
                     {(tr) => (
                         <table class="table table-xs table-fixed" style={{ width: tableW(cols.trace) }}>
@@ -1122,13 +1122,13 @@ export function PromptLabV4Page() {
     <div class="border border-base-300 rounded-lg">
         {viewHeader("vars", "变量定义", sel() ? sel()!.relpath : "未选模版")}
         <Show when={views()["vars"]}>
-            <div class="bg-base-300/40 px-2 py-0.5 text-[10px] opacity-70">
+            <div class="bg-base-300/40 px-2 py-0.5 text-caption opacity-70">
                 <span class="text-info">●</span> = 本模版用到；点整行 = 高亮它的所有出现处；点
                 <span class="font-mono">[类型]</span> 行 = 高亮用到该类型的文本
             </div>
         </Show>
         <Show when={views()["vars"]}>
-            <div class="overflow-x-auto bg-base-200 px-0 py-1 font-mono text-[11px]">
+            <div class="overflow-x-auto bg-base-200 px-0 py-1 font-mono text-body">
                 <Show when={analysis()} fallback={<div class="px-2 py-1 opacity-60">左侧点开一份模版</div>}>
                     {(an) => (
                         <Show when={an().a} fallback={<div class="px-2 py-1 text-error">{an().error}</div>}>
@@ -1240,7 +1240,7 @@ export function PromptLabV4Page() {
     <div class="border border-base-300 rounded-lg">
         {viewHeader("vals", "变量值", "本次注入的实际值（随任务变化）")}
         <Show when={views()["vals"]}>
-            <div class="overflow-x-auto bg-base-200 px-0 py-1 text-[11px]">
+            <div class="overflow-x-auto bg-base-200 px-0 py-1 text-body">
                 <Show
                     when={preview()}
                     fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}
@@ -1286,11 +1286,11 @@ export function PromptLabV4Page() {
             <>
 {/* 中央编辑器 */}
 <div class="flex-1 flex flex-col min-w-0">
-    <Show when={sel()} fallback={<div class="p-4 opacity-60 text-sm">左侧模板树点开一份</div>}>
+    <Show when={sel()} fallback={<div class="p-4 opacity-60 text-prose">左侧模板树点开一份</div>}>
         {(s) => (
             <>
                 {/* 标题栏：文件名 + dirty + 右侧动作图标 */}
-                <div class={`flex items-center gap-1 border-b px-3 ${VIEW_BAR_H} text-xs shrink-0`}>
+                <div class={`flex items-center gap-1 border-b px-3 ${VIEW_BAR_H} text-body shrink-0`}>
                     <span class="font-mono font-semibold">
                         {s().relpath}
                         <Show when={dirtyOf(s())}>
@@ -1329,7 +1329,7 @@ export function PromptLabV4Page() {
                 </div>
                 {/* 锁卡说明条（不可编辑时顶置，不用悬浮找原因） */}
                 <Show when={s().locked}>
-                    <div class="alert alert-warning mx-3 mt-2 px-3 py-1.5 text-xs shrink-0">
+                    <div class="alert alert-warning mx-3 mt-2 px-3 py-1.5 text-body shrink-0">
                         <span>🔒</span>
                         <span>{s().lockTip}</span>
                     </div>
@@ -1362,7 +1362,7 @@ export function PromptLabV4Page() {
                             </div>
                         }
                     >
-                        <div class="min-h-0 flex-1 overflow-auto rounded bg-base-200 p-2 font-mono text-xs leading-relaxed">
+                        <div class="min-h-0 flex-1 overflow-auto rounded bg-base-200 p-2 font-mono text-body leading-relaxed">
                             <For each={lineDiff(s().builtin, draftOf(s()))}>
                                 {(l) => (
                                     <div
@@ -1393,7 +1393,7 @@ export function PromptLabV4Page() {
                原来这里用 area 内互斥 tab：多一层页签，且每次只看得到一块、展开的块只剩一小条。
                折叠块把"看哪块"变成一次点击，展开的那块独占剩余高度。
                注：上下文树已独立成 ctxlab 子页面（另一套组织方式，不挤在本页右栏）。 */
-            <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-xs">
+            <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-body">
                 {/* 展开的块 flex-1（独占剩余高度）并保底 160px；都展开时外层滚动，
                     不把每块压成一条 —— 这正是"tab 每块太小"要解决的问题 */}
                 <div class="flex min-h-0 flex-col rounded-lg border border-base-300" classList={{ "flex-1 min-h-[160px]": !!views()["sysctx"] }}>
@@ -1403,10 +1403,10 @@ export function PromptLabV4Page() {
 {/* 右：视图区 = 一个编辑器 view（与中间完全同构：标题栏 + 编辑器本体，只是只读）。
     结构化观察在左栏；请求体在「请求预览」tab */}
 <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-    <div class={`flex items-center gap-1 border-b px-3 ${VIEW_BAR_H} text-xs shrink-0`}>
+    <div class={`flex items-center gap-1 border-b px-3 ${VIEW_BAR_H} text-body shrink-0`}>
         <span class="font-mono font-semibold">_system.md</span>
         <span class="opacity-50">（预览）</span>
-        <span class="ml-auto font-mono text-[10px] opacity-60">
+        <span class="ml-auto font-mono text-caption opacity-60">
             <Show when={preview()} fallback="渲染中…">
                 {(p) => `${(new TextEncoder().encode(p().system).length / 1024).toFixed(1)} KB`}
             </Show>
@@ -1423,17 +1423,17 @@ export function PromptLabV4Page() {
             onClear={() => setHlSel(null)}
         />
     </Show>
-    <Show when={preview()} fallback={<div class="p-3 text-xs opacity-60">渲染中…</div>}>
+    <Show when={preview()} fallback={<div class="p-3 text-body opacity-60">渲染中…</div>}>
         {(p) => (
             <div class="flex min-h-0 flex-1 flex-col">
                 <Show when={p().overBudget}>
-                    <div class="alert alert-error m-2 shrink-0 text-xs py-1">
+                    <div class="alert alert-error m-2 shrink-0 text-body py-1">
                         超出预算：{(p().overBudget!.used / 1024).toFixed(1)} KB /{" "}
                         {(p().overBudget!.budget / 1024).toFixed(0)} KB —— 不会发送，请精简模版
                     </div>
                 </Show>
                 <Show when={p().warnings.length > 0}>
-                    <div class="alert alert-warning m-2 shrink-0 text-xs py-1">
+                    <div class="alert alert-warning m-2 shrink-0 text-body py-1">
                         {p().warnings.map((w) => (
                             <span>⚠️ {w}</span>
                         ))}
@@ -1472,13 +1472,13 @@ export function PromptLabV4Page() {
             <Show
                 when={!!taskUri()}
                 fallback={
-                    <div class="flex flex-1 flex-col items-center justify-center gap-3 text-sm opacity-70">
+                    <div class="flex flex-1 flex-col items-center justify-center gap-3 text-prose opacity-70">
                         <div>提示词页以当前任务为场景，请先从任务管理页打开一个任务</div>
                     </div>
                 }
             >
                 {/* 顶：page 菜单条（任务即场景 + 刷新 + area 开合按钮） */}
-                <div class={`flex items-center gap-2 border-b px-3 ${VIEW_BAR_H} text-xs shrink-0`}>
+                <div class={`flex items-center gap-2 border-b px-3 ${VIEW_BAR_H} text-body shrink-0`}>
                     <span class="badge badge-info badge-sm" title={taskUri()}>
                         📌 {taskUri()}
                     </span>
@@ -1520,7 +1520,7 @@ export function PromptLabV4Page() {
                         ctx={taskUri()}
                         layout={LAB_PAGE.layout}
                         binding={layoutStore.bindingFor(LAB_PAGE, taskUri())}
-                        renderView={(viewId) => parts[viewId]?.() ?? <div class="p-3 text-xs opacity-60">未注册的 view: {viewId}</div>}
+                        renderView={(viewId) => parts[viewId]?.() ?? <div class="p-3 text-body opacity-60">未注册的 view: {viewId}</div>}
                     />
                 </div>
             </Show>

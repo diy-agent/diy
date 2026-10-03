@@ -1,4 +1,4 @@
-import { createSignal, createMemo, For, Show, onCleanup, onMount } from "solid-js";
+import { createSignal, createEffect, createMemo, on, For, Show, onCleanup, onMount } from "solid-js";
 import { createMutable } from "solid-js/store";
 import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSensor } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
@@ -7,9 +7,11 @@ import { notificationStore } from "../store/notificationStore";
 import { diyService } from "../lib/rpc";
 import { Caches } from "../lib/ui-state";
 import { CreateProjectSheet } from "./CreateProjectSheet";
+import { isAncestorOf } from "../lib/task-lineage";
 import { TASK_STATES, taskStateColor } from "../../main/core/task-state";
 import { CreateTaskSheet } from "./CreateTaskSheet";
 import { DynamicBar } from "./DynamicBar";
+import { findNode } from "../lib/task-lineage";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 import {
     SORT_KEYS,
@@ -76,12 +78,13 @@ function cachedRow(
     return row;
 }
 
-interface TaskProjectInfo {
+export interface TaskProjectInfo {
     project: string;
     parent: string | undefined;
 }
 
-function findTaskProject(nodes: TreeNode[], uri: string): TaskProjectInfo | null {
+/** 从任务树找 {项目, 直接父} —— 拖拽改层级的同项目/同父校验用（nav 拖拽复用，故导出） */
+export function findTaskProject(nodes: TreeNode[], uri: string): TaskProjectInfo | null {
     for (const p of nodes) {
         if (p.kind !== "project") continue;
         const f = findInTree(p.children, uri);
@@ -140,7 +143,7 @@ function StateSelector(props: { uri: string; state: string }) {
                         {(s) => (
                             <li>
                                 <button
-                                    class={`text-xs gap-2 ${s === props.state ? "active font-bold" : ""}`}
+                                    class={`text-body gap-2 ${s === props.state ? "active font-bold" : ""}`}
                                     onClick={(e) => changeState(s, e)}
                                 >
                                     <span class={`w-2 h-2 rounded-full inline-block ${taskStateColor(s)}`} />
@@ -201,13 +204,13 @@ function SortableTh(props: {
                 onClick={() => props.onSort(props.sortKey)}
             >
                 <span>{meta.label}</span>
-                <span class="text-[9px]">{active() ? (props.sort.dir === "asc" ? "▲" : "▼") : "⇅"}</span>
+                <span class="text-caption">{active() ? (props.sort.dir === "asc" ? "▲" : "▼") : "⇅"}</span>
             </button>
         </th>
     );
 }
 
-export function TaskTree() {
+export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null } = {}) {
     // 展开/滚动/排序/搜索：视图 cache（lib/ui-state，localStorage 归一定位），可被清理入口清空
     const loadExpanded = (): Set<string> => {
         try {
@@ -327,18 +330,63 @@ export function TaskTree() {
         if (selectable()[next]) taskStore.selectTask(selectable()[next]);
     };
 
-    // ⌘/Ctrl+F 聚焦搜索框：与浏览器/编辑器一致的心智模型（Esc 清空）
-    onMount(() => {
-        const onKey = (e: KeyboardEvent) => {
-            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
-                e.preventDefault();
-                searchRef?.focus();
-                searchRef?.select();
-            }
-        };
-        window.addEventListener("keydown", onKey);
-        onCleanup(() => window.removeEventListener("keydown", onKey));
-    });
+    // ⌘/Ctrl+F 曾是「聚焦任务搜索框」的局部绑定（##109）。2026-10-03 用户指令去掉：
+    // 全局 ⌘F 应为**页内查找**（##234），任务搜索改由点击搜索框进入（不再抢快捷键）。
+    // 保留 Esc 清空（搜索框自身的 onKeyDown，与快捷键归属无关）。
+
+    // ── 外部定位请求（##160）：切回「任务管理」页时展开当前任务的祖先并定位到它 ──
+    /** 定位后的高亮：把目标行闪一下（2s 自动消失，不留常驻噪音；行本身若被选中另有底色） */
+    const [revealFlash, setRevealFlash] = createSignal<string | null>(null);
+    let revealFlashTimer: ReturnType<typeof setTimeout> | undefined;
+
+    /**
+     * 展开 uri 的**全部任务祖先**（沿 parentUri 上溯）+ 滚动到位 + 闪高亮。
+     *
+     * 只展开祖先、不展开任务自身：目的是「让这一行可见」，展开它自己的子树是另一件事。
+     * `seen` 防环（脏数据互相认父不该把这里转死），与 taskAncestorsOf / lineageRows 同款。
+     */
+    const revealTask = (uri: string) => {
+        const chain: string[] = [];
+        let cur = findNode(taskStore.nodes, uri)?.parentUri;
+        const seen = new Set<string>([uri]);
+        while (cur && !seen.has(cur)) {
+            seen.add(cur);
+            chain.push(cur);
+            cur = findNode(taskStore.nodes, cur)?.parentUri;
+        }
+        if (chain.length > 0) {
+            setExpanded((prev) => {
+                const n = new Set(prev);
+                for (const k of chain) n.add(k); // 任务节点：入集 = 展开（项目节点语义相反，不在此列）
+                saveExpanded(n);
+                return n;
+            });
+        }
+        // 展开后立即滚（Solid 的 setSignal → DOM 更新是同步的，展开行此刻已在 DOM 里）。
+        // **不用 requestAnimationFrame**：Electron 窗口被遮挡/最小化时 rAF 会被节流甚至暂停，
+        // 定位会「点完没反应、几秒后才滚」（实测踩到）；直接同步执行不依赖渲染帧。
+        document.querySelector(`[data-uri="${CSS.escape(uri)}"]`)?.scrollIntoView({ block: "center" });
+        setRevealFlash(uri);
+        clearTimeout(revealFlashTimer);
+        revealFlashTimer = setTimeout(() => setRevealFlash(null), 2000);
+    };
+
+    /**
+     * 消费外部定位请求。树数据可能尚未加载（首进 app / 刚建任务）→ 先补齐再定位。
+     * `on` 默认首跑：TaskTree 正是切页时挂载的，故挂载即消费挂载前下发的请求。
+     */
+    createEffect(
+        on(
+            () => props.reveal?.nonce,
+            () => {
+                const uri = props.reveal?.uri;
+                if (!uri) return;
+                if (findNode(taskStore.nodes, uri)) revealTask(uri);
+                else void taskStore.loadTree().then(() => revealTask(uri));
+            },
+        ),
+    );
+    onCleanup(() => clearTimeout(revealFlashTimer));
 
     const scrollRef = (el: HTMLDivElement | undefined) => {
         if (!el || el.dataset.scrollRestored === "1") return;
@@ -396,6 +444,12 @@ export function TaskTree() {
             notificationStore.addToast("error", "只能在同一项目内拖动");
             return;
         }
+        // RV-07（##245 review）：防环预检 —— 拖到自己的子孙下成环。main 有守卫
+        // （task.ts 防环，数据安全无虞），客户端提前拦只为体验（非法落点当场报）。
+        if (isAncestorOf(taskStore.nodes, dragUri, dropUri)) {
+            notificationStore.addToast("error", "不能拖到自己的子任务下");
+            return;
+        }
         if (dropUri === dragInfo.parent) return; // 拖到直接父级：无需改动
         try {
             await diyService.diy.task.move({ uri: dragUri, parent: dropUri });
@@ -412,13 +466,13 @@ export function TaskTree() {
         <DragDropProvider onDragEnd={handleDragEnd} sensors={[PointerSensor]}>
             <div class="h-full flex flex-col">
                 <div class={`flex items-center gap-2 px-3 ${VIEW_BAR_H} border-b shrink-0`}>
-                    <span class="text-sm font-semibold shrink-0">任务</span>
+                    <span class="text-title font-semibold shrink-0">任务</span>
                     {/* 搜索框：宽度随容器伸缩，但保底能看清几个词 */}
                     <input
                         ref={bindSearch}
                         type="search"
                         class="input input-bordered input-xs flex-1 min-w-24 max-w-72"
-                        placeholder="搜索标题 / 编号 / 正文…（⌘F）"
+                        placeholder="搜索标题 / 编号 / 正文…"
                         value={query()}
                         onInput={(e) => applyQuery(e.currentTarget.value)}
                         onKeyDown={(e) => {
@@ -488,7 +542,7 @@ export function TaskTree() {
                                             row={row}
                                             expanded={expanded()}
                                             onToggle={toggle}
-                                            focused={searching() && row.key === focusUri()}
+                                            focused={(searching() && row.key === focusUri()) || row.key === revealFlash()}
                                         />
                                     )
                                 }
@@ -509,9 +563,9 @@ export function TaskTree() {
             <DragOverlay>
                 {(source) =>
                     source?.data?.title ? (
-                        <div class="flex items-center px-3 py-1 text-sm bg-base-100 border rounded shadow-lg opacity-80 max-w-[200px] pointer-events-none select-none">
+                        <div class="flex items-center px-3 py-1 text-prose bg-base-100 border rounded shadow-lg opacity-80 max-w-[200px] pointer-events-none select-none">
                             <span class="truncate">{String(source.data.title)}</span>
-                            <span class="ml-2 text-xs opacity-60">拖放改层级</span>
+                            <span class="ml-2 text-body opacity-60">拖放改层级</span>
                         </div>
                     ) : null
                 }
@@ -529,12 +583,15 @@ function ProjectRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: 
         },
     });
     const ref = (el: Element | undefined) => drop.ref(el);
+    // 悬停该行 → App 的 document 委托弹一层任务详情覆盖层（与 nav 项 / 血缘树同源）。
+    // 锚点放 <tr> 上 = 整行都是热区；行内交互控件（状态选择等）自身 stopPropagation，
+    // 且委托按 target.closest 取最近的 [data-task-hover-uri]，子控件仍命中本 tr。
     return (
         <tr
             ref={ref}
             class={`bg-base-200 hover:bg-base-300 border-b transition-colors ${drop.isDropTarget() ? " ring-2 ring-primary/50 ring-inset" : ""}`}
         >
-            <td style={`padding-left:${8 + row.depth * 20}px`} class="font-semibold">
+            <td style={`padding-left:${8 + row.depth * 20}px`} class="font-semibold text-body">
                 <span class="inline-flex items-center gap-1">
                     {row.node.children?.length ? (
                         <button
@@ -563,7 +620,7 @@ function ProjectRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: 
                 </span>
             </td>
             {/* 项目行的其余列：项目路径（原 URI 列的语义，项目自身没有任务字段） */}
-            <td colspan={7} class="font-mono text-xs opacity-60 truncate">
+            <td colspan={7} class="font-mono text-body opacity-60 truncate">
                 {row.node.project_path ?? ""}
             </td>
         </tr>
@@ -603,7 +660,7 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                     : "hover:bg-base-200" + (drop.isDropTarget() ? " ring-2 ring-primary/50 ring-inset" : "")
             } ${props.focused ? " outline outline-1 outline-warning/70 -outline-offset-1" : ""}`}
         >
-            <td style={`padding-left:${8 + row.depth * 20}px`}>
+            <td style={`padding-left:${8 + row.depth * 20}px`} class="text-body">
                 <span class="inline-flex items-center gap-1">
                     {row.node.children?.length ? (
                         <button
@@ -622,7 +679,7 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                     {/* 任务号前置：一眼定位「几号任务」，且与 URI 列的末段同源（都来自 main 的 num）。
                         弱化成 mono/半透明，避免与标题抢视觉焦点；标题过长时它不参与 truncate。 */}
                     <Show when={row.node.num}>
-                        <span class="shrink-0 font-mono text-xs opacity-50">#{row.node.num}</span>
+                        <span class="shrink-0 font-mono text-body opacity-50">#{row.node.num}</span>
                     </Show>
                     <span
                         class="truncate font-medium diy-link underline-offset-2 hover:underline cursor-pointer"
@@ -640,7 +697,7 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                     纯文本单行展示——不做 Markdown 渲染：片段是"定位线索"，渲染只会增加噪音。 */}
                 <Show when={row.snippet}>
                     {(s) => (
-                        <div class="text-xs opacity-60 truncate leading-tight" title={`${s().before}${s().match}${s().after}`}>
+                        <div class="text-body opacity-60 truncate leading-tight" title={`${s().before}${s().match}${s().after}`}>
                             <span>{s().before}</span>
                             <mark class="bg-warning/40 text-inherit rounded-sm px-0.5">{s().match}</mark>
                             <span>{s().after}</span>
@@ -651,29 +708,31 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                     )}
                 </Show>
             </td>
-            <td class="text-xs">
+            <td class="text-body">
                 <Show when={row.node.change_type} fallback={<Dash />}>
                     {(v) => <span class="font-mono opacity-80">{v()}</span>}
                 </Show>
             </td>
-            <td class="text-xs">
+            <td class="text-body">
                 <Show when={row.node.module} fallback={<Dash />}>
                     {(v) => <span class="font-mono opacity-80 truncate inline-block max-w-40 align-bottom">{v()}</span>}
                 </Show>
             </td>
-            <td class="text-xs whitespace-nowrap">
+            <td class="text-body whitespace-nowrap">
                 <Show when={row.node.priority} fallback={<Dash />}>
                     {(v) => <span class={`badge badge-sm font-mono ${priorityClass(v())}`}>{v()}</span>}
                 </Show>
             </td>
-            <td class="text-xs">
+            {/* whitespace-nowrap：列窄时「待处理」会被中文逐字竖排（188②），
+                状态文字固定 3 字，锁单行让 table 保住该列的 min-content */}
+            <td class="text-body whitespace-nowrap">
                 <StateSelector uri={row.key} state={row.node.state ?? ""} />
             </td>
-            <td class="text-xs font-mono opacity-60">{row.node.num ?? ""}</td>
-            <td class="text-xs whitespace-nowrap opacity-70" title={row.node.created ?? ""}>
+            <td class="text-body font-mono opacity-60">{row.node.num ?? ""}</td>
+            <td class="text-body whitespace-nowrap opacity-70" title={row.node.created ?? ""}>
                 {fmtTime(row.node.created)}
             </td>
-            <td class="text-xs whitespace-nowrap opacity-70" title={row.node.updated ?? ""}>
+            <td class="text-body whitespace-nowrap opacity-70" title={row.node.updated ?? ""}>
                 {fmtTime(row.node.updated)}
             </td>
         </tr>

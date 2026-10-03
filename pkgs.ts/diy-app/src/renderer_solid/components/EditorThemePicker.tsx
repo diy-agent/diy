@@ -36,7 +36,7 @@ export function EditorThemePicker() {
                 <For each={GROUPS}>
                     {(g) => (
                         <div class="mb-1.5">
-                            <div class="flex items-center gap-1 px-1 pb-1 text-[10px] font-bold tracking-widest opacity-60">
+                            <div class="flex items-center gap-1 px-1 pb-1 text-caption font-bold tracking-widest opacity-60">
                                 <span>{g.title}</span>
                                 <span class="font-normal normal-case tracking-normal opacity-80">
                                     {g.key === "auto"
@@ -48,7 +48,7 @@ export function EditorThemePicker() {
                                 <For each={EDITOR_THEMES.filter((t) => t.group === g.key)}>
                                     {(t) => (
                                         <button
-                                            class={`flex flex-col gap-1 rounded border px-1 py-1 text-[10px] leading-tight ${
+                                            class={`flex flex-col gap-1 rounded border px-1 py-1 text-caption leading-tight ${
                                                 editorThemeKey() === t.key
                                                     ? "border-primary bg-primary/15 font-semibold"
                                                     : "border-transparent hover:bg-base-300/60"
@@ -70,7 +70,7 @@ export function EditorThemePicker() {
                         </div>
                     )}
                 </For>
-                <div class="border-t border-base-300 px-1 pt-1.5 text-[10px] leading-relaxed opacity-50">
+                <div class="border-t border-base-300 px-1 pt-1.5 text-caption leading-relaxed opacity-50">
                     两个编辑器同步；选择会记住。
                     <br />
                     当前：

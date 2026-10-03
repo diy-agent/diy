@@ -109,9 +109,9 @@ export function ViewGrid(props: {
      *   两个图标叠放做旋转交替，点一下即动画切换，不需要重挂载。
      * · 最小化是**单向动作**（收起后 chrome 随 area 一起消失，恢复入口在页面级
      *   「区域开合」按钮里）→ 不做 swap，避免暗示"再点一次能还原"。
-     * · tooltip 用 daisyUI `tooltip` + `data-tip`（而非原生 title：title 有 OS 级延迟）。
-     *   方向取 `tooltip-bottom`：chrome 贴着 area 上沿，tooltip 落进 area 内部不会被
-     *   area 的 `overflow-hidden` 裁掉（tooltip-left/right 会顶到相邻 area 边界）。
+     * · 提示用 `data-tip`（由 App 的**全局 tooltip 委托**渲染成 viewport fixed 浮层）：
+     *   daisyUI 的 `.tooltip` 是 `::before` 伪元素，会被本 area 的 `overflow-hidden` 裁掉，
+     *   全局浮层不受裁剪（2026-10-03 统一）。
      */
     const AreaChrome = (p: { areaId: string }) => {
         const isMax = () => maximized() === p.areaId;
@@ -121,7 +121,7 @@ export function ViewGrid(props: {
                 class={`absolute top-0 right-0 z-30 flex items-center ${VIEW_BAR_H} opacity-40 hover:opacity-100 transition-opacity`}
             >
                 <label
-                    class="btn btn-ghost btn-xs px-1 min-h-0 swap swap-rotate tooltip tooltip-bottom"
+                    class="btn btn-ghost btn-xs px-1 min-h-0 swap swap-rotate"
                     data-tip={isMax() ? "还原（退出最大化）" : "最大化（填满内容区）"}
                     aria-label={isMax() ? "还原" : "最大化"}
                 >
@@ -137,7 +137,7 @@ export function ViewGrid(props: {
                     <IconCompress class="swap-on h-3.5 w-3.5" />
                 </label>
                 <button
-                    class="btn btn-ghost btn-xs px-1 min-h-0 tooltip tooltip-bottom"
+                    class="btn btn-ghost btn-xs px-1 min-h-0"
                     data-tip="最小化（收起该区域）"
                     aria-label="最小化"
                     onClick={(e) => {

@@ -818,7 +818,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
                     const d = document.querySelector('${sel(uri)}');
                     if (!d) return null;
                     const dr = d.getBoundingClientRect();
-                    const list = d.querySelector('.tooltip')?.parentElement;   // 左列滚动容器
+                    const list = d.querySelector('[data-tip]')?.parentElement;   // 左列滚动容器
                     const lr = list?.getBoundingClientRect();
                     const models = [...d.querySelectorAll('button[aria-pressed]')]
                         .map(b => b.getAttribute('aria-label'))
@@ -927,17 +927,18 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
             (v) => v === true,
             { label: "左列出现候选人" },
         );
-        // 提示语必须在，且是 **daisyUI tooltip**（双击是标准手势，但界面上看不出「可以双击」）
+        // 提示语必须在，且走 **data-tip**（由 App 的全局面板级 tooltip 渲染 —— 2026-10-03
+        // 统一替换掉会被 overflow 容器裁剪的 daisyUI `.tooltip`/`tooltip-content`）
         const tip = await ui!.eval<{ text: string | null; hasTooltipClass: boolean }>(`(() => {
             const el = document.querySelector('${sel(uri)} [aria-label="人物 ${候选名}"]');
-            const wrap = el.closest('.tooltip');
+            const wrap = el.closest('[data-tip]');
             return {
-                text: wrap?.querySelector('.tooltip-content')?.textContent ?? null,
+                text: wrap?.getAttribute('data-tip') ?? null,
                 hasTooltipClass: wrap?.classList.contains('tooltip-bottom') ?? false,
             };
         })()`);
         expect(tip.text).toBe("双击选择此人物");
-        expect(tip.hasTooltipClass).toBe(true);
+        expect(tip.hasTooltipClass).toBe(false);
 
         // 滚入视野再真实双击（与 clickIn 同理：滚动区外的元素点不到）
         await ui!.eval<boolean>(`(() => {
@@ -968,45 +969,45 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         );
     });
 
-    it("人物条目上的 tooltip 不被列表的 overflow 裁掉（滚到底的最后一项也完整）", async () => {
-        // daisyUI tooltip 是绝对定位在条目内的，而左列是 `overflow-y-auto` —— 贴着容器底边的条目，
-        // 提示会落到容器外**被裁掉**（本项目在试验场已踩过同一坑，见 promptLabCommon 的 useHoverTip 注释）。
-        // 这里把列表滚到底、对**最后一项**强制展开提示（daisyUI 的 `.tooltip-open`），量它是否完整可见。
-        // 不加这条，容器上的 pb 留白一旦被顺手删掉，肉眼很难发现（要刚好滚到底才复现）。
-        // 标题不能带空格：setupTask 的 title 直接拼进 shell 命令（`task create <title> <pid>`）未加引号，
-        // 带空格会被 CLI 当成额外的位置参数（"project 裁剪任务 未注册"）
+    it("人物条目的提示是 viewport fixed 浮层，不被列表的 overflow 裁掉（滚到底的最后一项也完整）", async () => {
+        // 2026-10-03 统一：提示改由 App 的全局 tooltip 委托渲染成 **fixed 浮层**（读 data-tip），
+        // 不再用 daisyUI 的 `.tooltip`/`.tooltip-content`（那种绝对定位元素贴着 overflow 容器底边会被裁）。
+        // 这里把列表滚到底、对最后一项派发 mouseover，量浮层是否完整落在视口内。
         const uri = await setupTask("tooltip裁剪任务");
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
         await openPanel(uri);
 
         const r = await waitUntil(
             async () =>
-                ui!.eval<{ visible: number; full: number; text: string } | null>(`(() => {
+                ui!.eval<{ visible: number; full: number; text: string; inView: boolean } | null>(`(() => {
                     const d = document.querySelector('${sel(uri)}');
                     if (!d) return null;
-                    const wraps = [...d.querySelectorAll('.tooltip')];
+                    const wraps = [...d.querySelectorAll('[data-tip]')];
                     if (wraps.length === 0) return null;
                     const list = wraps[0].parentElement;
                     list.scrollTop = list.scrollHeight;           // 滚到底：最后一项最贴近容器下沿
                     const last = wraps[wraps.length - 1];
-                    last.classList.add('tooltip-open');           // 强制展开（.tooltip-open 是 daisyUI 的公开态）
-                    const lr = list.getBoundingClientRect();
-                    const tc = last.querySelector('.tooltip-content');
-                    const tr = tc.getBoundingClientRect();
-                    last.classList.remove('tooltip-open');
+                    last.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+                    const tip = [...document.querySelectorAll('div')].find((x) =>
+                        (x.className || '').includes('z-[200]'),
+                    );
+                    if (!tip) return { visible: 0, full: 0, text: '', inView: false };
+                    const tr = tip.getBoundingClientRect();
+                    const visible = Math.round(Math.min(tr.bottom, window.innerHeight) - Math.max(tr.top, 0));
                     return {
-                        visible: Math.round(Math.min(tr.bottom, lr.bottom) - Math.max(tr.top, lr.top)),
+                        visible,
                         full: Math.round(tr.height),
-                        text: tc.textContent ?? "",
+                        text: tip.textContent ?? '',
+                        inView: tr.top >= 0 && tr.bottom <= window.innerHeight,
                     };
                 })()`),
-            (v) => !!v,
-            { label: "量出 tooltip 的可见高度" },
+            (v) => !!v && v.full > 0,
+            { label: "量出全局 tooltip 浮层" },
         );
         expect(r!.text).toBe("双击选择此人物");
-        // 完整可见 = 可见高度等于自身高度（被裁的话会小一截甚至为负）
         expect(r!.full).toBeGreaterThan(0);
-        expect(r!.visible).toBe(r!.full);
+        expect(r!.visible).toBe(r!.full); // 完整可见（fixed 浮层不受列表 overflow 裁剪）
+        expect(r!.inView).toBe(true);
     });
 
     it("双击**已在本任务在用**的人物：绑定原样，也照常关面板", async () => {
@@ -1049,7 +1050,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
                     const d = document.querySelector('${sel(uri)}');
                     const bar = d?.querySelector('[data-testid="persona-impact-bar"]');
                     if (!bar) return null;
-                    const list = d.querySelector('.tooltip')?.parentElement;
+                    const list = d.querySelector('[data-tip]')?.parentElement;
                     return {
                         text: bar.innerText,
                         // 在列表**之上**（否则就是"贴着底栏按钮"那个歧义形态）

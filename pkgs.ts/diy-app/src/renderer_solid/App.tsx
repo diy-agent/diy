@@ -1,4 +1,4 @@
-import { createSignal, createEffect, onMount, onCleanup, untrack, Show, For } from "solid-js";
+import { createSignal, createEffect, on, onMount, onCleanup, untrack, Show, For } from "solid-js";
 import * as Tabs from "@kobalte/core/tabs";
 import { TaskTree } from "./components/TaskTree";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
@@ -25,7 +25,13 @@ import { Caches, NAV_W_MIN, NAV_W_MAX, NAV_W_DEFAULT } from "./lib/ui-state";
 import { VIEW_BAR_H } from "./lib/layout-metrics";
 import { TaskSideView } from "./components/TaskSideView";
 import { Breadcrumb } from "./components/Breadcrumb";
+import { FindBar } from "./components/FindBar";
+import { findStore } from "./store/findStore";
 import { setRendererActions, resetRendererActions, getRendererActions } from "./lib/renderer-actions";
+import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSensor } from "@dnd-kit/solid";
+import type { DragDropProviderProps } from "@dnd-kit/solid";
+import { findTaskProject } from "./components/TaskTree";
+import { isAncestorOf } from "./lib/task-lineage";
 
 /**
  * 路由（page 一级 + 任务执行页的实例）。
@@ -40,6 +46,9 @@ type Section = "task" | "llm" | "settings";
  * 任务执行页与提示词页都是 tab —— 后者是前者的子页面（见 133「一页一中心」）。
  */
 type Route = { kind: "section"; section: Section } | { kind: "tab"; key: string };
+
+// dnd-kit/solid 未直接导出 DragEndEvent，从 onDragEnd 回调参数提取（TaskTree 同款）
+type DragEndEvent = Parameters<NonNullable<DragDropProviderProps["onDragEnd"]>>[0];
 
 /** 顶级导航（一侧栏项 = 一类事情）。任务执行页不出现在这里，它是任务下的动态页面 */
 const NAV_ITEMS: Array<{ id: "task" | "llm" | "settings"; label: string; icon: string }> = [
@@ -95,7 +104,50 @@ export default function App() {
     // 拖拽中的标记：期间**必须强制展开**，否则鼠标一离开侧栏就 mouseleave 收拢，
     // 宽度在「收拢 → 变宽 → 又展开」之间抖（见 onNavGripDown）
     const [resizingNav, setResizingNav] = createSignal(false);
+    // nav 拖拽改父子（任务 242 / ##87）：拖拽期间屏蔽 hover 详情层（否则幽灵经过别的项
+    // 就弹层，界面乱），松手即恢复
+    const [navDragging, setNavDragging] = createSignal(false);
+    const [navDragLabel, setNavDragLabel] = createSignal("");
     let navEl: HTMLDivElement | undefined;
+
+    /**
+     * nav 任务项拖拽 → 改父子（**只在 nav 项之间拖**，不跨 view/page —— 用户 2026-10-03 澄清）。
+     * 语义与任务管理树一致（TaskTree handleDragEnd 同款）：拖到某任务上 = 成为其子任务；
+     * dnd id 用 tab key（同一任务可开 task-run/ctxlab 多个 tab，uri 会撞），落点换算回任务 uri。
+     */
+    const handleNavDragEnd = async (event: DragEndEvent) => {
+        if (event.operation?.canceled) return;
+        const dragKey = String(event.operation?.source?.id ?? "");
+        const dropKey = String(event.operation?.target?.id ?? "");
+        if (!dragKey || !dropKey || dragKey === dropKey) return;
+        const dragTab = tabStore.opened.find((t) => t.key === dragKey);
+        const dropTab = tabStore.opened.find((t) => t.key === dropKey);
+        const dragUri = dragTab?.ctx;
+        const dropUri = dropTab?.ctx;
+        if (!dragUri || !dropUri || dragUri === dropUri) return; // 同任务多 tab：互拖无意义
+        const dragInfo = findTaskProject(taskStore.nodes, dragUri);
+        const dropInfo = findTaskProject(taskStore.nodes, dropUri);
+        if (!dragInfo || !dropInfo) return;
+        if (dragInfo.project !== dropInfo.project) {
+            notificationStore.addToast("error", "只能在同一项目内拖动");
+            return;
+        }
+        // RV-07：防环预检 —— 拖到自己的子孙下成环。main 有守卫（数据安全无虞），
+        // 客户端提前拦只为体验：非法落点当场报，不等 main 抛错。
+        if (isAncestorOf(taskStore.nodes, dragUri, dropUri)) {
+            notificationStore.addToast("error", "不能拖到自己的子任务下");
+            return;
+        }
+        if (dropUri === dragInfo.parent) return; // 拖到直接父级：无需改动
+        try {
+            await diyService.diy.task.move({ uri: dragUri, parent: dropUri });
+            await taskStore.loadTree(); // 树变 → tabStore 祖先链重算 → nav 缩进/顺序自动跟上（##159 链路）
+            notificationStore.addToast("success", "已调整层级");
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            notificationStore.addToast("error", `调整失败: ${msg}`);
+        }
+    };
     let mainAreaEl: HTMLDivElement | undefined;
 
     /**
@@ -108,6 +160,10 @@ export default function App() {
      * 的过期丢弃守住，防止旧快照让这里误判「任务消失」。
      */
     let prevUris = new Set<string>();
+    // RV-03（##245 review）：切页后旧页面的查找 Range 随 Solid 卸载退化成 zeroWidth，
+    // badge 还挂着过期计数（refresh 全仓零调用）。查找条是**页内**语义 → 换页即关
+    // （close 会清 Range/计数/高亮，一步到位）。
+    createEffect(on(() => route(), () => findStore.close()));
     createEffect(() => {
         const cur = new Set<string>();
         const walk = (ns: TreeNode[]) => {
@@ -132,6 +188,42 @@ export default function App() {
     });
 
     /**
+     * 切回「任务管理」页时，要求在树里**展开定位**到某个任务（##160）。
+     *
+     * 为什么需要外部下发而不是 TaskTree 自己推：树是「当前在哪」的索引，但切页那一刻
+     * 路由已经离开 tab —— `tabStore.showTree()` 把 active 清空后，树无从知道
+     * 「刚才是从哪个任务的会话回来的」。故由切页动作**在清空之前**把目标夺下来交给树。
+     *
+     * nonce 用于「重复点同一个导航项也要重新定位」：只比对 uri 的话，第二次点击
+     * （比如用户在树里滚跑后想回到当前任务）不会触发任何变化。
+     */
+    const [treeReveal, setTreeReveal] = createSignal<{ uri: string; nonce: number } | null>(null);
+
+    /**
+     * 记下「切页前的当前任务」并请求树定位它。
+     *
+     * 取值优先级：正在看的 tab 的任务（会话页/提示词页的 ctx）→ 树里选中的任务。
+     * 两者都没有（首次进 app、纯任务管理操作）时什么都不做 —— 不定位总比乱定位好。
+     * **必须在 `tabStore.showTree()` 之前调用**（active 清空后就取不到 ctx 了）。
+     */
+    const requestTreeReveal = (explicit?: string) => {
+        const uri = explicit ?? tabStore.activeTab()?.ctx ?? taskStore.selectedUri;
+        if (!uri) return;
+        setTreeReveal({ uri, nonce: (treeReveal()?.nonce ?? 0) + 1 });
+    };
+
+    /**
+     * 全局悬浮提示（viewport fixed）—— 取代 daisyUI 的 `tooltip`/`data-tip` 伪元素。
+     *
+     * 为什么统一收在这里：daisyUI 的 `.tooltip` 是元素上的 `::before` 伪元素，会被祖先的
+     * `overflow-hidden/auto` 裁掉 —— 分区 area、详情抽屉、滚动容器里普遍踩到（用户反馈
+     * 「任务详情 bar 的按钮提示被遮挡」即此）；原生 `title` 又有 OS 级延迟。
+     * 改为 **document 级委托 + fixed 浮层**：悬停即显、永不裁剪，一处生效全部 tooltip。
+     * 数据源仍是各处既有的 `data-tip` 属性 —— 组件侧写法不变（只是不再挂 `.tooltip` 类）。
+     */
+    const [tip, setTip] = createSignal<{ text: string; el: HTMLElement } | null>(null);
+
+    /**
      * 悬停导航上的任务项时，在其右侧弹出的「任务详情」覆盖层（值是任务 uri）。
      *
      * 三个刻意的选择：
@@ -145,9 +237,17 @@ export default function App() {
     /** 任务树标题的单层预览 drawer：left 是相对 mainAreaEl 的 x，宽度取触发 view 的宽度 */
     const [hoverTreeTask, setHoverTreeTask] = createSignal<{ uri: string; left: number; width: number } | null>(null);
     const HOVER_HIDE_MS = 180;
+    /** 任务管理表格行 hover 预览的固定宽度（行本身接近整页宽，不能按行宽铺开） */
+    const HOVER_TREE_W = 320;
     let hoverHideTimer: ReturnType<typeof setTimeout> | undefined;
     const showHoverTask = (uri: string | null | undefined) => {
         if (!uri) return;
+        /* 只有「该任务正是此刻在看的那一个」才不弹详情覆盖层（##183 C-1 的原意）：
+           它的详情已在屏上，hover 再弹一层 = 同屏两份。
+           ⚠️ 不能写成 `find(task-run:<uri>)`（凡是开在 nav 里的都跳）—— 那样
+           「已开但没在看」的任务 hover 也全没了（用户反馈「导航 hover 丢了」）。
+           判据见 tabStore.isTaskDisplayed（响应式：切走/关掉立刻恢复可弹）。 */
+        if (tabStore.isTaskDisplayed(uri)) return;
         clearTimeout(hoverHideTimer);
         setHoverTreeTask(null);
         setHoverTaskUri(uri);
@@ -164,7 +264,7 @@ export default function App() {
     // → drawer-content（以及贴在它左缘的覆盖层）跟着左移，画面抖一下。
     // 注意：**不能**把 hoverTreeTask 也算作「该展开」—— tree drawer 是主区内的 overlay，
     // 展开侧栏会让主区整体右移，把鼠标下的标题链接挪走（指针落到 nav 上）→ drawer 刚开就被收掉。
-    const expanded = () => pinned() || hovered() || resizingNav() || !!hoverTaskUri();
+    const expanded = () => pinned() || hovered() || resizingNav() || !!hoverTaskUri() || navDragging();
 
     /**
      * 清空悬停覆盖层。**任何「切页面」的动作都要调它**：
@@ -206,7 +306,23 @@ export default function App() {
         tabStore.setAncestorsResolver(taskAncestorsOf);
         taskStore.loadTree();
 
-        // 任务树标题悬停 → 只开一层详情 drawer（复用 TaskSideView），贴在触发任务 view 右侧。
+        // ── 页内查找（##234）──
+        // 搜索根 = 主内容区（不含面包屑/侧栏/查找条自身）
+        findStore.setRoot(mainAreaEl);
+        // ⌘/Ctrl+F：打开页内查找并聚焦（全局；任务树搜索不再抢这个键，见 TaskTree）
+        const onFindKey = (e: KeyboardEvent) => {
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+                e.preventDefault();
+                findStore.openFind();
+            } else if (e.key === "Escape" && findStore.open) {
+                findStore.close();
+            }
+        };
+        window.addEventListener("keydown", onFindKey);
+        onCleanup(() => window.removeEventListener("keydown", onFindKey));
+
+        // 任务「血缘树 / 任务管理表格行」悬停 → 只开一层详情 drawer（复用 TaskSideView），
+        // 尽力贴在触发行/所在 view 的右侧（贴不下就放左侧，两侧都不行贴主区右缘）。
         // 不在 drawer 里再开 drawer：overlay 实例禁用 hoverPreview，只保留一层。
         const onTreePreview = (detail: { uri: string; rect: { left: number; right: number; width: number } }) => {
             const host = mainAreaEl;
@@ -215,11 +331,12 @@ export default function App() {
             const width = Math.min(Math.round(detail.rect.width), Math.round(main.width));
             const roomRight = main.right - detail.rect.right;
             const roomLeft = detail.rect.left - main.left;
-            // 优先贴右边；右侧不够才放左侧。左右都放不下完整一层就不弹。
+            // 优先贴右边；右侧不够才放左侧。
             let left: number;
             if (roomRight >= width) left = detail.rect.right - main.left;
             else if (roomLeft >= width) left = detail.rect.left - main.left - width;
-            else return;
+            // 两侧都放不下（如任务管理表格行几乎占满主区）→ 贴主区右缘，别直接不弹
+            else left = Math.max(0, Math.round(main.width - width));
             // mousemove 在行内连续派发：同一个 URI 已经是当前唯一 drawer 时不重设对象，
             // 否则每帧都重建 TaskSideView，会把标题 tooltip / 鼠标 hover 连续打断。
             const current = hoverTreeTask();
@@ -240,9 +357,13 @@ export default function App() {
             const link = target.closest<HTMLElement>("[data-task-hover-uri]");
             const uri = link?.dataset.taskHoverUri;
             if (!uri) return;
+            // 锚点：血缘树里是所在 view（宽度取 view 宽）；任务管理表格行是所在行，
+            // 宽度固定 HOVER_TREE_W（行接近整页宽，按行宽会铺满整屏）。
             const view = link.closest<HTMLElement>("[data-task-side-view]");
-            const rect = view?.getBoundingClientRect();
-            if (rect) onTreePreview({ uri, rect: { left: rect.left, right: rect.right, width: rect.width } });
+            const anchor = view ?? link.closest<HTMLElement>("tr[data-uri]") ?? link;
+            const r = anchor.getBoundingClientRect();
+            const width = view ? r.width : HOVER_TREE_W;
+            onTreePreview({ uri, rect: { left: r.left, right: r.right, width } });
         };
         const onDocumentMouseOut = (ev: MouseEvent) => {
             const target = ev.target;
@@ -255,19 +376,56 @@ export default function App() {
         };
         document.addEventListener("mouseover", onDocumentMouseOver);
         document.addEventListener("mouseout", onDocumentMouseOut);
+        // ── 全局 tooltip 委托（读 [data-tip]）──
+        const onTipOver = (ev: MouseEvent) => {
+            const t = ev.target;
+            if (!(t instanceof Element)) return;
+            const el = t.closest<HTMLElement>("[data-tip]");
+            if (!el) {
+                if (tip()) setTip(null);
+                return;
+            }
+            if (tip()?.el === el) return; // 同一元素内移动：不重设，免得每帧闪
+            setTip({ text: el.dataset.tip ?? "", el });
+        };
+        const onTipOut = (ev: MouseEvent) => {
+            const t = ev.target;
+            if (!(t instanceof Element)) return;
+            const el = t.closest<HTMLElement>("[data-tip]");
+            if (!el) return;
+            const next = ev.relatedTarget;
+            if (next instanceof Node && el.contains(next)) return; // 仍在同一元素内
+            setTip(null);
+        };
+        // 按下即隐：tooltip 与下拉菜单同位（都在触发元素正下方），若点击后仍驻留，
+        // fixed z-200 会把 absolute z-20 的菜单盖住 —— 用户「点了没反应，没子菜单」
+        // （任务 242 实测：⋯ 菜单 rect 与 tooltip rect 逐像素重叠）。一按下就收，交互即隐。
+        const onTipDown = () => {
+            if (tip()) setTip(null);
+        };
+        document.addEventListener("mouseover", onTipOver);
+        document.addEventListener("mouseout", onTipOut);
+        document.addEventListener("pointerdown", onTipDown);
         onCleanup(() => {
             document.removeEventListener("mouseover", onDocumentMouseOver);
             document.removeEventListener("mouseout", onDocumentMouseOut);
+            document.removeEventListener("mouseover", onTipOver);
+            document.removeEventListener("mouseout", onTipOut);
+            document.removeEventListener("pointerdown", onTipDown);
         });
         setRendererActions({
             navigate: (page) => {
                 if (!VALID_PAGES.has(page)) return;
+                hideHoverLayers(); // RV-01/06：切页入口统一收悬停层（与 goSection 对齐）
                 if (page === "task-run" || page === "lab") {
                     const t = tabStore.activeTab();
                     setRoute(t ? { kind: "tab", key: t.key } : { kind: "section", section: "task" });
                     return;
                 }
-                if (page === "task") tabStore.showTree();
+                if (page === "task") {
+                    requestTreeReveal();
+                    tabStore.showTree();
+                }
                 setRoute({ kind: "section", section: page as Section });
             },
             focus: (uri) => taskStore.selectTask(uri),
@@ -313,10 +471,12 @@ export default function App() {
                 layoutStore.setViewHidden(pageId, viewInstanceKey(def, ctx), !visible);
             },
             openTaskRun: (uri) => {
+                hideHoverLayers(); // RV-06：覆盖层里点标题开会话切页 → 层立即收，不等 mouseleave
                 tabStore.open("task-run", uri);
                 setRoute({ kind: "tab", key: tabStore.active });
             },
             openLab: (uri) => getRendererActions().openTab?.("lab", uri),
+            revealTask: (uri) => requestTreeReveal(uri),
             openTab: (pageId, ctx) => {
                 tabStore.open(pageId, ctx);
                 setRoute({ kind: "tab", key: tabStore.active });
@@ -390,6 +550,7 @@ export default function App() {
     const goSection = (id: Section) => {
         hideHoverLayers(); // 页面切走了，悬停层不能留着盖在屏幕上
         if (id === "task") {
+            requestTreeReveal(); // 取 ctx 要在 showTree 清空 active 之前（##160）
             tabStore.showTree();
             setRoute({ kind: "section", section: "task" });
             return;
@@ -410,13 +571,22 @@ export default function App() {
     /** 关闭 tab：与任务状态无关（= 暂时不理会）。关父连带关子 */
     const closeTab = (key: string) => {
         hideHoverLayers();
+        // 关闭前记下它的 ctx：关掉最后一个 tab 会落回任务树，那时也应在树里定位到它（##160），
+        // 但 tabStore.close 之后 activeTab 已变，取不到了
+        const closedCtx = key.includes(":") ? key.slice(key.indexOf(":") + 1) : null;
         tabStore.close(key);
         const next = tabStore.active;
-        setRoute(next ? { kind: "tab", key: next } : { kind: "section", section: "task" });
+        if (next) {
+            setRoute({ kind: "tab", key: next });
+            return;
+        }
+        if (closedCtx) setTreeReveal({ uri: closedCtx, nonce: (treeReveal()?.nonce ?? 0) + 1 });
+        setRoute({ kind: "section", section: "task" });
     };
 
     return (
-        <div class="drawer lg:drawer-open">
+        // diy-nav-pinned：pin 锁定时窄窗也占布局列（199），覆盖规则见 index.css
+        <div class={`drawer lg:drawer-open ${pinned() ? "diy-nav-pinned" : ""}`}>
             {/* DaisyUI drawer 必须的 checkbox（控制开合，:checked 决定侧栏是否展开） */}
             <input type="checkbox" id="sidebar-toggle" class="drawer-toggle" />
             {/* 主内容区 */}
@@ -442,14 +612,20 @@ export default function App() {
                         }}
                         gotoSection={(id) => {
                             hideHoverLayers();
-                            if (id === "task") tabStore.showTree();
+                            if (id === "task") {
+                                requestTreeReveal();
+                                tabStore.showTree();
+                            }
                             setRoute({ kind: "section", section: id as Section });
                         }}
                         closeTab={closeTab}
                     />
+                    {/* 页内查找条：动态出现（关掉即消失），不是模态弹窗。放在面包屑与主内容之间，
+                        且在 mainAreaEl 之外 —— 查找不搜自己。 */}
+                    <FindBar />
                     <div ref={(el) => (mainAreaEl = el)} class="flex-1 min-h-0 overflow-hidden relative">
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "task"}>
-                        <TaskTree />
+                        <TaskTree reveal={treeReveal()} />
                         <TaskDetailPanel />
                     </Show>
                     <Show when={route().kind === "tab" && activeTabItem()?.pageId === "task-run"}>
@@ -505,6 +681,7 @@ export default function App() {
                         <Show when={hoverTaskUri()}>
                             {(uri) => (
                                 <aside
+                                    data-find-skip
                                     class="absolute inset-y-0 left-0 z-30 w-80 bg-base-100 border-r shadow-2xl flex flex-col"
                                     aria-label={`任务详情：${uri()}`}
                                     onMouseEnter={cancelHideHoverTask}
@@ -518,6 +695,7 @@ export default function App() {
                         <Show when={hoverTreeTask()}>
                             {(preview) => (
                                 <aside
+                                    data-find-skip
                                     class="absolute inset-y-0 z-30 bg-base-100 border-r shadow-2xl flex flex-col"
                                     style={{ left: `${preview().left}px`, width: `${preview().width}px` }}
                                     aria-label={`任务详情：${preview().uri}`}
@@ -529,11 +707,45 @@ export default function App() {
                                 </aside>
                             )}
                         </Show>
+                        {/* 全局 tooltip 浮层：fixed，按触发元素定位（下方放不下则翻到上方）。
+                            pointer-events-none：绝不挡住鼠标，免得 tooltip 自己触发 mouseout 抖动。 */}
+                        <Show when={tip()}>
+                            {(t) => {
+                                const r = t().el.getBoundingClientRect();
+                                const up = r.bottom + 48 > window.innerHeight;
+                                const left = Math.max(6, Math.min(r.left, window.innerWidth - 270));
+                                return (
+                                    <div
+                                        class="pointer-events-none fixed z-[200] max-w-64 rounded bg-neutral px-2 py-1 text-body leading-relaxed text-neutral-content shadow-lg"
+                                        style={{
+                                            left: `${left}px`,
+                                            top: `${up ? r.top - 6 : r.bottom + 6}px`,
+                                            transform: up ? "translateY(-100%)" : undefined,
+                                        }}
+                                    >
+                                        {t().text}
+                                    </div>
+                                );
+                            }}
+                        </Show>
                     </div>
 </main>
             </div>
 
-            {/* 侧栏 - DaisyUI drawer */}
+            {/* 侧栏 - DaisyUI drawer。
+                DragDropProvider 是纯 context（不产生 DOM），包住侧栏让任务项的
+                useDraggable/useDroppable 拿到管理器 —— nav 拖拽改父子（任务 242）。 */}
+            <DragDropProvider
+                sensors={[PointerSensor]}
+                onDragStart={() => {
+                    setNavDragging(true);
+                    hideHoverLayers(); // 拖拽中不再弹 hover 详情层（幽灵经过别的项会乱）
+                }}
+                onDragEnd={(e) => {
+                    setNavDragging(false);
+                    return handleNavDragEnd(e);
+                }}
+            >
             <div class="drawer-side z-40">
                 <label for="sidebar-toggle" class="drawer-overlay" />
                 {/* 宽用内联 style：daisyUI .menu{width:fit-content} 是非分层样式，会压住 w-12/w-56 utility
@@ -625,38 +837,63 @@ export default function App() {
                                                 /** 缩进：页面子页面一级 + 每个已打开的祖先任务一级 */
                                                 const indentPx = () => 28 + (isSubPage() ? 12 : 0) + taskIndent() * 14;
                                                 const isNested = () => isSubPage() || taskIndent() > 0;
+                                                // nav 拖拽改父子（任务 242）：带任务上下文的 tab 都可拖/可放
+                                                // （lab 提示词页也有 ctx=挂的任务；dnd id 用 tab key —— 同一任务
+                                                // 可开多个 tab，uri 会撞 id）。只挂展开态（收起态看不出标题，不支持拖）。
+                                                const drag = useDraggable({
+                                                    get id() {
+                                                        return t.key;
+                                                    },
+                                                    get data() {
+                                                        return { title: label(), kind: "nav-task" };
+                                                    },
+                                                });
+                                                const drop = useDroppable({
+                                                    get id() {
+                                                        return t.key;
+                                                    },
+                                                });
+                                                const dndRef = (el: Element | undefined) => {
+                                                    drag.ref(el);
+                                                    drop.ref(el);
+                                                };
                                                 return (
                                                     <li class="flex justify-center">
                                                         <Show
                                                             when={expanded()}
                                                             fallback={
                                                                 <button
-                                                                    class={`relative flex items-center justify-center h-8 w-8 rounded-lg text-[10px] font-mono transition-colors cursor-pointer ${
+                                                                    class={`relative flex items-center justify-center h-8 w-8 rounded-lg text-caption font-mono transition-colors cursor-pointer ${
                                                                         isActive()
                                                                             ? "bg-primary/30 ring-1 ring-primary/40 font-semibold"
                                                                             : "hover:bg-base-300 opacity-70"
                                                                     }`}
                                                                     title={label()}
                                                                     onClick={tabGoto}
-                                                                    onMouseEnter={() => showHoverTask(t.ctx)}
+                                                                    onMouseEnter={() => {
+                                                                        if (!navDragging()) showHoverTask(t.ctx);
+                                                                    }}
                                                                     onMouseLeave={scheduleHideHoverTask}
                                                                 >
                                                                     {icon()}
                                                                     {/* 收起态装不下缩进，用一个小角标表达「有父」 */}
                                                                     <Show when={isNested()}>
-                                                                        <span class="absolute left-0.5 bottom-0.5 text-[8px] opacity-50">↳</span>
+                                                                        <span class="absolute left-0.5 bottom-0.5 text-caption opacity-50">↳</span>
                                                                     </Show>
                                                                 </button>
                                                             }
                                                         >
                                                             <div
-                                                                class={`group flex items-center gap-1 w-full pr-1 py-1 rounded-lg text-xs cursor-pointer transition-colors ${
+                                                                ref={dndRef}
+                                                                class={`group flex items-center gap-1 w-full pr-1 py-1 rounded-lg text-body cursor-pointer transition-colors ${
                                                                     isActive() ? "bg-primary/25 ring-1 ring-primary/30" : "hover:bg-base-300"
-                                                                }`}
+                                                                } ${drop.isDropTarget() ? "ring-2 ring-primary/60 ring-inset" : ""}`}
                                                                 style={{ "padding-left": `${indentPx()}px` }}
                                                                 title={t.ctx ?? t.key}
                                                                 onClick={tabGoto}
-                                                                onMouseEnter={() => showHoverTask(t.ctx)}
+                                                                onMouseEnter={() => {
+                                                                    if (!navDragging()) showHoverTask(t.ctx);
+                                                                }}
                                                                 onMouseLeave={scheduleHideHoverTask}
                                                             >
                                                                 {/* 缩进用竖线引导（比箭头更清楚地表示「挂在上面那项之下」）；
@@ -701,6 +938,18 @@ export default function App() {
                     </Show>
                 </div>
             </div>
+            {/* 拖拽幽灵：跟随光标显示「正在拖的任务标题」（TaskTree 同款视觉） */}
+            <DragOverlay>
+                {(source) =>
+                    source?.data?.title ? (
+                        <div class="flex items-center px-3 py-1 text-prose bg-base-100 border rounded shadow-lg opacity-80 max-w-[200px] pointer-events-none select-none">
+                            <span class="truncate">{String(source.data.title)}</span>
+                            <span class="ml-2 text-body opacity-60">拖放改层级</span>
+                        </div>
+                    ) : null
+                }
+            </DragOverlay>
+            </DragDropProvider>
 
             <ToastContainer />
         </div>

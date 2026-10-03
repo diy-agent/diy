@@ -187,6 +187,20 @@ export const tabStore = {
         return tabStore.find(active());
     },
 
+    /**
+     * 某任务是否是**此刻正显示在屏幕上**的 task-run tab。
+     *
+     * 用途：hover 详情覆盖层的去重判据 —— 只跳过「其详情已经在屏上」的那一个任务，
+     * 而不是「凡是开在 nav 里的都跳」。**这是 C-1 的修正**：原判据用 `find(task-run:<uri>)`
+     * 把「已开但非激活」的任务也一并跳过，导致 nav/血缘树的 hover 预览大面积失效
+     * （用户反馈「导航的 hover 事件丢了」）。##183 的原意是「已开在**当前页**的任务」，
+     * 即正在看的那一个 —— 此方法如实表达该语义。
+     */
+    isTaskDisplayed(uri: string): boolean {
+        const t = tabStore.activeTab();
+        return t?.pageId === "task-run" && t.ctx === uri;
+    },
+
     /** 注入任务祖先链解析器（App 侧：从任务树现查）。注入即触发重算。
      *  注意：必须包一层 `() => fn` —— Solid 的 setter 把「函数入参」当 updater 调用，
      *  直接 set(fn) 会立刻以 prev 调 fn 并把返回值当新值。 */

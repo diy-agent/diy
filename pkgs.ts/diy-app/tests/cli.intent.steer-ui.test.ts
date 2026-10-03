@@ -179,8 +179,16 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
         // 没在生成：不该出现留言按钮（它只在生成中有意义）
         expect(text).not.toContain("停止");
         expect(text).not.toContain("留言");
-        // 清空本对话历史已从输入区挪到对话 view 上方（仅图标 + tooltip）
-        expect(text).toContain("清空本对话历史");
+        // 清空历史收进「⋯」溢出菜单（低频/危险操作默认不显示，点开才露出）：
+        // 收起态只该看到 ⋯ 入口，不该直接露出危险项
+        expect(text).toContain("更多操作");
+        expect(text).not.toContain("清空本对话历史");
+        await clickButton("更多操作");
+        const menuText = await waitUntil(a11yText, (s) => s.includes("清空本对话历史"), {
+            label: "⋯ 菜单展开后露出清空项",
+        });
+        expect(menuText).toContain("清空本对话历史");
+        await clickButton("更多操作"); // 收起，避免影响后续用例
     });
 
     it("非生成态：打字只有「发送」，没有留言按钮", async () => {

@@ -16,6 +16,7 @@ import { findPage } from "../../shared/view-registry";
 import { taskStateColor } from "../../main/core/task-state";
 import { tabStore, type TabItem } from "../store/tabStore";
 import { taskStore, type TreeNode } from "../store/taskStore";
+import { findStore } from "../store/findStore";
 
 // ═══════════════════════════════════════
 //  工具函数
@@ -177,7 +178,7 @@ function CrumbDropdown(props: {
             <button
                 ref={btnRef}
                 tabindex={0}
-                class="btn btn-ghost btn-xs px-0.5 min-h-0 h-4 text-[10px] leading-none opacity-40 hover:opacity-100"
+                class="btn btn-ghost btn-xs px-0.5 min-h-0 h-4 text-caption leading-none opacity-40 hover:opacity-100"
                 onClick={(e) => { e.stopPropagation(); setOpen(!open()); watchOpen(); }}
             >
                 ▾
@@ -186,7 +187,7 @@ function CrumbDropdown(props: {
                 <ul
                     ref={menuRef}
                     tabindex={0}
-                    class="dropdown-content menu p-1 shadow-lg bg-base-200 rounded-box w-52 text-xs z-50 max-h-60 overflow-y-auto"
+                    class="dropdown-content menu p-1 shadow-lg bg-base-200 rounded-box w-52 text-body z-50 max-h-60 overflow-y-auto"
                     onClick={dismiss}
                 >
                     <For each={props.items}>
@@ -205,9 +206,9 @@ function CrumbDropdown(props: {
                                             <span class={`w-1.5 h-1.5 rounded-full shrink-0 ${taskStateColor(findNode(taskStore.nodes, t.ctx ?? "")?.state)}`} />
                                         </Show>
                                         <span class="flex-1 truncate">{labelOf(t)}</span>
-                                        {isCur && <span class="text-primary text-[10px]">◀</span>}
+                                        {isCur && <span class="text-primary text-caption">◀</span>}
                                         <button
-                                            class="btn btn-ghost btn-xs px-0.5 min-h-0 h-4 opacity-0 hover:!opacity-100 text-[10px]"
+                                            class="btn btn-ghost btn-xs px-0.5 min-h-0 h-4 opacity-0 hover:!opacity-100 text-caption"
                                             title="关闭"
                                             onClick={(e) => { e.stopPropagation(); props.onClose(t.key); }}
                                         >
@@ -262,11 +263,11 @@ export function Breadcrumb(props: BreadcrumbProps) {
     };
 
     return (
-        <nav class="flex items-center gap-0.5 px-3 py-1 text-[13px] border-b border-base-300/60 bg-base-200/30 shrink-0 select-none min-h-[2rem]">
+        <nav class="flex items-center gap-0.5 px-3 py-1 text-body border-b border-base-300/60 bg-base-200/30 shrink-0 select-none min-h-[2rem]">
             <For each={crumbs()}>
                 {(crumb, i) => (
                     <span class="flex items-center gap-0.5 shrink-0">
-                        {i() > 0 && <span class="text-base-content/25 mx-1 text-[11px]">›</span>}
+                        {i() > 0 && <span class="text-base-content/25 mx-1 text-body">›</span>}
                         <button
                             class={`btn btn-ghost btn-xs px-1.5 min-h-0 h-5 normal-case font-normal whitespace-nowrap ${
                                 crumb.isCurrent
@@ -276,7 +277,7 @@ export function Breadcrumb(props: BreadcrumbProps) {
                             onClick={() => handleClick(crumb)}
                             disabled={crumb.isCurrent}
                         >
-                            {crumb.icon && <span class="text-[12px]">{crumb.icon}</span>}
+                            {crumb.icon && <span class="text-body">{crumb.icon}</span>}
                             {crumb.label}
                         </button>
                         <Show when={crumb.siblings && crumb.siblings.length > 0}>
@@ -291,21 +292,33 @@ export function Breadcrumb(props: BreadcrumbProps) {
                 )}
             </For>
 
-            {/* 当前 tab 的关闭入口 —— 放在顶栏最右端（页面右上角）。
-                为什么导航侧栏已有 ✕ 还要这一个：侧栏 tab 的关闭按钮是 hover 才显形的
-                （opacity-0 group-hover:opacity-70），一旦侧栏收起（rail 态）就完全不可见；
-                而「关掉当前页面」是高频动作，应该在页面本体上有常显入口。
-                只在 tab 路由显示：section 页面（任务管理/LLM/设置）没有「当前 tab」可关。 */}
-            <Show when={!!props.activeKey}>
+            {/* 右侧动作组：页内查找 + 关闭当前页（都靠右）。
+                查找按钮是「不知道快捷键的人也能点」的入口（##234）：⌘F 可用，但按钮保证可达。 */}
+            <div class="ml-auto flex items-center gap-0.5 shrink-0">
                 <button
-                    class="btn btn-ghost btn-xs ml-auto px-1.5 min-h-0 h-5 shrink-0 gap-1 text-base-content/60 hover:text-error"
-                    title="关闭当前页面（暂时不理会，不影响任务状态）"
-                    onClick={() => props.closeTab(props.activeKey)}
+                    class="btn btn-ghost btn-xs px-1.5 min-h-0 h-5 shrink-0 gap-1 text-base-content/60 hover:text-primary"
+                    title="页面内查找（⌘F）"
+                    data-tip="页面内查找（⌘F）"
+                    onClick={() => findStore.openFind()}
                 >
-                    <span class="text-[11px]">✕</span>
-                    <span class="text-[11px]">关闭</span>
+                    <span class="text-body">🔍</span>
                 </button>
-            </Show>
+                {/* 当前 tab 的关闭入口 —— 放在顶栏最右端（页面右上角）。
+                    为什么导航侧栏已有 ✕ 还要这一个：侧栏 tab 的关闭按钮是 hover 才显形的
+                    （opacity-0 group-hover:opacity-70），一旦侧栏收起（rail 态）就完全不可见；
+                    而「关掉当前页面」是高频动作，应该在页面本体上有常显入口。
+                    只在 tab 路由显示：section 页面（任务管理/LLM/设置）没有「当前 tab」可关。 */}
+                <Show when={!!props.activeKey}>
+                    <button
+                        class="btn btn-ghost btn-xs px-1.5 min-h-0 h-5 shrink-0 gap-1 text-base-content/60 hover:text-error"
+                        title="关闭当前页面（暂时不理会，不影响任务状态）"
+                        onClick={() => props.closeTab(props.activeKey)}
+                    >
+                        <span class="text-body">✕</span>
+                        <span class="text-body">关闭</span>
+                    </button>
+                </Show>
+            </div>
         </nav>
     );
 }

@@ -33,7 +33,7 @@ export function AppInfo() {
             .catch((e: unknown) => setFailed(e instanceof Error ? e.message : String(e)));
     });
     return (
-        <div class="p-4 max-w-xl space-y-2 text-xs font-mono">
+        <div class="p-4 max-w-xl space-y-2 text-body font-mono">
             <Show when={failed()} fallback={
                 <Show when={info()} fallback={<div class="opacity-60">加载中…</div>}>
                     {(i) => (
@@ -66,7 +66,7 @@ export function AppInfo() {
                     )}
                 </Show>
             }>
-                {(err) => <div class="p-4 text-sm text-error">获取运行信息失败：{err()}</div>}
+                {(err) => <div class="p-4 text-prose text-error">获取运行信息失败：{err()}</div>}
             </Show>
         </div>
     );

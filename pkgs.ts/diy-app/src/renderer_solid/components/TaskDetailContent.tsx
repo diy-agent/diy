@@ -21,9 +21,9 @@
  * （悬停覆盖层 + 执行页左栏 + 管理页详情面板），全局单例只有一份值，会让别的实例
  * 永远卡在「加载中…」（这个坑在本文件的前身 TaskSideView 里踩过）。
  */
-import { createSignal, createEffect, on, onMount, For, Show, type JSX } from "solid-js";
+import { createSignal, createEffect, on, onMount, onCleanup, For, Show, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
-import { taskStore, type TaskDetail } from "../store/taskStore";
+import { taskStore, type TaskDetail, type TreeNode } from "../store/taskStore";
 import { tabStore } from "../store/tabStore";
 import { personaStore } from "../store/personaStore";
 import { draftStore } from "../store/draftStore";
@@ -54,7 +54,7 @@ function Block(props: { k: string; title: string; extra?: string; children: JSX.
     return (
         <section class="border border-base-300 rounded-lg overflow-hidden min-w-0">
             <button
-                class="flex w-full items-center gap-1 bg-base-300 px-2 py-1 text-[11px] font-bold tracking-wide opacity-80 hover:opacity-100"
+                class="flex w-full items-center gap-1 bg-base-300 px-2 py-1 text-body font-bold tracking-wide opacity-80 hover:opacity-100"
                 aria-expanded={blockOpen(props.k)}
                 onClick={() => setBlocks((v) => ({ ...v, [props.k]: !blockOpen(props.k) }))}
             >
@@ -71,15 +71,30 @@ function Block(props: { k: string; title: string; extra?: string; children: JSX.
     );
 }
 
-/** 打开任务 = 任务管理表格里点任务名的那个动作（选中它、看它的详情）。 */
+/** 打开任务 = 任务管理内选中它、看它的详情，并**带动下面任务表展开定位**（reveal，##160 机制）。 */
 function openTask(uri: string): void {
     void taskStore.selectTask(uri);
     getRendererActions().navigate?.("task");
+    getRendererActions().revealTask?.(uri);
 }
 
 /** 打开对话 = nav 上点任务项那个动作（开/聚焦任务执行页 tab） */
 function openChat(uri: string): void {
     getRendererActions().openTaskRun?.(uri);
+}
+
+/** 在任务树里找节点及其直接父标题（管理面板 hover 信息卡的数据源） */
+function findNodeInfo(
+    nodes: readonly TreeNode[],
+    uri: string,
+    parentTitle?: string,
+): { node: TreeNode; parentTitle?: string } | null {
+    for (const n of nodes ?? []) {
+        if (n.kind === "task" && n.uri === uri) return { node: n, parentTitle };
+        const f = findNodeInfo(n.children ?? [], uri, n.kind === "task" ? (n.title ?? n.uri) : parentTitle);
+        if (f) return f;
+    }
+    return null;
 }
 
 /**
@@ -101,6 +116,16 @@ function TaskNameLink(props: {
     preview?: boolean;
     /** 该任务的对话是否已打开（打开态由调用方从 tabStore 现查） */
     chatOpen?: boolean;
+    /** 长标题换行显示全（详情面板标题用，188①）；缺省单行 truncate（树内嵌入场景） */
+    wrap?: boolean;
+    /**
+     * 字号档（RV-02，##245 review）：title = 14px（详情面板主标题，E 节语义档
+     * 「title 14px = 详情 h3」）；缺省 body = 11px（树内行级链接）。
+     * 原模板硬编码 text-body，压过外层 h3.text-title → 显示 11px、编辑态 14px 跳变。
+     */
+    size?: "body" | "title";
+    /** 点击语义：task = 去任务管理看详情（缺省）；chat = 打开/切换对话（血缘树，C-2 调换） */
+    act?: "task" | "chat";
 }) {
     const [tip, setTip] = createSignal<{ x: number; y: number; up: boolean } | null>(null);
 
@@ -113,15 +138,19 @@ function TaskNameLink(props: {
     return (
         <>
             <button
-                class={`diy-link block w-full truncate text-left underline-offset-2 hover:underline cursor-pointer ${
-                    props.chatOpen ? "font-semibold" : ""
-                }`}
+                class={`${props.size === "title" ? "text-title" : "text-body"} ${props.class ?? ""} diy-link block w-full text-left underline-offset-2 hover:underline cursor-pointer ${
+                    props.wrap ? "whitespace-normal" : "truncate"
+                } ${props.chatOpen ? "font-semibold" : ""}`}
                 data-task-hover-uri={props.preview ? props.uri : undefined}
                 onMouseEnter={(e) => showTip(e.currentTarget)}
                 onMouseLeave={() => setTip(null)}
                 onClick={(e) => {
                     e.stopPropagation();
-                    openTask(props.uri);
+                    /* C-2（改 ##183 的既定交互）：血缘树点标题 = 打开对话 ——
+                       用户在树里点标题的意图几乎都是「进这个任务的会话」，
+                       原「去任务管理」常点错，真正的任务管理入口交给行内按钮。 */
+                    if (props.act === "chat") openChat(props.uri);
+                    else openTask(props.uri);
                 }}
             >
                 {props.label}
@@ -130,14 +159,18 @@ function TaskNameLink(props: {
                 {(t) => (
                     <Portal>
                         <div
-                            class="pointer-events-none fixed z-[100] w-max max-w-64 rounded bg-neutral px-2 py-1 text-[11px] leading-relaxed text-neutral-content shadow-lg"
+                            class="pointer-events-none fixed z-[100] w-max max-w-64 rounded bg-neutral px-2 py-1 text-body leading-relaxed text-neutral-content shadow-lg"
                             style={{
                                 left: `${Math.min(t().x, Math.max(8, window.innerWidth - 268))}px`,
                                 top: `${t().up ? t().y : t().y}px`,
                                 transform: t().up ? "translateY(-100%)" : undefined,
                             }}
                         >
-                            {props.chatOpen ? "已在对话中打开 · 点击打开任务" : "打开任务"}
+                            {props.act === "chat"
+                                ? props.chatOpen
+                                    ? "已在对话中打开 · 点击切换到对话"
+                                    : "打开对话（就近）"
+                                : "在任务管理中查看 · 展开任务表定位"}
                         </div>
                     </Portal>
                 )}
@@ -212,19 +245,19 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
     return (
         <div class="space-y-3">
             <div class="task-field-row">
-                <span class="task-field-label text-xs opacity-50">标题</span>
+                <span class="task-field-label text-body opacity-50">标题</span>
                 <div class="flex min-w-0 items-center gap-1">
                     <Show
                         when={editing()}
                         fallback={
-                            <h3 class="min-w-0 flex-1 text-sm font-bold">
-                                <TaskNameLink uri={props.uri} label={props.task.title || props.uri} class="block" />
+                            <h3 class="min-w-0 flex-1 text-title font-bold">
+                                <TaskNameLink uri={props.uri} label={props.task.title || props.uri} class="block" wrap size="title" />
                             </h3>
                         }
                     >
                         <input
                             type="text"
-                            class="input input-bordered input-sm min-w-0 flex-1 text-sm font-bold"
+                            class="input input-bordered input-sm min-w-0 flex-1 text-title font-bold"
                             value={titleDraft()}
                             onInput={(e) => onInput(e.currentTarget.value)}
                             placeholder="任务标题"
@@ -244,7 +277,7 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                 控件右缘对齐成一条线，扫读时值在哪里是可预期的。 */}
             <div class="flex flex-col gap-1.5">
                 <div class="task-field-row">
-                    <span class="task-field-label text-xs opacity-50">状态</span>
+                    <span class="task-field-label text-body opacity-50">状态</span>
                     <div class="flex min-w-0 items-center gap-1">
                         <StateSelect current={props.task.state} saving={saving()} onSave={(v) => void savePatch({ state: v })} />
                         <Show when={editing()}>
@@ -275,7 +308,7 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                     这里**只换绑**（续聊，会话一条不动）；改人物本身的模型走 CLI
                     `diy agent persona set`（那是全局的，影响所有引用它的任务）。 */}
                 <div class="task-field-row">
-                    <span class="task-field-label text-xs opacity-50">人物</span>
+                    <span class="task-field-label text-body opacity-50">人物</span>
                     <select
                         class="select select-xs select-bordered min-w-0"
                         disabled={saving() || personaStore.personas.length === 0}
@@ -302,7 +335,15 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                 </div>
             </div>
 
-            <div class="flex flex-col gap-1 text-[11px] opacity-60">
+            <div class="flex flex-col gap-1 text-body opacity-60">
+                {/* 任务 URI：原在任务执行页 page 菜单条上，A 方案（2026-10-03）移入属性 ——
+                    page 条只留页面级入口（提示词/上下文树/area 开合），信息字段归属性面板 */}
+                <div class="task-field-row">
+                    <span class="task-field-label">URI</span>
+                    <span class="min-w-0 truncate font-mono" title={props.uri}>
+                        {props.uri}
+                    </span>
+                </div>
                 <Show when={props.task.project}>
                     <div class="task-field-row">
                         <span class="task-field-label">项目</span>
@@ -329,77 +370,167 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
 }
 
 // ═══════════════════════════════════════════
-// 块 2：任务父子关系树（祖先链 + 自己 + 子孙）
+// 块 2：任务树（当前任务所在根任务下的**整颗树**，含兄弟分支；当前任务高亮定位）
 // ═══════════════════════════════════════════
-function LineageBlock(props: { uri: string; hoverPreview?: boolean }) {
-    /** 血缘行：树才是父子关系的真相源（URI 路径不表达层级），见 lib/task-lineage */
+function LineageBlock(props: { uri: string; hoverPreview?: boolean; host?: "manage" | "chat" }) {
+    /** 管理宿主：树点标题 = 就近选中；hover 出「左侧并排信息卡」而非弹覆盖层 */
+    const isManage = () => props.host === "manage";
+    /** 就近语义：manage 宿主就近 = 去任务管理看它；chat 宿主就近 = 打开它的对话 */
+    const act = () => (isManage() ? "task" : "chat") as "task" | "chat";
+    /**
+     * 管理面板树 hover 的并排信息卡（2026-10-03 用户指令：
+     * 「任务管理的任务详情的任务树 hover 附着一个左侧并排的任务信息 view，方便快速对比」）。
+     * 贴**面板左缘外侧** fixed —— 面板在屏右，卡在面板左边 = 两个任务同屏并排对比；
+     * 不盖面板（覆盖层是「弹走」，这个是「并排」）。移向卡有 250ms 宽限，不会一闪而过。
+     */
+    const [peek, setPeek] = createSignal<{ uri: string; right: number; top: number } | null>(null);
+    let peekTimer: ReturnType<typeof setTimeout> | undefined;
+    const cancelPeekClose = () => clearTimeout(peekTimer);
+    const schedulePeekClose = () => {
+        clearTimeout(peekTimer);
+        peekTimer = setTimeout(() => setPeek(null), 250);
+    };
+    const openPeek = (uri: string, el: HTMLElement) => {
+        if (!isManage()) return;
+        clearTimeout(peekTimer);
+        const panel = el.closest("[data-task-detail-panel]")?.getBoundingClientRect();
+        const r = el.getBoundingClientRect();
+        if (!panel) return;
+        const top = Math.max(8, Math.min(r.top, window.innerHeight - 260));
+        setPeek({ uri, right: Math.max(8, window.innerWidth - panel.left + 8), top });
+    };
+    onCleanup(() => clearTimeout(peekTimer));
+    /**
+     * 任务树行：树才是父子关系的真相源（URI 路径不表达层级）。
+     *
+     * **整颗树**（##233 / ##183 第 4 点）—— 从当前任务所在**根任务** DFS 全部任务，
+     * 含所有兄弟分支；当前任务标 `current`。见 lib/task-lineage。
+     */
     const rows = () => lineageRows(taskStore.nodes, props.uri);
     /**
      * 该任务的对话是否**已经开在导航里**（tabStore.opened 是响应式 getter：
      * 开/关 tab 会立即让这里的圆点与按钮态跟着变，不需要额外订阅）。
      */
     const chatOpen = (uri: string) => !!tabStore.find(`task-run:${uri}`);
+
+    /**
+     * 树的内滚动容器。
+     *
+     * 整树可能很长（本仓 ##87 一系上百个任务）—— 全展开撑爆详情面板会把正文挤到看不到，
+     * 故给树自己一个高度上限、内部滚动（##233 的「规模风险」：先全展开 + 定位高亮，
+     * 折叠策略后续再谈）。
+     */
+    let scrollEl: HTMLDivElement | undefined;
+    /** 定位到当前任务行：只在它不在可视区时滚（`block:"nearest"`），不无谓打扰 */
+    const scrollToCurrent = () => scrollEl?.querySelector("[data-lineage-current]")?.scrollIntoView({ block: "nearest" });
+
+    createEffect(
+        on(
+            () => props.uri,
+            () => {
+                // 数据可能还没到（taskStore.nodes 异步加载）：立即滚一次（fallback 行已就位），
+                // 稍后再校正一次（整树渲染完，当前行位置可能变）。不用 rAF —— 窗口被遮挡时会被节流。
+                setTimeout(scrollToCurrent, 0);
+                setTimeout(scrollToCurrent, 250);
+            },
+        ),
+    );
+
     return (
-        <div class="flex flex-col">
+        <div ref={(el) => (scrollEl = el)} class="flex flex-col max-h-[45vh] overflow-auto">
             <For each={rows()}>
                 {(r) => (
                     <div
+                        data-lineage-current={r.current ? "1" : undefined}
                         class={`group flex items-center gap-1 rounded px-1 py-0.5 cursor-pointer hover:bg-base-300 ${
                             r.current ? "bg-primary/20 ring-1 ring-primary/30" : ""
                         }`}
                         style={{ "padding-left": `${r.depth * 12 + 4}px` }}
                         title={r.uri}
-                        onClick={() => openTask(r.uri)}
+                        /* 主链接就近（2026-10-03）：管理宿主 = 管理内选中 + 任务表定位；
+                           对话宿主 = 打开对话（原行点击硬编码 openTask = 跑去任务管理，是「跑远」） */
+                        onClick={() => (isManage() ? openTask(r.uri) : openChat(r.uri))}
+                        onMouseEnter={(e) => openPeek(r.uri, e.currentTarget)}
+                        onMouseLeave={schedulePeekClose}
                     >
                         <span class={`w-1.5 h-1.5 rounded-full shrink-0 ${taskStateColor(r.state)}`} />
-                        <span class="font-mono shrink-0 text-[11px] opacity-60">#{r.num ?? "?"}</span>
+                        <span class="font-mono shrink-0 text-body opacity-60">#{r.num ?? "?"}</span>
                         {/* 「◀ 当前」**紧跟标题**（不是行尾）：它是标题的补语，隔着一个
                             auto margin 飘到右边会读成「这一行整体是当前」。
                             标题 min-w-0 + truncate：长标题只截自己，不吃掉后面的标签。 */}
                         <TaskNameLink
                             uri={r.uri}
                             label={r.title ?? r.uri}
-                            class="min-w-0 text-[11px]"
-                            /* 已开在导航里的任务**不再弹 hover 详情**：
-                               nav 上那一项 hover 出来的就是同一个 view 的同一份详情，
-                               树里再弹一层等于把同样的东西显示两遍 —— 这个动作本来就只是
-                               「顺便看一眼」，重复弹反而让人以为点错了地方。
-                               那些任务的详情入口 = nav 项 hover（或点标题进任务管理页）。
-                               tabStore 是响应式的：关掉 tab 后这里立刻恢复可弹。 */
-                            preview={props.hoverPreview && !chatOpen(r.uri)}
+                            class="min-w-0 text-body"
+                            act={act()}
+                            /* hover 预览（chat 宿主）：只跳过「该任务正是此刻在看的那一个」。
+                               manage 宿主不走覆盖层 —— hover 改为「左侧并排信息卡」（下方 Portal）。 */
+                            preview={!isManage() && props.hoverPreview && !tabStore.isTaskDisplayed(r.uri)}
                             chatOpen={chatOpen(r.uri)}
                         />
-                        <Show when={r.current}>
-                            <span class="shrink-0 text-[10px] opacity-60">◀ 当前</span>
+                        {/* 「◀ 当前」标记已删（2026-10-03 用户指令）：当前行的高亮底色 +
+                            ring 已经表达了「就是这行」，再加文字是重复信息。 */}
+                        {/* 「已打开在对话里」= **单个图标**（2026-10-03 用户指令）：原来是一颗
+                            两图标 + 文字的操作按钮，噪音大。**跳转任务管理**的入口已从树里删掉、
+                            统一收在「任务详情」view 的 bar 上（见 TaskSideView），故这里只留
+                            状态指示：已打开显示 💬，未打开不显示任何图标。 */}
+                        <Show when={chatOpen(r.uri)}>
+                            <span class="ml-auto shrink-0 text-body" title="已在对话中打开">💬</span>
                         </Show>
-                        {/* 操作按钮**右对齐**（ml-auto），与上面「当前」各管一侧 —— 混在一起
-                            会随标题长度左右漂，每行的按钮位置都不一样，扫不下去。
-                            两态刻意不同：
-                              · 未打开 → hover 该行才显形（平时不占地方，行内保持安静）
-                              · **已打开在导航里** → 常态显示且高亮成「已开」态：这时它是
-                                「状态指示」而不只是动作入口，藏起来反而要去 nav 里核对
-                            文案随之变成「已打开」，避免和未打开态长得一样、「到底开没开」看不出来。 */}
-                        <button
-                            class={`btn btn-xs px-1 min-h-0 ml-auto shrink-0 ${
-                                chatOpen(r.uri)
-                                    ? "btn-ghost bg-primary/25 ring-1 ring-primary/40 text-base-content hover:bg-primary/40"
-                                    : "btn-ghost opacity-0 group-hover:opacity-70 hover:!opacity-100"
-                            }`}
-                            title={
-                                chatOpen(r.uri)
-                                    ? `#${r.num ?? "?"} 的对话已打开（点击切换到它）`
-                                    : `打开 #${r.num ?? "?"} 的对话`
-                            }
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                openChat(r.uri);
-                            }}
-                        >
-                            {chatOpen(r.uri) ? "💬 已打开" : "💬 对话"}
-                        </button>
                     </div>
                 )}
             </For>
+            {/* 管理面板树 hover 的并排信息卡：fixed 在面板左缘外（与面板并排、可同屏对比） */}
+            <Show when={peek()}>
+                {(pk) => {
+                    const info = () => findNodeInfo(taskStore.nodes, pk().uri);
+                    return (
+                        <Portal>
+                            <div
+                                class="fixed z-[150] w-72 rounded-box border border-base-300 bg-base-100 p-3 shadow-xl"
+                                style={{ right: `${pk().right}px`, top: `${pk().top}px` }}
+                                data-find-skip
+                                onMouseEnter={cancelPeekClose}
+                                onMouseLeave={schedulePeekClose}
+                            >
+                                <Show when={info()} fallback={<div class="text-body opacity-60">加载中…</div>}>
+                                    {(f) => (
+                                        <div class="flex flex-col gap-1.5 text-body min-w-0">
+                                            <div class="flex items-baseline gap-1.5 min-w-0">
+                                                <span class="font-mono opacity-60 shrink-0">#{f().node.num ?? "?"}</span>
+                                                <span class="font-semibold min-w-0 break-all">{f().node.title ?? f().node.uri}</span>
+                                            </div>
+                                            <div class="flex items-center gap-1.5 opacity-70">
+                                                <span
+                                                    class={`w-2 h-2 rounded-full inline-block ${taskStateColor(f().node.state)}`}
+                                                />
+                                                <span>{f().node.state ?? "—"}</span>
+                                            </div>
+                                            <Show when={f().parentTitle}>
+                                                <div class="min-w-0 opacity-70">
+                                                    父级：<span class="min-w-0 break-all">{f().parentTitle}</span>
+                                                </div>
+                                            </Show>
+                                            <Show when={f().node.created}>
+                                                <div class="opacity-60">🕐 {new Date(f().node.created!).toLocaleString()}</div>
+                                            </Show>
+                                            <Show when={f().node.updated && f().node.updated !== f().node.created}>
+                                                <div class="opacity-60">✏️ {new Date(f().node.updated!).toLocaleString()}</div>
+                                            </Show>
+                                            <Show when={f().node.body}>
+                                                <div class="opacity-50 border-t border-base-300 pt-1.5 line-clamp-4 whitespace-pre-wrap break-all">
+                                                    {f().node.body}
+                                                </div>
+                                            </Show>
+                                            <div class="opacity-40 text-caption">并排对比 · 点标题=就近操作</div>
+                                        </div>
+                                    )}
+                                </Show>
+                            </div>
+                        </Portal>
+                    );
+                }}
+            </Show>
         </div>
     );
 }
@@ -478,7 +609,7 @@ function BodyBlock(props: { uri: string; task: TaskDetail; refresh: () => Promis
                 }
             >
                 <textarea
-                    class="textarea textarea-bordered w-full text-xs font-mono"
+                    class="textarea textarea-bordered w-full text-body font-mono"
                     rows="14"
                     value={draft()}
                     onInput={(e) => onInput(e.currentTarget.value)}
@@ -495,7 +626,7 @@ function BodyBlock(props: { uri: string; task: TaskDetail; refresh: () => Promis
             </Show>
 
             <Show when={!editing()}>
-                <Show when={props.task.body} fallback={<span class="text-xs opacity-40 italic">无内容</span>}>
+                <Show when={props.task.body} fallback={<span class="text-body opacity-40 italic">无内容</span>}>
                     <Show when={tab() === "md"} fallback={<CodeBlock code={props.task.body!} lang="markdown" />}>
                         <MarkdownView content={props.task.body!} />
                     </Show>
@@ -508,7 +639,18 @@ function BodyBlock(props: { uri: string; task: TaskDetail; refresh: () => Promis
 // ═══════════════════════════════════════════
 // 容器：三块的流式排布
 // ═══════════════════════════════════════════
-export function TaskDetailContent(props: { uri: string; task?: TaskDetail; hoverPreview?: boolean }) {
+export function TaskDetailContent(props: {
+    uri: string;
+    task?: TaskDetail;
+    hoverPreview?: boolean;
+    /**
+     * 宿主语义（用户 2026-10-03 重捋，取代 183/C-2 的一刀切）：
+     *   manage = 任务管理详情面板 —— 树点标题**就近**（管理内选中 + 任务表展开定位）；
+     *   chat   = 执行页左栏 / 悬停覆盖层 —— 树点标题**就近**（打开对话）。
+     * 「主链接就近、远跳交给面板大按钮/入口」是总原则（见 ##228 七节）。
+     */
+    host?: "manage" | "chat";
+}) {
     /** 自取的那份（没给 props.task 时用；覆盖层 / 执行页左栏走这条路） */
     const [own, setOwn] = createSignal<TaskDetail | null>(null);
     /**
@@ -587,7 +729,7 @@ export function TaskDetailContent(props: { uri: string; task?: TaskDetail; hover
     };
 
     return (
-        <Show when={task()} fallback={<div class="text-xs opacity-60 p-1">加载中…</div>}>
+        <Show when={task()} fallback={<div class="text-body opacity-60 p-1">加载中…</div>}>
             {(t) => (
                 <div class="task-flow">
                     {/* 左列宽度用 CSS 变量下发（只改宽度，不改结构：结构由容器查询按实测宽度切换）。
@@ -598,7 +740,7 @@ export function TaskDetailContent(props: { uri: string; task?: TaskDetail; hover
                                 <AttrsBlock uri={props.uri} task={t()} refresh={refresh} />
                             </Block>
                             <Block k="lineage" title="任务树">
-                                <LineageBlock uri={props.uri} hoverPreview={props.hoverPreview} />
+                                <LineageBlock uri={props.uri} hoverPreview={props.hoverPreview} host={props.host ?? "chat"} />
                             </Block>
                         </div>
                         {/* 拖宽手柄：只在两列布局下显示（窄容器里单列，拖它没有语义）。

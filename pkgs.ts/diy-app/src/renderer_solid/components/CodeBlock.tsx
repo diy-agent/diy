@@ -99,7 +99,7 @@ export function CodeBlock(props: {
     <Show
       when={html()}
       fallback={
-        <pre class="my-2 overflow-auto rounded-lg bg-base-200 p-3 text-xs leading-relaxed font-mono">
+        <pre class="my-2 overflow-auto rounded-lg bg-base-200 p-3 text-body leading-relaxed font-mono">
           <code>{props.code}</code>
         </pre>
       }
@@ -107,7 +107,7 @@ export function CodeBlock(props: {
       {/* Shiki 产出的是自带 <pre class="shiki"> 的完整结构，直接挂载其输出。
           内容由 Shiki 从纯文本生成（非用户 HTML 注入），是官方消费方式。
           背景/内边距用 CSS 覆盖，让深浅主题与 daisyUI 变量一致。 */}
-      <div class="my-2 overflow-auto rounded-lg text-xs [&_pre]:m-0 [&_pre]:p-3 [&_pre]:!bg-base-200" innerHTML={html()!} />
+      <div class="my-2 overflow-auto rounded-lg text-body [&_pre]:m-0 [&_pre]:p-3 [&_pre]:!bg-base-200" innerHTML={html()!} />
     </Show>
   );
 }

@@ -39,7 +39,7 @@ export function CreateTaskSheet(props: {
     return (
         <>
             <button
-                class="ml-auto opacity-40 hover:opacity-100 text-xs px-1"
+                class="ml-auto opacity-40 hover:opacity-100 text-body px-1"
                 onClick={(e) => {
                     e.stopPropagation();
                     setOpen(true);
@@ -51,10 +51,10 @@ export function CreateTaskSheet(props: {
             {/* DaisyUI Modal */}
             <dialog class="modal" open={open()}>
                 <div class="modal-box w-96">
-                    <h3 class="font-bold text-lg">
+                    <h3 class="font-bold text-display">
                         {isSubtask() ? "添加子任务" : "添加任务"}
                     </h3>
-                    <p class="text-xs opacity-60 py-2">
+                    <p class="text-body opacity-60 py-2">
                         {isSubtask()
                             ? `添加到「${props.projectLabel}」`
                             : `为「${props.projectLabel}」创建新任务`}
@@ -62,7 +62,7 @@ export function CreateTaskSheet(props: {
 
                     <div class="form-control py-1">
                         <label class="label">
-                            <span class="label-text">任务标题</span>
+                            <span class="label-text text-body">任务标题</span>
                         </label>
                         <input
                             class="input input-bordered input-sm"
@@ -86,7 +86,7 @@ export function CreateTaskSheet(props: {
                     </div>
                 </div>
                 <form method="dialog" class="modal-backdrop">
-                    <button onClick={() => setOpen(false)}>close</button>
+                    <button class="text-body" onClick={() => setOpen(false)}>close</button>
                 </form>
             </dialog>
         </>

@@ -1,8 +1,10 @@
 /**
- * task-lineage — 一个任务的「血缘行」：祖先链（根 → 直接父）+ 自己 + 全部子孙。
+ * task-lineage — 一个任务所在的「整颗任务树」行（从根任务 DFS、树序、带深度）。
  *
- * 供 TaskDetailContent 的「任务树」块用（原先那里只平铺「自己 uri / 父 uri」两行，
- * 看不出层级，也无法点进去）。
+ * 供 TaskDetailContent 的「任务树」块用。**以当前任务所在根任务为根、展开整颗树**
+ * （含所有兄弟分支），当前任务标 `current` —— 不再只是「父链 + 自己 + 子孙」那条线。
+ * 出处：##183 第 4 点（hover 时只显示一条线很乱、脑疲劳，应显示整颗树并定位本任务），
+ * 落地见 ##233。
  *
  * 父子关系的真相源是**任务树**（`parentUri`），不是 URI 路径 ——
  * `projects/<pid>/tasks/<n>` 只表达「哪个项目第几号」，不表达层级。
@@ -11,7 +13,7 @@ import type { TreeNode } from "../store/taskStore";
 
 export interface LineageRow {
     uri: string;
-    /** 缩进层级：祖先链从 0 起，自己 = 链长，子孙依次 +1 */
+    /** 缩进层级：根任务从 0 起，子级依次 +1（与 URI 路径无关，由 parentUri 树决定） */
     depth: number;
     /** 是否为本视图的「当前任务」 */
     current: boolean;
@@ -41,20 +43,24 @@ function chainTo(nodes: TreeNode[], uri: string): TreeNode[] | null {
 }
 
 /**
- * 生成血缘行（深度优先、已按树序）。
+ * 生成整树行（**从根任务深度优先、树序**）。
+ *
+ * 步骤：先求出从顶层到 `uri` 的链，链中**第一个有 uri 的节点**即根任务
+ * （项目节点没有 uri、不能成行，故滤掉再取 —— 顺带避免「跳过一行」让后续缩进整体多一级）；
+ * 再从该根任务 DFS 全部子孙。兄弟分支因同属该根而自然纳入。
  *
  * `seen` 兼作**防环**：脏数据（互相认父、自己当自己的子）不该把这里转死。
+ * 根的父若指向已删除任务，`chainTo` 找不到自会以当前可达的顶层任务为根（##87 语义：
+ * parent 悬空的任务视为根，不丢失）。
  */
 export function lineageRows(nodes: TreeNode[], uri: string): LineageRow[] {
-    // 项目节点没有 uri（只有 project id），不能成行 —— 先滤掉再算层级，
-    // 否则「跳过一行」会让后面的行整体多缩进一级（实测踩过）。
-    const chain = chainTo(nodes, uri)?.filter((n): n is TreeNode & { uri: string } => !!n.uri);
+    const raw = chainTo(nodes, uri);
     // 树里还没有它（刚建 / 树未加载完）→ 只显示自己，不至于空白
-    if (!chain || chain.length === 0) return [{ uri, depth: 0, current: true }];
+    if (!raw || raw.length === 0) return [{ uri, depth: 0, current: true }];
 
     const rows: LineageRow[] = [];
     const seen = new Set<string>();
-    const push = (n: TreeNode, depth: number) => {
+    const walk = (n: TreeNode, depth: number) => {
         if (!n.uri || seen.has(n.uri)) return;
         seen.add(n.uri);
         rows.push({
@@ -65,14 +71,35 @@ export function lineageRows(nodes: TreeNode[], uri: string): LineageRow[] {
             title: n.title,
             state: n.state,
         });
+        for (const c of n.children ?? []) walk(c, depth + 1);
     };
-    chain.forEach((n, i) => push(n, i));
-    const walk = (ns: TreeNode[], depth: number) => {
-        for (const n of ns) {
-            push(n, depth);
-            walk(n.children ?? [], depth + 1);
-        }
-    };
-    walk(chain[chain.length - 1].children ?? [], chain.length);
+
+    // 根 = 链中第一个有 uri 的节点（项目节点无 uri 不能成行）。
+    const firstIdx = raw.findIndex((n) => !!n.uri);
+    const rootNode = raw[firstIdx]!;
+    const parent = firstIdx > 0 ? raw[firstIdx - 1] : undefined;
+    /**
+     * **当前任务就是顶级**时（rootNode === 当前，父是项目节点）：兄弟顶级任务挂在
+     * 项目节点下，不走「根任务的子树」就会被漏掉（RV-04：实测项目下 #1/#2 两个顶级，
+     * 查 #1 只返回一行）。此时 DFS 起点改为**项目节点的全部任务子级**（项目行仍不成行，
+     * 子级 depth 从 0 起）—— 正是「整颗根树含兄弟分支」在顶级场景的语义。
+     * 深层任务行为不变（根仍是其所在根任务）。
+     */
+    const roots: TreeNode[] =
+        parent && parent.kind === "project" && rootNode.uri === uri
+            ? (parent.children ?? []).filter((c) => c.kind === "task" && !!c.uri)
+            : [rootNode];
+    for (const r of roots) walk(r, 0);
     return rows;
+}
+
+/**
+ * `ancestor` 是否在 `uri` 的祖先链上（含直接父）—— 拖拽防环预检用（RV-07）：
+ * 把任务拖到自己的子孙下会成环，main 侧有守卫（task.ts 防环），这里提前拦**只为体验**
+ * （非法落点在客户端就报，不等 main 抛错）。数据安全本就由 main 保证。
+ */
+export function isAncestorOf(nodes: TreeNode[], ancestor: string, uri: string): boolean {
+    const chain = chainTo(nodes, uri);
+    if (!chain) return false;
+    return chain.some((n) => n.uri === ancestor);
 }

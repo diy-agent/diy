@@ -96,6 +96,7 @@ export function TaskDetailPanel() {
     return (
         <Show when={!!taskStore.selectedUri}>
             <div
+                data-task-detail-panel
                 class="card bg-base-100 border-l shadow-xl absolute inset-y-0 right-0 z-40 h-full flex flex-col"
                 style={{ width: `${renderW()}px` }}
                 onClick={(e) => e.stopPropagation()}
@@ -107,7 +108,7 @@ export function TaskDetailPanel() {
                 />
                 {/* 卡片头部：URI + 试验场 + 关闭 */}
                 <div class={`flex items-center justify-between px-4 ${VIEW_BAR_H} border-b shrink-0`}>
-                    <span class="text-xs font-mono opacity-60 truncate max-w-[300px]">
+                    <span class="text-body font-mono opacity-60 truncate max-w-[300px]">
                         {taskStore.selectedUri}
                     </span>
                     <div class="flex items-center gap-1">
@@ -134,8 +135,8 @@ export function TaskDetailPanel() {
                             （draftStore.hasAny），只要用户改过内容就会自动恢复，无内容损失。
                             内容本体与任务执行页左栏 / nav 悬停覆盖层**同一个组件**：
                             这里宽度够（默认 560px），流式布局自动排成两列。 */}
-                        <Show when={taskStore.selectedTask} keyed fallback={<div class="opacity-60 text-sm">加载中…</div>}>
-                            {(t) => <TaskDetailContent uri={t.uri} task={t} />}
+                        <Show when={taskStore.selectedTask} keyed fallback={<div class="opacity-60 text-prose">加载中…</div>}>
+                            {(t) => <TaskDetailContent uri={t.uri} task={t} host="manage" />}
                         </Show>
                 </div>
 

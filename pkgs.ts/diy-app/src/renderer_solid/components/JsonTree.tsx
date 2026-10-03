@@ -77,10 +77,10 @@ function JsonNode(props: { k?: string; v: unknown; depth: number; floor: () => n
                             <Show
                                 when={md()}
                                 fallback={
-                                    <pre class="whitespace-pre-wrap font-mono text-[11px] leading-relaxed">{s}</pre>
+                                    <pre class="whitespace-pre-wrap font-mono text-body leading-relaxed">{s}</pre>
                                 }
                             >
-                                <MarkdownView content={s} class="text-xs" />
+                                <MarkdownView content={s} class="text-body" />
                             </Show>
                         </div>
                     </Show>
@@ -110,12 +110,12 @@ function JsonNode(props: { k?: string; v: unknown; depth: number; floor: () => n
                 <button class="opacity-70 hover:opacity-100 font-mono" onClick={() => setOpen((o) => !o)}>
                     {isArr() ? "[" : "{"}
                     <Show when={!open() && isArr()}>
-                        <span class="opacity-60 text-[10px]"> {summary()} </span>
+                        <span class="opacity-60 text-caption"> {summary()} </span>
                     </Show>
                     <Show when={!open()}>{isArr() ? "]" : "}"}</Show>
                 </button>
                 <Show when={open() && isArr()}>
-                    <span class="opacity-40 text-[10px] font-mono">{summary()}</span>
+                    <span class="opacity-40 text-caption font-mono">{summary()}</span>
                 </Show>
             </div>
             <Show when={open()}>
@@ -124,7 +124,7 @@ function JsonNode(props: { k?: string; v: unknown; depth: number; floor: () => n
                         <For each={items()}>
                             {(item, i) => (
                                 <div class="flex gap-1">
-                                    <span class="opacity-30 font-mono text-[10px] pt-0.5">{i()}</span>
+                                    <span class="opacity-30 font-mono text-caption pt-0.5">{i()}</span>
                                     <div class="flex-1 min-w-0">
                                         <JsonNode v={item} depth={props.depth + 1} floor={props.floor} />
                                     </div>
@@ -155,7 +155,7 @@ export function JsonTree(props: { data: unknown }) {
     const max = () => Math.max(1, depthOf(props.data));
     const step = () => setFloor((f) => (f >= max() ? 1 : f + 1));
     return (
-        <div class="font-mono text-[11px] leading-relaxed">
+        <div class="font-mono text-body leading-relaxed">
             <div class="flex justify-end pb-1">
                 <button class="btn btn-xs btn-ghost" onClick={step}>
                     {floor() >= max() ? `收起 ${max()}/${max()}层` : `展开到 ${floor() + 1}/${max()}层`}
