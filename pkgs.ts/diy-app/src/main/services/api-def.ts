@@ -33,6 +33,26 @@ const StatusDataId = z.object({ status: z.string(), data: z.object({ id: z.strin
 const StatusOk = z.object({ status: z.string() });
 
 /** 任务树节点 schema（递归，供 ui.tree 输出强类型） */
+/** UI 快照数据（ui.state 单读 / ui.watch.uiState 流 共用同一形状） */
+const UiSnapshotData = z.object({
+  rev: z.number().describe("UI 快照序号（每次渲染提交递增；通用屏障）"),
+  uiRev: z.number().describe("本地 UI 状态版本（tab/页面/选中 变化递增）"),
+  dataRev: z.number().describe("数据版本（任务树等来自 main 的数据变化递增；跨进程链的终点）"),
+  active: z.string().describe('当前激活 tab key；"" = 任务管理页'),
+  tabs: z.array(z.object({
+    key: z.string(),
+    pageId: z.string(),
+    ctx: z.string().nullable(),
+    indent: z.number().describe("任务层次缩进（祖先链长度）"),
+  })),
+  selectedUri: z.string().nullable().describe("任务树当前选中任务 uri"),
+  tree: z.object({
+    count: z.number().describe("任务数（递归展开任务节点后的数量）"),
+    sig: z.string().describe("任务 uri+状态+标题 排序签名（消费端可比对，不需解析 DOM）"),
+    loading: z.boolean(),
+  }),
+});
+
 export interface TaskNodeShape {
   kind: "project" | "task";
   uri?: string;
@@ -1052,6 +1072,38 @@ export const apiDef = RpcSchema.router({
                 }),
               }),
             }),
+          }),
+
+          /**
+           * UI 状态单读（unary）—— 与 ui.watch.uiState 同一形状。
+           * 用于「先读现状（拿 rev/uiRev/dataRev）→ 操作 → 再读/比对」的一次性调用；
+           * 事件驱动等待用 ui.watch.uiState 流。
+           */
+          state: RpcSchema.unary({
+            desc: `UI 状态快照（单读；含 rev/uiRev/dataRev 版本号）`,
+            input: {},
+            output: z.object({ status: z.string(), data: UiSnapshotData }),
+          }),
+
+          /**
+           * UI 状态变化流（业务语义快照）—— renderer 侧事件源，createEffect 后推送。
+           *
+           * 为什么放 diy.ui.*：状态活在 renderer，事件源也在 renderer（createEffect 读 store），
+           * 经 rpc-port 的 RendererForwarder 转发给 CLI/测试订阅；与 diy.watch.fileChange（main 侧）
+           * 对称，只是事件源换到渲染进程的"渲染提交后"边界。
+           *
+           * 语义：**订阅即刻 yield 当前快照**（防丢唤醒），此后每次渲染提交（DOM 已更新）再 yield 全量快照。
+           * 消费者不用轮询、不猜时机：`for await (snap) { if (ok(snap)) break }`。
+           */
+          watch: RpcSchema.group({
+            desc: `UI 状态变化流（业务语义，渲染提交后快照）`,
+            children: {
+              uiState: RpcSchema.serverStream({
+                desc: `UI 快照流 — 订阅即得当前态，之后每次 UI 变更（渲染提交后）推送全量快照`,
+                input: {},
+                output: z.object({ status: z.string(), data: UiSnapshotData }),
+              }),
+            },
           }),
         },
       }),
