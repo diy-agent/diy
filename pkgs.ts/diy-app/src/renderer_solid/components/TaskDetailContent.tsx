@@ -343,21 +343,51 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
 }
 
 // ═══════════════════════════════════════════
-// 块 2：任务父子关系树（祖先链 + 自己 + 子孙）
+// 块 2：任务树（当前任务所在根任务下的**整颗树**，含兄弟分支；当前任务高亮定位）
 // ═══════════════════════════════════════════
 function LineageBlock(props: { uri: string; hoverPreview?: boolean }) {
-    /** 血缘行：树才是父子关系的真相源（URI 路径不表达层级），见 lib/task-lineage */
+    /**
+     * 任务树行：树才是父子关系的真相源（URI 路径不表达层级）。
+     *
+     * **整颗树**（##233 / ##183 第 4 点）—— 从当前任务所在**根任务** DFS 全部任务，
+     * 含所有兄弟分支；当前任务标 `current`。见 lib/task-lineage。
+     */
     const rows = () => lineageRows(taskStore.nodes, props.uri);
     /**
      * 该任务的对话是否**已经开在导航里**（tabStore.opened 是响应式 getter：
      * 开/关 tab 会立即让这里的圆点与按钮态跟着变，不需要额外订阅）。
      */
     const chatOpen = (uri: string) => !!tabStore.find(`task-run:${uri}`);
+
+    /**
+     * 树的内滚动容器。
+     *
+     * 整树可能很长（本仓 ##87 一系上百个任务）—— 全展开撑爆详情面板会把正文挤到看不到，
+     * 故给树自己一个高度上限、内部滚动（##233 的「规模风险」：先全展开 + 定位高亮，
+     * 折叠策略后续再谈）。
+     */
+    let scrollEl: HTMLDivElement | undefined;
+    /** 定位到当前任务行：只在它不在可视区时滚（`block:"nearest"`），不无谓打扰 */
+    const scrollToCurrent = () => scrollEl?.querySelector("[data-lineage-current]")?.scrollIntoView({ block: "nearest" });
+
+    createEffect(
+        on(
+            () => props.uri,
+            () => {
+                // 数据可能还没到（taskStore.nodes 异步加载）：立即滚一次（fallback 行已就位），
+                // 稍后再校正一次（整树渲染完，当前行位置可能变）。不用 rAF —— 窗口被遮挡时会被节流。
+                setTimeout(scrollToCurrent, 0);
+                setTimeout(scrollToCurrent, 250);
+            },
+        ),
+    );
+
     return (
-        <div class="flex flex-col">
+        <div ref={(el) => (scrollEl = el)} class="flex flex-col max-h-[45vh] overflow-auto">
             <For each={rows()}>
                 {(r) => (
                     <div
+                        data-lineage-current={r.current ? "1" : undefined}
                         class={`group flex items-center gap-1 rounded px-1 py-0.5 cursor-pointer hover:bg-base-300 ${
                             r.current ? "bg-primary/20 ring-1 ring-primary/30" : ""
                         }`}

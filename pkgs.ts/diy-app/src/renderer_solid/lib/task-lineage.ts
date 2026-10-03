@@ -1,8 +1,10 @@
 /**
- * task-lineage — 一个任务的「血缘行」：祖先链（根 → 直接父）+ 自己 + 全部子孙。
+ * task-lineage — 一个任务所在的「整颗任务树」行（从根任务 DFS、树序、带深度）。
  *
- * 供 TaskDetailContent 的「任务树」块用（原先那里只平铺「自己 uri / 父 uri」两行，
- * 看不出层级，也无法点进去）。
+ * 供 TaskDetailContent 的「任务树」块用。**以当前任务所在根任务为根、展开整颗树**
+ * （含所有兄弟分支），当前任务标 `current` —— 不再只是「父链 + 自己 + 子孙」那条线。
+ * 出处：##183 第 4 点（hover 时只显示一条线很乱、脑疲劳，应显示整颗树并定位本任务），
+ * 落地见 ##233。
  *
  * 父子关系的真相源是**任务树**（`parentUri`），不是 URI 路径 ——
  * `projects/<pid>/tasks/<n>` 只表达「哪个项目第几号」，不表达层级。
@@ -11,7 +13,7 @@ import type { TreeNode } from "../store/taskStore";
 
 export interface LineageRow {
     uri: string;
-    /** 缩进层级：祖先链从 0 起，自己 = 链长，子孙依次 +1 */
+    /** 缩进层级：根任务从 0 起，子级依次 +1（与 URI 路径无关，由 parentUri 树决定） */
     depth: number;
     /** 是否为本视图的「当前任务」 */
     current: boolean;
@@ -41,20 +43,24 @@ function chainTo(nodes: TreeNode[], uri: string): TreeNode[] | null {
 }
 
 /**
- * 生成血缘行（深度优先、已按树序）。
+ * 生成整树行（**从根任务深度优先、树序**）。
+ *
+ * 步骤：先求出从顶层到 `uri` 的链，链中**第一个有 uri 的节点**即根任务
+ * （项目节点没有 uri、不能成行，故滤掉再取 —— 顺带避免「跳过一行」让后续缩进整体多一级）；
+ * 再从该根任务 DFS 全部子孙。兄弟分支因同属该根而自然纳入。
  *
  * `seen` 兼作**防环**：脏数据（互相认父、自己当自己的子）不该把这里转死。
+ * 根的父若指向已删除任务，`chainTo` 找不到自会以当前可达的顶层任务为根（##87 语义：
+ * parent 悬空的任务视为根，不丢失）。
  */
 export function lineageRows(nodes: TreeNode[], uri: string): LineageRow[] {
-    // 项目节点没有 uri（只有 project id），不能成行 —— 先滤掉再算层级，
-    // 否则「跳过一行」会让后面的行整体多缩进一级（实测踩过）。
     const chain = chainTo(nodes, uri)?.filter((n): n is TreeNode & { uri: string } => !!n.uri);
     // 树里还没有它（刚建 / 树未加载完）→ 只显示自己，不至于空白
     if (!chain || chain.length === 0) return [{ uri, depth: 0, current: true }];
 
     const rows: LineageRow[] = [];
     const seen = new Set<string>();
-    const push = (n: TreeNode, depth: number) => {
+    const walk = (n: TreeNode, depth: number) => {
         if (!n.uri || seen.has(n.uri)) return;
         seen.add(n.uri);
         rows.push({
@@ -65,14 +71,8 @@ export function lineageRows(nodes: TreeNode[], uri: string): LineageRow[] {
             title: n.title,
             state: n.state,
         });
+        for (const c of n.children ?? []) walk(c, depth + 1);
     };
-    chain.forEach((n, i) => push(n, i));
-    const walk = (ns: TreeNode[], depth: number) => {
-        for (const n of ns) {
-            push(n, depth);
-            walk(n.children ?? [], depth + 1);
-        }
-    };
-    walk(chain[chain.length - 1].children ?? [], chain.length);
+    walk(chain[0], 0);
     return rows;
 }
