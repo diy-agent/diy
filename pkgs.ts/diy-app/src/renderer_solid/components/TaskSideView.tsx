@@ -34,7 +34,7 @@ export function TaskSideView(props: { uri: string; hoverPreview?: boolean; chrom
                     chromeGap = area 有 chrome 浮在右上（任务执行页左栏）→ 留出它的位置，
                     否则按钮会被 chrome 盖住。 */}
                 <button
-                    class={`btn btn-ghost btn-xs px-1 min-h-0 ml-auto shrink-0 tooltip tooltip-bottom ${props.chromeGap ? "mr-12" : ""}`}
+                    class={`btn btn-ghost btn-xs px-1 min-h-0 ml-auto shrink-0 ${props.chromeGap ? "mr-12" : ""}`}
                     data-tip="去任务管理（看这个任务的详情）"
                     aria-label="跳转任务管理"
                     onClick={(e) => {

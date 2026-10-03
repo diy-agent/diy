@@ -184,3 +184,15 @@
         background-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
     }
 }
+
+/* ── 页内查找高亮（##234，CSS Custom Highlight API）────────────────────
+ * 不动 DOM、由浏览器绘制（Solid 流式重渲染不会把它们冲掉）。
+ * 全部命中用半亮色，当前命中用高对比（与 DynamicBar 的 warning 系同色系）。 */
+::highlight(diy-find) {
+  background-color: color-mix(in oklab, var(--color-warning) 40%, transparent);
+  color: inherit;
+}
+::highlight(diy-find-active) {
+  background-color: var(--color-warning);
+  color: var(--color-warning-content);
+}

@@ -724,7 +724,7 @@ function SteerRow(props: {
             {/* 最左：拖拽手柄（按住可拖，改投递顺序） */}
             <span
                 ref={drag.handleRef}
-                class="tooltip tooltip-right shrink-0 cursor-grab text-base-content/40 hover:text-base-content/80 active:cursor-grabbing"
+                class="shrink-0 cursor-grab text-base-content/40 hover:text-base-content/80 active:cursor-grabbing"
                 aria-label={`拖动调整顺序（${it().text}）`}
                 data-tip="拖动调整投递顺序"
                 data-steer-handle
@@ -739,11 +739,7 @@ function SteerRow(props: {
                   · 下一步（加急）：闪电 + warning 高对比底色/描边 + 呼吸 = "马上插进去"
                 形状不同，不读 tooltip 也能分辨；动画只作用于图标，不动整行布局。 */}
             <label
-                class={`btn btn-xs shrink-0 swap tooltip tooltip-left ${
-                    it().mode === "next-step"
-                        ? "border-warning/60 bg-warning/15 text-warning hover:bg-warning/25"
-                        : "btn-ghost text-base-content/45 hover:text-base-content/80"
-                }`}
+                class={`btn btn-xs shrink-0 swap ${ it().mode === "next-step" ? "border-warning/60 bg-warning/15 text-warning hover:bg-warning/25" : "btn-ghost text-base-content/45 hover:text-base-content/80" }`}
 
                 data-tip={
                     it().mode === "next-turn"
@@ -1108,7 +1104,7 @@ export function LocalChatPage(props: { uri?: string }) {
                     生成中不显示：正跑着的会话不该在此时被清掉（原行为不变）。 */}
                 <Show when={!localChatStore.live}>
                     <button
-                        class="btn btn-ghost btn-xs tooltip tooltip-bottom"
+                        class="btn btn-ghost btn-xs"
                         data-tip="清空本对话历史（不可恢复）"
                         aria-label="清空本对话历史"
                         onClick={() => setConfirmClear(true)}
@@ -1118,7 +1114,7 @@ export function LocalChatPage(props: { uri?: string }) {
                 </Show>
                 <div class="relative" data-density-control>
                     <button
-                        class="btn btn-ghost btn-xs tooltip tooltip-bottom"
+                        class="btn btn-ghost btn-xs"
                         data-tip="信息密度（拖到最右看全部过程）"
                         aria-label="信息密度"
                         onClick={(e) => {
@@ -1257,7 +1253,7 @@ export function LocalChatPage(props: { uri?: string }) {
                     {/* 全文编辑开关：输入框**右上角**，daisyUI swap（小↔大 双向动画）。
                         用 label+checkbox 而不是 button：swap 的语义就是「两种状态的开关」。 */}
                     <label
-                        class="btn btn-ghost btn-xs swap swap-rotate absolute right-1 top-1 z-10 tooltip tooltip-left"
+                        class="btn btn-ghost btn-xs swap swap-rotate absolute right-1 top-1 z-10"
                         data-tip={fullscreen() ? "退出全文编辑（Esc）" : "全文编辑（放大）"}
                         aria-label={fullscreen() ? "退出全文编辑" : "全文编辑"}
                     >
@@ -1303,7 +1299,7 @@ export function LocalChatPage(props: { uri?: string }) {
                             按钮本身显示**本任务当前用谁 + 它的模型与档位** ——
                             "我这条消息会发给哪个模型"必须一眼可见，不用点开才知道。 */}
                         <button
-                            class="btn btn-ghost btn-xs max-w-[280px] min-w-0 tooltip tooltip-top"
+                            class="btn btn-ghost btn-xs max-w-[280px] min-w-0"
                             data-tip="agent 人物：选择绑定 / 跟随缺省，编辑模型与参数（改人物会影响所有引用它的任务）"
                             aria-label="打开 agent 人物面板"
                             onClick={(e) => {
@@ -1341,7 +1337,7 @@ export function LocalChatPage(props: { uri?: string }) {
                         <Show when={localChatStore.view.busy}>
                             <Show when={inputValue().trim()}>
                                 <button
-                                    class="btn btn-outline btn-xs tooltip tooltip-top"
+                                    class="btn btn-outline btn-xs"
                                     data-tip="留言：排到下一轮（回车同此）。想让它马上生效，提交后点上方那条的闪电图标"
                                     onClick={() => void submitSteer(DEFAULT_STEER_MODE)}
                                 >
@@ -1363,7 +1359,7 @@ export function LocalChatPage(props: { uri?: string }) {
                                 </span>
                                 <div class="aura text-error rounded-full" style={{ "--aura-padding": "2px", "--tw-duration": "2.4s" }}>
                                     <button
-                                        class="btn btn-error btn-sm tooltip tooltip-top"
+                                        class="btn btn-error btn-sm"
                                         data-tip={
                                             localChatStore.view.stoppingStuck
                                                 ? "收尾超时；再点一次强制中断（可重复，main 侧幂等）"
@@ -1379,7 +1375,7 @@ export function LocalChatPage(props: { uri?: string }) {
                             <Match when={localChatStore.view.busy}>
                                 <div class="aura text-error rounded-full" style={{ "--aura-padding": "2px", "--tw-duration": "2.4s" }}>
                                     <button
-                                        class="btn btn-error btn-sm tooltip tooltip-top"
+                                        class="btn btn-error btn-sm"
                                         data-tip="中断本轮生成（保留已产出内容；由其他端发起的轮次同样可停）"
                                         onClick={() => uri() && void localChatStore.cancel(uri()!)}
                                     >
@@ -1389,7 +1385,7 @@ export function LocalChatPage(props: { uri?: string }) {
                             </Match>
                             <Match when={!localChatStore.live}>
                                 <button
-                                    class="btn btn-primary btn-sm tooltip tooltip-top"
+                                    class="btn btn-primary btn-sm"
                                     data-tip="发送（回车发送 / Shift+回车换行）"
                                     onClick={() => void submit()}
                                 >

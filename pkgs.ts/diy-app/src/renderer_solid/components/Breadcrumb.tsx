@@ -16,6 +16,7 @@ import { findPage } from "../../shared/view-registry";
 import { taskStateColor } from "../../main/core/task-state";
 import { tabStore, type TabItem } from "../store/tabStore";
 import { taskStore, type TreeNode } from "../store/taskStore";
+import { findStore } from "../store/findStore";
 
 // ═══════════════════════════════════════
 //  工具函数
@@ -291,21 +292,33 @@ export function Breadcrumb(props: BreadcrumbProps) {
                 )}
             </For>
 
-            {/* 当前 tab 的关闭入口 —— 放在顶栏最右端（页面右上角）。
-                为什么导航侧栏已有 ✕ 还要这一个：侧栏 tab 的关闭按钮是 hover 才显形的
-                （opacity-0 group-hover:opacity-70），一旦侧栏收起（rail 态）就完全不可见；
-                而「关掉当前页面」是高频动作，应该在页面本体上有常显入口。
-                只在 tab 路由显示：section 页面（任务管理/LLM/设置）没有「当前 tab」可关。 */}
-            <Show when={!!props.activeKey}>
+            {/* 右侧动作组：页内查找 + 关闭当前页（都靠右）。
+                查找按钮是「不知道快捷键的人也能点」的入口（##234）：⌘F 可用，但按钮保证可达。 */}
+            <div class="ml-auto flex items-center gap-0.5 shrink-0">
                 <button
-                    class="btn btn-ghost btn-xs ml-auto px-1.5 min-h-0 h-5 shrink-0 gap-1 text-base-content/60 hover:text-error"
-                    title="关闭当前页面（暂时不理会，不影响任务状态）"
-                    onClick={() => props.closeTab(props.activeKey)}
+                    class="btn btn-ghost btn-xs px-1.5 min-h-0 h-5 shrink-0 gap-1 text-base-content/60 hover:text-primary"
+                    title="页面内查找（⌘F）"
+                    data-tip="页面内查找（⌘F）"
+                    onClick={() => findStore.openFind()}
                 >
-                    <span class="text-body">✕</span>
-                    <span class="text-body">关闭</span>
+                    <span class="text-body">🔍</span>
                 </button>
-            </Show>
+                {/* 当前 tab 的关闭入口 —— 放在顶栏最右端（页面右上角）。
+                    为什么导航侧栏已有 ✕ 还要这一个：侧栏 tab 的关闭按钮是 hover 才显形的
+                    （opacity-0 group-hover:opacity-70），一旦侧栏收起（rail 态）就完全不可见；
+                    而「关掉当前页面」是高频动作，应该在页面本体上有常显入口。
+                    只在 tab 路由显示：section 页面（任务管理/LLM/设置）没有「当前 tab」可关。 */}
+                <Show when={!!props.activeKey}>
+                    <button
+                        class="btn btn-ghost btn-xs px-1.5 min-h-0 h-5 shrink-0 gap-1 text-base-content/60 hover:text-error"
+                        title="关闭当前页面（暂时不理会，不影响任务状态）"
+                        onClick={() => props.closeTab(props.activeKey)}
+                    >
+                        <span class="text-body">✕</span>
+                        <span class="text-body">关闭</span>
+                    </button>
+                </Show>
+            </div>
         </nav>
     );
 }

@@ -411,9 +411,8 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean }) {
                             preview={props.hoverPreview && !tabStore.isTaskDisplayed(r.uri)}
                             chatOpen={chatOpen(r.uri)}
                         />
-                        <Show when={r.current}>
-                            <span class="shrink-0 text-caption opacity-60">◀ 当前</span>
-                        </Show>
+                        {/* 「◀ 当前」标记已删（2026-10-03 用户指令）：当前行的高亮底色 +
+                            ring 已经表达了「就是这行」，再加文字是重复信息。 */}
                         {/* 「已打开在对话里」= **单个图标**（2026-10-03 用户指令）：原来是一颗
                             两图标 + 文字的操作按钮，噪音大。**跳转任务管理**的入口已从树里删掉、
                             统一收在「任务详情」view 的 bar 上（见 TaskSideView），故这里只留

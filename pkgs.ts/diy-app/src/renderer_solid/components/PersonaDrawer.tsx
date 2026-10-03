@@ -434,10 +434,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                     放在列表**之上**并用分隔线隔开，是因为它与人物列表不是同类项：
                                     列表里每一项代表一个可选的"谁"，这一行代表"不要固定". */}
                                 <Show when={followMatchesSearch()}>
-                                    <div class="tooltip tooltip-bottom group block w-full">
-                                        <div class="tooltip-content">
-                                            双击选择此模式；点击箭头查看当前缺省人物
-                                        </div>
+                                    <div class="group block w-full" data-tip="双击选择此模式；点击箭头查看当前缺省人物">
                                         <div class="mb-1 flex w-full items-stretch gap-1">
                                             <button
                                                 class={`min-w-0 flex-1 flex-col items-start gap-0.5 rounded-box px-2 py-1.5 text-left transition-colors ${
@@ -492,7 +489,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                                 </span>
                                             </button>
                                             <button
-                                                class="btn btn-ghost btn-xs my-auto h-5 min-h-0 shrink-0 px-1 tooltip tooltip-left"
+                                                class="btn btn-ghost btn-xs my-auto h-5 min-h-0 shrink-0 px-1"
                                                 aria-label="跳转到当前缺省人物"
                                                 data-tip="查看当前缺省人物的模型与行为指令"
                                                 onClick={() => {
@@ -517,14 +514,11 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                 </Show>
                                 <For each={filteredPersonas()}>
                                     {(p) => (
-                                        // tooltip 包在**外层**：daisyUI 的 `.tooltip` 自带 `display:inline-block`，
-                                        // 直接挂到下边那个 flex 按钮上会和 `flex` 抢 display（纵向排布会塌）。
-                                        // 提示用 `<div class="tooltip-content">` 而不是 `data-tip`：后者是
-                                        // `:before` 伪元素，**测不到**（自动化只能断言属性存在，断言不了"真的显示了、
-                                        // 且没被容器裁掉"），而真实元素可以量 rect。
-                                        // `block` 是必需的：不要它，每项会退化成 inline-block，行盒之间多出空隙。
-                                        <div class="tooltip tooltip-bottom group block w-full">
-                                            <div class="tooltip-content">双击选择此人物</div>
+                                        // 提示统一走**全局面板级 tooltip**（App 的 document 委托 + viewport fixed）：
+                                        // daisyUI 的 `.tooltip`/`tooltip-content` 会被 overflow 容器裁掉，本行
+                                        // 身处 `overflow-y-auto` 抽屉里正是踩坑场景（2026-10-03 统一替换）。
+                                        // `block` 必需：不要它，每项会退化成 inline-block，行盒之间多出空隙。
+                                        <div class="group block w-full" data-tip="双击选择此人物">
                                             <div class="mb-1 flex w-full items-stretch gap-1">
                                                 <button
                                                     class={`min-w-0 flex-1 flex-col items-start gap-0.5 rounded-box px-2 py-1.5 text-left transition-colors ${
