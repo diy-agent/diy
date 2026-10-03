@@ -79,12 +79,37 @@ async function setState(uri: string, state: string) {
 
 // 单例：以「值 getter」暴露信号（组件当值用）。读 taskStore.nodes 即读 nodes()，
 // 在 JSX 模板 / createMemo 里读取会追踪该信号 → 响应式保持。
+/**
+ * 确保任务树包含给定 uri —— 供「tab 顺序/缩进依赖任务层次」的场景使用。
+ *
+ * 为什么需要：tab 的顺序与缩进是**读时**由任务树现算的（tabStore.opened ← ancestorsResolver
+ * ← taskStore.nodes）。而任务树来自 main（fileWatcher 有 500ms 防抖 + 200ms awaitWriteFinish），
+ * CLI/外部刚建完任务时，renderer 的树可能还没刷新 → 此刻开 tab，层次算不出来，顺序/缩进退化为
+ * 「按打开顺序平级」。这里补一次**按需重载**：树里缺这些 uri 就重载一次，覆盖这个窗口。
+ * （渲染/交互场景树早已加载 → 命中即返回，零成本。）
+ */
+async function ensureTasks(uris: (string | null | undefined)[]): Promise<void> {
+  const wanted = uris.filter((u): u is string => !!u);
+  if (wanted.length === 0) return;
+  const all = new Set<string>();
+  const walk = (ns: TreeNode[]) => {
+    for (const n of ns) {
+      if (n.uri) all.add(n.uri);
+      if (n.children) walk(n.children);
+    }
+  };
+  walk(nodes());
+  if (wanted.every((u) => all.has(u))) return;
+  await loadTree();
+}
+
 export const taskStore = {
   get nodes() { return nodes(); },
   get selectedUri() { return selectedUri(); },
   get selectedTask() { return selectedTask(); },
   get loading() { return loading(); },
   loadTree,
+  ensureTasks,
   selectTask,
   refreshSelected,
   setState,

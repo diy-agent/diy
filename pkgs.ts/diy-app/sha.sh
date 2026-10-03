@@ -91,8 +91,11 @@ link() { run npm link; }
 
 test-watch() { run npx vitest "$@"; }
 # 意图测试：先构建（起隔离 Electron，最慢放最后）
+# CLI 默认走 server /cli http 端点（单条 ~41ms vs 编译产物 ~300ms vs tsx ~600ms，intent 全量 ~140s vs ~300s）。
+# 无 app.port / curl 不支持 h2 时自动回退直连 CLI，不会失败。排查需要可覆盖：DIY_CLI_MODE=compiled|tsx ./sha.sh test-intent
 test-intent() {
   build
+  export DIY_CLI_MODE="${DIY_CLI_MODE:-http}"
   run npx vitest run --no-file-parallelism tests/cli.intent "$@"
 }
 

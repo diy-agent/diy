@@ -190,10 +190,38 @@ export interface CliConfig<TRouter extends _Router | _AnyProcedureMeta> {
    * 缺省 process.cwd()。
    */
   cwd?: string;
+  /**
+   * 输出/退出注入（server 内嵌 CLI / 端点用，见 diy-app rpc-port.ts 的 /cli）：
+   * 缺省 = console.log / console.error / process.exit —— 直连 CLI 行为不变。
+   *
+   * 契约：`out`/`err` 收到的参数与 `console.log`/`console.error` **完全同参**
+   * （一行文本，**不含行尾换行**）—— 落盘时由注入方自行补 `\n`，这样字节与直连一致。
+   * `exit` 应为不返回（否则 parse 继续跑），见 `_exit` 的 never 收窄。
+   */
+  out?: (line: string) => void;
+  err?: (line: string) => void;
+  exit?: (code: number) => void;
 }
 
 /** @internal */
 export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
+
+  // ── 输出/退出注入（server 内嵌 /cli 端点用；缺省 = 原行为，直连 CLI 不变）──
+  /** stdout 写入点：缺省 console.log；注入方负责补行尾换行（契约见 CliConfig.out） */
+  private _print(line: string): void {
+    (this.config.out ?? ((x: string) => console.log(x)))(line);
+  }
+  /** stderr 写入点：缺省 console.error（同上，注入方补换行） */
+  private _printErr(line: string): void {
+    (this.config.err ?? ((x: string) => console.error(x)))(line);
+  }
+  /** 退出点：缺省 process.exit；注入后由调用方接管（内嵌时抛异常中止 parse）。
+   *  返回类型 never —— 与 process.exit 对齐，调用点后的 TS 收窄（resolved/proc）不被破坏。 */
+  private _exit(code: number): never {
+    (this.config.exit ?? ((c: number) => process.exit(c)))(code);
+    // 到这里只有两种情况：注入的 exit 实现返回了（不允许）——显式炸，别静默继续
+    throw new Error(`[cli] exit(${code}) hook returned normally`);
+  }
   private config: CliConfig<TRouter>;
   private tree: _RouterNode;
   /** 根命令描述 = router 顶层第一个 group（如 diy）的 desc，替代原 config.desc */
@@ -253,7 +281,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
       argv[0] === "--version" ||
       argv[0] === "-V"
     ) {
-      if (this.config.version) console.log(this.config.version);
+      if (this.config.version) this._print(this.config.version);
       return;
     }
     if (argv[0] === "help" || argv[0] === "--help" || argv[0] === "-h") {
@@ -265,9 +293,9 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
           this.showNodeHelp(sub);
           return;
         }
-        console.error(`Unknown command: ${rest.join(" ")}`);
+        this._printErr(`Unknown command: ${rest.join(" ")}`);
         this.showHelp();
-        process.exit(2);
+        this._exit(2);
       }
       this.showHelp();
       return;
@@ -294,14 +322,14 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
         const input = argv.slice(0, idx + 1).join(" ");
         const sugg = suggestCommand(parent.children, argv[idx] ?? "");
         if (sugg.length > 0) {
-          console.error(`Unknown command: ${input}`);
-          console.error(`Did you mean: ${sugg.join(", ")}?`);
+          this._printErr(`Unknown command: ${input}`);
+          this._printErr(`Did you mean: ${sugg.join(", ")}?`);
         } else {
-          console.error(`Unknown command: ${input}`);
+          this._printErr(`Unknown command: ${input}`);
         }
       }
       this.showHelp();
-      process.exit(2);
+      this._exit(2);
     }
 
     const proc = resolved;
@@ -328,11 +356,11 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
         // 命令级 Usage 用裁剪后的短命令名（用户实际输入的命令），非 RPC 全名
         const shortCmd = commandName(proc);
         const args = fmtUsageArgs(def);
-        console.log(
+        this._print(
           `Usage: ${this.config.name} ${shortCmd} [options]${args ? ` ${args}` : ""}`,
         );
         const help = generateHelp(def, shortCmd, desc);
-        if (help) console.log("\n" + help);
+        if (help) this._print("\n" + help);
         return;
       }
 
@@ -346,7 +374,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
             typeof chunk === "object"
               ? JSON.stringify(chunk)
               : String(chunk);
-          console.log(line);
+          this._print(line);
         }
       } else if (mode === "client") {
         const lines = stdinAsync();
@@ -360,7 +388,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
           typeof result === "object"
             ? JSON.stringify(result, null, 2)
             : String(result);
-        console.log(line);
+        this._print(line);
       } else if (mode === "bidi") {
         const handle = await tx.bidiStream(
           rpcName,
@@ -372,33 +400,33 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
             typeof chunk === "object"
               ? JSON.stringify(chunk)
               : String(chunk);
-          console.log(line);
+          this._print(line);
         }
       } else {
         const result = await tx.invoke(rpcName, { input });
         if (result === undefined) return;
         if (this._jsonFlag || this.config.json) {
-          console.log(JSON.stringify({ ok: true, data: result }));
+          this._print(JSON.stringify({ ok: true, data: result }));
         } else {
           const output =
             typeof result === "object"
               ? JSON.stringify(result, null, 2)
               : String(result);
-          console.log(output);
+          this._print(output);
         }
       }
     } catch (err: unknown) {
       if (err instanceof CliParseError) {
-        console.error(err.message);
+        this._printErr(err.message);
         const shortCmd = commandName(proc);
         const help = generateHelp(def, shortCmd, desc);
-        if (help) console.error("\n" + help);
-        process.exit(2); // 用法错误（CLIG：usage error = 2）
+        if (help) this._printErr("\n" + help);
+        this._exit(2); // 用法错误（CLIG：usage error = 2）
       }
-      console.error(
+      this._printErr(
         `Error: ${err instanceof Error ? err.message : String(err)}`,
       );
-      process.exit(1);
+      this._exit(1);
     }
   }
 
@@ -407,9 +435,9 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     if (node.kind === "proc") {
       const shortCmd = commandName(node);
       const args = fmtUsageArgs(node.def);
-      console.log(`Usage: ${this.config.name} ${shortCmd} [options]${args ? ` ${args}` : ""}`);
+      this._print(`Usage: ${this.config.name} ${shortCmd} [options]${args ? ` ${args}` : ""}`);
       const help = generateHelp(node.def, shortCmd, procDesc(node.def));
-      if (help) console.log("\n" + help);
+      if (help) this._print("\n" + help);
       return;
     }
     // 父命令（router）：显示自身 desc + 子命令列表
@@ -419,7 +447,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     if (node.desc) lines.push("", node.desc);
     if (node.children.length > 0) lines.push("", "Commands:");
     emitCommandList(lines, node.children.map((child) => ({ name: child.name, desc: nodeTitle(child) })));
-    console.log(lines.join("\n"));
+    this._print(lines.join("\n"));
   }
 
   showHelp(): void {
@@ -461,6 +489,6 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     lines.push("  -h, --help     Show help");
     if (this.config.version) lines.push("  -V, --version  Show version");
 
-    console.log(lines.join("\n"));
+    this._print(lines.join("\n"));
   }
 }

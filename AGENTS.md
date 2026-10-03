@@ -18,8 +18,8 @@
 | | `diy`（全局命令） | `./diy.sh` | `./sha.sh dev` |
 |---|---|---|---|
 | 本质 | 发布版 CLI **客户端** | worktree 版 CLI **客户端** | **GUI 启动器** |
-| 跑什么 | `node out/cli/index.js`（编译产物） | `tsx src/cli/index.ts`（源码，改完即生效） | Vite dev server + watch main/preload + Electron |
-| 要构建吗 | 是（`out/` 必须存在） | CLI 不用；拉起的 GUI 要 `out/main` | 不用（HMR 走 `loadURL`） |
+| 跑什么 | `node out/cli/index.js`（编译产物） | `auto`：`out/cli/index.js` 优先（打包源比产物新→回退 `tsx` 源码，`DIY_CLI_MODE=auto\|compiled\|tsx`） | Vite dev server + watch main/preload + Electron |
+| 要构建吗 | 是（`out/` 必须存在） | CLI 可选（auto 无产物/产物旧→tsx 兜底）；拉起的 GUI 要 `out/main` | 不用（HMR 走 `loadURL`） |
 | 数据根 | `~/.diy`（**生产**） | `./build/home`（worktree 隔离） | 同 `diy.sh` |
 | `DIY_ENV` | `production` | `development` | `development` |
 | 连哪个 app | 探测/拉起自己的实例 | 同 worktree 实例 | **它自己拉起的实例** |

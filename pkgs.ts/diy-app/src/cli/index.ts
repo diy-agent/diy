@@ -167,20 +167,44 @@ async function ensureAppPort(cfg: RuntimeConfig): Promise<number> {
 }
 
 /**
- * 等 stdout 排空再退出。
- * 背景（实测）：stdout 是管道时 node 的写入是异步的，`process.exit()` 会丢掉还没交出去的字节
- * —— 输出超过管道缓冲（65536）时表现为**JSON 被截成一半**（下游 `jq` / 脚本 / 意图测试全炸）。
+ * 等一条流排空（writableLength 归零）。
+ * 背景（实测）：stdout/stderr 是管道时 node 的写入是异步的，`process.exit()` 会丢掉还没交出去的
+ * 字节 —— 输出超过管道缓冲（65536）时表现为**JSON 被截成一半**；错误信息（stderr）同理，
+ * 表现为 `expected '' to match /.../`（下游 jq / 脚本 / 意图测试都会随机炸）。
  * 重定向到文件时是同步写，所以只有管道才暴露。
  */
-async function flushStdout(): Promise<void> {
-  if (process.stdout.writableLength === 0) return;
+async function flushStream(stream: NodeJS.WriteStream): Promise<void> {
+  if (stream.writableLength === 0) return;
   await new Promise<void>((resolve) => {
     const t = setTimeout(resolve, 2000); // 兜底：管道另一端不读时别挂死
-    process.stdout.once("drain", () => {
+    stream.once("drain", () => {
       clearTimeout(t);
       resolve();
     });
   });
+}
+
+/**
+ * 等 stdout + stderr 都排空再退出。
+ *
+ * ⚠️ 必须两条都等：实测（t223）错误路径的 stderr 输出会以 **≈2.5%/条** 的概率丢失
+ * —— CLI 侧 `installDiagnostics` 同步落盘的 cli.log 里错误在，但管道这一端读到空，
+ * 断言 `expected '' to match /未知模型/` 随机红且 retry 无效。根因是 CliApp 错误退出走的是
+ * `_exit` → `process.exit`，不等待在途字节（此前只给 stdout 的正常返回路径做了 flush）。
+ */
+async function flushStreams(): Promise<void> {
+  await Promise.all([flushStream(process.stdout), flushStream(process.stderr)]);
+}
+
+/**
+ * CliApp 的 exit 钩子：**不直接 process.exit**，改为抛哨兵，由 main 统一「先 flush 两条流再退出」。
+ * `_exit` 的契约要求钩子「不返回」——抛异常即最自然的「不返回」。
+ */
+class CliExit extends Error {
+  constructor(readonly code: number) {
+    super(`cli exit ${code}`);
+    this.name = "CliExit";
+  }
 }
 
 async function main() {
@@ -194,25 +218,36 @@ async function main() {
   const transport = new HttpClientBinding(`http://127.0.0.1:${port}`);
   await transport.ready();
 
-  await new CliApp({
-    name: "diy",
-    version: "0.1.0",
-    router: apiDef.diy,
-    transport,
-    // 路径参数（如 tool read 的 path）按**调用者**目录解析：入口脚本已 cd 到应用目录，
-    // 进程 cwd 不再可信，故由 DIY_CALLER_CWD 显式带过来（见 diy.sh / bin/diy）。
-    cwd: process.env["DIY_CALLER_CWD"] || process.cwd(),
-  }).parse(argv);
+  let exitCode = 0;
+  try {
+    await new CliApp({
+      name: "diy",
+      version: "0.1.0",
+      router: apiDef.diy,
+      transport,
+      // 路径参数（如 tool read 的 path）按**调用者**目录解析：入口脚本已 cd 到应用目录，
+      // 进程 cwd 不再可信，故由 DIY_CALLER_CWD 显式带过来（见 diy.sh / bin/diy）。
+      cwd: process.env["DIY_CALLER_CWD"] || process.cwd(),
+      // 错误路径（用法错误 exit=2 / 运行错误 exit=1）也走这里：不直接 exit，先让 main 排空两条流
+      exit: (code: number): never => {
+        throw new CliExit(code);
+      },
+    }).parse(argv);
+  } catch (e) {
+    if (e instanceof CliExit) exitCode = e.code;
+    else throw e;
+  }
 
   // 清理：关闭 RPC 连接，允许进程正常退出（app 保持运行）
   transport.dispose();
-  await flushStdout();
-  process.exit(0);
+  // 退出前把两条流都排空 —— 否则错误信息/大输出会被 process.exit 丢掉（见 flushStreams 注释）
+  await flushStreams();
+  process.exit(exitCode);
 }
 
 main().catch(async (e) => {
   const msg = e instanceof Error ? e.message : String(e);
   console.error(`致命错误: ${msg}`);
-  await flushStdout();
+  await flushStreams();
   process.exit(1);
 });

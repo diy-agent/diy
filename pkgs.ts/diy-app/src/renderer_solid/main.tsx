@@ -1,5 +1,6 @@
 import { render } from "solid-js/web";
 import { bindRendererApi } from "./lib/renderer-api-impl";
+import { startUiWatch } from "./lib/ui-watch";
 import { applyTheme, getTheme } from "./lib/theme";
 import App from "./App";
 import "./index.css";
@@ -17,6 +18,8 @@ declare global {
 // window.transport 由 preload/index.ts 暴露
 if (window.transport) {
   const rendererBinding = bindRendererApi(window.transport);
+  // UI 状态变化流的事件源（diy.ui.watch.uiState 的推送端）
+  startUiWatch();
   // 页面卸载时清理
   window.addEventListener("beforeunload", () => rendererBinding.destroy());
   console.log("[renderer] RPC binding started");
