@@ -51,7 +51,7 @@ export function stripStderrNoise(raw: string, markerPrefix: string, sentinel: st
     .trim();
 }
 
-/** 清理 stdout：剥掉协议哨兵行与 （哨兵是协议开销，不是命令输出） */
+/** 清理 stdout：剥掉协议哨兵行与 \r 回车（哨兵是协议开销，不是命令输出） */
 export function stripStdoutNoise(raw: string, sentinel: string): string {
   return raw
     .replace(/\r\n/g, "\n")
