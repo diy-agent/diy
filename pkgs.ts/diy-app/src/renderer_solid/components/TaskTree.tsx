@@ -7,6 +7,7 @@ import { notificationStore } from "../store/notificationStore";
 import { diyService } from "../lib/rpc";
 import { Caches } from "../lib/ui-state";
 import { CreateProjectSheet } from "./CreateProjectSheet";
+import { isAncestorOf } from "../lib/task-lineage";
 import { TASK_STATES, taskStateColor } from "../../main/core/task-state";
 import { CreateTaskSheet } from "./CreateTaskSheet";
 import { DynamicBar } from "./DynamicBar";
@@ -441,6 +442,12 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
         if (!dropInfo) return;
         if (dragInfo.project !== dropInfo.project) {
             notificationStore.addToast("error", "只能在同一项目内拖动");
+            return;
+        }
+        // RV-07（##245 review）：防环预检 —— 拖到自己的子孙下成环。main 有守卫
+        // （task.ts 防环，数据安全无虞），客户端提前拦只为体验（非法落点当场报）。
+        if (isAncestorOf(taskStore.nodes, dragUri, dropUri)) {
+            notificationStore.addToast("error", "不能拖到自己的子任务下");
             return;
         }
         if (dropUri === dragInfo.parent) return; // 拖到直接父级：无需改动

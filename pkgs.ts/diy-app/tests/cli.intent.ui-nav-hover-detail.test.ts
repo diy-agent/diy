@@ -164,7 +164,59 @@ describe("悬停导航任务项 → 任务详情覆盖层", () => {
     const panel = await waitUntil(hoverPanel, (p) => p !== null, { label: "覆盖层出现" });
     expect(panel).not.toBeNull();
     expect(panel!.text).toContain(titleA);
-    expect(panel!.text).not.toContain("另一个任务B");
+    // RV-04（##245 review）修复后，a 的**任务树块含兄弟 b 是设计行为**（整树含兄弟分支，
+    // ##233）—— 原「整段不含 b 标题」断言写在「顶级任务丢兄弟」的缺陷行为上，已收窄到
+    // **属性块**（属性块只属于当前任务；b 残留时属性块会是 b 的标题）。
+    const attrsBlock = panel!.text.split("任务树")[0];
+    expect(attrsBlock).toContain(titleA);
+    expect(attrsBlock).not.toContain("另一个任务B");
+  });
+
+  it("详情主标题 = 14px 语义档 + 血缘树行链接带上 min-w-0（RV-02/RV-05）", async () => {
+    // 覆盖层出着（上一用例 hover a 之后未 leave）—— 直接查；若已收则重新 hover
+    if ((await hoverPanel()) === null) await hoverNavItem(uriA);
+    const panel = await waitUntil(hoverPanel, (p) => p !== null, { label: "覆盖层在位" });
+    // RV-02：h3 内 TaskNameLink 显示 14px（原硬编码 text-body=11px，压过 h3.text-title）
+    const size = await ui.query<string>(`(() => {
+      const aside = [...document.querySelectorAll('aside')].find(a => (a.getAttribute('aria-label')||'').includes('任务详情'));
+      const link = aside && aside.querySelector('h3 button');
+      return link ? getComputedStyle(link).fontSize : '';
+    })()`);
+    expect(size).toBe("14px");
+    // RV-05：调用方传的 class（血缘树行 min-w-0）真实进了模板（原为死代码被丢弃）
+    const rowLinkHasMinW = await ui.query<boolean>(`(() => {
+      const aside = [...document.querySelectorAll('aside')].find(a => (a.getAttribute('aria-label')||'').includes('任务详情'));
+      const link = aside && [...aside.querySelectorAll('button')].find(b =>
+        String(b.className).includes('diy-link') && b.closest('div[title^="projects/"]'));
+      return link ? String(link.className).includes('min-w-0') : false;
+    })()`);
+    expect(rowLinkHasMinW).toBe(true);
+    expect(panel!.text).toContain(titleA);
+  });
+
+  it("覆盖层点 📋 → 任务表定位到**目标**任务 + 覆盖层立即收（RV-01/RV-06）", async () => {
+    // 前置：覆盖层悬停 a（a 非激活）；当前激活仍是 b（活动 tab 的任务）
+    if ((await hoverPanel()) === null) await hoverNavItem(uriA);
+    await waitUntil(hoverPanel, (p) => p !== null, { label: "覆盖层在位" });
+    const clicked = await ui.query<boolean>(`(() => {
+      const aside = [...document.querySelectorAll('aside')].find(a => (a.getAttribute('aria-label')||'').includes('任务详情'));
+      const btn = aside && [...aside.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === '跳转任务管理');
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()`);
+    expect(clicked).toBe(true);
+    // RV-01：flash 定位到**目标 a**（原缺陷：取活动 tab 的任务 b）
+    await waitUntil(
+      () =>
+        ui.query<string | null>(
+          `document.querySelector('[class*="outline-warning"][data-uri]')?.getAttribute('data-uri') ?? null`,
+        ),
+      (v) => v === uriA,
+      { label: "任务表定位到目标 a（不是活动 tab 的 b）", timeoutMs: 6000 },
+    );
+    // RV-06：切页入口统一收覆盖层（原缺陷：残留到 mouseleave 才消失）
+    await waitUntil(hoverPanel, (p) => p === null, { label: "覆盖层随切页立即收", timeoutMs: 4000 });
   });
 
   it("悬停 b（**当前激活**任务）→ 不弹覆盖层（详情已在屏上，##183 C-1）", async () => {

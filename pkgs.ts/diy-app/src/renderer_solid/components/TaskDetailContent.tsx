@@ -118,6 +118,12 @@ function TaskNameLink(props: {
     chatOpen?: boolean;
     /** 长标题换行显示全（详情面板标题用，188①）；缺省单行 truncate（树内嵌入场景） */
     wrap?: boolean;
+    /**
+     * 字号档（RV-02，##245 review）：title = 14px（详情面板主标题，E 节语义档
+     * 「title 14px = 详情 h3」）；缺省 body = 11px（树内行级链接）。
+     * 原模板硬编码 text-body，压过外层 h3.text-title → 显示 11px、编辑态 14px 跳变。
+     */
+    size?: "body" | "title";
     /** 点击语义：task = 去任务管理看详情（缺省）；chat = 打开/切换对话（血缘树，C-2 调换） */
     act?: "task" | "chat";
 }) {
@@ -132,7 +138,7 @@ function TaskNameLink(props: {
     return (
         <>
             <button
-                class={`text-body diy-link block w-full text-left underline-offset-2 hover:underline cursor-pointer ${
+                class={`${props.size === "title" ? "text-title" : "text-body"} ${props.class ?? ""} diy-link block w-full text-left underline-offset-2 hover:underline cursor-pointer ${
                     props.wrap ? "whitespace-normal" : "truncate"
                 } ${props.chatOpen ? "font-semibold" : ""}`}
                 data-task-hover-uri={props.preview ? props.uri : undefined}
@@ -245,7 +251,7 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                         when={editing()}
                         fallback={
                             <h3 class="min-w-0 flex-1 text-title font-bold">
-                                <TaskNameLink uri={props.uri} label={props.task.title || props.uri} class="block" wrap />
+                                <TaskNameLink uri={props.uri} label={props.task.title || props.uri} class="block" wrap size="title" />
                             </h3>
                         }
                     >

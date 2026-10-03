@@ -110,6 +110,21 @@ describe("页面内查找（##234）", () => {
     expect(await highlightCount()).toBe(0);
   });
 
+  it("切页 → 查找条关闭、高亮清零（RV-03：旧页 Range 随 Solid 卸载退化，不能留过期计数）", async () => {
+    await ui.press("Meta+f");
+    await waitUntil(findBarPresent, (v) => v, { label: "重新打开查找条" });
+    await ui.type("查找");
+    await waitUntil(highlightCount, (n) => n > 0, { label: "高亮就绪" });
+    expect(await highlightCount()).toBeGreaterThan(0);
+    // 切页：查找条是**页内**语义 → 路由一变即关（App createEffect on(route) → findStore.close）
+    await fx.sh.getJson("./diy.sh ui page navigate settings");
+    await waitUntil(findBarPresent, (v) => !v, { label: "切页关查找条", timeoutMs: 5000 });
+    expect(await findBarPresent()).toBe(false);
+    expect(await highlightCount()).toBe(0); // 高亮同步清（不残留 zeroWidth Range）
+    // 切回任务页供后续（无后续，仅恢复现场）
+    await fx.sh.getJson("./diy.sh ui page navigate task");
+  });
+
   it("顶栏 🔍 按钮也能打开（不知道快捷键的人的入口）", async () => {
     await ui.clickSelector('button[title="页面内查找（⌘F）"]');
     await waitUntil(findBarPresent, (v) => v, { label: "点按钮打开查找条" });

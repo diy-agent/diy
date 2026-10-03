@@ -1,4 +1,4 @@
-import { createSignal, createEffect, onMount, onCleanup, untrack, Show, For } from "solid-js";
+import { createSignal, createEffect, on, onMount, onCleanup, untrack, Show, For } from "solid-js";
 import * as Tabs from "@kobalte/core/tabs";
 import { TaskTree } from "./components/TaskTree";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
@@ -31,6 +31,7 @@ import { setRendererActions, resetRendererActions, getRendererActions } from "./
 import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSensor } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { findTaskProject } from "./components/TaskTree";
+import { isAncestorOf } from "./lib/task-lineage";
 
 /**
  * 路由（page 一级 + 任务执行页的实例）。
@@ -131,6 +132,12 @@ export default function App() {
             notificationStore.addToast("error", "只能在同一项目内拖动");
             return;
         }
+        // RV-07：防环预检 —— 拖到自己的子孙下成环。main 有守卫（数据安全无虞），
+        // 客户端提前拦只为体验：非法落点当场报，不等 main 抛错。
+        if (isAncestorOf(taskStore.nodes, dragUri, dropUri)) {
+            notificationStore.addToast("error", "不能拖到自己的子任务下");
+            return;
+        }
         if (dropUri === dragInfo.parent) return; // 拖到直接父级：无需改动
         try {
             await diyService.diy.task.move({ uri: dragUri, parent: dropUri });
@@ -153,6 +160,10 @@ export default function App() {
      * 的过期丢弃守住，防止旧快照让这里误判「任务消失」。
      */
     let prevUris = new Set<string>();
+    // RV-03（##245 review）：切页后旧页面的查找 Range 随 Solid 卸载退化成 zeroWidth，
+    // badge 还挂着过期计数（refresh 全仓零调用）。查找条是**页内**语义 → 换页即关
+    // （close 会清 Range/计数/高亮，一步到位）。
+    createEffect(on(() => route(), () => findStore.close()));
     createEffect(() => {
         const cur = new Set<string>();
         const walk = (ns: TreeNode[]) => {
@@ -405,6 +416,7 @@ export default function App() {
         setRendererActions({
             navigate: (page) => {
                 if (!VALID_PAGES.has(page)) return;
+                hideHoverLayers(); // RV-01/06：切页入口统一收悬停层（与 goSection 对齐）
                 if (page === "task-run" || page === "lab") {
                     const t = tabStore.activeTab();
                     setRoute(t ? { kind: "tab", key: t.key } : { kind: "section", section: "task" });
@@ -459,6 +471,7 @@ export default function App() {
                 layoutStore.setViewHidden(pageId, viewInstanceKey(def, ctx), !visible);
             },
             openTaskRun: (uri) => {
+                hideHoverLayers(); // RV-06：覆盖层里点标题开会话切页 → 层立即收，不等 mouseleave
                 tabStore.open("task-run", uri);
                 setRoute({ kind: "tab", key: tabStore.active });
             },

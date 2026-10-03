@@ -6,7 +6,7 @@
 // 旧实现只产出「祖先链 + 自己 + 子孙」一条线 —— 本用例锁住回退。
 
 import { describe, it, expect } from "vitest";
-import { lineageRows } from "../../src/renderer_solid/lib/task-lineage";
+import { lineageRows, isAncestorOf } from "../../src/renderer_solid/lib/task-lineage";
 import type { TreeNode } from "../../src/renderer_solid/store/taskStore";
 
 function task(num: string, over: Partial<TreeNode> = {}): TreeNode {
@@ -96,6 +96,31 @@ describe("lineageRows：整颗树（##233）", () => {
     const rows = lineageRows([orphan], "projects/1/tasks/9");
     expect(uris(rows)).toEqual(["projects/1/tasks/9"]);
     expect(rows[0].current).toBe(true);
+  });
+
+  it("当前任务是顶级 → 兄弟顶级分支也在（RV-04 边界：项目下两个顶级）", () => {
+    const proj: TreeNode = { kind: "project", project: "1", children: [task("1"), task("2")] };
+    const rows = lineageRows([proj], "projects/1/tasks/1");
+    // 修前实测只回 ['projects/1/tasks/1']，兄弟 #2 丢失
+    expect(uris(rows)).toEqual(["projects/1/tasks/1", "projects/1/tasks/2"]);
+    expect(rows[0].current).toBe(true);
+    expect(rows.every((r) => r.depth === 0)).toBe(true); // 顶级之间同层
+  });
+
+  it("深层任务行为不变：根仍是其所在根任务，不扩到项目全部顶级", () => {
+    const rows = lineageRows(sampleTree(), "projects/1/tasks/4");
+    expect(uris(rows)[0]).toBe("projects/1/tasks/1");
+    // sampleTree 根 #1 就是唯一顶级，不出现「项目其他顶级」的语义漂移
+    expect(uris(rows)).not.toContain("projects/1/tasks/9");
+  });
+
+  it("isAncestorOf：隔代祖先是、子孙不是、自己算（RV-07 拖拽防环预检）", () => {
+    const nodes = sampleTree();
+    expect(isAncestorOf(nodes, "projects/1/tasks/1", "projects/1/tasks/4")).toBe(true); // 根是孙的祖先
+    expect(isAncestorOf(nodes, "projects/1/tasks/2", "projects/1/tasks/4")).toBe(true); // 直接父
+    expect(isAncestorOf(nodes, "projects/1/tasks/4", "projects/1/tasks/1")).toBe(false); // 反向
+    expect(isAncestorOf(nodes, "projects/1/tasks/3", "projects/1/tasks/4")).toBe(false); // 旁系
+    expect(isAncestorOf(nodes, "projects/1/tasks/99", "projects/1/tasks/4")).toBe(false); // 不存在
   });
 
   it("脏数据成环（互相认父）不把遍历转死", () => {

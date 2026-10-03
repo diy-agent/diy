@@ -23,6 +23,10 @@ import { VIEW_BAR_H } from "../lib/layout-metrics";
 function gotoTaskManager(uri: string): void {
     void taskStore.selectTask(uri);
     getRendererActions().navigate?.("task");
+    // RV-01（##245 review）：navigate 内部的无参 reveal 取的是「活动 tab 的任务」，
+    // 覆盖层场景下那是会话任务 A 而非本按钮的目标 B → 闪高亮/滚动会定位到错误任务。
+    // 这里补**显式** reveal 以目标 uri 覆盖之（nonce 后者胜）。
+    getRendererActions().revealTask?.(uri);
 }
 
 export function TaskSideView(props: { uri: string; hoverPreview?: boolean; chromeGap?: boolean }) {
