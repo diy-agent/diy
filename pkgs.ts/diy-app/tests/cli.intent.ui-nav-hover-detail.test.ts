@@ -164,9 +164,9 @@ describe("悬停导航任务项 → 任务详情覆盖层", () => {
     const panel = await waitUntil(hoverPanel, (p) => p !== null, { label: "覆盖层出现" });
     expect(panel).not.toBeNull();
     expect(panel!.text).toContain(titleA);
-    // RV-04（##245 review）修复后，a 的**任务树块含兄弟 b 是设计行为**（整树含兄弟分支，
-    // ##233）—— 原「整段不含 b 标题」断言写在「顶级任务丢兄弟」的缺陷行为上，已收窄到
-    // **属性块**（属性块只属于当前任务；b 残留时属性块会是 b 的标题）。
+    // a / b 是**顶级根任务**，各成一棵：a 的任务树块只含「自己 + 子孙」，不再平铺同级根
+    // b（##258 / R4 收回了 RV-04 的越界）。断言仍只看**属性块**（属性块只属于当前任务；
+    // b 残留时属性块会是 b 的标题）—— 与树块内容解耦，免得树的策略再变又得改这条。
     const attrsBlock = panel!.text.split("任务树")[0];
     expect(attrsBlock).toContain(titleA);
     expect(attrsBlock).not.toContain("另一个任务B");
