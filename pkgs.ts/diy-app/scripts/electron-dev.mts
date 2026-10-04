@@ -4,7 +4,8 @@
 import { build, createServer, type ViteDevServer, type Rollup } from "vite";
 import { spawn, type ChildProcess } from "node:child_process";
 import electronPath from "electron";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
   SINGLETON_LOCK,
@@ -28,6 +29,20 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = join(scriptDir, ".."); // pkgs.ts/diy-app
 const repoRoot = join(scriptDir, "..", "..", "..");
 const defaultHome = join(repoRoot, "build", "home");
+
+// ── 生产数据保护（判据与 diy.sh 完全一致，勿单方面改动）──
+// agent / CI / 外层 shell 常导出 DIY_HOME=~/.diy（生产数据根）。dev 若透传，Electron 会用
+// 生产 userData 目录 → 撞宿主（生产实例）的单实例锁 → 打印 `SingleInstanceLock: failed`
+// 后 exit 0，现象只是「dev 起来了又退出」，没有任何指向原因的信息。
+// 这个坑被三个会话独立记录（##245 §8、##242 尾、##249 §六）→ 由代码兜底，不靠纪律。
+// 确需在生产数据上起 dev 才显式 opt-in：DIY_ALLOW_PROD_HOME=1 ./sha.sh dev
+const prodHome = join(process.env["HOME"] ?? homedir(), ".diy");
+const inheritedHome = process.env["DIY_HOME"];
+if (inheritedHome && resolve(inheritedHome) === prodHome && process.env["DIY_ALLOW_PROD_HOME"] !== "1") {
+  console.warn(`[dev] 警告: 忽略继承的生产数据目录 DIY_HOME=${inheritedHome}, 改用本 worktree 的 ${defaultHome}`);
+  console.warn("[dev] 警告: 确需在生产数据上起 dev 请显式声明 DIY_ALLOW_PROD_HOME=1 ./sha.sh dev");
+  delete process.env["DIY_HOME"];
+}
 if (!process.env["DIY_HOME"]) {
   mkdirSync(defaultHome, { recursive: true });
   process.env["DIY_HOME"] = defaultHome;

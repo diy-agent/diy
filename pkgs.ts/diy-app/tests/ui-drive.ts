@@ -296,6 +296,23 @@ export async function makeUiDriver(
     return point;
   };
 
+  /**
+   * 坐标处的最上层元素是不是目标（或其内部后代）？
+   *
+   * 为什么点击前要验：`sampleStablePoint` 只保证「坐标连续两次一致」——而路由切换 /
+   * 重渲染会让节点**在同一坐标处被替换**，或浮层短暂盖住它。此时原生事件的命中测试打到的
+   * 不是目标元素，click 会静默丢失（页面毫无反应、也没有报错）。
+   * 实测：ui-find「点顶栏 🔍 打开查找条」在负载高时就这样挂到 waitUntil 上限、靠 retry 才过
+   * （##255 §1）。
+   */
+  const pointHits = (selector: string, nth: number, p: { x: number; y: number }) =>
+    cdp.eval<boolean>(`(() => {
+      const el = document.querySelectorAll(${JSON.stringify(selector)})[${nth}];
+      if (!el) return false;
+      const hit = document.elementFromPoint(${Math.round(p.x)}, ${Math.round(p.y)});
+      return !!hit && (hit === el || el.contains(hit));
+    })()`);
+
   /** 取树并按谓词定位（每次现取：上一步操作会让 rect 变） */
   const locate = async (target: TextMatch) => {
     const match =
@@ -338,7 +355,20 @@ export async function makeUiDriver(
     },
 
     async clickSelector(selector, opts = {}) {
-      const point = await sampleStablePoint(selector, opts.nth ?? 0);
+      const nth = opts.nth ?? 0;
+      let point = await sampleStablePoint(selector, nth);
+      // 命中校验：坐标被别的元素占着（节点刚被替换 / 浮层短暂遮挡）就重采样等它归位。
+      // 有上限（~1.5s）：确实被有意覆盖的元素沿用旧行为按原坐标点击，只打一行日志，不把
+      // 测试变成硬失败。
+      for (let i = 0; i < 30; i++) {
+        if (await pointHits(selector, nth, point)) break;
+        if (i === 29) {
+          console.error(`[ui-drive] 点击目标持续被遮挡，按原坐标点击：${selector}[${nth}]`);
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 50));
+        point = await sampleStablePoint(selector, nth);
+      }
       await mouse("mousePressed", point);
       await mouse("mouseReleased", point);
       await new Promise((r) => setTimeout(r, 120));
