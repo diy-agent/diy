@@ -323,6 +323,9 @@ export default function App() {
                 // ⌘K：快速打开会话（##254）。当前空闲键位 —— 全局只占用了 ⌘F（页内查找）。
                 // 开合都走这一个分支（弹出层自己也监听 Esc）；preventDefault 挡住浏览器默认行为。
                 e.preventDefault();
+                // 与 nav 入口按钮同处置：打开时先收掉 hover 层，避免弹层背后留着
+                // nav hover 详情（review1 RV-2：两条路径此前不一致）。
+                hideHoverLayers();
                 setNavSearchOpen((v) => !v);
             } else if (e.key === "Escape" && findStore.open) {
                 findStore.close();

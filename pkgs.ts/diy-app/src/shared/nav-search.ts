@@ -33,6 +33,16 @@ export const NAV_HIT_RANK = {
 
 export interface NavHit<T extends TaskListNode = TaskListNode> {
   node: T;
+  /**
+   * 结果项要打开的任务 URI —— **必填**（不是 node.uri 的裸拷贝）。
+   *
+   * 为什么单独收窄成 string：`TaskListNode.uri` 是可选的（结构类型，项目节点就没有），
+   * 但**没有 uri 的任务压根打不开会话** —— 它不该出现在结果里。搜索时直接把它滤掉、
+   * 并把 uri 提升成必填，调用方（NavSearch）就不必写 `hit.node.uri!`（那断言在真缺
+   * uri 时会静默把 undefined 送进 openTaskRun → `keyOf(pageId, undefined)`）。
+   * 类型诚实：**能出现在结果里的，一定有 uri**。
+   */
+  uri: string;
   /** 命中强度（见 NAV_HIT_RANK） */
   rank: number;
   /** 正文命中片段（仅 rank = body 时有值） */
@@ -82,22 +92,35 @@ function rankOf(node: TaskListNode, q: string): { rank: number; snippet: SearchS
 }
 
 /**
- * 全树搜索任务，按命中强度 + 最近修改排序，取前 limit 条。
+ * 全树搜索任务（= `flattenTasks` + `searchTasksOf` 的组合，便捷入口）。
  *
- * 同档内按 `updated` 降序（最近动过的更可能是要找的），再按任务号升序兜底 ——
- * 缺 updated 的旧数据恒排本档最后（不给"没时间戳"编一个假顺序）。
+ * 返回**全部命中**（不截断）：调用方既要展示前 N 条、又要在底部写「N / 共 M 条」（RV-4），
+ * 若这里就截断，就分不清「真只有 12 条」与「被截掉了」。截断交给 `searchTasks`。
  */
-export function searchTasks<T extends TaskListNode>(
-  nodes: T[],
-  query: string,
-  limit = NAV_SEARCH_LIMIT,
-): NavHit<T>[] {
+export function searchTaskHits<T extends TaskListNode>(nodes: T[], query: string): NavHit<T>[] {
+  return searchTasksOf(flattenTasks(nodes), query);
+}
+
+/**
+ * 对**已平铺**的任务列表搜索排序（核心实现）。
+ *
+ * 与 `searchTaskHits` 分开的理由（RV-8）：`flattenTasks` 是按整棵树走的，与查询词无关；
+ * 弹层每次按键都重搜时，若把平铺也放进搜索函数，就等于每次输入都重新遍历整棵树。
+ * 调用方（NavSearch）按 `taskStore.nodes` 引用 memo 平铺结果，逐键只做匹配。
+ *
+ * 排序：命中强度 → `updated` 降序（最近动过的更可能是要找的）→ 任务号升序兜底。
+ * 缺 updated 的旧数据恒排本档最后（不给"没时间戳"编一个假顺序）。
+ * **跳过没有 uri 的任务**：它们打不开会话，进结果就是死项（见 NavHit.uri）。
+ */
+export function searchTasksOf<T extends TaskListNode>(flat: T[], query: string): NavHit<T>[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const hits: NavHit<T>[] = [];
-  for (const node of flattenTasks(nodes)) {
+  for (const node of flat) {
+    const uri = node.uri;
+    if (!uri) continue; // 无 uri = 打不开，不是候选
     const r = rankOf(node, q);
-    if (r) hits.push({ node, rank: r.rank, snippet: r.snippet });
+    if (r) hits.push({ node, uri, rank: r.rank, snippet: r.snippet });
   }
   hits.sort((a, b) => {
     if (a.rank !== b.rank) return a.rank - b.rank;
@@ -108,5 +131,15 @@ export function searchTasks<T extends TaskListNode>(
     const bn = Number(b.node.num ?? Number.MAX_SAFE_INTEGER);
     return an - bn;
   });
+  return hits;
+}
+
+/** 全树搜索并截断到展示上限（limit <= 0 = 不截断）。计数见 searchTaskHits */
+export function searchTasks<T extends TaskListNode>(
+  nodes: T[],
+  query: string,
+  limit = NAV_SEARCH_LIMIT,
+): NavHit<T>[] {
+  const hits = searchTaskHits(nodes, query);
   return limit > 0 ? hits.slice(0, limit) : hits;
 }

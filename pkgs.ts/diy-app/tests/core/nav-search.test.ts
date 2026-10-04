@@ -9,7 +9,9 @@ import {
   NAV_HIT_RANK,
   NAV_SEARCH_LIMIT,
   flattenTasks,
+  searchTaskHits,
   searchTasks,
+  searchTasksOf,
 } from "../../src/shared/nav-search";
 import type { TaskListNode } from "../../src/shared/task-list";
 
@@ -110,5 +112,29 @@ describe("nav-search：命中与排序", () => {
     expect(hits).toHaveLength(2);
     expect(flattenTasks(tree).length).toBe(3);
     expect(NAV_SEARCH_LIMIT).toBeGreaterThan(0);
+  });
+
+  it("searchTaskHits 返回全量，searchTasks 才截断（供底部 N/共 M 计数）", () => {
+    const tree = [project([task("1", { title: "nav" }), task("2", { title: "nav" }), task("3", { title: "nav" })])];
+    expect(searchTaskHits(tree, "nav")).toHaveLength(3);
+    expect(searchTasks(tree, "nav", 2)).toHaveLength(2);
+    // 截断后取的是排序前段（任务号升序兜底）
+    expect(nums(searchTasks(tree, "nav", 2).map((h) => h.node))).toEqual(["1", "2"]);
+  });
+
+  it("searchTasksOf（已平铺）与 searchTaskHits（整树）结果一致", () => {
+    const tree = [project([task("1", { title: "nav" }), task("2", { title: "nav 子", children: [task("3", { title: "nav 孙" })] })])];
+    const viaTree = searchTaskHits(tree, "nav").map((h) => h.uri);
+    const viaFlat = searchTasksOf(flattenTasks(tree), "nav").map((h) => h.uri);
+    expect(viaFlat).toEqual(viaTree);
+    expect(viaFlat).toHaveLength(3);
+  });
+
+  it("没有 uri 的任务不进结果（打不开会话的死项）", () => {
+    const noUri: TaskListNode = { kind: "task", num: "9", title: "nav 无 URI", children: [] };
+    const tree = [project([noUri, task("1", { title: "nav 有 URI" })])];
+    const hits = searchTaskHits(tree, "nav");
+    expect(nums(hits.map((h) => h.node))).toEqual(["1"]);
+    expect(hits[0]!.uri).toBe("projects/1/tasks/1"); // NavHit.uri 是必填 string
   });
 });
