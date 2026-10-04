@@ -94,8 +94,10 @@ function rankOf(node: TaskListNode, q: string): { rank: number; snippet: SearchS
 /**
  * 全树搜索任务（= `flattenTasks` + `searchTasksOf` 的组合，便捷入口）。
  *
- * 返回**全部命中**（不截断）：调用方既要展示前 N 条、又要在底部写「N / 共 M 条」（RV-4），
- * 若这里就截断，就分不清「真只有 12 条」与「被截掉了」。截断交给 `searchTasks`。
+ * 返回**全部命中**（**不截断**）：调用方既要展示前 N 条、又要在底部写「N / 共 M 条」（RV-4），
+ * 若这里就截断，就分不清「真只有 12 条」与「被截掉了」。截断由调用方按需 `slice`
+ * （弹层用 `NAV_SEARCH_LIMIT`）—— 本模块**不再**提供带 limit 的包装：生产路径要全量计数，
+ * 那种包装无人消费（review2 R2-3，已删以减面）。
  */
 export function searchTaskHits<T extends TaskListNode>(nodes: T[], query: string): NavHit<T>[] {
   return searchTasksOf(flattenTasks(nodes), query);
@@ -132,14 +134,4 @@ export function searchTasksOf<T extends TaskListNode>(flat: T[], query: string):
     return an - bn;
   });
   return hits;
-}
-
-/** 全树搜索并截断到展示上限（limit <= 0 = 不截断）。计数见 searchTaskHits */
-export function searchTasks<T extends TaskListNode>(
-  nodes: T[],
-  query: string,
-  limit = NAV_SEARCH_LIMIT,
-): NavHit<T>[] {
-  const hits = searchTaskHits(nodes, query);
-  return limit > 0 ? hits.slice(0, limit) : hits;
 }

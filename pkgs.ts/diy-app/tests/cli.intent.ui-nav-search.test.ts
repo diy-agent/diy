@@ -51,8 +51,17 @@ const itemUris = () =>
   );
 const focusedIsInput = () =>
   ui.query<boolean>(`document.activeElement?.getAttribute("data-testid") === "nav-search-input"`);
+/**
+ * 底部计数条文本（R2-1）。
+ *
+ * ⚠️ 必须取 **`[data-testid="nav-search-footer"]`**，不能取 `OVERLAY.lastElementChild` ——
+ * overlay 的唯一子元素是 panel，那样取到的是**整个面板文本**（含结果项的 `#12`），
+ * 于是 `toContain("12")` 恒真、截断用例假绿。footer 节点已加 testid 定点。
+ */
 const footerText = () =>
-  ui.query<string>(`document.querySelector(${JSON.stringify(OVERLAY)})?.lastElementChild?.textContent || ""`);
+  ui.query<string>(
+    `document.querySelector('[data-testid="nav-search-footer"]')?.textContent || ""`,
+  );
 
 async function tabs(): Promise<{ opened: string[]; active: string }> {
   const r = await fx.sh.getJson("./diy.sh ui tab list");
@@ -227,8 +236,9 @@ describe("nav ⌘K 快速打开会话", () => {
     const list = await waitUntil(items, (v) => v.length >= NAV_SEARCH_LIMIT, { label: "截断后的结果出现" });
     expect(list.length).toBe(NAV_SEARCH_LIMIT);
     const footer = await waitUntil(footerText, (t) => t.includes("共"), { label: "底部计数出现" });
-    expect(footer).toContain(`${NAV_SEARCH_LIMIT}`);
-    expect(footer).toContain(`共 ${NAV_SEARCH_LIMIT + 1} 条`);
+    // 精确到完整片段（R2-1：取的是定点 footer 节点，不是整块面板 —— 否则 "#12" 会让
+    // 只断言 "12" 的用例恒真。这里直接校验整段文案，同时证明「显示上限 / 总数」都对）。
+    expect(footer).toContain(`显示 ${NAV_SEARCH_LIMIT} / 共 ${NAV_SEARCH_LIMIT + 1} 条`);
     await ui.press("Escape");
     await waitUntil(overlayOpen, (v) => !v, { label: "Esc 关弹层" });
   });

@@ -10,7 +10,6 @@ import {
   NAV_SEARCH_LIMIT,
   flattenTasks,
   searchTaskHits,
-  searchTasks,
   searchTasksOf,
 } from "../../src/shared/nav-search";
 import type { TaskListNode } from "../../src/shared/task-list";
@@ -38,40 +37,40 @@ const nums = (ns: TaskListNode[]) => ns.map((n) => n.num);
 
 describe("nav-search：命中与排序", () => {
   it("空查询返回空（不把整棵树倒出来）", () => {
-    expect(searchTasks([project([task("1")])], "")).toEqual([]);
-    expect(searchTasks([project([task("1")])], "   ")).toEqual([]);
+    expect(searchTaskHits([project([task("1")])], "")).toEqual([]);
+    expect(searchTaskHits([project([task("1")])], "   ")).toEqual([]);
   });
 
   it("编号精确命中压过标题子串命中", () => {
     const tree = [project([task("12", { title: "别的" }), task("3", { title: "关于 12 的说明" })])];
-    const hits = searchTasks(tree, "12");
+    const hits = searchTaskHits(tree, "12");
     expect(nums(hits.map((h) => h.node))).toEqual(["12", "3"]);
     expect(hits[0]!.rank).toBe(NAV_HIT_RANK.numExact);
   });
 
   it("`#12` 也能精确命中编号", () => {
-    const hits = searchTasks([project([task("12")])], "#12");
+    const hits = searchTaskHits([project([task("12")])], "#12");
     expect(nums(hits.map((h) => h.node))).toEqual(["12"]);
     expect(hits[0]!.rank).toBe(NAV_HIT_RANK.numExact);
   });
 
   it("编号前缀命中排在标题命中之前", () => {
     const tree = [project([task("7", { title: "复盘 1 号方案" }), task("12"), task("199")])];
-    const hits = searchTasks(tree, "1");
+    const hits = searchTaskHits(tree, "1");
     expect(nums(hits.map((h) => h.node))).toEqual(["12", "199", "7"]);
     expect(hits[2]!.rank).toBe(NAV_HIT_RANK.titleSub);
   });
 
   it("非数字查询不触发编号档（num 是数字也不当前缀）", () => {
     // 搜 "task"：uri 里含 task → 字段命中；不该因为 num="12" 而进编号档
-    const hits = searchTasks([project([task("12", { uri: "projects/1/tasks/12" })])], "task");
+    const hits = searchTaskHits([project([task("12", { uri: "projects/1/tasks/12" })])], "task");
     expect(hits).toHaveLength(1);
     expect(hits[0]!.rank).toBe(NAV_HIT_RANK.field);
   });
 
   it("标题前缀 > 标题子串", () => {
     const tree = [project([task("1", { title: "复盘：nav 搜索" }), task("2", { title: "nav 搜索弹层" })])];
-    const hits = searchTasks(tree, "nav");
+    const hits = searchTaskHits(tree, "nav");
     expect(nums(hits.map((h) => h.node))).toEqual(["2", "1"]);
   });
 
@@ -82,7 +81,7 @@ describe("nav-search：命中与排序", () => {
         task("2", { title: "nav 搜索弹层" }),
       ]),
     ];
-    const hits = searchTasks(tree, "nav");
+    const hits = searchTaskHits(tree, "nav");
     expect(nums(hits.map((h) => h.node))).toEqual(["2", "1"]);
     expect(hits[1]!.rank).toBe(NAV_HIT_RANK.body);
     expect(hits[1]!.snippet?.match).toBe("nav");
@@ -97,29 +96,22 @@ describe("nav-search：命中与排序", () => {
         task("3", { title: "nav c" }),
       ]),
     ];
-    expect(nums(searchTasks(tree, "nav").map((h) => h.node))).toEqual(["2", "1", "3"]);
+    expect(nums(searchTaskHits(tree, "nav").map((h) => h.node))).toEqual(["2", "1", "3"]);
   });
 
   it("递归下钻：子任务同样可被搜到；项目节点本身不进结果", () => {
     const tree = [project([task("1", { title: "父", children: [task("2", { title: "nav 子任务" })] })])];
-    const hits = searchTasks(tree, "nav");
+    const hits = searchTaskHits(tree, "nav");
     expect(nums(hits.map((h) => h.node))).toEqual(["2"]);
   });
 
-  it("limit 生效，且取的是排序后的前 N 条", () => {
+  it("searchTaskHits 返回全量、不截断（底部「N / 共 M」计数的基础，RV-4）", () => {
     const tree = [project([task("1", { title: "nav" }), task("2", { title: "nav" }), task("3", { title: "nav" })])];
-    const hits = searchTasks(tree, "nav", 2);
-    expect(hits).toHaveLength(2);
-    expect(flattenTasks(tree).length).toBe(3);
+    const all = searchTaskHits(tree, "nav");
+    expect(all).toHaveLength(3);
+    // 展示上限由调用方按 NAV_SEARCH_LIMIT 切片 —— 取排序前段（任务号升序兜底）
+    expect(nums(all.slice(0, 2).map((h) => h.node))).toEqual(["1", "2"]);
     expect(NAV_SEARCH_LIMIT).toBeGreaterThan(0);
-  });
-
-  it("searchTaskHits 返回全量，searchTasks 才截断（供底部 N/共 M 计数）", () => {
-    const tree = [project([task("1", { title: "nav" }), task("2", { title: "nav" }), task("3", { title: "nav" })])];
-    expect(searchTaskHits(tree, "nav")).toHaveLength(3);
-    expect(searchTasks(tree, "nav", 2)).toHaveLength(2);
-    // 截断后取的是排序前段（任务号升序兜底）
-    expect(nums(searchTasks(tree, "nav", 2).map((h) => h.node))).toEqual(["1", "2"]);
   });
 
   it("searchTasksOf（已平铺）与 searchTaskHits（整树）结果一致", () => {

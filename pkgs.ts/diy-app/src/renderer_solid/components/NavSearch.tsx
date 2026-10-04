@@ -133,7 +133,9 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
                     placeholder="搜索任务 / 会话（↑↓ 选择，Enter 打开）"
                     value={query()}
                     role="combobox"
-                    aria-expanded={hits().length > 0}
+                    // R2-2：aria-expanded 语义 =「弹出列表是否展示」，与有无命中无关。
+                    // 弹层只在 open 时渲染 → 列表恒展示（0 命中也有"没有匹配的任务"），故恒 true。
+                    aria-expanded={true}
                     aria-controls="nav-search-list"
                     aria-activedescendant={activeId()}
                     onInput={(e) => setQuery(e.currentTarget.value)}
@@ -227,14 +229,22 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
                         </For>
                     </Show>
                 </ul>
-                <div class="border-t border-base-300 px-3 py-1 text-caption opacity-50">
-                    {/* RV-4：被截断时说清"还有更多"，不让用户以为总共就这些 */}
-                    {hits().length > 0
-                        ? hiddenCount() > 0
-                            ? `显示 ${hits().length} / 共 ${allHits().length} 条 · 继续输入缩小范围`
-                            : `${hits().length} 条`
-                        : ""}
-                    {" · Enter 打开会话 · Esc 关闭 · ⌘K 开关"}
+                <div
+                    data-testid="nav-search-footer"
+                    class="border-t border-base-300 px-3 py-1 text-caption opacity-50"
+                >
+                    {/* R2-4：计数段与快捷键段用同一模板串拼接（无计数时不留下前导 `·`）。
+                        RV-4：被截断时说清"还有更多"，不让用户以为总共就这些。 */}
+                    {[
+                        hits().length > 0
+                            ? hiddenCount() > 0
+                                ? `显示 ${hits().length} / 共 ${allHits().length} 条 · 继续输入缩小范围`
+                                : `${hits().length} 条`
+                            : "",
+                        "Enter 打开会话 · Esc 关闭 · ⌘K 开关",
+                    ]
+                        .filter(Boolean)
+                        .join(" · ")}
                 </div>
             </div>
         </div>
