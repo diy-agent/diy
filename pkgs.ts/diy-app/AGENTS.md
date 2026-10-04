@@ -31,7 +31,7 @@
 - `env.env` — `DIY_ENV` = `production`/`development`/`test`，**dev/test 专属能力的唯一判据**（如窗口副屏定位）；缺省 = production（未声明即生产，能力全关）
 - `env.port` — `DIY_PORT` 首选端口（测试注 `0`=随机）；优先级 `DIY_PORT` > `app.port` 文件 > 18888
 - `env.noLaunch` — `DIY_NO_LAUNCH=1` 禁止 CLI 自动拉起 app（测试专用，防实例逃逸）
-- `env.inject` — **入口自证，不继承**：`DIY_CLI` = 「跑的是谁」。三入口各声明自己（`diy.sh` → 自身；`bin/diy` → `$0`；`electron-dev.mts` → `<repo>/diy.sh`）；非打包的 main 还会兜底自证（从自身位置找仓库根 → `<repo>/diy.sh`），覆盖不经入口脚本的直 spawn（测试 harness）。**绝不采信继承值**：agent 会话导出的常是全局 `diy`（生产），透传后模型被提示去敲另一个 checkout 的 CLI
+- `env.inject` — **入口自证，不继承**：`DIY_CLI` = 「跑的是谁」。各入口各声明自己（`diy.sh` → 自身；`bin/diy` → `$0`；`electron-dev.mts` → `<repo>/diy.sh`；`serve/index.ts` → 从自身位置找仓库根）；非打包的 `main/index.ts` 也兜底自证，覆盖不经入口脚本的直 spawn（测试 harness）。`serve` **不 import main**，故它独立自证一次。**绝不采信继承值**：agent 会话导出的常是全局 `diy`（生产），透传后模型被提示去敲另一个 checkout 的 CLI
 
 ## rule — 硬约束
 

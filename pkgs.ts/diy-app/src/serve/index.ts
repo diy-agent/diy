@@ -29,13 +29,22 @@ import { bindApi, setRpcPort } from "../main/services/api-impl";
 import { AppConfig } from "../main/core/app-config";
 import { installDiagnostics } from "../main/services/diagnostics";
 import { readRuntimeConfig } from "../runtime";
+import { findRepoRoot } from "../main/core/instance-identity";
+
+// 计算项目根目录：从 src/serve/index.ts 向上两级到 pkgs.ts/diy-app/
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// CLI 入口自证（与 main/index.ts 同原则、同契约，注释见那里）。**必须在此独立做** ——
+// serve 不 import main/index.ts，那条自证不覆盖本进程。提示词模版会把 DIY_CLI 写进
+// 「命令行入口」，继承来的值可能指向另一个 checkout（agent 会话导出的全局 diy → 生产）。
+// 找不到仓库根（打包部署目录）就不动：宁可缺、由 prompt-registry 走「未注入」告警。
+const repoRoot = findRepoRoot(__dirname);
+if (repoRoot) process.env["DIY_CLI"] = path.join(repoRoot, "diy.sh");
 
 // 运行配置由入口注入的环境变量装配（DIY_HOME / DIY_PORT）
 const cfg = readRuntimeConfig();
 // serve 是纯 Node 常驻进程，同样要防 EPIPE / 未捕获异常裸奔；日志独立落 serve.log
 installDiagnostics(cfg.home, "serve");
-// 计算项目根目录：从 src/serve/index.ts 向上两级到 pkgs.ts/diy-app/
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..", "..");
 const STATIC_DIR = path.resolve(ROOT, "out/renderer");
 
@@ -125,6 +134,7 @@ async function main() {
     console.log(`  Tailscale: http://<tailscale-host>:${realPort}`);
     console.log(`  PID:      ${process.pid}`);
     console.log(`  DIY_HOME: ${home}`);
+    console.log(`  DIY_CLI:  ${process.env["DIY_CLI"] ?? "(未注入 → 提示词会告警)"}`);
     console.log("───────────────────────────────────────");
   });
 }
