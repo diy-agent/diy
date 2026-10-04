@@ -41,7 +41,7 @@ import { requestYaml } from "../../shared/context/request";
 import { diffSize } from "../../shared/context/steps";
 import { fmtAgo, fmtShortTime } from "../../shared/date-format";
 import { lineRange, matchRanges, type LineRange } from "../../shared/context/match";
-import type { ContextDiff } from "../../shared/context/schema";
+import type { ContextDiff, Stats } from "../../shared/context/schema";
 import type { DiffLine } from "../../shared/line-diff";
 
 const PAGE = "ctxlab";
@@ -109,6 +109,9 @@ function ContainerToggle(props: { c: "system" | "runtime" | null; onToggle: () =
         </button>
     );
 }
+
+/** 变化率（0~1）→ 百分比文本 */
+const fmtRate = (rate: number): string => `${Math.round(rate * 100)}%`;
 
 /** 结构树一行的高亮态（选中 + 容器色条） */
 const rowCls = (selected: boolean): string =>
@@ -253,6 +256,23 @@ export function ContextLabPage(props: { uri: string }) {
     );
 
     /**
+     * 变更统计（**按项目累计**，跨任务）：回答"这个节点用了几天变了几次 / 变化率"。
+     * 为什么不按任务：单任务样本太小；长期累计才有"该不该待在 system"的判据价值
+     * （逐轮明细已由上面的「变更（真发轮次）」给出；见 shared/context/stats.ts 头注）。
+     */
+    const [stats, { refetch: refetchStats }] = createResource(
+        () => projectFromUri(props.uri),
+        async (pid) => {
+            if (!pid) return null;
+            return (await diyService.diy.context.stats({
+                project: pid,
+                taskUri: undefined,
+                limit: undefined,
+            })) as Stats;
+        },
+    );
+
+    /**
      * 变更详情：选中某步 → 与上一步比；未选中 → 当前变量树 vs 最后一步（都在 main 侧算）。
      * ⚠️ source 用**字符串**：createResource 对非函数 source 按 `===` 比较，传对象字面量的话
      * 每次渲染都是新引用 → 无谓重拉（甚至把它变成一台 RPC 打桩机）。
@@ -270,13 +290,14 @@ export function ContextLabPage(props: { uri: string }) {
         })) as ContextDiff | null;
     });
 
-    /** 顶栏刷新：重拉四处（当前上下文 / 快照列表 / 变更详情 / 划分规则真源）——
+    /** 顶栏刷新：重拉五处（当前上下文 / 快照列表 / 变更详情 / 划分规则真源 / 变更统计）——
      *  没有实时推送，只有显式刷新（外部改了 context.yaml 也靠它捡回来） */
     const refresh = (): void => {
         void refetch();
         void refetchSteps();
         void refetchDiff();
         void refetchConfig();
+        void refetchStats();
     };
 
     /** 请求预览的形态：YAML（默认；内嵌 system/runtime 文本就地解析展开）/ 原文（真发 JSON） */
@@ -335,6 +356,32 @@ export function ContextLabPage(props: { uri: string }) {
             if (u.startsWith(`${path}.`)) return false;
         }
         return true;
+    };
+
+    /**
+     * 某个变量路径**归哪个投递单元管**：取覆盖它的最深单元（`chain.0.path` → `chain`）。
+     * 没有单元覆盖 → null（投递上等价于默认的 runtime）。
+     */
+    const ownerOf = (path: string): { place: string; container: "system" | "runtime" } | null => {
+        const units = unitMap();
+        let best: string | null = null;
+        for (const u of units.keys()) {
+            if ((path === u || path.startsWith(`${u}.`)) && (best === null || u.length > best.length)) best = u;
+        }
+        return best === null ? null : { place: best, container: units.get(best)! };
+    };
+
+    /**
+     * system 全量重建的**原因**：这一步变化的变量里，哪些落在 system 单元上
+     * （收拢到单元路径，去重排序）。空 = 不是值变化引起的（投递范围或编码版本变了）。
+     */
+    const sysCauses = (changed: readonly string[] | undefined): string[] => {
+        const out = new Set<string>();
+        for (const p of changed ?? []) {
+            const o = ownerOf(p);
+            if (o?.container === "system") out.add(o.place);
+        }
+        return [...out].sort();
     };
 
     const structure = () => buildVarTree(AssembleGlobalsSchema);
@@ -405,7 +452,16 @@ export function ContextLabPage(props: { uri: string }) {
             >
                 <ul class="menu menu-xs">
                     <For each={[...(steps()?.steps ?? [])].reverse()}>
-                        {(st) => (
+                        {(st) => {
+                            // system 全量重建的原因：把这一步变化的变量收拢到 system 投递单元
+                            // （叶子 `chain.0.path` 归到 `chain`）—— 徽章旁边一眼看到"是谁在打断缓存"。
+                            const causes = (): string[] => sysCauses(st.sincePrev?.changed);
+                            const causeText = (): string => {
+                                const c = causes();
+                                if (c.length === 0) return "";
+                                return ` ${c.slice(0, 2).join(",")}${c.length > 2 ? ` +${c.length - 2}` : ""}`;
+                            };
+                            return (
                             <li>
                                 <button
                                     class={`flex items-center gap-2 ${rowCls(pickedStep() === st.index)}`}
@@ -427,7 +483,17 @@ export function ContextLabPage(props: { uri: string }) {
                                     </span>
                                     <span class="ml-auto flex gap-1">
                                         <Show when={st.sincePrev?.systemDiffers}>
-                                            <span class="badge badge-primary badge-xs">sys</span>
+                                            <span
+                                                class="badge badge-primary badge-xs font-mono"
+                                                title={
+                                                    "system 全量重建（每轮重发，断前缀缓存）—— " +
+                                                    (causes().length > 0
+                                                        ? `由这些投递单元变化引起：${causes().join(", ")}`
+                                                        : "投递范围或编码版本变了（不是值变化）")
+                                                }
+                                            >
+                                                {`sys${causeText()}`}
+                                            </span>
                                         </Show>
                                         <Show when={st.sincePrev?.runtimeDiffers}>
                                             <span class="badge badge-warning badge-xs">run</span>
@@ -435,7 +501,8 @@ export function ContextLabPage(props: { uri: string }) {
                                     </span>
                                 </button>
                             </li>
-                        )}
+                            );
+                        }}
                     </For>
                 </ul>
             </Show>
@@ -536,6 +603,80 @@ export function ContextLabPage(props: { uri: string }) {
         );
     };
 
+    /**
+     * 变更统计（按项目累计）：每个节点变了几次 / 变化率 —— 判"该不该待在 system"的长期判据。
+     * 点一行 → 选中该路径（与结构树选中同一套联动：请求预览滚到并高亮）。
+     */
+    const statsPane = () => {
+        const s = stats();
+        if (!s) return <div class="p-2 opacity-60">统计加载中…</div>;
+        return (
+            <div class="p-1">
+                <div class="mb-1 flex items-center gap-1 px-1 opacity-70">
+                    <span>{`项目累计 · ${s.turns} 轮`}</span>
+                    <Show when={s.since}>
+                        <span class="ml-auto" title={`${s.since} ~ ${s.until}`}>
+                            {`${fmtShortTime(s.since)} ~ ${fmtShortTime(s.until)}`}
+                        </span>
+                    </Show>
+                </div>
+                <Show
+                    when={s.paths.length > 0}
+                    fallback={
+                        <div class="p-2 opacity-60">
+                            还没有变化记录。真发几轮后这里会累计每个节点变了多少次。
+                        </div>
+                    }
+                >
+                    <table class="table table-xs">
+                        <thead>
+                            <tr>
+                                <th>变量</th>
+                                <th class="text-right">变了</th>
+                                <th class="text-right">变化率</th>
+                                <th>归属</th>
+                                <th>最后</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <For each={s.paths}>
+                                {(p) => {
+                                    const o = () => ownerOf(p.path);
+                                    return (
+                                        <tr
+                                            class={`cursor-pointer hover:bg-base-300/60 ${rowCls(selected() === p.path)}`}
+                                            title={`变了 ${p.changes} 次 / 共 ${s.turns} 轮；最后变化 ${p.lastChanged ?? "—"}`}
+                                            onClick={() => setSelected(p.path)}
+                                        >
+                                            <td class="font-mono">{p.path}</td>
+                                            <td class="text-right font-mono">{p.changes}</td>
+                                            <td class="text-right font-mono">{fmtRate(p.rate)}</td>
+                                            <td>
+                                                <span
+                                                    class="badge badge-xs font-mono"
+                                                    classList={{
+                                                        "badge-primary": o()?.container === "system",
+                                                        "badge-ghost": o()?.container !== "system",
+                                                    }}
+                                                    title={o() ? `投递单元 ${o()!.place}（${o()!.container}）` : "无单元覆盖（默认 runtime）"}
+                                                >
+                                                    {o()?.place ?? "runtime"}
+                                                </span>
+                                            </td>
+                                            <td class="whitespace-nowrap opacity-60">
+                                                {p.lastChanged ? fmtAgo(p.lastChanged) : "—"}
+                                            </td>
+                                        </tr>
+                                    );
+                                }}
+                            </For>
+                        </tbody>
+                    </table>
+                </Show>
+            </div>
+        );
+    };
+
     const parts: Record<string, () => JSX.Element> = {
         /** 左：结构树（契约 + 划分操作） */
         "ctxlab.structure": () => (
@@ -543,6 +684,10 @@ export function ContextLabPage(props: { uri: string }) {
                 {/* 变更列表：真发快照（每轮一条；点一条看它改了什么） */}
                 <Fold k="steps" label="变更（真发轮次）" extra={`${steps()?.total ?? 0} 轮`}>
                     {stepsPane()}
+                </Fold>
+                {/* 变更统计：按项目累计的长期视角（"用了几天变了几次"），是判断该不该待在 system 的判据 */}
+                <Fold k="stats" label="变更统计（项目累计）" extra={`${stats()?.turns ?? 0} 轮`}>
+                    {statsPane()}
                 </Fold>
                 <Fold k="structure" label="结构树（变量契约）" extra="含无值变量 · 类型与描述">
                 <table class="table table-xs">

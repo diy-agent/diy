@@ -17,7 +17,7 @@
 | 说明头 | `guide.ts`：上下文 YAML 前面的纯文本说明（结构 + 解读规则）。**暂不模版化**（先看内容；要模版化时只换本文件，树/划分/投影不动）。它参与 renderedHash（改它 = 改 wire 语义） |
 | 页面数据 | `preview.ts`：真实 globals（`assembleGlobals` 的产物，不是示范数据）+ system 名单 → 树/规则/两份投递/请求体；`PLACE_CANDIDATES` 只声明 system 名单，其余自动 runtime（不是两套表）。**候选拆到子字段**（`task.title` 稳定 vs `task.body` 易变）——按第一层粗暴划分会让易变内容污染 system 缓存 |
 | 请求预览 | `request.ts`：**整份请求体渲染为一份大 YAML**（树形文本编辑器形态）。请求体里与 system/runtime 两份文本**逐字相等**的字符串，就地解析为 YAML 子节点展开（解析的是 body 里那段原文本身，不是另算的一份）——说明头按注释输出（内容不丢、整份仍是合法 YAML）；解析失败退回块标量原文，不强行展开。wire 一行不动，UI 提供「原文」切 JSON（真发格式） |
-| 页面与 view | `ContextLabPage.tsx` + registry 的 `ctxlab.*`：**两列**（左=结构树/变更列表，中=请求预览）。**单份视图已删**（变量树 / system 份 / runtime 份 / 变更详情）—— 同一份文本的展开形态就在请求预览的树里，看两遍没有增量信息。块折叠态走 `Caches.diy_ctxlab_fold`，CLI：`ui view expand ctx.<structure\|steps\|request> open\|closed` |
+| 页面与 view | `ContextLabPage.tsx` + registry 的 `ctxlab.*`：**两列**（左=变更统计/变更列表/结构树，中=请求预览）。**单份视图已删**（变量树 / system 份 / runtime 份 / 变更详情）—— 同一份文本的展开形态就在请求预览的树里，看两遍没有增量信息。块折叠态走 `Caches.diy_ctxlab_fold`，CLI：`ui view expand ctx.<stats\|steps\|structure\|change\|request> open\|closed` |
 | 选中联动 | 点结构树一行 → 请求预览滚到并高亮**那几行**（行号由渲染同源收集、内嵌块无需换算）；请求预览里内嵌块的行号就在同一份映射里 |
 | 变更列表（待接快照） | 左栏「变更（step）」当前还是**重算对比**打出来的观察列表（`shared/context/history.ts`，内容没变不新增），只展示不选中。真发快照已就位（见上），下一步把它换成读 `context steps`：选中第 N 步 → 与第 N-1 步比；取消选中 → 当前 vs 最后一步 |
 | ⚠️ 两处"请求预览"只有一处是真发 | **上下文树页**（ctxlab）的请求预览 = 真发形态（同 `buildDelivery`）；**提示词页**（lab）的请求预览是**模版线**（`assembleSystem` 渲染 `_system.md` + AGENTS.md 链），它的 `requestNote` 已明确标注此事。别把 lab 的预览当成"会发出去的东西" |

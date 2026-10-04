@@ -827,7 +827,9 @@ export default function App() {
                                                 const label = () =>
                                                     t.pageId === "lab"
                                                         ? `提示词${num() ? ` #${num()}` : ""}`
-                                                        : tabLabel(t.ctx ?? "");
+                                                        : t.pageId === "ctxlab"
+                                                          ? `上下文树${num() ? ` #${num()}` : ""}`
+                                                          : tabLabel(t.ctx ?? "");
                                                 const icon = () => (t.pageId === "lab" ? "L" : (num() ?? "•"));
                                                 const tabGoto = () => {
                                                     hideHoverLayers();

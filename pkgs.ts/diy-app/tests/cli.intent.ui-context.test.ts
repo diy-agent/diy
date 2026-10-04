@@ -16,6 +16,7 @@ import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
 import { makeUiDriver, type A11yNode } from "./ui-drive";
+import { lockNavOpen } from "./nav-helper";
 
 let fx: { sh: ShellTest; HOME: string; electron: ElectronTest };
 
@@ -513,4 +514,97 @@ describe("上下文树：UI 上屏（两列 + 请求预览）", () => {
 
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 180_000);
+});
+
+describe("上下文树：可见性增强（统计接页 / 变更原因 / tab 标题）", () => {
+  it("统计块上屏；sys 徽章显示变更原因；nav tab 标题为「上下文树」", async () => {
+    const repo = `${fx.HOME}/ctxlab-vis`;
+    mkdirSync(repo, { recursive: true });
+    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 可见性`);
+    const pid = String((p.data as any)?.data?.id);
+    const t = await fx.sh.getJson(`./diy.sh task create 可见性任务 ${pid}`);
+    const uri = String((t.data as any)?.data?.uri);
+
+    // 手写两条快照：第二条 `chain.0` 值变 → system 全量重建；原因应收拢到投递单元 `chain`
+    // （叶子 chain.0 → 单元 chain，见 ContextLabPage 的 sysCauses / ownerOf）。
+    const rec = (over: Record<string, unknown>) => ({
+      ts: "2026-09-27T00:00:00.000Z",
+      turnId: "v1",
+      model: "mimo-v2.5",
+      wireVersion: "aaaa1111",
+      systemPlaces: ["chain"],
+      runtimePlaces: ["task.body"],
+      valueHashes: { "chain.0": "c1", "task.body": "b1" },
+      systemText: "chain:\n  - path: /a",
+      runtimeText: 'task:\n  body: "一"',
+      ...over,
+    });
+    const localDir = join(fx.HOME, "local");
+    mkdirSync(localDir, { recursive: true });
+    writeFileSync(
+      join(localDir, `${keyOf(uri)}.steps.jsonl`),
+      [
+        rec({}),
+        rec({
+          turnId: "v2",
+          valueHashes: { "chain.0": "c2", "task.body": "b1" },
+          systemText: "chain:\n  - path: /b",
+        }),
+      ]
+        .map((r) => JSON.stringify(r))
+        .join("\n") + "\n",
+    );
+
+    // 手写项目累计统计（真发需 LLM key）：chain.0 变 2 次 / 共 4 轮 → 变化率 50%
+    const stat = (ts: string, changed: string[]) =>
+      JSON.stringify({ ts, taskUri: uri, turnId: `s-${ts}`, changed });
+    mkdirSync(join(fx.HOME, "projects", pid), { recursive: true });
+    writeFileSync(
+      join(fx.HOME, "projects", pid, "context-stats.jsonl"),
+      [
+        stat("2026-09-27T00:00:00.000Z", ["chain.0", "diy"]),
+        stat("2026-09-27T01:00:00.000Z", ["chain.0"]),
+        stat("2026-09-27T02:00:00.000Z", []),
+        stat("2026-09-27T03:00:00.000Z", ["task.body"]),
+      ].join("\n") + "\n",
+    );
+
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
+    await fx.sh.getJson(`./diy.sh ui page navigate ctxlab:${uri}`);
+
+    const ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
+      const r = await fx.sh.getJson("./diy.sh ui inspect");
+      return (r.data as any)?.data?.tree as A11yNode | undefined;
+    });
+    try {
+      // R3: nav 侧栏 tab 标题 = 「上下文树 #N」（收起态是 rail，label 要展开侧栏才看得到）
+      await lockNavOpen(ui);
+      const nav = await waitUntil(a11yText, (s) => /上下文树 #\d+/.test(s), {
+        label: "nav tab 标题为「上下文树 #N」",
+      });
+      expect(nav).toMatch(/上下文树 #\d+/);
+
+      // R1: 展开「变更统计」块 → 路径 + 变化率上屏（chain.0 2 次 / 4 轮 = 50%）
+      await fold("stats", true);
+      const st = await waitUntil(
+        a11yText,
+        (s) => s.includes("变更统计（项目累计）") && s.includes("50%"),
+        { label: "变更统计（项目累计）上屏" },
+      );
+      expect(st).toContain("chain.0");
+      expect(st).toContain("50%");
+
+      // R2: 展开「变更（真发轮次）」→ sys 徽章旁显示原因（chain）
+      await fold("steps", true);
+      const sp = await waitUntil(a11yText, (s) => /sys\s*chain/.test(s), {
+        label: "sys 徽章显示变更原因",
+      });
+      expect(sp).toMatch(/sys\s*chain/);
+    } finally {
+      ui.close();
+    }
+
+    await fx.sh.run(`./diy.sh project remove ${pid}`);
+  }, 120_000);
 });
