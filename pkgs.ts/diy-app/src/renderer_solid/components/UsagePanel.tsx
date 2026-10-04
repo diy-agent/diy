@@ -23,6 +23,8 @@
 import { createEffect, createSignal, For, Show, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 import { localChatStore } from "../store/localChatStore";
+// 时间口径唯一出处（shared/date-format）：用量卡的 HH:MM 与对话流的时间戳同源
+import { fmtTurnClock } from "../../shared/date-format";
 import {
     cacheHitRate,
     fmtCost,
@@ -82,15 +84,6 @@ const faceLabel = (api: string): string => (api === "responses" ? "resp" : "chat
 function isLegacyUsage(u: unknown): boolean {
     const r = u as Record<string, unknown> | null;
     return !!r && typeof r["noCache"] !== "number";
-}
-
-/** turnId（`t` + 13 位 epoch ms）→ `HH:MM`；旧格式 id 解析不出就不显示（不编时间） */
-function fmtTurnClock(turnId: string): string | null {
-    const m = /^t(\d{13})$/.exec(turnId);
-    if (!m) return null;
-    const d = new Date(Number(m[1]));
-    if (Number.isNaN(d.getTime())) return null;
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 // ─── L2 汇总卡：统一数据模型（A/B 两表同一份源） ───────

@@ -368,6 +368,8 @@ export async function makeUiDriver(
         ArrowDown: { code: "ArrowDown", vk: 40 },
         ArrowUp: { code: "ArrowUp", vk: 38 },
         Escape: { code: "Escape", vk: 27 },
+        Backspace: { code: "Backspace", vk: 8 },
+        Delete: { code: "Delete", vk: 46 },
         Enter: { code: "Enter", vk: 13 },
         Tab: { code: "Tab", vk: 9 },
       };

@@ -34,3 +34,49 @@ export function fmtAgo(iso: string | undefined | null, now: number = Date.now())
     if (s < 86400) return `${Math.floor(s / 3600)} 小时前`;
     return `${Math.floor(s / 86400)} 天前`;
 }
+
+/**
+ * turn 块 id → 时刻（`t` + 13 位 epoch 毫秒，如 `t1759512744123`）。
+ *
+ * 这是**协议契约**（不是巧合）：main 侧 `local-agent.ts` 用 `t${Date.now()}` 造 turnId，
+ * step/tool/think 块 id 全部以它为前缀（`<turnId>_s1`…），所以一个 turn 块的 id 自带
+ * 该轮的起点时刻 —— 这是对话流里**唯一**的时间真源（Op 协议无 ts 字段，块结构也没有）。
+ *
+ * 旧日志可能有非此形状的 id（改名/迁移前），解析不出的**不编时间**、返回 null：
+ * 宁可没有时间，也不能显示一个假时刻（与 byline 的"当时人物未知"同一原则）。
+ */
+export function turnTimeOf(turnId: string | undefined | null): Date | null {
+    if (!turnId) return null;
+    const m = /^t(\d{13})$/.exec(turnId);
+    if (!m) return null;
+    const d = new Date(Number(m[1]));
+    return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** turnId → `HH:MM`；解析不出 → null（调用方决定显不显示，不显示占位） */
+export function fmtTurnClock(turnId: string | undefined | null): string | null {
+    const d = turnTimeOf(turnId);
+    if (!d) return null;
+    const p = (n: number): string => String(n).padStart(2, "0");
+    return `${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/**
+ * turnId → `MM-DD HH:MM` —— 对话流里**显示给用户**的那一份。
+ *
+ * 带日期（而非只 HH:MM）：会话天然跨天，只写 14:07 时"昨天下午那句"和"刚才那句"长得一样，
+ * 回头定位就失去意义；这一列本来就是"这句话什么时候说的"。
+ */
+export function fmtTurnStamp(turnId: string | undefined | null): string | null {
+    const d = turnTimeOf(turnId);
+    if (!d) return null;
+    return fmtShortTime(d.toISOString());
+}
+
+/** turnId → `YYYY-MM-DD HH:MM:SS`（title 里的精确值；hover 才看，不占版面） */
+export function fmtTurnFull(turnId: string | undefined | null): string | null {
+    const d = turnTimeOf(turnId);
+    if (!d) return null;
+    const p = (n: number): string => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}

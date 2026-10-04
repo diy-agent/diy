@@ -35,6 +35,8 @@ import { Caches, DENSITY_LEVEL, DENSITY_VALUES, type Density } from "../lib/ui-s
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
 import { bylineOf } from "../lib/assistant-byline";
+// 对话流的时间戳：真源是 turnId 内嵌的毫秒（shared/date-format 统一解析与格式化）
+import { fmtTurnStamp, fmtTurnFull } from "../../shared/date-format";
 import type { ReasoningEffort } from "../../main/services/local-agent";
 // 插话队列项：与草稿同文件存储（任务目录 .diy/drafts.yaml），类型只在 main 侧定义
 import type { SteerItem, SteerMode } from "../../main/core/drafts";
@@ -415,7 +417,9 @@ function ErrorBox(props: { node: BlockNode }) {
  * 旧会话（无该字段）回落到当前人物，但**显式标注为推断**——不假装确定。
  * 与输入框旁那个「跟随缺省（X）」是两回事：那个回答"下一条发给谁"，仍读当前配置。
  */
-function AssistantByline(props: { turnModel?: unknown }) {
+function AssistantByline(props: { turnModel?: unknown; turnId: string }) {
+    // 该轮的时刻：真源 = turnId 内嵌毫秒（协议无 ts）。解析不出的旧 id → 不显示，不编时间。
+    const stamp = () => fmtTurnStamp(props.turnId);
     const id = () => taskStore.selectedTask?.persona ?? personaStore.idForTask();
     // defOfLive：缓存里没有该 id 时补拉一次（CLI 新建/改名后 renderer 的清单会陈旧）
     const persona = () => personaStore.defOfLive(id());
@@ -451,6 +455,16 @@ function AssistantByline(props: { turnModel?: unknown }) {
             <Show when={info().inferred}>
                 <span class="opacity-40">（当时人物未知）</span>
             </Show>
+            {/* 该轮时刻：贴着署名行尾（扫读一列时间，不占正文宽度）。
+                带日期（MM-DD HH:MM）而不是只写 HH:MM —— 会话天然跨天，只写时刻时
+                "昨天的 14:07"与"刚才的 14:07"长得一样，回头定位就没了意义。
+                hover 出精确到秒的完整时间（秒是噪音，只在不占版面时才给）。
+                时间与"谁答的"同属**该轮事实**，所以和署名同一行 —— 它俩都是那轮的属性。 */}
+            <Show when={stamp()}>
+                <span class="ml-auto shrink-0 tabular-nums opacity-50" title={fmtTurnFull(props.turnId) ?? undefined}>
+                    {stamp()}
+                </span>
+            </Show>
         </div>
     );
 }
@@ -459,6 +473,8 @@ function LeafView(props: {
     node: BlockNode;
     /** 本轮 turn 的 attrs.model（该轮事实；旧会话可能没有） */
     turnModel?: unknown;
+    /** 本轮 turn 的 id（时间真源：`t` + 毫秒） */
+    turnId: string;
     density: Density;
     pin: Record<string, boolean>;
     onToggle: (id: string) => void;
@@ -495,7 +511,7 @@ function LeafView(props: {
             // 会被解析成错乱结构，这里绝不能走 Markdown 渲染
             return (
                 <div>
-                    <AssistantByline turnModel={props.turnModel} />
+                    <AssistantByline turnModel={props.turnModel} turnId={props.turnId} />
                     <div class="text-prose opacity-80 truncate">
                         {b.stopped ? firstLine(t) : tailLine(t)}
                         <Show when={!b.stopped}>
@@ -512,7 +528,7 @@ function LeafView(props: {
         // 旧分支会原样留在 DOM 里——现象就是点「MD 原文」正文纹丝不动（只在切任务/重挂载后才生效）。
         return (
             <div>
-                <AssistantByline turnModel={props.turnModel} />
+                <AssistantByline turnModel={props.turnModel} turnId={props.turnId} />
                 <Show when={props.md} fallback={<PlainText text={text} />}>
                     <MarkdownText text={text} streaming={!b.stopped} />
                 </Show>
@@ -589,6 +605,7 @@ function TurnView(props: {
                         <LeafView
                             node={seg.node}
                             turnModel={t.attrs.model}
+                            turnId={t.id}
                             density={props.density}
                             pin={props.pin}
                             onToggle={props.onToggle}
@@ -940,6 +957,13 @@ export function LocalChatPage(props: { uri?: string }) {
     const [personaPanelOpen, setPersonaPanelOpen] = createSignal(false);
     const [fullscreen, setFullscreen] = createSignal(false);
     let scrollRef: HTMLDivElement | undefined;
+    /** 页面容器（用于量 view 高度：输入区封顶 = view 1/3，见 R5 输入框高度） */
+    let rootRef: HTMLDivElement | undefined;
+    /** 当前 view 高度（px，0 = 尚未量到）；输入区 max-height 由它推出 */
+    const [viewH, setViewH] = createSignal(0);
+    /** 输入区封顶高度：view 的 1/3。用**实测值**而不是 33vh —— 多 view 并排时
+     *  页面比视口矮，33vh 会明显超出一档；首帧未量到先退回 33vh。 */
+    const inputMaxH = () => (viewH() > 0 ? `${Math.round(viewH() / 3)}px` : "33vh");
     /** 跟随态：true=贴底（新内容自动滚到底）；false=用户正在上方阅读（绝不打扰） */
     const [stick, setStick] = createSignal(true);
     /** 恢复中闸门：历史重放期间 trees 连发，须让位给 restore 的定位（否则被抢先滚到底） */
@@ -1005,7 +1029,12 @@ export function LocalChatPage(props: { uri?: string }) {
         };
         document.addEventListener("click", closePopovers);
         document.addEventListener("keydown", onKey, true);
+        // view 高度跟随窗口/布局变化（输入区封顶 = view 1/3，R5）
+        const ro = new ResizeObserver(() => setViewH(rootRef?.clientHeight ?? 0));
+        if (rootRef) ro.observe(rootRef);
+        setViewH(rootRef?.clientHeight ?? 0);
         onCleanup(() => {
+            ro.disconnect();
             document.removeEventListener("click", closePopovers);
             document.removeEventListener("keydown", onKey, true);
         });
@@ -1169,7 +1198,11 @@ export function LocalChatPage(props: { uri?: string }) {
     };
 
     return (
-        <div class="flex flex-col h-full overflow-hidden">
+        <div
+            ref={(el) => (rootRef = el)}
+            class="flex flex-col h-full overflow-hidden"
+            data-testid="local-chat-page"
+        >
             <PersonaDrawer open={personaPanelOpen()} onClose={() => setPersonaPanelOpen(false)} />
             {/* 打开时顺手对一次账本（轮次间隙别人跑的那几轮不该漏） */}
             <UsageDrawer open={usageBoard()} uri={uri()} onClose={() => setUsageBoard(false)} />
@@ -1400,7 +1433,8 @@ export function LocalChatPage(props: { uri?: string }) {
                     </label>
                     {/* pr-8：正文不要钻到右上角按钮底下 */}
                     <div
-                        class={`min-h-0 overflow-auto px-2 pt-2 pr-8 ${fullscreen() ? "flex-1" : "min-h-[72px] max-h-[320px]"}`}
+                        class="min-h-0 overflow-auto px-2 pt-2 pr-8"
+                        style={fullscreen() ? undefined : { "max-height": inputMaxH() }}
                     >
                         <MdEditor
                             value={inputValue()}
@@ -1421,7 +1455,6 @@ export function LocalChatPage(props: { uri?: string }) {
                             wrap
                             lineNumbers={fullscreen()}
                             embedded
-                            class="min-h-[56px]"
                         />
                     </div>
                     {/* 不再画分隔线：正文与工具条同底色（base-200），一条 border-base-300 的横线
