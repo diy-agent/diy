@@ -2,15 +2,16 @@
  * LocalChatPage — 本地自定义 agent 对话页（ai-sdk 块协议，独立于 ACP ChatPage）
  *
  * 渲染 = f(层级 density, 阶段 phase)：
- *   层级 L1 脉络 / L2 阅读 / L3 审计 / L4 取证（工具条切换，localStorage 持久）
+ *   层级 L1 脉络 / L2 阅读 / L3 审计（☷ 单键循环切换，localStorage 持久）
  *   阶段 streaming（未 stop）/ settled（定稿）——直播态无视层级做减法，保证进度可见
  *
- * 规则矩阵：
- *   L1: user 全文 + assistant 单行（直播末行/定稿首行）+ ·N 步；过程隐藏
- *   L2: text 全文 + 过程压成发丝线（失败自动展开）；直播另加单行 TurnLiveLine
- *   L3: text 全文 + 过程标题行（点开展示截断输出 + 全屏按钮）
- *   L4: = L3 全部展开（无新组件）
- * 定稿自动收敛：open = pinned ?? (L4 ? true : error? true : false)，直播块天然展开预览。
+ * 规则矩阵（2026-10-04 重定义：**密度只决定「默认展开与否」，不是「能否展开」**）：
+ *   L1: user 全文；assistant 正文折成一行摘要（点开看全文）；过程聚合成一行（点开逐条看）
+ *   L2: 正文默认展开（点标题行可折叠）；过程同 L1
+ *   L3: 正文默认展开；过程**每块各一行**（点开看内容）
+ *   —— 取消原 L4「全开」档：任何档位下每个块的展开都靠用户点，档位不再"帮用户全开"。
+ * 展开判定 = pin（用户的显式覆盖）?? 默认值（正文看档位、过程一律收）；
+ * error 块与中断遗留 tool 恒开（要让人一眼看到"断在哪"）。
  */
 
 import { createSignal, For, Show, Switch, Match, createEffect, on, onMount, onCleanup } from "solid-js";
@@ -31,7 +32,7 @@ import {
 import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
-import { Caches, DENSITY_LEVEL, DENSITY_VALUES, type Density } from "../lib/ui-state";
+import { Caches, DENSITY_LEVEL, DENSITY_LABEL, DENSITY_VALUES, type Density } from "../lib/ui-state";
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
 import { bylineOf } from "../lib/assistant-byline";
@@ -51,8 +52,8 @@ import { steerModeLabel, steerModeTip } from "../../shared/steer-mode";
 
 // ─── 层级 ───────────────────────────────────────────
 
-/** 审计及以上（L3/L4：过程以标题行展示） */
-const isAuditPlus = (d: Density) => d === DENSITY_LEVEL.AUDIT || d === DENSITY_LEVEL.FORENSIC;
+/** 审计档（L3：过程以标题行逐块展示，不聚合成发丝线） */
+const isAudit = (d: Density) => d === DENSITY_LEVEL.AUDIT;
 
 function loadDensity(): Density {
     return Caches.diy_chat_density.get();
@@ -121,20 +122,6 @@ function MarkdownText(props: { text: string; streaming: boolean }) {
 
 // ─── 树工具（文档序） ───────────────────────────────
 
-function descendants(n: BlockNode): BlockNode[] {
-    const out: BlockNode[] = [];
-    const walk = (x: BlockNode) => {
-        for (const c of x.children) {
-            out.push(c);
-            walk(c);
-        }
-    };
-    walk(n);
-    return out;
-}
-const processOf = (turn: BlockNode) =>
-    descendants(turn).filter((b) => b.tag === "think" || b.tag === "tool");
-
 /** 本轮是否已出现助理侧内容（think/tool/text-assistant/error/plan）。
  *  发送后到首个助理事件之间有一段真空期（握手 + 上游首 token 往返），
  *  此时界面上只有 user 气泡，需要 loading 图标填充"正在处理"的反馈；
@@ -192,7 +179,8 @@ function segments(density: Density, leaves: BlockNode[]): Seg[] {
         (b.tag === "think" || b.tag === "tool") &&
         b.stopped &&
         !(b.tag === "tool" && str(b.attrs.status) === "error");
-    if (density !== DENSITY_LEVEL.READ) return leaves.map((node) => ({ kind: "block", node }));
+    // L3 审计：过程每块各一行（不聚合）；L1/L2：连续已定稿过程段聚合成一行发丝线
+    if (density === DENSITY_LEVEL.AUDIT) return leaves.map((node) => ({ kind: "block", node }));
     const out: Seg[] = [];
     let run: BlockNode[] = [];
     const flush = () => {
@@ -229,13 +217,26 @@ function isInterruptedToolBlock(n: BlockNode): boolean {
     return !localChatStore.live;
 }
 
-/** 展开判定：error 恒开 → 中断的 tool 恒开（要让人一眼看到"最后一句断在哪"）→ 手动 pin → L4 全开 */
-function isOpen(n: BlockNode, density: Density, pin: Record<string, boolean>): boolean {
+/**
+ * 展开判定（2026-10-04 重写）：**pin 是用户的显式覆盖，档位只给默认值**。
+ *
+ * 正文与过程分两套默认：
+ *   · 正文：pin → L2/L3 默认展开、L1 折成一行（**直播中同样折叠** —— L1 的语义就是
+ *     "只看最后一行"，收起态仍显示正在写的那一行 + 光标，进度照样可见）；
+ *   · 过程：error 块 / 中断遗留 tool 恒开（看"断在哪"）→ pin → 一律默认收起
+ *     （原 L4「全开」档已取消 —— 档位不再负责"帮用户全开"）。
+ */
+function textOpen(n: BlockNode, density: Density, pin: Record<string, boolean>): boolean {
+    if (n.id in pin) return pin[n.id]!;
+    return density !== DENSITY_LEVEL.OUTLINE;
+}
+
+function procOpen(n: BlockNode, pin: Record<string, boolean>): boolean {
     if (n.tag === "error") return true;
     if (n.tag === "tool" && str(n.attrs.status) === "error") return true;
     if (isInterruptedToolBlock(n)) return true;
     if (n.id in pin) return pin[n.id]!;
-    return density === DENSITY_LEVEL.FORENSIC;
+    return false;
 }
 
 // ─── 行摘要与正文 ───────────────────────────────────
@@ -321,13 +322,12 @@ function ToolBody(props: { node: BlockNode; onFull: (title: string, content: str
 /** 过程行：标题 + 状态灯 + Chevron；正文按 open 渲染；直播且展开时跟随到底 */
 function ProcessRow(props: {
     node: BlockNode;
-    density: Density;
     pin: Record<string, boolean>;
     onToggle: (id: string) => void;
     onFull: (title: string, content: string) => void;
 }) {
     const n = () => props.node;
-    const open = () => isOpen(n(), props.density, props.pin);
+    const open = () => procOpen(n(), props.pin);
     let bodyRef: HTMLDivElement | undefined;
     // 直播展开时跟随到底：订阅整树信号（每 op 重跑一次），仅当 open 且未定稿
     createEffect(() => {
@@ -345,6 +345,7 @@ function ProcessRow(props: {
                 class="flex items-center gap-2 cursor-pointer select-none px-2.5 py-1.5 w-full text-left"
                 onPointerDown={(e) => e.preventDefault()}
                 onClick={() => props.onToggle(n().id)}
+                aria-expanded={open()}
             >
                 {statusMark(n())}
                 <span class="font-medium text-base-content/80 truncate flex-1">
@@ -366,23 +367,107 @@ function ProcessRow(props: {
     );
 }
 
+/**
+ * assistant 正文的折叠组件（与 ProcessRow 同款形态，**默认展开**）。
+ *
+ * 为什么正文也要折叠：旧版 L1 用 `truncate` 只显一行且**没有任何展开入口** ——
+ * 想看全文只能整档切密度。现在折叠只是"默认收起"，点标题行即可读全文（收纳形态统一）。
+ * 收起时的摘要恒为**纯文本**：截断出的半行 Markdown（断在 `**`、` ``` `、表格 `|` 中间）
+ * 会被解析成错乱结构，绝不能走 Markdown 渲染。
+ */
+function TextFold(props: {
+    node: BlockNode;
+    turnModel?: unknown;
+    density: Density;
+    pin: Record<string, boolean>;
+    onToggle: (id: string) => void;
+    md: boolean;
+}) {
+    const b = () => props.node;
+    const open = () => textOpen(b(), props.density, props.pin);
+    const text = () => str(b().attrs.content);
+    /** 收起时的单行摘要：直播看末行（正在写的那行）、定稿看首行 */
+    const digest = () => (b().stopped ? firstLine(text()) : tailLine(text()));
+    return (
+        <div class="rounded-lg border border-base-300 bg-base-200/40" data-block-id={b().id} data-block-tag="text">
+            <button
+                type="button"
+                class="flex items-center gap-2 cursor-pointer select-none px-2.5 py-1.5 w-full text-left text-body"
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => props.onToggle(b().id)}
+                aria-expanded={open()}
+            >
+                <span class="shrink-0 opacity-60">🤖</span>
+                <span class="font-medium text-base-content/80 truncate flex-1">{digest()}</span>
+                <Show when={!b().stopped}>
+                    <span class="animate-pulse">▋</span>
+                </Show>
+                <span class="opacity-40 text-body">{open() ? "▴" : "›"}</span>
+            </button>
+            <Show when={open()}>
+                <div class="px-3 pb-2">
+                    <AssistantByline turnModel={props.turnModel} />
+                    <Show when={props.md} fallback={<PlainText text={text()} />}>
+                        <MarkdownText text={text()} streaming={!b().stopped} />
+                    </Show>
+                </div>
+            </Show>
+        </div>
+    );
+}
+
 // ─── Turn 视图：文档序渲染 + 密度可见性矩阵 ──────────
 //
 // 铁律：块按时间（DFS 文档序）呈现，密度只决定「怎么显示/是否显示」，
 // 绝不按 kind 重排分组——tool 执行完才产生的 text 结论，必须画在 tool 之后。
 
-/** 连续已定稿过程段的发丝线（L2） */
-function HairSeg(props: { nodes: BlockNode[] }) {
+/**
+ * 连续已定稿过程段的聚合行（L1/L2）：一行发丝线摘要，**可点开**逐条看过程。
+ *
+ * 为什么必须可点开：密度只决定「默认隐藏」，不决定「能否展开」（2026-10-04 定调）——
+ * 旧版发丝线是死胡同：想看这几步是什么，只能整档切到 L3。
+ *
+ * 展开态也走 pin：key 用 `hair:<首节点 id>` 前缀，与块 id 不相撞（块 id 不由 "hair:" 开头），
+ * 于是同一张 pin 表既能管单块也能管聚合段，且聚合段的身份在节点增删时会失效（需重新点开）——
+ * 这正是我们要的：段内容变了，旧的"我看过"就不该继续生效。
+ */
+function HairSeg(props: {
+    nodes: BlockNode[];
+    pin: Record<string, boolean>;
+    onToggle: (id: string) => void;
+    onFull: (title: string, content: string) => void;
+}) {
     const tools = () => props.nodes.filter((b) => b.tag === "tool").length;
     const thinks = () => props.nodes.filter((b) => b.tag === "think").length;
+    const key = () => `hair:${props.nodes[0]!.id}`;
+    const open = () => (key() in props.pin ? props.pin[key()]! : false);
     return (
-        <div class="flex items-center gap-2 text-body opacity-40 select-none py-0.5">
-            <span class="flex-1 border-t border-base-300" />
-            <span>
-                <Show when={tools()}>⚙ {tools()} </Show>
-                <Show when={thinks()}>· 💭 {thinks()}</Show>
-            </span>
-            <span class="flex-1 border-t border-base-300" />
+        <div class="rounded-lg" data-block-tag="hair">
+            <button
+                type="button"
+                class="flex items-center gap-2 w-full cursor-pointer select-none text-body opacity-40 hover:opacity-70 py-0.5"
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => props.onToggle(key())}
+                aria-expanded={open()}
+                aria-label={`过程摘要：${tools()} 个工具、${thinks()} 段思考（点击${open() ? "收起" : "展开逐条"}）`}
+            >
+                <span class="flex-1 border-t border-base-300" />
+                <span>
+                    <Show when={tools()}>⚙ {tools()} </Show>
+                    <Show when={thinks()}>· 💭 {thinks()}</Show>
+                </span>
+                <span class="text-caption">{open() ? "▴" : "›"}</span>
+                <span class="flex-1 border-t border-base-300" />
+            </button>
+            <Show when={open()}>
+                <div class="mt-1 space-y-1">
+                    <For each={props.nodes}>
+                        {(n) => (
+                            <ProcessRow node={n} pin={props.pin} onToggle={props.onToggle} onFull={props.onFull} />
+                        )}
+                    </For>
+                </div>
+            </Show>
         </div>
     );
 }
@@ -488,58 +573,38 @@ function LeafView(props: {
         );
     }
     if (b.tag === "text") {
-        // assistant 正文：L1 单行（直播取末行/定稿取首行），L2+ 全文（流式照常平铺）
-        if (props.density === DENSITY_LEVEL.OUTLINE) {
-            const t = str(b.attrs.content);
-            // L1 摘要恒为纯文本：截断出的半行 Markdown（断在 ** 、``` 、表格 | 中间）
-            // 会被解析成错乱结构，这里绝不能走 Markdown 渲染
-            return (
-                <div>
-                    <AssistantByline turnModel={props.turnModel} />
-                    <div class="text-prose opacity-80 truncate">
-                        {b.stopped ? firstLine(t) : tailLine(t)}
-                        <Show when={!b.stopped}>
-                            <span class="animate-pulse">▋</span>
-                        </Show>
-                    </div>
-                </div>
-            );
-        }
-        const text = str(b.attrs.content);
-        // ⚠️ 必须用 <Show> 而不是 if：LeafView 是组件函数，只在创建时执行一次，
-        // 函数体里的 if 分支对 props 变化**不响应**。密度切换之所以看起来是好的，
-        // 是因为 segments(density) 变了 → <For> 重建节点；而切 md 不改变 segments，
-        // 旧分支会原样留在 DOM 里——现象就是点「MD 原文」正文纹丝不动（只在切任务/重挂载后才生效）。
+        // assistant 正文：统一走折叠组件，默认展开与否由档位决定（L1 收 / L2+ 开），
+        // 任何档位下点标题行都能读全文（密度不再等于"能否展开"）。
+        //
+        // ⚠️ 展开/收起恒走 <Show>：LeafView 是组件函数，只在创建时执行一次，函数体里的 if
+        // 对 props 变化**不响应**（旧版就是这么踩的：切 md 时正文纹丝不动，因为 segments
+        // 没变、节点没重建）。TextFold 内部一律 <Show>，故 md / pin / density 变化都能即时反映。
         return (
-            <div>
-                <AssistantByline turnModel={props.turnModel} />
-                <Show when={props.md} fallback={<PlainText text={text} />}>
-                    <MarkdownText text={text} streaming={!b.stopped} />
-                </Show>
-            </div>
+            <TextFold
+                node={b}
+                turnModel={props.turnModel}
+                density={props.density}
+                pin={props.pin}
+                onToggle={props.onToggle}
+                md={props.md}
+            />
         );
     }
     if (b.tag === "think" || b.tag === "tool") {
         const failed = b.tag === "tool" && str(b.attrs.status) === "error";
         // 直播中的过程块：所有密度都显示为进度行（静默的是内容，不是活动）
-        if (!b.stopped || failed || isAuditPlus(props.density)) {
+        if (!b.stopped || failed || isAudit(props.density)) {
             return (
-                <ProcessRow
-                    node={b}
-                    density={props.density}
-                    pin={props.pin}
-                    onToggle={props.onToggle}
-                    onFull={props.onFull}
-                />
+                <ProcessRow node={b} pin={props.pin} onToggle={props.onToggle} onFull={props.onFull} />
             );
         }
-        return null; // L1/L2 定稿过程：L1 隐藏；L2 由 HairSeg 聚合（segments 合并过，单块即一段）
+        return null; // L1/L2 的已定稿过程由 HairSeg 聚合（segments 已合并，此处不渲染单块）
     }
     if (b.tag === "error") {
         return <ErrorBox node={b} />;
     }
     if (b.tag === "plan") {
-        if (props.density === DENSITY_LEVEL.OUTLINE) return null;
+        // 计划块本身只有几行、信息量高：不再按档位隐藏（密度只决定默认展开，不决定"有没有"）
         return (
             <div class="text-body opacity-70">
                 📋 计划：
@@ -576,7 +641,6 @@ function TurnView(props: {
         prevSegs = reuseSegs(prevSegs, segments(props.density, leavesOf(t)));
         return prevSegs;
     };
-    const procCount = () => processOf(t).length;
     const isLiveTurn = () => props.liveTurnId != null && props.liveTurnId === t.id;
     return (
         <div class="space-y-1.5">
@@ -584,7 +648,12 @@ function TurnView(props: {
             <For each={segs()}>
                 {(seg) =>
                     seg.kind === "hair" ? (
-                        <HairSeg nodes={seg.nodes} />
+                        <HairSeg
+                            nodes={seg.nodes}
+                            pin={props.pin}
+                            onToggle={props.onToggle}
+                            onFull={props.onFull}
+                        />
                     ) : (
                         <LeafView
                             node={seg.node}
@@ -598,10 +667,6 @@ function TurnView(props: {
                     )
                 }
             </For>
-            {/* L1 页脚：被隐藏的过程给个计数，不展开内容 */}
-            <Show when={props.density === DENSITY_LEVEL.OUTLINE && procCount() > 0}>
-                <div class="text-body opacity-40">· {procCount()} 步</div>
-            </Show>
             {/* 截断/步数耗尽提示：main 按生效 limits 写入，限制值动态非硬编码 */}
             <Show when={str(t.attrs.notice)}>
                 <div class="text-body text-warning">⚠ {str(t.attrs.notice)}</div>
@@ -934,7 +999,6 @@ export function LocalChatPage(props: { uri?: string }) {
     // 页面可能显示“选择任务”但聊天仍沿用上一个任务的会话，形成串台。
     const uri = () => props.uri ?? taskStore.selectedUri ?? null;
     const [inputValue, setInputValue] = createSignal("");
-    const [densityOpen, setDensityOpen] = createSignal(false);
     /** 「⋯」溢出菜单：低频/危险操作（清空历史）默认不显示，点开才露出（VSCode 附加菜单式） */
     const [moreOpen, setMoreOpen] = createSignal(false);
     const [personaPanelOpen, setPersonaPanelOpen] = createSignal(false);
@@ -988,12 +1052,10 @@ export function LocalChatPage(props: { uri?: string }) {
         void personaStore.load();
         const closePopovers = (e: MouseEvent) => {
             const target = e.target as Element;
-            if (!target.closest("[data-density-control]")) setDensityOpen(false);
             if (!target.closest("[data-more-control]")) setMoreOpen(false);
         };
         const onKey = (e: KeyboardEvent) => {
             if (e.key === "Escape") {
-                setDensityOpen(false);
                 setMoreOpen(false);
                 setPersonaPanelOpen(false);
                 setFullscreen(false);
@@ -1036,6 +1098,11 @@ export function LocalChatPage(props: { uri?: string }) {
     const setDensity = (d: Density) => {
         setDensityRaw(d);
         Caches.diy_chat_density.set(d);
+    };
+    /** ☷ 单键循环：点一下进下一档（L1→L2→L3→L1），末档回卷 —— 不弹层、不选级 */
+    const cycleDensity = () => {
+        const i = DENSITY_VALUES.indexOf(density());
+        setDensity(DENSITY_VALUES[(i + 1) % DENSITY_VALUES.length]!);
     };
     // Markdown 渲染开关（视图 cache 持久化，与密度同级）：全局开关而非 per-message
     const [md, setMdRaw] = createSignal<boolean>(Caches.diy_chat_md.get());
@@ -1197,44 +1264,21 @@ export function LocalChatPage(props: { uri?: string }) {
             <div
                 class={`flex items-center justify-end gap-2 pl-4 pr-16 ${VIEW_BAR_H} border-b shrink-0`}
             >
-                <div class="relative" data-density-control>
-                    <button
-                        class="btn btn-ghost btn-xs"
-                        data-tip="信息密度（拖到最右看全部过程）"
-                        aria-label="信息密度"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            setDensityOpen((v) => !v);
-                            setMoreOpen(false); // 与「⋯」互斥（stopPropagation 挡住了 document 关闭）
-                        }}
-                    >
-                        ☷
-                    </button>
-                    <Show when={densityOpen()}>
-                        <div
-                            class="absolute right-0 top-full z-20 mt-1 w-48 rounded-box border border-base-300 bg-base-100 p-3 shadow-xl"
-                            data-density-control
-                            onClick={(e) => e.stopPropagation()}
-                        >
-                            <input
-                                type="range"
-                                min="1"
-                                max="4"
-                                step="1"
-                                class="range range-primary range-xs"
-                                value={DENSITY_VALUES.indexOf(density()) + 1}
-                                aria-label="信息密度"
-                                onInput={(e) =>
-                                    setDensity(DENSITY_VALUES[Number(e.currentTarget.value) - 1]!)
-                                }
-                            />
-                            <div class="mt-1 flex justify-between text-caption opacity-60">
-                                <span>简</span>
-                                <span>详</span>
-                            </div>
-                        </div>
-                    </Show>
-                </div>
+                {/* 信息密度：**单键循环** —— 点一下进下一档（L1 脉络 → L2 阅读 → L3 审计 → 回 L1）。
+                    不弹层、不拖 range（"点开再选级"太绕）；按钮直接写出当前档名，
+                    因为单看 ☷ 一个符号看不出"现在是哪档"，切回来还得猜。 */}
+                <button
+                    class="btn btn-ghost btn-xs shrink-0"
+                    data-tip={`信息密度：${DENSITY_LABEL[density()]}（点击循环切换）`}
+                    aria-label={`信息密度：${DENSITY_LABEL[density()]}（点击循环切换）`}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        setMoreOpen(false); // 与「⋯」菜单互斥（stopPropagation 挡住了 document 关闭）
+                        cycleDensity();
+                    }}
+                >
+                    ☷ <span class="opacity-70">{DENSITY_LABEL[density()]}</span>
+                </button>
                 {/* 显示方式二选一：两个选项都可见、当前态高亮 —— 单按钮式「MD」看不出
                     处于哪一态（切回去要猜），且与破坏性按钮同形时易误点。 */}
                 <div class="join shrink-0" role="group" aria-label="Markdown 显示方式">
@@ -1270,7 +1314,6 @@ export function LocalChatPage(props: { uri?: string }) {
                             onClick={(e) => {
                                 e.stopPropagation();
                                 setMoreOpen((v) => !v);
-                            setDensityOpen(false); // 与密度弹层互斥
                             }}
                         >
                             <span class="text-body leading-none">⋯</span>

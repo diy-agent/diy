@@ -12,7 +12,7 @@
 // 模式：field(key, spec) 扁平字段，每个字段 = key + 类型 + 反序列化/校验 + 默认值，
 // 统一 .get()/.set()/.reset()。收益：
 //   1. 类型化读写：调用方不再各自 Number()/JSON.parse/cast
-//   2. 约束集中：范围校验（density 1-4、宽度 360-1000）定义即生效
+//   2. 约束集中：范围校验（density 三档枚举、宽度 360-1000）定义即生效
 //   3. 与存储解耦：未来换 IndexedDB/$DIY_HOME 文件只改本文件内部
 // 不引入 zod：zod 的运行时校验 + 类型派生服务于跨进程契约（RPC）；视图 cache
 // 是进程内单端标量字段，轻量 parse 即可。
@@ -20,27 +20,38 @@
 export type DiyTheme = "dark" | "light";
 
 // ─── 聊天信息密度（枚举：值即存储值，自解释，替代裸数字） ─────────
-
+//
+// 三档语义（2026-10-04 重定义，取消原第四档「全开/FORENSIC」）：
+//   · **密度只决定「默认展开与否」**，任何档位下每个块都能手动点开（pin 覆盖默认值）；
+//   · 正文（assistant text）与过程（think/tool）各有一套默认展开规则（见 LocalChatPage）；
+//   · 过程在 L1/L2 聚合成一行摘要（可点开），L3 每块各一行。
 export const DENSITY_LEVEL = {
-  OUTLINE: "outline", // L1 脉络：user 全文 + assistant 单行，过程隐藏
-  READ: "read", // L2 阅读：正文全文 + 过程压成发丝线（默认）
-  AUDIT: "audit", // L3 审计：过程标题行可展开
-  FORENSIC: "forensic", // L4 取证：全部展开
+  OUTLINE: "outline", // L1 脉络：正文与过程一律折成一行摘要，点开看全文
+  READ: "read", // L2 阅读：正文默认展开，过程折成一行摘要（默认）
+  AUDIT: "audit", // L3 审计：正文默认展开 + 过程每块各一行
 } as const;
 export type Density = (typeof DENSITY_LEVEL)[keyof typeof DENSITY_LEVEL];
-/** 由简到繁的顺序（工具条渲染顺序） */
+/** 由简到繁的顺序（单键循环的切换次序） */
 export const DENSITY_VALUES: readonly Density[] = [
   DENSITY_LEVEL.OUTLINE,
   DENSITY_LEVEL.READ,
   DENSITY_LEVEL.AUDIT,
-  DENSITY_LEVEL.FORENSIC,
 ];
-/** 旧版数字存储（1-4）→ 语义值兼容 */
+/** 单键循环按钮上显示的短名（人一眼认出当前档，不靠数字） */
+export const DENSITY_LABEL: Record<Density, string> = {
+  [DENSITY_LEVEL.OUTLINE]: "脉络",
+  [DENSITY_LEVEL.READ]: "阅读",
+  [DENSITY_LEVEL.AUDIT]: "审计",
+};
+/** 旧版存储值 → 新三档。
+ *  数字 1-3 顺延；数字 4 与原枚举 forensic（已取消的"全开"档）**都归并到 L3** ——
+ *  归并方向选"信息不减"：曾经的最高档用户要看到过程，落到新最高档最不违其意。 */
 const LEGACY_DENSITY: Record<string, Density> = {
   "1": DENSITY_LEVEL.OUTLINE,
   "2": DENSITY_LEVEL.READ,
   "3": DENSITY_LEVEL.AUDIT,
-  "4": DENSITY_LEVEL.FORENSIC,
+  "4": DENSITY_LEVEL.AUDIT,
+  forensic: DENSITY_LEVEL.AUDIT,
 };
 
 // ─── 缓存字段（get/set/reset，内部吞异常 + 留痕） ─────────────
@@ -230,7 +241,7 @@ export const Caches = {
     serialize: (v) => v,
     defaultValue: "",
   }),
-  /** 本地聊天密度（枚举语义值 outline/read/audit/forensic，兼容旧数字 1-4） */
+  /** 本地聊天密度（三档语义值 outline/read/audit；兼容旧数字 1-4 与已取消的 forensic） */
   diy_chat_density: field<Density>("diy_chat_density", {
     parse: (raw) => {
       if (DENSITY_VALUES.includes(raw as Density)) return raw as Density;
