@@ -1,6 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
+import { sweepStaleTestHomes } from "./temp-home";
 
 // ═══════════════════════════════════════════════
 // 🛡️ 安全：每次测试运行分配一次性临时目录
@@ -31,3 +32,11 @@ process.env["DIY_ENV"] = "test";
 // 注入点选这里而非各测试文件：ShellTest 的 env = { ...process.env, ...opts.env }，
 // 在此设一次即对所有 CLI 调用生效（见 shell-test.ts:43）。
 process.env["DIY_NO_LAUNCH"] = "1";
+
+// 顺手清扫历史残留的隔离 HOME：删「系统临时目录下、超过 24h 未动」的本套件目录。
+// 按 mtime 判龄 → 并发跑的其它 worktree 的活跃目录不会被误删。失败静默。
+// 注：放在 env 隔离**之后**执行（本模块已把 HOME 指向隔离目录，不影响 tmpdir）。
+{
+  const n = sweepStaleTestHomes();
+  if (n > 0) console.log(`[setup] 清扫 ${n} 个过期测试临时目录（>24h）`);
+}

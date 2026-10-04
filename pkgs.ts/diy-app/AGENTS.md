@@ -37,6 +37,8 @@
 
 - `rule.noemit` — **类型检查绝不 emit**（各包 `noEmit: true`，唯一入口 `./sha.sh check`）。一旦产物落在源码旁，`resolve.extensions` 里 `.js/.jsx` 排在 `.ts/.tsx` 之前 → dev/构建/单测全部静默加载旧产物
 - `rule.stdio` — 子进程 stdio 判据是**读端是否一定被排空**：常驻/分离式 spawn 一律 `inherit`/`ignore`；测试侧 `pipe` 必须挂 `data` 监听持续排空。⚠️ **不得**为解析 `DevTools listening on` 而 pipe stderr —— CDP 地址一律读 `DevToolsActivePort` 文件
+- `rule.test-home` — intent 的隔离 HOME（`$TMPDIR/diy-app-test-*`）**用后即删**（`tests/temp-home.ts`）：测试目录不再永久堆积（曾 4 天积 1583 个 / 2.9GB）。删除双校验：必须在 `os.tmpdir()` 下 + 带本套件前缀，缺一不可
+- `rule.test-render` — intent 用 `--no-file-parallelism` + `fileParallelism:false`：**单实例串行**（起→测→收），实测 app 并发恒为 1；别改成并发（多实例抢 CPU 会让墙钟判据假红）
 - `rule.renderer-io` — renderer **永不直接写文件**，一律经 RPC（如 `diy.task.drafts.*`）
 - `rule.check` — 类型检查只准 `./sha.sh check`；`dev` 运行中勿并发 `tsc -b`/`vite build`/全量 vitest（抢 `outDir`，watcher 卡死）
 - `rule.agents-chain` — AGENTS.md 链**上界到 `$HOME` 为止**（不进 `/`、`/Users`）；不在 `$HOME` 下时只取工作目录一层

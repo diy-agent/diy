@@ -9,5 +9,7 @@ export default defineConfig({
     // 也不并发），保证确定性——实测并发跑偶发 20-26 用例失败，串行稳定全绿。
     maxWorkers: 1,
     fileParallelism: false,
+    // 首个失败即停：intent 是大头（串行起真实 Electron），红一条就没必要把剩下的跑完
+    bail: 1,
   },
 });
