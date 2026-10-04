@@ -57,6 +57,15 @@ fi
 # 要换入口就换入口脚本，而不是改这个变量。
 export DIY_CLI="$SCRIPT_DIR/diy.sh"
 
+# ── 运行环境自证（与 HOME / CLI 同一个坑）──
+# 外层 shell（agent 会话）常导出 DIY_ENV=production。worktree 入口应声明 development ——
+# DIY_ENV 是 dev/test 专属能力的唯一判据，"继承的生产声明"会让这些能力被误关。
+# 测试走 setup.ts 显式注入 test，不经本脚本。
+if [[ "${DIY_ENV:-}" == "production" ]]; then
+  echo "[diy.sh] 警告: 忽略继承的 DIY_ENV=production, 改用 development" >&2
+  unset DIY_ENV
+fi
+
 # DIY_CALLER_CWD：调用者敲命令时的目录。下面的 cd 会把它换掉，而 CLI 的路径参数
 # （如 `diy tool read <相对路径>`）必须按**用户的**目录解析 —— 所以先记下来传进去。
 # 缺了它，相对路径会落到应用目录（实测：`cd /tmp && diy tool read a.txt` 去找 <app>/a.txt）。

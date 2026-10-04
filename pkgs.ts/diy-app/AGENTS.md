@@ -31,7 +31,8 @@
 - `env.env` — `DIY_ENV` = `production`/`development`/`test`，**dev/test 专属能力的唯一判据**（如窗口副屏定位）；缺省 = production（未声明即生产，能力全关）
 - `env.port` — `DIY_PORT` 首选端口（测试注 `0`=随机）；优先级 `DIY_PORT` > `app.port` 文件 > 18888
 - `env.noLaunch` — `DIY_NO_LAUNCH=1` 禁止 CLI 自动拉起 app（测试专用，防实例逃逸）
-- `env.inject` — **入口自证，不继承**：`DIY_CLI` = 「跑的是谁」。各入口各声明自己（`diy.sh` → 自身；`bin/diy` → `$0`；`electron-dev.mts` → `<repo>/diy.sh`；`serve/index.ts` → 从自身位置找仓库根）；非打包的 `main/index.ts` 也兜底自证，覆盖不经入口脚本的直 spawn（测试 harness）。`serve` **不 import main**，故它独立自证一次。**绝不采信继承值**：agent 会话导出的常是全局 `diy`（生产），透传后模型被提示去敲另一个 checkout 的 CLI
+- `env.inject` — **入口自证，不继承**：`DIY_CLI` = 「跑的是谁」。各入口各声明自己（`diy.sh` → 自身；`bin/diy` → `$0`；`electron-dev.mts` → `<repo>/diy.sh`；`serve/index.ts` → 从自身位置找仓库根）。`main/index.ts` **只在未注入时**兜底自证（`||=`，按数据根推导：生产根 → `"diy"`，隔离 → `<repo>/diy.sh`）—— 无条件覆盖会误伤生产 GUI（把 `bin/diy` 注入的 `$0` 换成 `<repo>/diy.sh`）。`serve` 不 import main，故独立自证一次
+- `env.self-declare` — **三件套 `DIY_HOME`/`DIY_CLI`/`DIY_ENV` 都自证，不继承**（开发入口）。继承的生产值（agent 会话常带 `DIY_HOME=~/.diy`、`DIY_CLI=<全局 diy>`、`DIY_ENV=production`）会：操作生产数据 / 让模型敲错的 CLI / 误关 dev 能力。判据集中在 `core/instance-identity.ts`（`isProdDataHome` / `cliEntryForRepo` / `prodDataHome`）；`DIY_ALLOW_PROD_HOME=1` 放行。数据根判据：未设置或指向生产根 → `<repo>/build/home`；`DIY_ENV`：`production` → `development`。`serve` 直接跑也走同一套（它不 import main）
 
 ## rule — 硬约束
 

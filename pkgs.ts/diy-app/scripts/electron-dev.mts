@@ -5,8 +5,8 @@ import { build, createServer, type ViteDevServer, type Rollup } from "vite";
 import { spawn, type ChildProcess } from "node:child_process";
 import electronPath from "electron";
 import { join, dirname, resolve } from "node:path";
-import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { prodDataHome } from "../src/main/core/instance-identity";
 import {
   SINGLETON_LOCK,
   classifyLock,
@@ -36,7 +36,7 @@ const defaultHome = join(repoRoot, "build", "home");
 // 后 exit 0，现象只是「dev 起来了又退出」，没有任何指向原因的信息。
 // 这个坑被三个会话独立记录（##245 §8、##242 尾、##249 §六）→ 由代码兜底，不靠纪律。
 // 确需在生产数据上起 dev 才显式 opt-in：DIY_ALLOW_PROD_HOME=1 ./sha.sh dev
-const prodHome = join(process.env["HOME"] ?? homedir(), ".diy");
+const prodHome = prodDataHome();  // 真实家目录下的 ~/.diy（不读 $HOME，避免被隔离实例改写）
 const inheritedHome = process.env["DIY_HOME"];
 if (inheritedHome && resolve(inheritedHome) === prodHome && process.env["DIY_ALLOW_PROD_HOME"] !== "1") {
   console.warn(`[dev] 警告: 忽略继承的生产数据目录 DIY_HOME=${inheritedHome}, 改用本 worktree 的 ${defaultHome}`);

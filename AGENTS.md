@@ -36,7 +36,7 @@
 ## tool — 命令
 
 - `tool.check` — `./sha.sh check` **提交前唯一检查**：`tsc -b tsconfig.all.json --noEmit` + oxlint + rpc 浏览器安全 + 产物护栏
-- `tool.test` — `./sha.sh test` 全仓 · `./sha.sh test-unit` 快测（不起 Electron）· `pkgs.ts/diy-app/sha.sh test-intent` 意图测试
+- `tool.test` — `./sha.sh test` 全仓 · `./sha.sh test-unit` 快测（不起 Electron）· 意图测试 `pkgs.ts/diy-app/sha.sh test-intent [片段...]`：位置参数**过滤文件**（短名补 `tests/cli.intent.` 前缀，如 `test-intent ui-find`；带 `/` 或 `.test.ts` 原样传），无参才全量
 - `tool.cli` — 查/改数据：全局 `diy <域> <命令>`（生产）· worktree 里 `./diy.sh <域> <命令>`（隔离）。域：`task` `project` `agent` `template` `log` `watch` `ui` `doctor`
 - `tool.pkg` — `pkgs.ts/diy-app/sha.sh dev|build|test|cli` 单包动作
 - `tool.sync` — **新开 worktree 先 `./sha.sh sync`**（`npm install` + 子模块 + 各包 sync）；不跑则包没装、`node_modules` 缺。必须带 `--include-workspace-root` —— 光 `npm i --workspaces` 只装 workspace、漏装根 package.json 的依赖（`remark-gfm` 等），干净 worktree 上必现 build 解析失败

@@ -29,17 +29,34 @@ import { bindApi, setRpcPort } from "../main/services/api-impl";
 import { AppConfig } from "../main/core/app-config";
 import { installDiagnostics } from "../main/services/diagnostics";
 import { readRuntimeConfig } from "../runtime";
-import { findRepoRoot } from "../main/core/instance-identity";
+import { cliEntryForRepo, findRepoRoot, isProdDataHome, prodHomeAllowed } from "../main/core/instance-identity";
 
 // 计算项目根目录：从 src/serve/index.ts 向上两级到 pkgs.ts/diy-app/
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// CLI 入口自证（与 main/index.ts 同原则、同契约，注释见那里）。**必须在此独立做** ——
-// serve 不 import main/index.ts，那条自证不覆盖本进程。提示词模版会把 DIY_CLI 写进
-// 「命令行入口」，继承来的值可能指向另一个 checkout（agent 会话导出的全局 diy → 生产）。
+// ── 开发态入口自证（与 main/index.ts / diy.sh / electron-dev.mts 同一套判据）──
+// **必须在此独立做** —— serve 不 import main/index.ts，那条自证不覆盖本进程。
+// 外层 shell（agent 会话）常带 DIY_HOME=~/.diy、DIY_CLI=<全局 diy>、DIY_ENV=production；
+// 若透传，serve 会操作生产数据根、并让模型去敲另一个 checkout 的 CLI。
 // 找不到仓库根（打包部署目录）就不动：宁可缺、由 prompt-registry 走「未注入」告警。
 const repoRoot = findRepoRoot(__dirname);
-if (repoRoot) process.env["DIY_CLI"] = path.join(repoRoot, "diy.sh");
+if (repoRoot) {
+  // 数据根：未设置、或指向生产根（且未 DIY_ALLOW_PROD_HOME=1）→ 落本 checkout 的 build/home
+  const inheritedHome = process.env["DIY_HOME"];
+  if (!prodHomeAllowed() && (inheritedHome === undefined || isProdDataHome(inheritedHome))) {
+    if (inheritedHome !== undefined) {
+      console.warn(`[serve] 警告: 忽略继承的生产数据目录 DIY_HOME=${inheritedHome}, 改用 ${path.join(repoRoot, "build", "home")}`);
+    }
+    process.env["DIY_HOME"] = path.join(repoRoot, "build", "home");
+  }
+  // 环境：开发入口不该是 production（那会关掉 dev 专属能力）
+  if (process.env["DIY_ENV"] === "production") {
+    console.warn("[serve] 警告: 忽略继承的 DIY_ENV=production, 改用 development");
+    process.env["DIY_ENV"] = "development";
+  }
+  // 入口：与数据根匹配
+  process.env["DIY_CLI"] = cliEntryForRepo(repoRoot, process.env["DIY_HOME"]!);
+}
 
 // 运行配置由入口注入的环境变量装配（DIY_HOME / DIY_PORT）
 const cfg = readRuntimeConfig();
