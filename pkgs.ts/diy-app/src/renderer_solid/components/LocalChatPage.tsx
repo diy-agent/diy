@@ -44,7 +44,7 @@ import { reasoningEffortLabel } from "../../shared/reasoning-effort";
 import { DragDropProvider, DragOverlay, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt } from "./icons";
-import { VIEW_BAR_H } from "../lib/layout-metrics";
+import { VIEW_BAR_H, chatInputMaxHeight } from "../lib/layout-metrics";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
 // 历史 mode 值归一与文案放 shared（纯函数、可单测）：ops 日志是 append-only 的史书，
@@ -490,15 +490,32 @@ function LeafView(props: {
         // "这句是在第几步之后插进去的"，而不是以为它是一次新对话的开头
         // 注意类型是 string 而非 SteerMode：值域由**历史日志**决定（含改名前的 step/turn）
         const steer = str(b.attrs.steer);
+        // 用户消息的时刻：与助理署名行**同一口径、同一真源**（都是本轮的 turnId）。
+        // 需求原文是"对话消息显示时间"——只标助理一侧会让人以为"我这句话没被记录到"。
+        // 位置放在气泡上方右对齐，与助理署名行（左起、时间在行尾）对称：每条消息块
+        // 都以一行 meta 开头，时间永远在最右。
+        const stamp = fmtTurnStamp(props.turnId);
         return (
-            <div class="flex justify-end">
-                <div class="max-w-[85%] bg-primary/10 border border-primary/20 rounded-2xl px-3.5 py-2 text-prose whitespace-pre-wrap break-words">
-                    <Show when={steer}>
-                        <span class="mb-0.5 block text-caption opacity-60">
-                            ⤵ 插话（{steerModeLabel(steer)}）{steerModeTip(steer)}
+            <div>
+                <Show when={stamp}>
+                    <div class="mb-0.5 flex justify-end text-body" data-testid="user-byline">
+                        <span
+                            class="shrink-0 tabular-nums opacity-50"
+                            title={fmtTurnFull(props.turnId) ?? undefined}
+                        >
+                            {stamp}
                         </span>
-                    </Show>
-                    {str(b.attrs.content)}
+                    </div>
+                </Show>
+                <div class="flex justify-end">
+                    <div class="max-w-[85%] bg-primary/10 border border-primary/20 rounded-2xl px-3.5 py-2 text-prose whitespace-pre-wrap break-words">
+                        <Show when={steer}>
+                            <span class="mb-0.5 block text-caption opacity-60">
+                                ⤵ 插话（{steerModeLabel(steer)}）{steerModeTip(steer)}
+                            </span>
+                        </Show>
+                        {str(b.attrs.content)}
+                    </div>
                 </div>
             </div>
         );
@@ -961,9 +978,8 @@ export function LocalChatPage(props: { uri?: string }) {
     let rootRef: HTMLDivElement | undefined;
     /** 当前 view 高度（px，0 = 尚未量到）；输入区 max-height 由它推出 */
     const [viewH, setViewH] = createSignal(0);
-    /** 输入区封顶高度：view 的 1/3。用**实测值**而不是 33vh —— 多 view 并排时
-     *  页面比视口矮，33vh 会明显超出一档；首帧未量到先退回 33vh。 */
-    const inputMaxH = () => (viewH() > 0 ? `${Math.round(viewH() / 3)}px` : "33vh");
+    /** 输入区封顶高度（口径见 lib/layout-metrics 的 chatInputMaxHeight） */
+    const inputMaxH = () => chatInputMaxHeight(viewH());
     /** 跟随态：true=贴底（新内容自动滚到底）；false=用户正在上方阅读（绝不打扰） */
     const [stick, setStick] = createSignal(true);
     /** 恢复中闸门：历史重放期间 trees 连发，须让位给 restore 的定位（否则被抢先滚到底） */
@@ -1432,8 +1448,11 @@ export function LocalChatPage(props: { uri?: string }) {
                         <IconCompress class="swap-on h-4 w-4" />
                     </label>
                     {/* pr-8：正文不要钻到右上角按钮底下 */}
+                    {/* 全屏时 `flex-1` 不能丢：面板是 `fixed inset-4 flex flex-col`，正文宿主
+                        没有 flex-grow 就成了内容高的项 → 内容少时缩成一条（R5 review1-1 实测：
+                        面板 683px、编辑区仅 23px，「全文编辑」形同虚设）。 */}
                     <div
-                        class="min-h-0 overflow-auto px-2 pt-2 pr-8"
+                        class={`min-h-0 overflow-auto px-2 pt-2 pr-8 ${fullscreen() ? "flex-1" : ""}`}
                         style={fullscreen() ? undefined : { "max-height": inputMaxH() }}
                     >
                         <MdEditor

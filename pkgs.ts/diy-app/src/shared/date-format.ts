@@ -53,19 +53,12 @@ export function turnTimeOf(turnId: string | undefined | null): Date | null {
     return Number.isNaN(d.getTime()) ? null : d;
 }
 
-/** turnId → `HH:MM`；解析不出 → null（调用方决定显不显示，不显示占位） */
-export function fmtTurnClock(turnId: string | undefined | null): string | null {
-    const d = turnTimeOf(turnId);
-    if (!d) return null;
-    const p = (n: number): string => String(n).padStart(2, "0");
-    return `${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
 /**
- * turnId → `MM-DD HH:MM` —— 对话流里**显示给用户**的那一份。
+ * turnId → `MM-DD HH:MM` —— **turn 级时刻的唯一展示格式**（对话流 / 用量条 / 明细抽屉共用）。
  *
  * 带日期（而非只 HH:MM）：会话天然跨天，只写 14:07 时"昨天下午那句"和"刚才那句"长得一样，
- * 回头定位就失去意义；这一列本来就是"这句话什么时候说的"。
+ * 回头定位就失去意义。**不再提供 HH:MM 短版**：同一事实两种精度并列，读的人要重新判断
+ * "这两个数为什么不一样"，而省下的几个字符不值这个代价（任务 257 review1-3）。
  */
 export function fmtTurnStamp(turnId: string | undefined | null): string | null {
     const d = turnTimeOf(turnId);

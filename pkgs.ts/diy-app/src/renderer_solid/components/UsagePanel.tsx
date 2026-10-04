@@ -23,8 +23,8 @@
 import { createEffect, createSignal, For, Show, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 import { localChatStore } from "../store/localChatStore";
-// 时间口径唯一出处（shared/date-format）：用量卡的 HH:MM 与对话流的时间戳同源
-import { fmtTurnClock } from "../../shared/date-format";
+// 时间口径唯一出处（shared/date-format）：用量条的时刻与对话流消息同格式（fmtTurnStamp）
+import { fmtTurnFull, fmtTurnStamp } from "../../shared/date-format";
 import {
     cacheHitRate,
     fmtCost,
@@ -895,7 +895,8 @@ export function UsageHoverCard(props: {
         const s = props.state;
         if (!s) return "";
         if (s.id === "session") return "会话用量（累计）";
-        const c = fmtTurnClock(s.id);
+        // 时刻口径与对话流一致（fmtTurnStamp）：同一轮不该出现两种时间格式
+        const c = fmtTurnStamp(s.id);
         return c ? `本轮用量 · ${c}` : "本轮用量";
     };
 
@@ -981,7 +982,8 @@ export function TurnUsageBar(props: {
         );
     }
     const p = () => props.usage as TurnUsagePatch;
-    const clock = fmtTurnClock(props.turnId);
+    // 与对话流里的消息时刻同一格式（fmtTurnStamp）：同一轮一个口径，精确值走 title
+    const clock = fmtTurnStamp(props.turnId);
     return (
         <button
             type="button"
@@ -999,7 +1001,9 @@ export function TurnUsageBar(props: {
             onClick={props.onDetail}
         >
             <Show when={clock != null}>
-                <span class="tabular-nums opacity-70">{clock}</span>
+                <span class="tabular-nums opacity-70" title={fmtTurnFull(props.turnId) ?? undefined}>
+                    {clock}
+                </span>
             </Show>
             <span class="tabular-nums">{fmtTokens(p().total)} tok</span>
             <span class="tabular-nums">{p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}</span>
@@ -1326,7 +1330,7 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
     });
     const rows = () => (props.turnId ? localChatStore.usage.filter((r) => r.turnId === props.turnId) : []);
     const group = () => (props.turnId ? groupByTurn(localChatStore.usage).find((g) => g.turnId === props.turnId) ?? null : null);
-    const clock = () => (props.turnId ? fmtTurnClock(props.turnId) : null);
+    const clock = () => (props.turnId ? fmtTurnStamp(props.turnId) : null);
     /** 表格 / MD 源码 / 账本源码（两键皆不亮 = 表格；再点已亮键回表格） */
     const [fmtView, setFmtView] = createSignal<"table" | "md" | "raw">("table");
     const toggleFmt = (v: "md" | "raw") => setFmtView((x) => (x === v ? "table" : v));

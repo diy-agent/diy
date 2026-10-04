@@ -20,3 +20,16 @@ export const VIEW_BAR_H = "h-8";
 
 /** 同上，px 数值（测量/断言/文档用；不要拿它去拼 class） */
 export const VIEW_BAR_H_PX = 32;
+
+/**
+ * 聊天输入区（composer）的封顶高度 —— **view 高度的 1/3**（任务 257 R5）。
+ *
+ * 口径为什么是"实测 view 高度"而不是 `33vh`：多 view 并排时页面比视口矮，
+ * `33vh` 会明显超出一档（实测差 ~32px）。所以由调用方量宿主 `clientHeight` 后传进来。
+ *
+ * `viewH <= 0`（首帧 ResizeObserver 尚未回调）→ 兜 `33vh`：此时**不能返回空串/NaN**，
+ * 那等于不封顶（长文本会把对话区挤没）；`33vh` 是同一口径的近似值，只活一帧。
+ */
+export function chatInputMaxHeight(viewH: number): string {
+    return viewH > 0 ? `${Math.round(viewH / 3)}px` : "33vh";
+}
