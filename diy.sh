@@ -50,6 +50,16 @@ if [[ -n "${DIY_HOME:-}" && "${DIY_HOME}" == "${HOME}/.diy" && "${DIY_ALLOW_PROD
   unset DIY_HOME
 fi
 
+# ── CLI 入口归属（与 DIY_HOME 同一个坑的另一半）──
+# agent 会话常导出 DIY_CLI=<生产 diy>（npm link 的全局入口）。若透传，GUI 会话的提示词
+# 会告诉模型去敲生产 CLI → 操作生产数据根。CLI 入口必须是**本 worktree** 的：
+# 判据 = 继承值不在本 worktree 目录下 → 忽略，回落本 worktree 的 diy.sh。
+# 确需在生产数据上干活（DIY_ALLOW_PROD_HOME=1）时保留继承值。
+if [[ -n "${DIY_CLI:-}" && "${DIY_CLI}" != "${SCRIPT_DIR}"/* && "${DIY_ALLOW_PROD_HOME:-}" != "1" ]]; then
+  echo "[diy.sh] 警告: 忽略继承的外部 CLI 入口 DIY_CLI=${DIY_CLI}, 改用 ${SCRIPT_DIR}/diy.sh" >&2
+  unset DIY_CLI
+fi
+
 # DIY_CALLER_CWD：调用者敲命令时的目录。下面的 cd 会把它换掉，而 CLI 的路径参数
 # （如 `diy tool read <相对路径>`）必须按**用户的**目录解析 —— 所以先记下来传进去。
 # 缺了它，相对路径会落到应用目录（实测：`cd /tmp && diy tool read a.txt` 去找 <app>/a.txt）。

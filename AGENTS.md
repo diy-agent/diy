@@ -39,7 +39,7 @@
 - `tool.test` — `./sha.sh test` 全仓 · `./sha.sh test-unit` 快测（不起 Electron）· `pkgs.ts/diy-app/sha.sh test-intent` 意图测试
 - `tool.cli` — 查/改数据：全局 `diy <域> <命令>`（生产）· worktree 里 `./diy.sh <域> <命令>`（隔离）。域：`task` `project` `agent` `template` `log` `watch` `ui` `doctor`
 - `tool.pkg` — `pkgs.ts/diy-app/sha.sh dev|build|test|cli` 单包动作
-- `tool.sync` — **新开 worktree 先 `./sha.sh sync`**（`npm i --workspaces` + 子模块 + 各包 sync）；不跑则包没装、`node_modules` 缺
+- `tool.sync` — **新开 worktree 先 `./sha.sh sync`**（`npm install` + 子模块 + 各包 sync）；不跑则包没装、`node_modules` 缺。**必须用 `npm install` 不带 `--workspaces`** —— 后者只装 workspace、漏装根 package.json 的依赖（`remark-gfm` 等）
 - `tool.ui` — 真实 UI 验证走 CDP：`playwright-cli attach --cdp=…`
 
 ## rule — 硬约束

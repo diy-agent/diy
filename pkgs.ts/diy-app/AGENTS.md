@@ -31,7 +31,7 @@
 - `env.env` — `DIY_ENV` = `production`/`development`/`test`，**dev/test 专属能力的唯一判据**（如窗口副屏定位）；缺省 = production（未声明即生产，能力全关）
 - `env.port` — `DIY_PORT` 首选端口（测试注 `0`=随机）；优先级 `DIY_PORT` > `app.port` 文件 > 18888
 - `env.noLaunch` — `DIY_NO_LAUNCH=1` 禁止 CLI 自动拉起 app（测试专用，防实例逃逸）
-- `env.inject` — **三个入口都必须注入 `DIY_CLI`**，漏一处 GUI 会话就会让模型敲裸 `diy` → worktree 里打到生产数据根
+- `env.inject` — **三个入口都必须注入 `DIY_CLI`**，漏一处 GUI 会话就会让模型敲裸 `diy` → worktree 里打到生产数据根。**值也必须是本 worktree 的**：继承来的外部入口（agent 会话里的全局 `diy`）一律忽略 —— 否则模型被提示去敲生产 CLI，同样打到生产数据根（`DIY_ALLOW_PROD_HOME=1` 时例外）
 
 ## rule — 硬约束
 

@@ -56,7 +56,11 @@ clean() {
 
 # mono所有workspaced的sync,包括uv sync、ln软链接到全局执行文件等
 sync()  {
-    run npm i --workspaces
+    # `--include-workspace-root` 不能省：`npm i --workspaces` 把安装范围限定在 workspace，
+    # **漏装只在根 package.json 声明的依赖**（remark-gfm / playwright-core 等）—— 干净
+    # worktree 上 100% 复现，症状是 renderer build 报 `Failed to resolve import "remark-gfm"`。
+    # 详见 ##255。
+    run npm i --workspaces --include-workspace-root
     run git submodule update --init --recursive
 
     _ws_run command ./sha.sh sync;
