@@ -41,7 +41,7 @@ import { installCrashReporting } from "./services/crash-reporting";
 import { detectGpu } from "./core/gpu-detect";
 import { readRuntimeConfig } from "../runtime";
 import { instanceTitle } from "../shared/instance-title";
-import { homeDisplayOf, repoDisplayOf } from "./core/instance-identity";
+import { findRepoRoot, homeDisplayOf, repoDisplayOf } from "./core/instance-identity";
 import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "./core/single-instance";
 
 // Chromium 开关必须走 app.commandLine（ready 之前），跟在 app 路径后传 argv 无效。
@@ -60,15 +60,22 @@ let httpPort = 0;
 // 这里只保留 httpPort 供启动横幅与端口复用逻辑使用。
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// dev GUI 加载 URL 由入口注入（electron-dev.mts），缺省 → loadFile 编译产物
-// 打包后的 app 没有自带 CLI 入口：electron-builder 只打 out/**（asar 内不可直接执行），bin/diy 也不在 files 里；
-// 生产用法的 CLI 是用户全局安装的 diy（PATH 解析）。这里显式声明成 "diy"，
-// 而不是让 prompt-registry 走「未注入」告警分支（那条告警只对 dev/worktree 有意义：那里裸 diy 会打到 ~/.diy）。
-if (app.isPackaged && !process.env["DIY_CLI"]) {
-  process.env["DIY_CLI"] = "diy";
+// CLI 入口由**本进程自己声明**，不采信继承值 —— 提示词模版会把它写进「命令行入口」，
+// 值错了模型就会去敲另一个 checkout 的 CLI（典型：agent 会话继承的全局 diy → 打到生产数据根）。
+//   打包态：asar 内没有可执行的 CLI（electron-builder 只打 out/**，bin/diy 也不在 files 里），
+//           生产用法的 CLI 是用户全局安装的 diy（PATH 解析）→ 声明成 "diy"。
+//   非打包：跑的就是某个 checkout 的产物（out/main/index.mjs）→ 从自身位置向上找仓库根，
+//           入口恒为该 checkout 的 diy.sh。这条覆盖**所有**启动路径，包括不经任何入口脚本、
+//           直接 spawn Electron 的场合（测试 harness / 第三方编排）。
+if (app.isPackaged) {
+  process.env["DIY_CLI"] ||= "diy";
   console.log('[runtime] 打包模式未注入 DIY_CLI：显式回落为 PATH 上的 "diy"');
+} else {
+  const repoRoot = findRepoRoot(__dirname);
+  if (repoRoot) process.env["DIY_CLI"] = path.join(repoRoot, "diy.sh");
 }
 const cfg = readRuntimeConfig();
+// dev GUI 加载 URL 由入口注入（electron-dev.mts），缺省 → loadFile 编译产物
 const devUrlArg = cfg.devServerUrl ?? "";
 const isDev = !!devUrlArg;
 

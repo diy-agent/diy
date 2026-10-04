@@ -33,10 +33,10 @@ beforeAll(async () => {
     // 超预算用例会走到 chat()，它要求 main 进程有 OPENCODE_ZEN_API_KEY；
     // 该路径在发送前就早退（不触网），给假 key 只为过前置校验。
     process.env["OPENCODE_ZEN_API_KEY"] ||= "intent-test-dummy-key";
-    // DIY_CLI 注入契约：真实入口会注入它（diy.sh / bin/diy / electron-dev.mts），
-    // 这里让隔离 Electron 继承一份，断言「注入后提示词不再退化成裸 diy」；
-    // 「未注入」分支由单测 tests/core/prompt-registry.test.ts 覆盖。
-    process.env["DIY_CLI"] ||= join(__dirname, "..", "..", "..", "diy.sh");
+    // DIY_CLI 契约（##255）：入口**自证**、不继承 —— 非打包的 main 进程会用自身位置向上找
+    // 仓库根，把入口定为本 checkout 的 diy.sh。这里无需注入，断言就按那个值来；
+    // 用 `=`（不是 `||=`）显式对齐，免得继承到生产路径时断言"自证"了错误的东西。
+    process.env["DIY_CLI"] = join(__dirname, "..", "..", "..", "diy.sh");
     const electron = await startElectronTest();
     const HOME = electron.home;
     fx = {

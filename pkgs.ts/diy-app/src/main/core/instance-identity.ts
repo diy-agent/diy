@@ -40,7 +40,16 @@ export function repoDisplayOf(startDir: string = HERE): string {
   return root ? abbrevHome(root, realHomeDir()) : "?";
 }
 
-/** 从 startDir 向上找含 .git 的目录。worktree 里 `.git` 是**文件**，故只判存在性、不判类型 */
+/**
+ * 从 startDir 向上找含 .git 的目录（即本 checkout 的仓库根）；找不到 → null。
+ * worktree 里 `.git` 是**文件**，故只判存在性、不判类型。
+ *
+ * 用途之一：非打包运行时**自证** CLI 入口（<repo>/diy.sh），不靠环境变量继承（见 main/index.ts）。
+ */
+export function findRepoRoot(startDir: string): string | null {
+  return findGitRoot(startDir);
+}
+
 function findGitRoot(startDir: string): string | null {
   let dir = resolve(startDir);
   for (;;) {
