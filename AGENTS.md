@@ -13,28 +13,33 @@
 - `find.intent` — **需求契约 = 意图测试**：`pkgs.ts/diy-app/tests/cli.intent.*.test.ts` + `pkgs.ts/diy-template/tests/intent.*`
 - `find.docs` — `docs/` 架构与方案 · `scripts/` 辅助脚本与冒烟脚本 · `pkgs/` Python 归档（不演进）
 
-## entry — 三个入口最常混（改代码前先看）
+## entry — 三个入口最常混（**先问：操作谁的数据 / 要不要热更新**）
 
 | | `diy`（全局命令） | `./diy.sh` | `./sha.sh dev` |
 |---|---|---|---|
-| 本质 | 发布版 CLI **客户端** | worktree 版 CLI **客户端** | **GUI 启动器** |
-| 跑什么 | `node out/cli/index.js`（编译产物） | `auto`：`out/cli/index.js` 优先（打包源比产物新→回退 `tsx` 源码，`DIY_CLI_MODE=auto\|compiled\|tsx`） | Vite dev server + watch main/preload + Electron |
-| 要构建吗 | 是（`out/` 必须存在） | CLI 可选（auto 无产物/产物旧→tsx 兜底）；拉起的 GUI 要 `out/main` | 不用（HMR 走 `loadURL`） |
+| 本质 | 发布版 CLI **客户端** | worktree 版 CLI **客户端** | **GUI 启动器**（演示 / HMR） |
+| 用途 | 操作**生产**数据（真实任务·项目·agent·日志） | worktree 里**自动测试 / 契约验证**入口 | 起个**演示 app**，改码即时热更新 |
+| 跑什么 | `node out/cli/index.js`（编译产物） | `auto`：`out/cli/index.js` 优先（打包源更新则回退 `tsx`，`DIY_CLI_MODE=auto\|compiled\|tsx`） | Vite dev server + watch main/preload + Electron |
+| 要构建吗 | **要**（`sha.sh build`，产物 `out/` 必须存在） | **要**（`sha.sh build`，否则拉起的 GUI `out/main` 不存在 → CLI 报错退出） | **不用**（HMR 走 `loadURL`） |
 | 数据根 | `~/.diy`（**生产**） | `./build/home`（worktree 隔离） | 同 `diy.sh` |
 | `DIY_ENV` | `production` | `development` | `development` |
-| 连哪个 app | 探测/拉起自己的实例 | 同 worktree 实例 | **它自己拉起的实例** |
+| 连哪个 app | 探测/拉起生产实例 | 同 worktree 实例 | **它自己拉起的实例** |
 
+- `entry.choose` — **先问「操作谁的数据」**：真实任务/项目/agent → 全局 `diy`；worktree 改码·跑测试 → `./diy.sh`；看 demo·热更新 → `./sha.sh dev`。**别拿 `./diy.sh` 查生产任务**（它的 `./build/home` 里没有 → 报「任务 N 不存在」）
+- `entry.prod` — 全局 `diy` 一般由 main 上 `npm link` 而来 → 跑的是 **main 的编译产物**；worktree 里改的码它看不到
 - `entry.client` — `diy` 与 `./diy.sh` **都是客户端、都不启动 GUI**：读 `$DIY_HOME/app.port` 探测已运行实例，探不到才 spawn Electron（CLI 与 GUI 是两进程）
-- `entry.gui` — 起 GUI 只有两条路：`./sha.sh dev`（HMR，免构建）或先 `pkgs.ts/diy-app/sha.sh build` 再由 CLI 拉起
-- `entry.risk` — **worktree 里务必 `./diy.sh`**；裸 `diy` 会打生产 `~/.diy`（`diy.sh` 会拒绝继承来的生产 `DIY_HOME`，需 `DIY_ALLOW_PROD_HOME=1` 显式放行）
+- `entry.gui` — 起 GUI 两条路：`./sha.sh dev`（HMR，免构建）或 `sha.sh build` 后由 CLI 拉起
+- `entry.dev-verify` — `./sha.sh dev` 起来后用 `diy getAppInfo` 看 `diyHome` / `env` / `branch`，确认数据目录与启动参数（验证没起错数据根）
+- `entry.risk` — worktree 改码跑测一律 `./diy.sh`（隔离 `./build/home`；会拒绝继承来的生产 `DIY_HOME`，需 `DIY_ALLOW_PROD_HOME=1` 放行）；**查/改真实数据才用全局 `diy`**
 - `entry.inject` — `DIY_CLI` 由三个入口注入：`diy.sh` / `bin/diy` / `electron-dev.mts`；漏一处提示词就退化成裸 `diy`（→ 打到生产）
 
 ## tool — 命令
 
 - `tool.check` — `./sha.sh check` **提交前唯一检查**：`tsc -b tsconfig.all.json --noEmit` + oxlint + rpc 浏览器安全 + 产物护栏
-- `tool.test` — `./sha.sh test` 全仓 · `./sha.sh test-unit` 快测（不起 Electron）
-- `tool.cli` — `./diy.sh <域> <命令>`：`task` `project` `agent` `template` `log` `watch` `ui` `doctor`（`./diy.sh --help`）
+- `tool.test` — `./sha.sh test` 全仓 · `./sha.sh test-unit` 快测（不起 Electron）· `pkgs.ts/diy-app/sha.sh test-intent` 意图测试
+- `tool.cli` — 查/改数据：全局 `diy <域> <命令>`（生产）· worktree 里 `./diy.sh <域> <命令>`（隔离）。域：`task` `project` `agent` `template` `log` `watch` `ui` `doctor`
 - `tool.pkg` — `pkgs.ts/diy-app/sha.sh dev|build|test|cli` 单包动作
+- `tool.sync` — **新开 worktree 先 `./sha.sh sync`**（`npm i --workspaces` + 子模块 + 各包 sync）；不跑则包没装、`node_modules` 缺
 - `tool.ui` — 真实 UI 验证走 CDP：`playwright-cli attach --cdp=…`
 
 ## rule — 硬约束
