@@ -26,6 +26,7 @@ import { Caches, NAV_W_MIN, NAV_W_MAX, NAV_W_DEFAULT } from "./lib/ui-state";
 import { VIEW_BAR_H } from "./lib/layout-metrics";
 import { TaskSideView } from "./components/TaskSideView";
 import { Breadcrumb } from "./components/Breadcrumb";
+import { NavSearch } from "./components/NavSearch";
 import { FindBar } from "./components/FindBar";
 import { findStore } from "./store/findStore";
 import { setRendererActions, resetRendererActions, getRendererActions } from "./lib/renderer-actions";
@@ -200,6 +201,9 @@ export default function App() {
      */
     const [treeReveal, setTreeReveal] = createSignal<{ uri: string; nonce: number } | null>(null);
 
+    /** ⌘K 快速打开会话的弹层开关（##254）。内容与键盘导航见 components/NavSearch.tsx */
+    const [navSearchOpen, setNavSearchOpen] = createSignal(false);
+
     /**
      * 记下「切页前的当前任务」并请求树定位它。
      *
@@ -315,6 +319,11 @@ export default function App() {
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
                 e.preventDefault();
                 findStore.openFind();
+            } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+                // ⌘K：快速打开会话（##254）。当前空闲键位 —— 全局只占用了 ⌘F（页内查找）。
+                // 开合都走这一个分支（弹出层自己也监听 Esc）；preventDefault 挡住浏览器默认行为。
+                e.preventDefault();
+                setNavSearchOpen((v) => !v);
             } else if (e.key === "Escape" && findStore.open) {
                 findStore.close();
             }
@@ -805,6 +814,28 @@ export default function App() {
                         </Show>
                     </div>
                     <div class={`space-y-1 w-full min-w-0 ${expanded() ? "p-1" : "py-2"}`}>
+                        {/* ⌘K 快速打开会话（##254）的**可见入口**：展开态是一行「搜索…」伪输入框
+                            （与导航项同构的 li，快捷键写在右侧）；收起态是 40px rail 里的 🔍 按钮
+                            （装不下文字，与顶栏按钮区同理）。两态都要有 —— 不知道快捷键的人也得点得到。 */}
+                        <li class="flex justify-center">
+                            <button
+                                class={`flex items-center gap-2 w-full transition-colors cursor-pointer ${
+                                    expanded() ? "px-3 py-2 rounded-lg" : "h-8 w-8 rounded-lg justify-center"
+                                } hover:bg-base-300`}
+                                data-testid="nav-search-open"
+                                title="搜索任务 / 会话（⌘K）"
+                                onClick={() => {
+                                    hideHoverLayers();
+                                    setNavSearchOpen(true);
+                                }}
+                            >
+                                <span>🔍</span>
+                                <Show when={expanded()}>
+                                    <span class="flex-1 text-left opacity-70">搜索…</span>
+                                    <kbd class="text-caption opacity-50">⌘K</kbd>
+                                </Show>
+                            </button>
+                        </li>
                         <For each={NAV_ITEMS}>
                             {(item) => (
                                 <>
@@ -957,6 +988,14 @@ export default function App() {
                 }
             </DragOverlay>
             </DragDropProvider>
+
+            {/* ⌘K 快速打开会话（##254）：结果单位是**任务**（diy 里任务与会话 1:1），
+                选中即开/聚焦该任务的会话 tab —— 不经过任务管理详情。 */}
+            <NavSearch
+                open={navSearchOpen()}
+                onClose={() => setNavSearchOpen(false)}
+                onPick={(uri) => getRendererActions().openTaskRun?.(uri)}
+            />
 
             <ToastContainer />
         </div>
