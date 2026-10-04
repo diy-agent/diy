@@ -242,11 +242,15 @@ export function ContextLabPage(props: { uri: string }) {
                     turnId: string;
                     model: string;
                     bytes: { system: number; runtime: number };
+                    /** 该轮快照的划分（历史归因的**唯一依据**；不能用页面当前划分反推） */
+                    systemPlaces: string[];
+                    runtimePlaces: string[];
                     changed?: string[];
                     sincePrev: {
                         changed: string[];
                         systemDiffers: boolean;
                         runtimeDiffers: boolean;
+                        incomparable: boolean;
                         systemSize: { add: number; del: number };
                         runtimeSize: { add: number; del: number };
                     } | null;
@@ -359,27 +363,44 @@ export function ContextLabPage(props: { uri: string }) {
     };
 
     /**
-     * 某个变量路径**归哪个投递单元管**：取覆盖它的最深单元（`chain.0.path` → `chain`）。
-     * 没有单元覆盖 → null（投递上等价于默认的 runtime）。
+     * 一个变量路径的**投递归属**。三态，不能压成一种（review RV-01）：
+     *   · unit      —— 被某个投递单元覆盖（path 是该单元或其后代）→ 报单元名 + 容器；
+     *   · container —— 是若干单元的**祖先**（如 `task`：子字段横跨 system/runtime）→ 报跨几个单元；
+     *   · none      —— 既不被单元覆盖、也不是单元的祖先（如 `persona.name`：根本不在投递里，
+     *                  `PLACE_CANDIDATES` 刻意不列 persona）→ 必须说"未投递"，不能谎报成 runtime。
      */
-    const ownerOf = (path: string): { place: string; container: "system" | "runtime" } | null => {
+    type Attribution =
+        | { kind: "unit"; place: string; container: "system" | "runtime" }
+        | { kind: "container"; units: { place: string; container: "system" | "runtime" }[] }
+        | { kind: "none" };
+    const attributionOf = (path: string): Attribution => {
         const units = unitMap();
+        // ① 覆盖它的最深单元（`chain.0.path` → `chain`）
         let best: string | null = null;
         for (const u of units.keys()) {
             if ((path === u || path.startsWith(`${u}.`)) && (best === null || u.length > best.length)) best = u;
         }
-        return best === null ? null : { place: best, container: units.get(best)! };
+        if (best !== null) return { kind: "unit", place: best, container: units.get(best)! };
+        // ② 它是某些单元的祖先 → 容器行（子字段分属多个单元）
+        const spanned = [...units.entries()].filter(([u]) => u.startsWith(`${path}.`));
+        if (spanned.length > 0) {
+            return { kind: "container", units: spanned.map(([place, container]) => ({ place, container })) };
+        }
+        // ③ 不在投递里
+        return { kind: "none" };
     };
 
     /**
-     * system 全量重建的**原因**：这一步变化的变量里，哪些落在 system 单元上
-     * （收拢到单元路径，去重排序）。空 = 不是值变化引起的（投递范围或编码版本变了）。
+     * system 全量重建的**原因**（review RV-02）：**基于该轮快照的 `systemPlaces`**，而不是页面当前
+     * 划分（`unitMap()`）。否则用户改一次划分，历史轮次的归因会集体漂移/消失（真实原因没变）。
+     * 收拢到单元路径；空 = 不是值变化引起的（投递范围或编码版本变了）。
      */
-    const sysCauses = (changed: readonly string[] | undefined): string[] => {
+    const sysCauses = (changed: readonly string[] | undefined, sysPlaces: readonly string[]): string[] => {
         const out = new Set<string>();
         for (const p of changed ?? []) {
-            const o = ownerOf(p);
-            if (o?.container === "system") out.add(o.place);
+            for (const u of sysPlaces) {
+                if (p === u || p.startsWith(`${u}.`)) out.add(u);
+            }
         }
         return [...out].sort();
     };
@@ -453,9 +474,12 @@ export function ContextLabPage(props: { uri: string }) {
                 <ul class="menu menu-xs">
                     <For each={[...(steps()?.steps ?? [])].reverse()}>
                         {(st) => {
-                            // system 全量重建的原因：把这一步变化的变量收拢到 system 投递单元
+                            // system 全量重建的原因：把这一步变化的变量收拢到**该轮快照的** system 单元
                             // （叶子 `chain.0.path` 归到 `chain`）—— 徽章旁边一眼看到"是谁在打断缓存"。
-                            const causes = (): string[] => sysCauses(st.sincePrev?.changed);
+                            // ⚠️ 用 `st.systemPlaces`（当轮快照），不用页面当前划分：改划分不该改写历史（RV-02）。
+                            const incomparable = (): boolean => st.sincePrev?.incomparable === true;
+                            const causes = (): string[] =>
+                                incomparable() ? [] : sysCauses(st.sincePrev?.changed, st.systemPlaces);
                             const causeText = (): string => {
                                 const c = causes();
                                 if (c.length === 0) return "";
@@ -487,9 +511,11 @@ export function ContextLabPage(props: { uri: string }) {
                                                 class="badge badge-primary badge-xs font-mono"
                                                 title={
                                                     "system 全量重建（每轮重发，断前缀缓存）—— " +
-                                                    (causes().length > 0
-                                                        ? `由这些投递单元变化引起：${causes().join(", ")}`
-                                                        : "投递范围或编码版本变了（不是值变化）")
+                                                    (incomparable()
+                                                        ? "投递编码版本变化（不可比，非值变化引起，不归因）"
+                                                        : causes().length > 0
+                                                          ? `由这些投递单元变化引起：${causes().join(", ")}`
+                                                          : "投递范围变了（不是值变化）")
                                                 }
                                             >
                                                 {`sys${causeText()}`}
@@ -603,23 +629,78 @@ export function ContextLabPage(props: { uri: string }) {
         );
     };
 
+    /** 归属徽章：按 attributionOf 的三态分别渲染（单元 / 跨单元容器 / 未投递） */
+    const attrBadge = (path: string): JSX.Element => {
+        const a = attributionOf(path);
+        if (a.kind === "unit") {
+            return (
+                <span
+                    class="badge badge-xs font-mono"
+                    classList={{
+                        "badge-primary": a.container === "system",
+                        "badge-ghost": a.container !== "system",
+                    }}
+                    title={`投递单元 ${a.place}（${a.container}）`}
+                >
+                    {a.place}
+                </span>
+            );
+        }
+        if (a.kind === "container") {
+            return (
+                <span
+                    class="badge badge-xs badge-neutral"
+                    title={`容器行：子字段分属 ${a.units.length} 个投递单元 —— ${a.units
+                        .map((u) => `${u.place}(${u.container})`)
+                        .join(", ")}`}
+                >
+                    {`跨 ${a.units.length} 单元`}
+                </span>
+            );
+        }
+        return (
+            <span
+                class="badge badge-xs badge-ghost opacity-60"
+                title="未投递（不在 PLACE_CANDIDATES，也不是某个单元的祖先）"
+            >
+                未投递
+            </span>
+        );
+    };
+
     /**
      * 变更统计（按项目累计）：每个节点变了几次 / 变化率 —— 判"该不该待在 system"的长期判据。
      * 点一行 → 选中该路径（与结构树选中同一套联动：请求预览滚到并高亮）。
      */
     const statsPane = () => {
+        // RV-08：解析不出项目 → 明确空态，别永久停在"加载中…"
+        const pid = projectFromUri(props.uri);
+        if (!pid) return <div class="p-2 opacity-60">无法从任务 URI 解析出项目，统计不可用。</div>;
         const s = stats();
         if (!s) return <div class="p-2 opacity-60">统计加载中…</div>;
+        // 行粒度（RV-03）：中间容器（有后代同时上榜）且自身**不是投递单元** → 折叠。
+        // 容器的变化恒由后代解释（父 hash = 子树 hash），单列只会稀释"该不该待在 system"的判据。
+        const allPaths = s.paths;
+        const isUnit = (p: string): boolean => unitMap().has(p);
+        const isContainer = (p: string): boolean =>
+            allPaths.some((q) => q.path !== p && q.path.startsWith(`${p}.`));
+        const rows = allPaths.filter((x) => isUnit(x.path) || !isContainer(x.path));
+        const collapsed = allPaths.length - rows.length;
         return (
             <div class="p-1">
                 <div class="mb-1 flex items-center gap-1 px-1 opacity-70">
-                    <span>{`项目累计 · ${s.turns} 轮`}</span>
+                    <span>{`项目累计 · ${s.turns} 轮 · ${s.taskCount} 个任务`}</span>
                     <Show when={s.since}>
                         <span class="ml-auto" title={`${s.since} ~ ${s.until}`}>
                             {`${fmtShortTime(s.since)} ~ ${fmtShortTime(s.until)}`}
                         </span>
                     </Show>
                 </div>
+                <Show when={collapsed > 0}>
+                    <div class="mb-1 px-1 text-caption opacity-50">
+                        {`已折叠 ${collapsed} 个中间容器（变化恒由后代解释；只留叶子与投递单元）`}
+                    </div>
+                </Show>
                 <Show
                     when={s.paths.length > 0}
                     fallback={
@@ -639,9 +720,8 @@ export function ContextLabPage(props: { uri: string }) {
                             </tr>
                         </thead>
                         <tbody>
-                            <For each={s.paths}>
+                            <For each={rows}>
                                 {(p) => {
-                                    const o = () => ownerOf(p.path);
                                     return (
                                         <tr
                                             class={`cursor-pointer hover:bg-base-300/60 ${rowCls(selected() === p.path)}`}
@@ -651,18 +731,7 @@ export function ContextLabPage(props: { uri: string }) {
                                             <td class="font-mono">{p.path}</td>
                                             <td class="text-right font-mono">{p.changes}</td>
                                             <td class="text-right font-mono">{fmtRate(p.rate)}</td>
-                                            <td>
-                                                <span
-                                                    class="badge badge-xs font-mono"
-                                                    classList={{
-                                                        "badge-primary": o()?.container === "system",
-                                                        "badge-ghost": o()?.container !== "system",
-                                                    }}
-                                                    title={o() ? `投递单元 ${o()!.place}（${o()!.container}）` : "无单元覆盖（默认 runtime）"}
-                                                >
-                                                    {o()?.place ?? "runtime"}
-                                                </span>
-                                            </td>
+                                            <td>{attrBadge(p.path)}</td>
                                             <td class="whitespace-nowrap opacity-60">
                                                 {p.lastChanged ? fmtAgo(p.lastChanged) : "—"}
                                             </td>
@@ -682,11 +751,15 @@ export function ContextLabPage(props: { uri: string }) {
         "ctxlab.structure": () => (
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-body">
                 {/* 变更列表：真发快照（每轮一条；点一条看它改了什么） */}
-                <Fold k="steps" label="变更（真发轮次）" extra={`${steps()?.total ?? 0} 轮`}>
+                <Fold k="steps" label="变更（真发轮次）" extra={`本任务 · ${steps()?.total ?? 0} 轮`}>
                     {stepsPane()}
                 </Fold>
                 {/* 变更统计：按项目累计的长期视角（"用了几天变了几次"），是判断该不该待在 system 的判据 */}
-                <Fold k="stats" label="变更统计（项目累计）" extra={`${stats()?.turns ?? 0} 轮`}>
+                <Fold
+                    k="stats"
+                    label="变更统计（项目累计）"
+                    extra={`项目累计 · ${stats()?.turns ?? 0} 轮 · ${stats()?.taskCount ?? 0} 个任务`}
+                >
                     {statsPane()}
                 </Fold>
                 <Fold k="structure" label="结构树（变量契约）" extra="含无值变量 · 类型与描述">

@@ -85,6 +85,16 @@ describe("summarizeStats：聚合口径", () => {
         expect(s.records).toBe(4);
     });
 
+    it("taskCount = 参与的任务数（跨任务累计时让「轮数」的口径可辨）", () => {
+        const s = summarizeStats([
+            rec("t1", ["a"], "projects/1/tasks/1"),
+            rec("t2", ["a"], "projects/1/tasks/1"),
+            rec("t3", ["b"], "projects/1/tasks/2"),
+        ]);
+        expect(s.taskCount).toBe(2);
+        expect(summarizeStats([]).taskCount).toBe(0);
+    });
+
     it("空输入不炸", () => {
         const s = summarizeStats([]);
         expect(s).toMatchObject({ turns: 0, records: 0, since: null, until: null, paths: [] });

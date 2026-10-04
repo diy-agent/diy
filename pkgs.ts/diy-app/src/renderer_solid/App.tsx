@@ -824,12 +824,15 @@ export default function App() {
                                                 /** 任务层次的缩进层级（已打开的祖先任务个数；0 = 顶级） */
                                                 const taskIndent = () => taskIndentOf(t, tabStore.opened);
                                                 const num = () => (t.ctx ? findNode(taskStore.nodes, t.ctx)?.num : undefined);
-                                                const label = () =>
-                                                    t.pageId === "lab"
-                                                        ? `提示词${num() ? ` #${num()}` : ""}`
-                                                        : t.pageId === "ctxlab"
-                                                          ? `上下文树${num() ? ` #${num()}` : ""}`
-                                                          : tabLabel(t.ctx ?? "");
+                                                // 非 task-run 的页面 tab 一律用 registry 的 title（避免"新页面忘了加特判"
+                                                // 就显示成所属任务名 —— R3 那个 bug 的成因；见 review RV-05）。
+                                                // task-run 例外：它代表任务本体，显示任务名而非页面名。
+                                                const label = () => {
+                                                    const def = findPage(t.pageId);
+                                                    if (def && t.pageId !== "task-run")
+                                                        return `${def.title}${num() ? ` #${num()}` : ""}`;
+                                                    return tabLabel(t.ctx ?? "");
+                                                };
                                                 const icon = () => (t.pageId === "lab" ? "L" : (num() ?? "•"));
                                                 const tabGoto = () => {
                                                     hideHoverLayers();

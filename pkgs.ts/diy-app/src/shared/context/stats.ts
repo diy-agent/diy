@@ -60,6 +60,8 @@ export interface StatsSummary {
     until: string | null;
     /** 参与的记录条数（= 真发轮数） */
     records: number;
+    /** 参与的任务数（跨任务累计时，让"轮数"的口径一眼可辨） */
+    taskCount: number;
     /** 按变化次数**降序**（并列按路径字典序，保证输出稳定） */
     paths: PathStat[];
 }
@@ -93,6 +95,7 @@ export function summarizeStats(records: readonly ContextStatRecord[]): StatsSumm
     return {
         turns,
         records: turns,
+        taskCount: new Set(records.map((r) => r.taskUri)).size,
         since: ts[0] ?? null,
         until: ts[ts.length - 1] ?? null,
         paths,
