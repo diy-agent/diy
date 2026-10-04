@@ -37,8 +37,8 @@ describe("聊天信息密度（三档语义）", () => {
         for (const d of DENSITY_VALUES) expect(DENSITY_LABEL[d]).toBeTruthy();
     });
 
-    it("默认 = 阅读（L2）", () => {
-        expect(Caches.diy_chat_density.get()).toBe(DENSITY_LEVEL.READ);
+    it("默认 = 脉络（L1：App 打开时已截止轮次折叠）", () => {
+        expect(Caches.diy_chat_density.get()).toBe(DENSITY_LEVEL.OUTLINE);
     });
 
     it("旧数字兼容：1/2/3 顺延，4（含已取消的 forensic）归并到审计 L3", () => {
@@ -60,7 +60,7 @@ describe("聊天信息密度（三档语义）", () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         for (const bad of ["", "nope", "5", "0"]) {
             store.set("diy_chat_density", bad);
-            expect(Caches.diy_chat_density.get(), bad).toBe(DENSITY_LEVEL.READ);
+            expect(Caches.diy_chat_density.get(), bad).toBe(DENSITY_LEVEL.OUTLINE);
         }
         warn.mockRestore();
     });

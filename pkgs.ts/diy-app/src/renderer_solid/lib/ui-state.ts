@@ -249,7 +249,25 @@ export const Caches = {
       return LEGACY_DENSITY[raw] ?? null;
     },
     serialize: (v) => v,
-    defaultValue: DENSITY_LEVEL.READ,
+    // 默认「脉络」：App 打开时已截止轮次是折叠的（头 + 最后一条正文），
+    // 与 dsh 的默认 compact 一致；要读全文逐轮展开或切到阅读/审计。
+    defaultValue: DENSITY_LEVEL.OUTLINE,
+  }),
+  /** 聊天「紧凑模式」：折叠态只把该轮**最后一条正文**压到 N 行（展开后一律全文）。
+   *  与密度是**两条独立轴**：密度管过程的可见层次，紧凑只管正文默认可见行数。 */
+  diy_chat_compact: field<boolean>("diy_chat_compact", {
+    parse: (raw) => (raw === "1" ? true : raw === "0" ? false : null),
+    serialize: (v) => (v ? "1" : "0"),
+    defaultValue: false,
+  }),
+  /** 紧凑模式正文行数上限（可调；默认 3），parse 夹在 1-10 */
+  diy_chat_compact_lines: field<number>("diy_chat_compact_lines", {
+    parse: (raw) => {
+      const v = Number(raw);
+      return Number.isInteger(v) && v >= 1 && v <= 10 ? v : null;
+    },
+    serialize: (v) => String(v),
+    defaultValue: 3,
   }),
   /** 聊天正文渲染模式（true=Markdown 富文本，false=原文） */
   diy_chat_md: field<boolean>("diy_chat_md", {
