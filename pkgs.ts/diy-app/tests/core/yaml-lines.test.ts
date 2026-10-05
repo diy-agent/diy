@@ -2,8 +2,12 @@
 // 🎯 请求 YAML 预览的纯逻辑：序列化 / 折叠 / 对齐 diff / 默认折叠态
 import { describe, it, expect } from "vitest";
 import {
+    collapsedAtLevel,
     defaultCollapsed,
     diffYamlRows,
+    foldDepths,
+    foldLevelCount,
+    subtreeChanges,
     toYamlLines,
     visibleDiffRows,
     visibleLineIndexes,
@@ -138,5 +142,44 @@ describe("messageLayerBytes", () => {
         expect(b.assistantText).toBe(2);
         expect(b.assistantTool).toBe(JSON.stringify({ command: "ls" }).length);
         expect(b.toolResult).toBe(2);
+    });
+});
+
+describe("逐级展开（foldDepths / collapsedAtLevel）+ 变更点", () => {
+    // 构造「可折叠深度跳级」的场景：可折叠行在 indent 0 与 2（没有 1）
+    const rows = diffYamlRows(
+        toYamlLines({ a: { b: { c: 1 } }, d: 2 }),
+        toYamlLines({ a: { b: { c: 9 } }, d: 2 }),
+    );
+
+    it("foldDepths 用实际存在的折叠深度（去重升序），不是连续整数", () => {
+        const depths = foldDepths(rows);
+        expect(depths).toEqual([...new Set(depths)].sort((a, b) => a - b));
+        expect(depths).toContain(0);
+        expect(depths).toContain(1); // `a:` 的子键 `b:` 在 indent1
+    });
+
+    it("每一档展开都必然多露出内容（不存在「点了没反应」的空档）", () => {
+        const n = foldLevelCount(rows);
+        expect(n).toBeGreaterThan(1);
+        let prev = -1;
+        for (let lv = 0; lv <= n; lv++) {
+            const vis = visibleDiffRows(rows, collapsedAtLevel(rows, lv)).length;
+            expect(vis).toBeGreaterThan(prev); // 严格递增
+            prev = vis;
+        }
+        // 最高档 = 全展开
+        expect(collapsedAtLevel(rows, n).size).toBe(0);
+    });
+
+    it("subtreeChanges：折叠节点带出子树内的增减计数；无变化的节点为 0", () => {
+        const ch = subtreeChanges(rows);
+        // a 的子树含变更（c: 1 → c: 9）
+        const aIdx = rows.findIndex((r) => (r.right?.text ?? r.left?.text ?? "") === "a:");
+        expect(ch.get(aIdx)!.add + ch.get(aIdx)!.del).toBeGreaterThan(0);
+        // d 无变化
+        const dIdx = rows.findIndex((r) => (r.right?.text ?? r.left?.text ?? "") === "d: 2");
+        expect(ch.get(dIdx)?.add ?? 0).toBe(0);
+        expect(ch.get(dIdx)?.del ?? 0).toBe(0);
     });
 });

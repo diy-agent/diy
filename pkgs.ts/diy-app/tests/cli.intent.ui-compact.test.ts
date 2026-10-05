@@ -54,6 +54,19 @@ async function a11yText(): Promise<string> {
   return acc.join("\n");
 }
 
+/** 把右栏展开档位设到最大（`展开 N/N`），保证后续断言看到完整 YAML */
+async function expandAll(): Promise<void> {
+  for (let i = 0; i < 12; i++) {
+    const label = await ui.query<string>(
+      "document.querySelector('[aria-label=\"逐级展开\"]')?.textContent?.trim() ?? ''",
+    );
+    const m = /展开 (\d+)\/(\d+)/.exec(label);
+    if (!m) return;
+    if (Number(m[1]) >= Number(m[2])) return;
+    await ui.clickSelector('[aria-label="逐级展开"]');
+  }
+}
+
 /** 正文里的文本（判「某轮还在不在」） */
 const bodyHas = (s: string) => ui.query<boolean>(`document.body.textContent.includes(${JSON.stringify(s)})`);
 
@@ -113,9 +126,13 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
     expect(text).toContain("共 8 轮");
   });
 
-  it("压缩后估算表列头（被压缩的历史消息/压缩前/压缩后/预估节省）+ 合计居首、各层带 ├/└ 层级符号", async () => {
+  it("压缩后估算表：中文层名 + 合计居首 + ├/└ 层级符号", async () => {
     const text = await a11yText();
     for (const h of ["被压缩的历史消息", "压缩前", "压缩后", "预估节省"]) expect(text).toContain(h);
+    // 每个字段都有中文词汇（不给英文键）
+    for (const name of ["系统提示词", "工具定义", "用户消息", "模型回复", "工具调用", "工具结果"]) {
+      expect(text).toContain(name);
+    }
     const firstRow = await ui.query<string>(
       "(() => { const tr = document.querySelector('table tbody tr'); return tr ? [...tr.children].map(td => td.textContent.trim()).join('|') : ''; })()",
     );
@@ -147,15 +164,28 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
     const cur = Number(m![1]);
     const n = Number(m![2]);
     expect(n).toBeGreaterThan(1);
+    // 默认展开到最大层级
+    expect(cur).toBe(n);
     await ui.clickSelector('[aria-label="逐级展开"]');
     const label1 = await ui.query<string>(
       "document.querySelector('[aria-label=\"逐级展开\"]')?.textContent?.trim() ?? ''",
     );
     expect(label1).toBe(`展开 ${cur + 1 <= n ? cur + 1 : 0}/${n}`);
+    // 每一档都要有实际变化（不能出现「点了没反应」的空档）：逐档遍历，可见行数应单调不减
+    let prevVis = -1;
+    for (let lv = 0; lv <= n; lv++) {
+      const vis = await ui.query<number>(`document.querySelectorAll('[data-compact-preview] [data-diff]').length`);
+      expect(vis).toBeGreaterThanOrEqual(prevVis);
+      prevVis = vis;
+      if (lv < n) await ui.clickSelector('[aria-label="逐级展开"]');
+    }
+    // 复位到最大层级
+    await expandAll();
   });
 
   it("右栏渲染请求 YAML diff（含 system/messages 与增删行）", async () => {
     // YAML 结构（右栏）：base vs mod 的请求字段
+    await expandAll();
     // 只看差异默认开 → 预览只显示变化行（丢掉的旧轮内容）
     const diffText = await waitUntil(
       () => ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''"),

@@ -25,13 +25,14 @@ import {
 import {
     collapsedAtLevel,
     diffYamlRows,
-    maxFoldLevel,
+    foldLevelCount,
     subtreeChanges,
     toYamlLines,
     visibleDiffRows,
     type YamlDiffRow,
 } from "../../shared/yaml-lines";
 import { requestViewYaml, type LayerRow, type RequestView } from "../../shared/context/request-view";
+import { VIEW_BAR_H } from "../lib/layout-metrics";
 
 const INDENT = "  ";
 
@@ -74,7 +75,7 @@ function FactRow(props: { row: LayerRow; isTotal: boolean; isLast: boolean }) {
         <tr title={props.row.label} class={props.isTotal ? "font-semibold" : ""}>
             <td class="pr-2 whitespace-nowrap">
                 <span class={props.isTotal ? "" : "opacity-50 font-mono"}>{symbol()}</span>
-                {props.row.label.split(" — ")[0]}
+                {props.row.name}
             </td>
             <td class="text-right tabular-nums opacity-70">{props.row.oldTokens.toLocaleString()}</td>
             <td class="text-right tabular-nums">{props.row.newTokens.toLocaleString()}</td>
@@ -90,6 +91,26 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     const setPol = (p: Partial<CompactPolicy>) => setPolRaw(normalizePolicy({ ...pol(), ...p }));
     const [busy, setBusy] = createSignal(false);
     const [err, setErr] = createSignal<string | null>(null);
+    /**
+     * 抽屉高度（px）：**贴着上方、从底部拖拽调整**（形态对齐 token 窗口的用量抽屉，
+     * 而非居中 dialog）。默认 2/3 屏高；拖把握手在面板底边。
+     */
+    const [height, setHeight] = createSignal(Math.round(window.innerHeight * 0.66));
+    const startResize = (e: MouseEvent) => {
+        e.preventDefault();
+        const startY = e.clientY;
+        const startH = height();
+        const move = (ev: MouseEvent) => {
+            const h = Math.round(startH + ev.clientY - startY);
+            setHeight(Math.min(window.innerHeight - 8, Math.max(180, h)));
+        };
+        const up = () => {
+            window.removeEventListener("mousemove", move);
+            window.removeEventListener("mouseup", up);
+        };
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
+    };
 
     // 右栏视图控制
     const [sideBySide, setSideBySide] = createSignal(false);
@@ -98,7 +119,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
      * 展开层级：0 = 只露根行；N = 全展开（N 随会话 YAML 深度而变）。
      * 「展开 i/N」按钮点一下 +1，到顶再回到 0 —— **逐级展开**，不搞「一键全开」。
      */
-    const [expandLevel, setExpandLevel] = createSignal(1);
+    const [expandLevel, setExpandLevel] = createSignal(Number.MAX_SAFE_INTEGER); // 默认展开到最大层级
 
     const turnCount = () => localChatStore.trees.length;
 
@@ -123,12 +144,14 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     const modLines = createMemo(() => (pv() ? toYamlLines(requestViewYaml(pv()!.modRequest)) : []));
     const rows = createMemo<YamlDiffRow[]>(() => diffYamlRows(baseLines(), modLines()));
 
-    /** 可折叠层级数（= maxFoldLevel + 1）；「展开 i/N」的 N */
-    const foldLevels = createMemo(() => maxFoldLevel(rows()) + 1);
-    /** 逐级展开：点一下多展开一级；到顶（> N）回到 0 级循环 */
+    /** 可折叠深度数 = 「展开 i/N」的 N（i 从 0 到 N；i = N 时全展开） */
+    const foldLevels = createMemo(() => foldLevelCount(rows()));
+    /** 当前用于显示的档位（默认「最大」用 sentinel 表示，这里夹到 N） */
+    const curLevel = createMemo(() => Math.min(expandLevel(), foldLevels()));
+    /** 逐级展开：点一下多展开一级；到顶（N）回到 0 级循环 */
     const nextLevel = () => {
         const n = foldLevels();
-        setExpandLevel((v) => (v >= n ? 0 : v + 1));
+        setExpandLevel((v) => (Math.min(v, n) >= n ? 0 : Math.min(v, n) + 1));
     };
 
     /** 手动折叠覆盖：点某个节点箭头时，单独翻转它的折叠态（叠加在层级展开之上） */
@@ -138,15 +161,16 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
         const cur = new Set(base);
         if (cur.has(i)) cur.delete(i);
         else cur.add(i);
-        setManual({ level: expandLevel(), collapsed: cur });
+        setManual({ level: curLevel(), collapsed: cur });
     };
     /** 层级变化时丢弃手动覆盖（换级 = 重新按层级展开） */
-    createEffect(on(expandLevel, () => setManual({ level: -1, collapsed: new Set() }), { defer: true }));
+    createEffect(on(curLevel, () => setManual({ level: -1, collapsed: new Set() }), { defer: true }));
 
-    /** 折叠集合：由展开层级推出（层级 >= expandLevel 的可折叠行折叠）；手动点击覆盖之 */
+    /** 折叠集合：由展开档位推出（折叠深度 >= 当前档位深度）；手动点击覆盖之 */
     const collapsed = createMemo<Set<number>>(() => {
+        const lv = curLevel();
         const m = manual();
-        return m.level === expandLevel() ? m.collapsed : collapsedAtLevel(rows(), expandLevel());
+        return m.level === lv ? m.collapsed : collapsedAtLevel(rows(), lv);
     });
     /** 每个可折叠行子树内的变更数（折叠时在箭头上标出「里面有改动」） */
     const changes = createMemo(() => subtreeChanges(rows()));
@@ -203,14 +227,14 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     });
 
     return (
-        <div
-            class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
-            onClick={(e) => {
-                if (e.target === e.currentTarget) props.onClose();
-            }}
-        >
-            <div class="bg-base-100 rounded-xl w-full max-w-6xl max-h-[92vh] flex flex-col">
-                <div class="px-4 py-2.5 border-b flex items-center justify-between shrink-0">
+        <div class="fixed inset-0 z-50 flex flex-col" onClick={props.onClose}>
+            <div class="absolute inset-0 bg-black/30" />
+            <div
+                class="relative flex shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl"
+                style={{ height: `${height()}px` }}
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div class={`px-4 border-b flex items-center justify-between shrink-0 ${VIEW_BAR_H}`}>
                     <div class="font-bold text-title">压缩会话上下文</div>
                     <div class="text-caption opacity-70">
                         当前 {estTok(pv()?.before.bytes ?? 0).toLocaleString()} tok → 压缩后{" "}
@@ -223,7 +247,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                     </button>
                 </div>
 
-                <div class="flex grow overflow-hidden">
+                <div class="flex min-h-0 grow overflow-hidden">
                     {/* ── 左栏：压缩选项 + 压缩后估算（两个可折叠 view）────────── */}
                     <div class="w-[340px] shrink-0 border-r overflow-auto p-2 space-y-2">
                         <Block title="压缩选项">
@@ -375,7 +399,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                 aria-label="逐级展开"
                                 onClick={nextLevel}
                             >
-                                展开 {Math.min(expandLevel(), foldLevels())}/{foldLevels()}
+                                展开 {curLevel()}/{foldLevels()}
                             </button>
                             <span class="opacity-50 ml-auto">请求结构 YAML（base vs mod）</span>
                         </div>
@@ -471,14 +495,25 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                         {busy() ? "压缩中…" : "压缩（历史保留）"}
                     </button>
                 </div>
+                {/* 底边拖拽把手：调整抽屉高度（对齐 token 窗口用量抽屉的形态） */}
+                <div
+                    class="h-1.5 shrink-0 cursor-row-resize bg-base-300 hover:bg-primary/50 active:bg-primary"
+                    title="拖动调整高度"
+                    aria-label="拖动调整高度"
+                    onMouseDown={startResize}
+                />
             </div>
         </div>
     );
 }
 
 /**
- * 折叠箭头（可折叠行才画）：折叠时若子树内有红/绿变更，追加一个变更点/计数 ——
- * 否则外层完全看不出里面藏着改动（用户反馈的第 2 点）。
+ * 折叠箭头（可折叠行才画）。
+ *
+ * 变更提示（用户反馈「只有第一级标注、展开第二层却没有」）：只要子树内有红/绿变更就标
+ * `● -x +y`，**与折叠/展开无关** —— 这样从根一路到真正的变更节点，路径上每一级都点着灯，
+ * 无论当前展开到哪一层都一致（此前只在折叠时显示，展开后上一级就"熄灯"了，看着像漏标）。
+ * 节点自身就是变更行时它已被染色，这里仍可点灯（一致优先，不做特例）。
  */
 function FoldToggle(props: {
     i: number;
@@ -494,13 +529,13 @@ function FoldToggle(props: {
     return (
         <>
             <button
-                class={`inline-block w-3 text-left select-none hover:opacity-100 ${hasChange && isCollapsed ? "text-warning" : "opacity-60"}`}
+                class={`inline-block w-3 text-left select-none hover:opacity-100 ${hasChange ? "text-warning" : "opacity-60"}`}
                 aria-label={isCollapsed ? "展开节点" : "折叠节点"}
                 onClick={() => props.onToggle(props.i)}
             >
                 {isCollapsed ? "▸" : "▾"}
             </button>
-            <Show when={hasChange && isCollapsed}>
+            <Show when={hasChange}>
                 <span
                     class="mr-1 text-warning select-none"
                     title={`内含变更：删 ${c!.del} / 增 ${c!.add} 行`}

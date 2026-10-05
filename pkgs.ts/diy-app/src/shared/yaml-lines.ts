@@ -292,23 +292,39 @@ export function defaultCollapsed(rows: readonly YamlDiffRow[]): Set<number> {
 
 // ─── 层级展开（「展开 i/N」逐步展开）+ 折叠态变更提示 ──────────
 
-/** 可折叠行的最大缩进层级（0 起）；无折叠行 → 0 */
-export function maxFoldLevel(rows: readonly YamlDiffRow[]): number {
-    let max = 0;
-    for (const r of rows) if (r.foldable && r.indent > max) max = r.indent;
-    return max;
+/**
+ * 实际存在的**可折叠深度序列**（升序去重）。
+ *
+ * 为什么不用「缩进整数值」当层级：可折叠行的缩进会跳级（如 messages 下第一层
+ * 折叠行在 indent 2 而非 1）→ 按整数递增会出现「两级折叠集完全一样」的空档，
+ * 表现为「点展开没反应」（实测踩过）。按**真实存在的深度**递进，每次点击必有变化。
+ */
+export function foldDepths(rows: readonly YamlDiffRow[]): number[] {
+    const set = new Set<number>();
+    for (const r of rows) if (r.foldable) set.add(r.indent);
+    return [...set].sort((a, b) => a - b);
+}
+
+/** 可折叠深度序列的长度 = 「展开 i/N」的 N（i 从 0 到 N；i = N 时全展开） */
+export function foldLevelCount(rows: readonly YamlDiffRow[]): number {
+    return foldDepths(rows).length;
 }
 
 /**
- * 按「展开层级」求折叠集合：折叠所有缩进 >= level 的可折叠行。
- *   level = 0 → 顶层节也折叠（只露根行）；level = maxFoldLevel+1 → 全展开。
- * 与「展开 i/N」按钮配套：N = maxFoldLevel+1。
+ * 按「展开档位」求折叠集合。
+ *   levelIndex = 0 → 折叠所有可折叠行（只露根行）
+ *   levelIndex = N（= 深度数）→ 全展开
+ *   中间：折叠深度 >= 第 levelIndex 个深度的可折叠行（即「展开到第 levelIndex 层」）
+ * 语义保证：levelIndex 从 0 递增到 N，每一步都**必然**展开一批实际存在的折叠行。
  */
-export function collapsedAtLevel(rows: readonly YamlDiffRow[], level: number): Set<number> {
+export function collapsedAtLevel(rows: readonly YamlDiffRow[], levelIndex: number): Set<number> {
+    const depths = foldDepths(rows);
     const out = new Set<number>();
+    if (levelIndex >= depths.length) return out; // 全展开
+    const threshold = depths[Math.max(0, levelIndex)]!;
     for (let i = 0; i < rows.length; i++) {
         const r = rows[i]!;
-        if (r.foldable && r.indent >= level) out.add(i);
+        if (r.foldable && r.indent >= threshold) out.add(i);
     }
     return out;
 }

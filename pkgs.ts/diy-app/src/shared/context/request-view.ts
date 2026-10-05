@@ -25,7 +25,9 @@ export interface RequestView {
 /** 一层在请求里的占比（事实表一行） */
 export interface LayerRow {
     key: string;
-    /** 中文说明（人读；括号里是它对应请求的哪个字段） */
+    /** 中文名（人读；表格「被压缩的历史消息」列直接展示它） */
+    name: string;
+    /** 详细说明（悬停提示用；含英文键与含义） */
     label: string;
     oldTokens: number;
     newTokens: number;
@@ -74,14 +76,14 @@ const tok = (bytes: number): number => Math.round(bytes / 4);
 export function layerFacts(base: RequestView, mod: RequestView, inputRate: number): LayerRow[] {
     const b = messageLayerBytes(base.messages);
     const m = messageLayerBytes(mod.messages);
-    const rows: { key: string; label: string; oldBytes: number; newBytes: number }[] = [
-        { key: "total", label: "合计", oldBytes: 0, newBytes: 0 },
-        { key: "system", label: "system — 系统提示词（人物行为指令 / 规则 / 保命契约 / AGENTS.md 链）", oldBytes: utf8Bytes(base.system), newBytes: utf8Bytes(mod.system) },
-        { key: "tools", label: "tools — 工具定义（bash / read 等函数 schema）", oldBytes: base.toolsBytes, newBytes: mod.toolsBytes },
-        { key: "user", label: "user — 用户消息（含 runtime 任务正文/技能清单）", oldBytes: b.user, newBytes: m.user },
-        { key: "assistant.text", label: "assistant.text — 模型回复正文", oldBytes: b.assistantText, newBytes: m.assistantText },
-        { key: "assistant.tool", label: "assistant.tool — 模型发起的工具调用（命令/参数）", oldBytes: b.assistantTool, newBytes: m.assistantTool },
-        { key: "tool.result", label: "tool.result — 工具执行结果（可被头尾裁剪的部分）", oldBytes: b.toolResult, newBytes: m.toolResult },
+    const rows: { key: string; name: string; label: string; oldBytes: number; newBytes: number }[] = [
+        { key: "total", name: "合计", label: "合计（各层之和）", oldBytes: 0, newBytes: 0 },
+        { key: "system", name: "系统提示词", label: "system — 人物行为指令 / 规则 / 保命契约 / AGENTS.md 链", oldBytes: utf8Bytes(base.system), newBytes: utf8Bytes(mod.system) },
+        { key: "tools", name: "工具定义", label: "tools — bash / read 等函数 schema（压缩动不了它）", oldBytes: base.toolsBytes, newBytes: mod.toolsBytes },
+        { key: "user", name: "用户消息", label: "user — 用户消息（含 runtime 任务正文 / 技能清单）", oldBytes: b.user, newBytes: m.user },
+        { key: "assistant.text", name: "模型回复", label: "assistant.text — 模型回复正文", oldBytes: b.assistantText, newBytes: m.assistantText },
+        { key: "assistant.tool", name: "工具调用", label: "assistant.tool — 模型发起的工具调用（命令 / 参数）", oldBytes: b.assistantTool, newBytes: m.assistantTool },
+        { key: "tool.result", name: "工具结果", label: "tool.result — 工具执行结果（头尾裁剪作用于此）", oldBytes: b.toolResult, newBytes: m.toolResult },
     ];
     const rest = rows.slice(1).sort((a, x) => x.oldBytes - a.oldBytes);
     const toks = rest.map((r) => ({ oldTokens: tok(r.oldBytes), newTokens: tok(r.newBytes) }));
@@ -91,6 +93,7 @@ export function layerFacts(base: RequestView, mod: RequestView, inputRate: numbe
     return [
         {
             key: "total",
+            name: rows[0]!.name,
             label: rows[0]!.label,
             oldTokens: totalOld,
             newTokens: totalNew,
@@ -98,6 +101,7 @@ export function layerFacts(base: RequestView, mod: RequestView, inputRate: numbe
         },
         ...rest.map((r, i) => ({
             key: r.key,
+            name: r.name,
             label: r.label,
             oldTokens: toks[i]!.oldTokens,
             newTokens: toks[i]!.newTokens,
