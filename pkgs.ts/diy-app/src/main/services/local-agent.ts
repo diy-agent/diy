@@ -47,6 +47,27 @@ import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
 import { statFromStep } from "../../shared/context/stats";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
+import {
+    estimateTokens,
+    makeDeliveryTransform,
+    listGenerations,
+    listTurnIds,
+    normalizePolicy,
+    parseCompactLog,
+    resolveBoundary,
+    sliceOpsFromTurn,
+    turnsOfGeneration,
+    utf8Bytes,
+    type ClippedToolDetail,
+    type CompactEventRecord,
+    type CompactLogEvent,
+    type CompactPolicy,
+    type DroppedTurnDetail,
+    type EffectiveBoundary,
+    type GenerationInfo,
+    type RateSnapshot,
+    type SizeSnapshot,
+} from "../../shared/context/compaction";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
 import { SteerQueue } from "../core/steer-queue";
@@ -243,6 +264,8 @@ function appendUsage(taskUri: string, rec: StepUsageRecord): void {
     } catch (e) {
         console.error(`[local-agent] 用量记录写入失败 ${fp}:`, e);
     }
+    // 压缩效果的唯一真值：压缩后首次真发的实测（见 maybeRecordMeasure 头注）
+    maybeRecordMeasure(taskUri, rec);
 }
 
 /** 原始流 dump（仅 DIY_RAW_STREAM_DUMP=1 时写）：ai-sdk 的 part 原样落盘，用于研究“Op 是否漏信息” */
@@ -302,6 +325,292 @@ function readJsonl<T>(path: string): T[] {
         }
     }
     return out;
+}
+
+// ─── 压缩（compact）：账本 / 边界 / 原文寻回 ──────────────
+//
+// 存储取舍（三句话）：
+//   · **不搬文件、不 rm** —— 旧 ops 原地不动，压缩只往 `<key>.compact.jsonl` 写一条账（边界）；
+//     于是旧内容天然可查（UI 历史列表）、可撤销（undo）、不需要维护归档目录与索引。
+//   · 「彻底删除」仍归现有 `clear()`（物理删所有日志）—— 两个语义分开，文案必须写清。
+//   · `sessionIdOf` **不换**（##230 实测：缓存按键于内容前缀、64 token 块、跨 session 共享；
+//     换它无收益、反有路由亲和风险）。清零 = 不发送旧内容，纯请求层的事。
+
+/** 压缩账本（append-only：每行一条 compact/measure/undo 事件） */
+function compactFile(taskUri: string): string {
+    return path.join(localDir(), `${keyOf(taskUri)}.compact.jsonl`);
+}
+
+/** 工具 id 里的非法文件名字符归一（块 id 形如 `t1759_s1_r1`，一般无需动） */
+function safeId(id: string): string {
+    return id.replace(/[^\w.-]+/g, "_");
+}
+
+/** 被裁剪工具输出的原文落盘目录（模型可回取；##127 的「原文可寻回」） */
+function toolOutDir(): string {
+    const d = path.join(localDir(), "toolout");
+    mkdirSync(d, { recursive: true });
+    return d;
+}
+
+/** marker 里写的相对路径：相对 $DIY_HOME，人/模型都能照此找到原文 */
+function toolOutRelPath(id: string): string {
+    return `local/toolout/${safeId(id)}.txt`;
+}
+
+/** 读取压缩账本（文件不存在 = 从未压缩过；坏行由 parseCompactLog 跳过） */
+function readCompactLog(taskUri: string): CompactLogEvent[] {
+    const fp = compactFile(taskUri);
+    if (!existsSync(fp)) return [];
+    try {
+        return parseCompactLog(readFileSync(fp, "utf-8"));
+    } catch (e) {
+        console.error(`[local-agent] 压缩账本读取失败 ${fp}:`, e);
+        return [];
+    }
+}
+
+/** 追加一条压缩账（写失败只出声 —— 记账不能阻断会话） */
+function appendCompactEvent(taskUri: string, ev: CompactLogEvent): void {
+    const fp = compactFile(taskUri);
+    try {
+        appendFileSync(fp, `${JSON.stringify(ev)}\n`, "utf-8");
+    } catch (e) {
+        console.error(`[local-agent] 压缩账写入失败 ${fp}:`, e);
+    }
+}
+
+/**
+ * 压缩后首次真发的实测补写（**零额外请求**：借本轮第一步的 usage 记账）。
+ *
+ * 用户明确放弃了「压缩效果评估」（##230#25），但请求发出去就没了 —— 现在不存，
+ * 将来想算账也无从回补。所以只在有「未实测的压缩」时写一条 measure，不做任何判断与提示。
+ */
+function maybeRecordMeasure(taskUri: string, rec: StepUsageRecord): void {
+    const events = readCompactLog(taskUri);
+    let pending: CompactEventRecord | null = null;
+    for (const e of events) if (e.kind === "compact") pending = e;
+    if (!pending) return;
+    if (events.some((e) => e.kind === "measure" && e.ref === pending!.id)) return;
+    const b = bucketsOf(rec.usage as UsageLike);
+    appendCompactEvent(taskUri, {
+        kind: "measure",
+        v: 1,
+        ref: pending.id,
+        ts: new Date().toISOString(),
+        firstTurnId: rec.turnId,
+        predicted: {},
+        actual: {
+            windowTotal: b.total,
+            inputTotal: b.inputTotal,
+            cacheRead: b.cacheRead,
+            noCache: b.noCache,
+            cost: rec.cost?.total ?? null,
+            cacheHitRate: b.inputTotal > 0 ? b.cacheRead / b.inputTotal : null,
+        },
+    });
+}
+
+/** ops.jsonl 扫描结果：解析后的 op + 每轮 start 的字节位置（回查/DroppedTurnDetail 的指针） */
+interface OpsScan {
+    ops: Op[];
+    /** turnId → 该轮 start 行的字节偏移 */
+    turnOffsets: Map<string, number>;
+    /** 每轮覆盖的字节数（到下一轮 start 或文件尾） */
+    turnBytes: Map<string, number>;
+    totalBytes: number;
+}
+
+/** 扫一遍 ops 文件：既要 op 对象，也要每轮的字节位置（分两次算等于读两遍大文件） */
+function scanOpsFile(taskUri: string): OpsScan {
+    const fp = opsFile(taskUri);
+    const ops: Op[] = [];
+    const turnOffsets = new Map<string, number>();
+    const turnBytes = new Map<string, number>();
+    if (!existsSync(fp)) return { ops, turnOffsets, turnBytes, totalBytes: 0 };
+    const buf = readFileSync(fp);
+    let start = 0;
+    let offset = 0;
+    const ids: string[] = [];
+    for (let i = 0; i < buf.length; i++) {
+        if (buf[i] !== 0x0a) continue;
+        const line = buf.subarray(start, i).toString("utf-8").trim();
+        if (line) {
+            try {
+                const op = JSON.parse(line) as Op;
+                ops.push(op);
+                if (op.op === "start" && op.kind === "turn") {
+                    turnOffsets.set(op.id, start);
+                    ids.push(op.id);
+                }
+            } catch {
+                // 半行跳过（与 readJsonl 同策略）
+            }
+        }
+        offset = i + 1;
+        start = i + 1;
+    }
+    for (let k = 0; k < ids.length; k++) {
+        const from = turnOffsets.get(ids[k])!;
+        const to = k + 1 < ids.length ? turnOffsets.get(ids[k + 1])! : offset;
+        turnBytes.set(ids[k], Math.max(0, to - from));
+    }
+    return { ops, turnOffsets, turnBytes, totalBytes: offset };
+}
+
+/** 一组 op → 规模快照（messages 用真实投影，bytes 用 JSON 字节 —— 与真发口径一致） */
+function sizeOfOps(ops: readonly Op[], opts?: Parameters<typeof blocksToMessages>[1]): SizeSnapshot {
+    const store = new BlockStore();
+    for (const op of ops) store.apply(op);
+    const msgs = blocksToMessages(store, opts);
+    const bytes = utf8Bytes(msgs.map((m) => JSON.stringify(m)).join("\n"));
+    return {
+        turns: listTurnIds(ops).length,
+        messages: msgs.length,
+        bytes,
+        estTokens: estimateTokens(bytes),
+    };
+}
+
+/**
+ * 由「策略 + 边界」构造投递选项（纯函数，不读盘）。
+ * 抽出来的理由：真发（deliveryOptsOf）与**预览/记账**（compact）必须用同一份构造逻辑，
+ * 否则「预览说省 97%、真发却照旧」这种分叉根本测不出来。
+ */
+function optsFor(
+    policy: CompactPolicy,
+    keptFromTurnId: string | null,
+    collect?: ClippedToolDetail[],
+): Parameters<typeof blocksToMessages>[1] {
+    return makeDeliveryTransform(policy, keptFromTurnId, toolOutRelPath, collect);
+}
+
+/** 压缩预案的中间态（planCompact 输出；compact 与 compactPreview 共用） */
+interface CompactPlan {
+    policy: CompactPolicy;
+    keptTurns: number;
+    keptFromTurnId: string | null;
+    droppedIds: string[];
+    scan: OpsScan;
+    store: BlockStore;
+    before: SizeSnapshot;
+    after: SizeSnapshot;
+    droppedDetail: DroppedTurnDetail[];
+    clipped: ClippedToolDetail[];
+    rateSnap?: RateSnapshot;
+    stats: Pick<CompactEventRecord, "taxShare" | "zeroOutputSteps" | "rebuildCost" | "backfillSteps">;
+}
+
+/** 压缩预览（只算不写）：panel「事实」行 + 预览页共用 */
+export interface CompactPreview {
+    policy: CompactPolicy;
+    keptTurns: number;
+    droppedTurns: number;
+    keptFromTurnId: string | null;
+    before: SizeSnapshot;
+    after: SizeSnapshot;
+    droppedDetail: DroppedTurnDetail[];
+    clipped: ClippedToolDetail[];
+    rates?: RateSnapshot;
+    taxShare?: number;
+    zeroOutputSteps?: number;
+    rebuildCost?: number;
+    backfillSteps?: number;
+}
+
+/** 历史会话面板行：代 + 该代的规模/用量（main 算好，renderer 只负责显示） */
+export interface GenerationView extends GenerationInfo {
+    turns: number;
+    messages: number;
+    bytes: number;
+    estTokens: number;
+    /** 该代累计 token（usage 账本按轮聚合） */
+    totalTokens: number;
+    /** 该代累计金额（缺价步不计；全缺 → null） */
+    cost: number | null;
+}
+
+/** 取某一代覆盖的 op 切片（按 turn 边界切，不切半轮） */
+function opsOfGeneration(ops: readonly Op[], turnIds: readonly string[], g: GenerationInfo): Op[] {
+    const owned = new Set(turnsOfGeneration(turnIds, g));
+    if (owned.size === 0) return [];
+    const out: Op[] = [];
+    for (const op of ops) {
+        if (op.op === "start" && op.kind === "turn") {
+            if (!owned.has(op.id)) continue;
+        }
+        out.push(op);
+    }
+    return out;
+}
+
+/** 一轮的摘要（被丢弃轮次的索引项；全文仍留在 ops 原地） */
+function describeTurn(store: BlockStore, turnId: string, offset: number, bytes: number): DroppedTurnDetail {
+    const detail: DroppedTurnDetail = {
+        turnId,
+        opsOffset: offset,
+        opsBytes: bytes,
+        steps: 0,
+        textBytes: 0,
+        thinkBytes: 0,
+        tools: [],
+    };
+    const walk = (bid: string): void => {
+        const b = store.blocks.get(bid);
+        if (!b) return;
+        if (b.kind === "step") detail.steps++;
+        else if (b.kind === "text" && b.role !== "user") detail.textBytes += utf8Bytes(String(b.content ?? ""));
+        else if (b.kind === "think") detail.thinkBytes += utf8Bytes(String(b.content ?? ""));
+        else if (b.kind === "tool") {
+            const out = typeof b.output === "string" ? b.output : "";
+            detail.tools.push({
+                id: b.id,
+                tool: String(b.tool ?? "tool"),
+                argsBrief: JSON.stringify(b.args ?? b.input ?? "").slice(0, 200),
+                outLines: out === "" ? 0 : out.split("\n").length,
+                outBytes: utf8Bytes(out),
+                status: String(b.status ?? ""),
+            });
+        }
+        for (const c of b.children) walk(c);
+    };
+    walk(turnId);
+    return detail;
+}
+
+/**
+ * 用量经验（全部来自 usage 账本，**纯账、无需语义**；##230 作废「重复率」后留下的三个硬指标）。
+ * 缺数据时字段缺省（不编 0）：'不可测 ≠ 0' 是 ##211 定下的口径。
+ */
+function usageStats(
+    usages: StepUsageRecord[],
+    afterTokens: number,
+    rate: RateSnapshot | undefined,
+): Pick<CompactEventRecord, "taxShare" | "zeroOutputSteps" | "rebuildCost" | "backfillSteps"> {
+    if (usages.length === 0) return {};
+    const buckets = usages.map((r) => bucketsOf(r.usage as UsageLike));
+    const zeroOutputSteps = buckets.filter((b) => b.noCache === 0).length;
+    let taxShare: number | undefined;
+    const priced = usages.filter((r) => r.cost && r.rates);
+    if (priced.length === usages.length) {
+        const totalCost = priced.reduce((a, r) => a + (r.cost?.total ?? 0), 0);
+        const readCost = priced.reduce((a, r, i) => {
+            const b = buckets[i]!;
+            return a + ((r.rates!.cacheRead ?? r.rates!.input) * b.cacheRead) / 1_000_000;
+        }, 0);
+        if (totalCost > 0) taxShare = readCost / totalCost;
+    }
+    const rebuildCost = rate ? (afterTokens * Math.max(0, rate.input - rate.cacheRead)) / 1_000_000 : undefined;
+    const avgNew = buckets.reduce((a, b) => a + b.noCache, 0) / buckets.length;
+    const windowNow = buckets[buckets.length - 1]!.total;
+    const backfillSteps =
+        avgNew > 0 && windowNow > afterTokens ? Math.round((windowNow - afterTokens) / avgNew) : undefined;
+    return {
+        ...(taxShare !== undefined ? { taxShare } : {}),
+        zeroOutputSteps,
+        ...(rebuildCost !== undefined ? { rebuildCost } : {}),
+        ...(backfillSteps !== undefined ? { backfillSteps } : {}),
+    };
 }
 
 // ─── 工具（execute 全在 main：副作用不出进程边界）────
@@ -476,6 +785,16 @@ export class LocalAgentManager {
         return this._limits;
     }
 
+    /**
+     * 当前生效的投递口径（压缩边界 + 工具输出裁剪闭包）。
+     * 每次重建 messages 都从这里取 —— 「预览看到的 = 真发出去的」靠的就是同一个入口。
+     * collect 传入时顺带收集被裁明细（compact() 记账用）。
+     */
+    private deliveryOptsOf(taskUri: string, collect?: ClippedToolDetail[]): Parameters<typeof blocksToMessages>[1] {
+        const b = resolveBoundary(readCompactLog(taskUri));
+        return b ? optsFor(b.policy, b.keptFromTurnId, collect) : {};
+    }
+
     private getSession(taskUri: string): LocalSession {
         let s = this.sessions.get(taskUri);
         if (!s) {
@@ -485,7 +804,7 @@ export class LocalAgentManager {
         if (!s.loaded) {
             // ops 日志 → 块树 → LLM 历史（wire = store = UI = LLM 单一权威路径）
             for (const op of readJsonl<Op>(opsFile(taskUri))) s.store.apply(op);
-            s.messages = blocksToMessages(s.store) as unknown as ModelMessage[];
+            s.messages = blocksToMessages(s.store, this.deliveryOptsOf(taskUri)) as unknown as ModelMessage[];
             s.loaded = true;
         }
         return s;
@@ -495,8 +814,172 @@ export class LocalAgentManager {
         return LOCAL_MODELS;
     }
 
+    /**
+     * 会话的 ops 视图 = **当前这一代的** op 流（UI 重放只画当前会话）。
+     * 有生效压缩时从边界起切；没压缩过（绝大多数任务）返回全量 —— 行为与历史完全一致。
+     * 旧代的内容走 generations()/generationOps()，语义上属于「历史会话」，不是当前会话。
+     */
     history(taskUri: string): Op[] {
-        return readJsonl<Op>(opsFile(taskUri));
+        const ops = readJsonl<Op>(opsFile(taskUri));
+        const b = resolveBoundary(readCompactLog(taskUri));
+        return b ? sliceOpsFromTurn(ops, b.keptFromTurnId) : ops;
+    }
+
+    /** 历史代列表（历史会话面板的数据源）：每代的时间 / 轮数 / 消息数 / 用量 */
+    generations(taskUri: string): GenerationView[] {
+        const scan = scanOpsFile(taskUri);
+        const turnIds = listTurnIds(scan.ops);
+        const events = readCompactLog(taskUri);
+        const usages = readStepUsages(taskUri);
+        return listGenerations(turnIds, events).map((g) => {
+            const owned = new Set(turnsOfGeneration(turnIds, g));
+            const gOps = opsOfGeneration(scan.ops, turnIds, g);
+            const size = sizeOfOps(gOps);
+            const mine = usages.filter((r) => owned.has(r.turnId));
+            const buckets = sumBuckets(mine.map((r) => bucketsOf(r.usage as UsageLike)));
+            const priced = mine.map((r) => r.cost).filter((c): c is CostBreakdown => !!c);
+            return {
+                ...g,
+                turns: size.turns,
+                messages: size.messages,
+                bytes: size.bytes,
+                estTokens: size.estTokens,
+                totalTokens: buckets.total,
+                cost: priced.length ? sumCosts(priced).total : null,
+            };
+        });
+    }
+
+    /** 某一代的 ops（只读查看旧会话用；seq 非法 → 空数组，不抛） */
+    generationOps(taskUri: string, seq: number): Op[] {
+        const scan = scanOpsFile(taskUri);
+        const turnIds = listTurnIds(scan.ops);
+        const g = listGenerations(turnIds, readCompactLog(taskUri)).find((x) => x.seq === seq);
+        return g ? opsOfGeneration(scan.ops, turnIds, g) : [];
+    }
+
+    /**
+     * 压缩执行：写一条账（append-only）+ 落盘被裁原文 + 重置内存态。
+     *
+     * 失败/边界原则（照 clear 的教训）：**先把可失败的事做完，最后才改内存态**。
+     * 中途失败时盘上账本可能已写一半 —— 所以账本只 append 一条 JSON 行（要么整行在、要么不在）。
+     */
+    /**
+     * 压缩预案（**只算不写**）：预览、panel「事实」行、真发前的记账共用同一份计算。
+     * 抽出来是为了「预览看到的 = 真压出来的」——两条路径各算各的必然分叉。
+     */
+    private planCompact(taskUri: string, policyInput: Partial<CompactPolicy>): CompactPlan {
+        const policy = normalizePolicy(policyInput);
+        const scan = scanOpsFile(taskUri);
+        const turnIds = listTurnIds(scan.ops);
+        const keptTurns = Math.min(policy.keepTurns, turnIds.length);
+        const keptFromTurnId = keptTurns > 0 ? turnIds[turnIds.length - keptTurns]! : null;
+        const droppedIds = keptFromTurnId ? turnIds.slice(0, turnIds.length - keptTurns) : [...turnIds];
+
+        const clipped: ClippedToolDetail[] = [];
+        const before = sizeOfOps(scan.ops);
+        const after = sizeOfOps(scan.ops, optsFor(policy, keptFromTurnId, clipped));
+
+        const store = new BlockStore();
+        for (const op of scan.ops) store.apply(op);
+        const droppedDetail = droppedIds.map((id) =>
+            describeTurn(store, id, scan.turnOffsets.get(id) ?? 0, scan.turnBytes.get(id) ?? 0),
+        );
+
+        const model = personaForTask(diyHome(), taskUri).model;
+        const rates = costOf(model, after.estTokens);
+        const rateSnap: RateSnapshot | undefined = rates
+            ? {
+                  provider: (rates as { source?: string }).source,
+                  model,
+                  input: rates.input,
+                  cacheRead: rates.cacheRead ?? rates.input,
+                  k: (rates.cacheRead ?? rates.input) > 0 ? rates.input / (rates.cacheRead ?? rates.input) : 0,
+                  asOf: MODEL_COST_AS_OF,
+              }
+            : undefined;
+        const stats = usageStats(readStepUsages(taskUri), after.estTokens, rateSnap);
+        return { policy, keptTurns, keptFromTurnId, droppedIds, scan, store, before, after, droppedDetail, clipped, rateSnap, stats };
+    }
+
+    /** 压缩预览（只算不写）：panel 与预览页的数据源 */
+    compactPreview(taskUri: string, policyInput: Partial<CompactPolicy>): CompactPreview {
+        const p = this.planCompact(taskUri, policyInput);
+        return {
+            policy: p.policy,
+            keptTurns: p.keptTurns,
+            droppedTurns: p.droppedIds.length,
+            keptFromTurnId: p.keptFromTurnId,
+            before: p.before,
+            after: p.after,
+            droppedDetail: p.droppedDetail,
+            clipped: p.clipped.map((c) => ({ ...c, tool: p.store.blocks.get(c.id)?.tool ? String(p.store.blocks.get(c.id)!.tool) : c.tool })),
+            ...(p.rateSnap ? { rates: p.rateSnap } : {}),
+            ...p.stats,
+        };
+    }
+
+    /**
+     * 执行压缩：写一条账（append-only）+ 落盘被裁原文 + 重置内存态。
+     *
+     * 失败/边界原则（照 clear 的教训）：**先把可失败的事做完，最后才改内存态**。
+     * 账本是 append-only 的单行 JSON（要么整行在、要么不在），中途失败也不会留半条。
+     */
+    compact(taskUri: string, policyInput: Partial<CompactPolicy>, by: "ui" | "cli"): CompactEventRecord {
+        const sess = this.sessions.get(taskUri);
+        if (sess?.running) throw new Error(`任务 ${taskUri} 的本地会话正在生成中，先停止再压缩`);
+        const p = this.planCompact(taskUri, policyInput);
+
+        // 原文落盘：marker 指的路径必须真的能打开（否则模型只能重跑命令 —— 那是真金白银）
+        for (const c of p.clipped) {
+            const b = p.store.blocks.get(c.id);
+            c.tool = b?.tool ? String(b.tool) : c.tool;
+            try {
+                writeFileSync(path.join(toolOutDir(), `${safeId(c.id)}.txt`), typeof b?.output === "string" ? b.output : "", "utf-8");
+            } catch (e) {
+                console.error(`[local-agent] 工具原文落盘失败 ${c.id}:`, e);
+            }
+        }
+
+        const ts = new Date().toISOString();
+        const rec: CompactEventRecord = {
+            kind: "compact",
+            v: 1,
+            id: ts,
+            ts,
+            by,
+            policy: p.policy,
+            boundary: {
+                keptFromTurnId: p.keptFromTurnId,
+                ...(p.keptFromTurnId !== null && p.scan.turnOffsets.has(p.keptFromTurnId)
+                    ? { keptFromOpsOffset: p.scan.turnOffsets.get(p.keptFromTurnId)! }
+                    : {}),
+                keptTurns: p.keptTurns,
+                droppedTurns: p.droppedIds.length,
+            },
+            before: p.before,
+            after: p.after,
+            ...(p.rateSnap ? { rates: p.rateSnap } : {}),
+            ...p.stats,
+            droppedDetail: p.droppedDetail,
+            clipped: p.clipped,
+            summaryText: null,
+            summaryCost: null,
+        };
+        appendCompactEvent(taskUri, rec);
+        // 内存态重置：删掉会话缓存 → 下次 getSession 按新边界重建（ops 仍全量，供历史查看）
+        this.sessions.delete(taskUri);
+        return rec;
+    }
+
+    /** 撤销某次压缩（append-only 的 undo：不删账，只标） */
+    undoCompact(taskUri: string, ref: string): boolean {
+        const events = readCompactLog(taskUri);
+        if (!events.some((e) => e.kind === "compact" && e.id === ref)) return false;
+        if (events.some((e) => e.kind === "undo" && e.ref === ref)) return false;
+        appendCompactEvent(taskUri, { kind: "undo", v: 1, ref, ts: new Date().toISOString() });
+        this.sessions.delete(taskUri);
+        return true;
     }
 
     cancel(taskUri: string): boolean {
@@ -549,13 +1032,35 @@ export class LocalAgentManager {
             console.error(`[local-agent] 清空插话队列失败 ${taskUri}:`, e);
             ok = false;
         }
-        for (const f of [opsFile(taskUri), llmFile(taskUri), rawFile(taskUri), stepsFile(taskUri)]) {
+        // 文件清单必须**穷举**：加新日志（如 usage / compact）时漏一处，就是「彻底删除」删不干净
+        // （旧实现就漏了 usage.jsonl —— 用量账本按会话存，留着它会让删除后仍查到本会话的花费）。
+        for (const f of [
+            opsFile(taskUri),
+            llmFile(taskUri),
+            rawFile(taskUri),
+            stepsFile(taskUri),
+            usageFile(taskUri),
+            compactFile(taskUri),
+        ]) {
             try {
                 rmSync(f, { force: true });
             } catch (e) {
                 // force:true 已吸收 ENOENT；能到这里的都是真故障（权限/只读盘），不能冒充成功
                 console.error(`[local-agent] 删除日志失败 ${f}:`, e);
                 ok = false;
+            }
+        }
+        // 被裁剪工具输出的原文：按本任务账本里引用过的 id 删（toolout/ 是多任务共享目录，
+        // 不能整个删 —— 同 id 也可能被别的任务引用）。
+        for (const e of readCompactLog(taskUri)) {
+            if (e.kind !== "compact") continue;
+            for (const c of e.clipped ?? []) {
+                try {
+                    rmSync(path.join(toolOutDir(), `${safeId(c.id)}.txt`), { force: true });
+                } catch (err) {
+                    console.error(`[local-agent] 删除工具原文失败 ${c.id}:`, err);
+                    ok = false;
+                }
             }
         }
         // 内存态无论如何都丢：留着它才是真的不一致（盘上文件仍在 → 重进会重新加载）
@@ -714,7 +1219,7 @@ export class LocalAgentManager {
             // 空树跳过：装配期就抛错时块树未动，别拿空内容覆盖上一轮的可用 dump。
             if (sess.store.roots().length > 0) {
                 try {
-                    sess.messages = blocksToMessages(sess.store) as unknown as ModelMessage[];
+                    sess.messages = blocksToMessages(sess.store, this.deliveryOptsOf(taskUri)) as unknown as ModelMessage[];
                     // dump 整文件覆盖 → tmp+rename 原子化：读取方永不见半文件（权威仍是 ops append-only）
                     const dump = llmFile(taskUri);
                     writeFileSync(`${dump}.tmp`, sess.messages.map((m) => JSON.stringify(m)).join("\n") + "\n", "utf-8");
@@ -1018,7 +1523,10 @@ export class LocalAgentManager {
                 systemBytes: delivery.system.bytes,
                 toolsBytes: JSON.stringify(tools).length,
             };
-            const sent: ModelMessage[] = withRuntime(blocksToMessages(sess.store) as unknown as ModelMessage[], delivery.runtime.text);
+            const sent: ModelMessage[] = withRuntime(
+                blocksToMessages(sess.store, this.deliveryOptsOf(taskUri)) as unknown as ModelMessage[],
+                delivery.runtime.text,
+            );
             rawSink({
                 kind: "request",
                 ts: new Date().toISOString(),

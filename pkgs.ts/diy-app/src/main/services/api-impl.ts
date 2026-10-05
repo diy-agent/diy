@@ -25,6 +25,7 @@ import { addSource, removeSource } from "./ref-config";
 import { apiDef } from "./api-def";
 import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
+import type { CompactPolicy, ToolOutputMode } from "../../shared/context/compaction";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
 import { resolve as resolvePath } from "node:path";
 
@@ -380,6 +381,45 @@ export function bindAppHandlers(binding: ServerBinding): void {
     noteRendererTouch("diy.agent.local.usage", input.taskUri);
     const { readUsage } = await import("./usage-report");
     return readUsage(input.taskUri);
+  });
+  // ── 压缩（compact）：少发 ≠ 销毁；历史原地保留可查、可撤销 ──
+  // CLI/UI 传来的散字段 → 策略对象（缺省字段由 normalizePolicy 兜底；undefined 覆盖成默认值）
+  const policyOf = (i: Record<string, unknown>): Partial<CompactPolicy> => ({
+    keepTurns: i.keepTurns as number | undefined,
+    toolOutput: i.toolOutput as ToolOutputMode | undefined,
+    headtail: {
+      triggerLines: i.triggerLines as number,
+      headLines: i.headLines as number,
+      tailLines: i.tailLines as number,
+      maxLineChars: i.maxLineChars as number,
+      maxKeepBytes: i.maxKeepBytes as number,
+    },
+    summary: i.summary as boolean | undefined,
+  });
+  binding.on(app.agent.local.compact, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().compact(input.taskUri, policyOf(input), "cli");
+  });
+  binding.on(app.agent.local.compactPreview, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compactPreview", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().compactPreview(input.taskUri, policyOf(input));
+  });
+  binding.on(app.agent.local.undoCompact, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.undoCompact", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return { undone: getLocalAgent().undoCompact(input.taskUri, input.ref) };
+  });
+  binding.on(app.agent.local.generations, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.generations", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().generations(input.taskUri);
+  });
+  binding.on(app.agent.local.generationOps, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.generationOps", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().generationOps(input.taskUri, input.seq);
   });
   // 会话用量报表（人读表格）：与 UI 同源同口径，只是在这里渲染成等宽文本
   binding.on(app.agent.usage, async ({ input }) => {

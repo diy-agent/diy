@@ -22,7 +22,8 @@
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { join } from "node:path";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { ShellTest, Session } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 
@@ -79,6 +80,44 @@ function opsPath(taskUri: string): string {
 }
 function hasOpsFile(taskUri: string): boolean {
     return findOpsFile(taskUri) !== undefined;
+}
+
+/**
+ * 会话文件 basename 的完整键（可读前缀 + sha256 前 12 位）。
+ * ⚠️ 这里是 keyOf 的**测试副本**：本套件通过 CLI 子进程验证（不 import 重依赖的 local-agent），
+ * 拿不到那个实现。复制的唯一目的是「种一份历史对话」；一旦算法变了，文件找不到会**响亮报错**，
+ * 不会静默漏测 —— 与产品路径共用同一套语义仍由 findOpsFile 的 readdir 断言兜底。
+ */
+function localKey(taskUri: string): string {
+    const readable = taskUri.replace(/[^\w.-]+/g, "_").slice(0, 64);
+    const sum = createHash("sha256").update(taskUri).digest("hex").slice(0, 12);
+    return `${readable}-${sum}`;
+}
+
+/** 造一轮的 op（user 文本 + 一个 bash 工具；outText 缺省给 n 行） */
+function turnOps(turnId: string, userText: string, outText: string): Array<Record<string, unknown>> {
+    const t = turnId;
+    return [
+        { op: "start", id: t, kind: "turn" },
+        { op: "start", id: `${t}_u`, kind: "text", parent: t, meta: { role: "user" } },
+        { op: "delta", id: `${t}_u`, fields: { content: userText } },
+        { op: "stop", id: `${t}_u` },
+        { op: "start", id: `${t}_r`, kind: "tool", parent: t, meta: { tool: "bash" } },
+        { op: "patch", id: `${t}_r`, fields: { args: { command: "rg x" }, status: "running", title: "rg x" } },
+        { op: "delta", id: `${t}_r`, fields: { output: outText } },
+        { op: "patch", id: `${t}_r`, fields: { status: "done" } },
+        { op: "stop", id: `${t}_r` },
+        { op: "stop", id: t },
+    ];
+}
+
+/** 种一份 ops 日志（模拟「已有历史对话」，供无网络的压缩用例验证） */
+function seedOps(taskUri: string, ops: Array<Record<string, unknown>>): string {
+    const dir = join(fx.HOME, "local");
+    mkdirSync(dir, { recursive: true });
+    const fp = join(dir, `${localKey(taskUri)}.ops.jsonl`);
+    writeFileSync(fp, ops.map((o) => JSON.stringify(o)).join("\n") + "\n", "utf-8");
+    return fp;
 }
 
 // ─── 插话（steer）：对话中插嘴 ───────────────────────
@@ -390,4 +429,131 @@ describe("agent.local — 真实对话（zen/go 缺省模型 gpt-5.6-luna）", (
         },
         260_000,
     );
+});
+
+// ─── 压缩 compact（无网络，种历史对话）────────────────────────
+//
+// 三条意图契约（##246 验收）在这里落地：
+//   ① 压缩不删历史（旧 ops 文件仍在、行数不变）
+//   ② 压缩后投递不再含旧块（history 自边界起）
+//   ③ 历史代可查（generations / generationOps）
+describe("agent.local — 压缩 compact（无网络）", () => {
+    /** 三轮历史；返回 uri（每轮一个工具输出，便于验证裁剪） */
+    async function seededSession(title: string): Promise<string> {
+        const uri = await setup(title);
+        const big = Array.from({ length: 200 }, (_, i) => `row ${i}`).join("\n");
+        seedOps(uri, [
+            ...turnOps("t1000", "第一轮", "a\nb"),
+            ...turnOps("t2000", "第二轮", big),
+            ...turnOps("t3000", "第三轮", "最后一个输出"),
+        ]);
+        return uri;
+    }
+
+    it("契约①③：compact 保留 1 轮 → 旧 ops 文件仍在且行数不变；generations 出两代", async () => {
+        const uri = await seededSession("压缩保留历史");
+        const fp = opsPath(uri);
+        const before = readFileSync(fp, "utf-8");
+
+        const rec = (await fx.sh.getJson(`./diy.sh agent local compact ${uri} --keep-turns 1`)).data as {
+            boundary: { keptFromTurnId: string | null; droppedTurns: number };
+            before: { bytes: number };
+            after: { bytes: number };
+        };
+        expect(rec.boundary.keptFromTurnId).toBe("t3000");
+        expect(rec.boundary.droppedTurns).toBe(2);
+        // after 更小（丢了前两轮 + 第二轮工具输出被按需裁）
+        expect(rec.after.bytes).toBeLessThan(rec.before.bytes);
+        // 契约①：**未删任何历史**（同一文件、同一内容）
+        expect(existsSync(fp)).toBe(true);
+        expect(readFileSync(fp, "utf-8")).toBe(before);
+
+        // 契约③：两代，当前代从 t3000 起
+        const gens = (await fx.sh.getJson(`./diy.sh agent local generations ${uri}`)).data as Array<{
+            seq: number;
+            fromTurnId: string | null;
+            current: boolean;
+            turns: number;
+        }>;
+        expect(gens).toHaveLength(2);
+        expect(gens[0]).toMatchObject({ seq: 0, fromTurnId: null, current: false, turns: 2 });
+        expect(gens[1]).toMatchObject({ seq: 1, fromTurnId: "t3000", current: true, turns: 1 });
+
+        // 0 代只读可查（旧内容没丢）
+        const oldOps = (await fx.sh.getJson(`./diy.sh agent local generationOps ${uri} 0`)).data as unknown[];
+        expect(oldOps.length).toBeGreaterThan(0);
+        expect(JSON.stringify(oldOps)).toContain("第一轮");
+
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
+
+    it("契约②：压缩后 history 只含边界后的块（旧块不再投递）", async () => {
+        const uri = await seededSession("压缩边界投递");
+        await fx.sh.getJson(`./diy.sh agent local compact ${uri} --keep-turns 1`);
+        const hist = (await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data as unknown[];
+        const asText = JSON.stringify(hist);
+        expect(asText).toContain("第三轮");
+        expect(asText).not.toContain("第一轮");
+        expect(asText).not.toContain("第二轮");
+        // 边界轮本身的 op 在（t3000 的 start 是第一条）
+        expect(hist[0]).toMatchObject({ op: "start", id: "t3000", kind: "turn" });
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
+
+    it("工具输出裁剪：headtail 后投递里的工具结果带「中间省略」标记（保留 1 轮 + 裁）", async () => {
+        const uri = await setup("压缩裁工具输出");
+        const big = Array.from({ length: 200 }, (_, i) => `row ${i}`).join("\n");
+        seedOps(uri, [...turnOps("t9000", "只这一轮", big)]);
+        const rec = (await fx.sh.getJson(
+            `./diy.sh agent local compact ${uri} --keep-turns 1 --tool-output headtail`,
+        )).data as { after: { bytes: number }; clipped?: unknown[] };
+        expect(rec.clipped && rec.clipped.length).toBeGreaterThan(0);
+
+        const hist = (await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data as unknown[];
+        // history 是 ops（原始，不裁）；裁剪只影响**投递**，故用 preview 的投影字节对比
+        expect(JSON.stringify(hist)).toContain("row 199"); // ops 原文仍在
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
+
+    it("compactPreview 只算不写：after<before 且不产生 compact 账本文件", async () => {
+        const uri = await seededSession("压缩预览");
+        const pv = (await fx.sh.getJson(
+            `./diy.sh agent local compactPreview ${uri} --keep-turns 1`,
+        )).data as { before: { bytes: number }; after: { bytes: number } };
+        expect(pv.after.bytes).toBeLessThan(pv.before.bytes);
+        const dir = join(fx.HOME, "local");
+        const hasCompact = readdirSync(dir).some((f) => f.startsWith(localKey(uri)) && f.endsWith(".compact.jsonl"));
+        expect(hasCompact).toBe(false); // 预览不落账
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
+
+    it("undoCompact：撤销后 history 恢复全量", async () => {
+        const uri = await seededSession("压缩撤销");
+        const rec = (await fx.sh.getJson(`./diy.sh agent local compact ${uri} --keep-turns 1`)).data as { id: string };
+        const beforeUndo = (await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data as unknown[];
+        expect(JSON.stringify(beforeUndo)).not.toContain("第一轮");
+
+        const u = (await fx.sh.getJson(`./diy.sh agent local undoCompact ${uri} ${rec.id}`)).data as { undone: boolean };
+        expect(u.undone).toBe(true);
+        const afterUndo = (await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data as unknown[];
+        expect(JSON.stringify(afterUndo)).toContain("第一轮");
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
+
+    it("clear 是「彻底删除」：连同 compact 账本一起清（与 compact 的正交语义）", async () => {
+        const uri = await seededSession("压缩与彻底删除");
+        await fx.sh.getJson(`./diy.sh agent local compact ${uri} --keep-turns 1`);
+        const dir = join(fx.HOME, "local");
+        const key = localKey(uri);
+        expect(readdirSync(dir).some((f) => f.startsWith(key) && f.endsWith(".compact.jsonl"))).toBe(true);
+
+        await fx.sh.getJson(`./diy.sh agent local clear ${uri}`);
+        expect(hasOpsFile(uri)).toBe(false);
+        // 账本也删干净（否则删除后仍能查到本会话的压缩史）
+        expect(readdirSync(dir).some((f) => f.startsWith(key) && f.endsWith(".compact.jsonl"))).toBe(false);
+        // 清后的 generations：没有任何可查的代内容（空会话）
+        const gens = (await fx.sh.getJson(`./diy.sh agent local generations ${uri}`)).data as Array<{ current: boolean }>;
+        expect(gens.some((g) => g.current)).toBe(true);
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
 });

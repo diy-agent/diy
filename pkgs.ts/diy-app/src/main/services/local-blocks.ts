@@ -367,9 +367,27 @@ export interface LocalModelMessage {
     content: string | Array<LocalTextPart | LocalToolCallPart | LocalToolResultPart>;
 }
 
+/**
+ * 投递选项（**压缩能力的落点**）。
+ *
+ * 为什么裁剪必须落在这里、而不是工具 execute 里：
+ *   执行时裁 = 原文当场丢（UI 也看不到全量）、且新输出也一起被裁；
+ *   投递时裁 = 块树/UI/落盘全是原文，只有「发给模型的那一份」被裁 —— 用户随时能看全量，
+ *              原文还能另存一份供模型回取（见 clipToolOutput 的 origPath）。
+ * 两者作用阶段不同，可与 execute 侧的 clip()（错误路径 6000 字符）并存。
+ */
+export interface DeliveryOpts {
+    /** 只投递从这个 turn 起的块（压缩边界）；null = 一个都不投（全部清零）；缺省 = 全投 */
+    sinceTurnId?: string | null;
+    /** 工具输出裁剪（由 main 注入：同一份纯函数既算预览也算真发，见 shared/context/compaction） */
+    transformToolOutput?: (b: { id: string; tool: string; title: string; output: string }) => string;
+}
+
 /** 块树 → ModelMessage[]（跳过 turn/step 容器与 think） */
-export function blocksToMessages(store: BlockStore): LocalModelMessage[] {
+export function blocksToMessages(store: BlockStore, opts?: DeliveryOpts): LocalModelMessage[] {
     const out: LocalModelMessage[] = [];
+    const since = opts && "sinceTurnId" in opts ? opts.sinceTurnId : undefined;
+    const transform = opts?.transformToolOutput;
     const walk = (id: string) => {
         const b = store.blocks.get(id)!;
         if (b.kind === "text") {
@@ -428,12 +446,17 @@ export function blocksToMessages(store: BlockStore): LocalModelMessage[] {
             const status = String(b.status ?? "");
             const doneish =
                 status === "done" || status === "error" || status === INTERRUPTED_STATUS;
-            const value =
+            const raw =
                 typeof b.output === "string" && b.output
                     ? b.output
                     : doneish
                       ? "（空结果）"
                       : INTERRUPTED_TOOL_NOTICE;
+            // 裁剪只作用于**工具真实输出**（非空、非中断占位）—— 占位文案本身是契约文本，动了就误导模型
+            const value =
+                transform && typeof b.output === "string" && b.output
+                    ? transform({ id: b.id, tool: String(b.tool ?? "bash"), title: String(b.title ?? ""), output: raw })
+                    : raw;
             out.push({
                 role: "tool",
                 content: [
@@ -449,7 +472,25 @@ export function blocksToMessages(store: BlockStore): LocalModelMessage[] {
         }
         for (const c of b.children) walk(c);
     };
-    for (const r of store.roots()) walk(r.id);
+    // 边界轮及其后 = 投递。
+    //   · since 缺省      → 全投（与历史行为逐字一致）
+    //   · since === null  → 一条不投（全部清零）
+    //   · since 指向某轮  → 该轮及其后投；**找不到该轮时退化为全投**（宁可多给，
+    //                        也别让用户面对一个空白会话 —— 日志被换/跨机器时会遇到）
+    const roots = store.roots();
+    let kept: Set<string> | null = null;
+    if (since !== undefined && since !== null) {
+        const from = roots.findIndex((r) => r.id === since);
+        kept = from >= 0 ? new Set(roots.slice(from).map((r) => r.id)) : null; // null = 找不到 → 全投
+    }
+    for (const r of roots) {
+        // turn 级边界：边界之前（含被丢掉的旧轮）整棵子树不投递。
+        // 只按 root（turn）切、不做块级切 —— 切半轮会留下「有 tool-call 无 result」的残段，
+        // 直接违反「每个 tool-call 必有 tool-result」铁律（provider 会拒整个历史）。
+        if (since === null && r.kind === "turn") continue;
+        if (kept && r.kind === "turn" && !kept.has(r.id)) continue;
+        walk(r.id);
+    }
     return out;
 }
 

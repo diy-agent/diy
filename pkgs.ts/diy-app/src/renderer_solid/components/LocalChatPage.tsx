@@ -28,6 +28,7 @@ import {
     cancelHoverClose,
     type UsageHoverState,
 } from "./UsagePanel";
+import { CompactSessionPanel, GenerationsPanel } from "./CompactSessionPanel";
 import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
@@ -937,6 +938,9 @@ export function LocalChatPage(props: { uri?: string }) {
     const [densityOpen, setDensityOpen] = createSignal(false);
     /** 「⋯」溢出菜单：低频/危险操作（清空历史）默认不显示，点开才露出（VSCode 附加菜单式） */
     const [moreOpen, setMoreOpen] = createSignal(false);
+    /** 压缩面板（只改投递、不删历史）与历史会话面板 */
+    const [compactOpen, setCompactOpen] = createSignal(false);
+    const [gensOpen, setGensOpen] = createSignal(false);
     const [personaPanelOpen, setPersonaPanelOpen] = createSignal(false);
     const [fullscreen, setFullscreen] = createSignal(false);
     let scrollRef: HTMLDivElement | undefined;
@@ -1283,6 +1287,26 @@ export function LocalChatPage(props: { uri?: string }) {
                             >
                                 <button
                                     class="btn btn-ghost btn-xs w-full justify-start gap-2 normal-case font-normal"
+                                    aria-label="压缩会话上下文"
+                                    onClick={() => {
+                                        setMoreOpen(false);
+                                        setCompactOpen(true);
+                                    }}
+                                >
+                                    压缩会话…
+                                </button>
+                                <button
+                                    class="btn btn-ghost btn-xs w-full justify-start gap-2 normal-case font-normal"
+                                    aria-label="历史会话"
+                                    onClick={() => {
+                                        setMoreOpen(false);
+                                        setGensOpen(true);
+                                    }}
+                                >
+                                    历史会话…
+                                </button>
+                                <button
+                                    class="btn btn-ghost btn-xs w-full justify-start gap-2 normal-case font-normal"
                                     aria-label="清空本对话历史"
                                     onClick={() => {
                                         setMoreOpen(false);
@@ -1466,6 +1490,18 @@ export function LocalChatPage(props: { uri?: string }) {
                         />
                         {/* L1 窗口占用环（chip 的 token/金额总量右侧）：hover chip 的 title/环自身 title 给明细 */}
                         <WindowRing />
+                        {/* 压缩入口：放在 token 窗口面板旁（用户 230#26「入口直接放在 token 窗口面板里，给个大按钮」）。
+                            生成中隐藏（正跑的会话不该在此时被改投递口径）。 */}
+                        <Show when={!localChatStore.live}>
+                            <button
+                                class="btn btn-outline btn-xs"
+                                aria-label="压缩会话上下文"
+                                data-tip="压缩会话上下文：保留最近若干轮 + 可选裁工具输出；历史保留、可撤销"
+                                onClick={() => setCompactOpen(true)}
+                            >
+                                压缩
+                            </button>
+                        </Show>
                         <div class="flex-1" />
                         {/* 生成中的可见性：别人（CLI/另一窗口）发起时本地 running 全程为 false，
                             不显式说出来，界面看起来就像"什么都没发生"（任务 194 现象一的另一半） */}
@@ -1539,6 +1575,12 @@ export function LocalChatPage(props: { uri?: string }) {
                 </div>
             </div>
 
+            <Show when={compactOpen() && uri()}>
+                <CompactSessionPanel uri={uri()!} onClose={() => setCompactOpen(false)} />
+            </Show>
+            <Show when={gensOpen() && uri()}>
+                <GenerationsPanel uri={uri()!} onClose={() => setGensOpen(false)} />
+            </Show>
             {/* 清空确认：破坏性且不可恢复，点击与执行之间隔一层确认 */}
             <Show when={confirmClear()}>
                 <ConfirmDialog

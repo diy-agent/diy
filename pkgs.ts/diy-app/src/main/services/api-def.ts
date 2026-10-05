@@ -564,6 +564,71 @@ export const apiDef = RpcSchema.router({
                 },
                 output: z.array(z.any()),
               }),
+              /**
+               * 压缩会话上下文（**不删任何历史**）：写一条边界账 `<key>.compact.jsonl`，
+               * 投递时只发边界之后的轮 + 按策略裁工具输出。旧内容原地保留、可查、可撤销。
+               * 与 `clear`（物理删所有日志）语义正交 —— 这里是「少发」，那里是「销毁」。
+               */
+              compact: RpcSchema.unary({
+                desc: `压缩会话上下文（保留最近 N 轮 + 可选裁剪工具输出；历史原地保留可撤销）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  keepTurns: z.number().optional().cliOption({ desc: "保留最近多少轮（0 = 全部清零；缺省 6）" }),
+                  toolOutput: z
+                    .enum(["asis", "headtail", "callpath"])
+                    .optional()
+                    .cliOption({ desc: "工具输出处理：asis 原样 / headtail 头尾裁剪 / callpath 只留调用+路径" }),
+                  triggerLines: z.number().optional().cliOption({ desc: "头尾裁剪：超过多少行才裁（缺省 80）" }),
+                  headLines: z.number().optional().cliOption({ desc: "头尾裁剪：保留头部行数（缺省 40）" }),
+                  tailLines: z.number().optional().cliOption({ desc: "头尾裁剪：保留尾部行数（缺省 10）" }),
+                  maxLineChars: z.number().optional().cliOption({ desc: "单行超长截断阈值（字符，缺省 300）" }),
+                  maxKeepBytes: z.number().optional().cliOption({ desc: "保留总量字节兜底（缺省 8192）" }),
+                  summary: z.boolean().optional().cliOption({ desc: "是否计算历史摘要带进新会话（缺省否）" }),
+                },
+                output: z.any(),
+              }),
+              /** 压缩预览：只算不写（panel 的「事实」行与预览页都用它；与真发同一份纯函数） */
+              compactPreview: RpcSchema.unary({
+                desc: `预览压缩效果（只算不写；返回前后规模 / 丢弃轮明细 / 裁剪明细 / 用量经验）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  keepTurns: z.number().optional().cliOption({ desc: "保留最近多少轮（0 = 全部清零）" }),
+                  toolOutput: z.enum(["asis", "headtail", "callpath"]).optional().cliOption({ desc: "工具输出处理" }),
+                  triggerLines: z.number().optional().cliOption({ desc: "头尾裁剪阈值行数" }),
+                  headLines: z.number().optional().cliOption({ desc: "头尾裁剪保留头行数" }),
+                  tailLines: z.number().optional().cliOption({ desc: "头尾裁剪保留尾行数" }),
+                  maxLineChars: z.number().optional().cliOption({ desc: "单行超长截断阈值" }),
+                  maxKeepBytes: z.number().optional().cliOption({ desc: "保留总量字节兜底" }),
+                  summary: z.boolean().optional().cliOption({ desc: "是否算摘要" }),
+                },
+                output: z.any(),
+              }),
+              /** 撤销一次压缩（append-only 的 undo 标记；不删账，可审计） */
+              undoCompact: RpcSchema.unary({
+                desc: `撤销一次压缩（按压缩 id；恢复为上一次生效边界）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  ref: z.string().cliArg({ desc: "压缩 id（见 generations 或 compact 返回）" }),
+                },
+                output: z.object({ undone: z.boolean() }),
+              }),
+              /** 历史代列表（历史会话面板的数据源：时间 / 轮数 / 消息数 / 用量） */
+              generations: RpcSchema.unary({
+                desc: `列出会话的历史代（每代时间/轮数/消息数/token/金额；当前代标 current）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                },
+                output: z.array(z.any()),
+              }),
+              /** 某一代的 ops（只读查看旧会话；不放回当前会话，不可续聊） */
+              generationOps: RpcSchema.unary({
+                desc: `读取某一代的 Op 流（只读查看历史会话；seq 见 generations）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  seq: z.number().cliArg({ desc: "第几代（0 = 最初那一代）" }),
+                },
+                output: z.array(z.any()),
+              }),
             },
           }),
 
