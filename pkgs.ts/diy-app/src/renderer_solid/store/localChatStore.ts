@@ -632,13 +632,26 @@ async function requestView(taskUri: string) {
 }
 
 /** 压缩预览（只算不写）：mod 请求 + 事实表（base 侧由 requestView 单独取一次） */
-async function compactPreview(taskUri: string, policy: Partial<CompactPolicy>) {
-    return diyService.diy.agent.local.compactPreview({ taskUri, ...policyFlat(policy) });
+async function compactPreview(taskUri: string, policy: Partial<CompactPolicy>, summaryText?: string) {
+    return diyService.diy.agent.local.compactPreview({ taskUri, ...policyFlat(policy), summaryText });
+}
+
+/** 生成历史摘要（一次模型调用，花钱；由面板「生成摘要」显式触发） */
+async function summarize(taskUri: string, keepTurns: number) {
+    return diyService.diy.agent.local.summarize({ taskUri, keepTurns });
 }
 
 /** 执行压缩（写边界账 + 落盘被裁原文 + 内存态重置）；成功后重建本地块树到新边界 */
-async function compact(taskUri: string, policy: Partial<CompactPolicy>) {
-    const rec = await diyService.diy.agent.local.compact({ taskUri, ...policyFlat(policy) });
+async function compact(
+    taskUri: string,
+    policy: Partial<CompactPolicy>,
+    summary?: { text: string; data: unknown; cost: number | null },
+) {
+    const rec = await diyService.diy.agent.local.compact({
+        taskUri,
+        ...policyFlat(policy),
+        ...(summary ? { summaryText: summary.text, summaryData: summary.data, summaryCost: summary.cost } : {}),
+    } as never);
     // 压缩后当前会话视图变了（只含边界后的轮）→ 重建块树，让界面立刻反映新会话
     await reload(taskUri);
     return rec;
@@ -747,6 +760,7 @@ export const localChatStore = {
     /** 压缩：预览（只算）/ 执行 / 撤销 / 历史代（旧会话只读查看）*/
     requestView,
     compactPreview,
+    summarize,
     compact,
     undoCompact,
     generations,

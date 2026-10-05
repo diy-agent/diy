@@ -584,6 +584,21 @@ export const apiDef = RpcSchema.router({
                   maxLineChars: z.number().optional().cliOption({ desc: "单行超长截断阈值（字符，缺省 300）" }),
                   maxKeepBytes: z.number().optional().cliOption({ desc: "保留总量字节兜底（缺省 8192）" }),
                   summary: z.boolean().optional().cliOption({ desc: "是否计算历史摘要带进新会话（缺省否）" }),
+                  summaryText: z.string().optional().cliOption({ desc: "已生成的摘要文本（先跑 summarize；缺省则不投摘要）" }),
+                  summaryData: z.any().optional(),
+                  summaryCost: z.number().optional(),
+                },
+                output: z.any(),
+              }),
+              /**
+               * 生成历史摘要（压缩承接）：对**将被丢弃的轮**做一次结构化抽取（一次模型调用，花钱）。
+               * 与 compact 分开：摘要是可选增强、且要用户显式掏钱；compact 本身不调模型。
+               */
+              summarize: RpcSchema.unary({
+                desc: `生成历史摘要（对将被丢弃的轮做结构化抽取；一次模型调用）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  keepTurns: z.number().optional().cliOption({ desc: "保留最近多少轮（摘要针对被丢弃的轮；缺省 6）" }),
                 },
                 output: z.any(),
               }),
@@ -608,6 +623,7 @@ export const apiDef = RpcSchema.router({
                   maxLineChars: z.number().optional().cliOption({ desc: "单行超长截断阈值" }),
                   maxKeepBytes: z.number().optional().cliOption({ desc: "保留总量字节兜底" }),
                   summary: z.boolean().optional().cliOption({ desc: "是否算摘要" }),
+                  summaryText: z.string().optional().cliOption({ desc: "已生成的摘要文本（缺省用占位骨架）" }),
                 },
                 output: z.any(),
               }),

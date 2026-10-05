@@ -399,7 +399,16 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.agent.local.compact, async ({ input }) => {
     noteRendererTouch("diy.agent.local.compact", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
-    return getLocalAgent().compact(input.taskUri, policyOf(input), "cli");
+    const summary =
+      input.summaryText !== undefined
+        ? { text: input.summaryText, data: (input.summaryData ?? null) as never, cost: input.summaryCost ?? null }
+        : undefined;
+    return getLocalAgent().compact(input.taskUri, policyOf(input), "cli", summary);
+  });
+  binding.on(app.agent.local.summarize, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.summarize", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().summarize(input.taskUri, input.keepTurns ?? 6);
   });
   binding.on(app.agent.local.requestView, async ({ input }) => {
     noteRendererTouch("diy.agent.local.requestView", input.taskUri);
@@ -409,7 +418,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.agent.local.compactPreview, async ({ input }) => {
     noteRendererTouch("diy.agent.local.compactPreview", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
-    return getLocalAgent().compactPreview(input.taskUri, policyOf(input));
+    const txt = (input as { summaryText?: string }).summaryText;
+    return getLocalAgent().compactPreview(input.taskUri, policyOf(input), txt);
   });
   binding.on(app.agent.local.undoCompact, async ({ input }) => {
     noteRendererTouch("diy.agent.local.undoCompact", input.taskUri);

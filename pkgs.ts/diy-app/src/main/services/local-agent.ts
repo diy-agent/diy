@@ -7,7 +7,7 @@
 //   <key>.llm.jsonl — ModelMessage[] 完整对话（续聊的权威，含工具链路 id）
 // 密钥/上游收敛在 main：renderer 不接触 key；zen/go 无 CORS，代理是硬约束。
 
-import { streamText, tool, stepCountIs } from "ai";
+import { streamText, generateText, tool, stepCountIs } from "ai";
 import type { LanguageModel, ModelMessage } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -69,6 +69,15 @@ import {
     type SizeSnapshot,
 } from "../../shared/context/compaction";
 import { layerFacts, type LayerRow, type RequestView } from "../../shared/context/request-view";
+import {
+    emptySummary,
+    parseSummary,
+    summaryExtractionPrompt,
+    summaryHasContent,
+    summaryPlaceholder,
+    type SummaryData,
+} from "../../shared/context/summary";
+import { renderSummarySection } from "./prompt-registry";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
 import { SteerQueue } from "../core/steer-queue";
@@ -147,7 +156,7 @@ export interface LocalAgentLimits {
 }
 
 export const DEFAULT_LIMITS: LocalAgentLimits = {
-    maxSteps: 60,
+    maxSteps: 200,
     maxOutputTokens: 4000,
     bashTimeoutMs: 30_000,
     outputClipChars: 6000,
@@ -289,6 +298,16 @@ function sessionIdOf(taskUri: string): string {
  * 易变项（任务正文、技能清单等）放这里，稳定项在 system 参数里；两者合起来才是完整上下文。
  * runtime 为空 → 原样返回（不硬塞空消息：白耗 token 且让模型困惑）。
  */
+/**
+ * 摘要作为**首条上下文消息**插在历史之前（承接语义）：[摘要, ...历史, runtime, 新输入]。
+ * 为什么是 user 而非 system：system 是稳定前缀（缓存友好），摘要是动态内容；放 user 段
+ * 既不砸缓存，也符合"把上一段会话的结论交给你"的对话语义。
+ */
+function withSummary(hist: ModelMessage[], summaryText: string): ModelMessage[] {
+    if (!summaryText.trim()) return hist;
+    return [{ role: "user" as const, content: summaryText }, ...hist];
+}
+
 function withRuntime(hist: ModelMessage[], runtime: string): ModelMessage[] {
     if (!runtime.trim()) return hist;
     const last = hist[hist.length - 1];
@@ -613,6 +632,28 @@ function usageStats(
     };
 }
 
+/** 把「被丢弃的轮」的文本抽出来（喂给摘要抽取模型）；截断防爆 token */
+function droppedTextOf(store: BlockStore, droppedIds: readonly string[], maxChars = 120_000): string {
+    const parts: string[] = [];
+    const walk = (id: string) => {
+        const b = store.blocks.get(id);
+        if (!b) return;
+        if (b.kind === "text") {
+            const role = String(b.role ?? "user");
+            const c = String(b.content ?? "").trim();
+            if (c) parts.push(`[${role}] ${c}`);
+        } else if (b.kind === "tool") {
+            const args = b.args != null ? JSON.stringify(b.args).slice(0, 200) : "";
+            const out = String(b.output ?? "").slice(0, 4000);
+            parts.push(`[tool ${String(b.tool ?? "")}] ${args}\n→ ${out}`);
+        }
+        for (const c of b.children) walk(c);
+    };
+    for (const id of droppedIds) walk(id);
+    const text = parts.join("\n\n");
+    return text.length > maxChars ? text.slice(0, maxChars) + "\n…（已截断）" : text;
+}
+
 // ─── 工具（execute 全在 main：副作用不出进程边界）────
 
 function clip(s: string, n = 6000): string {
@@ -907,7 +948,12 @@ export class LocalAgentManager {
      * **与真发同一条链**：assembleGlobals → buildDelivery → blocksToMessages（+ 工具输出裁剪）。
      * 预览的全部价值就是"看到的就是会发出去的"，所以这里不许另算一份。
      */
-    private buildRequestView(taskUri: string, policy: CompactPolicy, keptFromTurnId: string | null | undefined): RequestView {
+    private buildRequestView(
+        taskUri: string,
+        policy: CompactPolicy,
+        keptFromTurnId: string | null | undefined,
+        summaryOverride?: string,
+    ): RequestView {
         const home = diyHome();
         const globals = assembleGlobals(home, projectFromUri(taskUri), { taskUri }) as unknown as Record<string, unknown>;
         const delivery = buildDelivery(globals, loadSystemPlaces(home));
@@ -916,10 +962,12 @@ export class LocalAgentManager {
         const tools = buildTools(cwd, L, taskUri);
         const store = new BlockStore();
         for (const op of readJsonl<Op>(opsFile(taskUri))) store.apply(op);
-        const messages = withRuntime(
+        const history = withRuntime(
             blocksToMessages(store, optsFor(policy, keptFromTurnId)) as unknown as ModelMessage[],
             delivery.runtime.text,
         );
+        const summaryText = summaryOverride !== undefined ? summaryOverride : this.effectiveSummary(taskUri);
+        const messages = withSummary(history, summaryText);
         return {
             model: personaForTask(home, taskUri).model,
             system: delivery.system.text,
@@ -932,6 +980,54 @@ export class LocalAgentManager {
         };
     }
 
+    /** 当前生效压缩的摘要文本（未压缩/未生成摘要 → 空串 = 不投递） */
+    effectiveSummary(taskUri: string): string {
+        const events = readCompactLog(taskUri);
+        const b = resolveBoundary(events);
+        if (!b) return "";
+        const c = events.find((e) => e.kind === "compact" && e.id === b.compactId) as CompactEventRecord | undefined;
+        return c?.summaryText ?? "";
+    }
+
+    /** 当前生效摘要的结构化数据（预览占位与再生成用） */
+    currentSummaryData(taskUri: string): SummaryData {
+        const events = readCompactLog(taskUri);
+        const b = resolveBoundary(events);
+        const c = b ? (events.find((e) => e.kind === "compact" && e.id === b.compactId) as CompactEventRecord | undefined) : undefined;
+        return c?.summaryData ?? emptySummary();
+    }
+
+    /**
+     * 对**将被丢弃的轮**生成结构化摘要（一次模型调用；花钱，故由 UI 显式触发）。
+     * 返回渲染好的文本（走 summary.md 模版）+ 结构化数据 + 金额。
+     */
+    async summarize(
+        taskUri: string,
+        keepTurnsInput: number,
+    ): Promise<{ text: string; data: SummaryData; cost: number | null }> {
+        const key = process.env.OPENCODE_ZEN_API_KEY;
+        if (!key) throw new Error("缺少 OPENCODE_ZEN_API_KEY（main 进程环境变量）");
+        const p = this.planCompact(taskUri, { keepTurns: keepTurnsInput });
+        if (p.droppedIds.length === 0) return { text: "", data: emptySummary(), cost: null };
+        const model = personaForTask(diyHome(), taskUri).model;
+        const dropped = droppedTextOf(p.store, p.droppedIds);
+        const res = await generateText({
+            model: this.modelFor(model, key),
+            prompt: summaryExtractionPrompt(dropped, p.droppedIds.length),
+            headers: { "x-opencode-session": sessionIdOf(taskUri) },
+            maxOutputTokens: 2000,
+            maxRetries: 2,
+        });
+        const data = parseSummary(res.text);
+        if (!data) throw new Error("摘要模型未返回可解析的 JSON（已放弃本次摘要，不写空摘要冒充成功）");
+        data.turns = p.droppedIds.length;
+        const b = bucketsOf(res.usage as UsageLike);
+        const rates = costOf(model, b.inputTotal);
+        const cost = rates ? costBreakdown(rates, b).total : null;
+        const text = renderSummarySection(diyHome(), projectFromUri(taskUri), data);
+        return { text, data, cost };
+    }
+
     /** 当前生效请求（base）：不传策略 = 用盘上生效的边界与裁剪 */
     requestView(taskUri: string): RequestView {
         const b = resolveBoundary(readCompactLog(taskUri));
@@ -940,10 +1036,16 @@ export class LocalAgentManager {
     }
 
     /** 压缩预览（只算不写）：面板左侧参数 + 右侧请求 YAML diff + 事实表的数据源 */
-    compactPreview(taskUri: string, policyInput: Partial<CompactPolicy>): CompactPreview {
+    compactPreview(taskUri: string, policyInput: Partial<CompactPolicy>, summaryText?: string): CompactPreview {
         const p = this.planCompact(taskUri, policyInput);
         const base = this.requestView(taskUri);
-        const mod = this.buildRequestView(taskUri, p.policy, p.keptFromTurnId);
+        // 勾选摘要但尚未生成 → 用占位骨架（让用户先看见"会得到什么"，且不花一分钱）
+        const sum = p.policy.summary
+            ? summaryText !== undefined
+                ? summaryText
+                : this.effectiveSummary(taskUri) || summaryPlaceholder(emptySummary(p.droppedIds.length))
+            : "";
+        const mod = this.buildRequestView(taskUri, p.policy, p.keptFromTurnId, sum);
         const inputRate = costOf(base.model, p.after.estTokens)?.input ?? 0;
         return {
             policy: p.policy,
@@ -965,7 +1067,12 @@ export class LocalAgentManager {
      * 失败/边界原则（照 clear 的教训）：**先把可失败的事做完，最后才改内存态**。
      * 账本是 append-only 的单行 JSON（要么整行在、要么不在），中途失败也不会留半条。
      */
-    compact(taskUri: string, policyInput: Partial<CompactPolicy>, by: "ui" | "cli"): CompactEventRecord {
+    compact(
+        taskUri: string,
+        policyInput: Partial<CompactPolicy>,
+        by: "ui" | "cli",
+        summary?: { text: string; data: SummaryData; cost: number | null },
+    ): CompactEventRecord {
         const sess = this.sessions.get(taskUri);
         if (sess?.running) throw new Error(`任务 ${taskUri} 的本地会话正在生成中，先停止再压缩`);
         const p = this.planCompact(taskUri, policyInput);
@@ -1003,8 +1110,9 @@ export class LocalAgentManager {
             ...p.stats,
             droppedDetail: p.droppedDetail,
             clipped: p.clipped,
-            summaryText: null,
-            summaryCost: null,
+            summaryText: summary?.text ?? null,
+            summaryData: summary?.data ?? null,
+            summaryCost: summary?.cost ?? null,
         };
         appendCompactEvent(taskUri, rec);
         // 内存态重置：删掉会话缓存 → 下次 getSession 按新边界重建（ops 仍全量，供历史查看）
@@ -1563,9 +1671,12 @@ export class LocalAgentManager {
                 systemBytes: delivery.system.bytes,
                 toolsBytes: JSON.stringify(tools).length,
             };
-            const sent: ModelMessage[] = withRuntime(
-                blocksToMessages(sess.store, this.deliveryOptsOf(taskUri)) as unknown as ModelMessage[],
-                delivery.runtime.text,
+            const sent: ModelMessage[] = withSummary(
+                withRuntime(
+                    blocksToMessages(sess.store, this.deliveryOptsOf(taskUri)) as unknown as ModelMessage[],
+                    delivery.runtime.text,
+                ),
+                this.effectiveSummary(taskUri),
             );
             rawSink({
                 kind: "request",

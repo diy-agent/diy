@@ -131,10 +131,15 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     // base 请求（打开面板取一次，参数变化不重取）
     const [base] = createResource(() => props.uri, (u) => localChatStore.requestView(u) as Promise<RequestView>);
 
+    /** 已生成的历史摘要（文字 + 结构化 + 金额）；未生成 = null */
+    const [summary, setSummary] = createSignal<{ text: string; data: unknown; cost: number | null } | null>(null);
+    const [sumBusy, setSumBusy] = createSignal(false);
+    const [sumErr, setSumErr] = createSignal<string | null>(null);
+
     // 预览（只算不写）：策略变化即重算（返回 mod 请求 + 事实表）
     const [pv] = createResource(
-        () => ({ uri: props.uri, p: pol() }),
-        (k) => localChatStore.compactPreview(k.uri, k.p) as Promise<{
+        () => ({ uri: props.uri, p: pol(), sum: summary()?.text }),
+        (k) => localChatStore.compactPreview(k.uri, k.p, k.sum) as Promise<{
             before: { bytes: number };
             after: { bytes: number };
             keptTurns: number;
@@ -225,11 +230,29 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
             });
     });
 
+    /** 生成摘要（显式、花钱一次）；结果直接进预览 */
+    const genSummary = async () => {
+        setSumBusy(true);
+        setSumErr(null);
+        try {
+            const r = (await localChatStore.summarize(props.uri, pol().keepTurns)) as {
+                text: string;
+                data: unknown;
+                cost: number | null;
+            };
+            setSummary(r);
+        } catch (e) {
+            setSumErr(String(e instanceof Error ? e.message : e));
+        } finally {
+            setSumBusy(false);
+        }
+    };
+
     const apply = async () => {
         setBusy(true);
         setErr(null);
         try {
-            await localChatStore.compact(props.uri, pol());
+            await localChatStore.compact(props.uri, pol(), pol().summary ? (summary() ?? undefined) : undefined);
             props.onClose();
         } catch (e) {
             setErr(String(e instanceof Error ? e.message : e));
@@ -391,6 +414,29 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                             </span>
                                         </span>
                                     </label>
+                                    <Show when={pol().summary}>
+                                        <div class="ml-5 mt-1 flex items-center gap-2 text-caption">
+                                            <button
+                                                class="btn btn-outline btn-xs"
+                                                aria-label="生成摘要"
+                                                disabled={sumBusy() || busy()}
+                                                onClick={() => void genSummary()}
+                                            >
+                                                {sumBusy() ? "生成中…" : summary() ? "重新生成摘要" : "生成摘要"}
+                                            </button>
+                                            <Show when={summary()}>
+                                                <span class="text-success">
+                                                    已生成{summary()!.cost != null ? `（$${summary()!.cost!.toFixed(4)}）` : ""}
+                                                </span>
+                                            </Show>
+                                            <Show when={!summary()}>
+                                                <span class="opacity-60">未生成时，预览显示模版骨架（占位）</span>
+                                            </Show>
+                                        </div>
+                                        <Show when={sumErr()}>
+                                            <div class="ml-5 mt-1 text-caption text-error">{sumErr()}</div>
+                                        </Show>
+                                    </Show>
                                 </section>
                             </div>
                         </Block>

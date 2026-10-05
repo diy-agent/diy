@@ -245,6 +245,30 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
     expect(Math.abs((await h()) - h0)).toBeLessThanOrEqual(2);
   });
 
+  it("勾选历史摘要 → 预览出现 <summary> 骨架 + 「生成摘要」按钮（未生成时显示占位，不花钱）", async () => {
+    await expandAll();
+    const before = await ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''");
+    expect(before).not.toContain("<summary");
+
+    // 勾选「③ 计算历史摘要」
+    await ui.query<string>(
+      `(() => { const cb=[...document.querySelectorAll('input[type=checkbox]')].find(c=>(c.closest('label')?.textContent||'').includes('计算历史摘要')); cb?.click(); return 'x'; })()`,
+    );
+    const txt = await waitUntil(
+      () => ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''"),
+      (t) => t.includes("<summary"),
+      { label: "摘要骨架进预览" },
+    );
+    expect(txt).toContain("<summary turns=");
+    // 「生成摘要」按钮出现（点击才花钱）
+    expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="生成摘要"]')`)).toBe(true);
+    // 复位：取消勾选
+    await ui.query<string>(
+      `(() => { const cb=[...document.querySelectorAll('input[type=checkbox]')].find(c=>(c.closest('label')?.textContent||'').includes('计算历史摘要')); cb?.click(); return 'x'; })()`,
+    );
+    await expandAll();
+  });
+
   it("头尾裁剪的「保留 前/后」输入就在头尾裁剪选项下面（不在只留调用+路径下面）", async () => {
     await ui.query<string>(
       `(() => { const r=[...document.querySelectorAll('input[type=radio]')].find(x=>x.parentElement.textContent.includes('头尾裁剪')); r?.click(); return 'x'; })()`,

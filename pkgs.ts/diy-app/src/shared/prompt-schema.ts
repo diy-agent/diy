@@ -21,9 +21,11 @@ export const PromptEntrySchema = z.object({
   locked: z.boolean(),
   /** 锁定时展示给用户的理由 */
   lockTip: z.string(),
-  /** 角色：入口 / 节（被入口 include）/ 片段（只被引用）——由 `_system.md` 的 include 推导 */
-  /** 入口（_system.md）/ 节（被入口 include）：由入口的 include 列表推导，不手工维护 */
-  role: z.enum(["entry", "section"]),
+  /**
+   * 角色：入口（_system.md）/ 节（被入口 include）/ 片段（独立模版，不在 system 装配里）。
+   * 由入口的 include 列表**推导**，不手工维护。
+   */
+  role: z.enum(["entry", "section", "fragment"]),
   status: z.enum(["builtin", "overridden"]),
   current: z.string(),
   builtin: z.string(),

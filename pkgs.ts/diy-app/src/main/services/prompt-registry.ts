@@ -21,6 +21,12 @@ import { AssembleGlobalsSchema, type AssembleGlobals } from "../../shared/prompt
 export type { AssembleGlobals };
 import { flattenVars } from "../../shared/var-tree";
 import { PROMPT_DEFAULTS } from "../prompts/defaults";
+import {
+  renderSummaryFallback,
+  summaryHasContent,
+  SUMMARY_TEMPLATE_RELPATH,
+  type SummaryData,
+} from "../../shared/context/summary";
 import { parseTaskFile } from "../core/state";
 import { resolveCwd } from "../core/cwd";
 import { personaForTask } from "../core/persona";
@@ -43,6 +49,20 @@ export interface PromptMeta {
 
 /** 变量契约：由 shared/prompt-schema 的 AssembleGlobalsSchema 派生（单一真源在那里） */
 export const SYSTEM_VARS: VarSpec[] = flattenVars(AssembleGlobalsSchema);
+
+/**
+ * 「历史摘要」节的变量契约（summary.md 专用）。
+ * 为什么单独一份、不并进 SYSTEM_VARS：摘要是**动态内容**、不进 _system.md 装配，
+ * 它的变量不属于 AssembleGlobals（配置真源）——并进去会让 lint 以为它是 system 的一部分。
+ */
+const SUMMARY_VARS: VarSpec[] = [
+  { path: "summary", type: "object" },
+  { path: "summary.turns", type: "number" },
+  { path: "summary.conclusions", type: "array" },
+  { path: "summary.changes", type: "array" },
+  { path: "summary.todos", type: "array" },
+  { path: "summary.open", type: "array" },
+];
 
 /** 装配入口固定名（顺序与分隔的唯一真源） */
 export const ENTRY_RELPATH = "_system.md";
@@ -153,12 +173,22 @@ function orphanOverrides(home: string, projectId: string): string[] {
 }
 
 /**
- * 该模版的角色：入口（`_system.md`）/ 节（被入口 include）——单一真源是入口的 include 列表。
- * 不设"片段"角色：片段这个概念已经没有实例（原来只有 chain.md，已并入 project.md），
- * 少一个状态就少一处漂移；将来真需要引用式片段，再加回来。
+ * 该模版的角色（**由入口的 include 列表推导**，不手工维护）：
+ *   · 入口本身（`_system.md`）→ "entry"
+ *   · 被入口 include 的 → "section"（进 system 装配）
+ *   · 两者都不是 → "fragment"（独立模版，不在 system 里；当前唯一实例是 summary.md —
+ *     压缩摘要，投递位置是会话首条消息而非 system，故不进 _system.md）
  */
+function entryIncludes(): Set<string> {
+  const raw = PROMPT_DEFAULTS[ENTRY_RELPATH] ?? "";
+  const { body } = parseMd(raw);
+  const out = new Set<string>();
+  for (const m of body.matchAll(/:include="([^"]+)"/g)) out.add(m[1]!.replace(/^\.\//, ""));
+  return out;
+}
 function roleOf(relpath: string): PromptEntry["role"] {
-  return relpath === ENTRY_RELPATH ? "entry" : "section";
+  if (relpath === ENTRY_RELPATH) return "entry";
+  return entryIncludes().has(relpath) ? "section" : "fragment";
 }
 
 function entryOf(home: string, projectId: string, relpath: string, metaAll?: Record<string, { baseVersion: number }>): PromptEntry {
@@ -350,6 +380,28 @@ export function renderSystemDslTraced(opts: {
   return { text: res.text, trace: res.trace };
 }
 
+/**
+ * 渲染「历史摘要」节（压缩承接用）。
+ * 与 system 装配**共用同一个引擎与 include 解析**（项目覆盖/草稿都生效），但**不进 _system.md**：
+ * 摘要是动态内容，投递位置是「新会话首条上下文消息」，放 system 会砸前缀缓存。
+ * 模版缺失/损坏 → 回退纯文本渲染（renderSummaryFallback），不让承接能力整个哑掉。
+ */
+export function renderSummarySection(
+  home: string,
+  projectId: string,
+  data: SummaryData,
+): string {
+  if (!summaryHasContent(data)) return "";
+  try {
+    const resolve = projectIncludeResolver(home, projectId);
+    const text = renderSystemDsl({ globals: { summary: data }, resolve, entry: SUMMARY_TEMPLATE_RELPATH });
+    return text.trim() ? text.trim() : renderSummaryFallback(data);
+  } catch (e) {
+    console.warn("[prompt-registry] 摘要模版渲染失败，回退纯文本:", e);
+    return renderSummaryFallback(data);
+  }
+}
+
 /** 只取文本（真发路径；不分配 trace） */
 export function renderSystemDsl(opts: {
   globals: AssembleGlobals | Record<string, unknown>;
@@ -415,7 +467,8 @@ function lintWarnings(home: string, projectId: string): string[] {
   for (const relpath of Object.keys(PROMPT_DEFAULTS)) {
     const entry = entryOf(home, projectId, relpath);
     try {
-      for (const issue of analyze(entry.current, { file: relpath, vars: SYSTEM_VARS }).lint) {
+      const vars = relpath === SUMMARY_TEMPLATE_RELPATH ? SUMMARY_VARS : SYSTEM_VARS;
+      for (const issue of analyze(entry.current, { file: relpath, vars }).lint) {
         out.push(`${relpath}:${issue.loc.line}:${issue.loc.col} ${issue.message}`);
       }
     } catch (e) {

@@ -515,6 +515,25 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });
 
+    it("摘要：compactPreview 勾选 summary → mod 请求首条消息是 <summary> 骨架；compact 落账保留摘要", async () => {
+        const uri = await seededSession("摘要落账");
+        // 勾选 summary（尚未生成）→ 预览里出现占位骨架
+        const pv = (await fx.sh.getJson(
+            `./diy.sh agent local compactPreview ${uri} --keep-turns 1 --summary`,
+        )).data as { modRequest: { messages: unknown[] } };
+        const first = JSON.stringify(pv.modRequest.messages[0] ?? "");
+        expect(first).toContain("<summary");
+        expect(first).toContain("{{summary.conclusions}}"); // 占位里带变量名
+
+        // 执行压缩并带一段摘要文本 → 账本里摘要可查，投递首条即该摘要
+        await fx.sh.getJson(
+            `./diy.sh agent local compact ${uri} --keep-turns 1 --summary --summary-text ${JSON.stringify("<summary turns=\"2\">\n关键结论：\n- 已定稿\n</summary>")}`,
+        );
+        const rv = (await fx.sh.getJson(`./diy.sh agent local requestView ${uri}`)).data as { messages: unknown[] };
+        expect(JSON.stringify(rv.messages[0] ?? "")).toContain("关键结论");
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
+
     it("compactPreview 只算不写：after<before 且不产生 compact 账本文件", async () => {
         const uri = await seededSession("压缩预览");
         const pv = (await fx.sh.getJson(

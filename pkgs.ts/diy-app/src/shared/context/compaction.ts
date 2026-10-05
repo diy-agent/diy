@@ -381,8 +381,10 @@ export interface CompactEventRecord {
     backfillSteps?: number;
     droppedDetail?: DroppedTurnDetail[];
     clipped?: ClippedToolDetail[];
-    /** 摘要文本（勾选 summary 时） */
+    /** 摘要文本（勾选 summary 且已生成；走 summary.md 模版渲染） */
     summaryText?: string | null;
+    /** 摘要的结构化数据（再生成/预览占位用；见 shared/context/summary.ts） */
+    summaryData?: import("./summary").SummaryData | null;
     summaryCost?: number | null;
 }
 
