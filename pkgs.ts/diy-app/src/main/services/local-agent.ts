@@ -308,6 +308,40 @@ function withSummary(hist: ModelMessage[], summaryText: string): ModelMessage[] 
     return [{ role: "user" as const, content: summaryText }, ...hist];
 }
 
+/**
+ * 合并**相邻的 user 消息**为一条。
+ *
+ * 为什么必须做：多家 OpenAI-compatible provider（含 zen/go 的部分路由）要求角色交替、
+ * 或对连续同角色消息行为不一致（有的报错、有的静默丢弃）。而我们的投递**天然会造出连续 user**：
+ *   · runtime 作为尾部 user 插在本轮输入之前 → [..., {user: runtime}, {user: 本轮输入}]
+ *   · 摘要作为首条 user 插在历史之前 → [{user: 摘要}, ...{user: 历史首条}]
+ * 合并只动相邻 user、位置与总文本不变（前缀缓存不受影响：摘要/runtime 本就在变化段），
+ * tool-call/tool-result 配对铁律也不涉及（只合并 user）。
+ */
+/** user 消息的 content 形态：既可为纯字符串，也可为 part 数组（text/image/file） */
+type UserContent = Extract<ModelMessage, { role: "user" }>["content"];
+function mergeUserContent(a: UserContent, b: UserContent): UserContent {
+    if (typeof a === "string" && typeof b === "string") return `${a}\n${b}`;
+    const toParts = (c: UserContent) =>
+        typeof c === "string" ? [{ type: "text" as const, text: c }] : (c as unknown[]);
+    return [...toParts(a), ...toParts(b)] as UserContent;
+}
+export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
+    const out: ModelMessage[] = [];
+    for (const m of msgs) {
+        const last = out[out.length - 1];
+        if (m.role === "user" && last?.role === "user") {
+            out[out.length - 1] = {
+                role: "user",
+                content: mergeUserContent(last.content as UserContent, m.content as UserContent),
+            };
+        } else {
+            out.push(m);
+        }
+    }
+    return out;
+}
+
 function withRuntime(hist: ModelMessage[], runtime: string): ModelMessage[] {
     if (!runtime.trim()) return hist;
     const last = hist[hist.length - 1];
@@ -967,7 +1001,7 @@ export class LocalAgentManager {
             delivery.runtime.text,
         );
         const summaryText = summaryOverride !== undefined ? summaryOverride : this.effectiveSummary(taskUri);
-        const messages = withSummary(history, summaryText);
+        const messages = normalizeUserRuns(withSummary(history, summaryText));
         return {
             model: personaForTask(home, taskUri).model,
             system: delivery.system.text,
@@ -1671,12 +1705,14 @@ export class LocalAgentManager {
                 systemBytes: delivery.system.bytes,
                 toolsBytes: JSON.stringify(tools).length,
             };
-            const sent: ModelMessage[] = withSummary(
-                withRuntime(
-                    blocksToMessages(sess.store, this.deliveryOptsOf(taskUri)) as unknown as ModelMessage[],
-                    delivery.runtime.text,
+            const sent: ModelMessage[] = normalizeUserRuns(
+                withSummary(
+                    withRuntime(
+                        blocksToMessages(sess.store, this.deliveryOptsOf(taskUri)) as unknown as ModelMessage[],
+                        delivery.runtime.text,
+                    ),
+                    this.effectiveSummary(taskUri),
                 ),
-                this.effectiveSummary(taskUri),
             );
             rawSink({
                 kind: "request",
@@ -2130,11 +2166,13 @@ export async function previewSimulatedRequest(opts: {
     const hist = opts.messages?.length
         ? { messages: opts.messages, total: opts.messages.length }
         : historyFromLog(taskUri, PREVIEW_HISTORY_MAX);
-    const messages: ModelMessage[] = [
+    // 与真发同样合并相邻 user（真发 = normalizeUserRuns(...本轮的 runtime + 输入)）——
+    // 否则预览会显示两条连续 user，而真发只有一条，破坏「预览看到的 = 发出去的」
+    const messages: ModelMessage[] = normalizeUserRuns([
         ...hist.messages,
         ...(opts.runtime ? [{ role: "user" as const, content: opts.runtime }] : []),
         { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" },
-    ];
+    ]);
     let body: Record<string, unknown> | null = null;
     simBodySink = (b) => {
         body = b;
