@@ -19,6 +19,8 @@ export interface YamlLine {
     path: string;
 }
 
+import { lineDiff } from "./line-diff";
+
 const INDENT = "  ";
 
 /** 标量原地渲染（含转义）；返回 null 表示"不是原地可写"，需换行块 */
@@ -180,79 +182,198 @@ export interface YamlDiffRow {
     foldable: boolean;
 }
 
+/** 值是否普通对象 */
+function isObj(v: unknown): v is Record<string, unknown> {
+    return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+/** 结构相等用的廉价指纹：JSON 序列化（我们的数据全是 JSON，够用且稳定） */
+function fp(v: unknown): string {
+    try {
+        return JSON.stringify(v) ?? "null";
+    } catch {
+        return String(v);
+    }
+}
+
 /**
- * 两份行列表 → 对齐行。
- * 用行级 LCS 得到 ' '/'-'/'+'，再把连续的删/增配对（同一位置并排显示）。
- * 说明：这里是**展示级**对齐（行文本相等即"未变"），不做结构化 diff —— 对 YAML 缩进文本足够，
- * 且与用户"看 diff"的直觉一致（增删行各自成行）。
+ * **两级 diff**：先按节点结构对齐，再对变了的标量做内部文本 diff。
+ *
+ * 为什么不能直接对 YAML 文本做行级 LCS（旧实现，已废弃 —— 用户实测乱标）：
+ *   会话 YAML 里有大量**重复行**（每轮都有 `- role: "user"`、`content:` 等）。行级 LCS
+ *   只按"文本相等"配对，会把 base 第 1 轮的 `- role` 配上 mod 第 6 轮的 `- role`，
+ *   于是出现"同一份删除子树里，有的行白、有的行红"这种自相矛盾的着色。
+ *
+ * 正确做法（本实现）：
+ *   ① **节点对齐**：对象按 key 求并集；数组按元素**指纹 LCS** 对齐（保留段必然整段相等）。
+ *   ② 对齐上的同节点 → 整棵子树 same（两侧同色）；
+ *   ③ 只在 base 的节点 → 整棵子树 del（**子孙全红**，不再半白半红）；
+ *   ④ 只在 mod 的节点 → 整棵子树 add；
+ *   ⑤ 两侧都有但不等：
+ *      · 都是对象/数组 → 同层继续下钻（于是"工具输出的 value 变了"只染 value 那几行）；
+ *      · 都是多行字符串 → lineDiff 内部逐行（块标量）；
+ *      · 其余标量 → 单行 change。
  */
-export function diffYamlRows(base: readonly YamlLine[], mod: readonly YamlLine[]): YamlDiffRow[] {
-    const A = base.map((l) => l.text);
-    const B = mod.map((l) => l.text);
-    // 朴素 LCS（YAML 行数可控；与 shared/line-diff 同策略）
-    const n = A.length;
-    const m = B.length;
+export function diffValues(base: unknown, mod: unknown): YamlDiffRow[] {
+    const out: YamlDiffRow[] = [];
+    diffAt(out, 0, base, mod, "");
+    return out;
+}
+
+function mkLine(indent: number, text: string, foldable: boolean, path: string): YamlLine {
+    return { indent, text, foldable, path };
+}
+function sameRow(l: YamlLine): YamlDiffRow {
+    return { t: "same", left: l, right: l, indent: l.indent, foldable: l.foldable };
+}
+function delRow(l: YamlLine): YamlDiffRow {
+    return { t: "del", left: l, indent: l.indent, foldable: l.foldable };
+}
+function addRow(l: YamlLine): YamlDiffRow {
+    return { t: "add", right: l, indent: l.indent, foldable: l.foldable };
+}
+
+/** 整棵子树按单一标签渲染（same/del/add） */
+function emitSubtree(out: YamlDiffRow[], value: unknown, indent: number, path: string, side: "same" | "del" | "add", prefix = ""): void {
+    const ls = toYamlLines(value, path);
+    ls.forEach((l, i) => {
+        const text = i === 0 && prefix ? prefix + l.text : l.text;
+        const ll = mkLine(indent + l.indent, text, l.foldable, l.path);
+        out.push(side === "same" ? sameRow(ll) : side === "del" ? delRow(ll) : addRow(ll));
+    });
+}
+
+/** `key: <subtree>` 整体按单一标签渲染 */
+function emitEntry(out: YamlDiffRow[], indent: number, prefix: string, key: string, value: unknown, path: string, side: "same" | "del" | "add"): void {
+    emitSubtree(out, { [key]: value }, indent, path, side, prefix);
+}
+
+/** 对象节点：key 并集，逐 key 下钻（itemPrefix = "- " 表示这是数组元素，首 key 与 `-` 同行） */
+function diffObject(out: YamlDiffRow[], indent: number, a: Record<string, unknown>, b: Record<string, unknown>, path: string, itemPrefix?: string): void {
+    const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])];
+    keys.forEach((k, idx) => {
+        const inA = Object.hasOwn(a, k);
+        const inB = Object.hasOwn(b, k);
+        const at = itemPrefix && idx > 0 ? indent + 1 : indent;
+        const prefix = itemPrefix && idx === 0 ? itemPrefix : "";
+        const kp = `${path}/${k}`;
+        if (inA && inB) diffAt(out, at, a[k], b[k], kp, prefix, k);
+        else if (inA) emitEntry(out, at, prefix, k, a[k], kp, "del");
+        else emitEntry(out, at, prefix, k, b[k], kp, "add");
+    });
+}
+
+/** 数组节点：元素指纹 LCS 对齐；不成对的相邻删/增**成对下钻**（工具输出只染 value） */
+function diffArray(out: YamlDiffRow[], indent: number, a: unknown[], b: unknown[], path: string): void {
+    const ha = a.map(fp);
+    const hb = b.map(fp);
+    const n = a.length;
+    const m = b.length;
     const dp: number[][] = Array.from({ length: n + 1 }, () => Array.from({ length: m + 1 }, () => 0));
     for (let i = n - 1; i >= 0; i--)
         for (let j = m - 1; j >= 0; j--)
-            dp[i]![j] = A[i] === B[j] ? (dp[i + 1]![j + 1] ?? 0) + 1 : Math.max(dp[i + 1]![j] ?? 0, dp[i]![j + 1] ?? 0);
-    const raw: { t: "+" | "-" | " "; ai?: number; bi?: number }[] = [];
+            dp[i]![j] = ha[i] === hb[j] ? (dp[i + 1]![j + 1] ?? 0) + 1 : Math.max(dp[i + 1]![j] ?? 0, dp[i]![j + 1] ?? 0);
+    // 产出操作序列
+    type Op = { t: "same"; i: number; j: number } | { t: "del"; i: number } | { t: "add"; j: number };
+    const ops: Op[] = [];
     let i = 0;
     let j = 0;
     while (i < n && j < m) {
-        if (A[i] === B[j]) {
-            raw.push({ t: " ", ai: i, bi: j });
+        if (ha[i] === hb[j]) {
+            ops.push({ t: "same", i, j });
             i++;
             j++;
-        } else if ((dp[i + 1]![j] ?? 0) >= (dp[i]![j + 1] ?? 0)) {
-            raw.push({ t: "-", ai: i });
-            i++;
-        } else {
-            raw.push({ t: "+", bi: j });
-            j++;
-        }
+        } else if ((dp[i + 1]![j] ?? 0) >= (dp[i]![j + 1] ?? 0)) ops.push({ t: "del", i: i++ });
+        else ops.push({ t: "add", j: j++ });
     }
-    while (i < n) raw.push({ t: "-", ai: i++ });
-    while (j < m) raw.push({ t: "+", bi: j++ });
+    while (i < n) ops.push({ t: "del", i: i++ });
+    while (j < m) ops.push({ t: "add", j: j++ });
 
-    // 把相邻的 - 段与 + 段配对成同一行（并排视图可左右对照）
-    const rows: YamlDiffRow[] = [];
-    for (let k = 0; k < raw.length; ) {
-        const r = raw[k]!;
-        if (r.t === " ") {
-            const l = base[r.ai!]!;
-            rows.push({ t: "same", left: l, right: mod[r.bi!]!, indent: l.indent, foldable: l.foldable });
+    for (let k = 0; k < ops.length; ) {
+        const op = ops[k]!;
+        if (op.t === "same") {
+            emitSubtree(out, [a[op.i]], indent, `${path}/${op.i}`, "same");
             k++;
             continue;
         }
-        if (r.t === "-") {
-            const dels: number[] = [];
-            while (k < raw.length && raw[k]!.t === "-") dels.push(raw[k++]!.ai!);
-            const adds: number[] = [];
-            while (k < raw.length && raw[k]!.t === "+") adds.push(raw[k++]!.bi!);
-            const max = Math.max(dels.length, adds.length);
-            for (let x = 0; x < max; x++) {
-                const left = x < dels.length ? base[dels[x]!] : undefined;
-                const right = x < adds.length ? mod[adds[x]!] : undefined;
-                rows.push({
-                    t: left && right ? "change" : left ? "del" : "add",
-                    ...(left ? { left } : {}),
-                    ...(right ? { right } : {}),
-                    indent: (left ?? right)!.indent,
-                    foldable: (left ?? right)!.foldable,
-                });
-            }
-            continue;
-        }
-        // 纯 + 段
+        // 收集一段连续的删与增，成对下钻
+        const dels: number[] = [];
         const adds: number[] = [];
-        while (k < raw.length && raw[k]!.t === "+") adds.push(raw[k++]!.bi!);
-        for (const bi of adds) {
-            const r2 = mod[bi]!;
-            rows.push({ t: "add", right: r2, indent: r2.indent, foldable: r2.foldable });
+        while (k < ops.length && ops[k]!.t === "del") dels.push((ops[k++] as { i: number }).i);
+        while (k < ops.length && ops[k]!.t === "add") adds.push((ops[k++] as { j: number }).j);
+        const max = Math.max(dels.length, adds.length);
+        for (let x = 0; x < max; x++) {
+            const ai = x < dels.length ? dels[x]! : undefined;
+            const bj = x < adds.length ? adds[x]! : undefined;
+            const va = ai !== undefined ? a[ai] : undefined;
+            const vb = bj !== undefined ? b[bj] : undefined;
+            // 两侧都是同形对象 → 下钻（数组元素变化 → 只染变化的子节点）
+            if (va !== undefined && vb !== undefined && isObj(va) && isObj(vb)) {
+                diffObject(out, indent, va, vb, `${path}/${ai}`, "- ");
+            } else if (va !== undefined && vb !== undefined && Array.isArray(va) && Array.isArray(vb)) {
+                out.push(delRow(mkLine(indent, "-", true, `${path}/${ai}`)));
+                diffArray(out, indent + 1, va, vb, `${path}/${ai}`);
+                out.push(addRow(mkLine(indent, "-", true, `${path}/${bj}`)));
+            } else {
+                if (va !== undefined) emitSubtree(out, [va], indent, `${path}/${ai}`, "del");
+                if (vb !== undefined) emitSubtree(out, [vb], indent, `${path}/${bj}`, "add");
+            }
         }
     }
-    return rows;
+}
+
+/**
+ * 单个节点的 diff 落点。
+ * @param at 该节点**行**的缩进
+ * @param prefix 行首前缀（"- " 用于数组元素首 key）
+ * @param key 若该节点是"对象的某个 key"，给出 key 名；undefined = 根或无 key 的节点
+ */
+function diffAt(out: YamlDiffRow[], at: number, a: unknown, b: unknown, path: string, prefix = "", key?: string): void {
+    if (fp(a) === fp(b)) {
+        // 整棵子树相等 → same（两侧同色）
+        if (key !== undefined) emitEntry(out, at, prefix, key, a, path, "same");
+        else emitSubtree(out, a, at, path, "same", prefix);
+        return;
+    }
+    if (isObj(a) && isObj(b)) {
+        // 同层下钻：key 行 same，子节点各自比
+        if (key !== undefined) out.push(sameRow(mkLine(at, `${prefix}${key}:`, true, path)));
+        diffObject(out, key !== undefined ? at + 1 : at, a, b, path);
+        return;
+    }
+    if (Array.isArray(a) && Array.isArray(b)) {
+        if (key !== undefined) out.push(sameRow(mkLine(at, `${prefix}${key}:`, true, path)));
+        diffArray(out, key !== undefined ? at + 1 : at, a, b, path);
+        return;
+    }
+    // 多行字符串 → 块标量，内部逐行 diff（只染变化的行）
+    if (typeof a === "string" && typeof b === "string" && a.includes("\n") && b.includes("\n")) {
+        out.push(sameRow(mkLine(at, `${prefix}${key !== undefined ? `${key}: ` : ""}|`, true, path)));
+        for (const d of lineDiff(a, b)) {
+            const line = mkLine(at + 1, `  ${d.s}`, false, path);
+            out.push(d.t === "+" ? addRow(line) : d.t === "-" ? delRow(line) : sameRow(line));
+        }
+        return;
+    }
+    // 单行标量变化 → change；类型不匹配或非单行 → 整节点删 + 增
+    const la = scalarLine(at, prefix, key, a);
+    const lb = scalarLine(at, prefix, key, b);
+    if (la && lb) {
+        out.push({ t: "change", left: la, right: lb, indent: at, foldable: false });
+        return;
+    }
+    if (key !== undefined) emitEntry(out, at, prefix, key, a, path, "del");
+    else emitSubtree(out, a, at, path, "del", prefix);
+    if (key !== undefined) emitEntry(out, at, prefix, key, b, path, "add");
+    else emitSubtree(out, b, at, path, "add", prefix);
+}
+
+/** 单行标量渲染（key: value / 或纯值）；不可单行（含换行/容器）→ null */
+function scalarLine(indent: number, prefix: string, key: string | undefined, v: unknown): YamlLine | null {
+    if (v !== null && typeof v === "object") return null;
+    if (typeof v === "string" && v.includes("\n")) return null;
+    const s = inlineScalar(v);
+    if (s === null) return null;
+    return mkLine(indent, key !== undefined ? `${prefix}${key}: ${s}` : `${prefix}${s}`, false, "");
 }
 
 /** 折叠过滤（对 diff 行同样适用）：折叠某行 = 隐藏其后缩进更深的行 */

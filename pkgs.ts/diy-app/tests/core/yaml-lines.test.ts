@@ -4,7 +4,7 @@ import { describe, it, expect } from "vitest";
 import {
     collapsedAtLevel,
     defaultCollapsed,
-    diffYamlRows,
+    diffValues,
     foldDepths,
     foldLevelCount,
     subtreeChanges,
@@ -12,6 +12,7 @@ import {
     visibleDiffRows,
     visibleLineIndexes,
     yamlText,
+    type YamlDiffRow,
     type YamlLine,
 } from "../../src/shared/yaml-lines";
 import { layerFacts, messageLayerBytes, type RequestView } from "../../src/shared/context/request-view";
@@ -68,30 +69,60 @@ describe("折叠", () => {
     });
 });
 
-describe("diffYamlRows", () => {
-    const base = toYamlLines({ messages: [{ role: "user", content: "旧" }] });
-    const mod = toYamlLines({ messages: [{ role: "user", content: "新" }] });
-    it("文本相同的行 → same；不同的行 → del/add", () => {
-        const rows = diffYamlRows(base, mod);
-        const same = rows.filter((r) => r.t === "same").map((r) => r.left?.text ?? r.right?.text);
-        expect(same).toContain("messages:");
-        // 同行改动 → change（左右都有）
-        expect(rows.some((r) => r.t === "change" && r.left?.text.includes("旧") && r.right?.text.includes("新"))).toBe(true);
+describe("diffValues（两级 diff：先节点、再文本）", () => {
+    it("节点相同 → 整棵 same；不重复渲染", () => {
+        const v = { messages: [{ role: "user", content: "x" }] };
+        const rows = diffValues(v, v);
+        expect(rows.every((r) => r.t === "same")).toBe(true);
     });
 
-    it("mod 少了一整块 → 该块成 del 行（压缩丢轮）", () => {
-        const b = toYamlLines({ messages: [{ role: "user" }, { role: "user" }] });
-        const m = toYamlLines({ messages: [{ role: "user" }] });
-        const rows = diffYamlRows(b, m);
-        expect(rows.filter((r) => r.t === "del").length).toBeGreaterThan(0);
+    it("数组丢元素 → **整棵子树全 del**（不再半白半红）", () => {
+        const b = { messages: [{ role: "user", content: "第1轮" }, { role: "assistant", content: "答复" }, { role: "user", content: "第2轮" }] };
+        const m = { messages: [{ role: "user", content: "第2轮" }] };
+        const rows = diffValues(b, m);
+        // 第1轮与答复：其所有行都是 del（含 `- role:` 头行）
+        const delTexts = rows.filter((r) => r.t === "del").map((r) => r.left?.text ?? "");
+        expect(delTexts.some((t) => t.includes("第1轮"))).toBe(true);
+        expect(delTexts.some((t) => t.includes("- role:"))).toBe(true);
+        // 保留的第2轮及其所有行都是 same（不出现「同一元素里有的白有的红」）
+        const keepRows = rows.filter((r) => (r.right?.text ?? "").includes("第2轮"));
+        expect(keepRows.every((r) => r.t === "same")).toBe(true);
+    });
+
+    it("对象同 key 标量变 → change（左右都有）", () => {
+        const rows = diffValues({ messages: [{ role: "user", content: "旧" }] }, { messages: [{ role: "user", content: "新" }] });
+        expect(rows.some((r) => r.t === "change" && r.left?.text.includes("旧") && r.right?.text.includes("新"))).toBe(true);
+        // `- role: "user"` 未变 → same
+        expect(rows.some((r) => r.t === "same" && r.left?.text.includes('role: "user"'))).toBe(true);
+    });
+
+    it("工具输出（多行块标量）变 → 只在块内逐行 diff，外层结构仍 same", () => {
+        const out = (n: number) => Array.from({ length: n }, (_, i) => `row ${i}`).join("\n");
+        const clipped = ["row 0", "row 1", "row 2", "[... 中间省略 ...]", "row 27", "row 28", "row 29"].join("\n");
+        const b = { messages: [{ role: "tool", content: [{ type: "tool-result", output: { type: "text", value: out(30) } }] }] };
+        const m = { messages: [{ role: "tool", content: [{ type: "tool-result", output: { type: "text", value: clipped } }] }] };
+        const rows = diffValues(b, m);
+        // 头 3 行保留 → same
+        expect(rows.some((r) => r.t === "same" && r.left?.text.trim() === "row 0")).toBe(true);
+        expect(rows.some((r) => r.t === "same" && r.left?.text.trim() === "row 29")).toBe(true);
+        // 中间被删 → del
+        expect(rows.some((r) => r.t === "del" && r.left?.text.includes("row 3"))).toBe(true);
+        // 外层 key 未变 → same（说明没把整条消息标红）
+        expect(rows.some((r) => r.t === "same" && r.left?.text.includes('role: "tool"'))).toBe(true);
+    });
+
+    it("数组前插一个元素（摘要）→ 该元素 add，其余 same", () => {
+        const b = { messages: [{ role: "user", content: "A" }] };
+        const m = { messages: [{ role: "user", content: "<summary>…</summary>" }, { role: "user", content: "A" }] };
+        const rows = diffValues(b, m);
+        expect(rows.some((r) => r.t === "add" && r.right?.text.includes("summary"))).toBe(true);
+        expect(rows.some((r) => r.t === "same" && r.left?.text.includes("A"))).toBe(true);
     });
 });
 
 describe("defaultCollapsed", () => {
     it("折叠「无变化」的节，变化路径保持展开", () => {
-        const base = toYamlLines({ a: { x: 1 }, b: { y: 1 } });
-        const mod = toYamlLines({ a: { x: 1 }, b: { y: 2 } });
-        const rows = diffYamlRows(base, mod);
+        const rows = diffValues({ a: { x: 1 }, b: { y: 1 } }, { a: { x: 1 }, b: { y: 2 } });
         const collapsed = defaultCollapsed(rows);
         const visible = visibleDiffRows(rows, collapsed);
         const texts = visible.map((i) => rows[i]!.right?.text ?? rows[i]!.left?.text);
@@ -147,10 +178,7 @@ describe("messageLayerBytes", () => {
 
 describe("逐级展开（foldDepths / collapsedAtLevel）+ 变更点", () => {
     // 构造「可折叠深度跳级」的场景：可折叠行在 indent 0 与 2（没有 1）
-    const rows = diffYamlRows(
-        toYamlLines({ a: { b: { c: 1 } }, d: 2 }),
-        toYamlLines({ a: { b: { c: 9 } }, d: 2 }),
-    );
+    const rows = diffValues({ a: { b: { c: 1 } }, d: 2 }, { a: { b: { c: 9 } }, d: 2 });
 
     it("foldDepths 用实际存在的折叠深度（去重升序），不是连续整数", () => {
         const depths = foldDepths(rows);

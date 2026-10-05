@@ -24,10 +24,9 @@ import {
 } from "../../shared/context/compaction";
 import {
     collapsedAtLevel,
-    diffYamlRows,
+    diffValues,
     foldLevelCount,
     subtreeChanges,
-    toYamlLines,
     visibleDiffRows,
     type YamlDiffRow,
 } from "../../shared/yaml-lines";
@@ -149,10 +148,13 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
         }>,
     );
 
-    // YAML 行 + diff
-    const baseLines = createMemo(() => (base() ? toYamlLines(requestViewYaml(base()!)) : []));
-    const modLines = createMemo(() => (pv() ? toYamlLines(requestViewYaml(pv()!.modRequest)) : []));
-    const rows = createMemo<YamlDiffRow[]>(() => diffYamlRows(baseLines(), modLines()));
+    // 两级 diff：以两个请求**对象**做节点级对齐（不是 YAML 文本行）
+    const rows = createMemo<YamlDiffRow[]>(() => {
+        const b = base();
+        const m = pv();
+        if (!b || !m) return [];
+        return diffValues(requestViewYaml(b), requestViewYaml(m.modRequest));
+    });
 
     /** 可折叠深度数 = 「展开 i/N」的 N（i 从 0 到 N；i = N 时全展开） */
     const foldLevels = createMemo(() => foldLevelCount(rows()));
