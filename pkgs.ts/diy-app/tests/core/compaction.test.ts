@@ -41,10 +41,11 @@ describe("normalizePolicy：缺省值 + 越界兜底", () => {
         expect(p.toolOutput).toBe("asis");
         expect(normalizePolicy({ keepTurns: 4.9 }).keepTurns).toBe(4);
     });
-    it("headtail 局部覆盖：只给 headLines，其余保持默认", () => {
+    it("headtail 局部覆盖：只给 headLines，其余保持默认；trigger 由 head+tail 推出", () => {
         const p = normalizePolicy({ headtail: { headLines: 7 } as never });
         expect(p.headtail.headLines).toBe(7);
         expect(p.headtail.tailLines).toBe(DEFAULT_HEADTAIL.tailLines);
+        expect(p.headtail.triggerLines).toBe(7 + DEFAULT_HEADTAIL.tailLines);
     });
 });
 
@@ -68,27 +69,27 @@ describe("clipToolOutput", () => {
         expect(r.text).toBe(t);
     });
 
-    it("headtail：未超阈值（80 行）不裁 —— 86% 的输出走这条路径", () => {
-        const t = lines(50);
+    it("headtail：未超阈值（默认 6 行）不裁 —— 短输出原样走这条路径", () => {
+        const t = lines(6);
         const r = clipToolOutput(t, pol("headtail"));
         expect(r.clipped).toBe(false);
         expect(r.text).toBe(t);
     });
 
-    it("headtail：超阈值 → 前 40 + marker + 后 10，标记省略行数/字节/原文路径", () => {
+    it("headtail：超阈值 → 前 3 + marker + 后 3，标记省略行数/字节/原文路径", () => {
         const t = lines(1842);
         const r = clipToolOutput(t, pol("headtail"), { origPath: "local/toolout/x.txt" });
         expect(r.clipped).toBe(true);
         const out = r.text.split("\n");
         expect(out[0]).toBe("line 0");
-        expect(out[39]).toBe("line 39");
-        expect(out[40]).toContain("中间省略 1792 行");
-        expect(out[40]).toContain("local/toolout/x.txt");
+        expect(out[2]).toBe("line 2");
+        expect(out[3]).toContain("中间省略 1836 行");
+        expect(out[3]).toContain("local/toolout/x.txt");
         expect(out[out.length - 1]).toBe("line 1841");
         expect(r.origLines).toBe(1842);
-        expect(r.droppedLines).toBe(1792);
-        // 头 40 + marker 1 + 尾 10
-        expect(r.keptLines).toBe(51);
+        expect(r.droppedLines).toBe(1836);
+        // 头 3 + marker 1 + 尾 3
+        expect(r.keptLines).toBe(7);
     });
 
     it("headtail：无 origPath 时 marker 不编造路径", () => {

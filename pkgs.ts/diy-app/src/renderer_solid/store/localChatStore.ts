@@ -626,7 +626,12 @@ function getDetailScroll(taskUri: string): number {
 //   clear   = 物理删除所有会话日志（不可恢复）—— 那是另一条路，与压缩无关。
 // 全部计算在 main（预览与真发共用同一份纯函数），renderer 只负责把结果画出来。
 
-/** 压缩预览（只算不写）：panel「事实」行 + 预览页的数据源 */
+/** 当前生效请求的展示模型（base）：压缩面板打开时取一次 */
+async function requestView(taskUri: string) {
+    return diyService.diy.agent.local.requestView({ taskUri });
+}
+
+/** 压缩预览（只算不写）：mod 请求 + 事实表（base 侧由 requestView 单独取一次） */
 async function compactPreview(taskUri: string, policy: Partial<CompactPolicy>) {
     return diyService.diy.agent.local.compactPreview({ taskUri, ...policyFlat(policy) });
 }
@@ -740,6 +745,7 @@ export const localChatStore = {
     refreshSteers,
     clear,
     /** 压缩：预览（只算）/ 执行 / 撤销 / 历史代（旧会话只读查看）*/
+    requestView,
     compactPreview,
     compact,
     undoCompact,

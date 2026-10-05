@@ -93,8 +93,43 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
     expect(text).toContain("② 工具输出");
     expect(text).toContain("③ 计算历史摘要");
     expect(text).toContain("事实");
-    // 默认保留 6 轮、共 8 轮 → 丢弃 2 轮（事实行里应能读到）
-    expect(text).toContain("保留最近 6 轮");
+    // 默认保留 6 轮、共 8 轮（数字与「保留最近」在 a11y 树里是不同节点）
+    expect(text).toContain("保留最近");
+    expect(text).toContain("共 8 轮");
+  });
+
+  it("右栏渲染请求 YAML diff（含 system/messages 与增删行）+ 事实表列头", async () => {
+    const text = await a11yText();
+    // 事实表列头
+    expect(text).toContain("旧值");
+    expect(text).toContain("省 cost");
+    // YAML 结构（右栏）：base vs mod 的请求字段
+    // 只看差异默认开 → 预览只显示变化行（丢掉的旧轮内容）
+    const diffText = await waitUntil(
+      () => ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''"),
+      (t) => t.includes("第1轮问题") && t.includes("第2轮问题"),
+      { label: "diff 上屏" },
+    );
+    expect(diffText).toContain("第1轮问题"); // 被丢的旧轮出现在删除行
+    expect(await ui.query<boolean>("!!document.querySelector('[data-compact-preview] [data-diff=\"del\"]')")).toBe(true);
+
+    // 关掉「只看差异」→ 完整 YAML 结构可见（system / messages 等字段）
+    await ui.click("只看差异");
+    const yaml = await waitUntil(
+      () => ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''"),
+      (t) => t.includes("system:") && t.includes("messages:"),
+      { label: "完整 YAML 上屏" },
+    );
+    expect(yaml).toContain("system");
+    expect(yaml).toContain("messages");
+    await ui.click("只看差异"); // 复位
+  });
+
+  it("切「并排」视图不报错且两栏都在", async () => {
+    await ui.click("并排");
+    await new Promise((r) => setTimeout(r, 150));
+    expect(await ui.query<boolean>("!!document.querySelector('table')")).toBe(true);
+    await ui.click("统一 diff");
   });
 
   it("点「执行压缩」→ 当前会话不再含最早两轮（第1/2轮），较新一轮仍在", async () => {

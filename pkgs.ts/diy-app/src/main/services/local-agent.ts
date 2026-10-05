@@ -68,6 +68,7 @@ import {
     type RateSnapshot,
     type SizeSnapshot,
 } from "../../shared/context/compaction";
+import { layerFacts, type LayerRow, type RequestView } from "../../shared/context/request-view";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
 import { SteerQueue } from "../core/steer-queue";
@@ -479,7 +480,7 @@ function sizeOfOps(ops: readonly Op[], opts?: Parameters<typeof blocksToMessages
  */
 function optsFor(
     policy: CompactPolicy,
-    keptFromTurnId: string | null,
+    keptFromTurnId: string | null | undefined,
     collect?: ClippedToolDetail[],
 ): Parameters<typeof blocksToMessages>[1] {
     return makeDeliveryTransform(policy, keptFromTurnId, toolOutRelPath, collect);
@@ -511,11 +512,10 @@ export interface CompactPreview {
     after: SizeSnapshot;
     droppedDetail: DroppedTurnDetail[];
     clipped: ClippedToolDetail[];
-    rates?: RateSnapshot;
-    taxShare?: number;
-    zeroOutputSteps?: number;
-    rebuildCost?: number;
-    backfillSteps?: number;
+    /** 改参数后这一次请求的实际投递内容（与真发同一组装链） */
+    modRequest: RequestView;
+    /** 事实表：base（当前生效请求）vs mod 的分层 token 与金额差 */
+    facts: LayerRow[];
 }
 
 /** 历史会话面板行：代 + 该代的规模/用量（main 算好，renderer 只负责显示） */
@@ -902,9 +902,49 @@ export class LocalAgentManager {
         return { policy, keptTurns, keptFromTurnId, droppedIds, scan, store, before, after, droppedDetail, clipped, rateSnap, stats };
     }
 
-    /** 压缩预览（只算不写）：panel 与预览页的数据源 */
+    /**
+     * 构造「一次请求的实际投递内容」（展示用）。
+     * **与真发同一条链**：assembleGlobals → buildDelivery → blocksToMessages（+ 工具输出裁剪）。
+     * 预览的全部价值就是"看到的就是会发出去的"，所以这里不许另算一份。
+     */
+    private buildRequestView(taskUri: string, policy: CompactPolicy, keptFromTurnId: string | null | undefined): RequestView {
+        const home = diyHome();
+        const globals = assembleGlobals(home, projectFromUri(taskUri), { taskUri }) as unknown as Record<string, unknown>;
+        const delivery = buildDelivery(globals, loadSystemPlaces(home));
+        const { cwd } = resolveCwdWithNote(home, taskUri);
+        const L = this.getLimits();
+        const tools = buildTools(cwd, L, taskUri);
+        const store = new BlockStore();
+        for (const op of readJsonl<Op>(opsFile(taskUri))) store.apply(op);
+        const messages = withRuntime(
+            blocksToMessages(store, optsFor(policy, keptFromTurnId)) as unknown as ModelMessage[],
+            delivery.runtime.text,
+        );
+        return {
+            model: personaForTask(home, taskUri).model,
+            system: delivery.system.text,
+            tools: Object.entries(tools).map(([name, t]) => ({
+                name,
+                description: String((t as { description?: unknown }).description ?? ""),
+            })),
+            messages: messages as unknown[],
+            toolsBytes: JSON.stringify(tools).length,
+        };
+    }
+
+    /** 当前生效请求（base）：不传策略 = 用盘上生效的边界与裁剪 */
+    requestView(taskUri: string): RequestView {
+        const b = resolveBoundary(readCompactLog(taskUri));
+        // 无压缩 → undefined（全投）；有压缩 → 用其边界（null 表示"清零"）
+        return this.buildRequestView(taskUri, b?.policy ?? normalizePolicy({}), b ? b.keptFromTurnId : undefined);
+    }
+
+    /** 压缩预览（只算不写）：面板左侧参数 + 右侧请求 YAML diff + 事实表的数据源 */
     compactPreview(taskUri: string, policyInput: Partial<CompactPolicy>): CompactPreview {
         const p = this.planCompact(taskUri, policyInput);
+        const base = this.requestView(taskUri);
+        const mod = this.buildRequestView(taskUri, p.policy, p.keptFromTurnId);
+        const inputRate = costOf(base.model, p.after.estTokens)?.input ?? 0;
         return {
             policy: p.policy,
             keptTurns: p.keptTurns,
@@ -914,8 +954,8 @@ export class LocalAgentManager {
             after: p.after,
             droppedDetail: p.droppedDetail,
             clipped: p.clipped.map((c) => ({ ...c, tool: p.store.blocks.get(c.id)?.tool ? String(p.store.blocks.get(c.id)!.tool) : c.tool })),
-            ...(p.rateSnap ? { rates: p.rateSnap } : {}),
-            ...p.stats,
+            modRequest: mod,
+            facts: layerFacts(base, mod, inputRate),
         };
     }
 

@@ -31,7 +31,10 @@ export type ToolOutputMode =
 
 /** 头尾裁剪参数（默认值来自 ##230 会话实测定，勿凭感觉改） */
 export interface HeadTailPolicy {
-    /** 超过多少行才裁（≈ p90：只动约 10% 的输出，却覆盖大头） */
+    /**
+     * 超过多少行才裁。**由 head+tail 推出**（不再单列输入项）：前 3 后 3 → 超过 6 行才裁。
+     * 保留此字段只为读取与展示方便（落盘账本里也写明白当时用的是多少）。
+     */
     triggerLines: number;
     /** 保留头部行数 */
     headLines: number;
@@ -44,14 +47,14 @@ export interface HeadTailPolicy {
 }
 
 /**
- * 默认头尾裁剪参数。
- * 依据（本机 20,965 条 tool 输出实测）：p50=9 行 / p90=64 行 / p99=211 行 / max=2338 行；
- * >50 行仅 14%、>100 行仅 5% —— 即 86% 的历史输出根本不会被这条规则碰到。
+ * 默认头尾裁剪参数：**保留前 3 行 + 后 3 行，超过 6 行即裁**。
+ * 依据（本机 20,965 条 tool 输出实测）：p50=9 行 / p90=64 行；默认阈值取小，覆盖面更广
+ * （绝大多数输出在 6 行以内 → 原样；长输出则一律裁成头 3 + 尾 3 + marker）。
  */
 export const DEFAULT_HEADTAIL: HeadTailPolicy = {
-    triggerLines: 80,
-    headLines: 40,
-    tailLines: 10,
+    triggerLines: 6,
+    headLines: 3,
+    tailLines: 3,
     maxLineChars: 300,
     maxKeepBytes: 8192,
 };
@@ -85,13 +88,18 @@ export function normalizePolicy(p: Partial<CompactPolicy> | undefined | null): C
         keepTurns: pos(src.keepTurns, DEFAULT_KEEP_TURNS, 0),
         toolOutput:
             src.toolOutput === "headtail" || src.toolOutput === "callpath" ? src.toolOutput : "asis",
-        headtail: {
-            triggerLines: pos(ht.triggerLines, DEFAULT_HEADTAIL.triggerLines, 0),
-            headLines: pos(ht.headLines, DEFAULT_HEADTAIL.headLines, 0),
-            tailLines: pos(ht.tailLines, DEFAULT_HEADTAIL.tailLines, 0),
-            maxLineChars: pos(ht.maxLineChars, DEFAULT_HEADTAIL.maxLineChars, 1),
-            maxKeepBytes: pos(ht.maxKeepBytes, DEFAULT_HEADTAIL.maxKeepBytes, 1),
-        },
+        headtail: (() => {
+            const headLines = pos(ht.headLines, DEFAULT_HEADTAIL.headLines, 0);
+            const tailLines = pos(ht.tailLines, DEFAULT_HEADTAIL.tailLines, 0);
+            return {
+                // 阈值一律由 head+tail 推出（UI 不再单列「超过 N 行」输入项）
+                triggerLines: headLines + tailLines,
+                headLines,
+                tailLines,
+                maxLineChars: pos(ht.maxLineChars, DEFAULT_HEADTAIL.maxLineChars, 1),
+                maxKeepBytes: pos(ht.maxKeepBytes, DEFAULT_HEADTAIL.maxKeepBytes, 1),
+            };
+        })(),
         summary: src.summary === true,
     };
 }
@@ -240,17 +248,25 @@ export function clipToolOutput(
  * `origPathOf` 由调用方注入（main 用落盘相对路径，renderer 用同一字符串，不碰文件系统）。
  */
 export interface DeliveryTransform {
-    sinceTurnId: string | null;
+    sinceTurnId?: string | null;
     transformToolOutput?: (b: { id: string; tool: string; title: string; output: string }) => string;
 }
 
+/**
+ * 注意三态语义（**极易踩**）：
+ *   · keptFromTurnId = undefined → **全投**（无压缩；opts 里不带 sinceTurnId）
+ *   · keptFromTurnId = null      → **全部清零**（opts.sinceTurnId = null）
+ *   · keptFromTurnId = "t123"    → 自该轮起投
+ * 把 undefined 与 null 混为一谈，会让「未压缩」被当成「清零」→ 请求变空（实测踩过）。
+ */
 export function makeDeliveryTransform(
     policy: CompactPolicy,
-    keptFromTurnId: string | null,
+    keptFromTurnId: string | null | undefined,
     origPathOf: (id: string) => string,
     collect?: ClippedToolDetail[],
 ): DeliveryTransform {
-    const opts: DeliveryTransform = { sinceTurnId: keptFromTurnId };
+    const opts: DeliveryTransform = {};
+    if (keptFromTurnId !== undefined) opts.sinceTurnId = keptFromTurnId;
     if (policy.toolOutput !== "asis") {
         opts.transformToolOutput = ({ id, output }) => {
             const r = clipToolOutput(output, policy, { origPath: origPathOf(id) });

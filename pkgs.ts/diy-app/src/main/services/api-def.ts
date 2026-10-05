@@ -587,6 +587,14 @@ export const apiDef = RpcSchema.router({
                 },
                 output: z.any(),
               }),
+              /** 当前生效请求的展示模型（base）：打开压缩面板时取一次；mod 由 compactPreview 给 */
+              requestView: RpcSchema.unary({
+                desc: `读取当前生效请求的实际投递内容（system / tools / messages；压缩预览的 base 侧）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                },
+                output: z.any(),
+              }),
               /** 压缩预览：只算不写（panel 的「事实」行与预览页都用它；与真发同一份纯函数） */
               compactPreview: RpcSchema.unary({
                 desc: `预览压缩效果（只算不写；返回前后规模 / 丢弃轮明细 / 裁剪明细 / 用量经验）`,

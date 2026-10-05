@@ -401,6 +401,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().compact(input.taskUri, policyOf(input), "cli");
   });
+  binding.on(app.agent.local.requestView, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.requestView", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().requestView(input.taskUri);
+  });
   binding.on(app.agent.local.compactPreview, async ({ input }) => {
     noteRendererTouch("diy.agent.local.compactPreview", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
