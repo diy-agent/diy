@@ -176,12 +176,28 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     const changes = createMemo(() => subtreeChanges(rows()));
 
     const shownIndexes = createMemo(() => visibleDiffRows(rows(), collapsed()));
+    /**
+     * 行对象缓存：**同一行索引复用同一对象引用**。
+     *
+     * 为什么必须缓存：Solid 的 `<For>` 按**引用**做 keyed 差分。若每次现造 `{i,row}`，
+     * 展开/折叠后所有项引用都变 → For 判定"全换了" → 整个列表 DOM 重建 →
+     * **焦点丢失、滚动条弹回顶部**（用户实测：点尖头展开一个节点，视线被拽回第一行）。
+     * 引用稳定后，For 只增删真正变化的行，滚动位置与焦点原地不动。
+     */
+    const rowCache = new Map<number, { i: number; row: YamlDiffRow }>();
     const renderRows = createMemo(() => {
         const idx = shownIndexes();
         const all = rows();
         const ch = changes();
         return idx
-            .map((i) => ({ i, row: all[i]! }))
+            .map((i) => {
+                const row = all[i]!;
+                const cached = rowCache.get(i);
+                if (cached && cached.row === row) return cached;
+                const obj = { i, row };
+                rowCache.set(i, obj);
+                return obj;
+            })
             // 「只看差异」时**保留变更行的祖先节头**（它们本身是 same，但子树有变更）——
             // 否则折叠着的节头被过滤掉，用户既看不到路径、也看不到「这里有改动」的标记。
             .filter(({ i, row }) => !onlyDiff() || row.t !== "same" || (row.foldable && hasOwnChange(ch.get(i))));
@@ -273,51 +289,66 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                 <section>
                                     <div class="text-caption font-semibold opacity-70 mb-1">② 工具输出（只对保留部分生效）</div>
                                     <div class="flex flex-col gap-1 text-body">
-                                        {(["asis", "headtail", "callpath"] as ToolOutputMode[]).map((m) => (
-                                            <label class="flex items-center gap-1.5 cursor-pointer">
+                                        {/* asis */}
+                                        <label class="flex items-center gap-1.5 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                class="radio radio-xs radio-primary"
+                                                checked={pol().toolOutput === "asis"}
+                                                onChange={() => setPol({ toolOutput: "asis" })}
+                                            />
+                                            <span>原样（不裁）</span>
+                                        </label>
+
+                                        {/* headtail：保留行数就放在本选项下面（不再漂到别的选项下） */}
+                                        <label class="flex items-center gap-1.5 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                class="radio radio-xs radio-primary"
+                                                checked={pol().toolOutput === "headtail"}
+                                                onChange={() => setPol({ toolOutput: "headtail" })}
+                                            />
+                                            <span>头尾裁剪（保留头尾，中间省略）</span>
+                                        </label>
+                                        <Show when={pol().toolOutput === "headtail"}>
+                                            <div class="ml-5 flex items-center gap-1.5 text-caption">
+                                                <span>保留 前</span>
                                                 <input
-                                                    type="radio"
-                                                    class="radio radio-xs radio-primary"
-                                                    checked={pol().toolOutput === m}
-                                                    onChange={() => setPol({ toolOutput: m })}
+                                                    type="number"
+                                                    class="input input-xs w-14"
+                                                    value={pol().headtail.headLines}
+                                                    aria-label="保留头部行数"
+                                                    onInput={(e) => setPol({ headtail: { ...pol().headtail, headLines: Number(e.currentTarget.value) } })}
                                                 />
-                                                <span>
-                                                    {m === "asis"
-                                                        ? "原样（不裁）"
-                                                        : m === "headtail"
-                                                          ? "头尾裁剪（保留头尾，中间省略）"
-                                                          : "只留调用+路径（整段换成原文路径）"}
-                                                </span>
-                                            </label>
-                                        ))}
+                                                <span>行 后</span>
+                                                <input
+                                                    type="number"
+                                                    class="input input-xs w-14"
+                                                    value={pol().headtail.tailLines}
+                                                    aria-label="保留尾部行数"
+                                                    onInput={(e) => setPol({ headtail: { ...pol().headtail, tailLines: Number(e.currentTarget.value) } })}
+                                                />
+                                                <span>行</span>
+                                            </div>
+                                            <div class="ml-5 text-caption opacity-60">
+                                                ⓘ 超过 {pol().headtail.headLines + pol().headtail.tailLines} 行的输出才裁剪；裁掉的原文落盘可寻回
+                                            </div>
+                                        </Show>
+
+                                        {/* callpath */}
+                                        <label class="flex items-center gap-1.5 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                class="radio radio-xs radio-primary"
+                                                checked={pol().toolOutput === "callpath"}
+                                                onChange={() => setPol({ toolOutput: "callpath" })}
+                                            />
+                                            <span>只留调用+路径（整段换成原文路径）</span>
+                                        </label>
+                                        <Show when={pol().toolOutput === "callpath"}>
+                                            <div class="ml-5 text-caption opacity-60">整段输出换成一行指向原文的提示，模型可按路径回取。</div>
+                                        </Show>
                                     </div>
-                                    <Show when={pol().toolOutput === "headtail"}>
-                                        <div class="mt-2 flex items-center gap-1.5 text-caption">
-                                            <span>保留 前</span>
-                                            <input
-                                                type="number"
-                                                class="input input-xs w-14"
-                                                value={pol().headtail.headLines}
-                                                aria-label="保留头部行数"
-                                                onInput={(e) => setPol({ headtail: { ...pol().headtail, headLines: Number(e.currentTarget.value) } })}
-                                            />
-                                            <span>行 后</span>
-                                            <input
-                                                type="number"
-                                                class="input input-xs w-14"
-                                                value={pol().headtail.tailLines}
-                                                aria-label="保留尾部行数"
-                                                onInput={(e) => setPol({ headtail: { ...pol().headtail, tailLines: Number(e.currentTarget.value) } })}
-                                            />
-                                            <span>行</span>
-                                        </div>
-                                        <div class="mt-1 text-caption opacity-60">
-                                            ⓘ 超过 {pol().headtail.headLines + pol().headtail.tailLines} 行的输出才裁剪；裁掉的原文落盘可寻回
-                                        </div>
-                                    </Show>
-                                    <Show when={pol().toolOutput === "callpath"}>
-                                        <div class="mt-1 text-caption opacity-60">整段输出换成一行指向原文的提示，模型可按路径回取。</div>
-                                    </Show>
                                 </section>
 
                                 <section>
@@ -416,6 +447,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                                         <span class={row.t === "del" || row.t === "change" ? "text-error" : ""}>
                                                             {row.left ? INDENT.repeat(row.left.indent) + row.left.text : ""}
                                                         </span>
+                                                        <ChangeMark collapsed={collapsed().has(i)} changes={changes().get(i)} />
                                                     </td>
                                                     <td class="align-top whitespace-pre-wrap break-all pl-2">
                                                         <span class={row.t === "add" || row.t === "change" ? "text-success" : ""}>
@@ -440,6 +472,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                                         <span class="whitespace-pre-wrap break-all">
                                                             {INDENT.repeat(row.left?.indent ?? row.indent) + (row.left?.text ?? "")}
                                                         </span>
+                                                        <ChangeMark collapsed={collapsed().has(i)} changes={changes().get(i)} />
                                                     </div>
                                                     <div data-diff="add" class="bg-success/10 text-success">
                                                         <span class="inline-block w-3" />
@@ -466,6 +499,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                                 <span class="whitespace-pre-wrap break-all">
                                                     {INDENT.repeat(row.indent) + (row.right?.text ?? row.left?.text ?? "")}
                                                 </span>
+                                                <ChangeMark collapsed={collapsed().has(i)} changes={changes().get(i)} />
                                             </div>
                                         </Show>
                                     )}
@@ -508,12 +542,8 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
 }
 
 /**
- * 折叠箭头（可折叠行才画）。
- *
- * 变更提示（用户反馈「只有第一级标注、展开第二层却没有」）：只要子树内有红/绿变更就标
- * `● -x +y`，**与折叠/展开无关** —— 这样从根一路到真正的变更节点，路径上每一级都点着灯，
- * 无论当前展开到哪一层都一致（此前只在折叠时显示，展开后上一级就"熄灯"了，看着像漏标）。
- * 节点自身就是变更行时它已被染色，这里仍可点灯（一致优先，不做特例）。
+ * 折叠箭头（可折叠行才画；**只画箭头**，变更点由行尾的 ChangeMark 承担）。
+ * 折叠且有内含变更时箭头染警示色（提示「里面还有东西，展开看看」）；展开后恢复常态。
  */
 function FoldToggle(props: {
     i: number;
@@ -523,32 +553,37 @@ function FoldToggle(props: {
     onToggle: (i: number) => void;
 }) {
     if (!props.row.foldable) return <span class="inline-block w-3" />;
-    const isCollapsed = props.collapsed;
-    const c = props.changes;
-    const hasChange = !!c && (c.add > 0 || c.del > 0);
+    const warn = props.collapsed && hasOwnChange(props.changes);
     return (
-        <>
-            <button
-                class={`inline-block w-3 text-left select-none hover:opacity-100 ${hasChange ? "text-warning" : "opacity-60"}`}
-                aria-label={isCollapsed ? "展开节点" : "折叠节点"}
-                onClick={() => props.onToggle(props.i)}
+        <button
+            class={`inline-block w-3 text-left select-none hover:opacity-100 ${warn ? "text-warning" : "opacity-60"}`}
+            aria-label={props.collapsed ? "展开节点" : "折叠节点"}
+            onClick={() => props.onToggle(props.i)}
+        >
+            {props.collapsed ? "▸" : "▾"}
+        </button>
+    );
+}
+
+/**
+ * 行尾变更点：**只在节点折叠时**显示（展开后不用标注 —— 内容已可见），
+ * 放行尾而非行首，避免插在缩进前破坏 YAML 的层级视觉。
+ */
+function ChangeMark(props: { collapsed: boolean; changes?: { add: number; del: number } }) {
+    const c = props.changes;
+    const show = () => props.collapsed && hasOwnChange(c);
+    return (
+        <Show when={show()}>
+            <span
+                class="ml-2 text-warning select-none"
+                title={`内含变更：删 ${c!.del} / 增 ${c!.add} 行（展开查看）`}
             >
-                {isCollapsed ? "▸" : "▾"}
-            </button>
-            <Show when={hasChange}>
-                <span
-                    class="mr-1 text-warning select-none"
-                    title={`内含变更：删 ${c!.del} / 增 ${c!.add} 行`}
-                >
-                    ●
-                    <span class="text-caption">
-                        {c!.del > 0 ? `-${c!.del}` : ""}
-                        {c!.del > 0 && c!.add > 0 ? " " : ""}
-                        {c!.add > 0 ? `+${c!.add}` : ""}
-                    </span>
-                </span>
-            </Show>
-        </>
+                ●{" "}
+                {c!.del > 0 ? `-${c!.del}` : ""}
+                {c!.del > 0 && c!.add > 0 ? " " : ""}
+                {c!.add > 0 ? `+${c!.add}` : ""}
+            </span>
+        </Show>
     );
 }
 

@@ -143,7 +143,13 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
     expect(hasBranch).toBe(true);
   });
 
-  it("折叠节点标出内部变更（外层不必逐级展开即可见 ●-x/+y）", async () => {
+  it("变更点：只在节点折叠时标出，展开即隐去；且标在行尾（不破缩进）", async () => {
+    await expandAll();
+    // 最大展开 → 无变更点（内容都已可见）
+    expect(await ui.query<number>(`document.querySelectorAll('[data-compact-preview] [title*="内含变更"]').length`)).toBe(0);
+
+    // 折叠一个节点 → 变更点出现
+    await ui.clickSelector('[data-compact-preview] button[aria-label="折叠节点"]');
     const dot = await waitUntil(
       () =>
         ui.query<string>(
@@ -153,6 +159,66 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
       { label: "折叠变更点出现" },
     );
     expect(dot).toContain("●");
+    // 位置：变更点必须在该行的**内容之后**（行尾），不是行首（否则破坏 YAML 缩进视觉）
+    const afterText = await ui.query<boolean>(
+      `(() => {
+         const m = document.querySelector('[data-compact-preview] [title*="内含变更"]');
+         if (!m) return false;
+         const row = m.closest('[data-diff]') ?? m.parentElement;
+         return row ? row.textContent.trim().indexOf('●') > 0 : false;
+       })()`,
+    );
+    expect(afterText).toBe(true);
+
+    // 再展开 → 变更点隐去
+    await ui.clickSelector('[data-compact-preview] button[aria-label="展开节点"]');
+    await waitUntil(
+      () => ui.query<number>(`document.querySelectorAll('[data-compact-preview] [title*="内含变更"]').length`),
+      (v) => v === 0,
+      { label: "展开后变更点隐去" },
+    );
+    await expandAll();
+  });
+
+  it("展开节点时列表不整表重建（DOM 节点存活 → 焦点/滚动不被拽回顶部）", async () => {
+    await expandAll();
+    // 给**首行**打标记（首行不会被任何折叠隐藏；测的是 <For> 是否保留既有 DOM 节点）
+    await ui.query<string>(
+      `(() => { const rows=[...document.querySelectorAll('[data-compact-preview] [data-diff]')]; const first=rows[0]; if(first) first.setAttribute('data-probe','kept'); return 'x'; })()`,
+    );
+    expect(await ui.query<number>(`document.querySelectorAll('[data-probe="kept"]').length`)).toBeGreaterThan(0);
+    // 折叠一个**靠前**的节点（会引起后续行的可见性变化）
+    await ui.clickSelector('[data-compact-preview] button[aria-label="折叠节点"]');
+    await new Promise((r) => setTimeout(r, 300));
+    // 标记仍在 → Solid <For> 按稳定引用只增删变化行，没有整表重建
+    expect(await ui.query<number>(`document.querySelectorAll('[data-probe="kept"]').length`)).toBeGreaterThan(0);
+    await expandAll();
+  });
+
+  it("头尾裁剪的「保留 前/后」输入就在头尾裁剪选项下面（不在只留调用+路径下面）", async () => {
+    await ui.query<string>(
+      `(() => { const r=[...document.querySelectorAll('input[type=radio]')].find(x=>x.parentElement.textContent.includes('头尾裁剪')); r?.click(); return 'x'; })()`,
+    );
+    const ys = await waitUntil(
+      () =>
+        ui.query<string>(
+          `JSON.stringify({
+             head: document.querySelector('input[aria-label="保留头部行数"]')?.getBoundingClientRect().y ?? null,
+             htRadio: [...document.querySelectorAll('input[type=radio]')].find(x=>x.parentElement.textContent.includes('头尾裁剪'))?.getBoundingClientRect().y ?? null,
+             callRadio: [...document.querySelectorAll('input[type=radio]')].find(x=>x.parentElement.textContent.includes('只留调用'))?.getBoundingClientRect().y ?? null,
+           })`,
+        ),
+      (t) => t.includes('"head":') && !t.includes('"head":null'),
+      { label: "头尾输入出现" },
+    );
+    const { head, htRadio, callRadio } = JSON.parse(ys) as { head: number; htRadio: number; callRadio: number };
+    // 在头尾裁剪选项之下、且在「只留调用+路径」之上
+    expect(head).toBeGreaterThan(htRadio);
+    expect(head).toBeLessThan(callRadio);
+    // 复位为原样
+    await ui.query<string>(
+      `(() => { const r=[...document.querySelectorAll('input[type=radio]')].find(x=>x.parentElement.textContent.includes('原样')); r?.click(); return 'x'; })()`,
+    );
   });
 
   it("逐级展开：按钮显示「展开 i/N」，点一下多展开一级（N 随 YAML 深度）", async () => {
