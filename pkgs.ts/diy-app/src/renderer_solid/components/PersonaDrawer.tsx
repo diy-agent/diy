@@ -47,6 +47,7 @@
  */
 
 import { createSignal, createEffect, createMemo, on, For, Show } from "solid-js";
+import { useDrawerMax, DrawerMaxButton } from "./DrawerMaximize";
 import { personaStore } from "../store/personaStore";
 import { taskStore } from "../store/taskStore";
 import { notificationStore } from "../store/notificationStore";
@@ -344,6 +345,8 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
         void save({ name: next });
     };
 
+    const DM = useDrawerMax(66.666);
+
     return (
         <Show when={props.open}>
             {/* 贴顶 drawer：下方留白给输入框与消息流（改人物时常要对着消息反复核对，
@@ -351,7 +354,8 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
             <div class="fixed inset-0 z-[70] flex flex-col">
                 <div class="absolute inset-0 bg-black/25" onClick={props.onClose} />
                 <div
-                    class="relative flex h-[min(42rem,66.666vh)] shrink-0 flex-col border-b border-base-300 bg-base-100 shadow-2xl"
+                    class="relative flex min-h-0 shrink-0 flex-col border-b border-base-300 bg-base-100 shadow-2xl"
+                    style={DM.style()}
                     data-testid="persona-drawer"
                     // 归属任务：一个 tab 一个面板实例，多个 tab 同时挂载时同名字元素会重复。
                     // 自动化（以及排查）都必须能指名道姓地找到"我这个任务的面板"。
@@ -366,13 +370,16 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                         <span class="text-body opacity-50">
                             人物决定模型与参数；改它会影响所有引用它的任务（下一轮生效）
                         </span>
-                        <button
-                            class="btn btn-ghost btn-xs ml-auto"
-                            aria-label="关闭人物面板"
-                            onClick={props.onClose}
-                        >
-                            ✕
-                        </button>
+                        <div class="ml-auto flex items-center gap-1">
+                            <DrawerMaxButton max={DM.max()} onToggle={DM.toggle} />
+                            <button
+                                class="btn btn-ghost btn-xs"
+                                aria-label="关闭人物面板"
+                                onClick={props.onClose}
+                            >
+                                ✕
+                            </button>
+                        </div>
                     </div>
 
                     {/* 影响面提示条：**紧贴 view bar 之下**（与 DynamicBar 同族的细条：细、贴顶、随上下文存在）。

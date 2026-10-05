@@ -23,6 +23,7 @@
 import { createEffect, createSignal, For, Show, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 import { localChatStore } from "../store/localChatStore";
+import { useDrawerMax, DrawerMaxButton } from "./DrawerMaximize";
 import {
     cacheHitRate,
     fmtCost,
@@ -670,13 +671,14 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
     const partial = () => groups().some((g) => !g.last.record.contextParts);
     const partialHint = partial() ? "部分和：仅含已落盘构成的轮（本版前的老轮不计）" : undefined;
 
+    const DM = useDrawerMax();
     return (
         <Show when={props.open}>
             {/* 与用量抽屉同构：全宽贴顶、高 2/3 屏；点遮罩 / ✕ / Escape 退出 */}
             <div class="fixed inset-0 z-50 flex flex-col" onClick={props.onClose}>
                 <div class="absolute inset-0 bg-black/30" />
                 <div
-                    class="relative flex h-[66.666vh] shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl"
+                    class="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl" style={DM.style()}
                     onClick={(e) => e.stopPropagation()}
                 >
                     <div class={`flex shrink-0 items-center gap-2 border-b px-4 ${VIEW_BAR_H}`}>
@@ -700,6 +702,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                 分表（按步）
                             </button>
                         </div>
+                        <DrawerMaxButton max={DM.max()} onToggle={DM.toggle} />
                         <button class="btn btn-ghost btn-xs" onClick={props.onClose} aria-label="关闭窗口构成">
                             ✕
                         </button>
@@ -1340,6 +1343,7 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
     const mdText = () => turnDetailMd(group(), rows(), clock());
     const rawText = () => rows().map((r) => JSON.stringify(r)).join("\n");
 
+    const DM = useDrawerMax();
     return (
         <Show when={props.turnId}>
             {/* 形态（2026-10-03 定稿，与人物面板 PersonaDrawer 同构）：**全宽贴顶、高 2/3 屏** ——
@@ -1348,7 +1352,7 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
             <div class="fixed inset-0 z-50 flex flex-col" onClick={props.onClose}>
                 <div class="absolute inset-0 bg-black/30" />
                 <div
-                    class="relative flex h-[66.666vh] shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl"
+                    class="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl" style={DM.style()}
                     onClick={(e) => e.stopPropagation()}
                 >
                     <div class={`flex shrink-0 items-center gap-2 border-b px-4 ${VIEW_BAR_H}`}>
@@ -1361,6 +1365,7 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
                         <div class="ml-auto">
                             <FmtToggle view={fmtView()} onView={toggleFmt} />
                         </div>
+                        <DrawerMaxButton max={DM.max()} onToggle={DM.toggle} />
                         <button class="btn btn-ghost btn-xs" onClick={props.onClose} aria-label="关闭明细">
                             ✕
                         </button>
@@ -1514,6 +1519,7 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
     const mdText = () => sessionBoardMd(groupByAgent(steps()));
     const rawText = () => steps().map((r) => JSON.stringify(r)).join("\n");
 
+    const DM = useDrawerMax();
     return (
         <Show when={props.open}>
             {/* 与 TurnUsageDetailDrawer 同款形态（与 PersonaDrawer 同构）：全宽贴顶、高 2/3 屏，
@@ -1521,7 +1527,7 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
             <div class="fixed inset-0 z-50 flex flex-col" onClick={props.onClose}>
                 <div class="absolute inset-0 bg-black/30" />
                 <div
-                    class="relative flex h-[66.666vh] shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl"
+                    class="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl" style={DM.style()}
                     onClick={(e) => e.stopPropagation()}
                 >
                     <div class={`flex shrink-0 items-center gap-2 border-b px-4 ${VIEW_BAR_H}`}>
@@ -1529,6 +1535,7 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
                         <div class="ml-auto">
                             <FmtToggle view={fmtView()} onView={toggleFmt} />
                         </div>
+                        <DrawerMaxButton max={DM.max()} onToggle={DM.toggle} />
                         <button class="btn btn-ghost btn-xs" onClick={props.onClose} aria-label="关闭看板">
                             ✕
                         </button>

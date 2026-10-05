@@ -33,6 +33,7 @@ import {
 } from "../../shared/yaml-lines";
 import { requestViewYaml, type LayerRow, type RequestView } from "../../shared/context/request-view";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
+import { DrawerMaxButton } from "./DrawerMaximize";
 
 const INDENT = "  ";
 
@@ -96,11 +97,15 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
      * 而非居中 dialog）。默认 2/3 屏高；拖把握手在面板底边。
      */
     const [height, setHeight] = createSignal(Math.round(window.innerHeight * 0.66));
+    /** 最大化：与拖拽共存 —— 最大化时占满可视高；一旦拖动即退出最大化 */
+    const [maximized, setMaximized] = createSignal(false);
+    const drawerHeight = () => (maximized() ? window.innerHeight : height());
     const startResize = (e: MouseEvent) => {
         e.preventDefault();
         const startY = e.clientY;
         const startH = height();
         const move = (ev: MouseEvent) => {
+            setMaximized(false);
             const h = Math.round(startH + ev.clientY - startY);
             setHeight(Math.min(window.innerHeight - 8, Math.max(180, h)));
         };
@@ -185,22 +190,39 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
      * 引用稳定后，For 只增删真正变化的行，滚动位置与焦点原地不动。
      */
     const rowCache = new Map<number, { i: number; row: YamlDiffRow }>();
+    /** 「只看差异」保留的上下文行数（变更行上下各留 N 行）——头尾裁剪保留的头/尾行因此可见 */
+    const CONTEXT_LINES = 3;
     const renderRows = createMemo(() => {
         const idx = shownIndexes();
         const all = rows();
         const ch = changes();
+        // 保留集 = 变更行 + 变更的祖先节头 + 变更行上下 CONTEXT 行（上下文只绕**变更行**展开，
+        // 不绕祖先 —— 否则会把祖先上方不相关的行（如 tools 段末）也带进来）。
+        const keep = new Set<number>();
+        if (onlyDiff()) {
+            idx.forEach((ri, pos) => {
+                const row = all[ri]!;
+                if (row.t !== "same" || (row.foldable && hasOwnChange(ch.get(ri)))) keep.add(pos);
+            });
+            idx.forEach((ri, pos) => {
+                if (all[ri]!.t === "same") return;
+                for (let d = -CONTEXT_LINES; d <= CONTEXT_LINES; d++) {
+                    const q = pos + d;
+                    if (q >= 0 && q < idx.length) keep.add(q);
+                }
+            });
+        }
         return idx
-            .map((i) => {
+            .map((i, pos) => ({ i, pos }))
+            .filter(({ pos }) => !onlyDiff() || keep.has(pos))
+            .map(({ i }) => {
                 const row = all[i]!;
                 const cached = rowCache.get(i);
                 if (cached && cached.row === row) return cached;
                 const obj = { i, row };
                 rowCache.set(i, obj);
                 return obj;
-            })
-            // 「只看差异」时**保留变更行的祖先节头**（它们本身是 same，但子树有变更）——
-            // 否则折叠着的节头被过滤掉，用户既看不到路径、也看不到「这里有改动」的标记。
-            .filter(({ i, row }) => !onlyDiff() || row.t !== "same" || (row.foldable && hasOwnChange(ch.get(i))));
+            });
     });
 
     const apply = async () => {
@@ -247,7 +269,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
             <div class="absolute inset-0 bg-black/30" />
             <div
                 class="relative flex shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl"
-                style={{ height: `${height()}px` }}
+                style={{ height: `${drawerHeight()}px` }}
                 onClick={(e) => e.stopPropagation()}
             >
                 <div class={`px-4 border-b flex items-center justify-between shrink-0 ${VIEW_BAR_H}`}>
@@ -258,9 +280,12 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                         <span class="text-success">(-{ratio()}%)</span>
                         <span class="opacity-60">　删 {diffCounts().del} / 增 {diffCounts().add} 行</span>
                     </div>
-                    <button class="btn btn-ghost btn-xs" onClick={props.onClose}>
-                        ✕
-                    </button>
+                    <div class="flex items-center gap-1">
+                        <DrawerMaxButton max={maximized()} onToggle={() => setMaximized((v) => !v)} />
+                        <button class="btn btn-ghost btn-xs" onClick={props.onClose}>
+                            ✕
+                        </button>
+                    </div>
                 </div>
 
                 <div class="flex min-h-0 grow overflow-hidden">
@@ -608,6 +633,7 @@ export function GenerationsPanel(props: { uri: string; onClose: () => void }) {
     const [openSeq, setOpenSeq] = createSignal<number | null>(null);
     const [opsView] = createResource(openSeq, async (seq) => (seq == null ? [] : await localChatStore.generationOps(props.uri, seq)));
     const [busy, setBusy] = createSignal(false);
+    const [maximized, setMaximized] = createSignal(false);
 
     const undo = async (ref: string) => {
         setBusy(true);
@@ -633,12 +659,17 @@ export function GenerationsPanel(props: { uri: string; onClose: () => void }) {
                 if (e.target === e.currentTarget) props.onClose();
             }}
         >
-            <div class="bg-base-100 rounded-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+            <div
+                class={`bg-base-100 rounded-xl w-full flex flex-col ${maximized() ? "max-w-[96vw] h-[92vh]" : "max-w-2xl max-h-[90vh]"}`}
+            >
                 <div class="px-4 py-3 border-b flex items-center justify-between">
                     <div class="font-bold text-title">历史会话（{gens()?.length ?? 0} 代）</div>
-                    <button class="btn btn-ghost btn-xs" onClick={props.onClose}>
-                        ✕
-                    </button>
+                    <div class="flex items-center gap-1">
+                        <DrawerMaxButton max={maximized()} onToggle={() => setMaximized((v) => !v)} />
+                        <button class="btn btn-ghost btn-xs" onClick={props.onClose}>
+                            ✕
+                        </button>
+                    </div>
                 </div>
                 <div class="overflow-auto grow">
                     <Show when={openSeq() == null} fallback={

@@ -182,17 +182,67 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
 
   it("展开节点时列表不整表重建（DOM 节点存活 → 焦点/滚动不被拽回顶部）", async () => {
     await expandAll();
-    // 给**首行**打标记（首行不会被任何折叠隐藏；测的是 <For> 是否保留既有 DOM 节点）
+    // 给**末行**打标记（末行不会被折叠隐藏：折的是靠前的节点，且末行在保持可见的行里）
     await ui.query<string>(
       `(() => { const rows=[...document.querySelectorAll('[data-compact-preview] [data-diff]')]; const first=rows[0]; if(first) first.setAttribute('data-probe','kept'); return 'x'; })()`,
     );
     expect(await ui.query<number>(`document.querySelectorAll('[data-probe="kept"]').length`)).toBeGreaterThan(0);
-    // 折叠一个**靠前**的节点（会引起后续行的可见性变化）
-    await ui.clickSelector('[data-compact-preview] button[aria-label="折叠节点"]');
+    // 折叠**最靠后**的可折叠节点（它的子树在末尾，首行不受影响但仍会引起列表增删 → 测 <For> 是否重建）
+    await ui.query<string>(
+      `(() => { const bs=[...document.querySelectorAll('[data-compact-preview] button[aria-label="折叠节点"]')]; bs[bs.length-1]?.click(); return 'x'; })()`,
+    );
     await new Promise((r) => setTimeout(r, 300));
     // 标记仍在 → Solid <For> 按稳定引用只增删变化行，没有整表重建
     expect(await ui.query<number>(`document.querySelectorAll('[data-probe="kept"]').length`)).toBeGreaterThan(0);
     await expandAll();
+  });
+
+  it("头尾裁剪 diff：保留的头 3/尾 3 行以「未变」呈现、只有中间删除（+ left context 可见）", async () => {
+    // 本用例的数据：每轮一个 30 行 tool 输出；选 headtail → 头 3 + 尾 3 保留、中间删除
+    await ui.query<string>(
+      `(() => { const r=[...document.querySelectorAll('input[type=radio]')].find(x=>x.parentElement.textContent.includes('头尾裁剪')); r?.click(); return 'x'; })()`,
+    );
+    // 只看差异默认开 —— 头/尾保留行应作为上下文（data-diff="same"）出现
+    const info = await waitUntil(
+      () =>
+        ui.query<string>(
+          `JSON.stringify([...document.querySelectorAll('[data-compact-preview] [data-diff]')].map(e=>e.getAttribute('data-diff')+':'+e.textContent.trim().replace(/\s+/g,' ').slice(-8)))`,
+        ),
+      (t) => t.includes("row 0") && t.includes("row 29"),
+      { label: "头尾保留行作为上下文出现" },
+    );
+    const rows = JSON.parse(info) as string[];
+    const sameTexts = rows.filter((r) => r.startsWith("same:")); // 未变行（原色）
+    // 头 3 行保留 = same（未变，原色）
+    expect(sameTexts.some((r) => /row 0$/.test(r.trim()))).toBe(true);
+    // 尾 3 行保留 = same（未变，原色）
+    expect(sameTexts.some((r) => /row 29$/.test(r.trim()))).toBe(true);
+    // 中间被删 = del（红）
+    expect(rows.some((r) => r.startsWith("del:") && r.includes("row 3"))).toBe(true);
+    // 复位为原样
+    await ui.query<string>(
+      `(() => { const r=[...document.querySelectorAll('input[type=radio]')].find(x=>x.parentElement.textContent.includes('原样')); r?.click(); return 'x'; })()`,
+    );
+  });
+
+  it("压缩抽屉可在「默认尺寸 ⇄ 最大化」间切换（底部拖拽把手的抽屉）", async () => {
+    const scope = `document.querySelector('[data-compact-preview]')?.closest('[style*="height"]')`;
+    const btn = (v: "0" | "1") => `document.querySelector('[data-compact-preview]')?.closest('[style*="height"]')?.querySelector('[data-drawer-max="${v}"]')`;
+    const h = () => ui.query<number>(`${scope}?.getBoundingClientRect().height ?? 0`);
+    const h0 = await h();
+    expect(h0).toBeGreaterThan(0);
+    expect(await ui.query<boolean>(`!!${btn("0")}`)).toBe(true);
+    await ui.query<string>(`${btn("0")}?.click(); 'x'`);
+    await new Promise((r) => setTimeout(r, 200));
+    const h1 = await h();
+    const vh = await ui.query<number>("window.innerHeight");
+    expect(h1).toBeGreaterThan(h0);
+    expect(Math.abs(h1 - vh)).toBeLessThanOrEqual(2); // 最大化 = 占满可视高
+    expect(await ui.query<boolean>(`!!${btn("1")}`)).toBe(true);
+    // 还原
+    await ui.query<string>(`${btn("1")}?.click(); 'x'`);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(Math.abs((await h()) - h0)).toBeLessThanOrEqual(2);
   });
 
   it("头尾裁剪的「保留 前/后」输入就在头尾裁剪选项下面（不在只留调用+路径下面）", async () => {
