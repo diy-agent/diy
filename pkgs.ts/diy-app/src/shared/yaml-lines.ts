@@ -289,3 +289,59 @@ export function defaultCollapsed(rows: readonly YamlDiffRow[]): Set<number> {
     for (let i = 0; i < rows.length; i++) if (rows[i]!.foldable && !changed.has(i)) out.add(i);
     return out;
 }
+
+// ─── 层级展开（「展开 i/N」逐步展开）+ 折叠态变更提示 ──────────
+
+/** 可折叠行的最大缩进层级（0 起）；无折叠行 → 0 */
+export function maxFoldLevel(rows: readonly YamlDiffRow[]): number {
+    let max = 0;
+    for (const r of rows) if (r.foldable && r.indent > max) max = r.indent;
+    return max;
+}
+
+/**
+ * 按「展开层级」求折叠集合：折叠所有缩进 >= level 的可折叠行。
+ *   level = 0 → 顶层节也折叠（只露根行）；level = maxFoldLevel+1 → 全展开。
+ * 与「展开 i/N」按钮配套：N = maxFoldLevel+1。
+ */
+export function collapsedAtLevel(rows: readonly YamlDiffRow[], level: number): Set<number> {
+    const out = new Set<number>();
+    for (let i = 0; i < rows.length; i++) {
+        const r = rows[i]!;
+        if (r.foldable && r.indent >= level) out.add(i);
+    }
+    return out;
+}
+
+export interface ChangeCount {
+    add: number;
+    del: number;
+}
+
+/**
+ * 每个可折叠行**其子树内**的变更数（含自身）。
+ * 用途：折叠状态下外层看不出内部有没有红/绿 —— 在折叠箭头上标一个「有变更」的点/计数，
+ * 用户不必逐级展开才知道「这里藏着改动」。
+ * 实现：可折叠行的子树 = 其后连续「缩进更深」的行（同一份行列表里天然成立）。
+ */
+export function subtreeChanges(rows: readonly YamlDiffRow[]): Map<number, ChangeCount> {
+    const out = new Map<number, ChangeCount>();
+    const bump = (m: Map<number, ChangeCount>, i: number, add: number, del: number) => {
+        const c = m.get(i) ?? { add: 0, del: 0 };
+        c.add += add;
+        c.del += del;
+        m.set(i, c);
+    };
+    for (let i = 0; i < rows.length; i++) {
+        const r = rows[i]!;
+        if (!r.foldable) continue;
+        for (let j = i + 1; j < rows.length && rows[j]!.indent > r.indent; j++) {
+            const c = rows[j]!;
+            if (c.t === "add") bump(out, i, 1, 0);
+            else if (c.t === "del") bump(out, i, 0, 1);
+            else if (c.t === "change") bump(out, i, 1, 1);
+        }
+        if (!out.has(i)) out.set(i, { add: 0, del: 0 });
+    }
+    return out;
+}

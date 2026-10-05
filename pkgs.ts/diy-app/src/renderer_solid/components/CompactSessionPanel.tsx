@@ -13,7 +13,7 @@
  *   · 左栏底部「事实表」= base↔mod 分层 token 与金额差（旧值 / 新值 / 省 cost）
  */
 
-import { createSignal, createResource, For, Show, createMemo, onMount, onCleanup } from "solid-js";
+import { createSignal, createResource, createEffect, on, For, Show, createMemo, onMount, onCleanup, type JSX } from "solid-js";
 import { localChatStore } from "../store/localChatStore";
 import {
     DEFAULT_COMPACT_POLICY,
@@ -23,8 +23,10 @@ import {
     type ToolOutputMode,
 } from "../../shared/context/compaction";
 import {
-    defaultCollapsed,
+    collapsedAtLevel,
     diffYamlRows,
+    maxFoldLevel,
+    subtreeChanges,
     toYamlLines,
     visibleDiffRows,
     type YamlDiffRow,
@@ -33,13 +35,47 @@ import { requestViewYaml, type LayerRow, type RequestView } from "../../shared/c
 
 const INDENT = "  ";
 
-/** 「事实表」一行：旧值 / 新值 / 省 cost */
-function FactRow(props: { row: LayerRow }) {
+/** 该折叠行子树内是否含变更（add/del/change 任意） */
+const hasOwnChange = (c?: { add: number; del: number }): boolean => !!c && (c.add > 0 || c.del > 0);
+
+/** 折叠框（VSCode 式：标题条整条可点，▾/▸ 指示）—— 与 TaskDetailContent 的 Block 同形 */
+function Block(props: { title: string; children: JSX.Element; defaultOpen?: boolean; extra?: string }) {
+    const [open, setOpen] = createSignal(props.defaultOpen !== false);
+    return (
+        <section class="border border-base-300 rounded-lg overflow-hidden min-w-0">
+            <button
+                class="flex w-full items-center gap-1 bg-base-300 px-2 py-1 text-body font-bold tracking-wide opacity-80 hover:opacity-100"
+                aria-expanded={open()}
+                onClick={() => setOpen((v) => !v)}
+            >
+                <span>{open() ? "▾" : "▸"}</span>
+                <span>{props.title}</span>
+                <Show when={props.extra}>
+                    <span class="ml-auto font-mono font-normal opacity-70">{props.extra}</span>
+                </Show>
+            </button>
+            <Show when={open()}>
+                <div class="p-2 min-w-0">{props.children}</div>
+            </Show>
+        </section>
+    );
+}
+
+/**
+ * 「压缩后估算」一行：压缩前 / 压缩后 / 预估节省。
+ * 用层级符号（├/└，与「会话用量（累计）」同一套）表达「各行之和 = 合计」——
+ * 合计行不加「（= 各层之和）」这类注释，层级关系用符号自明。
+ */
+function FactRow(props: { row: LayerRow; isTotal: boolean; isLast: boolean }) {
     const saved = () => props.row.costDelta < 0;
     const zero = () => Math.abs(props.row.costDelta) < 1e-9;
+    const symbol = () => (props.isTotal ? "" : props.isLast ? "└ " : "├ ");
     return (
-        <tr title={props.row.label}>
-            <td class="pr-2 whitespace-nowrap">{props.row.label.split(" — ")[0]}</td>
+        <tr title={props.row.label} class={props.isTotal ? "font-semibold" : ""}>
+            <td class="pr-2 whitespace-nowrap">
+                <span class={props.isTotal ? "" : "opacity-50 font-mono"}>{symbol()}</span>
+                {props.row.label.split(" — ")[0]}
+            </td>
             <td class="text-right tabular-nums opacity-70">{props.row.oldTokens.toLocaleString()}</td>
             <td class="text-right tabular-nums">{props.row.newTokens.toLocaleString()}</td>
             <td class={`text-right tabular-nums ${saved() ? "text-success" : zero() ? "opacity-50" : "text-error"}`}>
@@ -58,8 +94,11 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     // 右栏视图控制
     const [sideBySide, setSideBySide] = createSignal(false);
     const [onlyDiff, setOnlyDiff] = createSignal(true);
-    const [forceExpand, setForceExpand] = createSignal(false);
-    const [localCollapsed, setLocalCollapsed] = createSignal<Set<number>>(new Set());
+    /**
+     * 展开层级：0 = 只露根行；N = 全展开（N 随会话 YAML 深度而变）。
+     * 「展开 i/N」按钮点一下 +1，到顶再回到 0 —— **逐级展开**，不搞「一键全开」。
+     */
+    const [expandLevel, setExpandLevel] = createSignal(1);
 
     const turnCount = () => localChatStore.trees.length;
 
@@ -84,27 +123,45 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     const modLines = createMemo(() => (pv() ? toYamlLines(requestViewYaml(pv()!.modRequest)) : []));
     const rows = createMemo<YamlDiffRow[]>(() => diffYamlRows(baseLines(), modLines()));
 
-    // 折叠态：默认折叠「不含变化」的节；「全展开」清空；用户点击切换
+    /** 可折叠层级数（= maxFoldLevel + 1）；「展开 i/N」的 N */
+    const foldLevels = createMemo(() => maxFoldLevel(rows()) + 1);
+    /** 逐级展开：点一下多展开一级；到顶（> N）回到 0 级循环 */
+    const nextLevel = () => {
+        const n = foldLevels();
+        setExpandLevel((v) => (v >= n ? 0 : v + 1));
+    };
+
+    /** 手动折叠覆盖：点某个节点箭头时，单独翻转它的折叠态（叠加在层级展开之上） */
+    const [manual, setManual] = createSignal<{ level: number; collapsed: Set<number> }>({ level: -1, collapsed: new Set() });
+    const toggleFold = (i: number) => {
+        const base = collapsed();
+        const cur = new Set(base);
+        if (cur.has(i)) cur.delete(i);
+        else cur.add(i);
+        setManual({ level: expandLevel(), collapsed: cur });
+    };
+    /** 层级变化时丢弃手动覆盖（换级 = 重新按层级展开） */
+    createEffect(on(expandLevel, () => setManual({ level: -1, collapsed: new Set() }), { defer: true }));
+
+    /** 折叠集合：由展开层级推出（层级 >= expandLevel 的可折叠行折叠）；手动点击覆盖之 */
     const collapsed = createMemo<Set<number>>(() => {
-        if (forceExpand()) return new Set();
-        const local = localCollapsed();
-        return local.size > 0 ? local : defaultCollapsed(rows());
+        const m = manual();
+        return m.level === expandLevel() ? m.collapsed : collapsedAtLevel(rows(), expandLevel());
     });
+    /** 每个可折叠行子树内的变更数（折叠时在箭头上标出「里面有改动」） */
+    const changes = createMemo(() => subtreeChanges(rows()));
 
     const shownIndexes = createMemo(() => visibleDiffRows(rows(), collapsed()));
     const renderRows = createMemo(() => {
         const idx = shownIndexes();
         const all = rows();
-        return idx.map((i) => ({ i, row: all[i]! })).filter(({ row }) => !onlyDiff() || row.t !== "same");
+        const ch = changes();
+        return idx
+            .map((i) => ({ i, row: all[i]! }))
+            // 「只看差异」时**保留变更行的祖先节头**（它们本身是 same，但子树有变更）——
+            // 否则折叠着的节头被过滤掉，用户既看不到路径、也看不到「这里有改动」的标记。
+            .filter(({ i, row }) => !onlyDiff() || row.t !== "same" || (row.foldable && hasOwnChange(ch.get(i))));
     });
-
-    const toggleFold = (i: number) => {
-        const cur = new Set(collapsed());
-        if (cur.has(i)) cur.delete(i);
-        else cur.add(i);
-        setForceExpand(false);
-        setLocalCollapsed(cur);
-    };
 
     const apply = async () => {
         setBusy(true);
@@ -167,116 +224,124 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                 </div>
 
                 <div class="flex grow overflow-hidden">
-                    {/* ── 左栏：参数 + 事实表 ─────────────────────────── */}
-                    <div class="w-[340px] shrink-0 border-r overflow-auto p-3 space-y-4">
-                        <section>
-                            <div class="text-body font-semibold mb-1.5">① 保留范围</div>
-                            <input
-                                type="range"
-                                min="0"
-                                max={Math.max(1, turnCount())}
-                                step="1"
-                                class="range range-primary range-sm w-full"
-                                value={pol().keepTurns}
-                                aria-label="保留最近轮数"
-                                onInput={(e) => setPol({ keepTurns: Number(e.currentTarget.value) })}
-                            />
-                            <div class="text-caption opacity-80">
-                                保留最近 <b>{pol().keepTurns}</b> 轮（共 {turnCount()} 轮）
-                                {pol().keepTurns === 0 ? " · 全部清零" : ""}
-                            </div>
-                        </section>
+                    {/* ── 左栏：压缩选项 + 压缩后估算（两个可折叠 view）────────── */}
+                    <div class="w-[340px] shrink-0 border-r overflow-auto p-2 space-y-2">
+                        <Block title="压缩选项">
+                            <div class="space-y-3">
+                                <section>
+                                    <div class="text-caption font-semibold opacity-70 mb-1">① 保留范围</div>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max={Math.max(1, turnCount())}
+                                        step="1"
+                                        class="range range-primary range-sm w-full"
+                                        value={pol().keepTurns}
+                                        aria-label="保留最近轮数"
+                                        onInput={(e) => setPol({ keepTurns: Number(e.currentTarget.value) })}
+                                    />
+                                    <div class="text-caption opacity-80">
+                                        保留最近 <b>{pol().keepTurns}</b> 轮（共 {turnCount()} 轮）
+                                        {pol().keepTurns === 0 ? " · 全部清零" : ""}
+                                    </div>
+                                </section>
 
-                        <section>
-                            <div class="text-body font-semibold mb-1.5">② 工具输出（只对保留部分生效）</div>
-                            <div class="flex flex-col gap-1 text-body">
-                                {(["asis", "headtail", "callpath"] as ToolOutputMode[]).map((m) => (
-                                    <label class="flex items-center gap-1.5 cursor-pointer">
+                                <section>
+                                    <div class="text-caption font-semibold opacity-70 mb-1">② 工具输出（只对保留部分生效）</div>
+                                    <div class="flex flex-col gap-1 text-body">
+                                        {(["asis", "headtail", "callpath"] as ToolOutputMode[]).map((m) => (
+                                            <label class="flex items-center gap-1.5 cursor-pointer">
+                                                <input
+                                                    type="radio"
+                                                    class="radio radio-xs radio-primary"
+                                                    checked={pol().toolOutput === m}
+                                                    onChange={() => setPol({ toolOutput: m })}
+                                                />
+                                                <span>
+                                                    {m === "asis"
+                                                        ? "原样（不裁）"
+                                                        : m === "headtail"
+                                                          ? "头尾裁剪（保留头尾，中间省略）"
+                                                          : "只留调用+路径（整段换成原文路径）"}
+                                                </span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                    <Show when={pol().toolOutput === "headtail"}>
+                                        <div class="mt-2 flex items-center gap-1.5 text-caption">
+                                            <span>保留 前</span>
+                                            <input
+                                                type="number"
+                                                class="input input-xs w-14"
+                                                value={pol().headtail.headLines}
+                                                aria-label="保留头部行数"
+                                                onInput={(e) => setPol({ headtail: { ...pol().headtail, headLines: Number(e.currentTarget.value) } })}
+                                            />
+                                            <span>行 后</span>
+                                            <input
+                                                type="number"
+                                                class="input input-xs w-14"
+                                                value={pol().headtail.tailLines}
+                                                aria-label="保留尾部行数"
+                                                onInput={(e) => setPol({ headtail: { ...pol().headtail, tailLines: Number(e.currentTarget.value) } })}
+                                            />
+                                            <span>行</span>
+                                        </div>
+                                        <div class="mt-1 text-caption opacity-60">
+                                            ⓘ 超过 {pol().headtail.headLines + pol().headtail.tailLines} 行的输出才裁剪；裁掉的原文落盘可寻回
+                                        </div>
+                                    </Show>
+                                    <Show when={pol().toolOutput === "callpath"}>
+                                        <div class="mt-1 text-caption opacity-60">整段输出换成一行指向原文的提示，模型可按路径回取。</div>
+                                    </Show>
+                                </section>
+
+                                <section>
+                                    <label class="flex items-start gap-2 cursor-pointer">
                                         <input
-                                            type="radio"
-                                            class="radio radio-xs radio-primary"
-                                            checked={pol().toolOutput === m}
-                                            onChange={() => setPol({ toolOutput: m })}
+                                            type="checkbox"
+                                            class="checkbox checkbox-xs checkbox-primary mt-0.5"
+                                            checked={pol().summary}
+                                            onChange={(e) => setPol({ summary: e.currentTarget.checked })}
                                         />
-                                        <span>
-                                            {m === "asis"
-                                                ? "原样（不裁）"
-                                                : m === "headtail"
-                                                  ? "头尾裁剪（保留头尾，中间省略）"
-                                                  : "只留调用+路径（整段换成原文路径）"}
+                                        <span class="text-body">
+                                            ③ 计算历史摘要并带进新会话
+                                            <span class="block text-caption opacity-60">
+                                                可选（额外调一次模型）。清零只丢会话历史，任务记忆仍在任务正文里。
+                                            </span>
                                         </span>
                                     </label>
-                                ))}
+                                </section>
                             </div>
-                            <Show when={pol().toolOutput === "headtail"}>
-                                <div class="mt-2 flex items-center gap-1.5 text-caption">
-                                    <span>保留 前</span>
-                                    <input
-                                        type="number"
-                                        class="input input-xs w-14"
-                                        value={pol().headtail.headLines}
-                                        aria-label="保留头部行数"
-                                        onInput={(e) => setPol({ headtail: { ...pol().headtail, headLines: Number(e.currentTarget.value) } })}
-                                    />
-                                    <span>行 后</span>
-                                    <input
-                                        type="number"
-                                        class="input input-xs w-14"
-                                        value={pol().headtail.tailLines}
-                                        aria-label="保留尾部行数"
-                                        onInput={(e) => setPol({ headtail: { ...pol().headtail, tailLines: Number(e.currentTarget.value) } })}
-                                    />
-                                    <span>行</span>
-                                </div>
-                                <div class="mt-1 text-caption opacity-60">
-                                    ⓘ 超过 {pol().headtail.headLines + pol().headtail.tailLines} 行的输出才裁剪；裁掉的原文落盘可寻回
-                                </div>
-                            </Show>
-                            <Show when={pol().toolOutput === "callpath"}>
-                                <div class="mt-1 text-caption opacity-60">整段输出换成一行指向原文的提示，模型可按路径回取。</div>
-                            </Show>
-                        </section>
+                        </Block>
 
-                        <section>
-                            <label class="flex items-start gap-2 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    class="checkbox checkbox-xs checkbox-primary mt-0.5"
-                                    checked={pol().summary}
-                                    onChange={(e) => setPol({ summary: e.currentTarget.checked })}
-                                />
-                                <span class="text-body">
-                                    ③ 计算历史摘要并带进新会话
-                                    <span class="block text-caption opacity-60">
-                                        可选（额外调一次模型）。清零只丢会话历史，任务记忆仍在任务正文里。
-                                    </span>
-                                </span>
-                            </label>
-                        </section>
-
-                        {/* 事实表：base ↔ mod 差异（旧值 / 新值 / 省 cost） */}
-                        <section>
-                            <div class="text-body font-semibold mb-1.5">事实（当前请求 → 改参数后）</div>
+                        {/* 压缩后估算：压缩前 / 压缩后 / 预估节省。合计占首行，各层用 ├/└ 缩进表达层级 */}
+                        <Block title="压缩后估算">
                             <table class="table table-xs w-full">
                                 <thead>
                                     <tr class="text-caption">
-                                        <th>层级</th>
-                                        <th class="text-right">旧值</th>
-                                        <th class="text-right">新值</th>
-                                        <th class="text-right">省 cost</th>
+                                        <th>被压缩的历史消息</th>
+                                        <th class="text-right">压缩前</th>
+                                        <th class="text-right">压缩后</th>
+                                        <th class="text-right">预估节省</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <For each={pv()?.facts ?? []}>{(r) => <FactRow row={r} />}</For>
+                                    <For each={pv()?.facts ?? []}>
+                                        {(r, i) => (
+                                            <FactRow
+                                                row={r}
+                                                isTotal={r.key === "total"}
+                                                isLast={i() === (pv()?.facts.length ?? 1) - 1}
+                                            />
+                                        )}
+                                    </For>
                                 </tbody>
                             </table>
                             <div class="mt-1 text-caption opacity-60">
                                 token 按字节/4 估算，仅用于对比（不进计费）；金额差按当前模型非缓存输入单价。
                             </div>
-                            <div class="mt-1 text-caption opacity-80">
-                                保留 {pv()?.keptTurns ?? pol().keepTurns} 轮 · 不再重发 {pv()?.droppedTurns ?? 0} 轮 · 旧历史原地保留（可在「历史会话」查，可撤销）
-                            </div>
-                        </section>
+                        </Block>
                     </div>
 
                     {/* ── 右栏：请求 YAML diff ─────────────────────────── */}
@@ -307,12 +372,10 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                             </label>
                             <button
                                 class="btn btn-ghost btn-xs"
-                                onClick={() => {
-                                    setForceExpand(true);
-                                    setLocalCollapsed(new Set<number>());
-                                }}
+                                aria-label="逐级展开"
+                                onClick={nextLevel}
                             >
-                                全部展开
+                                展开 {Math.min(expandLevel(), foldLevels())}/{foldLevels()}
                             </button>
                             <span class="opacity-50 ml-auto">请求结构 YAML（base vs mod）</span>
                         </div>
@@ -325,7 +388,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                             {({ i, row }) => (
                                                 <tr class={row.t === "add" ? "bg-success/10" : row.t === "del" || row.t === "change" ? "bg-error/10" : ""}>
                                                     <td class="align-top whitespace-pre-wrap break-all w-1/2 pr-2 border-r border-base-300">
-                                                        <FoldToggle i={i} row={row} collapsed={collapsed()} onToggle={toggleFold} side="left" />
+                                                        <FoldToggle i={i} row={row} collapsed={collapsed().has(i)} changes={changes().get(i)} onToggle={toggleFold} />
                                                         <span class={row.t === "del" || row.t === "change" ? "text-error" : ""}>
                                                             {row.left ? INDENT.repeat(row.left.indent) + row.left.text : ""}
                                                         </span>
@@ -348,7 +411,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                             fallback={
                                                 <>
                                                     <div data-diff="del" class="bg-error/10 text-error">
-                                                        <FoldToggle i={i} row={row} collapsed={collapsed()} onToggle={toggleFold} side="left" />
+                                                        <FoldToggle i={i} row={row} collapsed={collapsed().has(i)} changes={changes().get(i)} onToggle={toggleFold} />
                                                         <span class="opacity-40 select-none">- </span>
                                                         <span class="whitespace-pre-wrap break-all">
                                                             {INDENT.repeat(row.left?.indent ?? row.indent) + (row.left?.text ?? "")}
@@ -374,7 +437,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                                           : ""
                                                 }
                                             >
-                                                <FoldToggle i={i} row={row} collapsed={collapsed()} onToggle={toggleFold} side="left" />
+                                                <FoldToggle i={i} row={row} collapsed={collapsed().has(i)} changes={changes().get(i)} onToggle={toggleFold} />
                                                 <span class="opacity-40 select-none">{row.t === "add" ? "+" : row.t === "del" ? "-" : " "} </span>
                                                 <span class="whitespace-pre-wrap break-all">
                                                     {INDENT.repeat(row.indent) + (row.right?.text ?? row.left?.text ?? "")}
@@ -413,24 +476,44 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     );
 }
 
-/** 折叠箭头（可折叠行才画） */
+/**
+ * 折叠箭头（可折叠行才画）：折叠时若子树内有红/绿变更，追加一个变更点/计数 ——
+ * 否则外层完全看不出里面藏着改动（用户反馈的第 2 点）。
+ */
 function FoldToggle(props: {
     i: number;
     row: YamlDiffRow;
-    collapsed: ReadonlySet<number>;
+    collapsed: boolean;
+    changes?: { add: number; del: number };
     onToggle: (i: number) => void;
-    side: "left" | "right";
 }) {
+    if (!props.row.foldable) return <span class="inline-block w-3" />;
+    const isCollapsed = props.collapsed;
+    const c = props.changes;
+    const hasChange = !!c && (c.add > 0 || c.del > 0);
     return (
-        <Show when={props.row.foldable} fallback={<span class="inline-block w-3" />}>
+        <>
             <button
-                class="inline-block w-3 text-left opacity-60 hover:opacity-100 select-none"
-                aria-label={props.collapsed.has(props.i) ? "展开" : "折叠"}
+                class={`inline-block w-3 text-left select-none hover:opacity-100 ${hasChange && isCollapsed ? "text-warning" : "opacity-60"}`}
+                aria-label={isCollapsed ? "展开节点" : "折叠节点"}
                 onClick={() => props.onToggle(props.i)}
             >
-                {props.collapsed.has(props.i) ? "▸" : "▾"}
+                {isCollapsed ? "▸" : "▾"}
             </button>
-        </Show>
+            <Show when={hasChange && isCollapsed}>
+                <span
+                    class="mr-1 text-warning select-none"
+                    title={`内含变更：删 ${c!.del} / 增 ${c!.add} 行`}
+                >
+                    ●
+                    <span class="text-caption">
+                        {c!.del > 0 ? `-${c!.del}` : ""}
+                        {c!.del > 0 && c!.add > 0 ? " " : ""}
+                        {c!.add > 0 ? `+${c!.add}` : ""}
+                    </span>
+                </span>
+            </Show>
+        </>
     );
 }
 

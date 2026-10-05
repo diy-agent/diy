@@ -75,7 +75,7 @@ export function layerFacts(base: RequestView, mod: RequestView, inputRate: numbe
     const b = messageLayerBytes(base.messages);
     const m = messageLayerBytes(mod.messages);
     const rows: { key: string; label: string; oldBytes: number; newBytes: number }[] = [
-        { key: "total", label: "总输入 token（= 各层之和）", oldBytes: 0, newBytes: 0 },
+        { key: "total", label: "合计", oldBytes: 0, newBytes: 0 },
         { key: "system", label: "system — 系统提示词（人物行为指令 / 规则 / 保命契约 / AGENTS.md 链）", oldBytes: utf8Bytes(base.system), newBytes: utf8Bytes(mod.system) },
         { key: "tools", label: "tools — 工具定义（bash / read 等函数 schema）", oldBytes: base.toolsBytes, newBytes: mod.toolsBytes },
         { key: "user", label: "user — 用户消息（含 runtime 任务正文/技能清单）", oldBytes: b.user, newBytes: m.user },
