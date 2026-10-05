@@ -49,7 +49,9 @@ import { statFromStep } from "../../shared/context/stats";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import {
     estimateTokens,
+    indexOfTurn,
     makeDeliveryTransform,
+    turnIdAtOrAfterOp,
     listGenerations,
     listTurnIds,
     normalizePolicy,
@@ -470,6 +472,8 @@ interface OpsScan {
     ops: Op[];
     /** turnId → 该轮 start 行的字节偏移 */
     turnOffsets: Map<string, number>;
+    /** turnId → 该轮 start 在 ops 数组里的**下标**（机械锚点 keepFromOpIndex 的来源） */
+    turnOpIndex: Map<string, number>;
     /** 每轮覆盖的字节数（到下一轮 start 或文件尾） */
     turnBytes: Map<string, number>;
     totalBytes: number;
@@ -480,8 +484,9 @@ function scanOpsFile(taskUri: string): OpsScan {
     const fp = opsFile(taskUri);
     const ops: Op[] = [];
     const turnOffsets = new Map<string, number>();
+    const turnOpIndex = new Map<string, number>();
     const turnBytes = new Map<string, number>();
-    if (!existsSync(fp)) return { ops, turnOffsets, turnBytes, totalBytes: 0 };
+    if (!existsSync(fp)) return { ops, turnOffsets, turnOpIndex, turnBytes, totalBytes: 0 };
     const buf = readFileSync(fp);
     let start = 0;
     let offset = 0;
@@ -495,6 +500,7 @@ function scanOpsFile(taskUri: string): OpsScan {
                 ops.push(op);
                 if (op.op === "start" && op.kind === "turn") {
                     turnOffsets.set(op.id, start);
+                    turnOpIndex.set(op.id, ops.length - 1); // 该 op 刚 push 进 ops
                     ids.push(op.id);
                 }
             } catch {
@@ -509,7 +515,7 @@ function scanOpsFile(taskUri: string): OpsScan {
         const to = k + 1 < ids.length ? turnOffsets.get(ids[k + 1])! : offset;
         turnBytes.set(ids[k], Math.max(0, to - from));
     }
-    return { ops, turnOffsets, turnBytes, totalBytes: offset };
+    return { ops, turnOffsets, turnOpIndex, turnBytes, totalBytes: offset };
 }
 
 /** 一组 op → 规模快照（messages 用真实投影，bytes 用 JSON 字节 —— 与真发口径一致） */
@@ -544,6 +550,7 @@ interface CompactPlan {
     policy: CompactPolicy;
     keptTurns: number;
     keptFromTurnId: string | null;
+    keepFromOpIndex: number;
     droppedIds: string[];
     scan: OpsScan;
     store: BlockStore;
@@ -865,9 +872,25 @@ export class LocalAgentManager {
      * 每次重建 messages 都从这里取 —— 「预览看到的 = 真发出去的」靠的就是同一个入口。
      * collect 传入时顺带收集被裁明细（compact() 记账用）。
      */
+    /**
+     * 边界 → 投递用的 turn 边界（**基于 op 下标**，不是直接拿 keptFromTurnId）。
+     *
+     * 关键：`keptFromTurnId=null`（压缩那一刻全清）**不能**直接当作 blocksToMessages 的
+     * sinceTurnId=null（那会"永远发空"）——必须换算成"从中锚点起的第一个 turn"；
+     * 中锚点之后新产生的轮因此天然保留。中锚点越界（压缩瞬间尚无新轮）→ 返回 null = 真发空。
+     */
+    private sinceTurnIdOf(taskUri: string): string | null | undefined {
+        const b = resolveBoundary(readCompactLog(taskUri));
+        if (!b) return undefined; // 未压缩 → 全投
+        const ops = readJsonl<Op>(opsFile(taskUri));
+        const idx = b.keepFromOpIndex >= 0 ? b.keepFromOpIndex : indexOfTurn(ops, b.keptFromTurnId ?? "");
+        return turnIdAtOrAfterOp(ops, idx < 0 ? 0 : idx);
+    }
+
     private deliveryOptsOf(taskUri: string, collect?: ClippedToolDetail[]): Parameters<typeof blocksToMessages>[1] {
         const b = resolveBoundary(readCompactLog(taskUri));
-        return b ? optsFor(b.policy, b.keptFromTurnId, collect) : {};
+        if (!b) return {};
+        return optsFor(b.policy, this.sinceTurnIdOf(taskUri), collect);
     }
 
     private getSession(taskUri: string): LocalSession {
@@ -897,7 +920,10 @@ export class LocalAgentManager {
     history(taskUri: string): Op[] {
         const ops = readJsonl<Op>(opsFile(taskUri));
         const b = resolveBoundary(readCompactLog(taskUri));
-        return b ? sliceOpsFromTurn(ops, b.keptFromTurnId) : ops;
+        if (!b) return ops;
+        // 按**op 下标**切（不是按 turn id）：全清后新发的轮（追加在文件尾）因此得以保留。
+        const idx = b.keepFromOpIndex >= 0 ? b.keepFromOpIndex : indexOfTurn(ops, b.keptFromTurnId ?? "");
+        return ops.slice(Math.max(0, idx));
     }
 
     /** 历史代列表（历史会话面板的数据源）：每代的时间 / 轮数 / 消息数 / 用量 */
@@ -951,6 +977,10 @@ export class LocalAgentManager {
         const keptFromTurnId = keptTurns > 0 ? turnIds[turnIds.length - keptTurns]! : null;
         const droppedIds = keptFromTurnId ? turnIds.slice(0, turnIds.length - keptTurns) : [...turnIds];
 
+        // 机械锚点：保留起点轮的 op 下标；全清（keptTurns=0）→ 压缩时刻的 op 总数
+        const keepFromOpIndex =
+            keptFromTurnId !== null ? (scan.turnOpIndex.get(keptFromTurnId) ?? -1) : scan.ops.length;
+
         const clipped: ClippedToolDetail[] = [];
         const before = sizeOfOps(scan.ops);
         const after = sizeOfOps(scan.ops, optsFor(policy, keptFromTurnId, clipped));
@@ -974,7 +1004,7 @@ export class LocalAgentManager {
               }
             : undefined;
         const stats = usageStats(readStepUsages(taskUri), after.estTokens, rateSnap);
-        return { policy, keptTurns, keptFromTurnId, droppedIds, scan, store, before, after, droppedDetail, clipped, rateSnap, stats };
+        return { policy, keptTurns, keptFromTurnId, keepFromOpIndex, droppedIds, scan, store, before, after, droppedDetail, clipped, rateSnap, stats };
     }
 
     /**
@@ -1065,8 +1095,8 @@ export class LocalAgentManager {
     /** 当前生效请求（base）：不传策略 = 用盘上生效的边界与裁剪 */
     requestView(taskUri: string): RequestView {
         const b = resolveBoundary(readCompactLog(taskUri));
-        // 无压缩 → undefined（全投）；有压缩 → 用其边界（null 表示"清零"）
-        return this.buildRequestView(taskUri, b?.policy ?? normalizePolicy({}), b ? b.keptFromTurnId : undefined);
+        // 无压缩 → undefined（全投）；有压缩 → 由 op 下标换算出的 turn 边界（可能为 null=发空）
+        return this.buildRequestView(taskUri, b?.policy ?? normalizePolicy({}), this.sinceTurnIdOf(taskUri));
     }
 
     /** 压缩预览（只算不写）：面板左侧参数 + 右侧请求 YAML diff + 事实表的数据源 */
@@ -1132,6 +1162,7 @@ export class LocalAgentManager {
             policy: p.policy,
             boundary: {
                 keptFromTurnId: p.keptFromTurnId,
+                keepFromOpIndex: p.keepFromOpIndex,
                 ...(p.keptFromTurnId !== null && p.scan.turnOffsets.has(p.keptFromTurnId)
                     ? { keptFromOpsOffset: p.scan.turnOffsets.get(p.keptFromTurnId)! }
                     : {}),

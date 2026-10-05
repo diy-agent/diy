@@ -159,7 +159,7 @@ function compactEvent(id: string, keptFromTurnId: string | null, ts = id): Compa
         ts,
         by: "cli",
         policy: normalizePolicy({}),
-        boundary: { keptFromTurnId, keptTurns: 2, droppedTurns: 3 },
+        boundary: { keptFromTurnId, keepFromOpIndex: 0, keptTurns: 2, droppedTurns: 3 },
         before: { turns: 5, messages: 10, bytes: 1000, estTokens: 250 },
         after: { turns: 2, messages: 4, bytes: 400, estTokens: 100 },
     };

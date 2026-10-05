@@ -534,6 +534,33 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });
 
+    it("回归：全清（--keep-turns 0）后**新发的消息保留**（不被边界吞掉）", async () => {
+        const uri = await setup("边界锚点");
+        const fp = seedOps(uri, [
+            ...turnOps("t1000", "旧1", "x"),
+            ...turnOps("t2000", "旧2", "x"),
+            ...turnOps("t3000", "旧3", "x"),
+        ]);
+        // 全清
+        await fx.sh.getJson(`./diy.sh agent local compact ${uri} --keep-turns 0`);
+        // 压缩瞬间：当前会话为空
+        expect((await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data).toEqual([]);
+
+        // 用户此后发新消息 → 向 ops 追加一轮（模拟）
+        const before = readFileSync(fp, "utf-8");
+        const appended = [...turnOps("t4000", "新发的话", "x")].map((o) => JSON.stringify(o)).join("\n") + "\n";
+        writeFileSync(fp, before + appended, "utf-8");
+
+        // 关键：新轮必须出现（此前会被「永远发空」吞掉）
+        const hist = (await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data as unknown[];
+        expect(JSON.stringify(hist)).toContain("新发的话");
+        expect(JSON.stringify(hist)).not.toContain("旧1");
+        // 真发侧：requestView 的 messages 也含新对话
+        const rv = (await fx.sh.getJson(`./diy.sh agent local requestView ${uri}`)).data as { messages: unknown[] };
+        expect(JSON.stringify(rv.messages)).toContain("新发的话");
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
+
     it("compactPreview 只算不写：after<before 且不产生 compact 账本文件", async () => {
         const uri = await seededSession("压缩预览");
         const pv = (await fx.sh.getJson(

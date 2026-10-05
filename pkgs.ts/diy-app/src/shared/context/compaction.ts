@@ -312,8 +312,17 @@ export interface RateSnapshot {
 }
 
 export interface CompactBoundaryRecord {
-    /** 保留起点轮 id（null = 全部清零，新会话从零开始） */
+    /** 保留起点轮 id（label；null = 压缩那一刻全部清零） */
     keptFromTurnId: string | null;
+    /**
+     * **机械锚点**：压缩那一刻的 ops 下标 —— 只保留此下标之后的 op。
+     *
+     * 为什么必须有它：`keptFromTurnId` 为 null 时**表达不了"以后新产生的轮要保留"**。
+     * 若只按 turn id 切，null 会被解读成"永远从空开始"→ 压缩后新发的消息（op 追加在文件尾）
+     * 也被吞掉（UI 看不到、真发也不投 → 模型失忆）。用"压缩时刻的 op 下标"作锚，
+     * 新的轮落在此下标之后因而天然保留（实测 bug：压缩后发的聊天消息全消失）。
+     */
+    keepFromOpIndex: number;
     /** 该轮 start 在 ops.jsonl 里的**字节偏移**（重放跳前缀的快路径；缺省则退化为全量重放） */
     keptFromOpsOffset?: number;
     keptTurns: number;
@@ -442,6 +451,8 @@ export function parseCompactLog(text: string): CompactLogEvent[] {
 export interface EffectiveBoundary {
     compactId: string;
     keptFromTurnId: string | null;
+    /** 机械锚点（op 下标）；-1 = 老账本没记（下游按 keptFromTurnId 回退推导） */
+    keepFromOpIndex: number;
     keptFromOpsOffset?: number;
     policy: CompactPolicy;
     ts: string;
@@ -469,6 +480,7 @@ export function resolveBoundary(events: readonly CompactLogEvent[]): EffectiveBo
     return {
         compactId: c.id,
         keptFromTurnId: c.boundary.keptFromTurnId,
+        keepFromOpIndex: c.boundary.keepFromOpIndex ?? -1,
         ...(c.boundary.keptFromOpsOffset !== undefined
             ? { keptFromOpsOffset: c.boundary.keptFromOpsOffset }
             : {}),
@@ -504,6 +516,18 @@ export function sliceOpsFromTurn<T extends OpLike>(ops: readonly T[], sinceTurnI
     if (sinceTurnId == null) return [];
     const i = indexOfTurn(ops, sinceTurnId);
     return i < 0 ? [...ops] : ops.slice(i);
+}
+
+/**
+ * 从 op 下标 idx 起，第一个 turn 的 id；无（idx 已越界）→ null（= 投递"空历史"）。
+ * 与 keepFromOpIndex 配套：它把"机械锚点"翻译成 blocksToMessages 用的 turn 边界。
+ */
+export function turnIdAtOrAfterOp(ops: readonly OpLike[], idx: number): string | null {
+    for (let i = Math.max(0, idx); i < ops.length; i++) {
+        const o = ops[i]!;
+        if (o.op === "start" && o.kind === "turn") return o.id;
+    }
+    return null;
 }
 
 /** 会话里所有 turn 的 id（按出现顺序） */
