@@ -2,7 +2,7 @@
  * CompactSessionPanel — 压缩会话上下文（清零 → 硬切换新 session 的 UI）
  *
  * ⚠️ 语义：压缩 **≠** 清除。
- *   · 压缩（本面板）：只改「发给模型的上下文」—— 保留最近 N 轮 + 可选裁工具输出；
+ *   · 压缩（本面板）：只改「发给模型的上下文」—— 保留最近 N 轮 + 可选裁工具结果；
  *     **不删任何历史**，旧内容仍在会话日志里、可查（历史代）、可撤销。
  *   · 清除（⋯ 菜单）：物理删除所有会话日志，不可恢复 —— 与本面板是两回事，别混。
  *
@@ -19,7 +19,7 @@ import {
     DEFAULT_COMPACT_POLICY,
     flatPolicyOf,
     type FlatCompactPolicy,
-    type ToolOutputMode,
+    type ToolResultMode,
 } from "../../shared/context/compaction";
 import {
     collapsedAtLevel,
@@ -86,7 +86,7 @@ function FactRow(props: { row: LayerRow; isTotal: boolean; isLast: boolean }) {
 }
 
 export function CompactSessionPanel(props: { uri: string; onClose: () => void }) {
-    // UI 用**扁平策略**（keepTurns/toolOutput/headtail…）：它是稳定的输入面契约；
+    // UI 用**扁平策略**（keepTurns/toolResult/headtail…）：它是稳定的输入面契约；
     // 三轴形状由 main 侧 normalizePolicy 统一生成（见 shared/context/compaction 的策略区）。
     const [pol, setPolRaw] = createSignal<FlatCompactPolicy>(flatPolicyOf(DEFAULT_COMPACT_POLICY));
     const setPol = (p: Partial<FlatCompactPolicy>) => setPolRaw({ ...pol(), ...p });
@@ -338,15 +338,15 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                 </section>
 
                                 <section>
-                                    <div class="text-caption font-semibold opacity-70 mb-1">② 工具输出（只对保留部分生效）</div>
+                                    <div class="text-caption font-semibold opacity-70 mb-1">② 工具结果（只对保留部分生效）</div>
                                     <div class="flex flex-col gap-1 text-body">
                                         {/* asis */}
                                         <label class="flex items-center gap-1.5 cursor-pointer">
                                             <input
                                                 type="radio"
                                                 class="radio radio-xs radio-primary"
-                                                checked={pol().toolOutput === "asis"}
-                                                onChange={() => setPol({ toolOutput: "asis" })}
+                                                checked={pol().toolResult === "asis"}
+                                                onChange={() => setPol({ toolResult: "asis" })}
                                             />
                                             <span>原样（不裁）</span>
                                         </label>
@@ -356,12 +356,12 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                             <input
                                                 type="radio"
                                                 class="radio radio-xs radio-primary"
-                                                checked={pol().toolOutput === "headtail"}
-                                                onChange={() => setPol({ toolOutput: "headtail" })}
+                                                checked={pol().toolResult === "headtail"}
+                                                onChange={() => setPol({ toolResult: "headtail" })}
                                             />
                                             <span>头尾裁剪（保留头尾，中间省略）</span>
                                         </label>
-                                        <Show when={pol().toolOutput === "headtail"}>
+                                        <Show when={pol().toolResult === "headtail"}>
                                             <div class="ml-5 flex items-center gap-1.5 text-caption">
                                                 <span>保留 前</span>
                                                 <input
@@ -391,12 +391,12 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                             <input
                                                 type="radio"
                                                 class="radio radio-xs radio-primary"
-                                                checked={pol().toolOutput === "callpath"}
-                                                onChange={() => setPol({ toolOutput: "callpath" })}
+                                                checked={pol().toolResult === "callpath"}
+                                                onChange={() => setPol({ toolResult: "callpath" })}
                                             />
                                             <span>只留调用+路径（整段换成原文路径）</span>
                                         </label>
-                                        <Show when={pol().toolOutput === "callpath"}>
+                                        <Show when={pol().toolResult === "callpath"}>
                                             <div class="ml-5 text-caption opacity-60">整段输出换成一行指向原文的提示，模型可按路径回取。</div>
                                         </Show>
                                     </div>

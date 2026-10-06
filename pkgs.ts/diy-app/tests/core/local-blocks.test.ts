@@ -383,9 +383,9 @@ describe("blocksToMessages 投递选项（压缩落点）", () => {
         expect(m).toHaveLength(4);
     });
 
-    it("transformToolOutput：只作用于工具真实输出，tool-call 结构不动（配对铁律不变）", () => {
+    it("transformToolResult：只作用于工具真实输出，tool-call 结构不动（配对铁律不变）", () => {
         const m = blocksToMessages(twoTurns(), {
-            transformToolOutput: ({ output }) => `[裁]${output.length}`,
+            transformToolResult: ({ output }) => `[裁]${output.length}`,
         });
         const tool = m.find((x) => x.role === "tool")!;
         const value = (tool.content as Array<{ output: { value: string } }>)[0]!.output.value;
@@ -395,7 +395,7 @@ describe("blocksToMessages 投递选项（压缩落点）", () => {
         expect((call.content as Array<{ toolCallId: string }>)[0]!.toolCallId).toBe("t1_r");
     });
 
-    it("transformToolOutput 不碰中断占位文案（契约文本不能被裁）", () => {
+    it("transformToolResult 不碰中断占位文案（契约文本不能被裁）", () => {
         const s = twoTurns();
         // 造一个中断 tool：只有 args、无 output
         s.apply({ op: "start", id: "t3", kind: "turn" });
@@ -403,7 +403,7 @@ describe("blocksToMessages 投递选项（压缩落点）", () => {
         s.apply({ op: "patch", id: "t3_r", fields: { args: { command: "date" } } });
         s.apply({ op: "stop", id: "t3_r" });
         s.apply({ op: "stop", id: "t3" });
-        const m = blocksToMessages(s, { transformToolOutput: () => "改掉了" });
+        const m = blocksToMessages(s, { transformToolResult: () => "改掉了" });
         // 按 toolCallId 精确定位中断块（不能拿第一个 tool —— t1_r 是正常输出，会被裁）
         const tool = m.find(
             (x) =>
@@ -432,16 +432,16 @@ describe("中断 tool 的投递恒定性（回归：收敛动作不得改变投�
     it("已收敛的中断块（output 已写契约文案）仍不被裁剪 —— 否则本地补的错误信息被当历史投递", () => {
         const s = interruptedTurn();
         for (const op of interruptedToolPatches(s)) s.apply(op); // 模拟 main 的落盘收敛
-        expect(valueOf(blocksToMessages(s, { transformToolOutput: () => "改掉了" }))).toBe(
+        expect(valueOf(blocksToMessages(s, { transformToolResult: () => "改掉了" }))).toBe(
             INTERRUPTED_TOOL_NOTICE,
         );
     });
 
     it("收敛前后投递**逐字一致**（D1「stop 即定稿」的结构前提）", () => {
-        const before = blocksToMessages(interruptedTurn(), { transformToolOutput: () => "改掉了" });
+        const before = blocksToMessages(interruptedTurn(), { transformToolResult: () => "改掉了" });
         const s = interruptedTurn();
         for (const op of interruptedToolPatches(s)) s.apply(op);
-        const after = blocksToMessages(s, { transformToolOutput: () => "改掉了" });
+        const after = blocksToMessages(s, { transformToolResult: () => "改掉了" });
         expect(JSON.stringify(after)).toBe(JSON.stringify(before));
     });
 });

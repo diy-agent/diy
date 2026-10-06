@@ -574,7 +574,7 @@ export const apiDef = RpcSchema.router({
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
                   keepTurns: z.number().optional().cliOption({ desc: "保留最近多少轮（0 = 全部清零；缺省 6）" }),
-                  toolOutput: z
+                  toolResult: z
                     .enum(["asis", "headtail", "callpath"])
                     .optional()
                     .cliOption({ desc: "工具输出处理：asis 原样 / headtail 头尾裁剪 / callpath 只留调用+路径" }),
@@ -616,7 +616,7 @@ export const apiDef = RpcSchema.router({
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
                   keepTurns: z.number().optional().cliOption({ desc: "保留最近多少轮（0 = 全部清零）" }),
-                  toolOutput: z.enum(["asis", "headtail", "callpath"]).optional().cliOption({ desc: "工具输出处理" }),
+                  toolResult: z.enum(["asis", "headtail", "callpath"]).optional().cliOption({ desc: "工具结果的处理方式（asis/headtail/callpath）" }),
                   triggerLines: z.number().optional().cliOption({ desc: "头尾裁剪阈值行数" }),
                   headLines: z.number().optional().cliOption({ desc: "头尾裁剪保留头行数" }),
                   tailLines: z.number().optional().cliOption({ desc: "头尾裁剪保留尾行数" }),

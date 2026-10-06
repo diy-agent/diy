@@ -679,7 +679,7 @@ function policyFlat(p: FlatCompactPolicy): {
     keepTurns: number | undefined;
     keepUnit: "turns" | "messages" | undefined;
     content: "all" | "text" | "conclusion" | undefined;
-    toolOutput: "asis" | "headtail" | "callpath" | undefined;
+    toolResult: "asis" | "headtail" | "callpath" | undefined;
     triggerLines: number | undefined;
     headLines: number | undefined;
     tailLines: number | undefined;
@@ -692,7 +692,7 @@ function policyFlat(p: FlatCompactPolicy): {
         keepTurns: p.keepTurns,
         keepUnit: p.keepUnit,
         content: p.content,
-        toolOutput: p.toolOutput,
+        toolResult: p.toolResult,
         triggerLines: ht.triggerLines,
         headLines: ht.headLines,
         tailLines: ht.tailLines,

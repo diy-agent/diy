@@ -505,7 +505,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         const big = Array.from({ length: 200 }, (_, i) => `row ${i}`).join("\n");
         seedOps(uri, [...turnOps("t9000", "只这一轮", big)]);
         const rec = (await fx.sh.getJson(
-            `./diy.sh agent local compact ${uri} --keep-turns 1 --tool-output headtail`,
+            `./diy.sh agent local compact ${uri} --keep-turns 1 --tool-result headtail`,
         )).data as { after: { bytes: number }; clipped?: unknown[] };
         expect(rec.clipped && rec.clipped.length).toBeGreaterThan(0);
 

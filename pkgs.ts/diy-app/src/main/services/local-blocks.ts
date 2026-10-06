@@ -410,14 +410,14 @@ export interface LocalModelMessage {
  * 为什么裁剪必须落在这里、而不是工具 execute 里：
  *   执行时裁 = 原文当场丢（UI 也看不到全量）、且新输出也一起被裁；
  *   投递时裁 = 块树/UI/落盘全是原文，只有「发给模型的那一份」被裁 —— 用户随时能看全量，
- *              原文还能另存一份供模型回取（见 clipToolOutput 的 origPath）。
+ *              原文还能另存一份供模型回取（见 clipToolResult 的 origPath）。
  * 两者作用阶段不同，可与 execute 侧的 clip()（错误路径 6000 字符）并存。
  */
 export interface DeliveryOpts {
     /** 只投递从这个 turn 起的块（压缩边界）；null = 一个都不投（全部清零）；缺省 = 全投 */
     sinceTurnId?: string | null;
-    /** 工具输出裁剪（由 main 注入：同一份纯函数既算预览也算真发，见 shared/context/compaction） */
-    transformToolOutput?: (b: { id: string; tool: string; title: string; output: string }) => string;
+    /** 工具结果渲染（由 main 注入：同一份纯函数既算预览也算真发，见 shared/context/compaction） */
+    transformToolResult?: (b: { id: string; tool: string; title: string; output: string }) => string;
     /**
      * 写 tool-result 的 `origin` 自证位（缺省 false = 原生形状，用于**真发**）。
      * 落盘（llm.jsonl 全量日志）时置 true —— 于是"这条 value 是工具给的还是本地补的"
@@ -436,7 +436,7 @@ export interface DeliveryOpts {
 export function blocksToMessages(store: BlockStore, opts?: DeliveryOpts): LocalModelMessage[] {
     const out: LocalModelMessage[] = [];
     const since = opts && "sinceTurnId" in opts ? opts.sinceTurnId : undefined;
-    const transform = opts?.transformToolOutput;
+    const transform = opts?.transformToolResult;
     const withIndex = opts?.withIndex === true;
     /** 消息级索引位的落点（withIndex 关闭时是空对象，展开后不产生任何键） */
     const idx = (turn: string | undefined, step: string | undefined): { turn?: string; step?: string } =>

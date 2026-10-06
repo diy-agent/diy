@@ -99,7 +99,7 @@ describe("llm 全量日志：只增 + 与压缩解耦", () => {
         const mgr = new LocalAgentManager(() => stubModel() as unknown as LanguageModel);
         await run(mgr, uri, "会被压掉的旧话");
         const before = readLines(filesOf(uri).llm);
-        // 造一条压缩账（keepTurns=0 = 全清；keepFromOpIndex 越界 → 投递侧空历史）
+        // 造一条压缩账（keep.count=0 = 全清；keepFromOpIndex 越界 → 投递侧空历史）
         writeFileSync(
             filesOf(uri).compact,
             JSON.stringify({
@@ -108,7 +108,7 @@ describe("llm 全量日志：只增 + 与压缩解耦", () => {
                 id: "test-c1",
                 ts: new Date().toISOString(),
                 by: "cli",
-                policy: { ...DEFAULT_COMPACT_POLICY, keepTurns: 0 },
+                policy: { ...DEFAULT_COMPACT_POLICY, keep: { unit: "turns", count: 0 } },
                 boundary: { keptFromTurnId: null, keepFromOpIndex: 99999, keptTurns: 0, droppedTurns: 1 },
                 before: { turns: 1, messages: 2, bytes: 0, estTokens: 0 },
                 after: { turns: 0, messages: 0, bytes: 0, estTokens: 0 },

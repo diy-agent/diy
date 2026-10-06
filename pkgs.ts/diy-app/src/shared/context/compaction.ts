@@ -23,7 +23,7 @@ import { z } from "zod";
 // ─── ① 策略 ───────────────────────────────────────────
 
 /** 工具输出的处理方式（只作用于**投递**，UI 与落盘永远保留原文） */
-export type ToolOutputMode =
+export type ToolResultMode =
     /** 原样（不裁） */
     | "asis"
     /** 头尾裁剪：保留前 N 行 + 后 M 行，中间写 marker（原文可寻回） */
@@ -66,13 +66,13 @@ export const DEFAULT_KEEP_TURNS = 6;
 
 // ─── 策略的**三条正交轴**（用户 2026-10-06 定）─────────────────────────
 //
-// 为什么拆轴：原先 `toolOutput` 与 `headtail` 是**平级兄弟字段**，于是 headtail 恒在，
-// 哪怕 toolOutput="asis"（它是 headtail 分支的私有参数，却挂在外面 → 语义泄漏、看 JSON
+// 为什么拆轴：原先扁平形状里「工具结果处理」与 `headtail` 是**平级兄弟字段**，于是 headtail 恒在，
+// 哪怕 render="asis"（它是 headtail 分支的私有参数，却挂在外面 → 语义泄漏、看 JSON
 // 也看不出谁属于谁）。三条轴各自独立，参数收进各自分支 → **看 JSON 就懂结构**（D5 命名
 // 规范：结构即语义）。同时把"轮次是唯一安全单位"这个隐含假设显式化（keep.unit）。
 //
 // 与旧（扁平）形状的关系：**输入面**（RPC / CLI / UI）暂时仍是扁平的
-// （keepTurns / toolOutput / headtail / summary）—— `normalizePolicy` 是唯一适配点，
+// （keepTurns / toolResult / headtail / summary）—— `normalizePolicy` 是唯一适配点，
 // 两种形状都收；`flatPolicyOf` 供 UI 回读。存储与内部一律用三轴形状。
 
 /** ① 范围轴：留多久（轮 = 安全单位，不会切开 tool-call/result 配对；消息条数会自动吸附到轮首） */
@@ -86,42 +86,49 @@ export const ContentPolicySchema = z
     .enum(["all", "text", "conclusion"])
     .describe("all=用户+助手文本+工具链路；text=只留用户与助手文本；conclusion=每轮只留用户+最后一条助手文本");
 
-/** ③ 工具输出轴：判别式联合，参数收进分支（看 JSON 即知关系） */
-export const ToolOutputPolicySchema = z.discriminatedUnion("mode", [
-    z.object({ mode: z.literal("asis").describe("原样（不裁）") }),
+/**
+ * ③ 工具**结果**轴：判别式联合，参数收进分支（看 JSON 即知关系）。
+ *
+ * 名字为什么是 `toolResult` 而不是 `toolOutput`（用户 2026-10-06）：
+ * 「output」与 provider 的 input/output token 撞词，读 JSON 时分不清是"工具产出的文本"
+ * 还是"输出 token 数"；而 provider 的 part 类型本就叫 `tool-result` —— 用同一个词，零歧义。
+ * 判别键同理：`render`（这条工具结果**怎么呈现给模型**）比 `mode` 具体。
+ */
+export const ToolResultPolicySchema = z.discriminatedUnion("render", [
+    z.object({ render: z.literal("asis").describe("原样（不裁）") }),
     z.object({
-        mode: z.literal("headtail").describe("头尾裁剪：保留前 head 行 + 后 tail 行，中间写 marker"),
+        render: z.literal("headtail").describe("头尾裁剪：保留前 head 行 + 后 tail 行，中间写 marker"),
         head: z.number().describe("保留头部行数"),
         tail: z.number().describe("保留尾部行数"),
         maxLineChars: z.number().describe("单行超长截断阈值（字符）"),
         maxKeepBytes: z.number().describe("保留总量兜底（字节），防「一行超长」钻空子"),
     }),
-    z.object({ mode: z.literal("callpath").describe("只留调用 + 原文路径") }),
+    z.object({ render: z.literal("callpath").describe("只留调用 + 原文路径") }),
 ]);
 
 export const CompactPolicySchema = z.object({
     keep: KeepPolicySchema,
     content: ContentPolicySchema,
-    toolOutput: ToolOutputPolicySchema,
+    toolResult: ToolResultPolicySchema,
     summary: z.boolean().describe("是否额外算一份历史摘要带进新会话"),
 });
 
 export type KeepPolicy = z.infer<typeof KeepPolicySchema>;
 export type ContentPolicy = z.infer<typeof ContentPolicySchema>;
-export type ToolOutputPolicy = z.infer<typeof ToolOutputPolicySchema>;
+export type ToolResultPolicy = z.infer<typeof ToolResultPolicySchema>;
 export type CompactPolicy = z.infer<typeof CompactPolicySchema>;
 
 export const DEFAULT_COMPACT_POLICY: CompactPolicy = {
     keep: { unit: "turns", count: DEFAULT_KEEP_TURNS },
     content: "all",
-    toolOutput: { mode: "asis" },
+    toolResult: { render: "asis" },
     summary: false,
 };
 
 /** 扁平（输入面）形状：RPC / CLI / UI 的现有契约，**不是**内部形状 */
 export interface FlatCompactPolicy {
     keepTurns: number;
-    toolOutput: ToolOutputMode;
+    toolResult: ToolResultMode;
     headtail: HeadTailPolicy;
     summary: boolean;
     content?: ContentPolicy;
@@ -130,9 +137,9 @@ export interface FlatCompactPolicy {
 
 /** 三轴 → 扁平（UI 回读 / 旧契约输出用） */
 export function flatPolicyOf(p: CompactPolicy): FlatCompactPolicy {
-    const t = p.toolOutput;
+    const t = p.toolResult;
     const ht =
-        t.mode === "headtail"
+        t.render === "headtail"
             ? {
                   triggerLines: t.head + t.tail,
                   headLines: t.head,
@@ -143,7 +150,7 @@ export function flatPolicyOf(p: CompactPolicy): FlatCompactPolicy {
             : { ...DEFAULT_HEADTAIL };
     return {
         keepTurns: p.keep.count,
-        toolOutput: t.mode,
+        toolResult: t.render,
         headtail: ht,
         summary: p.summary,
         content: p.content,
@@ -156,7 +163,7 @@ const posNum = (v: unknown, d: number, min = 0): number =>
 
 /**
  * 宽松校验：从 UI/CLI/旧账本来的策略 → 合法三轴策略。
- * **两种形状都收**（初版紧凑、扩展松散）：旧扁平（keepTurns/toolOutput/headtail）与新三轴。
+ * **两种形状都收**（初版紧凑、扩展松散）：旧扁平（keepTurns/toolResult/headtail）与新三轴。
  * 判据看有没有 `keep` —— 有就当新形状，否则按扁平解。
  */
 export function normalizePolicy(p: unknown): CompactPolicy {
@@ -171,39 +178,40 @@ export function normalizePolicy(p: unknown): CompactPolicy {
     const content: ContentPolicy =
         content0 === "text" || content0 === "conclusion" ? content0 : "all";
 
-    const t0 = src["toolOutput"];
-    let toolOutput: ToolOutputPolicy;
+    const t0 = src["toolResult"];
+    let toolResult: ToolResultPolicy;
     if (t0 !== null && typeof t0 === "object") {
         // 已经是分支形状（新）：只校验判别键
-        const m = (t0 as { mode?: unknown }).mode;
-        toolOutput =
+        // 判别键：新形状 `render`，旧形状 `mode`（扩展松散）
+        const m = (t0 as { render?: unknown }).render ?? (t0 as { mode?: unknown }).mode;
+        toolResult =
             m === "headtail"
                 ? {
-                      mode: "headtail",
+                      render: "headtail",
                       head: posNum((t0 as { head?: unknown }).head, DEFAULT_HEADTAIL.headLines, 0),
                       tail: posNum((t0 as { tail?: unknown }).tail, DEFAULT_HEADTAIL.tailLines, 0),
                       maxLineChars: posNum((t0 as { maxLineChars?: unknown }).maxLineChars, DEFAULT_HEADTAIL.maxLineChars, 1),
                       maxKeepBytes: posNum((t0 as { maxKeepBytes?: unknown }).maxKeepBytes, DEFAULT_HEADTAIL.maxKeepBytes, 1),
                   }
                 : m === "callpath"
-                  ? { mode: "callpath" }
-                  : { mode: "asis" };
+                  ? { render: "callpath" }
+                  : { render: "asis" };
     } else if (t0 === "headtail") {
         const head = posNum(ht0.headLines, DEFAULT_HEADTAIL.headLines, 0);
         const tail = posNum(ht0.tailLines, DEFAULT_HEADTAIL.tailLines, 0);
-        toolOutput = {
-            mode: "headtail",
+        toolResult = {
+            render: "headtail",
             head,
             tail,
             maxLineChars: posNum(ht0.maxLineChars, DEFAULT_HEADTAIL.maxLineChars, 1),
             maxKeepBytes: posNum(ht0.maxKeepBytes, DEFAULT_HEADTAIL.maxKeepBytes, 1),
         };
     } else if (t0 === "callpath") {
-        toolOutput = { mode: "callpath" };
+        toolResult = { render: "callpath" };
     } else {
-        toolOutput = { mode: "asis" };
+        toolResult = { render: "asis" };
     }
-    return { keep: { unit, count }, content, toolOutput, summary: src["summary"] === true };
+    return { keep: { unit, count }, content, toolResult, summary: src["summary"] === true };
 }
 
 /**
@@ -271,7 +279,7 @@ function truncLine(line: string, max: number): string {
  *   · marker 里**必须**给原文路径（##127 的「头尾保留 + marker + 原文可寻回」三件套），
  *     否则模型看到「中间省略」却无处可查，只能重跑一遍命令（那是真金白银）。
  */
-export function clipToolOutput(text: string, toolOutput: ToolOutputPolicy, opts: ClipOpts = {}): ToolClipResult {
+export function clipToolResult(text: string, toolResult: ToolResultPolicy, opts: ClipOpts = {}): ToolClipResult {
     const origLines = text === "" ? 0 : text.split("\n").length;
     const origBytes = utf8Bytes(text);
     const same = (): ToolClipResult => ({
@@ -285,12 +293,12 @@ export function clipToolOutput(text: string, toolOutput: ToolOutputPolicy, opts:
         droppedBytes: 0,
     });
 
-    if (toolOutput.mode === "asis") return same();
+    if (toolResult.render === "asis") return same();
 
     const lines = text.split("\n");
     const pathHint = opts.origPath ? `完整输出见 ${opts.origPath}` : "完整输出已省略";
 
-    if (toolOutput.mode === "callpath") {
+    if (toolResult.render === "callpath") {
         if (text === "") return same();
         const marker = `[输出已省略（只留调用）：${origLines} 行 / ${fmtBytes(origBytes)}，${pathHint}]`;
         return {
@@ -306,7 +314,7 @@ export function clipToolOutput(text: string, toolOutput: ToolOutputPolicy, opts:
     }
 
     // headtail（参数直接来自分支 —— 判别式联合的意义就在这：不必判"该不该有这些参数"）
-    const ht = { triggerLines: toolOutput.head + toolOutput.tail, headLines: toolOutput.head, tailLines: toolOutput.tail, maxLineChars: toolOutput.maxLineChars, maxKeepBytes: toolOutput.maxKeepBytes };
+    const ht = { triggerLines: toolResult.head + toolResult.tail, headLines: toolResult.head, tailLines: toolResult.tail, maxLineChars: toolResult.maxLineChars, maxKeepBytes: toolResult.maxKeepBytes };
     const overLines = origLines > ht.triggerLines;
     const overBytes = origBytes > ht.maxKeepBytes;
     const longLine = lines.some((l) => l.length > ht.maxLineChars);
@@ -366,7 +374,7 @@ export function clipToolOutput(text: string, toolOutput: ToolOutputPolicy, opts:
  */
 export interface DeliveryTransform {
     sinceTurnId?: string | null;
-    transformToolOutput?: (b: { id: string; tool: string; title: string; output: string }) => string;
+    transformToolResult?: (b: { id: string; tool: string; title: string; output: string }) => string;
 }
 
 /**
@@ -384,14 +392,14 @@ export function makeDeliveryTransform(
 ): DeliveryTransform {
     const opts: DeliveryTransform = {};
     if (keptFromTurnId !== undefined) opts.sinceTurnId = keptFromTurnId;
-    if (policy.toolOutput.mode !== "asis") {
-        opts.transformToolOutput = ({ id, output }) => {
-            const r = clipToolOutput(output, policy.toolOutput, { origPath: origPathOf(id) });
+    if (policy.toolResult.render !== "asis") {
+        opts.transformToolResult = ({ id, output }) => {
+            const r = clipToolResult(output, policy.toolResult, { origPath: origPathOf(id) });
             if (!r.clipped) return output;
             collect?.push({
                 id,
                 tool: "",
-                mode: policy.toolOutput.mode,
+                render: policy.toolResult.render,
                 origLines: r.origLines,
                 origBytes: r.origBytes,
                 keptLines: r.keptLines,
@@ -470,7 +478,7 @@ export interface DroppedTurnDetail {
 export interface ClippedToolDetail {
     id: string;
     tool: string;
-    mode: ToolOutputMode;
+    render: ToolResultMode;
     origLines: number;
     origBytes: number;
     keptLines: number;
@@ -601,7 +609,7 @@ export function resolveBoundary(events: readonly CompactLogEvent[]): EffectiveBo
         ...(c.boundary.keptFromOpsOffset !== undefined
             ? { keptFromOpsOffset: c.boundary.keptFromOpsOffset }
             : {}),
-        // 读侧归一：旧账本存的是扁平 policy（keepTurns/toolOutput/headtail），
+        // 读侧归一：旧账本存的是扁平 policy（keepTurns/toolResult/headtail），
         // 这里统一成三轴 —— 于是「历史账本」与「新写的账本」下游完全同形（初版紧凑、扩展松散）。
         policy: normalizePolicy(c.policy),
         ts: c.ts,

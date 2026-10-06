@@ -25,7 +25,7 @@ import { addSource, removeSource } from "./ref-config";
 import { apiDef } from "./api-def";
 import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
-import type { CompactPolicy, ToolOutputMode } from "../../shared/context/compaction";
+import type { CompactPolicy, ToolResultMode } from "../../shared/context/compaction";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
 import { resolve as resolvePath } from "node:path";
 
@@ -389,7 +389,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     keepTurns: i.keepTurns as number | undefined,
     keepUnit: i.keepUnit as string | undefined,
     content: i.content as string | undefined,
-    toolOutput: i.toolOutput as ToolOutputMode | undefined,
+    toolResult: (i.toolResult ?? i.toolOutput) as ToolResultMode | undefined,
     headtail: {
       triggerLines: i.triggerLines as number,
       headLines: i.headLines as number,

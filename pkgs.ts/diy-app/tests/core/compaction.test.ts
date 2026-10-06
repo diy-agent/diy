@@ -9,7 +9,7 @@ import {
     DEFAULT_HEADTAIL,
     flatPolicyOf,
     keptTurnsByMessageCount,
-    clipToolOutput,
+    clipToolResult,
     estimateTokens,
     fmtBytes,
     listGenerations,
@@ -31,7 +31,7 @@ describe("normalizePolicy：缺省值 + 越界兜底", () => {
         const p = normalizePolicy(undefined);
         expect(p.keep).toEqual({ unit: "turns", count: 6 });
         expect(p.content).toBe("all");
-        expect(p.toolOutput).toEqual({ mode: "asis" });
+        expect(p.toolResult).toEqual({ render: "asis" });
         expect(p.summary).toBe(false);
         // 扁平视图（输入面契约）仍是老样子，UI 不用改
         expect(flatPolicyOf(p).headtail).toEqual(DEFAULT_HEADTAIL);
@@ -41,21 +41,21 @@ describe("normalizePolicy：缺省值 + 越界兜底", () => {
         expect(normalizePolicy({ keep: { unit: "turns", count: 0 } }).keep.count).toBe(0);
     });
     it("非法值逐项回落：负数 / 未知 mode / 小数取整", () => {
-        const p = normalizePolicy({ keepTurns: -3, toolOutput: "nope" });
+        const p = normalizePolicy({ keepTurns: -3, toolResult: "nope" });
         expect(p.keep.count).toBe(6);
-        expect(p.toolOutput).toEqual({ mode: "asis" });
+        expect(p.toolResult).toEqual({ render: "asis" });
         expect(normalizePolicy({ keepTurns: 4.9 }).keep.count).toBe(4);
     });
     it("**两种形状都收**：旧扁平（keepTurns/headtail）与新三轴，结果同形", () => {
-        const flat = normalizePolicy({ keepTurns: 2, toolOutput: "headtail", headtail: { headLines: 7, tailLines: 2 } });
-        const axis = normalizePolicy({ keep: { unit: "turns", count: 2 }, toolOutput: { mode: "headtail", head: 7, tail: 2 } });
+        const flat = normalizePolicy({ keepTurns: 2, toolResult: "headtail", headtail: { headLines: 7, tailLines: 2 } });
+        const axis = normalizePolicy({ keep: { unit: "turns", count: 2 }, toolResult: { render: "headtail", head: 7, tail: 2 } });
         expect(flat).toEqual(axis);
-        expect(flat.toolOutput).toEqual({ mode: "headtail", head: 7, tail: 2, maxLineChars: DEFAULT_HEADTAIL.maxLineChars, maxKeepBytes: DEFAULT_HEADTAIL.maxKeepBytes });
+        expect(flat.toolResult).toEqual({ render: "headtail", head: 7, tail: 2, maxLineChars: DEFAULT_HEADTAIL.maxLineChars, maxKeepBytes: DEFAULT_HEADTAIL.maxKeepBytes });
     });
     it("旧扁平局部覆盖：只给 headLines，其余保持默认（参数收进分支后仍如此）", () => {
-        const t = normalizePolicy({ toolOutput: "headtail", headtail: { headLines: 7 } }).toolOutput;
-        expect(t.mode).toBe("headtail");
-        if (t.mode === "headtail") {
+        const t = normalizePolicy({ toolResult: "headtail", headtail: { headLines: 7 } }).toolResult;
+        expect(t.render).toBe("headtail");
+        if (t.render === "headtail") {
             expect(t.head).toBe(7);
             expect(t.tail).toBe(DEFAULT_HEADTAIL.tailLines);
         }
@@ -74,28 +74,28 @@ function lines(n: number): string {
     return Array.from({ length: n }, (_, i) => `line ${i}`).join("\n");
 }
 
-describe("clipToolOutput", () => {
+describe("clipToolResult", () => {
     // 工具输出策略：三轴形状（参数收进分支）
     const pol = (mode: "asis" | "headtail" | "callpath", ht = DEFAULT_HEADTAIL) =>
-        normalizePolicy({ toolOutput: mode, headtail: { headLines: ht.headLines, tailLines: ht.tailLines, maxLineChars: ht.maxLineChars, maxKeepBytes: ht.maxKeepBytes } }).toolOutput;
+        normalizePolicy({ toolResult: mode, headtail: { headLines: ht.headLines, tailLines: ht.tailLines, maxLineChars: ht.maxLineChars, maxKeepBytes: ht.maxKeepBytes } }).toolResult;
 
     it("asis：逐字符返回原文", () => {
         const t = lines(1000);
-        const r = clipToolOutput(t, pol("asis"));
+        const r = clipToolResult(t, pol("asis"));
         expect(r.clipped).toBe(false);
         expect(r.text).toBe(t);
     });
 
     it("headtail：未超阈值（默认 6 行）不裁 —— 短输出原样走这条路径", () => {
         const t = lines(6);
-        const r = clipToolOutput(t, pol("headtail"));
+        const r = clipToolResult(t, pol("headtail"));
         expect(r.clipped).toBe(false);
         expect(r.text).toBe(t);
     });
 
     it("headtail：超阈值 → 前 3 + marker + 后 3，标记省略行数/字节/原文路径", () => {
         const t = lines(1842);
-        const r = clipToolOutput(t, pol("headtail"), { origPath: "local/toolout/x.txt" });
+        const r = clipToolResult(t, pol("headtail"), { origPath: "local/toolout/x.txt" });
         expect(r.clipped).toBe(true);
         const out = r.text.split("\n");
         expect(out[0]).toBe("line 0");
@@ -110,14 +110,14 @@ describe("clipToolOutput", () => {
     });
 
     it("headtail：无 origPath 时 marker 不编造路径", () => {
-        const r = clipToolOutput(lines(200), pol("headtail"));
+        const r = clipToolResult(lines(200), pol("headtail"));
         expect(r.text).toContain("完整输出已省略");
         expect(r.text).not.toContain("见 ");
     });
 
     it("headtail：行数没超但单行超长 → 只做单行截断，不写「中间省略」marker", () => {
         const t = `short\n${"A".repeat(500)}\nshort`;
-        const r = clipToolOutput(t, pol("headtail"));
+        const r = clipToolResult(t, pol("headtail"));
         expect(r.clipped).toBe(true);
         expect(r.droppedLines).toBe(0);
         expect(r.text).not.toContain("中间省略");
@@ -128,13 +128,13 @@ describe("clipToolOutput", () => {
     it("headtail：字节兜底（一行超长穿透 maxKeepBytes）→ 收缩到预算内", () => {
         // 一行 = 100k 字符 > 8KB 兜底
         const t = `head\n${"B".repeat(100_000)}\ntail`;
-        const r = clipToolOutput(t, pol("headtail", { ...DEFAULT_HEADTAIL, maxLineChars: 1_000_000 }));
+        const r = clipToolResult(t, pol("headtail", { ...DEFAULT_HEADTAIL, maxLineChars: 1_000_000 }));
         expect(r.clipped).toBe(true);
         expect(utf8Bytes(r.text)).toBeLessThanOrEqual(DEFAULT_HEADTAIL.maxKeepBytes);
     });
 
     it("callpath：整段换成一句「只留调用」提示 + 原文路径", () => {
-        const r = clipToolOutput(lines(300), pol("callpath"), { origPath: "local/toolout/y.txt" });
+        const r = clipToolResult(lines(300), pol("callpath"), { origPath: "local/toolout/y.txt" });
         expect(r.clipped).toBe(true);
         expect(r.text).toContain("输出已省略（只留调用）");
         expect(r.text).toContain("300 行");
@@ -144,7 +144,7 @@ describe("clipToolOutput", () => {
 
     it("空输出：任何模式都不裁（空串没有可省略的东西）", () => {
         for (const m of ["asis", "headtail", "callpath"] as const) {
-            const r = clipToolOutput("", pol(m));
+            const r = clipToolResult("", pol(m));
             expect(r.clipped).toBe(false);
             expect(r.text).toBe("");
         }
