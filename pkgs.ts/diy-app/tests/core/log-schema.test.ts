@@ -13,11 +13,7 @@ import {
     describeAnomalies,
     readLlmLog,
 } from "../../src/shared/context/log-schema";
-import {
-    DroppedSegmentSchema,
-    parseDroppedSegment,
-    renderDroppedNote,
-} from "../../src/shared/context/dropped";
+import { DroppedNoteSchema, parseDroppedNote, renderDroppedNote } from "../../src/shared/context/dropped";
 import { fieldDocs, fieldNames, renderFieldDocs } from "../../src/shared/schema-doc";
 
 // ─── ① 日志行：必需严格 ────────────────────────────────
@@ -110,37 +106,38 @@ describe("schema-doc：字段说明由 zod 派生（不手写第二真源）", (
         expect(out.every((l) => l.startsWith("#   a ") || l.startsWith("#   b ") || l.startsWith("#   c "))).toBe(true);
     });
 
-    it("投递注记的字段表就是 DroppedSegment 的派生结果（含「可选」标注）", () => {
+    it("投递注记的字段表由 DroppedNote/DroppedSegment 派生（含子表），可选才标", () => {
         const note = renderDroppedNote(
-            { range: [1, 9], turns: ["t1"], messages: 9, tools: [], why: "w" },
+            { total: 9, segments: [{ range: [1, 9], kind: "turns", turns: ["t1"], tools: [], why: "w" }] },
             { file: "local/k.llm.jsonl" },
         );
         expect(note).toContain("# 字段（由 zod 定义派生，勿手写）：");
-        expect(note).toContain("range");
-        expect(note).toContain("被省去的原文行号");
-        // gist 是唯一可选字段 → 带（可选）标记；required 的 range 不带
-        const gistLine = note.split("\n").find((l) => l.includes("gist"))!;
-        expect(gistLine).toContain("（可选）");
+        // 顶层说明
+        expect(note.split("\n").find((l) => l.includes("total"))).toContain("被省去的消息总数");
+        // 子表说明（segments 每项）
+        expect(note).toContain("（segments 每一项）");
         const rangeLine = note.split("\n").find((l) => l.trim().startsWith("#") && l.includes("range"))!;
-        expect(rangeLine).not.toContain("（可选）");
+        expect(rangeLine).toContain("原文行号区间");
+        expect(rangeLine).not.toContain("（可选）"); // 必填字段不刷噪音
     });
 });
 
-describe("parseDroppedSegment：投递产物用严格 object（多字段/缺字段都是异常）", () => {
-    const good = { range: [1, 9] as [number, number], turns: ["t1"], messages: 9, tools: [], why: "w" };
+describe("parseDroppedNote：投递产物用严格 object（多字段/缺字段都是异常）", () => {
+    const seg = { range: [1, 9] as [number, number], kind: "turns" as const, turns: ["t1"], tools: [], why: "w" };
+    const good = { total: 9, segments: [seg] };
     it("合法 → ok", () => {
-        const r = parseDroppedSegment(good);
+        const r = parseDroppedNote(good);
         expect(r.ok).toBe(true);
     });
     it("缺 why / range 不是二元组 → 失败并给字段名", () => {
-        const a = parseDroppedSegment({ range: [1, 9], turns: [], messages: 1, tools: [] });
+        const a = parseDroppedNote({ segments: [{ range: [1, 9], kind: "turns", turns: [], tools: [] }] });
         expect(a.ok).toBe(false);
         if (!a.ok) expect(a.issues.join()).toContain("why");
-        const b = parseDroppedSegment({ ...good, range: [1, 2, 3] });
+        const b = parseDroppedNote({ ...good, segments: [{ ...seg, range: [1, 2, 3] }] });
         expect(b.ok).toBe(false);
         if (!b.ok) expect(b.issues.join()).toContain("range");
     });
-    it("gist 可缺（可选字段不参与必填）", () => {
-        expect(DroppedSegmentSchema.safeParse(good).success).toBe(true);
+    it("segments 可空（没有任何内容被省时由调用方直接不投，不是错）", () => {
+        expect(DroppedNoteSchema.safeParse({ total: 0, segments: [] }).success).toBe(true);
     });
 });

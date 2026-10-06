@@ -4,7 +4,7 @@
 // ── 为什么是"文本嵌进原生 messages"而不是"整段历史变一份文档" ──
 // 曾定过两种形式做对比实验：
 //   A 整文档：把压缩后的历史整体渲染成一份 YAML，塞进**一条** user 消息。
-//   B 原生+注记：messages 保持原样（provider 最友好），结构化索引只出现在"被丢的位置"。
+//   B 原生+注记：messages 保持原样（provider 最友好），结构化索引只出现在"被省的位置"。
 // 用户 2026-10-06 拍定 B，理由（两条都是硬的）：
 //   · A 的单条 user 可能超 provider 的单消息上限（大会话几 MB）；
 //   · A 丢掉 role 交替 → 前缀缓存整个失效（B 的保留部分逐字不变，缓存仍命中）。
@@ -12,6 +12,11 @@
 // ── 注记要回答的问题 ──
 // 模型在自己缺信息时该能**回取**：去哪找（file）、找哪几行（range）、那一坨是什么（turns/tools/why）。
 // 所以每个字段都指向一个"可动作"的事实，而不是给人看的统计报表。
+//
+// ── 为什么会**多段**（##269 D3b）──
+// `content` 轴（只留文本 / 只留结论）会在**保留的轮里面**也省掉东西（工具链路、过程性文本）。
+// 只报"前缀被省了多少轮"会让模型以为保留轮是完整的 —— 那是**说谎**（比不给索引更坏）。
+// 所以注记是**分段**的，每段标注 `kind`：整轮被裁（turns）/ 保留轮内被裁（content）。
 //
 // ── 为什么附 schema 注释（且**从 zod 派生**）──
 // 实测（用户反馈）：模型对裸字段名常常理解偏差（把 range 当成字符偏移、把 turns 当轮数）。
@@ -22,8 +27,7 @@ import { z } from "zod";
 import { renderFieldDocs } from "../schema-doc";
 
 /**
- * 一段被省去的历史（当前压缩只有"前缀整段"，故注记通常只有一段；
- * D3 的 `content: "text" | "conclusion"` 会产生**段内丢** → 那时就是多段）。
+ * 一段被省去的历史。
  *
  * 这里是**投递产物**（要贴给模型看），故用严格 `z.object`：多出字段没有意义，
  * 与日志那种"扩展松散"的读侧策略相反 —— 见 log-schema.ts。
@@ -31,24 +35,39 @@ import { renderFieldDocs } from "../schema-doc";
 export const DroppedSegmentSchema = z.object({
     range: z
         .tuple([z.number(), z.number()])
-        .describe("被省去的原文行号（含两端；1-based，等于 llm.jsonl 的物理行号）"),
-    turns: z.array(z.string()).describe("被省去覆盖的轮次 id（t+毫秒时间戳）"),
-    messages: z.number().describe("被省去的消息条数"),
+        .describe("被省去的原文行号区间（含两端；1-based，等于 llm.jsonl 的物理行号）"),
+    kind: z
+        .enum(["turns", "content"])
+        .describe("省去的类别：turns = 整个轮次被裁（在保留范围之外）；content = 保留轮**内部**被裁掉的内容"),
+    turns: z.array(z.string()).describe("这段覆盖的轮次 id（t+毫秒时间戳）"),
     tools: z.array(z.string()).describe("这段里出现过的工具名（空 = 只有文本/思考）"),
-    why: z.string().describe("为什么被省（策略推导，非模型生成）"),
-    gist: z.string().optional().describe("一句话概述（勾选摘要并生成后才有内容）"),
+    why: z.string().describe("为什么被省（由策略推导，非模型生成）"),
+});
+
+/**
+ * 整份注记。
+ *
+ * 注意这里**没有** `messages` 字段：每段的条数恒等于区间长度（段按连续行号切），
+ * 多存一个数就是**冗余**（冗余 = 两个数可能不一致 = 迟早不一致）。要总数看 `total`。
+ * 也**没有** `gist`：一句话概述属于「摘要」，摘要是**另投一条消息**（##246 定稿），
+ * 混进索引会让两件事互相污染。
+ */
+export const DroppedNoteSchema = z.object({
+    total: z.number().describe("被省去的消息总数（= 各段区间长度之和）"),
+    segments: z.array(DroppedSegmentSchema).describe("被省区间的分段（按原文行号升序；相邻且同类会合并）"),
 });
 
 export type DroppedSegment = z.infer<typeof DroppedSegmentSchema>;
+export type DroppedNote = z.infer<typeof DroppedNoteSchema>;
 
 /**
- * 校验一段注记数据。失败 = **异常数据**（用户 2026-10-06：不当成"可有可无"糊过去）。
+ * 校验一份注记。失败 = **异常数据**（用户 2026-10-06：不当成"可有可无"糊过去）。
  * 调用方据此决定：不投递（宁可不写也不写坏的）还是记一笔异常。
  */
-export function parseDroppedSegment(
+export function parseDroppedNote(
     x: unknown,
-): { ok: true; value: DroppedSegment } | { ok: false; issues: string[] } {
-    const r = DroppedSegmentSchema.safeParse(x);
+): { ok: true; value: DroppedNote } | { ok: false; issues: string[] } {
+    const r = DroppedNoteSchema.safeParse(x);
     if (r.success) return { ok: true, value: r.data };
     return { ok: false, issues: r.error.issues.map((i) => `${i.path.join(".") || "(根)"}: ${i.message}`) };
 }
@@ -66,47 +85,37 @@ function q(s: string): string {
 }
 
 /**
- * 把被省区间渲染成一段**可直接插进 user 消息的文本**。
- * 形态：YAML 注释头（说明 + schema + 回取方法）+ 一条 `dropped:` 映射。
+ * 把注记渲染成一段**可直接插进 user 消息的文本**。
+ * 形态：YAML 注释头（说明 + schema + 回取方法）+ `dropped:` 映射（分段）。
  */
-export function renderDroppedNote(seg: DroppedSegment, ctx: DroppedNoteCtx): string {
+export function renderDroppedNote(note: DroppedNote, ctx: DroppedNoteCtx): string {
+    const first = note.segments[0];
     const L: string[] = [];
     L.push("# ── 会话历史（压缩视图）────────────────────────────────────────");
-    L.push("# 以下是本次会话**较早的部分**，已按压缩策略省去（原文没有被删除）。");
+    L.push("# 以下是本次会话的**部分内容已按压缩策略省去**（原文没有被删除）。");
     L.push(`# 原文：${ctx.file}${ctx.absPath ? `（${ctx.absPath}）` : ""}`);
     L.push("#   · 每 1 行 = 1 条消息，**行号即消息序号**");
-    L.push(`#   · 回取（按行）：bash 里 \`sed -n '${seg.range[0]},${seg.range[1]}p' <原文>\``);
-    // 兜底：行号是"日志补齐后"的位置，若盘上日志暂时落后于 ops（极端情形）会整体偏移；
-    // 轮 id 写在每行的 turn 字段里，grep 一定命中 —— 两条路并存，模型任选。
-    if (seg.turns.length > 0) {
-        L.push(`#   · 回取（按轮）：bash 里 \`grep -n '"turn":"${seg.turns[0]}"' <原文>\``);
+    if (first) {
+        L.push(`#   · 回取（按行）：bash 里 \`sed -n '${first.range[0]},${first.range[1]}p' <原文>\``);
+        // 兜底：行号是"日志补齐后"的位置，若盘上日志暂时落后于 ops（极端情形）会整体偏移；
+        // 轮 id 写在每行的 turn 字段里，grep 一定命中 —— 两条路并存，模型任选。
+        if (first.turns.length > 0) {
+            L.push(`#   · 回取（按轮）：bash 里 \`grep -n '"turn":"${first.turns[0]}"' <原文>\``);
+        }
     }
     L.push("# 字段（由 zod 定义派生，勿手写）：");
+    L.push(...renderFieldDocs(DroppedNoteSchema));
+    L.push("#   （segments 每一项）");
     L.push(...renderFieldDocs(DroppedSegmentSchema));
     L.push("dropped:");
-    L.push(`  range: [${seg.range[0]}, ${seg.range[1]}]`);
-    L.push(`  turns: [${seg.turns.join(", ")}]`);
-    L.push(`  messages: ${seg.messages}`);
-    L.push(`  tools: [${seg.tools.join(", ")}]`);
-    L.push(`  why: ${q(seg.why)}`);
-    if (seg.gist) L.push(`  gist: ${q(seg.gist)}`);
-    return L.join("\n");
-}
-
-/**
- * 取出投影结果里的「轮 id 序」（去重保序）与工具名（去重保序）—— 注记的数据源。
- * 只认**结构化字段**（role/turn/toolName），绝不解析 content 文本：那是用户数据，格式不可控。
- */
-export function collectDroppedFacts(
-    messages: readonly { role: string; content: unknown; turn?: string }[],
-): { turns: string[]; tools: string[] } {
-    const turns: string[] = [];
-    const tools: string[] = [];
-    for (const m of messages) {
-        if (m.turn && !turns.includes(m.turn)) turns.push(m.turn);
-        if (m.role !== "tool") continue;
-        const parts = Array.isArray(m.content) ? (m.content as { toolName?: unknown }[]) : [];
-        for (const p of parts) if (typeof p.toolName === "string" && !tools.includes(p.toolName)) tools.push(p.toolName);
+    L.push(`  total: ${note.total}`);
+    L.push("  segments:");
+    for (const s of note.segments) {
+        L.push(`    - range: [${s.range[0]}, ${s.range[1]}]`);
+        L.push(`      kind: ${s.kind}`);
+        L.push(`      turns: [${s.turns.join(", ")}]`);
+        L.push(`      tools: [${s.tools.join(", ")}]`);
+        L.push(`      why: ${q(s.why)}`);
     }
-    return { turns, tools };
+    return L.join("\n");
 }

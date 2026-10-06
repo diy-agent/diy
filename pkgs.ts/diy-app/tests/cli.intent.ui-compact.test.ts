@@ -2,7 +2,7 @@
 // ═══════════════════════════════════════════════════════════════
 // 🎯 压缩会话 UI 意图验证（真实 renderer + CDP 原生点击）
 //
-// 需求（##246）：token 窗口面板旁的「压缩」大按钮 → 打开压缩面板（保留 N 轮 + 工具结果选项
+// 需求（##246）：token 窗口面板旁的「压缩」大按钮 → 打开压缩面板（保留 N 轮 + 内容/工具结果选项
 //   + 事实行）→「压缩」→ 当前会话只剩边界后的轮；旧历史仍在（历史会话面板可查）。
 //
 // 分工：三条核心契约（不删历史 / 投递自边界起 / 归档可查）在 cli.intent.agent-local.test.ts
@@ -116,8 +116,9 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
     );
     await ui.clickSelector('[aria-label="压缩会话上下文"]');
     const text = await waitUntil(a11yText, (t) => t.includes("① 保留范围"), { label: "压缩面板上屏" });
-    expect(text).toContain("② 工具结果");
-    expect(text).toContain("③ 计算历史摘要");
+    expect(text).toContain("② 内容");
+    expect(text).toContain("③ 工具结果");
+    expect(text).toContain("④ 计算历史摘要");
     // 两个 view 用统一的折叠框模式（标题条可点）
     expect(text).toContain("压缩选项");
     expect(text).toContain("压缩后估算");

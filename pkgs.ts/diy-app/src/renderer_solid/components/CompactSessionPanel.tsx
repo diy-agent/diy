@@ -334,7 +334,8 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                         max={Math.max(1, turnCount())}
                                         step="1"
                                         class="range range-primary range-sm w-full"
-                                        value={pol().keepTurns}
+                                        value={pol().keepTurns === "all" ? turnCount() : pol().keepTurns}
+                                        disabled={pol().keepTurns === "all"}
                                         aria-label="保留最近轮数"
                                         onInput={(e) => setPol({ keepTurns: Number(e.currentTarget.value) })}
                                     />
@@ -342,10 +343,59 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                         保留最近 <b>{pol().keepTurns}</b> 轮（共 {turnCount()} 轮）
                                         {pol().keepTurns === 0 ? " · 全部清零" : ""}
                                     </div>
+                                    {/* "全留"必须单列一个开关：滑到最右只能留"共 N 轮"，而轮数是会长的 ——
+                                        自动压缩的默认策略要的是"保留**所有**轮次的结论"，那是个不写死数字的意图 */}
+                                    <label class="mt-1 flex items-center gap-1.5 cursor-pointer text-caption">
+                                        <input
+                                            type="checkbox"
+                                            class="checkbox checkbox-xs checkbox-primary"
+                                            checked={pol().keepTurns === "all"}
+                                            onChange={(e) => setPol({ keepTurns: e.currentTarget.checked ? "all" : 6 })}
+                                        />
+                                        <span>全部保留（配合②只裁内容 ⇒ 留所有轮次的结论）</span>
+                                    </label>
                                 </section>
 
                                 <section>
-                                    <div class="text-caption font-semibold opacity-70 mb-1">② 工具结果（只对保留部分生效）</div>
+                                    <div class="text-caption font-semibold opacity-70 mb-1">② 内容（留过程 还是 只留结论）</div>
+                                    <div class="flex flex-col gap-1 text-body">
+                                        <label class="flex items-center gap-1.5 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                class="radio radio-xs radio-primary"
+                                                checked={(pol().content ?? "all") === "all"}
+                                                onChange={() => setPol({ content: "all" })}
+                                            />
+                                            <span>全部（用户 + 助手文本 + 工具过程）</span>
+                                        </label>
+                                        <label class="flex items-center gap-1.5 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                class="radio radio-xs radio-primary"
+                                                checked={pol().content === "text"}
+                                                onChange={() => setPol({ content: "text" })}
+                                            />
+                                            <span>只留文本（去掉工具调用与结果）</span>
+                                        </label>
+                                        <label class="flex items-center gap-1.5 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                class="radio radio-xs radio-primary"
+                                                checked={pol().content === "conclusion"}
+                                                onChange={() => setPol({ content: "conclusion" })}
+                                            />
+                                            <span>只留结论（每轮只留最后一条助手文本）</span>
+                                        </label>
+                                        <Show when={(pol().content ?? "all") !== "all"}>
+                                            <div class="ml-5 text-caption opacity-60">
+                                                ⓘ 省掉的部分会在历史里**分段标注**（哪几行、为什么省），模型可按行号回取原文
+                                            </div>
+                                        </Show>
+                                    </div>
+                                </section>
+
+                                <section>
+                                    <div class="text-caption font-semibold opacity-70 mb-1">③ 工具结果（只对保留部分生效）</div>
                                     <div class="flex flex-col gap-1 text-body">
                                         {/* asis */}
                                         <label class="flex items-center gap-1.5 cursor-pointer">
@@ -418,7 +468,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                             onChange={(e) => setPol({ summary: e.currentTarget.checked })}
                                         />
                                         <span class="text-body">
-                                            ③ 计算历史摘要并带进新会话
+                                            ④ 计算历史摘要并带进新会话
                                             <span class="block text-caption opacity-60">
                                                 可选（额外调一次模型）。清零只丢会话历史，任务记忆仍在任务正文里。
                                             </span>

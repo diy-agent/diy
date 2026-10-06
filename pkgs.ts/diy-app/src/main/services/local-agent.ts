@@ -33,6 +33,9 @@ import {
     blocksToMessages,
     danglingStopPatches,
     interruptedToolPatches,
+    projectAll,
+    selectHistory,
+    type DeliveryOpts,
     type Op,
     type JSONVal,
 } from "./local-blocks";
@@ -52,7 +55,12 @@ import {
     type UsageLike,
 } from "../../shared/usage";
 import { buildDelivery } from "../../shared/context/delivery";
-import { collectDroppedFacts, parseDroppedSegment, renderDroppedNote, type DroppedSegment } from "../../shared/context/dropped";
+import {
+    parseDroppedNote,
+    renderDroppedNote,
+    type DroppedNote,
+    type DroppedSegment,
+} from "../../shared/context/dropped";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
@@ -67,6 +75,7 @@ import {
     listTurnIds,
     keptTurnsByMessageCount,
     keptTurnsOf,
+    type ContentPolicy,
     normalizePolicy,
     parseCompactLog,
     resolveBoundary,
@@ -313,32 +322,60 @@ function messageTurnsOf(store: BlockStore): string[] {
 }
 
 /**
- * 被省区间的**事实**（行号/轮/工具/原因），数据源是同一次全量投影。
+ * 被省内容的**分段事实**（行号区间 / 类别 / 轮 / 工具 / 原因）—— 数据源与投递**同一次投影**。
  *
- * 返回 null 的两种情形都是"宁可不写也不说谎"：
- *   · 没有被省的消息（首条保留就是第一条）—— 没什么可注；
- *   · 保留起点在投影里找不到（日志被换/跨机器）—— 此时 blocksToMessages 会**退化为全投**，
- *     注记却会指向一段其实完整发出去的历史，那是误导。
+ * 为什么必须分段（##269 D3b）：`content` 轴会在**保留的轮内部**也省内容（工具链路、过程性文本）。
+ * 只报"前缀裁了多少轮"会让模型以为保留轮是完整的 —— 那是说谎。
+ * 于是：整轮被裁的段标 `kind:"turns"`，保留轮内被裁的段标 `kind:"content"`。
+ *
+ * 判据完全用下标（不做文本解析）：同一份全量投影跑两次选择 —— 只做轮级 vs 轮级+内容级，
+ * 差集即 content 段（选择是纯函数，两次结果必然自洽；两份判据各写一遍才会分叉）。
  */
-export function droppedSegmentOf(
+export function droppedSegmentsOf(
     store: BlockStore,
-    sinceTurnId: string | null | undefined,
+    opts: { sinceTurnId: string | null | undefined; content: ContentPolicy },
     policy: CompactPolicy,
-): DroppedSegment | null {
-    if (sinceTurnId === undefined) return null; // 全投（未压缩）
-    const all = blocksToMessages(store, { withIndex: true });
-    // sinceTurnId=null（全清那刻尚无新轮）→ 全部都在被省侧
-    const firstKept = sinceTurnId === null ? all.length : all.findIndex((m) => m.turn === sinceTurnId);
-    if (firstKept < 0) return null; // 找不到保留起点 → 投影实际是全投
-    if (firstKept === 0) return null; // 无消息被省
-    const facts = collectDroppedFacts(all.slice(0, firstKept));
-    return {
-        range: [1, firstKept],
-        turns: facts.turns,
-        messages: firstKept,
-        tools: facts.tools,
-        why: droppedWhyOf(policy, facts.turns.length),
-    };
+): DroppedNote | null {
+    const { sinceTurnId } = opts;
+    if (sinceTurnId === undefined && opts.content === "all") return null; // 未压缩
+    const all = projectAll(store);
+    // 只做轮级选择（"轮级之外的裁"都是 content 裁）
+    const turnsOnly = selectHistory(all, { sinceTurnId }).dropped;
+    const full = selectHistory(all, { sinceTurnId, content: opts.content }).dropped;
+    if (full.length === 0) return null;
+    const byTurns = new Set(turnsOnly);
+
+    // 连续且同类 → 合成一段（段数越少，注记越短；语义不变）
+    type Run = { from: number; to: number; kind: "turns" | "content"; idx: number[] };
+    const runs: Run[] = [];
+    for (const i of full) {
+        const kind: "turns" | "content" = byTurns.has(i) ? "turns" : "content";
+        const cur = runs[runs.length - 1];
+        if (cur && i === cur.to + 1 && cur.kind === kind) {
+            cur.to = i;
+            cur.idx.push(i);
+        } else runs.push({ from: i, to: i, kind, idx: [i] });
+    }
+    const segments: DroppedSegment[] = runs.map((r) => {
+        const msgs = r.idx.map((i) => all[i]!);
+        const turns: string[] = [];
+        const tools: string[] = [];
+        for (const m of msgs) {
+            const t = m.turn ?? "";
+            if (t && !turns.includes(t)) turns.push(t);
+            for (const p of Array.isArray(m.content) ? (m.content as { toolName?: unknown }[]) : []) {
+                if (typeof p.toolName === "string" && !tools.includes(p.toolName)) tools.push(p.toolName);
+            }
+        }
+        return {
+            range: [r.from + 1, r.to + 1] as [number, number],
+            kind: r.kind,
+            turns,
+            tools,
+            why: r.kind === "turns" ? droppedWhyOf(policy, turns.length) : contentWhyOf(policy),
+        };
+    });
+    return { total: full.length, segments };
 }
 
 /** 为什么被省 —— 由**策略**推导（不是模型写的、也不是猜测） */
@@ -349,6 +386,13 @@ function droppedWhyOf(policy: CompactPolicy, turns: number): string {
     return unit === "turns"
         ? `压缩策略：只保留最近 ${count} 轮（此处含被省去的 ${turns} 轮）`
         : `压缩策略：只保留最近 ${count} 条消息，余下的整轮保留（此处含被省去的 ${turns} 轮）`;
+}
+
+/** 保留轮**内部**被省掉的内容，为什么被省（同样是策略推导，不是猜测） */
+function contentWhyOf(policy: CompactPolicy): string {
+    return policy.content === "conclusion"
+        ? "压缩策略：只留结论（省去工具调用/结果与过程性文本）"
+        : "压缩策略：只留文本（省去工具调用与结果）";
 }
 
 /** 原始流 dump（仅 DIY_RAW_STREAM_DUMP=1 时写）：ai-sdk 的 part 原样落盘，用于研究“Op 是否漏信息” */
@@ -613,7 +657,7 @@ function optsFor(
     policy: CompactPolicy,
     keptFromTurnId: string | null | undefined,
     collect?: ClippedToolDetail[],
-): Parameters<typeof blocksToMessages>[1] {
+): DeliveryOpts {
     return makeDeliveryTransform(policy, keptFromTurnId, toolOutRelPath, collect);
 }
 
@@ -1132,27 +1176,24 @@ export class LocalAgentManager {
         /** 原文路径用（注记里的 file 字段）；view 路径与真发同一个 taskUri */
         taskUriOf = "",
     ): ModelMessage[] {
-        // content 轴：**已定义/已校验/已落账**，但投影实现（只留文本 / 只留结论）尚未做 ——
-        // 此处**出声**而不是静默按 all 走（静默 = 界面上的旋钮撒谎，用户拧了没反应还以为生效了）。
-        if (policy && policy.content !== "all") {
-            console.warn(
-                `[local-agent] content="${policy.content}" 尚未实现，本轮按 all 投递（##269 D3 待做）`,
-            );
-        }
-        const opts = policy ? optsFor(policy, sinceTurnId, collect) : {};
+        const opts: DeliveryOpts = policy ? optsFor(policy, sinceTurnId, collect) : {};
         const kept = blocksToMessages(store, opts) as unknown as ModelMessage[];
         if (!policy || !this.noteEnabled()) return kept;
-        const raw = droppedSegmentOf(store, sinceTurnId, policy);
+        // 与投递**同一份**选择口径（就是刚下发给 blocksToMessages 的那个 opts 对象）
+        const sinceOf: string | null | undefined = "sinceTurnId" in opts ? opts.sinceTurnId : undefined;
+        const raw = droppedSegmentsOf(store, { sinceTurnId: sinceOf, content: opts.content ?? "all" }, policy);
         if (!raw) return kept;
         // 异常数据不许投出去（写坏的结构比不写更糟 —— 模型会照着它去回取错的区间）
-        const parsed = parseDroppedSegment(raw);
+        const parsed = parseDroppedNote(raw);
         if (!parsed.ok) {
-            console.error(`[local-agent] 压缩注记结构非法，已跳过（$异常=${parsed.issues.join("；")}）`);
+            console.error(`[local-agent] 压缩注记结构非法，已跳过（异常=${parsed.issues.join("；")}）`);
             return kept;
         }
-        const seg = parsed.value;
         const key = keyOf(taskUriOf);
-        const note = renderDroppedNote(seg, { file: `local/${key}.llm.jsonl`, absPath: llmFile(taskUriOf) });
+        const note = renderDroppedNote(parsed.value, {
+            file: `local/${key}.llm.jsonl`,
+            absPath: llmFile(taskUriOf),
+        });
         // 注记 + 保留首条（必为 user）→ 合并成一条：provider 不收连续同角色
         return normalizeUserRuns([{ role: "user", content: note }, ...kept]);
     }

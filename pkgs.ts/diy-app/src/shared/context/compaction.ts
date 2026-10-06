@@ -87,8 +87,13 @@ export const KeepPolicySchema = z.object({
      * 轮数随会话变，写死数字要么裁掉结论、要么留不住；`all` 才是准确表达。
      */
     count: z
-        .union([z.number(), z.literal("all")])
-        .describe('保留数量；数字 = 保留最近 N；"all" = 全留轮次；0 = 全部清零'),
+        .union([
+            // coerce：CLI 把选项当字符串传（`--keep-turns 1`），不 coerce 的话 union 直接判非法
+            // （实测：exit=2 "keepTurns: Invalid input"）。RPC/账本传数字时 coerce 是恒等变换。
+            z.coerce.number().describe("保留最近 N（0 = 全部清零）"),
+            z.literal("all").describe("全留轮次（配合 content 只裁内容）"),
+        ])
+        .describe('保留数量：数字 = 保留最近 N；"all" = 全留轮次；0 = 全部清零'),
 });
 
 /** ② 内容轴：留过程还是只留结论 */
@@ -183,7 +188,15 @@ export function normalizePolicy(p: unknown): CompactPolicy {
     const legacyCount = src["keepTurns"];
     const unit = keep0?.unit === "messages" || src["keepUnit"] === "messages" ? "messages" : "turns";
     const rawCount = keep0?.count ?? legacyCount;
-    const count: number | "all" = rawCount === "all" ? "all" : posNum(rawCount, DEFAULT_KEEP_TURNS, 0);
+    // 数字也可能是字符串（CLI/手写 YAML 都常见）—— 宽松收，"初版紧凑、扩展松散"
+    const numOf = (v: unknown): number | null => {
+        if (typeof v === "number" && Number.isFinite(v) && v >= 0) return Math.floor(v);
+        if (typeof v === "string" && /^\s*\d+\s*$/.test(v)) return Number(v);
+        return null;
+    };
+    // ⚠️ 负数**不**夹成 0：0 是「全部清零」（会话硬切换），而负数只可能是笔误/脏数据 ——
+    //    把 -1 解成"清空会话"是灾难性误读，故一律回落缺省（6）。
+    const count: number | "all" = rawCount === "all" ? "all" : (numOf(rawCount) ?? DEFAULT_KEEP_TURNS);
 
     const content0 = src["content"];
     const content: ContentPolicy =
@@ -404,7 +417,9 @@ export function clipToolResult(text: string, toolResult: ToolResultPolicy, opts:
  */
 export interface DeliveryTransform {
     sinceTurnId?: string | null;
-    transformToolResult?: (b: { id: string; tool: string; title: string; output: string }) => string;
+    /** 内容轴：留过程还是只留结论（选择阶段的判据，见 local-blocks 的 selectHistory） */
+    content?: ContentPolicy;
+    transformToolResult?: (b: { id: string; tool: string; output: string }) => string;
 }
 
 /**
@@ -422,6 +437,8 @@ export function makeDeliveryTransform(
 ): DeliveryTransform {
     const opts: DeliveryTransform = {};
     if (keptFromTurnId !== undefined) opts.sinceTurnId = keptFromTurnId;
+    // 内容轴随策略一起下发（选择阶段用）；"all" 是缺省、不必写
+    if (policy.content !== "all") opts.content = policy.content;
     if (policy.toolResult.render !== "asis") {
         opts.transformToolResult = ({ id, output }) => {
             const r = clipToolResult(output, policy.toolResult, { origPath: origPathOf(id) });
