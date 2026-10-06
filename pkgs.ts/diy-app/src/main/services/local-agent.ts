@@ -52,6 +52,7 @@ import {
     type UsageLike,
 } from "../../shared/usage";
 import { buildDelivery } from "../../shared/context/delivery";
+import { collectDroppedFacts, renderDroppedNote, type DroppedSegment } from "../../shared/context/dropped";
 import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
 import { statFromStep } from "../../shared/context/stats";
@@ -300,6 +301,42 @@ function appendUsage(taskUri: string, rec: StepUsageRecord): void {
     maybeRecordMeasure(taskUri, rec);
 }
 
+/**
+ * 被省区间的**事实**（行号/轮/工具/原因），数据源是同一次全量投影。
+ *
+ * 返回 null 的两种情形都是"宁可不写也不说谎"：
+ *   · 没有被省的消息（首条保留就是第一条）—— 没什么可注；
+ *   · 保留起点在投影里找不到（日志被换/跨机器）—— 此时 blocksToMessages 会**退化为全投**，
+ *     注记却会指向一段其实完整发出去的历史，那是误导。
+ */
+export function droppedSegmentOf(
+    store: BlockStore,
+    sinceTurnId: string | null | undefined,
+    policy: CompactPolicy,
+): DroppedSegment | null {
+    if (sinceTurnId === undefined) return null; // 全投（未压缩）
+    const all = blocksToMessages(store, { withIndex: true });
+    // sinceTurnId=null（全清那刻尚无新轮）→ 全部都在被省侧
+    const firstKept = sinceTurnId === null ? all.length : all.findIndex((m) => m.turn === sinceTurnId);
+    if (firstKept < 0) return null; // 找不到保留起点 → 投影实际是全投
+    if (firstKept === 0) return null; // 无消息被省
+    const facts = collectDroppedFacts(all.slice(0, firstKept));
+    return {
+        range: [1, firstKept],
+        turns: facts.turns,
+        messages: firstKept,
+        tools: facts.tools,
+        why: droppedWhyOf(policy, facts.turns.length),
+    };
+}
+
+/** 为什么被省 —— 由**策略**推导（不是模型写的、也不是猜测） */
+function droppedWhyOf(policy: CompactPolicy, turns: number): string {
+    return policy.keepTurns === 0
+        ? `压缩策略：会话清零（此处含被省去的 ${turns} 轮）`
+        : `压缩策略：只保留最近 ${policy.keepTurns} 轮（此处含被省去的 ${turns} 轮）`;
+}
+
 /** 原始流 dump（仅 DIY_RAW_STREAM_DUMP=1 时写）：ai-sdk 的 part 原样落盘，用于研究“Op 是否漏信息” */
 function rawFile(taskUri: string): string {
     return path.join(localDir(), `${keyOf(taskUri)}.raw.jsonl`);
@@ -412,8 +449,9 @@ function readJsonl<T>(path: string): T[] {
 //   · `sessionIdOf` **不换**（##230 实测：缓存按键于内容前缀、64 token 块、跨 session 共享；
 //     换它无收益、反有路由亲和风险）。清零 = 不发送旧内容，纯请求层的事。
 
-/** 压缩账本（append-only：每行一条 compact/measure/undo 事件） */
-function compactFile(taskUri: string): string {
+/** 压缩账本（append-only：每行一条 compact/measure/undo 事件）。
+ *  导出供测试构造「已压缩」的落盘状态（key 算法不复制到测试里）。 */
+export function compactFile(taskUri: string): string {
     return path.join(localDir(), `${keyOf(taskUri)}.compact.jsonl`);
 }
 
@@ -1030,14 +1068,72 @@ export class LocalAgentManager {
     }
 
     /**
-     * 投递口径的历史消息（与真发同源：压缩边界 + 工具输出裁剪）。
+     * **投递口径的历史**（真发 / 预览 / panel 三处唯一入口）。
+     *
+     * 未压缩 → 与历史行为逐字一致（全量投影）。
+     * 已压缩 → 被省区间渲染成一条 **user 索引注记**，拼在保留部分之前（形式 B）：
+     *   messages 保持原样（provider 最友好、前缀缓存不砸），结构化索引只出现在"被省的位置"。
+     *   注记与紧邻的保留首条 user 会被 normalizeUserRuns 合并成一条（provider 拒连续同角色）。
+     *
+     * 行号口径：llm.jsonl 只增且**第 i 行 = 全量投影第 i 条**（加载时已对账/补齐），
+     * 故此处用全量投影的序号当行号 —— 它是模型回取时的真实落点。
+     */
+    private deliveryHistory(
+        taskUri: string,
+        store: BlockStore,
+        collect?: ClippedToolDetail[],
+    ): ModelMessage[] {
+        const b = resolveBoundary(readCompactLog(taskUri));
+        return this.buildHistory(store, b?.policy ?? null, b ? this.sinceTurnIdOf(taskUri) : undefined, collect, taskUri);
+    }
+
+    /** 面板参数预览用（给定 policy + 边界现算，不读生效账本）—— 与真发同一条构造链 */
+    private deliveryHistoryForView(
+        store: BlockStore,
+        policy: CompactPolicy,
+        keptFromTurnId: string | null | undefined,
+        taskUri: string,
+    ): ModelMessage[] {
+        return this.buildHistory(store, policy, keptFromTurnId, undefined, taskUri);
+    }
+
+    /**
+     * 投递历史的**唯一构造**：原生投影（+ 可选索引注记）。
+     * policy=null / sinceTurnId=undefined ⇒ 未压缩 ⇒ 与历史行为逐字一致。
+     */
+    private buildHistory(
+        store: BlockStore,
+        policy: CompactPolicy | null,
+        sinceTurnId: string | null | undefined,
+        collect?: ClippedToolDetail[],
+        /** 原文路径用（注记里的 file 字段）；view 路径与真发同一个 taskUri */
+        taskUriOf = "",
+    ): ModelMessage[] {
+        const opts = policy ? optsFor(policy, sinceTurnId, collect) : {};
+        const kept = blocksToMessages(store, opts) as unknown as ModelMessage[];
+        if (!policy || !this.noteEnabled()) return kept;
+        const seg = droppedSegmentOf(store, sinceTurnId, policy);
+        if (!seg) return kept;
+        const key = keyOf(taskUriOf);
+        const note = renderDroppedNote(seg, { file: `local/${key}.llm.jsonl`, absPath: llmFile(taskUriOf) });
+        // 注记 + 保留首条（必为 user）→ 合并成一条：provider 不收连续同角色
+        return normalizeUserRuns([{ role: "user", content: note }, ...kept]);
+    }
+
+    /** 索引注记开关（默认开；`DIY_CTX_HISTORY_NOTE=0` 关 —— 对照实验用，将来收编进 policy） */
+    private noteEnabled(): boolean {
+        return process.env["DIY_CTX_HISTORY_NOTE"] !== "0";
+    }
+
+    /**
+     * 投递口径的历史消息（与真发同源：压缩边界 + 索引注记 + 工具输出裁剪）。
      * **只读**：自己 replay ops，不加载会话、不落盘 —— 预览用，不应有副作用。
      * （不能用 llm.jsonl：那是 append-only 的**全量**日志，含已被压掉的轮。）
      */
     deliveryMessages(taskUri: string): ModelMessage[] {
         const store = new BlockStore();
         for (const op of readJsonl<Op>(opsFile(taskUri))) store.apply(op);
-        return blocksToMessages(store, this.deliveryOptsOf(taskUri)) as unknown as ModelMessage[];
+        return this.deliveryHistory(taskUri, store);
     }
 
     listModels(): LocalModel[] {
@@ -1158,8 +1254,9 @@ export class LocalAgentManager {
         const tools = buildTools(cwd, L, taskUri);
         const store = new BlockStore();
         for (const op of readJsonl<Op>(opsFile(taskUri))) store.apply(op);
+        // 与真发**同一条链**（含压缩注记）：面板里的"压缩后预览"就是这一份
         const history = withRuntime(
-            blocksToMessages(store, optsFor(policy, keptFromTurnId)) as unknown as ModelMessage[],
+            this.deliveryHistoryForView(store, policy, keptFromTurnId, taskUri),
             delivery.runtime.text,
         );
         const summaryText = summaryOverride !== undefined ? summaryOverride : this.effectiveSummary(taskUri);
@@ -1864,10 +1961,7 @@ export class LocalAgentManager {
             };
             const sent: ModelMessage[] = normalizeUserRuns(
                 withSummary(
-                    withRuntime(
-                        blocksToMessages(sess.store, this.deliveryOptsOf(taskUri)) as unknown as ModelMessage[],
-                        delivery.runtime.text,
-                    ),
+                    withRuntime(this.deliveryHistory(taskUri, sess.store), delivery.runtime.text),
                     this.effectiveSummary(taskUri),
                 ),
             );
