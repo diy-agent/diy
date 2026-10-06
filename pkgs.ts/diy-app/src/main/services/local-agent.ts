@@ -52,7 +52,8 @@ import {
     type UsageLike,
 } from "../../shared/usage";
 import { buildDelivery } from "../../shared/context/delivery";
-import { collectDroppedFacts, renderDroppedNote, type DroppedSegment } from "../../shared/context/dropped";
+import { collectDroppedFacts, parseDroppedSegment, renderDroppedNote, type DroppedSegment } from "../../shared/context/dropped";
+import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
 import { statFromStep } from "../../shared/context/stats";
@@ -1029,7 +1030,16 @@ export class LocalAgentManager {
                 return k;
             }
         }
-        console.warn(`[local-agent] llm 全量日志与 ops 投影不一致（第 ${k + 1} 条起），整份重建 ${fp}`);
+        // 不一致才做一次读侧校验：把"为什么坏"写进日志（异常数据必须可见，不许静默重建）。
+        // 只在罕见路径上跑，热路径零成本。
+        let why = "";
+        try {
+            const an = readLlmLog(actual.join("\n")).anomalies;
+            if (an.length > 0) why = `；异常行：${describeAnomalies(an)}`;
+        } catch {
+            /* 诊断失败不影响重建 */
+        }
+        console.warn(`[local-agent] llm 全量日志与 ops 投影不一致（第 ${k + 1} 条起），整份重建 ${fp}${why}`);
         try {
             writeFileSync(`${fp}.tmp`, expect.map((l) => `${l}\n`).join(""), "utf-8");
             renameSync(`${fp}.tmp`, fp);
@@ -1112,8 +1122,15 @@ export class LocalAgentManager {
         const opts = policy ? optsFor(policy, sinceTurnId, collect) : {};
         const kept = blocksToMessages(store, opts) as unknown as ModelMessage[];
         if (!policy || !this.noteEnabled()) return kept;
-        const seg = droppedSegmentOf(store, sinceTurnId, policy);
-        if (!seg) return kept;
+        const raw = droppedSegmentOf(store, sinceTurnId, policy);
+        if (!raw) return kept;
+        // 异常数据不许投出去（写坏的结构比不写更糟 —— 模型会照着它去回取错的区间）
+        const parsed = parseDroppedSegment(raw);
+        if (!parsed.ok) {
+            console.error(`[local-agent] 压缩注记结构非法，已跳过（$异常=${parsed.issues.join("；")}）`);
+            return kept;
+        }
+        const seg = parsed.value;
         const key = keyOf(taskUriOf);
         const note = renderDroppedNote(seg, { file: `local/${key}.llm.jsonl`, absPath: llmFile(taskUriOf) });
         // 注记 + 保留首条（必为 user）→ 合并成一条：provider 不收连续同角色

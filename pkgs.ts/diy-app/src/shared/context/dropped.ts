@@ -13,24 +13,44 @@
 // 模型在自己缺信息时该能**回取**：去哪找（file）、找哪几行（range）、那一坨是什么（turns/tools/why）。
 // 所以每个字段都指向一个"可动作"的事实，而不是给人看的统计报表。
 //
-// ── 为什么附 schema 注释 ──
+// ── 为什么附 schema 注释（且**从 zod 派生**）──
 // 实测（用户反馈）：模型对裸字段名常常理解偏差（把 range 当成字符偏移、把 turns 当轮数）。
 // 于是把字段含义写在 YAML 上方的注释里 —— 注释也在它的上下文里，读起来零歧义。
+// 但注释**不许手写**（手写 = 第二真源，改字段忘改注释就撒谎）：从下面的 zod 定义派生。
 
-/** 一段被省去的历史（当前压缩只有"前缀整段"，故注记通常只有一段；保留数组形态给 D3 的段内丢） */
-export interface DroppedSegment {
-    /** 原文行号区间（闭区间；1-based，等于 llm.jsonl 的物理行号） */
-    range: [number, number];
-    /** 覆盖到的轮 id（按出现序去重） */
-    turns: string[];
-    /** 这段里被省去的消息条数 */
-    messages: number;
-    /** 涉及的工具名（按出现序去重；空 = 这段只有文本/思考） */
-    tools: string[];
-    /** 为什么被省（人读的一句话；由策略推导，不是模型生成） */
-    why: string;
-    /** 一句话概述（勾选摘要并生成后才有；没有就不写这一行） */
-    gist?: string;
+import { z } from "zod";
+import { renderFieldDocs } from "../schema-doc";
+
+/**
+ * 一段被省去的历史（当前压缩只有"前缀整段"，故注记通常只有一段；
+ * D3 的 `content: "text" | "conclusion"` 会产生**段内丢** → 那时就是多段）。
+ *
+ * 这里是**投递产物**（要贴给模型看），故用严格 `z.object`：多出字段没有意义，
+ * 与日志那种"扩展松散"的读侧策略相反 —— 见 log-schema.ts。
+ */
+export const DroppedSegmentSchema = z.object({
+    range: z
+        .tuple([z.number(), z.number()])
+        .describe("被省去的原文行号（含两端；1-based，等于 llm.jsonl 的物理行号）"),
+    turns: z.array(z.string()).describe("被省去覆盖的轮次 id（t+毫秒时间戳）"),
+    messages: z.number().describe("被省去的消息条数"),
+    tools: z.array(z.string()).describe("这段里出现过的工具名（空 = 只有文本/思考）"),
+    why: z.string().describe("为什么被省（策略推导，非模型生成）"),
+    gist: z.string().optional().describe("一句话概述（勾选摘要并生成后才有内容）"),
+});
+
+export type DroppedSegment = z.infer<typeof DroppedSegmentSchema>;
+
+/**
+ * 校验一段注记数据。失败 = **异常数据**（用户 2026-10-06：不当成"可有可无"糊过去）。
+ * 调用方据此决定：不投递（宁可不写也不写坏的）还是记一笔异常。
+ */
+export function parseDroppedSegment(
+    x: unknown,
+): { ok: true; value: DroppedSegment } | { ok: false; issues: string[] } {
+    const r = DroppedSegmentSchema.safeParse(x);
+    if (r.success) return { ok: true, value: r.data };
+    return { ok: false, issues: r.error.issues.map((i) => `${i.path.join(".") || "(根)"}: ${i.message}`) };
 }
 
 export interface DroppedNoteCtx {
@@ -61,13 +81,8 @@ export function renderDroppedNote(seg: DroppedSegment, ctx: DroppedNoteCtx): str
     if (seg.turns.length > 0) {
         L.push(`#   · 回取（按轮）：bash 里 \`grep -n '"turn":"${seg.turns[0]}"' <原文>\``);
     }
-    L.push("# 字段：");
-    L.push("#   range    被省去的原文行号（含两端）");
-    L.push("#   turns    被省去覆盖的轮次 id（t+毫秒时间戳，可用它给行号定位）");
-    L.push("#   messages 被省去的消息条数");
-    L.push("#   tools    这段里出现过的工具名");
-    L.push("#   why      为什么被省（策略推导，非模型生成）");
-    L.push("#   gist     一句话概述（若有）");
+    L.push("# 字段（由 zod 定义派生，勿手写）：");
+    L.push(...renderFieldDocs(DroppedSegmentSchema));
     L.push("dropped:");
     L.push(`  range: [${seg.range[0]}, ${seg.range[1]}]`);
     L.push(`  turns: [${seg.turns.join(", ")}]`);
