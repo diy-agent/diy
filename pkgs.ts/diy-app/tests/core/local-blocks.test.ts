@@ -413,3 +413,72 @@ describe("blocksToMessages 投递选项（压缩落点）", () => {
         expect(value).toBe(INTERRUPTED_TOOL_NOTICE);
     });
 });
+
+describe("中断 tool 的投递恒定性（回归：收敛动作不得改变投递结果）", () => {
+    /** t1 里一个 tool c1：args 已到、无 output（未收敛态） */
+    function interruptedTurn(): BlockStore {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: "t1", kind: "turn" });
+        s.apply({ op: "start", id: "c1", kind: "tool", parent: "t1", meta: { tool: "bash" } });
+        s.apply({ op: "patch", id: "c1", fields: { args: { command: "sleep 9" } } });
+        s.apply({ op: "stop", id: "c1" });
+        s.apply({ op: "stop", id: "t1" });
+        return s;
+    }
+    const valueOf = (m: ReturnType<typeof blocksToMessages>) =>
+        (m.find((x) => x.role === "tool")!.content as Array<{ output: { value: string } }>)[0]!.output.value;
+
+    it("已收敛的中断块（output 已写契约文案）仍不被裁剪 —— 否则本地补的错误信息被当历史投递", () => {
+        const s = interruptedTurn();
+        for (const op of interruptedToolPatches(s)) s.apply(op); // 模拟 main 的落盘收敛
+        expect(valueOf(blocksToMessages(s, { transformToolOutput: () => "改掉了" }))).toBe(
+            INTERRUPTED_TOOL_NOTICE,
+        );
+    });
+
+    it("收敛前后投递**逐字一致**（D1「stop 即定稿」的结构前提）", () => {
+        const before = blocksToMessages(interruptedTurn(), { transformToolOutput: () => "改掉了" });
+        const s = interruptedTurn();
+        for (const op of interruptedToolPatches(s)) s.apply(op);
+        const after = blocksToMessages(s, { transformToolOutput: () => "改掉了" });
+        expect(JSON.stringify(after)).toBe(JSON.stringify(before));
+    });
+});
+
+describe("tool-result 的 origin 自证位（落盘用；真发不带）", () => {
+    /** 三种来源各一条：真实输出 / 中断终态 / 跑完无输出 */
+    function three(): BlockStore {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: "t1", kind: "turn" });
+        s.apply({ op: "start", id: "ok", kind: "tool", parent: "t1", meta: { tool: "bash" } });
+        s.apply({ op: "patch", id: "ok", fields: { args: { command: "ls" } } });
+        s.apply({ op: "delta", id: "ok", fields: { output: "a" } });
+        s.apply({ op: "patch", id: "ok", fields: { status: "done" } });
+        s.apply({ op: "stop", id: "ok" });
+        s.apply({ op: "start", id: "int", kind: "tool", parent: "t1", meta: { tool: "bash" } });
+        s.apply({ op: "patch", id: "int", fields: { args: { command: "sleep 9" } } });
+        s.apply({
+            op: "patch",
+            id: "int",
+            fields: { status: INTERRUPTED_STATUS, output: INTERRUPTED_TOOL_NOTICE },
+        });
+        s.apply({ op: "stop", id: "int" });
+        s.apply({ op: "start", id: "emp", kind: "tool", parent: "t1", meta: { tool: "bash" } });
+        s.apply({ op: "patch", id: "emp", fields: { args: { command: "true" } } });
+        s.apply({ op: "patch", id: "emp", fields: { status: "done" } });
+        s.apply({ op: "stop", id: "emp" });
+        s.apply({ op: "stop", id: "t1" });
+        return s;
+    }
+    const origins = (withOrigin: boolean) =>
+        blocksToMessages(three(), withOrigin ? { withOrigin: true } : undefined)
+            .filter((x) => x.role === "tool")
+            .map((x) => (x.content as Array<{ origin?: string }>)[0]!.origin);
+
+    it("缺省（真发）= 不写 origin，保持原生 part 形状", () => {
+        expect(origins(false)).toEqual([undefined, undefined, undefined]);
+    });
+    it("withOrigin = 三值可程序化区分：tool / interrupted / empty", () => {
+        expect(origins(true)).toEqual(["tool", "interrupted", "empty"]);
+    });
+});

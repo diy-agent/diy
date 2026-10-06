@@ -356,11 +356,22 @@ export interface LocalToolCallPart {
     toolName: string;
     input: JSONVal;
 }
+/**
+ * 工具结果的**来源**（自证位）：`output.value` 一个槽三义共用，靠它才分得清。
+ *   "tool"        —— 工具真实产出（唯一允许被裁剪的东西）
+ *   "interrupted" —— 本地补的中断终态文案（契约文本，永不裁剪；见 INTERRUPTED_TOOL_NOTICE）
+ *   "empty"       —— 工具跑完但没有输出（占位"（空结果）"）
+ * 只写在**落盘/投递的序列化产物**里（`withOrigin`）；真发 provider 前剥掉（原生 part 形状不变）。
+ */
+export type ToolResultOrigin = "tool" | "interrupted" | "empty";
+
 export interface LocalToolResultPart {
     type: "tool-result";
     toolCallId: string;
     toolName: string;
     output: { type: "text"; value: string };
+    /** 自证位（仅 withOrigin 时写；投递默认不带 —— 见 ToolResultOrigin） */
+    origin?: ToolResultOrigin;
 }
 export interface LocalModelMessage {
     role: "user" | "assistant" | "tool";
@@ -381,6 +392,12 @@ export interface DeliveryOpts {
     sinceTurnId?: string | null;
     /** 工具输出裁剪（由 main 注入：同一份纯函数既算预览也算真发，见 shared/context/compaction） */
     transformToolOutput?: (b: { id: string; tool: string; title: string; output: string }) => string;
+    /**
+     * 写 tool-result 的 `origin` 自证位（缺省 false = 原生形状，用于**真发**）。
+     * 落盘（llm.jsonl 全量日志）时置 true —— 于是"这条 value 是工具给的还是本地补的"
+     * 不再靠比对字符串，压缩统计/UI 标记/索引 why 都能程序化取。
+     */
+    withOrigin?: boolean;
 }
 
 /** 块树 → ModelMessage[]（跳过 turn/step 容器与 think） */
@@ -444,30 +461,37 @@ export function blocksToMessages(store: BlockStore, opts?: DeliveryOpts): LocalM
             // 兼容分支（工具正在跑但历史已要发出）仍拿 INTERRUPTED_TOOL_NOTICE 兜底，
             // 不另写文案 —— 保证 UI 与请求永远同源。
             const status = String(b.status ?? "");
-            const doneish =
-                status === "done" || status === "error" || status === INTERRUPTED_STATUS;
-            const raw =
-                typeof b.output === "string" && b.output
-                    ? b.output
-                    : doneish
-                      ? "（空结果）"
-                      : INTERRUPTED_TOOL_NOTICE;
-            // 裁剪只作用于**工具真实输出**（非空、非中断占位）—— 占位文案本身是契约文本，动了就误导模型
+            // ⚠️ 「中断」必须由 **status** 判定，不能由「output 是否非空」判定 ——
+            //    interruptedToolPatches 收敛时会往 output 写上同一句契约文案，于是收敛后
+            //    output 变非空，旧判据（typeof b.output === "string" && b.output）就会把它
+            //    当成工具真实输出送去裁剪：callpath 模式把它换成「[输出已省略（只留调用）…]」，
+            //    并指向一个**根本不存在的** toolout/<id>.txt。同一份历史，投递结果取决于
+            //    "这块有没有被收敛过" —— 是 bug（本地补的错误信息被当作历史投递）。
+            const interrupted = status === INTERRUPTED_STATUS;
+            const realOut = typeof b.output === "string" && b.output !== "";
+            const doneish = status === "done" || status === "error";
+            const raw = interrupted
+                ? INTERRUPTED_TOOL_NOTICE
+                : realOut
+                  ? (b.output as string)
+                  : doneish
+                    ? "（空结果）"
+                    : INTERRUPTED_TOOL_NOTICE;
+            // 裁剪只作用于**工具真实输出**（非空、非中断）—— 契约文本与占位文案动了就误导模型
             const value =
-                transform && typeof b.output === "string" && b.output
+                transform && !interrupted && realOut
                     ? transform({ id: b.id, tool: String(b.tool ?? "bash"), title: String(b.title ?? ""), output: raw })
                     : raw;
-            out.push({
-                role: "tool",
-                content: [
-                    {
-                        type: "tool-result",
-                        toolCallId: b.id,
-                        toolName: String(b.tool ?? "bash"),
-                        output: { type: "text", value },
-                    },
-                ],
-            });
+            const origin: ToolResultOrigin =
+                interrupted || (!realOut && !doneish) ? "interrupted" : realOut ? "tool" : "empty";
+            const result: LocalToolResultPart = {
+                type: "tool-result",
+                toolCallId: b.id,
+                toolName: String(b.tool ?? "bash"),
+                output: { type: "text", value },
+            };
+            if (opts?.withOrigin) result.origin = origin;
+            out.push({ role: "tool", content: [result] });
             return;
         }
         for (const c of b.children) walk(c);
