@@ -10,6 +10,7 @@
 - `find.renderer` — `src/renderer_solid/`（Solid，主线）：`components/` 业务组件 · `store/` signal 单例 · `lib/` rpc client 与 `diy.ui.*` handler · `App.tsx` / `main.tsx`
 - `find.shared` — `src/shared/` **跨层契约**（zod schema / 纯函数，main 与 renderer 共用，禁止各处重写）：`task-uri.ts`（URI 解析）· `task-detail.ts` · `task-list.ts`（排序搜索）· `persona.ts` · `prompt-schema.ts` · `session-view.ts` · `usage.ts`（**token 四桶 / 单价 / 金额的唯一口径处**，含 tier 选价与聚合）
 - `find.context` — `src/shared/context/` 上下文树与投递：`README.md` 是**完整约定表**（领域模型 / 投递构造 / 划分真源 / step 快照 / 渲染坑）；投递构造唯一入口 `delivery.ts` 的 `buildDelivery`；划分真源 `$DIY_HOME/context.yaml`（契约 `config.ts`、I/O `src/main/core/context-config.ts`）
+- `find.compact` — 压缩/自动压缩：策略+账本 `shared/context/compaction.ts`（三轴 policy / 选择+渲染 / 账本 v2 分组）· 索引注记 `dropped.ts` + 其**格式说明变量树节点** `history-index.ts` · 缓存 TTL 夹逼 `cache-ttl.ts` · 自动压缩 `auto-compact.ts`（真源 `$DIY_HOME/auto-compact.yaml`，契约 `shared/context/auto-compact.ts`、I/O `src/main/core/auto-compact-config.ts`）· 会话落盘路径唯一出口 `src/main/core/local-paths.ts`
 - `find.serve` — `src/serve/index.ts` 纯 Web 模式（无 Electron）
 - `find.tests` — `tests/`：`cli.intent.*` 意图测试（真实 UI / 隔离 Electron，**跑 `out/` 产物**）· `core/` `services/` 单测（vitest **直读 `src/`**）· 夹具 `electron-test.ts` · `ui-drive.ts` · `shell-test.ts` · `setup.ts`
 - `find.scripts` — 仓库 `scripts/`：`ui-smoke/`（CDP 冒烟）· `cdp-colorscheme-demo.mts` · `repro-epipe-dialog.mts` · `doctor-env.sh`
@@ -44,6 +45,8 @@
 - `rule.golden` — 改内置模版（`src/main/prompts/defaults.ts`）**必须同步** `tests/fixtures/system.golden.txt`（当前内置模版的逐字节快照）。⚠️ `./sha.sh check` **不含 vitest**，不会替你抓到这类失效 —— 改完模版跑 `npx vitest run tests/core/template-dsl-golden.test.ts`
 - `rule.agents-injected` — **本文件会被 `chainOf` 注入 system 提示词**（受 64KB 预算 `SYSTEM_BUDGET_CAP_BYTES` 约束）：长文写 README / 独立文档，这里只留指针
 - `rule.no-silent-catch` — 不要静默吞异常（如切模型曾一律 `catch {}` → 用户以为切了其实没切）
+- `rule.log-vs-config` — **落盘日志**（`local/*.jsonl`）读侧宽松（初版紧凑/扩展松散/缺必填即**异常数据**，见 `log-schema.ts`）；**配置真源**（`context.yaml` / `auto-compact.yaml`）读侧出声回落默认、写侧归一 + 原子写，且**不进 localStorage**（有损 + 两进程各持一份）
+- `pit.compact-triggers` — 自动压缩的三个触发（`systemContextChanged` / `cacheExpired` / `contextWindowOver`）**全是从现成数据可判定的确定事实**（零额外请求），**不含"划不划算"的预测** —— 后者是 ##230#25 明确放弃的评估；改动别把判据换成估算
 - `rule.schema-source` — 需自说明的结构（策略 / 投递注记 / 日志行）一律以 **zod 定义为唯一真源**：字段说明由 `src/shared/schema-doc.ts` 从 `.describe()` 派生，**禁止手写字段表**（手写 = 第二真源，改字段忘改注释就撒谎）；日志读侧校验走 `src/shared/context/log-schema.ts`（初版紧凑 / 扩展松散 / 缺必填即**异常数据**，不计入统计）
 
 ## pit — 坑（反直觉，代码看不出来）
