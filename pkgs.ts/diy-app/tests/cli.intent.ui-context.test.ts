@@ -95,7 +95,8 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     // 请求体：与真发同一条构造链。形态 = [system 段, ...历史, user(runtime), user(占位输入)]
     // （真发同理：runtime 作为独立 user 消息插在**本轮输入之前**，见 runTurn 的 withRuntime）
     //
-    // ⚠️ 形状随缺省模型的 **API 面** 变（缺省模型是 responses 面的 gpt-5.6-luna）：
+    // ⚠️ 形状随缺省模型的 **API 面** 变（缺省模型 = mimo-v2.6-flash，**chat 面**；
+    //    换模型/换面时这里要跟着看）：
     //   chat 面      → messages[]，首项 role=system
     //   responses 面 → input[]，首项 role=developer（system 装在首项）
     // 断言两面都覆盖，别把测试绑死在 chat 面（main 的 template.test.ts 踩过同一个坑）。
@@ -425,7 +426,7 @@ describe("上下文树：UI 上屏（两列 + 请求预览）", () => {
     // ⚠️ 只断言到反引号之前：CM 的 a11y 树把 `` ` `` 拆成独立 token（行内代码会插进分隔节点），
     // 带反引号的整行在 a11y 文本里不存在 —— 与下面 messages/input 那条"判据必须是整行"同一类坑。
     expect(yamlView).toContain("# - 顶层键分两类");
-    // 顶层容器随 API 面变：chat 面 messages / responses 面 input（缺省模型是 responses）。
+    // 顶层容器随 API 面变：chat 面 messages / responses 面 input（缺省模型 mimo = chat 面）。
     // ⚠️ 判据必须是**整行**：CM 编辑器的 a11y 树把 token 拆成独立节点（键与 `:` 各一行），
     // 连写的 `messages:` 在 a11y 文本里根本不存在。
     expect(/^(messages|input)$/m.test(yamlView)).toBe(true);

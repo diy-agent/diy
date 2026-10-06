@@ -472,13 +472,24 @@ export interface SizeSnapshot {
 
 /** 单位成本快照：**按 provider 实算，不能写死**（同一模型各家 k 从 1x 到 50x，见 ##230） */
 export interface RateSnapshot {
+    /** **谁服务的**（实际调用的上游，如 zen-go）——与下面的 `source` 是两件事，别混 */
     provider?: string;
+    /**
+     * **价目真源**（如 `models.dev@2026-10-02`）。
+     * 为什么要与 provider 分开：同一模型多家 provider 报价差到 1x~50x（##230 实测），
+     * 只记 provider 说明不了"这个单价是从哪张表查的"；只记 source 则不知道请求实际走谁。
+     */
+    source?: string;
     model?: string;
     /** 全价（$/1M） */
     input: number;
     /** 缓存读价（$/1M） */
     cacheRead: number;
-    /** k = 全价 ÷ 缓存读价（回本公式的分子；k=50 → 砍一半要 49 步回本） */
+    /**
+     * k = 全价 ÷ 缓存读价（回本公式的分子；k=50 → 砍一半要 49 步回本）。
+     * ⚠️ 落盘前**必须圆整**：不做的话会出现 `50.00000000000001` 这种毛刺（实测），
+     * 而它是给人看的账目数字，不是中间计算量 —— 精度越高越像 bug。
+     */
     k: number;
     asOf?: string;
 }

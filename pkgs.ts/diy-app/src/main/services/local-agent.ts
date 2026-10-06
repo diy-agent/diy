@@ -117,6 +117,8 @@ import {
     costOf,
     DEFAULT_MODEL,
     MODEL_COST_AS_OF,
+    UPSTREAM_PROVIDER,
+    round3,
     isKnownModel,
     LOCAL_MODELS,
     maxOutputTokensOf,
@@ -549,7 +551,8 @@ function maybeRecordMeasure(taskUri: string, rec: StepUsageRecord): void {
         ref: pending.id,
         ts: new Date().toISOString(),
         firstTurnId: rec.turnId,
-        predicted: {},
+        // predicted 只在**真有预测值**时才写：空对象 `{}` 落到盘上毫无信息量，
+        // 只会让读账的人以为"预测过但没算出来"（实测账本里就有这种空壳）。
         actual: {
             windowTotal: b.total,
             inputTotal: b.inputTotal,
@@ -618,8 +621,15 @@ function sizeOfOps(ops: readonly Op[], opts?: Parameters<typeof blocksToMessages
     for (const op of ops) store.apply(op);
     const msgs = blocksToMessages(store, opts);
     const bytes = utf8Bytes(msgs.map((m) => JSON.stringify(m)).join("\n"));
+    // ⚠️ `turns` 必须按**投递口径**数，不能拿 `listTurnIds(ops)`（那是全部轮的个数）。
+    //    旧实现就是这么写的，于是「全部清零」后 after.turns 仍显示 3 —— 一个自相矛盾的账目
+    //    （消息 0 条、却写着 3 轮）。账本要能自证，数字之间不许打架。
+    //    用与投递同一次选择（projectAll + selectHistory），不另算一份判据。
+    const all = projectAll(store);
+    const sel = selectHistory(all, opts ?? {});
+    const turns = new Set(sel.kept.map((i) => all[i]!.turn).filter((x): x is string => !!x)).size;
     return {
-        turns: listTurnIds(ops).length,
+        turns,
         messages: msgs.length,
         bytes,
         estTokens: estimateTokens(bytes),
@@ -1281,11 +1291,16 @@ export class LocalAgentManager {
         const rates = costOf(model, after.estTokens);
         const rateSnap: RateSnapshot | undefined = rates
             ? {
-                  provider: (rates as { source?: string }).source,
+                  // provider = **谁服务的**（我们实际调的上游），不是价目真源名。
+                  // 旧实现把 `rates.source`（"models.dev@…"）填进 provider —— 那是一个自相矛盾的
+                  // 字段（"provider: models.dev" 会让人以为请求走了 models.dev，它只是个价目网站）。
+                  provider: UPSTREAM_PROVIDER,
+                  source: rates.source,
                   model,
                   input: rates.input,
                   cacheRead: rates.cacheRead ?? rates.input,
-                  k: (rates.cacheRead ?? rates.input) > 0 ? rates.input / (rates.cacheRead ?? rates.input) : 0,
+                  // 圆整：这是给人看的账目数字，`50.00000000000001` 这种毛刺只是浮点残渣（实测）
+                  k: round3((rates.cacheRead ?? rates.input) > 0 ? rates.input / (rates.cacheRead ?? rates.input) : 0),
                   asOf: MODEL_COST_AS_OF,
               }
             : undefined;

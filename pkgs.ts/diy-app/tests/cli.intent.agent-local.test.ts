@@ -15,7 +15,8 @@
 //
 // 真发用例**指定 `mimo-v2.6-flash`**（全表最便宜的带工具能力模型，见仓库根 AGENTS.md
 // 「本地 agent 测试用什么模型」）：这些用例只验协议链路，与模型强弱无关，
-// 用默认的 gpt-5.6-luna（output 0.28 → 1.20 $/1M，贵 4 倍）纯属浪费。
+// 不显式指定模型也不必担心浪费（缺省已是最便宜的 mimo-v2.6-flash，用户 2026-10-06 改的），
+// 但显式写出来更稳：缺省值将来若变，这些用例不会悄悄换成贵模型。
 // exceptions：responses 面那条**必须**用 gpt-5.6-luna —— 它测的就是"responses-only
 // 模型不能打到 chat 面"，换模型就测不到那个 api 面。
 // ═══════════════════════════════════════════════════════════════
@@ -262,7 +263,7 @@ describe("agent.local — 控制面（无网络）", () => {
     });
 });
 
-describe("agent.local — 真实对话（zen/go 缺省模型 gpt-5.6-luna）", () => {
+describe("agent.local — 真实对话（zen/go）", () => {
     it.skipIf(!RUN_LLM)(
         "纯文本轮：Op 流四动词齐全 + usage + 落盘重放一致",
         async () => {

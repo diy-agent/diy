@@ -10,10 +10,25 @@
 
 import { ratesOf, type EffectiveRates, type ModelCost } from "./usage";
 
-export const DEFAULT_MODEL = "gpt-5.6-luna";
+/**
+ * 缺省模型。
+ *
+ * 为什么是 `mimo-v2.6-flash`（用户 2026-10-06）：它是全表最便宜的带工具模型
+ * （$0.14 / $0.28 per 1M），而**并行任务多、费用易失控**时默认值必须是最省的那个
+ * —— 用户原话「当前系统的费用失控」「不要用 luna」。要贵的模型请显式选（人物）。
+ * 另见 `~/git/diy/diy/AGENTS.md` 的 `model.default` 约定（测试同样只准便宜档）。
+ */
+export const DEFAULT_MODEL = "mimo-v2.6-flash";
 
 /** zen/go 基址：两个 API 面共用（chat/completions 与 responses 只是路径不同） */
 export const ZEN_BASE_URL = "https://opencode.ai/zen/go/v1";
+
+/**
+ * **实际服务的上游名**（ai-sdk provider 名，与 `createOpenAICompatible({ name })` 一致）。
+ * 与价目真源（`COST_SOURCE` = models.dev）是两件事：这是"请求走了谁"，那是"单价查的哪张表"。
+ * 落账本时两个都要有（##230 实测：同一模型不同 provider 报价差 1x~50x）。
+ */
+export const UPSTREAM_PROVIDER = "zen-go";
 
 /**
  * 模型走的 API 面。**必须逐个模型标注**，因为 zen/go 的 `GET /models` 不返回 API 面信息
@@ -57,6 +72,11 @@ export interface LocalModel {
  * 而且 1 小时是各家公开档位里最常见的量级；实测区间会把它夹紧（见 shared/context/cache-ttl）。
  */
 export const CACHE_TTL_PRIOR_MS = 60 * 60 * 1000;
+
+/** 保留 3 位小数（账目数字：浮点残渣如 50.00000000000001 只会让人以为是 bug） */
+export function round3(x: number): number {
+    return Number.isFinite(x) ? Math.round(x * 1000) / 1000 : x;
+}
 
 /** 某模型的缓存 TTL 先验（缺省见 CACHE_TTL_PRIOR_MS） */
 export function cacheTtlMsOf(modelId: string): number {
