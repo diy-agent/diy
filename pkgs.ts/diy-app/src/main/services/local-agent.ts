@@ -261,10 +261,12 @@ function llmFile(taskUri: string): string {
 
 /**
  * 全量消息日志的序列化行：**不传投递选项**（= 不受压缩边界影响，原文永不动），
- * 但带 `origin` 自证位（落盘用；真发前由投影剥掉）。
+ * 但带两类自证位（落盘用，真发不产生）：
+ *   · 消息级 `turn` / `step` —— 索引位（行号 ↔ 轮/步 互查；开场 user 无 step，见 local-blocks）
+ *   · part 级 `origin` —— 输出槽三义（tool / interrupted / empty）的自证
  */
 function llmLogLines(store: BlockStore): string[] {
-    return blocksToMessages(store, { withOrigin: true }).map((m) => JSON.stringify(m));
+    return blocksToMessages(store, { withOrigin: true, withIndex: true }).map((m) => JSON.stringify(m));
 }
 
 /** 投递快照（每轮真发一条）：投递**事实**，与 raw 那种旁路观测不同 —— UI 的 step/diff 靠它 */

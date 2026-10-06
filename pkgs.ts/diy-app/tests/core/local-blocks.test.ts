@@ -505,3 +505,37 @@ describe("danglingStopPatches：崩溃残留块补 stop", () => {
         expect(danglingStopPatches(s)).toEqual([]);
     });
 });
+
+describe("消息级索引位 turn/step（落盘日志用；真发不带）", () => {
+    /** 一轮：开场 user（挂 turn）+ step 内 assistant 文本 / tool */
+    function turnWithStep(): BlockStore {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: "t1", kind: "turn" });
+        s.apply({ op: "start", id: "t1_u", kind: "text", parent: "t1", meta: { role: "user" } });
+        s.apply({ op: "delta", id: "t1_u", fields: { content: "开场" } });
+        s.apply({ op: "stop", id: "t1_u" });
+        s.apply({ op: "start", id: "t1_s1", kind: "step", parent: "t1" });
+        s.apply({ op: "start", id: "c1", kind: "tool", parent: "t1_s1", meta: { tool: "bash" } });
+        s.apply({ op: "patch", id: "c1", fields: { args: { command: "ls" } } });
+        s.apply({ op: "patch", id: "c1", fields: { status: "done" } });
+        s.apply({ op: "stop", id: "c1" });
+        s.apply({ op: "stop", id: "t1_s1" });
+        s.apply({ op: "stop", id: "t1" });
+        return s;
+    }
+
+    it("缺省（真发）= 不写 turn/step，保持原生形状", () => {
+        for (const m of blocksToMessages(turnWithStep())) {
+            expect(m).not.toHaveProperty("turn");
+            expect(m).not.toHaveProperty("step");
+        }
+    });
+
+    it("withIndex：每条都有 turn；step 内消息另有 step，开场 user 没有（如实反映 parent）", () => {
+        const ms = blocksToMessages(turnWithStep(), { withIndex: true });
+        for (const m of ms) expect(m.turn).toBe("t1");
+        const user = ms.find((m) => m.role === "user")!;
+        expect(user.step).toBeUndefined();
+        for (const m of ms.filter((x) => x.role !== "user")) expect(m.step).toBe("t1_s1");
+    });
+});

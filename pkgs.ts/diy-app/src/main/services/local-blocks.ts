@@ -394,6 +394,14 @@ export interface LocalToolResultPart {
 export interface LocalModelMessage {
     role: "user" | "assistant" | "tool";
     content: string | Array<LocalTextPart | LocalToolCallPart | LocalToolResultPart>;
+    /**
+     * 索引位（仅 withIndex 时写；**落盘日志用**，投递不带）：这条消息属于哪一轮？
+     * 只有 turn 是**必填** —— 开场 user 块（含插话）的 parent 就是 turn，不属于任何 step
+     * （实测 tasks_100：888 条可投递消息里 54 条无 step，全是每轮的开场 user）。
+     */
+    turn?: string;
+    /** 属于哪一步（`<turnId>_s<n>`）；开场 user 与插话没有它 */
+    step?: string;
 }
 
 /**
@@ -416,6 +424,12 @@ export interface DeliveryOpts {
      * 不再靠比对字符串，压缩统计/UI 标记/索引 why 都能程序化取。
      */
     withOrigin?: boolean;
+    /**
+     * 写消息级 `turn`/`step` 索引位（缺省 false = 原生形状，用于**真发**）。
+     * 落盘时置 true：llm.jsonl 的行号因此能反查「这条消息属于哪轮哪步」，
+     * 压缩索引才能给出「第 1~74 行 = 第 1~2 轮」这种可回取的概念（而不是字节偏移）。
+     */
+    withIndex?: boolean;
 }
 
 /** 块树 → ModelMessage[]（跳过 turn/step 容器与 think） */
@@ -423,13 +437,21 @@ export function blocksToMessages(store: BlockStore, opts?: DeliveryOpts): LocalM
     const out: LocalModelMessage[] = [];
     const since = opts && "sinceTurnId" in opts ? opts.sinceTurnId : undefined;
     const transform = opts?.transformToolOutput;
-    const walk = (id: string) => {
+    const withIndex = opts?.withIndex === true;
+    /** 消息级索引位的落点（withIndex 关闭时是空对象，展开后不产生任何键） */
+    const idx = (turn: string | undefined, step: string | undefined): { turn?: string; step?: string } =>
+        withIndex ? (step ? { turn, step } : { turn }) : {};
+    const walk = (id: string, turnId?: string, stepId?: string) => {
         const b = store.blocks.get(id)!;
+        // turn 只认 turn 块自己；step 只认 step 块自己 —— 之后的叶块一路继承下来
+        // （开场 user 的 parent 是 turn、assistant/tool 的 parent 是 step，继承即如实反映）
+        const turn = b.kind === "turn" ? b.id : turnId;
+        const step = b.kind === "step" ? b.id : stepId;
         if (b.kind === "text") {
             const role = (b.role as string) ?? "user";
             const text = (b.content as string) ?? "";
             if (!text) return;
-            if (role === "user") out.push({ role: "user", content: text });
+            if (role === "user") out.push({ role: "user", content: text, ...idx(turn, step) });
             else {
                 // assistant 文本并入最近的 assistant 消息（若上一条正是纯文本 assistant 则拼接）
                 const last = out[out.length - 1];
@@ -440,7 +462,7 @@ export function blocksToMessages(store: BlockStore, opts?: DeliveryOpts): LocalM
                 ) {
                     (last.content as LocalTextPart[]).push({ type: "text", text });
                 } else {
-                    out.push({ role: "assistant", content: [{ type: "text", text }] });
+                    out.push({ role: "assistant", content: [{ type: "text", text }], ...idx(turn, step) });
                 }
             }
             return;
@@ -470,6 +492,7 @@ export function blocksToMessages(store: BlockStore, opts?: DeliveryOpts): LocalM
                         input: b.args as JSONVal,
                     },
                 ],
+                ...idx(turn, step),
             });
             // 配对铁律：每个 tool-call 必有 tool-result，否则下一轮 provider 拒整个历史。
             // （只适用于走到这里的块 —— 指令已下达；半截指令在上面整体跳过了。）
@@ -509,10 +532,10 @@ export function blocksToMessages(store: BlockStore, opts?: DeliveryOpts): LocalM
                 output: { type: "text", value },
             };
             if (opts?.withOrigin) result.origin = origin;
-            out.push({ role: "tool", content: [result] });
+            out.push({ role: "tool", content: [result], ...idx(turn, step) });
             return;
         }
-        for (const c of b.children) walk(c);
+        for (const c of b.children) walk(c, turn, step);
     };
     // 边界轮及其后 = 投递。
     //   · since 缺省      → 全投（与历史行为逐字一致）
