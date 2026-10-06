@@ -66,6 +66,7 @@ import {
     listGenerations,
     listTurnIds,
     keptTurnsByMessageCount,
+    keptTurnsOf,
     normalizePolicy,
     parseCompactLog,
     resolveBoundary,
@@ -344,6 +345,7 @@ export function droppedSegmentOf(
 function droppedWhyOf(policy: CompactPolicy, turns: number): string {
     const { unit, count } = policy.keep;
     if (count === 0) return `压缩策略：会话清零（此处含被省去的 ${turns} 轮）`;
+    if (count === "all") return `压缩策略：全留轮次、只裁内容（此处含被省去的 ${turns} 轮）`;
     return unit === "turns"
         ? `压缩策略：只保留最近 ${count} 轮（此处含被省去的 ${turns} 轮）`
         : `压缩策略：只保留最近 ${count} 条消息，余下的整轮保留（此处含被省去的 ${turns} 轮）`;
@@ -1238,11 +1240,8 @@ export class LocalAgentManager {
         const turnIds = listTurnIds(scan.ops);
         const store = new BlockStore();
         for (const op of scan.ops) store.apply(op);
-        // keep 有两种单位：turns 直取；messages 先取条数再**吸附到轮首**（见 keptTurnsByMessageCount）
-        const keptTurns =
-            policy.keep.unit === "turns"
-                ? Math.min(policy.keep.count, turnIds.length)
-                : keptTurnsByMessageCount(messageTurnsOf(store), policy.keep.count, turnIds);
+        // 保留轮数：唯一入口 keptTurnsOf（三态 turns/messages/"all" 都在那收口）
+        const keptTurns = keptTurnsOf(policy.keep, turnIds, messageTurnsOf(store));
         const keptFromTurnId = keptTurns > 0 ? turnIds[turnIds.length - keptTurns]! : null;
         const droppedIds = keptFromTurnId ? turnIds.slice(0, turnIds.length - keptTurns) : [...turnIds];
 

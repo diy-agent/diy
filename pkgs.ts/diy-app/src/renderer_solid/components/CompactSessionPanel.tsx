@@ -238,7 +238,14 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
         setSumBusy(true);
         setSumErr(null);
         try {
-            const r = (await localChatStore.summarize(props.uri, pol().keepTurns)) as {
+            // 摘要的对象是**被丢弃的轮**；保留全部轮次时没有被丢弃的内容 —— 说清楚，别静默摘要出一堆空话
+            const keepN = pol().keepTurns;
+            if (keepN === "all") {
+                setSumErr("保留全部轮次时没有可摘要的内容（摘要针对被丢弃的轮）");
+                setSumBusy(false);
+                return;
+            }
+            const r = (await localChatStore.summarize(props.uri, keepN)) as {
                 text: string;
                 data: unknown;
                 cost: number | null;

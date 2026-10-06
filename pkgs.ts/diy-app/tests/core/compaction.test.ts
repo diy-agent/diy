@@ -9,6 +9,7 @@ import {
     DEFAULT_HEADTAIL,
     flatPolicyOf,
     keptTurnsByMessageCount,
+    keptTurnsOf,
     clipToolResult,
     estimateTokens,
     fmtBytes,
@@ -319,5 +320,31 @@ describe("keep 单位经由 normalizePolicy 落地（扁平输入 → 三轴）"
         expect(normalizePolicy({ keepUnit: "messages", keepTurns: 2 })).toEqual(
             normalizePolicy({ keep: { unit: "messages", count: 2 } }),
         );
+    });
+});
+
+describe('keep.count = "all"（全留轮次：只裁内容、不裁轮）', () => {
+    it("normalizePolicy 收 all；与数字三态不混", () => {
+        expect(normalizePolicy({ keepTurns: "all" }).keep.count).toBe("all");
+        expect(normalizePolicy({ keep: { unit: "turns", count: "all" } }).keep).toEqual({ unit: "turns", count: "all" });
+        expect(normalizePolicy({ keepTurns: 0 }).keep.count).toBe(0);
+        expect(normalizePolicy({}).keep.count).toBe(6);
+    });
+
+    it("keptTurnsOf：all = 全留轮；0 = 全丢；数字 = min(...)", () => {
+        const turns = ["t1", "t2", "t3"];
+        const msgs = ["t1", "t1", "t2", "t2", "t3"];
+        expect(keptTurnsOf({ unit: "turns", count: "all" }, turns, msgs)).toBe(3);
+        expect(keptTurnsOf({ unit: "turns", count: 0 }, turns, msgs)).toBe(0);
+        expect(keptTurnsOf({ unit: "turns", count: 2 }, turns, msgs)).toBe(2);
+        expect(keptTurnsOf({ unit: "turns", count: 99 }, turns, msgs)).toBe(3);
+        // messages 单位仍走吸附
+        expect(keptTurnsOf({ unit: "messages", count: 2 }, turns, msgs)).toBe(2);
+    });
+
+    it("自动压缩的默认策略读法：全留轮 + 只留结论", () => {
+        const p = normalizePolicy({ keep: { unit: "turns", count: "all" }, content: "conclusion" });
+        expect(p.keep.count).toBe("all");
+        expect(p.content).toBe("conclusion");
     });
 });

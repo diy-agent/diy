@@ -573,7 +573,7 @@ export const apiDef = RpcSchema.router({
                 desc: `压缩会话上下文（保留最近 N 轮 + 可选裁剪工具输出；历史原地保留可撤销）`,
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                  keepTurns: z.number().optional().cliOption({ desc: "保留最近多少轮（0 = 全部清零；缺省 6）" }),
+                  keepTurns: z.union([z.number(), z.literal("all")]).optional().cliOption({ desc: '保留最近多少轮；数字 0 = 全部清零、"all" = 全留轮次；缺省 6' }),
                   toolResult: z
                     .enum(["asis", "headtail", "callpath"])
                     .optional()
@@ -615,7 +615,7 @@ export const apiDef = RpcSchema.router({
                 desc: `预览压缩效果（只算不写；返回前后规模 / 丢弃轮明细 / 裁剪明细 / 用量经验）`,
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                  keepTurns: z.number().optional().cliOption({ desc: "保留最近多少轮（0 = 全部清零）" }),
+                  keepTurns: z.union([z.number(), z.literal("all")]).optional().cliOption({ desc: '保留最近多少轮（0 = 全部清零、"all" = 全留轮次）' }),
                   toolResult: z.enum(["asis", "headtail", "callpath"]).optional().cliOption({ desc: "工具结果的处理方式（asis/headtail/callpath）" }),
                   triggerLines: z.number().optional().cliOption({ desc: "头尾裁剪阈值行数" }),
                   headLines: z.number().optional().cliOption({ desc: "头尾裁剪保留头行数" }),

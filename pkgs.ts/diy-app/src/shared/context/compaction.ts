@@ -78,7 +78,17 @@ export const DEFAULT_KEEP_TURNS = 6;
 /** ① 范围轴：留多久（轮 = 安全单位，不会切开 tool-call/result 配对；消息条数会自动吸附到轮首） */
 export const KeepPolicySchema = z.object({
     unit: z.enum(["turns", "messages"]).describe("保留单位：turns（轮，安全单位）或 messages（条数，自动吸附到轮首）"),
-    count: z.number().describe("保留数量；0 = 全部清零（会话硬切换）"),
+    /**
+     * 保留数量。三态（**注意别把 all 与 0 搞混 —— 一个是全留、一个是全丢**）：
+     *   · 数字 > 0 → 保留最近这么多（单位见 unit）
+     *   · `"all"`  → **全留轮次**（配合 `content != "all"` 用：只裁内容、不裁轮）
+     *   · `0`      → 全部清零（会话硬切换）
+     * `"all"` 的存在理由：自动压缩的默认策略是「保留**所有**轮次的结论」（用户 2026-10-06）——
+     * 轮数随会话变，写死数字要么裁掉结论、要么留不住；`all` 才是准确表达。
+     */
+    count: z
+        .union([z.number(), z.literal("all")])
+        .describe('保留数量；数字 = 保留最近 N；"all" = 全留轮次；0 = 全部清零'),
 });
 
 /** ② 内容轴：留过程还是只留结论 */
@@ -127,7 +137,7 @@ export const DEFAULT_COMPACT_POLICY: CompactPolicy = {
 
 /** 扁平（输入面）形状：RPC / CLI / UI 的现有契约，**不是**内部形状 */
 export interface FlatCompactPolicy {
-    keepTurns: number;
+    keepTurns: number | "all";
     toolResult: ToolResultMode;
     headtail: HeadTailPolicy;
     summary: boolean;
@@ -172,7 +182,8 @@ export function normalizePolicy(p: unknown): CompactPolicy {
     const ht0 = (src["headtail"] ?? {}) as Partial<HeadTailPolicy>;
     const legacyCount = src["keepTurns"];
     const unit = keep0?.unit === "messages" || src["keepUnit"] === "messages" ? "messages" : "turns";
-    const count = posNum(keep0?.count ?? legacyCount, DEFAULT_KEEP_TURNS, 0);
+    const rawCount = keep0?.count ?? legacyCount;
+    const count: number | "all" = rawCount === "all" ? "all" : posNum(rawCount, DEFAULT_KEEP_TURNS, 0);
 
     const content0 = src["content"];
     const content: ContentPolicy =
@@ -212,6 +223,25 @@ export function normalizePolicy(p: unknown): CompactPolicy {
         toolResult = { render: "asis" };
     }
     return { keep: { unit, count }, content, toolResult, summary: src["summary"] === true };
+}
+
+/**
+ * keep 轴 → 保留轮数（**唯一入口**：turns / messages / "all" 三态都在这收口，
+ * 免得每个调用点各写一遍 `count === 0 ? 0 : …` 而漏掉 `"all"`）。
+ *
+ *   · count = "all"  → 全留（轮数 = 全部）
+ *   · count = 0      → 全丢（会话硬切换）
+ *   · unit=turns     → min(count, 总轮数)
+ *   · unit=messages  → 取尾 count 条消息后吸附到轮首（见 keptTurnsByMessageCount）
+ */
+export function keptTurnsOf(
+    keep: KeepPolicy,
+    turnIds: readonly string[],
+    messageTurns: readonly string[],
+): number {
+    if (keep.count === "all") return turnIds.length;
+    if (keep.unit === "turns") return Math.min(keep.count, turnIds.length);
+    return keptTurnsByMessageCount(messageTurns, keep.count, turnIds);
 }
 
 /**

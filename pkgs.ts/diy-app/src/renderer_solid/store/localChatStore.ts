@@ -676,7 +676,7 @@ async function generationOps(taskUri: string, seq: number): Promise<OpLike[]> {
 
 /** 策略对象 → RPC 扁平参数（headtail 展开成顶层字段，与 api-def 的 cliOption 对齐） */
 function policyFlat(p: FlatCompactPolicy): {
-    keepTurns: number | undefined;
+    keepTurns: number | "all" | undefined;
     keepUnit: "turns" | "messages" | undefined;
     content: "all" | "text" | "conclusion" | undefined;
     toolResult: "asis" | "headtail" | "callpath" | undefined;
