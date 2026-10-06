@@ -609,6 +609,28 @@ export const apiDef = RpcSchema.router({
                 },
                 output: z.any(),
               }),
+              /**
+               * 自动压缩检测（只读）：三个**确定事实**（系统上下文变 / 缓存过期 / 窗口超限）
+               * 是否成立 + 当前配置 + 生效 TTL。UI 据此提示「此刻压缩无重建代价」。
+               */
+              autoCompactStatus: RpcSchema.unary({
+                desc: `检测自动压缩触发（只读；返回事实/触发理由/生效 TTL/当前配置）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                },
+                output: z.any(),
+              }),
+              /**
+               * 写自动压缩配置（真源 = `$DIY_HOME/auto-compact.yaml`，手改或经此写回都行）。
+               */
+              autoCompactSetConfig: RpcSchema.unary({
+                desc: `写自动压缩配置（mode / triggers / 默认策略）`,
+                input: {
+                  mode: z.enum(["off", "notify", "auto"]).optional().cliOption({ desc: "off/notify/auto" }),
+                  config: z.any().optional().cliOption({ desc: "完整配置对象（与 mode 二选一）" }),
+                },
+                output: z.any(),
+              }),
               /** 当前生效请求的展示模型（base）：打开压缩面板时取一次；mod 由 compactPreview 给 */
               requestView: RpcSchema.unary({
                 desc: `读取当前生效请求的实际投递内容（system / tools / messages；压缩预览的 base 侧）`,

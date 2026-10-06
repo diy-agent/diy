@@ -66,6 +66,21 @@ import {
     type DroppedSegment,
 } from "../../shared/context/dropped";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
+import {
+    autoCompactPolicyInput,
+    detectAutoCompactTriggers,
+    TRIGGER_TEXT,
+    type AutoCompactConfig,
+    type AutoCompactFacts,
+} from "../../shared/context/auto-compact";
+import { loadAutoCompact } from "../core/auto-compact-config";
+import { cacheTtlMsOf } from "../../shared/models";
+import {
+    effectiveTtl,
+    ttlBoundsFrom,
+    type CacheObservation,
+    type EffectiveTtl,
+} from "../../shared/context/cache-ttl";
 import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
 import { statFromStep } from "../../shared/context/stats";
@@ -1195,6 +1210,89 @@ export class LocalAgentManager {
     }
 
     /**
+     * 缓存观测序列（供 TTL 夹逼）——从 usage 账本 + steps 快照**离线**推（无额外请求）。
+     *
+     * 判据（见 cache-ttl.ts 头注）：
+     *   · gap = 本步 ts − 上一步 ts；hit = 本步缓存读 > 0
+     *   · `samePrefix`：同一轮内的步**必同前缀**（system/runtime 都不变）；跨轮比对两轮的
+     *     `systemText`（steps.jsonl 每条都记了全文）—— 变了就是"作废"不是"过期"，不进夹逼。
+     * 缺上游数据（老会话没 steps）时保守取 false（宁可少算，不可把作废当过期）。
+     */
+    private cacheObservations(taskUri: string): CacheObservation[] {
+        const usages = readStepUsages(taskUri);
+        if (usages.length < 2) return [];
+        const steps = readDeliverySteps(taskUri);
+        const sysOfTurn = new Map<string, string>();
+        for (const st of steps) sysOfTurn.set(st.turnId, st.systemText);
+        const out: CacheObservation[] = [];
+        for (let i = 1; i < usages.length; i++) {
+            const prev = usages[i - 1]!;
+            const cur = usages[i]!;
+            const gapMs = Date.parse(cur.ts) - Date.parse(prev.ts);
+            const b = bucketsOf(cur.usage as UsageLike);
+            const sameTurn = cur.turnId === prev.turnId;
+            const sPrev = sysOfTurn.get(prev.turnId);
+            const sCur = sysOfTurn.get(cur.turnId);
+            const samePrefix = sameTurn || (sPrev !== undefined && sCur !== undefined && sPrev === sCur);
+            out.push({ gapMs, hit: b.cacheRead > 0, samePrefix });
+        }
+        return out;
+    }
+
+    /** 该任务当前生效的 TTL（实测夹逼 + 先验；模型先验见 models.ts 的 cacheTtlMs） */
+    effectiveTtlOf(taskUri: string): EffectiveTtl {
+        const model = personaForTask(diyHome(), taskUri).model;
+        return effectiveTtl(ttlBoundsFrom(this.cacheObservations(taskUri)), cacheTtlMsOf(model));
+    }
+
+    /**
+     * **自动压缩检测**（只读，不写任何东西）——UI 提示与 CLI 都用它。
+     *
+     * 三个事实都从现成数据取（零额外请求、零额外模型调用）：
+     *   · systemContextChanged —— 当前 system 全文 vs 上一条 steps 快照的 systemText
+     *   · sinceLastRequestMs   —— now − 最后一条 usage 的 ts
+     *   · windowRatio          —— 最后一步用量（最后一步 = 窗口占用，见 ##211 §三）/ contextLimit
+     */
+    autoCompactStatus(taskUri: string): {
+        config: AutoCompactConfig;
+        facts: AutoCompactFacts;
+        triggers: CompactTrigger[];
+        reasons: string[];
+    } {
+        const config = loadAutoCompact(diyHome());
+        // 系统上下文：与上次真发那份比（口径与 steps.jsonl 的 systemText 完全一致）
+        const home = diyHome();
+        const globals = assembleGlobals(home, projectFromUri(taskUri), { taskUri }) as unknown as Record<string, unknown>;
+        const delivery = buildDelivery(globals, loadSystemPlaces(home));
+        const lastStep = readDeliverySteps(taskUri).at(-1) ?? null;
+        const systemContextChanged = lastStep !== null && lastStep.systemText !== delivery.system.text;
+
+        const usages = readStepUsages(taskUri);
+        const last = usages.at(-1) ?? null;
+        const sinceLastRequestMs = last ? Date.now() - Date.parse(last.ts) : null;
+        const model = personaForTask(home, taskUri).model;
+        const limit = contextLimitOf(model);
+        // 窗口占用：优先用**实测**（最后一步用量 = 窗口占用的权威口径，见 ##211 §三）；
+        // 没有用量账（老会话 / 手工造的会话）时退回**估算**（当前投递的字节）——
+        // 估不准总比"未知"强：未知会让"窗口超限"这个硬件约束形同虚设。
+        const windowRatio = !limit
+            ? null
+            : last
+              ? bucketsOf(last.usage as UsageLike).total / limit
+              : (delivery.system.bytes + delivery.runtime.bytes + this.deliveryHistory(taskUri, this.sessions.get(taskUri)?.store ?? new BlockStore()).reduce((a, m) => a + JSON.stringify(m).length, 0)) /
+                limit;
+
+        const facts: AutoCompactFacts = {
+            systemContextChanged,
+            sinceLastRequestMs,
+            ttl: this.effectiveTtlOf(taskUri),
+            windowRatio,
+        };
+        const triggers = detectAutoCompactTriggers(facts, config);
+        return { config, facts, triggers, reasons: triggers.map((t) => TRIGGER_TEXT[t]) };
+    }
+
+    /**
      * 投递口径的历史消息（与真发同源：压缩边界 + 索引注记 + 工具输出裁剪）。
      * **只读**：自己 replay ops，不加载会话、不落盘 —— 预览用，不应有副作用。
      * （不能用 llm.jsonl：那是 append-only 的**全量**日志，含已被压掉的轮。）
@@ -1613,8 +1711,38 @@ export class LocalAgentManager {
         const model = modelOverride ?? persona.model;
         // 手写 personas.yaml 可能把档位留空：兜底到该模型自己的默认档，不把空档发给上游
         const reasoningEffort = reasoningEffortOverride ?? (persona.reasoningEffort || reasoningOf(model).default);
-        const sess = this.getSession(taskUri);
+        let sess = this.getSession(taskUri);
         if (sess.running) throw new Error(`任务 ${taskUri} 的本地会话正在生成中`);
+
+        // ── 自动压缩（新请求之前，是唯一正确的时机）──
+        // 为什么在这里：三个触发条件（缓存过期 / 系统上下文变 / 窗口超限）都要求"**发出去之前**"
+        // 处理 —— 发完再压，那次已经按全价付过了。而且此处的 `deliveryOptsOf` 读的就是最新边界。
+        // 只读检测 → `mode: "auto"` 才动手；`notify` 只提供状态（UI 提示 + 一键），不静默改会话
+        // （静默丢用户历史与 `rule.no-silent-catch` 同一条原则）。
+        if (loadAutoCompact(diyHome()).mode === "auto") {
+            try {
+                const st = this.autoCompactStatus(taskUri);
+                if (st.triggers.length > 0) {
+                    const rec = this.compact(
+                        taskUri,
+                        autoCompactPolicyInput(st.config),
+                        "auto",
+                        undefined,
+                        st.triggers[0],
+                    );
+                    console.log(
+                        `[local-agent] 自动压缩 ${taskUri}：${st.reasons.join("；")}` +
+                            `（before ${rec.size.before.turns} 轮 → after ${rec.size.after.turns} 轮）`,
+                    );
+                    // 边界变了 → 内存态必须重建（compact 内部已 delete sessions，这里重新加载）
+                    sess = this.getSession(taskUri);
+                }
+            } catch (e) {
+                // 自动压缩失败**不阻断本轮**（用户还是要能说话），但必须出声
+                console.error(`[local-agent] 自动压缩失败（已跳过，本轮照常发送）${taskUri}:`, e);
+            }
+        }
+
         const ctrl = new AbortController();
         sess.running = ctrl;
         let done = false;

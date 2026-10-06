@@ -408,6 +408,20 @@ export function bindAppHandlers(binding: ServerBinding): void {
         : undefined;
     return getLocalAgent().compact(input.taskUri, policyOf(input), "cli", summary);
   });
+  binding.on(app.agent.local.autoCompactStatus, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.autoCompactStatus", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().autoCompactStatus(input.taskUri);
+  });
+  binding.on(app.agent.local.autoCompactSetConfig, async ({ input }) => {
+    const { saveAutoCompact } = await import("../core/auto-compact-config");
+    const { loadAutoCompact } = await import("../core/auto-compact-config");
+    const { diyHome } = await import("../core/state");
+    const home = diyHome();
+    if (input.config !== undefined) return saveAutoCompact(home, input.config);
+    const cur = loadAutoCompact(home);
+    return saveAutoCompact(home, { ...cur, ...(input.mode !== undefined ? { mode: input.mode } : {}) });
+  });
   binding.on(app.agent.local.summarize, async ({ input }) => {
     noteRendererTouch("diy.agent.local.summarize", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
