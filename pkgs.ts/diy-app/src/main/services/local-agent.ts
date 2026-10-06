@@ -4,7 +4,9 @@
 // 与 ACP 通道（acp-sessions-v2）完全独立：独立会话、独立存储、独立取消。
 // 双日志（$DIY_HOME/local/）：
 //   <key>.ops.jsonl — Op 流（UI 重放的权威）
-//   <key>.llm.jsonl — ModelMessage[] 完整对话（续聊的权威，含工具链路 id）
+//   <key>.llm.jsonl — **append-only 全量消息日志**（每行 1 条 ModelMessage，行号即消息序号；
+//                    续聊/索引的权威。压缩只做投递期投影，绝不写它 —— 见 appendLlm）
+//                    行内含 tool-result 的 origin 自证位（tool/interrupted/empty；真发前剥掉）
 // 密钥/上游收敛在 main：renderer 不接触 key；zen/go 无 CORS，代理是硬约束。
 
 import { streamText, generateText, tool, stepCountIs } from "ai";
@@ -26,7 +28,14 @@ import {
 import path from "node:path";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
 import { resolveCwd as resolveCwdWithNote } from "../core/cwd";
-import { BlockStore, blocksToMessages, interruptedToolPatches, type Op, type JSONVal } from "./local-blocks";
+import {
+    BlockStore,
+    blocksToMessages,
+    danglingStopPatches,
+    interruptedToolPatches,
+    type Op,
+    type JSONVal,
+} from "./local-blocks";
 import { appendAudit } from "./agent-audit";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
@@ -215,7 +224,8 @@ interface TurnInput {
 interface LocalSession {
     /** 块树（Op 重放）：UI 与 fold 的唯一权威；llm.jsonl 只是观察 dump */
     store: BlockStore;
-    messages: ModelMessage[];
+    /** llm 全量日志（append-only）已写出的消息条数 = 下次 append 的起点（真值在盘上，加载时对账得出） */
+    logged: number;
     loaded: boolean;
     running: AbortController | null;
 }
@@ -247,6 +257,14 @@ export function opsFile(taskUri: string): string {
 }
 function llmFile(taskUri: string): string {
     return path.join(localDir(), `${keyOf(taskUri)}.llm.jsonl`);
+}
+
+/**
+ * 全量消息日志的序列化行：**不传投递选项**（= 不受压缩边界影响，原文永不动），
+ * 但带 `origin` 自证位（落盘用；真发前由投影剥掉）。
+ */
+function llmLogLines(store: BlockStore): string[] {
+    return blocksToMessages(store, { withOrigin: true }).map((m) => JSON.stringify(m));
 }
 
 /** 投递快照（每轮真发一条）：投递**事实**，与 raw 那种旁路观测不同 —— UI 的 step/diff 靠它 */
@@ -896,16 +914,128 @@ export class LocalAgentManager {
     private getSession(taskUri: string): LocalSession {
         let s = this.sessions.get(taskUri);
         if (!s) {
-            s = { store: new BlockStore(), messages: [], loaded: false, running: null };
+            s = { store: new BlockStore(), logged: 0, loaded: false, running: null };
             this.sessions.set(taskUri, s);
         }
         if (!s.loaded) {
             // ops 日志 → 块树 → LLM 历史（wire = store = UI = LLM 单一权威路径）
             for (const op of readJsonl<Op>(opsFile(taskUri))) s.store.apply(op);
-            s.messages = blocksToMessages(s.store, this.deliveryOptsOf(taskUri)) as unknown as ModelMessage[];
+            // 崩溃残留自愈：半截块补终态 + 未闭合块补 stop（写回 ops，幂等）。
+            // 必须在「接受新输入之前」做完 —— getSession 先于 runTurn，故补写的轮不会插到新轮后面。
+            this.convergeOnLoad(taskUri, s);
+            s.logged = this.reconcileLlmLog(taskUri, s);
             s.loaded = true;
         }
         return s;
+    }
+
+    /**
+     * 加载时自愈（幂等）：把崩溃/被杀留下的**半截块与未闭合轮**收敛成显式终态，写回 ops。
+     *
+     * 为什么必须在加载时做（而不是等下一条用户消息）：
+     *   旧实现靠「下一轮开场收敛 + 每轮整份重写 llm 日志」自愈；改 append-only 后不会自愈 ——
+     *   未 stop 的轮无法定稿（定稿判据 = turn 已 stop），于是它永远缺在日志里，UI 也一直显示
+     *   「本轮未完成」。用户 2026-10-06 的判据：「ops 也好、llm 消息也好都应该处理好，
+     *   不然 ops 补了、llm 没补，也是问题」。
+     */
+    private convergeOnLoad(taskUri: string, s: LocalSession): void {
+        const fp = opsFile(taskUri);
+        const sink = (op: Op) => {
+            try {
+                appendFileSync(fp, `${JSON.stringify(op)}\n`, "utf-8");
+            } catch (e) {
+                console.error(`[local-agent] 加载自愈落盘失败 ${fp}:`, e);
+            }
+        };
+        // 先补 tool 的业务终态（patch + stop），再补剩余结构开口（stop）—— 前者已 stop 的块
+        // 不会被后者重复处理（danglingStopPatches 只挑未 stop 的）。
+        for (const op of [...interruptedToolPatches(s.store), ...danglingStopPatches(s.store)]) {
+            sink(op);
+            s.store.apply(op);
+        }
+    }
+
+    /**
+     * llm 全量日志（append-only）对账 —— 加载时跑一次，返回「已写条数」作 append 游标。
+     *
+     * 三种结果：
+     *   · 一致             → 游标 = 全量条数（绝大多数情况）
+     *   · 文件是投影的前缀 → **追加**补齐（崩溃时最后一轮没来得及写）
+     *   · 中部就不一致     → **整份重建**（原子 tmp+rename）并出声（旧版本脏行 / 被手工改过）
+     * 为什么不在运行期做：「只增」的价值是行号稳定（D2 的索引锚点），运行期永不回改已写内容。
+     */
+    private reconcileLlmLog(taskUri: string, s: LocalSession): number {
+        const fp = llmFile(taskUri);
+        const expect = llmLogLines(s.store);
+        let actual: string[] = [];
+        if (existsSync(fp)) {
+            try {
+                actual = readFileSync(fp, "utf-8").split("\n").filter((l) => l.trim() !== "");
+            } catch (e) {
+                console.error(`[local-agent] llm 日志读取失败 ${fp}:`, e);
+                return 0;
+            }
+        }
+        let k = 0;
+        while (k < actual.length && k < expect.length && actual[k] === expect[k]) k++;
+        if (k === actual.length && k === expect.length) return k; // 一致
+        if (k === actual.length) {
+            // 文件是投影的前缀 → 只追加缺的尾部（崩溃残留轮），不动已写行
+            try {
+                appendFileSync(fp, expect.slice(k).map((l) => `${l}\n`).join(""), "utf-8");
+                return expect.length;
+            } catch (e) {
+                console.error(`[local-agent] llm 日志补齐失败 ${fp}:`, e);
+                return k;
+            }
+        }
+        console.warn(`[local-agent] llm 全量日志与 ops 投影不一致（第 ${k + 1} 条起），整份重建 ${fp}`);
+        try {
+            writeFileSync(`${fp}.tmp`, expect.map((l) => `${l}\n`).join(""), "utf-8");
+            renameSync(`${fp}.tmp`, fp);
+            return expect.length;
+        } catch (e) {
+            console.error(`[local-agent] llm 日志重建失败 ${fp}:`, e);
+            return k;
+        }
+    }
+
+    /**
+     * 一轮定稿后追加写全量日志（**只增**）。
+     * 起点 = 内存游标（加载时对账得出）；投影收缩（ops 被截/换机器）时回退到整份对账。
+     */
+    private appendLlm(taskUri: string, s: LocalSession): void {
+        const fp = llmFile(taskUri);
+        let expect: string[];
+        try {
+            expect = llmLogLines(s.store);
+        } catch (e) {
+            console.error(`[local-agent] llm 日志投影失败 ${taskUri}:`, e);
+            return;
+        }
+        if (expect.length < s.logged) {
+            // 投影比已写还短 → 交给整份对账，别盲目 append 出重复/错位行
+            s.logged = this.reconcileLlmLog(taskUri, s);
+            return;
+        }
+        if (expect.length === s.logged) return;
+        try {
+            appendFileSync(fp, expect.slice(s.logged).map((l) => `${l}\n`).join(""), "utf-8");
+            s.logged = expect.length;
+        } catch (e) {
+            console.error(`[local-agent] llm 日志追加失败 ${fp}:`, e);
+        }
+    }
+
+    /**
+     * 投递口径的历史消息（与真发同源：压缩边界 + 工具输出裁剪）。
+     * **只读**：自己 replay ops，不加载会话、不落盘 —— 预览用，不应有副作用。
+     * （不能用 llm.jsonl：那是 append-only 的**全量**日志，含已被压掉的轮。）
+     */
+    deliveryMessages(taskUri: string): ModelMessage[] {
+        const store = new BlockStore();
+        for (const op of readJsonl<Op>(opsFile(taskUri))) store.apply(op);
+        return blocksToMessages(store, this.deliveryOptsOf(taskUri)) as unknown as ModelMessage[];
     }
 
     listModels(): LocalModel[] {
@@ -1424,23 +1554,17 @@ export class LocalAgentManager {
             // （AbortController.abort() 按规范不抛错，此处无需 try/catch）
             if (!done) ctrl.abort();
             sess.running = null;
-            // 轮末 dump：从块树重建 LLM 历史（含本轮 user/tool 链路），整体覆盖 llm 日志。
+            // 轮末落盘：**append-only 全量日志**（不再整份覆盖、不再受压缩边界影响）。
+            //   时刻合法：本轮的 turn 块已在 runTurn 的 finally 里 stop ⇒ 内容此后不再变
+            //   （「turn 已 stop 即定稿」）。中断 tool 块的收敛发生在下一轮开场，但它只改
+            //   status/output 字段，而投影按 status 分流（见 local-blocks）⇒ 收敛前后 append
+            //   的字节逐字相同，不必等它。
             // ⚠️ 必须在 finally、不能只放在 try 尾 —— 消费端取消（renderer 点停止 → end 帧 →
             // channel-server-binding 的 if(cancelled) return → 链式 gen.return()）会把 try 的
             // 后半段**整段截断**（任务 201 R1-S1：旧实现因此在主动停止后既缺 turn 的 stop、
             // 也缺这份 dump）。finally 无 yield，不会被吞没，每条退出路径都能留下最后一轮。
-            // 空树跳过：装配期就抛错时块树未动，别拿空内容覆盖上一轮的可用 dump。
-            if (sess.store.roots().length > 0) {
-                try {
-                    sess.messages = blocksToMessages(sess.store, this.deliveryOptsOf(taskUri)) as unknown as ModelMessage[];
-                    // dump 整文件覆盖 → tmp+rename 原子化：读取方永不见半文件（权威仍是 ops append-only）
-                    const dump = llmFile(taskUri);
-                    writeFileSync(`${dump}.tmp`, sess.messages.map((m) => JSON.stringify(m)).join("\n") + "\n", "utf-8");
-                    renameSync(`${dump}.tmp`, dump);
-                } catch (e) {
-                    console.error(`[local-agent] llm dump 失败 ${llmFile(taskUri)}:`, e);
-                }
-            }
+            // 空树跳过：装配期就抛错时块树未动，什么也不该写。
+            if (sess.store.roots().length > 0) this.appendLlm(taskUri, sess);
             // ⚠️ 兜底注销活跃轮次 —— **不能只依赖 runTurn 的 closeTurn**：
             //   runTurn 里 try{streamText} 之前的那些步骤（装配系统上下文、读模版、算 cwd）
             //   都不在 try 覆盖内，任何一步抛错就等于跳过 closeTurn → activeTurns 留下僵尸条目。
@@ -2137,24 +2261,6 @@ function getSimResponsesProvider(model: string): ReturnType<typeof createOpenAI>
     return simRespProviderCache;
 }
 
-/** 预览包含的历史消息上限：**0 = 全量**（当前取值，让日常使用直接暴露真实数据量；
- *  想省内存/渲染时间就改成正数，例如 40 —— note 会自动标注「截尾」）。 */
-const PREVIEW_HISTORY_MAX = 0;
-
-/** 上次真发落盘的 messages（llm.jsonl 就是 blocksToMessages 的转储）；无日志/解析失败则空 */
-function historyFromLog(taskUri: string, maxMessages: number): { messages: ModelMessage[]; total: number } {
-    try {
-        const fp = llmFile(taskUri);
-        if (!existsSync(fp)) return { messages: [], total: 0 };
-        const lines = readFileSync(fp, "utf-8").split("\n").filter((l) => l.trim() !== "");
-        const tail = maxMessages > 0 ? lines.slice(-maxMessages) : lines;
-        return { messages: tail.map((l) => JSON.parse(l) as ModelMessage), total: lines.length };
-    } catch (e) {
-        console.warn(`[local-agent] 预览历史读取失败 ${taskUri}:`, e);
-        return { messages: [], total: 0 };
-    }
-}
-
 export interface SimulatedRequest {
     /** 定稿 HTTP body（request.json 同形）；无任务场景时为 null */
     body: Record<string, unknown> | null;
@@ -2165,7 +2271,8 @@ export interface SimulatedRequest {
  * 仿真预览请求：用与 runTurn 完全相同的参数调 streamText，
  * 经 transformRequestBody 捕获定稿 body 后由 fetch 桩吞掉发送（一字节不出网）。
  * 保真关键：system/tools/limits/headers/messages 都走真实数据，只在最后一毫米掐断。
- * - messages：缺省从任务的真实 LLM 日志（上次真发的那份）取历史，末尾补一条占位 user —— 这才是「下一轮会发出的请求」。
+ * - messages：缺省从**块树现算投递口径**（与真发同一投影：含压缩边界与工具裁剪），末尾补一条占位 user —— 这才是「下一轮会发出的请求」。
+ *   **不再读 llm.jsonl**：它现在是 append-only 的**全量**日志，拿它当历史会把该压掉的轮又发出去。
  * - 无副作用：不写审计/日志，工具 execute 永不触发；桩返回**合法 SSE**，连 SDK 的 console.error 都不产生。
  */
 export async function previewSimulatedRequest(opts: {
@@ -2174,7 +2281,7 @@ export async function previewSimulatedRequest(opts: {
     system: string;
     /** 模型 id；缺省 = 任务当前人物的模型（与真发同源），显式传则覆盖（试模型用） */
     model?: string;
-    /** 历史消息；缺省 = 读任务 LLM 日志（无日志则仅占位，即首轮形态） */
+    /** 历史消息；缺省 = 从块树现算投递口径（无 ops 则仅占位，即首轮形态） */
     messages?: ModelMessage[];
     /** 末条 user 消息的正文（缺省是占位文案） */
     lastUser?: string;
@@ -2193,10 +2300,11 @@ export async function previewSimulatedRequest(opts: {
     const cwd = resolveCwdWithNote(diyHome(), taskUri).cwd;
     const L = getLocalAgent().getLimits();
     const modelMax = modelOutputTokens(model);
-    // 历史：优先用调用方传的，否则读上次真发落盘的 llm 日志（上限见 PREVIEW_HISTORY_MAX）
+    // 历史：优先用调用方传的；否则从块树现算（与真发同一条投影 —— 含压缩边界与工具裁剪）。
+    // 全量下发（不再有截尾上限）：历史已被压缩边界裁过，再截尾会破坏「预览=真发」。
     const hist = opts.messages?.length
-        ? { messages: opts.messages, total: opts.messages.length }
-        : historyFromLog(taskUri, PREVIEW_HISTORY_MAX);
+        ? { messages: opts.messages }
+        : { messages: getLocalAgent().deliveryMessages(taskUri) };
     // 与真发同样合并相邻 user（真发 = normalizeUserRuns(...本轮的 runtime + 输入)）——
     // 否则预览会显示两条连续 user，而真发只有一条，破坏「预览看到的 = 发出去的」
     const messages: ModelMessage[] = normalizeUserRuns([
@@ -2235,11 +2343,7 @@ export async function previewSimulatedRequest(opts: {
         return { body: null, note: "仿真未触达组装（SDK 行为变更？）" };
     }
     const histNote =
-        hist.messages.length === 0
-            ? "无历史：首轮形态"
-            : hist.total > hist.messages.length
-              ? `含历史 ${hist.messages.length}/${hist.total} 条（截尾；取自上次真发日志）`
-              : `含历史 ${hist.total} 条（全量，取自上次真发日志）`;
+        hist.messages.length === 0 ? "无历史：首轮形态" : `含历史 ${hist.messages.length} 条（与真发同源）`;
     return {
         body,
         note: `dry-run：与真发同一条组装链（${apiOf(model)} 面），${histNote}；fetch 桩拦截未发送`,

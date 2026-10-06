@@ -94,6 +94,24 @@ export function interruptedToolPatches(store: BlockStore): Op[] {
     return out;
 }
 
+/**
+ * 把**未收 stop 的块**补上 stop（崩溃/被杀留下的开口块），返回要落盘的 op。
+ *
+ * 与 interruptedToolPatches 的分工：
+ *   · interruptedToolPatches 管 tool 块的**业务终态**（patch status + output + stop）；
+ *   · 本函数管**结构闭合**：所有还没 stop 的块（turn / step / text / think / tool …）。
+ * 会话加载时调用（幂等）：崩溃现场若停在半轮，不补 stop 就会让 UI 永远显示"本轮未完成"，
+ * 且 append-only 的 llm 全量日志也没法给这一轮定稿（定稿判据 = turn 已 stop）。
+ *
+ * 顺序：倒序遍历（父块总先于子块创建）→ 子先父后，与 closeTurn 的收尾顺序一致。
+ */
+export function danglingStopPatches(store: BlockStore): Op[] {
+    const out: Op[] = [];
+    const ids = [...store.blocks.values()].filter((b) => !b.stopped).map((b) => b.id);
+    for (const id of ids.reverse()) out.push({ op: "stop", id });
+    return out;
+}
+
 // ─── fold：Op 流 → 块树 ───────────────────────────────
 
 export interface FoldIssue {

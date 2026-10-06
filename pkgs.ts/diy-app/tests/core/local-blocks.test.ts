@@ -7,6 +7,7 @@ import {
     INTERRUPTED_TOOL_NOTICE,
     interruptedToolPatches,
     BlockStore,
+    danglingStopPatches,
     replay,
     toTree,
     blocksToMessages,
@@ -480,5 +481,27 @@ describe("tool-result 的 origin 自证位（落盘用；真发不带）", () =>
     });
     it("withOrigin = 三值可程序化区分：tool / interrupted / empty", () => {
         expect(origins(true)).toEqual(["tool", "interrupted", "empty"]);
+    });
+});
+
+describe("danglingStopPatches：崩溃残留块补 stop", () => {
+    it("只挑未 stop 的块，子先父后（与 closeTurn 的收尾顺序一致）", () => {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: "t1", kind: "turn" });
+        s.apply({ op: "start", id: "u1", kind: "text", parent: "t1", meta: { role: "user" } });
+        s.apply({ op: "delta", id: "u1", fields: { content: "半" } });
+        s.apply({ op: "start", id: "t2", kind: "turn" });
+        s.apply({ op: "stop", id: "t2" }); // 已闭合的不再出现
+        expect(danglingStopPatches(s)).toEqual([
+            { op: "stop", id: "u1" },
+            { op: "stop", id: "t1" },
+        ]);
+    });
+
+    it("全已闭合 → 空（幂等：收敛后重跑不再产出）", () => {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: "t1", kind: "turn" });
+        s.apply({ op: "stop", id: "t1" });
+        expect(danglingStopPatches(s)).toEqual([]);
     });
 });
