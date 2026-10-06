@@ -32,6 +32,8 @@ import { resolveCwd } from "../core/cwd";
 import { personaForTask } from "../core/persona";
 import { getProjectPath } from "../core/project";
 import { readRuntimeConfig } from "../../runtime";
+import { llmLogRelPath } from "../core/local-paths";
+import { historyIndexValue } from "../../shared/context/history-index";
 // 契约类型唯一源（shared/prompt-schema.ts，纯 zod）——renderer 也用它，避免手抄第二份
 import type { AssembledSystem, PromptEntry } from "../../shared/prompt-schema";
 
@@ -614,5 +616,9 @@ export function assembleGlobals(
     identity: section(DELIVERED_SECTIONS.identity),
     rules: section(DELIVERED_SECTIONS.rules),
     guard: section(DELIVERED_SECTIONS.guard),
+    // 压缩历史索引的**格式说明**（稳定项 → 进 system；易变的注记数据留在 messages）。
+    // 路径算法与 local-agent 共用 ../core/local-paths —— 两处各写一份 key 会让"模型照注释
+    // 取不到原文"（比不给索引更坏）。
+    historyIndex: historyIndexValue(llmLogRelPath(taskUri)),
   };
 }

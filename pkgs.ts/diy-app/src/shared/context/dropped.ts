@@ -77,6 +77,13 @@ export interface DroppedNoteCtx {
     file: string;
     /** 原文绝对路径（bash 直接可用） */
     absPath?: string;
+    /**
+     * 格式说明（字段表 + 回取法）是否**已经**随 system 的 `historyIndex` 节点投出去了。
+     * true ⇒ 注记只留数据 + 一行指路（同一信息不投两遍；这也是"格式说明从 zod 派生、
+     * 作为变量树节点进 system"的落地处）。
+     * 缺省 false ⇒ 自带完整注释头（llm.jsonl 单独读时仍自解释）。
+     */
+    schemaInSystem?: boolean;
 }
 
 /** YAML 双引号标量（JSON 转义是 YAML 双引号转义的子集，见 shared/context/README 的块标量三条坑） */
@@ -91,6 +98,22 @@ function q(s: string): string {
 export function renderDroppedNote(note: DroppedNote, ctx: DroppedNoteCtx): string {
     const first = note.segments[0];
     const L: string[] = [];
+    if (ctx.schemaInSystem) {
+        // 精简头：格式说明与回取法已在 system 的 historyIndex 节点里（不重复投）
+        L.push("# ── 会话历史（压缩视图）：以下内容已按压缩策略省去（原文未被删除）");
+        L.push("# 格式与回取法见 system 上下文的 historyIndex 节点；行号即消息序号");
+        L.push("dropped:");
+        L.push(`  total: ${note.total}`);
+        L.push("  segments:");
+        for (const s of note.segments) {
+            L.push(`    - range: [${s.range[0]}, ${s.range[1]}]`);
+            L.push(`      kind: ${s.kind}`);
+            L.push(`      turns: [${s.turns.join(", ")}]`);
+            L.push(`      tools: [${s.tools.join(", ")}]`);
+            L.push(`      why: ${q(s.why)}`);
+        }
+        return L.join("\n");
+    }
     L.push("# ── 会话历史（压缩视图）────────────────────────────────────────");
     L.push("# 以下是本次会话的**部分内容已按压缩策略省去**（原文没有被删除）。");
     L.push(`# 原文：${ctx.file}${ctx.absPath ? `（${ctx.absPath}）` : ""}`);

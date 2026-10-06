@@ -104,15 +104,18 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     expect(items).toBeTruthy();
     expect(["system", "developer"]).toContain(items[0].role);
     expect(String(items[0].content)).toContain("家目录规范");
-    // 末两条 user：倒数第二条 = runtime 份，末条 = "下一轮真实输入"的占位
+    // 末条 user = runtime 份 + "下一轮真实输入"占位 —— ⚠️ 两者**合并成一条**：
+    //   投递前必过 normalizeUserRuns（provider 拒绝连续同角色；真发同样是
+    //   normalizeUserRuns(withRuntime(历史, runtime))，见 local-agent）。所以别指望能
+    //   数出两条 user —— 曾经那样断言过，是错的（本用例因此在 main 上一直是红的，无 CI 未暴露）。
     const lastUser = items[items.length - 1];
-    const runtimeUser = items[items.length - 2];
     expect(lastUser.role).toBe("user");
-    expect(runtimeUser.role).toBe("user");
     // responses 面里 user 的 content 是 [{type:"input_text",text}]，取文本要比出两种形状
     const textOf = (m: any): string =>
       typeof m.content === "string" ? m.content : (m.content ?? []).map((p: any) => p.text ?? "").join("");
-    expect(textOf(runtimeUser)).toContain("body:");
+    // 合并后的这一条里，runtime 份（task.body 在 runtime）与占位输入都在
+    expect(textOf(lastUser)).toContain("body:");
+    expect(textOf(lastUser)).toContain("仿真占位");
     expect(d.request.model).toBeTruthy();
 
     // 行号映射与文本同源（选中联动高亮靠它）

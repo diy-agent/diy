@@ -107,6 +107,46 @@ export const AssembleGlobalsSchema = z.object({
   identity: z.string().describe("身份节（identity.md 渲染结果：身份行 + 人物行为指令）"),
   rules: z.string().describe("规范节（rules.md 渲染结果）"),
   guard: z.string().describe("保命契约（_guard.md 渲染结果，模版锁定）"),
+  /**
+   * 压缩历史索引的**格式说明**（用户 2026-10-06 定）。
+   *
+   * 为什么进变量树而不是拼在消息里：它是**稳定**结构（只在 schema 升级时变）——稳定项进
+   * system 不砸前缀缓存；而易变的 dropped 数据留在 messages 的那条注记里。
+   * 「一条信息只在一处」＝ 不再到处写解释性注释（用户原话）。
+   *
+   * 字段表由 `history-index.ts` 从 zod 派生（禁止手写第二真源）。
+   */
+  historyIndex: z
+    .object({
+      about: z.string().describe("这段说明的用途"),
+      source: z.string().describe("压缩前原文的位置（全量消息日志）"),
+      retrieve: z
+        .object({
+          byLine: z.string().describe("按行号区间回取原文的 bash 命令"),
+          byTurn: z.string().describe("按轮次 id 回取原文的 bash 命令"),
+        })
+        .describe("回取法"),
+      noteLocation: z.string().describe("注记在 messages 里的位置与形态"),
+      note: z
+        .array(
+          z.object({
+            name: z.string().describe("字段名"),
+            desc: z.string().describe("含义"),
+            required: z.boolean().describe("是否必填"),
+          }),
+        )
+        .describe("注记顶层字段表（由 zod 定义派生）"),
+      segment: z
+        .array(
+          z.object({
+            name: z.string().describe("字段名"),
+            desc: z.string().describe("含义"),
+            required: z.boolean().describe("是否必填"),
+          }),
+        )
+        .describe("注记里 segments 每一项的字段表（由 zod 定义派生）"),
+    })
+    .describe("压缩历史索引的格式说明（稳定；易变的 dropped 数据在 messages 里）"),
 });
 export type AssembleGlobals = z.infer<typeof AssembleGlobalsSchema>;
 

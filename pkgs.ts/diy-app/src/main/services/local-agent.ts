@@ -27,6 +27,10 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
+import { keyOf, llmFile, llmLogRelPath, localDir, opsFile } from "../core/local-paths";
+
+// 再导出：测试与产品共用同一路径实现（不把 key 算法复制到测试里）
+export { opsFile };
 import { resolveCwd as resolveCwdWithNote } from "../core/cwd";
 import {
     BlockStore,
@@ -243,34 +247,8 @@ interface LocalSession {
     running: AbortController | null;
 }
 
-function localDir(): string {
-    const d = path.join(diyHome(), "local");
-    mkdirSync(d, { recursive: true });
-    return d;
-}
-
-/**
- * 会话文件/亲和头共用键。
- * ⚠️ 不能只做字符替换：`a/b` 与 `a:b` 会洗成同一个 `a_b`（碰撞=两任务互相串历史、
- * 共享 zen 会话亲和头）。可读前缀只为便于排查，唯一性由 sha256 前 12 位负责。
- */
-function keyOf(taskUri: string): string {
-    const readable = taskUri.replace(/[^\w.-]+/g, "_").slice(0, 64);
-    const sum = createHash("sha256").update(taskUri).digest("hex").slice(0, 12);
-    return `${readable}-${sum}`;
-}
-
-/**
- * 会话 Op 流文件路径。
- * 导出供测试构造「历史对话已存在」的落盘状态：测试与产品共用同一路径实现
- * （key = 可读前缀 + uri 哈希），不复制 key 算法到测试里。
- */
-export function opsFile(taskUri: string): string {
-    return path.join(localDir(), `${keyOf(taskUri)}.ops.jsonl`);
-}
-function llmFile(taskUri: string): string {
-    return path.join(localDir(), `${keyOf(taskUri)}.llm.jsonl`);
-}
+// 会话路径（keyOf / opsFile / llmFile）已抽到 ../core/local-paths —— 见那里的头注：
+// prompt-registry 也要用它（把回取命令写进 system 的索引说明节点），反向 import 会成环。
 
 /**
  * 全量消息日志的序列化行：**不传投递选项**（= 不受压缩边界影响，原文永不动），
@@ -1189,10 +1167,11 @@ export class LocalAgentManager {
             console.error(`[local-agent] 压缩注记结构非法，已跳过（异常=${parsed.issues.join("；")}）`);
             return kept;
         }
-        const key = keyOf(taskUriOf);
         const note = renderDroppedNote(parsed.value, {
-            file: `local/${key}.llm.jsonl`,
+            file: llmLogRelPath(taskUriOf),
             absPath: llmFile(taskUriOf),
+            // 格式说明已随 system 的 historyIndex 节点投出 → 这里只留数据 + 一行指路
+            schemaInSystem: true,
         });
         // 注记 + 保留首条（必为 user）→ 合并成一条：provider 不收连续同角色
         return normalizeUserRuns([{ role: "user", content: note }, ...kept]);
