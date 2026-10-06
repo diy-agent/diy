@@ -544,40 +544,199 @@ export interface ClippedToolDetail {
     origPath: string;
 }
 
+/**
+ * 自动压缩的**触发理由**（用户 2026-10-06：自动压也要能看到"为什么压"）。
+ * 全是**确定事实**，不含任何"划不划算"的预测（后者是 230#25 明确放弃的评估）。
+ */
+export type CompactTrigger =
+    /** 用户手动点的（含 CLI） */
+    | "manual"
+    /** 系统上下文（system 容器）变了 → 前缀缓存必**作废**（invalidated） */
+    | "systemContextChanged"
+    /** 缓存**过期**（距上次请求 > 生效 TTL，见 cache-ttl.ts） */
+    | "cacheExpired"
+    /** 上下文窗口占用超上限（撞墙即压） */
+    | "contextWindowOver";
+
+/**
+ * 压缩账（**v2：按语义分组**，用户 2026-10-06 定；D5 命名规范「结构即语义」）。
+ *
+ * 为什么分组：v1 把十几项平铺，读的人要自己分辨哪些是**用户输入**、哪些是**锚点**、
+ * 哪些是**结果数字**、哪些是**账目**；`keptTurns/droppedTurns` 更是塞在 `boundary` 里
+ * （它们是结果，不是锚点）。分组后每块回答一个问题：
+ *   policy   —— 用户拧了什么
+ *   boundary —— 锚在哪（**物理位置**，可回查：ops 下标 / ops 字节偏移）
+ *   size     —— 前后规模与轮数（**结果数字**）
+ *   cost     —— 钱与步数（可缺：无价目表时）
+ *   details  —— 明细（被丢的轮、被裁的输出、摘要）
+ *
+ * 兼容：**读侧两种形状都收**（`normalizeCompactEvent`）—— 旧 v1 平铺账本照旧可读，
+ * 无需迁移；新写的都是 v2。
+ */
 export interface CompactEventRecord {
     kind: "compact";
-    v: 1;
+    v: 2;
     /** 压缩 id（= ts，供 measure / undo 回指） */
+    id: string;
+    ts: string;
+    /** 谁触发的（"auto" 是自动压缩；理由见 trigger） */
+    by: "ui" | "cli" | "auto";
+    /** 为什么压（手动/系统上下文变/缓存过期/窗口超限） */
+    trigger: CompactTrigger;
+    /** 用户拧的旋钮 */
+    policy: CompactPolicy;
+    /** **锚点**：只记物理位置（逻辑 id 只是 label；锚必须锚在物理位置，见 keepFromOpIndex 头注） */
+    boundary: {
+        /** 保留起点轮 id（label；null = 压缩那一刻全部清零） */
+        keptFromTurnId: string | null;
+        /** 机械锚点：压缩那一刻的 ops 下标 —— 只保留此下标之后的 op */
+        keepFromOpIndex: number;
+        /** 该轮 start 在 ops.jsonl 里的字节偏移（重放跳前缀的快路径） */
+        keptFromOpsOffset?: number;
+    };
+    /** **结果数字**（规模，按投递口径算；数字之间不许打架） */
+    size: {
+        before: SizeSnapshot;
+        after: SizeSnapshot;
+        keptTurns: number;
+        droppedTurns: number;
+    };
+    /** **账目**（可缺：无价目表时不编数） */
+    cost?: {
+        rates?: RateSnapshot;
+        /** 压缩前这个会话的缓存读成本占总成本的比例（「有没有税可省」） */
+        taxShare?: number;
+        /** 零产出步数（上下文增量为 0 的步 = 纯重发，压缩的靶子） */
+        zeroOutputSteps?: number;
+        /**
+         * 一次性重建代价（$）= 保留部分按 (全价 − 缓存读) 重读一次 —— **纯账，不是预测**，
+         * panel 的「事实」行直接显示这个数（不显示「省多少」，那是没底气的预测，见 ##230#25）。
+         */
+        rebuildCost?: number;
+        /**
+         * 回填步数**估算**（##230 的「回填速度」）：会话上下文涨回压缩前水位大约还要几步。
+         * 为什么它重要：清零的收益只在「回填期」存在 —— 实测清零后 19~37 步就涨回 50k~150k，
+         * 「省 20%」的原估因此缩水到 10~14%。标注为估算（无 tokenizer，按步均增量推）。
+         */
+        backfillSteps?: number;
+    };
+    /** **明细**（体积可控：只存摘要 + 指针，全文留在 ops 原地） */
+    details?: {
+        /** 被丢弃的轮（只存摘要 + 指针） */
+        dropped?: DroppedTurnDetail[];
+        /** 被裁剪的工具输出（只对保留部分生效；原文落盘可寻回） */
+        clipped?: ClippedToolDetail[];
+        /** 摘要（勾选 summary 且已生成） */
+        summary?: {
+            /** 走 summary.md 模版渲染出的文本 */
+            text: string | null;
+            /** 结构化数据（再生成/预览占位用；见 shared/context/summary.ts） */
+            data: import("./summary").SummaryData | null;
+            cost: number | null;
+        };
+    };
+}
+
+/** v1 平铺账（历史遗留形状；只用于**读**，`normalizeCompactEvent` 把它归一成 v2） */
+interface CompactEventRecordV1 {
+    kind: "compact";
+    v: 1;
     id: string;
     ts: string;
     by: "ui" | "cli";
     policy: CompactPolicy;
-    boundary: CompactBoundaryRecord;
+    boundary: {
+        keptFromTurnId: string | null;
+        keepFromOpIndex?: number;
+        keptFromOpsOffset?: number;
+        keptTurns?: number;
+        droppedTurns?: number;
+    };
     before: SizeSnapshot;
     after: SizeSnapshot;
     rates?: RateSnapshot;
-    /** 压缩前这个会话的缓存读成本占总成本的比例（「有没有税可省」） */
     taxShare?: number;
-    /** 零产出步数（上下文增量为 0 的步 = 纯重发，压缩的靶子） */
     zeroOutputSteps?: number;
-    /**
-     * 一次性重建代价（$）= 保留部分按 (全价 − 缓存读) 重读一次 —— **纯账，不是预测**，
-     * panel 的「事实」行直接显示这个数（不显示「省多少」，那是没底气的预测，见 ##230#25）。
-     */
     rebuildCost?: number;
-    /**
-     * 回填步数**估算**（##230 的「回填速度」）：会话上下文涨回压缩前水位大约还要几步。
-     * 为什么它重要：清零的收益只在「回填期」存在 —— 实测清零后 19~37 步就涨回 50k~150k，
-     * 「省 20%」的原估因此缩水到 10~14%。标注为估算（无 tokenizer，按步均增量推）。
-     */
     backfillSteps?: number;
     droppedDetail?: DroppedTurnDetail[];
     clipped?: ClippedToolDetail[];
-    /** 摘要文本（勾选 summary 且已生成；走 summary.md 模版渲染） */
     summaryText?: string | null;
-    /** 摘要的结构化数据（再生成/预览占位用；见 shared/context/summary.ts） */
     summaryData?: import("./summary").SummaryData | null;
     summaryCost?: number | null;
+}
+
+/**
+ * 账本一条 compact 事件 → **统一（v2 分组）形状**。
+ * v1 平铺 / v2 分组都收；缺的分组给空对象/省略（不是 `{}` 空壳 —— 见 measure 的 predicted 教训）。
+ * ⚠️ v1 的 `boundary.keptTurns/droppedTurns` 是**结果数字**却塞在锚点里 → 归到 `size`。
+ */
+function normalizeCompactEvent(e: CompactEventRecord | CompactEventRecordV1): CompactEventRecord {
+    if (e.v === 2) return e;
+    const v1 = e;
+    const hasDetails =
+        v1.droppedDetail !== undefined ||
+        v1.clipped !== undefined ||
+        v1.summaryText !== undefined ||
+        v1.summaryData !== undefined ||
+        v1.summaryCost !== undefined;
+    const hasCost =
+        v1.rates !== undefined ||
+        v1.taxShare !== undefined ||
+        v1.zeroOutputSteps !== undefined ||
+        v1.rebuildCost !== undefined ||
+        v1.backfillSteps !== undefined;
+    return {
+        kind: "compact",
+        v: 2,
+        id: v1.id,
+        ts: v1.ts,
+        by: v1.by,
+        // v1 没有 trigger 概念：旧账一律视为手动
+        trigger: "manual",
+        policy: v1.policy,
+        boundary: {
+            keptFromTurnId: v1.boundary.keptFromTurnId,
+            keepFromOpIndex: v1.boundary.keepFromOpIndex ?? -1,
+            ...(v1.boundary.keptFromOpsOffset !== undefined
+                ? { keptFromOpsOffset: v1.boundary.keptFromOpsOffset }
+                : {}),
+        },
+        size: {
+            before: v1.before,
+            after: v1.after,
+            keptTurns: v1.boundary.keptTurns ?? v1.after.turns,
+            droppedTurns: v1.boundary.droppedTurns ?? v1.before.turns - v1.after.turns,
+        },
+        ...(hasCost
+            ? {
+                  cost: {
+                      ...(v1.rates !== undefined ? { rates: v1.rates } : {}),
+                      ...(v1.taxShare !== undefined ? { taxShare: v1.taxShare } : {}),
+                      ...(v1.zeroOutputSteps !== undefined ? { zeroOutputSteps: v1.zeroOutputSteps } : {}),
+                      ...(v1.rebuildCost !== undefined ? { rebuildCost: v1.rebuildCost } : {}),
+                      ...(v1.backfillSteps !== undefined ? { backfillSteps: v1.backfillSteps } : {}),
+                  },
+              }
+            : {}),
+        ...(hasDetails
+            ? {
+                  details: {
+                      ...(v1.droppedDetail !== undefined ? { dropped: v1.droppedDetail } : {}),
+                      ...(v1.clipped !== undefined ? { clipped: v1.clipped } : {}),
+                      ...(v1.summaryText !== undefined || v1.summaryData !== undefined || v1.summaryCost !== undefined
+                          ? {
+                                summary: {
+                                    text: v1.summaryText ?? null,
+                                    data: v1.summaryData ?? null,
+                                    cost: v1.summaryCost ?? null,
+                                },
+                            }
+                          : {}),
+                  },
+              }
+            : {}),
+    };
 }
 
 /**
@@ -594,6 +753,7 @@ export interface MeasureEventRecord {
     ref: string;
     ts: string;
     firstTurnId: string;
+    /** ⚠️ 只有**真有预测值**时才写：空壳 `{}` 落盘毫无信息量（实测账本里就有）。 */
     predicted?: { estTokens?: number };
     actual?: {
         windowTotal?: number;
@@ -621,8 +781,10 @@ export function parseCompactLog(text: string): CompactLogEvent[] {
         const line = raw.trim();
         if (!line) continue;
         try {
-            const e = JSON.parse(line) as CompactLogEvent;
-            if (e && typeof e === "object" && typeof (e as { kind?: unknown }).kind === "string") out.push(e);
+            const e = JSON.parse(line) as CompactLogEvent | CompactEventRecordV1;
+            if (!e || typeof e !== "object" || typeof (e as { kind?: unknown }).kind !== "string") continue;
+            // 读侧归一：v1 平铺账 → v2 分组（旧账本无需迁移，下游只见一种形状）
+            out.push(e.kind === "compact" ? normalizeCompactEvent(e) : (e as CompactLogEvent));
         } catch {
             // 崩溃半行跳过（与 local-agent 的 readJsonl 同策略）
         }

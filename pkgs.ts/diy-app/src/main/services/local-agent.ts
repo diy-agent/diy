@@ -80,6 +80,7 @@ import {
     keptTurnsByMessageCount,
     keptTurnsOf,
     type ContentPolicy,
+    type CompactTrigger,
     normalizePolicy,
     parseCompactLog,
     resolveBoundary,
@@ -663,7 +664,8 @@ interface CompactPlan {
     droppedDetail: DroppedTurnDetail[];
     clipped: ClippedToolDetail[];
     rateSnap?: RateSnapshot;
-    stats: Pick<CompactEventRecord, "taxShare" | "zeroOutputSteps" | "rebuildCost" | "backfillSteps">;
+    /** 账目（可缺；形状与账本的 `cost` 分组一致） */
+    stats: NonNullable<CompactEventRecord["cost"]>;
 }
 
 /** 压缩预览（只算不写）：panel「事实」行 + 预览页共用 */
@@ -750,7 +752,7 @@ function usageStats(
     usages: StepUsageRecord[],
     afterTokens: number,
     rate: RateSnapshot | undefined,
-): Pick<CompactEventRecord, "taxShare" | "zeroOutputSteps" | "rebuildCost" | "backfillSteps"> {
+): NonNullable<CompactEventRecord["cost"]> {
     if (usages.length === 0) return {};
     const buckets = usages.map((r) => bucketsOf(r.usage as UsageLike));
     const zeroOutputSteps = buckets.filter((b) => b.noCache === 0).length;
@@ -1352,7 +1354,7 @@ export class LocalAgentManager {
         const b = resolveBoundary(events);
         if (!b) return "";
         const c = events.find((e) => e.kind === "compact" && e.id === b.compactId) as CompactEventRecord | undefined;
-        return c?.summaryText ?? "";
+        return c?.details?.summary?.text ?? "";
     }
 
     /** 当前生效摘要的结构化数据（预览占位与再生成用） */
@@ -1360,7 +1362,7 @@ export class LocalAgentManager {
         const events = readCompactLog(taskUri);
         const b = resolveBoundary(events);
         const c = b ? (events.find((e) => e.kind === "compact" && e.id === b.compactId) as CompactEventRecord | undefined) : undefined;
-        return c?.summaryData ?? emptySummary();
+        return c?.details?.summary?.data ?? emptySummary();
     }
 
     /**
@@ -1436,8 +1438,11 @@ export class LocalAgentManager {
     compact(
         taskUri: string,
         policyInput: unknown,
-        by: "ui" | "cli",
+        by: "ui" | "cli" | "auto",
         summary?: { text: string; data: SummaryData; cost: number | null },
+        /** 为什么压（手动 / 系统上下文变 / 缓存过期 / 窗口超限；缺省 manual）。
+         *  放在 summary 之后：既有调用点全是位置参数，追加在尾部才不会把 summary 挤错位。 */
+        trigger: CompactTrigger = "manual",
     ): CompactEventRecord {
         const sess = this.sessions.get(taskUri);
         if (sess?.running) throw new Error(`任务 ${taskUri} 的本地会话正在生成中，先停止再压缩`);
@@ -1457,29 +1462,33 @@ export class LocalAgentManager {
         const ts = new Date().toISOString();
         const rec: CompactEventRecord = {
             kind: "compact",
-            v: 1,
+            v: 2,
             id: ts,
             ts,
             by,
+            trigger,
             policy: p.policy,
+            // 锚点：只记**物理位置**（逻辑 id 只是 label）
             boundary: {
                 keptFromTurnId: p.keptFromTurnId,
                 keepFromOpIndex: p.keepFromOpIndex,
                 ...(p.keptFromTurnId !== null && p.scan.turnOffsets.has(p.keptFromTurnId)
                     ? { keptFromOpsOffset: p.scan.turnOffsets.get(p.keptFromTurnId)! }
                     : {}),
+            },
+            // 结果数字（keptTurns/droppedTurns 归这里 —— 它们是结果，不是锚点）
+            size: {
+                before: p.before,
+                after: p.after,
                 keptTurns: p.keptTurns,
                 droppedTurns: p.droppedIds.length,
             },
-            before: p.before,
-            after: p.after,
-            ...(p.rateSnap ? { rates: p.rateSnap } : {}),
-            ...p.stats,
-            droppedDetail: p.droppedDetail,
-            clipped: p.clipped,
-            summaryText: summary?.text ?? null,
-            summaryData: summary?.data ?? null,
-            summaryCost: summary?.cost ?? null,
+            cost: { ...(p.rateSnap ? { rates: p.rateSnap } : {}), ...p.stats },
+            details: {
+                dropped: p.droppedDetail,
+                clipped: p.clipped,
+                summary: { text: summary?.text ?? null, data: summary?.data ?? null, cost: summary?.cost ?? null },
+            },
         };
         appendCompactEvent(taskUri, rec);
         // 内存态重置：删掉会话缓存 → 下次 getSession 按新边界重建（ops 仍全量，供历史查看）
@@ -1569,7 +1578,7 @@ export class LocalAgentManager {
         // 不能整个删 —— 同 id 也可能被别的任务引用）。
         for (const e of readCompactLog(taskUri)) {
             if (e.kind !== "compact") continue;
-            for (const c of e.clipped ?? []) {
+            for (const c of e.details?.clipped ?? []) {
                 try {
                     rmSync(path.join(toolOutDir(), `${safeId(c.id)}.txt`), { force: true });
                 } catch (err) {

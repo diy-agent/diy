@@ -15,14 +15,19 @@ import {
 function clearAllLedger(keepFromOpIndex: number): CompactEventRecord {
     return {
         kind: "compact",
-        v: 1,
+        v: 2,
         id: "c1",
         ts: "c1",
         by: "ui",
+        trigger: "manual",
         policy: normalizePolicy({ keepTurns: 0 }),
-        boundary: { keptFromTurnId: null, keepFromOpIndex, keptTurns: 0, droppedTurns: 3 },
-        before: { turns: 3, messages: 6, bytes: 300, estTokens: 75 },
-        after: { turns: 0, messages: 0, bytes: 0, estTokens: 0 },
+        boundary: { keptFromTurnId: null, keepFromOpIndex },
+        size: {
+            before: { turns: 3, messages: 6, bytes: 300, estTokens: 75 },
+            after: { turns: 0, messages: 0, bytes: 0, estTokens: 0 },
+            keptTurns: 0,
+            droppedTurns: 3,
+        },
     };
 }
 

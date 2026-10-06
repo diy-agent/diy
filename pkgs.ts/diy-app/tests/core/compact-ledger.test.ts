@@ -87,14 +87,16 @@ describe("② rates：provider = 谁服务的，source = 价目真源", () => {
         seedOps(uri);
         // 用「真压一次」把账本写出来（预览不落账）
         const rec = getLocalAgent().compact(uri, { keepTurns: 1 }, "cli");
-        const ev = rec as unknown as { rates?: { provider?: string; source?: string; k: number } };
-        expect(ev.rates).toBeTruthy();
-        expect(ev.rates!.provider).toBe(UPSTREAM_PROVIDER);
-        expect(ev.rates!.provider).not.toContain("models.dev");
-        expect(String(ev.rates!.source)).toContain("models.dev");
+        // v2 分组后 rates 在 cost 分组里
+        const ev = rec as unknown as { cost?: { rates?: { provider?: string; source?: string; k: number } } };
+        const rates = ev.cost?.rates;
+        expect(rates).toBeTruthy();
+        expect(rates!.provider).toBe(UPSTREAM_PROVIDER);
+        expect(rates!.provider).not.toContain("models.dev");
+        expect(String(rates!.source)).toContain("models.dev");
         // 圆整：不留浮点残渣（k 的真值因模型而异：mimo/deepseek=50、luna=10；
         // 关键是**圆整后是个干净的数**，且等于 round3(input/cacheRead)）
-        const r = ev.rates as unknown as { input: number; cacheRead: number; k: number };
+        const r = rates as unknown as { input: number; cacheRead: number; k: number };
         expect(r.k).toBe(Math.round((r.input / r.cacheRead) * 1000) / 1000);
         expect(String(r.k)).not.toContain("000000000");
         expect([10, 50]).toContain(r.k);
@@ -137,5 +139,61 @@ describe("③ measure 事件：空壳 predicted 不写", () => {
         expect(measure).toBeTruthy();
         expect("predicted" in measure!).toBe(false);
         expect(measure!.ref).toBeTruthy();
+    });
+});
+
+describe("④ v2 分组形状：看 JSON 就知道每块回答什么（D5「结构即语义」）", () => {
+    it("policy / boundary / size / cost / details 五块，且 keptTurns 归 size（不是锚点）", () => {
+        const uri = newUri();
+        seedOps(uri);
+        const rec = getLocalAgent().compact(uri, { keepTurns: 1, content: "text" }, "cli") as unknown as Record<string, unknown>;
+        expect(rec.kind).toBe("compact");
+        expect(rec.v).toBe(2);
+        expect(rec.trigger).toBe("manual");
+        expect(Object.keys(rec)).toEqual(
+            expect.arrayContaining(["policy", "boundary", "size", "cost", "details"]),
+        );
+        // 锚点里**没有** keptTurns/droppedTurns（它们是结果，不是锚）
+        const boundary = rec.boundary as Record<string, unknown>;
+        expect(boundary).toHaveProperty("keepFromOpIndex");
+        expect(boundary).not.toHaveProperty("keptTurns");
+        const size = rec.size as Record<string, unknown>;
+        expect(size).toHaveProperty("keptTurns", 1);
+        expect(size).toHaveProperty("droppedTurns", 2);
+        // 明细在 details（被裁工具输出）
+        const details = rec.details as Record<string, unknown>;
+        expect(Array.isArray(details.clipped)).toBe(true);
+        expect(Array.isArray(details.dropped)).toBe(true);
+    });
+
+    it("① v1 平铺账照样能读（读侧归一，旧账本无需迁移）", async () => {
+        const { parseCompactLog } = await import("../../src/shared/context/compaction");
+        const v1 = JSON.stringify({
+            kind: "compact",
+            v: 1,
+            id: "old-1",
+            ts: "old-1",
+            by: "ui",
+            policy: { keepTurns: 1, toolResult: "asis", headtail: {}, summary: false },
+            boundary: { keptFromTurnId: null, keepFromOpIndex: 7, keptTurns: 0, droppedTurns: 3 },
+            before: { turns: 3, messages: 6, bytes: 300, estTokens: 75 },
+            after: { turns: 0, messages: 0, bytes: 0, estTokens: 0 },
+            taxShare: 0.37,
+            clipped: [{ id: "c1", tool: "bash", render: "headtail", origLines: 9, origBytes: 90, keptLines: 3, keptBytes: 30, origPath: "p" }],
+            summaryText: "摘要",
+        });
+        const [e] = parseCompactLog(v1);
+        expect(e!.kind).toBe("compact");
+        const c = e as unknown as Record<string, any>;
+        expect(c.v).toBe(2); // 归一成 v2
+        expect(c.trigger).toBe("manual"); // 旧账没有 trigger 概念
+        expect(c.boundary.keepFromOpIndex).toBe(7);
+        expect(c.size.keptTurns).toBe(0); // 从 boundary 搬到 size
+        expect(c.size.droppedTurns).toBe(3);
+        expect(c.cost.taxShare).toBe(0.37);
+        expect(c.details.clipped).toHaveLength(1);
+        expect(c.details.summary.text).toBe("摘要");
+        // 空分组不写（不是空壳）
+        expect(c).not.toHaveProperty("__nonexistent");
     });
 });

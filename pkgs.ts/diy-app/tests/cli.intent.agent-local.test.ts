@@ -456,15 +456,22 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         const fp = opsPath(uri);
         const before = readFileSync(fp, "utf-8");
 
+        // v2 分组账（D4）：锚点在 boundary，结果数字在 size
         const rec = (await fx.sh.getJson(`./diy.sh agent local compact ${uri} --keep-turns 1`)).data as {
-            boundary: { keptFromTurnId: string | null; droppedTurns: number };
-            before: { bytes: number };
-            after: { bytes: number };
+            boundary: { keptFromTurnId: string | null; keepFromOpIndex: number };
+            size: {
+                keptTurns: number;
+                droppedTurns: number;
+                before: { bytes: number };
+                after: { bytes: number };
+            };
         };
         expect(rec.boundary.keptFromTurnId).toBe("t3000");
-        expect(rec.boundary.droppedTurns).toBe(2);
+        // 结果数字与前后规模都归 size（它们是结果，不是锚点）
+        expect(rec.size.droppedTurns).toBe(2);
+        expect(rec.size.keptTurns).toBe(1);
         // after 更小（丢了前两轮 + 第二轮工具输出被按需裁）
-        expect(rec.after.bytes).toBeLessThan(rec.before.bytes);
+        expect(rec.size.after.bytes).toBeLessThan(rec.size.before.bytes);
         // 契约①：**未删任何历史**（同一文件、同一内容）
         expect(existsSync(fp)).toBe(true);
         expect(readFileSync(fp, "utf-8")).toBe(before);
@@ -507,8 +514,9 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         seedOps(uri, [...turnOps("t9000", "只这一轮", big)]);
         const rec = (await fx.sh.getJson(
             `./diy.sh agent local compact ${uri} --keep-turns 1 --tool-result headtail`,
-        )).data as { after: { bytes: number }; clipped?: unknown[] };
-        expect(rec.clipped && rec.clipped.length).toBeGreaterThan(0);
+        )).data as { after: { bytes: number }; details?: { clipped?: unknown[] } };
+        // v2 分组：被裁明细在 details.clipped
+        expect(rec.details?.clipped && rec.details.clipped.length).toBeGreaterThan(0);
 
         const hist = (await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data as unknown[];
         // history 是 ops（原始，不裁）；裁剪只影响**投递**，故用 preview 的投影字节对比

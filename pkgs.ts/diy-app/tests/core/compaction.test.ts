@@ -172,14 +172,19 @@ describe("utf8Bytes / fmtBytes / estimateTokens", () => {
 function compactEvent(id: string, keptFromTurnId: string | null, ts = id): CompactEventRecord {
     return {
         kind: "compact",
-        v: 1,
+        v: 2,
         id,
         ts,
         by: "cli",
+        trigger: "manual",
         policy: normalizePolicy({}),
-        boundary: { keptFromTurnId, keepFromOpIndex: 0, keptTurns: 2, droppedTurns: 3 },
-        before: { turns: 5, messages: 10, bytes: 1000, estTokens: 250 },
-        after: { turns: 2, messages: 4, bytes: 400, estTokens: 100 },
+        boundary: { keptFromTurnId, keepFromOpIndex: 0 },
+        size: {
+            before: { turns: 5, messages: 10, bytes: 1000, estTokens: 250 },
+            after: { turns: 2, messages: 4, bytes: 400, estTokens: 100 },
+            keptTurns: 2,
+            droppedTurns: 3,
+        },
     };
 }
 
