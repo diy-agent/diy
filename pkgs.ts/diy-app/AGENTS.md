@@ -11,7 +11,7 @@
 - `find.shared` — `src/shared/` **跨层契约**（zod schema / 纯函数，main 与 renderer 共用，禁止各处重写）：`task-uri.ts`（URI 解析）· `task-detail.ts` · `task-list.ts`（排序搜索）· `persona.ts` · `prompt-schema.ts` · `session-view.ts` · `usage.ts`（**token 四桶 / 单价 / 金额的唯一口径处**，含 tier 选价与聚合）
 - `find.context` — `src/shared/context/` 上下文树与投递：`README.md` 是**完整约定表**（领域模型 / 投递构造 / 划分真源 / step 快照 / 渲染坑）；投递构造唯一入口 `delivery.ts` 的 `buildDelivery`；划分真源 `$DIY_HOME/context.yaml`（契约 `config.ts`、I/O `src/main/core/context-config.ts`）
 - `find.serve` — `src/serve/index.ts` 纯 Web 模式（无 Electron）
-- `find.tests` — `tests/`：`cli.intent.*` 意图测试（真实 UI / 隔离 Electron）· `core/` `services/` 单测 · 夹具 `electron-test.ts` · `ui-drive.ts` · `shell-test.ts` · `setup.ts`
+- `find.tests` — `tests/`：`cli.intent.*` 意图测试（真实 UI / 隔离 Electron，**跑 `out/` 产物**）· `core/` `services/` 单测（vitest **直读 `src/`**）· 夹具 `electron-test.ts` · `ui-drive.ts` · `shell-test.ts` · `setup.ts`
 - `find.scripts` — 仓库 `scripts/`：`ui-smoke/`（CDP 冒烟）· `cdp-colorscheme-demo.mts` · `repro-epipe-dialog.mts` · `doctor-env.sh`
 
 ## entry — 入口注入的环境变量
@@ -44,6 +44,7 @@
 - `rule.golden` — 改内置模版（`src/main/prompts/defaults.ts`）**必须同步** `tests/fixtures/system.golden.txt`（当前内置模版的逐字节快照）。⚠️ `./sha.sh check` **不含 vitest**，不会替你抓到这类失效 —— 改完模版跑 `npx vitest run tests/core/template-dsl-golden.test.ts`
 - `rule.agents-injected` — **本文件会被 `chainOf` 注入 system 提示词**（受 64KB 预算 `SYSTEM_BUDGET_CAP_BYTES` 约束）：长文写 README / 独立文档，这里只留指针
 - `rule.no-silent-catch` — 不要静默吞异常（如切模型曾一律 `catch {}` → 用户以为切了其实没切）
+- `rule.schema-source` — 需自说明的结构（策略 / 投递注记 / 日志行）一律以 **zod 定义为唯一真源**：字段说明由 `src/shared/schema-doc.ts` 从 `.describe()` 派生，**禁止手写字段表**（手写 = 第二真源，改字段忘改注释就撒谎）；日志读侧校验走 `src/shared/context/log-schema.ts`（初版紧凑 / 扩展松散 / 缺必填即**异常数据**，不计入统计）
 
 ## pit — 坑（反直觉，代码看不出来）
 
@@ -56,8 +57,10 @@
 - `pit.cdp-hit` — 点击前做**命中自检** `document.elementFromPoint(中心) === 目标元素`（抓「按钮溢出被相邻元素盖住」的唯一手段）；断言读 DOM 不靠截图；`elementFromPoint` 只测坐标，**真实手势链**要 `mouse.move/down/up` 分步，且拖拽**必须给真实时间 + 至少一帧**（CDP 合成事件是瞬时的，dnd-kit 异步激活等不到）
 - `pit.shell-test` — `ShellTest` 的输出边界 = stderr 的 PS1 marker + **stdout 的哨兵**：marker 只证明命令结束，stdout 是另一管道、到达顺序不保证，只等 marker 会读到半截输出并让后续每条命令错位
 - `pit.env-pollution` — 跑意图测试 / CDP 夹具前 shell 里**不要 export `DIY_PORT` / `DIY_HOME`**（`ShellTest` 继承 `process.env` → 每条 `./diy.sh` 都去打别的端口、各拉一个新 app 互踢）。正确姿势 `env -u DIY_PORT -u DIY_HOME npx vitest run …`
+- `pit.intent-build` — **`tests/cli.intent.*` 跑的是 `out/` 编译产物**（起隔离 Electron，main/preload/renderer 全来自产物）：改 `src/**` 后不 `./sha.sh build` 就跑 = 拿旧代码断言（症状：文案/diff 断言莫名失败，而同一份源码的单测全绿）。`tests/core|services` 是 vitest 直读源码，无需构建
 - `pit.excepthook` — 主进程**自注册 `uncaughtException` 处理器即抑制 Electron 的模态异常框**（其内置守卫是 `listenerCount > 1`），与有没有 try/catch 无关；诊断由 `installDiagnostics` 统一挂（三入口各落独立日志）
 - `pit.interrupt` — 中断的 tool 调用必须**在新一轮开始时收敛成显式终态并写进 ops**，投影（`blocksToMessages`）只做纯翻译。禁止退回"投影时现造占位文案"：文案会被模型当待办，重载后同一条自毁命令会被重发
+- `pit.llm-log` — `$DIY_HOME/local/<key>.llm.jsonl` 是**append-only 全量消息日志**（每行 1 条原生 ModelMessage + 索引位 `turn`/`step` + 工具结果的 `origin` 自证位），**行号 = 消息序号**（压缩注记的 `range` 就指它）。与压缩**解耦**：压缩只改投递期投影，绝不写它。加载时与 ops 投影对账（前缀则补齐 / 中部不一致则整份重建）
 - `pit.theme` — 主题**不得回落 `prefers-color-scheme`**：Playwright 的 `colorScheme` 默认 `"light"`，attach CDP 会覆盖系统外观把界面刷白
 - `pit.daisyui-drawer` — drawer 需渲染 `<input class="drawer-toggle">`，漏了侧栏 `visibility:hidden` 直接消失
 - `pit.hl-token` — CodeMirror 默认**只给 token 挂 class、不上色**：必须配 `HighlightStyle` + `syntaxHighlighting()`。`&light`/`&dark` **只能**用在 `EditorView.baseTheme`，写在 `EditorView.theme` 里是**模块加载期**抛错 → 整个 renderer 白屏
