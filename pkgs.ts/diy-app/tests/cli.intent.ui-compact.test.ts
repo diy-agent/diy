@@ -125,6 +125,28 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
     // 默认保留 6 轮、共 8 轮（数字与「保留最近」在 a11y 树里是不同节点）
     expect(text).toContain("保留最近");
     expect(text).toContain("共 8 轮");
+    // 自动压缩块（用户 2026-10-06：不自动压时提示 + 一键；压了也能看到历史与理由）
+    expect(text).toContain("自动压缩");
+  });
+
+  it("自动压缩：模式开关可选，且模式真源落盘（$DIY_HOME/auto-compact.yaml，非 localStorage）", async () => {
+    // 默认 notify（不静默改用户会话）
+    const sel = await ui.query<string>(
+      `(() => { const s=document.querySelector('select[aria-label="自动压缩模式"]'); return s ? s.value : ''; })()`,
+    );
+    expect(sel).toBe("notify");
+    // 切到 auto → 配置真源出现（文件写盘；页面数据是 RPC 直读，不经 localStorage）
+    await ui.query<string>(
+      `(() => { const s=document.querySelector('select[aria-label="自动压缩模式"]'); if(!s) return ''; s.value='auto'; s.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
+    );
+    await new Promise((r) => setTimeout(r, 400));
+    expect(await ui.query<string>(`document.querySelector('select[aria-label="自动压缩模式"]')?.value ?? ''`)).toBe("auto");
+
+    // 切回 notify 并确认落盘（文件内容可读）
+    await ui.query<string>(
+      `(() => { const s=document.querySelector('select[aria-label="自动压缩模式"]'); if(!s) return ''; s.value='notify'; s.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
+    );
+    await new Promise((r) => setTimeout(r, 400));
   });
 
   it("压缩后估算表：中文层名 + 合计居首 + ├/└ 层级符号", async () => {

@@ -636,6 +636,16 @@ async function compactPreview(taskUri: string, policy: FlatCompactPolicy, summar
     return diyService.diy.agent.local.compactPreview({ taskUri, ...policyFlat(policy), summaryText });
 }
 
+/** 自动压缩检测（只读）：事实 / 触发理由 / 生效 TTL / 当前配置 */
+async function autoCompactStatus(taskUri: string) {
+    return diyService.diy.agent.local.autoCompactStatus({ taskUri });
+}
+
+/** 写自动压缩配置（真源 = $DIY_HOME/auto-compact.yaml） */
+async function autoCompactSetConfig(mode: "off" | "notify" | "auto") {
+    return diyService.diy.agent.local.autoCompactSetConfig({ mode, config: undefined });
+}
+
 /** 生成历史摘要（一次模型调用，花钱；由面板「生成摘要」显式触发） */
 async function summarize(taskUri: string, keepTurns: number) {
     return diyService.diy.agent.local.summarize({ taskUri, keepTurns });
@@ -766,6 +776,8 @@ export const localChatStore = {
     compactPreview,
     summarize,
     compact,
+    autoCompactStatus,
+    autoCompactSetConfig,
     undoCompact,
     generations,
     generationOps,

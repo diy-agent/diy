@@ -908,6 +908,12 @@ export interface GenerationInfo {
     /** 被这次压缩压掉的次数（第 0 代后面紧跟的压缩 id） */
     compactId: string | null;
     policy?: CompactPolicy;
+    /** 谁压的（ui / cli / auto）—— 历史列表要能看出"这代是自动压的还是我压的" */
+    by?: "ui" | "cli" | "auto";
+    /** 为什么压（用户 2026-10-06：自动压也要能看到压缩历史与理由） */
+    trigger?: CompactTrigger;
+    /** 压缩时刻（与 startedAt 同源，但**第 0 代没有** —— 它不是被压出来的） */
+    compactTs?: string;
 }
 
 /**
@@ -952,6 +958,9 @@ export function listGenerations(
             current: i === valid.length - 1,
             compactId: c.id,
             policy: c.policy,
+            by: c.by,
+            trigger: c.trigger,
+            compactTs: c.ts,
         });
     });
     return gens;

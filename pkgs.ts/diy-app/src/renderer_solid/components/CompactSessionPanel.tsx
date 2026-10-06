@@ -21,6 +21,20 @@ import {
     type FlatCompactPolicy,
     type ToolResultMode,
 } from "../../shared/context/compaction";
+/** 触发理由的短文案（表里空间小；完整版在 TRIGGER_TEXT_FULL，提示条上用） */
+function triggerText(t: string | undefined): string {
+    switch (t) {
+        case "systemContextChanged":
+            return "系统上下文变";
+        case "cacheExpired":
+            return "缓存过期";
+        case "contextWindowOver":
+            return "窗口超限";
+        default:
+            return "手动";
+    }
+}
+
 import {
     collapsedAtLevel,
     diffValues,
@@ -88,6 +102,25 @@ function FactRow(props: { row: LayerRow; isTotal: boolean; isLast: boolean }) {
 export function CompactSessionPanel(props: { uri: string; onClose: () => void }) {
     // UI 用**扁平策略**（keepTurns/toolResult/headtail…）：它是稳定的输入面契约；
     // 三轴形状由 main 侧 normalizePolicy 统一生成（见 shared/context/compaction 的策略区）。
+    // 自动压缩检测（只读）：提示「此刻压缩无重建代价」+ 模式开关（真源落盘，不是 localStorage）
+    const [auto, { refetch: refetchAuto }] = createResource(() => props.uri, async (u) => {
+        return (await localChatStore.autoCompactStatus(u)) as {
+            config: { mode: "off" | "notify" | "auto" };
+            facts: { systemContextChanged: boolean; sinceLastRequestMs: number | null; windowRatio: number | null };
+            triggers: string[];
+            reasons: string[];
+        };
+    });
+    const [autoBusy, setAutoBusy] = createSignal(false);
+    const setAutoMode = async (mode: "off" | "notify" | "auto") => {
+        setAutoBusy(true);
+        try {
+            await localChatStore.autoCompactSetConfig(mode);
+            await refetchAuto();
+        } finally {
+            setAutoBusy(false);
+        }
+    };
     const [pol, setPolRaw] = createSignal<FlatCompactPolicy>(flatPolicyOf(DEFAULT_COMPACT_POLICY));
     const setPol = (p: Partial<FlatCompactPolicy>) => setPolRaw({ ...pol(), ...p });
     const [busy, setBusy] = createSignal(false);
@@ -324,6 +357,39 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                 <div class="flex min-h-0 grow overflow-hidden">
                     {/* ── 左栏：压缩选项 + 压缩后估算（两个可折叠 view）────────── */}
                     <div class="w-[340px] shrink-0 border-r overflow-auto p-2 space-y-2">
+                        {/* ── 自动压缩（用户 2026-10-06：不自动压时提示 + 一键；压了也能看到历史与理由）── */}
+                        <div class="rounded-lg border border-base-300 p-2 space-y-1.5">
+                            <div class="flex items-center justify-between">
+                                <div class="text-caption font-semibold opacity-70">自动压缩</div>
+                                <select
+                                    class="select select-xs"
+                                    aria-label="自动压缩模式"
+                                    value={auto()?.config.mode ?? "notify"}
+                                    disabled={autoBusy()}
+                                    onChange={(e) => void setAutoMode(e.currentTarget.value as "off" | "notify" | "auto")}
+                                >
+                                    <option value="off">关闭检测</option>
+                                    <option value="notify">检测并提示</option>
+                                    <option value="auto">自动执行</option>
+                                </select>
+                            </div>
+                            <Show
+                                when={(auto()?.triggers.length ?? 0) > 0}
+                                fallback={<div class="text-caption opacity-60">此刻无「该压缩」的确定事实（缓存还热 / 窗口未满）</div>}
+                            >
+                                <div class="text-caption text-warning">
+                                    <For each={auto()?.reasons ?? []}>{(r) => <div>⚠ {r}</div>}</For>
+                                </div>
+                                <Show when={auto()?.config.mode === "notify"}>
+                                    <button class="btn btn-primary btn-xs w-full" disabled={busy()} onClick={() => void apply()}>
+                                        一键压缩（此刻无重建代价）
+                                    </button>
+                                </Show>
+                                <Show when={auto()?.config.mode === "auto"}>
+                                    <div class="text-caption opacity-60">已设为自动：下一轮发送前会按默认策略压一次，账本记 by=auto 与理由</div>
+                                </Show>
+                            </Show>
+                        </div>
                         <Block title="压缩选项">
                             <div class="space-y-3">
                                 <section>
@@ -732,6 +798,9 @@ interface GenRow {
     totalTokens: number;
     cost: number | null;
     compactId: string | null;
+    /** 谁压的（ui / cli / auto）与为什么压 —— 历史列表要能看出理由（用户 2026-10-06） */
+    by?: "ui" | "cli" | "auto";
+    trigger?: string;
 }
 
 export function GenerationsPanel(props: { uri: string; onClose: () => void }) {
@@ -796,6 +865,7 @@ export function GenerationsPanel(props: { uri: string; onClose: () => void }) {
                                     <th class="text-right">消息</th>
                                     <th class="text-right">token</th>
                                     <th class="text-right">金额</th>
+                                    <th>方式 / 理由</th>
                                     <th />
                                 </tr>
                             </thead>
@@ -811,6 +881,14 @@ export function GenerationsPanel(props: { uri: string; onClose: () => void }) {
                                             <td class="text-right tabular-nums">{g.messages}</td>
                                             <td class="text-right tabular-nums">{g.totalTokens.toLocaleString()}</td>
                                             <td class="text-right tabular-nums">{g.cost == null ? "—" : `$${g.cost.toFixed(4)}`}</td>
+                                            <td class="opacity-80 text-caption">
+                                                <Show when={g.by} fallback={<span class="opacity-40">—</span>}>
+                                                    <span class="badge badge-xs" classList={{ "badge-info": g.by === "auto" }}>
+                                                        {g.by === "auto" ? "自动" : g.by === "ui" ? "界面" : "命令行"}
+                                                    </span>
+                                                    <span class="ml-1">{triggerText(g.trigger)}</span>
+                                                </Show>
+                                            </td>
                                             <td class="text-right">
                                                 <button class="btn btn-ghost btn-xs" onClick={() => setOpenSeq(g.seq)}>
                                                     查看

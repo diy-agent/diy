@@ -627,7 +627,7 @@ export const apiDef = RpcSchema.router({
                 desc: `写自动压缩配置（mode / triggers / 默认策略）`,
                 input: {
                   mode: z.enum(["off", "notify", "auto"]).optional().cliOption({ desc: "off/notify/auto" }),
-                  config: z.any().optional().cliOption({ desc: "完整配置对象（与 mode 二选一）" }),
+                  config: z.unknown().optional().cliOption({ desc: "完整配置对象（与 mode 二选一）" }),
                 },
                 output: z.any(),
               }),
