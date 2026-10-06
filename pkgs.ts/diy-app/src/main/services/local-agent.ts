@@ -65,6 +65,7 @@ import {
     turnIdAtOrAfterOp,
     listGenerations,
     listTurnIds,
+    keptTurnsByMessageCount,
     normalizePolicy,
     parseCompactLog,
     resolveBoundary,
@@ -303,6 +304,14 @@ function appendUsage(taskUri: string, rec: StepUsageRecord): void {
 }
 
 /**
+ * 全量投影里每条消息所属的轮（保序）—— keep.unit=messages 的吸附依据。
+ * 用**全量投影**（不带投递选项）：吸附要按"实际上会发出去的消息"算，不能用压缩后的。
+ */
+function messageTurnsOf(store: BlockStore): string[] {
+    return blocksToMessages(store, { withIndex: true }).map((m) => String(m.turn ?? ""));
+}
+
+/**
  * 被省区间的**事实**（行号/轮/工具/原因），数据源是同一次全量投影。
  *
  * 返回 null 的两种情形都是"宁可不写也不说谎"：
@@ -333,9 +342,11 @@ export function droppedSegmentOf(
 
 /** 为什么被省 —— 由**策略**推导（不是模型写的、也不是猜测） */
 function droppedWhyOf(policy: CompactPolicy, turns: number): string {
-    return policy.keepTurns === 0
-        ? `压缩策略：会话清零（此处含被省去的 ${turns} 轮）`
-        : `压缩策略：只保留最近 ${policy.keepTurns} 轮（此处含被省去的 ${turns} 轮）`;
+    const { unit, count } = policy.keep;
+    if (count === 0) return `压缩策略：会话清零（此处含被省去的 ${turns} 轮）`;
+    return unit === "turns"
+        ? `压缩策略：只保留最近 ${count} 轮（此处含被省去的 ${turns} 轮）`
+        : `压缩策略：只保留最近 ${count} 条消息，余下的整轮保留（此处含被省去的 ${turns} 轮）`;
 }
 
 /** 原始流 dump（仅 DIY_RAW_STREAM_DUMP=1 时写）：ai-sdk 的 part 原样落盘，用于研究“Op 是否漏信息” */
@@ -1119,6 +1130,13 @@ export class LocalAgentManager {
         /** 原文路径用（注记里的 file 字段）；view 路径与真发同一个 taskUri */
         taskUriOf = "",
     ): ModelMessage[] {
+        // content 轴：**已定义/已校验/已落账**，但投影实现（只留文本 / 只留结论）尚未做 ——
+        // 此处**出声**而不是静默按 all 走（静默 = 界面上的旋钮撒谎，用户拧了没反应还以为生效了）。
+        if (policy && policy.content !== "all") {
+            console.warn(
+                `[local-agent] content="${policy.content}" 尚未实现，本轮按 all 投递（##269 D3 待做）`,
+            );
+        }
         const opts = policy ? optsFor(policy, sinceTurnId, collect) : {};
         const kept = blocksToMessages(store, opts) as unknown as ModelMessage[];
         if (!policy || !this.noteEnabled()) return kept;
@@ -1214,11 +1232,17 @@ export class LocalAgentManager {
      * 压缩预案（**只算不写**）：预览、panel「事实」行、真发前的记账共用同一份计算。
      * 抽出来是为了「预览看到的 = 真压出来的」——两条路径各算各的必然分叉。
      */
-    private planCompact(taskUri: string, policyInput: Partial<CompactPolicy>): CompactPlan {
+    private planCompact(taskUri: string, policyInput: unknown): CompactPlan {
         const policy = normalizePolicy(policyInput);
         const scan = scanOpsFile(taskUri);
         const turnIds = listTurnIds(scan.ops);
-        const keptTurns = Math.min(policy.keepTurns, turnIds.length);
+        const store = new BlockStore();
+        for (const op of scan.ops) store.apply(op);
+        // keep 有两种单位：turns 直取；messages 先取条数再**吸附到轮首**（见 keptTurnsByMessageCount）
+        const keptTurns =
+            policy.keep.unit === "turns"
+                ? Math.min(policy.keep.count, turnIds.length)
+                : keptTurnsByMessageCount(messageTurnsOf(store), policy.keep.count, turnIds);
         const keptFromTurnId = keptTurns > 0 ? turnIds[turnIds.length - keptTurns]! : null;
         const droppedIds = keptFromTurnId ? turnIds.slice(0, turnIds.length - keptTurns) : [...turnIds];
 
@@ -1230,8 +1254,6 @@ export class LocalAgentManager {
         const before = sizeOfOps(scan.ops);
         const after = sizeOfOps(scan.ops, optsFor(policy, keptFromTurnId, clipped));
 
-        const store = new BlockStore();
-        for (const op of scan.ops) store.apply(op);
         const droppedDetail = droppedIds.map((id) =>
             describeTurn(store, id, scan.turnOffsets.get(id) ?? 0, scan.turnBytes.get(id) ?? 0),
         );
@@ -1346,7 +1368,7 @@ export class LocalAgentManager {
     }
 
     /** 压缩预览（只算不写）：面板左侧参数 + 右侧请求 YAML diff + 事实表的数据源 */
-    compactPreview(taskUri: string, policyInput: Partial<CompactPolicy>, summaryText?: string): CompactPreview {
+    compactPreview(taskUri: string, policyInput: unknown, summaryText?: string): CompactPreview {
         const p = this.planCompact(taskUri, policyInput);
         const base = this.requestView(taskUri);
         // 勾选摘要但尚未生成 → 用占位骨架（让用户先看见"会得到什么"，且不花一分钱）
@@ -1379,7 +1401,7 @@ export class LocalAgentManager {
      */
     compact(
         taskUri: string,
-        policyInput: Partial<CompactPolicy>,
+        policyInput: unknown,
         by: "ui" | "cli",
         summary?: { text: string; data: SummaryData; cost: number | null },
     ): CompactEventRecord {

@@ -7,6 +7,7 @@ import {
     listTurnIds,
     parseCompactLog,
     type CompactEventRecord,
+    normalizePolicy,
     type OpLike,
 } from "../../src/shared/context/compaction";
 
@@ -18,7 +19,7 @@ function clearAllLedger(keepFromOpIndex: number): CompactEventRecord {
         id: "c1",
         ts: "c1",
         by: "ui",
-        policy: { keepTurns: 0, toolOutput: "asis", headtail: { triggerLines: 6, headLines: 3, tailLines: 3, maxLineChars: 300, maxKeepBytes: 8192 }, summary: false },
+        policy: normalizePolicy({ keepTurns: 0 }),
         boundary: { keptFromTurnId: null, keepFromOpIndex, keptTurns: 0, droppedTurns: 3 },
         before: { turns: 3, messages: 6, bytes: 300, estTokens: 75 },
         after: { turns: 0, messages: 0, bytes: 0, estTokens: 0 },
@@ -64,7 +65,7 @@ describe("边界锚点 keepFromOpIndex（回归：压缩后发的消息消失）
     it("老账本缺 keepFromOpIndex → 回退 -1（下游按 keptFromTurnId 推导，不崩）", () => {
         const legacy = JSON.stringify({
             kind: "compact", v: 1, id: "L", ts: "L", by: "cli",
-            policy: { keepTurns: 0, toolOutput: "asis", headtail: { triggerLines: 6, headLines: 3, tailLines: 3, maxLineChars: 300, maxKeepBytes: 8192 }, summary: false },
+            policy: normalizePolicy({ keepTurns: 0 }),
             boundary: { keptFromTurnId: null, keptTurns: 0, droppedTurns: 1 },
             before: { turns: 1, messages: 2, bytes: 10, estTokens: 3 },
             after: { turns: 0, messages: 0, bytes: 0, estTokens: 0 },

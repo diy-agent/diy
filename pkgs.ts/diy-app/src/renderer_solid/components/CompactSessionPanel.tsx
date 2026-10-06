@@ -17,9 +17,8 @@ import { createSignal, createResource, createEffect, on, For, Show, createMemo, 
 import { localChatStore } from "../store/localChatStore";
 import {
     DEFAULT_COMPACT_POLICY,
-    DEFAULT_HEADTAIL,
-    normalizePolicy,
-    type CompactPolicy,
+    flatPolicyOf,
+    type FlatCompactPolicy,
     type ToolOutputMode,
 } from "../../shared/context/compaction";
 import {
@@ -87,8 +86,10 @@ function FactRow(props: { row: LayerRow; isTotal: boolean; isLast: boolean }) {
 }
 
 export function CompactSessionPanel(props: { uri: string; onClose: () => void }) {
-    const [pol, setPolRaw] = createSignal<CompactPolicy>({ ...DEFAULT_COMPACT_POLICY, headtail: { ...DEFAULT_HEADTAIL } });
-    const setPol = (p: Partial<CompactPolicy>) => setPolRaw(normalizePolicy({ ...pol(), ...p }));
+    // UI 用**扁平策略**（keepTurns/toolOutput/headtail…）：它是稳定的输入面契约；
+    // 三轴形状由 main 侧 normalizePolicy 统一生成（见 shared/context/compaction 的策略区）。
+    const [pol, setPolRaw] = createSignal<FlatCompactPolicy>(flatPolicyOf(DEFAULT_COMPACT_POLICY));
+    const setPol = (p: Partial<FlatCompactPolicy>) => setPolRaw({ ...pol(), ...p });
     const [busy, setBusy] = createSignal(false);
     const [err, setErr] = createSignal<string | null>(null);
     /**

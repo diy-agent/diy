@@ -28,7 +28,7 @@ import { personaStore } from "./personaStore";
 import { sessionView, type SessionView } from "../../shared/session-view";
 // 用量账本类型：与 main 落盘、CLI 报表、看板共用同一份形状（shared/usage 是唯一口径处）
 import type { StepUsageRecord } from "../../shared/usage";
-import type { CompactPolicy, HeadTailPolicy, OpLike } from "../../shared/context/compaction";
+import type { FlatCompactPolicy, HeadTailPolicy, OpLike } from "../../shared/context/compaction";
 
 interface TaskState {
     store: BlockStore;
@@ -632,7 +632,7 @@ async function requestView(taskUri: string) {
 }
 
 /** 压缩预览（只算不写）：mod 请求 + 事实表（base 侧由 requestView 单独取一次） */
-async function compactPreview(taskUri: string, policy: Partial<CompactPolicy>, summaryText?: string) {
+async function compactPreview(taskUri: string, policy: FlatCompactPolicy, summaryText?: string) {
     return diyService.diy.agent.local.compactPreview({ taskUri, ...policyFlat(policy), summaryText });
 }
 
@@ -644,7 +644,7 @@ async function summarize(taskUri: string, keepTurns: number) {
 /** 执行压缩（写边界账 + 落盘被裁原文 + 内存态重置）；成功后重建本地块树到新边界 */
 async function compact(
     taskUri: string,
-    policy: Partial<CompactPolicy>,
+    policy: FlatCompactPolicy,
     summary?: { text: string; data: unknown; cost: number | null },
 ) {
     const rec = await diyService.diy.agent.local.compact({
@@ -675,8 +675,10 @@ async function generationOps(taskUri: string, seq: number): Promise<OpLike[]> {
 }
 
 /** 策略对象 → RPC 扁平参数（headtail 展开成顶层字段，与 api-def 的 cliOption 对齐） */
-function policyFlat(p: Partial<CompactPolicy>): {
+function policyFlat(p: FlatCompactPolicy): {
     keepTurns: number | undefined;
+    keepUnit: "turns" | "messages" | undefined;
+    content: "all" | "text" | "conclusion" | undefined;
     toolOutput: "asis" | "headtail" | "callpath" | undefined;
     triggerLines: number | undefined;
     headLines: number | undefined;
@@ -688,6 +690,8 @@ function policyFlat(p: Partial<CompactPolicy>): {
     const ht: Partial<HeadTailPolicy> = p.headtail ?? {};
     return {
         keepTurns: p.keepTurns,
+        keepUnit: p.keepUnit,
+        content: p.content,
         toolOutput: p.toolOutput,
         triggerLines: ht.triggerLines,
         headLines: ht.headLines,

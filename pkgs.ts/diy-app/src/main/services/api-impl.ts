@@ -384,8 +384,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
   // ── 压缩（compact）：少发 ≠ 销毁；历史原地保留可查、可撤销 ──
   // CLI/UI 传来的散字段 → 策略对象（缺省字段由 normalizePolicy 兜底；undefined 覆盖成默认值）
-  const policyOf = (i: Record<string, unknown>): Partial<CompactPolicy> => ({
+  // 散字段 → **扁平策略对象**（输入面契约；三轴形状由 normalizePolicy 统一生成，见 shared/context/compaction）
+  const policyOf = (i: Record<string, unknown>): unknown => ({
     keepTurns: i.keepTurns as number | undefined,
+    keepUnit: i.keepUnit as string | undefined,
+    content: i.content as string | undefined,
     toolOutput: i.toolOutput as ToolOutputMode | undefined,
     headtail: {
       triggerLines: i.triggerLines as number,
