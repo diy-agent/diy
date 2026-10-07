@@ -54,7 +54,9 @@ export function saveAutoCompact(home: string, cfg: unknown): AutoCompactConfig {
         "#   systemContextChanged 系统上下文变了 → 前缀缓存必作废，此刻压缩零重建代价\n" +
         "#   cacheExpired         缓存已过期（距上次请求 > 生效 TTL）→ 冷启动，压缩是白赚\n" +
         "#   contextWindowOver    上下文窗口占用上限（0~1；0 = 关闭）\n" +
-        "# keep: 自动压时的默认策略（count: all = 全留轮次；content: conclusion = 只留结论）\n" +
+        "# policy: 自动压时用的策略（与手动面板同一棵决策树）\n" +
+        "#   mode: reset 清零 / keep 保留；keep.scope: all 全留轮次 | recent 保留最近 N\n" +
+        "#   content.kind: all 含工具链路（再配 toolResult）/ text 只留文本 / conclusion 只留结论\n" +
         "# 契约：pkgs.ts/diy-app/src/shared/context/auto-compact.ts 的 AutoCompactConfigSchema\n";
     const tmp = `${p}.tmp-${process.pid}`;
     writeFileSync(tmp, header + yaml.dump(norm, { indent: 2, noRefs: true }), "utf-8");

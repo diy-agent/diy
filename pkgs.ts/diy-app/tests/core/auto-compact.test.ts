@@ -97,7 +97,7 @@ describe("normalizeAutoCompact：初版紧凑、扩展松散", () => {
         const c = normalizeAutoCompact(undefined);
         expect(c).toEqual(DEFAULT_AUTO_COMPACT);
         expect(c.mode).toBe("notify");
-        expect(c.keep).toEqual({ unit: "turns", count: "all", content: "conclusion" });
+        expect(c.policy).toEqual({ mode: "keep", keep: { scope: "all" }, content: { kind: "conclusion" }, summary: false });
     });
 
     it("非法 mode/比例回落；0 是合法值（关闭该触发）", () => {
@@ -107,10 +107,10 @@ describe("normalizeAutoCompact：初版紧凑、扩展松散", () => {
     });
 
     it("默认策略 → 压缩策略输入：全留轮次 + 只留结论", () => {
-        const p = normalizePolicy(autoCompactPolicyInput(DEFAULT_AUTO_COMPACT));
-        expect(p.keep).toEqual({ unit: "turns", count: "all" });
-        expect(p.content).toBe("conclusion");
-        expect(p.summary).toBe(false);
+        // 策略**直接复用决策树**（含 summary），不再经扁平形状转一道
+        const p = autoCompactPolicyInput(DEFAULT_AUTO_COMPACT);
+        expect(p).toEqual({ mode: "keep", keep: { scope: "all" }, content: { kind: "conclusion" }, summary: false });
+        expect(normalizePolicy(p)).toEqual(p);
     });
 });
 
@@ -127,7 +127,7 @@ describe("配置文件层：真源落盘（不是 localStorage）", () => {
         expect(c.mode).toBe("auto");
         expect(c.triggers.contextWindowOver).toBe(0.6);
         // 未给的字段用默认补（初版紧凑）
-        expect(c.keep.count).toBe("all");
+        expect(c.policy).toEqual({ mode: "keep", keep: { scope: "all" }, content: { kind: "conclusion" }, summary: false });
     });
 
     it("坏文件 → 默认 + 出声（不崩、不用坏数据）", () => {
@@ -222,8 +222,7 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
         expect(c.by).toBe("auto");
         expect(c.trigger).toBe("contextWindowOver");
         // 自动压用的是默认策略：全留轮次 + 只留结论
-        expect(c.policy.keep).toEqual({ unit: "turns", count: "all" });
-        expect(c.policy.content).toBe("conclusion");
+        expect(c.policy).toEqual({ mode: "keep", keep: { scope: "all" }, content: { kind: "conclusion" }, summary: false });
         // 旧历史仍在（压缩只改投递）
         expect(readFileSync(opsFile(uri), "utf-8")).toContain("第 1 句");
     });

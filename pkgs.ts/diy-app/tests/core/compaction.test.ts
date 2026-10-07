@@ -17,6 +17,9 @@ import {
     listTurnIds,
     normalizePolicy,
     parseCompactLog,
+    toolResultOf,
+    contentKindOf,
+    type CompactPolicy,
     resolveBoundary,
     sliceOpsFromTurn,
     turnsOfGeneration,
@@ -27,34 +30,56 @@ import {
 
 // ─── 策略归一 ────────────────────────────────────────
 
+/** 造一条 keep 策略（内容默认「全部 + 原样」；范围单独给） */
+const keepP = (count: number | "all", unit: "turns" | "messages" = "turns"): CompactPolicy => ({
+    mode: "keep",
+    keep: count === "all" ? { scope: "all" } : { scope: "recent", unit, count },
+    content: { kind: "all", toolResult: { render: "asis" } },
+    summary: false,
+});
+
 describe("normalizePolicy：缺省值 + 越界兜底", () => {
     it("空输入 → 全默认（保留 6 轮 / 全内容 / 原样 / 不摘要）", () => {
         const p = normalizePolicy(undefined);
-        expect(p.keep).toEqual({ unit: "turns", count: 6 });
-        expect(p.content).toBe("all");
-        expect(p.toolResult).toEqual({ render: "asis" });
-        expect(p.summary).toBe(false);
+        expect(p).toEqual({
+            mode: "keep",
+            keep: { scope: "recent", unit: "turns", count: 6 },
+            content: { kind: "all", toolResult: { render: "asis" } },
+            summary: false,
+        });
         // 扁平视图（输入面契约）仍是老样子，UI 不用改
         expect(flatPolicyOf(p).headtail).toEqual(DEFAULT_HEADTAIL);
     });
-    it("count=0 是合法值（= 全部清零），不被当成缺失回落默认", () => {
-        expect(normalizePolicy({ keepTurns: 0 }).keep.count).toBe(0);
-        expect(normalizePolicy({ keep: { unit: "turns", count: 0 } }).keep.count).toBe(0);
+    it("**旧 count:0 升格成 mode:reset**（0 不再是一支范围，也就不会被误读成「保留 0 轮」）", () => {
+        expect(normalizePolicy({ keepTurns: 0 })).toEqual({ mode: "reset", summary: false });
+        expect(normalizePolicy({ keep: { unit: "turns", count: 0 } })).toEqual({ mode: "reset", summary: false });
+        // 决策树形状：reset 是**另一支**，不带范围/内容字段
+        expect(normalizePolicy({ mode: "reset" })).toEqual({ mode: "reset", summary: false });
     });
-    it("非法值逐项回落：负数 / 未知 mode / 小数取整", () => {
-        const p = normalizePolicy({ keepTurns: -3, toolResult: "nope" });
-        expect(p.keep.count).toBe(6);
-        expect(p.toolResult).toEqual({ render: "asis" });
-        expect(normalizePolicy({ keepTurns: 4.9 }).keep.count).toBe(4);
+    it("非法值逐项回落：负数 / 未知 render / 小数取整", () => {
+        expect(normalizePolicy({ keepTurns: -3, toolResult: "nope" })).toMatchObject({
+            mode: "keep",
+            keep: { scope: "recent", unit: "turns", count: 6 },
+            content: { kind: "all", toolResult: { render: "asis" } },
+        });
+        expect(normalizePolicy({ keepTurns: 4.9 })).toMatchObject({ keep: { scope: "recent", unit: "turns", count: 4 } });
     });
-    it("**两种形状都收**：旧扁平（keepTurns/headtail）与新三轴，结果同形", () => {
+    it("**三种形状都收**：旧扁平 / 旧三轴 / 新决策树，结果同形", () => {
         const flat = normalizePolicy({ keepTurns: 2, toolResult: "headtail", headtail: { headLines: 7, tailLines: 2 } });
         const axis = normalizePolicy({ keep: { unit: "turns", count: 2 }, toolResult: { render: "headtail", head: 7, tail: 2 } });
+        const tree = normalizePolicy({
+            mode: "keep",
+            keep: { scope: "recent", unit: "turns", count: 2 },
+            content: { kind: "all", toolResult: { render: "headtail", head: 7, tail: 2 } },
+        });
         expect(flat).toEqual(axis);
-        expect(flat.toolResult).toEqual({ render: "headtail", head: 7, tail: 2, maxLineChars: DEFAULT_HEADTAIL.maxLineChars, maxKeepBytes: DEFAULT_HEADTAIL.maxKeepBytes });
+        expect(tree).toEqual(axis);
+        expect(flat).toMatchObject({
+            content: { kind: "all", toolResult: { render: "headtail", head: 7, tail: 2, maxLineChars: DEFAULT_HEADTAIL.maxLineChars, maxKeepBytes: DEFAULT_HEADTAIL.maxKeepBytes } },
+        });
     });
     it("旧扁平局部覆盖：只给 headLines，其余保持默认（参数收进分支后仍如此）", () => {
-        const t = normalizePolicy({ toolResult: "headtail", headtail: { headLines: 7 } }).toolResult;
+        const t = toolResultOf(normalizePolicy({ toolResult: "headtail", headtail: { headLines: 7 } }))!;
         expect(t.render).toBe("headtail");
         if (t.render === "headtail") {
             expect(t.head).toBe(7);
@@ -62,9 +87,9 @@ describe("normalizePolicy：缺省值 + 越界兜底", () => {
         }
     });
     it("messages 单位 + 未知 content 逐项兜底", () => {
-        expect(normalizePolicy({ keepUnit: "messages", keepTurns: 3 }).keep).toEqual({ unit: "messages", count: 3 });
-        expect(normalizePolicy({ content: "nope" }).content).toBe("all");
-        expect(normalizePolicy({ content: "conclusion" }).content).toBe("conclusion");
+        expect(normalizePolicy({ keepUnit: "messages", keepTurns: 3 })).toMatchObject({ keep: { scope: "recent", unit: "messages", count: 3 } });
+        expect(normalizePolicy({ content: "nope" })).toMatchObject({ content: { kind: "all", toolResult: { render: "asis" } } });
+        expect(normalizePolicy({ content: "conclusion" })).toMatchObject({ content: { kind: "conclusion" } });
     });
 });
 
@@ -78,7 +103,7 @@ function lines(n: number): string {
 describe("clipToolResult", () => {
     // 工具输出策略：三轴形状（参数收进分支）
     const pol = (mode: "asis" | "headtail" | "callpath", ht = DEFAULT_HEADTAIL) =>
-        normalizePolicy({ toolResult: mode, headtail: { headLines: ht.headLines, tailLines: ht.tailLines, maxLineChars: ht.maxLineChars, maxKeepBytes: ht.maxKeepBytes } }).toolResult;
+        toolResultOf(normalizePolicy({ toolResult: mode, headtail: { headLines: ht.headLines, tailLines: ht.tailLines, maxLineChars: ht.maxLineChars, maxKeepBytes: ht.maxKeepBytes } }))!;
 
     it("asis：逐字符返回原文", () => {
         const t = lines(1000);
@@ -320,7 +345,7 @@ describe("keep.unit=messages：安全吸附（绝不切开 tool-call/result 配�
     });
 });
 
-describe("keep 单位经由 normalizePolicy 落地（扁平输入 → 三轴）", () => {
+describe("keep 单位经由 normalizePolicy 落地（扁平输入 → 决策树）", () => {
     it("keepUnit=messages 与三轴形状等价", () => {
         expect(normalizePolicy({ keepUnit: "messages", keepTurns: 2 })).toEqual(
             normalizePolicy({ keep: { unit: "messages", count: 2 } }),
@@ -328,28 +353,33 @@ describe("keep 单位经由 normalizePolicy 落地（扁平输入 → 三轴）"
     });
 });
 
-describe('keep.count = "all"（全留轮次：只裁内容、不裁轮）', () => {
-    it("normalizePolicy 收 all；与数字三态不混", () => {
-        expect(normalizePolicy({ keepTurns: "all" }).keep.count).toBe("all");
-        expect(normalizePolicy({ keep: { unit: "turns", count: "all" } }).keep).toEqual({ unit: "turns", count: "all" });
-        expect(normalizePolicy({ keepTurns: 0 }).keep.count).toBe(0);
-        expect(normalizePolicy({}).keep.count).toBe(6);
+describe("范围三支：全留轮次 / 保留最近 N / 清零（互不混）", () => {
+    it("normalizePolicy 收 all / recent / reset，各归各支", () => {
+        expect(normalizePolicy({ keepTurns: "all" })).toMatchObject({ mode: "keep", keep: { scope: "all" } });
+        expect(normalizePolicy({ keep: { unit: "turns", count: "all" } })).toMatchObject({ mode: "keep", keep: { scope: "all" } });
+        expect(normalizePolicy({ keepTurns: 0 })).toMatchObject({ mode: "reset" });
+        expect(normalizePolicy({})).toMatchObject({ mode: "keep", keep: { scope: "recent", unit: "turns", count: 6 } });
     });
 
-    it("keptTurnsOf：all = 全留轮；0 = 全丢；数字 = min(...)", () => {
+    it("keptTurnsOf：all = 全留轮；reset = 全丢；recent = min(...)", () => {
         const turns = ["t1", "t2", "t3"];
         const msgs = ["t1", "t1", "t2", "t2", "t3"];
-        expect(keptTurnsOf({ unit: "turns", count: "all" }, turns, msgs)).toBe(3);
-        expect(keptTurnsOf({ unit: "turns", count: 0 }, turns, msgs)).toBe(0);
-        expect(keptTurnsOf({ unit: "turns", count: 2 }, turns, msgs)).toBe(2);
-        expect(keptTurnsOf({ unit: "turns", count: 99 }, turns, msgs)).toBe(3);
+        expect(keptTurnsOf(keepP("all"), turns, msgs)).toBe(3);
+        expect(keptTurnsOf({ mode: "reset", summary: false }, turns, msgs)).toBe(0);
+        expect(keptTurnsOf(keepP(2), turns, msgs)).toBe(2);
+        expect(keptTurnsOf(keepP(99), turns, msgs)).toBe(3);
         // messages 单位仍走吸附
-        expect(keptTurnsOf({ unit: "messages", count: 2 }, turns, msgs)).toBe(2);
+        expect(keptTurnsOf(keepP(2, "messages"), turns, msgs)).toBe(2);
+    });
+
+    it("清零支恒为「不裁内容」（contentKindOf / toolResultOf 收口）", () => {
+        const r = normalizePolicy({ mode: "reset" });
+        expect(contentKindOf(r)).toBe("all");
+        expect(toolResultOf(r)).toBeNull();
     });
 
     it("自动压缩的默认策略读法：全留轮 + 只留结论", () => {
         const p = normalizePolicy({ keep: { unit: "turns", count: "all" }, content: "conclusion" });
-        expect(p.keep.count).toBe("all");
-        expect(p.content).toBe("conclusion");
+        expect(p).toMatchObject({ mode: "keep", keep: { scope: "all" }, content: { kind: "conclusion" } });
     });
 });

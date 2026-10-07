@@ -115,10 +115,15 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
       { label: "压缩按钮就位" },
     );
     await ui.clickSelector('[aria-label="压缩会话上下文"]');
-    const text = await waitUntil(a11yText, (t) => t.includes("1. 保留范围"), { label: "压缩面板上屏" });
-    expect(text).toContain("2. 内容");
-    expect(text).toContain("3. 工具结果");
-    expect(text).toContain("4. 计算历史摘要");
+    // ② 是**决策树**：1 模式 →（保留支）2 范围 / 3 内容 /（含工具链路时）4 工具结果；
+    // 摘要不编号（清零与保留都能算，故它不在这棵树的某一支里）
+    const text = await waitUntil(a11yText, (t) => t.includes("1. 这次怎么压"), { label: "压缩面板上屏" });
+    expect(text).toContain("保留部分历史");
+    expect(text).toContain("会话清零");
+    expect(text).toContain("2. 保留范围");
+    expect(text).toContain("3. 内容");
+    expect(text).toContain("4. 工具结果");
+    expect(text).toContain("计算历史摘要");
     // 两块策略区：① 自动压缩（系统行为）/ ② 本次手动压缩（只影响这一次点击）
     expect(text).toContain("① 自动压缩");
     expect(text).toContain("② 本次手动压缩");
@@ -129,6 +134,27 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
     expect(text).toContain("共 8 轮");
     // 自动压缩块（用户 2026-10-06：不自动压时提示 + 一键；压了也能看到历史与理由）
     expect(text).toContain("自动压缩");
+  });
+
+  it("② 是决策树：选「会话清零」→ 范围/内容/工具结果整块收起（清零没有内容可裁）", async () => {
+    const clickMode = (label: string) =>
+      ui.query<string>(
+        `(() => { const rs=[...document.querySelectorAll('input[type=radio]')]; const r=rs.find(x=>(x.closest('label')?.textContent||'').includes(${JSON.stringify(label)})); r?.click(); return 'x'; })()`,
+      );
+    await clickMode("会话清零");
+    await waitUntil(a11yText, (t) => !t.includes("2. 保留范围"), { label: "清零支收起范围/内容/工具结果" });
+    const t = await a11yText();
+    expect(t).not.toContain("3. 内容");
+    expect(t).not.toContain("4. 工具结果");
+    expect(t).toContain("日志一字不删"); // 说明文案（清零不等于清除）
+    // 清零支的结构：**没有** keep/content 字段（这正是决策树要表达的"非法组合不可表达"）
+    const stored = await ui.query<string>(`localStorage.getItem('diy_compact_manual_policy') ?? ''`);
+    expect(JSON.parse(stored)).toEqual({ mode: "reset", summary: false });
+
+    // 切回「保留部分历史」→ 上次拧的范围/内容**记得**（来回切不该把参数抹掉）
+    await clickMode("保留部分历史");
+    await waitUntil(a11yText, (t) => t.includes("2. 保留范围"), { label: "切回保留支" });
+    expect(await a11yText()).toContain("3. 内容");
   });
 
   it("自动压缩：模式开关可选，且模式真源落盘（$DIY_HOME/auto-compact.yaml，非 localStorage）", async () => {
@@ -204,6 +230,46 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
       );
       await new Promise((r) => setTimeout(r, 200));
     }
+  });
+
+  it("「全部轮次」开关 → scope:all（不写死数字：会话再长也不裁轮，只按内容轴裁）", async () => {
+    const toggle = `document.querySelector('input[aria-label="全部保留"]')`;
+    expect(await ui.query<string>(`${toggle}?.checked ?? null`)).toBe(false);
+    await ui.query<string>(`${toggle}?.click(); 'x'`);
+    await waitUntil(
+      () => ui.query<string>(`localStorage.getItem('diy_compact_manual_policy') ?? ''`),
+      (v) => String(v).includes('"scope":"all"'),
+      { label: "勾选 → scope:all" },
+    );
+    // 滑条此时禁用（"全部轮次"与具体数字不能同时表达）
+    expect(await ui.query<boolean>(`${toggle}?.checked === true && document.querySelector('input[aria-label="保留最近轮数"]').disabled === true`)).toBe(true);
+    // 取消勾选 → 回到具体轮数
+    await ui.query<string>(`${toggle}?.click(); 'x'`);
+    await waitUntil(
+      () => ui.query<string>(`localStorage.getItem('diy_compact_manual_policy') ?? ''`),
+      (v) => String(v).includes('"scope":"recent"'),
+      { label: "取消 → scope:recent" },
+    );
+  });
+
+  it("切支不丢参数：只留文本 → 回「全部」时工具结果的裁法仍在（记忆值）", async () => {
+    const radio = (label: string) =>
+      `(() => { const rs=[...document.querySelectorAll('input[type=radio]')]; const r=rs.find(x=>(x.closest('label')?.textContent||'').includes(${JSON.stringify(label)})); r?.click(); return 'x'; })()`;
+    // 选头尾裁剪 + 改头部行数
+    await ui.query<string>(radio("头尾裁剪"));
+    await waitUntil(() => ui.query<string>(`document.querySelector('input[aria-label="保留头部行数"]')?.value ?? ''`), (v) => v !== "", { label: "头尾参数出现" });
+    await ui.query<string>(`(() => { const i=document.querySelector('input[aria-label="保留头部行数"]'); i.value='5'; i.dispatchEvent(new Event('input',{bubbles:true})); return 'x'; })()`);
+    // 切到「只留文本」→ 工具结果节消失（结构上就不该有）
+    await ui.query<string>(radio("只留文本"));
+    await waitUntil(a11yText, (t) => !t.includes("4. 工具结果"), { label: "只留文本 → 工具结果节收起" });
+    // 切回「全部」→ 裁法还是头尾、行数还是 5
+    await ui.query<string>(radio("全部"));
+    await waitUntil(() => ui.query<string>(`document.querySelector('input[aria-label="保留头部行数"]')?.value ?? ''`), (v) => v === "5", { label: "切回后参数仍在" });
+    const stored = JSON.parse(await ui.query<string>(`localStorage.getItem('diy_compact_manual_policy') ?? '{}'`));
+    expect(stored.content).toMatchObject({ kind: "all", toolResult: { render: "headtail", head: 5 } });
+    // 复位为原样（免得污染后续 diff 断言）
+    await ui.query<string>(radio("原样"));
+    await waitUntil(() => ui.query<string>(`localStorage.getItem('diy_compact_manual_policy') ?? ''`), (v) => String(v).includes('"render":"asis"'), { label: "复位原样" });
   });
 
   it("压缩后估算表：中文层名 + 合计居首 + ├/└ 层级符号", async () => {

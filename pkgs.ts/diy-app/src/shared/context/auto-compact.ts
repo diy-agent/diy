@@ -16,7 +16,7 @@
 
 import { z } from "zod";
 import { cacheStateAfterGap, type EffectiveTtl } from "./cache-ttl";
-import type { CompactTrigger } from "./compaction";
+import { CompactPolicySchema, normalizePolicy, type CompactPolicy, type CompactTrigger } from "./compaction";
 
 /** 自动压缩的触发配置（三个都是可判定的确定事实） */
 export const AutoCompactTriggersSchema = z.object({
@@ -32,15 +32,14 @@ export const AutoCompactConfigSchema = z.object({
         .enum(["off", "notify", "auto"])
         .describe("off 不检测；notify 检测并提示（默认）；auto 检测到就压"),
     triggers: AutoCompactTriggersSchema,
-    /** 自动压时用的默认策略（用户 2026-10-06：**保留所有轮次的结论**，UI 可调） */
-    keep: z
-        .object({
-            unit: z.enum(["turns", "messages"]).describe("保留单位"),
-            count: z.union([z.number(), z.literal("all")]).describe('数量；"all" = 全留轮次'),
-            content: z.enum(["all", "text", "conclusion"]).describe("内容轴：自动压默认只留结论"),
-        })
-        .describe("自动压缩的默认策略（全留轮次 + 只留结论 = 保留所有轮次的结论）"),
-    summary: z.boolean().describe("自动压时是否带历史摘要（花钱，默认否）"),
+    /**
+     * 自动压时用的策略 —— **直接复用 `CompactPolicy` 这棵决策树**（含 `summary`）。
+     *
+     * 为什么不再自造一个 `{unit,count,content}`：那是同一概念的**第二个形状**（`content` 在这边
+     * 挂在 `keep` 里、在真实策略里挂顶层），两处各写一遍必然分叉。自动压的"压什么"与手动压
+     * 完全同类，就用同一个真源（差异只在**谁触发**，那由 `mode`/`triggers` 表达）。
+     */
+    policy: CompactPolicySchema.describe("自动压时用的策略（与手动面板同一真源形状）"),
 });
 export type AutoCompactConfig = z.infer<typeof AutoCompactConfigSchema>;
 export type AutoCompactTriggers = z.infer<typeof AutoCompactTriggersSchema>;
@@ -53,22 +52,28 @@ export type AutoCompactTriggers = z.infer<typeof AutoCompactTriggersSchema>;
 export const DEFAULT_AUTO_COMPACT: AutoCompactConfig = {
     mode: "notify",
     triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 0.8 },
-    keep: { unit: "turns", count: "all", content: "conclusion" },
-    summary: false,
+    // 「保留所有轮次的结论」：全留轮次 + 只留结论 —— 用户 2026-10-06 定的自动压意图
+    policy: {
+        mode: "keep",
+        keep: { scope: "all" },
+        content: { kind: "conclusion" },
+        summary: false,
+    },
 };
 
-/** 宽松归一（从 YAML/UI 来的可能缺字段/越界）：初版紧凑、扩展松散 */
+/**
+ * 宽松归一（从 YAML/UI 来的可能缺字段/越界）：初版紧凑、扩展松散。
+ *
+ * 缺 `policy` 时**不**用 `normalizePolicy({})` 的缺省（那是「保留最近 6 轮」）——
+ * 自动压的意图是「保留**所有**轮次的结论」，用 6 会把用户没明确要丢的结论丢掉。
+ * 缺省值必须有依据，不能顺手取一个（见 `DEFAULT_AUTO_COMPACT` 的注释）。
+ */
 export function normalizeAutoCompact(raw: unknown): AutoCompactConfig {
     const src = (raw ?? {}) as Record<string, unknown>;
     const t = (src["triggers"] ?? {}) as Record<string, unknown>;
-    const k = (src["keep"] ?? {}) as Record<string, unknown>;
     const num = (v: unknown, d: number, min: number, max: number): number =>
         typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : d;
     const mode = src["mode"] === "off" || src["mode"] === "auto" ? src["mode"] : "notify";
-    // 缺省 count = "all"（不是 6）：自动压缩的默认意图是「全留轮次、只裁内容」——
-    // 用 6 会把用户没明确要丢的结论丢掉（缺省值必须有依据，不能顺手写一个数）
-    const rawCount = k["count"] ?? DEFAULT_AUTO_COMPACT.keep.count;
-    const count = rawCount === "all" ? "all" : num(rawCount, 6, 0, Number.MAX_SAFE_INTEGER);
     return {
         mode,
         triggers: {
@@ -76,12 +81,9 @@ export function normalizeAutoCompact(raw: unknown): AutoCompactConfig {
             cacheExpired: t["cacheExpired"] !== false,
             contextWindowOver: num(t["contextWindowOver"], DEFAULT_AUTO_COMPACT.triggers.contextWindowOver, 0, 1),
         },
-        keep: {
-            unit: k["unit"] === "messages" ? "messages" : "turns",
-            count,
-            content: k["content"] === "text" || k["content"] === "all" ? k["content"] : "conclusion",
-        },
-        summary: src["summary"] === true,
+        // 策略与手动面板**同一棵决策树** → 交给 normalizePolicy 统一宽松归一；
+        // 缺省用它自己的缺省策略（不是 normalizePolicy 的：见本函数头注）。
+        policy: src["policy"] !== undefined ? normalizePolicy(src["policy"]) : DEFAULT_AUTO_COMPACT.policy,
     };
 }
 
@@ -127,11 +129,10 @@ export const TRIGGER_TEXT: Record<CompactTrigger, string> = {
     contextWindowOver: "上下文窗口占用超过上限（不压就撞墙）",
 };
 
-/** 把自动压缩配置转成压缩策略（喂给 normalizePolicy 的扁平形状；唯一适配点） */
-export function autoCompactPolicyInput(cfg: AutoCompactConfig): Record<string, unknown> {
-    return {
-        keep: { unit: cfg.keep.unit, count: cfg.keep.count },
-        content: cfg.keep.content,
-        summary: cfg.summary,
-    };
+/**
+ * 自动压缩的生效策略（提要：`autoCompactPolicyInput(cfg)` → 直接就是决策树）。
+ * 保留这个包装只为把「配置 → 策略」这点语义显式化（调用点读起来是"要压什么"，而不是"读了个字段"）。
+ */
+export function autoCompactPolicyInput(cfg: AutoCompactConfig): CompactPolicy {
+    return cfg.policy;
 }

@@ -61,48 +61,26 @@ export const DEFAULT_HEADTAIL: HeadTailPolicy = {
     maxKeepBytes: 8192,
 };
 
-/** 默认保留轮数（用户可在 panel 里调；0 = 全部清零） */
+/** 默认保留轮数（用户可在 panel 里调；「全部清零」是另一支 `mode:"reset"`，不是 `count:0`） */
 export const DEFAULT_KEEP_TURNS = 6;
 
-// ─── 策略的**三条正交轴**（用户 2026-10-06 定）─────────────────────────
+// ─── 策略：一棵**决策树**（用户 2026-10-06 二次定稿）───────────────────
 //
-// 为什么拆轴：原先扁平形状里「工具结果处理」与 `headtail` 是**平级兄弟字段**，于是 headtail 恒在，
-// 哪怕 render="asis"（它是 headtail 分支的私有参数，却挂在外面 → 语义泄漏、看 JSON
-// 也看不出谁属于谁）。三条轴各自独立，参数收进各自分支 → **看 JSON 就懂结构**（D5 命名
-// 规范：结构即语义）。同时把"轮次是唯一安全单位"这个隐含假设显式化（keep.unit）。
+// 演进：扁平兄弟字段（##267）→ 三轴 + 私有参数进分支（D3a，只治了最深一层）
+//       → **按从属关系建模的决策树**（现在）。
 //
-// 与旧（扁平）形状的关系：**输入面**（RPC / CLI / UI）暂时仍是扁平的
-// （keepTurns / toolResult / headtail / summary）—— `normalizePolicy` 是唯一适配点，
-// 两种形状都收；`flatPolicyOf` 供 UI 回读。存储与内部一律用三轴形状。
-
-/** ① 范围轴：留多久（轮 = 安全单位，不会切开 tool-call/result 配对；消息条数会自动吸附到轮首） */
-export const KeepPolicySchema = z.object({
-    unit: z.enum(["turns", "messages"]).describe("保留单位：turns（轮，安全单位）或 messages（条数，自动吸附到轮首）"),
-    /**
-     * 保留数量。三态（**注意别把 all 与 0 搞混 —— 一个是全留、一个是全丢**）：
-     *   · 数字 > 0 → 保留最近这么多（单位见 unit）
-     *   · `"all"`  → **全留轮次**（配合 `content != "all"` 用：只裁内容、不裁轮）
-     *   · `0`      → 全部清零（会话硬切换）
-     * `"all"` 的存在理由：自动压缩的默认策略是「保留**所有**轮次的结论」（用户 2026-10-06）——
-     * 轮数随会话变，写死数字要么裁掉结论、要么留不住；`all` 才是准确表达。
-     */
-    count: z
-        .union([
-            // coerce：CLI 把选项当字符串传（`--keep-turns 1`），不 coerce 的话 union 直接判非法
-            // （实测：exit=2 "keepTurns: Invalid input"）。RPC/账本传数字时 coerce 是恒等变换。
-            z.coerce.number().describe("保留最近 N（0 = 全部清零）"),
-            z.literal("all").describe("全留轮次（配合 content 只裁内容）"),
-        ])
-        .describe('保留数量：数字 = 保留最近 N；"all" = 全留轮次；0 = 全部清零'),
-});
-
-/** ② 内容轴：留过程还是只留结论 */
-export const ContentPolicySchema = z
-    .enum(["all", "text", "conclusion"])
-    .describe("all=用户+助手文本+工具链路；text=只留用户与助手文本；conclusion=每轮只留用户+最后一条助手文本");
+// 为什么还要再进一步：三轴虽把 `headtail` 收进了 `toolResult` 分支，但三条轴**本身仍是平级兄弟** ——
+// 于是 `mode:"reset"`（清零）时 `keep.unit` / `content` / `toolResult` 全是**死字段**
+// （清零已无内容可裁），读 YAML 的人无从知道「这个字段属于哪一支、什么时候才生效」。
+// 决策树把这一点编进**结构**：每层的私有参数收进该层分支 ⇒ **非法组合不可表达**
+// （清零不可能带 toolResult），读结构即知语义（D5「结构即语义」）。
+//
+// 层级：① 模式（清零 / 保留）→ ② 范围（最近 N / 全部轮次）→ ③ 内容（含不含工具链路）
+//       → ④ 工具结果怎么裁（**只在「含工具链路」这一支里**）
+// `summary` 不在树上：清零与保留**都**能算摘要 ⇒ 放进树里就得每支重复一个同名字段。
 
 /**
- * ③ 工具**结果**轴：判别式联合，参数收进分支（看 JSON 即知关系）。
+ * ④ 工具**结果**轴：判别式联合，参数收进分支（看 JSON 即知关系）。
  *
  * 名字为什么是 `toolResult` 而不是 `toolOutput`（用户 2026-10-06）：
  * 「output」与 provider 的 input/output token 撞词，读 JSON 时分不清是"工具产出的文本"
@@ -121,140 +99,248 @@ export const ToolResultPolicySchema = z.discriminatedUnion("render", [
     z.object({ render: z.literal("callpath").describe("只留调用 + 原文路径") }),
 ]);
 
-export const CompactPolicySchema = z.object({
-    keep: KeepPolicySchema,
-    content: ContentPolicySchema,
-    toolResult: ToolResultPolicySchema,
-    summary: z.boolean().describe("是否额外算一份历史摘要带进新会话"),
-});
+/**
+ * ③ 内容轴：留过程还是只留结论 —— **工具结果的裁法是这一支的私有参数**（只有「含工具链路」才谈得上怎么裁）。
+ */
+export const ContentPolicySchema = z.discriminatedUnion("kind", [
+    z.object({
+        kind: z.literal("all").describe("保留工具链路（用户 / 助手文本 + 工具调用与结果）"),
+        toolResult: ToolResultPolicySchema,
+    }),
+    z.object({ kind: z.literal("text").describe("只留文本：去掉工具调用与结果") }),
+    z.object({ kind: z.literal("conclusion").describe("只留结论：每轮只留最后一条助手文本") }),
+]);
+
+/** ② 范围轴：留多久（轮 = 安全单位，不会切开 tool-call/result 配对；消息条数会自动吸附到轮首） */
+export const KeepPolicySchema = z.discriminatedUnion("scope", [
+    z.object({
+        scope: z.literal("all").describe("全留轮次（配合内容轴用：只裁内容、不裁轮）"),
+    }),
+    z.object({
+        scope: z.literal("recent").describe("保留最近若干（单位见 unit）"),
+        unit: z.enum(["turns", "messages"]).describe("保留单位：turns（轮，安全单位）或 messages（条数，自动吸附到轮首）"),
+        // coerce：CLI 把选项当字符串传（`--keep-turns 1`）。**正数**约束把 0 挡在门外 ——
+        // 0 的旧含义（全部清零）已升格成 `mode:"reset"`，留在这一支只会造出第二个真源。
+        count: z.coerce.number().int().positive().describe("保留最近 N（N ≥ 1；「全部清零」是 mode=reset，不是 count=0）"),
+    }),
+]);
+
+/** 「是否额外算一份历史摘要」——**两种模式都成立**，故不进决策树（见本区头注） */
+const SummaryField = z.boolean().describe("是否额外算一份历史摘要带进新会话（额外调一次模型，花钱）");
+
+/**
+ * ① 模式轴：**清零** 还是 **保留**（顶层判别）。
+ * `reset` 支没有范围 / 内容字段 —— 清零没有内容可裁，那些字段放进这一支全是死字段。
+ */
+export const CompactPolicySchema = z.discriminatedUnion("mode", [
+    z.object({
+        mode: z.literal("reset").describe("会话清零：本次压缩不投任何历史轮（日志一字不删，可查、可回取）"),
+        summary: SummaryField,
+    }),
+    z.object({
+        mode: z.literal("keep").describe("保留部分历史（范围 / 内容 / 工具结果见下）"),
+        keep: KeepPolicySchema,
+        content: ContentPolicySchema,
+        summary: SummaryField,
+    }),
+]);
 
 export type KeepPolicy = z.infer<typeof KeepPolicySchema>;
 export type ContentPolicy = z.infer<typeof ContentPolicySchema>;
+export type ContentPolicyKind = ContentPolicy["kind"];
 export type ToolResultPolicy = z.infer<typeof ToolResultPolicySchema>;
 export type CompactPolicy = z.infer<typeof CompactPolicySchema>;
+export type CompactMode = CompactPolicy["mode"];
 
 export const DEFAULT_COMPACT_POLICY: CompactPolicy = {
-    keep: { unit: "turns", count: DEFAULT_KEEP_TURNS },
-    content: "all",
-    toolResult: { render: "asis" },
+    mode: "keep",
+    keep: { scope: "recent", unit: "turns", count: DEFAULT_KEEP_TURNS },
+    content: { kind: "all", toolResult: { render: "asis" } },
     summary: false,
 };
 
-/** 扁平（输入面）形状：RPC / CLI / UI 的现有契约，**不是**内部形状 */
+// ── 决策树 → 选择 / 渲染阶段要用的三值（下游只认这三个，不认树）──
+
+/** 内容轴的三值视图（清零时无内容可裁 → "all"） */
+export function contentKindOf(p: CompactPolicy): ContentPolicyKind {
+    return p.mode === "keep" ? p.content.kind : "all";
+}
+
+/** 工具结果策略：只有「保留工具链路」这一支有；其余 → null（不裁） */
+export function toolResultOf(p: CompactPolicy): ToolResultPolicy | null {
+    return p.mode === "keep" && p.content.kind === "all" ? p.content.toolResult : null;
+}
+
+/**
+ * 扁平（**输入面**）形状：RPC / CLI / UI state 用的紧凑契约，**不是**真源形状。
+ *
+ * 为什么输入面可以继续扁平：UI 自己保证「只产生合法组合」（决策树按分支展开），
+ * CLI 的 `--keep-turns / --content / --tool-result` 是给人用的快捷语法；
+ * 而**真源**（账本 / auto-compact.yaml）必须是决策树 —— 那里要给人读、要自解释。
+ * `normalizePolicy` 是唯一适配点（扁平/旧形状 → 树），`flatPolicyOf` 是反向（树 → 扁平，供 UI 回读）。
+ */
 export interface FlatCompactPolicy {
     keepTurns: number | "all";
     toolResult: ToolResultMode;
     headtail: HeadTailPolicy;
     summary: boolean;
-    content?: ContentPolicy;
+    content?: ContentPolicyKind;
     keepUnit?: "turns" | "messages";
 }
 
-/** 三轴 → 扁平（UI 回读 / 旧契约输出用） */
+/** 决策树 → 扁平（UI 回读用） */
 export function flatPolicyOf(p: CompactPolicy): FlatCompactPolicy {
-    const t = p.toolResult;
+    if (p.mode === "reset") {
+        return {
+            keepTurns: 0,
+            toolResult: "asis",
+            headtail: { ...DEFAULT_HEADTAIL },
+            summary: p.summary,
+            content: "all",
+            keepUnit: "turns",
+        };
+    }
+    const k = p.keep;
+    const tr = p.content.kind === "all" ? p.content.toolResult : ({ render: "asis" } as const);
     const ht =
-        t.render === "headtail"
+        tr.render === "headtail"
             ? {
-                  triggerLines: t.head + t.tail,
-                  headLines: t.head,
-                  tailLines: t.tail,
-                  maxLineChars: t.maxLineChars,
-                  maxKeepBytes: t.maxKeepBytes,
+                  triggerLines: tr.head + tr.tail,
+                  headLines: tr.head,
+                  tailLines: tr.tail,
+                  maxLineChars: tr.maxLineChars,
+                  maxKeepBytes: tr.maxKeepBytes,
               }
             : { ...DEFAULT_HEADTAIL };
     return {
-        keepTurns: p.keep.count,
-        toolResult: t.render,
+        keepTurns: k.scope === "all" ? "all" : k.count,
+        toolResult: tr.render,
         headtail: ht,
         summary: p.summary,
-        content: p.content,
-        keepUnit: p.keep.unit,
+        content: p.content.kind,
+        keepUnit: k.scope === "recent" ? k.unit : "turns",
     };
 }
 
 const posNum = (v: unknown, d: number, min = 0): number =>
     typeof v === "number" && Number.isFinite(v) && v >= min ? Math.floor(v) : d;
 
+/** 工具结果策略的宽松读（三种历史形状都收：`"headtail"` 字符串 / `{render,…}` / 更早的 `{mode,…}`） */
+function readToolResult(raw: unknown, ht: Partial<HeadTailPolicy>): ToolResultPolicy {
+    if (raw !== null && typeof raw === "object") {
+        const o = raw as Record<string, unknown>;
+        const m = o["render"] ?? o["mode"];
+        if (m === "headtail") {
+            return {
+                render: "headtail",
+                head: posNum(o["head"], DEFAULT_HEADTAIL.headLines, 0),
+                tail: posNum(o["tail"], DEFAULT_HEADTAIL.tailLines, 0),
+                maxLineChars: posNum(o["maxLineChars"], DEFAULT_HEADTAIL.maxLineChars, 1),
+                maxKeepBytes: posNum(o["maxKeepBytes"], DEFAULT_HEADTAIL.maxKeepBytes, 1),
+            };
+        }
+        return m === "callpath" ? { render: "callpath" } : { render: "asis" };
+    }
+    if (raw === "headtail") {
+        return {
+            render: "headtail",
+            head: posNum(ht.headLines, DEFAULT_HEADTAIL.headLines, 0),
+            tail: posNum(ht.tailLines, DEFAULT_HEADTAIL.tailLines, 0),
+            maxLineChars: posNum(ht.maxLineChars, DEFAULT_HEADTAIL.maxLineChars, 1),
+            maxKeepBytes: posNum(ht.maxKeepBytes, DEFAULT_HEADTAIL.maxKeepBytes, 1),
+        };
+    }
+    if (raw === "callpath") return { render: "callpath" };
+    return { render: "asis" };
+}
+
+/** 内容轴的宽松读（新 `{kind, toolResult}` / 旧 `"all"|"text"|"conclusion"` 都收） */
+function readContent(raw: unknown, legacyToolResult: unknown, ht: Partial<HeadTailPolicy>): ContentPolicy {
+    if (raw !== null && typeof raw === "object") {
+        const o = raw as Record<string, unknown>;
+        const kind = o["kind"];
+        if (kind === "text") return { kind: "text" };
+        if (kind === "conclusion") return { kind: "conclusion" };
+        return { kind: "all", toolResult: readToolResult(o["toolResult"], ht) };
+    }
+    if (raw === "text") return { kind: "text" };
+    if (raw === "conclusion") return { kind: "conclusion" };
+    return { kind: "all", toolResult: readToolResult(legacyToolResult, ht) };
+}
+
 /**
- * 宽松校验：从 UI/CLI/旧账本来的策略 → 合法三轴策略。
- * **两种形状都收**（初版紧凑、扩展松散）：旧扁平（keepTurns/toolResult/headtail）与新三轴。
- * 判据看有没有 `keep` —— 有就当新形状，否则按扁平解。
+ * 宽松校验：从 UI / CLI / 旧账本来的策略 → 合法**决策树**。
+ *
+ * 两类输入：
+ *   · 决策树形状（现役，带 `mode`）→ 逐字段宽松归一；
+ *   · **旧形状**（D3a 的三轴 `keep:{unit,count}` / ##267 的扁平 `keepTurns`）→ 迁移过来。
+ *     为什么必须支持：`$DIY_HOME` 里**已有**老账本（compact.jsonl）存着旧 policy，读出来要能正确投递
+ *     （否则老会话的压缩边界失效 → 请求内容错乱）。这是**正确性**，不是兼容洁癖。
  */
 export function normalizePolicy(p: unknown): CompactPolicy {
     const src = (p ?? {}) as Record<string, unknown>;
-    const keep0 = src["keep"] as Partial<KeepPolicy> | undefined;
+
+    // ── 现役：决策树形状 ──
+    if (src["mode"] === "reset") return { mode: "reset", summary: src["summary"] === true };
+    if (src["mode"] === "keep") {
+        const k = (src["keep"] ?? {}) as Record<string, unknown>;
+        return {
+            mode: "keep",
+            keep: k["scope"] === "all" ? { scope: "all" } : readRecent(k, src["keepUnit"]),
+            content: readContent(src["content"], undefined, {}),
+            summary: src["summary"] === true,
+        };
+    }
+
+    // ── 旧形状迁移 ──
+    const k = (src["keep"] ?? {}) as Record<string, unknown>;
     const ht0 = (src["headtail"] ?? {}) as Partial<HeadTailPolicy>;
-    const legacyCount = src["keepTurns"];
-    const unit = keep0?.unit === "messages" || src["keepUnit"] === "messages" ? "messages" : "turns";
-    const rawCount = keep0?.count ?? legacyCount;
-    // 数字也可能是字符串（CLI/手写 YAML 都常见）—— 宽松收，"初版紧凑、扩展松散"
+    const rawCount = k["count"] ?? src["keepTurns"];
+    const unit = k["unit"] === "messages" || src["keepUnit"] === "messages" ? "messages" : "turns";
     const numOf = (v: unknown): number | null => {
         if (typeof v === "number" && Number.isFinite(v) && v >= 0) return Math.floor(v);
         if (typeof v === "string" && /^\s*\d+\s*$/.test(v)) return Number(v);
         return null;
     };
-    // ⚠️ 负数**不**夹成 0：0 是「全部清零」（会话硬切换），而负数只可能是笔误/脏数据 ——
+    // ⚠️ 负数**不**夹成 0：0 的旧含义是「全部清零」，负数只可能是笔误/脏数据 ——
     //    把 -1 解成"清空会话"是灾难性误读，故一律回落缺省（6）。
-    const count: number | "all" = rawCount === "all" ? "all" : (numOf(rawCount) ?? DEFAULT_KEEP_TURNS);
+    const n = numOf(rawCount);
+    const summary = src["summary"] === true;
+    const content = readContent(src["content"], src["toolResult"], ht0);
+    if (rawCount === "all") return { mode: "keep", keep: { scope: "all" }, content, summary };
+    if (n === 0) return { mode: "reset", summary }; // 旧 count:0 = 清零 → 升格成 mode
+    return {
+        mode: "keep",
+        keep: { scope: "recent", unit, count: n ?? DEFAULT_KEEP_TURNS },
+        content,
+        summary,
+    };
+}
 
-    const content0 = src["content"];
-    const content: ContentPolicy =
-        content0 === "text" || content0 === "conclusion" ? content0 : "all";
-
-    const t0 = src["toolResult"];
-    let toolResult: ToolResultPolicy;
-    if (t0 !== null && typeof t0 === "object") {
-        // 已经是分支形状（新）：只校验判别键
-        // 判别键：新形状 `render`，旧形状 `mode`（扩展松散）
-        const m = (t0 as { render?: unknown }).render ?? (t0 as { mode?: unknown }).mode;
-        toolResult =
-            m === "headtail"
-                ? {
-                      render: "headtail",
-                      head: posNum((t0 as { head?: unknown }).head, DEFAULT_HEADTAIL.headLines, 0),
-                      tail: posNum((t0 as { tail?: unknown }).tail, DEFAULT_HEADTAIL.tailLines, 0),
-                      maxLineChars: posNum((t0 as { maxLineChars?: unknown }).maxLineChars, DEFAULT_HEADTAIL.maxLineChars, 1),
-                      maxKeepBytes: posNum((t0 as { maxKeepBytes?: unknown }).maxKeepBytes, DEFAULT_HEADTAIL.maxKeepBytes, 1),
-                  }
-                : m === "callpath"
-                  ? { render: "callpath" }
-                  : { render: "asis" };
-    } else if (t0 === "headtail") {
-        const head = posNum(ht0.headLines, DEFAULT_HEADTAIL.headLines, 0);
-        const tail = posNum(ht0.tailLines, DEFAULT_HEADTAIL.tailLines, 0);
-        toolResult = {
-            render: "headtail",
-            head,
-            tail,
-            maxLineChars: posNum(ht0.maxLineChars, DEFAULT_HEADTAIL.maxLineChars, 1),
-            maxKeepBytes: posNum(ht0.maxKeepBytes, DEFAULT_HEADTAIL.maxKeepBytes, 1),
-        };
-    } else if (t0 === "callpath") {
-        toolResult = { render: "callpath" };
-    } else {
-        toolResult = { render: "asis" };
-    }
-    return { keep: { unit, count }, content, toolResult, summary: src["summary"] === true };
+/** `{unit,count}`（现役 recent 支）的宽松读；unit 也接受来自扁平形状的 `keepUnit` */
+function readRecent(k: Record<string, unknown>, legacyUnit: unknown): KeepPolicy {
+    const unit = k["unit"] === "messages" || legacyUnit === "messages" ? "messages" : "turns";
+    const n = typeof k["count"] === "number" && Number.isFinite(k["count"]) && k["count"] > 0 ? Math.floor(k["count"]) : DEFAULT_KEEP_TURNS;
+    return { scope: "recent", unit, count: n };
 }
 
 /**
- * keep 轴 → 保留轮数（**唯一入口**：turns / messages / "all" 三态都在这收口，
- * 免得每个调用点各写一遍 `count === 0 ? 0 : …` 而漏掉 `"all"`）。
+ * 策略 → 保留轮数（**唯一入口**：三种取法都在收口，免得每个调用点各写一遍而漏掉某一支）。
  *
- *   · count = "all"  → 全留（轮数 = 全部）
- *   · count = 0      → 全丢（会话硬切换）
- *   · unit=turns     → min(count, 总轮数)
- *   · unit=messages  → 取尾 count 条消息后吸附到轮首（见 keptTurnsByMessageCount）
+ *   · mode = "reset"        → 0（全丢，会话硬切换）
+ *   · scope = "all"         → 全留（轮数 = 全部）
+ *   · scope = "recent"      → unit=turns 取 min(count, 总轮数)；unit=messages 见 keptTurnsByMessageCount
  */
 export function keptTurnsOf(
-    keep: KeepPolicy,
+    policy: CompactPolicy,
     turnIds: readonly string[],
     messageTurns: readonly string[],
 ): number {
-    if (keep.count === "all") return turnIds.length;
-    if (keep.unit === "turns") return Math.min(keep.count, turnIds.length);
-    return keptTurnsByMessageCount(messageTurns, keep.count, turnIds);
+    if (policy.mode === "reset") return 0;
+    const k = policy.keep;
+    if (k.scope === "all") return turnIds.length;
+    if (k.unit === "turns") return Math.min(k.count, turnIds.length);
+    return keptTurnsByMessageCount(messageTurns, k.count, turnIds);
 }
 
 /**
@@ -417,8 +503,8 @@ export function clipToolResult(text: string, toolResult: ToolResultPolicy, opts:
  */
 export interface DeliveryTransform {
     sinceTurnId?: string | null;
-    /** 内容轴：留过程还是只留结论（选择阶段的判据，见 local-blocks 的 selectHistory） */
-    content?: ContentPolicy;
+    /** 内容轴的三值：留过程还是只留结论（选择阶段的判据，见 local-blocks 的 selectHistory） */
+    content?: ContentPolicyKind;
     transformToolResult?: (b: { id: string; tool: string; output: string }) => string;
 }
 
@@ -437,16 +523,20 @@ export function makeDeliveryTransform(
 ): DeliveryTransform {
     const opts: DeliveryTransform = {};
     if (keptFromTurnId !== undefined) opts.sinceTurnId = keptFromTurnId;
-    // 内容轴随策略一起下发（选择阶段用）；"all" 是缺省、不必写
-    if (policy.content !== "all") opts.content = policy.content;
-    if (policy.toolResult.render !== "asis") {
+    // 内容轴随策略一起下发（选择阶段用）；"all" 是缺省、不必写。
+    // 清零支恒为 "all"（无内容可裁）—— 由 contentKindOf 收口，调用点不必自己判 mode。
+    const kind = contentKindOf(policy);
+    if (kind !== "all") opts.content = kind;
+    // 工具结果的裁法**只有**「保留工具链路」这一支有（其余 → null）
+    const tr = toolResultOf(policy);
+    if (tr && tr.render !== "asis") {
         opts.transformToolResult = ({ id, output }) => {
-            const r = clipToolResult(output, policy.toolResult, { origPath: origPathOf(id) });
+            const r = clipToolResult(output, tr, { origPath: origPathOf(id) });
             if (!r.clipped) return output;
             collect?.push({
                 id,
                 tool: "",
-                render: policy.toolResult.render,
+                render: tr.render,
                 origLines: r.origLines,
                 origBytes: r.origBytes,
                 keptLines: r.keptLines,

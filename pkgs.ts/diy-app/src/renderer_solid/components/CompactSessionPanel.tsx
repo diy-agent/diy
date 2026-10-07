@@ -16,10 +16,16 @@
 import { createSignal, createResource, createEffect, on, For, Show, createMemo, onMount, onCleanup, type JSX } from "solid-js";
 import { localChatStore } from "../store/localChatStore";
 import {
+    DEFAULT_HEADTAIL,
+    DEFAULT_KEEP_TURNS,
     flatPolicyOf,
     normalizePolicy,
-    type FlatCompactPolicy,
-    type ToolResultMode,
+    type CompactMode,
+    type CompactPolicy,
+    type ContentPolicy,
+    type ContentPolicyKind,
+    type KeepPolicy,
+    type ToolResultPolicy,
 } from "../../shared/context/compaction";
 import { Caches } from "../lib/ui-state";
 /** 触发理由的短文案（表里空间小；完整版在 TRIGGER_TEXT_FULL，提示条上用） */
@@ -101,16 +107,15 @@ function FactRow(props: { row: LayerRow; isTotal: boolean; isLast: boolean }) {
 }
 
 export function CompactSessionPanel(props: { uri: string; onClose: () => void }) {
-    // UI 用**扁平策略**（keepTurns/toolResult/headtail…）：它是稳定的输入面契约；
-    // 三轴形状由 main 侧 normalizePolicy 统一生成（见 shared/context/compaction 的策略区）。
+    // 策略形状：面板直接用**真源那棵决策树**（不做第二套形状）。唯一的形状转换发生在两处边界 ——
+    // 下发 RPC 时 `flatPolicyOf`（输入面仍是紧凑散字段）、读旧 UI state 时 `normalizePolicy`。
     // 自动压缩检测（只读）：提示「此刻压缩无重建代价」+ 模式开关（真源落盘，不是 localStorage）
     const [auto, { refetch: refetchAuto }] = createResource(() => props.uri, async (u) => {
         return (await localChatStore.autoCompactStatus(u)) as {
             config: {
                 mode: "off" | "notify" | "auto";
                 triggers: { systemContextChanged: boolean; cacheExpired: boolean; contextWindowOver: number };
-                keep: { unit: "turns" | "messages"; count: number | "all"; content: "all" | "text" | "conclusion" };
-                summary: boolean;
+                policy: unknown;
             };
             facts: {
                 systemContextChanged: boolean;
@@ -138,17 +143,133 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     const setAutoMode = (mode: "off" | "notify" | "auto") => void patchAuto({ mode });
 
     /**
-     * 「本次手动压缩」的参数 —— **初始值 = 上次手动拧的**（UI state，丢失只回默认、无数据损失），
+     * 「本次手动压缩」的策略 —— **直接就是真源那棵决策树**（UI 不另造一套形状：
+     * 面板长得像树、盘上存的也是树，就没有"两处形状迟早分叉"的余地）。
+     * 初始值 = 上次手动拧的（UI state，丢失只回默认、无数据损失），
      * 与自动那套**互不为真源、互不同步**（用户 2026-10-06：手动设的不该影响自动）。
      */
-    const [pol, setPolRaw] = createSignal<FlatCompactPolicy>(
-        flatPolicyOf(normalizePolicy(Caches.diy_compact_manual_policy.get())),
-    );
-    const setPol = (p: Partial<FlatCompactPolicy>) => {
-        const next = { ...pol(), ...p };
-        setPolRaw(next);
+    const [pol, setPolRaw] = createSignal<CompactPolicy>(normalizePolicy(Caches.diy_compact_manual_policy.get()));
+    const put = (p: CompactPolicy) => {
+        setPolRaw(p);
         // 改动即存：下次打开面板仍是这次的参数（否则"上次拧的白拧"）
-        Caches.diy_compact_manual_policy.set(next as unknown as Record<string, unknown>);
+        Caches.diy_compact_manual_policy.set(p as unknown as Record<string, unknown>);
+    };
+    /**
+     * **被"藏着"的参数记忆** —— 决策树把不生效的分支从结构里删掉（这正是它的意义），
+     * 但用户拧过的值仍是**意图**，不该因为切了一下模式/范围就归零：
+     *   · `recent`      —— 「保留最近 N 轮」的值（切到"全部轮次"再切回来要还在）
+     *   · `content`     —— 内容轴（切到清零再切回来要还在）
+     *   · `toolResult`  —— 工具结果裁法（切到"只留文本"再回"全部"要还在）
+     * 初值全部由**当前策略**派生，故与 localStorage 里的上次参数一致。
+     */
+    const boot = normalizePolicy(Caches.diy_compact_manual_policy.get());
+    const bootContent: ContentPolicy = boot.mode === "keep" ? boot.content : { kind: "all", toolResult: { render: "asis" } };
+    const [recent, setRecent] = createSignal<Extract<KeepPolicy, { scope: "recent" }>>(
+        boot.mode === "keep" && boot.keep.scope === "recent"
+            ? boot.keep
+            : { scope: "recent", unit: "turns", count: DEFAULT_KEEP_TURNS },
+    );
+    const [memoContent, setMemoContent] = createSignal<ContentPolicy>(bootContent);
+    const [memoToolResult, setMemoToolResult] = createSignal<ToolResultPolicy>(
+        bootContent.kind === "all" ? bootContent.toolResult : { render: "asis" },
+    );
+
+    /** 保留支的当前范围（清零支结构上没有，取记忆值 —— 供"切回来"与展示） */
+    const keep = (): KeepPolicy => {
+        const p = pol();
+        return p.mode === "keep" ? p.keep : recent();
+    };
+    const content = (): ContentPolicy => {
+        const p = pol();
+        return p.mode === "keep" ? p.content : memoContent();
+    };
+    const setMode = (mode: CompactMode) => {
+        const p = pol();
+        if (mode === p.mode) return;
+        if (p.mode === "keep") setMemoContent(p.content);
+        put(mode === "reset" ? { mode: "reset", summary: p.summary } : { mode: "keep", keep: keep(), content: memoContent(), summary: p.summary });
+    };
+    const keepAll = () => keep().scope === "all";
+    const keepCount = () => (keepAll() ? recent().count : (keep() as Extract<KeepPolicy, { scope: "recent" }>).count);
+    const keepUnit = () => (keepAll() ? recent().unit : (keep() as Extract<KeepPolicy, { scope: "recent" }>).unit);
+    const setKeep = (next: KeepPolicy) => {
+        const cur = pol();
+        if (next.scope === "recent") setRecent(next);
+        if (cur.mode !== "keep") return;
+        put({ ...cur, keep: next });
+    };
+    /** 内容轴（清零时取记忆值；控件只在保留支显示，故不会与清零支打架） */
+    const contentType = (): ContentPolicyKind => {
+        const p = pol();
+        return p.mode === "keep" ? p.content.kind : memoContent().kind;
+    };
+    const setContent = (c: ContentPolicy) => {
+        setMemoContent(c);
+        if (c.kind === "all") setMemoToolResult(c.toolResult);
+        const cur = pol();
+        if (cur.mode !== "keep") return;
+        put({ ...cur, content: c });
+    };
+    /** 工具结果策略（只有「保留工具链路」这一支有；其余取记忆值 —— 切回来不丢） */
+    const toolResult = (): ToolResultPolicy => {
+        const c = content();
+        return c.kind === "all" ? c.toolResult : memoToolResult();
+    };
+    const setToolResult = (
+        render: "asis" | "headtail" | "callpath",
+        patch: Partial<Extract<ToolResultPolicy, { render: "headtail" }>> = {},
+    ) => {
+        const cur = toolResult();
+        const next: ToolResultPolicy =
+            render === "headtail"
+                ? cur.render === "headtail"
+                    ? { ...cur, ...patch }
+                    : {
+                          render: "headtail",
+                          head: DEFAULT_HEADTAIL.headLines,
+                          tail: DEFAULT_HEADTAIL.tailLines,
+                          maxLineChars: DEFAULT_HEADTAIL.maxLineChars,
+                          maxKeepBytes: DEFAULT_HEADTAIL.maxKeepBytes,
+                          ...patch,
+                      }
+                : { render };
+        setMemoToolResult(next);
+        // 只有「含工具链路」这一支才把裁法写进策略（其余支这字段不存在 —— 结构如此）
+        const cur2 = pol();
+        if (cur2.mode === "keep" && cur2.content.kind === "all") put({ ...cur2, content: { kind: "all", toolResult: next } });
+    };
+    const headtail = () => {
+        const t = toolResult();
+        return t.render === "headtail" ? t : null;
+    };
+    const setPolSummary = (summary: boolean) => put({ ...pol(), summary });
+    /** 自动压缩那套的策略（读侧；写回整段替换 —— 主进程是浅合并） */
+    const autoPolicy = (): CompactPolicy => normalizePolicy(auto()?.config.policy);
+    const autoKeep = () => {
+        const p = autoPolicy();
+        if (p.mode === "reset") return "reset";
+        return p.keep.scope === "all" ? "all" : String(p.keep.count);
+    };
+    const autoContent = (): ContentPolicyKind => {
+        const p = autoPolicy();
+        return p.mode === "keep" ? p.content.kind : "all";
+    };
+    const patchAutoPolicy = (next: CompactPolicy) => void patchAuto({ policy: next });
+    const autoKeepChange = (v: string) => {
+        const p = autoPolicy();
+        if (v === "reset") return patchAutoPolicy({ mode: "reset", summary: p.summary });
+        patchAutoPolicy({
+            mode: "keep",
+            keep: v === "all" ? { scope: "all" } : { scope: "recent", unit: "turns", count: Number(v) },
+            content: p.mode === "keep" ? p.content : { kind: "all", toolResult: { render: "asis" } },
+            summary: p.summary,
+        });
+    };
+    const autoContentChange = (kind: ContentPolicyKind) => {
+        const p = autoPolicy();
+        if (p.mode !== "keep") return;
+        const content: ContentPolicy = kind === "all" ? { kind: "all", toolResult: p.content.kind === "all" ? p.content.toolResult : { render: "asis" } } : { kind };
+        patchAutoPolicy({ ...p, content });
     };
     const [busy, setBusy] = createSignal(false);
     const [err, setErr] = createSignal<string | null>(null);
@@ -209,7 +330,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
 
     // 预览（只算不写）：策略变化即重算（返回 mod 请求 + 事实表）
     const [pv] = createResource(
-        () => ({ uri: props.uri, p: pol(), sum: summary()?.text }),
+        () => ({ uri: props.uri, p: flatPolicyOf(pol()), sum: summary()?.text }),
         (k) => localChatStore.compactPreview(k.uri, k.p, k.sum) as Promise<{
             before: { bytes: number };
             after: { bytes: number };
@@ -309,13 +430,15 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
         setSumBusy(true);
         setSumErr(null);
         try {
-            // 摘要的对象是**被丢弃的轮**；保留全部轮次时没有被丢弃的内容 —— 说清楚，别静默摘要出一堆空话
-            const keepN = pol().keepTurns;
-            if (keepN === "all") {
+            // 摘要的对象是**被丢弃的轮**：清零 = 全部轮都丢（最有价值的一次摘要）；
+            // 「全部保留」则没有被丢弃的内容 —— 说清楚，别静默摘要出一堆空话。
+            const p = pol();
+            if (p.mode === "keep" && p.keep.scope === "all") {
                 setSumErr("保留全部轮次时没有可摘要的内容（摘要针对被丢弃的轮）");
                 setSumBusy(false);
                 return;
             }
+            const keepN = p.mode === "reset" ? 0 : keepCount();
             const r = (await localChatStore.summarize(props.uri, keepN)) as {
                 text: string;
                 data: unknown;
@@ -333,7 +456,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
         setBusy(true);
         setErr(null);
         try {
-            await localChatStore.compact(props.uri, pol(), pol().summary ? (summary() ?? undefined) : undefined);
+            await localChatStore.compact(props.uri, flatPolicyOf(pol()), pol().summary ? (summary() ?? undefined) : undefined);
             props.onClose();
         } catch (e) {
             setErr(String(e instanceof Error ? e.message : e));
@@ -494,7 +617,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                             </span>
                                         </label>
                                     </div>
-                                    {/* 自动压时的策略（默认：全留轮次 + 只留结论 = 保留所有轮次的结论） */}
+                                    {/* 自动压时的策略 —— **与②同一棵决策树**（真源形状一致，不再另造 {unit,count,content}） */}
                                     <div class="space-y-1">
                                         <div class="text-caption font-semibold opacity-70">自动压时的策略</div>
                                         <div class="flex items-center gap-1.5 text-caption">
@@ -502,41 +625,39 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                             <select
                                                 class="select select-xs"
                                                 aria-label="自动压缩：保留数量"
-                                                value={String(auto()?.config.keep.count ?? "all")}
-                                                onChange={(e) =>
-                                                    void patchAuto({
-                                                        keep: {
-                                                            ...auto()!.config.keep,
-                                                            count: e.currentTarget.value === "all" ? "all" : Number(e.currentTarget.value),
-                                                        },
-                                                    })
-                                                }
+                                                value={autoKeep()}
+                                                onChange={(e) => autoKeepChange(e.currentTarget.value)}
                                             >
                                                 <option value="all">全部轮次</option>
                                                 <option value="10">最近 10 轮</option>
                                                 <option value="6">最近 6 轮</option>
                                                 <option value="3">最近 3 轮</option>
                                                 <option value="1">最近 1 轮</option>
-                                                <option value="0">全部清零</option>
+                                                <option value="reset">全部清零</option>
                                             </select>
                                         </div>
-                                        <div class="flex items-center gap-2 text-caption">
-                                            <span>内容</span>
-                                            <select
-                                                class="select select-xs"
-                                                aria-label="自动压缩：内容"
-                                                value={auto()?.config.keep.content ?? "conclusion"}
-                                                onChange={(e) =>
-                                                    void patchAuto({
-                                                        keep: { ...auto()!.config.keep, content: e.currentTarget.value as "all" | "text" | "conclusion" },
-                                                    })
-                                                }
-                                            >
-                                                <option value="conclusion">只留结论</option>
-                                                <option value="text">只留文本</option>
-                                                <option value="all">全部内容</option>
-                                            </select>
-                                        </div>
+                                        <Show
+                                            when={autoPolicy().mode === "keep"}
+                                            fallback={
+                                                <div class="text-caption text-warning">
+                                                    ⚠ 自动清零：每次触发都不投任何历史轮（日志仍在，可按索引回取）
+                                                </div>
+                                            }
+                                        >
+                                            <div class="flex items-center gap-2 text-caption">
+                                                <span>内容</span>
+                                                <select
+                                                    class="select select-xs"
+                                                    aria-label="自动压缩：内容"
+                                                    value={autoContent()}
+                                                    onChange={(e) => autoContentChange(e.currentTarget.value as ContentPolicyKind)}
+                                                >
+                                                    <option value="conclusion">只留结论</option>
+                                                    <option value="text">只留文本</option>
+                                                    <option value="all">全部内容</option>
+                                                </select>
+                                            </div>
+                                        </Show>
                                         <label class="flex items-center justify-between gap-2 cursor-pointer text-caption">
                                             <span>同时生成历史摘要（花钱）</span>
                                             <input
@@ -544,8 +665,11 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                                 class="toggle toggle-xs toggle-primary"
                                                 aria-label="自动压缩：生成摘要"
                                                 disabled={autoBusy()}
-                                                checked={auto()?.config.summary ?? false}
-                                                onChange={(e) => void patchAuto({ summary: e.currentTarget.checked })}
+                                                checked={autoPolicy().summary}
+                                                onChange={(e) => {
+                                                    const p = autoPolicy();
+                                                    patchAutoPolicy({ ...p, summary: e.currentTarget.checked });
+                                                }}
                                             />
                                         </label>
                                     </div>
@@ -569,142 +693,191 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                 </Show>
                             </Show>
                         </div>
-                        {/* ── ② 本次手动压缩：只影响下面这一次点击；参数记在 UI state（上次拧的） ── */}
+                                                {/* ── ② 本次手动压缩：只影响下面这一次点击；参数记在 UI state（上次拧的） ── */}
                         <Block title="② 本次手动压缩">
                             <div class="space-y-3">
+                                {/* 1. 模式 —— 决策树的根。清零支**结构上就没有**范围/内容字段，故下面几节整块不出现 */}
                                 <section>
-                                    <div class="text-caption font-semibold opacity-70 mb-1">1. 保留范围</div>
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max={Math.max(1, turnCount())}
-                                        step="1"
-                                        class="range range-primary range-sm w-full"
-                                        value={pol().keepTurns === "all" ? turnCount() : pol().keepTurns}
-                                        disabled={pol().keepTurns === "all"}
-                                        aria-label="保留最近轮数"
-                                        onInput={(e) => setPol({ keepTurns: Number(e.currentTarget.value) })}
-                                    />
-                                    <div class="text-caption opacity-80">
-                                        保留最近 <b>{pol().keepTurns}</b> 轮（共 {turnCount()} 轮）
-                                        {pol().keepTurns === 0 ? " · 全部清零" : ""}
+                                    <div class="text-caption font-semibold opacity-70 mb-1">1. 这次怎么压</div>
+                                    <div class="flex flex-col gap-1 text-body">
+                                        <label class="flex items-start gap-1.5 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                class="radio radio-xs radio-primary mt-0.5"
+                                                aria-label="模式：保留部分历史"
+                                                checked={pol().mode === "keep"}
+                                                onChange={() => setMode("keep")}
+                                            />
+                                            <span>
+                                                保留部分历史
+                                                <span class="block text-caption opacity-60">按下面 2~4 裁一裁，其余照发</span>
+                                            </span>
+                                        </label>
+                                        <label class="flex items-start gap-1.5 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                class="radio radio-xs radio-primary mt-0.5"
+                                                aria-label="模式：会话清零"
+                                                checked={pol().mode === "reset"}
+                                                onChange={() => setMode("reset")}
+                                            />
+                                            <span>
+                                                会话清零
+                                                <span class="block text-caption opacity-60">
+                                                    不投任何旧轮（日志一字不删；模型可按索引回取原文）
+                                                </span>
+                                            </span>
+                                        </label>
                                     </div>
-                                    {/* "全留"必须单列一个开关：滑到最右只能留"共 N 轮"，而轮数是会长的 ——
-                                        自动压缩的默认策略要的是"保留**所有**轮次的结论"，那是个不写死数字的意图 */}
-                                    <label class="mt-1 flex items-center gap-1.5 cursor-pointer text-caption">
+                                </section>
+
+                                <Show
+                                    when={pol().mode === "keep"}
+                                    fallback={
+                                        <div class="text-caption opacity-60">
+                                            ⓘ 清零是最彻底的一刀：本次请求只带 system + 工具 + 本次摘要。旧内容留在日志里，随时可查、可撤销。
+                                        </div>
+                                    }
+                                >
+                                    <section>
+                                        <div class="text-caption font-semibold opacity-70 mb-1">2. 保留范围</div>
                                         <input
-                                            type="checkbox"
-                                            class="toggle toggle-xs toggle-primary"
-                                            aria-label="全部保留"
-                                            checked={pol().keepTurns === "all"}
-                                            onChange={(e) => setPol({ keepTurns: e.currentTarget.checked ? "all" : 6 })}
+                                            type="range"
+                                            min="1"
+                                            max={Math.max(1, turnCount())}
+                                            step="1"
+                                            class="range range-primary range-sm w-full"
+                                            value={keepCount()}
+                                            disabled={keepAll()}
+                                            aria-label="保留最近轮数"
+                                            onInput={(e) => setKeep({ scope: "recent", unit: keepUnit(), count: Number(e.currentTarget.value) })}
                                         />
-                                        <span>全部保留（配合②只裁内容 ⇒ 留所有轮次的结论）</span>
-                                    </label>
-                                </section>
+                                        <div class="text-caption opacity-80">
+                                            保留最近 <b>{keepCount()}</b> 轮（共 {turnCount()} 轮）
+                                        </div>
+                                        {/* 「全部轮次」必须能单独表达：滑到最右只能留"共 N 轮"，而轮数会变 ——
+                                            "不写死数字、永远不裁轮"是另一件事 */}
+                                        <label class="mt-1 flex items-center gap-1.5 cursor-pointer text-caption">
+                                            <input
+                                                type="checkbox"
+                                                class="toggle toggle-xs toggle-primary"
+                                                aria-label="全部保留"
+                                                checked={keepAll()}
+                                                onChange={(e) =>
+                                                    setKeep(e.currentTarget.checked ? { scope: "all" } : { ...recent(), count: Math.min(recent().count, Math.max(1, turnCount())) })
+                                                }
+                                            />
+                                            <span>全部轮次（不写死数字：会话再长也不裁轮，只按下面的内容轴裁）</span>
+                                        </label>
+                                    </section>
 
-                                <section>
-                                    <div class="text-caption font-semibold opacity-70 mb-1">2. 内容（留过程 还是 只留结论）</div>
-                                    <div class="flex flex-col gap-1 text-body">
-                                        <label class="flex items-center gap-1.5 cursor-pointer">
-                                            <input
-                                                type="radio"
-                                                class="radio radio-xs radio-primary"
-                                                checked={(pol().content ?? "all") === "all"}
-                                                onChange={() => setPol({ content: "all" })}
-                                            />
-                                            <span>全部（用户 + 助手文本 + 工具过程）</span>
-                                        </label>
-                                        <label class="flex items-center gap-1.5 cursor-pointer">
-                                            <input
-                                                type="radio"
-                                                class="radio radio-xs radio-primary"
-                                                checked={pol().content === "text"}
-                                                onChange={() => setPol({ content: "text" })}
-                                            />
-                                            <span>只留文本（去掉工具调用与结果）</span>
-                                        </label>
-                                        <label class="flex items-center gap-1.5 cursor-pointer">
-                                            <input
-                                                type="radio"
-                                                class="radio radio-xs radio-primary"
-                                                checked={pol().content === "conclusion"}
-                                                onChange={() => setPol({ content: "conclusion" })}
-                                            />
-                                            <span>只留结论（每轮只留最后一条助手文本）</span>
-                                        </label>
-                                        <Show when={(pol().content ?? "all") !== "all"}>
-                                            <div class="ml-5 text-caption opacity-60">
-                                                ⓘ 省掉的部分会在历史里**分段标注**（哪几行、为什么省），模型可按行号回取原文
-                                            </div>
-                                        </Show>
-                                    </div>
-                                </section>
-
-                                <section>
-                                    <div class="text-caption font-semibold opacity-70 mb-1">3. 工具结果（只对保留部分生效）</div>
-                                    <div class="flex flex-col gap-1 text-body">
-                                        {/* asis */}
-                                        <label class="flex items-center gap-1.5 cursor-pointer">
-                                            <input
-                                                type="radio"
-                                                class="radio radio-xs radio-primary"
-                                                checked={pol().toolResult === "asis"}
-                                                onChange={() => setPol({ toolResult: "asis" })}
-                                            />
-                                            <span>原样（不裁）</span>
-                                        </label>
-
-                                        {/* headtail：保留行数就放在本选项下面（不再漂到别的选项下） */}
-                                        <label class="flex items-center gap-1.5 cursor-pointer">
-                                            <input
-                                                type="radio"
-                                                class="radio radio-xs radio-primary"
-                                                checked={pol().toolResult === "headtail"}
-                                                onChange={() => setPol({ toolResult: "headtail" })}
-                                            />
-                                            <span>头尾裁剪（保留头尾，中间省略）</span>
-                                        </label>
-                                        <Show when={pol().toolResult === "headtail"}>
-                                            <div class="ml-5 flex items-center gap-1.5 text-caption">
-                                                <span>保留 前</span>
+                                    <section>
+                                        <div class="text-caption font-semibold opacity-70 mb-1">3. 内容（留过程 还是 只留结论）</div>
+                                        <div class="flex flex-col gap-1 text-body">
+                                            <label class="flex items-center gap-1.5 cursor-pointer">
                                                 <input
-                                                    type="number"
-                                                    class="input input-xs w-14"
-                                                    value={pol().headtail.headLines}
-                                                    aria-label="保留头部行数"
-                                                    onInput={(e) => setPol({ headtail: { ...pol().headtail, headLines: Number(e.currentTarget.value) } })}
+                                                    type="radio"
+                                                    class="radio radio-xs radio-primary"
+                                                    aria-label="内容：全部"
+                                                    checked={contentType() === "all"}
+                                                    onChange={() => setContent({ kind: "all", toolResult: toolResult() })}
                                                 />
-                                                <span>行 后</span>
+                                                <span>全部（用户 + 助手文本 + 工具过程）</span>
+                                            </label>
+                                            <label class="flex items-center gap-1.5 cursor-pointer">
                                                 <input
-                                                    type="number"
-                                                    class="input input-xs w-14"
-                                                    value={pol().headtail.tailLines}
-                                                    aria-label="保留尾部行数"
-                                                    onInput={(e) => setPol({ headtail: { ...pol().headtail, tailLines: Number(e.currentTarget.value) } })}
+                                                    type="radio"
+                                                    class="radio radio-xs radio-primary"
+                                                    aria-label="内容：只留文本"
+                                                    checked={contentType() === "text"}
+                                                    onChange={() => setContent({ kind: "text" })}
                                                 />
-                                                <span>行</span>
-                                            </div>
-                                            <div class="ml-5 text-caption opacity-60">
-                                                ⓘ 超过 {pol().headtail.headLines + pol().headtail.tailLines} 行的输出才裁剪；裁掉的原文落盘可寻回
-                                            </div>
-                                        </Show>
+                                                <span>只留文本（去掉工具调用与结果）</span>
+                                            </label>
+                                            <label class="flex items-center gap-1.5 cursor-pointer">
+                                                <input
+                                                    type="radio"
+                                                    class="radio radio-xs radio-primary"
+                                                    aria-label="内容：只留结论"
+                                                    checked={contentType() === "conclusion"}
+                                                    onChange={() => setContent({ kind: "conclusion" })}
+                                                />
+                                                <span>只留结论（每轮只留最后一条助手文本）</span>
+                                            </label>
+                                            <Show when={contentType() !== "all"}>
+                                                <div class="ml-5 text-caption opacity-60">
+                                                    ⓘ 省掉的部分会在历史里**分段标注**（哪几行、为什么省），模型可按行号回取原文
+                                                </div>
+                                            </Show>
+                                        </div>
+                                    </section>
 
-                                        {/* callpath */}
-                                        <label class="flex items-center gap-1.5 cursor-pointer">
-                                            <input
-                                                type="radio"
-                                                class="radio radio-xs radio-primary"
-                                                checked={pol().toolResult === "callpath"}
-                                                onChange={() => setPol({ toolResult: "callpath" })}
-                                            />
-                                            <span>只留调用+路径（整段换成原文路径）</span>
-                                        </label>
-                                        <Show when={pol().toolResult === "callpath"}>
-                                            <div class="ml-5 text-caption opacity-60">整段输出换成一行指向原文的提示，模型可按路径回取。</div>
-                                        </Show>
-                                    </div>
-                                </section>
+                                    {/* 工具结果：**只有「含工具链路」才谈得上怎么裁** —— 这正是它挂在内容轴 all 分支下的理由 */}
+                                    <Show when={contentType() === "all"}>
+                                        <section>
+                                            <div class="text-caption font-semibold opacity-70 mb-1">4. 工具结果（只对保留部分生效）</div>
+                                            <div class="flex flex-col gap-1 text-body">
+                                                <label class="flex items-center gap-1.5 cursor-pointer">
+                                                    <input
+                                                        type="radio"
+                                                        class="radio radio-xs radio-primary"
+                                                        aria-label="工具结果：原样"
+                                                        checked={toolResult().render === "asis"}
+                                                        onChange={() => setToolResult("asis")}
+                                                    />
+                                                    <span>原样（不裁）</span>
+                                                </label>
+                                                <label class="flex items-center gap-1.5 cursor-pointer">
+                                                    <input
+                                                        type="radio"
+                                                        class="radio radio-xs radio-primary"
+                                                        aria-label="工具结果：头尾裁剪"
+                                                        checked={toolResult().render === "headtail"}
+                                                        onChange={() => setToolResult("headtail")}
+                                                    />
+                                                    <span>头尾裁剪（保留头尾，中间省略）</span>
+                                                </label>
+                                                <Show when={headtail()}>
+                                                    <div class="ml-5 flex items-center gap-1.5 text-caption">
+                                                        <span>保留 前</span>
+                                                        <input
+                                                            type="number"
+                                                            class="input input-xs w-14"
+                                                            value={headtail()!.head}
+                                                            aria-label="保留头部行数"
+                                                            onInput={(e) => setToolResult("headtail", { head: Number(e.currentTarget.value) })}
+                                                        />
+                                                        <span>行 后</span>
+                                                        <input
+                                                            type="number"
+                                                            class="input input-xs w-14"
+                                                            value={headtail()!.tail}
+                                                            aria-label="保留尾部行数"
+                                                            onInput={(e) => setToolResult("headtail", { tail: Number(e.currentTarget.value) })}
+                                                        />
+                                                        <span>行</span>
+                                                    </div>
+                                                    <div class="ml-5 text-caption opacity-60">
+                                                        ⓘ 超过 {headtail()!.head + headtail()!.tail} 行的输出才裁剪；裁掉的原文落盘可寻回
+                                                    </div>
+                                                </Show>
+                                                <label class="flex items-center gap-1.5 cursor-pointer">
+                                                    <input
+                                                        type="radio"
+                                                        class="radio radio-xs radio-primary"
+                                                        aria-label="工具结果：只留调用+路径"
+                                                        checked={toolResult().render === "callpath"}
+                                                        onChange={() => setToolResult("callpath")}
+                                                    />
+                                                    <span>只留调用+路径（整段换成原文路径）</span>
+                                                </label>
+                                                <Show when={toolResult().render === "callpath"}>
+                                                    <div class="ml-5 text-caption opacity-60">整段输出换成一行指向原文的提示，模型可按路径回取。</div>
+                                                </Show>
+                                            </div>
+                                        </section>
+                                    </Show>
+                                </Show>
 
                                 <section>
                                     <label class="flex items-start gap-2 cursor-pointer">
@@ -713,10 +886,10 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                             class="toggle toggle-xs toggle-primary mt-0.5"
                                             aria-label="计算历史摘要"
                                             checked={pol().summary}
-                                            onChange={(e) => setPol({ summary: e.currentTarget.checked })}
+                                            onChange={(e) => setPolSummary(e.currentTarget.checked)}
                                         />
                                         <span class="text-body">
-                                            4. 计算历史摘要并带进新会话
+                                            计算历史摘要并带进新会话
                                             <span class="block text-caption opacity-60">
                                                 可选（额外调一次模型）。清零只丢会话历史，任务记忆仍在任务正文里。
                                             </span>

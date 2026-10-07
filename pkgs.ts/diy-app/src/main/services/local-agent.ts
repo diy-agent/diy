@@ -94,7 +94,8 @@ import {
     listTurnIds,
     keptTurnsByMessageCount,
     keptTurnsOf,
-    type ContentPolicy,
+    type ContentPolicyKind,
+    contentKindOf,
     type CompactTrigger,
     normalizePolicy,
     parseCompactLog,
@@ -329,7 +330,7 @@ function messageTurnsOf(store: BlockStore): string[] {
  */
 export function droppedSegmentsOf(
     store: BlockStore,
-    opts: { sinceTurnId: string | null | undefined; content: ContentPolicy },
+    opts: { sinceTurnId: string | null | undefined; content: ContentPolicyKind },
     policy: CompactPolicy,
 ): DroppedNote | null {
     const { sinceTurnId } = opts;
@@ -376,17 +377,17 @@ export function droppedSegmentsOf(
 
 /** 为什么被省 —— 由**策略**推导（不是模型写的、也不是猜测） */
 function droppedWhyOf(policy: CompactPolicy, turns: number): string {
-    const { unit, count } = policy.keep;
-    if (count === 0) return `压缩策略：会话清零（此处含被省去的 ${turns} 轮）`;
-    if (count === "all") return `压缩策略：全留轮次、只裁内容（此处含被省去的 ${turns} 轮）`;
-    return unit === "turns"
-        ? `压缩策略：只保留最近 ${count} 轮（此处含被省去的 ${turns} 轮）`
-        : `压缩策略：只保留最近 ${count} 条消息，余下的整轮保留（此处含被省去的 ${turns} 轮）`;
+    if (policy.mode === "reset") return `压缩策略：会话清零（此处含被省去的 ${turns} 轮）`;
+    const k = policy.keep;
+    if (k.scope === "all") return `压缩策略：全留轮次、只裁内容（此处含被省去的 ${turns} 轮）`;
+    return k.unit === "turns"
+        ? `压缩策略：只保留最近 ${k.count} 轮（此处含被省去的 ${turns} 轮）`
+        : `压缩策略：只保留最近 ${k.count} 条消息，余下的整轮保留（此处含被省去的 ${turns} 轮）`;
 }
 
 /** 保留轮**内部**被省掉的内容，为什么被省（同样是策略推导，不是猜测） */
 function contentWhyOf(policy: CompactPolicy): string {
-    return policy.content === "conclusion"
+    return contentKindOf(policy) === "conclusion"
         ? "压缩策略：只留结论（省去工具调用/结果与过程性文本）"
         : "压缩策略：只留文本（省去工具调用与结果）";
 }
@@ -1370,8 +1371,8 @@ export class LocalAgentManager {
         const turnIds = listTurnIds(scan.ops);
         const store = new BlockStore();
         for (const op of scan.ops) store.apply(op);
-        // 保留轮数：唯一入口 keptTurnsOf（三态 turns/messages/"all" 都在那收口）
-        const keptTurns = keptTurnsOf(policy.keep, turnIds, messageTurnsOf(store));
+        // 保留轮数：唯一入口 keptTurnsOf（清零 / recent 的 turns|messages / all 都在那收口）
+        const keptTurns = keptTurnsOf(policy, turnIds, messageTurnsOf(store));
         const keptFromTurnId = keptTurns > 0 ? turnIds[turnIds.length - keptTurns]! : null;
         const droppedIds = keptFromTurnId ? turnIds.slice(0, turnIds.length - keptTurns) : [...turnIds];
 
