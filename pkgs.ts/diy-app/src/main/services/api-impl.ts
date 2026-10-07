@@ -387,9 +387,6 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // 散字段 → **扁平策略对象**（输入面契约；三轴形状由 normalizePolicy 统一生成，见 shared/context/compaction）
   const policyOf = (i: Record<string, unknown>): unknown => ({
     budgetBytes: i.budgetBytes as number | undefined,
-    keepTurns: i.keepTurns as number | undefined,
-    keepUnit: i.keepUnit as string | undefined,
-    content: i.content as string | undefined,
     toolResult: (i.toolResult ?? i.toolOutput) as ToolResultMode | undefined,
     headtail: {
       triggerLines: i.triggerLines as number,

@@ -577,14 +577,6 @@ export const apiDef = RpcSchema.router({
                     .number()
                     .optional()
                     .cliOption({ desc: "【新】历史消息可占字节上限（0 = 清零）；给了它就按纵向优先级阶梯保留" }),
-                  keepTurns: z
-                    .union([z.coerce.number(), z.literal("all")])
-                    .optional()
-                    .cliOption({ desc: '【旧】保留最近多少轮；数字 0 = 全部清零、"all" = 全留轮次；缺省 6' }),
-                  content: z
-                    .enum(["all", "text", "conclusion"])
-                    .optional()
-                    .cliOption({ desc: "内容：all 全部 / text 只留用户与助手文本 / conclusion 只留结论（每轮最后一条助手文本）" }),
                   toolResult: z
                     .enum(["asis", "headtail", "callpath"])
                     .optional()
@@ -654,14 +646,6 @@ export const apiDef = RpcSchema.router({
                     .number()
                     .optional()
                     .cliOption({ desc: "【新】历史消息可占字节上限（0 = 清零）" }),
-                  keepTurns: z
-                    .union([z.coerce.number(), z.literal("all")])
-                    .optional()
-                    .cliOption({ desc: '【旧】保留最近多少轮（0 = 全部清零、"all" = 全留轮次）' }),
-                  content: z
-                    .enum(["all", "text", "conclusion"])
-                    .optional()
-                    .cliOption({ desc: "内容：all/text/conclusion（同 compact）" }),
                   toolResult: z.enum(["asis", "headtail", "callpath"]).optional().cliOption({ desc: "工具结果的处理方式（asis/headtail/callpath）" }),
                   triggerLines: z.number().optional().cliOption({ desc: "头尾裁剪阈值行数" }),
                   headLines: z.number().optional().cliOption({ desc: "头尾裁剪保留头行数" }),

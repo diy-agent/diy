@@ -13,7 +13,6 @@ import {
     describeAnomalies,
     readLlmLog,
 } from "../../src/shared/context/log-schema";
-import { DroppedNoteSchema, parseDroppedNote, renderDroppedNote } from "../../src/shared/context/dropped";
 import { fieldDocs, fieldNames, renderFieldDocs } from "../../src/shared/schema-doc";
 
 // ─── ① 日志行：必需严格 ────────────────────────────────
@@ -104,40 +103,5 @@ describe("schema-doc：字段说明由 zod 派生（不手写第二真源）", (
         expect(out[2]).toContain("丙（有默认值 = 可选）（可选）");
         // 对齐 = 名字列宽相同（取最长字段名）
         expect(out.every((l) => l.startsWith("#   a ") || l.startsWith("#   b ") || l.startsWith("#   c "))).toBe(true);
-    });
-
-    it("投递注记的字段表由 DroppedNote/DroppedSegment 派生（含子表），可选才标", () => {
-        const note = renderDroppedNote(
-            { total: 9, segments: [{ range: [1, 9], kind: "turns", turns: ["t1"], tools: [], why: "w" }] },
-            { file: "local/k.llm.jsonl" },
-        );
-        expect(note).toContain("# 字段（由 zod 定义派生，勿手写）：");
-        // 顶层说明
-        expect(note.split("\n").find((l) => l.includes("total"))).toContain("被省去的消息总数");
-        // 子表说明（segments 每项）
-        expect(note).toContain("（segments 每一项）");
-        const rangeLine = note.split("\n").find((l) => l.trim().startsWith("#") && l.includes("range"))!;
-        expect(rangeLine).toContain("原文行号区间");
-        expect(rangeLine).not.toContain("（可选）"); // 必填字段不刷噪音
-    });
-});
-
-describe("parseDroppedNote：投递产物用严格 object（多字段/缺字段都是异常）", () => {
-    const seg = { range: [1, 9] as [number, number], kind: "turns" as const, turns: ["t1"], tools: [], why: "w" };
-    const good = { total: 9, segments: [seg] };
-    it("合法 → ok", () => {
-        const r = parseDroppedNote(good);
-        expect(r.ok).toBe(true);
-    });
-    it("缺 why / range 不是二元组 → 失败并给字段名", () => {
-        const a = parseDroppedNote({ segments: [{ range: [1, 9], kind: "turns", turns: [], tools: [] }] });
-        expect(a.ok).toBe(false);
-        if (!a.ok) expect(a.issues.join()).toContain("why");
-        const b = parseDroppedNote({ ...good, segments: [{ ...seg, range: [1, 2, 3] }] });
-        expect(b.ok).toBe(false);
-        if (!b.ok) expect(b.issues.join()).toContain("range");
-    });
-    it("segments 可空（没有任何内容被省时由调用方直接不投，不是错）", () => {
-        expect(DroppedNoteSchema.safeParse({ total: 0, segments: [] }).success).toBe(true);
     });
 });

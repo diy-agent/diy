@@ -9,7 +9,6 @@
 import { describe, it, expect } from "vitest";
 import { join } from "node:path";
 import { historyIndexValue } from "../../src/shared/context/history-index";
-import { DroppedNoteSchema, DroppedSegmentSchema } from "../../src/shared/context/dropped";
 import { fieldDocs } from "../../src/shared/schema-doc";
 import { AssembleGlobalsSchema } from "../../src/shared/prompt-schema";
 import { buildVarTree, flattenVars } from "../../src/shared/var-tree";
@@ -71,22 +70,3 @@ describe("变量树契约：historyIndex 是正式节点（可看、可切 syste
     });
 });
 
-describe("注记渲染：schema 已在 system 时只留数据 + 指路", () => {
-    it("schemaInSystem：不重复字段表/回取命令，但保留数据与指路", async () => {
-        const { renderDroppedNote } = await import("../../src/shared/context/dropped");
-        const note = {
-            total: 10,
-            segments: [{ range: [1, 10] as [number, number], kind: "turns" as const, turns: ["t1"], tools: ["bash"], why: "只保留最近 1 轮" }],
-        };
-        const slim = renderDroppedNote(note, { file: REL, schemaInSystem: true });
-        expect(slim).toContain("historyIndex");
-        expect(slim).toContain("dropped:");
-        expect(slim).toContain("total: 10");
-        expect(slim).toContain("range: [1, 10]");
-        expect(slim).not.toContain("sed -n"); // 回取命令不重复
-        // 自带完整头（llm.jsonl 单独读时仍自解释）
-        const full = renderDroppedNote(note, { file: REL });
-        expect(full).toContain("sed -n '1,10p'");
-        expect(full).toContain("# 字段（由 zod 定义派生，勿手写）：");
-    });
-});

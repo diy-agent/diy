@@ -56,28 +56,17 @@ function seedOps(uri: string, turns = 3): string[] {
 }
 
 describe("① after.turns 按投递口径（数字之间不许打架）", () => {
-    it("全部清零 → after.turns = 0（旧实现会写 3）", () => {
+    it("预算=0（清零）→ after.turns = 0；预算撑满 → = 3", () => {
         const uri = newUri();
         seedOps(uri);
-        const pv = getLocalAgent().compactPreview(uri, { keepTurns: 0 });
-        expect(pv.after.turns).toBe(0);
-        expect(pv.after.messages).toBe(0);
-        expect(pv.before.turns).toBe(3);
-    });
+        const pv0 = getLocalAgent().compactPreview(uri, { budgetBytes: 0, toolResult: { render: "asis" } });
+        expect(pv0.after.turns).toBe(0);
+        expect(pv0.after.messages).toBe(0);
+        expect(pv0.before.turns).toBe(3);
 
-    it("保留 1 轮 → after.turns = 1；保留全部 → = 3", () => {
-        const uri = newUri();
-        seedOps(uri);
-        expect(getLocalAgent().compactPreview(uri, { keepTurns: 1 }).after.turns).toBe(1);
-        expect(getLocalAgent().compactPreview(uri, { keepTurns: "all" }).after.turns).toBe(3);
-    });
-
-    it("content 裁内容但轮不动 → after.turns 仍是 3（轮在、内容少了）", () => {
-        const uri = newUri();
-        seedOps(uri);
-        const pv = getLocalAgent().compactPreview(uri, { keepTurns: "all", content: "conclusion" });
-        expect(pv.after.turns).toBe(3);
-        expect(pv.after.messages).toBeLessThan(pv.before.messages);
+        const uri2 = newUri();
+        seedOps(uri2);
+        expect(getLocalAgent().compactPreview(uri2, { budgetBytes: 1024 * 1024, toolResult: { render: "asis" } }).after.turns).toBe(3);
     });
 });
 
@@ -108,7 +97,7 @@ describe("② rates：provider = 谁服务的，source = 价目真源", () => {
         const uri = newUri();
         seedOps(uri);
         // 用「真压一次」把账本写出来（预览不落账）
-        const rec = getLocalAgent().compact(uri, { keepTurns: 1 }, "cli");
+        const rec = getLocalAgent().compact(uri, { budgetBytes: 3072, toolResult: { render: "asis" } }, "cli");
         // v2 分组后 rates 在 cost 分组里
         const ev = rec as unknown as { cost?: { rates?: { provider?: string; source?: string; k: number } } };
         const rates = ev.cost?.rates;
@@ -150,7 +139,7 @@ describe("③ measure 事件：空壳 predicted 不写", () => {
     it("真发一轮后 measure 落账，且**没有** predicted 键", async () => {
         const uri = newUri();
         seedOps(uri);
-        getLocalAgent().compact(uri, { keepTurns: 1 }, "cli");
+        getLocalAgent().compact(uri, { budgetBytes: 3072, toolResult: { render: "asis" } }, "cli");
         const mgr = new (await import("../../src/main/services/local-agent")).LocalAgentManager(
             () => stub() as unknown as LanguageModel,
         );
@@ -168,7 +157,7 @@ describe("④ v2 分组形状：看 JSON 就知道每块回答什么（D5「结�
     it("policy / boundary / size / cost / details 五块，且 keptTurns 归 size（不是锚点）", () => {
         const uri = newUri();
         seedOps(uri);
-        const rec = getLocalAgent().compact(uri, { keepTurns: 1, content: "text" }, "cli") as unknown as Record<string, unknown>;
+        const rec = getLocalAgent().compact(uri, { budgetBytes: 1024 * 1024, toolResult: { render: "asis" } }, "cli") as unknown as Record<string, unknown>;
         expect(rec.kind).toBe("compact");
         expect(rec.v).toBe(2);
         expect(rec.trigger).toBe("manual");
@@ -180,8 +169,8 @@ describe("④ v2 分组形状：看 JSON 就知道每块回答什么（D5「结�
         expect(boundary).toHaveProperty("keepFromOpIndex");
         expect(boundary).not.toHaveProperty("keptTurns");
         const size = rec.size as Record<string, unknown>;
-        expect(size).toHaveProperty("keptTurns", 1);
-        expect(size).toHaveProperty("droppedTurns", 2);
+        expect(size).toHaveProperty("keptTurns", 3);
+        expect(size).toHaveProperty("droppedTurns", 0);
         // 明细在 details（被裁工具输出）
         const details = rec.details as Record<string, unknown>;
         expect(Array.isArray(details.clipped)).toBe(true);

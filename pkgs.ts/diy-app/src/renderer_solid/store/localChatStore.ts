@@ -681,24 +681,18 @@ async function compactEvents(taskUri: string) {
 
 /** 策略对象 → RPC 扁平参数（headtail 展开成顶层字段，与 api-def 的 cliOption 对齐） */
 function policyFlat(p: FlatCompactPolicy): {
-    budgetBytes: number | undefined;
-    keepTurns: number | "all" | undefined;
-    keepUnit: "turns" | "messages" | undefined;
-    content: "all" | "text" | "conclusion" | undefined;
-    toolResult: "asis" | "headtail" | "callpath" | undefined;
+    budgetBytes: number;
+    toolResult: "asis" | "headtail" | "callpath";
     triggerLines: number | undefined;
     headLines: number | undefined;
     tailLines: number | undefined;
     maxLineChars: number | undefined;
     maxKeepBytes: number | undefined;
-    summary: boolean | undefined;
+    summary: boolean;
 } {
     const ht: Partial<HeadTailPolicy> = p.headtail ?? {};
     return {
         budgetBytes: p.budgetBytes,
-        keepTurns: p.keepTurns,
-        keepUnit: p.keepUnit,
-        content: p.content,
         toolResult: p.toolResult,
         triggerLines: ht.triggerLines,
         headLines: ht.headLines,

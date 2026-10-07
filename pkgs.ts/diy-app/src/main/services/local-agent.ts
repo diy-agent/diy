@@ -61,12 +61,6 @@ import {
     type UsageLike,
 } from "../../shared/usage";
 import { buildDelivery } from "../../shared/context/delivery";
-import {
-    parseDroppedNote,
-    renderDroppedNote,
-    type DroppedNote,
-    type DroppedSegment,
-} from "../../shared/context/dropped";
 import { renderBudgetNote } from "../../shared/context/budget-note";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
@@ -92,9 +86,6 @@ import {
     estimateTokens,
     makeDeliveryTransform,
     listTurnIds,
-    keptTurnsOf,
-    type ContentPolicyKind,
-    contentKindOf,
     type CompactTrigger,
     normalizePolicy,
     parseCompactLog,
@@ -310,82 +301,6 @@ function appendUsage(taskUri: string, rec: StepUsageRecord): void {
  */
 function messageTurnsOf(store: BlockStore): string[] {
     return blocksToMessages(store, { withIndex: true }).map((m) => String(m.turn ?? ""));
-}
-
-/**
- * 被省内容的**分段事实**（行号区间 / 类别 / 轮 / 工具 / 原因）—— 数据源与投递**同一次投影**。
- *
- * 为什么必须分段（##269 D3b）：`content` 轴会在**保留的轮内部**也省内容（工具链路、过程性文本）。
- * 只报"前缀裁了多少轮"会让模型以为保留轮是完整的 —— 那是说谎。
- * 于是：整轮被裁的段标 `kind:"turns"`，保留轮内被裁的段标 `kind:"content"`。
- *
- * 判据完全用下标（不做文本解析）：同一份全量投影跑两次选择 —— 只做轮级 vs 轮级+内容级，
- * 差集即 content 段（选择是纯函数，两次结果必然自洽；两份判据各写一遍才会分叉）。
- */
-export function droppedSegmentsOf(
-    store: BlockStore,
-    opts: { sinceTurnId: string | null | undefined; content: ContentPolicyKind },
-    policy: CompactPolicy,
-): DroppedNote | null {
-    const { sinceTurnId } = opts;
-    if (sinceTurnId === undefined && opts.content === "all") return null; // 未压缩
-    const all = projectAll(store);
-    // 只做轮级选择（"轮级之外的裁"都是 content 裁）
-    const turnsOnly = selectHistory(all, { sinceTurnId }).dropped;
-    const full = selectHistory(all, { sinceTurnId, content: opts.content }).dropped;
-    if (full.length === 0) return null;
-    const byTurns = new Set(turnsOnly);
-
-    // 连续且同类 → 合成一段（段数越少，注记越短；语义不变）
-    type Run = { from: number; to: number; kind: "turns" | "content"; idx: number[] };
-    const runs: Run[] = [];
-    for (const i of full) {
-        const kind: "turns" | "content" = byTurns.has(i) ? "turns" : "content";
-        const cur = runs[runs.length - 1];
-        if (cur && i === cur.to + 1 && cur.kind === kind) {
-            cur.to = i;
-            cur.idx.push(i);
-        } else runs.push({ from: i, to: i, kind, idx: [i] });
-    }
-    const segments: DroppedSegment[] = runs.map((r) => {
-        const msgs = r.idx.map((i) => all[i]!);
-        const turns: string[] = [];
-        const tools: string[] = [];
-        for (const m of msgs) {
-            const t = m.turn ?? "";
-            if (t && !turns.includes(t)) turns.push(t);
-            for (const p of Array.isArray(m.content) ? (m.content as { toolName?: unknown }[]) : []) {
-                if (typeof p.toolName === "string" && !tools.includes(p.toolName)) tools.push(p.toolName);
-            }
-        }
-        return {
-            range: [r.from + 1, r.to + 1] as [number, number],
-            kind: r.kind,
-            turns,
-            tools,
-            why: r.kind === "turns" ? droppedWhyOf(policy, turns.length) : contentWhyOf(policy),
-        };
-    });
-    return { total: full.length, segments };
-}
-
-/** 为什么被省 —— 由**策略**推导（不是模型写的、也不是猜测） */
-function droppedWhyOf(policy: CompactPolicy, turns: number): string {
-    if (policy.mode === "reset") return `压缩策略：会话清零（此处含被省去的 ${turns} 轮）`;
-    if (policy.mode === "budget")
-        return `压缩策略：按预算 ${policy.modeData.budgetBytes} 字节保留最优先的历史（此处含被省去的 ${turns} 轮）`;
-    const k = policy.modeData.keep;
-    if (k.scope === "all") return `压缩策略：全留轮次、只裁内容（此处含被省去的 ${turns} 轮）`;
-    return k.unit === "turns"
-        ? `压缩策略：只保留最近 ${k.count} 轮（此处含被省去的 ${turns} 轮）`
-        : `压缩策略：只保留最近 ${k.count} 条消息，余下的整轮保留（此处含被省去的 ${turns} 轮）`;
-}
-
-/** 保留轮**内部**被省掉的内容，为什么被省（同样是策略推导，不是猜测） */
-function contentWhyOf(policy: CompactPolicy): string {
-    return contentKindOf(policy) === "conclusion"
-        ? "压缩策略：只留结论（省去工具调用/结果与过程性文本）"
-        : "压缩策略：只留文本（省去工具调用与结果）";
 }
 
 /** 原始流 dump（仅 DIY_RAW_STREAM_DUMP=1 时写）：ai-sdk 的 part 原样落盘，用于研究“Op 是否漏信息” */
@@ -654,12 +569,8 @@ function sizeOfOps(ops: readonly Op[], opts?: Parameters<typeof blocksToMessages
  * 抽出来的理由：真发（deliveryOptsOf）与**预览/记账**（compact）必须用同一份构造逻辑，
  * 否则「预览说省 97%、真发却照旧」这种分叉根本测不出来。
  */
-function optsFor(
-    policy: CompactPolicy,
-    keptFromTurnId: string | null | undefined,
-    collect?: ClippedToolDetail[],
-): DeliveryOpts {
-    return makeDeliveryTransform(policy, keptFromTurnId, toolOutRelPath, collect);
+function optsFor(policy: CompactPolicy, collect?: ClippedToolDetail[]): DeliveryOpts {
+    return makeDeliveryTransform(policy, toolOutRelPath, collect);
 }
 
 /** 压缩预案的中间态（planCompact 输出；compact 与 compactPreview 共用） */
@@ -1112,67 +1023,40 @@ export class LocalAgentManager {
         // 改预算**本轮即生效**。压缩账（compact.jsonl）只是**历史快照**（不可变，供回溯/对比），
         // 不再决定投递（旧实现读 `resolveBoundary` → 没压过就不生效，违反直觉）。
         const policy = loadAutoCompact(diyHome()).policy;
-        return this.buildHistory(store, policy, undefined, collect, taskUri);
+        return this.buildHistory(store, policy, collect, taskUri);
     }
 
     /** 面板参数预览用（给定 policy + 边界现算，不读生效账本）—— 与真发同一条构造链 */
-    private deliveryHistoryForView(
-        store: BlockStore,
-        policy: CompactPolicy | null,
-        keptFromTurnId: string | null | undefined,
-        taskUri: string,
-    ): ModelMessage[] {
-        return this.buildHistory(store, policy, keptFromTurnId, undefined, taskUri);
+    private deliveryHistoryForView(store: BlockStore, policy: CompactPolicy | null, taskUri: string): ModelMessage[] {
+        return this.buildHistory(store, policy, undefined, taskUri);
     }
 
-    /**
-     * 投递历史的**唯一构造**：原生投影（+ 可选索引注记）。
-     * policy=null / sinceTurnId=undefined ⇒ 未压缩 ⇒ 与历史行为逐字一致。
+/**
+     * 投递历史的**唯一构造**：原生投影 + 预算注记。
+     * policy=null ⇒ 全量（未压缩，无注记）。
      */
     private buildHistory(
         store: BlockStore,
         policy: CompactPolicy | null,
-        sinceTurnId: string | null | undefined,
         collect?: ClippedToolDetail[],
         /** 原文路径用（注记里的 file 字段）；view 路径与真发同一个 taskUri */
         taskUriOf = "",
     ): ModelMessage[] {
-        const opts: DeliveryOpts = policy ? optsFor(policy, sinceTurnId, collect) : {};
+        const opts: DeliveryOpts = policy ? optsFor(policy, collect) : {};
         const kept = blocksToMessages(store, opts) as unknown as ModelMessage[];
         if (!policy || !this.noteEnabled()) return kept;
-        // ── 预算口径：注记只列**保留区间**（gap 自明，不逐 gap 标注）──
-        if (policy.mode === "budget") {
-            const all = projectAll(store);
-            const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, opts);
-            const note = renderBudgetNote(
-                {
-                    about: "会话历史已按字节预算压缩：以下是**保留位置索引**，区间之间的行号即被省略的部分",
-                    budgetBytes: policy.modeData.budgetBytes,
-                    keptBytes: sel.keptBytes,
-                    kept: sel.keptRuns,
-                },
-                { file: llmLogRelPath(taskUriOf), absPath: llmFile(taskUriOf), legendInSystem: true },
-            );
-            return normalizeUserRuns([{ role: "user", content: note }, ...kept]);
-        }
-        // 与投递**同一份**选择口径（就是刚下发给 blocksToMessages 的那个 opts 对象）
-        const sinceOf: string | null | undefined = "sinceTurnId" in opts ? opts.sinceTurnId : undefined;
-        const raw = droppedSegmentsOf(store, { sinceTurnId: sinceOf, content: opts.content ?? "all" }, policy);
-        if (!raw) return kept;
-        // 异常数据不许投出去（写坏的结构比不写更糟 —— 模型会照着它去回取错的区间）
-        const parsed = parseDroppedNote(raw);
-        if (!parsed.ok) {
-            console.error(`[local-agent] 压缩注记结构非法，已跳过（异常=${parsed.issues.join("；")}）`);
-            return kept;
-        }
-        const note = renderDroppedNote(parsed.value, {
-            file: llmLogRelPath(taskUriOf),
-            absPath: llmFile(taskUriOf),
-            // ⚠️ 历史被省注记（旧轮边界口径）与 system 的 historyIndex（预算注记说明）**不是同一格式**
-            // → 自描述（schemaInSystem:false），免得模型照着错格式回取。
-            schemaInSystem: false,
-        });
-        // 注记 + 保留首条（必为 user）→ 合并成一条：provider 不收连续同角色
+        // 预算注记：只列**保留区间**（gap 自明，不逐 gap 标注）
+        const all = projectAll(store);
+        const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, opts);
+        const note = renderBudgetNote(
+            {
+                about: "会话历史已按字节预算压缩：以下是**保留位置索引**，区间之间的行号即被省略的部分",
+                budgetBytes: policy.modeData.budgetBytes,
+                keptBytes: sel.keptBytes,
+                kept: sel.keptRuns,
+            },
+            { file: llmLogRelPath(taskUriOf), absPath: llmFile(taskUriOf), legendInSystem: true },
+        );
         return normalizeUserRuns([{ role: "user", content: note }, ...kept]);
     }
 
@@ -1312,25 +1196,14 @@ export class LocalAgentManager {
         const turnIds = listTurnIds(scan.ops);
         const store = new BlockStore();
         for (const op of scan.ops) store.apply(op);
-        // 保留轮数：预算支由**预算选择**实时算出；旧支走 keptTurnsOf（清零 / recent / all 在那收口）
-        let keptTurns: number;
-        let keptFromTurnId: string | null;
-        let droppedIds: string[];
-        // 预算的**过滤器表达**（保留行号区间）—— 存进事件，历史回溯/对比时据此还原 diff
-        let keptRuns: [number, number][] | null = null;
-        if (policy.mode === "budget") {
-            const all = projectAll(store);
-            const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, optsFor(policy, undefined));
-            keptRuns = sel.keptRuns;
-            const keptSet = new Set(sel.kept.map((i) => all[i]!.turn).filter((t): t is string => !!t));
-            keptTurns = keptSet.size;
-            keptFromTurnId = sel.kept.length > 0 ? (all[sel.kept[0]!]!.turn ?? null) : null;
-            droppedIds = turnIds.filter((id) => !keptSet.has(id));
-        } else {
-            keptTurns = keptTurnsOf(policy, turnIds, messageTurnsOf(store));
-            keptFromTurnId = keptTurns > 0 ? turnIds[turnIds.length - keptTurns]! : null;
-            droppedIds = keptFromTurnId ? turnIds.slice(0, turnIds.length - keptTurns) : [...turnIds];
-        }
+        // 保留 = 预算选择（实时算）。keptRuns = 预算的**过滤器表达**（存进事件，供历史回溯还原 diff）
+        const all = projectAll(store);
+        const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, optsFor(policy));
+        const keptRuns = sel.keptRuns;
+        const keptSet = new Set(sel.kept.map((i) => all[i]!.turn).filter((t): t is string => !!t));
+        const keptTurns = keptSet.size;
+        const keptFromTurnId: string | null = sel.kept.length > 0 ? (all[sel.kept[0]!]!.turn ?? null) : null;
+        const droppedIds = turnIds.filter((id) => !keptSet.has(id));
 
         // 机械锚点：保留起点轮的 op 下标；全清（keptTurns=0）→ 压缩时刻的 op 总数
         const keepFromOpIndex =
@@ -1338,7 +1211,7 @@ export class LocalAgentManager {
 
         const clipped: ClippedToolDetail[] = [];
         const before = sizeOfOps(scan.ops);
-        const after = sizeOfOps(scan.ops, optsFor(policy, keptFromTurnId, clipped));
+        const after = sizeOfOps(scan.ops, optsFor(policy, clipped));
 
         const droppedDetail = droppedIds.map((id) =>
             describeTurn(store, id, scan.turnOffsets.get(id) ?? 0, scan.turnBytes.get(id) ?? 0),
@@ -1386,7 +1259,7 @@ export class LocalAgentManager {
         for (const op of readJsonl<Op>(opsFile(taskUri))) store.apply(op);
         // 与真发**同一条链**（含压缩注记）：面板里的"压缩后预览"就是这一份
         const history = withRuntime(
-            this.deliveryHistoryForView(store, policy, keptFromTurnId, taskUri),
+            this.deliveryHistoryForView(store, policy, taskUri),
             delivery.runtime.text,
         );
         const summaryText = summaryOverride !== undefined ? summaryOverride : this.effectiveSummary(taskUri);

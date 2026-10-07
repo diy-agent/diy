@@ -422,15 +422,6 @@ export interface DeliveryOpts {
     /** 只投递从这个 turn 起的块（压缩边界）；null = 一个都不投（全部清零）；缺省 = 全投 */
     sinceTurnId?: string | null;
     /**
-     * 内容轴的三值（② 内容）：留过程还是只留结论（##269 D3b）。
-     * ⚠️ 这里只认**三值**（不认决策树）：树 → 三值的翻译由 `contentKindOf` 收口，
-     * 免得"清零支没有内容轴"这种事在每个选择点各判一遍。
-     *   all        = user + assistant 文本 + 工具链路（缺省，与历史行为一致）
-     *   text       = 只留 user + assistant 文本（**整条**丢掉 tool 链路 ⇒ 配对铁律天然不破）
-     *   conclusion = 再在每轮只留**最后一条**助手文本（省掉过程性文本）
-     */
-    content?: ContentPolicyKind;
-    /**
      * 工具结果渲染（由 main 注入：同一份纯函数既算预览也算真发，见 shared/context/compaction）。
      * **不带 title**：渲染只需要「谁的输出、输出是什么」，title 是 UI 的东西（曾经传了但没人用，
      * 留着等于撒谎说渲染依赖它）。
@@ -460,7 +451,6 @@ export interface DeliveryOpts {
 // 于是：全量投影（= llm.jsonl 每行）→ 选择 → 渲染。预览与真发共用同一条链。
 
 import { utf8Bytes } from "../../shared/context/compaction";
-import type { ContentPolicyKind } from "../../shared/context/compaction";
 
 /**
  * **全量投影**：块树 → 消息（不做任何选择、不裁剪工具结果）。
@@ -596,35 +586,20 @@ export interface HistorySelection {
  * ② 内容级（`content`）：**整条丢** tool 链路（tool-call 与 tool-result 同批丢 ⇒ 配对铁律
  *    天然不破）；`conclusion` 再在每轮只留**最后一条**助手文本（省掉"我先看看…"过程文本）。
  */
+/** **轮边界选择**（旧机制，仅 `selectForDelivery` 在无 budgetBytes 时兜底用；投递主路径走预算） */
 export function selectHistory(
     all: readonly LocalModelMessage[],
-    opts: Pick<DeliveryOpts, "sinceTurnId" | "content"> = {},
+    opts: Pick<DeliveryOpts, "sinceTurnId"> = {},
 ): HistorySelection {
     const since = "sinceTurnId" in opts ? opts.sinceTurnId : undefined;
-    const content: ContentPolicyKind = opts.content ?? "all";
     const n = all.length;
     const keep = new Array<boolean>(n).fill(true);
-
     if (since === null) {
         keep.fill(false);
     } else if (since !== undefined) {
         const i = all.findIndex((m) => m.turn === since);
         if (i >= 0) for (let k = 0; k < i; k++) keep[k] = false;
     }
-
-    if (content !== "all") {
-        for (let k = 0; k < n; k++) if (kindOfMessage(all[k]!) === "tool-chain") keep[k] = false;
-        if (content === "conclusion") {
-            // 每轮只留**最后一条**助手文本（判据取自 kept 中的助手消息 —— 已被工具裁掉的先不算）
-            const lastAssistant = new Map<string, number>();
-            for (let k = 0; k < n; k++) if (keep[k] && all[k]!.role === "assistant") lastAssistant.set(all[k]!.turn ?? "", k);
-            for (let k = 0; k < n; k++) {
-                if (!keep[k] || all[k]!.role !== "assistant") continue;
-                if (lastAssistant.get(all[k]!.turn ?? "") !== k) keep[k] = false;
-            }
-        }
-    }
-
     const kept: number[] = [];
     const dropped: number[] = [];
     for (let k = 0; k < n; k++) (keep[k] ? kept : dropped).push(k);
