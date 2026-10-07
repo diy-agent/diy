@@ -31,7 +31,15 @@ const arg = (name: string, dflt?: string): string | undefined => {
 const model = arg("model", "mimo-v2.6-flash")!;
 const gapsMin = (arg("gaps", "1,20,40,55,70") ?? "").split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
 const probeTokens = Number(arg("probe-tokens", "2000"));
-const baseUrl = arg("base-url", "https://opencode.ai/zen/v1")!;
+// 缺省对齐代码里的**唯一真源** ZEN_BASE_URL（chat 面路径 = base + /chat/completions）
+const baseUrl = arg("base-url", "https://opencode.ai/zen/go/v1")!;
+/**
+ * zen/go **强制要求**会话亲和头（实测：缺了直接 400 MissingSessionID ——
+ * "Request is missing x-opencode-session and cannot be routed efficiently"）。
+ * 本地 agent 里由 `sessionIdOf(taskUri)` 提供（`local-<key>`）。
+ * 探测必须**全程用同一个值**：换值等于换路由/会话，缓存亲和会跟着变，测出来的就不是 TTL。
+ */
+const session = arg("session", "local-probe-cache-ttl")!;
 
 const key = process.env["OPENCODE_ZEN_API_KEY"] ?? "";
 if (!key) {
@@ -50,7 +58,12 @@ function prefix(): string {
 async function once(messages: Array<{ role: string; content: string }>) {
     const res = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+        headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${key}`,
+            // 缺这个头上游直接 400（实测）——见上方 session 的注释
+            "x-opencode-session": session,
+        },
         body: JSON.stringify({ model, messages, max_tokens: 1, stream: false }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -63,25 +76,27 @@ async function once(messages: Array<{ role: string; content: string }>) {
 
 const P = prefix();
 console.log(`模型 ${model} · 探针 ${probeTokens} tok（近似 ${P.length} 字符）· gaps(min) = ${gapsMin.join(", ")}`);
+console.log("每轮**独立**：先 warm 建立缓存 → 静默等 gap → 探一次（见下方「为什么必须独立」）");
 
-// 建立缓存
-const warm = await once([{ role: "user", content: P }]);
-console.log(`[warm] prompt=${warm.prompt} cached=${warm.cached}  ← 首次必然 0（建立缓存）`);
-
-let last = Date.now();
+/**
+ * ⚠️ 为什么每个 gap 必须**独立一轮**（本轮实测设计缺陷，别改回递增）：
+ *   探测请求**本身会刷新缓存的 TTL**。若像最初那样"warm 一次然后递增等待"
+ *   （1 → 20 → 40 …），每次探针都在给缓存续命 —— 于是**永远命中**，
+ *   只能夹出下界、永远夹不出上界（"什么时候真的死"测不到）。
+ *   正确做法：每个 gap 前重新 warm，只让**那一个**间隔的静默去考验它。
+ */
 for (const g of gapsMin) {
-    const waitMs = Math.max(0, last + g * 60_000 - Date.now());
-    if (waitMs > 0) {
-        console.log(`  … 等 ${(waitMs / 60000).toFixed(1)} 分钟`);
-        await new Promise((r) => setTimeout(r, waitMs));
-    }
+    const warm = await once([{ role: "user", content: P }]);
+    if (warm.cached === 0) console.log(`[warm] prompt=${warm.prompt} cached=0  ← 建立缓存（首轮正常）`);
+    const waitMs = g * 60_000;
+    console.log(`  … [gap=${g}min] 静默等待（其间不发任何请求，否则会续命）`);
+    await new Promise((r) => setTimeout(r, waitMs));
     const r = await once([{ role: "user", content: P }]);
     const hit = r.cached > 0;
     console.log(
-        `[gap=${String(g).padStart(3)}min] prompt=${r.prompt} cached=${r.cached} → ` +
-            (hit ? `命中 ⇒ ttl > ${g}min` : `未命中 ⇒ ttl ≤ ${g}min`),
+        `[gap=${String(g).padStart(4)}min] prompt=${r.prompt} cached=${r.cached} → ` +
+            (hit ? `命中 ⇒ ttl > ${g}min（下界候选）` : `未命中 ⇒ ttl ≤ ${g}min（上界候选）`),
     );
-    last = Date.now();
 }
 
 console.log("\n把上面的「命中/未命中 + gap」写成 CacheObservation[]（同一前缀 ⇒ samePrefix=true），");
