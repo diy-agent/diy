@@ -68,6 +68,19 @@ async function expandAll(): Promise<void> {
   }
 }
 
+/** 打开压缩面板：**hover token 窗口环**（压缩按钮在其 card 里）→ 点「压缩会话上下文」 */
+async function openCompactPanel(): Promise<void> {
+  await ui.query<string>(
+    `(() => { const b=[...document.querySelectorAll('button')].find(x=>(x.getAttribute('aria-label')||'').startsWith('窗口占用')); if(!b) return 'no'; b.dispatchEvent(new Event('pointerenter')); return 'ok'; })()`,
+  );
+  await waitUntil(
+    () => ui.query<boolean>(`!!document.querySelector('[aria-label="压缩会话上下文"]')`),
+    (v) => v === true,
+    { label: "压缩卡出现" },
+  );
+  await ui.clickSelector('[aria-label="压缩会话上下文"]');
+}
+
 /** 正文里的文本（判「某轮还在不在」） */
 const bodyHas = (s: string) => ui.query<boolean>(`document.body.textContent.includes(${JSON.stringify(s)})`);
 
@@ -112,20 +125,20 @@ describe("压缩会话：面板 → 立即压缩 → 历史不销毁", () => {
     writeFileSync(file, ops.map((o) => JSON.stringify(o)).join("\n") + "\n", "utf-8");
   });
 
-  it("打开任务页 → 「压缩」按钮在 token 窗口面板旁", async () => {
+  it("打开任务页 → token 窗口环存在；hover 后 card 里出现「压缩」按钮", async () => {
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
     await waitUntil(a11yText, (t) => t.includes("第8轮问题"), { label: "会话历史渲染上屏" });
-    expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="压缩会话上下文"]')`)).toBe(true);
-    expect(await a11yText()).toContain("压缩");
+    // 环按钮存在（aria-label 以「窗口占用」开头）
+    expect(await ui.query<boolean>(`[...document.querySelectorAll('button')].some(b=>(b.getAttribute('aria-label')||'').startsWith('窗口占用'))`)).toBe(true);
+    // hover 前：压缩按钮不在 DOM（在 card 里）
+    expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="压缩会话上下文"]')`)).toBe(false);
+    // hover 后：出现
+    await ui.query<string>(`(() => { const b=[...document.querySelectorAll('button')].find(x=>(x.getAttribute('aria-label')||'').startsWith('窗口占用')); b.dispatchEvent(new Event('pointerenter')); return 'x'; })()`);
+    await waitUntil(() => ui.query<boolean>(`!!document.querySelector('[aria-label="压缩会话上下文"]')`), (v) => v === true, { label: "压缩按钮出现（card 内）" });
   });
 
   it("点「压缩」→ 面板出现：**极简**（自动压缩 toggle + 压缩到输入 + 压缩按钮 + 费用对比）", async () => {
-    await waitUntil(
-      () => ui.query<boolean>("!!document.querySelector('[aria-label=\"压缩会话上下文\"]')"),
-      (v) => v === true,
-      { label: "压缩按钮就位" },
-    );
-    await ui.clickSelector('[aria-label="压缩会话上下文"]');
+    await openCompactPanel();
     const text = await waitUntil(a11yText, (t) => t.includes("压缩到"), { label: "压缩面板上屏" });
     // 仅三个交互控件 + 费用对比图
     expect(text).toContain("自动压缩");       // toggle

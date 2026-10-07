@@ -20,7 +20,7 @@
  *   · 不可测桶写 `–`/`n/a`，**不写 0**；旧记录（无四桶字段）按原样降级，不假装能拆
  */
 
-import { createEffect, createSignal, For, Show, onCleanup } from "solid-js";
+import { createEffect, createResource, createSignal, For, Show, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 import { localChatStore } from "../store/localChatStore";
 import { useDrawerMax, DrawerMaxButton } from "./DrawerMaximize";
@@ -467,12 +467,33 @@ const pctCell = (v: number | null, prompt: number | null) =>
  * · hover 弹构成卡（三段估算 + 总量精确）；卡上「明细 →」打开构成报表（总/分两表）。
  * 数据链：turn patch 的 contextParts（main 每步真发时记字节）+ 账本 prompt —— 不做 hover 现算。
  */
-export function WindowRing() {
+export function WindowRing(props: { onCompact?: () => void; running?: boolean } = {}) {
     const w = () => currentWindow(localChatStore.trees);
+    /** 无数据也显示环（0%）—— 用户 2026-10-07：「无数据时应显示 0%」，不是整块消失 */
+    const win = () => w() ?? { total: 0, contextLimit: 0, rate: 0, prompt: null, parts: null };
     const [open, setOpen] = createSignal(false);
     const [drawerOpen, setDrawerOpen] = createSignal(false);
     const [anchor, setAnchor] = createSignal<{ left: number; top: number } | null>(null);
     let closeT: ReturnType<typeof setTimeout> | undefined;
+
+    /** 当前生效预算（字节）—— 取配置真源 `auto-compact.yaml` 的 policy.modeData.budgetBytes */
+    const [budget] = createResource(() => localChatStore.currentUri, async (u) => {
+        if (!u) return null;
+        const st = (await localChatStore.autoCompactStatus(u)) as {
+            config?: { policy?: { modeData?: { budgetBytes?: number }; budgetBytes?: number } };
+        };
+        const p = st?.config?.policy;
+        const bb = p?.modeData?.budgetBytes ?? p?.budgetBytes;
+        return typeof bb === "number" ? bb : null;
+    });
+    /** 压缩后估算 token：固定开支（system+工具）+ 预算内历史 */
+    const afterTokens = (): number | null => {
+        const p = partsOf(win());
+        const fixed = (p.system ?? 0) + (p.tools ?? 0);
+        const b = budget();
+        if (b == null) return null;
+        return fixed + Math.round(b / 4);
+    };
 
     const openCard = (el: HTMLElement) => {
         if (closeT !== undefined) clearTimeout(closeT);
@@ -488,29 +509,23 @@ export function WindowRing() {
 
     return (
         <>
-            <Show when={w()}>
-                {(x) => (
-                    /* 与总 token 统计（会话 chip）同构：hover 出 2 级卡、点击开 3 级报表（2026-10-03） */
-                    <button
-                        type="button"
-                        class="flex cursor-pointer items-center gap-1 rounded px-0.5 transition-opacity hover:opacity-80"
-                        aria-label="窗口占用（悬停看构成，点击开窗口构成报表）"
-                        aria-haspopup="dialog"
-                        title={`当前上下文 ${fmtTokens(x().total)} / ${fmtTokens(x().contextLimit)}（最后一步 总输入+总输出 ÷ 窗口上限），距上限还有 ${fmtTokens(Math.max(0, x().contextLimit - x().total))}。悬停看构成，点击打开按轮/按步报表`}
-                        onPointerEnter={(e) => openCard(e.currentTarget)}
-                        onPointerLeave={armClose}
-                        onClick={() => {
-                            setOpen(false);
-                            setDrawerOpen(true);
-                        }}
-                    >
-                        <RingBar rate={x().rate} size="1.5rem" thickness="3px" />
-                        <span class="text-body tabular-nums opacity-70">{pctText(x().rate)}</span>
-                    </button>
-                )}
-            </Show>
-            {/* 构成卡（Portal fixed；贴环上方，出屏夹紧） */}
-            <Show when={open() && anchor() && w()}>
+            <button
+                type="button"
+                class="flex cursor-pointer items-center gap-1 rounded px-0.5 transition-opacity hover:opacity-80"
+                aria-label="窗口占用（悬停看构成与压缩，点击开窗口构成报表）"
+                aria-haspopup="dialog"
+                title={`当前上下文 ${fmtTokens(win().total)} / ${fmtTokens(win().contextLimit)}（最后一步 总输入+总输出 ÷ 窗口上限），距上限还有 ${fmtTokens(Math.max(0, win().contextLimit - win().total))}。悬停看构成，点击打开按轮/按步报表`}
+                onPointerEnter={(e) => openCard(e.currentTarget)}
+                onPointerLeave={armClose}
+                onClick={() => {
+                    setOpen(false);
+                    setDrawerOpen(true);
+                }}
+            >
+                <RingBar rate={win().rate} size="1.5rem" thickness="3px" />
+                <span class="text-body tabular-nums opacity-70">{pctText(win().rate)}</span>
+            </button>
+            <Show when={open() && anchor()}>
                 <Portal>
                     <div
                         class="fixed z-[70] w-72 rounded-box border border-base-300 bg-base-100 shadow-2xl"
@@ -534,7 +549,6 @@ export function WindowRing() {
                                 明细 ›
                             </button>
                         </div>
-                        {/* 三列：数量 ~N + 独立占比列（该段 ÷ prompt；2026-10-03 用户定，与 L3 报表同口径） */}
                         <div class="grid grid-cols-[auto_1fr_auto] gap-x-3 px-3 pt-2 text-caption opacity-40">
                             <span />
                             <span class="block text-right">数量</span>
@@ -542,7 +556,7 @@ export function WindowRing() {
                         </div>
                         <dl class="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-1 px-3 py-1 text-body">
                             {(() => {
-                                const p = partsOf(w()!);
+                                const p = partsOf(win());
                                 const pct = (v: number | null) =>
                                     v == null || p.prompt == null ? (
                                         <span class="opacity-40">–</span>
@@ -562,7 +576,7 @@ export function WindowRing() {
                                     <>
                                         <dt class="opacity-60" title="最后一步 总输入+总输出 ÷ 上限（账本精确，与环同源）">当前 / 上限</dt>
                                         <dd class="text-right tabular-nums">
-                                            {fmtTokens(w()!.total)} / {fmtTokens(w()!.contextLimit)}
+                                            {fmtTokens(win().total)} / {fmtTokens(win().contextLimit)}
                                         </dd>
                                         <dd class="text-right opacity-40">—</dd>
                                         {row("系统提示词", p.system, "真发 system 容器字节 ÷ 4（估算）")}
@@ -572,13 +586,69 @@ export function WindowRing() {
                                 );
                             })()}
                         </dl>
+
+                        {/* ── 压缩：卡上只给「压缩」按钮 + 可降低窗口的比较条（参数调整在详情页）── */}
+                        <Show when={props.onCompact}>
+                            <div class="border-t border-base-300 px-3 py-2">
+                                <div class="mb-1.5 text-caption opacity-60">压缩（降低历史占用，历史不删）</div>
+                                {(() => {
+                                    const cur = win().total;
+                                    const aft = afterTokens();
+                                    const max = Math.max(1, cur, aft ?? 0);
+                                    const w1 = `${Math.min(100, (cur / max) * 100).toFixed(1)}%`;
+                                    const w2 = aft == null ? "0%" : `${Math.min(100, (aft / max) * 100).toFixed(1)}%`;
+                                    const saved = aft == null ? null : Math.max(0, cur - aft);
+                                    return (
+                                        <div class="mb-2 space-y-1 text-caption">
+                                            <div>
+                                                <div class="flex justify-between"><span>当前</span><span class="tabular-nums opacity-70">{fmtTokens(cur)}</span></div>
+                                                <div class="mt-0.5 h-2.5 rounded bg-base-200 overflow-hidden">
+                                                    <div data-cost-bar class="h-full bg-base-content/35" style={{ width: w1 }} />
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div class="flex justify-between"><span>压缩后</span><span class="tabular-nums opacity-70">{aft == null ? "–" : fmtTokens(aft)}</span></div>
+                                                <div class="mt-0.5 h-2.5 rounded bg-base-200 overflow-hidden">
+                                                    <div data-cost-bar class="h-full bg-primary" style={{ width: w2 }} />
+                                                </div>
+                                            </div>
+                                            <div class="pt-0.5">
+                                                {saved == null ? (
+                                                    <span class="opacity-50">–</span>
+                                                ) : saved > 0 ? (
+                                                    <span class="text-success" data-cost-saved>可降 {fmtTokens(saved)}</span>
+                                                ) : (
+                                                    <span class="opacity-50" data-cost-saved>无可降（预算未生效）</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+                                <button
+                                    type="button"
+                                    class="btn btn-primary btn-xs w-full"
+                                    aria-label="压缩会话上下文"
+                                    disabled={props.running}
+                                    title={props.running ? "对话正在生成，停止后才能压缩" : "压缩会话上下文（历史保留、可撤销）；参数调整在窗口构成页"}
+                                    onClick={() => {
+                                        setOpen(false);
+                                        props.onCompact?.();
+                                    }}
+                                >
+                                    压缩
+                                </button>
+                                <Show when={props.running}>
+                                    <div class="mt-1 text-caption text-warning">对话正在生成，停止后才能压缩</div>
+                                </Show>
+                            </div>
+                        </Show>
+
                         <div class="border-t border-base-300 px-3 py-1 text-caption opacity-50">
                             ~ = 字节 ÷ 4 估算；占比 = 该段 ÷ prompt；– = 该轮未落盘构成（本版前的记录）
                         </div>
                     </div>
                 </Portal>
             </Show>
-            {/* L3 构成报表：总表（按轮）/ 分表（按步），与用量看板同款上半屏形态 */}
             <ContextPartsDrawer open={drawerOpen()} onClose={() => setDrawerOpen(false)} />
         </>
     );
@@ -1029,8 +1099,9 @@ export function SessionUsageChip(props: {
     const agg = () => aggregateSessionUsage(localChatStore.trees);
     const label = () => {
         const a = agg();
-        if (a.turns === 0) return "— tok · $—";
-        return `${fmtTokens(a.total)} tok · ${a.cost ? `$${fmtCost(a.cost.total)}` : "$—"}`;
+        // 无数据也要显示 0（不是 "—"）—— 用户 2026-10-07：「显示 --tok.$-- 本身是错误的，应该显示 0 tok」
+        if (a.turns === 0) return "0 tok · $0";
+        return `${fmtTokens(a.total)} tok · ${a.cost ? `$${fmtCost(a.cost.total)}` : "$0"}`;
     };
     return (
         <button

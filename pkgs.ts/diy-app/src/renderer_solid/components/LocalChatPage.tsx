@@ -1488,20 +1488,9 @@ export function LocalChatPage(props: { uri?: string }) {
                             onHoverEnd={hoverUsageOut}
                             onDetail={() => setUsageBoard(true)}
                         />
-                        {/* L1 窗口占用环（chip 的 token/金额总量右侧）：hover chip 的 title/环自身 title 给明细 */}
-                        <WindowRing />
-                        {/* 压缩入口：放在 token 窗口面板旁（用户 230#26「入口直接放在 token 窗口面板里，给个大按钮」）。
-                            生成中隐藏（正跑的会话不该在此时被改投递口径）。 */}
-                        <Show when={!localChatStore.live}>
-                            <button
-                                class="btn btn-outline btn-xs"
-                                aria-label="压缩会话上下文"
-                                data-tip="压缩会话上下文：保留最近若干轮 + 可选裁工具输出；历史保留、可撤销"
-                                onClick={() => setCompactOpen(true)}
-                            >
-                                压缩
-                            </button>
-                        </Show>
+                        {/* L1 窗口占用环（chip 的 token/金额总量右侧）：hover 出构成卡（含「压缩」按钮 + 可降低窗口比较条）。
+                            【用户 2026-10-07】压缩入口**移进 token 窗口的 card**（不再单独一个按钮）；生成中禁用+提示。 */}
+                        <WindowRing onCompact={() => setCompactOpen(true)} running={localChatStore.live} />
                         <div class="flex-1" />
                         {/* 生成中的可见性：别人（CLI/另一窗口）发起时本地 running 全程为 false，
                             不显式说出来，界面看起来就像"什么都没发生"（任务 194 现象一的另一半） */}
