@@ -811,6 +811,11 @@ export interface CompactEventRecord {
         dropped?: DroppedTurnDetail[];
         /** 被裁剪的工具输出（只对保留部分生效；原文落盘可寻回） */
         clipped?: ClippedToolDetail[];
+        /**
+         * **预算算法的过滤器表达**：保留的消息行号区间（1-based，等于 llm.jsonl 物理行号）。
+         * 历史回溯 / 对比时据此还原那次投递了哪些消息（diff 的"保留侧"），不需要重放当前配置。
+         */
+        kept?: [number, number][];
         /** 摘要（勾选 summary 且已生成） */
         summary?: {
             /** 走 summary.md 模版渲染出的文本 */

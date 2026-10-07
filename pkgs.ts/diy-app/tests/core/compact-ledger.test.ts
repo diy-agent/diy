@@ -81,6 +81,28 @@ describe("① after.turns 按投递口径（数字之间不许打架）", () => 
     });
 });
 
+describe("④ 预算事件的**过滤器表达**（历史回溯可还原投递集）", () => {
+    it("budget 事件 details.kept 记保留行号区间；预算=0 时为空", () => {
+        const uri = newUri();
+        seedOps(uri);
+        // 预算撑满 → 全部保留（单区间 [1, N]）
+        const rec = getLocalAgent().compact(uri, { mode: "budget", budgetBytes: 1024 * 1024, toolResult: { render: "asis" }, summary: false }, "cli") as {
+            details?: { kept?: [number, number][] };
+        };
+        expect(rec.details?.kept?.length).toBe(1);
+        expect(rec.details!.kept![0]![0]).toBe(1);
+        expect(rec.details!.kept![0]![1]).toBeGreaterThanOrEqual(1);
+
+        // 预算=0 → 空区间
+        const uri2 = newUri();
+        seedOps(uri2);
+        const rec2 = getLocalAgent().compact(uri2, { mode: "budget", budgetBytes: 0, toolResult: { render: "asis" }, summary: false }, "cli") as {
+            details?: { kept?: [number, number][] };
+        };
+        expect(rec2.details?.kept).toEqual([]);
+    });
+});
+
 describe("② rates：provider = 谁服务的，source = 价目真源", () => {
     it("provider 不是 models.dev；source 才是；k 圆整", () => {
         const uri = newUri();

@@ -675,6 +675,8 @@ interface CompactPlan {
     keptFromTurnId: string | null;
     keepFromOpIndex: number;
     droppedIds: string[];
+    /** 预算算法的**过滤器表达**：保留的行号区间（1-based）；非预算支为 null */
+    keptRuns: [number, number][] | null;
     scan: OpsScan;
     store: BlockStore;
     before: SizeSnapshot;
@@ -1318,9 +1320,12 @@ export class LocalAgentManager {
         let keptTurns: number;
         let keptFromTurnId: string | null;
         let droppedIds: string[];
+        // 预算的**过滤器表达**（保留行号区间）—— 存进事件，历史回溯/对比时据此还原 diff
+        let keptRuns: [number, number][] | null = null;
         if (policy.mode === "budget") {
             const all = projectAll(store);
             const sel = selectHistoryByBudget(all, policy.budgetBytes, optsFor(policy, undefined));
+            keptRuns = sel.keptRuns;
             const keptSet = new Set(sel.kept.map((i) => all[i]!.turn).filter((t): t is string => !!t));
             keptTurns = keptSet.size;
             keptFromTurnId = sel.kept.length > 0 ? (all[sel.kept[0]!]!.turn ?? null) : null;
@@ -1361,7 +1366,7 @@ export class LocalAgentManager {
               }
             : undefined;
         const stats = usageStats(readStepUsages(taskUri), after.estTokens, rateSnap);
-        return { policy, keptTurns, keptFromTurnId, keepFromOpIndex, droppedIds, scan, store, before, after, droppedDetail, clipped, rateSnap, stats };
+        return { policy, keptTurns, keptFromTurnId, keepFromOpIndex, droppedIds, keptRuns, scan, store, before, after, droppedDetail, clipped, rateSnap, stats };
     }
 
     /**
@@ -1540,6 +1545,7 @@ export class LocalAgentManager {
             details: {
                 dropped: p.droppedDetail,
                 clipped: p.clipped,
+                ...(p.keptRuns ? { kept: p.keptRuns } : {}),
                 summary: { text: summary?.text ?? null, data: summary?.data ?? null, cost: summary?.cost ?? null },
             },
         };
