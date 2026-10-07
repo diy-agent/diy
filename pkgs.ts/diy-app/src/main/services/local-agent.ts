@@ -39,6 +39,7 @@ import {
     interruptedToolPatches,
     projectAll,
     selectHistory,
+    selectHistoryByBudget,
     type DeliveryOpts,
     type Op,
     type JSONVal,
@@ -378,6 +379,8 @@ export function droppedSegmentsOf(
 /** 为什么被省 —— 由**策略**推导（不是模型写的、也不是猜测） */
 function droppedWhyOf(policy: CompactPolicy, turns: number): string {
     if (policy.mode === "reset") return `压缩策略：会话清零（此处含被省去的 ${turns} 轮）`;
+    if (policy.mode === "budget")
+        return `压缩策略：按预算 ${policy.budgetBytes} 字节保留最优先的历史（此处含被省去的 ${turns} 轮）`;
     const k = policy.keep;
     if (k.scope === "all") return `压缩策略：全留轮次、只裁内容（此处含被省去的 ${turns} 轮）`;
     return k.unit === "turns"
@@ -1371,10 +1374,22 @@ export class LocalAgentManager {
         const turnIds = listTurnIds(scan.ops);
         const store = new BlockStore();
         for (const op of scan.ops) store.apply(op);
-        // 保留轮数：唯一入口 keptTurnsOf（清零 / recent 的 turns|messages / all 都在那收口）
-        const keptTurns = keptTurnsOf(policy, turnIds, messageTurnsOf(store));
-        const keptFromTurnId = keptTurns > 0 ? turnIds[turnIds.length - keptTurns]! : null;
-        const droppedIds = keptFromTurnId ? turnIds.slice(0, turnIds.length - keptTurns) : [...turnIds];
+        // 保留轮数：预算支由**预算选择**实时算出；旧支走 keptTurnsOf（清零 / recent / all 在那收口）
+        let keptTurns: number;
+        let keptFromTurnId: string | null;
+        let droppedIds: string[];
+        if (policy.mode === "budget") {
+            const all = projectAll(store);
+            const sel = selectHistoryByBudget(all, policy.budgetBytes, optsFor(policy, undefined));
+            const keptSet = new Set(sel.kept.map((i) => all[i]!.turn).filter((t): t is string => !!t));
+            keptTurns = keptSet.size;
+            keptFromTurnId = sel.kept.length > 0 ? (all[sel.kept[0]!]!.turn ?? null) : null;
+            droppedIds = turnIds.filter((id) => !keptSet.has(id));
+        } else {
+            keptTurns = keptTurnsOf(policy, turnIds, messageTurnsOf(store));
+            keptFromTurnId = keptTurns > 0 ? turnIds[turnIds.length - keptTurns]! : null;
+            droppedIds = keptFromTurnId ? turnIds.slice(0, turnIds.length - keptTurns) : [...turnIds];
+        }
 
         // 机械锚点：保留起点轮的 op 下标；全清（keptTurns=0）→ 压缩时刻的 op 总数
         const keepFromOpIndex =

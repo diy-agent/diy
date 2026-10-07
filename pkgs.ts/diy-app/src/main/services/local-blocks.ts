@@ -414,6 +414,11 @@ export interface LocalModelMessage {
  * 两者作用阶段不同，可与 execute 侧的 clip()（错误路径 6000 字符）并存。
  */
 export interface DeliveryOpts {
+    /**
+     * 【新·目标式预算】历史消息可占字节上限（不含固定开支）。**有它就按纵向优先级阶梯选择**，
+     * 忽略 `sinceTurnId`/`content`（旧的轮边界口径）—— 见 selectHistoryByBudget。
+     */
+    budgetBytes?: number;
     /** 只投递从这个 turn 起的块（压缩边界）；null = 一个都不投（全部清零）；缺省 = 全投 */
     sinceTurnId?: string | null;
     /**
@@ -795,6 +800,7 @@ function renderMessage(m: LocalModelMessage, opts: DeliveryOpts): LocalModelMess
 export function blocksToMessages(store: BlockStore, opts?: DeliveryOpts): LocalModelMessage[] {
     const o = opts ?? {};
     const all = projectAll(store);
-    const sel = selectHistory(all, o);
+    // 预算口径（新）与轮边界口径（旧）二选一 —— 由 opts.budgetBytes 是否给出来分派
+    const sel = o.budgetBytes !== undefined ? selectHistoryByBudget(all, o.budgetBytes, o) : selectHistory(all, o);
     return sel.kept.map((i) => renderMessage(all[i]!, o));
 }

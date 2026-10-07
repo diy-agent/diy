@@ -248,6 +248,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     const autoKeep = () => {
         const p = autoPolicy();
         if (p.mode === "reset") return "reset";
+        if (p.mode !== "keep") return "all";
         return p.keep.scope === "all" ? "all" : String(p.keep.count);
     };
     const autoContent = (): ContentPolicyKind => {

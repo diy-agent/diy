@@ -132,13 +132,41 @@ const SummaryField = z.boolean().describe("是否额外算一份历史摘要带�
  * ① 模式轴：**清零** 还是 **保留**（顶层判别）。
  * `reset` 支没有范围 / 内容字段 —— 清零没有内容可裁，那些字段放进这一支全是死字段。
  */
+/**
+ * 【新 · 用户 2026-10-07 定稿】**目标式预算**：用户只给一个字节预算，系统按**纵向优先级
+ * 阶梯**（user > 结论 > 非结论 > 工具命令 > 工具结果）保留到预算上限。
+ *
+ * 与旧决策树的区别（为什么弃用旧 UI）：
+ *   · 旧的是「用户拧保留规则」（保留几轮 / 内容轴 / 工具结果裁法）—— 6+ 控件、认知负担重；
+ *   · 新的是「用户给目标，系统定阶梯」—— 唯一输入 `budgetBytes`。工具结果的呈现（`toolResult`）
+ *     降级为**系统内部旋钮**，不给用户拧。
+ *
+ * 语义：`budgetBytes` 是**除固定开支外**（system 容器 + 工具定义 + runtime 容器 + 当前轮 user
+ * 消息）历史消息可占的字节上限；`0` ⇒ 等价清零。它按**字节**计（UTF-8），UI 里以 KB 显示。
+ */
+export const BudgetPolicySchema = z.object({
+    mode: z.literal("budget").describe("目标式预算：按纵向优先级阶梯保留到预算上限"),
+    budgetBytes: z
+        .number()
+        .int()
+        .nonnegative()
+        .describe("历史消息可占字节上限（不含固定开支）；0 = 清零"),
+    toolResult: ToolResultPolicySchema.describe("工具结果在预算内的呈现（系统内部旋钮）"),
+    summary: SummaryField,
+});
+
+/**
+ * 策略真源（判别联合）：**budget**（新，唯一由 UI/CLI 产生）/ **reset** / **keep**（旧，仅供读取
+ * 历史账本，保证老会话的压缩口径不失效 —— 这是正确性，不是兼容洁癖）。
+ */
 export const CompactPolicySchema = z.discriminatedUnion("mode", [
+    BudgetPolicySchema,
     z.object({
-        mode: z.literal("reset").describe("会话清零：本次压缩不投任何历史轮（日志一字不删，可查、可回取）"),
+        mode: z.literal("reset").describe("【旧】会话清零：本次压缩不投任何历史轮（日志一字不删）"),
         summary: SummaryField,
     }),
     z.object({
-        mode: z.literal("keep").describe("保留部分历史（范围 / 内容 / 工具结果见下）"),
+        mode: z.literal("keep").describe("【旧】保留部分历史（范围 / 内容 / 工具结果见下）"),
         keep: KeepPolicySchema,
         content: ContentPolicySchema,
         summary: SummaryField,
@@ -149,26 +177,51 @@ export type KeepPolicy = z.infer<typeof KeepPolicySchema>;
 export type ContentPolicy = z.infer<typeof ContentPolicySchema>;
 export type ContentPolicyKind = ContentPolicy["kind"];
 export type ToolResultPolicy = z.infer<typeof ToolResultPolicySchema>;
+export type BudgetPolicy = z.infer<typeof BudgetPolicySchema>;
 export type CompactPolicy = z.infer<typeof CompactPolicySchema>;
 export type CompactMode = CompactPolicy["mode"];
 
-export const DEFAULT_COMPACT_POLICY: CompactPolicy = {
-    mode: "keep",
-    keep: { scope: "recent", unit: "turns", count: DEFAULT_KEEP_TURNS },
-    content: { kind: "all", toolResult: { render: "asis" } },
+/** 默认预算：用户 2026-10-07 定的经验值 **3KB**（≈清零 —— 经验上清零也没啥大不了、还挺干净） */
+export const DEFAULT_BUDGET_BYTES = 3 * 1024;
+
+/** 预算缺省的工具结果呈现（头尾裁剪：长输出留头尾、中间省略，原文可回取） */
+export const DEFAULT_TOOL_RESULT_POLICY: ToolResultPolicy = {
+    render: "headtail",
+    head: DEFAULT_HEADTAIL.headLines,
+    tail: DEFAULT_HEADTAIL.tailLines,
+    maxLineChars: DEFAULT_HEADTAIL.maxLineChars,
+    maxKeepBytes: DEFAULT_HEADTAIL.maxKeepBytes,
+};
+
+/** 新策略真源（UI/CLI 的缺省）：3KB 预算 + 工具结果头尾裁剪 */
+export const DEFAULT_COMPACT_POLICY: BudgetPolicy = {
+    mode: "budget",
+    budgetBytes: DEFAULT_BUDGET_BYTES,
+    toolResult: DEFAULT_TOOL_RESULT_POLICY,
     summary: false,
 };
 
 // ── 决策树 → 选择 / 渲染阶段要用的三值（下游只认这三个，不认树）──
 
-/** 内容轴的三值视图（清零时无内容可裁 → "all"） */
+/** 内容轴的三值视图（预算 / 清零都无「内容轴」概念 → "all"；仅旧 keep 支有） */
 export function contentKindOf(p: CompactPolicy): ContentPolicyKind {
     return p.mode === "keep" ? p.content.kind : "all";
 }
 
-/** 工具结果策略：只有「保留工具链路」这一支有；其余 → null（不裁） */
+/** 工具结果策略：预算支取 `toolResult`；旧 keep+all 支取 `content.toolResult`；其余 → null（不裁） */
 export function toolResultOf(p: CompactPolicy): ToolResultPolicy | null {
+    if (p.mode === "budget") return p.toolResult;
     return p.mode === "keep" && p.content.kind === "all" ? p.content.toolResult : null;
+}
+
+/**
+ * 策略 → **字节预算**（`null` = 非预算策略，走旧的「轮边界 + 内容轴」投递路径）。
+ * `reset` 视作预算 0（等价清零）。这是「预算」这条新路径的**唯一入口**。
+ */
+export function budgetBytesOf(p: CompactPolicy): number | null {
+    if (p.mode === "budget") return p.budgetBytes;
+    if (p.mode === "reset") return 0;
+    return null;
 }
 
 /**
@@ -180,6 +233,8 @@ export function toolResultOf(p: CompactPolicy): ToolResultPolicy | null {
  * `normalizePolicy` 是唯一适配点（扁平/旧形状 → 树），`flatPolicyOf` 是反向（树 → 扁平，供 UI 回读）。
  */
 export interface FlatCompactPolicy {
+    /** 【新】目标式预算的字节上限（KB 由 UI 换算）；有它就按预算选择 */
+    budgetBytes?: number;
     keepTurns: number | "all";
     toolResult: ToolResultMode;
     headtail: HeadTailPolicy;
@@ -188,8 +243,24 @@ export interface FlatCompactPolicy {
     keepUnit?: "turns" | "messages";
 }
 
-/** 决策树 → 扁平（UI 回读用） */
+/** 策略 → 扁平（UI 回读 / RPC 下发用） */
 export function flatPolicyOf(p: CompactPolicy): FlatCompactPolicy {
+    if (p.mode === "budget") {
+        const tr = p.toolResult;
+        const ht =
+            tr.render === "headtail"
+                ? { triggerLines: tr.head + tr.tail, headLines: tr.head, tailLines: tr.tail, maxLineChars: tr.maxLineChars, maxKeepBytes: tr.maxKeepBytes }
+                : { ...DEFAULT_HEADTAIL };
+        return {
+            budgetBytes: p.budgetBytes,
+            keepTurns: "all",
+            toolResult: tr.render,
+            headtail: ht,
+            summary: p.summary,
+            content: "all",
+            keepUnit: "turns",
+        };
+    }
     if (p.mode === "reset") {
         return {
             keepTurns: 0,
@@ -280,7 +351,21 @@ function readContent(raw: unknown, legacyToolResult: unknown, ht: Partial<HeadTa
 export function normalizePolicy(p: unknown): CompactPolicy {
     const src = (p ?? {}) as Record<string, unknown>;
 
-    // ── 现役：决策树形状 ──
+    // ── 现役①：目标式预算（新；UI/CLI 产出的唯一形状）──
+    // 判据：显式 `mode:"budget"` 或带 `budgetBytes`（扁平输入面传 budgetBytes 时会走这条）
+    if (src["mode"] === "budget" || (src["budgetBytes"] !== undefined && src["mode"] === undefined)) {
+        const bb = posNum(src["budgetBytes"], DEFAULT_BUDGET_BYTES, 0);
+        const ht = (src["headtail"] ?? {}) as Partial<HeadTailPolicy>;
+        return {
+            mode: "budget",
+            budgetBytes: bb,
+            // 未显式给工具结果裁法 → 用缺省（头尾裁剪）。若不裁，大工具结果会一口吃掉预算。
+            toolResult: src["toolResult"] !== undefined || ht.headLines !== undefined ? readToolResult(src["toolResult"], ht) : DEFAULT_TOOL_RESULT_POLICY,
+            summary: src["summary"] === true,
+        };
+    }
+
+    // ── 现役②：旧决策树（读历史账本用，不再由 UI 产生）──
     if (src["mode"] === "reset") return { mode: "reset", summary: src["summary"] === true };
     if (src["mode"] === "keep") {
         const k = (src["keep"] ?? {}) as Record<string, unknown>;
@@ -337,6 +422,9 @@ export function keptTurnsOf(
     messageTurns: readonly string[],
 ): number {
     if (policy.mode === "reset") return 0;
+    // 预算支：保留轮数取决于**实际字节**（要投影才知道），无法从 turn id 推出 —— 由调用方
+    // （planCompact）用 selectHistoryByBudget 另行计数；这里不应被调用到。
+    if (policy.mode === "budget") return turnIds.length;
     const k = policy.keep;
     if (k.scope === "all") return turnIds.length;
     if (k.unit === "turns") return Math.min(k.count, turnIds.length);
@@ -502,6 +590,8 @@ export function clipToolResult(text: string, toolResult: ToolResultPolicy, opts:
  * `origPathOf` 由调用方注入（main 用落盘相对路径，renderer 用同一字符串，不碰文件系统）。
  */
 export interface DeliveryTransform {
+    /** 【新·目标式预算】历史消息可占字节上限；有它就按纵向优先级阶梯选择，忽略 sinceTurnId/content */
+    budgetBytes?: number;
     sinceTurnId?: string | null;
     /** 内容轴的三值：留过程还是只留结论（选择阶段的判据，见 local-blocks 的 selectHistory） */
     content?: ContentPolicyKind;
@@ -522,11 +612,16 @@ export function makeDeliveryTransform(
     collect?: ClippedToolDetail[],
 ): DeliveryTransform {
     const opts: DeliveryTransform = {};
-    if (keptFromTurnId !== undefined) opts.sinceTurnId = keptFromTurnId;
-    // 内容轴随策略一起下发（选择阶段用）；"all" 是缺省、不必写。
-    // 清零支恒为 "all"（无内容可裁）—— 由 contentKindOf 收口，调用点不必自己判 mode。
-    const kind = contentKindOf(policy);
-    if (kind !== "all") opts.content = kind;
+    const bb = budgetBytesOf(policy);
+    if (bb !== null) {
+        // 【新】预算口径：每次请求实时按预算选择（不管 sinceTurnId / 轮边界）—— 用户 2026-10-07
+        opts.budgetBytes = bb;
+    } else if (keptFromTurnId !== undefined) {
+        // 【旧】轮边界口径（读历史账本用）
+        opts.sinceTurnId = keptFromTurnId;
+        const kind = contentKindOf(policy);
+        if (kind !== "all") opts.content = kind;
+    }
     // 工具结果的裁法**只有**「保留工具链路」这一支有（其余 → null）
     const tr = toolResultOf(policy);
     if (tr && tr.render !== "asis") {

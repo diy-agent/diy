@@ -386,6 +386,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // CLI/UI 传来的散字段 → 策略对象（缺省字段由 normalizePolicy 兜底；undefined 覆盖成默认值）
   // 散字段 → **扁平策略对象**（输入面契约；三轴形状由 normalizePolicy 统一生成，见 shared/context/compaction）
   const policyOf = (i: Record<string, unknown>): unknown => ({
+    budgetBytes: i.budgetBytes as number | undefined,
     keepTurns: i.keepTurns as number | undefined,
     keepUnit: i.keepUnit as string | undefined,
     content: i.content as string | undefined,
