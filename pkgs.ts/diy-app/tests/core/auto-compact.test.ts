@@ -93,11 +93,11 @@ describe("detectAutoCompactTriggers：确定事实的判定", () => {
 });
 
 describe("normalizeAutoCompact：初版紧凑、扩展松散", () => {
-    it("空 → 默认（notify + 三个触发开）+ **自动压默认只留结论、全留轮次**", () => {
+    it("空 → 默认（notify + 三个触发开）+ **自动压默认 = 目标式预算 3KB**", () => {
         const c = normalizeAutoCompact(undefined);
         expect(c).toEqual(DEFAULT_AUTO_COMPACT);
         expect(c.mode).toBe("notify");
-        expect(c.policy).toEqual({ mode: "keep", keep: { scope: "all" }, content: { kind: "conclusion" }, summary: false });
+        expect(c.policy).toEqual(DEFAULT_AUTO_COMPACT.policy);
     });
 
     it("非法 mode/比例回落；0 是合法值（关闭该触发）", () => {
@@ -106,10 +106,10 @@ describe("normalizeAutoCompact：初版紧凑、扩展松散", () => {
         expect(normalizeAutoCompact({ triggers: { contextWindowOver: 0 } }).triggers.contextWindowOver).toBe(0);
     });
 
-    it("默认策略 → 压缩策略输入：全留轮次 + 只留结论", () => {
-        // 策略**直接复用决策树**（含 summary），不再经扁平形状转一道
+    it("默认策略 → 压缩策略输入：目标式预算 3KB", () => {
+        // 策略**直接复用真源形状**（含 summary），不再经扁平形状转一道
         const p = autoCompactPolicyInput(DEFAULT_AUTO_COMPACT);
-        expect(p).toEqual({ mode: "keep", keep: { scope: "all" }, content: { kind: "conclusion" }, summary: false });
+        expect(p).toEqual(DEFAULT_AUTO_COMPACT.policy);
         expect(normalizePolicy(p)).toEqual(p);
     });
 });
@@ -127,7 +127,7 @@ describe("配置文件层：真源落盘（不是 localStorage）", () => {
         expect(c.mode).toBe("auto");
         expect(c.triggers.contextWindowOver).toBe(0.6);
         // 未给的字段用默认补（初版紧凑）
-        expect(c.policy).toEqual({ mode: "keep", keep: { scope: "all" }, content: { kind: "conclusion" }, summary: false });
+        expect(c.policy).toEqual(DEFAULT_AUTO_COMPACT.policy);
     });
 
     it("坏文件 → 默认 + 出声（不崩、不用坏数据）", () => {
@@ -221,8 +221,8 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
         expect(c).toBeTruthy();
         expect(c.by).toBe("auto");
         expect(c.trigger).toBe("contextWindowOver");
-        // 自动压用的是默认策略：全留轮次 + 只留结论
-        expect(c.policy).toEqual({ mode: "keep", keep: { scope: "all" }, content: { kind: "conclusion" }, summary: false });
+        // 自动压用的是默认策略：目标式预算 3KB
+        expect(c.policy).toEqual(DEFAULT_AUTO_COMPACT.policy);
         // 旧历史仍在（压缩只改投递）
         expect(readFileSync(opsFile(uri), "utf-8")).toContain("第 1 句");
     });

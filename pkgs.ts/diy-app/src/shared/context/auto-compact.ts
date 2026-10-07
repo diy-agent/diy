@@ -16,7 +16,14 @@
 
 import { z } from "zod";
 import { cacheStateAfterGap, type EffectiveTtl } from "./cache-ttl";
-import { CompactPolicySchema, normalizePolicy, type CompactPolicy, type CompactTrigger } from "./compaction";
+import {
+    CompactPolicySchema,
+    DEFAULT_BUDGET_BYTES,
+    DEFAULT_TOOL_RESULT_POLICY,
+    normalizePolicy,
+    type CompactPolicy,
+    type CompactTrigger,
+} from "./compaction";
 
 /** 自动压缩的触发配置（三个都是可判定的确定事实） */
 export const AutoCompactTriggersSchema = z.object({
@@ -52,11 +59,12 @@ export type AutoCompactTriggers = z.infer<typeof AutoCompactTriggersSchema>;
 export const DEFAULT_AUTO_COMPACT: AutoCompactConfig = {
     mode: "notify",
     triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 0.8 },
-    // 「保留所有轮次的结论」：全留轮次 + 只留结论 —— 用户 2026-10-06 定的自动压意图
+    // 目标式预算：默认 3KB（≈清零）—— 用户 2026-10-07「更倾向于清零，经验上也没啥大不了」。
+    // 自动压与手动压**同一套策略**（合并后不再有第二套）。
     policy: {
-        mode: "keep",
-        keep: { scope: "all" },
-        content: { kind: "conclusion" },
+        mode: "budget",
+        budgetBytes: DEFAULT_BUDGET_BYTES,
+        toolResult: DEFAULT_TOOL_RESULT_POLICY,
         summary: false,
     },
 };
@@ -64,9 +72,8 @@ export const DEFAULT_AUTO_COMPACT: AutoCompactConfig = {
 /**
  * 宽松归一（从 YAML/UI 来的可能缺字段/越界）：初版紧凑、扩展松散。
  *
- * 缺 `policy` 时**不**用 `normalizePolicy({})` 的缺省（那是「保留最近 6 轮」）——
- * 自动压的意图是「保留**所有**轮次的结论」，用 6 会把用户没明确要丢的结论丢掉。
- * 缺省值必须有依据，不能顺手取一个（见 `DEFAULT_AUTO_COMPACT` 的注释）。
+ * 缺 `policy` 时用 `DEFAULT_AUTO_COMPACT.policy`（目标式预算 3KB），**不**用 `normalizePolicy({})`
+ * 的缺省 —— 缺省值必须有依据，不能顺手取一个（见 `DEFAULT_AUTO_COMPACT` 的注释）。
  */
 export function normalizeAutoCompact(raw: unknown): AutoCompactConfig {
     const src = (raw ?? {}) as Record<string, unknown>;
@@ -81,8 +88,8 @@ export function normalizeAutoCompact(raw: unknown): AutoCompactConfig {
             cacheExpired: t["cacheExpired"] !== false,
             contextWindowOver: num(t["contextWindowOver"], DEFAULT_AUTO_COMPACT.triggers.contextWindowOver, 0, 1),
         },
-        // 策略与手动面板**同一棵决策树** → 交给 normalizePolicy 统一宽松归一；
-        // 缺省用它自己的缺省策略（不是 normalizePolicy 的：见本函数头注）。
+        // 策略（自动 / 手动**同一套**）→ 交给 normalizePolicy 统一宽松归一；
+        // 缺省用 DEFAULT_AUTO_COMPACT.policy（见本函数头注）。
         policy: src["policy"] !== undefined ? normalizePolicy(src["policy"]) : DEFAULT_AUTO_COMPACT.policy,
     };
 }
