@@ -207,10 +207,8 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     };
     const fmtPct = (r: number | null): string => (r === null ? "—" : `${(r * 100).toFixed(1)}%`);
 
-    // base 请求（打开面板取一次，参数变化不重取）
-    const [base] = createResource(() => props.uri, (u) => localChatStore.requestView(u) as Promise<RequestView>);
-
-    // 预览（只算不写）：预算变化即重算
+    // 预览（只算不写）：预算变化即重算。base/mod 都从它取 ——
+    // 【配置/历史分离】base = **未压缩**（compactPreview 现算），mod = 当前预算。
     const [pv] = createResource(
         () => ({ uri: props.uri, p: flatPolicyOf(autoPolicy()) }),
         (k) => localChatStore.compactPreview(k.uri, k.p) as Promise<{
@@ -220,15 +218,15 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
             droppedTurns: number;
             facts: LayerRow[];
             modRequest: RequestView;
+            baseRequest: RequestView;
         }>,
     );
 
-    // 两级 diff：以两个请求**对象**做节点级对齐
+    // 两级 diff：以两个请求**对象**做节点级对齐（base = 未压缩，mod = 当前预算）
     const rows = createMemo<YamlDiffRow[]>(() => {
-        const b = base();
         const m = pv();
-        if (!b || !m) return [];
-        return diffValues(requestViewYaml(b), requestViewYaml(m.modRequest));
+        if (!m) return [];
+        return diffValues(requestViewYaml(m.baseRequest), requestViewYaml(m.modRequest));
     });
 
     const foldLevels = createMemo(() => foldLevelCount(rows()));

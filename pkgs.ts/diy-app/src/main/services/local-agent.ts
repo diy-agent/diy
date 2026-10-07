@@ -700,6 +700,8 @@ export interface CompactPreview {
     clipped: ClippedToolDetail[];
     /** 改参数后这一次请求的实际投递内容（与真发同一组装链） */
     modRequest: RequestView;
+    /** 基准请求 = **未压缩**（全量历史、无注记）—— 右栏 diff 的左侧 */
+    baseRequest: RequestView;
     /** 事实表：base（当前生效请求）vs mod 的分层 token 与金额差 */
     facts: LayerRow[];
 }
@@ -1122,7 +1124,7 @@ export class LocalAgentManager {
     /** 面板参数预览用（给定 policy + 边界现算，不读生效账本）—— 与真发同一条构造链 */
     private deliveryHistoryForView(
         store: BlockStore,
-        policy: CompactPolicy,
+        policy: CompactPolicy | null,
         keptFromTurnId: string | null | undefined,
         taskUri: string,
     ): ModelMessage[] {
@@ -1376,7 +1378,7 @@ export class LocalAgentManager {
      */
     private buildRequestView(
         taskUri: string,
-        policy: CompactPolicy,
+        policy: CompactPolicy | null,
         keptFromTurnId: string | null | undefined,
         summaryOverride?: string,
     ): RequestView {
@@ -1464,7 +1466,9 @@ export class LocalAgentManager {
     /** 压缩预览（只算不写）：面板左侧参数 + 右侧请求 YAML diff + 事实表的数据源 */
     compactPreview(taskUri: string, policyInput: unknown, summaryText?: string): CompactPreview {
         const p = this.planCompact(taskUri, policyInput);
-        const base = this.requestView(taskUri);
+        // base = **未压缩**的投递（全量历史、无注记）—— 配置 / 历史分离后，"当前配置"就是 mod，
+        // 拿它当 base 会得出"无差异"。预览的价值是看"这次压缩**去掉/改了什么**"，故 base 取全量。
+        const base = this.buildRequestView(taskUri, null, undefined);
         // 勾选摘要但尚未生成 → 用占位骨架（让用户先看见"会得到什么"，且不花一分钱）
         const sum = p.policy.summary
             ? summaryText !== undefined
@@ -1483,6 +1487,7 @@ export class LocalAgentManager {
             droppedDetail: p.droppedDetail,
             clipped: p.clipped.map((c) => ({ ...c, tool: p.store.blocks.get(c.id)?.tool ? String(p.store.blocks.get(c.id)!.tool) : c.tool })),
             modRequest: mod,
+            baseRequest: base,
             facts: layerFacts(base, mod, inputRate),
         };
     }
