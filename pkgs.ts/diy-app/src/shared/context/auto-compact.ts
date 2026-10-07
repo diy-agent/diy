@@ -63,8 +63,7 @@ export const DEFAULT_AUTO_COMPACT: AutoCompactConfig = {
     // 自动压与手动压**同一套策略**（合并后不再有第二套）。
     policy: {
         mode: "budget",
-        budgetBytes: DEFAULT_BUDGET_BYTES,
-        toolResult: DEFAULT_TOOL_RESULT_POLICY,
+        modeData: { budgetBytes: DEFAULT_BUDGET_BYTES, toolResult: DEFAULT_TOOL_RESULT_POLICY },
         summary: false,
     },
 };

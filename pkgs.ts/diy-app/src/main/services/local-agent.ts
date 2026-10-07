@@ -373,8 +373,8 @@ export function droppedSegmentsOf(
 function droppedWhyOf(policy: CompactPolicy, turns: number): string {
     if (policy.mode === "reset") return `压缩策略：会话清零（此处含被省去的 ${turns} 轮）`;
     if (policy.mode === "budget")
-        return `压缩策略：按预算 ${policy.budgetBytes} 字节保留最优先的历史（此处含被省去的 ${turns} 轮）`;
-    const k = policy.keep;
+        return `压缩策略：按预算 ${policy.modeData.budgetBytes} 字节保留最优先的历史（此处含被省去的 ${turns} 轮）`;
+    const k = policy.modeData.keep;
     if (k.scope === "all") return `压缩策略：全留轮次、只裁内容（此处含被省去的 ${turns} 轮）`;
     return k.unit === "turns"
         ? `压缩策略：只保留最近 ${k.count} 轮（此处含被省去的 ${turns} 轮）`
@@ -1143,11 +1143,11 @@ export class LocalAgentManager {
         // ── 预算口径：注记只列**保留区间**（gap 自明，不逐 gap 标注）──
         if (policy.mode === "budget") {
             const all = projectAll(store);
-            const sel = selectHistoryByBudget(all, policy.budgetBytes, opts);
+            const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, opts);
             const note = renderBudgetNote(
                 {
                     about: "会话历史已按字节预算压缩：以下是**保留位置索引**，区间之间的行号即被省略的部分",
-                    budgetBytes: policy.budgetBytes,
+                    budgetBytes: policy.modeData.budgetBytes,
                     keptBytes: sel.keptBytes,
                     kept: sel.keptRuns,
                 },
@@ -1320,7 +1320,7 @@ export class LocalAgentManager {
         let keptRuns: [number, number][] | null = null;
         if (policy.mode === "budget") {
             const all = projectAll(store);
-            const sel = selectHistoryByBudget(all, policy.budgetBytes, optsFor(policy, undefined));
+            const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, optsFor(policy, undefined));
             keptRuns = sel.keptRuns;
             const keptSet = new Set(sel.kept.map((i) => all[i]!.turn).filter((t): t is string => !!t));
             keptTurns = keptSet.size;

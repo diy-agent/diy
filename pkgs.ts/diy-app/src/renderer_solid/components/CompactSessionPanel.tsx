@@ -172,7 +172,11 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     /** 把工具结果的呈现（内部旋钮）从当前策略里取出来、缺省用头尾裁剪 */
     const currentToolResult = () => toolResultOf(autoPolicy()) ?? DEFAULT_TOOL_RESULT_POLICY;
     const setBudgetBytes = (b: number) =>
-        patchAutoPolicy({ mode: "budget", budgetBytes: Math.max(0, Math.round(b)), toolResult: currentToolResult(), summary: false });
+        patchAutoPolicy({
+            mode: "budget",
+            modeData: { budgetBytes: Math.max(0, Math.round(b)), toolResult: currentToolResult() },
+            summary: false,
+        });
     const setBudgetKb = (kb: number) => setBudgetBytes(kb * 1024);
 
     /** 预算输入框草稿（KB）：不要让异步 auto() 覆盖用户正在输入的内容 —— 仅初始化/提交时同步 */
@@ -645,7 +649,14 @@ interface CompactEventRow {
     ts?: string;
     by?: "ui" | "cli" | "auto";
     trigger?: string;
-    policy?: { mode?: string; budgetBytes?: number; keep?: { scope?: string; count?: number }; content?: { kind?: string } };
+    /** v3 = modeData 嵌套；v2 = 扁平（读旧账本）—— 两种都收 */
+    policy?: {
+        mode?: string;
+        modeData?: { budgetBytes?: number; toolResult?: { render?: string }; keep?: { scope?: string; count?: number }; content?: { kind?: string } };
+        budgetBytes?: number;
+        keep?: { scope?: string; count?: number };
+        content?: { kind?: string };
+    };
     size?: {
         before?: { turns: number; messages: number; bytes: number };
         after?: { turns: number; messages: number; bytes: number };
@@ -673,13 +684,17 @@ function algoName(mode: string | undefined): string {
 /** 算法的**过滤器表达**（算法私有，故按 mode 分派；换算法加新分支） */
 function filterText(p: CompactEventRow["policy"]): string {
     if (!p) return "—";
+    const md = p.modeData ?? p; // v3 嵌套 / v2 扁平
     if (p.mode === "budget") {
-        const kb = p.budgetBytes === undefined ? "?" : p.budgetBytes === 0 ? "0（=清零）" : `${Math.round(p.budgetBytes / 1024)} KB`;
+        const bb = md.budgetBytes;
+        const kb = bb === undefined ? "?" : bb === 0 ? "0（=清零）" : `${Math.round(bb / 1024)} KB`;
         return `上限 ${kb}`;
     }
     if (p.mode === "keep") {
-        const scope = p.keep?.scope === "all" ? "全部轮次" : `最近 ${p.keep?.count ?? "?"} 轮`;
-        const content = p.content?.kind === "conclusion" ? "只留结论" : p.content?.kind === "text" ? "只留文本" : "全部";
+        const keep = md.keep;
+        const scope = keep?.scope === "all" ? "全部轮次" : `最近 ${keep?.count ?? "?"} 轮`;
+        const k = md.content?.kind;
+        const content = k === "conclusion" ? "只留结论" : k === "text" ? "只留文本" : "全部";
         return `${scope} · ${content}`;
     }
     if (p.mode === "reset") return "不投任何历史轮";

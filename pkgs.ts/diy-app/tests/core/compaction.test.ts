@@ -31,8 +31,10 @@ import {
 /** 造一条 keep 策略（内容默认「全部 + 原样」；范围单独给） */
 const keepP = (count: number | "all", unit: "turns" | "messages" = "turns"): CompactPolicy => ({
     mode: "keep",
-    keep: count === "all" ? { scope: "all" } : { scope: "recent", unit, count },
-    content: { kind: "all", toolResult: { render: "asis" } },
+    modeData: {
+        keep: count === "all" ? { scope: "all" } : { scope: "recent", unit, count },
+        content: { kind: "all", toolResult: { render: "asis" } },
+    },
     summary: false,
 });
 
@@ -41,8 +43,10 @@ describe("normalizePolicy：缺省值 + 越界兜底", () => {
         const p = normalizePolicy(undefined);
         expect(p).toEqual({
             mode: "keep",
-            keep: { scope: "recent", unit: "turns", count: 6 },
-            content: { kind: "all", toolResult: { render: "asis" } },
+            modeData: {
+                keep: { scope: "recent", unit: "turns", count: 6 },
+                content: { kind: "all", toolResult: { render: "asis" } },
+            },
             summary: false,
         });
         // 扁平视图（输入面契约）仍是老样子，UI 不用改
@@ -57,37 +61,41 @@ describe("normalizePolicy：缺省值 + 越界兜底", () => {
     it("非法值逐项回落：负数 / 未知 render / 小数取整", () => {
         expect(normalizePolicy({ keepTurns: -3, toolResult: "nope" })).toMatchObject({
             mode: "keep",
-            keep: { scope: "recent", unit: "turns", count: 6 },
-            content: { kind: "all", toolResult: { render: "asis" } },
+            modeData: {
+                keep: { scope: "recent", unit: "turns", count: 6 },
+                content: { kind: "all", toolResult: { render: "asis" } },
+            },
         });
-        expect(normalizePolicy({ keepTurns: 4.9 })).toMatchObject({ keep: { scope: "recent", unit: "turns", count: 4 } });
+        expect(normalizePolicy({ keepTurns: 4.9 })).toMatchObject({ modeData: { keep: { scope: "recent", unit: "turns", count: 4 } } });
     });
     it("**三种形状都收**：旧扁平 / 旧三轴 / 新决策树，结果同形", () => {
         const flat = normalizePolicy({ keepTurns: 2, toolResult: "headtail", headtail: { headLines: 7, tailLines: 2 } });
         const axis = normalizePolicy({ keep: { unit: "turns", count: 2 }, toolResult: { render: "headtail", head: 7, tail: 2 } });
         const tree = normalizePolicy({
             mode: "keep",
-            keep: { scope: "recent", unit: "turns", count: 2 },
-            content: { kind: "all", toolResult: { render: "headtail", head: 7, tail: 2 } },
+            modeData: {
+                keep: { scope: "recent", unit: "turns", count: 2 },
+                content: { kind: "all", toolResult: { render: "headtail", renderData: { head: 7, tail: 2, maxLineChars: DEFAULT_HEADTAIL.maxLineChars, maxKeepBytes: DEFAULT_HEADTAIL.maxKeepBytes } } },
+            },
         });
         expect(flat).toEqual(axis);
         expect(tree).toEqual(axis);
         expect(flat).toMatchObject({
-            content: { kind: "all", toolResult: { render: "headtail", head: 7, tail: 2, maxLineChars: DEFAULT_HEADTAIL.maxLineChars, maxKeepBytes: DEFAULT_HEADTAIL.maxKeepBytes } },
+            modeData: { content: { kind: "all", toolResult: { render: "headtail", renderData: { head: 7, tail: 2, maxLineChars: DEFAULT_HEADTAIL.maxLineChars, maxKeepBytes: DEFAULT_HEADTAIL.maxKeepBytes } } } },
         });
     });
     it("旧扁平局部覆盖：只给 headLines，其余保持默认（参数收进分支后仍如此）", () => {
         const t = toolResultOf(normalizePolicy({ toolResult: "headtail", headtail: { headLines: 7 } }))!;
         expect(t.render).toBe("headtail");
         if (t.render === "headtail") {
-            expect(t.head).toBe(7);
-            expect(t.tail).toBe(DEFAULT_HEADTAIL.tailLines);
+            expect(t.renderData.head).toBe(7);
+            expect(t.renderData.tail).toBe(DEFAULT_HEADTAIL.tailLines);
         }
     });
     it("messages 单位 + 未知 content 逐项兜底", () => {
-        expect(normalizePolicy({ keepUnit: "messages", keepTurns: 3 })).toMatchObject({ keep: { scope: "recent", unit: "messages", count: 3 } });
-        expect(normalizePolicy({ content: "nope" })).toMatchObject({ content: { kind: "all", toolResult: { render: "asis" } } });
-        expect(normalizePolicy({ content: "conclusion" })).toMatchObject({ content: { kind: "conclusion" } });
+        expect(normalizePolicy({ keepUnit: "messages", keepTurns: 3 })).toMatchObject({ modeData: { keep: { scope: "recent", unit: "messages", count: 3 } } });
+        expect(normalizePolicy({ content: "nope" })).toMatchObject({ modeData: { content: { kind: "all", toolResult: { render: "asis" } } } });
+        expect(normalizePolicy({ content: "conclusion" })).toMatchObject({ modeData: { content: { kind: "conclusion" } } });
     });
 });
 
@@ -313,10 +321,10 @@ describe("keep 单位经由 normalizePolicy 落地（扁平输入 → 决策树�
 
 describe("范围三支：全留轮次 / 保留最近 N / 清零（互不混）", () => {
     it("normalizePolicy 收 all / recent / reset，各归各支", () => {
-        expect(normalizePolicy({ keepTurns: "all" })).toMatchObject({ mode: "keep", keep: { scope: "all" } });
-        expect(normalizePolicy({ keep: { unit: "turns", count: "all" } })).toMatchObject({ mode: "keep", keep: { scope: "all" } });
+        expect(normalizePolicy({ keepTurns: "all" })).toMatchObject({ mode: "keep", modeData: { keep: { scope: "all" } } });
+        expect(normalizePolicy({ keep: { unit: "turns", count: "all" } })).toMatchObject({ mode: "keep", modeData: { keep: { scope: "all" } } });
         expect(normalizePolicy({ keepTurns: 0 })).toMatchObject({ mode: "reset" });
-        expect(normalizePolicy({})).toMatchObject({ mode: "keep", keep: { scope: "recent", unit: "turns", count: 6 } });
+        expect(normalizePolicy({})).toMatchObject({ mode: "keep", modeData: { keep: { scope: "recent", unit: "turns", count: 6 } } });
     });
 
     it("keptTurnsOf：all = 全留轮；reset = 全丢；recent = min(...)", () => {
@@ -338,6 +346,6 @@ describe("范围三支：全留轮次 / 保留最近 N / 清零（互不混）",
 
     it("自动压缩的默认策略读法：全留轮 + 只留结论", () => {
         const p = normalizePolicy({ keep: { unit: "turns", count: "all" }, content: "conclusion" });
-        expect(p).toMatchObject({ mode: "keep", keep: { scope: "all" }, content: { kind: "conclusion" } });
+        expect(p).toMatchObject({ mode: "keep", modeData: { keep: { scope: "all" }, content: { kind: "conclusion" } } });
     });
 });
