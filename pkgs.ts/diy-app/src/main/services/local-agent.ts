@@ -66,6 +66,7 @@ import {
     type DroppedNote,
     type DroppedSegment,
 } from "../../shared/context/dropped";
+import { renderBudgetNote } from "../../shared/context/budget-note";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -1188,6 +1189,21 @@ export class LocalAgentManager {
         const opts: DeliveryOpts = policy ? optsFor(policy, sinceTurnId, collect) : {};
         const kept = blocksToMessages(store, opts) as unknown as ModelMessage[];
         if (!policy || !this.noteEnabled()) return kept;
+        // ── 预算口径：注记只列**保留区间**（gap 自明，不逐 gap 标注）──
+        if (policy.mode === "budget") {
+            const all = projectAll(store);
+            const sel = selectHistoryByBudget(all, policy.budgetBytes, opts);
+            const note = renderBudgetNote(
+                {
+                    about: "会话历史已按字节预算压缩：以下是**保留位置索引**，区间之间的行号即被省略的部分",
+                    budgetBytes: policy.budgetBytes,
+                    keptBytes: sel.keptBytes,
+                    kept: sel.keptRuns,
+                },
+                { file: llmLogRelPath(taskUriOf), absPath: llmFile(taskUriOf), legendInSystem: true },
+            );
+            return normalizeUserRuns([{ role: "user", content: note }, ...kept]);
+        }
         // 与投递**同一份**选择口径（就是刚下发给 blocksToMessages 的那个 opts 对象）
         const sinceOf: string | null | undefined = "sinceTurnId" in opts ? opts.sinceTurnId : undefined;
         const raw = droppedSegmentsOf(store, { sinceTurnId: sinceOf, content: opts.content ?? "all" }, policy);

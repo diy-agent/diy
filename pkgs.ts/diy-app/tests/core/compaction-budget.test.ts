@@ -100,3 +100,35 @@ describe("selectHistoryByBudget — 连续区间与结论识别", () => {
         expect(s.kept).toEqual([2]);
     });
 });
+
+describe("预算注记（budget-note）：YAML 文本 + zod 派生 legend", () => {
+    it("渲染出可解析的 YAML，含保留区间与 legend（元数据作为 YAML 数据）", async () => {
+        const { renderBudgetNote, parseBudgetNote } = await import("../../src/shared/context/budget-note");
+        const yaml = renderBudgetNote(
+            { about: "会话历史已按字节预算压缩", budgetBytes: 3072, keptBytes: 2048, kept: [[5, 8], [120, 135]] },
+            { file: "local/x.llm.jsonl", absPath: "/tmp/x.llm.jsonl", legendInSystem: false },
+        );
+        // 是 YAML 数据（非 # 注释）
+        expect(yaml).toContain("history:");
+        expect(yaml).toContain("budgetBytes: 3072");
+        expect(yaml).toContain("kept: [[5, 8], [120, 135]]");
+        expect(yaml).toContain("legend:");
+        expect(yaml).toContain("name: budgetBytes");
+        expect(yaml.split("\n").some((l) => l.trimStart().startsWith("#"))).toBe(false);
+
+        // 结构自证：注记字段能过 zod（parseBudgetNote）
+        const r = parseBudgetNote({ about: "x", budgetBytes: 1, keptBytes: 1, kept: [[1, 2]] });
+        expect(r.ok).toBe(true);
+        const bad = parseBudgetNote({ budgetBytes: 1 });
+        expect(bad.ok).toBe(false);
+    });
+
+    it("legendInSystem=true → 不再重复投 legend（信息不投两遍）", async () => {
+        const { renderBudgetNote } = await import("../../src/shared/context/budget-note");
+        const yaml = renderBudgetNote(
+            { about: "x", budgetBytes: 1, keptBytes: 1, kept: [[1, 2]] },
+            { file: "f", legendInSystem: true },
+        );
+        expect(yaml).not.toContain("legend:");
+    });
+});
