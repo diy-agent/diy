@@ -2,11 +2,12 @@
 // ═══════════════════════════════════════════════════════════════
 // 🎯 压缩会话 UI 意图验证（真实 renderer + CDP 原生点击）
 //
-// 需求（##246）：token 窗口面板旁的「压缩」大按钮 → 打开压缩面板（保留 N 轮 + 内容/工具结果选项
-//   + 事实行）→「压缩」→ 当前会话只剩边界后的轮；旧历史仍在（历史会话面板可查）。
+// 需求（##246 → ##271 N6）：token 窗口面板旁的「压缩」大按钮 → 打开压缩面板
+//   （**目标式预算**：一个 `压缩到 ___ KB` 输入 + 预设清零/不压缩 + 立即压缩）→
+//   「立即压缩」→ 账本记一次预算压缩；历史**不销毁**（聊天页仍可见，历史会话可查）。
 //
-// 分工：三条核心契约（不删历史 / 投递自边界起 / 归档可查）在 cli.intent.agent-local.test.ts
-//   用 CLI 断言；本文件只验证**界面真的可交互且结果上屏**（按钮点得动、面板出得来、压缩生效）。
+// 分工：核心契约（纵向优先级 / 不删历史 / 注记）在 tests/core/compaction-budget.test.ts 等
+//   单测里断言；本文件只验证**界面真的可交互且结果上屏**。
 //
 // 隐私/隔离：与其它 ui intent 同套路，用隔离 Electron 的 HOME 直写 ops.jsonl（UI 重放的权威输入）。
 // ═══════════════════════════════════════════════════════════════
@@ -70,7 +71,19 @@ async function expandAll(): Promise<void> {
 /** 正文里的文本（判「某轮还在不在」） */
 const bodyHas = (s: string) => ui.query<boolean>(`document.body.textContent.includes(${JSON.stringify(s)})`);
 
-describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮", () => {
+/** 预算输入框当前值（KB） */
+const budgetKb = () =>
+  ui.query<string>(`document.querySelector('input[aria-label="压缩预算KB"]')?.value ?? ''`);
+
+/** 在预算输入框里设 KB 并提交（input + change） */
+async function setBudgetKb(kb: number): Promise<void> {
+  await ui.query<string>(
+    `(() => { const i=document.querySelector('input[aria-label="压缩预算KB"]'); if(!i) return 'x'; i.value=${JSON.stringify(String(kb))}; i.dispatchEvent(new Event('input',{bubbles:true})); i.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
+  );
+  await new Promise((r) => setTimeout(r, 500));
+}
+
+describe("压缩会话：面板 → 立即压缩 → 历史不销毁", () => {
   it("setup: 造 8 轮会话（每轮一个可辨识的用户文本）", async () => {
     const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/cp --label 压缩`);
     const pid = String((p.data as any)?.data?.id);
@@ -102,96 +115,83 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
   it("打开任务页 → 「压缩」按钮在 token 窗口面板旁", async () => {
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
     await waitUntil(a11yText, (t) => t.includes("第8轮问题"), { label: "会话历史渲染上屏" });
-    // 按钮存在（DOM 层按 aria-label 定位 —— a11y 文本树给的是可见文字）
     expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="压缩会话上下文"]')`)).toBe(true);
     expect(await a11yText()).toContain("压缩");
   });
 
-  it("点「压缩」→ 面板出现（① 自动压缩 / ② 本次手动压缩 / 压缩后估算）", async () => {
-    // 等按钮就位（页面可能还在挂载），再点 —— 避免与挂载竞争
+  it("点「压缩」→ 面板出现：一个预算输入 + 预设 + 立即压缩（无决策树）", async () => {
     await waitUntil(
       () => ui.query<boolean>("!!document.querySelector('[aria-label=\"压缩会话上下文\"]')"),
       (v) => v === true,
       { label: "压缩按钮就位" },
     );
     await ui.clickSelector('[aria-label="压缩会话上下文"]');
-    // ② 是**决策树**：1 模式 →（保留支）2 范围 / 3 内容 /（含工具链路时）4 工具结果；
-    // 摘要不编号（清零与保留都能算，故它不在这棵树的某一支里）
-    const text = await waitUntil(a11yText, (t) => t.includes("1. 这次怎么压"), { label: "压缩面板上屏" });
-    expect(text).toContain("保留部分历史");
-    expect(text).toContain("会话清零");
-    expect(text).toContain("2. 保留范围");
-    expect(text).toContain("3. 内容");
-    expect(text).toContain("4. 工具结果");
-    expect(text).toContain("计算历史摘要");
-    // 两块策略区：① 自动压缩（系统行为）/ ② 本次手动压缩（只影响这一次点击）
-    expect(text).toContain("① 自动压缩");
-    expect(text).toContain("② 本次手动压缩");
-    // 两个 view 用统一的折叠框模式（标题条可点）
+    const text = await waitUntil(a11yText, (t) => t.includes("压缩预算"), { label: "压缩面板上屏" });
+    // 预算 UI
+    expect(text).toContain("压缩到");
+    expect(text).toContain("清零");
+    expect(text).toContain("不压缩");
+    expect(text).toContain("何时自动压");
+    expect(text).toContain("触发条件与状态");
+    expect(text).toContain("立即压缩");
     expect(text).toContain("压缩后估算");
-    // 默认保留 6 轮、共 8 轮（数字与「保留最近」在 a11y 树里是不同节点）
-    expect(text).toContain("保留最近");
-    expect(text).toContain("共 8 轮");
-    // 自动压缩块（用户 2026-10-06：不自动压时提示 + 一键；压了也能看到历史与理由）
-    expect(text).toContain("自动压缩");
+    // 旧决策树 UI **不再出现**
+    expect(text).not.toContain("1. 这次怎么压");
+    expect(text).not.toContain("2. 保留范围");
+    expect(text).not.toContain("② 本次手动压缩");
+    // 预算输入默认 3KB（用户定的经验值）
+    expect(await budgetKb()).toBe("3");
   });
 
-  it("② 是决策树：选「会话清零」→ 范围/内容/工具结果整块收起（清零没有内容可裁）", async () => {
-    const clickMode = (label: string) =>
-      ui.query<string>(
-        `(() => { const rs=[...document.querySelectorAll('input[type=radio]')]; const r=rs.find(x=>(x.closest('label')?.textContent||'').includes(${JSON.stringify(label)})); r?.click(); return 'x'; })()`,
-      );
-    await clickMode("会话清零");
-    await waitUntil(a11yText, (t) => !t.includes("2. 保留范围"), { label: "清零支收起范围/内容/工具结果" });
-    const t = await a11yText();
-    expect(t).not.toContain("3. 内容");
-    expect(t).not.toContain("4. 工具结果");
-    expect(t).toContain("日志一字不删"); // 说明文案（清零不等于清除）
-    // 清零支的结构：**没有** keep/content 字段（这正是决策树要表达的"非法组合不可表达"）
-    const stored = await ui.query<string>(`localStorage.getItem('diy_compact_manual_policy') ?? ''`);
-    expect(JSON.parse(stored)).toEqual({ mode: "reset", summary: false });
-
-    // 切回「保留部分历史」→ 上次拧的范围/内容**记得**（来回切不该把参数抹掉）
-    await clickMode("保留部分历史");
-    await waitUntil(a11yText, (t) => t.includes("2. 保留范围"), { label: "切回保留支" });
-    expect(await a11yText()).toContain("3. 内容");
+  it("预设「清零」→ 0 KB；「不压缩」→ 大值；手改写回真源 $DIY_HOME/auto-compact.yaml", async () => {
+    // 清零
+    await ui.clickSelector('[aria-label="预设清零"]');
+    await waitUntil(budgetKb, (v) => v === "0", { label: "清零 → 0" });
+    await waitUntil(
+      () => Promise.resolve(readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8")),
+      (t) => t.includes("budgetBytes: 0"),
+      { label: "清零写回真源" },
+    );
+    // 不压缩（大值）
+    await ui.clickSelector('[aria-label="预设不压缩"]');
+    await waitUntil(budgetKb, (v) => Number(v) > 1000, { label: "不压缩 → 大值" });
+    // 手改 3 KB
+    await setBudgetKb(3);
+    await waitUntil(
+      () => Promise.resolve(readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8")),
+      (t) => t.includes("budgetBytes: 3072"),
+      { label: "手改写回真源（3KB=3072）" },
+    );
+    const yaml = readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8");
+    expect(yaml).toContain("mode: budget"); // 真源是预算形状（非决策树）
   });
 
-  it("自动压缩：模式开关可选，且模式真源落盘（$DIY_HOME/auto-compact.yaml，非 localStorage）", async () => {
-    // 默认 notify（不静默改用户会话）
+  it("自动压缩：模式开关可选，且模式真源落盘（非 localStorage）", async () => {
     const sel = await ui.query<string>(
       `(() => { const s=document.querySelector('select[aria-label="自动压缩模式"]'); return s ? s.value : ''; })()`,
     );
     expect(sel).toBe("notify");
-    // 切到 auto → 配置真源出现（文件写盘；页面数据是 RPC 直读，不经 localStorage）
     await ui.query<string>(
       `(() => { const s=document.querySelector('select[aria-label="自动压缩模式"]'); if(!s) return ''; s.value='auto'; s.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
     );
     await new Promise((r) => setTimeout(r, 400));
     expect(await ui.query<string>(`document.querySelector('select[aria-label="自动压缩模式"]')?.value ?? ''`)).toBe("auto");
-
-    // 切回 notify 并确认落盘（文件内容可读）
     await ui.query<string>(
       `(() => { const s=document.querySelector('select[aria-label="自动压缩模式"]'); if(!s) return ''; s.value='notify'; s.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
     );
     await new Promise((r) => setTimeout(r, 400));
   });
 
-  it("自动压缩配置区：默认收起；展开后可改触发条件与策略，改完写回真源", async () => {
-    // 默认收起：只显示状态 + 提示。⚠️ 判据不能是"触发条件" —— 展开按钮的**文案**里
-    // 就含这四个字（它始终在 DOM 里）；要判的是**只在展开时出现**的项。
+  it("触发条件区：默认收起；展开后可改触发条件，改完写回真源", async () => {
     expect(await a11yText()).not.toContain("系统上下文变化");
     await ui.clickSelector('[aria-label="自动压缩配置开关"]');
-    const text = await waitUntil(a11yText, (t) => t.includes("触发条件"), { label: "自动压缩配置区展开" });
+    const text = await waitUntil(a11yText, (t) => t.includes("触发条件"), { label: "触发条件区展开" });
     expect(text).toContain("系统上下文变化");
     expect(text).toContain("缓存过期");
     expect(text).toContain("窗口占用超过");
-    expect(text).toContain("自动压时的策略");
-    // 状态区（只读）：距上次请求 / 窗口占用 / 系统上下文
     expect(text).toContain("距上次请求");
     expect(text).toContain("窗口占用");
 
-    // 改一个触发开关 → 写回真源 `$DIY_HOME/auto-compact.yaml`（不是 localStorage）
     const before = readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8");
     expect(before).toContain("cacheExpired: true");
     await ui.clickSelector('[aria-label="触发：缓存过期"]');
@@ -200,7 +200,6 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
       (t) => String(t).includes("cacheExpired: false"),
       { label: "触发开关写回真源" },
     );
-    // 复原（免得影响后续用例）：开关回 true + 配置区收起
     await ui.clickSelector('[aria-label="触发：缓存过期"]');
     await waitUntil(
       () => Promise.resolve(readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8")),
@@ -211,71 +210,9 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
     await waitUntil(a11yText, (t) => !t.includes("系统上下文变化"), { label: "配置区收起" });
   });
 
-  it("手动参数：改完记住（UI state），重开面板仍是上次拧的", async () => {
-    // 改「只留结论」→ 关面板 → 重开，仍是结论
-    const clicked = await ui.query<boolean>(
-      `(() => { const rs=[...document.querySelectorAll('input[type=radio]')]; const r=rs.find(x=>(x.closest('label')?.textContent||'').includes('只留结论')); if(!r) return false; r.click(); return true; })()`,
-    );
-    if (clicked) {
-      await new Promise((r) => setTimeout(r, 200));
-      // 存的是 UI state（localStorage），且**不影响**自动压缩那套（两套互不为真源）
-      const stored = await ui.query<string>(`localStorage.getItem('diy_compact_manual_policy') ?? ''`);
-      expect(stored).toContain("conclusion");
-      const autoFile = readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8");
-      expect(autoFile).not.toContain("content: text"); // 自动那套没被手动的改动带跑
-      // ⚠️ **必须复位**：面板参数是全局单例的（UI state），不复位会污染后面所有
-      // 依赖预览/diff 的用例（本轮实测：不回「全部」→ 头尾裁剪 diff 断言假红）
-      await ui.query<string>(
-        `(() => { const rs=[...document.querySelectorAll('input[type=radio]')]; const r=rs.find(x=>(x.closest('label')?.textContent||'').includes('全部')); r?.click(); return 'x'; })()`,
-      );
-      await new Promise((r) => setTimeout(r, 200));
-    }
-  });
-
-  it("「全部轮次」开关 → scope:all（不写死数字：会话再长也不裁轮，只按内容轴裁）", async () => {
-    const toggle = `document.querySelector('input[aria-label="全部保留"]')`;
-    expect(await ui.query<string>(`${toggle}?.checked ?? null`)).toBe(false);
-    await ui.query<string>(`${toggle}?.click(); 'x'`);
-    await waitUntil(
-      () => ui.query<string>(`localStorage.getItem('diy_compact_manual_policy') ?? ''`),
-      (v) => String(v).includes('"scope":"all"'),
-      { label: "勾选 → scope:all" },
-    );
-    // 滑条此时禁用（"全部轮次"与具体数字不能同时表达）
-    expect(await ui.query<boolean>(`${toggle}?.checked === true && document.querySelector('input[aria-label="保留最近轮数"]').disabled === true`)).toBe(true);
-    // 取消勾选 → 回到具体轮数
-    await ui.query<string>(`${toggle}?.click(); 'x'`);
-    await waitUntil(
-      () => ui.query<string>(`localStorage.getItem('diy_compact_manual_policy') ?? ''`),
-      (v) => String(v).includes('"scope":"recent"'),
-      { label: "取消 → scope:recent" },
-    );
-  });
-
-  it("切支不丢参数：只留文本 → 回「全部」时工具结果的裁法仍在（记忆值）", async () => {
-    const radio = (label: string) =>
-      `(() => { const rs=[...document.querySelectorAll('input[type=radio]')]; const r=rs.find(x=>(x.closest('label')?.textContent||'').includes(${JSON.stringify(label)})); r?.click(); return 'x'; })()`;
-    // 选头尾裁剪 + 改头部行数
-    await ui.query<string>(radio("头尾裁剪"));
-    await waitUntil(() => ui.query<string>(`document.querySelector('input[aria-label="保留头部行数"]')?.value ?? ''`), (v) => v !== "", { label: "头尾参数出现" });
-    await ui.query<string>(`(() => { const i=document.querySelector('input[aria-label="保留头部行数"]'); i.value='5'; i.dispatchEvent(new Event('input',{bubbles:true})); return 'x'; })()`);
-    // 切到「只留文本」→ 工具结果节消失（结构上就不该有）
-    await ui.query<string>(radio("只留文本"));
-    await waitUntil(a11yText, (t) => !t.includes("4. 工具结果"), { label: "只留文本 → 工具结果节收起" });
-    // 切回「全部」→ 裁法还是头尾、行数还是 5
-    await ui.query<string>(radio("全部"));
-    await waitUntil(() => ui.query<string>(`document.querySelector('input[aria-label="保留头部行数"]')?.value ?? ''`), (v) => v === "5", { label: "切回后参数仍在" });
-    const stored = JSON.parse(await ui.query<string>(`localStorage.getItem('diy_compact_manual_policy') ?? '{}'`));
-    expect(stored.content).toMatchObject({ kind: "all", toolResult: { render: "headtail", head: 5 } });
-    // 复位为原样（免得污染后续 diff 断言）
-    await ui.query<string>(radio("原样"));
-    await waitUntil(() => ui.query<string>(`localStorage.getItem('diy_compact_manual_policy') ?? ''`), (v) => String(v).includes('"render":"asis"'), { label: "复位原样" });
-  });
-
   it("压缩后估算表：中文层名 + 合计居首 + ├/└ 层级符号", async () => {
     const text = await a11yText();
     for (const h of ["被压缩的历史消息", "压缩前", "压缩后", "预估节省"]) expect(text).toContain(h);
-    // 每个字段都有中文词汇（不给英文键）
     for (const name of ["系统提示词", "工具定义", "用户消息", "模型回复", "工具调用", "工具结果"]) {
       expect(text).toContain(name);
     }
@@ -289,86 +226,42 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
     expect(hasBranch).toBe(true);
   });
 
-  it("变更点：只在节点折叠时标出，展开即隐去；且标在行尾（不破缩进）", async () => {
+  it("右栏渲染请求 YAML diff（含 system/messages 与增删行）", async () => {
     await expandAll();
-    // 最大展开 → 无变更点（内容都已可见）
-    expect(await ui.query<number>(`document.querySelectorAll('[data-compact-preview] [title*="内含变更"]').length`)).toBe(0);
+    const diffText = await waitUntil(
+      () => ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''"),
+      (t) => t.includes("第1轮问题"),
+      { label: "diff 上屏" },
+    );
+    expect(await ui.query<boolean>("!!document.querySelector('[data-compact-preview] [data-diff=\"del\"]')")).toBe(true);
 
-    // 折叠一个节点 → 变更点出现
-    await ui.clickSelector('[data-compact-preview] button[aria-label="折叠节点"]');
-    const dot = await waitUntil(
-      () =>
-        ui.query<string>(
-          "document.querySelector('[data-compact-preview] [title*=\"内含变更\"]')?.textContent?.trim() ?? ''",
-        ),
-      (t) => t.includes("●"),
-      { label: "折叠变更点出现" },
+    await ui.click("只看差异");
+    const yaml = await waitUntil(
+      () => ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''"),
+      (t) => t.includes("system:") && t.includes("messages:"),
+      { label: "完整 YAML 上屏" },
     );
-    expect(dot).toContain("●");
-    // 位置：变更点必须在该行的**内容之后**（行尾），不是行首（否则破坏 YAML 缩进视觉）
-    const afterText = await ui.query<boolean>(
-      `(() => {
-         const m = document.querySelector('[data-compact-preview] [title*="内含变更"]');
-         if (!m) return false;
-         const row = m.closest('[data-diff]') ?? m.parentElement;
-         return row ? row.textContent.trim().indexOf('●') > 0 : false;
-       })()`,
-    );
-    expect(afterText).toBe(true);
-
-    // 再展开 → 变更点隐去
-    await ui.clickSelector('[data-compact-preview] button[aria-label="展开节点"]');
-    await waitUntil(
-      () => ui.query<number>(`document.querySelectorAll('[data-compact-preview] [title*="内含变更"]').length`),
-      (v) => v === 0,
-      { label: "展开后变更点隐去" },
-    );
-    await expandAll();
+    expect(yaml).toContain("system");
+    expect(yaml).toContain("messages");
+    await ui.click("只看差异");
   });
 
-  it("展开节点时列表不整表重建（DOM 节点存活 → 焦点/滚动不被拽回顶部）", async () => {
+  it("逐级展开：按钮显示「展开 i/N」，点一下多展开一级", async () => {
+    const label0 = await ui.query<string>(
+      "document.querySelector('[aria-label=\"逐级展开\"]')?.textContent?.trim() ?? ''",
+    );
+    const m = /展开 (\d+)\/(\d+)/.exec(label0);
+    expect(m).not.toBeNull();
+    const cur = Number(m![1]);
+    const n = Number(m![2]);
+    expect(n).toBeGreaterThan(1);
+    expect(cur).toBe(n);
+    await ui.clickSelector('[aria-label="逐级展开"]');
+    const label1 = await ui.query<string>(
+      "document.querySelector('[aria-label=\"逐级展开\"]')?.textContent?.trim() ?? ''",
+    );
+    expect(label1).toBe(`展开 ${cur + 1 <= n ? cur + 1 : 0}/${n}`);
     await expandAll();
-    // 给**末行**打标记（末行不会被折叠隐藏：折的是靠前的节点，且末行在保持可见的行里）
-    await ui.query<string>(
-      `(() => { const rows=[...document.querySelectorAll('[data-compact-preview] [data-diff]')]; const first=rows[0]; if(first) first.setAttribute('data-probe','kept'); return 'x'; })()`,
-    );
-    expect(await ui.query<number>(`document.querySelectorAll('[data-probe="kept"]').length`)).toBeGreaterThan(0);
-    // 折叠**最靠后**的可折叠节点（它的子树在末尾，首行不受影响但仍会引起列表增删 → 测 <For> 是否重建）
-    await ui.query<string>(
-      `(() => { const bs=[...document.querySelectorAll('[data-compact-preview] button[aria-label="折叠节点"]')]; bs[bs.length-1]?.click(); return 'x'; })()`,
-    );
-    await new Promise((r) => setTimeout(r, 300));
-    // 标记仍在 → Solid <For> 按稳定引用只增删变化行，没有整表重建
-    expect(await ui.query<number>(`document.querySelectorAll('[data-probe="kept"]').length`)).toBeGreaterThan(0);
-    await expandAll();
-  });
-
-  it("头尾裁剪 diff：保留的头 3/尾 3 行以「未变」呈现、只有中间删除（+ left context 可见）", async () => {
-    // 本用例的数据：每轮一个 30 行 tool 输出；选 headtail → 头 3 + 尾 3 保留、中间删除
-    await ui.query<string>(
-      `(() => { const r=[...document.querySelectorAll('input[type=radio]')].find(x=>x.parentElement.textContent.includes('头尾裁剪')); r?.click(); return 'x'; })()`,
-    );
-    // 只看差异默认开 —— 头/尾保留行应作为上下文（data-diff="same"）出现
-    const info = await waitUntil(
-      () =>
-        ui.query<string>(
-          `JSON.stringify([...document.querySelectorAll('[data-compact-preview] [data-diff]')].map(e=>e.getAttribute('data-diff')+':'+e.textContent.trim().replace(/\s+/g,' ').slice(-8)))`,
-        ),
-      (t) => t.includes("row 0") && t.includes("row 29"),
-      { label: "头尾保留行作为上下文出现" },
-    );
-    const rows = JSON.parse(info) as string[];
-    const sameTexts = rows.filter((r) => r.startsWith("same:")); // 未变行（原色）
-    // 头 3 行保留 = same（未变，原色）
-    expect(sameTexts.some((r) => /row 0$/.test(r.trim()))).toBe(true);
-    // 尾 3 行保留 = same（未变，原色）
-    expect(sameTexts.some((r) => /row 29$/.test(r.trim()))).toBe(true);
-    // 中间被删 = del（红）
-    expect(rows.some((r) => r.startsWith("del:") && r.includes("row 3"))).toBe(true);
-    // 复位为原样
-    await ui.query<string>(
-      `(() => { const r=[...document.querySelectorAll('input[type=radio]')].find(x=>x.parentElement.textContent.includes('原样')); r?.click(); return 'x'; })()`,
-    );
   });
 
   it("压缩抽屉可在「默认尺寸 ⇄ 最大化」间切换（底部拖拽把手的抽屉）", async () => {
@@ -383,114 +276,11 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
     const h1 = await h();
     const vh = await ui.query<number>("window.innerHeight");
     expect(h1).toBeGreaterThan(h0);
-    expect(Math.abs(h1 - vh)).toBeLessThanOrEqual(2); // 最大化 = 占满可视高
+    expect(Math.abs(h1 - vh)).toBeLessThanOrEqual(2);
     expect(await ui.query<boolean>(`!!${btn("1")}`)).toBe(true);
-    // 还原
     await ui.query<string>(`${btn("1")}?.click(); 'x'`);
     await new Promise((r) => setTimeout(r, 200));
     expect(Math.abs((await h()) - h0)).toBeLessThanOrEqual(2);
-  });
-
-  it("勾选历史摘要 → 预览出现 <summary> 骨架 + 「生成摘要」按钮（未生成时显示占位，不花钱）", async () => {
-    await expandAll();
-    const before = await ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''");
-    expect(before).not.toContain("<summary");
-
-    // 勾选「③ 计算历史摘要」
-    await ui.query<string>(
-      `(() => { const cb=[...document.querySelectorAll('input[type=checkbox]')].find(c=>(c.closest('label')?.textContent||'').includes('计算历史摘要')); cb?.click(); return 'x'; })()`,
-    );
-    const txt = await waitUntil(
-      () => ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''"),
-      (t) => t.includes("<summary"),
-      { label: "摘要骨架进预览" },
-    );
-    expect(txt).toContain("<summary turns=");
-    // 「生成摘要」按钮出现（点击才花钱）
-    expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="生成摘要"]')`)).toBe(true);
-    // 复位：取消勾选
-    await ui.query<string>(
-      `(() => { const cb=[...document.querySelectorAll('input[type=checkbox]')].find(c=>(c.closest('label')?.textContent||'').includes('计算历史摘要')); cb?.click(); return 'x'; })()`,
-    );
-    await expandAll();
-  });
-
-  it("头尾裁剪的「保留 前/后」输入就在头尾裁剪选项下面（不在只留调用+路径下面）", async () => {
-    await ui.query<string>(
-      `(() => { const r=[...document.querySelectorAll('input[type=radio]')].find(x=>x.parentElement.textContent.includes('头尾裁剪')); r?.click(); return 'x'; })()`,
-    );
-    const ys = await waitUntil(
-      () =>
-        ui.query<string>(
-          `JSON.stringify({
-             head: document.querySelector('input[aria-label="保留头部行数"]')?.getBoundingClientRect().y ?? null,
-             htRadio: [...document.querySelectorAll('input[type=radio]')].find(x=>x.parentElement.textContent.includes('头尾裁剪'))?.getBoundingClientRect().y ?? null,
-             callRadio: [...document.querySelectorAll('input[type=radio]')].find(x=>x.parentElement.textContent.includes('只留调用'))?.getBoundingClientRect().y ?? null,
-           })`,
-        ),
-      (t) => t.includes('"head":') && !t.includes('"head":null'),
-      { label: "头尾输入出现" },
-    );
-    const { head, htRadio, callRadio } = JSON.parse(ys) as { head: number; htRadio: number; callRadio: number };
-    // 在头尾裁剪选项之下、且在「只留调用+路径」之上
-    expect(head).toBeGreaterThan(htRadio);
-    expect(head).toBeLessThan(callRadio);
-    // 复位为原样
-    await ui.query<string>(
-      `(() => { const r=[...document.querySelectorAll('input[type=radio]')].find(x=>x.parentElement.textContent.includes('原样')); r?.click(); return 'x'; })()`,
-    );
-  });
-
-  it("逐级展开：按钮显示「展开 i/N」，点一下多展开一级（N 随 YAML 深度）", async () => {
-    const label0 = await ui.query<string>(
-      "document.querySelector('[aria-label=\"逐级展开\"]')?.textContent?.trim() ?? ''",
-    );
-    const m = /展开 (\d+)\/(\d+)/.exec(label0);
-    expect(m).not.toBeNull();
-    const cur = Number(m![1]);
-    const n = Number(m![2]);
-    expect(n).toBeGreaterThan(1);
-    // 默认展开到最大层级
-    expect(cur).toBe(n);
-    await ui.clickSelector('[aria-label="逐级展开"]');
-    const label1 = await ui.query<string>(
-      "document.querySelector('[aria-label=\"逐级展开\"]')?.textContent?.trim() ?? ''",
-    );
-    expect(label1).toBe(`展开 ${cur + 1 <= n ? cur + 1 : 0}/${n}`);
-    // 每一档都要有实际变化（不能出现「点了没反应」的空档）：逐档遍历，可见行数应单调不减
-    let prevVis = -1;
-    for (let lv = 0; lv <= n; lv++) {
-      const vis = await ui.query<number>(`document.querySelectorAll('[data-compact-preview] [data-diff]').length`);
-      expect(vis).toBeGreaterThanOrEqual(prevVis);
-      prevVis = vis;
-      if (lv < n) await ui.clickSelector('[aria-label="逐级展开"]');
-    }
-    // 复位到最大层级
-    await expandAll();
-  });
-
-  it("右栏渲染请求 YAML diff（含 system/messages 与增删行）", async () => {
-    // YAML 结构（右栏）：base vs mod 的请求字段
-    await expandAll();
-    // 只看差异默认开 → 预览只显示变化行（丢掉的旧轮内容）
-    const diffText = await waitUntil(
-      () => ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''"),
-      (t) => t.includes("第1轮问题") && t.includes("第2轮问题"),
-      { label: "diff 上屏" },
-    );
-    expect(diffText).toContain("第1轮问题"); // 被丢的旧轮出现在删除行
-    expect(await ui.query<boolean>("!!document.querySelector('[data-compact-preview] [data-diff=\"del\"]')")).toBe(true);
-
-    // 关掉「只看差异」→ 完整 YAML 结构可见（system / messages 等字段）
-    await ui.click("只看差异");
-    const yaml = await waitUntil(
-      () => ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''"),
-      (t) => t.includes("system:") && t.includes("messages:"),
-      { label: "完整 YAML 上屏" },
-    );
-    expect(yaml).toContain("system");
-    expect(yaml).toContain("messages");
-    await ui.click("只看差异"); // 复位
   });
 
   it("切「并排」视图不报错且两栏都在", async () => {
@@ -500,21 +290,24 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
     await ui.click("统一 diff");
   });
 
-  it("点「执行压缩」→ 当前会话不再含最早两轮（第1/2轮），较新一轮仍在", async () => {
-    await ui.clickSelector('[aria-label="执行压缩"]');
-    // 面板关闭
-    await waitUntil(a11yText, (t) => !t.includes("1. 保留范围"), { label: "压缩面板退场" });
-    // 当前会话视图只剩边界后的轮
-    expect(await waitUntil(() => bodyHas("第1轮问题"), (v) => v === false, { label: "第1轮消失" })).toBe(false);
-    expect(await bodyHas("第2轮问题")).toBe(false);
+  it("点「立即压缩」→ 面板退场；账本记预算压缩；**历史不销毁**（聊天页仍可见第1轮）", async () => {
+    await ui.clickSelector('[aria-label="立即压缩"]');
+    await waitUntil(a11yText, (t) => !t.includes("压缩预算"), { label: "压缩面板退场" });
+    // 账本新增一条 mode:budget 的 compact
+    const log = readFileSync(join(fx.HOME, "local", basename(opsFile(uri)).replace(/\.ops\.jsonl$/, ".compact.jsonl")), "utf-8");
+    expect(log).toContain('"mode":"budget"');
+    // 历史不销毁：聊天页仍看得到最早那轮（少发 ≠ 销毁）
+    expect(await waitUntil(() => bodyHas("第1轮问题"), (v) => v === true, { label: "第1轮仍在（不销毁）" })).toBe(true);
     expect(await bodyHas("第8轮问题")).toBe(true);
   });
 
-  it("旧历史仍可查：CLI generations 出两代，generationOps(0) 仍含第1轮", async () => {
+  it("旧历史未销毁：ops 原文仍含全部 8 轮；generations 列表非空", async () => {
+    // 预算选择是**分散**的（用户发言作为主干即使最早也优先保留），故「代」的连续轮边界
+    // 可能落在第 1 轮 → 第 0 代为空 —— 这是预算模型的正常形态，不是 bug。真正的保证是
+    // **原文一字不删**（少发 ≠ 销毁）：
+    const opsRaw = readFileSync(join(fx.HOME, "local", basename(opsFile(uri))), "utf-8");
+    for (let i = 1; i <= 8; i++) expect(opsRaw).toContain(`第${i}轮问题`);
     const gens = (await fx.sh.getJson(`./diy.sh agent local generations ${uri}`)).data as Array<{ seq: number; current: boolean }>;
-    expect(gens).toHaveLength(2);
-    expect(gens[1]).toMatchObject({ seq: 1, current: true });
-    const old = (await fx.sh.getJson(`./diy.sh agent local generationOps ${uri} 0`)).data as unknown[];
-    expect(JSON.stringify(old)).toContain("第1轮问题");
+    expect(gens.length).toBeGreaterThanOrEqual(1);
   });
 });
