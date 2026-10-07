@@ -1077,87 +1077,16 @@ export function turnIdToTime(turnId: string): Date | null {
     return Number.isFinite(d.getTime()) ? d : null;
 }
 
-// ─── ⑤ 历史代（历史会话列表的数据源）────────────────────
-
-export interface GenerationInfo {
-    /** 第几代（0 = 最初那一代） */
-    seq: number;
-    /** 这一代的起点轮（null = 从会话最开始；第 0 代必为 null） */
-    fromTurnId: string | null;
-    /** 这一代截止到哪一轮（不含；null = 到当前末尾） */
-    untilTurnId: string | null;
-    /** 这一代什么时候开始的（第 0 代取首轮 turn id 的时刻；后续取压缩时刻） */
-    startedAt: string | null;
-    /** 是不是当前生效的这一代 */
-    current: boolean;
-    /** 被这次压缩压掉的次数（第 0 代后面紧跟的压缩 id） */
-    compactId: string | null;
-    policy?: CompactPolicy;
-    /** 谁压的（ui / cli / auto）—— 历史列表要能看出"这代是自动压的还是我压的" */
-    by?: "ui" | "cli" | "auto";
-    /** 为什么压（用户 2026-10-06：自动压也要能看到压缩历史与理由） */
-    trigger?: CompactTrigger;
-    /** 压缩时刻（与 startedAt 同源，但**第 0 代没有** —— 它不是被压出来的） */
-    compactTs?: string;
-}
-
-/**
- * 由「turn 顺序 + 生效的压缩链」列出各代。
- *
- * 定义：每次压缩把会话切成两代 —— 被丢的那段结尾、以及从边界起的新一段。
- * 于是**第 k 代的终点 = 第 k+1 代的起点**；最后一代的终点为 null（= 至今）。
- * 点「撤销」后这条链少一环，两代自然合并回一代（无需迁移任何数据）。
- */
-export function listGenerations(
-    turnIds: readonly string[],
-    events: readonly CompactLogEvent[],
-): GenerationInfo[] {
-    // 生效链（保留顺序、跳过被 undo 的）
-    const alive = new Map<string, CompactEventRecord>();
-    const order: string[] = [];
-    for (const e of events) {
-        if (e.kind === "compact") {
-            if (!alive.has(e.id)) order.push(e.id);
-            alive.set(e.id, e);
-        } else if (e.kind === "undo") alive.delete(e.ref);
-    }
-    const chain = order.filter((id) => alive.has(id)).map((id) => alive.get(id)!);
-    const valid = chain.filter((c) => c.boundary.keptFromTurnId === null || turnIds.includes(c.boundary.keptFromTurnId));
-
-    const gens: GenerationInfo[] = [];
-    const firstTurn = turnIds[0] ?? null;
-    gens.push({
-        seq: 0,
-        fromTurnId: null,
-        untilTurnId: valid[0]?.boundary.keptFromTurnId ?? null,
-        startedAt: firstTurn ? (turnIdToTime(firstTurn)?.toISOString() ?? null) : null,
-        current: valid.length === 0,
-        compactId: valid[0]?.id ?? null,
-    });
-    valid.forEach((c, i) => {
-        gens.push({
-            seq: i + 1,
-            fromTurnId: c.boundary.keptFromTurnId,
-            untilTurnId: valid[i + 1]?.boundary.keptFromTurnId ?? null,
-            startedAt: c.ts,
-            current: i === valid.length - 1,
-            compactId: c.id,
-            policy: c.policy,
-            by: c.by,
-            trigger: c.trigger,
-            compactTs: c.ts,
-        });
-    });
-    return gens;
-}
-
-/** 某代覆盖的 turn id 列表（用于算这一代的消息数/字节 —— 历史列表的三列） */
-export function turnsOfGeneration(turnIds: readonly string[], gen: GenerationInfo): string[] {
-    const start = gen.fromTurnId === null ? 0 : turnIds.indexOf(gen.fromTurnId);
-    const from = start < 0 ? 0 : start;
-    const end = gen.untilTurnId === null ? turnIds.length : turnIds.indexOf(gen.untilTurnId);
-    return turnIds.slice(from, end < 0 ? turnIds.length : end);
-}
+// ─── ⑤ 压缩事件（历史页的数据源）────────────────────
+//
+// 【用户 2026-10-07】分代（generations）已删除：它把会话切成**连续轮**的段，前提是"保留=一段连续轮"，
+// 而目标式预算的保留是**分散**的（纵向优先级跨轮挑选），连续段表达不了。
+//
+// 新模型：**历史 = 固定的消息集合**；一次压缩 = 用**某算法**对它定义的一个**过滤条件**。
+// 于是要记两样（都在 CompactEventRecord.policy 里）：
+//   · **算法**（`mode`：budget / reset / keep）—— 换算法 = 加新分支 + 新 filter 形状（判别式联合）；
+//   · 该算法的**过滤器表达**（其余字段：budgetBytes+toolResult / …）。
+// 历史页列的就是这些**不可变快照**；当前配置对历史回溯**无效**（回溯只看当时那条事件）。
 
 /** 粗略 token 估算：字节/4（无 tokenizer；只用于 panel 的「首屏估算」文案，绝不用于计费） */
 export function estimateTokens(bytes: number): number {

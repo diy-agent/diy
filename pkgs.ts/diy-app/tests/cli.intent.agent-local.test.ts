@@ -112,6 +112,20 @@ function turnOps(turnId: string, userText: string, outText: string): Array<Recor
     ];
 }
 
+/**
+ * 写**配置真源** `auto-compact.yaml` 的 policy（配置 / 历史分离后，投递口径 = **当前配置**）。
+ * 【用户 2026-10-07】改预算本轮即生效 —— 不再靠"写一次压缩事件"来生效。
+ */
+function setConfigPolicy(policy: Record<string, unknown>): void {
+    // JSON 是合法 YAML；整份按 AutoCompactConfigSchema 严格形状写（缺字段会被读侧拒 → 回默认）
+    const cfg = {
+        mode: "notify",
+        triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 0.8 },
+        policy,
+    };
+    writeFileSync(join(fx.HOME, "auto-compact.yaml"), JSON.stringify(cfg), "utf-8");
+}
+
 /** 种一份 ops 日志（模拟「已有历史对话」，供无网络的压缩用例验证） */
 function seedOps(taskUri: string, ops: Array<Record<string, unknown>>): string {
     const dir = join(fx.HOME, "local");
@@ -476,35 +490,43 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         expect(existsSync(fp)).toBe(true);
         expect(readFileSync(fp, "utf-8")).toBe(before);
 
-        // 契约③：两代，当前代从 t3000 起
-        const gens = (await fx.sh.getJson(`./diy.sh agent local generations ${uri}`)).data as Array<{
-            seq: number;
-            fromTurnId: string | null;
-            current: boolean;
-            turns: number;
+        // 契约③：**事件快照**（取代旧的"分代"）—— 一条 compact 事件，带算法 + 过滤器
+        const events = (await fx.sh.getJson(`./diy.sh agent local compactEvents ${uri}`)).data as Array<{
+            kind: string;
+            policy?: { mode?: string };
+            size?: { before?: { turns: number }; after?: { turns: number } };
         }>;
-        expect(gens).toHaveLength(2);
-        expect(gens[0]).toMatchObject({ seq: 0, fromTurnId: null, current: false, turns: 2 });
-        expect(gens[1]).toMatchObject({ seq: 1, fromTurnId: "t3000", current: true, turns: 1 });
+        const compacts = events.filter((e) => e.kind === "compact");
+        expect(compacts).toHaveLength(1);
+        expect(compacts[0]!.policy?.mode).toBe("keep"); // 算法（旧形状，读侧兼容）
+        expect(compacts[0]!.size?.after?.turns).toBe(1);
 
-        // 0 代只读可查（旧内容没丢）
-        const oldOps = (await fx.sh.getJson(`./diy.sh agent local generationOps ${uri} 0`)).data as unknown[];
-        expect(oldOps.length).toBeGreaterThan(0);
-        expect(JSON.stringify(oldOps)).toContain("第一轮");
+        // 契约①：历史页始终全显（压缩不隐藏历史）——old ops 内容仍可查
+        const hist = (await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data as unknown[];
+        expect(JSON.stringify(hist)).toContain("第一轮");
 
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });
 
-    it("契约②：压缩后 history 只含边界后的块（旧块不再投递）", async () => {
-        const uri = await seededSession("压缩边界投递");
-        await fx.sh.getJson(`./diy.sh agent local compact ${uri} --keep-turns 1`);
+    it("契约②：投递口径 = **当前配置**（改预算本轮即生效）；history 始终全量", async () => {
+        const uri = await seededSession("配置驱动投递");
+        // 历史页（ops）**始终全量** —— 压缩不隐藏历史
         const hist = (await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data as unknown[];
         const asText = JSON.stringify(hist);
+        expect(asText).toContain("第一轮");
         expect(asText).toContain("第三轮");
-        expect(asText).not.toContain("第一轮");
-        expect(asText).not.toContain("第二轮");
-        // 边界轮本身的 op 在（t3000 的 start 是第一条）
-        expect(hist[0]).toMatchObject({ op: "start", id: "t3000", kind: "turn" });
+
+        // 配置：预算 = 0 → 投递不带任何历史轮（=清零）；但**没写过任何压缩事件**
+        setConfigPolicy({ mode: "budget", budgetBytes: 0, toolResult: { render: "asis" }, summary: false });
+        const rv0 = (await fx.sh.getJson(`./diy.sh agent local requestView ${uri}`)).data as { messages: unknown[] };
+        const m0 = JSON.stringify(rv0.messages);
+        expect(m0).not.toContain("第一轮");
+        expect(m0).not.toContain("第三轮");
+
+        // 配置：预算撑满 → 历史回归投递（改预算**本轮即生效**，无需压缩事件）
+        setConfigPolicy({ mode: "budget", budgetBytes: 1024 * 1024, toolResult: { render: "asis" }, summary: false });
+        const rv1 = (await fx.sh.getJson(`./diy.sh agent local requestView ${uri}`)).data as { messages: unknown[] };
+        expect(JSON.stringify(rv1.messages)).toContain("第三轮");
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });
 
@@ -543,30 +565,20 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });
 
-    it("回归：全清（--keep-turns 0）后**新发的消息保留**（不被边界吞掉）", async () => {
-        const uri = await setup("边界锚点");
-        const fp = seedOps(uri, [
+    it("预算 = 0（清零）→ 投递不带历史；有历史消息时也不投（配置驱动，与事件无关）", async () => {
+        const uri = await setup("清零投递");
+        seedOps(uri, [
             ...turnOps("t1000", "旧1", "x"),
             ...turnOps("t2000", "旧2", "x"),
             ...turnOps("t3000", "旧3", "x"),
         ]);
-        // 全清
-        await fx.sh.getJson(`./diy.sh agent local compact ${uri} --keep-turns 0`);
-        // 压缩瞬间：当前会话为空
-        expect((await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data).toEqual([]);
-
-        // 用户此后发新消息 → 向 ops 追加一轮（模拟）
-        const before = readFileSync(fp, "utf-8");
-        const appended = [...turnOps("t4000", "新发的话", "x")].map((o) => JSON.stringify(o)).join("\n") + "\n";
-        writeFileSync(fp, before + appended, "utf-8");
-
-        // 关键：新轮必须出现（此前会被「永远发空」吞掉）
-        const hist = (await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data as unknown[];
-        expect(JSON.stringify(hist)).toContain("新发的话");
-        expect(JSON.stringify(hist)).not.toContain("旧1");
-        // 真发侧：requestView 的 messages 也含新对话
+        setConfigPolicy({ mode: "budget", budgetBytes: 0, toolResult: { render: "asis" }, summary: false });
         const rv = (await fx.sh.getJson(`./diy.sh agent local requestView ${uri}`)).data as { messages: unknown[] };
-        expect(JSON.stringify(rv.messages)).toContain("新发的话");
+        const m = JSON.stringify(rv.messages);
+        expect(m).not.toContain("旧1");
+        expect(m).not.toContain("旧3");
+        // 历史页（ops）仍全显（不销毁、不隐藏）
+        expect(JSON.stringify((await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data)).toContain("旧1");
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });
 
@@ -582,16 +594,20 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });
 
-    it("undoCompact：撤销后 history 恢复全量", async () => {
+    it("undoCompact：标记某次压缩作废（append-only，事件留痕可审计）", async () => {
         const uri = await seededSession("压缩撤销");
         const rec = (await fx.sh.getJson(`./diy.sh agent local compact ${uri} --keep-turns 1`)).data as { id: string };
-        const beforeUndo = (await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data as unknown[];
-        expect(JSON.stringify(beforeUndo)).not.toContain("第一轮");
-
         const u = (await fx.sh.getJson(`./diy.sh agent local undoCompact ${uri} ${rec.id}`)).data as { undone: boolean };
         expect(u.undone).toBe(true);
-        const afterUndo = (await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data as unknown[];
-        expect(JSON.stringify(afterUndo)).toContain("第一轮");
+        // 事件账里出现一条 undo（不删原 compact 行 —— append-only、可审计）
+        const events = (await fx.sh.getJson(`./diy.sh agent local compactEvents ${uri}`)).data as Array<{
+            kind: string;
+            ref?: string;
+        }>;
+        expect(events.some((e) => e.kind === "undo" && e.ref === rec.id)).toBe(true);
+        expect(events.some((e) => e.kind === "compact" && (e as { id?: string }).id === rec.id)).toBe(true);
+        // 原文一字未删
+        expect(JSON.stringify((await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data)).toContain("第一轮");
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });
 
@@ -606,9 +622,9 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         expect(hasOpsFile(uri)).toBe(false);
         // 账本也删干净（否则删除后仍能查到本会话的压缩史）
         expect(readdirSync(dir).some((f) => f.startsWith(key) && f.endsWith(".compact.jsonl"))).toBe(false);
-        // 清后的 generations：没有任何可查的代内容（空会话）
-        const gens = (await fx.sh.getJson(`./diy.sh agent local generations ${uri}`)).data as Array<{ current: boolean }>;
-        expect(gens.some((g) => g.current)).toBe(true);
+        // 清后：压缩事件账也没了（本会话的压缩史查不到）
+        const events = (await fx.sh.getJson(`./diy.sh agent local compactEvents ${uri}`)).data as unknown[];
+        expect(events).toEqual([]);
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });
 });

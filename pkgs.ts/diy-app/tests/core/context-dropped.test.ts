@@ -15,9 +15,10 @@ import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { BlockStore, projectAll, selectHistory, type Op } from "../../src/main/services/local-blocks";
-import { compactFile, droppedSegmentsOf, getLocalAgent, opsFile } from "../../src/main/services/local-agent";
+import { droppedSegmentsOf, getLocalAgent, opsFile } from "../../src/main/services/local-agent";
 import { renderDroppedNote, type DroppedNote } from "../../src/shared/context/dropped";
 import { normalizePolicy } from "../../src/shared/context/compaction";
+import { saveAutoCompact } from "../../src/main/core/auto-compact-config";
 
 let PROJECT = "";
 beforeAll(() => {
@@ -204,16 +205,17 @@ describe("droppedSegmentsOf：分段事实", () => {
 
 // ─── 端到端：deliveryMessages 的投递形态 ──────────────
 
-/** 造一个「已压缩」的落盘状态（真 ops + 真 compact 账本），走真发同一条链 */
-function compactedTask(policy: Record<string, unknown>, keepTurnIdx: number): { uri: string; turns: string[] } {
+/**
+ * 造一个会话（真 ops），并写**配置真源** `auto-compact.yaml` —— 配置 / 历史分离后，
+ * 投递口径 = 当前配置（`deliveryMessages` 读它）。返回 uri 与各轮 id。
+ */
+function seededSession(policy: Record<string, unknown>): { uri: string; turns: string[] } {
     const uri = newUri();
     const lines: string[] = [];
-    const turnStarts: number[] = [];
     const turns: string[] = [];
     for (let i = 1; i <= 3; i++) {
         const t = `t${2000 + i}`;
         turns.push(t);
-        turnStarts.push(lines.length);
         const push = (o: Op) => lines.push(JSON.stringify(o));
         push({ op: "start", id: t, kind: "turn" });
         push({ op: "start", id: `${t}_u`, kind: "text", parent: t, meta: { role: "user" } });
@@ -228,79 +230,55 @@ function compactedTask(policy: Record<string, unknown>, keepTurnIdx: number): { 
         push({ op: "stop", id: t });
     }
     writeFileSync(opsFile(uri), lines.join("\n") + "\n", "utf-8");
-    writeFileSync(
-        compactFile(uri),
-        JSON.stringify({
-            kind: "compact",
-            v: 1,
-            id: "c1",
-            ts: new Date().toISOString(),
-            by: "cli",
-            policy: normalizePolicy(policy),
-            boundary: {
-                keptFromTurnId: turns[keepTurnIdx],
-                keepFromOpIndex: turnStarts[keepTurnIdx],
-                keptTurns: 3 - keepTurnIdx,
-                droppedTurns: keepTurnIdx,
-            },
-            before: { turns: 3, messages: 9, bytes: 0, estTokens: 0 },
-            after: { turns: 3, messages: 3, bytes: 0, estTokens: 0 },
-        }) + "\n",
-        "utf-8",
-    );
+    saveAutoCompact(diyHome(), {
+        mode: "notify",
+        triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 0.8 },
+        policy,
+    });
     return { uri, turns };
 }
 
-describe("deliveryMessages：注记落在投递里，且保留部分原样", () => {
-    it("轮级裁：首条 = 索引注记（kind=turns）；被省内容不在投递里", () => {
-        const { uri } = compactedTask({ keepTurns: 1 }, 2);
+describe("deliveryMessages（配置驱动）：预算注记落在投递里，保留部分原样", () => {
+    it("预算=0（清零）：投递不带历史；注记是预算格式（kept 为空）", () => {
+        const { uri } = seededSession({ mode: "budget", budgetBytes: 0, toolResult: { render: "asis" }, summary: false });
         const msgs = getLocalAgent().deliveryMessages(uri);
         const first = msgs[0]!;
         expect(first.role).toBe("user");
-        const text = typeof first.content === "string" ? first.content : JSON.stringify(first.content);
-        // 旧轮边界口径的注记与 system 的 historyIndex（预算注记说明）不是同一格式 → 自描述
-        expect(text).toContain("# ── 会话历史（压缩视图）");
-        expect(text).toContain("kind: turns");
-        expect(text).toContain("sed -n"); // 自带回取命令（不再依赖 system 节点）
-        expect(text).toContain("turns: [t2001, t2002]");
+        const text = String(first.content);
+        expect(text).toContain("history:");       // 预算注记（YAML）
+        expect(text).toContain("kept: []");       // 保留区间为空
         const all = JSON.stringify(msgs);
         expect(all).not.toContain("第 1 句");
-        expect(all).not.toContain("第 2 句");
-        expect(all).toContain("第 3 句");
-        expect(all).toContain("out3");
+        expect(all).not.toContain("第 3 句");
     });
 
-    it("content=text：注记**两段**（turns + content），且工具链路不在投递里", () => {
-        const { uri } = compactedTask({ keepTurns: 1, content: "text" }, 2);
+    it("预算撑满：注记 kept 覆盖全部行；历史都在", () => {
+        const { uri } = seededSession({ mode: "budget", budgetBytes: 1024 * 1024, toolResult: { render: "asis" }, summary: false });
         const msgs = getLocalAgent().deliveryMessages(uri);
         const text = String(msgs[0]!.content);
-        expect(text).toContain("kind: turns");
-        expect(text).toContain("kind: content");
-        expect(text).toContain("只留文本");
-        const all = JSON.stringify(msgs);
-        expect(all).not.toContain("out3"); // 保留轮的工具结果也被省
-        expect(all).toContain("第 3 句");
-    });
-
-    it("keepTurns='all' + content=conclusion：全留轮、只留结论", () => {
-        const { uri } = compactedTask({ keepTurns: "all", content: "conclusion" }, 0);
-        const msgs = getLocalAgent().deliveryMessages(uri);
-        const text = String(msgs[0]!.content);
-        expect(text).toContain("kind: content");
-        expect(text).toContain("只留结论");
-        expect(text).not.toContain("kind: turns"); // 没有整轮被裁
+        expect(text).toContain("kept: [[1, 9]]");
         const all = JSON.stringify(msgs);
         expect(all).toContain("第 1 句");
         expect(all).toContain("第 3 句");
+    });
+
+    it("预算偏小：**主干优先** —— 用户发言保留，工具结果被裁/丢", () => {
+        // 仅够一条 user 发言（约几十字节），工具链放不下
+        const { uri } = seededSession({ mode: "budget", budgetBytes: 60, toolResult: { render: "asis" }, summary: false });
+        const msgs = getLocalAgent().deliveryMessages(uri);
+        const all = JSON.stringify(msgs);
+        // 最新 user 优先
+        expect(all).toContain("第 3 句");
+        // 工具结果（细节）先被牺牲
         expect(all).not.toContain("out1");
     });
 
     it("DIY_CTX_HISTORY_NOTE=0 → 退回纯原生（对照实验的开关）", () => {
-        const { uri } = compactedTask({ keepTurns: 1 }, 2);
+        const { uri } = seededSession({ mode: "budget", budgetBytes: 0, toolResult: { render: "asis" }, summary: false });
         process.env["DIY_CTX_HISTORY_NOTE"] = "0";
         try {
             const msgs = getLocalAgent().deliveryMessages(uri);
-            expect(JSON.stringify(msgs)).not.toContain("会话历史（压缩视图）");
+            expect(JSON.stringify(msgs)).not.toContain("history:");
         } finally {
             delete process.env["DIY_CTX_HISTORY_NOTE"];
         }

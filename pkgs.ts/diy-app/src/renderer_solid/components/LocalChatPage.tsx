@@ -28,7 +28,7 @@ import {
     cancelHoverClose,
     type UsageHoverState,
 } from "./UsagePanel";
-import { CompactSessionPanel, GenerationsPanel } from "./CompactSessionPanel";
+import { CompactSessionPanel, CompactHistoryPanel } from "./CompactSessionPanel";
 import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
@@ -1579,7 +1579,7 @@ export function LocalChatPage(props: { uri?: string }) {
                 <CompactSessionPanel uri={uri()!} onClose={() => setCompactOpen(false)} />
             </Show>
             <Show when={gensOpen() && uri()}>
-                <GenerationsPanel uri={uri()!} onClose={() => setGensOpen(false)} />
+                <CompactHistoryPanel uri={uri()!} onClose={() => setGensOpen(false)} />
             </Show>
             {/* 清空确认：破坏性且不可恢复，点击与执行之间隔一层确认 */}
             <Show when={confirmClear()}>

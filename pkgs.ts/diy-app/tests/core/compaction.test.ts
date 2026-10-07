@@ -13,7 +13,6 @@ import {
     clipToolResult,
     estimateTokens,
     fmtBytes,
-    listGenerations,
     listTurnIds,
     normalizePolicy,
     parseCompactLog,
@@ -22,7 +21,6 @@ import {
     type CompactPolicy,
     resolveBoundary,
     sliceOpsFromTurn,
-    turnsOfGeneration,
     utf8Bytes,
     type CompactEventRecord,
     type OpLike,
@@ -276,46 +274,6 @@ describe("sliceOpsFromTurn / listTurnIds", () => {
     });
     it("边界轮找不到 → 返回全量（宁可多给，不让用户面对空白会话）", () => {
         expect(sliceOpsFromTurn(OPS, "tX")).toEqual(OPS);
-    });
-});
-
-// ─── 历史代 ──────────────────────────────────────────
-
-describe("listGenerations / turnsOfGeneration", () => {
-    const turns = ["t1", "t2", "t3", "t4", "t5"];
-
-    it("无压缩 → 单代（seq 0, current, 覆盖全部轮）", () => {
-        const gens = listGenerations(turns, []);
-        expect(gens).toHaveLength(1);
-        expect(gens[0]).toMatchObject({ seq: 0, fromTurnId: null, untilTurnId: null, current: true });
-        expect(turnsOfGeneration(turns, gens[0]!)).toEqual(turns);
-    });
-
-    it("一次压缩 → 两代；上一代终点 = 下一代起点", () => {
-        const gens = listGenerations(turns, [compactEvent("a", "t4")]);
-        expect(gens.map((g) => [g.seq, g.fromTurnId, g.untilTurnId, g.current])).toEqual([
-            [0, null, "t4", false],
-            [1, "t4", null, true],
-        ]);
-        expect(turnsOfGeneration(turns, gens[0]!)).toEqual(["t1", "t2", "t3"]);
-        expect(turnsOfGeneration(turns, gens[1]!)).toEqual(["t4", "t5"]);
-    });
-
-    it("清零（keptFromTurnId=null）→ 新一代从零开始", () => {
-        const gens = listGenerations(turns, [compactEvent("a", null)]);
-        expect(gens[1]).toMatchObject({ fromTurnId: null, untilTurnId: null, current: true });
-        expect(turnsOfGeneration(turns, gens[1]!)).toEqual(turns); // from null = 从头（该代自身即全部轮）
-    });
-
-    it("边界轮已不存在（日志被换）→ 该次压缩不入代链，不凭空造代", () => {
-        const gens = listGenerations(turns, [compactEvent("a", "tX")]);
-        expect(gens).toHaveLength(1);
-        expect(gens[0]!.current).toBe(true);
-    });
-
-    it("第 0 代的起点时间取首轮 id 的时刻", () => {
-        const gens = listGenerations(["t1735000000000"], []);
-        expect(gens[0]!.startedAt).toBe(new Date(1735000000000).toISOString());
     });
 });
 

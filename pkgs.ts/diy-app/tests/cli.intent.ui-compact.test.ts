@@ -301,13 +301,16 @@ describe("压缩会话：面板 → 立即压缩 → 历史不销毁", () => {
     expect(await bodyHas("第8轮问题")).toBe(true);
   });
 
-  it("旧历史未销毁：ops 原文仍含全部 8 轮；generations 列表非空", async () => {
-    // 预算选择是**分散**的（用户发言作为主干即使最早也优先保留），故「代」的连续轮边界
-    // 可能落在第 1 轮 → 第 0 代为空 —— 这是预算模型的正常形态，不是 bug。真正的保证是
-    // **原文一字不删**（少发 ≠ 销毁）：
+  it("历史未销毁：ops 原文仍含全部 8 轮；压缩事件账有快照（算法+过滤器）", async () => {
+    // 历史 = 固定的消息集合，压缩只是投递侧过滤（不删、不隐藏）。
     const opsRaw = readFileSync(join(fx.HOME, "local", basename(opsFile(uri))), "utf-8");
     for (let i = 1; i <= 8; i++) expect(opsRaw).toContain(`第${i}轮问题`);
-    const gens = (await fx.sh.getJson(`./diy.sh agent local generations ${uri}`)).data as Array<{ seq: number; current: boolean }>;
-    expect(gens.length).toBeGreaterThanOrEqual(1);
+    const events = (await fx.sh.getJson(`./diy.sh agent local compactEvents ${uri}`)).data as Array<{
+      kind: string;
+      policy?: { mode?: string };
+    }>;
+    const compacts = events.filter((e) => e.kind === "compact");
+    expect(compacts.length).toBeGreaterThanOrEqual(1);
+    expect(compacts[0]!.policy?.mode).toBe("budget"); // 算法 + 过滤器表达
   });
 });

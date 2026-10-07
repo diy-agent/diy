@@ -678,24 +678,19 @@ export const apiDef = RpcSchema.router({
                 desc: `撤销一次压缩（按压缩 id；恢复为上一次生效边界）`,
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                  ref: z.string().cliArg({ desc: "压缩 id（见 generations 或 compact 返回）" }),
+                  ref: z.string().cliArg({ desc: "压缩 id（见 compactEvents 或 compact 返回）" }),
                 },
                 output: z.object({ undone: z.boolean() }),
               }),
-              /** 历史代列表（历史会话面板的数据源：时间 / 轮数 / 消息数 / 用量） */
-              generations: RpcSchema.unary({
-                desc: `列出会话的历史代（每代时间/轮数/消息数/token/金额；当前代标 current）`,
+              /**
+               * 压缩事件账（历史页数据源）：**不可变快照列表**。
+               * 每条自带**算法**（`policy.mode`）与该算法的**过滤器表达** —— 换算法 = 新分支，不混淆。
+               * 【用户 2026-10-07】取代 generations（连续分代不适合预算的分散保留）。
+               */
+              compactEvents: RpcSchema.unary({
+                desc: `读取压缩事件账（历史页快照列表：时间/算法/过滤器/前后规模/方式·理由）`,
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                },
-                output: z.array(z.any()),
-              }),
-              /** 某一代的 ops（只读查看旧会话；不放回当前会话，不可续聊） */
-              generationOps: RpcSchema.unary({
-                desc: `读取某一代的 Op 流（只读查看历史会话；seq 见 generations）`,
-                input: {
-                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                  seq: z.number().cliArg({ desc: "第几代（0 = 最初那一代）" }),
                 },
                 output: z.array(z.any()),
               }),

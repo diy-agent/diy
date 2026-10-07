@@ -93,7 +93,6 @@ import {
     indexOfTurn,
     makeDeliveryTransform,
     turnIdAtOrAfterOp,
-    listGenerations,
     listTurnIds,
     keptTurnsByMessageCount,
     keptTurnsOf,
@@ -104,7 +103,6 @@ import {
     parseCompactLog,
     resolveBoundary,
     sliceOpsFromTurn,
-    turnsOfGeneration,
     utf8Bytes,
     type ClippedToolDetail,
     type CompactEventRecord,
@@ -112,7 +110,6 @@ import {
     type CompactPolicy,
     type DroppedTurnDetail,
     type EffectiveBoundary,
-    type GenerationInfo,
     type RateSnapshot,
     type SizeSnapshot,
 } from "../../shared/context/compaction";
@@ -705,32 +702,6 @@ export interface CompactPreview {
     facts: LayerRow[];
 }
 
-/** 历史会话面板行：代 + 该代的规模/用量（main 算好，renderer 只负责显示） */
-export interface GenerationView extends GenerationInfo {
-    turns: number;
-    messages: number;
-    bytes: number;
-    estTokens: number;
-    /** 该代累计 token（usage 账本按轮聚合） */
-    totalTokens: number;
-    /** 该代累计金额（缺价步不计；全缺 → null） */
-    cost: number | null;
-}
-
-/** 取某一代覆盖的 op 切片（按 turn 边界切，不切半轮） */
-function opsOfGeneration(ops: readonly Op[], turnIds: readonly string[], g: GenerationInfo): Op[] {
-    const owned = new Set(turnsOfGeneration(turnIds, g));
-    if (owned.size === 0) return [];
-    const out: Op[] = [];
-    for (const op of ops) {
-        if (op.op === "start" && op.kind === "turn") {
-            if (!owned.has(op.id)) continue;
-        }
-        out.push(op);
-    }
-    return out;
-}
-
 /** 一轮的摘要（被丢弃轮次的索引项；全文仍留在 ops 原地） */
 function describeTurn(store: BlockStore, turnId: string, offset: number, bytes: number): DroppedTurnDetail {
     const detail: DroppedTurnDetail = {
@@ -994,31 +965,9 @@ export class LocalAgentManager {
         return this._limits;
     }
 
-    /**
-     * 当前生效的投递口径（压缩边界 + 工具输出裁剪闭包）。
-     * 每次重建 messages 都从这里取 —— 「预览看到的 = 真发出去的」靠的就是同一个入口。
-     * collect 传入时顺带收集被裁明细（compact() 记账用）。
-     */
-    /**
-     * 边界 → 投递用的 turn 边界（**基于 op 下标**，不是直接拿 keptFromTurnId）。
-     *
-     * 关键：`keptFromTurnId=null`（压缩那一刻全清）**不能**直接当作 blocksToMessages 的
-     * sinceTurnId=null（那会"永远发空"）——必须换算成"从中锚点起的第一个 turn"；
-     * 中锚点之后新产生的轮因此天然保留。中锚点越界（压缩瞬间尚无新轮）→ 返回 null = 真发空。
-     */
-    private sinceTurnIdOf(taskUri: string): string | null | undefined {
-        const b = resolveBoundary(readCompactLog(taskUri));
-        if (!b) return undefined; // 未压缩 → 全投
-        const ops = readJsonl<Op>(opsFile(taskUri));
-        const idx = b.keepFromOpIndex >= 0 ? b.keepFromOpIndex : indexOfTurn(ops, b.keptFromTurnId ?? "");
-        return turnIdAtOrAfterOp(ops, idx < 0 ? 0 : idx);
-    }
-
-    private deliveryOptsOf(taskUri: string, collect?: ClippedToolDetail[]): Parameters<typeof blocksToMessages>[1] {
-        const b = resolveBoundary(readCompactLog(taskUri));
-        if (!b) return {};
-        return optsFor(b.policy, this.sinceTurnIdOf(taskUri), collect);
-    }
+    // 【已移除】sinceTurnIdOf / deliveryOptsOf —— 旧"读压缩账边界"的投递口径。
+    // 配置 / 历史分离后，投递口径一律取**当前配置**（见 deliveryHistory / requestView），
+    // 压缩账只作历史快照。（保留此说明，免得后来者又去找它们。）
 
     private getSession(taskUri: string): LocalSession {
         let s = this.sessions.get(taskUri);
@@ -1161,8 +1110,11 @@ export class LocalAgentManager {
         store: BlockStore,
         collect?: ClippedToolDetail[],
     ): ModelMessage[] {
-        const b = resolveBoundary(readCompactLog(taskUri));
-        return this.buildHistory(store, b?.policy ?? null, b ? this.sinceTurnIdOf(taskUri) : undefined, collect, taskUri);
+        // 【配置 / 历史分离，用户 2026-10-07】投递口径 = **当前配置**（期望值），每次请求实时算 ——
+        // 改预算**本轮即生效**。压缩账（compact.jsonl）只是**历史快照**（不可变，供回溯/对比），
+        // 不再决定投递（旧实现读 `resolveBoundary` → 没压过就不生效，违反直觉）。
+        const policy = loadAutoCompact(diyHome()).policy;
+        return this.buildHistory(store, policy, undefined, collect, taskUri);
     }
 
     /** 面板参数预览用（给定 policy + 边界现算，不读生效账本）—— 与真发同一条构造链 */
@@ -1329,51 +1281,21 @@ export class LocalAgentManager {
         return LOCAL_MODELS;
     }
 
-    /**
-     * 会话的 ops 视图 = **当前这一代的** op 流（UI 重放只画当前会话）。
-     * 有生效压缩时从边界起切；没压缩过（绝大多数任务）返回全量 —— 行为与历史完全一致。
-     * 旧代的内容走 generations()/generationOps()，语义上属于「历史会话」，不是当前会话。
-     */
+    /** 会话的 ops 视图（UI 重放）：**固定消息集合**，始终全量（压缩不隐藏历史，只过滤投递） */
     history(taskUri: string): Op[] {
-        const ops = readJsonl<Op>(opsFile(taskUri));
-        const b = resolveBoundary(readCompactLog(taskUri));
-        if (!b) return ops;
-        // 按**op 下标**切（不是按 turn id）：全清后新发的轮（追加在文件尾）因此得以保留。
-        const idx = b.keepFromOpIndex >= 0 ? b.keepFromOpIndex : indexOfTurn(ops, b.keptFromTurnId ?? "");
-        return ops.slice(Math.max(0, idx));
+        // 【配置 / 历史分离】历史 = **固定的消息集合**：聊天页始终全显，压缩只体现在"发给模型的"
+        // 与压缩面板里（压缩是投递侧的**过滤**，不销毁、不隐藏）。旧实现按边界切片 → 预算的
+        // 分散保留与之不吻合，已废。
+        return readJsonl<Op>(opsFile(taskUri));
     }
 
-    /** 历史代列表（历史会话面板的数据源）：每代的时间 / 轮数 / 消息数 / 用量 */
-    generations(taskUri: string): GenerationView[] {
-        const scan = scanOpsFile(taskUri);
-        const turnIds = listTurnIds(scan.ops);
-        const events = readCompactLog(taskUri);
-        const usages = readStepUsages(taskUri);
-        return listGenerations(turnIds, events).map((g) => {
-            const owned = new Set(turnsOfGeneration(turnIds, g));
-            const gOps = opsOfGeneration(scan.ops, turnIds, g);
-            const size = sizeOfOps(gOps);
-            const mine = usages.filter((r) => owned.has(r.turnId));
-            const buckets = sumBuckets(mine.map((r) => bucketsOf(r.usage as UsageLike)));
-            const priced = mine.map((r) => r.cost).filter((c): c is CostBreakdown => !!c);
-            return {
-                ...g,
-                turns: size.turns,
-                messages: size.messages,
-                bytes: size.bytes,
-                estTokens: size.estTokens,
-                totalTokens: buckets.total,
-                cost: priced.length ? sumCosts(priced).total : null,
-            };
-        });
-    }
-
-    /** 某一代的 ops（只读查看旧会话用；seq 非法 → 空数组，不抛） */
-    generationOps(taskUri: string, seq: number): Op[] {
-        const scan = scanOpsFile(taskUri);
-        const turnIds = listTurnIds(scan.ops);
-        const g = listGenerations(turnIds, readCompactLog(taskUri)).find((x) => x.seq === seq);
-        return g ? opsOfGeneration(scan.ops, turnIds, g) : [];
+    /**
+     * 压缩事件账（历史页数据源）：**不可变快照列表**（时间 / 算法 / 过滤器 / 前后规模 / 方式·理由）。
+     * 每条的 `policy` 自带算法（`mode`）与该算法的过滤器表达 —— 换算法 = 新分支，不混淆。
+     * 【用户 2026-10-07】取代旧的 generations（连续分代不适合预算的分散保留）。
+     */
+    compactEvents(taskUri: string): CompactLogEvent[] {
+        return readCompactLog(taskUri);
     }
 
     /**
@@ -1530,9 +1452,8 @@ export class LocalAgentManager {
 
     /** 当前生效请求（base）：不传策略 = 用盘上生效的边界与裁剪 */
     requestView(taskUri: string): RequestView {
-        const b = resolveBoundary(readCompactLog(taskUri));
-        // 无压缩 → undefined（全投）；有压缩 → 由 op 下标换算出的 turn 边界（可能为 null=发空）
-        return this.buildRequestView(taskUri, b?.policy ?? normalizePolicy({}), this.sinceTurnIdOf(taskUri));
+        // 与真发同源：读**当前配置**（不是压缩账里的旧 policy；配置 / 历史分离）
+        return this.buildRequestView(taskUri, loadAutoCompact(diyHome()).policy, undefined);
     }
 
     /** 压缩预览（只算不写）：面板左侧参数 + 右侧请求 YAML diff + 事实表的数据源 */

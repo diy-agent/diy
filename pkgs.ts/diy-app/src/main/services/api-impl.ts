@@ -445,15 +445,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent } = await import("./local-agent");
     return { undone: getLocalAgent().undoCompact(input.taskUri, input.ref) };
   });
-  binding.on(app.agent.local.generations, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.generations", input.taskUri);
+  binding.on(app.agent.local.compactEvents, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compactEvents", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
-    return getLocalAgent().generations(input.taskUri);
-  });
-  binding.on(app.agent.local.generationOps, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.generationOps", input.taskUri);
-    const { getLocalAgent } = await import("./local-agent");
-    return getLocalAgent().generationOps(input.taskUri, input.seq);
+    return getLocalAgent().compactEvents(input.taskUri);
   });
   // 会话用量报表（人读表格）：与 UI 同源同口径，只是在这里渲染成等宽文本
   binding.on(app.agent.usage, async ({ input }) => {

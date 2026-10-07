@@ -731,30 +731,78 @@ function ChangeMark(props: { collapsed: boolean; changes?: { add: number; del: n
 }
 
 
-// ─── 历史会话（代列表 + 只读查看 + 撤销）────────────────
+// ─── 压缩历史（事件快照列表 + 撤销）────────────────
+//
+// 【用户 2026-10-07】取代旧的「分代」：历史 = 固定的消息集合；一次压缩 = 用**某算法**对它定义的
+// 一个**过滤条件**。列表列的就是这些不可变快照（算法 + 过滤器 + 结果 + 方式/理由）。
+// 当前配置对历史回溯无效 —— 回溯只看当时那条事件。
 
-interface GenRow {
-    seq: number;
-    fromTurnId: string | null;
-    startedAt: string | null;
-    current: boolean;
-    turns: number;
-    messages: number;
-    bytes: number;
-    totalTokens: number;
-    cost: number | null;
-    compactId: string | null;
-    /** 谁压的（ui / cli / auto）与为什么压 —— 历史列表要能看出理由（用户 2026-10-06） */
+/** 一条压缩事件（快照）。字段与账本 `CompactEventRecord` 对齐（这里只取展示需要的）。 */
+interface CompactEventRow {
+    kind: string;
+    id?: string;
+    ts?: string;
     by?: "ui" | "cli" | "auto";
     trigger?: string;
+    policy?: { mode?: string; budgetBytes?: number; keep?: { scope?: string; count?: number }; content?: { kind?: string } };
+    size?: {
+        before?: { turns: number; messages: number; bytes: number };
+        after?: { turns: number; messages: number; bytes: number };
+        keptTurns?: number;
+        droppedTurns?: number;
+    };
+    /** undo 事件回指的 compact id */
+    ref?: string;
 }
 
-export function GenerationsPanel(props: { uri: string; onClose: () => void }) {
-    const [gens, { refetch }] = createResource(() => props.uri, async (u) => (await localChatStore.generations(u)) as GenRow[]);
-    const [openSeq, setOpenSeq] = createSignal<number | null>(null);
-    const [opsView] = createResource(openSeq, async (seq) => (seq == null ? [] : await localChatStore.generationOps(props.uri, seq)));
+/** 算法中文名（`policy.mode`）；未知算法原样显示 —— 换算法加新分支即可 */
+function algoName(mode: string | undefined): string {
+    switch (mode) {
+        case "budget":
+            return "预算";
+        case "reset":
+            return "清零";
+        case "keep":
+            return "保留";
+        default:
+            return mode ?? "—";
+    }
+}
+
+/** 算法的**过滤器表达**（算法私有，故按 mode 分派；换算法加新分支） */
+function filterText(p: CompactEventRow["policy"]): string {
+    if (!p) return "—";
+    if (p.mode === "budget") {
+        const kb = p.budgetBytes === undefined ? "?" : p.budgetBytes === 0 ? "0（=清零）" : `${Math.round(p.budgetBytes / 1024)} KB`;
+        return `上限 ${kb}`;
+    }
+    if (p.mode === "keep") {
+        const scope = p.keep?.scope === "all" ? "全部轮次" : `最近 ${p.keep?.count ?? "?"} 轮`;
+        const content = p.content?.kind === "conclusion" ? "只留结论" : p.content?.kind === "text" ? "只留文本" : "全部";
+        return `${scope} · ${content}`;
+    }
+    if (p.mode === "reset") return "不投任何历史轮";
+    return "—";
+}
+
+const fmtBytes = (n: number | undefined): string => {
+    if (n === undefined) return "—";
+    if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${n} B`;
+};
+
+export function CompactHistoryPanel(props: { uri: string; onClose: () => void }) {
+    const [events, { refetch }] = createResource(
+        () => props.uri,
+        async (u) => (await localChatStore.compactEvents(u)) as CompactEventRow[],
+    );
     const [busy, setBusy] = createSignal(false);
     const [maximized, setMaximized] = createSignal(false);
+
+    /** 只列 compact 事件（measure / undo 是附属记录，不单独成行） */
+    const rows = () => (events() ?? []).filter((e) => e.kind === "compact");
+    /** 已被 undo 的 compact id（行上标"已撤销"） */
+    const undone = () => new Set((events() ?? []).filter((e) => e.kind === "undo").map((e) => e.ref));
 
     const undo = async (ref: string) => {
         setBusy(true);
@@ -766,13 +814,6 @@ export function GenerationsPanel(props: { uri: string; onClose: () => void }) {
         }
     };
 
-    const asText = (ops: { op: string; kind?: string; id: string }[]) =>
-        ops
-            .filter((o) => o.op === "delta")
-            .map((o) => (o as unknown as { fields?: { content?: string } }).fields?.content ?? "")
-            .filter(Boolean)
-            .join("\n");
-
     return (
         <div
             class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6"
@@ -780,11 +821,9 @@ export function GenerationsPanel(props: { uri: string; onClose: () => void }) {
                 if (e.target === e.currentTarget) props.onClose();
             }}
         >
-            <div
-                class={`bg-base-100 rounded-xl w-full flex flex-col ${maximized() ? "max-w-[96vw] h-[92vh]" : "max-w-2xl max-h-[90vh]"}`}
-            >
+            <div class={`bg-base-100 rounded-xl w-full flex flex-col ${maximized() ? "max-w-[96vw] h-[92vh]" : "max-w-3xl max-h-[90vh]"}`}>
                 <div class="px-4 py-3 border-b flex items-center justify-between">
-                    <div class="font-bold text-title">历史会话（{gens()?.length ?? 0} 代）</div>
+                    <div class="font-bold text-title">压缩历史（{rows().length} 次快照）</div>
                     <div class="flex items-center gap-1">
                         <DrawerMaxButton max={maximized()} onToggle={() => setMaximized((v) => !v)} />
                         <button class="btn btn-ghost btn-xs" onClick={props.onClose}>
@@ -792,66 +831,74 @@ export function GenerationsPanel(props: { uri: string; onClose: () => void }) {
                         </button>
                     </div>
                 </div>
+                <div class="px-4 py-1.5 text-caption opacity-60 border-b">
+                    ⓘ 每次压缩 = 用**某算法**对历史消息定义的一个**过滤条件**（不可变快照）。当前配置改动
+                    **不回改**这些快照；回溯看的就是当时这一次。
+                </div>
                 <div class="overflow-auto grow">
-                    <Show when={openSeq() == null} fallback={
-                        <div class="p-3">
-                            <button class="btn btn-ghost btn-xs mb-2" onClick={() => setOpenSeq(null)}>
-                                ← 返回列表
-                            </button>
-                            <div class="text-caption opacity-60 mb-1">只读 · 旧会话内容（不可续聊）</div>
-                            <pre class="whitespace-pre-wrap text-caption font-mono opacity-80">{asText(opsView() ?? [])}</pre>
-                        </div>
-                    }>
+                    <Show
+                        when={rows().length > 0}
+                        fallback={<div class="p-6 opacity-60">还没有压缩记录。</div>}
+                    >
                         <table class="table table-xs">
                             <thead>
                                 <tr>
-                                    <th>代</th>
-                                    <th>起始</th>
-                                    <th class="text-right">轮</th>
+                                    <th>时间</th>
+                                    <th>算法</th>
+                                    <th>过滤器</th>
+                                    <th class="text-right">轮次</th>
                                     <th class="text-right">消息</th>
-                                    <th class="text-right">token</th>
-                                    <th class="text-right">金额</th>
+                                    <th class="text-right">字节</th>
                                     <th>方式 / 理由</th>
                                     <th />
                                 </tr>
                             </thead>
                             <tbody>
-                                <For each={gens()}>
-                                    {(g) => (
-                                        <tr>
-                                            <td>
-                                                第 {g.seq} 代 {g.current ? <span class="badge badge-primary badge-xs">当前</span> : null}
-                                            </td>
-                                            <td class="opacity-70">{g.startedAt ? new Date(g.startedAt).toLocaleString() : "—"}</td>
-                                            <td class="text-right tabular-nums">{g.turns}</td>
-                                            <td class="text-right tabular-nums">{g.messages}</td>
-                                            <td class="text-right tabular-nums">{g.totalTokens.toLocaleString()}</td>
-                                            <td class="text-right tabular-nums">{g.cost == null ? "—" : `$${g.cost.toFixed(4)}`}</td>
-                                            <td class="opacity-80 text-caption">
-                                                <Show when={g.by} fallback={<span class="opacity-40">—</span>}>
-                                                    <span class="badge badge-xs" classList={{ "badge-info": g.by === "auto" }}>
-                                                        {g.by === "auto" ? "自动" : g.by === "ui" ? "界面" : "命令行"}
+                                <For each={rows()}>
+                                    {(e) => {
+                                        const isUndone = () => !!e.id && undone().has(e.id);
+                                        return (
+                                            <tr>
+                                                <td class="opacity-70 whitespace-nowrap">
+                                                    {e.ts ? new Date(e.ts).toLocaleString() : "—"}
+                                                </td>
+                                                <td>
+                                                    <span class="badge badge-ghost badge-xs">{algoName(e.policy?.mode)}</span>
+                                                </td>
+                                                <td class="opacity-80 text-caption">{filterText(e.policy)}</td>
+                                                <td class="text-right tabular-nums">
+                                                    {e.size?.before?.turns ?? "?"} → {e.size?.after?.turns ?? "?"}
+                                                </td>
+                                                <td class="text-right tabular-nums">
+                                                    {e.size?.before?.messages ?? "?"} → {e.size?.after?.messages ?? "?"}
+                                                </td>
+                                                <td class="text-right tabular-nums">
+                                                    {fmtBytes(e.size?.before?.bytes)} → {fmtBytes(e.size?.after?.bytes)}
+                                                </td>
+                                                <td class="opacity-80 text-caption">
+                                                    <span class="badge badge-xs" classList={{ "badge-info": e.by === "auto" }}>
+                                                        {e.by === "auto" ? "自动" : e.by === "ui" ? "界面" : "命令行"}
                                                     </span>
-                                                    <span class="ml-1">{triggerText(g.trigger)}</span>
-                                                </Show>
-                                            </td>
-                                            <td class="text-right">
-                                                <button class="btn btn-ghost btn-xs" onClick={() => setOpenSeq(g.seq)}>
-                                                    查看
-                                                </button>
-                                                <Show when={!g.current && g.compactId}>
-                                                    <button
-                                                        class="btn btn-ghost btn-xs text-warning"
-                                                        disabled={busy()}
-                                                        title="撤销这次压缩（历史原地恢复，可审计）"
-                                                        onClick={() => void undo(g.compactId!)}
-                                                    >
-                                                        撤销
-                                                    </button>
-                                                </Show>
-                                            </td>
-                                        </tr>
-                                    )}
+                                                    <span class="ml-1">{triggerText(e.trigger)}</span>
+                                                    <Show when={isUndone()}>
+                                                        <span class="ml-1 badge badge-warning badge-xs">已撤销</span>
+                                                    </Show>
+                                                </td>
+                                                <td class="text-right">
+                                                    <Show when={!isUndone() && e.id}>
+                                                        <button
+                                                            class="btn btn-ghost btn-xs text-warning"
+                                                            disabled={busy()}
+                                                            title="标记这次压缩作废（append-only，可审计）"
+                                                            onClick={() => void undo(e.id!)}
+                                                        >
+                                                            撤销
+                                                        </button>
+                                                    </Show>
+                                                </td>
+                                            </tr>
+                                        );
+                                    }}
                                 </For>
                             </tbody>
                         </table>

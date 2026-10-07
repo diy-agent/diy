@@ -674,14 +674,9 @@ async function undoCompact(taskUri: string, ref: string) {
     return r.undone;
 }
 
-/** 历史代列表（历史会话面板） */
-async function generations(taskUri: string) {
-    return diyService.diy.agent.local.generations({ taskUri });
-}
-
-/** 某一代的 ops（只读查看旧会话） */
-async function generationOps(taskUri: string, seq: number): Promise<OpLike[]> {
-    return (await diyService.diy.agent.local.generationOps({ taskUri, seq })) as OpLike[];
+/** 压缩事件账（历史页：不可变快照列表） */
+async function compactEvents(taskUri: string) {
+    return diyService.diy.agent.local.compactEvents({ taskUri });
 }
 
 /** 策略对象 → RPC 扁平参数（headtail 展开成顶层字段，与 api-def 的 cliOption 对齐） */
@@ -781,8 +776,7 @@ export const localChatStore = {
     autoCompactStatus,
     autoCompactSetConfig,
     undoCompact,
-    generations,
-    generationOps,
+    compactEvents,
     setScroll,
     getScroll,
     setTab,
