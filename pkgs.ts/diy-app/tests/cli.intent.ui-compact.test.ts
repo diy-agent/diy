@@ -119,43 +119,53 @@ describe("压缩会话：面板 → 立即压缩 → 历史不销毁", () => {
     expect(await a11yText()).toContain("压缩");
   });
 
-  it("点「压缩」→ 面板出现：一个预算输入 + 预设 + 立即压缩（无决策树）", async () => {
+  it("点「压缩」→ 面板出现：**极简**（自动压缩 toggle + 压缩到输入 + 压缩按钮 + 费用对比）", async () => {
     await waitUntil(
       () => ui.query<boolean>("!!document.querySelector('[aria-label=\"压缩会话上下文\"]')"),
       (v) => v === true,
       { label: "压缩按钮就位" },
     );
     await ui.clickSelector('[aria-label="压缩会话上下文"]');
-    const text = await waitUntil(a11yText, (t) => t.includes("压缩预算"), { label: "压缩面板上屏" });
-    // 预算 UI
-    expect(text).toContain("压缩到");
-    expect(text).toContain("清零");
-    expect(text).toContain("不压缩");
-    expect(text).toContain("何时自动压");
-    expect(text).toContain("触发条件与状态");
-    expect(text).toContain("立即压缩");
-    expect(text).toContain("压缩后估算");
-    // 旧决策树 UI **不再出现**
+    const text = await waitUntil(a11yText, (t) => t.includes("压缩到"), { label: "压缩面板上屏" });
+    // 仅三个交互控件 + 费用对比图
+    expect(text).toContain("自动压缩");       // toggle
+    expect(text).toContain("压缩到");         // 预算输入
+    expect(text).toContain("费用对比");       // 图形块
+    // DOM 层确认控件存在
+    expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="自动压缩"]')`)).toBe(true);
+    expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="压缩"]')`)).toBe(true);
+    expect(await ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`)).toBe(true);
+    // 已删：预设 / 何时自动压 select / 触发条件区 / 立即压缩 / 压缩后估算表 / 决策树
+    expect(text).not.toContain("预设");
+    expect(text).not.toContain("何时自动压");
+    expect(text).not.toContain("触发条件");
+    expect(text).not.toContain("立即压缩");
     expect(text).not.toContain("1. 这次怎么压");
-    expect(text).not.toContain("2. 保留范围");
     expect(text).not.toContain("② 本次手动压缩");
-    // 预算输入默认 3KB（用户定的经验值）
+    // 预算输入默认 3KB
     expect(await budgetKb()).toBe("3");
   });
 
-  it("预设「清零」→ 0 KB；「不压缩」→ 大值；手改写回真源 $DIY_HOME/auto-compact.yaml", async () => {
-    // 清零
-    await ui.clickSelector('[aria-label="预设清零"]');
-    await waitUntil(budgetKb, (v) => v === "0", { label: "清零 → 0" });
+  it("自动压缩：toggle 写回真源 $DIY_HOME/auto-compact.yaml（auto ⇄ off）", async () => {
+    // 默认未勾选（真源 notify；toggle 只表达"是否 auto"）
+    expect(await ui.query<boolean>(`document.querySelector('input[aria-label="自动压缩"]')?.checked`)).toBe(false);
+    // 勾上 → auto
+    await ui.query<string>(`(() => { const t=document.querySelector('input[aria-label="自动压缩"]'); t.checked=true; t.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`);
     await waitUntil(
       () => Promise.resolve(readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8")),
-      (t) => t.includes("budgetBytes: 0"),
-      { label: "清零写回真源" },
+      (t) => t.includes("mode: auto"),
+      { label: "toggle 开 → auto" },
     );
-    // 不压缩（大值）
-    await ui.clickSelector('[aria-label="预设不压缩"]');
-    await waitUntil(budgetKb, (v) => Number(v) > 1000, { label: "不压缩 → 大值" });
-    // 手改 3 KB
+    // 关掉 → off
+    await ui.query<string>(`(() => { const t=document.querySelector('input[aria-label="自动压缩"]'); t.checked=false; t.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`);
+    await waitUntil(
+      () => Promise.resolve(readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8")),
+      (t) => t.includes("mode: off"),
+      { label: "toggle 关 → off" },
+    );
+  });
+
+  it("压缩到输入：手改写回真源（3KB=3072，预算形状）", async () => {
     await setBudgetKb(3);
     await waitUntil(
       () => Promise.resolve(readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8")),
@@ -166,64 +176,15 @@ describe("压缩会话：面板 → 立即压缩 → 历史不销毁", () => {
     expect(yaml).toContain("mode: budget"); // 真源是预算形状（非决策树）
   });
 
-  it("自动压缩：模式开关可选，且模式真源落盘（非 localStorage）", async () => {
-    const sel = await ui.query<string>(
-      `(() => { const s=document.querySelector('select[aria-label="自动压缩模式"]'); return s ? s.value : ''; })()`,
-    );
-    expect(sel).toBe("notify");
-    await ui.query<string>(
-      `(() => { const s=document.querySelector('select[aria-label="自动压缩模式"]'); if(!s) return ''; s.value='auto'; s.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
-    );
-    await new Promise((r) => setTimeout(r, 400));
-    expect(await ui.query<string>(`document.querySelector('select[aria-label="自动压缩模式"]')?.value ?? ''`)).toBe("auto");
-    await ui.query<string>(
-      `(() => { const s=document.querySelector('select[aria-label="自动压缩模式"]'); if(!s) return ''; s.value='notify'; s.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
-    );
-    await new Promise((r) => setTimeout(r, 400));
-  });
-
-  it("触发条件区：默认收起；展开后可改触发条件，改完写回真源", async () => {
-    expect(await a11yText()).not.toContain("系统上下文变化");
-    await ui.clickSelector('[aria-label="自动压缩配置开关"]');
-    const text = await waitUntil(a11yText, (t) => t.includes("触发条件"), { label: "触发条件区展开" });
-    expect(text).toContain("系统上下文变化");
-    expect(text).toContain("缓存过期");
-    expect(text).toContain("窗口占用超过");
-    expect(text).toContain("距上次请求");
-    expect(text).toContain("窗口占用");
-
-    const before = readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8");
-    expect(before).toContain("cacheExpired: true");
-    await ui.clickSelector('[aria-label="触发：缓存过期"]');
-    await waitUntil(
-      () => Promise.resolve(readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8")),
-      (t) => String(t).includes("cacheExpired: false"),
-      { label: "触发开关写回真源" },
-    );
-    await ui.clickSelector('[aria-label="触发：缓存过期"]');
-    await waitUntil(
-      () => Promise.resolve(readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8")),
-      (t) => String(t).includes("cacheExpired: true"),
-      { label: "触发开关复原" },
-    );
-    await ui.clickSelector('[aria-label="自动压缩配置开关"]');
-    await waitUntil(a11yText, (t) => !t.includes("系统上下文变化"), { label: "配置区收起" });
-  });
-
-  it("压缩后估算表：中文层名 + 合计居首 + ├/└ 层级符号", async () => {
+  it("费用对比（图形）：当前 / 压缩后两条 + 省 $x（−y%）", async () => {
     const text = await a11yText();
-    for (const h of ["被压缩的历史消息", "压缩前", "压缩后", "预估节省"]) expect(text).toContain(h);
-    for (const name of ["系统提示词", "工具定义", "用户消息", "模型回复", "工具调用", "工具结果"]) {
-      expect(text).toContain(name);
-    }
-    const firstRow = await ui.query<string>(
-      "(() => { const tr = document.querySelector('table tbody tr'); return tr ? [...tr.children].map(td => td.textContent.trim()).join('|') : ''; })()",
-    );
-    expect(firstRow.startsWith("合计|")).toBe(true);
-    const hasBranch = await ui.query<boolean>(
-      "!!document.querySelector('table tbody tr td') && document.querySelector('table tbody').textContent.includes('├')",
-    );
-    expect(hasBranch).toBe(true);
+    expect(text).toContain("费用对比");
+    expect(text).toContain("当前");
+    expect(text).toContain("压缩后");
+    // 两条横条（宽度按 token 比例）+ 金额
+    const bars = await ui.query<number>(`document.querySelectorAll('[data-cost-bar]').length`);
+    expect(bars).toBe(2);
+    expect(await ui.query<string>(`document.querySelector('[data-cost-saved]')?.textContent?.trim() ?? ''`)).toMatch(/省|无节省/);
   });
 
   it("右栏渲染请求 YAML diff（含 system/messages 与增删行）", async () => {
@@ -290,9 +251,9 @@ describe("压缩会话：面板 → 立即压缩 → 历史不销毁", () => {
     await ui.click("统一 diff");
   });
 
-  it("点「立即压缩」→ 面板退场；账本记预算压缩；**历史不销毁**（聊天页仍可见第1轮）", async () => {
-    await ui.clickSelector('[aria-label="立即压缩"]');
-    await waitUntil(a11yText, (t) => !t.includes("压缩预算"), { label: "压缩面板退场" });
+  it("点「压缩」→ 面板退场；账本记预算压缩；**历史不销毁**（聊天页仍可见第1轮）", async () => {
+    await ui.clickSelector('[aria-label="压缩"]');
+    await waitUntil(a11yText, (t) => !t.includes("自动压缩"), { label: "压缩面板退场" });
     // 账本新增一条 mode:budget 的 compact
     const log = readFileSync(join(fx.HOME, "local", basename(opsFile(uri)).replace(/\.ops\.jsonl$/, ".compact.jsonl")), "utf-8");
     expect(log).toContain('"mode":"budget"');

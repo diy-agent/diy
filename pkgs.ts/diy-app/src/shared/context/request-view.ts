@@ -33,6 +33,10 @@ export interface LayerRow {
     newTokens: number;
     /** 金额差（$）；负 = 省。按当前模型非缓存输入单价算 */
     costDelta: number;
+    /** 这一层**当前**的输入费用（$）—— 图形对比用（= oldTokens/1M × 单价） */
+    oldCost: number;
+    /** 这一层**压缩后**的输入费用（$） */
+    newCost: number;
 }
 
 /** 分层字节：从 messages 里按 role / part 类型拆 */
@@ -90,6 +94,7 @@ export function layerFacts(base: RequestView, mod: RequestView, inputRate: numbe
     // 总输入 = 各层 token 之和（**按展示值求和**，保证表格列加起来自洽；不做字节再估）
     const totalOld = toks.reduce((a, x) => a + x.oldTokens, 0);
     const totalNew = toks.reduce((a, x) => a + x.newTokens, 0);
+    const usd = (tokens: number): number => (tokens / 1_000_000) * inputRate;
     return [
         {
             key: "total",
@@ -97,7 +102,9 @@ export function layerFacts(base: RequestView, mod: RequestView, inputRate: numbe
             label: rows[0]!.label,
             oldTokens: totalOld,
             newTokens: totalNew,
-            costDelta: ((totalNew - totalOld) / 1_000_000) * inputRate,
+            costDelta: usd(totalNew) - usd(totalOld),
+            oldCost: usd(totalOld),
+            newCost: usd(totalNew),
         },
         ...rest.map((r, i) => ({
             key: r.key,
@@ -105,7 +112,9 @@ export function layerFacts(base: RequestView, mod: RequestView, inputRate: numbe
             label: r.label,
             oldTokens: toks[i]!.oldTokens,
             newTokens: toks[i]!.newTokens,
-            costDelta: ((toks[i]!.newTokens - toks[i]!.oldTokens) / 1_000_000) * inputRate,
+            costDelta: usd(toks[i]!.newTokens) - usd(toks[i]!.oldTokens),
+            oldCost: usd(toks[i]!.oldTokens),
+            newCost: usd(toks[i]!.newTokens),
         })),
     ];
 }

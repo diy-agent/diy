@@ -83,47 +83,72 @@ function Block(props: { title: string; children: JSX.Element; defaultOpen?: bool
  * 用层级符号（├/└，与「会话用量（累计）」同一套）表达「各行之和 = 合计」——
  * 合计行不加「（= 各层之和）」这类注释，层级关系用符号自明。
  */
-function FactRow(props: { row: LayerRow; isTotal: boolean; isLast: boolean }) {
-    const saved = () => props.row.costDelta < 0;
-    const zero = () => Math.abs(props.row.costDelta) < 1e-9;
-    const symbol = () => (props.isTotal ? "" : props.isLast ? "└ " : "├ ");
+/**
+ * 费用对比（图形）：**当前 vs 压缩后**两条横条（宽度按 token 比例），
+ * 下面一行「省 $X（−Y%）」。用 total 行（合计）—— 直观看省多少，不列各层明细。
+ */
+function CostCompare(props: { facts: LayerRow[] }) {
+    const total = createMemo(() => props.facts.find((r) => r.key === "total"));
+    const maxTok = () => Math.max(1, total()?.oldTokens ?? 0);
+    const width = (t: number) => `${Math.max(0, Math.min(100, (t / maxTok()) * 100)).toFixed(1)}%`;
+    const saved = () => {
+        const t = total();
+        return t ? t.oldCost - t.newCost : 0;
+    };
+    const savedPct = () => {
+        const t = total();
+        return t && t.oldTokens > 0 ? Math.round((1 - t.newTokens / t.oldTokens) * 100) : 0;
+    };
+    const money = (v: number) => `$${v.toFixed(4)}`;
     return (
-        <tr title={props.row.label} class={props.isTotal ? "font-semibold" : ""}>
-            <td class="pr-2 whitespace-nowrap">
-                <span class={props.isTotal ? "" : "opacity-50 font-mono"}>{symbol()}</span>
-                {props.row.name}
-            </td>
-            <td class="text-right tabular-nums opacity-70">{props.row.oldTokens.toLocaleString()}</td>
-            <td class="text-right tabular-nums">{props.row.newTokens.toLocaleString()}</td>
-            <td class={`text-right tabular-nums ${saved() ? "text-success" : zero() ? "opacity-50" : "text-error"}`}>
-                {zero() ? "0" : `${props.row.costDelta < 0 ? "−" : "+"}$${Math.abs(props.row.costDelta).toFixed(4)}`}
-            </td>
-        </tr>
+        <Show when={total()} fallback={<div class="text-caption opacity-50">…</div>}>
+            {(t) => (
+                <div class="space-y-2 text-caption">
+                    <div>
+                        <div class="flex justify-between">
+                            <span>当前</span>
+                            <span class="tabular-nums opacity-80">
+                                {t().oldTokens.toLocaleString()} tok · {money(t().oldCost)}
+                            </span>
+                        </div>
+                        <div class="mt-0.5 h-3 rounded bg-base-200 overflow-hidden">
+                            <div data-cost-bar class="h-full bg-base-content/35" style={{ width: width(t().oldTokens) }} />
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between">
+                            <span>压缩后</span>
+                            <span class="tabular-nums opacity-80">
+                                {t().newTokens.toLocaleString()} tok · {money(t().newCost)}
+                            </span>
+                        </div>
+                        <div class="mt-0.5 h-3 rounded bg-base-200 overflow-hidden">
+                            <div data-cost-bar class="h-full bg-primary" style={{ width: width(t().newTokens) }} />
+                        </div>
+                    </div>
+                    <div class="pt-1.5 border-t border-base-300">
+                        <Show
+                            when={saved() > 1e-9}
+                            fallback={<span data-cost-saved class="opacity-60">无节省（预算未生效 / 历史本来就不多）</span>}
+                        >
+                            <span data-cost-saved class="text-success font-semibold">
+                                省 {money(saved())}（−{savedPct()}%）
+                            </span>
+                        </Show>
+                    </div>
+                </div>
+            )}
+        </Show>
     );
 }
-
 export function CompactSessionPanel(props: { uri: string; onClose: () => void }) {
-    // ── 自动压缩检测（只读）：事实 / 触发理由 / 生效 TTL / 当前配置 ──
+    // ── 自动压缩配置（只读）：只剩「开关 + 策略」——触发条件已收进系统默认（极简 UI）──
     const [auto, { refetch: refetchAuto }] = createResource(() => props.uri, async (u) => {
         return (await localChatStore.autoCompactStatus(u)) as {
-            config: {
-                mode: "off" | "notify" | "auto";
-                triggers: { systemContextChanged: boolean; cacheExpired: boolean; contextWindowOver: number };
-                policy: unknown;
-            };
-            facts: {
-                systemContextChanged: boolean;
-                sinceLastRequestMs: number | null;
-                ttl: { knownAlive: number; maybeDead: number; prior: number; bounded: boolean; priorFalsified: boolean };
-                windowRatio: number | null;
-            };
-            triggers: string[];
-            reasons: string[];
+            config: { mode: "off" | "notify" | "auto"; policy: unknown };
         };
     });
     const [autoBusy, setAutoBusy] = createSignal(false);
-    /** 触发条件与状态区是否展开（默认收起：先看「压到多少」，要调再展开） */
-    const [autoCfgOpen, setAutoCfgOpen] = createSignal(false);
     const patchAuto = async (patch: Record<string, unknown>) => {
         setAutoBusy(true);
         try {
@@ -133,13 +158,12 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
             setAutoBusy(false);
         }
     };
-    const setAutoMode = (mode: "off" | "notify" | "auto") => void patchAuto({ mode });
 
     /**
      * 【合并】压缩预算 —— 自动与手动**同一套策略**（用户 2026-10-07：
      * 「所有压缩都改为自动压缩策略 …… 提供手工压缩执行的按钮」）。
      * 真源 = `$DIY_HOME/auto-compact.yaml` 的 `policy`（`mode:"budget"`）。
-     * 平时按触发条件自动压；下面「立即压缩」= 用同一个预算立刻压一次。
+     * 开启自动压缩时按触发条件自动压；「压缩」按钮 = 用同一个预算立刻压一次。
      */
     const autoPolicy = (): CompactPolicy => normalizePolicy(auto()?.config.policy);
     /** 预算（字节）；非预算策略（旧 keep/reset）时回落到缺省 */
@@ -194,18 +218,6 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     const [onlyDiff, setOnlyDiff] = createSignal(true);
     /** 展开层级：0 = 只露根行；N = 全展开 */
     const [expandLevel, setExpandLevel] = createSignal(Number.MAX_SAFE_INTEGER);
-    const turnCount = () => localChatStore.trees.length;
-
-    /** 时长人读（用于"距上次请求"与 TTL 区间）；null/-1 = 未知 */
-    const fmtGap = (ms: number | null): string => {
-        if (ms === null || ms < 0) return "—";
-        const m = ms / 60000;
-        if (m < 1) return "<1 分钟";
-        if (m < 60) return `${Math.round(m)} 分钟`;
-        const h = m / 60;
-        return h < 48 ? `${h.toFixed(1)} 小时` : `${Math.round(h / 24)} 天`;
-    };
-    const fmtPct = (r: number | null): string => (r === null ? "—" : `${(r * 100).toFixed(1)}%`);
 
     // 预览（只算不写）：预算变化即重算。base/mod 都从它取 ——
     // 【配置/历史分离】base = **未压缩**（compactPreview 现算），mod = 当前预算。
@@ -310,6 +322,14 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     onCleanup(() => document.removeEventListener("keydown", onKey, true));
 
     const estTok = (bytes: number) => Math.round(bytes / 4);
+    /** 预算人读（KB；0 特别标「清零」） */
+    const budgetKbLabel = (): string => {
+        const b = budgetBytes();
+        if (b === 0) return "0（清零）";
+        return b % 1024 === 0 ? `${b / 1024} KB` : `${(b / 1024).toFixed(1)} KB`;
+    };
+    /** 压缩后整份请求的规模（KB）—— 固定开支（system/工具/runtime）+ 预算内历史 */
+    const afterKb = (): string => `${((pv()?.after.bytes ?? 0) / 1024).toFixed(1)} KB`;
     const ratio = () => {
         const b = pv()?.before.bytes ?? 0;
         const a = pv()?.after.bytes ?? 0;
@@ -350,22 +370,25 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                 </div>
 
                 <div class="flex min-h-0 grow overflow-hidden">
-                    {/* ── 左栏：压缩预算（自动 / 手动合一）+ 压缩后估算 ── */}
+                    {/* ── 左栏：压缩预算（极简：一个 toggle + 一个输入 + 一个按钮）+ 费用对比图形 ── */}
                     <div class="w-[340px] shrink-0 border-r overflow-auto p-2 space-y-2">
-                        <div class="rounded-lg border border-base-300 p-2 space-y-2">
-                            <div class="text-caption font-semibold opacity-70">压缩预算</div>
-                            <div class="text-caption opacity-60">
-                                ⓘ 只给一个上限：历史消息最多占这么多字节（固定开支不占）。系统按优先级
-                                <b> 用户发言 &gt; 助手结论 &gt; 助手过程 &gt; 工具命令 &gt; 工具结果 </b>
-                                保留，尽量填满；小的排后面，先丢。**实时运算**，会话再长也按此上限。
+                        <div class="rounded-lg border border-base-300 p-3 space-y-3">
+                            <div class="flex items-center justify-between">
+                                <span class="text-body font-semibold">自动压缩</span>
+                                <input
+                                    type="checkbox"
+                                    class="toggle toggle-sm toggle-primary"
+                                    aria-label="自动压缩"
+                                    disabled={autoBusy()}
+                                    checked={auto()?.config.mode === "auto"}
+                                    onChange={(e) => void patchAuto({ mode: e.currentTarget.checked ? "auto" : "off" })}
+                                />
                             </div>
-
-                            {/* 预算输入 + 预设 */}
-                            <div class="flex items-center gap-1.5 text-caption">
-                                <span>压缩到</span>
+                            <div class="flex items-center gap-2">
+                                <span class="text-body">压缩到</span>
                                 <input
                                     type="number"
-                                    class="input input-xs w-20"
+                                    class="input input-sm w-20"
                                     aria-label="压缩预算KB"
                                     min="0"
                                     value={kbDraft()}
@@ -374,167 +397,30 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                     onChange={commitKb}
                                     onBlur={commitKb}
                                 />
-                                <span>KB</span>
+                                <span class="text-body">KB</span>
                                 <div class="flex-1" />
                                 <button
-                                    class="btn btn-ghost btn-xs"
-                                    aria-label="预设清零"
-                                    disabled={autoBusy()}
-                                    onClick={() => setBudgetKb(0)}
+                                    class="btn btn-primary btn-sm"
+                                    aria-label="压缩"
+                                    disabled={busy() || autoBusy()}
+                                    onClick={() => void apply()}
                                 >
-                                    清零
-                                </button>
-                                <button
-                                    class="btn btn-ghost btn-xs"
-                                    aria-label="预设不压缩"
-                                    disabled={autoBusy()}
-                                    onClick={() => setBudgetKb(1024 * 1024)}
-                                >
-                                    不压缩
+                                    {busy() ? "压缩中…" : "压缩"}
                                 </button>
                             </div>
-
-                            {/* 何时压（系统行为）：模式 + 触发条件 */}
-                            <div class="flex items-center justify-between gap-2">
-                                <span class="text-caption opacity-70">何时自动压</span>
-                                <select
-                                    class="select select-xs"
-                                    aria-label="自动压缩模式"
-                                    value={auto()?.config.mode ?? "notify"}
-                                    disabled={autoBusy()}
-                                    onChange={(e) => setAutoMode(e.currentTarget.value as "off" | "notify" | "auto")}
-                                >
-                                    <option value="off">关闭检测</option>
-                                    <option value="notify">检测并提示</option>
-                                    <option value="auto">自动执行</option>
-                                </select>
+                            <div class="text-caption opacity-70">
+                                历史 ≤ <b>{budgetKbLabel()}</b> · 整份请求 ≈ <b>{afterKb()}</b>
                             </div>
-
-                            <button
-                                class="btn btn-ghost btn-xs w-full justify-between"
-                                aria-label="自动压缩配置开关"
-                                onClick={() => setAutoCfgOpen((v) => !v)}
-                            >
-                                <span>{autoCfgOpen() ? "▾" : "▸"} 触发条件与状态</span>
-                            </button>
-                            <Show when={autoCfgOpen()}>
-                                <div class="space-y-2 pl-1">
-                                    <div class="text-caption opacity-70 space-y-0.5">
-                                        <div>
-                                            距上次请求 {fmtGap(auto()?.facts.sinceLastRequestMs ?? null)}
-                                            {" · "}生效 TTL{" "}
-                                            <Show
-                                                when={auto()?.facts.ttl.bounded}
-                                                fallback={<span>（实测不足，用先验 {fmtGap(auto()?.facts.ttl.prior ?? null)}）</span>}
-                                            >
-                                                {`(${fmtGap(auto()?.facts.ttl.knownAlive ?? null)}, ${fmtGap(auto()?.facts.ttl.maybeDead ?? null)}]`}
-                                            </Show>
-                                        </div>
-                                        <div>窗口占用 {fmtPct(auto()?.facts.windowRatio ?? null)}</div>
-                                        <div>系统上下文 {auto()?.facts.systemContextChanged ? "**已变化**" : "未变化"}</div>
-                                    </div>
-                                    <div class="space-y-1">
-                                        <div class="text-caption font-semibold opacity-70">触发条件</div>
-                                        <label class="flex items-center justify-between gap-2 cursor-pointer text-caption">
-                                            <span>系统上下文变化</span>
-                                            <input
-                                                type="checkbox"
-                                                class="toggle toggle-xs toggle-primary"
-                                                aria-label="触发：系统上下文变化"
-                                                disabled={autoBusy()}
-                                                checked={auto()?.config.triggers.systemContextChanged ?? true}
-                                                onChange={(e) =>
-                                                    void patchAuto({
-                                                        triggers: { ...auto()!.config.triggers, systemContextChanged: e.currentTarget.checked },
-                                                    })
-                                                }
-                                            />
-                                        </label>
-                                        <label class="flex items-center justify-between gap-2 cursor-pointer text-caption">
-                                            <span>缓存过期</span>
-                                            <input
-                                                type="checkbox"
-                                                class="toggle toggle-xs toggle-primary"
-                                                aria-label="触发：缓存过期"
-                                                disabled={autoBusy()}
-                                                checked={auto()?.config.triggers.cacheExpired ?? true}
-                                                onChange={(e) =>
-                                                    void patchAuto({
-                                                        triggers: { ...auto()!.config.triggers, cacheExpired: e.currentTarget.checked },
-                                                    })
-                                                }
-                                            />
-                                        </label>
-                                        <label class="flex items-center justify-between gap-2 text-caption">
-                                            <span>窗口占用超过</span>
-                                            <span class="flex items-center gap-1">
-                                                <input
-                                                    type="number"
-                                                    class="input input-xs w-16"
-                                                    aria-label="触发：窗口占用阈值"
-                                                    min="0"
-                                                    max="100"
-                                                    value={Math.round((auto()?.config.triggers.contextWindowOver ?? 0.8) * 100)}
-                                                    onChange={(e) =>
-                                                        void patchAuto({
-                                                            triggers: {
-                                                                ...auto()!.config.triggers,
-                                                                contextWindowOver: Math.min(1, Math.max(0, Number(e.currentTarget.value) / 100)),
-                                                            },
-                                                        })
-                                                    }
-                                                />
-                                                <span class="opacity-60">%（0 = 关闭）</span>
-                                            </span>
-                                        </label>
-                                    </div>
-                                </div>
-                            </Show>
-
-                            <Show
-                                when={(auto()?.triggers.length ?? 0) > 0}
-                                fallback={<div class="text-caption opacity-60">此刻无「该压缩」的确定事实（缓存还热 / 窗口未满）</div>}
-                            >
-                                <div class="text-caption text-warning">
-                                    <For each={auto()?.reasons ?? []}>{(r) => <div>⚠ {r}</div>}</For>
-                                </div>
-                            </Show>
-
-                            <button
-                                class="btn btn-primary btn-xs w-full"
-                                aria-label="立即压缩"
-                                disabled={busy() || autoBusy()}
-                                onClick={() => void apply()}
-                            >
-                                {busy() ? "压缩中…" : "立即压缩（历史保留）"}
-                            </button>
+                            <div class="text-caption opacity-45">
+                                历史按优先级保留：用户发言 &gt; 助手结论 &gt; 助手过程 &gt; 工具命令 &gt; 工具结果
+                            </div>
                         </div>
 
-                        {/* 压缩后估算：压缩前 / 压缩后 / 预估节省 */}
-                        <Block title="压缩后估算">
-                            <table class="table table-xs w-full">
-                                <thead>
-                                    <tr class="text-caption">
-                                        <th>被压缩的历史消息</th>
-                                        <th class="text-right">压缩前</th>
-                                        <th class="text-right">压缩后</th>
-                                        <th class="text-right">预估节省</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <For each={pv()?.facts ?? []}>
-                                        {(r, i) => (
-                                            <FactRow
-                                                row={r}
-                                                isTotal={r.key === "total"}
-                                                isLast={i() === (pv()?.facts.length ?? 1) - 1}
-                                            />
-                                        )}
-                                    </For>
-                                </tbody>
-                            </table>
-                            <div class="mt-1 text-caption opacity-60">
-                                token 按字节/4 估算，仅用于对比（不进计费）；金额差按当前模型非缓存输入单价。
+                        {/* 费用对比（图形）：当前 vs 压缩后 —— 直观看出省多少 */}
+                        <Block title="费用对比">
+                            <CostCompare facts={pv()?.facts ?? []} />
+                            <div class="mt-2 text-caption opacity-60">
+                                金额 = token ÷ 1M × 当前模型非缓存输入单价；token 按字节/4 估算（仅为对比，不进计费）。
                             </div>
                         </Block>
                     </div>
