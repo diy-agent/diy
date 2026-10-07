@@ -328,8 +328,14 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
         if (b === 0) return "0（清零）";
         return b % 1024 === 0 ? `${b / 1024} KB` : `${(b / 1024).toFixed(1)} KB`;
     };
-    /** 压缩后整份请求的规模（KB）—— 固定开支（system/工具/runtime）+ 预算内历史 */
-    const afterKb = (): string => `${((pv()?.after.bytes ?? 0) / 1024).toFixed(1)} KB`;
+    /**
+     * 压缩后**整份请求**的规模（KB）—— 含固定开支（system + 工具定义 + runtime）+ 预算内历史。
+     * 用费用表 total 行的 token（= 各层之和，含 system/tools）；token ≈ 字节/4 ⇒ ×4 反推字节。
+     */
+    const afterKb = (): string => {
+        const t = (pv()?.facts ?? []).find((r) => r.key === "total");
+        return `${(((t?.newTokens ?? 0) * 4) / 1024).toFixed(1)} KB`;
+    };
     const ratio = () => {
         const b = pv()?.before.bytes ?? 0;
         const a = pv()?.after.bytes ?? 0;
