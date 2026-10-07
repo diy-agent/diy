@@ -28,7 +28,7 @@ import { personaStore } from "./personaStore";
 import { sessionView, type SessionView } from "../../shared/session-view";
 // 用量账本类型：与 main 落盘、CLI 报表、看板共用同一份形状（shared/usage 是唯一口径处）
 import type { StepUsageRecord } from "../../shared/usage";
-import type { FlatCompactPolicy, HeadTailPolicy, OpLike } from "../../shared/context/compaction";
+import type { FlatCompactPolicy, HeadTailPolicy } from "../../shared/context/compaction";
 
 interface TaskState {
     store: BlockStore;

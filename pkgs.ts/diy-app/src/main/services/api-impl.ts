@@ -25,7 +25,7 @@ import { addSource, removeSource } from "./ref-config";
 import { apiDef } from "./api-def";
 import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
-import type { CompactPolicy, ToolResultMode } from "../../shared/context/compaction";
+import type { ToolResultMode } from "../../shared/context/compaction";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
 import { resolve as resolvePath } from "node:path";
 

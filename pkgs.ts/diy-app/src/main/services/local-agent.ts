@@ -90,11 +90,8 @@ import { statFromStep } from "../../shared/context/stats";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import {
     estimateTokens,
-    indexOfTurn,
     makeDeliveryTransform,
-    turnIdAtOrAfterOp,
     listTurnIds,
-    keptTurnsByMessageCount,
     keptTurnsOf,
     type ContentPolicyKind,
     contentKindOf,
@@ -102,14 +99,12 @@ import {
     normalizePolicy,
     parseCompactLog,
     resolveBoundary,
-    sliceOpsFromTurn,
     utf8Bytes,
     type ClippedToolDetail,
     type CompactEventRecord,
     type CompactLogEvent,
     type CompactPolicy,
     type DroppedTurnDetail,
-    type EffectiveBoundary,
     type RateSnapshot,
     type SizeSnapshot,
 } from "../../shared/context/compaction";
@@ -118,7 +113,6 @@ import {
     emptySummary,
     parseSummary,
     summaryExtractionPrompt,
-    summaryHasContent,
     summaryPlaceholder,
     type SummaryData,
 } from "../../shared/context/summary";
