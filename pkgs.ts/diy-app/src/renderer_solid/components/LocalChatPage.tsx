@@ -938,7 +938,7 @@ export function LocalChatPage(props: { uri?: string }) {
     const [densityOpen, setDensityOpen] = createSignal(false);
     /** 「⋯」溢出菜单：低频/危险操作（清空历史）默认不显示，点开才露出（VSCode 附加菜单式） */
     const [moreOpen, setMoreOpen] = createSignal(false);
-    /** 压缩面板（只改投递、不删历史）与历史会话面板 */
+    /** 压缩面板（只改投递、不删历史）与压缩历史（事件快照列表） */
     const [compactOpen, setCompactOpen] = createSignal(false);
     const [gensOpen, setGensOpen] = createSignal(false);
     const [personaPanelOpen, setPersonaPanelOpen] = createSignal(false);
@@ -1297,13 +1297,13 @@ export function LocalChatPage(props: { uri?: string }) {
                                 </button>
                                 <button
                                     class="btn btn-ghost btn-xs w-full justify-start gap-2 normal-case font-normal"
-                                    aria-label="历史会话"
+                                    aria-label="压缩历史"
                                     onClick={() => {
                                         setMoreOpen(false);
                                         setGensOpen(true);
                                     }}
                                 >
-                                    历史会话…
+                                    压缩历史…
                                 </button>
                                 <button
                                     class="btn btn-ghost btn-xs w-full justify-start gap-2 normal-case font-normal"
