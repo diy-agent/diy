@@ -168,7 +168,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     const autoPolicy = (): CompactPolicy => normalizePolicy(auto()?.config.policy);
     /** 预算（字节）；非预算策略（旧 keep/reset）时回落到缺省 */
     const budgetBytes = (): number => budgetBytesOf(autoPolicy()) ?? DEFAULT_BUDGET_BYTES;
-    const patchAutoPolicy = (next: CompactPolicy) => void patchAuto({ policy: next });
+    const patchAutoPolicy = (next: CompactPolicy) => patchAuto({ policy: next });
     /** 把工具结果的呈现（内部旋钮）从当前策略里取出来、缺省用头尾裁剪 */
     const currentToolResult = () => toolResultOf(autoPolicy()) ?? DEFAULT_TOOL_RESULT_POLICY;
     const setBudgetBytes = (b: number) =>
@@ -184,10 +184,19 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
             { defer: false },
         ),
     );
-    const commitKb = () => {
+    /**
+     * 提交预算输入（失焦 / 回车 / 点「压缩」前调用）。**返回 Promise** —— 调用方需 `await`：
+     * 写盘 + refetch 是异步的，`apply()` 若不等它就直接读数，会用**旧预算**（实测竞态）。
+     * 草稿与当前一致时不重复写盘（免多余 RPC）。
+     */
+    const commitKb = async (): Promise<void> => {
         const kb = Number(kbDraft());
-        if (Number.isFinite(kb) && kb >= 0) setBudgetKb(kb);
-        else setKbDraft(String(budgetBytes() / 1024));
+        if (!Number.isFinite(kb) || kb < 0) {
+            setKbDraft(String(budgetBytes() / 1024));
+            return;
+        }
+        if (Math.round(kb * 1024) === budgetBytes()) return; // 无变化 → 不写
+        await setBudgetKb(kb);
     };
 
     const [busy, setBusy] = createSignal(false);
@@ -303,6 +312,8 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
         setBusy(true);
         setErr(null);
         try {
+            // ⚠️ 先把输入框里的预算落盘（blur 的写盘是异步的）——否则可能用**旧预算**压
+            await commitKb();
             await localChatStore.compact(props.uri, flatPolicyOf(autoPolicy()));
             props.onClose();
         } catch (e) {
@@ -400,8 +411,8 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                     value={kbDraft()}
                                     disabled={autoBusy()}
                                     onInput={(e) => setKbDraft(e.currentTarget.value)}
-                                    onChange={commitKb}
-                                    onBlur={commitKb}
+                                    onChange={() => void commitKb()}
+                                    onBlur={() => void commitKb()}
                                 />
                                 <span class="text-body">KB</span>
                                 <div class="flex-1" />
