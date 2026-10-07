@@ -18,18 +18,17 @@ import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { assembleGlobals } from "../../src/main/services/prompt-registry";
 import { llmLogRelPath } from "../../src/main/core/local-paths";
+import { BudgetNoteSchema } from "../../src/shared/context/budget-note";
 
 const REL = "local/projects_4_tasks_9-abcd1234ef56.llm.jsonl";
 
 describe("historyIndexValue：格式说明从 zod 派生", () => {
     const v = historyIndexValue(REL);
 
-    it("① 顶层字段表与 DroppedNoteSchema 的派生结果**逐项相同**", () => {
-        expect(v.note).toEqual(fieldDocs(DroppedNoteSchema));
-        expect(v.segment).toEqual(fieldDocs(DroppedSegmentSchema));
+    it("① 字段表与 BudgetNoteSchema 的派生结果**逐项相同**", () => {
+        expect(v.note).toEqual(fieldDocs(BudgetNoteSchema));
         // 至少确认关键字段在（防 schema 被清空而测试仍通过）
-        expect(v.note.map((f) => f.name)).toEqual(["total", "segments"]);
-        expect(v.segment.map((f) => f.name)).toEqual(["range", "kind", "turns", "tools", "why"]);
+        expect(v.note.map((f) => f.name)).toEqual(["about", "budgetBytes", "keptBytes", "kept"]);
     });
 
     it("② 回取命令直接用给定路径（不另算 key），且给了按行与按轮两条路", () => {
@@ -45,8 +44,8 @@ describe("historyIndexValue：格式说明从 zod 派生", () => {
         expect(JSON.stringify(historyIndexValue(REL))).toBe(JSON.stringify(historyIndexValue(REL)));
     });
 
-    it("说明里点明注记在 messages 里、且行号即消息序号（模型要据此回取）", () => {
-        expect(v.noteLocation).toContain("user");
+    it("说明里点明行号即消息序号（模型要据此回取）", () => {
+        expect(v.about).toContain("history");
         expect(v.source).toContain("行号即消息序号");
     });
 });

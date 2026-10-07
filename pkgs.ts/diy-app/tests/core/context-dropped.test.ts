@@ -258,11 +258,10 @@ describe("deliveryMessages：注记落在投递里，且保留部分原样", () 
         const first = msgs[0]!;
         expect(first.role).toBe("user");
         const text = typeof first.content === "string" ? first.content : JSON.stringify(first.content);
-        // 精简头：格式说明与回取法已随 system 的 historyIndex 节点投出（不重复投）
+        // 旧轮边界口径的注记与 system 的 historyIndex（预算注记说明）不是同一格式 → 自描述
         expect(text).toContain("# ── 会话历史（压缩视图）");
-        expect(text).toContain("historyIndex");
         expect(text).toContain("kind: turns");
-        expect(text).not.toContain("sed -n"); // 回取命令不再重复
+        expect(text).toContain("sed -n"); // 自带回取命令（不再依赖 system 节点）
         expect(text).toContain("turns: [t2001, t2002]");
         const all = JSON.stringify(msgs);
         expect(all).not.toContain("第 1 句");

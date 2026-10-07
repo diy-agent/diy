@@ -126,7 +126,6 @@ export const AssembleGlobalsSchema = z.object({
           byTurn: z.string().describe("按轮次 id 回取原文的 bash 命令"),
         })
         .describe("回取法"),
-      noteLocation: z.string().describe("注记在 messages 里的位置与形态"),
       note: z
         .array(
           z.object({
@@ -135,16 +134,7 @@ export const AssembleGlobalsSchema = z.object({
             required: z.boolean().describe("是否必填"),
           }),
         )
-        .describe("注记顶层字段表（由 zod 定义派生）"),
-      segment: z
-        .array(
-          z.object({
-            name: z.string().describe("字段名"),
-            desc: z.string().describe("含义"),
-            required: z.boolean().describe("是否必填"),
-          }),
-        )
-        .describe("注记里 segments 每一项的字段表（由 zod 定义派生）"),
+        .describe("注记字段表（由 zod 定义派生）"),
     })
     .describe("压缩历史索引的格式说明（稳定；易变的 dropped 数据在 messages 里）"),
 });

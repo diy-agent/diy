@@ -1217,8 +1217,9 @@ export class LocalAgentManager {
         const note = renderDroppedNote(parsed.value, {
             file: llmLogRelPath(taskUriOf),
             absPath: llmFile(taskUriOf),
-            // 格式说明已随 system 的 historyIndex 节点投出 → 这里只留数据 + 一行指路
-            schemaInSystem: true,
+            // ⚠️ 历史被省注记（旧轮边界口径）与 system 的 historyIndex（预算注记说明）**不是同一格式**
+            // → 自描述（schemaInSystem:false），免得模型照着错格式回取。
+            schemaInSystem: false,
         });
         // 注记 + 保留首条（必为 user）→ 合并成一条：provider 不收连续同角色
         return normalizeUserRuns([{ role: "user", content: note }, ...kept]);
