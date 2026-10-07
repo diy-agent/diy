@@ -1374,8 +1374,8 @@ export class LocalAgentManager {
          *  放在 summary 之后：既有调用点全是位置参数，追加在尾部才不会把 summary 挤错位。 */
         trigger: CompactTrigger = "manual",
     ): CompactEventRecord {
-        const sess = this.sessions.get(taskUri);
-        if (sess?.running) throw new Error(`任务 ${taskUri} 的本地会话正在生成中，先停止再压缩`);
+        // 【用户 2026-10-07】允许**轮次中**压缩（长任务不能等一轮结束）。压缩只写快照 + 落盘被裁原文，
+        // 不改 ops、不重置会话（投递按当前配置实时算），故对正在跑的轮次无副作用。
         const p = this.planCompact(taskUri, policyInput);
 
         // 原文落盘：marker 指的路径必须真的能打开（否则模型只能重跑命令 —— 那是真金白银）
@@ -1422,8 +1422,6 @@ export class LocalAgentManager {
             },
         };
         appendCompactEvent(taskUri, rec);
-        // 内存态重置：删掉会话缓存 → 下次 getSession 按新边界重建（ops 仍全量，供历史查看）
-        this.sessions.delete(taskUri);
         return rec;
     }
 

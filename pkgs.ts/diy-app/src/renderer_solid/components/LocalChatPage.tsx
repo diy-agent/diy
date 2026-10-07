@@ -1490,7 +1490,7 @@ export function LocalChatPage(props: { uri?: string }) {
                         />
                         {/* L1 窗口占用环（chip 的 token/金额总量右侧）：hover 出构成卡（含「压缩」按钮 + 可降低窗口比较条）。
                             【用户 2026-10-07】压缩入口**移进 token 窗口的 card**（不再单独一个按钮）；生成中禁用+提示。 */}
-                        <WindowRing onCompact={() => setCompactOpen(true)} running={localChatStore.live} />
+                        <WindowRing />
                         <div class="flex-1" />
                         {/* 生成中的可见性：别人（CLI/另一窗口）发起时本地 running 全程为 false，
                             不显式说出来，界面看起来就像"什么都没发生"（任务 194 现象一的另一半） */}

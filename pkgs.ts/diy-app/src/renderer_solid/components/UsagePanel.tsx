@@ -45,6 +45,7 @@ import {
 import type { BlockNode } from "../../main/services/local-blocks";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 import { notificationStore } from "../store/notificationStore";
+import { DEFAULT_BUDGET_BYTES } from "../../shared/context/compaction";
 
 // ─── 共用小件 ────────────────────────────────────────
 
@@ -467,12 +468,28 @@ const pctCell = (v: number | null, prompt: number | null) =>
  * · hover 弹构成卡（三段估算 + 总量精确）；卡上「明细 →」打开构成报表（总/分两表）。
  * 数据链：turn patch 的 contextParts（main 每步真发时记字节）+ 账本 prompt —— 不做 hover 现算。
  */
-export function WindowRing(props: { onCompact?: () => void; running?: boolean } = {}) {
+export function WindowRing() {
     const w = () => currentWindow(localChatStore.trees);
     /** 无数据也显示环（0%）—— 用户 2026-10-07：「无数据时应显示 0%」，不是整块消失 */
     const win = () => w() ?? { total: 0, contextLimit: 0, rate: 0, prompt: null, parts: null };
     const [open, setOpen] = createSignal(false);
     const [drawerOpen, setDrawerOpen] = createSignal(false);
+    const [busy, setBusy] = createSignal(false);
+    /** 直接压缩一次（用当前配置的预算）—— 用户 2026-10-07「点后直接压缩，不要弹到详情页」 */
+    const apply = async () => {
+        const u = localChatStore.currentUri;
+        if (!u) return;
+        setBusy(true);
+        try {
+            await localChatStore.compact(u, { budgetBytes: budget() ?? DEFAULT_BUDGET_BYTES } as never);
+            notificationStore.addToast("success", "已压缩（历史保留、可撤销）");
+            setOpen(false);
+        } catch (e) {
+            notificationStore.addToast("error", String(e instanceof Error ? e.message : e));
+        } finally {
+            setBusy(false);
+        }
+    };
     const [anchor, setAnchor] = createSignal<{ left: number; top: number } | null>(null);
     let closeT: ReturnType<typeof setTimeout> | undefined;
 
@@ -587,9 +604,8 @@ export function WindowRing(props: { onCompact?: () => void; running?: boolean } 
                             })()}
                         </dl>
 
-                        {/* ── 压缩：卡上只给「压缩」按钮 + 可降低窗口的比较条（参数调整在详情页）── */}
-                        <Show when={props.onCompact}>
-                            <div class="border-t border-base-300 px-3 py-2">
+                        {/* ── 压缩：卡上只给「压缩」按钮 + 可降低窗口的比较条（参数调整在窗口构成页）── */}
+                        <div class="border-t border-base-300 px-3 py-2">
                                 <div class="mb-1.5 text-caption opacity-60">压缩（降低历史占用，历史不删）</div>
                                 {(() => {
                                     const cur = win().total;
@@ -628,20 +644,13 @@ export function WindowRing(props: { onCompact?: () => void; running?: boolean } 
                                     type="button"
                                     class="btn btn-primary btn-xs w-full"
                                     aria-label="压缩会话上下文"
-                                    disabled={props.running}
-                                    title={props.running ? "对话正在生成，停止后才能压缩" : "压缩会话上下文（历史保留、可撤销）；参数调整在窗口构成页"}
-                                    onClick={() => {
-                                        setOpen(false);
-                                        props.onCompact?.();
-                                    }}
+                                    disabled={busy()}
+                                    title="压缩会话上下文（历史保留、可撤销）；参数调整在窗口构成页"
+                                    onClick={() => void apply()}
                                 >
-                                    压缩
+                                    {busy() ? "压缩中…" : "压缩"}
                                 </button>
-                                <Show when={props.running}>
-                                    <div class="mt-1 text-caption text-warning">对话正在生成，停止后才能压缩</div>
-                                </Show>
                             </div>
-                        </Show>
 
                         <div class="border-t border-base-300 px-3 py-1 text-caption opacity-50">
                             ~ = 字节 ÷ 4 估算；占比 = 该段 ÷ prompt；– = 该轮未落盘构成（本版前的记录）
