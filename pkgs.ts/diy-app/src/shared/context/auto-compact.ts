@@ -40,7 +40,7 @@ export const AutoCompactConfigSchema = z.object({
         .describe("off 不检测；notify 检测并提示（默认）；auto 检测到就压"),
     triggers: AutoCompactTriggersSchema,
     /**
-     * 自动压时用的策略 —— **直接复用 `CompactPolicy` 这棵决策树**（含 `summary`）。
+     * 压缩策略（自动 / 手动**同一套**）—— 直接复用 `CompactPolicy`（含 `summary`）。
      *
      * 为什么不再自造一个 `{unit,count,content}`：那是同一概念的**第二个形状**（`content` 在这边
      * 挂在 `keep` 里、在真实策略里挂顶层），两处各写一遍必然分叉。自动压的"压什么"与手动压
