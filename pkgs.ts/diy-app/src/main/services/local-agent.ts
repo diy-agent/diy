@@ -40,6 +40,7 @@ import {
     projectAll,
     selectHistory,
     selectHistoryByBudget,
+    selectForDelivery,
     type DeliveryOpts,
     type Op,
     type JSONVal,
@@ -647,7 +648,7 @@ function sizeOfOps(ops: readonly Op[], opts?: Parameters<typeof blocksToMessages
     //    （消息 0 条、却写着 3 轮）。账本要能自证，数字之间不许打架。
     //    用与投递同一次选择（projectAll + selectHistory），不另算一份判据。
     const all = projectAll(store);
-    const sel = selectHistory(all, opts ?? {});
+    const sel = selectForDelivery(all, opts ?? {});
     const turns = new Set(sel.kept.map((i) => all[i]!.turn).filter((x): x is string => !!x)).size;
     return {
         turns,

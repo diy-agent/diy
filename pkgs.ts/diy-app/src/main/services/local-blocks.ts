@@ -796,11 +796,24 @@ function renderMessage(m: LocalModelMessage, opts: DeliveryOpts): LocalModelMess
     return out;
 }
 
+/**
+ * **选择分派**（唯一入口）：预算口径（新）与轮边界口径（旧）二选一。
+ * ⚠️ 所有需要"投递了哪些消息"的地方都必须走这里 —— 直接调 `selectHistory` 会漏掉预算
+ * （实测 bug：sizeOfOps 曾直接调 selectHistory，清零/预算下 after.turns 数错）。
+ */
+export function selectForDelivery(
+    all: readonly LocalModelMessage[],
+    opts: DeliveryOpts = {},
+): { kept: number[]; dropped: number[] } {
+    return opts.budgetBytes !== undefined
+        ? selectHistoryByBudget(all, opts.budgetBytes, opts)
+        : selectHistory(all, opts);
+}
+
 /** 块树 → 可发/可落盘的消息（选择 + 渲染；跳过 turn/step 容器与 think） */
 export function blocksToMessages(store: BlockStore, opts?: DeliveryOpts): LocalModelMessage[] {
     const o = opts ?? {};
     const all = projectAll(store);
-    // 预算口径（新）与轮边界口径（旧）二选一 —— 由 opts.budgetBytes 是否给出来分派
-    const sel = o.budgetBytes !== undefined ? selectHistoryByBudget(all, o.budgetBytes, o) : selectHistory(all, o);
+    const sel = selectForDelivery(all, o);
     return sel.kept.map((i) => renderMessage(all[i]!, o));
 }
