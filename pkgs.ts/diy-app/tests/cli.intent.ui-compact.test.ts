@@ -13,7 +13,7 @@
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { basename, dirname, join } from "node:path";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
@@ -107,7 +107,7 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
     expect(await a11yText()).toContain("压缩");
   });
 
-  it("点「压缩」→ 面板出现（压缩选项 / 压缩后估算两个可折叠 view）", async () => {
+  it("点「压缩」→ 面板出现（① 自动压缩 / ② 本次手动压缩 / 压缩后估算）", async () => {
     // 等按钮就位（页面可能还在挂载），再点 —— 避免与挂载竞争
     await waitUntil(
       () => ui.query<boolean>("!!document.querySelector('[aria-label=\"压缩会话上下文\"]')"),
@@ -115,12 +115,14 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
       { label: "压缩按钮就位" },
     );
     await ui.clickSelector('[aria-label="压缩会话上下文"]');
-    const text = await waitUntil(a11yText, (t) => t.includes("① 保留范围"), { label: "压缩面板上屏" });
-    expect(text).toContain("② 内容");
-    expect(text).toContain("③ 工具结果");
-    expect(text).toContain("④ 计算历史摘要");
+    const text = await waitUntil(a11yText, (t) => t.includes("1. 保留范围"), { label: "压缩面板上屏" });
+    expect(text).toContain("2. 内容");
+    expect(text).toContain("3. 工具结果");
+    expect(text).toContain("4. 计算历史摘要");
+    // 两块策略区：① 自动压缩（系统行为）/ ② 本次手动压缩（只影响这一次点击）
+    expect(text).toContain("① 自动压缩");
+    expect(text).toContain("② 本次手动压缩");
     // 两个 view 用统一的折叠框模式（标题条可点）
-    expect(text).toContain("压缩选项");
     expect(text).toContain("压缩后估算");
     // 默认保留 6 轮、共 8 轮（数字与「保留最近」在 a11y 树里是不同节点）
     expect(text).toContain("保留最近");
@@ -147,6 +149,61 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
       `(() => { const s=document.querySelector('select[aria-label="自动压缩模式"]'); if(!s) return ''; s.value='notify'; s.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
     );
     await new Promise((r) => setTimeout(r, 400));
+  });
+
+  it("自动压缩配置区：默认收起；展开后可改触发条件与策略，改完写回真源", async () => {
+    // 默认收起：只显示状态 + 提示。⚠️ 判据不能是"触发条件" —— 展开按钮的**文案**里
+    // 就含这四个字（它始终在 DOM 里）；要判的是**只在展开时出现**的项。
+    expect(await a11yText()).not.toContain("系统上下文变化");
+    await ui.clickSelector('[aria-label="自动压缩配置开关"]');
+    const text = await waitUntil(a11yText, (t) => t.includes("触发条件"), { label: "自动压缩配置区展开" });
+    expect(text).toContain("系统上下文变化");
+    expect(text).toContain("缓存过期");
+    expect(text).toContain("窗口占用超过");
+    expect(text).toContain("自动压时的策略");
+    // 状态区（只读）：距上次请求 / 窗口占用 / 系统上下文
+    expect(text).toContain("距上次请求");
+    expect(text).toContain("窗口占用");
+
+    // 改一个触发开关 → 写回真源 `$DIY_HOME/auto-compact.yaml`（不是 localStorage）
+    const before = readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8");
+    expect(before).toContain("cacheExpired: true");
+    await ui.clickSelector('[aria-label="触发：缓存过期"]');
+    await waitUntil(
+      () => Promise.resolve(readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8")),
+      (t) => String(t).includes("cacheExpired: false"),
+      { label: "触发开关写回真源" },
+    );
+    // 复原（免得影响后续用例）：开关回 true + 配置区收起
+    await ui.clickSelector('[aria-label="触发：缓存过期"]');
+    await waitUntil(
+      () => Promise.resolve(readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8")),
+      (t) => String(t).includes("cacheExpired: true"),
+      { label: "触发开关复原" },
+    );
+    await ui.clickSelector('[aria-label="自动压缩配置开关"]');
+    await waitUntil(a11yText, (t) => !t.includes("系统上下文变化"), { label: "配置区收起" });
+  });
+
+  it("手动参数：改完记住（UI state），重开面板仍是上次拧的", async () => {
+    // 改「只留结论」→ 关面板 → 重开，仍是结论
+    const clicked = await ui.query<boolean>(
+      `(() => { const rs=[...document.querySelectorAll('input[type=radio]')]; const r=rs.find(x=>(x.closest('label')?.textContent||'').includes('只留结论')); if(!r) return false; r.click(); return true; })()`,
+    );
+    if (clicked) {
+      await new Promise((r) => setTimeout(r, 200));
+      // 存的是 UI state（localStorage），且**不影响**自动压缩那套（两套互不为真源）
+      const stored = await ui.query<string>(`localStorage.getItem('diy_compact_manual_policy') ?? ''`);
+      expect(stored).toContain("conclusion");
+      const autoFile = readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8");
+      expect(autoFile).not.toContain("content: text"); // 自动那套没被手动的改动带跑
+      // ⚠️ **必须复位**：面板参数是全局单例的（UI state），不复位会污染后面所有
+      // 依赖预览/diff 的用例（本轮实测：不回「全部」→ 头尾裁剪 diff 断言假红）
+      await ui.query<string>(
+        `(() => { const rs=[...document.querySelectorAll('input[type=radio]')]; const r=rs.find(x=>(x.closest('label')?.textContent||'').includes('全部')); r?.click(); return 'x'; })()`,
+      );
+      await new Promise((r) => setTimeout(r, 200));
+    }
   });
 
   it("压缩后估算表：中文层名 + 合计居首 + ├/└ 层级符号", async () => {
@@ -380,7 +437,7 @@ describe("压缩会话：面板 → 压缩 → 当前会话只剩边界后的轮
   it("点「执行压缩」→ 当前会话不再含最早两轮（第1/2轮），较新一轮仍在", async () => {
     await ui.clickSelector('[aria-label="执行压缩"]');
     // 面板关闭
-    await waitUntil(a11yText, (t) => !t.includes("① 保留范围"), { label: "压缩面板退场" });
+    await waitUntil(a11yText, (t) => !t.includes("1. 保留范围"), { label: "压缩面板退场" });
     // 当前会话视图只剩边界后的轮
     expect(await waitUntil(() => bodyHas("第1轮问题"), (v) => v === false, { label: "第1轮消失" })).toBe(false);
     expect(await bodyHas("第2轮问题")).toBe(false);

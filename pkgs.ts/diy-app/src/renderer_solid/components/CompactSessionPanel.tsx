@@ -16,11 +16,12 @@
 import { createSignal, createResource, createEffect, on, For, Show, createMemo, onMount, onCleanup, type JSX } from "solid-js";
 import { localChatStore } from "../store/localChatStore";
 import {
-    DEFAULT_COMPACT_POLICY,
     flatPolicyOf,
+    normalizePolicy,
     type FlatCompactPolicy,
     type ToolResultMode,
 } from "../../shared/context/compaction";
+import { Caches } from "../lib/ui-state";
 /** 触发理由的短文案（表里空间小；完整版在 TRIGGER_TEXT_FULL，提示条上用） */
 function triggerText(t: string | undefined): string {
     switch (t) {
@@ -105,24 +106,50 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     // 自动压缩检测（只读）：提示「此刻压缩无重建代价」+ 模式开关（真源落盘，不是 localStorage）
     const [auto, { refetch: refetchAuto }] = createResource(() => props.uri, async (u) => {
         return (await localChatStore.autoCompactStatus(u)) as {
-            config: { mode: "off" | "notify" | "auto" };
-            facts: { systemContextChanged: boolean; sinceLastRequestMs: number | null; windowRatio: number | null };
+            config: {
+                mode: "off" | "notify" | "auto";
+                triggers: { systemContextChanged: boolean; cacheExpired: boolean; contextWindowOver: number };
+                keep: { unit: "turns" | "messages"; count: number | "all"; content: "all" | "text" | "conclusion" };
+                summary: boolean;
+            };
+            facts: {
+                systemContextChanged: boolean;
+                sinceLastRequestMs: number | null;
+                ttl: { knownAlive: number; maybeDead: number; prior: number; bounded: boolean; priorFalsified: boolean };
+                windowRatio: number | null;
+            };
             triggers: string[];
             reasons: string[];
         };
     });
     const [autoBusy, setAutoBusy] = createSignal(false);
-    const setAutoMode = async (mode: "off" | "notify" | "auto") => {
+    /** 自动压缩的**配置区**是否展开（默认收起：只显示状态 + 提示，免得左栏太长） */
+    const [autoCfgOpen, setAutoCfgOpen] = createSignal(false);
+    /** 写回自动压缩配置（部分字段 → 主进程浅合并 → 真源 `$DIY_HOME/auto-compact.yaml`） */
+    const patchAuto = async (patch: Record<string, unknown>) => {
         setAutoBusy(true);
         try {
-            await localChatStore.autoCompactSetConfig(mode);
+            await localChatStore.autoCompactSetConfig(patch);
             await refetchAuto();
         } finally {
             setAutoBusy(false);
         }
     };
-    const [pol, setPolRaw] = createSignal<FlatCompactPolicy>(flatPolicyOf(DEFAULT_COMPACT_POLICY));
-    const setPol = (p: Partial<FlatCompactPolicy>) => setPolRaw({ ...pol(), ...p });
+    const setAutoMode = (mode: "off" | "notify" | "auto") => void patchAuto({ mode });
+
+    /**
+     * 「本次手动压缩」的参数 —— **初始值 = 上次手动拧的**（UI state，丢失只回默认、无数据损失），
+     * 与自动那套**互不为真源、互不同步**（用户 2026-10-06：手动设的不该影响自动）。
+     */
+    const [pol, setPolRaw] = createSignal<FlatCompactPolicy>(
+        flatPolicyOf(normalizePolicy(Caches.diy_compact_manual_policy.get())),
+    );
+    const setPol = (p: Partial<FlatCompactPolicy>) => {
+        const next = { ...pol(), ...p };
+        setPolRaw(next);
+        // 改动即存：下次打开面板仍是这次的参数（否则"上次拧的白拧"）
+        Caches.diy_compact_manual_policy.set(next as unknown as Record<string, unknown>);
+    };
     const [busy, setBusy] = createSignal(false);
     const [err, setErr] = createSignal<string | null>(null);
     /**
@@ -160,6 +187,17 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     const [expandLevel, setExpandLevel] = createSignal(Number.MAX_SAFE_INTEGER); // 默认展开到最大层级
 
     const turnCount = () => localChatStore.trees.length;
+
+    /** 时长人读（用于"距上次请求"与 TTL 区间）；null/-1 = 未知 */
+    const fmtGap = (ms: number | null): string => {
+        if (ms === null || ms < 0) return "—";
+        const m = ms / 60000;
+        if (m < 1) return "<1 分钟";
+        if (m < 60) return `${Math.round(m)} 分钟`;
+        const h = m / 60;
+        return h < 48 ? `${h.toFixed(1)} 小时` : `${Math.round(h / 24)} 天`;
+    };
+    const fmtPct = (r: number | null): string => (r === null ? "—" : `${(r * 100).toFixed(1)}%`);
 
     // base 请求（打开面板取一次，参数变化不重取）
     const [base] = createResource(() => props.uri, (u) => localChatStore.requestView(u) as Promise<RequestView>);
@@ -357,22 +395,163 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                 <div class="flex min-h-0 grow overflow-hidden">
                     {/* ── 左栏：压缩选项 + 压缩后估算（两个可折叠 view）────────── */}
                     <div class="w-[340px] shrink-0 border-r overflow-auto p-2 space-y-2">
-                        {/* ── 自动压缩（用户 2026-10-06：不自动压时提示 + 一键；压了也能看到历史与理由）── */}
+                        {/* ── ① 自动压缩：**系统行为**（会自动改会话历史）；真源 $DIY_HOME/auto-compact.yaml ── */}
                         <div class="rounded-lg border border-base-300 p-2 space-y-1.5">
                             <div class="flex items-center justify-between">
-                                <div class="text-caption font-semibold opacity-70">自动压缩</div>
+                                <div class="text-caption font-semibold opacity-70">① 自动压缩</div>
                                 <select
                                     class="select select-xs"
                                     aria-label="自动压缩模式"
                                     value={auto()?.config.mode ?? "notify"}
                                     disabled={autoBusy()}
-                                    onChange={(e) => void setAutoMode(e.currentTarget.value as "off" | "notify" | "auto")}
+                                    onChange={(e) => setAutoMode(e.currentTarget.value as "off" | "notify" | "auto")}
                                 >
                                     <option value="off">关闭检测</option>
                                     <option value="notify">检测并提示</option>
                                     <option value="auto">自动执行</option>
                                 </select>
                             </div>
+                            <div class="text-caption opacity-60">
+                                ⓘ 这套是**系统行为**：下一轮发送前会按它自动压（会改会话历史）。与下面②互不影响。
+                            </div>
+
+                            {/* 配置区默认**收起**：先给人看"现在什么状态、要不要压"，要调参数再展开 */}
+                            <button
+                                class="btn btn-ghost btn-xs w-full justify-between"
+                                aria-label="自动压缩配置开关"
+                                onClick={() => setAutoCfgOpen((v) => !v)}
+                            >
+                                <span>{autoCfgOpen() ? "▾" : "▸"} 触发条件与策略</span>
+                            </button>
+                            <Show when={autoCfgOpen()}>
+                                <div class="space-y-2 pl-1">
+                                    {/* 状态（只读，现算）—— 回答"为什么它会/不会触发" */}
+                                    <div class="text-caption opacity-70 space-y-0.5">
+                                        <div>
+                                            距上次请求{" "}
+                                            {fmtGap(auto()?.facts.sinceLastRequestMs ?? null)}
+                                            {" · "}
+                                            生效 TTL <Show when={auto()?.facts.ttl.bounded} fallback={<span>（实测不足，用先验 {fmtGap(auto()?.facts.ttl.prior ?? null)}）</span>}>
+                                                {`(${fmtGap(auto()?.facts.ttl.knownAlive ?? null)}, ${fmtGap(auto()?.facts.ttl.maybeDead ?? null)}]`}
+                                            </Show>
+                                        </div>
+                                        <div>窗口占用 {fmtPct(auto()?.facts.windowRatio ?? null)}</div>
+                                        <div>系统上下文 {auto()?.facts.systemContextChanged ? "**已变化**" : "未变化"}</div>
+                                    </div>
+                                    {/* 触发条件（三个确定事实；勾谁谁才参与判定） */}
+                                    <div class="space-y-1">
+                                        <div class="text-caption font-semibold opacity-70">触发条件</div>
+                                        <label class="flex items-center justify-between gap-2 cursor-pointer text-caption">
+                                            <span>系统上下文变化</span>
+                                            <input
+                                                type="checkbox"
+                                                class="toggle toggle-xs toggle-primary"
+                                                aria-label="触发：系统上下文变化"
+                                                disabled={autoBusy()}
+                                                checked={auto()?.config.triggers.systemContextChanged ?? true}
+                                                onChange={(e) =>
+                                                    void patchAuto({
+                                                        triggers: { ...auto()!.config.triggers, systemContextChanged: e.currentTarget.checked },
+                                                    })
+                                                }
+                                            />
+                                        </label>
+                                        <label class="flex items-center justify-between gap-2 cursor-pointer text-caption">
+                                            <span>缓存过期</span>
+                                            <input
+                                                type="checkbox"
+                                                class="toggle toggle-xs toggle-primary"
+                                                aria-label="触发：缓存过期"
+                                                disabled={autoBusy()}
+                                                checked={auto()?.config.triggers.cacheExpired ?? true}
+                                                onChange={(e) =>
+                                                    void patchAuto({
+                                                        triggers: { ...auto()!.config.triggers, cacheExpired: e.currentTarget.checked },
+                                                    })
+                                                }
+                                            />
+                                        </label>
+                                        <label class="flex items-center justify-between gap-2 text-caption">
+                                            <span>窗口占用超过</span>
+                                            <span class="flex items-center gap-1">
+                                                <input
+                                                    type="number"
+                                                    class="input input-xs w-16"
+                                                    aria-label="触发：窗口占用阈值"
+                                                    min="0"
+                                                    max="100"
+                                                    value={Math.round((auto()?.config.triggers.contextWindowOver ?? 0.8) * 100)}
+                                                    onChange={(e) =>
+                                                        void patchAuto({
+                                                            triggers: {
+                                                                ...auto()!.config.triggers,
+                                                                contextWindowOver: Math.min(1, Math.max(0, Number(e.currentTarget.value) / 100)),
+                                                            },
+                                                        })
+                                                    }
+                                                />
+                                                <span class="opacity-60">%（0 = 关闭）</span>
+                                            </span>
+                                        </label>
+                                    </div>
+                                    {/* 自动压时的策略（默认：全留轮次 + 只留结论 = 保留所有轮次的结论） */}
+                                    <div class="space-y-1">
+                                        <div class="text-caption font-semibold opacity-70">自动压时的策略</div>
+                                        <div class="flex items-center gap-1.5 text-caption">
+                                            <span>保留</span>
+                                            <select
+                                                class="select select-xs"
+                                                aria-label="自动压缩：保留数量"
+                                                value={String(auto()?.config.keep.count ?? "all")}
+                                                onChange={(e) =>
+                                                    void patchAuto({
+                                                        keep: {
+                                                            ...auto()!.config.keep,
+                                                            count: e.currentTarget.value === "all" ? "all" : Number(e.currentTarget.value),
+                                                        },
+                                                    })
+                                                }
+                                            >
+                                                <option value="all">全部轮次</option>
+                                                <option value="10">最近 10 轮</option>
+                                                <option value="6">最近 6 轮</option>
+                                                <option value="3">最近 3 轮</option>
+                                                <option value="1">最近 1 轮</option>
+                                                <option value="0">全部清零</option>
+                                            </select>
+                                        </div>
+                                        <div class="flex items-center gap-2 text-caption">
+                                            <span>内容</span>
+                                            <select
+                                                class="select select-xs"
+                                                aria-label="自动压缩：内容"
+                                                value={auto()?.config.keep.content ?? "conclusion"}
+                                                onChange={(e) =>
+                                                    void patchAuto({
+                                                        keep: { ...auto()!.config.keep, content: e.currentTarget.value as "all" | "text" | "conclusion" },
+                                                    })
+                                                }
+                                            >
+                                                <option value="conclusion">只留结论</option>
+                                                <option value="text">只留文本</option>
+                                                <option value="all">全部内容</option>
+                                            </select>
+                                        </div>
+                                        <label class="flex items-center justify-between gap-2 cursor-pointer text-caption">
+                                            <span>同时生成历史摘要（花钱）</span>
+                                            <input
+                                                type="checkbox"
+                                                class="toggle toggle-xs toggle-primary"
+                                                aria-label="自动压缩：生成摘要"
+                                                disabled={autoBusy()}
+                                                checked={auto()?.config.summary ?? false}
+                                                onChange={(e) => void patchAuto({ summary: e.currentTarget.checked })}
+                                            />
+                                        </label>
+                                    </div>
+                                </div>
+                            </Show>
+
                             <Show
                                 when={(auto()?.triggers.length ?? 0) > 0}
                                 fallback={<div class="text-caption opacity-60">此刻无「该压缩」的确定事实（缓存还热 / 窗口未满）</div>}
@@ -386,14 +565,15 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                     </button>
                                 </Show>
                                 <Show when={auto()?.config.mode === "auto"}>
-                                    <div class="text-caption opacity-60">已设为自动：下一轮发送前会按默认策略压一次，账本记 by=auto 与理由</div>
+                                    <div class="text-caption opacity-60">已设为自动：下一轮发送前会按上面策略压一次，账本记 by=auto 与理由</div>
                                 </Show>
                             </Show>
                         </div>
-                        <Block title="压缩选项">
+                        {/* ── ② 本次手动压缩：只影响下面这一次点击；参数记在 UI state（上次拧的） ── */}
+                        <Block title="② 本次手动压缩">
                             <div class="space-y-3">
                                 <section>
-                                    <div class="text-caption font-semibold opacity-70 mb-1">① 保留范围</div>
+                                    <div class="text-caption font-semibold opacity-70 mb-1">1. 保留范围</div>
                                     <input
                                         type="range"
                                         min="0"
@@ -414,7 +594,8 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                     <label class="mt-1 flex items-center gap-1.5 cursor-pointer text-caption">
                                         <input
                                             type="checkbox"
-                                            class="checkbox checkbox-xs checkbox-primary"
+                                            class="toggle toggle-xs toggle-primary"
+                                            aria-label="全部保留"
                                             checked={pol().keepTurns === "all"}
                                             onChange={(e) => setPol({ keepTurns: e.currentTarget.checked ? "all" : 6 })}
                                         />
@@ -423,7 +604,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                 </section>
 
                                 <section>
-                                    <div class="text-caption font-semibold opacity-70 mb-1">② 内容（留过程 还是 只留结论）</div>
+                                    <div class="text-caption font-semibold opacity-70 mb-1">2. 内容（留过程 还是 只留结论）</div>
                                     <div class="flex flex-col gap-1 text-body">
                                         <label class="flex items-center gap-1.5 cursor-pointer">
                                             <input
@@ -461,7 +642,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                 </section>
 
                                 <section>
-                                    <div class="text-caption font-semibold opacity-70 mb-1">③ 工具结果（只对保留部分生效）</div>
+                                    <div class="text-caption font-semibold opacity-70 mb-1">3. 工具结果（只对保留部分生效）</div>
                                     <div class="flex flex-col gap-1 text-body">
                                         {/* asis */}
                                         <label class="flex items-center gap-1.5 cursor-pointer">
@@ -529,12 +710,13 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                                     <label class="flex items-start gap-2 cursor-pointer">
                                         <input
                                             type="checkbox"
-                                            class="checkbox checkbox-xs checkbox-primary mt-0.5"
+                                            class="toggle toggle-xs toggle-primary mt-0.5"
+                                            aria-label="计算历史摘要"
                                             checked={pol().summary}
                                             onChange={(e) => setPol({ summary: e.currentTarget.checked })}
                                         />
                                         <span class="text-body">
-                                            ④ 计算历史摘要并带进新会话
+                                            4. 计算历史摘要并带进新会话
                                             <span class="block text-caption opacity-60">
                                                 可选（额外调一次模型）。清零只丢会话历史，任务记忆仍在任务正文里。
                                             </span>
@@ -616,7 +798,8 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
                             <label class="flex items-center gap-1 cursor-pointer">
                                 <input
                                     type="checkbox"
-                                    class="checkbox checkbox-xs"
+                                    class="toggle toggle-xs"
+                                    aria-label="只看差异"
                                     checked={onlyDiff()}
                                     onChange={(e) => setOnlyDiff(e.currentTarget.checked)}
                                 />

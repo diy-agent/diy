@@ -284,6 +284,29 @@ export const Caches = {
   diy_lab_cols_vars: jsonCols("diy_lab_cols_vars", [96, 224]),
   diy_lab_cols_vals: jsonCols("diy_lab_cols_vals", [110, 210]),
   diy_lab_cols_trace: jsonCols("diy_lab_cols_trace", [96, 96, 84, 48]),
+  /**
+   * 压缩面板「本次手动压缩」的参数（**上次手动拧的旋钮**）。
+   *
+   * 为什么进 UI state 而不是 `$DIY_HOME` 再开一个 yaml：
+   *   · 丢了只是回默认值，**不影响任何会话历史** —— 与本文件"localStorage 全部是可清理的
+   *     视图 cache、丢失无数据损失"的定位一致；
+   *   · 而**自动压缩**那套是**系统行为契约**（会自动改会话历史），丢了代价不同类
+   *     → 它放 `$DIY_HOME/auto-compact.yaml`（见 shared/context/auto-compact.ts）。
+   * **两套互不为真源、互不同步**（用户 2026-10-06：手动设的参数不该影响自动那套）。
+   * parse 只收已知形状（缺字段由调用方 `normalizePolicy` 兜底；这里不做第二套校验）。
+   */
+  diy_compact_manual_policy: field<Record<string, unknown>>("diy_compact_manual_policy", {
+    parse: (raw) => {
+      try {
+        const o: unknown = JSON.parse(raw);
+        return o && typeof o === "object" && !Array.isArray(o) ? (o as Record<string, unknown>) : null;
+      } catch {
+        return null;
+      }
+    },
+    serialize: (v) => JSON.stringify(v),
+    defaultValue: {},
+  }),
   /** 试验场未存盘草稿（project → { relpath → 正文 }）。
    *  存这里而不是组件 signal：App.tsx 用 <Show> 挂死页面，切页即卸载 → 半编辑内容全丢。
    *  按 project 分桶，切到别的项目不会看到/不会写入上一个项目的草稿。 */

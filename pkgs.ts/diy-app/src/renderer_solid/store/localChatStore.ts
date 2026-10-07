@@ -641,9 +641,9 @@ async function autoCompactStatus(taskUri: string) {
     return diyService.diy.agent.local.autoCompactStatus({ taskUri });
 }
 
-/** 写自动压缩配置（真源 = $DIY_HOME/auto-compact.yaml） */
-async function autoCompactSetConfig(mode: "off" | "notify" | "auto") {
-    return diyService.diy.agent.local.autoCompactSetConfig({ mode, config: undefined });
+/** 写自动压缩配置（真源 = $DIY_HOME/auto-compact.yaml；patch = 部分字段，主进程浅合并） */
+async function autoCompactSetConfig(patch: Record<string, unknown>) {
+    return diyService.diy.agent.local.autoCompactSetConfig({ patch });
 }
 
 /** 生成历史摘要（一次模型调用，花钱；由面板「生成摘要」显式触发） */

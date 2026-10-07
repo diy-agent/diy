@@ -624,10 +624,12 @@ export const apiDef = RpcSchema.router({
                * 写自动压缩配置（真源 = `$DIY_HOME/auto-compact.yaml`，手改或经此写回都行）。
                */
               autoCompactSetConfig: RpcSchema.unary({
-                desc: `写自动压缩配置（mode / triggers / 默认策略）`,
+                desc: `写自动压缩配置（真源 $DIY_HOME/auto-compact.yaml；patch = 部分字段，浅合并后归一）`,
                 input: {
-                  mode: z.enum(["off", "notify", "auto"]).optional().cliOption({ desc: "off/notify/auto" }),
-                  config: z.unknown().optional().cliOption({ desc: "完整配置对象（与 mode 二选一）" }),
+                  patch: z
+                    .unknown()
+                    .optional()
+                    .cliOption({ desc: "部分配置（mode / triggers / keep / summary），浅合并后写回" }),
                 },
                 output: z.any(),
               }),

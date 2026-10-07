@@ -414,13 +414,14 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return getLocalAgent().autoCompactStatus(input.taskUri);
   });
   binding.on(app.agent.local.autoCompactSetConfig, async ({ input }) => {
-    const { saveAutoCompact } = await import("../core/auto-compact-config");
-    const { loadAutoCompact } = await import("../core/auto-compact-config");
+    const { saveAutoCompact, loadAutoCompact } = await import("../core/auto-compact-config");
     const { diyHome } = await import("../core/state");
     const home = diyHome();
-    if (input.config !== undefined) return saveAutoCompact(home, input.config);
     const cur = loadAutoCompact(home);
-    return saveAutoCompact(home, { ...cur, ...(input.mode !== undefined ? { mode: input.mode } : {}) });
+    // 部分更新：浅合并（triggers / keep 也是整体替换 —— 调用方给的都是完整子对象，
+    // 只给一半反而会让"没提的字段"含义模糊，不如要求完整；缺子对象 = 保留现值）
+    const patch = (input.patch ?? {}) as Record<string, unknown>;
+    return saveAutoCompact(home, { ...cur, ...patch });
   });
   binding.on(app.agent.local.summarize, async ({ input }) => {
     noteRendererTouch("diy.agent.local.summarize", input.taskUri);
