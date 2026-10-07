@@ -454,6 +454,7 @@ export interface DeliveryOpts {
 //   · **渲染**（怎么呈现）才涉及工具结果裁剪/origin 自证位等形状问题。
 // 于是：全量投影（= llm.jsonl 每行）→ 选择 → 渲染。预览与真发共用同一条链。
 
+import { utf8Bytes } from "../../shared/context/compaction";
 import type { ContentPolicyKind } from "../../shared/context/compaction";
 
 /**
@@ -623,6 +624,136 @@ export function selectHistory(
     const dropped: number[] = [];
     for (let k = 0; k < n; k++) (keep[k] ? kept : dropped).push(k);
     return { kept, dropped };
+}
+
+// ─── 预算驱动的历史选择（用户 2026-10-07：目标式压缩）──────────────────
+//
+// 用户只给**一个数**：`budgetBytes`（除固定开支外，历史消息可占的字节上限）。
+// 系统按**纵向优先级阶梯**（全局按消息类型、跨轮）尽力保留到预算，超出的丢弃、并整层标注回取位置。
+//
+// 为什么是**纵向**（用户 2026-10-07 纠正「逐轮降解」）：**主干 > 细节**。用户发言是他
+// 记得、认为重要的主干，不管多旧都应优先保留；工具结果只是可回取的细节。按轮（横向）
+// 会把前面重要的用户消息整轮陪葬 —— 后几轮工具垃圾一爆，前面的用户发言就没了。
+
+/** 消息在阶梯里的类别（数组序 = 优先级，前 = 高） */
+export type HistoryRank = "user" | "conclusion" | "text" | "call" | "result";
+
+/**
+ * 优先级阶梯：**系统定义、只读可见**（不给用户拧）。
+ *   user       = 用户发言（主干）
+ *   conclusion = 助手**结论**文本（每轮最后一条助手文本）
+ *   text       = 助手非结论文本（过程性："我先看看…"）
+ *   call       = 工具命令（tool-call）
+ *   result     = 工具结果（content）
+ */
+export const HISTORY_LADDER: readonly HistoryRank[] = ["user", "conclusion", "text", "call", "result"];
+
+const RANK_OF: Record<HistoryRank, number> = { user: 0, conclusion: 1, text: 2, call: 3, result: 4 };
+
+function hasToolCall(m: LocalModelMessage): boolean {
+    return Array.isArray(m.content) && m.content.some((p) => p.type === "tool-call");
+}
+
+/** tool-call 消息的 toolCallId（不是 tool-call → null） */
+function callIdOfMessage(m: LocalModelMessage): string | null {
+    if (!hasToolCall(m)) return null;
+    const c = (m.content as { type: string; toolCallId?: string }[]).find((p) => p.type === "tool-call");
+    return c?.toolCallId ?? null;
+}
+
+/** 预算选择的结果 */
+export interface BudgetSelection {
+    /** 保留的消息下标（升序）；行号 = 下标 + 1 */
+    kept: number[];
+    /** 被丢弃的消息下标（升序） */
+    dropped: number[];
+    /** 保留的**连续区间**（[from,to] 1-based，含两端）—— 索引标注用它（gap = 区间之间的空隙，不必逐 gap 标注） */
+    keptRuns: [number, number][];
+    /** 实际占用字节（**渲染后**口径，工具结果已按策略裁剪） */
+    keptBytes: number;
+}
+
+/**
+ * **预算选择**：全量投影 + 预算 → 保留哪些下标（纯函数）。
+ *
+ * 算法：把消息按 `HISTORY_LADDER` 分类；按（优先级升序，下标降序 = **新的先**）逐个尝试，
+ * 放得下就留、否则跳。tool-call 必须与其 tool-result **同进退**（配对铁律）：选 call 时连带
+ * 选它的 result 并**合并计费**；放不下就两者一起丢。result 从不单独选（不会出现孤儿结果）。
+ *
+ * 边界：`budgetBytes = 0` ⇒ 一条不留（= 清零）。
+ */
+export function selectHistoryByBudget(
+    all: readonly LocalModelMessage[],
+    budgetBytes: number,
+    opts: Pick<DeliveryOpts, "transformToolResult"> = {},
+): BudgetSelection {
+    const n = all.length;
+    if (n === 0) return { kept: [], dropped: [], keptRuns: [], keptBytes: 0 };
+
+    // ① 分类：先标出每轮的**最后一条助手文本**（= 结论）
+    const lastTextIdx = new Map<string, number>();
+    for (let i = 0; i < n; i++) {
+        const m = all[i]!;
+        if (m.role === "assistant" && !hasToolCall(m)) lastTextIdx.set(m.turn ?? "", i);
+    }
+    const rank = new Array<HistoryRank>(n);
+    for (let i = 0; i < n; i++) {
+        const m = all[i]!;
+        if (m.role === "user") rank[i] = "user";
+        else if (m.role === "tool") rank[i] = "result";
+        else if (hasToolCall(m)) rank[i] = "call";
+        else rank[i] = lastTextIdx.get(m.turn ?? "") === i ? "conclusion" : "text";
+    }
+
+    // ② toolCallId → result 下标（配对用）
+    const resultOf = new Map<string, number>();
+    for (let i = 0; i < n; i++) {
+        const m = all[i]!;
+        if (m.role !== "tool") continue;
+        for (const p of m.content as LocalToolResultPart[]) if (p.type === "tool-result") resultOf.set(p.toolCallId, i);
+    }
+
+    // ③ 每条消息的**投递字节**（渲染后口径 —— 工具结果已按策略裁剪）
+    const cost = all.map((m) => utf8Bytes(JSON.stringify(renderMessage(m, opts))));
+
+    // ④ 贪心：优先级升序、同优先级新的先
+    const keep = new Array<boolean>(n).fill(false);
+    const order = Array.from({ length: n }, (_, i) => i).sort(
+        (a, b) => RANK_OF[rank[a]!] - RANK_OF[rank[b]!] || b - a,
+    );
+    let remaining = Math.max(0, budgetBytes);
+    for (const i of order) {
+        if (keep[i]) continue;
+        if (rank[i] === "result") continue; // 结果只随其 call 一起选
+        const add: number[] = [i];
+        let c = cost[i]!;
+        if (rank[i] === "call") {
+            const id = callIdOfMessage(all[i]!);
+            const ri = id ? resultOf.get(id) : undefined;
+            if (ri !== undefined && !keep[ri]) {
+                add.push(ri);
+                c += cost[ri]!;
+            }
+        }
+        if (c <= remaining) {
+            for (const k of add) if (!keep[k]) { keep[k] = true; remaining -= cost[k]!; }
+        }
+    }
+
+    // ⑤ 汇总（保留下标升序 + 连续区间）
+    const kept: number[] = [];
+    const dropped: number[] = [];
+    for (let i = 0; i < n; i++) (keep[i] ? kept : dropped).push(i);
+    const keptRuns: [number, number][] = [];
+    let prev = -2;
+    let keptBytes = 0;
+    for (const i of kept) {
+        keptBytes += cost[i]!;
+        if (i === prev + 1) keptRuns[keptRuns.length - 1]![1] = i + 1;
+        else keptRuns.push([i + 1, i + 1]);
+        prev = i;
+    }
+    return { kept, dropped, keptRuns, keptBytes };
 }
 
 /**
