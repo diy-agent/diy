@@ -1370,9 +1370,13 @@ export class LocalAgentManager {
         // 【用户 2026-10-07】允许**轮次中**压缩（长任务不能等一轮结束）。压缩只写快照 + 落盘被裁原文，
         // 不改 ops、不重置会话（投递按当前配置实时算），故对正在跑的轮次无副作用。
         const p = this.planCompact(taskUri, policyInput);
+        // 空操作：无轮被丢 + 无工具被裁 + 投递字节不缩 ⇒ 什么都没改，**不写账**（写一条"压缩"却
+        // 没压任何东西是误导：历史页会把它当一次真压缩）。缓存过期 / 系统上下文变触发时预算本就够用，
+        // 这条很常见（实测 auto cacheExpired 空转）。返回带 noop 的记录，调用方可据此提示"无需压缩"。
+        const noop = p.droppedIds.length === 0 && p.clipped.length === 0 && p.after.bytes >= p.before.bytes;
 
         // 原文落盘：marker 指的路径必须真的能打开（否则模型只能重跑命令 —— 那是真金白银）
-        for (const c of p.clipped) {
+        for (const c of noop ? [] : p.clipped) {
             const b = p.store.blocks.get(c.id);
             c.tool = b?.tool ? String(b.tool) : c.tool;
             try {
@@ -1413,8 +1417,10 @@ export class LocalAgentManager {
                 ...(p.keptRuns ? { kept: p.keptRuns } : {}),
                 summary: { text: summary?.text ?? null, data: summary?.data ?? null, cost: summary?.cost ?? null },
             },
+            ...(noop ? { noop: true } : {}),
         };
-        appendCompactEvent(taskUri, rec);
+        // 空操作不写账（见上）；非空操作才 append。
+        if (!noop) appendCompactEvent(taskUri, rec);
         return rec;
     }
 

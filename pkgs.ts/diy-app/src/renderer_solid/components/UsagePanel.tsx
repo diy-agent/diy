@@ -483,8 +483,9 @@ export function WindowRing() {
         if (!u) return;
         setBusy(true);
         try {
-            await localChatStore.compact(u, { budgetBytes: budget() ?? DEFAULT_BUDGET_BYTES } as never);
-            notificationStore.addToast("success", "已压缩（历史保留、可撤销）");
+            const rec = await localChatStore.compact(u, { budgetBytes: budget() ?? DEFAULT_BUDGET_BYTES } as never);
+            if (rec?.noop) notificationStore.addToast("info", "无需压缩（历史已在预算内）");
+            else notificationStore.addToast("success", "已压缩（历史保留、可撤销）");
             setOpen(false);
         } catch (e) {
             notificationStore.addToast("error", String(e instanceof Error ? e.message : e));
@@ -790,6 +791,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                             <button
                                 class={`btn btn-xs join-item ${view() === "compact" ? "btn-active" : "btn-ghost"}`}
                                 aria-pressed={view() === "compact"}
+                                data-drawer-tab="compact"
                                 onClick={() => setView("compact")}
                             >
                                 压缩
@@ -797,6 +799,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                             <button
                                 class={`btn btn-xs join-item ${view() === "total" ? "btn-active" : "btn-ghost"}`}
                                 aria-pressed={view() === "total"}
+                                data-drawer-tab="total"
                                 onClick={() => setView("total")}
                             >
                                 总表（按轮）
@@ -804,6 +807,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                             <button
                                 class={`btn btn-xs join-item ${view() === "step" ? "btn-active" : "btn-ghost"}`}
                                 aria-pressed={view() === "step"}
+                                data-drawer-tab="step"
                                 onClick={() => setView("step")}
                             >
                                 分表（按步）

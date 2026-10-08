@@ -84,9 +84,18 @@ async function hoverRing(): Promise<void> {
 }
 
 /** 点环 → 开 L3「窗口构成」抽屉（默认第一 tab = 压缩） */
+/**
+ * 打开「窗口构成」抽屉。
+ * ⚠️ 必须用**合成 click**（`el.click()`）而非真实鼠标：环的 pointerenter 会弹出 hover 卡
+ * （z-70），它正盖在抽屉 tab 上 —— 真实点击会落到卡上、且被遮的 tab 不进 a11y 树。
+ * 合成 click 不产生 hover 链，绕开这层干扰（这里只验抽屉内逻辑，不验环的 hover 行为）。
+ */
 async function openDrawer(): Promise<void> {
-  await ui.clickSelector('button[aria-label^="窗口占用"]');
+  await ui.query<string>(
+    `(() => { const b=[...document.querySelectorAll('button')].find(x=>(x.getAttribute('aria-label')||'').startsWith('窗口占用')); if(!b) return 'no'; b.click(); return 'ok'; })()`,
+  );
   await waitUntil(a11yText, (t) => t.includes("窗口构成"), { label: "窗口构成抽屉打开" });
+  await new Promise((r) => setTimeout(r, 120));
 }
 
 /** 正文里的文本（判「某轮还在不在」） */
@@ -285,17 +294,17 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
   });
 
   it("切「总表（按轮）/ 分表（按步）」：压缩内容退场（无用量记录 → 空态），可切回", async () => {
-    await ui.click("总表（按轮）");
+    await ui.clickSelector('[data-drawer-tab="total"]');
     await waitUntil(
       () => ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`),
       (v) => v === false,
       { label: "压缩 tab 退场" },
     );
     expect(await ui.query<boolean>("!!document.querySelector('table')")).toBe(false);
-    await ui.click("分表（按步）");
+    await ui.clickSelector('[data-drawer-tab="step"]');
     await new Promise((r) => setTimeout(r, 150));
     expect(await ui.query<boolean>("!!document.querySelector('table')")).toBe(false);
-    await ui.clickSelector('[aria-label="窗口构成视图"] button');
+    await ui.clickSelector('[data-drawer-tab="compact"]');
     await waitUntil(
       () => ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`),
       (v) => v === true,
@@ -398,9 +407,8 @@ describe("M4：分表压缩点位", () => {
   });
 
   it("打开抽屉 → 分表：事件后那步有「压缩」按钮，展开显示算法/过滤器/规模", async () => {
-    await ui.clickSelector('button[aria-label^="窗口占用"]');
-    await waitUntil(a11yText, (t) => t.includes("窗口构成"), { label: "抽屉打开" });
-    await ui.click("分表（按步）");
+    await openDrawer();
+    await ui.clickSelector('[data-drawer-tab="step"]');
     await waitUntil(
       () => ui.query<number>("document.querySelectorAll('[data-compact-point]').length"),
       (n) => n >= 1,

@@ -647,11 +647,11 @@ async function compact(
     policy: FlatCompactPolicy,
     summary?: { text: string; data: unknown; cost: number | null },
 ) {
-    const rec = await diyService.diy.agent.local.compact({
+    const rec = (await diyService.diy.agent.local.compact({
         taskUri,
         ...policyFlat(policy),
         ...(summary ? { summaryText: summary.text, summaryData: summary.data, summaryCost: summary.cost } : {}),
-    } as never);
+    } as never)) as { noop?: boolean } | undefined;
     // 压缩后当前会话视图变了（只含边界后的轮）→ 重建块树，让界面立刻反映新会话
     await reload(taskUri);
     return rec;

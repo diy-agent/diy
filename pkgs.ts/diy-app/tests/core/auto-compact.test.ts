@@ -163,7 +163,7 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
             pushes({ op: "stop", id: `${t}_u` });
             pushes({ op: "start", id: `${t}_s1`, kind: "step", parent: t });
             pushes({ op: "start", id: `${t}_c`, kind: "tool", parent: `${t}_s1`, meta: { tool: "bash" } });
-            pushes({ op: "patch", id: `${t}_c`, fields: { args: { command: "ls" }, status: "done", output: "out" } });
+            pushes({ op: "patch", id: `${t}_c`, fields: { args: { command: "ls" }, status: "done", output: Array.from({ length: 120 }, (_, k) => `row ${k}`).join("\n") } });
             pushes({ op: "stop", id: `${t}_c` });
             pushes({ op: "stop", id: `${t}_s1` });
             pushes({ op: "stop", id: t });

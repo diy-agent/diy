@@ -377,9 +377,15 @@ export function makeDeliveryTransform(
     const opts: DeliveryTransform = { budgetBytes: budgetBytesOf(policy) };
     const tr = toolResultOf(policy);
     if (tr.render !== "asis") {
+        // 去重：同一 transform 会在**多次渲染**里对同一工具结果重复调用（投递渲染 + 选择时的成本
+        // 估算各一次；见 sizeOfOps 的 blocksToMessages + selectForDelivery）——同一 id 的裁剪结果
+        // 确定，重复记会让 `details.clipped` 虚胖（实测每个 id 恰 2×）。按 id 只记一次。
+        const seen = new Set<string>();
         opts.transformToolResult = ({ id, output }) => {
             const r = clipToolResult(output, tr, { origPath: origPathOf(id) });
             if (!r.clipped) return output;
+            if (seen.has(id)) return r.text;
+            seen.add(id);
             collect?.push({
                 id,
                 tool: "",
@@ -531,6 +537,11 @@ export interface CompactEventRecord {
         /** 该轮 start 在 ops.jsonl 里的字节偏移（重放跳前缀的快路径） */
         keptFromOpsOffset?: number;
     };
+    /**
+     * **空操作**标记（可选）：该次压缩什么都没改（无轮被丢、无工具被裁、投递字节不变）。
+     * 只读检测用 —— 真正的空操作**不写账**（见 compact()），此字段供调用方判断"这次白压了"。
+     */
+    noop?: boolean;
     /** **结果数字**（规模，按投递口径算；数字之间不许打架） */
     size: {
         before: SizeSnapshot;

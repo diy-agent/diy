@@ -9,7 +9,7 @@
 //   ③ 账目数字要圆整（`50.00000000000001` 是浮点残渣，不是精度）；空壳 `predicted: {}` 不写。
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { LanguageModelV3StreamPart, LanguageModelV3StreamResult, LanguageModelV3Usage } from "@ai-sdk/provider";
 import { MockLanguageModelV3 } from "ai/test";
@@ -29,6 +29,28 @@ beforeAll(() => {
 });
 let seq = 0;
 const newUri = (): string => createTask({ title: `账本测试 ${++seq}`, project: PROJECT });
+
+/** 三轮会话（每轮 user + assistant 文本 + 一个 tool，工具输出巨大 → 可被 headtail 裁）落盘 */
+function seedOpsBigTools(uri: string, turns = 3): void {
+    const lines: string[] = [];
+    for (let i = 1; i <= turns; i++) {
+        const t = `t${6000 + i}`;
+        const big = Array.from({ length: 200 }, (_, k) => `row ${k}`).join("\n");
+        const push = (o: unknown) => lines.push(JSON.stringify(o));
+        push({ op: "start", id: t, kind: "turn" });
+        push({ op: "start", id: `${t}_u`, kind: "text", parent: t, meta: { role: "user" } });
+        push({ op: "delta", id: `${t}_u`, fields: { content: `第 ${i} 句` } });
+        push({ op: "stop", id: `${t}_u` });
+        push({ op: "start", id: `${t}_s1`, kind: "step", parent: t });
+        push({ op: "start", id: `${t}_c`, kind: "tool", parent: `${t}_s1`, meta: { tool: "bash" } });
+        push({ op: "patch", id: `${t}_c`, fields: { args: { command: "ls" } } });
+        push({ op: "patch", id: `${t}_c`, fields: { status: "done", output: big } });
+        push({ op: "stop", id: `${t}_c` });
+        push({ op: "stop", id: `${t}_s1` });
+        push({ op: "stop", id: t });
+    }
+    writeFileSync(opsFile(uri), lines.join("\n") + "\n", "utf-8");
+}
 
 /** 三轮会话（每轮 user + assistant 文本 + 一个 tool）落盘 */
 function seedOps(uri: string, turns = 3): string[] {
@@ -91,12 +113,60 @@ describe("④ 预算事件的**过滤器表达**（历史回溯可还原投递�
     });
 });
 
+describe("② details.clipped：同 id 只记一次（去重 —— 回归「虚胖一倍」）", () => {
+    it("headtail 裁剪时，每个工具 id 在 details.clipped 里只出现一次", () => {
+        const uri = newUri();
+        seedOpsBigTools(uri);
+        const rec = getLocalAgent().compact(
+            uri,
+            { mode: "budget", budgetBytes: 1024 * 1024, toolResult: { render: "headtail" }, summary: false },
+            "cli",
+        ) as { details?: { clipped?: Array<{ id: string }> } };
+        const clipped = rec.details?.clipped ?? [];
+        expect(clipped.length).toBeGreaterThan(0);
+        const ids = clipped.map((c) => c.id);
+        expect(new Set(ids).size).toBe(ids.length); // 无重复
+    });
+});
+
+describe("② 空操作压缩：不写账、返回 noop（回归「cacheExpired 空转记一次压缩」）", () => {
+    it("预算 ≥ 历史（无轮丢、无工具裁）→ rec.noop=true，且 compact 账本无新事件", () => {
+        const uri = newUri();
+        seedOps(uri); // 三轮小会话
+        const rec = getLocalAgent().compact(
+            uri,
+            { mode: "budget", budgetBytes: 1024 * 1024, toolResult: { render: "asis" }, summary: false },
+            "auto",
+            undefined,
+            "cacheExpired",
+        ) as { noop?: boolean };
+        expect(rec.noop).toBe(true);
+        // 空操作**不写账**：账本文件里没有 kind=compact 的行（文件甚至可能不存在）
+        const logText = existsSync(compactFile(uri)) ? readFileSync(compactFile(uri), "utf-8") : "";
+        const events = parseCompactLog(logText);
+        expect(events.filter((e) => e.kind === "compact")).toHaveLength(0);
+    });
+
+    it("真压（预算=0）→ 无 noop，账本记一条", () => {
+        const uri = newUri();
+        seedOps(uri);
+        const rec = getLocalAgent().compact(
+            uri,
+            { mode: "budget", budgetBytes: 0, toolResult: { render: "asis" }, summary: false },
+            "cli",
+        ) as { noop?: boolean };
+        expect(rec.noop).toBeUndefined();
+        const events = parseCompactLog(readFileSync(compactFile(uri), "utf-8").toString());
+        expect(events.filter((e) => e.kind === "compact")).toHaveLength(1);
+    });
+});
+
 describe("② rates：provider = 谁服务的，source = 价目真源", () => {
     it("provider 不是 models.dev；source 才是；k 圆整", () => {
         const uri = newUri();
         seedOps(uri);
         // 用「真压一次」把账本写出来（预览不落账）
-        const rec = getLocalAgent().compact(uri, { budgetBytes: 3072, toolResult: { render: "asis" } }, "cli");
+        const rec = getLocalAgent().compact(uri, { budgetBytes: 0, toolResult: { render: "asis" } }, "cli");
         // v2 分组后 rates 在 cost 分组里
         const ev = rec as unknown as { cost?: { rates?: { provider?: string; source?: string; k: number } } };
         const rates = ev.cost?.rates;
@@ -138,7 +208,7 @@ describe("③ measure 事件：空壳 predicted 不写", () => {
     it("真发一轮后 measure 落账，且**没有** predicted 键", async () => {
         const uri = newUri();
         seedOps(uri);
-        getLocalAgent().compact(uri, { budgetBytes: 3072, toolResult: { render: "asis" } }, "cli");
+        getLocalAgent().compact(uri, { budgetBytes: 0, toolResult: { render: "asis" } }, "cli");
         const mgr = new (await import("../../src/main/services/local-agent")).LocalAgentManager(
             () => stub() as unknown as LanguageModel,
         );
