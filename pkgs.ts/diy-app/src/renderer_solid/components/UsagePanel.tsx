@@ -20,7 +20,7 @@
  *   · 不可测桶写 `–`/`n/a`，**不写 0**；旧记录（无四桶字段）按原样降级，不假装能拆
  */
 
-import { createEffect, createResource, createSignal, For, Show, onCleanup } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 import { localChatStore } from "../store/localChatStore";
 import { useDrawerMax, DrawerMaxButton } from "./DrawerMaximize";
@@ -46,6 +46,8 @@ import { VIEW_BAR_H } from "../lib/layout-metrics";
 import { notificationStore } from "../store/notificationStore";
 import { DEFAULT_BUDGET_BYTES } from "../../shared/context/compaction";
 import { useCompactPanel, CompactPanelContent } from "./CompactSessionPanel";
+import type { CompactEventRecord, CompactTrigger } from "../../shared/context/compaction";
+import { mapCompactPointsToSteps, stepKey } from "../../shared/context/compact-points";
 
 // ─── 共用小件 ────────────────────────────────────────
 
@@ -667,7 +669,7 @@ export function WindowRing() {
  * L3 窗口构成报表 —— 回答「为 agent 优化该动谁」：系统提示词多了？历史消息多了？工具输出多了？
  * 与用量看板（钱 vs 模型，判断价格变化）是**两个问题**，数据同账本、不同列（2026-10-03 定位）。
  * · 总表 = 按轮列表（轮时间到秒 + 轮 id；构成数量 3 列 + 占比 3 列独立；不带末步 prompt/窗口）
- * · 分表 = 按步列表（步时间到秒 + 轮 id + 该步 prompt 与执行时窗口；数量/占比同样 3+3）
+ * · 分表 = 按步列表（步时间到秒 + 轮 id + 该步 prompt 与执行时窗口 + 压缩点位；数量/占比同样 3+3）
  * 单元格口径：数量 = 字节÷4 估（~）；占比 = 该段 ÷ 同行 prompt；– = 未落盘构成（本版前的记录）。
  */
 export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }) {
@@ -677,6 +679,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
         if (!props.open) return;
         const u = localChatStore.currentUri;
         if (u) void localChatStore.refreshUsage(u);
+        void refetchCompactEvents();
         const onKey = (e: KeyboardEvent) => {
             if (e.key === "Escape") {
                 e.stopPropagation();
@@ -690,6 +693,22 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
     const groups = () => groupByTurn(steps());
     /** 压缩面板控制器（供 tab 栏执行按钮 + 压缩 tab 内容共享） */
     const ctl = useCompactPanel(() => localChatStore.currentUri ?? "");
+
+    // ─── M4：压缩点位（分表按步标注「哪次请求被压过」）───
+    // 【用户 2026-10-08】压缩可能发生在**一轮中间** ⇒ 用**轮次总表**表达不了「哪个请求压过」，
+    // 必须落在**分表（按步）**：一步 = 一次请求。判据 = 该步 ts 是该压缩事件之后的**第一步**。
+    const [compactEvents, { refetch: refetchCompactEvents }] = createResource(
+        () => (props.open ? localChatStore.currentUri : null),
+        async (u) => (u ? ((await localChatStore.compactEvents(u)) as CompactEventRecord[]) : []),
+    );
+    /** 展开的压缩点位（键 = `<turnId>#<step>`；同时只开一个） */
+    const [openPoint, setOpenPoint] = createSignal<string | null>(null);
+    /** 步键 → 该步命中的压缩事件（按 ts 升序；可能多条）。纯函数在 shared（可单测）。 */
+    const compactPoints = createMemo(() => mapCompactPointsToSteps(steps(), compactEvents() ?? []));
+    const fmtB = (n?: number) => (n === undefined ? "—" : n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`);
+    const byText = (by: CompactEventRecord["by"]) => (by === "auto" ? "自动" : by === "ui" ? "界面" : "命令行");
+    const triggerShort = (t: CompactTrigger) =>
+        t === "systemContextChanged" ? "系统上下文变" : t === "cacheExpired" ? "缓存过期" : t === "contextWindowOver" ? "窗口超限" : "手动";
 
     /** 一行的三段（cp = 该行记录的构成字节；prompt = 该行输入 token，精确） */
     const rowParts = (cp: { systemBytes: number; toolsBytes: number } | undefined, prompt: number) => {
@@ -831,22 +850,69 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                                         { label: "步", cls: "text-right" },
                                                         { label: "该步 prompt", cls: "text-right", title: "该步总输入（账本精确）" },
                                                     ],
-                                                    [{ label: "窗口%", title: "该步 总输入+总输出 ÷ 上限（执行时的窗口情况）" }],
+                                                    [
+                                                        { label: "窗口%", title: "该步 总输入+总输出 ÷ 上限（执行时的窗口情况）" },
+                                                        { label: "压缩", title: "该步（请求）是否被压缩过 —— 点击展开那次压缩信息" },
+                                                    ],
                                                 )}
                                             </thead>
                                             <tbody>
                                                 <For each={steps()}>
                                                     {(r) => {
                                                         const v = stepView(r);
+                                                        const k = stepKey(r);
+                                                        const evs = () => compactPoints().get(k);
                                                         return (
-                                                            <tr>
-                                                                <td class="text-right tabular-nums" title={r.ts}>{stepStamp(r.ts)}</td>
-                                                                <td class="text-right font-mono text-caption opacity-70">{r.turnId}</td>
-                                                                <td class="text-right tabular-nums">s{r.step}</td>
-                                                                <td class="text-right tabular-nums">{fmtInt(v.buckets.inputTotal)}</td>
-                                                                {cellsOf(r.contextParts, v.buckets.inputTotal)}
-                                                                <td class={`text-right ${pctClass(v.windowRate)}`}>{pctText(v.windowRate)}</td>
-                                                            </tr>
+                                                            <>
+                                                                <tr>
+                                                                    <td class="text-right tabular-nums" title={r.ts}>{stepStamp(r.ts)}</td>
+                                                                    <td class="text-right font-mono text-caption opacity-70">{r.turnId}</td>
+                                                                    <td class="text-right tabular-nums">s{r.step}</td>
+                                                                    <td class="text-right tabular-nums">{fmtInt(v.buckets.inputTotal)}</td>
+                                                                    {cellsOf(r.contextParts, v.buckets.inputTotal)}
+                                                                    <td class={`text-right ${pctClass(v.windowRate)}`}>{pctText(v.windowRate)}</td>
+                                                                    <td class="text-right">
+                                                                        <Show when={evs()} fallback={<span class="opacity-30">—</span>}>
+                                                                            {(list) => (
+                                                                                <button
+                                                                                    class="btn btn-ghost btn-xs text-info"
+                                                                                    aria-label="压缩点位"
+                                                                                    data-compact-point
+                                                                                    onClick={() => setOpenPoint((cur) => (cur === k ? null : k))}
+                                                                                >
+                                                                                    压缩{list().length > 1 ? ` ×${list().length}` : ""}
+                                                                                </button>
+                                                                            )}
+                                                                        </Show>
+                                                                    </td>
+                                                                </tr>
+                                                                <Show when={openPoint() === k && evs()}>
+                                                                    <tr data-compact-point-detail>
+                                                                        <td colspan={12} class="bg-base-200/60 p-2">
+                                                                            <div class="space-y-1 text-caption">
+                                                                                <For each={evs() ?? []}>
+                                                                                    {(ev) => (
+                                                                                        <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                                                                                            <span class="badge badge-ghost badge-xs">budget</span>
+                                                                                            <span>
+                                                                                                上限{" "}
+                                                                                                {ev.policy.modeData.budgetBytes === 0
+                                                                                                    ? "0（=清零）"
+                                                                                                    : `${Math.round(ev.policy.modeData.budgetBytes / 1024)} KB`}
+                                                                                            </span>
+                                                                                            <span>{byText(ev.by)} · {triggerShort(ev.trigger)}</span>
+                                                                                            <span class="tabular-nums">轮 {ev.size.before.turns} → {ev.size.after.turns}</span>
+                                                                                            <span class="tabular-nums">字节 {fmtB(ev.size.before.bytes)} → {fmtB(ev.size.after.bytes)}</span>
+                                                                                            <span>保留区间 {(ev.details?.kept ?? []).length} 段</span>
+                                                                                            <span class="opacity-50">{new Date(ev.ts).toLocaleString()}</span>
+                                                                                        </div>
+                                                                                    )}
+                                                                                </For>
+                                                                            </div>
+                                                                        </td>
+                                                                    </tr>
+                                                                </Show>
+                                                            </>
                                                         );
                                                     }}
                                                 </For>
@@ -900,7 +966,8 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                 ~ = 字节 ÷ 4 估算（中英混排会偏差）；历史消息 = 同行 prompt（账本精确）− 系统 − 工具；
                                 占比 = 该段 ÷ 同行 prompt（合计 = Σ段 ÷ Σprompt）。
                                 <br />
-                                `–` = 该记录未落盘构成（本版前的旧轮）；窗口% = 该步 总输入+总输出 ÷ 上限（与环同源）。
+                                `–` = 该记录未落盘构成（本版前的旧轮）；窗口% = 该步 总输入+总输出 ÷ 上限（与环同源）；
+                                压缩列 = 该步（请求）是否被压缩过（点开看那次的算法/过滤器/规模）。
                             </div>
                         </Show>
                     </div>

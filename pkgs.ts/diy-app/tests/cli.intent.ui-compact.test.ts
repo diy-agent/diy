@@ -328,3 +328,104 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     await waitUntil(() => Promise.resolve(budgetMarks()), (n) => n > before, { label: "快捷直压再记一条" });
   });
 });
+
+// ─── M4：压缩点位进「分表（按步）」────────────────────────────
+// 【用户 2026-10-08】压缩可能发生在一轮中间 ⇒ 只能按**步（请求）**标，落到分表。
+// 数据：手工种 usage.jsonl（两步，分居压缩事件两侧）+ compact.jsonl（一条压缩事件）。
+describe("M4：分表压缩点位", () => {
+  let uri2 = "";
+
+  it("两步 + 一条压缩事件（落在两步之间）→ 只有其后那步标「压缩」", async () => {
+    const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/cp2 --label 点位`);
+    const pid = String((p.data as any)?.data?.id);
+    const t = await fx.sh.getJson(`./diy.sh task create "压缩点位" ${pid}`);
+    uri2 = String((t.data as any)?.data?.uri);
+
+    const dir = join(fx.HOME, "local");
+    mkdirSync(dir, { recursive: true });
+    const key = basename(opsFile(uri2)).replace(/\.ops\.jsonl$/, "");
+    const evTs = new Date(Date.now()).toISOString();
+    const t1 = new Date(Date.now() - 60_000).toISOString();
+    const t2 = new Date(Date.now() + 60_000).toISOString();
+
+    // 一条压缩事件（v2 真源形状）
+    const ev = {
+      kind: "compact",
+      v: 2,
+      id: evTs,
+      ts: evTs,
+      by: "ui",
+      trigger: "manual",
+      policy: { mode: "budget", modeData: { budgetBytes: 3072, toolResult: { render: "asis" } }, summary: false },
+      boundary: { keptFromTurnId: null, keepFromOpIndex: 0 },
+      size: {
+        before: { turns: 3, messages: 6, bytes: 300, estTokens: 75 },
+        after: { turns: 0, messages: 0, bytes: 0, estTokens: 0 },
+        keptTurns: 0,
+        droppedTurns: 3,
+      },
+      details: { kept: [[1, 9]] },
+    };
+    writeFileSync(join(dir, `${key}.compact.jsonl`), JSON.stringify(ev) + "\n", "utf-8");
+
+    // 两步用量账：t1 在事件前、t2 在事件后
+    const step = (turnId: string, s: number, ts: string) =>
+      JSON.stringify({
+        ts,
+        turnId,
+        step: s,
+        model: "test",
+        apiFace: "chat",
+        usage: { inputTokens: 1000, outputTokens: 100 },
+      });
+    writeFileSync(join(dir, `${key}.usage.jsonl`), [step("t1000", 1, t1), step("t2000", 1, t2)].join("\n") + "\n", "utf-8");
+    // 让会话有 ops（免得历史区空）
+    const opsFile2 = join(dir, `${key}.ops.jsonl`);
+    writeFileSync(
+      opsFile2,
+      [
+        { op: "start", id: "t1000", kind: "turn" },
+        { op: "start", id: "t1000_u", kind: "text", parent: "t1000", meta: { role: "user" } },
+        { op: "delta", id: "t1000_u", fields: { content: "第一轮" } },
+        { op: "stop", id: "t1000_u" },
+        { op: "stop", id: "t1000" },
+      ].map((o) => JSON.stringify(o)).join("\n") + "\n",
+      "utf-8",
+    );
+
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri2}`);
+    await waitUntil(a11yText, (t) => t.includes("第一轮"), { label: "会话上屏" });
+  });
+
+  it("打开抽屉 → 分表：事件后那步有「压缩」按钮，展开显示算法/过滤器/规模", async () => {
+    await ui.clickSelector('button[aria-label^="窗口占用"]');
+    await waitUntil(a11yText, (t) => t.includes("窗口构成"), { label: "抽屉打开" });
+    await ui.click("分表（按步）");
+    await waitUntil(
+      () => ui.query<number>("document.querySelectorAll('[data-compact-point]').length"),
+      (n) => n >= 1,
+      { label: "压缩点位按钮出现" },
+    );
+    // 只有一步被标
+    expect(await ui.query<number>("document.querySelectorAll('[data-compact-point]').length")).toBe(1);
+    // 展开前无详情
+    expect(await ui.query<boolean>("!!document.querySelector('[data-compact-point-detail]')")).toBe(false);
+    await ui.clickSelector('[aria-label="压缩点位"]');
+    const detail = await waitUntil(
+      () => ui.query<string>("document.querySelector('[data-compact-point-detail]')?.textContent ?? ''"),
+      (t) => t.includes("上限"),
+      { label: "压缩详情展开" },
+    );
+    expect(detail).toContain("budget");
+    expect(detail).toContain("3 KB");
+    expect(detail).toContain("保留区间");
+    // 再点收起
+    await ui.clickSelector('[aria-label="压缩点位"]');
+    await waitUntil(
+      () => ui.query<boolean>("!!document.querySelector('[data-compact-point-detail]')"),
+      (v) => v === false,
+      { label: "压缩详情收起" },
+    );
+    await ui.clickSelector('[aria-label="关闭窗口构成"]');
+  });
+});
