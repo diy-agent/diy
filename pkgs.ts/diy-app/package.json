@@ -32,6 +32,7 @@
     "@kobalte/core": "^0.13.8",
     "@lezer/highlight": "^1.2.3",
     "@types/js-yaml": "^4.0.9",
+    "@babel/runtime": "^7.28.4",
     "@uiw/codemirror-themes-all": "^4.25.11",
     "ai": "^7.0.113",
     "chokidar": "^5.0.0",
