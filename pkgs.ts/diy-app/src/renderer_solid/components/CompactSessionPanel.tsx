@@ -26,6 +26,8 @@ import {
     normalizePolicy,
     toolResultOf,
     type CompactPolicy,
+    type ToolResultMode,
+    type ToolResultPolicy,
 } from "../../shared/context/compaction";
 /** 触发理由的短文案（表里空间小；完整版在 TRIGGER_TEXT_FULL，提示条上用） */
 function triggerText(t: string | undefined): string {
@@ -163,7 +165,10 @@ export interface CompactPreviewModel {
 }
 
 export interface CompactPanelCtl {
-    auto: () => { config: { mode: "off" | "notify" | "auto"; policy: unknown } } | undefined;
+    auto: () => {
+        config: { mode: "off" | "notify" | "auto"; policy: unknown };
+        raw?: { path: string; text: string };
+    } | undefined;
     autoBusy: () => boolean;
     patchAuto: (patch: Record<string, unknown>) => Promise<void>;
     autoPolicy: () => CompactPolicy;
@@ -176,6 +181,19 @@ export interface CompactPanelCtl {
     err: () => string | null;
     /** 立即压缩：按当前预算压一次（历史保留、可撤销）。成功 toast。 */
     apply: () => Promise<void>;
+    // ─── M3：策略参数读写（层级展示用）───
+    /** `modeData.toolResult.render`（工具结果呈现） */
+    render: () => ToolResultMode;
+    setRender: (r: ToolResultMode) => void;
+    /** headtail 私有参数（`renderData`）；非 headtail 时给当前/缺省值 */
+    renderData: () => { head: number; tail: number; maxLineChars: number; maxKeepBytes: number };
+    setRenderData: (patch: Partial<{ head: number; tail: number; maxLineChars: number; maxKeepBytes: number }>) => void;
+    /** 与 mode 同级的 `summary`（预留字段） */
+    summaryEnabled: () => boolean;
+    setSummary: (v: boolean) => void;
+    /** 配置真源 `auto-compact.yaml` 原始全文（只读视图用） */
+    rawText: () => string;
+    rawPath: () => string;
 }
 
 /**
@@ -189,6 +207,7 @@ export function useCompactPanel(uri: () => string): CompactPanelCtl {
             if (!u) return undefined;
             return (await localChatStore.autoCompactStatus(u)) as {
                 config: { mode: "off" | "notify" | "auto"; policy: unknown };
+                raw?: { path: string; text: string };
             };
         },
     );
@@ -224,6 +243,30 @@ export function useCompactPanel(uri: () => string): CompactPanelCtl {
             { defer: false },
         ),
     );
+    /** headtail 私有参数（无 headtail 时回落到缺省 —— 切到 headtail 时用它初始化） */
+    const headtailData = () => {
+        const tr = currentToolResult();
+        if (tr.render === "headtail") return tr.renderData;
+        const d = DEFAULT_TOOL_RESULT_POLICY.render === "headtail" ? DEFAULT_TOOL_RESULT_POLICY.renderData : undefined;
+        return d ?? { head: 3, tail: 3, maxLineChars: 300, maxKeepBytes: 8192 };
+    };
+    /** 写整个 toolResult 支（保住 budgetBytes 与 summary） */
+    const patchToolResult = (next: ToolResultPolicy) =>
+        patchAutoPolicy({
+            mode: "budget",
+            modeData: { budgetBytes: budgetBytes(), toolResult: next },
+            summary: autoPolicy().summary,
+        });
+    const render = (): ToolResultMode => currentToolResult().render;
+    const setRender = (r: ToolResultMode) =>
+        patchToolResult(r === "headtail" ? { render: "headtail", renderData: headtailData() } : { render: r });
+    const setRenderData = (patch: Partial<{ head: number; tail: number; maxLineChars: number; maxKeepBytes: number }>) =>
+        patchToolResult({ render: "headtail", renderData: { ...headtailData(), ...patch } });
+    const summaryEnabled = (): boolean => autoPolicy().summary;
+    const setSummary = (v: boolean) => patchAutoPolicy({ ...autoPolicy(), summary: v });
+    const rawText = (): string => auto()?.raw?.text ?? "";
+    const rawPath = (): string => auto()?.raw?.path ?? "";
+
     /** 提交预算输入（失焦 / 回车）。**返回 Promise**：写盘 + refetch 异步，apply 必须先 await 它。 */
     const commitKb = async (): Promise<void> => {
         const kb = Number(kbDraft());
@@ -268,7 +311,10 @@ export function useCompactPanel(uri: () => string): CompactPanelCtl {
         }
     };
 
-    return { auto, autoBusy, patchAuto, autoPolicy, budgetBytes, kbDraft, setKbDraft, commitKb, pv, busy, err, apply };
+    return {
+        auto, autoBusy, patchAuto, autoPolicy, budgetBytes, kbDraft, setKbDraft, commitKb, pv, busy, err, apply,
+        render, setRender, renderData: headtailData, setRenderData, summaryEnabled, setSummary, rawText, rawPath,
+    };
 }
 
 /**
@@ -279,6 +325,16 @@ export function useCompactPanel(uri: () => string): CompactPanelCtl {
  */
 export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
     const ctl = props.ctl;
+
+    /** 左栏视图：UI 表单 ⇄ 原始 YAML（同 VSCode settings 的 UI/JSON 切换；用户 2026-10-07） */
+    const [panelView, setPanelView] = createSignal<"form" | "yaml">("form");
+    /** headtail 私有参数的字段表（渲染顺序 + 文案一处定义） */
+    const RENDER_DATA_FIELDS: { key: "head" | "tail" | "maxLineChars" | "maxKeepBytes"; hint: string }[] = [
+        { key: "head", hint: "保留头部行数" },
+        { key: "tail", hint: "保留尾部行数" },
+        { key: "maxLineChars", hint: "单行超长截断阈值（字符）" },
+        { key: "maxKeepBytes", hint: "保留总量兜底（字节）" },
+    ];
 
     // 右栏视图控制
     const [sideBySide, setSideBySide] = createSignal(false);
@@ -386,58 +442,158 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
 
     return (
         <div class="flex h-full min-h-0 w-full">
-            {/* ── 左栏：预算区（自动压缩 toggle + 压缩到输入）+ 费用图 ── */}
+            {/* ── 左栏：视图切换（参数 / 原始 YAML）+ 参数区 + 费用图 ── */}
             <div class="w-[340px] shrink-0 overflow-auto border-r p-2 space-y-2">
-                <div class="rounded-lg border border-base-300 p-3 space-y-3">
-                    <div class="text-caption opacity-70">
-                        当前 {estTok(ctl.pv()?.before.bytes ?? 0).toLocaleString()} tok → 压缩后{" "}
-                        {estTok(ctl.pv()?.after.bytes ?? 0).toLocaleString()} tok{" "}
-                        <span class="text-success">(-{ratio()}%)</span>
-                        <span class="opacity-60">　删 {diffCounts().del} / 增 {diffCounts().add} 行</span>
-                    </div>
-                    <div class="flex items-center justify-between">
-                        <span class="text-body font-semibold">自动压缩</span>
-                        <input
-                            type="checkbox"
-                            class="toggle toggle-sm toggle-primary"
-                            aria-label="自动压缩"
-                            disabled={ctl.autoBusy()}
-                            checked={ctl.auto()?.config.mode === "auto"}
-                            onChange={(e) => void ctl.patchAuto({ mode: e.currentTarget.checked ? "auto" : "off" })}
-                        />
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <span class="text-body">压缩到</span>
-                        <input
-                            type="number"
-                            class="input input-sm w-20"
-                            aria-label="压缩预算KB"
-                            min="0"
-                            value={ctl.kbDraft()}
-                            disabled={ctl.autoBusy()}
-                            onInput={(e) => ctl.setKbDraft(e.currentTarget.value)}
-                            onChange={() => void ctl.commitKb()}
-                            onBlur={() => void ctl.commitKb()}
-                        />
-                        <span class="text-body">KB</span>
-                    </div>
-                    <div class="text-caption opacity-70">
-                        历史 ≤ <b>{budgetKbLabel()}</b> · 整份请求 ≈ <b>{afterKb()}</b>
-                    </div>
-                    <div class="text-caption opacity-45">
-                        历史按优先级保留：用户发言 &gt; 助手结论 &gt; 助手过程 &gt; 工具命令 &gt; 工具结果
-                    </div>
-                    <Show when={ctl.err()}>
-                        <div class="text-caption text-error">{ctl.err()}</div>
-                    </Show>
+                <div class="join w-full" role="group" aria-label="压缩配置视图">
+                    <button
+                        class={"btn btn-xs join-item flex-1 " + (panelView() === "form" ? "btn-active" : "btn-ghost")}
+                        aria-pressed={panelView() === "form"}
+                        onClick={() => setPanelView("form")}
+                    >
+                        参数
+                    </button>
+                    <button
+                        class={"btn btn-xs join-item flex-1 " + (panelView() === "yaml" ? "btn-active" : "btn-ghost")}
+                        aria-pressed={panelView() === "yaml"}
+                        onClick={() => setPanelView("yaml")}
+                    >
+                        原始 YAML
+                    </button>
                 </div>
 
-                <Block title="费用对比">
-                    <CostCompare facts={ctl.pv()?.facts ?? []} />
-                    <div class="mt-2 text-caption opacity-60">
-                        金额 = token ÷ 1M × 当前模型非缓存输入单价；token 按字节 / 4 估算（仅为对比，不进计费）。
+                <Show
+                    when={panelView() === "form"}
+                    fallback={
+                        <div class="rounded-lg border border-base-300">
+                            <div class="border-b border-base-300 px-2 py-1 text-caption opacity-60 break-all" title={ctl.rawPath()}>
+                                真源 {ctl.rawPath() || "auto-compact.yaml"}（只读）
+                            </div>
+                            <pre
+                                data-compact-raw
+                                class="m-0 max-h-[70vh] overflow-auto p-2 text-caption font-mono leading-[1.5] whitespace-pre-wrap break-all"
+                            >{ctl.rawText() || "（尚未生成；改动参数后即落盘）"}</pre>
+                        </div>
+                    }
+                >
+                    {/* 预算区：自动压缩开关（= config.mode，非策略） */}
+                    <div class="rounded-lg border border-base-300 p-3 space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-body font-semibold">自动压缩</span>
+                            <input
+                                type="checkbox"
+                                class="toggle toggle-sm toggle-primary"
+                                aria-label="自动压缩"
+                                disabled={ctl.autoBusy()}
+                                checked={ctl.auto()?.config.mode === "auto"}
+                                onChange={(e) => void ctl.patchAuto({ mode: e.currentTarget.checked ? "auto" : "off" })}
+                            />
+                        </div>
+                        <div class="text-caption opacity-70">
+                            当前 {estTok(ctl.pv()?.before.bytes ?? 0).toLocaleString()} tok → 压缩后{" "}
+                            {estTok(ctl.pv()?.after.bytes ?? 0).toLocaleString()} tok{" "}
+                            <span class="text-success">(-{ratio()}%)</span>
+                            <span class="opacity-60">　删 {diffCounts().del} / 增 {diffCounts().add} 行</span>
+                        </div>
+                        <div class="text-caption opacity-70">
+                            历史 ≤ <b>{budgetKbLabel()}</b> · 整份请求 ≈ <b>{afterKb()}</b>
+                        </div>
+                        <div class="text-caption opacity-45">
+                            历史按优先级保留：用户发言 &gt; 助手结论 &gt; 助手过程 &gt; 工具命令 &gt; 工具结果
+                        </div>
+                        <Show when={ctl.err()}>
+                            <div class="text-caption text-error">{ctl.err()}</div>
+                        </Show>
                     </div>
-                </Block>
+
+                    {/* 参数区：按 mode → modeData → toolResult → renderData 的层次展示（归属可见） */}
+                    <Block title="压缩参数" extra="策略真源">
+                        <div class="space-y-2 text-caption">
+                            <div class="flex items-center gap-2">
+                                <span class="font-mono opacity-60">mode</span>
+                                <span class="badge badge-ghost badge-xs">budget</span>
+                                <span class="opacity-45">目标式预算（现役唯一算法）</span>
+                            </div>
+                            <div class="space-y-2 border-l-2 border-base-300 pl-2">
+                                <div class="font-mono opacity-50">modeData</div>
+                                <div class="flex items-center gap-2">
+                                    <span class="font-mono opacity-70">budgetBytes</span>
+                                    <input
+                                        type="number"
+                                        class="input input-xs w-16"
+                                        aria-label="压缩预算KB"
+                                        min="0"
+                                        value={ctl.kbDraft()}
+                                        disabled={ctl.autoBusy()}
+                                        onInput={(e) => ctl.setKbDraft(e.currentTarget.value)}
+                                        onChange={() => void ctl.commitKb()}
+                                        onBlur={() => void ctl.commitKb()}
+                                    />
+                                    <span class="opacity-60">KB</span>
+                                </div>
+                                <div class="space-y-2 border-l-2 border-base-300 pl-2">
+                                    <div class="font-mono opacity-50">toolResult</div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="font-mono opacity-70">render</span>
+                                        <select
+                                            class="select select-xs select-bordered"
+                                            aria-label="工具结果呈现"
+                                            disabled={ctl.autoBusy()}
+                                            value={ctl.render()}
+                                            onChange={(e) => ctl.setRender(e.currentTarget.value as ToolResultMode)}
+                                        >
+                                            <option value="asis">asis 原样</option>
+                                            <option value="headtail">headtail 头尾裁剪</option>
+                                            <option value="callpath">callpath 只留调用</option>
+                                        </select>
+                                    </div>
+                                    <Show when={ctl.render() === "headtail"}>
+                                        <div class="space-y-1 border-l-2 border-base-300 pl-2">
+                                            <div class="font-mono opacity-50">renderData</div>
+                                            <For each={RENDER_DATA_FIELDS}>
+                                                {(f) => (
+                                                    <div class="flex items-center gap-2">
+                                                        <span class="w-28 shrink-0 truncate font-mono opacity-70" title={f.hint}>
+                                                            {f.key}
+                                                        </span>
+                                                        <input
+                                                            type="number"
+                                                            class="input input-xs w-20"
+                                                            aria-label={f.key}
+                                                            min="0"
+                                                            value={ctl.renderData()[f.key]}
+                                                            disabled={ctl.autoBusy()}
+                                                            onChange={(e) => ctl.setRenderData({ [f.key]: Number(e.currentTarget.value) })}
+                                                        />
+                                                        <span class="truncate opacity-40" title={f.hint}>{f.hint}</span>
+                                                    </div>
+                                                )}
+                                            </For>
+                                        </div>
+                                    </Show>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2 border-t border-base-300 pt-2">
+                                <span class="font-mono opacity-60">summary</span>
+                                <input
+                                    type="checkbox"
+                                    class="toggle toggle-xs"
+                                    aria-label="历史摘要"
+                                    disabled={ctl.autoBusy()}
+                                    checked={ctl.summaryEnabled()}
+                                    onChange={(e) => ctl.setSummary(e.currentTarget.checked)}
+                                />
+                                <span class="opacity-45">额外算历史摘要（预留，暂未启用）</span>
+                            </div>
+                        </div>
+                    </Block>
+
+                    <Block title="费用对比">
+                        <CostCompare facts={ctl.pv()?.facts ?? []} />
+                        <div class="mt-2 text-caption opacity-60">
+                            金额 = token ÷ 1M × 当前模型非缓存输入单价；token 按字节 / 4 估算（仅为对比，不进计费）。
+                        </div>
+                    </Block>
+                </Show>
             </div>
 
             {/* ── 右栏：预览区（请求 YAML diff）─────────────── */}

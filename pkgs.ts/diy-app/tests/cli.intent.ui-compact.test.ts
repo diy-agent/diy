@@ -146,11 +146,15 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="压缩会话上下文"]')`)).toBe(true);
   });
 
-  it("点环 → 窗口构成抽屉：**第一 tab 是压缩**（自动压缩 + 压缩到 + 费用对比），tab 栏有「压缩」执行按钮", async () => {
+  it("点环 → 窗口构成抽屉：**第一 tab 是压缩**（自动压缩 + 参数区 + 费用对比），tab 栏有「压缩」执行按钮", async () => {
     await openDrawer();
-    const text = await waitUntil(a11yText, (t) => t.includes("压缩到"), { label: "压缩 tab 上屏" });
+    await waitUntil(
+      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`),
+      (v) => v === true,
+      { label: "压缩 tab 上屏" },
+    );
+    const text = await a11yText();
     expect(text).toContain("自动压缩");
-    expect(text).toContain("压缩到");
     expect(text).toContain("费用对比");
     expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="自动压缩"]')`)).toBe(true);
     expect(await ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`)).toBe(true);
@@ -158,6 +162,67 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     expect(await ui.query<string>(`document.querySelector('[aria-label="窗口构成视图"] button')?.textContent?.trim() ?? ''`)).toBe("压缩");
     expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="窗口构成视图"] button.btn-active')`)).toBe(true);
     expect(await budgetKb()).toBe("3");
+  });
+
+  it("M3：参数区按 mode → modeData → toolResult → renderData 层次展示（归属可见）", async () => {
+    const text = await a11yText();
+    for (const k of ["mode", "budget", "modeData", "budgetBytes", "toolResult", "render", "renderData", "summary"]) {
+      expect(text).toContain(k);
+    }
+    // 层次结构的字段键（renderData 私有参数）在 DOM 里
+    for (const k of ["head", "tail", "maxLineChars", "maxKeepBytes"]) {
+      expect(await ui.query<boolean>(`!!document.querySelector('input[aria-label="${k}"]')`)).toBe(true);
+    }
+    // render 默认 headtail（真源缺省）
+    expect(await ui.query<string>(`document.querySelector('select[aria-label="工具结果呈现"]')?.value ?? ''`)).toBe("headtail");
+  });
+
+  it("M3：改工具结果呈现 render（headtail → callpath）写回真源", async () => {
+    await ui.query<string>(
+      `(() => { const s=document.querySelector('select[aria-label="工具结果呈现"]'); s.value='callpath'; s.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
+    );
+    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("render: callpath"), { label: "render → callpath 写回" });
+    // 非 headtail → renderData 字段从 DOM 退场
+    await waitUntil(
+      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="head"]')`),
+      (v) => v === false,
+      { label: "renderData 字段退场" },
+    );
+    // 切回 headtail（后续用例依赖缺省）
+    await ui.query<string>(
+      `(() => { const s=document.querySelector('select[aria-label="工具结果呈现"]'); s.value='headtail'; s.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
+    );
+    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("render: headtail"), { label: "render 切回 headtail" });
+  });
+
+  it("M3：改 renderData.head 写回真源（嵌套私有参数）", async () => {
+    await ui.query<string>(
+      `(() => { const i=document.querySelector('input[aria-label="head"]'); i.value='5'; i.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
+    );
+    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("head: 5"), { label: "renderData.head → 5 写回" });
+    // 复位
+    await ui.query<string>(
+      `(() => { const i=document.querySelector('input[aria-label="head"]'); i.value='3'; i.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
+    );
+    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("head: 3"), { label: "renderData.head 复位" });
+  });
+
+  it("M3：切「原始 YAML」显示真源全文（只读），可切回参数", async () => {
+    await ui.clickSelector('[aria-label="压缩配置视图"] button:nth-child(2)');
+    const raw = await waitUntil(
+      () => ui.query<string>("document.querySelector('[data-compact-raw]')?.textContent ?? ''"),
+      (t) => t.includes("mode:") && t.includes("policy:"),
+      { label: "原始 YAML 上屏" },
+    );
+    expect(raw).toContain("budgetBytes");
+    expect(raw).toContain("toolResult");
+    // 切回参数视图
+    await ui.clickSelector('[aria-label="压缩配置视图"] button:nth-child(1)');
+    await waitUntil(
+      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`),
+      (v) => v === true,
+      { label: "参数视图回归" },
+    );
   });
 
   it("自动压缩：toggle 写回真源 $DIY_HOME/auto-compact.yaml（auto ⇄ off）", async () => {
@@ -221,13 +286,21 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
 
   it("切「总表（按轮）/ 分表（按步）」：压缩内容退场（无用量记录 → 空态），可切回", async () => {
     await ui.click("总表（按轮）");
-    await waitUntil(a11yText, (t) => !t.includes("压缩到"), { label: "压缩 tab 退场" });
+    await waitUntil(
+      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`),
+      (v) => v === false,
+      { label: "压缩 tab 退场" },
+    );
     expect(await ui.query<boolean>("!!document.querySelector('table')")).toBe(false);
     await ui.click("分表（按步）");
     await new Promise((r) => setTimeout(r, 150));
     expect(await ui.query<boolean>("!!document.querySelector('table')")).toBe(false);
     await ui.clickSelector('[aria-label="窗口构成视图"] button');
-    await waitUntil(a11yText, (t) => t.includes("压缩到"), { label: "压缩 tab 回归" });
+    await waitUntil(
+      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`),
+      (v) => v === true,
+      { label: "压缩 tab 回归" },
+    );
   });
 
   it("点「压缩（详情页）」→ 账本记预算压缩；**历史不销毁**（聊天页仍可见第1轮）", async () => {

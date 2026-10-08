@@ -42,6 +42,20 @@ export function loadAutoCompact(home: string): AutoCompactConfig {
     }
 }
 
+/**
+ * 读自动压缩配置的**原始全文**（`$DIY_HOME/auto-compact.yaml`，含注释）—— 供 UI「原始配置」
+ * 只读视图（用户 2026-10-07：「我希望 app 能尽量有显示原始数据的能力」）。缺失 → 空串。
+ */
+export function readAutoCompactText(home: string): string {
+    const p = autoCompactFile(home);
+    try {
+        return existsSync(p) ? readFileSync(p, "utf-8") : "";
+    } catch (e) {
+        console.warn(`[auto-compact] ${p} 读取失败:`, e);
+        return "";
+    }
+}
+
 /** 写自动压缩配置（原子：tmp → rename）。宽松归一后再写（不存坏数据）。 */
 export function saveAutoCompact(home: string, cfg: unknown): AutoCompactConfig {
     const norm = normalizeAutoCompact(cfg);

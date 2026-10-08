@@ -68,7 +68,7 @@ import {
     type AutoCompactConfig,
     type AutoCompactFacts,
 } from "../../shared/context/auto-compact";
-import { loadAutoCompact } from "../core/auto-compact-config";
+import { autoCompactFile, loadAutoCompact, readAutoCompactText } from "../core/auto-compact-config";
 import { cacheTtlMsOf } from "../../shared/models";
 import {
     effectiveTtl,
@@ -1104,6 +1104,8 @@ export class LocalAgentManager {
         facts: AutoCompactFacts;
         triggers: CompactTrigger[];
         reasons: string[];
+        /** 配置真源 `auto-compact.yaml` 的**原始全文**（含注释）—— 供 UI「原始配置」只读视图 */
+        raw: { path: string; text: string };
     } {
         const config = loadAutoCompact(diyHome());
         // 系统上下文：与上次真发那份比（口径与 steps.jsonl 的 systemText 完全一致）
@@ -1135,7 +1137,8 @@ export class LocalAgentManager {
             windowRatio,
         };
         const triggers = detectAutoCompactTriggers(facts, config);
-        return { config, facts, triggers, reasons: triggers.map((t) => TRIGGER_TEXT[t]) };
+        const raw = { path: autoCompactFile(home), text: readAutoCompactText(home) };
+        return { config, facts, triggers, reasons: triggers.map((t) => TRIGGER_TEXT[t]), raw };
     }
 
     /**

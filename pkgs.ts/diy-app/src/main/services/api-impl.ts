@@ -416,7 +416,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { diyHome } = await import("../core/state");
     const home = diyHome();
     const cur = loadAutoCompact(home);
-    // 部分更新：浅合并（triggers / keep 也是整体替换 —— 调用方给的都是完整子对象，
+    // 部分更新：浅合并（triggers / policy 也是整体替换 —— 调用方给的都是完整子对象，
     // 只给一半反而会让"没提的字段"含义模糊，不如要求完整；缺子对象 = 保留现值）
     const patch = (input.patch ?? {}) as Record<string, unknown>;
     return saveAutoCompact(home, { ...cur, ...patch });
