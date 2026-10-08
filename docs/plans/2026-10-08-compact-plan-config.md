@@ -69,8 +69,8 @@ auto:
 history:
   budget: 12 KB
   keep:
-    - { type: steps, must: true, typeData: { n: 10 } }      # ① 最近 10 步 = 工作集（agent 正在做的事）—— 必保
-    - { type: role,  must: true, typeData: { role: user } } # ② 所有用户发言 —— 必保
+    - { type: steps, must: true, data: { n: 10 } }      # ① 最近 10 步 = 工作集（agent 正在做的事）—— 必保
+    - { type: role,  must: true, data: { role: user } } # ② 所有用户发言 —— 必保
     - { type: ladder }                                     # ③ 剩余预算按重要度填（缺省兜底）
 tool-result:
   render: headtail
@@ -91,22 +91,70 @@ tool-result:
 **按 `rule.discriminated-union`**（判别键同级 = 公共字段；分支私有数据进 `<判别键>Data`）：
 
 ```ts
-// 级 = 判别键 `type`（公共字段 must/limit 与 type 同级）+ 分支私有数据进 `typeData`
+// 级 = 判别键 `type`（公共字段 must/limit 与 type 同级）+ 分支私有数据进 `data`
 type Stage =
   | { type: "ladder"; must?: boolean; limit?: number }
-  | { type: "role";   must?: boolean; limit?: number; typeData: { role: "user" | "assistant" | "tool" } }
-  | { type: "recent"; must?: boolean; limit?: number; typeData: { n: number; role?: "user" | "assistant" | "tool" } }
-  | { type: "steps";  must?: boolean; limit?: number; typeData: { n: number } };
+  | { type: "role";   must?: boolean; limit?: number; data: { role: "user" | "assistant" | "tool" } }
+  | { type: "recent"; must?: boolean; limit?: number; data: { n: number; role?: "user" | "assistant" | "tool" } }
+  | { type: "steps";  must?: boolean; limit?: number; data: { n: number } };
 ```
 
 - **与 `type` 同级** = 每个分支都有的公共字段：`must`（必保、不占 budget）、`limit`（最多几个单元）。
-- **`typeData` 内** = 该 type **私有**的数据（`n` / `role`）——换 type 就换一整包 `typeData`。
+- **`data` 内** = 该 type **私有**的数据（`n` / `role`）——换 type 就换一整包 `data`。
 - 判别键**用 `type`**（`kind` 已被 op 流 / 事件账占用，见 `rule.discriminated-union`）。
 
 > 四个取法已够表达「工作集 / 用户话 / 按重要度」这三类诉求；**先不加更多**（简单优先，缺了再加）。
 
 **映射到已落地的元件**（`compaction-plan.ts`）：`ladder→byLadder()` · `role→byRole()` ·
 `recent→recentMessages()` · `steps→recentSteps()` · `must:true→exemptStage()` · 否则 `stage()`。
+
+### ④.1 裁剪：每个取法都能带「怎么裁」（能力轴，非全局设置）
+
+**两个正交的动作**，别混：
+- **选择（取法 type）**：这条消息**在不在**投递里（粗粒度，省字节 = 去掉整条）。
+- **裁剪（`clip`）**：在的那条消息**怎么呈现**（细粒度，省字节 = 头尾裁 / 换成路径指针）。
+
+> 用户 2026-10-08：「tool 消息实在太多了……几百步全留工具消息太夸张。应从**能力**设计：
+> 保留某些步骤**全部**、保留某些步骤的**部分类型**消息、保留某些消息内容的**全部 / path 参考 / 截断**。」
+
+**`clip` 是**每个取法都能带**的字段（与 `must`/`limit` 同级 = 公共字段）；不写则回落**计划级默认**。
+
+```ts
+type Clip =
+  | "full"       // 原样全留（整条内容）
+  | "path"       // 只留「调用 + 原文路径指针」，正文换成「见 <path>」（可回取）
+  | { type: "headtail"; data: { head: number; tail: number; maxLineChars?: number; maxKeepBytes?: number } };
+```
+
+**范例：能力矩阵**
+```yaml
+history:
+  budget: 10 KB
+  defaultClip: { type: headtail, data: { head: 3, tail: 3 } }   # 计划级默认：其余一律头尾裁
+  keep:
+    # 最近 3 步：**完整保留**（工作集，工具输出也全留 —— 不计预算）
+    - { type: steps, must: true, clip: full, data: { n: 3 } }
+    # 最近 30 步里的**工具结果**：只留「调用 + 路径」（细节可回取，省最多）
+    - { type: recent, clip: path, data: { n: 30, role: tool } }
+    # 最近 30 步里的 **user**：完整留（主干）
+    - { type: recent, clip: full, data: { n: 30, role: user } }
+    # 其余：按重要度填，用默认裁（headtail）
+    - { type: ladder }
+```
+
+**优先级**：一条消息被多级选中 → **先选中的级**的 `clip` 生效（先到先得）；都没选 → 不在投递里。
+
+**粒度组合**（对应你列的三件事）：
+| 想要 | 写法 |
+|---|---|
+| 某些**步骤**全部 | `{ type: steps, clip: full, data: { n: 3 } }` |
+| 某些步骤的**部分类型**消息 | `{ type: recent, clip: …, data: { n: 30, role: tool } }`（`role` 过滤 + `clip` 决定呈现） |
+| 某些消息内容：**全部 / 路径 / 截断** | 同上，靠 `clip: full | path | headtail` |
+
+> 现 `tool-result.render`（全局一个 headtail）= **计划级默认裁剪**的旧形态；
+> 新设计把它降级为 `history.defaultClip`，`clip` 在**每个取法**上可覆盖 —— 于是不再「人工给一个全局值」，
+> 而是「能力（取法 × 裁剪 × 预算）由装配声明」，agent 可组合。
+
 
 ---
 
@@ -207,8 +255,8 @@ run(all, plan):
   "plan": {
     "budgetBytes": 12288,
     "keep": [
-      { "type": "steps", "must": true, "typeData": { "n": 10 } },
-      { "type": "role", "must": true, "typeData": { "role": "user" } },
+      { "type": "steps", "must": true, "data": { "n": 10 } },
+      { "type": "role", "must": true, "data": { "role": "user" } },
       { "type": "ladder" }
     ]
   },
@@ -238,8 +286,8 @@ diy compact preview   <uri>            # 按当前 plan 现算：保留/丢弃�
 ```
 用户：记得把我说的都留着，还有你最近干的别忘。
 agent：（产出 plan 修改建议，不直接生效）
-   + - { type: steps, must: true, typeData: { n: 10 } }
-   + - { type: role,  must: true, typeData: { role: user } }
+   + - { type: steps, must: true, data: { n: 10 } }
+   + - { type: role,  must: true, data: { role: user } }
      - { type: ladder }
    「新增两级必保（不吃预算）；ladder 继续兜底。」
 用户：行。
@@ -249,6 +297,43 @@ agent：（产出 plan 修改建议，不直接生效）
 数据**既是**机器执行的东西，**又是**人和 agent 对话的媒介——同一份文本，三种用法。
 
 ---
+
+## ⑦.5 日志与配置作为**系统变量**（可检索底盘，清零也能找回）
+
+用户 2026-10-08：「llm.jsonl / ops.jsonl 等 config/log review 是否都作为**系统变量**存在，
+而不只是压缩时的提示？信息要足够，方便尽管是**清零**也能正确找到信息。」
+
+**现状**：`historyIndex`（system 变量树节点，见 `history-index.ts`）**只覆盖 `llm.jsonl`**
+（字段说明 + byLine/byTurn 回取命令）。**其他日志与配置的真源路径未作为稳定变量暴露**。
+
+**目标**：把「本会话的全部可检索产物」作为**稳定的 system 变量**（常量、不砸前缀缓存），
+于是**预算=0（清零）后**，agent 仍知道去哪把丢掉的东西找回来。
+
+**建议的系统树节点**（`local` / 日志与配置；示例）：
+```yaml
+local:                                  # 本会话的可检索产物（每项都是「路径 + 怎么用」）
+  home: ~/.diy
+  key: projects_1_tasks_2-d881749cfdb1  # 文件名前缀（keyOf(taskUri)）
+  logs:
+    ops:                                # 原始 op 流 —— **权威**，压缩永不改它
+      path: $DIY_HOME/local/<key>.ops.jsonl
+      how: grep -n '"turn":"T"' …
+    llm:                                # 全量消息日志 —— **行号 = 消息序号**（压缩注记 kept 就指它）
+      path: $DIY_HOME/local/<key>.llm.jsonl
+      how: sed -n 'A,Bp' …              # byLine（注记 kept）/ grep '"turn":"T"'（byTurn）
+    usage: { path: $DIY_HOME/local/<key>.usage.jsonl, how: 每步四桶 + 金额 }
+    steps: { path: $DIY_HOME/local/<key>.steps.jsonl, how: 每轮投递快照（system 全文） }
+    compact: { path: $DIY_HOME/local/<key>.compact.jsonl, how: 压缩事件账（算法 + 过滤器） }
+  config:
+    autoCompact: { path: $DIY_HOME/auto-compact.yaml, how: 压缩策略真源（本 YAML） }
+```
+
+**要点**：
+- **稳定常量**（路径 + 用法），进 system **不砸前缀缓存**（同 `historyIndex` 的做法）；易变的
+  只留「这一次的注记数据」在 messages 里。
+- **`ops.jsonl` 是权威、压缩永不写它** ⇒ 一切「被压掉」的历史都能从它按 `turn` 原样取回。
+- **`llm.jsonl` 行号即消息序号** ⇒ 注记的 `kept: [[a,b]]` 与它**同一坐标系**（见 ⑤.0）。
+- 现 `historyIndex` 是 `logs.llm` 的**特例** —— 收敛到统一 `local` 节点（保留 byLine/byTurn 说明）。
 
 ## ⑧ 开放点（下轮开工前敲定）
 
