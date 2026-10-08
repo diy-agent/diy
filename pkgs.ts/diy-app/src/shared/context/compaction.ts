@@ -3,7 +3,7 @@
 //
 // 为什么单独一个文件、且必须是纯模块：
 //   · main 要用它决定「投递哪些块」（blocksToMessages 的裁剪闭包）；
-//   · renderer 要用它做**预览页**（当前会话 vs 压缩后 diff）与历史代列表 —— 预览不能靠 RPC
+//   · renderer 要用它做**预览页**（当前会话 vs 压缩后 diff）与压缩历史（事件快照列表）—— 预览不能靠 RPC
 //     往返（每次拉滑条都打一次主进程），只能靠同一份纯函数在渲染层现算；
 //   · 两边共用同一份实现，才能保证「预览看到的」就是「真发出去的」（##227 数字可信的同一条原则）。
 //
@@ -61,23 +61,11 @@ export const DEFAULT_HEADTAIL: HeadTailPolicy = {
     maxKeepBytes: 8192,
 };
 
-/** 默认保留轮数（用户可在 panel 里调；「全部清零」是另一支 `mode:"reset"`，不是 `count:0`） */
-export const DEFAULT_KEEP_TURNS = 6;
-
-// ─── 策略：一棵**决策树**（用户 2026-10-06 二次定稿）───────────────────
+// ─── 策略：带**归属**的结构（用户 2026-10-06 定稿）───────────────────
 //
-// 演进：扁平兄弟字段（##267）→ 三轴 + 私有参数进分支（D3a，只治了最深一层）
-//       → **按从属关系建模的决策树**（现在）。
-//
-// 为什么还要再进一步：三轴虽把 `headtail` 收进了 `toolResult` 分支，但三条轴**本身仍是平级兄弟** ——
-// 于是 `mode:"reset"`（清零）时 `keep.unit` / `content` / `toolResult` 全是**死字段**
-// （清零已无内容可裁），读 YAML 的人无从知道「这个字段属于哪一支、什么时候才生效」。
-// 决策树把这一点编进**结构**：每层的私有参数收进该层分支 ⇒ **非法组合不可表达**
-// （清零不可能带 toolResult），读结构即知语义（D5「结构即语义」）。
-//
-// 层级：① 模式（清零 / 保留）→ ② 范围（最近 N / 全部轮次）→ ③ 内容（含不含工具链路）
-//       → ④ 工具结果怎么裁（**只在「含工具链路」这一支里**）
-// `summary` 不在树上：清零与保留**都**能算摘要 ⇒ 放进树里就得每支重复一个同名字段。
+// 现役**只有 budget 一种算法**（`reset` / `keep` 已在 ##271 删除，未发布无需兼容）。
+// 结构约定：与 `mode` 同级 = 所有算法共有（`summary`）；`modeData` 内 = 该 mode **私有**
+// （换 mode 就换一整包）—— 私有参数收进分支，读结构即知归属（D5「结构即语义」）。
 
 /**
  * ④ 工具**结果**轴：判别式联合，参数收进分支（看 JSON 即知关系）。
@@ -104,13 +92,9 @@ export const ToolResultPolicySchema = z.discriminatedUnion("render", [
     z.object({ render: z.literal("callpath").describe("只留调用 + 原文路径") }),
 ]);
 
-/** 「是否额外算一份历史摘要」——**两种模式都成立**，故不进决策树（见本区头注） */
+/** 「是否额外算一份历史摘要」——与 `mode` 同级（所有算法共有），不进 `modeData` */
 const SummaryField = z.boolean().describe("是否额外算一份历史摘要（暂未启用；预留字段）");
 
-/**
- * ① 模式轴：**清零** 还是 **保留**（顶层判别）。
- * `reset` 支没有范围 / 内容字段 —— 清零没有内容可裁，那些字段放进这一支全是死字段。
- */
 /** 策略真源：**只有 budget 一种算法**（`reset` / `keep` 已删除 —— 用户 2026-10-07，未发布无需兼容）。
  *
  * 结构约定：与 `mode` 同级 = 所有算法共有（`summary`）；`modeData` 内 = 该 mode **私有**
@@ -170,14 +154,13 @@ export function budgetBytesOf(p: CompactPolicy): number {
 }
 
 /**
- * 扁平（**输入面**）形状：RPC / CLI / UI state 用的紧凑契约，**不是**真源形状。
+ * 扁平（**输入面**）形状：RPC / CLI / UI state 用的紧凑契约（`flatPolicyOf` 是树 → 扁平），**不是**真源形状。
  *
- * 为什么输入面可以继续扁平：UI 自己保证「只产生合法组合」（决策树按分支展开），
- * CLI 的 `--keep-turns / --content / --tool-result` 是给人用的快捷语法；
- * 而**真源**（账本 / auto-compact.yaml）必须是决策树 —— 那里要给人读、要自解释。
+ * 为什么输入面可以继续扁平：UI 自己保证「只产生合法组合」（按分支展开），CLI 的
+ * `--budget-bytes / --tool-result / …` 是给人用的快捷语法；而**真源**（账本 / auto-compact.yaml）
+ * 必须是带归属的结构 —— 那里要给人读、要自解释。
  * `normalizePolicy` 是唯一适配点（扁平/旧形状 → 树），`flatPolicyOf` 是反向（树 → 扁平，供 UI 回读）。
  */
-/** 扁平（**输入面**）形状：RPC / CLI 用的紧凑契约（`flatPolicyOf` 是树 → 扁平） */
 export interface FlatCompactPolicy {
     budgetBytes: number;
     toolResult: ToolResultMode;
@@ -415,7 +398,7 @@ export function makeDeliveryTransform(
 
 // ─── ③ 事件账本 ────────────────────────────────────────
 
-/** 规模快照（前后对比 / 历史代列表共用） */
+/** 规模快照（前后对比 / 压缩事件快照共用） */
 export interface SizeSnapshot {
     turns: number;
     messages: number;
@@ -794,8 +777,8 @@ export function resolveBoundary(events: readonly CompactLogEvent[]): EffectiveBo
         ...(c.boundary.keptFromOpsOffset !== undefined
             ? { keptFromOpsOffset: c.boundary.keptFromOpsOffset }
             : {}),
-        // 读侧归一：旧账本存的是扁平 policy（keepTurns/toolResult/headtail），
-        // 这里统一成三轴 —— 于是「历史账本」与「新写的账本」下游完全同形（初版紧凑、扩展松散）。
+        // 读侧归一：账本里可能是扁平输入面形状（budgetBytes/toolResult/headtail），
+        // 这里统一成决策树 —— 于是「历史账本」与「新写的账本」下游完全同形（初版紧凑、扩展松散）。
         policy: normalizePolicy(c.policy),
         ts: c.ts,
     };
@@ -864,7 +847,7 @@ export function turnIdToTime(turnId: string): Date | null {
 //
 // 新模型：**历史 = 固定的消息集合**；一次压缩 = 用**某算法**对它定义的一个**过滤条件**。
 // 于是要记两样（都在 CompactEventRecord.policy 里）：
-//   · **算法**（`mode`：budget / reset / keep）—— 换算法 = 加新分支 + 新 filter 形状（判别式联合）；
+//   · **算法**（`mode`：现役只有 `budget`）—— 换算法 = 加新分支 + 新 filter 形状（判别式联合）；
 //   · 该算法的**过滤器表达**（其余字段：budgetBytes+toolResult / …）。
 // 历史页列的就是这些**不可变快照**；当前配置对历史回溯**无效**（回溯只看当时那条事件）。
 

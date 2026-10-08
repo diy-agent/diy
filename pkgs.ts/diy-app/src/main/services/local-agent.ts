@@ -1299,11 +1299,11 @@ export class LocalAgentManager {
      */
     async summarize(
         taskUri: string,
-        keepTurnsInput: number,
     ): Promise<{ text: string; data: SummaryData; cost: number | null }> {
         const key = process.env.OPENCODE_ZEN_API_KEY;
         if (!key) throw new Error("缺少 OPENCODE_ZEN_API_KEY（main 进程环境变量）");
-        const p = this.planCompact(taskUri, { keepTurns: keepTurnsInput });
+        // 摘要针对**当前配置下会被丢弃的轮**（与 compact 同一份预算），不再用旧的 keepTurns 旋钮。
+        const p = this.planCompact(taskUri, loadAutoCompact(diyHome()).policy);
         if (p.droppedIds.length === 0) return { text: "", data: emptySummary(), cost: null };
         const model = personaForTask(diyHome(), taskUri).model;
         const dropped = droppedTextOf(p.store, p.droppedIds);

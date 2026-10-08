@@ -1,16 +1,19 @@
 /**
- * CompactSessionPanel — 压缩会话上下文（清零 → 硬切换新 session 的 UI）
+ * CompactSessionPanel — 压缩会话上下文的**面板**（控制器 + 可嵌入内容）
  *
  * ⚠️ 语义：压缩 **≠** 清除。
- *   · 压缩（本面板）：只改「发给模型的上下文」—— 保留最近 N 轮 + 可选裁工具结果；
- *     **不删任何历史**，旧内容仍在会话日志里、可查（历史代）、可撤销。
- *   · 清除（⋯ 菜单）：物理删除所有会话日志，不可恢复 —— 与本面板是两回事，别混。
+ *   · 压缩：只改「发给模型的上下文」—— 按字节预算保留历史 + 可选裁工具结果；
+ *     **不删任何历史**，旧内容仍在会话日志里、可查、可撤销。
+ *   · 清除（⋯ 菜单）：物理删除所有会话日志，不可恢复 —— 两回事，别混。
  *
- * 布局（2026-10-05 定稿）：**左参数 + 右预览**，一眼对照。
- *   · base = 当前生效请求（requestView，打开面板取一次）
- *   · mod  = 改参数后请求（compactPreview 随参数刷新）
+ * 【M1】本文件**不再自带抽屉外壳**：`useCompactPanel(uri)` 管状态与副作用，
+ *   `CompactPanelContent` 是可嵌入的纯内容（左参数 + 右预览），嵌进「窗口构成页」第一 tab；
+ *   顶栏 / 执行按钮 / 关闭都归外层 drawer。`CompactHistoryPanel` 是独立的压缩历史弹窗。
+ *
+ * 内容布局：**左参数 + 右预览**，一眼对照。
+ *   · 左栏 = 预算区（自动压缩 toggle + 压缩到 KB）+ 费用对比图形
+ *   · base = **未压缩**的全量投递（compactPreview 现算），mod = 当前预算
  *   · 右栏把两者渲染成 YAML 行、做行级 diff（增删变色、可折叠、可只看差异、可并排）
- *   · 左栏底部「事实表」= base↔mod 分层 token 与金额差（旧值 / 新值 / 省 cost）
  */
 
 import { createSignal, createResource, createEffect, on, For, Show, createMemo, type JSX } from "solid-js";
@@ -620,13 +623,10 @@ interface CompactEventRow {
     ts?: string;
     by?: "ui" | "cli" | "auto";
     trigger?: string;
-    /** v3 = modeData 嵌套；v2 = 扁平（读旧账本）—— 两种都收 */
+    /** 策略真源（决策树）：`{ mode:"budget", modeData:{ budgetBytes, toolResult } }` */
     policy?: {
         mode?: string;
-        modeData?: { budgetBytes?: number; toolResult?: { render?: string }; keep?: { scope?: string; count?: number }; content?: { kind?: string } };
-        budgetBytes?: number;
-        keep?: { scope?: string; count?: number };
-        content?: { kind?: string };
+        modeData?: { budgetBytes?: number; toolResult?: { render?: string } };
     };
     size?: {
         before?: { turns: number; messages: number; bytes: number };
@@ -640,35 +640,17 @@ interface CompactEventRow {
 
 /** 算法中文名（`policy.mode`）；未知算法原样显示 —— 换算法加新分支即可 */
 function algoName(mode: string | undefined): string {
-    switch (mode) {
-        case "budget":
-            return "预算";
-        case "reset":
-            return "清零";
-        case "keep":
-            return "保留";
-        default:
-            return mode ?? "—";
-    }
+    return mode === "budget" ? "预算" : (mode ?? "—");
 }
 
 /** 算法的**过滤器表达**（算法私有，故按 mode 分派；换算法加新分支） */
 function filterText(p: CompactEventRow["policy"]): string {
     if (!p) return "—";
-    const md = p.modeData ?? p; // v3 嵌套 / v2 扁平
     if (p.mode === "budget") {
-        const bb = md.budgetBytes;
+        const bb = p.modeData?.budgetBytes;
         const kb = bb === undefined ? "?" : bb === 0 ? "0（=清零）" : `${Math.round(bb / 1024)} KB`;
         return `上限 ${kb}`;
     }
-    if (p.mode === "keep") {
-        const keep = md.keep;
-        const scope = keep?.scope === "all" ? "全部轮次" : `最近 ${keep?.count ?? "?"} 轮`;
-        const k = md.content?.kind;
-        const content = k === "conclusion" ? "只留结论" : k === "text" ? "只留文本" : "全部";
-        return `${scope} · ${content}`;
-    }
-    if (p.mode === "reset") return "不投任何历史轮";
     return "—";
 }
 

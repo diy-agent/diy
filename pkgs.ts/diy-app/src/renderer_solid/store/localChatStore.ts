@@ -621,7 +621,7 @@ function getDetailScroll(taskUri: string): number {
 // ─── 压缩（compact）：少发 ≠ 销毁 ──────────────────────
 //
 // 语义提醒（与 clear 正交）：
-//   compact = 只改「发给模型的上下文」（保留最近 N 轮 + 可选裁工具输出），
+//   compact = 只改「发给模型的上下文」（按字节预算保留历史 + 可选裁工具输出），
 //             **不删任何历史**，旧内容仍在 ops 里、可查、可撤销；
 //   clear   = 物理删除所有会话日志（不可恢复）—— 那是另一条路，与压缩无关。
 // 全部计算在 main（预览与真发共用同一份纯函数），renderer 只负责把结果画出来。
@@ -647,8 +647,8 @@ async function autoCompactSetConfig(patch: Record<string, unknown>) {
 }
 
 /** 生成历史摘要（一次模型调用，花钱；由面板「生成摘要」显式触发） */
-async function summarize(taskUri: string, keepTurns: number) {
-    return diyService.diy.agent.local.summarize({ taskUri, keepTurns });
+async function summarize(taskUri: string) {
+    return diyService.diy.agent.local.summarize({ taskUri });
 }
 
 /** 执行压缩（写边界账 + 落盘被裁原文 + 内存态重置）；成功后重建本地块树到新边界 */
@@ -762,7 +762,7 @@ export const localChatStore = {
     },
     refreshSteers,
     clear,
-    /** 压缩：预览（只算）/ 执行 / 撤销 / 历史代（旧会话只读查看）*/
+    /** 压缩：预览（只算）/ 执行 / 撤销 / 压缩历史（事件快照列表，只读查看）*/
     requestView,
     compactPreview,
     summarize,

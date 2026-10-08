@@ -570,7 +570,7 @@ export const apiDef = RpcSchema.router({
                * 与 `clear`（物理删所有日志）语义正交 —— 这里是「少发」，那里是「销毁」。
                */
               compact: RpcSchema.unary({
-                desc: `压缩会话上下文（保留最近 N 轮 + 可选裁剪工具输出；历史原地保留可撤销）`,
+                desc: `压缩会话上下文（按字节预算保留历史 + 可选裁剪工具输出；历史原地保留可撤销）`,
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
                   budgetBytes: z
@@ -581,9 +581,9 @@ export const apiDef = RpcSchema.router({
                     .enum(["asis", "headtail", "callpath"])
                     .optional()
                     .cliOption({ desc: "工具输出处理：asis 原样 / headtail 头尾裁剪 / callpath 只留调用+路径" }),
-                  triggerLines: z.number().optional().cliOption({ desc: "头尾裁剪：超过多少行才裁（缺省 80）" }),
-                  headLines: z.number().optional().cliOption({ desc: "头尾裁剪：保留头部行数（缺省 40）" }),
-                  tailLines: z.number().optional().cliOption({ desc: "头尾裁剪：保留尾部行数（缺省 10）" }),
+                  triggerLines: z.number().optional().cliOption({ desc: "头尾裁剪：超过多少行才裁（缺省 6）" }),
+                  headLines: z.number().optional().cliOption({ desc: "头尾裁剪：保留头部行数（缺省 3）" }),
+                  tailLines: z.number().optional().cliOption({ desc: "头尾裁剪：保留尾部行数（缺省 3）" }),
                   maxLineChars: z.number().optional().cliOption({ desc: "单行超长截断阈值（字符，缺省 300）" }),
                   maxKeepBytes: z.number().optional().cliOption({ desc: "保留总量字节兜底（缺省 8192）" }),
                   summary: z.boolean().optional().cliOption({ desc: "是否计算历史摘要带进新会话（缺省否）" }),
@@ -601,7 +601,6 @@ export const apiDef = RpcSchema.router({
                 desc: `生成历史摘要（对将被丢弃的轮做结构化抽取；一次模型调用）`,
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                  keepTurns: z.number().optional().cliOption({ desc: "保留最近多少轮（摘要针对被丢弃的轮；缺省 6）" }),
                 },
                 output: z.any(),
               }),
@@ -625,7 +624,7 @@ export const apiDef = RpcSchema.router({
                   patch: z
                     .unknown()
                     .optional()
-                    .cliOption({ desc: "部分配置（mode / triggers / keep / summary），浅合并后写回" }),
+                    .cliOption({ desc: "部分配置（mode / triggers / policy），浅合并后写回" }),
                 },
                 output: z.any(),
               }),

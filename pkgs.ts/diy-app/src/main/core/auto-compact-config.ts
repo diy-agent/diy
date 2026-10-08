@@ -55,7 +55,7 @@ export function saveAutoCompact(home: string, cfg: unknown): AutoCompactConfig {
         "#   cacheExpired         缓存已过期（距上次请求 > 生效 TTL）→ 冷启动，压缩是白赚\n" +
         "#   contextWindowOver    上下文窗口占用上限（0~1；0 = 关闭）\n" +
         "# policy: 压缩策略（自动与手动**同一套**）。\n" +
-        "#   mode: budget 目标式预算（现役）/ reset 清零 / keep 保留（后两者旧形状，仅供读历史账本）\n" +
+        "#   mode: budget 目标式预算（现役；只有这一种算法）\n" +
         "#   modeData: **只属于该 mode** 的私有参数（换 mode 就换一整包；与 mode 同级的 summary 才是所有算法共有）\n" +
         "#     · budget：budgetBytes 历史字节上限（0=清零）· toolResult 工具结果呈现\n" +
         "#         toolResult.render: asis 原样 / headtail 头尾裁剪（私有参数在 renderData）/ callpath 只留调用\n" +

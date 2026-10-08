@@ -424,7 +424,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.agent.local.summarize, async ({ input }) => {
     noteRendererTouch("diy.agent.local.summarize", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
-    return getLocalAgent().summarize(input.taskUri, input.keepTurns ?? 6);
+    return getLocalAgent().summarize(input.taskUri);
   });
   binding.on(app.agent.local.requestView, async ({ input }) => {
     noteRendererTouch("diy.agent.local.requestView", input.taskUri);

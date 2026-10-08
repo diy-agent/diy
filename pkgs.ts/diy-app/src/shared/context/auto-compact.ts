@@ -42,9 +42,8 @@ export const AutoCompactConfigSchema = z.object({
     /**
      * 压缩策略（自动 / 手动**同一套**）—— 直接复用 `CompactPolicy`（含 `summary`）。
      *
-     * 为什么不再自造一个 `{unit,count,content}`：那是同一概念的**第二个形状**（`content` 在这边
-     * 挂在 `keep` 里、在真实策略里挂顶层），两处各写一遍必然分叉。自动压的"压什么"与手动压
-     * 完全同类，就用同一个真源（差异只在**谁触发**，那由 `mode`/`triggers` 表达）。
+     * 自动压的"压什么"与手动压完全同类，就用同一个真源（差异只在**谁触发**，由 `mode`/`triggers` 表达）；
+     * 各造一个形状必然分叉。
      */
     policy: CompactPolicySchema.describe("自动压时用的策略（与手动面板同一真源形状）"),
 });

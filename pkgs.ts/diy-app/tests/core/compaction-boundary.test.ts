@@ -20,7 +20,7 @@ function clearAllLedger(keepFromOpIndex: number): CompactEventRecord {
         ts: "c1",
         by: "ui",
         trigger: "manual",
-        policy: normalizePolicy({ keepTurns: 0 }),
+        policy: normalizePolicy({ budgetBytes: 0, toolResult: { render: "asis" } }),
         boundary: { keptFromTurnId: null, keepFromOpIndex },
         size: {
             before: { turns: 3, messages: 6, bytes: 300, estTokens: 75 },
@@ -70,7 +70,7 @@ describe("边界锚点 keepFromOpIndex（回归：压缩后发的消息消失）
     it("老账本缺 keepFromOpIndex → 回退 -1（下游按 keptFromTurnId 推导，不崩）", () => {
         const legacy = JSON.stringify({
             kind: "compact", v: 1, id: "L", ts: "L", by: "cli",
-            policy: normalizePolicy({ keepTurns: 0 }),
+            policy: normalizePolicy({ budgetBytes: 0, toolResult: { render: "asis" } }),
             boundary: { keptFromTurnId: null, keptTurns: 0, droppedTurns: 1 },
             before: { turns: 1, messages: 2, bytes: 10, estTokens: 3 },
             after: { turns: 0, messages: 0, bytes: 0, estTokens: 0 },
@@ -79,7 +79,7 @@ describe("边界锚点 keepFromOpIndex（回归：压缩后发的消息消失）
         expect(b.keepFromOpIndex).toBe(-1);
     });
 
-    it("保留 N 轮：锚点在保留首轮的 op 下标（非 null 路径不变）", () => {
+    it("非空保留起点：锚点在保留首轮的 op 下标（非 null 路径不变）", () => {
         const ev = clearAllLedger(2);
         ev.boundary.keptFromTurnId = "a2";
         ev.boundary.keepFromOpIndex = 2;
