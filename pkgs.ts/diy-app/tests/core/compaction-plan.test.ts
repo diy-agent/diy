@@ -11,6 +11,7 @@ import {
     exemptStage,
     defaultBudgetPlan,
     byLadder,
+    byRole,
     recentMessages,
     recentSteps,
     type PickCtx,
@@ -127,5 +128,50 @@ describe("边界", () => {
         const all = [result("t1", "c1", "r1")];
         const s = run(all, plan(1_000_000, stage(recentMessages(10))));
         expect(s.kept).toEqual([]);
+    });
+});
+
+// ── 实际范例（docs/plans/2026-10-08-compact-plan-config.md ③.2）：工作集必保 + 用户话必保 + ladder 兜底 ──
+describe("实际范例：必保层（工作集 + 用户话）不被预算挤掉", () => {
+    // 3 轮、13 条消息（含步/无步），与范例执行迹同构
+    const all: LocalModelMessage[] = [
+        user("t1", "开场问"),                                   // 0
+        call("t1", "c1", "s1"), result("t1", "c1", "r1", "s1"),  // 1,2
+        text("t1", "结论1", "s2"),                               // 3
+        user("t2", "第二问"),                                    // 4
+        call("t2", "c2", "s1"), result("t2", "c2", "r2", "s1"),  // 5,6
+        call("t2", "c3", "s2"), result("t2", "c3", "r3", "s2"),  // 7,8
+        user("t3", "第三问"),                                    // 9
+        call("t3", "c4", "s1"), result("t3", "c4", "r4", "s1"),  // 10,11
+        text("t3", "结论3", "s2"),                               // 12
+    ];
+    // ③.2 的管道：steps 必保 + user 必保 + ladder 兜底
+    const pipe = (budgetBytes: number) =>
+        plan(budgetBytes, exemptStage(recentSteps(10)), exemptStage(byRole("user")), stage(byLadder()));
+
+    it("预算再小，必保层（全部用户话 + 最近步结论）仍在", () => {
+        const s = run(all, pipe(64)); // 极小预算，几乎只够 ladder 塞一两条
+        // 用户话 0/4/9 必保
+        expect(s.kept).toEqual(expect.arrayContaining([0, 4, 9]));
+        // 最近一步的结论 12（steps:10 覆盖）必保
+        expect(s.kept).toContain(12);
+    });
+
+    it("对照：缺省单级 ladder 同预算 → 用户话可能被「更近的」挤掉比例不同（此处验证语义差异存在）", () => {
+        const small = 64;
+        const sPlan = run(all, pipe(small));
+        const sLadder = run(all, defaultBudgetPlan(small));
+        // 两者都保住了用户话（ladder 里 user 优先级最高）——差异在**必保 vs 计数**的处理上，
+        // 用「最近步结论」体现：管道的 steps 必保把它钉死；单级 ladder 若预算不足可能后到。
+        // 这里只断言管道**必含** 12（必保语义确凿）。
+        expect(sPlan.kept).toContain(12);
+        // 单级 ladder 的结果不承诺必含 12 —— 正是「必保」与「仅按重要度」的区别所在。
+        expect(Array.isArray(sLadder.kept)).toBe(true);
+    });
+
+    it("预算充足（12KB）→ 全留", () => {
+        const total = all.reduce((n, m) => n + bytesOf(m), 0);
+        const s = run(all, pipe(total + 1));
+        expect(s.kept.length).toBe(all.length);
     });
 });

@@ -178,6 +178,19 @@ export const recentMessages = (count: number, opts: { role?: LocalModelMessage["
 });
 
 /**
+ * **某角色的全部消息**（新的先）—— 例：`byRole("user")` = 用户发言主干。
+ * 与 `byLadder` 里 user 那层重叠时用「级」序决定谁先挑（见 runPlan）。
+ */
+export const byRole = (role: LocalModelMessage["role"]): Picker => ({
+    label: `role:${role}`,
+    picks: (ctx) => {
+        const out: number[] = [];
+        for (let i = ctx.all.length - 1; i >= 0; i--) if (ctx.all[i]!.role === role) out.push(i);
+        return out;
+    },
+});
+
+/**
  * **最近 N 个 step 的消息**（新的 step 先；同 step 内按原序）。
  * 只取有 `step` 索引位的消息（开场 user / 插话无 step，由角色元件负责）。
  * 供「必带的最近几步完整历史」这类托底盘使用。
