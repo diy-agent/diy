@@ -1269,7 +1269,12 @@ export class LocalAgentManager {
         };
     }
 
-    /** 当前生效压缩的摘要文本（未压缩/未生成摘要 → 空串 = 不投递） */
+    /**
+     * 当前生效压缩的摘要文本（未压缩/未生成摘要 → 空串 = 不投递）。
+     * ⚠️ 读的是**历史 compact 快照**里的 summary，而非「当前配置」——与 `pit.config-vs-history` 相悖。
+     * 因 UI 摘要入口已删、`summary` 标「暂未启用」，此链**休眠**，不阻塞。激活摘要时须改为读当前配置
+     * （见 ##273，review 2026-10-08 备注）。
+     */
     effectiveSummary(taskUri: string): string {
         const events = readCompactLog(taskUri);
         const b = resolveBoundary(events);

@@ -815,6 +815,9 @@ export function indexOfTurn(ops: readonly OpLike[], turnId: string): number {
 
 /**
  * 从某个 turn 起切片（用于「当前会话」与「历史某代」的 ops 视图）。
+ *
+ * ⚠️ `##271 N9` 已删其**生产调用点**（投递不再按边界切片）；当前**仅测试引用**（保留以备核对）。
+ * review 2026-10-08 备注：可随手清，或再长出用途时保留。
  *   · sinceTurnId = null  → 空数组（全部清零：新会话从零开始）
  *   · 找不到该 turn（日志被截/换机器）→ **返回全量**：宁可多给，不可让用户面对空白会话
  */
