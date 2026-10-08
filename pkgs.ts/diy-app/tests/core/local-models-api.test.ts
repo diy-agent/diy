@@ -29,7 +29,8 @@ describe("LOCAL_MODELS 的 api 面标注", () => {
         // 这里曾经锁的是「首项 === DEFAULT_MODEL」。清单顺序改成"按价格从低到高"（便宜的先看见）后，
         // 首项成了**展示顺序**的产物，而"默认用哪个模型"是内置 persona 的 model —— 两件事分开。
         // 真正要防的是 DEFAULT_MODEL 写出清单外的 id（apiOf/reasoningOf 会 fallback 成"未知模型只能关闭"）。
-        expect(DEFAULT_MODEL).toBe("gpt-5.6-luna");
+        // 缺省模型 = 最便宜的带工具模型（用户 2026-10-06 定：默认必须最省）
+        expect(DEFAULT_MODEL).toBe("mimo-v2.6-flash");
         expect(LOCAL_MODELS.map((m) => m.id)).toContain(DEFAULT_MODEL);
     });
 

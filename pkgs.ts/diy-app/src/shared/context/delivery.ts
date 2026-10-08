@@ -54,6 +54,9 @@ export const PLACE_CANDIDATES: PlaceCandidate[] = [
     { path: "identity", system: true, reason: "身份：人物名 + 行为指令（模版节渲染结果）；任务存续期内不变 → 可缓存" },
     { path: "rules", system: true, reason: "行为规范：静态文本，只在改模版时变" },
     { path: "guard", system: true, reason: "保命契约：静态文本，丢了模型可能换写法杀宿主进程" },
+    // 压缩历史索引的格式说明：**稳定**结构（只在 schema 升级时变）+ 回取命令 → 进 system。
+    // 易变的 dropped 数据留在 messages 那条注记里（用户 2026-10-06：一条信息只在一处）。
+    { path: "historyIndex", system: true, reason: "压缩索引的格式说明与回取法：结构稳定（仅 schema 升级时变），进 system 不砸缓存" },
     { path: "task.body", system: false, reason: "任务正文：每次编辑正文就变 → 放 runtime，不污染 system 缓存" },
     { path: "skills", system: false, reason: "技能清单：安装/升级技能就变" },
 ];

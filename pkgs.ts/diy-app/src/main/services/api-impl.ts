@@ -25,6 +25,7 @@ import { addSource, removeSource } from "./ref-config";
 import { apiDef } from "./api-def";
 import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
+import type { ToolResultMode } from "../../shared/context/compaction";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
 import { resolve as resolvePath } from "node:path";
 
@@ -380,6 +381,71 @@ export function bindAppHandlers(binding: ServerBinding): void {
     noteRendererTouch("diy.agent.local.usage", input.taskUri);
     const { readUsage } = await import("./usage-report");
     return readUsage(input.taskUri);
+  });
+  // ── 压缩（compact）：少发 ≠ 销毁；历史原地保留可查、可撤销 ──
+  // CLI/UI 传来的散字段 → 策略对象（缺省字段由 normalizePolicy 兜底；undefined 覆盖成默认值）
+  // 散字段 → **扁平策略对象**（输入面契约；三轴形状由 normalizePolicy 统一生成，见 shared/context/compaction）
+  const policyOf = (i: Record<string, unknown>): unknown => ({
+    budgetBytes: i.budgetBytes as number | undefined,
+    toolResult: (i.toolResult ?? i.toolOutput) as ToolResultMode | undefined,
+    headtail: {
+      triggerLines: i.triggerLines as number,
+      headLines: i.headLines as number,
+      tailLines: i.tailLines as number,
+      maxLineChars: i.maxLineChars as number,
+      maxKeepBytes: i.maxKeepBytes as number,
+    },
+    summary: i.summary as boolean | undefined,
+  });
+  binding.on(app.agent.local.compact, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    const summary =
+      input.summaryText !== undefined
+        ? { text: input.summaryText, data: (input.summaryData ?? null) as never, cost: input.summaryCost ?? null }
+        : undefined;
+    return getLocalAgent().compact(input.taskUri, policyOf(input), "cli", summary);
+  });
+  binding.on(app.agent.local.autoCompactStatus, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.autoCompactStatus", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().autoCompactStatus(input.taskUri);
+  });
+  binding.on(app.agent.local.autoCompactSetConfig, async ({ input }) => {
+    const { saveAutoCompact, loadAutoCompact } = await import("../core/auto-compact-config");
+    const { diyHome } = await import("../core/state");
+    const home = diyHome();
+    const cur = loadAutoCompact(home);
+    // 部分更新：浅合并（triggers / policy 也是整体替换 —— 调用方给的都是完整子对象，
+    // 只给一半反而会让"没提的字段"含义模糊，不如要求完整；缺子对象 = 保留现值）
+    const patch = (input.patch ?? {}) as Record<string, unknown>;
+    return saveAutoCompact(home, { ...cur, ...patch });
+  });
+  binding.on(app.agent.local.summarize, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.summarize", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().summarize(input.taskUri);
+  });
+  binding.on(app.agent.local.requestView, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.requestView", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().requestView(input.taskUri);
+  });
+  binding.on(app.agent.local.compactPreview, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compactPreview", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    const txt = (input as { summaryText?: string }).summaryText;
+    return getLocalAgent().compactPreview(input.taskUri, policyOf(input), txt);
+  });
+  binding.on(app.agent.local.undoCompact, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.undoCompact", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return { undone: getLocalAgent().undoCompact(input.taskUri, input.ref) };
+  });
+  binding.on(app.agent.local.compactEvents, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compactEvents", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().compactEvents(input.taskUri);
   });
   // 会话用量报表（人读表格）：与 UI 同源同口径，只是在这里渲染成等宽文本
   binding.on(app.agent.usage, async ({ input }) => {

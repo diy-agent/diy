@@ -66,7 +66,7 @@ function overridePath(pid: string, relpath: string): string {
 }
 
 describe("template list/get", () => {
-    it("list — 装配入口 + 七份节 + 链片段、全部 builtin、入口与 _guard 锁定", async () => {
+    it("list — 装配入口 + 七份节 + 摘要片段 + 保命契约、全部 builtin、入口与 _guard 锁定", async () => {
         const pid = await freshProj("list");
         const r = await fx.sh.getJson(`./diy.sh template list ${pid}`);
         const list = r.data as Array<{
@@ -74,10 +74,11 @@ describe("template list/get", () => {
             status: string;
             locked: boolean;
             lockTip: string;
-            role: "entry" | "section";
+            role: "entry" | "section" | "fragment";
         }>;
         expect(list.map((e) => e.relpath)).toEqual([
             "_system.md",
+            "summary.md", // 摘要片段（不进 _system.md 装配；##271 起）
             "identity.md",
             "diy.md",
             "project.md",
@@ -90,7 +91,13 @@ describe("template list/get", () => {
         // 角色由入口的 include 推导（不再由 frontmatter 声明，避免两处漂移）
         expect(list.find((e) => e.relpath === "_system.md")!.role).toBe("entry");
         expect(list.find((e) => e.relpath === "project.md")!.role).toBe("section");
-        expect(list.every((e) => e.role === (e.relpath === "_system.md" ? "entry" : "section"))).toBe(true);
+        // summary.md 是 fragment（独立模版，不在 system 里）；其余非入口皆是 section
+        expect(list.find((e) => e.relpath === "summary.md")!.role).toBe("fragment");
+        expect(
+            list.every((e) =>
+                e.role === (e.relpath === "_system.md" ? "entry" : e.relpath === "summary.md" ? "fragment" : "section"),
+            ),
+        ).toBe(true);
         // 命名约定 `_` = 锁定：入口与保命契约都不可覆盖
         const guard = list.find((e) => e.relpath === "_guard.md")!;
         expect(guard.locked).toBe(true);

@@ -10,10 +10,25 @@
 
 import { ratesOf, type EffectiveRates, type ModelCost } from "./usage";
 
-export const DEFAULT_MODEL = "gpt-5.6-luna";
+/**
+ * 缺省模型。
+ *
+ * 为什么是 `mimo-v2.6-flash`（用户 2026-10-06）：它是全表最便宜的带工具模型
+ * （$0.14 / $0.28 per 1M），而**并行任务多、费用易失控**时默认值必须是最省的那个
+ * —— 用户原话「当前系统的费用失控」「不要用 luna」。要贵的模型请显式选（人物）。
+ * 另见 `~/git/diy/diy/AGENTS.md` 的 `model.default` 约定（测试同样只准便宜档）。
+ */
+export const DEFAULT_MODEL = "mimo-v2.6-flash";
 
 /** zen/go 基址：两个 API 面共用（chat/completions 与 responses 只是路径不同） */
 export const ZEN_BASE_URL = "https://opencode.ai/zen/go/v1";
+
+/**
+ * **实际服务的上游名**（ai-sdk provider 名，与 `createOpenAICompatible({ name })` 一致）。
+ * 与价目真源（`COST_SOURCE` = models.dev）是两件事：这是"请求走了谁"，那是"单价查的哪张表"。
+ * 落账本时两个都要有（##230 实测：同一模型不同 provider 报价差 1x~50x）。
+ */
+export const UPSTREAM_PROVIDER = "zen-go";
 
 /**
  * 模型走的 API 面。**必须逐个模型标注**，因为 zen/go 的 `GET /models` 不返回 API 面信息
@@ -42,6 +57,30 @@ export interface LocalModel {
     reasoning: LocalModelReasoning;
     /** 单价（$/1M tokens，真源 models.dev，抓取日期见 MODEL_COST_AS_OF）；缺失 = 无价目，不算钱 */
     cost?: ModelCost;
+    /**
+     * 提示词缓存的**存活时长**（ms）—— 官方一律不给这个数字（只能实测夹逼）。
+     * 用途：判断"距上次请求这么久 → 缓存已过期（expired）→ 此刻压缩零重建代价"（##269 自动压缩）。
+     * ⚠️ 填的是**先验**（缺省 1 小时），真正的判据是**从 usage 实测回归出来的区间**
+     * （见共享模块 cache-ttl：`ttl ∈ (aliveUpTo, deadFrom]`）——别把这个常数当真理。
+     */
+    cacheTtlMs?: number;
+}
+
+/**
+ * 缓存 TTL 的**先验缺省**：1 小时。
+ * 为什么写它而不是留空：判"缓存是否过期"必须有个兜底（官网不提供数字），
+ * 而且 1 小时是各家公开档位里最常见的量级；实测区间会把它夹紧（见 shared/context/cache-ttl）。
+ */
+export const CACHE_TTL_PRIOR_MS = 60 * 60 * 1000;
+
+/** 保留 3 位小数（账目数字：浮点残渣如 50.00000000000001 只会让人以为是 bug） */
+export function round3(x: number): number {
+    return Number.isFinite(x) ? Math.round(x * 1000) / 1000 : x;
+}
+
+/** 某模型的缓存 TTL 先验（缺省见 CACHE_TTL_PRIOR_MS） */
+export function cacheTtlMsOf(modelId: string): number {
+    return LOCAL_MODELS.find((m) => m.id === modelId)?.cacheTtlMs ?? CACHE_TTL_PRIOR_MS;
 }
 
 /**
@@ -68,10 +107,10 @@ export const LOCAL_MODELS: LocalModel[] = [
     // 排列顺序 = UI 平铺按钮的展示顺序，按**价格从低到高**（便宜的先看见）。
     // 注意：首项**不再**等于内置默认 persona 的模型（DEFAULT_MODEL）—— 模型选择已归 persona，
     // 界面/代码都不该再"取列表首项当默认"（那正是"看着一个模型、用的是另一个"的来源）。
-    { id: "mimo-v2.6-flash", name: "MiMo V2.6 Flash", api: "chat", contextLimit: 1048576, maxOutputTokens: 131072 , reasoning: { supported: ["none", "low", "medium", "high"], default: "medium" }, cost: { input: 0.14, output: 0.28, cacheRead: 0.0028 } },
-    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", api: "chat", contextLimit: 1000000, maxOutputTokens: 384000 , reasoning: { supported: ["none", "minimal", "low", "medium", "high", "xhigh", "ultra", "max"], default: "medium" }, cost: { input: 0.15, output: 0.6, cacheRead: 0.003 } },
-    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", api: "responses", contextLimit: 1050000, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high", "xhigh", "max"], default: "medium" }, cost: { input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25, tiers: [{ above: 272000, input: 0.4, output: 1.8, cacheRead: 0.04, cacheWrite: 0.5 }] } },
-    { id: "gpt-6-luna", name: "GPT 6 Luna", api: "responses", contextLimit: 1050000, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high", "xhigh", "max"], default: "medium" }, cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125, tiers: [{ above: 272000, input: 0.2, output: 0.75, cacheRead: 0.02, cacheWrite: 0.25 }] } }
+    { id: "mimo-v2.6-flash", name: "MiMo V2.6 Flash", api: "chat", contextLimit: 1048576, maxOutputTokens: 131072 , reasoning: { supported: ["none", "low", "medium", "high"], default: "medium" }, cost: { input: 0.14, output: 0.28, cacheRead: 0.0028 }, cacheTtlMs: CACHE_TTL_PRIOR_MS },
+    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", api: "chat", contextLimit: 1000000, maxOutputTokens: 384000 , reasoning: { supported: ["none", "minimal", "low", "medium", "high", "xhigh", "ultra", "max"], default: "medium" }, cost: { input: 0.15, output: 0.6, cacheRead: 0.003 }, cacheTtlMs: CACHE_TTL_PRIOR_MS },
+    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", api: "responses", contextLimit: 1050000, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high", "xhigh", "max"], default: "medium" }, cost: { input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25, tiers: [{ above: 272000, input: 0.4, output: 1.8, cacheRead: 0.04, cacheWrite: 0.5 }] }, cacheTtlMs: CACHE_TTL_PRIOR_MS },
+    { id: "gpt-6-luna", name: "GPT 6 Luna", api: "responses", contextLimit: 1050000, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high", "xhigh", "max"], default: "medium" }, cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125, tiers: [{ above: 272000, input: 0.2, output: 0.75, cacheRead: 0.02, cacheWrite: 0.25 }] }, cacheTtlMs: CACHE_TTL_PRIOR_MS }
 ];
 
 /** 按 model id 查 API 面；未知模型按 chat 处理（保持历史行为，不静默换面） */
