@@ -13,7 +13,7 @@
  *   · 左栏底部「事实表」= base↔mod 分层 token 与金额差（旧值 / 新值 / 省 cost）
  */
 
-import { createSignal, createResource, createEffect, on, For, Show, createMemo, onMount, onCleanup, type JSX } from "solid-js";
+import { createSignal, createResource, createEffect, on, For, Show, createMemo, type JSX } from "solid-js";
 import { localChatStore } from "../store/localChatStore";
 import {
     DEFAULT_BUDGET_BYTES,
@@ -47,8 +47,8 @@ import {
     type YamlDiffRow,
 } from "../../shared/yaml-lines";
 import { requestViewYaml, type LayerRow, type RequestView } from "../../shared/context/request-view";
-import { VIEW_BAR_H } from "../lib/layout-metrics";
 import { DrawerMaxButton } from "./DrawerMaximize";
+import { notificationStore } from "../store/notificationStore";
 
 const INDENT = "  ";
 
@@ -141,13 +141,54 @@ function CostCompare(props: { facts: LayerRow[] }) {
         </Show>
     );
 }
-export function CompactSessionPanel(props: { uri: string; onClose: () => void }) {
-    // ── 自动压缩配置（只读）：只剩「开关 + 策略」——触发条件已收进系统默认（极简 UI）──
-    const [auto, { refetch: refetchAuto }] = createResource(() => props.uri, async (u) => {
-        return (await localChatStore.autoCompactStatus(u)) as {
-            config: { mode: "off" | "notify" | "auto"; policy: unknown };
-        };
-    });
+// ─── 面板控制器（状态与副作用；供抽屉 tab 栏与内容区共享）──────────────
+//
+// 【M1】原 CompactSessionPanel 自带抽屉外壳 + 遮罩 + 底栏；现移植进「窗口构成页」第一 tab，
+// 外壳（标题 / 最大化 / 关闭 / 执行按钮）归外层 drawer ⇒ 这里只留**状态与预览逻辑**，
+// 渲染交 `CompactPanelContent`。内容拆「预算区 / 参数区 / 预览区 / 费用图」四块
+// （用户 2026-10-07 同意；参数区在 M3 补齐）。
+
+/** 压缩预览模型（主进程 compactPreview 返回；base = 未压缩，mod = 当前预算） */
+export interface CompactPreviewModel {
+    before: { bytes: number };
+    after: { bytes: number };
+    keptTurns: number;
+    droppedTurns: number;
+    facts: LayerRow[];
+    modRequest: RequestView;
+    baseRequest: RequestView;
+}
+
+export interface CompactPanelCtl {
+    auto: () => { config: { mode: "off" | "notify" | "auto"; policy: unknown } } | undefined;
+    autoBusy: () => boolean;
+    patchAuto: (patch: Record<string, unknown>) => Promise<void>;
+    autoPolicy: () => CompactPolicy;
+    budgetBytes: () => number;
+    kbDraft: () => string;
+    setKbDraft: (v: string) => void;
+    commitKb: () => Promise<void>;
+    pv: () => CompactPreviewModel | undefined;
+    busy: () => boolean;
+    err: () => string | null;
+    /** 立即压缩：按当前预算压一次（历史保留、可撤销）。成功 toast。 */
+    apply: () => Promise<void>;
+}
+
+/**
+ * 压缩面板控制器 —— 自动压缩配置（真源 `$DIY_HOME/auto-compact.yaml` 的 policy）+ 预览 + 执行。
+ * 自动与手动**同一套策略**（用户 2026-10-07：「所有压缩都改为自动压缩策略……提供手工压缩执行的按钮」）。
+ */
+export function useCompactPanel(uri: () => string): CompactPanelCtl {
+    const [auto, { refetch: refetchAuto }] = createResource(
+        () => uri(),
+        async (u) => {
+            if (!u) return undefined;
+            return (await localChatStore.autoCompactStatus(u)) as {
+                config: { mode: "off" | "notify" | "auto"; policy: unknown };
+            };
+        },
+    );
     const [autoBusy, setAutoBusy] = createSignal(false);
     const patchAuto = async (patch: Record<string, unknown>) => {
         setAutoBusy(true);
@@ -159,17 +200,9 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
         }
     };
 
-    /**
-     * 【合并】压缩预算 —— 自动与手动**同一套策略**（用户 2026-10-07：
-     * 「所有压缩都改为自动压缩策略 …… 提供手工压缩执行的按钮」）。
-     * 真源 = `$DIY_HOME/auto-compact.yaml` 的 `policy`（`mode:"budget"`）。
-     * 开启自动压缩时按触发条件自动压；「压缩」按钮 = 用同一个预算立刻压一次。
-     */
     const autoPolicy = (): CompactPolicy => normalizePolicy(auto()?.config.policy);
-    /** 预算（字节）；非预算策略（旧 keep/reset）时回落到缺省 */
     const budgetBytes = (): number => budgetBytesOf(autoPolicy()) ?? DEFAULT_BUDGET_BYTES;
     const patchAutoPolicy = (next: CompactPolicy) => patchAuto({ policy: next });
-    /** 把工具结果的呈现（内部旋钮）从当前策略里取出来、缺省用头尾裁剪 */
     const currentToolResult = () => toolResultOf(autoPolicy()) ?? DEFAULT_TOOL_RESULT_POLICY;
     const setBudgetBytes = (b: number) =>
         patchAutoPolicy({
@@ -179,7 +212,7 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
         });
     const setBudgetKb = (kb: number) => setBudgetBytes(kb * 1024);
 
-    /** 预算输入框草稿（KB）：不要让异步 auto() 覆盖用户正在输入的内容 —— 仅初始化/提交时同步 */
+    /** 预算输入框草稿（KB）：不要让异步 auto() 覆盖用户正在输入的内容 —— 仅初始化 / 提交时同步 */
     const [kbDraft, setKbDraft] = createSignal("3");
     createEffect(
         on(
@@ -188,43 +221,61 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
             { defer: false },
         ),
     );
-    /**
-     * 提交预算输入（失焦 / 回车 / 点「压缩」前调用）。**返回 Promise** —— 调用方需 `await`：
-     * 写盘 + refetch 是异步的，`apply()` 若不等它就直接读数，会用**旧预算**（实测竞态）。
-     * 草稿与当前一致时不重复写盘（免多余 RPC）。
-     */
+    /** 提交预算输入（失焦 / 回车）。**返回 Promise**：写盘 + refetch 异步，apply 必须先 await 它。 */
     const commitKb = async (): Promise<void> => {
         const kb = Number(kbDraft());
         if (!Number.isFinite(kb) || kb < 0) {
             setKbDraft(String(budgetBytes() / 1024));
             return;
         }
-        if (Math.round(kb * 1024) === budgetBytes()) return; // 无变化 → 不写
+        if (Math.round(kb * 1024) === budgetBytes()) return;
         await setBudgetKb(kb);
     };
 
     const [busy, setBusy] = createSignal(false);
     const [err, setErr] = createSignal<string | null>(null);
-    /** 抽屉高度（px）：贴着上方、从底部拖拽调整；默认 2/3 屏高 */
-    const [height, setHeight] = createSignal(Math.round(window.innerHeight * 0.66));
-    const [maximized, setMaximized] = createSignal(false);
-    const drawerHeight = () => (maximized() ? window.innerHeight : height());
-    const startResize = (e: MouseEvent) => {
-        e.preventDefault();
-        const startY = e.clientY;
-        const startH = height();
-        const move = (ev: MouseEvent) => {
-            setMaximized(false);
-            const h = Math.round(startH + ev.clientY - startY);
-            setHeight(Math.min(window.innerHeight - 8, Math.max(180, h)));
-        };
-        const up = () => {
-            window.removeEventListener("mousemove", move);
-            window.removeEventListener("mouseup", up);
-        };
-        window.addEventListener("mousemove", move);
-        window.addEventListener("mouseup", up);
+
+    /** 预览（只算不写）：预算变化即重算。base = 未压缩（compactPreview 现算），mod = 当前预算。 */
+    const [pv] = createResource(
+        () => {
+            const u = uri();
+            return u ? { uri: u, p: flatPolicyOf(autoPolicy()) } : null;
+        },
+        (k) =>
+            k
+                ? (localChatStore.compactPreview(k.uri, k.p) as Promise<CompactPreviewModel>)
+                : Promise.resolve(undefined),
+    );
+
+    /** 立即压缩：按当前预算压一次（历史保留、可撤销） */
+    const apply = async () => {
+        const u = uri();
+        if (!u) return;
+        setBusy(true);
+        setErr(null);
+        try {
+            // ⚠️ 先把输入框里的预算落盘（blur 的写盘是异步的）——否则可能用**旧预算**压
+            await commitKb();
+            await localChatStore.compact(u, flatPolicyOf(autoPolicy()));
+            notificationStore.addToast("success", "已压缩（历史保留、可撤销）");
+        } catch (e) {
+            setErr(String(e instanceof Error ? e.message : e));
+        } finally {
+            setBusy(false);
+        }
     };
+
+    return { auto, autoBusy, patchAuto, autoPolicy, budgetBytes, kbDraft, setKbDraft, commitKb, pv, busy, err, apply };
+}
+
+/**
+ * 压缩面板内容（**可嵌入**）—— 左参数 + 右预览，一眼对照。
+ *   · 左栏 = 预算区 + 费用图（费用对比图形：当前 vs 压缩后）
+ *   · 右栏 = 预览区（请求结构 YAML 行级 diff：增删变色、可折叠、可只看差异、可并排）
+ * 外壳（顶栏 / 底栏 / 遮罩）由外层「窗口构成页」提供；执行按钮在 tab 栏。
+ */
+export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
+    const ctl = props.ctl;
 
     // 右栏视图控制
     const [sideBySide, setSideBySide] = createSignal(false);
@@ -232,24 +283,9 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
     /** 展开层级：0 = 只露根行；N = 全展开 */
     const [expandLevel, setExpandLevel] = createSignal(Number.MAX_SAFE_INTEGER);
 
-    // 预览（只算不写）：预算变化即重算。base/mod 都从它取 ——
-    // 【配置/历史分离】base = **未压缩**（compactPreview 现算），mod = 当前预算。
-    const [pv] = createResource(
-        () => ({ uri: props.uri, p: flatPolicyOf(autoPolicy()) }),
-        (k) => localChatStore.compactPreview(k.uri, k.p) as Promise<{
-            before: { bytes: number };
-            after: { bytes: number };
-            keptTurns: number;
-            droppedTurns: number;
-            facts: LayerRow[];
-            modRequest: RequestView;
-            baseRequest: RequestView;
-        }>,
-    );
-
     // 两级 diff：以两个请求**对象**做节点级对齐（base = 未压缩，mod = 当前预算）
     const rows = createMemo<YamlDiffRow[]>(() => {
-        const m = pv();
+        const m = ctl.pv();
         if (!m) return [];
         return diffValues(requestViewYaml(m.baseRequest), requestViewYaml(m.modRequest));
     });
@@ -311,279 +347,214 @@ export function CompactSessionPanel(props: { uri: string; onClose: () => void })
             });
     });
 
-    /** 立即压缩：按当前预算压一次（历史保留、可撤销） */
-    const apply = async () => {
-        setBusy(true);
-        setErr(null);
-        try {
-            // ⚠️ 先把输入框里的预算落盘（blur 的写盘是异步的）——否则可能用**旧预算**压
-            await commitKb();
-            await localChatStore.compact(props.uri, flatPolicyOf(autoPolicy()));
-            props.onClose();
-        } catch (e) {
-            setErr(String(e instanceof Error ? e.message : e));
-        } finally {
-            setBusy(false);
-        }
-    };
-
-    const onKey = (e: KeyboardEvent) => {
-        if (e.key === "Escape") {
-            e.stopPropagation();
-            props.onClose();
-        }
-    };
-    onMount(() => document.addEventListener("keydown", onKey, true));
-    onCleanup(() => document.removeEventListener("keydown", onKey, true));
-
     const estTok = (bytes: number) => Math.round(bytes / 4);
     /** 预算人读（KB；0 特别标「清零」） */
     const budgetKbLabel = (): string => {
-        const b = budgetBytes();
+        const b = ctl.budgetBytes();
         if (b === 0) return "0（清零）";
-        return b % 1024 === 0 ? `${b / 1024} KB` : `${(b / 1024).toFixed(1)} KB`;
+        return b % 1024 === 0 ? String(b / 1024) + " KB" : (b / 1024).toFixed(1) + " KB";
     };
     /**
      * 压缩后**整份请求**的规模（KB）—— 含固定开支（system + 工具定义 + runtime）+ 预算内历史。
-     * 用费用表 total 行的 token（= 各层之和，含 system/tools）；token ≈ 字节/4 ⇒ ×4 反推字节。
+     * 用费用表 total 行的 token（= 各层之和，含 system / tools）；token ≈ 字节 / 4 ⇒ ×4 反推字节。
      */
     const afterKb = (): string => {
-        const t = (pv()?.facts ?? []).find((r) => r.key === "total");
-        return `${(((t?.newTokens ?? 0) * 4) / 1024).toFixed(1)} KB`;
+        const t = (ctl.pv()?.facts ?? []).find((r) => r.key === "total");
+        return (((t?.newTokens ?? 0) * 4) / 1024).toFixed(1) + " KB";
     };
     const ratio = () => {
-        const b = pv()?.before.bytes ?? 0;
-        const a = pv()?.after.bytes ?? 0;
+        const b = ctl.pv()?.before.bytes ?? 0;
+        const a = ctl.pv()?.after.bytes ?? 0;
         return b > 0 ? Math.round((1 - a / b) * 100) : 0;
     };
     const diffCounts = createMemo(() => {
-        let add = 0, del = 0;
+        let add = 0;
+        let del = 0;
         for (const r of rows()) {
             if (r.t === "add") add++;
             else if (r.t === "del") del++;
-            else if (r.t === "change") { add++; del++; }
+            else if (r.t === "change") {
+                add++;
+                del++;
+            }
         }
         return { add, del };
     });
 
     return (
-        <div class="fixed inset-0 z-50 flex flex-col" onClick={props.onClose}>
-            <div class="absolute inset-0 bg-black/30" />
-            <div
-                class="relative flex shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl"
-                style={{ height: `${drawerHeight()}px` }}
-                onClick={(e) => e.stopPropagation()}
-            >
-                <div class={`px-4 border-b flex items-center justify-between shrink-0 ${VIEW_BAR_H}`}>
-                    <div class="font-bold text-title">压缩会话上下文</div>
+        <div class="flex h-full min-h-0 w-full">
+            {/* ── 左栏：预算区（自动压缩 toggle + 压缩到输入）+ 费用图 ── */}
+            <div class="w-[340px] shrink-0 overflow-auto border-r p-2 space-y-2">
+                <div class="rounded-lg border border-base-300 p-3 space-y-3">
                     <div class="text-caption opacity-70">
-                        当前 {estTok(pv()?.before.bytes ?? 0).toLocaleString()} tok → 压缩后{" "}
-                        {estTok(pv()?.after.bytes ?? 0).toLocaleString()} tok{" "}
+                        当前 {estTok(ctl.pv()?.before.bytes ?? 0).toLocaleString()} tok → 压缩后{" "}
+                        {estTok(ctl.pv()?.after.bytes ?? 0).toLocaleString()} tok{" "}
                         <span class="text-success">(-{ratio()}%)</span>
                         <span class="opacity-60">　删 {diffCounts().del} / 增 {diffCounts().add} 行</span>
                     </div>
-                    <div class="flex items-center gap-1">
-                        <DrawerMaxButton max={maximized()} onToggle={() => setMaximized((v) => !v)} />
-                        <button class="btn btn-ghost btn-xs" onClick={props.onClose}>
-                            ✕
-                        </button>
+                    <div class="flex items-center justify-between">
+                        <span class="text-body font-semibold">自动压缩</span>
+                        <input
+                            type="checkbox"
+                            class="toggle toggle-sm toggle-primary"
+                            aria-label="自动压缩"
+                            disabled={ctl.autoBusy()}
+                            checked={ctl.auto()?.config.mode === "auto"}
+                            onChange={(e) => void ctl.patchAuto({ mode: e.currentTarget.checked ? "auto" : "off" })}
+                        />
                     </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-body">压缩到</span>
+                        <input
+                            type="number"
+                            class="input input-sm w-20"
+                            aria-label="压缩预算KB"
+                            min="0"
+                            value={ctl.kbDraft()}
+                            disabled={ctl.autoBusy()}
+                            onInput={(e) => ctl.setKbDraft(e.currentTarget.value)}
+                            onChange={() => void ctl.commitKb()}
+                            onBlur={() => void ctl.commitKb()}
+                        />
+                        <span class="text-body">KB</span>
+                    </div>
+                    <div class="text-caption opacity-70">
+                        历史 ≤ <b>{budgetKbLabel()}</b> · 整份请求 ≈ <b>{afterKb()}</b>
+                    </div>
+                    <div class="text-caption opacity-45">
+                        历史按优先级保留：用户发言 &gt; 助手结论 &gt; 助手过程 &gt; 工具命令 &gt; 工具结果
+                    </div>
+                    <Show when={ctl.err()}>
+                        <div class="text-caption text-error">{ctl.err()}</div>
+                    </Show>
                 </div>
 
-                <div class="flex min-h-0 grow overflow-hidden">
-                    {/* ── 左栏：压缩预算（极简：一个 toggle + 一个输入 + 一个按钮）+ 费用对比图形 ── */}
-                    <div class="w-[340px] shrink-0 border-r overflow-auto p-2 space-y-2">
-                        <div class="rounded-lg border border-base-300 p-3 space-y-3">
-                            <div class="flex items-center justify-between">
-                                <span class="text-body font-semibold">自动压缩</span>
-                                <input
-                                    type="checkbox"
-                                    class="toggle toggle-sm toggle-primary"
-                                    aria-label="自动压缩"
-                                    disabled={autoBusy()}
-                                    checked={auto()?.config.mode === "auto"}
-                                    onChange={(e) => void patchAuto({ mode: e.currentTarget.checked ? "auto" : "off" })}
-                                />
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <span class="text-body">压缩到</span>
-                                <input
-                                    type="number"
-                                    class="input input-sm w-20"
-                                    aria-label="压缩预算KB"
-                                    min="0"
-                                    value={kbDraft()}
-                                    disabled={autoBusy()}
-                                    onInput={(e) => setKbDraft(e.currentTarget.value)}
-                                    onChange={() => void commitKb()}
-                                    onBlur={() => void commitKb()}
-                                />
-                                <span class="text-body">KB</span>
-                                <div class="flex-1" />
-                                <button
-                                    class="btn btn-primary btn-sm"
-                                    aria-label="压缩"
-                                    disabled={busy() || autoBusy()}
-                                    onClick={() => void apply()}
-                                >
-                                    {busy() ? "压缩中…" : "压缩"}
-                                </button>
-                            </div>
-                            <div class="text-caption opacity-70">
-                                历史 ≤ <b>{budgetKbLabel()}</b> · 整份请求 ≈ <b>{afterKb()}</b>
-                            </div>
-                            <div class="text-caption opacity-45">
-                                历史按优先级保留：用户发言 &gt; 助手结论 &gt; 助手过程 &gt; 工具命令 &gt; 工具结果
-                            </div>
-                        </div>
-
-                        {/* 费用对比（图形）：当前 vs 压缩后 —— 直观看出省多少 */}
-                        <Block title="费用对比">
-                            <CostCompare facts={pv()?.facts ?? []} />
-                            <div class="mt-2 text-caption opacity-60">
-                                金额 = token ÷ 1M × 当前模型非缓存输入单价；token 按字节/4 估算（仅为对比，不进计费）。
-                            </div>
-                        </Block>
+                <Block title="费用对比">
+                    <CostCompare facts={ctl.pv()?.facts ?? []} />
+                    <div class="mt-2 text-caption opacity-60">
+                        金额 = token ÷ 1M × 当前模型非缓存输入单价；token 按字节 / 4 估算（仅为对比，不进计费）。
                     </div>
+                </Block>
+            </div>
 
-                    {/* ── 右栏：请求 YAML diff ─────────────────────────── */}
-                    <div class="grow flex flex-col overflow-hidden">
-                        <div class="px-3 py-1.5 border-b flex items-center gap-3 shrink-0 text-caption">
-                            <div class="join">
-                                <button
-                                    class={`btn btn-xs join-item ${!sideBySide() ? "btn-active" : "btn-ghost"}`}
-                                    onClick={() => setSideBySide(false)}
-                                >
-                                    统一 diff
-                                </button>
-                                <button
-                                    class={`btn btn-xs join-item ${sideBySide() ? "btn-active" : "btn-ghost"}`}
-                                    onClick={() => setSideBySide(true)}
-                                >
-                                    并排
-                                </button>
-                            </div>
-                            <label class="flex items-center gap-1 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    class="toggle toggle-xs"
-                                    aria-label="只看差异"
-                                    checked={onlyDiff()}
-                                    onChange={(e) => setOnlyDiff(e.currentTarget.checked)}
-                                />
-                                只看差异
-                            </label>
-                            <button
-                                class="btn btn-ghost btn-xs"
-                                aria-label="逐级展开"
-                                onClick={nextLevel}
-                            >
-                                展开 {curLevel()}/{foldLevels()}
-                            </button>
-                            <span class="opacity-50 ml-auto">请求结构 YAML（base vs mod）</span>
-                        </div>
+            {/* ── 右栏：预览区（请求 YAML diff）─────────────── */}
+            <div class="grow flex flex-col overflow-hidden">
+                <div class="px-3 py-1.5 border-b flex items-center gap-3 shrink-0 text-caption">
+                    <div class="join">
+                        <button
+                            class={"btn btn-xs join-item " + (!sideBySide() ? "btn-active" : "btn-ghost")}
+                            onClick={() => setSideBySide(false)}
+                        >
+                            统一 diff
+                        </button>
+                        <button
+                            class={"btn btn-xs join-item " + (sideBySide() ? "btn-active" : "btn-ghost")}
+                            onClick={() => setSideBySide(true)}
+                        >
+                            并排
+                        </button>
+                    </div>
+                    <label class="flex items-center gap-1 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            class="toggle toggle-xs"
+                            aria-label="只看差异"
+                            checked={onlyDiff()}
+                            onChange={(e) => setOnlyDiff(e.currentTarget.checked)}
+                        />
+                        只看差异
+                    </label>
+                    <button class="btn btn-ghost btn-xs" aria-label="逐级展开" onClick={nextLevel}>
+                        展开 {curLevel()}/{foldLevels()}
+                    </button>
+                    <span class="opacity-50 ml-auto">请求结构 YAML（base vs mod）</span>
+                </div>
 
-                        <div class="overflow-auto grow p-2 text-caption font-mono leading-[1.5]" data-compact-preview>
-                            <Show when={!sideBySide()} fallback={
-                                <table class="w-full border-collapse">
-                                    <tbody>
-                                        <For each={renderRows()}>
-                                            {({ i, row }) => (
-                                                <tr class={row.t === "add" ? "bg-success/10" : row.t === "del" || row.t === "change" ? "bg-error/10" : ""}>
-                                                    <td class="align-top whitespace-pre-wrap break-all w-1/2 pr-2 border-r border-base-300">
-                                                        <FoldToggle i={i} row={row} collapsed={collapsed().has(i)} changes={changes().get(i)} onToggle={toggleFold} />
-                                                        <span class={row.t === "del" || row.t === "change" ? "text-error" : ""}>
-                                                            {row.left ? INDENT.repeat(row.left.indent) + row.left.text : ""}
-                                                        </span>
-                                                        <ChangeMark collapsed={collapsed().has(i)} changes={changes().get(i)} />
-                                                    </td>
-                                                    <td class="align-top whitespace-pre-wrap break-all pl-2">
-                                                        <span class={row.t === "add" || row.t === "change" ? "text-success" : ""}>
-                                                            {row.right ? INDENT.repeat(row.right.indent) + row.right.text : ""}
-                                                        </span>
-                                                    </td>
-                                                </tr>
-                                            )}
-                                        </For>
-                                    </tbody>
-                                </table>
-                            }>
-                                <For each={renderRows()}>
-                                    {({ i, row }) => (
-                                        <Show
-                                            when={row.t !== "change"}
-                                            fallback={
-                                                <>
-                                                    <div data-diff="del" class="bg-error/10 text-error">
-                                                        <FoldToggle i={i} row={row} collapsed={collapsed().has(i)} changes={changes().get(i)} onToggle={toggleFold} />
-                                                        <span class="opacity-40 select-none">- </span>
-                                                        <span class="whitespace-pre-wrap break-all">
-                                                            {INDENT.repeat(row.left?.indent ?? row.indent) + (row.left?.text ?? "")}
-                                                        </span>
-                                                        <ChangeMark collapsed={collapsed().has(i)} changes={changes().get(i)} />
-                                                    </div>
-                                                    <div data-diff="add" class="bg-success/10 text-success">
-                                                        <span class="inline-block w-3" />
-                                                        <span class="opacity-40 select-none">+ </span>
-                                                        <span class="whitespace-pre-wrap break-all">
-                                                            {INDENT.repeat(row.right?.indent ?? row.indent) + (row.right?.text ?? "")}
-                                                        </span>
-                                                    </div>
-                                                </>
-                                            }
-                                        >
-                                            <div
-                                                data-diff={row.t}
+                <div class="overflow-auto grow p-2 text-caption font-mono leading-[1.5]" data-compact-preview>
+                    <Show
+                        when={!sideBySide()}
+                        fallback={
+                            <table class="w-full border-collapse">
+                                <tbody>
+                                    <For each={renderRows()}>
+                                        {({ i, row }) => (
+                                            <tr
                                                 class={
                                                     row.t === "add"
-                                                        ? "bg-success/10 text-success"
-                                                        : row.t === "del"
-                                                          ? "bg-error/10 text-error"
+                                                        ? "bg-success/10"
+                                                        : row.t === "del" || row.t === "change"
+                                                          ? "bg-error/10"
                                                           : ""
                                                 }
                                             >
+                                                <td class="align-top whitespace-pre-wrap break-all w-1/2 pr-2 border-r border-base-300">
+                                                    <FoldToggle i={i} row={row} collapsed={collapsed().has(i)} changes={changes().get(i)} onToggle={toggleFold} />
+                                                    <span class={row.t === "del" || row.t === "change" ? "text-error" : ""}>
+                                                        {row.left ? INDENT.repeat(row.left.indent) + row.left.text : ""}
+                                                    </span>
+                                                    <ChangeMark collapsed={collapsed().has(i)} changes={changes().get(i)} />
+                                                </td>
+                                                <td class="align-top whitespace-pre-wrap break-all pl-2">
+                                                    <span class={row.t === "add" || row.t === "change" ? "text-success" : ""}>
+                                                        {row.right ? INDENT.repeat(row.right.indent) + row.right.text : ""}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </For>
+                                </tbody>
+                            </table>
+                        }
+                    >
+                        <For each={renderRows()}>
+                            {({ i, row }) => (
+                                <Show
+                                    when={row.t !== "change"}
+                                    fallback={
+                                        <>
+                                            <div data-diff="del" class="bg-error/10 text-error">
                                                 <FoldToggle i={i} row={row} collapsed={collapsed().has(i)} changes={changes().get(i)} onToggle={toggleFold} />
-                                                <span class="opacity-40 select-none">{row.t === "add" ? "+" : row.t === "del" ? "-" : " "} </span>
+                                                <span class="opacity-40 select-none">- </span>
                                                 <span class="whitespace-pre-wrap break-all">
-                                                    {INDENT.repeat(row.indent) + (row.right?.text ?? row.left?.text ?? "")}
+                                                    {INDENT.repeat(row.left?.indent ?? row.indent) + (row.left?.text ?? "")}
                                                 </span>
                                                 <ChangeMark collapsed={collapsed().has(i)} changes={changes().get(i)} />
                                             </div>
-                                        </Show>
-                                    )}
-                                </For>
-                            </Show>
-                            <Show when={renderRows().length === 0}>
-                                <div class="p-4 opacity-60">无差异（当前参数与生效请求一致）</div>
-                            </Show>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="px-4 py-2 border-t flex items-center justify-between gap-2 shrink-0">
-                    <Show when={err()}>
-                        <span class="text-caption text-error">{err()}</span>
+                                            <div data-diff="add" class="bg-success/10 text-success">
+                                                <span class="inline-block w-3" />
+                                                <span class="opacity-40 select-none">+ </span>
+                                                <span class="whitespace-pre-wrap break-all">
+                                                    {INDENT.repeat(row.right?.indent ?? row.indent) + (row.right?.text ?? "")}
+                                                </span>
+                                            </div>
+                                        </>
+                                    }
+                                >
+                                    <div
+                                        data-diff={row.t}
+                                        class={
+                                            row.t === "add"
+                                                ? "bg-success/10 text-success"
+                                                : row.t === "del"
+                                                  ? "bg-error/10 text-error"
+                                                  : ""
+                                        }
+                                    >
+                                        <FoldToggle i={i} row={row} collapsed={collapsed().has(i)} changes={changes().get(i)} onToggle={toggleFold} />
+                                        <span class="opacity-40 select-none">{row.t === "add" ? "+" : row.t === "del" ? "-" : " "} </span>
+                                        <span class="whitespace-pre-wrap break-all">
+                                            {INDENT.repeat(row.indent) + (row.right?.text ?? row.left?.text ?? "")}
+                                        </span>
+                                        <ChangeMark collapsed={collapsed().has(i)} changes={changes().get(i)} />
+                                    </div>
+                                </Show>
+                            )}
+                        </For>
                     </Show>
-                    <div class="flex-1" />
-                    <button class="btn btn-xs" onClick={props.onClose}>
-                        取消
-                    </button>
-                    <button
-                        class="btn btn-primary btn-xs"
-                        aria-label="执行压缩"
-                        disabled={busy()}
-                        onClick={() => void apply()}
-                    >
-                        {busy() ? "压缩中…" : "压缩（历史保留）"}
-                    </button>
+                    <Show when={renderRows().length === 0}>
+                        <div class="p-4 opacity-60">无差异（当前参数与生效请求一致）</div>
+                    </Show>
                 </div>
-                {/* 底边拖拽把手：调整抽屉高度（对齐 token 窗口用量抽屉的形态） */}
-                <div
-                    class="h-1.5 shrink-0 cursor-row-resize bg-base-300 hover:bg-primary/50 active:bg-primary"
-                    title="拖动调整高度"
-                    aria-label="拖动调整高度"
-                    onMouseDown={startResize}
-                />
             </div>
         </div>
     );

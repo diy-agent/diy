@@ -46,6 +46,7 @@ import type { BlockNode } from "../../main/services/local-blocks";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 import { notificationStore } from "../store/notificationStore";
 import { DEFAULT_BUDGET_BYTES } from "../../shared/context/compaction";
+import { useCompactPanel, CompactPanelContent } from "./CompactSessionPanel";
 
 // ─── 共用小件 ────────────────────────────────────────
 
@@ -671,7 +672,7 @@ export function WindowRing() {
  * 单元格口径：数量 = 字节÷4 估（~）；占比 = 该段 ÷ 同行 prompt；– = 未落盘构成（本版前的记录）。
  */
 export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }) {
-    const [view, setView] = createSignal<"total" | "step">("total");
+    const [view, setView] = createSignal<"compact" | "total" | "step">("compact");
     // 打开对账一次账本 + Escape 自管（stopPropagation：别把别的抽屉连带关了）
     createEffect(() => {
         if (!props.open) return;
@@ -688,6 +689,8 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
     });
     const steps = () => localChatStore.usage;
     const groups = () => groupByTurn(steps());
+    /** 压缩面板控制器（供 tab 栏执行按钮 + 压缩 tab 内容共享） */
+    const ctl = useCompactPanel(() => localChatStore.currentUri ?? "");
 
     /** 一行的三段（cp = 该行记录的构成字节；prompt = 该行输入 token，精确） */
     const rowParts = (cp: { systemBytes: number; toolsBytes: number } | undefined, prompt: number) => {
@@ -765,7 +768,14 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                             窗口构成
                             <span class="ml-2 text-body font-normal opacity-60">为 agent 优化：该动谁（提示词 / 历史 / 工具）</span>
                         </div>
-                        <div class="join ml-auto shrink-0" role="group" aria-label="报表粒度">
+                        <div class="join ml-auto shrink-0" role="group" aria-label="窗口构成视图">
+                            <button
+                                class={`btn btn-xs join-item ${view() === "compact" ? "btn-active" : "btn-ghost"}`}
+                                aria-pressed={view() === "compact"}
+                                onClick={() => setView("compact")}
+                            >
+                                压缩
+                            </button>
                             <button
                                 class={`btn btn-xs join-item ${view() === "total" ? "btn-active" : "btn-ghost"}`}
                                 aria-pressed={view() === "total"}
@@ -781,11 +791,28 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                 分表（按步）
                             </button>
                         </div>
+                        <button
+                            class="btn btn-primary btn-xs shrink-0"
+                            aria-label="压缩（详情页）"
+                            disabled={ctl.busy()}
+                            title="压缩会话上下文（历史保留、可撤销）"
+                            onClick={() => void ctl.apply()}
+                        >
+                            {ctl.busy() ? "压缩中…" : "压缩"}
+                        </button>
                         <DrawerMaxButton max={DM.max()} onToggle={DM.toggle} />
                         <button class="btn btn-ghost btn-xs" onClick={props.onClose} aria-label="关闭窗口构成">
                             ✕
                         </button>
                     </div>
+                    <Show
+                        when={view() !== "compact"}
+                        fallback={
+                            <div class="min-h-0 flex-1 overflow-hidden">
+                                <CompactPanelContent ctl={ctl} />
+                            </div>
+                        }
+                    >
                     <div class="min-h-0 flex-1 overflow-auto p-4">
                         <Show
                             when={steps().length > 0}
@@ -878,6 +905,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                             </div>
                         </Show>
                     </div>
+                    </Show>
                 </div>
             </div>
         </Show>

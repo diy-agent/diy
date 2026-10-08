@@ -28,7 +28,7 @@ import {
     cancelHoverClose,
     type UsageHoverState,
 } from "./UsagePanel";
-import { CompactSessionPanel, CompactHistoryPanel } from "./CompactSessionPanel";
+import { CompactHistoryPanel } from "./CompactSessionPanel";
 import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
@@ -938,8 +938,7 @@ export function LocalChatPage(props: { uri?: string }) {
     const [densityOpen, setDensityOpen] = createSignal(false);
     /** 「⋯」溢出菜单：低频/危险操作（清空历史）默认不显示，点开才露出（VSCode 附加菜单式） */
     const [moreOpen, setMoreOpen] = createSignal(false);
-    /** 压缩面板（只改投递、不删历史）与压缩历史（事件快照列表） */
-    const [compactOpen, setCompactOpen] = createSignal(false);
+    /** 压缩历史（事件快照列表）；压缩参数改在「窗口构成页」第一 tab（M1），卡内可快捷直压 */
     const [gensOpen, setGensOpen] = createSignal(false);
     const [personaPanelOpen, setPersonaPanelOpen] = createSignal(false);
     const [fullscreen, setFullscreen] = createSignal(false);
@@ -1287,16 +1286,6 @@ export function LocalChatPage(props: { uri?: string }) {
                             >
                                 <button
                                     class="btn btn-ghost btn-xs w-full justify-start gap-2 normal-case font-normal"
-                                    aria-label="压缩会话上下文"
-                                    onClick={() => {
-                                        setMoreOpen(false);
-                                        setCompactOpen(true);
-                                    }}
-                                >
-                                    压缩会话…
-                                </button>
-                                <button
-                                    class="btn btn-ghost btn-xs w-full justify-start gap-2 normal-case font-normal"
                                     aria-label="压缩历史"
                                     onClick={() => {
                                         setMoreOpen(false);
@@ -1564,9 +1553,6 @@ export function LocalChatPage(props: { uri?: string }) {
                 </div>
             </div>
 
-            <Show when={compactOpen() && uri()}>
-                <CompactSessionPanel uri={uri()!} onClose={() => setCompactOpen(false)} />
-            </Show>
             <Show when={gensOpen() && uri()}>
                 <CompactHistoryPanel uri={uri()!} onClose={() => setGensOpen(false)} />
             </Show>
