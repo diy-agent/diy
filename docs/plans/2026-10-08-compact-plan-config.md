@@ -69,9 +69,9 @@ auto:
 history:
   budget: 12 KB
   keep:
-    - { type: steps, n: 10, must: true }   # ① 最近 10 步 = 工作集（agent 正在做的事）—— 必保
-    - { type: role, role: user, must: true } # ② 所有用户发言 —— 必保
-    - { type: ladder }                     # ③ 剩余预算按重要度填（缺省兜底）
+    - { type: steps, must: true, typeData: { n: 10 } }      # ① 最近 10 步 = 工作集（agent 正在做的事）—— 必保
+    - { type: role,  must: true, typeData: { role: user } } # ② 所有用户发言 —— 必保
+    - { type: ladder }                                     # ③ 剩余预算按重要度填（缺省兜底）
 tool-result:
   render: headtail
   head: 3
@@ -88,18 +88,20 @@ tool-result:
 
 ## ④ 取法词汇（`type` 判别；可序列化、可校验）
 
-```ts
-type Take =
-  | { type: "ladder" }                                        // 纵向阶梯：user>结论>过程>命令>结果（同层新先）
-  | { type: "role";   role: "user" | "assistant" | "tool" }   // 某角色全部（新先）
-  | { type: "recent"; n: number; role?: "user"|"assistant"|"tool" } // 最近 n 条消息（可带角色）
-  | { type: "steps";  n: number };                            // 最近 n 个 step 的消息（新步先）
+**按 `rule.discriminated-union`**（判别键同级 = 公共字段；分支私有数据进 `<判别键>Data`）：
 
-type Stage = Take & {
-  must?: boolean;   // true = 必保：不占 budget；不足时由兜底闸截断（见 ⑧）
-  limit?: number;   // 本元件最多取几个单元（单元 = call 连同其 result 算 1）
-};
+```ts
+// 级 = 判别键 `type`（公共字段 must/limit 与 type 同级）+ 分支私有数据进 `typeData`
+type Stage =
+  | { type: "ladder"; must?: boolean; limit?: number }
+  | { type: "role";   must?: boolean; limit?: number; typeData: { role: "user" | "assistant" | "tool" } }
+  | { type: "recent"; must?: boolean; limit?: number; typeData: { n: number; role?: "user" | "assistant" | "tool" } }
+  | { type: "steps";  must?: boolean; limit?: number; typeData: { n: number } };
 ```
+
+- **与 `type` 同级** = 每个分支都有的公共字段：`must`（必保、不占 budget）、`limit`（最多几个单元）。
+- **`typeData` 内** = 该 type **私有**的数据（`n` / `role`）——换 type 就换一整包 `typeData`。
+- 判别键**用 `type`**（`kind` 已被 op 流 / 事件账占用，见 `rule.discriminated-union`）。
 
 > 四个取法已够表达「工作集 / 用户话 / 按重要度」这三类诉求；**先不加更多**（简单优先，缺了再加）。
 
@@ -109,6 +111,28 @@ type Stage = Take & {
 ---
 
 ## ⑤ 执行逻辑与执行迹
+
+### ⑤.0 坐标：两套「第几行」，**别混**（回答「编号是否可行」）
+
+压缩选择的坐标**只有一套**，且它**与 role 无关**——就是「**消息历史里的第几行**」：
+
+| 坐标 | 是什么 | 谁用 | 是否含投递期注入 |
+|---|---|---|---|
+| **`logLine`（日志坐标）** | **块树全量投影**的下标 + 1 = `llm.jsonl` **物理行号** | **压缩选择 / 注记 `kept` / byLine 回取** | **否**（runtime / 摘要**不在**此处） |
+| `deliveryIndex`（投递坐标） | 最终发给模型的 `messages` 下标 | 只用于展示「这次到底发了什么」 | 是（含 `[..., {user:runtime}, {user:本轮输入}]` 及相邻 user 合并） |
+
+**关键事实（查证 `local-agent.ts` 而来）**：
+- runtime 容器（上下文树的易变部分）**不进块树、不进 `llm.jsonl`**；它在**投递期**作为尾部
+  `user` 消息拼进去（`withRuntime`），与本轮输入组成**相邻两条 user**，再被 `normalizeUserRuns`
+  **合并成一条**发给 provider。—— 这正是你说的「同一次请求可能发出 2 个 message」。
+- 但**压缩选择不看投递坐标**：它在**块树投影**上做，编号 = 该投影下标 = `llm.jsonl` 行号
+  （每行带 `turn` / `step` 索引位）。所以「runtime / 合并」**不干扰编号**，`kept: [[a,b]]` 稳定可回取。
+- 因此**不需要** `step+messageId` 做选择坐标：选择只需要「在块树消息序列里的位置」，下标就够；
+  且它是**唯一**那套坐标（注记 byLine 已按它取行）。role（user/assistant/tool）**只是该行的属性**，
+  不是坐标维度 —— 「不关是 tool / user / 助理，只是第几行」的判断**正确**。
+
+> ⚠️ 若将来要把「选择结果」映射到「最终发出那份」，才需要 `deliveryIndex`；那是**展示**用途，
+> 必须与 `logLine` 显式区分命名（否则就是上版范例的混乱根源）。
 
 ### ⑤.1 逻辑（`runPlan` 语义；逐级 = 逐声明）
 
@@ -183,8 +207,8 @@ run(all, plan):
   "plan": {
     "budgetBytes": 12288,
     "keep": [
-      { "type": "steps", "n": 10, "must": true },
-      { "type": "role", "role": "user", "must": true },
+      { "type": "steps", "must": true, "typeData": { "n": 10 } },
+      { "type": "role", "must": true, "typeData": { "role": "user" } },
       { "type": "ladder" }
     ]
   },
@@ -214,8 +238,8 @@ diy compact preview   <uri>            # 按当前 plan 现算：保留/丢弃�
 ```
 用户：记得把我说的都留着，还有你最近干的别忘。
 agent：（产出 plan 修改建议，不直接生效）
-   + - { type: steps, n: 10, must: true }
-   + - { type: role, role: user, must: true }
+   + - { type: steps, must: true, typeData: { n: 10 } }
+   + - { type: role,  must: true, typeData: { role: user } }
      - { type: ladder }
    「新增两级必保（不吃预算）；ladder 继续兜底。」
 用户：行。
