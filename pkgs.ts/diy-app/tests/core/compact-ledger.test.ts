@@ -11,7 +11,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
 import type { LanguageModelV3StreamPart, LanguageModelV3StreamResult, LanguageModelV3Usage } from "@ai-sdk/provider";
 import { MockLanguageModelV3 } from "ai/test";
 import type { LanguageModel } from "ai";

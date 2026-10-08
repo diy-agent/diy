@@ -42,11 +42,6 @@ function isEmpty(v: unknown): boolean {
     return false;
 }
 
-/** 是否是容器（对象/数组，需要多行） */
-function isContainer(v: unknown): boolean {
-    return v !== null && typeof v === "object";
-}
-
 /**
  * 值 → 行列表。
  * @param value 任意 JSON 值

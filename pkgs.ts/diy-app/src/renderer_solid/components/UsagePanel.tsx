@@ -40,7 +40,6 @@ import {
     type StepUsageRecord,
     type TurnGroup,
     type TurnUsagePatch,
-    type UsageBuckets,
 } from "../../shared/usage";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { VIEW_BAR_H } from "../lib/layout-metrics";

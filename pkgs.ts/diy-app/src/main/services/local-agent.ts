@@ -15,7 +15,6 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
     appendFileSync,
     existsSync,
@@ -38,7 +37,6 @@ import {
     danglingStopPatches,
     interruptedToolPatches,
     projectAll,
-    selectHistory,
     selectHistoryByBudget,
     selectForDelivery,
     type DeliveryOpts,
@@ -293,14 +291,6 @@ function appendUsage(taskUri: string, rec: StepUsageRecord): void {
     }
     // 压缩效果的唯一真值：压缩后首次真发的实测（见 maybeRecordMeasure 头注）
     maybeRecordMeasure(taskUri, rec);
-}
-
-/**
- * 全量投影里每条消息所属的轮（保序）—— keep.unit=messages 的吸附依据。
- * 用**全量投影**（不带投递选项）：吸附要按"实际上会发出去的消息"算，不能用压缩后的。
- */
-function messageTurnsOf(store: BlockStore): string[] {
-    return blocksToMessages(store, { withIndex: true }).map((m) => String(m.turn ?? ""));
 }
 
 /** 原始流 dump（仅 DIY_RAW_STREAM_DUMP=1 时写）：ai-sdk 的 part 原样落盘，用于研究“Op 是否漏信息” */

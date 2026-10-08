@@ -11,8 +11,6 @@ import {
     toYamlLines,
     visibleDiffRows,
     visibleLineIndexes,
-    yamlText,
-    type YamlDiffRow,
     type YamlLine,
 } from "../../src/shared/yaml-lines";
 import { layerFacts, messageLayerBytes, type RequestView } from "../../src/shared/context/request-view";
