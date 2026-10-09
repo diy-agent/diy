@@ -94,7 +94,7 @@ let ui: UiDriver;
 beforeAll(async () => {
     stub = await startStub();
     // 桩上游 + 占位 key：main 侧 chat() 会校验 key 存在，桩不看 key 的值
-    process.env["OPENCODE_ZEN_API_KEY"] ||= "intent-test-dummy-key";
+    process.env["OPENCODE_API_KEY"] ||= "intent-test-dummy-key";
     process.env["DIY_ZEN_BASE_URL"] = stub.url;
     const electron = await startElectronTest();
     const HOME = electron.home;

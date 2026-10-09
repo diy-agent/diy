@@ -5,7 +5,7 @@
 // 块协议 G 的需求定义：
 //   1. Op 流即 JSONL：start/delta/patch/stop 四类行，wire = 存储 = 渲染输入
 //   2. history 重放返回完整 Op 日志；clear 清日志；cancel 无在途返回 false
-//   3. 真实对话（zen/go + OPENCODE_ZEN_API_KEY）：turn/user/text 块 + usage
+//   3. 真实对话（zen/go + OPENCODE_API_KEY）：turn/user/text 块 + usage
 //   4. 工具链路：tool 块带 args/output/status（toolCallId = 块 id）
 //
 // 无网络部分恒跑；**真实 LLM 用例默认不跑**（需 DIY_LLM_E2E=1 + key）：
@@ -29,7 +29,7 @@ import { ShellTest, Session } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 
 // 真实 LLM 用例：默认关闭（见文件头）。缺 key 时即使开了开关也跳过。
-const RUN_LLM = process.env.DIY_LLM_E2E === "1" && !!process.env.OPENCODE_ZEN_API_KEY;
+const RUN_LLM = process.env.DIY_LLM_E2E === "1" && !!process.env.OPENCODE_API_KEY;
 
 interface ElectronFixture {
     sh: ShellTest;

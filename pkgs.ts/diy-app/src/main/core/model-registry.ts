@@ -13,6 +13,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { defaultApiFace } from "../../shared/models";
 import {
     filterAllows,
     type AccountView,
@@ -81,14 +82,23 @@ function modelViews(
     return ids.map((id) => {
         const m = spec?.models[id];
         const o = overrides[id];
+        const sc = m?.cost as
+            | { input?: number; output?: number; cache_read?: number; cache_write?: number }
+            | undefined;
+        const cost =
+            o?.cost ??
+            (sc && (sc.input !== undefined || sc.output !== undefined)
+                ? { input: sc.input, output: sc.output, cache_read: sc.cache_read, cache_write: sc.cache_write }
+                : null);
         return {
             id,
             name: o?.name ?? (m?.name as string | undefined) ?? id,
             context: o?.limit?.context ?? m?.limit?.context ?? null,
             output: o?.limit?.output ?? m?.limit?.output ?? null,
+            api: defaultApiFace(id, o?.api),
             reasoning: m?.reasoning ?? false,
             reasoningOverride: o?.reasoning ?? null,
-            cost: o?.cost ?? ((m?.cost as { input?: number; output?: number } | undefined) ? { input: m!.cost!.input, output: m!.cost!.output } : null),
+            cost,
             enabled: filterAllows(filter, id),
             overridden: o !== undefined,
             specMissing: m === undefined,

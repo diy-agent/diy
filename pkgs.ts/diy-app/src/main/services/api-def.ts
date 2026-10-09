@@ -527,10 +527,14 @@ export const apiDef = RpcSchema.router({
                 },
               }),
               models: RpcSchema.unary({
-                desc: `列出本地 agent 可选模型（zen/go；api 面逐个标注，见 local-agent.ts apiOf）`,
+                desc: `列出本地 agent 可选模型（来自 model.yaml ⊕ snapshot；每项带完全限定名 ref）`,
                 input: {},
                 output: z.array(
                   z.object({
+                    /** 完全限定名 account@provider/model（人物 model 字段就用它） */
+                    ref: z.string(),
+                    provider: z.string(),
+                    account: z.string(),
                     id: z.string(),
                     name: z.string(),
                     api: z.enum(["chat", "responses"]),

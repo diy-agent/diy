@@ -327,6 +327,7 @@ function ProviderCard(props: {
                 <th class="w-8">{mode() === "exclude" ? "排除" : "启用"}</th>
                 <th>模型</th>
                 <th class="w-36">context / output</th>
+                <th class="w-20">面</th>
                 <th class="w-20">推理</th>
                 <th class="w-20">成本 $/1M</th>
                 <th class="w-24">覆盖</th>
@@ -369,6 +370,7 @@ function ProviderCard(props: {
                       <td class="font-mono text-xs">
                         {fmtK(m.context)} / {fmtK(m.output)}
                       </td>
+                      <td class="text-xs"><code>{m.api}</code></td>
                       <td class="text-xs">{m.reasoning ? "✓" : "—"}</td>
                       <td class="text-xs">{m.cost?.input != null ? `${m.cost.input}/${m.cost.output}` : "—"}</td>
                       <td>
@@ -377,7 +379,7 @@ function ProviderCard(props: {
                     </tr>
                     <Show when={open()}>
                       <tr>
-                        <td colspan={6}>
+                        <td colspan={7}>
                           <OverrideEditor
                             value={ov()}
                             onSave={(o) => editCfg((c) => {
@@ -407,7 +409,7 @@ function fmtK(n: number | null | undefined): string {
   return String(n);
 }
 
-/** 逐模型覆盖编辑（白名单字段：name / limit / reasoning 档位 / cost） */
+/** 逐模型覆盖编辑（白名单字段：name / api 面 / limit / reasoning 档位 / cost） */
 function OverrideEditor(props: { value: ModelOverride | undefined; onSave: (o: ModelOverride | null) => void }) {
   const [name, setName] = createSignal(props.value?.name ?? "");
   const [ctx, setCtx] = createSignal(props.value?.limit?.context != null ? String(props.value.limit.context) : "");
@@ -416,10 +418,13 @@ function OverrideEditor(props: { value: ModelOverride | undefined; onSave: (o: M
   const [cout, setCout] = createSignal(props.value?.cost?.output != null ? String(props.value.cost.output) : "");
   const [sup, setSup] = createSignal(props.value?.reasoning?.supported.join(", ") ?? "");
   const [def, setDef] = createSignal(props.value?.reasoning?.default ?? "");
+  // API 面：空 = 跟随（override 内置 responses 名单 / chat 缺省，见 main/core/model-runtime.ts）
+  const [apiFace, setApiFace] = createSignal<"" | "chat" | "responses">(props.value?.api ?? "");
 
   const commit = () => {
     const o: ModelOverride = {};
     if (name().trim()) o.name = name().trim();
+    if (apiFace()) o.api = apiFace() as "chat" | "responses";
     const limit: NonNullable<ModelOverride["limit"]> = {};
     if (ctx().trim()) limit.context = Number(ctx());
     if (out().trim()) limit.output = Number(out());
@@ -436,6 +441,14 @@ function OverrideEditor(props: { value: ModelOverride | undefined; onSave: (o: M
       <label class="form-control">
         <span class="label-text text-xs">显示名</span>
         <input class="input input-bordered input-xs" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
+      </label>
+      <label class="form-control">
+        <span class="label-text text-xs">API 面</span>
+        <select class="select select-bordered select-xs" value={apiFace()} onChange={(e) => setApiFace(e.currentTarget.value as "" | "chat" | "responses")}>
+          <option value="">跟随（缺省）</option>
+          <option value="chat">chat</option>
+          <option value="responses">responses</option>
+        </select>
       </label>
       <label class="form-control">
         <span class="label-text text-xs">context</span>

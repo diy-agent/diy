@@ -724,14 +724,15 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                         <For each={personaStore.models}>
                                             {(m) => (
                                                 <ChoiceButton
-                                                    // 显示 **id**：那才是发给上游、也是存在配置里的值。
-                                                    // 上游的 name 与 id 经常对不上（"看着 GPT 5.6、实际发 mimo"）
+                                                    // 显示 **model id**：那才是发给上游的值；provider 在 title 里区分
+                                                    // （同 id 可挂在多个 provider 下，裸 id 会让人分不清用哪个账号）。
                                                     label={m.id}
+                                                    hint={m.ref}
                                                     // 新建态也按同一套值判选中：草稿与人物定义只差来源，
                                                     // 交互却必须一致（"看着亮的是 A、建出来是 B"是最坏的）
-                                                    active={shownModel() === m.id}
+                                                    active={shownModel() === m.ref || shownModel() === m.id}
                                                     disabled={busy()}
-                                                    onClick={() => pickModel(m.id)}
+                                                    onClick={() => pickModel(m.ref)}
                                                 />
                                             )}
                                         </For>

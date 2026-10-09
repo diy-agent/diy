@@ -5,6 +5,7 @@
 // 见 projects/4/tasks/162：同一现象在 gpt-6-luna 上复现，两者都是 responses-only。
 import { describe, it, expect } from "vitest";
 import { DEFAULT_MODEL, LOCAL_MODELS, apiOf } from "../../src/main/services/local-agent";
+import { findModel } from "../../src/shared/models";
 
 describe("LOCAL_MODELS 的 api 面标注", () => {
     it("每个模型都必须显式标注 api，且只能是 chat / responses", () => {
@@ -30,8 +31,9 @@ describe("LOCAL_MODELS 的 api 面标注", () => {
         // 首项成了**展示顺序**的产物，而"默认用哪个模型"是内置 persona 的 model —— 两件事分开。
         // 真正要防的是 DEFAULT_MODEL 写出清单外的 id（apiOf/reasoningOf 会 fallback 成"未知模型只能关闭"）。
         // 缺省模型 = 最便宜的带工具模型（用户 2026-10-06 定：默认必须最省）
-        expect(DEFAULT_MODEL).toBe("mimo-v2.6-flash");
-        expect(LOCAL_MODELS.map((m) => m.id)).toContain(DEFAULT_MODEL);
+        // DEFAULT_MODEL 现在是**完全限定名**（account@provider/model）；要防的是它解析不到。
+        expect(DEFAULT_MODEL).toBe("0@opencode-go/mimo-v2.6-flash");
+        expect(findModel(DEFAULT_MODEL)?.id).toBe("mimo-v2.6-flash");
     });
 
     it("清单顺序 = 展示顺序：便宜的先看见（mimo → deepseek → gpt-5.6 → gpt-6）", () => {

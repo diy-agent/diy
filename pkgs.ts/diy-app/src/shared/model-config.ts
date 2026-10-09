@@ -59,6 +59,13 @@ export type Filter = z.infer<typeof FilterSchema>;
  */
 export const ModelOverrideSchema = z.object({
     name: z.string().optional(),
+    /**
+     * API 面（diy 扩展字段，models.dev 无此粒度）。models.dev 的 `npm` 是 provider 级的
+     * 粗定面（openai 官方一个包两面），无法表达「同 provider 少数模型走 responses」——
+     * 如 zen/go 的 gpt-5.6-luna / gpt-6-luna（打到 chat 面必 503，见 shared/models.ts 注释）。
+     * 缺省由 npm 推导（见 main/core/model-runtime.ts），此处是逐模型精修。
+     */
+    api: z.enum(["chat", "responses"]).optional(),
     limit: z
         .object({
             context: z.number().int().positive().optional(),
@@ -161,13 +168,22 @@ export const ModelViewSchema = z.object({
     name: z.string(),
     context: z.number().nullable(),
     output: z.number().nullable(),
+    /** 生效 API 面（override > 内置 responses 名单 > npm 推导；见 main/core/model-runtime.ts） */
+    api: z.enum(["chat", "responses"]),
     /** spec 的 reasoning 支持（models.dev 布尔位） */
     reasoning: z.boolean(),
     /** 档位表覆盖（有则 UI 显示；models.dev 无此数据） */
     reasoningOverride: z
         .object({ supported: z.array(z.string()), default: z.string() })
         .nullable(),
-    cost: z.object({ input: z.number(), output: z.number() }).partial().nullable(),
+    cost: z
+        .object({
+            input: z.number().optional(),
+            output: z.number().optional(),
+            cache_read: z.number().optional(),
+            cache_write: z.number().optional(),
+        })
+        .nullable(),
     /** filter（include/exclude）判定结果 —— UI 勾选框的状态 */
     enabled: z.boolean(),
     /** 是否有 config.models 覆盖（UI 显示「覆盖」徽章） */

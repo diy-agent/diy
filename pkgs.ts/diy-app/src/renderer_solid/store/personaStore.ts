@@ -20,9 +20,16 @@ import type { ReasoningEffort } from "../../shared/models";
 
 /** 模型清单里本 store 用到的最小形状（展示用：id → 名字 / 推理档位支持集） */
 interface ModelBrief {
+    /** 完全限定名 account@provider/model —— persona.model 存的就是它 */
+    ref: string;
     id: string;
     name: string;
     reasoning: { supported: ReasoningEffort[]; default: ReasoningEffort };
+}
+
+/** 按限定名 `ref`（或裸 id，兼容存量）在清单里找条目 */
+function findModelBrief(refOrId: string): ModelBrief | undefined {
+    return models().find((m) => m.ref === refOrId) ?? models().find((m) => m.id === refOrId);
 }
 
 const [personas, setPersonas] = createSignal<PersonaView[]>([]);
@@ -233,7 +240,7 @@ export const personaStore = {
     // 模型一律**直接用 id** 展示 —— 它才是发给上游的那个值，也是配置里存的那个值。
     /** 某模型支持的思考级别（平铺按钮候选；模型未知时给空数组，界面自己兜底显示） */
     reasoningChoices(model: string): ReasoningEffort[] {
-        return models().find((m) => m.id === model)?.reasoning.supported ?? [];
+        return findModelBrief(model)?.reasoning.supported ?? [];
     },
     /**
      * 某模型的**默认**档位（null = 模型未知/清单未到）。
@@ -242,7 +249,7 @@ export const personaStore = {
      * 否则会写出一个上游必拒的组合（400 Invalid request parameters）—— 写入侧也会拦，但那是事后报错。
      */
     defaultReasoning(model: string): ReasoningEffort | null {
-        return models().find((m) => m.id === model)?.reasoning.default ?? null;
+        return findModelBrief(model)?.reasoning.default ?? null;
     },
     load,
     save,

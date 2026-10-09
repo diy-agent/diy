@@ -24,7 +24,7 @@ import { readFileSync } from "node:fs";
 
 let PROJECT = "";
 beforeAll(() => {
-    process.env["OPENCODE_ZEN_API_KEY"] = "test-key";
+    process.env["OPENCODE_API_KEY"] = "test-key";
     PROJECT = createProject(join(diyHome(), "ledger-work"));
 });
 let seq = 0;
