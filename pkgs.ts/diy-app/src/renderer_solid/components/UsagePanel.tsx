@@ -856,7 +856,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                                     ],
                                                     [
                                                         { label: "窗口%", title: "该步 总输入+总输出 ÷ 上限（执行时的窗口情况）" },
-                                                        { label: "压缩", title: "该步（请求）是否被压缩过 —— 点击展开那次压缩信息" },
+                                                        { label: "压缩", title: "该步（请求）的压缩：投递=按配置（每轮重建，无需事件）；压缩=触发/手动事件（点击展开）" },
                                                     ],
                                                 )}
                                             </thead>
@@ -866,6 +866,9 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                                         const v = stepView(r);
                                                         const k = stepKey(r);
                                                         const evs = () => compactPoints().get(k);
+                                                        // 投递压缩事实：只在**轮首**（step===1）—— 每轮按当前配置重建
+                                                        const hs = () => r.historySelection;
+                                                        const hasDelivery = () => r.step === 1 && !!r.historySelection;
                                                         return (
                                                             <>
                                                                 <tr>
@@ -876,18 +879,42 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                                                     {cellsOf(r.contextParts, v.buckets.inputTotal)}
                                                                     <td class={`text-right ${pctClass(v.windowRate)}`}>{pctText(v.windowRate)}</td>
                                                                     <td class="text-right">
-                                                                        <Show when={evs()} fallback={<span class="opacity-30">—</span>}>
-                                                                            {(list) => (
-                                                                                <button
-                                                                                    class="btn btn-ghost btn-xs text-info"
-                                                                                    aria-label="压缩点位"
-                                                                                    data-compact-point
-                                                                                    onClick={() => setOpenPoint((cur) => (cur === k ? null : k))}
-                                                                                >
-                                                                                    压缩{list().length > 1 ? ` ×${list().length}` : ""}
-                                                                                </button>
-                                                                            )}
-                                                                        </Show>
+                                                                        <div class="flex items-center justify-end gap-1">
+                                                                            <Show when={hasDelivery() ? hs() : undefined}>
+                                                                                {(d) => (
+                                                                                    <span
+                                                                                        data-delivery-compact
+                                                                                        class="badge badge-ghost badge-xs"
+                                                                                        title={`投递压缩（配置驱动·每轮重建）：预算 ${
+                                                                                            d().budgetBytes === 0
+                                                                                                ? "0（清零）"
+                                                                                                : `${Math.round(d().budgetBytes / 1024)} KB`
+                                                                                        } · 丢 ${d().droppedMessages}/${d().totalMessages} 条 · 保留 ${d().keptRuns} 段`}
+                                                                                    >
+                                                                                        投递{d().droppedMessages > 0 ? "" : "·全量"}
+                                                                                    </span>
+                                                                                )}
+                                                                            </Show>
+                                                                            <Show
+                                                                                when={evs()}
+                                                                                fallback={
+                                                                                    <Show when={!hasDelivery()}>
+                                                                                        <span class="opacity-30">—</span>
+                                                                                    </Show>
+                                                                                }
+                                                                            >
+                                                                                {(list) => (
+                                                                                    <button
+                                                                                        class="btn btn-ghost btn-xs text-info"
+                                                                                        aria-label="压缩点位"
+                                                                                        data-compact-point
+                                                                                        onClick={() => setOpenPoint((cur) => (cur === k ? null : k))}
+                                                                                    >
+                                                                                        压缩{list().length > 1 ? ` ×${list().length}` : ""}
+                                                                                    </button>
+                                                                                )}
+                                                                            </Show>
+                                                                        </div>
                                                                     </td>
                                                                 </tr>
                                                                 <Show when={openPoint() === k && evs()}>
@@ -971,7 +998,8 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                 占比 = 该段 ÷ 同行 prompt（合计 = Σ段 ÷ Σprompt）。
                                 <br />
                                 `–` = 该记录未落盘构成（本版前的旧轮）；窗口% = 该步 总输入+总输出 ÷ 上限（与环同源）；
-                                压缩列 = 该步（请求）是否被压缩过（点开看那次的算法/过滤器/规模）。
+                                压缩列 = 该步（请求）的压缩：**投递**=按当前配置（每轮首重建，**无需事件**）→ 悬停看预算/丢几条；
+                                **压缩**=触发/手动事件（点开看算法/过滤器/规模）。
                             </div>
                         </Show>
                     </div>

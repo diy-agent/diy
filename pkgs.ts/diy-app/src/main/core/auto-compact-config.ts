@@ -35,7 +35,9 @@ export function loadAutoCompact(home: string): AutoCompactConfig {
             );
             return DEFAULT_AUTO_COMPACT;
         }
-        return parsed.data;
+        // 读侧也走宽松归一：单位迁移（旧比例 → 字节默认）等**只在归一里做一次**，
+        // 否则手改的旧配置文件会绕过迁移，被当成字节阈值。
+        return normalizeAutoCompact(parsed.data);
     } catch (e) {
         console.warn(`[auto-compact] ${p} 解析失败，用默认:`, e);
         return DEFAULT_AUTO_COMPACT;
@@ -67,7 +69,7 @@ export function saveAutoCompact(home: string, cfg: unknown): AutoCompactConfig {
         "# triggers: 三个都是**可判定的确定事实**（不是「划不划算」的预测）\n" +
         "#   systemContextChanged 系统上下文变了 → 前缀缓存必作废，此刻压缩零重建代价\n" +
         "#   cacheExpired         缓存已过期（距上次请求 > 生效 TTL）→ 冷启动，压缩是白赚\n" +
-        "#   contextWindowOver    上下文窗口占用上限（0~1；0 = 关闭）\n" +
+        "#   contextWindowOver    上下文窗口占用上限（**字节**，按 token×4 估算；0 = 关闭）\n" +
         "# policy: 压缩策略（自动与手动**同一套**）。\n" +
         "#   mode: budget 目标式预算（现役；只有这一种算法）\n" +
         "#   modeData: **只属于该 mode** 的私有参数（换 mode 就换一整包；与 mode 同级的 summary 才是所有算法共有）\n" +

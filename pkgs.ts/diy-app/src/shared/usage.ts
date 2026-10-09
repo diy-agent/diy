@@ -342,6 +342,23 @@ export interface StepUsageRecord {
      * optional：本版上线前的账本没有 → 三段显示 `–`（不编 0）。
      */
     contextParts?: { systemBytes: number; toolsBytes: number };
+    /**
+     * 该轮**首步**（step===1）投递时的历史选择（**配置驱动压缩的事实**）—— 供 UI 在分表标注
+     * 「本步投递被压过」。**每轮重建**（`runTurn` 轮首按当前配置算一次），与是否写了压缩事件无关。
+     * optional：本版上线前的账本没有 → 分表不标注（不编造）。
+     */
+    historySelection?: {
+        /** 生效预算（字节）；0 = 清零 */
+        budgetBytes: number;
+        /** 实际保留的渲染后字节 */
+        keptBytes: number;
+        /** 保留的连续区间段数 */
+        keptRuns: number;
+        /** 被省的消息条数 */
+        droppedMessages: number;
+        /** 全量投影消息条数 */
+        totalMessages: number;
+    };
 }
 
 /**
