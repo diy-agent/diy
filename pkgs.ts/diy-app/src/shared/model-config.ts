@@ -123,7 +123,14 @@ export const SpecModelSchema = z
         temperature: z.boolean().optional(),
         release_date: z.string().optional(),
         limit: z.object({ context: z.number(), output: z.number() }).partial().optional(),
-        cost: z.object({ input: z.number(), output: z.number() }).partial().optional(),
+        cost: z
+            .object({
+                input: z.number().optional(),
+                output: z.number().optional(),
+                cache_read: z.number().optional(),
+                cache_write: z.number().optional(),
+            })
+            .optional(),
     })
     .passthrough();
 export type SpecModel = z.infer<typeof SpecModelSchema>;

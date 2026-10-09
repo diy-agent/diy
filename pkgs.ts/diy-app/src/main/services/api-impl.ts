@@ -15,6 +15,7 @@ import * as project from "../core/project";
 import * as state from "../core/state";
 import * as taskTree from "../core/task-tree";
 import { AppConfig } from "../core/app-config";
+import { refreshModelRuntime } from "../core/model-runtime";
 import { platform, arch, release, totalmem, freemem } from "node:os";
 import { currentGitBranch, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
 import { readRuntimeConfig } from "../../runtime";
@@ -55,18 +56,15 @@ const app = apiDef.diy;
  * 或 ChannelServerBinding（测试）。转发 diy.ui.* 由调用方在 binding 上 onForward。
  */
 export function bindAppHandlers(binding: ServerBinding): void {
-  // 装配运行时模型目录（snapshot ⊕ custom ⊕ model.yaml）。配置非法（结构错）→ 出声但
-  // 不阻断启动：回退内置 zen/go，用户仍可进界面改回来（fail-visible 而非 fail-dead）。
-  void import("../core/model-runtime")
-    .then(({ refreshModelRuntime }) => {
-      try {
-        const n = refreshModelRuntime(state.diyHome());
-        console.log(`[model-runtime] 装配 ${n} 个模型引用`);
-      } catch (e) {
-        console.warn("[model-runtime] 装配失败，回退内置 zen/go:", e);
-      }
-    })
-    .catch((e) => console.warn("[model-runtime] 加载失败:", e));
+  // 装配运行时模型目录（snapshot ⊕ custom ⊕ model.yaml）。**同步**做：异步会让早期的
+  // models 查询抢在装配前看到内置清单。配置非法（结构错）→ 出声但不阻断启动：
+  // 回退内置 zen/go，用户仍可进界面改回来（fail-visible 而非 fail-dead）。
+  try {
+    const n = refreshModelRuntime(state.diyHome());
+    console.log(`[model-runtime] 装配 ${n} 个模型引用`);
+  } catch (e) {
+    console.warn("[model-runtime] 装配失败，回退内置 zen/go:", e);
+  }
 
   // ── task ──
   binding.on(app.task.create, async ({ input }) => {
@@ -676,7 +674,6 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.llmConfig.write, async ({ input }) => {
     const { saveModelConfig } = await import("../core/model-config");
     saveModelConfig(state.diyHome(), input.modelFile);
-    const { refreshModelRuntime } = await import("../core/model-runtime");
     refreshModelRuntime(state.diyHome());
     return { status: "ok" };
   });
@@ -686,7 +683,6 @@ export function bindAppHandlers(binding: ServerBinding): void {
     if (input.spec === null) delete specs[input.id];
     else specs[input.id] = input.spec;
     saveCustomSpecs(state.diyHome(), specs);
-    const { refreshModelRuntime } = await import("../core/model-runtime");
     refreshModelRuntime(state.diyHome());
     return { status: "ok" };
   });

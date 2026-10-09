@@ -89,6 +89,31 @@ describe("refreshModelRuntime（装配 snapshot ⊕ custom ⊕ model.yaml）", (
         delete process.env["GOAT_TEST_KEY"];
     });
 
+    it("spec/override 的 cost（snake）→ ModelCost（camel），缓存价不丢", () => {
+        writeFileSync(
+            join(home, "providers.custom.yaml"),
+            `goat:
+  id: goat
+  npm: "@ai-sdk/openai-compatible"
+  api: "https://x/v1"
+  models:
+    a/b:
+      limit: { context: 1000, output: 100 }
+      cost: { input: 1, output: 2, cache_read: 0.1, cache_write: 0.5 }
+`,
+        );
+        writeFileSync(
+            join(home, "model.yaml"),
+            `customProviders:
+  goat:
+    accounts: [{ type: apiKey, data: { value: "k" } }]
+`,
+        );
+        refreshModelRuntime(home);
+        const m = findModel("0@custom:goat/a/b")!;
+        expect(m.cost).toEqual({ input: 1, output: 2, cacheRead: 0.1, cacheWrite: 0.5 });
+    });
+
     it("std provider（opencode-go）+ filter exclude 生效", () => {
         writeFileSync(
             join(home, "model.yaml"),

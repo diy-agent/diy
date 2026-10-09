@@ -14,7 +14,20 @@ import {
     type LocalModelReasoning,
     type ResolvedModel,
 } from "../../shared/models";
+import type { ModelCost } from "../../shared/usage";
 import { expandEnvValue, registryView } from "./model-registry";
+
+/**
+ * spec/override 的 cost 是 **models.dev 的 snake_case**（`cache_read`/`cache_write`），
+ * 而计价口径 `ModelCost`/`ratesOf` 读 **camelCase**（`cacheRead`/`cacheWrite`）——
+ * 不转就会把缓存读单价丢掉（按 0 算，静默低估成钱）。缺 input/output 视为无价。
+ */
+function toModelCost(
+    c: { input?: number; output?: number; cache_read?: number; cache_write?: number } | null | undefined,
+): ModelCost | undefined {
+    if (!c || c.input === undefined || c.output === undefined) return undefined;
+    return { input: c.input, output: c.output, cacheRead: c.cache_read, cacheWrite: c.cache_write };
+}
 
 /** 无档位信息时的保守档位集（models.dev 只有 reasoning 布尔位，没有词表） */
 const GENERIC_REASONING: LocalModelReasoning = {
@@ -40,7 +53,7 @@ export function refreshModelRuntime(home: string): number {
                 m.reasoningOverride ??
                 builtin?.reasoning ??
                 (m.reasoning ? GENERIC_REASONING : OFF_REASONING);
-            const cost = m.cost ?? builtin?.cost;
+            const cost = toModelCost(m.cost) ?? builtin?.cost;
             const context = m.context ?? builtin?.contextLimit ?? 0;
             const output = m.output ?? builtin?.maxOutputTokens ?? 0;
             for (const a of p.accounts) {
@@ -51,7 +64,7 @@ export function refreshModelRuntime(home: string): number {
                     contextLimit: context,
                     maxOutputTokens: output,
                     reasoning,
-                    cost: (cost ?? undefined) as ResolvedModel["cost"],
+                    cost: cost ?? undefined,
                     cacheTtlMs: builtin?.cacheTtlMs,
                     ref: `${a.label}@${p.limited}/${m.id}`,
                     provider: p.limited,
