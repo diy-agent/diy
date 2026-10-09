@@ -1,7 +1,8 @@
 // components/ModelConfigPage.tsx — 模型 provider 配置（直译 $DIY_HOME/model.yaml）
 //
 // 两组卡片：std = models.dev snapshot provider（spec 只读）；custom = providers.custom.yaml
-// （baseUrl / 面(npm) 可编辑）。卡片内：账号 → 模型清单（勾选启用）→ [保存][移除]。
+// （baseUrl / provider 级默认面(npm) 可编辑）。卡片内：账号 → 模型清单（勾选启用）→ [保存][移除]。
+// 模型清单不显示「面」列：面由 npm/端点自动解析，对用户没意义（provider 级默认面仍可改）。
 // 「添加 provider」即时落盘（否则 read 拿不到新 provider 的模型清单）；其余编辑攒 dirty → 每卡 [保存]。
 //
 // 交互约定（对齐 dsh 模型设置页）：
@@ -427,7 +428,6 @@ function StdCard(props: {
                 <th class="w-8">{mode() === "exclude" ? "排除" : "启用"}</th>
                 <th>模型</th>
                 <th class="w-36">context / output</th>
-                <th class="w-20">面</th>
                 <th class="w-24">推理档位</th>
                 <th class="w-24">$/1M</th>
               </tr>
@@ -456,7 +456,6 @@ function StdCard(props: {
                         </div>
                       </td>
                       <td class="font-mono text-xs">{fmtK(m().context)} / {fmtK(m().output)}</td>
-                      <td class="text-xs"><code>{m().api}</code></td>
                       <td class="text-xs">
                         <Show when={m().reasoning.declared} fallback={<span class="opacity-50">未声明</span>}>
                           {m().reasoning.supported.join("/")}
@@ -653,7 +652,6 @@ function CustomCard(props: {
                 <th>模型 id / 名称</th>
                 <th class="w-28">context</th>
                 <th class="w-28">output</th>
-                <th class="w-40">面</th>
                 <th class="w-52">档位（逗号，空=平台默认）</th>
               </tr>
             </thead>
@@ -661,7 +659,6 @@ function CustomCard(props: {
               <Index each={modelIds()}>
                 {(id) => {
                   const m = () => spec()!.models[id()];
-                  const mNpm = () => (m() as { provider?: { npm?: string } } | undefined)?.provider?.npm ?? providerNpm();
                   const enabled = () => {
                     if (mode() === "all") return true;
                     const flt = props.card.cfg.filter;
@@ -701,19 +698,6 @@ function CustomCard(props: {
                           value={m()?.limit?.output != null ? String(m()!.limit!.output) : ""}
                           onInput={(e) => patchModel(id(), (mm) => { const t = e.currentTarget.value.trim(); mm.limit = { ...mm.limit, ...(t ? { output: Number(t) } : {}) }; if (!t) delete mm.limit!.output; })}
                         />
-                      </td>
-                      <td>
-                        <select
-                          class="select select-bordered select-xs"
-                          value={mNpm()}
-                          onChange={(e) => patchModel(id(), (mm) => {
-                            const v = e.currentTarget.value;
-                            if (v === providerNpm()) delete (mm as { provider?: unknown }).provider;
-                            else (mm as { provider?: { npm?: string } }).provider = { npm: v };
-                          })}
-                        >
-                          <For each={FACE_OPTIONS}>{(o) => <option value={o.npm}>{o.label}</option>}</For>
-                        </select>
                       </td>
                       <td>
                         <input

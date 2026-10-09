@@ -425,7 +425,26 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         );
     }
 
-    it("主从视图：左列人物带引用数，右侧是平铺的模型/级别按钮（不是下拉）", async () => {
+    /**
+     * 展开模型选择表。
+     *
+     * 模型字段**默认收起**（只显示当前选中项 —— 常驻大表反而看不清当前选的是哪个）；
+     * 点触发按钮才展开。已展开则跳过（新建态会自动展开）。
+     */
+    async function openModelPicker(root: string): Promise<void> {
+        const picker = `${sel(root)} [data-testid="persona-model-picker"]`;
+        const already = await ui!.eval<boolean>(
+            `!!document.querySelector(${JSON.stringify(picker)})`,
+        );
+        if (!already) await clickIn(`${sel(root)} [data-testid="persona-model-trigger"]`);
+        await waitUntil(
+            async () => ui!.eval<boolean>(`!!document.querySelector(${JSON.stringify(picker)})`),
+            (v) => v === true,
+            { label: "模型选择表已展开" },
+        );
+    }
+
+    it("主从视图：模型默认收起（仅显示当前项），点击才展开选择表；级别是平铺按钮", async () => {
         const 名 = uniq("面板人物");
         const id = await addPersona(名, "mimo-v2.6-flash");
         const uri = await setupTask("面板测试任务");
@@ -437,7 +456,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         expect(text).toContain(名);
         // 人物列表不再混入任务信息（本任务/引用数移到 info 条与绑定模式语义中）
         expect(text).toContain("缺省");
-        // 属性直接可改；模型用**平铺按钮**（aria-pressed 标记选中），不是 select
+        // 属性直接可改；模型字段默认只显示当前值（不是常驻大表），展开后是可选表格
         expect(text).toContain("模型");
         expect(text).toContain("思考级别");
         expect(text).toContain("行为指令");
@@ -456,9 +475,21 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         })()`);
         expect(st.editing).toBe(id);
         expect(st.bound).toBe(id);
-        // 面板内不应再有 <select>（模型与档位都是平铺按钮；名字/行为指令是输入框）
+        // 面板内不应再有 <select>（模型是触发展开，档位是平铺按钮；名字/行为指令是输入框）
         expect(st.selects).toBe(0);
-        // 且**当前模型的按钮是选中态**（显示与实际一致：选中 mimo 就得亮 mimo）
+        // 模型字段默认收起：选择表**不在** DOM 里，但触发按钮上看得见当前模型 id
+        const collapsed = await ui!.eval<{ picker: boolean; trigger: string }>(`(() => {
+            const d = document.querySelector('${sel(uri)}');
+            const t = d?.querySelector('[data-testid="persona-model-trigger"]');
+            return {
+                picker: !!d?.querySelector('[data-testid="persona-model-picker"]'),
+                trigger: t?.textContent ?? '',
+            };
+        })()`);
+        expect(collapsed.picker).toBe(false);
+        expect(collapsed.trigger).toContain("mimo-v2.6-flash");
+        // 展开后当前模型的按钮是选中态（显示与实际一致：选中 mimo 就得亮 mimo）
+        await openModelPicker(uri);
         const pressed = await ui!.eval<string[]>(
             `Array.from(document.querySelectorAll('${sel(uri)} button[aria-pressed="true"]')).map(b => b.getAttribute('aria-label'))`,
         );
@@ -471,6 +502,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
         await openPanel(uri);
+        await openModelPicker(uri);
 
         // 真实点击模型按钮（表格首列的按钮显示 id；不是派发合成 change —— 这里就是按钮，点得动）
         await clickIn(`${sel(uri)} button[aria-label="deepseek-v4.1-flash"]`);
@@ -490,6 +522,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
         await openPanel(uri);
+        await openModelPicker(uri);
 
         const levelsOf = () =>
             ui!.eval<string[]>(
@@ -535,6 +568,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         await openPanel(uri);
 
         await clickIn(`${sel(uri)} [aria-label="新建人物"]`);
+        await openModelPicker(uri);
 
         // 1) 新建态三块属性都必须可交互（模型/档位 = button[aria-pressed]，行为指令 = textarea）
         const st = await waitUntil(
@@ -813,6 +847,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
         await openPanel(uri);
+        await openModelPicker(uri);
 
         const geo = await waitUntil(
             async () =>
@@ -1064,6 +1099,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
 
         // 新建态不显示（那时还没有"会影响谁"可言，显示了像在说别人的事）
         await clickIn(`${sel(uri)} [aria-label="新建人物"]`);
+        await openModelPicker(uri);
         await waitUntil(
             async () =>
                 ui!.eval<boolean>(
