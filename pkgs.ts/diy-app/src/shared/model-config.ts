@@ -57,15 +57,26 @@ export type Filter = z.infer<typeof FilterSchema>;
  * 逐模型覆盖（可整个缺省）。**白名单字段**，同构 models.dev 对应字段；
  * 不是整体 merge —— 只有列在这里的字段能改，其余永远跟 spec 走。
  */
+/**
+ * models.dev 的**阶梯价条目**（snake_case，与 api.json 同构）：
+ *   `tiers: [{ input, output, cache_read, cache_write, tier: { type: "context", size: 272000 } }]`
+ * `size` = 触发阈值（映射到 ModelTier.above，见 shared/usage.ts）。
+ * 不映射就会丢整档 —— 长上下文高价模型会按基础档静默少算（同 cache_read 那类坑）。
+ */
+const CostTierSchema = z
+    .object({
+        input: z.number().optional(),
+        output: z.number().optional(),
+        cache_read: z.number().optional(),
+        cache_write: z.number().optional(),
+        tier: z.object({ type: z.string().optional(), size: z.number() }).optional(),
+    })
+    .passthrough();
+
 export const ModelOverrideSchema = z.object({
     name: z.string().optional(),
-    /**
-     * API 面（diy 扩展字段，models.dev 无此粒度）。models.dev 的 `npm` 是 provider 级的
-     * 粗定面（openai 官方一个包两面），无法表达「同 provider 少数模型走 responses」——
-     * 如 zen/go 的 gpt-5.6-luna / gpt-6-luna（打到 chat 面必 503，见 shared/models.ts 注释）。
-     * 缺省由 npm 推导（见 main/core/model-runtime.ts），此处是逐模型精修。
-     */
-    api: z.enum(["chat", "responses"]).optional(),
+    // API 面**不可覆盖**：与 models.dev 对齐，面由 npm 解析（provider.npm 默认 + model.provider.npm
+    // 覆写，见 shared/models.ts faceOfNpm）。要改面就改 spec 的 npm，不在配置层另造字段。
     limit: z
         .object({
             context: z.number().int().positive().optional(),
@@ -85,6 +96,7 @@ export const ModelOverrideSchema = z.object({
             output: z.number(),
             cache_read: z.number().optional(),
             cache_write: z.number().optional(),
+            tiers: z.array(CostTierSchema).optional(),
         })
         .optional(),
 });
@@ -122,6 +134,8 @@ export const SpecModelSchema = z
         attachment: z.boolean().optional(),
         temperature: z.boolean().optional(),
         release_date: z.string().optional(),
+        /** models.dev 的**模型级 npm 覆写**（面在此精修；provider 级 npm 是粗默认） */
+        provider: z.object({ npm: z.string().optional() }).passthrough().optional(),
         limit: z.object({ context: z.number(), output: z.number() }).partial().optional(),
         cost: z
             .object({
@@ -129,6 +143,7 @@ export const SpecModelSchema = z
                 output: z.number().optional(),
                 cache_read: z.number().optional(),
                 cache_write: z.number().optional(),
+                tiers: z.array(CostTierSchema).optional(),
             })
             .optional(),
     })
@@ -175,8 +190,10 @@ export const ModelViewSchema = z.object({
     name: z.string(),
     context: z.number().nullable(),
     output: z.number().nullable(),
-    /** 生效 API 面（override > 内置 responses 名单 > npm 推导；见 main/core/model-runtime.ts） */
+    /** 生效 API 面（由 npm 解析；见 shared/models.ts faceOfNpm） */
     api: z.enum(["chat", "responses"]),
+    /** 生效 npm（provider.npm 或模型级 provider.npm 覆写） */
+    npm: z.string(),
     /** spec 的 reasoning 支持（models.dev 布尔位） */
     reasoning: z.boolean(),
     /** 档位表覆盖（有则 UI 显示；models.dev 无此数据） */
@@ -189,6 +206,7 @@ export const ModelViewSchema = z.object({
             output: z.number().optional(),
             cache_read: z.number().optional(),
             cache_write: z.number().optional(),
+            tiers: z.array(CostTierSchema).optional(),
         })
         .nullable(),
     /** filter（include/exclude）判定结果 —— UI 勾选框的状态 */

@@ -13,7 +13,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultApiFace } from "../../shared/models";
+import { faceOfNpm } from "../../shared/models";
 import {
     filterAllows,
     type AccountView,
@@ -35,7 +35,8 @@ function snapshot(): Record<string, SpecProvider> {
     if (_snapshot) return _snapshot;
     const here = dirname(fileURLToPath(import.meta.url));
     const cands = [
-        join(here, "../data/models-snapshot.json"), // out/main/data（build 拷贝）
+        join(here, "data/models-snapshot.json"), // out/main/data（bundle 在 out/main，build 拷贝到此处）
+        join(here, "../data/models-snapshot.json"), // 兼容旧布局
         join(here, "../../src/main/data/models-snapshot.json"), // 源树（tsx 直跑兜底）
     ];
     const p = cands.find((c) => existsSync(c));
@@ -79,31 +80,40 @@ function modelViews(
 ): ModelView[] {
     const specIds = spec ? Object.keys(spec.models) : [];
     const ids = [...specIds, ...Object.keys(overrides).filter((id) => !specIds.includes(id))];
-    return ids.map((id) => {
+    const out: ModelView[] = [];
+    for (const id of ids) {
         const m = spec?.models[id];
         const o = overrides[id];
+        // 面由 npm 解析：模型级 `provider.npm` 覆写 > provider 级 `npm`（对齐 models.dev）。
+        const npm = (m?.provider as { npm?: string } | undefined)?.npm ?? spec?.npm ?? "";
+        const face = faceOfNpm(npm);
+        if (!face) continue; // 不支持的 npm（anthropic/google/…）→ 该模型不出现
         const sc = m?.cost as
-            | { input?: number; output?: number; cache_read?: number; cache_write?: number }
+            | { input?: number; output?: number; cache_read?: number; cache_write?: number; tiers?: unknown }
             | undefined;
         const cost =
             o?.cost ??
             (sc && (sc.input !== undefined || sc.output !== undefined)
-                ? { input: sc.input, output: sc.output, cache_read: sc.cache_read, cache_write: sc.cache_write }
+                ? { input: sc.input, output: sc.output, cache_read: sc.cache_read, cache_write: sc.cache_write, tiers: sc.tiers }
                 : null);
-        return {
+        out.push({
             id,
             name: o?.name ?? (m?.name as string | undefined) ?? id,
             context: o?.limit?.context ?? m?.limit?.context ?? null,
             output: o?.limit?.output ?? m?.limit?.output ?? null,
-            api: defaultApiFace(id, o?.api),
+            api: face,
+            npm,
             reasoning: m?.reasoning ?? false,
             reasoningOverride: o?.reasoning ?? null,
-            cost,
+            cost: cost as ModelView["cost"],
             enabled: filterAllows(filter, id),
             overridden: o !== undefined,
             specMissing: m === undefined,
-        };
-    });
+        });
+    }
+    // 展示顺序 = 价格从低到高（便宜的先看见；无价排后）。UI 模型平铺按钮照此渲染。
+    out.sort((a, b) => (a.cost?.input ?? Number.POSITIVE_INFINITY) - (b.cost?.input ?? Number.POSITIVE_INFINITY) || a.id.localeCompare(b.id));
+    return out;
 }
 
 function providerView(

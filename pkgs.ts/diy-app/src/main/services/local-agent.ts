@@ -115,17 +115,13 @@ import {
     apiOf,
     contextLimitOf,
     costOf,
-    DEFAULT_MODEL,
     findModel,
     getModelCatalog,
     MODEL_COST_AS_OF,
-    UPSTREAM_PROVIDER,
     round3,
     isKnownModel,
-    LOCAL_MODELS,
     maxOutputTokensOf,
     reasoningOf,
-    ZEN_BASE_URL,
     type LocalModel,
     type LocalModelApi,
     type LocalModelReasoning,
@@ -135,19 +131,9 @@ import {
 import { personaForTask } from "../core/persona";
 import { resolveModelKey } from "../core/model-runtime";
 
-// 模型清单（LOCAL_MODELS / apiOf / reasoningOf / contextLimitOf …）已抽到 shared/models.ts：
-//   core/persona 要「默认模型 + 能力查询」，而 core 不能被 services 反向依赖（会循环 import）。
-// 这里**原样 re-export**：历史引用路径（tests/…/local-models-*.test.ts）保持不变。
-export {
-    apiOf,
-    contextLimitOf,
-    DEFAULT_MODEL,
-    isKnownModel,
-    LOCAL_MODELS,
-    maxOutputTokensOf,
-    reasoningOf,
-    ZEN_BASE_URL,
-};
+// 模型查询函数抽到 shared/models.ts（core 不能被 services 反向依赖，否则循环 import）。
+// 这里**原样 re-export**：历史引用路径（tests/…/local-models-*.test.ts 等）保持不变。
+export { apiOf, contextLimitOf, isKnownModel, maxOutputTokensOf, reasoningOf };
 export type { LocalModel, LocalModelApi, LocalModelReasoning, ReasoningEffort };
 
 /**
@@ -160,22 +146,12 @@ export type { LocalModel, LocalModelApi, LocalModelReasoning, ReasoningEffort };
 export const MAX_STEER_ROUNDS = 8;
 
 /**
- * zen/go 基址：两个 API 面共用（chat/completions 与 responses 只是路径不同）。
- *
- * `DIY_ZEN_BASE_URL` 是**测试/自建代理**的接缝：插话投递时机只与"步/轮边界"有关，
- * 而真实上游无法保证边界何时到来（详见 tests/cli.intent.steer-ui.test.ts 的桩上游）。
- * 缺省不设即官方 zen/go，生产行为不变。
- */
-export function zenBaseUrl(): string {
-    return process.env["DIY_ZEN_BASE_URL"] || ZEN_BASE_URL;
-}
-
-/**
- * 生效 baseUrl：内置 opencode-go 保留 `DIY_ZEN_BASE_URL` 测试接缝（桩上游），
- * 其余 provider 一律走 spec 配的 baseUrl。多账号不在此区分（baseUrl 是 provider 级的）。
+ * 生效 baseUrl：一律走 spec 配的 baseUrl。`DIY_ZEN_BASE_URL` 是**测试/自建代理**接缝
+ * （把任意 provider 的请求指到桩上游，详见 tests/cli.intent.steer-ui.test.ts）。多账号不在此
+ * 区分（baseUrl 是 provider 级的）。
  */
 export function resolveBaseUrl(m: ResolvedModel): string {
-    return m.provider === "opencode-go" ? zenBaseUrl() : m.baseUrl;
+    return process.env["DIY_ZEN_BASE_URL"] || m.baseUrl;
 }
 
 // 解析「人物/覆盖里写的模型引用」→ 运行时模型 + 密钥：见 LocalAgentManager.resolveModel。
@@ -879,6 +855,8 @@ export class LocalAgentManager {
      * 例外：注入了 `modelResolver`（单测桩模型）时跳过密钥解析 —— 桩模型不出网，无需 key。
      */
     private resolveModel(modelRef: string): { rm: ResolvedModel; key: string } {
+        // 人物 model 为空 = 还没配模型（应用首次启动无 provider）：给出可操作的指引。
+        if (!modelRef) throw new Error("未配置模型：请先在「模型 provider 配置」添加 provider，并在人物里选择模型");
         const rm = findModel(modelRef);
         if (!rm) throw new Error(`未知模型 ${modelRef}（可选：diy agent local models）`);
         return { rm, key: this.modelResolver ? "" : resolveModelKey(rm) };
@@ -1255,7 +1233,7 @@ export class LocalAgentManager {
                   // provider = **谁服务的**（我们实际调的上游），不是价目真源名。
                   // 旧实现把 `rates.source`（"models.dev@…"）填进 provider —— 那是一个自相矛盾的
                   // 字段（"provider: models.dev" 会让人以为请求走了 models.dev，它只是个价目网站）。
-                  provider: findModel(model)?.provider ?? UPSTREAM_PROVIDER,
+                  provider: findModel(model)?.provider ?? "unknown",
                   source: rates.source,
                   model,
                   input: rates.input,

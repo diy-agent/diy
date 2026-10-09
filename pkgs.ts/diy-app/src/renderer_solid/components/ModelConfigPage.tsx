@@ -127,7 +127,7 @@ export function ModelConfigPage() {
 
       <Show when={!loading()} fallback={<div class="text-body opacity-50">加载中…</div>}>
         {/* ── stdProviders ── */}
-        <div class="text-title font-semibold mt-2">内置 provider（models.dev）</div>
+        <div class="text-title font-semibold mt-2">models.dev provider（snapshot）</div>
         <Show when={unconfigured().length > 0}>
           <select
             class="select select-bordered select-sm w-full max-w-md"
@@ -139,7 +139,7 @@ export function ModelConfigPage() {
             }}
           >
             <option value="" disabled>
-              ＋ 添加内置 provider…
+              ＋ 添加 provider（来自 models.dev）…
             </option>
             <For each={unconfigured()}>
               {(c) => (
@@ -234,6 +234,15 @@ function ProviderCard(props: {
     });
   };
 
+  /** 移除整个 provider 段（std/custom 同法）；custom spec 保留在 providers.custom.yaml（下次再加不用重填） */
+  const removeProvider = () => {
+    if (!confirm(`移除 provider「${props.card.key}」？（模型选择随之消失；custom spec 保留）`)) return;
+    props.mutate((f) => {
+      if (props.card.kind === "std") delete f.stdProviders[props.card.key];
+      else delete f.customProviders[props.card.key];
+    });
+  };
+
   return (
     <div class="card border bg-base-100 p-3 space-y-2">
       {/* 头 */}
@@ -246,6 +255,10 @@ function ProviderCard(props: {
             编辑 spec
           </button>
         </Show>
+        <span class="flex-1" />
+        <button class="btn btn-xs btn-error btn-outline" onClick={removeProvider}>
+          移除
+        </button>
         <span class={`badge badge-sm ${base()?.usable ? "badge-success" : "badge-warning"}`}>
           {base()?.usable ? "密钥可用" : base() ? "无可用密钥" : "未读到"}
         </span>
@@ -418,13 +431,10 @@ function OverrideEditor(props: { value: ModelOverride | undefined; onSave: (o: M
   const [cout, setCout] = createSignal(props.value?.cost?.output != null ? String(props.value.cost.output) : "");
   const [sup, setSup] = createSignal(props.value?.reasoning?.supported.join(", ") ?? "");
   const [def, setDef] = createSignal(props.value?.reasoning?.default ?? "");
-  // API 面：空 = 跟随（override 内置 responses 名单 / chat 缺省，见 main/core/model-runtime.ts）
-  const [apiFace, setApiFace] = createSignal<"" | "chat" | "responses">(props.value?.api ?? "");
 
   const commit = () => {
     const o: ModelOverride = {};
     if (name().trim()) o.name = name().trim();
-    if (apiFace()) o.api = apiFace() as "chat" | "responses";
     const limit: NonNullable<ModelOverride["limit"]> = {};
     if (ctx().trim()) limit.context = Number(ctx());
     if (out().trim()) limit.output = Number(out());
@@ -441,14 +451,6 @@ function OverrideEditor(props: { value: ModelOverride | undefined; onSave: (o: M
       <label class="form-control">
         <span class="label-text text-xs">显示名</span>
         <input class="input input-bordered input-xs" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
-      </label>
-      <label class="form-control">
-        <span class="label-text text-xs">API 面</span>
-        <select class="select select-bordered select-xs" value={apiFace()} onChange={(e) => setApiFace(e.currentTarget.value as "" | "chat" | "responses")}>
-          <option value="">跟随（缺省）</option>
-          <option value="chat">chat</option>
-          <option value="responses">responses</option>
-        </select>
       </label>
       <label class="form-control">
         <span class="label-text text-xs">context</span>

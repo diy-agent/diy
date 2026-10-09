@@ -192,9 +192,10 @@ describe("agent.persona — 人物是配置实体", () => {
         );
         expect(bad.stderr + bad.stdout).toMatch(/未知模型/);
 
-        // mimo-v2.6-flash 不支持 xhigh（实测上游 400，见 shared/models.ts）
+        // 档位不在该模型支持集内（models.dev snapshot 只给布尔 reasoning，词表为通用集，
+        // `ultra` 不在通用集 → 应被拒）
         const bad2 = await fx.sh.run(
-            `./diy.sh agent persona set --name 报错人物 --model mimo-v2.6-flash --reasoningEffort xhigh`,
+            `./diy.sh agent persona set --name 报错人物 --model mimo-v2.6-flash --reasoningEffort ultra`,
         );
         expect(bad2.stderr + bad2.stdout).toMatch(/不支持推理强度/);
 
@@ -475,10 +476,10 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         await clickIn(`${sel(uri)} button[aria-label="gpt-6-luna"]`);
         const changed = await waitUntil(
             async () => (await personaList()).personas.find((p) => p.id === id)?.model,
-            (m) => m === "gpt-6-luna",
+            (m) => !!m && m.endsWith("gpt-6-luna"),
             { label: "personas.yaml 里的模型已改" },
         );
-        expect(changed).toBe("gpt-6-luna");
+        expect(changed!.endsWith("gpt-6-luna")).toBe(true);
     });
 
     it("改模型后，档位按钮换成该模型的候选集（各模型词表不同）", async () => {
@@ -494,7 +495,8 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
             ui!.eval<string[]>(
                 `Array.from(document.querySelectorAll('${sel(uri)} button[aria-pressed]')).map(b => b.getAttribute('aria-label'))`,
             );
-        expect(await levelsOf()).not.toContain("超高"); // mimo 没有 xhigh
+        // 注：models.dev 只给 reasoning 布尔位、无档位词表 → 通用集含 xhigh，
+        // 「mimo 无 xhigh」的旧实测精度不再成立（要精确可在人物覆盖里登记档位）。
         await clickIn(`${sel(uri)} button[aria-label="gpt-6-luna"]`);
         await waitUntil(
             async () => (await levelsOf()).includes("超高"),
@@ -568,7 +570,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
             (v) => !!v,
             { label: "新人物已落盘" },
         );
-        expect(pl!.model).toBe("mimo-v2.6-flash");
+        expect(pl!.model.endsWith("mimo-v2.6-flash")).toBe(true);
         expect(pl!.reasoningEffort).toBe("low");
         expect(pl!.instructions).toBe("每次汇报前先喊「报告」。");
         // 4) 建完停在**刚建好的人物**上（否则"跟随本任务绑定"的校准会立刻切回别人，看着像没建成）
@@ -836,13 +838,9 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         expect(geo!.hRatio).toBeGreaterThan(0.5);
         expect(geo!.leftRatio).toBeGreaterThan(0.3);
         expect(geo!.leftRatio).toBeLessThan(0.36);
-        // 便宜的在前面（清单顺序即展示顺序；顺序变了这条会红，提醒同步改文案）
-        expect(geo!.models.slice(0, 4)).toEqual([
-            "mimo-v2.6-flash",
-            "deepseek-v4.1-flash",
-            "gpt-5.6-luna",
-            "gpt-6-luna",
-        ]);
+        // 模型清单来自 snapshot（opencode-go 全量）→ 数量不再固定 4；
+        // 排序仍按价格升序（见 model-registry.modelViews），但具体集合随 models.dev 变，故只断言非空。
+        expect(geo!.models.length).toBeGreaterThan(0);
     });
 
     it("「跟随缺省」是左列第一行：单击显示说明态（不给编辑器），双击 = 本任务改为跟随并关窗", async () => {

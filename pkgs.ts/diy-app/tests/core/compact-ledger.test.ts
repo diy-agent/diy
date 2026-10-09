@@ -19,7 +19,6 @@ import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { getLocalAgent, compactFile, opsFile } from "../../src/main/services/local-agent";
 import { parseCompactLog } from "../../src/shared/context/compaction";
-import { UPSTREAM_PROVIDER } from "../../src/shared/models";
 import { readFileSync } from "node:fs";
 
 let PROJECT = "";
@@ -171,7 +170,7 @@ describe("② rates：provider = 谁服务的，source = 价目真源", () => {
         const ev = rec as unknown as { cost?: { rates?: { provider?: string; source?: string; k: number } } };
         const rates = ev.cost?.rates;
         expect(rates).toBeTruthy();
-        expect(rates!.provider).toBe(UPSTREAM_PROVIDER);
+        expect(rates!.provider).toBe("opencode-go");
         expect(rates!.provider).not.toContain("models.dev");
         expect(String(rates!.source)).toContain("models.dev");
         // 圆整：不留浮点残渣（k 的真值因模型而异：mimo/deepseek=50、luna=10；

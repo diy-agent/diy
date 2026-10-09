@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { splitQualified } from "../../src/shared/model-config";
-import { findModel, getModelCatalog, BUILTIN_CATALOG } from "../../src/shared/models";
+import { findModel, getModelCatalog } from "../../src/shared/models";
 import { refreshModelRuntime, resolveModelKey } from "../../src/main/core/model-runtime";
 
 describe("splitQualified：account@provider/model", () => {
@@ -41,13 +41,12 @@ describe("refreshModelRuntime（装配 snapshot ⊕ custom ⊕ model.yaml）", (
         rmSync(home, { recursive: true, force: true });
     });
 
-    it("无配置 → 回退内置 zen/go（开箱即用）", () => {
+    it("无配置 → 空目录（**没有内置 provider**）", () => {
         const n = refreshModelRuntime(home);
         expect(n).toBe(0);
-        expect(getModelCatalog()).toBe(BUILTIN_CATALOG);
-        expect(findModel("0@opencode-go/mimo-v2.6-flash")?.id).toBe("mimo-v2.6-flash");
-        // 裸名仍可解析（存量兼容）
-        expect(findModel("gpt-5.6-luna")?.api).toBe("responses");
+        expect(getModelCatalog()).toEqual([]);
+        expect(findModel("mimo-v2.6-flash")).toBeUndefined();
+        expect(findModel("0@opencode-go/mimo-v2.6-flash")).toBeUndefined();
     });
 
     it("custom provider（goat）+ $VAR 展开 + 模型 id 自带 /", () => {

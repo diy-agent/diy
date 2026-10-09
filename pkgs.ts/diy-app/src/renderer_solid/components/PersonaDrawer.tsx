@@ -52,7 +52,6 @@ import { personaStore } from "../store/personaStore";
 import { taskStore } from "../store/taskStore";
 import { notificationStore } from "../store/notificationStore";
 import { reasoningEffortLabel } from "../../shared/reasoning-effort";
-import { DEFAULT_MODEL } from "../../shared/models";
 
 /** 平铺选项按钮：选中态用主色底，未选中 hover 亮一点（与详情面板的结构化字段同一套观感） */
 function ChoiceButton(props: {
@@ -235,7 +234,8 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
         const base =
             current()?.model ??
             personaStore.defOf(personaStore.idForTask())?.model ??
-            DEFAULT_MODEL;
+            personaStore.models[0]?.ref ??
+            "";
         setCreating(true);
         setNewName("");
         setNewModel(base);
@@ -720,7 +720,8 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                     <span class="mt-1 w-14 shrink-0 text-body opacity-60">
                                         模型
                                     </span>
-                                    <div class="flex flex-wrap gap-1">
+                                    {/* 模型可能几十个（snapshot 全量）：限高滚动，避免撑破面板几何 */}
+                                    <div class="flex flex-wrap gap-1 max-h-44 overflow-y-auto">
                                         <For each={personaStore.models}>
                                             {(m) => (
                                                 <ChoiceButton

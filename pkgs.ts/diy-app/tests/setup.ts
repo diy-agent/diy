@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 
@@ -31,3 +31,15 @@ process.env["DIY_ENV"] = "test";
 // 注入点选这里而非各测试文件：ShellTest 的 env = { ...process.env, ...opts.env }，
 // 在此设一次即对所有 CLI 调用生效（见 shell-test.ts:43）。
 process.env["DIY_NO_LAUNCH"] = "1";
+
+// ── 模型目录夹具（生产无内置 provider；单测注入一份「已配置 opencode-go」） ──
+// 见 tests/fixtures/models.ts。注入后 findModel/apiOf/reasoningOf 等对这套模型可用。
+import { setModelCatalog } from "../src/shared/models";
+import { OPENCODE_GO_SNAPSHOT, FIXTURE_DEFAULT_REF } from "./fixtures/models";
+setModelCatalog(OPENCODE_GO_SNAPSHOT);
+// 缺省人物指向一个可用模型：core 单测（compact/steer…）走真链时 persona.model 必须解析得到。
+// 生产不写这份兜底（用户需自行配置 provider 后建人物）。
+writeFileSync(
+    join(testHome, "personas.yaml"),
+    `default: persona/1\npersonas:\n  persona/1:\n    name: 大副\n    model: ${FIXTURE_DEFAULT_REF}\n    reasoningEffort: medium\n    instructions: ""\n`,
+);

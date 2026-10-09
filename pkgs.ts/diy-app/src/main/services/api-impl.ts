@@ -57,13 +57,13 @@ const app = apiDef.diy;
  */
 export function bindAppHandlers(binding: ServerBinding): void {
   // 装配运行时模型目录（snapshot ⊕ custom ⊕ model.yaml）。**同步**做：异步会让早期的
-  // models 查询抢在装配前看到内置清单。配置非法（结构错）→ 出声但不阻断启动：
-  // 回退内置 zen/go，用户仍可进界面改回来（fail-visible 而非 fail-dead）。
+  // models 查询抢在装配前看到空目录。配置非法（结构错）→ 出声但不阻断启动：
+  // 目录保持上一次（或空），用户仍可进界面改回来（fail-visible 而非 fail-dead）。
   try {
     const n = refreshModelRuntime(state.diyHome());
     console.log(`[model-runtime] 装配 ${n} 个模型引用`);
   } catch (e) {
-    console.warn("[model-runtime] 装配失败，回退内置 zen/go:", e);
+    console.warn("[model-runtime] 装配失败，目录保持原状（或空）:", e);
   }
 
   // ── task ──
@@ -560,8 +560,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
       model: "",
     };
     if (taskUri) {
-      const { previewSimulatedRequest, DEFAULT_MODEL } = await import("./local-agent");
-      const model = input.model || DEFAULT_MODEL;
+      const { previewSimulatedRequest } = await import("./local-agent");
+      const { getModelCatalog } = await import("../../shared/models");
+      // 无缺省模型：预演不指定就用目录首项（目录空 = 无 provider，model 为空 → 预演只组装不发）
+      const model = input.model || getModelCatalog()[0]?.ref || "";
       const sim = await previewSimulatedRequest({
         taskUri,
         system: lab.system.text,
