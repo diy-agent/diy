@@ -710,12 +710,19 @@ export function bindAppHandlers(binding: ServerBinding): void {
       if (!res.ok) {
         return { ok: false, status: res.status, models: [], error: `HTTP ${res.status}: ${text.slice(0, 200)}` };
       }
-      let models: { id: string; name: string | null }[] = [];
+      let models: { id: string; name: string | null; context: number | null; endpoints: string[] }[] = [];
       try {
-        const json = JSON.parse(text) as { data?: Array<{ id?: string; name?: string }> };
+        const json = JSON.parse(text) as {
+          data?: Array<{ id?: string; name?: string; context_length?: number; supported_endpoints?: string[] }>;
+        };
         models = (json.data ?? [])
           .filter((m) => typeof m?.id === "string")
-          .map((m) => ({ id: m.id as string, name: m.name ?? null }));
+          .map((m) => ({
+            id: m.id as string,
+            name: m.name ?? null,
+            context: typeof m.context_length === "number" ? m.context_length : null,
+            endpoints: Array.isArray(m.supported_endpoints) ? m.supported_endpoints.filter((e) => typeof e === "string") : [],
+          }));
       } catch {
         return { ok: false, status: res.status, models: [], error: "响应不是 JSON（/models 不可解析）" };
       }

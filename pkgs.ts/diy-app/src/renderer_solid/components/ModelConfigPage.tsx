@@ -19,7 +19,7 @@ import type {
   ProviderConfig,
   SpecProvider,
 } from "../../shared/model-config";
-import { filterAllows } from "../../shared/model-config";
+import { filterAllows, npmOfEndpoints } from "../../shared/model-config";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "../store/notificationStore";
 
@@ -265,6 +265,7 @@ function AccountsEditor(props: {
   placeholder: () => string;
   onTest: () => void;
   testing: () => boolean;
+  testLabel?: () => string;
 }) {
   return (
     <div class="space-y-1">
@@ -307,7 +308,7 @@ function AccountsEditor(props: {
               </Show>
               <Show when={i === 0}>
                 <button class="btn btn-xs btn-outline" disabled={props.testing()} onClick={props.onTest}>
-                  {props.testing() ? "测试中…" : "测试"}
+                  {props.testing() ? "测试中…" : (props.testLabel?.() ?? "测试")}
                 </button>
               </Show>
             </div>
@@ -500,6 +501,12 @@ function ModelFilter(props: { mode: () => FilterMode; setFilter: (m: FilterMode)
 }
 
 // ── custom provider 卡片（spec 可编辑） ────────────────────────
+//
+// 模型清单**唯一来源 = `/models`**（「测试并获取模型列表」按钮）。不支持手工加模型：
+// 手工输入的 id 没有 context/面 等元数据，等于让用户自己编参数。拿不到 /models 的端点
+// 不适合做 custom provider（交给 provider 自带的 models.dev 定义）。
+// 拉到的 `context_length` / `supported_endpoints` / `name` 落进 spec（与 models.dev 同构），
+// 之后各字段仍可就地改（context/output/面/档位），与新增时同一套控件。
 
 function CustomCard(props: {
   card: { key: string; cfg: ProviderConfig; spec: SpecProvider | null; base: LlmConfigView["providers"][number] | undefined };
@@ -512,48 +519,55 @@ function CustomCard(props: {
   onRemove: () => void;
 }) {
   const [testing, setTesting] = createSignal(false);
-  const [newModelId, setNewModelId] = createSignal("");
   const [modelQuery, setModelQuery] = createSignal("");
   const mutateCfg = (fn: (c: ProviderConfig) => void) =>
     props.mutateFile((f) => { const c = f.customProviders[props.card.key]; if (c) fn(c); });
 
   const spec = () => props.card.spec;
-  const faceNpm = () => spec()?.npm ?? FACE_OPTIONS[0].npm;
+  const providerNpm = () => spec()?.npm ?? FACE_OPTIONS[0].npm;
   const modelIds = createMemo(() => {
     const q = modelQuery().trim().toLowerCase();
-    return Object.keys(spec()?.models ?? {}).filter((id) => !q || id.toLowerCase().includes(q));
+    return Object.keys(spec()?.models ?? {}).filter((id) => {
+      if (!q) return true;
+      const nm = (spec()?.models[id] as { name?: string } | undefined)?.name ?? "";
+      return id.toLowerCase().includes(q) || nm.toLowerCase().includes(q);
+    });
   });
   const mode = () => modeOf(props.card.cfg.filter);
 
-  const test = async () => {
+  /** 测试连通 + 从 /models 同步模型清单（替换 spec.models；context/面 取自元数据） */
+  const testAndFetch = async () => {
     const s = spec();
     if (!s) return;
+    if (!s.api.trim()) { notificationStore.addToast("error", "先填 API 地址"); return; }
     setTesting(true);
     try {
       const r = await diyService.diy.llmConfig.probe({ baseUrl: s.api, apiKey: props.card.cfg.accounts[0]?.data.value ?? "" });
-      if (r.ok) notificationStore.addToast("success", `连通（HTTP ${r.status}，${r.models.length} 个模型）`);
-      else notificationStore.addToast("error", `不通：${r.error ?? "未知错误"}`);
+      if (!r.ok) { notificationStore.addToast("error", `不通：${r.error ?? "未知错误"}`); return; }
+      const fallbackNpm = providerNpm();
+      const next: Record<string, SpecProvider["models"][string]> = {};
+      let skipped = 0;
+      for (const m of r.models) {
+        // endpoints 非空 → 按端点定面（只支持两家；anthropic 等跳过）；为空 → 用 provider 级默认面。
+        const faceNpm = m.endpoints.length > 0 ? npmOfEndpoints(m.endpoints) : fallbackNpm;
+        if (!faceNpm) { skipped++; continue; }
+        next[m.id] = {
+          id: m.id,
+          ...(m.name ? { name: m.name } : {}),
+          ...(m.context ? { limit: { context: m.context } } : {}),
+          ...(faceNpm !== fallbackNpm ? { provider: { npm: faceNpm } } : {}),
+        };
+      }
+      props.mutateSpec(props.card.key, (sp) => { sp.models = next; });
+      notificationStore.addToast(
+        "success",
+        `连通（HTTP ${r.status}），同步 ${Object.keys(next).length} 个模型` + (skipped ? `（跳过 ${skipped} 个未支持面的模型）` : ""),
+      );
     } finally {
       setTesting(false);
     }
   };
 
-  const addModel = (id: string, extra?: { name?: string | null; context?: number; output?: number; reasoning?: boolean }) => {
-    const mid = id.trim();
-    if (!mid) return;
-    props.mutateSpec(props.card.key, (s) => {
-      if (!s.models[mid]) {
-        s.models[mid] = {
-          id: mid,
-          ...(extra?.name ? { name: extra.name } : {}),
-          reasoning: extra?.reasoning ?? false,
-          tool_call: true,
-          ...(extra?.context || extra?.output ? { limit: { ...(extra.context ? { context: extra.context } : {}), ...(extra.output ? { output: extra.output } : {}) } } : {}),
-        };
-      }
-    });
-  };
-  const removeModel = (id: string) => props.mutateSpec(props.card.key, (s) => { delete s.models[id]; });
   const patchModel = (id: string, fn: (m: NonNullable<SpecProvider["models"][string]>) => void) =>
     props.mutateSpec(props.card.key, (s) => { const m = s.models[id]; if (m) fn(m); });
 
@@ -593,10 +607,10 @@ function CustomCard(props: {
           />
         </label>
         <label class="form-control">
-          <span class="label-text text-xs">API 协议（面）</span>
+          <span class="label-text text-xs">默认 API 协议（面；模型可从 /models 覆写）</span>
           <select
             class="select select-bordered select-sm"
-            value={faceNpm()}
+            value={providerNpm()}
             onChange={(e) => props.mutateSpec(props.card.key, (s) => { s.npm = e.currentTarget.value; })}
           >
             <For each={FACE_OPTIONS}>{(o) => <option value={o.npm}>{o.label}</option>}</For>
@@ -609,9 +623,10 @@ function CustomCard(props: {
         mutateCfg={mutateCfg}
         base={() => props.card.base}
         limited={() => `custom:${props.card.key}`}
-        placeholder={() => "输入密钥，或 $ENV"}
-        onTest={() => void test()}
+        placeholder={() => "输入密钥（明文或 $ENV）"}
+        onTest={() => void testAndFetch()}
         testing={testing}
+        testLabel={() => "测试并获取模型列表"}
       />
 
       <ModelFilter mode={mode} setFilter={(m) => {
@@ -623,33 +638,30 @@ function CustomCard(props: {
         });
       }} />
 
-      <ModelFetch inline onAdd={(ms) => ms.forEach((m) => addModel(m.id, { name: m.name, context: m.context, output: m.output, reasoning: m.reasoning }))} api={() => spec()?.api ?? ""} keyValue={() => props.card.cfg.accounts[0]?.data.value ?? ""} />
-
       <div class="flex items-center gap-2">
-        <input class="input input-bordered input-xs w-56 font-mono" placeholder="手动输入模型 id…" value={newModelId()} onInput={(e) => setNewModelId(e.currentTarget.value)} />
-        <button class="btn btn-xs" onClick={() => { addModel(newModelId()); setNewModelId(""); }}>＋ 添加模型</button>
+        <span class="text-xs opacity-50">模型清单由「测试并获取模型列表」从 /models 同步</span>
         <span class="flex-1" />
         <input class="input input-bordered input-xs w-40" placeholder="🔍 搜索模型…" value={modelQuery()} onInput={(e) => setModelQuery(e.currentTarget.value)} />
       </div>
 
-      <Show when={modelIds().length > 0} fallback={<div class="text-xs opacity-50">（还没有模型：先「获取模型」或手动添加）</div>}>
+      <Show when={modelIds().length > 0} fallback={<div class="text-xs opacity-50">（还没有模型：先填 API 地址与密钥，点「测试并获取模型列表」）</div>}>
         <div class="max-h-72 overflow-y-auto">
           <table class="table table-xs">
             <thead>
               <tr>
                 <th class="w-8">{mode() === "exclude" ? "排除" : "启用"}</th>
-                <th>模型 id（不可改）</th>
+                <th>模型 id / 名称</th>
                 <th class="w-28">context</th>
                 <th class="w-28">output</th>
-                <th class="w-16">推理</th>
-                <th class="w-52">档位（逗号，可空）</th>
-                <th class="w-10" />
+                <th class="w-40">面</th>
+                <th class="w-52">档位（逗号，空=平台默认）</th>
               </tr>
             </thead>
             <tbody>
               <Index each={modelIds()}>
                 {(id) => {
                   const m = () => spec()!.models[id()];
+                  const mNpm = () => (m() as { provider?: { npm?: string } } | undefined)?.provider?.npm ?? providerNpm();
                   const enabled = () => {
                     if (mode() === "all") return true;
                     const flt = props.card.cfg.filter;
@@ -666,7 +678,14 @@ function CustomCard(props: {
                       <td>
                         <input type="checkbox" class="checkbox checkbox-xs" disabled={mode() === "all"} checked={enabled()} onChange={() => toggle(id())} />
                       </td>
-                      <td class="font-mono text-xs">{id()}</td>
+                      <td>
+                        <div class="flex gap-2 items-center flex-wrap">
+                          <span class="font-mono text-xs">{id()}</span>
+                          <Show when={(m() as { name?: string })?.name}>
+                            <span class="text-xs opacity-70">{(m() as { name?: string }).name}</span>
+                          </Show>
+                        </div>
+                      </td>
                       <td>
                         <input
                           class="input input-bordered input-xs w-24"
@@ -684,7 +703,17 @@ function CustomCard(props: {
                         />
                       </td>
                       <td>
-                        <input type="checkbox" class="checkbox checkbox-xs" checked={m()?.reasoning ?? false} onChange={(e) => patchModel(id(), (mm) => { mm.reasoning = e.currentTarget.checked; })} />
+                        <select
+                          class="select select-bordered select-xs"
+                          value={mNpm()}
+                          onChange={(e) => patchModel(id(), (mm) => {
+                            const v = e.currentTarget.value;
+                            if (v === providerNpm()) delete (mm as { provider?: unknown }).provider;
+                            else (mm as { provider?: { npm?: string } }).provider = { npm: v };
+                          })}
+                        >
+                          <For each={FACE_OPTIONS}>{(o) => <option value={o.npm}>{o.label}</option>}</For>
+                        </select>
                       </td>
                       <td>
                         <input
@@ -698,7 +727,6 @@ function CustomCard(props: {
                           })}
                         />
                       </td>
-                      <td><button class="btn btn-xs btn-ghost" title="删除模型" onClick={() => removeModel(id())}>×</button></td>
                     </tr>
                   );
                 }}
@@ -712,91 +740,6 @@ function CustomCard(props: {
         <button class="btn btn-sm btn-primary" disabled={props.saving()} onClick={() => void props.save()}>保存</button>
         <button class="btn btn-sm btn-outline btn-error" onClick={props.onRemove}>移除</button>
       </div>
-    </div>
-  );
-}
-
-/** 拉 /models 并勾选加入（dsh 的「获取可用模型」）：/models 只给 id 列表，不含档位。 */
-function ModelFetch(props: {
-  api: () => string;
-  keyValue: () => string;
-  onAdd: (ms: { id: string; name: string | null; context: number; output: number; reasoning: boolean }[]) => void;
-  inline?: boolean;
-}) {
-  const [open, setOpen] = createSignal(false);
-  const [busy, setBusy] = createSignal(false);
-  const [list, setList] = createSignal<{ id: string; name: string | null; checked: boolean }[]>([]);
-  const [q, setQ] = createSignal("");
-  const [err, setErr] = createSignal<string | null>(null);
-
-  const fetchList = async () => {
-    if (!props.api().trim()) { notificationStore.addToast("error", "先填 API 地址"); return; }
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await diyService.diy.llmConfig.probe({ baseUrl: props.api(), apiKey: props.keyValue() });
-      if (!r.ok) { setErr(r.error ?? "拉取失败"); setList([]); }
-      else setList(r.models.map((m) => ({ id: m.id, name: m.name, checked: true })));
-      setOpen(true);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const shown = () => {
-    const s = q().trim().toLowerCase();
-    return list().filter((m) => !s || m.id.toLowerCase().includes(s) || (m.name ?? "").toLowerCase().includes(s));
-  };
-
-  return (
-    <div class="space-y-1">
-      <div class="flex gap-2 items-center">
-        <button class="btn btn-xs btn-outline" disabled={busy()} onClick={() => void fetchList()}>
-          {busy() ? "获取中…" : "获取可用模型"}
-        </button>
-        <Show when={err()}>
-          <span class="text-error text-xs">{err()}</span>
-        </Show>
-      </div>
-      <Show when={open()}>
-        <div class="border rounded-box p-2 bg-base-200 space-y-1">
-          <div class="flex gap-2 items-center">
-            <input class="input input-bordered input-xs flex-1" placeholder="🔍 搜索模型" value={q()} onInput={(e) => setQ(e.currentTarget.value)} />
-            <button class="btn btn-xs" onClick={() => setList((l) => l.map((m) => ({ ...m, checked: true })))}>全选</button>
-            <button class="btn btn-xs" onClick={() => setList((l) => l.map((m) => ({ ...m, checked: false })))}>取消全选</button>
-          </div>
-          <div class="max-h-56 overflow-y-auto">
-            <Index each={shown()}>
-              {(m) => (
-                <label class="flex items-center gap-2 px-1 py-0.5 hover:bg-base-100">
-                  <input
-                    type="checkbox"
-                    class="checkbox checkbox-xs"
-                    checked={m().checked}
-                    onChange={(e) => setList((l) => {
-                      const target = m().id;
-                      return l.map((x) => (x.id === target ? { ...x, checked: e.currentTarget.checked } : x));
-                    })}
-                  />
-                  <code class="text-xs">{m().id}</code>
-                  <Show when={m().name}><span class="text-xs opacity-60">{m().name}</span></Show>
-                </label>
-              )}
-            </Index>
-          </div>
-          <div class="flex justify-end gap-2">
-            <button class="btn btn-xs" onClick={() => setOpen(false)}>取消</button>
-            <button
-              class="btn btn-xs btn-primary"
-              onClick={() => {
-                props.onAdd(list().filter((m) => m.checked).map((m) => ({ id: m.id, name: m.name, context: 0, output: 0, reasoning: false })));
-                setOpen(false);
-              }}
-            >
-              加入所选（{list().filter((m) => m.checked).length}）
-            </button>
-          </div>
-        </div>
-      </Show>
     </div>
   );
 }
@@ -846,7 +789,7 @@ function NewCustomForm(props: {
         </label>
       </div>
       <Show when={err()}><div class="text-error text-xs">{err()}</div></Show>
-      <div class="text-xs opacity-60">创建后再进卡片「获取可用模型」或用 /models 拉清单。</div>
+      <div class="text-xs opacity-60">创建后进卡片填密钥，点「测试并获取模型列表」从 /models 同步模型（只支持能提供模型元数据的端点）。</div>
       <div class="flex gap-2">
         <button class="btn btn-sm btn-primary" onClick={create}>创建</button>
         <button class="btn btn-sm" onClick={props.onCancel}>取消</button>

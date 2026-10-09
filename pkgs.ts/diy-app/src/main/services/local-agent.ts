@@ -2061,11 +2061,12 @@ export class LocalAgentManager {
                 abortSignal: signal,
                 headers: { "x-opencode-session": sessionIdOf(taskUri) },
                 maxOutputTokens: modelMax, // 按模型硬上限（models.dev），reasoning 模型会先吃一部分
-                // none 用 AI SDK 标准关闭语义；其他值由 OpenAI-compatible provider 原样转发。
+                // none 用 AI SDK 标准关闭语义；"default"（平台默认）**什么都不发**（交上游默认行为，
+                // 见 shared/model-config.DEFAULT_EFFORT）；其他值由 OpenAI-compatible provider 原样转发。
                 // provider 配置可以提供 minimal/xhigh/max 等非通用值，不能压缩成固定枚举。
                 ...(reasoningEffort === "none"
                     ? { reasoning: "none" as const }
-                    : reasoningEffort
+                    : reasoningEffort && reasoningEffort !== "default"
                       ? {
                             // 命名空间必须与 provider 包一致（##184 坑 4）：
                             // chat 面 = @ai-sdk/openai-compatible（openaiCompatible）；

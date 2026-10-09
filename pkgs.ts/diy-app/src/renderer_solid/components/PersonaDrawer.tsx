@@ -921,7 +921,8 @@ function ModelPicker(props: {
                 api: m.api,
                 context: m.contextLimit,
                 output: m.maxOutputTokens,
-                reasoning: m.reasoning.supported.some((x) => x !== "none"),
+                // 有真档位才算「支持推理」（排除哨兵 default 与 none）
+                reasoning: m.reasoning.supported.some((x) => x !== "default" && x !== "none"),
                 cost: m.cost ?? null,
                 ref: variant.ref,
                 active:

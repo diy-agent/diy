@@ -4,6 +4,7 @@
 // `provider.npm: "@ai-sdk/openai"`（responses），打 chat 面必 503 —— 靠数据表达，不硬编码名单。
 import { describe, it, expect } from "vitest";
 import { faceOfNpm } from "../../src/shared/models";
+import { npmOfEndpoints } from "../../src/shared/model-config";
 import { apiOf } from "../../src/main/services/local-agent";
 
 describe("npm → API 面白名单", () => {
@@ -22,5 +23,14 @@ describe("apiOf：按目录里解析出的面", () => {
         expect(apiOf("gpt-5.6-luna")).toBe("responses");
         expect(apiOf("mimo-v2.6-flash")).toBe("chat");
         expect(apiOf("不存在的模型")).toBe("chat");
+    });
+});
+
+describe("npmOfEndpoints：/models 的 supported_endpoints → 面", () => {
+    it("chat 优先；只 responses 则 responses；只 /messages 等未支持面 → null", () => {
+        expect(npmOfEndpoints(["/chat/completions", "/responses"])).toBe("@ai-sdk/openai-compatible");
+        expect(npmOfEndpoints(["/responses"])).toBe("@ai-sdk/openai");
+        expect(npmOfEndpoints(["/messages"])).toBeNull();
+        expect(npmOfEndpoints([])).toBeNull();
     });
 });

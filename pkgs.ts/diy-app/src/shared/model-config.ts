@@ -55,15 +55,23 @@ export type Filter = z.infer<typeof FilterSchema>;
 
 /**
  * models.dev `reasoning_options` → diy 的档位表（effort 词表）。
- *   · `reasoning:false`                          → 只能关闭（["none"]）
- *   · 有 `{type:"effort",values:[…]}`            → 用**上游声明的词表**（精确档位；default 优先 medium→high→首项）
- *   · `reasoning:true` 但无 effort 词表（空/toggle/budget） → **兜底通用集**（declared:false，
- *     上游没声明可传递的档位词表；UI 标注「未声明」，不要假装精确）
- * `toggle`/`budget_tokens` 不是 effort 语义，不映射成档位（我们的传输只发 effort 字符串）。
+ *
+ * **哨兵值 `DEFAULT_EFFORT`（"default" = 平台默认）**：代表「不发送任何推理参数」，
+ * 交上游按自己的默认行为处理。传输层据此**省略** reasoning/providerOptions（见 local-agent.ts）。
+ * 它**恒为每个模型的首选项** —— 允许用户不强制档位（declared 模型也可选平台默认）。
+ *
+ * 映射规则（与 opencode 同构，见 git-ref/opencode 的 provider/transform.ts:reasoningVariants）：
+ *   · 有 `{type:"effort",values:[…]}` → 用**上游声明的词表**（精确档位；default 优先 medium→high→首项）
+ *   · `reasoning:false`              → 模型不支持推理 → 只有平台默认（不发送）
+ *   · `reasoning:true` 但无 effort 词表（空 / toggle / budget_tokens）→ 只有平台默认（declared:false，
+ *     上游没给可传递的 effort 词表；UI 标注「未声明」，不假装精确）
+ *   · 字段整体缺失（custom provider 的 /models 不给推理信息）→ 同「未声明」，declared:false
+ * `toggle`（推理开关）/`budget_tokens`（思考预算）**不是 effort 语义**，我们的传输只发 effort
+ * 字符串 → 不映射成档位（opencode 对 @ai-sdk/openai-compatible 的 toggle 也是返回空变体）。
  */
-export const STD_REASONING_FALLBACK = { supported: ["none", "minimal", "low", "medium", "high"], default: "medium" };
+export const DEFAULT_EFFORT = "default";
 
-/** 解析结果：declared=false 表示用了兜底集（spec 未声明 effort 词表） */
+/** 解析结果：declared=false 表示 spec 未声明 effort 词表（只有平台默认可选） */
 export const ReasoningSupportSchema = z.object({
     supported: z.array(z.string()),
     default: z.string(),
@@ -75,17 +83,24 @@ export function reasoningFromSpec(
     reasoning: boolean | undefined,
     options: Array<{ type?: string; values?: unknown }> | undefined,
 ): ReasoningSupport {
-    if (!reasoning) return { supported: ["none"], default: "none", declared: true };
     const values = new Set<string>();
     for (const o of options ?? []) {
         if (o?.type === "effort" && Array.isArray(o.values)) {
             for (const v of o.values) if (typeof v === "string") values.add(v);
         }
     }
-    if (values.size === 0) return { ...STD_REASONING_FALLBACK, declared: false };
-    const supported = [...values];
-    const def = supported.includes("medium") ? "medium" : supported.includes("high") ? "high" : supported[0];
-    return { supported, default: def, declared: true };
+    if (values.size > 0) {
+        const supported = [DEFAULT_EFFORT, ...values];
+        const declaredValues = [...values];
+        const def = declaredValues.includes("medium")
+            ? "medium"
+            : declaredValues.includes("high")
+              ? "high"
+              : declaredValues[0];
+        return { supported, default: def, declared: true };
+    }
+    // 无可用 effort 词表（false / toggle / budget / 空 / 缺字段）→ 只有平台默认。
+    return { supported: [DEFAULT_EFFORT], default: DEFAULT_EFFORT, declared: false };
 }
 
 /** 模型运行时的档位能力（与 shared/models.LocalModelReasoning 同形，供 runtime 直用） */
@@ -293,16 +308,44 @@ export const CatalogEntrySchema = z.object({
 });
 export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;
 
-/** `llmConfig.probe` 输出：拉 `${baseUrl}/models`（连通性 + 可选模型清单） */
+/**
+ * `/models` 返回的单条模型（OpenAI 形状 + 常见扩展）：
+ *   `{ id, object, created, owned_by, name?, context_length?, supported_endpoints? }`
+ * `object`/`created`/`owned_by` 我们不用；`name`/`context_length`/`supported_endpoints` 是
+ * 事实上的通用扩展（vLLM 等也发；commandcode 全量提供）。**standard OpenAI /models 只保证
+ * `id`** —— 那时 name=null、context=null、endpoints=[]，面则回退到 provider 级 npm。
+ */
+export const ProbeModelSchema = z.object({
+    id: z.string(),
+    name: z.string().nullable(),
+    /** `context_length`（扩展；缺省 null）→ spec.limit.context */
+    context: z.number().nullable(),
+    /** `supported_endpoints`（扩展；缺省 []）→ 解析成模型级 npm（面） */
+    endpoints: z.array(z.string()),
+});
+export type ProbeModel = z.infer<typeof ProbeModelSchema>;
+
+/** `llmConfig.probe` 输出：拉 `${baseUrl}/models`（连通性 + 模型清单 + 可用元数据） */
 export const ProbeResultSchema = z.object({
     ok: z.boolean(),
     /** HTTP 状态；网络层失败 = null */
     status: z.number().nullable(),
-    /** 上游返回的模型（id/name）；不支持 `/models` 时为空 */
-    models: z.array(z.object({ id: z.string(), name: z.string().nullable() })),
+    /** 上游返回的模型；不支持 `/models` 时为空 */
+    models: z.array(ProbeModelSchema),
     error: z.string().nullable(),
 });
 export type ProbeResult = z.infer<typeof ProbeResultSchema>;
+
+/**
+ * `/models` 的 `supported_endpoints` → diy 的 npm 包名（`faceOfNpm` 的逆）。
+ * 同 support 两个端点时优先 chat（更通用的 openai-compatible）；只支持 anthropic `/messages`
+ * 等未支持面 → null（调用方跳过该模型）。
+ */
+export function npmOfEndpoints(endpoints: string[]): string | null {
+    if (endpoints.includes("/chat/completions")) return "@ai-sdk/openai-compatible";
+    if (endpoints.includes("/responses")) return "@ai-sdk/openai";
+    return null;
+}
 
 /** llmConfig.read 全量输出 */
 export const LlmConfigViewSchema = z.object({

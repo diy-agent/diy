@@ -129,9 +129,9 @@ export function apiOf(modelId: string): LocalModelApi {
     return findModel(modelId)?.api ?? "chat";
 }
 
-/** 按 model id 查推理能力；未知模型回退成「只能关闭」（不静默给档位） */
+/** 按 model id 查推理能力；未知模型回退成「平台默认」（不发送档位，不静默给档位） */
 export function reasoningOf(modelId: string): LocalModelReasoning {
-    return findModel(modelId)?.reasoning ?? { supported: ["none"], default: "none" };
+    return findModel(modelId)?.reasoning ?? { supported: ["default"], default: "default" };
 }
 
 /** 按 model id 查上下文窗口（tokens）；未知返回 undefined（预算回退到硬上限） */

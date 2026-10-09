@@ -7,7 +7,7 @@ import { REASONING_EFFORT_LABELS } from "../../src/shared/reasoning-effort";
 import { OPENCODE_GO_SNAPSHOT } from "../fixtures/models";
 
 /** 档位全序（UI 直接按数组顺序渲染，低级 → 高级） */
-const ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "ultra", "max"];
+const ORDER = ["default", "none", "minimal", "low", "medium", "high", "xhigh", "ultra", "max"];
 
 describe("目录模型的 reasoning 档位", () => {
     it("supported 非空且无重复", () => {
@@ -41,17 +41,17 @@ describe("目录模型的 reasoning 档位", () => {
 
     it("回归护栏：逐个模型的支持集（fixture）", () => {
         const expected: Record<string, string[]> = {
-            "gpt-5.6-luna": ["none", "low", "medium", "high", "xhigh", "max"],
-            "gpt-6-luna": ["none", "low", "medium", "high", "xhigh", "max"],
-            "deepseek-v4.1-flash": ["none", "minimal", "low", "medium", "high", "xhigh", "ultra", "max"],
-            "mimo-v2.6-flash": ["none", "low", "medium", "high"],
+            "gpt-5.6-luna": ["default", "none", "low", "medium", "high", "xhigh", "max"],
+            "gpt-6-luna": ["default", "none", "low", "medium", "high", "xhigh", "max"],
+            "deepseek-v4.1-flash": ["default", "none", "minimal", "low", "medium", "high", "xhigh", "ultra", "max"],
+            "mimo-v2.6-flash": ["default", "none", "low", "medium", "high"],
         };
         for (const [id, supported] of Object.entries(expected)) {
             expect(reasoningOf(id).supported, id).toEqual(supported);
         }
     });
 
-    it("reasoningOf：未知模型回退成「只能关闭」", () => {
-        expect(reasoningOf("不存在的模型")).toEqual({ supported: ["none"], default: "none" });
+    it("reasoningOf：未知模型回退成「平台默认」", () => {
+        expect(reasoningOf("不存在的模型")).toEqual({ supported: ["default"], default: "default" });
     });
 });
