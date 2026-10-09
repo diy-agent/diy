@@ -49,6 +49,8 @@ sync() { :; }
 # 本包构建：main + preload + renderer（根 build 调这个；cli 产物另见 build-cli）
 build() {
   run npx vite build --config vite.main.config.ts
+  # snapshot（models.dev 产物，fs 惰性读）随 main 产物走：out/main/data/
+  run mkdir -p out/main/data && cp src/main/data/models-snapshot.json out/main/data/
   run npx vite build --config vite.preload.config.ts
   run npx vite build --config vite.cli.config.ts
   build-renderer

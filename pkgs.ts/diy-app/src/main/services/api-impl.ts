@@ -656,6 +656,25 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { status: "ok" };
   });
 
+  // ── llmConfig（模型 provider 配置）──
+  binding.on(app.llmConfig.read, async () => {
+    const { registryView } = await import("../core/model-registry");
+    return registryView(state.diyHome());
+  });
+  binding.on(app.llmConfig.write, async ({ input }) => {
+    const { saveModelConfig } = await import("../core/model-config");
+    saveModelConfig(state.diyHome(), input.modelFile);
+    return { status: "ok" };
+  });
+  binding.on(app.llmConfig.writeSpec, async ({ input }) => {
+    const { loadCustomSpecs, saveCustomSpecs } = await import("../core/model-config");
+    const specs = loadCustomSpecs(state.diyHome());
+    if (input.spec === null) delete specs[input.id];
+    else specs[input.id] = input.spec;
+    saveCustomSpecs(state.diyHome(), specs);
+    return { status: "ok" };
+  });
+
   // ── log ──
   binding.on(app.log.read, async ({ input }) => {
     const { existsSync, readFileSync } = await import("node:fs");

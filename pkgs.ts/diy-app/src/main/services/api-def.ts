@@ -23,6 +23,7 @@ import { ContextDiffSchema, StatsSchema, StepsSchema } from "../../shared/contex
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
 // agent 人物契约（纯 zod，renderer 同源）——模型/参数/行为指令的配置实体
 import { PersonaSchema } from "../../shared/persona";
+import { LlmConfigViewSchema, ModelConfigFileSchema, SpecProviderSchema } from "../../shared/model-config";
 // 草稿与任务详情载荷的契约（纯 zod，renderer 同源）
 import { DraftFieldSchema, DraftFieldsSchema, DraftsData, TaskDetailSchema } from "../../shared/task-detail";
 
@@ -875,6 +876,27 @@ export const apiDef = RpcSchema.router({
           stop: RpcSchema.unary({
             desc: `停止 LLM 代理`,
             input: {},
+            output: StatusOk,
+          }),
+        },
+      }),
+
+      llmConfig: RpcSchema.group({
+        desc: `模型 provider 配置（$DIY_HOME/model.yaml + providers.custom.yaml）`,
+        children: {
+          read: RpcSchema.unary({
+            desc: `读全量视图（spec + 配置 + 可见模型）`,
+            input: {},
+            output: LlmConfigViewSchema,
+          }),
+          write: RpcSchema.unary({
+            desc: `整份回写 model.yaml（原子写；结构非法抛错）`,
+            input: { modelFile: ModelConfigFileSchema },
+            output: StatusOk,
+          }),
+          writeSpec: RpcSchema.unary({
+            desc: `写/删 providers.custom.yaml 单条（spec=null 删除）`,
+            input: { id: z.string().cliArg({ desc: "custom provider 裸 id" }), spec: SpecProviderSchema.nullable() },
             output: StatusOk,
           }),
         },
