@@ -671,7 +671,18 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // ── llmConfig（模型 provider 配置）──
   binding.on(app.llmConfig.read, async () => {
     const { registryView } = await import("../core/model-registry");
-    return registryView(state.diyHome());
+    try {
+      return registryView(state.diyHome());
+    } catch (e) {
+      // 配置坏文件（结构非法）不该让 UI 锁死：返回空视图 + error，页面仍能打开提示（##275 R1-6）
+      return {
+        modelFile: { stdProviders: {}, customProviders: {} },
+        customSpecs: {},
+        catalog: [],
+        providers: [],
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
   });
   binding.on(app.llmConfig.write, async ({ input }) => {
     const { saveModelConfig } = await import("../core/model-config");

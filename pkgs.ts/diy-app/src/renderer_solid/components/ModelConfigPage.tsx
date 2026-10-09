@@ -55,12 +55,19 @@ export function ModelConfigPage() {
   const [showNewCustom, setShowNewCustom] = createSignal(false);
 
   const reload = async () => {
-    const v = await diyService.diy.llmConfig.read({});
-    setView(v);
-    setFile(structuredClone(v.modelFile));
-    setSpecs(structuredClone(v.customSpecs));
-    setDirty(false);
-    setLoading(false);
+    try {
+      const v = await diyService.diy.llmConfig.read({});
+      setView(v);
+      setFile(structuredClone(v.modelFile));
+      setSpecs(structuredClone(v.customSpecs));
+      setDirty(false);
+      // read 降级（配置结构非法）时仍打开页面，只提示原因（避免 RPC 抛错锁死，##275 R1-6）
+      if (v.error) notificationStore.addToast("error", `配置读取失败：${v.error}`);
+    } catch (e) {
+      notificationStore.addToast("error", e instanceof Error ? e.message : "配置读取失败");
+    } finally {
+      setLoading(false);
+    }
   };
   onMount(reload);
 

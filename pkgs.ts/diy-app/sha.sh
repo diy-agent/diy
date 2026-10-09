@@ -53,6 +53,8 @@ build() {
   run mkdir -p out/main/data && cp src/main/data/models-snapshot.json out/main/data/
   run npx vite build --config vite.preload.config.ts
   run npx vite build --config vite.cli.config.ts
+  # CLI 产物也带 snapshot：否则打包安装（无源树）时 out/cli 找不到数据，模型目录退化为空（##275 R1-5）
+  run mkdir -p out/cli/data && cp src/main/data/models-snapshot.json out/cli/data/
   build-renderer
 }
 

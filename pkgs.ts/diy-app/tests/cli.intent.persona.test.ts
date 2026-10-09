@@ -648,7 +648,10 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         const pl = await personaList();
         const byName = pl.personas.find((p) => p.name === "大副")!;
         expect(text).toContain(byName.name);
-        expect(text).toContain(byName.model); // 模型按 id 显示（上游名字与 id 经常对不上）
+        // 模型按 id 显示；provider 只有唯一账号时 UI 省掉 `account@` 前缀（displayModel），
+        // 而 personas.yaml 存的是全限定名 —— 断言要按**显示态**比（##275 R1-1#2）。
+        expect(byName.model).toMatch(/^\d+@/); // 存量确实是全限定名
+        expect(text).toContain(byName.model.replace(/^[^@]+@/, ""));
     });
 
     it("每条 assistant 回复上方显示人物头像与名字（回复人可见）", async () => {

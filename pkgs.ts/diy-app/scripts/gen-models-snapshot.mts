@@ -7,7 +7,7 @@
 // 运行时 registry 只读它 —— 即讨论定下的「snapshot 为唯一真源」。
 //
 // 用法：
-//   node scripts/gen-models-snapshot.mjs [源]        # 源 = 本地文件路径 或 URL
+//   npx tsx scripts/gen-models-snapshot.mts [源]      # 源 = 本地文件路径 或 URL
 //   缺省源 = https://models.dev/api.json
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

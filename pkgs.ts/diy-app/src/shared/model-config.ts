@@ -60,18 +60,31 @@ export type Filter = z.infer<typeof FilterSchema>;
  * 交上游按自己的默认行为处理。传输层据此**省略** reasoning/providerOptions（见 local-agent.ts）。
  * 它**恒为每个模型的首选项** —— 允许用户不强制档位（declared 模型也可选平台默认）。
  *
- * 映射规则（与 opencode 同构，见 git-ref/opencode 的 provider/transform.ts:reasoningVariants）：
+ * 映射规则（fixture 与 diy 逐模型**实测**集为真源；models.dev 只作声明来源）：
  *   · 有 `{type:"effort",values:[…]}` → 用**上游声明的词表**（精确档位；default 优先 medium→high→首项）
  *   · `reasoning:false`              → 模型不支持推理 → 只有平台默认（不发送）
- *   · `reasoning:true` 但无 effort 词表（空 / toggle / budget_tokens）→ 只有平台默认（declared:false，
- *     上游没给可传递的 effort 词表；UI 标注「未声明」，不假装精确）
- *   · 字段整体缺失（custom provider 的 /models 不给推理信息）→ 同「未声明」，declared:false
- * `toggle`（推理开关）/`budget_tokens`（思考预算）**不是 effort 语义**，我们的传输只发 effort
- * 字符串 → 不映射成档位（opencode 对 @ai-sdk/openai-compatible 的 toggle 也是返回空变体）。
+ *   · `reasoning:true` 但**未给出任何 reasoning_options**（空数组 / 缺字段）→ **通用兜底档位**
+ *     （`GENERIC_REASONING_EFFORTS`，declared:false）。理由：models.dev 对此类模型（如 zen/go 的
+ *     mimo-v2.6-flash，opts=[]）只标了「会推理」却没登记枚举，而 diy 实测该模型认
+ *     none/low/medium/high —— 若一律坍缩成「平台默认」，存量 personas（effort=high/low）编辑即被拒。
+ *     精确档位可在 model.yaml 的 `models[id].reasoning` 覆盖登记。
+ *   · `reasoning:true` 且**明示了非 effort 选项**（toggle / budget_tokens）→ 只有平台默认
+ *     （上游声明了推理，但不是 effort 语义，我们的传输只发 effort 字符串 → 不假装有档位）。
+ *   · `reasoning` 字段缺失（custom provider 的 /models 不给推理信息）→ 只有平台默认（declared:false）
+ * `toggle`（推理开关）/`budget_tokens`（思考预算）**不是 effort 语义** → 不映射成档位
+ * （opencode 对 @ai-sdk/openai-compatible 的 toggle 也是返回空变体）。
  */
 export const DEFAULT_EFFORT = "default";
 
-/** 解析结果：declared=false 表示 spec 未声明 effort 词表（只有平台默认可选） */
+/**
+ * **通用兜底档位**：模型声明了 `reasoning:true`、但 spec 没给出 effort 词表时用。
+ * 取 OpenAI 兼容 reasoning 模型最普遍接受的子集（diy 对 zen/go 的实测集恰为此四档）；
+ * 上游若拒（400），说明该模型档位更窄 → 用 model.yaml 的模型覆盖登记精确集。default=medium。
+ */
+export const GENERIC_REASONING_EFFORTS = ["none", "low", "medium", "high"] as const;
+export const GENERIC_REASONING_DEFAULT = "medium";
+
+/** 解析结果：declared=false = spec 未登记 effort 词表（值为通用兜底集，或只有平台默认） */
 export const ReasoningSupportSchema = z.object({
     supported: z.array(z.string()),
     default: z.string(),
@@ -99,7 +112,13 @@ export function reasoningFromSpec(
               : declaredValues[0];
         return { supported, default: def, declared: true };
     }
-    // 无可用 effort 词表（false / toggle / budget / 空 / 缺字段）→ 只有平台默认。
+    // 声明会推理、却没登记任何 reasoning_options（空/缺字段）→ 通用兜底档位。
+    // 反例：明示了 toggle/budget（非 effort 语义）→ 不当成有档位，交平台默认。
+    const declaredNonEffort = (options ?? []).length > 0;
+    if (reasoning === true && !declaredNonEffort) {
+        return { supported: [DEFAULT_EFFORT, ...GENERIC_REASONING_EFFORTS], default: GENERIC_REASONING_DEFAULT, declared: false };
+    }
+    // 其余（reasoning:false / 明示非 effort / 缺字段）→ 只有平台默认。
     return { supported: [DEFAULT_EFFORT], default: DEFAULT_EFFORT, declared: false };
 }
 
@@ -357,6 +376,11 @@ export const LlmConfigViewSchema = z.object({
     catalog: z.array(CatalogEntrySchema),
     /** 已配置 provider 视图（std + custom） */
     providers: z.array(ProviderViewSchema),
+    /**
+     * 读配置时的降级原因（model.yaml / providers.custom.yaml 结构非法）。非 null 时上面各字段为
+     * 空视图 —— UI 仍能打开并提示，而不是 RPC 抛错锁死页面（##275 R1-6）。
+     */
+    error: z.string().nullable().optional(),
 });
 export type LlmConfigView = z.infer<typeof LlmConfigViewSchema>;
 
