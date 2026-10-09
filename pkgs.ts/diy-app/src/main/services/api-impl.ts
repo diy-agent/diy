@@ -689,6 +689,44 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { status: "ok" };
   });
 
+  binding.on(app.llmConfig.probe, async ({ input }) => {
+    // 拉 `${baseUrl}/models`：既是连通性测试，也是 custom provider 的模型清单来源。
+    // 不强求成功：上游若不支持 /models（如 commandcode），ok=false 且 error 说明原因。
+    const { expandEnvValue } = await import("../core/model-registry");
+    if (input.apiKey.trim() === "") return { ok: false, status: null, models: [], error: "账号密钥为空" };
+    const expanded = expandEnvValue(input.apiKey);
+    if (expanded.error || expanded.value === null) {
+      return { ok: false, status: null, models: [], error: expanded.error ?? "密钥为空" };
+    }
+    const base = input.baseUrl.replace(/\/+$/, "");
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12_000);
+    try {
+      const res = await fetch(`${base}/models`, {
+        headers: expanded.value ? { authorization: `Bearer ${expanded.value}` } : {},
+        signal: ctrl.signal,
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        return { ok: false, status: res.status, models: [], error: `HTTP ${res.status}: ${text.slice(0, 200)}` };
+      }
+      let models: { id: string; name: string | null }[] = [];
+      try {
+        const json = JSON.parse(text) as { data?: Array<{ id?: string; name?: string }> };
+        models = (json.data ?? [])
+          .filter((m) => typeof m?.id === "string")
+          .map((m) => ({ id: m.id as string, name: m.name ?? null }));
+      } catch {
+        return { ok: false, status: res.status, models: [], error: "响应不是 JSON（/models 不可解析）" };
+      }
+      return { ok: true, status: res.status, models, error: null };
+    } catch (e) {
+      return { ok: false, status: null, models: [], error: e instanceof Error ? e.message : String(e) };
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
   // ── log ──
   binding.on(app.log.read, async ({ input }) => {
     const { existsSync, readFileSync } = await import("node:fs");

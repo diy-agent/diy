@@ -18,13 +18,22 @@ import { notificationStore } from "./notificationStore";
 import type { PersonaView } from "../../shared/persona";
 import type { ReasoningEffort } from "../../shared/models";
 
-/** 模型清单里本 store 用到的最小形状（展示用：id → 名字 / 推理档位支持集） */
-interface ModelBrief {
+/** 模型清单里本 store 用到的形状（展示 + 模型选择表；字段来自 agent.local.models） */
+export interface ModelBrief {
     /** 完全限定名 account@provider/model —— persona.model 存的就是它 */
     ref: string;
+    /** provider 段（std = models.dev id；custom = `custom:<key>`） */
+    provider: string;
+    /** 账号段（限定名 `@` 前） */
+    account: string;
     id: string;
     name: string;
+    api: "chat" | "responses";
+    contextLimit: number;
+    maxOutputTokens: number;
     reasoning: { supported: ReasoningEffort[]; default: ReasoningEffort };
+    /** 单价（$/1M tokens；缺失 = 无价目，表里显示 —） */
+    cost?: { input: number; output: number; cacheRead?: number; cacheWrite?: number } | null;
 }
 
 /** 按限定名 `ref`（或裸 id，兼容存量）在清单里找条目 */

@@ -23,7 +23,7 @@ import { ContextDiffSchema, StatsSchema, StepsSchema } from "../../shared/contex
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
 // agent 人物契约（纯 zod，renderer 同源）——模型/参数/行为指令的配置实体
 import { PersonaSchema } from "../../shared/persona";
-import { LlmConfigViewSchema, ModelConfigFileSchema, SpecProviderSchema } from "../../shared/model-config";
+import { LlmConfigViewSchema, ModelConfigFileSchema, ProbeResultSchema, SpecProviderSchema } from "../../shared/model-config";
 // 草稿与任务详情载荷的契约（纯 zod，renderer 同源）
 import { DraftFieldSchema, DraftFieldsSchema, DraftsData, TaskDetailSchema } from "../../shared/task-detail";
 
@@ -544,6 +544,16 @@ export const apiDef = RpcSchema.router({
                       supported: z.array(z.string()),
                       default: z.string(),
                     }),
+                    /** 单价（$/1M tokens；缺失 = 无价目）—— 模型选择表分列展示 */
+                    cost: z
+                      .object({
+                        input: z.number(),
+                        output: z.number(),
+                        cacheRead: z.number().optional(),
+                        cacheWrite: z.number().optional(),
+                      })
+                      .nullable()
+                      .optional(),
                   }),
                 ),
               }),
@@ -902,6 +912,14 @@ export const apiDef = RpcSchema.router({
             desc: `写/删 providers.custom.yaml 单条（spec=null 删除）`,
             input: { id: z.string().cliArg({ desc: "custom provider 裸 id" }), spec: SpecProviderSchema.nullable() },
             output: StatusOk,
+          }),
+          probe: RpcSchema.unary({
+            desc: `探测 provider 连通性并拉 ${"${baseUrl}"}/models（UI「测试/获取模型」共用）`,
+            input: {
+              baseUrl: z.string().cliArg({ desc: "provider baseUrl" }),
+              apiKey: z.string().cliArg({ desc: "密钥原始值（明文或 $VAR，服务端展开）" }),
+            },
+            output: ProbeResultSchema,
           }),
         },
       }),

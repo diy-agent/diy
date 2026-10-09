@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { faceOfNpm } from "../../shared/models";
 import {
     filterAllows,
+    reasoningFromSpec,
     type AccountView,
     type CatalogEntry,
     type Filter,
@@ -68,7 +69,8 @@ export function expandEnvValue(v: string): { value: string | null; error: string
 
 function accountViews(accounts: ProviderConfig["accounts"]): AccountView[] {
     return accounts.map((a, i) => {
-        const { value, error } = expandEnvValue(a.data.value);
+        // 空值 = 还没填（不是错误，运行时该账号不可用）：expanded=null、error=null。
+        const { value, error } = a.data.value.trim() === "" ? { value: null, error: null } : expandEnvValue(a.data.value);
         return { index: i, label: a.name ?? String(i), account: a, expanded: value, error };
     });
 }
@@ -78,12 +80,13 @@ function modelViews(
     overrides: Record<string, ModelOverride>,
     filter: Filter,
 ): ModelView[] {
-    const specIds = spec ? Object.keys(spec.models) : [];
-    const ids = [...specIds, ...Object.keys(overrides).filter((id) => !specIds.includes(id))];
+    const specModels = spec?.models ?? {}; // custom spec 未写 models 时是 undefined
+    const specIds = Object.keys(specModels);
+    const ids = [...specIds, ...Object.keys(overrides ?? {}).filter((id) => !specIds.includes(id))];
     const out: ModelView[] = [];
     for (const id of ids) {
-        const m = spec?.models[id];
-        const o = overrides[id];
+        const m = specModels[id];
+        const o = (overrides ?? {})[id];
         // 面由 npm 解析：模型级 `provider.npm` 覆写 > provider 级 `npm`（对齐 models.dev）。
         const npm = (m?.provider as { npm?: string } | undefined)?.npm ?? spec?.npm ?? "";
         const face = faceOfNpm(npm);
@@ -96,6 +99,11 @@ function modelViews(
             (sc && (sc.input !== undefined || sc.output !== undefined)
                 ? { input: sc.input, output: sc.output, cache_read: sc.cache_read, cache_write: sc.cache_write, tiers: sc.tiers }
                 : null);
+        // 档位：配置覆盖 > models.dev 的 reasoning_options（effort 词表）> 兜底/关闭。
+        const declaredSupport = reasoningFromSpec(m?.reasoning, m?.reasoning_options);
+        const reasoning = o?.reasoning
+            ? { supported: o.reasoning.supported, default: o.reasoning.default, declared: true }
+            : declaredSupport;
         out.push({
             id,
             name: o?.name ?? (m?.name as string | undefined) ?? id,
@@ -103,11 +111,9 @@ function modelViews(
             output: o?.limit?.output ?? m?.limit?.output ?? null,
             api: face,
             npm,
-            reasoning: m?.reasoning ?? false,
-            reasoningOverride: o?.reasoning ?? null,
+            reasoning,
             cost: cost as ModelView["cost"],
             enabled: filterAllows(filter, id),
-            overridden: o !== undefined,
             specMissing: m === undefined,
         });
     }
@@ -125,6 +131,7 @@ function providerView(
     const limited = kind === "custom" ? `custom:${key}` : key;
     const filter: Filter = config.filter ?? { include: [], exclude: [] };
     const overrides: Record<string, ModelOverride> = config.models ?? {};
+    // 注：config.models 覆盖仍被 schema 保留（档位兜底登记），本 UI 不暴露。
     const accounts = accountViews(config.accounts);
     const models = modelViews(spec, overrides, filter);
     return {
@@ -137,7 +144,7 @@ function providerView(
         config: { accounts: config.accounts, filter, models: overrides },
         accounts,
         models,
-        usable: accounts.some((a) => a.expanded !== null),
+        usable: accounts.some((a) => a.expanded !== null && a.expanded !== ""),
     };
 }
 

@@ -52,6 +52,8 @@ import { personaStore } from "../store/personaStore";
 import { taskStore } from "../store/taskStore";
 import { notificationStore } from "../store/notificationStore";
 import { reasoningEffortLabel } from "../../shared/reasoning-effort";
+import { splitQualified } from "../../shared/model-config";
+import type { ModelBrief } from "../store/personaStore";
 
 /** 平铺选项按钮：选中态用主色底，未选中 hover 亮一点（与详情面板的结构化字段同一套观感） */
 function ChoiceButton(props: {
@@ -407,7 +409,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                 悬浮提示是绝对定位在条目内的，贴着容器底边的那一项下方没有余量就会被裁掉
                                 （daisyUI tooltip 被 overflow 容器裁剪是本项目踩过的坑）。
                                 留白放在滚动内容的末端，视觉上就是列表尾部一点空隙，不占布局。 */}
-                            <div class="flex-1 overflow-y-auto p-2 pb-9">
+                            <div class="flex-1 overflow-y-auto p-2 pb-9" data-testid="persona-left-list">
                                 <div class="mb-2 flex items-center gap-2">
                                     <input
                                         class="input input-sm input-bordered min-w-0 flex-1"
@@ -715,30 +717,20 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                     </Show>
                                 </div>
 
-                                {/* 模型：平铺按钮（一眼全见，一次命中；下拉要多一次展开） */}
+                                {/* 模型：provider 切片 + 搜索 + 账号 + 可排序表格（价格分列） */}
                                 <div class="mb-3 flex items-start gap-2">
                                     <span class="mt-1 w-14 shrink-0 text-body opacity-60">
                                         模型
                                     </span>
-                                    {/* 模型可能几十个（snapshot 全量）：限高滚动，避免撑破面板几何 */}
-                                    <div class="flex flex-wrap gap-1 max-h-44 overflow-y-auto">
-                                        <For each={personaStore.models}>
-                                            {(m) => (
-                                                <ChoiceButton
-                                                    // 显示 **model id**：那才是发给上游的值；provider 在 title 里区分
-                                                    // （同 id 可挂在多个 provider 下，裸 id 会让人分不清用哪个账号）。
-                                                    label={m.id}
-                                                    hint={m.ref}
-                                                    // 新建态也按同一套值判选中：草稿与人物定义只差来源，
-                                                    // 交互却必须一致（"看着亮的是 A、建出来是 B"是最坏的）
-                                                    active={shownModel() === m.ref || shownModel() === m.id}
-                                                    disabled={busy()}
-                                                    onClick={() => pickModel(m.ref)}
-                                                />
-                                            )}
-                                        </For>
+                                    <div class="min-w-0 flex-1">
+                                        <ModelPicker
+                                            models={personaStore.models}
+                                            value={shownModel()}
+                                            disabled={busy()}
+                                            onPick={pickModel}
+                                        />
                                         <Show when={creating() && personaStore.models.length === 0}>
-                                            <span class="self-center text-caption opacity-50">
+                                            <span class="text-caption opacity-50">
                                                 模型清单未加载，稍候（人物必须指定模型）
                                             </span>
                                         </Show>
@@ -835,5 +827,249 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                 </div>
             </div>
         </Show>
+    );
+}
+
+// ── 模型选择器：provider 切片 + 搜索 + 账号 + 可排序表格 ─────────────
+//
+// 需求：像 Excel 切片查询 —— provider 过滤按钮（全部 / 各家）、查询输入框、
+// 选中 provider 后可切账号（一个则默认选中，多个默认第一个）；模型以**表格**列出各项属性，
+// **价格分列**（输入/输出/缓存），列头可点击排序。
+
+type SortKey = "id" | "context" | "output" | "in" | "out" | "cache";
+
+function fmtTokens(n: number): string {
+    if (!n) return "—";
+    if (n >= 1_000_000) return `${Math.round(n / 100_000) / 10}M`;
+    if (n >= 1000) return `${Math.round(n / 1000)}K`;
+    return String(n);
+}
+function fmtPrice(n: number | undefined): string {
+    if (n == null) return "—";
+    return n === 0 ? "免费" : String(n);
+}
+
+function ModelPicker(props: {
+    models: ModelBrief[];
+    value: string;
+    disabled?: boolean;
+    onPick: (ref: string) => void;
+}) {
+    const [provider, setProvider] = createSignal("all");
+    const [query, setQuery] = createSignal("");
+    const [sortKey, setSortKey] = createSignal<SortKey>("in");
+    const [sortDir, setSortDir] = createSignal<1 | -1>(1);
+    const [acctByProvider, setAcctByProvider] = createSignal<Record<string, string>>({});
+
+    const parsed = createMemo(() => props.models.map((m) => ({ m, q: splitQualified(m.ref) })));
+
+    const providers = createMemo(() => {
+        const cnt = new Map<string, Set<string>>();
+        for (const { m, q } of parsed()) {
+            if (!q) continue;
+            const set = cnt.get(q.provider) ?? new Set<string>();
+            set.add(m.id);
+            cnt.set(q.provider, set);
+        }
+        return [...cnt.entries()]
+            .map(([name, ids]) => ({ name, count: ids.size }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    });
+
+    const accountsOf = (p: string): string[] => {
+        const out: string[] = [];
+        for (const { m, q } of parsed()) if (q?.provider === p && !out.includes(m.account)) out.push(m.account);
+        return out;
+    };
+    const accountOf = (p: string) => acctByProvider()[p] ?? accountsOf(p)[0] ?? "";
+
+    const rows = createMemo(() => {
+        const q = query().trim().toLowerCase();
+        const cur = splitQualified(props.value);
+        const seen = new Set<string>();
+        const out: {
+            provider: string;
+            id: string;
+            name: string;
+            api: string;
+            context: number;
+            output: number;
+            reasoning: boolean;
+            cost: ModelBrief["cost"];
+            ref: string;
+            active: boolean;
+        }[] = [];
+        for (const { m, q: pq } of parsed()) {
+            if (!pq) continue;
+            if (provider() !== "all" && pq.provider !== provider()) continue;
+            if (q && !m.id.toLowerCase().includes(q) && !m.name.toLowerCase().includes(q)) continue;
+            const key = `${pq.provider}/${m.id}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const acct = provider() === "all" ? m.account : accountOf(pq.provider);
+            const variant =
+                provider() === "all"
+                    ? m
+                    : props.models.find((x) => {
+                          const y = splitQualified(x.ref);
+                          return !!y && y.provider === pq.provider && y.model === m.id && y.account === acct;
+                      }) ?? m;
+            out.push({
+                provider: pq.provider,
+                id: m.id,
+                name: m.name,
+                api: m.api,
+                context: m.contextLimit,
+                output: m.maxOutputTokens,
+                reasoning: m.reasoning.supported.some((x) => x !== "none"),
+                cost: m.cost ?? null,
+                ref: variant.ref,
+                active:
+                    props.value === variant.ref ||
+                    props.value === m.id ||
+                    (!!cur && cur.provider === pq.provider && cur.model === m.id),
+            });
+        }
+        const k = sortKey();
+        const d = sortDir();
+        const val = (r: (typeof out)[number]): number | string => {
+            switch (k) {
+                case "id":
+                    return r.id.toLowerCase();
+                case "context":
+                    return r.context;
+                case "output":
+                    return r.output;
+                case "in":
+                    return r.cost?.input ?? Number.POSITIVE_INFINITY;
+                case "out":
+                    return r.cost?.output ?? Number.POSITIVE_INFINITY;
+                case "cache":
+                    return r.cost?.cacheRead ?? Number.POSITIVE_INFINITY;
+            }
+        };
+        out.sort((a, b) => {
+            const va = val(a);
+            const vb = val(b);
+            const c = typeof va === "string" ? va.localeCompare(String(vb)) : va - (vb as number);
+            return c !== 0 ? c * d : a.id.localeCompare(b.id);
+        });
+        return out;
+    });
+
+    const toggleSort = (k: SortKey) => {
+        if (sortKey() === k) setSortDir((d) => (d === 1 ? -1 : 1));
+        else {
+            setSortKey(k);
+            setSortDir(1);
+        }
+    };
+    const arrow = (k: SortKey) => (sortKey() === k ? (sortDir() === 1 ? " ▲" : " ▼") : "");
+    const Th = (p: { k: SortKey; label: string; cls?: string }) => (
+        <th
+            class={`cursor-pointer select-none whitespace-nowrap ${p.cls ?? ""}`}
+            onClick={() => toggleSort(p.k)}
+        >
+            {p.label}
+            {arrow(p.k)}
+        </th>
+    );
+
+    return (
+        <div class="space-y-1">
+            {/* provider 切片 */}
+            <div class="flex flex-wrap items-center gap-1">
+                <button
+                    class={`btn btn-xs ${provider() === "all" ? "btn-primary" : "btn-ghost border border-base-300"}`}
+                    onClick={() => setProvider("all")}
+                >
+                    全部（{props.models.length > 0 ? new Set(parsed().map((x) => x.q?.provider)).size : 0}）
+                </button>
+                <For each={providers()}>
+                    {(p) => (
+                        <button
+                            class={`btn btn-xs ${provider() === p.name ? "btn-primary" : "btn-ghost border border-base-300"}`}
+                            onClick={() => setProvider(p.name)}
+                        >
+                            {p.name}（{p.count}）
+                        </button>
+                    )}
+                </For>
+            </div>
+
+            {/* 搜索 + 账号 */}
+            <div class="flex flex-wrap items-center gap-2">
+                <input
+                    class="input input-xs input-bordered w-56"
+                    placeholder="🔍 过滤模型 id / 名称"
+                    value={query()}
+                    onInput={(e) => setQuery(e.currentTarget.value)}
+                />
+                <Show when={provider() !== "all" && accountsOf(provider()).length > 1}>
+                    <label class="flex items-center gap-1 text-caption opacity-70">
+                        账号
+                        <select
+                            class="select select-xs select-bordered"
+                            value={accountOf(provider())}
+                            onChange={(e) => setAcctByProvider((s) => ({ ...s, [provider()]: e.currentTarget.value }))}
+                        >
+                            <For each={accountsOf(provider())}>{(a) => <option value={a}>{a}</option>}</For>
+                        </select>
+                    </label>
+                </Show>
+                <span class="text-caption opacity-50">{rows().length} 个模型</span>
+            </div>
+
+            {/* 模型表（价格分列，列头排序） */}
+            <div class="max-h-52 overflow-y-auto rounded-box border border-base-300">
+                <table class="table table-xs">
+                    <thead class="sticky top-0 bg-base-100">
+                        <tr>
+                            <Th k="id" label="模型" />
+                            <Show when={provider() === "all"}>
+                                <th class="whitespace-nowrap">provider</th>
+                            </Show>
+                            <Th k="context" label="上下文" cls="text-right" />
+                            <Th k="output" label="输出上限" cls="text-right" />
+                            <th>面</th>
+                            <th>推理</th>
+                            <Th k="in" label="输入$/1M" cls="text-right" />
+                            <Th k="out" label="输出$/1M" cls="text-right" />
+                            <Th k="cache" label="缓存$/1M" cls="text-right" />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <For each={rows()}>
+                            {(r) => (
+                                <tr class={r.active ? "bg-primary/10" : ""}>
+                                    <td>
+                                        <button
+                                            class={`btn btn-xs ${r.active ? "btn-primary" : "btn-ghost border border-base-300"}`}
+                                            aria-pressed={r.active}
+                                            aria-label={r.id}
+                                            title={r.ref}
+                                            disabled={props.disabled}
+                                            onClick={() => props.onPick(r.ref)}
+                                        >
+                                            {r.id}
+                                        </button>
+                                    </td>
+                                    <Show when={provider() === "all"}>
+                                        <td class="whitespace-nowrap text-caption opacity-70">{r.provider}</td>
+                                    </Show>
+                                    <td class="text-right font-mono">{fmtTokens(r.context)}</td>
+                                    <td class="text-right font-mono">{fmtTokens(r.output)}</td>
+                                    <td class="text-caption">{r.api === "responses" ? "resp" : "chat"}</td>
+                                    <td class="text-caption">{r.reasoning ? "✓" : "—"}</td>
+                                    <td class="text-right font-mono">{fmtPrice(r.cost?.input)}</td>
+                                    <td class="text-right font-mono">{fmtPrice(r.cost?.output)}</td>
+                                    <td class="text-right font-mono">{fmtPrice(r.cost?.cacheRead)}</td>
+                                </tr>
+                            )}
+                        </For>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     );
 }

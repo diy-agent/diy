@@ -32,10 +32,10 @@ export const AccountSchema = z.object({
     name: z.string().regex(ACCOUNT_NAME_RE, "账号名只许 [A-Za-z0-9._-]（禁 @ 和 /）").optional(),
     data: z.object({
         /**
-         * 明文或 `$VAR`/`${VAR}` 环境变量插值。
-         * 使用时先展开再当 key；**未定义的 $VAR = fail-fast 报错**（你制定了环境变量却不提供）。
+         * 明文或 `$VAR`/`${VAR}` 环境变量插值。**允许空**（= 还没填，UI 显示占位提示；
+         * 运行时该账号不可用，不是错误）。未定义的 `$VAR` = fail-fast 报错（你制定了环境变量却不提供）。
          */
-        value: z.string().min(1),
+        value: z.string(),
     }),
 });
 export type Account = z.infer<typeof AccountSchema>;
@@ -52,6 +52,49 @@ export const FilterSchema = z.object({
     exclude: z.array(z.string()).default([]),
 });
 export type Filter = z.infer<typeof FilterSchema>;
+
+/**
+ * models.dev `reasoning_options` → diy 的档位表（effort 词表）。
+ *   · `reasoning:false`                          → 只能关闭（["none"]）
+ *   · 有 `{type:"effort",values:[…]}`            → 用**上游声明的词表**（精确档位；default 优先 medium→high→首项）
+ *   · `reasoning:true` 但无 effort 词表（空/toggle/budget） → **兜底通用集**（declared:false，
+ *     上游没声明可传递的档位词表；UI 标注「未声明」，不要假装精确）
+ * `toggle`/`budget_tokens` 不是 effort 语义，不映射成档位（我们的传输只发 effort 字符串）。
+ */
+export const STD_REASONING_FALLBACK = { supported: ["none", "minimal", "low", "medium", "high"], default: "medium" };
+
+/** 解析结果：declared=false 表示用了兜底集（spec 未声明 effort 词表） */
+export const ReasoningSupportSchema = z.object({
+    supported: z.array(z.string()),
+    default: z.string(),
+    declared: z.boolean(),
+});
+export type ReasoningSupport = z.infer<typeof ReasoningSupportSchema>;
+
+export function reasoningFromSpec(
+    reasoning: boolean | undefined,
+    options: Array<{ type?: string; values?: unknown }> | undefined,
+): ReasoningSupport {
+    if (!reasoning) return { supported: ["none"], default: "none", declared: true };
+    const values = new Set<string>();
+    for (const o of options ?? []) {
+        if (o?.type === "effort" && Array.isArray(o.values)) {
+            for (const v of o.values) if (typeof v === "string") values.add(v);
+        }
+    }
+    if (values.size === 0) return { ...STD_REASONING_FALLBACK, declared: false };
+    const supported = [...values];
+    const def = supported.includes("medium") ? "medium" : supported.includes("high") ? "high" : supported[0];
+    return { supported, default: def, declared: true };
+}
+
+/** 模型运行时的档位能力（与 shared/models.LocalModelReasoning 同形，供 runtime 直用） */
+export function reasoningSupportOf(s: ReasoningSupport): { supported: string[]; default: string } {
+    return { supported: s.supported, default: s.default };
+}
+
+/** 单条覆盖里的档位（配置层 models[id].reasoning，白名单字段） */
+export const ReasoningOverrideSchema = z.object({ supported: z.array(z.string()), default: z.string() });
 
 /**
  * 逐模型覆盖（可整个缺省）。**白名单字段**，同构 models.dev 对应字段；
@@ -83,13 +126,8 @@ export const ModelOverrideSchema = z.object({
             output: z.number().int().positive().optional(),
         })
         .optional(),
-    /** 档位表（models.dev 的 reasoning 布尔位不够用时在此登记；custom 模型常需手填） */
-    reasoning: z
-        .object({
-            supported: z.array(z.string()),
-            default: z.string(),
-        })
-        .optional(),
+    /** 档位表（models.dev 未声明 effort 词表时，在此登记精确档位） */
+    reasoning: ReasoningOverrideSchema.optional(),
     cost: z
         .object({
             input: z.number(),
@@ -134,6 +172,8 @@ export const SpecModelSchema = z
         attachment: z.boolean().optional(),
         temperature: z.boolean().optional(),
         release_date: z.string().optional(),
+        /** models.dev 的档位词表：`[{type:"effort",values:[...]}|{type:"toggle"}|{type:"budget_tokens",…}]` */
+        reasoning_options: z.array(z.object({ type: z.string() }).passthrough()).optional(),
         /** models.dev 的**模型级 npm 覆写**（面在此精修；provider 级 npm 是粗默认） */
         provider: z.object({ npm: z.string().optional() }).passthrough().optional(),
         limit: z.object({ context: z.number(), output: z.number() }).partial().optional(),
@@ -194,12 +234,8 @@ export const ModelViewSchema = z.object({
     api: z.enum(["chat", "responses"]),
     /** 生效 npm（provider.npm 或模型级 provider.npm 覆写） */
     npm: z.string(),
-    /** spec 的 reasoning 支持（models.dev 布尔位） */
-    reasoning: z.boolean(),
-    /** 档位表覆盖（有则 UI 显示；models.dev 无此数据） */
-    reasoningOverride: z
-        .object({ supported: z.array(z.string()), default: z.string() })
-        .nullable(),
+    /** 生效档位表（spec 的 reasoning_options ⊕ 配置覆盖；declared=false = 兜底通用集） */
+    reasoning: ReasoningSupportSchema,
     cost: z
         .object({
             input: z.number().optional(),
@@ -211,8 +247,6 @@ export const ModelViewSchema = z.object({
         .nullable(),
     /** filter（include/exclude）判定结果 —— UI 勾选框的状态 */
     enabled: z.boolean(),
-    /** 是否有 config.models 覆盖（UI 显示「覆盖」徽章） */
-    overridden: z.boolean(),
     /** spec 里没有此模型（只有覆盖登记）→ UI 提示 id 打错或 snapshot 已变 */
     specMissing: z.boolean(),
 });
@@ -258,6 +292,17 @@ export const CatalogEntrySchema = z.object({
     env: z.array(z.string()),
 });
 export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;
+
+/** `llmConfig.probe` 输出：拉 `${baseUrl}/models`（连通性 + 可选模型清单） */
+export const ProbeResultSchema = z.object({
+    ok: z.boolean(),
+    /** HTTP 状态；网络层失败 = null */
+    status: z.number().nullable(),
+    /** 上游返回的模型（id/name）；不支持 `/models` 时为空 */
+    models: z.array(z.object({ id: z.string(), name: z.string().nullable() })),
+    error: z.string().nullable(),
+});
+export type ProbeResult = z.infer<typeof ProbeResultSchema>;
 
 /** llmConfig.read 全量输出 */
 export const LlmConfigViewSchema = z.object({

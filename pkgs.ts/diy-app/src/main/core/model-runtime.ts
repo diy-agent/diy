@@ -7,7 +7,7 @@
 // **没有内置 provider**：无任何已配置 provider → 目录为空（模型元数据全部来自 snapshot ⊕ custom
 // spec，代码里不硬编码模型清单）。API 面由 npm 解析（见 model-registry.modelViews / faceOfNpm）。
 
-import { setModelCatalog, type LocalModelReasoning, type ResolvedModel } from "../../shared/models";
+import { setModelCatalog, type ResolvedModel } from "../../shared/models";
 import type { ModelCost } from "../../shared/usage";
 import { expandEnvValue, registryView } from "./model-registry";
 
@@ -47,13 +47,6 @@ function toModelCost(
     };
 }
 
-/** 无档位词表时的保守档位集（models.dev 通常只有 reasoning 布尔位，没有词表） */
-const GENERIC_REASONING: LocalModelReasoning = {
-    supported: ["none", "low", "medium", "high", "xhigh", "max"],
-    default: "medium",
-};
-const OFF_REASONING: LocalModelReasoning = { supported: ["none"], default: "none" };
-
 /**
  * 装配运行时目录。无任何已配置 provider → 空目录（**不回退内置**）。
  * 返回装配结果（模型引用数），便于日志/测试。
@@ -65,7 +58,8 @@ export function refreshModelRuntime(home: string): number {
         if (!p.spec) continue; // 无 spec（snapshot 改版 / custom spec 未写）→ 跳过
         for (const m of p.models) {
             if (!m.enabled) continue;
-            const reasoning = m.reasoningOverride ?? (m.reasoning ? GENERIC_REASONING : OFF_REASONING);
+            // 档位已由 model-registry 解析（models.dev reasoning_options ⊕ 配置覆盖 ⊕ 兜底）。
+            const reasoning = { supported: m.reasoning.supported, default: m.reasoning.default };
             const cost = toModelCost(m.cost);
             for (const a of p.accounts) {
                 models.push({
