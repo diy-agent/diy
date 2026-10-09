@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { splitQualified } from "../../src/shared/model-config";
-import { findModel, getModelCatalog } from "../../src/shared/models";
+import { effectiveMaxOutputTokens, findModel, getModelCatalog, maxOutputTokensOf } from "../../src/shared/models";
 import { refreshModelRuntime, resolveModelKey } from "../../src/main/core/model-runtime";
 
 describe("splitQualified：account@provider/model", () => {
@@ -131,6 +131,36 @@ describe("refreshModelRuntime（装配 snapshot ⊕ custom ⊕ model.yaml）", (
         expect(findModel("0@opencode-go/mimo-v2.6-pro")).toBeUndefined();
         expect(findModel("0@opencode-go/gpt-5.6-luna")?.api).toBe("responses");
         delete process.env["OPENCODE_API_KEY"];
+    });
+
+    it("spec 未给 limit（如 commandcode /models 无输出上限）→ undefined 而非 0", () => {
+        // 回归 ##184「goat mimo 报 maxOutputTokens must be >= 1」：
+        // 旧实现 m.output ?? 0 把缺失输出上限写成 0，SDK 直接拒。缺失必须留 undefined。
+        writeFileSync(
+            join(home, "providers.custom.yaml"),
+            `goat:
+  id: goat
+  npm: "@ai-sdk/openai-compatible"
+  api: "https://api.commandcode.ai/provider/v1"
+  models:
+    xiaomi/mimo-v2.6-flash:
+      name: MiMo V2.6 Flash
+`,
+        );
+        writeFileSync(
+            join(home, "model.yaml"),
+            `customProviders:
+  goat:
+    accounts: [{ type: apiKey, data: { value: "k" } }]
+`,
+        );
+        refreshModelRuntime(home);
+        const m = findModel("0@custom:goat/xiaomi/mimo-v2.6-flash")!;
+        expect(m.maxOutputTokens).toBeUndefined();
+        expect(m.contextLimit).toBeUndefined();
+        expect(maxOutputTokensOf("0@custom:goat/xiaomi/mimo-v2.6-flash")).toBeUndefined();
+        // 生效值必须 >= 1（SDK 硬约束），缺省走 fallback
+        expect(effectiveMaxOutputTokens("0@custom:goat/xiaomi/mimo-v2.6-flash", 4000)).toBe(4000);
     });
 
     it("$VAR 未定义 → resolveModelKey fail-fast", () => {

@@ -838,8 +838,8 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
 
 type SortKey = "id" | "context" | "output" | "in" | "out" | "cache";
 
-function fmtTokens(n: number): string {
-    if (!n) return "—";
+function fmtTokens(n: number | undefined): string {
+    if (n == null || !n) return "—";
     if (n >= 1_000_000) return `${Math.round(n / 100_000) / 10}M`;
     if (n >= 1000) return `${Math.round(n / 1000)}K`;
     return String(n);
@@ -892,8 +892,8 @@ function ModelPicker(props: {
             id: string;
             name: string;
             api: string;
-            context: number;
-            output: number;
+            context?: number;
+            output?: number;
             reasoning: boolean;
             cost: ModelBrief["cost"];
             ref: string;
@@ -938,9 +938,9 @@ function ModelPicker(props: {
                 case "id":
                     return r.id.toLowerCase();
                 case "context":
-                    return r.context;
+                    return r.context ?? Number.POSITIVE_INFINITY;
                 case "output":
-                    return r.output;
+                    return r.output ?? Number.POSITIVE_INFINITY;
                 case "in":
                     return r.cost?.input ?? Number.POSITIVE_INFINITY;
                 case "out":

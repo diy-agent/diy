@@ -29,8 +29,10 @@ export interface ModelBrief {
     id: string;
     name: string;
     api: "chat" | "responses";
-    contextLimit: number;
-    maxOutputTokens: number;
+    /** 上下文窗口；spec 未给 → 缺省（表里显示「—」） */
+    contextLimit?: number;
+    /** 单次输出上限；spec 未给 → 缺省（运行时回退默认值） */
+    maxOutputTokens?: number;
     reasoning: { supported: ReasoningEffort[]; default: ReasoningEffort };
     /** 单价（$/1M tokens；缺失 = 无价目，表里显示 —） */
     cost?: { input: number; output: number; cacheRead?: number; cacheWrite?: number } | null;

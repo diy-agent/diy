@@ -538,8 +538,10 @@ export const apiDef = RpcSchema.router({
                     id: z.string(),
                     name: z.string(),
                     api: z.enum(["chat", "responses"]),
-                    contextLimit: z.number(),
-                    maxOutputTokens: z.number(),
+                    /** 上下文窗口；spec 未给 → 缺省（UI 显示「—」，运行时按无预算） */
+                    contextLimit: z.number().optional(),
+                    /** 单次输出上限；spec 未给 → 缺省（运行时回退 DEFAULT_LIMITS.maxOutputTokens） */
+                    maxOutputTokens: z.number().optional(),
                     reasoning: z.object({
                       supported: z.array(z.string()),
                       default: z.string(),

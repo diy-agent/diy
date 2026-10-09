@@ -47,8 +47,10 @@ export interface LocalModel {
     name: string;
     /** chat = /chat/completions（@ai-sdk/openai-compatible）；responses = /responses（@ai-sdk/openai） */
     api: LocalModelApi;
-    contextLimit: number;
-    maxOutputTokens: number;
+    /** 上下文窗口（tokens）；spec 未提供 → undefined（运行时按"无预算"处理） */
+    contextLimit?: number;
+    /** 单次输出上限（tokens）；spec 未提供 → undefined（运行时回退 DEFAULT_LIMITS.maxOutputTokens） */
+    maxOutputTokens?: number;
     reasoning: LocalModelReasoning;
     /** 单价（$/1M tokens，真源 models.dev，抓取日期见 MODEL_COST_AS_OF）；缺失 = 无价目，不算钱 */
     cost?: ModelCost;
@@ -142,6 +144,18 @@ export function contextLimitOf(modelId: string): number | undefined {
 /** 按 model id 查 maxOutputTokens；未知返回 undefined（调用方决定 fallback） */
 export function maxOutputTokensOf(modelId: string): number | undefined {
     return findModel(modelId)?.maxOutputTokens;
+}
+
+/**
+ * 生效输出上限：spec 给了**正值**就用，否则回退 `fallback`。**保证返回 >= 1**。
+ *
+ * 为什么必须钳：`streamText({ maxOutputTokens })` 传 0/负数会被 SDK 直接拒
+ * （"maxOutputTokens must be >= 1"，##184 实测）。spec 未给 limit.output 的模型
+ * （如 commandcode 的 /models 只给 context_length）就走 fallback，绝不下发 0。
+ */
+export function effectiveMaxOutputTokens(modelId: string, fallback: number): number {
+    const n = maxOutputTokensOf(modelId);
+    return n !== undefined && n >= 1 ? n : fallback;
 }
 
 /** 某模型的缓存 TTL 先验（缺省见 CACHE_TTL_PRIOR_MS） */

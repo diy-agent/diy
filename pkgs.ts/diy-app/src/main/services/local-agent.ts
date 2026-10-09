@@ -115,6 +115,7 @@ import {
     apiOf,
     contextLimitOf,
     costOf,
+    effectiveMaxOutputTokens,
     findModel,
     getModelCatalog,
     MODEL_COST_AS_OF,
@@ -156,9 +157,15 @@ export function resolveBaseUrl(m: ResolvedModel): string {
 
 // 解析「人物/覆盖里写的模型引用」→ 运行时模型 + 密钥：见 LocalAgentManager.resolveModel。
 
-/** 按 model id 查 maxOutputTokens，fallback 到全局 limits */
+/**
+ * 按 model id 查 maxOutputTokens，回退全局 limits。
+ *
+ * ⚠️ 必须保证返回 **>= 1**：`streamText({ maxOutputTokens })` 传 0/负数会被 SDK 直接拒
+ * （"maxOutputTokens must be >= 1"，##184 实测）。spec 未给 limit.output 的模型（如
+ * commandcode 的 /models 只给 context_length、不给输出上限）走这里回退，绝不把 0 下发。
+ */
 function modelOutputTokens(modelId: string): number {
-    return maxOutputTokensOf(modelId) ?? DEFAULT_LIMITS.maxOutputTokens;
+    return effectiveMaxOutputTokens(modelId, DEFAULT_LIMITS.maxOutputTokens);
 }
 
 // ─── 运行限制配置（默认值 < $DIY_HOME/local/limits.json < 环境变量 DIY_LOCAL_*）──

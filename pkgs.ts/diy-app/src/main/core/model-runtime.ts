@@ -66,8 +66,11 @@ export function refreshModelRuntime(home: string): number {
                     id: m.id,
                     name: m.name,
                     api: m.api,
-                    contextLimit: m.context ?? 0,
-                    maxOutputTokens: m.output ?? 0,
+                    // spec 未给 limit → **留 undefined**（不是 0！）：0 会被当成真实上限下发，
+                    // SDK 直接拒（maxOutputTokens must be >= 1）。undefined 让运行时回退默认值
+                    // （见 local-agent.modelOutputTokens / DEFAULT_LIMITS）。
+                    contextLimit: m.context ?? undefined,
+                    maxOutputTokens: m.output ?? undefined,
                     reasoning,
                     cost,
                     ref: `${a.label}@${p.limited}/${m.id}`,
