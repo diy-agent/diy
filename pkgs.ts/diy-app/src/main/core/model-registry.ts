@@ -35,10 +35,13 @@ let _snapshot: Record<string, SpecProvider> | null = null;
 function snapshot(): Record<string, SpecProvider> {
     if (_snapshot) return _snapshot;
     const here = dirname(fileURLToPath(import.meta.url));
+    // 候选路径按「bundle 所在深度」区分：src/**（tsx 直跑）= app 下 2~3 层；
+    // build/<V>/{main,cli}（vite 产物）= app 下 3 层。二者相对布局不同，故必须分开列。
     const cands = [
-        join(here, "data/models-snapshot.json"), // build/<V>/main/data（bundle 在 build/<V>/main，build 拷贝到此处）
-        join(here, "../data/models-snapshot.json"), // 兼容旧布局
-        join(here, "../../src/main/data/models-snapshot.json"), // 源树（tsx 直跑兜底）
+        join(here, "data/models-snapshot.json"), // bundle 旁：build/<V>/main|cli/data（sha.sh build 拷贝）
+        join(here, "../data/models-snapshot.json"), // src/main/** → src/main/data（tsx 直跑）
+        join(here, "../../../src/main/data/models-snapshot.json"), // build/<V>/main|cli → 源树兜底（preview/lab 未拷贝时）
+        join(here, "../../src/main/data/models-snapshot.json"), // src/cli/** → src/main/data（tsx 直跑 CLI）
     ];
     const p = cands.find((c) => existsSync(c));
     if (!p) throw new Error(`models-snapshot.json 缺失: ${cands.join(" | ")}`);
