@@ -833,7 +833,9 @@ export default function App() {
                                                         return `${def.title}${num() ? ` #${num()}` : ""}`;
                                                     return tabLabel(t.ctx ?? "");
                                                 };
-                                                const icon = () => (t.pageId === "lab" ? "L" : (num() ?? "•"));
+                                                // 图标同样走 registry（RV-10）：别在组件里特判 pageId ——
+                                                // 新页面忘记加特判就会重复 R3 那个 bug；无 icon 时退回页面序号。
+                                                const icon = () => findPage(t.pageId)?.icon ?? (num() ?? "•");
                                                 const tabGoto = () => {
                                                     hideHoverLayers();
                                                     tabStore.activate(t.key);

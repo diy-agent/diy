@@ -39,6 +39,7 @@ import { notificationStore } from "../store/notificationStore";
 import type { ContextLab, PlaceCandidate } from "../../shared/context/preview";
 import { requestYaml } from "../../shared/context/request";
 import { diffSize } from "../../shared/context/steps";
+import { attributionOf, foldStatRows, sysCauses, unitsFromRules, type Attribution } from "../../shared/context/attribution";
 import { fmtAgo, fmtShortTime } from "../../shared/date-format";
 import { lineRange, matchRanges, type LineRange } from "../../shared/context/match";
 import type { ContextDiff, Stats } from "../../shared/context/schema";
@@ -344,9 +345,8 @@ export function ContextLabPage(props: { uri: string }) {
         })();
     };
 
-    /** 当前投递单元（path → 容器） */
-    const unitMap = (): Map<string, "system" | "runtime"> =>
-        new Map((lab()?.rules ?? []).map((r) => [r.place, r.container]));
+    /** 当前投递单元（path → 容器）。纯函数在 shared/context/attribution.ts（RV-10）。 */
+    const unitMap = (): Map<string, "system" | "runtime"> => unitsFromRules(lab()?.rules ?? []);
     const containerOf = (path: string): "system" | "runtime" | null => unitMap().get(path) ?? null;
 
     /** 该节点能否切换容器（开关按钮的显示规则）：
@@ -363,47 +363,14 @@ export function ContextLabPage(props: { uri: string }) {
     };
 
     /**
-     * 一个变量路径的**投递归属**。三态，不能压成一种（review RV-01）：
-     *   · unit      —— 被某个投递单元覆盖（path 是该单元或其后代）→ 报单元名 + 容器；
-     *   · container —— 是若干单元的**祖先**（如 `task`：子字段横跨 system/runtime）→ 报跨几个单元；
-     *   · none      —— 既不被单元覆盖、也不是单元的祖先（如 `persona.name`：根本不在投递里，
-     *                  `PLACE_CANDIDATES` 刻意不列 persona）→ 必须说"未投递"，不能谎报成 runtime。
+     * 归属（三态）与归因（system 重建原因）的**纯函数已提到 `shared/context/attribution.ts`**
+     * （review RV-10：一份实现 + 可单测）。这里只负责把**页面当前划分**（`unitMap()`）喂进去。
+     * ⚠️ 注意两处口径**有意不同**（review RV-09）：
+     *   · 本页「变更统计」表归属列、结构树的 ⇄ 开关 = **当前**划分（用户眼前这把刀，改划分即重算）；
+     *   · 「变更（真发轮次）」的 sys 徽章 = **该轮快照**的划分（`sysCauses(changed, st.systemPlaces)`，
+     *     历史不该被当前划分改写 —— RV-02）。
      */
-    type Attribution =
-        | { kind: "unit"; place: string; container: "system" | "runtime" }
-        | { kind: "container"; units: { place: string; container: "system" | "runtime" }[] }
-        | { kind: "none" };
-    const attributionOf = (path: string): Attribution => {
-        const units = unitMap();
-        // ① 覆盖它的最深单元（`chain.0.path` → `chain`）
-        let best: string | null = null;
-        for (const u of units.keys()) {
-            if ((path === u || path.startsWith(`${u}.`)) && (best === null || u.length > best.length)) best = u;
-        }
-        if (best !== null) return { kind: "unit", place: best, container: units.get(best)! };
-        // ② 它是某些单元的祖先 → 容器行（子字段分属多个单元）
-        const spanned = [...units.entries()].filter(([u]) => u.startsWith(`${path}.`));
-        if (spanned.length > 0) {
-            return { kind: "container", units: spanned.map(([place, container]) => ({ place, container })) };
-        }
-        // ③ 不在投递里
-        return { kind: "none" };
-    };
-
-    /**
-     * system 全量重建的**原因**（review RV-02）：**基于该轮快照的 `systemPlaces`**，而不是页面当前
-     * 划分（`unitMap()`）。否则用户改一次划分，历史轮次的归因会集体漂移/消失（真实原因没变）。
-     * 收拢到单元路径；空 = 不是值变化引起的（投递范围或编码版本变了）。
-     */
-    const sysCauses = (changed: readonly string[] | undefined, sysPlaces: readonly string[]): string[] => {
-        const out = new Set<string>();
-        for (const p of changed ?? []) {
-            for (const u of sysPlaces) {
-                if (p === u || p.startsWith(`${u}.`)) out.add(u);
-            }
-        }
-        return [...out].sort();
-    };
+    const attrOf = (path: string): Attribution => attributionOf(unitMap(), path);
 
     const structure = () => buildVarTree(AssembleGlobalsSchema);
 
@@ -515,7 +482,7 @@ export function ContextLabPage(props: { uri: string }) {
                                                         ? "投递编码版本变化（不可比，非值变化引起，不归因）"
                                                         : causes().length > 0
                                                           ? `由这些投递单元变化引起：${causes().join(", ")}`
-                                                          : "投递范围变了（不是值变化）")
+                                                          : "非值变化引起（说明头/渲染变了，或投递范围变了）")
                                                 }
                                             >
                                                 {`sys${causeText()}`}
@@ -579,7 +546,7 @@ export function ContextLabPage(props: { uri: string }) {
                                 fallback={
                                     <div class="opacity-50">
                                         {dd().systemDiffers || dd().runtimeDiffers
-                                            ? "无值变化（是投递范围或编码版本变了）"
+                                            ? "无值变化（说明头/渲染变了，或投递范围变了）"
                                             : "没有变化：当前投递与最后一步一致"}
                                     </div>
                                 }
@@ -631,7 +598,16 @@ export function ContextLabPage(props: { uri: string }) {
 
     /** 归属徽章：按 attributionOf 的三态分别渲染（单元 / 跨单元容器 / 未投递） */
     const attrBadge = (path: string): JSX.Element => {
-        const a = attributionOf(path);
+        // 划分还没加载完（`lab()` 未就绪）→ 既不能折行也不能算归属，先给个中间态，
+        // 别用"空划分"算出的 `none` 谎报"未投递"（review RV-13 的同类闪烁）。
+        if (unitMap().size === 0) {
+            return (
+                <span class="badge badge-xs badge-ghost opacity-40" title="划分加载中…">
+                    …
+                </span>
+            );
+        }
+        const a = attrOf(path);
         if (a.kind === "unit") {
             return (
                 <span
@@ -680,12 +656,10 @@ export function ContextLabPage(props: { uri: string }) {
         if (!s) return <div class="p-2 opacity-60">统计加载中…</div>;
         // 行粒度（RV-03）：中间容器（有后代同时上榜）且自身**不是投递单元** → 折叠。
         // 容器的变化恒由后代解释（父 hash = 子树 hash），单列只会稀释"该不该待在 system"的判据。
-        const allPaths = s.paths;
-        const isUnit = (p: string): boolean => unitMap().has(p);
-        const isContainer = (p: string): boolean =>
-            allPaths.some((q) => q.path !== p && q.path.startsWith(`${p}.`));
-        const rows = allPaths.filter((x) => isUnit(x.path) || !isContainer(x.path));
-        const collapsed = allPaths.length - rows.length;
+        // 纯函数在 shared/context/attribution.ts（可与 UI 分开单测）。
+        const { rows: keptPaths, collapsed } = foldStatRows(s.paths.map((x) => x.path), unitMap());
+        const kept = new Set(keptPaths);
+        const rows = s.paths.filter((x) => kept.has(x.path));
         return (
             <div class="p-1">
                 <div class="mb-1 flex items-center gap-1 px-1 opacity-70">
@@ -695,6 +669,11 @@ export function ContextLabPage(props: { uri: string }) {
                             {`${fmtShortTime(s.since)} ~ ${fmtShortTime(s.until)}`}
                         </span>
                     </Show>
+                </div>
+                {/* RV-09：归属列按**页面当前划分**（统计是"今天这把刀切哪"的操作视角），
+                    与上面 sys 徽章"按当轮快照"的口径**有意不同** → 必须写出来，否则用户当成一套。 */}
+                <div class="mb-1 px-1 text-caption opacity-50">
+                    归属列按当前划分（改划分即重算；历史轮次的原因看「变更（真发轮次）」的 sys 徽章，按当轮快照）
                 </div>
                 <Show when={collapsed > 0}>
                     <div class="mb-1 px-1 text-caption opacity-50">

@@ -4,7 +4,10 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, expect } from "vitest";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { diffSteps, summarizeSteps, withIndex, type DeliveryStepRecord } from "../../src/shared/context/steps";
+import { opsFile, readDeliverySteps } from "../../src/main/services/local-agent";
 
 const rec = (over: Partial<DeliveryStepRecord> = {}): DeliveryStepRecord => ({
     ts: "2026-09-25T00:00:00.000Z",
@@ -90,5 +93,30 @@ describe("step 摘要列表", () => {
 describe("withIndex", () => {
     it("按行序给 1 基序号", () => {
         expect(withIndex([rec(), rec()]).map((s) => s.index)).toEqual([1, 2]);
+    });
+});
+
+describe("读侧兜底：缺字段的快照不打断渲染（review RV-12）", () => {
+    it("steps.jsonl 缺 systemPlaces/runtimePlaces → 读出来是 []（不是 undefined）", () => {
+        // 路径与 main 侧同一算法：借用 opsFile（同目录同 key），只换后缀 —— 不复制 key 算法
+        const uri = "projects/99/tasks/1";
+        const fp = opsFile(uri).replace(/\.ops\.jsonl$/, ".steps.jsonl");
+        mkdirSync(dirname(fp), { recursive: true });
+        writeFileSync(
+            fp,
+            JSON.stringify({
+                ts: "2026-10-02T00:00:00.000Z",
+                turnId: "t1",
+                model: "m",
+                wireVersion: "aaaa1111",
+                valueHashes: {},
+                systemText: "",
+                runtimeText: "",
+            }) + "\n",
+        );
+        const got = readDeliverySteps(uri);
+        expect(got).toHaveLength(1);
+        expect(got[0]!.systemPlaces).toEqual([]);
+        expect(got[0]!.runtimePlaces).toEqual([]);
     });
 });

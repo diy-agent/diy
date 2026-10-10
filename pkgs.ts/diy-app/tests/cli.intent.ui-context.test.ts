@@ -802,3 +802,44 @@ describe("上下文树：统计与归因的边界（review RV-07 / RV-08）", ()
     await fx.sh.run(`./diy.sh project remove ${pidB}`);
   }, 120_000);
 });
+
+describe("上下文树：归属口径标注与 URI 解析失败出口（review RV-09 / RV-13）", () => {
+  it("统计块写明「归属列按当前划分」；被打开的 uri 解析不出项目 → 明确空态（不是永久加载中）", async () => {
+    // ① 正常项目：统计块应有口径标注（RV-09：与 sys 徽章的「当轮快照」口径有意不同，必须写出来）
+    const repo = `${fx.HOME}/ctxlab-scope`;
+    mkdirSync(repo, { recursive: true });
+    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 口径`);
+    const pid = String((p.data as any)?.data?.id);
+    const t = await fx.sh.getJson(`./diy.sh task create 口径任务 ${pid}`);
+    const uri = String((t.data as any)?.data?.uri);
+    // 一条统计记录（有变化 → 表非空，块头 + 口径标注都渲染）
+    mkdirSync(join(fx.HOME, "projects", pid), { recursive: true });
+    writeFileSync(
+      join(fx.HOME, "projects", pid, "context-stats.jsonl"),
+      JSON.stringify({ ts: "2026-10-01T00:00:00.000Z", taskUri: uri, turnId: "s1", changed: ["chain.0"] }) + "\n",
+    );
+
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
+    await fx.sh.getJson(`./diy.sh ui page navigate ctxlab:${uri}`);
+    await fold("request", false);
+    await fold("change", false);
+    await fold("stats", true);
+    const scoped = await waitUntil(a11yText, (s) => s.includes("归属列按当前划分"), {
+      label: "归属列口径标注上屏",
+    });
+    expect(scoped).toContain("归属列按当前划分");
+
+    // ② RV-13：URI 解析不出项目（非 projects/<pid>/tasks/<tid> 形状）→ 明确空态出口
+    //    （原分支 `if (!pid) return null` 会永久停在「统计加载中…」）
+    await fx.sh.getJson(`./diy.sh ui tab open ctxlab:not-a-task`);
+    await fx.sh.getJson(`./diy.sh ui page navigate ctxlab:not-a-task`);
+    await fold("stats", true);
+    const bad = await waitUntil(a11yText, (s) => s.includes("无法从任务 URI 解析出项目"), {
+      label: "URI 解析失败空态",
+    });
+    expect(bad).toContain("无法从任务 URI 解析出项目");
+
+    await fx.sh.run(`./diy.sh project remove ${pid}`);
+  }, 120_000);
+});
