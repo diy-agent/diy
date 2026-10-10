@@ -71,6 +71,23 @@ describe("seedHome", () => {
         );
     });
 
+    it("生产数据根永不种入（即使被显式指到 ~/.diy）", () => {
+        // HOME 指到临时目录：万一护栏失效，也只会写进 tmp（绝不碰真实 ~/.diy）
+        const savedHomeEnv = process.env["HOME"];
+        process.env["HOME"] = home;
+        try {
+            const prodHome = join(home, ".diy");
+            const r = seedHome(prodHome, ENV);
+            expect(r.skipped).toContain("生产数据根");
+            expect(r.project).toBeNull();
+            expect(r.tasks).toEqual([]);
+            expect(existsSync(join(prodHome, "model.yaml"))).toBe(false); // 一个字节都没写
+        } finally {
+            if (savedHomeEnv === undefined) delete process.env["HOME"];
+            else process.env["HOME"] = savedHomeEnv;
+        }
+    });
+
     it("幂等：重复种入不动已有数据", () => {
         seedHome(home, ENV);
         const again = seedHome(home, ENV);
@@ -78,6 +95,7 @@ describe("seedHome", () => {
         expect(again.persona).toBe("exists");
         expect(again.project).toBeNull();
         expect(again.tasks).toEqual([]);
+        expect(again.skipped).toBeNull();
         expect(existsSync(join(home, "personas.yaml"))).toBe(true);
     });
 });

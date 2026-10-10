@@ -27,9 +27,10 @@
 |------|--------|------|
 | `./diy.sh`（仓库根） | `auto`：`build/<variant>/cli/index.js` 优先，打包源比产物新回退 `tsx src/cli/index.ts`（`DIY_CLI_MODE`） | `DIY_HOME=./build/<variant>/home`、`DIY_VARIANT=preview`、`DIY_CLI` |
 | `bin/diy`（发布） | `node build/prod/cli/index.js` | `DIY_HOME=~/.diy`、`DIY_CLI=$0`、`DIY_ENV=production` |
-| `scripts/electron-dev.mts`（preview / lab） | `build/<variant>/main/index.mjs` | `DIY_HOME=./build/<variant>/home`、`DIY_VARIANT`、`DIY_CLI`、`DIY_DEV_SERVER_URL`、`DIY_ENV=development` |
+| `scripts/electron-dev.mts`（preview / lab） | `build/<variant>/main/index.mjs` | `DIY_HOME=./build/<variant>/home`（继承来的生产根被拒，见 `env.home`）、`DIY_VARIANT`、`DIY_CLI`、`DIY_DEV_SERVER_URL`、`DIY_ENV=development` |
 
-- `env.home` — `DIY_HOME` 数据根（state/task/**app.port**），缺省 `~/.diy`
+- `env.home` — `DIY_HOME` 数据根（state/task/**app.port**），缺省 `~/.diy`；**preview/lab 与 `diy.sh` 一律拒绝继承来的 `~/.diy`**（决策点 `src/main/core/dev-home.ts`，放行需 `DIY_ALLOW_PROD_HOME=1`）
+- `env.seed` — `DIY_SEED` 三态：未声明 = 仅 preview/lab 自动种入，`1`/`0` 显式开关（`src/main/core/seed.ts`；生产根永不种入）
 - `env.cli` — `DIY_CLI` 当前 CLI 入口绝对路径（提示词模版 `diy.md` 消费）；缺 → 提示词里告警，**不静默冒充 `diy`**
 - `env.env` — `DIY_ENV` = `production`/`development`/`test`，**dev/test 专属能力的唯一判据**（如窗口副屏定位）；缺省 = production（未声明即生产，能力全关）
 - `env.port` — `DIY_PORT` 首选端口（测试注 `0`=随机）；优先级 `DIY_PORT` > `app.port` 文件 > 18888

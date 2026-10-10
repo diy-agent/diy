@@ -67,7 +67,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     if (autoSeedEnabled()) {
       const r = seedHome(state.diyHome());
       console.log(
-        `[seed] model=${r.model} persona=${r.persona} project=${r.project ?? "-"} tasks=${r.tasks.length}`,
+        r.skipped
+          ? `[seed] 跳过：${r.skipped}`
+          : `[seed] model=${r.model} persona=${r.persona} project=${r.project ?? "-"} tasks=${r.tasks.length}`,
       );
     }
   } catch (e) {

@@ -37,12 +37,16 @@
 - `entry.gui` — 起 GUI 两条路：`./sha.sh preview`（HMR，免构建）或 `sha.sh build` 后由 CLI 拉起
 - `entry.verify` — preview/lab 起来后用 `diy getAppInfo` 看 `diyHome` / `env` / `branch`，确认数据目录与启动参数（验证没起错数据根/变体）
 - `entry.risk` — worktree 改码跑测一律 `./diy.sh`（隔离 `./build/<variant>/home`；会拒绝继承来的生产 `DIY_HOME`，需 `DIY_ALLOW_PROD_HOME=1` 放行）；**查/改真实数据才用全局 `diy`**
+- `entry.home-guard` — 「继承来的生产 `DIY_HOME` 一律拒绝」的唯一决策点 `pkgs.ts/diy-app/src/main/core/dev-home.ts`（`./diy.sh` 与 `./sha.sh preview|lab` 共用；宿主 shell 常导出 `DIY_HOME=~/.diy`，不拦则 preview 开着生产数据根跑、还会把种子写进去）
+- `entry.seed` — 空数据根的初始种入（`pkgs.ts/diy-app/src/main/core/seed.ts`）：`preview`/`lab` 缺省自动、`DIY_SEED` 三态覆盖、`diy seed run` 手动；**生产根永不种入**
 - `entry.inject` — `DIY_CLI` 由三个入口注入：`diy.sh` / `bin/diy` / `electron-dev.mts`；漏一处提示词就退化成裸 `diy`（→ 打到生产）
 
 ## tool — 命令
 
 - `tool.check` — `./sha.sh check` **提交前唯一检查**：`tsc -b tsconfig.all.json --noEmit` + oxlint + rpc 浏览器安全 + 产物护栏
 - `tool.test` — `./sha.sh test` 全仓 · `./sha.sh test-unit` 快测（不起 Electron）· `pkgs.ts/diy-app/sha.sh test-intent` 意图测试
+- `tool.model-import` — 环境变量 → provider 导入候选（只列不写；UI 模型页提示条 / `diy llmConfig scanEnv|importEnv`）→ `pkgs.ts/diy-app/src/main/core/model-import.ts`
+- `tool.confirm` — 破坏性操作的应用内二次确认走 `renderer_solid/components/ConfirmDialog.tsx`；**禁用原生 `window.confirm`**（窗口级模态：卡住整个渲染进程，且非 DOM 节点 —— 自动化点不到）
 - `tool.cli` — 查/改数据：全局 `diy <域> <命令>`（生产）· worktree 里 `./diy.sh <域> <命令>`（隔离）。域：`task` `project` `agent` `template` `log` `watch` `ui` `doctor`
 - `tool.pkg` — `pkgs.ts/diy-app/sha.sh preview|lab|build|test|cli` 单包动作
 - `tool.sync` — **新开 worktree 先 `./sha.sh sync`**（`npm i --workspaces` + 子模块 + 各包 sync）；不跑则包没装、`node_modules` 缺

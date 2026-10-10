@@ -409,6 +409,8 @@ export const SeedReportSchema = z.object({
     project: z.string().nullable(),
     /** 本次创建的任务 URI */
     tasks: z.array(z.string()),
+    /** 跳过原因（非 null 即**什么都没写**）；目前只有一种：生产数据根 */
+    skipped: z.string().nullable(),
 });
 export type SeedReport = z.infer<typeof SeedReportSchema>;
 
