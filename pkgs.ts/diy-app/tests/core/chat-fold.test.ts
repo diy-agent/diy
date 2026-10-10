@@ -9,6 +9,7 @@ import {
     isProc,
     isUserText,
     lastAssistantText,
+    leadUsers,
     leavesOf,
     liveAreaOf,
 } from "../../src/renderer_solid/lib/chat-fold";
@@ -75,6 +76,31 @@ describe("foldedItems：折叠态 = 严格文档序，不重排", () => {
         const t = turn(user("u1"), tool("x1", false));
         expect(foldedItems(t).map((x) => x.id)).toEqual(["u1"]);
         expect(lastAssistantText(t)).toBeNull();
+    });
+});
+
+describe("leadUsers：轮首用户发言（渲染在轮次头之前）", () => {
+    it("轮首连续的用户发言是 lead（IM 顺序：用户先说、助理的身份行再接）", () => {
+        const t = turn(user("u1"), say("a1"), tool("x1"));
+        expect(leadUsers(t).map((x) => x.id)).toEqual(["u1"]);
+    });
+
+    it("只取**开头连续**的：轮中插话不算 lead（提前 = 又一次重排）", () => {
+        const t = turn(user("u1"), say("a1"), user("u2"), say("a2"));
+        expect(leadUsers(t).map((x) => x.id)).toEqual(["u1"]);
+    });
+
+    it("助理先开口（无用户发言）时 lead 为空，轮次头仍在最上", () => {
+        expect(leadUsers(turn(think("k1"), say("a1")))).toEqual([]);
+    });
+
+    it("lead 与折叠体互补：lead ∪ foldBody = foldedItems，无重复", () => {
+        const t = turn(user("u1"), say("a1"), tool("x1"), user("u2"), say("a9"));
+        const head = leadUsers(t);
+        const body = foldedItems(t).filter((n) => !head.includes(n));
+        const all = [...head, ...body].map((x) => x.id);
+        expect(all).toEqual(["u1", "u2", "a9"]);
+        expect(new Set(all).size).toBe(all.length);
     });
 });
 

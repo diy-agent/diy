@@ -1,13 +1,16 @@
 /**
  * LocalChatPage — 本地自定义 agent 对话页（ai-sdk 块协议，独立于 ACP ChatPage）
  *
- * 渲染 = f(大纲 outline, 阶段 phase)：
- *   大纲 ▤（唯一显示开关）：折叠态「最后一条正文」是否截到 N 行（默认 false = 正常全文）
+ * 渲染 = f(显示模式 outline, 阶段 phase)：
+ *   显示模式 ▤（唯一开关，**两态**）：正常 ⇄ 大纲。它决定两件事 ——
+ *     ① **默认层级**：正常默认展开（L1 全部正文在眼）；大纲默认折叠（L0 只剩结论）
+ *     ② 折叠态那条「最后一条正文」的默认行数：正常=全文；大纲=N 行（默认 3，且带裁剪视觉）
  *   阶段 streaming（未 stop）/ settled（定稿）——静态与动态层次**同构**，动态只在轮尾多一块实时区
  *
- * 轮次四层折叠（2026-10-04 定稿，对齐 dsh）+ 轮尾实时区：
+ * 轮次结构（2026-10-04 定稿对齐 dsh，2026-10-11 按 IM 顺序修正）+ 轮尾实时区：
+ *   [轮首用户发言]  ← 先出：IM 直觉是"用户先说、对方再接"
  *   L0 轮次头 = 身份（🤖 人物 · 模型 · 思考级别）+ 统计（N 步 · 耗时 · ⚙a 💭b · Σtok）+ chevron
- *      折叠态 = 头 + **文档序**的可见项（用户发言 / error / 最后一条正文，大纲截 N 行）+ 用量条
+ *      折叠态 = 头 + **文档序**的可见项（轮中插话 / error / 最后一条正文，大纲截 N 行）+ 用量条
  *   L1 展开轮次 → 全部正文（文档序）+ 过程图标行
  *   L2 展开图标行 → 每事件一行（各自单行折叠）
  *   L3 展开单行 → 内容
@@ -15,7 +18,9 @@
  *      挂 `⋯ 等待下一步` 直到下一步开始接收 —— 详见 lib/chat-fold 的 liveAreaOf 头注。
  *
  * 「显示什么、按什么序」的语义全在 `lib/chat-fold.ts`（纯函数 + 单测），本文件只管画。
- * 展开判定 = pin（用户显式覆盖）?? 默认折叠；error 块与中断遗留 tool 恒开。
+ * 展开判定 = pin（用户显式点过头）?? 模式默认；error 块与中断遗留 tool 恒开。
+ * 被裁掉的正文必须**看得出被裁**（底部渐隐 + 可点提示行，见 ClampedText 头注），
+ * 否则"缩紧状态"就是静默丢信息（2026-10-11 用户反馈）。
  * 「开/关」一律由 `IconChevron`（daisyUI collapse-arrow 同形：收起下指、展开上指）表达，
  * 可展开行头一律 `DisclosureHead`（div + role=button：**按钮内的文本选不中**，见其头注）。
  */
@@ -55,7 +60,7 @@ import { VIEW_BAR_H } from "../lib/layout-metrics";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
 // 折叠语义（纯函数，可单测）：显示什么、按什么序 —— 本文件只消费结果
-import { foldedItems, isUserText, leavesOf, liveAreaOf, type LiveArea } from "../lib/chat-fold";
+import { foldedItems, isUserText, leadUsers, leavesOf, liveAreaOf, type LiveArea } from "../lib/chat-fold";
 // 历史 mode 值归一与文案放 shared（纯函数、可单测）：ops 日志是 append-only 的史书，
 // 枚举改名前的 step/turn 与现值长期共存，读侧必须归一（详见 shared/steer-mode.ts）
 import { steerModeLabel, steerModeTip } from "../../shared/steer-mode";
@@ -401,16 +406,17 @@ function ProcessRow(props: {
 /**
  * 轮次级折叠（2026-10-04 定稿，对齐 dsh 的信息层次）。
  *
- * 一个 turn = 四层 + 轮尾实时区，**静态截止与动态进行中结构同构**，动态只是多出实时区：
+ * 一个 turn = 轮首用户发言 + 四层 + 轮尾实时区，**静态截止与动态进行中结构同构**，动态只是多出实时区：
+ *   轮首用户发言：IM 顺序 —— 用户先说，助理的身份行（轮次头）再接
  *   L0 轮次头：身份（🤖 人物 · 模型 · 思考级别）+ 统计（N 步 · 耗时 · ⚙a 💭b · Σtok）+ chevron
- *      折叠态 = 头 + **文档序**可见项（用户发言 / error / **最后一条正文**）+ 用量条
+ *      折叠态 = 头 + **文档序**可见项（轮中插话 / error / **最后一条正文**）+ 用量条
  *   L1 展开轮次：全部正文 + 过程图标行（均按文档序）
  *   L2 展开图标行：每事件一行（各自单行折叠）
  *   L3 展开单行：该 tool 结果 / think 内容
  *   LIVE 实时区（仅直播轮次，固定在轮尾）：当前活动的展开体 ≤5 行；跑完不消失，挂 ⋯ 等下一步
  *
- * 唯一显示开关 `▤ 正常 ⇄ 大纲`（不是多档密度）：只决定折叠态那一条正文的默认行数
- * （正常=全文，大纲=N 行），**展开后一律全文，四层点击行为两模式完全一致**。
+ * 唯一显示开关 `▤ 正常 ⇄ 大纲`（不是多档密度）：决定**默认层级**（正常=展开、大纲=折叠）
+ * 与折叠态那条正文的默认行数（正常=全文，大纲=N 行）；**展开后一律全文，四层点击行为两模式一致**。
  * 身份是**该轮事实**的投影（`turn.attrs.model` / `reasoningEffort` / `durationMs`），
  * 不是当前配置 —— 否则改一次 personas.yaml 全部历史署名被一起改写（任务 196 的教训）。
  *
@@ -575,19 +581,60 @@ function TextBlock(props: { node: BlockNode; md: boolean }) {
     );
 }
 
-/** 折叠态正文：大纲模式截 N 行（纯文本呈现，避免半截 Markdown 错乱），正常模式全文 */
-function ClampedText(props: { node: BlockNode; outline: boolean; lines: number; md: boolean }) {
+/**
+ * 折叠态正文：大纲模式截 N 行（纯文本呈现，避免半截 Markdown 错乱），正常模式全文。
+ *
+ * 「被裁剪过」必须**一眼可见**（2026-10-11 用户反馈：只截 3 行看不出来被缩过）。
+ * 业界三种主流表达（详见图注）：
+ *   ① **底部渐隐**（mask 遮罩）：文字在末行淡出 —— 暗示"下面还有"，最不打断阅读
+ *      （Linear / Notion / Apple 摘要是这一路）；
+ *   ② **可点提示行**："⋯ 还有 N 行 · 展开全文" —— 明确、可操作（GitHub / Slack 的 Show more；
+ *      ChatGPT 对长回答也是底部一行按钮）；
+ *   ③ 单纯 CSS `-webkit-line-clamp` 自己出的那个 "…" —— 信息量最低，且对已渲染
+ *      代码块/列表会截在结构中间。
+ * 这里取 ①+②：渐隐负责"看着就知道被裁了"，提示行负责"点哪能看全"。
+ * 提示行点击 = 展开轮次（与轮次头 chevron 同一动作，不引入第三套开关）。
+ */
+function ClampedText(props: {
+    node: BlockNode;
+    outline: boolean;
+    lines: number;
+    md: boolean;
+    /** 点提示行 = 展开本轮的全文（由 TurnView 传入；不传则提示行不可点） */
+    onExpand?: () => void;
+}) {
     const b = () => props.node;
     const raw = () => str(b().attrs.content);
     const clipped = () => props.outline && b().stopped;
     const view = () => (clipped() ? clampLines(raw(), props.lines) : { text: raw(), omitted: 0 });
+    const cut = () => view().omitted > 0;
     return (
-        <div data-block-id={b().id} data-block-tag="text" data-clamped={clipped() && view().omitted > 0 ? "1" : undefined}>
-            <Show when={props.md && !clipped()} fallback={<PlainText text={view().text} />}>
-                <MarkdownText text={view().text} streaming={!b().stopped} />
-            </Show>
-            <Show when={view().omitted > 0}>
-                <div class="mt-0.5 text-caption opacity-50">… 还有 {view().omitted} 行（展开轮次看全文）</div>
+        <div data-block-id={b().id} data-block-tag="text" data-clamped={cut() ? "1" : undefined}>
+            <div
+                style={
+                    cut()
+                        ? {
+                              "mask-image":
+                                  "linear-gradient(to bottom, #000 45%, rgba(0,0,0,0) 100%)",
+                              "-webkit-mask-image":
+                                  "linear-gradient(to bottom, #000 45%, rgba(0,0,0,0) 100%)",
+                          }
+                        : undefined
+                }
+            >
+                <Show when={props.md && !clipped()} fallback={<PlainText text={view().text} />}>
+                    <MarkdownText text={view().text} streaming={!b().stopped} />
+                </Show>
+            </div>
+            <Show when={cut()}>
+                {/* 提示行本身就是"继续读"的入口：按钮语义 + 只在此处可点（正文仍可拖选） */}
+                <button
+                    type="button"
+                    class="mt-0.5 text-caption opacity-60 hover:opacity-100 hover:text-primary"
+                    onClick={() => props.onExpand?.()}
+                >
+                    ⋯ 已折叠 {view().omitted} 行 · 点击展开全文
+                </button>
             </Show>
         </div>
     );
@@ -766,9 +813,20 @@ function TurnView(props: {
     onDetailUsage: (id: string) => void;
 }) {
     const t = props.node;
-    // 轮次开合：pin（用户显式覆盖）?? 默认折叠（L0 只留头 + 最后一条正文）
     const turnKey = () => `turn:${t.id}`;
-    const open = () => (turnKey() in props.pin ? props.pin[turnKey()]! : false);
+    // 默认层级由**显示模式**决定（2026-10-11 用户口径）：
+    //   · 正常模式 → 默认展开（L1：全部正文都在，过程仍折成一行图标条）
+    //   · 大纲模式 → 默认折叠（L0：只留用户发言 + 最后一条正文，截 N 行）
+    //「只显示结论」这一层因此归大纲模式，不再是正常模式的默认（那样太不直观）。
+    // pin = 用户显式点过头，永远优先于模式默认（切模式也不动他手动开/关过的那几轮）。
+    const open = () => (turnKey() in props.pin ? props.pin[turnKey()]! : !props.outline);
+    /** 轮首用户发言：渲染在轮次头**之前**（IM 顺序）。见 chat-fold.leadUsers */
+    const lead = () => leadUsers(t);
+    /** 折叠体：把 lead 剔掉，否则与轮次头上方那批重复画一遍 */
+    const foldBody = () => {
+        const head = lead();
+        return head.length ? foldedItems(t).filter((n) => !head.includes(n)) : foldedItems(t);
+    };
     const isLiveTurn = () => props.liveTurnId != null && props.liveTurnId === t.id;
     // 上帧的段序列：跨次渲染复用未变的段（见 reuseSegs 头注）
     let prevSegs: Seg[] = [];
@@ -777,12 +835,21 @@ function TurnView(props: {
     const liveArea = () => liveAreaOf(t, isLiveTurn());
     const segs = () => {
         const live = liveArea()?.node;
-        prevSegs = reuseSegs(prevSegs, segments(leavesOf(t).filter((n) => n !== live)));
+        // 轮首用户发言（已由 lead 单独渲染）与实时区节点一并从文档序剔除：
+        // 留在里面就是同一块画两遍 —— 前者违反 IM 顺序、后者是 review P1-1 的老坑。
+        const head = new Set(lead());
+        prevSegs = reuseSegs(
+            prevSegs,
+            segments(leavesOf(t).filter((n) => n !== live && !head.has(n))),
+        );
         return prevSegs;
     };
     const counts = () => countTags(t);
     return (
         <div class="space-y-1.5" data-turn-id={t.id}>
+            {/* 轮首用户发言**先出**：IM 直觉是"用户先说、对方再接"。
+                轮次头（助理身份行）压在用户消息上面 = 看着像助理先开口（2026-10-11 反馈）。 */}
+            <For each={lead()}>{(n) => <UserBubble node={n} />}</For>
             <TurnHeader
                 node={t}
                 open={open()}
@@ -795,9 +862,10 @@ function TurnView(props: {
                     /* 折叠态 = **严格文档序**（用户 / error / 最后一条正文），只"藏中间过程"、
                        不"搬位置"。为什么必须如此：插话块在文档序上位于轮次中间，旧版把
                        "全部用户发言"提到最前，它就被拽到了自己那条助理回复的下面 ——
-                       看着像"助理先说、用户后说"（2026-10-04 现象）。判据见 chat-fold.foldedItems。 */
+                       看着像"助理先说、用户后说"（2026-10-04 现象）。判据见 chat-fold.foldedItems。
+                       （轮首那批已由上方 lead 渲染过，此处用 foldBody 剔掉，避免画两遍。） */
                     <div class="space-y-1.5 pl-1">
-                        <For each={foldedItems(t)}>
+                        <For each={foldBody()}>
                             {(n) =>
                                 isUserText(n) ? (
                                     <UserBubble node={n} />
@@ -811,6 +879,7 @@ function TurnView(props: {
                                         outline={props.outline}
                                         lines={props.outlineLines}
                                         md={props.md}
+                                        onExpand={() => props.onToggle(turnKey())}
                                     />
                                 )
                             }
@@ -1442,14 +1511,15 @@ export function LocalChatPage(props: { uri?: string }) {
                 class={`flex items-center justify-end gap-2 pl-4 pr-16 ${VIEW_BAR_H} border-b shrink-0`}
             >
                 {/* 显示模式：**只有「正常 / 大纲」两态**（2026-10-04 用户口径，取消三档密度）。
-                    唯一差别 = 折叠态那条「最后一条正文」的默认行数：正常=全文、大纲=截 N 行。
+                    差别两处（2026-10-11）：① 默认层级 —— 正常=展开（全部正文）、大纲=折叠（只剩结论）；
+                    ② 折叠态那条正文的行数 —— 正常=全文、大纲=截 N 行（带渐隐，看得出被裁过）。
                     展开后的层次与点击行为两模式完全一致。 */}
                 <button
                     class={`btn btn-xs shrink-0 ${outline() ? "btn-active" : "btn-ghost"}`}
                     data-tip={
                         outline()
-                            ? `大纲：折叠态正文压到 ${outlineLines()} 行（点击改回正常）`
-                            : "正常：折叠态正文显示全文（点击改大纲）"
+                            ? `大纲：轮次默认折叠、结论压到 ${outlineLines()} 行（点击回到正常）`
+                            : "正常：轮次默认展开、正文全文（点击切大纲）"
                     }
                     aria-pressed={outline()}
                     onClick={() => setOutline(!outline())}
