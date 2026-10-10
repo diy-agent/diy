@@ -318,11 +318,17 @@ export default function App() {
         const onFindKey = (e: KeyboardEvent) => {
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
                 e.preventDefault();
+                // 弹层开着时页内查找让位（review3 R3-1b）：FindBar 是主区内的**流内**元素、
+                // 无层级，会被弹层 z-500 全屏遮罩压住 —— 开了也看不见点不到，像「⌘F 没反应」。
+                // 模态优先；关掉弹层再按即可。按住不放的连发也只响应首次（R3-2）。
+                if (e.repeat || navSearchOpen()) return;
                 findStore.openFind();
             } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
                 // ⌘K：快速打开会话（##254）。当前空闲键位 —— 全局只占用了 ⌘F（页内查找）。
                 // 开合都走这一个分支（弹出层自己也监听 Esc）；preventDefault 挡住浏览器默认行为。
                 e.preventDefault();
+                // 按住不放会 keydown 连发 → 高频开合（R3-2），只认首次。
+                if (e.repeat) return;
                 // 与 nav 入口按钮同处置：打开时先收掉 hover 层，避免弹层背后留着
                 // nav hover 详情（review1 RV-2：两条路径此前不一致）。
                 hideHoverLayers();

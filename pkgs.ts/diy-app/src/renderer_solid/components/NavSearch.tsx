@@ -25,7 +25,6 @@ import { NAV_SEARCH_LIMIT, flattenTasks, searchTasksOf } from "../../shared/nav-
 import { taskStateColor } from "../../main/core/task-state";
 import { taskStore } from "../store/taskStore";
 import { tabStore } from "../store/tabStore";
-import { findNode } from "../lib/task-lineage";
 
 /**
  * 弹层遮罩的 z-index。
@@ -85,17 +84,22 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
 
     onMount(() => {
         inputEl?.focus();
-        // 点背景/焦点在别处时的 Esc：window 层兜住（列表点击后焦点会走开）。
+        // 不开弹层时焦点可能在别处（列表点过之后），故 Esc 在 document 统一兜住。
+        // **捕获阶段 + stopPropagation**（不是 window 冒泡）：`TaskDetailPanel` 也在 window
+        // 上听 Esc（冒泡）关整个任务详情面板，两条互不相识、都不查 defaultPrevented ——
+        // 一次 Esc 会跑两个语义（关弹层 + 清面板，review3 R3-1a）。捕获阶段先手拦下，
+        // 事件不再传播到 window，面板就不受牵连。同款先例见 ConfirmDialog。
         // 同样挡 IME 组合态 —— 组合中的 Esc 是"取消选词"，不该关弹层。
         const onKey = (e: KeyboardEvent) => {
             if (e.key === "Escape" && !composing(e)) {
+                e.stopPropagation();
                 e.preventDefault();
                 props.onClose();
             }
         };
-        window.addEventListener("keydown", onKey);
+        document.addEventListener("keydown", onKey, true);
         onCleanup(() => {
-            window.removeEventListener("keydown", onKey);
+            document.removeEventListener("keydown", onKey, true);
             restoreFocus?.focus?.(); // 焦点归还触发元素（若它还在文档里）
         });
     });
@@ -151,10 +155,9 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
                         } else if (e.key === "Enter") {
                             e.preventDefault();
                             pick(active());
-                        } else if (e.key === "Escape") {
-                            e.preventDefault();
-                            props.onClose();
                         }
+                        // 注意：Esc **不在这里**处理 —— 由 onMount 的 document 捕获阶段统一接管
+                        // （只有那样才挡得住 TaskDetailPanel 的 window 监听，见 R3-1a）。
                     }}
                 />
                 <ul
@@ -194,7 +197,10 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
                                                 class={`h-1.5 w-1.5 shrink-0 rounded-full ${taskStateColor(hit.node.state)}`}
                                             />
                                             <span class="shrink-0 font-mono text-caption opacity-60">
-                                                #{findNode(taskStore.nodes, hit.uri)?.num ?? hit.node.num}
+                                                {/* hit.node 就是 taskStore.nodes 树里的**同一批对象引用**
+                                                    （flattenTasks 只平铺、不拷贝），再 findNode 一次既多余
+                                                    又与同行的 hit.node.title 写法不一致（review3 R3-3）。 */}
+                                                #{hit.node.num}
                                             </span>
                                             <span class="min-w-0 flex-1 truncate text-body">
                                                 {hit.node.title ?? hit.uri}

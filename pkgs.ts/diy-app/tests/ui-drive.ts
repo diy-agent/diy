@@ -199,6 +199,14 @@ export interface UiDriver {
    */
   clickSelector(selector: string, opts?: { nth?: number }): Promise<void>;
   /**
+   * 在**任意坐标**真实点击（press + release，走完整命中测试）。
+   *
+   * 为什么需要（不是绕路）：有些可点目标没有"自己的中心点"可用 —— 典型是**模态遮罩**：
+   * 遮罩是全屏的，它的几何中心恰好落在居中的面板里（点下去命中的是面板，不是遮罩）。
+   * 这类场合只能给出一个"确实落在遮罩上"的坐标再点，才能测得动。
+   */
+  clickPoint(point: { x: number; y: number }): Promise<void>;
+  /**
    * 按 CSS 选择器定位 → **真实双击**（同上定位与命中路径）。
    *
    * 为什么不是"连点两次 clickSelector"：Chromium 的 `dblclick` 由**点击计数**驱动
@@ -219,6 +227,15 @@ export interface UiDriver {
   type(text: string): Promise<void>;
   /** 真实按键（如 Enter / ArrowDown / Escape）。可带 Meta/Ctrl/Shift 修饰，如 `Meta+A` */
   press(key: string): Promise<void>;
+  /**
+   * 让**当前焦点元素**进入真实输入法（IME）组合态（CDP `Input.imeSetComposition`）。
+   *
+   * 为什么必须走这条路（不是绕路）：`isComposing` 是**浏览器在 IME 管线里自己打的标** ——
+   * 用 `new KeyboardEvent(..., { isComposing: true })` 派发只能测"handler 认不认这个字段"，
+   * 证明不了"真实输入法送来的回车确实带这个标"。本方法建立组合态后，随后的 `press()`
+   * 走的才是与中文拼音输入同一条路径（Chromium 会在其 keydown 上标 `isComposing:true`）。
+   */
+  imeCompose(text: string): Promise<void>;
   /** 按坐标拖拽（拖线用）；steps 让中间点也发出去，命中拖拽逻辑 */
   drag(from: { x: number; y: number }, to: { x: number; y: number }, steps?: number): Promise<void>;
   /** 在 renderer 里求值 */
@@ -314,6 +331,14 @@ export async function makeUiDriver(
     return found;
   };
 
+  /** 真实点一下某坐标（press + release）：clickSelector / clickPoint 共用同一路径 */
+  const clickAt = async (point: { x: number; y: number }) => {
+    await mouse("mousePressed", point);
+    await mouse("mouseReleased", point);
+    // 让 Solid 的响应式更新走完（点击 → state 变 → DOM 重渲染）
+    await new Promise((r) => setTimeout(r, 120));
+  };
+
   return {
     async click(text) {
       const target = await locate(text);
@@ -338,10 +363,11 @@ export async function makeUiDriver(
     },
 
     async clickSelector(selector, opts = {}) {
-      const point = await sampleStablePoint(selector, opts.nth ?? 0);
-      await mouse("mousePressed", point);
-      await mouse("mouseReleased", point);
-      await new Promise((r) => setTimeout(r, 120));
+      await clickAt(await sampleStablePoint(selector, opts.nth ?? 0));
+    },
+
+    async clickPoint(point) {
+      await clickAt(point);
     },
 
     async dblclickSelector(selector, opts = {}) {
@@ -392,6 +418,12 @@ export async function makeUiDriver(
       };
       await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...base });
       await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+      await new Promise((r) => setTimeout(r, 120));
+    },
+
+    async imeCompose(text) {
+      // 组合中的文本与选区都落在末尾（模拟"拼音已敲完、尚未选词"）
+      await cdp.send("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length });
       await new Promise((r) => setTimeout(r, 120));
     },
 

@@ -122,6 +122,19 @@ describe("nav-search：命中与排序", () => {
     expect(viaFlat).toHaveLength(3);
   });
 
+  it("flattenTasks 不假设「根恒为项目」：顶层直接挂的 task 也收录（R3-4）", () => {
+    // 现实里任务树根恒为项目，但 flattenTasks 是 shared/ 的通用纯函数 ——
+    // 它只该按 kind 判，不该靠"根一定是 project"这个外部前提成立。
+    const forest = [project([task("1", { title: "nav 项目下" })]), task("2", { title: "nav 顶层" })];
+    expect(nums(flattenTasks(forest))).toEqual(["1", "2"]);
+    expect(nums(searchTaskHits(forest, "nav").map((h) => h.node))).toEqual(["1", "2"]);
+  });
+
+  it("项目节点本身不进结果（结果单位是任务/会话）", () => {
+    const tree = [project([task("1", { title: "nav" })])];
+    expect(nums(flattenTasks(tree))).toEqual(["1"]);
+  });
+
   it("没有 uri 的任务不进结果（打不开会话的死项）", () => {
     const noUri: TaskListNode = { kind: "task", num: "9", title: "nav 无 URI", children: [] };
     const tree = [project([noUri, task("1", { title: "nav 有 URI" })])];

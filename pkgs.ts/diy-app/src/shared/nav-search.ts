@@ -10,7 +10,7 @@
 //   · 表格是树（剪枝 + 保祖先链 + 展开），弹层是**平铺候选**（快速定位，不看层级）；
 //   · 表格保持用户排序，弹层按**命中强度**排 —— 搜 `12` 时任务 #12 必须压过"正文提到 12"的。
 
-import { buildSnippet, matchTask, type SearchSnippet, type TaskListNode } from "./task-list";
+import { matchTask, type SearchSnippet, type TaskListNode } from "./task-list";
 
 /** 弹层默认最多展示多少条（再多就不是"快速打开"，是翻列表了） */
 export const NAV_SEARCH_LIMIT = 12;
@@ -49,7 +49,12 @@ export interface NavHit<T extends TaskListNode = TaskListNode> {
   snippet: SearchSnippet | null;
 }
 
-/** 整棵树的**平铺任务**（项目节点不参与命中 —— 弹层的结果单位是任务/会话） */
+/**
+ * 整棵**森林**的平铺任务（项目节点不参与命中 —— 弹层的结果单位是任务/会话）。
+ *
+ * 直接从根开始递归：只有 `kind === "task"` 被收录，项目节点自然被略过，
+ * 故**不对"根恒为项目"作假设**（review3 R3-4）—— 顶层若直接挂 task 也照样能搜到。
+ */
 export function flattenTasks<T extends TaskListNode>(nodes: T[]): T[] {
   const out: T[] = [];
   const walk = (ns: T[]) => {
@@ -58,10 +63,7 @@ export function flattenTasks<T extends TaskListNode>(nodes: T[]): T[] {
       walk((n.children ?? []) as T[]);
     }
   };
-  for (const n of nodes) {
-    if (n.kind !== "project") continue;
-    walk((n.children ?? []) as T[]);
-  }
+  walk(nodes);
   return out;
 }
 
