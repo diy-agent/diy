@@ -54,15 +54,21 @@ async function probePort(port: number): Promise<boolean> {
   }
 }
 
-/** 定位 Electron 主进程产物入口（CLI spawn app 用）。返回包根（out/ 的父目录）。
- * import.meta.url 源码模式为 src/cli/index.ts、编译模式为 out/cli/index.js，
- * 均为 appRoot 下 2 级，需 3 次 dirname 回到 pkgs.ts/diy-app */
+/** 定位 Electron 主进程产物入口（CLI spawn app 用）。返回包根（build/ 的父目录）。
+ * import.meta.url 源码模式为 src/cli/index.ts、编译模式为 build/<variant>/cli/index.js，
+ * 均为 appRoot 下 3 级，需 4 次 dirname 回到 pkgs.ts/diy-app */
 function appRoot(): string {
-  return dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+  return dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
+}
+
+/** 产物变体根（prod|test|preview|lab）：入口脚本经 DIY_VARIANT 注入，缺省 prod。
+ * 决定 spawn 哪个 build/<variant>/main/index.mjs（测试=test、preview/lab 各占）。 */
+function variant(): string {
+  return process.env["DIY_VARIANT"] ?? "prod";
 }
 
 function mainEntry(): string {
-  return join(appRoot(), "out", "main", "index.mjs");
+  return join(appRoot(), "build", variant(), "main", "index.mjs");
 }
 
 /** 启动 diy 管控台（Electron 主进程产物），作为独立进程持续运行 */

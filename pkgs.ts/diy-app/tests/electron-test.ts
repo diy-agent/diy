@@ -3,7 +3,7 @@
 //
 // 安全：每次启动分配独立临时 HOME（symlink 必要配置但不读写用户数据），
 // 绝不触及 ~/.diy / ~/.config/diy-app 等生产数据。
-// 依赖：已构建产物（out/main + out/preload + out/renderer），由 ./sha.sh build 保证。
+// 依赖：已构建产物（build/<variant>/main + preload + renderer），由 ./sha.sh build 保证。
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { connect, type ClientHttp2Session } from "node:http2";
@@ -196,7 +196,8 @@ export async function startElectronTest(): Promise<ElectronTest> {
   const env = { ...process.env, HOME: home, DIY_HOME: home, DIY_ENV: "test" };
   const appDir = join(__dirname, "..");
 
-  const args = ["out/main/index.mjs", "--remote-debugging-port=0"];
+  // 测试实例走 build/test/main（DIY_VARIANT=test 由 test-intent 注入），与 preview/lab 产物隔离
+  const args = [join("build", process.env["DIY_VARIANT"] ?? "test", "main", "index.mjs"), "--remote-debugging-port=0"];
   // 受限环境（Chromium sandbox 初始化被拒，如沙箱/容器）置 DIY_NO_SANDBOX=1 跑通测试；
   // 默认不传，与生产行为一致。
   if (process.env["DIY_NO_SANDBOX"] === "1") args.push("--no-sandbox");

@@ -3,11 +3,13 @@ import solid from "vite-plugin-solid";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
 
+const V = process.env.DIY_VARIANT ?? "prod"; // 变体产物根：prod|test|preview|lab
+
 export default defineConfig({
   root: "src/renderer_solid",
   base: "",
   build: {
-    outDir: "../../out/renderer",
+    outDir: `../../build/${V}/renderer`,
     emptyOutDir: true,
   },
   plugins: [solid({ tsconfig: { compilerOptions: { jsx: "preserve", jsxImportSource: "solid-js" } } } as any), tailwindcss()],

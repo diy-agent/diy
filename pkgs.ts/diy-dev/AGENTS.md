@@ -7,7 +7,7 @@
 - `find.cli` — `src/cli/index.ts` 入口：**进程内 RPC**（`createMemTransportPair` + `ChannelServerBinding`），零网络零 Electron —— 只为复用 `diy-app` 同一套命令解析（zod schema + `cliArg`/`cliOption` → help / did-you-mean）
 - `find.ref` — `src/ref/`：`api.ts`（RPC **纯定义**）· `impl.ts`（handler 绑定）· `git.ts`（git 调用）· `store.ts`（`diy.yaml` / `ref.lock.yaml` 读写 + URL 解析）· `render.ts`（输出）· `progress.ts`
 - `find.runtime` — `src/runtime.ts` 只读 `DIY_HOME`（镜像根 `$DIY_HOME/ref`）
-- `find.entry` — `bin/dev`（跑 `out/cli/index.js` 产物）· `./sha.sh dev <args>`（跑源码，**不 cd**）
+- `find.entry` — `bin/dev`（跑 `build/prod/cli/index.js` 产物）· `./sha.sh dev <args>`（跑源码，**不 cd**）
 
 ## rule — 硬约束
 

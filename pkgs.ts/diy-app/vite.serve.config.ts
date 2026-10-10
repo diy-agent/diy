@@ -4,9 +4,11 @@ import { builtinModules } from 'node:module'
 const pkgDeps = ['@diy/rpc', '@diy/template']
 const external = ['electron', ...builtinModules, ...builtinModules.map((m) => `node:${m}`)]
 
+const V = process.env.DIY_VARIANT ?? "prod"; // 变体产物根：prod|test|preview|lab
+
 export default defineConfig({
   build: {
-    outDir: 'out/serve',
+    outDir: `build/${V}/serve`,
     lib: {
       entry: 'src/serve/index.ts',
       formats: ['es'],

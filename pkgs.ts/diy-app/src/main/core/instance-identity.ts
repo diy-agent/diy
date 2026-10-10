@@ -14,7 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { abbrevHome } from "../../shared/instance-title";
 
-/** 本文件所在目录（打包后 = out/main，源码直跑 = src/main/core），git 探测的起点 */
+/** 本文件所在目录（打包后 = build/prod/main，源码直跑 = src/main/core），git 探测的起点 */
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 /**

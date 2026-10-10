@@ -309,7 +309,7 @@ export const apiDef = RpcSchema.router({
            *  必须能看出来，否则容易误改生产数据。 */
           env: z.string(),
           /** 当前运行代码所在 git 分支（打包/非仓库为空串）。窗口标题用它区分
-           *  「哪个 worktree 的构建」—— 数据根是 /tmp 或 build/home 时这是唯一来源线索。 */
+           *  「哪个 worktree 的构建」—— 数据根是 /tmp 或 build/<v>/home 时这是唯一来源线索。 */
           branch: z.string(),
           cache: z.string(),
           userData: z.string(),

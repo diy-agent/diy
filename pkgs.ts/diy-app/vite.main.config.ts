@@ -1,12 +1,13 @@
 import { defineConfig } from "vite";
 import { builtinModules } from "node:module";
 
+const V = process.env.DIY_VARIANT ?? "prod"; // 变体产物根：prod|test|preview|lab
 const pkgDeps = ["@diy/rpc", "@diy/template"];
 const external = ["electron", ...builtinModules, ...builtinModules.map((m) => `node:${m}`)];
 
 export default defineConfig({
   build: {
-    outDir: "out/main",
+    outDir: `build/${V}/main`,
     lib: {
       entry: "src/main/index.ts",
       formats: ["es"],

@@ -36,7 +36,7 @@ function snapshot(): Record<string, SpecProvider> {
     if (_snapshot) return _snapshot;
     const here = dirname(fileURLToPath(import.meta.url));
     const cands = [
-        join(here, "data/models-snapshot.json"), // out/main/data（bundle 在 out/main，build 拷贝到此处）
+        join(here, "data/models-snapshot.json"), // build/<V>/main/data（bundle 在 build/<V>/main，build 拷贝到此处）
         join(here, "../data/models-snapshot.json"), // 兼容旧布局
         join(here, "../../src/main/data/models-snapshot.json"), // 源树（tsx 直跑兜底）
     ];
