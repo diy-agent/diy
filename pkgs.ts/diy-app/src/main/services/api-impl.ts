@@ -57,9 +57,6 @@ const app = apiDef.diy;
  * 或 ChannelServerBinding（测试）。转发 diy.ui.* 由调用方在 binding 上 onForward。
  */
 export function bindAppHandlers(binding: ServerBinding): void {
-  // 装配运行时模型目录（snapshot ⊕ custom ⊕ model.yaml）。**同步**做：异步会让早期的
-  // models 查询抢在装配前看到空目录。配置非法（结构错）→ 出声但不阻断启动：
-  // 目录保持上一次（或空），用户仍可进界面改回来（fail-visible 而非 fail-dead）。
   // 空数据根的初始种入（preview/lab；见 core/seed.ts）。必须在 refreshModelRuntime 之前 ——
   // 种子会写 model.yaml，晚于装配就看不见刚种下的 provider（要等下次刷新）。
   // 失败不阻断启动（种子只是便利，不是前提）。
@@ -76,6 +73,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     console.warn("[seed] 跳过（不阻断启动）:", e);
   }
 
+  // 装配运行时模型目录（snapshot ⊕ custom ⊕ model.yaml）。**同步**做：异步会让早期的
+  // models 查询抢在装配前看到空目录。配置非法（结构错）→ 出声但不阻断启动：
+  // 目录保持上一次（或空），用户仍可进界面改回来（fail-visible 而非 fail-dead）。
   try {
     const n = refreshModelRuntime(state.diyHome());
     console.log(`[model-runtime] 装配 ${n} 个模型引用`);
@@ -775,7 +775,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     }
   });
 
-  // ── log ──
+  // ── seed ──
   binding.on(app.seed.run, async () => {
     const r = seedHome(state.diyHome());
     // 种子可能新写了 model.yaml → 重装目录，让 UI 立刻看到模型
@@ -783,6 +783,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return r;
   });
 
+  // ── log ──
   binding.on(app.log.read, async ({ input }) => {
     const { existsSync, readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
