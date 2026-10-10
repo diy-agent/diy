@@ -248,7 +248,7 @@ export const Caches = {
     serialize: (v) => (v ? "1" : "0"),
     defaultValue: false,
   }),
-  /** 大纲模式正文行数上限（可调；默认 3），parse 夹在 1-10 */
+  /** 大纲模式正文行数上限（**默认 3**；暂无 UI 入口，仅测试写入），parse 夹在 1-10 */
   diy_chat_outline_lines: field<number>("diy_chat_outline_lines", {
     parse: (raw) => {
       const v = Number(raw);

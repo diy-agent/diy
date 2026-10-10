@@ -119,3 +119,30 @@ export function IconBolt(props: { class?: string }) {
         </svg>
     );
 }
+
+/**
+ * 展开/收起指示（daisyUI `collapse-arrow` 同形）：**收起 = 下指，展开 = 上指**（180° 翻转）。
+ *
+ * 为什么不用原来的字符 `▸ / ▾ / ▴ / ›`：四个字符方向各不相同、基线各异，同一层级的开关
+ * 在轮次头 / 图标行 / 单行三处长得不一样，用户一眼看不出"这层是开还是关"
+ * （2026-10-04 反馈「要用 collapse-arrow 的图标标出展开和关闭状态」）。
+ * 一枚 SVG + CSS 旋转过渡：同一形状、同一方向语义，全层级一致。
+ *
+ * `open` 是必填而不是可选：这个图标的存在意义就是表达状态，调用方必须给出状态。
+ */
+export function IconChevron(props: { open: boolean; class?: string }) {
+    return (
+        <svg
+            class={`shrink-0 transition-transform duration-150 ${props.open ? "rotate-180" : ""} ${props.class ?? ""}`}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.4"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+        >
+            <path d="m6 9 6 6 6-6" />
+        </svg>
+    );
+}

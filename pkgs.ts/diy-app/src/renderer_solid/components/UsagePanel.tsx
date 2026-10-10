@@ -2,7 +2,7 @@
  * UsagePanel — 用量可见性的**三级收纳**（契约见任务 211 §六b；交互形态 2026-10-03 与用户对齐）：
  *
  *   L1 实时常显（页面只留一行数，大表一律藏进 L3）：
- *     · TurnUsageBar     —— turn 底 bar：`HH:MM · N tok · $X`（行是 flex 容器，后续可挂别的按钮）
+ *     · TurnUsageBar     —— turn 底 bar：`YYYY-MM-DD HH:MM:SS · N tok · $X`（行是 flex 容器，后续可挂别的按钮）
  *     · SessionUsageChip —— 发送区人物右侧：会话累计 `N tok · $X`
  *   L2 hover 汇总卡：纵向 8 项（token 桶加总 + 输入$/输出$/合计$），
  *     卡顶 viewbar 右侧「明细」→ L3
@@ -88,7 +88,7 @@ function isLegacyUsage(u: unknown): boolean {
     return !!r && typeof r["noCache"] !== "number";
 }
 
-/** turnId（`t` + 13 位 epoch ms）→ `HH:MM`；旧格式 id 解析不出就不显示（不编时间） */
+/** turnId（`t` + 13 位 epoch ms）→ `YYYY-MM-DD HH:MM:SS`；旧格式 id 解析不出就不显示（不编时间） */
 function fmtTurnClock(turnId: string): string | null {
     const m = /^t(\d{13})$/.exec(turnId);
     if (!m) return null;
