@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadModelConfig } from "../../src/main/core/model-config";
+import { loadModelConfig, saveModelConfig } from "../../src/main/core/model-config";
 import { loadPersonas } from "../../src/main/core/persona";
 import { autoSeedEnabled, SEED_PERSONA_MODEL, seedHome } from "../../src/main/core/seed";
 import { getTask } from "../../src/main/core/state";
@@ -86,6 +86,23 @@ describe("seedHome", () => {
             if (savedHomeEnv === undefined) delete process.env["HOME"];
             else process.env["HOME"] = savedHomeEnv;
         }
+    });
+
+    it("自动种入只跑一次：删掉的 provider 不会被种回来", () => {
+        seedHome(home, ENV, { autoOnly: true }); // 首次初始化
+        // 用户删掉 provider（模拟预览里为了看「环境变量导入」提示条而清空）
+        saveModelConfig(home, { stdProviders: {}, customProviders: {} });
+        const again = seedHome(home, ENV, { autoOnly: true });
+        expect(again.skipped).toContain("已初始化过");
+        expect(loadModelConfig(home).stdProviders).toEqual({});
+    });
+
+    it("显式 `diy seed run`（非 autoOnly）仍按缺则补", () => {
+        seedHome(home, ENV, { autoOnly: true });
+        saveModelConfig(home, { stdProviders: {}, customProviders: {} });
+        const r = seedHome(home, ENV);
+        expect(r.model).toBe("imported");
+        expect(loadModelConfig(home).stdProviders["opencode-go"]).toBeDefined();
     });
 
     it("幂等：重复种入不动已有数据", () => {

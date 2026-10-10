@@ -14,7 +14,7 @@
 //
 // 模型面按用户规则**只认 opencode-go**，人物模型 = `mimo-v2.6-flash`（允许清单内最便宜）。
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUILTIN_PERSONA_ID } from "../../shared/persona";
 import { parseSeedFlag } from "../../runtime";
@@ -28,6 +28,14 @@ import { createTask, updateTask } from "./task";
 
 /** 种子只配这一家 provider（用户规则：测试用人物模型只指 opencode-go 的 mimo-v2.6-flash） */
 export const SEED_PROVIDER = "opencode-go";
+/**
+ * 一次性标记：自动种入**只跑一次**。
+ * 为什么需要：种子原来按「缺则补」，于是用户在预览里删掉 opencode-go（正是为了看
+ * 「环境变量导入」提示条）—— 一重启就被种回来，看起来像「删不掉」（实测踩过）。
+ * 显式 `diy seed run` 不看这个标记：那是用户明确要求补缺项。
+ */
+export const SEED_MARKER = ".seed-done";
+
 /** 种子人物模型（须在允许清单内：mimo-v2.6-flash / deepseek-v4.1-flash） */
 export const SEED_MODEL = "mimo-v2.6-flash";
 /** 人物模型限定名（account 段 0 = 首个无名字号） */
@@ -67,8 +75,16 @@ const SEED_TASKS: Array<{ title: string; body: string; state: string; parent?: n
 /**
  * 种入最小可用数据。幂等：已存在的部分跳过（见文件头三条约束）。
  * `env` 可注入（测试用假环境，不去读真实 process.env）。
+ *
+ * @param opts.autoOnly 启动路径用：只认「首次初始化」—— 见过 SEED_MARKER 就整体跳过，
+ *        不补缺项（否则用户删掉的 provider 会被一次次种回来）。显式 `diy seed run`
+ *        省略此参数 = 缺则补。
  */
-export function seedHome(home: string, env: NodeJS.ProcessEnv = process.env): SeedReport {
+export function seedHome(
+    home: string,
+    env: NodeJS.ProcessEnv = process.env,
+    opts: { autoOnly?: boolean } = {},
+): SeedReport {
     const report: SeedReport = {
         home,
         model: "exists",
@@ -82,6 +98,13 @@ export function seedHome(home: string, env: NodeJS.ProcessEnv = process.env): Se
     // 显式组合 —— 那才是真会写坏生产数据的路径。
     if (isProdHome(home)) {
         report.skipped = `生产数据根永不种入：${home}`;
+        return report;
+    }
+    // 自动种入只跑一次（见 SEED_MARKER）：已初始化过的数据根，缺什么都**不补** ——
+    // 用户删掉的东西必须留得住。
+    const marker = join(home, SEED_MARKER);
+    if (opts.autoOnly && existsSync(marker)) {
+        report.skipped = "已初始化过（自动种入只跑一次；补缺项用 `diy seed run`）";
         return report;
     }
 
@@ -136,5 +159,7 @@ export function seedHome(home: string, env: NodeJS.ProcessEnv = process.env): Se
         report.tasks = created;
     }
 
+    mkdirSync(home, { recursive: true });
+    writeFileSync(marker, `${new Date().toISOString()}\n`, "utf-8");
     return report;
 }

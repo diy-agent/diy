@@ -38,7 +38,7 @@
 - `entry.verify` — preview/lab 起来后用 `diy getAppInfo` 看 `diyHome` / `env` / `branch`，确认数据目录与启动参数（验证没起错数据根/变体）
 - `entry.risk` — worktree 改码跑测一律 `./diy.sh`（隔离 `./build/<variant>/home`；会拒绝继承来的生产 `DIY_HOME`，需 `DIY_ALLOW_PROD_HOME=1` 放行）；**查/改真实数据才用全局 `diy`**
 - `entry.home-guard` — 「继承来的生产 `DIY_HOME` 一律拒绝」的唯一决策点 `pkgs.ts/diy-app/src/main/core/dev-home.ts`（`./diy.sh` 与 `./sha.sh preview|lab` 共用；宿主 shell 常导出 `DIY_HOME=~/.diy`，不拦则 preview 开着生产数据根跑、还会把种子写进去）
-- `entry.seed` — 空数据根的初始种入（`pkgs.ts/diy-app/src/main/core/seed.ts`）：`preview`/`lab` 缺省自动、`DIY_SEED` 三态覆盖、`diy seed run` 手动；**生产根永不种入**
+- `entry.seed` — 空数据根的初始种入（`pkgs.ts/diy-app/src/main/core/seed.ts`）：**自动只跑一次**（`.seed-done` 标记，删掉的 provider 不会被种回来）、`preview`/`lab` 缺省自动、`DIY_SEED` 三态覆盖、`diy seed run` 手动补缺项；**生产根永不种入**
 - `entry.inject` — `DIY_CLI` 由三个入口注入：`diy.sh` / `bin/diy` / `electron-dev.mts`；漏一处提示词就退化成裸 `diy`（→ 打到生产）
 
 ## tool — 命令

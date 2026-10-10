@@ -65,7 +65,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // 失败不阻断启动（种子只是便利，不是前提）。
   try {
     if (autoSeedEnabled()) {
-      const r = seedHome(state.diyHome());
+      const r = seedHome(state.diyHome(), process.env, { autoOnly: true });
       console.log(
         r.skipped
           ? `[seed] 跳过：${r.skipped}`
