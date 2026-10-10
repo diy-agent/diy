@@ -47,7 +47,7 @@
 - `tool.test` — `./sha.sh test` 全仓 · `./sha.sh test-unit` 快测（不起 Electron）· `pkgs.ts/diy-app/sha.sh test-intent` 意图测试
 - `tool.model-import` — 环境变量 → provider 导入候选（只列不写；UI 模型页提示条 / `diy llmConfig scanEnv|importEnv`）→ `pkgs.ts/diy-app/src/main/core/model-import.ts`
 - `tool.confirm` — 破坏性操作的应用内二次确认走 `renderer_solid/components/ConfirmDialog.tsx`；**禁用原生 `window.confirm`**（窗口级模态：卡住整个渲染进程，且非 DOM 节点 —— 自动化点不到）
-- `tool.cli` — 查/改数据：全局 `diy <域> <命令>`（生产）· worktree 里 `./diy.sh <域> <命令>`（隔离）。域：`task` `project` `agent` `template` `log` `watch` `ui` `doctor`
+- `tool.cli` — 查/改数据：全局 `diy <域> <命令>`（生产）· worktree 里 `./diy.sh <域> <命令>`（隔离）。**域名清单真源 = `diy --help`**（`task` `project` `agent` `tool` `context` `template` `llmConfig` `seed` `log` `ref` `watch` `ui` `doctor`…；本行曾只列 8 个，早已腐坏）
 - `tool.pkg` — `pkgs.ts/diy-app/sha.sh preview|lab|build|test|cli` 单包动作
 - `tool.sync` — **新开 worktree 先 `./sha.sh sync`**（`npm i --workspaces` + 子模块 + 各包 sync）；不跑则包没装、`node_modules` 缺
 - `tool.ui` — 真实 UI 验证走 CDP：`playwright-cli attach --cdp=…`
