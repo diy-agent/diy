@@ -10,7 +10,7 @@
 //   2. CliApp: RPC 客户端，把 CLI 命令转发到 app（HTTP/2）
 
 import { existsSync, readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
 import electronPath from "electron";
@@ -18,6 +18,7 @@ import { HttpClientBinding } from "@diy/rpc/http";
 import { CliApp } from "@diy/rpc/cli";
 import { apiDef } from "../main/services/api-def";
 import { readRuntimeConfig, type RuntimeConfig } from "../runtime";
+import { resolveAppRoot } from "../main/core/app-root";
 import { AppConfig } from "../main/core/app-config";
 import { installDiagnostics } from "../main/services/diagnostics";
 import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "../main/core/single-instance";
@@ -54,11 +55,11 @@ async function probePort(port: number): Promise<boolean> {
   }
 }
 
-/** 定位 Electron 主进程产物入口（CLI spawn app 用）。返回包根（build/ 的父目录）。
- * import.meta.url 源码模式为 src/cli/index.ts、编译模式为 build/<variant>/cli/index.js，
- * 均为 appRoot 下 3 级，需 4 次 dirname 回到 pkgs.ts/diy-app */
+/** 定位包根（build/ 的父目录）。**别数 dirname**：源码模式 `src/cli/index.ts` 与产物模式
+ * `build/<variant>/cli/index.js` 深度不同（固定 4 次只对产物成立，tsx 直跑会算到 pkgs.ts/）。
+ * 判据在 core/app-root.ts（按包标记上溯），理由与实测见该文件头注。 */
 function appRoot(): string {
-  return dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
+  return resolveAppRoot(fileURLToPath(import.meta.url));
 }
 
 /** 产物变体根（prod|test|preview|lab）：入口脚本经 DIY_VARIANT 注入，缺省 prod。
