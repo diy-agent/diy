@@ -135,6 +135,21 @@ describe("nav-search：命中与排序", () => {
     expect(nums(flattenTasks(tree))).toEqual(["1"]);
   });
 
+  it("兜底排序：空任务号 / 非数字号都垫底（不给它们 0 或 NaN，R4-3）", () => {
+    // 原实现 `Number(num ?? MAX)`：`""` → Number("")===0 → 空号**排到最前**（反了）；
+    // 非数字 → NaN → 比较器返回 NaN → 排序退化（顺序未定义）。真源 num 恒为数字串，
+    // 但这是 shared/ 的通用纯函数，不靠调用方纪律成立。
+    const tree = [
+      project([
+        task("", { title: "nav 空号" }),
+        task("2", { title: "nav 二号" }),
+        task("abc", { title: "nav 非数" }),
+      ]),
+    ];
+    // updated 全缺 → 同档 → 兜底按 num 升序：只有 "2" 可解析，其余垫底（稳定序保持原相对位置）
+    expect(nums(searchTaskHits(tree, "nav").map((h) => h.node))).toEqual(["2", "", "abc"]);
+  });
+
   it("没有 uri 的任务不进结果（打不开会话的死项）", () => {
     const noUri: TaskListNode = { kind: "task", num: "9", title: "nav 无 URI", children: [] };
     const tree = [project([noUri, task("1", { title: "nav 有 URI" })])];

@@ -20,6 +20,8 @@
 //  11. 点击遮罩空白处关闭弹层（onClick 路径，review3 R3-5）
 //  12. `↑` 在首项回绕到末项（不是卡在第一条，review3 R3-5）
 //  13. Esc 关弹层**不牵连**任务详情面板（review3 R3-1a：两条 window 级 Esc 互不相识）
+//  14. 后台任务变更导致结果重排后，选中项仍跟着**同一条任务**（review4 R4-1：记 uri 不记下标）
+//  15. 关闭弹层后焦点归还触发元素；0 命中时 Enter 无副作用（review4 R4-6）
 //
 // 为什么走真实 UI 而不是 CLI 调状态：本功能全是键盘与焦点行为（聚焦、↑↓、Enter），
 // 状态机断言证明不了「按了键有没有反应」——那正是本功能唯一值得测的东西。
@@ -41,6 +43,11 @@ let uriLate = "";
 let uriEarly = "";
 /** 截断用例用的第 3 批任务（不同 search 词，避免污染上面的 2 条） */
 const uriMany: string[] = [];
+/** 项目 id（R4-1 用例要在测试中途新建任务触发重排） */
+let pid = "";
+/** R4-1 专用词（独立于 navsearch，避免给其它用例多出结果） */
+let uriReorderEarly = "";
+let uriReorderLate = "";
 
 const OVERLAY = '[data-testid="nav-search-overlay"]';
 const ITEM = '[data-testid="nav-search-item"]';
@@ -57,6 +64,11 @@ const itemUris = () =>
     `[...document.querySelectorAll(${JSON.stringify(ITEM)})].map((e) => e.dataset.uri || "")`,
   );
 const detailOpen = () => ui.query<boolean>(`!!document.querySelector(${JSON.stringify(DETAIL)})`);
+/** 当前高亮项（aria-selected）的 uri —— R4-1 用：重排后它应指向同一条任务 */
+const selectedUri = () =>
+  ui.query<string | null>(
+    `document.querySelector('[data-testid="nav-search-item"][aria-selected="true"]')?.dataset.uri ?? null`,
+  );
 const focusedIsInput = () =>
   ui.query<boolean>(`document.activeElement?.getAttribute("data-testid") === "nav-search-input"`);
 /**
@@ -119,7 +131,7 @@ beforeAll(async () => {
     await new Promise((r) => setTimeout(r, 200));
   }
   const p = await fx.sh.getJson(`./diy.sh project create ${HOME}/navsearch --label NavSearch`);
-  const pid = String((p.data as any)?.data?.id);
+  pid = String((p.data as any)?.data?.id);
   const a = await fx.sh.getJson(`./diy.sh task create navsearch-早期 ${pid}`);
   uriEarly = String((a.data as any)?.data?.uri);
   // 刻意间隔 >1s：让两条 updated 明确分先后，排序断言不依赖"同毫秒退化的 num 兜底"
@@ -131,9 +143,17 @@ beforeAll(async () => {
     const t = await fx.sh.getJson(`./diy.sh task create navmany-${String(i).padStart(2, "0")} ${pid}`);
     uriMany.push(String((t.data as any)?.data?.uri));
   }
+  // R4-1 专用：两条同档（标题前缀）任务，updated 分先后 → 晚期在前
+  const r1 = await fx.sh.getJson(`./diy.sh task create navreorder-早期 ${pid}`);
+  uriReorderEarly = String((r1.data as any)?.data?.uri);
+  await new Promise((r) => setTimeout(r, 1100));
+  const r2 = await fx.sh.getJson(`./diy.sh task create navreorder-晚期 ${pid}`);
+  uriReorderLate = String((r2.data as any)?.data?.uri);
   expect(uriEarly).toMatch(/^projects\/.+\/tasks\/.+$/);
   expect(uriLate).toMatch(/^projects\/.+\/tasks\/.+$/);
   expect(uriMany).toHaveLength(NAV_SEARCH_LIMIT + 1);
+  expect(uriReorderEarly).toMatch(/^projects\/.+\/tasks\/.+$/);
+  expect(uriReorderLate).toMatch(/^projects\/.+\/tasks\/.+$/);
 }, 120000);
 
 afterAll(async () => {
@@ -397,5 +417,59 @@ describe("nav ⌘K 快速打开会话", () => {
     // 再按一次才清面板 —— 顺带证明面板自己的 Esc 没被改坏
     await ui.press("Escape");
     await waitUntil(detailOpen, (v) => !v, { label: "再按 Esc 清详情面板" });
+  });
+
+  it("后台新增任务导致重排后，选中项仍跟着原条目（R4-1 回归）", async () => {
+    await fx.sh.getJson("./diy.sh ui page navigate task");
+    await openSearch();
+    await ui.type("navreorder");
+    const list = await waitUntil(itemUris, (v) => v.length === 2, { label: "reorder 结果出现" });
+    expect(list[0]).toBe(uriReorderLate); // 排序契约：updated 降序
+    expect(list[1]).toBe(uriReorderEarly);
+
+    await ui.press("ArrowDown"); // 选中 index=1（早期）
+    expect(await selectedUri()).toBe(uriReorderEarly);
+
+    // 新建一条同样命中 navreorder 的任务：updated 最新 → 排到首位 → 原 index1 会变成别的条目。
+    // 选中若记下标就会指错（修复前：selectedUri 变成 uriReorderLate）；记 uri 则不动。
+    await fx.sh.getJson(`./diy.sh task create navreorder-最晚 ${pid}`);
+    await waitUntil(itemUris, (v) => v.length === 3, { label: "后台任务变更后列表重排" });
+    expect((await itemUris())[0]).not.toBe(uriReorderLate); // 证明真的重排了（否则本用例可能空过）
+    expect(await selectedUri(), "重排后选中项应仍是用户当初选的那条").toBe(uriReorderEarly);
+
+    await ui.press("Escape");
+    await waitUntil(overlayOpen, (v) => !v, { label: "Esc 关弹层" });
+  });
+
+  it("关闭弹层后焦点归还触发元素（R4-6）", async () => {
+    await fx.sh.getJson("./diy.sh ui page navigate task");
+    await lockNavOpen(ui);
+    await openViaNavEntry();
+    await waitUntil(focusedIsInput, (v) => v, { label: "输入框自动聚焦" });
+    await ui.press("Escape");
+    await waitUntil(overlayOpen, (v) => !v, { label: "Esc 关弹层" });
+    // 打开前是 nav 入口按钮 → 关闭后焦点该回到它（模态不该把焦点吞掉）
+    const back = await waitUntil(
+      () => ui.query<string | null>(`document.activeElement?.getAttribute("data-testid") ?? null`),
+      (v) => v === "nav-search-open",
+      { label: "焦点归还 nav 入口按钮", timeoutMs: 2000 },
+    );
+    expect(back).toBe("nav-search-open");
+  });
+
+  it("0 命中时 Enter 无副作用（R4-6）", async () => {
+    const before = await tabs();
+    await openSearch();
+    await ui.type("zzz-绝无此任务-zzz");
+    await waitUntil(
+      () => ui.query<string>(`document.querySelector('[data-testid="nav-search-list"]')?.textContent || ""`),
+      (t) => t.includes("没有匹配的任务"),
+      { label: "空结果占位出现" },
+    );
+    await ui.press("Enter");
+    expect(await overlayOpen(), "空结果时 Enter 不该关弹层").toBe(true);
+    expect(await tabs(), "空结果时 Enter 不该打开任何会话").toEqual(before);
+    await ui.press("Escape");
+    await waitUntil(overlayOpen, (v) => !v, { label: "Esc 关弹层" });
   });
 });

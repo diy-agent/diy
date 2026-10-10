@@ -36,9 +36,15 @@ import { tabStore } from "../store/tabStore";
  */
 const OVERLAY_Z = 500;
 
-/** 该任务此刻是否已开着会话 tab（用于「已打开」徽标） */
-const hasOpenSession = (uri: string): boolean =>
-    tabStore.opened.some((t) => t.pageId === "task-run" && t.ctx === uri);
+/**
+ * 该任务此刻是否已开着会话 tab（用于「已打开」徽标）。
+ *
+ * 用 `tabStore.find` 而非自己遍历 `opened`（review4 R4-2）：仓内既有惯用法就是
+ * `!!tabStore.find(\`task-run:${uri}\`)`（见 TaskDetailContent 的 chatOpen），
+ * 键格式由 `keyOf` 保证与 `opened` 同源 —— 不必在这里重述一遍匹配规则。
+ * 注：**不是** `isTaskDisplayed`，那个只判"此刻在屏上"，语义不同、不可替代。
+ */
+const hasOpenSession = (uri: string): boolean => !!tabStore.find(`task-run:${uri}`);
 
 /**
  * IME 组合态守卫：组合中（拼音/日文未选词）的按键一律放行给 IME，
@@ -48,7 +54,15 @@ const composing = (e: KeyboardEvent): boolean => e.isComposing || e.keyCode === 
 
 function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
     const [query, setQuery] = createSignal("");
-    const [active, setActive] = createSignal(0);
+    /**
+     * 选中项记 **uri**，不记下标（review4 R4-1）。
+     *
+     * 为什么：`hits` 会在弹层开着时被**后台数据变更**重算 —— agent 持续写任务文件 →
+     * `task-change` → `taskStore.loadTree()` → `nodes` 换引用 → 排序重排。若记下标，
+     * 重排后高亮会落到"换到那个位置"的**别的**任务上，用户按 Enter 打开的不是眼睛
+     * 看到的那条。记 uri 则选中跟着"同一条任务"走；它若从结果里消失，退回首项。
+     */
+    const [activeUri, setActiveUri] = createSignal<string | null>(null);
     let inputEl: HTMLInputElement | undefined;
     let listEl: HTMLUListElement | undefined;
     /** 打开弹层前的焦点元素 —— 关闭时归还焦点（RV-7：模态不该把焦点吞掉） */
@@ -63,16 +77,35 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
     /** 被截断掉多少条（>0 时底部提示还有更多） */
     const hiddenCount = () => allHits().length - hits().length;
 
-    /** 换词 → 选中归零（否则旧下标指向新列表里的别的任务） */
+    /**
+     * 选中项下标（渲染与 aria 用）：按 uri 在当前结果里定位；uri 不在结果里则归零。
+     *
+     * ⚠️ 是**普通函数**而不是 `createMemo` —— Solid 的 memo 创建时**立即求值**，
+     * 放在这里没问题，但若上移到 `activeUri` 旁边就会在 `hits` 初始化前读它（TDZ，
+     * 整个 Panel 直接抛错、弹层再也开不出来）。惰性求值也顺带省掉一层订阅。
+     */
+    const activeIndex = () => {
+        const list = hits();
+        const u = activeUri();
+        if (u) {
+            const i = list.findIndex((h) => h.uri === u);
+            if (i >= 0) return i;
+        }
+        return 0;
+    };
+
+    /** 换词 → 选中归零（新列表的首项才是用户此刻想看的那条） */
     createEffect(() => {
         query();
-        setActive(0);
+        setActiveUri(null);
     });
 
     const move = (delta: number) => {
-        const n = hits().length;
+        const list = hits();
+        const n = list.length;
         if (n === 0) return;
-        setActive((a) => ((a + delta) % n + n) % n);
+        const next = ((activeIndex() + delta) % n + n) % n;
+        setActiveUri(list[next]!.uri);
     };
 
     const pick = (i: number) => {
@@ -106,13 +139,13 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
 
     /** 选中项滚进可视区（键盘导航时列表可能比容器长） */
     createEffect(() => {
-        const i = active();
+        const i = activeIndex();
         const el = listEl?.querySelector<HTMLElement>(`[data-index="${i}"]`);
         el?.scrollIntoView({ block: "nearest" });
     });
 
     /** 当前选中项 id（aria-activedescendant 用；无结果时 undefined） */
-    const activeId = () => (hits().length > 0 ? `nav-search-item-${active()}` : undefined);
+    const activeId = () => (hits().length > 0 ? `nav-search-item-${activeIndex()}` : undefined);
 
     return (
         <div
@@ -154,7 +187,7 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
                             move(-1);
                         } else if (e.key === "Enter") {
                             e.preventDefault();
-                            pick(active());
+                            pick(activeIndex());
                         }
                         // 注意：Esc **不在这里**处理 —— 由 onMount 的 document 捕获阶段统一接管
                         // （只有那样才挡得住 TaskDetailPanel 的 window 监听，见 R3-1a）。
@@ -185,11 +218,11 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
                                         data-index={i()}
                                         data-uri={hit.uri}
                                         role="option"
-                                        aria-selected={i() === active()}
+                                        aria-selected={i() === activeIndex()}
                                         class={`flex w-full flex-col gap-0.5 px-3 py-1.5 text-left transition-colors ${
-                                            i() === active() ? "bg-primary/25" : "hover:bg-base-200"
+                                            i() === activeIndex() ? "bg-primary/25" : "hover:bg-base-200"
                                         }`}
-                                        onMouseEnter={() => setActive(i())}
+                                        onMouseEnter={() => setActiveUri(hit.uri)}
                                         onClick={() => pick(i())}
                                     >
                                         <span class="flex w-full items-center gap-2">

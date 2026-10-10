@@ -826,6 +826,8 @@ export default function App() {
                         {/* ⌘K 快速打开会话（##254）的**可见入口**：展开态是一行「搜索…」伪输入框
                             （与导航项同构的 li，快捷键写在右侧）；收起态是 40px rail 里的 🔍 按钮
                             （装不下文字，与顶栏按钮区同理）。两态都要有 —— 不知道快捷键的人也得点得到。 */}
+                        {/* R4-5：收起态（rail）装不下文字，可访问名会退化成只有 🔍 ——
+                            `title` 不保证被当作可访问名，故显式给 aria-label。 */}
                         <li class="flex justify-center">
                             <button
                                 class={`flex items-center gap-2 w-full transition-colors cursor-pointer ${
@@ -833,6 +835,7 @@ export default function App() {
                                 } hover:bg-base-300`}
                                 data-testid="nav-search-open"
                                 title="搜索任务 / 会话（⌘K）"
+                                aria-label="搜索任务 / 会话（⌘K）"
                                 onClick={() => {
                                     hideHoverLayers();
                                     setNavSearchOpen(true);

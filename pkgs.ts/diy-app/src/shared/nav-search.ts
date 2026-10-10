@@ -116,6 +116,21 @@ export function searchTaskHits<T extends TaskListNode>(nodes: T[], query: string
  * 缺 updated 的旧数据恒排本档最后（不给"没时间戳"编一个假顺序）。
  * **跳过没有 uri 的任务**：它们打不开会话，进结果就是死项（见 NavHit.uri）。
  */
+/**
+ * 排序兜底用的任务号：能解析成有限数才用，否则给 `MAX_SAFE_INTEGER`（排本档最后）。
+ *
+ * 为什么不能直接 `Number(node.num ?? MAX)`（review4 R4-3）：
+ *   · `num: ""` 时 `??` 不触发 → `Number("") === 0` → 空号被排到**所有任务之前**（反了）；
+ *   · `num` 非数字 → `NaN`，比较器返回 `NaN` → 排序结果**未定义**。
+ * 真源里 num 恒为数字串，但这里是 shared/ 的通用纯函数，不靠调用方纪律成立。
+ */
+function numOrLast(raw: string | undefined): number {
+  const s = (raw ?? "").trim();
+  if (!s) return Number.MAX_SAFE_INTEGER;
+  const v = Number(s);
+  return Number.isFinite(v) ? v : Number.MAX_SAFE_INTEGER;
+}
+
 export function searchTasksOf<T extends TaskListNode>(flat: T[], query: string): NavHit<T>[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
@@ -131,9 +146,7 @@ export function searchTasksOf<T extends TaskListNode>(flat: T[], query: string):
     const au = a.node.updated ?? "";
     const bu = b.node.updated ?? "";
     if (au !== bu) return bu.localeCompare(au); // 新在前；空串自然落最后
-    const an = Number(a.node.num ?? Number.MAX_SAFE_INTEGER);
-    const bn = Number(b.node.num ?? Number.MAX_SAFE_INTEGER);
-    return an - bn;
+    return numOrLast(a.node.num) - numOrLast(b.node.num);
   });
   return hits;
 }
