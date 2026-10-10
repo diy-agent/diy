@@ -16,6 +16,9 @@
 //                       测试环境专用：测试自己用 startElectronTest 启动实例并持有句柄，
 //                       CLI 若在探测超时时另起一个 detached 实例，测试无法回收 → 进程泄露。
 //                       生产不设，保持「敲 diy 命令顺手把 app 带起来」的既有体验。
+//   DIY_SEED            初始种入开关（空数据根种入 model/persona/示例项目·任务）。
+//                       0/false/off = 关，1/true/on = 开；缺省 = 仅 DIY_VARIANT 为 preview/lab 时开
+//                       （prod 是用户真实数据，永不种）。
 //
 // 产物根（out/ 所在目录）由各进程自己通过 import.meta.url 计算，不需要环境变量注入。
 
@@ -49,6 +52,19 @@ export interface RuntimeConfig {
   devServerUrl?: string;
   /** 禁止 CLI 自动拉起 app（测试注入，防实例逃逸） */
   noLaunch: boolean;
+  /** 初始种入开关；undefined = 未显式声明（由变体决定，见 core/seed.autoSeedEnabled） */
+  seed?: boolean;
+}
+
+/**
+ * 解析 DIY_SEED 三态开关：未声明/无法识别 = undefined（交缺省规则），否则布尔。
+ * 与 DiyEnv 同一套「宁可少开能力」的取向：只认明确的真/假词，其余一律当未声明。
+ */
+export function parseSeedFlag(raw: string | undefined): boolean | undefined {
+  const v = (raw ?? "").trim().toLowerCase();
+  if (v === "0" || v === "false" || v === "off") return false;
+  if (v === "1" || v === "true" || v === "on") return true;
+  return undefined;
 }
 
 export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -62,5 +78,6 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     env: parseDiyEnv(env.DIY_ENV),
     devServerUrl: env.DIY_DEV_SERVER_URL || undefined,
     noLaunch: env.DIY_NO_LAUNCH === "1",
+    seed: parseSeedFlag(env.DIY_SEED),
   };
 }

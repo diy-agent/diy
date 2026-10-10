@@ -31,14 +31,22 @@ import { loadCustomSpecs, loadModelConfig } from "./model-config";
 
 let _snapshot: Record<string, SpecProvider> | null = null;
 
+/** snapshot 全量投影（models.dev 产物）。装配视图之外的用途（如 env 导入扫描）经此取用。 */
+export function snapshotProviders(): Record<string, SpecProvider> {
+    return snapshot();
+}
+
 /** 惰性加载 snapshot（进程内缓存一次） */
 function snapshot(): Record<string, SpecProvider> {
     if (_snapshot) return _snapshot;
     const here = dirname(fileURLToPath(import.meta.url));
+    // 候选路径按「bundle 所在深度」区分：src/**（tsx 直跑）= app 下 2~3 层；
+    // build/<V>/{main,cli}（vite 产物）= app 下 3 层。二者相对布局不同，故必须分开列。
     const cands = [
-        join(here, "data/models-snapshot.json"), // build/<V>/main/data（bundle 在 build/<V>/main，build 拷贝到此处）
-        join(here, "../data/models-snapshot.json"), // 兼容旧布局
-        join(here, "../../src/main/data/models-snapshot.json"), // 源树（tsx 直跑兜底）
+        join(here, "data/models-snapshot.json"), // bundle 旁：build/<V>/main|cli/data（sha.sh build 拷贝）
+        join(here, "../data/models-snapshot.json"), // src/main/** → src/main/data（tsx 直跑）
+        join(here, "../../../src/main/data/models-snapshot.json"), // build/<V>/main|cli → 源树兜底（preview/lab 未拷贝时）
+        join(here, "../../src/main/data/models-snapshot.json"), // src/cli/** → src/main/data（tsx 直跑 CLI）
     ];
     const p = cands.find((c) => existsSync(c));
     if (!p) throw new Error(`models-snapshot.json 缺失: ${cands.join(" | ")}`);
@@ -51,12 +59,15 @@ function snapshot(): Record<string, SpecProvider> {
  * 未定义 → error（**fail-fast**：你制定了环境变量却不提供，当然报错）。
  * UI 读取时只标红不炸页；真正调用上游时按同一结果 fail-fast。
  */
-export function expandEnvValue(v: string): { value: string | null; error: string | null } {
+export function expandEnvValue(
+    v: string,
+    env: NodeJS.ProcessEnv = process.env,
+): { value: string | null; error: string | null } {
     if (!v.includes("$")) return { value: v, error: null };
     let error: string | null = null;
     const out = v.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (m, braced, bare) => {
         const name = braced ?? bare;
-        const val = process.env[name];
+        const val = env[name];
         if (val === undefined) {
             error ??= `环境变量 $${name} 未定义`;
             return m;

@@ -23,7 +23,15 @@ import { ContextDiffSchema, StatsSchema, StepsSchema } from "../../shared/contex
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
 // agent 人物契约（纯 zod，renderer 同源）——模型/参数/行为指令的配置实体
 import { PersonaSchema } from "../../shared/persona";
-import { LlmConfigViewSchema, ModelConfigFileSchema, ProbeResultSchema, SpecProviderSchema } from "../../shared/model-config";
+import {
+  ImportEnvResultSchema,
+  LlmConfigViewSchema,
+  ModelConfigFileSchema,
+  ProbeResultSchema,
+  ScanEnvResultSchema,
+  SeedReportSchema,
+  SpecProviderSchema,
+} from "../../shared/model-config";
 // 草稿与任务详情载荷的契约（纯 zod，renderer 同源）
 import { DraftFieldSchema, DraftFieldsSchema, DraftsData, TaskDetailSchema } from "../../shared/task-detail";
 
@@ -915,6 +923,21 @@ export const apiDef = RpcSchema.router({
             input: { id: z.string().cliArg({ desc: "custom provider 裸 id" }), spec: SpecProviderSchema.nullable() },
             output: StatusOk,
           }),
+          scanEnv: RpcSchema.unary({
+            desc: `扫环境变量得到可导入的 provider 候选（models.dev 声明的 env ∩ process.env，再与现有配置比对）`,
+            input: {},
+            output: ScanEnvResultSchema,
+          }),
+          importEnv: RpcSchema.unary({
+            desc: `导入环境变量命中的 provider（写 $VAR 引用；已配置/密钥重复的跳过）`,
+            input: {
+              providers: z
+                .array(z.string())
+                .optional()
+                .cliOption({ desc: "只导入这些 provider id（缺省 = 全部可导入项）" }),
+            },
+            output: ImportEnvResultSchema,
+          }),
           probe: RpcSchema.unary({
             desc: `探测 provider 连通性并拉 ${"${baseUrl}"}/models（UI「测试/获取模型」共用）`,
             input: {
@@ -922,6 +945,17 @@ export const apiDef = RpcSchema.router({
               apiKey: z.string().cliArg({ desc: "密钥原始值（明文或 $VAR，服务端展开）" }),
             },
             output: ProbeResultSchema,
+          }),
+        },
+      }),
+
+      seed: RpcSchema.group({
+        desc: `初始数据种入（preview/lab 空数据根；幂等，已存在不动）`,
+        children: {
+          run: RpcSchema.unary({
+            desc: `种入最小可用数据：opencode-go 模型配置 + 缺省人物（mimo-v2.6-flash）+ 示例项目与任务`,
+            input: {},
+            output: SeedReportSchema,
           }),
         },
       }),

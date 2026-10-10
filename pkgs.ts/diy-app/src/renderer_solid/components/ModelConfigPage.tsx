@@ -15,6 +15,7 @@ import type {
   Account,
   CatalogEntry,
   CustomSpecsFile,
+  EnvImportCandidate,
   LlmConfigView,
   ModelConfigFile,
   ProviderConfig,
@@ -22,7 +23,9 @@ import type {
 } from "../../shared/model-config";
 import { filterAllows, npmOfEndpoints } from "../../shared/model-config";
 import { diyService } from "../lib/rpc";
+import { EnvImportBar, type EnvScanScope } from "./EnvImportBar";
 import { notificationStore } from "../store/notificationStore";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 type FilterMode = "all" | "include" | "exclude";
 
@@ -53,6 +56,15 @@ export function ModelConfigPage() {
   const [specs, setSpecs] = createSignal<CustomSpecsFile>({});
   const [query, setQuery] = createSignal("");
   const [showNewCustom, setShowNewCustom] = createSignal(false);
+  /** 环境变量导入候选（snapshot 声明的 env ∩ process.env，再与现有配置比对；见 core/model-import） */
+  const [envCandidates, setEnvCandidates] = createSignal<EnvImportCandidate[]>([]);
+  /** 扫描面（providers 数 / 变量名）：零命中时提示条靠它交代「查过什么」 */
+  const [envScanned, setEnvScanned] = createSignal<EnvScanScope | null>(null);
+  /** 扫描失败原因：区别于「零命中」——前者是功能坏了，后者是环境里真没有 */
+  const [envScanError, setEnvScanError] = createSignal<string | null>(null);
+  const [envDismissed, setEnvDismissed] = createSignal(false);
+  /** 待确认移除的 provider（null = 无弹窗）。用应用内 ConfirmDialog，不用原生 confirm（见其头注释） */
+  const [pendingRemove, setPendingRemove] = createSignal<{ kind: "std" | "custom"; key: string } | null>(null);
 
   const reload = async () => {
     try {
@@ -69,7 +81,43 @@ export function ModelConfigPage() {
       setLoading(false);
     }
   };
-  onMount(reload);
+  /** 扫环境变量（只列不写）：提示条据此渲染（候选 + 扫描面；失败也如实入条，不静默吞） */
+  const scanEnv = async () => {
+    try {
+      const r = await diyService.diy.llmConfig.scanEnv({});
+      setEnvCandidates(r.candidates);
+      setEnvScanned(r.scanned);
+      setEnvScanError(null);
+    } catch (e) {
+      setEnvCandidates([]);
+      setEnvScanned(null);
+      setEnvScanError(e instanceof Error ? e.message : "扫描失败");
+    }
+  };
+  onMount(() => {
+    void reload();
+    void scanEnv();
+  });
+
+  /** 导入候选（providers 为空 = 全部可导入项）；落盘后重读，候选随之变灰/消失 */
+  const importEnv = async (providers: string[]) => {
+    try {
+      const r = await diyService.diy.llmConfig.importEnv({ providers: providers.length ? providers : undefined });
+      await reload();
+      await scanEnv();
+      if (r.imported.length > 0) {
+        notificationStore.addToast("success", `已导入 ${r.imported.join("、")}（账号写为 $VAR 引用）`);
+      }
+      if (r.skipped.length > 0) {
+        notificationStore.addToast(
+          "info",
+          `跳过：${r.skipped.map((s) => `${s.provider}（${s.note}）`).join("；")}`,
+        );
+      }
+    } catch (e) {
+      notificationStore.addToast("error", e instanceof Error ? e.message : "导入失败");
+    }
+  };
 
   const mutateFile = (fn: (f: ModelConfigFile) => void) => {
     const next = structuredClone(file());
@@ -100,6 +148,7 @@ export function ModelConfigPage() {
         if (a !== b) await diyService.diy.llmConfig.writeSpec({ id, spec: now[id] ?? null });
       }
       await reload();
+      await scanEnv();
       notificationStore.addToast("success", "model.yaml 已保存");
     } catch (e) {
       notificationStore.addToast("error", e instanceof Error ? e.message : "保存失败");
@@ -151,12 +200,26 @@ export function ModelConfigPage() {
     })),
   );
 
-  const removeProvider = (kind: "std" | "custom", key: string) => {
-    if (!confirm(`移除 provider「${kind === "custom" ? `custom:${key}` : key}」？模型选择随之消失。`)) return;
-    mutateFile((f) => {
-      if (kind === "std") delete f.stdProviders[key];
-      else delete f.customProviders[key];
-    });
+  /**
+   * 移除 provider = **立即落盘**（与「添加 provider」同一约定）。
+   * 为什么不攒 dirty 等「保存全部」：移除是破坏性操作，攒着会让人以为删掉了 ——
+   * 一切换页面就又 read 回来（实测被报成「删不掉」）。删完顺手重扫环境变量：
+   * 「删掉 → 提示条立刻出现导入」是这条路径的**目的**，不重扫就得重进页面才看得到。
+   */
+  const removeProvider = async (kind: "std" | "custom", key: string) => {
+    setPendingRemove(null);
+    const next = structuredClone(file());
+    if (kind === "std") delete next.stdProviders[key];
+    else delete next.customProviders[key];
+    setFile(next);
+    try {
+      await diyService.diy.llmConfig.write({ modelFile: next });
+      await reload();
+      await scanEnv();
+      notificationStore.addToast("success", `已移除 ${kind === "custom" ? `custom:${key}` : key}`);
+    } catch (e) {
+      notificationStore.addToast("error", e instanceof Error ? e.message : "移除失败");
+    }
   };
 
   return (
@@ -174,6 +237,20 @@ export function ModelConfigPage() {
         密钥支持 <code>$ENV</code> 插值（未定义会报错）；模型清单来自 models.dev snapshot（models.dev
         provider）或 providers.custom.yaml（自定义）。勾选即启用/隐藏，逐卡片「保存」落盘。
       </div>
+
+      {/* 环境变量导入提示条（形态对齐 FindBar：页内一条、可关闭、不挡内容）。
+          四态都给话（##286）：可导入 / 命中但均已在配置中 / 零命中 / 扫描失败 —— 用户不必猜。
+          只提示不自动写，点「导入」才落盘。 */}
+      <Show when={!envDismissed()}>
+        <EnvImportBar
+          candidates={envCandidates()}
+          scanned={envScanned()}
+          error={envScanError()}
+          onImport={(providers) => void importEnv(providers)}
+          onRetry={() => void scanEnv()}
+          onDismiss={() => setEnvDismissed(true)}
+        />
+      </Show>
 
       <Show when={!loading()} fallback={<div class="text-body opacity-50">加载中…</div>}>
         {/* ── stdProviders ── */}
@@ -215,7 +292,7 @@ export function ModelConfigPage() {
               mutateFile={mutateFile}
               save={save}
               saving={saving}
-              onRemove={() => removeProvider("std", c().key)}
+              onRemove={() => setPendingRemove({ kind: "std", key: c().key })}
             />
           )}
         </Index>
@@ -232,7 +309,7 @@ export function ModelConfigPage() {
               mutateSpec={mutateSpec}
               save={save}
               saving={saving}
-              onRemove={() => removeProvider("custom", c().key)}
+              onRemove={() => setPendingRemove({ kind: "custom", key: c().key })}
             />
           )}
         </Index>
@@ -256,6 +333,19 @@ export function ModelConfigPage() {
             }}
           />
         </Show>
+      </Show>
+
+      {/* 移除确认：破坏性（模型选择随之消失），且不可撤销 */}
+      <Show when={pendingRemove()}>
+        {(t) => (
+          <ConfirmDialog
+            title={`移除 provider「${t().kind === "custom" ? `custom:${t().key}` : t().key}」？`}
+            message="该 provider 及其模型选择将立即从 model.yaml 移除。"
+            confirmLabel="移除"
+            onCancel={() => setPendingRemove(null)}
+            onConfirm={() => void removeProvider(t().kind, t().key)}
+          />
+        )}
       </Show>
     </div>
   );
@@ -343,6 +433,7 @@ function StdCard(props: {
   mutateFile: (fn: (f: ModelConfigFile) => void) => void;
   save: () => Promise<void>;
   saving: () => boolean;
+  /** 点「移除」= 请求确认（由页面弹 ConfirmDialog，见 removeProvider） */
   onRemove: () => void;
 }) {
   const [testing, setTesting] = createSignal(false);
@@ -522,6 +613,7 @@ function CustomCard(props: {
   mutateSpec: (key: string, fn: (s: SpecProvider) => void) => void;
   save: () => Promise<void>;
   saving: () => boolean;
+  /** 点「移除」= 请求确认（由页面弹 ConfirmDialog，见 removeProvider） */
   onRemove: () => void;
 }) {
   const [testing, setTesting] = createSignal(false);
