@@ -54,6 +54,7 @@
 - `rule.check` — **类型检查只准 `./sha.sh check`**。各包 `noEmit:true`；一旦 emit，产物落在源码旁会被 `resolve.extensions` 优先命中（症状：改了没反应）
 - `rule.probe` — 轮次中勿改 `src/**` 当探针（watch 重启打断自己的轮次）；探针写 `/tmp`
 - `rule.dev-concurrent` — **同一 variant** 的 `preview`/`lab` 运行中勿并发 `tsc -b` / `vite build` / 全量 vitest（抢同一 `outDir`，watcher 卡死）。跨 variant（preview vs test）各写 `build/<v>`，不抢
+- `rule.instance-lifecycle` — **实例起停权限与数据定性**：`test` / `lab` 由 agent **自由起停**（随便折腾，不用问）；`preview` 供**人机沟通·验证 UI**，亦可随便起停（给正当理由即可）；三者数据皆**临时非生产**（仓库根 `build/<variant>/home`，坏了就清，必要时可重置）。**唯全局 `diy`（prod / `~/.diy`）是日常实跑的生产 app** —— 不动其数据根、不杀其进程，重启留给用户手动
 - `rule.new-pkg` — 新增包检查单：`tsconfig.json`（composite + noEmit + include）+ `tsconfig.all.json` references
 - `rule.renderer` — UI 主线是 `renderer_solid/`（SolidJS）；React 版已删除
 
