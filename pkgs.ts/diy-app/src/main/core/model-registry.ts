@@ -48,11 +48,6 @@ export function snapshotProvider(id: string): SpecProvider | null {
     return snapshot()[id] ?? null;
 }
 
-/** snapshot 是否收录该 provider（裸 id 判 std/custom 用） */
-export function snapshotHasProvider(id: string): boolean {
-    return snapshot()[id] !== undefined;
-}
-
 /**
  * `$VAR` / `${VAR}` 展开（就地，只认环境变量；不做 `!command`）。
  * 未定义 → error（**fail-fast**：你制定了环境变量却不提供，当然报错）。

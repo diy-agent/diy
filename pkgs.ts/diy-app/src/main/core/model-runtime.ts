@@ -40,7 +40,10 @@ interface SpecCost {
 function toTierWhen(tier: SpecCostTier["tier"], id: string): TierWhen | null {
     if (!tier?.type) return null;
     if (tier.type === "context") {
-        const size = tier.size ?? (tier.data?.size as number | undefined) ?? 0;
+        // 不能盲 cast：`data.size` 是 unknown（手写 YAML / 上游改形状都可能给字符串），
+        // 非数字若放过去会变成「永远比不过」的死档（静默少算钱）。
+        const declared = tier.size ?? tier.data?.size;
+        const size = typeof declared === "number" && Number.isFinite(declared) ? declared : 0;
         if (size <= 0) {
             console.warn(`模型 ${id} 的 context 档缺 size → 丢档`);
             return null;

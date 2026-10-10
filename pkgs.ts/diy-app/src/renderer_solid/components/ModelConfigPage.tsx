@@ -798,7 +798,14 @@ function CustomCard(props: {
                             placeholder="基准标签"
                             title="未命中任何时段档时的档名（如 off-peak）；留空显示 base"
                             value={costOf(id())?.baseLabel ?? ""}
-                            onInput={(e) => patchModel(id(), (mm) => setBaseLabel((mm.cost ??= {}), e.currentTarget.value))}
+                            onInput={(e) =>
+                              patchModel(id(), (mm) => {
+                                // 与 patchCost 同一收尾：改完若整个 cost 空了就删键，别留 `cost: {}`
+                                const c = (mm.cost ??= {});
+                                setBaseLabel(c, e.currentTarget.value);
+                                if (Object.keys(c).length === 0) delete mm.cost;
+                              })
+                            }
                           />
                           <button
                             class="btn btn-xs btn-ghost"

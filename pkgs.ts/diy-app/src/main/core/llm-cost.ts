@@ -316,7 +316,9 @@ function receipt(loc: Located, modelId: string, slot: WriteSlot, seeded: boolean
     const ov = map[loc.id]?.models?.[modelId]?.cost;
     const spec = specCostOf(loc, modelId);
     const here = slot.holder.cost;
-    const effective = slot.target === "override" ? (ov ?? spec ?? null) : (here ?? null);
+    // `effective` 的口径恒为 **override > spec**，与 target 无关：写 spec 时若那边已有覆盖，
+    // 真正生效的仍是覆盖价 —— 回执照 `here` 报会让人以为"我刚写的价生效了"（假回执）。
+    const effective = ov ?? (slot.target === "spec" ? here : spec) ?? null;
     return {
         provider: loc.limited,
         kind: loc.kind,

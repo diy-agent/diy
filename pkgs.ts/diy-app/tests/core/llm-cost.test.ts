@@ -165,6 +165,15 @@ describe("setCost — std 覆盖落点", () => {
         expect(loadModelConfig(home).stdProviders["opencode-go"]?.models).toBeUndefined();
     });
 
+    it("override 存在时写 spec：effective 仍报 override 价（回执不许说谎 —— 生效的是覆盖）", () => {
+        const home = seedHome({ withGoatConfig: true }); // 两个落点都可写
+        setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "override", input: 9 });
+        const r = setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "spec", input: 1, output: 2 });
+        expect(r.target).toBe("spec");
+        expect(r.cost?.input).toBe(1); // 该落点写进去了
+        expect(r.effective?.input).toBe(9); // 但生效的仍是 override（override > spec）
+    });
+
     it("std 用 --target spec → 出声拒绝（models.dev 的价在 snapshot 里，改不了 spec）", () => {
         const home = seedHome();
         expect(() => setModelCost(home, { provider: "opencode-go", model: "deepseek-v4.1-flash", target: "spec", input: 1 })).toThrow(/--target override/);
