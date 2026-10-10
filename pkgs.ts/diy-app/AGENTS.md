@@ -11,7 +11,9 @@
 - `find.shared` — `src/shared/` **跨层契约**（zod schema / 纯函数，main 与 renderer 共用，禁止各处重写）：`task-uri.ts`（URI 解析）· `task-detail.ts` · `task-list.ts`（排序搜索）· `persona.ts` · `prompt-schema.ts` · `session-view.ts` · `usage.ts`（**token 四桶 / 单价 / 金额的唯一口径处**，含 tier 选价与聚合）
 - `find.context` — `src/shared/context/` 上下文树与投递：`README.md` 是**完整约定表**（领域模型 / 投递构造 / 划分真源 / step 快照 / 渲染坑）；投递构造唯一入口 `delivery.ts` 的 `buildDelivery`；划分真源 `$DIY_HOME/context.yaml`（契约 `config.ts`、I/O `src/main/core/context-config.ts`）
 - `find.compact` — 压缩（**目标式预算**）：策略/账本/选择 `shared/context/compaction.ts`（`CompactPolicySchema` 真源 + `selectHistoryByBudget` 的宿主 `main/services/local-blocks.ts`）· 预算注记 `shared/context/budget-note.ts`（YAML 文本，`kept` 保留区间）+ 其**格式说明变量树节点** `history-index.ts` · 缓存 TTL 夹逼 `cache-ttl.ts` · 自动压缩 `auto-compact.ts`（真源 `$DIY_HOME/auto-compact.yaml`，契约 `shared/context/auto-compact.ts`、I/O `src/main/core/auto-compact-config.ts`）· 会话落盘路径唯一出口 `src/main/core/local-paths.ts`
-- `find.model` — 模型 provider 配置机制（##184）：契约 `src/shared/model-config.ts`（`model.yaml` 配置层 + `providers.custom.yaml` spec 层 + 限定名切分 `splitQualified`）· 运行时可解析目录 `src/shared/models.ts`（`setModelCatalog`/`findModel`/`apiOf`…，**无内置 provider：无配置 = 空目录**）· 装配 `src/main/core/model-runtime.ts`（snapshot ⊕ custom ⊕ `$DIY_HOME/model.yaml` → 目录，含 `$VAR` 展开）· 文件 I/O `src/main/core/model-config.ts` · 配置 UI `src/renderer_solid/components/ModelConfigPage.tsx` · spec 真源 `src/main/data/models-snapshot.json`（models.dev npm 白名单产物，`scripts/gen-models-snapshot.mts`）· 单测夹具 `tests/fixtures/models.ts`
+- `find.model` — 模型 provider 配置机制（##184）：契约 `src/shared/model-config.ts`（`model.yaml` 配置层 + `providers.custom.yaml` spec 层 + 限定名切分 `splitQualified`）· 运行时可解析目录 `src/shared/models.ts`（`setModelCatalog`/`findModel`/`apiOf`…，**无内置 provider：无配置 = 空目录**）· 装配 `src/main/core/model-runtime.ts`（snapshot ⊕ custom ⊕ `$DIY_HOME/model.yaml` → 目录，含 `$VAR` 展开）· 文件 I/O `src/main/core/model-config.ts` · 配置 UI `src/renderer_solid/components/ModelConfigPage.tsx` · spec 真源 `src/main/data/models-snapshot.json`（models.dev npm 白名单产物，`scripts/gen-models-snapshot.mts`）· 单测夹具 `tests/fixtures/models.ts` · env 导入 `src/main/core/model-import.ts`（snapshot 声明的 env ∩ 本机变量 → 候选；**只列不写、不落明文、不覆盖已有**，UI 提示条与 `diy llmConfig scanEnv|importEnv` 同源）
+- `find.env-import` — 模型页「环境变量导入」提示条 `src/renderer_solid/components/EnvImportBar.tsx`：**四态常显**（可导入 / 命中但均已配置 / 零命中 / 扫描失败），零命中态靠 `llmConfig.scanEnv` 回报的**扫描面**（`scanned`：191 家 / 181 个变量名）交代「查过什么」——只在有候选时出条，会让用户分不清「env 没这个变量」与「功能没跑」
+- `find.seed` — 空数据根的初始种入 `src/main/core/seed.ts`：preview/lab 启动自动（`DIY_SEED` 开关）+ `diy seed run` 手动；**只配 opencode-go、人物模型 = `0@opencode-go/mimo-v2.6-flash`**，写 `$VAR` 引用；幂等（已存在不动），prod/test 缺省不种
 - `find.serve` — `src/serve/index.ts` 纯 Web 模式（无 Electron）
 - `find.tests` — `tests/`：`cli.intent.*` 意图测试（真实 UI / 隔离 Electron，**跑 `out/` 产物**）· `core/` `services/` 单测（vitest **直读 `src/`**）· 夹具 `electron-test.ts` · `ui-drive.ts` · `shell-test.ts` · `setup.ts`
 - `find.scripts` — 仓库 `scripts/`：`ui-smoke/`（CDP 冒烟）· `cdp-colorscheme-demo.mts` · `repro-epipe-dialog.mts` · `doctor-env.sh`
@@ -26,9 +28,10 @@
 |------|--------|------|
 | `./diy.sh`（仓库根） | `auto`：`build/<variant>/cli/index.js` 优先，打包源比产物新回退 `tsx src/cli/index.ts`（`DIY_CLI_MODE`） | `DIY_HOME=./build/<variant>/home`、`DIY_VARIANT=preview`、`DIY_CLI` |
 | `bin/diy`（发布） | `node build/prod/cli/index.js` | `DIY_HOME=~/.diy`、`DIY_CLI=$0`、`DIY_ENV=production` |
-| `scripts/electron-dev.mts`（preview / lab） | `build/<variant>/main/index.mjs` | `DIY_HOME=./build/<variant>/home`、`DIY_VARIANT`、`DIY_CLI`、`DIY_DEV_SERVER_URL`、`DIY_ENV=development` |
+| `scripts/electron-dev.mts`（preview / lab） | `build/<variant>/main/index.mjs` | `DIY_HOME=./build/<variant>/home`（继承来的生产根被拒，见 `env.home`）、`DIY_VARIANT`、`DIY_CLI`、`DIY_DEV_SERVER_URL`、`DIY_ENV=development` |
 
-- `env.home` — `DIY_HOME` 数据根（state/task/**app.port**），缺省 `~/.diy`
+- `env.home` — `DIY_HOME` 数据根（state/task/**app.port**），缺省 `~/.diy`；**preview/lab 与 `diy.sh` 一律拒绝继承来的 `~/.diy`**（决策点 `src/main/core/dev-home.ts`，放行需 `DIY_ALLOW_PROD_HOME=1`）
+- `env.seed` — `DIY_SEED` 三态开关（`0`/`false`/`off` 关 · `1`/`true`/`on` 开；未声明 = 仅 `DIY_VARIANT` 为 `preview`/`lab` 时开）→ `src/main/core/seed.ts`（契约 `src/runtime.ts`）。**自动种入只跑一次**（`.seed-done` 标记：删掉的 provider 不会被种回来），补缺项用 `diy seed run`；**生产根永不种入**
 - `env.cli` — `DIY_CLI` 当前 CLI 入口绝对路径（提示词模版 `diy.md` 消费）；缺 → 提示词里告警，**不静默冒充 `diy`**
 - `env.env` — `DIY_ENV` = `production`/`development`/`test`，**dev/test 专属能力的唯一判据**（如窗口副屏定位）；缺省 = production（未声明即生产，能力全关）
 - `env.port` — `DIY_PORT` 首选端口（测试注 `0`=随机）；优先级 `DIY_PORT` > `app.port` 文件 > 18888
@@ -69,6 +72,7 @@
 - `pit.shell-test` — `ShellTest` 的输出边界 = stderr 的 PS1 marker + **stdout 的哨兵**：marker 只证明命令结束，stdout 是另一管道、到达顺序不保证，只等 marker 会读到半截输出并让后续每条命令错位
 - `pit.env-pollution` — 跑意图测试 / CDP 夹具前 shell 里**不要 export `DIY_PORT` / `DIY_HOME`**（`ShellTest` 继承 `process.env` → 每条 `./diy.sh` 都去打别的端口、各拉一个新 app 互踢）。正确姿势 `env -u DIY_PORT -u DIY_HOME npx vitest run …`
 - `pit.intent-build` — **`tests/cli.intent.*` 跑的是 `build/test/` 编译产物**（起隔离 Electron，main/preload/renderer 全来自产物）：改 `src/**` 后不构建就跑 = 拿旧代码断言（症状：文案/diff 断言莫名失败，而同一份源码的单测全绿）。`sha.sh test-intent` 自动 `DIY_VARIANT=test build`；`tests/core|services` 是 vitest 直读源码，无需构建
+- `pit.app-root` — **包根别数 `dirname`**：CLI 的源码 `src/cli/index.ts`（包根下 2 级）与产物 `build/<V>/cli/index.js`（4 级）深度不同 —— 固定 4 次只对产物成立，`DIY_CLI_MODE=tsx` 直跑时报「未构建: `<repo>`/pkgs.ts/build/…」（少了 `diy-app`）。判据 = 按 `package.json` 标记上溯（`core/app-root.ts`，有单测）
 - `pit.excepthook` — 主进程**自注册 `uncaughtException` 处理器即抑制 Electron 的模态异常框**（其内置守卫是 `listenerCount > 1`），与有没有 try/catch 无关；诊断由 `installDiagnostics` 统一挂（三入口各落独立日志）
 - `pit.interrupt` — 中断的 tool 调用必须**在新一轮开始时收敛成显式终态并写进 ops**，投影（`blocksToMessages`）只做纯翻译。禁止退回"投影时现造占位文案"：文案会被模型当待办，重载后同一条自毁命令会被重发
 - `pit.llm-log` — `$DIY_HOME/local/<key>.llm.jsonl` 是**append-only 全量消息日志**（每行 1 条原生 ModelMessage + 索引位 `turn`/`step` + 工具结果的 `origin` 自证位），**行号 = 消息序号**（压缩注记的 `range` 就指它）。与压缩**解耦**：压缩只改投递期投影，绝不写它。加载时与 ops 投影对账（前缀则补齐 / 中部不一致则整份重建）

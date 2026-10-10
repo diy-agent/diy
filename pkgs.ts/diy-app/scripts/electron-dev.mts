@@ -12,6 +12,7 @@ import {
   lockAdvice,
   readLock,
 } from "../src/main/core/single-instance";
+import { resolveDevHome } from "../src/main/core/dev-home";
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, appendFileSync, type Dirent } from "node:fs";
 // 注：Chromium 开关（disable-features=RustPng / use-gl=angle）由 src/main/index.ts 经
 // app.commandLine.appendSwitch 生效，此处不再拼 argv（Chromium 不吃 app argv）。
@@ -32,12 +33,23 @@ const repoRoot = join(scriptDir, "..", "..", "..");
 const variant = process.env["DIY_VARIANT"] ?? "preview";
 process.env["DIY_VARIANT"] = variant; // 传给 vite 配置（决定 outDir）
 const outRel = join("build", variant); // 相对 appDir 的产物根
-// DIY_HOME 默认指向仓库根 build/<variant>/home，与 diy.sh 保持一致
-const defaultHome = join(repoRoot, "build", variant, "home");
-if (!process.env["DIY_HOME"]) {
-  mkdirSync(defaultHome, { recursive: true });
-  process.env["DIY_HOME"] = defaultHome;
+// 数据根：build/<variant>/home —— 「变体互不干扰」全靠它（单实例锁也是 per-home）。
+// ⚠️ 继承来的 DIY_HOME 会把它顶掉：宿主 shell / agent / CI 常导出 DIY_HOME=~/.diy，preview
+// 就直接开着**生产数据根**跑（实测踩过：宿主正是如此，一路直奔 ~/.diy，只因 prod 实例占着
+// 锁才没造成污染；而 preview 缺省带初始种入，真跑起来会把示例项目写进生产）。
+// 决策与警告交给 core/dev-home（同一条口径 diy.sh 也在用，且可被单测覆盖）。
+const decision = resolveDevHome({
+  variant,
+  repoRoot,
+  inherited: process.env["DIY_HOME"],
+  allowProdHome: process.env["DIY_ALLOW_PROD_HOME"] === "1",
+});
+if (decision.rejected) {
+  console.warn(`[dev] 警告: 忽略继承的生产数据目录 DIY_HOME=${decision.rejected}，改用本变体的 ${decision.home}`);
+  console.warn(`[dev] 警告: 确需操作生产数据请显式声明 DIY_ALLOW_PROD_HOME=1 ./sha.sh ${variant}`);
 }
+mkdirSync(decision.home, { recursive: true });
+process.env["DIY_HOME"] = decision.home;
 // DIY_CLI：当前生效的 CLI 入口（提示词模版 100-diy 消费）。
 // dev 只能由本脚本注入 —— 提示词里的入口若缺省，prompt-registry 会兜底成裸 "diy"，
 // 在 worktree 里就打到生产数据根（与 diy.sh / bin/diy 同一契约，三处必须都给）。
@@ -52,7 +64,7 @@ let cleaningUp = false;
 // 实测教训：main 产物被清空后再不重建，事后只有 app 侧的 main.log（只知道重启过），
 // 无法判断是 bundle 失败、build 未完成还是 watcher 死了 —— 所以每一步都落盘。
 function devLogger() {
-  const dir = join(process.env["DIY_HOME"] ?? defaultHome, "log");
+  const dir = join(process.env["DIY_HOME"] ?? decision.home, "log");
   return join(dir, "dev.jsonl");
 }
 let devLogReady = false;
