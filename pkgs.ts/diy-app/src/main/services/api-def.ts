@@ -23,6 +23,8 @@ import { ContextDiffSchema, StatsSchema, StepsSchema } from "../../shared/contex
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
 // agent 人物契约（纯 zod，renderer 同源）——模型/参数/行为指令的配置实体
 import { PersonaSchema } from "../../shared/persona";
+// 价格形状（camelCase 运行时口径）：与 UI/CLI 同一份 schema
+import { ModelCostSchema } from "../../shared/usage";
 import {
   CostUpdateResultSchema,
   LlmConfigViewSchema,
@@ -554,16 +556,13 @@ export const apiDef = RpcSchema.router({
                       supported: z.array(z.string()),
                       default: z.string(),
                     }),
-                    /** 单价（$/1M tokens；缺失 = 无价目）—— 模型选择表分列展示 */
-                    cost: z
-                      .object({
-                        input: z.number(),
-                        output: z.number(),
-                        cacheRead: z.number().optional(),
-                        cacheWrite: z.number().optional(),
-                      })
-                      .nullable()
-                      .optional(),
+                    /**
+                     * 单价（$/1M tokens；缺失 = 无价目）—— 模型选择表分列展示。
+                     * 形状 = `shared/usage.ts` 的 `ModelCostSchema`（含 `baseLabel` 与**分档** `tiers`）。
+                     * ⚠️ 这里少写字段**不会**报错（outputSchema 不做运行期校验，见 diy-rpc meta.ts），
+                     * 只会让消费端静默拿不到 → 所以形状必须与 schema 同源，别手写第二份。
+                     */
+                    cost: ModelCostSchema.nullable().optional(),
                   }),
                 ),
               }),

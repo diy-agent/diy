@@ -29,6 +29,23 @@ export interface CalendarDef {
     workdays?: Record<string, string>;
 }
 
+/** 当日分钟数 → `HH:MM`（时段档**展示**用；解析回来见 `parseTimeOfDay`） */
+export function formatMinuteOfDay(min: number): string {
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+/** 偏移毫秒 → `+08:00` / `-05:30` / `Z`（展示用；与 `parseTimeOfDay` 的偏移写法互逆） */
+export function formatOffset(offsetMs: number): string {
+    if (offsetMs === 0) return "Z";
+    const sign = offsetMs < 0 ? "-" : "+";
+    const abs = Math.abs(offsetMs);
+    const h = Math.floor(abs / 3_600_000);
+    const m = Math.floor((abs % 3_600_000) / 60_000);
+    return `${sign}${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
 /** 日历表：id → 定义（运行时由 main 读 `src/main/data/calendars.json` 灌入） */
 export type CalendarTable = Record<string, CalendarDef>;
 

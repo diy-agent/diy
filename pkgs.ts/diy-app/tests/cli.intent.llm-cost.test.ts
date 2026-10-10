@@ -186,6 +186,21 @@ describe("llmConfig setTiers（峰谷时段档）", () => {
     expect((goatCost("gpt-5.5") as { tiers?: unknown }).tiers).toBeUndefined();
   });
 
+  it("分档价**必须随 `agent local models` 下发**（否则模型表只能画 base 档 = 看着 0.15 实收 0.5）", async () => {
+    // base 档（谷价）+ 时段档（峰价）：模型表列里放得下前者，放不下后者，只能靠 schema 带出来
+    await fx.sh.getJson("./diy.sh llmConfig setCost custom:paca llama-x --input 0.15 --output 0.6 --cache-read 0.003 --base-label off-peak");
+    await fx.sh.getJson(`./diy.sh llmConfig setTiers custom:paca llama-x --tiers '${peak}'`);
+
+    const models = (await fx.sh.getJson("./diy.sh agent local models")).data as {
+      ref: string;
+      cost: { baseLabel?: string; tiers?: { when: { kind: string; label?: string }; input: number; output: number }[] } | null;
+    }[];
+    const m = models.find((x) => x.ref.endsWith("@custom:paca/llama-x"))!;
+    expect(m.cost?.baseLabel).toBe("off-peak");
+    expect(m.cost?.tiers).toHaveLength(1);
+    expect(m.cost?.tiers![0]).toMatchObject({ when: { kind: "utc-range", label: "peak" }, input: 0.5, output: 3 });
+  });
+
   it("引用不存在的日历 → 仍保存但预警（该窗永不命中，退 base 价）", async () => {
     const r = await fx.sh.getJson(
       "./diy.sh llmConfig setTiers custom:goat gpt-5.5 --tiers '[{\"input\":1,\"output\":2,\"tier\":{\"type\":\"utc-range\",\"data\":{\"start\":\"01:00:00+08:00\",\"end\":\"04:00:00+08:00\",\"calendar\":\"Mars-business-day\"}}}]'",

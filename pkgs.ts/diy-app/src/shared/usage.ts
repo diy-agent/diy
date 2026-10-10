@@ -15,7 +15,8 @@
 // **不可测 ≠ 0**：`api:"chat"` 面拿不到 cacheWrite（ai-sdk 的 openai-compatible 恒返回
 // undefined），该桶一律 `null`（不可测），绝不落 0（0 = 实测为零，是另一个事实，混了就是静默低估算钱）。
 
-import { matchUtcRange, type CalendarTable, type UtcRangeWindow } from "./calendars";
+import { z } from "zod";
+import { formatMinuteOfDay, formatOffset, matchUtcRange, type CalendarTable, type UtcRangeWindow } from "./calendars";
 
 /** 单价（$ / 1M tokens）。缺字段 = 该 provider 未给该桶定价 */
 export interface ModelRates {
@@ -46,6 +47,71 @@ export interface ModelCost extends ModelRates {
     tiers?: ModelTier[];
     /** 时段档「未命中任何窗」时的展示名（如 `"off-peak"`）；缺省 `"base"` */
     baseLabel?: string;
+}
+
+/**
+ * 运行时价目形状的**线上 schema**（`kind` 判别；与 `ModelCost` 同构）。
+ *
+ * 为什么要有：RPC 的 `outputSchema` **只用于类型推导、运行期不校验**（见 diy-rpc meta.ts）——
+ * 所以「类型漏写 tiers/baseLabel」不会报错，只在**消费端**表现为「拿不到、画不出」，极难发现。
+ * 这里把形状固化成 schema，api-def 与 renderer 都引用它：漂移 = 编译期报错，而不是静默丢字段。
+ * 与写侧 schema（`shared/model-config.ts` 的 `TierWhenSchema`，判别键 `type` + `data`）是**两套**：
+ * 那边是 YAML 人写形状，这边是解析后的 camelCase 运行时形状。
+ */
+export const RuntimeTierWhenSchema: z.ZodType<TierWhen> = z.discriminatedUnion("kind", [
+    z.object({
+        kind: z.literal("context"),
+        /** 总输入 token 严格大于它 → 整档生效 */
+        size: z.number(),
+    }),
+    z.object({
+        kind: z.literal("utc-range"),
+        startMin: z.number(),
+        endMin: z.number(),
+        offsetMs: z.number(),
+        calendar: z.string().optional(),
+        label: z.string().optional(),
+    }),
+]);
+
+/** 单条档（价目 + 触发条件） */
+export const RuntimeModelTierSchema: z.ZodType<ModelTier> = z.object({
+    when: RuntimeTierWhenSchema,
+    input: z.number(),
+    output: z.number(),
+    cacheRead: z.number().optional(),
+    cacheWrite: z.number().optional(),
+});
+
+/** 生效价目（camelCase 运行时形状）：RPC 下发 / UI 展示 / CLI 输出共用 */
+export const ModelCostSchema: z.ZodType<ModelCost> = z.object({
+    input: z.number(),
+    output: z.number(),
+    cacheRead: z.number().optional(),
+    cacheWrite: z.number().optional(),
+    baseLabel: z.string().optional(),
+    tiers: z.array(RuntimeModelTierSchema).optional(),
+});
+
+/**
+ * 分档价 → 逐行说明（UI tooltip / CLI 排错用）。
+ *
+ * 为什么需要：模型表的「输入$/1M」等列**只能画 base 档**。有分档却不写出来 = 最坏的静默：
+ * 看着 0.15 的价，实际按 0.5 收（峰价），或按 3 收（长上下文）—— 用户会以为账算错了。
+ */
+export function describeTiers(cost: ModelCost | null | undefined): string[] {
+    const out: string[] = [];
+    for (const t of cost?.tiers ?? []) {
+        const w = t.when;
+        if (w.kind === "utc-range") {
+            const scope = `${formatMinuteOfDay(w.startMin)}–${formatMinuteOfDay(w.endMin)} ${formatOffset(w.offsetMs)}` +
+                (w.calendar ? ` · ${w.calendar}` : "");
+            out.push(`${w.label ?? "时段档"}（${scope}）：in ${t.input} / out ${t.output}${t.cacheRead === undefined ? "" : ` / cache ${t.cacheRead}`}`);
+        } else {
+            out.push(`总输入 > ${w.size} tokens：in ${t.input} / out ${t.output}${t.cacheRead === undefined ? "" : ` / cache ${t.cacheRead}`}`);
+        }
+    }
+    return out;
 }
 
 /** 生效单价快照：选中的那一档 + 来源。**单价会变，历史账不能漂**，故随每行落盘 */

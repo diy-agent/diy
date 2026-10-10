@@ -7,8 +7,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { isWorkdayById, matchUtcRange, parseTimeOfDay, type CalendarTable, type UtcRangeWindow } from "../../src/shared/calendars";
-import { ratesOf, type ModelCost } from "../../src/shared/usage";
+import { formatMinuteOfDay, formatOffset, isWorkdayById, matchUtcRange, parseTimeOfDay, type CalendarTable, type UtcRangeWindow } from "../../src/shared/calendars";
+import { describeTiers, ModelCostSchema, ratesOf, type ModelCost } from "../../src/shared/usage";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TABLES: CalendarTable = (
@@ -147,5 +147,62 @@ describe("ratesOf 的时段价（与上下文阶梯两轴分离）", () => {
         const r = ratesOf(both, 200_000, at("2026-10-08T12:00:00+08:00"), TABLES)!;
         expect(r.input).toBe(9);
         expect(r.tier).toBe("input>100000");
+    });
+});
+
+describe("展示格式化（formatMinuteOfDay / formatOffset，与解析互逆）", () => {
+    it("分钟 → HH:MM；偏移 → ±HH:MM（0 → Z）", () => {
+        expect(formatMinuteOfDay(60)).toBe("01:00");
+        expect(formatMinuteOfDay(1410)).toBe("23:30");
+        expect(formatOffset(8 * 3600_000)).toBe("+08:00");
+        expect(formatOffset(-5 * 3600_000)).toBe("-05:00");
+        expect(formatOffset(5.5 * 3600_000)).toBe("+05:30");
+        expect(formatOffset(0)).toBe("Z");
+    });
+
+    it("解析 ∘ 格式化 = 恒等（不是各写一套，改一处就漂）", () => {
+        for (const s of ["01:00:00+08:00", "23:30:00Z", "00:30:00-05:00", "12:45:00+05:30"]) {
+            const t = parseTimeOfDay(s)!;
+            expect(parseTimeOfDay(`${formatMinuteOfDay(t.minutes)}:00${formatOffset(t.offsetMs)}`)).toEqual(t);
+        }
+    });
+});
+
+describe("describeTiers（分档价必须**看得见**，否则表里 0.15、实收 0.5）", () => {
+    it("时段档 → 时段名 + 区间 + 日历 + 三个价", () => {
+        expect(describeTiers(DS_COST)).toEqual(["peak（01:00–04:00 +08:00 · CN-business-day）：in 0.5 / out 3 / cache 0.1"]);
+    });
+
+    it("无日历 → 不写日历段；缺档名 → 占位（不冒用 baseLabel）", () => {
+        const c: ModelCost = { input: 1, output: 2, baseLabel: "off-peak", tiers: [{ when: { kind: "utc-range", ...win("22:00:00+08:00", "02:00:00+08:00") }, input: 5, output: 6 }] };
+        const [line] = describeTiers(c);
+        expect(line).toContain("22:00–02:00 +08:00）：in 5 / out 6");
+        expect(line).not.toContain("CN-business-day");
+        expect(line).not.toContain("off-peak"); // 档名缺省 ≠ 基准名（冒用会让人把峰价当谷价）
+    });
+
+    it("上下文阶梯 → 阈值写法；无分档 → 空数组（UI 据此不画标记）", () => {
+        expect(describeTiers({ input: 1, output: 2, tiers: [{ when: { kind: "context", size: 272_000 }, input: 2, output: 4 }] }))
+            .toEqual(["总输入 > 272000 tokens：in 2 / out 4"]);
+        expect(describeTiers({ input: 1, output: 2 })).toEqual([]);
+        expect(describeTiers(null)).toEqual([]);
+    });
+});
+
+describe("ModelCostSchema（下发给 UI/CLI 的形状；漏字段不会报错，只会静默看不见）", () => {
+    it("解析运行时价目：含 baseLabel 与两种档（判别键 kind）", () => {
+        const parsed = ModelCostSchema.parse({
+            ...DS_COST,
+            tiers: [...DS_COST.tiers!, { when: { kind: "context", size: 272_000 }, input: 0.2, output: 0.8 }],
+        }) as ModelCost;
+        expect(parsed.baseLabel).toBe("off-peak");
+        expect(parsed.tiers!.map((t) => t.when.kind)).toEqual(["utc-range", "context"]);
+        // 解析后仍可直接喂计价：schema 与 `ModelCost` 同构（不是"看起来像"）
+        expect(ratesOf(parsed, 1000, Date.parse("2026-10-08T02:00:00+08:00"), TABLES)!.input).toBe(0.5);
+    });
+
+    it("拒收写侧形状（snake_case + `type`/`data`）—— 两套形状不能混", () => {
+        const specShape = { input: 1, output: 2, tiers: [{ input: 5, output: 6, tier: { type: "context", size: 1 } }] };
+        expect(ModelCostSchema.safeParse(specShape).success).toBe(false);
     });
 });
