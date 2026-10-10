@@ -1147,7 +1147,9 @@ export function UsageHoverCard(props: {
 // ─── L1① turn 底 bar ────────────────────────────────
 
 /**
- * turn 底 bar：`HH:MM · N tok · $X` —— 只放时间、总 token 合计、金额（2026-10-03 定稿）。
+ * turn 底 bar：`YYYY-MM-DD HH:MM:SS · N tok · $X` —— 只放时间、总 token 合计、金额。
+ * 时间用**日期+时间到秒**（2026-10-04 用户定）：轮次末尾要能定位"这话什么时候说的"，
+ * 只给时分在同一天多轮、或跨天回看时无法定位。旧记录轮次也照样出时间（见下）。
  * 三数同为**各步累计**口径（可互算）；窗口% 不上 bar（不同口径不同框，防相除误读）。
  * hover 出 L2 卡；点击直接开 L3 抽屉（卡里的「明细」是同一动作的第二个入口）。
  */
@@ -1162,8 +1164,13 @@ export function TurnUsageBar(props: {
     /** 旧记录：无四桶无金额 → 降级成一行字，不进卡不进抽屉（拆不出东西） */
     if (isLegacyUsage(props.usage)) {
         const l = props.usage as { in?: number; out?: number; total?: number };
+        // 时间与记录格式无关（turnId 里就带着开始时刻）—— 旧记录轮次同样要能定位时间
+        const c = fmtTurnClock(props.turnId);
         return (
             <div class="text-body opacity-60">
+                <Show when={c != null}>
+                    <span class="mr-1 tabular-nums">{c}</span>
+                </Show>
                 tokens ↑{fmtInt(l.in ?? 0)} ↓{fmtInt(l.out ?? 0)}（Σ{fmtInt(l.total ?? 0)}）
                 <span class="ml-1">（旧记录：无四桶/金额）</span>
             </div>
