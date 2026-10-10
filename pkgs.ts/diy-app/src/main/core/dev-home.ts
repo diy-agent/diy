@@ -8,13 +8,11 @@
 // 实测的坑：宿主 shell / agent / CI 常导出 `DIY_HOME=~/.diy`。preview 若照单全收，就开着
 // 生产数据根跑（只因 prod 实例占着单实例锁才没出事）；更糟的是 preview **缺省带初始种入**，
 // 真跑起来会把示例项目与任务写进生产。
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
-
-/** 是不是生产数据根（`<homeDir>/.diy`）。用 resolve 比：写法不同（相对路径 / 尾斜杠）不该绕过判定 */
-export function isProdHome(home: string, homeDir: string = homedir()): boolean {
-    return resolve(home) === resolve(join(homeDir, ".diy"));
-}
+//
+// 「生产根是什么」**只有一个定义处**：`core/instance-identity.ts::prodDataHome`（用**真实**
+// 家目录，不读会被改写的 `$HOME`）。本文件只管「撞上了怎么办」—— 回落本变体的 home。
+import { join } from "node:path";
+import { isProdDataHome } from "./instance-identity";
 
 export type DevHomeDecision = {
     /** 真正生效的数据根 */
@@ -33,13 +31,11 @@ export function resolveDevHome(opts: {
     repoRoot: string;
     inherited?: string | undefined;
     allowProdHome?: boolean;
-    /** 生产根所在的家目录（测试注入用；缺省 homedir()） */
-    homeDir?: string;
 }): DevHomeDecision {
     const fallback = join(opts.repoRoot, "build", opts.variant, "home");
     const inherited = opts.inherited?.trim();
     if (!inherited) return { home: fallback, rejected: null };
-    if (isProdHome(inherited, opts.homeDir) && !opts.allowProdHome) {
+    if (isProdDataHome(inherited) && !opts.allowProdHome) {
         return { home: fallback, rejected: inherited };
     }
     return { home: inherited, rejected: null };

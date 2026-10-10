@@ -45,12 +45,18 @@ export function repoDisplayOf(startDir: string = HERE): string {
 // DIY_HOME=~/.diy、DIY_CLI=<全局 diy>、DIY_ENV=production）。开发入口若原样透传，模型就会被
 // 提示去操作生产数据根 / 敲另一个 checkout 的 CLI。判据集中在这里，保证各入口一致。
 
-/** 生产数据根（发布态固定 ~/.diy）。用**真实**家目录（不读 $HOME）—— 测试/隔离实例会改写 $HOME。 */
+/**
+ * 生产数据根（发布态固定 `~/.diy`）。用**真实**家目录（不读 `$HOME`）—— 测试/隔离实例会改写 `$HOME`。
+ *
+ * **全仓「生产根是什么」的唯一定义处**：dev-home（preview/lab 守卫）、seed（永不种生产）、
+ * serve / main（入口自证）、diy.sh / bin/diy（bash 侧，等价地用 `$HOME/.diy`）都以此为准。
+ * 别在别处再写一份 `join(homedir(), ".diy")` —— 两份判据迟早分叉。
+ */
 export function prodDataHome(): string {
   return join(realHomeDir(), ".diy");
 }
 
-/** 该路径是否指向生产数据根 */
+/** 该路径是否指向生产数据根（写法差异 —— 相对路径 / 尾斜杠 —— 归一后再比，不该绕过） */
 export function isProdDataHome(home: string): boolean {
   return resolve(home) === prodDataHome();
 }

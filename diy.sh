@@ -44,6 +44,9 @@ fi
 # `./diy.sh project remove <id>` 就会操作生产数据（实测：removeProject 会按 meta.yaml
 # 的 path 去摘目标仓库的 diy.yaml 名片，那条路径是真实的 ~/git/...）。
 # 因此：继承到的 DIY_HOME 若指向生产数据根（$HOME/.diy），默认拒绝，改用本 worktree 的。
+# 生产根的定义在 TS 侧只有一处（core/instance-identity.ts::prodDataHome，用**真实**家目录）；
+# bash 取不到 getpwuid，等价地用 $HOME/.diy —— 用户 shell 里两者恒等（测试会改写 $HOME，但它走的是
+# 隔离 DIY_HOME，不落这条判据）。
 # 测试不受影响：它们显式传 DIY_HOME=<临时目录>，不等于 $HOME/.diy，会正常透传。
 # 确实需要指向生产数据时显式 opt-in：DIY_ALLOW_PROD_HOME=1 ./diy.sh ...
 if [[ -n "${DIY_HOME:-}" && "${DIY_HOME}" == "${HOME}/.diy" && "${DIY_ALLOW_PROD_HOME:-}" != "1" ]]; then
@@ -55,8 +58,8 @@ if [[ -n "${DIY_HOME:-}" && "${DIY_HOME}" == "${HOME}/.diy" && "${DIY_ALLOW_PROD
 fi
 
 # 数据根：默认「本 worktree × 变体」；上面的生产根已被拒，其余继承值照旧透传
-# （判据与 TS 侧 core/dev-home.ts::resolveDevHome 同口径；bash 无法 import TS，故此处是
-#   shell 侧唯一的默认值定义处 —— 改这里要同步改 dev-home.ts）。
+# （判据与 TS 侧同源：core/instance-identity.ts::isProdDataHome + core/dev-home.ts::resolveDevHome；
+#   bash 无法 import TS，故此处是 shell 侧唯一的默认值定义处 —— 改这里要同步改那两个）。
 export DIY_HOME="${DIY_HOME:-$SCRIPT_DIR/build/${DIY_VARIANT}/home}"
 mkdir -p "$DIY_HOME"
 
