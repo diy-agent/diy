@@ -1,18 +1,25 @@
 // src/shared/cost-edit.ts
-// 🎯 价格登记的 **UI 编辑变换**（纯函数：无 DOM、无 node）—— ModelConfigPage 只渲染，逻辑在这层。
+// 🎯 价格登记的**编辑变换**（纯函数：无 DOM、无 node）—— UI（ModelConfigPage）与 CLI
+// （`diy llmConfig setCost/setTiers` 的服务端实现）共用同一层，两边不各写一份。
 //
 // 为什么独立成文件：renderer 组件测试要起 Electron（慢、脆），而这里全是**纯对象变换** →
-// 单测可直接跑，且能顺手验证「UI 编出来的 cost 一定能过 zod」（产物合法性是本层的第一职责：
-// 写侧 schema 严格，UI 产出非法值 → 保存时整卡报错，用户白填）。
+// 单测可直接跑，且能顺手验证「编辑出来的 cost 一定能过 zod」（产物合法性是本层的第一职责：
+// 写侧 schema 严格，产出非法值 → 保存时整块报错/CLI 拒收，用户白填）。
 //
-// 范围：只编辑**时段档**（`utc-range`）。上下文阶梯（`context`）是 models.dev 原生形状，
-// UI 不碰、按原位保留（见 `utcRangeSlots` 保留下标）。
+// 范围：base 档（in/out/读/写 + `baseLabel`）与**时段档**（`utc-range`）。上下文阶梯（`context`）
+// 是 models.dev 原生形状 —— 不编辑、按原位保留（见 `utcRangeSlots` 保留下标、`setUtcRangeTiers`
+// 只动 utc-range 条目）。⚠️ 时段档的**顺序即优先级**（按序首个命中，见 usage.ratesOf）：
+// 任何批量操作都不得打乱既有时段档的相对次序。
 import { parseTimeOfDay } from "./calendars";
-import { TIME_OF_DAY_RE, type Cost, type CostTier } from "./model-config";
+import { COST_PRICE_FIELDS, TIME_OF_DAY_RE, type Cost, type CostClearField, type CostPriceField, type CostTier } from "./model-config";
 
-/** 可编辑的单价字段（spec 的 snake_case；单位 $/1M tokens） */
-export type CostField = "input" | "output" | "cache_read" | "cache_write";
-export const COST_FIELDS: readonly CostField[] = ["input", "output", "cache_read", "cache_write"];
+/** 可编辑的单价字段（spec 的 snake_case；单位 $/1M tokens）—— 字段集真源在 model-config */
+export type CostField = CostPriceField;
+export const COST_FIELDS: readonly CostField[] = COST_PRICE_FIELDS;
+
+/** base 档可清字段（比 `CostField` 多一个展示名 `baseLabel`）—— 真源同上 */
+export type { CostClearField };
+export const COST_CLEAR_FIELDS: readonly CostClearField[] = [...COST_PRICE_FIELDS, "baseLabel"];
 
 /**
  * 「中国法定工作日」日历 id —— 内置 `calendars.json` 里**唯一带数据**的日历
@@ -118,8 +125,11 @@ export function patchUtcRange(cost: Cost, index: number, patch: TierPatch): void
 /**
  * 单条时段档的**校验提示**（空数组 = 合法）。保存侧由 zod 兜底（会整卡报错），
  * 这里提前标红，省得用户填完才被打回。规则与 `TierWhenSchema` / runtime 语义一一对应。
+ *
+ * `calendarIds` 给了才查「日历是否存在」（UI 下拉只列内置日历，故不传；CLI 用回执的
+ * `warnings` 报给 agent —— 引用不存在的日历不阻断保存，只让该窗永不命中，见 shared/calendars.ts）。
  */
-export function tierIssues(cost: Cost | undefined, tier: CostTier): string[] {
+export function tierIssues(cost: Cost | undefined, tier: CostTier, calendarIds?: readonly string[]): string[] {
     const out: string[] = [];
     if (tier.tier?.type !== "utc-range") return out;
     const d = tier.tier.data;
@@ -131,5 +141,111 @@ export function tierIssues(cost: Cost | undefined, tier: CostTier): string[] {
     if (tier.input == null && tier.output == null && (cost?.input == null || cost.output == null)) {
         out.push("本档与默认档都没填完整价（in/out）→ 该时段仍算不出金额");
     }
+    if (calendarIds && d.calendar !== undefined && !calendarIds.includes(d.calendar)) {
+        out.push(`引用日历 ${d.calendar} 不存在（该时段永不命中，退 base 价）`);
+    }
+    return out;
+}
+
+// ── CLI 侧（`llmConfig setCost/setTiers`）用的批量变换 + 回执预警 ──
+
+/** 单价补丁：**合并语义** —— 只改给出的键，未给的一律保持（CLI 每次只传想改的） */
+export interface CostPatch {
+    input?: number;
+    output?: number;
+    cache_read?: number;
+    cache_write?: number;
+    /** 空串 = 删字段（回退默认 "base"） */
+    baseLabel?: string;
+    /** 显式清字段（CLI `--clear-fields`；与上面同名的以清为准） */
+    clearFields?: readonly CostClearField[];
+}
+
+/** 应用补丁（就改传入对象；`tiers` 不在此列，见 `setUtcRangeTiers`） */
+export function applyCostPatch(cost: Cost, patch: CostPatch): void {
+    for (const f of COST_FIELDS) {
+        const v = patch[f];
+        if (v !== undefined) cost[f] = v;
+    }
+    if (patch.baseLabel !== undefined) setBaseLabel(cost, patch.baseLabel);
+    for (const f of patch.clearFields ?? []) {
+        if (f === "baseLabel") delete cost.baseLabel;
+        else delete cost[f];
+    }
+}
+
+/** 空价目（无任何单价、无标签、无档）→ 调用方应把整个 `cost` 键删掉，不留 `cost: {}` 噪声 */
+export function isEmptyCost(cost: Cost | undefined): boolean {
+    if (!cost) return true;
+    if (cost.input !== undefined || cost.output !== undefined) return false;
+    if (cost.cache_read !== undefined || cost.cache_write !== undefined) return false;
+    if (cost.baseLabel) return false;
+    return (cost.tiers?.length ?? 0) === 0;
+}
+
+/** 时段档条数（CLI `--drop <n>` / 回执 `tierCount` 的编号口径：**只数 utc-range**） */
+export function utcRangeCount(cost: Cost | undefined): number {
+    return (cost?.tiers ?? []).filter((t) => t.tier?.type === "utc-range").length;
+}
+
+/**
+ * 批量写时段档：`replace` = 换掉**全部** utc-range 档（新档落在原首条的位置，既有时段档次序
+ * 之外的条目 —— 尤其 models.dev 的 context 档 —— 原位保留）；`append` = 追加到末尾。
+ * 档位顺序 = 优先级，故 replace 时**只能整段换**，不能逐条覆盖导致次序错乱。
+ */
+export function setUtcRangeTiers(cost: Cost, tiers: readonly CostTier[], mode: "replace" | "append"): void {
+    const incoming = tiers.map((t) => structuredClone(t)) as CostTier[];
+    if (mode === "append") {
+        if (incoming.length === 0) return;
+        (cost.tiers ??= []).push(...incoming);
+        return;
+    }
+    const all = cost.tiers ?? [];
+    const kept = all.filter((t) => t.tier?.type !== "utc-range");
+    const firstIdx = all.findIndex((t) => t.tier?.type === "utc-range");
+    // 插入点 = 原首条时段档之前**被保留下来**的条目数（= 它在 kept 里的下标）
+    const insertAt = firstIdx < 0 ? kept.length : all.slice(0, firstIdx).filter((t) => t.tier?.type !== "utc-range").length;
+    const next = [...kept.slice(0, insertAt), ...incoming, ...kept.slice(insertAt)];
+    if (next.length === 0) delete cost.tiers;
+    else cost.tiers = next;
+}
+
+/** 删第 n 条时段档（0-based，只数 utc-range）；越界 → null（调用方报错，别静默无操作） */
+export function dropUtcRangeTier(cost: Cost, n: number): CostTier | null {
+    const slot = utcRangeSlots(cost)[n];
+    if (!slot) return null;
+    const removed = (cost.tiers ?? []).splice(slot.index, 1)[0] ?? null;
+    if (cost.tiers?.length === 0) delete cost.tiers;
+    return removed;
+}
+
+/** 删光全部时段档（保留 context 档）；返回删掉的条数 */
+export function clearUtcRangeTiers(cost: Cost): number {
+    const all = cost.tiers ?? [];
+    const kept = all.filter((t) => t.tier?.type !== "utc-range");
+    const removed = all.length - kept.length;
+    if (kept.length === 0) delete cost.tiers;
+    else cost.tiers = kept;
+    return removed;
+}
+
+/**
+ * 价目**预警**（不阻断保存；CLI 写后回执给 agent，UI 侧另有 `tierIssues` 就地标红）。
+ * 判据与运行时一致 —— 预警的每一条都对应「这个价会在某类请求上算不出/算错」。
+ */
+export function costWarnings(cost: Cost | undefined, calendarIds: readonly string[]): string[] {
+    if (isEmptyCost(cost)) return ["无价目 → usage 金额为 null（不是 0；不是免费）"];
+    const out: string[] = [];
+    const c = cost!;
+    if (c.input === undefined || c.output === undefined) {
+        out.push("base 档缺完整价（in/out）→ 未命中时段档的请求算不出金额");
+    }
+    const raw = c.tiers ?? [];
+    raw.forEach((t, i) => {
+        if (!t.tier) out.push(`tiers[${i}] 缺 tier 触发条件（运行时忽略该条）`);
+    });
+    utcRangeSlots(c).forEach((slot, n) => {
+        for (const msg of tierIssues(c, slot.tier, calendarIds)) out.push(`第 ${n} 条时段档: ${msg}`);
+    });
     return out;
 }

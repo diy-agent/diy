@@ -127,6 +127,10 @@ export function reasoningSupportOf(s: ReasoningSupport): { supported: string[]; 
     return { supported: s.supported, default: s.default };
 }
 
+/** 单价字段（spec 的 snake_case；单位 $/1M tokens）—— base 档与各阶档共用同一组键 */
+export const COST_PRICE_FIELDS = ["input", "output", "cache_read", "cache_write"] as const;
+export type CostPriceField = (typeof COST_PRICE_FIELDS)[number];
+
 /** 单条覆盖里的档位（配置层 models[id].reasoning，白名单字段） */
 export const ReasoningOverrideSchema = z.object({ supported: z.array(z.string()), default: z.string() });
 
@@ -402,6 +406,80 @@ export function npmOfEndpoints(endpoints: string[]): string | null {
  */
 export const CalendarChoiceSchema = z.object({ id: z.string(), label: z.string() });
 export type CalendarChoice = z.infer<typeof CalendarChoiceSchema>;
+
+// ── 价目登记（CLI `llmConfig costs/setCost/setTiers`）的输入/输出契约 ──
+
+/** 价目**落点**：spec（`providers.custom.yaml` / models.dev 内置 spec）vs override（`model.yaml` 覆盖） */
+export const CostTargetSchema = z.enum(["spec", "override"]);
+export type CostTarget = z.infer<typeof CostTargetSchema>;
+
+/** 生效价目**来自哪**：`override` > `spec` > `none`（与 registryView 的取值同源） */
+export const CostSourceSchema = z.enum(["override", "spec", "none"]);
+export type CostSource = z.infer<typeof CostSourceSchema>;
+
+/**
+ * CLI 写入的档条目：**必须带 `tier` 触发条件** —— 没有触发条件的档会被运行时静默丢弃
+ * （`toTierWhen` 返回 undefined），所以宁可在入口拒收，也不留一条"看起来写了其实没用"的档。
+ */
+export const TierWriteSchema = CostTierSchema.refine((t) => t.tier !== undefined, {
+    message: "每条档必须给 tier 触发条件，如 tier:{type:'utc-range', data:{start,end,calendar,label}}",
+});
+export type TierWrite = z.infer<typeof TierWriteSchema>;
+
+/** `--clear-fields` 可清的字段（比单价字段多一个展示名 `baseLabel`） */
+export const CostClearFieldSchema = z.enum(["input", "output", "cache_read", "cache_write", "baseLabel"]);
+export type CostClearField = z.infer<typeof CostClearFieldSchema>;
+
+/** `llmConfig costs`：单个模型的价目态（agent 发现 model id / 现价 / 可写落点） */
+export const ModelCostViewSchema = z.object({
+    id: z.string(),
+    name: z.string(),
+    /** filter 判定（false = 不参与运行时目录，填价也白填） */
+    enabled: z.boolean(),
+    /** spec 里没此模型（只有覆盖登记）→ 提示 id 打错或 snapshot 已变 */
+    specMissing: z.boolean(),
+    /** 生效价目（override > spec）；null = 无价 → usage 金额为 null */
+    cost: CostSchema.nullable(),
+    costSource: CostSourceSchema,
+    /** 可写落点（spec：仅 custom 且该模型在 spec 里；override：该 provider 已配在 model.yaml） */
+    writable: z.array(CostTargetSchema),
+});
+export type ModelCostView = z.infer<typeof ModelCostViewSchema>;
+
+/** `llmConfig costs` 输出 */
+export const ProviderCostsViewSchema = z.object({
+    /** 限定名（custom 恒带 `custom:` 前缀） */
+    provider: z.string(),
+    kind: z.enum(["std", "custom"]),
+    /** `--target` 缺省（auto）会落的点：custom → spec、std → override */
+    target: CostTargetSchema,
+    /** provider 段是否已在 model.yaml（false → override 不可写：无账号无从落） */
+    configured: z.boolean(),
+    /** 时段档可引用的日历（id + 展示名；整表在 main 侧） */
+    calendars: z.array(CalendarChoiceSchema),
+    models: z.array(ModelCostViewSchema),
+});
+export type ProviderCostsView = z.infer<typeof ProviderCostsViewSchema>;
+
+/** `llmConfig setCost/setTiers` 的回执（agent 据此核对「写了什么 / 生效什么 / 有什么坑」） */
+export const CostUpdateResultSchema = z.object({
+    provider: z.string(),
+    kind: z.enum(["std", "custom"]),
+    model: z.string(),
+    target: CostTargetSchema,
+    /** 落盘文件绝对路径（spec → providers.custom.yaml；override → model.yaml） */
+    file: z.string(),
+    /** 该**落点**的价目（null = 该落点无价） */
+    cost: CostSchema.nullable(),
+    /** 写后**生效**价目（override > spec）；与 `cost` 不同 = 有回退，别只看 `cost` */
+    effective: CostSchema.nullable(),
+    /** 时段档条数（编号口径同 `--drop`） */
+    tierCount: z.number().int().nonnegative(),
+    /** override 首次写入时以 spec 价为基线（避免"只填 output"丢掉 models.dev 的缓存价） */
+    seededFromSpec: z.boolean(),
+    warnings: z.array(z.string()),
+});
+export type CostUpdateResult = z.infer<typeof CostUpdateResultSchema>;
 
 /** llmConfig.read 全量输出 */
 export const LlmConfigViewSchema = z.object({

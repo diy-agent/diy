@@ -701,6 +701,25 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { status: "ok" };
   });
 
+  binding.on(app.llmConfig.costs, async ({ input }) => {
+    const { providerCosts } = await import("../core/llm-cost");
+    return providerCosts(state.diyHome(), input.provider);
+  });
+  // 价目写入后立刻重装运行时目录（与 write / writeSpec 同一处收敛）：改价即生效，
+  // 不必等下次 provider 配置改动才被读到。
+  binding.on(app.llmConfig.setCost, async ({ input }) => {
+    const { setModelCost } = await import("../core/llm-cost");
+    const result = setModelCost(state.diyHome(), input);
+    refreshModelRuntime(state.diyHome());
+    return result;
+  });
+  binding.on(app.llmConfig.setTiers, async ({ input }) => {
+    const { setModelTiers } = await import("../core/llm-cost");
+    const result = setModelTiers(state.diyHome(), input);
+    refreshModelRuntime(state.diyHome());
+    return result;
+  });
+
   binding.on(app.llmConfig.probe, async ({ input }) => {
     // 拉 `${baseUrl}/models`：既是连通性测试，也是 custom provider 的模型清单来源。
     // 不强求成功：上游若不支持 /models（如 commandcode），ok=false 且 error 说明原因。

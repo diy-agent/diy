@@ -40,6 +40,20 @@ function snapshot(): Record<string, SpecProvider> {
 }
 
 /**
+ * 取 snapshot 的单个 provider 条目（含 models）；未收录 = null。
+ * 价目登记（`main/core/llm-cost.ts`）用它取 std provider 的 spec —— 裸 id 判 std/custom 也用它。
+ * ⚠️ 首次调用会解析整份 snapshot（进程内缓存一次），别在热路径高频调。
+ */
+export function snapshotProvider(id: string): SpecProvider | null {
+    return snapshot()[id] ?? null;
+}
+
+/** snapshot 是否收录该 provider（裸 id 判 std/custom 用） */
+export function snapshotHasProvider(id: string): boolean {
+    return snapshot()[id] !== undefined;
+}
+
+/**
  * `$VAR` / `${VAR}` 展开（就地，只认环境变量；不做 `!command`）。
  * 未定义 → error（**fail-fast**：你制定了环境变量却不提供，当然报错）。
  * UI 读取时只标红不炸页；真正调用上游时按同一结果 fail-fast。

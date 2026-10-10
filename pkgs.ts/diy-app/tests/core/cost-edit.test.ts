@@ -8,11 +8,18 @@ import { CostSchema, type Cost, type CostTier } from "../../src/shared/model-con
 import {
     CN_BUSINESS_DAY,
     addUtcRangeTier,
+    applyCostPatch,
+    clearUtcRangeTiers,
+    costWarnings,
+    dropUtcRangeTier,
+    isEmptyCost,
     patchUtcRange,
     removeTier,
     setBaseLabel,
     setBasePrice,
+    setUtcRangeTiers,
     tierIssues,
+    utcRangeCount,
     utcRangeSlots,
 } from "../../src/shared/cost-edit";
 
@@ -173,5 +180,100 @@ describe("编辑产物必须过写侧 schema", () => {
         const parsed = CostSchema.safeParse(c);
         expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
         if (parsed.success) expect(parsed.data.tiers![0]!.tier).toMatchObject({ type: "utc-range", data: { calendar: CN_BUSINESS_DAY } });
+    });
+});
+
+// ── CLI 侧（`llmConfig setCost/setTiers`）共用的批量变换 ──
+
+const ctxTier = (): CostTier => ({ input: 1, output: 6, tier: { type: "context", data: { size: 128000 } } });
+
+describe("applyCostPatch（CLI 的合并语义）", () => {
+    it("只改给出的键；clearFields 删指定字段（含 baseLabel）", () => {
+        const c: Cost = { input: 1, output: 2, cache_read: 0.1, baseLabel: "off-peak" };
+        applyCostPatch(c, { output: 9, clearFields: ["cache_read", "baseLabel"] });
+        expect(c).toEqual({ input: 1, output: 9 });
+    });
+    it("baseLabel 空串 = 删（回退默认 base）", () => {
+        const c: Cost = { input: 1, baseLabel: "peak" };
+        applyCostPatch(c, { baseLabel: "  " });
+        expect("baseLabel" in c).toBe(false);
+    });
+});
+
+describe("isEmptyCost（空块不留噪声）", () => {
+    it("无价无标签无档 = 空；只有标签或有档 = 不空", () => {
+        expect(isEmptyCost({})).toBe(true);
+        expect(isEmptyCost(undefined)).toBe(true);
+        expect(isEmptyCost({ input: 0 })).toBe(false); // 0 是合法价（免费 ≠ 无价），别当空
+        expect(isEmptyCost({ baseLabel: "off-peak" })).toBe(false);
+        expect(isEmptyCost({ tiers: [ctxTier()] })).toBe(false);
+    });
+});
+
+describe("setUtcRangeTiers（档位顺序 = 优先级，替换只能整段换）", () => {
+    it("replace：context 档原位保留，新时段档落在原首条时段档的位置", () => {
+        const c: Cost = { input: 1, output: 2, tiers: [dsCost().tiers![0]!, ctxTier()] };
+        setUtcRangeTiers(c, [{ output: 99, tier: { type: "utc-range", data: { start: "05:00:00+08:00", end: "06:00:00+08:00" } } }], "replace");
+        expect(c.tiers!.map((t) => t.tier?.type)).toEqual(["utc-range", "context"]);
+        expect(c.tiers![0]!.output).toBe(99);
+        expect(utcRangeCount(c)).toBe(1);
+    });
+    it("原本没有时段档 → 追加到末尾（不插到 context 之前）", () => {
+        const c: Cost = { tiers: [ctxTier()] };
+        setUtcRangeTiers(c, [dsCost().tiers![0]!], "replace");
+        expect(c.tiers!.map((t) => t.tier?.type)).toEqual(["context", "utc-range"]);
+    });
+    it("append：追加在末尾；空数组无副作用", () => {
+        const c: Cost = { tiers: [dsCost().tiers![0]!] };
+        setUtcRangeTiers(c, [ctxTier()], "append");
+        expect(c.tiers!.map((t) => t.tier?.type)).toEqual(["utc-range", "context"]);
+        const n = c.tiers!.length;
+        setUtcRangeTiers(c, [], "append");
+        expect(c.tiers).toHaveLength(n);
+    });
+    it("入参深拷贝：改外部数组不影响已写入的档", () => {
+        const c: Cost = {};
+        const incoming: CostTier = { tier: { type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+08:00" } } };
+        setUtcRangeTiers(c, [incoming], "replace");
+        incoming.output = 7;
+        expect(c.tiers![0]!.output).toBeUndefined();
+    });
+});
+
+describe("dropUtcRangeTier / clearUtcRangeTiers（编号只数 utc-range）", () => {
+    it("drop(0) 删第一条时段档，context 档不受影响；越界 → null", () => {
+        const c: Cost = { tiers: [ctxTier(), dsCost().tiers![0]!] };
+        expect(dropUtcRangeTier(c, 1)).toBeNull();
+        expect(dropUtcRangeTier(c, 0)).not.toBeNull();
+        expect(c.tiers!.map((t) => t.tier?.type)).toEqual(["context"]);
+    });
+    it("clear 删光时段档、返回条数；无档时返回 0", () => {
+        const c: Cost = { tiers: [dsCost().tiers![0]!, ctxTier()] };
+        expect(clearUtcRangeTiers(c)).toBe(1);
+        expect(clearUtcRangeTiers(c)).toBe(0);
+        expect(c.tiers!.map((t) => t.tier?.type)).toEqual(["context"]);
+    });
+});
+
+describe("costWarnings（CLI 回执的预警；与运行时判据一致）", () => {
+    it("合法价目（base 全 + 档引用内置日历）→ 无预警", () => {
+        expect(costWarnings(dsCost(), [CN_BUSINESS_DAY])).toEqual([]);
+    });
+    it("无价 → 明说金额为 null（不是 0）", () => {
+        expect(costWarnings(undefined, []).join()).toContain("金额为 null");
+        expect(costWarnings({}, []).join()).toContain("金额为 null");
+    });
+    it("缺 base in/out、坏时刻、不存在的日历、缺 tier 的条目 → 逐条点出（带序号）", () => {
+        const c: Cost = {
+            tiers: [
+                { input: 1, output: 2, tier: { type: "utc-range", data: { start: "01:00:00", end: "04:00:00+08:00", calendar: "Mars" } } },
+                { input: 1, output: 2 }, // 缺触发条件（运行时忽略）
+            ],
+        };
+        const w = costWarnings(c, [CN_BUSINESS_DAY]);
+        expect(w.join("\n")).toContain("base 档缺完整价");
+        expect(w.join("\n")).toContain("第 0 条时段档: 开始时刻须带 UTC 偏移");
+        expect(w.join("\n")).toContain("引用日历 Mars 不存在");
+        expect(w.join("\n")).toContain("tiers[1] 缺 tier 触发条件");
     });
 });
