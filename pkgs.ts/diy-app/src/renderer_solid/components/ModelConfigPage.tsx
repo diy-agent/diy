@@ -15,6 +15,7 @@ import type {
   Account,
   CatalogEntry,
   CustomSpecsFile,
+  EnvImportCandidate,
   LlmConfigView,
   ModelConfigFile,
   ProviderConfig,
@@ -53,6 +54,9 @@ export function ModelConfigPage() {
   const [specs, setSpecs] = createSignal<CustomSpecsFile>({});
   const [query, setQuery] = createSignal("");
   const [showNewCustom, setShowNewCustom] = createSignal(false);
+  /** 环境变量导入候选（snapshot 声明的 env ∩ process.env，再与现有配置比对；见 core/model-import） */
+  const [envCandidates, setEnvCandidates] = createSignal<EnvImportCandidate[]>([]);
+  const [envDismissed, setEnvDismissed] = createSignal(false);
 
   const reload = async () => {
     try {
@@ -69,7 +73,42 @@ export function ModelConfigPage() {
       setLoading(false);
     }
   };
-  onMount(reload);
+  /** 扫环境变量（只列不写）：提示条据此渲染 */
+  const scanEnv = async () => {
+    try {
+      const r = await diyService.diy.llmConfig.scanEnv({});
+      setEnvCandidates(r.candidates);
+    } catch {
+      setEnvCandidates([]); // 扫描失败不打扰（提示条只是便利）
+    }
+  };
+  onMount(() => {
+    void reload();
+    void scanEnv();
+  });
+
+  /** 导入候选（providers 为空 = 全部可导入项）；落盘后重读，候选随之变灰/消失 */
+  const importEnv = async (providers: string[]) => {
+    try {
+      const r = await diyService.diy.llmConfig.importEnv({ providers: providers.length ? providers : undefined });
+      await reload();
+      await scanEnv();
+      if (r.imported.length > 0) {
+        notificationStore.addToast("success", `已导入 ${r.imported.join("、")}（账号写为 $VAR 引用）`);
+      }
+      if (r.skipped.length > 0) {
+        notificationStore.addToast(
+          "info",
+          `跳过：${r.skipped.map((s) => `${s.provider}（${s.note}）`).join("；")}`,
+        );
+      }
+    } catch (e) {
+      notificationStore.addToast("error", e instanceof Error ? e.message : "导入失败");
+    }
+  };
+
+  /** 提示条只列「可导入」的（configured / duplicate 是"已存在"，没必要提示） */
+  const envImportable = createMemo(() => envCandidates().filter((c) => c.status === "importable"));
 
   const mutateFile = (fn: (f: ModelConfigFile) => void) => {
     const next = structuredClone(file());
@@ -174,6 +213,35 @@ export function ModelConfigPage() {
         密钥支持 <code>$ENV</code> 插值（未定义会报错）；模型清单来自 models.dev snapshot（models.dev
         provider）或 providers.custom.yaml（自定义）。勾选即启用/隐藏，逐卡片「保存」落盘。
       </div>
+
+      {/* 环境变量导入提示条（形态对齐 FindBar：动态出现、可关闭、不挡内容）。
+          只提示、不自动写 —— 用户点「导入」才落盘；已配置的 provider / 重复密钥不在此列。 */}
+      <Show when={envImportable().length > 0 && !envDismissed()}>
+        <div class="flex flex-wrap items-center gap-2 rounded-box border border-warning/30 bg-warning/15 px-2 py-1 text-sm">
+          <span>🔑 检测到 {envImportable().length} 个可由环境变量导入的 provider：</span>
+          <For each={envImportable()}>
+            {(c) => (
+              <span class="flex items-center gap-1 rounded-field bg-base-100 px-1.5 py-0.5">
+                <code class="font-mono text-xs">{c.provider}</code>
+                <span class="text-xs opacity-60">${c.envVar}</span>
+                <button
+                  class="btn btn-xs btn-ghost"
+                  title={`导入 ${c.provider}（账号写为 $${c.envVar} 引用）`}
+                  onClick={() => void importEnv([c.provider])}
+                >
+                  导入
+                </button>
+              </span>
+            )}
+          </For>
+          <button class="btn btn-xs btn-primary" onClick={() => void importEnv([])}>
+            全部导入
+          </button>
+          <button class="btn btn-xs btn-ghost" title="关闭提示" onClick={() => setEnvDismissed(true)}>
+            ✕
+          </button>
+        </div>
+      </Show>
 
       <Show when={!loading()} fallback={<div class="text-body opacity-50">加载中…</div>}>
         {/* ── stdProviders ── */}

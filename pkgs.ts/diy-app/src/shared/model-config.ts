@@ -366,6 +366,52 @@ export function npmOfEndpoints(endpoints: string[]): string | null {
     return null;
 }
 
+/**
+ * 环境变量导入候选（`llmConfig.scanEnv` 输出）。
+ * 来源 = snapshot 里该 provider 声明的 `env` ∩ `process.env`（有值）；再与现有 model.yaml 比对：
+ *   · importable —— 可一键导入（写 `$VAR` 引用，不落明文）
+ *   · configured —— 该 provider 已配置，不覆盖
+ *   · duplicate  —— 该密钥值已被现有账号使用（或与本清单里别家同源）
+ */
+export const EnvImportCandidateSchema = z.object({
+    provider: z.string(),
+    name: z.string().nullable(),
+    /** 命中的环境变量名（写入时作为 `$VAR` 引用） */
+    envVar: z.string(),
+    /** 该 provider 的模型数（让人心里有数，不下载全量） */
+    models: z.number().int(),
+    status: z.enum(["importable", "configured", "duplicate"]),
+    /** 跳过原因（importable 时 = null） */
+    note: z.string().nullable(),
+});
+export type EnvImportCandidate = z.infer<typeof EnvImportCandidateSchema>;
+
+/** `llmConfig.scanEnv` 输出 */
+export const ScanEnvResultSchema = z.object({ candidates: z.array(EnvImportCandidateSchema) });
+export type ScanEnvResult = z.infer<typeof ScanEnvResultSchema>;
+
+/** `llmConfig.importEnv` 输出 */
+export const ImportEnvResultSchema = z.object({
+    imported: z.array(z.string()),
+    skipped: z.array(z.object({ provider: z.string(), note: z.string() })),
+});
+export type ImportEnvResult = z.infer<typeof ImportEnvResultSchema>;
+
+/** `seed.run` 输出：种入结果（幂等，已存在即 skipped） */
+export const SeedReportSchema = z.object({
+    /** 数据根 */
+    home: z.string(),
+    /** model.yaml：imported（本次写入）/ exists（已配置）/ placeholder（无可用 env，写了引用占位） */
+    model: z.enum(["imported", "exists", "placeholder"]),
+    /** personas.yaml：written（本次写入）/ exists（已有缺省人物模型） */
+    persona: z.enum(["written", "exists"]),
+    /** 示例项目 id；已有项目时 = null */
+    project: z.string().nullable(),
+    /** 本次创建的任务 URI */
+    tasks: z.array(z.string()),
+});
+export type SeedReport = z.infer<typeof SeedReportSchema>;
+
 /** llmConfig.read 全量输出 */
 export const LlmConfigViewSchema = z.object({
     /** model.yaml 原样（编辑基线；保存时整份回写） */
