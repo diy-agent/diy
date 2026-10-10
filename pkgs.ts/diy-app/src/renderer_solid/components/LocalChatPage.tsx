@@ -29,6 +29,7 @@ import {
     type UsageHoverState,
 } from "./UsagePanel";
 import { CompactHistoryPanel } from "./CompactSessionPanel";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
@@ -867,62 +868,6 @@ function FullscreenModal(props: { title: string; content: string; onClose: () =>
                 <pre class="overflow-auto p-4 text-body font-mono whitespace-pre-wrap break-all flex-1">
                     {props.content}
                 </pre>
-            </div>
-        </div>
-    );
-}
-
-// ─── 确认弹窗（破坏性操作前置确认） ─────────────────
-
-function ConfirmDialog(props: {
-    title: string;
-    message: string;
-    confirmLabel: string;
-    onCancel: () => void;
-    onConfirm: () => void;
-}) {
-    let cancelRef: HTMLButtonElement | undefined;
-    const onKey = (e: KeyboardEvent) => {
-        // 只拦 Esc；不拦 Enter —— 焦点默认在「取消」上，回车本就是取消（原生行为），
-        // 而 Tab 到「清空」后回车应能正常确认：全局拦 Enter 会把这条路一起掐掉。
-        if (e.key === "Escape") {
-            e.stopPropagation();
-            props.onCancel();
-        }
-    };
-    onMount(() => {
-        // ⚠️ 不能用 HTML autofocus：它只在文档加载时生效，动态插入的节点上无效
-        // （实测焦点留在原按钮上，回车会误触原按钮）。必须主动 focus。
-        cancelRef?.focus();
-        // 捕获阶段 + stopPropagation：弹窗开着时 Esc 只该关弹窗。
-        // TaskDetailPanel 也在 window 上监听 Esc 关整个详情面板（冒泡阶段），
-        // 不拦的话一次 Esc 会连面板一起关掉（弹窗和面板双杀）。
-        document.addEventListener("keydown", onKey, true);
-    });
-    onCleanup(() => document.removeEventListener("keydown", onKey, true));
-    return (
-        <div
-            class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6"
-            onClick={(e) => {
-                if (e.target === e.currentTarget) props.onCancel();
-            }}
-        >
-            <div class="bg-base-100 rounded-xl w-full max-w-sm flex flex-col">
-                <div class="px-4 py-3 border-b font-bold text-title">{props.title}</div>
-                <div class="px-4 py-3 text-body opacity-80">{props.message}</div>
-                <div class="px-4 py-2 border-t flex justify-end gap-2">
-                    {/* 焦点落在「取消」：回车/空格不会误触发不可恢复的删除 */}
-                    <button
-                        class="btn btn-xs"
-                        ref={(el) => (cancelRef = el)}
-                        onClick={props.onCancel}
-                    >
-                        取消
-                    </button>
-                    <button class="btn btn-error btn-xs" onClick={props.onConfirm}>
-                        {props.confirmLabel}
-                    </button>
-                </div>
             </div>
         </div>
     );
