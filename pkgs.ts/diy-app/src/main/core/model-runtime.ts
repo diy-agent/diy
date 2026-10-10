@@ -83,7 +83,15 @@ function toModelCost(c: SpecCost | null | undefined, id: string): ModelCost | un
     for (const t of c.tiers ?? []) {
         const when = toTierWhen(t.tier, id);
         if (!when) continue;
-        tiers.push({ when, input: t.input ?? c.input!, output: t.output ?? c.output!, cacheRead: t.cache_read, cacheWrite: t.cache_write });
+        // 档内缺字段**逐项回退 base**（含缓存价）：峰谷价通常只改 in/out，缓存读若按「无值→
+        // 输入价兜底」（见 usage.costBreakdown）会比 base 的缓存价贵几十倍，故这里先继承。
+        tiers.push({
+            when,
+            input: t.input ?? c.input!,
+            output: t.output ?? c.output!,
+            cacheRead: t.cache_read ?? c.cache_read,
+            cacheWrite: t.cache_write ?? c.cache_write,
+        });
     }
     return {
         input: c.input,

@@ -189,6 +189,7 @@ export const CostTierSchema = z
         tier: TierWhenSchema.optional(),
     })
     .passthrough();
+export type CostTier = z.infer<typeof CostTierSchema>;
 
 /** 价目块（spec / override / 视图三处复用同一形状） */
 export const CostSchema = z.object({
@@ -200,6 +201,7 @@ export const CostSchema = z.object({
     baseLabel: z.string().optional(),
     tiers: z.array(CostTierSchema).optional(),
 });
+export type Cost = z.infer<typeof CostSchema>;
 
 export const ModelOverrideSchema = z.object({
     name: z.string().optional(),
@@ -393,8 +395,18 @@ export function npmOfEndpoints(endpoints: string[]): string | null {
     return null;
 }
 
+/**
+ * 日历选项（价格时段档的「工作日扩展」下拉用）：只是 id + 展示名。
+ * 日历**定义**（holidays/workdays 表）在 main 侧（`src/main/data/calendars.json`），
+ * renderer 不需要、也不该拿到整表 —— 它只把 id 写进档位。
+ */
+export const CalendarChoiceSchema = z.object({ id: z.string(), label: z.string() });
+export type CalendarChoice = z.infer<typeof CalendarChoiceSchema>;
+
 /** llmConfig.read 全量输出 */
 export const LlmConfigViewSchema = z.object({
+    /** 内置日历清单（时段档的日历下拉项；空 = calendars.json 缺失 → 时段档只能「不限日历」） */
+    calendars: z.array(CalendarChoiceSchema),
     /** model.yaml 原样（编辑基线；保存时整份回写） */
     modelFile: ModelConfigFileSchema,
     /** providers.custom.yaml 全文 */

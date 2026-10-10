@@ -11,6 +11,7 @@
 // tsc 的 resolveJsonModule 会尝试把它推断成字面量类型（6315 模型 → 实例化爆炸）。
 
 import { readFileSync } from "node:fs";
+import { calendarLabel } from "../../shared/calendars";
 import { faceOfNpm } from "../../shared/models";
 import {
     filterAllows,
@@ -25,6 +26,7 @@ import {
     type ProviderView,
     type SpecProvider,
 } from "../../shared/model-config";
+import { calendars } from "./calendars";
 import { dataFileOrThrow } from "./data-file";
 import { loadCustomSpecs, loadModelConfig } from "./model-config";
 
@@ -158,5 +160,8 @@ export function registryView(home: string): LlmConfigView {
             providerView("custom", key, config, customSpecs[key] ?? null),
         ),
     ];
-    return { modelFile: cfg, customSpecs, catalog, providers };
+    // 日历清单（时段档的「工作日扩展」下拉项）：只下 id + 展示名，整表留在 main 侧
+    const tables = calendars();
+    const calendarChoices = Object.entries(tables).map(([id, def]) => ({ id, label: calendarLabel(def, id) }));
+    return { modelFile: cfg, customSpecs, catalog, providers, calendars: calendarChoices };
 }

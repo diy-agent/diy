@@ -3,6 +3,8 @@
 // 两组卡片：std = models.dev snapshot provider（spec 只读）；custom = providers.custom.yaml
 // （baseUrl / provider 级默认面(npm) 可编辑）。卡片内：账号 → 模型清单（勾选启用）→ [保存][移除]。
 // 模型清单不显示「面」列：面由 npm/端点自动解析，对用户没意义（provider 级默认面仍可改）。
+// 价格：每行填 base 档（in/out/读/写 + 基准标签）；「时段档」展开后可加 utc-range 档
+// （峰/谷价 + 可选日历 = 工作日限定，UI 只列内置日历）—— 变换逻辑在 shared/cost-edit.ts。
 // 「添加 provider」即时落盘（否则 read 拿不到新 provider 的模型清单）；其余编辑攒 dirty → 每卡 [保存]。
 //
 // 交互约定（对齐 dsh 模型设置页）：
@@ -13,7 +15,10 @@
 import { For, Index, Show, createMemo, createSignal, onMount } from "solid-js";
 import type {
   Account,
+  CalendarChoice,
   CatalogEntry,
+  Cost,
+  CostTier,
   CustomSpecsFile,
   LlmConfigView,
   ModelConfigFile,
@@ -21,6 +26,8 @@ import type {
   SpecProvider,
 } from "../../shared/model-config";
 import { filterAllows, npmOfEndpoints } from "../../shared/model-config";
+import type { CostField } from "../../shared/cost-edit";
+import { addUtcRangeTier, patchUtcRange, removeTier, setBaseLabel, setBasePrice, tierIssues, utcRangeSlots } from "../../shared/cost-edit";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "../store/notificationStore";
 
@@ -44,8 +51,7 @@ const FACE_OPTIONS = [
   { npm: "@ai-sdk/openai", label: "responses（/responses）" },
 ] as const;
 
-/** 可编辑的单价字段（spec 的 snake_case；$/1M tokens）。tiers（阶梯价）暂留 YAML 手改。 */
-type CostField = "input" | "output" | "cache_read" | "cache_write";
+/** 单价输入框（key 是 spec 的 snake_case；$/1M tokens）。逐档价格复用同一组控件。 */
 const COST_FIELDS: { key: CostField; ph: string; label: string }[] = [
   { key: "input", ph: "in", label: "非缓存输入 $/1M（必填）" },
   { key: "output", ph: "out", label: "输出 $/1M（必填）" },
@@ -183,7 +189,7 @@ export function ModelConfigPage() {
         密钥支持 <code>$ENV</code> 插值（未定义会报错）；模型清单来自 models.dev snapshot（models.dev
         provider）或 providers.custom.yaml（自定义）。勾选即启用/隐藏，逐卡片「保存」落盘。
         自定义 provider 可在模型行**填单价**（$/1M，落 providers.custom.yaml）；不填 = 无价（金额显示
-        <code>—</code>，绝不按 0 计）。
+        <code>—</code>，绝不按 0 计）。峰谷价用行内**时段档**（时刻 + 可选日历，如中国法定工作日）。
       </div>
 
       <Show when={!loading()} fallback={<div class="text-body opacity-50">加载中…</div>}>
@@ -241,6 +247,7 @@ export function ModelConfigPage() {
               mutateFile={mutateFile}
               specs={specs}
               mutateSpec={mutateSpec}
+              calendars={() => view()?.calendars ?? []}
               save={save}
               saving={saving}
               onRemove={() => removeProvider("custom", c().key)}
@@ -531,12 +538,16 @@ function CustomCard(props: {
   mutateFile: (fn: (f: ModelConfigFile) => void) => void;
   specs: () => CustomSpecsFile;
   mutateSpec: (key: string, fn: (s: SpecProvider) => void) => void;
+  /** 内置日历清单（时段档的「工作日扩展」下拉项，来自 llmConfig.read） */
+  calendars: () => CalendarChoice[];
   save: () => Promise<void>;
   saving: () => boolean;
   onRemove: () => void;
 }) {
   const [testing, setTesting] = createSignal(false);
   const [modelQuery, setModelQuery] = createSignal("");
+  /** 展开编辑时段档的模型 id（同一时刻只展开一个，表窄） */
+  const [expanded, setExpanded] = createSignal<string | null>(null);
   const mutateCfg = (fn: (c: ProviderConfig) => void) =>
     props.mutateFile((f) => { const c = f.customProviders[props.card.key]; if (c) fn(c); });
 
@@ -603,20 +614,26 @@ function CustomCard(props: {
     const c = spec()?.models[id]?.cost;
     return c != null && (c.input != null) !== (c.output != null);
   };
-  /** 写单价字段（$/1M，spec 的 snake_case）：清空则删字段；全空则删整个 cost（无价）。 */
+  /** 写 base 档单价（$/1M，spec 的 snake_case）：清空则删字段；全空则删整个 cost（无价）。 */
   const patchCost = (id: string, f: CostField, raw: string) =>
     patchModel(id, (mm) => {
       const c = mm.cost ?? {};
-      const t = raw.trim();
-      if (!t) delete c[f];
-      else {
-        const n = Number(t);
-        if (!Number.isFinite(n) || n < 0) return;
-        c[f] = n;
-      }
+      setBasePrice(c, f, raw);
       if (Object.keys(c).length > 0) mm.cost = c;
       else delete mm.cost;
     });
+
+  // ── 时段档（utc-range）：变换在 shared/cost-edit.ts（纯函数，可单测） ──
+  const costOf = (id: string): Cost | undefined => spec()?.models[id]?.cost;
+  const slotsOf = (id: string) => utcRangeSlots(costOf(id));
+  const patchTier = (id: string, index: number, p: Parameters<typeof patchUtcRange>[2]) =>
+    patchModel(id, (mm) => patchUtcRange(mm.cost ?? {}, index, p));
+  const addTier = (id: string) =>
+    patchModel(id, (mm) => { addUtcRangeTier((mm.cost ??= {})); setExpanded(id); });
+  const dropTier = (id: string, index: number) =>
+    patchModel(id, (mm) => { if (mm.cost) removeTier(mm.cost, index); });
+  /** 时段档的日历编辑块（`utc-range` 归一形状；非该类型不该出现在展开区） */
+  const winOf = (t: CostTier) => (t.tier?.type === "utc-range" ? t.tier.data : null);
 
   const toggle = (id: string) => {
     const m = mode();
@@ -720,6 +737,7 @@ function CustomCard(props: {
                     return Array.isArray(v) ? (v as string[]).join(",") : "";
                   };
                   return (
+                    <>
                     <tr class={enabled() ? "" : "opacity-40"}>
                       <td>
                         <input type="checkbox" class="checkbox checkbox-xs" disabled={mode() === "all"} checked={enabled()} onChange={() => toggle(id())} />
@@ -774,11 +792,101 @@ function CustomCard(props: {
                             )}
                           </Index>
                         </div>
+                        <div class="flex items-center gap-1 mt-1">
+                          <input
+                            class="input input-bordered input-xs w-16"
+                            placeholder="基准标签"
+                            title="未命中任何时段档时的档名（如 off-peak）；留空显示 base"
+                            value={costOf(id())?.baseLabel ?? ""}
+                            onInput={(e) => patchModel(id(), (mm) => setBaseLabel((mm.cost ??= {}), e.currentTarget.value))}
+                          />
+                          <button
+                            class="btn btn-xs btn-ghost"
+                            title="峰/谷时段价（按 UTC 时刻 + 可选日历）"
+                            onClick={() => setExpanded(expanded() === id() ? null : id())}
+                          >
+                            时段档{slotsOf(id()).length ? ` ${slotsOf(id()).length}` : ""}
+                          </button>
+                        </div>
                         <Show when={costPartial(id())}>
                           <span class="text-error text-xs">in/out 需同填才有价</span>
                         </Show>
                       </td>
                     </tr>
+                    <Show when={expanded() === id()}>
+                      <tr class="bg-base-200">
+                        <td colspan={6}>
+                          <div class="space-y-1 py-1">
+                            <div class="text-xs opacity-60">
+                              命中时段用档价，未命中用上面的默认价（基准标签 <code>{costOf(id())?.baseLabel ?? "base"}</code>）。
+                              时刻 = 带 UTC 偏移的 ISO 8601（如 <code>01:00:00+08:00</code>）；end &lt; start = 跨零点。
+                              日历 = 该时段只在这些日子生效；档内价格留空 = 沿用默认价。
+                            </div>
+                            <For each={slotsOf(id())}>
+                              {(slot) => {
+                                const d = () => winOf(slot.tier)!;
+                                const issues = () => tierIssues(costOf(id()), slot.tier);
+                                return (
+                                  <div class="flex items-center gap-1 flex-wrap">
+                                    <input
+                                      class="input input-bordered input-xs w-36 font-mono"
+                                      title="开始时刻（含 UTC 偏移）"
+                                      value={d().start}
+                                      onInput={(e) => patchTier(id(), slot.index, { start: e.currentTarget.value })}
+                                    />
+                                    <span class="opacity-50">→</span>
+                                    <input
+                                      class="input input-bordered input-xs w-36 font-mono"
+                                      title="结束时刻（偏移须与开始一致）"
+                                      value={d().end}
+                                      onInput={(e) => patchTier(id(), slot.index, { end: e.currentTarget.value })}
+                                    />
+                                    <select
+                                      class="select select-bordered select-xs w-44"
+                                      title="仅在这些日子生效（中国法定工作日含周末调休补班）"
+                                      value={d().calendar ?? ""}
+                                      onChange={(e) => patchTier(id(), slot.index, { calendar: e.currentTarget.value })}
+                                    >
+                                      <option value="">不限日历（每天）</option>
+                                      <For each={props.calendars()}>{(c) => <option value={c.id}>{c.label}</option>}</For>
+                                    </select>
+                                    <input
+                                      class="input input-bordered input-xs w-20"
+                                      placeholder="标签 peak"
+                                      title="该时段的档名（落 usage.jsonl 的 window 字段）"
+                                      value={d().label ?? ""}
+                                      onInput={(e) => patchTier(id(), slot.index, { label: e.currentTarget.value })}
+                                    />
+                                    <Index each={COST_FIELDS}>
+                                      {(f) => (
+                                        <input
+                                          class="input input-bordered input-xs w-14"
+                                          placeholder={f().ph}
+                                          title={`本档 ${f().label}`}
+                                          value={slot.tier[f().key] != null ? String(slot.tier[f().key]) : ""}
+                                          onInput={(e) => patchTier(id(), slot.index, { price: { f: f().key, raw: e.currentTarget.value } })}
+                                        />
+                                      )}
+                                    </Index>
+                                    <button class="btn btn-xs btn-ghost text-error" title="删除此档" onClick={() => dropTier(id(), slot.index)}>×</button>
+                                    <Show when={issues().length > 0}>
+                                      <span class="text-error text-xs">{issues().join("；")}</span>
+                                    </Show>
+                                  </div>
+                                );
+                              }}
+                            </For>
+                            <div class="flex items-center gap-2">
+                              <button class="btn btn-xs btn-outline" onClick={() => addTier(id())}>＋ 时段档</button>
+                              <span class="text-xs opacity-50">
+                                档位顺序即优先级（首个命中者生效）；判档用请求发起时刻。
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    </Show>
+                    </>
                   );
                 }}
               </Index>

@@ -680,6 +680,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
         customSpecs: {},
         catalog: [],
         providers: [],
+        calendars: [],
         error: e instanceof Error ? e.message : String(e),
       };
     }
