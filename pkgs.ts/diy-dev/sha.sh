@@ -30,7 +30,7 @@ source "../../sha.common.sh"
 ####################################################################################
 
 clean() {
-  run rm -rf ./out ./build ./dist
+  run rm -rf ./build ./dist
 }
 
 # 本包检查：类型 + lint

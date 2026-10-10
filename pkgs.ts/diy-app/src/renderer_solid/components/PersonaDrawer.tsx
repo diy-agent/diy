@@ -31,9 +31,13 @@
  * 放在「设为缺省人物」这类**动作**旁边会被读成"这个按钮会影响 N 个任务" —— 歧义。
  *
  * 形态取舍：
+ *   · **高度（下缘）与左列宽（中缝）可拖**：拖动即所见，松手落盘（视图 cache，丢失无损）；
+ *     双击手柄复位。最大化按钮与手拖互斥（拖了即退出最大化）。
  *   · **贴顶 drawer，下方留白**：改人物时常要对着会话里的消息反复核对（这个词该用哪个模型），
  *     把整个下半屏留给输入框与消息流，改完就能直接发一条试 —— 改成全屏抽屉就得来回切。
- *   · **模型与档位用平铺按钮，不用 `<select>`**：两三个选项的下拉要多一次"展开→找→点"，
+ *   · **模型字段默认收起，只显示当前选中项**：常驻大表会占掉右栏一半高度，反而
+ *     「一眼看不出当前选的是哪个」（选中态只是几十行里的一抹浅蓝）。要改时点触发按钮展开表格。
+ *   · **档位用平铺按钮，不用 `<select>`**：两三个选项的下拉要多一次"展开→找→点"，
  *     而且原生 select 的弹层由 OS 绘制（自动化都点不进，只能派发合成事件）。平铺一眼全见、一次命中。
  *
  * 新建人物**连同模型/档位/行为指令一起填**（不是"先建个名字、建完再改"）：
@@ -47,11 +51,14 @@
  */
 
 import { createSignal, createEffect, createMemo, on, For, Show } from "solid-js";
+import { useDrawerMax, DrawerMaxButton } from "./DrawerMaximize";
+import { Caches, PERSONA_DRAWER_H_MIN, PERSONA_DRAWER_H_MAX, PERSONA_LEFT_W_MIN, PERSONA_LEFT_W_MAX } from "../lib/ui-state";
 import { personaStore } from "../store/personaStore";
 import { taskStore } from "../store/taskStore";
 import { notificationStore } from "../store/notificationStore";
 import { reasoningEffortLabel } from "../../shared/reasoning-effort";
-import { DEFAULT_MODEL } from "../../shared/models";
+import { splitQualified } from "../../shared/model-config";
+import type { ModelBrief } from "../store/personaStore";
 
 /** 平铺选项按钮：选中态用主色底，未选中 hover 亮一点（与详情面板的结构化字段同一套观感） */
 function ChoiceButton(props: {
@@ -234,7 +241,8 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
         const base =
             current()?.model ??
             personaStore.defOf(personaStore.idForTask())?.model ??
-            DEFAULT_MODEL;
+            personaStore.models[0]?.ref ??
+            "";
         setCreating(true);
         setNewName("");
         setNewModel(base);
@@ -344,6 +352,60 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
         void save({ name: next });
     };
 
+    const DM = useDrawerMax(66.666);
+
+    // ── 抽屉几何：高度（下缘）+ 左列宽（中缝）都可拖；松手落盘（视图 cache，丢失无损）──
+    // 高度默认 2/3 视口，未拖过不写 cache（0 = 未设置）；最大化按钮与手动拖高互斥：
+    // 一旦拖动就退出最大化态（否则 100vh 会把手拖的高度盖掉，看着"拖不动"）。
+    const [drawerH, setDrawerH] = createSignal(Caches.diy_persona_drawer_height.get());
+    const [leftW, setLeftW] = createSignal(Caches.diy_persona_left_width.get());
+    let leftColEl: HTMLDivElement | undefined;
+
+    const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+    /** 当前高度（px）：拖过用缓存；否则 2/3 视口。最大化态见 heightStyle */
+    const heightPx = () => drawerH() || Math.round(window.innerHeight * 0.66666);
+    const heightStyle = () => ({ height: DM.max() ? "100vh" : `${heightPx()}px` });
+
+    const onHeightGripDown = (e: MouseEvent) => {
+        e.preventDefault();
+        if (DM.max()) DM.toggle(); // 退出最大化：改由手拖高度接管
+        const startY = e.clientY;
+        const startH = heightPx();
+        const move = (ev: MouseEvent) => {
+            setDrawerH(clamp(Math.round(startH + (ev.clientY - startY)), PERSONA_DRAWER_H_MIN, PERSONA_DRAWER_H_MAX));
+        };
+        const up = () => {
+            window.removeEventListener("mousemove", move);
+            window.removeEventListener("mouseup", up);
+            Caches.diy_persona_drawer_height.set(drawerH());
+        };
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
+    };
+    const resetHeight = () => {
+        setDrawerH(0);
+        Caches.diy_persona_drawer_height.reset();
+    };
+
+    const onLeftGripDown = (e: MouseEvent) => {
+        e.preventDefault();
+        const left = leftColEl?.getBoundingClientRect().left ?? 0;
+        const move = (ev: MouseEvent) => {
+            setLeftW(clamp(Math.round(ev.clientX - left), PERSONA_LEFT_W_MIN, PERSONA_LEFT_W_MAX));
+        };
+        const up = () => {
+            window.removeEventListener("mousemove", move);
+            window.removeEventListener("mouseup", up);
+            Caches.diy_persona_left_width.set(leftW());
+        };
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
+    };
+    const resetLeftW = () => {
+        setLeftW(0);
+        Caches.diy_persona_left_width.reset();
+    };
+
     return (
         <Show when={props.open}>
             {/* 贴顶 drawer：下方留白给输入框与消息流（改人物时常要对着消息反复核对，
@@ -351,7 +413,8 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
             <div class="fixed inset-0 z-[70] flex flex-col">
                 <div class="absolute inset-0 bg-black/25" onClick={props.onClose} />
                 <div
-                    class="relative flex h-[min(42rem,66.666vh)] shrink-0 flex-col border-b border-base-300 bg-base-100 shadow-2xl"
+                    class="relative flex min-h-0 shrink-0 flex-col border-b border-base-300 bg-base-100 shadow-2xl"
+                    style={heightStyle()}
                     data-testid="persona-drawer"
                     // 归属任务：一个 tab 一个面板实例，多个 tab 同时挂载时同名字元素会重复。
                     // 自动化（以及排查）都必须能指名道姓地找到"我这个任务的面板"。
@@ -366,13 +429,16 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                         <span class="text-body opacity-50">
                             人物决定模型与参数；改它会影响所有引用它的任务（下一轮生效）
                         </span>
-                        <button
-                            class="btn btn-ghost btn-xs ml-auto"
-                            aria-label="关闭人物面板"
-                            onClick={props.onClose}
-                        >
-                            ✕
-                        </button>
+                        <div class="ml-auto flex items-center gap-1">
+                            <DrawerMaxButton max={DM.max()} onToggle={DM.toggle} />
+                            <button
+                                class="btn btn-ghost btn-xs"
+                                aria-label="关闭人物面板"
+                                onClick={props.onClose}
+                            >
+                                ✕
+                            </button>
+                        </div>
                     </div>
 
                     {/* 影响面提示条：**紧贴 view bar 之下**（与 DynamicBar 同族的细条：细、贴顶、随上下文存在）。
@@ -395,12 +461,16 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
 
                     <div class="flex min-h-0 flex-1">
                         {/* ── 左：人物列表（主视图） ── */}
-                        <div class="flex w-1/3 min-w-[18rem] shrink-0 flex-col border-r border-base-300">
+                        <div
+                            ref={leftColEl}
+                            class="relative flex w-1/3 min-w-[10rem] shrink-0 flex-col border-r border-base-300"
+                            style={leftW() ? { width: `${leftW()}px` } : undefined}
+                        >
                             {/* pb-9：给条目**下方**的 tooltip 留出空间 —— 这是 `overflow-y-auto` 容器，
                                 悬浮提示是绝对定位在条目内的，贴着容器底边的那一项下方没有余量就会被裁掉
                                 （daisyUI tooltip 被 overflow 容器裁剪是本项目踩过的坑）。
                                 留白放在滚动内容的末端，视觉上就是列表尾部一点空隙，不占布局。 */}
-                            <div class="flex-1 overflow-y-auto p-2 pb-9">
+                            <div class="flex-1 overflow-y-auto p-2 pb-9" data-testid="persona-left-list">
                                 <div class="mb-2 flex items-center gap-2">
                                     <input
                                         class="input input-sm input-bordered min-w-0 flex-1"
@@ -473,7 +543,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                                                 personaStore.defaultPersona,
                                                             );
                                                             return d
-                                                                ? `${d.model} · ${reasoningEffortLabel(d.reasoningEffort)}`
+                                                                ? `${personaStore.displayModel(d.model)} · ${reasoningEffortLabel(d.reasoningEffort)}`
                                                                 : "";
                                                         })()}
                                                     >
@@ -482,7 +552,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                                                 personaStore.defaultPersona,
                                                             );
                                                             return d
-                                                                ? ` · ${d.model} · ${reasoningEffortLabel(d.reasoningEffort)}`
+                                                                ? ` · ${personaStore.displayModel(d.model)} · ${reasoningEffortLabel(d.reasoningEffort)}`
                                                                 : "";
                                                         })()}
                                                     </span>
@@ -550,7 +620,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                                     </span>
                                                     <span class="w-full truncate text-caption opacity-60">
                                                         <HighlightText
-                                                            text={p.model}
+                                                            text={personaStore.displayModel(p.model)}
                                                             query={search}
                                                         />
                                                         {" · "}
@@ -604,6 +674,13 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                     ＋ 新建人物
                                 </button>
                             </div>
+                            {/* 中缝拖宽：绝对定位在左列右缘。双击复位到 1/3 宽。 */}
+                            <div
+                                class="absolute inset-y-0 -right-0.5 z-10 w-1.5 cursor-col-resize hover:bg-primary/40 active:bg-primary/60"
+                                title="拖动调整左列宽度（双击复位）"
+                                onMouseDown={onLeftGripDown}
+                                onDblClick={resetLeftW}
+                            />
                         </div>
 
                         {/* ── 右：选中人物的属性（从视图） ── */}
@@ -644,8 +721,11 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                                     </span>
                                                 </div>
                                                 <div class="mt-1 opacity-70">
-                                                    {personaStore.defOf(personaStore.defaultPersona)
-                                                        ?.model ?? ""}
+                                                    {personaStore.displayModel(
+                                                        personaStore.defOf(
+                                                            personaStore.defaultPersona,
+                                                        )?.model ?? "",
+                                                    )}
                                                     {" · "}
                                                     {reasoningEffortLabel(
                                                         personaStore.defOf(
@@ -670,14 +750,14 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                 }
                             >
                                 {/* 名字：可改（引用用 id，改名不影响任何任务的绑定） */}
-                                <div class="mb-3 flex items-center gap-2">
-                                    <span class="w-14 shrink-0 text-body opacity-60">名字</span>
+                                <fieldset class="fieldset mb-3">
+                                    <legend class="fieldset-legend">名字</legend>
                                     <Show
                                         when={creating()}
                                         fallback={
                                             <>
                                                 <input
-                                                    class="input input-sm input-bordered w-56"
+                                                    class="input input-sm input-bordered w-64"
                                                     value={nameDraft()}
                                                     disabled={busy()}
                                                     aria-label="人物名字"
@@ -692,55 +772,34 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                                         }
                                                     }}
                                                 />
-                                                <span class="text-caption opacity-40">
+                                                <p class="fieldset-label">
                                                     改名不影响引用（任务存的是 id {editing()}）
-                                                </span>
+                                                </p>
                                             </>
                                         }
                                     >
                                         <input
-                                            class="input input-sm input-bordered w-56"
+                                            class="input input-sm input-bordered w-64"
                                             placeholder="人物名（如 Mimo / 审查员）"
                                             value={newName()}
                                             onInput={(e) => setNewName(e.currentTarget.value)}
                                             aria-label="新人物名字"
                                         />
                                     </Show>
-                                </div>
+                                </fieldset>
 
-                                {/* 模型：平铺按钮（一眼全见，一次命中；下拉要多一次展开） */}
-                                <div class="mb-3 flex items-start gap-2">
-                                    <span class="mt-1 w-14 shrink-0 text-body opacity-60">
-                                        模型
-                                    </span>
-                                    <div class="flex flex-wrap gap-1">
-                                        <For each={personaStore.models}>
-                                            {(m) => (
-                                                <ChoiceButton
-                                                    // 显示 **id**：那才是发给上游、也是存在配置里的值。
-                                                    // 上游的 name 与 id 经常对不上（"看着 GPT 5.6、实际发 mimo"）
-                                                    label={m.id}
-                                                    // 新建态也按同一套值判选中：草稿与人物定义只差来源，
-                                                    // 交互却必须一致（"看着亮的是 A、建出来是 B"是最坏的）
-                                                    active={shownModel() === m.id}
-                                                    disabled={busy()}
-                                                    onClick={() => pickModel(m.id)}
-                                                />
-                                            )}
-                                        </For>
-                                        <Show when={creating() && personaStore.models.length === 0}>
-                                            <span class="self-center text-caption opacity-50">
-                                                模型清单未加载，稍候（人物必须指定模型）
-                                            </span>
-                                        </Show>
-                                    </div>
-                                </div>
+                                {/* 模型：默认只显示当前选中项，点按钮才展开选择表（见 ModelField） */}
+                                <ModelField
+                                    models={personaStore.models}
+                                    value={shownModel()}
+                                    creating={creating()}
+                                    disabled={busy()}
+                                    onPick={pickModel}
+                                />
 
                                 {/* 思考级别：候选集由**该模型**决定（各家词表不同，见 shared/models.ts） */}
-                                <div class="mb-3 flex items-start gap-2">
-                                    <span class="mt-1 w-14 shrink-0 text-body opacity-60">
-                                        思考级别
-                                    </span>
+                                <fieldset class="fieldset mb-3">
+                                    <legend class="fieldset-legend">思考级别</legend>
                                     <div class="flex flex-wrap gap-1">
                                         <For each={personaStore.reasoningChoices(shownModel())}>
                                             {(v) => (
@@ -754,17 +813,15 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                             )}
                                         </For>
                                     </div>
-                                </div>
+                                </fieldset>
 
                                 {/* 行为指令：注入身份节（identity.md 的 {{persona.instructions}}）。
                                     命名为「行为指令」而不是「口气」：这里能写的不只是措辞语气，
                                     还有回答结构、专业程度、输出约束（`style`/`tone` 都太窄）。 */}
-                                <div class="mb-3 flex items-start gap-2">
-                                    <span class="mt-1 w-14 shrink-0 text-body opacity-60">
-                                        行为指令
-                                    </span>
+                                <fieldset class="fieldset mb-3">
+                                    <legend class="fieldset-legend">行为指令</legend>
                                     <textarea
-                                        class="textarea textarea-sm textarea-bordered min-h-[56px] flex-1 leading-relaxed"
+                                        class="textarea textarea-sm textarea-bordered w-full min-h-[56px] leading-relaxed"
                                         placeholder="注入系统提示词的身份节，如：每次回答前先称一声「sir」。留空 = 不注入。"
                                         value={shownInstructions()}
                                         disabled={busy()}
@@ -784,7 +841,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                             }
                                         }}
                                     />
-                                </div>
+                                </fieldset>
                             </Show>
                         </div>
                     </div>
@@ -823,8 +880,364 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                             </button>
                         </Show>
                     </div>
+
+                    {/* 下缘拖高：绝对定位在抽屉底边（不占布局）。双击复位到 2/3 视口。 */}
+                    <div
+                        class="absolute inset-x-0 bottom-0 z-10 h-1.5 cursor-row-resize hover:bg-primary/40 active:bg-primary/60"
+                        title="拖动调整高度（双击复位）"
+                        onMouseDown={onHeightGripDown}
+                        onDblClick={resetHeight}
+                    />
                 </div>
             </div>
         </Show>
+    );
+}
+
+// ── 模型字段：默认只显示当前选中项，点按钮才展开选择表 ───────────────
+//
+// 为什么收起（而不是像以前那样常驻大表）：常驻表格占了右栏一半高度，
+// 反而「一眼看不出当前选的是哪个模型」（表格里选中态只是一行浅蓝，淹没在几十行里）。
+// 收起后当前值就是一行按钮，选中态一目了然；要改再展开。
+// 展开态表在右栏内部向下推（不是浮层）：右栏本就 overflow-y-auto，浮层会被抽屉裁切。
+
+function ChevronDown(props: { open: boolean }) {
+    return (
+        <svg
+            class={`h-3.5 w-3.5 shrink-0 transition-transform ${props.open ? "rotate-180" : ""}`}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            aria-hidden="true"
+        >
+            <path d="m6 9 6 6 6-6" />
+        </svg>
+    );
+}
+
+function ModelField(props: {
+    models: ModelBrief[];
+    value: string;
+    creating: boolean;
+    disabled?: boolean;
+    onPick: (ref: string) => void;
+}) {
+    const [open, setOpen] = createSignal(false);
+    // 新建人物时模型还是草稿、多半正要挑 → 直接展开；编辑态默认收起（先看清当前值）
+    createEffect(
+        on(
+            () => props.creating,
+            (c) => {
+                if (c) setOpen(true);
+            },
+        ),
+    );
+    const current = createMemo(
+        () => props.models.find((m) => m.ref === props.value || m.id === props.value) ?? null,
+    );
+    const price = () => {
+        const c = current()?.cost;
+        if (!c || c.input == null) return "";
+        return `$${c.input}/$${c.output} per 1M`;
+    };
+
+    return (
+        <fieldset class="fieldset mb-3">
+            <legend class="fieldset-legend">模型</legend>
+            <div class="flex flex-wrap items-center gap-2">
+                <button
+                    class="btn btn-sm h-auto min-h-0 flex-col items-start gap-0 py-1.5 text-left font-normal"
+                    aria-label="选择模型"
+                    aria-expanded={open()}
+                    title={props.value ? `当前模型：${props.value}（点击展开/收起）` : "点击选择模型"}
+                    disabled={props.disabled}
+                    data-testid="persona-model-trigger"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        setOpen((o) => !o);
+                    }}
+                >
+                    <span class="flex items-center gap-2">
+                        <span class="font-mono text-body">
+                            {props.value
+                                ? personaStore.displayModel(props.value)
+                                : "（未选模型）"}
+                        </span>
+                        <ChevronDown open={open()} />
+                    </span>
+                    <Show when={current()?.name || price()}>
+                        <span class="text-caption opacity-60">
+                            {current()?.name ?? ""}
+                            <Show when={price()}>
+                                <span class="opacity-70">{current()?.name ? " · " : ""}{price()}</span>
+                            </Show>
+                        </span>
+                    </Show>
+                </button>
+                <Show when={!open()}>
+                    <span class="text-caption opacity-50">点击更换</span>
+                </Show>
+                <Show when={props.creating && props.models.length === 0}>
+                    <span class="text-caption opacity-50">模型清单未加载，稍候（人物必须指定模型）</span>
+                </Show>
+            </div>
+            <Show when={open()}>
+                <div class="mt-2 rounded-box border border-base-300 p-2" data-testid="persona-model-picker">
+                    <ModelPicker
+                        models={props.models}
+                        value={props.value}
+                        disabled={props.disabled}
+                        onPick={(ref) => {
+                            props.onPick(ref);
+                            setOpen(false);
+                        }}
+                    />
+                </div>
+            </Show>
+        </fieldset>
+    );
+}
+
+// ── 模型选择器：provider 切片 + 搜索 + 账号 + 可排序表格 ─────────────
+//
+// 需求：像 Excel 切片查询 —— provider 过滤按钮（全部 / 各家）、查询输入框、
+// 选中 provider 后可切账号（一个则默认选中，多个默认第一个）；模型以**表格**列出各项属性，
+// **价格分列**（输入/输出/缓存），列头可点击排序。
+
+type SortKey = "id" | "context" | "output" | "in" | "out" | "cache";
+
+function fmtTokens(n: number | undefined): string {
+    if (n == null || !n) return "—";
+    if (n >= 1_000_000) return `${Math.round(n / 100_000) / 10}M`;
+    if (n >= 1000) return `${Math.round(n / 1000)}K`;
+    return String(n);
+}
+function fmtPrice(n: number | undefined): string {
+    if (n == null) return "—";
+    return n === 0 ? "免费" : String(n);
+}
+
+function ModelPicker(props: {
+    models: ModelBrief[];
+    value: string;
+    disabled?: boolean;
+    onPick: (ref: string) => void;
+}) {
+    const [provider, setProvider] = createSignal("all");
+    const [query, setQuery] = createSignal("");
+    const [sortKey, setSortKey] = createSignal<SortKey>("in");
+    const [sortDir, setSortDir] = createSignal<1 | -1>(1);
+    const [acctByProvider, setAcctByProvider] = createSignal<Record<string, string>>({});
+
+    const parsed = createMemo(() => props.models.map((m) => ({ m, q: splitQualified(m.ref) })));
+
+    const providers = createMemo(() => {
+        const cnt = new Map<string, Set<string>>();
+        for (const { m, q } of parsed()) {
+            if (!q) continue;
+            const set = cnt.get(q.provider) ?? new Set<string>();
+            set.add(m.id);
+            cnt.set(q.provider, set);
+        }
+        return [...cnt.entries()]
+            .map(([name, ids]) => ({ name, count: ids.size }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    });
+
+    const accountsOf = (p: string): string[] => {
+        const out: string[] = [];
+        for (const { m, q } of parsed()) if (q?.provider === p && !out.includes(m.account)) out.push(m.account);
+        return out;
+    };
+    const accountOf = (p: string) => acctByProvider()[p] ?? accountsOf(p)[0] ?? "";
+
+    const rows = createMemo(() => {
+        const q = query().trim().toLowerCase();
+        const cur = splitQualified(props.value);
+        const seen = new Set<string>();
+        const out: {
+            provider: string;
+            id: string;
+            name: string;
+            api: string;
+            context?: number;
+            output?: number;
+            reasoning: boolean;
+            cost: ModelBrief["cost"];
+            ref: string;
+            active: boolean;
+        }[] = [];
+        for (const { m, q: pq } of parsed()) {
+            if (!pq) continue;
+            if (provider() !== "all" && pq.provider !== provider()) continue;
+            if (q && !m.id.toLowerCase().includes(q) && !m.name.toLowerCase().includes(q)) continue;
+            const key = `${pq.provider}/${m.id}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const acct = provider() === "all" ? m.account : accountOf(pq.provider);
+            const variant =
+                provider() === "all"
+                    ? m
+                    : props.models.find((x) => {
+                          const y = splitQualified(x.ref);
+                          return !!y && y.provider === pq.provider && y.model === m.id && y.account === acct;
+                      }) ?? m;
+            out.push({
+                provider: pq.provider,
+                id: m.id,
+                name: m.name,
+                api: m.api,
+                context: m.contextLimit,
+                output: m.maxOutputTokens,
+                // 有真档位才算「支持推理」（排除哨兵 default 与 none）
+                reasoning: m.reasoning.supported.some((x) => x !== "default" && x !== "none"),
+                cost: m.cost ?? null,
+                ref: variant.ref,
+                active:
+                    props.value === variant.ref ||
+                    props.value === m.id ||
+                    (!!cur && cur.provider === pq.provider && cur.model === m.id),
+            });
+        }
+        const k = sortKey();
+        const d = sortDir();
+        const val = (r: (typeof out)[number]): number | string => {
+            switch (k) {
+                case "id":
+                    return r.id.toLowerCase();
+                case "context":
+                    return r.context ?? Number.POSITIVE_INFINITY;
+                case "output":
+                    return r.output ?? Number.POSITIVE_INFINITY;
+                case "in":
+                    return r.cost?.input ?? Number.POSITIVE_INFINITY;
+                case "out":
+                    return r.cost?.output ?? Number.POSITIVE_INFINITY;
+                case "cache":
+                    return r.cost?.cacheRead ?? Number.POSITIVE_INFINITY;
+            }
+        };
+        out.sort((a, b) => {
+            const va = val(a);
+            const vb = val(b);
+            const c = typeof va === "string" ? va.localeCompare(String(vb)) : va - (vb as number);
+            return c !== 0 ? c * d : a.id.localeCompare(b.id);
+        });
+        return out;
+    });
+
+    const toggleSort = (k: SortKey) => {
+        if (sortKey() === k) setSortDir((d) => (d === 1 ? -1 : 1));
+        else {
+            setSortKey(k);
+            setSortDir(1);
+        }
+    };
+    const arrow = (k: SortKey) => (sortKey() === k ? (sortDir() === 1 ? " ▲" : " ▼") : "");
+    const Th = (p: { k: SortKey; label: string; cls?: string }) => (
+        <th
+            class={`cursor-pointer select-none whitespace-nowrap ${p.cls ?? ""}`}
+            onClick={() => toggleSort(p.k)}
+        >
+            {p.label}
+            {arrow(p.k)}
+        </th>
+    );
+
+    return (
+        <div class="space-y-1">
+            {/* provider 切片 */}
+            <div class="flex flex-wrap items-center gap-1">
+                <button
+                    class={`btn btn-xs ${provider() === "all" ? "btn-primary" : "btn-ghost border border-base-300"}`}
+                    onClick={() => setProvider("all")}
+                >
+                    全部（{props.models.length > 0 ? new Set(parsed().map((x) => x.q?.provider)).size : 0}）
+                </button>
+                <For each={providers()}>
+                    {(p) => (
+                        <button
+                            class={`btn btn-xs ${provider() === p.name ? "btn-primary" : "btn-ghost border border-base-300"}`}
+                            onClick={() => setProvider(p.name)}
+                        >
+                            {p.name}（{p.count}）
+                        </button>
+                    )}
+                </For>
+            </div>
+
+            {/* 搜索 + 账号 */}
+            <div class="flex flex-wrap items-center gap-2">
+                <input
+                    class="input input-xs input-bordered w-56"
+                    placeholder="🔍 过滤模型 id / 名称"
+                    value={query()}
+                    onInput={(e) => setQuery(e.currentTarget.value)}
+                />
+                <Show when={provider() !== "all" && accountsOf(provider()).length > 1}>
+                    <label class="flex items-center gap-1 text-caption opacity-70">
+                        账号
+                        <select
+                            class="select select-xs select-bordered"
+                            value={accountOf(provider())}
+                            onChange={(e) => setAcctByProvider((s) => ({ ...s, [provider()]: e.currentTarget.value }))}
+                        >
+                            <For each={accountsOf(provider())}>{(a) => <option value={a}>{a}</option>}</For>
+                        </select>
+                    </label>
+                </Show>
+                <span class="text-caption opacity-50">{rows().length} 个模型</span>
+            </div>
+
+            {/* 模型表（价格分列，列头排序） */}
+            <div class="max-h-52 overflow-y-auto rounded-box border border-base-300">
+                <table class="table table-xs">
+                    <thead class="sticky top-0 bg-base-100">
+                        <tr>
+                            <Th k="id" label="模型" />
+                            <Show when={provider() === "all"}>
+                                <th class="whitespace-nowrap">provider</th>
+                            </Show>
+                            <Th k="context" label="上下文" cls="text-right" />
+                            <Th k="output" label="输出上限" cls="text-right" />
+                            <th>推理</th>
+                            <Th k="in" label="输入$/1M" cls="text-right" />
+                            <Th k="out" label="输出$/1M" cls="text-right" />
+                            <Th k="cache" label="缓存$/1M" cls="text-right" />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <For each={rows()}>
+                            {(r) => (
+                                <tr class={r.active ? "bg-primary/10" : ""}>
+                                    <td>
+                                        <button
+                                            class={`btn btn-xs ${r.active ? "btn-primary" : "btn-ghost border border-base-300"}`}
+                                            aria-pressed={r.active}
+                                            aria-label={r.id}
+                                            title={r.ref}
+                                            disabled={props.disabled}
+                                            onClick={() => props.onPick(r.ref)}
+                                        >
+                                            {r.id}
+                                        </button>
+                                    </td>
+                                    <Show when={provider() === "all"}>
+                                        <td class="whitespace-nowrap text-caption opacity-70">{r.provider}</td>
+                                    </Show>
+                                    <td class="text-right font-mono">{fmtTokens(r.context)}</td>
+                                    <td class="text-right font-mono">{fmtTokens(r.output)}</td>
+                                    <td class="text-caption">{r.reasoning ? "✓" : "—"}</td>
+                                    <td class="text-right font-mono">{fmtPrice(r.cost?.input)}</td>
+                                    <td class="text-right font-mono">{fmtPrice(r.cost?.output)}</td>
+                                    <td class="text-right font-mono">{fmtPrice(r.cost?.cacheRead)}</td>
+                                </tr>
+                            )}
+                        </For>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     );
 }

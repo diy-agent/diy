@@ -57,9 +57,9 @@ describe("currentGitBranch —— 从给定目录上溯找 .git", () => {
     resetGitBranchCache();
     expect(currentGitBranch(dir)).toBe("feat/tmp-branch");
     // 从子目录上溯也能找到（main 的调用点是 out/main，也在仓库子目录里）
-    mkdirSync(join(dir, "pkgs.ts/diy-app/out/main"), { recursive: true });
+    mkdirSync(join(dir, "pkgs.ts/diy-app/build/preview/main"), { recursive: true });
     resetGitBranchCache();
-    expect(currentGitBranch(join(dir, "pkgs.ts/diy-app/out/main"))).toBe("feat/tmp-branch");
+    expect(currentGitBranch(join(dir, "pkgs.ts/diy-app/build/preview/main"))).toBe("feat/tmp-branch");
   });
 
   it("detached HEAD → `<短 sha>(detached)`（不显示无意义的字面量 HEAD）", () => {

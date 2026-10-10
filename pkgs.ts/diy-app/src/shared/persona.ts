@@ -6,7 +6,7 @@
 //   （改一个会话另一个也变），想隔离就必然无法统一改。解法是把**配置挂到可复用的具名实体**
 //   上：会话只持有「用哪个人物」的引用，改人物 = 所有引用者统一变（下一轮生效），
 //   换人物 = 只改本会话的引用、完全不碰别人。旧实现把 activeModel 放在 renderer 的
-//   模块级全局信号里，两个病症同源（串台 + 重启回落硬编码 DEFAULT_MODEL）。
+//   模块级全局信号里，两个病症同源（串台 + 重启回落硬编码默认模型）。
 //
 // **引用用 id，名字只是标签**（可改）：
 //   任务的 `persona` 存 id 而不是名字。名字是给人看的（"大副"随时可改成"赫敏"），
@@ -16,7 +16,6 @@
 // 约定：本文件只放 schema/类型/内置默认值，禁止 import node:*（renderer 会打进包）。
 
 import { z } from "zod";
-import { DEFAULT_MODEL } from "./models";
 
 /**
  * 人物定义：agent 的**默认工作方式**。
@@ -85,11 +84,16 @@ export const PERSONA_ID_PREFIX = "persona/";
 export const BUILTIN_PERSONA_ID = "persona/1";
 export const BUILTIN_PERSONA_NAME = "大副";
 
-/** 内置缺省人物定义 */
+/**
+ * 内置缺省人物定义（personas.yaml 不存在时系统可用的唯一人物）。
+ * **无内置缺省模型**：应用首次启动没有任何 provider（没有 key 就没有可用模型），
+ * 模型必须等用户添加 provider 后自建/指定 —— 不写死一个代码内模型（那正是旧
+ * 默认模型的病灶：重启回落到一个与用户配置无关的值）。
+ */
 export const BUILTIN_PERSONA_DEF: PersonaDef = {
   name: BUILTIN_PERSONA_NAME,
-  model: DEFAULT_MODEL,
-  reasoningEffort: "medium",
+  model: "",
+  reasoningEffort: "",
   instructions: "每次回答前先称一声「sir」。",
 };
 

@@ -2,7 +2,7 @@
 // 🎯 Electron 主进程入口
 //
 // 运行配置统一由 src/runtime.ts readRuntimeConfig() 从入口注入的环境变量装配：
-//   DIY_HOME            → 数据根（.diy.sh: build/home，测试: mkdtemp，生产: ~/.diy）
+//   DIY_HOME            → 数据根（.diy.sh: build/<variant>/home，测试: mkdtemp，生产: ~/.diy）
 //   DIY_PORT            → 首选端口
 //   DIY_DEV_SERVER_URL  → dev 时加载 Vite URL；缺省 → loadFile 编译产物
 //
@@ -65,6 +65,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 无条件覆盖会误伤生产 GUI —— `bin/diy` 注入的 `$0` 会被改成 `<repo>/diy.sh`（数据根
 // build/home），模型于是去敲一个连不上当前生产实例的入口（##255）。
 // 缺失时按**数据根**推导：生产根 → "diy"；隔离/开发/测试 → <repo>/diy.sh（见 cliEntryForRepo）。
+// 打包后的 app 不自带 CLI 入口（asar 内不可执行），生产用全局安装的 diy（PATH 解析）。
 const home = readRuntimeConfig().home;
 if (app.isPackaged) {
   process.env["DIY_CLI"] ||= "diy";
@@ -79,7 +80,7 @@ const devUrlArg = cfg.devServerUrl ?? "";
 const isDev = !!devUrlArg;
 
 // ── 1. AppConfig ──
-// 单根模型：所有数据落在 DIY_HOME 下（diy.sh: ./build/home，测试: mkdtemp）
+// 单根模型：所有数据落在 DIY_HOME 下（diy.sh: ./build/<variant>/home，测试: mkdtemp）
 // 同时把 Electron 的 userData/cache 也指向该根，实现锁隔离。
 appConfig = AppConfig.fromRuntime(cfg);
 for (const p of [appConfig.electronUserData, appConfig.cache, appConfig.diyHome]) {

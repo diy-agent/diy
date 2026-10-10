@@ -2,36 +2,42 @@
 # diy.sh — worktree 开发入口（测试约定 ./diy.sh，cwd=仓库根）。
 #
 # 机制（与 src/runtime.ts / src/cli/index.ts / src/main/index.ts 契约一致）：
-#   1. CLI：DIY_CLI_MODE=auto（默认）优先用编译产物 out/cli/index.js（实测冷启动
+#   1. CLI：DIY_CLI_MODE=auto（默认）优先用编译产物 build/<variant>/cli/index.js（实测冷启动
 #      ~2.5× 快于 tsx：310ms vs 629ms），只要 CLI 打包源比产物新就自动回退 tsx
 #      源码，保持「改完即生效」；DIY_CLI_MODE=tsx 强制源码、=compiled 强制产物；
 #      =http 走 server /cli 端点（curl，免 node 启动，~60ms；传输失败自动回退直连）
 #   2. GUI：CLI 通过 ensureAppPort() 复用或拉起 Electron 产物
-#      out/main/index.mjs + out/preload/index.js + out/renderer/index.html
+#      build/<variant>/main/index.mjs + .../preload/index.js + .../renderer/index.html
 #      → GUI 必须先构建才会存在，未构建直接报错（见下方检查）
-#   3. dev 模式另走：cd pkgs.ts/diy-app && ./sha.sh dev
+#   3. preview/lab 模式另走：cd pkgs.ts/diy-app && ./sha.sh preview | lab
 #      起 Vite dev server 并注入 DIY_DEV_SERVER_URL，走 loadURL 热更新（HMR），无需 build
-#   4. 数据隔离：DIY_HOME 默认 ./build/home（本 worktree 独立），注入后由
+#   4. 数据隔离：DIY_HOME 默认 ./build/<variant>/home（本 worktree × 变体独立），注入后由
 #      src/runtime.ts readRuntimeConfig() 统一读取；测试用 mkdtemp 隔离
 #      环境声明：DIY_ENV 默认 development（dev/test 专属能力的判据，缺省按 production）
-#   5. 发布入口：pkgs.ts/diy-app/bin/diy 跑编译产物 out/cli/index.js，数据落 ~/.diy
+#   5. 发布入口：pkgs.ts/diy-app/bin/diy 跑编译产物 build/prod/cli/index.js，数据落 ~/.diy
 #
 # 前置要求：首次使用或改动 main/preload/renderer 后，需先构建：
 #   cd pkgs.ts/diy-app && ./sha.sh build
-# 否则 out/main/index.mjs 不存在，CLI 会在 stderr 提示并退出（不污染 stdout JSON）。
+# 否则 build/<variant>/main/index.mjs 不存在，CLI 会在 stderr 提示并退出（不污染 stdout JSON）。
+# 变体：DIY_VARIANT=prod|test|preview|lab（缺省 preview）。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$SCRIPT_DIR/pkgs.ts/diy-app"
-HOME_DEFAULT="$SCRIPT_DIR/build/home"
+# 变体根：决定连/起哪个实例（prod 一般由全局 diy 负责，这里缺省 preview）。
+# preview / lab 共用 ./diy.sh 作为「通用 CLI 客户端」，连谁由 DIY_VARIANT + DIY_HOME 决定。
+DIY_VARIANT="${DIY_VARIANT:-preview}"
+export DIY_VARIANT
+HOME_DEFAULT="$SCRIPT_DIR/build/${DIY_VARIANT}/home"
 mkdir -p "$HOME_DEFAULT"
 
 # 前置检查：GUI 产物必须存在（CLI 本身是 tsx 源码无需构建，但要拉起的 Electron 必须已构建）
-if [[ ! -f "$APP_DIR/out/main/index.mjs" ]]; then
-  echo "[diy.sh] 未找到 Electron 产物: $APP_DIR/out/main/index.mjs" >&2
-  echo "[diy.sh] 机制: CLI(编译产物/tsx 源码) 需拉起 GUI 产物(out/main)才能响应 RPC" >&2
-  echo "[diy.sh] 请先构建: cd pkgs.ts/diy-app && ./sha.sh build" >&2
-  echo "[diy.sh] 或开发模式（HMR，无需 build）: cd pkgs.ts/diy-app && ./sha.sh dev" >&2
+GUI_ENTRY="$APP_DIR/build/${DIY_VARIANT}/main/index.mjs"
+if [[ ! -f "$GUI_ENTRY" ]]; then
+  echo "[diy.sh] 未找到 Electron 产物: $GUI_ENTRY" >&2
+  echo "[diy.sh] 机制: CLI(编译产物/tsx 源码) 需拉起 GUI 产物(build/<variant>/main)才能响应 RPC" >&2
+  echo "[diy.sh] 请先构建（变体 ${DIY_VARIANT}）: DIY_VARIANT=${DIY_VARIANT} ./pkgs.ts/diy-app/sha.sh build" >&2
+  echo "[diy.sh] 或开发模式（HMR，无需 build）: cd pkgs.ts/diy-app && ./sha.sh preview | lab" >&2
   exit 1
 fi
 
@@ -149,7 +155,7 @@ cd "$APP_DIR"
 #   比产物新（刚改完码没重新 build）→ 回退 tsx 源码，保住「改完即生效」。
 #   新鲜度检查实测 ~14ms，远小于省下的 ~390ms。
 # DIY_CLI_MODE 默认值见文件上部（已设）；此处只定位产物路径。
-CLI_JS="$APP_DIR/out/cli/index.js"
+CLI_JS="$APP_DIR/build/${DIY_VARIANT}/cli/index.js"
 DIY_CLI_EFFECTIVE="tsx"
 if [[ "$DIY_CLI_MODE" != "tsx" && -f "$CLI_JS" ]]; then
   if [[ "$DIY_CLI_MODE" == "compiled" ]]; then
@@ -164,16 +170,16 @@ fi
 
 # 机制提示（仅交互终端输出到 stderr，不污染 --json 的 stdout）
 if [[ -t 2 ]]; then
-  echo "[diy.sh] CLI=${DIY_CLI_MODE:-auto}(${DIY_CLI_EFFECTIVE:-?}) | GUI=out/main产物 | HOME=${DIY_HOME:-$HOME_DEFAULT} | 需先 build（dev 模式除外）" >&2
+  echo "[diy.sh] CLI=${DIY_CLI_MODE:-auto}(${DIY_CLI_EFFECTIVE:-?}) | VARIANT=${DIY_VARIANT} | GUI=build/${DIY_VARIANT}/main产物 | HOME=${DIY_HOME:-$HOME_DEFAULT} | 需先 build（preview/lab 模式除外）" >&2
 fi
 
 # DIY_CLI：当前生效的 CLI 入口（提示词模版 100-diy 用它告诉 agent 该敲哪个命令；
 # 少了它 agent 只能猜“diy”，在 worktree 里会打到生产数据根）
 # DIY_ENV：运行环境声明（development/test/production，缺省 production）
 if [[ "$DIY_CLI_EFFECTIVE" == "compiled" ]]; then
-  exec env DIY_HOME="${DIY_HOME:-$HOME_DEFAULT}" DIY_CLI="$SCRIPT_DIR/diy.sh" DIY_ENV="${DIY_ENV:-development}" \
+  exec env DIY_HOME="${DIY_HOME:-$HOME_DEFAULT}" DIY_CLI="$SCRIPT_DIR/diy.sh" DIY_ENV="${DIY_ENV:-development}" DIY_VARIANT="${DIY_VARIANT}" \
     node "$CLI_JS" "$@"
 else
-  exec env DIY_HOME="${DIY_HOME:-$HOME_DEFAULT}" DIY_CLI="$SCRIPT_DIR/diy.sh" DIY_ENV="${DIY_ENV:-development}" \
+  exec env DIY_HOME="${DIY_HOME:-$HOME_DEFAULT}" DIY_CLI="$SCRIPT_DIR/diy.sh" DIY_ENV="${DIY_ENV:-development}" DIY_VARIANT="${DIY_VARIANT}" \
     "$APP_DIR/../../node_modules/.bin/tsx" src/cli/index.ts "$@"
 fi

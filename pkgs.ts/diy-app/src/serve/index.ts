@@ -63,7 +63,7 @@ const cfg = readRuntimeConfig();
 // serve 是纯 Node 常驻进程，同样要防 EPIPE / 未捕获异常裸奔；日志独立落 serve.log
 installDiagnostics(cfg.home, "serve");
 const ROOT = path.resolve(__dirname, "..", "..");
-const STATIC_DIR = path.resolve(ROOT, "out/renderer");
+const STATIC_DIR = path.resolve(ROOT, "build", process.env["DIY_VARIANT"] ?? "prod", "renderer");
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",

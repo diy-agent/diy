@@ -27,7 +27,7 @@ import { BlockStore, type Op } from "../../src/main/services/local-blocks";
 
 let PROJECT = "1";
 beforeAll(() => {
-  process.env["OPENCODE_ZEN_API_KEY"] = "test-key"; // 桩模型不用它，但 chat 入口会校验
+  process.env["OPENCODE_API_KEY"] = "test-key"; // 桩模型不用它，但 chat 入口会校验
   PROJECT = createProject(join(diyHome(), "steer-work"));
 });
 

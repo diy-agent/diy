@@ -7,6 +7,7 @@ import {
     INTERRUPTED_TOOL_NOTICE,
     interruptedToolPatches,
     BlockStore,
+    danglingStopPatches,
     replay,
     toTree,
     blocksToMessages,
@@ -332,5 +333,209 @@ describe("中断 tool 的显式终态收敛（防止重载后重复发起）", (
         const value = (toolMsg.content as Array<{ output: { value: string } }>)[0]!.output.value;
         expect(value).toBe(INTERRUPTED_TOOL_NOTICE);
         expect(value).not.toContain("重新发起");
+    });
+});
+
+// ─── 投递选项（压缩能力的落点）────────────────────────
+//
+// blocksToMessages 的 opts 是「只发部分历史 / 裁工具输出」的唯一落点。
+// 关键契约：切分只按 turn（不切半轮，否则出「有 tool-call 无 result」残段被 provider 拒）。
+
+describe("blocksToMessages 投递选项（压缩落点）", () => {
+    /** 两轮：t1(用户问候 + bash 工具) / t2(用户问候) */
+    function twoTurns(): BlockStore {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: "t1", kind: "turn" });
+        s.apply({ op: "start", id: "t1_u", kind: "text", parent: "t1", meta: { role: "user" } });
+        s.apply({ op: "delta", id: "t1_u", fields: { content: "第一轮" } });
+        s.apply({ op: "stop", id: "t1_u" });
+        s.apply({ op: "start", id: "t1_r", kind: "tool", parent: "t1", meta: { tool: "bash" } });
+        s.apply({ op: "patch", id: "t1_r", fields: { args: { command: "ls" } } });
+        s.apply({ op: "delta", id: "t1_r", fields: { output: "a\nb\nc" } });
+        s.apply({ op: "patch", id: "t1_r", fields: { status: "done" } });
+        s.apply({ op: "stop", id: "t1_r" });
+        s.apply({ op: "stop", id: "t1" });
+        s.apply({ op: "start", id: "t2", kind: "turn" });
+        s.apply({ op: "start", id: "t2_u", kind: "text", parent: "t2", meta: { role: "user" } });
+        s.apply({ op: "delta", id: "t2_u", fields: { content: "第二轮" } });
+        s.apply({ op: "stop", id: "t2_u" });
+        s.apply({ op: "stop", id: "t2" });
+        return s;
+    }
+
+    it("缺省 = 全投（与历史行为完全一致）", () => {
+        const m = blocksToMessages(twoTurns());
+        expect(m.map((x) => x.role)).toEqual(["user", "assistant", "tool", "user"]);
+    });
+
+    it("sinceTurnId = 边界轮：只投该轮及其后（旧轮整棵子树不带）", () => {
+        const m = blocksToMessages(twoTurns(), { sinceTurnId: "t2" });
+        expect(m.map((x) => x.role)).toEqual(["user"]);
+        expect((m[0]!.content as string)).toBe("第二轮");
+    });
+
+    it("sinceTurnId = null：全部清零 —— 一条都不投", () => {
+        expect(blocksToMessages(twoTurns(), { sinceTurnId: null })).toEqual([]);
+    });
+
+    it("边界轮找不到：退化为全投（不让用户面对空白会话）", () => {
+        const m = blocksToMessages(twoTurns(), { sinceTurnId: "tX" });
+        expect(m).toHaveLength(4);
+    });
+
+    it("transformToolResult：只作用于工具真实输出，tool-call 结构不动（配对铁律不变）", () => {
+        const m = blocksToMessages(twoTurns(), {
+            transformToolResult: ({ output }) => `[裁]${output.length}`,
+        });
+        const tool = m.find((x) => x.role === "tool")!;
+        const value = (tool.content as Array<{ output: { value: string } }>)[0]!.output.value;
+        expect(value).toBe("[裁]5");
+        // tool-call 仍在，且 toolCallId 未变 → call/result 仍配对
+        const call = m.find((x) => x.role === "assistant")!;
+        expect((call.content as Array<{ toolCallId: string }>)[0]!.toolCallId).toBe("t1_r");
+    });
+
+    it("transformToolResult 不碰中断占位文案（契约文本不能被裁）", () => {
+        const s = twoTurns();
+        // 造一个中断 tool：只有 args、无 output
+        s.apply({ op: "start", id: "t3", kind: "turn" });
+        s.apply({ op: "start", id: "t3_r", kind: "tool", parent: "t3", meta: { tool: "bash" } });
+        s.apply({ op: "patch", id: "t3_r", fields: { args: { command: "date" } } });
+        s.apply({ op: "stop", id: "t3_r" });
+        s.apply({ op: "stop", id: "t3" });
+        const m = blocksToMessages(s, { transformToolResult: () => "改掉了" });
+        // 按 toolCallId 精确定位中断块（不能拿第一个 tool —— t1_r 是正常输出，会被裁）
+        const tool = m.find(
+            (x) =>
+                x.role === "tool" &&
+                (x.content as Array<{ toolCallId: string }>)[0]!.toolCallId === "t3_r",
+        )!;
+        const value = (tool.content as Array<{ output: { value: string } }>)[0]!.output.value;
+        expect(value).toBe(INTERRUPTED_TOOL_NOTICE);
+    });
+});
+
+describe("中断 tool 的投递恒定性（回归：收敛动作不得改变投递结果）", () => {
+    /** t1 里一个 tool c1：args 已到、无 output（未收敛态） */
+    function interruptedTurn(): BlockStore {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: "t1", kind: "turn" });
+        s.apply({ op: "start", id: "c1", kind: "tool", parent: "t1", meta: { tool: "bash" } });
+        s.apply({ op: "patch", id: "c1", fields: { args: { command: "sleep 9" } } });
+        s.apply({ op: "stop", id: "c1" });
+        s.apply({ op: "stop", id: "t1" });
+        return s;
+    }
+    const valueOf = (m: ReturnType<typeof blocksToMessages>) =>
+        (m.find((x) => x.role === "tool")!.content as Array<{ output: { value: string } }>)[0]!.output.value;
+
+    it("已收敛的中断块（output 已写契约文案）仍不被裁剪 —— 否则本地补的错误信息被当历史投递", () => {
+        const s = interruptedTurn();
+        for (const op of interruptedToolPatches(s)) s.apply(op); // 模拟 main 的落盘收敛
+        expect(valueOf(blocksToMessages(s, { transformToolResult: () => "改掉了" }))).toBe(
+            INTERRUPTED_TOOL_NOTICE,
+        );
+    });
+
+    it("收敛前后投递**逐字一致**（D1「stop 即定稿」的结构前提）", () => {
+        const before = blocksToMessages(interruptedTurn(), { transformToolResult: () => "改掉了" });
+        const s = interruptedTurn();
+        for (const op of interruptedToolPatches(s)) s.apply(op);
+        const after = blocksToMessages(s, { transformToolResult: () => "改掉了" });
+        expect(JSON.stringify(after)).toBe(JSON.stringify(before));
+    });
+});
+
+describe("tool-result 的 origin 自证位（落盘用；真发不带）", () => {
+    /** 三种来源各一条：真实输出 / 中断终态 / 跑完无输出 */
+    function three(): BlockStore {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: "t1", kind: "turn" });
+        s.apply({ op: "start", id: "ok", kind: "tool", parent: "t1", meta: { tool: "bash" } });
+        s.apply({ op: "patch", id: "ok", fields: { args: { command: "ls" } } });
+        s.apply({ op: "delta", id: "ok", fields: { output: "a" } });
+        s.apply({ op: "patch", id: "ok", fields: { status: "done" } });
+        s.apply({ op: "stop", id: "ok" });
+        s.apply({ op: "start", id: "int", kind: "tool", parent: "t1", meta: { tool: "bash" } });
+        s.apply({ op: "patch", id: "int", fields: { args: { command: "sleep 9" } } });
+        s.apply({
+            op: "patch",
+            id: "int",
+            fields: { status: INTERRUPTED_STATUS, output: INTERRUPTED_TOOL_NOTICE },
+        });
+        s.apply({ op: "stop", id: "int" });
+        s.apply({ op: "start", id: "emp", kind: "tool", parent: "t1", meta: { tool: "bash" } });
+        s.apply({ op: "patch", id: "emp", fields: { args: { command: "true" } } });
+        s.apply({ op: "patch", id: "emp", fields: { status: "done" } });
+        s.apply({ op: "stop", id: "emp" });
+        s.apply({ op: "stop", id: "t1" });
+        return s;
+    }
+    const origins = (withOrigin: boolean) =>
+        blocksToMessages(three(), withOrigin ? { withOrigin: true } : undefined)
+            .filter((x) => x.role === "tool")
+            .map((x) => (x.content as Array<{ origin?: string }>)[0]!.origin);
+
+    it("缺省（真发）= 不写 origin，保持原生 part 形状", () => {
+        expect(origins(false)).toEqual([undefined, undefined, undefined]);
+    });
+    it("withOrigin = 三值可程序化区分：tool / interrupted / empty", () => {
+        expect(origins(true)).toEqual(["tool", "interrupted", "empty"]);
+    });
+});
+
+describe("danglingStopPatches：崩溃残留块补 stop", () => {
+    it("只挑未 stop 的块，子先父后（与 closeTurn 的收尾顺序一致）", () => {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: "t1", kind: "turn" });
+        s.apply({ op: "start", id: "u1", kind: "text", parent: "t1", meta: { role: "user" } });
+        s.apply({ op: "delta", id: "u1", fields: { content: "半" } });
+        s.apply({ op: "start", id: "t2", kind: "turn" });
+        s.apply({ op: "stop", id: "t2" }); // 已闭合的不再出现
+        expect(danglingStopPatches(s)).toEqual([
+            { op: "stop", id: "u1" },
+            { op: "stop", id: "t1" },
+        ]);
+    });
+
+    it("全已闭合 → 空（幂等：收敛后重跑不再产出）", () => {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: "t1", kind: "turn" });
+        s.apply({ op: "stop", id: "t1" });
+        expect(danglingStopPatches(s)).toEqual([]);
+    });
+});
+
+describe("消息级索引位 turn/step（落盘日志用；真发不带）", () => {
+    /** 一轮：开场 user（挂 turn）+ step 内 assistant 文本 / tool */
+    function turnWithStep(): BlockStore {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: "t1", kind: "turn" });
+        s.apply({ op: "start", id: "t1_u", kind: "text", parent: "t1", meta: { role: "user" } });
+        s.apply({ op: "delta", id: "t1_u", fields: { content: "开场" } });
+        s.apply({ op: "stop", id: "t1_u" });
+        s.apply({ op: "start", id: "t1_s1", kind: "step", parent: "t1" });
+        s.apply({ op: "start", id: "c1", kind: "tool", parent: "t1_s1", meta: { tool: "bash" } });
+        s.apply({ op: "patch", id: "c1", fields: { args: { command: "ls" } } });
+        s.apply({ op: "patch", id: "c1", fields: { status: "done" } });
+        s.apply({ op: "stop", id: "c1" });
+        s.apply({ op: "stop", id: "t1_s1" });
+        s.apply({ op: "stop", id: "t1" });
+        return s;
+    }
+
+    it("缺省（真发）= 不写 turn/step，保持原生形状", () => {
+        for (const m of blocksToMessages(turnWithStep())) {
+            expect(m).not.toHaveProperty("turn");
+            expect(m).not.toHaveProperty("step");
+        }
+    });
+
+    it("withIndex：每条都有 turn；step 内消息另有 step，开场 user 没有（如实反映 parent）", () => {
+        const ms = blocksToMessages(turnWithStep(), { withIndex: true });
+        for (const m of ms) expect(m.turn).toBe("t1");
+        const user = ms.find((m) => m.role === "user")!;
+        expect(user.step).toBeUndefined();
+        for (const m of ms.filter((x) => x.role !== "user")) expect(m.step).toBe("t1_s1");
     });
 });

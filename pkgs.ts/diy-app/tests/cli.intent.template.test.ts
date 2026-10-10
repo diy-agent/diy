@@ -30,9 +30,9 @@ interface ElectronFixture {
 let fx: ElectronFixture;
 
 beforeAll(async () => {
-    // 超预算用例会走到 chat()，它要求 main 进程有 OPENCODE_ZEN_API_KEY；
+    // 超预算用例会走到 chat()，它要求 main 进程有 OPENCODE_API_KEY；
     // 该路径在发送前就早退（不触网），给假 key 只为过前置校验。
-    process.env["OPENCODE_ZEN_API_KEY"] ||= "intent-test-dummy-key";
+    process.env["OPENCODE_API_KEY"] ||= "intent-test-dummy-key";
     // DIY_CLI 契约（##255）：**入口脚本注入的值必须被保留** —— main 只在未注入（缺失）时
     // 才按数据根自证。这里注入一个「外来」入口，断言提示词原样采用它。
     // 守住 R5 的回归：那时 main 无条件覆盖，会把注入的生产入口 `$0` 换成 `<repo>/diy.sh`
@@ -67,7 +67,7 @@ function overridePath(pid: string, relpath: string): string {
 }
 
 describe("template list/get", () => {
-    it("list — 装配入口 + 七份节 + 链片段、全部 builtin、入口与 _guard 锁定", async () => {
+    it("list — 装配入口 + 七份节 + 摘要片段 + 保命契约、全部 builtin、入口与 _guard 锁定", async () => {
         const pid = await freshProj("list");
         const r = await fx.sh.getJson(`./diy.sh template list ${pid}`);
         const list = r.data as Array<{
@@ -75,10 +75,11 @@ describe("template list/get", () => {
             status: string;
             locked: boolean;
             lockTip: string;
-            role: "entry" | "section";
+            role: "entry" | "section" | "fragment";
         }>;
         expect(list.map((e) => e.relpath)).toEqual([
             "_system.md",
+            "summary.md", // 摘要片段（不进 _system.md 装配；##271 起）
             "identity.md",
             "diy.md",
             "project.md",
@@ -91,7 +92,13 @@ describe("template list/get", () => {
         // 角色由入口的 include 推导（不再由 frontmatter 声明，避免两处漂移）
         expect(list.find((e) => e.relpath === "_system.md")!.role).toBe("entry");
         expect(list.find((e) => e.relpath === "project.md")!.role).toBe("section");
-        expect(list.every((e) => e.role === (e.relpath === "_system.md" ? "entry" : "section"))).toBe(true);
+        // summary.md 是 fragment（独立模版，不在 system 里）；其余非入口皆是 section
+        expect(list.find((e) => e.relpath === "summary.md")!.role).toBe("fragment");
+        expect(
+            list.every((e) =>
+                e.role === (e.relpath === "_system.md" ? "entry" : e.relpath === "summary.md" ? "fragment" : "section"),
+            ),
+        ).toBe(true);
         // 命名约定 `_` = 锁定：入口与保命契约都不可覆盖
         const guard = list.find((e) => e.relpath === "_guard.md")!;
         expect(guard.locked).toBe(true);

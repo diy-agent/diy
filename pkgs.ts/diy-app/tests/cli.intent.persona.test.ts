@@ -169,9 +169,9 @@ describe("agent.persona — 人物是配置实体", () => {
         expect(p.instructions).toBe("只回要点。");
 
         // 改模型：按 id 定位，只给 --model，其他字段保持（"未给 = 保持"语义）
-        await fx.sh.run(`./diy.sh agent persona set ${id} --model gpt-6-luna`);
+        await fx.sh.run(`./diy.sh agent persona set ${id} --model deepseek-v4.1-flash`);
         const p2 = (await personaList()).personas.find((x) => x.id === id)!;
-        expect(p2.model).toBe("gpt-6-luna");
+        expect(p2.model).toBe("deepseek-v4.1-flash");
         expect(p2.instructions).toBe("只回要点。");
         expect(p2.name).toBe(名); // 名字没被动
     });
@@ -179,7 +179,7 @@ describe("agent.persona — 人物是配置实体", () => {
     it("改名：只改显示名，id 不变（引用键稳定）", async () => {
         const 原 = uniq("待改名");
         const 新 = uniq("改名后");
-        const id = await addPersona(原, "gpt-6-luna");
+        const id = await addPersona(原, "mimo-v2.6-flash");
         await fx.sh.run(`./diy.sh agent persona set ${id} --name ${新}`);
         const p = (await personaList()).personas.find((x) => x.id === id)!;
         expect(p.name).toBe(新);
@@ -192,9 +192,10 @@ describe("agent.persona — 人物是配置实体", () => {
         );
         expect(bad.stderr + bad.stdout).toMatch(/未知模型/);
 
-        // mimo-v2.6-flash 不支持 xhigh（实测上游 400，见 shared/models.ts）
+        // 档位不在该模型支持集内（models.dev snapshot 只给布尔 reasoning，词表为通用集，
+        // `ultra` 不在通用集 → 应被拒）
         const bad2 = await fx.sh.run(
-            `./diy.sh agent persona set --name 报错人物 --model mimo-v2.6-flash --reasoningEffort xhigh`,
+            `./diy.sh agent persona set --name 报错人物 --model mimo-v2.6-flash --reasoningEffort ultra`,
         );
         expect(bad2.stderr + bad2.stdout).toMatch(/不支持推理强度/);
 
@@ -240,7 +241,7 @@ describe("任务 ↔ 人物绑定（引用存 id）", () => {
     });
 
     it("换人物 = 只改本任务（不影响别的任务）—— 续聊，不重置会话", async () => {
-        const 工兵 = await addPersona(uniq("工兵"), "gpt-5.6-luna");
+        const 工兵 = await addPersona(uniq("工兵"), "mimo-v2.6-flash");
         const a = await setupTask("任务A");
         const b = await setupTask("任务B");
         const before = personaOf(b);
@@ -261,7 +262,7 @@ describe("任务 ↔ 人物绑定（引用存 id）", () => {
         // 若拿名字当引用键，改名就等于把所有引用打断 → 引用者静默回落缺省人物（换模型不打招呼）
         const 原名 = uniq("原名");
         const 新名 = uniq("新名");
-        const id = await addPersona(原名, "gpt-6-luna");
+        const id = await addPersona(原名, "mimo-v2.6-flash");
         const uri = await setupTask("改名不影响绑定的任务");
         await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
 
@@ -272,7 +273,7 @@ describe("任务 ↔ 人物绑定（引用存 id）", () => {
     });
 
     it("固定绑定后 task show 回显 persona id（新格式 persona/<n>）", async () => {
-        const id = await addPersona(uniq("回显人物"), "gpt-6-luna");
+        const id = await addPersona(uniq("回显人物"), "mimo-v2.6-flash");
         const uri = await setupTask("回显测试");
         await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
         const r = await fx.sh.getJson(`./diy.sh task show ${uri}`);
@@ -290,7 +291,7 @@ describe("任务 ↔ 人物绑定（引用存 id）", () => {
     it("清空人物 = 改为**跟随缺省**（合法动作，不再是「不能为空」的错误）", async () => {
         // 语义变更：从"任务必须有人物"改成"人物永远是解析得出来的，但绑定可以不固定"。
         // `default` 与空串两种写法等价（省得调用方记两套）。
-        const id = await addPersona(uniq("被清空的"), "gpt-6-luna");
+        const id = await addPersona(uniq("被清空的"), "mimo-v2.6-flash");
         const a = await setupTask("清空人物测试A");
         await fx.sh.run(`./diy.sh task edit ${a} --persona ${id}`);
         expect(personaOf(a)).toBe(id);
@@ -305,7 +306,7 @@ describe("任务 ↔ 人物绑定（引用存 id）", () => {
     });
 
     it("创建任务时可显式指定人物（按 id）", async () => {
-        const id = await addPersona(uniq("被指定的"), "gpt-6-luna");
+        const id = await addPersona(uniq("被指定的"), "mimo-v2.6-flash");
         const repo = `${fx.HOME}/persona-create-${Date.now()}`;
         const r = await fx.sh.getJson(`./diy.sh project create ${repo} --label 指定人物`);
         const pid = String(
@@ -318,7 +319,7 @@ describe("任务 ↔ 人物绑定（引用存 id）", () => {
 
 describe("References — 引用计数（改人物前先看见影响面）", () => {
     it("list 回传每人物的 taskCount", async () => {
-        const id = await addPersona(uniq("统计人物167"), "gpt-6-luna");
+        const id = await addPersona(uniq("统计人物167"), "mimo-v2.6-flash");
         const uri = await setupTask("被统计的任务");
         await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
 
@@ -424,7 +425,26 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         );
     }
 
-    it("主从视图：左列人物带引用数，右侧是平铺的模型/级别按钮（不是下拉）", async () => {
+    /**
+     * 展开模型选择表。
+     *
+     * 模型字段**默认收起**（只显示当前选中项 —— 常驻大表反而看不清当前选的是哪个）；
+     * 点触发按钮才展开。已展开则跳过（新建态会自动展开）。
+     */
+    async function openModelPicker(root: string): Promise<void> {
+        const picker = `${sel(root)} [data-testid="persona-model-picker"]`;
+        const already = await ui!.eval<boolean>(
+            `!!document.querySelector(${JSON.stringify(picker)})`,
+        );
+        if (!already) await clickIn(`${sel(root)} [data-testid="persona-model-trigger"]`);
+        await waitUntil(
+            async () => ui!.eval<boolean>(`!!document.querySelector(${JSON.stringify(picker)})`),
+            (v) => v === true,
+            { label: "模型选择表已展开" },
+        );
+    }
+
+    it("主从视图：模型默认收起（仅显示当前项），点击才展开选择表；级别是平铺按钮", async () => {
         const 名 = uniq("面板人物");
         const id = await addPersona(名, "mimo-v2.6-flash");
         const uri = await setupTask("面板测试任务");
@@ -436,7 +456,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         expect(text).toContain(名);
         // 人物列表不再混入任务信息（本任务/引用数移到 info 条与绑定模式语义中）
         expect(text).toContain("缺省");
-        // 属性直接可改；模型用**平铺按钮**（aria-pressed 标记选中），不是 select
+        // 属性直接可改；模型字段默认只显示当前值（不是常驻大表），展开后是可选表格
         expect(text).toContain("模型");
         expect(text).toContain("思考级别");
         expect(text).toContain("行为指令");
@@ -455,9 +475,21 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         })()`);
         expect(st.editing).toBe(id);
         expect(st.bound).toBe(id);
-        // 面板内不应再有 <select>（模型与档位都是平铺按钮；名字/行为指令是输入框）
+        // 面板内不应再有 <select>（模型是触发展开，档位是平铺按钮；名字/行为指令是输入框）
         expect(st.selects).toBe(0);
-        // 且**当前模型的按钮是选中态**（显示与实际一致：选中 mimo 就得亮 mimo）
+        // 模型字段默认收起：选择表**不在** DOM 里，但触发按钮上看得见当前模型 id
+        const collapsed = await ui!.eval<{ picker: boolean; trigger: string }>(`(() => {
+            const d = document.querySelector('${sel(uri)}');
+            const t = d?.querySelector('[data-testid="persona-model-trigger"]');
+            return {
+                picker: !!d?.querySelector('[data-testid="persona-model-picker"]'),
+                trigger: t?.textContent ?? '',
+            };
+        })()`);
+        expect(collapsed.picker).toBe(false);
+        expect(collapsed.trigger).toContain("mimo-v2.6-flash");
+        // 展开后当前模型的按钮是选中态（显示与实际一致：选中 mimo 就得亮 mimo）
+        await openModelPicker(uri);
         const pressed = await ui!.eval<string[]>(
             `Array.from(document.querySelectorAll('${sel(uri)} button[aria-pressed="true"]')).map(b => b.getAttribute('aria-label'))`,
         );
@@ -470,34 +502,37 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
         await openPanel(uri);
+        await openModelPicker(uri);
 
-        // 真实点击模型按钮（按钮显示 id；不是派发合成 change —— 这里就是按钮，点得动）
-        await clickIn(`${sel(uri)} button[aria-label="gpt-6-luna"]`);
+        // 真实点击模型按钮（表格首列的按钮显示 id；不是派发合成 change —— 这里就是按钮，点得动）
+        await clickIn(`${sel(uri)} button[aria-label="deepseek-v4.1-flash"]`);
         const changed = await waitUntil(
             async () => (await personaList()).personas.find((p) => p.id === id)?.model,
-            (m) => m === "gpt-6-luna",
+            (m) => !!m && m.endsWith("deepseek-v4.1-flash"),
             { label: "personas.yaml 里的模型已改" },
         );
-        expect(changed).toBe("gpt-6-luna");
+        expect(changed!.endsWith("deepseek-v4.1-flash")).toBe(true);
     });
 
     it("改模型后，档位按钮换成该模型的候选集（各模型词表不同）", async () => {
-        // gpt-6-luna 支持 xhigh/max；mimo-v2.6-flash 只到 high。切模型后按钮集必须跟着换，
-        // 否则用户点一个上游必拒的档位（400 Invalid request parameters）。
+        // deepseek-v4.1-flash 有 max（models.dev 声明 low/high/max）；mimo-v2.6-flash 的兜底集只到 high。
+        // 切模型后按钮集必须跟着换，否则用户点一个上游必拒的档位（400 Invalid request parameters）。
         const id = await addPersona(uniq("档位随模型"), "mimo-v2.6-flash");
         const uri = await setupTask("档位测试任务");
         await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
         await openPanel(uri);
+        await openModelPicker(uri);
 
         const levelsOf = () =>
             ui!.eval<string[]>(
                 `Array.from(document.querySelectorAll('${sel(uri)} button[aria-pressed]')).map(b => b.getAttribute('aria-label'))`,
             );
-        expect(await levelsOf()).not.toContain("超高"); // mimo 没有 xhigh
-        await clickIn(`${sel(uri)} button[aria-label="gpt-6-luna"]`);
+        // models.dev 的 reasoning_options 现在提供精确 effort 词表（见 shared/model-config.reasoningFromSpec）；
+        // 未声明的模型退回兜底集（只到 high）。
+        await clickIn(`${sel(uri)} button[aria-label="deepseek-v4.1-flash"]`);
         await waitUntil(
-            async () => (await levelsOf()).includes("超高"),
+            async () => (await levelsOf()).includes("最大"),
             (v) => v === true,
             { label: "档位集跟着换" },
         );
@@ -506,7 +541,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
     it("改名输入框：改完即存，id 不变", async () => {
         const 前 = uniq("面板改名前");
         const 后 = uniq("面板改名后");
-        const id = await addPersona(前, "gpt-6-luna");
+        const id = await addPersona(前, "mimo-v2.6-flash");
         const uri = await setupTask("面板改名任务");
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
         await openPanel(uri);
@@ -533,6 +568,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         await openPanel(uri);
 
         await clickIn(`${sel(uri)} [aria-label="新建人物"]`);
+        await openModelPicker(uri);
 
         // 1) 新建态三块属性都必须可交互（模型/档位 = button[aria-pressed]，行为指令 = textarea）
         const st = await waitUntil(
@@ -568,7 +604,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
             (v) => !!v,
             { label: "新人物已落盘" },
         );
-        expect(pl!.model).toBe("mimo-v2.6-flash");
+        expect(pl!.model.endsWith("mimo-v2.6-flash")).toBe(true);
         expect(pl!.reasoningEffort).toBe("low");
         expect(pl!.instructions).toBe("每次汇报前先喊「报告」。");
         // 4) 建完停在**刚建好的人物**上（否则"跟随本任务绑定"的校准会立刻切回别人，看着像没建成）
@@ -612,7 +648,10 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         const pl = await personaList();
         const byName = pl.personas.find((p) => p.name === "大副")!;
         expect(text).toContain(byName.name);
-        expect(text).toContain(byName.model); // 模型按 id 显示（上游名字与 id 经常对不上）
+        // 模型按 id 显示；provider 只有唯一账号时 UI 省掉 `account@` 前缀（displayModel），
+        // 而 personas.yaml 存的是全限定名 —— 断言要按**显示态**比（##275 R1-1#2）。
+        expect(byName.model).toMatch(/^\d+@/); // 存量确实是全限定名
+        expect(text).toContain(byName.model.replace(/^[^@]+@/, ""));
     });
 
     it("每条 assistant 回复上方显示人物头像与名字（回复人可见）", async () => {
@@ -706,7 +745,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         expect(got[2]).toContain("|1");
 
         // 反向护栏：任务绑定（换绑）不该改写**已发生**轮次的署名 —— 换到另一个模型的人物后重开
-        const 别 = await addPersona(uniq("别人"), "gpt-6-luna");
+        const 别 = await addPersona(uniq("别人"), "mimo-v2.6-flash");
         await fx.sh.run(`./diy.sh task edit ${uri} --persona ${别}`);
         await fx.sh.getJson(`./diy.sh ui tab close active`);
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
@@ -717,7 +756,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         );
         expect(after[0]).toContain("mimo-v2.6-flash"); // t1 事实不变
         expect(after[1]).toContain("deepseek-v4.1-flash"); // t2 事实不变
-        expect(after[1]).not.toContain("gpt-6-luna"); // 新绑定不得污染历史
+        expect(after[1]).not.toContain("mimo-v2.6-flash"); // 新绑定（mimo）不得污染历史
     });
 
     it("人物搜索：按字段过滤并高亮；Esc/清除恢复列表；无结果有提示", async () => {
@@ -807,10 +846,11 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         // 几何是"看得见的需求"，不给断言就会在后续调样式时悄悄退化（这条量的是真实 rect）。
         const uri = await setupTask("面板几何任务");
         // 固定绑定到一个真实人物：跟随缺省时右侧是说明态，没有模型按钮可量
-        const id = await addPersona(uniq("几何人物"), "gpt-6-luna");
+        const id = await addPersona(uniq("几何人物"), "mimo-v2.6-flash");
         await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
         await openPanel(uri);
+        await openModelPicker(uri);
 
         const geo = await waitUntil(
             async () =>
@@ -818,7 +858,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
                     const d = document.querySelector('${sel(uri)}');
                     if (!d) return null;
                     const dr = d.getBoundingClientRect();
-                    const list = d.querySelector('[data-tip]')?.parentElement;   // 左列滚动容器
+                    const list = d.querySelector('[data-testid="persona-left-list"]');   // 左列滚动容器（见 PersonaDrawer）
                     const lr = list?.getBoundingClientRect();
                     const models = [...d.querySelectorAll('button[aria-pressed]')]
                         .map(b => b.getAttribute('aria-label'))
@@ -836,20 +876,16 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         expect(geo!.hRatio).toBeGreaterThan(0.5);
         expect(geo!.leftRatio).toBeGreaterThan(0.3);
         expect(geo!.leftRatio).toBeLessThan(0.36);
-        // 便宜的在前面（清单顺序即展示顺序；顺序变了这条会红，提醒同步改文案）
-        expect(geo!.models.slice(0, 4)).toEqual([
-            "mimo-v2.6-flash",
-            "deepseek-v4.1-flash",
-            "gpt-5.6-luna",
-            "gpt-6-luna",
-        ]);
+        // 模型清单来自 snapshot（opencode-go 全量）→ 数量不再固定 4；
+        // 排序仍按价格升序（见 model-registry.modelViews），但具体集合随 models.dev 变，故只断言非空。
+        expect(geo!.models.length).toBeGreaterThan(0);
     });
 
     it("「跟随缺省」是左列第一行：单击显示说明态（不给编辑器），双击 = 本任务改为跟随并关窗", async () => {
         // 需求原文：「如何选择缺省 agent 这个选项呢？」—— 落法：它是**绑定模式**而不是人物，
         // 所以放在列表**之上**、用分隔线隔开，并且右侧不给属性编辑器（跟随态下改模型改的是
         // 缺省人物的全局定义，会影响所有跟随者，那种动作必须回"选中那个人物再改"）。
-        const id = await addPersona(uniq("固定绑定"), "gpt-6-luna");
+        const id = await addPersona(uniq("固定绑定"), "mimo-v2.6-flash");
         const uri = await setupTask("跟随缺省行任务");
         await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
@@ -914,7 +950,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         // 这条同时锁三件事：① 双击真的触发换绑（不是"两次单击"——那不会产生 dblclick）
         // ② 换绑只动本任务的引用 ③ 面板自动关闭（动作闭环，不用再手动关）
         const 候选名 = uniq("候选人");
-        const 候选人 = await addPersona(候选名, "gpt-6-luna");
+        const 候选人 = await addPersona(候选名, "mimo-v2.6-flash");
         const uri = await setupTask("换绑任务");
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
         await openPanel(uri);
@@ -957,7 +993,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         );
         expect(personaOf(uri)).toBe(候选人);
         expect((await personaList()).personas.find((p) => p.id === 候选人)?.model).toBe(
-            "gpt-6-luna",
+            "mimo-v2.6-flash",
         );
         // 面板已关闭
         await waitUntil(
@@ -984,7 +1020,8 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
                     if (!d) return null;
                     const wraps = [...d.querySelectorAll('[data-tip]')];
                     if (wraps.length === 0) return null;
-                    const list = wraps[0].parentElement;
+                    const list = d.querySelector('[data-testid="persona-left-list"]');
+                    if (!list) return null;
                     list.scrollTop = list.scrollHeight;           // 滚到底：最后一项最贴近容器下沿
                     const last = wraps[wraps.length - 1];
                     last.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
@@ -1012,7 +1049,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
 
     it("双击**已在本任务在用**的人物：绑定原样，也照常关面板", async () => {
         const 名 = uniq("已在用");
-        const id = await addPersona(名, "gpt-6-luna");
+        const id = await addPersona(名, "mimo-v2.6-flash");
         const uri = await setupTask("重复双击任务");
         await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
@@ -1038,7 +1075,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         // 需求原文：「'改上面的属性'应该作为 info 提示 bar 存在于视图 bar 的下面……而不是把提示词显示到
         // '设为缺省人物'旁，歧义」。这句话描述的是**整个右侧区域**的后果，挨着动作按钮会被读成
         // "这个按钮会影响 N 个任务" —— 所以位置本身就是契约：必须在头部之下、主从区之上。
-        const id = await addPersona(uniq("影响面条"), "gpt-6-luna");
+        const id = await addPersona(uniq("影响面条"), "mimo-v2.6-flash");
         const uri = await setupTask("影响面任务");
         await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
@@ -1050,7 +1087,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
                     const d = document.querySelector('${sel(uri)}');
                     const bar = d?.querySelector('[data-testid="persona-impact-bar"]');
                     if (!bar) return null;
-                    const list = d.querySelector('[data-tip]')?.parentElement;
+                    const list = d.querySelector('[data-testid="persona-left-list"]');
                     return {
                         text: bar.innerText,
                         // 在列表**之上**（否则就是"贴着底栏按钮"那个歧义形态）
@@ -1065,6 +1102,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
 
         // 新建态不显示（那时还没有"会影响谁"可言，显示了像在说别人的事）
         await clickIn(`${sel(uri)} [aria-label="新建人物"]`);
+        await openModelPicker(uri);
         await waitUntil(
             async () =>
                 ui!.eval<boolean>(
@@ -1081,7 +1119,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         // 三件事一起锁：① 挂在条目内（不是页脚那个"作用于当前编辑人物"的位置）
         // ② 默认隐藏、hover 条目才显形 ③ 按钮 btn-secondary、标签 badge-secondary badge-soft（同色系更浅）
         const 名 = uniq("缺省按钮");
-        const id = await addPersona(名, "gpt-6-luna");
+        const id = await addPersona(名, "mimo-v2.6-flash");
         const uri = await setupTask("缺省按钮任务");
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
         await openPanel(uri);

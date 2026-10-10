@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bin/diy — 发布后的 CLI 入口（npm 全局 / 安装到 PATH 用）。
 #
-# 用途：跑编译产物 out/cli/index.js，数据根默认 ~/.diy（可由 DIY_HOME 覆盖）。
+# 用途：跑编译产物 build/prod/cli/index.js，数据根默认 ~/.diy（可由 DIY_HOME 覆盖）。
 # 定位：跟随 symlink 解析包根（发布后 bin/ 与 out/ 相邻同层）。
 # 注入：DIY_HOME — 供 JS 侧 src/runtime.ts readRuntimeConfig() 读取装配。
 set -euo pipefail
@@ -18,7 +18,7 @@ _realpath() {
 }
 
 APP_DIR="$(dirname "$(_realpath "$0")")"
-CLI="$APP_DIR/out/cli/index.js"
+CLI="$APP_DIR/build/prod/cli/index.js"
 [[ -f "$CLI" ]] || { echo "diy 未构建/未安装: ${CLI}（先 ./sha.sh build-cli）" >&2; exit 1; }
 
 # DIY_CALLER_CWD：调用者敲命令时的目录（下面的 cd 会换掉它，见 diy.sh 同名注释）

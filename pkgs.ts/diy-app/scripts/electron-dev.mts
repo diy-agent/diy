@@ -4,15 +4,15 @@
 import { build, createServer, type ViteDevServer, type Rollup } from "vite";
 import { spawn, type ChildProcess } from "node:child_process";
 import electronPath from "electron";
-import { join, dirname, resolve } from "node:path";
+import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { prodDataHome } from "../src/main/core/instance-identity";
 import {
   SINGLETON_LOCK,
   classifyLock,
   lockAdvice,
   readLock,
 } from "../src/main/core/single-instance";
+import { resolveDevHome } from "../src/main/core/dev-home";
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, appendFileSync, type Dirent } from "node:fs";
 // 注：Chromium 开关（disable-features=RustPng / use-gl=angle）由 src/main/index.ts 经
 // app.commandLine.appendSwitch 生效，此处不再拼 argv（Chromium 不吃 app argv）。
@@ -24,29 +24,32 @@ const explicitPort = portIdx >= 0 ? args[portIdx + 1] : null;
 const electronArgs: string[] = [];
 if (explicitPort) electronArgs.push("--port", explicitPort);
 
-// DIY_HOME 默认指向仓库根 build/home，与 diy.sh 保持一致
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = join(scriptDir, ".."); // pkgs.ts/diy-app
 const repoRoot = join(scriptDir, "..", "..", "..");
-const defaultHome = join(repoRoot, "build", "home");
-
-// ── 生产数据保护（判据与 diy.sh 完全一致，勿单方面改动）──
-// agent / CI / 外层 shell 常导出 DIY_HOME=~/.diy（生产数据根）。dev 若透传，Electron 会用
-// 生产 userData 目录 → 撞宿主（生产实例）的单实例锁 → 打印 `SingleInstanceLock: failed`
-// 后 exit 0，现象只是「dev 起来了又退出」，没有任何指向原因的信息。
-// 这个坑被三个会话独立记录（##245 §8、##242 尾、##249 §六）→ 由代码兜底，不靠纪律。
-// 确需在生产数据上起 dev 才显式 opt-in：DIY_ALLOW_PROD_HOME=1 ./sha.sh dev
-const prodHome = prodDataHome();  // 真实家目录下的 ~/.diy（不读 $HOME，避免被隔离实例改写）
-const inheritedHome = process.env["DIY_HOME"];
-if (inheritedHome && resolve(inheritedHome) === prodHome && process.env["DIY_ALLOW_PROD_HOME"] !== "1") {
-  console.warn(`[dev] 警告: 忽略继承的生产数据目录 DIY_HOME=${inheritedHome}, 改用本 worktree 的 ${defaultHome}`);
-  console.warn("[dev] 警告: 确需在生产数据上起 dev 请显式声明 DIY_ALLOW_PROD_HOME=1 ./sha.sh dev");
-  delete process.env["DIY_HOME"];
+// 产物/数据变体根（prod|test|preview|lab）。本脚本负责 preview / lab 两个
+// 「开发互不干扰」的变体：各独占 build/<variant>/{main,preload} 产物 + build/<variant>/home
+// 数据根，故可同时运行（单实例锁 per-home）。
+const variant = process.env["DIY_VARIANT"] ?? "preview";
+process.env["DIY_VARIANT"] = variant; // 传给 vite 配置（决定 outDir）
+const outRel = join("build", variant); // 相对 appDir 的产物根
+// 数据根：build/<variant>/home —— 「变体互不干扰」全靠它（单实例锁也是 per-home）。
+// ⚠️ 继承来的 DIY_HOME 会把它顶掉：宿主 shell / agent / CI 常导出 DIY_HOME=~/.diy，preview
+// 就直接开着**生产数据根**跑（实测踩过：宿主正是如此，一路直奔 ~/.diy，只因 prod 实例占着
+// 锁才没造成污染；而 preview 缺省带初始种入，真跑起来会把示例项目写进生产）。
+// 决策与警告交给 core/dev-home（同一条口径 diy.sh 也在用，且可被单测覆盖）。
+const decision = resolveDevHome({
+  variant,
+  repoRoot,
+  inherited: process.env["DIY_HOME"],
+  allowProdHome: process.env["DIY_ALLOW_PROD_HOME"] === "1",
+});
+if (decision.rejected) {
+  console.warn(`[dev] 警告: 忽略继承的生产数据目录 DIY_HOME=${decision.rejected}，改用本变体的 ${decision.home}`);
+  console.warn(`[dev] 警告: 确需操作生产数据请显式声明 DIY_ALLOW_PROD_HOME=1 ./sha.sh ${variant}`);
 }
-if (!process.env["DIY_HOME"]) {
-  mkdirSync(defaultHome, { recursive: true });
-  process.env["DIY_HOME"] = defaultHome;
-}
+mkdirSync(decision.home, { recursive: true });
+process.env["DIY_HOME"] = decision.home;
 // DIY_CLI：本进程**自证**的 CLI 入口，不继承（提示词模版 100-diy 消费）。
 // 它就是本 checkout 的 diy.sh —— 入口报的必须是「跑的是谁」，不是「环境里恰好有什么」：
 // agent 会话继承的 DIY_CLI 是 npm link 的全局 diy（生产），透传后演示实例里的模型会被提示
@@ -63,7 +66,7 @@ let cleaningUp = false;
 // 实测教训：main 产物被清空后再不重建，事后只有 app 侧的 main.log（只知道重启过），
 // 无法判断是 bundle 失败、build 未完成还是 watcher 死了 —— 所以每一步都落盘。
 function devLogger() {
-  const dir = join(process.env["DIY_HOME"] ?? defaultHome, "log");
+  const dir = join(process.env["DIY_HOME"] ?? decision.home, "log");
   return join(dir, "dev.jsonl");
 }
 let devLogReady = false;
@@ -118,7 +121,7 @@ function newestMtime(path: string): { file: string; mtime: number } {
 
 function bundleMtime(): number {
   try {
-    return statSync(join(appDir, "out/main/index.mjs")).mtimeMs;
+    return statSync(join(appDir, outRel, "main/index.mjs")).mtimeMs;
   } catch {
     return 0;
   }
@@ -131,20 +134,20 @@ let mainBuiltOnce = false;
 let preloadBuiltOnce = false;
 
 /** watcher 卡死检测：源码比产物新且持续 → 写 `watch-stall-suspect` 并大声提示重启。
- *  main / preload 各自比对自己的产物（不能交叉：改 preload 不会重建 out/main）。
+ *  main / preload 各自比对自己的产物（不能交叉：改 preload 不会重建 main）。
  *  判据刻意保守：连续 2 次采样（间隔 30s）都成立才报；期间有 build 完成或报错就清空。 */
 function installStallDetector(): void {
   const pairs: Array<{ label: string; inputs: string[]; output: string; built: () => boolean }> = [
     {
       label: "main",
       inputs: ["src/main", "vite.main.config.ts"],
-      output: "out/main/index.mjs",
+      output: join(outRel, "main/index.mjs"),
       built: () => mainBuiltOnce,
     },
     {
       label: "preload",
       inputs: ["src/preload", "vite.preload.config.ts"],
-      output: "out/preload",
+      output: join(outRel, "preload"),
       built: () => preloadBuiltOnce,
     },
   ];
@@ -301,7 +304,7 @@ function startElectron(url: string) {
   checkSingletonLock("spawn"); // spawn 前：已知撞锁就把「谁占着/怎么办」说出来，别等 exit 0 再猜
 
   // Chromium 开关由 src/main/index.ts 经 app.commandLine.appendSwitch 生效，此处不传 argv。
-  const proc = spawn(String(electronPath), ["out/main/index.mjs", url, ...electronArgs, ...cdpArgs], {
+  const proc = spawn(String(electronPath), [join(outRel, "main/index.mjs"), url, ...electronArgs, ...cdpArgs], {
     stdio: "inherit",
     // 注入运行时契约变量（src/runtime.ts 读取）：dev 加载 URL + 产物根 + 数据根
     // DIY_ENV=development：runtime.ts 派生 dev 专属能力（窗口定位副屏等），不遮挡主屏干活区
