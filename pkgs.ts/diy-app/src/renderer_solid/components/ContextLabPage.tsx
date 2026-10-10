@@ -366,7 +366,7 @@ export function ContextLabPage(props: { uri: string }) {
      * 归属（三态）与归因（system 重建原因）的**纯函数已提到 `shared/context/attribution.ts`**
      * （review RV-10：一份实现 + 可单测）。这里只负责把**页面当前划分**（`unitMap()`）喂进去。
      * ⚠️ 注意两处口径**有意不同**（review RV-09）：
-     *   · 本页「变更统计」表归属列、结构树的 ⇄ 开关 = **当前**划分（用户眼前这把刀，改划分即重算）；
+     *   · 本页「变更统计」表的归属列与中间容器折叠、结构树的 ⇄ 开关 = **当前**划分（用户眼前这把刀，改划分即重算）；
      *   · 「变更（真发轮次）」的 sys 徽章 = **该轮快照**的划分（`sysCauses(changed, st.systemPlaces)`，
      *     历史不该被当前划分改写 —— RV-02）。
      */
@@ -623,6 +623,9 @@ export function ContextLabPage(props: { uri: string }) {
             );
         }
         if (a.kind === "container") {
+            // ⚠️ 统计表里此分支当前**不可达**：`foldStatRows` 已把"有后代上榜且自身非投递单元"的
+            // 容器行折掉，而凡上榜的容器必有后代上榜（父 hash = 子树 hash）→ 走不到这里。
+            // 保留作语义守卫：折叠规则一旦放宽（如允许保留高变化容器）它立即生效。
             return (
                 <span
                     class="badge badge-xs badge-neutral"
@@ -673,7 +676,7 @@ export function ContextLabPage(props: { uri: string }) {
                 {/* RV-09：归属列按**页面当前划分**（统计是"今天这把刀切哪"的操作视角），
                     与上面 sys 徽章"按当轮快照"的口径**有意不同** → 必须写出来，否则用户当成一套。 */}
                 <div class="mb-1 px-1 text-caption opacity-50">
-                    归属列按当前划分（改划分即重算；历史轮次的原因看「变更（真发轮次）」的 sys 徽章，按当轮快照）
+                    归属列与折叠均按当前划分（改划分即重算；历史轮次的原因看「变更（真发轮次）」的 sys 徽章，按当轮快照）
                 </div>
                 <Show when={collapsed > 0}>
                     <div class="mb-1 px-1 text-caption opacity-50">

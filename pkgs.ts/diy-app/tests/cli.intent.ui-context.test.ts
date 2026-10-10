@@ -339,7 +339,9 @@ describe("上下文树：变更统计（按项目累计）", () => {
     expect((empty.data as any).turns).toBe(0);
     expect((empty.data as any).paths).toEqual([]);
 
-    // 手写统计（真发需要 LLM key）：任务一 3 轮（chain.0 变 2 次），任务二 1 轮
+    // 手写统计（真发需要 LLM key）：任务一 4 轮 / 任务二 1 轮。
+    // ⚠️ 每个任务的**首轮基线**按老写入器的样子写（把当时存在的 path 全记成 changed）——
+    // RV-15 实测的存量污染正是这样落盘的，读侧必须抹平（否则从不变过的 diy 会显示成"变了 N 次"）。
     const stat = (ts: string, taskUri: string, changed: string[]) =>
       JSON.stringify({ ts, taskUri, turnId: `t-${ts}`, changed });
     const fp = join(fx.HOME, "projects", pid, "context-stats.jsonl");
@@ -347,32 +349,39 @@ describe("上下文树：变更统计（按项目累计）", () => {
     writeFileSync(
       fp,
       [
-        stat("2026-09-26T01:00:00.000Z", uri1, ["chain.0", "diy"]),
-        stat("2026-09-26T02:00:00.000Z", uri1, ["chain.0"]),
+        stat("2026-09-26T00:30:00.000Z", uri1, ["chain.0", "diy", "task.body"]), // 任务一首轮基线（污染）
+        stat("2026-09-26T01:00:00.000Z", uri1, ["chain.0"]), // ← 唯一一次真变化
+        stat("2026-09-26T02:00:00.000Z", uri1, []),
         stat("2026-09-26T03:00:00.000Z", uri1, []),
-        stat("2026-09-26T04:00:00.000Z", uri2, ["task.body"]),
+        stat("2026-09-26T04:00:00.000Z", uri2, ["task.body", "chain.0"]), // 任务二首轮基线（污染）
       ].join("\n") + "\n",
     );
 
-    // 整个项目累计：4 轮
+    // 整个项目累计：5 轮（首轮也算真发轮 —— 分母口径不能被"没变"或"基线"改写）
     const all = (await fx.sh.getJson(`./diy.sh context stats ${pid}`)).data as any;
-    expect(all.turns).toBe(4);
-    expect(all.since).toBe("2026-09-26T01:00:00.000Z");
+    expect(all.turns).toBe(5);
+    expect(all.since).toBe("2026-09-26T00:30:00.000Z");
     expect(all.until).toBe("2026-09-26T04:00:00.000Z");
     const chain = all.paths.find((x: any) => x.path === "chain.0");
-    expect(chain.changes).toBe(2);
-    expect(chain.rate).toBeCloseTo(0.5); // 分母是总轮数（含没变的那轮）
-    expect(chain.turns).toEqual([1, 2]);
+    expect(chain.changes).toBe(1); // ★ 首轮基线那一次不算（RV-15）；旧口径会算成 2
+    expect(chain.rate).toBeCloseTo(1 / 5); // 分母是总轮数（含没变的那轮）
+    expect(chain.turns).toEqual([2]); // 只剩那一次真变化
+    // ★ 从没真变过的节点不再上榜（旧口径：diy 记了 1 次首轮 → 谎报"变了"）
+    expect(all.paths.find((x: any) => x.path === "diy")).toBeUndefined();
+    // ★ 任务二只有首轮基线 → task.body 也不该上榜
+    expect(all.paths.find((x: any) => x.path === "task.body")).toBeUndefined();
 
-    // 按任务过滤：只有任务一的 3 轮
+    // 按任务过滤：只有任务一的 4 轮
     const only1 = (await fx.sh.getJson(`./diy.sh context stats ${pid} --taskUri ${uri1}`)).data as any;
-    expect(only1.turns).toBe(3);
+    expect(only1.turns).toBe(4);
     expect(only1.paths.find((x: any) => x.path === "task.body")).toBeUndefined();
 
-    // limit 取最近 N 轮
+    // ★ 抹平发生在 filter/slice **之前**：limit 切掉的若含首轮，也不影响别的任务
+    // （若在切片后抹平，任务二那条基线会被当成"真变化"）
     const last2 = (await fx.sh.getJson(`./diy.sh context stats ${pid} --limit 2`)).data as any;
-    expect(last2.records).toBe(4); // 总数仍报 4（未被 limit 掩盖）
+    expect(last2.records).toBe(5); // 总数仍报 5（未被 limit 掩盖）
     expect(last2.turns).toBe(2);
+    expect(last2.paths.find((x: any) => x.path === "task.body")).toBeUndefined();
 
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 90_000);
@@ -573,16 +582,17 @@ describe("上下文树：可见性增强（统计接页 / 变更原因 / tab 标
     );
 
     // 手写项目累计统计（真发需 LLM key）：chain.0 变 2 次 / 共 4 轮 → 变化率 50%
+    // （第 1 条是该任务的首轮基线，按 RV-15 记成 changed: []）
     const stat = (ts: string, changed: string[]) =>
       JSON.stringify({ ts, taskUri: uri, turnId: `s-${ts}`, changed });
     mkdirSync(join(fx.HOME, "projects", pid), { recursive: true });
     writeFileSync(
       join(fx.HOME, "projects", pid, "context-stats.jsonl"),
       [
-        stat("2026-09-27T00:00:00.000Z", ["chain.0", "diy"]),
-        stat("2026-09-27T01:00:00.000Z", ["chain.0"]),
-        stat("2026-09-27T02:00:00.000Z", []),
-        stat("2026-09-27T03:00:00.000Z", ["task.body"]),
+        stat("2026-09-27T00:00:00.000Z", []),
+        stat("2026-09-27T01:00:00.000Z", ["chain.0", "diy"]),
+        stat("2026-09-27T02:00:00.000Z", ["chain.0"]),
+        stat("2026-09-27T03:00:00.000Z", []),
       ].join("\n") + "\n",
     );
 
@@ -646,6 +656,7 @@ describe("上下文树：归属三态与中间容器折叠（review RV-01 / RV-0
     writeFileSync(
       join(fx.HOME, "projects", pid, "context-stats.jsonl"),
       [
+        stat("2026-09-27T23:00:00.000Z", []), // 首轮基线（RV-15）
         stat("2026-09-28T00:00:00.000Z", ["chain.0", "persona.name", "task", "skills"]),
         stat("2026-09-28T01:00:00.000Z", ["task.body"]),
       ].join("\n") + "\n",
@@ -662,13 +673,13 @@ describe("上下文树：归属三态与中间容器折叠（review RV-01 / RV-0
       label: "归属统计表上屏",
     });
     // ① chain.0 → 归到投递单元 chain（system）
-    expect(rowCells(st, "chain.0", "变更统计（项目累计）").slice(0, 3)).toEqual(["1", "50%", "chain"]);
+    expect(rowCells(st, "chain.0", "变更统计（项目累计）").slice(0, 3)).toEqual(["1", "33%", "chain"]);
     // ② persona.name → 未投递（不谎报 runtime）
-    expect(rowCells(st, "persona.name", "变更统计（项目累计）").slice(0, 3)).toEqual(["1", "50%", "未投递"]);
+    expect(rowCells(st, "persona.name", "变更统计（项目累计）").slice(0, 3)).toEqual(["1", "33%", "未投递"]);
     // ③ skills → runtime 单元 skills
-    expect(rowCells(st, "skills", "变更统计（项目累计）").slice(0, 3)).toEqual(["1", "50%", "skills"]);
+    expect(rowCells(st, "skills", "变更统计（项目累计）").slice(0, 3)).toEqual(["1", "33%", "skills"]);
     // ④ task.body → runtime 单元 task.body
-    expect(rowCells(st, "task.body", "变更统计（项目累计）").slice(0, 3)).toEqual(["1", "50%", "task.body"]);
+    expect(rowCells(st, "task.body", "变更统计（项目累计）").slice(0, 3)).toEqual(["1", "33%", "task.body"]);
     // ⑤ task（中间容器）折叠，不单列（否则会显示与事实相反的归属）
     expect(st).toContain("已折叠 1 个中间容器");
 
@@ -804,8 +815,9 @@ describe("上下文树：统计与归因的边界（review RV-07 / RV-08）", ()
 });
 
 describe("上下文树：归属口径标注与 URI 解析失败出口（review RV-09 / RV-13）", () => {
-  it("统计块写明「归属列按当前划分」；被打开的 uri 解析不出项目 → 明确空态（不是永久加载中）", async () => {
-    // ① 正常项目：统计块应有口径标注（RV-09：与 sys 徽章的「当轮快照」口径有意不同，必须写出来）
+  it("统计块写明「归属列与折叠均按当前划分」；被打开的 uri 解析不出项目 → 明确空态（不是永久加载中）", async () => {
+    // ① 正常项目：统计块应有口径标注（RV-09：与 sys 徽章的「当轮快照」口径有意不同，必须写出来；
+    //    RV-17：**折叠数**同样随当前划分变，标注必须一并覆盖它，否则用户以为只有归属列受影响）
     const repo = `${fx.HOME}/ctxlab-scope`;
     mkdirSync(repo, { recursive: true });
     const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 口径`);
@@ -825,10 +837,11 @@ describe("上下文树：归属口径标注与 URI 解析失败出口（review R
     await fold("request", false);
     await fold("change", false);
     await fold("stats", true);
-    const scoped = await waitUntil(a11yText, (s) => s.includes("归属列按当前划分"), {
+    const scoped = await waitUntil(a11yText, (s) => s.includes("归属列与折叠均按当前划分"), {
       label: "归属列口径标注上屏",
     });
-    expect(scoped).toContain("归属列按当前划分");
+    expect(scoped).toContain("归属列与折叠均按当前划分");
+    expect(scoped).toContain("历史轮次的原因看「变更（真发轮次）」的 sys 徽章，按当轮快照");
 
     // ② RV-13：URI 解析不出项目（非 projects/<pid>/tasks/<tid> 形状）→ 明确空态出口
     //    （原分支 `if (!pid) return null` 会永久停在「统计加载中…」）

@@ -74,8 +74,10 @@ describe("sysCauses：system 重建的原因（当轮快照划分）", () => {
         expect(sysCauses(undefined, ["chain"])).toEqual([]); // 坏行/缺 changed
     });
 
-    it("systemPlaces 缺失（undefined）不抛（RV-12 的读侧兜底语义）", () => {
+    it("空名单（[]）→ 全部候选为 runtime；undefined 也容忍（RV-12 读侧兜底是 main 的活，这里再兜一层）", () => {
         expect(unitsFromSystemPlaces([]).size).toBe(PLACE_CANDIDATES.length);
+        expect([...unitsFromSystemPlaces([]).values()].every((c) => c === "runtime")).toBe(true);
+        expect(unitsFromSystemPlaces(undefined).size).toBe(PLACE_CANDIDATES.length);
     });
 });
 
@@ -119,5 +121,25 @@ describe("unitsFromSystemPlaces：快照划分 → 单元 map", () => {
         const u = unitsFromSystemPlaces(DEF_SYS);
         expect(u.get("task.title")).toBe("system");
         expect(u.get("task.body")).toBe("runtime");
+    });
+
+    it("★ 名单里的候选外单元也要成为单元 —— 否则它的变化报成「无原因」（RV-14）", () => {
+        // 手填 `persona.name`（buildDelivery 明确支持候选外 path；sanitizeSystemPlaces 只校验路径合法）
+        const u = unitsFromSystemPlaces(["chain", "persona.name"]);
+        expect(u.get("persona.name")).toBe("system");
+        expect(sysCauses(["persona.name"], ["chain", "persona.name"])).toEqual(["persona.name"]);
+    });
+
+    it("★ 名单里是祖先级单元时，被挤掉的候选不得复活成幽灵单元（RV-14）", () => {
+        // 手填 `systemPlaces: [task]`：真发那轮 places 里只剩 `task`（candidatesCompatible 把
+        // task.title/task.body/… 全挤掉）→ 单元名单必须与之一致，否则会谎报出 `task.title(runtime)`
+        // 这种该轮并不存在的单元，且容器说反（明明整棵 task 都在 system）。
+        const u = unitsFromSystemPlaces(["task", "chain"]);
+        expect(u.has("task")).toBe(true);
+        expect(u.has("task.title")).toBe(false); // 幽灵单元
+        expect(u.has("task.body")).toBe(false);
+        expect(sysCauses(["task.body"], ["task", "chain"])).toEqual(["task"]);
+        expect(sysCauses(["task.title"], ["task", "chain"])).toEqual(["task"]);
+        expect(attributionOf(u, "task.title")).toEqual({ kind: "unit", place: "task", container: "system" });
     });
 });

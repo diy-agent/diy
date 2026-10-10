@@ -7,7 +7,7 @@ import { describe, it, expect } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { diffSteps, summarizeSteps, withIndex, type DeliveryStepRecord } from "../../src/shared/context/steps";
-import { opsFile, readDeliverySteps } from "../../src/main/services/local-agent";
+import { readDeliverySteps, stepsFile } from "../../src/main/services/local-agent";
 
 const rec = (over: Partial<DeliveryStepRecord> = {}): DeliveryStepRecord => ({
     ts: "2026-09-25T00:00:00.000Z",
@@ -98,9 +98,9 @@ describe("withIndex", () => {
 
 describe("读侧兜底：缺字段的快照不打断渲染（review RV-12）", () => {
     it("steps.jsonl 缺 systemPlaces/runtimePlaces → 读出来是 []（不是 undefined）", () => {
-        // 路径与 main 侧同一算法：借用 opsFile（同目录同 key），只换后缀 —— 不复制 key 算法
+        // 路径用 main 侧导出的 stepsFile（review RV-17：别靠后缀反推 —— 改后缀会静默写错文件、用例变假绿）
         const uri = "projects/99/tasks/1";
-        const fp = opsFile(uri).replace(/\.ops\.jsonl$/, ".steps.jsonl");
+        const fp = stepsFile(uri);
         mkdirSync(dirname(fp), { recursive: true });
         writeFileSync(
             fp,

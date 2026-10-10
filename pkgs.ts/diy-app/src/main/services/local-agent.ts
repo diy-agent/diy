@@ -216,8 +216,11 @@ function llmFile(taskUri: string): string {
     return path.join(localDir(), `${keyOf(taskUri)}.llm.jsonl`);
 }
 
-/** 投递快照（每轮真发一条）：投递**事实**，与 raw 那种旁路观测不同 —— UI 的 step/diff 靠它 */
-function stepsFile(taskUri: string): string {
+/**
+ * 投递快照（每轮真发一条）：投递**事实**，与 raw 那种旁路观测不同 —— UI 的 step/diff 靠它。
+ * 导出供测试构造落盘状态（review RV-17：别让用例靠后缀反推路径 —— 改后缀会静默变成假绿）。
+ */
+export function stepsFile(taskUri: string): string {
     return path.join(localDir(), `${keyOf(taskUri)}.steps.jsonl`);
 }
 

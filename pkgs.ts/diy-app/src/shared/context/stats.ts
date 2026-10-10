@@ -29,14 +29,37 @@ export interface ContextStatRecord {
 /**
  * 两份值 hash 表 → 变化路径（字典序）。
  * 增（新 path）与删（消失的 path）都算变化；值相同不算。
+ *
+ * `prev` 为 null（**没有上一轮**，如某任务的首轮）→ `[]`：没有可比对的基线，就谈不上"变化"。
+ * 曾把这里写成"全部存在的 path 算变化"，于是每个任务首轮把 41 个 path 全记成变化，
+ * 从不变过的 `diy`/`guard`/`rules` 被显示成"变了 39 次 · 7.2%"（review RV-15）。
  */
 export function changedPaths(
     prev: Record<string, string> | null,
     next: Record<string, string>,
 ): string[] {
-    if (!prev) return Object.keys(next).sort();
+    if (!prev) return [];
     const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
     return [...keys].filter((k) => prev[k] !== next[k]).sort();
+}
+
+/**
+ * 首轮基线不算变化 —— **存量数据**侧（review RV-15）。
+ *
+ * 修写入器只对**新**记录生效（`statFromStep` 现在给 `[]`），而 stats 是长期累计、
+ * append-only 的：老文件里那批"首轮 = 全部 path"的记录会一直污染「变了 / 变化率」列。
+ * 本函数按同一规则把**每个任务在本文件里的第一条记录**的 `changed` 抹成 `[]`
+ * （append-only ⇒ 文件里某任务的第一条就是它的首轮）。新记录本就是 `[]`，此函数对它是恒等变换。
+ *
+ * ⚠️ 必须在**过滤 / 切片之前**调用：`slice(-limit)` 剩下那批的最早一条不是首轮，事后无从分辨。
+ */
+export function dropBaselineChanges(records: readonly ContextStatRecord[]): ContextStatRecord[] {
+    const seen = new Set<string>();
+    return records.map((r) => {
+        const first = !seen.has(r.taskUri);
+        seen.add(r.taskUri);
+        return first && r.changed.length > 0 ? { ...r, changed: [] } : r;
+    });
 }
 
 /** 单个节点的统计 */
@@ -104,7 +127,7 @@ export function summarizeStats(records: readonly ContextStatRecord[]): StatsSumm
 
 /**
  * 从投递快照造一条统计记录（真发路径用）。
- * `prevHashes` = **同一任务上一轮**的值 hash 表（首轮传 null → 全部算变化）。
+ * `prevHashes` = **同一任务上一轮**的值 hash 表；首轮传 null（→ 不算变化，见 `changedPaths`）。
  */
 export function statFromStep(
     step: DeliveryStepRecord,

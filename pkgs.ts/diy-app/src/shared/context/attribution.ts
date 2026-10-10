@@ -8,7 +8,7 @@
 //
 // 约定：本文件只放纯函数，禁止 import node:*（renderer 会打进包）。
 
-import { PLACE_CANDIDATES } from "./delivery";
+import { unitPathsOf } from "./delivery";
 import type { ContextContainer, ContextPath } from "./types";
 
 /** 一个投递单元（path → 容器） */
@@ -35,12 +35,19 @@ export function unitsFromRules(rules: readonly PlaceUnit[]): Map<string, Context
 }
 
 /**
- * **某一轮快照的划分**（`systemPlaces`）→ 单元 map（用 `PLACE_CANDIDATES` 补全其余为 runtime）。
+ * **某一轮快照的划分**（`systemPlaces`）→ 单元 map（未进名单的单元 = runtime）。
  * 用于历史归因：那时生效的是这一轮的划分，不是页面当前那把刀（review RV-02）。
+ *
+ * 单元名单必须与当轮**真发**同一份（`unitPathsOf` = 候选 ∪ 名单 − 与名单互斥的候选）。
+ * 只遍历 `PLACE_CANDIDATES` 会两个方向都说错话（review RV-14，探针三实现对照）：
+ *   · 候选外的手填单元被整个丢掉 → 该单元的变化报"无原因"；
+ *   · 名单里是祖先级单元（手填 `task`）时，被挤掉的候选被当幽灵单元造出来 →
+ *     `task.title` 被谎报成 `task.title(runtime)`，而该轮实际单元是 `task(system)`。
+ * `systemPlaces` 缺失时按空名单处理（读侧兜底是 main 的活，这里再兜一层不冲突 —— RV-17）。
  */
-export function unitsFromSystemPlaces(systemPlaces: readonly string[]): Map<string, ContextContainer> {
-    const sys = new Set(systemPlaces);
-    return new Map(PLACE_CANDIDATES.map((c) => [c.path, (sys.has(c.path) ? "system" : "runtime") as ContextContainer]));
+export function unitsFromSystemPlaces(systemPlaces: readonly string[] | undefined): Map<string, ContextContainer> {
+    const sys = new Set(systemPlaces ?? []);
+    return new Map(unitPathsOf(systemPlaces ?? []).map((p) => [p, (sys.has(p) ? "system" : "runtime") as ContextContainer]));
 }
 
 export function attributionOf(units: ReadonlyMap<string, ContextContainer>, path: string): Attribution {
@@ -65,7 +72,7 @@ export function attributionOf(units: ReadonlyMap<string, ContextContainer>, path
  * 并复用 `attributionOf`：容器 path（如 `task`）展开成其子字段所属的单元（一份实现，RV-10）。
  * 空数组 = 不是值变化引起的（说明头/渲染变了，或变化落在未投递路径）。
  */
-export function sysCauses(changed: readonly string[] | undefined, systemPlaces: readonly string[]): ContextPath[] {
+export function sysCauses(changed: readonly string[] | undefined, systemPlaces: readonly string[] | undefined): ContextPath[] {
     const units = unitsFromSystemPlaces(systemPlaces);
     const out = new Set<ContextPath>();
     for (const p of changed ?? []) {

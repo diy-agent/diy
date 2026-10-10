@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
     changedPaths,
+    dropBaselineChanges,
     statFromStep,
     summarizeStats,
     type ContextStatRecord,
@@ -27,8 +28,10 @@ const rec = (ts: string, changed: string[], taskUri = "projects/1/tasks/1"): Con
 });
 
 describe("changedPaths：变化路径", () => {
-    it("首轮（无上一轮）→ 全部存在的 path 算变化", () => {
-        expect(changedPaths(null, { b: "2", a: "1" })).toEqual(["a", "b"]);
+    it("★ 首轮（无上一轮）→ **不算变化**（没有基线就谈不上变化，RV-15）", () => {
+        // 曾写成"全部存在的 path 算变化" → 每个任务首轮把 41 个 path 全记成变化，
+        // 从不变过的 diy/guard/rules 会显示成"变了 39 次 · 7.2%"（把用户往反方向带）。
+        expect(changedPaths(null, { b: "2", a: "1" })).toEqual([]);
     });
 
     it("值变算变化；值同不算", () => {
@@ -119,8 +122,49 @@ describe("statFromStep：从投递快照造统计", () => {
         expect(r).toMatchObject({ taskUri: "projects/1/tasks/1", turnId: "t1", changed: ["b"] });
     });
 
-    it("首轮（prev=null）→ 全部算变化", () => {
-        expect(statFromStep(step({ a: "1" }), null, "u").changed).toEqual(["a"]);
+    it("★ 首轮（prev=null）→ changed 为空（RV-15；真发写入路径也走这条）", () => {
+        expect(statFromStep(step({ a: "1" }), null, "u").changed).toEqual([]);
+    });
+
+    it("有上一轮 → 只记真变化（首轮不掺沙子的对照）", () => {
+        const r = statFromStep(step({ a: "1", b: "2" }), { a: "1", b: "2" }, "u");
+        expect(r.changed).toEqual([]);
+    });
+});
+
+describe("dropBaselineChanges：存量数据抹平（RV-15）", () => {
+    it("每个任务的**第一条**记录的 changed 抹成 []，其余原样", () => {
+        const rows = [
+            rec("2026-09-26T01:00:00Z", ["diy", "guard", "task.title"], "projects/1/tasks/1"), // 首轮基线
+            rec("2026-09-26T02:00:00Z", ["task.title"], "projects/1/tasks/1"),
+            rec("2026-09-26T03:00:00Z", ["diy", "rules"], "projects/1/tasks/2"), // 另一任务的首轮基线
+            rec("2026-09-26T04:00:00Z", ["chain"], "projects/1/tasks/1"),
+        ];
+        expect(dropBaselineChanges(rows).map((r) => r.changed)).toEqual([[], ["task.title"], [], ["chain"]]);
+        // 不改 ts/taskUri/turnId
+        expect(dropBaselineChanges(rows)[0]!.turnId).toBe(rows[0]!.turnId);
+    });
+
+    it("★ 对**新**记录（首轮 written 已是 []）是恒等变换", () => {
+        const rows = [
+            rec("2026-09-26T01:00:00Z", [], "projects/1/tasks/1"),
+            rec("2026-09-26T02:00:00Z", ["chain"], "projects/1/tasks/1"),
+        ];
+        expect(dropBaselineChanges(rows)).toEqual(rows);
+    });
+
+    it("★ 抹平后：从不变过的节点不再上榜，变化率里也不再有首轮沙子（RV-15 的用户可见效果）", () => {
+        // 3 个任务各 1 轮基线（都记了全部 path）+ 1 轮真变化
+        const legacy = [
+            rec("2026-09-26T01:00:00Z", ["diy", "task.title"], "projects/1/tasks/1"),
+            rec("2026-09-26T02:00:00Z", ["task.title"], "projects/1/tasks/1"),
+            rec("2026-09-26T03:00:00Z", ["diy", "task.title"], "projects/1/tasks/2"),
+        ];
+        const s = summarizeStats(dropBaselineChanges(legacy));
+        expect(s.paths.find((p) => p.path === "diy")).toBeUndefined(); // 39 次变 0 次 → 不显示
+        expect(s.paths.find((p) => p.path === "task.title")!.changes).toBe(1); // 只剩真变化
+        expect(s.turns).toBe(3); // 分母仍是全部真发轮（含没变的轮）
+        expect(s.taskCount).toBe(2);
     });
 });
 
