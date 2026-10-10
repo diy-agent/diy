@@ -10,9 +10,7 @@
 // snapshot 用 **fs 惰性读** 而不是 import：4.3MB JSON 一旦被 import，
 // tsc 的 resolveJsonModule 会尝试把它推断成字面量类型（6315 模型 → 实例化爆炸）。
 
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { faceOfNpm } from "../../shared/models";
 import {
     filterAllows,
@@ -27,6 +25,7 @@ import {
     type ProviderView,
     type SpecProvider,
 } from "../../shared/model-config";
+import { dataFileOrThrow } from "./data-file";
 import { loadCustomSpecs, loadModelConfig } from "./model-config";
 
 let _snapshot: Record<string, SpecProvider> | null = null;
@@ -34,18 +33,7 @@ let _snapshot: Record<string, SpecProvider> | null = null;
 /** 惰性加载 snapshot（进程内缓存一次） */
 function snapshot(): Record<string, SpecProvider> {
     if (_snapshot) return _snapshot;
-    const here = dirname(fileURLToPath(import.meta.url));
-    // 候选路径按「bundle 所在深度」区分：src/**（tsx 直跑）= app 下 2~3 层；
-    // build/<V>/{main,cli}（vite 产物）= app 下 3 层。二者相对布局不同，故必须分开列。
-    const cands = [
-        join(here, "data/models-snapshot.json"), // bundle 旁：build/<V>/main|cli/data（sha.sh build 拷贝）
-        join(here, "../data/models-snapshot.json"), // src/main/** → src/main/data（tsx 直跑）
-        join(here, "../../../src/main/data/models-snapshot.json"), // build/<V>/main|cli → 源树兜底（preview/lab 未拷贝时）
-        join(here, "../../src/main/data/models-snapshot.json"), // src/cli/** → src/main/data（tsx 直跑 CLI）
-    ];
-    const p = cands.find((c) => existsSync(c));
-    if (!p) throw new Error(`models-snapshot.json 缺失: ${cands.join(" | ")}`);
-    _snapshot = JSON.parse(readFileSync(p, "utf-8")) as Record<string, SpecProvider>;
+    _snapshot = JSON.parse(readFileSync(dataFileOrThrow("models-snapshot.json"), "utf-8")) as Record<string, SpecProvider>;
     return _snapshot;
 }
 
@@ -94,13 +82,12 @@ function modelViews(
         const npm = (m?.provider as { npm?: string } | undefined)?.npm ?? spec?.npm ?? "";
         const face = faceOfNpm(npm);
         if (!face) continue; // 不支持的 npm（anthropic/google/…）→ 该模型不出现
-        const sc = m?.cost as
-            | { input?: number; output?: number; cache_read?: number; cache_write?: number; tiers?: unknown }
-            | undefined;
+        const sc = m?.cost;
+        // 覆盖（model.yaml，可含时段档）优先；否则取 spec 的价（models.dev 原生 / custom 自写）。
         const cost =
             o?.cost ??
             (sc && (sc.input !== undefined || sc.output !== undefined)
-                ? { input: sc.input, output: sc.output, cache_read: sc.cache_read, cache_write: sc.cache_write, tiers: sc.tiers }
+                ? { input: sc.input, output: sc.output, cache_read: sc.cache_read, cache_write: sc.cache_write, baseLabel: sc.baseLabel, tiers: sc.tiers }
                 : null);
         // 档位：配置覆盖 > models.dev 的 reasoning_options（effort 词表）> 兜底/关闭。
         const declaredSupport = reasoningFromSpec(m?.reasoning, m?.reasoning_options);

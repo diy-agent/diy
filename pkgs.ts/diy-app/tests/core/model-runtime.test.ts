@@ -190,6 +190,77 @@ describe("refreshModelRuntime（装配 snapshot ⊕ custom ⊕ model.yaml）", (
         expect(m.cost).toBeUndefined();
     });
 
+    it("custom spec 的**时段档**（utc-range）→ 运行时 TierWhen；baseLabel 带过", () => {
+        writeFileSync(
+            join(home, "providers.custom.yaml"),
+            `goat:
+  id: goat
+  npm: "@ai-sdk/openai-compatible"
+  api: "https://x/v1"
+  models:
+    a/b:
+      limit: { context: 1000, output: 100 }
+      cost:
+        input: 0.15
+        output: 0.6
+        baseLabel: off-peak
+        tiers:
+          - input: 0.5
+            output: 3
+            cache_read: 0.1
+            tier: { type: utc-range, data: { start: "01:00:00+08:00", end: "04:00:00+08:00", calendar: CN-business-day, label: peak } }
+`,
+        );
+        writeFileSync(
+            join(home, "model.yaml"),
+            `customProviders:
+  goat:
+    accounts: [{ type: apiKey, data: { value: "k" } }]
+`,
+        );
+        refreshModelRuntime(home);
+        const c = findModel("0@custom:goat/a/b")!.cost!;
+        expect(c.baseLabel).toBe("off-peak");
+        expect(c.tiers).toEqual([
+            {
+                when: { kind: "utc-range", startMin: 60, endMin: 240, offsetMs: 8 * 3600_000, calendar: "CN-business-day", label: "peak" },
+                input: 0.5,
+                output: 3,
+                cacheRead: 0.1,
+                cacheWrite: undefined,
+            },
+        ]);
+    });
+
+    it("时段档 start/end **缺偏移** → **读配置即 fail-fast**（不默认本地时区，歧义不接受）", () => {
+        writeFileSync(
+            join(home, "providers.custom.yaml"),
+            `goat:
+  id: goat
+  npm: "@ai-sdk/openai-compatible"
+  api: "https://x/v1"
+  models:
+    a/b:
+      limit: { context: 1000, output: 100 }
+      cost:
+        input: 1
+        output: 2
+        tiers:
+          - input: 5
+            output: 5
+            tier: { type: utc-range, data: { start: "01:00", end: "04:00" } }
+`,
+        );
+        writeFileSync(
+            join(home, "model.yaml"),
+            `customProviders:
+  goat:
+    accounts: [{ type: apiKey, data: { value: "k" } }]
+`,
+        );
+        expect(() => refreshModelRuntime(home)).toThrow(/ISO 8601/);
+    });
+
     it("$VAR 未定义 → resolveModelKey fail-fast", () => {
         writeFileSync(
             join(home, "providers.custom.yaml"),

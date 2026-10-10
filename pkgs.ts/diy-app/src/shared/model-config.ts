@@ -134,21 +134,72 @@ export const ReasoningOverrideSchema = z.object({ supported: z.array(z.string())
  * 逐模型覆盖（可整个缺省）。**白名单字段**，同构 models.dev 对应字段；
  * 不是整体 merge —— 只有列在这里的字段能改，其余永远跟 spec 走。
  */
+/** `01:00:00+08:00`：ISO 8601 时刻 + **必填** UTC 偏移（无偏移 = 歧义 → 拒，不默认本地时区） */
+export const TIME_OF_DAY_RE = /^(\d{2}):(\d{2})(?::(\d{2}))?(Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * 阶梯价条目的**触发条件**（写侧严格 schema；判别键 `type`，**分支私有数据进 `data`**）。
+ *
+ *   · `context`   —— `{type:"context", size: N}`（**models.dev 原生形状，原样保留**；
+ *                    diy 写侧也可用自相似的 `{type:"context", data:{size}}`）
+ *   · `utc-range` —— `{type:"utc-range", data:{start, end, calendar?, label?}}`
+ *                    `start`/`end` = 带 UTC 偏移的 ISO 8601 时刻（如 `01:00:00+08:00`）；
+ *                    `end < start` = **跨零点**；`offset` 必须两者一致（不一致 = 歧义 → 拒）。
+ *                    `calendar` = `calendars.json` 里的日历 id（工作日定义，见 shared/calendars.ts）。
+ *
+ * 运行时的两段规则见 shared/usage.ts `ratesOf`：时段价「按序首个命中」，上下文阶梯「最大阈值」。
+ */
+export const TierWhenSchema = z.discriminatedUnion("type", [
+    z
+        .object({
+            type: z.literal("context"),
+            /** models.dev 原生位置（顶层） */
+            size: z.number().int().positive().optional(),
+            /** diy 自相似位置（`data`） */
+            data: z.object({ size: z.number().int().positive() }).optional(),
+        })
+        .refine((v) => v.size !== undefined || v.data?.size !== undefined, {
+            message: "context 档必须给 size（顶层或 data.size）",
+        }),
+    z.object({
+        type: z.literal("utc-range"),
+        data: z.object({
+            start: z.string().regex(TIME_OF_DAY_RE, "须为带 UTC 偏移的 ISO 8601 时刻，如 01:00:00+08:00"),
+            end: z.string().regex(TIME_OF_DAY_RE, "同上"),
+            /** 日历 id（工作日定义）；缺省 = 时段内每天都算 */
+            calendar: z.string().optional(),
+            /** 该时段展示名（如 "peak"）；缺省 = cost.baseLabel */
+            label: z.string().optional(),
+        }),
+    }),
+]);
+export type TierWhenSpec = z.infer<typeof TierWhenSchema>;
+
 /**
  * models.dev 的**阶梯价条目**（snake_case，与 api.json 同构）：
  *   `tiers: [{ input, output, cache_read, cache_write, tier: { type: "context", size: 272000 } }]`
- * `size` = 触发阈值（映射到 ModelTier.above，见 shared/usage.ts）。
  * 不映射就会丢整档 —— 长上下文高价模型会按基础档静默少算（同 cache_read 那类坑）。
  */
-const CostTierSchema = z
+export const CostTierSchema = z
     .object({
         input: z.number().optional(),
         output: z.number().optional(),
         cache_read: z.number().optional(),
         cache_write: z.number().optional(),
-        tier: z.object({ type: z.string().optional(), size: z.number() }).optional(),
+        tier: TierWhenSchema.optional(),
     })
     .passthrough();
+
+/** 价目块（spec / override / 视图三处复用同一形状） */
+export const CostSchema = z.object({
+    input: z.number().optional(),
+    output: z.number().optional(),
+    cache_read: z.number().optional(),
+    cache_write: z.number().optional(),
+    /** 时段档「未命中任何窗」时的展示名（如 "off-peak"）；缺省 "base" */
+    baseLabel: z.string().optional(),
+    tiers: z.array(CostTierSchema).optional(),
+});
 
 export const ModelOverrideSchema = z.object({
     name: z.string().optional(),
@@ -162,15 +213,7 @@ export const ModelOverrideSchema = z.object({
         .optional(),
     /** 档位表（models.dev 未声明 effort 词表时，在此登记精确档位） */
     reasoning: ReasoningOverrideSchema.optional(),
-    cost: z
-        .object({
-            input: z.number(),
-            output: z.number(),
-            cache_read: z.number().optional(),
-            cache_write: z.number().optional(),
-            tiers: z.array(CostTierSchema).optional(),
-        })
-        .optional(),
+    cost: CostSchema.optional(),
 });
 export type ModelOverride = z.infer<typeof ModelOverrideSchema>;
 
@@ -211,15 +254,7 @@ export const SpecModelSchema = z
         /** models.dev 的**模型级 npm 覆写**（面在此精修；provider 级 npm 是粗默认） */
         provider: z.object({ npm: z.string().optional() }).passthrough().optional(),
         limit: z.object({ context: z.number(), output: z.number() }).partial().optional(),
-        cost: z
-            .object({
-                input: z.number().optional(),
-                output: z.number().optional(),
-                cache_read: z.number().optional(),
-                cache_write: z.number().optional(),
-                tiers: z.array(CostTierSchema).optional(),
-            })
-            .optional(),
+        cost: CostSchema.optional(),
     })
     .passthrough();
 export type SpecModel = z.infer<typeof SpecModelSchema>;
@@ -270,15 +305,7 @@ export const ModelViewSchema = z.object({
     npm: z.string(),
     /** 生效档位表（spec 的 reasoning_options ⊕ 配置覆盖；declared=false = 兜底通用集） */
     reasoning: ReasoningSupportSchema,
-    cost: z
-        .object({
-            input: z.number().optional(),
-            output: z.number().optional(),
-            cache_read: z.number().optional(),
-            cache_write: z.number().optional(),
-            tiers: z.array(CostTierSchema).optional(),
-        })
-        .nullable(),
+    cost: CostSchema.nullable(),
     /** filter（include/exclude）判定结果 —— UI 勾选框的状态 */
     enabled: z.boolean(),
     /** spec 里没有此模型（只有覆盖登记）→ UI 提示 id 打错或 snapshot 已变 */

@@ -15,6 +15,8 @@
 // **不可测 ≠ 0**：`api:"chat"` 面拿不到 cacheWrite（ai-sdk 的 openai-compatible 恒返回
 // undefined），该桶一律 `null`（不可测），绝不落 0（0 = 实测为零，是另一个事实，混了就是静默低估算钱）。
 
+import { matchUtcRange, type CalendarTable, type UtcRangeWindow } from "./calendars";
+
 /** 单价（$ / 1M tokens）。缺字段 = 该 provider 未给该桶定价 */
 export interface ModelRates {
     input: number;
@@ -23,20 +25,35 @@ export interface ModelRates {
     cacheWrite?: number;
 }
 
-/** 阶梯价：**总输入 token** 严格大于 `above` 时整档生效（models.dev 的 `tier.size`） */
-export interface ModelTier extends ModelRates {
-    above: number;
-}
+/**
+ * 阶梯价条目的**触发条件**（运行时归一形状；判别键 `kind`）。
+ *
+ * 两类**不可比大小**，故规则不同：
+ *   · `context`   —— 总输入 token **严格大于** `size` 时整档生效（models.dev 的 `tier.size`）；
+ *                    有多个时取「满足条件的**最大**阈值」（pi / opencode 两家一致，##211 §四.2）。
+ *   · `utc-range` —— 请求时刻落在 `[startMin, endMin)` 且日历判为工作日 → 命中；
+ *                    这是**分类**而非阈值，故取「**按序首个命中**」（两个时段窗之间没有大小可言）。
+ *
+ * 匹配优先级：**时段价先于上下文阶梯**（时段更具体；两类不叠加 —— DeepSeek 的峰谷与上下文长度无关）。
+ */
+export type TierWhen = { kind: "context"; size: number } | ({ kind: "utc-range" } & UtcRangeWindow);
 
-/** 模型表里的价格配置（真源 models.dev，抓取日期见 models.ts） */
+/** 阶梯价条目：价目（公共字段）+ 触发条件（`when` 私有） */
+export type ModelTier = ModelRates & { when: TierWhen };
+
+/** 模型表里的价格配置（真源 models.dev，抓取日期见 models.ts；diy 补丁见 ##281） */
 export interface ModelCost extends ModelRates {
     tiers?: ModelTier[];
+    /** 时段档「未命中任何窗」时的展示名（如 `"off-peak"`）；缺省 `"base"` */
+    baseLabel?: string;
 }
 
 /** 生效单价快照：选中的那一档 + 来源。**单价会变，历史账不能漂**，故随每行落盘 */
 export interface EffectiveRates extends ModelRates {
-    /** "base" | "input>272000" —— 直观说明为什么是这组价 */
+    /** "base" | "input>272000" —— 直观说明为什么是这组价（**上下文档**） */
     tier: string;
+    /** 时段档标（如 "peak" / "off-peak"）；该模型无时段价 → 缺省 */
+    window?: string;
     /** 真源标识（如 "models.dev@2026-10-02"） */
     source: string;
 }
@@ -122,20 +139,53 @@ export function bucketsOf(u: UsageLike | undefined | null): UsageBuckets {
 }
 
 /**
- * 选出生效单价：tier 按**总输入 token**（非缓存 + 缓存读 + 缓存写）比阈值，
- * 取**满足条件的最大阈值**（pi / opencode 两家一致，见 ##211 §四.2）。
- * 未过任何阈值 → base。
+ * 选出生效单价。**两段规则**（顺序即优先级，见 `TierWhen`）：
+ *   ① 时段价（`utc-range`）：命中即用 —— **按序首个命中**，`atMs` = 请求发起时刻。
+ *      引用了不存在的日历 → 该窗不命中（`matchUtcRange` 语义），退到 base 价，**绝不静默用错价**。
+ *   ② 上下文阶梯（`context`）：按**总输入 token**（非缓存 + 缓存读 + 缓存写）比阈值，
+ *      取满足条件的**最大阈值**（pi / opencode 两家一致，##211 §四.2）。
+ *
+ * `tier` = 上下文档位（"base" / "input>272000"）；`window` = 时段标（"peak" / "off-peak"）。
+ * 两者是**不同轴**，分开落盘 —— 混成一个字符串日后无法回答「这轮贵是因为长上下文还是峰价」。
  */
-export function ratesOf(cost: ModelCost | undefined, promptTokens: number): EffectiveRates | null {
+export function ratesOf(
+    cost: ModelCost | undefined,
+    promptTokens: number,
+    atMs?: number,
+    calendars?: CalendarTable,
+): EffectiveRates | null {
     if (!cost) return null;
+    const tiers = cost.tiers ?? [];
+
+    // ① 时段价：分类，故「按序首个命中」
+    if (calendars && tiers.length > 0) {
+        const at = atMs ?? Date.now();
+        for (const t of tiers) {
+            if (t.when.kind !== "utc-range") continue;
+            if (matchUtcRange(t.when, at, calendars)) {
+                return {
+                    input: t.input,
+                    output: t.output,
+                    cacheRead: t.cacheRead,
+                    cacheWrite: t.cacheWrite,
+                    tier: "base",
+                    window: t.when.label ?? cost.baseLabel ?? "base",
+                    source: COST_SOURCE,
+                };
+            }
+        }
+    }
+
+    // ② 上下文阶梯：取满足条件的最大阈值
     let rates: ModelRates = cost;
     let tier = "base";
     let matched = -1;
-    for (const t of cost.tiers ?? []) {
-        if (promptTokens > t.above && t.above > matched) {
+    for (const t of tiers) {
+        if (t.when.kind !== "context") continue;
+        if (promptTokens > t.when.size && t.when.size > matched) {
             rates = t;
-            matched = t.above;
-            tier = `input>${t.above}`;
+            matched = t.when.size;
+            tier = `input>${t.when.size}`;
         }
     }
     return {
@@ -145,6 +195,7 @@ export function ratesOf(cost: ModelCost | undefined, promptTokens: number): Effe
         cacheWrite: rates.cacheWrite,
         tier,
         source: COST_SOURCE,
+        ...(cost.baseLabel ? { window: cost.baseLabel } : {}),
     };
 }
 
@@ -486,8 +537,10 @@ export interface AgentGroup {
     buckets: UsageBuckets;
     cost: CostBreakdown | null;
     unpriced: number;
-    /** 单价依据：出现过的 tier 集合（如 ["base"] 或 ["base","input>272000"]） */
+    /** 单价依据：出现过的**上下文档**集合（如 ["base"] 或 ["base","input>272000"]） */
     tiers: string[];
+    /** 单价依据：出现过的**时段档**集合（如 ["peak"] / ["off-peak"]）；无时段价 → 空 */
+    windows: string[];
 }
 
 /**
@@ -511,6 +564,7 @@ export function groupByAgent(steps: StepUsageRecord[]): AgentGroup[] {
         const r0 = views[0]!.record;
         const priced = views.filter((v) => v.cost != null).map((v) => v.cost!);
         const tiers = [...new Set(views.map((v) => v.record.rates?.tier).filter((t): t is string => !!t))];
+        const windows = [...new Set(views.map((v) => v.record.rates?.window).filter((t): t is string => !!t))];
         return {
             persona: r0.persona ?? "—",
             stepCount: views.length,
@@ -518,6 +572,7 @@ export function groupByAgent(steps: StepUsageRecord[]): AgentGroup[] {
             cost: priced.length ? sumCosts(priced) : null,
             unpriced: views.length - priced.length,
             tiers,
+            windows,
         };
     });
 }
