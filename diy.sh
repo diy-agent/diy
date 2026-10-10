@@ -28,8 +28,6 @@ APP_DIR="$SCRIPT_DIR/pkgs.ts/diy-app"
 # preview / lab 共用 ./diy.sh 作为「通用 CLI 客户端」，连谁由 DIY_VARIANT + DIY_HOME 决定。
 DIY_VARIANT="${DIY_VARIANT:-preview}"
 export DIY_VARIANT
-HOME_DEFAULT="$SCRIPT_DIR/build/${DIY_VARIANT}/home"
-mkdir -p "$HOME_DEFAULT"
 
 # 前置检查：GUI 产物必须存在（CLI 本身是 tsx 源码无需构建，但要拉起的 Electron 必须已构建）
 GUI_ENTRY="$APP_DIR/build/${DIY_VARIANT}/main/index.mjs"
@@ -51,10 +49,16 @@ fi
 if [[ -n "${DIY_HOME:-}" && "${DIY_HOME}" == "${HOME}/.diy" && "${DIY_ALLOW_PROD_HOME:-}" != "1" ]]; then
   # 变量一律用 ${} 界定：紧跟多字节字符时，非 UTF-8 locale 下 bash 会把字符首字节
   # 并入变量名，set -u 下报 "unbound variable"（踩过）
-  echo "[diy.sh] 警告: 忽略继承的生产数据目录 DIY_HOME=${DIY_HOME}, 改用本 worktree 的 ${HOME_DEFAULT}" >&2
+  echo "[diy.sh] 警告: 忽略继承的生产数据目录 DIY_HOME=${DIY_HOME}, 改用本 worktree 的 build/${DIY_VARIANT}/home" >&2
   echo "[diy.sh] 警告: 确需操作生产数据请显式声明 DIY_ALLOW_PROD_HOME=1 ./diy.sh ..." >&2
   unset DIY_HOME
 fi
+
+# 数据根：默认「本 worktree × 变体」；上面的生产根已被拒，其余继承值照旧透传
+# （判据与 TS 侧 core/dev-home.ts::resolveDevHome 同口径；bash 无法 import TS，故此处是
+#   shell 侧唯一的默认值定义处 —— 改这里要同步改 dev-home.ts）。
+export DIY_HOME="${DIY_HOME:-$SCRIPT_DIR/build/${DIY_VARIANT}/home}"
+mkdir -p "$DIY_HOME"
 
 # ── CLI 入口自证，不继承 ──
 # DIY_CLI 是「提示词里让 agent 敲的命令行入口」。它必须是**本脚本自己**：本脚本就是本
@@ -90,7 +94,7 @@ DIY_CLI_MODE="${DIY_CLI_MODE:-auto}"
 # 实测：curl 地板 ~17ms（含 bash 脚本自身开销总计 ~45ms/条；tsx 601、compiled 300）。
 # 位置：放在新鲜度 find 之前 —— http 模式不需要选 tsx/compiled，省掉那次 find（~14ms）。
 if [[ "$DIY_CLI_MODE" == "http" ]]; then
-  _home="${DIY_HOME:-$HOME_DEFAULT}"
+  _home="$DIY_HOME"
   _port=""
   if [[ -f "$_home/app.port" ]]; then
     # 注意：app.port 可能无末尾换行 → read 返回非零但**已赋值**，
@@ -170,16 +174,16 @@ fi
 
 # 机制提示（仅交互终端输出到 stderr，不污染 --json 的 stdout）
 if [[ -t 2 ]]; then
-  echo "[diy.sh] CLI=${DIY_CLI_MODE:-auto}(${DIY_CLI_EFFECTIVE:-?}) | VARIANT=${DIY_VARIANT} | GUI=build/${DIY_VARIANT}/main产物 | HOME=${DIY_HOME:-$HOME_DEFAULT} | 需先 build（preview/lab 模式除外）" >&2
+  echo "[diy.sh] CLI=${DIY_CLI_MODE:-auto}(${DIY_CLI_EFFECTIVE:-?}) | VARIANT=${DIY_VARIANT} | GUI=build/${DIY_VARIANT}/main产物 | HOME=${DIY_HOME} | 需先 build（preview/lab 模式除外）" >&2
 fi
 
 # DIY_CLI：当前生效的 CLI 入口（提示词模版 100-diy 用它告诉 agent 该敲哪个命令；
 # 少了它 agent 只能猜“diy”，在 worktree 里会打到生产数据根）
 # DIY_ENV：运行环境声明（development/test/production，缺省 production）
 if [[ "$DIY_CLI_EFFECTIVE" == "compiled" ]]; then
-  exec env DIY_HOME="${DIY_HOME:-$HOME_DEFAULT}" DIY_CLI="$SCRIPT_DIR/diy.sh" DIY_ENV="${DIY_ENV:-development}" DIY_VARIANT="${DIY_VARIANT}" \
+  exec env DIY_HOME="$DIY_HOME" DIY_CLI="$SCRIPT_DIR/diy.sh" DIY_ENV="${DIY_ENV:-development}" DIY_VARIANT="${DIY_VARIANT}" \
     node "$CLI_JS" "$@"
 else
-  exec env DIY_HOME="${DIY_HOME:-$HOME_DEFAULT}" DIY_CLI="$SCRIPT_DIR/diy.sh" DIY_ENV="${DIY_ENV:-development}" DIY_VARIANT="${DIY_VARIANT}" \
+  exec env DIY_HOME="$DIY_HOME" DIY_CLI="$SCRIPT_DIR/diy.sh" DIY_ENV="${DIY_ENV:-development}" DIY_VARIANT="${DIY_VARIANT}" \
     "$APP_DIR/../../node_modules/.bin/tsx" src/cli/index.ts "$@"
 fi
