@@ -419,9 +419,12 @@ function ErrorBox(props: { node: BlockNode }) {
  * 旧会话（无该字段）回落到当前人物，但**显式标注为推断**——不假装确定。
  * 与输入框旁那个「跟随缺省（X）」是两回事：那个回答"下一条发给谁"，仍读当前配置。
  */
-function AssistantByline(props: { turnModel?: unknown; turnId: string }) {
+function AssistantByline(props: { turnModel?: unknown; turnId: string; showTime: boolean }) {
     // 该轮的时刻：真源 = turnId 内嵌毫秒（协议无 ts）。解析不出的旧 id → 不显示，不编时间。
-    const stamp = () => fmtTurnStamp(props.turnId);
+    // 且**一轮只显示一次**：时刻是「轮」的事实（turnId = 该轮起点），而署名行是按**块**渲染的
+    // —— 多步会话一轮有好几条，每条都挂时刻等于同一轮说四五遍（review2-3）。
+    // 所以由 `showTime`（该块是不是本轮的「时刻挂载点」，见 TurnBlock）决定谁挂。
+    const stamp = () => (props.showTime ? fmtTurnStamp(props.turnId) : null);
     const id = () => taskStore.selectedTask?.persona ?? personaStore.idForTask();
     // defOfLive：缓存里没有该 id 时补拉一次（CLI 新建/改名后 renderer 的清单会陈旧）
     const persona = () => personaStore.defOfLive(id());
@@ -439,29 +442,34 @@ function AssistantByline(props: { turnModel?: unknown; turnId: string }) {
             title={info().title}
         >
             <span
-                class="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-body"
+                class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-body"
                 aria-hidden="true"
             >
                 🤖
             </span>
             {/* 名字只在"当前人物的模型与该轮记录一致"时才敢写：否则宁可只报模型，
                 也不能拿别人的名字去顶替（那正是原 bug：署名成了当前配置的投影） */}
+            {/* min-w-0 + truncate：多 view 并排时单栏只有 200~260px，名字/模型（`provider/model`
+                很长）会把这条 flex 行撑成两行、甚至顶破容器右缘（review2-1）。`min-w-0` 才允许
+                flex 子项收缩到内容宽以下（`min-width:auto` 是默认值，不加就永远不缩）。
+                「谁答的」优先于「哪个模型」还是次要的：真正长的是模型名，所以它先被截。 */}
             <Show when={info().name}>
-                <span class="font-medium">{info().name}</span>
+                <span class="min-w-0 truncate font-medium">{info().name}</span>
             </Show>
             <Show when={info().model}>
-                <span class="opacity-50">·</span>
-                <span class="opacity-60">{personaStore.displayModel(info().model)}</span>
+                <span class="shrink-0 opacity-50">·</span>
+                <span class="min-w-0 truncate opacity-60">{personaStore.displayModel(info().model)}</span>
             </Show>
             {/* 旧轮次没有模型记录：说清"这是按当前人物推断的"，别让用户以为界面知道当时是谁答的 */}
             <Show when={info().inferred}>
-                <span class="opacity-40">（当时人物未知）</span>
+                <span class="shrink-0 opacity-40">（当时人物未知）</span>
             </Show>
-            {/* 该轮时刻：贴着署名行尾（扫读一列时间，不占正文宽度）。
+            {/* 该轮时刻：只在**本块是本轮的时刻挂载点**时才渲染（`showTime`，见 TurnBlock）。
                 带日期（MM-DD HH:MM）而不是只写 HH:MM —— 会话天然跨天，只写时刻时
                 "昨天的 14:07"与"刚才的 14:07"长得一样，回头定位就没了意义。
                 hover 出精确到秒的完整时间（秒是噪音，只在不占版面时才给）。
-                时间与"谁答的"同属**该轮事实**，所以和署名同一行 —— 它俩都是那轮的属性。 */}
+                落到署名行上的是"该轮没有用户块"那一种（CLI/agent 自己发起的轮次）——
+                正常一轮挂在用户发言那一行（见 LeafView 的 user 分支）。 */}
             <Show when={stamp()}>
                 <span class="ml-auto shrink-0 tabular-nums opacity-50" title={fmtTurnFull(props.turnId) ?? undefined}>
                     {stamp()}
@@ -477,6 +485,8 @@ function LeafView(props: {
     turnModel?: unknown;
     /** 本轮 turn 的 id（时间真源：`t` + 毫秒） */
     turnId: string;
+    /** 本块是不是**本轮时刻的挂载点**（该轮首个文本块；一轮只有一块为真，见 TurnBlock） */
+    isTimeAnchor: boolean;
     density: Density;
     pin: Record<string, boolean>;
     onToggle: (id: string) => void;
@@ -492,11 +502,11 @@ function LeafView(props: {
         // "这句是在第几步之后插进去的"，而不是以为它是一次新对话的开头
         // 注意类型是 string 而非 SteerMode：值域由**历史日志**决定（含改名前的 step/turn）
         const steer = str(b.attrs.steer);
-        // 用户消息的时刻：与助理署名行**同一口径、同一真源**（都是本轮的 turnId）。
-        // 需求原文是"对话消息显示时间"——只标助理一侧会让人以为"我这句话没被记录到"。
-        // 位置放在气泡上方右对齐，与助理署名行（左起、时间在行尾）对称：每条消息块
-        // 都以一行 meta 开头，时间永远在最右。
-        const stamp = fmtTurnStamp(props.turnId);
+        // 用户消息的时刻：一轮的**唯一**一处（同一真源 = 本轮的 turnId）。
+        // 需求原文是"对话消息显示时间"，而 turnId 就是"用户按下发送"那一刻 ——
+        // 挂在轮首这条发言上语义最准（挂在助理回答上等于把提问时刻当成回答时刻）。
+        // 位置放在气泡上方右对齐：它标的是"这条发言什么时候说的"。
+        const stamp = props.isTimeAnchor ? fmtTurnStamp(props.turnId) : null;
         return (
             <div>
                 <Show when={stamp}>
@@ -530,7 +540,11 @@ function LeafView(props: {
             // 会被解析成错乱结构，这里绝不能走 Markdown 渲染
             return (
                 <div>
-                    <AssistantByline turnModel={props.turnModel} turnId={props.turnId} />
+                    <AssistantByline
+                        turnModel={props.turnModel}
+                        turnId={props.turnId}
+                        showTime={props.isTimeAnchor}
+                    />
                     <div class="text-prose opacity-80 truncate">
                         {b.stopped ? firstLine(t) : tailLine(t)}
                         <Show when={!b.stopped}>
@@ -547,7 +561,11 @@ function LeafView(props: {
         // 旧分支会原样留在 DOM 里——现象就是点「MD 原文」正文纹丝不动（只在切任务/重挂载后才生效）。
         return (
             <div>
-                <AssistantByline turnModel={props.turnModel} turnId={props.turnId} />
+                <AssistantByline
+                    turnModel={props.turnModel}
+                    turnId={props.turnId}
+                    showTime={props.isTimeAnchor}
+                />
                 <Show when={props.md} fallback={<PlainText text={text} />}>
                     <MarkdownText text={text} streaming={!b.stopped} />
                 </Show>
@@ -613,6 +631,17 @@ function TurnView(props: {
     };
     const procCount = () => processOf(t).length;
     const isLiveTurn = () => props.liveTurnId != null && props.liveTurnId === t.id;
+    /**
+     * 本轮时刻的**唯一挂载点**：首个文本块（正常一轮里就是用户那条发言）。
+     *
+     * 为什么不是"每条消息都挂"：tuid 是**轮起点**（main 侧 `t${Date.now()}`，就是用户按下
+     * 发送那一刻），所以一轮里所有块的时间戳**完全相同** —— 逐块挂等于同一轮重复说四五遍
+     * （review2-3 实测：一轮两步时 '09-26 14:07' 在页面上出现 4 次）。
+     * 挂在轮首语义也最准：它是"这次对话什么时候开始的"，不是"这一块什么时候到的"
+     * （块的时刻协议里根本没有，拿轮起点去冒充是编时间）。
+     * 没有用户块的轮次（CLI/agent 自己发起）→ 落到首个助理署名行，时间照样看得见。
+     */
+    const timeAnchorId = () => leavesOf(t).find((b) => b.tag === "text")?.id ?? null;
     return (
         <div class="space-y-1.5">
             {/* 唯一渲染循环：文档序分段，密度只作用于每段的呈现方式 */}
@@ -625,6 +654,7 @@ function TurnView(props: {
                             node={seg.node}
                             turnModel={t.attrs.model}
                             turnId={t.id}
+                            isTimeAnchor={seg.node.id === timeAnchorId()}
                             density={props.density}
                             pin={props.pin}
                             onToggle={props.onToggle}
@@ -647,7 +677,6 @@ function TurnView(props: {
                 页面级：块树每帧重建，组件内 signal 会被清掉（D3 的"点开又自动合上"）。 */}
             <Show when={t.attrs.usage}>
                 <TurnUsageBar
-                    turnId={t.id}
                     usage={t.attrs.usage}
                     hover={props.usageHover?.id === t.id}
                     onHover={(el) => props.onHoverUsage(t.id, el)}
@@ -1374,8 +1403,14 @@ export function LocalChatPage(props: { uri?: string }) {
                         **只变色、不加 outline**：outline 画在 border 外侧 2px，看着像"多了一圈
                         边框"（实测双边框感），边框自己变色就够表达了。
                       · 圆角：`--radius-field`（输入类控件语义，比 `--radius-box` 更方正） */}
+                {/* R5 封顶加在**这个盒子**（= 用户眼里的「输入框」：正文 + 底部工具条）上，而不是
+                    只加在正文宿主上。封顶的**主语**必须与需求一致 —— review2-2 实测：只封宿主时
+                    整个输入区比 view/3 高出 50px（工具条那一行没算进去），后人按"整体 1/3"去改测试
+                    就会对不上。`flex flex-col` 是让工具条（shrink-0）与正文（flex-auto）在盒子里分高度：
+                    内容少时两者都按内容高（默认一行）；超过 max-height 时只有正文收缩 + 内部滚动。 */}
                 <div
-                    class={`rounded-field border border-base-content/20 bg-base-200 transition-colors focus-within:border-base-content ${fullscreen() ? "fixed inset-4 z-40 flex min-h-0 flex-col p-4" : "relative"}`}
+                    class={`rounded-field border border-base-content/20 bg-base-200 transition-colors focus-within:border-base-content ${fullscreen() ? "fixed inset-4 z-40 flex min-h-0 flex-col p-4" : "relative flex flex-col"}`}
+                    style={fullscreen() ? undefined : { "max-height": inputMaxH() }}
                 >
                     {/* 全屏时横条挪进这块 fixed 区域顶部：正常态那份被遮罩盖住看不见，
                         同一时刻只有一处渲染（同一份数据不重复画） */}
@@ -1408,10 +1443,12 @@ export function LocalChatPage(props: { uri?: string }) {
                     {/* pr-8：正文不要钻到右上角按钮底下 */}
                     {/* 全屏时 `flex-1` 不能丢：面板是 `fixed inset-4 flex flex-col`，正文宿主
                         没有 flex-grow 就成了内容高的项 → 内容少时缩成一条（R5 review1-1 实测：
-                        面板 683px、编辑区仅 23px，「全文编辑」形同虚设）。 */}
+                        面板 683px、编辑区仅 23px，「全文编辑」形同虚设）。
+                        正常态用 `flex-auto`（basis = 内容高）而不是 `flex-1`（basis = 0）——
+                        basis 0 在"高度由内容决定"的盒子里会把正文压成 0 高；而 basis auto 只在
+                        盒子被 max-height 卡住时才收缩（收缩权在正文，工具条 shrink-0 不动）。 */}
                     <div
-                        class={`min-h-0 overflow-auto px-2 pt-2 pr-8 ${fullscreen() ? "flex-1" : ""}`}
-                        style={fullscreen() ? undefined : { "max-height": inputMaxH() }}
+                        class={`min-h-0 overflow-auto px-2 pt-2 pr-8 ${fullscreen() ? "flex-1" : "flex-auto"}`}
                     >
                         <MdEditor
                             value={inputValue()}

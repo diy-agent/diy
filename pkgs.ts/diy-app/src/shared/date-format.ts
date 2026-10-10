@@ -54,11 +54,15 @@ export function turnTimeOf(turnId: string | undefined | null): Date | null {
 }
 
 /**
- * turnId → `MM-DD HH:MM` —— **turn 级时刻的唯一展示格式**（对话流 / 用量条 / 明细抽屉共用）。
+ * turnId → `MM-DD HH:MM` —— **turn 级时刻的唯一展示格式**（对话流轮首消息 / 用量卡 / 明细抽屉共用）。
  *
  * 带日期（而非只 HH:MM）：会话天然跨天，只写 14:07 时"昨天下午那句"和"刚才那句"长得一样，
- * 回头定位就失去意义。**不再提供 HH:MM 短版**：同一事实两种精度并列，读的人要重新判断
- * "这两个数为什么不一样"，而省下的几个字符不值这个代价（任务 257 review1-3）。
+ * 回头定位就失去意义。**不提供 HH:MM 短版**：同一事实两种精度并列，读的人要重新判断
+ * "这两个数为什么不一样"，而省下的几个字符不值这个代价（##257 review1-3）。
+ *
+ * ⚠️ 它是**轮**的事实（turnId 就是该轮起点）。一轮里所有块的时间戳完全相同，所以对话流里
+ * 一轮只显示一次（挂在该轮首个消息块上，见 `LocalChatPage.TurnBlock.timeAnchorId`）——
+ * 按块渲染会让同一轮把同一个数印四五遍（##257 review2-3）。
  */
 export function fmtTurnStamp(turnId: string | undefined | null): string | null {
     const d = turnTimeOf(turnId);

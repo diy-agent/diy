@@ -24,6 +24,10 @@ export const VIEW_BAR_H_PX = 32;
 /**
  * 聊天输入区（composer）的封顶高度 —— **view 高度的 1/3**（任务 257 R5）。
  *
+ * 主语是**整个输入框**（`rounded-field` 盒子 = 正文 + 底部工具条），不是只算正文宿主：
+ * review2-2 实测只封宿主时整体比 view/3 高出 50px。调用方把它挂到盒子的 `max-height` 上，
+ * 由 `flex flex-col` + 正文 `flex-auto` / 工具条 `shrink-0` 去分配（见 LocalChatPage 输入框）。
+ *
  * 口径为什么是"实测 view 高度"而不是 `33vh`：多 view 并排时页面比视口矮，
  * `33vh` 会明显超出一档（实测差 ~32px）。所以由调用方量宿主 `clientHeight` 后传进来。
  *

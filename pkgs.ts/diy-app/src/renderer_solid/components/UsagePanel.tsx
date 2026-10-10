@@ -23,7 +23,8 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 import { localChatStore } from "../store/localChatStore";
-// 时间口径唯一出处（shared/date-format）：用量条的时刻与对话流消息同格式（fmtTurnStamp）
+// 时间口径唯一出处（shared/date-format）：面板里的轮次时刻（hover 卡标题 / 明细抽屉）与对话流
+// 首行同格式（fmtTurnStamp）；列头那处要「到秒」故用 fmtTurnFull。
 import { fmtTurnFull, fmtTurnStamp } from "../../shared/date-format";
 import { useDrawerMax, DrawerMaxButton } from "./DrawerMaximize";
 import {
@@ -432,14 +433,6 @@ const fmtDateSec = (d: Date | number): string => {
     if (Number.isNaN(dt.getTime())) return "";
     const p = (n: number) => String(n).padStart(2, "0");
     return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())} ${p(dt.getHours())}:${p(dt.getMinutes())}:${p(dt.getSeconds())}`;
-};
-
-/** 轮次时间（日期 + 时间到秒）：turnId 自带 epoch ms（`t179…`）；非常规 id → null（回退原 id） */
-const turnStamp = (turnId: string): string | null => {
-    const m = /^t(\d{13})$/.exec(turnId);
-    if (!m) return null;
-    const s = fmtDateSec(Number(m[1]));
-    return s || null;
 };
 
 /** 步时间（日期 + 时间到秒）：账本 ts（ISO）；非法 → 原文 */
@@ -935,7 +928,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                             <For each={groups()}>
                                                 {(g) => (
                                                     <tr>
-                                                        <td class="text-right tabular-nums" title={g.turnId}>{turnStamp(g.turnId) ?? g.turnId}</td>
+                                                        <td class="text-right tabular-nums" title={g.turnId}>{fmtTurnFull(g.turnId) ?? g.turnId}</td>
                                                         <td class="text-right font-mono text-caption opacity-70">{g.turnId}</td>
                                                         <td class="text-right">{g.steps.length}</td>
                                                         {cellsOf(g.last.record.contextParts, g.last.buckets.inputTotal)}
@@ -1139,12 +1132,15 @@ export function UsageHoverCard(props: {
 // ─── L1① turn 底 bar ────────────────────────────────
 
 /**
- * turn 底 bar：`HH:MM · N tok · $X` —— 只放时间、总 token 合计、金额（2026-10-03 定稿）。
- * 三数同为**各步累计**口径（可互算）；窗口% 不上 bar（不同口径不同框，防相除误读）。
+ * turn 底 bar：`N tok · $X` —— 只放总 token 合计与金额（2026-10-03 定稿；时刻于 review2-3 移除）。
+ * 两数同为**各步累计**口径（可互算）；窗口% 不上 bar（不同口径不同框，防相除误读）。
  * hover 出 L2 卡；点击直接开 L3 抽屉（卡里的「明细」是同一动作的第二个入口）。
+ *
+ * 为什么不显示时刻：时刻是**轮**的事实，一轮只该出现一次，挂在该轮首个消息块上
+ * （用户发言那一行，见 LocalChatPage.TurnBlock.timeAnchorId）。底 bar 是同一轮的第三个
+ * 可见位置 —— 一轮里把同一个数印三遍不增加信息，只增加噪音（review2-3）。
  */
 export function TurnUsageBar(props: {
-    turnId: string;
     usage: unknown;
     hover: boolean;
     onHover: (el: HTMLElement) => void;
@@ -1162,8 +1158,7 @@ export function TurnUsageBar(props: {
         );
     }
     const p = () => props.usage as TurnUsagePatch;
-    // 与对话流里的消息时刻同一格式（fmtTurnStamp）：同一轮一个口径，精确值走 title
-    const clock = fmtTurnStamp(props.turnId);
+    // 这里**不画时刻**：见上方头注（一轮一处，挂轮首消息）。
     return (
         <button
             type="button"
@@ -1180,11 +1175,6 @@ export function TurnUsageBar(props: {
             }}
             onClick={props.onDetail}
         >
-            <Show when={clock != null}>
-                <span class="tabular-nums opacity-70" title={fmtTurnFull(props.turnId) ?? undefined}>
-                    {clock}
-                </span>
-            </Show>
             <span class="tabular-nums">{fmtTokens(p().total)} tok</span>
             <span class="tabular-nums">{p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}</span>
         </button>
