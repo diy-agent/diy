@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 
@@ -26,8 +26,23 @@ process.env["DIY_HOME"] = testHome;
 process.env["DIY_PORT"] = "0";
 // 声明测试环境：runtime.ts 据此派生 dev/test 专属能力（窗口定位副屏等），生产能力一律关闭
 process.env["DIY_ENV"] = "test";
+// 变体根：测试实例独占 build/test/**（产物由 `sha.sh test-intent` 的 `DIY_VARIANT=test build` 出）。
+// 在这里兜底，直接跑 `npx vitest run tests/cli.intent` 也能命中（不必依赖外层 export）。
+process.env["DIY_VARIANT"] ??= "test";
 // 禁止 CLI 自动拉起 app：测试自己用 startElectronTest 启动实例并持有句柄，
 // CLI 若在端口探测超时时另起 detached 实例，测试无法回收 → 进程泄露。
 // 注入点选这里而非各测试文件：ShellTest 的 env = { ...process.env, ...opts.env }，
 // 在此设一次即对所有 CLI 调用生效（见 shell-test.ts:43）。
 process.env["DIY_NO_LAUNCH"] = "1";
+
+// ── 模型目录夹具（生产无内置 provider；单测注入一份「已配置 opencode-go」） ──
+// 见 tests/fixtures/models.ts。注入后 findModel/apiOf/reasoningOf 等对这套模型可用。
+import { setModelCatalog } from "../src/shared/models";
+import { OPENCODE_GO_SNAPSHOT, FIXTURE_DEFAULT_REF } from "./fixtures/models";
+setModelCatalog(OPENCODE_GO_SNAPSHOT);
+// 缺省人物指向一个可用模型：core 单测（compact/steer…）走真链时 persona.model 必须解析得到。
+// 生产不写这份兜底（用户需自行配置 provider 后建人物）。
+writeFileSync(
+    join(testHome, "personas.yaml"),
+    `default: persona/1\npersonas:\n  persona/1:\n    name: 大副\n    model: ${FIXTURE_DEFAULT_REF}\n    reasoningEffort: medium\n    instructions: ""\n`,
+);

@@ -17,12 +17,31 @@ import { taskStore } from "./taskStore";
 import { notificationStore } from "./notificationStore";
 import type { PersonaView } from "../../shared/persona";
 import type { ReasoningEffort } from "../../shared/models";
+import { splitQualified } from "../../shared/model-config";
 
-/** 模型清单里本 store 用到的最小形状（展示用：id → 名字 / 推理档位支持集） */
-interface ModelBrief {
+/** 模型清单里本 store 用到的形状（展示 + 模型选择表；字段来自 agent.local.models） */
+export interface ModelBrief {
+    /** 完全限定名 account@provider/model —— persona.model 存的就是它 */
+    ref: string;
+    /** provider 段（std = models.dev id；custom = `custom:<key>`） */
+    provider: string;
+    /** 账号段（限定名 `@` 前） */
+    account: string;
     id: string;
     name: string;
+    api: "chat" | "responses";
+    /** 上下文窗口；spec 未给 → 缺省（表里显示「—」） */
+    contextLimit?: number;
+    /** 单次输出上限；spec 未给 → 缺省（运行时回退默认值） */
+    maxOutputTokens?: number;
     reasoning: { supported: ReasoningEffort[]; default: ReasoningEffort };
+    /** 单价（$/1M tokens；缺失 = 无价目，表里显示 —） */
+    cost?: { input: number; output: number; cacheRead?: number; cacheWrite?: number } | null;
+}
+
+/** 按限定名 `ref`（或裸 id，兼容存量）在清单里找条目 */
+function findModelBrief(refOrId: string): ModelBrief | undefined {
+    return models().find((m) => m.ref === refOrId) ?? models().find((m) => m.id === refOrId);
 }
 
 const [personas, setPersonas] = createSignal<PersonaView[]>([]);
@@ -231,9 +250,26 @@ export const personaStore = {
     // 不提供"模型 id → 显示名"的映射：上游的显示名与 id 经常对不上（同一 id 在不同批次
     // 叫法不同、或清单里的 name 是历史遗留），于是"界面显示 X、实际发的是 Y"。
     // 模型一律**直接用 id** 展示 —— 它才是发给上游的那个值，也是配置里存的那个值。
+    /**
+     * 模型的**展示名**：provider 只有唯一账号时省掉 `account@` 前缀。
+     *
+     * 引用（persona.model / ref）永远存全限定名；这里只改显示 —— 单账号下
+     * `goat@custom:goat/xiaomi/mimo-v2.6-flash` 的 `goat@` 纯是噪音，去掉更清楚。
+     * 清单未加载（无从判断账号数）时也按单账号处理（不加前缀）。
+     */
+    displayModel(ref: string): string {
+        const q = splitQualified(ref);
+        if (!q) return ref;
+        const accts = new Set<string>();
+        for (const m of models()) {
+            const x = splitQualified(m.ref);
+            if (x && x.provider === q.provider) accts.add(x.account);
+        }
+        return accts.size <= 1 ? `${q.provider}/${q.model}` : ref;
+    },
     /** 某模型支持的思考级别（平铺按钮候选；模型未知时给空数组，界面自己兜底显示） */
     reasoningChoices(model: string): ReasoningEffort[] {
-        return models().find((m) => m.id === model)?.reasoning.supported ?? [];
+        return findModelBrief(model)?.reasoning.supported ?? [];
     },
     /**
      * 某模型的**默认**档位（null = 模型未知/清单未到）。
@@ -242,7 +278,7 @@ export const personaStore = {
      * 否则会写出一个上游必拒的组合（400 Invalid request parameters）—— 写入侧也会拦，但那是事后报错。
      */
     defaultReasoning(model: string): ReasoningEffort | null {
-        return models().find((m) => m.id === model)?.reasoning.default ?? null;
+        return findModelBrief(model)?.reasoning.default ?? null;
     },
     load,
     save,

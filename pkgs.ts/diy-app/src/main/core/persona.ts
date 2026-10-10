@@ -7,7 +7,7 @@
 //
 // 为什么默认值兜底成"内置人物"而不是报错：personas.yaml 不存在时系统必须可用
 // （开箱即用），且缺省人物是**数据**（用户可改）而不是代码里的硬编码回落 ——
-// 旧实现把 DEFAULT_MODEL 硬编码进 chat()，正是"每次重启都回到同一个模型"的病灶。
+// 旧实现把默认模型硬编码进 chat()，正是"每次重启都回到同一个模型"的病灶。
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

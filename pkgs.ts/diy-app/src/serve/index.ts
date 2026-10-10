@@ -37,7 +37,7 @@ installDiagnostics(cfg.home, "serve");
 // 计算项目根目录：从 src/serve/index.ts 向上两级到 pkgs.ts/diy-app/
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..", "..");
-const STATIC_DIR = path.resolve(ROOT, "out/renderer");
+const STATIC_DIR = path.resolve(ROOT, "build", process.env["DIY_VARIANT"] ?? "prod", "renderer");
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",

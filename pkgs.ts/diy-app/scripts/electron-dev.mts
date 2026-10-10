@@ -23,11 +23,17 @@ const explicitPort = portIdx >= 0 ? args[portIdx + 1] : null;
 const electronArgs: string[] = [];
 if (explicitPort) electronArgs.push("--port", explicitPort);
 
-// DIY_HOME 默认指向仓库根 build/home，与 diy.sh 保持一致
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = join(scriptDir, ".."); // pkgs.ts/diy-app
 const repoRoot = join(scriptDir, "..", "..", "..");
-const defaultHome = join(repoRoot, "build", "home");
+// 产物/数据变体根（prod|test|preview|lab）。本脚本负责 preview / lab 两个
+// 「开发互不干扰」的变体：各独占 build/<variant>/{main,preload} 产物 + build/<variant>/home
+// 数据根，故可同时运行（单实例锁 per-home）。
+const variant = process.env["DIY_VARIANT"] ?? "preview";
+process.env["DIY_VARIANT"] = variant; // 传给 vite 配置（决定 outDir）
+const outRel = join("build", variant); // 相对 appDir 的产物根
+// DIY_HOME 默认指向仓库根 build/<variant>/home，与 diy.sh 保持一致
+const defaultHome = join(repoRoot, "build", variant, "home");
 if (!process.env["DIY_HOME"]) {
   mkdirSync(defaultHome, { recursive: true });
   process.env["DIY_HOME"] = defaultHome;
@@ -101,7 +107,7 @@ function newestMtime(path: string): { file: string; mtime: number } {
 
 function bundleMtime(): number {
   try {
-    return statSync(join(appDir, "out/main/index.mjs")).mtimeMs;
+    return statSync(join(appDir, outRel, "main/index.mjs")).mtimeMs;
   } catch {
     return 0;
   }
@@ -114,20 +120,20 @@ let mainBuiltOnce = false;
 let preloadBuiltOnce = false;
 
 /** watcher 卡死检测：源码比产物新且持续 → 写 `watch-stall-suspect` 并大声提示重启。
- *  main / preload 各自比对自己的产物（不能交叉：改 preload 不会重建 out/main）。
+ *  main / preload 各自比对自己的产物（不能交叉：改 preload 不会重建 main）。
  *  判据刻意保守：连续 2 次采样（间隔 30s）都成立才报；期间有 build 完成或报错就清空。 */
 function installStallDetector(): void {
   const pairs: Array<{ label: string; inputs: string[]; output: string; built: () => boolean }> = [
     {
       label: "main",
       inputs: ["src/main", "vite.main.config.ts"],
-      output: "out/main/index.mjs",
+      output: join(outRel, "main/index.mjs"),
       built: () => mainBuiltOnce,
     },
     {
       label: "preload",
       inputs: ["src/preload", "vite.preload.config.ts"],
-      output: "out/preload",
+      output: join(outRel, "preload"),
       built: () => preloadBuiltOnce,
     },
   ];
@@ -284,7 +290,7 @@ function startElectron(url: string) {
   checkSingletonLock("spawn"); // spawn 前：已知撞锁就把「谁占着/怎么办」说出来，别等 exit 0 再猜
 
   // Chromium 开关由 src/main/index.ts 经 app.commandLine.appendSwitch 生效，此处不传 argv。
-  const proc = spawn(String(electronPath), ["out/main/index.mjs", url, ...electronArgs, ...cdpArgs], {
+  const proc = spawn(String(electronPath), [join(outRel, "main/index.mjs"), url, ...electronArgs, ...cdpArgs], {
     stdio: "inherit",
     // 注入运行时契约变量（src/runtime.ts 读取）：dev 加载 URL + 产物根 + 数据根
     // DIY_ENV=development：runtime.ts 派生 dev 专属能力（窗口定位副屏等），不遮挡主屏干活区

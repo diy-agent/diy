@@ -22,7 +22,7 @@ import {
     savePersonas,
 } from "../../src/main/core/persona";
 import { BUILTIN_PERSONA_ID, BUILTIN_PERSONA_NAME } from "../../src/shared/persona";
-import { DEFAULT_MODEL } from "../../src/shared/models";
+import { FIXTURE_DEFAULT_REF } from "../fixtures/models";
 
 /** 写一份任务文件（只保留 persona 判定需要的字段） */
 function writeTask(uri: string, front: string): void {
@@ -35,7 +35,7 @@ const TWO = {
     default: "p2",
     personas: {
         p2: { name: "密探", model: "mimo-v2.6-flash", reasoningEffort: "low", instructions: "只回要点。" },
-        p1: { name: "大副", model: DEFAULT_MODEL, reasoningEffort: "medium", instructions: "" },
+        p1: { name: "大副", model: FIXTURE_DEFAULT_REF, reasoningEffort: "medium", instructions: "" },
     },
 };
 
@@ -52,8 +52,8 @@ describe("内置缺省人物（personas.yaml 不存在）", () => {
         const file = loadPersonas(diyHome());
         expect(Object.keys(file.personas)).toEqual([BUILTIN_PERSONA_ID]);
         expect(defaultPersonaId(diyHome())).toBe(BUILTIN_PERSONA_ID);
-        // 缺省人物的模型必须与全局默认模型一致（否则"重启回到的模型"会是第三个值）
-        expect(personaById(diyHome(), BUILTIN_PERSONA_ID)?.model).toBe(DEFAULT_MODEL);
+        // 无内置缺省模型：配置 provider 后才建/指定人物（模型 = 空串）
+        expect(personaById(diyHome(), BUILTIN_PERSONA_ID)?.model).toBe("");
         expect(listPersonas(diyHome())).toHaveLength(1);
     });
 

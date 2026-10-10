@@ -28,6 +28,7 @@ import {
     cancelHoverClose,
     type UsageHoverState,
 } from "./UsagePanel";
+import { CompactHistoryPanel } from "./CompactSessionPanel";
 import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
@@ -449,7 +450,7 @@ function AssistantByline(props: { turnModel?: unknown; turnId: string }) {
             </Show>
             <Show when={info().model}>
                 <span class="opacity-50">·</span>
-                <span class="opacity-60">{info().model}</span>
+                <span class="opacity-60">{personaStore.displayModel(info().model)}</span>
             </Show>
             {/* 旧轮次没有模型记录：说清"这是按当前人物推断的"，别让用户以为界面知道当时是谁答的 */}
             <Show when={info().inferred}>
@@ -971,6 +972,8 @@ export function LocalChatPage(props: { uri?: string }) {
     const [densityOpen, setDensityOpen] = createSignal(false);
     /** 「⋯」溢出菜单：低频/危险操作（清空历史）默认不显示，点开才露出（VSCode 附加菜单式） */
     const [moreOpen, setMoreOpen] = createSignal(false);
+    /** 压缩历史（事件快照列表）；压缩参数改在「窗口构成页」第一 tab（M1），卡内可快捷直压 */
+    const [gensOpen, setGensOpen] = createSignal(false);
     const [personaPanelOpen, setPersonaPanelOpen] = createSignal(false);
     const [fullscreen, setFullscreen] = createSignal(false);
     let scrollRef: HTMLDivElement | undefined;
@@ -1332,6 +1335,16 @@ export function LocalChatPage(props: { uri?: string }) {
                             >
                                 <button
                                     class="btn btn-ghost btn-xs w-full justify-start gap-2 normal-case font-normal"
+                                    aria-label="压缩历史"
+                                    onClick={() => {
+                                        setMoreOpen(false);
+                                        setGensOpen(true);
+                                    }}
+                                >
+                                    压缩历史…
+                                </button>
+                                <button
+                                    class="btn btn-ghost btn-xs w-full justify-start gap-2 normal-case font-normal"
                                     aria-label="清空本对话历史"
                                     onClick={() => {
                                         setMoreOpen(false);
@@ -1501,7 +1514,7 @@ export function LocalChatPage(props: { uri?: string }) {
                                 <span class="opacity-60">
                                     （
                                     {personaDef()
-                                        ? `${personaDef()!.model} · ${reasoningEffortLabel(personaDef()!.reasoningEffort as ReasoningEffort)}`
+                                        ? `${personaStore.displayModel(personaDef()!.model)} · ${reasoningEffortLabel(personaDef()!.reasoningEffort as ReasoningEffort)}`
                                         : "加载中…"}
                                     ）
                                 </span>
@@ -1516,7 +1529,8 @@ export function LocalChatPage(props: { uri?: string }) {
                             onHoverEnd={hoverUsageOut}
                             onDetail={() => setUsageBoard(true)}
                         />
-                        {/* L1 窗口占用环（chip 的 token/金额总量右侧）：hover chip 的 title/环自身 title 给明细 */}
+                        {/* L1 窗口占用环（chip 的 token/金额总量右侧）：hover 出构成卡（含「压缩」按钮 + 可降低窗口比较条）。
+                            【用户 2026-10-07】压缩入口**移进 token 窗口的 card**（不再单独一个按钮）；生成中禁用+提示。 */}
                         <WindowRing />
                         <div class="flex-1" />
                         {/* 生成中的可见性：别人（CLI/另一窗口）发起时本地 running 全程为 false，
@@ -1591,6 +1605,9 @@ export function LocalChatPage(props: { uri?: string }) {
                 </div>
             </div>
 
+            <Show when={gensOpen() && uri()}>
+                <CompactHistoryPanel uri={uri()!} onClose={() => setGensOpen(false)} />
+            </Show>
             {/* 清空确认：破坏性且不可恢复，点击与执行之间隔一层确认 */}
             <Show when={confirmClear()}>
                 <ConfirmDialog
