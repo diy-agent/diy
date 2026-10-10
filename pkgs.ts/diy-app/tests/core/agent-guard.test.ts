@@ -16,7 +16,7 @@ function fakeSelf(): SelfProcessInfo {
     pgid: 1000,
     pids: new Set([1000, 1001, 1002, 999]),
     cmdlines: [
-      "/x/node_modules/electron/dist/electron.app/contents/macos/electron /x/out/main/index.mjs",
+      "/x/node_modules/electron/dist/electron.app/contents/macos/electron /x/build/preview/main/index.mjs",
       "/x/electron helper --type=gpu-process --user-data-dir=/u/.diy/electron_user_data",
       "/x/electron helper --type=renderer",
     ],

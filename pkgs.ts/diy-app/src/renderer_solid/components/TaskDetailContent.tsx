@@ -327,7 +327,7 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                         <For each={personaStore.personas}>
                             {(p) => (
                                 <option value={p.id} title={`${p.name}（${p.id}）`}>
-                                    {p.name} · {p.model}
+                                    {p.name} · {personaStore.displayModel(p.model)}
                                 </option>
                             )}
                         </For>

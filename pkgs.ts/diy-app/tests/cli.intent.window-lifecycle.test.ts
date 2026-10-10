@@ -134,11 +134,11 @@ async function freshUi(): Promise<void> {
  * ⚠️ 等 exit 不够：实测第二个进程 exit code:0 之后，常驻实例的事件还在路上 ——
  * 若立刻断言「窗口回来了」会假红（等 60s 都等不到，因为事件晚到且我们没等）。
  * 所以这里只负责「把事件发出去」，由调用方在 freshUi() 里轮询终态。
- * `out/main/index.mjs` 是 `startElectronTest` 的 cwd（appDir），与常驻实例同一份代码/同一 HOME。
+ * `build/<variant>/main/index.mjs` 是 `startElectronTest` 的 cwd（appDir），与常驻实例同一份代码/同一 HOME。
  */
 function spawnClash(): Promise<void> {
   return new Promise((resolve) => {
-    const second = spawn(String(electronPath), ["out/main/index.mjs"], {
+    const second = spawn(String(electronPath), [join("build", process.env["DIY_VARIANT"] ?? "test", "main", "index.mjs")], {
       cwd: join(__dirname, ".."),
       env: { ...process.env, HOME: fx.HOME, DIY_HOME: fx.HOME, DIY_ENV: "test" },
       stdio: "ignore",

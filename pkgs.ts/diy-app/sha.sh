@@ -30,8 +30,13 @@ source "../../sha.common.sh"
 # mono必备子命令（根 ./sha.sh check/fix/test/test-unit 组装这些）
 ####################################################################################
 
+# 产物变体根：prod|test|preview|lab。vite 配置读 DIY_VARIANT 决定输出目录；
+# build/<variant>/{main,preload,cli,renderer,serve} 各自独立（见根 AGENTS.md「实例/变体」）。
+export DIY_VARIANT="${DIY_VARIANT:-prod}"
+_build_dir() { echo "build/${DIY_VARIANT:-prod}"; }
+
 clean() {
-  run rm -rf ./out ./build ./dist
+  run rm -rf ./build ./dist
 }
 
 # 本包检查：类型 + lint（全仓 check 另含 rpc 浏览器安全，见根 sha.sh）
@@ -48,9 +53,14 @@ sync() { :; }
 
 # 本包构建：main + preload + renderer（根 build 调这个；cli 产物另见 build-cli）
 build() {
+  local d; d="$(_build_dir)"
   run npx vite build --config vite.main.config.ts
+  # snapshot（models.dev 产物，fs 惰性读）随 main 产物走：build/<V>/main/data/
+  run mkdir -p "$d/main/data" && cp src/main/data/models-snapshot.json "$d/main/data/"
   run npx vite build --config vite.preload.config.ts
   run npx vite build --config vite.cli.config.ts
+  # CLI 产物也带 snapshot：否则打包安装（无源树）时 build/<V>/cli 找不到数据，模型目录退化为空（##275 R1-5）
+  run mkdir -p "$d/cli/data" && cp src/main/data/models-snapshot.json "$d/cli/data/"
   build-renderer
 }
 
@@ -67,8 +77,12 @@ test-unit() { run npx vitest run --exclude '**/cli.intent*'; }
 # 子项目自己的命令（原 package.json scripts）
 ####################################################################################
 
-# 开发模式：renderer dev server + watch main/preload + electron（透传参数，如 --port 18888）
-dev() { run npx tsx scripts/electron-dev.mts "$@"; }
+# 预览实例：renderer dev server + watch main/preload + electron（HMR，人看效果）。
+# 产物/数据根 build/preview/{main,preload,home} —— 与 lab / test 互不干扰，可同时运行。
+# 透传参数，如 --port 18888
+preview() { run env DIY_VARIANT=preview npx tsx scripts/electron-dev.mts "$@"; }
+# 实验实例：同 preview 机制，但独占 build/lab/**（agent 快速验证/debug 用）。
+lab() { run env DIY_VARIANT=lab npx tsx scripts/electron-dev.mts "$@"; }
 # 开发期跑 CLI 源码：./sha.sh cli task list
 cli() { run npx tsx src/cli/index.ts "$@"; }
 # 纯 Web 服务（先构建 renderer，透传参数，如 --port <port>）
@@ -82,10 +96,10 @@ serve-build() {
 }
 build-cli() { run npx vite build --config vite.cli.config.ts; }
 build-renderer() { run npx vite build --config vite.renderer.config.ts; }
-# 运行生产构建（先构建）
+# 运行生产构建（先构建，变体 prod）
 start() {
   build
-  run npx electron out/main/index.mjs "$@"
+  run npx electron "$(_build_dir)/main/index.mjs" "$@"
 }
 link() { run npm link; }
 
@@ -94,6 +108,8 @@ test-watch() { run npx vitest "$@"; }
 # CLI 默认走 server /cli http 端点（单条 ~41ms vs 编译产物 ~300ms vs tsx ~600ms，intent 全量 ~140s vs ~300s）。
 # 无 app.port / curl 不支持 h2 时自动回退直连 CLI，不会失败。排查需要可覆盖：DIY_CLI_MODE=compiled|tsx ./sha.sh test-intent
 test-intent() {
+  # 测试实例独占 build/test/**：与 preview/lab 的 watch 产物不撞（##184 实例分根）
+  export DIY_VARIANT=test
   build
   export DIY_CLI_MODE="${DIY_CLI_MODE:-http}"
   run npx vitest run --no-file-parallelism tests/cli.intent "$@"

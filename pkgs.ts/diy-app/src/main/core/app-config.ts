@@ -2,7 +2,7 @@
 // 🎯 AppConfig — 应用目录配置（纯数据，不依赖 Electron）
 //
 // 单根模型：所有数据落在 DIY_HOME 下，不再分散到 ~/.config / ~/.cache。
-//   diyHome:          $DIY_HOME（worktree: ./build/home，测试: mkdtemp，生产: ~/.diy）
+//   diyHome:          $DIY_HOME（worktree: ./build/<variant>/home，测试: mkdtemp，生产: ~/.diy）
 //   electronUserData: <diyHome>/electron_user_data  ← app.setPath("userData")
 //   cache:            <diyHome>/cache               ← app.setPath("cache")
 //

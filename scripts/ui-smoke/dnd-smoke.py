@@ -72,7 +72,7 @@ def main():
     env = dict(os.environ, HOME=home, DIY_HOME=home,
                PATH=REPO + "/node_modules/.bin:" + os.environ.get("PATH", ""))
     port = args.cdp_port or __import__("random").randint(9470, 9990)
-    proc = subprocess.Popen([ELECTRON, "out/main/index.mjs", f"--remote-debugging-port={port}"],
+    proc = subprocess.Popen([ELECTRON, "build/prod/main/index.mjs", f"--remote-debugging-port={port}"],
                             cwd=APP, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(8)
 
@@ -141,7 +141,7 @@ def main():
         if not args.keep:
             proc.kill()
             time.sleep(1)
-            subprocess.run(["pkill", "-f", "out/main/index.mjs"], capture_output=True)
+            subprocess.run(["pkill", "-f", "build/prod/main/index.mjs"], capture_output=True)
 
 
 if __name__ == "__main__":

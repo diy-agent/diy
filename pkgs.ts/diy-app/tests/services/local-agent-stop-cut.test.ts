@@ -117,7 +117,7 @@ function freshTask(title: string): string {
 }
 
 beforeAll(() => {
-    process.env["OPENCODE_ZEN_API_KEY"] = "test-key"; // 只为过 chat 入口校验；mock 不出网
+    process.env["OPENCODE_API_KEY"] = "test-key"; // 只为过 chat 入口校验；mock 不出网
     projectDir = mkdtempSync(join(tmpdir(), "stop-cut-probe-"));
     mkdirSync(projectDir, { recursive: true });
     pid = createProject(projectDir);

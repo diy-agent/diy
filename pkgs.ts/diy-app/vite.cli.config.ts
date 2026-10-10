@@ -3,15 +3,17 @@ import { resolve } from "node:path";
 
 /** CLI 构建配置
  *
- * 将 src/cli/index.ts 编译为 out/cli/index.js，
+ * 将 src/cli/index.ts 编译为 build/<variant>/cli/index.js，
  * 供 bin/diy2.mjs 在生产环境加载（开发环境用 tsx 运行源码）。
  *
  * 外部化所有运行时依赖（它们在 node_modules 里），
  * 只打包 TypeScript 源码到 JS。
  */
+const V = process.env.DIY_VARIANT ?? "prod"; // 变体产物根：prod|test|preview|lab
+
 export default defineConfig({
   build: {
-    outDir: "out/cli",
+    outDir: `build/${V}/cli`,
     // SSR 模式（node 环境）：vite 自动外部化 node 内建 + node_modules 依赖，
     // 无需手写 external 列表。见 https://vite.dev/guide/ssr
     ssr: true,

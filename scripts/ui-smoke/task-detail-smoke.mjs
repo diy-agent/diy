@@ -41,7 +41,7 @@ const home = mkdtempSync(join(tmpdir(), "diy-taskdetail-"));
 const env = { ...process.env, HOME: home, DIY_HOME: home, PATH: join(REPO, "node_modules/.bin") + ":" + process.env.PATH };
 delete env.DIY_PORT;
 const port = 9470 + Math.floor(Math.random() * 400);
-const proc = spawn(ELECTRON, ["out/main/index.mjs", `--remote-debugging-port=${port}`], { cwd: APP, env, stdio: "ignore", detached: true });
+const proc = spawn(ELECTRON, ["build/prod/main/index.mjs", `--remote-debugging-port=${port}`], { cwd: APP, env, stdio: "ignore", detached: true });
 const diy = (args) => JSON.parse(execFileSync("tsx", ["src/cli/index.ts", ...args], { cwd: APP, env, encoding: "utf8" }));
 
 let ok = false, step = "boot";

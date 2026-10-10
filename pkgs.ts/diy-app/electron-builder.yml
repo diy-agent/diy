@@ -6,12 +6,14 @@ productName: diy
 copyright: Copyright © 2026
 electronVersion: "43.1.1"
 
+# buildResources 挪 res/：build/ 现在是产物根（build/prod/**），不能再当资源目录
+# （否则 electron-builder 会把整个 build/ 当资源并从打包里排除）。
 directories:
   output: release
-  buildResources: build
+  buildResources: res
 
 files:
-  - out/**/*
+  - build/prod/**/*
   - package.json
   - "!node_modules/**"
 
@@ -19,7 +21,7 @@ asar: true
 
 # ── macOS ──
 mac:
-  icon: build/icon.icns
+  icon: res/icon.icns
   target:
     - target: dmg
       arch:

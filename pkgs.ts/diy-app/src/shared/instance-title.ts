@@ -3,13 +3,13 @@
 //
 // 为什么需要：diy 允许多实例并行，各自的数据根（DIY_HOME）完全不同 ——
 //   生产     ~/.diy
-//   worktree <repo>/build/home（`./diy.sh` 的隔离数据根）
+//   worktree <repo>/build/<variant>/home（`./diy.sh` / preview / lab 的隔离数据根）
 //   测试     mkdtemp 临时目录
 // 此前标题只有 "diy solid"，切窗口 / macOS 标题栏 / dock 悬停全都认不出谁是谁，
 // 排查「我这条命令打到哪个实例的数据」时只能靠猜。
 //
 // 为什么还要仓库路径 / 端口 / PID（任务 177）：只有数据根仍然不够用 ——
-//   · 数据根本身看不出「是哪份代码在跑」（`./build/home`、`/tmp/diy-app-test-xxx` 尤其），
+//   · 数据根本身看不出「是哪份代码在跑」（`./build/*/home`、`/tmp/diy-app-test-xxx` 尤其），
 //     故把**仓库/worktree 路径**放最前（早先显示 git 分支；同分支不同代码时反而误导）
 //   · 同分支多实例、dev 热重启后端口会变（18888 ↔ 随机），端口是「命令打给谁」的直接抓手
 //   · PID 用来确认「眼前这个窗口 = 那个进程」，排查残留实例 / 单实例锁问题时必需
@@ -19,7 +19,7 @@
 // 不能直接用 $HOME —— 测试/隔离实例会把 HOME 指到临时目录，那时 DIY_HOME === $HOME，
 // 缩写产物是 `~`，标题里的数据根退化成 `~`：看着像用户家目录，其实是个 /tmp 临时根。
 //
-// 例：`~/git/diy/diy🔹~/git/diy/diy/build/home🔹port:18888🔹pid:4242`
+// 例：`~/git/diy/diy🔹~/git/diy/diy/build/preview/home🔹port:18888🔹pid:4242`
 //     `~/git/diy/diy🔹/var/folders/…/diy-app-test-abc123🔹port:52341🔹pid:53087`
 
 /**

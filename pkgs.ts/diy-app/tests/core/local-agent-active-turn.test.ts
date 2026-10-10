@@ -19,7 +19,7 @@ import { LocalAgentManager } from "../../src/main/services/local-agent";
 import { activeTurnList } from "../../src/main/services/runtime-context";
 
 beforeAll(() => {
-    process.env["OPENCODE_ZEN_API_KEY"] = "test-key"; // 只是让 chat 入口的校验通过；本用例不会真发请求
+    process.env["OPENCODE_API_KEY"] = "test-key"; // 只是让 chat 入口的校验通过；本用例不会真发请求
 });
 
 describe("活跃轮次不留僵尸", () => {
