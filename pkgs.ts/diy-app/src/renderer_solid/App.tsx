@@ -5,6 +5,7 @@ import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { TaskRunPage } from "./components/TaskRunPage";
 import { LabPage } from "./components/LabPage";
 import { LlmPage } from "./components/LlmPage";
+import { ModelConfigPage } from "./components/ModelConfigPage";
 // 折叠框展开态仍是 lab view 内部的局部状态（与「view 在哪个 area」是两件事）
 import { setLabView } from "./components/PromptLabV4Page";
 import { ContextLabPage, setCtxLabFold } from "./components/ContextLabPage";
@@ -660,6 +661,9 @@ export default function App() {
                                         <Tabs.Trigger value="theme" class="tab">
                                             🎨 外观
                                         </Tabs.Trigger>
+                                        <Tabs.Trigger value="models" class="tab">
+                                            🤖 模型
+                                        </Tabs.Trigger>
                                     </Tabs.List>
                                 </Tabs.Root>
                             </div>
@@ -671,6 +675,9 @@ export default function App() {
                             </Show>
                             <Show when={subPage() === "theme"}>
                                 <ThemeSettings />
+                            </Show>
+                            <Show when={subPage() === "models"}>
+                                <ModelConfigPage />
                             </Show>
                         </div>
                     </Show>

@@ -29,6 +29,7 @@ import {
     cancelHoverClose,
     type UsageHoverState,
 } from "./UsagePanel";
+import { CompactHistoryPanel } from "./CompactSessionPanel";
 import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
@@ -359,15 +360,16 @@ function ProcessRow(props: {
  * 轮次级折叠（2026-10-04 定稿，对齐 dsh 的信息层次）。
  *
  * 一个 turn = 四层，**静态截止与动态进行中结构对称**，动态只多一条实时 delta 行：
- *   L0 轮次头：身份（🤖 人物·模型）+ 统计（N 步 · ⚙a 💭b · Σtok）+ 折叠开关
- *      折叠态 = 头 + 用户发言 + **最后一条正文**（紧凑模式截 N 行）+ 用量条
+ *   L0 轮次头：身份（🤖 人物 · 模型 · 思考级别）+ 统计（N 步 · 耗时 · ⚙a 💭b · Σtok）+ 折叠开关
+ *      折叠态 = 头 + 用户发言 + **最后一条正文**（大纲模式截 N 行）+ 用量条
  *   L1 展开轮次：全部正文（文档序）+ 过程图标行
  *   L2 展开图标行：每事件一行（各自单行折叠）
  *   L3 展开单行：该 tool 结果 / think 内容
  *
- * 两条独立轴（不是第 4 档密度）：
- *   · `☷ 密度` 决定 L0 的默认开合：脉络=折叠 / 阅读=展开 / 审计=展开且图标行默认铺开；
- *   · `▤ 紧凑` 只把「折叠态那一条正文」压到 N 行，**展开后一律全文**——点击行为两模式完全一致。
+ * 唯一显示开关 `▤ 正常 ⇄ 大纲`（不是多档密度）：只决定折叠态那一条正文的默认行数
+ * （正常=全文，大纲=N 行），**展开后一律全文，四层点击行为两模式完全一致**。
+ * 身份是**该轮事实**的投影（`turn.attrs.model` / `reasoningEffort` / `durationMs`），
+ * 不是当前配置 —— 否则改一次 personas.yaml 全部历史署名被一起改写（任务 196 的教训）。
  */
 
 /** 轮次头：身份 + 统计（含折叠开关）。整轮共用一处身份，不再每块挂署名。 */
@@ -435,7 +437,7 @@ function TurnHeader(props: {
                 <span class="font-medium">{info().name}</span>
             </Show>
             <Show when={info().model}>
-                <span class="opacity-60">{info().model}</span>
+                <span class="opacity-60">{personaStore.displayModel(info().model)}</span>
             </Show>
             {/* 思考级别：该轮实际生效的档位（main 写入 turn meta） */}
             <Show when={effort() && effort() !== "none"}>
@@ -1085,6 +1087,8 @@ export function LocalChatPage(props: { uri?: string }) {
     const [inputValue, setInputValue] = createSignal("");
     /** 「⋯」溢出菜单：低频/危险操作（清空历史）默认不显示，点开才露出（VSCode 附加菜单式） */
     const [moreOpen, setMoreOpen] = createSignal(false);
+    /** 压缩历史（事件快照列表）；压缩参数改在「窗口构成页」第一 tab（M1），卡内可快捷直压 */
+    const [gensOpen, setGensOpen] = createSignal(false);
     const [personaPanelOpen, setPersonaPanelOpen] = createSignal(false);
     const [fullscreen, setFullscreen] = createSignal(false);
     let scrollRef: HTMLDivElement | undefined;
@@ -1406,6 +1410,16 @@ export function LocalChatPage(props: { uri?: string }) {
                             >
                                 <button
                                     class="btn btn-ghost btn-xs w-full justify-start gap-2 normal-case font-normal"
+                                    aria-label="压缩历史"
+                                    onClick={() => {
+                                        setMoreOpen(false);
+                                        setGensOpen(true);
+                                    }}
+                                >
+                                    压缩历史…
+                                </button>
+                                <button
+                                    class="btn btn-ghost btn-xs w-full justify-start gap-2 normal-case font-normal"
                                     aria-label="清空本对话历史"
                                     onClick={() => {
                                         setMoreOpen(false);
@@ -1573,7 +1587,7 @@ export function LocalChatPage(props: { uri?: string }) {
                                 <span class="opacity-60">
                                     （
                                     {personaDef()
-                                        ? `${personaDef()!.model} · ${reasoningEffortLabel(personaDef()!.reasoningEffort as ReasoningEffort)}`
+                                        ? `${personaStore.displayModel(personaDef()!.model)} · ${reasoningEffortLabel(personaDef()!.reasoningEffort as ReasoningEffort)}`
                                         : "加载中…"}
                                     ）
                                 </span>
@@ -1588,7 +1602,8 @@ export function LocalChatPage(props: { uri?: string }) {
                             onHoverEnd={hoverUsageOut}
                             onDetail={() => setUsageBoard(true)}
                         />
-                        {/* L1 窗口占用环（chip 的 token/金额总量右侧）：hover chip 的 title/环自身 title 给明细 */}
+                        {/* L1 窗口占用环（chip 的 token/金额总量右侧）：hover 出构成卡（含「压缩」按钮 + 可降低窗口比较条）。
+                            【用户 2026-10-07】压缩入口**移进 token 窗口的 card**（不再单独一个按钮）；生成中禁用+提示。 */}
                         <WindowRing />
                         <div class="flex-1" />
                         {/* 生成中的可见性：别人（CLI/另一窗口）发起时本地 running 全程为 false，
@@ -1663,6 +1678,9 @@ export function LocalChatPage(props: { uri?: string }) {
                 </div>
             </div>
 
+            <Show when={gensOpen() && uri()}>
+                <CompactHistoryPanel uri={uri()!} onClose={() => setGensOpen(false)} />
+            </Show>
             {/* 清空确认：破坏性且不可恢复，点击与执行之间隔一层确认 */}
             <Show when={confirmClear()}>
                 <ConfirmDialog

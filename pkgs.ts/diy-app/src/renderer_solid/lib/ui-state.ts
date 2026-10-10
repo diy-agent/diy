@@ -96,6 +96,14 @@ export const NAV_W_DEFAULT = 224;
 export const TASK_DETAIL_LEFT_MIN = 200;
 export const TASK_DETAIL_LEFT_MAX = 560;
 
+/** agent 人物面板：抽屉高度边界（px）。0 = 未设置 → 用默认 2/3 视口高。
+ *  parse 与拖拽 clamp 共用这一对值（同 NAV_W 的教训：存得进读不回）。 */
+export const PERSONA_DRAWER_H_MIN = 200;
+export const PERSONA_DRAWER_H_MAX = 4000;
+/** agent 人物面板：左列（人物列表）宽度边界（px）。0 = 未设置 → 用默认 1/3 宽。 */
+export const PERSONA_LEFT_W_MIN = 160;
+export const PERSONA_LEFT_W_MAX = 720;
+
 /** 视图 cache 字段池：Caches.<模块>_<组件>_<用途>.get()/.set()/.reset() */
 export const Caches = {
   /** 任务树：展开节点集 */
@@ -158,6 +166,24 @@ export const Caches = {
     serialize: (v) => String(v),
     // 280 是「560px 面板里左列约一半」的取值：再宽正文就只剩一条缝了
     defaultValue: 280,
+  }),
+  /** agent 人物面板高度（px）。拖动下缘调高 / 双击手柄复位后落盘；0 = 未设置（用 2/3 视口）。 */
+  diy_persona_drawer_height: field("diy_persona_drawer_height", {
+    parse: (raw) => {
+      const v = Number(raw);
+      return v >= PERSONA_DRAWER_H_MIN && v <= PERSONA_DRAWER_H_MAX ? v : null;
+    },
+    serialize: (v) => String(v),
+    defaultValue: 0,
+  }),
+  /** agent 人物面板左列（人物列表）宽度（px）。拖动中缝调宽 / 双击复位后落盘；0 = 未设置（用 1/3 宽）。 */
+  diy_persona_left_width: field("diy_persona_left_width", {
+    parse: (raw) => {
+      const v = Number(raw);
+      return v >= PERSONA_LEFT_W_MIN && v <= PERSONA_LEFT_W_MAX ? v : null;
+    },
+    serialize: (v) => String(v),
+    defaultValue: 0,
   }),
   /** 侧栏（左侧导航）展开宽度（px）。拖动右缘调宽 / 双击手柄复位后落盘，重启恢复。
    *  收起态 rail 宽度（2.5rem）不在这里 —— 那是固定几何，不是用户偏好。 */

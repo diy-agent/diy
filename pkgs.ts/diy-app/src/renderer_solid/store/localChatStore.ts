@@ -28,6 +28,7 @@ import { personaStore } from "./personaStore";
 import { sessionView, type SessionView } from "../../shared/session-view";
 // 用量账本类型：与 main 落盘、CLI 报表、看板共用同一份形状（shared/usage 是唯一口径处）
 import type { StepUsageRecord } from "../../shared/usage";
+import type { FlatCompactPolicy, HeadTailPolicy } from "../../shared/context/compaction";
 
 interface TaskState {
     store: BlockStore;
@@ -617,6 +618,81 @@ function getDetailScroll(taskUri: string): number {
 }
 
 
+// ─── 压缩（compact）：少发 ≠ 销毁 ──────────────────────
+//
+// 语义提醒（与 clear 正交）：
+//   compact = 只改「发给模型的上下文」（按字节预算保留历史 + 可选裁工具输出），
+//             **不删任何历史**，旧内容仍在 ops 里、可查、可撤销；
+//   clear   = 物理删除所有会话日志（不可恢复）—— 那是另一条路，与压缩无关。
+// 全部计算在 main（预览与真发共用同一份纯函数），renderer 只负责把结果画出来。
+
+/** 压缩预览（只算不写）：返回 base（未压缩全量）与 mod（当前预算）两个请求 + 事实表 */
+async function compactPreview(taskUri: string, policy: FlatCompactPolicy, summaryText?: string) {
+    return diyService.diy.agent.local.compactPreview({ taskUri, ...policyFlat(policy), summaryText });
+}
+
+/** 自动压缩检测（只读）：事实 / 触发理由 / 生效 TTL / 当前配置 */
+async function autoCompactStatus(taskUri: string) {
+    return diyService.diy.agent.local.autoCompactStatus({ taskUri });
+}
+
+/** 写自动压缩配置（真源 = $DIY_HOME/auto-compact.yaml；patch = 部分字段，主进程浅合并） */
+async function autoCompactSetConfig(patch: Record<string, unknown>) {
+    return diyService.diy.agent.local.autoCompactSetConfig({ patch });
+}
+
+/** 执行压缩（写边界账 + 落盘被裁原文 + 内存态重置）；成功后重建本地块树到新边界 */
+async function compact(
+    taskUri: string,
+    policy: FlatCompactPolicy,
+    summary?: { text: string; data: unknown; cost: number | null },
+) {
+    const rec = (await diyService.diy.agent.local.compact({
+        taskUri,
+        ...policyFlat(policy),
+        ...(summary ? { summaryText: summary.text, summaryData: summary.data, summaryCost: summary.cost } : {}),
+    } as never)) as { noop?: boolean } | undefined;
+    // 压缩后当前会话视图变了（只含边界后的轮）→ 重建块树，让界面立刻反映新会话
+    await reload(taskUri);
+    return rec;
+}
+
+/** 撤销一次压缩（append-only 的 undo）；成功后重建到恢复后的边界 */
+async function undoCompact(taskUri: string, ref: string) {
+    const r = await diyService.diy.agent.local.undoCompact({ taskUri, ref });
+    if (r.undone) await reload(taskUri);
+    return r.undone;
+}
+
+/** 压缩事件账（历史页：不可变快照列表） */
+async function compactEvents(taskUri: string) {
+    return diyService.diy.agent.local.compactEvents({ taskUri });
+}
+
+/** 策略对象 → RPC 扁平参数（headtail 展开成顶层字段，与 api-def 的 cliOption 对齐） */
+function policyFlat(p: FlatCompactPolicy): {
+    budgetBytes: number;
+    toolResult: "asis" | "headtail" | "callpath";
+    triggerLines: number | undefined;
+    headLines: number | undefined;
+    tailLines: number | undefined;
+    maxLineChars: number | undefined;
+    maxKeepBytes: number | undefined;
+    summary: boolean;
+} {
+    const ht: Partial<HeadTailPolicy> = p.headtail ?? {};
+    return {
+        budgetBytes: p.budgetBytes,
+        toolResult: p.toolResult,
+        triggerLines: ht.triggerLines,
+        headLines: ht.headLines,
+        tailLines: ht.tailLines,
+        maxLineChars: ht.maxLineChars,
+        maxKeepBytes: ht.maxKeepBytes,
+        summary: p.summary,
+    };
+}
+
 // 输入框草稿已移出本 store：草稿是非缓存数据（丢了=用户白打），权威在任务目录
 // .diy/drafts.yaml，由 store/draftStore.ts 负责（经 RPC 落盘、随任务删除、跨模式可见）。
 // 本 store 只管会话（op 流，可重放重建）。
@@ -676,6 +752,13 @@ export const localChatStore = {
     },
     refreshSteers,
     clear,
+    /** 压缩：预览（只算）/ 执行 / 撤销 / 压缩历史（事件快照列表，只读查看）*/
+    compactPreview,
+    compact,
+    autoCompactStatus,
+    autoCompactSetConfig,
+    undoCompact,
+    compactEvents,
     setScroll,
     getScroll,
     setTab,

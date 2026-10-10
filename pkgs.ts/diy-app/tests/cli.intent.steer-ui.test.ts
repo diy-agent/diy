@@ -38,7 +38,8 @@ interface Stub {
     close(): Promise<void>;
 }
 
-/** responses 面（默认模型 gpt-5.6-luna）的终止事件；写法与 local-agent 的预览桩一致 */
+/** responses 面的终止事件（缺省模型现已换 chat 面 mimo，桩**两面都应答**，见下方路径分支）；
+ *  写法与 local-agent 的预览桩一致 */
 const RESPONSES_DONE = `event: response.completed\ndata: ${JSON.stringify({
     type: "response.completed",
     response: { id: "stub", object: "response", status: "completed", output: [], usage: null },
@@ -93,7 +94,7 @@ let ui: UiDriver;
 beforeAll(async () => {
     stub = await startStub();
     // 桩上游 + 占位 key：main 侧 chat() 会校验 key 存在，桩不看 key 的值
-    process.env["OPENCODE_ZEN_API_KEY"] ||= "intent-test-dummy-key";
+    process.env["OPENCODE_API_KEY"] ||= "intent-test-dummy-key";
     process.env["DIY_ZEN_BASE_URL"] = stub.url;
     const electron = await startElectronTest();
     const HOME = electron.home;

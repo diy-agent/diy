@@ -33,6 +33,7 @@ describe("list/get", () => {
     const all = listPrompts(home, PID);
     expect(all.map((e) => e.relpath)).toEqual([
       "_system.md",
+      "summary.md",
       "identity.md",
       "diy.md",
       "project.md",
@@ -46,10 +47,12 @@ describe("list/get", () => {
     expect(getPrompt(home, PID, "_system.md").lockTip.length).toBeGreaterThan(0);
     expect(getPrompt(home, PID, "_guard.md").locked).toBe(true);
     expect(getPrompt(home, PID, "rules.md").locked).toBe(false);
-    // 角色：入口 / 节（其余都是被入口 include 的节）
+    // 角色：入口 / 节（被入口 include）/ 片段（独立模版，不在 system 里）
     expect(getPrompt(home, PID, "_system.md").role).toBe("entry");
     expect(getPrompt(home, PID, "project.md").role).toBe("section");
-    expect(all.every((e) => e.role === (e.relpath === "_system.md" ? "entry" : "section"))).toBe(true);
+    // summary.md 不进 _system.md（摘要是会话首条消息、非 system）→ 角色 fragment
+    expect(getPrompt(home, PID, "summary.md").role).toBe("fragment");
+    expect(all.every((e) => e.role === (e.relpath === "_system.md" ? "entry" : e.relpath === "summary.md" ? "fragment" : "section"))).toBe(true);
     expect(all.every((e) => e.status === "builtin")).toBe(true);
   });
   it("非法路径拒绝（含穿越）", () => {

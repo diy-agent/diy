@@ -23,6 +23,7 @@ import { ContextDiffSchema, StatsSchema, StepsSchema } from "../../shared/contex
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
 // agent 人物契约（纯 zod，renderer 同源）——模型/参数/行为指令的配置实体
 import { PersonaSchema } from "../../shared/persona";
+import { LlmConfigViewSchema, ModelConfigFileSchema, ProbeResultSchema, SpecProviderSchema } from "../../shared/model-config";
 // 草稿与任务详情载荷的契约（纯 zod，renderer 同源）
 import { DraftFieldSchema, DraftFieldsSchema, DraftsData, TaskDetailSchema } from "../../shared/task-detail";
 
@@ -308,7 +309,7 @@ export const apiDef = RpcSchema.router({
            *  必须能看出来，否则容易误改生产数据。 */
           env: z.string(),
           /** 当前运行代码所在 git 分支（打包/非仓库为空串）。窗口标题用它区分
-           *  「哪个 worktree 的构建」—— 数据根是 /tmp 或 build/home 时这是唯一来源线索。 */
+           *  「哪个 worktree 的构建」—— 数据根是 /tmp 或 build/<v>/home 时这是唯一来源线索。 */
           branch: z.string(),
           cache: z.string(),
           userData: z.string(),
@@ -526,19 +527,35 @@ export const apiDef = RpcSchema.router({
                 },
               }),
               models: RpcSchema.unary({
-                desc: `列出本地 agent 可选模型（zen/go；api 面逐个标注，见 local-agent.ts apiOf）`,
+                desc: `列出本地 agent 可选模型（来自 model.yaml ⊕ snapshot；每项带完全限定名 ref）`,
                 input: {},
                 output: z.array(
                   z.object({
+                    /** 完全限定名 account@provider/model（人物 model 字段就用它） */
+                    ref: z.string(),
+                    provider: z.string(),
+                    account: z.string(),
                     id: z.string(),
                     name: z.string(),
                     api: z.enum(["chat", "responses"]),
-                    contextLimit: z.number(),
-                    maxOutputTokens: z.number(),
+                    /** 上下文窗口；spec 未给 → 缺省（UI 显示「—」，运行时按无预算） */
+                    contextLimit: z.number().optional(),
+                    /** 单次输出上限；spec 未给 → 缺省（运行时回退 DEFAULT_LIMITS.maxOutputTokens） */
+                    maxOutputTokens: z.number().optional(),
                     reasoning: z.object({
                       supported: z.array(z.string()),
                       default: z.string(),
                     }),
+                    /** 单价（$/1M tokens；缺失 = 无价目）—— 模型选择表分列展示 */
+                    cost: z
+                      .object({
+                        input: z.number(),
+                        output: z.number(),
+                        cacheRead: z.number().optional(),
+                        cacheWrite: z.number().optional(),
+                      })
+                      .nullable()
+                      .optional(),
                   }),
                 ),
               }),
@@ -559,6 +576,119 @@ export const apiDef = RpcSchema.router({
                */
               usage: RpcSchema.unary({
                 desc: `读取本地 agent 的逐步用量账本（每步四桶 + raw + 身份 + 单价快照 + 金额）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                },
+                output: z.array(z.any()),
+              }),
+              /**
+               * 压缩会话上下文（**不删任何历史**）：写一条边界账 `<key>.compact.jsonl`，
+               * 投递时只发边界之后的轮 + 按策略裁工具输出。旧内容原地保留、可查、可撤销。
+               * 与 `clear`（物理删所有日志）语义正交 —— 这里是「少发」，那里是「销毁」。
+               */
+              compact: RpcSchema.unary({
+                desc: `压缩会话上下文（按字节预算保留历史 + 可选裁剪工具输出；历史原地保留可撤销）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  budgetBytes: z
+                    .number()
+                    .optional()
+                    .cliOption({ desc: "【新】历史消息可占字节上限（0 = 清零）；给了它就按纵向优先级阶梯保留" }),
+                  toolResult: z
+                    .enum(["asis", "headtail", "callpath"])
+                    .optional()
+                    .cliOption({ desc: "工具输出处理：asis 原样 / headtail 头尾裁剪 / callpath 只留调用+路径" }),
+                  triggerLines: z.number().optional().cliOption({ desc: "头尾裁剪：超过多少行才裁（缺省 6）" }),
+                  headLines: z.number().optional().cliOption({ desc: "头尾裁剪：保留头部行数（缺省 3）" }),
+                  tailLines: z.number().optional().cliOption({ desc: "头尾裁剪：保留尾部行数（缺省 3）" }),
+                  maxLineChars: z.number().optional().cliOption({ desc: "单行超长截断阈值（字符，缺省 300）" }),
+                  maxKeepBytes: z.number().optional().cliOption({ desc: "保留总量字节兜底（缺省 8192）" }),
+                  summary: z.boolean().optional().cliOption({ desc: "是否计算历史摘要带进新会话（缺省否）" }),
+                  summaryText: z.string().optional().cliOption({ desc: "已生成的摘要文本（先跑 summarize；缺省则不投摘要）" }),
+                  summaryData: z.any().optional(),
+                  summaryCost: z.number().optional(),
+                },
+                output: z.any(),
+              }),
+              /**
+               * 生成历史摘要（压缩承接）：对**将被丢弃的轮**做一次结构化抽取（一次模型调用，花钱）。
+               * 与 compact 分开：摘要是可选增强、且要用户显式掏钱；compact 本身不调模型。
+               */
+              summarize: RpcSchema.unary({
+                desc: `生成历史摘要（对将被丢弃的轮做结构化抽取；一次模型调用）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                },
+                output: z.any(),
+              }),
+              /**
+               * 自动压缩检测（只读）：三个**确定事实**（系统上下文变 / 缓存过期 / 窗口超限）
+               * 是否成立 + 当前配置 + 生效 TTL。UI 据此提示「此刻压缩无重建代价」。
+               */
+              autoCompactStatus: RpcSchema.unary({
+                desc: `检测自动压缩触发（只读；返回事实/触发理由/生效 TTL/当前配置）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                },
+                output: z.any(),
+              }),
+              /**
+               * 写自动压缩配置（真源 = `$DIY_HOME/auto-compact.yaml`，手改或经此写回都行）。
+               */
+              autoCompactSetConfig: RpcSchema.unary({
+                desc: `写自动压缩配置（真源 $DIY_HOME/auto-compact.yaml；patch = 部分字段，浅合并后归一）`,
+                input: {
+                  patch: z
+                    .unknown()
+                    .optional()
+                    .cliOption({ desc: "部分配置（mode / triggers / policy），浅合并后写回" }),
+                },
+                output: z.any(),
+              }),
+              /** 当前生效请求的展示模型（系统/工具/消息的实际投递内容）；CLI/调试用 */
+              requestView: RpcSchema.unary({
+                desc: `读取当前生效请求的实际投递内容（system / tools / messages；压缩预览的 base 侧）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                },
+                output: z.any(),
+              }),
+              /** 压缩预览：只算不写（panel 的「事实」行与预览页都用它；与真发同一份纯函数） */
+              compactPreview: RpcSchema.unary({
+                desc: `预览压缩效果（只算不写；返回 base/mod 请求 / 前后规模 / 丢弃轮明细 / 裁剪明细 / 分层费用 facts）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  budgetBytes: z
+                    .number()
+                    .optional()
+                    .cliOption({ desc: "【新】历史消息可占字节上限（0 = 清零）" }),
+                  toolResult: z.enum(["asis", "headtail", "callpath"]).optional().cliOption({ desc: "工具结果的处理方式（asis/headtail/callpath）" }),
+                  triggerLines: z.number().optional().cliOption({ desc: "头尾裁剪阈值行数" }),
+                  headLines: z.number().optional().cliOption({ desc: "头尾裁剪保留头行数" }),
+                  tailLines: z.number().optional().cliOption({ desc: "头尾裁剪保留尾行数" }),
+                  maxLineChars: z.number().optional().cliOption({ desc: "单行超长截断阈值" }),
+                  maxKeepBytes: z.number().optional().cliOption({ desc: "保留总量字节兜底" }),
+                  summary: z.boolean().optional().cliOption({ desc: "是否算摘要" }),
+                  summaryText: z.string().optional().cliOption({ desc: "已生成的摘要文本（缺省用占位骨架）" }),
+                },
+                output: z.any(),
+              }),
+              /** 撤销一次压缩（append-only 的 undo 标记；不删账，可审计） */
+              undoCompact: RpcSchema.unary({
+                desc: `撤销一次压缩（按压缩 id；恢复为上一次生效边界）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  ref: z.string().cliArg({ desc: "压缩 id（见 compactEvents 或 compact 返回）" }),
+                },
+                output: z.object({ undone: z.boolean() }),
+              }),
+              /**
+               * 压缩事件账（历史页数据源）：**不可变快照列表**。
+               * 每条自带**算法**（`policy.mode`）与该算法的**过滤器表达** —— 换算法 = 新分支，不混淆。
+               * 【用户 2026-10-07】取代 generations（连续分代不适合预算的分散保留）。
+               */
+              compactEvents: RpcSchema.unary({
+                desc: `读取压缩事件账（历史页快照列表：时间/算法/过滤器/前后规模/方式·理由）`,
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
                 },
@@ -763,6 +893,35 @@ export const apiDef = RpcSchema.router({
             desc: `停止 LLM 代理`,
             input: {},
             output: StatusOk,
+          }),
+        },
+      }),
+
+      llmConfig: RpcSchema.group({
+        desc: `模型 provider 配置（$DIY_HOME/model.yaml + providers.custom.yaml）`,
+        children: {
+          read: RpcSchema.unary({
+            desc: `读全量视图（spec + 配置 + 可见模型）`,
+            input: {},
+            output: LlmConfigViewSchema,
+          }),
+          write: RpcSchema.unary({
+            desc: `整份回写 model.yaml（原子写；结构非法抛错）`,
+            input: { modelFile: ModelConfigFileSchema },
+            output: StatusOk,
+          }),
+          writeSpec: RpcSchema.unary({
+            desc: `写/删 providers.custom.yaml 单条（spec=null 删除）`,
+            input: { id: z.string().cliArg({ desc: "custom provider 裸 id" }), spec: SpecProviderSchema.nullable() },
+            output: StatusOk,
+          }),
+          probe: RpcSchema.unary({
+            desc: `探测 provider 连通性并拉 ${"${baseUrl}"}/models（UI「测试/获取模型」共用）`,
+            input: {
+              baseUrl: z.string().cliArg({ desc: "provider baseUrl" }),
+              apiKey: z.string().cliArg({ desc: "密钥原始值（明文或 $VAR，服务端展开）" }),
+            },
+            output: ProbeResultSchema,
           }),
         },
       }),

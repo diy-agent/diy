@@ -94,6 +94,24 @@ export function interruptedToolPatches(store: BlockStore): Op[] {
     return out;
 }
 
+/**
+ * 把**未收 stop 的块**补上 stop（崩溃/被杀留下的开口块），返回要落盘的 op。
+ *
+ * 与 interruptedToolPatches 的分工：
+ *   · interruptedToolPatches 管 tool 块的**业务终态**（patch status + output + stop）；
+ *   · 本函数管**结构闭合**：所有还没 stop 的块（turn / step / text / think / tool …）。
+ * 会话加载时调用（幂等）：崩溃现场若停在半轮，不补 stop 就会让 UI 永远显示"本轮未完成"，
+ * 且 append-only 的 llm 全量日志也没法给这一轮定稿（定稿判据 = turn 已 stop）。
+ *
+ * 顺序：倒序遍历（父块总先于子块创建）→ 子先父后，与 closeTurn 的收尾顺序一致。
+ */
+export function danglingStopPatches(store: BlockStore): Op[] {
+    const out: Op[] = [];
+    const ids = [...store.blocks.values()].filter((b) => !b.stopped).map((b) => b.id);
+    for (const id of ids.reverse()) out.push({ op: "stop", id });
+    return out;
+}
+
 // ─── fold：Op 流 → 块树 ───────────────────────────────
 
 export interface FoldIssue {
@@ -356,27 +374,108 @@ export interface LocalToolCallPart {
     toolName: string;
     input: JSONVal;
 }
+/**
+ * 工具结果的**来源**（自证位）：`output.value` 一个槽三义共用，靠它才分得清。
+ *   "tool"        —— 工具真实产出（唯一允许被裁剪的东西）
+ *   "interrupted" —— 本地补的中断终态文案（契约文本，永不裁剪；见 INTERRUPTED_TOOL_NOTICE）
+ *   "empty"       —— 工具跑完但没有输出（占位"（空结果）"）
+ * 只写在**落盘/投递的序列化产物**里（`withOrigin`）；真发 provider 前剥掉（原生 part 形状不变）。
+ */
+export type ToolResultOrigin = "tool" | "interrupted" | "empty";
+
 export interface LocalToolResultPart {
     type: "tool-result";
     toolCallId: string;
     toolName: string;
     output: { type: "text"; value: string };
+    /** 自证位（仅 withOrigin 时写；投递默认不带 —— 见 ToolResultOrigin） */
+    origin?: ToolResultOrigin;
 }
 export interface LocalModelMessage {
     role: "user" | "assistant" | "tool";
     content: string | Array<LocalTextPart | LocalToolCallPart | LocalToolResultPart>;
+    /**
+     * 索引位（仅 withIndex 时写；**落盘日志用**，投递不带）：这条消息属于哪一轮？
+     * 只有 turn 是**必填** —— 开场 user 块（含插话）的 parent 就是 turn，不属于任何 step
+     * （实测 tasks_100：888 条可投递消息里 54 条无 step，全是每轮的开场 user）。
+     */
+    turn?: string;
+    /** 属于哪一步（`<turnId>_s<n>`）；开场 user 与插话没有它 */
+    step?: string;
 }
 
-/** 块树 → ModelMessage[]（跳过 turn/step 容器与 think） */
-export function blocksToMessages(store: BlockStore): LocalModelMessage[] {
+/**
+ * 投递选项（**压缩能力的落点**）。
+ *
+ * 为什么裁剪必须落在这里、而不是工具 execute 里：
+ *   执行时裁 = 原文当场丢（UI 也看不到全量）、且新输出也一起被裁；
+ *   投递时裁 = 块树/UI/落盘全是原文，只有「发给模型的那一份」被裁 —— 用户随时能看全量，
+ *              原文还能另存一份供模型回取（见 clipToolResult 的 origPath）。
+ * 两者作用阶段不同，可与 execute 侧的 clip()（错误路径 6000 字符）并存。
+ */
+export interface DeliveryOpts {
+    /**
+     * 【新·目标式预算】历史消息可占字节上限（不含固定开支）。**有它就按纵向优先级阶梯选择**，
+     * 忽略 `sinceTurnId`/`content`（旧的轮边界口径）—— 见 selectHistoryByBudget。
+     */
+    budgetBytes?: number;
+    /** 只投递从这个 turn 起的块（压缩边界）；null = 一个都不投（全部清零）；缺省 = 全投 */
+    sinceTurnId?: string | null;
+    /**
+     * 工具结果渲染（由 main 注入：同一份纯函数既算预览也算真发，见 shared/context/compaction）。
+     * **不带 title**：渲染只需要「谁的输出、输出是什么」，title 是 UI 的东西（曾经传了但没人用，
+     * 留着等于撒谎说渲染依赖它）。
+     */
+    transformToolResult?: (b: { id: string; tool: string; output: string }) => string;
+    /**
+     * 写 tool-result 的 `origin` 自证位（缺省 false = 原生形状，用于**真发**）。
+     * 落盘（llm.jsonl 全量日志）时置 true —— 于是"这条 value 是工具给的还是本地补的"
+     * 不再靠比对字符串，压缩统计/UI 标记/索引 why 都能程序化取。
+     */
+    withOrigin?: boolean;
+    /**
+     * 写消息级 `turn`/`step` 索引位（缺省 false = 原生形状，用于**真发**）。
+     * 落盘时置 true：llm.jsonl 的行号因此能反查「这条消息属于哪轮哪步」，
+     * 压缩索引才能给出「第 1~74 行 = 第 1~2 轮」这种可回取的概念（而不是字节偏移）。
+     */
+    withIndex?: boolean;
+}
+
+// ─── 投影 = 选择 + 渲染（**两段分离**）──────────────────────────────
+//
+// 为什么必须分开（##269 D3b）：
+//   · **选择**（投什么）是纯下标运算 —— 压缩注记要给模型「哪些行被省了」，那是**行号**，
+//     只有把选择做成"在全量投影上取/舍哪些下标"才说得清；把选择与裁剪揉在 walk 里，
+//     注记就只能靠"另算一份"（两份判据必然分叉，##227 的老教训）。
+//   · **渲染**（怎么呈现）才涉及工具结果裁剪/origin 自证位等形状问题。
+// 于是：全量投影（= llm.jsonl 每行）→ 选择 → 渲染。预览与真发共用同一条链。
+
+import { utf8Bytes } from "../../shared/context/compaction";
+// 选择算法（元件库 + 装配器）—— 见 compaction-plan.ts 头注。此处**转出**旧公开名以保持兼容。
+import { runPlan, defaultBudgetPlan, HISTORY_LADDER, type BudgetSelection, type HistoryRank } from "./compaction-plan";
+export { HISTORY_LADDER, type HistoryRank, type BudgetSelection };
+
+/**
+ * **全量投影**：块树 → 消息（不做任何选择、不裁剪工具结果）。
+ * 它是「原文的消息形态」= llm.jsonl 的每一行 —— 所以**数组下标 + 1 = 行号**，
+ * 压缩注记给模型的行号就是它。
+ *
+ * `turn`/`step`/`origin` 一律算出来（选择与渲染都要用），是否**写进**结果由
+ * `blocksToMessages` 按 opts 剥掉。
+ */
+export function projectAll(store: BlockStore): LocalModelMessage[] {
     const out: LocalModelMessage[] = [];
-    const walk = (id: string) => {
+    const walk = (id: string, turnId?: string, stepId?: string) => {
         const b = store.blocks.get(id)!;
+        // turn 只认 turn 块自己；step 只认 step 块自己 —— 之后的叶块一路继承下来
+        // （开场 user 的 parent 是 turn、assistant/tool 的 parent 是 step，继承即如实反映）
+        const turn = b.kind === "turn" ? b.id : turnId;
+        const step = b.kind === "step" ? b.id : stepId;
         if (b.kind === "text") {
             const role = (b.role as string) ?? "user";
             const text = (b.content as string) ?? "";
             if (!text) return;
-            if (role === "user") out.push({ role: "user", content: text });
+            if (role === "user") out.push({ role: "user", content: text, turn, ...(step ? { step } : {}) });
             else {
                 // assistant 文本并入最近的 assistant 消息（若上一条正是纯文本 assistant 则拼接）
                 const last = out[out.length - 1];
@@ -387,7 +486,7 @@ export function blocksToMessages(store: BlockStore): LocalModelMessage[] {
                 ) {
                     (last.content as LocalTextPart[]).push({ type: "text", text });
                 } else {
-                    out.push({ role: "assistant", content: [{ type: "text", text }] });
+                    out.push({ role: "assistant", content: [{ type: "text", text }], turn, ...(step ? { step } : {}) });
                 }
             }
             return;
@@ -417,23 +516,30 @@ export function blocksToMessages(store: BlockStore): LocalModelMessage[] {
                         input: b.args as JSONVal,
                     },
                 ],
+                turn,
+                ...(step ? { step } : {}),
             });
             // 配对铁律：每个 tool-call 必有 tool-result，否则下一轮 provider 拒整个历史。
             // （只适用于走到这里的块 —— 指令已下达；半截指令在上面整体跳过了。）
-            //
-            // 优先用块自己的 output：中断块在「新一轮开始」时已被 main 收敛成显式终态
-            // （interruptedToolPatches 写入 ops），所以这里绝大多数情况是**纯翻译**。
-            // 兼容分支（工具正在跑但历史已要发出）仍拿 INTERRUPTED_TOOL_NOTICE 兜底，
-            // 不另写文案 —— 保证 UI 与请求永远同源。
             const status = String(b.status ?? "");
-            const doneish =
-                status === "done" || status === "error" || status === INTERRUPTED_STATUS;
-            const value =
-                typeof b.output === "string" && b.output
-                    ? b.output
-                    : doneish
-                      ? "（空结果）"
-                      : INTERRUPTED_TOOL_NOTICE;
+            // ⚠️ 「中断」必须由 **status** 判定，不能由「output 是否非空」判定 ——
+            //    interruptedToolPatches 收敛时会往 output 写上同一句契约文案，于是收敛后
+            //    output 变非空，旧判据（typeof b.output === "string" && b.output）就会把它
+            //    当成工具真实输出送去裁剪：callpath 模式把它换成「[输出已省略（只留调用）…]」，
+            //    并指向一个**根本不存在的** toolout/<id>.txt。同一份历史，投递结果取决于
+            //    "这块有没有被收敛过" —— 是 bug（本地补的错误信息被当作历史投递）。
+            const interrupted = status === INTERRUPTED_STATUS;
+            const realOut = typeof b.output === "string" && b.output !== "";
+            const doneish = status === "done" || status === "error";
+            const raw = interrupted
+                ? INTERRUPTED_TOOL_NOTICE
+                : realOut
+                  ? (b.output as string)
+                  : doneish
+                    ? "（空结果）"
+                    : INTERRUPTED_TOOL_NOTICE;
+            const origin: ToolResultOrigin =
+                interrupted || (!realOut && !doneish) ? "interrupted" : realOut ? "tool" : "empty";
             out.push({
                 role: "tool",
                 content: [
@@ -441,16 +547,146 @@ export function blocksToMessages(store: BlockStore): LocalModelMessage[] {
                         type: "tool-result",
                         toolCallId: b.id,
                         toolName: String(b.tool ?? "bash"),
-                        output: { type: "text", value },
+                        output: { type: "text", value: raw },
+                        origin,
                     },
                 ],
+                turn,
+                ...(step ? { step } : {}),
             });
             return;
         }
-        for (const c of b.children) walk(c);
+        for (const c of b.children) walk(c, turn, step);
     };
     for (const r of store.roots()) walk(r.id);
     return out;
 }
 
+/** 消息的内容类别（**只看结构，不解析文本** —— 文本是用户数据，格式不可控） */
+export type MessageKind = "user" | "assistant-text" | "tool-chain";
 
+export function kindOfMessage(m: LocalModelMessage): MessageKind {
+    if (m.role === "user") return "user";
+    if (m.role === "tool") return "tool-chain";
+    const parts = Array.isArray(m.content) ? m.content : [];
+    return parts.some((p) => p.type === "tool-call") ? "tool-chain" : "assistant-text";
+}
+
+/** 选择结果：全量投影里的下标（升序）——**行号 = 下标 + 1** */
+export interface HistorySelection {
+    kept: number[];
+    dropped: number[];
+}
+
+/**
+ * **选择**：全量投影 + 策略 → 保留哪些下标（纯函数，与渲染无关）。
+ *
+ * ① 轮级边界（`sinceTurnId`）：
+ *      · 缺省      → 全投（与历史行为逐字一致）
+ *      · `null`    → 一条不投（全部清零）
+ *      · 指向某轮  → 该轮及其后投；**找不到该轮时退化为全投**（宁可多给，也别让用户
+ *                    面对一个空白会话 —— 日志被换/跨机器时会遇到）
+ * ② 内容级（`content`）：**整条丢** tool 链路（tool-call 与 tool-result 同批丢 ⇒ 配对铁律
+ *    天然不破）；`conclusion` 再在每轮只留**最后一条**助手文本（省掉"我先看看…"过程文本）。
+ */
+/** **轮边界选择**（旧机制，仅 `selectForDelivery` 在无 budgetBytes 时兜底用；投递主路径走预算） */
+export function selectHistory(
+    all: readonly LocalModelMessage[],
+    opts: Pick<DeliveryOpts, "sinceTurnId"> = {},
+): HistorySelection {
+    const since = "sinceTurnId" in opts ? opts.sinceTurnId : undefined;
+    const n = all.length;
+    const keep = new Array<boolean>(n).fill(true);
+    if (since === null) {
+        keep.fill(false);
+    } else if (since !== undefined) {
+        const i = all.findIndex((m) => m.turn === since);
+        if (i >= 0) for (let k = 0; k < i; k++) keep[k] = false;
+    }
+    const kept: number[] = [];
+    const dropped: number[] = [];
+    for (let k = 0; k < n; k++) (keep[k] ? kept : dropped).push(k);
+    return { kept, dropped };
+}
+
+// ─── 预算驱动的历史选择（用户 2026-10-07：目标式压缩）──────────────────
+//
+// 选择算法已抽到 `compaction-plan.ts`（**元件库 + 装配器**，用户 2026-10-08）：把「排序 / 配对 /
+// 预算累加」拆成可组合的**挑选元件**，默认管道 `defaultBudgetPlan` 复刻既有纵向阶梯行为。
+// 本函数是投递侧的**稳定入口**（真发 / 预览 / 记账共用），内部委托默认管道 ⇒ 行为逐字节不变。
+//
+// 为什么是**纵向**（用户 2026-10-07 纠正「逐轮降解」）：**主干 > 细节**。用户发言是他
+// 记得、认为重要的主干，不管多旧都应优先保留；工具结果只是可回取的细节。按轮（横向）
+// 会把前面重要的用户消息整轮陪葬 —— 后几轮工具垃圾一爆，前面的用户发言就没了。
+
+/**
+ * **预算选择**：全量投影 + 预算 → 保留哪些下标（纯函数）。
+ * 内部委托 `runPlan` + 默认管道（= 纵向阶梯 + 计入预算）；实现见 `compaction-plan.ts`。
+ */
+export function selectHistoryByBudget(
+    all: readonly LocalModelMessage[],
+    budgetBytes: number,
+    opts: Pick<DeliveryOpts, "transformToolResult"> = {},
+): BudgetSelection {
+    return runPlan(all, defaultBudgetPlan(budgetBytes), {
+        // 成本 = **投递**口径（渲染后字节；工具结果已按策略裁剪）
+        costOf: (m) => utf8Bytes(JSON.stringify(renderMessage(m, opts))),
+    });
+}
+
+/**
+ * **渲染**：保留下来的消息 → 可发/可落盘的形状。
+ * 两件事：① 工具结果裁剪（只作用于**真实输出**，见 origin）；② 按 opts 决定写不写
+ * `turn`/`step`/`origin` 自证位（真发不带，落盘带）。
+ */
+function renderMessage(m: LocalModelMessage, opts: DeliveryOpts): LocalModelMessage {
+    const out: LocalModelMessage = { role: m.role, content: m.content };
+    if (opts.withIndex) {
+        if (m.turn !== undefined) out.turn = m.turn;
+        if (m.step !== undefined) out.step = m.step;
+    }
+    if (m.role !== "tool") return out;
+    const transform = opts.transformToolResult;
+    const parts = (m.content as LocalToolResultPart[]).map((p) => {
+        const part: LocalToolResultPart = {
+            type: "tool-result",
+            toolCallId: p.toolCallId,
+            toolName: p.toolName,
+            output: {
+                type: "text",
+                // 裁剪只作用于**工具真实输出**（origin="tool"）—— 中断契约文本与占位文案动了
+                // 就误导模型（用户 2026-10-06：本地补的错误信息不许当历史投递）
+                value:
+                    transform && p.origin === "tool"
+                        ? transform({ id: p.toolCallId, tool: p.toolName, output: p.output.value })
+                        : p.output.value,
+            },
+        };
+        if (opts.withOrigin && p.origin) part.origin = p.origin;
+        return part;
+    });
+    out.content = parts;
+    return out;
+}
+
+/**
+ * **选择分派**（唯一入口）：预算口径（新）与轮边界口径（旧）二选一。
+ * ⚠️ 所有需要"投递了哪些消息"的地方都必须走这里 —— 直接调 `selectHistory` 会漏掉预算
+ * （实测 bug：sizeOfOps 曾直接调 selectHistory，清零/预算下 after.turns 数错）。
+ */
+export function selectForDelivery(
+    all: readonly LocalModelMessage[],
+    opts: DeliveryOpts = {},
+): { kept: number[]; dropped: number[] } {
+    return opts.budgetBytes !== undefined
+        ? selectHistoryByBudget(all, opts.budgetBytes, opts)
+        : selectHistory(all, opts);
+}
+
+/** 块树 → 可发/可落盘的消息（选择 + 渲染；跳过 turn/step 容器与 think） */
+export function blocksToMessages(store: BlockStore, opts?: DeliveryOpts): LocalModelMessage[] {
+    const o = opts ?? {};
+    const all = projectAll(store);
+    const sel = selectForDelivery(all, o);
+    return sel.kept.map((i) => renderMessage(all[i]!, o));
+}

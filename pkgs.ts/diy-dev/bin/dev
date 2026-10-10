@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bin/dev — 发布后的 diy-dev CLI 入口（npm 全局 / 安装到 PATH 用）。
 #
-# 用途：跑编译产物 out/cli/index.js，镜像根默认 $DIY_HOME/ref（DIY_HOME 缺省 ~/.diy）。
+# 用途：跑编译产物 build/prod/cli/index.js，镜像根默认 $DIY_HOME/ref（DIY_HOME 缺省 ~/.diy）。
 # 定位：跟随 symlink 解析包根（发布后 bin/ 与 out/ 相邻同层）。
 # 注入：DIY_HOME — 供 JS 侧 src/runtime.ts readRuntimeConfig() 读取装配。
 set -euo pipefail
@@ -18,7 +18,7 @@ _realpath() {
 }
 
 APP_DIR="$(dirname "$(_realpath "$0")")"
-CLI="$APP_DIR/out/cli/index.js"
+CLI="$APP_DIR/build/prod/cli/index.js"
 [[ -f "$CLI" ]] || { echo "diy-dev 未构建: ${CLI}（先 ./sha.sh build）" >&2; exit 1; }
 
 # 注意：不要 cd 到 APP_DIR！diy-dev 语义是「cwd 即作用域」（diy.yaml 在哪个目录就在哪操作），

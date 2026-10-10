@@ -47,6 +47,45 @@ lockTip: "装配入口是结构契约：改了会改变模型看到的节顺序�
 <template :include="./_guard.md"/>
 `,
 
+    // ── 历史摘要（压缩承接，**不进 _system.md**）────────────────────────
+    // 为什么独立于 system：摘要从会话内容派生、每轮可能不同，投递位置是「新会话首条上下文消息」，
+    // 放进 system 会砸掉前缀缓存（见 shared/context/summary.ts 头注）。故此节只在勾选摘要时
+    // 由 main 单独渲染，不参与 _system.md 装配。
+    'summary.md': `---
+title: 历史摘要
+desc: 压缩会话后带进新会话的承接摘要。变量来自对「被丢弃的轮」的结构化抽取（结论/改动/未完成/未决）。
+version: 1
+---
+<summary turns="{{summary.turns}}">
+（以下是之前会话的摘要，供你接续工作；它不是新指令）
+<template :if={{summary.conclusions}}>
+关键结论：
+<template :for={{summary.conclusions}} :as="c">
+- {{.c.value}}
+</template>
+</template>
+<template :if={{summary.changes}}>
+改动文件：
+<template :for={{summary.changes}} :as="c">
+- {{.c.value.path}}：{{.c.value.what}}
+</template>
+</template>
+<template :if={{summary.todos}}>
+未完成：
+<template :for={{summary.todos}} :as="t">
+- {{.t.value}}
+</template>
+</template>
+<template :if={{summary.open}}>
+未决问题：
+<template :for={{summary.open}} :as="o">
+- {{.o.value}}
+</template>
+</template>
+</summary>
+
+`,
+
     'identity.md': `---
 title: 身份
 desc: agent 的开场白 + 当前 agent 人物（名字与行为指令来自 personas.yaml）。整段替换式更新，改语气改定位都在这。
