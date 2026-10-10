@@ -37,7 +37,7 @@ type FieldKind = "Text" | "List" | "Flag";
 
 /** kind → 字段类型表。children 为结构位（start 自动维护），不接受 delta/patch。 */
 const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
-    turn: { usage: "Flag", status: "Flag", notice: "Flag" },
+    turn: { usage: "Flag", status: "Flag", notice: "Flag", reasoningEffort: "Flag", durationMs: "Flag" },
     step: { model: "Flag", usage: "Flag", status: "Flag" },
     // steer / steerId：用户"插嘴"写进对话流的标记（模式 next-step|next-turn，缺省 = 本轮开场的那次发言）
     // 与队列项 id（steer/N，回查用）。走 start 的 meta 落位（见 local-agent 的 steerBlockOps），

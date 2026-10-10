@@ -90,7 +90,9 @@ function fmtTurnClock(turnId: string): string | null {
     if (!m) return null;
     const d = new Date(Number(m[1]));
     if (Number.isNaN(d.getTime())) return null;
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    const p = (n: number) => String(n).padStart(2, "0");
+    // 日期 + 时间到秒（用户 2026-10-04：轮次末尾要能定位"什么时候说的"）
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 // ─── L2 汇总卡：统一数据模型（A/B 两表同一份源） ───────

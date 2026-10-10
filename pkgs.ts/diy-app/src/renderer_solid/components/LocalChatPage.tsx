@@ -1,19 +1,17 @@
 /**
  * LocalChatPage — 本地自定义 agent 对话页（ai-sdk 块协议，独立于 ACP ChatPage）
  *
- * 渲染 = f(密度 density, 紧凑 compact, 阶段 phase)：
- *   密度 ☷（单键循环，localStorage 持久）：L1 脉络 / L2 阅读 / L3 审计 —— 决定过程的可见层次
- *   紧凑 ▤（独立开关）：只把「折叠态最后一条正文」压到 N 行，展开后一律全文
+ * 渲染 = f(大纲 outline, 阶段 phase)：
+ *   大纲 ▤（唯一显示开关）：折叠态「最后一条正文」是否截到 N 行（默认 false = 正常全文）
  *   阶段 streaming（未 stop）/ settled（定稿）——静态与动态层次对称，动态每层多一条 delta 行
  *
  * 轮次四层折叠（2026-10-04 定稿，对齐 dsh）：
- *   L0 轮次头 = 身份 + 统计（N 步 · ⚙a 💭b · Σtok）
- *      折叠态 = 头 + 用户发言 + 最后一条正文（紧凑截 N 行）+ 用量条
+ *   L0 轮次头 = 身份（🤖 人物 · 模型 · 思考级别）+ 统计（N 步 · ⚙a 💭b · Σtok）
+ *      折叠态 = 头 + 用户发言 + 最后一条正文（大纲截 N 行）+ 用量条
  *   L1 展开轮次 → 全部正文 + 过程图标行
  *   L2 展开图标行 → 每事件一行（各自单行折叠）
  *   L3 展开单行 → 内容
- * 展开判定 = pin（用户显式覆盖）?? 默认值（轮次看密度、过程一律收）；
- * error 块与中断遗留 tool 恒开（要让人一眼看到"断在哪"）。
+ * 展开判定 = pin（用户显式覆盖）?? 默认折叠；error 块与中断遗留 tool 恒开。
  */
 
 import { createSignal, For, Show, Switch, Match, createEffect, on, onMount, onCleanup } from "solid-js";
@@ -34,7 +32,7 @@ import {
 import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
-import { Caches, DENSITY_LEVEL, DENSITY_LABEL, DENSITY_VALUES, type Density } from "../lib/ui-state";
+import { Caches } from "../lib/ui-state";
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
 import { bylineOf } from "../lib/assistant-byline";
@@ -54,23 +52,13 @@ import { steerModeLabel, steerModeTip } from "../../shared/steer-mode";
 
 // ─── 层级 ───────────────────────────────────────────
 
-/** 审计档（L3：过程以标题行逐块展示，不聚合成发丝线） */
-const isAudit = (d: Density) => d === DENSITY_LEVEL.AUDIT;
 
-function loadDensity(): Density {
-    return Caches.diy_chat_density.get();
-}
 
 // ─── 小工具 ─────────────────────────────────────────
 
 const firstLine = (s: string) => {
     const i = s.indexOf("\n");
     return i === -1 ? s.slice(0, 90) : s.slice(0, i);
-};
-const tailLine = (s: string) => {
-    const t = s.trimEnd();
-    const i = t.lastIndexOf("\n");
-    return i === -1 ? t : t.slice(i + 1);
 };
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v));
 
@@ -176,13 +164,11 @@ function reuseSegs(prev: Seg[], next: Seg[]): Seg[] {
         return p && sameSeg(p, s) ? p : s;
     });
 }
-function segments(density: Density, leaves: BlockNode[]): Seg[] {
+function segments(leaves: BlockNode[]): Seg[] {
     const isHairable = (b: BlockNode) =>
         (b.tag === "think" || b.tag === "tool") &&
         b.stopped &&
         !(b.tag === "tool" && str(b.attrs.status) === "error");
-    // L3 审计：过程每块各一行（不聚合）；L1/L2：连续已定稿过程段聚合成一行发丝线
-    if (density === DENSITY_LEVEL.AUDIT) return leaves.map((node) => ({ kind: "block", node }));
     const out: Seg[] = [];
     let run: BlockNode[] = [];
     const flush = () => {
@@ -247,9 +233,8 @@ function toolCommand(n: BlockNode): string {
 
 function summaryOf(n: BlockNode): string {
     if (n.tag === "think") {
-        const t = str(n.attrs.content);
-        if (!t) return "思考中…";
-        return !n.stopped ? tailLine(t) : firstLine(t);
+        // 折叠行**不预览内容**（内容只在展开后出现）—— 避免"折叠行标题 + 展开内容"同一句看两遍
+        return n.stopped ? "思考" : "思考中…";
     }
     if (n.tag === "tool") {
         return `${str(n.attrs.tool) || "tool"}${toolCommand(n) ? ` · ${firstLine(toolCommand(n))}` : ""}${isInterruptedToolBlock(n) ? " · ⊘ 中断" : ""}`;
@@ -288,9 +273,15 @@ function ToolBody(props: { node: BlockNode; onFull: (title: string, content: str
     const output = () => str(n.attrs.output);
     const pv = () => previewLines(output());
     const title = () => `${str(n.attrs.tool)} · ${toolCommand(n)}`;
+    // 命令行只在**多行或超长**时才在展开体重列：折叠行已显示命令首行，
+    // 单行短命令再列一遍就是同一句看两遍（用户 2026-10-04 反馈的重复）。
+    const cmdNeedsFull = () => {
+        const c = toolCommand(n);
+        return c.includes("\n") || c.length > 80;
+    };
     return (
         <div class="space-y-1 font-mono">
-            <Show when={toolCommand(n)}>
+            <Show when={cmdNeedsFull()}>
                 <pre class="text-base-content/70">$ {toolCommand(n)}</pre>
             </Show>
             <Show when={output()}>
@@ -396,15 +387,25 @@ function TurnHeader(props: {
             personaName: persona()?.name ?? null,
             personaModel: persona()?.model ?? null,
         });
+    // 思考级别：**该轮事实**（main 在 turn start 写进 meta），不是当前配置
+    const effort = () => str(t().attrs.reasoningEffort);
     const tokens = () => {
         const u = t().attrs.usage as { total?: number } | undefined;
         return u?.total ?? null;
     };
     const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+    // 耗时：该轮事实（main 在收尾 patch 写入 durationMs）
+    const durMs = () => {
+        const d = t().attrs.durationMs;
+        return typeof d === "number" ? d : null;
+    };
+    const fmtDur = (ms: number) => (ms >= 1000 ? `${Math.round(ms / 1000)} 秒` : `${ms}ms`);
     const summary = () => {
         const c = props.counts;
         const parts: string[] = [];
         if (c.step) parts.push(`${c.step} 步`);
+        const d = durMs();
+        if (d != null) parts.push(fmtDur(d));
         if (c.tool) parts.push(`⚙ ${c.tool}`);
         if (c.think) parts.push(`💭 ${c.think}`);
         const tok = tokens();
@@ -435,6 +436,11 @@ function TurnHeader(props: {
             </Show>
             <Show when={info().model}>
                 <span class="opacity-60">{info().model}</span>
+            </Show>
+            {/* 思考级别：该轮实际生效的档位（main 写入 turn meta） */}
+            <Show when={effort() && effort() !== "none"}>
+                <span class="opacity-50">·</span>
+                <span class="opacity-60">{reasoningEffortLabel(effort() as ReasoningEffort)}</span>
             </Show>
             <Show when={info().inferred}>
                 <span class="opacity-40">（当时人物未知）</span>
@@ -476,11 +482,11 @@ function TextBlock(props: { node: BlockNode; md: boolean }) {
     );
 }
 
-/** 折叠态正文：紧凑模式截 N 行（纯文本呈现，避免半截 Markdown 错乱），正常模式全文 */
-function ClampedText(props: { node: BlockNode; compact: boolean; lines: number; md: boolean }) {
+/** 折叠态正文：大纲模式截 N 行（纯文本呈现，避免半截 Markdown 错乱），正常模式全文 */
+function ClampedText(props: { node: BlockNode; outline: boolean; lines: number; md: boolean }) {
     const b = () => props.node;
     const raw = () => str(b().attrs.content);
-    const clipped = () => props.compact && b().stopped;
+    const clipped = () => props.outline && b().stopped;
     const view = () => (clipped() ? clampLines(raw(), props.lines) : { text: raw(), omitted: 0 });
     return (
         <div data-block-id={b().id} data-block-tag="text" data-clamped={clipped() && view().omitted > 0 ? "1" : undefined}>
@@ -520,7 +526,6 @@ function UserBubble(props: { node: BlockNode }) {
  */
 function ProcessStrip(props: {
     nodes: BlockNode[];
-    density: Density;
     pin: Record<string, boolean>;
     onToggle: (id: string) => void;
     onFull: (title: string, content: string) => void;
@@ -528,7 +533,7 @@ function ProcessStrip(props: {
     const tools = () => props.nodes.filter((b) => b.tag === "tool").length;
     const thinks = () => props.nodes.filter((b) => b.tag === "think").length;
     const key = () => `proc:${props.nodes[0]!.id}`;
-    const open = () => (key() in props.pin ? props.pin[key()]! : props.density === DENSITY_LEVEL.AUDIT);
+    const open = () => (key() in props.pin ? props.pin[key()]! : false);
     return (
         <div class="rounded-lg" data-block-tag="proc-strip">
             <button
@@ -589,10 +594,9 @@ function ErrorBox(props: { node: BlockNode }) {
     );
 }
 
-/** 展开态单块（正文 / 过程 / 计划 / 未知）：文档序渲染，密度只决定过程怎么呈现 */
+/** 展开态单块（正文 / 过程 / 计划 / 未知）：文档序渲染 */
 function LeafView(props: {
     node: BlockNode;
-    density: Density;
     pin: Record<string, boolean>;
     onToggle: (id: string) => void;
     onFull: (title: string, content: string) => void;
@@ -607,8 +611,8 @@ function LeafView(props: {
     }
     if (b.tag === "think" || b.tag === "tool") {
         const failed = b.tag === "tool" && str(b.attrs.status) === "error";
-        // 直播中的过程块、失败块、审计档：单块呈现；其余（L1/L2 已定稿过程）由 ProcessStrip 聚合
-        if (!b.stopped || failed || isAudit(props.density)) {
+        // 直播块/失败块单独呈现；已定稿的连续过程由 segments 聚合成图标行（此处不渲染单块）
+        if (!b.stopped || failed) {
             return <ProcessRow node={b} pin={props.pin} onToggle={props.onToggle} onFull={props.onFull} />;
         }
         return null;
@@ -655,11 +659,10 @@ function liveProcessOf(turn: BlockNode): BlockNode | null {
 
 function TurnView(props: {
     node: BlockNode;
-    density: Density;
     pin: Record<string, boolean>;
-    /** 紧凑模式：折叠态正文截断到 compactLines 行（展开后一律全文） */
-    compact: boolean;
-    compactLines: number;
+    /** 大纲模式：折叠态正文截断到 outlineLines 行（展开后一律全文） */
+    outline: boolean;
+    outlineLines: number;
     onToggle: (id: string) => void;
     onFull: (title: string, content: string) => void;
     liveTurnId: string | null;
@@ -673,14 +676,13 @@ function TurnView(props: {
     onDetailUsage: (id: string) => void;
 }) {
     const t = props.node;
-    // 轮次开合：pin（用户显式）?? 密度默认（脉络=折叠，其余=展开）
+    // 轮次开合：pin（用户显式覆盖）?? 默认折叠（L0 只留头 + 最后一条正文）
     const turnKey = () => `turn:${t.id}`;
-    const open = () =>
-        turnKey() in props.pin ? props.pin[turnKey()]! : props.density !== DENSITY_LEVEL.OUTLINE;
+    const open = () => (turnKey() in props.pin ? props.pin[turnKey()]! : false);
     // 上帧的段序列：跨次渲染复用未变的段（见 reuseSegs 头注）
     let prevSegs: Seg[] = [];
     const segs = () => {
-        prevSegs = reuseSegs(prevSegs, segments(props.density, leavesOf(t)));
+        prevSegs = reuseSegs(prevSegs, segments(leavesOf(t)));
         return prevSegs;
     };
     const counts = () => countTags(t);
@@ -713,8 +715,8 @@ function TurnView(props: {
                             {(n) => (
                                 <ClampedText
                                     node={n()}
-                                    compact={props.compact}
-                                    lines={props.compactLines}
+                                    outline={props.outline}
+                                    lines={props.outlineLines}
                                     md={props.md}
                                 />
                             )}
@@ -729,7 +731,6 @@ function TurnView(props: {
                             seg.kind === "hair" ? (
                                 <ProcessStrip
                                     nodes={seg.nodes}
-                                    density={props.density}
                                     pin={props.pin}
                                     onToggle={props.onToggle}
                                     onFull={props.onFull}
@@ -737,7 +738,6 @@ function TurnView(props: {
                             ) : (
                                 <LeafView
                                     node={seg.node}
-                                    density={props.density}
                                     pin={props.pin}
                                     onToggle={props.onToggle}
                                     onFull={props.onFull}
@@ -1177,30 +1177,19 @@ export function LocalChatPage(props: { uri?: string }) {
         const turns = localChatStore.trees.filter((t) => t.tag === "turn");
         return turns.length ? turns[turns.length - 1]!.id : null;
     };
-    // 密度（持久化）与手动 pin（局部覆盖，不跳变）
-    const [density, setDensityRaw] = createSignal<Density>(loadDensity());
-    const setDensity = (d: Density) => {
-        setDensityRaw(d);
-        Caches.diy_chat_density.set(d);
-    };
-    /** ☷ 单键循环：点一下进下一档（L1→L2→L3→L1），末档回卷 —— 不弹层、不选级 */
-    const cycleDensity = () => {
-        const i = DENSITY_VALUES.indexOf(density());
-        setDensity(DENSITY_VALUES[(i + 1) % DENSITY_VALUES.length]!);
-    };
-    // Markdown 渲染开关（视图 cache 持久化，与密度同级）：全局开关而非 per-message
+    // Markdown 渲染开关（视图 cache 持久化）：全局开关而非 per-message
     const [md, setMdRaw] = createSignal<boolean>(Caches.diy_chat_md.get());
     const setMd = (v: boolean) => {
         setMdRaw(v);
         Caches.diy_chat_md.set(v);
     };
-    // 紧凑模式（与密度正交：只管折叠态正文的默认行数）
-    const [compact, setCompactRaw] = createSignal<boolean>(Caches.diy_chat_compact.get());
-    const setCompact = (v: boolean) => {
-        setCompactRaw(v);
-        Caches.diy_chat_compact.set(v);
+    // 大纲模式（唯一显示开关）：折叠态正文是否截 N 行。默认正常（false）= 全文。
+    const [outline, setOutlineRaw] = createSignal<boolean>(Caches.diy_chat_outline.get());
+    const setOutline = (v: boolean) => {
+        setOutlineRaw(v);
+        Caches.diy_chat_outline.set(v);
     };
-    const compactLines = () => Caches.diy_chat_compact_lines.get();
+    const outlineLines = () => Caches.diy_chat_outline_lines.get();
     /** 清空确认：清空会删掉 main 侧 ops/llm 日志（rmSync，不可恢复），必须二次确认 */
     const [confirmClear, setConfirmClear] = createSignal(false);
     const [pinned, setPinned] = createSignal<Record<string, boolean>>({});
@@ -1355,30 +1344,20 @@ export function LocalChatPage(props: { uri?: string }) {
             <div
                 class={`flex items-center justify-end gap-2 pl-4 pr-16 ${VIEW_BAR_H} border-b shrink-0`}
             >
-                {/* 信息密度：**单键循环** —— 点一下进下一档（L1 脉络 → L2 阅读 → L3 审计 → 回 L1）。
-                    不弹层、不拖 range（"点开再选级"太绕）；按钮直接写出当前档名，
-                    因为单看 ☷ 一个符号看不出"现在是哪档"，切回来还得猜。 */}
+                {/* 显示模式：**只有「正常 / 大纲」两态**（2026-10-04 用户口径，取消三档密度）。
+                    唯一差别 = 折叠态那条「最后一条正文」的默认行数：正常=全文、大纲=截 N 行。
+                    展开后的层次与点击行为两模式完全一致。 */}
                 <button
-                    class="btn btn-ghost btn-xs shrink-0"
-                    data-tip={`信息密度：${DENSITY_LABEL[density()]}（点击循环切换）`}
-                    aria-label={`信息密度：${DENSITY_LABEL[density()]}（点击循环切换）`}
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        setMoreOpen(false); // 与「⋯」菜单互斥（stopPropagation 挡住了 document 关闭）
-                        cycleDensity();
-                    }}
+                    class={`btn btn-xs shrink-0 ${outline() ? "btn-active" : "btn-ghost"}`}
+                    data-tip={
+                        outline()
+                            ? `大纲：折叠态正文压到 ${outlineLines()} 行（点击改回正常）`
+                            : "正常：折叠态正文显示全文（点击改大纲）"
+                    }
+                    aria-pressed={outline()}
+                    onClick={() => setOutline(!outline())}
                 >
-                    ☷ <span class="opacity-70">{DENSITY_LABEL[density()]}</span>
-                </button>
-                {/* 紧凑模式开关：与密度正交 —— 只压缩「折叠态那一条正文」的行数，
-                    展开轮次后仍全文（用户口径 2026-10-04：不是第 4 档密度）。 */}
-                <button
-                    class={`btn btn-xs shrink-0 ${compact() ? "btn-active" : "btn-ghost"}`}
-                    data-tip={compact() ? `紧凑：折叠态正文压到 ${compactLines()} 行（点击改回正常）` : "正常：折叠态正文显示全文（点击改紧凑）"}
-                    aria-pressed={compact()}
-                    onClick={() => setCompact(!compact())}
-                >
-                    {compact() ? "▤ 紧凑" : "▤ 正常"}
+                    {outline() ? "▤ 大纲" : "▤ 正常"}
                 </button>
                 {/* 显示方式二选一：两个选项都可见、当前态高亮 —— 单按钮式「MD」看不出
                     处于哪一态（切回去要猜），且与破坏性按钮同形时易误点。 */}
@@ -1454,10 +1433,9 @@ export function LocalChatPage(props: { uri?: string }) {
                             t.tag === "turn" ? (
                                 <TurnView
                                     node={t}
-                                    density={density()}
                                     pin={pinned()}
-                                    compact={compact()}
-                                    compactLines={compactLines()}
+                                    outline={outline()}
+                                    outlineLines={outlineLines()}
                                     onToggle={togglePin}
                                     onFull={(title, content) => setFull({ title, content })}
                                     liveTurnId={liveTurnId()}

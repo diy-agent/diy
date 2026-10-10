@@ -12,47 +12,21 @@
 // 模式：field(key, spec) 扁平字段，每个字段 = key + 类型 + 反序列化/校验 + 默认值，
 // 统一 .get()/.set()/.reset()。收益：
 //   1. 类型化读写：调用方不再各自 Number()/JSON.parse/cast
-//   2. 约束集中：范围校验（density 三档枚举、宽度 360-1000）定义即生效
+//   2. 约束集中：范围校验（大纲行数 1-10、宽度 360-1000）定义即生效
 //   3. 与存储解耦：未来换 IndexedDB/$DIY_HOME 文件只改本文件内部
 // 不引入 zod：zod 的运行时校验 + 类型派生服务于跨进程契约（RPC）；视图 cache
 // 是进程内单端标量字段，轻量 parse 即可。
 
 export type DiyTheme = "dark" | "light";
 
-// ─── 聊天信息密度（枚举：值即存储值，自解释，替代裸数字） ─────────
+// ─── 聊天显示模式（正常 / 大纲） ───────────────────────
 //
-// 三档语义（2026-10-04 重定义，取消原第四档「全开/FORENSIC」）：
-//   · **密度只决定「默认展开与否」**，任何档位下每个块都能手动点开（pin 覆盖默认值）；
-//   · 正文（assistant text）与过程（think/tool）各有一套默认展开规则（见 LocalChatPage）；
-//   · 过程在 L1/L2 聚合成一行摘要（可点开），L3 每块各一行。
-export const DENSITY_LEVEL = {
-  OUTLINE: "outline", // L1 脉络：正文与过程一律折成一行摘要，点开看全文
-  READ: "read", // L2 阅读：正文默认展开，过程折成一行摘要（默认）
-  AUDIT: "audit", // L3 审计：正文默认展开 + 过程每块各一行
-} as const;
-export type Density = (typeof DENSITY_LEVEL)[keyof typeof DENSITY_LEVEL];
-/** 由简到繁的顺序（单键循环的切换次序） */
-export const DENSITY_VALUES: readonly Density[] = [
-  DENSITY_LEVEL.OUTLINE,
-  DENSITY_LEVEL.READ,
-  DENSITY_LEVEL.AUDIT,
-];
-/** 单键循环按钮上显示的短名（人一眼认出当前档，不靠数字） */
-export const DENSITY_LABEL: Record<Density, string> = {
-  [DENSITY_LEVEL.OUTLINE]: "脉络",
-  [DENSITY_LEVEL.READ]: "阅读",
-  [DENSITY_LEVEL.AUDIT]: "审计",
-};
-/** 旧版存储值 → 新三档。
- *  数字 1-3 顺延；数字 4 与原枚举 forensic（已取消的"全开"档）**都归并到 L3** ——
- *  归并方向选"信息不减"：曾经的最高档用户要看到过程，落到新最高档最不违其意。 */
-const LEGACY_DENSITY: Record<string, Density> = {
-  "1": DENSITY_LEVEL.OUTLINE,
-  "2": DENSITY_LEVEL.READ,
-  "3": DENSITY_LEVEL.AUDIT,
-  "4": DENSITY_LEVEL.AUDIT,
-  forensic: DENSITY_LEVEL.AUDIT,
-};
+// **唯一一个显示开关**（2026-10-04 定案，取消原「脉络/阅读/审计」三档密度）。
+// 它只决定：折叠态那条「最后一条正文」默认显示多少行 ——
+//   正常 = 全文；大纲 = 截到 N 行（默认 3，可调）。
+// 展开后的层次与点击行为两模式**完全一致**（轮次头 → 正文+图标行 → 逐条 → 内容），
+// 所以它不是"第 4 档密度"，而是与折叠结构正交的一个显示偏好。
+export const OUTLINE_LINES_DEFAULT = 3;
 
 // ─── 缓存字段（get/set/reset，内部吞异常 + 留痕） ─────────────
 
@@ -241,33 +215,21 @@ export const Caches = {
     serialize: (v) => v,
     defaultValue: "",
   }),
-  /** 本地聊天密度（三档语义值 outline/read/audit；兼容旧数字 1-4 与已取消的 forensic） */
-  diy_chat_density: field<Density>("diy_chat_density", {
-    parse: (raw) => {
-      if (DENSITY_VALUES.includes(raw as Density)) return raw as Density;
-      // 旧版数字（1-4）兼容
-      return LEGACY_DENSITY[raw] ?? null;
-    },
-    serialize: (v) => v,
-    // 默认「脉络」：App 打开时已截止轮次是折叠的（头 + 最后一条正文），
-    // 与 dsh 的默认 compact 一致；要读全文逐轮展开或切到阅读/审计。
-    defaultValue: DENSITY_LEVEL.OUTLINE,
-  }),
-  /** 聊天「紧凑模式」：折叠态只把该轮**最后一条正文**压到 N 行（展开后一律全文）。
-   *  与密度是**两条独立轴**：密度管过程的可见层次，紧凑只管正文默认可见行数。 */
-  diy_chat_compact: field<boolean>("diy_chat_compact", {
+  /** 聊天「大纲模式」开关：折叠态只把该轮**最后一条正文**压到 N 行（展开后一律全文）。
+   *  false = 正常（全文），true = 大纲（截 N 行）。**不是第 4 档密度**，是正交显示偏好。 */
+  diy_chat_outline: field<boolean>("diy_chat_outline", {
     parse: (raw) => (raw === "1" ? true : raw === "0" ? false : null),
     serialize: (v) => (v ? "1" : "0"),
     defaultValue: false,
   }),
-  /** 紧凑模式正文行数上限（可调；默认 3），parse 夹在 1-10 */
-  diy_chat_compact_lines: field<number>("diy_chat_compact_lines", {
+  /** 大纲模式正文行数上限（可调；默认 3），parse 夹在 1-10 */
+  diy_chat_outline_lines: field<number>("diy_chat_outline_lines", {
     parse: (raw) => {
       const v = Number(raw);
       return Number.isInteger(v) && v >= 1 && v <= 10 ? v : null;
     },
     serialize: (v) => String(v),
-    defaultValue: 3,
+    defaultValue: OUTLINE_LINES_DEFAULT,
   }),
   /** 聊天正文渲染模式（true=Markdown 富文本，false=原文） */
   diy_chat_md: field<boolean>("diy_chat_md", {
@@ -388,6 +350,10 @@ const LEGACY_KEYS = [
   "diy-detail-width",
   "diy-local-density",
   "diy-theme",
+  // 三档密度（脉络/阅读/审计）已于 2026-10-04 取消 → 改「正常/大纲」两态，旧 key 一并清
+  "diy_chat_density",
+  "diy_chat_compact",
+  "diy_chat_compact_lines",
   // 试验场早期直写的宽度 key（已收进字段池）
   "lab4.leftW",
   "lab4.rightW",

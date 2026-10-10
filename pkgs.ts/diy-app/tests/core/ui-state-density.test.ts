@@ -1,11 +1,10 @@
-// tests/core/ui-state-density.test.ts — 聊天信息密度（三档语义）的缓存契约
+// tests/core/ui-state-density.test.ts — 聊天显示模式（正常/大纲）的缓存契约
 //
-// 2026-10-04 重定义：四级（outline/read/audit/forensic）→ 三级，取消「全开」档。
-// 这里锁定两件容易回退的事：
-//   ① 枚举顺序 = ☷ 单键循环的切换次序（L1 → L2 → L3 → 回 L1）；
-//   ② 旧存储值的归并方向 —— 已落盘的 "4" 与原枚举 forensic 都必须归到 L3（信息不减），
-//      不能悄悄回默认（那会让老用户重启后"过程凭空消失"）。
-import { beforeEach, describe, expect, it, vi } from "vitest";
+// 2026-10-04 定案：取消原「脉络/阅读/审计」三档密度，改**唯一一个显示开关**
+//（正常 = 折叠态正文全文；大纲 = 截 N 行）。这里锁定：
+//   ① 默认正常（false）、行数默认 3；② 行数 parse 夹在 1-10；
+//   ③ 旧 key（diy_chat_density 三档 / diy_chat_compact）由 clearUiCache 一并清走。
+import { beforeEach, describe, expect, it } from "vitest";
 
 const store = new Map<string, string>();
 (globalThis as unknown as { localStorage: Storage }).localStorage = {
@@ -17,57 +16,43 @@ const store = new Map<string, string>();
     length: 0,
 } as Storage;
 
-const { Caches, DENSITY_LEVEL, DENSITY_VALUES, DENSITY_LABEL } = await import(
+const { Caches, OUTLINE_LINES_DEFAULT, clearUiCache } = await import(
     "../../src/renderer_solid/lib/ui-state"
 );
 
-describe("聊天信息密度（三档语义）", () => {
+describe("聊天显示模式（正常/大纲）", () => {
     beforeEach(() => store.clear());
 
-    it("恰好三档、顺序 = 由简到繁（单键循环的次序）", () => {
-        expect(DENSITY_VALUES).toEqual([
-            DENSITY_LEVEL.OUTLINE,
-            DENSITY_LEVEL.READ,
-            DENSITY_LEVEL.AUDIT,
-        ]);
-        expect(DENSITY_VALUES).toHaveLength(3);
+    it("默认正常（false，折叠态正文全文）", () => {
+        expect(Caches.diy_chat_outline.get()).toBe(false);
     });
 
-    it("每档都有中文短名（单键按钮要显示当前档，不能再靠数字/位置猜）", () => {
-        for (const d of DENSITY_VALUES) expect(DENSITY_LABEL[d]).toBeTruthy();
-    });
-
-    it("默认 = 脉络（L1：App 打开时已截止轮次折叠）", () => {
-        expect(Caches.diy_chat_density.get()).toBe(DENSITY_LEVEL.OUTLINE);
-    });
-
-    it("旧数字兼容：1/2/3 顺延，4（含已取消的 forensic）归并到审计 L3", () => {
-        for (const raw of ["1", "2", "3", "4", "forensic"]) {
-            store.set("diy_chat_density", raw);
-            const got = Caches.diy_chat_density.get();
-            expect(got, raw).not.toBeUndefined();
-            expect(DENSITY_VALUES, raw).toContain(got);
+    it("大纲行数默认 3，parse 夹在 1-10（越界/非整数回默认）", () => {
+        expect(Caches.diy_chat_outline_lines.defaultValue).toBe(OUTLINE_LINES_DEFAULT);
+        expect(Caches.diy_chat_outline_lines.get()).toBe(3);
+        for (const good of [1, 5, 10]) {
+            store.set("diy_chat_outline_lines", String(good));
+            expect(Caches.diy_chat_outline_lines.get(), String(good)).toBe(good);
         }
-        store.set("diy_chat_density", "1");
-        expect(Caches.diy_chat_density.get()).toBe(DENSITY_LEVEL.OUTLINE);
-        store.set("diy_chat_density", "4");
-        expect(Caches.diy_chat_density.get()).toBe(DENSITY_LEVEL.AUDIT);
-        store.set("diy_chat_density", "forensic");
-        expect(Caches.diy_chat_density.get()).toBe(DENSITY_LEVEL.AUDIT);
-    });
-
-    it("非法值回默认（不崩、不臆断）", () => {
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-        for (const bad of ["", "nope", "5", "0"]) {
-            store.set("diy_chat_density", bad);
-            expect(Caches.diy_chat_density.get(), bad).toBe(DENSITY_LEVEL.OUTLINE);
+        for (const bad of ["0", "11", "-1", "3.5", "abc", ""]) {
+            store.set("diy_chat_outline_lines", bad);
+            expect(Caches.diy_chat_outline_lines.get(), bad).toBe(OUTLINE_LINES_DEFAULT);
         }
-        warn.mockRestore();
     });
 
-    it("写入即持久化（存语义值，不是数字）", () => {
-        Caches.diy_chat_density.set(DENSITY_LEVEL.AUDIT);
-        expect(store.get("diy_chat_density")).toBe("audit");
-        expect(Caches.diy_chat_density.get()).toBe(DENSITY_LEVEL.AUDIT);
+    it("写入即持久化（大纲开关存 1/0）", () => {
+        Caches.diy_chat_outline.set(true);
+        expect(store.get("diy_chat_outline")).toBe("1");
+        expect(Caches.diy_chat_outline.get()).toBe(true);
+    });
+
+    it("clearUiCache 清走旧 key（三档密度 + 旧紧凑 key）", () => {
+        for (const k of ["diy_chat_density", "diy_chat_compact", "diy_chat_compact_lines"]) {
+            store.set(k, "x");
+        }
+        clearUiCache();
+        for (const k of ["diy_chat_density", "diy_chat_compact", "diy_chat_compact_lines"]) {
+            expect(store.get(k), k).toBeUndefined();
+        }
     });
 });

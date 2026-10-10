@@ -903,6 +903,9 @@ export class LocalAgentManager {
          */
         const closeTurn = function* (currentStepId: string, steps: number): Generator<Op, void, void> {
             const ops: Op[] = [];
+            // 轮次耗时（该轮事实）：turnId 内嵌开始毫秒（`t${Date.now()}`）→ 收尾此刻
+            const durationMs = Date.now() - Number(turnId.slice(1));
+            ops.push({ op: "patch", id: turnId, fields: { durationMs } });
             if (currentStepId !== turnId) ops.push({ op: "stop", id: currentStepId });
             ops.push({ op: "stop", id: turnId });
             // ① 同步副作用（无 await、无 yield）：无论走正常收尾还是 return 展开，这一段必定执行完
@@ -923,7 +926,8 @@ export class LocalAgentManager {
             for (const op of ops) yield op;
         };
 
-        yield* emit({ op: "start", id: turnId, kind: "turn", meta: { model: model } });
+        // 轮次事实：模型 + 思考级别（渲染时读它署名/展示档位，不读当前配置 —— 任务 196 的教训）
+        yield* emit({ op: "start", id: turnId, kind: "turn", meta: { model: model, reasoningEffort } });
 
         // ── 系统上下文：**先算预算再记账** ──
         // 超预算时这一轮根本不发请求，所以此刻**还不能**写开场 user 块、也不能投递插话：
