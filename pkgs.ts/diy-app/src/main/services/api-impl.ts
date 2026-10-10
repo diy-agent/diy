@@ -15,6 +15,7 @@ import * as project from "../core/project";
 import * as state from "../core/state";
 import * as taskTree from "../core/task-tree";
 import { AppConfig } from "../core/app-config";
+import { refreshModelRuntime } from "../core/model-runtime";
 import { platform, arch, release, totalmem, freemem } from "node:os";
 import { currentGitBranch, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
 import { readRuntimeConfig } from "../../runtime";
@@ -55,6 +56,15 @@ const app = apiDef.diy;
  * 或 ChannelServerBinding（测试）。转发 diy.ui.* 由调用方在 binding 上 onForward。
  */
 export function bindAppHandlers(binding: ServerBinding): void {
+  // 装配运行时模型目录（snapshot ⊕ custom ⊕ model.yaml）。**同步**做：异步会让早期的
+  // models 查询抢在装配前看到空目录。配置非法（结构错）→ 出声但不阻断启动：
+  // 目录保持上一次（或空），用户仍可进界面改回来（fail-visible 而非 fail-dead）。
+  try {
+    const n = refreshModelRuntime(state.diyHome());
+    console.log(`[model-runtime] 装配 ${n} 个模型引用`);
+  } catch (e) {
+    console.warn("[model-runtime] 装配失败，目录保持原状（或空）:", e);
+  }
 
   // ── task ──
   binding.on(app.task.create, async ({ input }) => {
@@ -550,8 +560,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
       model: "",
     };
     if (taskUri) {
-      const { previewSimulatedRequest, DEFAULT_MODEL } = await import("./local-agent");
-      const model = input.model || DEFAULT_MODEL;
+      const { previewSimulatedRequest } = await import("./local-agent");
+      const { getModelCatalog } = await import("../../shared/models");
+      // 无缺省模型：预演不指定就用目录首项（目录空 = 无 provider，model 为空 → 预演只组装不发）
+      const model = input.model || getModelCatalog()[0]?.ref || "";
       const sim = await previewSimulatedRequest({
         taskUri,
         system: lab.system.text,
@@ -654,6 +666,83 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const proxy = await getLlmProxy();
     proxy.stop();
     return { status: "ok" };
+  });
+
+  // ── llmConfig（模型 provider 配置）──
+  binding.on(app.llmConfig.read, async () => {
+    const { registryView } = await import("../core/model-registry");
+    try {
+      return registryView(state.diyHome());
+    } catch (e) {
+      // 配置坏文件（结构非法）不该让 UI 锁死：返回空视图 + error，页面仍能打开提示（##275 R1-6）
+      return {
+        modelFile: { stdProviders: {}, customProviders: {} },
+        customSpecs: {},
+        catalog: [],
+        providers: [],
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+  });
+  binding.on(app.llmConfig.write, async ({ input }) => {
+    const { saveModelConfig } = await import("../core/model-config");
+    saveModelConfig(state.diyHome(), input.modelFile);
+    refreshModelRuntime(state.diyHome());
+    return { status: "ok" };
+  });
+  binding.on(app.llmConfig.writeSpec, async ({ input }) => {
+    const { loadCustomSpecs, saveCustomSpecs } = await import("../core/model-config");
+    const specs = loadCustomSpecs(state.diyHome());
+    if (input.spec === null) delete specs[input.id];
+    else specs[input.id] = input.spec;
+    saveCustomSpecs(state.diyHome(), specs);
+    refreshModelRuntime(state.diyHome());
+    return { status: "ok" };
+  });
+
+  binding.on(app.llmConfig.probe, async ({ input }) => {
+    // 拉 `${baseUrl}/models`：既是连通性测试，也是 custom provider 的模型清单来源。
+    // 不强求成功：上游若不支持 /models（如 commandcode），ok=false 且 error 说明原因。
+    const { expandEnvValue } = await import("../core/model-registry");
+    if (input.apiKey.trim() === "") return { ok: false, status: null, models: [], error: "账号密钥为空" };
+    const expanded = expandEnvValue(input.apiKey);
+    if (expanded.error || expanded.value === null) {
+      return { ok: false, status: null, models: [], error: expanded.error ?? "密钥为空" };
+    }
+    const base = input.baseUrl.replace(/\/+$/, "");
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12_000);
+    try {
+      const res = await fetch(`${base}/models`, {
+        headers: expanded.value ? { authorization: `Bearer ${expanded.value}` } : {},
+        signal: ctrl.signal,
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        return { ok: false, status: res.status, models: [], error: `HTTP ${res.status}: ${text.slice(0, 200)}` };
+      }
+      let models: { id: string; name: string | null; context: number | null; endpoints: string[] }[] = [];
+      try {
+        const json = JSON.parse(text) as {
+          data?: Array<{ id?: string; name?: string; context_length?: number; supported_endpoints?: string[] }>;
+        };
+        models = (json.data ?? [])
+          .filter((m) => typeof m?.id === "string")
+          .map((m) => ({
+            id: m.id as string,
+            name: m.name ?? null,
+            context: typeof m.context_length === "number" ? m.context_length : null,
+            endpoints: Array.isArray(m.supported_endpoints) ? m.supported_endpoints.filter((e) => typeof e === "string") : [],
+          }));
+      } catch {
+        return { ok: false, status: res.status, models: [], error: "响应不是 JSON（/models 不可解析）" };
+      }
+      return { ok: true, status: res.status, models, error: null };
+    } catch (e) {
+      return { ok: false, status: null, models: [], error: e instanceof Error ? e.message : String(e) };
+    } finally {
+      clearTimeout(timer);
+    }
   });
 
   // ── log ──

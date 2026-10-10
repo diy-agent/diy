@@ -6,7 +6,7 @@
 // 已在 tests/core/cache-ttl.test.ts 里用构造数据覆盖 —— 本脚本只负责「造真观测」。
 //
 // 用法（需真 key；只在 worktree 隔离 home 里跑，别碰 ~/.diy）：
-//   DIY_HOME=$PWD/build/home OPENCODE_ZEN_API_KEY=... \
+//   DIY_HOME=$PWD/build/preview/home OPENCODE_ZEN_API_KEY=... \
 //     npx tsx scripts/probe-cache-ttl.mts --model mimo-v2.6-flash --gaps 1,20,40,55,70
 //
 // 做法（对照 ##230#439 的"只发头部"结论 —— 探针越长越贵，但太短可能低于缓存门槛）：

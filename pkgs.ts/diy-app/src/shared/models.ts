@@ -1,86 +1,96 @@
 // src/shared/models.ts
-// 🎯 可选模型清单（zen/go）的**单一真相源**：纯数据 + 纯函数，无 node 依赖。
+// 🎯 运行时模型目录 + 查询函数（纯数据 + 纯函数，无 node 依赖）。
 //
-// 为什么独立于 local-agent（服务实现）：
-//   persona（agent 人物）在 core 层就要用到「默认模型」「模型能力查询」，而 core 不能被
-//   services 反向依赖（否则 core/persona ↔ services/local-agent 循环 import，常量初始化
-//   顺序会拿到 undefined）。清单本身是配置数据、不是协议实现，放 shared 是正确归属。
+// 数据来源（见 main/core/model-runtime.ts）：snapshot（models.dev 白名单产物）⊕ custom spec
+// ⊕ $DIY_HOME/model.yaml（账号/可见性/覆盖）。进程启动 / 配置保存后把解析结果**灌进本模块的
+// 可变目录**（setModelCatalog），此后一切查询（apiOf/contextLimitOf/costOf/…）都走它。
+//
+// **没有内置 provider**：无任何已配置 provider → 目录为空（模型元数据全部来自
+// snapshot ⊕ custom spec，代码里不硬编码任何模型清单）。应用首次启动是空的，用户添加
+// provider + 账号后才列出可用模型。
 //
 // 约定：本文件禁止 import node:*（renderer 会打进包）。
 
 import { ratesOf, type EffectiveRates, type ModelCost } from "./usage";
 
 /**
- * 缺省模型。
- *
- * 为什么是 `mimo-v2.6-flash`（用户 2026-10-06）：它是全表最便宜的带工具模型
- * （$0.14 / $0.28 per 1M），而**并行任务多、费用易失控**时默认值必须是最省的那个
- * —— 用户原话「当前系统的费用失控」「不要用 luna」。要贵的模型请显式选（人物）。
- * 另见 `~/git/diy/diy/AGENTS.md` 的 `model.default` 约定（测试同样只准便宜档）。
- */
-export const DEFAULT_MODEL = "mimo-v2.6-flash";
-
-/** zen/go 基址：两个 API 面共用（chat/completions 与 responses 只是路径不同） */
-export const ZEN_BASE_URL = "https://opencode.ai/zen/go/v1";
-
-/**
- * **实际服务的上游名**（ai-sdk provider 名，与 `createOpenAICompatible({ name })` 一致）。
- * 与价目真源（`COST_SOURCE` = models.dev）是两件事：这是"请求走了谁"，那是"单价查的哪张表"。
- * 落账本时两个都要有（##230 实测：同一模型不同 provider 报价差 1x~50x）。
- */
-export const UPSTREAM_PROVIDER = "zen-go";
-
-/**
- * 模型走的 API 面。**必须逐个模型标注**，因为 zen/go 的 `GET /models` 不返回 API 面信息
- * （只有 id/object/created/owned_by），标错的表现是「上游 503 Endpoint is unavailable」：
- * responses-only 模型打到 /chat/completions 一律 503（gpt-5.6-luna / gpt-6-luna 2026-09-24 实测）。
- * 真源：pi 的 ~/.pi/agent/models-store.json 的 `api` 字段（opencode-go provider）。
+ * 模型走的 API 面。**由 npm 字段解析**（provider 级 `npm` 默认 + 模型级 `provider.npm` 覆写）：
+ *   `@ai-sdk/openai-compatible` → chat（POST {baseUrl}/chat/completions）
+ *   `@ai-sdk/openai`            → responses（POST {baseUrl}/responses）
+ * 这与 models.dev 完全对齐（opencode-go 等混面 provider 靠模型级 npm 覆写表达）。
  */
 export type LocalModelApi = "chat" | "responses";
 
-/** 推理强度档位：开放字符串（各模型词表不同，见 LOCAL_MODELS 的 reasoning） */
+/** npm 包名 → API 面白名单。只认这两家；其余 npm 的 provider/模型不进 registry。 */
+export const NPM_FACE: Record<string, LocalModelApi> = {
+    "@ai-sdk/openai-compatible": "chat",
+    "@ai-sdk/openai": "responses",
+};
+
+/** 解析 npm → 面；不支持的 npm → null（该 provider/模型不出现） */
+export function faceOfNpm(npm: string | undefined | null): LocalModelApi | null {
+    return npm ? (NPM_FACE[npm] ?? null) : null;
+}
+
+/** 推理强度档位：开放字符串（各模型词表不同） */
 export type ReasoningEffort = string;
 
-/** 模型能力的临时手工登记；待模型管理功能接入后由远端配置替换。 */
+/** 模型能力的登记（spec 的 reasoning_options ⊕ 配置覆盖） */
 export interface LocalModelReasoning {
     supported: ReasoningEffort[];
     default: ReasoningEffort;
 }
 
+/** 模型元数据（= spec ⊕ 覆盖；不含连接信息） */
 export interface LocalModel {
     id: string;
     name: string;
     /** chat = /chat/completions（@ai-sdk/openai-compatible）；responses = /responses（@ai-sdk/openai） */
     api: LocalModelApi;
-    contextLimit: number;
-    maxOutputTokens: number;
+    /** 上下文窗口（tokens）；spec 未提供 → undefined（运行时按"无预算"处理） */
+    contextLimit?: number;
+    /** 单次输出上限（tokens）；spec 未提供 → undefined（运行时回退 DEFAULT_LIMITS.maxOutputTokens） */
+    maxOutputTokens?: number;
     reasoning: LocalModelReasoning;
     /** 单价（$/1M tokens，真源 models.dev，抓取日期见 MODEL_COST_AS_OF）；缺失 = 无价目，不算钱 */
     cost?: ModelCost;
     /**
      * 提示词缓存的**存活时长**（ms）—— 官方一律不给这个数字（只能实测夹逼）。
      * 用途：判断"距上次请求这么久 → 缓存已过期（expired）→ 此刻压缩零重建代价"（##269 自动压缩）。
-     * ⚠️ 填的是**先验**（缺省 1 小时），真正的判据是**从 usage 实测回归出来的区间**
-     * （见共享模块 cache-ttl：`ttl ∈ (aliveUpTo, deadFrom]`）——别把这个常数当真理。
+     * ⚠️ 填的是**先验**（缺省 1 小时），真正的判据是**从 usage 实测回归出来的区间**。
      */
     cacheTtlMs?: number;
 }
 
 /**
- * 缓存 TTL 的**先验缺省**：1 小时。
- * 为什么写它而不是留空：判"缓存是否过期"必须有个兜底（官网不提供数字），
- * 而且 1 小时是各家公开档位里最常见的量级；实测区间会把它夹紧（见 shared/context/cache-ttl）。
+ * 运行时可解析模型 = 元数据 + 连接路由。**运行时唯一查询对象**。
+ * `ref` = 完全限定名 `account@provider/model`（见 shared/model-config.ts splitQualified）。
+ */
+export interface ResolvedModel extends LocalModel {
+    /** 完全限定名：`0@opencode-go/gpt-5.6-luna` */
+    ref: string;
+    /** provider 段（std = models.dev id；custom = `custom:<key>`） */
+    provider: string;
+    kind: "std" | "custom";
+    /** 账号名（限定名 `@` 前段） */
+    account: string;
+    /** baseUrl（spec.api） */
+    baseUrl: string;
+    /** ai-sdk 包名（spec/provider.npm 解析结果） */
+    npm: string;
+    /** 展开后的 apiKey；null = 未配置/展开失败（运行时 fail-fast） */
+    key: string | null;
+}
+
+/**
+ * 缓存 TTL 的**先验缺省**：1 小时。官网不提供该数字，必须有个兜底；
+ * 实测区间会把它夹紧（见 shared/context/cache-ttl）。
  */
 export const CACHE_TTL_PRIOR_MS = 60 * 60 * 1000;
 
-/** 保留 3 位小数（账目数字：浮点残渣如 50.00000000000001 只会让人以为是 bug） */
+/** 保留 3 位小数（账目数字：浮点残渣只会让人以为是 bug） */
 export function round3(x: number): number {
     return Number.isFinite(x) ? Math.round(x * 1000) / 1000 : x;
-}
-
-/** 某模型的缓存 TTL 先验（缺省见 CACHE_TTL_PRIOR_MS） */
-export function cacheTtlMsOf(modelId: string): number {
-    return LOCAL_MODELS.find((m) => m.id === modelId)?.cacheTtlMs ?? CACHE_TTL_PRIOR_MS;
 }
 
 /**
@@ -89,48 +99,68 @@ export function cacheTtlMsOf(modelId: string): number {
  */
 export const MODEL_COST_AS_OF = "2026-10-02";
 
-/**
- * 可选模型（2026-09-24 实查 /models + models.dev 价格 + 两个 API 面逐个 curl 验证）
- * 价格单位为 $/1M tokens：input / output（cacheRead）
- *
- * `reasoning.supported` 的真源是**上游自己的校验报错**（2026-09-24 逐模型探测）：
- * 给 `reasoning_effort`（chat 面）/ `reasoning.effort`（responses 面）发一个非法值，
- * 上游回 400 并列出 expected one of ...，再逐值实测确认 200 / 400。
- * 实测差异：deepseek-v4.1-flash 多一个 `ultra` 档；两个 luna 都无 `minimal`；
- * mimo-v2.6-flash 只认 none/low/medium/high（minimal/xhigh/max 一律 400 Invalid request parameters）。
- * 注意：这与 pi 的 `thinkingLevelMap` 不同源 —— 那张表是「pi 档位 → 上游 thinking 字段」的映射，
- * 对直传 reasoning_effort 的 diy 不适用（pi 隐藏的档位在 diy 路径上实测有效）。
- */
-export const LOCAL_MODELS: LocalModel[] = [
-    // maxOutputTokens / contextLimit 来源：models.dev/api.json 的 limit.output / limit.context（2026-09 实查，
-    // 取 opencode-go 或同名模型主 provider 的值）。contextLimit 用于推导系统上下文预算（见 prompt-registry）。
-    // 排列顺序 = UI 平铺按钮的展示顺序，按**价格从低到高**（便宜的先看见）。
-    // 注意：首项**不再**等于内置默认 persona 的模型（DEFAULT_MODEL）—— 模型选择已归 persona，
-    // 界面/代码都不该再"取列表首项当默认"（那正是"看着一个模型、用的是另一个"的来源）。
-    { id: "mimo-v2.6-flash", name: "MiMo V2.6 Flash", api: "chat", contextLimit: 1048576, maxOutputTokens: 131072 , reasoning: { supported: ["none", "low", "medium", "high"], default: "medium" }, cost: { input: 0.14, output: 0.28, cacheRead: 0.0028 }, cacheTtlMs: CACHE_TTL_PRIOR_MS },
-    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", api: "chat", contextLimit: 1000000, maxOutputTokens: 384000 , reasoning: { supported: ["none", "minimal", "low", "medium", "high", "xhigh", "ultra", "max"], default: "medium" }, cost: { input: 0.15, output: 0.6, cacheRead: 0.003 }, cacheTtlMs: CACHE_TTL_PRIOR_MS },
-    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", api: "responses", contextLimit: 1050000, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high", "xhigh", "max"], default: "medium" }, cost: { input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25, tiers: [{ above: 272000, input: 0.4, output: 1.8, cacheRead: 0.04, cacheWrite: 0.5 }] }, cacheTtlMs: CACHE_TTL_PRIOR_MS },
-    { id: "gpt-6-luna", name: "GPT 6 Luna", api: "responses", contextLimit: 1050000, maxOutputTokens: 128000 , reasoning: { supported: ["none", "low", "medium", "high", "xhigh", "max"], default: "medium" }, cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125, tiers: [{ above: 272000, input: 0.2, output: 0.75, cacheRead: 0.02, cacheWrite: 0.25 }] }, cacheTtlMs: CACHE_TTL_PRIOR_MS }
-];
+// ── 可变目录（main 侧 model-runtime 灌入；无 provider 配置 = 空） ──
 
-/** 按 model id 查 API 面；未知模型按 chat 处理（保持历史行为，不静默换面） */
-export function apiOf(modelId: string): LocalModelApi {
-    return LOCAL_MODELS.find(m => m.id === modelId)?.api ?? "chat";
+let _catalog: ResolvedModel[] = [];
+
+/** 灌入运行时目录（main 启动 / 改配置后调用）。**不回退内置**：无 provider 就是空。 */
+export function setModelCatalog(models: ResolvedModel[]): void {
+    _catalog = models;
 }
 
-/** 按 model id 查推理能力；未知模型回退成「只能关闭」（不静默给档位） */
+/** 当前运行时目录（UI 模型列表 / CLI 用） */
+export function getModelCatalog(): ResolvedModel[] {
+    return _catalog;
+}
+
+/**
+ * 按**完全限定名**或**裸模型 id** 查模型。
+ * 裸 id 命中多个**不同 provider** → undefined（歧义，调用方报错；不猜）。
+ * 同 provider 多账号命中同一 id → 返回首个（元数据一致，账号差异由调用方按 ref 指定）。
+ */
+export function findModel(refOrId: string): ResolvedModel | undefined {
+    const exact = _catalog.find((m) => m.ref === refOrId);
+    if (exact) return exact;
+    const hits = _catalog.filter((m) => m.id === refOrId);
+    if (hits.length === 0) return undefined;
+    return new Set(hits.map((h) => h.provider)).size === 1 ? hits[0] : undefined;
+}
+
+/** 按 model id 查 API 面；未知模型按 chat 处理（不静默换面） */
+export function apiOf(modelId: string): LocalModelApi {
+    return findModel(modelId)?.api ?? "chat";
+}
+
+/** 按 model id 查推理能力；未知模型回退成「平台默认」（不发送档位，不静默给档位） */
 export function reasoningOf(modelId: string): LocalModelReasoning {
-    return LOCAL_MODELS.find(m => m.id === modelId)?.reasoning ?? { supported: ["none"], default: "none" };
+    return findModel(modelId)?.reasoning ?? { supported: ["default"], default: "default" };
 }
 
 /** 按 model id 查上下文窗口（tokens）；未知返回 undefined（预算回退到硬上限） */
 export function contextLimitOf(modelId: string): number | undefined {
-    return LOCAL_MODELS.find(m => m.id === modelId)?.contextLimit;
+    return findModel(modelId)?.contextLimit;
 }
 
 /** 按 model id 查 maxOutputTokens；未知返回 undefined（调用方决定 fallback） */
 export function maxOutputTokensOf(modelId: string): number | undefined {
-    return LOCAL_MODELS.find(m => m.id === modelId)?.maxOutputTokens;
+    return findModel(modelId)?.maxOutputTokens;
+}
+
+/**
+ * 生效输出上限：spec 给了**正值**就用，否则回退 `fallback`。**保证返回 >= 1**。
+ *
+ * 为什么必须钳：`streamText({ maxOutputTokens })` 传 0/负数会被 SDK 直接拒
+ * （"maxOutputTokens must be >= 1"，##184 实测）。spec 未给 limit.output 的模型
+ * （如 commandcode 的 /models 只给 context_length）就走 fallback，绝不下发 0。
+ */
+export function effectiveMaxOutputTokens(modelId: string, fallback: number): number {
+    const n = maxOutputTokensOf(modelId);
+    return n !== undefined && n >= 1 ? n : fallback;
+}
+
+/** 某模型的缓存 TTL 先验（缺省见 CACHE_TTL_PRIOR_MS） */
+export function cacheTtlMsOf(modelId: string): number {
+    return findModel(modelId)?.cacheTtlMs ?? CACHE_TTL_PRIOR_MS;
 }
 
 /**
@@ -138,10 +168,10 @@ export function maxOutputTokensOf(modelId: string): number | undefined {
  * tier 按「总输入 token」选（含缓存读/写），取满足条件的最大阈值 —— 见 shared/usage.ts。
  */
 export function costOf(modelId: string, promptTokens: number): EffectiveRates | null {
-    return ratesOf(LOCAL_MODELS.find(m => m.id === modelId)?.cost, promptTokens);
+    return ratesOf(findModel(modelId)?.cost, promptTokens);
 }
 
 /** 该 id 是否在清单内（persona 校验用：写配置时就拦住打错的模型名） */
 export function isKnownModel(modelId: string): boolean {
-    return LOCAL_MODELS.some(m => m.id === modelId);
+    return modelId.length > 0 && findModel(modelId) !== undefined;
 }

@@ -446,7 +446,7 @@ function AssistantByline(props: { turnModel?: unknown }) {
             </Show>
             <Show when={info().model}>
                 <span class="opacity-50">·</span>
-                <span class="opacity-60">{info().model}</span>
+                <span class="opacity-60">{personaStore.displayModel(info().model)}</span>
             </Show>
             {/* 旧轮次没有模型记录：说清"这是按当前人物推断的"，别让用户以为界面知道当时是谁答的 */}
             <Show when={info().inferred}>
@@ -1462,7 +1462,7 @@ export function LocalChatPage(props: { uri?: string }) {
                                 <span class="opacity-60">
                                     （
                                     {personaDef()
-                                        ? `${personaDef()!.model} · ${reasoningEffortLabel(personaDef()!.reasoningEffort as ReasoningEffort)}`
+                                        ? `${personaStore.displayModel(personaDef()!.model)} · ${reasoningEffortLabel(personaDef()!.reasoningEffort as ReasoningEffort)}`
                                         : "加载中…"}
                                     ）
                                 </span>

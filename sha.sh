@@ -45,7 +45,7 @@ _ws_run() {
 exec()  {  _ws_run command "$@"; }
 # build() {  _ws_run command ./sha.sh build; }
 # mono所有workspaced的clean,包括删除build/dist等
-#（各包 out/ 由自家 ./sha.sh clean 负责，见 pkgs.ts/*/sha.sh）
+#（各包 build/ 产物由自家 ./sha.sh clean 负责，见 pkgs.ts/*/sha.sh）
 clean() {
     run rm -rf ./build
     run rm -rf ./dist
@@ -144,7 +144,9 @@ github-actions-cicd()    {
     publish
 }
 
-dev() { pkgs.ts/diy-app/sha.sh dev; }
+# preview：HMR 预览实例（人看效果）；lab：agent 实验实例。各占 build/<variant>/**，可并行。
+preview() { pkgs.ts/diy-app/sha.sh preview; }
+lab()     { pkgs.ts/diy-app/sha.sh lab; }
 
 
 ####################################################

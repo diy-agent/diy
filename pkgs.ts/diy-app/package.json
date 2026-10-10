@@ -7,7 +7,7 @@
   },
   "files": [
     "bin/",
-    "out/"
+    "build/prod/"
   ],
   "type": "module",
   "dependencies": {
@@ -67,12 +67,12 @@
     "lineWidth": 100,
     "quotes": "single",
     "ignore": [
-      "out/",
+      "build/",
       "node_modules/",
       "dist/"
     ]
   },
-  "main": "out/main/index.mjs",
+  "main": "build/prod/main/index.mjs",
   "description": "diy 管控台 — 任务管理桌面应用",
   "author": "ccc <ccc@users.noreply.github.com>"
 }

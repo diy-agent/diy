@@ -12,7 +12,7 @@
 // ── 命名（用户 2026-10-06：名字要能看懂是哪个模块）──
 //   expired（过期/时间） ≠ invalidated（作废/内容变） ≠ miss（未命中/观测结果）
 //   `systemContext` = `buildDelivery` 的 system 容器（不是 OS 的 system，本仓库里 system 是歧义词）
-//   `contextWindow` = 上下文窗口（对齐 LOCAL_MODELS.contextLimit；不叫 tokenWindow，那会与"输出 token 数"混）
+//   `contextWindow` = 上下文窗口（对齐运行时模型目录的 contextLimit；不叫 tokenWindow，那会与"输出 token 数"混）
 
 import { z } from "zod";
 import { cacheStateAfterGap, type EffectiveTtl } from "./cache-ttl";

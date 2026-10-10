@@ -115,35 +115,26 @@ import {
     apiOf,
     contextLimitOf,
     costOf,
-    DEFAULT_MODEL,
+    effectiveMaxOutputTokens,
+    findModel,
+    getModelCatalog,
     MODEL_COST_AS_OF,
-    UPSTREAM_PROVIDER,
     round3,
     isKnownModel,
-    LOCAL_MODELS,
     maxOutputTokensOf,
     reasoningOf,
-    ZEN_BASE_URL,
     type LocalModel,
     type LocalModelApi,
     type LocalModelReasoning,
+    type ResolvedModel,
     type ReasoningEffort,
 } from "../../shared/models";
 import { personaForTask } from "../core/persona";
+import { resolveModelKey } from "../core/model-runtime";
 
-// 模型清单（LOCAL_MODELS / apiOf / reasoningOf / contextLimitOf …）已抽到 shared/models.ts：
-//   core/persona 要「默认模型 + 能力查询」，而 core 不能被 services 反向依赖（会循环 import）。
-// 这里**原样 re-export**：历史引用路径（tests/…/local-models-*.test.ts）保持不变。
-export {
-    apiOf,
-    contextLimitOf,
-    DEFAULT_MODEL,
-    isKnownModel,
-    LOCAL_MODELS,
-    maxOutputTokensOf,
-    reasoningOf,
-    ZEN_BASE_URL,
-};
+// 模型查询函数抽到 shared/models.ts（core 不能被 services 反向依赖，否则循环 import）。
+// 这里**原样 re-export**：历史引用路径（tests/…/local-models-*.test.ts 等）保持不变。
+export { apiOf, contextLimitOf, isKnownModel, maxOutputTokensOf, reasoningOf };
 export type { LocalModel, LocalModelApi, LocalModelReasoning, ReasoningEffort };
 
 /**
@@ -156,19 +147,25 @@ export type { LocalModel, LocalModelApi, LocalModelReasoning, ReasoningEffort };
 export const MAX_STEER_ROUNDS = 8;
 
 /**
- * zen/go 基址：两个 API 面共用（chat/completions 与 responses 只是路径不同）。
- *
- * `DIY_ZEN_BASE_URL` 是**测试/自建代理**的接缝：插话投递时机只与"步/轮边界"有关，
- * 而真实上游无法保证边界何时到来（详见 tests/cli.intent.steer-ui.test.ts 的桩上游）。
- * 缺省不设即官方 zen/go，生产行为不变。
+ * 生效 baseUrl：一律走 spec 配的 baseUrl。`DIY_ZEN_BASE_URL` 是**测试/自建代理**接缝
+ * （把任意 provider 的请求指到桩上游，详见 tests/cli.intent.steer-ui.test.ts）。多账号不在此
+ * 区分（baseUrl 是 provider 级的）。
  */
-export function zenBaseUrl(): string {
-    return process.env["DIY_ZEN_BASE_URL"] || ZEN_BASE_URL;
+export function resolveBaseUrl(m: ResolvedModel): string {
+    return process.env["DIY_ZEN_BASE_URL"] || m.baseUrl;
 }
 
-/** 按 model id 查 maxOutputTokens，fallback 到全局 limits */
+// 解析「人物/覆盖里写的模型引用」→ 运行时模型 + 密钥：见 LocalAgentManager.resolveModel。
+
+/**
+ * 按 model id 查 maxOutputTokens，回退全局 limits。
+ *
+ * ⚠️ 必须保证返回 **>= 1**：`streamText({ maxOutputTokens })` 传 0/负数会被 SDK 直接拒
+ * （"maxOutputTokens must be >= 1"，##184 实测）。spec 未给 limit.output 的模型（如
+ * commandcode 的 /models 只给 context_length、不给输出上限）走这里回退，绝不把 0 下发。
+ */
 function modelOutputTokens(modelId: string): number {
-    return maxOutputTokensOf(modelId) ?? DEFAULT_LIMITS.maxOutputTokens;
+    return effectiveMaxOutputTokens(modelId, DEFAULT_LIMITS.maxOutputTokens);
 }
 
 // ─── 运行限制配置（默认值 < $DIY_HOME/local/limits.json < 环境变量 DIY_LOCAL_*）──
@@ -732,7 +729,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 const home = diyHome();
                 // 自杀护栏（agent-guard.ts）已停用（2026-10-02）：
                 // 判据是命令文本，无法区分「宿主进程」与「agent 自己起的实例」——
-                // 实测两类误拦（同 pgid、命令行含 out/main/index.mjs）把本仓库任意
+                // 实测两类误拦（同 pgid、命令行含 main/index.mjs）把本仓库任意
                 // worktree/测试实例都算宿主家人，连 agent 收自己起的实例都被拒。
                 // 恢复方式：还原本处调用 + import（模块与单测均保留，见 agent-guard.ts）。
                 // 现仅保留 write-ahead 审计：先落盘再执行，保证最后一幕不丢
@@ -817,10 +814,11 @@ export class LocalAgentManager {
      * 因此重启应用、切 Electron/serve 模式后队列仍在；本对象只是无状态门面（每次现读盘）。
      */
     private queue = new SteerQueue();
-    /** chat 面 provider（/chat/completions）；与 responses 面各自单例，key 同生命周期 */
-    private provider: ReturnType<typeof createOpenAICompatible> | null = null;
-    /** responses 面 provider（/responses）—— responses-only 模型打 chat 面必 503，见 apiOf 注释 */
-    private respProvider: ReturnType<typeof createOpenAI> | null = null;
+    /**
+     * provider 实例缓存，按 `baseUrl|key` 分组（一个 provider 可能配多个账号 → 多实例）。
+     * chat 面（/chat/completions）与 responses 面（/responses）各一，key 同生命周期。
+     */
+    private providers = new Map<string, { chat: ReturnType<typeof createOpenAICompatible> | null; resp: ReturnType<typeof createOpenAI> | null }>();
     private _limits: LocalAgentLimits | null = null;
 
     /**
@@ -836,15 +834,39 @@ export class LocalAgentManager {
         this.modelResolver = modelResolver;
     }
 
-    /** 按 API 面取语言模型：同一 baseURL，路径由 provider 决定（/chat/completions vs /responses） */
-    private modelFor(id: string, key: string): LanguageModel {
-        if (this.modelResolver) return this.modelResolver(id, key);
-        if (apiOf(id) === "responses") {
-            this.respProvider ??= createOpenAI({ name: "zen-go", baseURL: zenBaseUrl(), apiKey: key });
-            return this.respProvider.responses(id);
+    /**
+     * 按 API 面取语言模型：一个 provider（baseUrl+key）一组实例，面决定路径
+     * （/chat/completions vs /responses，见 shared/models.ts 的 api 面注释）。
+     * chat 面走 openai-compatible，responses 面走 @ai-sdk/openai 的 responses API。
+     */
+    private modelFor(m: ResolvedModel, key: string): LanguageModel {
+        if (this.modelResolver) return this.modelResolver(m.id, key);
+        const baseUrl = resolveBaseUrl(m);
+        const ck = `${baseUrl}|${key}`;
+        let entry = this.providers.get(ck);
+        if (!entry) {
+            entry = { chat: null, resp: null };
+            this.providers.set(ck, entry);
         }
-        this.provider ??= createOpenAICompatible({ name: "zen-go", baseURL: zenBaseUrl(), apiKey: key });
-        return this.provider(id);
+        if (m.api === "responses") {
+            entry.resp ??= createOpenAI({ name: m.provider, baseURL: baseUrl, apiKey: key });
+            return entry.resp.responses(m.id);
+        }
+        entry.chat ??= createOpenAICompatible({ name: m.provider, baseURL: baseUrl, apiKey: key });
+        return entry.chat(m.id);
+    }
+
+    /**
+     * 解析「人物/覆盖里写的模型引用」→ 运行时模型 + 密钥。
+     * 未知名一律 fail-fast；密钥未配置也 fail-fast（不静默换模型、不拿空 key 发请求）。
+     * 例外：注入了 `modelResolver`（单测桩模型）时跳过密钥解析 —— 桩模型不出网，无需 key。
+     */
+    private resolveModel(modelRef: string): { rm: ResolvedModel; key: string } {
+        // 人物 model 为空 = 还没配模型（应用首次启动无 provider）：给出可操作的指引。
+        if (!modelRef) throw new Error("未配置模型：请先在「模型 provider 配置」添加 provider，并在人物里选择模型");
+        const rm = findModel(modelRef);
+        if (!rm) throw new Error(`未知模型 ${modelRef}（可选：diy agent local models）`);
+        return { rm, key: this.modelResolver ? "" : resolveModelKey(rm) };
     }
 
     /** 生效限制：首次使用读 limits.json 并缓存（改文件需重启应用，与 zen key 同生命周期语义） */
@@ -1152,8 +1174,9 @@ export class LocalAgentManager {
         return this.deliveryHistory(taskUri, store);
     }
 
-    listModels(): LocalModel[] {
-        return LOCAL_MODELS;
+    /** 可选模型（去掉密钥等连接隐私字段，只下发元数据 + 限定名供 UI/CLI 展示） */
+    listModels(): Array<Omit<ResolvedModel, "key" | "baseUrl" | "npm" | "kind">> {
+        return getModelCatalog().map(({ key: _key, baseUrl: _b, npm: _n, kind: _k, ...meta }) => meta);
     }
 
     /** 会话的 ops 视图（UI 重放）：**固定消息集合**，始终全量（压缩不隐藏历史，只过滤投递） */
@@ -1217,7 +1240,7 @@ export class LocalAgentManager {
                   // provider = **谁服务的**（我们实际调的上游），不是价目真源名。
                   // 旧实现把 `rates.source`（"models.dev@…"）填进 provider —— 那是一个自相矛盾的
                   // 字段（"provider: models.dev" 会让人以为请求走了 models.dev，它只是个价目网站）。
-                  provider: UPSTREAM_PROVIDER,
+                  provider: findModel(model)?.provider ?? "unknown",
                   source: rates.source,
                   model,
                   input: rates.input,
@@ -1298,15 +1321,14 @@ export class LocalAgentManager {
     async summarize(
         taskUri: string,
     ): Promise<{ text: string; data: SummaryData; cost: number | null }> {
-        const key = process.env.OPENCODE_ZEN_API_KEY;
-        if (!key) throw new Error("缺少 OPENCODE_ZEN_API_KEY（main 进程环境变量）");
         // 摘要针对**当前配置下会被丢弃的轮**（与 compact 同一份预算），不再用旧的 keepTurns 旋钮。
         const p = this.planCompact(taskUri, loadAutoCompact(diyHome()).policy);
         if (p.droppedIds.length === 0) return { text: "", data: emptySummary(), cost: null };
         const model = personaForTask(diyHome(), taskUri).model;
+        const { rm, key } = this.resolveModel(model);
         const dropped = droppedTextOf(p.store, p.droppedIds);
         const res = await generateText({
-            model: this.modelFor(model, key),
+            model: this.modelFor(rm, key),
             prompt: summaryExtractionPrompt(dropped, p.droppedIds.length),
             headers: { "x-opencode-session": sessionIdOf(taskUri) },
             maxOutputTokens: 2000,
@@ -1540,10 +1562,9 @@ export class LocalAgentManager {
      * 也不必给用户一堆"立即/下步/下轮"的时机选项（step 中途换模型在语义上就不成立）。
      */
     async *chat(taskUri: string, message: string, modelOverride?: string, reasoningEffortOverride?: ReasoningEffort): AsyncGenerator<Op> {
-        const key = process.env.OPENCODE_ZEN_API_KEY;
-        if (!key) throw new Error("缺少 OPENCODE_ZEN_API_KEY（main 进程环境变量）");
         const persona = personaForTask(diyHome(), taskUri);
         const model = modelOverride ?? persona.model;
+        const { rm, key } = this.resolveModel(model);
         // 手写 personas.yaml 可能把档位留空：兜底到该模型自己的默认档，不把空档发给上游
         const reasoningEffort = reasoningEffortOverride ?? (persona.reasoningEffort || reasoningOf(model).default);
         let sess = this.getSession(taskUri);
@@ -1614,7 +1635,7 @@ export class LocalAgentManager {
                 // 手动驱动同时还能拿到内层的返回值（failed），for-await 会把它丢掉。
                 // 逐步用量记录的身份字段：这几项 chat() 时已知，但不进任何日志就答不出
                 // 「哪种配置更省」（##211 §六.2）—— 尤其同一会话换模型/换面时。
-                const inner = this.runTurn(taskUri, sess, pending, model, reasoningEffort, ctrl.signal, key, sink, {
+                const inner = this.runTurn(taskUri, sess, pending, model, reasoningEffort, ctrl.signal, key, rm, sink, {
                     persona: persona.id,
                     apiFace: apiOf(model),
                     contextLimit: contextLimitOf(model),
@@ -1735,6 +1756,7 @@ export class LocalAgentManager {
         reasoningEffort: ReasoningEffort,
         signal: AbortSignal,
         key: string,
+        rm: ResolvedModel,
         sink: (op: Op) => void,
         /** 落盘身份（人物/面/窗口）：同一会话可换模型，故它是**行**的属性（##211 §六b.6） */
         identity: { persona: string; apiFace: LocalModelApi; contextLimit?: number },
@@ -2038,7 +2060,7 @@ export class LocalAgentManager {
             // 用途：跑几天后回答"这个节点到底变了几次" —— 划分位置的判据（见 task 178）。
             appendContextStat(projectDir(projectFromUri(taskUri)), statFromStep(step, prevStep?.valueHashes ?? null, taskUri));
             const result = streamText({
-                model: this.modelFor(model, key),
+                model: this.modelFor(rm, key),
                 system: delivery.system.text,
                 messages: sent,
                 tools,
@@ -2046,12 +2068,21 @@ export class LocalAgentManager {
                 abortSignal: signal,
                 headers: { "x-opencode-session": sessionIdOf(taskUri) },
                 maxOutputTokens: modelMax, // 按模型硬上限（models.dev），reasoning 模型会先吃一部分
-                // none 用 AI SDK 标准关闭语义；其他值由 OpenAI-compatible provider 原样转发。
+                // none 用 AI SDK 标准关闭语义；"default"（平台默认）**什么都不发**（交上游默认行为，
+                // 见 shared/model-config.DEFAULT_EFFORT）；其他值由 OpenAI-compatible provider 原样转发。
                 // provider 配置可以提供 minimal/xhigh/max 等非通用值，不能压缩成固定枚举。
                 ...(reasoningEffort === "none"
                     ? { reasoning: "none" as const }
-                    : reasoningEffort
-                      ? { providerOptions: { openaiCompatible: { reasoningEffort } } }
+                    : reasoningEffort && reasoningEffort !== "default"
+                      ? {
+                            // 命名空间必须与 provider 包一致（##184 坑 4）：
+                            // chat 面 = @ai-sdk/openai-compatible（openaiCompatible）；
+                            // responses 面 = @ai-sdk/openai（openai）。写错面 → 上游收不到档位。
+                            providerOptions:
+                                rm.api === "responses"
+                                    ? { openai: { reasoningEffort } }
+                                    : { openaiCompatible: { reasoningEffort } },
+                        }
                       : {}),
                 maxRetries: 2,
                 // 每个模型步开始前的唯一钩子：把队列里的 next-step 插话插进这一步的 messages

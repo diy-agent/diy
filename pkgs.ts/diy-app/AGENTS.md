@@ -11,6 +11,7 @@
 - `find.shared` — `src/shared/` **跨层契约**（zod schema / 纯函数，main 与 renderer 共用，禁止各处重写）：`task-uri.ts`（URI 解析）· `task-detail.ts` · `task-list.ts`（排序搜索）· `persona.ts` · `prompt-schema.ts` · `session-view.ts` · `usage.ts`（**token 四桶 / 单价 / 金额的唯一口径处**，含 tier 选价与聚合）
 - `find.context` — `src/shared/context/` 上下文树与投递：`README.md` 是**完整约定表**（领域模型 / 投递构造 / 划分真源 / step 快照 / 渲染坑）；投递构造唯一入口 `delivery.ts` 的 `buildDelivery`；划分真源 `$DIY_HOME/context.yaml`（契约 `config.ts`、I/O `src/main/core/context-config.ts`）
 - `find.compact` — 压缩（**目标式预算**）：策略/账本/选择 `shared/context/compaction.ts`（`CompactPolicySchema` 真源 + `selectHistoryByBudget` 的宿主 `main/services/local-blocks.ts`）· 预算注记 `shared/context/budget-note.ts`（YAML 文本，`kept` 保留区间）+ 其**格式说明变量树节点** `history-index.ts` · 缓存 TTL 夹逼 `cache-ttl.ts` · 自动压缩 `auto-compact.ts`（真源 `$DIY_HOME/auto-compact.yaml`，契约 `shared/context/auto-compact.ts`、I/O `src/main/core/auto-compact-config.ts`）· 会话落盘路径唯一出口 `src/main/core/local-paths.ts`
+- `find.model` — 模型 provider 配置机制（##184）：契约 `src/shared/model-config.ts`（`model.yaml` 配置层 + `providers.custom.yaml` spec 层 + 限定名切分 `splitQualified`）· 运行时可解析目录 `src/shared/models.ts`（`setModelCatalog`/`findModel`/`apiOf`…，**无内置 provider：无配置 = 空目录**）· 装配 `src/main/core/model-runtime.ts`（snapshot ⊕ custom ⊕ `$DIY_HOME/model.yaml` → 目录，含 `$VAR` 展开）· 文件 I/O `src/main/core/model-config.ts` · 配置 UI `src/renderer_solid/components/ModelConfigPage.tsx` · spec 真源 `src/main/data/models-snapshot.json`（models.dev npm 白名单产物，`scripts/gen-models-snapshot.mts`）· 单测夹具 `tests/fixtures/models.ts`
 - `find.serve` — `src/serve/index.ts` 纯 Web 模式（无 Electron）
 - `find.tests` — `tests/`：`cli.intent.*` 意图测试（真实 UI / 隔离 Electron，**跑 `out/` 产物**）· `core/` `services/` 单测（vitest **直读 `src/`**）· 夹具 `electron-test.ts` · `ui-drive.ts` · `shell-test.ts` · `setup.ts`
 - `find.scripts` — 仓库 `scripts/`：`ui-smoke/`（CDP 冒烟）· `cdp-colorscheme-demo.mts` · `repro-epipe-dialog.mts` · `doctor-env.sh`
@@ -23,9 +24,9 @@
 
 | 入口 | 跑什么 | 注入 |
 |------|--------|------|
-| `./diy.sh`（仓库根） | `auto`：`out/cli/index.js` 优先，打包源比产物新回退 `tsx src/cli/index.ts`（`DIY_CLI_MODE`） | `DIY_HOME=./build/home`、`DIY_APP_ROOT`、`DIY_CLI` |
-| `bin/diy` | `node out/cli/index.js` | `DIY_HOME=~/.diy`、`DIY_APP_ROOT`、`DIY_CLI=$0`、`DIY_ENV=production` |
-| `scripts/electron-dev.mts` | `out/main/index.mjs` | `DIY_HOME`、`DIY_CLI`、`DIY_DEV_SERVER_URL`、`DIY_ENV=development` |
+| `./diy.sh`（仓库根） | `auto`：`build/<variant>/cli/index.js` 优先，打包源比产物新回退 `tsx src/cli/index.ts`（`DIY_CLI_MODE`） | `DIY_HOME=./build/<variant>/home`、`DIY_VARIANT=preview`、`DIY_CLI` |
+| `bin/diy`（发布） | `node build/prod/cli/index.js` | `DIY_HOME=~/.diy`、`DIY_CLI=$0`、`DIY_ENV=production` |
+| `scripts/electron-dev.mts`（preview / lab） | `build/<variant>/main/index.mjs` | `DIY_HOME=./build/<variant>/home`、`DIY_VARIANT`、`DIY_CLI`、`DIY_DEV_SERVER_URL`、`DIY_ENV=development` |
 
 - `env.home` — `DIY_HOME` 数据根（state/task/**app.port**），缺省 `~/.diy`
 - `env.cli` — `DIY_CLI` 当前 CLI 入口绝对路径（提示词模版 `diy.md` 消费）；缺 → 提示词里告警，**不静默冒充 `diy`**
@@ -33,13 +34,14 @@
 - `env.port` — `DIY_PORT` 首选端口（测试注 `0`=随机）；优先级 `DIY_PORT` > `app.port` 文件 > 18888
 - `env.noLaunch` — `DIY_NO_LAUNCH=1` 禁止 CLI 自动拉起 app（测试专用，防实例逃逸）
 - `env.inject` — **三个入口都必须注入 `DIY_CLI`**，漏一处 GUI 会话就会让模型敲裸 `diy` → worktree 里打到生产数据根
+- `env.variant` — `DIY_VARIANT` = `prod|test|preview|lab`，**产物/数据分根的唯一轴**：vite 配置据此定 `outDir=build/<variant>/*`，运行时据此选 `build/<variant>/main`，缺省 `prod`（`./diy.sh` 缺省 `preview`）。preview/lab 各占一根 → 可并行、互不打断 watch；test 独占 `build/test/**`
 
 ## rule — 硬约束
 
 - `rule.noemit` — **类型检查绝不 emit**（各包 `noEmit: true`，唯一入口 `./sha.sh check`）。一旦产物落在源码旁，`resolve.extensions` 里 `.js/.jsx` 排在 `.ts/.tsx` 之前 → dev/构建/单测全部静默加载旧产物
 - `rule.stdio` — 子进程 stdio 判据是**读端是否一定被排空**：常驻/分离式 spawn 一律 `inherit`/`ignore`；测试侧 `pipe` 必须挂 `data` 监听持续排空。⚠️ **不得**为解析 `DevTools listening on` 而 pipe stderr —— CDP 地址一律读 `DevToolsActivePort` 文件
 - `rule.renderer-io` — renderer **永不直接写文件**，一律经 RPC（如 `diy.task.drafts.*`）
-- `rule.check` — 类型检查只准 `./sha.sh check`；`dev` 运行中勿并发 `tsc -b`/`vite build`/全量 vitest（抢 `outDir`，watcher 卡死）
+- `rule.check` — 类型检查只准 `./sha.sh check`；**同一变体**的 `preview`/`lab` 运行中勿并发 `tsc -b`/`vite build`/全量 vitest（抢同一 `outDir`，watcher 卡死）。跨变体（preview vs test）不抢——各写 `build/<variant>`
 - `rule.agents-chain` — AGENTS.md 链**上界到 `$HOME` 为止**（不进 `/`、`/Users`）；不在 `$HOME` 下时只取工作目录一层
 - `rule.budget` — 系统提示词预算 `clamp(模型上下文 × 4B × 5%, 16KB, 64KB)`；超限**拒发不截断**，且早退也必须闭合轮次（stop + noteTurnEnd + 审计）
 - `rule.golden` — 改内置模版（`src/main/prompts/defaults.ts`）**必须同步** `tests/fixtures/system.golden.txt`（当前内置模版的逐字节快照）。⚠️ `./sha.sh check` **不含 vitest**，不会替你抓到这类失效 —— 改完模版跑 `npx vitest run tests/core/template-dsl-golden.test.ts`
@@ -57,16 +59,16 @@
 
 ## pit — 坑（反直觉，代码看不出来）
 
-- `pit.watch-restart` — 改 `src/**` 会触发 dev watch 重启 Electron，**正在跑的本机 agent 轮次会被打断**（tool 被标 `interrupted`）→ 轮次中别拿源码当探针，探针写 `/tmp`
+- `pit.watch-restart` — 改 `src/**` 会触发 preview/lab watch 重启 Electron，**正在跑的本机 agent 轮次会被打断**（tool 被标 `interrupted`）→ 轮次中别拿源码当探针，探针写 `/tmp`
 - `pit.solid-show` — Solid 组件函数体里的 `if (props.x) return A; return B;` **对 props 变化不响应**（函数体只执行一次）→ 用 `<Show when=… fallback=…>`。反之，`<Show>` 内组件在 `onCleanup` 里读 `props` 会抛 `Stale read from <Show>` 并中断更新 → 需"卸载前落盘"的副作用放面板级组件
 - `pit.singleton-lock` — 隔离实例必须用**全新 `DIY_HOME`**（`mktemp -d`）：`SingletonLock` 写在 `electron_user_data/` 下，残留实例会抢锁 → 新实例打 `SingleInstanceLock: failed` 后直接退出。撞锁时换新 home，别动别人的进程
-- `pit.self-destruct` — agent 起的进程**继承宿主 main 的进程组**，所以收掉自己拉起的实例会命中自毁护栏被拒（判据 `src/main/services/agent-guard.ts` 的 `collectSelfInfo`：同 pgid 或命令行含 `out/main/index.mjs`）。**不要绕过护栏** —— 把「要收的实例号 + 用途」列给用户手动收
+- `pit.self-destruct` — agent 起的进程**继承宿主 main 的进程组**，所以收掉自己拉起的实例会命中自毁护栏被拒（判据 `src/main/services/agent-guard.ts` 的 `collectSelfInfo`：同 pgid 或命令行含 `main/index.mjs`）。**不要绕过护栏** —— 把「要收的实例号 + 用途」列给用户手动收
 - `pit.cdp-port` — `DevToolsActivePort` 文件内容**不一定是当前实例的端口**（输给单实例锁的第二个实例也会先写自己的端口再退出）→ 读后必须 `curl --max-time 3 http://127.0.0.1:<port>/json/version` 校验
 - `pit.cdp-goto` — `playwright-cli attach` 模式下**不要用 `goto`**（CDP 附加态不支持 `Target.createTarget`，一次 goto 就打坏会话）；换页用 `reload`
 - `pit.cdp-hit` — 点击前做**命中自检** `document.elementFromPoint(中心) === 目标元素`（抓「按钮溢出被相邻元素盖住」的唯一手段）；断言读 DOM 不靠截图；`elementFromPoint` 只测坐标，**真实手势链**要 `mouse.move/down/up` 分步，且拖拽**必须给真实时间 + 至少一帧**（CDP 合成事件是瞬时的，dnd-kit 异步激活等不到）
 - `pit.shell-test` — `ShellTest` 的输出边界 = stderr 的 PS1 marker + **stdout 的哨兵**：marker 只证明命令结束，stdout 是另一管道、到达顺序不保证，只等 marker 会读到半截输出并让后续每条命令错位
 - `pit.env-pollution` — 跑意图测试 / CDP 夹具前 shell 里**不要 export `DIY_PORT` / `DIY_HOME`**（`ShellTest` 继承 `process.env` → 每条 `./diy.sh` 都去打别的端口、各拉一个新 app 互踢）。正确姿势 `env -u DIY_PORT -u DIY_HOME npx vitest run …`
-- `pit.intent-build` — **`tests/cli.intent.*` 跑的是 `out/` 编译产物**（起隔离 Electron，main/preload/renderer 全来自产物）：改 `src/**` 后不 `./sha.sh build` 就跑 = 拿旧代码断言（症状：文案/diff 断言莫名失败，而同一份源码的单测全绿）。`tests/core|services` 是 vitest 直读源码，无需构建
+- `pit.intent-build` — **`tests/cli.intent.*` 跑的是 `build/test/` 编译产物**（起隔离 Electron，main/preload/renderer 全来自产物）：改 `src/**` 后不构建就跑 = 拿旧代码断言（症状：文案/diff 断言莫名失败，而同一份源码的单测全绿）。`sha.sh test-intent` 自动 `DIY_VARIANT=test build`；`tests/core|services` 是 vitest 直读源码，无需构建
 - `pit.excepthook` — 主进程**自注册 `uncaughtException` 处理器即抑制 Electron 的模态异常框**（其内置守卫是 `listenerCount > 1`），与有没有 try/catch 无关；诊断由 `installDiagnostics` 统一挂（三入口各落独立日志）
 - `pit.interrupt` — 中断的 tool 调用必须**在新一轮开始时收敛成显式终态并写进 ops**，投影（`blocksToMessages`）只做纯翻译。禁止退回"投影时现造占位文案"：文案会被模型当待办，重载后同一条自毁命令会被重发
 - `pit.llm-log` — `$DIY_HOME/local/<key>.llm.jsonl` 是**append-only 全量消息日志**（每行 1 条原生 ModelMessage + 索引位 `turn`/`step` + 工具结果的 `origin` 自证位），**行号 = 消息序号**（压缩注记的 `range` 就指它）。与压缩**解耦**：压缩只改投递期投影，绝不写它。加载时与 ops 投影对账（前缀则补齐 / 中部不一致则整份重建）
@@ -81,6 +83,9 @@
 - `pit.agent-history` — 本地 agent 的 `bash` 工具若执行批量杀进程命令（按名字匹配 electron 的一类），会杀掉宿主自己的 renderer → 永久白屏且进程被杀事件捕获不到：只能**执行前拦截 + 执行前落盘**（`src/main/services/agent-guard.ts` / `agent-audit.ts`）
 
 - `pit.steer-two-phase` — 插话的「认领」（`prepareStep` 只读队列、注入请求 messages）与「落位」（流里出现 `start-step` 时才 sink + 出队）**不能合并**：两条流不同一时间轴，提前 sink 会把插话插到上一步未完内容之前。轮末开场则**只读不取**（先记账再出队），中途崩掉最坏重复投一遍、不会丢。理由见 `local-agent.ts` 的 `claimStepSteers` 头注
+- `pit.model-ref` — `persona.model` = **完全限定名** `account@provider/model`（按**第一个** `/` 切 provider|model —— 模型 id 自带 `/`；provider 段按**最后一个** `@` 切 account|provider）。custom provider 恒带 `custom:` 前缀（永不与 models.dev id 撞）。存量裸名不自动迁移（手工批处理）。账号名缺省 = 序号 `0`
+- `pit.model-apiface` — API 面**由 npm 解析**（与 models.dev 对齐，不硬编码名单）：`provider.npm` 默认 + 模型级 `provider.npm` 覆写（opencode-go 的 gpt-5.6/6-luna 在 models.dev 里就是 `@ai-sdk/openai`）。白名单 `@ai-sdk/openai-compatible`→chat / `@ai-sdk/openai`→responses，其余 npm 的模型不出现。`providerOptions` 命名空间随面对齐（chat → `openaiCompatible` / responses → `openai`）
+- `pit.model-env` — `model.yaml` 的账号 `data.value` 支持 `$VAR`/`${VAR}` 展开（未定义 = **fail-fast**，不静默发空 key）；无 env 回退，账号必填。密钥**明文可**（最简单），多账号是一等公民（同一 provider 多订阅）
 - `pit.persona-id` — persona 引用**存 id 不存名字**：名字只是标签（可随时改），拿名字当引用键则改名 = 打断所有引用（引用者静默回落缺省人物）。理由见 `src/shared/persona.ts` 头注
 - `pit.usage-buckets` — 用量口径三条硬约束（`shared/usage.ts` 是唯一实现，别在别处另算）：① **思考输出是总输出的子集**，展示可拆、计价**不另加**（照抄 opencode 公式即重复计费）；② **不可测桶写 `null` 不写 0**（`api:"chat"` 面拿不到 cacheWrite，记 0 = 静默低估成钱）；③ **窗口占用取最后一步**（总输入+总输出），累加值只解释「这轮为什么贵」。单价快照随每行落盘（单价会变，历史账不能漂）
 - `pit.cli-kebab` — CLI 选项名默认取 schema 字段名（camelCase），parser 另注册 kebab 别名并**在 help 里显示 kebab**（`--by-agent`），两种写法都接受 —— 新增 camelCase 选项无需额外处理
@@ -91,7 +96,7 @@
 - `tool.check` — `./sha.sh check`（提交前唯一检查）· `./sha.sh test` 全仓 · `npx vitest run tests/core/…` 单测
 - `tool.ui-verify` — **两层互补**：`diy.ui.*`（handler 层，CLI 经 RPC 直调 renderer 共享函数，测行为/契约，稳定但**测不到真实 DOM 事件链的 bug**）vs **Playwright/CDP 真实事件层**（`mouse.move/down/up` 驱动真实 renderer，抓 gesture bug —— UI 交互改动后必跑）
 - `tool.inspect` — `./diy.sh ui inspect` 遍历 renderer DOM 生成无障碍树，快速看 UI 全貌
-- `tool.cdp` — 取 CDP 地址：`cat "$DIY_HOME/electron_user_data/DevToolsActivePort"`（**读后校验**，见 `pit.cdp-port`）；`./sha.sh dev` 启动日志会打印完整 `attach` 命令
+- `tool.cdp` — 取 CDP 地址：`cat "$DIY_HOME/electron_user_data/DevToolsActivePort"`（**读后校验**，见 `pit.cdp-port`）；`./sha.sh preview | lab` 启动日志会打印完整 `attach` 命令
 - `tool.smoke` — `node scripts/ui-smoke/task-detail-smoke.mjs`（任务详情三块 + 拖宽落盘）· `python3 scripts/ui-smoke/dnd-smoke.py`（⚠️ 它的收尾用按名匹配的强杀，**会连正在用的 diy 一起收掉** —— 跑之前先改掉那段；且本机需 `pip install playwright`）
 - `tool.log` — 应用日志 `$DIY_HOME/log/`：`main.log` / `cli.log` / `serve.log` / `dev.jsonl`（`grep watch-stall-suspect` 判 watcher 卡死）/ `agent-bash.jsonl`（agent 命令审计，write-ahead）
 - `tool.isolate` — 起隔离实例：全新 `DIY_HOME`（`mktemp -d`）+ `export HOME=$H`；演示数据落 `/tmp`，不写用户 `~/.diy`

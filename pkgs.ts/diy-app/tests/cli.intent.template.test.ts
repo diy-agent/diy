@@ -30,9 +30,9 @@ interface ElectronFixture {
 let fx: ElectronFixture;
 
 beforeAll(async () => {
-    // 超预算用例会走到 chat()，它要求 main 进程有 OPENCODE_ZEN_API_KEY；
+    // 超预算用例会走到 chat()，它要求 main 进程有 OPENCODE_API_KEY；
     // 该路径在发送前就早退（不触网），给假 key 只为过前置校验。
-    process.env["OPENCODE_ZEN_API_KEY"] ||= "intent-test-dummy-key";
+    process.env["OPENCODE_API_KEY"] ||= "intent-test-dummy-key";
     // DIY_CLI 注入契约：真实入口会注入它（diy.sh / bin/diy / electron-dev.mts），
     // 这里让隔离 Electron 继承一份，断言「注入后提示词不再退化成裸 diy」；
     // 「未注入」分支由单测 tests/core/prompt-registry.test.ts 覆盖。

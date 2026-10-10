@@ -23,7 +23,8 @@ import {
     windowRate,
     type StepUsageRecord,
 } from "../../src/shared/usage";
-import { costOf, LOCAL_MODELS, contextLimitOf } from "../../src/shared/models";
+import { costOf, contextLimitOf } from "../../src/shared/models";
+import { OPENCODE_GO_SNAPSHOT } from "../fixtures/models";
 
 /** 一条 responses 面的 finish-step usage（luna 系实测形状，含 cacheWrite 与 reasoning） */
 const RESP_USAGE = {
@@ -73,7 +74,7 @@ describe("四桶口径（##211 §1b：AI SDK 归一化后的权威关系）", ()
 });
 
 describe("tier 选价（按**总输入 token**取满足条件的最大阈值）", () => {
-    const luna6 = LOCAL_MODELS.find((m) => m.id === "gpt-6-luna")!;
+    const luna6 = OPENCODE_GO_SNAPSHOT.find((m) => m.id === "gpt-6-luna")!;
 
     it("未过阈值 → base 价", () => {
         const r = ratesOf(luna6.cost, 271_999)!;
@@ -109,7 +110,7 @@ describe("tier 选价（按**总输入 token**取满足条件的最大阈值）"
 
 describe("金额分解（##211 §四.2：取 pi 口径，思考不重复计）", () => {
     it("逐项 = 桶 × 单价；合计 = 非缓存 + 缓存读 + 缓存写 + 文本 + 思考", () => {
-        const rates = ratesOf(LOCAL_MODELS.find((m) => m.id === "gpt-6-luna")!.cost, 764)!;
+        const rates = ratesOf(OPENCODE_GO_SNAPSHOT.find((m) => m.id === "gpt-6-luna")!.cost, 764)!;
         const c = costBreakdown(rates, bucketsOf(RESP_USAGE));
         expect(c.noCache).toBeCloseTo((0.1 * 252) / 1e6, 12);
         expect(c.cacheRead).toBeCloseTo((0.01 * 512) / 1e6, 12);
@@ -120,7 +121,7 @@ describe("金额分解（##211 §四.2：取 pi 口径，思考不重复计）",
     });
 
     it("不可测桶 → 金额也是 null（按 0 算是静默低估）", () => {
-        const rates = ratesOf(LOCAL_MODELS.find((m) => m.id === "mimo-v2.6-flash")!.cost, 100)!;
+        const rates = ratesOf(OPENCODE_GO_SNAPSHOT.find((m) => m.id === "mimo-v2.6-flash")!.cost, 100)!;
         const c = costBreakdown(rates, bucketsOf({ inputTokens: 100, inputTokenDetails: { noCacheTokens: 100 }, outputTokens: 5 }));
         expect(c.cacheWrite).toBeNull();
     });
@@ -133,7 +134,7 @@ describe("金额分解（##211 §四.2：取 pi 口径，思考不重复计）",
     });
 
     it("chat 面（mimo）实测金额：与手算一致", () => {
-        const rates = ratesOf(LOCAL_MODELS.find((m) => m.id === "mimo-v2.6-flash")!.cost, 171)!;
+        const rates = ratesOf(OPENCODE_GO_SNAPSHOT.find((m) => m.id === "mimo-v2.6-flash")!.cost, 171)!;
         const c = costBreakdown(rates, { noCache: 102, cacheRead: 4544, cacheWrite: null, text: 8, reasoning: 17 });
         expect(c.total).toBeCloseTo((0.14 * 102 + 0.0028 * 4544 + 0.28 * 25) / 1e6, 12);
     });
@@ -259,7 +260,7 @@ describe("展示格式化（UI 与 CLI 同源）", () => {
     });
 
     it("spec 样例：luna 的 per-step 金额逐项可复算（##211 §六b 的 s2 行）", () => {
-        const rates = ratesOf(LOCAL_MODELS.find((m) => m.id === "gpt-6-luna")!.cost, 764)!;
+        const rates = ratesOf(OPENCODE_GO_SNAPSHOT.find((m) => m.id === "gpt-6-luna")!.cost, 764)!;
         const c = costBreakdown(rates, bucketsOf(RESP_USAGE));
         expect(fmtCost(c.noCache)).toBe("0.000025");
         expect(fmtCost(c.total)).toBe("0.000045"); // 0.0000252+0.00000512+0.000011+0.0000035
@@ -281,12 +282,12 @@ describe("落盘快照（字段必须看得见「没有这个数」）", () => {
 
 describe("模型表价格数据自洽", () => {
     it("四个模型都有价格，且 contextLimit 与 tier 阈值分开（不是同一个数）", () => {
-        for (const m of LOCAL_MODELS) {
+        for (const m of OPENCODE_GO_SNAPSHOT) {
             expect(m.cost, `${m.id} 缺价格`).toBeTruthy();
             expect(contextLimitOf(m.id)).toBeGreaterThan(0);
         }
         // responses 面（有 cacheWrite 价）与 chat 面（无）必须区分开：这是"可测性"的前提
-        expect(LOCAL_MODELS.find((m) => m.id === "gpt-6-luna")!.cost!.cacheWrite).toBe(0.125);
-        expect(LOCAL_MODELS.find((m) => m.id === "mimo-v2.6-flash")!.cost!.cacheWrite).toBeUndefined();
+        expect(OPENCODE_GO_SNAPSHOT.find((m) => m.id === "gpt-6-luna")!.cost!.cacheWrite).toBe(0.125);
+        expect(OPENCODE_GO_SNAPSHOT.find((m) => m.id === "mimo-v2.6-flash")!.cost!.cacheWrite).toBeUndefined();
     });
 });

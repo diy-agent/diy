@@ -23,6 +23,7 @@ import { ContextDiffSchema, StatsSchema, StepsSchema } from "../../shared/contex
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
 // agent 人物契约（纯 zod，renderer 同源）——模型/参数/行为指令的配置实体
 import { PersonaSchema } from "../../shared/persona";
+import { LlmConfigViewSchema, ModelConfigFileSchema, ProbeResultSchema, SpecProviderSchema } from "../../shared/model-config";
 // 草稿与任务详情载荷的契约（纯 zod，renderer 同源）
 import { DraftFieldSchema, DraftFieldsSchema, DraftsData, TaskDetailSchema } from "../../shared/task-detail";
 
@@ -308,7 +309,7 @@ export const apiDef = RpcSchema.router({
            *  必须能看出来，否则容易误改生产数据。 */
           env: z.string(),
           /** 当前运行代码所在 git 分支（打包/非仓库为空串）。窗口标题用它区分
-           *  「哪个 worktree 的构建」—— 数据根是 /tmp 或 build/home 时这是唯一来源线索。 */
+           *  「哪个 worktree 的构建」—— 数据根是 /tmp 或 build/<v>/home 时这是唯一来源线索。 */
           branch: z.string(),
           cache: z.string(),
           userData: z.string(),
@@ -526,19 +527,35 @@ export const apiDef = RpcSchema.router({
                 },
               }),
               models: RpcSchema.unary({
-                desc: `列出本地 agent 可选模型（zen/go；api 面逐个标注，见 local-agent.ts apiOf）`,
+                desc: `列出本地 agent 可选模型（来自 model.yaml ⊕ snapshot；每项带完全限定名 ref）`,
                 input: {},
                 output: z.array(
                   z.object({
+                    /** 完全限定名 account@provider/model（人物 model 字段就用它） */
+                    ref: z.string(),
+                    provider: z.string(),
+                    account: z.string(),
                     id: z.string(),
                     name: z.string(),
                     api: z.enum(["chat", "responses"]),
-                    contextLimit: z.number(),
-                    maxOutputTokens: z.number(),
+                    /** 上下文窗口；spec 未给 → 缺省（UI 显示「—」，运行时按无预算） */
+                    contextLimit: z.number().optional(),
+                    /** 单次输出上限；spec 未给 → 缺省（运行时回退 DEFAULT_LIMITS.maxOutputTokens） */
+                    maxOutputTokens: z.number().optional(),
                     reasoning: z.object({
                       supported: z.array(z.string()),
                       default: z.string(),
                     }),
+                    /** 单价（$/1M tokens；缺失 = 无价目）—— 模型选择表分列展示 */
+                    cost: z
+                      .object({
+                        input: z.number(),
+                        output: z.number(),
+                        cacheRead: z.number().optional(),
+                        cacheWrite: z.number().optional(),
+                      })
+                      .nullable()
+                      .optional(),
                   }),
                 ),
               }),
@@ -876,6 +893,35 @@ export const apiDef = RpcSchema.router({
             desc: `停止 LLM 代理`,
             input: {},
             output: StatusOk,
+          }),
+        },
+      }),
+
+      llmConfig: RpcSchema.group({
+        desc: `模型 provider 配置（$DIY_HOME/model.yaml + providers.custom.yaml）`,
+        children: {
+          read: RpcSchema.unary({
+            desc: `读全量视图（spec + 配置 + 可见模型）`,
+            input: {},
+            output: LlmConfigViewSchema,
+          }),
+          write: RpcSchema.unary({
+            desc: `整份回写 model.yaml（原子写；结构非法抛错）`,
+            input: { modelFile: ModelConfigFileSchema },
+            output: StatusOk,
+          }),
+          writeSpec: RpcSchema.unary({
+            desc: `写/删 providers.custom.yaml 单条（spec=null 删除）`,
+            input: { id: z.string().cliArg({ desc: "custom provider 裸 id" }), spec: SpecProviderSchema.nullable() },
+            output: StatusOk,
+          }),
+          probe: RpcSchema.unary({
+            desc: `探测 provider 连通性并拉 ${"${baseUrl}"}/models（UI「测试/获取模型」共用）`,
+            input: {
+              baseUrl: z.string().cliArg({ desc: "provider baseUrl" }),
+              apiKey: z.string().cliArg({ desc: "密钥原始值（明文或 $VAR，服务端展开）" }),
+            },
+            output: ProbeResultSchema,
           }),
         },
       }),

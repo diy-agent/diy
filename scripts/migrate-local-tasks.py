@@ -22,7 +22,7 @@
   - 老 star 中属于 local 且目标存在的，按新命名重建；dangling 跳过并记录
 
 用法：
-  python3 scripts/migrate-local-tasks.py [--source ~/.diy] [--target ./build/home] [--apply] [--force]
+  python3 scripts/migrate-local-tasks.py [--source ~/.diy] [--target ./build/preview/home] [--apply] [--force]
   默认 dry-run（只打印报告不写盘）；--apply 才写；目标 projects/ 非空时需 --force（清空重建）。
 """
 
@@ -59,7 +59,7 @@ def parse_agents_md(path: Path) -> tuple[dict, str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="迁移老 local 任务到新 TS 布局")
     ap.add_argument("--source", default="~/.diy", help="老数据根（默认 ~/.diy）")
-    ap.add_argument("--target", default="./build/home", help="新数据根（默认 ./build/home）")
+    ap.add_argument("--target", default="./build/preview/home", help="新数据根（默认 ./build/preview/home）")
     ap.add_argument("--apply", action="store_true", help="不加则 dry-run，只打印报告")
     ap.add_argument("--force", action="store_true", help="目标 projects/ 非空时清空重建")
     args = ap.parse_args()

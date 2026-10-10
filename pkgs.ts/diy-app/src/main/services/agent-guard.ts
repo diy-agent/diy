@@ -228,7 +228,8 @@ function parsePsLine(line: string): PsRow | null {
 //      pgid === 宿主 pgid），于是一律进 pids。可 kill <pid> 收掉兄弟实例并不影响宿主
 //      （各自独立 Electron 进程树 / userData / RPC 端口）；真正危险的是负号形式
 //      `kill -<pgid>`，而它已由规则 1 的第二段单独覆盖 —— 这条属冗余的"过度包含"。
-//   b) marker `out/main/index.mjs`：本仓库任意 worktree 构建的 Electron 实例都命中，
+//   b) marker `main/index.mjs`：本仓库任意 worktree × 变体构建的 Electron 实例
+//      （路径含 build/<variant>/main/index.mjs）都命中，
 //      等于"凡本仓库产物皆宿主家人"。宿主的真实指纹是 DIY_HOME（userData / log /
 //      RPC 端口都由它派生）；crashpad 这类 ppid=1 的孤儿靠 `--database=<home>/log/crashes`
 //      即可覆盖。
@@ -236,7 +237,7 @@ function parsePsLine(line: string): PsRow | null {
 //   收益方向仍对（保守优先：误拦只让模型换个做法，漏拦是白屏 + 无日志）。
 //   若要收紧：把 pids 拆成 selfPids（自身 + 祖先 + 直接子进程 + 按 DIY_HOME 命中）与
 //   pgidPids（同 pgid）；规则 1 的显式 pid 只查前者，负号组杀才查后者；并去掉裸
-//   `out/main/index.mjs` marker。改动必须带单测。
+//   `main/index.mjs` marker。改动必须带单测。
 //
 // ⚠️ 另一类误伤（同日实测 4 次）：规则 3 的候选词是从**整条 bash 命令串**里抽的，
 //   所以命令里只要"提到" kill（例如用 heredoc 写一个含该词的脚本/文档），候选词就可能
@@ -249,7 +250,7 @@ function parsePsLine(line: string): PsRow | null {
  *   a) 自身 + 祖先链        —— 杀它等于杀自己
  *   b) 直接子进程           —— Electron helper（GPU/network/renderer/crashpad）
  *   c) 同进程组             —— kill -<pgid> 会波及
- *   d) diy 进程全家         —— 命令行提到 DIY_HOME / out/main/index.mjs 的（crashpad 的 ppid 是 1，靠这条兜住）
+ *   d) diy 进程全家         —— 命令行提到 DIY_HOME / main/index.mjs 的（crashpad 的 ppid 是 1，靠这条兜住）
  */
 export function collectSelfInfo(home: string): SelfProcessInfo | null {
   try {
@@ -267,7 +268,7 @@ export function collectSelfInfo(home: string): SelfProcessInfo | null {
       cur = byPid.get(cur.ppid);
     }
     const pgid = byPid.get(process.pid)?.pgid ?? process.pid;
-    const markers = [home, `${home}/electron_user_data`, "out/main/index.mjs"];
+    const markers = [home, `${home}/electron_user_data`, "main/index.mjs"];
     for (const r of rows) {
       if (r.pgid === pgid) pids.add(r.pid);
       if (r.ppid === process.pid) pids.add(r.pid);
