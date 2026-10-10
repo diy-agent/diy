@@ -19,14 +19,13 @@
 
 export type DiyTheme = "dark" | "light";
 
-// ─── 聊天显示模式（正常 / 大纲） ───────────────────────
+// ─── 聊天正文摘要（2 级「结论」的行数） ───────────────
 //
-// **唯一一个显示开关**（2026-10-04 定案，取消原「脉络/阅读/审计」三档密度）。
-// 它只决定：折叠态那条「最后一条正文」默认显示多少行 ——
-//   正常 = 全文；大纲 = 截到 N 行（默认 3，可调）。
-// 展开后的层次与点击行为两模式**完全一致**（轮次头 → 正文+图标行 → 逐条 → 内容），
-// 所以它不是"第 4 档密度"，而是与折叠结构正交的一个显示偏好。
-export const OUTLINE_LINES_DEFAULT = 3;
+// 2026-10-11：原「正常 / 大纲」两态开关已取消 —— 改成**每轮各自一份的展开级别循环**
+//（1 全收缩 / 2 结论 / 3 全部正文 / 4 逐条过程，见 renderer_solid/lib/chat-fold）。
+// 与存储有关的只剩这一个数：2 级把结论压成几行（默认 3）。它不是"模式"，是**摘要行数**，
+// 4 个级别本身不落盘（级别是"我现在想看多细"的临时状态，不是长期偏好）。
+export const CONCLUSION_LINES_DEFAULT = 3;
 
 // ─── 缓存字段（get/set/reset，内部吞异常 + 留痕） ─────────────
 
@@ -241,21 +240,15 @@ export const Caches = {
     serialize: (v) => v,
     defaultValue: "",
   }),
-  /** 聊天「大纲模式」开关：折叠态只把该轮**最后一条正文**压到 N 行（展开后一律全文）。
-   *  false = 正常（全文），true = 大纲（截 N 行）。**不是第 4 档密度**，是正交显示偏好。 */
-  diy_chat_outline: field<boolean>("diy_chat_outline", {
-    parse: (raw) => (raw === "1" ? true : raw === "0" ? false : null),
-    serialize: (v) => (v ? "1" : "0"),
-    defaultValue: false,
-  }),
-  /** 大纲模式正文行数上限（**默认 3**；暂无 UI 入口，仅测试写入），parse 夹在 1-10 */
-  diy_chat_outline_lines: field<number>("diy_chat_outline_lines", {
+  /** 2 级「结论」摘要的行数上限（**默认 3**；暂无 UI 入口，仅测试写入），parse 夹在 1-10。
+   *  MD 渲染/原文开关对摘要同样生效（2026-10-11 反馈：摘要态强制原文是错的）。 */
+  diy_chat_conclusion_lines: field<number>("diy_chat_conclusion_lines", {
     parse: (raw) => {
       const v = Number(raw);
       return Number.isInteger(v) && v >= 1 && v <= 10 ? v : null;
     },
     serialize: (v) => String(v),
-    defaultValue: OUTLINE_LINES_DEFAULT,
+    defaultValue: CONCLUSION_LINES_DEFAULT,
   }),
   /** 聊天正文渲染模式（true=Markdown 富文本，false=原文） */
   diy_chat_md: field<boolean>("diy_chat_md", {
@@ -376,10 +369,13 @@ const LEGACY_KEYS = [
   "diy-detail-width",
   "diy-local-density",
   "diy-theme",
-  // 三档密度（脉络/阅读/审计）已于 2026-10-04 取消 → 改「正常/大纲」两态，旧 key 一并清
+  // 三档密度（脉络/阅读/审计）2026-10-04 取消 → 改「正常/大纲」两态，旧 key 一并清
   "diy_chat_density",
   "diy_chat_compact",
   "diy_chat_compact_lines",
+  // 「正常/大纲」两态 2026-10-11 取消 → 改每轮**级别循环**，模式开关与旧行数 key 一并清
+  "diy_chat_outline",
+  "diy_chat_outline_lines",
   // 试验场早期直写的宽度 key（已收进字段池）
   "lab4.leftW",
   "lab4.rightW",

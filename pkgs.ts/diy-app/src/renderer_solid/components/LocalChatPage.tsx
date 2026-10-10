@@ -1,28 +1,26 @@
 /**
  * LocalChatPage — 本地自定义 agent 对话页（ai-sdk 块协议，独立于 ACP ChatPage）
  *
- * 渲染 = f(显示模式 outline, 阶段 phase)：
- *   显示模式 ▤（唯一开关，**两态**）：正常 ⇄ 大纲。它决定两件事 ——
- *     ① **默认层级**：正常默认展开（L1 全部正文在眼）；大纲默认折叠（L0 只剩结论）
- *     ② 折叠态那条「最后一条正文」的默认行数：正常=全文；大纲=N 行（默认 3，且带裁剪视觉）
- *   阶段 streaming（未 stop）/ settled（定稿）——静态与动态层次**同构**，动态只在轮尾多一块实时区
+ * 渲染 = f(轮次展开级别 level, 阶段 phase)。静态（已截止）与动态（进行中）**结构同构**，
+ * 动态只是在轮尾多一块实时区。
  *
- * 轮次结构（2026-10-04 定稿对齐 dsh，2026-10-11 按 IM 顺序修正）+ 轮尾实时区：
- *   [轮首用户发言]  ← 先出：IM 直觉是"用户先说、对方再接"
- *   L0 轮次头 = 身份（🤖 人物 · 模型 · 思考级别）+ 统计（N 步 · 耗时 · ⚙a 💭b · Σtok）+ chevron
- *      折叠态 = 头 + **文档序**的可见项（轮中插话 / error / 最后一条正文，大纲截 N 行）+ 用量条
- *   L1 展开轮次 → 全部正文（文档序）+ 过程图标行
- *   L2 展开图标行 → 每事件一行（各自单行折叠）
- *   L3 展开单行 → 内容
- *   LIVE 实时区（仅直播轮次，固定在轮尾）：当前活动那一步的展开体 ≤5 行；跑完不消失，
- *      挂 `⋯ 等待下一步` 直到下一步开始接收 —— 详见 lib/chat-fold 的 liveAreaOf 头注。
+ * 一个 turn 的形状（[ ] = 阶段出现的东西）：
+ *   [轮首用户发言]           ← 先出：IM 直觉是"用户先说、对方再接"
+ *   轮次头（1 级那一行）      🤖 + [2 级起：身份/思考级别] + 统计 + `n/4` + chevron
+ *   内容区（按级别）          1 只有插话/error · 2 + 结论摘要 · 3 + 全部正文与过程图标行 · 4 图标行铺开
+ *   [轮尾实时区]             仅直播中：当前那一步的展开体，固定高度（见 LiveAreaView）
+ *   用量条                   时刻 · Σtoken · 金额（hover 出汇总卡、点开明细）
  *
- * 「显示什么、按什么序」的语义全在 `lib/chat-fold.ts`（纯函数 + 单测），本文件只管画。
- * 展开判定 = pin（用户显式点过头）?? 模式默认；error 块与中断遗留 tool 恒开。
- * 被裁掉的正文必须**看得出被裁**（底部渐隐 + 可点提示行，见 ClampedText 头注），
- * 否则"缩紧状态"就是静默丢信息（2026-10-11 用户反馈）。
+ * 级别（`lib/chat-fold` 的 TurnLevel，**每轮各自一份**，点轮次头循环）：
+ *   1 全收缩 → 2 结论 → 3 全部正文 → 4 逐条过程 → 回到 1。
+ * **工具/思考的内容（详情层）不在循环里**：那是用户自己点开的那一下（procOpen）。
+ *
+ * 恒显项（与级别无关）：用户发言（"我说过啥"的脉络本体）、error 块、用量条、直播实时区。
+ * 被压成摘要的正文必须**看得出被裁过**（底部渐隐 + 可点提示行，见 ConclusionText）。
  * 「开/关」一律由 `IconChevron`（daisyUI collapse-arrow 同形：收起下指、展开上指）表达，
  * 可展开行头一律 `DisclosureHead`（div + role=button：**按钮内的文本选不中**，见其头注）。
+ * 「显示什么、按什么序、开到第几层」的语义全在 `lib/chat-fold.ts`（纯函数 + 单测），本文件只管画。
+ * MD 渲染/原文是**正交**的显示偏好：摘要态同样按它渲染（2026-10-11 反馈，见 ConclusionText）。
  */
 
 import { createSignal, For, Show, Switch, Match, createEffect, on, onMount, onCleanup } from "solid-js";
@@ -59,8 +57,24 @@ import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, Ico
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
-// 折叠语义（纯函数，可单测）：显示什么、按什么序 —— 本文件只消费结果
-import { foldedItems, isUserText, leadUsers, leavesOf, liveAreaOf, type LiveArea } from "../lib/chat-fold";
+// 折叠 / 展开级别语义（纯函数，可单测）：显示什么、按什么序、开到第几层 —— 本文件只消费结果
+import {
+    TURN_LEVEL_MAX,
+    DEFAULT_TURN_LEVEL,
+    clampLines,
+    cycleTurnLevel,
+    foldedItems,
+    isTurnLevel,
+    isUserText,
+    leadUsers,
+    leavesOf,
+    liveAreaOf,
+    planOfLevel,
+    turnLevelLabel,
+    turnLevelTip,
+    type LiveArea,
+    type TurnLevel,
+} from "../lib/chat-fold";
 // 历史 mode 值归一与文案放 shared（纯函数、可单测）：ops 日志是 append-only 的史书，
 // 枚举改名前的 step/turn 与现值长期共存，读侧必须归一（详见 shared/steer-mode.ts）
 import { steerModeLabel, steerModeTip } from "../../shared/steer-mode";
@@ -308,26 +322,43 @@ function ThinkBody(props: { node: BlockNode }) {
     return <div class="whitespace-pre-wrap leading-relaxed">{str(props.node.attrs.content)}</div>;
 }
 
-function ToolBody(props: { node: BlockNode; onFull: (title: string, content: string) => void }) {
+function ToolBody(props: {
+    node: BlockNode;
+    onFull: (title: string, content: string) => void;
+    /** true = 画在轮尾活动框里（活的那个工具）：命令行恒给出、内层不再自己滚 */
+    live?: boolean;
+}) {
     const n = props.node;
     const output = () => str(n.attrs.output);
     const pv = () => previewLines(output());
     const title = () => `${str(n.attrs.tool)} · ${toolCommand(n)}`;
     // 命令行只在**多行或超长**时才在展开体重列：折叠行已显示命令首行，
     // 单行短命令再列一遍就是同一句看两遍（用户 2026-10-04 反馈的重复）。
+    // 例外：活动框里**恒给**（那里没有"上一行标题"可看，且高度是固定的，
+    // 空着一块会以为坏了 —— 2026-10-11 反馈「工具输出没像思考那样进活动框」）。
     const cmdNeedsFull = () => {
+        if (props.live) return true;
         const c = toolCommand(n);
         return c.includes("\n") || c.length > 80;
     };
     return (
-        <div class="space-y-1 font-mono">
+        <div class="space-y-1 font-mono" data-tool-body>
             <Show when={cmdNeedsFull()}>
                 <pre class="text-base-content/70">$ {toolCommand(n)}</pre>
             </Show>
             <Show when={output()}>
-                <pre class="whitespace-pre-wrap max-h-72 overflow-auto bg-base-100/60 rounded p-2">
+                {/* live：内层不设 max-h/overflow —— 外面那层就是唯一的滚动容器，
+                    两层各自滚动会出现"滚不动"的错觉（实测：内层吃掉滚轮） */}
+                <pre
+                    class={`whitespace-pre-wrap bg-base-100/60 rounded p-2 ${props.live ? "" : "max-h-72 overflow-auto"}`}
+                >
                     {pv().text}
                 </pre>
+            </Show>
+            {/* 工具返回前的结果区是**真空**（ai-sdk 只在 tool-result 一次给全量 stdout），
+                固定高度的框里说明白"在等什么"，否则看着像卡住 */}
+            <Show when={props.live && !n.stopped && !output()}>
+                <div class="animate-pulse text-base-content/50">⋯ 执行中，等待工具返回…</div>
             </Show>
             {/* 中断遗留：正文显示与发往 LLM 完全同源的占位说明（不再是空白让人无从下手） */}
             <Show when={isInterruptedToolBlock(n)}>
@@ -349,25 +380,36 @@ function ToolBody(props: { node: BlockNode; onFull: (title: string, content: str
 
 /** 过程块正文（think 原文 / tool 输出）：**折叠行与实时区共用同一份渲染** ——
  *  两处各写一遍就会出现"实时区漏了中断提示/全屏按钮"这类只有一边修好的偏差。 */
-function ProcBody(props: { node: BlockNode; onFull: (title: string, content: string) => void }) {
+function ProcBody(props: {
+    node: BlockNode;
+    onFull: (title: string, content: string) => void;
+    live?: boolean;
+}) {
     return (
         <Switch>
             <Match when={props.node.tag === "think"}>
                 <ThinkBody node={props.node} />
             </Match>
             <Match when={props.node.tag === "tool"}>
-                <ToolBody node={props.node} onFull={props.onFull} />
+                <ToolBody node={props.node} onFull={props.onFull} live={props.live} />
             </Match>
         </Switch>
     );
 }
 
-/** 过程行：标题 + 状态灯 + chevron；正文按 open 渲染；直播且展开时跟随到底 */
+/**
+ * 过程行：标题 + （可选）状态灯 + chevron；正文按 open 渲染；直播且展开时跟随到底。
+ *
+ * `showMark=false` 用于**图标条铺开后的逐条行**（4 级）：那一行上面就有一排 ⚙/💭 图标，
+ * 每行再顶一个 ✓/💭 是同一件事说两遍（2026-10-11 用户口径）。**直播与失败行不受影响** ——
+ * 它们的 ●（在跑）/ ✗（报错）是状态而不是装饰，丢了就看不出断在哪。
+ */
 function ProcessRow(props: {
     node: BlockNode;
     pin: Record<string, boolean>;
     onToggle: (id: string) => void;
     onFull: (title: string, content: string) => void;
+    showMark?: boolean;
 }) {
     const n = () => props.node;
     const open = () => procOpen(n(), props.pin);
@@ -388,7 +430,7 @@ function ProcessRow(props: {
                 onToggle={() => props.onToggle(n().id)}
                 class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-base-200/60"
             >
-                {statusMark(n())}
+                <Show when={props.showMark !== false}>{statusMark(n())}</Show>
                 <span class="font-medium text-base-content/80 truncate flex-1">
                     {summaryOf(n())}
                 </span>
@@ -404,31 +446,34 @@ function ProcessRow(props: {
 }
 
 /**
- * 轮次级折叠（2026-10-04 定稿，对齐 dsh 的信息层次）。
+ * 轮次级展开（2026-10-11 定稿：**级别循环**，取代「正常 / 大纲」两态开关）。
  *
- * 一个 turn = 轮首用户发言 + 四层 + 轮尾实时区，**静态截止与动态进行中结构同构**，动态只是多出实时区：
- *   轮首用户发言：IM 顺序 —— 用户先说，助理的身份行（轮次头）再接
- *   L0 轮次头：身份（🤖 人物 · 模型 · 思考级别）+ 统计（N 步 · 耗时 · ⚙a 💭b · Σtok）+ chevron
- *      折叠态 = 头 + **文档序**可见项（轮中插话 / error / **最后一条正文**）+ 用量条
- *   L1 展开轮次：全部正文 + 过程图标行（均按文档序）
- *   L2 展开图标行：每事件一行（各自单行折叠）
- *   L3 展开单行：该 tool 结果 / think 内容
- *   LIVE 实时区（仅直播轮次，固定在轮尾）：当前活动的展开体 ≤5 行；跑完不消失，挂 ⋯ 等下一步
+ * 一个 turn = 轮首用户发言 + 级别控制 + 内容区 + 轮尾实时区。级别**每轮各自一份**，
+ * 像 JSON 树那样点一下展开一层、点完最深层回到最浅层（语义见 `lib/chat-fold.ts`）：
+ *   1 全收缩   只有这一行（身份/统计）—— 连结论也收起，一屏扫完"我聊了哪些轮"
+ *   2 结论     + 末条助理正文（压成 N 行摘要，带渐隐与"还有 N 行"提示行）
+ *   3 全部正文 + 其余正文与过程图标行（连续已定稿的 think/tool 收成一行图标）
+ *   4 逐条过程 图标行铺开成"每事件一行"
+ * 而**工具/思考的内容（详情层）不在循环里**：那是用户自己点开的那一下（procOpen），
+ * 级别按钮不管它 —— 否则"看某个工具的完整输出"要被级别状态牵着走。
  *
- * 唯一显示开关 `▤ 正常 ⇄ 大纲`（不是多档密度）：决定**默认层级**（正常=展开、大纲=折叠）
- * 与折叠态那条正文的默认行数（正常=全文，大纲=N 行）；**展开后一律全文，四层点击行为两模式一致**。
- * 身份是**该轮事实**的投影（`turn.attrs.model` / `reasoningEffort` / `durationMs`），
- * 不是当前配置 —— 否则改一次 personas.yaml 全部历史署名被一起改写（任务 196 的教训）。
+ * 恒显项（与级别无关）：轮首用户发言（"我说过啥"的脉络本体）、error 块（一轮报错后
+ * 收起就与成功轮次长得一模一样 = 信息丢失，review P1-2）、轮尾用量条、直播中的实时区。
  *
- * 折叠态**不重排**：只做"藏中间过程"，用户发言/插话/error 一律就地渲染（见 chat-fold.ts）。
+ * 身份（🤖 人物 · 模型 · 思考级别）是**该轮事实**的投影（`turn.attrs.model` /
+ * `reasoningEffort`），不是当前配置 —— 否则改一次 personas.yaml 全部历史署名被一起改写
+ * （任务 196 的教训）。1 级只留一枚头像点，名字/模型放到 2 级起显示：全收缩态要的
+ * 是"能一眼扫完"，而"谁答的"在展开看内容时才有意义（2026-10-11 用户口径）。
+ *
+ * 折叠体**不重排**：只做"藏中间过程"，用户发言/插话/error 一律就地渲染（见 chat-fold.ts）。
  */
 
-/** 轮次头：身份 + 统计（含折叠开关）。整轮共用一处身份，不再每块挂署名。 */
+/** 轮次头（1 级那一行）：身份（2 级起）+ 统计 + 级别指示 + chevron。点它 = 进下一级。 */
 function TurnHeader(props: {
     node: BlockNode;
-    open: boolean;
-    onToggle: () => void;
-    counts: { step: number; tool: number; think: number };
+    level: TurnLevel;
+    onCycle: () => void;
+    counts: { step: number; tool: number; think: number; error: number };
 }) {
     const t = () => props.node;
     // 身份是**该轮事实**的投影（turn.attrs.model），不是当前配置（任务 196 的教训）
@@ -461,21 +506,26 @@ function TurnHeader(props: {
         if (d != null) parts.push(fmtDur(d));
         if (c.tool) parts.push(`⚙ ${c.tool}`);
         if (c.think) parts.push(`💭 ${c.think}`);
+        // 报错在**统计里**也要有位置：全收缩（1 级）时 error 块仍是唯一露头的内容，
+        // 但一屏多轮时先看见"哪轮出过事"更快
+        if (c.error) parts.push(`❌ ${c.error}`);
         const tok = tokens();
         if (tok) parts.push(`Σ ${fmtTok(tok)}`);
         return parts.join(" · ");
     };
     return (
         <DisclosureHead
-            open={props.open}
-            onToggle={props.onToggle}
+            open={props.level > 1}
+            onToggle={props.onCycle}
             class="flex items-center gap-1.5 w-full text-left rounded-lg px-1.5 py-1 hover:bg-base-200/60 text-body"
+            ariaLabel={`本轮展开级别 ${props.level}/${TURN_LEVEL_MAX}（${turnLevelLabel(props.level)}）；${summary()}`}
             rest={{
                 "data-testid": "turn-header",
                 "data-block-id": t().id,
                 "data-block-tag": "turn",
+                "data-level": String(props.level),
                 "data-inferred": info().inferred ? "1" : undefined,
-                title: info().title,
+                title: `${turnLevelTip(props.level)}\n${info().title}`,
             }}
         >
             <span
@@ -484,46 +534,59 @@ function TurnHeader(props: {
             >
                 🤖
             </span>
-            <Show when={info().name}>
-                <span class="font-medium">{info().name}</span>
-            </Show>
-            <Show when={info().model}>
-                <span class="opacity-60">{personaStore.displayModel(info().model)}</span>
-            </Show>
-            {/* 思考级别：该轮实际生效的档位（main 写入 turn meta） */}
-            <Show when={effort() && effort() !== "none"}>
-                <span class="opacity-50">·</span>
-                <span class="opacity-60">{reasoningEffortLabel(effort() as ReasoningEffort)}</span>
-            </Show>
-            <Show when={info().inferred}>
-                <span class="opacity-40">（当时人物未知）</span>
+            {/* 身份：2 级起才显示 —— 1 级（全收缩）要的是"一眼扫完"，名字/模型在
+                展开看内容时才有意义（2026-10-11 用户口径：1 级删掉人物） */}
+            <Show when={props.level > 1}>
+                <Show when={info().name}>
+                    <span class="font-medium">{info().name}</span>
+                </Show>
+                <Show when={info().model}>
+                    <span class="opacity-60">{personaStore.displayModel(info().model)}</span>
+                </Show>
+                {/* 思考级别：该轮实际生效的档位（main 写入 turn meta） */}
+                <Show when={effort() && effort() !== "none"}>
+                    <span class="opacity-50">·</span>
+                    <span class="opacity-60">{reasoningEffortLabel(effort() as ReasoningEffort)}</span>
+                </Show>
+                <Show when={info().inferred}>
+                    <span class="opacity-40">（当时人物未知）</span>
+                </Show>
             </Show>
             <span class="flex-1" />
             <span class="text-caption opacity-60">{summary()}</span>
-            <IconChevron open={props.open} class="h-3.5 w-3.5 opacity-40" />
+            {/* 级别指示：4 档循环没有可见记号就无从知道自己点到了第几层 */}
+            <span class="shrink-0 text-caption opacity-40" data-turn-level>
+                {props.level}/{TURN_LEVEL_MAX}
+            </span>
+            <IconChevron open={props.level > 1} class="h-3.5 w-3.5 opacity-40" />
         </DisclosureHead>
     );
 }
 
 /**
- * 实时区（直播轮次**轮尾**）：把"当前活动"那一步**展开**画出来（体 ≤5 行，超出滚动）。
+ * 实时区（直播轮次**轮尾**）：把"当前活动"那一步**展开**画出来。
  *
  * 为什么放轮尾而不是塞进文档序：它是"此刻正在发生的事"，不是历史流的一段；
  * 位置固定才不用在长会话里翻找（旧版是一行 delta 混在流里，一滚就没了）。
- * 两种状态（用户 2026-10-04）：
- *   · active  —— 该步在跑：给展开体（tool 命令行/输出、think 正文），随产出滚到底；
- *   · waiting —— 该步已跑完、下一步还没开始接收：**它留在原位不消失**（冻结标题行），
- *     底下挂 `⋯ 等待下一步`。旧行为"步骤一完就整块消失"会在模型决定接下来干什么的
- *     那几秒里留一大段空白 —— 用户不知道在等什么，看着像卡死。
- *     此处**只留标题行、不回放冻结体**：那几秒界面该是安静的，5 行冻结输出 + 脉动提示
- *     会同时喊两件事；而且新步一开始，整块会被新内容替换，高度不跳变。
+ *
+ * 三处定死的行为（都是用户反馈换来的）：
+ *   ① **高度固定**（`h-` 不是 `max-h-`，≈5 行）：早先是 max-height，内容一行行长出来时
+ *      整块往下顶、屏幕来回跳；think 因为内容连续还好，tool 从"只有命令行"到
+ *      "一大段输出"一跳就是十几行。固定高度后**任何时刻**这块的尺寸都一样 ——
+ *      内容在框内自己滚（2026-10-11 反馈）。
+ *   ② **状态切换不换布局**：跑完不消失、也不再多出一行"等待下一步"（那也会顶开一格），
+ *      而是把状态写在标题行右侧（`进行中` ⇄ `⋯ 等待下一步`）。冻结的输出留在框里 ——
+ *      用户要看的就是"刚刚那条命令输出了什么"（2026-10-11 反馈：工具输出没进活动框）。
+ *   ③ **两种状态都画 `ProcBody`**（同一份渲染）：分成两处写就会出现"活动态修好了、
+ *      等待态漏了"这类只有一边对的偏差。
  *
  * `liveArea.node` 必须已从文档序渲染里剔除（见 TurnView.segs）——否则同一块画两遍。
  */
 function LiveAreaView(props: { area: LiveArea; onFull: (title: string, content: string) => void }) {
     const n = () => props.area.node;
     let bodyRef: HTMLDivElement | undefined;
-    // 活动体在流：每帧贴到底（看最新输出，而不是从头看）
+    // 活动体在流：每帧贴到底（看最新输出，而不是从头看）。
+    // 等待态**不**跟随：那时内容已冻结，用户若往上翻了就应该停在他看的位置。
     createEffect(() => {
         void localChatStore.trees;
         if (props.area.active && bodyRef) bodyRef.scrollTop = bodyRef.scrollHeight;
@@ -538,35 +601,22 @@ function LiveAreaView(props: { area: LiveArea; onFull: (title: string, content: 
             <div class="flex items-center gap-2">
                 {statusMark(n())}
                 <span class="font-medium text-base-content/80 truncate flex-1">{summaryOf(n())}</span>
-                <span class="shrink-0 text-caption opacity-50">
-                    {props.area.active ? "进行中" : "已完成"}
+                <span class="shrink-0 text-caption opacity-50" data-live-state>
+                    <Show when={props.area.active} fallback={<span class="animate-pulse">⋯ 等待下一步…</span>}>
+                        进行中
+                    </Show>
                 </span>
             </div>
-            <Show when={props.area.active}>
-                {/* 高度 ≈ 5 行正文（leading-relaxed 1.625em × 5 ≈ 8.2em），超出滚动 */}
-                <div
-                    ref={(el) => (bodyRef = el)}
-                    class="mt-1 max-h-[8.2em] overflow-auto rounded bg-base-100/50 px-2 py-1"
-                    data-live-body
-                >
-                    <ProcBody node={n()} onFull={props.onFull} />
-                </div>
-            </Show>
-            <Show when={!props.area.active}>
-                <div class="mt-0.5 flex items-center gap-2 pl-1 opacity-60" data-live-waiting>
-                    <span class="animate-pulse">⋯</span>
-                    <span>等待下一步…</span>
-                </div>
-            </Show>
+            {/* 高度 ≈ 5 行正文（leading-relaxed 1.625em × 5 ≈ 8.2em）：固定值，超出在框内滚 */}
+            <div
+                ref={(el) => (bodyRef = el)}
+                class="mt-1 h-[8.2em] overflow-auto rounded bg-base-100/50 px-2 py-1"
+                data-live-body
+            >
+                <ProcBody node={n()} onFull={props.onFull} live />
+            </div>
         </div>
     );
-}
-
-/** 按可视行数截断（紧凑模式用；Markdown 不解析，避免断在结构中间） */
-function clampLines(text: string, n: number): { text: string; omitted: number } {
-    const lines = text.split("\n");
-    if (lines.length <= n) return { text, omitted: 0 };
-    return { text: lines.slice(0, n).join("\n"), omitted: lines.length - n };
 }
 
 /** assistant 正文（展开态）：全文，md/原文由全局开关决定；每轮身份已在轮次头，不再单独署名 */
@@ -582,30 +632,29 @@ function TextBlock(props: { node: BlockNode; md: boolean }) {
 }
 
 /**
- * 折叠态正文：大纲模式截 N 行（纯文本呈现，避免半截 Markdown 错乱），正常模式全文。
+ * 2 级「结论」：末条助理正文，**正文按 N 行摘要呈现**，点提示行进 3 级看全文。
  *
- * 「被裁剪过」必须**一眼可见**（2026-10-11 用户反馈：只截 3 行看不出来被缩过）。
- * 业界三种主流表达（详见图注）：
- *   ① **底部渐隐**（mask 遮罩）：文字在末行淡出 —— 暗示"下面还有"，最不打断阅读
- *      （Linear / Notion / Apple 摘要是这一路）；
- *   ② **可点提示行**："⋯ 还有 N 行 · 展开全文" —— 明确、可操作（GitHub / Slack 的 Show more；
- *      ChatGPT 对长回答也是底部一行按钮）；
- *   ③ 单纯 CSS `-webkit-line-clamp` 自己出的那个 "…" —— 信息量最低，且对已渲染
- *      代码块/列表会截在结构中间。
- * 这里取 ①+②：渐隐负责"看着就知道被裁了"，提示行负责"点哪能看全"。
- * 提示行点击 = 展开轮次（与轮次头 chevron 同一动作，不引入第三套开关）。
+ * 两个易错点（都是用户反馈过的）：
+ *   ① **必须跟 MD 渲染/原文开关走**（2026-10-11 反馈：摘要态强制原文、展开态才是渲染，
+ *      同一个块两种格式切换很怪）。摘要仍走同一份正文，只是行数少了 —— 渲染方式与
+ *      是否截断是两个正交维度，不能互相决定。截断处 Markdown 会在围栏/列表中间断开，
+ *      交给 MarkdownView 的 streaming 分支兜底（未闭合围栏照样成块），不退回原文。
+ *   ② 「被裁剪过」必须**一眼可见**（2026-10-11 反馈：只截 3 行看不出被缩过）：
+ *      底部**渐隐**暗示"下面还有"（Linear / Notion / Apple 摘要一路），
+ *      再加**可点提示行**说清"还有几行 + 点哪看全"（GitHub / Slack 的 Show more 一路）。
+ *      只靠 CSS line-clamp 自带的 `…` 信息量最低，且会把代码块截在结构中间。
  */
-function ClampedText(props: {
+function ConclusionText(props: {
     node: BlockNode;
-    outline: boolean;
     lines: number;
     md: boolean;
-    /** 点提示行 = 展开本轮的全文（由 TurnView 传入；不传则提示行不可点） */
-    onExpand?: () => void;
+    /** 点提示行 = 进下一级（3 级：全部正文） */
+    onExpand: () => void;
 }) {
     const b = () => props.node;
     const raw = () => str(b().attrs.content);
-    const clipped = () => props.outline && b().stopped;
+    // 直播中的结论不截：它还在长，截断只会来回跳；定稿后才压成摘要
+    const clipped = () => b().stopped;
     const view = () => (clipped() ? clampLines(raw(), props.lines) : { text: raw(), omitted: 0 });
     const cut = () => view().omitted > 0;
     return (
@@ -622,18 +671,18 @@ function ClampedText(props: {
                         : undefined
                 }
             >
-                <Show when={props.md && !clipped()} fallback={<PlainText text={view().text} />}>
-                    <MarkdownText text={view().text} streaming={!b().stopped} />
+                <Show when={props.md} fallback={<PlainText text={view().text} />}>
+                    <MarkdownText text={view().text} streaming={!b().stopped || cut()} />
                 </Show>
             </div>
             <Show when={cut()}>
-                {/* 提示行本身就是"继续读"的入口：按钮语义 + 只在此处可点（正文仍可拖选） */}
+                {/* 提示行是独立 button：正文（上面那层 div）仍可拖选复制 */}
                 <button
                     type="button"
                     class="mt-0.5 text-caption opacity-60 hover:opacity-100 hover:text-primary"
-                    onClick={() => props.onExpand?.()}
+                    onClick={() => props.onExpand()}
                 >
-                    ⋯ 已折叠 {view().omitted} 行 · 点击展开全文
+                    ⋯ 已折叠 {view().omitted} 行 · 点击展开全部正文
                 </button>
             </Show>
         </div>
@@ -659,30 +708,35 @@ function UserBubble(props: { node: BlockNode }) {
 }
 
 /**
- * 过程图标行（连续已定稿过程段，L1/L2）。
+ * 过程图标行（3 级起）：一行不换行的图标，每个图标 = 一个已定稿的 think/tool 事件。
  *
- * 静态：一行不换行的图标，每个图标 = 一个 think/tool 事件；点击铺开为逐条行（L2），
- * 每条行再点才展开内容（L3）。展开态走 pin，key 前缀 `proc:` 与块 id 不相撞。
+ * 4 级时铺开成"每事件一行"的单行标题（每行自身再点才出内容 —— 那是**详情层**，
+ * 由用户自己点，级别循环不管它）。所以这里：
+ *   · `open` 来自**轮次级别**（不是自己的 pin）：3 级收成图标条、4 级铺开；
+ *   · 点这一行 = **进下一级**（与轮次头同一个动作，一处状态两处入口，不会各说各话）。
+ * 逐条行不重复画状态图标（见 ProcessRow 的 showMark）。
  */
 function ProcessStrip(props: {
     nodes: BlockNode[];
+    /** true = 铺开为逐条行（4 级） */
+    open: boolean;
+    onExpand: () => void;
     pin: Record<string, boolean>;
     onToggle: (id: string) => void;
     onFull: (title: string, content: string) => void;
 }) {
     const tools = () => props.nodes.filter((b) => b.tag === "tool").length;
     const thinks = () => props.nodes.filter((b) => b.tag === "think").length;
-    const key = () => `proc:${props.nodes[0]!.id}`;
-    const open = () => (key() in props.pin ? props.pin[key()]! : false);
+    const open = () => props.open;
     return (
         <div class="rounded-lg" data-block-tag="proc-strip">
             <DisclosureHead
                 open={open()}
-                onToggle={() => props.onToggle(key())}
+                onToggle={() => props.onExpand()}
                 class="flex items-center gap-2 w-full py-1 px-1.5 rounded-lg hover:bg-base-200/60 text-body"
                 /* 读屏文案：thinks() 为 0 时不能落成模板串里的 `0 && …`（求值成 0，念作
                    「过程：02 个工具」）—— 用三元而不是 && */
-                ariaLabel={`过程：${thinks() ? `${thinks()} 段思考、` : ""}${tools()} 个工具（点击${open() ? "收起" : "展开逐条"}）`}
+                ariaLabel={`过程：${thinks() ? `${thinks()} 段思考、` : ""}${tools()} 个工具（点击${open() ? "到 1 级全收缩" : "铺开逐条"}）`}
             >
                 <span
                     class="flex items-center gap-0.5 shrink-0 overflow-hidden"
@@ -709,7 +763,13 @@ function ProcessStrip(props: {
                 <div class="mt-0.5 ml-2 space-y-0.5 border-l border-base-300 pl-2">
                     <For each={props.nodes}>
                         {(n) => (
-                            <ProcessRow node={n} pin={props.pin} onToggle={props.onToggle} onFull={props.onFull} />
+                            <ProcessRow
+                                node={n}
+                                pin={props.pin}
+                                onToggle={props.onToggle}
+                                onFull={props.onFull}
+                                showMark={false}
+                            />
                         )}
                     </For>
                 </div>
@@ -777,29 +837,35 @@ function LeafView(props: {
     return <div class="text-body opacity-40">[未知块 {b.tag}]</div>;
 }
 
-/** 轮次内各类事件计数（轮次头的统计用） */
-function countTags(turn: BlockNode): { step: number; tool: number; think: number } {
+/** 轮次内各类事件计数（轮次头的统计用）。error 也数：一屏多轮时先看见"哪轮出过事" */
+function countTags(turn: BlockNode): { step: number; tool: number; think: number; error: number } {
     let step = 0,
         tool = 0,
-        think = 0;
+        think = 0,
+        error = 0;
     const walk = (x: BlockNode) => {
         for (const c of x.children) {
             if (c.tag === "step") step++;
             else if (c.tag === "tool") tool++;
             else if (c.tag === "think") think++;
+            else if (c.tag === "error") error++;
             walk(c);
         }
     };
     walk(turn);
-    return { step, tool, think };
+    return { step, tool, think, error };
 }
 
 function TurnView(props: {
     node: BlockNode;
+    /** 过程**详情**层的开合（用户自己点出来的那一下；与级别无关） */
     pin: Record<string, boolean>;
-    /** 大纲模式：折叠态正文截断到 outlineLines 行（展开后一律全文） */
-    outline: boolean;
-    outlineLines: number;
+    /** 本轮展开级别（1-4，循环；见 lib/chat-fold 的 TurnLevel） */
+    level: TurnLevel;
+    /** 点轮次头 / 过程图标行 = 进下一级 */
+    onCycle: () => void;
+    /** 2 级结论摘要的行数 */
+    conclusionLines: number;
     onToggle: (id: string) => void;
     onFull: (title: string, content: string) => void;
     liveTurnId: string | null;
@@ -813,19 +879,21 @@ function TurnView(props: {
     onDetailUsage: (id: string) => void;
 }) {
     const t = props.node;
-    const turnKey = () => `turn:${t.id}`;
-    // 默认层级由**显示模式**决定（2026-10-11 用户口径）：
-    //   · 正常模式 → 默认展开（L1：全部正文都在，过程仍折成一行图标条）
-    //   · 大纲模式 → 默认折叠（L0：只留用户发言 + 最后一条正文，截 N 行）
-    //「只显示结论」这一层因此归大纲模式，不再是正常模式的默认（那样太不直观）。
-    // pin = 用户显式点过头，永远优先于模式默认（切模式也不动他手动开/关过的那几轮）。
-    const open = () => (turnKey() in props.pin ? props.pin[turnKey()]! : !props.outline);
+    const plan = () => planOfLevel(props.level);
     /** 轮首用户发言：渲染在轮次头**之前**（IM 顺序）。见 chat-fold.leadUsers */
     const lead = () => leadUsers(t);
-    /** 折叠体：把 lead 剔掉，否则与轮次头上方那批重复画一遍 */
+    /**
+     * 1-2 级的内容区（严格文档序，只"藏中间过程"、不"搬位置"）：
+     *   · 1 级：只有轮中插话与 error（结论也收）
+     *   · 2 级：再加末条正文（结论），压成 N 行摘要
+     * 为什么必须文档序：插话块在文档序上位于轮次**中间**，旧版把"全部用户发言"提到最前，
+     * 它就被拽到了自己那条助理回复的下面 —— 看着像"助理先说、用户后说"（2026-10-04 现象）。
+     * 轮首那批已由 lead 渲染，这里用 foldBody 剔掉，避免画两遍。
+     */
     const foldBody = () => {
         const head = lead();
-        return head.length ? foldedItems(t).filter((n) => !head.includes(n)) : foldedItems(t);
+        const items = foldedItems(t, { conclusion: plan().conclusion });
+        return head.length ? items.filter((n) => !head.includes(n)) : items;
     };
     const isLiveTurn = () => props.liveTurnId != null && props.liveTurnId === t.id;
     // 上帧的段序列：跨次渲染复用未变的段（见 reuseSegs 头注）
@@ -846,40 +914,34 @@ function TurnView(props: {
     };
     const counts = () => countTags(t);
     return (
-        <div class="space-y-1.5" data-turn-id={t.id}>
+        <div class="space-y-1.5" data-turn-id={t.id} data-turn-level={props.level}>
             {/* 轮首用户发言**先出**：IM 直觉是"用户先说、对方再接"。
                 轮次头（助理身份行）压在用户消息上面 = 看着像助理先开口（2026-10-11 反馈）。 */}
             <For each={lead()}>{(n) => <UserBubble node={n} />}</For>
             <TurnHeader
                 node={t}
-                open={open()}
-                onToggle={() => props.onToggle(turnKey())}
+                level={props.level}
+                onCycle={props.onCycle}
                 counts={counts()}
             />
             <Show
-                when={open()}
+                when={plan().allTexts}
                 fallback={
-                    /* 折叠态 = **严格文档序**（用户 / error / 最后一条正文），只"藏中间过程"、
-                       不"搬位置"。为什么必须如此：插话块在文档序上位于轮次中间，旧版把
-                       "全部用户发言"提到最前，它就被拽到了自己那条助理回复的下面 ——
-                       看着像"助理先说、用户后说"（2026-10-04 现象）。判据见 chat-fold.foldedItems。
-                       （轮首那批已由上方 lead 渲染过，此处用 foldBody 剔掉，避免画两遍。） */
                     <div class="space-y-1.5 pl-1">
                         <For each={foldBody()}>
                             {(n) =>
                                 isUserText(n) ? (
                                     <UserBubble node={n} />
                                 ) : n.tag === "error" ? (
-                                    /* error 折叠态也要露头：否则一轮报错折叠起来与成功轮次
+                                    /* error 在**所有级别**都露头：一轮报错后收起来与成功轮次
                                        长得一模一样，最后一条正文还可能是报错前的旧内容 */
                                     <ErrorBox node={n} />
                                 ) : (
-                                    <ClampedText
+                                    <ConclusionText
                                         node={n}
-                                        outline={props.outline}
-                                        lines={props.outlineLines}
+                                        lines={props.conclusionLines}
                                         md={props.md}
-                                        onExpand={() => props.onToggle(turnKey())}
+                                        onExpand={props.onCycle}
                                     />
                                 )
                             }
@@ -894,6 +956,8 @@ function TurnView(props: {
                             seg.kind === "hair" ? (
                                 <ProcessStrip
                                     nodes={seg.nodes}
+                                    open={plan().stripRows}
+                                    onExpand={props.onCycle}
                                     pin={props.pin}
                                     onToggle={props.onToggle}
                                     onFull={props.onFull}
@@ -911,8 +975,8 @@ function TurnView(props: {
                     </For>
                 </div>
             </Show>
-            {/* 轮尾实时区：直播轮次的"当前活动"（展开体 ≤5 行；跑完不消失，挂 ⋯ 等下一步）。
-                折叠态与展开态都出 —— 它就是"此刻在干什么"，与轮次开合无关。 */}
+            {/* 轮尾实时区：直播轮次的"当前活动"（固定高度；跑完不消失）。
+                与级别无关 —— 它就是"此刻在干什么"。 */}
             <Show when={liveArea()}>
                 {(la) => <LiveAreaView area={la()} onFull={props.onFull} />}
             </Show>
@@ -1349,13 +1413,25 @@ export function LocalChatPage(props: { uri?: string }) {
         setMdRaw(v);
         Caches.diy_chat_md.set(v);
     };
-    // 大纲模式（唯一显示开关）：折叠态正文是否截 N 行。默认正常（false）= 全文。
-    const [outline, setOutlineRaw] = createSignal<boolean>(Caches.diy_chat_outline.get());
-    const setOutline = (v: boolean) => {
-        setOutlineRaw(v);
-        Caches.diy_chat_outline.set(v);
+    /**
+     * 每轮的展开级别（1-4 循环）。
+     *
+     * 为什么是**每轮各自一份**而不是一个全局模式开关（2026-10-11 用户口径）：
+     * 读长会话时想细看的就那么几轮，其余只配一眼扫过；一个全局开关要么全展开、
+     * 要么全收起，两头都别扭。级别是"我现在想看多细"的临时状态，**不落盘**
+     *（轮次 id 会无限增长，写进 localStorage 只会越攒越脏）。
+     * 用户点过的轮次进这张表；没点过的用 DEFAULT_TURN_LEVEL（3：全部正文 + 图标行）。
+     */
+    const [levels, setLevels] = createSignal<Record<string, TurnLevel>>({});
+    const levelOf = (turnId: string): TurnLevel => {
+        const v = levels()[turnId];
+        return isTurnLevel(v) ? v : DEFAULT_TURN_LEVEL;
     };
-    const outlineLines = () => Caches.diy_chat_outline_lines.get();
+    /** 进下一级（1→2→3→4→1）。轮次头与过程图标行都走这里 —— 一处状态两处入口 */
+    const cycleLevel = (turnId: string) =>
+        setLevels((p) => ({ ...p, [turnId]: cycleTurnLevel(isTurnLevel(p[turnId]) ? p[turnId]! : DEFAULT_TURN_LEVEL) }));
+    /** 2 级结论摘要的行数 */
+    const conclusionLines = () => Caches.diy_chat_conclusion_lines.get();
     /** 清空确认：清空会删掉 main 侧 ops/llm 日志（rmSync，不可恢复），必须二次确认 */
     const [confirmClear, setConfirmClear] = createSignal(false);
     const [pinned, setPinned] = createSignal<Record<string, boolean>>({});
@@ -1510,22 +1586,10 @@ export function LocalChatPage(props: { uri?: string }) {
             <div
                 class={`flex items-center justify-end gap-2 pl-4 pr-16 ${VIEW_BAR_H} border-b shrink-0`}
             >
-                {/* 显示模式：**只有「正常 / 大纲」两态**（2026-10-04 用户口径，取消三档密度）。
-                    差别两处（2026-10-11）：① 默认层级 —— 正常=展开（全部正文）、大纲=折叠（只剩结论）；
-                    ② 折叠态那条正文的行数 —— 正常=全文、大纲=截 N 行（带渐隐，看得出被裁过）。
-                    展开后的层次与点击行为两模式完全一致。 */}
-                <button
-                    class={`btn btn-xs shrink-0 ${outline() ? "btn-active" : "btn-ghost"}`}
-                    data-tip={
-                        outline()
-                            ? `大纲：轮次默认折叠、结论压到 ${outlineLines()} 行（点击回到正常）`
-                            : "正常：轮次默认展开、正文全文（点击切大纲）"
-                    }
-                    aria-pressed={outline()}
-                    onClick={() => setOutline(!outline())}
-                >
-                    {outline() ? "▤ 大纲" : "▤ 正常"}
-                </button>
+                {/* 这里原有一个「正常 / 大纲」显示模式按钮，2026-10-11 取消：
+                    展不展开是**每一轮各自的事**，用全局开关既粗又别扭。改为
+                    **点轮次头一层层展开**（1 全收缩 → 2 结论 → 3 全部正文 → 4 逐条过程 → 回到 1），
+                    语义见 lib/chat-fold 的 TurnLevel；顶部不再需要任何开关。 */}
                 {/* 显示方式二选一：两个选项都可见、当前态高亮 —— 单按钮式「MD」看不出
                     处于哪一态（切回去要猜），且与破坏性按钮同形时易误点。 */}
                 <div class="join shrink-0" role="group" aria-label="Markdown 显示方式">
@@ -1611,8 +1675,9 @@ export function LocalChatPage(props: { uri?: string }) {
                                 <TurnView
                                     node={t}
                                     pin={pinned()}
-                                    outline={outline()}
-                                    outlineLines={outlineLines()}
+                                    level={levelOf(t.id)}
+                                    onCycle={() => cycleLevel(t.id)}
+                                    conclusionLines={conclusionLines()}
                                     onToggle={togglePin}
                                     onFull={(title, content) => setFull({ title, content })}
                                     liveTurnId={liveTurnId()}
