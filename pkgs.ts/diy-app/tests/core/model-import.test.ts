@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadModelConfig } from "../../src/main/core/model-config";
-import { importEnvProviders, scanEnvCandidates } from "../../src/main/core/model-import";
+import { importEnvProviders, scanEnv, scanEnvCandidates } from "../../src/main/core/model-import";
 
 const ENV = { OPENCODE_API_KEY: "sk-test-opencode" };
 
@@ -89,5 +89,36 @@ describe("importEnvProviders", () => {
         const r = importEnvProviders(home, ["opencode"], ENV);
         expect(r.imported).toEqual([]);
         expect(r.skipped).toHaveLength(1);
+    });
+});
+
+describe("scanEnv（候选 + 扫描面）", () => {
+    let home: string;
+    beforeEach(() => {
+        home = mkdtempSync(join(tmpdir(), "diy-model-import-"));
+    });
+    afterEach(() => {
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    // 提示条「零命中」态要靠扫描面说清「查过什么」，否则用户分不清没配 key 与功能没跑
+    it("零命中：候选为空，扫描面照样回报（provider 数 / 变量名清单）", () => {
+        const r = scanEnv(home, {});
+        expect(r.candidates).toHaveLength(0);
+        expect(r.scanned.providers).toBeGreaterThan(100);
+        expect(r.scanned.vars).toContain("OPENCODE_API_KEY");
+        expect(r.scanned.vars).toEqual([...r.scanned.vars].sort()); // 升序（给 UI 直接列）
+    });
+
+    it("命中：candidates 与 scanEnvCandidates 一致（同一份逻辑的两个出口）", () => {
+        const r = scanEnv(home, ENV);
+        expect(r.candidates.map((c) => c.provider)).toEqual(
+            scanEnvCandidates(home, ENV).map((c) => c.provider),
+        );
+        expect(r.candidates.some((c) => c.status === "importable")).toBe(true);
+    });
+
+    it("扫描面与 env 无关（同一份 snapshot 声明，两次调用一致）", () => {
+        expect(scanEnv(home, {}).scanned).toEqual(scanEnv(home, ENV).scanned);
     });
 });

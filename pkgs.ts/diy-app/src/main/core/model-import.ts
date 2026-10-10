@@ -15,7 +15,12 @@
 //   3. **不覆盖已有**：provider 已配置、或该密钥值已被现有账号使用 → 一律标跳过。
 //      「同一个 key 不用配两遍」是用户的硬要求，也是本模块存在的理由。
 
-import type { Account, EnvImportCandidate, ModelConfigFile } from "../../shared/model-config";
+import type {
+    Account,
+    EnvImportCandidate,
+    ModelConfigFile,
+    ScanEnvResult,
+} from "../../shared/model-config";
 import { loadModelConfig, saveModelConfig } from "./model-config";
 import { expandEnvValue, snapshotProviders } from "./model-registry";
 
@@ -91,6 +96,27 @@ export function scanEnvCandidates(
     return out.sort(
         (a, b) => Number(b.status === "importable") - Number(a.status === "importable"),
     );
+}
+
+/**
+ * 扫描面：snapshot 里**声明了 `env`** 的 provider 数与变量名（去重升序）。
+ * 这是 scan 的分母 —— 零命中时用它交代「查过 191 家 / 181 个变量名」，而不是让 UI 空着。
+ */
+export function envScanScope(): { providers: number; vars: string[] } {
+    const vars = new Set<string>();
+    let providers = 0;
+    for (const spec of Object.values(snapshotProviders())) {
+        const declared = (spec.env ?? []).filter((v) => v.trim() !== "");
+        if (declared.length === 0) continue;
+        providers++;
+        for (const v of declared) vars.add(v);
+    }
+    return { providers, vars: [...vars].sort() };
+}
+
+/** `llmConfig.scanEnv` 的完整结果 = 候选清单 + 扫描面（UI/CLI 共用） */
+export function scanEnv(home: string, env: NodeJS.ProcessEnv = process.env): ScanEnvResult {
+    return { candidates: scanEnvCandidates(home, env), scanned: envScanScope() };
 }
 
 /**

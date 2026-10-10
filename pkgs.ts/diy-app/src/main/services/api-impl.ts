@@ -718,8 +718,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
 
   binding.on(app.llmConfig.scanEnv, async () => {
-    const { scanEnvCandidates } = await import("../core/model-import");
-    return { candidates: scanEnvCandidates(state.diyHome()) };
+    const { scanEnv } = await import("../core/model-import");
+    // 连同扫描面（provider 数 / 变量名）一起回报：零命中时 UI 要能说清「查过什么」
+    return scanEnv(state.diyHome());
   });
   binding.on(app.llmConfig.importEnv, async ({ input }) => {
     const { importEnvProviders } = await import("../core/model-import");

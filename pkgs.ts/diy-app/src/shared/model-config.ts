@@ -386,8 +386,20 @@ export const EnvImportCandidateSchema = z.object({
 });
 export type EnvImportCandidate = z.infer<typeof EnvImportCandidateSchema>;
 
-/** `llmConfig.scanEnv` 输出 */
-export const ScanEnvResultSchema = z.object({ candidates: z.array(EnvImportCandidateSchema) });
+/**
+ * `llmConfig.scanEnv` 输出：候选 + **扫描范围**。
+ * 为什么要 scanned：一个都没命中时，UI 必须能说清「查过什么」——否则用户看到的是
+ * 一片空白，分不清「本机确实没设密钥」与「功能没生效」。范围数据也让人对照变量名拼写。
+ */
+export const ScanEnvResultSchema = z.object({
+    candidates: z.array(EnvImportCandidateSchema),
+    scanned: z.object({
+        /** snapshot 里声明了 `env` 的 provider 数（扫描面的分母） */
+        providers: z.number().int(),
+        /** 这些 provider 声明过的变量名（去重升序） */
+        vars: z.array(z.string()),
+    }),
+});
 export type ScanEnvResult = z.infer<typeof ScanEnvResultSchema>;
 
 /** `llmConfig.importEnv` 输出 */

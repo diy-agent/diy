@@ -23,6 +23,7 @@ import type {
 } from "../../shared/model-config";
 import { filterAllows, npmOfEndpoints } from "../../shared/model-config";
 import { diyService } from "../lib/rpc";
+import { EnvImportBar, type EnvScanScope } from "./EnvImportBar";
 import { notificationStore } from "../store/notificationStore";
 import { ConfirmDialog } from "./ConfirmDialog";
 
@@ -57,6 +58,10 @@ export function ModelConfigPage() {
   const [showNewCustom, setShowNewCustom] = createSignal(false);
   /** 环境变量导入候选（snapshot 声明的 env ∩ process.env，再与现有配置比对；见 core/model-import） */
   const [envCandidates, setEnvCandidates] = createSignal<EnvImportCandidate[]>([]);
+  /** 扫描面（providers 数 / 变量名）：零命中时提示条靠它交代「查过什么」 */
+  const [envScanned, setEnvScanned] = createSignal<EnvScanScope | null>(null);
+  /** 扫描失败原因：区别于「零命中」——前者是功能坏了，后者是环境里真没有 */
+  const [envScanError, setEnvScanError] = createSignal<string | null>(null);
   const [envDismissed, setEnvDismissed] = createSignal(false);
   /** 待确认移除的 provider（null = 无弹窗）。用应用内 ConfirmDialog，不用原生 confirm（见其头注释） */
   const [pendingRemove, setPendingRemove] = createSignal<{ kind: "std" | "custom"; key: string } | null>(null);
@@ -76,13 +81,17 @@ export function ModelConfigPage() {
       setLoading(false);
     }
   };
-  /** 扫环境变量（只列不写）：提示条据此渲染 */
+  /** 扫环境变量（只列不写）：提示条据此渲染（候选 + 扫描面；失败也如实入条，不静默吞） */
   const scanEnv = async () => {
     try {
       const r = await diyService.diy.llmConfig.scanEnv({});
       setEnvCandidates(r.candidates);
-    } catch {
-      setEnvCandidates([]); // 扫描失败不打扰（提示条只是便利）
+      setEnvScanned(r.scanned);
+      setEnvScanError(null);
+    } catch (e) {
+      setEnvCandidates([]);
+      setEnvScanned(null);
+      setEnvScanError(e instanceof Error ? e.message : "扫描失败");
     }
   };
   onMount(() => {
@@ -109,9 +118,6 @@ export function ModelConfigPage() {
       notificationStore.addToast("error", e instanceof Error ? e.message : "导入失败");
     }
   };
-
-  /** 提示条只列「可导入」的（configured / duplicate 是"已存在"，没必要提示） */
-  const envImportable = createMemo(() => envCandidates().filter((c) => c.status === "importable"));
 
   const mutateFile = (fn: (f: ModelConfigFile) => void) => {
     const next = structuredClone(file());
@@ -232,33 +238,18 @@ export function ModelConfigPage() {
         provider）或 providers.custom.yaml（自定义）。勾选即启用/隐藏，逐卡片「保存」落盘。
       </div>
 
-      {/* 环境变量导入提示条（形态对齐 FindBar：动态出现、可关闭、不挡内容）。
-          只提示、不自动写 —— 用户点「导入」才落盘；已配置的 provider / 重复密钥不在此列。 */}
-      <Show when={envImportable().length > 0 && !envDismissed()}>
-        <div class="flex flex-wrap items-center gap-2 rounded-box border border-warning/30 bg-warning/15 px-2 py-1 text-sm">
-          <span>🔑 检测到 {envImportable().length} 个可由环境变量导入的 provider：</span>
-          <For each={envImportable()}>
-            {(c) => (
-              <span class="flex items-center gap-1 rounded-field bg-base-100 px-1.5 py-0.5">
-                <code class="font-mono text-xs">{c.provider}</code>
-                <span class="text-xs opacity-60">${c.envVar}</span>
-                <button
-                  class="btn btn-xs btn-ghost"
-                  title={`导入 ${c.provider}（账号写为 $${c.envVar} 引用）`}
-                  onClick={() => void importEnv([c.provider])}
-                >
-                  导入
-                </button>
-              </span>
-            )}
-          </For>
-          <button class="btn btn-xs btn-primary" onClick={() => void importEnv([])}>
-            全部导入
-          </button>
-          <button class="btn btn-xs btn-ghost" title="关闭提示" onClick={() => setEnvDismissed(true)}>
-            ✕
-          </button>
-        </div>
+      {/* 环境变量导入提示条（形态对齐 FindBar：页内一条、可关闭、不挡内容）。
+          四态都给话（##286）：可导入 / 命中但均已在配置中 / 零命中 / 扫描失败 —— 用户不必猜。
+          只提示不自动写，点「导入」才落盘。 */}
+      <Show when={!envDismissed()}>
+        <EnvImportBar
+          candidates={envCandidates()}
+          scanned={envScanned()}
+          error={envScanError()}
+          onImport={(providers) => void importEnv(providers)}
+          onRetry={() => void scanEnv()}
+          onDismiss={() => setEnvDismissed(true)}
+        />
       </Show>
 
       <Show when={!loading()} fallback={<div class="text-body opacity-50">加载中…</div>}>
