@@ -44,6 +44,15 @@ const FACE_OPTIONS = [
   { npm: "@ai-sdk/openai", label: "responses（/responses）" },
 ] as const;
 
+/** 可编辑的单价字段（spec 的 snake_case；$/1M tokens）。tiers（阶梯价）暂留 YAML 手改。 */
+type CostField = "input" | "output" | "cache_read" | "cache_write";
+const COST_FIELDS: { key: CostField; ph: string; label: string }[] = [
+  { key: "input", ph: "in", label: "非缓存输入 $/1M（必填）" },
+  { key: "output", ph: "out", label: "输出 $/1M（必填）" },
+  { key: "cache_read", ph: "读", label: "缓存读 $/1M（可选）" },
+  { key: "cache_write", ph: "写", label: "缓存写 $/1M（可选）" },
+];
+
 export function ModelConfigPage() {
   const [loading, setLoading] = createSignal(true);
   const [saving, setSaving] = createSignal(false);
@@ -173,6 +182,8 @@ export function ModelConfigPage() {
       <div class="text-body opacity-60 text-xs">
         密钥支持 <code>$ENV</code> 插值（未定义会报错）；模型清单来自 models.dev snapshot（models.dev
         provider）或 providers.custom.yaml（自定义）。勾选即启用/隐藏，逐卡片「保存」落盘。
+        自定义 provider 可在模型行**填单价**（$/1M，落 providers.custom.yaml）；不填 = 无价（金额显示
+        <code>—</code>，绝不按 0 计）。
       </div>
 
       <Show when={!loading()} fallback={<div class="text-body opacity-50">加载中…</div>}>
@@ -551,16 +562,21 @@ function CustomCard(props: {
       const r = await diyService.diy.llmConfig.probe({ baseUrl: s.api, apiKey: props.card.cfg.accounts[0]?.data.value ?? "" });
       if (!r.ok) { notificationStore.addToast("error", `不通：${r.error ?? "未知错误"}`); return; }
       const fallbackNpm = providerNpm();
+      const prevModels = spec()?.models ?? {};
       const next: Record<string, SpecProvider["models"][string]> = {};
       let skipped = 0;
       for (const m of r.models) {
         // endpoints 非空 → 按端点定面（只支持两家；anthropic 等跳过）；为空 → 用 provider 级默认面。
         const faceNpm = m.endpoints.length > 0 ? npmOfEndpoints(m.endpoints) : fallbackNpm;
         if (!faceNpm) { skipped++; continue; }
+        const prev = prevModels[m.id];
+        // 合并而非重建：/models 只提供 name/context/面；**手工登记的价格/档位/自定义 limit 必须保留**
+        // （否则点一次「测试并获取模型列表」就把填好的价冲掉 → 静默变无价）。
         next[m.id] = {
+          ...(prev ?? {}),
           id: m.id,
           ...(m.name ? { name: m.name } : {}),
-          ...(m.context ? { limit: { context: m.context } } : {}),
+          ...(m.context ? { limit: { ...(prev?.limit ?? {}), context: m.context } } : {}),
           ...(faceNpm !== fallbackNpm ? { provider: { npm: faceNpm } } : {}),
         };
       }
@@ -576,6 +592,31 @@ function CustomCard(props: {
 
   const patchModel = (id: string, fn: (m: NonNullable<SpecProvider["models"][string]>) => void) =>
     props.mutateSpec(props.card.key, (s) => { const m = s.models[id]; if (m) fn(m); });
+
+  /** 读某模型某单价字段的展示值（未填 → 空串，不显示 0） */
+  const costVal = (id: string, f: CostField): string => {
+    const v = spec()?.models[id]?.cost?.[f];
+    return v != null ? String(v) : "";
+  };
+  /** in/out 只填了一个（runtime 只认两者齐全的价 → 该模型仍无价）：UI 标红提醒 */
+  const costPartial = (id: string): boolean => {
+    const c = spec()?.models[id]?.cost;
+    return c != null && (c.input != null) !== (c.output != null);
+  };
+  /** 写单价字段（$/1M，spec 的 snake_case）：清空则删字段；全空则删整个 cost（无价）。 */
+  const patchCost = (id: string, f: CostField, raw: string) =>
+    patchModel(id, (mm) => {
+      const c = mm.cost ?? {};
+      const t = raw.trim();
+      if (!t) delete c[f];
+      else {
+        const n = Number(t);
+        if (!Number.isFinite(n) || n < 0) return;
+        c[f] = n;
+      }
+      if (Object.keys(c).length > 0) mm.cost = c;
+      else delete mm.cost;
+    });
 
   const toggle = (id: string) => {
     const m = mode();
@@ -660,6 +701,7 @@ function CustomCard(props: {
                 <th class="w-28">context</th>
                 <th class="w-28">output</th>
                 <th class="w-52">档位（逗号，空=平台默认）</th>
+                <th class="w-72">价格 $/1M（in / out / 缓存读 / 缓存写）</th>
               </tr>
             </thead>
             <tbody>
@@ -717,6 +759,24 @@ function CustomCard(props: {
                             (mm as { reasoning_options?: unknown[] }).reasoning_options = [...other, ...(vals.length ? [{ type: "effort", values: vals }] : [])];
                           })}
                         />
+                      </td>
+                      <td>
+                        <div class="flex items-center gap-1">
+                          <Index each={COST_FIELDS}>
+                            {(f) => (
+                              <input
+                                class="input input-bordered input-xs w-14"
+                                placeholder={f().ph}
+                                title={f().label}
+                                value={costVal(id(), f().key)}
+                                onInput={(e) => patchCost(id(), f().key, e.currentTarget.value)}
+                              />
+                            )}
+                          </Index>
+                        </div>
+                        <Show when={costPartial(id())}>
+                          <span class="text-error text-xs">in/out 需同填才有价</span>
+                        </Show>
                       </td>
                     </tr>
                   );

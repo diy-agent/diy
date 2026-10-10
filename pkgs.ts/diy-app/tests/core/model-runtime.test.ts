@@ -163,6 +163,33 @@ describe("refreshModelRuntime（装配 snapshot ⊕ custom ⊕ model.yaml）", (
         expect(effectiveMaxOutputTokens("0@custom:goat/xiaomi/mimo-v2.6-flash", 4000)).toBe(4000);
     });
 
+    it("cost 只填一半（缺 output）→ 无价（不按 0 静默低估）", () => {
+        // UI 允许 in/out 分开填（编辑中途），runtime 只认两者齐全的价：半填 = cost 缺失，
+        // 金额显示 n/a，绝不把缺失的 output 当 0 计（##281）。
+        writeFileSync(
+            join(home, "providers.custom.yaml"),
+            `goat:
+  id: goat
+  npm: "@ai-sdk/openai-compatible"
+  api: "https://x/v1"
+  models:
+    a/b:
+      limit: { context: 1000, output: 100 }
+      cost: { input: 1 }
+`,
+        );
+        writeFileSync(
+            join(home, "model.yaml"),
+            `customProviders:
+  goat:
+    accounts: [{ type: apiKey, data: { value: "k" } }]
+`,
+        );
+        refreshModelRuntime(home);
+        const m = findModel("0@custom:goat/a/b")!;
+        expect(m.cost).toBeUndefined();
+    });
+
     it("$VAR 未定义 → resolveModelKey fail-fast", () => {
         writeFileSync(
             join(home, "providers.custom.yaml"),
