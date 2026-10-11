@@ -484,8 +484,8 @@ describe("tool-result 的 origin 自证位（落盘用；真发不带）", () =>
     });
 });
 
-describe("danglingStopPatches：崩溃残留块补 stop", () => {
-    it("只挑未 stop 的块，子先父后（与 closeTurn 的收尾顺序一致）", () => {
+describe("danglingStopPatches：崩溃残留块补 stop + 轮级结束原因", () => {
+    it("只挑未 stop 的块，子先父后（与 closeTurn 的收尾顺序一致）；开口的 turn 补 endReason=interrupted", () => {
         const s = new BlockStore();
         s.apply({ op: "start", id: "t1", kind: "turn" });
         s.apply({ op: "start", id: "u1", kind: "text", parent: "t1", meta: { role: "user" } });
@@ -494,6 +494,8 @@ describe("danglingStopPatches：崩溃残留块补 stop", () => {
         s.apply({ op: "stop", id: "t2" }); // 已闭合的不再出现
         expect(danglingStopPatches(s)).toEqual([
             { op: "stop", id: "u1" },
+            // ##288 拍板②：进程已死不可能是正常收尾 —— turn 补 closer 时一并钉死结束原因
+            { op: "patch", id: "t1", fields: { endReason: { type: "interrupted", data: {} } } },
             { op: "stop", id: "t1" },
         ]);
     });
@@ -503,6 +505,22 @@ describe("danglingStopPatches：崩溃残留块补 stop", () => {
         s.apply({ op: "start", id: "t1", kind: "turn" });
         s.apply({ op: "stop", id: "t1" });
         expect(danglingStopPatches(s)).toEqual([]);
+    });
+
+    it("已有 endReason 的 turn 不覆盖（正常收尾 / 已补过 closer）", () => {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: "t1", kind: "turn" });
+        s.apply({ op: "patch", id: "t1", fields: { endReason: { type: "max-steps", data: { steps: 3, limit: 3 } } } });
+        expect(danglingStopPatches(s)).toEqual([{ op: "stop", id: "t1" }]);
+    });
+
+    it("收敛后重放：turn.attrs.endReason 可在块树上读到（UI 的输入）", () => {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: "t1", kind: "turn" });
+        for (const op of danglingStopPatches(s)) s.apply(op);
+        const node = toTree(s, "t1");
+        expect(node.attrs.endReason).toEqual({ type: "interrupted", data: {} });
+        expect(node.stopped).toBe(true);
     });
 });
 

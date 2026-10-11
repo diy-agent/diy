@@ -14,6 +14,23 @@ export type JSONVal = string | number | boolean | null | JSONVal[] | { [k: strin
 
 export type BlockKind = "turn" | "step" | "text" | "think" | "tool" | "plan" | "error";
 
+/**
+ * 轮次**结束原因**（判别联合）—— 遵 `rule.discriminated-union`：判别键 `type` 与公共字段同级，
+ * 每个分支**私有**的数据一律进 `data`。落 `turn` 块的 `endReason` 字段（整体 patch）。
+ *
+ * 为什么必须有它（##288）：原先轮次"结束"的唯一信号是 `closeTurn` **无条件**发的 `stop` ——
+ * 「模型自然说完」/「打满步数被掐」/「用户中断」/「流断裂」在 UI 上是同一个形状，
+ * 用户看日志时无从判断"到底是谁结束的、为什么"。
+ * 值域照 dsh 的 `TurnEndReasonMap`，砍掉 diy 没有对照组的 `blocked` / `forked`。
+ */
+export type TurnEndReason =
+    | { type: "completed"; data: {} } // 模型自然说完（末步无待续工具）
+    | { type: "max-steps"; data: { steps: number; limit: number } } // 打满 maxSteps，模型仍在请求工具
+    | { type: "max-tokens"; data: { maxOutputTokens: number } } // 撞 maxOutputTokens 被截断
+    | { type: "aborted"; data: { source: string } } // 用户停止 / 消费端断开
+    | { type: "error"; data: { source: string; message: string } } // llm / stream / budget
+    | { type: "interrupted"; data: {} }; // 崩溃/被杀后补 closer（进程已死，不可能是正常收尾）
+
 export type Op =
     | { op: "start"; id: string; kind: BlockKind; parent?: string; meta?: Record<string, JSONVal> }
     | { op: "delta"; id: string; fields: Record<string, JSONVal> }
@@ -37,7 +54,7 @@ type FieldKind = "Text" | "List" | "Flag";
 
 /** kind → 字段类型表。children 为结构位（start 自动维护），不接受 delta/patch。 */
 const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
-    turn: { usage: "Flag", status: "Flag", notice: "Flag", reasoningEffort: "Flag", durationMs: "Flag" },
+    turn: { usage: "Flag", status: "Flag", notice: "Flag", reasoningEffort: "Flag", durationMs: "Flag", endReason: "Flag" },
     step: { model: "Flag", usage: "Flag", status: "Flag" },
     // steer / steerId：用户"插嘴"写进对话流的标记（模式 next-step|next-turn，缺省 = 本轮开场的那次发言）
     // 与队列项 id（steer/N，回查用）。走 start 的 meta 落位（见 local-agent 的 steerBlockOps），
@@ -99,21 +116,32 @@ export function interruptedToolPatches(store: BlockStore): Op[] {
  *
  * 与 interruptedToolPatches 的分工：
  *   · interruptedToolPatches 管 tool 块的**业务终态**（patch status + output + stop）；
- *   · 本函数管**结构闭合**：所有还没 stop 的块（turn / step / text / think / tool …）。
+ *   · 本函数管**结构闭合**：所有还没 stop 的块（turn / step / text / think / tool …），
+ *     外加**轮级结束原因**（`turn.endReason = interrupted`，见下）。
  * 会话加载时调用（幂等）：崩溃现场若停在半轮，不补 stop 就会让 UI 永远显示"本轮未完成"，
  * 且 append-only 的 llm 全量日志也没法给这一轮定稿（定稿判据 = turn 已 stop）。
  *
  * 顺序：倒序遍历（父块总先于子块创建）→ 子先父后，与 closeTurn 的收尾顺序一致。
  *
- * ⚠️ 只补**结构闭合**（stop），**不补 `durationMs`** —— 正常收尾的耗时由 closeTurn 写
- * （`local-agent.ts` 的 `durationMs = Date.now() - turnId 内嵌开始毫秒`），而崩溃/被杀那一刻
- * 进程已死，"这一轮跑到哪结束"无从得知，编一个数就是假事实。故这类轮次的头部**永远没有耗时位**，
- * 只显示「本轮未完成（流中断/崩溃恢复）」。这是有意为之，不是漏填。
+ * ⚠️ 只补**结构闭合**（stop）与**结束原因**（interrupted），**不补 `durationMs`** —— 正常收尾的耗时
+ * 由 closeTurn 写（`durationMs = Date.now() - turnId 内嵌开始毫秒`），而崩溃/被杀那一刻进程已死，
+ * "这一轮跑到哪结束"无从得知，编一个数就是假事实。故这类轮次的头部**永远没有耗时位**，
+ * 只显示按 `endReason` 派生的「本轮未完成」。这是有意为之，不是漏填。
+ *
+ * 为什么 endReason 也在这里补（##288 拍板②）：`interrupted` 是**冷读合成**的 closer ——
+ * 进程已死，真相只有一个"没跑完"，与 dsh 在同一位置（turn-end 的 interrupted）取同名。
+ * 幂等：已有 `endReason`（正常收尾落过 / 之前已补过）不覆盖。
  */
 export function danglingStopPatches(store: BlockStore): Op[] {
     const out: Op[] = [];
     const ids = [...store.blocks.values()].filter((b) => !b.stopped).map((b) => b.id);
-    for (const id of ids.reverse()) out.push({ op: "stop", id });
+    for (const id of ids.reverse()) {
+        const b = store.blocks.get(id)!;
+        if (b.kind === "turn" && b.endReason === undefined) {
+            out.push({ op: "patch", id, fields: { endReason: { type: "interrupted", data: {} } } });
+        }
+        out.push({ op: "stop", id });
+    }
     return out;
 }
 

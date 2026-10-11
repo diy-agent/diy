@@ -42,6 +42,7 @@ import {
     type DeliveryOpts,
     type Op,
     type JSONVal,
+    type TurnEndReason,
 } from "./local-blocks";
 import { appendAudit } from "./agent-audit";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
@@ -1834,6 +1835,21 @@ export class LocalAgentManager {
         let turnCost: CostBreakdown = { noCache: 0, cacheRead: 0, cacheWrite: null, text: 0, reasoning: 0, total: 0 };
         // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
         let lastAct: "none" | "text" | "tool" = "none";
+        /**
+         * 本轮**结束原因**（##288 拍板①）：closeTurn 时 patch 进 turn 块。
+         *
+         * `null` = 尚未判定。判据分散在流循环的几条分支里（finish / error / abort / catch），
+         * 一旦写入就**粘住**（`setEndReason` 先到先得）：`error` 之后照常会收到 finish，
+         * 那是同一次流的收尾，不是新结论 —— 后者不许把 error 降级成 completed。
+         *
+         * 兜底（closeTurn）：跑完流却没写（消费端断开 / 崩溃）见 `streamDone`。
+         */
+        let endReason: TurnEndReason | null = null;
+        /** 流循环是否**正常跑完**（区别"消费端 return 展开"：那时内层 for-await 被丢弃，不会置位） */
+        let streamDone = false;
+        const setEndReason = (r: TurnEndReason): void => {
+            if (endReason === null) endReason = r;
+        };
 
         // ── 插话投递 ─────────────────────────────────────────────
         // prepareStep 是同步回调（不是生成器），只能先把 op 排队、由流循环 flush 出去
@@ -1928,6 +1944,10 @@ export class LocalAgentManager {
          */
         const closeTurn = function* (currentStepId: string, steps: number): Generator<Op, void, void> {
             const ops: Op[] = [];
+            // 轮次结束原因（该轮事实，##288）：正常分支已写好；没写 = 流没跑完（消费端断开/崩溃）
+            // → `aborted{detached}` —— 生成器被 return 展开时唯一可证的事实。
+            const reason: TurnEndReason = endReason ?? (streamDone ? { type: "completed", data: {} } : { type: "aborted", data: { source: "detached" } });
+            ops.push({ op: "patch", id: turnId, fields: { endReason: reason } });
             // 轮次耗时（该轮事实）：turnId 内嵌开始毫秒（`t${Date.now()}`）→ 收尾此刻
             const durationMs = Date.now() - Number(turnId.slice(1));
             ops.push({ op: "patch", id: turnId, fields: { durationMs } });
@@ -1977,11 +1997,11 @@ export class LocalAgentManager {
         const over = systemOverBudget(delivery.system.bytes, contextLimitOf(model));
         if (over) {
             const kb = (n: number) => (n / 1024).toFixed(1);
-            yield* errorBlock(
-                "budget",
+            const budgetMsg =
                 `系统上下文超出预算（${kb(over.used)} KB > ${kb(over.budget)} KB），本轮未发送。` +
-                    `请精简项目 AGENTS.md，或在上下文树页把易变变量划到 runtime。`,
-            );
+                `请精简项目 AGENTS.md，或在上下文树页把易变变量划到 runtime。`;
+            setEndReason({ type: "error", data: { source: "budget", message: budgetMsg } });
+            yield* errorBlock("budget", budgetMsg);
             // 拒绝发送也是一轮完整生命周期：必须闭合，否则 UI/崩溃报告/审计三处都会认为它还在跑。
             // 这条 return 在 try 之前，不经过下面的 finally —— 收尾在这里显式做，且**只做一次**
             // （closeTurn 的 sink 不幂等：重复调用会往 ops 里多写一条 stop，虽然无害但脏）。
@@ -2266,10 +2286,14 @@ export class LocalAgentManager {
                             yield* emit({ op: "stop", id });
                             break;
                         }
-                        case "error":
-                            yield* errorBlock("llm", errText((part as { error?: unknown }).error));
+                        case "error": {
+                            const msg = errText((part as { error?: unknown }).error);
+                            setEndReason({ type: "error", data: { source: "llm", message: msg } });
+                            yield* errorBlock("llm", msg);
                             break;
+                        }
                         case "abort":
+                            setEndReason({ type: "aborted", data: { source: "abort" } });
                             yield* errorBlock("abort", "生成已取消");
                             break;
                         case "finish-step": {
@@ -2332,8 +2356,12 @@ export class LocalAgentManager {
                             let notice: string | undefined;
                             if (fr === "length") {
                                 notice = `输出达到 maxOutputTokens=${modelMax} 被截断（${model} 硬上限），可再发一条消息接上`;
+                                setEndReason({ type: "max-tokens", data: { maxOutputTokens: modelMax } });
                             } else if (stepN >= L.maxSteps && lastAct === "tool") {
                                 notice = `达到 maxSteps=${L.maxSteps} 步上限，本轮强制收尾（模型仍在请求工具）；继续发消息可接力`;
+                                setEndReason({ type: "max-steps", data: { steps: stepN, limit: L.maxSteps } });
+                            } else {
+                                setEndReason({ type: "completed", data: {} });
                             }
                             if (notice) yield* emit({ op: "patch", id: turnId, fields: { notice } });
                             if (usage) {
@@ -2353,12 +2381,19 @@ export class LocalAgentManager {
                     }
                 }
 
+                // 流循环跑到这里 = 流**正常收尾**（无异常、无 return 展开）。置位供 closeTurn 兜底：
+                // 若各分支都没写 endReason（provider 连 finish 都没发），至少有"跑完了"这个事实。
+                streamDone = true;
                 // LLM 历史由外层 chat() 从块树统一重建（见 chat 末尾），此处不操作
             } catch (e) {
                 // 取消（消费端断开 / 停止按钮）与真实错误分流：前者是预期收尾，后者记 error 块
-                if (signal.aborted) yield* errorBlock("abort", "生成已取消");
-                else {
-                    yield* errorBlock("stream", errText(e));
+                if (signal.aborted) {
+                    setEndReason({ type: "aborted", data: { source: "abort" } });
+                    yield* errorBlock("abort", "生成已取消");
+                } else {
+                    const msg = errText(e);
+                    setEndReason({ type: "error", data: { source: "stream", message: msg } });
+                    yield* errorBlock("stream", msg);
                     failed = true;
                 }
             }
