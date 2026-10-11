@@ -26,7 +26,7 @@ import { Caches, NAV_W_MIN, NAV_W_MAX, NAV_W_DEFAULT } from "./lib/ui-state";
 import { VIEW_BAR_H } from "./lib/layout-metrics";
 import { TaskSideView } from "./components/TaskSideView";
 import { Breadcrumb } from "./components/Breadcrumb";
-import { NavSearch } from "./components/NavSearch";
+import { NAV_SEARCH_SHORTCUT, NavSearch } from "./components/NavSearch";
 import { FindBar } from "./components/FindBar";
 import { findStore } from "./store/findStore";
 import { setRendererActions, resetRendererActions, getRendererActions } from "./lib/renderer-actions";
@@ -834,8 +834,10 @@ export default function App() {
                                     expanded() ? "px-3 py-2 rounded-lg" : "h-8 w-8 rounded-lg justify-center"
                                 } hover:bg-base-300`}
                                 data-testid="nav-search-open"
-                                title="搜索任务 / 会话（⌘K）"
-                                aria-label="搜索任务 / 会话（⌘K）"
+                                // R6-1：快捷键文案（title / aria-label / <kbd>）与弹层 footer 同源，
+                                // 不再各写各的 —— 非 mac 用户也得看得见 Ctrl+K。
+                                title={`搜索任务 / 会话（${NAV_SEARCH_SHORTCUT}）`}
+                                aria-label={`搜索任务 / 会话（${NAV_SEARCH_SHORTCUT}）`}
                                 onClick={() => {
                                     hideHoverLayers();
                                     setNavSearchOpen(true);
@@ -844,7 +846,7 @@ export default function App() {
                                 <span>🔍</span>
                                 <Show when={expanded()}>
                                     <span class="flex-1 text-left opacity-70">搜索…</span>
-                                    <kbd class="text-caption opacity-50">⌘K</kbd>
+                                    <kbd class="text-caption opacity-50">{NAV_SEARCH_SHORTCUT}</kbd>
                                 </Show>
                             </button>
                         </li>

@@ -37,6 +37,15 @@ import { tabStore } from "../store/tabStore";
 const OVERLAY_Z = 500;
 
 /**
+ * 快捷键文案的**唯一源**（R6-1）。
+ *
+ * 弹层 footer 与 nav 入口（`title` / `aria-label` / `<kbd>`）都在展示它 —— 此前四处各写
+ * 各的，改 footer 时漏了入口三处，同一个 PR 内就自相矛盾（非 mac 用户看不到 Ctrl+K）。
+ * 两处共用一个常量，这类"改一处漏一处"就不会再发生。
+ */
+export const NAV_SEARCH_SHORTCUT = "⌘K / Ctrl+K";
+
+/**
  * 该任务此刻是否已开着会话 tab（用于「已打开」徽标）。
  *
  * 用 `tabStore.find` 而非自己遍历 `opened`（review4 R4-2）：仓内既有惯用法就是
@@ -76,6 +85,15 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
     const hits = createMemo(() => allHits().slice(0, NAV_SEARCH_LIMIT));
     /** 被截断掉多少条（>0 时底部提示还有更多） */
     const hiddenCount = () => allHits().length - hits().length;
+
+    /** 底部计数段文案（R6-4：算一次给 footer 用，避免同一段里反复读 hits()/allHits()） */
+    const countText = () => {
+        const shown = hits().length;
+        if (shown === 0) return "";
+        return hiddenCount() > 0
+            ? `显示 ${shown} / 共 ${allHits().length} 条 · 继续输入缩小范围`
+            : `${shown} 条`;
+    };
 
     /**
      * 选中项下标（渲染与 aria 用）：按 uri 在当前结果里定位；uri 不在结果里则归零。
@@ -278,15 +296,9 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
                     class="border-t border-base-300 px-3 py-1 text-caption opacity-50"
                 >
                     {/* R2-4：计数段与快捷键段用同一模板串拼接（无计数时不留下前导 `·`）。
-                        RV-4：被截断时说清"还有更多"，不让用户以为总共就这些。 */}
-                    {[
-                        hits().length > 0
-                            ? hiddenCount() > 0
-                                ? `显示 ${hits().length} / 共 ${allHits().length} 条 · 继续输入缩小范围`
-                                : `${hits().length} 条`
-                            : "",
-                        "Enter 打开会话 · Esc 关闭 · ⌘K / Ctrl+K 开关",
-                    ]
+                        RV-4：被截断时说清"还有更多"，不让用户以为总共就这些。
+                        R6-4：计数自己在 countText 里算一次，不在这里反复调 hits()/allHits()。 */}
+                    {[countText(), `Enter 打开会话 · Esc 关闭 · ${NAV_SEARCH_SHORTCUT} 开关`]
                         .filter(Boolean)
                         .join(" · ")}
                 </div>

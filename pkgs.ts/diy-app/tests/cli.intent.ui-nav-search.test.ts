@@ -28,6 +28,11 @@
 //      且快捷键段写「⌘K / Ctrl+K」（review5 R5-3② / R5-4）
 //  19. **IME 组合态的 Esc 也要拦下不再外传** —— 组合态放行会让事件冒泡到 window、
 //      顺手清掉背后的任务详情面板（review5 R5-1a：R3-1a 的对称面）
+//  20. nav 入口的快捷键文案与弹层 footer **同源**（title / aria-label / kbd 都写
+//      「⌘K / Ctrl+K」，不再只写 ⌘K —— 非 mac 用户看不到；review6 R6-1）
+//  21. 弹层开着时 `⌘F` **让位**（FindBar 是流内元素，会被 z-500 遮罩压住 → 开了也看不见）；
+//      关掉弹层后 `⌘F` 恢复正常（review6 R6-2）
+//  22. **按住不放的连发**（真 `autoRepeat` keydown）只响应首次，不会把弹层又开合回来（review6 R6-3）
 //
 // 为什么走真实 UI 而不是 CLI 调状态：本功能全是键盘与焦点行为（聚焦、↑↓、Enter），
 // 状态机断言证明不了「按了键有没有反应」——那正是本功能唯一值得测的东西。
@@ -180,6 +185,17 @@ describe("nav ⌘K 快速打开会话", () => {
     expect(await waitUntil(focusedIsInput, (v) => v, { label: "输入框自动聚焦" })).toBe(true);
     await ui.press("Escape");
     await waitUntil(overlayOpen, (v) => !v, { label: "Esc 关弹层" });
+
+    // R6-1：入口的快捷键文案与弹层 footer 同源 —— title / aria-label / <kbd> 三处都不能
+    // 只写 ⌘K（非 mac 用户看不到 Ctrl+K）。此前 footer 改了、入口三处漏改。
+    const entry = await ui.query<{ title: string | null; label: string | null; kbd: string }>(`(() => {
+      const b = document.querySelector('[data-testid="nav-search-open"]');
+      return { title: b.getAttribute("title"), label: b.getAttribute("aria-label"),
+               kbd: b.querySelector("kbd")?.textContent ?? "" };
+    })()`);
+    for (const [what, text] of [["title", entry.title], ["aria-label", entry.label], ["kbd", entry.kbd]] as const) {
+      expect(text, `入口 ${what} 该写全快捷键`).toContain("Ctrl+K");
+    }
   });
 
   it("收起态（rail）：🔍 入口仍在且可用", async () => {
@@ -364,11 +380,67 @@ describe("nav ⌘K 快速打开会话", () => {
     expect(await tabs()).toEqual(before);
   });
 
-  it("Ctrl+K 与 ⌘K 等效（Win/Linux 习惯；按住不放的连发只响应首次）", async () => {
+  it("Ctrl+K 与 ⌘K 等效；按住不放的连发只响应首次（真 autoRepeat，R6-3）", async () => {
+    // 记下每次 `k` keydown 的 repeat 标。**不记就等于没测**：autoRepeat 若没真送出去，
+    // "连发没把弹层关掉"也可能只是"根本没连发"而侥幸通过（这正是 R6-3 指出的旧用例病症 ——
+    // 标题写连发、实际只按了两次独立按键，测的是 toggle 而不是 repeat 守卫）。
+    await ui.query(`(() => {
+      window.__k = [];
+      document.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === 'k') window.__k.push({ repeat: e.repeat });
+      }, true);
+      return true;
+    })()`);
+
     await ui.press("Ctrl+K");
     await waitUntil(overlayOpen, (v) => v, { label: "Ctrl+K 打开弹层" });
+
+    // 按住不放 → keydown 连发（autoRepeat）；handler 的 `if (e.repeat) return` 只认首次。
+    // ⚠️ **奇数次**：连发若没被守卫拦住，每次连发都会 toggle —— 发偶数次会"关→开"抵消，
+    // 断言假过（本用例初版就踩了这个：反向探针下仍然绿）。逐次断言才划得开真假。
+    await ui.press("Ctrl+K", { autoRepeat: true });
+    expect(await overlayOpen(), "一次连发不该把弹层关掉").toBe(true);
+    await ui.press("Ctrl+K", { autoRepeat: true });
+    expect(await overlayOpen(), "连发不该累积成开合").toBe(true);
+    const ks = await ui.query<{ repeat: boolean }[]>("window.__k");
+    expect(ks.some((k) => k.repeat), "autoRepeat 的 keydown 必须真送达（否则本用例假绿）").toBe(true);
+    expect(await overlayOpen(), "连发不该把弹层又关掉").toBe(true);
+
+    // 真实第二次按键（非连发）才是"再按一次关闭"
     await ui.press("Ctrl+K");
     await waitUntil(overlayOpen, (v) => !v, { label: "Ctrl+K 再按关闭" });
+  });
+
+  it("弹层开着时 ⌘F 让位；关掉后 ⌘F 恢复正常（R6-2）", async () => {
+    const findBar = () => ui.query<boolean>(`!!document.querySelector('input[placeholder*="页面内查找"]')`);
+    expect(await findBar(), "前置：此刻不该有查找条").toBe(false);
+
+    await openSearch();
+    // 防假绿：断言这次 Meta+F 的 keydown 真的送到了 window handler（否则"没开查找条"
+    // 也可能只是"按键根本没发出去"）。
+    await ui.query(`(() => {
+      window.__f = null;
+      document.addEventListener('keydown', (e) => {
+        if (window.__f === null && e.key.toLowerCase() === 'f') window.__f = { mod: e.metaKey || e.ctrlKey };
+      }, true);
+      return true;
+    })()`);
+    await ui.press("Meta+F");
+    expect((await ui.query<{ mod: boolean } | null>("window.__f"))?.mod).toBe(true);
+    // 让位（R3-1b）：FindBar 是主区内的**流内**元素、无层级，会被 z-500 全屏遮罩压住 ——
+    // 开了也看不见点不到，像「⌘F 没反应」。给它一拍确认它确实没冒出来。
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await findBar(), "弹层开着时 ⌘F 不该打开查找条").toBe(false);
+    expect(await overlayOpen(), "让位不影响弹层本身").toBe(true);
+
+    // 关掉弹层后 ⌘F 恢复正常
+    await ui.press("Escape");
+    await waitUntil(overlayOpen, (v) => !v, { label: "Esc 关弹层" });
+    await ui.press("Meta+F");
+    await waitUntil(findBar, (v) => v, { label: "关掉弹层后 ⌘F 恢复正常" });
+    // 清场：Esc 关查找条
+    await ui.press("Escape");
+    await waitUntil(findBar, (v) => !v, { label: "Esc 关查找条" });
   });
 
   it("鼠标点击结果项即打开该会话（onClick 路径）", async () => {

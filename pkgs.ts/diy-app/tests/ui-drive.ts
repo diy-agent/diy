@@ -225,8 +225,14 @@ export interface UiDriver {
    * 注意：文本会插到**插入点**，不替换已有内容；要先 click 聚焦、必要时 `press("Meta+A")` 全选。
    */
   type(text: string): Promise<void>;
-  /** 真实按键（如 Enter / ArrowDown / Escape）。可带 Meta/Ctrl/Shift 修饰，如 `Meta+A` */
-  press(key: string): Promise<void>;
+  /**
+   * 真实按键（如 Enter / ArrowDown / Escape）。可带 Meta/Ctrl/Shift 修饰，如 `Meta+A`。
+   *
+   * `autoRepeat: true` = 把这次 keydown 标成**按住不放的连发**（CDP `autoRepeat` →
+   * `KeyboardEvent.repeat === true`）。用于验证"连发只响应首次"这类契约：没有它就只能
+   * 连按两次独立按键，那测的是 toggle 而不是 repeat 守卫（review6 R6-3）。
+   */
+  press(key: string, opts?: { autoRepeat?: boolean }): Promise<void>;
   /**
    * 让**当前焦点元素**进入真实输入法（IME）组合态（CDP `Input.imeSetComposition`）。
    *
@@ -400,7 +406,7 @@ export async function makeUiDriver(
       await new Promise((r) => setTimeout(r, 120));
     },
 
-    async press(key) {
+    async press(key, opts) {
       // 常见键 → 键码。`Mod+K`（Meta/Ctrl）形式解析：修饰键只改 modifiers，主键照发。
       const CODES: Record<string, { code: string; vk: number }> = {
         ArrowDown: { code: "ArrowDown", vk: 40 },
@@ -430,7 +436,8 @@ export async function makeUiDriver(
         nativeVirtualKeyCode: info.vk,
         modifiers,
       };
-      await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...base });
+      // autoRepeat 只打在 keyDown 上（keyUp 没有"连发"这回事）
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", autoRepeat: opts?.autoRepeat ?? false, ...base });
       await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
       await new Promise((r) => setTimeout(r, 120));
     },
