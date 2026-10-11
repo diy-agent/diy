@@ -273,13 +273,105 @@ export function turnEndNote(turn: BlockNode): string | null {
  * 判据 = 文档序位置：数一数前面有几项，其**首个叶子**排在活动块之前。
  * 取不到（节点已被移除）→ 排在末尾，宁可偏后也不要抛错。
  */
-export function liveSlotIndex(turn: BlockNode, items: ContentItem[], node: BlockNode): number {
+export function liveSlotIndex(turn: BlockNode, items: readonly { key: string }[], node: BlockNode): number {
     const order = new Map<string, number>();
     leavesOf(turn).forEach((n, i) => order.set(n.id, i));
     const at = order.get(node.id) ?? Number.POSITIVE_INFINITY;
     let i = 0;
     while (i < items.length && (order.get(items[i]!.key) ?? Number.POSITIVE_INFINITY) < at) i++;
     return i;
+}
+
+/**
+ * 这一行**点开会不会多出东西** —— 决定行首给「展开箭头」还是「末级点」。
+ *
+ * 用户 2026-10-11 口径：思考行收起时先给**首行**预览（与工具行的 `tool · 命令首行` 对称），
+ * 点开才看全文；若思考**只有一行**，展开体与那行标题是同一句 —— 那就不该有展开能力
+ * （点开毫无变化，像坏了）。行首**不能空着**：左列箭头是层级刻度，缺一格整行文字会左移、与上下行错位，
+ * 故给一个极轻的点（`IconDot`，不是箭头 —— 箭头承诺「里面还有东西」）。
+ *
+ * 工具行**恒可展开**：它有 result（或命令被裁）要看 —— 展开永远比标题多东西。
+ * 阈值与标题的首行截断一致（`LocalChatPage.firstLine` 切到 90 字）：被裁的单行思考也必须能点开看全。
+ */
+const THINK_LINE_MAX = 90;
+
+export function expandableOf(n: BlockNode): boolean {
+    if (n.tag !== "think") return true;
+    const c = typeof n.attrs.content === "string" ? n.attrs.content : "";
+    return c.includes("\n") || c.trim().length > THINK_LINE_MAX;
+}
+
+// ─── 一轮的行（级别同构的唯一切口） ──────────────────────
+
+/**
+ * 一轮正文区的**一行**。级别只决定"**已完成的**行显示多少"，尾行（活动块 / 错误现场）
+ * **任何级别都在**、形状一致 —— 这就是"级别同构"。
+ *
+ * 为什么统一成一个行类型（用户 2026-10-11 口径：「级别显示应该是同构的，尽量不要特殊处理，
+ * 如果有特殊情况…有可能是我们把层次或位置搞错了…尽量同构代码也简单」）：
+ *   旧版按级别分了两条渲染路径（1-2 级 fallback / 3-4 级中间区），于是每加一条规格
+ *   （活动块、现场、结论、错误…）都得在两处各写一遍，还各自漏过东西（现场只在一处出、
+ *   活动块只在一处画）—— 特例不是需求带来的，是"两套结构"带来的。
+ *   现在：**一条行序列**，`turnRows` 一处产出，`<For>` 一处渲染，级别只影响序列内容。
+ *
+ * `key` 是行的稳定标识（`<For>` 按引用 diff 的依据，见组件 reuseRows）：
+ *   · 尾行**只带 id**（节点每帧换引用 —— 带节点就是每帧重建 DOM = 点击全丢）
+ *   · 其余行带节点；节点在块树里未变则同引用（`toTree` 缓存），故可据以复用
+ */
+export type TurnRow =
+    | { kind: "user"; key: string; node: BlockNode }
+    | { kind: "error"; key: string; node: BlockNode }
+    /** 助理正文；`clamp` = 压成 N 行摘要（1 级的结论那一行） */
+    | { kind: "text"; key: string; node: BlockNode; clamp: boolean }
+    /** 连续过程折成一行 bar（3 级起；切法见 contentItems） */
+    | { kind: "proc"; key: string; parts: BlockNode[] }
+    /** 尾行：直播**活动块**（live）或异常结束的**现场** —— 任何级别都在，节点按 id 现取 */
+    | { kind: "tail"; key: string };
+
+/**
+ * 尾行的节点：直播中 = 活动块（`live`，见 liveTailOf）；否则 = 异常结束的现场（`sceneTailOf`）。
+ * 判据只此一处 —— 组件与 `turnRows` 都从这里取，免得两处各判一次而分叉。
+ */
+export function tailNodeOf(turn: BlockNode, live: BlockNode | null): BlockNode | null {
+    return live ?? sceneTailOf(turn);
+}
+
+/**
+ * 一轮的正文行（**级别同构的唯一切口**）—— 纯函数，可单测。
+ *
+ * 级别只改"已完成的"部分：
+ *   1-2 级 —— 用户发言（**轮首那批由调用方先画**，见 leadUsers）+ error + **结论**（1 级压 N 行 / 2 级全文）
+ *   3-4 级 —— 用户发言 + error + **助理正文逐条**（全文）+ 连续过程折成一行 bar
+ * 尾行（活动块 / 现场）**与上面这些无关**：它表示"正在发生 / 断在哪"，任何级别都出，
+ * 且位置由**文档序**决定（`liveSlotIndex`）—— 插回它该在的那一行之前，不重排。
+ *
+ * `live` = 本轮的活动块节点（非直播轮 / 还没出内容 → null）。节点只在函数内用来定位与排除
+ * （它必须**只画一次**），行里**只存 id**。
+ */
+export function turnRows(turn: BlockNode, level: TurnLevel, live: BlockNode | null): TurnRow[] {
+    const plan = planOfLevel(level);
+    const tail = tailNodeOf(turn, live);
+    const lead = new Set(leadUsers(turn));
+    /** 尾行的节点不再进文档序行（同一块画两遍就是重复 —— review P1-1） */
+    const owned = new Set<string>(tail ? [tail.id] : []);
+    const rows: TurnRow[] = [];
+    if (plan.mid) {
+        for (const it of contentItems(turn, (n) => owned.has(n.id))) {
+            if (it.kind === "proc") rows.push({ kind: "proc", key: it.key, parts: it.parts });
+            else if (it.kind === "text") rows.push({ kind: "text", key: it.key, node: it.node, clamp: false });
+            else rows.push({ kind: it.kind, key: it.key, node: it.node });
+        }
+    } else {
+        for (const n of foldedItems(turn)) {
+            // 轮首那批用户发言由调用方先画（IM 顺序，见 leadUsers）—— 这里再画一遍就是同一句两遍
+            if (lead.has(n) || owned.has(n.id)) continue;
+            if (isUserText(n)) rows.push({ kind: "user", key: n.id, node: n });
+            else if (n.tag === "error") rows.push({ kind: "error", key: n.id, node: n });
+            else rows.push({ kind: "text", key: n.id, node: n, clamp: plan.conclusionClamped });
+        }
+    }
+    if (tail) rows.splice(liveSlotIndex(turn, rows, tail), 0, { kind: "tail", key: tail.id });
+    return rows;
 }
 
 // ─── 展开级别 ────────────────────────────────────────
@@ -297,6 +389,9 @@ export function liveSlotIndex(turn: BlockNode, items: ContentItem[], node: Block
  * 单轮不做循环 —— 点轮次头就是"把我这条展开 / 收拢"两态（见 `levelOfTurn`）。
  * 4 级那个"铺开"也能被用户**单点某一行**单独触发（组件的 pin），不必先整体换层：
  * 展开这一行的结果与 4 级那一行长得一样（用户 2026-10-11 口径："展开就还是第 4 层"）。
+ *
+ * **活动块（直播中那条）不受级别限制**：1 级看不清中间区，但它仍以**定高活动框**出现 ——
+ * 只剩一行状态的话首行很快定住、看不出还在跑（用户 2026-10-11 口径）。
  *
  * **第 5 层 = 单条工具/思考的正文（内容），不在级别里**（`TURN_DETAIL_LAYER`）：
  * 一轮几十个事件、每个几百行，整体展开就"一屏放不下两轮"。那份内容只由用户

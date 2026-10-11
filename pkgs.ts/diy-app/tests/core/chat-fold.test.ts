@@ -11,6 +11,7 @@ import {
     clampLines,
     contentItems,
     cycleTurnLevel,
+    expandableOf,
     foldedItems,
     isProc,
     isTurnLevel,
@@ -26,7 +27,9 @@ import {
     liveSlotIndex,
     liveTailOf,
     planOfLevel,
+    tailNodeOf,
     turnLevelLabel,
+    turnRows,
 } from "../../src/renderer_solid/lib/chat-fold";
 import type { BlockNode } from "../../src/main/services/local-blocks";
 
@@ -483,5 +486,89 @@ describe("clampLines：1 级摘要按行截断", () => {
 
     it("按行切而不是按字符切：代码块/列表不会被切在中间", () => {
         expect(clampLines("```\nx=1\n```\ntail", 3).text).toBe("```\nx=1\n```");
+    });
+});
+
+// ─── 级别同构（2026-10-11 用户口径：「级别显示应该是同构的，尽量不要特殊处理」） ───
+
+describe("expandableOf：这一行点开会不会多出东西", () => {
+    it("思考只有一行 → 不给展开能力（展开体与标题是同一句）", () => {
+        expect(expandableOf(n("think", "k1", { content: "想一下" }))).toBe(false);
+        expect(expandableOf(n("think", "k2", { content: "" }))).toBe(false);
+    });
+
+    it("思考多行 / 单行超长（标题会被裁到 90 字）→ 可展开", () => {
+        expect(expandableOf(n("think", "k1", { content: "第一行\n第二行" }))).toBe(true);
+        expect(expandableOf(n("think", "k2", { content: "x".repeat(91) }))).toBe(true);
+        expect(expandableOf(n("think", "k3", { content: "x".repeat(90) }))).toBe(false);
+    });
+
+    it("工具恒可展开：它有 result / 完整命令可看", () => {
+        expect(expandableOf(tool("x1"))).toBe(true);
+    });
+});
+
+describe("turnRows：一条行序列、所有级别同构", () => {
+    const t = turn(
+        step("s1", [user("u1")]),
+        step("s2", [think("k1"), tool("x1")]),
+        step("s3", [say("a1")]),
+    );
+    const shape = (rows: ReturnType<typeof turnRows>) =>
+        rows.map((r) =>
+            r.kind === "proc" ? `proc:${r.parts.map((p) => p.id).join(",")}` : `${r.kind}:${r.key}`,
+        );
+
+    it("1 级 = 结论（压摘要）；2 级 = 同一行不压（级别只改 clamp，不改结构）", () => {
+        const r1 = turnRows(t, 1, null);
+        expect(shape(r1)).toEqual(["text:a1"]);
+        expect(r1[0]).toMatchObject({ kind: "text", clamp: true });
+        const r2 = turnRows(t, 2, null);
+        expect(shape(r2)).toEqual(["text:a1"]);
+        expect(r2[0]).toMatchObject({ kind: "text", clamp: false });
+    });
+
+    it("3 级 = 连续过程一行 bar + 正文逐条；4 级同一批行（铺开是渲染侧的事）", () => {
+        expect(shape(turnRows(t, 3, null))).toEqual(["proc:k1,x1", "text:a1"]);
+        expect(shape(turnRows(t, 4, null))).toEqual(shape(turnRows(t, 3, null)));
+    });
+
+    it("尾行（活动块）**任何级别都在**，且那条叶子不再出现在别的行里", () => {
+        const live = think("k1");
+        for (const l of [1, 2, 3, 4] as const) {
+            const rows = turnRows(t, l, live);
+            expect(rows.filter((r) => r.kind === "tail").map((r) => r.key)).toEqual(["k1"]);
+            expect(
+                rows.some((r) => r.kind === "proc" && r.parts.some((p) => p.id === "k1")),
+            ).toBe(false);
+        }
+    });
+
+    it("尾行按**文档序**插回：它在后面那条插话之前（不重排、也不挂末尾）", () => {
+        const withSteer = turn(step("s1", [think("k1")]), step("s2", [user("u2")]));
+        expect(shape(turnRows(withSteer, 3, think("k1")))).toEqual(["tail:k1", "user:u2"]);
+        expect(shape(turnRows(withSteer, 1, think("k1")))).toEqual(["tail:k1", "user:u2"]);
+    });
+
+    it("异常结束 → 现场也是尾行（1 级就看得见）；`tailNodeOf` 一处判定", () => {
+        const dead = n(
+            "turn",
+            "t1",
+            { endReason: { type: "aborted", data: { source: "abort" } } },
+            [step("s1", [think("k1"), tool("x1", true, "error")]), step("s2", [say("a1")])],
+        );
+        // 末叶子是正文 → 那是结论，不是现场
+        expect(tailNodeOf(dead, null)).toBeNull();
+        const cut = n(
+            "turn",
+            "t2",
+            { endReason: { type: "interrupted", data: {} } },
+            [step("s1", [say("a1"), tool("x1", true, "error")])],
+        );
+        expect(tailNodeOf(cut, null)?.id).toBe("x1");
+        // 1 级：末叶子不是正文 ⇒ **没有结论**，只有现场那一行（判据见 conclusionOf）
+        expect(shape(turnRows(cut, 1, null))).toEqual(["tail:x1"]);
+        // 4 级：那句更早的过程正文也在（真位置在失败工具之前），现场仍是尾行
+        expect(shape(turnRows(cut, 4, null))).toEqual(["text:a1", "tail:x1"]);
     });
 });

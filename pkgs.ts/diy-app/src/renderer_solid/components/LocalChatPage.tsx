@@ -1,24 +1,26 @@
 /**
  * LocalChatPage — 本地自定义 agent 对话页（ai-sdk 块协议，独立于 ACP ChatPage）
  *
- * 渲染 = f(轮次展开级别 level, 阶段 phase)。静态（已截止）与动态（进行中）**结构同构** ——
- * 动态多一个"尾巴框"（活动块），它就地画在文档序原位（`liveSlotIndex`）。
+ * 渲染 = 一个 `<For>` 铺开**一条行序列**（`chat-fold.turnRows`），**所有级别同构**：
+ * 级别只是"取行的参数"，不是另一套结构 —— 静态（已截止）与动态（进行中）也同构，
+ * 动态多的那个"活动块"是行序列里的**尾行**（`kind: "tail"`），任何级别都在、形状一致。
  *
  * 级别（`lib/chat-fold` 的 TurnLevel）：1 摘要结论 → 2 完整结论 → 3 全部正文 → 4 逐条过程。
- *   **循环只归顶部那个 `n/4 展开` 按钮**（对所有轮次一起换层）；点某一轮的人物标题 bar 只是
- *   "把我这一条收拢 / 展开"两态（用户 2026-10-11 口径：单条信息不做循环），见 `levelOfTurn`。
+ *   **循环只归顶部那个 `n/4 展开` 按钮**（对所有轮次一起换层，且**复位**所有手工痕迹）；
+ *   点某一轮的人物标题 bar 只是"把我这一条收拢 / 展开"两态（单条信息不做循环），见 `levelOfTurn`。
  *   **第 5 层（单条工具/思考的内容）不在级别里**：太庞大，只由用户点那一行自己开。
  *
- * ⚠️ 根行（每个 turn 一行）**按 id 复用行对象**（见 rootRows 与本文件的 turnById）：
- *   `<For>` 按引用判定同一行，而直播轮的块树节点每帧都是新对象 —— 直接喂 `trees` 会让
- *   整轮 DOM 每帧重建，后果不是"卡"而是**点击全丢**（2026-10-11 CDP 实测）。
- * ⚠️ 尾巴框单独画的叶子必须与 `ownedIds` 一致（那批叶子不再进文档序渲染）——
+ * ⚠️ 行**按 key 复用行对象**（见 `rootRows` / `reuseRows`）：`<For>` 按引用判定同一行，
+ *   而直播轮的块树节点每帧都是新对象 —— 直接喂新数组会让整块 DOM 每帧重建，后果不是"卡"
+ *   而是**点击全丢**（2026-10-11 CDP 实测）。**尾行只带 id**（节点每帧换引用）。
+ * ⚠️ 尾行那条叶子由 `turnRows` **排除在文档序之外**（判据一处：`tailNodeOf`）——
  *   两处判据一分叉就是同一块画两遍（review P1-1）。
  *
- * 「开/关」一律由 `IconChevron` 表达，**放在行首**（收起右指 ▸、展开下指 ▾ —— 树形语义，见其头注）：
+ * 「开/关」一律由 `IconChevron` 表达，**放在行首**（收起右指 ▸、展开下指 ▾ —— 树形语义，见其头注）；
+ * 没有可展开内容的行给 `IconDot`（同格占位，见 `chat-fold.expandableOf`）。
  * 可展开行头一律 `DisclosureHead`（div + role=button：**按钮内的文本选不中**，见其头注）。
  * 「显示什么、按什么序、开到第几层」的语义全在 `lib/chat-fold.ts`（纯函数 + 单测），本文件只管画。
- * MD 渲染/原文是**正交**的显示偏好：摘要态同样按它渲染（见 ConclusionText）。
+ * MD 渲染/原文是**正交**的显示偏好：摘要态同样按它渲染（见 TextRow）。
  */
 import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch } from "solid-js";
 import type { JSX } from "solid-js";
@@ -50,7 +52,7 @@ import type { SteerItem, SteerMode } from "../../main/core/drafts";
 import { reasoningEffortLabel } from "../../shared/reasoning-effort";
 import { DragDropProvider, DragOverlay, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
-import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron } from "./icons";
+import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron, IconDot } from "./icons";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
@@ -61,24 +63,22 @@ import {
     TURN_LEVEL_MIN,
     clampLines,
     composeTail,
-    contentItems,
     cycleTurnLevel,
-    foldedItems,
+    expandableOf,
     isTurnLevel,
     isUserText,
     leadUsers,
     leavesOf,
     levelOfTurn,
-    liveSlotIndex,
     liveTailOf,
     planOfLevel,
-    sceneTailOf,
+    tailNodeOf,
     turnEndNote,
     turnFoldTip,
     turnLevelTip,
-    type TailScene,
-    type ContentItem,
+    turnRows,
     type TurnLevel,
+    type TurnRow,
 } from "../lib/chat-fold";
 // 历史 mode 值归一与文案放 shared（纯函数、可单测）：ops 日志是 append-only 的史书，
 // 枚举改名前的 step/turn 与现值长期共存，读侧必须归一（详见 shared/steer-mode.ts）
@@ -218,35 +218,36 @@ function hasAssistantContent(turn: BlockNode): boolean {
     return leavesOf(turn).some((n) => !isUserText(n));
 }
 /**
- * 中间区的**身份复用**：`contentItems` 每次（每帧）都返回一组新对象，直接喂 `<For>` 就是
- * 每帧把整轮重建 —— 后果见文件头注（点击全丢）。行对象按 key + 结构（同引用）复用，
- * DOM 才留在原地。
+ * 行的**身份复用**：`turnRows` 每帧都返回一组新对象，直接喂 `<For>` 就是每帧把整轮重建
+ * —— 后果见文件头注（点击全丢）。行对象按 key + 内容（同引用）复用，DOM 才留在原地。
  *
  * 用**引用相等**做判据的依据与 `toTree` 的缓存一致：未变的块在块树里就是同一个对象，
- * 于是"内容没变" ⟺ "节点逐个同引用"。
+ * 于是"内容没变" ⟺ "节点逐个同引用"。**尾行例外**：它只带 id（直播时节点每帧换引用，
+ * 比不了也比不得），故只比 id —— 同一个 id 就是同一行，DOM 不该重建。
  */
-function sameItem(a: ContentItem, b: ContentItem): boolean {
+function sameRow(a: TurnRow, b: TurnRow): boolean {
     if (a.kind !== b.kind || a.key !== b.key) return false;
-    if (a.kind === "proc" && b.kind === "proc") {
-        return a.parts.length === b.parts.length && a.parts.every((n, i) => n === b.parts[i]);
+    if (a.kind === "tail") return true; // 只带 id：节点每帧换引用，不能比
+    if (a.kind === "proc") {
+        return (
+            b.kind === "proc" &&
+            a.parts.length === b.parts.length &&
+            a.parts.every((n, i) => n === b.parts[i])
+        );
     }
-    return a.kind !== "proc" && b.kind !== "proc" && a.node === b.node;
-}
-
-/** 中间区的一行：内容项，或**就地**画的活动块（`key` = 活动块那个叶子的 id） */
-type MidRow = ContentItem | { kind: "live"; key: string };
-
-function sameRow(a: MidRow, b: MidRow): boolean {
-    if (a.kind === "live" || b.kind === "live") return a.kind === b.kind && a.key === b.key;
-    return sameItem(a, b);
+    if (a.kind === "text") {
+        // `clamp` 随级别变（1/2 级切换）：同节点也必须重画，否则收起态回不到全文
+        return b.kind === "text" && a.node === b.node && a.clamp === b.clamp;
+    }
+    return (b as { node: BlockNode }).node === a.node;
 }
 
 /**
  * 按位复用同形行（新数组，但元素尽量沿用旧对象 —— 元素的引用相等正是 `<For>` 的 diff 依据）。
- * 活动块那一行**只带 id**（不带节点）—— 内容每帧都在变，带节点就是每帧换引用 = 每帧重建 DOM，
+ * 尾行**只带 id**（不带节点）：内容每帧都在变，带节点就是每帧换引用 = 每帧重建 DOM，
  * 后果不是"卡"而是**点击全丢**（见文件头注）。节点由 `leafById` 现取。
  */
-function reuseRows(prev: MidRow[], next: MidRow[]): MidRow[] {
+function reuseRows(prev: TurnRow[], next: TurnRow[]): TurnRow[] {
     return next.map((s, i) => {
         const p = prev[i];
         return p && sameRow(p, s) ? p : s;
@@ -315,9 +316,11 @@ function summaryOf(n: BlockNode, open = true): string {
         return `[${str(n.attrs.source)}] ${firstLine(str(n.attrs.message))}`;
     }
     if (n.tag === "think") {
-        const label = n.stopped ? "思考" : "思考中…";
-        if (open) return label;
-        return firstLine(str(n.attrs.content)).trim() || label;
+        // 首行**恒给**（2026-10-11 用户口径）：3 级 bar 的预览与 4 级逐条行要**同一句** ——
+        // 工具行写 `tool · 命令首行`，思考行只写"思考"是不对称的。
+        // 内容还空着（刚起）时才退回状态词。展开体是全文，首行会重复一次，那是"预览"的代价；
+        // 单行思考干脆**不给展开能力**（见 expandableOf），从根上不重复。
+        return firstLine(str(n.attrs.content)).trim() || (n.stopped ? "思考" : "思考中…");
     }
     if (n.tag === "tool") {
         return `${str(n.attrs.tool) || "tool"}${toolCommand(n) ? ` · ${firstLine(toolCommand(n))}` : ""}${isInterruptedToolBlock(n) ? " · ⊘ 中断" : ""}`;
@@ -449,6 +452,9 @@ function ProcBody(props: {
  * 行首 `statusMark` **恒显**（💭 / ⚙ 类字形 + ● 在跑 / ✓ 完成 / ✗ 失败 / ⊘ 中断）：
  * 少了它，一行 `思考` 与一行 `Bash · 命令` 在长列表里只能靠读文字分辨（2026-10-11 用户口径
  * "给工具和思考 bar 前加前缀图标"）。它同时是**状态位**（● / ✗ / ⊘），不是纯装饰。
+ *
+ * **行首第一格**：能展开给箭头、不能展开给 `IconDot`（见 `expandableOf`）——
+ * 思考只有一行时展开体与标题是同一句，点开毫无变化；但格子不能空（左列是齐的层级刻度）。
  */
 function ProcessRow(props: {
     node: BlockNode;
@@ -457,24 +463,43 @@ function ProcessRow(props: {
     onFull: (title: string, content: string) => void;
 }) {
     const n = () => props.node;
-    const open = () => procOpen(n(), props.pin);
+    /** 这一行**点开会不会多出东西**（思考只有一行就不给展开能力，见 chat-fold.expandableOf） */
+    const can = () => expandableOf(n());
+    const open = () => can() && procOpen(n(), props.pin);
+    const head = "flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left";
+    /**
+     * 行头（三种行位共用同一份内容，只是外壳不同）：
+     * **能展开** = `DisclosureHead`（可点）；**不能展开** = 静态 `div` —— 不是"按钮"，
+     * 读屏不该念成可按。第一格恒占位（箭头 或 `IconDot`），左列才是齐的层级刻度。
+     */
+    const body = (
+        <>
+            <Show when={can()} fallback={<IconDot class="h-3.5 w-3.5 opacity-20" />}>
+                <IconChevron open={open()} class="h-3.5 w-3.5 opacity-40" />
+            </Show>
+            {statusMark(n())}
+            <span class="font-medium text-base-content/80 truncate flex-1">{summaryOf(n(), open())}</span>
+        </>
+    );
     return (
         <div
             class="rounded-lg border border-base-300 bg-base-200/40 text-body"
             data-block-id={n().id}
             data-block-tag={n().tag}
+            data-expandable={can() ? "1" : "0"}
         >
-            <DisclosureHead
-                open={open()}
-                onToggle={() => props.onToggle(n().id)}
-                class="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left hover:bg-base-200/60"
+            <Show
+                when={can()}
+                fallback={<div class={head}>{body}</div>}
             >
-                <IconChevron open={open()} class="h-3.5 w-3.5 opacity-40" />
-                {statusMark(n())}
-                <span class="font-medium text-base-content/80 truncate flex-1">
-                    {summaryOf(n(), open())}
-                </span>
-            </DisclosureHead>
+                <DisclosureHead
+                    open={open()}
+                    onToggle={() => props.onToggle(n().id)}
+                    class={`${head} hover:bg-base-200/60`}
+                >
+                    {body}
+                </DisclosureHead>
+            </Show>
             <Show when={open()}>
                 <div class="px-3 pb-2 max-h-72 overflow-auto">
                     <ProcBody node={n()} onFull={props.onFull} />
@@ -485,7 +510,8 @@ function ProcessRow(props: {
 }
 
 /**
- * 轮次末尾的**尾巴框**：活动（直播中）与**现场**（异常结束后）是同一件东西的两个时刻。
+ * **尾行框**：活动（直播中）与**现场**（异常结束后）是同一件东西的两个时刻；它是行序列里
+ * `kind: "tail"` 的那一行 —— **任何级别都在**、形状一致（"级别同构"，也是"1 级不变量"里的"错误"）。
  *
  * 用户 2026-10-11 定稿：
  *   · **直播中** = 中间载体，装**所有正在收取中的数据**（text / tool / think），体**定高**
@@ -580,55 +606,33 @@ function TailBox(props: {
     );
 }
 
-/** 现场框：`tail` 为空即不出一行（判据全在 `composeTail` / `sceneTailOf` 里，组件不自己判） */
-function SceneBox(props: {
-    tail: TailScene | null;
-    node: BlockNode | null;
-    pin: Record<string, boolean>;
-    onToggle: (id: string, force?: boolean) => void;
-    onFull: (title: string, content: string) => void;
-    md: boolean;
-}) {
-    return (
-        <Show when={props.tail}>
-            {(tc) => (
-                <Show when={props.node}>
-                    {(nd) => (
-                        <TailBox
-                            node={nd()}
-                            error={tc().error}
-                            body={tc().body}
-                            pin={props.pin}
-                            onToggle={props.onToggle}
-                            onFull={props.onFull}
-                            md={props.md}
-                        />
-                    )}
-                </Show>
-            )}
-        </Show>
-    );
-}
-
 /**
- * 一个 turn 的渲染构成（级别语义见 `lib/chat-fold.ts`，这里只说层次）：
- *   [轮首用户发言]   `leadUsers` —— 先出（IM 直觉：用户先说、对方再接）
+ * 一个 turn 的渲染构成（级别语义见 `lib/chat-fold.ts`，这里只说层次）——
+ * **一条行序列，所有级别同构**：
+ *   [轮首用户发言]  `leadUsers` —— 先出（IM 直觉：用户先说、对方再接）
  *   轮次头          身份 + chevron；点它 = **收拢 / 展开这一轮**（换层归顶部那个全局按钮）
- *   内容区          1 摘要结论 · 2 完整结论 · 3 全部正文 + 过程 bar · 4 过程 bar 铺开逐条
- *   尾巴框          直播中 = **活动块**（定高，装**所有收取中的数据**：text / think / tool）；
- *                   异常结束 = **现场**（末叶子不是正文时：折叠 = 一行标题，展开 = 当时在跑的东西）
+ *   正文行序列      `chat-fold.turnRows` 一处产出、同一个 `<For>` 一处渲染 ——
+ *                   级别只改"**已完成的**行显示多少"：1 摘要结论 · 2 完整结论 ·
+ *                   3 全部正文 + 过程 bar · 4 过程 bar 铺开逐条
+ *   **尾行**        活动块（直播中）或现场（异常结束）—— **任何级别都在、形状一致**，
+ *                   位置按文档序插回（`liveSlotIndex`）
  *   结束说明        按 `endReason` 说清"为什么结束"（所有级别恒显）
  *   轮尾一行        时刻（左，纯文本、不可点）+ 统计（纯文本）+ 用量按钮（右）
  *
+ * 为什么只有一条行序列（用户 2026-10-11 口径：「级别显示应该是同构的，尽量不要特殊处理，
+ * 如果有特殊情况…有可能是我们把层次或位置搞错了…尽量同构代码也简单」）：旧版按级别
+ * 分成两条渲染路径，每加一条规格（活动块 / 现场 / 结论 / 错误）都得在两处各写一遍，
+ * 各自漏过东西。现在"级别"只是一个**取行的参数**，不是另一套结构。
+ *
  * 恒显项 = **"1 级不变量"**（与级别无关）：用户发言 · 轮次头 · 结论文本 · error / 现场 · 结束说明。
- * 其中"结论"的判据是 `chat-fold.conclusionOf`（**文档序最后一个非用户叶子恰是助理正文**）——
- * 旧判据"最后一条正文"是错的：中途被打断的轮会把一句过程话当结论（2026-10-11 用户实测）。
+ * 其中"结论"的判据是 `chat-fold.conclusionOf`（**文档序最后一个非用户叶子恰是助理正文**）
+ * —— 旧判据"最后一条正文"是错的：中途被打断的轮会把一句过程话当结论（2026-10-11 用户实测）。
  *
  * 身份（🤖 头像 · 人物 · 模型 · 思考级别）是**该轮事实**的投影（`turn.attrs.model` /
  * `reasoningEffort`），不是当前配置 —— 否则改一次 personas.yaml 全部历史署名被一起改写
- * （任务 196 的教训）。**任何级别都显示身份**（用户 2026-10-11 口径：1 级与 2 级要一致）。
+ * （任务 196 的教训）。**任何级别都显示身份**（1 级与 2 级必须一致）。
  *
- * 折叠体**不重排**：只做"藏中间过程"，用户发言/插话/error 一律就地渲染（见 chat-fold.ts）。
+ * 行**不重排**：只做"藏中间过程"，用户发言/插话/error 一律就地渲染（见 chat-fold.ts）。
  */
 
 /** 该轮耗时（main 收尾 patch 写入的 `durationMs`）；没写（旧日志 / 崩溃轮）→ null，不编 0 */
@@ -654,7 +658,7 @@ function fmtDuration(ms: number): string {
  * 判据（都是 review 或用户口径换来的）：
  *   · **不放 token**：用量按钮就在右边，同一行说两遍；
  *   · **不放 `n/4`**：级别归顶部那个全局按钮，单轮只有开/合两态（见 TurnHeader 头注）；
- *   · 报错要有位置：一屏多轮时先看见"哪轮出过事"最快（error 块本身恒显，见 foldBody）。
+ *   · 报错要有位置：一屏多轮时先看见"哪轮出过事"最快（error 块本身是恒显行，见 chat-fold.turnRows）。
  */
 function turnStatLine(t: BlockNode, c: { step: number; tool: number; think: number; error: number }): string {
     const parts: string[] = [];
@@ -747,46 +751,10 @@ function TurnHeader(props: {
 }
 
 /**
- * 轮尾的**单行**状态条（只有 1-2 级用 —— 那两级看不到中间区，这儿是唯一的直播反馈）。
+ * **助理正文行** —— 所有级别共用同一个组件，级别只决定 `clamp`（"级别同构"的落点之一）。
  *
- * 恒一行、纯文字，**零跳动**：它不随内容长高（不像旧的轮尾活动框会吃掉 5 行高度）。
- * 3 级起不再有它 —— 活动块自己就在文档序里带着状态（见 ProcessRow 的 live），
- * 同一句标题在同一个屏幕上说两遍是用户反复否掉的重复。
- */
-function LiveStatusLine(props: { turnId: string; blockId: string }) {
-    const n = () => leafById(props.turnId, props.blockId);
-    return (
-        <div
-            class="flex items-center gap-2 px-1.5 text-body"
-            data-live-line
-            data-block-id={props.blockId}
-            data-block-tag={n().tag}
-        >
-            {statusMark(n())}
-            <span class="min-w-0 flex-1 truncate opacity-70">{summaryOf(n(), false)}</span>
-            <span class="shrink-0 text-caption opacity-50" data-live-state>
-                <Show when={!n().stopped} fallback={<span class="animate-pulse">⋯ 等待下一步…</span>}>
-                    <span class="animate-pulse">进行中</span>
-                </Show>
-            </span>
-        </div>
-    );
-}
-
-/** assistant 正文（展开态）：全文，md/原文由全局开关决定；每轮身份已在轮次头，不再单独署名 */
-function TextBlock(props: { node: BlockNode; md: boolean }) {
-    const b = () => props.node;
-    return (
-        <div data-block-id={b().id} data-block-tag="text">
-            <Show when={props.md} fallback={<PlainText text={str(b().attrs.content)} />}>
-                <MarkdownText text={str(b().attrs.content)} streaming={!b().stopped} />
-            </Show>
-        </div>
-    );
-}
-
-/**
- * 1 级「摘要结论」：末条助理正文压成 N 行摘要，点提示行进 2 级看全文。
+ * `clamp`（1 级的结论）压成 N 行摘要、点提示行进下一级看全；`!clamp`（2 级起 + 3-4 级的
+ * 中间正文）一律全文。
  *
  * 两个易错点（都是用户反馈过的）：
  *   ① **必须跟 MD 渲染/原文开关走**（2026-10-11 反馈：摘要态强制原文、展开态才是渲染，
@@ -798,11 +766,11 @@ function TextBlock(props: { node: BlockNode; md: boolean }) {
  *      再加**可点提示行**说清"还有几行 + 点哪看全"（GitHub / Slack 的 Show more 一路）。
  *      只靠 CSS line-clamp 自带的 `…` 信息量最低，且会把代码块截在结构中间。
  */
-function ConclusionText(props: {
+function TextRow(props: {
     node: BlockNode;
-    /** 摘要行数上限（仅 1 级用） */
+    /** 摘要行数上限（仅 clamp 时用） */
     lines: number;
-    /** true = 压成摘要（1 级）；false = 全文（2 级起） */
+    /** true = 压成摘要（1 级）；false = 全文 */
     clamp: boolean;
     md: boolean;
     /** 点提示行 = 进下一级（全文在下一级） */
@@ -810,8 +778,8 @@ function ConclusionText(props: {
 }) {
     const b = () => props.node;
     const raw = () => str(b().attrs.content);
-    // 直播中的结论不截：它还在长，截断只会来回跳；定稿后才压成摘要。
-    // clamp=false（2 级）时**永不截** —— 那一级要的就是全文，级别说了算，组件不自作主张
+    // 直播中的正文不截：它还在长，截断只会来回跳；定稿后才压成摘要。
+    // clamp=false 时**永不截** —— 那一级要的就是全文，级别说了算，组件不自作主张
     const clipped = () => props.clamp && b().stopped;
     const view = () => (clipped() ? clampLines(raw(), props.lines) : { text: raw(), omitted: 0 });
     const cut = () => view().omitted > 0;
@@ -899,19 +867,15 @@ function ProcBar(props: {
     const thinks = () => props.parts.filter((n) => n.tag === "think").length;
     const tools = () => props.parts.filter((n) => n.tag === "tool").length;
     const failed = () => props.parts.some((n) => n.tag === "tool" && str(n.attrs.status) === "error");
-    /** 计数块的读屏/自动化文案（图标的字形读屏念不出来） */
-    const countsText = () =>
-        [thinks() ? `${thinks()} 段思考` : "", tools() ? `${tools()} 个工具` : ""]
-            .filter(Boolean)
-            .join("、");
+    /** 计数块的读屏/自动化文案（图标的字形读屏念不出来）；**两个计数恒在**（见下） */
+    const countsText = () => `${thinks()} 段思考、${tools()} 个工具`;
     return (
         <div class="rounded-lg" data-block-tag="proc-bar" data-block-id={props.parts[0]?.id}>
             <DisclosureHead
                 open={props.open}
                 onToggle={props.onToggle}
                 class="flex items-center gap-1.5 w-full py-1 px-1.5 rounded-lg hover:bg-base-200/60 text-body"
-                /* 读屏文案：thinks() 为 0 时不能落成模板串里的 `0 && …`（求值成 0，念作「02 个工具」） */
-                ariaLabel={`过程：${countsText() || "空"}（点击${props.open ? "收起" : "展开"}这一行）`}
+                ariaLabel={`过程：${countsText()}（点击${props.open ? "收起" : "展开"}这一行）`}
             >
                 <IconChevron open={props.open} class="h-3.5 w-3.5 opacity-40" />
                 {/* 计数在**行首**：展开/收起都在（同一位置同一形状，不随开合消失），
@@ -919,11 +883,12 @@ function ProcBar(props: {
                 <span
                     class="shrink-0 rounded bg-base-300/60 px-1 tabular-nums text-caption opacity-70"
                     data-proc-counts={countsText()}
-                    title={countsText() || undefined}
+                    title={countsText()}
                 >
-                    {thinks() ? `💭 ${thinks()}` : ""}
-                    {thinks() && tools() ? " · " : ""}
-                    {tools() ? `⚙ ${tools()}` : ""}
+                    {/* **两个计数恒在**（为 0 也写）：各段的计数块同宽同位，扫一眼就能比"哪段重"；
+                        只写非零那个，第一段（只有思考）就比后面的窄一截，看着像两种行
+                        （用户 2026-10-11 口径："甚至为 0 都要有，方便对齐和视觉概念上的统一"）。 */}
+                    {`💭 ${thinks()} · ⚙ ${tools()}`}
                     <Show when={failed()}>
                         <span class="ml-1 text-error" title="这一行里有失败的工具">
                             ✗
@@ -1060,56 +1025,23 @@ function TurnView(props: {
     const plan = () => planOfLevel(props.level);
     /** 轮首用户发言：渲染在轮次头**之前**（IM 顺序）。见 chat-fold.leadUsers */
     const lead = () => leadUsers(t());
-    /**
-     * 1-2 级的内容区（严格文档序，只"藏中间过程"、不"搬位置"）：
-     *   · 1 级：轮中插话 + error + 末条正文（**压 N 行摘要**）
-     *   · 2 级：同上，但末条正文给**全文**（其余正文仍不显示）
-     * 为什么必须文档序：插话块在文档序上位于轮次**中间**，旧版把"全部用户发言"提到最前，
-     * 它就被拽到了自己那条助理回复的下面 —— 看着像"助理先说、用户后说"（2026-10-04 现象）。
-     * 轮首那批已由 lead 渲染，这里用 foldBody 剔掉，避免画两遍。
-     */
-    const foldBody = () => {
-        const head = lead();
-        const own = ownedIds();
-        const items = foldedItems(t()).filter((n) => !own.has(n.id));
-        return head.length ? items.filter((n) => !head.includes(n)) : items;
-    };
     const isLiveTurn = () => props.liveTurnId != null && props.liveTurnId === t().id;
     /** 直播中：本轮已出助理内容、但 main 还没写过 usage patch → 轮尾那行先出**占位**
      *  （时间由 turnId 自带，用量要等第一步 finish-step）。判据与"等待响应"loading 互补：
      *  助理内容一出现，占位条即接管，界面不再"什么都没有"。 */
     const usagePending = () => !t().attrs.usage && isLiveTurn() && hasAssistantContent(t());
-    // 上帧的行序列：跨次渲染复用未变的行（`<For>` 按引用 diff —— 不复用就是每帧重建 = 点击全丢）
-    let prevItems: MidRow[] = [];
-    /** **活动块**（仅直播轮次）= 文档序最后一个非用户叶子（think / tool / **text** …，见 chat-fold）。
-     *  它就地画（带定高展开体），所以先从文档序里剔除（否则同一块画两遍，review P1-1），
-     *  再按 `liveSlotIndex` **插回它文档序该在的位置** —— 它后面常有收尾那条正文，
-     *  一律挂在末尾就会排到那条正文后面（顺序错，2026-10-04 那个坑）。 */
+    /** **活动块**（仅直播轮次）= 文档序最后一个非用户叶子（think / tool / **text** …，见 chat-fold） */
     const liveNode = () => liveTailOf(t(), isLiveTurn());
-    /** 尾巴叶子：直播=活动块；已结束=**现场**（异常结束且末叶子不是正文，见 chat-fold.sceneTailOf） */
-    const tailNode = () => (isLiveTurn() ? liveNode() : sceneTailOf(t()));
+    /** **尾行**节点：直播 = 活动块；已结束 = 现场。判据只在 chat-fold（`tailNodeOf`），组件不自己判 */
+    const tailNode = () => tailNodeOf(t(), liveNode());
     const tail = () => composeTail(t(), tailNode());
-    /** 尾巴占用的叶子 id：它们由 TailBox 单独画，不进文档序（同一块画两遍是 review P1-1） */
-    const ownedIds = () => {
-        const own = new Set<string>();
-        const tc = tail();
-        if (tc) {
-            if (tc.body) own.add(tc.body.id);
-            if (tc.error) own.add(tc.error.id);
-        }
-        return own;
-    };
-    const items = () => {
-        const live = liveNode();
-        const own = ownedIds();
-        const its = contentItems(t(), (n) => own.has(n.id));
-        let rows: MidRow[] = its;
-        if (isLiveTurn() && live) {
-            const at = liveSlotIndex(t(), its, live);
-            rows = [...its.slice(0, at), { kind: "live", key: live.id }, ...its.slice(at)];
-        }
-        prevItems = reuseRows(prevItems, rows);
-        return prevItems;
+    /** 上帧的行序列：跨次渲染复用未变的行（`<For>` 按引用 diff —— 不复用就是每帧重建 = 点击全丢） */
+    let prevRows: TurnRow[] = [];
+    /** 正文行序列 —— **一条路径、所有级别同构**（见 chat-fold.turnRows） */
+    const rows = () => {
+        const next = turnRows(t(), props.level, liveNode());
+        prevRows = reuseRows(prevRows, next);
+        return prevRows;
     };
     const counts = () => countTags(t());
     /** 过程 bar 的开合：用户的 pin 优先，否则跟 4 级。键加 `row:` 前缀 —— 行键 = 该段首个叶子 id，
@@ -1123,107 +1055,59 @@ function TurnView(props: {
             {/* 轮首用户发言**先出**：IM 直觉是"用户先说、对方再接"。
                 轮次头（助理身份行）压在用户消息上面 = 看着像助理先开口（2026-10-11 反馈）。 */}
             <For each={lead()}>{(n) => <UserBubble node={n} />}</For>
-            <TurnHeader
-                turnId={props.turnId}
-                level={props.level}
-                onToggle={props.onCycle}
-                counts={counts()}
-            />
-            <Show
-                when={plan().mid}
-                fallback={
-                    <div class="space-y-1.5 pl-1">
-                        <For each={foldBody()}>
-                            {(n) =>
-                                isUserText(n) ? (
-                                    <UserBubble node={n} />
-                                ) : n.tag === "error" ? (
-                                    /* error 在**所有级别**都露头：一轮报错后收起来与成功轮次
-                                       长得一模一样，最后一条正文还可能是报错前的旧内容 */
-                                    <ErrorBox node={n} />
-                                ) : (
-                                    <ConclusionText
-                                        node={n}
-                                        lines={props.conclusionLines}
-                                        clamp={plan().conclusionClamped}
-                                        md={props.md}
-                                        onExpand={props.onCycle}
-                                    />
-                                )
-                            }
-                        </For>
-                        {/* 现场（见上）：1-2 级看不见中间区，但它属于"1 级不变量"里的"错误" */}
-                        <SceneBox
-                            tail={isLiveTurn() ? null : tail()}
-                            node={tailNode()}
-                            pin={props.pin}
-                            onToggle={props.onToggle}
-                            onFull={props.onFull}
-                            md={props.md}
-                        />
-                    </div>
-                }
-            >
-                {/* 3 级起：中间区 = 正文逐条全文 + 过程 bar（连续过程折一行）+ 用户发言 + error，
-                    全部按文档序（见 chat-fold.contentItems）。
-
-                    `pl-2`（不是 `pl-0.5`）：箭头移到行首后，**左列箭头的缩进就是一个层级刻度**
-                    （轮次头 → 过程 bar → 逐条过程）。只让 4px 时三者的箭头看着像同一列没对齐，
-                    8px 才读得出"bar 在轮次头之下"（2026-10-11 口径：箭头换左）。 */}
-                <div class="space-y-1 pl-2">
-                    <For each={items()}>
-                        {(it) => {
-                            /* 活动块：就地（文档序原位）带定高展开体 + 状态。
-                               节点按 id 现取 —— 它是每帧换引用的流式节点。 */
-                            if (it.kind === "live") {
-                                const tc = tail()!;
-                                return (
-                                    <div class="my-1" data-mid-live>
-                                        <TailBox
-                                            node={leafById(props.turnId, it.key)}
-                                            error={tc.error}
-                                            body={tc.body}
-                                            pin={props.pin}
-                                            onToggle={props.onToggle}
-                                            onFull={props.onFull}
-                                            md={props.md}
-                                            live
-                                        />
-                                    </div>
-                                );
-                            }
-                            if (it.kind === "user") return <UserBubble node={it.node} />;
-                            if (it.kind === "error") return <ErrorBox node={it.node} />;
-                            if (it.kind === "text") return <TextBlock node={it.node} md={props.md} />;
+            <TurnHeader turnId={props.turnId} level={props.level} onToggle={props.onCycle} counts={counts()} />
+            {/* 正文区：**一个 `<For>` 渲染所有级别**（同构）。
+                `pl-2`：箭头移到行首后，左列箭头的缩进就是层级刻度
+                （轮次头 → 过程 bar → 逐条过程），8px 才读得出"bar 在轮次头之下"。 */}
+            <div class="space-y-1.5 pl-2">
+                <For each={rows()}>
+                    {(row) => {
+                        /* **尾行**（活动块 / 现场）：节点按 id 现取 —— 直播时它是每帧换引用的
+                           流式节点；内容与错误条由 `composeTail` 一处分解，TailBox 只画 */
+                        if (row.kind === "tail") {
                             return (
-                                <ProcBar
-                                    parts={it.parts}
-                                    open={rowOpen(it.key)}
-                                    onToggle={() => props.onToggle(`row:${it.key}`)}
-                                    pin={props.pin}
-                                    onToggleProc={props.onToggle}
-                                    onFull={props.onFull}
+                                <div data-tail-row={isLiveTurn() ? "live" : "scene"}>
+                                    <TailBox
+                                        node={leafById(props.turnId, row.key)}
+                                        error={tail()?.error ?? null}
+                                        body={tail()?.body ?? null}
+                                        pin={props.pin}
+                                        onToggle={props.onToggle}
+                                        onFull={props.onFull}
+                                        md={props.md}
+                                        live={isLiveTurn()}
+                                    />
+                                </div>
+                            );
+                        }
+                        if (row.kind === "user") return <UserBubble node={row.node} />;
+                        if (row.kind === "error") return <ErrorBox node={row.node} />;
+                        if (row.kind === "text")
+                            return (
+                                <TextRow
+                                    node={row.node}
+                                    lines={props.conclusionLines}
+                                    clamp={row.clamp}
+                                    md={props.md}
+                                    onExpand={props.onCycle}
                                 />
                             );
-                        }}
-                    </For>
-                    {/* 已结束轮次的**现场**（异常结束 + 末叶子不是正文）：1-4 级都要出 */}
-                    <SceneBox
-                        tail={isLiveTurn() ? null : tail()}
-                        node={tailNode()}
-                        pin={props.pin}
-                        onToggle={props.onToggle}
-                        onFull={props.onFull}
-                        md={props.md}
-                    />
-                </div>
-            </Show>
-            {/* 直播轮次 1-2 级：中间区不显示，活动块就不在屏幕上 —— 这儿给**单行**状态
-                （恒一行、零跳动；"step 跑完不消失、转 ⋯ 等待下一步"就是这一行在说）。
-                3 级起活动块自己带状态，这里不再出一行 —— 同一句标题同屏说两遍是用户否掉的重复。 */}
-            <Show when={!plan().mid && liveNode()}>
-                <LiveStatusLine turnId={props.turnId} blockId={liveNode()!.id} />
-            </Show>
+                        return (
+                            <ProcBar
+                                parts={row.parts}
+                                open={rowOpen(row.key)}
+                                /* **显式**给反值：`pin` 缺省时翻转出来是 `!undefined = true`，
+                                   而 4 级这行**默认就是展开** —— 不显式传 force 的话第一次点
+                                   毫无变化（要连点两下才收起）。与 TailBox 同一个坑，见 togglePin。 */
+                                onToggle={() => props.onToggle(`row:${row.key}`, !rowOpen(row.key))}
+                                pin={props.pin}
+                                onToggleProc={props.onToggle}
+                                onFull={props.onFull}
+                            />
+                        );
+                    }}
+                </For>
+            </div>
             {/* 结束状态说明（所有级别恒显 = "1 级不变量"）：按 endReason 说清"模型说完了 /
                 被步数掐 / 输出截断 / 被中断 / 流断裂"。旧日志无 endReason 时退回 notice 与 interrupted */}
             <Show when={!isLiveTurn() && turnEndNote(t())}>
@@ -1700,10 +1584,16 @@ export function LocalChatPage(props: { uri?: string }) {
     /** 人物标题 bar：**收拢 / 展开这一轮**（不换层）——按"现在是什么态"决定翻到哪一边 */
     const toggleTurn = (turnId: string) =>
         setFoldMarks((p) => ({ ...p, [turnId]: levelOf(turnId) > TURN_LEVEL_MIN }));
-    /** 全部轮次换层（顶部按钮）：连同收拢标记一起复位 */
+    /** 全部轮次换层（顶部按钮）：**状态复位**，不是"叠加一层"。
+     *
+     * 用户 2026-10-11 口径：「总的 4 级展开按钮点击后，所有级别都应该复原，而不是因为被点开
+     * 或收缩过，导致切换到 4 级时还有手工点过的某些行没铺开」——两种手工痕迹一起清：
+     * 轮次的收拢标记（`foldMarks`）与每行的开合 pin（`pinned`）。
+     * 不清 pin 的话，切到 4 级时"某一行还闭着"（`rowOpen` 的 pin 优先），看着就是按钮失灵。 */
     const cycleAllLevels = () => {
         setGlobalLevel(cycleTurnLevel(globalLevel()));
         setFoldMarks({});
+        setPinned({});
     };
     /** 1 级摘要的行数 */
     const conclusionLines = () => Caches.diy_chat_conclusion_lines.get();
