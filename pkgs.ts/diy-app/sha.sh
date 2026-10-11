@@ -55,12 +55,13 @@ sync() { :; }
 build() {
   local d; d="$(_build_dir)"
   run npx vite build --config vite.main.config.ts
-  # snapshot（models.dev 产物，fs 惰性读）随 main 产物走：build/<V>/main/data/
-  run mkdir -p "$d/main/data" && cp src/main/data/models-snapshot.json "$d/main/data/"
+  # 内置数据三件（models.dev.json + models.dev.diy.json + calendars.json，均 fs 惰性读）
+  # 随 main 产物走：build/<V>/main/data/（通配拷贝 —— 加文件不用改这里，但改名要同步）
+  run mkdir -p "$d/main/data" && cp src/main/data/*.json "$d/main/data/"
   run npx vite build --config vite.preload.config.ts
   run npx vite build --config vite.cli.config.ts
-  # CLI 产物也带 snapshot：否则打包安装（无源树）时 build/<V>/cli 找不到数据，模型目录退化为空（##275 R1-5）
-  run mkdir -p "$d/cli/data" && cp src/main/data/models-snapshot.json "$d/cli/data/"
+  # CLI 产物也带内置数据：否则打包安装（无源树）时 build/<V>/cli 找不到数据，模型目录退化为空（##275 R1-5）
+  run mkdir -p "$d/cli/data" && cp src/main/data/*.json "$d/cli/data/"
   build-renderer
 }
 

@@ -1,12 +1,15 @@
 // src/shared/model-config.ts
 // 🎯 LLM provider 配置的**唯一契约源**：纯 zod，无 node 依赖（renderer 也引用）。
 //
-// 两个文件、两层数据，**谁也不覆盖谁**（按 id 关联）：
+// 三层数据，**谁也不覆盖谁**（按 id 关联）：
 //   · $DIY_HOME/model.yaml          配置层 —— provider 连接信息 + 模型选择规则（本文件上半）
 //   · $DIY_HOME/providers.custom.yaml spec 层 —— models.dev 没有的 provider 的模型规格
 //                                     （结构 = models.dev api.json 的 provider 条目，字段对齐）
-//   · snapshot（src/main/data/models-snapshot.json）内置 spec —— models.dev npm 白名单产物，
-//     与 api.json 完全同构，「snapshot 为唯一真源」。
+//   · src/main/data/models.dev.json    内置 spec —— models.dev npm 白名单产物，与 api.json
+//                                     完全同构，「models.dev 为唯一真源」（更新走 ##107）
+//   · src/main/data/models.dev.diy.json **diy 扩展层** —— models.dev 不表达的东西（具名时段表
+//                                     `windows`、日历引用），与 models.dev.json 同级等位。
+//                                     只增不改：models.dev.json 整份重下，本文件永不被覆盖。
 //
 // 配置层零 models.dev 字段：UI 词汇（accounts/filter/models 覆盖），与 spec 按 id 关联。
 //
@@ -18,6 +21,21 @@
 //           provider 段按**最后一个** `@` 分 account 与 provider。
 
 import { z } from "zod";
+import { WINDOW_ID_RE } from "./cost-windows";
+
+// ── 内置数据文件名（`src/main/data/`，由 main/core/data-file.ts 定位） ──
+//
+// 三个名字在这里定性，别处只准引用常量：改名要**同时**动 `scripts/gen-*.mts` 的产物路径与
+// `sha.sh` 的拷贝（`cp src/main/data/*.json`，通配故无需改）。分开三个文件是因为**归属不同**：
+// models.dev.json 是上游产物（整份重下）、models.dev.diy.json 是 diy 手写扩展（只增不改）、
+// calendars.json 是第三方数据生成物（自动更新）。
+
+/** models.dev 的 npm 白名单快照（`scripts/gen-models-dev.mts` 产物，整份覆盖） */
+export const MODELS_DEV_FILE = "models.dev.json";
+/** diy 对 models.dev 的**扩展层**（手写：具名时段表 `windows`；只增不改） */
+export const MODELS_DEV_DIY_FILE = "models.dev.diy.json";
+/** 内置工作日日历（`scripts/gen-calendars.mts` 产物，chinese-days 数据） */
+export const CALENDARS_FILE = "calendars.json";
 
 /** 账号名字符集：禁 `@` `/`（保证限定名唯一切点） */
 const ACCOUNT_NAME_RE = /^[A-Za-z0-9._-]+$/;
@@ -127,6 +145,10 @@ export function reasoningSupportOf(s: ReasoningSupport): { supported: string[]; 
     return { supported: s.supported, default: s.default };
 }
 
+/** 单价字段（spec 的 snake_case；单位 $/1M tokens）—— base 档与各阶档共用同一组键 */
+export const COST_PRICE_FIELDS = ["input", "output", "cache_read", "cache_write"] as const;
+export type CostPriceField = (typeof COST_PRICE_FIELDS)[number];
+
 /** 单条覆盖里的档位（配置层 models[id].reasoning，白名单字段） */
 export const ReasoningOverrideSchema = z.object({ supported: z.array(z.string()), default: z.string() });
 
@@ -134,21 +156,105 @@ export const ReasoningOverrideSchema = z.object({ supported: z.array(z.string())
  * 逐模型覆盖（可整个缺省）。**白名单字段**，同构 models.dev 对应字段；
  * 不是整体 merge —— 只有列在这里的字段能改，其余永远跟 spec 走。
  */
+/** `01:00:00+08:00`：ISO 8601 时刻 + **必填** UTC 偏移（无偏移 = 歧义 → 拒，不默认本地时区） */
+export const TIME_OF_DAY_RE = /^(\d{2}):(\d{2})(?::(\d{2}))?(Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * `utc-range` 的 `data`：两条**互斥**写法。
+ *
+ *   · 具名时段表 —— `{window: "deepseek-peak"}`：段 / 日历 / 标签**全在 diy 扩展层**
+ *     （`src/main/data/models.dev.diy.json`，见 shared/cost-windows.ts），档里只留**价**。
+ *     同一 vendor 的时段是一张表（DeepSeek 全部模型共用一套两段峰）—— 逐模型手抄
+ *     「01:00–04:00 + 06:00–10:00」= 抄漏一段就静默算错钱。
+ *   · 自定义时刻 —— `{start, end, calendar?, label?}`：带 UTC 偏移的 ISO 8601 时刻
+ *     （如 `01:00:00+08:00`）；`end < start` = **跨零点**；两端偏移必须一致（不一致 = 歧义 → 拒）；
+ *     `calendar` = `calendars.json` 的日历 id（工作日定义，见 shared/calendars.ts）。
+ *
+ * 两条同时给 = 谁覆盖谁说不清 → **拒**（歧义不猜，宁可让人写清楚）。
+ */
+const UtcRangeDataSchema = z
+    .object({
+        /** 具名时段表 id（与 start/end 二选一） */
+        window: z.string().optional(),
+        start: z.string().optional(),
+        end: z.string().optional(),
+        /** 日历 id（工作日定义）；缺省 = 时段内每天都算 */
+        calendar: z.string().optional(),
+        /** 该时段展示名（如 "peak"）；缺省 = cost.baseLabel */
+        label: z.string().optional(),
+    })
+    .superRefine((v, ctx) => {
+        const bad = (message: string) => ctx.addIssue({ code: "custom", message });
+        if (v.window !== undefined) {
+            if (!WINDOW_ID_RE.test(v.window)) bad(`window 须为时段表 id（${WINDOW_ID_RE.source}）`);
+            for (const k of ["start", "end", "calendar", "label"] as const) {
+                if (v[k] !== undefined) bad(`给了 window 就不能再给 ${k}（段/日历/标签都在时段表里定义）`);
+            }
+            return;
+        }
+        if (v.start === undefined || v.end === undefined) {
+            bad("utc-range 档须给 window（具名时段表）或 start+end（自定义时刻）");
+        }
+        for (const k of ["start", "end"] as const) {
+            const t = v[k];
+            if (t !== undefined && !TIME_OF_DAY_RE.test(t)) {
+                bad(`${k} 须为带 UTC 偏移的 ISO 8601 时刻，如 01:00:00+08:00`);
+            }
+        }
+    });
+
+/**
+ * 阶梯价条目的**触发条件**（写侧严格 schema；判别键 `type`，**分支私有数据进 `data`**）。
+ *
+ *   · `context`   —— `{type:"context", size: N}`（**models.dev 原生形状，原样保留**；
+ *                    diy 写侧也可用自相似的 `{type:"context", data:{size}}`）
+ *   · `utc-range` —— `{type:"utc-range", data: <见 UtcRangeDataSchema>}`
+ *
+ * 运行时的两段规则见 shared/usage.ts `ratesOf`：时段价「按序首个命中」，上下文阶梯「最大阈值」。
+ */
+export const TierWhenSchema = z.discriminatedUnion("type", [
+    z
+        .object({
+            type: z.literal("context"),
+            /** models.dev 原生位置（顶层） */
+            size: z.number().int().positive().optional(),
+            /** diy 自相似位置（`data`） */
+            data: z.object({ size: z.number().int().positive() }).optional(),
+        })
+        .refine((v) => v.size !== undefined || v.data?.size !== undefined, {
+            message: "context 档必须给 size（顶层或 data.size）",
+        }),
+    z.object({ type: z.literal("utc-range"), data: UtcRangeDataSchema }),
+]);
+export type TierWhenSpec = z.infer<typeof TierWhenSchema>;
+
 /**
  * models.dev 的**阶梯价条目**（snake_case，与 api.json 同构）：
  *   `tiers: [{ input, output, cache_read, cache_write, tier: { type: "context", size: 272000 } }]`
- * `size` = 触发阈值（映射到 ModelTier.above，见 shared/usage.ts）。
  * 不映射就会丢整档 —— 长上下文高价模型会按基础档静默少算（同 cache_read 那类坑）。
  */
-const CostTierSchema = z
+export const CostTierSchema = z
     .object({
         input: z.number().optional(),
         output: z.number().optional(),
         cache_read: z.number().optional(),
         cache_write: z.number().optional(),
-        tier: z.object({ type: z.string().optional(), size: z.number() }).optional(),
+        tier: TierWhenSchema.optional(),
     })
     .passthrough();
+export type CostTier = z.infer<typeof CostTierSchema>;
+
+/** 价目块（spec / override / 视图三处复用同一形状） */
+export const CostSchema = z.object({
+    input: z.number().optional(),
+    output: z.number().optional(),
+    cache_read: z.number().optional(),
+    cache_write: z.number().optional(),
+    /** 时段档「未命中任何窗」时的展示名（如 "off-peak"）；缺省 "base" */
+    baseLabel: z.string().optional(),
+    tiers: z.array(CostTierSchema).optional(),
+});
+export type Cost = z.infer<typeof CostSchema>;
 
 export const ModelOverrideSchema = z.object({
     name: z.string().optional(),
@@ -162,15 +268,7 @@ export const ModelOverrideSchema = z.object({
         .optional(),
     /** 档位表（models.dev 未声明 effort 词表时，在此登记精确档位） */
     reasoning: ReasoningOverrideSchema.optional(),
-    cost: z
-        .object({
-            input: z.number(),
-            output: z.number(),
-            cache_read: z.number().optional(),
-            cache_write: z.number().optional(),
-            tiers: z.array(CostTierSchema).optional(),
-        })
-        .optional(),
+    cost: CostSchema.optional(),
 });
 export type ModelOverride = z.infer<typeof ModelOverrideSchema>;
 
@@ -211,15 +309,7 @@ export const SpecModelSchema = z
         /** models.dev 的**模型级 npm 覆写**（面在此精修；provider 级 npm 是粗默认） */
         provider: z.object({ npm: z.string().optional() }).passthrough().optional(),
         limit: z.object({ context: z.number(), output: z.number() }).partial().optional(),
-        cost: z
-            .object({
-                input: z.number().optional(),
-                output: z.number().optional(),
-                cache_read: z.number().optional(),
-                cache_write: z.number().optional(),
-                tiers: z.array(CostTierSchema).optional(),
-            })
-            .optional(),
+        cost: CostSchema.optional(),
     })
     .passthrough();
 export type SpecModel = z.infer<typeof SpecModelSchema>;
@@ -270,15 +360,7 @@ export const ModelViewSchema = z.object({
     npm: z.string(),
     /** 生效档位表（spec 的 reasoning_options ⊕ 配置覆盖；declared=false = 兜底通用集） */
     reasoning: ReasoningSupportSchema,
-    cost: z
-        .object({
-            input: z.number().optional(),
-            output: z.number().optional(),
-            cache_read: z.number().optional(),
-            cache_write: z.number().optional(),
-            tiers: z.array(CostTierSchema).optional(),
-        })
-        .nullable(),
+    cost: CostSchema.nullable(),
     /** filter（include/exclude）判定结果 —— UI 勾选框的状态 */
     enabled: z.boolean(),
     /** spec 里没有此模型（只有覆盖登记）→ UI 提示 id 打错或 snapshot 已变 */
@@ -367,6 +449,102 @@ export function npmOfEndpoints(endpoints: string[]): string | null {
 }
 
 /**
+ * 日历选项（价格时段档的「工作日扩展」下拉用）：只是 id + 展示名。
+ * 日历**定义**（holidays/workdays 表）在 main 侧（`src/main/data/calendars.json`），
+ * renderer 不需要、也不该拿到整表 —— 它只把 id 写进档位。
+ */
+export const CalendarChoiceSchema = z.object({ id: z.string(), label: z.string() });
+export type CalendarChoice = z.infer<typeof CalendarChoiceSchema>;
+
+/**
+ * 时段表选项（价格时段档的「时段表」下拉用）：id + 展示名 + 人读摘要
+ * （如 `01:00–04:00, 06:00–10:00Z · CN-mon-fri-ex-holiday`）。
+ *
+ * 定义（`ranges`/`calendar`）在 diy 扩展层 `src/main/data/models.dev.diy.json`
+ * （main 读取并展开，见 shared/cost-windows.ts）；renderer 只拿摘要 —— 它把 **id** 写进档位，
+ * 展开与判定全在 main。为什么要抽走参数：同一 vendor 的时段是**一张表**（DeepSeek 全部模型
+ * 共用一套两段峰），逐模型手抄 = 抄漏一段就静默算错钱。
+ */
+export const WindowChoiceSchema = z.object({ id: z.string(), label: z.string(), detail: z.string() });
+export type WindowChoice = z.infer<typeof WindowChoiceSchema>;
+
+// ── 价目登记（CLI `llmConfig costs/setCost/setTiers`）的输入/输出契约 ──
+
+/** 价目**落点**：spec（`providers.custom.yaml` / models.dev 内置 spec）vs override（`model.yaml` 覆盖） */
+export const CostTargetSchema = z.enum(["spec", "override"]);
+export type CostTarget = z.infer<typeof CostTargetSchema>;
+
+/** 生效价目**来自哪**：`override` > `spec` > `none`（与 registryView 的取值同源） */
+export const CostSourceSchema = z.enum(["override", "spec", "none"]);
+export type CostSource = z.infer<typeof CostSourceSchema>;
+
+/**
+ * CLI 写入的档条目：**必须带 `tier` 触发条件** —— 没有触发条件的档会被运行时静默丢弃
+ * （`toTierWhens` 返回空数组），所以宁可在入口拒收，也不留一条"看起来写了其实没用"的档。
+ */
+export const TierWriteSchema = CostTierSchema.refine((t) => t.tier !== undefined, {
+    message: "每条档必须给 tier 触发条件，如 tier:{type:'utc-range', data:{window:'deepseek-peak'}} 或 data:{start,end,calendar,label}",
+});
+export type TierWrite = z.infer<typeof TierWriteSchema>;
+
+/** `--clear-fields` 可清的字段（比单价字段多一个展示名 `baseLabel`） */
+export const CostClearFieldSchema = z.enum(["input", "output", "cache_read", "cache_write", "baseLabel"]);
+export type CostClearField = z.infer<typeof CostClearFieldSchema>;
+
+/** `llmConfig costs`：单个模型的价目态（agent 发现 model id / 现价 / 可写落点） */
+export const ModelCostViewSchema = z.object({
+    id: z.string(),
+    name: z.string(),
+    /** filter 判定（false = 不参与运行时目录，填价也白填） */
+    enabled: z.boolean(),
+    /** spec 里没此模型（只有覆盖登记）→ 提示 id 打错或 snapshot 已变 */
+    specMissing: z.boolean(),
+    /** 生效价目（override > spec）；null = 无价 → usage 金额为 null */
+    cost: CostSchema.nullable(),
+    costSource: CostSourceSchema,
+    /** 可写落点（spec：仅 custom 且该模型在 spec 里；override：该 provider 已配在 model.yaml） */
+    writable: z.array(CostTargetSchema),
+});
+export type ModelCostView = z.infer<typeof ModelCostViewSchema>;
+
+/** `llmConfig costs` 输出 */
+export const ProviderCostsViewSchema = z.object({
+    /** 限定名（custom 恒带 `custom:` 前缀） */
+    provider: z.string(),
+    kind: z.enum(["std", "custom"]),
+    /** `--target` 缺省（auto）会落的点：custom → spec、std → override */
+    target: CostTargetSchema,
+    /** provider 段是否已在 model.yaml（false → override 不可写：无账号无从落） */
+    configured: z.boolean(),
+    /** 时段档可引用的日历（id + 展示名；整表在 main 侧） */
+    calendars: z.array(CalendarChoiceSchema),
+    /** 时段档可引用的**具名时段表**（diy 扩展层；空 = 无表 → 只能用自定义时刻） */
+    windows: z.array(WindowChoiceSchema),
+    models: z.array(ModelCostViewSchema),
+});
+export type ProviderCostsView = z.infer<typeof ProviderCostsViewSchema>;
+
+/** `llmConfig setCost/setTiers` 的回执（agent 据此核对「写了什么 / 生效什么 / 有什么坑」） */
+export const CostUpdateResultSchema = z.object({
+    provider: z.string(),
+    kind: z.enum(["std", "custom"]),
+    model: z.string(),
+    target: CostTargetSchema,
+    /** 落盘文件绝对路径（spec → providers.custom.yaml；override → model.yaml） */
+    file: z.string(),
+    /** 该**落点**的价目（null = 该落点无价） */
+    cost: CostSchema.nullable(),
+    /** 写后**生效**价目（override > spec）；与 `cost` 不同 = 有回退，别只看 `cost` */
+    effective: CostSchema.nullable(),
+    /** 时段档条数（编号口径同 `--drop`） */
+    tierCount: z.number().int().nonnegative(),
+    /** override 首次写入时以 spec 价为基线（避免"只填 output"丢掉 models.dev 的缓存价） */
+    seededFromSpec: z.boolean(),
+    warnings: z.array(z.string()),
+});
+export type CostUpdateResult = z.infer<typeof CostUpdateResultSchema>;
+
+/**
  * 环境变量导入候选（`llmConfig.scanEnv` 输出）。
  * 来源 = snapshot 里该 provider 声明的 `env` ∩ `process.env`（有值）；再与现有 model.yaml 比对：
  *   · importable —— 可一键导入（写 `$VAR` 引用，不落明文）
@@ -428,6 +606,10 @@ export type SeedReport = z.infer<typeof SeedReportSchema>;
 
 /** llmConfig.read 全量输出 */
 export const LlmConfigViewSchema = z.object({
+    /** 内置日历清单（时段档的日历下拉项；空 = calendars.json 缺失 → 时段档只能「不限日历」） */
+    calendars: z.array(CalendarChoiceSchema),
+    /** 具名时段表清单（时段档的「时段表」下拉项；空 = diy 扩展层缺失 → 只能自定义时刻） */
+    windows: z.array(WindowChoiceSchema),
     /** model.yaml 原样（编辑基线；保存时整份回写） */
     modelFile: ModelConfigFileSchema,
     /** providers.custom.yaml 全文 */

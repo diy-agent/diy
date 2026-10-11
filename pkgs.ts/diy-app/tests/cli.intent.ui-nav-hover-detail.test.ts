@@ -16,6 +16,9 @@
 //   5. **只跳过「正在看的那一个」**：悬停已开在 nav 里但**非激活**的任务（a）要弹；
 //      悬停**当前激活**的任务（b）不弹 —— 它的详情已在屏上，再弹就是同屏两份（##183 C-1）。
 //      ⚠️ 回归教训：C-1 曾写成「凡是开在 nav 里的都跳过」→ nav hover 大面积失效
+//   6. 覆盖层「任务树」块的**行集合**：当前任务是顶级根时只含「自己 + 子孙」，
+//      不平铺项目下其余顶级根（##258 / R4 回收 RV-04 越界）。用户感知的就是「渲染多少行」，
+//      故在此设真实渲染断言网（纯函数单测只守算法）——RV-02。
 //
 // 交互模拟的说明：真实鼠标 hover 无法由 CDP 注入复现（`Input.dispatchMouseEvent`
 // 不更新 hover 状态，详见 tests/ui-drive.ts 注释），故这里派发原生 mouseenter/
@@ -37,6 +40,8 @@ let ui: UiDriver;
 let uriA = "";
 let uriB = "";
 let titleA = "";
+/** a 的子任务：验证「顶级根的树块 = 自己 + 子孙」（##258 / R4） */
+let uriA1 = "";
 
 beforeAll(async () => {
   const electron = await startElectronTest();
@@ -61,8 +66,12 @@ beforeAll(async () => {
   uriA = String((rA.data as any)?.data?.uri);
   const rB = await fx.sh.getJson(`./diy.sh task create 另一个任务B ${pid}`);
   uriB = String((rB.data as any)?.data?.uri);
-  // 两个都打开成 tab（nav 上才会出现），且**最后激活 b** → b 是「正在看的那一个」，
-  // 全局 selectedTask 指向 b；a 已开但非激活 —— 正好覆盖 C-1 的两种情形
+  // a 再挂一个子 a1 —— 供 ##258 用例（a 是顶级根、a1 是它的子）
+  const rA1 = await fx.sh.getJson(`./diy.sh task create A的子 ${pid} -p ${uriA}`);
+  uriA1 = String((rA1.data as any)?.data?.uri);
+  // 三个都打开成 tab（nav 上才会出现），且**最后激活 b** → b 是「正在看的那一个」，
+  // 全局 selectedTask 指向 b；a / a1 已开但非激活 —— 正好覆盖 C-1 的两种情形
+  await fx.sh.getJson(`./diy.sh ui tab open ${uriA1}`);
   await fx.sh.getJson(`./diy.sh ui tab open ${uriA}`);
   await fx.sh.getJson(`./diy.sh ui tab open ${uriB}`);
   // 展开侧栏：展开态的任务项 title 才是 uri（收起态 title 是短标签）
@@ -115,6 +124,24 @@ const leaveNavItem = (uri: string) =>
     return true;
   })()`);
 
+/** 覆盖层「任务树」块里的行（uri + 深度缩进）—— 行 div 的 title = 任务 uri（##258 / RV-02） */
+const treeRows = () =>
+  ui.query<{ uri: string; depthPad: number }[]>(`(() => {
+    const el = document.querySelector('aside[aria-label^="任务详情"]');
+    if (!el) return [];
+    return [...el.querySelectorAll('div[title^="projects/"]')].map((d) => ({
+      uri: d.getAttribute('title'),
+      depthPad: parseInt(getComputedStyle(d).paddingLeft, 10),
+    }));
+  })()`);
+
+/** 覆盖层里被标 current 的那一行 uri（##233：当前任务在树中被高亮） */
+const currentRowUri = () =>
+  ui.query<string>(`(() => {
+    const el = document.querySelector('aside[aria-label^="任务详情"] [data-lineage-current]');
+    return el ? el.getAttribute('title') : '';
+  })()`);
+
 describe("悬停导航任务项 → 任务详情覆盖层", () => {
   it("setup: 两个任务都已打开，且全局选中任务不是 a", async () => {
     const list = await fx.sh.getJson("./diy.sh ui tab list");
@@ -122,6 +149,7 @@ describe("悬停导航任务项 → 任务详情覆盖层", () => {
     expect(opened).toContain(`task-run:${uriA}`);
     expect(opened).toContain(`task-run:${uriB}`);
     expect(uriA).not.toBe(uriB);
+    expect(uriA1).not.toBe(uriA); // a1 是 a 的子，uri 不同
     expect(titleA.length).toBeGreaterThan(0);
   });
 
@@ -164,9 +192,9 @@ describe("悬停导航任务项 → 任务详情覆盖层", () => {
     const panel = await waitUntil(hoverPanel, (p) => p !== null, { label: "覆盖层出现" });
     expect(panel).not.toBeNull();
     expect(panel!.text).toContain(titleA);
-    // RV-04（##245 review）修复后，a 的**任务树块含兄弟 b 是设计行为**（整树含兄弟分支，
-    // ##233）—— 原「整段不含 b 标题」断言写在「顶级任务丢兄弟」的缺陷行为上，已收窄到
-    // **属性块**（属性块只属于当前任务；b 残留时属性块会是 b 的标题）。
+    // a / b 是**顶级根任务**，各成一棵：a 的任务树块只含「自己 + 子孙」，不再平铺同级根
+    // b（##258 / R4 收回了 RV-04 的越界）。断言仍只看**属性块**（属性块只属于当前任务；
+    // b 残留时属性块会是 b 的标题）—— 与树块内容解耦，免得树的策略再变又得改这条。
     const attrsBlock = panel!.text.split("任务树")[0];
     expect(attrsBlock).toContain(titleA);
     expect(attrsBlock).not.toContain("另一个任务B");
@@ -229,5 +257,32 @@ describe("悬停导航任务项 → 任务详情覆盖层", () => {
     // 给足 180ms 延迟 + 余量：若会被弹，这段时间早该出现
     await new Promise((r) => setTimeout(r, 400));
     expect(await hoverPanel(), "悬停当前激活任务不该弹覆盖层").toBeNull();
+  });
+
+  // ── ##258 / R4：任务树块的行集合（RV-02 补的 UI 层断言网）──────────────
+  // 用户感知的恰是「渲染多少行」；纯函数单测只守算法，这里守真实渲染。
+  it("悬停顶级根 a → 树块恰为 [a, a1]，兄弟根 b 不平铺（##258 / R4）", async () => {
+    // 前置：b 为激活 tab（a / a1 非激活，悬停才会弹）；先清掉可能残留的覆盖层
+    await fx.sh.getJson(`./diy.sh ui tab active task-run:${uriB}`);
+    await leaveNavItem(uriA);
+    await waitUntil(hoverPanel, (p) => p === null, { label: "覆盖层先清空" });
+
+    const probe = await hoverNavItem(uriA);
+    expect(probe.found).toBe(true);
+    const rows = await waitUntil(treeRows, (r) => r.length > 0, { label: "任务树块渲染出行" });
+    expect(rows.map((r) => r.uri)).toEqual([uriA, uriA1]); // 树序：根 → 子
+    expect(rows.map((r) => r.uri)).not.toContain(uriB); // 兄弟根不平铺（RV-04 越界已回收）
+    expect(rows[0].depthPad).toBeLessThan(rows[1].depthPad); // 缩进按树层级
+    expect(await currentRowUri()).toBe(uriA);
+  });
+
+  it("悬停深层任务 a1 → 树块仍以根 a 为根、含自己（##233 语义未被收紧波及）", async () => {
+    const probe = await hoverNavItem(uriA1);
+    expect(probe.found).toBe(true);
+    const rows = await waitUntil(treeRows, (r) => r.some((x) => x.uri === uriA1), {
+      label: "切到 a1 的树块",
+    });
+    expect(rows.map((r) => r.uri)).toEqual([uriA, uriA1]);
+    expect(await currentRowUri()).toBe(uriA1);
   });
 });

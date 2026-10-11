@@ -1,9 +1,10 @@
 // tests/core/task-lineage.test.ts
 // 🎯 任务详情「任务树」块的行生成 —— 纯函数单测（无 DOM，无 Electron）
 //
-// 契约（##233 / ##183 第 4 点）：以当前任务所在**根任务**为根，展开**整颗树**
-// （含所有兄弟分支），树序 + 带深度，当前任务标 current。
-// 旧实现只产出「祖先链 + 自己 + 子孙」一条线 —— 本用例锁住回退。
+// 契约（##233 / ##183 第 4 点 · ##258 / R4）：以当前任务所在**根任务**为根，
+// 展开该根自己的子树（兄弟分支同属该根，自然纳入），树序 + 带深度，当前任务标 current。
+// **当前任务本身就是顶级**时退化为「自己 + 子孙」—— 不平铺项目下其余根任务（RV-04 已废）。
+// 旧实现只产出「祖先链 + 自己 + 子孙」一条线 —— 本用例锁住回退（深层场景）。
 
 import { describe, it, expect } from "vitest";
 import { lineageRows, isAncestorOf } from "../../src/renderer_solid/lib/task-lineage";
@@ -79,11 +80,11 @@ describe("lineageRows：整颗树（##233）", () => {
     expect(current[0].uri).toBe("projects/1/tasks/4");
   });
 
-  it("对根任务调用 → 同一整树，current 落在根", () => {
+  it("对根任务调用 → 该根自己的整棵子树，current 落在根", () => {
     const rows = lineageRows(sampleTree(), "projects/1/tasks/1");
     expect(uris(rows)[0]).toBe("projects/1/tasks/1");
     expect(rows[0].current).toBe(true);
-    expect(uris(rows)).toContain("projects/1/tasks/5"); // 兄弟分支仍在
+    expect(uris(rows)).toContain("projects/1/tasks/5"); // 根任务下的兄弟分支仍属该根，保留
   });
 
   it("树里找不到该任务 → 只回自己一行（不空白）", () => {
@@ -98,13 +99,24 @@ describe("lineageRows：整颗树（##233）", () => {
     expect(rows[0].current).toBe(true);
   });
 
-  it("当前任务是顶级 → 兄弟顶级分支也在（RV-04 边界：项目下两个顶级）", () => {
+  it("当前任务是顶级 → 只显示自己 + 子孙，不平铺同级根任务（##258 / R4）", () => {
+    // 项目下两个顶级根 #1 / #2；查 #1 只看 #1 这棵子树，兄弟根 #2 不出现
+    const grand = task("4", { parentUri: "projects/1/tasks/3" });
+    const a = task("3", { parentUri: "projects/1/tasks/1", children: [grand] });
+    const root1 = task("1", { children: [a] });
+    const root2 = task("2", { children: [task("5", { parentUri: "projects/1/tasks/2" })] });
+    const proj: TreeNode = { kind: "project", project: "1", children: [root1, root2] };
+    const rows = lineageRows([proj], "projects/1/tasks/1");
+    expect(uris(rows)).toEqual(["projects/1/tasks/1", "projects/1/tasks/3", "projects/1/tasks/4"]);
+    expect(rows[0].current).toBe(true);
+    expect(uris(rows)).not.toContain("projects/1/tasks/2"); // 兄弟根不出现
+  });
+
+  it("顶级当前任务无子孙 → 仅自己一行", () => {
     const proj: TreeNode = { kind: "project", project: "1", children: [task("1"), task("2")] };
     const rows = lineageRows([proj], "projects/1/tasks/1");
-    // 修前实测只回 ['projects/1/tasks/1']，兄弟 #2 丢失
-    expect(uris(rows)).toEqual(["projects/1/tasks/1", "projects/1/tasks/2"]);
+    expect(uris(rows)).toEqual(["projects/1/tasks/1"]);
     expect(rows[0].current).toBe(true);
-    expect(rows.every((r) => r.depth === 0)).toBe(true); // 顶级之间同层
   });
 
   it("深层任务行为不变：根仍是其所在根任务，不扩到项目全部顶级", () => {
