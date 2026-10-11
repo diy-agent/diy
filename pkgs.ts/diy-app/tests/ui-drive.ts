@@ -209,6 +209,14 @@ export interface UiDriver {
    */
   clickSelector(selector: string, opts?: { nth?: number }): Promise<void>;
   /**
+   * 在**任意坐标**真实点击（press + release，走完整命中测试）。
+   *
+   * 为什么需要（不是绕路）：有些可点目标没有"自己的中心点"可用 —— 典型是**模态遮罩**：
+   * 遮罩是全屏的，它的几何中心恰好落在居中的面板里（点下去命中的是面板，不是遮罩）。
+   * 这类场合只能给出一个"确实落在遮罩上"的坐标再点，才能测得动。
+   */
+  clickPoint(point: { x: number; y: number }): Promise<void>;
+  /**
    * 按 CSS 选择器定位 → **真实双击**（同上定位与命中路径）。
    *
    * 为什么不是"连点两次 clickSelector"：Chromium 的 `dblclick` 由**点击计数**驱动
@@ -227,8 +235,23 @@ export interface UiDriver {
    * 注意：文本会插到**插入点**，不替换已有内容；要先 click 聚焦、必要时 `press("Meta+A")` 全选。
    */
   type(text: string): Promise<void>;
-  /** 真实按键（如 Enter / ArrowDown / Escape）。可带 Meta/Ctrl/Shift 修饰，如 `Meta+A` */
-  press(key: string): Promise<void>;
+  /**
+   * 真实按键（如 Enter / ArrowDown / Escape）。可带 Meta/Ctrl/Shift 修饰，如 `Meta+A`。
+   *
+   * `autoRepeat: true` = 把这次 keydown 标成**按住不放的连发**（CDP `autoRepeat` →
+   * `KeyboardEvent.repeat === true`）。用于验证"连发只响应首次"这类契约：没有它就只能
+   * 连按两次独立按键，那测的是 toggle 而不是 repeat 守卫（review6 R6-3）。
+   */
+  press(key: string, opts?: { autoRepeat?: boolean }): Promise<void>;
+  /**
+   * 让**当前焦点元素**进入真实输入法（IME）组合态（CDP `Input.imeSetComposition`）。
+   *
+   * 为什么必须走这条路（不是绕路）：`isComposing` 是**浏览器在 IME 管线里自己打的标** ——
+   * 用 `new KeyboardEvent(..., { isComposing: true })` 派发只能测"handler 认不认这个字段"，
+   * 证明不了"真实输入法送来的回车确实带这个标"。本方法建立组合态后，随后的 `press()`
+   * 走的才是与中文拼音输入同一条路径（Chromium 会在其 keydown 上标 `isComposing:true`）。
+   */
+  imeCompose(text: string): Promise<void>;
   /** 按坐标拖拽（拖线用）；steps 让中间点也发出去，命中拖拽逻辑 */
   drag(from: { x: number; y: number }, to: { x: number; y: number }, steps?: number): Promise<void>;
   /**
@@ -455,6 +478,13 @@ export async function makeUiDriver(
       await new Promise((r) => setTimeout(r, 120));
     },
 
+    async clickPoint(point) {
+      await mouse("mousePressed", point);
+      await mouse("mouseReleased", point);
+      // 让 Solid 的响应式更新走完（点击 → state 变 → DOM 重渲染）
+      await new Promise((r) => setTimeout(r, 120));
+    },
+
     async dblclickSelector(selector, opts = {}) {
       const point = await sampleStablePoint(selector, opts.nth ?? 0);
       // 第二次带 clickCount: 2 —— 这才是 Chromium 判定 dblclick 的依据（见接口注释）
@@ -473,7 +503,7 @@ export async function makeUiDriver(
       await new Promise((r) => setTimeout(r, 120));
     },
 
-    async press(key) {
+    async press(key, opts) {
       // 常见键 → 键码。`Mod+K`（Meta/Ctrl）形式解析：修饰键只改 modifiers，主键照发。
       const CODES: Record<string, { code: string; vk: number }> = {
         ArrowDown: { code: "ArrowDown", vk: 40 },
@@ -503,8 +533,15 @@ export async function makeUiDriver(
         nativeVirtualKeyCode: info.vk,
         modifiers,
       };
-      await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...base });
+      // autoRepeat 只打在 keyDown 上（keyUp 没有"连发"这回事）
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", autoRepeat: opts?.autoRepeat ?? false, ...base });
       await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+      await new Promise((r) => setTimeout(r, 120));
+    },
+
+    async imeCompose(text) {
+      // 组合中的文本与选区都落在末尾（模拟"拼音已敲完、尚未选词"）
+      await cdp.send("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length });
       await new Promise((r) => setTimeout(r, 120));
     },
 
