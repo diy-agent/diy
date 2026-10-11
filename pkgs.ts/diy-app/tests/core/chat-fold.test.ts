@@ -192,8 +192,8 @@ describe("展开级别：循环 1→2→3→4→1", () => {
         expect([1, 2, 3, 4].map((l) => turnLevelLabel(l as 1 | 2 | 3 | 4))).toEqual([
             "摘要结论",
             "完整结论",
-            "紧凑过程",
-            "全部展开",
+            "全部正文",
+            "逐条过程",
         ]);
     });
 
@@ -232,10 +232,10 @@ describe("planOfLevel：每一级看得见什么", () => {
     it("2 级：结论给全文（中间区仍不出）", () => {
         expect(planOfLevel(2)).toEqual({ conclusionClamped: false, mid: false, midExpanded: false });
     });
-    it("3 级：中间区可见（紧凑行，不铺开）", () => {
+    it("3 级：中间区可见（正文逐条 + 过程 bar，bar 不铺开）", () => {
         expect(planOfLevel(3)).toEqual({ conclusionClamped: false, mid: true, midExpanded: false });
     });
-    it("4 级：紧凑行铺开成逐条", () => {
+    it("4 级：过程 bar 铺开成逐条", () => {
         expect(planOfLevel(4)).toEqual({ conclusionClamped: false, mid: true, midExpanded: true });
     });
     it("级别单调：往上一级只会多显示（摘要只会变全文），不会少", () => {
@@ -250,57 +250,68 @@ describe("planOfLevel：每一级看得见什么", () => {
     });
 });
 
-describe("contentItems：3 级起的中间区（过程 + 收束它的正文 = 一行）", () => {
-    /** 行摘要视图：正文 id + 过程 id（避免拿对象比引用）。
-     *  parts **不含那条正文** —— 正文由组件按原样渲染，混进 parts 会被当"未知块"再画一遍 */
+describe("contentItems：3 级起的中间区（正文逐条 + 连续过程一行 bar）", () => {
+    /** 视图：正文/用户/error 取 id，过程段取「首叶子 id + 段内 id 表」 */
     const view = (its: ReturnType<typeof contentItems>) =>
         its.map((i) =>
-            i.kind === "row"
-                ? { row: i.key, text: i.text?.id ?? null, parts: i.parts.map((n) => n.id) }
+            i.kind === "proc"
+                ? { proc: i.key, parts: i.parts.map((n) => n.id) }
                 : { kind: i.kind, id: i.node.id },
         );
 
-    it("攒着的过程与收束它的那条正文合成一行；只有新正文才另起一行", () => {
-        // 思考+工具 → 正文① → 思考+工具 → 正文②（②是结论，单独成项）
+    it("正文各自成项（不折行），连续过程折成一行 bar —— 文档序原样", () => {
+        // 思考+工具 → 正文① → 思考+工具 → 正文②（②是末条，也照样各自成项）
         const t = turn(think("k1"), tool("x1"), say("a1"), think("k2"), tool("x2"), say("a2"));
         expect(view(contentItems(t))).toEqual([
-            { row: "k1", text: "a1", parts: ["k1", "x1"] },
-            { row: "k2", text: null, parts: ["k2", "x2"] },
-            { kind: "conclusion", id: "a2" },
+            { proc: "k1", parts: ["k1", "x1"] },
+            { kind: "text", id: "a1" },
+            { proc: "k2", parts: ["k2", "x2"] },
+            { kind: "text", id: "a2" },
         ]);
     });
 
-    it("结论恒为单独成项（它是答案：2 级起就全文可见，不能被压进紧凑行）", () => {
-        const its = contentItems(turn(think("k1"), say("a1")));
-        expect(its[its.length - 1]).toMatchObject({ kind: "conclusion", node: { id: "a1" } });
+    it("顺序 = 文档序：「思考 → 正文」在界面上就是思考的 bar 在前（旧版把正文提到工具前，用户实测踩到）", () => {
+        const t = turn(think("k1"), say("a1"));
+        expect(view(contentItems(t))).toEqual([
+            { proc: "k1", parts: ["k1"] },
+            { kind: "text", id: "a1" },
+        ]);
     });
 
-    it("用户插话与 error 就地单独成项，并切断行（不并进紧凑行）", () => {
-        const t = turn(user("u1"), think("k1"), say("a1"), user("u2"), err("e1"), say("a9"));
+    it("用户插话与 error 就地单独成项，并**切断**过程段（两侧的过程不并成一行）", () => {
+        const t = turn(user("u1"), think("k1"), say("a1"), user("u2"), err("e1"), think("k2"), say("a9"));
         expect(view(contentItems(t))).toEqual([
-            { row: "k1", text: "a1", parts: ["k1"] },
+            { proc: "k1", parts: ["k1"] },
+            { kind: "text", id: "a1" },
             { kind: "user", id: "u2" },
             { kind: "error", id: "e1" },
-            { kind: "conclusion", id: "a9" },
+            { proc: "k2", parts: ["k2"] },
+            { kind: "text", id: "a9" },
         ]);
     });
 
     it("轮首用户发言交给 leadUsers 单独画（此处排除，避免同一句画两遍）", () => {
         const t = turn(user("u1"), say("a1"));
-        expect(view(contentItems(t))).toEqual([{ kind: "conclusion", id: "a1" }]);
+        expect(view(contentItems(t))).toEqual([{ kind: "text", id: "a1" }]);
     });
 
     it("skip 掉实时区那个节点：它画在轮尾，留在文档序里就是同一块画两遍", () => {
         const t = turn(think("k1"), tool("x1", false), say("a1"));
         const live = leavesOf(t)[1];
         expect(view(contentItems(t, (n) => n === live))).toEqual([
-            { row: "k1", text: null, parts: ["k1"] },
-            { kind: "conclusion", id: "a1" },
+            { proc: "k1", parts: ["k1"] },
+            { kind: "text", id: "a1" },
         ]);
     });
 
-    it("行的 key = 该行首个叶子 id（供 <For> / pin 复用，跨帧稳定）", () => {
-        const t = turn(think("k1"), tool("x1"), say("a1"), say("a2"));
+    it("段整个被 skip 掉时**不出空段**（否则界面上多一条空白 bar）", () => {
+        const t = turn(think("k1"), say("a1"));
+        const live = leavesOf(t)[0];
+        expect(view(contentItems(t, (n) => n === live))).toEqual([{ kind: "text", id: "a1" }]);
+    });
+
+    it("段的 key = 段内首个叶子 id（供 <For> / pin 复用，跨帧稳定）", () => {
+        const t = turn(think("k1"), tool("x1"), think("k2"), say("a1"));
         expect(contentItems(t)[0]!.key).toBe("k1");
     });
 });

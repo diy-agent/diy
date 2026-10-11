@@ -2,7 +2,8 @@
  * UsagePanel — 用量可见性的**三级收纳**（契约见任务 211 §六b；交互形态 2026-10-03 与用户对齐）：
  *
  *   L1 实时常显（页面只留一行数，大表一律藏进 L3）：
- *     · TurnUsageBar     —— turn 尾一行：`时刻（左，纯文本） … N tok · $X（右，按钮）`（时刻与用量分开，见其头注）
+ *     · TurnUsageBar     —— turn 尾一行：`时刻（左，纯文本） … N tok · $X（右，按钮）`（时刻与用量分开，见其头注）；
+ *       直播中第一步还没跑完时先出**占位**（`pending`：时间照给、用量位写"⋯ 统计中"）
  *     · SessionUsageChip —— 发送区人物右侧：会话累计 `N tok · $X`
  *   L2 hover 汇总卡：纵向 8 项（token 桶加总 + 输入$/输出$/合计$），
  *     卡顶 viewbar 右侧「明细」→ L3
@@ -20,7 +21,7 @@
  *   · 不可测桶写 `–`/`n/a`，**不写 0**；旧记录（无四桶字段）按原样降级，不假装能拆
  */
 
-import { createEffect, createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Match, Show, Switch, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 import { localChatStore } from "../store/localChatStore";
 import { useDrawerMax, DrawerMaxButton } from "./DrawerMaximize";
@@ -1159,6 +1160,8 @@ export function UsageHoverCard(props: {
 export function TurnUsageBar(props: {
     turnId: string;
     usage: unknown;
+    /** true = 直播中且 main 还没写过 usage patch（第一步 finish-step 之前）：给占位，不装作有数 */
+    pending?: boolean;
     hover: boolean;
     onHover: (el: HTMLElement) => void;
     onHoverEnd: () => void;
@@ -1172,45 +1175,72 @@ export function TurnUsageBar(props: {
             <span class="shrink-0 tabular-nums text-caption opacity-50">{clock}</span>
         </Show>
     );
+    /** 直播首步还没跑完：时间照给（turnId 自带开始时刻），用量位给占位。
+     *  ⚠️ 三个分支必须走 `<Switch>`，**不能** `if (...) return`：Solid 组件体只跑一次，
+     *  提前 return 得到的分支在 usage 到达后不会重算 —— 占位条会永远留在那儿（实测坑）。 */
+    const pending = () => !!props.pending && props.usage == null;
+    return (
+        <Switch>
+            <Match when={pending()}>
+                <div class="flex items-center gap-2 text-body" data-usage-pending="1">
+                    <Clock />
+                    <span class="flex-1" />
+                    <span
+                        class="text-caption opacity-40"
+                        title="用量要等本步跑完（finish-step）才拿得到；时间是本轮开始时刻"
+                    >
+                        ⋯ 统计中
+                    </span>
+                </div>
+            </Match>
+            <Match when={isLegacyUsage(props.usage)}>{LegacyRow()}</Match>
+            <Match when={true}>{LiveRow()}</Match>
+        </Switch>
+    );
+
     /** 旧记录：无四桶无金额 → 降级成一行字，不进卡不进抽屉（拆不出东西） */
-    if (isLegacyUsage(props.usage)) {
-        const l = props.usage as { in?: number; out?: number; total?: number };
+    function LegacyRow() {
+        const l = () => props.usage as { in?: number; out?: number; total?: number };
         return (
             <div class="flex items-center gap-2 text-body">
                 <Clock />
                 <span class="flex-1" />
                 <span class="opacity-60">
-                    tokens ↑{fmtInt(l.in ?? 0)} ↓{fmtInt(l.out ?? 0)}（Σ{fmtInt(l.total ?? 0)}）
+                    tokens ↑{fmtInt(l().in ?? 0)} ↓{fmtInt(l().out ?? 0)}（Σ{fmtInt(l().total ?? 0)}）
                     <span class="ml-1">（旧记录：无四桶/金额）</span>
                 </span>
             </div>
         );
     }
-    const p = () => props.usage as TurnUsagePatch;
-    return (
-        <div class="flex items-center gap-2">
-            <Clock />
-            <span class="flex-1" />
-            <button
-                type="button"
-                class="flex w-max cursor-pointer select-none items-center gap-x-3 rounded px-1 text-body opacity-70 transition-opacity hover:bg-base-200 hover:opacity-100"
-                aria-haspopup="dialog"
-                aria-expanded={props.hover}
-                aria-label="本轮用量（悬停看汇总，点击开逐步明细）"
-                title="各轮/各步累计（重发成本口径，非窗口占用）。悬停看汇总，点击开逐步明细"
-                onPointerEnter={(e) => props.onHover(e.currentTarget)}
-                onPointerLeave={(e) => {
-                    // 元素被块树重建移除时浏览器也可能派发 leave —— 那不是"移出"，忽略
-                    if (!e.currentTarget.isConnected) return;
-                    props.onHoverEnd();
-                }}
-                onClick={props.onDetail}
-            >
-                <span class="tabular-nums">{fmtTokens(p().total)} tok</span>
-                <span class="tabular-nums">{p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}</span>
-            </button>
-        </div>
-    );
+
+    /** 正常一轮：时刻靠左 · 用量按钮靠右（hover 卡 / 点击明细） */
+    function LiveRow() {
+        const p = () => props.usage as TurnUsagePatch;
+        return (
+            <div class="flex items-center gap-2">
+                <Clock />
+                <span class="flex-1" />
+                <button
+                    type="button"
+                    class="flex w-max cursor-pointer select-none items-center gap-x-3 rounded px-1 text-body opacity-70 transition-opacity hover:bg-base-200 hover:opacity-100"
+                    aria-haspopup="dialog"
+                    aria-expanded={props.hover}
+                    aria-label="本轮用量（悬停看汇总，点击开逐步明细）"
+                    title="各轮/各步累计（重发成本口径，非窗口占用）。悬停看汇总，点击开逐步明细"
+                    onPointerEnter={(e) => props.onHover(e.currentTarget)}
+                    onPointerLeave={(e) => {
+                        // 元素被块树重建移除时浏览器也可能派发 leave —— 那不是"移出"，忽略
+                        if (!e.currentTarget.isConnected) return;
+                        props.onHoverEnd();
+                    }}
+                    onClick={props.onDetail}
+                >
+                    <span class="tabular-nums">{fmtTokens(p().total)} tok</span>
+                    <span class="tabular-nums">{p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}</span>
+                </button>
+            </div>
+        );
+    }
 }
 
 // ─── L1② 发送区会话汇总 chip ────────────────────────

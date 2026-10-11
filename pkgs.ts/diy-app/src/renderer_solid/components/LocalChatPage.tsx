@@ -7,12 +7,12 @@
  * 一个 turn 的形状（[ ] = 阶段出现的东西）：
  *   [轮首用户发言]           ← 先出：IM 直觉是"用户先说、对方再接"
  *   轮次头（人物标题 bar）    🤖 + 人物/模型/思考级别 + 统计 + 开合箭头（点它 = 收拢/展开这一轮）
- *   内容区（按级别）          1 结论摘要 · 2 结论全文 · 3 + 紧凑行 · 4 紧凑行铺开逐条
+ *   内容区（按级别）          1 结论摘要 · 2 结论全文 · 3 + 全部正文与过程 bar · 4 过程 bar 铺开逐条
  *   [轮尾实时区]             仅直播中：当前那一步的展开体，固定高度（见 LiveAreaView）
  *   轮尾一行                 时刻（左，纯文本，不可点）+ 用量按钮（右，hover 卡 / 点击明细）
  *
  * 级别（`lib/chat-fold` 的 TurnLevel）：
- *   1 摘要结论 → 2 完整结论 → 3 紧凑过程 → 4 全部展开。
+ *   1 摘要结论 → 2 完整结论 → 3 全部正文 → 4 逐条过程。
  *   **循环只归顶部那个 `n/4 展开` 按钮**（对所有轮次一起换层）；
  *   点某一轮的人物标题 bar 只是"把我这一条收拢 / 展开"两态（用户 2026-10-11 口径：
  *   单条信息不做循环），见 `levelOfTurn`。
@@ -221,14 +221,10 @@ function hasAssistantContent(turn: BlockNode): boolean {
  */
 function sameItem(a: ContentItem, b: ContentItem): boolean {
     if (a.kind !== b.kind || a.key !== b.key) return false;
-    if (a.kind === "row" && b.kind === "row") {
-        return (
-            a.text === b.text &&
-            a.parts.length === b.parts.length &&
-            a.parts.every((n, i) => n === b.parts[i])
-        );
+    if (a.kind === "proc" && b.kind === "proc") {
+        return a.parts.length === b.parts.length && a.parts.every((n, i) => n === b.parts[i]);
     }
-    return a.kind !== "row" && b.kind !== "row" && a.node === b.node;
+    return a.kind !== "proc" && b.kind !== "proc" && a.node === b.node;
 }
 
 /** 按位复用同形项（新数组，但元素尽量沿用旧对象 —— 元素的引用相等正是 `<For>` 的 diff 依据） */
@@ -458,8 +454,8 @@ function ProcessRow(props: {
  * 像 JSON 树那样点一下展开一层、点完最深层回到最浅层（语义见 `lib/chat-fold.ts`）：
  *   1 全收缩   只有这一行（身份/统计）—— 连结论也收起，一屏扫完"我聊了哪些轮"
  *   2 结论     + 末条助理正文（压成 N 行摘要，带渐隐与"还有 N 行"提示行）
- *   3 全部正文 + 其余正文与过程汇总条（连续已定稿的 think/tool 收成一行计数）
- *   4 逐条过程 汇总条铺开成"每事件一行"
+ *   3 全部正文 + 过程 bar（连续的 think/tool 折成一行）
+ *   4 逐条过程 过程 bar 铺开成"每事件一行"
  * 而**工具/思考的内容（详情层）不在循环里**：那是用户自己点开的那一下（procOpen），
  * 级别按钮不管它 —— 否则"看某个工具的完整输出"要被级别状态牵着走。
  *
@@ -719,46 +715,49 @@ function UserBubble(props: { node: BlockNode }) {
 }
 
 /**
- * 紧凑行（3 级起）：一行的「过程 + 收束它的那条正文」（见 `chat-fold.contentItems`）。
+ * 过程 bar（3 级起）：**一段连续的思考/工具**折成一行（切法见 `chat-fold.contentItems`）。
  *
- * 收起 = **一行**：正文首行 + 过程计数 + 箭头；展开 = 逐条正文 + 逐条过程单行
- * （展开的样子与 4 级那一行长一样 —— 用户 2026-10-11 口径："展开就还是第 4 层"）。
- * 所以 `open` 不跟级别走死：**用户的 pin 优先，否则跟 4 级**。整体切到 4 级 = 全部行都展开，
- * 单点某一行 = 只展开这一行，两者共用同一套渲染，不会各说各话。
+ * 收起 = 一行：左侧写这一段**第一个**过程的内容（思考首行 / `tool · 命令首行`），
+ * 右侧是思考数 · 工具数（另有失败标记）。展开 = 逐条单行，与 4 级那一行长得一样：
+ * `open` 不跟级别走死 —— **用户的 pin 优先，否则跟 4 级**（整体切到 4 级 = 所有 bar 都开，
+ * 单点某一行 = 只开这一行，两者共用同一套渲染，不会各说各话）。
  *
- * 展开后标题**不再复述正文首行**（那条正文就写在下面，同一屏里看两遍 —— 同 think 行的口径）。
+ * **展开后标题不再复述那第一行**：它马上会以逐条列表的第一行出现，同一屏里看两遍
+ * （同 think 行"展开后只写'思考'"的口径）。但也不能空着 —— 一行没有标题的 bar 看着像残缺
+ * （用户 2026-10-11 口径："展开后 bar 上不要空着，应显示点啥"），故展开态写中性的「过程」。
+ *
+ * bar 里**只有过程**：助理正文各自成项（3 级起全文）—— 正文与过程一旦合并，
+ * 顺序就会出错（上一版把正文收进这一行的教训）。
  */
-function CompactRow(props: {
-    row: { key: string; text: BlockNode | null; parts: BlockNode[] };
+function ProcBar(props: {
+    /** 这一段连续的过程叶子（文档序）——数组引用稳定是 `<For>` 不重建的前提（见 reuseItems） */
+    parts: BlockNode[];
     open: boolean;
     /** 点整行 = 切这一行的 pin（**不是**换级别：级别循环归顶部按钮） */
     onToggle: () => void;
     pin: Record<string, boolean>;
     onToggleProc: (id: string) => void;
     onFull: (title: string, content: string) => void;
-    md: boolean;
 }) {
-    const thinks = () => props.row.parts.filter((n) => n.tag === "think").length;
-    const tools = () => props.row.parts.filter((n) => n.tag === "tool").length;
-    const failed = () => props.row.parts.some((n) => n.tag === "tool" && str(n.attrs.status) === "error");
-    /** 收起时的标题：这条正文的首行；本行还没有正文（过程刚跑出来）时退到最后一个过程的摘要 */
-    const title = () => {
-        if (props.open) return "";
-        const tx = props.row.text;
-        if (tx) return firstLine(str(tx.attrs.content)).trim() || "（空正文）";
-        const last = props.row.parts[props.row.parts.length - 1];
-        return last ? summaryOf(last, false) : "";
+    const thinks = () => props.parts.filter((n) => n.tag === "think").length;
+    const tools = () => props.parts.filter((n) => n.tag === "tool").length;
+    const failed = () => props.parts.some((n) => n.tag === "tool" && str(n.attrs.status) === "error");
+    /** 收起 = 这一段第一个过程的内容（"bar 文本显示第一个工具或思考的内容"）；展开 = 中性标题 */
+    const head = () => {
+        if (props.open) return "过程";
+        const first = props.parts[0];
+        return first ? summaryOf(first, false) : "过程";
     };
     return (
-        <div class="rounded-lg" data-block-tag="compact-row" data-block-id={props.row.key}>
+        <div class="rounded-lg" data-block-tag="proc-bar" data-block-id={props.parts[0]?.id}>
             <DisclosureHead
                 open={props.open}
                 onToggle={props.onToggle}
                 class="flex items-center gap-2 w-full py-1 px-1.5 rounded-lg hover:bg-base-200/60 text-body"
                 /* 读屏文案：thinks() 为 0 时不能落成模板串里的 `0 && …`（求值成 0，念作「02 个工具」） */
-                ariaLabel={`过程：${thinks() ? `${thinks()} 段思考、` : ""}${tools()} 个工具${props.row.text ? `；正文：${firstLine(str(props.row.text.attrs.content)).slice(0, 30)}` : ""}（点击${props.open ? "收起" : "展开"}这一行）`}
+                ariaLabel={`过程：${thinks() ? `${thinks()} 段思考、` : ""}${tools()} 个工具（点击${props.open ? "收起" : "展开"}这一行）`}
             >
-                <span class="min-w-0 flex-1 truncate text-base-content/80">{title()}</span>
+                <span class="min-w-0 flex-1 truncate text-base-content/80">{head()}</span>
                 <Show when={failed()}>
                     <span class="shrink-0 text-error" title="这一行里有失败的工具">
                         ✗
@@ -773,7 +772,7 @@ function CompactRow(props: {
             </DisclosureHead>
             <Show when={props.open}>
                 <div class="mt-0.5 ml-2 space-y-0.5 border-l border-base-300 pl-2">
-                    <For each={props.row.parts}>
+                    <For each={props.parts}>
                         {(n) => (
                             <PartRow
                                 node={n}
@@ -783,10 +782,6 @@ function CompactRow(props: {
                             />
                         )}
                     </For>
-                    <Show when={props.row.text}>
-                        {/* 正文收束本行：文档序上它就在这些过程之后（见 contentItems） */}
-                        {(tx) => <TextBlock node={tx()} md={props.md} />}
-                    </Show>
                 </div>
             </Show>
         </div>
@@ -794,9 +789,9 @@ function CompactRow(props: {
 }
 
 /**
- * 紧凑行铺开后的**逐条**：过程 → 单行（各自再点开才是内容 = 第 5 层）；plan / 未知块照实画。
+ * 过程 bar 铺开后的**逐条**：过程 → 单行（各自再点开才是内容 = 第 5 层）；plan / 未知块照实画。
  *
- * `showMark={false}`：这一行的形状已由外层紧凑行的计数说过（上面那排 `💭 n ⚙ n`），
+ * `showMark={false}`：这一行的形状已由外层 bar 的计数说过（上面那排 `💭 n ⚙ n`），
  * 每行再顶一个 ✓/💭 是把同一件事说两遍（2026-10-11 用户口径）。
  */
 function PartRow(props: {
@@ -910,6 +905,10 @@ function TurnView(props: {
         return head.length ? items.filter((n) => !head.includes(n)) : items;
     };
     const isLiveTurn = () => props.liveTurnId != null && props.liveTurnId === t().id;
+    /** 直播中：本轮已出助理内容、但 main 还没写过 usage patch → 轮尾那行先出**占位**
+     *  （时间由 turnId 自带，用量要等第一步 finish-step）。判据与"等待响应"loading 互补：
+     *  助理内容一出现，占位条即接管，界面不再"什么都没有"。 */
+    const usagePending = () => !t().attrs.usage && isLiveTurn() && hasAssistantContent(t());
     // 上帧的行序列：跨次渲染复用未变的行（`<For>` 按引用 diff —— 不复用就是每帧重建 = 点击全丢）
     let prevItems: ContentItem[] = [];
     /** 轮尾实时区（仅直播轮次）。它的节点必须**从文档序渲染里剔除** —— 否则同一块
@@ -921,8 +920,8 @@ function TurnView(props: {
         return prevItems;
     };
     const counts = () => countTags(t());
-    /** 紧凑行的开合：用户的 pin 优先，否则跟 4 级。键加 `row:` 前缀 —— 行键 = 该行首个叶子 id，
-     *  不加前缀会与那个叶子自己的过程 pin 撞车（点过程变成连整行一起开合）。 */
+    /** 过程 bar 的开合：用户的 pin 优先，否则跟 4 级。键加 `row:` 前缀 —— 行键 = 该段首个叶子 id，
+     *  不加前缀会与那个叶子自己的过程 pin 撞车（点过程变成连整段 bar 一起开合）。 */
     const rowOpen = (key: string) => {
         const p = props.pin[`row:${key}`];
         return p === undefined ? plan().midExpanded : p;
@@ -964,23 +963,22 @@ function TurnView(props: {
                     </div>
                 }
             >
-                {/* 3 级起：中间区 = 紧凑行（过程 + 收束它的正文合成一行）+ 结论全文
-                    + 用户发言 + error，全部按文档序（见 chat-fold.contentItems） */}
+                {/* 3 级起：中间区 = 正文逐条全文 + 过程 bar（连续过程折一行）+ 用户发言 + error，
+                    全部按文档序（见 chat-fold.contentItems） */}
                 <div class="space-y-1 pl-1">
                     <For each={items()}>
                         {(it) => {
                             if (it.kind === "user") return <UserBubble node={it.node} />;
                             if (it.kind === "error") return <ErrorBox node={it.node} />;
-                            if (it.kind === "conclusion") return <TextBlock node={it.node} md={props.md} />;
+                            if (it.kind === "text") return <TextBlock node={it.node} md={props.md} />;
                             return (
-                                <CompactRow
-                                    row={it}
+                                <ProcBar
+                                    parts={it.parts}
                                     open={rowOpen(it.key)}
                                     onToggle={() => props.onToggle(`row:${it.key}`)}
                                     pin={props.pin}
                                     onToggleProc={props.onToggle}
                                     onFull={props.onFull}
-                                    md={props.md}
                                 />
                             );
                         }}
@@ -998,11 +996,17 @@ function TurnView(props: {
             </Show>
             {/* 轮尾：**时刻靠左、纯文本、不可点**（滚屏阅读时左侧最容易误触，那句话也没有可点的东西），
                 用量按钮靠右（hover 出汇总卡、点击开明细抽屉）—— 两个状态都存页面级：
-                块树每帧重建，组件内 signal 会被清掉（D3 的"点开又自动合上"）。 */}
-            <Show when={t().attrs.usage}>
+                块树每帧重建，组件内 signal 会被清掉（D3 的"点开又自动合上"）。
+
+                直播轮次**一出现助理内容就出这行**（`usagePending`）：main 的 usage patch 要等
+                第一步 finish-step 才写，而第一个思考可能长跑几十秒 —— 那段时间轮尾什么都没有，
+                这行会"啪"地蹦出来把下面的内容顶开（用户 2026-10-11 口径：第一次动态内容时
+                时间和 token 那行就该在）。数字还没到时给占位（见 TurnUsageBar 的 pending）。 */}
+            <Show when={t().attrs.usage || usagePending()}>
                 <TurnUsageBar
                     turnId={t().id}
                     usage={t().attrs.usage}
+                    pending={usagePending()}
                     hover={props.usageHover?.id === t().id}
                     onHover={(el) => props.onHoverUsage(t().id, el)}
                     onHoverEnd={props.onHoverEndUsage}

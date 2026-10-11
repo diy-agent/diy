@@ -90,28 +90,34 @@ export function foldedItems(turn: BlockNode): BlockNode[] {
     return out;
 }
 
-// ─── 3 级起的中间区：紧凑行 ──────────────────────────────
+// ─── 3 级起的中间区：正文逐条 + 连续过程折成一行 ──────────────
 
 /** 3 级起「中间区」的一项（文档序） */
 export type ContentItem =
     | { kind: "user"; key: string; node: BlockNode }
     | { kind: "error"; key: string; node: BlockNode }
-    | { kind: "conclusion"; key: string; node: BlockNode }
-    | { kind: "row"; key: string; text: BlockNode | null; parts: BlockNode[] };
+    | { kind: "text"; key: string; node: BlockNode }
+    | { kind: "proc"; key: string; parts: BlockNode[] };
 
 /**
- * 3 级起的中间区（文档序、不重排）。
+ * 3 级起的中间区（**严格文档序，不重排**）。
  *
- * 用户 2026-10-11 口径：一轮的产出节奏是「若干个思考/工具 → 一条正文 → 再来一些思考/工具
- * → 又一条正文 …… 最后是结论」。中间那些**正文与过程条不该各占一行**：攒着的过程
- * （`parts`）与**收束它的那条正文**合成**一行的紧凑行**（`row`），一条正文收一行
- * （"只有新来的正文才换行"）。展开这一行（4 级、或用户手点这一行）就还是原样：
- * 逐条正文 + 逐条过程单行。
+ * 用户 2026-10-11 第四次口径（推翻上一版的"紧凑行"）：
+ *   ① **助理正文一律各自成项、全文显示**（"3 级不折叠 text"）—— 上一版把"过程 +
+ *      收束它的那条正文"压成一行，收起时显示的是**正文首行**、展开后那条正文却排在
+ *      工具**后面**，与文档序（思考 → 正文）眼见的顺序相反（用户实测："思考->文本，
+ *      但折叠时显示的是文本，展开文本却跑到后面"）。
+ *   ② **连续的思考/工具折成一行 bar**：bar 左侧写这一段**第一个**过程的内容、
+ *      右侧是思考数 / 工具数（`💭 n · ⚙ n`）；点它展开成逐条单行（= 第 4 级那一行）。
  *
- * 单独成项、不并入紧凑行的三种：
+ * 为什么这样切就绕开了顺序问题：正文与过程**各按文档序先后成项，没有任何"合并"**
+ * —— 合并在哪，顺序就在哪出问题（上一版的教训）。bar 只含过程，它落在哪一行
+ * 就是那些过程在时间线上的位置。
+ *
+ * 单独成项、不进 bar 的三种：
  *   · 用户发言（含插话）—— 脉络本体，且必须就地（提前 = 又一次重排）
- *   · error 块 —— 收进紧凑行就看不见了（一轮报错后与成功轮次长得一样 = 信息丢失）
- *   · **结论**（末条助理正文）—— 它是答案：2 级起就全文可见，压进紧凑行等于把答案藏了
+ *   · error 块 —— 收进 bar 就看不见了（一轮报错后与成功轮次长得一样 = 信息丢失）
+ *   · 助理正文（含结论）—— 这一轮"说了什么"的正文，全文可见，不压不并
  *
  * 轮首用户发言由调用方先画（见 leadUsers），此处排除，避免同一句画两遍。
  * `skip` 给调用方剔除**实时区那一个节点** —— 它在轮尾单独画（展开体给当前 tool/think），
@@ -119,17 +125,12 @@ export type ContentItem =
  */
 export function contentItems(turn: BlockNode, skip?: (n: BlockNode) => boolean): ContentItem[] {
     const lead = new Set(leadUsers(turn));
-    const last = lastAssistantText(turn);
     const out: ContentItem[] = [];
-    let parts: BlockNode[] = []; // 非正文叶子（think/tool/plan…），文档序
-    let text: BlockNode | null = null; // 收束本行的那条正文
-    let first: BlockNode | null = null; // 本行首个叶子（行键取它 —— 跨帧稳定）
+    let parts: BlockNode[] = []; // 连续的过程叶子（think/tool/plan…），文档序
     const flush = () => {
-        if (!first) return;
-        out.push({ kind: "row", key: first.id, text, parts });
+        // 空段不出：`skip` 剔掉实时区那一个节点后，一段可能整个空了
+        if (parts.length) out.push({ kind: "proc", key: parts[0]!.id, parts });
         parts = [];
-        text = null;
-        first = null;
     };
     for (const n of leavesOf(turn)) {
         if (lead.has(n) || skip?.(n)) continue;
@@ -139,19 +140,12 @@ export function contentItems(turn: BlockNode, skip?: (n: BlockNode) => boolean):
         } else if (n.tag === "error") {
             flush();
             out.push({ kind: "error", key: n.id, node: n });
-        } else if (n === last) {
+        } else if (n.tag === "text") {
             flush();
-            out.push({ kind: "conclusion", key: n.id, node: n });
+            out.push({ kind: "text", key: n.id, node: n });
         } else {
-            if (!first) first = n;
-            if (n.tag === "text") {
-                // 正文收束本行 —— 它**不进 parts**（那条正文由组件按原样渲染，
-                // 进了 parts 就会被当成"未知块"再画一次）
-                text = n;
-                flush();
-            } else {
-                parts.push(n);
-            }
+            // 过程块攒着 —— 连续的过程在界面上就是一行的 bar（见上）
+            parts.push(n);
         }
     }
     flush();
@@ -195,11 +189,11 @@ export function liveAreaOf(turn: BlockNode, isLive: boolean): LiveArea | null {
 /**
  * 轮次展开级别（像 JSON 树那样一层比一层细）。
  *
- * 2026-10-11 用户口径（第三次修正）：
+ * 2026-10-11 用户口径（第四次修正）：
  *   1 摘要结论 —— 轮次头 + 末条助理正文，**压成 N 行摘要**（底部渐隐 + "还有 N 行"提示行）
  *   2 完整结论 —— 轮次头 + 末条正文**全文**（其余仍不显示）
- *   3 紧凑过程 —— + 中间区：**过程与收束它的正文合一行**（见 contentItems）
- *   4 全部展开 —— 紧凑行铺开成"逐条正文 + 逐条过程单行"
+ *   3 全部正文 —— + 中间区：**助理正文逐条全文**，连续的过程折成一行 bar（见 contentItems）
+ *   4 逐条过程 —— 过程 bar 铺开成"每事件一行"（正文同 3 级）
  *
  * **级别循环只归顶部那一个按钮**（`cycleTurnLevel`，对所有轮次一起换层）；
  * 单轮不做循环 —— 点轮次头就是"把我这条展开 / 收拢"两态（见 `levelOfTurn`）。
@@ -218,7 +212,7 @@ export const TURN_LEVEL_MAX = 4;
 /** 第 5 层：单条工具/思考的**内容**。刻意不在级别循环里（太庞大），只由用户点那行自己开 */
 export const TURN_DETAIL_LAYER = 5;
 
-/** 默认级别：3（紧凑过程）—— 打开会话就能读到结论、也看得见过程轮廓 */
+/** 默认级别：3（全部正文）—— 打开会话就能读到正文、也看得见过程轮廓 */
 export const DEFAULT_TURN_LEVEL: TurnLevel = 3;
 
 export function isTurnLevel(v: unknown): v is TurnLevel {
@@ -253,8 +247,8 @@ export function levelOfTurn(mark: boolean | undefined, global: TurnLevel): TurnL
 export function turnLevelLabel(level: TurnLevel): string {
     if (level === 1) return "摘要结论";
     if (level === 2) return "完整结论";
-    if (level === 3) return "紧凑过程";
-    return "全部展开";
+    if (level === 3) return "全部正文";
+    return "逐条过程";
 }
 
 /** 顶部**全局**按钮的说明（它才负责换层） */
@@ -271,9 +265,9 @@ export function turnFoldTip(open: boolean): string {
 export interface LevelPlan {
     /** 结论（末条助理正文）**压成 N 行摘要** —— 1 级压、2 级起全文 */
     conclusionClamped: boolean;
-    /** 中间区可见（紧凑行）—— 3 级起 */
+    /** 中间区可见（正文逐条 + 过程 bar）—— 3 级起 */
     mid: boolean;
-    /** 紧凑行铺开成逐条 —— 4 级（用户单点某一行也能只展开它自己） */
+    /** 过程 bar 铺开成逐条 —— 4 级（用户单点某一行也能只展开它自己） */
     midExpanded: boolean;
 }
 
