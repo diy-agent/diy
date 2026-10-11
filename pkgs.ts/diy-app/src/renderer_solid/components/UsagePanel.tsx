@@ -2,7 +2,8 @@
  * UsagePanel — 用量可见性的**三级收纳**（契约见任务 211 §六b；交互形态 2026-10-03 与用户对齐）：
  *
  *   L1 实时常显（页面只留一行数，大表一律藏进 L3）：
- *     · TurnUsageBar     —— turn 底 bar：`HH:MM · N tok · $X`（行是 flex 容器，后续可挂别的按钮）
+ *     · TurnUsageBar     —— turn 尾一行：`时刻（左，纯文本） … N tok · $X（右，按钮）`（时刻与用量分开，见其头注）；
+ *       直播中第一步还没跑完时先出**占位**（`pending`：时间照给、用量位写"⋯ 统计中"）
  *     · SessionUsageChip —— 发送区人物右侧：会话累计 `N tok · $X`
  *   L2 hover 汇总卡：纵向 8 项（token 桶加总 + 输入$/输出$/合计$），
  *     卡顶 viewbar 右侧「明细」→ L3
@@ -20,7 +21,7 @@
  *   · 不可测桶写 `–`/`n/a`，**不写 0**；旧记录（无四桶字段）按原样降级，不假装能拆
  */
 
-import { createEffect, createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Match, Show, Switch, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 import { localChatStore } from "../store/localChatStore";
 import { useDrawerMax, DrawerMaxButton } from "./DrawerMaximize";
@@ -88,13 +89,15 @@ function isLegacyUsage(u: unknown): boolean {
     return !!r && typeof r["noCache"] !== "number";
 }
 
-/** turnId（`t` + 13 位 epoch ms）→ `HH:MM`；旧格式 id 解析不出就不显示（不编时间） */
+/** turnId（`t` + 13 位 epoch ms）→ `YYYY-MM-DD HH:MM:SS`；旧格式 id 解析不出就不显示（不编时间） */
 function fmtTurnClock(turnId: string): string | null {
     const m = /^t(\d{13})$/.exec(turnId);
     if (!m) return null;
     const d = new Date(Number(m[1]));
     if (Number.isNaN(d.getTime())) return null;
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    const p = (n: number) => String(n).padStart(2, "0");
+    // 日期 + 时间到秒（用户 2026-10-04：轮次末尾要能定位"什么时候说的"）
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 // ─── L2 汇总卡：统一数据模型（A/B 两表同一份源） ───────
@@ -1145,53 +1148,117 @@ export function UsageHoverCard(props: {
 // ─── L1① turn 底 bar ────────────────────────────────
 
 /**
- * turn 底 bar：`HH:MM · N tok · $X` —— 只放时间、总 token 合计、金额（2026-10-03 定稿）。
- * 三数同为**各步累计**口径（可互算）；窗口% 不上 bar（不同口径不同框，防相除误读）。
- * hover 出 L2 卡；点击直接开 L3 抽屉（卡里的「明细」是同一动作的第二个入口）。
+ * turn 尾一行：左边**时刻**（`YYYY-MM-DD HH:MM:SS`），中间**本轮统计**（纯文本），
+ * 右边**用量按钮**（`N tok · $X`，hover 出 L2 卡、点击开 L3 抽屉；卡里的「明细」是同一动作的第二个入口）。
+ *
+ * 时刻为什么**独立且靠左**（2026-10-11 用户口径）：它与用量本来是同一个按钮，
+ * 于是整行都带 hover/点击，而滚屏阅读时视线与指针多半落在左侧 —— 一路读下来不断误触。
+ * 时刻本身也没有"更多信息"可给，不该可点；用量（真要细看的东西）靠右，误触面小。
+ * 时间用**日期+时间到秒**（2026-10-04 用户定）：轮次末尾要能定位"这话什么时候说的"，
+ * 只给时分在同一天多轮、或跨天回看时无法定位。旧记录轮次也照样出时间（见下）。
+ *
+ * `stat`（步数 · 耗时 · ⚙ n · 💭 n · ❌ n）本文件**只负责摆**，内容与判据见
+ * `LocalChatPage.turnStatLine`：从轮次头右侧搬到这行、用量左边（用户 2026-10-11 口径）。
+ * 三者三种交互（时刻/统计纯文本不可点、用量可 hover 可点），故**分成三段**而不是一个按钮 ——
+ * 合成一个就是把"不可点的东西"塞进可点区域（时刻那次的教训）。
  */
 export function TurnUsageBar(props: {
     turnId: string;
     usage: unknown;
+    /** true = 直播中且 main 还没写过 usage patch（第一步 finish-step 之前）：给占位，不装作有数 */
+    pending?: boolean;
+    /** 本轮统计（步数 · 耗时 · ⚙ n · 💭 n · ❌ n），摆在这行、用量按钮左边；空则不占位 */
+    stat?: string;
     hover: boolean;
     onHover: (el: HTMLElement) => void;
     onHoverEnd: () => void;
     onDetail: () => void;
 }) {
+    // 时间与记录格式无关（turnId 里就带着开始时刻）—— 旧记录轮次同样要能定位时间
+    const clock = fmtTurnClock(props.turnId);
+    /** 时刻：纯文本、无 hover、无点击（它没有"更多信息"可给，靠左却最容易误触） */
+    const Clock = () => (
+        <Show when={clock != null}>
+            <span class="shrink-0 tabular-nums text-caption opacity-50">{clock}</span>
+        </Show>
+    );
+    /** 本轮统计：与时刻同为**纯文本**（无 hover / 无点击）—— 它没有"更多信息"可给 */
+    const Stat = () => (
+        <Show when={props.stat}>
+            <span class="shrink-0 text-caption opacity-60" data-turn-stat>
+                {props.stat}
+            </span>
+        </Show>
+    );
+    /** 直播首步还没跑完：时间照给（turnId 自带开始时刻），用量位给占位。
+     *  ⚠️ 三个分支必须走 `<Switch>`，**不能** `if (...) return`：Solid 组件体只跑一次，
+     *  提前 return 得到的分支在 usage 到达后不会重算 —— 占位条会永远留在那儿（实测坑）。 */
+    const pending = () => !!props.pending && props.usage == null;
+    return (
+        <Switch>
+            <Match when={pending()}>
+                <div class="flex items-center gap-2 text-body" data-usage-pending="1">
+                    <Clock />
+                    <span class="flex-1" />
+                    <Stat />
+                    <span
+                        class="text-caption opacity-40"
+                        title="用量要等本步跑完（finish-step）才拿得到；时间是本轮开始时刻"
+                    >
+                        ⋯ 统计中
+                    </span>
+                </div>
+            </Match>
+            <Match when={isLegacyUsage(props.usage)}>{LegacyRow()}</Match>
+            <Match when={true}>{LiveRow()}</Match>
+        </Switch>
+    );
+
     /** 旧记录：无四桶无金额 → 降级成一行字，不进卡不进抽屉（拆不出东西） */
-    if (isLegacyUsage(props.usage)) {
-        const l = props.usage as { in?: number; out?: number; total?: number };
+    function LegacyRow() {
+        const l = () => props.usage as { in?: number; out?: number; total?: number };
         return (
-            <div class="text-body opacity-60">
-                tokens ↑{fmtInt(l.in ?? 0)} ↓{fmtInt(l.out ?? 0)}（Σ{fmtInt(l.total ?? 0)}）
-                <span class="ml-1">（旧记录：无四桶/金额）</span>
+            <div class="flex items-center gap-2 text-body">
+                <Clock />
+                <span class="flex-1" />
+                <Stat />
+                <span class="opacity-60">
+                    tokens ↑{fmtInt(l().in ?? 0)} ↓{fmtInt(l().out ?? 0)}（Σ{fmtInt(l().total ?? 0)}）
+                    <span class="ml-1">（旧记录：无四桶/金额）</span>
+                </span>
             </div>
         );
     }
-    const p = () => props.usage as TurnUsagePatch;
-    const clock = fmtTurnClock(props.turnId);
-    return (
-        <button
-            type="button"
-            class="flex w-max cursor-pointer select-none items-center gap-x-3 rounded px-1 text-body opacity-70 transition-opacity hover:bg-base-200 hover:opacity-100"
-            aria-haspopup="dialog"
-            aria-expanded={props.hover}
-            aria-label="本轮用量（悬停看汇总，点击开逐步明细）"
-            title="各轮/各步累计（重发成本口径，非窗口占用）。悬停看汇总，点击开逐步明细"
-            onPointerEnter={(e) => props.onHover(e.currentTarget)}
-            onPointerLeave={(e) => {
-                // 元素被块树重建移除时浏览器也可能派发 leave —— 那不是"移出"，忽略
-                if (!e.currentTarget.isConnected) return;
-                props.onHoverEnd();
-            }}
-            onClick={props.onDetail}
-        >
-            <Show when={clock != null}>
-                <span class="tabular-nums opacity-70">{clock}</span>
-            </Show>
-            <span class="tabular-nums">{fmtTokens(p().total)} tok</span>
-            <span class="tabular-nums">{p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}</span>
-        </button>
-    );
+
+    /** 正常一轮：时刻靠左 · 用量按钮靠右（hover 卡 / 点击明细） */
+    function LiveRow() {
+        const p = () => props.usage as TurnUsagePatch;
+        return (
+            <div class="flex items-center gap-2">
+                <Clock />
+                <span class="flex-1" />
+                <Stat />
+                <button
+                    type="button"
+                    class="flex w-max cursor-pointer select-none items-center gap-x-3 rounded px-1 text-body opacity-70 transition-opacity hover:bg-base-200 hover:opacity-100"
+                    aria-haspopup="dialog"
+                    aria-expanded={props.hover}
+                    aria-label="本轮用量（悬停看汇总，点击开逐步明细）"
+                    title="各轮/各步累计（重发成本口径，非窗口占用）。悬停看汇总，点击开逐步明细"
+                    onPointerEnter={(e) => props.onHover(e.currentTarget)}
+                    onPointerLeave={(e) => {
+                        // 元素被块树重建移除时浏览器也可能派发 leave —— 那不是"移出"，忽略
+                        if (!e.currentTarget.isConnected) return;
+                        props.onHoverEnd();
+                    }}
+                    onClick={props.onDetail}
+                >
+                    <span class="tabular-nums">{fmtTokens(p().total)} tok</span>
+                    <span class="tabular-nums">{p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}</span>
+                </button>
+            </div>
+        );
+    }
 }
 
 // ─── L1② 发送区会话汇总 chip ────────────────────────

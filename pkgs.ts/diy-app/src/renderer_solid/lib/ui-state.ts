@@ -12,36 +12,27 @@
 // 模式：field(key, spec) 扁平字段，每个字段 = key + 类型 + 反序列化/校验 + 默认值，
 // 统一 .get()/.set()/.reset()。收益：
 //   1. 类型化读写：调用方不再各自 Number()/JSON.parse/cast
-//   2. 约束集中：范围校验（density 1-4、宽度 360-1000）定义即生效
+//   2. 约束集中：范围校验（大纲行数 1-10、宽度 360-1000）定义即生效
 //   3. 与存储解耦：未来换 IndexedDB/$DIY_HOME 文件只改本文件内部
 // 不引入 zod：zod 的运行时校验 + 类型派生服务于跨进程契约（RPC）；视图 cache
 // 是进程内单端标量字段，轻量 parse 即可。
 
+// 级别语义的真源是 renderer_solid/lib/chat-fold（TurnLevel / TURN_LEVEL_*）——
+// 存储层只做"夹范围"，不重新定义一套枚举（两处各写一份边界必然腐坏）。
+import { DEFAULT_TURN_LEVEL, isTurnLevel } from "./chat-fold";
+
 export type DiyTheme = "dark" | "light";
 
-// ─── 聊天信息密度（枚举：值即存储值，自解释，替代裸数字） ─────────
-
-export const DENSITY_LEVEL = {
-  OUTLINE: "outline", // L1 脉络：user 全文 + assistant 单行，过程隐藏
-  READ: "read", // L2 阅读：正文全文 + 过程压成发丝线（默认）
-  AUDIT: "audit", // L3 审计：过程标题行可展开
-  FORENSIC: "forensic", // L4 取证：全部展开
-} as const;
-export type Density = (typeof DENSITY_LEVEL)[keyof typeof DENSITY_LEVEL];
-/** 由简到繁的顺序（工具条渲染顺序） */
-export const DENSITY_VALUES: readonly Density[] = [
-  DENSITY_LEVEL.OUTLINE,
-  DENSITY_LEVEL.READ,
-  DENSITY_LEVEL.AUDIT,
-  DENSITY_LEVEL.FORENSIC,
-];
-/** 旧版数字存储（1-4）→ 语义值兼容 */
-const LEGACY_DENSITY: Record<string, Density> = {
-  "1": DENSITY_LEVEL.OUTLINE,
-  "2": DENSITY_LEVEL.READ,
-  "3": DENSITY_LEVEL.AUDIT,
-  "4": DENSITY_LEVEL.FORENSIC,
-};
+// ─── 聊天的两个视图数：全局展开级别 + 摘要行数 ─────────
+//
+// 2026-10-11：原「正常 / 大纲」两态开关已取消 —— 改成**展开级别**（1 摘要结论 /
+// 2 完整结论 / 3 全部正文 / 4 逐条过程；第 5 层「单条过程内容」不在循环里，
+// 只由用户点那一行自己开。见 renderer_solid/lib/chat-fold 的 TurnLevel）。
+// 落盘的只有两个数：
+//   · 全局级别 —— 顶部 `n/4 展开` 按钮，**长期偏好**（"我习惯看多细"）
+//   · 摘要行数 —— 1 级把结论压成几行（默认 3）
+// **单轮的手动覆盖不落盘**：轮次 id 会无限增长，逐轮写进 localStorage 只会越攒越脏。
+export const CONCLUSION_LINES_DEFAULT = 3;
 
 // ─── 缓存字段（get/set/reset，内部吞异常 + 留痕） ─────────────
 
@@ -256,15 +247,25 @@ export const Caches = {
     serialize: (v) => v,
     defaultValue: "",
   }),
-  /** 本地聊天密度（枚举语义值 outline/read/audit/forensic，兼容旧数字 1-4） */
-  diy_chat_density: field<Density>("diy_chat_density", {
+  /** 1 级「摘要结论」的行数上限（**默认 3**；暂无 UI 入口，仅测试写入），parse 夹在 1-10。
+   *  MD 渲染/原文开关对摘要同样生效（2026-10-11 反馈：摘要态强制原文是错的）。 */
+  diy_chat_conclusion_lines: field<number>("diy_chat_conclusion_lines", {
     parse: (raw) => {
-      if (DENSITY_VALUES.includes(raw as Density)) return raw as Density;
-      // 旧版数字（1-4）兼容
-      return LEGACY_DENSITY[raw] ?? null;
+      const v = Number(raw);
+      return Number.isInteger(v) && v >= 1 && v <= 10 ? v : null;
     },
-    serialize: (v) => v,
-    defaultValue: DENSITY_LEVEL.READ,
+    serialize: (v) => String(v),
+    defaultValue: CONCLUSION_LINES_DEFAULT,
+  }),
+  /** 聊天**全局展开级别**（1-4，见 lib/chat-fold 的 TurnLevel）：顶部 `n/4 展开` 按钮。
+   *  它是"我习惯看多细"的长期偏好，故落盘；单轮的手动覆盖不落盘（轮次 id 无限增长）。 */
+  diy_chat_level: field<number>("diy_chat_level", {
+    parse: (raw) => {
+      const v = Number(raw);
+      return isTurnLevel(v) ? v : null;
+    },
+    serialize: (v) => String(v),
+    defaultValue: DEFAULT_TURN_LEVEL,
   }),
   /** 聊天正文渲染模式（true=Markdown 富文本，false=原文） */
   diy_chat_md: field<boolean>("diy_chat_md", {
@@ -385,6 +386,14 @@ const LEGACY_KEYS = [
   "diy-detail-width",
   "diy-local-density",
   "diy-theme",
+  // 三档密度（脉络/阅读/审计）2026-10-04 取消 → 改「正常/大纲」两态，旧 key 一并清
+  "diy_chat_density",
+  "diy_chat_compact",
+  "diy_chat_compact_lines",
+  // 「正常/大纲」两态 2026-10-11 取消 → 改**展开级别**（全局 `n/4 展开` + 单轮覆盖），
+  // 模式开关与旧行数 key 一并清
+  "diy_chat_outline",
+  "diy_chat_outline_lines",
   // 试验场早期直写的宽度 key（已收进字段池）
   "lab4.leftW",
   "lab4.rightW",

@@ -37,7 +37,7 @@ type FieldKind = "Text" | "List" | "Flag";
 
 /** kind → 字段类型表。children 为结构位（start 自动维护），不接受 delta/patch。 */
 const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
-    turn: { usage: "Flag", status: "Flag", notice: "Flag" },
+    turn: { usage: "Flag", status: "Flag", notice: "Flag", reasoningEffort: "Flag", durationMs: "Flag" },
     step: { model: "Flag", usage: "Flag", status: "Flag" },
     // steer / steerId：用户"插嘴"写进对话流的标记（模式 next-step|next-turn，缺省 = 本轮开场的那次发言）
     // 与队列项 id（steer/N，回查用）。走 start 的 meta 落位（见 local-agent 的 steerBlockOps），
@@ -104,6 +104,11 @@ export function interruptedToolPatches(store: BlockStore): Op[] {
  * 且 append-only 的 llm 全量日志也没法给这一轮定稿（定稿判据 = turn 已 stop）。
  *
  * 顺序：倒序遍历（父块总先于子块创建）→ 子先父后，与 closeTurn 的收尾顺序一致。
+ *
+ * ⚠️ 只补**结构闭合**（stop），**不补 `durationMs`** —— 正常收尾的耗时由 closeTurn 写
+ * （`local-agent.ts` 的 `durationMs = Date.now() - turnId 内嵌开始毫秒`），而崩溃/被杀那一刻
+ * 进程已死，"这一轮跑到哪结束"无从得知，编一个数就是假事实。故这类轮次的头部**永远没有耗时位**，
+ * 只显示「本轮未完成（流中断/崩溃恢复）」。这是有意为之，不是漏填。
  */
 export function danglingStopPatches(store: BlockStore): Op[] {
     const out: Op[] = [];
