@@ -699,6 +699,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
         customSpecs: {},
         catalog: [],
         providers: [],
+        calendars: [],
+        windows: [],
         error: e instanceof Error ? e.message : String(e),
       };
     }
@@ -719,6 +721,24 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { status: "ok" };
   });
 
+  binding.on(app.llmConfig.costs, async ({ input }) => {
+    const { providerCosts } = await import("../core/llm-cost");
+    return providerCosts(state.diyHome(), input.provider);
+  });
+  // 价目写入后立刻重装运行时目录（与 write / writeSpec 同一处收敛）：改价即生效，
+  // 不必等下次 provider 配置改动才被读到。
+  binding.on(app.llmConfig.setCost, async ({ input }) => {
+    const { setModelCost } = await import("../core/llm-cost");
+    const result = setModelCost(state.diyHome(), input);
+    refreshModelRuntime(state.diyHome());
+    return result;
+  });
+  binding.on(app.llmConfig.setTiers, async ({ input }) => {
+    const { setModelTiers } = await import("../core/llm-cost");
+    const result = setModelTiers(state.diyHome(), input);
+    refreshModelRuntime(state.diyHome());
+    return result;
+  });
   binding.on(app.llmConfig.scanEnv, async () => {
     const { scanEnv } = await import("../core/model-import");
     // 连同扫描面（provider 数 / 变量名）一起回报：零命中时 UI 要能说清「查过什么」

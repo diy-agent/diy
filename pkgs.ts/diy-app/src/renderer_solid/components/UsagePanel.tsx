@@ -2,7 +2,7 @@
  * UsagePanel — 用量可见性的**三级收纳**（契约见任务 211 §六b；交互形态 2026-10-03 与用户对齐）：
  *
  *   L1 实时常显（页面只留一行数，大表一律藏进 L3）：
- *     · TurnUsageBar     —— turn 底 bar：`HH:MM · N tok · $X`（行是 flex 容器，后续可挂别的按钮）
+ *     · TurnUsageBar     —— turn 底 bar：`N tok · $X`（行是 flex 容器，后续可挂别的按钮）
  *     · SessionUsageChip —— 发送区人物右侧：会话累计 `N tok · $X`
  *   L2 hover 汇总卡：纵向 8 项（token 桶加总 + 输入$/输出$/合计$），
  *     卡顶 viewbar 右侧「明细」→ L3
@@ -23,6 +23,9 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 import { localChatStore } from "../store/localChatStore";
+// 时间口径唯一出处（shared/date-format）：面板里的轮次时刻（hover 卡标题 / 明细抽屉）与对话流
+// 首行同格式（fmtTurnStamp）；列头那处要「到秒」故用 fmtTurnFull。
+import { fmtTurnFull, fmtTurnStamp } from "../../shared/date-format";
 import { useDrawerMax, DrawerMaxButton } from "./DrawerMaximize";
 import {
     cacheHitRate,
@@ -86,15 +89,6 @@ const faceLabel = (api: string): string => (api === "responses" ? "resp" : "chat
 function isLegacyUsage(u: unknown): boolean {
     const r = u as Record<string, unknown> | null;
     return !!r && typeof r["noCache"] !== "number";
-}
-
-/** turnId（`t` + 13 位 epoch ms）→ `HH:MM`；旧格式 id 解析不出就不显示（不编时间） */
-function fmtTurnClock(turnId: string): string | null {
-    const m = /^t(\d{13})$/.exec(turnId);
-    if (!m) return null;
-    const d = new Date(Number(m[1]));
-    if (Number.isNaN(d.getTime())) return null;
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 // ─── L2 汇总卡：统一数据模型（A/B 两表同一份源） ───────
@@ -439,14 +433,6 @@ const fmtDateSec = (d: Date | number): string => {
     if (Number.isNaN(dt.getTime())) return "";
     const p = (n: number) => String(n).padStart(2, "0");
     return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())} ${p(dt.getHours())}:${p(dt.getMinutes())}:${p(dt.getSeconds())}`;
-};
-
-/** 轮次时间（日期 + 时间到秒）：turnId 自带 epoch ms（`t179…`）；非常规 id → null（回退原 id） */
-const turnStamp = (turnId: string): string | null => {
-    const m = /^t(\d{13})$/.exec(turnId);
-    if (!m) return null;
-    const s = fmtDateSec(Number(m[1]));
-    return s || null;
 };
 
 /** 步时间（日期 + 时间到秒）：账本 ts（ISO）；非法 → 原文 */
@@ -942,7 +928,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                             <For each={groups()}>
                                                 {(g) => (
                                                     <tr>
-                                                        <td class="text-right tabular-nums" title={g.turnId}>{turnStamp(g.turnId) ?? g.turnId}</td>
+                                                        <td class="text-right tabular-nums" title={g.turnId}>{fmtTurnFull(g.turnId) ?? g.turnId}</td>
                                                         <td class="text-right font-mono text-caption opacity-70">{g.turnId}</td>
                                                         <td class="text-right">{g.steps.length}</td>
                                                         {cellsOf(g.last.record.contextParts, g.last.buckets.inputTotal)}
@@ -1082,7 +1068,8 @@ export function UsageHoverCard(props: {
         const s = props.state;
         if (!s) return "";
         if (s.id === "session") return "会话用量（累计）";
-        const c = fmtTurnClock(s.id);
+        // 时刻口径与对话流一致（fmtTurnStamp）：同一轮不该出现两种时间格式
+        const c = fmtTurnStamp(s.id);
         return c ? `本轮用量 · ${c}` : "本轮用量";
     };
 
@@ -1145,12 +1132,15 @@ export function UsageHoverCard(props: {
 // ─── L1① turn 底 bar ────────────────────────────────
 
 /**
- * turn 底 bar：`HH:MM · N tok · $X` —— 只放时间、总 token 合计、金额（2026-10-03 定稿）。
- * 三数同为**各步累计**口径（可互算）；窗口% 不上 bar（不同口径不同框，防相除误读）。
+ * turn 底 bar：`N tok · $X` —— 只放总 token 合计与金额（2026-10-03 定稿；时刻于 review2-3 移除）。
+ * 两数同为**各步累计**口径（可互算）；窗口% 不上 bar（不同口径不同框，防相除误读）。
  * hover 出 L2 卡；点击直接开 L3 抽屉（卡里的「明细」是同一动作的第二个入口）。
+ *
+ * 为什么不显示时刻：时刻是**轮**的事实，一轮只该出现一次，挂在该轮首个消息块上
+ * （用户发言那一行，见 LocalChatPage.TurnView.timeAnchorId）。底 bar 是同一轮的第三个
+ * 可见位置 —— 一轮里把同一个数印三遍不增加信息，只增加噪音（review2-3）。
  */
 export function TurnUsageBar(props: {
-    turnId: string;
     usage: unknown;
     hover: boolean;
     onHover: (el: HTMLElement) => void;
@@ -1168,7 +1158,7 @@ export function TurnUsageBar(props: {
         );
     }
     const p = () => props.usage as TurnUsagePatch;
-    const clock = fmtTurnClock(props.turnId);
+    // 这里**不画时刻**：见上方头注（一轮一处，挂轮首消息）。
     return (
         <button
             type="button"
@@ -1185,9 +1175,6 @@ export function TurnUsageBar(props: {
             }}
             onClick={props.onDetail}
         >
-            <Show when={clock != null}>
-                <span class="tabular-nums opacity-70">{clock}</span>
-            </Show>
             <span class="tabular-nums">{fmtTokens(p().total)} tok</span>
             <span class="tabular-nums">{p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}</span>
         </button>
@@ -1514,7 +1501,7 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
     });
     const rows = () => (props.turnId ? localChatStore.usage.filter((r) => r.turnId === props.turnId) : []);
     const group = () => (props.turnId ? groupByTurn(localChatStore.usage).find((g) => g.turnId === props.turnId) ?? null : null);
-    const clock = () => (props.turnId ? fmtTurnClock(props.turnId) : null);
+    const clock = () => (props.turnId ? fmtTurnStamp(props.turnId) : null);
     /** 表格 / MD 源码 / 账本源码（两键皆不亮 = 表格；再点已亮键回表格） */
     const [fmtView, setFmtView] = createSignal<"table" | "md" | "raw">("table");
     const toggleFmt = (v: "md" | "raw") => setFmtView((x) => (x === v ? "table" : v));
@@ -1691,6 +1678,8 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
     };
     const rate = () => (last() ? windowRate(last()!.buckets, last()!.record.contextLimit) : null);
     const tiers = () => [...new Set(steps().map((r) => r.rates?.tier).filter((t): t is string => !!t))];
+    /** 时段档（峰/谷）——与上下文档位是**两轴**，分开显示（见 shared/usage.ts ratesOf） */
+    const windows = () => [...new Set(steps().map((r) => r.rates?.window).filter((t): t is string => !!t))];
     /** 表格 / MD 源码 / 账本源码（两键皆不亮 = 表格；再点已亮键回表格） */
     const [fmtView, setFmtView] = createSignal<"table" | "md" | "raw">("table");
     const toggleFmt = (v: "md" | "raw") => setFmtView((x) => (x === v ? "table" : v));
@@ -1766,7 +1755,9 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
                                 : ""}
                             {" · "}
                             生效档位：{tiers().length ? tiers().join(", ") : "—"}
-                            （tier 按总输入 token 选，取满足条件的最大阈值）
+                            {windows().length ? ` · 时段：${windows().join(", ")}` : ""}
+                            （tier = 上下文档：按总输入 token 取满足条件的最大阈值；时段 = 峰谷档：
+                            按请求时刻 + 内置日历判定）
                             <br />
                             `合计$` = 非缓存 + 缓存读 + 缓存写 + 文本 + 思考；思考是总输出的拆解子项，
                             <span class="font-medium">不重复加</span>。缓存写 `n/a` = 该 API 面不可测（不是 0）。
