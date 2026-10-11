@@ -2,24 +2,15 @@
 // 🎯 dev 变体（preview/lab）数据根的决策：恒为 build/<variant>/home，继承来的**生产根**必须被拒。
 // 这条守的是「别把示例数据写进用户真实数据根」（##286 实测：宿主 shell 的 DIY_HOME=~/.diy
 // 一路透传，preview 直奔生产）。
+//
+// 「生产根」的定义在 instance-identity（单一定义处，见那里的单测）；本文件只测「撞上后怎么办」。
 
 import { describe, it, expect } from "vitest";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { isProdHome, resolveDevHome } from "../../src/main/core/dev-home";
+import { resolveDevHome } from "../../src/main/core/dev-home";
+import { prodDataHome } from "../../src/main/core/instance-identity";
 
-const HOME = "/home/tester";
 const REPO = "/repo";
-
-describe("isProdHome", () => {
-    it("$HOME/.diy 才算生产根", () => {
-        expect(isProdHome("/home/tester/.diy", HOME)).toBe(true);
-        expect(isProdHome("/home/tester/.diy/", HOME)).toBe(true); // 尾斜杠不该绕过
-        expect(isProdHome("/home/tester/.diy/dev", HOME)).toBe(false); // 子目录不是根
-        expect(isProdHome("/home/tester/.diy-x", HOME)).toBe(false);
-        expect(isProdHome(join(homedir(), ".diy"))).toBe(true); // 缺省用真实家目录
-    });
-});
 
 describe("resolveDevHome", () => {
     it("没有继承值 → build/<variant>/home", () => {
@@ -36,22 +27,29 @@ describe("resolveDevHome", () => {
         const d = resolveDevHome({
             variant: "preview",
             repoRoot: REPO,
-            inherited: join(HOME, ".diy"),
-            homeDir: HOME,
+            inherited: prodDataHome(),
         });
         expect(d.home).toBe(join(REPO, "build/preview/home"));
-        expect(d.rejected).toBe(join(HOME, ".diy"));
+        expect(d.rejected).toBe(prodDataHome());
+    });
+
+    it("生产根的等价写法（尾斜杠）也拒绝", () => {
+        const d = resolveDevHome({
+            variant: "lab",
+            repoRoot: REPO,
+            inherited: `${prodDataHome()}/`,
+        });
+        expect(d.home).toBe(join(REPO, "build/lab/home"));
     });
 
     it("DIY_ALLOW_PROD_HOME 显式放行时照旧透传", () => {
         const d = resolveDevHome({
             variant: "preview",
             repoRoot: REPO,
-            inherited: join(HOME, ".diy"),
-            homeDir: HOME,
+            inherited: prodDataHome(),
             allowProdHome: true,
         });
-        expect(d.home).toBe(join(HOME, ".diy"));
+        expect(d.home).toBe(prodDataHome());
         expect(d.rejected).toBeNull();
     });
 
@@ -60,7 +58,6 @@ describe("resolveDevHome", () => {
             variant: "lab",
             repoRoot: REPO,
             inherited: "/tmp/scratch-home",
-            homeDir: HOME,
         });
         expect(d.home).toBe("/tmp/scratch-home");
         expect(d.rejected).toBeNull();

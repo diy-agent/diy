@@ -187,10 +187,13 @@ describe("任务表格：排序", () => {
   });
 
   it("排序规格落到视图 cache（刷新后仍是用户选的）", async () => {
-    // 切到「优先级」列（降序：P1 在前，未定级的排最后）
+    // 切到「优先级」列。**新键首点 = 升序**（`toggleSort`：除 `updated` 外一律升序，
+    // 枚举按声明序 → P0/P1 在前、未定级恒排最后）。这里曾断言 `priority:desc` —— 那是
+    // 175 改 `toggleSort` 之前的旧行为，断言没跟着改，一直被 `retry:1` 掩盖（重跑时状态
+    // 已是 asc，同键再点才翻成 desc）。去掉 retry 后被 ##255 R6 揭出。
     await clickHeader("优先级");
     const cached = await ui.eval<string>(`localStorage.getItem("diy_task_tree_sort")`);
-    expect(cached).toBe("priority:desc");
+    expect(cached).toBe("priority:asc");
 
     // 未定级的任务（2、3）不能挤到有优先级的前面 —— 「未设置恒排最后」
     const order = await waitUntil(rowOrder, (o) => o[0]?.endsWith("/tasks/1"), { label: "P1 排最前" });
