@@ -1678,6 +1678,8 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
     };
     const rate = () => (last() ? windowRate(last()!.buckets, last()!.record.contextLimit) : null);
     const tiers = () => [...new Set(steps().map((r) => r.rates?.tier).filter((t): t is string => !!t))];
+    /** 时段档（峰/谷）——与上下文档位是**两轴**，分开显示（见 shared/usage.ts ratesOf） */
+    const windows = () => [...new Set(steps().map((r) => r.rates?.window).filter((t): t is string => !!t))];
     /** 表格 / MD 源码 / 账本源码（两键皆不亮 = 表格；再点已亮键回表格） */
     const [fmtView, setFmtView] = createSignal<"table" | "md" | "raw">("table");
     const toggleFmt = (v: "md" | "raw") => setFmtView((x) => (x === v ? "table" : v));
@@ -1753,7 +1755,9 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
                                 : ""}
                             {" · "}
                             生效档位：{tiers().length ? tiers().join(", ") : "—"}
-                            （tier 按总输入 token 选，取满足条件的最大阈值）
+                            {windows().length ? ` · 时段：${windows().join(", ")}` : ""}
+                            （tier = 上下文档：按总输入 token 取满足条件的最大阈值；时段 = 峰谷档：
+                            按请求时刻 + 内置日历判定）
                             <br />
                             `合计$` = 非缓存 + 缓存读 + 缓存写 + 文本 + 思考；思考是总输出的拆解子项，
                             <span class="font-medium">不重复加</span>。缓存写 `n/a` = 该 API 面不可测（不是 0）。
