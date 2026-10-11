@@ -8,7 +8,7 @@
  * 一个轮次在界面上分三段，判据各自成函数：
  *   ① 轮首用户发言 `leadUsers` —— 渲染在轮次头**之前**（IM 顺序：用户先说、对方再接）
  *   ② 中间内容 `foldedItems`（1-2 级）/ `contentItems`（3 级起）
- *   ③ 轮尾实时区 `liveAreaOf` —— 只有直播轮次有
+ *   ③ 活动块 `liveTailOf` + 插入位置 `liveSlotIndex` —— 只有直播轮次有（**就地**画在中间区里）
  */
 
 import type { BlockNode } from "../../main/services/local-blocks";
@@ -120,8 +120,8 @@ export type ContentItem =
  *   · 助理正文（含结论）—— 这一轮"说了什么"的正文，全文可见，不压不并
  *
  * 轮首用户发言由调用方先画（见 leadUsers），此处排除，避免同一句画两遍。
- * `skip` 给调用方剔除**实时区那一个节点** —— 它在轮尾单独画（展开体给当前 tool/think），
- * 留在文档序里就是同一块画两遍（2026-10-04 review P1-1）。
+ * `skip` 给调用方剔除**活动块那一个节点** —— 它要带定高展开体单独画，留在文档序里就是
+ * 同一块画两遍（2026-10-04 review P1-1）。位置由 `liveSlotIndex` 补回（插回文档序原位）。
  */
 export function contentItems(turn: BlockNode, skip?: (n: BlockNode) => boolean): ContentItem[] {
     const lead = new Set(leadUsers(turn));
@@ -152,36 +152,44 @@ export function contentItems(turn: BlockNode, skip?: (n: BlockNode) => boolean):
     return out;
 }
 
-/** 实时区的形状：见 `liveAreaOf` */
-export interface LiveArea {
-    node: BlockNode;
-    /** true = 该步正在跑（给出展开体）；false = 已跑完、在等下一步（只留标题行 + ⋯） */
-    active: boolean;
+/**
+ * 直播轮次的**活动过程** = 最后一个过程叶子（think / tool）；还没有过程块（刚发出去、
+ * 模型连第一个 think 都还没产出）→ null，那段时间交给"等待响应"的 loading。
+ *
+ * ⚠️ 判据**故意不看它后面还有什么**（旧版规则③"后面有助理正文就让位"已删）：
+ *   一条正文开始流就让位，等于把刚跑完那个工具**从框里搬回文档序的 bar 里** ——
+ *   框消失 + 同一块内容换容器 = 双重跳变；而 3 级的 bar 是折叠的，那段工具输出当场看不见
+ *   （用户 2026-10-11："遇到一个 text 消息时，动态输出的文本框会消失…视觉跳动"）。
+ *   现在活动块**就地**画（位置见 `liveSlotIndex`），正文只是在它下方原地往下长 ——
+ *   不换容器、不搬家。
+ *
+ * `stopped` 两态由渲染侧判定（同一个判据，不再另开字段）：未定稿 = 在跑（体里实时刷）；
+ * 已定稿但还没被下一步替换掉 = **冻结**（标题栏转 `⋯ 等待下一步…`，内容留在框里）。
+ * 用户口径（2026-10-11）："step 完成后不要立即消失 … 直到下一步开始接收时替换掉当前
+ * 最后一条，避免长时间空白期"。
+ */
+export function liveTailOf(turn: BlockNode, isLive: boolean): BlockNode | null {
+    if (!isLive) return null;
+    const procs = leavesOf(turn).filter(isProc);
+    return procs[procs.length - 1] ?? null;
 }
 
 /**
- * 直播轮次的"当前活动"（渲染在轮尾）。
+ * 活动块**该插在中间区的第几项之前**（`contentItems` 已把它 skip 掉，位置得补回来）。
  *
- * 目标（用户 2026-10-04）：两步之间不要再留"什么都没有"的空白期 —— 模型在决定下一步
- * 干什么的那几秒里，界面必须仍然说明"在等什么"。
- *   ① 最后一步**正在跑**（未定稿）→ 它就是当前活动，展开体给出来（当前 tool 命令行 / think 正文）；
- *   ② 最后一步**已定稿但之后还没有助理内容** → 它留在原位不消失（冻结成标题行），
- *      底下挂一条 `⋯ 等待下一步`；新步一开始，整块内容被替换掉；
- *   ③ 它之后已有助理内容在流（正文/计划/错误）→ 那块内容本身就是"当前活动"，实时区让位。
- *
- * 调用方必须把 `node` 从文档序渲染里剔除（`contentItems` 的 `skip`）：否则同一块画两遍
- * （2026-10-04 review P1-1：展开态过程行与轮尾 delta 行各画一次，同一句出现两遍）。
+ * 为什么必须补：活动块是"最后一个过程叶子"，但它后面**可能还有东西** —— 最常见的就是
+ * 收尾那条正文（think → tool → 正文 是标准时序）。挂在列表末尾就会排到那条正文**后面**，
+ * 与文档序相反（顺序一错用户一眼看得出来，2026-10-04 那个坑）。
+ * 判据 = 文档序位置：数一数前面有几项，其**首个叶子**排在活动块之前。
+ * 取不到（节点已被移除）→ 排在末尾，宁可偏后也不要抛错。
  */
-export function liveAreaOf(turn: BlockNode, isLive: boolean): LiveArea | null {
-    if (!isLive) return null;
-    const leaves = leavesOf(turn);
-    const procs = leaves.filter(isProc);
-    const last = procs[procs.length - 1];
-    if (!last) return null;
-    if (!last.stopped) return { node: last, active: true };
-    const after = leaves.slice(leaves.indexOf(last) + 1);
-    if (after.some((n) => !isUserText(n))) return null;
-    return { node: last, active: false };
+export function liveSlotIndex(turn: BlockNode, items: ContentItem[], node: BlockNode): number {
+    const order = new Map<string, number>();
+    leavesOf(turn).forEach((n, i) => order.set(n.id, i));
+    const at = order.get(node.id) ?? Number.POSITIVE_INFINITY;
+    let i = 0;
+    while (i < items.length && (order.get(items[i]!.key) ?? Number.POSITIVE_INFINITY) < at) i++;
+    return i;
 }
 
 // ─── 展开级别 ────────────────────────────────────────

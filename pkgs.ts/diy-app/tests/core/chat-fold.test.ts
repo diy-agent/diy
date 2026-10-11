@@ -19,7 +19,8 @@ import {
     leadUsers,
     leavesOf,
     levelOfTurn,
-    liveAreaOf,
+    liveSlotIndex,
+    liveTailOf,
     planOfLevel,
     turnLevelLabel,
 } from "../../src/renderer_solid/lib/chat-fold";
@@ -114,40 +115,76 @@ describe("leadUsers：轮首用户发言（渲染在轮次头之前）", () => {
     });
 });
 
-describe("liveAreaOf：轮尾实时区", () => {
-    it("非直播轮次没有实时区", () => {
-        expect(liveAreaOf(turn(user("u1"), tool("x1", false)), false)).toBeNull();
+describe("liveTailOf：活动块（就地画在文档序里）", () => {
+    it("非直播轮次没有活动块", () => {
+        expect(liveTailOf(turn(user("u1"), tool("x1", false)), false)).toBeNull();
     });
 
-    it("一步在跑 → active（给展开体）", () => {
+    it("一步在跑 → 就是它（渲染侧看 stopped=false ⇒ 实时刷）", () => {
         const t = turn(user("u1"), tool("x1", false));
-        expect(liveAreaOf(t, true)).toEqual({ node: leavesOf(t)[1], active: true });
+        expect(liveTailOf(t, true)).toBe(leavesOf(t)[1]);
+        expect(liveTailOf(t, true)!.stopped).toBe(false);
     });
 
-    it("一步跑完、后面还没有助理内容 → 不消失（waiting + ⋯）", () => {
+    it("一步跑完、后面还没有内容 → **仍然返回它**（冻结：框不消失，等下一步替换）", () => {
         const t = turn(user("u1"), tool("x1"));
-        const a = liveAreaOf(t, true);
-        expect(a?.active).toBe(false);
-        expect(isProc(a!.node)).toBe(true);
+        expect(liveTailOf(t, true)!.id).toBe("x1");
+        expect(liveTailOf(t, true)!.stopped).toBe(true);
     });
 
-    it("跑完后的用户插话不算「助理内容」，仍然 waiting（否则空白期又回来了）", () => {
+    it("跑完且后面**有助理正文在流** → 照样返回它（旧版在这里让位 = 框消失 + 内容换容器 = 双重跳变）", () => {
+        // 用户 2026-10-11：一条 text 消息到达时"动态输出的文本框会消失…视觉跳动"。
+        // 修正点就是删掉旧规则③ —— 活动块就地画，正文只是在它下方原地往下长。
+        const t = turn(tool("x1"), say("a1"));
+        expect(liveTailOf(t, true)!.id).toBe("x1");
+        expect(liveTailOf(t, true)!.stopped).toBe(true);
+    });
+
+    it("跑完后的用户插话同样不改变判据（位置由 liveSlotIndex 管）", () => {
         const t = turn(tool("x1"), user("u2"));
-        expect(liveAreaOf(t, true)?.active).toBe(false);
+        expect(liveTailOf(t, true)!.id).toBe("x1");
     });
 
-    it("后面已有助理内容在流 → 让位（那块内容本身就是当前活动）", () => {
-        expect(liveAreaOf(turn(tool("x1"), say("a1")), true)).toBeNull();
-        expect(liveAreaOf(turn(tool("x1"), err("e1")), true)).toBeNull();
-    });
-
-    it("还没有任何过程块 → 没有实时区（那段时间交给「等待响应」loading）", () => {
-        expect(liveAreaOf(turn(user("u1")), true)).toBeNull();
+    it("还没有任何过程块 → 没有活动块（那段时间交给「等待响应」loading）", () => {
+        expect(liveTailOf(turn(user("u1")), true)).toBeNull();
+        expect(liveTailOf(turn(user("u1"), say("a1")), true)).toBeNull();
     });
 
     it("取的是最后一个过程块（think/tool 混排也一样）", () => {
         const t = turn(think("k1"), tool("x1"), think("k2", false));
-        expect(liveAreaOf(t, true)?.node.id).toBe("k2");
+        expect(liveTailOf(t, true)!.id).toBe("k2");
+    });
+});
+
+describe("liveSlotIndex：活动块插回文档序原位", () => {
+    it("活动块就是最后一个叶子 → 插在末尾", () => {
+        const t = turn(user("u1"), think("k1", false));
+        const its = contentItems(t, (n) => n === leavesOf(t)[1]);
+        expect(liveSlotIndex(t, its, leavesOf(t)[1]!)).toBe(its.length);
+    });
+
+    it("活动块后面还有收尾正文 → 插在**那条正文之前**（不能一律挂末尾）", () => {
+        // think → tool → 正文 是标准时序：活动块（tool）排到正文后面就与文档序相反
+        const t = turn(think("k1"), tool("x1"), say("a9"));
+        const live = leavesOf(t).find((n) => n.id === "x1")!;
+        const its = contentItems(t, (n) => n === live);
+        expect(its.map((i) => i.key)).toEqual(["k1", "a9"]);
+        expect(liveSlotIndex(t, its, live)).toBe(1); // 在 a9 之前
+    });
+
+    it("活动块在一段连续过程的**末尾** → 整段（已剔掉它）仍在它之前", () => {
+        // 轮首u1 由 leadUsers 单独渲染（不在中间区里），故项从 k1 起
+        const t = turn(user("u1"), think("k1"), tool("x1"), think("k2", false), say("a9"));
+        const live = leavesOf(t).find((n) => n.id === "k2")!;
+        const its = contentItems(t, (n) => n === live);
+        expect(its.map((i) => i.key)).toEqual(["k1", "a9"]);
+        expect(liveSlotIndex(t, its, live)).toBe(1);
+    });
+
+    it("节点已经取不到（正被移除）→ 排末尾，不抛错", () => {
+        const t = turn(tool("x1"), say("a9"));
+        const its = contentItems(t);
+        expect(liveSlotIndex(t, its, tool("gone"))).toBe(its.length);
     });
 });
 
@@ -295,7 +332,7 @@ describe("contentItems：3 级起的中间区（正文逐条 + 连续过程一�
         expect(view(contentItems(t))).toEqual([{ kind: "text", id: "a1" }]);
     });
 
-    it("skip 掉实时区那个节点：它画在轮尾，留在文档序里就是同一块画两遍", () => {
+    it("skip 掉活动块那个节点：它带定高展开体单独画，留在文档序里就是同一块画两遍", () => {
         const t = turn(think("k1"), tool("x1", false), say("a1"));
         const live = leavesOf(t)[1];
         expect(view(contentItems(t, (n) => n === live))).toEqual([
