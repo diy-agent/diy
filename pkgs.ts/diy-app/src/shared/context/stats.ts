@@ -22,7 +22,7 @@ export interface ContextStatRecord {
     taskUri: string;
     /** 轮次 id（与 ops/审计同一套，便于交叉检索） */
     turnId: string;
-    /** 与**同一任务的上一轮**相比，值 hash 变化的 path（字典序）；首轮 = 全部存在的 path */
+    /** 与**同一任务的上一轮**相比，值 hash 变化的 path（字典序）；首轮 = `[]`（没有上一轮就没有"变化"，RV-15） */
     changed: string[];
 }
 
