@@ -100,6 +100,18 @@ describe("llmConfig costs（发现入口）", () => {
     expect(d.models[0]!.writable).toEqual(["spec"]);
     expect(d.calendars.map((c) => c.id)).toContain("CN-business-day");
   });
+
+  it("costs 同时下发**具名时段表**（agent 填 tier.data.window 前要知道有哪些 id）", async () => {
+    const r = await fx.sh.getJson("./diy.sh llmConfig costs custom:goat");
+    const d = r.data as { windows: { id: string; label: string; detail: string }[] };
+    const w = d.windows.find((x) => x.id === "deepseek-peak")!;
+    expect(w, `windows = ${JSON.stringify(d.windows)}`).toBeTruthy();
+    expect(w.label).toBe("peak");
+    // 摘要必须**两段都写出来**（漏一段 = 人以为只登记了 01:00–04:00）
+    expect(w.detail).toContain("01:00–04:00Z");
+    expect(w.detail).toContain("06:00–10:00Z");
+    expect(w.detail).toContain("CN-mon-fri-ex-holiday");
+  });
 });
 
 describe("llmConfig setCost", () => {
@@ -199,6 +211,38 @@ describe("llmConfig setTiers（峰谷时段档）", () => {
     expect(m.cost?.baseLabel).toBe("off-peak");
     expect(m.cost?.tiers).toHaveLength(1);
     expect(m.cost?.tiers![0]).toMatchObject({ when: { kind: "utc-range", label: "peak" }, input: 0.5, output: 3 });
+  });
+
+  it("档可**引用具名时段表**（只写 id，段不手抄）→ 落盘只有 window，且展开成表里每段一条", async () => {
+    await fx.sh.getJson("./diy.sh llmConfig setCost custom:paca llama-x --input 0.15 --output 0.6 --cache-read 0.003 --base-label off-peak");
+    const r = await fx.sh.getJson(
+      './diy.sh llmConfig setTiers custom:paca llama-x --tiers \'[{"input":0.3,"output":1.2,"cache_read":0.006,"tier":{"type":"utc-range","data":{"window":"deepseek-peak"}}}]\'',
+    );
+    expect((r.data as { warnings: string[] }).warnings).toEqual([]);
+    // 落盘：只有 window（段/日历/标签在 diy 扩展层，不重复抄进配置）
+    const cost = goatCost("llama-x", "paca") as { tiers: { tier: { type: string; data: Record<string, string> } }[] };
+    expect(cost.tiers[0]!.tier.data).toEqual({ window: "deepseek-peak" });
+    // 生效：运行时展开成**两条**（DeepSeek 峰是两段 interval）—— 这是引用时段表的意义
+    const models = (await fx.sh.getJson("./diy.sh agent local models")).data as {
+      ref: string;
+      cost: { tiers?: { when: { kind: string; startMin: number; endMin: number; label?: string } }[] } | null;
+    }[];
+    const m = models.find((x) => x.ref.endsWith("@custom:paca/llama-x"))!;
+    expect(m.cost?.tiers?.map((t) => [t.when.startMin, t.when.endMin])).toEqual([
+      [60, 240],
+      [360, 600],
+    ]);
+    expect(m.cost?.tiers!.every((t) => t.when.label === "peak")).toBe(true);
+    await fx.sh.run("./diy.sh llmConfig setTiers custom:paca llama-x --clear");
+  });
+
+  it("引用不存在的时段表 → 仍保存但预警（该档永不命中，退 base 价）", async () => {
+    await fx.sh.getJson("./diy.sh llmConfig setCost custom:goat gpt-5.5 --input 1 --output 2");
+    const r = await fx.sh.getJson(
+      './diy.sh llmConfig setTiers custom:goat gpt-5.5 --tiers \'[{"input":3,"output":4,"tier":{"type":"utc-range","data":{"window":"nope"}}}]\'',
+    );
+    expect((r.data as { warnings: string[] }).warnings.join("\n")).toContain("引用时段表 nope 不存在");
+    await fx.sh.run("./diy.sh llmConfig setTiers custom:goat gpt-5.5 --clear");
   });
 
   it("引用不存在的日历 → 仍保存但预警（该窗永不命中，退 base 价）", async () => {

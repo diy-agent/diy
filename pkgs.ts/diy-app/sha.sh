@@ -55,7 +55,8 @@ sync() { :; }
 build() {
   local d; d="$(_build_dir)"
   run npx vite build --config vite.main.config.ts
-  # 内置数据（models.dev snapshot + 工作日日历，均 fs 惰性读）随 main 产物走：build/<V>/main/data/
+  # 内置数据三件（models.dev.json + models.dev.diy.json + calendars.json，均 fs 惰性读）
+  # 随 main 产物走：build/<V>/main/data/（通配拷贝 —— 加文件不用改这里，但改名要同步）
   run mkdir -p "$d/main/data" && cp src/main/data/*.json "$d/main/data/"
   run npx vite build --config vite.preload.config.ts
   run npx vite build --config vite.cli.config.ts

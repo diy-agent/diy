@@ -1,5 +1,5 @@
 // src/main/core/model-registry.ts
-// 🎯 provider 注册表：snapshot（内置 spec）+ custom spec + model.yaml（配置）→ UI/运行时视图。
+// 🎯 provider 注册表：models.dev 快照（内置 spec）+ custom spec + model.yaml（配置）→ UI/运行时视图。
 //
 // 数据流（谁也不覆盖谁，按 id 关联）：
 //   spec 层  = models.dev.json（models.dev npm 白名单产物，唯一真源）
@@ -7,7 +7,7 @@
 //   配置层   = $DIY_HOME/model.yaml（accounts/filter/models 覆盖 —— 零 models.dev 字段）
 //   视图     = spec ⊕ override（白名单字段）＋ filter 判定 ＋ $VAR 展开
 //
-// snapshot 用 **fs 惰性读** 而不是 import：4.3MB JSON 一旦被 import，
+// 快照用 **fs 惰性读** 而不是 import：4MB JSON 一旦被 import，
 // tsc 的 resolveJsonModule 会尝试把它推断成字面量类型（6315 模型 → 实例化爆炸）。
 
 import { readFileSync } from "node:fs";
@@ -15,6 +15,7 @@ import { calendarLabel } from "../../shared/calendars";
 import { faceOfNpm } from "../../shared/models";
 import {
     filterAllows,
+    MODELS_DEV_FILE,
     reasoningFromSpec,
     type AccountView,
     type CatalogEntry,
@@ -27,6 +28,7 @@ import {
     type SpecProvider,
 } from "../../shared/model-config";
 import { calendars } from "./calendars";
+import { windowChoices } from "./cost-windows";
 import { dataFileOrThrow } from "./data-file";
 import { loadCustomSpecs, loadModelConfig } from "./model-config";
 
@@ -35,7 +37,7 @@ let _snapshot: Record<string, SpecProvider> | null = null;
 /** 惰性加载 snapshot（进程内缓存一次） */
 function snapshot(): Record<string, SpecProvider> {
     if (_snapshot) return _snapshot;
-    _snapshot = JSON.parse(readFileSync(dataFileOrThrow("models.dev.json"), "utf-8")) as Record<string, SpecProvider>;
+    _snapshot = JSON.parse(readFileSync(dataFileOrThrow(MODELS_DEV_FILE), "utf-8")) as Record<string, SpecProvider>;
     return _snapshot;
 }
 
@@ -172,5 +174,14 @@ export function registryView(home: string): LlmConfigView {
     // 日历清单（时段档的「工作日扩展」下拉项）：只下 id + 展示名，整表留在 main 侧
     const tables = calendars();
     const calendarChoices = Object.entries(tables).map(([id, def]) => ({ id, label: calendarLabel(def, id) }));
-    return { modelFile: cfg, customSpecs, catalog, providers, calendars: calendarChoices };
+    return {
+        modelFile: cfg,
+        customSpecs,
+        catalog,
+        providers,
+        calendars: calendarChoices,
+        // 具名时段表（时段档的「时段表」下拉项）：同样只下 id + 展示名 + 人读摘要，
+        // 段/日历的定义留在 main（models.dev.diy.json）
+        windows: windowChoices(),
+    };
 }

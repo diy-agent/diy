@@ -9,7 +9,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { splitQualified } from "../../src/shared/model-config";
 import { effectiveMaxOutputTokens, findModel, getModelCatalog, maxOutputTokensOf } from "../../src/shared/models";
-import { refreshModelRuntime, resolveModelKey, toTierWhen } from "../../src/main/core/model-runtime";
+import { calendars } from "../../src/main/core/calendars";
+import { refreshModelRuntime, resolveModelKey, toTierWhens } from "../../src/main/core/model-runtime";
+import { ratesOf } from "../../src/shared/usage";
 
 describe("splitQualified：account@provider/model", () => {
     it("模型 id 自带 / → 按第一个 / 切（provider 段不受影响）", () => {
@@ -32,10 +34,12 @@ describe("splitQualified：account@provider/model", () => {
     });
 });
 
-describe("toTierWhen（档触发条件的最后一道哨：snapshot 路径无 zod）", () => {
+describe("toTierWhens（档触发条件的最后一道哨：models.dev 快照路径无 zod）", () => {
+    /** 无时段表（快照路径的常态：上游不表达时段） */
+    const NO_WINDOWS = {};
     it("context：顶层 size 与 data.size 都认（models.dev 原生 / diy 自相似两处）", () => {
-        expect(toTierWhen({ type: "context", size: 272_000 }, "m")).toEqual({ kind: "context", size: 272_000 });
-        expect(toTierWhen({ type: "context", data: { size: 128_000 } }, "m")).toEqual({ kind: "context", size: 128_000 });
+        expect(toTierWhens({ type: "context", size: 272_000 }, "m", NO_WINDOWS)).toEqual([{ kind: "context", size: 272_000 }]);
+        expect(toTierWhens({ type: "context", data: { size: 128_000 } }, "m", NO_WINDOWS)).toEqual([{ kind: "context", size: 128_000 }]);
     });
     it("context：size 非数字 / 缺失 / ≤0 → 丢档（放过就是「永远比不过」的死档，静默少收钱）", () => {
         for (const t of [
@@ -45,17 +49,49 @@ describe("toTierWhen（档触发条件的最后一道哨：snapshot 路径无 zo
             { type: "context", size: 0 },
             { type: "context", size: -1 },
             { type: "context" },
-        ]) expect(toTierWhen(t, "m")).toBeNull();
+        ]) expect(toTierWhens(t, "m", NO_WINDOWS)).toEqual([]);
     });
     it("utc-range：合法 → 归一成分钟 + 偏移（日历/标签可选）；缺偏移/偏移不一致 → 丢档", () => {
-        expect(toTierWhen({ type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+08:00", calendar: "CN-business-day", label: "peak" } }, "m"))
-            .toEqual({ kind: "utc-range", startMin: 60, endMin: 240, offsetMs: 8 * 3600_000, calendar: "CN-business-day", label: "peak" });
-        expect(toTierWhen({ type: "utc-range", data: { start: "01:00", end: "04:00" } }, "m")).toBeNull(); // 无偏移 = 歧义
-        expect(toTierWhen({ type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+09:00" } }, "m")).toBeNull(); // 两端不一致
+        expect(toTierWhens({ type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+08:00", calendar: "CN-business-day", label: "peak" } }, "m", NO_WINDOWS))
+            .toEqual([{ kind: "utc-range", startMin: 60, endMin: 240, offsetMs: 8 * 3600_000, calendar: "CN-business-day", label: "peak" }]);
+        expect(toTierWhens({ type: "utc-range", data: { start: "01:00", end: "04:00" } }, "m", NO_WINDOWS)).toEqual([]); // 无偏移 = 歧义
+        expect(toTierWhens({ type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+09:00" } }, "m", NO_WINDOWS)).toEqual([]); // 两端不一致
+    });
+    it("utc-range + 具名时段表：一张表**多段 → 多条**窗（DeepSeek 峰就是两段）", () => {
+        const windows = {
+            "ds-peak": {
+                label: "peak",
+                calendar: "CN-mon-fri-ex-holiday",
+                ranges: [
+                    { start: "01:00:00Z", end: "04:00:00Z" },
+                    { start: "06:00:00Z", end: "10:00:00Z" },
+                ],
+            },
+        };
+        expect(toTierWhens({ type: "utc-range", data: { window: "ds-peak" } }, "m", windows)).toEqual([
+            { kind: "utc-range", startMin: 60, endMin: 240, offsetMs: 0, calendar: "CN-mon-fri-ex-holiday", label: "peak" },
+            { kind: "utc-range", startMin: 360, endMin: 600, offsetMs: 0, calendar: "CN-mon-fri-ex-holiday", label: "peak" },
+        ]);
+    });
+    it("utc-range + 具名时段表：表里没这个 id → 丢档（退 base 价，绝不静默按错档收）", () => {
+        expect(toTierWhens({ type: "utc-range", data: { window: "nope" } }, "m", NO_WINDOWS)).toEqual([]);
+    });
+    it("utc-range + 具名时段表：坏段丢该段，好段照留（一张表坏一段不拖死其余）", () => {
+        const windows = {
+            mixed: {
+                ranges: [
+                    { start: "01:00", end: "04:00" }, // 无偏移 → 丢
+                    { start: "06:00:00Z", end: "10:00:00Z" },
+                ],
+            },
+        };
+        expect(toTierWhens({ type: "utc-range", data: { window: "mixed" } }, "m", windows)).toEqual([
+            { kind: "utc-range", startMin: 360, endMin: 600, offsetMs: 0 },
+        ]);
     });
     it("未知 type / 缺 type → 丢档（上游加新档型时宁可不认，也不按错的价收）", () => {
-        expect(toTierWhen({ type: "moon-phase" }, "m")).toBeNull();
-        expect(toTierWhen(undefined, "m")).toBeNull();
+        expect(toTierWhens({ type: "moon-phase" }, "m", NO_WINDOWS)).toEqual([]);
+        expect(toTierWhens(undefined, "m", NO_WINDOWS)).toEqual([]);
     });
 });
 
@@ -138,6 +174,55 @@ describe("refreshModelRuntime（装配 snapshot ⊕ custom ⊕ model.yaml）", (
         refreshModelRuntime(home);
         const m = findModel("0@custom:goat/a/b")!;
         expect(m.cost).toEqual({ input: 1, output: 2, cacheRead: 0.1, cacheWrite: 0.5 });
+    });
+
+    it("档引用**具名时段表** → 展开成多档（用真实 models.dev.diy.json，不造假数据）", () => {
+        writeFileSync(
+            join(home, "providers.custom.yaml"),
+            `goat:
+  id: goat
+  npm: "@ai-sdk/openai-compatible"
+  api: "https://x/v1"
+  models:
+    deepseek-v4.1-flash:
+      limit: { context: 1000000, output: 384000 }
+      cost:
+        input: 0.15
+        output: 0.6
+        cache_read: 0.003
+        baseLabel: off-peak
+        tiers:
+          - input: 0.3
+            output: 1.2
+            cache_read: 0.006
+            tier: { type: utc-range, data: { window: deepseek-peak } }
+`,
+        );
+        writeFileSync(
+            join(home, "model.yaml"),
+            `customProviders:
+  goat:
+    accounts: [{ type: apiKey, data: { value: "k" } }]
+`,
+        );
+        refreshModelRuntime(home);
+        const m = findModel("0@custom:goat/deepseek-v4.1-flash")!;
+        // 谷价（models.dev 收录的就是谷价）不动；峰档 = 表里两段各一条，价与标签由表带下来
+        expect(m.cost).toEqual({
+            input: 0.15,
+            output: 0.6,
+            cacheRead: 0.003,
+            baseLabel: "off-peak",
+            tiers: [
+                { when: { kind: "utc-range", startMin: 60, endMin: 240, offsetMs: 0, calendar: "CN-mon-fri-ex-holiday", label: "peak" }, input: 0.3, output: 1.2, cacheRead: 0.006 },
+                { when: { kind: "utc-range", startMin: 360, endMin: 600, offsetMs: 0, calendar: "CN-mon-fri-ex-holiday", label: "peak" }, input: 0.3, output: 1.2, cacheRead: 0.006 },
+            ],
+        });
+        // 实际计费：2026-10-14（周三）02:00Z 落**峰段①**（01:00–04:00Z）→ 峰价；
+        // 13:00Z 落谷 → models.dev 收录的 base 价（谷价）+ off-peak 标签
+        const rates = (ms: number) => ratesOf(m.cost, 1000, ms, calendars())!;
+        expect(rates(Date.UTC(2026, 9, 14, 2))).toMatchObject({ window: "peak", input: 0.3, output: 1.2 });
+        expect(rates(Date.UTC(2026, 9, 14, 13))).toMatchObject({ window: "off-peak", input: 0.15 });
     });
 
     it("std provider（opencode-go）+ filter exclude 生效", () => {

@@ -8,6 +8,7 @@ import { CostSchema, type Cost, type CostTier } from "../../src/shared/model-con
 import {
     CN_BUSINESS_DAY,
     addUtcRangeTier,
+    newWindowTier,
     applyCostPatch,
     clearUtcRangeTiers,
     costWarnings,
@@ -208,6 +209,63 @@ describe("tierIssues（保存前标红；保存侧由 zod 兜底）", () => {
     });
 });
 
+// ── 具名时段表（window）：档只引用 id，段/日历/标签在 diy 扩展层定义 ──
+
+/** 引用 DeepSeek 官方峰段表的峰价档（价仍逐模型填） */
+const dsWindowCost = (): Cost => ({
+    input: 0.15,
+    output: 0.6,
+    cache_read: 0.003,
+    baseLabel: "off-peak",
+    tiers: [{ input: 0.3, output: 1.2, cache_read: 0.006, ...newWindowTier("deepseek-peak") }],
+});
+
+describe("具名时段表（window 模式）", () => {
+    it("新建：只写表 id —— 段/日历/标签**不重复填**（表里已有）", () => {
+        const c: Cost = { input: 1, output: 2 };
+        addUtcRangeTier(c, "deepseek-peak");
+        expect(c.tiers![0]!.tier).toEqual({ type: "utc-range", data: { window: "deepseek-peak" } });
+    });
+    it("自定义 → 具名：清掉 start/end/calendar/label（两种模式并存 = zod 拒整份 YAML）", () => {
+        const c = dsCost(); // 自定义时刻档
+        patchUtcRange(c, 0, { window: "deepseek-peak" });
+        expect(c.tiers![0]!.tier).toEqual({ type: "utc-range", data: { window: "deepseek-peak" } });
+        expect(CostSchema.safeParse(c).success).toBe(true);
+    });
+    it("具名 → 自定义：删 window 并补回形状示例（不留空 start/end 存不下去）", () => {
+        const c = dsWindowCost();
+        patchUtcRange(c, 0, { window: "" });
+        const d = (c.tiers![0]!.tier as { data: Record<string, unknown> }).data;
+        expect("window" in d).toBe(false);
+        expect(d.start).toBe("01:00:00+08:00");
+        expect(d.end).toBe("04:00:00+08:00");
+        expect(CostSchema.safeParse(c).success).toBe(true);
+    });
+    it("在具名档上改时刻 → 视为切回自定义（先删 window，免得存下非法组合）", () => {
+        const c = dsWindowCost();
+        patchUtcRange(c, 0, { start: "09:00:00+08:00" });
+        const d = (c.tiers![0]!.tier as { data: Record<string, unknown> }).data;
+        expect("window" in d).toBe(false);
+        expect(d.start).toBe("09:00:00+08:00");
+        expect(CostSchema.safeParse(c).success).toBe(true);
+    });
+    it("改价不影响 window（价仍逐模型）", () => {
+        const c = dsWindowCost();
+        patchUtcRange(c, 0, { price: { f: "output", raw: "2.4" } });
+        expect(c.tiers![0]!.output).toBe(2.4);
+        expect(c.tiers![0]!.tier).toEqual({ type: "utc-range", data: { window: "deepseek-peak" } });
+    });
+    it("tierIssues：表不存在 → 提示；表存在 → 无提示（价齐时）", () => {
+        const c = dsWindowCost();
+        expect(tierIssues(c, c.tiers![0]!, [], ["deepseek-peak"])).toEqual([]);
+        expect(tierIssues(c, c.tiers![0]!, [], []).join()).toContain("引用时段表 deepseek-peak 不存在");
+    });
+    it("costWarnings：把「表不存在」带进 CLI 回执（agent 靠它判断要不要改）", () => {
+        expect(costWarnings(dsWindowCost(), [], ["deepseek-peak"])).toEqual([]);
+        expect(costWarnings(dsWindowCost(), [], []).join()).toContain("引用时段表");
+    });
+});
+
 describe("编辑产物必须过写侧 schema", () => {
     it("新建档 → 改时刻/日历/价 → 仍能过 CostSchema（合法才能保存）", () => {
         const c: Cost = {};
@@ -221,6 +279,12 @@ describe("编辑产物必须过写侧 schema", () => {
         const parsed = CostSchema.safeParse(c);
         expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
         if (parsed.success) expect(parsed.data.tiers![0]!.tier).toMatchObject({ type: "utc-range", data: { calendar: CN_BUSINESS_DAY } });
+    });
+    it("具名时段表档（window）也过 CostSchema；window 与 start 并存 → 拒（歧义不猜）", () => {
+        const c = dsWindowCost();
+        expect(CostSchema.safeParse(c).success).toBe(true);
+        const bad = { input: 1, output: 2, tiers: [{ tier: { type: "utc-range", data: { window: "deepseek-peak", start: "01:00:00Z", end: "04:00:00Z" } } }] };
+        expect(CostSchema.safeParse(bad).success).toBe(false);
     });
 });
 

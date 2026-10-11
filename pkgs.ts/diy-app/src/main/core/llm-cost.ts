@@ -41,6 +41,7 @@ import {
 } from "../../shared/model-config";
 import { faceOfNpm } from "../../shared/models";
 import { calendars } from "./calendars";
+import { windowChoices, windowTable } from "./cost-windows";
 import { customSpecsFile, loadCustomSpecs, loadModelConfig, modelConfigFile, saveCustomSpecs, saveModelConfig } from "./model-config";
 import { registryView, snapshotProvider } from "./model-registry";
 
@@ -106,6 +107,11 @@ function calendarIds(): string[] {
     return Object.keys(calendars());
 }
 
+/** 具名时段表 id 清单（时段档 `window` 的合法取值；diy 扩展层 `models.dev.diy.json`） */
+function windowIds(): string[] {
+    return Object.keys(windowTable());
+}
+
 // ── llmConfig.costs ──
 
 /**
@@ -150,6 +156,9 @@ export function providerCosts(home: string, ref: string): ProviderCostsView {
         target: defaultTarget(loc.kind),
         configured: loc.configured,
         calendars: Object.entries(tables).map(([id, def]) => ({ id, label: calendarLabel(def, id) })),
+        // 具名时段表（agent 填 `tier.data.window` 时要知道有哪些 id）；扩展层缺失/坏段的告警
+        // 由加载器打到 stderr（`windowIssues()`），不混进这张下拉清单
+        windows: windowChoices(),
         models,
     };
 }
@@ -330,6 +339,6 @@ function receipt(loc: Located, modelId: string, slot: WriteSlot, seeded: boolean
         effective,
         tierCount: utcRangeCount(here),
         seededFromSpec: seeded,
-        warnings: costWarnings(here ?? effective ?? undefined, calendarIds()),
+        warnings: costWarnings(here ?? effective ?? undefined, calendarIds(), windowIds()),
     };
 }

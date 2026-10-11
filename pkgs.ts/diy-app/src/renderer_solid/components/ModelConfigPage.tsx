@@ -24,6 +24,7 @@ import type {
   ModelConfigFile,
   ProviderConfig,
   SpecProvider,
+  WindowChoice,
 } from "../../shared/model-config";
 import { filterAllows, npmOfEndpoints } from "../../shared/model-config";
 import type { CostField } from "../../shared/cost-edit";
@@ -248,6 +249,7 @@ export function ModelConfigPage() {
               specs={specs}
               mutateSpec={mutateSpec}
               calendars={() => view()?.calendars ?? []}
+              windows={() => view()?.windows ?? []}
               save={save}
               saving={saving}
               onRemove={() => removeProvider("custom", c().key)}
@@ -540,6 +542,8 @@ function CustomCard(props: {
   mutateSpec: (key: string, fn: (s: SpecProvider) => void) => void;
   /** 内置日历清单（时段档的「工作日扩展」下拉项，来自 llmConfig.read） */
   calendars: () => CalendarChoice[];
+  /** 具名时段表清单（时段档的「时段表」下拉项，来自 llmConfig.read；空 = 只能自定义时刻） */
+  windows: () => WindowChoice[];
   save: () => Promise<void>;
   saving: () => boolean;
   onRemove: () => void;
@@ -814,6 +818,8 @@ function CustomCard(props: {
                           <div class="space-y-1 py-1">
                             <div class="text-xs opacity-60">
                               命中时段用档价，未命中用上面的默认价（基准标签 <code>{costOf(id())?.baseLabel ?? "base"}</code>）。
+                              档可**引用具名时段表**（段/日历/标签在 <code>models.dev.diy.json</code> 定义，
+                              同 vendor 的多个模型共用一张），也可「自定义时刻」。
                               时刻 = 带 UTC 偏移的 ISO 8601（如 <code>01:00:00+08:00</code>）；end &lt; start = 跨零点。
                               日历 = 该时段只在这些日子生效；档内价格留空 = 沿用默认价。
                             </div>
@@ -823,35 +829,55 @@ function CustomCard(props: {
                                 const issues = () => tierIssues(costOf(id()), slot.tier);
                                 return (
                                   <div class="flex items-center gap-1 flex-wrap">
-                                    <input
-                                      class="input input-bordered input-xs w-36 font-mono"
-                                      title="开始时刻（含 UTC 偏移）"
-                                      value={d().start}
-                                      onInput={(e) => patchTier(id(), slot.index, { start: e.currentTarget.value })}
-                                    />
-                                    <span class="opacity-50">→</span>
-                                    <input
-                                      class="input input-bordered input-xs w-36 font-mono"
-                                      title="结束时刻（偏移须与开始一致）"
-                                      value={d().end}
-                                      onInput={(e) => patchTier(id(), slot.index, { end: e.currentTarget.value })}
-                                    />
                                     <select
                                       class="select select-bordered select-xs w-44"
-                                      title="仅在这些日子生效（中国法定工作日含周末调休补班）"
-                                      value={d().calendar ?? ""}
-                                      onChange={(e) => patchTier(id(), slot.index, { calendar: e.currentTarget.value })}
+                                      title="具名时段表（段/日历/标签在 models.dev.diy.json 里定义，此处只引用）或自定义时刻"
+                                      value={d().window ?? ""}
+                                      onChange={(e) => patchTier(id(), slot.index, { window: e.currentTarget.value })}
                                     >
-                                      <option value="">不限日历（每天）</option>
-                                      <For each={props.calendars()}>{(c) => <option value={c.id}>{c.label}</option>}</For>
+                                      <option value="">自定义时刻</option>
+                                      <For each={props.windows()}>{(w) => <option value={w.id}>{w.id}</option>}</For>
                                     </select>
-                                    <input
-                                      class="input input-bordered input-xs w-20"
-                                      placeholder="标签 peak"
-                                      title="该时段的档名（落 usage.jsonl 的 window 字段）"
-                                      value={d().label ?? ""}
-                                      onInput={(e) => patchTier(id(), slot.index, { label: e.currentTarget.value })}
-                                    />
+                                    <Show
+                                      when={d().window}
+                                      fallback={
+                                        <>
+                                          <input
+                                            class="input input-bordered input-xs w-36 font-mono"
+                                            title="开始时刻（含 UTC 偏移）"
+                                            value={d().start ?? ""}
+                                            onInput={(e) => patchTier(id(), slot.index, { start: e.currentTarget.value })}
+                                          />
+                                          <span class="opacity-50">→</span>
+                                          <input
+                                            class="input input-bordered input-xs w-36 font-mono"
+                                            title="结束时刻（偏移须与开始一致）"
+                                            value={d().end ?? ""}
+                                            onInput={(e) => patchTier(id(), slot.index, { end: e.currentTarget.value })}
+                                          />
+                                          <select
+                                            class="select select-bordered select-xs w-44"
+                                            title="仅在这些日子生效"
+                                            value={d().calendar ?? ""}
+                                            onChange={(e) => patchTier(id(), slot.index, { calendar: e.currentTarget.value })}
+                                          >
+                                            <option value="">不限日历（每天）</option>
+                                            <For each={props.calendars()}>{(c) => <option value={c.id}>{c.label}</option>}</For>
+                                          </select>
+                                          <input
+                                            class="input input-bordered input-xs w-20"
+                                            placeholder="标签 peak"
+                                            title="该时段的档名（落 usage.jsonl 的 window 字段）"
+                                            value={d().label ?? ""}
+                                            onInput={(e) => patchTier(id(), slot.index, { label: e.currentTarget.value })}
+                                          />
+                                        </>
+                                      }
+                                    >
+                                      <span class="text-xs opacity-60 font-mono max-w-96 truncate" title="段/日历/标签由时段表定义（models.dev.diy.json）">
+                                        {props.windows().find((w) => w.id === d().window)?.detail ?? "（时段表不存在）"}
+                                      </span>
+                                    </Show>
                                     <Index each={COST_FIELDS}>
                                       {(f) => (
                                         <input

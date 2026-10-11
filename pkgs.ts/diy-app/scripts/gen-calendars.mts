@@ -69,12 +69,26 @@ async function main(): Promise<void> {
                 label: { zh: "周一至周五", en: "Mon–Fri" },
                 base: { days: [1, 2, 3, 4, 5] },
             },
+            // ① 中国**上班日**：周一至周五，法定假日不上班、调休补班的周末要上班。
+            //    判据 = 政府/市场的作息（含调休）。「周中的法定假日」与「周末补班」算法推不出，
+            //    只能靠公告表 —— 这就是本表的 holidays/workdays 两个覆盖层。
             "CN-business-day": {
-                label: { zh: "中国法定工作日", en: "CN business day" },
+                label: { zh: "中国上班日（含调休补班）", en: "CN working day (incl. makeup)" },
                 base: { days: [1, 2, 3, 4, 5] },
                 coverage: { from: dates[0]!, to: dates[dates.length - 1]! },
                 holidays,
                 workdays,
+            },
+            // ② 中国**周一至周五（排除法定假日）**：与 ① 只差 `workdays` —— 调休上班的周末
+            //    **仍是周末**。这是 DeepSeek 官方价页的峰段口径原文：
+            //    「Peak hours are 01:00 - 04:00 and 06:00 - 10:00 UTC, Monday through Friday,
+            //     excluding Chinese public holidays.」——「Monday through Friday」即周规则，
+            //    调休的周六不属于它。同一地域两套作息是常态，故日历按语义分 id（不是按国家）。
+            "CN-mon-fri-ex-holiday": {
+                label: { zh: "周一至周五（排除中国法定假日）", en: "CN Mon–Fri, excl. public holidays" },
+                base: { days: [1, 2, 3, 4, 5] },
+                coverage: { from: dates[0]!, to: dates[dates.length - 1]! },
+                holidays,
             },
         },
     };

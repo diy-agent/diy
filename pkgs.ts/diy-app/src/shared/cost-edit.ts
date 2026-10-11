@@ -6,7 +6,8 @@
 // 单测可直接跑，且能顺手验证「编辑出来的 cost 一定能过 zod」（产物合法性是本层的第一职责：
 // 写侧 schema 严格，产出非法值 → 保存时整块报错/CLI 拒收，用户白填）。
 //
-// 范围：base 档（in/out/读/写 + `baseLabel`）与**时段档**（`utc-range`）。上下文阶梯（`context`）
+// 范围：base 档（in/out/读/写 + `baseLabel`）与**时段档**（`utc-range`：具名时段表 `window`
+// 或自定义时刻 `start`/`end` 二选一）。上下文阶梯（`context`）
 // 是 models.dev 原生形状 —— 不编辑、按原位保留（见 `utcRangeSlots` 保留下标、`setUtcRangeTiers`
 // 只动 utc-range 条目）。⚠️ 时段档的**顺序即优先级**（按序首个命中，见 usage.ratesOf）：
 // 任何批量操作都不得打乱既有时段档的相对次序。
@@ -45,22 +46,37 @@ export function utcRangeSlots(cost: Cost | undefined): TierSlot[] {
 }
 
 /**
- * 新档模板：DeepSeek 峰段的形状（01:00–04:00 +08:00，中国工作日，label=peak），
+ * 新档模板（**自定义时刻**）：一个形状示例（01:00–04:00 +08:00，中国上班日，label=peak），
  * **价格留空** —— 空价 = 沿用 base 价（`toModelCost` 的回退语义），用户按需填。
+ * 默认给"自定义"而不是某张具名表：表是 vendor 专属的（`deepseek-peak` 只对 DeepSeek 成立），
+ * 给别的 provider 预选一张 DeepSeek 表 = 误导。
  */
+/** 自定义时刻档的形状示例 —— **字面量类型常量**，勿经 `newUtcRangeTier(): CostTier` 的注解去取 `.data`：
+ *  那注解会把判别键 `type` 抹平成联合（`context` 分支的 `data` 还可选），`start`/`end` 就成了
+ *  「联合里某支没有的键 + 可能 undefined」，tsc 直接报一串（##281 review 实踩）。 */
+const UTC_RANGE_TEMPLATE = {
+    start: "01:00:00+08:00",
+    end: "04:00:00+08:00",
+    calendar: CN_BUSINESS_DAY,
+    label: "peak",
+} as const;
+
 export function newUtcRangeTier(): CostTier {
-    return {
-        tier: {
-            type: "utc-range",
-            data: { start: "01:00:00+08:00", end: "04:00:00+08:00", calendar: CN_BUSINESS_DAY, label: "peak" },
-        },
-    };
+    return { tier: { type: "utc-range", data: { ...UTC_RANGE_TEMPLATE } } };
 }
 
-/** 追加一条时段档 → 返回新档的**下标**（UI 用它定位/展开） */
-export function addUtcRangeTier(cost: Cost): number {
+/**
+ * 新档模板（**具名时段表**）：只写表 id —— 段/日历/标签全在 diy 扩展层
+ * （`models.dev.diy.json` 的 `windows`）定义，这里**不重复参数**。价格仍留空。
+ */
+export function newWindowTier(windowId: string): CostTier {
+    return { tier: { type: "utc-range", data: { window: windowId } } };
+}
+
+/** 追加一条时段档 → 返回新档的**下标**（UI 用它定位/展开）；给了 `windowId` 则用具名时段表 */
+export function addUtcRangeTier(cost: Cost, windowId?: string): number {
     const tiers = (cost.tiers ??= []);
-    tiers.push(newUtcRangeTier());
+    tiers.push(windowId ? newWindowTier(windowId) : newUtcRangeTier());
     return tiers.length - 1;
 }
 
@@ -107,6 +123,8 @@ export function editCost(parent: { cost?: Cost }, fn: (cost: Cost) => void): voi
 
 /** 单条时段档的编辑指令（只给要改的键；`calendar`/`label` 给空串 = 删该字段） */
 export interface TierPatch {
+    /** 切到具名时段表 id；空串 = 切回**自定义时刻**（按模板填 start/end） */
+    window?: string;
     start?: string;
     end?: string;
     calendar?: string;
@@ -114,21 +132,50 @@ export interface TierPatch {
     price?: { f: CostField; raw: string };
 }
 
-/** 改一条时段档（按下标；非 `utc-range` 档 → 原样不动，防误改 models.dev 原生条目） */
+/**
+ * 改一条时段档（按下标；非 `utc-range` 档 → 原样不动，防误改 models.dev 原生条目）。
+ *
+ * **两种模式的互斥由本函数维护**（写侧 zod 也会拒"window 与 start 同时给"，但那会让整份
+ * YAML 存不下去 —— 不能指望它兜底）：
+ *   · `patch.window` 给了 → 只留 `window`，清掉 `start`/`end`/`calendar`/`label`
+ *   · `patch.start/end/calendar/label` 给了 → 视为**自定义时刻**，先清掉 `window`
+ */
 export function patchUtcRange(cost: Cost, index: number, patch: TierPatch): void {
     const tier = cost.tiers?.[index];
     if (!tier || tier.tier?.type !== "utc-range") return;
     const d = tier.tier.data;
-    for (const k of ["start", "end"] as const) {
-        const v = patch[k];
-        if (v !== undefined) d[k] = v; // 必填字段：允许临时非法（URI 里标红提示，保存前由 zod 拦）
+    // ① 显式切换模式
+    if (patch.window !== undefined) {
+        const t = patch.window.trim();
+        if (t) {
+            d.window = t;
+            for (const k of ["start", "end", "calendar", "label"] as const) delete d[k];
+        } else {
+            delete d.window;
+            Object.assign(d, UTC_RANGE_TEMPLATE); // 切回自定义：给形状示例，免留空档存不下
+        }
     }
-    for (const k of ["calendar", "label"] as const) {
-        const v = patch[k];
-        if (v === undefined) continue;
-        const t = v.trim();
-        if (t) d[k] = t;
-        else delete d[k];
+    // ② 改「自定义模式专属字段」= 隐式切回自定义（否则 window 与 start 并存 → zod 拒整份 YAML）
+    if ((["start", "end", "calendar", "label"] as const).some((k) => patch[k] !== undefined) && d.window !== undefined) {
+        delete d.window;
+        d.start ??= UTC_RANGE_TEMPLATE.start;
+        d.end ??= UTC_RANGE_TEMPLATE.end;
+    }
+    // ③ 具名模式：段/日历/标签由时段表定义，此处只动价
+    if (d.window === undefined) {
+        d.start ??= ""; // 自定义模式下 start/end 是必填：先保证键在（值可临时非法，UI 标红、zod 兜底）
+        d.end ??= "";
+        for (const k of ["start", "end"] as const) {
+            const v = patch[k];
+            if (v !== undefined) d[k] = v;
+        }
+        for (const k of ["calendar", "label"] as const) {
+            const v = patch[k];
+            if (v === undefined) continue;
+            const t = v.trim();
+            if (t) d[k] = t;
+            else delete d[k];
+        }
     }
     if (patch.price) setNum(tier as unknown as Record<string, unknown>, patch.price.f, patch.price.raw);
 }
@@ -137,23 +184,38 @@ export function patchUtcRange(cost: Cost, index: number, patch: TierPatch): void
  * 单条时段档的**校验提示**（空数组 = 合法）。保存侧由 zod 兜底（会整卡报错），
  * 这里提前标红，省得用户填完才被打回。规则与 `TierWhenSchema` / runtime 语义一一对应。
  *
- * `calendarIds` 给了才查「日历是否存在」（UI 下拉只列内置日历，故不传；CLI 用回执的
- * `warnings` 报给 agent —— 引用不存在的日历不阻断保存，只让该窗永不命中，见 shared/calendars.ts）。
+ * `calendarIds` / `windowIds` 给了才查「引用的日历 / 时段表是否存在」（UI 下拉只列已存在的，
+ * 故不传；CLI 用回执的 `warnings` 报给 agent —— 引用不存在的 id 不阻断保存，只让该档永不命中，
+ * 见 shared/calendars.ts 与 shared/cost-windows.ts）。
  */
-export function tierIssues(cost: Cost | undefined, tier: CostTier, calendarIds?: readonly string[]): string[] {
+export function tierIssues(
+    cost: Cost | undefined,
+    tier: CostTier,
+    calendarIds?: readonly string[],
+    windowIds?: readonly string[],
+): string[] {
     const out: string[] = [];
     if (tier.tier?.type !== "utc-range") return out;
     const d = tier.tier.data;
-    const s = parseTimeOfDay(d.start);
-    const e = parseTimeOfDay(d.end);
-    if (!TIME_OF_DAY_RE.test(d.start.trim())) out.push("开始时刻须带 UTC 偏移（如 01:00:00+08:00）");
-    if (!TIME_OF_DAY_RE.test(d.end.trim())) out.push("结束时刻须带 UTC 偏移（同上）");
-    if (s && e && s.offsetMs !== e.offsetMs) out.push("开始/结束的 UTC 偏移须一致（跨时区 = 歧义）");
+    if (d.window !== undefined) {
+        // 具名时段表模式：段/日历/标签都在表里，这里只查「表是否存在」+ 价
+        if (windowIds && !windowIds.includes(d.window)) {
+            out.push(`引用时段表 ${d.window} 不存在（该档永不命中，退 base 价）`);
+        }
+    } else {
+        const start = d.start ?? "";
+        const end = d.end ?? "";
+        const s = parseTimeOfDay(start);
+        const e = parseTimeOfDay(end);
+        if (!TIME_OF_DAY_RE.test(start.trim())) out.push("开始时刻须带 UTC 偏移（如 01:00:00+08:00）");
+        if (!TIME_OF_DAY_RE.test(end.trim())) out.push("结束时刻须带 UTC 偏移（同上）");
+        if (s && e && s.offsetMs !== e.offsetMs) out.push("开始/结束的 UTC 偏移须一致（跨时区 = 歧义）");
+        if (calendarIds && d.calendar !== undefined && !calendarIds.includes(d.calendar)) {
+            out.push(`引用日历 ${d.calendar} 不存在（该时段永不命中，退 base 价）`);
+        }
+    }
     if (tier.input == null && tier.output == null && (cost?.input == null || cost.output == null)) {
         out.push("本档与默认档都没填完整价（in/out）→ 该时段仍算不出金额");
-    }
-    if (calendarIds && d.calendar !== undefined && !calendarIds.includes(d.calendar)) {
-        out.push(`引用日历 ${d.calendar} 不存在（该时段永不命中，退 base 价）`);
     }
     return out;
 }
@@ -244,7 +306,11 @@ export function clearUtcRangeTiers(cost: Cost): number {
  * 价目**预警**（不阻断保存；CLI 写后回执给 agent，UI 侧另有 `tierIssues` 就地标红）。
  * 判据与运行时一致 —— 预警的每一条都对应「这个价会在某类请求上算不出/算错」。
  */
-export function costWarnings(cost: Cost | undefined, calendarIds: readonly string[]): string[] {
+export function costWarnings(
+    cost: Cost | undefined,
+    calendarIds: readonly string[],
+    windowIds: readonly string[] = [],
+): string[] {
     if (isEmptyCost(cost)) return ["无价目 → usage 金额为 null（不是 0；不是免费）"];
     const out: string[] = [];
     const c = cost!;
@@ -256,7 +322,7 @@ export function costWarnings(cost: Cost | undefined, calendarIds: readonly strin
         if (!t.tier) out.push(`tiers[${i}] 缺 tier 触发条件（运行时忽略该条）`);
     });
     utcRangeSlots(c).forEach((slot, n) => {
-        for (const msg of tierIssues(c, slot.tier, calendarIds)) out.push(`第 ${n} 条时段档: ${msg}`);
+        for (const msg of tierIssues(c, slot.tier, calendarIds, windowIds)) out.push(`第 ${n} 条时段档: ${msg}`);
     });
     return out;
 }

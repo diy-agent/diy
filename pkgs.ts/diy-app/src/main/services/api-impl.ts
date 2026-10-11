@@ -681,6 +681,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
         catalog: [],
         providers: [],
         calendars: [],
+        windows: [],
         error: e instanceof Error ? e.message : String(e),
       };
     }
