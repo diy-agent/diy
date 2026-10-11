@@ -259,8 +259,11 @@ function llmLogLines(store: BlockStore): string[] {
     return blocksToMessages(store, { withOrigin: true, withIndex: true }).map((m) => JSON.stringify(m));
 }
 
-/** 投递快照（每轮真发一条）：投递**事实**，与 raw 那种旁路观测不同 —— UI 的 step/diff 靠它 */
-function stepsFile(taskUri: string): string {
+/**
+ * 投递快照（每轮真发一条）：投递**事实**，与 raw 那种旁路观测不同 —— UI 的 step/diff 靠它。
+ * 导出供测试构造落盘状态（review RV-17：别让用例靠后缀反推路径 —— 改后缀会静默变成假绿）。
+ */
+export function stepsFile(taskUri: string): string {
     return path.join(localDir(), `${keyOf(taskUri)}.steps.jsonl`);
 }
 
@@ -365,7 +368,13 @@ function withRuntime(hist: ModelMessage[], runtime: string): ModelMessage[] {
 
 /** 读某任务的投递快照（时间正序；文件不存在 = 还没真发过） */
 export function readDeliverySteps(taskUri: string): DeliveryStepRecord[] {
-    return readJsonl<DeliveryStepRecord>(stepsFile(taskUri));
+    // 读侧兜底（review RV-12）：`systemPlaces` 首版即写，正常不会缺；但 renderer 已当它必填
+    // （`sysCauses(changed, undefined)` 会 `for..of undefined` 打断渲染），坏行/手写快照给个 [] 更稳。
+    return readJsonl<DeliveryStepRecord>(stepsFile(taskUri)).map((r) => ({
+        ...r,
+        systemPlaces: r.systemPlaces ?? [],
+        runtimePlaces: r.runtimePlaces ?? [],
+    }));
 }
 
 /** 追加一条投递快照（append-only；写失败只出声 —— 观测不能阻断发送） */

@@ -27,10 +27,13 @@ import { PersonaSchema } from "../../shared/persona";
 import { ModelCostSchema } from "../../shared/usage";
 import {
   CostUpdateResultSchema,
+  ImportEnvResultSchema,
   LlmConfigViewSchema,
   ModelConfigFileSchema,
   ProbeResultSchema,
   ProviderCostsViewSchema,
+  ScanEnvResultSchema,
+  SeedReportSchema,
   SpecProviderSchema,
   TierWriteSchema,
 } from "../../shared/model-config";
@@ -958,6 +961,21 @@ export const apiDef = RpcSchema.router({
             },
             output: CostUpdateResultSchema,
           }),
+          scanEnv: RpcSchema.unary({
+            desc: `扫环境变量得到可导入的 provider 候选（models.dev 声明的 env ∩ process.env，再与现有配置比对）`,
+            input: {},
+            output: ScanEnvResultSchema,
+          }),
+          importEnv: RpcSchema.unary({
+            desc: `导入环境变量命中的 provider（写 $VAR 引用；已配置/密钥重复的跳过）`,
+            input: {
+              providers: z
+                .array(z.string())
+                .optional()
+                .cliOption({ desc: "只导入这些 provider id（缺省 = 全部可导入项）" }),
+            },
+            output: ImportEnvResultSchema,
+          }),
           probe: RpcSchema.unary({
             desc: `探测 provider 连通性并拉 ${"${baseUrl}"}/models（UI「测试/获取模型」共用）`,
             input: {
@@ -965,6 +983,17 @@ export const apiDef = RpcSchema.router({
               apiKey: z.string().cliArg({ desc: "密钥原始值（明文或 $VAR，服务端展开）" }),
             },
             output: ProbeResultSchema,
+          }),
+        },
+      }),
+
+      seed: RpcSchema.group({
+        desc: `初始数据种入（preview/lab 空数据根；幂等，已存在不动）`,
+        children: {
+          run: RpcSchema.unary({
+            desc: `种入最小可用数据：opencode-go 模型配置 + 缺省人物（mimo-v2.6-flash）+ 示例项目与任务`,
+            input: {},
+            output: SeedReportSchema,
           }),
         },
       }),

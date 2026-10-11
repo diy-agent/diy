@@ -34,6 +34,11 @@ import { loadCustomSpecs, loadModelConfig } from "./model-config";
 
 let _snapshot: Record<string, SpecProvider> | null = null;
 
+/** snapshot 全量投影（models.dev 产物）。装配视图之外的用途（如 env 导入扫描）经此取用。 */
+export function snapshotProviders(): Record<string, SpecProvider> {
+    return snapshot();
+}
+
 /** 惰性加载 snapshot（进程内缓存一次） */
 function snapshot(): Record<string, SpecProvider> {
     if (_snapshot) return _snapshot;
@@ -55,12 +60,15 @@ export function snapshotProvider(id: string): SpecProvider | null {
  * 未定义 → error（**fail-fast**：你制定了环境变量却不提供，当然报错）。
  * UI 读取时只标红不炸页；真正调用上游时按同一结果 fail-fast。
  */
-export function expandEnvValue(v: string): { value: string | null; error: string | null } {
+export function expandEnvValue(
+    v: string,
+    env: NodeJS.ProcessEnv = process.env,
+): { value: string | null; error: string | null } {
     if (!v.includes("$")) return { value: v, error: null };
     let error: string | null = null;
     const out = v.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (m, braced, bare) => {
         const name = braced ?? bare;
-        const val = process.env[name];
+        const val = env[name];
         if (val === undefined) {
             error ??= `环境变量 $${name} 未定义`;
             return m;

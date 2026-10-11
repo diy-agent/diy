@@ -544,6 +544,66 @@ export const CostUpdateResultSchema = z.object({
 });
 export type CostUpdateResult = z.infer<typeof CostUpdateResultSchema>;
 
+/**
+ * 环境变量导入候选（`llmConfig.scanEnv` 输出）。
+ * 来源 = snapshot 里该 provider 声明的 `env` ∩ `process.env`（有值）；再与现有 model.yaml 比对：
+ *   · importable —— 可一键导入（写 `$VAR` 引用，不落明文）
+ *   · configured —— 该 provider 已配置，不覆盖
+ *   · duplicate  —— 该密钥值已被现有账号使用（或与本清单里别家同源）
+ */
+export const EnvImportCandidateSchema = z.object({
+    provider: z.string(),
+    name: z.string().nullable(),
+    /** 命中的环境变量名（写入时作为 `$VAR` 引用） */
+    envVar: z.string(),
+    /** 该 provider 的模型数（让人心里有数，不下载全量） */
+    models: z.number().int(),
+    status: z.enum(["importable", "configured", "duplicate"]),
+    /** 跳过原因（importable 时 = null） */
+    note: z.string().nullable(),
+});
+export type EnvImportCandidate = z.infer<typeof EnvImportCandidateSchema>;
+
+/**
+ * `llmConfig.scanEnv` 输出：候选 + **扫描范围**。
+ * 为什么要 scanned：一个都没命中时，UI 必须能说清「查过什么」——否则用户看到的是
+ * 一片空白，分不清「本机确实没设密钥」与「功能没生效」。范围数据也让人对照变量名拼写。
+ */
+export const ScanEnvResultSchema = z.object({
+    candidates: z.array(EnvImportCandidateSchema),
+    scanned: z.object({
+        /** snapshot 里声明了 `env` 的 provider 数（扫描面的分母） */
+        providers: z.number().int(),
+        /** 这些 provider 声明过的变量名（去重升序） */
+        vars: z.array(z.string()),
+    }),
+});
+export type ScanEnvResult = z.infer<typeof ScanEnvResultSchema>;
+
+/** `llmConfig.importEnv` 输出 */
+export const ImportEnvResultSchema = z.object({
+    imported: z.array(z.string()),
+    skipped: z.array(z.object({ provider: z.string(), note: z.string() })),
+});
+export type ImportEnvResult = z.infer<typeof ImportEnvResultSchema>;
+
+/** `seed.run` 输出：种入结果（幂等，已存在即 skipped） */
+export const SeedReportSchema = z.object({
+    /** 数据根 */
+    home: z.string(),
+    /** model.yaml：imported（本次写入）/ exists（已配置）/ placeholder（无可用 env，写了引用占位） */
+    model: z.enum(["imported", "exists", "placeholder"]),
+    /** personas.yaml：written（本次写入）/ exists（已有缺省人物模型） */
+    persona: z.enum(["written", "exists"]),
+    /** 示例项目 id；已有项目时 = null */
+    project: z.string().nullable(),
+    /** 本次创建的任务 URI */
+    tasks: z.array(z.string()),
+    /** 跳过原因（非 null 即**什么都没写**）；目前只有一种：生产数据根 */
+    skipped: z.string().nullable(),
+});
+export type SeedReport = z.infer<typeof SeedReportSchema>;
+
 /** llmConfig.read 全量输出 */
 export const LlmConfigViewSchema = z.object({
     /** 内置日历清单（时段档的日历下拉项；空 = calendars.json 缺失 → 时段档只能「不限日历」） */

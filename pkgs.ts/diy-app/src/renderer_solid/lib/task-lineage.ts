@@ -1,10 +1,13 @@
 /**
  * task-lineage — 一个任务所在的「整颗任务树」行（从根任务 DFS、树序、带深度）。
  *
- * 供 TaskDetailContent 的「任务树」块用。**以当前任务所在根任务为根、展开整颗树**
- * （含所有兄弟分支），当前任务标 `current` —— 不再只是「父链 + 自己 + 子孙」那条线。
+ * 供 TaskDetailContent 的「任务树」块用。**以最近的根任务为根、展开它自己的子树**
+ * （根任务下的所有兄弟分支都算「自己人」，自然纳入），当前任务标 `current`。
  * 出处：##183 第 4 点（hover 时只显示一条线很乱、脑疲劳，应显示整颗树并定位本任务），
- * 落地见 ##233。
+ * 落地见 ##233；顶级场景见下（##258 / R4 收紧了 RV-04 的越界）。
+ *
+ * **当前任务本身就是顶级（根）**时退化为「自己 + 子孙」—— 不把项目下其余根任务
+ * 一起平铺（RV-04 曾这么做，被 ##258 改回）。
  *
  * 父子关系的真相源是**任务树**（`parentUri`），不是 URI 路径 ——
  * `projects/<pid>/tasks/<n>` 只表达「哪个项目第几号」，不表达层级。
@@ -47,7 +50,8 @@ function chainTo(nodes: TreeNode[], uri: string): TreeNode[] | null {
  *
  * 步骤：先求出从顶层到 `uri` 的链，链中**第一个有 uri 的节点**即根任务
  * （项目节点没有 uri、不能成行，故滤掉再取 —— 顺带避免「跳过一行」让后续缩进整体多一级）；
- * 再从该根任务 DFS 全部子孙。兄弟分支因同属该根而自然纳入。
+ * 再从该根任务 DFS 全部子孙。根任务下的兄弟分支因同属该根而自然纳入；
+ * 但**项目下的其余根任务不属于本根**，顶级场景下不会出现（##258）。
  *
  * `seen` 兼作**防环**：脏数据（互相认父、自己当自己的子）不该把这里转死。
  * 根的父若指向已删除任务，`chainTo` 找不到自会以当前可达的顶层任务为根（##87 语义：
@@ -74,22 +78,18 @@ export function lineageRows(nodes: TreeNode[], uri: string): LineageRow[] {
         for (const c of n.children ?? []) walk(c, depth + 1);
     };
 
-    // 根 = 链中第一个有 uri 的节点（项目节点无 uri 不能成行）。
+    /*
+     * 根 = 链中第一个有 uri 的节点（项目节点无 uri 不能成行）。
+     * 从它 DFS 全部子孙即行 —— 根任务下的兄弟分支同属该根，自动纳入。
+     *
+     * **当前任务就是顶级时**，rootNode 即当前任务本身 → 只剩「自己 + 子孙」，
+     * 项目下其余顶级任务（不属于本根）不再出现（##258 / R4）。
+     * 不再按 `parent.kind === "project"` 把 DFS 起点换成「项目节点的全部任务子级」
+     * —— RV-04 那套会让顶级任务平铺整个项目的顶级列表。
+     */
     const firstIdx = raw.findIndex((n) => !!n.uri);
     const rootNode = raw[firstIdx]!;
-    const parent = firstIdx > 0 ? raw[firstIdx - 1] : undefined;
-    /**
-     * **当前任务就是顶级**时（rootNode === 当前，父是项目节点）：兄弟顶级任务挂在
-     * 项目节点下，不走「根任务的子树」就会被漏掉（RV-04：实测项目下 #1/#2 两个顶级，
-     * 查 #1 只返回一行）。此时 DFS 起点改为**项目节点的全部任务子级**（项目行仍不成行，
-     * 子级 depth 从 0 起）—— 正是「整颗根树含兄弟分支」在顶级场景的语义。
-     * 深层任务行为不变（根仍是其所在根任务）。
-     */
-    const roots: TreeNode[] =
-        parent && parent.kind === "project" && rootNode.uri === uri
-            ? (parent.children ?? []).filter((c) => c.kind === "task" && !!c.uri)
-            : [rootNode];
-    for (const r of roots) walk(r, 0);
+    walk(rootNode, 0);
     return rows;
 }
 

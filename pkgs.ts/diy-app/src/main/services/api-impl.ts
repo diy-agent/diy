@@ -16,6 +16,7 @@ import * as state from "../core/state";
 import * as taskTree from "../core/task-tree";
 import { AppConfig } from "../core/app-config";
 import { refreshModelRuntime } from "../core/model-runtime";
+import { autoSeedEnabled, seedHome } from "../core/seed";
 import { platform, arch, release, totalmem, freemem } from "node:os";
 import { currentGitBranch, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
 import { readRuntimeConfig } from "../../runtime";
@@ -56,6 +57,22 @@ const app = apiDef.diy;
  * 或 ChannelServerBinding（测试）。转发 diy.ui.* 由调用方在 binding 上 onForward。
  */
 export function bindAppHandlers(binding: ServerBinding): void {
+  // 空数据根的初始种入（preview/lab；见 core/seed.ts）。必须在 refreshModelRuntime 之前 ——
+  // 种子会写 model.yaml，晚于装配就看不见刚种下的 provider（要等下次刷新）。
+  // 失败不阻断启动（种子只是便利，不是前提）。
+  try {
+    if (autoSeedEnabled()) {
+      const r = seedHome(state.diyHome(), process.env, { autoOnly: true });
+      console.log(
+        r.skipped
+          ? `[seed] 跳过：${r.skipped}`
+          : `[seed] model=${r.model} persona=${r.persona} project=${r.project ?? "-"} tasks=${r.tasks.length}`,
+      );
+    }
+  } catch (e) {
+    console.warn("[seed] 跳过（不阻断启动）:", e);
+  }
+
   // 装配运行时模型目录（snapshot ⊕ custom ⊕ model.yaml）。**同步**做：异步会让早期的
   // models 查询抢在装配前看到空目录。配置非法（结构错）→ 出声但不阻断启动：
   // 目录保持上一次（或空），用户仍可进界面改回来（fail-visible 而非 fail-dead）。
@@ -588,11 +605,13 @@ export function bindAppHandlers(binding: ServerBinding): void {
 
   binding.on(app.context.stats, async ({ input }) => {
     const { readContextStats } = await import("../core/context-stats");
-    const { summarizeStats } = await import("../../shared/context/stats");
+    const { summarizeStats, dropBaselineChanges } = await import("../../shared/context/stats");
     const { projectDir, projectFromUri } = await import("../core/state");
     // project 以 taskUri 为准（与 lab/diff 同一口径：两者不一致时只有 CLI 能造成）
     const project = input.taskUri ? projectFromUri(input.taskUri) || input.project : input.project;
-    let records = readContextStats(projectDir(project));
+    // 首轮基线不算变化：老文件（写入器修前）每任务首轮把全部 path 记成变化 → 在这里抹平。
+    // 必须在 filter/slice **之前**（切完片最早那条已不是首轮，无从分辨）—— review RV-15。
+    let records = dropBaselineChanges(readContextStats(projectDir(project)));
     if (input.taskUri) records = records.filter((r) => r.taskUri === input.taskUri);
     const total = records.length;
     if (input.limit && input.limit > 0) records = records.slice(-input.limit);
@@ -720,6 +739,18 @@ export function bindAppHandlers(binding: ServerBinding): void {
     refreshModelRuntime(state.diyHome());
     return result;
   });
+  binding.on(app.llmConfig.scanEnv, async () => {
+    const { scanEnv } = await import("../core/model-import");
+    // 连同扫描面（provider 数 / 变量名）一起回报：零命中时 UI 要能说清「查过什么」
+    return scanEnv(state.diyHome());
+  });
+  binding.on(app.llmConfig.importEnv, async ({ input }) => {
+    const { importEnvProviders } = await import("../core/model-import");
+    const r = importEnvProviders(state.diyHome(), input.providers);
+    // 落盘后立即重装运行时目录（与 write/writeSpec 同一约定：改配置即刻生效）
+    if (r.imported.length > 0) refreshModelRuntime(state.diyHome());
+    return r;
+  });
 
   binding.on(app.llmConfig.probe, async ({ input }) => {
     // 拉 `${baseUrl}/models`：既是连通性测试，也是 custom provider 的模型清单来源。
@@ -764,6 +795,14 @@ export function bindAppHandlers(binding: ServerBinding): void {
     } finally {
       clearTimeout(timer);
     }
+  });
+
+  // ── seed ──
+  binding.on(app.seed.run, async () => {
+    const r = seedHome(state.diyHome());
+    // 种子可能新写了 model.yaml → 重装目录，让 UI 立刻看到模型
+    refreshModelRuntime(state.diyHome());
+    return r;
   });
 
   // ── log ──
