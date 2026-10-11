@@ -22,6 +22,12 @@
 //  13. Esc 关弹层**不牵连**任务详情面板（review3 R3-1a：两条 window 级 Esc 互不相识）
 //  14. 后台任务变更导致结果重排后，选中项仍跟着**同一条任务**（review4 R4-1：记 uri 不记下标）
 //  15. 关闭弹层后焦点归还触发元素；0 命中时 Enter 无副作用（review4 R4-6）
+//  16. 鼠标悬停结果项即改高亮（onMouseEnter，review5 R5-3①）
+//  17. 弹层开着时后台开会话，「已打开」徽标即时更新（响应式，review5 R5-3③）
+//  18. 底部计数条文案：截断时给「继续输入缩小范围」；空查询 / 无命中时无前导 `·`、
+//      且快捷键段写「⌘K / Ctrl+K」（review5 R5-3② / R5-4）
+//  19. **IME 组合态的 Esc 也要拦下不再外传** —— 组合态放行会让事件冒泡到 window、
+//      顺手清掉背后的任务详情面板（review5 R5-1a：R3-1a 的对称面）
 //
 // 为什么走真实 UI 而不是 CLI 调状态：本功能全是键盘与焦点行为（聚焦、↑↓、Enter），
 // 状态机断言证明不了「按了键有没有反应」——那正是本功能唯一值得测的东西。
@@ -68,6 +74,11 @@ const detailOpen = () => ui.query<boolean>(`!!document.querySelector(${JSON.stri
 const selectedUri = () =>
   ui.query<string | null>(
     `document.querySelector('[data-testid="nav-search-item"][aria-selected="true"]')?.dataset.uri ?? null`,
+  );
+/** 某个 uri 结果行的文本（查「已打开」徽标，R5-3③） */
+const badgeFor = (uri: string) =>
+  ui.query<string>(
+    `[...document.querySelectorAll(${JSON.stringify(ITEM)})].find((e) => e.dataset.uri === ${JSON.stringify(uri)})?.textContent || ""`,
   );
 const focusedIsInput = () =>
   ui.query<boolean>(`document.activeElement?.getAttribute("data-testid") === "nav-search-input"`);
@@ -198,6 +209,13 @@ describe("nav ⌘K 快速打开会话", () => {
       `parseInt(getComputedStyle(document.querySelector('[data-testid="nav-search-overlay"]')).zIndex, 10)`,
     );
     expect(z).toBeGreaterThan(200);
+    // R5-5：input 是 combobox，须有可访问名（不能只有 placeholder）与 aria-autocomplete
+    const ax = await ui.query<{ label: string | null; ac: string | null }>(`(() => {
+      const i = document.querySelector('[data-testid="nav-search-input"]');
+      return { label: i.getAttribute("aria-label"), ac: i.getAttribute("aria-autocomplete") };
+    })()`);
+    expect(ax.label).toBeTruthy();
+    expect(ax.ac).toBe("list");
     await ui.press("Meta+K");
     await waitUntil(overlayOpen, (v) => !v, { label: "⌘K 再按一次关闭" });
     expect(await overlayOpen()).toBe(false);
@@ -239,8 +257,20 @@ describe("nav ⌘K 快速打开会话", () => {
   });
 
   it("已开着会话的任务标「已打开」，对它 Enter = 只切 active、不新开、顺序不变", async () => {
+    // 自建前置（review5 R5-2）：不用"上一用例留下的现场" —— 否则单独 `npx vitest run -t
+    // 已开着会话` 跑本用例必然失败，调试时被误读成"改坏了"。
+    // 先用搜索把 uriEarly 的会话打开（这一步同时验证了打开路径），再做"已打开"的断言。
+    await openSearch();
+    await ui.type("navsearch");
+    await waitUntil(itemUris, (v) => v.length === 2, { label: "结果出现" });
+    await arrowDownTo(uriEarly);
+    await ui.press("Enter");
+    await waitUntil(async () => (await tabs()).active, (k) => k === `task-run:${uriEarly}`, {
+      label: "先打开 uriEarly 的会话（自建前置）",
+    });
+
     const before = await tabs();
-    expect(before.active).toBe(`task-run:${uriEarly}`); // 上一用例留下的现场
+    expect(before.active).toBe(`task-run:${uriEarly}`);
     await openSearch();
     await ui.type("navsearch");
     const list = await waitUntil(items, (v) => v.some((t) => t.includes("已打开")), {
@@ -267,6 +297,7 @@ describe("nav ⌘K 快速打开会话", () => {
     // 精确到完整片段（R2-1：取的是定点 footer 节点，不是整块面板 —— 否则 "#12" 会让
     // 只断言 "12" 的用例恒真。这里直接校验整段文案，同时证明「显示上限 / 总数」都对）。
     expect(footer).toContain(`显示 ${NAV_SEARCH_LIMIT} / 共 ${NAV_SEARCH_LIMIT + 1} 条`);
+    expect(footer, "截断时应提示还有更多（R5-3②）").toContain("继续输入缩小范围");
     await ui.press("Escape");
     await waitUntil(overlayOpen, (v) => !v, { label: "Esc 关弹层" });
   });
@@ -471,5 +502,106 @@ describe("nav ⌘K 快速打开会话", () => {
     expect(await tabs(), "空结果时 Enter 不该打开任何会话").toEqual(before);
     await ui.press("Escape");
     await waitUntil(overlayOpen, (v) => !v, { label: "Esc 关弹层" });
+  });
+
+  it("鼠标悬停结果项即改高亮（onMouseEnter，R5-3①）", async () => {
+    await openSearch();
+    await ui.type("navsearch");
+    await waitUntil(itemUris, (v) => v.length === 2, { label: "结果出现" });
+    expect(await selectedUri()).toBe(uriLate); // 打开即选中首项
+    // Solid 的 DelegatedEvents 不含 mouseenter → 该监听是直挂的，合成 mouseenter 能命中。
+    await ui.hoverSelector(ITEM, { nth: 1 });
+    expect(await waitUntil(selectedUri, (v) => v === uriEarly, { label: "悬停改高亮" })).toBe(uriEarly);
+    await ui.press("Escape");
+    await waitUntil(overlayOpen, (v) => !v, { label: "Esc 关弹层" });
+  });
+
+  it("弹层开着时后台开会话，「已打开」徽标即时更新（R5-3③）", async () => {
+    // 前置：确保该会话此刻没开（徽标不该在）
+    await fx.sh.getJson(`./diy.sh ui tab close task-run:${uriEarly}`);
+    await openSearch();
+    await ui.type("navsearch");
+    await waitUntil(itemUris, (v) => v.length === 2, { label: "结果出现" });
+    expect(await badgeFor(uriEarly), "未开时不该有「已打开」").not.toContain("已打开");
+    // 弹层**开着**时从后台把该会话打开：徽标是响应式的，应即时出现
+    await fx.sh.getJson(`./diy.sh ui tab open task-run:${uriEarly}`);
+    expect(
+      await waitUntil(() => badgeFor(uriEarly), (t) => t.includes("已打开"), { label: "徽标即时更新" }),
+    ).toContain("已打开");
+    await ui.press("Escape");
+    await waitUntil(overlayOpen, (v) => !v, { label: "Esc 关弹层" });
+  });
+
+  it("底部计数条文案：空查询/无命中无前导 `·`，快捷键段写「⌘K / Ctrl+K」（R5-3② / R5-4）", async () => {
+    await openSearch();
+    const empty = await footerText();
+    expect(empty.startsWith("·"), `空查询时不该有前导分隔符：${empty}`).toBe(false);
+    expect(empty).toContain("⌘K / Ctrl+K 开关");
+    expect(empty, "空查询时无计数段").not.toContain("条");
+
+    await ui.type("zzz-绝无此任务-zzz");
+    await waitUntil(
+      () => ui.query<string>(`document.querySelector('[data-testid="nav-search-list"]')?.textContent || ""`),
+      (t) => t.includes("没有匹配的任务"),
+      { label: "空结果占位出现" },
+    );
+    const none = await footerText();
+    expect(none.startsWith("·"), `无命中时不该有前导分隔符：${none}`).toBe(false);
+    expect(none, "无命中时无计数段").not.toContain("条");
+    await ui.press("Escape");
+    await waitUntil(overlayOpen, (v) => !v, { label: "Esc 关弹层" });
+  });
+
+  it("IME 组合态的 Esc 不停传播 —— 不牵连任务详情面板（R5-1a 回归）", async () => {
+    // 前置：任务管理页点开某任务的详情面板（与 R3-1a 用例同法；行标题点击是切换语义）
+    await fx.sh.getJson("./diy.sh ui page navigate task");
+    const rowSel = `tr[data-uri="${uriEarly}"]`;
+    await waitUntil(() => ui.query<boolean>(`!!document.querySelector(${JSON.stringify(rowSel)})`), (v) => v, {
+      label: "任务行渲染出来",
+    });
+    if (await detailOpen()) {
+      await ui.press("Escape");
+      await waitUntil(detailOpen, (v) => !v, { label: "先收起已开的详情面板" });
+    }
+    await ui.query(
+      `document.querySelector(${JSON.stringify(rowSel + " .diy-link")}).scrollIntoView({ block: "center" })`,
+    );
+    await ui.clickSelector(`${rowSel} .diy-link`);
+    await waitUntil(detailOpen, (v) => v, { label: "任务详情面板上屏" });
+
+    await openSearch();
+    await ui.type("navsearch");
+    await waitUntil(itemUris, (v) => v.length === 2, { label: "结果出现" });
+
+    // 真 IME 组合态（CDP Input.imeSetComposition）下按 Esc
+    await ui.imeCompose("nav");
+    await ui.query(`(() => {
+      window.__k = null;
+      document.addEventListener('keydown', (e) => {
+        if (window.__k === null) window.__k = { key: e.key, ic: e.isComposing };
+      }, true);
+      return true;
+    })()`);
+    await ui.press("Escape");
+    const k = await ui.query<{ key: string; ic: boolean } | null>("window.__k");
+    expect(k?.ic, "组合态 Esc 必须真带 isComposing（否则本用例假绿）").toBe(true);
+    expect(k?.key).toBe("Escape");
+    // RV-1：组合中的 Esc = 取消选词 → 弹层不该关
+    expect(await overlayOpen()).toBe(true);
+    // R5-1a：且**不能继续冒泡到 window** 把背后的详情面板清掉
+    // （修复前：组合态没 stopPropagation → 事件漏到 window，被 TaskDetailPanel 接走 → 面板被关）
+    expect(await detailOpen(), "组合态 Esc 不该牵连详情面板").toBe(true);
+
+    // 收尾：点遮罩关弹层（鼠标路径，不受组合态影响），并证明面板仍在
+    const pt = await ui.query<{ x: number; y: number }>(`(() => {
+      const p = document.querySelector('[data-testid="nav-search-panel"]').getBoundingClientRect();
+      return { x: Math.round(p.left + p.width / 2), y: Math.max(2, Math.round(p.top / 2)) };
+    })()`);
+    await ui.clickPoint(pt);
+    await waitUntil(overlayOpen, (v) => !v, { label: "点遮罩关弹层" });
+    expect(await detailOpen(), "关弹层后详情面板仍在").toBe(true);
+    // 清场：面板自己的 Esc 仍可用
+    await ui.press("Escape");
+    await waitUntil(detailOpen, (v) => !v, { label: "再按 Esc 清详情面板" });
   });
 });

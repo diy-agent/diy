@@ -122,13 +122,16 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
         // 上听 Esc（冒泡）关整个任务详情面板，两条互不相识、都不查 defaultPrevented ——
         // 一次 Esc 会跑两个语义（关弹层 + 清面板，review3 R3-1a）。捕获阶段先手拦下，
         // 事件不再传播到 window，面板就不受牵连。同款先例见 ConfirmDialog。
-        // 同样挡 IME 组合态 —— 组合中的 Esc 是"取消选词"，不该关弹层。
+        // Esc 一律先 **拦下不再外传**（review5 R5-1a）：组合态与普通态都要 stopPropagation。
+        // 此前只在非组合态才 stopPropagation —— 组合态放行会让事件继续冒泡到 window，
+        // 被 TaskDetailPanel 的 window 监听接走、顺手清掉背后的任务详情面板（R3-1a 的对称面）。
+        // 组合中的 Esc 是"取消选词"，对任何外层 UI 都该是空操作：拦下但不关弹层。
         const onKey = (e: KeyboardEvent) => {
-            if (e.key === "Escape" && !composing(e)) {
-                e.stopPropagation();
-                e.preventDefault();
-                props.onClose();
-            }
+            if (e.key !== "Escape") return;
+            e.stopPropagation();
+            if (composing(e)) return;
+            e.preventDefault();
+            props.onClose();
         };
         document.addEventListener("keydown", onKey, true);
         onCleanup(() => {
@@ -170,6 +173,8 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
                     placeholder="搜索任务 / 会话（↑↓ 选择，Enter 打开）"
                     value={query()}
                     role="combobox"
+                    aria-label="搜索任务 / 会话"
+                    aria-autocomplete="list"
                     // R2-2：aria-expanded 语义 =「弹出列表是否展示」，与有无命中无关。
                     // 弹层只在 open 时渲染 → 列表恒展示（0 命中也有"没有匹配的任务"），故恒 true。
                     aria-expanded={true}
@@ -280,7 +285,7 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
                                 ? `显示 ${hits().length} / 共 ${allHits().length} 条 · 继续输入缩小范围`
                                 : `${hits().length} 条`
                             : "",
-                        "Enter 打开会话 · Esc 关闭 · ⌘K 开关",
+                        "Enter 打开会话 · Esc 关闭 · ⌘K / Ctrl+K 开关",
                     ]
                         .filter(Boolean)
                         .join(" · ")}
