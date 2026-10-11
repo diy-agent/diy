@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { splitQualified } from "../../src/shared/model-config";
 import { effectiveMaxOutputTokens, findModel, getModelCatalog, maxOutputTokensOf } from "../../src/shared/models";
-import { refreshModelRuntime, resolveModelKey } from "../../src/main/core/model-runtime";
+import { refreshModelRuntime, resolveModelKey, toTierWhen } from "../../src/main/core/model-runtime";
 
 describe("splitQualified：account@provider/model", () => {
     it("模型 id 自带 / → 按第一个 / 切（provider 段不受影响）", () => {
@@ -29,6 +29,33 @@ describe("splitQualified：account@provider/model", () => {
     it("缺 / 或缺 @ → null（调用方报错，不猜）", () => {
         expect(splitQualified("mimo-v2.6-flash")).toBeNull();
         expect(splitQualified("opencode-go/mimo-v2.6-flash")).toBeNull();
+    });
+});
+
+describe("toTierWhen（档触发条件的最后一道哨：snapshot 路径无 zod）", () => {
+    it("context：顶层 size 与 data.size 都认（models.dev 原生 / diy 自相似两处）", () => {
+        expect(toTierWhen({ type: "context", size: 272_000 }, "m")).toEqual({ kind: "context", size: 272_000 });
+        expect(toTierWhen({ type: "context", data: { size: 128_000 } }, "m")).toEqual({ kind: "context", size: 128_000 });
+    });
+    it("context：size 非数字 / 缺失 / ≤0 → 丢档（放过就是「永远比不过」的死档，静默少收钱）", () => {
+        for (const t of [
+            { type: "context", data: { size: "272000" } },
+            { type: "context", size: Number.NaN },
+            { type: "context", size: Number.POSITIVE_INFINITY },
+            { type: "context", size: 0 },
+            { type: "context", size: -1 },
+            { type: "context" },
+        ]) expect(toTierWhen(t, "m")).toBeNull();
+    });
+    it("utc-range：合法 → 归一成分钟 + 偏移（日历/标签可选）；缺偏移/偏移不一致 → 丢档", () => {
+        expect(toTierWhen({ type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+08:00", calendar: "CN-business-day", label: "peak" } }, "m"))
+            .toEqual({ kind: "utc-range", startMin: 60, endMin: 240, offsetMs: 8 * 3600_000, calendar: "CN-business-day", label: "peak" });
+        expect(toTierWhen({ type: "utc-range", data: { start: "01:00", end: "04:00" } }, "m")).toBeNull(); // 无偏移 = 歧义
+        expect(toTierWhen({ type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+09:00" } }, "m")).toBeNull(); // 两端不一致
+    });
+    it("未知 type / 缺 type → 丢档（上游加新档型时宁可不认，也不按错的价收）", () => {
+        expect(toTierWhen({ type: "moon-phase" }, "m")).toBeNull();
+        expect(toTierWhen(undefined, "m")).toBeNull();
     });
 });
 
@@ -230,6 +257,35 @@ describe("refreshModelRuntime（装配 snapshot ⊕ custom ⊕ model.yaml）", (
                 cacheWrite: undefined,
             },
         ]);
+    });
+
+    it("custom YAML 里 context 档 `data.size` 非数字 → **写侧 zod 即拒**（整份配置报错，不静默吞）", () => {
+        writeFileSync(
+            join(home, "providers.custom.yaml"),
+            `goat:
+  id: goat
+  npm: "@ai-sdk/openai-compatible"
+  api: "https://x/v1"
+  models:
+    a/b:
+      limit: { context: 1000, output: 100 }
+      cost:
+        input: 0.15
+        output: 0.6
+        tiers:
+          - input: 9
+            output: 9
+            tier: { type: context, data: { size: "272000" } }
+`,
+        );
+        writeFileSync(
+            join(home, "model.yaml"),
+            `customProviders:
+  goat:
+    accounts: [{ type: apiKey, data: { value: "k" } }]
+`,
+        );
+        expect(() => refreshModelRuntime(home)).toThrow(/size/);
     });
 
     it("时段档 start/end **缺偏移** → **读配置即 fail-fast**（不默认本地时区，歧义不接受）", () => {

@@ -12,6 +12,7 @@ import {
     clearUtcRangeTiers,
     costWarnings,
     dropUtcRangeTier,
+    editCost,
     isEmptyCost,
     patchUtcRange,
     removeTier,
@@ -59,6 +60,46 @@ describe("setBaseLabel（未命中时段的档名）", () => {
         expect(c.baseLabel).toBe("off-peak");
         setBaseLabel(c, "  ");
         expect("baseLabel" in c).toBe(false);
+    });
+});
+
+describe("editCost（UI 每个编辑入口的收尾：空了删键，不留 `cost: {}`）", () => {
+    it("填了单价又清空 → `cost` 键整个消失（回到初始态，而不是留空壳）", () => {
+        const m: { cost?: Cost } = {};
+        editCost(m, (c) => setBasePrice(c, "input", "1.5"));
+        editCost(m, (c) => setBasePrice(c, "output", "3"));
+        expect(m.cost).toEqual({ input: 1.5, output: 3 });
+        editCost(m, (c) => setBasePrice(c, "input", ""));
+        editCost(m, (c) => setBasePrice(c, "output", ""));
+        expect("cost" in m).toBe(false);
+    });
+    it("改基准标签到空 → 键消失；单价还在 → 键保留", () => {
+        const m: { cost?: Cost } = { cost: { baseLabel: "off-peak" } };
+        editCost(m, (c) => setBaseLabel(c, " "));
+        expect("cost" in m).toBe(false);
+        const n: { cost?: Cost } = { cost: { input: 0.15, output: 0.6, baseLabel: "off-peak" } };
+        editCost(n, (c) => setBaseLabel(c, ""));
+        expect(n.cost).toEqual({ input: 0.15, output: 0.6 });
+    });
+    it("时段档删光 → 键消失；但留下的 context 原生档仍算「有价」（键保留）", () => {
+        const m: { cost?: Cost } = { cost: { tiers: [dsCost().tiers![0]!] } }; // 只有一条时段档
+        editCost(m, (c) => removeTier(c, utcRangeSlots(c)[0]!.index));
+        expect("cost" in m).toBe(false);
+        const withBase: { cost?: Cost } = { cost: dsCost() }; // 有 base 价 → 删档后仍"有价"
+        editCost(withBase, (c) => removeTier(c, utcRangeSlots(c)[0]!.index));
+        expect(withBase.cost).toEqual({ input: 0.15, output: 0.6, cache_read: 0.003, baseLabel: "off-peak" });
+        const k: { cost?: Cost } = { cost: { tiers: [ctxTier()] } };
+        expect(utcRangeSlots(k.cost)[0]).toBeUndefined(); // 只剩 context 档 → 无时段档可删
+        editCost(k, (c) => {
+            const slot = utcRangeSlots(c)[0];
+            if (slot) removeTier(c, slot.index);
+        });
+        expect(k.cost!.tiers!.length).toBe(1);
+    });
+    it("原本无 cost 且没改动 → 不**凭空**造出 `cost` 键", () => {
+        const m: { cost?: Cost } = {};
+        editCost(m, () => {});
+        expect("cost" in m).toBe(false);
     });
 });
 

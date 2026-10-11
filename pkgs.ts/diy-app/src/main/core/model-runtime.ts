@@ -36,8 +36,14 @@ interface SpecCost {
  *   · `context`   —— `{type:"context", size}`（models.dev 原生）或 `{type:"context", data:{size}}`
  *   · `utc-range` —— `{type:"utc-range", data:{start, end, calendar?, label?}}`
  * **认不出的档一律 warn 丢弃**（不静默按 base 价收钱 —— 丢档 = 静默少算/多算）。
+ *
+ * ⚠️ 本函数是「档触发条件」的**最后一道哨**：`providers.custom.yaml` / `model.yaml` 走写侧 zod，
+ * 但 **snapshot（models.dev 产物）是 `JSON.parse` 直取、无校验**（见 model-registry.snapshot）。
+ * 上游把 `size` 写成字符串、或发个没见过的 `type`，全靠这里挡 —— 挡住 = 丢档（价目其余部分照用），
+ * 放过去 = 该档阈值退化成 0/NaN（"永远比不过"的死档），长上下文的钱静默少收。
+ * 故导出：直接单测这条判别边界（不必伪造 snapshot 文件）。
  */
-function toTierWhen(tier: SpecCostTier["tier"], id: string): TierWhen | null {
+export function toTierWhen(tier: SpecCostTier["tier"], id: string): TierWhen | null {
     if (!tier?.type) return null;
     if (tier.type === "context") {
         // 不能盲 cast：`data.size` 是 unknown（手写 YAML / 上游改形状都可能给字符串），

@@ -94,6 +94,17 @@ export function setBaseLabel(cost: Cost, raw: string): void {
     else delete cost.baseLabel;
 }
 
+/**
+ * **改价收尾**：编辑完若整个 `cost` 已空，就把 `cost` 键删掉 —— 不留 `cost: {}`。
+ * 空壳在 YAML 里毫无意义却会误导阅读者（看着"配了价"、"其实没价"），也让「填了又清空」
+ * 回不到初始态。UI 的**每个**编辑入口都包这层（填单价 / 改基准标签 / 增删时段档）。
+ */
+export function editCost(parent: { cost?: Cost }, fn: (cost: Cost) => void): void {
+    const c = (parent.cost ??= {});
+    fn(c);
+    if (Object.keys(c).length === 0) delete parent.cost;
+}
+
 /** 单条时段档的编辑指令（只给要改的键；`calendar`/`label` 给空串 = 删该字段） */
 export interface TierPatch {
     start?: string;

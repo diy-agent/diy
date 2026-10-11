@@ -27,7 +27,7 @@ import type {
 } from "../../shared/model-config";
 import { filterAllows, npmOfEndpoints } from "../../shared/model-config";
 import type { CostField } from "../../shared/cost-edit";
-import { addUtcRangeTier, patchUtcRange, removeTier, setBaseLabel, setBasePrice, tierIssues, utcRangeSlots } from "../../shared/cost-edit";
+import { addUtcRangeTier, editCost, patchUtcRange, removeTier, setBaseLabel, setBasePrice, tierIssues, utcRangeSlots } from "../../shared/cost-edit";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "../store/notificationStore";
 
@@ -616,22 +616,17 @@ function CustomCard(props: {
   };
   /** 写 base 档单价（$/1M，spec 的 snake_case）：清空则删字段；全空则删整个 cost（无价）。 */
   const patchCost = (id: string, f: CostField, raw: string) =>
-    patchModel(id, (mm) => {
-      const c = mm.cost ?? {};
-      setBasePrice(c, f, raw);
-      if (Object.keys(c).length > 0) mm.cost = c;
-      else delete mm.cost;
-    });
+    patchModel(id, (mm) => editCost(mm, (c) => setBasePrice(c, f, raw)));
 
   // ── 时段档（utc-range）：变换在 shared/cost-edit.ts（纯函数，可单测） ──
   const costOf = (id: string): Cost | undefined => spec()?.models[id]?.cost;
   const slotsOf = (id: string) => utcRangeSlots(costOf(id));
   const patchTier = (id: string, index: number, p: Parameters<typeof patchUtcRange>[2]) =>
-    patchModel(id, (mm) => patchUtcRange(mm.cost ?? {}, index, p));
+    patchModel(id, (mm) => editCost(mm, (c) => patchUtcRange(c, index, p)));
   const addTier = (id: string) =>
-    patchModel(id, (mm) => { addUtcRangeTier((mm.cost ??= {})); setExpanded(id); });
+    patchModel(id, (mm) => { editCost(mm, addUtcRangeTier); setExpanded(id); });
   const dropTier = (id: string, index: number) =>
-    patchModel(id, (mm) => { if (mm.cost) removeTier(mm.cost, index); });
+    patchModel(id, (mm) => editCost(mm, (c) => removeTier(c, index)));
   /** 时段档的日历编辑块（`utc-range` 归一形状；非该类型不该出现在展开区） */
   const winOf = (t: CostTier) => (t.tier?.type === "utc-range" ? t.tier.data : null);
 
@@ -798,14 +793,7 @@ function CustomCard(props: {
                             placeholder="基准标签"
                             title="未命中任何时段档时的档名（如 off-peak）；留空显示 base"
                             value={costOf(id())?.baseLabel ?? ""}
-                            onInput={(e) =>
-                              patchModel(id(), (mm) => {
-                                // 与 patchCost 同一收尾：改完若整个 cost 空了就删键，别留 `cost: {}`
-                                const c = (mm.cost ??= {});
-                                setBaseLabel(c, e.currentTarget.value);
-                                if (Object.keys(c).length === 0) delete mm.cost;
-                              })
-                            }
+                            onInput={(e) => patchModel(id(), (mm) => editCost(mm, (c) => setBaseLabel(c, e.currentTarget.value)))}
                           />
                           <button
                             class="btn btn-xs btn-ghost"
