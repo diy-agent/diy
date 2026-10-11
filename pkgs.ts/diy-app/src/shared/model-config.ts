@@ -5,8 +5,8 @@
 //   · $DIY_HOME/model.yaml          配置层 —— provider 连接信息 + 模型选择规则（本文件上半）
 //   · $DIY_HOME/providers.custom.yaml spec 层 —— models.dev 没有的 provider 的模型规格
 //                                     （结构 = models.dev api.json 的 provider 条目，字段对齐）
-//   · snapshot（src/main/data/models-snapshot.json）内置 spec —— models.dev npm 白名单产物，
-//     与 api.json 完全同构，「snapshot 为唯一真源」。
+//   · snapshot（src/main/data/models.dev.json）内置 spec —— models.dev npm 白名单产物，
+//     与 api.json 完全同构，「models.dev 为唯一真源」。
 //
 // 配置层零 models.dev 字段：UI 词汇（accounts/filter/models 覆盖），与 spec 按 id 关联。
 //

@@ -2,7 +2,7 @@
 // 🎯 provider 注册表：snapshot（内置 spec）+ custom spec + model.yaml（配置）→ UI/运行时视图。
 //
 // 数据流（谁也不覆盖谁，按 id 关联）：
-//   spec 层  = models-snapshot.json（models.dev npm 白名单产物，唯一真源）
+//   spec 层  = models.dev.json（models.dev npm 白名单产物，唯一真源）
 //             + $DIY_HOME/providers.custom.yaml（models.dev 没有的 provider）
 //   配置层   = $DIY_HOME/model.yaml（accounts/filter/models 覆盖 —— 零 models.dev 字段）
 //   视图     = spec ⊕ override（白名单字段）＋ filter 判定 ＋ $VAR 展开
@@ -35,7 +35,7 @@ let _snapshot: Record<string, SpecProvider> | null = null;
 /** 惰性加载 snapshot（进程内缓存一次） */
 function snapshot(): Record<string, SpecProvider> {
     if (_snapshot) return _snapshot;
-    _snapshot = JSON.parse(readFileSync(dataFileOrThrow("models-snapshot.json"), "utf-8")) as Record<string, SpecProvider>;
+    _snapshot = JSON.parse(readFileSync(dataFileOrThrow("models.dev.json"), "utf-8")) as Record<string, SpecProvider>;
     return _snapshot;
 }
 
