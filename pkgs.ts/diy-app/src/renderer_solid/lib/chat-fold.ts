@@ -11,7 +11,7 @@
  *   ③ 活动块 `liveTailOf` + 插入位置 `liveSlotIndex` —— 只有直播轮次有（**就地**画在中间区里）
  */
 
-import type { BlockNode } from "../../main/services/local-blocks";
+import type { BlockNode, TurnEndReason } from "../../main/services/local-blocks";
 
 /** 用户发言块（插话与轮次开场那次发言同形，只差 attrs.steer） */
 export function isUserText(n: BlockNode): boolean {
@@ -41,10 +41,20 @@ export function leavesOf(turn: BlockNode): BlockNode[] {
     return out;
 }
 
-/** 最后一条助理正文（1 级摘要 / 2 级全文 / 3 级起单独成项的**结论**就是它；没有则 null） */
-export function lastAssistantText(turn: BlockNode): BlockNode | null {
-    const a = leavesOf(turn).filter((n) => n.tag === "text" && !isUserText(n));
-    return a[a.length - 1] ?? null;
+/**
+ * **结论**：文档序**最后一个叶子**恰好是助理正文时才成立，否则 null。
+ *
+ * 为什么不是"最后一条正文"（2026-10-11 用户报的 bug）：一轮可能是
+ * `正文(过程) → 工具(跑着被人中断)`，正文**不是**结论 —— 旧判据取"最后一条正文"，
+ * 于是 1-2 级折叠起来看到的是那句过程话，**像结论一样**；3 级才对上它真正的位置。
+ * 判据改成"它必须是这一轮的最后一个叶子"：模型说完就停 ⇒ 正文在末尾 ⇒ 是结论；
+ * 末叶子是工具/思考/错误 ⇒ 这一轮**没有结论**（`sceneTailOf` 接手给我"现场"）。
+ */
+export function conclusionOf(turn: BlockNode): BlockNode | null {
+    // 用户块（含轮中插话）不算"助理说过的话"：末尾压着一条插话时，结论仍是那句正文
+    const ls = leavesOf(turn).filter((n) => !isUserText(n));
+    const last = ls[ls.length - 1];
+    return last && last.tag === "text" ? last : null;
 }
 
 /**
@@ -82,7 +92,7 @@ export function leadUsers(turn: BlockNode): BlockNode[] {
  *   · 其余（更早的正文、全部过程）一律收起，3 级才见（见 contentItems）
  */
 export function foldedItems(turn: BlockNode): BlockNode[] {
-    const last = lastAssistantText(turn);
+    const last = conclusionOf(turn);
     const out: BlockNode[] = [];
     for (const n of leavesOf(turn)) {
         if (isUserText(n) || n.tag === "error" || n === last) out.push(n);
@@ -153,25 +163,105 @@ export function contentItems(turn: BlockNode, skip?: (n: BlockNode) => boolean):
 }
 
 /**
- * 直播轮次的**活动过程** = 最后一个过程叶子（think / tool）；还没有过程块（刚发出去、
- * 模型连第一个 think 都还没产出）→ null，那段时间交给"等待响应"的 loading。
+ * 直播轮次的**活动块** = 文档序**最后一个非用户叶子**（think / tool / **text** / error …）；
+ * 刚发出去、模型连第一个事件都还没产出 → null，那段时间交给"等待响应"的 loading。
  *
- * ⚠️ 判据**故意不看它后面还有什么**（旧版规则③"后面有助理正文就让位"已删）：
- *   一条正文开始流就让位，等于把刚跑完那个工具**从框里搬回文档序的 bar 里** ——
- *   框消失 + 同一块内容换容器 = 双重跳变；而 3 级的 bar 是折叠的，那段工具输出当场看不见
- *   （用户 2026-10-11："遇到一个 text 消息时，动态输出的文本框会消失…视觉跳动"）。
- *   现在活动块**就地**画（位置见 `liveSlotIndex`），正文只是在它下方原地往下长 ——
- *   不换容器、不搬家。
+ * 判据沿革（两次都栽在"只认过程"上）：
+ *   · 旧版只认 think/tool 且"后面有正文就让位"（规则③）—— 正文一开始流框就消失、
+ *     同一块内容换容器，双重跳变（用户 2026-10-11 实测："遇到一个 text 消息时，
+ *     动态输出的文本框会消失…视觉跳动"）。R17 删了规则③，但**仍只认过程**
+ *     ⇒ 正文在框**下面**长；正文流完再遇到工具，活动块换成新工具（在正文**之后**）
+ *     ⇒ 那段正文"消失、跳到框上面去"（用户 2026-10-11 第二条反馈）。
+ *   · 现在（用户定稿）：动态框是**中间载体**，装**所有正在收取中的数据**（text/tool/think）
+ *     —— 正文也在框里；它定稿后按级别**弹射到上方完成区**，框接着装下一条。
+ *   于是"框下 → 框上"这条错位路径根本不存在：任何时刻框里都是"最新那条"。
  *
- * `stopped` 两态由渲染侧判定（同一个判据，不再另开字段）：未定稿 = 在跑（体里实时刷）；
- * 已定稿但还没被下一步替换掉 = **冻结**（标题栏转 `⋯ 等待下一步…`，内容留在框里）。
- * 用户口径（2026-10-11）："step 完成后不要立即消失 … 直到下一步开始接收时替换掉当前
- * 最后一条，避免长时间空白期"。
+ * 位置由 `liveSlotIndex` 补回文档序原位（`contentItems` 已把它 skip 掉）。
+ *
+ * `stopped` 两态由渲染侧判定：未定稿 = 在跑（体里实时刷）；已定稿但还没被下一步替换掉
+ * = **冻结**（标题栏转 `⋯ 等待下一步…`，内容留在框里）。用户口径："step 完成后不要立即消失 …
+ * 直到下一步开始接收时替换掉当前最后一条，避免长时间空白期"。
  */
 export function liveTailOf(turn: BlockNode, isLive: boolean): BlockNode | null {
     if (!isLive) return null;
-    const procs = leavesOf(turn).filter(isProc);
-    return procs[procs.length - 1] ?? null;
+    const ls = leavesOf(turn).filter((n) => !isUserText(n));
+    return ls[ls.length - 1] ?? null;
+}
+
+/**
+ * 轮次**异常结束**时"最后那个叶子"就是**现场**（1 级也要看得见的 item）。
+ *
+ * 用户 2026-10-11 口径：「我起码知道是模型说我正常结束了，还是模型说我有长度/金额限制
+ * 所以要结束了，还有就是压根没收到 llm 的结束，只是不知道为啥结束了 —— 保留现场的理由很充分」。
+ *
+ * 判据：
+ *   · 结束原因属**异常类**（`aborted` / `interrupted` / `error` / `max-steps`；`completed` 与
+ *     `max-tokens` 不算 —— 后者仍以正文收尾，`notice` 已说清）；
+ *   · 且**末叶子不是助理正文**（是正文时那本就是结论，`conclusionOf` 已经把它当结论显示，
+ *     再出一份现场就是同一句画两遍）。
+ * 旧日志没有 `endReason`（`turn.attrs.interrupted` 兜底）。
+ */
+export function sceneTailOf(turn: BlockNode): BlockNode | null {
+    const t = endReasonOf(turn);
+    const abnormal = t
+        ? t.type === "aborted" || t.type === "interrupted" || t.type === "error" || t.type === "max-steps"
+        : Boolean(turn.attrs.interrupted);
+    if (!abnormal) return null;
+    const ls = leavesOf(turn).filter((n) => !isUserText(n));
+    const last = ls[ls.length - 1];
+    if (!last || last.tag === "text") return null;
+    return last;
+}
+
+/** 现场/活动框的构成：末叶子是 error 时，错误当**红条压在框顶**、主体取它前面那一个非 error 叶子 */
+export interface TailScene {
+    /** 主体（当时正在跑的东西）；可能为 null（错误之前没有内容） */
+    body: BlockNode | null;
+    /** 错误条（末叶子是 error 块时） */
+    error: BlockNode | null;
+}
+
+export function composeTail(turn: BlockNode, tail: BlockNode | null): TailScene | null {
+    if (!tail) return null;
+    if (tail.tag !== "error") return { body: tail, error: null };
+    const ls = leavesOf(turn).filter((n) => !isUserText(n));
+    const i = ls.findIndex((n) => n.id === tail.id);
+    const prev = i > 0 ? ls[i - 1]! : null;
+    return { body: prev && prev.tag !== "error" ? prev : null, error: tail };
+}
+
+/** 结束原因（读该轮事实；脏值当没有） */
+export function endReasonOf(turn: BlockNode): TurnEndReason | null {
+    const r = turn.attrs.endReason as TurnEndReason | undefined;
+    if (!r || typeof r !== "object") return null;
+    return typeof (r as { type?: unknown }).type === "string" ? r : null;
+}
+
+/**
+ * 轮次末尾的**结束状态说明**（所有级别恒显 —— 它属于"1 级不变量"）。
+ *
+ * 为什么要有：用户 2026-10-11 —— "我不知道到底是真的模型说结束了，还是有 bug 漏消息了"。
+ * `endReason`（##288 拍板①）是判据；这里只把它翻成人话。
+ * `notice` 仍是更细的那句（含限制值），有它优先。
+ */
+export function turnEndNote(turn: BlockNode): string | null {
+    const notice = typeof turn.attrs.notice === "string" && turn.attrs.notice ? turn.attrs.notice : null;
+    const r = endReasonOf(turn);
+    if (!r) return turn.attrs.interrupted ? "本轮未完成（流中断/崩溃恢复）" : notice;
+    switch (r.type) {
+        case "completed":
+            return notice;
+        case "max-steps":
+            return notice ?? `达到步数上限 ${r.data.limit}，本轮被强制收尾（模型仍在请求工具）`;
+        case "max-tokens":
+            return notice ?? "输出达到上限被截断";
+        case "aborted":
+            return r.data.source === "detached" ? "本轮被中断（消费端断开，未跑完）" : "本轮被中断（未跑完）";
+        case "error":
+            return notice; // 细节由 error 块 / 现场说，同一句不写两遍
+        case "interrupted":
+            return "本轮未完成（流中断/崩溃恢复）";
+    }
 }
 
 /**

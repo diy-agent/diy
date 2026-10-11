@@ -15,8 +15,12 @@ import {
     isProc,
     isTurnLevel,
     isUserText,
-    lastAssistantText,
+    conclusionOf,
+    composeTail,
+    endReasonOf,
     leadUsers,
+    sceneTailOf,
+    turnEndNote,
     leavesOf,
     levelOfTurn,
     liveSlotIndex,
@@ -36,7 +40,7 @@ function n(
     return { tag, id, stopped, touched: 0, attrs, children };
 }
 const user = (id: string) => n("text", id, { role: "user", content: id });
-const say = (id: string) => n("text", id, { content: id }); // 助理正文
+const say = (id: string, stopped = true) => n("text", id, { content: id }, [], stopped); // 助理正文
 const think = (id: string, stopped = true) => n("think", id, { content: "…" }, [], stopped);
 const tool = (id: string, stopped = true, status = "done") =>
     n("tool", id, { tool: "bash", title: id, status }, [], stopped);
@@ -86,7 +90,7 @@ describe("foldedItems：折叠态 = 严格文档序，不重排", () => {
     it("没有助理正文时只留用户发言（不凭空造一条）", () => {
         const t = turn(user("u1"), tool("x1", false));
         expect(foldedItems(t).map((x) => x.id)).toEqual(["u1"]);
-        expect(lastAssistantText(t)).toBeNull();
+        expect(conclusionOf(t)).toBeNull();
     });
 });
 
@@ -132,27 +136,27 @@ describe("liveTailOf：活动块（就地画在文档序里）", () => {
         expect(liveTailOf(t, true)!.stopped).toBe(true);
     });
 
-    it("跑完且后面**有助理正文在流** → 照样返回它（旧版在这里让位 = 框消失 + 内容换容器 = 双重跳变）", () => {
-        // 用户 2026-10-11：一条 text 消息到达时"动态输出的文本框会消失…视觉跳动"。
-        // 修正点就是删掉旧规则③ —— 活动块就地画，正文只是在它下方原地往下长。
-        const t = turn(tool("x1"), say("a1"));
-        expect(liveTailOf(t, true)!.id).toBe("x1");
-        expect(liveTailOf(t, true)!.stopped).toBe(true);
+    it("**正文也是「收取中的数据」**：text 一生效，活动块就是它（2026-10-11 口径修正）", () => {
+        // 旧规则（R17）活动块只认过程叶子 ⇒ 正文流在框**下面**，正文流完再遇到工具时
+        // 又整段跳回框上面（用户实测的"消失跳位"）。新口径：中间载体装**所有**收取中的东西。
+        const t = turn(tool("x1"), say("a1", ));
+        expect(liveTailOf(t, true)!.id).toBe("a1");
     });
 
-    it("跑完后的用户插话同样不改变判据（位置由 liveSlotIndex 管）", () => {
+    it("跑完后的用户插话不改变判据（位置由 liveSlotIndex 管）", () => {
         const t = turn(tool("x1"), user("u2"));
         expect(liveTailOf(t, true)!.id).toBe("x1");
     });
 
-    it("还没有任何过程块 → 没有活动块（那段时间交给「等待响应」loading）", () => {
+    it("还没有任何助理内容 → 没有活动块（那段时间交给「等待响应」loading）", () => {
         expect(liveTailOf(turn(user("u1")), true)).toBeNull();
-        expect(liveTailOf(turn(user("u1"), say("a1")), true)).toBeNull();
     });
 
-    it("取的是最后一个过程块（think/tool 混排也一样）", () => {
+    it("取的是**文档序最后一个非用户叶子**（think/tool/text 混排也一样）", () => {
         const t = turn(think("k1"), tool("x1"), think("k2", false));
         expect(liveTailOf(t, true)!.id).toBe("k2");
+        const t2 = turn(think("k1"), tool("x1"), say("a1", ));
+        expect(liveTailOf(t2, true)!.id).toBe("a1");
     });
 });
 
@@ -350,6 +354,121 @@ describe("contentItems：3 级起的中间区（正文逐条 + 连续过程一�
     it("段的 key = 段内首个叶子 id（供 <For> / pin 复用，跨帧稳定）", () => {
         const t = turn(think("k1"), tool("x1"), think("k2"), say("a1"));
         expect(contentItems(t)[0]!.key).toBe("k1");
+    });
+});
+
+describe("conclusionOf：结论 = 文档序**最后一个叶子**恰好是助理正文", () => {
+    it("模型说完就停（正文在末尾）→ 是结论", () => {
+        const t = turn(user("u1"), think("k1"), tool("x1"), say("a9"));
+        expect(conclusionOf(t)!.id).toBe("a9");
+    });
+
+    it("中途被打断（末叶子是工具）→ **没有结论**（旧判据会把中间那句过程话当结论，用户报的 bug）", () => {
+        const t = turn(user("u1"), say("a1"), tool("x1", false));
+        expect(conclusionOf(t)).toBeNull();
+        // 折叠态于是只剩用户发言 —— 不再伪造一条"像结论"的假话
+        expect(foldedItems(t).map((x) => x.id)).toEqual(["u1"]);
+    });
+
+    it("末叶子是 think / error 同样没有结论", () => {
+        expect(conclusionOf(turn(say("a1"), think("k1", false)))).toBeNull();
+        expect(conclusionOf(turn(say("a1"), err("e1")))).toBeNull();
+    });
+
+    it("末叶子是用户插话 → 正文仍是结论（插话不等于助理说了新话）", () => {
+        const t = turn(say("a1"), user("u2"));
+        expect(conclusionOf(t)!.id).toBe("a1");
+    });
+});
+
+describe("sceneTailOf / composeTail：异常结束的「现场」", () => {
+    const ended = (type: string, kids: BlockNode[], data: Record<string, unknown> = {}): BlockNode =>
+        n("turn", "t1", { endReason: { type, data } }, kids);
+
+    it("completed / max-tokens → 无现场（正文即结论，notice 已说清）", () => {
+        expect(sceneTailOf(ended("completed", [tool("x1")]))).toBeNull();
+        expect(sceneTailOf(ended("max-tokens", [say("a1")]))).toBeNull();
+    });
+
+    it("aborted / interrupted / error / max-steps + 末叶子不是正文 → 末叶子就是现场", () => {
+        for (const ty of ["aborted", "interrupted", "error", "max-steps"]) {
+            const t = ended(ty, [say("a1"), tool("x1", false)]);
+            expect(sceneTailOf(t)!.id, ty).toBe("x1");
+        }
+    });
+
+    it("异常结束但**末叶子是正文** → 不另开现场（那本就是结论，避免同一句画两遍）", () => {
+        expect(sceneTailOf(ended("aborted", [tool("x1"), say("a1")]))).toBeNull();
+    });
+
+    it("旧日志（无 endReason）用 attrs.interrupted 兜底", () => {
+        const t = n("turn", "t1", { interrupted: true }, [tool("x1", false)]);
+        expect(sceneTailOf(t)!.id).toBe("x1");
+        expect(sceneTailOf(n("turn", "t1", {}, [tool("x1", false)]))).toBeNull();
+    });
+
+    it("composeTail：末叶子是 error → 红条压顶 + 主体取它前一个非 error 叶子", () => {
+        const t = ended("error", [tool("x1", false), err("e1")]);
+        const sc = composeTail(t, sceneTailOf(t))!;
+        expect(sc.error!.id).toBe("e1");
+        expect(sc.body!.id).toBe("x1");
+    });
+
+    it("composeTail：普通末叶子 → 主体就是它、无错误条", () => {
+        const t = ended("aborted", [tool("x1", false)]);
+        expect(composeTail(t, sceneTailOf(t))).toEqual({ body: leavesOf(t)[0], error: null });
+        expect(composeTail(t, null)).toBeNull();
+    });
+
+    it("error 前面没有内容 → 主体为 null（只出红条，不造空体）", () => {
+        const t = ended("error", [err("e1")]);
+        expect(composeTail(t, sceneTailOf(t))).toEqual({ body: null, error: leavesOf(t)[0] });
+    });
+});
+
+describe("turnEndNote：结束原因翻成人话（所有级别恒显）", () => {
+    const ended = (type: string, data: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) =>
+        n("turn", "t1", { endReason: { type, data }, ...extra });
+
+    it("每个值域都有一句（不给 UI 留 undefined）", () => {
+        for (const ty of ["completed", "max-steps", "max-tokens", "aborted", "error", "interrupted"]) {
+            const note = turnEndNote(ended(ty, { limit: 60, maxOutputTokens: 4000, source: "abort", message: "x" }));
+            if (ty === "completed" || ty === "error") expect(note, ty).toBeNull();
+            else expect(note, ty).toBeTruthy();
+        }
+    });
+
+    it("notice（含限制值的那句）优先于兜底文案", () => {
+        expect(turnEndNote(ended("max-steps", { limit: 60 }, { notice: "达到 maxSteps=60 步上限…" }))).toBe(
+            "达到 maxSteps=60 步上限…",
+        );
+    });
+
+    it("max-steps 没带 notice 也能说清（限制值来自 endReason.data）", () => {
+        expect(turnEndNote(ended("max-steps", { limit: 8 }))).toContain("8");
+    });
+
+    it("消费端断开（detached）与用户停止（abort）分开说", () => {
+        expect(turnEndNote(ended("aborted", { source: "detached" }))).toContain("消费端断开");
+        expect(turnEndNote(ended("aborted", { source: "abort" }))).toContain("被中断");
+    });
+
+    it("error 的细节由 error 块/现场说 —— 这一行不重复", () => {
+        expect(turnEndNote(ended("error", { source: "stream", message: "x" }))).toBeNull();
+    });
+
+    it("旧日志（无 endReason）：沿用 attrs.interrupted / notice", () => {
+        expect(turnEndNote(n("turn", "t1", { interrupted: true }))).toContain("本轮未完成");
+        expect(turnEndNote(n("turn", "t1", { notice: "截断了" }))).toBe("截断了");
+        expect(turnEndNote(n("turn", "t1", {}))).toBeNull();
+    });
+
+    it("endReasonOf 挡住脏值", () => {
+        expect(endReasonOf(n("turn", "t1", { endReason: "completed" }))).toBeNull();
+        expect(endReasonOf(n("turn", "t1", { endReason: { type: "completed", data: {} } }))).toEqual({
+            type: "completed",
+            data: {},
+        });
     });
 });
 
