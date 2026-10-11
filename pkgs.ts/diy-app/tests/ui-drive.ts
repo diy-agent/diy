@@ -16,7 +16,7 @@
 // 于是测试永远绿 —— 这类假绿正是要避免的。
 import WebSocket from "ws";
 import { waitUntil } from "./wait";
-import { textHit } from "./ui-text";
+import { textHit, textHitAny } from "./ui-text";
 
 /**
  * 点击命中校验的最长等待（ms）：坐标被浮层占着就重新定位/重采样，最多等这么久。
@@ -347,13 +347,29 @@ export async function makeUiDriver(
    * 如箭头字符）；加长度上限，避免命中的是 body / 整页容器（它的文本必然包含 w）造成误判。
    */
   const pointHitsText = (p: { x: number; y: number }, want: string) =>
-    cdp.eval<boolean>(`(() => {
+    cdp.eval<boolean | string>(`(() => {
       const hit = document.elementFromPoint(${Math.round(p.x)}, ${Math.round(p.y)});
-      if (!hit) return false;
-      // textHit 由纯函数注入（tests/ui-text.ts）：比较逻辑放**真代码**里，避开
-      // 模板字面量把「空白正则转义」吃成字母 s 的坑 —— 曾因此对含空格文本恒判未命中（##255 R2-1）。
+      if (!hit) return "该坐标处没有任何元素";
+      // 比较逻辑由纯函数注入（tests/ui-text.ts）：放**真代码**里，避开模板字面量把
+      // 「空白正则转义」吃成字母 s 的坑 —— 曾因此对含空格文本恒判未命中（##255 R2-1）。
+      // 两个函数成对注入（textHitAny 引用 textHit，见 ui-text 的注释）。
       const textHit = ${textHit.toString()};
-      return textHit((hit.innerText ?? hit.textContent ?? "") + "", ${JSON.stringify(want)});
+      const textHitAny = ${textHitAny.toString()};
+      // 候选串 = 自身文本 + （自己及祖先的）**显式名字** aria-label / title。
+      // 为什么必须往上找：elementFromPoint 给的是**最内层**元素，而 a11y 名常挂在祖先按钮上 ——
+      // 「⋯」按钮的 DOM 文本只有图标字符（实测 elementFromPoint 命中 <span>"⋯"），名字在
+      // 父级 <button aria-label="更多操作"> 上；只看命中元素自身会恒判未命中，每次点击白等满
+      // 墙钟预算（实测 steer-ui 里 2 次 = 12s，##255 R4-1）。向上最多 5 层、到 body 止。
+      // 祖先前缀只取**属性名**（不取 innerText）：容器文本会撞 textHit 的 200 字上限误判。
+      const cands = [hit.innerText ?? hit.textContent];
+      for (let el = hit, depth = 0; el && el !== document.body && depth < 5; el = el.parentElement, depth++) {
+        cands.push(el.getAttribute("aria-label"), el.getAttribute("title"));
+      }
+      if (textHitAny(cands, ${JSON.stringify(want)})) return true;
+      // 未命中时回一行**诊断摘要**（实际命中了谁）—— 早先只打「（谓词）」查不动问题。
+      const named = cands.slice(1).find((c) => c);
+      return "<" + hit.tagName.toLowerCase() + '> "' + ((cands[0] ?? "") + "").slice(0, 20) + '"' +
+        (named ? ' 祖先名 "' + named + '"' : "");
     })()`);
 
   /** 取树并按谓词定位（每次现取：上一步操作会让 rect 变） */
@@ -382,10 +398,13 @@ export async function makeUiDriver(
       // 只打一行日志，不把测试变成硬失败。
       const deadline = Date.now() + OCCLUSION_WAIT_MS;
       for (;;) {
-        if (await pointHitsText(target, target.text)) break;
+        const hit = await pointHitsText(target, target.text);
+        if (hit === true) break;
         if (Date.now() >= deadline) {
           console.error(
-            `[ui-drive] 点击目标持续被遮挡（~${OCCLUSION_WAIT_MS / 1000}s），按原坐标点击：${typeof text === "string" ? text : "（谓词）"}`,
+            `[ui-drive] 点击目标持续被遮挡（~${OCCLUSION_WAIT_MS / 1000}s），按原坐标点击：` +
+              `${typeof text === "string" ? `"${text}"` : "（谓词）"}` +
+              `；期望文本 "${target.text}"，实际命中 ${hit}`,
           );
           break;
         }

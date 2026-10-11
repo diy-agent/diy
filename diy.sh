@@ -45,14 +45,26 @@ fi
 # 的 path 去摘目标仓库的 diy.yaml 名片，那条路径是真实的 ~/git/...）。
 # 因此：继承到的 DIY_HOME 若指向生产数据根（$HOME/.diy），默认拒绝，改用本 worktree 的。
 # 生产根的定义在 TS 侧只有一处（core/instance-identity.ts::prodDataHome，用**真实**家目录，且
-# resolve() 归一写法差异）；bash 取不到 getpwuid，只能等价地用 $HOME/.diy —— 前提是写法规范。
-# 这里只额外归一**尾斜杠**（`~/.diy/` 与 `~/.diy` 同一个根）；`..` / 相对路径这类写法不归一是
-# 已知缺口（不是遗漏：bash 侧只是「一眼能认出生产根」的防呆，真正的判据在 TS 侧 resolve 归一）。
-# 测试不受影响：它们显式传 DIY_HOME=<临时目录>，不等于 $HOME/.diy，会正常透传。
+# resolve() 归一写法差异）；bash 取不到 getpwuid，只能等价地用 $HOME/.diy。
+# 两侧都做**写法归一**：TS 侧 resolve()（`..` / `./` / 尾斜杠），bash 侧 `cd <dir> && pwd -P`
+# （多一层符号链接解析）—— bash 是 TS 的**超集**，方向安全（多认出的那些只可能是生产根本身）。
+# 目录不存在时 cd 失败 → 原样保留并剥尾斜杠；此时不可能命中生产根（生产根必然存在）。
+# 测试不受影响：它们显式传 DIY_HOME=<临时目录>，归一后仍不等于 $HOME/.diy，会正常透传。
 # 确实需要指向生产数据时显式 opt-in：DIY_ALLOW_PROD_HOME=1 ./diy.sh ...
-_prod_home_norm="${HOME%/}/.diy"
-_home_check="${DIY_HOME:-}"
-while [[ "$_home_check" == */ && "$_home_check" != "/" ]]; do _home_check="${_home_check%/}"; done
+_norm_dir() {
+  # 归一写法的路径（stdout）：能 cd 进去就 pwd -P，否则原样回吐并只剥尾斜杠
+  local d="$1"
+  local real
+  if real="$(cd "$d" 2>/dev/null && pwd -P)"; then
+    printf '%s' "$real"
+  else
+    while [[ "$d" == */ && "$d" != "/" ]]; do d="${d%/}"; done
+    printf '%s' "$d"
+  fi
+}
+_prod_home_norm="$(_norm_dir "${HOME%/}/.diy")"
+_home_check=""
+if [[ -n "${DIY_HOME:-}" ]]; then _home_check="$(_norm_dir "$DIY_HOME")"; fi
 if [[ -n "$_home_check" && "$_home_check" == "$_prod_home_norm" && "${DIY_ALLOW_PROD_HOME:-}" != "1" ]]; then
   # 变量一律用 ${} 界定：紧跟多字节字符时，非 UTF-8 locale 下 bash 会把字符首字节
   # 并入变量名，set -u 下报 "unbound variable"（踩过）

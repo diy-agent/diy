@@ -3,8 +3,9 @@
 // 历史上这段逻辑写在模板字面量里，`\s` 被吃成字母 s（正则变成「剥字母 s」），
 // 对含空格文本（如「MD 原文」）恒判未命中 → 点击前的遮挡校验空转 ~19s 才放弃。
 // 这里把它钉死，并额外守住「可 toString 注入浏览器」这条契约。
+// R4-1 追加：icon-only 控件（名字只在 aria-label 里）的多候选串比较（textHitAny）。
 import { describe, expect, it } from "vitest";
-import { textHit } from "../ui-text";
+import { textHit, textHitAny } from "../ui-text";
 
 describe("textHit —— 命中元素文本与期望文本是否同一目标", () => {
   it("含空格的文本：命中（旧实现的回归点）", () => {
@@ -35,6 +36,26 @@ describe("textHit —— 命中元素文本与期望文本是否同一目标", (
     expect(textHit("", "目标")).toBe(false);
     expect(textHit("目标", "")).toBe(false);
     expect(textHit("甲", "乙")).toBe(false);
+  });
+
+  it("多候选串：icon-only 控件的名字只在 aria-label 里（##255 R4-1 回归）", () => {
+    // `⋯`（LocalChatPage）只有 aria-label="更多操作" + data-tip，innerText 是空串 ——
+    // 只比 innerText 会恒判未命中，点击前的遮挡校验白等满墙钟预算（实测 2 次 = 12s）。
+    const cands = ["更多操作", null, ""]; // [aria-label, title, innerText]
+    expect(textHitAny(cands, "更多操作")).toBe(true);
+    expect(textHitAny(["", null, ""], "更多操作")).toBe(false);
+    // 全空 / 全 undefined 不该抛，也不该误判命中
+    expect(textHitAny([null, undefined], "更多操作")).toBe(false);
+  });
+
+  it("textHitAny 与 textHit **成对**注入后可在隔离作用域求值", () => {
+    // ui-drive 把两个函数先后注入同一作用域（textHitAny 引用 textHit）——
+    // 单独注入 textHitAny 会在浏览器里 ReferenceError，故契约是「成对」。
+    const isolated = new Function(
+      `const textHit = ${textHit.toString()}; return (${textHitAny.toString()});`,
+    )() as typeof textHitAny;
+    expect(isolated(["更多操作"], "更多操作")).toBe(true);
+    expect(isolated([""], "更多操作")).toBe(false);
   });
 
   it("可 toString 后注入隔离作用域求值（注入契约：必须自包含）", () => {

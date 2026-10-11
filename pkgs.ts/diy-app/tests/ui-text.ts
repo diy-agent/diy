@@ -22,3 +22,18 @@ export function textHit(hitText: string, want: string): boolean {
   if (!w || !t || t.length > 200) return false;
   return t.includes(w) || w.includes(t);
 }
+
+/**
+ * 多候选串版本：命中元素可能是 **icon-only** 控件 —— `⋯` 只有 `aria-label="更多操作"`、
+ * `data-tip`，DOM 里没有任何文本（`innerText === ""`）。只比 `innerText` 会恒判「未命中」，
+ * 于是每次点击都白等满遮挡校验的墙钟预算（实测 steer-ui 里 2 次 = 12s，##255 R4-1）。
+ *
+ * 候选串由调用方从元素上取（aria-label / title / innerText，按此序），命中任一即算命中。
+ *
+ * ⚠️ 与 `textHit` **成对注入**：本函数引用了 `textHit`，浏览器作用域里两个都必须存在
+ * （见 pointHitsText；注入契约用例在 tests/core/ui-text.test.ts）。
+ */
+export function textHitAny(cands: readonly (string | null | undefined)[], want: string): boolean {
+  for (const c of cands) if (c && textHit(c, want)) return true;
+  return false;
+}

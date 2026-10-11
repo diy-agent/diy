@@ -69,8 +69,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const cfg = readRuntimeConfig();
 const home = cfg.home;
 if (app.isPackaged) {
-  process.env["DIY_CLI"] ||= "diy";
-  console.log('[runtime] 打包模式未注入 DIY_CLI：显式回落为 PATH 上的 "diy"');
+  // 日志必须收在 if 里：`bin/diy` 会注入 `DIY_CLI=$0` 并被 CLI spawn 继承，
+  // 那时它已经注入过，再喊「未注入」就是假日志（日志在 `||=` 之外）。
+  if (!process.env["DIY_CLI"]) {
+    process.env["DIY_CLI"] = "diy";
+    console.log('[runtime] 打包模式未注入 DIY_CLI：显式回落为 PATH 上的 "diy"');
+  }
 } else {
   const repoRoot = findRepoRoot(__dirname);
   if (repoRoot) process.env["DIY_CLI"] ||= cliEntryForRepo(repoRoot, home);
