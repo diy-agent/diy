@@ -11,6 +11,7 @@
 //
 // 约定：本文件禁止 import node:*（renderer 会打进包）。
 
+import type { CalendarTable } from "./calendars";
 import { ratesOf, type EffectiveRates, type ModelCost } from "./usage";
 
 /**
@@ -113,6 +114,20 @@ export function getModelCatalog(): ResolvedModel[] {
     return _catalog;
 }
 
+// ── 日历表（同上：main 侧装配时灌入；时段价的日历判定用它） ──
+
+let _calendars: CalendarTable = {};
+
+/** 灌入内置日历表（main 启动 / 装配模型目录时调用）；未灌 = 空表（时段档全不命中） */
+export function setCalendarCatalog(calendars: CalendarTable): void {
+    _calendars = calendars;
+}
+
+/** 当前日历表（UI 展示「工作日定义」用） */
+export function getCalendarCatalog(): CalendarTable {
+    return _calendars;
+}
+
 /**
  * 按**完全限定名**或**裸模型 id** 查模型。
  * 裸 id 命中多个**不同 provider** → undefined（歧义，调用方报错；不猜）。
@@ -164,11 +179,13 @@ export function cacheTtlMsOf(modelId: string): number {
 }
 
 /**
- * 取**生效单价**（含选中 tier）；模型不在表里或表中无价 → null（调用方决定怎么提示）。
- * tier 按「总输入 token」选（含缓存读/写），取满足条件的最大阈值 —— 见 shared/usage.ts。
+ * 取**生效单价**（含选中档）；模型不在表里或表中无价 → null（调用方决定怎么提示）。
+ *   · `tier`   = 上下文档（按总输入 token 比阈值取最大，含缓存读/写）
+ *   · `window` = 时段档（按 `atMs` 请求时刻 + 内置日历判定；缺省 now）
+ * 见 shared/usage.ts ratesOf。
  */
-export function costOf(modelId: string, promptTokens: number): EffectiveRates | null {
-    return ratesOf(findModel(modelId)?.cost, promptTokens);
+export function costOf(modelId: string, promptTokens: number, atMs?: number): EffectiveRates | null {
+    return ratesOf(findModel(modelId)?.cost, promptTokens, atMs, _calendars);
 }
 
 /** 该 id 是否在清单内（persona 校验用：写配置时就拦住打错的模型名） */
