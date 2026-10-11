@@ -65,7 +65,7 @@
 - `pit.watch-restart` — 改 `src/**` 会触发 preview/lab watch 重启 Electron，**正在跑的本机 agent 轮次会被打断**（tool 被标 `interrupted`）→ 轮次中别拿源码当探针，探针写 `/tmp`
 - `pit.solid-show` — Solid 组件函数体里的 `if (props.x) return A; return B;` **对 props 变化不响应**（函数体只执行一次）→ 用 `<Show when=… fallback=…>`。反之，`<Show>` 内组件在 `onCleanup` 里读 `props` 会抛 `Stale read from <Show>` 并中断更新 → 需"卸载前落盘"的副作用放面板级组件
 - `pit.singleton-lock` — 隔离实例必须用**全新 `DIY_HOME`**（`mktemp -d`）：`SingletonLock` 写在 `electron_user_data/` 下，残留实例会抢锁 → 新实例打 `SingleInstanceLock: failed` 后直接退出。撞锁时换新 home，别动别人的进程
-- `pit.self-destruct` — agent 起的进程**继承宿主 main 的进程组**，所以收掉自己拉起的实例会命中自毁护栏被拒（判据 `src/main/services/agent-guard.ts` 的 `collectSelfInfo`：同 pgid 或命令行含 `main/index.mjs`）。**不要绕过护栏** —— 把「要收的实例号 + 用途」列给用户手动收
+- `pit.self-destruct` — 生产 diy（数据根 `~/.diy`，管任务管理）与 agent 同进程树，杀它 = 窗口白屏 + 无日志（SIGKILL 捕获不到）：**绝不可杀**。agent **自己**起的隔离实例（数据根在 worktree 的 `build/home` 等）可自行按**精确 pid** 收掉 —— `_guard.md` 已明许（运行时护栏 `agent-guard.ts` 已停用，判据分不清宿主与自己起的实例）；**只禁 `pkill/killall electron` 这类无差别指令**（会捎带生产实例）
 - `pit.cdp-port` — `DevToolsActivePort` 文件内容**不一定是当前实例的端口**（输给单实例锁的第二个实例也会先写自己的端口再退出）→ 读后必须 `curl --max-time 3 http://127.0.0.1:<port>/json/version` 校验
 - `pit.cdp-goto` — `playwright-cli attach` 模式下**不要用 `goto`**（CDP 附加态不支持 `Target.createTarget`，一次 goto 就打坏会话）；换页用 `reload`
 - `pit.cdp-hit` — 点击前做**命中自检** `document.elementFromPoint(中心) === 目标元素`（抓「按钮溢出被相邻元素盖住」的唯一手段）；断言读 DOM 不靠截图；`elementFromPoint` 只测坐标，**真实手势链**要 `mouse.move/down/up` 分步，且拖拽**必须给真实时间 + 至少一帧**（CDP 合成事件是瞬时的，dnd-kit 异步激活等不到）
@@ -84,7 +84,7 @@
 - `pit.localstorage` — **禁止把草稿写 localStorage**（属有损数据，且 serve 与 Electron 各持一份）：草稿 + 插话队列落任务目录 `.diy/drafts.yaml`，会话日志落 `$DIY_HOME/local/`
 - `pit.ref-lock` — `ref-sync.ts` 写 **v5** 格式的 `.diy/ref.lock.yaml`（`ref.{python,node}.{scope}.{category}`），而 `pkgs.ts/diy-dev/src/ref/store.ts` 写 **v1**（`source.{key}`）到**同一个文件** → 后写覆盖前者，且两者**互读为空、不报错**（读侧各自 `?? 5` / `?? 1` 兜底）。改这个文件前先确认哪边是活的
 - `pit.ownership` — 任务目录内 `AGENTS.md` 面向用户可编辑，`.diy/**` 系统独占（仅 main 经 RPC 写）；路径单一出口 `src/main/core/state.ts` 的 `taskSystemDir(uri)`
-- `pit.agent-history` — 本地 agent 的 `bash` 工具若执行批量杀进程命令（按名字匹配 electron 的一类），会杀掉宿主自己的 renderer → 永久白屏且进程被杀事件捕获不到：只能**执行前拦截 + 执行前落盘**（`src/main/services/agent-guard.ts` / `agent-audit.ts`）
+- `pit.agent-history` — 本地 agent 的 `bash` 工具若执行**批量**杀进程命令（按名字匹配 electron 的一类），会杀掉宿主自己的 renderer → 永久白屏且进程被杀事件捕获不到。曾经的运行时拦截 `agent-guard.ts` 已于 2026-10-02 停用（判据分不清宿主与 agent 自己起的实例）；现由 `_guard.md` 提示词约束（`prompts/defaults.ts`）
 
 - `pit.steer-two-phase` — 插话的「认领」（`prepareStep` 只读队列、注入请求 messages）与「落位」（流里出现 `start-step` 时才 sink + 出队）**不能合并**：两条流不同一时间轴，提前 sink 会把插话插到上一步未完内容之前。轮末开场则**只读不取**（先记账再出队），中途崩掉最坏重复投一遍、不会丢。理由见 `local-agent.ts` 的 `claimStepSteers` 头注
 - `pit.model-ref` — `persona.model` = **完全限定名** `account@provider/model`（按**第一个** `/` 切 provider|model —— 模型 id 自带 `/`；provider 段按**最后一个** `@` 切 account|provider）。custom provider 恒带 `custom:` 前缀（永不与 models.dev id 撞）。存量裸名不自动迁移（手工批处理）。账号名缺省 = 序号 `0`
