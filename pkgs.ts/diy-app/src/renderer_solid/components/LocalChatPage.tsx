@@ -25,7 +25,7 @@
  *
  * 恒显项（与级别无关）：用户发言（"我说过啥"的脉络本体）、error 块、轮尾时刻与用量、直播实时区。
  * 被压成摘要的正文必须**看得出被裁过**（底部渐隐 + 可点提示行，见 ConclusionText）。
- * 「开/关」一律由 `IconChevron`（daisyUI collapse-arrow 同形：收起下指、展开上指）表达，
+ * 「开/关」一律由 `IconChevron` 表达，**放在行首**（收起右指 ▸、展开下指 ▾ —— 树形语义，见其头注）：
  * 可展开行头一律 `DisclosureHead`（div + role=button：**按钮内的文本选不中**，见其头注）。
  * 「显示什么、按什么序、开到第几层」的语义全在 `lib/chat-fold.ts`（纯函数 + 单测），本文件只管画。
  * MD 渲染/原文是**正交**的显示偏好：摘要态同样按它渲染（2026-10-11 反馈，见 ConclusionText）。
@@ -399,19 +399,17 @@ function ProcBody(props: {
 }
 
 /**
- * 过程行：标题 + （可选）状态灯 + chevron；正文按 open 渲染；直播且展开时跟随到底。
+ * 过程行：chevron + 状态灯 + 标题；正文按 open 渲染；直播且展开时跟随到底。
  *
- * `showMark=false` 用于**汇总条铺开后的逐条行**（4 级）：那一行上面已有汇总计数、
- * 每行再顶一个 ✓/💭 是把同一件事说两遍（2026-10-11 用户口径；同一天汇总条自身的前缀
- * 图标串也已删）。⚠️ 注意它连 ●（在跑）/ ✗（报错）也一起不画 —— 4 级的失败块仍会
- * 由 `error` 着色标出，故可接受；若要恢复状态灯，改这里而不是加回汇总条的图标串。
+ * 行首 `statusMark` **恒显**（💭 / ⚙ 类字形 + ● 在跑 / ✓ 完成 / ✗ 失败 / ⊘ 中断）：
+ * 少了它，一行 `思考` 与一行 `Bash · 命令` 在长列表里只能靠读文字分辨（2026-10-11 用户口径
+ * "给工具和思考 bar 前加前缀图标"）。它同时是**状态位**（● / ✗ / ⊘），不是纯装饰。
  */
 function ProcessRow(props: {
     node: BlockNode;
     pin: Record<string, boolean>;
     onToggle: (id: string) => void;
     onFull: (title: string, content: string) => void;
-    showMark?: boolean;
 }) {
     const n = () => props.node;
     const open = () => procOpen(n(), props.pin);
@@ -430,13 +428,13 @@ function ProcessRow(props: {
             <DisclosureHead
                 open={open()}
                 onToggle={() => props.onToggle(n().id)}
-                class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-base-200/60"
+                class="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left hover:bg-base-200/60"
             >
-                <Show when={props.showMark !== false}>{statusMark(n())}</Show>
+                <IconChevron open={open()} class="h-3.5 w-3.5 opacity-40" />
+                {statusMark(n())}
                 <span class="font-medium text-base-content/80 truncate flex-1">
                     {summaryOf(n(), open())}
                 </span>
-                <IconChevron open={open()} class="h-3.5 w-3.5 opacity-40" />
             </DisclosureHead>
             <Show when={open()}>
                 <div ref={(el) => (bodyRef = el)} class="px-3 pb-2 max-h-72 overflow-auto">
@@ -537,6 +535,9 @@ function TurnHeader(props: {
                 title: `${turnFoldTip(open())}\n${info().title}`,
             }}
         >
+            {/* 开合箭头在**行首**：一轮里"轮次头 → 过程 bar → 逐条过程"三级同列左对齐，
+                一眼能看出层级（2026-10-11 用户口径：箭头从右边换到左边） */}
+            <IconChevron open={open()} class="h-3.5 w-3.5 opacity-40" />
             {/* 身份：**所有级别都显示**（1 级与 2 级必须一致，用户 2026-10-11 口径） */}
             <span
                 class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15"
@@ -560,7 +561,6 @@ function TurnHeader(props: {
             </Show>
             <span class="flex-1" />
             <span class="text-caption opacity-60">{summary()}</span>
-            <IconChevron open={open()} class="h-3.5 w-3.5 opacity-40" />
         </DisclosureHead>
     );
 }
@@ -728,6 +728,10 @@ function UserBubble(props: { node: BlockNode }) {
  *
  * bar 里**只有过程**：助理正文各自成项（3 级起全文）—— 正文与过程一旦合并，
  * 顺序就会出错（上一版把正文收进这一行的教训）。
+ *
+ * 行首也是 **chevron + 该段第一个过程的 `statusMark`**：chevron 在左（树形，与下面铺开的
+ * 逐条行对齐成一列），状态灯让"这一段是思考还是工具、跑没跑完"不看文字就分得出
+ * （2026-10-11 用户口径："给工具和思考 bar 前加前缀图标"）。
  */
 function ProcBar(props: {
     /** 这一段连续的过程叶子（文档序）——数组引用稳定是 `<For>` 不重建的前提（见 reuseItems） */
@@ -753,10 +757,12 @@ function ProcBar(props: {
             <DisclosureHead
                 open={props.open}
                 onToggle={props.onToggle}
-                class="flex items-center gap-2 w-full py-1 px-1.5 rounded-lg hover:bg-base-200/60 text-body"
+                class="flex items-center gap-1.5 w-full py-1 px-1.5 rounded-lg hover:bg-base-200/60 text-body"
                 /* 读屏文案：thinks() 为 0 时不能落成模板串里的 `0 && …`（求值成 0，念作「02 个工具」） */
                 ariaLabel={`过程：${thinks() ? `${thinks()} 段思考、` : ""}${tools()} 个工具（点击${props.open ? "收起" : "展开"}这一行）`}
             >
+                <IconChevron open={props.open} class="h-3.5 w-3.5 opacity-40" />
+                {props.parts[0] ? statusMark(props.parts[0]) : null}
                 <span class="min-w-0 flex-1 truncate text-base-content/80">{head()}</span>
                 <Show when={failed()}>
                     <span class="shrink-0 text-error" title="这一行里有失败的工具">
@@ -768,7 +774,6 @@ function ProcBar(props: {
                     {thinks() && tools() ? " · " : ""}
                     {tools() ? `⚙ ${tools()}` : ""}
                 </span>
-                <IconChevron open={props.open} class="h-3.5 w-3.5 opacity-40" />
             </DisclosureHead>
             <Show when={props.open}>
                 <div class="mt-0.5 ml-2 space-y-0.5 border-l border-base-300 pl-2">
@@ -791,8 +796,8 @@ function ProcBar(props: {
 /**
  * 过程 bar 铺开后的**逐条**：过程 → 单行（各自再点开才是内容 = 第 5 层）；plan / 未知块照实画。
  *
- * `showMark={false}`：这一行的形状已由外层 bar 的计数说过（上面那排 `💭 n ⚙ n`），
- * 每行再顶一个 ✓/💭 是把同一件事说两遍（2026-10-11 用户口径）。
+ * 每行**照带** chevron + 状态灯（`ProcessRow` 的默认形状）：外层 bar 只说"这一段有几段思考、
+ * 几个工具"，逐条里"哪条是思考、哪条还在跑/失败"只能由每行自己说（2026-10-11 用户口径）。
  */
 function PartRow(props: {
     node: BlockNode;
@@ -808,7 +813,6 @@ function PartRow(props: {
                 pin={props.pin}
                 onToggle={props.onToggle}
                 onFull={props.onFull}
-                showMark={false}
             />
         );
     }
@@ -964,8 +968,12 @@ function TurnView(props: {
                 }
             >
                 {/* 3 级起：中间区 = 正文逐条全文 + 过程 bar（连续过程折一行）+ 用户发言 + error，
-                    全部按文档序（见 chat-fold.contentItems） */}
-                <div class="space-y-1 pl-1">
+                    全部按文档序（见 chat-fold.contentItems）。
+
+                    `pl-2`（不是 `pl-0.5`）：箭头移到行首后，**左列箭头的缩进就是一个层级刻度**
+                    （轮次头 → 过程 bar → 逐条过程）。只让 4px 时三者的箭头看着像同一列没对齐，
+                    8px 才读得出"bar 在轮次头之下"（2026-10-11 口径：箭头换左）。 */}
+                <div class="space-y-1 pl-2">
                     <For each={items()}>
                         {(it) => {
                             if (it.kind === "user") return <UserBubble node={it.node} />;
@@ -1651,8 +1659,8 @@ export function LocalChatPage(props: { uri?: string }) {
                     aria-label={turnLevelTip(globalLevel())}
                     onClick={cycleAllLevels}
                 >
-                    <span class="text-body leading-none">{`${globalLevel()}/${TURN_LEVEL_MAX} 展开`}</span>
                     <IconChevron open={globalLevel() > TURN_LEVEL_MIN} class="h-3.5 w-3.5 opacity-40" />
+                    <span class="text-body leading-none">{`${globalLevel()}/${TURN_LEVEL_MAX} 展开`}</span>
                 </button>
                 {/* 显示方式二选一：两个选项都可见、当前态高亮 —— 单按钮式「MD」看不出
                     处于哪一态（切回去要猜），且与破坏性按钮同形时易误点。 */}
