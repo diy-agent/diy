@@ -29,14 +29,49 @@ import { bindApi, setRpcPort } from "../main/services/api-impl";
 import { AppConfig } from "../main/core/app-config";
 import { installDiagnostics } from "../main/services/diagnostics";
 import { readRuntimeConfig } from "../runtime";
+import { cliEntryForRepo, findRepoRoot, prodHomeAllowed } from "../main/core/instance-identity";
+import { resolveDevHome } from "../main/core/dev-home";
+
+// 计算项目根目录：从 src/serve/index.ts 向上两级到 pkgs.ts/diy-app/
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// ── 开发态入口自证（与 main/index.ts / diy.sh / electron-dev.mts 同一套判据）──
+// **必须在此独立做** —— serve 不 import main/index.ts，那条自证不覆盖本进程。
+// 外层 shell（agent 会话）常带 DIY_HOME=~/.diy、DIY_CLI=<全局 diy>、DIY_ENV=production；
+// 若透传，serve 会操作生产数据根、并让模型去敲另一个 checkout 的 CLI。
+// 找不到仓库根（打包部署目录）就不动：宁可缺、由 prompt-registry 走「未注入」告警。
+const repoRoot = findRepoRoot(__dirname);
+if (repoRoot) {
+  // 数据根：与静态目录**同一个 variant 轴**（`build/<variant>/{renderer,home}`，见 AGENTS.md
+  // env.variant）—— 入口的默认值 + 生产根拒绝都交给 core/dev-home（与 preview/lab / diy.sh
+  // 同一判据，别在这里再写一套）。缺省 variant=prod（serve 独立跑时走 build/prod/home）。
+  const variant = process.env["DIY_VARIANT"] ?? "prod";
+  const decision = resolveDevHome({
+    variant,
+    repoRoot,
+    inherited: process.env["DIY_HOME"],
+    allowProdHome: prodHomeAllowed(),
+  });
+  if (decision.rejected !== null) {
+    console.warn(`[serve] 警告: 忽略继承的生产数据目录 DIY_HOME=${decision.rejected}, 改用 ${decision.home}`);
+  }
+  process.env["DIY_HOME"] = decision.home;
+  // 环境：开发入口不该是 production（那会关掉 dev 专属能力）
+  if (process.env["DIY_ENV"] === "production") {
+    console.warn("[serve] 警告: 忽略继承的 DIY_ENV=production, 改用 development");
+    process.env["DIY_ENV"] = "development";
+  }
+  // 入口：与数据根匹配。**无条件覆盖**（外部注入值会被换掉）—— serve 没有上游入口为它声明，
+  // 它只能自证；与 main/index.ts 的 `||=`（已在生产 GUI 里被 bin/diy 注入）语义不同，见 AGENTS.md env.self-declare。
+  process.env["DIY_CLI"] = cliEntryForRepo(repoRoot, decision.home);
+}
 
 // 运行配置由入口注入的环境变量装配（DIY_HOME / DIY_PORT）
 const cfg = readRuntimeConfig();
 // serve 是纯 Node 常驻进程，同样要防 EPIPE / 未捕获异常裸奔；日志独立落 serve.log
 installDiagnostics(cfg.home, "serve");
-// 计算项目根目录：从 src/serve/index.ts 向上两级到 pkgs.ts/diy-app/
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..", "..");
+// 与上面的数据根同一根：build/<variant>/{renderer,home}（缺省 prod，与 resolveDevHome 的 variant 同源）
 const STATIC_DIR = path.resolve(ROOT, "build", process.env["DIY_VARIANT"] ?? "prod", "renderer");
 
 const MIME: Record<string, string> = {
@@ -125,6 +160,7 @@ async function main() {
     console.log(`  Tailscale: http://<tailscale-host>:${realPort}`);
     console.log(`  PID:      ${process.pid}`);
     console.log(`  DIY_HOME: ${home}`);
+    console.log(`  DIY_CLI:  ${process.env["DIY_CLI"] ?? "(未注入 → 提示词会告警)"}`);
     console.log("───────────────────────────────────────");
   });
 }

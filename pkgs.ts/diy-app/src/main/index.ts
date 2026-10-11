@@ -41,7 +41,7 @@ import { installCrashReporting } from "./services/crash-reporting";
 import { detectGpu } from "./core/gpu-detect";
 import { readRuntimeConfig } from "../runtime";
 import { instanceTitle } from "../shared/instance-title";
-import { homeDisplayOf, repoDisplayOf } from "./core/instance-identity";
+import { cliEntryForRepo, findRepoRoot, homeDisplayOf, repoDisplayOf } from "./core/instance-identity";
 import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "./core/single-instance";
 
 // Chromium 开关必须走 app.commandLine（ready 之前），跟在 app 路径后传 argv 无效。
@@ -60,15 +60,22 @@ let httpPort = 0;
 // 这里只保留 httpPort 供启动横幅与端口复用逻辑使用。
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// dev GUI 加载 URL 由入口注入（electron-dev.mts），缺省 → loadFile 编译产物
-// 打包后的 app 没有自带 CLI 入口：electron-builder 只打 build/prod/**（asar 内不可直接执行），bin/diy 也不在 files 里；
-// 生产用法的 CLI 是用户全局安装的 diy（PATH 解析）。这里显式声明成 "diy"，
-// 而不是让 prompt-registry 走「未注入」告警分支（那条告警只对 dev/worktree 有意义：那里裸 diy 会打到 ~/.diy）。
-if (app.isPackaged && !process.env["DIY_CLI"]) {
-  process.env["DIY_CLI"] = "diy";
-  console.log('[runtime] 打包模式未注入 DIY_CLI：显式回落为 PATH 上的 "diy"');
-}
+// CLI 入口（提示词模版里的「命令行入口」）自证，**但只在未注入时**（`||=`）。
+// 为什么是 `||=` 而不是无条件覆盖：本进程的启动者（CLI 入口脚本）已经声明过正确的入口，
+// 无条件覆盖会误伤生产 GUI —— `bin/diy` 注入的 `$0` 会被改成 `<repo>/diy.sh`（数据根
+// build/home），模型于是去敲一个连不上当前生产实例的入口（##255）。
+// 缺失时按**数据根**推导：生产根 → "diy"；隔离/开发/测试 → <repo>/diy.sh（见 cliEntryForRepo）。
+// 打包后的 app 不自带 CLI 入口（asar 内不可执行），生产用全局安装的 diy（PATH 解析）。
 const cfg = readRuntimeConfig();
+const home = cfg.home;
+if (app.isPackaged) {
+  process.env["DIY_CLI"] ||= "diy";
+  console.log('[runtime] 打包模式未注入 DIY_CLI：显式回落为 PATH 上的 "diy"');
+} else {
+  const repoRoot = findRepoRoot(__dirname);
+  if (repoRoot) process.env["DIY_CLI"] ||= cliEntryForRepo(repoRoot, home);
+}
+// dev GUI 加载 URL 由入口注入（electron-dev.mts），缺省 → loadFile 编译产物
 const devUrlArg = cfg.devServerUrl ?? "";
 const isDev = !!devUrlArg;
 

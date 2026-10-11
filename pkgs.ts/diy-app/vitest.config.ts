@@ -8,14 +8,18 @@ export default defineConfig({
     // intent 测试走真实 CLI/Electron 启动，单用例 2~4s 属正常；
     // 默认 5s 在全量并发抢 CPU 时不足 → 用例超时被掐断，afterAll 的
     // electron.stop() 来不及执行，测试 Electron 实例成为孤儿进程堆积。
-    // 放宽到 30s 保证 teardown 每次都走到（Teardown 泄露教训见 electron-test.ts stop）。
-    testTimeout: 30_000,
-    hookTimeout: 30_000,
-    // E2E 重试一次：intent 测试是真实 Electron + CLI 往返，机器负载高时
-    // 偶发假红（实测：两次全量各挂 1 例、且每次挂的是不同用例，单独跑都过）。
-    // 轮询（tests/wait.ts）解决"慢一拍"，重试兜住剩下的时序噪声；
-    // 真实 LLM 用例已改为显式 DIY_LLM_E2E=1 才跑，不在默认套件里。
-    retry: 1,
+    // 30s 仍不够：实测 `cli.intent.persona` 的「人物搜索」用例（多次 CLI 调用 + 面板交互）
+    // 单独跑就要 ~20-25s，机器上有别的 worktree 同跑 intent 时（load 40+）突破 30s 被掐。
+    // 放宽到 60s：去掉了 retry（见下），必须让「接近上限的长用例」有余量，否则负载一高就假红。
+    // 仍是有界超时 —— 真死锁只多等一轮，bail:1 立刻停。
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
+    // 不重试：重试会把「真问题」和「资源不够」一起掩盖成绿色，且失败用例再跑一遍让
+    // 本就紧张的机器更挤（实测一条 10s 的用例 retry 后变 105s）。假红要显形，不要兜住。
+    retry: 0,
+    // 首个失败即停（含跨文件）：intent 测试是串行起真实 Electron，第一个红就是信号，
+    // 继续跑只会让「到底是哪一处坏」更难看清。CI 与本地同此行为。
+    bail: 1,
     // 顺序执行（不并发）：intent 测试会各自拉起真实 Electron 实例并跑 CLI，
     // 并发时多实例抢 CPU 会让 probePort（1500ms）与用例断言双双超时；
     // 且各文件虽用独立临时 HOME，并发下仍会同时占用大量内存/端口，稳定性差。

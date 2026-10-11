@@ -113,7 +113,24 @@ test-intent() {
   export DIY_VARIANT=test
   build
   export DIY_CLI_MODE="${DIY_CLI_MODE:-http}"
-  run npx vitest run --no-file-parallelism tests/cli.intent "$@"
+  # 位置参数 = 只跑匹配的文件（片段 / 相对路径 / 文件名），无参数 = 全量。
+  #   例：./sha.sh test-intent ui-find          → tests/cli.intent.ui-find
+  #       ./sha.sh test-intent ui-find task     → 两个文件
+  #       ./sha.sh test-intent tests/cli.intent.ui-find.test.ts → 原样
+  # 为什么不能写成 `... tests/cli.intent "$@"`：vitest 多个 filter 取**并集**，
+  #   写死的全量 filter 会让任何单文件参数都退化成全量（##255 §2 的成因）。
+  local filters=() arg
+  for arg in "$@"; do
+    if [[ "$arg" == */* || "$arg" == *.test.ts || "$arg" == cli.intent.* ]]; then
+      filters+=("$arg")
+    else
+      filters+=("tests/cli.intent.$arg")
+    fi
+  done
+  if [[ ${#filters[@]} -eq 0 ]]; then
+    filters=("tests/cli.intent")
+  fi
+  run npx vitest run --no-file-parallelism "${filters[@]}"
 }
 
 typecheck() { run npx tsc --noEmit; }

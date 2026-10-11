@@ -33,10 +33,11 @@ beforeAll(async () => {
     // 超预算用例会走到 chat()，它要求 main 进程有 OPENCODE_API_KEY；
     // 该路径在发送前就早退（不触网），给假 key 只为过前置校验。
     process.env["OPENCODE_API_KEY"] ||= "intent-test-dummy-key";
-    // DIY_CLI 注入契约：真实入口会注入它（diy.sh / bin/diy / electron-dev.mts），
-    // 这里让隔离 Electron 继承一份，断言「注入后提示词不再退化成裸 diy」；
-    // 「未注入」分支由单测 tests/core/prompt-registry.test.ts 覆盖。
-    process.env["DIY_CLI"] ||= join(__dirname, "..", "..", "..", "diy.sh");
+    // DIY_CLI 契约（##255）：**入口脚本注入的值必须被保留** —— main 只在未注入（缺失）时
+    // 才按数据根自证。这里注入一个「外来」入口，断言提示词原样采用它。
+    // 守住 R5 的回归：那时 main 无条件覆盖，会把注入的生产入口 `$0` 换成 `<repo>/diy.sh`
+    // （数据根 build/home）→ 生产 GUI 的模型被指向一个连不上当前实例的入口。
+    process.env["DIY_CLI"] = "/opt/prod-diy/bin/diy";
     const electron = await startElectronTest();
     const HOME = electron.home;
     fx = {
@@ -168,8 +169,8 @@ describe("template preview", () => {
         expect(system).toContain("<guard>");
         expect(system).not.toContain("<skills>"); // 空节不进请求
         expect(system).toContain("预览任务");
-        // DIY_CLI 注入后：渲染成绝对入口，且不再报「未注入」告警
-        expect(system).toContain(String(process.env["DIY_CLI"]));
+        // 注入的 CLI 入口被原样渲染（未被 main 自证覆盖），且不报「未注入」告警
+        expect(system).toContain("/opt/prod-diy/bin/diy");
         expect(p["warnings"]).toEqual([]);
         // 模版线仿真请求体（**不是真发形态** —— 真发已切 Context Tree 投递，见下方 requestNote）。
         // 形状随缺省模型的 API 面变：chat 面是 messages[0]=system；

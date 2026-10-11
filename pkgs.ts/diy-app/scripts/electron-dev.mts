@@ -50,10 +50,12 @@ if (decision.rejected) {
 }
 mkdirSync(decision.home, { recursive: true });
 process.env["DIY_HOME"] = decision.home;
-// DIY_CLI：当前生效的 CLI 入口（提示词模版 100-diy 消费）。
-// dev 只能由本脚本注入 —— 提示词里的入口若缺省，prompt-registry 会兜底成裸 "diy"，
-// 在 worktree 里就打到生产数据根（与 diy.sh / bin/diy 同一契约，三处必须都给）。
-const cliEntry = process.env["DIY_CLI"] ?? join(repoRoot, "diy.sh");
+// DIY_CLI：本进程**自证**的 CLI 入口，不继承（提示词模版 100-diy 消费）。
+// 它就是本 checkout 的 diy.sh —— 入口报的必须是「跑的是谁」，不是「环境里恰好有什么」：
+// agent 会话继承的 DIY_CLI 是 npm link 的全局 diy（生产），透传后演示实例里的模型会被提示
+// 去敲生产 CLI → 操作生产数据根。三入口（diy.sh / bin/diy / 本脚本）各自声明自己，
+// 非打包的 main 进程还会兜底自证一次（见 src/main/index.ts）。
+const cliEntry = join(repoRoot, "diy.sh");
 
 let electronProc: ChildProcess | null = null;
 let rendererServer: ViteDevServer | null = null;

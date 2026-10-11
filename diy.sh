@@ -28,8 +28,6 @@ APP_DIR="$SCRIPT_DIR/pkgs.ts/diy-app"
 # preview / lab 共用 ./diy.sh 作为「通用 CLI 客户端」，连谁由 DIY_VARIANT + DIY_HOME 决定。
 DIY_VARIANT="${DIY_VARIANT:-preview}"
 export DIY_VARIANT
-HOME_DEFAULT="$SCRIPT_DIR/build/${DIY_VARIANT}/home"
-mkdir -p "$HOME_DEFAULT"
 
 # 前置检查：GUI 产物必须存在（CLI 本身是 tsx 源码无需构建，但要拉起的 Electron 必须已构建）
 GUI_ENTRY="$APP_DIR/build/${DIY_VARIANT}/main/index.mjs"
@@ -46,14 +44,43 @@ fi
 # `./diy.sh project remove <id>` 就会操作生产数据（实测：removeProject 会按 meta.yaml
 # 的 path 去摘目标仓库的 diy.yaml 名片，那条路径是真实的 ~/git/...）。
 # 因此：继承到的 DIY_HOME 若指向生产数据根（$HOME/.diy），默认拒绝，改用本 worktree 的。
+# 生产根的定义在 TS 侧只有一处（core/instance-identity.ts::prodDataHome，用**真实**家目录，且
+# resolve() 归一写法差异）；bash 取不到 getpwuid，只能等价地用 $HOME/.diy —— 前提是写法规范。
+# 这里只额外归一**尾斜杠**（`~/.diy/` 与 `~/.diy` 同一个根）；`..` / 相对路径这类写法不归一是
+# 已知缺口（不是遗漏：bash 侧只是「一眼能认出生产根」的防呆，真正的判据在 TS 侧 resolve 归一）。
 # 测试不受影响：它们显式传 DIY_HOME=<临时目录>，不等于 $HOME/.diy，会正常透传。
 # 确实需要指向生产数据时显式 opt-in：DIY_ALLOW_PROD_HOME=1 ./diy.sh ...
-if [[ -n "${DIY_HOME:-}" && "${DIY_HOME}" == "${HOME}/.diy" && "${DIY_ALLOW_PROD_HOME:-}" != "1" ]]; then
+_prod_home_norm="${HOME%/}/.diy"
+_home_check="${DIY_HOME:-}"
+while [[ "$_home_check" == */ && "$_home_check" != "/" ]]; do _home_check="${_home_check%/}"; done
+if [[ -n "$_home_check" && "$_home_check" == "$_prod_home_norm" && "${DIY_ALLOW_PROD_HOME:-}" != "1" ]]; then
   # 变量一律用 ${} 界定：紧跟多字节字符时，非 UTF-8 locale 下 bash 会把字符首字节
   # 并入变量名，set -u 下报 "unbound variable"（踩过）
-  echo "[diy.sh] 警告: 忽略继承的生产数据目录 DIY_HOME=${DIY_HOME}, 改用本 worktree 的 ${HOME_DEFAULT}" >&2
+  echo "[diy.sh] 警告: 忽略继承的生产数据目录 DIY_HOME=${DIY_HOME}, 改用本 worktree 的 build/${DIY_VARIANT}/home" >&2
   echo "[diy.sh] 警告: 确需操作生产数据请显式声明 DIY_ALLOW_PROD_HOME=1 ./diy.sh ..." >&2
   unset DIY_HOME
+fi
+
+# 数据根：默认「本 worktree × 变体」；上面的生产根已被拒，其余继承值照旧透传
+# （TS 侧对应：core/dev-home.ts::resolveDevHome + core/instance-identity.ts 判据；
+#   bash 无法 import TS，故此处是 shell 侧唯一的默认值定义处 —— 改这里要同步改那两个）。
+export DIY_HOME="${DIY_HOME:-$SCRIPT_DIR/build/${DIY_VARIANT}/home}"
+mkdir -p "$DIY_HOME"
+
+# ── CLI 入口自证，不继承 ──
+# DIY_CLI 是「提示词里让 agent 敲的命令行入口」。它必须是**本脚本自己**：本脚本就是本
+# checkout 的 CLI 入口。继承值一律不采信 —— agent 会话里导出的常是 npm link 的全局 diy
+# （生产），透传后 GUI 会话的提示词会让模型去操作生产数据根。
+# 要换入口就换入口脚本，而不是改这个变量。
+export DIY_CLI="$SCRIPT_DIR/diy.sh"
+
+# ── 运行环境自证（与 HOME / CLI 同一个坑）──
+# 外层 shell（agent 会话）常导出 DIY_ENV=production。worktree 入口应声明 development ——
+# DIY_ENV 是 dev/test 专属能力的唯一判据，"继承的生产声明"会让这些能力被误关。
+# 测试走 setup.ts 显式注入 test，不经本脚本。
+if [[ "${DIY_ENV:-}" == "production" ]]; then
+  echo "[diy.sh] 警告: 忽略继承的 DIY_ENV=production, 改用 development" >&2
+  unset DIY_ENV
 fi
 
 # DIY_CALLER_CWD：调用者敲命令时的目录。下面的 cd 会把它换掉，而 CLI 的路径参数
@@ -74,7 +101,7 @@ DIY_CLI_MODE="${DIY_CLI_MODE:-auto}"
 # 实测：curl 地板 ~17ms（含 bash 脚本自身开销总计 ~45ms/条；tsx 601、compiled 300）。
 # 位置：放在新鲜度 find 之前 —— http 模式不需要选 tsx/compiled，省掉那次 find（~14ms）。
 if [[ "$DIY_CLI_MODE" == "http" ]]; then
-  _home="${DIY_HOME:-$HOME_DEFAULT}"
+  _home="$DIY_HOME"
   _port=""
   if [[ -f "$_home/app.port" ]]; then
     # 注意：app.port 可能无末尾换行 → read 返回非零但**已赋值**，
@@ -154,16 +181,16 @@ fi
 
 # 机制提示（仅交互终端输出到 stderr，不污染 --json 的 stdout）
 if [[ -t 2 ]]; then
-  echo "[diy.sh] CLI=${DIY_CLI_MODE:-auto}(${DIY_CLI_EFFECTIVE:-?}) | VARIANT=${DIY_VARIANT} | GUI=build/${DIY_VARIANT}/main产物 | HOME=${DIY_HOME:-$HOME_DEFAULT} | 需先 build（preview/lab 模式除外）" >&2
+  echo "[diy.sh] CLI=${DIY_CLI_MODE:-auto}(${DIY_CLI_EFFECTIVE:-?}) | VARIANT=${DIY_VARIANT} | GUI=build/${DIY_VARIANT}/main产物 | HOME=${DIY_HOME} | 需先 build（preview/lab 模式除外）" >&2
 fi
 
 # DIY_CLI：当前生效的 CLI 入口（提示词模版 100-diy 用它告诉 agent 该敲哪个命令；
 # 少了它 agent 只能猜“diy”，在 worktree 里会打到生产数据根）
 # DIY_ENV：运行环境声明（development/test/production，缺省 production）
 if [[ "$DIY_CLI_EFFECTIVE" == "compiled" ]]; then
-  exec env DIY_HOME="${DIY_HOME:-$HOME_DEFAULT}" DIY_CLI="${DIY_CLI:-$SCRIPT_DIR/diy.sh}" DIY_ENV="${DIY_ENV:-development}" DIY_VARIANT="${DIY_VARIANT}" \
+  exec env DIY_HOME="$DIY_HOME" DIY_CLI="$SCRIPT_DIR/diy.sh" DIY_ENV="${DIY_ENV:-development}" DIY_VARIANT="${DIY_VARIANT}" \
     node "$CLI_JS" "$@"
 else
-  exec env DIY_HOME="${DIY_HOME:-$HOME_DEFAULT}" DIY_CLI="${DIY_CLI:-$SCRIPT_DIR/diy.sh}" DIY_ENV="${DIY_ENV:-development}" DIY_VARIANT="${DIY_VARIANT}" \
+  exec env DIY_HOME="$DIY_HOME" DIY_CLI="$SCRIPT_DIR/diy.sh" DIY_ENV="${DIY_ENV:-development}" DIY_VARIANT="${DIY_VARIANT}" \
     "$APP_DIR/../../node_modules/.bin/tsx" src/cli/index.ts "$@"
 fi

@@ -126,6 +126,13 @@ describe("页面内查找（##234）", () => {
   });
 
   it("顶栏 🔍 按钮也能打开（不知道快捷键的人的入口）", async () => {
+    // 上一用例结尾才切回任务页；路由重挂载没走完就点，点击会丢（##255 §1）——
+    // 先等任务行重新渲染出来，消除对前一用例副作用的隐式时序依赖。
+    await waitUntil(
+      () => ui.query<number>(`document.querySelectorAll('tbody tr[data-uri]').length`),
+      (n) => n >= 3,
+      { label: "切回任务页就绪", timeoutMs: 8000 },
+    );
     await ui.clickSelector('button[title="页面内查找（⌘F）"]');
     await waitUntil(findBarPresent, (v) => v, { label: "点按钮打开查找条" });
     expect(await findBarPresent()).toBe(true);

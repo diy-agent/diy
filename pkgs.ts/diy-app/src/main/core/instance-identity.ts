@@ -40,7 +40,55 @@ export function repoDisplayOf(startDir: string = HERE): string {
   return root ? abbrevHome(root, realHomeDir()) : "?";
 }
 
-/** 从 startDir 向上找含 .git 的目录。worktree 里 `.git` 是**文件**，故只判存在性、不判类型 */
+// ── 开发态「入口自证」的共享判据 ──────────────────────────────
+// 背景（##255）：GUI / serve 的**运行时变量会继承外层 shell**（agent 会话里常带
+// DIY_HOME=~/.diy、DIY_CLI=<全局 diy>、DIY_ENV=production）。开发入口若原样透传，模型就会被
+// 提示去操作生产数据根 / 敲另一个 checkout 的 CLI。判据集中在这里，保证各入口一致。
+
+/**
+ * 生产数据根（发布态固定 `~/.diy`）。用**真实**家目录（不读 `$HOME`）—— 测试/隔离实例会改写 `$HOME`。
+ *
+ * **全仓「生产根是什么」的唯一定义处**：dev-home（preview/lab 守卫）、seed（永不种生产）、
+ * serve / main（入口自证）、diy.sh / bin/diy（bash 侧，等价地用 `$HOME/.diy`）都以此为准。
+ * 别在别处再写一份 `join(homedir(), ".diy")` —— 两份判据迟早分叉。
+ */
+export function prodDataHome(): string {
+  return join(realHomeDir(), ".diy");
+}
+
+/** 该路径是否指向生产数据根（写法差异 —— 相对路径 / 尾斜杠 —— 归一后再比，不该绕过） */
+export function isProdDataHome(home: string): boolean {
+  return resolve(home) === prodDataHome();
+}
+
+/** 是否显式放行生产数据根（`DIY_ALLOW_PROD_HOME=1`，与 diy.sh 同一个开关） */
+export function prodHomeAllowed(): boolean {
+  return process.env["DIY_ALLOW_PROD_HOME"] === "1";
+}
+
+/**
+ * 非打包运行时的 CLI 入口自证：入口须与**数据根匹配**。
+ *   数据根 = 生产根          → `"diy"`（PATH 上的生产入口）
+ *   数据根 = 隔离/开发/测试  → `<repo>/diy.sh`
+ *
+ * 只在 `DIY_CLI` **未注入**时用（`||=`）：入口脚本已注入时以其为准。
+ * 曾是**无条件覆盖**（##255 R5），那会误伤生产 GUI —— `bin/diy` 注入的 `$0`（生产入口）被改成
+ * `<repo>/diy.sh`（数据根 build/home），模型于是去敲一个连不上当前实例的入口。
+ */
+export function cliEntryForRepo(repoRoot: string, home: string): string {
+  return isProdDataHome(home) ? "diy" : join(repoRoot, "diy.sh");
+}
+
+/**
+ * 从 startDir 向上找含 .git 的目录（即本 checkout 的仓库根）；找不到 → null。
+ * worktree 里 `.git` 是**文件**，故只判存在性、不判类型。
+ *
+ * 用途之一：非打包运行时**自证** CLI 入口（<repo>/diy.sh），不靠环境变量继承（见 main/index.ts）。
+ */
+export function findRepoRoot(startDir: string): string | null {
+  return findGitRoot(startDir);
+}
+
 function findGitRoot(startDir: string): string | null {
   let dir = resolve(startDir);
   for (;;) {

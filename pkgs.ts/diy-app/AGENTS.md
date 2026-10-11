@@ -30,19 +30,22 @@
 | `bin/diy`（发布） | `node build/prod/cli/index.js` | `DIY_HOME=~/.diy`、`DIY_CLI=$0`、`DIY_ENV=production` |
 | `scripts/electron-dev.mts`（preview / lab） | `build/<variant>/main/index.mjs` | `DIY_HOME=./build/<variant>/home`（继承来的生产根被拒，见 `env.home`）、`DIY_VARIANT`、`DIY_CLI`、`DIY_DEV_SERVER_URL`、`DIY_ENV=development` |
 
-- `env.home` — `DIY_HOME` 数据根（state/task/**app.port**），缺省 `~/.diy`；**preview/lab 与 `diy.sh` 一律拒绝继承来的 `~/.diy`**（决策点 `src/main/core/dev-home.ts`，放行需 `DIY_ALLOW_PROD_HOME=1`）
+- `env.home` — `DIY_HOME` 数据根（state/task/**app.port**），缺省 `~/.diy`；**preview/lab / `diy.sh` / `serve` 一律拒绝继承来的 `~/.diy`**（判据唯一定义处 `core/instance-identity.ts::isProdDataHome` ── 真实家目录；撞上后怎么回落见 `core/dev-home.ts::resolveDevHome`；放行需 `DIY_ALLOW_PROD_HOME=1`）。bash 侧（`diy.sh`）只额外归一尾斜杠，`..` 写法靠 TS 侧 `resolve` 兜
 - `env.seed` — `DIY_SEED` 三态开关（`0`/`false`/`off` 关 · `1`/`true`/`on` 开；未声明 = 仅 `DIY_VARIANT` 为 `preview`/`lab` 时开）→ `src/main/core/seed.ts`（契约 `src/runtime.ts`）。**自动种入只跑一次**（`.seed-done` 标记：删掉的 provider 不会被种回来），补缺项用 `diy seed run`；**生产根永不种入**
 - `env.cli` — `DIY_CLI` 当前 CLI 入口绝对路径（提示词模版 `diy.md` 消费）；缺 → 提示词里告警，**不静默冒充 `diy`**
 - `env.env` — `DIY_ENV` = `production`/`development`/`test`，**dev/test 专属能力的唯一判据**（如窗口副屏定位）；缺省 = production（未声明即生产，能力全关）
 - `env.port` — `DIY_PORT` 首选端口（测试注 `0`=随机）；优先级 `DIY_PORT` > `app.port` 文件 > 18888
 - `env.noLaunch` — `DIY_NO_LAUNCH=1` 禁止 CLI 自动拉起 app（测试专用，防实例逃逸）
-- `env.inject` — **三个入口都必须注入 `DIY_CLI`**，漏一处 GUI 会话就会让模型敲裸 `diy` → worktree 里打到生产数据根
+- `env.inject` — **入口自证，不继承**：`DIY_CLI` = 「跑的是谁」。各入口各声明自己（`diy.sh` → 自身；`bin/diy` → `$0`；`electron-dev.mts` → `<repo>/diy.sh`；`serve/index.ts` → 从自身位置找仓库根）。`main/index.ts` **只在未注入时**兜底自证（`||=`，按数据根推导：生产根 → `"diy"`，隔离 → `<repo>/diy.sh`）—— 无条件覆盖会误伤生产 GUI（把 `bin/diy` 注入的 `$0` 换成 `<repo>/diy.sh`）。`serve` 不 import main，故独立自证一次；它**无条件覆盖** `DIY_CLI`（没有上游入口为它声明，只能自证），与 main 的 `||=` 语义相反 —— 别照抄
+- `env.self-declare` — **三件套 `DIY_HOME`/`DIY_CLI`/`DIY_ENV` 都自证，不继承**（开发入口）。继承的生产值（agent 会话常带 `DIY_HOME=~/.diy`、`DIY_CLI=<全局 diy>`、`DIY_ENV=production`）会：操作生产数据 / 让模型敲错的 CLI / 误关 dev 能力。数据根判据：`core/instance-identity.ts`（`prodDataHome` / `isProdDataHome` / `cliEntryForRepo`，**全仓唯一**；dev 侧再经 `core/dev-home.ts::resolveDevHome` 回落 `build/<variant>/home`）；`DIY_ALLOW_PROD_HOME=1` 放行。数据根：未设置或指向生产根 → `<repo>/build/<variant>/home`（**与静态产物同一个 variant 轴**；`serve` 缺省 variant=`prod`）；`DIY_ENV`：`production` → `development`。`serve` 直接跑也走同一套（它不 import main），数据根经 `core/dev-home.ts::resolveDevHome` —— 不要在入口里另写一套回落
 - `env.variant` — `DIY_VARIANT` = `prod|test|preview|lab`，**产物/数据分根的唯一轴**：vite 配置据此定 `outDir=build/<variant>/*`，运行时据此选 `build/<variant>/main`，缺省 `prod`（`./diy.sh` 缺省 `preview`）。preview/lab 各占一根 → 可并行、互不打断 watch；test 独占 `build/test/**`
 
 ## rule — 硬约束
 
 - `rule.noemit` — **类型检查绝不 emit**（各包 `noEmit: true`，唯一入口 `./sha.sh check`）。一旦产物落在源码旁，`resolve.extensions` 里 `.js/.jsx` 排在 `.ts/.tsx` 之前 → dev/构建/单测全部静默加载旧产物
 - `rule.stdio` — 子进程 stdio 判据是**读端是否一定被排空**：常驻/分离式 spawn 一律 `inherit`/`ignore`；测试侧 `pipe` 必须挂 `data` 监听持续排空。⚠️ **不得**为解析 `DevTools listening on` 而 pipe stderr —— CDP 地址一律读 `DevToolsActivePort` 文件
+- `rule.test-home` — 隔离 HOME **用后即删**（`tests/temp-home.ts`）：两套前缀都要管 —— `diy-app-test-*`（electron-test，`stop()` 当场删）与 `diy-desktop-test-*`（`setup.ts` 每测试文件一个，`afterAll` 删；**`process.on("exit")` 在 vitest worker 里不触发** —— 被 tinypool SIGTERM 掐）。删除双校验：必须在 `os.tmpdir()` 下 + 带本套件前缀（`TEST_HOME_PREFIXES`），缺一不可；另有 `sweepStaleTestHomes`（>24h）兜强杀残留。历史代价：曾 4 天积 1583 个 / 2.9GB
+- `rule.test-render` — intent 用 `--no-file-parallelism` + `fileParallelism:false`：**单实例串行**（起→测→收），实测 app 并发恒为 1；别改成并发（多实例抢 CPU 会让墙钟判据假红）
 - `rule.renderer-io` — renderer **永不直接写文件**，一律经 RPC（如 `diy.task.drafts.*`）
 - `rule.check` — 类型检查只准 `./sha.sh check`；**同一变体**的 `preview`/`lab` 运行中勿并发 `tsc -b`/`vite build`/全量 vitest（抢同一 `outDir`，watcher 卡死）。跨变体（preview vs test）不抢——各写 `build/<variant>`
 - `rule.agents-chain` — AGENTS.md 链**上界到 `$HOME` 为止**（不进 `/`、`/Users`）；不在 `$HOME` 下时只取工作目录一层

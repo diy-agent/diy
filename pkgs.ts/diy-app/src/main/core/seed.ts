@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { BUILTIN_PERSONA_ID } from "../../shared/persona";
 import { parseSeedFlag } from "../../runtime";
 import type { SeedReport } from "../../shared/model-config";
-import { isProdHome } from "./dev-home";
+import { isProdDataHome } from "./instance-identity";
 import { loadModelConfig, saveModelConfig } from "./model-config";
 import { snapshotProviders } from "./model-registry";
 import { savePersonas } from "./persona";
@@ -93,10 +93,10 @@ export function seedHome(
         tasks: [],
         skipped: null,
     };
-    // 硬护栏（与 electron-dev.mts / diy.sh 的「拒绝继承生产 DIY_HOME」是两道独立的门）：
-    // 变体开关只保证 prod **不自动**种，挡不住「DIY_VARIANT=preview + DIY_HOME=~/.diy」这种
-    // 显式组合 —— 那才是真会写坏生产数据的路径。
-    if (isProdHome(home)) {
+    // 硬护栏（与 dev 入口的「拒绝继承生产 DIY_HOME」是两道独立的门，但判据同源：
+    // instance-identity::isProdDataHome）：变体开关只保证 prod **不自动**种，挡不住
+    // 「DIY_VARIANT=preview + DIY_HOME=~/.diy」这种显式组合 —— 那才是真会写坏生产数据的路径。
+    if (isProdDataHome(home)) {
         report.skipped = `生产数据根永不种入：${home}`;
         return report;
     }

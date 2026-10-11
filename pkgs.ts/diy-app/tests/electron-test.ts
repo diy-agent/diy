@@ -10,6 +10,11 @@ import { connect, type ClientHttp2Session } from "node:http2";
 import { mkdtempSync, symlinkSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
+import { TEST_HOME_PREFIX, removeIsolatedHome } from "./temp-home";
+
+// 隔离 HOME 的删除/清扫见 temp-home.ts（零依赖模块，setup.ts 也要用）；这里复用其前缀常量，
+// mkdtemp 模板必须与之一致，否则 removeIsolatedHome 的前缀校验会拒删。
+export { TEST_HOME_PREFIX, removeIsolatedHome } from "./temp-home";
 import electronPath from "electron";
 
 /** 等待 app.port 文件出现并返回端口 */
@@ -70,7 +75,7 @@ function waitForRpcReady(port: number, timeoutMs = 15000): Promise<void> {
 
 /** 隔离 HOME：临时目录 + symlink 必要配置（不写坏用户数据） */
 function makeIsolatedHome(): string {
-  const home = mkdtempSync(join(tmpdir(), "diy-app-test-"));
+  const home = mkdtempSync(join(tmpdir(), TEST_HOME_PREFIX));
   // 符号链接源头必须是真实家目录：setup.ts 已把 process.env.HOME 指向隔离目录，
   // 此处的 homedir() 会跟着变，会把 home 链到自身。故用 setup.ts 留档的 DIY_REAL_HOME。
   const real = process.env["DIY_REAL_HOME"] ?? homedir();
@@ -231,8 +236,12 @@ export async function startElectronTest(): Promise<ElectronTest> {
       stop: () => {
         liveInstances.delete(proc);
         return new Promise<void>((resolve) => {
-          if (proc.exitCode !== null || proc.signalCode !== null) return resolve();
-          proc.once("exit", () => resolve());
+          const done = () => {
+            removeIsolatedHome(home); // 实例已停 → 它的临时 HOME 没用了，当场删（见函数注释）
+            resolve();
+          };
+          if (proc.exitCode !== null || proc.signalCode !== null) return done();
+          proc.once("exit", done);
           proc.kill("SIGTERM");
           // SIGTERM 3s 后还没退出 → SIGKILL。残留 Electron 堆内存会把机器拖慢，
           // 后续用例的 CLI 探活连带超时，造成全量跑级联失败。
@@ -244,13 +253,14 @@ export async function startElectronTest(): Promise<ElectronTest> {
                 /* 竞态：正好退出了 */
               }
             }
-            resolve();
+            done();
           }, 3000);
         });
       },
     };
   } catch (err) {
     proc.kill("SIGTERM");
+    removeIsolatedHome(home); // 起不来也别把垃圾留下
     if (stderrTail.trim()) {
       console.error(`[electron-test] 启动失败，子进程 stderr 尾部：\n${stderrTail}`);
     }

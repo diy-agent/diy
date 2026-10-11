@@ -9,8 +9,11 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  cliEntryForRepo,
   currentGitBranch,
   homeDisplayOf,
+  isProdDataHome,
+  prodDataHome,
   realHomeDir,
   resetGitBranchCache,
 } from "../../src/main/core/instance-identity";
@@ -101,3 +104,23 @@ function initRepo(dir: string, branch: string): void {
   );
   if (!existsSync(join(dir, ".git"))) throw new Error("临时仓库初始化失败");
 }
+
+// ── 开发态入口自证的共享判据（##255）──
+describe("isProdDataHome / cliEntryForRepo —— 入口须与数据根匹配", () => {
+  it("isProdDataHome：只认真实家目录下的 .diy", () => {
+    expect(isProdDataHome(prodDataHome())).toBe(true);
+    expect(isProdDataHome(realHomeDir())).toBe(false); // 家目录本身不是
+    expect(isProdDataHome("/tmp/some-isolated-home")).toBe(false);
+    // 相对/尾斜杠都归一后再比
+    expect(isProdDataHome(prodDataHome() + "/")).toBe(true);
+  });
+
+  it("数据根 = 生产根 → 入口回落 PATH 上的 diy", () => {
+    expect(cliEntryForRepo("/repo", prodDataHome())).toBe("diy");
+  });
+
+  it("数据根 = 隔离/开发/测试 → 入口是本 checkout 的 diy.sh", () => {
+    expect(cliEntryForRepo("/repo", "/tmp/diy-test-xyz")).toBe(join("/repo", "diy.sh"));
+    expect(cliEntryForRepo("/repo", "/repo/build/home")).toBe(join("/repo", "diy.sh"));
+  });
+});
