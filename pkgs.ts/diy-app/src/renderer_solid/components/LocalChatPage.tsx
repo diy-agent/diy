@@ -37,6 +37,8 @@ import { Caches, DENSITY_LEVEL, DENSITY_VALUES, type Density } from "../lib/ui-s
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
 import { bylineOf } from "../lib/assistant-byline";
+// 对话流的时间戳：真源是 turnId 内嵌的毫秒（shared/date-format 统一解析与格式化）
+import { fmtTurnStamp, fmtTurnFull } from "../../shared/date-format";
 import type { ReasoningEffort } from "../../main/services/local-agent";
 // 插话队列项：与草稿同文件存储（任务目录 .diy/drafts.yaml），类型只在 main 侧定义
 import type { SteerItem, SteerMode } from "../../main/core/drafts";
@@ -44,7 +46,7 @@ import { reasoningEffortLabel } from "../../shared/reasoning-effort";
 import { DragDropProvider, DragOverlay, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt } from "./icons";
-import { VIEW_BAR_H } from "../lib/layout-metrics";
+import { VIEW_BAR_H, chatInputMaxHeight } from "../lib/layout-metrics";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
 // 历史 mode 值归一与文案放 shared（纯函数、可单测）：ops 日志是 append-only 的史书，
@@ -417,7 +419,12 @@ function ErrorBox(props: { node: BlockNode }) {
  * 旧会话（无该字段）回落到当前人物，但**显式标注为推断**——不假装确定。
  * 与输入框旁那个「跟随缺省（X）」是两回事：那个回答"下一条发给谁"，仍读当前配置。
  */
-function AssistantByline(props: { turnModel?: unknown }) {
+function AssistantByline(props: { turnModel?: unknown; turnId: string; showTime: boolean }) {
+    // 该轮的时刻：真源 = turnId 内嵌毫秒（协议无 ts）。解析不出的旧 id → 不显示，不编时间。
+    // 且**一轮只显示一次**：时刻是「轮」的事实（turnId = 该轮起点），而署名行是按**块**渲染的
+    // —— 多步会话一轮有好几条，每条都挂时刻等于同一轮说四五遍（review2-3）。
+    // 所以由 `showTime`（该块是不是本轮的「时刻挂载点」，见 TurnView）决定谁挂。
+    const stamp = () => (props.showTime ? fmtTurnStamp(props.turnId) : null);
     const id = () => taskStore.selectedTask?.persona ?? personaStore.idForTask();
     // defOfLive：缓存里没有该 id 时补拉一次（CLI 新建/改名后 renderer 的清单会陈旧）
     const persona = () => personaStore.defOfLive(id());
@@ -435,23 +442,38 @@ function AssistantByline(props: { turnModel?: unknown }) {
             title={info().title}
         >
             <span
-                class="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-body"
+                class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-body"
                 aria-hidden="true"
             >
                 🤖
             </span>
             {/* 名字只在"当前人物的模型与该轮记录一致"时才敢写：否则宁可只报模型，
                 也不能拿别人的名字去顶替（那正是原 bug：署名成了当前配置的投影） */}
+            {/* min-w-0 + truncate：多 view 并排时单栏只有 200~260px，名字/模型（`provider/model`
+                很长）会把这条 flex 行撑成两行、甚至顶破容器右缘（review2-1）。`min-w-0` 才允许
+                flex 子项收缩到内容宽以下（`min-width:auto` 是默认值，不加就永远不缩）。
+                「谁答的」优先于「哪个模型」还是次要的：真正长的是模型名，所以它先被截。 */}
             <Show when={info().name}>
-                <span class="font-medium">{info().name}</span>
+                <span class="min-w-0 truncate font-medium">{info().name}</span>
             </Show>
             <Show when={info().model}>
-                <span class="opacity-50">·</span>
-                <span class="opacity-60">{personaStore.displayModel(info().model)}</span>
+                <span class="shrink-0 opacity-50">·</span>
+                <span class="min-w-0 truncate opacity-60">{personaStore.displayModel(info().model)}</span>
             </Show>
             {/* 旧轮次没有模型记录：说清"这是按当前人物推断的"，别让用户以为界面知道当时是谁答的 */}
             <Show when={info().inferred}>
-                <span class="opacity-40">（当时人物未知）</span>
+                <span class="shrink-0 opacity-40">（当时人物未知）</span>
+            </Show>
+            {/* 该轮时刻：只在**本块是本轮的时刻挂载点**时才渲染（`showTime`，见 TurnView）。
+                带日期（MM-DD HH:MM）而不是只写 HH:MM —— 会话天然跨天，只写时刻时
+                "昨天的 14:07"与"刚才的 14:07"长得一样，回头定位就没了意义。
+                hover 出精确到秒的完整时间（秒是噪音，只在不占版面时才给）。
+                落到署名行上的是"该轮没有用户块"那一种（CLI/agent 自己发起的轮次）——
+                正常一轮挂在用户发言那一行（见 LeafView 的 user 分支）。 */}
+            <Show when={stamp()}>
+                <span class="ml-auto shrink-0 tabular-nums opacity-50" title={fmtTurnFull(props.turnId) ?? undefined}>
+                    {stamp()}
+                </span>
             </Show>
         </div>
     );
@@ -461,6 +483,10 @@ function LeafView(props: {
     node: BlockNode;
     /** 本轮 turn 的 attrs.model（该轮事实；旧会话可能没有） */
     turnModel?: unknown;
+    /** 本轮 turn 的 id（时间真源：`t` + 毫秒） */
+    turnId: string;
+    /** 本块是不是**本轮时刻的挂载点**（该轮首个文本块；一轮只有一块为真，见 TurnView） */
+    isTimeAnchor: boolean;
     density: Density;
     pin: Record<string, boolean>;
     onToggle: (id: string) => void;
@@ -476,15 +502,32 @@ function LeafView(props: {
         // "这句是在第几步之后插进去的"，而不是以为它是一次新对话的开头
         // 注意类型是 string 而非 SteerMode：值域由**历史日志**决定（含改名前的 step/turn）
         const steer = str(b.attrs.steer);
+        // 用户消息的时刻：一轮的**唯一**一处（同一真源 = 本轮的 turnId）。
+        // 需求原文是"对话消息显示时间"，而 turnId 就是"用户按下发送"那一刻 ——
+        // 挂在轮首这条发言上语义最准（挂在助理回答上等于把提问时刻当成回答时刻）。
+        // 位置放在气泡上方右对齐：它标的是"这条发言什么时候说的"。
+        const stamp = props.isTimeAnchor ? fmtTurnStamp(props.turnId) : null;
         return (
-            <div class="flex justify-end">
-                <div class="max-w-[85%] bg-primary/10 border border-primary/20 rounded-2xl px-3.5 py-2 text-prose whitespace-pre-wrap break-words">
-                    <Show when={steer}>
-                        <span class="mb-0.5 block text-caption opacity-60">
-                            ⤵ 插话（{steerModeLabel(steer)}）{steerModeTip(steer)}
+            <div>
+                <Show when={stamp}>
+                    <div class="mb-0.5 flex justify-end text-body" data-testid="user-byline">
+                        <span
+                            class="shrink-0 tabular-nums opacity-50"
+                            title={fmtTurnFull(props.turnId) ?? undefined}
+                        >
+                            {stamp}
                         </span>
-                    </Show>
-                    {str(b.attrs.content)}
+                    </div>
+                </Show>
+                <div class="flex justify-end">
+                    <div class="max-w-[85%] bg-primary/10 border border-primary/20 rounded-2xl px-3.5 py-2 text-prose whitespace-pre-wrap break-words">
+                        <Show when={steer}>
+                            <span class="mb-0.5 block text-caption opacity-60">
+                                ⤵ 插话（{steerModeLabel(steer)}）{steerModeTip(steer)}
+                            </span>
+                        </Show>
+                        {str(b.attrs.content)}
+                    </div>
                 </div>
             </div>
         );
@@ -497,7 +540,11 @@ function LeafView(props: {
             // 会被解析成错乱结构，这里绝不能走 Markdown 渲染
             return (
                 <div>
-                    <AssistantByline turnModel={props.turnModel} />
+                    <AssistantByline
+                        turnModel={props.turnModel}
+                        turnId={props.turnId}
+                        showTime={props.isTimeAnchor}
+                    />
                     <div class="text-prose opacity-80 truncate">
                         {b.stopped ? firstLine(t) : tailLine(t)}
                         <Show when={!b.stopped}>
@@ -514,7 +561,11 @@ function LeafView(props: {
         // 旧分支会原样留在 DOM 里——现象就是点「MD 原文」正文纹丝不动（只在切任务/重挂载后才生效）。
         return (
             <div>
-                <AssistantByline turnModel={props.turnModel} />
+                <AssistantByline
+                    turnModel={props.turnModel}
+                    turnId={props.turnId}
+                    showTime={props.isTimeAnchor}
+                />
                 <Show when={props.md} fallback={<PlainText text={text} />}>
                     <MarkdownText text={text} streaming={!b.stopped} />
                 </Show>
@@ -580,6 +631,17 @@ function TurnView(props: {
     };
     const procCount = () => processOf(t).length;
     const isLiveTurn = () => props.liveTurnId != null && props.liveTurnId === t.id;
+    /**
+     * 本轮时刻的**唯一挂载点**：首个文本块（正常一轮里就是用户那条发言）。
+     *
+     * 为什么不是"每条消息都挂"：tuid 是**轮起点**（main 侧 `t${Date.now()}`，就是用户按下
+     * 发送那一刻），所以一轮里所有块的时间戳**完全相同** —— 逐块挂等于同一轮重复说四五遍
+     * （review2-3 实测：一轮两步时 '09-26 14:07' 在页面上出现 4 次）。
+     * 挂在轮首语义也最准：它是"这次对话什么时候开始的"，不是"这一块什么时候到的"
+     * （块的时刻协议里根本没有，拿轮起点去冒充是编时间）。
+     * 没有用户块的轮次（CLI/agent 自己发起）→ 落到首个助理署名行，时间照样看得见。
+     */
+    const timeAnchorId = () => leavesOf(t).find((b) => b.tag === "text")?.id ?? null;
     return (
         <div class="space-y-1.5">
             {/* 唯一渲染循环：文档序分段，密度只作用于每段的呈现方式 */}
@@ -591,6 +653,8 @@ function TurnView(props: {
                         <LeafView
                             node={seg.node}
                             turnModel={t.attrs.model}
+                            turnId={t.id}
+                            isTimeAnchor={seg.node.id === timeAnchorId()}
                             density={props.density}
                             pin={props.pin}
                             onToggle={props.onToggle}
@@ -608,12 +672,11 @@ function TurnView(props: {
             <Show when={str(t.attrs.notice)}>
                 <div class="text-body text-warning">⚠ {str(t.attrs.notice)}</div>
             </Show>
-            {/* L1 turn 底 bar：时刻 · 总token累计 · $（实时，来自 main 每步 patch 的块属性）。
+            {/* L1 turn 底 bar：总token累计 · $（实时，来自 main 每步 patch 的块属性）。
                 hover 出 L2 汇总卡、点击开 L3 明细抽屉 —— 两个状态（hover/detail）都存
                 页面级：块树每帧重建，组件内 signal 会被清掉（D3 的"点开又自动合上"）。 */}
             <Show when={t.attrs.usage}>
                 <TurnUsageBar
-                    turnId={t.id}
                     usage={t.attrs.usage}
                     hover={props.usageHover?.id === t.id}
                     onHover={(el) => props.onHoverUsage(t.id, el)}
@@ -888,6 +951,12 @@ export function LocalChatPage(props: { uri?: string }) {
     const [personaPanelOpen, setPersonaPanelOpen] = createSignal(false);
     const [fullscreen, setFullscreen] = createSignal(false);
     let scrollRef: HTMLDivElement | undefined;
+    /** 页面容器（用于量 view 高度：输入区封顶 = view 1/3，见 R5 输入框高度） */
+    let rootRef: HTMLDivElement | undefined;
+    /** 当前 view 高度（px，0 = 尚未量到）；输入区 max-height 由它推出 */
+    const [viewH, setViewH] = createSignal(0);
+    /** 输入区封顶高度（口径见 lib/layout-metrics 的 chatInputMaxHeight） */
+    const inputMaxH = () => chatInputMaxHeight(viewH());
     /** 跟随态：true=贴底（新内容自动滚到底）；false=用户正在上方阅读（绝不打扰） */
     const [stick, setStick] = createSignal(true);
     /** 恢复中闸门：历史重放期间 trees 连发，须让位给 restore 的定位（否则被抢先滚到底） */
@@ -953,7 +1022,12 @@ export function LocalChatPage(props: { uri?: string }) {
         };
         document.addEventListener("click", closePopovers);
         document.addEventListener("keydown", onKey, true);
+        // view 高度跟随窗口/布局变化（输入区封顶 = view 1/3，R5）
+        const ro = new ResizeObserver(() => setViewH(rootRef?.clientHeight ?? 0));
+        if (rootRef) ro.observe(rootRef);
+        setViewH(rootRef?.clientHeight ?? 0);
         onCleanup(() => {
+            ro.disconnect();
             document.removeEventListener("click", closePopovers);
             document.removeEventListener("keydown", onKey, true);
         });
@@ -1117,7 +1191,11 @@ export function LocalChatPage(props: { uri?: string }) {
     };
 
     return (
-        <div class="flex flex-col h-full overflow-hidden">
+        <div
+            ref={(el) => (rootRef = el)}
+            class="flex flex-col h-full overflow-hidden"
+            data-testid="local-chat-page"
+        >
             <PersonaDrawer open={personaPanelOpen()} onClose={() => setPersonaPanelOpen(false)} />
             {/* 打开时顺手对一次账本（轮次间隙别人跑的那几轮不该漏） */}
             <UsageDrawer open={usageBoard()} uri={uri()} onClose={() => setUsageBoard(false)} />
@@ -1325,8 +1403,14 @@ export function LocalChatPage(props: { uri?: string }) {
                         **只变色、不加 outline**：outline 画在 border 外侧 2px，看着像"多了一圈
                         边框"（实测双边框感），边框自己变色就够表达了。
                       · 圆角：`--radius-field`（输入类控件语义，比 `--radius-box` 更方正） */}
+                {/* R5 封顶加在**这个盒子**（= 用户眼里的「输入框」：正文 + 底部工具条）上，而不是
+                    只加在正文宿主上。封顶的**主语**必须与需求一致 —— review2-2 实测：只封宿主时
+                    整个输入区比 view/3 高出 50px（工具条那一行没算进去），后人按"整体 1/3"去改测试
+                    就会对不上。`flex flex-col` 是让工具条（shrink-0）与正文（flex-auto）在盒子里分高度：
+                    内容少时两者都按内容高（默认一行）；超过 max-height 时只有正文收缩 + 内部滚动。 */}
                 <div
-                    class={`rounded-field border border-base-content/20 bg-base-200 transition-colors focus-within:border-base-content ${fullscreen() ? "fixed inset-4 z-40 flex min-h-0 flex-col p-4" : "relative"}`}
+                    class={`rounded-field border border-base-content/20 bg-base-200 transition-colors focus-within:border-base-content ${fullscreen() ? "fixed inset-4 z-40 flex min-h-0 flex-col p-4" : "relative flex flex-col"}`}
+                    style={fullscreen() ? undefined : { "max-height": inputMaxH() }}
                 >
                     {/* 全屏时横条挪进这块 fixed 区域顶部：正常态那份被遮罩盖住看不见，
                         同一时刻只有一处渲染（同一份数据不重复画） */}
@@ -1357,8 +1441,14 @@ export function LocalChatPage(props: { uri?: string }) {
                         <IconCompress class="swap-on h-4 w-4" />
                     </label>
                     {/* pr-8：正文不要钻到右上角按钮底下 */}
+                    {/* 全屏时 `flex-1` 不能丢：面板是 `fixed inset-4 flex flex-col`，正文宿主
+                        没有 flex-grow 就成了内容高的项 → 内容少时缩成一条（R5 review1-1 实测：
+                        面板 683px、编辑区仅 23px，「全文编辑」形同虚设）。
+                        正常态用 `flex-auto`（basis = 内容高）而不是 `flex-1`（basis = 0）——
+                        basis 0 在"高度由内容决定"的盒子里会把正文压成 0 高；而 basis auto 只在
+                        盒子被 max-height 卡住时才收缩（收缩权在正文，工具条 shrink-0 不动）。 */}
                     <div
-                        class={`min-h-0 overflow-auto px-2 pt-2 pr-8 ${fullscreen() ? "flex-1" : "min-h-[72px] max-h-[320px]"}`}
+                        class={`min-h-0 overflow-auto px-2 pt-2 pr-8 ${fullscreen() ? "flex-1" : "flex-auto"}`}
                     >
                         <MdEditor
                             value={inputValue()}
@@ -1379,7 +1469,6 @@ export function LocalChatPage(props: { uri?: string }) {
                             wrap
                             lineNumbers={fullscreen()}
                             embedded
-                            class="min-h-[56px]"
                         />
                     </div>
                     {/* 不再画分隔线：正文与工具条同底色（base-200），一条 border-base-300 的横线
