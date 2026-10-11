@@ -6,10 +6,10 @@
  *
  * 一个 turn 的形状（[ ] = 阶段出现的东西）：
  *   [轮首用户发言]           ← 先出：IM 直觉是"用户先说、对方再接"
- *   轮次头（人物标题 bar）    🤖 + 人物/模型/思考级别 + 统计 + 开合箭头（点它 = 收拢/展开这一轮）
+ *   轮次头（人物标题 bar）    🤖 + 人物/模型/思考级别 + 开合箭头（点它 = 收拢/展开这一轮）
  *   内容区（按级别）          1 结论摘要 · 2 结论全文 · 3 + 全部正文与过程 bar · 4 过程 bar 铺开逐条
  *   [轮尾实时区]             仅直播中：当前那一步的展开体，固定高度（见 LiveAreaView）
- *   轮尾一行                 时刻（左，纯文本，不可点）+ 用量按钮（右，hover 卡 / 点击明细）
+ *   轮尾一行                 时刻（左，纯文本，不可点）+ **本轮统计**（纯文本）+ 用量按钮（右，hover 卡 / 点击明细）
  *
  * 级别（`lib/chat-fold` 的 TurnLevel）：
  *   1 摘要结论 → 2 完整结论 → 3 全部正文 → 4 逐条过程。
@@ -468,18 +468,54 @@ function ProcessRow(props: {
  * 折叠体**不重排**：只做"藏中间过程"，用户发言/插话/error 一律就地渲染（见 chat-fold.ts）。
  */
 
+/** 该轮耗时（main 收尾 patch 写入的 `durationMs`）；没写（旧日志 / 崩溃轮）→ null，不编 0 */
+function turnDurationMs(t: BlockNode): number | null {
+    const d = t.attrs.durationMs;
+    return typeof d === "number" ? d : null;
+}
+
+function fmtDuration(ms: number): string {
+    return ms >= 1000 ? `${Math.round(ms / 1000)} 秒` : `${ms}ms`;
+}
+
 /**
- * 轮次头（人物标题 bar）：身份 + 统计 + 开合箭头。点它 = **这一轮**收拢 / 展开。
+ * 「这轮发生了什么」一行字：`6 步 · 12 秒 · ⚙ 5 · 💭 6 · ❌ 1`。
+ *
+ * 语义上属于**轮次**（不是某条消息），但视觉上归**轮尾**（时刻右侧、用量按钮左边）——
+ * 用户 2026-10-11 口径："把人物右侧的统计放到下面、用量的左边，不用 hover"：
+ *   · 放轮次头右侧时它跟身份挤在一行，读起来像名字的后缀；轮尾那行本来就"总结这一轮"；
+ *   · 它不能可点（没有"更多信息"可给），而轮次头整行是开合按钮 —— 摆在里面就成了
+ *     "点统计也换层"，与轮尾时刻同理（滚屏阅读时最易误触）。
+ * 与用量按钮**分开**：用量要 hover/点击，统计纯文本，两者语义不同（同轮尾时刻的处理）。
+ *
+ * 判据（都是 review 或用户口径换来的）：
+ *   · **不放 token**：用量按钮就在右边，同一行说两遍；
+ *   · **不放 `n/4`**：级别归顶部那个全局按钮，单轮只有开/合两态（见 TurnHeader 头注）；
+ *   · 报错要有位置：一屏多轮时先看见"哪轮出过事"最快（error 块本身恒显，见 foldBody）。
+ */
+function turnStatLine(t: BlockNode, c: { step: number; tool: number; think: number; error: number }): string {
+    const parts: string[] = [];
+    if (c.step) parts.push(`${c.step} 步`);
+    const d = turnDurationMs(t);
+    if (d != null) parts.push(fmtDuration(d));
+    if (c.tool) parts.push(`⚙ ${c.tool}`);
+    if (c.think) parts.push(`💭 ${c.think}`);
+    if (c.error) parts.push(`❌ ${c.error}`);
+    return parts.join(" · ");
+}
+
+/**
+ * 轮次头（人物标题 bar）：身份 + 开合箭头。点它 = **这一轮**收拢 / 展开。
  *
  * 身份（🤖 头像 · 人物 · 模型 · 思考级别）**任何级别都显示** —— 用户 2026-10-11 口径：
  * "1 级的人物 bar 和 2 级不一样，需要一致，也需要显示人物/模型信息"。
  * 身份是**该轮事实**的投影（`turn.attrs.model` / `reasoningEffort`），不是当前配置 ——
  * 否则改一次 personas.yaml，全部历史署名被一起改写（任务 196 的教训）。
  *
- * 统计只放"这轮发生了什么"：步数 · 耗时 · ⚙ n · 💭 n · ❌ n。
- *   · **不放 token**：轮尾那行（时刻 + 用量）已经写着，同一屏里同一件事说两遍
- *     （2026-10-11 用户口径）。
- *   · **不放 `n/4`**：级别循环归顶部那个按钮，单轮只有开/合两态，摆个分数像"还能再点几层"。
+ * **统计不在这里**（步数 · 耗时 · ⚙ n · 💭 n · ❌ n）：搬到轮尾一行、用量按钮左边
+ * （用户 2026-10-11 口径，判据见 `turnStatLine`）。这里只剩身份 —— 一行两件事本来就挤，
+ * 而且整行是开合按钮，统计摆进来会被读成"点了会出更多数字"。
+ * 它仍进 `ariaLabel` / `title`：读屏与 hover 时"这轮发生了什么"是有用的。
  */
 function TurnHeader(props: {
     /** 轮次 id（节点按 id 现取：行对象按 id 复用，见文件头注） */
@@ -500,32 +536,15 @@ function TurnHeader(props: {
         });
     // 思考级别：**该轮事实**（main 在 turn start 写进 meta），不是当前配置
     const effort = () => str(t().attrs.reasoningEffort);
-    // 耗时：该轮事实（main 在收尾 patch 写入 durationMs）
-    const durMs = () => {
-        const d = t().attrs.durationMs;
-        return typeof d === "number" ? d : null;
-    };
-    const fmtDur = (ms: number) => (ms >= 1000 ? `${Math.round(ms / 1000)} 秒` : `${ms}ms`);
-    const summary = () => {
-        const c = props.counts;
-        const parts: string[] = [];
-        if (c.step) parts.push(`${c.step} 步`);
-        const d = durMs();
-        if (d != null) parts.push(fmtDur(d));
-        if (c.tool) parts.push(`⚙ ${c.tool}`);
-        if (c.think) parts.push(`💭 ${c.think}`);
-        // 报错在**统计里**也要有位置：收拢时 error 块仍是唯一露头的内容，
-        // 但一屏多轮时先看见"哪轮出过事"更快
-        if (c.error) parts.push(`❌ ${c.error}`);
-        return parts.join(" · ");
-    };
+    /** 视觉上不画（在轮尾），但读屏/hover 文案要 —— `turnStatLine` 的唯一第二调用点 */
+    const stat = () => turnStatLine(t(), props.counts);
     const open = () => props.level > TURN_LEVEL_MIN;
     return (
         <DisclosureHead
             open={open()}
             onToggle={props.onToggle}
             class="flex items-center gap-1.5 w-full text-left rounded-lg px-1.5 py-1 hover:bg-base-200/60 text-body"
-            ariaLabel={`${info().name ?? "助理"}${info().model ? `（${personaStore.displayModel(info().model)}）` : ""}：${summary()}；${turnFoldTip(open())}`}
+            ariaLabel={`${info().name ?? "助理"}${info().model ? `（${personaStore.displayModel(info().model)}）` : ""}：${stat()}；${turnFoldTip(open())}`}
             rest={{
                 "data-testid": "turn-header",
                 "data-block-id": t().id,
@@ -559,8 +578,7 @@ function TurnHeader(props: {
             <Show when={info().inferred}>
                 <span class="opacity-40">（当时人物未知）</span>
             </Show>
-            <span class="flex-1" />
-            <span class="text-caption opacity-60">{summary()}</span>
+            {/* 统计不在这里：轮尾一行（时刻右边、用量左边）—— 见 turnStatLine 头注 */}
         </DisclosureHead>
     );
 }
@@ -717,21 +735,23 @@ function UserBubble(props: { node: BlockNode }) {
 /**
  * 过程 bar（3 级起）：**一段连续的思考/工具**折成一行（切法见 `chat-fold.contentItems`）。
  *
- * 收起 = 一行：左侧写这一段**第一个**过程的内容（思考首行 / `tool · 命令首行`），
- * 右侧是思考数 · 工具数（另有失败标记）。展开 = 逐条单行，与 4 级那一行长得一样：
- * `open` 不跟级别走死 —— **用户的 pin 优先，否则跟 4 级**（整体切到 4 级 = 所有 bar 都开，
- * 单点某一行 = 只开这一行，两者共用同一套渲染，不会各说各话）。
+ * 行首形状（2026-10-11 用户口径定稿）：`chevron ▸ · 💭 n · ⚙ n [✗] · │ · 首行内容`——
+ *   · **计数在 chevron 右边、内容左边**（原在右侧）：短、定宽、永远是数字，压在行首才扫得出
+ *     "整页哪几轮重"；而且**展开/收起都在**，同一位置同一形状，不随开合消失。
+ *   · **不再写「过程」二字**：那是"展开后不留空"的补丁标题，现在行首恒有计数 ICON，不空。
+ *   · **计数块带底色 chip**，收起态再接一个 `│` 分隔，把计数与后面那段首行内容从视觉上切开
+ *     （否则 `💭 1 · ⚙ 2 首行内容` 读成一串，看不出前半是统计）。
+ *   · **不再顶 `statusMark`**（R15 加过）：计数块已经带 `💭`/`⚙` 字形，前面再顶一个是同一行
+ *     图标叠两遍（R12 删掉同一处图标串的判据）；"这段跑没跑完"由失败 `✗` 与直播轮的实时区
+ *     （那边有 statusMark，因为它画的是**单个**节点）负责。
  *
- * **展开后标题不再复述那第一行**：它马上会以逐条列表的第一行出现，同一屏里看两遍
- * （同 think 行"展开后只写'思考'"的口径）。但也不能空着 —— 一行没有标题的 bar 看着像残缺
- * （用户 2026-10-11 口径："展开后 bar 上不要空着，应显示点啥"），故展开态写中性的「过程」。
+ * 收起 = 计数 + 该段**第一个**过程的内容（思考首行 / `tool · 命令首行`）；
+ * 展开 = 只剩计数（下面铺开的就是那第一行，标题再复述一遍就是同一屏看两遍），逐条单行与
+ * 4 级那一行长得一样：`open` 不跟级别走死 —— **用户的 pin 优先，否则跟 4 级**
+ * （整体切到 4 级 = 所有 bar 都开，单点某一行 = 只开这一行，共用同一套渲染，不会各说各话）。
  *
  * bar 里**只有过程**：助理正文各自成项（3 级起全文）—— 正文与过程一旦合并，
  * 顺序就会出错（上一版把正文收进这一行的教训）。
- *
- * 行首也是 **chevron + 该段第一个过程的 `statusMark`**：chevron 在左（树形，与下面铺开的
- * 逐条行对齐成一列），状态灯让"这一段是思考还是工具、跑没跑完"不看文字就分得出
- * （2026-10-11 用户口径："给工具和思考 bar 前加前缀图标"）。
  */
 function ProcBar(props: {
     /** 这一段连续的过程叶子（文档序）——数组引用稳定是 `<For>` 不重建的前提（见 reuseItems） */
@@ -746,12 +766,11 @@ function ProcBar(props: {
     const thinks = () => props.parts.filter((n) => n.tag === "think").length;
     const tools = () => props.parts.filter((n) => n.tag === "tool").length;
     const failed = () => props.parts.some((n) => n.tag === "tool" && str(n.attrs.status) === "error");
-    /** 收起 = 这一段第一个过程的内容（"bar 文本显示第一个工具或思考的内容"）；展开 = 中性标题 */
-    const head = () => {
-        if (props.open) return "过程";
-        const first = props.parts[0];
-        return first ? summaryOf(first, false) : "过程";
-    };
+    /** 计数块的读屏/自动化文案（图标的字形读屏念不出来） */
+    const countsText = () =>
+        [thinks() ? `${thinks()} 段思考` : "", tools() ? `${tools()} 个工具` : ""]
+            .filter(Boolean)
+            .join("、");
     return (
         <div class="rounded-lg" data-block-tag="proc-bar" data-block-id={props.parts[0]?.id}>
             <DisclosureHead
@@ -759,21 +778,34 @@ function ProcBar(props: {
                 onToggle={props.onToggle}
                 class="flex items-center gap-1.5 w-full py-1 px-1.5 rounded-lg hover:bg-base-200/60 text-body"
                 /* 读屏文案：thinks() 为 0 时不能落成模板串里的 `0 && …`（求值成 0，念作「02 个工具」） */
-                ariaLabel={`过程：${thinks() ? `${thinks()} 段思考、` : ""}${tools()} 个工具（点击${props.open ? "收起" : "展开"}这一行）`}
+                ariaLabel={`过程：${countsText() || "空"}（点击${props.open ? "收起" : "展开"}这一行）`}
             >
                 <IconChevron open={props.open} class="h-3.5 w-3.5 opacity-40" />
-                {props.parts[0] ? statusMark(props.parts[0]) : null}
-                <span class="min-w-0 flex-1 truncate text-base-content/80">{head()}</span>
-                <Show when={failed()}>
-                    <span class="shrink-0 text-error" title="这一行里有失败的工具">
-                        ✗
-                    </span>
-                </Show>
-                <span class="shrink-0 text-caption opacity-50">
+                {/* 计数在**行首**：展开/收起都在（同一位置同一形状，不随开合消失），
+                    带底色 chip = 与后面的首行内容分开（见头注） */}
+                <span
+                    class="shrink-0 rounded bg-base-300/60 px-1 tabular-nums text-caption opacity-70"
+                    data-proc-counts={countsText()}
+                    title={countsText() || undefined}
+                >
                     {thinks() ? `💭 ${thinks()}` : ""}
                     {thinks() && tools() ? " · " : ""}
                     {tools() ? `⚙ ${tools()}` : ""}
+                    <Show when={failed()}>
+                        <span class="ml-1 text-error" title="这一行里有失败的工具">
+                            ✗
+                        </span>
+                    </Show>
                 </span>
+                {/* 收起态才有"内容"可写（首行内容），故分隔符与内容一起只在收起态出现 */}
+                <Show when={!props.open && props.parts[0]}>
+                    <span class="shrink-0 opacity-25" aria-hidden="true">
+                        │
+                    </span>
+                    <span class="min-w-0 flex-1 truncate text-base-content/80">
+                        {summaryOf(props.parts[0], false)}
+                    </span>
+                </Show>
             </DisclosureHead>
             <Show when={props.open}>
                 <div class="mt-0.5 ml-2 space-y-0.5 border-l border-base-300 pl-2">
@@ -1015,6 +1047,9 @@ function TurnView(props: {
                     turnId={t().id}
                     usage={t().attrs.usage}
                     pending={usagePending()}
+                    /* 本轮统计（步数 · 耗时 · ⚙ n · 💭 n · ❌ n）画在**轮尾**：时刻右边、
+                       用量左边（用户 2026-10-11 口径，判据见 turnStatLine） */
+                    stat={turnStatLine(t(), counts())}
                     hover={props.usageHover?.id === t().id}
                     onHover={(el) => props.onHoverUsage(t().id, el)}
                     onHoverEnd={props.onHoverEndUsage}

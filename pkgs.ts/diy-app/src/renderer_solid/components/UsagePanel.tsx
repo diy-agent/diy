@@ -1148,20 +1148,27 @@ export function UsageHoverCard(props: {
 // ─── L1① turn 底 bar ────────────────────────────────
 
 /**
- * turn 尾一行：左边**时刻**（`YYYY-MM-DD HH:MM:SS`，纯文本、不可点），右边**用量按钮**
- * （`N tok · $X`，hover 出 L2 卡、点击开 L3 抽屉；卡里的「明细」是同一动作的第二个入口）。
+ * turn 尾一行：左边**时刻**（`YYYY-MM-DD HH:MM:SS`），中间**本轮统计**（纯文本），
+ * 右边**用量按钮**（`N tok · $X`，hover 出 L2 卡、点击开 L3 抽屉；卡里的「明细」是同一动作的第二个入口）。
  *
  * 时刻为什么**独立且靠左**（2026-10-11 用户口径）：它与用量本来是同一个按钮，
  * 于是整行都带 hover/点击，而滚屏阅读时视线与指针多半落在左侧 —— 一路读下来不断误触。
  * 时刻本身也没有"更多信息"可给，不该可点；用量（真要细看的东西）靠右，误触面小。
  * 时间用**日期+时间到秒**（2026-10-04 用户定）：轮次末尾要能定位"这话什么时候说的"，
  * 只给时分在同一天多轮、或跨天回看时无法定位。旧记录轮次也照样出时间（见下）。
+ *
+ * `stat`（步数 · 耗时 · ⚙ n · 💭 n · ❌ n）本文件**只负责摆**，内容与判据见
+ * `LocalChatPage.turnStatLine`：从轮次头右侧搬到这行、用量左边（用户 2026-10-11 口径）。
+ * 三者三种交互（时刻/统计纯文本不可点、用量可 hover 可点），故**分成三段**而不是一个按钮 ——
+ * 合成一个就是把"不可点的东西"塞进可点区域（时刻那次的教训）。
  */
 export function TurnUsageBar(props: {
     turnId: string;
     usage: unknown;
     /** true = 直播中且 main 还没写过 usage patch（第一步 finish-step 之前）：给占位，不装作有数 */
     pending?: boolean;
+    /** 本轮统计（步数 · 耗时 · ⚙ n · 💭 n · ❌ n），摆在这行、用量按钮左边；空则不占位 */
+    stat?: string;
     hover: boolean;
     onHover: (el: HTMLElement) => void;
     onHoverEnd: () => void;
@@ -1175,6 +1182,14 @@ export function TurnUsageBar(props: {
             <span class="shrink-0 tabular-nums text-caption opacity-50">{clock}</span>
         </Show>
     );
+    /** 本轮统计：与时刻同为**纯文本**（无 hover / 无点击）—— 它没有"更多信息"可给 */
+    const Stat = () => (
+        <Show when={props.stat}>
+            <span class="shrink-0 text-caption opacity-60" data-turn-stat>
+                {props.stat}
+            </span>
+        </Show>
+    );
     /** 直播首步还没跑完：时间照给（turnId 自带开始时刻），用量位给占位。
      *  ⚠️ 三个分支必须走 `<Switch>`，**不能** `if (...) return`：Solid 组件体只跑一次，
      *  提前 return 得到的分支在 usage 到达后不会重算 —— 占位条会永远留在那儿（实测坑）。 */
@@ -1185,6 +1200,7 @@ export function TurnUsageBar(props: {
                 <div class="flex items-center gap-2 text-body" data-usage-pending="1">
                     <Clock />
                     <span class="flex-1" />
+                    <Stat />
                     <span
                         class="text-caption opacity-40"
                         title="用量要等本步跑完（finish-step）才拿得到；时间是本轮开始时刻"
@@ -1205,6 +1221,7 @@ export function TurnUsageBar(props: {
             <div class="flex items-center gap-2 text-body">
                 <Clock />
                 <span class="flex-1" />
+                <Stat />
                 <span class="opacity-60">
                     tokens ↑{fmtInt(l().in ?? 0)} ↓{fmtInt(l().out ?? 0)}（Σ{fmtInt(l().total ?? 0)}）
                     <span class="ml-1">（旧记录：无四桶/金额）</span>
@@ -1220,6 +1237,7 @@ export function TurnUsageBar(props: {
             <div class="flex items-center gap-2">
                 <Clock />
                 <span class="flex-1" />
+                <Stat />
                 <button
                     type="button"
                     class="flex w-max cursor-pointer select-none items-center gap-x-3 rounded px-1 text-body opacity-70 transition-opacity hover:bg-base-200 hover:opacity-100"
