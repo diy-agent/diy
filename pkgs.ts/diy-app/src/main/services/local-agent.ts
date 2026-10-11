@@ -54,6 +54,7 @@ import {
     sumCosts,
     turnUsagePatch,
     type CostBreakdown,
+    type StepStreamShape,
     type StepUsageRecord,
     type UsageBuckets,
     type UsageLike,
@@ -298,6 +299,22 @@ function rawFile(taskUri: string): string {
 /** 原始流开关（默认关；读取时快照一次，避免一处开一处关） */
 function rawDumpEnabled(): boolean {
     return process.env["DIY_RAW_STREAM_DUMP"] === "1";
+}
+
+/**
+ * 一步流形状的累加器（##288 观察位）。**只记事实，不做判定** ——
+ * 「有没有正文」「工具调用是不是最后发生的」这类问题必须由数据回答，不能靠猜。
+ */
+function newShape(): StepStreamShape {
+    return { order: "", textChunks: 0, reasoningChunks: 0, toolCalls: 0 };
+}
+
+/** 记一个 part 段首（r=思考 t=文本 x=工具调用） */
+function markShape(s: StepStreamShape, ch: "r" | "t" | "x"): void {
+    s.order += ch;
+    if (ch === "r") s.reasoningChunks++;
+    else if (ch === "t") s.textChunks++;
+    else s.toolCalls++;
 }
 
 /** zen/go 会话亲和头：按 task 稳定（实测缺失会被 MissingSessionID 拒绝） */
@@ -2007,6 +2024,8 @@ export class LocalAgentManager {
         // 研究用：把“发给上游的 messages”与 fullStream 的每个 part 原样落盘
         const raw = rawDumpEnabled() ? rawFile(taskUri) : null;
         let rawSeq = 0;
+        // 该步的流形状（##288）：每步重置，随该步的用量账一起落盘
+        let shape = newShape();
         const rawSink = (row: Record<string, unknown>): void => {
             if (!raw) return;
             try {
@@ -2089,6 +2108,9 @@ export class LocalAgentManager {
                         }
                       : {}),
                 maxRetries: 2,
+                // 研究开关：把**上游原始 chunk**（归一之前的 SSE 载荷）也塞进 fullStream 的 raw part。
+                // 只有 raw dump 开着时才要 —— 它能把"ai-sdk 归一丢了什么"变成可核对的证据（##288）。
+                ...(raw ? { includeRawChunks: true } : {}),
                 // 每个模型步开始前的唯一钩子：把队列里的 next-step 插话插进这一步的 messages
                 // （**整批**：dsh 的 claim() 就是一次全投，不是一次一条）。
                 // 返回的 messages 会 carry forward 到后续步（SDK 语义），所以模型一开口就能看到。
@@ -2115,6 +2137,7 @@ export class LocalAgentManager {
                     rawSink({ kind: "part", seq: ++rawSeq, ts: new Date().toISOString(), part });
                     switch (part.type) {
                         case "start-step":
+                            shape = newShape();
                             // 插话落位点：**唯一无歧义的位置** —— start-step 在流里保证排在上一步的
                             // 所有 part 之后，而"下一步"还没产出任何内容。认领发生在 prepareStep（可能
                             // 早于消费端处理完上一步的 part），落位必须等到这里，否则插话块会插到
@@ -2126,6 +2149,7 @@ export class LocalAgentManager {
                             yield* emit({ op: "start", id: stepId, kind: "step", parent: turnId });
                             break;
                         case "reasoning-start": {
+                            markShape(shape, "r");
                             const id = `${turnId}_r${++rN}`;
                             partBlock.set(part.id, id);
                             yield* emit({ op: "start", id, kind: "think", parent: stepId });
@@ -2147,6 +2171,7 @@ export class LocalAgentManager {
                             break;
                         }
                         case "text-start": {
+                            markShape(shape, "t");
                             lastAct = "text";
                             const id = `${turnId}_a${++aN}`;
                             partBlock.set(part.id, id);
@@ -2174,6 +2199,7 @@ export class LocalAgentManager {
                             break;
                         }
                         case "tool-input-start":
+                            markShape(shape, "x");
                             lastAct = "tool";
                             partBlock.set(part.id, part.id);
                             yield* emit({ op: "start",
@@ -2255,6 +2281,7 @@ export class LocalAgentManager {
                                 performance?: StepUsageRecord["performance"];
                                 response?: { id?: string; modelId?: string };
                                 finishReason?: string;
+                                rawFinishReason?: string;
                             };
                             const su = fsPart.usage;
                             if (su) {
@@ -2279,6 +2306,10 @@ export class LocalAgentManager {
                                     ...(fsPart.response?.id ? { responseId: fsPart.response.id } : {}),
                                     ...(fsPart.response?.modelId ? { responseModel: fsPart.response.modelId } : {}),
                                     ...(fsPart.finishReason ? { finishReason: fsPart.finishReason } : {}),
+                                    ...(fsPart.rawFinishReason ? { rawFinishReason: fsPart.rawFinishReason } : {}),
+                                    // 形状快照（观察位）：与这一步的 finishReason 同行，才能回答
+                                    // 「没结论的那一步，形状到底是什么」（##288）
+                                    streamShape: { ...shape },
                                     usage: snapshotUsage(su)!,
                                     ...(fsPart.performance ? { performance: fsPart.performance } : {}),
                                     rates: rates ? { ...rates, asOf: MODEL_COST_AS_OF } : null,

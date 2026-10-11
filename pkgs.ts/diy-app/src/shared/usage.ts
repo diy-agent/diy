@@ -313,6 +313,15 @@ export interface StepPerformance {
  * 一步（= 一次上游请求）的用量记录。**行自带身份**：同一会话里每步的模型/人物/面/档位
  * 可以不同（切模型、子 agent 用别的模型），所以身份是行的属性而不是标题的属性（##211 §六b.6）。
  */
+/** 一步 fullStream 的 part 形状：`order` 每出现一个 part 段首追加一字符（r=思考 t=文本 x=工具） */
+export interface StepStreamShape {
+    /** 段首顺序串，如 `rxx`（先思考、再两次工具调用）、`t`（纯文本结论） */
+    order: string;
+    textChunks: number;
+    reasoningChunks: number;
+    toolCalls: number;
+}
+
 export interface StepUsageRecord {
     ts: string;
     /** 与本任务 steps.jsonl 的 turnId 同源，可 join */
@@ -330,6 +339,17 @@ export interface StepUsageRecord {
     /** 响应模型（**按它查价**：上游可能路由改写） */
     responseModel?: string;
     finishReason?: string;
+    /**
+     * 上游**原始** finish_reason（未经 ai-sdk 归一，如 `tool_calls` / `stop` / `max_tokens` /
+     * `content_filter`）。与 `finishReason`（归一后的 `stop|length|tool-calls|content-filter|error|other`）
+     * 一起记：归一会丢信息（多个原始值可能映到同一个统一值，见 ##288 研究）。
+     */
+    rawFinishReason?: string;
+    /**
+     * 该步 fullStream 里 part 的**形状**（观察位，不参与计价）：顺序串 + 计数。
+     * 用途：判定「这一步到底有没有正文/思考、工具调用是不是最后发生的」（##288 轮次结束语义）。
+     */
+    streamShape?: StepStreamShape;
     usage: UsageSnapshot;
     performance?: StepPerformance;
     /** 生效单价快照（含选中 tier 与真源日期） */
