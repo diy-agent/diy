@@ -1,12 +1,15 @@
-// tests/core/ui-state-chat-lines.test.ts — 聊天“2 级结论摘要行数”的缓存契约
+// tests/core/ui-state-chat-view.test.ts — 聊天**视图 cache**的两个数：全局展开级别 + 摘要行数
 //
-// 2026-10-11：原「正常 / 大纲」两态开关取消，改成**每轮各自的展开级别循环**
-//（见 lib/chat-fold 的 TurnLevel；级别本身不落盘）。留在存储里的只有摘要行数：
-//   ① 默认 3；② parse 夹在 1-10（越界/非整数回默认）；
+// 2026-10-11：原「正常 / 大纲」两态开关取消 → 改成**展开级别**（1 摘要结论 / 2 完整结论 /
+// 3 全部正文 / 4 逐条过程；第 5 层「单条过程内容」不在循环里，见 lib/chat-fold 的 TurnLevel）。
+// 存储里只剩两个数：
+//   ① 全局级别（顶部 `n/4 展开`）—— 默认 3、parse 只收 1-4（越界回默认）、**落盘**；
+//   ② 摘要行数 —— 默认 3、parse 夹在 1-10；
 //   ③ 历次迭代的旧 key（三档密度 / 旧紧凑 key / 「正常/大纲」开关与其行数 key）
 //      由 clearUiCache 一并清走，升级不留残渣。
-// 文件名曾叫 ui-state-density → ui-state-outline：名字跟着语义走（review P2-9），
-// 语义再变（大纲模式取消）就再改一次，不留下名不副实的文件。
+// **单轮的手动覆盖不落盘**（轮次 id 无限增长）—— 故此处没有对应字段可测，这是有意的。
+// 文件名曾叫 ui-state-density → ui-state-outline → ui-state-chat-lines：名字跟着语义走
+//（review P2-9），语义再变就再改一次，不留下名不副实的文件。
 import { beforeEach, describe, expect, it } from "vitest";
 
 const store = new Map<string, string>();
@@ -22,6 +25,33 @@ const store = new Map<string, string>();
 const { Caches, CONCLUSION_LINES_DEFAULT, clearUiCache } = await import(
     "../../src/renderer_solid/lib/ui-state"
 );
+const { DEFAULT_TURN_LEVEL, TURN_LEVEL_MAX } = await import("../../src/renderer_solid/lib/chat-fold");
+
+describe("聊天全局展开级别", () => {
+    beforeEach(() => store.clear());
+
+    it("默认 = chat-fold 的默认级别（3：全部正文），存储层不另立一套默认", () => {
+        expect(Caches.diy_chat_level.defaultValue).toBe(DEFAULT_TURN_LEVEL);
+        expect(Caches.diy_chat_level.get()).toBe(3);
+    });
+
+    it("parse 只收 1-4：越界（含第 5 层「过程详情」）与脏值一律回默认", () => {
+        for (const good of [1, 2, 3, TURN_LEVEL_MAX]) {
+            store.set("diy_chat_level", String(good));
+            expect(Caches.diy_chat_level.get(), String(good)).toBe(good);
+        }
+        for (const bad of ["0", "5", "-1", "2.5", "abc", ""]) {
+            store.set("diy_chat_level", bad);
+            expect(Caches.diy_chat_level.get(), bad).toBe(DEFAULT_TURN_LEVEL);
+        }
+    });
+
+    it("写入即持久化（全局级别是长期偏好，重开 app 不回默认）", () => {
+        Caches.diy_chat_level.set(1);
+        expect(store.get("diy_chat_level")).toBe("1");
+        expect(Caches.diy_chat_level.get()).toBe(1);
+    });
+});
 
 describe("聊天结论摘要行数", () => {
     beforeEach(() => store.clear());

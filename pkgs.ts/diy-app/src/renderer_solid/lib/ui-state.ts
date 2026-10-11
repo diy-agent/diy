@@ -17,14 +17,21 @@
 // 不引入 zod：zod 的运行时校验 + 类型派生服务于跨进程契约（RPC）；视图 cache
 // 是进程内单端标量字段，轻量 parse 即可。
 
+// 级别语义的真源是 renderer_solid/lib/chat-fold（TurnLevel / TURN_LEVEL_*）——
+// 存储层只做"夹范围"，不重新定义一套枚举（两处各写一份边界必然腐坏）。
+import { DEFAULT_TURN_LEVEL, isTurnLevel } from "./chat-fold";
+
 export type DiyTheme = "dark" | "light";
 
-// ─── 聊天正文摘要（2 级「结论」的行数） ───────────────
+// ─── 聊天的两个视图数：全局展开级别 + 摘要行数 ─────────
 //
-// 2026-10-11：原「正常 / 大纲」两态开关已取消 —— 改成**每轮各自一份的展开级别循环**
-//（1 全收缩 / 2 结论 / 3 全部正文 / 4 逐条过程，见 renderer_solid/lib/chat-fold）。
-// 与存储有关的只剩这一个数：2 级把结论压成几行（默认 3）。它不是"模式"，是**摘要行数**，
-// 4 个级别本身不落盘（级别是"我现在想看多细"的临时状态，不是长期偏好）。
+// 2026-10-11：原「正常 / 大纲」两态开关已取消 —— 改成**展开级别**（1 摘要结论 /
+// 2 完整结论 / 3 全部正文 / 4 逐条过程；第 5 层「单条过程内容」不在循环里，
+// 只由用户点那一行自己开。见 renderer_solid/lib/chat-fold 的 TurnLevel）。
+// 落盘的只有两个数：
+//   · 全局级别 —— 顶部 `n/4 展开` 按钮，**长期偏好**（"我习惯看多细"）
+//   · 摘要行数 —— 1 级把结论压成几行（默认 3）
+// **单轮的手动覆盖不落盘**：轮次 id 会无限增长，逐轮写进 localStorage 只会越攒越脏。
 export const CONCLUSION_LINES_DEFAULT = 3;
 
 // ─── 缓存字段（get/set/reset，内部吞异常 + 留痕） ─────────────
@@ -240,7 +247,7 @@ export const Caches = {
     serialize: (v) => v,
     defaultValue: "",
   }),
-  /** 2 级「结论」摘要的行数上限（**默认 3**；暂无 UI 入口，仅测试写入），parse 夹在 1-10。
+  /** 1 级「摘要结论」的行数上限（**默认 3**；暂无 UI 入口，仅测试写入），parse 夹在 1-10。
    *  MD 渲染/原文开关对摘要同样生效（2026-10-11 反馈：摘要态强制原文是错的）。 */
   diy_chat_conclusion_lines: field<number>("diy_chat_conclusion_lines", {
     parse: (raw) => {
@@ -249,6 +256,16 @@ export const Caches = {
     },
     serialize: (v) => String(v),
     defaultValue: CONCLUSION_LINES_DEFAULT,
+  }),
+  /** 聊天**全局展开级别**（1-4，见 lib/chat-fold 的 TurnLevel）：顶部 `n/4 展开` 按钮。
+   *  它是"我习惯看多细"的长期偏好，故落盘；单轮的手动覆盖不落盘（轮次 id 无限增长）。 */
+  diy_chat_level: field<number>("diy_chat_level", {
+    parse: (raw) => {
+      const v = Number(raw);
+      return isTurnLevel(v) ? v : null;
+    },
+    serialize: (v) => String(v),
+    defaultValue: DEFAULT_TURN_LEVEL,
   }),
   /** 聊天正文渲染模式（true=Markdown 富文本，false=原文） */
   diy_chat_md: field<boolean>("diy_chat_md", {
@@ -373,7 +390,8 @@ const LEGACY_KEYS = [
   "diy_chat_density",
   "diy_chat_compact",
   "diy_chat_compact_lines",
-  // 「正常/大纲」两态 2026-10-11 取消 → 改每轮**级别循环**，模式开关与旧行数 key 一并清
+  // 「正常/大纲」两态 2026-10-11 取消 → 改**展开级别**（全局 `n/4 展开` + 单轮覆盖），
+  // 模式开关与旧行数 key 一并清
   "diy_chat_outline",
   "diy_chat_outline_lines",
   // 试验场早期直写的宽度 key（已收进字段池）

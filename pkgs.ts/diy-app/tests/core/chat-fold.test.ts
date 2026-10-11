@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import {
     DEFAULT_TURN_LEVEL,
+    TURN_DETAIL_LAYER,
     TURN_LEVEL_MAX,
     clampLines,
     cycleTurnLevel,
@@ -18,6 +19,7 @@ import {
     leavesOf,
     liveAreaOf,
     planOfLevel,
+    resolveTurnLevel,
     turnLevelLabel,
 } from "../../src/renderer_solid/lib/chat-fold";
 import type { BlockNode } from "../../src/main/services/local-blocks";
@@ -158,13 +160,10 @@ describe("isUserText / isProc", () => {
     });
 });
 
-describe("foldedItems：1 级（全收缩）连结论也收起", () => {
-    it("conclusion:false → 只留用户发言与 error，末条正文不出现", () => {
-        const t = turn(user("u1"), err("e1"), say("a1"));
-        expect(foldedItems(t, { conclusion: false }).map((x) => x.id)).toEqual(["u1", "e1"]);
-    });
-
-    it("默认（不传）仍是「用户 + error + 末条正文」——2 级沿用同一判据", () => {
+describe("foldedItems：1-2 级的内容（结论恒在其中）", () => {
+    it("1 级压摘要、2 级给全文，**两者看见的条目完全一样**（只差截断）", () => {
+        // 判据只有一条：末条正文恒在。用户 2026-10-11 口径：「1 级也要看得见结论」——
+        // 上一版那个 `{ conclusion: false }`（全收缩）已随"1 级 = 只有一行头"一起取消。
         const t = turn(user("u1"), err("e1"), say("a1"));
         expect(foldedItems(t).map((x) => x.id)).toEqual(["u1", "e1", "a1"]);
     });
@@ -190,39 +189,62 @@ describe("展开级别：循环 1→2→3→4→1", () => {
 
     it("每级各有一句人话（tip/aria 用，不写死在组件里）", () => {
         expect([1, 2, 3, 4].map((l) => turnLevelLabel(l as 1 | 2 | 3 | 4))).toEqual([
-            "全收缩",
-            "结论",
+            "摘要结论",
+            "完整结论",
             "全部正文",
             "逐条过程",
         ]);
     });
+
+    it("第 5 层（单条过程内容）不在这条循环里：MAX 就是 4，循环永远到不了 5", () => {
+        expect(TURN_LEVEL_MAX).toBe(4);
+        expect(TURN_DETAIL_LAYER).toBe(TURN_LEVEL_MAX + 1);
+        let l = DEFAULT_TURN_LEVEL;
+        const touched: number[] = [];
+        for (let i = 0; i < 12; i++) touched.push((l = cycleTurnLevel(l)));
+        expect(Math.max(...touched)).toBe(TURN_LEVEL_MAX);
+    });
+});
+
+describe("resolveTurnLevel：手动点过的轮次优先于全局", () => {
+    it("点过这一轮 → 用它自己那份；没点过 → 跟全局", () => {
+        expect(resolveTurnLevel(4, 1)).toBe(4);
+        expect(resolveTurnLevel(undefined, 1)).toBe(1);
+    });
+
+    it("脏覆盖值不生效（isTurnLevel 是唯一判据），回落全局", () => {
+        for (const bad of [0, 5, "2", null, undefined, NaN]) {
+            expect(resolveTurnLevel(bad, 3), String(bad)).toBe(3);
+        }
+    });
 });
 
 describe("planOfLevel：每一级看得见什么", () => {
-    it("1 级什么都没有（连结论都收）", () => {
-        expect(planOfLevel(1)).toEqual({ conclusion: false, allTexts: false, stripRows: false });
+    it("1 级：结论压成摘要（其余正文与汇总条都不出）", () => {
+        expect(planOfLevel(1)).toEqual({ conclusionClamped: true, allTexts: false, stripRows: false });
     });
-    it("2 级只有结论", () => {
-        expect(planOfLevel(2)).toEqual({ conclusion: true, allTexts: false, stripRows: false });
+    it("2 级：结论给全文（仍不出其余正文）", () => {
+        expect(planOfLevel(2)).toEqual({ conclusionClamped: false, allTexts: false, stripRows: false });
     });
-    it("3 级全部正文 + 图标条（不铺开）", () => {
-        expect(planOfLevel(3)).toEqual({ conclusion: true, allTexts: true, stripRows: false });
+    it("3 级：全部正文 + 汇总条（不铺开）", () => {
+        expect(planOfLevel(3)).toEqual({ conclusionClamped: false, allTexts: true, stripRows: false });
     });
-    it("4 级把图标条铺开成逐条", () => {
-        expect(planOfLevel(4)).toEqual({ conclusion: true, allTexts: true, stripRows: true });
+    it("4 级：把汇总条铺开成逐条", () => {
+        expect(planOfLevel(4)).toEqual({ conclusionClamped: false, allTexts: true, stripRows: true });
     });
-    it("级别单调：往上一级只会多显示，不会少", () => {
+    it("级别单调：往上一级只会多显示（摘要只会变全文），不会少", () => {
         for (let l = 1; l < TURN_LEVEL_MAX; l++) {
             const a = planOfLevel(l as 1 | 2 | 3 | 4);
             const b = planOfLevel((l + 1) as 1 | 2 | 3 | 4);
-            expect(Number(b.conclusion)).toBeGreaterThanOrEqual(Number(a.conclusion));
+            // 摘要 → 全文是"放宽"，所以用"不增"表示不会又截回去
+            expect(Number(b.conclusionClamped)).toBeLessThanOrEqual(Number(a.conclusionClamped));
             expect(Number(b.allTexts)).toBeGreaterThanOrEqual(Number(a.allTexts));
             expect(Number(b.stripRows)).toBeGreaterThanOrEqual(Number(a.stripRows));
         }
     });
 });
 
-describe("clampLines：2 级摘要按行截断", () => {
+describe("clampLines：1 级摘要按行截断", () => {
     it("行数不超上限 → 原样，omitted=0（短结论不该显示「已折叠 0 行」）", () => {
         expect(clampLines("a\nb", 3)).toEqual({ text: "a\nb", omitted: 0 });
     });

@@ -63,7 +63,7 @@ export function leadUsers(turn: BlockNode): BlockNode[] {
 }
 
 /**
- * 折叠态可见项 —— **严格文档序，不重排**。
+ * 折叠态可见项（1-2 级的内容区）—— **严格文档序，不重排**。
  *
  * 历史教训（2026-10-04）：上一版是「全部用户发言 → 实时行 → 最后一条正文」三段拼接。
  * 而插话块在文档序上位于轮次**中间**（用户在第 38 步与第 39 步之间发的），
@@ -73,15 +73,13 @@ export function leadUsers(turn: BlockNode): BlockNode[] {
  *     **但轮首那批由调用方先行渲染**（见 leadUsers），否则会与轮次头顺序打架
  *     —— 组件渲染时须把它们从本列表里剔掉，不剔就是同一句画两遍
  *   · error 块 —— 恒显（一轮报错后折叠起来与成功轮次长得一模一样 = 信息丢失）
- *   · 最后一条助理正文（结论）—— 由 `opts.conclusion` 决定要不要（1 级全收缩时不要）
- *   · 其余（更早的正文、连续过程）一律收起，展开轮次才见
+ *   · 最后一条助理正文（结论）—— **恒显**：1 级压成 N 行摘要、2 级给全文。
+ *     2026-10-11 用户口径：1 级也要看得见结论 —— 「只留一行轮次头、连结论都收」
+ *     那个形态已取消（`opts.conclusion` 随之删除，判据少一条就少一处能错）。
+ *   · 其余（更早的正文、连续过程）一律收起，3 级才见
  */
-export function foldedItems(
-    turn: BlockNode,
-    opts: { conclusion?: boolean } = {},
-): BlockNode[] {
-    const withConclusion = opts.conclusion !== false;
-    const last = withConclusion ? lastAssistantText(turn) : null;
+export function foldedItems(turn: BlockNode): BlockNode[] {
+    const last = lastAssistantText(turn);
     const out: BlockNode[] = [];
     for (const n of leavesOf(turn)) {
         if (isUserText(n) || n.tag === "error" || n === last) out.push(n);
@@ -124,25 +122,45 @@ export function liveAreaOf(turn: BlockNode, isLive: boolean): LiveArea | null {
 // ─── 展开级别（像 JSON 树那样一层一层点开） ──────────────
 
 /**
- * 轮次展开级别（**每轮各自一份**，2026-10-11 用户口径：取消「正常/大纲」两态开关，
- * 改成"点一下展开一层、再点一下再展开一层"的级别循环）。
+ * 轮次展开级别（像 JSON 树那样点一下展开一层、点完最深层回最浅层）。
  *
- *   1 全收缩   —— 只有轮次头（身份/统计那一行）；连结论也收起
- *   2 结论     —— + 末条助理正文（截 N 行、带渐隐与提示行）
- *   3 全部正文 —— + 其余正文与过程图标行（连续已定稿的 think/tool 折成一行图标）
- *   4 逐条过程 —— 图标行铺开成"每事件一行"的单行标题
+ * 2026-10-11 用户口径（第二次修正 —— 第一版把 1 级做成"只有一行轮次头"，错了）：
+ *   1 摘要结论 —— 轮次头 + 末条助理正文，**压成 N 行摘要**（底部渐隐 + "还有 N 行"提示行）
+ *   2 完整结论 —— 轮次头 + 末条正文**全文**（其余正文仍不显示）
+ *   3 全部正文 —— + 其余正文与过程汇总条（连续已定稿的 think/tool 折成一行计数）
+ *   4 逐条过程 —— 汇总条铺开成"每事件一行"的单行标题
  *   点完 4 再点 → 回到 1（循环）
  *
- * **工具/思考的正文（详情层）不在这条循环里**：那是用户自己点开的那一下（见 procOpen），
- * 级别按钮不管它 —— 否则"看某个工具的完整输出"要被级别状态牵着走。
+ * 两个入口、同一套语义：
+ *   · 顶部 `n/4 展开` —— **所有轮次**一起换层（整段调粗细）；
+ *   · 点某一轮的轮次头 —— 只动这一轮（覆盖全局）。
+ * 见 `resolveTurnLevel`。
+ *
+ * **第 5 层 = 单条工具/思考的正文（内容），不在循环里**（`TURN_DETAIL_LAYER`）：
+ * 一轮几十个事件、每个几百行，进循环就"一屏放不下两轮"。所以那份内容只由用户
+ * **点开某一行**自己决定（组件的 procOpen / pin），级别按钮碰不到它。
  */
 export type TurnLevel = 1 | 2 | 3 | 4;
 
 export const TURN_LEVEL_MIN = 1;
 export const TURN_LEVEL_MAX = 4;
 
-/** 默认级别：3（全部正文 + 过程图标行）—— 打开会话就能读到内容，但过程仍收成一行 */
+/** 第 5 层：单条工具/思考的**内容**。刻意不在级别循环里（太庞大），只由用户点那行自己开 */
+export const TURN_DETAIL_LAYER = 5;
+
+/** 默认级别：3（全部正文 + 过程汇总条）—— 打开会话就能读到内容，但过程仍收成一行 */
 export const DEFAULT_TURN_LEVEL: TurnLevel = 3;
+
+/**
+ * 级别来源解析：**手动点过的轮次优先，否则跟全局**。
+ *
+ * 为什么两层：整段调粗细（全局按钮）与"这一轮我要细看"（点轮次头）是两件事，
+ * 用一个标量表达不了 —— 点过的那轮必须钉住，否则顶部一按就把它冲掉了。
+ * override 是脏值（旧 cache / 手改）时回落 fallback，不让界面卡在一个非法层。
+ */
+export function resolveTurnLevel(override: unknown, fallback: TurnLevel): TurnLevel {
+    return isTurnLevel(override) ? override : fallback;
+}
 
 export function isTurnLevel(v: unknown): v is TurnLevel {
     return v === 1 || v === 2 || v === 3 || v === 4;
@@ -155,37 +173,37 @@ export function cycleTurnLevel(level: TurnLevel): TurnLevel {
 
 /** 级别名（给 aria / tip 用；界面上不写死文案，改级别只改这里） */
 export function turnLevelLabel(level: TurnLevel): string {
-    if (level === 1) return "全收缩";
-    if (level === 2) return "结论";
+    if (level === 1) return "摘要结论";
+    if (level === 2) return "完整结论";
     if (level === 3) return "全部正文";
     return "逐条过程";
 }
 
-/** hover / 读屏说明：第几层 + 这一层有什么 + 点一下会到哪 */
+/** hover / 读屏说明：第几层 + 这一层有什么 + 点一下会到哪（顺带点明第 5 层不在循环里） */
 export function turnLevelTip(level: TurnLevel): string {
-    return `展开级别 ${level}/${TURN_LEVEL_MAX}（${turnLevelLabel(level)}）· 点击展开下一层`;
+    return `展开级别 ${level}/${TURN_LEVEL_MAX}（${turnLevelLabel(level)}）· 点击展开下一层（第 ${TURN_DETAIL_LAYER} 层「单条工具/思考的内容」点那一行自己开，不在循环里）`;
 }
 
 /** 每一级"看得见什么"（组件据此渲染，判断只此一处） */
 export interface LevelPlan {
-    /** 结论（末条助理正文）可见 —— 2 级起 */
-    conclusion: boolean;
-    /** 除结论外的正文 + 过程图标行可见 —— 3 级起 */
+    /** 结论（末条助理正文）**压成 N 行摘要** —— 1 级压、2 级起全文 */
+    conclusionClamped: boolean;
+    /** 除结论外的正文 + 过程汇总条可见 —— 3 级起 */
     allTexts: boolean;
-    /** 过程图标行铺开成逐条单行 —— 4 级 */
+    /** 过程汇总条铺开成逐条单行 —— 4 级 */
     stripRows: boolean;
 }
 
 export function planOfLevel(level: TurnLevel): LevelPlan {
     return {
-        conclusion: level >= 2,
+        conclusionClamped: level <= TURN_LEVEL_MIN,
         allTexts: level >= 3,
         stripRows: level >= 4,
     };
 }
 
 /**
- * 按可视行数截断正文（2 级「结论」的摘要态；Markdown 不解析时也走这里）。
+ * 按可视行数截断正文（**1 级「摘要结论」**的摘要态；Markdown 不解析时也走这里）。
  *
  * 只截**行**不截字符：正文里代码块/列表被字符数切开比少几行更难看懂。
  * 返回 omitted（被藏起来的行数）而不是布尔 —— 界面要说出"还有几行"，
