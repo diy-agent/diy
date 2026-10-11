@@ -9,8 +9,24 @@ import { rmSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 
-/** 本测试套件隔离 HOME 的目录名前缀（与 electron-test.makeIsolatedHome 的 mkdtemp 模板一致） */
+/** electron-test 隔离 HOME 的目录名前缀（与 makeIsolatedHome 的 mkdtemp 模板一致） */
 export const TEST_HOME_PREFIX = "diy-app-test-";
+
+/**
+ * setup.ts 为**每个测试文件**分配的隔离 HOME 前缀（`mkdtempSync` 模板见 setup.ts）。
+ *
+ * 为什么两套前缀都要管：两处都往 `$TMPDIR` 里造目录，漏一处就是「测试越跑磁盘越涨」——
+ * 实测 `diy-desktop-test-*` 一天积 1500 个 / 25MB（setupFiles 每个文件跑一次，从不删）。
+ */
+export const SETUP_HOME_PREFIX = "diy-desktop-test-";
+
+/** 本套件在系统临时目录下造的全部隔离 HOME 前缀（remove / sweep 一律按它判归属） */
+export const TEST_HOME_PREFIXES = [TEST_HOME_PREFIX, SETUP_HOME_PREFIX] as const;
+
+/** 目录名是否本套件所造（两道校验之一，见 removeIsolatedHome） */
+function isOursName(name: string): boolean {
+  return TEST_HOME_PREFIXES.some((p) => name.startsWith(p));
+}
 
 /**
  * 删除一个隔离 HOME —— 只删「我们自己造的、位于系统临时目录下」的那种。
@@ -24,7 +40,7 @@ export const TEST_HOME_PREFIX = "diy-app-test-";
  */
 export function removeIsolatedHome(home: string): void {
   const tmp = tmpdir();
-  if (!home.startsWith(tmp + "/") || !basename(home).startsWith(TEST_HOME_PREFIX)) return;
+  if (!home.startsWith(tmp + "/") || !isOursName(basename(home))) return;
   try {
     rmSync(home, { recursive: true, force: true });
   } catch {
@@ -48,7 +64,7 @@ export function sweepStaleTestHomes(ageMs = 24 * 60 * 60 * 1000): number {
   }
   const cutoff = Date.now() - ageMs;
   for (const name of names) {
-    if (!name.startsWith(TEST_HOME_PREFIX)) continue;
+    if (!isOursName(name)) continue;
     const p = join(tmp, name);
     try {
       if (statSync(p).mtimeMs < cutoff) {

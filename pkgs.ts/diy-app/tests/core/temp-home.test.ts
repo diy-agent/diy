@@ -6,7 +6,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, existsSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { TEST_HOME_PREFIX, removeIsolatedHome, sweepStaleTestHomes } from "../temp-home";
+import { SETUP_HOME_PREFIX, TEST_HOME_PREFIX, removeIsolatedHome, sweepStaleTestHomes } from "../temp-home";
 
 let made: string[] = [];
 
@@ -30,6 +30,12 @@ describe("removeIsolatedHome —— 只删该删的", () => {
   it("临时目录下带前缀的目录：删", () => {
     const p = makeHome();
     expect(existsSync(p)).toBe(true);
+    removeIsolatedHome(p);
+    expect(existsSync(p)).toBe(false);
+  });
+
+  it("setup.ts 的前缀（diy-desktop-test-）也认：删", () => {
+    const p = makeHome(SETUP_HOME_PREFIX);
     removeIsolatedHome(p);
     expect(existsSync(p)).toBe(false);
   });
@@ -65,6 +71,14 @@ describe("sweepStaleTestHomes —— 按龄清扫", () => {
     expect(removed).toBeGreaterThanOrEqual(1);
     expect(existsSync(old)).toBe(false);
     expect(existsSync(fresh)).toBe(true);
+  });
+
+  it("setup.ts 前缀的超龄目录也被清（##255 R2-2 的回归点）", () => {
+    const old = makeHome(SETUP_HOME_PREFIX);
+    const past = (Date.now() - 48 * 3600 * 1000) / 1000;
+    utimesSync(old, past, past);
+    sweepStaleTestHomes(24 * 3600 * 1000);
+    expect(existsSync(old)).toBe(false);
   });
 
   it("前缀不匹配的目录不归它管", () => {

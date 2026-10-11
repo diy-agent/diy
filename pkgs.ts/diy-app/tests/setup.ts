@@ -1,16 +1,22 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import { sweepStaleTestHomes } from "./temp-home";
+import { afterAll } from "vitest";
+import { SETUP_HOME_PREFIX, removeIsolatedHome, sweepStaleTestHomes } from "./temp-home";
 
 // ═══════════════════════════════════════════════
-// 🛡️ 安全：每次测试运行分配一次性临时目录
+// 🛡️ 安全：每个测试文件分配一次性临时目录
 //    测试代码读 process.env.DIY_HOME 时指向此处
 //    绝不可能触及 ~/.diy/ 的生产数据
-//    测试目录不删除（防 rm -rf 生产数据事故）
+//    生命周期：本文件测完当场删（下面的 afterAll；removeIsolatedHome 只删系统临时目录下、
+//    带本套件前缀的目录，两道校验缺一不可）。进程被强杀时的残留由 sweepStaleTestHomes 按龄兜底。
+//    历史注释「测试目录不删除」的代价实测很大：一天积 1500 个 / 25MB（见 temp-home.ts）。
 // ═══════════════════════════════════════════════
 
-const testHome = mkdtempSync(join(tmpdir(), "diy-desktop-test-"));
+const testHome = mkdtempSync(join(tmpdir(), SETUP_HOME_PREFIX));
+// 本文件测完即删。为什么用 afterAll 而不是 process.on("exit")：vitest worker 是被 tinypool
+// **SIGTERM 终止**的，'exit' 处理器不会触发（实测注册了也不跑，目录照旧堆积）。
+afterAll(() => removeIsolatedHome(testHome));
 
 // 真实 home 先留档再覆盖：后面若需要"用户真实配置"（如 electron-test 的符号链接源），
 // 必须用这个值——homedir() 在本文件执行后已指向隔离目录。

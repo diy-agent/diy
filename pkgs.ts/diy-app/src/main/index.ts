@@ -66,7 +66,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // build/home），模型于是去敲一个连不上当前生产实例的入口（##255）。
 // 缺失时按**数据根**推导：生产根 → "diy"；隔离/开发/测试 → <repo>/diy.sh（见 cliEntryForRepo）。
 // 打包后的 app 不自带 CLI 入口（asar 内不可执行），生产用全局安装的 diy（PATH 解析）。
-const home = readRuntimeConfig().home;
+const cfg = readRuntimeConfig();
+const home = cfg.home;
 if (app.isPackaged) {
   process.env["DIY_CLI"] ||= "diy";
   console.log('[runtime] 打包模式未注入 DIY_CLI：显式回落为 PATH 上的 "diy"');
@@ -74,7 +75,6 @@ if (app.isPackaged) {
   const repoRoot = findRepoRoot(__dirname);
   if (repoRoot) process.env["DIY_CLI"] ||= cliEntryForRepo(repoRoot, home);
 }
-const cfg = readRuntimeConfig();
 // dev GUI 加载 URL 由入口注入（electron-dev.mts），缺省 → loadFile 编译产物
 const devUrlArg = cfg.devServerUrl ?? "";
 const isDev = !!devUrlArg;

@@ -44,12 +44,16 @@ fi
 # `./diy.sh project remove <id>` 就会操作生产数据（实测：removeProject 会按 meta.yaml
 # 的 path 去摘目标仓库的 diy.yaml 名片，那条路径是真实的 ~/git/...）。
 # 因此：继承到的 DIY_HOME 若指向生产数据根（$HOME/.diy），默认拒绝，改用本 worktree 的。
-# 生产根的定义在 TS 侧只有一处（core/instance-identity.ts::prodDataHome，用**真实**家目录）；
-# bash 取不到 getpwuid，等价地用 $HOME/.diy —— 用户 shell 里两者恒等（测试会改写 $HOME，但它走的是
-# 隔离 DIY_HOME，不落这条判据）。
+# 生产根的定义在 TS 侧只有一处（core/instance-identity.ts::prodDataHome，用**真实**家目录，且
+# resolve() 归一写法差异）；bash 取不到 getpwuid，只能等价地用 $HOME/.diy —— 前提是写法规范。
+# 这里只额外归一**尾斜杠**（`~/.diy/` 与 `~/.diy` 同一个根）；`..` / 相对路径这类写法不归一是
+# 已知缺口（不是遗漏：bash 侧只是「一眼能认出生产根」的防呆，真正的判据在 TS 侧 resolve 归一）。
 # 测试不受影响：它们显式传 DIY_HOME=<临时目录>，不等于 $HOME/.diy，会正常透传。
 # 确实需要指向生产数据时显式 opt-in：DIY_ALLOW_PROD_HOME=1 ./diy.sh ...
-if [[ -n "${DIY_HOME:-}" && "${DIY_HOME}" == "${HOME}/.diy" && "${DIY_ALLOW_PROD_HOME:-}" != "1" ]]; then
+_prod_home_norm="${HOME%/}/.diy"
+_home_check="${DIY_HOME:-}"
+while [[ "$_home_check" == */ && "$_home_check" != "/" ]]; do _home_check="${_home_check%/}"; done
+if [[ -n "$_home_check" && "$_home_check" == "$_prod_home_norm" && "${DIY_ALLOW_PROD_HOME:-}" != "1" ]]; then
   # 变量一律用 ${} 界定：紧跟多字节字符时，非 UTF-8 locale 下 bash 会把字符首字节
   # 并入变量名，set -u 下报 "unbound variable"（踩过）
   echo "[diy.sh] 警告: 忽略继承的生产数据目录 DIY_HOME=${DIY_HOME}, 改用本 worktree 的 build/${DIY_VARIANT}/home" >&2
@@ -58,7 +62,7 @@ if [[ -n "${DIY_HOME:-}" && "${DIY_HOME}" == "${HOME}/.diy" && "${DIY_ALLOW_PROD
 fi
 
 # 数据根：默认「本 worktree × 变体」；上面的生产根已被拒，其余继承值照旧透传
-# （判据与 TS 侧同源：core/instance-identity.ts::isProdDataHome + core/dev-home.ts::resolveDevHome；
+# （TS 侧对应：core/dev-home.ts::resolveDevHome + core/instance-identity.ts 判据；
 #   bash 无法 import TS，故此处是 shell 侧唯一的默认值定义处 —— 改这里要同步改那两个）。
 export DIY_HOME="${DIY_HOME:-$SCRIPT_DIR/build/${DIY_VARIANT}/home}"
 mkdir -p "$DIY_HOME"
