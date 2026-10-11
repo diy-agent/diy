@@ -16,6 +16,16 @@
 // 于是测试永远绿 —— 这类假绿正是要避免的。
 import WebSocket from "ws";
 import { waitUntil } from "./wait";
+import { textHit, textHitAny } from "./ui-text";
+
+/**
+ * 点击命中校验的最长等待（ms）：坐标被浮层占着就重新定位/重采样，最多等这么久。
+ *
+ * 必须覆盖**成功 toast 的停留期**（见 `pointHitsText` 的说明）：按**墙钟**截止，不是按轮数 ——
+ * 每轮含一次 CDP eval（+ `ui inspect` spawn），单轮成本 50~160ms，按固定轮数写会在负载高时
+ * 放大成十几秒（实测 120 轮 ≈ 19s，注释却写「~6s」）。
+ */
+const OCCLUSION_WAIT_MS = 6000;
 
 interface CdpTarget {
   id: string;
@@ -308,6 +318,60 @@ export async function makeUiDriver(
     return point;
   };
 
+  /**
+   * 坐标处的最上层元素是不是目标（或其内部后代）？
+   *
+   * 为什么点击前要验：`sampleStablePoint` 只保证「坐标连续两次一致」——而路由切换 /
+   * 重渲染会让节点**在同一坐标处被替换**，或浮层短暂盖住它。此时原生事件的命中测试打到的
+   * 不是目标元素，click 会静默丢失（页面毫无反应、也没有报错）。
+   * 实测：ui-find「点顶栏 🔍 打开查找条」在负载高时就这样挂到 waitUntil 上限、靠 retry 才过
+   * （##255 §1）。
+   */
+  const pointHits = (selector: string, nth: number, p: { x: number; y: number }) =>
+    cdp.eval<boolean>(`(() => {
+      const el = document.querySelectorAll(${JSON.stringify(selector)})[${nth}];
+      if (!el) return false;
+      const hit = document.elementFromPoint(${Math.round(p.x)}, ${Math.round(p.y)});
+      return !!hit && (hit === el || el.contains(hit));
+    })()`);
+
+  /**
+   * 坐标处是否命中「文本匹配」的元素 —— `ui.click`（a11y 树定位）的遮挡校验用。
+   *
+   * 为什么 a11y 路径也要校验：成功 toast（「任务已创建 ✕」/「已压缩…」）浮在**右上角**，
+   * 实测正好盖住右上区域的表头（`ui.task-list` 的「编号」列）与抽屉右上角的视图切换按钮
+   * （`ui-compact` 的 `[data-drawer-tab=…]`）—— `mousePressed/Released` 落到 toast 上，
+   * 点击**静默无效**（不抛错），表现为「点了没反应」。
+   *
+   * 文本匹配从宽：命中元素文本与期望文本**互含**即算命中（a11y 名与 DOM 文本常有细微差异，
+   * 如箭头字符）；加长度上限，避免命中的是 body / 整页容器（它的文本必然包含 w）造成误判。
+   */
+  const pointHitsText = (p: { x: number; y: number }, want: string) =>
+    cdp.eval<boolean | string>(`(() => {
+      const hit = document.elementFromPoint(${Math.round(p.x)}, ${Math.round(p.y)});
+      if (!hit) return "该坐标处没有任何元素";
+      // 比较逻辑由纯函数注入（tests/ui-text.ts）：放**真代码**里，避开模板字面量把
+      // 「空白正则转义」吃成字母 s 的坑 —— 曾因此对含空格文本恒判未命中（##255 R2-1）。
+      // 两个函数成对注入（textHitAny 引用 textHit，见 ui-text 的注释）。
+      const textHit = ${textHit.toString()};
+      const textHitAny = ${textHitAny.toString()};
+      // 候选串 = 自身文本 + （自己及祖先的）**显式名字** aria-label / title。
+      // 为什么必须往上找：elementFromPoint 给的是**最内层**元素，而 a11y 名常挂在祖先按钮上 ——
+      // 「⋯」按钮的 DOM 文本只有图标字符（实测 elementFromPoint 命中 <span>"⋯"），名字在
+      // 父级 <button aria-label="更多操作"> 上；只看命中元素自身会恒判未命中，每次点击白等满
+      // 墙钟预算（实测 steer-ui 里 2 次 = 12s，##255 R4-1）。向上最多 5 层、到 body 止。
+      // 祖先前缀只取**属性名**（不取 innerText）：容器文本会撞 textHit 的 200 字上限误判。
+      const cands = [hit.innerText ?? hit.textContent];
+      for (let el = hit, depth = 0; el && el !== document.body && depth < 5; el = el.parentElement, depth++) {
+        cands.push(el.getAttribute("aria-label"), el.getAttribute("title"));
+      }
+      if (textHitAny(cands, ${JSON.stringify(want)})) return true;
+      // 未命中时回一行**诊断摘要**（实际命中了谁）—— 早先只打「（谓词）」查不动问题。
+      const named = cands.slice(1).find((c) => c);
+      return "<" + hit.tagName.toLowerCase() + '> "' + ((cands[0] ?? "") + "").slice(0, 20) + '"' +
+        (named ? ' 祖先名 "' + named + '"' : "");
+    })()`);
+
   /** 取树并按谓词定位（每次现取：上一步操作会让 rect 变） */
   const locate = async (target: TextMatch) => {
     const match =
@@ -328,7 +392,25 @@ export async function makeUiDriver(
 
   return {
     async click(text) {
-      const target = await locate(text);
+      let target = await locate(text);
+      // 与 clickSelector 同一套命中校验（见 pointHitsText 的说明）：坐标被浮层占着就重定位，
+      // 按墙钟等待 OCCLUSION_WAIT_MS（覆盖成功 toast 的停留期）；仍不命中则按原坐标点击 —— 沿用旧行为，
+      // 只打一行日志，不把测试变成硬失败。
+      const deadline = Date.now() + OCCLUSION_WAIT_MS;
+      for (;;) {
+        const hit = await pointHitsText(target, target.text);
+        if (hit === true) break;
+        if (Date.now() >= deadline) {
+          console.error(
+            `[ui-drive] 点击目标持续被遮挡（~${OCCLUSION_WAIT_MS / 1000}s），按原坐标点击：` +
+              `${typeof text === "string" ? `"${text}"` : "（谓词）"}` +
+              `；期望文本 "${target.text}"，实际命中 ${hit}`,
+          );
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 50));
+        target = await locate(text);
+      }
       await mouse("mousePressed", target);
       await mouse("mouseReleased", target);
       // 让 Solid 的响应式更新走完（点击 → state 变 → DOM 重渲染）
@@ -350,7 +432,24 @@ export async function makeUiDriver(
     },
 
     async clickSelector(selector, opts = {}) {
-      const point = await sampleStablePoint(selector, opts.nth ?? 0);
+      const nth = opts.nth ?? 0;
+      let point = await sampleStablePoint(selector, nth);
+      // 命中校验：坐标被别的元素占着（节点刚被替换 / 浮层短暂遮挡）就重采样等它归位。
+      // 按墙钟等待 OCCLUSION_WAIT_MS：必须覆盖**成功 toast 的停留期** —— 实测「已压缩…」toast 浮在右上角，与抽屉
+      // 右上角的视图切换按钮（`[data-drawer-tab=…]`）**坐标完全重合**，早先 1.5s 的窗口等不到它淡出，
+      // 点击就落到 toast 上（ui-compact「打开抽屉 → 分表」首跑必红、靠 retry 蒙过的根因）。
+      // 仍是有界等待：确实被有意覆盖的元素沿用旧行为按原坐标点击，只打一行日志，不把测试
+      // 变成硬失败。
+      const deadline = Date.now() + OCCLUSION_WAIT_MS;
+      for (;;) {
+        if (await pointHits(selector, nth, point)) break;
+        if (Date.now() >= deadline) {
+          console.error(`[ui-drive] 点击目标持续被遮挡（~${OCCLUSION_WAIT_MS / 1000}s），按原坐标点击：${selector}[${nth}]`);
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 50));
+        point = await sampleStablePoint(selector, nth);
+      }
       await mouse("mousePressed", point);
       await mouse("mouseReleased", point);
       await new Promise((r) => setTimeout(r, 120));

@@ -2,7 +2,7 @@
 // 🎯 初始种子的契约：幂等、只配 opencode-go、人物模型 = 0@opencode-go/mimo-v2.6-flash、
 // 示例项目/任务形态完整；触发开关只对 preview/lab 缺省开。
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,16 @@ import { autoSeedEnabled, SEED_PERSONA_MODEL, seedHome } from "../../src/main/co
 import { getTask } from "../../src/main/core/state";
 
 const ENV = { OPENCODE_API_KEY: "sk-test-opencode" };
+
+// 「生产根」现在是**不可伪造**的（instance-identity::prodDataHome 用真实家目录，不读 $HOME）。
+// 要测 seed 的「撞上生产根 → 一个字节都不写」这条护栏，又不冒写坏真实 ~/.diy 的风险，
+// 就把判据 mock 成一个临时目录下的假生产根：护栏万一失效，写的也只是 tmp。
+const FAKE_PROD_HOME = vi.hoisted(
+    () => `${process.env["TMPDIR"] ?? "/tmp"}/diy-t255-fake-prod-home/.diy`,
+);
+vi.mock("../../src/main/core/instance-identity", () => ({
+    isProdDataHome: (home: string) => home === FAKE_PROD_HOME,
+}));
 
 describe("autoSeedEnabled", () => {
     it("缺省：只 preview/lab 开，prod/test 关", () => {
@@ -71,21 +81,12 @@ describe("seedHome", () => {
         );
     });
 
-    it("生产数据根永不种入（即使被显式指到 ~/.diy）", () => {
-        // HOME 指到临时目录：万一护栏失效，也只会写进 tmp（绝不碰真实 ~/.diy）
-        const savedHomeEnv = process.env["HOME"];
-        process.env["HOME"] = home;
-        try {
-            const prodHome = join(home, ".diy");
-            const r = seedHome(prodHome, ENV);
-            expect(r.skipped).toContain("生产数据根");
-            expect(r.project).toBeNull();
-            expect(r.tasks).toEqual([]);
-            expect(existsSync(join(prodHome, "model.yaml"))).toBe(false); // 一个字节都没写
-        } finally {
-            if (savedHomeEnv === undefined) delete process.env["HOME"];
-            else process.env["HOME"] = savedHomeEnv;
-        }
+    it("生产数据根永不种入（即使被显式指到生产根）", () => {
+        const r = seedHome(FAKE_PROD_HOME, ENV); // 假生产根（见文件头 mock）
+        expect(r.skipped).toContain("生产数据根");
+        expect(r.project).toBeNull();
+        expect(r.tasks).toEqual([]);
+        expect(existsSync(join(FAKE_PROD_HOME, "model.yaml"))).toBe(false); // 一个字节都没写
     });
 
     it("自动种入只跑一次：删掉的 provider 不会被种回来", () => {

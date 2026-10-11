@@ -583,13 +583,19 @@ describe("agent.local — 压缩 compact（无网络）", () => {
 
     it("compactPreview 只算不写：after<before 且不产生 compact 账本文件", async () => {
         const uri = await seededSession("压缩预览");
+        const dir = join(fx.HOME, "local");
+        const compactCount = () =>
+            readdirSync(dir).filter((f) => f.startsWith(localKey(uri)) && f.endsWith(".compact.jsonl")).length;
+        // 基线而不是"目录里没有"：**同文件的其它用例会真落账**（compact/undoCompact…），
+        // 而 `project remove` 之后项目 id 会被**复用**（新项目又拿到 projects/1）——
+        // 于是同一个 key 的账本文件可能已经存在。本用例断言的是「**预览**不落账」，
+        // 看**增量**才对；断言"目录里没有"会把同文件其它用例的合法落账算成预览的锅。
+        const baseline = compactCount();
         const pv = (await fx.sh.getJson(
             `./diy.sh agent local compactPreview ${uri} --budget-bytes 0`,
         )).data as { before: { bytes: number }; after: { bytes: number } };
         expect(pv.after.bytes).toBeLessThan(pv.before.bytes);
-        const dir = join(fx.HOME, "local");
-        const hasCompact = readdirSync(dir).some((f) => f.startsWith(localKey(uri)) && f.endsWith(".compact.jsonl"));
-        expect(hasCompact).toBe(false); // 预览不落账
+        expect(compactCount()).toBe(baseline); // 预览不落账（不新增账本文件）
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });
 
