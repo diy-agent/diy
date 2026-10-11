@@ -61,7 +61,7 @@ export function turnTimeOf(turnId: string | undefined | null): Date | null {
  * "这两个数为什么不一样"，而省下的几个字符不值这个代价（##257 review1-3）。
  *
  * ⚠️ 它是**轮**的事实（turnId 就是该轮起点）。一轮里所有块的时间戳完全相同，所以对话流里
- * 一轮只显示一次（挂在该轮首个消息块上，见 `LocalChatPage.TurnBlock.timeAnchorId`）——
+ * 一轮只显示一次（挂在该轮首个消息块上，见 `LocalChatPage.TurnView.timeAnchorId`）——
  * 按块渲染会让同一轮把同一个数印四五遍（##257 review2-3）。
  */
 export function fmtTurnStamp(turnId: string | undefined | null): string | null {

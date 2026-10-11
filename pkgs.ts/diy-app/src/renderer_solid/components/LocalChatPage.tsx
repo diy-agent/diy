@@ -423,7 +423,7 @@ function AssistantByline(props: { turnModel?: unknown; turnId: string; showTime:
     // 该轮的时刻：真源 = turnId 内嵌毫秒（协议无 ts）。解析不出的旧 id → 不显示，不编时间。
     // 且**一轮只显示一次**：时刻是「轮」的事实（turnId = 该轮起点），而署名行是按**块**渲染的
     // —— 多步会话一轮有好几条，每条都挂时刻等于同一轮说四五遍（review2-3）。
-    // 所以由 `showTime`（该块是不是本轮的「时刻挂载点」，见 TurnBlock）决定谁挂。
+    // 所以由 `showTime`（该块是不是本轮的「时刻挂载点」，见 TurnView）决定谁挂。
     const stamp = () => (props.showTime ? fmtTurnStamp(props.turnId) : null);
     const id = () => taskStore.selectedTask?.persona ?? personaStore.idForTask();
     // defOfLive：缓存里没有该 id 时补拉一次（CLI 新建/改名后 renderer 的清单会陈旧）
@@ -464,7 +464,7 @@ function AssistantByline(props: { turnModel?: unknown; turnId: string; showTime:
             <Show when={info().inferred}>
                 <span class="shrink-0 opacity-40">（当时人物未知）</span>
             </Show>
-            {/* 该轮时刻：只在**本块是本轮的时刻挂载点**时才渲染（`showTime`，见 TurnBlock）。
+            {/* 该轮时刻：只在**本块是本轮的时刻挂载点**时才渲染（`showTime`，见 TurnView）。
                 带日期（MM-DD HH:MM）而不是只写 HH:MM —— 会话天然跨天，只写时刻时
                 "昨天的 14:07"与"刚才的 14:07"长得一样，回头定位就没了意义。
                 hover 出精确到秒的完整时间（秒是噪音，只在不占版面时才给）。
@@ -485,7 +485,7 @@ function LeafView(props: {
     turnModel?: unknown;
     /** 本轮 turn 的 id（时间真源：`t` + 毫秒） */
     turnId: string;
-    /** 本块是不是**本轮时刻的挂载点**（该轮首个文本块；一轮只有一块为真，见 TurnBlock） */
+    /** 本块是不是**本轮时刻的挂载点**（该轮首个文本块；一轮只有一块为真，见 TurnView） */
     isTimeAnchor: boolean;
     density: Density;
     pin: Record<string, boolean>;
@@ -672,7 +672,7 @@ function TurnView(props: {
             <Show when={str(t.attrs.notice)}>
                 <div class="text-body text-warning">⚠ {str(t.attrs.notice)}</div>
             </Show>
-            {/* L1 turn 底 bar：时刻 · 总token累计 · $（实时，来自 main 每步 patch 的块属性）。
+            {/* L1 turn 底 bar：总token累计 · $（实时，来自 main 每步 patch 的块属性）。
                 hover 出 L2 汇总卡、点击开 L3 明细抽屉 —— 两个状态（hover/detail）都存
                 页面级：块树每帧重建，组件内 signal 会被清掉（D3 的"点开又自动合上"）。 */}
             <Show when={t.attrs.usage}>

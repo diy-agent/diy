@@ -378,7 +378,7 @@ describe("R6 对话消息显示时间：真源 = turnId 内嵌毫秒", () => {
             { label: "用量条上屏" },
         );
         expect(await ui.query<string>(`document.querySelector('${bar}')?.textContent ?? ''`)).not.toMatch(
-            /\\d\\d-\\d\\d \\d\\d:\\d\\d/,
+            /\d\d-\d\d \d\d:\d\d/,
         );
 
         // 位置：user 那一刻在气泡**上方**、与气泡**右缘对齐**（每条消息块以一行 meta 开头，时间在最右）。
