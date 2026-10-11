@@ -9,6 +9,7 @@ import {
     TURN_DETAIL_LAYER,
     TURN_LEVEL_MAX,
     clampLines,
+    contentItems,
     cycleTurnLevel,
     foldedItems,
     isProc,
@@ -17,9 +18,9 @@ import {
     lastAssistantText,
     leadUsers,
     leavesOf,
+    levelOfTurn,
     liveAreaOf,
     planOfLevel,
-    resolveTurnLevel,
     turnLevelLabel,
 } from "../../src/renderer_solid/lib/chat-fold";
 import type { BlockNode } from "../../src/main/services/local-blocks";
@@ -191,8 +192,8 @@ describe("展开级别：循环 1→2→3→4→1", () => {
         expect([1, 2, 3, 4].map((l) => turnLevelLabel(l as 1 | 2 | 3 | 4))).toEqual([
             "摘要结论",
             "完整结论",
-            "全部正文",
-            "逐条过程",
+            "紧凑过程",
+            "全部展开",
         ]);
     });
 
@@ -206,31 +207,36 @@ describe("展开级别：循环 1→2→3→4→1", () => {
     });
 });
 
-describe("resolveTurnLevel：手动点过的轮次优先于全局", () => {
-    it("点过这一轮 → 用它自己那份；没点过 → 跟全局", () => {
-        expect(resolveTurnLevel(4, 1)).toBe(4);
-        expect(resolveTurnLevel(undefined, 1)).toBe(1);
+describe("levelOfTurn：单轮只有「收拢 / 展开」两态（循环归顶部按钮）", () => {
+    it("没动过 → 完全跟全局（全局按成 1 = 整体全收缩，不能被单轮逻辑顶回 2）", () => {
+        for (const g of [1, 2, 3, 4] as const) expect(levelOfTurn(undefined, g)).toBe(g);
     });
 
-    it("脏覆盖值不生效（isTurnLevel 是唯一判据），回落全局", () => {
-        for (const bad of [0, 5, "2", null, undefined, NaN]) {
-            expect(resolveTurnLevel(bad, 3), String(bad)).toBe(3);
-        }
+    it("收拢 = 1；展开 = 跟随全局", () => {
+        expect(levelOfTurn(true, 3)).toBe(1);
+        expect(levelOfTurn(false, 3)).toBe(3);
+        expect(levelOfTurn(false, 4)).toBe(4);
+        expect(levelOfTurn(false, 2)).toBe(2);
+    });
+
+    it("全局为 1 时「展开」给到 2：点了必须看得见变化（否则像坏了）", () => {
+        expect(levelOfTurn(true, 1)).toBe(1);
+        expect(levelOfTurn(false, 1)).toBe(2);
     });
 });
 
 describe("planOfLevel：每一级看得见什么", () => {
-    it("1 级：结论压成摘要（其余正文与汇总条都不出）", () => {
-        expect(planOfLevel(1)).toEqual({ conclusionClamped: true, allTexts: false, stripRows: false });
+    it("1 级：结论压成摘要（中间区不出）", () => {
+        expect(planOfLevel(1)).toEqual({ conclusionClamped: true, mid: false, midExpanded: false });
     });
-    it("2 级：结论给全文（仍不出其余正文）", () => {
-        expect(planOfLevel(2)).toEqual({ conclusionClamped: false, allTexts: false, stripRows: false });
+    it("2 级：结论给全文（中间区仍不出）", () => {
+        expect(planOfLevel(2)).toEqual({ conclusionClamped: false, mid: false, midExpanded: false });
     });
-    it("3 级：全部正文 + 汇总条（不铺开）", () => {
-        expect(planOfLevel(3)).toEqual({ conclusionClamped: false, allTexts: true, stripRows: false });
+    it("3 级：中间区可见（紧凑行，不铺开）", () => {
+        expect(planOfLevel(3)).toEqual({ conclusionClamped: false, mid: true, midExpanded: false });
     });
-    it("4 级：把汇总条铺开成逐条", () => {
-        expect(planOfLevel(4)).toEqual({ conclusionClamped: false, allTexts: true, stripRows: true });
+    it("4 级：紧凑行铺开成逐条", () => {
+        expect(planOfLevel(4)).toEqual({ conclusionClamped: false, mid: true, midExpanded: true });
     });
     it("级别单调：往上一级只会多显示（摘要只会变全文），不会少", () => {
         for (let l = 1; l < TURN_LEVEL_MAX; l++) {
@@ -238,9 +244,64 @@ describe("planOfLevel：每一级看得见什么", () => {
             const b = planOfLevel((l + 1) as 1 | 2 | 3 | 4);
             // 摘要 → 全文是"放宽"，所以用"不增"表示不会又截回去
             expect(Number(b.conclusionClamped)).toBeLessThanOrEqual(Number(a.conclusionClamped));
-            expect(Number(b.allTexts)).toBeGreaterThanOrEqual(Number(a.allTexts));
-            expect(Number(b.stripRows)).toBeGreaterThanOrEqual(Number(a.stripRows));
+            expect(Number(b.mid)).toBeGreaterThanOrEqual(Number(a.mid));
+            expect(Number(b.midExpanded)).toBeGreaterThanOrEqual(Number(a.midExpanded));
         }
+    });
+});
+
+describe("contentItems：3 级起的中间区（过程 + 收束它的正文 = 一行）", () => {
+    /** 行摘要视图：正文 id + 过程 id（避免拿对象比引用）。
+     *  parts **不含那条正文** —— 正文由组件按原样渲染，混进 parts 会被当"未知块"再画一遍 */
+    const view = (its: ReturnType<typeof contentItems>) =>
+        its.map((i) =>
+            i.kind === "row"
+                ? { row: i.key, text: i.text?.id ?? null, parts: i.parts.map((n) => n.id) }
+                : { kind: i.kind, id: i.node.id },
+        );
+
+    it("攒着的过程与收束它的那条正文合成一行；只有新正文才另起一行", () => {
+        // 思考+工具 → 正文① → 思考+工具 → 正文②（②是结论，单独成项）
+        const t = turn(think("k1"), tool("x1"), say("a1"), think("k2"), tool("x2"), say("a2"));
+        expect(view(contentItems(t))).toEqual([
+            { row: "k1", text: "a1", parts: ["k1", "x1"] },
+            { row: "k2", text: null, parts: ["k2", "x2"] },
+            { kind: "conclusion", id: "a2" },
+        ]);
+    });
+
+    it("结论恒为单独成项（它是答案：2 级起就全文可见，不能被压进紧凑行）", () => {
+        const its = contentItems(turn(think("k1"), say("a1")));
+        expect(its[its.length - 1]).toMatchObject({ kind: "conclusion", node: { id: "a1" } });
+    });
+
+    it("用户插话与 error 就地单独成项，并切断行（不并进紧凑行）", () => {
+        const t = turn(user("u1"), think("k1"), say("a1"), user("u2"), err("e1"), say("a9"));
+        expect(view(contentItems(t))).toEqual([
+            { row: "k1", text: "a1", parts: ["k1"] },
+            { kind: "user", id: "u2" },
+            { kind: "error", id: "e1" },
+            { kind: "conclusion", id: "a9" },
+        ]);
+    });
+
+    it("轮首用户发言交给 leadUsers 单独画（此处排除，避免同一句画两遍）", () => {
+        const t = turn(user("u1"), say("a1"));
+        expect(view(contentItems(t))).toEqual([{ kind: "conclusion", id: "a1" }]);
+    });
+
+    it("skip 掉实时区那个节点：它画在轮尾，留在文档序里就是同一块画两遍", () => {
+        const t = turn(think("k1"), tool("x1", false), say("a1"));
+        const live = leavesOf(t)[1];
+        expect(view(contentItems(t, (n) => n === live))).toEqual([
+            { row: "k1", text: null, parts: ["k1"] },
+            { kind: "conclusion", id: "a1" },
+        ]);
+    });
+
+    it("行的 key = 该行首个叶子 id（供 <For> / pin 复用，跨帧稳定）", () => {
+        const t = turn(think("k1"), tool("x1"), say("a1"), say("a2"));
+        expect(contentItems(t)[0]!.key).toBe("k1");
     });
 });
 

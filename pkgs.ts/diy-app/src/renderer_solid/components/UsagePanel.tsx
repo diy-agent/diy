@@ -2,7 +2,7 @@
  * UsagePanel — 用量可见性的**三级收纳**（契约见任务 211 §六b；交互形态 2026-10-03 与用户对齐）：
  *
  *   L1 实时常显（页面只留一行数，大表一律藏进 L3）：
- *     · TurnUsageBar     —— turn 底 bar：`YYYY-MM-DD HH:MM:SS · N tok · $X`（行是 flex 容器，后续可挂别的按钮）
+ *     · TurnUsageBar     —— turn 尾一行：`时刻（左，纯文本） … N tok · $X（右，按钮）`（时刻与用量分开，见其头注）
  *     · SessionUsageChip —— 发送区人物右侧：会话累计 `N tok · $X`
  *   L2 hover 汇总卡：纵向 8 项（token 桶加总 + 输入$/输出$/合计$），
  *     卡顶 viewbar 右侧「明细」→ L3
@@ -1147,11 +1147,14 @@ export function UsageHoverCard(props: {
 // ─── L1① turn 底 bar ────────────────────────────────
 
 /**
- * turn 底 bar：`YYYY-MM-DD HH:MM:SS · N tok · $X` —— 只放时间、总 token 合计、金额。
+ * turn 尾一行：左边**时刻**（`YYYY-MM-DD HH:MM:SS`，纯文本、不可点），右边**用量按钮**
+ * （`N tok · $X`，hover 出 L2 卡、点击开 L3 抽屉；卡里的「明细」是同一动作的第二个入口）。
+ *
+ * 时刻为什么**独立且靠左**（2026-10-11 用户口径）：它与用量本来是同一个按钮，
+ * 于是整行都带 hover/点击，而滚屏阅读时视线与指针多半落在左侧 —— 一路读下来不断误触。
+ * 时刻本身也没有"更多信息"可给，不该可点；用量（真要细看的东西）靠右，误触面小。
  * 时间用**日期+时间到秒**（2026-10-04 用户定）：轮次末尾要能定位"这话什么时候说的"，
  * 只给时分在同一天多轮、或跨天回看时无法定位。旧记录轮次也照样出时间（见下）。
- * 三数同为**各步累计**口径（可互算）；窗口% 不上 bar（不同口径不同框，防相除误读）。
- * hover 出 L2 卡；点击直接开 L3 抽屉（卡里的「明细」是同一动作的第二个入口）。
  */
 export function TurnUsageBar(props: {
     turnId: string;
@@ -1161,45 +1164,52 @@ export function TurnUsageBar(props: {
     onHoverEnd: () => void;
     onDetail: () => void;
 }) {
+    // 时间与记录格式无关（turnId 里就带着开始时刻）—— 旧记录轮次同样要能定位时间
+    const clock = fmtTurnClock(props.turnId);
+    /** 时刻：纯文本、无 hover、无点击（它没有"更多信息"可给，靠左却最容易误触） */
+    const Clock = () => (
+        <Show when={clock != null}>
+            <span class="shrink-0 tabular-nums text-caption opacity-50">{clock}</span>
+        </Show>
+    );
     /** 旧记录：无四桶无金额 → 降级成一行字，不进卡不进抽屉（拆不出东西） */
     if (isLegacyUsage(props.usage)) {
         const l = props.usage as { in?: number; out?: number; total?: number };
-        // 时间与记录格式无关（turnId 里就带着开始时刻）—— 旧记录轮次同样要能定位时间
-        const c = fmtTurnClock(props.turnId);
         return (
-            <div class="text-body opacity-60">
-                <Show when={c != null}>
-                    <span class="mr-1 tabular-nums">{c}</span>
-                </Show>
-                tokens ↑{fmtInt(l.in ?? 0)} ↓{fmtInt(l.out ?? 0)}（Σ{fmtInt(l.total ?? 0)}）
-                <span class="ml-1">（旧记录：无四桶/金额）</span>
+            <div class="flex items-center gap-2 text-body">
+                <Clock />
+                <span class="flex-1" />
+                <span class="opacity-60">
+                    tokens ↑{fmtInt(l.in ?? 0)} ↓{fmtInt(l.out ?? 0)}（Σ{fmtInt(l.total ?? 0)}）
+                    <span class="ml-1">（旧记录：无四桶/金额）</span>
+                </span>
             </div>
         );
     }
     const p = () => props.usage as TurnUsagePatch;
-    const clock = fmtTurnClock(props.turnId);
     return (
-        <button
-            type="button"
-            class="flex w-max cursor-pointer select-none items-center gap-x-3 rounded px-1 text-body opacity-70 transition-opacity hover:bg-base-200 hover:opacity-100"
-            aria-haspopup="dialog"
-            aria-expanded={props.hover}
-            aria-label="本轮用量（悬停看汇总，点击开逐步明细）"
-            title="各轮/各步累计（重发成本口径，非窗口占用）。悬停看汇总，点击开逐步明细"
-            onPointerEnter={(e) => props.onHover(e.currentTarget)}
-            onPointerLeave={(e) => {
-                // 元素被块树重建移除时浏览器也可能派发 leave —— 那不是"移出"，忽略
-                if (!e.currentTarget.isConnected) return;
-                props.onHoverEnd();
-            }}
-            onClick={props.onDetail}
-        >
-            <Show when={clock != null}>
-                <span class="tabular-nums opacity-70">{clock}</span>
-            </Show>
-            <span class="tabular-nums">{fmtTokens(p().total)} tok</span>
-            <span class="tabular-nums">{p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}</span>
-        </button>
+        <div class="flex items-center gap-2">
+            <Clock />
+            <span class="flex-1" />
+            <button
+                type="button"
+                class="flex w-max cursor-pointer select-none items-center gap-x-3 rounded px-1 text-body opacity-70 transition-opacity hover:bg-base-200 hover:opacity-100"
+                aria-haspopup="dialog"
+                aria-expanded={props.hover}
+                aria-label="本轮用量（悬停看汇总，点击开逐步明细）"
+                title="各轮/各步累计（重发成本口径，非窗口占用）。悬停看汇总，点击开逐步明细"
+                onPointerEnter={(e) => props.onHover(e.currentTarget)}
+                onPointerLeave={(e) => {
+                    // 元素被块树重建移除时浏览器也可能派发 leave —— 那不是"移出"，忽略
+                    if (!e.currentTarget.isConnected) return;
+                    props.onHoverEnd();
+                }}
+                onClick={props.onDetail}
+            >
+                <span class="tabular-nums">{fmtTokens(p().total)} tok</span>
+                <span class="tabular-nums">{p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}</span>
+            </button>
+        </div>
     );
 }
 
