@@ -39,9 +39,10 @@ import { notificationStore } from "../store/notificationStore";
 import type { ContextLab, PlaceCandidate } from "../../shared/context/preview";
 import { requestYaml } from "../../shared/context/request";
 import { diffSize } from "../../shared/context/steps";
+import { attributionOf, foldStatRows, sysCauses, unitsFromRules, type Attribution } from "../../shared/context/attribution";
 import { fmtAgo, fmtShortTime } from "../../shared/date-format";
 import { lineRange, matchRanges, type LineRange } from "../../shared/context/match";
-import type { ContextDiff } from "../../shared/context/schema";
+import type { ContextDiff, Stats } from "../../shared/context/schema";
 import type { DiffLine } from "../../shared/line-diff";
 
 const PAGE = "ctxlab";
@@ -109,6 +110,9 @@ function ContainerToggle(props: { c: "system" | "runtime" | null; onToggle: () =
         </button>
     );
 }
+
+/** 变化率（0~1）→ 百分比文本 */
+const fmtRate = (rate: number): string => `${Math.round(rate * 100)}%`;
 
 /** 结构树一行的高亮态（选中 + 容器色条） */
 const rowCls = (selected: boolean): string =>
@@ -239,16 +243,37 @@ export function ContextLabPage(props: { uri: string }) {
                     turnId: string;
                     model: string;
                     bytes: { system: number; runtime: number };
+                    /** 该轮快照的划分（历史归因的**唯一依据**；不能用页面当前划分反推） */
+                    systemPlaces: string[];
+                    runtimePlaces: string[];
                     changed?: string[];
                     sincePrev: {
                         changed: string[];
                         systemDiffers: boolean;
                         runtimeDiffers: boolean;
+                        incomparable: boolean;
                         systemSize: { add: number; del: number };
                         runtimeSize: { add: number; del: number };
                     } | null;
                 }>;
             };
+        },
+    );
+
+    /**
+     * 变更统计（**按项目累计**，跨任务）：回答"这个节点用了几天变了几次 / 变化率"。
+     * 为什么不按任务：单任务样本太小；长期累计才有"该不该待在 system"的判据价值
+     * （逐轮明细已由上面的「变更（真发轮次）」给出；见 shared/context/stats.ts 头注）。
+     */
+    const [stats, { refetch: refetchStats }] = createResource(
+        () => projectFromUri(props.uri),
+        async (pid) => {
+            if (!pid) return null;
+            return (await diyService.diy.context.stats({
+                project: pid,
+                taskUri: undefined,
+                limit: undefined,
+            })) as Stats;
         },
     );
 
@@ -270,13 +295,14 @@ export function ContextLabPage(props: { uri: string }) {
         })) as ContextDiff | null;
     });
 
-    /** 顶栏刷新：重拉四处（当前上下文 / 快照列表 / 变更详情 / 划分规则真源）——
+    /** 顶栏刷新：重拉五处（当前上下文 / 快照列表 / 变更详情 / 划分规则真源 / 变更统计）——
      *  没有实时推送，只有显式刷新（外部改了 context.yaml 也靠它捡回来） */
     const refresh = (): void => {
         void refetch();
         void refetchSteps();
         void refetchDiff();
         void refetchConfig();
+        void refetchStats();
     };
 
     /** 请求预览的形态：YAML（默认；内嵌 system/runtime 文本就地解析展开）/ 原文（真发 JSON） */
@@ -319,9 +345,8 @@ export function ContextLabPage(props: { uri: string }) {
         })();
     };
 
-    /** 当前投递单元（path → 容器） */
-    const unitMap = (): Map<string, "system" | "runtime"> =>
-        new Map((lab()?.rules ?? []).map((r) => [r.place, r.container]));
+    /** 当前投递单元（path → 容器）。纯函数在 shared/context/attribution.ts（RV-10）。 */
+    const unitMap = (): Map<string, "system" | "runtime"> => unitsFromRules(lab()?.rules ?? []);
     const containerOf = (path: string): "system" | "runtime" | null => unitMap().get(path) ?? null;
 
     /** 该节点能否切换容器（开关按钮的显示规则）：
@@ -336,6 +361,16 @@ export function ContextLabPage(props: { uri: string }) {
         }
         return true;
     };
+
+    /**
+     * 归属（三态）与归因（system 重建原因）的**纯函数已提到 `shared/context/attribution.ts`**
+     * （review RV-10：一份实现 + 可单测）。这里只负责把**页面当前划分**（`unitMap()`）喂进去。
+     * ⚠️ 注意两处口径**有意不同**（review RV-09）：
+     *   · 本页「变更统计」表的归属列与中间容器折叠、结构树的 ⇄ 开关 = **当前**划分（用户眼前这把刀，改划分即重算）；
+     *   · 「变更（真发轮次）」的 sys 徽章 = **该轮快照**的划分（`sysCauses(changed, st.systemPlaces)`，
+     *     历史不该被当前划分改写 —— RV-02）。
+     */
+    const attrOf = (path: string): Attribution => attributionOf(unitMap(), path);
 
     const structure = () => buildVarTree(AssembleGlobalsSchema);
 
@@ -405,7 +440,19 @@ export function ContextLabPage(props: { uri: string }) {
             >
                 <ul class="menu menu-xs">
                     <For each={[...(steps()?.steps ?? [])].reverse()}>
-                        {(st) => (
+                        {(st) => {
+                            // system 全量重建的原因：把这一步变化的变量收拢到**该轮快照的** system 单元
+                            // （叶子 `chain.0.path` 归到 `chain`）—— 徽章旁边一眼看到"是谁在打断缓存"。
+                            // ⚠️ 用 `st.systemPlaces`（当轮快照），不用页面当前划分：改划分不该改写历史（RV-02）。
+                            const incomparable = (): boolean => st.sincePrev?.incomparable === true;
+                            const causes = (): string[] =>
+                                incomparable() ? [] : sysCauses(st.sincePrev?.changed, st.systemPlaces);
+                            const causeText = (): string => {
+                                const c = causes();
+                                if (c.length === 0) return "";
+                                return ` ${c.slice(0, 2).join(",")}${c.length > 2 ? ` +${c.length - 2}` : ""}`;
+                            };
+                            return (
                             <li>
                                 <button
                                     class={`flex items-center gap-2 ${rowCls(pickedStep() === st.index)}`}
@@ -427,7 +474,19 @@ export function ContextLabPage(props: { uri: string }) {
                                     </span>
                                     <span class="ml-auto flex gap-1">
                                         <Show when={st.sincePrev?.systemDiffers}>
-                                            <span class="badge badge-primary badge-xs">sys</span>
+                                            <span
+                                                class="badge badge-primary badge-xs font-mono"
+                                                title={
+                                                    "system 全量重建（每轮重发，断前缀缓存）—— " +
+                                                    (incomparable()
+                                                        ? "投递编码版本变化（不可比，非值变化引起，不归因）"
+                                                        : causes().length > 0
+                                                          ? `由这些投递单元变化引起：${causes().join(", ")}`
+                                                          : "非值变化引起（说明头/渲染变了，或投递范围变了）")
+                                                }
+                                            >
+                                                {`sys${causeText()}`}
+                                            </span>
                                         </Show>
                                         <Show when={st.sincePrev?.runtimeDiffers}>
                                             <span class="badge badge-warning badge-xs">run</span>
@@ -435,7 +494,8 @@ export function ContextLabPage(props: { uri: string }) {
                                     </span>
                                 </button>
                             </li>
-                        )}
+                            );
+                        }}
                     </For>
                 </ul>
             </Show>
@@ -486,7 +546,7 @@ export function ContextLabPage(props: { uri: string }) {
                                 fallback={
                                     <div class="opacity-50">
                                         {dd().systemDiffers || dd().runtimeDiffers
-                                            ? "无值变化（是投递范围或编码版本变了）"
+                                            ? "无值变化（说明头/渲染变了，或投递范围变了）"
                                             : "没有变化：当前投递与最后一步一致"}
                                     </div>
                                 }
@@ -536,13 +596,153 @@ export function ContextLabPage(props: { uri: string }) {
         );
     };
 
+    /** 归属徽章：按 attributionOf 的三态分别渲染（单元 / 跨单元容器 / 未投递） */
+    const attrBadge = (path: string): JSX.Element => {
+        // 划分还没加载完（`lab()` 未就绪）→ 既不能折行也不能算归属，先给个中间态，
+        // 别用"空划分"算出的 `none` 谎报"未投递"（review RV-13 的同类闪烁）。
+        if (unitMap().size === 0) {
+            return (
+                <span class="badge badge-xs badge-ghost opacity-40" title="划分加载中…">
+                    …
+                </span>
+            );
+        }
+        const a = attrOf(path);
+        if (a.kind === "unit") {
+            return (
+                <span
+                    class="badge badge-xs font-mono"
+                    classList={{
+                        "badge-primary": a.container === "system",
+                        "badge-ghost": a.container !== "system",
+                    }}
+                    title={`投递单元 ${a.place}（${a.container}）`}
+                >
+                    {a.place}
+                </span>
+            );
+        }
+        if (a.kind === "container") {
+            // ⚠️ 统计表里此分支当前**不可达**：`foldStatRows` 已把"有后代上榜且自身非投递单元"的
+            // 容器行折掉，而凡上榜的容器必有后代上榜（父 hash = 子树 hash）→ 走不到这里。
+            // 保留作语义守卫：折叠规则一旦放宽（如允许保留高变化容器）它立即生效。
+            return (
+                <span
+                    class="badge badge-xs badge-neutral"
+                    title={`容器行：子字段分属 ${a.units.length} 个投递单元 —— ${a.units
+                        .map((u) => `${u.place}(${u.container})`)
+                        .join(", ")}`}
+                >
+                    {`跨 ${a.units.length} 单元`}
+                </span>
+            );
+        }
+        return (
+            <span
+                class="badge badge-xs badge-ghost opacity-60"
+                title="未投递（不在 PLACE_CANDIDATES，也不是某个单元的祖先）"
+            >
+                未投递
+            </span>
+        );
+    };
+
+    /**
+     * 变更统计（按项目累计）：每个节点变了几次 / 变化率 —— 判"该不该待在 system"的长期判据。
+     * 点一行 → 选中该路径（与结构树选中同一套联动：请求预览滚到并高亮）。
+     */
+    const statsPane = () => {
+        // RV-08：解析不出项目 → 明确空态，别永久停在"加载中…"
+        const pid = projectFromUri(props.uri);
+        if (!pid) return <div class="p-2 opacity-60">无法从任务 URI 解析出项目，统计不可用。</div>;
+        const s = stats();
+        if (!s) return <div class="p-2 opacity-60">统计加载中…</div>;
+        // 行粒度（RV-03）：中间容器（有后代同时上榜）且自身**不是投递单元** → 折叠。
+        // 容器的变化恒由后代解释（父 hash = 子树 hash），单列只会稀释"该不该待在 system"的判据。
+        // 纯函数在 shared/context/attribution.ts（可与 UI 分开单测）。
+        const { rows: keptPaths, collapsed } = foldStatRows(s.paths.map((x) => x.path), unitMap());
+        const kept = new Set(keptPaths);
+        const rows = s.paths.filter((x) => kept.has(x.path));
+        return (
+            <div class="p-1">
+                <div class="mb-1 flex items-center gap-1 px-1 opacity-70">
+                    <span>{`项目累计 · ${s.turns} 轮 · ${s.taskCount} 个任务`}</span>
+                    <Show when={s.since}>
+                        <span class="ml-auto" title={`${s.since} ~ ${s.until}`}>
+                            {`${fmtShortTime(s.since)} ~ ${fmtShortTime(s.until)}`}
+                        </span>
+                    </Show>
+                </div>
+                {/* RV-09：归属列按**页面当前划分**（统计是"今天这把刀切哪"的操作视角），
+                    与上面 sys 徽章"按当轮快照"的口径**有意不同** → 必须写出来，否则用户当成一套。 */}
+                <div class="mb-1 px-1 text-caption opacity-50">
+                    归属列与折叠均按当前划分（改划分即重算；历史轮次的原因看「变更（真发轮次）」的 sys 徽章，按当轮快照）
+                </div>
+                <Show when={collapsed > 0}>
+                    <div class="mb-1 px-1 text-caption opacity-50">
+                        {`已折叠 ${collapsed} 个中间容器（变化恒由后代解释；只留叶子与投递单元）`}
+                    </div>
+                </Show>
+                <Show
+                    when={s.paths.length > 0}
+                    fallback={
+                        <div class="p-2 opacity-60">
+                            还没有变化记录。真发几轮后这里会累计每个节点变了多少次。
+                        </div>
+                    }
+                >
+                    <table class="table table-xs">
+                        <thead>
+                            <tr>
+                                <th>变量</th>
+                                <th class="text-right">变了</th>
+                                <th class="text-right">变化率</th>
+                                <th>归属</th>
+                                <th>最后</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <For each={rows}>
+                                {(p) => {
+                                    return (
+                                        <tr
+                                            class={`cursor-pointer hover:bg-base-300/60 ${rowCls(selected() === p.path)}`}
+                                            title={`变了 ${p.changes} 次 / 共 ${s.turns} 轮；最后变化 ${p.lastChanged ?? "—"}`}
+                                            onClick={() => setSelected(p.path)}
+                                        >
+                                            <td class="font-mono">{p.path}</td>
+                                            <td class="text-right font-mono">{p.changes}</td>
+                                            <td class="text-right font-mono">{fmtRate(p.rate)}</td>
+                                            <td>{attrBadge(p.path)}</td>
+                                            <td class="whitespace-nowrap opacity-60">
+                                                {p.lastChanged ? fmtAgo(p.lastChanged) : "—"}
+                                            </td>
+                                        </tr>
+                                    );
+                                }}
+                            </For>
+                        </tbody>
+                    </table>
+                </Show>
+            </div>
+        );
+    };
+
     const parts: Record<string, () => JSX.Element> = {
         /** 左：结构树（契约 + 划分操作） */
         "ctxlab.structure": () => (
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-body">
                 {/* 变更列表：真发快照（每轮一条；点一条看它改了什么） */}
-                <Fold k="steps" label="变更（真发轮次）" extra={`${steps()?.total ?? 0} 轮`}>
+                <Fold k="steps" label="变更（真发轮次）" extra={`本任务 · ${steps()?.total ?? 0} 轮`}>
                     {stepsPane()}
+                </Fold>
+                {/* 变更统计：按项目累计的长期视角（"用了几天变了几次"），是判断该不该待在 system 的判据 */}
+                <Fold
+                    k="stats"
+                    label="变更统计（项目累计）"
+                    extra={`项目累计 · ${stats()?.turns ?? 0} 轮 · ${stats()?.taskCount ?? 0} 个任务`}
+                >
+                    {statsPane()}
                 </Fold>
                 <Fold k="structure" label="结构树（变量契约）" extra="含无值变量 · 类型与描述">
                 <table class="table table-xs">

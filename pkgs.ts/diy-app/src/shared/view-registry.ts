@@ -38,6 +38,8 @@ export interface ViewPlacement {
 export interface PageDef {
   id: string;
   title: string;
+  /** nav tab 图标（短字符）。缺省时由 tab 显示页面序号 —— 别在组件里特判 pageId（review RV-10）。 */
+  icon?: string;
   /** 是否可多开（任务执行页：每个任务一个实例，等同浏览器 tab） */
   multi?: boolean;
   /** 父 page id：有值 = 子页面（不进顶级导航，生命周期挂父 tab） */
@@ -184,6 +186,7 @@ export const PAGES: PageDef[] = [
     // 中心 = 系统提示词编辑器；左右下都是卫星。
     id: "lab",
     title: "提示词",
+    icon: "L",
     multi: true, // 每个任务一个实例（上下文键 = 任务 URI）
     parentPage: "task-run", // 子页面：关掉任务对话 → 提示词页一并关闭
     layout: {
