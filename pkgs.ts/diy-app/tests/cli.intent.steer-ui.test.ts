@@ -17,13 +17,14 @@
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { createServer, type Server } from "node:http";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { AddressInfo } from "node:net";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
 import { makeUiDriver, type A11yNode, type UiDriver } from "./ui-drive";
+import { opsFile } from "../src/main/services/local-agent";
 
 // ─── 桩上游：把"生成中"变成可控状态 ───────────────────
 
@@ -341,5 +342,35 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
         });
         expect(flow).toContain("再做一件事");
         expect(flow).toContain("下一轮"); // 对话流里的标记说出投递时机
+
+        // ── R6 时间契约钉在**真轮**上（##257 review2-5）────────────────────────────
+        // 意图测试里的 turnId 都是手写常量（`t${STAMP_MS}`），unit 也是自造 id —— 两边都在测
+        // "解析器"，没有一处对着 **main 真写出来的 id**。这里补上：从本轮真实的 ops.jsonl 里取
+        // 最后一条 turn id（main 用 `t${Date.now()}` 写的那个），再要求界面上确实显示了它对应的时刻。
+        // 换 id 形状（uuid / 改名 / 位数变化）时这条立刻红，而不是 UI 静默失去所有时间。
+        const opsRaw = readFileSync(join(fx.HOME, "local", basename(opsFile(uri))), "utf-8");
+        const turnIds = [...opsRaw.matchAll(/"id":"(t\d{13})"/g)].map((m) => m[1]!);
+        expect(turnIds.length).toBeGreaterThan(0); // 真轮确实落盘了
+        const lastTurnId = turnIds[turnIds.length - 1]!;
+        const d = new Date(Number(lastTurnId.slice(1)));
+        const p2 = (n: number) => String(n).padStart(2, "0");
+        const expTime = `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+        const expTitle = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+        const shown = await waitUntil(
+            () =>
+                ui.query<Array<{ time: string; title: string }>>(
+                    `[...document.querySelectorAll('[data-testid=user-byline],[data-testid=assistant-byline]')]
+                       .map((b) => {
+                         const s = [...b.querySelectorAll('span')].find((x) => /^\\d\\d-\\d\\d \\d\\d:\\d\\d$/.test((x.textContent || '').trim()));
+                         return s ? { time: s.textContent.trim(), title: s.getAttribute('title') || '' } : null;
+                       })
+                       .filter(Boolean)`,
+                ),
+            (rows) => rows.some((r) => r.title === expTitle),
+            { label: `真轮 ${lastTurnId} 的时刻已上屏` },
+        );
+        const hit = shown.find((r) => r.title === expTitle)!;
+        expect(hit.time).toBe(expTime); // 可见文案 = turnId 内嵌毫秒的本地时刻
+        expect(expTime).toMatch(/^\d\d-\d\d \d\d:\d\d$/);
     }, 120_000); // 本用例要跑完「一轮收尾 → 自动续轮」，且每次断言都要一次 CLI 往返：给足预算
 });

@@ -221,6 +221,18 @@ export interface UiDriver {
   press(key: string): Promise<void>;
   /** 按坐标拖拽（拖线用）；steps 让中间点也发出去，命中拖拽逻辑 */
   drag(from: { x: number; y: number }, to: { x: number; y: number }, steps?: number): Promise<void>;
+  /**
+   * 覆写渲染视口尺寸（CDP `Emulation.setDeviceMetricsOverride`）。
+   *
+   * 用途：验证**"随视口/布局变化重算"**的响应式分支（如输入区封顶 = view 1/3 的
+   * ResizeObserver 回调）。只改渲染进程的布局视口、不动真实窗口 —— 对被测代码而言
+   * 走的是同一条路径（视口变化 → 重排 → ResizeObserver 回调），而真实窗口尺寸
+   * 在无头/CI 下不可控。
+   * 用完必须 `clearViewport()` 复位，否则影响同文件后续用例。
+   */
+  setViewport(width: number, height: number): Promise<void>;
+  /** 撤销 setViewport 的覆写（回到真实窗口尺寸） */
+  clearViewport(): Promise<void>;
   /** 在 renderer 里求值 */
   eval<T>(expr: string): Promise<T>;
   close(): void;
@@ -368,6 +380,8 @@ export async function makeUiDriver(
         ArrowDown: { code: "ArrowDown", vk: 40 },
         ArrowUp: { code: "ArrowUp", vk: 38 },
         Escape: { code: "Escape", vk: 27 },
+        Backspace: { code: "Backspace", vk: 8 },
+        Delete: { code: "Delete", vk: 46 },
         Enter: { code: "Enter", vk: 13 },
         Tab: { code: "Tab", vk: 9 },
       };
@@ -404,6 +418,21 @@ export async function makeUiDriver(
       }
       await mouse("mouseReleased", to);
       await new Promise((r) => setTimeout(r, 120));
+    },
+
+    async setViewport(width, height) {
+      await cdp.send("Emulation.setDeviceMetricsOverride", {
+        width,
+        height,
+        deviceScaleFactor: 0, // 0 = 沿用当前设备像素比（不额外改变渲染缩放）
+        mobile: false,
+      });
+      await new Promise((r) => setTimeout(r, 200));
+    },
+
+    async clearViewport() {
+      await cdp.send("Emulation.clearDeviceMetricsOverride");
+      await new Promise((r) => setTimeout(r, 200));
     },
 
     eval: (expr) => cdp.eval(expr),
