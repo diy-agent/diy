@@ -238,14 +238,30 @@
     padding-left: 14px;
 }
 
-/* rail：行**不带卡底、不带边**（形状全交给容器那条线；子层的缩进/细线由组件自身给） */
+/* rail：过程 bar 与人物栏**不带卡底、不带边**（形状全交给容器那条线） */
 [data-skin="rail"] .diy-chat [data-block-tag="proc-bar"] > [role="button"],
-[data-skin="rail"] .diy-chat [data-tail-box],
 [data-skin="rail"] .diy-chat [data-testid="turn-header"] {
     background: transparent;
     border: 0;
     border-radius: 0;
     padding-inline: 0;
+}
+
+/* rail：**结尾槽**例外 —— 它在历史容器**之外**（那条贯穿线不穿过它），所以它得自带一层底
+   （草图 rail-v4.html 的 `.A .tailbox.row{background:#fafafa;border:0;border-radius:8px}`；
+   卡片皮肤下它是一张卡，两种皮肤下它都"自暴露"） */
+[data-skin="rail"] .diy-chat [data-tail-box] {
+    background: var(--diy-card);
+    border: 0;
+    border-radius: 0.5rem;
+}
+
+/* 状态行（**末行恒显**）：**两皮肤同一形态** —— 上虚线 + 纯文本行，
+   颜色只由 ✓/✗/⛔ 承载（不卡片化：卡片皮肤下那张卡会与其它色条打架，用户 2026-10-12 R24③） */
+.diy-chat [data-turn-status] {
+    border-top: 1px dashed var(--diy-edge);
+    margin-top: 0.4rem;
+    padding-top: 0.2rem;
 }
 
 /* 错误/警告吃色：判据与颜色两皮肤一致，只有形状不同（卡片的边条 / 竖栏的线） */

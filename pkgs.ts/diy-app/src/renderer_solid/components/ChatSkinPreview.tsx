@@ -10,6 +10,8 @@
 //   · `data-testid="turn-header"` → LocalChatPage 的 TurnHeader
 //   · `data-block-tag="proc-bar"` 且**子元素带 `role="button"`** → 过程 bar 的命中形状
 //   · `data-tail-box`（+ `data-failing`）/ `data-block-tag="proc-bar"[data-has-error]` → 结尾槽与出错态
+//   · `data-chat-list` → **每轮的过程历史容器**（rail 那条贯穿线的作用点；结尾槽与状态行在它之外）
+//   · `data-turn-status` → 状态行（末行恒显，两皮肤同一形态：上虚线 + 纯文本，不卡片化）
 // 一致性由 `tests/core/chat-skin-preview.test.ts` 守住：直接拿 index.css 里 `[data-skin]`
 // 段出现过的钩子来核对本文件 —— 以后加皮肤规则若忘了在小样补钩子，测试就红。
 //
@@ -72,16 +74,29 @@ export function ChatSkinPreview() {
           <span class="truncate text-error">工具出错</span>
         </div>
       </div>
-      {/* 结尾槽（结论）：恒显、与状态同级 */}
-      <div data-tail-box="scene" class="rounded-lg px-2 py-1.5 text-body">
+      </div>
+      {/* 结尾槽（结论）：**在历史容器之外** —— 恒显、与状态同级；rail 的线不穿过它 */}
+      <div data-tail-box="conclusion" class="rounded-lg px-2 py-1.5 text-body">
+        <div class="flex items-center gap-1.5">
+          <span class="h-3.5 w-3.5 opacity-40" aria-hidden="true">
+            ▾
+          </span>
+          <span class="text-base-content/80">这轮的结论……</span>
+        </div>
+      </div>
+      {/* 结尾槽（结束点：completed 但末件是工具）—— 保持工具形态 + tag，不冒充结论 */}
+      <div data-tail-box="endleaf" class="rounded-lg px-2 py-1.5 text-body">
         <div class="flex items-center gap-1.5">
           <span class="h-3.5 w-3.5 opacity-40" aria-hidden="true">
             ▸
           </span>
-          <span class="text-base-content/80">✓ 结论</span>
+          <span class="truncate text-base-content/80">⚙ rg -c TODO a.ts</span>
+          <span class="shrink-0 rounded border border-dashed border-base-300 px-1 text-caption opacity-50">
+            本轮结束点
+          </span>
         </div>
       </div>
-      {/* 结尾槽（失败现场）：框原地转红 */}
+      {/* 结尾槽（失败现场）：框原地转红 —— 只有错误/警告吃色 */}
       <div data-tail-box="scene" data-failing="1" class="rounded-lg px-2 py-1.5 text-body">
         <div class="flex items-center gap-1.5">
           <span class="h-3.5 w-3.5 opacity-40" aria-hidden="true">
@@ -90,6 +105,13 @@ export function ChatSkinPreview() {
           <span class="text-error">✗ 出错现场</span>
         </div>
       </div>
+      {/* 状态行（末行恒显）：两皮肤同一形态 —— 上虚线 + 纯文本，✓/✗/⛔ 扛状态色 */}
+      <div class="flex items-center gap-2 text-body" data-turn-status="1">
+        <span class="text-success">✓</span>
+        <span class="opacity-50">2026-10-12 10:24:07</span>
+        <span class="flex-1" />
+        <span class="opacity-70">3 步 · 12 秒 · ⚙ 2</span>
+        <span class="rounded bg-base-300/60 px-1 text-caption opacity-70">⚡ 38 tok/s</span>
       </div>
     </div>
   );

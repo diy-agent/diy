@@ -77,29 +77,6 @@ export function leadUsers(turn: BlockNode): BlockNode[] {
     return out;
 }
 
-/**
- * 1-2 级的内容区（结论 + 用户发言 + error）—— **严格文档序，不重排**。
- *
- * 历史教训（2026-10-04）：上一版是「全部用户发言 → 实时行 → 最后一条正文」三段拼接。
- * 而插话块在文档序上位于轮次**中间**（用户在第 38 步与第 39 步之间发的），
- * 折叠后它被拽到轮首 → 与它后面那条助理回复的相对顺序颠倒，看着像"助理先说、用户后说"。
- * 现在只做"藏中间过程"，不做"搬位置"：
- *   · 用户发言 —— 恒显（"我说过啥"的脉络本体；插话必须就地）；
- *     **但轮首那批由调用方先行渲染**（见 leadUsers），否则会与轮次头顺序打架
- *     —— 组件渲染时须把它们从本列表里剔掉，不剔就是同一句画两遍
- *   · error 块 —— 恒显（一轮报错后折叠起来与成功轮次长得一模一样 = 信息丢失）
- *   · 最后一条助理正文（结论）—— **恒显**：1 级压成 N 行摘要、2 级给全文。
- *   · 其余（更早的正文、全部过程）一律收起，3 级才见（见 contentItems）
- */
-export function foldedItems(turn: BlockNode): BlockNode[] {
-    const last = conclusionOf(turn);
-    const out: BlockNode[] = [];
-    for (const n of leavesOf(turn)) {
-        if (isUserText(n) || n.tag === "error" || n === last) out.push(n);
-    }
-    return out;
-}
-
 // ─── 3 级起的中间区：正文逐条 + 连续过程折成一行 ──────────────
 
 /** 3 级起「中间区」的一项（文档序） */
@@ -304,24 +281,6 @@ export function endMarkOf(end: TurnEndReason | null, live: boolean): EndMark {
 }
 
 /**
- * 活动块**该插在中间区的第几项之前**（`contentItems` 已把它 skip 掉，位置得补回来）。
- *
- * 为什么必须补：活动块是"最后一个过程叶子"，但它后面**可能还有东西** —— 最常见的就是
- * 收尾那条正文（think → tool → 正文 是标准时序）。挂在列表末尾就会排到那条正文**后面**，
- * 与文档序相反（顺序一错用户一眼看得出来，2026-10-04 那个坑）。
- * 判据 = 文档序位置：数一数前面有几项，其**首个叶子**排在活动块之前。
- * 取不到（节点已被移除）→ 排在末尾，宁可偏后也不要抛错。
- */
-export function liveSlotIndex(turn: BlockNode, items: readonly { key: string }[], node: BlockNode): number {
-    const order = new Map<string, number>();
-    leavesOf(turn).forEach((n, i) => order.set(n.id, i));
-    const at = order.get(node.id) ?? Number.POSITIVE_INFINITY;
-    let i = 0;
-    while (i < items.length && (order.get(items[i]!.key) ?? Number.POSITIVE_INFINITY) < at) i++;
-    return i;
-}
-
-/**
  * 这一行**点开会不会多出东西** —— 决定行首给「展开箭头」还是「末级点」。
  *
  * 用户 2026-10-11 口径：思考行收起时先给**首行**预览（与工具行的 `tool · 命令首行` 对称），
@@ -360,56 +319,72 @@ export function expandableOf(n: BlockNode): boolean {
 export type TurnRow =
     | { kind: "user"; key: string; node: BlockNode }
     | { kind: "error"; key: string; node: BlockNode }
-    /** 助理正文；`clamp` = 压成 N 行摘要（1 级的结论那一行） */
-    | { kind: "text"; key: string; node: BlockNode; clamp: boolean }
-    /** 连续过程折成一行 bar（3 级起；切法见 contentItems） */
-    | { kind: "proc"; key: string; parts: BlockNode[] }
-    /** 尾行：直播**活动块**（live）或异常结束的**现场** —— 任何级别都在，节点按 id 现取 */
-    | { kind: "tail"; key: string };
+    /** 助理正文（过程里说的那些话）—— **结论不在此列**：它属结尾槽，见 `tailOf` */
+    | { kind: "text"; key: string; node: BlockNode }
+    /** 连续过程折成一行 bar（切法见 contentItems） */
+    | { kind: "proc"; key: string; parts: BlockNode[] };
 
 /**
- * 尾行的节点：直播中 = 活动块（`live`，见 liveTailOf）；否则 = 异常结束的现场（`sceneTailOf`）。
- * 判据只此一处 —— 组件与 `turnRows` 都从这里取，免得两处各判一次而分叉。
+ * **结尾槽**：这一轮的**落点** —— 自暴露、恒显、与状态行同级，**不受历史折叠影响**
+ * （用户 2026-10-12 R22 口径：对话 = 执行过程历史 + 执行过程 + 结尾 + 状态；v3 之错 =
+ * 把错误"转移"进结尾可展开框，没留在现场）。
+ *
+ * 四形态，判据自上而下（先到先得）：
+ *   · `live`       执行过程 —— 正在跑的那一轮（**半结尾**）：本轮一有动态内容就出现，
+ *                  正常结束就把结尾推出去、自己消失；终止性错误**就地转红**留在这里，不搬家。
+ *   · `scene`      现场 —— 异常结束（`error` / `max-steps` / `aborted` / `interrupted`）
+ *                  且末件不是正文：停在那一刻的东西（见 `sceneTailOf` / `composeTail`）。
+ *   · `conclusion` 结论 —— 末件恰是助理正文（见 `conclusionOf`）。
+ *   · `endleaf`    结束点 —— 正常结束（completed / max-tokens）但末件不是正文（通常是工具）：
+ *                  **保持工具形态** + 「本轮结束点」tag，不复用结论样式（用户 2026-10-12 R25 拍板）。
+ * 都不是 → null（异常结束而末件是正文 = 结论已覆盖，不另开现场）。
+ *
+ * `ceilToLastLeaf` 之外的另一条硬约束：`endleaf` 的末件**不能是 error 块** —— 那是现场该管的事。
  */
-export function tailNodeOf(turn: BlockNode, live: BlockNode | null): BlockNode | null {
-    return live ?? sceneTailOf(turn);
+export type TailKind = "conclusion" | "endleaf" | "scene" | "live";
+export interface TurnTail {
+    kind: TailKind;
+    node: BlockNode;
+}
+
+export function tailOf(turn: BlockNode, live: BlockNode | null): TurnTail | null {
+    if (live) return { kind: "live", node: live };
+    const scene = sceneTailOf(turn);
+    if (scene) return { kind: "scene", node: scene };
+    const conc = conclusionOf(turn);
+    if (conc) return { kind: "conclusion", node: conc };
+    const t = endReasonOf(turn);
+    const abnormal = t
+        ? t.type === "error" || t.type === "max-steps" || t.type === "aborted" || t.type === "interrupted"
+        : Boolean(turn.attrs.interrupted);
+    if (abnormal) return null; // 异常结束但末件是正文：结论已覆盖，不再出结束点
+    const ls = leavesOf(turn).filter((n) => !isUserText(n));
+    const last = ls[ls.length - 1];
+    if (!last || last.tag === "error") return null;
+    return { kind: "endleaf", node: last };
 }
 
 /**
- * 一轮的正文行（**级别同构的唯一切口**）—— 纯函数，可单测。
+ * 一轮的**过程历史行**（"级别同构"的唯一切口）—— 纯函数，可单测。
  *
- * 级别只改"已完成的"部分：
- *   1-2 级 —— 用户发言（**轮首那批由调用方先画**，见 leadUsers）+ error + **结论**（1 级压 N 行 / 2 级全文）
- *   3-4 级 —— 用户发言 + error + **助理正文逐条**（全文）+ 连续过程折成一行 bar
- * 尾行（活动块 / 现场）**与上面这些无关**：它表示"正在发生 / 断在哪"，任何级别都出，
- * 且位置由**文档序**决定（`liveSlotIndex`）—— 插回它该在的那一行之前，不重排。
+ * 只产历史（用户发言 / error / 助理正文 / 过程 bar），**不含结尾槽**：
+ * 结论 / 结束点 / 现场 / 执行过程由 `tailOf` 单独给，渲染在历史容器**之外**（自暴露、恒显）。
+ * 历史**开不开**由调用方按 `historyOpenOf` 决定（不展开时整段不渲染），故本函数与级别无关 ——
+ * 级别只影响两处：结尾槽结论是否压摘要（`planOfLevel.conclusionClamped`）、
+ * 过程 bar 是否铺开（`midExpanded`）。
  *
- * `live` = 本轮的活动块节点（非直播轮 / 还没出内容 → null）。节点只在函数内用来定位与排除
- * （它必须**只画一次**），行里**只存 id**。
+ * `live` = 本轮的活动块节点（非直播轮 / 还没出内容 → null）：只用来把"结尾槽那一个叶子"
+ * 从历史里剔掉（**四种结尾形态一视同仁** —— 结论也是结尾，也不该在历史里再出现一遍）。
+ * 轮首那批用户发言由调用方先画（见 leadUsers），此处排除。
  */
-export function turnRows(turn: BlockNode, level: TurnLevel, live: BlockNode | null): TurnRow[] {
-    const plan = planOfLevel(level);
-    const tail = tailNodeOf(turn, live);
-    const lead = new Set(leadUsers(turn));
-    /** 尾行的节点不再进文档序行（同一块画两遍就是重复 —— review P1-1） */
+export function turnRows(turn: BlockNode, live: BlockNode | null): TurnRow[] {
+    const tail = tailOf(turn, live)?.node ?? null;
     const owned = new Set<string>(tail ? [tail.id] : []);
     const rows: TurnRow[] = [];
-    if (plan.mid) {
-        for (const it of contentItems(turn, (n) => owned.has(n.id))) {
-            if (it.kind === "proc") rows.push({ kind: "proc", key: it.key, parts: it.parts });
-            else if (it.kind === "text") rows.push({ kind: "text", key: it.key, node: it.node, clamp: false });
-            else rows.push({ kind: it.kind, key: it.key, node: it.node });
-        }
-    } else {
-        for (const n of foldedItems(turn)) {
-            // 轮首那批用户发言由调用方先画（IM 顺序，见 leadUsers）—— 这里再画一遍就是同一句两遍
-            if (lead.has(n) || owned.has(n.id)) continue;
-            if (isUserText(n)) rows.push({ kind: "user", key: n.id, node: n });
-            else if (n.tag === "error") rows.push({ kind: "error", key: n.id, node: n });
-            else rows.push({ kind: "text", key: n.id, node: n, clamp: plan.conclusionClamped });
-        }
+    for (const it of contentItems(turn, (n) => owned.has(n.id))) {
+        if (it.kind === "proc") rows.push({ kind: "proc", key: it.key, parts: it.parts });
+        else rows.push({ kind: it.kind, key: it.key, node: it.node });
     }
-    if (tail) rows.splice(liveSlotIndex(turn, rows, tail), 0, { kind: "tail", key: tail.id });
     return rows;
 }
 
@@ -457,22 +432,18 @@ export function cycleTurnLevel(level: TurnLevel): TurnLevel {
 }
 
 /**
- * 单轮的级别：**只有两态**（收拢 = 1，展开 = 跟全局）。
+ * **过程历史这一轮开不开**（三态，缺一不可）。
  *
- * 用户 2026-10-11 口径：级别循环只归顶部那个按钮，**单条信息不做循环** ——
- * 点轮次头就是"把我这条展开 / 收拢"。
- *
- * `mark` 是三态，缺一不可：
- *   · `true`  —— 用户收拢了这一轮（恒 1）
- *   · `false` —— 用户展开了这一轮（跟全局；全局为 1 时给到 2 —— 那一级本来就什么都没展开，
- *     点了必须看得见变化，否则点一下毫无反应，像坏了）
- *   · `undefined` —— 没动过：**完全跟全局**。缺了它，全局按成 1（整体全收缩）时
- *     每一轮都会"因为'展开'而后退到 2"，等于按钮失灵。
+ * 用户 2026-10-12 R22 口径：**级别只改"历史展开多少"，历史开不开归人物栏那枚 chevron** ——
+ *   · `true`  —— 用户收拢了这一轮 ⇒ 恒闭；
+ *   · `false` —— 用户展开了这一轮 ⇒ 恒开（**1 级下点人物栏也能直接开历史**，不必先切到 3 级）；
+ *   · `undefined` —— 没动过：默认跟全局（3 级起开，1-2 级闭）。
+ * 缺了 `undefined` 这档，全局按成 1（整体全缩）时每轮都会"因为'展开'而又开回来"，等于按钮失灵。
  */
-export function levelOfTurn(mark: boolean | undefined, global: TurnLevel): TurnLevel {
-    if (mark === true) return TURN_LEVEL_MIN;
-    if (mark === false) return global > TURN_LEVEL_MIN ? global : 2;
-    return global;
+export function historyOpenOf(mark: boolean | undefined, global: TurnLevel): boolean {
+    if (mark === true) return false;
+    if (mark === false) return true;
+    return global >= TURN_LEVEL_MAX - 1;
 }
 
 /** 级别名（给 aria / tip 用；界面上不写死文案，改级别只改这里） */
@@ -493,21 +464,21 @@ export function turnFoldTip(open: boolean): string {
     return open ? "点击收拢这一轮（只留结论摘要）" : "点击展开这一轮（按顶部那个级别显示）";
 }
 
-/** 每一级"看得见什么"（组件据此渲染，判断只此一处） */
+/** 每一级"看得见什么"（组件据此渲染，判断只此一处）—— **只管两处**：结论摘要、过程 bar 铺开 */
 export interface LevelPlan {
-    /** 结论（末条助理正文）**压成 N 行摘要** —— 1 级压、2 级起全文 */
+    /** 结尾槽的结论**压成 N 行摘要** —— 1 级压、2 级起全文 */
     conclusionClamped: boolean;
-    /** 中间区可见（正文逐条 + 过程 bar）—— 3 级起 */
-    mid: boolean;
     /** 过程 bar 铺开成逐条 —— 4 级（用户单点某一行也能只展开它自己） */
     midExpanded: boolean;
+    /** 历史**缺省**开 —— 3 级起（`historyOpenOf` 的 `undefined` 档；同一判据，这里冗余一份给读者） */
+    historyOpen: boolean;
 }
 
 export function planOfLevel(level: TurnLevel): LevelPlan {
     return {
         conclusionClamped: level <= TURN_LEVEL_MIN,
-        mid: level >= 3,
-        midExpanded: level >= 4,
+        midExpanded: level >= TURN_LEVEL_MAX,
+        historyOpen: historyOpenOf(undefined, level),
     };
 }
 

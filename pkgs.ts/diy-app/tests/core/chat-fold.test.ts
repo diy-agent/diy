@@ -12,7 +12,7 @@ import {
     contentItems,
     cycleTurnLevel,
     expandableOf,
-    foldedItems,
+    historyOpenOf,
     isProc,
     isTurnLevel,
     isUserText,
@@ -24,11 +24,9 @@ import {
     sceneTailOf,
     turnEndNote,
     leavesOf,
-    levelOfTurn,
-    liveSlotIndex,
     liveTailOf,
     planOfLevel,
-    tailNodeOf,
+    tailOf,
     turnLevelLabel,
     turnRows,
 } from "../../src/renderer_solid/lib/chat-fold";
@@ -64,40 +62,6 @@ describe("leavesOf：文档序拉平", () => {
     });
 });
 
-describe("foldedItems：折叠态 = 严格文档序，不重排", () => {
-    it("插话（文档序在轮中）就地渲染，不被拽到轮首", () => {
-        // 用户开场 → 助理① → 助手工具 → 【用户插话】 → 助理②（最后一条）
-        const t = turn(
-            user("u1"),
-            say("a1"),
-            tool("x1"),
-            user("u2"),
-            say("a2"),
-        );
-        // 旧实现（userTexts → delta → lastText）会给出 [u1, u2, a2]，
-        // 把 u2 提到 a1 前面 —— 与它后面那条 a2 的相对关系仍然错。
-        expect(foldedItems(t).map((x) => x.id)).toEqual(["u1", "u2", "a2"]);
-    });
-
-    it("用户发言恒显、更早的助理正文一律收起、只留最后一条", () => {
-        const t = turn(user("u1"), say("a1"), tool("x1"), think("k1"), say("a9"));
-        expect(foldedItems(t).map((x) => x.id)).toEqual(["u1", "a9"]);
-    });
-
-    it("error 块恒显（否则报错轮次折叠起来与成功轮次长得一模一样）", () => {
-        const t = turn(user("u1"), err("e1"), say("a1"));
-        const ids = foldedItems(t).map((x) => x.id);
-        expect(ids).toContain("e1");
-        expect(ids).toEqual(["u1", "e1", "a1"]);
-    });
-
-    it("没有助理正文时只留用户发言（不凭空造一条）", () => {
-        const t = turn(user("u1"), tool("x1", false));
-        expect(foldedItems(t).map((x) => x.id)).toEqual(["u1"]);
-        expect(conclusionOf(t)).toBeNull();
-    });
-});
-
 describe("leadUsers：轮首用户发言（渲染在轮次头之前）", () => {
     it("轮首连续的用户发言是 lead（IM 顺序：用户先说、助理的身份行再接）", () => {
         const t = turn(user("u1"), say("a1"), tool("x1"));
@@ -113,13 +77,14 @@ describe("leadUsers：轮首用户发言（渲染在轮次头之前）", () => {
         expect(leadUsers(turn(think("k1"), say("a1")))).toEqual([]);
     });
 
-    it("lead 与折叠体互补：lead ∪ foldBody = foldedItems，无重复", () => {
+    it("轮首那批**不进历史行**（由调用方单独画，避免同一句画两遍）；轮中插话仍在历史里就地", () => {
         const t = turn(user("u1"), say("a1"), tool("x1"), user("u2"), say("a9"));
-        const head = leadUsers(t);
-        const body = foldedItems(t).filter((n) => !head.includes(n));
-        const all = [...head, ...body].map((x) => x.id);
-        expect(all).toEqual(["u1", "u2", "a9"]);
-        expect(new Set(all).size).toBe(all.length);
+        expect(leadUsers(t).map((x) => x.id)).toEqual(["u1"]);
+        const keys = turnRows(t, null).map((r) => r.key);
+        expect(keys).not.toContain("u1"); // 轮首：调用方画
+        expect(keys).toContain("u2"); // 轮中插话：留在历史（就地，不提前）
+        expect(keys).toContain("a1"); // 更早的过程正文：3 级起可见
+        expect(keys).not.toContain("a9"); // 结论：属结尾槽，不进历史
     });
 });
 
@@ -147,7 +112,7 @@ describe("liveTailOf：活动块（就地画在文档序里）", () => {
         expect(liveTailOf(t, true)!.id).toBe("a1");
     });
 
-    it("跑完后的用户插话不改变判据（位置由 liveSlotIndex 管）", () => {
+    it("跑完后的用户插话不改变判据（活不活跃只看「最后一个非用户叶子」）", () => {
         const t = turn(tool("x1"), user("u2"));
         expect(liveTailOf(t, true)!.id).toBe("x1");
     });
@@ -164,38 +129,6 @@ describe("liveTailOf：活动块（就地画在文档序里）", () => {
     });
 });
 
-describe("liveSlotIndex：活动块插回文档序原位", () => {
-    it("活动块就是最后一个叶子 → 插在末尾", () => {
-        const t = turn(user("u1"), think("k1", false));
-        const its = contentItems(t, (n) => n === leavesOf(t)[1]);
-        expect(liveSlotIndex(t, its, leavesOf(t)[1]!)).toBe(its.length);
-    });
-
-    it("活动块后面还有收尾正文 → 插在**那条正文之前**（不能一律挂末尾）", () => {
-        // think → tool → 正文 是标准时序：活动块（tool）排到正文后面就与文档序相反
-        const t = turn(think("k1"), tool("x1"), say("a9"));
-        const live = leavesOf(t).find((n) => n.id === "x1")!;
-        const its = contentItems(t, (n) => n === live);
-        expect(its.map((i) => i.key)).toEqual(["k1", "a9"]);
-        expect(liveSlotIndex(t, its, live)).toBe(1); // 在 a9 之前
-    });
-
-    it("活动块在一段连续过程的**末尾** → 整段（已剔掉它）仍在它之前", () => {
-        // 轮首u1 由 leadUsers 单独渲染（不在中间区里），故项从 k1 起
-        const t = turn(user("u1"), think("k1"), tool("x1"), think("k2", false), say("a9"));
-        const live = leavesOf(t).find((n) => n.id === "k2")!;
-        const its = contentItems(t, (n) => n === live);
-        expect(its.map((i) => i.key)).toEqual(["k1", "a9"]);
-        expect(liveSlotIndex(t, its, live)).toBe(1);
-    });
-
-    it("节点已经取不到（正被移除）→ 排末尾，不抛错", () => {
-        const t = turn(tool("x1"), say("a9"));
-        const its = contentItems(t);
-        expect(liveSlotIndex(t, its, tool("gone"))).toBe(its.length);
-    });
-});
-
 describe("isUserText / isProc", () => {
     it("按 role 判用户发言，按 tag 判过程块", () => {
         expect(isUserText(user("u"))).toBe(true);
@@ -203,15 +136,6 @@ describe("isUserText / isProc", () => {
         expect(isProc(think("k"))).toBe(true);
         expect(isProc(tool("x"))).toBe(true);
         expect(isProc(say("a"))).toBe(false);
-    });
-});
-
-describe("foldedItems：1-2 级的内容（结论恒在其中）", () => {
-    it("1 级压摘要、2 级给全文，**两者看见的条目完全一样**（只差截断）", () => {
-        // 判据只有一条：末条正文恒在。用户 2026-10-11 口径：「1 级也要看得见结论」——
-        // 上一版那个 `{ conclusion: false }`（全收缩）已随"1 级 = 只有一行头"一起取消。
-        const t = turn(user("u1"), err("e1"), say("a1"));
-        expect(foldedItems(t).map((x) => x.id)).toEqual(["u1", "e1", "a1"]);
     });
 });
 
@@ -252,44 +176,39 @@ describe("展开级别：循环 1→2→3→4→1", () => {
     });
 });
 
-describe("levelOfTurn：单轮只有「收拢 / 展开」两态（循环归顶部按钮）", () => {
-    it("没动过 → 完全跟全局（全局按成 1 = 整体全收缩，不能被单轮逻辑顶回 2）", () => {
-        for (const g of [1, 2, 3, 4] as const) expect(levelOfTurn(undefined, g)).toBe(g);
+describe("historyOpenOf：历史开不开（级别只改「历史展开多少」）", () => {
+    it("没动过 → 跟全局：3 级起开、1-2 级闭", () => {
+        expect([1, 2, 3, 4].map((g) => historyOpenOf(undefined, g as 1 | 2 | 3 | 4))).toEqual([
+            false,
+            false,
+            true,
+            true,
+        ]);
     });
 
-    it("收拢 = 1；展开 = 跟随全局", () => {
-        expect(levelOfTurn(true, 3)).toBe(1);
-        expect(levelOfTurn(false, 3)).toBe(3);
-        expect(levelOfTurn(false, 4)).toBe(4);
-        expect(levelOfTurn(false, 2)).toBe(2);
+    it("收拢 → 恒闭（任何级别）", () => {
+        for (const g of [1, 2, 3, 4] as const) expect(historyOpenOf(true, g)).toBe(false);
     });
 
-    it("全局为 1 时「展开」给到 2：点了必须看得见变化（否则像坏了）", () => {
-        expect(levelOfTurn(true, 1)).toBe(1);
-        expect(levelOfTurn(false, 1)).toBe(2);
+    it("展开 → 恒开 —— **1 级下点人物栏也能直接开历史**（不必先切到 3 级）", () => {
+        for (const g of [1, 2, 3, 4] as const) expect(historyOpenOf(false, g)).toBe(true);
     });
 });
 
-describe("planOfLevel：每一级看得见什么", () => {
-    it("1 级：结论压成摘要（中间区不出）", () => {
-        expect(planOfLevel(1)).toEqual({ conclusionClamped: true, mid: false, midExpanded: false });
+describe("planOfLevel：每一级看得见什么（只管两处）", () => {
+    it("1 级结论压摘要 · 2 级结论全文 · 3 级历史缺省开 · 4 级过程 bar 铺开", () => {
+        expect(planOfLevel(1)).toEqual({ conclusionClamped: true, midExpanded: false, historyOpen: false });
+        expect(planOfLevel(2)).toEqual({ conclusionClamped: false, midExpanded: false, historyOpen: false });
+        expect(planOfLevel(3)).toEqual({ conclusionClamped: false, midExpanded: false, historyOpen: true });
+        expect(planOfLevel(4)).toEqual({ conclusionClamped: false, midExpanded: true, historyOpen: true });
     });
-    it("2 级：结论给全文（中间区仍不出）", () => {
-        expect(planOfLevel(2)).toEqual({ conclusionClamped: false, mid: false, midExpanded: false });
-    });
-    it("3 级：中间区可见（正文逐条 + 过程 bar，bar 不铺开）", () => {
-        expect(planOfLevel(3)).toEqual({ conclusionClamped: false, mid: true, midExpanded: false });
-    });
-    it("4 级：过程 bar 铺开成逐条", () => {
-        expect(planOfLevel(4)).toEqual({ conclusionClamped: false, mid: true, midExpanded: true });
-    });
+
     it("级别单调：往上一级只会多显示（摘要只会变全文），不会少", () => {
         for (let l = 1; l < TURN_LEVEL_MAX; l++) {
             const a = planOfLevel(l as 1 | 2 | 3 | 4);
             const b = planOfLevel((l + 1) as 1 | 2 | 3 | 4);
-            // 摘要 → 全文是"放宽"，所以用"不增"表示不会又截回去
             expect(Number(b.conclusionClamped)).toBeLessThanOrEqual(Number(a.conclusionClamped));
-            expect(Number(b.mid)).toBeGreaterThanOrEqual(Number(a.mid));
+            expect(Number(b.historyOpen)).toBeGreaterThanOrEqual(Number(a.historyOpen));
             expect(Number(b.midExpanded)).toBeGreaterThanOrEqual(Number(a.midExpanded));
         }
     });
@@ -370,8 +289,8 @@ describe("conclusionOf：结论 = 文档序**最后一个叶子**恰好是助理
     it("中途被打断（末叶子是工具）→ **没有结论**（旧判据会把中间那句过程话当结论，用户报的 bug）", () => {
         const t = turn(user("u1"), say("a1"), tool("x1", false));
         expect(conclusionOf(t)).toBeNull();
-        // 折叠态于是只剩用户发言 —— 不再伪造一条"像结论"的假话
-        expect(foldedItems(t).map((x) => x.id)).toEqual(["u1"]);
+        // 于是结尾槽按"结束点"给那个工具（见 tailOf）—— 不再伪造一条"像结论"的假话
+        expect(tailOf(t, null)).toMatchObject({ kind: "endleaf" });
     });
 
     it("末叶子是 think / error 同样没有结论", () => {
@@ -509,68 +428,65 @@ describe("expandableOf：这一行点开会不会多出东西", () => {
     });
 });
 
-describe("turnRows：一条行序列、所有级别同构", () => {
+describe("turnRows：过程历史行（**不含结尾槽**）", () => {
     const t = turn(
         step("s1", [user("u1")]),
         step("s2", [think("k1"), tool("x1")]),
         step("s3", [say("a1")]),
     );
     const shape = (rows: ReturnType<typeof turnRows>) =>
-        rows.map((r) =>
-            r.kind === "proc" ? `proc:${r.parts.map((p) => p.id).join(",")}` : `${r.kind}:${r.key}`,
-        );
+        rows.map((r) => (r.kind === "proc" ? `proc:${r.parts.map((p) => p.id).join(",")}` : `${r.kind}:${r.key}`));
 
-    it("1 级 = 结论（压摘要）；2 级 = 同一行不压（级别只改 clamp，不改结构）", () => {
-        const r1 = turnRows(t, 1, null);
-        expect(shape(r1)).toEqual(["text:a1"]);
-        expect(r1[0]).toMatchObject({ kind: "text", clamp: true });
-        const r2 = turnRows(t, 2, null);
-        expect(shape(r2)).toEqual(["text:a1"]);
-        expect(r2[0]).toMatchObject({ kind: "text", clamp: false });
+    it("结论不进历史行（它属结尾槽）；过程折成一行 bar；轮首用户不进（由调用方画）", () => {
+        expect(shape(turnRows(t, null))).toEqual(["proc:k1,x1"]);
     });
 
-    it("3 级 = 连续过程一行 bar + 正文逐条；4 级同一批行（铺开是渲染侧的事）", () => {
-        expect(shape(turnRows(t, 3, null))).toEqual(["proc:k1,x1", "text:a1"]);
-        expect(shape(turnRows(t, 4, null))).toEqual(shape(turnRows(t, 3, null)));
-    });
-
-    it("尾行（活动块）**任何级别都在**，且那条叶子不再出现在别的行里", () => {
+    it("直播中：活动块那一个叶子从历史里剔掉（结尾槽画它，不画两遍）", () => {
         const live = think("k1");
-        for (const l of [1, 2, 3, 4] as const) {
-            const rows = turnRows(t, l, live);
-            expect(rows.filter((r) => r.kind === "tail").map((r) => r.key)).toEqual(["k1"]);
-            expect(
-                rows.some((r) => r.kind === "proc" && r.parts.some((p) => p.id === "k1")),
-            ).toBe(false);
+        const rows = turnRows(t, live);
+        expect(rows.some((r) => r.kind === "proc" && r.parts.some((p) => p.id === "k1"))).toBe(false);
+        expect(rows.some((r) => r.kind === "proc" && r.parts.some((p) => p.id === "x1"))).toBe(true);
+    });
+});
+
+describe("tailOf：结尾槽的四种形态（自暴露 · 恒显）", () => {
+    const ended = (type: string, data: Record<string, unknown> = {}, kids: BlockNode[] = []): BlockNode =>
+        n("turn", "t1", { endReason: { type, data } }, kids);
+
+    it("末件是助理正文 → 结论", () => {
+        const tl = tailOf(turn(think("k1"), say("a9")), null)!;
+        expect(tl.kind).toBe("conclusion");
+        expect(tl.node.id).toBe("a9");
+    });
+
+    it("completed 但末件不是正文（通常是工具）→ 结束点，不冒充结论（R25 拍板）", () => {
+        const tl = tailOf(ended("completed", {}, [say("a1"), tool("x1")]), null)!;
+        expect(tl.kind).toBe("endleaf");
+        expect(tl.node.id).toBe("x1");
+    });
+
+    it("异常结束 + 末件不是正文 → 现场（error / max-steps / aborted / interrupted 一视同仁）", () => {
+        for (const ty of ["error", "max-steps", "aborted", "interrupted"]) {
+            const tl = tailOf(ended(ty, { limit: 3 }, [say("a1"), tool("x1", false)]), null)!;
+            expect(tl.kind, ty).toBe("scene");
+            expect(tl.node.id, ty).toBe("x1");
         }
     });
 
-    it("尾行按**文档序**插回：它在后面那条插话之前（不重排、也不挂末尾）", () => {
-        const withSteer = turn(step("s1", [think("k1")]), step("s2", [user("u2")]));
-        expect(shape(turnRows(withSteer, 3, think("k1")))).toEqual(["tail:k1", "user:u2"]);
-        expect(shape(turnRows(withSteer, 1, think("k1")))).toEqual(["tail:k1", "user:u2"]);
+    it("直播中 → 执行过程（半结尾；不看结束原因）", () => {
+        const tl = tailOf(turn(think("k1"), tool("x1", false)), think("k1"))!;
+        expect(tl.kind).toBe("live");
+        expect(tl.node.id).toBe("k1");
     });
 
-    it("异常结束 → 现场也是尾行（1 级就看得见）；`tailNodeOf` 一处判定", () => {
-        const dead = n(
-            "turn",
-            "t1",
-            { endReason: { type: "aborted", data: { source: "abort" } } },
-            [step("s1", [think("k1"), tool("x1", true, "error")]), step("s2", [say("a1")])],
+    it("末件是 error 块 → 现场该管，不出结束点", () => {
+        expect(tailOf(n("turn", "t1", {}, [say("a1"), err("e1")]), null)).toBeNull();
+    });
+
+    it("异常结束但末件是正文 → 结论已覆盖，不再叠一个结束点", () => {
+        expect(tailOf(ended("aborted", { source: "abort" }, [tool("x1"), say("a1")]), null)!.kind).toBe(
+            "conclusion",
         );
-        // 末叶子是正文 → 那是结论，不是现场
-        expect(tailNodeOf(dead, null)).toBeNull();
-        const cut = n(
-            "turn",
-            "t2",
-            { endReason: { type: "interrupted", data: {} } },
-            [step("s1", [say("a1"), tool("x1", true, "error")])],
-        );
-        expect(tailNodeOf(cut, null)?.id).toBe("x1");
-        // 1 级：末叶子不是正文 ⇒ **没有结论**，只有现场那一行（判据见 conclusionOf）
-        expect(shape(turnRows(cut, 1, null))).toEqual(["tail:x1"]);
-        // 4 级：那句更早的过程正文也在（真位置在失败工具之前），现场仍是尾行
-        expect(shape(turnRows(cut, 4, null))).toEqual(["text:a1", "tail:x1"]);
     });
 });
 
