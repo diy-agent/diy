@@ -124,6 +124,8 @@ describe("提示词页 = 子页面（不是任务页的底部面板）", () => {
     const lab = findPage("lab")!;
     expect(lab.parentPage).toBe("task-run");
     expect(lab.multi).toBe(true);
+    // nav tab 图标来自 registry（review RV-10/RV-17：它在组件外，正是为了不再"新页面忘了加特判"→ R3 复发）
+    expect(lab.icon).toBe("L");
   });
 
   it("任务执行页不再挂 lab 的任何 view", () => {

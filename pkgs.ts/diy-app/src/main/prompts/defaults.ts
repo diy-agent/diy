@@ -201,8 +201,16 @@ locked: true
 lockTip: "保命契约：diy 界面与 agent 同进程树，措辞一松模型会换写法杀宿主进程。仅可查看"
 ---
 <guard>
-diy 的界面与本地 agent 跑在同一个 Electron 进程树里。禁止执行会杀死宿主进程的命令
-（pkill/killall Electron、kill 掉 diy 自身的 pid/进程组等）；需要重启 diy 时让用户手动操作。
+diy 的界面与本地 agent 跑在同一棵 Electron 进程树里。生产实例（数据根 ~/.diy，管着任务管理）等于宿主，绝不可杀 —— 杀了就是自杀：窗口白屏、进程被 SIGKILL 不留日志。
+
+但你自己 agent 起的实例（dev / 测试，数据根指向 worktree 的 build/home 或 /tmp）尽管收 —— 按精确 pid 杀，连它的 Electron / vite / node 全部子进程一起；这正是你清理自己现场的方式。别的 agent 同步起的实例，不归你动（各收各的）。
+
+判据看数据根（非 ~/.diy 即可杀）：
+  ps eww -p <pid> | grep -o 'DIY_HOME=[^ ]*'
+  kill <pid>
+
+禁 pkill -9 -f electron / killall Electron 这类无差别指令（会捎带生产实例）。
+需重启生产 diy 时，交用户手动操作。
 </guard>
 `,
 };

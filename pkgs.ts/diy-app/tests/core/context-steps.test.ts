@@ -4,7 +4,10 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, expect } from "vitest";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { diffSteps, summarizeSteps, withIndex, type DeliveryStepRecord } from "../../src/shared/context/steps";
+import { readDeliverySteps, stepsFile } from "../../src/main/services/local-agent";
 
 const rec = (over: Partial<DeliveryStepRecord> = {}): DeliveryStepRecord => ({
     ts: "2026-09-25T00:00:00.000Z",
@@ -90,5 +93,30 @@ describe("step 摘要列表", () => {
 describe("withIndex", () => {
     it("按行序给 1 基序号", () => {
         expect(withIndex([rec(), rec()]).map((s) => s.index)).toEqual([1, 2]);
+    });
+});
+
+describe("读侧兜底：缺字段的快照不打断渲染（review RV-12）", () => {
+    it("steps.jsonl 缺 systemPlaces/runtimePlaces → 读出来是 []（不是 undefined）", () => {
+        // 路径用 main 侧导出的 stepsFile（review RV-17：别靠后缀反推 —— 改后缀会静默写错文件、用例变假绿）
+        const uri = "projects/99/tasks/1";
+        const fp = stepsFile(uri);
+        mkdirSync(dirname(fp), { recursive: true });
+        writeFileSync(
+            fp,
+            JSON.stringify({
+                ts: "2026-10-02T00:00:00.000Z",
+                turnId: "t1",
+                model: "m",
+                wireVersion: "aaaa1111",
+                valueHashes: {},
+                systemText: "",
+                runtimeText: "",
+            }) + "\n",
+        );
+        const got = readDeliverySteps(uri);
+        expect(got).toHaveLength(1);
+        expect(got[0]!.systemPlaces).toEqual([]);
+        expect(got[0]!.runtimePlaces).toEqual([]);
     });
 });

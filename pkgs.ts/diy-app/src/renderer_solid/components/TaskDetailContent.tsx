@@ -370,7 +370,7 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
 }
 
 // ═══════════════════════════════════════════
-// 块 2：任务树（当前任务所在根任务下的**整颗树**，含兄弟分支；当前任务高亮定位）
+// 块 2：任务树（当前任务所在**根任务的子树**；同级根任务不平铺，当前任务高亮定位）
 // ═══════════════════════════════════════════
 function LineageBlock(props: { uri: string; hoverPreview?: boolean; host?: "manage" | "chat" }) {
     /** 管理宿主：树点标题 = 就近选中；hover 出「左侧并排信息卡」而非弹覆盖层 */
@@ -403,8 +403,9 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean; host?: "mana
     /**
      * 任务树行：树才是父子关系的真相源（URI 路径不表达层级）。
      *
-     * **整颗树**（##233 / ##183 第 4 点）—— 从当前任务所在**根任务** DFS 全部任务，
-     * 含所有兄弟分支；当前任务标 `current`。见 lib/task-lineage。
+     * 从当前任务所在**根任务** DFS 它自己的子树（根下的兄弟分支自然纳入）；
+     * **当前任务本身是顶级时退化为「自己 + 子孙」**，不平铺项目下其余根任务
+     * （##258 / R4 收回了 RV-04 的越界）。当前任务标 `current`。见 lib/task-lineage。
      */
     const rows = () => lineageRows(taskStore.nodes, props.uri);
     /**

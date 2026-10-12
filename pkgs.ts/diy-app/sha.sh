@@ -55,12 +55,13 @@ sync() { :; }
 build() {
   local d; d="$(_build_dir)"
   run npx vite build --config vite.main.config.ts
-  # snapshot（models.dev 产物，fs 惰性读）随 main 产物走：build/<V>/main/data/
-  run mkdir -p "$d/main/data" && cp src/main/data/models-snapshot.json "$d/main/data/"
+  # 内置数据三件（models.dev.json + models.dev.diy.json + calendars.json，均 fs 惰性读）
+  # 随 main 产物走：build/<V>/main/data/（通配拷贝 —— 加文件不用改这里，但改名要同步）
+  run mkdir -p "$d/main/data" && cp src/main/data/*.json "$d/main/data/"
   run npx vite build --config vite.preload.config.ts
   run npx vite build --config vite.cli.config.ts
-  # CLI 产物也带 snapshot：否则打包安装（无源树）时 build/<V>/cli 找不到数据，模型目录退化为空（##275 R1-5）
-  run mkdir -p "$d/cli/data" && cp src/main/data/models-snapshot.json "$d/cli/data/"
+  # CLI 产物也带内置数据：否则打包安装（无源树）时 build/<V>/cli 找不到数据，模型目录退化为空（##275 R1-5）
+  run mkdir -p "$d/cli/data" && cp src/main/data/*.json "$d/cli/data/"
   build-renderer
 }
 
@@ -112,7 +113,24 @@ test-intent() {
   export DIY_VARIANT=test
   build
   export DIY_CLI_MODE="${DIY_CLI_MODE:-http}"
-  run npx vitest run --no-file-parallelism tests/cli.intent "$@"
+  # 位置参数 = 只跑匹配的文件（片段 / 相对路径 / 文件名），无参数 = 全量。
+  #   例：./sha.sh test-intent ui-find          → tests/cli.intent.ui-find
+  #       ./sha.sh test-intent ui-find task     → 两个文件
+  #       ./sha.sh test-intent tests/cli.intent.ui-find.test.ts → 原样
+  # 为什么不能写成 `... tests/cli.intent "$@"`：vitest 多个 filter 取**并集**，
+  #   写死的全量 filter 会让任何单文件参数都退化成全量（##255 §2 的成因）。
+  local filters=() arg
+  for arg in "$@"; do
+    if [[ "$arg" == */* || "$arg" == *.test.ts || "$arg" == cli.intent.* ]]; then
+      filters+=("$arg")
+    else
+      filters+=("tests/cli.intent.$arg")
+    fi
+  done
+  if [[ ${#filters[@]} -eq 0 ]]; then
+    filters=("tests/cli.intent")
+  fi
+  run npx vitest run --no-file-parallelism "${filters[@]}"
 }
 
 typecheck() { run npx tsc --noEmit; }

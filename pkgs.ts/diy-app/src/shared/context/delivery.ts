@@ -133,6 +133,21 @@ function candidatesCompatible(p: ContextPath, systemPlaces: readonly ContextPath
 }
 
 /**
+ * 一份 system 名单对应的**有效投递单元**（不含 `inTree` 过滤）：候选 ∪ 名单，再去掉与名单
+ * 互为祖先后代的候选（`places` 的硬规则）。
+ *
+ * 为什么提出来：`buildDelivery` 与**历史归因**（`unitsFromSystemPlaces`）必须用同一份名单 ——
+ * 各算一份必然漂移。反例（review RV-14）：只遍历 `PLACE_CANDIDATES` 时，手填的候选外单元被整个丢掉
+ * （它的变化报成"无原因"）；名单里是**祖先级**单元（如手填 `task`）时，还会把被挤掉的候选
+ * 当成幽灵单元造出来（`task.body` → 谎报 `task.body(runtime)`，实际该轮是 `task(system)`）。
+ */
+export function unitPathsOf(systemPlaces: readonly ContextPath[]): ContextPath[] {
+    return [...new Set([...PLACE_CANDIDATES.map((c) => c.path), ...systemPlaces])].filter((p) =>
+        candidatesCompatible(p, systemPlaces),
+    );
+}
+
+/**
  * 构造一轮投递（**真发与预览的唯一入口**）。
  * systemPlaces 缺省用推荐名单；名单里不存在于值树的 path 自动忽略（不报错：
  * 名单是用户偏好，跨任务复用时会有些 path 没有）。
@@ -144,10 +159,7 @@ export function buildDelivery(
     // places 取「候选里存在的」+ system 名单（后者可能含候选外的手填 path）
     const existing = new Set(Object.keys(globals));
     const inTree = (p: ContextPath): boolean => existing.has(p.split(".")[0]);
-    const places = [...new Set([...PLACE_CANDIDATES.map((c) => c.path), ...systemPlaces])]
-        .filter(inTree)
-        .filter((p) => candidatesCompatible(p, systemPlaces))
-        .sort();
+    const places = unitPathsOf(systemPlaces).filter(inTree).sort();
 
     let tree = treeOfGlobals(globals);
     tree = setPlaces(tree, places);

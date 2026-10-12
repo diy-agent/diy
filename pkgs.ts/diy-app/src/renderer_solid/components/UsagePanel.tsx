@@ -24,6 +24,9 @@
 import { createEffect, createMemo, createResource, createSignal, For, Match, Show, Switch, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 import { localChatStore } from "../store/localChatStore";
+// 时间口径唯一出处（shared/date-format）：面板里的轮次时刻（hover 卡标题 / 明细抽屉）与对话流
+// 首行同格式（fmtTurnStamp）；列头那处要「到秒」故用 fmtTurnFull。
+import { fmtTurnFull, fmtTurnStamp } from "../../shared/date-format";
 import { useDrawerMax, DrawerMaxButton } from "./DrawerMaximize";
 import {
     cacheHitRate,
@@ -442,14 +445,6 @@ const fmtDateSec = (d: Date | number): string => {
     if (Number.isNaN(dt.getTime())) return "";
     const p = (n: number) => String(n).padStart(2, "0");
     return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())} ${p(dt.getHours())}:${p(dt.getMinutes())}:${p(dt.getSeconds())}`;
-};
-
-/** 轮次时间（日期 + 时间到秒）：turnId 自带 epoch ms（`t179…`）；非常规 id → null（回退原 id） */
-const turnStamp = (turnId: string): string | null => {
-    const m = /^t(\d{13})$/.exec(turnId);
-    if (!m) return null;
-    const s = fmtDateSec(Number(m[1]));
-    return s || null;
 };
 
 /** 步时间（日期 + 时间到秒）：账本 ts（ISO）；非法 → 原文 */
@@ -945,7 +940,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                             <For each={groups()}>
                                                 {(g) => (
                                                     <tr>
-                                                        <td class="text-right tabular-nums" title={g.turnId}>{turnStamp(g.turnId) ?? g.turnId}</td>
+                                                        <td class="text-right tabular-nums" title={g.turnId}>{fmtTurnFull(g.turnId) ?? g.turnId}</td>
                                                         <td class="text-right font-mono text-caption opacity-70">{g.turnId}</td>
                                                         <td class="text-right">{g.steps.length}</td>
                                                         {cellsOf(g.last.record.contextParts, g.last.buckets.inputTotal)}
@@ -1085,7 +1080,8 @@ export function UsageHoverCard(props: {
         const s = props.state;
         if (!s) return "";
         if (s.id === "session") return "会话用量（累计）";
-        const c = fmtTurnClock(s.id);
+        // 时刻口径与对话流一致（fmtTurnStamp）：同一轮不该出现两种时间格式
+        const c = fmtTurnStamp(s.id);
         return c ? `本轮用量 · ${c}` : "本轮用量";
     };
 
@@ -1163,6 +1159,7 @@ export function UsageHoverCard(props: {
  * 合成一个就是把"不可点的东西"塞进可点区域（时刻那次的教训）。
  */
 export function TurnUsageBar(props: {
+    /** 本轮 id（`t` + 毫秒）：时刻的**唯一真源**（协议无块级 ts，见 fmtTurnClock） */
     turnId: string;
     usage: unknown;
     /** true = 直播中且 main 还没写过 usage patch（第一步 finish-step 之前）：给占位，不装作有数 */
@@ -1581,7 +1578,7 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
     });
     const rows = () => (props.turnId ? localChatStore.usage.filter((r) => r.turnId === props.turnId) : []);
     const group = () => (props.turnId ? groupByTurn(localChatStore.usage).find((g) => g.turnId === props.turnId) ?? null : null);
-    const clock = () => (props.turnId ? fmtTurnClock(props.turnId) : null);
+    const clock = () => (props.turnId ? fmtTurnStamp(props.turnId) : null);
     /** 表格 / MD 源码 / 账本源码（两键皆不亮 = 表格；再点已亮键回表格） */
     const [fmtView, setFmtView] = createSignal<"table" | "md" | "raw">("table");
     const toggleFmt = (v: "md" | "raw") => setFmtView((x) => (x === v ? "table" : v));
@@ -1758,6 +1755,8 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
     };
     const rate = () => (last() ? windowRate(last()!.buckets, last()!.record.contextLimit) : null);
     const tiers = () => [...new Set(steps().map((r) => r.rates?.tier).filter((t): t is string => !!t))];
+    /** 时段档（峰/谷）——与上下文档位是**两轴**，分开显示（见 shared/usage.ts ratesOf） */
+    const windows = () => [...new Set(steps().map((r) => r.rates?.window).filter((t): t is string => !!t))];
     /** 表格 / MD 源码 / 账本源码（两键皆不亮 = 表格；再点已亮键回表格） */
     const [fmtView, setFmtView] = createSignal<"table" | "md" | "raw">("table");
     const toggleFmt = (v: "md" | "raw") => setFmtView((x) => (x === v ? "table" : v));
@@ -1833,7 +1832,9 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
                                 : ""}
                             {" · "}
                             生效档位：{tiers().length ? tiers().join(", ") : "—"}
-                            （tier 按总输入 token 选，取满足条件的最大阈值）
+                            {windows().length ? ` · 时段：${windows().join(", ")}` : ""}
+                            （tier = 上下文档：按总输入 token 取满足条件的最大阈值；时段 = 峰谷档：
+                            按请求时刻 + 内置日历判定）
                             <br />
                             `合计$` = 非缓存 + 缓存读 + 缓存写 + 文本 + 思考；思考是总输出的拆解子项，
                             <span class="font-medium">不重复加</span>。缓存写 `n/a` = 该 API 面不可测（不是 0）。

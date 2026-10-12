@@ -17,6 +17,7 @@ import { taskStore } from "./taskStore";
 import { notificationStore } from "./notificationStore";
 import type { PersonaView } from "../../shared/persona";
 import type { ReasoningEffort } from "../../shared/models";
+import type { ModelCost } from "../../shared/usage";
 import { splitQualified } from "../../shared/model-config";
 
 /** 模型清单里本 store 用到的形状（展示 + 模型选择表；字段来自 agent.local.models） */
@@ -35,8 +36,12 @@ export interface ModelBrief {
     /** 单次输出上限；spec 未给 → 缺省（运行时回退默认值） */
     maxOutputTokens?: number;
     reasoning: { supported: ReasoningEffort[]; default: ReasoningEffort };
-    /** 单价（$/1M tokens；缺失 = 无价目，表里显示 —） */
-    cost?: { input: number; output: number; cacheRead?: number; cacheWrite?: number } | null;
+    /**
+     * 单价（$/1M tokens；缺失 = 无价目，表里显示 —）。
+     * 形状直接用计价口径的 `ModelCost`（含 `baseLabel` / 时段档 `tiers`）——
+     * 手写第二份子集 = 分档价在表里画不出来（`agent.local.models` 下发的就是它）。
+     */
+    cost?: ModelCost | null;
 }
 
 /** 按限定名 `ref`（或裸 id，兼容存量）在清单里找条目 */

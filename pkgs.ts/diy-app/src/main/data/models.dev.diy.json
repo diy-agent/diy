@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "note": "diy 对 models.dev 的**扩展层**。与 models.dev.json 同级等位、同一 dataFile 定位，但归属相反：models.dev.json 是上游产物（整份重下），本文件是 diy 手写（**只增不改**，永不被覆盖）。为什么需要它：models.dev 全量实测（191 provider / 6315 模型 / 373 条 tiers）**零个时间相关字段**，tiers 清一色 type=context —— 时段计费上游根本不表达。故『时段』在此按 vendor 登记一次，价仍逐 (provider, model) 登记在 providers.custom.yaml / model.yaml。",
+  "windows": {
+    "deepseek-peak": {
+      "label": "peak",
+      "calendar": "CN-mon-fri-ex-holiday",
+      "note": "DeepSeek 官方价页原文：「Peak hours are 01:00 - 04:00 and 06:00 - 10:00 UTC, Monday through Friday, excluding Chinese public holidays. All other hours are off-peak, including weekends and Chinese public holidays in full.」比分 = 峰价为谷价的 2 倍；models.dev 收录的正是**谷价**，故 base 档不动，只登记峰段。注意日历用 CN-mon-fri-ex-holiday（不含调休补班）—— 官方口径是『Monday through Friday』，调休上班的周六仍是 off-peak。",
+      "ranges": [
+        { "start": "01:00:00Z", "end": "04:00:00Z" },
+        { "start": "06:00:00Z", "end": "10:00:00Z" }
+      ]
+    }
+  }
+}

@@ -126,7 +126,9 @@ export function renderUsageByAgent(steps: StepUsageRecord[], opts: UsageTableOpt
         g.cost ? fmtCost(g.cost.text) : "n/a",
         g.cost ? fmtCost(g.cost.reasoning) : "n/a",
         g.cost ? fmtCost(g.cost.total) : "n/a",
-        g.tiers.length ? `tier=${g.tiers.join(",")}` : "—",
+        g.tiers.length || g.windows.length
+            ? [g.tiers.length ? `tier=${g.tiers.join(",")}` : "", g.windows.length ? `时段=${g.windows.join(",")}` : ""].filter(Boolean).join(" · ")
+            : "—",
     ]);
     return table(header, rows);
 }

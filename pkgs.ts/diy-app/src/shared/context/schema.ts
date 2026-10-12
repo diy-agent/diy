@@ -111,6 +111,7 @@ export type ContextDiff = z.infer<typeof ContextDiffSchema>;
 export const StatsSchema = z.object({
     turns: z.number(),
     records: z.number(),
+    taskCount: z.number(),
     since: z.string().nullable(),
     until: z.string().nullable(),
     paths: z.array(

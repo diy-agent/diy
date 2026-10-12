@@ -56,4 +56,4 @@ data/
 
 # ##184：models.dev snapshot（源数据真源，随仓走；上面 data/ 规则的例外）
 !pkgs.ts/diy-app/src/main/data/
-!pkgs.ts/diy-app/src/main/data/models-snapshot.json
+!pkgs.ts/diy-app/src/main/data/models*.json

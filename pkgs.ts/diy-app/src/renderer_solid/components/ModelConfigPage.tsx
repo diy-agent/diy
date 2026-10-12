@@ -3,6 +3,8 @@
 // 两组卡片：std = models.dev snapshot provider（spec 只读）；custom = providers.custom.yaml
 // （baseUrl / provider 级默认面(npm) 可编辑）。卡片内：账号 → 模型清单（勾选启用）→ [保存][移除]。
 // 模型清单不显示「面」列：面由 npm/端点自动解析，对用户没意义（provider 级默认面仍可改）。
+// 价格：每行填 base 档（in/out/读/写 + 基准标签）；「时段档」展开后可加 utc-range 档
+// （峰/谷价 + 可选日历 = 工作日限定，UI 只列内置日历）—— 变换逻辑在 shared/cost-edit.ts。
 // 「添加 provider」即时落盘（否则 read 拿不到新 provider 的模型清单）；其余编辑攒 dirty → 每卡 [保存]。
 //
 // 交互约定（对齐 dsh 模型设置页）：
@@ -13,16 +15,25 @@
 import { For, Index, Show, createMemo, createSignal, onMount } from "solid-js";
 import type {
   Account,
+  CalendarChoice,
   CatalogEntry,
+  Cost,
+  CostTier,
   CustomSpecsFile,
+  EnvImportCandidate,
   LlmConfigView,
   ModelConfigFile,
   ProviderConfig,
   SpecProvider,
+  WindowChoice,
 } from "../../shared/model-config";
 import { filterAllows, npmOfEndpoints } from "../../shared/model-config";
+import type { CostField } from "../../shared/cost-edit";
+import { addUtcRangeTier, editCost, patchUtcRange, removeTier, setBaseLabel, setBasePrice, tierIssues, utcRangeSlots } from "../../shared/cost-edit";
 import { diyService } from "../lib/rpc";
+import { EnvImportBar, type EnvScanScope } from "./EnvImportBar";
 import { notificationStore } from "../store/notificationStore";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 type FilterMode = "all" | "include" | "exclude";
 
@@ -44,6 +55,14 @@ const FACE_OPTIONS = [
   { npm: "@ai-sdk/openai", label: "responses（/responses）" },
 ] as const;
 
+/** 单价输入框（key 是 spec 的 snake_case；$/1M tokens）。逐档价格复用同一组控件。 */
+const COST_FIELDS: { key: CostField; ph: string; label: string }[] = [
+  { key: "input", ph: "in", label: "非缓存输入 $/1M（必填）" },
+  { key: "output", ph: "out", label: "输出 $/1M（必填）" },
+  { key: "cache_read", ph: "读", label: "缓存读 $/1M（可选）" },
+  { key: "cache_write", ph: "写", label: "缓存写 $/1M（可选）" },
+];
+
 export function ModelConfigPage() {
   const [loading, setLoading] = createSignal(true);
   const [saving, setSaving] = createSignal(false);
@@ -53,6 +72,15 @@ export function ModelConfigPage() {
   const [specs, setSpecs] = createSignal<CustomSpecsFile>({});
   const [query, setQuery] = createSignal("");
   const [showNewCustom, setShowNewCustom] = createSignal(false);
+  /** 环境变量导入候选（snapshot 声明的 env ∩ process.env，再与现有配置比对；见 core/model-import） */
+  const [envCandidates, setEnvCandidates] = createSignal<EnvImportCandidate[]>([]);
+  /** 扫描面（providers 数 / 变量名）：零命中时提示条靠它交代「查过什么」 */
+  const [envScanned, setEnvScanned] = createSignal<EnvScanScope | null>(null);
+  /** 扫描失败原因：区别于「零命中」——前者是功能坏了，后者是环境里真没有 */
+  const [envScanError, setEnvScanError] = createSignal<string | null>(null);
+  const [envDismissed, setEnvDismissed] = createSignal(false);
+  /** 待确认移除的 provider（null = 无弹窗）。用应用内 ConfirmDialog，不用原生 confirm（见其头注释） */
+  const [pendingRemove, setPendingRemove] = createSignal<{ kind: "std" | "custom"; key: string } | null>(null);
 
   const reload = async () => {
     try {
@@ -69,7 +97,43 @@ export function ModelConfigPage() {
       setLoading(false);
     }
   };
-  onMount(reload);
+  /** 扫环境变量（只列不写）：提示条据此渲染（候选 + 扫描面；失败也如实入条，不静默吞） */
+  const scanEnv = async () => {
+    try {
+      const r = await diyService.diy.llmConfig.scanEnv({});
+      setEnvCandidates(r.candidates);
+      setEnvScanned(r.scanned);
+      setEnvScanError(null);
+    } catch (e) {
+      setEnvCandidates([]);
+      setEnvScanned(null);
+      setEnvScanError(e instanceof Error ? e.message : "扫描失败");
+    }
+  };
+  onMount(() => {
+    void reload();
+    void scanEnv();
+  });
+
+  /** 导入候选（providers 为空 = 全部可导入项）；落盘后重读，候选随之变灰/消失 */
+  const importEnv = async (providers: string[]) => {
+    try {
+      const r = await diyService.diy.llmConfig.importEnv({ providers: providers.length ? providers : undefined });
+      await reload();
+      await scanEnv();
+      if (r.imported.length > 0) {
+        notificationStore.addToast("success", `已导入 ${r.imported.join("、")}（账号写为 $VAR 引用）`);
+      }
+      if (r.skipped.length > 0) {
+        notificationStore.addToast(
+          "info",
+          `跳过：${r.skipped.map((s) => `${s.provider}（${s.note}）`).join("；")}`,
+        );
+      }
+    } catch (e) {
+      notificationStore.addToast("error", e instanceof Error ? e.message : "导入失败");
+    }
+  };
 
   const mutateFile = (fn: (f: ModelConfigFile) => void) => {
     const next = structuredClone(file());
@@ -100,6 +164,7 @@ export function ModelConfigPage() {
         if (a !== b) await diyService.diy.llmConfig.writeSpec({ id, spec: now[id] ?? null });
       }
       await reload();
+      await scanEnv();
       notificationStore.addToast("success", "model.yaml 已保存");
     } catch (e) {
       notificationStore.addToast("error", e instanceof Error ? e.message : "保存失败");
@@ -151,12 +216,26 @@ export function ModelConfigPage() {
     })),
   );
 
-  const removeProvider = (kind: "std" | "custom", key: string) => {
-    if (!confirm(`移除 provider「${kind === "custom" ? `custom:${key}` : key}」？模型选择随之消失。`)) return;
-    mutateFile((f) => {
-      if (kind === "std") delete f.stdProviders[key];
-      else delete f.customProviders[key];
-    });
+  /**
+   * 移除 provider = **立即落盘**（与「添加 provider」同一约定）。
+   * 为什么不攒 dirty 等「保存全部」：移除是破坏性操作，攒着会让人以为删掉了 ——
+   * 一切换页面就又 read 回来（实测被报成「删不掉」）。删完顺手重扫环境变量：
+   * 「删掉 → 提示条立刻出现导入」是这条路径的**目的**，不重扫就得重进页面才看得到。
+   */
+  const removeProvider = async (kind: "std" | "custom", key: string) => {
+    setPendingRemove(null);
+    const next = structuredClone(file());
+    if (kind === "std") delete next.stdProviders[key];
+    else delete next.customProviders[key];
+    setFile(next);
+    try {
+      await diyService.diy.llmConfig.write({ modelFile: next });
+      await reload();
+      await scanEnv();
+      notificationStore.addToast("success", `已移除 ${kind === "custom" ? `custom:${key}` : key}`);
+    } catch (e) {
+      notificationStore.addToast("error", e instanceof Error ? e.message : "移除失败");
+    }
   };
 
   return (
@@ -173,7 +252,23 @@ export function ModelConfigPage() {
       <div class="text-body opacity-60 text-xs">
         密钥支持 <code>$ENV</code> 插值（未定义会报错）；模型清单来自 models.dev snapshot（models.dev
         provider）或 providers.custom.yaml（自定义）。勾选即启用/隐藏，逐卡片「保存」落盘。
+        自定义 provider 可在模型行**填单价**（$/1M，落 providers.custom.yaml）；不填 = 无价（金额显示
+        <code>—</code>，绝不按 0 计）。峰谷价用行内**时段档**（时刻 + 可选日历，如中国法定工作日）。
       </div>
+
+      {/* 环境变量导入提示条（形态对齐 FindBar：页内一条、可关闭、不挡内容）。
+          四态都给话（##286）：可导入 / 命中但均已在配置中 / 零命中 / 扫描失败 —— 用户不必猜。
+          只提示不自动写，点「导入」才落盘。 */}
+      <Show when={!envDismissed()}>
+        <EnvImportBar
+          candidates={envCandidates()}
+          scanned={envScanned()}
+          error={envScanError()}
+          onImport={(providers) => void importEnv(providers)}
+          onRetry={() => void scanEnv()}
+          onDismiss={() => setEnvDismissed(true)}
+        />
+      </Show>
 
       <Show when={!loading()} fallback={<div class="text-body opacity-50">加载中…</div>}>
         {/* ── stdProviders ── */}
@@ -215,7 +310,7 @@ export function ModelConfigPage() {
               mutateFile={mutateFile}
               save={save}
               saving={saving}
-              onRemove={() => removeProvider("std", c().key)}
+              onRemove={() => setPendingRemove({ kind: "std", key: c().key })}
             />
           )}
         </Index>
@@ -230,9 +325,11 @@ export function ModelConfigPage() {
               mutateFile={mutateFile}
               specs={specs}
               mutateSpec={mutateSpec}
+              calendars={() => view()?.calendars ?? []}
+              windows={() => view()?.windows ?? []}
               save={save}
               saving={saving}
-              onRemove={() => removeProvider("custom", c().key)}
+              onRemove={() => setPendingRemove({ kind: "custom", key: c().key })}
             />
           )}
         </Index>
@@ -256,6 +353,19 @@ export function ModelConfigPage() {
             }}
           />
         </Show>
+      </Show>
+
+      {/* 移除确认：破坏性（模型选择随之消失），且不可撤销 */}
+      <Show when={pendingRemove()}>
+        {(t) => (
+          <ConfirmDialog
+            title={`移除 provider「${t().kind === "custom" ? `custom:${t().key}` : t().key}」？`}
+            message="该 provider 及其模型选择将立即从 model.yaml 移除。"
+            confirmLabel="移除"
+            onCancel={() => setPendingRemove(null)}
+            onConfirm={() => void removeProvider(t().kind, t().key)}
+          />
+        )}
       </Show>
     </div>
   );
@@ -343,6 +453,7 @@ function StdCard(props: {
   mutateFile: (fn: (f: ModelConfigFile) => void) => void;
   save: () => Promise<void>;
   saving: () => boolean;
+  /** 点「移除」= 请求确认（由页面弹 ConfirmDialog，见 removeProvider） */
   onRemove: () => void;
 }) {
   const [testing, setTesting] = createSignal(false);
@@ -520,12 +631,19 @@ function CustomCard(props: {
   mutateFile: (fn: (f: ModelConfigFile) => void) => void;
   specs: () => CustomSpecsFile;
   mutateSpec: (key: string, fn: (s: SpecProvider) => void) => void;
+  /** 内置日历清单（时段档的「工作日扩展」下拉项，来自 llmConfig.read） */
+  calendars: () => CalendarChoice[];
+  /** 具名时段表清单（时段档的「时段表」下拉项，来自 llmConfig.read；空 = 只能自定义时刻） */
+  windows: () => WindowChoice[];
   save: () => Promise<void>;
   saving: () => boolean;
+  /** 点「移除」= 请求确认（由页面弹 ConfirmDialog，见 removeProvider） */
   onRemove: () => void;
 }) {
   const [testing, setTesting] = createSignal(false);
   const [modelQuery, setModelQuery] = createSignal("");
+  /** 展开编辑时段档的模型 id（同一时刻只展开一个，表窄） */
+  const [expanded, setExpanded] = createSignal<string | null>(null);
   const mutateCfg = (fn: (c: ProviderConfig) => void) =>
     props.mutateFile((f) => { const c = f.customProviders[props.card.key]; if (c) fn(c); });
 
@@ -551,16 +669,21 @@ function CustomCard(props: {
       const r = await diyService.diy.llmConfig.probe({ baseUrl: s.api, apiKey: props.card.cfg.accounts[0]?.data.value ?? "" });
       if (!r.ok) { notificationStore.addToast("error", `不通：${r.error ?? "未知错误"}`); return; }
       const fallbackNpm = providerNpm();
+      const prevModels = spec()?.models ?? {};
       const next: Record<string, SpecProvider["models"][string]> = {};
       let skipped = 0;
       for (const m of r.models) {
         // endpoints 非空 → 按端点定面（只支持两家；anthropic 等跳过）；为空 → 用 provider 级默认面。
         const faceNpm = m.endpoints.length > 0 ? npmOfEndpoints(m.endpoints) : fallbackNpm;
         if (!faceNpm) { skipped++; continue; }
+        const prev = prevModels[m.id];
+        // 合并而非重建：/models 只提供 name/context/面；**手工登记的价格/档位/自定义 limit 必须保留**
+        // （否则点一次「测试并获取模型列表」就把填好的价冲掉 → 静默变无价）。
         next[m.id] = {
+          ...(prev ?? {}),
           id: m.id,
           ...(m.name ? { name: m.name } : {}),
-          ...(m.context ? { limit: { context: m.context } } : {}),
+          ...(m.context ? { limit: { ...(prev?.limit ?? {}), context: m.context } } : {}),
           ...(faceNpm !== fallbackNpm ? { provider: { npm: faceNpm } } : {}),
         };
       }
@@ -576,6 +699,32 @@ function CustomCard(props: {
 
   const patchModel = (id: string, fn: (m: NonNullable<SpecProvider["models"][string]>) => void) =>
     props.mutateSpec(props.card.key, (s) => { const m = s.models[id]; if (m) fn(m); });
+
+  /** 读某模型某单价字段的展示值（未填 → 空串，不显示 0） */
+  const costVal = (id: string, f: CostField): string => {
+    const v = spec()?.models[id]?.cost?.[f];
+    return v != null ? String(v) : "";
+  };
+  /** in/out 只填了一个（runtime 只认两者齐全的价 → 该模型仍无价）：UI 标红提醒 */
+  const costPartial = (id: string): boolean => {
+    const c = spec()?.models[id]?.cost;
+    return c != null && (c.input != null) !== (c.output != null);
+  };
+  /** 写 base 档单价（$/1M，spec 的 snake_case）：清空则删字段；全空则删整个 cost（无价）。 */
+  const patchCost = (id: string, f: CostField, raw: string) =>
+    patchModel(id, (mm) => editCost(mm, (c) => setBasePrice(c, f, raw)));
+
+  // ── 时段档（utc-range）：变换在 shared/cost-edit.ts（纯函数，可单测） ──
+  const costOf = (id: string): Cost | undefined => spec()?.models[id]?.cost;
+  const slotsOf = (id: string) => utcRangeSlots(costOf(id));
+  const patchTier = (id: string, index: number, p: Parameters<typeof patchUtcRange>[2]) =>
+    patchModel(id, (mm) => editCost(mm, (c) => patchUtcRange(c, index, p)));
+  const addTier = (id: string) =>
+    patchModel(id, (mm) => { editCost(mm, addUtcRangeTier); setExpanded(id); });
+  const dropTier = (id: string, index: number) =>
+    patchModel(id, (mm) => editCost(mm, (c) => removeTier(c, index)));
+  /** 时段档的日历编辑块（`utc-range` 归一形状；非该类型不该出现在展开区） */
+  const winOf = (t: CostTier) => (t.tier?.type === "utc-range" ? t.tier.data : null);
 
   const toggle = (id: string) => {
     const m = mode();
@@ -660,6 +809,7 @@ function CustomCard(props: {
                 <th class="w-28">context</th>
                 <th class="w-28">output</th>
                 <th class="w-52">档位（逗号，空=平台默认）</th>
+                <th class="w-72">价格 $/1M（in / out / 缓存读 / 缓存写）</th>
               </tr>
             </thead>
             <tbody>
@@ -678,6 +828,7 @@ function CustomCard(props: {
                     return Array.isArray(v) ? (v as string[]).join(",") : "";
                   };
                   return (
+                    <>
                     <tr class={enabled() ? "" : "opacity-40"}>
                       <td>
                         <input type="checkbox" class="checkbox checkbox-xs" disabled={mode() === "all"} checked={enabled()} onChange={() => toggle(id())} />
@@ -718,7 +869,137 @@ function CustomCard(props: {
                           })}
                         />
                       </td>
+                      <td>
+                        <div class="flex items-center gap-1">
+                          <Index each={COST_FIELDS}>
+                            {(f) => (
+                              <input
+                                class="input input-bordered input-xs w-14"
+                                placeholder={f().ph}
+                                title={f().label}
+                                value={costVal(id(), f().key)}
+                                onInput={(e) => patchCost(id(), f().key, e.currentTarget.value)}
+                              />
+                            )}
+                          </Index>
+                        </div>
+                        <div class="flex items-center gap-1 mt-1">
+                          <input
+                            class="input input-bordered input-xs w-16"
+                            placeholder="基准标签"
+                            title="未命中任何时段档时的档名（如 off-peak）；留空显示 base"
+                            value={costOf(id())?.baseLabel ?? ""}
+                            onInput={(e) => patchModel(id(), (mm) => editCost(mm, (c) => setBaseLabel(c, e.currentTarget.value)))}
+                          />
+                          <button
+                            class="btn btn-xs btn-ghost"
+                            title="峰/谷时段价（按 UTC 时刻 + 可选日历）"
+                            onClick={() => setExpanded(expanded() === id() ? null : id())}
+                          >
+                            时段档{slotsOf(id()).length ? ` ${slotsOf(id()).length}` : ""}
+                          </button>
+                        </div>
+                        <Show when={costPartial(id())}>
+                          <span class="text-error text-xs">in/out 需同填才有价</span>
+                        </Show>
+                      </td>
                     </tr>
+                    <Show when={expanded() === id()}>
+                      <tr class="bg-base-200">
+                        <td colspan={6}>
+                          <div class="space-y-1 py-1">
+                            <div class="text-xs opacity-60">
+                              命中时段用档价，未命中用上面的默认价（基准标签 <code>{costOf(id())?.baseLabel ?? "base"}</code>）。
+                              档可**引用具名时段表**（段/日历/标签在 <code>models.dev.diy.json</code> 定义，
+                              同 vendor 的多个模型共用一张），也可「自定义时刻」。
+                              时刻 = 带 UTC 偏移的 ISO 8601（如 <code>01:00:00+08:00</code>）；end &lt; start = 跨零点。
+                              日历 = 该时段只在这些日子生效；档内价格留空 = 沿用默认价。
+                            </div>
+                            <For each={slotsOf(id())}>
+                              {(slot) => {
+                                const d = () => winOf(slot.tier)!;
+                                const issues = () => tierIssues(costOf(id()), slot.tier);
+                                return (
+                                  <div class="flex items-center gap-1 flex-wrap">
+                                    <select
+                                      class="select select-bordered select-xs w-44"
+                                      title="具名时段表（段/日历/标签在 models.dev.diy.json 里定义，此处只引用）或自定义时刻"
+                                      value={d().window ?? ""}
+                                      onChange={(e) => patchTier(id(), slot.index, { window: e.currentTarget.value })}
+                                    >
+                                      <option value="">自定义时刻</option>
+                                      <For each={props.windows()}>{(w) => <option value={w.id}>{w.id}</option>}</For>
+                                    </select>
+                                    <Show
+                                      when={d().window}
+                                      fallback={
+                                        <>
+                                          <input
+                                            class="input input-bordered input-xs w-36 font-mono"
+                                            title="开始时刻（含 UTC 偏移）"
+                                            value={d().start ?? ""}
+                                            onInput={(e) => patchTier(id(), slot.index, { start: e.currentTarget.value })}
+                                          />
+                                          <span class="opacity-50">→</span>
+                                          <input
+                                            class="input input-bordered input-xs w-36 font-mono"
+                                            title="结束时刻（偏移须与开始一致）"
+                                            value={d().end ?? ""}
+                                            onInput={(e) => patchTier(id(), slot.index, { end: e.currentTarget.value })}
+                                          />
+                                          <select
+                                            class="select select-bordered select-xs w-44"
+                                            title="仅在这些日子生效"
+                                            value={d().calendar ?? ""}
+                                            onChange={(e) => patchTier(id(), slot.index, { calendar: e.currentTarget.value })}
+                                          >
+                                            <option value="">不限日历（每天）</option>
+                                            <For each={props.calendars()}>{(c) => <option value={c.id}>{c.label}</option>}</For>
+                                          </select>
+                                          <input
+                                            class="input input-bordered input-xs w-20"
+                                            placeholder="标签 peak"
+                                            title="该时段的档名（落 usage.jsonl 的 window 字段）"
+                                            value={d().label ?? ""}
+                                            onInput={(e) => patchTier(id(), slot.index, { label: e.currentTarget.value })}
+                                          />
+                                        </>
+                                      }
+                                    >
+                                      <span class="text-xs opacity-60 font-mono max-w-96 truncate" title="段/日历/标签由时段表定义（models.dev.diy.json）">
+                                        {props.windows().find((w) => w.id === d().window)?.detail ?? "（时段表不存在）"}
+                                      </span>
+                                    </Show>
+                                    <Index each={COST_FIELDS}>
+                                      {(f) => (
+                                        <input
+                                          class="input input-bordered input-xs w-14"
+                                          placeholder={f().ph}
+                                          title={`本档 ${f().label}`}
+                                          value={slot.tier[f().key] != null ? String(slot.tier[f().key]) : ""}
+                                          onInput={(e) => patchTier(id(), slot.index, { price: { f: f().key, raw: e.currentTarget.value } })}
+                                        />
+                                      )}
+                                    </Index>
+                                    <button class="btn btn-xs btn-ghost text-error" title="删除此档" onClick={() => dropTier(id(), slot.index)}>×</button>
+                                    <Show when={issues().length > 0}>
+                                      <span class="text-error text-xs">{issues().join("；")}</span>
+                                    </Show>
+                                  </div>
+                                );
+                              }}
+                            </For>
+                            <div class="flex items-center gap-2">
+                              <button class="btn btn-xs btn-outline" onClick={() => addTier(id())}>＋ 时段档</button>
+                              <span class="text-xs opacity-50">
+                                档位顺序即优先级（首个命中者生效）；判档用请求发起时刻。
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    </Show>
+                    </>
                   );
                 }}
               </Index>

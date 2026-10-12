@@ -39,6 +39,7 @@ import {
     type UsageHoverState,
 } from "./UsagePanel";
 import { CompactHistoryPanel } from "./CompactSessionPanel";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { draftStore } from "../store/draftStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
@@ -46,6 +47,7 @@ import { Caches } from "../lib/ui-state";
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
 import { bylineOf } from "../lib/assistant-byline";
+// 对话流的时间戳：真源是 turnId 内嵌的毫秒（shared/date-format 统一解析与格式化）
 import type { ReasoningEffort } from "../../main/services/local-agent";
 // 插话队列项：与草稿同文件存储（任务目录 .diy/drafts.yaml），类型只在 main 侧定义
 import type { SteerItem, SteerMode } from "../../main/core/drafts";
@@ -53,7 +55,7 @@ import { reasoningEffortLabel } from "../../shared/reasoning-effort";
 import { DragDropProvider, DragOverlay, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron, IconDot } from "./icons";
-import { VIEW_BAR_H } from "../lib/layout-metrics";
+import { VIEW_BAR_H, chatInputMaxHeight } from "../lib/layout-metrics";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
 // 折叠 / 展开级别语义（纯函数，可单测）：显示什么、按什么序、开到第几层 —— 本文件只消费结果
@@ -726,16 +728,20 @@ function TurnHeader(props: {
             <IconChevron open={open()} class="h-3.5 w-3.5 opacity-40" />
             {/* 身份：**所有级别都显示**（1 级与 2 级必须一致，用户 2026-10-11 口径） */}
             <span
-                class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15"
+                class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-body"
                 aria-hidden="true"
             >
                 🤖
             </span>
+            {/* min-w-0 + truncate（review2-1）：多 view 并排时单栏只有 200~260px，模型名
+                （`provider/model`）很长，会把这条 flex 行撑成两行、甚至顶破容器右缘 ——
+                `min-width:auto` 是默认值，不加就永远不缩。真正长的是模型名，所以它先被截。 */}
             <Show when={info().name}>
-                <span class="font-medium">{info().name}</span>
+                <span class="min-w-0 truncate font-medium">{info().name}</span>
             </Show>
             <Show when={info().model}>
-                <span class="opacity-60">{personaStore.displayModel(info().model)}</span>
+                <span class="shrink-0 opacity-50">·</span>
+                <span class="min-w-0 truncate opacity-60">{personaStore.displayModel(info().model)}</span>
             </Show>
             {/* 思考级别：该轮实际生效的档位（main 写入 turn meta） */}
             <Show when={effort() && effort() !== "none"}>
@@ -743,8 +749,10 @@ function TurnHeader(props: {
                 <span class="opacity-60">{reasoningEffortLabel(effort() as ReasoningEffort)}</span>
             </Show>
             <Show when={info().inferred}>
-                <span class="opacity-40">（当时人物未知）</span>
+                <span class="shrink-0 opacity-40">（当时人物未知）</span>
             </Show>
+            {/* 该轮时刻**不在这里**：它在轮尾状态行（★ 状态行，见 UsagePanel 的 Clock）——
+                一轮只该出现一次，且要跟统计/用量/速度同列可扫。 */}
             {/* 统计不在这里：轮尾一行（时刻右边、用量左边）—— 见 turnStatLine 头注 */}
         </DisclosureHead>
     );
@@ -1385,62 +1393,6 @@ function FullscreenModal(props: { title: string; content: string; onClose: () =>
     );
 }
 
-// ─── 确认弹窗（破坏性操作前置确认） ─────────────────
-
-function ConfirmDialog(props: {
-    title: string;
-    message: string;
-    confirmLabel: string;
-    onCancel: () => void;
-    onConfirm: () => void;
-}) {
-    let cancelRef: HTMLButtonElement | undefined;
-    const onKey = (e: KeyboardEvent) => {
-        // 只拦 Esc；不拦 Enter —— 焦点默认在「取消」上，回车本就是取消（原生行为），
-        // 而 Tab 到「清空」后回车应能正常确认：全局拦 Enter 会把这条路一起掐掉。
-        if (e.key === "Escape") {
-            e.stopPropagation();
-            props.onCancel();
-        }
-    };
-    onMount(() => {
-        // ⚠️ 不能用 HTML autofocus：它只在文档加载时生效，动态插入的节点上无效
-        // （实测焦点留在原按钮上，回车会误触原按钮）。必须主动 focus。
-        cancelRef?.focus();
-        // 捕获阶段 + stopPropagation：弹窗开着时 Esc 只该关弹窗。
-        // TaskDetailPanel 也在 window 上监听 Esc 关整个详情面板（冒泡阶段），
-        // 不拦的话一次 Esc 会连面板一起关掉（弹窗和面板双杀）。
-        document.addEventListener("keydown", onKey, true);
-    });
-    onCleanup(() => document.removeEventListener("keydown", onKey, true));
-    return (
-        <div
-            class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6"
-            onClick={(e) => {
-                if (e.target === e.currentTarget) props.onCancel();
-            }}
-        >
-            <div class="bg-base-100 rounded-xl w-full max-w-sm flex flex-col">
-                <div class="px-4 py-3 border-b font-bold text-title">{props.title}</div>
-                <div class="px-4 py-3 text-body opacity-80">{props.message}</div>
-                <div class="px-4 py-2 border-t flex justify-end gap-2">
-                    {/* 焦点落在「取消」：回车/空格不会误触发不可恢复的删除 */}
-                    <button
-                        class="btn btn-xs"
-                        ref={(el) => (cancelRef = el)}
-                        onClick={props.onCancel}
-                    >
-                        取消
-                    </button>
-                    <button class="btn btn-error btn-xs" onClick={props.onConfirm}>
-                        {props.confirmLabel}
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-}
-
 // ─── 页面 ───────────────────────────────────────────
 
 export function LocalChatPage(props: { uri?: string }) {
@@ -1455,6 +1407,12 @@ export function LocalChatPage(props: { uri?: string }) {
     const [personaPanelOpen, setPersonaPanelOpen] = createSignal(false);
     const [fullscreen, setFullscreen] = createSignal(false);
     let scrollRef: HTMLDivElement | undefined;
+    /** 页面容器（用于量 view 高度：输入区封顶 = view 1/3，见 R5 输入框高度） */
+    let rootRef: HTMLDivElement | undefined;
+    /** 当前 view 高度（px，0 = 尚未量到）；输入区 max-height 由它推出 */
+    const [viewH, setViewH] = createSignal(0);
+    /** 输入区封顶高度（口径见 lib/layout-metrics 的 chatInputMaxHeight） */
+    const inputMaxH = () => chatInputMaxHeight(viewH());
     /** 跟随态：true=贴底（新内容自动滚到底）；false=用户正在上方阅读（绝不打扰） */
     const [stick, setStick] = createSignal(true);
     /** 恢复中闸门：历史重放期间 trees 连发，须让位给 restore 的定位（否则被抢先滚到底） */
@@ -1518,7 +1476,12 @@ export function LocalChatPage(props: { uri?: string }) {
         };
         document.addEventListener("click", closePopovers);
         document.addEventListener("keydown", onKey, true);
+        // view 高度跟随窗口/布局变化（输入区封顶 = view 1/3，R5）
+        const ro = new ResizeObserver(() => setViewH(rootRef?.clientHeight ?? 0));
+        if (rootRef) ro.observe(rootRef);
+        setViewH(rootRef?.clientHeight ?? 0);
         onCleanup(() => {
+            ro.disconnect();
             document.removeEventListener("click", closePopovers);
             document.removeEventListener("keydown", onKey, true);
         });
@@ -1743,7 +1706,11 @@ export function LocalChatPage(props: { uri?: string }) {
     };
 
     return (
-        <div class="flex flex-col h-full overflow-hidden">
+        <div
+            ref={(el) => (rootRef = el)}
+            class="flex flex-col h-full overflow-hidden"
+            data-testid="local-chat-page"
+        >
             <PersonaDrawer open={personaPanelOpen()} onClose={() => setPersonaPanelOpen(false)} />
             {/* 打开时顺手对一次账本（轮次间隙别人跑的那几轮不该漏） */}
             <UsageDrawer open={usageBoard()} uri={uri()} onClose={() => setUsageBoard(false)} />
@@ -1931,8 +1898,14 @@ export function LocalChatPage(props: { uri?: string }) {
                         **只变色、不加 outline**：outline 画在 border 外侧 2px，看着像"多了一圈
                         边框"（实测双边框感），边框自己变色就够表达了。
                       · 圆角：`--radius-field`（输入类控件语义，比 `--radius-box` 更方正） */}
+                {/* R5 封顶加在**这个盒子**（= 用户眼里的「输入框」：正文 + 底部工具条）上，而不是
+                    只加在正文宿主上。封顶的**主语**必须与需求一致 —— review2-2 实测：只封宿主时
+                    整个输入区比 view/3 高出 50px（工具条那一行没算进去），后人按"整体 1/3"去改测试
+                    就会对不上。`flex flex-col` 是让工具条（shrink-0）与正文（flex-auto）在盒子里分高度：
+                    内容少时两者都按内容高（默认一行）；超过 max-height 时只有正文收缩 + 内部滚动。 */}
                 <div
-                    class={`rounded-field border border-base-content/20 bg-base-200 transition-colors focus-within:border-base-content ${fullscreen() ? "fixed inset-4 z-40 flex min-h-0 flex-col p-4" : "relative"}`}
+                    class={`rounded-field border border-base-content/20 bg-base-200 transition-colors focus-within:border-base-content ${fullscreen() ? "fixed inset-4 z-40 flex min-h-0 flex-col p-4" : "relative flex flex-col"}`}
+                    style={fullscreen() ? undefined : { "max-height": inputMaxH() }}
                 >
                     {/* 全屏时横条挪进这块 fixed 区域顶部：正常态那份被遮罩盖住看不见，
                         同一时刻只有一处渲染（同一份数据不重复画） */}
@@ -1963,8 +1936,14 @@ export function LocalChatPage(props: { uri?: string }) {
                         <IconCompress class="swap-on h-4 w-4" />
                     </label>
                     {/* pr-8：正文不要钻到右上角按钮底下 */}
+                    {/* 全屏时 `flex-1` 不能丢：面板是 `fixed inset-4 flex flex-col`，正文宿主
+                        没有 flex-grow 就成了内容高的项 → 内容少时缩成一条（R5 review1-1 实测：
+                        面板 683px、编辑区仅 23px，「全文编辑」形同虚设）。
+                        正常态用 `flex-auto`（basis = 内容高）而不是 `flex-1`（basis = 0）——
+                        basis 0 在"高度由内容决定"的盒子里会把正文压成 0 高；而 basis auto 只在
+                        盒子被 max-height 卡住时才收缩（收缩权在正文，工具条 shrink-0 不动）。 */}
                     <div
-                        class={`min-h-0 overflow-auto px-2 pt-2 pr-8 ${fullscreen() ? "flex-1" : "min-h-[72px] max-h-[320px]"}`}
+                        class={`min-h-0 overflow-auto px-2 pt-2 pr-8 ${fullscreen() ? "flex-1" : "flex-auto"}`}
                     >
                         <MdEditor
                             value={inputValue()}
@@ -1985,7 +1964,6 @@ export function LocalChatPage(props: { uri?: string }) {
                             wrap
                             lineNumbers={fullscreen()}
                             embedded
-                            class="min-h-[56px]"
                         />
                     </div>
                     {/* 不再画分隔线：正文与工具条同底色（base-200），一条 border-base-300 的横线

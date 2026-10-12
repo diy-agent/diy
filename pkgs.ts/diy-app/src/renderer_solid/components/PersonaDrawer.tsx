@@ -58,6 +58,7 @@ import { taskStore } from "../store/taskStore";
 import { notificationStore } from "../store/notificationStore";
 import { reasoningEffortLabel } from "../../shared/reasoning-effort";
 import { splitQualified } from "../../shared/model-config";
+import { describeTiers } from "../../shared/usage";
 import type { ModelBrief } from "../store/personaStore";
 
 /** 平铺选项按钮：选中态用主色底，未选中 hover 亮一点（与详情面板的结构化字段同一套观感） */
@@ -1018,6 +1019,19 @@ function fmtPrice(n: number | undefined): string {
     return n === 0 ? "免费" : String(n);
 }
 
+/**
+ * 分档价提示（tooltip 文本；无分档 → null）。
+ *
+ * 为什么必须画出来：下面三列单价只能放 **base 档**。峰谷价 / 长上下文档不提示 = 表里写着 0.15、
+ * 实际按 0.5 收 —— 用户会当成账算错了（见 shared/usage.ts `describeTiers`）。
+ */
+function tierTip(cost: ModelBrief["cost"]): string | null {
+    const lines = describeTiers(cost);
+    if (lines.length === 0) return null;
+    const base = cost?.baseLabel ? [`基准档 ${cost.baseLabel}：in ${cost.input} / out ${cost.output}`] : [];
+    return ["带分档价（列内只显示基准档）：", ...base, ...lines].join("\n");
+}
+
 function ModelPicker(props: {
     models: ModelBrief[];
     value: string;
@@ -1229,7 +1243,16 @@ function ModelPicker(props: {
                                     <td class="text-right font-mono">{fmtTokens(r.context)}</td>
                                     <td class="text-right font-mono">{fmtTokens(r.output)}</td>
                                     <td class="text-caption">{r.reasoning ? "✓" : "—"}</td>
-                                    <td class="text-right font-mono">{fmtPrice(r.cost?.input)}</td>
+                                    <td class="text-right font-mono">
+                                        {fmtPrice(r.cost?.input)}
+                                        <Show when={tierTip(r.cost)}>
+                                            {(tip) => (
+                                                <span class="cursor-help pl-0.5 opacity-60" title={tip()}>
+                                                    ⇅
+                                                </span>
+                                            )}
+                                        </Show>
+                                    </td>
                                     <td class="text-right font-mono">{fmtPrice(r.cost?.output)}</td>
                                     <td class="text-right font-mono">{fmtPrice(r.cost?.cacheRead)}</td>
                                 </tr>

@@ -14,6 +14,6 @@
       "@/*": ["./src/renderer_solid/*"]
     }
   },
-  "exclude": ["src/renderer/**/*", "src/main/data/**/*"], // data = models-snapshot.json（4.3MB，resolveJsonModule 吃进 program 会拖死 tsc）
+  "exclude": ["src/renderer/**/*", "src/main/data/**/*"], // data = models.dev.json（4MB，resolveJsonModule 吃进 program 会拖死 tsc）
   "include": ["src/**/*", "scripts/**/*", "tests/**/*"]
 }

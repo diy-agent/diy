@@ -392,7 +392,8 @@ describe("投递节点（模版节 → Context Tree）", () => {
       // 规范与保命契约：模版正文原样渲染（含标签）
       expect(g["rules"]).toContain("<rules>");
       expect(g["guard"]).toContain("<guard>");
-      expect(g["guard"]).toContain("禁止执行会杀死宿主进程的命令");
+      expect(g["guard"]).toContain("生产实例");
+      expect(g["guard"]).toContain("绝不可杀");
       // 与模版线（assembleSystem）同源：同一份模版渲染，不是另写一段
       const tpl = assembleSystem(home, PID, { taskUri: TASK, diyCli: "/repo/diy.sh" }).system;
       for (const needle of ["<rules>", "<guard>", "你现在的人物是"]) {

@@ -83,7 +83,8 @@ describe("P0-1：真发 system 必须带行为契约", () => {
         const { d } = deliveryOf(home);
         expect(d.system.text).toContain("<rules>");
         expect(d.system.text).toContain("<guard>");
-        expect(d.system.text).toContain("禁止执行会杀死宿主进程的命令");
+        expect(d.system.text).toContain("生产实例");
+        expect(d.system.text).toContain("绝不可杀");
         expect(d.runtime.text).not.toContain("<guard>");
     });
 
