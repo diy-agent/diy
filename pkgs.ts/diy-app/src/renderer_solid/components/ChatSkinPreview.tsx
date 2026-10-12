@@ -23,12 +23,15 @@ export const SKIN_PREVIEW_HOOKS = [
   'data-has-error',
   'data-tail-box',
   'data-failing',
+  'data-chat-list',
 ] as const;
 
 export function ChatSkinPreview() {
   return (
     <div class="diy-chat space-y-1.5 rounded-lg border border-base-300/70 bg-base-100/50 p-2" data-testid="skin-preview">
       <div class="px-0.5 pb-0.5 text-caption opacity-50">小样（切换即时生效；与真实输出同一套规则）</div>
+      {/* 块树列 = rail 那条贯穿线的作用点（真实聊天页同钩子，见 LocalChatPage 的块树列） */}
+      <div class="space-y-1.5" data-chat-list>
       {/* 人物栏：一级标题行 —— rail 靠线 + 缩进，card 自带卡片底 */}
       <div
         class="flex w-full items-center gap-1.5 rounded-lg px-1.5 py-1 text-left text-body"
@@ -86,6 +89,7 @@ export function ChatSkinPreview() {
           </span>
           <span class="text-error">✗ 出错现场</span>
         </div>
+      </div>
       </div>
     </div>
   );

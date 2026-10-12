@@ -207,11 +207,17 @@
  * 扩面时给它加同一个 `diy-chat` 类即可 —— 这就是"系统整体样式"的落地方式，
  * 而不是给聊天页做一套私有开关。
  *
+ * 形状落点：**card = 每块一张卡**（边条挂在块上）；**rail = 一条线贯穿**（线挂在块树容器
+ * `[data-chat-list]` 上，块自己不带形状）—— 边线挂在块上就是"一串短线段"，看着与卡片无区别
+ * （2026-10-12 用户报"样式好像无效"的真因之一）。
+ *
  * 判据（用户 2026-10-12 定稿）：边条一律**灰**，**只有错误/警告吃色**；状态行不卡片化。
  * 颜色全走 daisyUI 变量（跟主题走），不写死色值。 */
 .diy-chat {
     --diy-edge: color-mix(in oklab, var(--color-base-content) 16%, transparent);
     --diy-card: color-mix(in oklab, var(--color-base-200) 55%, transparent);
+    /* rail 的**贯穿线**：比块边条略深，因为它要当成一条结构线看（不是每块的描边） */
+    --diy-rail: color-mix(in oklab, var(--color-base-content) 22%, transparent);
 }
 
 /* card：每块一张卡（左 4px 灰条 = 类型；这次只做形状，色归错误/警告） */
@@ -225,15 +231,21 @@
     padding-inline: 0.55rem;
 }
 
-/* rail：一条竖线贯穿（层级 = 线 + 缩进），行不带卡底 */
+/* rail：**一条竖线贯穿**（线画在块树容器上，不是每块一条边）——层级 = 线 + 缩进 */
+[data-skin="rail"] .diy-chat [data-chat-list] {
+    border-left: 2px solid var(--diy-rail);
+    margin-left: 9px;
+    padding-left: 14px;
+}
+
+/* rail：行**不带卡底、不带边**（形状全交给容器那条线；子层的缩进/细线由组件自身给） */
 [data-skin="rail"] .diy-chat [data-block-tag="proc-bar"] > [role="button"],
 [data-skin="rail"] .diy-chat [data-tail-box],
 [data-skin="rail"] .diy-chat [data-testid="turn-header"] {
     background: transparent;
     border: 0;
-    border-left: 2px solid var(--diy-edge);
     border-radius: 0;
-    padding-inline: 0.5rem;
+    padding-inline: 0;
 }
 
 /* 错误/警告吃色：判据与颜色两皮肤一致，只有形状不同（卡片的边条 / 竖栏的线） */

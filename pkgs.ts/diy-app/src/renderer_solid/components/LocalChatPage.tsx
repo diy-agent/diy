@@ -1843,7 +1843,10 @@ export function LocalChatPage(props: { uri?: string }) {
                 class="diy-chat flex-1 overflow-y-auto px-4 py-3"
                 onScroll={(e) => setStick(nearBottom(e.currentTarget))}
             >
-                <div class="space-y-3">
+                {/* 块树列：**皮肤的作用点之一** —— rail 的"一条竖线贯穿"画在这个容器上
+                    （`[data-skin="rail"] … [data-chat-list]`），而不是每个块各自一条短边线：
+                    各自一条 = 一串短线段，不是贯穿（2026-10-12 用户报"样式好像无效"）。 */}
+                <div class="space-y-3" data-chat-list>
                     <For each={rootRows()}>
                         {(row) =>
                             row.tag === "turn" ? (
