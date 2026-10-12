@@ -2,7 +2,8 @@
  * UsagePanel — 用量可见性的**三级收纳**（契约见任务 211 §六b；交互形态 2026-10-03 与用户对齐）：
  *
  *   L1 实时常显（页面只留一行数，大表一律藏进 L3）：
- *     · TurnUsageBar     —— turn 底 bar：`N tok · $X`（行是 flex 容器，后续可挂别的按钮）
+ *     · TurnUsageBar     —— turn 尾一行：`时刻（左，纯文本） … N tok · $X（右，按钮）`（时刻与用量分开，见其头注）；
+ *       直播中第一步还没跑完时先出**占位**（`pending`：时间照给、用量位写"⋯ 统计中"）
  *     · SessionUsageChip —— 发送区人物右侧：会话累计 `N tok · $X`
  *   L2 hover 汇总卡：纵向 8 项（token 桶加总 + 输入$/输出$/合计$），
  *     卡顶 viewbar 右侧「明细」→ L3
@@ -20,16 +21,18 @@
  *   · 不可测桶写 `–`/`n/a`，**不写 0**；旧记录（无四桶字段）按原样降级，不假装能拆
  */
 
-import { createEffect, createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Match, Show, Switch, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 import { localChatStore } from "../store/localChatStore";
 // 时间口径唯一出处（shared/date-format）：面板里的轮次时刻（hover 卡标题 / 明细抽屉）与对话流
 // 首行同格式（fmtTurnStamp）；列头那处要「到秒」故用 fmtTurnFull。
 import { fmtTurnFull, fmtTurnStamp } from "../../shared/date-format";
 import { useDrawerMax, DrawerMaxButton } from "./DrawerMaximize";
+import { endMarkOf } from "../lib/chat-fold";
 import {
     cacheHitRate,
     fmtCost,
+    fmtRate,
     fmtInt,
     fmtTokens,
     groupByAgent,
@@ -37,6 +40,7 @@ import {
     stepView,
     sumBuckets,
     sumCosts,
+    stepRate,
     windowRate,
     type AgentGroup,
     type CostBreakdown,
@@ -44,11 +48,12 @@ import {
     type TurnGroup,
     type TurnUsagePatch,
 } from "../../shared/usage";
-import type { BlockNode } from "../../main/services/local-blocks";
+import type { BlockNode, TurnEndReason } from "../../main/services/local-blocks";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 import { notificationStore } from "../store/notificationStore";
 import { DEFAULT_BUDGET_BYTES } from "../../shared/context/compaction";
 import { useCompactPanel, CompactPanelContent } from "./CompactSessionPanel";
+import { RowGutter } from "./RowGutter";
 import type { CompactEventRecord, CompactTrigger } from "../../shared/context/compaction";
 import { mapCompactPointsToSteps, stepKey } from "../../shared/context/compact-points";
 
@@ -89,6 +94,52 @@ const faceLabel = (api: string): string => (api === "responses" ? "resp" : "chat
 function isLegacyUsage(u: unknown): boolean {
     const r = u as Record<string, unknown> | null;
     return !!r && typeof r["noCache"] !== "number";
+}
+
+/**
+ * turnId → 本轮**开始时刻**（epoch ms）。旧格式 id / 脏值 → null。
+ * 轮尾状态行的时刻与「当前 token 速度」的分母都取自这里 —— **一处解析**，
+ * 免得两处各写一份正则、各自对"什么算合法 id"有不同看法。
+ */
+export function turnStartMs(turnId: string): number | null {
+    const m = /^t(\d{13})$/.exec(turnId);
+    if (!m) return null;
+    const ms = Number(m[1]);
+    return Number.isFinite(ms) ? ms : null;
+}
+
+/** turnId（`t` + 13 位 epoch ms）→ `YYYY-MM-DD HH:MM:SS`；旧格式 id 解析不出就不显示（不编时间） */
+function fmtTurnClock(turnId: string): string | null {
+    const start = turnStartMs(turnId);
+    if (start == null) return null;
+    const d = new Date(start);
+    if (Number.isNaN(d.getTime())) return null;
+    const p = (n: number) => String(n).padStart(2, "0");
+    // 日期 + 时间到秒（用户 2026-10-04：轮次末尾要能定位"什么时候说的"）
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/**
+ * 该轮**最后一步**的实测生成速度（tok/s）：两处来源，口径同一个（`shared/usage.stepRate`）。
+ *
+ *   ① `usage.lastStepRate` —— main 在每步 finish-step 下发的 patch 字段：**直播时最新**；
+ *   ② 逐步账本镜像（`localChatStore.usage` = `usage.jsonl` 的镜像，打开会话 / 轮次结束时对账刷新）：
+ *      **本版之前**落的 ops 没有 ①（那时还没这字段），但账本里本来就有 `performance` —— 用它补齐，
+ *      省得"老会话永远看不到速度"。镜像里没有这一轮（直播刚起步、一步都还没跑完）→ null。
+ */
+function turnStepRate(turnId: string, usage: unknown): number | null {
+    const fromPatch = (usage as TurnUsagePatch | undefined)?.lastStepRate;
+    if (typeof fromPatch === "number" && fromPatch > 0) return fromPatch;
+    const mine = localChatStore.usage.filter((r) => r.turnId === turnId);
+    const last = mine[mine.length - 1];
+    return last ? stepRate(last.performance, stepView(last).buckets.outputTotal) : null;
+}
+
+/** 整个会话**最近一次**实测速度（总状态栏口径：没有新 step 也留着上一次的值） */
+export function sessionLastRate(): number | null {
+    const steps = localChatStore.usage;
+    const last = steps[steps.length - 1];
+    return last ? stepRate(last.performance, stepView(last).buckets.outputTotal) : null;
 }
 
 // ─── L2 汇总卡：统一数据模型（A/B 两表同一份源） ───────
@@ -1132,52 +1183,203 @@ export function UsageHoverCard(props: {
 // ─── L1① turn 底 bar ────────────────────────────────
 
 /**
- * turn 底 bar：`N tok · $X` —— 只放总 token 合计与金额（2026-10-03 定稿；时刻于 review2-3 移除）。
- * 两数同为**各步累计**口径（可互算）；窗口% 不上 bar（不同口径不同框，防相除误读）。
- * hover 出 L2 卡；点击直接开 L3 抽屉（卡里的「明细」是同一动作的第二个入口）。
+ * **轮尾状态行**（末行恒显）—— 状态图标 + 时刻 + 统计 + ⚡速度 + 用量。
  *
- * 为什么不显示时刻：时刻是**轮**的事实，一轮只该出现一次，挂在该轮首个消息块上
- * （用户发言那一行，见 LocalChatPage.TurnView.timeAnchorId）。底 bar 是同一轮的第三个
- * 可见位置 —— 一轮里把同一个数印三遍不增加信息，只增加噪音（review2-3）。
+ * 三段三种交互（2026-10-11 用户口径，别再合成一个按钮）：图标/时刻/统计与 ⚡速度都是**纯文本**
+ * （没有"更多信息"可给；而滚屏阅读时视线与指针多半落在左侧，合成一个按钮就是一路误触），
+ * 只有**用量**是靠右的按钮（hover 出 L2 卡、点击开 L3 抽屉，卡里的「明细」是同一动作第二个入口）。
+ *
+ * 状态图标（`✓/✗/⛔`）**只写字形，说明进 tooltip**（用户 2026-10-12：状态行上不写"正常结束"这类字）：
+ * 判据 = `endReason`（##288 拍板），翻译见 lib/chat-fold 的 `endMarkOf`。
+ *
+ * ⚡速度 = **本轮最后一步**的生成速度（`总输出 ÷ (响应耗时 − TTFT)`，口径见 `shared/usage.stepRate`）。
+ * 粒度就是"一步"：流内部的 token 计数拿不到，所以**跑着的那一步显示的是上一个已完成步的实测值**，
+ * 该步一结束立刻刷新；轮次结束后这个值留在行上（"老的速度留在 bar 上"）。
+ * 给不出数（本版之前的老记录没有该字段）就**不显示**，不拿假数占位。
+ *
+ * 时间用**日期+时间到秒**（2026-10-04 用户定）：轮次末尾要能定位"这话什么时候说的"，
+ * 只给时分在同一天多轮、或跨天回看时无法定位。旧记录轮次也照样出时间（见下）。
+ *
+ * `stat`（步数 · 耗时 · ⚙ n · 💭 n · ❌ n）本文件**只负责摆**，内容与判据见
+ * `LocalChatPage.turnStatLine`。
  */
 export function TurnUsageBar(props: {
+    /** 本轮 id（`t` + 毫秒）：时刻与速度分母的**唯一真源**（协议无块级 ts，见 fmtTurnClock） */
+    turnId: string;
     usage: unknown;
+    /** true = 直播中且 main 还没写过 usage patch（第一步 finish-step 之前）：给占位，不装作有数 */
+    pending?: boolean;
+    /** true = 本轮仍在跑：决定 ⚡速度是否显示、状态图标是否走"进行中" */
+    live?: boolean;
+    /** 本轮结束原因（`endReason`）——状态图标的判据；旧日志没有 → 不给图标 */
+    end?: TurnEndReason | null;
+    /** 本轮统计（步数 · 耗时 · ⚙ n · 💭 n · ❌ n），摆在这行、用量按钮左边；空则不占位 */
+    stat?: string;
     hover: boolean;
     onHover: (el: HTMLElement) => void;
     onHoverEnd: () => void;
     onDetail: () => void;
 }) {
+    // 时间与记录格式无关（turnId 里就带着开始时刻）—— 旧记录轮次同样要能定位时间
+    const clock = fmtTurnClock(props.turnId);
+    /** 时刻：纯文本、无 hover、无点击（它没有"更多信息"可给，靠左却最容易误触） */
+    const Clock = () => (
+        <Show when={clock != null}>
+            <span class="shrink-0 tabular-nums text-caption opacity-50">{clock}</span>
+        </Show>
+    );
+    /** 本轮统计：与时刻同为**纯文本**（无 hover / 无点击）—— 它没有"更多信息"可给 */
+    const Stat = () => (
+        <Show when={props.stat}>
+            <span class="shrink-0 text-caption opacity-60" data-turn-stat>
+                {props.stat}
+            </span>
+        </Show>
+    );
+
+    // ── ⚡速度：**按步**的实测值（不是"跑着才算"的瞬时值，故无定时器 —— 值只在每步结束时变）
+    const rate = () => turnStepRate(props.turnId, props.usage);
+    /** 速度：纯文本；给不出数（老记录 / 该步没有计时）就整块不画 */
+    const Rate = () => (
+        <Show when={rate() != null}>
+            <span
+                class="shrink-0 tabular-nums text-caption opacity-70"
+                data-turn-rate
+                title="生成速度 = 本轮最后一步的总输出 ÷ (响应耗时 − 首字耗时 TTFT)。按步统计：流内部的 token 计数拿不到，跑着的那一步显示的是上一步的实测值，该步结束即刷新"
+            >
+                ⚡ {Math.round(rate()!)} tok/s
+            </span>
+        </Show>
+    );
+
+    // ── 状态图标：字形承载状态，说明只进 tooltip
+    const mark = () => endMarkOf(props.end ?? null, !!props.live);
+    const toneClass = () =>
+        ({ live: "opacity-40", ok: "text-success", cut: "text-warning", err: "text-error", none: "" })[mark().tone];
+    const StatusIcon = () => (
+        <Show when={mark().icon}>
+            <span
+                class={`shrink-0 ${toneClass()}`}
+                data-turn-end={mark().tone}
+                title={mark().tip}
+                aria-label={mark().tip}
+            >
+                {mark().icon}
+            </span>
+        </Show>
+    );
+
+    /** 直播首步还没跑完：时间照给（turnId 自带开始时刻），用量位给占位。
+     *  ⚠️ 三个分支必须走 `<Switch>`，**不能** `if (...) return`：Solid 组件体只跑一次，
+     *  提前 return 得到的分支在 usage 到达后不会重算 —— 占位条会永远留在那儿（实测坑）。 */
+    const pending = () => !!props.pending && props.usage == null;
+    return (
+        <Switch>
+            <Match when={pending()}>
+                <div class="flex items-center gap-2 text-body" data-usage-pending="1" data-turn-status="1">
+                    <RowGutter can={false} />
+                    <StatusIcon />
+                    <Clock />
+                    <span class="flex-1" />
+                    <Stat />
+                    <Rate />
+                    <span
+                        class="text-caption opacity-40"
+                        title="用量要等本步跑完（finish-step）才拿得到；时间是本轮开始时刻"
+                    >
+                        ⋯ 统计中
+                    </span>
+                </div>
+            </Match>
+            <Match when={isLegacyUsage(props.usage)}>{LegacyRow()}</Match>
+            <Match when={true}>{LiveRow()}</Match>
+        </Switch>
+    );
+
     /** 旧记录：无四桶无金额 → 降级成一行字，不进卡不进抽屉（拆不出东西） */
-    if (isLegacyUsage(props.usage)) {
-        const l = props.usage as { in?: number; out?: number; total?: number };
+    function LegacyRow() {
+        const l = () => props.usage as { in?: number; out?: number; total?: number };
         return (
-            <div class="text-body opacity-60">
-                tokens ↑{fmtInt(l.in ?? 0)} ↓{fmtInt(l.out ?? 0)}（Σ{fmtInt(l.total ?? 0)}）
-                <span class="ml-1">（旧记录：无四桶/金额）</span>
+            <div class="flex items-center gap-2 text-body" data-turn-status="1">
+                <RowGutter can={false} />
+                <StatusIcon />
+                <Clock />
+                <span class="flex-1" />
+                <Stat />
+                <Rate />
+                <span class="opacity-60">
+                    tokens ↑{fmtInt(l().in ?? 0)} ↓{fmtInt(l().out ?? 0)}（Σ{fmtInt(l().total ?? 0)}）
+                    <span class="ml-1">（旧记录：无四桶/金额）</span>
+                </span>
             </div>
         );
     }
-    const p = () => props.usage as TurnUsagePatch;
-    // 这里**不画时刻**：见上方头注（一轮一处，挂轮首消息）。
+
+    /** 正常一轮：图标/时刻靠左 · 统计/速度/用量靠右 */
+    function LiveRow() {
+        const p = () => props.usage as TurnUsagePatch;
+        return (
+            <div class="flex items-center gap-2" data-turn-status="1">
+                <RowGutter can={false} />
+                <StatusIcon />
+                <Clock />
+                <span class="flex-1" />
+                <Stat />
+                <Rate />
+                <button
+                    type="button"
+                    class="flex w-max cursor-pointer select-none items-center gap-x-3 rounded px-1 text-body opacity-70 transition-opacity hover:bg-base-200 hover:opacity-100"
+                    aria-haspopup="dialog"
+                    aria-expanded={props.hover}
+                    aria-label="本轮用量（悬停看汇总，点击开逐步明细）"
+                    title="各轮/各步累计（重发成本口径，非窗口占用）。悬停看汇总，点击开逐步明细"
+                    onPointerEnter={(e) => props.onHover(e.currentTarget)}
+                    onPointerLeave={(e) => {
+                        // 元素被块树重建移除时浏览器也可能派发 leave —— 那不是"移出"，忽略
+                        if (!e.currentTarget.isConnected) return;
+                        props.onHoverEnd();
+                    }}
+                    onClick={props.onDetail}
+                >
+                    <span class="tabular-nums">{fmtTokens(p().total)} tok</span>
+                    <span class="tabular-nums">{p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}</span>
+                </button>
+            </div>
+        );
+    }
+}
+
+// ─── L1③ 输入框底部总状态栏的速度 ──────────────
+
+/**
+ * ⚡ **最近一次实测**的生成速度（常驻位，输入框底部工具条）。
+ *
+ * 口径（用户 2026-10-12 拍板）：「没有执行新 step，老的速度留在 bar 上，就是最后一次速度」
+ * —— 所以它不是"跑着才显示"的瞬时值，而是**最后一次落盘的步速度**（`shared/usage.stepRate`，
+ * 与轮尾状态行、用量表速度列同一个数），跑完也留着，直到下一步结束才换新值。
+ *
+ * 为什么要有（与轮尾那枚 chip 重复的理由是位置）：轮尾那行在对话流里，滚上去看历史时就移出视野了；
+ * 而"这一轮跑得快不快"恰恰在**等待 / 想打断**时最需要看见 —— 那一刻视线在输入框。
+ *
+ * ⚠️ **粒度 = 一步**（别当 bug 再报一遍）：流内部的 token 计数拿不到（usage 是 provider 在每步
+ * 收尾才给的），所以跑着的那一步只能显示上一个已完成步的实测值 —— 不拿按流式文本估的假数占位。
+ *
+ * 给不出数（新会话还没跑过步 / 本版之前的老记录）→ 整块不画。
+ */
+export function StepRateChip(props: {
+    /** 最近一次实测的步速度（tok/s）；null → 不画 */
+    rate: number | null;
+}) {
     return (
-        <button
-            type="button"
-            class="flex w-max cursor-pointer select-none items-center gap-x-3 rounded px-1 text-body opacity-70 transition-opacity hover:bg-base-200 hover:opacity-100"
-            aria-haspopup="dialog"
-            aria-expanded={props.hover}
-            aria-label="本轮用量（悬停看汇总，点击开逐步明细）"
-            title="各轮/各步累计（重发成本口径，非窗口占用）。悬停看汇总，点击开逐步明细"
-            onPointerEnter={(e) => props.onHover(e.currentTarget)}
-            onPointerLeave={(e) => {
-                // 元素被块树重建移除时浏览器也可能派发 leave —— 那不是"移出"，忽略
-                if (!e.currentTarget.isConnected) return;
-                props.onHoverEnd();
-            }}
-            onClick={props.onDetail}
-        >
-            <span class="tabular-nums">{fmtTokens(p().total)} tok</span>
-            <span class="tabular-nums">{p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}</span>
-        </button>
+        <Show when={props.rate != null}>
+            <span
+                class="shrink-0 tabular-nums text-caption opacity-70"
+                data-live-rate
+                title="生成速度 = 最近一步的总输出 ÷ (响应耗时 − 首字耗时 TTFT)，每步结束刷新一次"
+            >
+                ⚡ {Math.round(props.rate!)} tok/s
+            </span>
+        </Show>
     );
 }
 
@@ -1291,8 +1493,8 @@ function turnDetailMd(g: TurnGroup | null, rows: StepUsageRecord[], clock: strin
     const total$ = g?.cost?.total ?? null;
     const m = (n: number | null | undefined): string => (n == null ? "n/a" : `${fmtCost(n)}（${costShare(n, total$)}）`);
     out.push(
-        "| 步 | 人物 | 模型 | 面 | 档位 | 非缓存输入 | 缓存读 | 缓存写 | 总输出 | 文本 | 思考 | 缓存命中 | 耗时 | TTFT | 窗口% | 单价快照 | 非缓存$ | 缓存读$ | 缓存写$ | 文本$ | 思考$ | 合计$ |",
-        "|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|",
+        "| 步 | 人物 | 模型 | 面 | 档位 | 非缓存输入 | 缓存读 | 缓存写 | 总输出 | 文本 | 思考 | 缓存命中 | 耗时 | TTFT | 速度 | 窗口% | 单价快照 | 非缓存$ | 缓存读$ | 缓存写$ | 文本$ | 思考$ | 合计$ |",
+        "|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|",
     );
     for (const r of rows) {
         const v = stepView(r);
@@ -1305,6 +1507,7 @@ function turnDetailMd(g: TurnGroup | null, rows: StepUsageRecord[], clock: strin
                 `| ${fmtInt(v.buckets.noCache)} | ${fmtInt(v.buckets.cacheRead)} | ${optCellInt(v.buckets.cacheWrite)} ` +
                 `| ${fmtInt(v.buckets.outputTotal)} | ${fmtInt(v.buckets.text)} | ${fmtInt(v.buckets.reasoning)} ` +
                 `| ${pctText(cacheHitRate(v.buckets))} | ${cellMs(r.performance?.stepTimeMs)} | ${cellMs(r.performance?.timeToFirstOutputMs)} ` +
+                `| ${fmtRate(stepRate(r.performance, v.buckets.outputTotal))} ` +
                 `| ${pctText(v.windowRate)} | ${rates} ` +
                 `| ${c ? m(c.noCache) : "n/a"} | ${c ? m(c.cacheRead) : "n/a"} | ${c?.cacheWrite == null ? "n/a" : m(c.cacheWrite)} ` +
                 `| ${c ? m(c.text) : "n/a"} | ${c ? m(c.reasoning) : "n/a"} | ${c ? m(c.total) : "n/a"} |`,
@@ -1361,7 +1564,7 @@ function TurnDetailTable(props: { rows: StepUsageRecord[] }) {
                 <tr class="text-caption">
                     <th colspan="5" class="text-center font-medium opacity-60">身份</th>
                     <th colspan="7" class="text-center font-medium opacity-60">Token 桶</th>
-                    <th colspan="3" class="text-center font-medium opacity-60">性能</th>
+                    <th colspan="4" class="text-center font-medium opacity-60">性能</th>
                     <th colspan="7" class="text-center font-medium opacity-60" title="各项金额下方小字 = 占本轮合计$比例">金额（$）· 占比</th>
                 </tr>
                 <tr>
@@ -1379,6 +1582,7 @@ function TurnDetailTable(props: { rows: StepUsageRecord[] }) {
                     <th class="text-right" title="缓存读 ÷ 总输入">缓存命中</th>
                     <th class="text-right">耗时</th>
                     <th class="text-right">TTFT</th>
+                    <th class="text-right" title="生成速度 = 总输出 ÷ (响应耗时 − 首字耗时 TTFT)；响应耗时不含客户端工具执行">速度</th>
                     <th class="text-right">窗口%</th>
                     <th title="该步生效单价（$/1M，入/出/读/写 · 生效档）">单价快照</th>
                     <th class="text-right">非缓存$</th>
@@ -1409,6 +1613,7 @@ function TurnDetailTable(props: { rows: StepUsageRecord[] }) {
                                 <td class="text-right">{pctText(cacheHitRate(v().buckets))}</td>
                                 <td class="text-right">{cellMs(r.performance?.stepTimeMs)}</td>
                                 <td class="text-right">{cellMs(r.performance?.timeToFirstOutputMs)}</td>
+                                <td class="text-right">{fmtRate(stepRate(r.performance, v().buckets.outputTotal))}</td>
                                 <td class={`text-right ${pctClass(v().windowRate)}`}>{pctText(v().windowRate)}</td>
                                 <td class="opacity-70">
                                     <Show when={r.rates} fallback={<span>无价目（该模型不在价格表内）</span>}>

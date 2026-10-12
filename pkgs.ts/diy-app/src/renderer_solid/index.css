@@ -196,3 +196,176 @@
   background-color: var(--color-warning);
   color: var(--color-warning-content);
 }
+
+/* ── 界面样式（皮肤：rail 竖栏 / card 卡片）────────────────────────────
+ * 两套皮肤改的**只是"块怎么摆"**，不改 DOM：组件输出中立结构 + 语义 data 钩子
+ * （`data-block-tag` / `data-tail-box` / `data-has-error` / `data-testid` / `data-row-band`），
+ * 皮肤规则全部在本段 —— 加皮肤、调皮肤都不动组件（见 lib/skin 的头注）。
+ *
+ * 挂载：`document.documentElement.dataset.skin`（main.tsx 先于首屏应用，避免闪一下）。
+ * **本期只覆盖 agent 输出区**（`.diy-chat`，LocalChatPage 的块树滚动容器）：其它页面暂无差异；
+ * 扩面时给它加同一个 `diy-chat` 类即可 —— 这就是"系统整体样式"的落地方式。
+ *
+ * ## 几何模型（2026-10-12 用户 R6 口径，两皮肤共用一套）
+ *
+ * 每个"行"= `[data-block-id]` 那个块**自己**：它同时是
+ *   ① **卡/行本体**（皮肤画形状的地方 —— 含展开后的正文与子层，**包含关系**）；
+ *   ② 行首 `--diy-gut-w` 宽的**折叠条列**（`[data-row-band]` 绝对定位铺满它）。
+ * 层级的表达两皮肤不同、但都靠**嵌套**（子层容器在父块**内部**）：
+ *   · card：父卡留白 20px（4px 色条 + 16px），子卡嵌在里面 ⇒ 父卡覆盖整段（v4 的 `.bulk .row > .sub`）；
+ *   · rail：贯穿线在历史容器上 + 子层容器再缩进 14px（v4 的 `.A .bulk .sub`）。
+ *
+ * 折叠条**只有一根**、**只有一个点击区**：贴条整块高 + 尖头图标首行居中（v3 的条 × 用户要求
+ * 的图标位置）。R3/R4 拆成"贴条锚块、图标锚行头"两件 —— 行头被卡内留白推右 16px，
+ * 同一行的竖条与箭头错开一格、成了两个点击区（用户 R6 点名"很乱"），本版合一。
+ *
+ * 判据（用户 2026-10-12 定稿）：边条一律**灰**，**只有错误/警告吃色**；状态行不卡片化。
+ * 颜色全走 daisyUI 变量（跟主题走），不写死色值。 */
+.diy-chat {
+    /* 折叠条列宽 = 行首留白 = 图标列（两皮肤同一个数：图标横向位置才对得齐） */
+    --diy-gut-w: 1rem;
+    /* 图标中心距块顶 —— **两皮肤同一个常数 = 首行居中**（各行的首行行盒都在块顶附近，
+       13px 对 turn/过程 bar/逐条过程/正文都落在首行中心 ±2px 内；比"每个块型各算一次"可靠） */
+    --diy-gut-top: 0.8125rem;
+    /* 卡左边框宽（card 皮肤 4px）—— 折叠条要压在这道条上，所以它得知道这个数 */
+    --diy-edge-w: 0px;
+    --diy-edge: color-mix(in oklab, var(--color-base-content) 16%, transparent);
+    /* 子层边条：**比主层更浅**的一档灰（草图 R24② 主层 `#cbd5e1` / 子层 `#d7dce2`）——
+       card 皮肤的子卡嵌在父卡里，层级靠这一档色差 + 嵌套读出来，所以它必须在 */
+    --diy-edge-child: color-mix(in oklab, var(--color-base-content) 11%, transparent);
+    --diy-card: color-mix(in oklab, var(--color-base-200) 55%, transparent);
+    /* rail 的**贯穿线**：比块边条略深，因为它要当成一条结构线看（不是每块的描边） */
+    --diy-rail: color-mix(in oklab, var(--color-base-content) 22%, transparent);
+}
+[data-skin="card"] .diy-chat {
+    --diy-edge-w: 4px;
+}
+
+/* ── 行本体 ────────────────────────────────────────────────────────────
+ * 每个块/行都是**定位上下文**（折叠条锚它）并留出行首那一条折叠条列。 */
+.diy-chat [data-block-id],
+.diy-chat [data-turn-status] {
+    position: relative;
+    padding-left: var(--diy-gut-w);
+    padding-right: 0.6875rem;
+}
+/* 状态行：不卡片化（上虚线 + 纯文本），但同样有折叠条列（那一格是静态点） */
+.diy-chat [data-turn-status] {
+    border-top: 1px dashed var(--diy-edge);
+    margin-top: 0.4rem;
+    padding-top: 0.2rem;
+}
+
+/* card：**每块一张卡**（左 4px 灰条 = 类型；色归错误/警告）——
+ * 主层（正文行 / 过程 bar / 结尾槽 / 逐条过程）同一张卡；**子层在卡内、色条浅一档**。
+ * 人物栏不是卡（草图 v4 的 `.B .k-head{border:0}`）：它只是"这轮是谁"，不是一件东西。 */
+[data-skin="card"] .diy-chat [data-block-id]:not([data-block-tag="turn"]) {
+    background: var(--diy-card);
+    border: 1px solid var(--diy-edge);
+    border-left: var(--diy-edge-w) solid var(--diy-edge);
+    border-radius: 0.5rem;
+    margin-bottom: 0.0625rem;
+}
+/* 子层（过程 bar 卡内的逐条）：同样是卡，**色条浅一档** —— 层级靠嵌套 + 这一档色差 */
+[data-skin="card"] .diy-chat [data-proc-children] > [data-block-id] {
+    border-left-color: var(--diy-edge-child);
+}
+/* 子层容器：**不带任何形状/位移** —— 位移由父卡的留白给（v4 的 `.sub{margin:4px 0 0}`），
+   子卡左缘 = 父卡左缘 + 20px（4px 色条 + 16px 留白）。 */
+[data-skin="card"] .diy-chat [data-proc-children] {
+    margin: 0.25rem 0 0;
+    padding: 0;
+    border: 0;
+}
+
+/* rail：**一条竖线贯穿**（线画在历史容器上，不是每块一条边）——层级 = 线 + 缩进 */
+/* 线挂在历史容器上、**不额外缩进**：人物栏 / 结尾槽 / 状态行都在容器外，缩进就会让
+   "历史里的行"与"结尾那一块"的左缘（连同它们的折叠条）错开一格（用户 R6 口径：统一）。 */
+[data-skin="rail"] .diy-chat [data-chat-list] {
+    border-left: 2px solid var(--diy-rail);
+    margin-left: 0;
+    padding-left: 0;
+}
+/* rail 的子层容器：嵌套的细线 + 缩进（v4 的 `.A .bulk .sub{margin-left:5px;padding-left:8px;border-left:1px}`）
+   —— 合起来 14px，加上父行自己的 16px 留白 = 子行左缘 = 父行左缘 + 30px。 */
+[data-skin="rail"] .diy-chat [data-proc-children] {
+    margin: 0.125rem 0 0.125rem 5px;
+    padding-left: 8px;
+    border-left: 1px solid var(--diy-edge);
+}
+
+/* ── 竖列折叠条（v3 的条 + 首行居中的图标；**一根条、一个点击区**）────────────
+ * `[data-row-band]` = 贴条：整块高（`top:0;bottom:0`）、铺满行首那一列；图标是它的**子元素**，
+ * 画在 `--diy-gut-top`（首行居中）。两皮肤只差**横向**落点（都相对块自己的 padding box）：
+ *   · card：`left:-4px` —— 压在那道 4px 色条上（图标中心 = 卡左缘 + 8，与草图 `.B .gut{left:-4px}` 同值）；
+ *   · rail：`left:0` —— 紧贴贯穿线右侧（线在容器边，行盒就在线右边）。 */
+.diy-chat [data-row-band] {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: var(--diy-gut-w);
+    border-radius: 0.25rem;
+    cursor: pointer;
+}
+/* 静态条（这一行没有可展开的内容）：占位、不承诺可点 —— 事件让给行头自己 */
+.diy-chat [data-row-band="static"] {
+    pointer-events: none;
+    cursor: default;
+}
+.diy-chat [data-row-band="1"]:hover {
+    background: color-mix(in oklab, var(--color-base-content) 6%, transparent);
+}
+.diy-chat [data-row-band]:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -1px;
+}
+.diy-chat [data-row-handle] {
+    position: absolute;
+    top: var(--diy-gut-top);
+    left: 50%;
+    translate: -50% -50%;
+    width: var(--diy-gut-w);
+    height: 1.6em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.25rem;
+    color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+    user-select: none;
+}
+.diy-chat [data-row-band="1"]:hover > [data-row-handle] {
+    color: var(--color-primary);
+}
+
+/* card：折叠条压在那道 4px 色条上（图标中心 = 卡左缘 + 8，与草图 `.B .gut{left:-4px}` 同值）。
+   **只对"有卡的块"** —— 人物栏不是卡（没有那道 4px），跟着 -4 会平白左移一格。 */
+[data-skin="card"] .diy-chat [data-block-id]:not([data-block-tag="turn"]) > [data-row-band] {
+    left: calc(-1 * var(--diy-edge-w));
+}
+
+/* ── 行头 / 正文的横向留白 ────────────────────────────────────────────
+ * 行首那 16px 由**块自己**给（`--diy-gut-w`，折叠条就铺在上面），所以**行头不要再给第二份**
+ * —— 给了就是"图标列 + 行头留白"的行比别的行右移 16px（结论正文曾比同屏其它行右移一格，
+ * CDP 实测过）。注意：这是**块里那个行头**（`… > [data-row-head]`）—— 人物栏把它挂在自己身上
+ * （它整行就是行头 + 块），`:not([data-block-id])` 把它排除，否则它连自己那 16px 也丢了。 */
+.diy-chat [data-row-head]:not([data-block-id]) {
+    padding-left: 0;
+}
+
+/* 错误/警告吃色：判据与颜色两皮肤一致，只有形状不同（卡片的边条 / 竖栏的线） */
+[data-skin="card"] .diy-chat [data-tail-box][data-failing],
+[data-skin="card"] .diy-chat [data-block-tag="proc-bar"][data-has-error] {
+    border-color: color-mix(in oklab, var(--color-error) 40%, transparent);
+    border-left-color: var(--color-error);
+    background: color-mix(in oklab, var(--color-error) 8%, transparent);
+}
+[data-skin="rail"] .diy-chat [data-tail-box][data-failing],
+[data-skin="rail"] .diy-chat [data-block-tag="proc-bar"][data-has-error] {
+    border-left: 2px solid var(--color-error);
+    background: color-mix(in oklab, var(--color-error) 6%, transparent);
+}
+[data-skin="rail"] .diy-chat [data-tail-box] {
+    background: var(--diy-card);
+    border-radius: 0.5rem;
+}

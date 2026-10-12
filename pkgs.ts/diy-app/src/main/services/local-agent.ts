@@ -42,6 +42,7 @@ import {
     type DeliveryOpts,
     type Op,
     type JSONVal,
+    type TurnEndReason,
 } from "./local-blocks";
 import { appendAudit } from "./agent-audit";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
@@ -50,10 +51,12 @@ import {
     bucketsOf,
     costBreakdown,
     snapshotUsage,
+    stepRate,
     sumBuckets,
     sumCosts,
     turnUsagePatch,
     type CostBreakdown,
+    type StepStreamShape,
     type StepUsageRecord,
     type UsageBuckets,
     type UsageLike,
@@ -301,6 +304,22 @@ function rawFile(taskUri: string): string {
 /** 原始流开关（默认关；读取时快照一次，避免一处开一处关） */
 function rawDumpEnabled(): boolean {
     return process.env["DIY_RAW_STREAM_DUMP"] === "1";
+}
+
+/**
+ * 一步流形状的累加器（##288 观察位）。**只记事实，不做判定** ——
+ * 「有没有正文」「工具调用是不是最后发生的」这类问题必须由数据回答，不能靠猜。
+ */
+function newShape(): StepStreamShape {
+    return { order: "", textChunks: 0, reasoningChunks: 0, toolCalls: 0 };
+}
+
+/** 记一个 part 段首（r=思考 t=文本 x=工具调用） */
+function markShape(s: StepStreamShape, ch: "r" | "t" | "x"): void {
+    s.order += ch;
+    if (ch === "r") s.reasoningChunks++;
+    else if (ch === "t") s.textChunks++;
+    else s.toolCalls++;
 }
 
 /** zen/go 会话亲和头：按 task 稳定（实测缺失会被 MissingSessionID 拒绝） */
@@ -1823,9 +1842,28 @@ export class LocalAgentManager {
         // 与累计金额（每步按各自生效单价算好再加，tier 每一步都可能不同）。
         let turnBuckets: UsageBuckets = { noCache: 0, cacheRead: 0, cacheWrite: null, text: 0, reasoning: 0, outputTotal: 0, inputTotal: 0, total: 0 };
         let lastStepBuckets: UsageBuckets | null = null;
+        // 本轮**最后一步**的生成速度（tok/s = 该步输出 ÷ (响应耗时 − TTFT)，口径见 shared/usage.stepRate）。
+        // 为什么要进 turn patch：状态栏的 ⚡ 要能"没在跑时也留在那儿"（老的速度不消失），
+        // 而流内部的 token 计数拿不到 ⇒ 只能每步落一次、由 UI 显示最后一次实测值。
+        let lastStepRate: number | null = null;
         let turnCost: CostBreakdown = { noCache: 0, cacheRead: 0, cacheWrite: null, text: 0, reasoning: 0, total: 0 };
         // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
         let lastAct: "none" | "text" | "tool" = "none";
+        /**
+         * 本轮**结束原因**（##288 拍板①）：closeTurn 时 patch 进 turn 块。
+         *
+         * `null` = 尚未判定。判据分散在流循环的几条分支里（finish / error / abort / catch），
+         * 一旦写入就**粘住**（`setEndReason` 先到先得）：`error` 之后照常会收到 finish，
+         * 那是同一次流的收尾，不是新结论 —— 后者不许把 error 降级成 completed。
+         *
+         * 兜底（closeTurn）：跑完流却没写（消费端断开 / 崩溃）见 `streamDone`。
+         */
+        let endReason: TurnEndReason | null = null;
+        /** 流循环是否**正常跑完**（区别"消费端 return 展开"：那时内层 for-await 被丢弃，不会置位） */
+        let streamDone = false;
+        const setEndReason = (r: TurnEndReason): void => {
+            if (endReason === null) endReason = r;
+        };
 
         // ── 插话投递 ─────────────────────────────────────────────
         // prepareStep 是同步回调（不是生成器），只能先把 op 排队、由流循环 flush 出去
@@ -1920,6 +1958,13 @@ export class LocalAgentManager {
          */
         const closeTurn = function* (currentStepId: string, steps: number): Generator<Op, void, void> {
             const ops: Op[] = [];
+            // 轮次结束原因（该轮事实，##288）：正常分支已写好；没写 = 流没跑完（消费端断开/崩溃）
+            // → `aborted{detached}` —— 生成器被 return 展开时唯一可证的事实。
+            const reason: TurnEndReason = endReason ?? (streamDone ? { type: "completed", data: {} } : { type: "aborted", data: { source: "detached" } });
+            ops.push({ op: "patch", id: turnId, fields: { endReason: reason } });
+            // 轮次耗时（该轮事实）：turnId 内嵌开始毫秒（`t${Date.now()}`）→ 收尾此刻
+            const durationMs = Date.now() - Number(turnId.slice(1));
+            ops.push({ op: "patch", id: turnId, fields: { durationMs } });
             if (currentStepId !== turnId) ops.push({ op: "stop", id: currentStepId });
             ops.push({ op: "stop", id: turnId });
             // ① 同步副作用（无 await、无 yield）：无论走正常收尾还是 return 展开，这一段必定执行完
@@ -1940,7 +1985,8 @@ export class LocalAgentManager {
             for (const op of ops) yield op;
         };
 
-        yield* emit({ op: "start", id: turnId, kind: "turn", meta: { model: model } });
+        // 轮次事实：模型 + 思考级别（渲染时读它署名/展示档位，不读当前配置 —— 任务 196 的教训）
+        yield* emit({ op: "start", id: turnId, kind: "turn", meta: { model: model, reasoningEffort } });
 
         // ── 系统上下文：**先算预算再记账** ──
         // 超预算时这一轮根本不发请求，所以此刻**还不能**写开场 user 块、也不能投递插话：
@@ -1965,11 +2011,11 @@ export class LocalAgentManager {
         const over = systemOverBudget(delivery.system.bytes, contextLimitOf(model));
         if (over) {
             const kb = (n: number) => (n / 1024).toFixed(1);
-            yield* errorBlock(
-                "budget",
+            const budgetMsg =
                 `系统上下文超出预算（${kb(over.used)} KB > ${kb(over.budget)} KB），本轮未发送。` +
-                    `请精简项目 AGENTS.md，或在上下文树页把易变变量划到 runtime。`,
-            );
+                `请精简项目 AGENTS.md，或在上下文树页把易变变量划到 runtime。`;
+            setEndReason({ type: "error", data: { source: "budget", message: budgetMsg } });
+            yield* errorBlock("budget", budgetMsg);
             // 拒绝发送也是一轮完整生命周期：必须闭合，否则 UI/崩溃报告/审计三处都会认为它还在跑。
             // 这条 return 在 try 之前，不经过下面的 finally —— 收尾在这里显式做，且**只做一次**
             // （closeTurn 的 sink 不幂等：重复调用会往 ops 里多写一条 stop，虽然无害但脏）。
@@ -2012,6 +2058,8 @@ export class LocalAgentManager {
         // 研究用：把“发给上游的 messages”与 fullStream 的每个 part 原样落盘
         const raw = rawDumpEnabled() ? rawFile(taskUri) : null;
         let rawSeq = 0;
+        // 该步的流形状（##288）：每步重置，随该步的用量账一起落盘
+        let shape = newShape();
         const rawSink = (row: Record<string, unknown>): void => {
             if (!raw) return;
             try {
@@ -2094,6 +2142,9 @@ export class LocalAgentManager {
                         }
                       : {}),
                 maxRetries: 2,
+                // 研究开关：把**上游原始 chunk**（归一之前的 SSE 载荷）也塞进 fullStream 的 raw part。
+                // 只有 raw dump 开着时才要 —— 它能把"ai-sdk 归一丢了什么"变成可核对的证据（##288）。
+                ...(raw ? { includeRawChunks: true } : {}),
                 // 每个模型步开始前的唯一钩子：把队列里的 next-step 插话插进这一步的 messages
                 // （**整批**：dsh 的 claim() 就是一次全投，不是一次一条）。
                 // 返回的 messages 会 carry forward 到后续步（SDK 语义），所以模型一开口就能看到。
@@ -2120,6 +2171,7 @@ export class LocalAgentManager {
                     rawSink({ kind: "part", seq: ++rawSeq, ts: new Date().toISOString(), part });
                     switch (part.type) {
                         case "start-step":
+                            shape = newShape();
                             // 插话落位点：**唯一无歧义的位置** —— start-step 在流里保证排在上一步的
                             // 所有 part 之后，而"下一步"还没产出任何内容。认领发生在 prepareStep（可能
                             // 早于消费端处理完上一步的 part），落位必须等到这里，否则插话块会插到
@@ -2131,6 +2183,7 @@ export class LocalAgentManager {
                             yield* emit({ op: "start", id: stepId, kind: "step", parent: turnId });
                             break;
                         case "reasoning-start": {
+                            markShape(shape, "r");
                             const id = `${turnId}_r${++rN}`;
                             partBlock.set(part.id, id);
                             yield* emit({ op: "start", id, kind: "think", parent: stepId });
@@ -2152,6 +2205,7 @@ export class LocalAgentManager {
                             break;
                         }
                         case "text-start": {
+                            markShape(shape, "t");
                             lastAct = "text";
                             const id = `${turnId}_a${++aN}`;
                             partBlock.set(part.id, id);
@@ -2179,6 +2233,7 @@ export class LocalAgentManager {
                             break;
                         }
                         case "tool-input-start":
+                            markShape(shape, "x");
                             lastAct = "tool";
                             partBlock.set(part.id, part.id);
                             yield* emit({ op: "start",
@@ -2245,10 +2300,14 @@ export class LocalAgentManager {
                             yield* emit({ op: "stop", id });
                             break;
                         }
-                        case "error":
-                            yield* errorBlock("llm", errText((part as { error?: unknown }).error));
+                        case "error": {
+                            const msg = errText((part as { error?: unknown }).error);
+                            setEndReason({ type: "error", data: { source: "llm", message: msg } });
+                            yield* errorBlock("llm", msg);
                             break;
+                        }
                         case "abort":
+                            setEndReason({ type: "aborted", data: { source: "abort" } });
                             yield* errorBlock("abort", "生成已取消");
                             break;
                         case "finish-step": {
@@ -2260,6 +2319,7 @@ export class LocalAgentManager {
                                 performance?: StepUsageRecord["performance"];
                                 response?: { id?: string; modelId?: string };
                                 finishReason?: string;
+                                rawFinishReason?: string;
                             };
                             const su = fsPart.usage;
                             if (su) {
@@ -2267,6 +2327,9 @@ export class LocalAgentManager {
                                 const b = bucketsOf(su);
                                 turnBuckets = sumBuckets([turnBuckets, b]);
                                 lastStepBuckets = b;
+                                // **测不出就留着上一次的**：有的步没有输出 token（空回复 / 纯工具步），
+                                // 直接赋 null 会把状态栏那枚 ⚡ 打回更早一轮（review ##253 小项2）。
+                                lastStepRate = stepRate(fsPart.performance, b.outputTotal) ?? lastStepRate;
                                 // **按 response.modelId 查价**：上游可能路由改写模型（##211 §四.4.4）
                                 const priceModel = fsPart.response?.modelId ?? model;
                                 const rates = costOf(priceModel, b.inputTotal);
@@ -2284,6 +2347,10 @@ export class LocalAgentManager {
                                     ...(fsPart.response?.id ? { responseId: fsPart.response.id } : {}),
                                     ...(fsPart.response?.modelId ? { responseModel: fsPart.response.modelId } : {}),
                                     ...(fsPart.finishReason ? { finishReason: fsPart.finishReason } : {}),
+                                    ...(fsPart.rawFinishReason ? { rawFinishReason: fsPart.rawFinishReason } : {}),
+                                    // 形状快照（观察位）：与这一步的 finishReason 同行，才能回答
+                                    // 「没结论的那一步，形状到底是什么」（##288）
+                                    streamShape: { ...shape },
                                     usage: snapshotUsage(su)!,
                                     ...(fsPart.performance ? { performance: fsPart.performance } : {}),
                                     rates: rates ? { ...rates, asOf: MODEL_COST_AS_OF } : null,
@@ -2293,7 +2360,7 @@ export class LocalAgentManager {
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
-                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts) },
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate) },
                                 });
                             }
                             if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
@@ -2306,8 +2373,12 @@ export class LocalAgentManager {
                             let notice: string | undefined;
                             if (fr === "length") {
                                 notice = `输出达到 maxOutputTokens=${modelMax} 被截断（${model} 硬上限），可再发一条消息接上`;
+                                setEndReason({ type: "max-tokens", data: { maxOutputTokens: modelMax } });
                             } else if (stepN >= L.maxSteps && lastAct === "tool") {
                                 notice = `达到 maxSteps=${L.maxSteps} 步上限，本轮强制收尾（模型仍在请求工具）；继续发消息可接力`;
+                                setEndReason({ type: "max-steps", data: { steps: stepN, limit: L.maxSteps } });
+                            } else {
+                                setEndReason({ type: "completed", data: {} });
                             }
                             if (notice) yield* emit({ op: "patch", id: turnId, fields: { notice } });
                             if (usage) {
@@ -2318,7 +2389,7 @@ export class LocalAgentManager {
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
-                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts) },
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate) },
                                 });
                             }
                             // turn 的 stop 由 closeTurn 发（finally 里那一处）：收尾必须闭合
@@ -2327,12 +2398,19 @@ export class LocalAgentManager {
                     }
                 }
 
+                // 流循环跑到这里 = 流**正常收尾**（无异常、无 return 展开）。置位供 closeTurn 兜底：
+                // 若各分支都没写 endReason（provider 连 finish 都没发），至少有"跑完了"这个事实。
+                streamDone = true;
                 // LLM 历史由外层 chat() 从块树统一重建（见 chat 末尾），此处不操作
             } catch (e) {
                 // 取消（消费端断开 / 停止按钮）与真实错误分流：前者是预期收尾，后者记 error 块
-                if (signal.aborted) yield* errorBlock("abort", "生成已取消");
-                else {
-                    yield* errorBlock("stream", errText(e));
+                if (signal.aborted) {
+                    setEndReason({ type: "aborted", data: { source: "abort" } });
+                    yield* errorBlock("abort", "生成已取消");
+                } else {
+                    const msg = errText(e);
+                    setEndReason({ type: "error", data: { source: "stream", message: msg } });
+                    yield* errorBlock("stream", msg);
                     failed = true;
                 }
             }

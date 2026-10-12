@@ -119,3 +119,56 @@ export function IconBolt(props: { class?: string }) {
         </svg>
     );
 }
+
+/**
+ * 展开/收起指示（daisyUI `collapse-arrow` 同形）：**收起 = 下指，展开 = 上指**（180° 翻转）。
+ *
+ * 为什么不用原来的字符 `▸ / ▾ / ▴ / ›`：四个字符方向各不相同、基线各异，同一层级的开关
+ * 在轮次头 / 图标行 / 单行三处长得不一样，用户一眼看不出"这层是开还是关"
+ * （2026-10-04 反馈「要用 collapse-arrow 的图标标出展开和关闭状态」）。
+ * 一枚 SVG + CSS 旋转过渡：同一形状、同一方向语义，全层级一致。
+ *
+ * `open` 是必填而不是可选：这个图标的存在意义就是表达状态，调用方必须给出状态。
+ */
+/**
+ * 「没有可展开的内容」的行首占位 —— 与 `IconChevron` 同列同尺寸（尺寸由调用方给）。
+ *
+ * 为什么需要：过程行（思考 / 工具）收起时先给首行预览、点开才看全文；思考只有一行时，
+ * 展开体与那行标题就是同一句 —— 点开毫无变化（用户 2026-10-11 口径：那就不该有展开能力）。
+ * 但**不能空着**：左列箭头是层级刻度，缺一格这一行的文字就会左移、与上下行错位。
+ * 故给一个极轻的点 —— 不是箭头（箭头是"这里面还有东西"的承诺，给了就该点得开）。
+ */
+export function IconDot(props: { class?: string }) {
+    return (
+        <svg class={`shrink-0 fill-current ${props.class ?? ""}`} viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="2.5" />
+        </svg>
+    );
+}
+
+/**
+ * 开合指示（树形 disclosure：**收起右指 ▸、展开下指 ▾**）。
+ *
+ * 两个口径（2026-10-11 用户反馈）：
+ *   ① **一律放在行首**（不是行尾）—— 左侧竖着对齐的一列箭头才是"这行能展开"的视觉语言
+ *      （VSCode / 文件树 / JSON 树都这样）；摆右侧时它跟着行内容长度飘，一眼扫不出层级。
+ *   ② **收起右指、展开下指**：同一个向下 chevron 旋转得来（收起 `-rotate-90`），
+ *      方向与"往右铺开一层"的直觉一致；旧版收起上指是 accordion 语义（纵向堆叠），
+ *      移左后上指会读成"收上去"，与树形相反。
+ */
+export function IconChevron(props: { open: boolean; class?: string }) {
+    return (
+        <svg
+            class={`shrink-0 transition-transform duration-150 ${props.open ? "" : "-rotate-90"} ${props.class ?? ""}`}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.4"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+        >
+            <path d="m6 9 6 6 6-6" />
+        </svg>
+    );
+}
