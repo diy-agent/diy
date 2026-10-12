@@ -7,7 +7,8 @@
 // index.css 的 `[data-skin]` 段（`data-skin` 挂在 documentElement 上，切换即全局生效）。
 //
 // 硬约束：钩子必须与真实 DOM 一致，否则小样会"撒谎"（显示的差异不是真差异）。
-//   · `data-row-head` / `data-row-handle` → **竖列折叠手柄**（行首 gutter 那一列，见 RowHandle.tsx）
+//   · `data-row-head` / `data-row-handle` / `data-row-band` → **竖列折叠条**（行首 gutter：
+//     图标在行头里首行居中、贴条整块高，见 RowHandle.tsx）
 //   · `data-testid="turn-header"` → LocalChatPage 的 TurnHeader
 //   · `data-block-tag="proc-bar"` 且**子元素带 `role="button"`** → 过程 bar 的命中形状
 //   · `data-proc-children` → 过程 bar 铺开后的**子层容器**（card 皮肤在这里去掉缩进，
@@ -30,6 +31,7 @@ export const SKIN_PREVIEW_HOOKS = [
   'data-failing',
   'data-chat-list',
   'data-row-head',
+  'data-row-band',
   'data-row-handle',
   'data-proc-children',
 ] as const;
@@ -47,6 +49,10 @@ function Handle(props: { open?: boolean; can?: boolean }) {
   );
 }
 
+function Band() {
+  return <span class="diy-row-band" data-row-band="1" aria-hidden="true" />;
+}
+
 export function ChatSkinPreview() {
   return (
     <div class="diy-chat space-y-1.5 rounded-lg border border-base-300/70 bg-base-100/50 p-2" data-testid="skin-preview">
@@ -61,6 +67,7 @@ export function ChatSkinPreview() {
         data-row-head="1"
         data-level="3"
       >
+        <Band />
         <Handle open />
         <span
           class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-body"
@@ -75,6 +82,7 @@ export function ChatSkinPreview() {
       {/* 过程 bar（铺开）：命中形状是 `[data-block-tag="proc-bar"] > [role="button"]`；
           子层容器 `data-proc-children` 里是逐条过程 —— card 皮肤下它不缩进、色条浅一档 */}
       <div data-block-tag="proc-bar" data-block-id="skin-preview-proc">
+        <Band />
         <div
           class="flex w-full items-center gap-1.5 rounded-lg px-1.5 py-1 text-body"
           role="button"
@@ -87,10 +95,12 @@ export function ChatSkinPreview() {
         </div>
         <div class="mt-0.5 ml-2 space-y-0.5 border-l border-base-300 pl-2" data-proc-children="1">
           <div class="rounded-lg px-1.5 py-1 text-body" data-block-tag="think" data-block-id="skin-preview-child-1" data-row-head="1">
+            <Band />
             <Handle can={false} />
             <span class="truncate opacity-80">💭 先确认一下目录结构</span>
           </div>
           <div class="rounded-lg px-1.5 py-1 text-body" data-block-tag="tool" data-block-id="skin-preview-child-2" data-row-head="1">
+            <Band />
             <Handle open />
             <span class="truncate opacity-80">⚙ bash · rg -c TODO a.ts</span>
           </div>
@@ -98,6 +108,7 @@ export function ChatSkinPreview() {
       </div>
       {/* 一顿出错的过程 bar：只有错误/警告吃色（判据两皮肤一致） */}
       <div data-block-tag="proc-bar" data-block-id="skin-preview-proc-err" data-has-error="1">
+        <Band />
         <div class="flex w-full items-center gap-1.5 rounded-lg px-1.5 py-1 text-body" role="button" tabindex="-1" data-row-head="1">
           <Handle open />
           <span class="shrink-0 rounded bg-base-300/60 px-1 text-caption tabular-nums opacity-70">0 思考 · 2 工具</span>
@@ -106,14 +117,16 @@ export function ChatSkinPreview() {
       </div>
       </div>
       {/* 结尾槽（结论）：**在历史容器之外** —— 恒显、与状态同级；rail 的线不穿过它 */}
-      <div data-tail-box="conclusion" class="rounded-lg px-2 py-1.5 text-body">
+      <div data-block-id="skin-preview-conc" data-tail-box="conclusion" class="rounded-lg px-2 py-1.5 text-body">
+        <Band />
         <div class="flex items-center gap-1.5" data-row-head="1">
           <Handle open />
           <span class="text-base-content/80">这轮的结论……</span>
         </div>
       </div>
       {/* 结尾槽（结束点：completed 但末件是工具）—— 保持工具形态 + tag，不冒充结论 */}
-      <div data-tail-box="endleaf" class="rounded-lg px-2 py-1.5 text-body">
+      <div data-block-id="skin-preview-endleaf" data-tail-box="endleaf" class="rounded-lg px-2 py-1.5 text-body">
+        <Band />
         <div class="flex items-center gap-1.5" data-row-head="1">
           <Handle />
           <span class="truncate text-base-content/80">⚙ rg -c TODO a.ts</span>
@@ -123,7 +136,8 @@ export function ChatSkinPreview() {
         </div>
       </div>
       {/* 结尾槽（失败现场）：框原地转红 —— 只有错误/警告吃色 */}
-      <div data-tail-box="scene" data-failing="1" class="rounded-lg px-2 py-1.5 text-body">
+      <div data-block-id="skin-preview-scene" data-tail-box="scene" data-failing="1" class="rounded-lg px-2 py-1.5 text-body">
+        <Band />
         <div class="flex items-center gap-1.5" data-row-head="1">
           <Handle open />
           <span class="text-error">✗ 出错现场</span>

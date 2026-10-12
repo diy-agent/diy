@@ -59,7 +59,7 @@ import { reasoningEffortLabel } from "../../shared/reasoning-effort";
 import { DragDropProvider, DragOverlay, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron } from "./icons";
-import { RowHandle } from "./RowHandle";
+import { RowBand, RowHandle } from "./RowHandle";
 import { VIEW_BAR_H, chatInputMaxHeight } from "../lib/layout-metrics";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
@@ -498,6 +498,11 @@ function ProcessRow(props: {
             data-block-tag={n().tag}
             data-expandable={can() ? "1" : "0"}
         >
+            {/* 贴条挂**块级**（整块高，含展开后的正文）；图标在下面行头里（首行居中）——
+                两者锚点不同，见 RowHandle 头注 */}
+            <Show when={can()}>
+                <RowBand onToggle={() => props.onToggle(n().id)} />
+            </Show>
             <Show
                 when={can()}
                 fallback={
@@ -580,6 +585,7 @@ function TailBox(props: {
             data-failing={failing() ? "1" : undefined}
             data-live-area={props.live ? (n().stopped ? "waiting" : "active") : undefined}
         >
+            <RowBand onToggle={() => props.onToggle(n().id, props.live ? !open() : undefined)} />
             <DisclosureHead
                 open={open()}
                 onToggle={() => props.onToggle(n().id, props.live ? !open() : undefined)}
@@ -650,6 +656,7 @@ function EndLeafBox(props: {
             data-block-tag={n().tag}
             data-tail-box="endleaf"
         >
+            <RowBand onToggle={() => props.onToggle(n().id, !open())} />
             <DisclosureHead
                 open={open()}
                 onToggle={() => props.onToggle(n().id, !open())}
@@ -795,6 +802,7 @@ function TurnHeader(props: {
             {/* 开合手柄在**行首 gutter**（`RowHandle`）：一轮里"轮次头 → 过程 bar → 逐条过程"
                 三级同列左对齐，一眼能看出层级（2026-10-11 用户口径：箭头从右边换到左边；
                 2026-10-12 用户口径：竖列成一列，见 RowHandle 头注） */}
+            <RowBand onToggle={props.onToggle} />
             <RowHandle open={open()} onToggle={props.onToggle} label={`过程历史：${turnFoldTip(open())}`} />
             {/* 身份：**所有级别都显示**（1 级与 2 级必须一致，用户 2026-10-11 口径） */}
             <span
@@ -874,6 +882,10 @@ function TextRow(props: {
     const cut = () => view().omitted > 0;
     return (
         <div data-block-id={b().id} data-block-tag="text" data-clamped={cut() ? "1" : undefined}>
+            {/* 截断时才给贴条（= 有得展开）；图标同样只在截断时可点 */}
+            <Show when={cut()}>
+                <RowBand onToggle={props.onExpand} />
+            </Show>
             {/* 正文行也给手柄（草图 `.k-text` 同款）：截断时才可展开 —— 展开动作就是"进下一级看全文" */}
             <RowHandle
                 can={cut()}
@@ -972,6 +984,7 @@ function ProcBar(props: {
             data-block-id={props.parts[0]?.id}
             data-has-error={failed() ? "1" : undefined}
         >
+            <RowBand onToggle={props.onToggle} />
             <DisclosureHead
                 open={props.open}
                 onToggle={props.onToggle}

@@ -56,6 +56,14 @@ describe("皮肤小样（ChatSkinPreview）与 index.css 规则一致", () => {
     expect(preview).toContain("data-has-error");
   });
 
+  it("贴条 `data-row-band` 在**块级**（行头之外），图标 `data-row-handle` 仍在行头里", () => {
+    // 折叠条 = 两件东西两个锚点（2026-10-12 用户口径：贴条整块高（v3）、图标首行居中）：
+    // 贴条塞进行头 → 被框在行头那一行里，大块上就不是"整个块高度"了
+    expect(preview).toMatch(/data-block-tag="proc-bar"[\s\S]{0,120}data-row-band/);
+    // 图标必须仍在行头里（行头单行 ⇒ 行头居中 == 首行居中）
+    expect(preview).toMatch(/data-row-head[\s\S]{0,400}data-row-handle/);
+  });
+
   it("小样给出**手柄列**与**子层容器**（竖列折叠手柄 / card 皮肤不缩进的落点）", () => {
     // 这两条是 2026-10-12 用户口径的落点：小样少了任何一个，设置页里就"看着没变"
     expect(preview).toMatch(/data-row-handle/);

@@ -290,20 +290,28 @@
     padding-top: 0.2rem;
 }
 
-/* ── 竖列折叠手柄（草图 `rail-v4.html` 的 `.gut`）─────────────────────────
- * **行首 gutter 里的一列把手**：能展开给箭头、不能展开给静态点（`RowHandle` 一处给）。
- * 不塞在内容行内 —— 手柄是结构不是内容，要成列、要压在皮肤那条结构物上（2026-10-12
- * 用户口径「竖版折叠条」）。
+/* ── 竖列折叠条（草图 `rail-v3.html` 的 `.gut`；v4 把贴条砍成 20px 是**错的**，
+ *    2026-10-12 用户点名「折叠条按 v3，其他按 v4」）─────────────────────────
+ * 两件东西、两个锚点：
+ *   · **贴条** `[data-row-band]`：`top:0;bottom:0` = **整个块的高度**（v3 `.gut` 同款），
+ *     透明底、悬停显形，块级定位（锚 `[data-block-id]`）—— 图标截下面几截都算"这行"。
+ *   · **图标** `[data-row-handle]`：**与首行垂直居中**（v3 图标居中在整个块的中间，
+ *     大块上会飘进内容里，用户点名改掉）—— 行头恒单行，行头居中 == 首行居中。
  *
- * 两条位置口径（都由 CSS 定，组件只给 `data-row-head` / `data-row-handle` 钩子）：
- *   · 竖直 = **与该行首行垂直居中**（草图 R24①：不是整块顶部，也不浮在块中间）
- *     —— 行头（单行 flex）用 `top:50%`；正文块（多行 md）改挂首行（`top:0; height:1.6em`）。
+ * 两条位置口径（都由 CSS 定，组件只给 `data-row-band` / `data-row-handle` 钩子）：
+ *   · 竖直 = 贴条锚块（`[data-block-id]`，含行头本身就是块的单行行）；
+ *     图标锚行头/文本块（`top:50%` 行头居中；正文块挂首行 `top:0; height:1lh`）。
  *   · 水平 = 贴在该皮肤的结构物上：**card = 左 4px 色条上**（草图 `.B .gut{left:-4px}`）、
  *     **rail = 贯穿线右侧**（草图 `.A .gut{left:-9px}`，线在它左边一格）。
  */
 .diy-chat [data-row-head],
 .diy-chat [data-turn-status],
 .diy-chat [data-block-tag="text"] {
+    position: relative;
+}
+/* 块级定位上下文 = **贴条的锚**（整块高，含展开后的正文）。行头自己也是相对定位，
+   但贴条是行头的**兄弟**（挂在块级），所以它锚的是块，不会被框进行头那一行。 */
+.diy-chat [data-block-id] {
     position: relative;
 }
 .diy-chat [data-row-handle] {
@@ -329,10 +337,12 @@
 .diy-chat [data-row-handle="static"]:hover {
     color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
 }
-/* 正文块：手柄贴**首行**（md 首行可能是标题、整块有多行长，居中会飘到块中间） */
+/* 正文块：图标贴**首行**（整块可能是多行长 md，按块居中会飘到内容里去）；
+   `1lh` = 首行行盒高度，图标在行盒里居中 = 首行居中 */
 .diy-chat [data-block-tag="text"] > [data-row-handle] {
     top: 0;
     translate: 0;
+    height: 1lh;
 }
 /* ── 行首留白（两皮肤都要）────────────────────────────────────────────
  * 手柄列必须落在**行自己的**左留白里，否则 chevron 会啃到内容首字（CDP 实测：状态行、
@@ -345,12 +355,28 @@
     padding-left: 1rem;
 }
 
-[data-skin="card"] .diy-chat [data-row-handle] {
+/* **贴条**：整块高度的竖带 —— 平时透明（rail 的贯穿线从它背后过，不断线；
+   v3 那条白底贴条会把自己的线盖没，像素验过，不抄），悬停显形 */
+.diy-chat [data-row-band] {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1rem;
+    border-radius: 0.25rem;
+    cursor: pointer;
+}
+.diy-chat [data-row-band]:hover {
+    background: color-mix(in oklab, var(--color-base-content) 6%, transparent);
+}
+
+[data-skin="card"] .diy-chat [data-row-handle],
+[data-skin="card"] .diy-chat [data-row-band] {
     /* -8px：手柄盒 356..372 —— 压在卡的 4px 色条（364..368）上，且**不压到卡内文字**
        （卡的 padding-inline 只有 0.55rem=8.8px，靠 -4px 时 chevron 会啃掉计数 chip 2px） */
     left: -0.5rem;
 }
-[data-skin="rail"] .diy-chat [data-row-handle] {
+[data-skin="rail"] .diy-chat [data-row-handle],
+[data-skin="rail"] .diy-chat [data-row-band] {
     left: -0.6rem;
 }
 

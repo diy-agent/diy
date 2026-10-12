@@ -1,23 +1,24 @@
 /**
- * **竖列折叠手柄** —— 行首 gutter 里那枚把手（草图 `rail-v4.html` 的 `.gut`）。
+ * **竖列折叠条** —— 行首 gutter 里那一列把手，拆成两件东西（草图 `rail-v3.html` 的 `.gut`，
+ * 2026-10-12 用户口径「折叠条按 v3，但图标放首行居中」）：
  *
- * 形状：能展开给 `IconChevron`（收起 ▸ / 展开 ▾），**不能展开给 `IconDot`** —— 同一格占位，
- * 左列才是齐的层级刻度（`expandableOf`：思考只有一行就不给展开能力，但格子不能空）。
+ *   · `RowBand` —— **贴条**：`top:0;bottom:0` **整个块的高度**（v3 的 `.gut{top:0;bottom:0}`，
+ *     不是 v4 那个只有 20px 的"首行伸缩"），透明底、悬停显形，鼠标点哪一截都开合；
+ *   · `RowHandle` —— **图标**：小尖头/静态点，**与该行首行垂直居中**（v3 把图标居中在整个
+ *     块的中间 —— 大块上会飘到内容里去，用户点名改成首行居中）。
  *
- * 为什么单独成列、不跟内容排在一行（2026-10-12 用户口径「竖版折叠条」）：手柄是**结构**，
- * 不是内容 —— 每行都有、位置固定、与内容长短无关。塞在内容里它跟着首行文字飘，
- * 扫不出"哪几行能开"；而 rail 皮肤那条贯穿线要**穿过这一列**（手柄压在线上），
- * 行内的箭头根本做不到。草图 A 皮肤把 `.gut` 钉在 `left:-9px`、与贯穿线同一条竖列上，
- * 就是这件事的字面写法。
+ * 为什么必须是两件：贴条要"整个块高"、图标要"首行居中"，两者锚点不同 —— 贴条锚**块**
+ * （`[data-block-id]`，含展开后的正文），图标锚**行头**（行头恒单行 ⇒ 行头居中 == 首行居中，
+ * 不用给每种行算 padding 常数）。所以 `RowBand` 挂在**块级**、`RowHandle` 留在**行头里**；
+ * 行头不能是定位上下文（否则贴条会被框在行头那一行里）—— `data-row-head` 的
+ * `position:relative` 只留给图标自己。
  *
- * 位置由 **CSS** 决定（组件只给钩子，见 `index.css` 皮肤段的 `[data-row-handle]`）：
- *   · 竖直 —— **与该行首行垂直居中**（草图 R24①：不是整块顶部，也不浮在块中间）；
- *   · 水平 —— 贴在该皮肤的结构物上（rail = 贯穿线右侧 / card = 左 4px 色条上）。
- * 所以宿主必须 `position: relative`（`[data-row-head]` / `[data-block-tag="text"]` 等已在 CSS 里声明）。
+ * 位置由 **CSS** 决定（组件只给钩子，见 `index.css` 皮肤段）：水平贴在该皮肤的结构物上
+ * （card = 左 4px 色条上 / rail = 贯穿线右侧），两者同一条竖列。
  *
- * 点击**必须** `stopPropagation`：手柄通常挂在行头（`DisclosureHead`）里，而整行头本身就是
- * 一个开合开关 —— 不拦就变成"一次点击翻转两下"（净效果 = 没反应，与源码 R17 / 草图 R24⑥
- * 踩过的"点着像没反应"是同一类坑）。
+ * 点击**必须** `stopPropagation`：手柄挂在行头（`DisclosureHead`）里时整行头本身就是一个
+ * 开合开关 —— 不拦就变成"一次点击翻转两下"（净效果 = 没反应，源码 R17 / 草图 R24⑥
+ * 踩过两次的坑）。`RowBand` 同理：它与行头是兄弟，点了不该再冒给父级。
  */
 import { Show } from "solid-js";
 import { IconChevron, IconDot } from "./icons";
@@ -64,5 +65,23 @@ export function RowHandle(props: {
                 <IconChevron open={!!props.open} class="h-3.5 w-3.5 opacity-40" />
             </span>
         </Show>
+    );
+}
+
+/**
+ * **贴条**（`RowBand`）：整块高度的那条竖带，纯鼠标便利 —— 读屏/键盘入口都在
+ * `RowHandle` 的图标上，所以这里 `aria-hidden`，也不进 tab 序。
+ */
+export function RowBand(props: { onToggle?: () => void }) {
+    return (
+        <span
+            class="diy-row-band"
+            data-row-band="1"
+            aria-hidden="true"
+            onClick={(e) => {
+                e.stopPropagation();
+                props.onToggle?.();
+            }}
+        />
     );
 }
