@@ -19,8 +19,9 @@
  * ⚠️ 结尾槽那一条叶子由 `turnRows` **排除在历史行之外**（判据一处：`tailOf` / `tailNodeOf`）——
  *   两处判据一分叉就是同一块画两遍（review P1-1）。
  *
- * 「开/关」一律由 `IconChevron` 表达，**放在行首**（收起右指 ▸、展开下指 ▾ —— 树形语义，见其头注）；
- * 没有可展开内容的行给 `IconDot`（同格占位，见 `chat-fold.expandableOf`）。
+ * 「开/关」一律由 `RowHandle` 表达（**行首 gutter 里的竖列手柄**：收起右指 ▸、展开下指 ▾，
+ * 树形语义见 `IconChevron` 头注；没有可展开内容的行给同格的静态点）。**不塞在内容行内** ——
+ * 手柄是结构不是内容，要成列、要压在皮肤那条结构线上（2026-10-12 用户口径「竖版折叠条」）。
  * 可展开行头一律 `DisclosureHead`（div + role=button：**按钮内的文本选不中**，见其头注）。
  * 「显示什么、按什么序、开到第几层」的语义全在 `lib/chat-fold.ts`（纯函数 + 单测），本文件只管画。
  * MD 渲染/原文是**正交**的显示偏好：摘要态同样按它渲染（见 TextRow）。
@@ -57,7 +58,8 @@ import type { SteerItem, SteerMode } from "../../main/core/drafts";
 import { reasoningEffortLabel } from "../../shared/reasoning-effort";
 import { DragDropProvider, DragOverlay, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
-import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron, IconDot } from "./icons";
+import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron } from "./icons";
+import { RowHandle } from "./RowHandle";
 import { VIEW_BAR_H, chatInputMaxHeight } from "../lib/layout-metrics";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
@@ -455,8 +457,9 @@ function ProcBody(props: {
  * 少了它，一行 `思考` 与一行 `Bash · 命令` 在长列表里只能靠读文字分辨（2026-10-11 用户口径
  * "给工具和思考 bar 前加前缀图标"）。它同时是**状态位**（● / ✗ / ⊘），不是纯装饰。
  *
- * **行首第一格**：能展开给箭头、不能展开给 `IconDot`（见 `expandableOf`）——
+ * **行首第一格**：能展开给箭头、不能展开给静态点（见 `expandableOf`）——
  * 思考只有一行时展开体与标题是同一句，点开毫无变化；但格子不能空（左列是齐的层级刻度）。
+ * 那一格现在是 `RowHandle`（行首 gutter 的竖列手柄），**不在行内**：见其头注。
  */
 function ProcessRow(props: {
     node: BlockNode;
@@ -472,13 +475,18 @@ function ProcessRow(props: {
     /**
      * 行头（三种行位共用同一份内容，只是外壳不同）：
      * **能展开** = `DisclosureHead`（可点）；**不能展开** = 静态 `div` —— 不是"按钮"，
-     * 读屏不该念成可按。第一格恒占位（箭头 或 `IconDot`），左列才是齐的层级刻度。
+     * 读屏不该念成可按。第一格恒占位（箭头 或静态点，都由 `RowHandle` 给），左列才是齐的层级刻度。
      */
     const body = (
         <>
-            <Show when={can()} fallback={<IconDot class="h-3.5 w-3.5 opacity-20" />}>
-                <IconChevron open={open()} class="h-3.5 w-3.5 opacity-40" />
-            </Show>
+            {/* 开合手柄在**行首 gutter**（不是行内第一格）：左列那一串箭头/点是"这行能展开"
+                的视觉语言，必须成列 —— 见 RowHandle 头注 */}
+            <RowHandle
+                can={can()}
+                open={open()}
+                onToggle={() => props.onToggle(n().id)}
+                label={`${summaryOf(n(), false)}（${can() ? (open() ? "收起" : "展开") : "无展开内容"}）`}
+            />
             {statusMark(n())}
             <span class="font-medium text-base-content/80 truncate flex-1">{summaryOf(n(), open())}</span>
         </>
@@ -492,12 +500,17 @@ function ProcessRow(props: {
         >
             <Show
                 when={can()}
-                fallback={<div class={head}>{body}</div>}
+                fallback={
+                    <div class={head} data-row-head="1">
+                        {body}
+                    </div>
+                }
             >
                 <DisclosureHead
                     open={open()}
                     onToggle={() => props.onToggle(n().id)}
                     class={`${head} hover:bg-base-200/60`}
+                    rest={{ "data-row-head": "1" }}
                 >
                     {body}
                 </DisclosureHead>
@@ -571,8 +584,12 @@ function TailBox(props: {
                 open={open()}
                 onToggle={() => props.onToggle(n().id, props.live ? !open() : undefined)}
                 class="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left hover:bg-base-200/60"
+                rest={{ "data-row-head": "1" }}
             >
-                <IconChevron open={open()} class="h-3.5 w-3.5 opacity-40" />
+                <RowHandle
+                    open={open()}
+                    onToggle={() => props.onToggle(n().id, props.live ? !open() : undefined)}
+                />
                 <Show when={failing()} fallback={statusMark(n())}>
                     <span class="text-error">✗</span>
                 </Show>
@@ -637,8 +654,9 @@ function EndLeafBox(props: {
                 open={open()}
                 onToggle={() => props.onToggle(n().id, !open())}
                 class="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left hover:bg-base-200/60"
+                rest={{ "data-row-head": "1" }}
             >
-                <IconChevron open={open()} class="h-3.5 w-3.5 opacity-40" />
+                <RowHandle open={open()} onToggle={() => props.onToggle(n().id, !open())} />
                 {statusMark(n())}
                 <span class="font-medium text-base-content/80 truncate flex-1">
                     {summaryOf(n(), open())}
@@ -766,6 +784,7 @@ function TurnHeader(props: {
             ariaLabel={`${info().name ?? "助理"}${info().model ? `（${personaStore.displayModel(info().model)}）` : ""}：${stat()}；${turnFoldTip(open())}`}
             rest={{
                 "data-testid": "turn-header",
+                "data-row-head": "1",
                 "data-block-id": t().id,
                 "data-block-tag": "turn",
                 "data-open": open() ? "1" : "0",
@@ -773,9 +792,10 @@ function TurnHeader(props: {
                 title: `${turnFoldTip(open())}\n${info().title}`,
             }}
         >
-            {/* 开合箭头在**行首**：一轮里"轮次头 → 过程 bar → 逐条过程"三级同列左对齐，
-                一眼能看出层级（2026-10-11 用户口径：箭头从右边换到左边） */}
-            <IconChevron open={open()} class="h-3.5 w-3.5 opacity-40" />
+            {/* 开合手柄在**行首 gutter**（`RowHandle`）：一轮里"轮次头 → 过程 bar → 逐条过程"
+                三级同列左对齐，一眼能看出层级（2026-10-11 用户口径：箭头从右边换到左边；
+                2026-10-12 用户口径：竖列成一列，见 RowHandle 头注） */}
+            <RowHandle open={open()} onToggle={props.onToggle} label={`过程历史：${turnFoldTip(open())}`} />
             {/* 身份：**所有级别都显示**（1 级与 2 级必须一致，用户 2026-10-11 口径） */}
             <span
                 class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-body"
@@ -854,6 +874,13 @@ function TextRow(props: {
     const cut = () => view().omitted > 0;
     return (
         <div data-block-id={b().id} data-block-tag="text" data-clamped={cut() ? "1" : undefined}>
+            {/* 正文行也给手柄（草图 `.k-text` 同款）：截断时才可展开 —— 展开动作就是"进下一级看全文" */}
+            <RowHandle
+                can={cut()}
+                open={false}
+                onToggle={() => props.onExpand()}
+                label="已折叠正文：展开全部"
+            />
             <div
                 style={
                     cut()
@@ -950,8 +977,9 @@ function ProcBar(props: {
                 onToggle={props.onToggle}
                 class="flex items-center gap-1.5 w-full py-1 px-1.5 rounded-lg hover:bg-base-200/60 text-body"
                 ariaLabel={`过程：${countsText()}（点击${props.open ? "收起" : "展开"}这一行）`}
+                rest={{ "data-row-head": "1" }}
             >
-                <IconChevron open={props.open} class="h-3.5 w-3.5 opacity-40" />
+                <RowHandle open={props.open} onToggle={props.onToggle} label={`过程：${countsText()}`} />
                 {/* 计数在**行首**：展开/收起都在（同一位置同一形状，不随开合消失），
                     带底色 chip = 与后面的首行内容分开（见头注） */}
                 <span
@@ -980,7 +1008,7 @@ function ProcBar(props: {
                 </Show>
             </DisclosureHead>
             <Show when={props.open}>
-                <div class="mt-0.5 ml-2 space-y-0.5 border-l border-base-300 pl-2">
+                <div class="mt-0.5 ml-2 space-y-0.5 border-l border-base-300 pl-2" data-proc-children="1">
                     <For each={props.parts}>
                         {(n) => (
                             <PartRow

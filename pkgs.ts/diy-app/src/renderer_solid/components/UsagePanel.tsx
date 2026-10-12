@@ -52,6 +52,7 @@ import { VIEW_BAR_H } from "../lib/layout-metrics";
 import { notificationStore } from "../store/notificationStore";
 import { DEFAULT_BUDGET_BYTES } from "../../shared/context/compaction";
 import { useCompactPanel, CompactPanelContent } from "./CompactSessionPanel";
+import { RowHandle } from "./RowHandle";
 import type { CompactEventRecord, CompactTrigger } from "../../shared/context/compaction";
 import { mapCompactPointsToSteps, stepKey } from "../../shared/context/compact-points";
 
@@ -1258,6 +1259,7 @@ export function TurnUsageBar(props: {
         <Switch>
             <Match when={pending()}>
                 <div class="flex items-center gap-2 text-body" data-usage-pending="1" data-turn-status="1">
+                    <RowHandle can={false} />
                     <StatusIcon />
                     <Clock />
                     <span class="flex-1" />
@@ -1281,6 +1283,7 @@ export function TurnUsageBar(props: {
         const l = () => props.usage as { in?: number; out?: number; total?: number };
         return (
             <div class="flex items-center gap-2 text-body" data-turn-status="1">
+                <RowHandle can={false} />
                 <StatusIcon />
                 <Clock />
                 <span class="flex-1" />
@@ -1299,6 +1302,7 @@ export function TurnUsageBar(props: {
         const p = () => props.usage as TurnUsagePatch;
         return (
             <div class="flex items-center gap-2" data-turn-status="1">
+                <RowHandle can={false} />
                 <StatusIcon />
                 <Clock />
                 <span class="flex-1" />

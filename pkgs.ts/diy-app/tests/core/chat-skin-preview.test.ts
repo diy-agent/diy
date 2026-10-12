@@ -11,12 +11,18 @@ const appDir = resolve(__dirname, "../..");
 const css = readFileSync(resolve(appDir, "src/renderer_solid/index.css"), "utf8");
 const preview = readFileSync(resolve(appDir, "src/renderer_solid/components/ChatSkinPreview.tsx"), "utf8");
 
-/** 取 `[data-skin]` 段（到下一段 `/* ──` 注释为止）的选择器行 */
+/**
+ * 取 `[data-skin]` 段的**全部**选择器（从第一处 `[data-skin=` 到文件末尾）。
+ *
+ * 为什么不是"到第一个 `{` 为止"（旧版写法）：那样只扫到第一条规则的选择器组，
+ * 后面新加的规则（子层容器、手柄列…）用了什么钩子**一律看不见** —— 小样漏钩子时
+ * 测试照绿，等于这道闸门对着新规则失效。皮肤段是 index.css 的**最后一段**，
+ * 故直接切到 EOF；它一旦不再是最后一段，这里会连带失败（比静默漏检好）。
+ */
 function skinSelectorBlock(): string {
   const start = css.indexOf('[data-skin="card"]');
   expect(start, "index.css 里找不到 [data-skin] 段").toBeGreaterThan(-1);
-  const end = css.indexOf("{", start);
-  return css.slice(start, end);
+  return css.slice(start);
 }
 
 describe("皮肤小样（ChatSkinPreview）与 index.css 规则一致", () => {
@@ -48,5 +54,15 @@ describe("皮肤小样（ChatSkinPreview）与 index.css 规则一致", () => {
   it("小样覆盖两个吃色态（data-failing / data-has-error），否则看不出「只有错误吃色」", () => {
     expect(preview).toContain("data-failing");
     expect(preview).toContain("data-has-error");
+  });
+
+  it("小样给出**手柄列**与**子层容器**（竖列折叠手柄 / card 皮肤不缩进的落点）", () => {
+    // 这两条是 2026-10-12 用户口径的落点：小样少了任何一个，设置页里就"看着没变"
+    expect(preview).toMatch(/data-row-handle/);
+    expect(preview).toMatch(/data-row-head/);
+    expect(preview).toMatch(/data-proc-children/);
+    // 手柄必须**真在**行头里（与真实 DOM 同嵌套：`[data-row-head] > [data-row-handle]`），
+    // 只写两个属性不算 —— 小样的价值是形状一致
+    expect(preview).toMatch(/data-row-head[\s\S]{0,400}data-row-handle/);
   });
 });

@@ -215,18 +215,41 @@
  * 颜色全走 daisyUI 变量（跟主题走），不写死色值。 */
 .diy-chat {
     --diy-edge: color-mix(in oklab, var(--color-base-content) 16%, transparent);
+    /* 子层边条：**比主层更浅**的一档灰（草图 R24② 主层 `#cbd5e1` / 子层 `#d7dce2`）——
+       card 皮肤不缩进，层级全靠这一档色差读出来，所以它必须在 */
+    --diy-edge-child: color-mix(in oklab, var(--color-base-content) 11%, transparent);
     --diy-card: color-mix(in oklab, var(--color-base-200) 55%, transparent);
     /* rail 的**贯穿线**：比块边条略深，因为它要当成一条结构线看（不是每块的描边） */
     --diy-rail: color-mix(in oklab, var(--color-base-content) 22%, transparent);
 }
 
-/* card：每块一张卡（左 4px 灰条 = 类型；这次只做形状，色归错误/警告） */
+/* card：**每块一张卡**（左 4px 灰条 = 类型；这次只做形状，色归错误/警告）
+   —— 主层 = 正文行 / 过程 bar / 结尾槽 / 人物栏；**子层 = 过程 bar 铺开后的逐条**
+   （色条浅一档 `--diy-edge-child`，这是 card 皮肤下唯一的层级线索，见下段）。 */
 [data-skin="card"] .diy-chat [data-block-tag="proc-bar"] > [role="button"],
 [data-skin="card"] .diy-chat [data-tail-box],
 [data-skin="card"] .diy-chat [data-testid="turn-header"] {
     background: var(--diy-card);
     border: 1px solid var(--diy-edge);
     border-left: 4px solid var(--diy-edge);
+    border-radius: 0.5rem;
+    padding-inline: 0.55rem;
+}
+/* 正文行：**只在过程历史里**算一张卡（`[data-chat-list]` 的直属行）。结尾槽（结论）里那份正文
+   不算 —— 它已经在结尾槽那张卡里，再套一层就是"卡里还一张卡"（同一个块两条边，纯噪声）。 */
+[data-skin="card"] .diy-chat [data-chat-list] > [data-block-tag="text"] {
+    background: var(--diy-card);
+    border: 1px solid var(--diy-edge);
+    border-left: 4px solid var(--diy-edge);
+    border-radius: 0.5rem;
+    padding-inline: 0.55rem;
+}
+
+/* 子层（逐条过程）：同一张卡，**色条浅一档** */
+[data-skin="card"] .diy-chat [data-proc-children] > [data-block-tag] {
+    background: var(--diy-card);
+    border: 1px solid var(--diy-edge);
+    border-left: 4px solid var(--diy-edge-child);
     border-radius: 0.5rem;
     padding-inline: 0.55rem;
 }
@@ -245,6 +268,9 @@
     border: 0;
     border-radius: 0;
     padding-inline: 0;
+    /* 行首留白照给（见下面「行首留白」段）—— `padding-inline:0` 是"去掉卡片的边距"，
+       不是"去掉手柄的地方"；手柄列就在这段留白里 */
+    padding-left: 1rem;
 }
 
 /* rail：**结尾槽**例外 —— 它在历史容器**之外**（那条贯穿线不穿过它），所以它得自带一层底
@@ -262,6 +288,80 @@
     border-top: 1px dashed var(--diy-edge);
     margin-top: 0.4rem;
     padding-top: 0.2rem;
+}
+
+/* ── 竖列折叠手柄（草图 `rail-v4.html` 的 `.gut`）─────────────────────────
+ * **行首 gutter 里的一列把手**：能展开给箭头、不能展开给静态点（`RowHandle` 一处给）。
+ * 不塞在内容行内 —— 手柄是结构不是内容，要成列、要压在皮肤那条结构物上（2026-10-12
+ * 用户口径「竖版折叠条」）。
+ *
+ * 两条位置口径（都由 CSS 定，组件只给 `data-row-head` / `data-row-handle` 钩子）：
+ *   · 竖直 = **与该行首行垂直居中**（草图 R24①：不是整块顶部，也不浮在块中间）
+ *     —— 行头（单行 flex）用 `top:50%`；正文块（多行 md）改挂首行（`top:0; height:1.6em`）。
+ *   · 水平 = 贴在该皮肤的结构物上：**card = 左 4px 色条上**（草图 `.B .gut{left:-4px}`）、
+ *     **rail = 贯穿线右侧**（草图 `.A .gut{left:-9px}`，线在它左边一格）。
+ */
+.diy-chat [data-row-head],
+.diy-chat [data-turn-status],
+.diy-chat [data-block-tag="text"] {
+    position: relative;
+}
+.diy-chat [data-row-handle] {
+    position: absolute;
+    top: 50%;
+    translate: 0 -50%;
+    width: 1rem;
+    height: 1.6em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.25rem;
+    color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+    cursor: pointer;
+    user-select: none;
+}
+.diy-chat [data-row-handle]:hover {
+    color: var(--color-primary);
+}
+.diy-chat [data-row-handle="static"] {
+    cursor: default;
+}
+.diy-chat [data-row-handle="static"]:hover {
+    color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+}
+/* 正文块：手柄贴**首行**（md 首行可能是标题、整块有多行长，居中会飘到块中间） */
+.diy-chat [data-block-tag="text"] > [data-row-handle] {
+    top: 0;
+    translate: 0;
+}
+/* ── 行首留白（两皮肤都要）────────────────────────────────────────────
+ * 手柄列必须落在**行自己的**左留白里，否则 chevron 会啃到内容首字（CDP 实测：状态行、
+ * 结尾槽里那份正文都啃掉 7px）。草图里**所有行**都是 `padding-left:16px`，手柄的
+ * `left:-9px` 正是从这段留白里取的位置 —— 这里是同一件事。
+ * 卡片行也吃这条（卡内左侧 16px）：既是草图的口径，也让 chevron 与首字之间留出气。 */
+.diy-chat [data-row-head],
+.diy-chat [data-block-tag="text"],
+.diy-chat [data-turn-status] {
+    padding-left: 1rem;
+}
+
+[data-skin="card"] .diy-chat [data-row-handle] {
+    /* -8px：手柄盒 356..372 —— 压在卡的 4px 色条（364..368）上，且**不压到卡内文字**
+       （卡的 padding-inline 只有 0.55rem=8.8px，靠 -4px 时 chevron 会啃掉计数 chip 2px） */
+    left: -0.5rem;
+}
+[data-skin="rail"] .diy-chat [data-row-handle] {
+    left: -0.6rem;
+}
+
+/* ── card 皮肤的层级：**不缩进**（草图 v2 口径：层级 = 块间距 + 色条色）────────
+ * rail 用「线 + 缩进」表达层级；card 皮肤下子层容器**去掉竖线与缩进**，子行卡片与父级
+ * 同一条左边缘（2026-10-12 用户口径「card 形式的 card 外框没有缩进层级」），层级只由
+ * 色条色区分（主层 `--diy-edge` / 子层 `--diy-edge-child`，都灰，只有错误吃色）。 */
+[data-skin="card"] .diy-chat [data-proc-children] {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
 }
 
 /* 错误/警告吃色：判据与颜色两皮肤一致，只有形状不同（卡片的边条 / 竖栏的线） */
