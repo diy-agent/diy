@@ -612,4 +612,20 @@ describe("结束点（endleaf）tag 的 tooltip：必须跟着 endReason 走", (
         // 与状态行同一批轮的"不编状态"口径一致：那边连图标都不给
         expect(endMarkOf(endReasonOf(t), false).icon).toBe("");
     });
+
+    // review3 RV-7：`notice`（maxSteps/maxTokens 的收尾文案）比 `endReason` **早一个月**进仓
+    // ⇒ 中间那批"上限收尾"轮**带 notice、无 endReason**（`danglingStopPatches` 只补开口轮，管不着）。
+    // 原来 `!r` 分支抢在 notice 之前 ⇒ 状态行说"达到上限"、其上的 tooltip 却说"结束原因未知"。
+    // 判据与 `turnEndNote` **同源**（`interrupted ? … : notice`）—— 结论一律由它反推，别再抄一遍模板。
+    it("无 endReason 但有 notice → 跟状态行同源（不许说「结束原因未知」）", () => {
+        const t = n("turn", "t1", { notice: "达到 maxSteps=40 步上限，本轮强制收尾" }, [step("s1", [tool("x1")])]);
+        expect(turnEndNote(t)).toBe("达到 maxSteps=40 步上限，本轮强制收尾");
+        expect(endLeafTip(t)).toBe(turnEndNote(t));
+    });
+
+    it("无 endReason 但 interrupted → 也跟状态行同源（说「未完成」而不是「未知」）", () => {
+        const t = n("turn", "t1", { interrupted: true }, [step("s1", [tool("x1")])]);
+        expect(endLeafTip(t)).toBe(turnEndNote(t));
+        expect(endLeafTip(t)).toContain("未完成");
+    });
 });

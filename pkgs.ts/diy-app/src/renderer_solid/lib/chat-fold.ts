@@ -386,7 +386,11 @@ export function endLeafTip(turn: BlockNode): string {
     // （review ##253 小项4：原来只有 `completed` 分支读它，`max-tokens` 分支把它丢了）。
     const notice = typeof turn.attrs.notice === "string" && turn.attrs.notice ? turn.attrs.notice : null;
     const r = endReasonOf(turn);
-    if (!r) return "结束原因未知（本版之前的记录没有 endReason）";
+    // **无 endReason 的旧日志也要先问 notice**（review3 RV-7）：`notice` 早在 `endReason` 之前一个月
+    // 就有了（maxSteps/maxTokens 的收尾文案）⇒ 那一批"上限收尾"轮**带 notice、无 endReason**，
+    // 原来 `!r` 抢在前面 ⇒ 状态行说"达到上限"、其上的 tooltip 却说"结束原因未知"（同一件事两套说法）。
+    // 与 `turnEndNote` **同源同分支**（`interrupted ? … : notice`），只是最后兜底多一句解释。
+    if (!r) return turnEndNote(turn) ?? "结束原因未知（本版之前的记录没有 endReason）";
     if (notice) return notice;
     switch (r.type) {
         case "completed":
