@@ -62,6 +62,16 @@ const NAV_ITEMS: Array<{ id: "task" | "llm" | "settings"; label: string; icon: s
 /** `ui page navigate` 的合法取值（非法值一律忽略：宁可不跳，也不能把主区打成白屏） */
 const VALID_PAGES = new Set(["task", "task-run", "lab", "llm", "settings"]);
 
+/**
+ * 窄窗断点。**必须与 index.css 的 `@media (width < 1024px)`、daisyUI 的 `lg:` 分支
+ * 三处同值** —— 它们共同决定「侧栏是常驻占列还是被推出画面」。
+ *
+ * 窄窗下 daisyUI 的 drawer 占位分支（lg:drawer-open）失效：侧栏连 40px rail 一起被推到
+ * 画面外（##297），故改由 CSS 的 `.diy-nav-rail` 接管（rail 常驻 + 点开浮层），
+ * JS 这边只需知道「现在是不是窄窗」来切换展开语义。
+ */
+const NARROW_MQ = "(width < 1024px)";
+
 /** 从任务树里找节点（tab 标题用） */
 function findNode(nodes: TreeNode[], uri: string): TreeNode | undefined {
     for (const n of nodes) {
@@ -101,6 +111,11 @@ export default function App() {
     // 侧栏默认紧缩（2.5rem 纯图标 rail 省空间）；悬停或锁定才展开，选导航后即回缩
     const [pinned, setPinned] = createSignal(false);
     const [hovered, setHovered] = createSignal(false);
+    // 窄窗（<1024）两态：isNarrow 由 matchMedia 跟随（见 onMount），railOpen 是
+    // 「把 rail 展开成浮层」的开关。窄窗 rail 常驻由 CSS 负责，这里只管浮层这一档 ——
+    // 于是侧栏宽度**从不消失**：窄窗最窄 40px rail，宽窗 40px↔224px（##297）。
+    const [isNarrow, setIsNarrow] = createSignal(false);
+    const [railOpen, setRailOpen] = createSignal(false);
     // 展开宽度（px）：右缘可拖，落视图 cache（见 ui-state 的 diy_nav_width）
     const [navW, setNavW] = createSignal(Caches.diy_nav_width.get());
     // 拖拽中的标记：期间**必须强制展开**，否则鼠标一离开侧栏就 mouseleave 收拢，
@@ -247,6 +262,11 @@ export default function App() {
     let hoverHideTimer: ReturnType<typeof setTimeout> | undefined;
     const showHoverTask = (uri: string | null | undefined) => {
         if (!uri) return;
+        /* 窄窗**浮层展开时**不弹（##297）：此刻侧栏是盖住主区的固定层（z-40），
+           卡片（z-30）弹出来也看不见，只会白建一个 TaskSideView。
+           rail 态（窄窗常态）照弹 —— 那与宽窗 rail 态几何完全一致：主区同样从 x=40 起，
+           卡片贴主区左缘正好落在 rail 右侧，看得见也点得到。 */
+        if (isNarrow() && railOpen()) return;
         /* 只有「该任务正是此刻在看的那一个」才不弹详情覆盖层（##183 C-1 的原意）：
            它的详情已在屏上，hover 再弹一层 = 同屏两份。
            ⚠️ 不能写成 `find(task-run:<uri>)`（凡是开在 nav 里的都跳）—— 那样
@@ -269,7 +289,16 @@ export default function App() {
     // → drawer-content（以及贴在它左缘的覆盖层）跟着左移，画面抖一下。
     // 注意：**不能**把 hoverTreeTask 也算作「该展开」—— tree drawer 是主区内的 overlay，
     // 展开侧栏会让主区整体右移，把鼠标下的标题链接挪走（指针落到 nav 上）→ drawer 刚开就被收掉。
-    const expanded = () => pinned() || hovered() || resizingNav() || !!hoverTaskUri() || navDragging();
+    // 窄窗没有「悬停即展开」这回事：触屏本就没有 hover，鼠标在 rail 上也是点开浮层
+    // （展开态盖着主区，鼠标一进来就展开只会自己闪）。故窄窗只看 railOpen。
+    // ⚠️ hoverTaskUri 也必须留在宽窗那一支里：它进 expanded() 是为了「鼠标跨到卡片上时
+    // 侧栏别收」（宽窗的卡片靠侧栏展开才贴着它右缘）。窄窗 rail 态没有「展开」这回事 ——
+    // 卡片贴的是主区左缘（与 rail 无关），一旦把它算进去，hover 一次侧栏就从 40px 弹到
+    // 224px，收缩逻辑全乱。resizingNav / navDragging 是两态共有的「拖拽期间保持展开」项。
+    const expanded = () =>
+        resizingNav() ||
+        navDragging() ||
+        (isNarrow() ? railOpen() : pinned() || hovered() || !!hoverTaskUri());
 
     /**
      * 清空悬停覆盖层。**任何「切页面」的动作都要调它**：
@@ -279,6 +308,17 @@ export default function App() {
         clearTimeout(hoverHideTimer);
         setHoverTaskUri(null);
         setHoverTreeTask(null);
+    };
+
+    /**
+     * 窄窗：主区被切走时收掉浮层。
+     *
+     * 窄窗浮层是**固定盖在主区上**的一层，且没有宽窗那条 mouseleave 兜底
+     * （宽窗「悬停即展开」→ 鼠标一移开就自己收）—— 不显式收，选完导航项浮层还盖在
+     * 主区上，用户得再点一次遮罩。宽窗无浮层可收（no-op）。
+     */
+    const collapseRail = () => {
+        if (isNarrow()) setRailOpen(false);
     };
 
     /**
@@ -310,6 +350,17 @@ export default function App() {
         // 注入后树一变（loadTree / 文件监听 / 拖拽改父）→ opened 重算 → 排序与缩进自动跟上。
         tabStore.setAncestorsResolver(taskAncestorsOf);
         taskStore.loadTree();
+
+        // 窄窗跟随视口（含 serve 模式下的浏览器窗口缩放 / 手机横竖屏）。跨回宽窗时
+        // 顺手关掉浮层态：否则再回窄窗会「浮层还开着、遮罩盖着主区」。
+        const narrowMq = window.matchMedia(NARROW_MQ);
+        const onNarrowChange = () => {
+            setIsNarrow(narrowMq.matches);
+            if (!narrowMq.matches) setRailOpen(false);
+        };
+        onNarrowChange();
+        narrowMq.addEventListener("change", onNarrowChange);
+        onCleanup(() => narrowMq.removeEventListener("change", onNarrowChange));
 
         // ── 页内查找（##234）──
         // 搜索根 = 主内容区（不含面包屑/侧栏/查找条自身）
@@ -568,6 +619,7 @@ export default function App() {
 
     const goSection = (id: Section) => {
         hideHoverLayers(); // 页面切走了，悬停层不能留着盖在屏幕上
+        collapseRail(); // 窄窗：浮层也一起收（见 collapseRail）
         if (id === "task") {
             requestTreeReveal(); // 取 ctx 要在 showTree 清空 active 之前（##160）
             tabStore.showTree();
@@ -583,6 +635,7 @@ export default function App() {
     /** 打开/聚焦某个 tab（含子页面） */
     const goto = (key: string) => {
         hideHoverLayers();
+        collapseRail(); // 窄窗：浮层也一起收
         tabStore.activate(key);
         setRoute({ kind: "tab", key });
     };
@@ -604,12 +657,22 @@ export default function App() {
     };
 
     return (
-        // diy-nav-pinned：pin 锁定时窄窗也占布局列（199），覆盖规则见 index.css
-        <div class={`drawer lg:drawer-open ${pinned() ? "diy-nav-pinned" : ""}`}>
+        // diy-nav-rail / diy-nav-rail-open：窄窗 rail 常驻占列 + 点开浮层（##297），
+        // 覆盖规则见 index.css。宽窗不需要额外类：lg:drawer-open 已让侧栏占列。
+        <div
+            class={`drawer lg:drawer-open ${
+                isNarrow() ? `diy-nav-rail${railOpen() ? " diy-nav-rail-open" : ""}` : ""
+            }`}
+        >
             {/* DaisyUI drawer 必须的 checkbox（控制开合，:checked 决定侧栏是否展开） */}
             <input type="checkbox" id="sidebar-toggle" class="drawer-toggle" />
-            {/* 主内容区 */}
-            <div class="drawer-content flex flex-col h-screen">
+            {/* 主内容区。窄窗浮层展开时置 inert：浮层把主区整个盖住，但 DOM 里主区的
+                按钮仍可 Tab 到、回车也照样触发（看不见的焦点 = 一点就中的坑）；
+                inert 同时挡掉命中测试。宽窗与 rail 态不受影响（rail 只占 40px，主区可用）。 */}
+            <div
+                class="drawer-content flex flex-col h-screen"
+                inert={isNarrow() && railOpen()}
+            >
                 <main
                     class="flex-1 flex flex-col relative overflow-hidden bg-base-100"
                     onClick={() => {
@@ -772,7 +835,20 @@ export default function App() {
                 }}
             >
             <div class="drawer-side z-40">
-                <label for="sidebar-toggle" class="drawer-overlay" />
+                {/* 遮罩：宽窗恒透明（daisyUI drawer-open 覆盖）；窄窗由 index.css 置
+                    pointer-events:none，**只在浮层展开态**可见可点 → 点空白收回侧栏（##297）。
+                    preventDefault 是必需的：`<label for>` 默认会顺手切 `#sidebar-toggle`，
+                    而那是 daisyUI 的另一套状态（`:checked` → `--page-scroll-lock` 锁根滚动），
+                    与 railOpen 双头跑必然脱同步。窄窗的开合只认 railOpen。 */}
+                <label
+                    for="sidebar-toggle"
+                    class="drawer-overlay"
+                    onClick={(e) => {
+                        if (!isNarrow()) return;
+                        e.preventDefault();
+                        setRailOpen(false);
+                    }}
+                />
                 {/* 宽用内联 style：daisyUI .menu{width:fit-content} 是非分层样式，会压住 w-12/w-56 utility
                     收起态同步去掉 menu 的 8px 水平 padding（p-0），否则按钮内容超出 rail 被顶到右侧。
 
@@ -796,30 +872,64 @@ export default function App() {
                         「一律 32px 高、按钮区在右」的统一规格不符。现改为：左 ◉、右按钮区。
                         收起态（rail 40px）装不下按钮区，只留 ◉ 居中。 */}
                     <div
-                        class={`flex items-center ${VIEW_BAR_H} border-b shrink-0 ${expanded() ? "justify-between px-2" : "justify-center"}`}
+                        class={`relative flex items-center ${VIEW_BAR_H} border-b shrink-0 ${expanded() ? "justify-between px-2" : "justify-center"}`}
                     >
-                        <Show
-                            when={expanded()}
-                            fallback={
-                                /* 收起态（rail 40px）只留品牌图标：按钮区放不下（◉ + 📍 挤在 40px 里），
-                                   也没有必要 —— 鼠标移到侧栏即展开，按钮区随之出现，「锁定」是一步之遥。
-                                   顺带避开一个陷阱：在收起态放 pin 按钮，点击的按下瞬间侧栏才展开、
-                                   按钮已经移位，down/up 落在不同元素上 → 点击不成立（真实点击测试抓到过）。 */
+                        {/* 窄窗（<1024）：◉ 就地变成**唯一的导航入口**（点击把 40px rail 展开成浮层）。
+                            **绝对定位钉在左侧 40px 区中心**是必需的：位置在展开前后完全不变 ——
+                            否则按下的瞬间侧栏展开、按钮移位，down/up 落在不同元素上，真实点击不成立
+                            （这正是下方 fallback 注释里那条「收起态别放按钮」的坑）。
+                            展开态右侧再加一个 ✕：遮罩之外也给一条明确的退路（触屏上尤其）。 */}
+                        <Show when={isNarrow()}>
+                            <button
+                                type="button"
+                                data-testid="nav-rail-toggle"
+                                class="absolute left-0 top-0 z-10 flex h-full w-10 cursor-pointer items-center justify-center font-bold hover:bg-base-300"
+                                title={railOpen() ? "收起导航" : "展开导航"}
+                                aria-label={railOpen() ? "收起导航" : "展开导航"}
+                                aria-expanded={railOpen()}
+                                onClick={() => setRailOpen(!railOpen())}
+                            >
+                                ◉
+                            </button>
+                            <Show when={railOpen()}>
+                                <button
+                                    type="button"
+                                    data-testid="nav-rail-close"
+                                    class="ml-auto cursor-pointer px-1 text-caption opacity-60 hover:opacity-100"
+                                    title="收起导航"
+                                    aria-label="收起导航"
+                                    onClick={() => setRailOpen(false)}
+                                >
+                                    ✕
+                                </button>
+                            </Show>
+                        </Show>
+                        {/* 宽窗：◉ 只是品牌标识 + 右侧按钮区的 pin（常驻展开）。窄窗不需要 pin ——
+                            rail 常驻本身就已经是「占一列」的语义（那正是 pin 当年在窄窗想做的事）。 */}
+                        <Show when={!isNarrow()}>
+                            <Show
+                                when={expanded()}
+                                fallback={
+                                    /* 收起态（rail 40px）只留品牌图标：按钮区放不下（◉ + 📍 挤在 40px 里），
+                                       也没有必要 —— 鼠标移到侧栏即展开，按钮区随之出现，「锁定」是一步之遥。
+                                       顺带避开一个陷阱：在收起态放 pin 按钮，点击的按下瞬间侧栏才展开、
+                                       按钮已经移位，down/up 落在不同元素上 → 点击不成立（真实点击测试抓到过）。 */
+                                    <span class="font-bold" title="diy">
+                                        ◉
+                                    </span>
+                                }
+                            >
                                 <span class="font-bold" title="diy">
                                     ◉
                                 </span>
-                            }
-                        >
-                            <span class="font-bold" title="diy">
-                                ◉
-                            </span>
-                            <button
-                                class="btn btn-ghost btn-xs px-1 min-h-0 opacity-60 hover:opacity-100"
-                                title={pinned() ? "取消锁定（恢复悬停展开）" : "锁定展开"}
-                                onClick={() => setPinned(!pinned())}
-                            >
-                                <span>{pinned() ? "📌" : "📍"}</span>
-                            </button>
+                                <button
+                                    class="btn btn-ghost btn-xs px-1 min-h-0 opacity-60 hover:opacity-100"
+                                    title={pinned() ? "取消锁定（恢复悬停展开）" : "锁定展开"}
+                                    onClick={() => setPinned(!pinned())}
+                                >
+                                    <span>{pinned() ? "📌" : "📍"}</span>
+                                </button>
+                            </Show>
                         </Show>
                     </div>
                     <div class={`space-y-1 w-full min-w-0 ${expanded() ? "p-1" : "py-2"}`}>
@@ -840,6 +950,7 @@ export default function App() {
                                 aria-label={`搜索任务 / 会话（${NAV_SEARCH_SHORTCUT}）`}
                                 onClick={() => {
                                     hideHoverLayers();
+                                    collapseRail(); // 窄窗：⌘K 弹层要占满屏，先把浮层收了
                                     setNavSearchOpen(true);
                                 }}
                             >
@@ -890,6 +1001,7 @@ export default function App() {
                                                 const icon = () => findPage(t.pageId)?.icon ?? (num() ?? "•");
                                                 const tabGoto = () => {
                                                     hideHoverLayers();
+                                                    collapseRail(); // 窄窗：浮层也一起收
                                                     tabStore.activate(t.key);
                                                     setRoute({ kind: "tab", key: t.key });
                                                 };

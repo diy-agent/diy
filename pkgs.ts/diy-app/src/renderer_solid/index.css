@@ -41,26 +41,61 @@
   color: var(--color-diy-link);
 }
 
-/* ── nav pin 窄窗也占布局列（任务 199） ────────────────────────────
- * daisyUI 把「侧栏占位列」绑在 @media(width>=1024) 的 .lg:drawer-open 分支
- * （side 切 position:sticky 参与 grid、content 留第 2 列）；窄窗 side 恒为
- * position:fixed 浮层 —— 不占 grid 列，JS 的 pinned 只能改 nav 宽度，
- * 展开后盖在 view 上不让位（pin 形同虚设）。
- * pin 锁定的语义就是「占一列」：在 <1024 复刻 lg 分支的占位属性，
- * overlay 同 lg 置透明（占位态不该压 40% 黑罩）。hover 未 pin 保持浮层不变。 */
+/* ── 窄窗（<1024）导航：rail 常驻 + 点开浮层（##297） ─────────────────
+ * daisyUI 把「侧栏占布局列」绑在 @media(width>=1024) 的 .lg:drawer-open 分支
+ * （side 转 sticky 参与 grid、content 留第 2 列）；窄窗 side 恒为 position:fixed
+ * 浮层且 visibility:hidden —— 不占 grid 列，整个侧栏（连 40px rail）被推到画面外
+ * （实测 x=-224），而唯一的开关 `#sidebar-toggle` 只被那张透明 overlay 引用 →
+ * 窄窗**没有任何可见的导航入口**：pad / 手机 / 拖窄的窗口全残。
+ *
+ * 修法：窄窗让 rail 常驻占一列 —— 复刻 lg 分支的占位属性（side 转 sticky 入
+ * grid，width:auto = 40px rail）；第一列固定 2.5rem，故浮层展开时主区也不回弹。
+ * 点 rail 顶部的 ◉ 才把 side 转回 fixed 浮层（覆盖主区 + 恢复可见遮罩），
+ * 点遮罩收回。侧栏宽度**从不消失**：最窄 40px，永不 0。 */
 @media (width < 1024px) {
-  .diy-nav-pinned > .drawer-side {
+  .diy-nav-rail {
+    grid-template-columns: 2.5rem 1fr;
+  }
+  .diy-nav-rail > .drawer-side {
     position: sticky;
     visibility: visible;
     opacity: 1;
     pointer-events: auto;
     width: auto;
     display: block;
+    overflow-y: auto;
     translate: 0%;
   }
-  .diy-nav-pinned > .drawer-side > .drawer-overlay {
+  /* rail 里的 nav 必须自己归零 translate：daisyUI 把「滑入」的那条归零规则挂在
+   * `@media(width>=1024)` 的 .lg:drawer-open 分支里（`.drawer-open>.drawer-toggle
+   * ~.drawer-side>:not(.drawer-overlay){translate:0%}`），窄窗没人管 —— side 占了列，
+   * 里面的 nav 却还停在 -100%（实测 menu x=-40，整条 rail 滑在画面外、点不到）。
+   * 浮层态同样要 0%（否则展开后 nav 也在左外）。 */
+  .diy-nav-rail > .drawer-side > :not(.drawer-overlay) {
+    translate: 0%;
+  }
+  /* rail 态的遮罩：不显示也不吃点击（点 rail 自己不该把它收掉） */
+  .diy-nav-rail > .drawer-side > .drawer-overlay {
     cursor: default;
     background-color: transparent;
+    pointer-events: none;
+  }
+  /* 展开态（浮层）：side 退回 fixed 满屏 → 盖住主区，遮罩恢复可见可点 */
+  .diy-nav-rail-open > .drawer-side {
+    position: fixed;
+    width: 100%;
+    display: grid;
+  }
+  .diy-nav-rail-open > .drawer-side > .drawer-overlay {
+    cursor: pointer;
+    background-color: oklch(0% 0 0 / 0.4);
+    pointer-events: auto;
+  }
+  /* 浮层宽度上限：nav 宽度（.menu 的内联 style）是**用户可拖、且从桌面继承**的（≤640px），
+   * 在窄窗里完全可能超过视口 —— 那样遮罩与右上 ✕ 全被挤出屏外，点哪儿都收不回来（死局）。
+   * max-width 压过内联 width（这不需要 !important，比宽度的优先级高），留 3rem 遮罩可点。 */
+  .diy-nav-rail-open > .drawer-side > .menu {
+    max-width: calc(100vw - 3rem);
   }
 }
 
