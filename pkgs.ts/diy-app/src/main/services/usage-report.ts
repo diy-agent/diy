@@ -9,6 +9,8 @@ import { readStepUsages } from "./local-agent";
 import {
     fmtCost,
     fmtInt,
+    fmtRate,
+    stepRate,
     fmtTokens,
     groupByAgent,
     stepView,
@@ -68,8 +70,8 @@ export function renderUsageSteps(steps: StepUsageRecord[], opts: UsageTableOpts 
     // 排查「这一步到底属于哪一轮」要来回数——而那正是最常问的问题。
     const turnNo = new Map<string, number>();
     for (const r of steps) if (!turnNo.has(r.turnId)) turnNo.set(r.turnId, turnNo.size + 1);
-    const header = ["轮.步", "人物", "模型", "面", "档位", "非缓存输入", "缓存读", "缓存写", "总输出(文本+思考)", "耗时", "TTFT", "窗口%", "合计$"];
-    if (opts.cost) header.splice(13, 0, "非缓存$", "缓存读$", "缓存写$", "文本$", "思考$");
+    const header = ["轮.步", "人物", "模型", "面", "档位", "非缓存输入", "缓存读", "缓存写", "总输出(文本+思考)", "耗时", "TTFT", "速度", "窗口%", "合计$"];
+    if (opts.cost) header.splice(14, 0, "非缓存$", "缓存读$", "缓存写$", "文本$", "思考$");
     const rows = list.map((r) => {
         const v = stepView(r);
         const b = v.buckets;
@@ -85,6 +87,8 @@ export function renderUsageSteps(steps: StepUsageRecord[], opts: UsageTableOpts 
             `${fmtInt(b.outputTotal)}(${fmtInt(b.text)}+${fmtInt(b.reasoning)})`,
             cellMs(r.performance?.stepTimeMs),
             cellMs(r.performance?.timeToFirstOutputMs),
+            // 速度 = 总输出 ÷ (响应耗时 − TTFT)（`stepRate`；给不出 → `–`）
+            fmtRate(stepRate(r.performance, b.outputTotal)),
             cellWindow(b, r.contextLimit),
             v.cost ? fmtCost(v.cost.total) : "n/a",
         ];
