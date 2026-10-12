@@ -91,6 +91,38 @@ describe("皮肤小样（ChatSkinPreview）与 index.css 规则一致", () => {
     expect([...chat.matchAll(/sole=\{/g)].length, "sole 只该给正文行（行头没开关的那一行）").toBe(1);
   });
 
+  // review ##253 RV-5 / RV-6 / 小项1：**纯函数绿 ≠ 接线对**。
+  // 这三处缺陷都在"组件喂给纯函数的东西"上 —— 单测直接喂对的输入，永远抓不到。
+  // 故这里对 `LocalChatPage.tsx` 做**接线断言**（本文件已有 `sole` 那一条同款先例）。
+  describe("接线：纯函数喂对了没有", () => {
+    const chat = readFileSync(resolve(appDir, "src/renderer_solid/components/LocalChatPage.tsx"), "utf8");
+
+    it("RV-5：结束点的 tooltip 用 **turn** 算，不是用尾叶子算", () => {
+      // `endLeafTip` 读 `turn.attrs.endReason`，而 `EndLeafBox` 的 `node` 是尾叶子（还要拿去画
+      // `ProcBody`）—— 组件内自算会恒走"结束原因未知"那一支，连新记录也这么说（说反了）。
+      expect(chat, "tip 不能拿叶子算（endReason 只在 turn 上）").not.toMatch(/endLeafTip\(n\(\)\)/);
+      const at = chat.indexOf("<EndLeafBox");
+      const call = chat.slice(at, at + 400);
+      expect(call, "EndLeafBox 的 node 是尾叶子（它还要拿去画 ProcBody）").toMatch(/node=\{leafById\(/);
+      expect(call, "tip 由调用方用 turn 算好传进来").toMatch(/tip=\{endLeafTip\(t\(\)\)\}/);
+    });
+
+    it("RV-6：正文行的折叠判据与 clampLines **同源**（不再按原始行数）", () => {
+      // 旧写法 `countLines(raw()) > props.lines` 与 `clampLines`（跳前导空行）不是一套
+      // ⇒ 以空行开头的正文给出一个"点开毫无变化"的箭头。
+      // 判据只留在 chat-fold 一处：组件里不许再有"原始行数"这套（注释里提到旧写法不算）
+      expect(chat, "第二套行数判据必须删掉").not.toMatch(/const countLines =/);
+      expect(chat, "canFold 不许再按原始行数判").not.toMatch(/canFold = \(\) => countLines/);
+      expect(chat).toMatch(/const canFold = \(\) => clampLines\(raw\(\), props\.lines\)\.omitted > 0;/);
+    });
+
+    it("小项1：直播中的正文**不承诺**可展开，条显示态取 `folded()`", () => {
+      // 直播中 `folded()` 恒 false（还没定稿）⇒ 条若写"收起"+箭头，点了当帧毫无变化。
+      expect(chat).toMatch(/can=\{canFold\(\) && b\(\)\.stopped\}/);
+      expect(chat).toMatch(/open=\{!folded\(\)\}/);
+    });
+  });
+
   it("小样覆盖条与行头的**两种真实结构**（别只看一种就以为结构统一）", () => {
     // CDP 实测真实 DOM 两种都有：人物栏把条**放进**行头里；过程行 / 正文行是**同层兄弟**。
     // 小样两种都要有 —— 否则"小样显示的差异"不等于"真实的差异"（本文件的第一原则）。

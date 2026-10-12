@@ -32,6 +32,7 @@ import { endMarkOf } from "../lib/chat-fold";
 import {
     cacheHitRate,
     fmtCost,
+    fmtRate,
     fmtInt,
     fmtTokens,
     groupByAgent,
@@ -82,14 +83,6 @@ const costShare = (v: number | null, total: number | null): string =>
 function cellMs(ms: number | undefined): string {
     if (ms == null) return "–";
     return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`;
-}
-
-/**
- * 速度列（tok/s）：给不出数 → `–`（不写 0）。
- * 表格里只写数字（列头已写"速度"，带单位反而每格都冗），口径 = `总输出 ÷ (响应耗时 − TTFT)`。
- */
-function cellRate(r: number | null): string {
-    return r == null ? "–" : `${Math.round(r)}`;
 }
 
 const faceLabel = (api: string): string => (api === "responses" ? "resp" : "chat");
@@ -1514,7 +1507,7 @@ function turnDetailMd(g: TurnGroup | null, rows: StepUsageRecord[], clock: strin
                 `| ${fmtInt(v.buckets.noCache)} | ${fmtInt(v.buckets.cacheRead)} | ${optCellInt(v.buckets.cacheWrite)} ` +
                 `| ${fmtInt(v.buckets.outputTotal)} | ${fmtInt(v.buckets.text)} | ${fmtInt(v.buckets.reasoning)} ` +
                 `| ${pctText(cacheHitRate(v.buckets))} | ${cellMs(r.performance?.stepTimeMs)} | ${cellMs(r.performance?.timeToFirstOutputMs)} ` +
-                `| ${cellRate(stepRate(r.performance, v.buckets.outputTotal))} ` +
+                `| ${fmtRate(stepRate(r.performance, v.buckets.outputTotal))} ` +
                 `| ${pctText(v.windowRate)} | ${rates} ` +
                 `| ${c ? m(c.noCache) : "n/a"} | ${c ? m(c.cacheRead) : "n/a"} | ${c?.cacheWrite == null ? "n/a" : m(c.cacheWrite)} ` +
                 `| ${c ? m(c.text) : "n/a"} | ${c ? m(c.reasoning) : "n/a"} | ${c ? m(c.total) : "n/a"} |`,
@@ -1620,7 +1613,7 @@ function TurnDetailTable(props: { rows: StepUsageRecord[] }) {
                                 <td class="text-right">{pctText(cacheHitRate(v().buckets))}</td>
                                 <td class="text-right">{cellMs(r.performance?.stepTimeMs)}</td>
                                 <td class="text-right">{cellMs(r.performance?.timeToFirstOutputMs)}</td>
-                                <td class="text-right">{cellRate(stepRate(r.performance, v().buckets.outputTotal))}</td>
+                                <td class="text-right">{fmtRate(stepRate(r.performance, v().buckets.outputTotal))}</td>
                                 <td class={`text-right ${pctClass(v().windowRate)}`}>{pctText(v().windowRate)}</td>
                                 <td class="opacity-70">
                                     <Show when={r.rates} fallback={<span>无价目（该模型不在价格表内）</span>}>

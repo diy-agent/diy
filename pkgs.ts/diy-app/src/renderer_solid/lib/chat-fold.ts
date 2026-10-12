@@ -376,18 +376,23 @@ export function tailOf(turn: BlockNode, live: BlockNode | null): TurnTail | null
  * 又没异常"）⇒ 同一件事，状态行说"不知道"（`endMarkOf` 对无 endReason 刻意不给图标），
  * 尾槽却断言"正常结束"（review ##253 RV-3）。旧日志里"末件是工具"完全可能是崩溃/中断留下的，
  * 不能替它编一个结束原因。搁在纯函数里才能被单测钉住（组件文案测不到）。
+ *
+ * **不说"末件是工具"**（review ##253 小项4）：`endleaf` 的末件不一定落在工具上 ——
+ * `max-tokens` 撞在长思考里时末件就是思考（甚至 plan）。而且**那一件东西就画在 tip 旁边**
+ * （`EndLeafBox` 的 `ProcBody`），tooltip 再断言一次它是什么，只会在猜错时撒谎。
  */
 export function endLeafTip(turn: BlockNode): string {
+    // **notice 优先**（三个分支统一）：它是 main 写下的更细的那句，有就压过一切模板文案
+    // （review ##253 小项4：原来只有 `completed` 分支读它，`max-tokens` 分支把它丢了）。
+    const notice = typeof turn.attrs.notice === "string" && turn.attrs.notice ? turn.attrs.notice : null;
     const r = endReasonOf(turn);
-    if (!r) return "末件是工具 · 结束原因未知（本版之前的记录没有 endReason）";
+    if (!r) return "结束原因未知（本版之前的记录没有 endReason）";
+    if (notice) return notice;
     switch (r.type) {
         case "completed":
-            return (
-                (typeof turn.attrs.notice === "string" && turn.attrs.notice) ||
-                "正常结束，但模型未给文字结论"
-            );
+            return "正常结束，但模型未给文字结论";
         case "max-tokens":
-            return "输出达到上限被截断，末件停在工具";
+            return "输出达到上限被截断";
         default:
             // tailOf 只在这一步之外（非异常）才会给 endleaf；真走到这儿就照实说
             return turnEndNote(turn) ?? "本轮结束点";
@@ -436,7 +441,7 @@ export function turnRows(turn: BlockNode, live: BlockNode | null): TurnRow[] {
  *   4 逐条过程 —— 过程 bar 铺开成"每事件一行"（正文同 3 级）
  *
  * **级别循环只归顶部那一个按钮**（`cycleTurnLevel`，对所有轮次一起换层）；
- * 单轮不做循环 —— 点轮次头就是"把我这条展开 / 收拢"两态（见 `levelOfTurn`）。
+ * 单轮不做循环 —— 点轮次头就是"把我这条展开 / 收拢"两态（见 `historyOpenOf`）。
  * 4 级那个"铺开"也能被用户**单点某一行**单独触发（组件的 pin），不必先整体换层：
  * 展开这一行的结果与 4 级那一行长得一样（用户 2026-10-11 口径："展开就还是第 4 层"）。
  *

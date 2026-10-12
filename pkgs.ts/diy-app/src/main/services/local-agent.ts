@@ -2327,7 +2327,9 @@ export class LocalAgentManager {
                                 const b = bucketsOf(su);
                                 turnBuckets = sumBuckets([turnBuckets, b]);
                                 lastStepBuckets = b;
-                                lastStepRate = stepRate(fsPart.performance, b.outputTotal);
+                                // **测不出就留着上一次的**：有的步没有输出 token（空回复 / 纯工具步），
+                                // 直接赋 null 会把状态栏那枚 ⚡ 打回更早一轮（review ##253 小项2）。
+                                lastStepRate = stepRate(fsPart.performance, b.outputTotal) ?? lastStepRate;
                                 // **按 response.modelId 查价**：上游可能路由改写模型（##211 §四.4.4）
                                 const priceModel = fsPart.response?.modelId ?? model;
                                 const rates = costOf(priceModel, b.inputTotal);

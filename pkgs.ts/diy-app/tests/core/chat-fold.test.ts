@@ -419,6 +419,15 @@ describe("clampLines：1 级摘要按行截断", () => {
         // 额度用完之后照旧按行截（前导空行只是不参与计数，不许把正文一起吞了）
         expect(clampLines("\n\n一行\n二行\n三行", 2)).toEqual({ text: "一行\n二行", omitted: 1 });
     });
+
+    // review ##253 RV-6：正文行的"能不能折"由 `omitted > 0` 判（组件 `TextRow.canFold`）——
+    // 前导空行不占额度之后，这种输入**不该**再给出箭头（旧判据按原始行数 5 > 3 给箭头，
+    // 点开却和标题一模一样：箭头承诺了不存在的东西）。
+    it("前导空行吃掉的行数不算「还能展开」：omitted=0 ⇒ 组件不给箭头", () => {
+        expect(clampLines("\n\n一行\n二行\n三行", 3)).toEqual({ text: "一行\n二行\n三行", omitted: 0 });
+        // 真多出一行就照旧给（底线：判据只差"前导空行"，不是把折叠能力整体关掉）
+        expect(clampLines("\n\n一行\n二行\n三行\n四行", 3)).toEqual({ text: "一行\n二行\n三行", omitted: 1 });
+    });
 });
 
 // ─── 级别同构（2026-10-11 用户口径：「级别显示应该是同构的，尽量不要特殊处理」） ───
@@ -572,6 +581,27 @@ describe("结束点（endleaf）tag 的 tooltip：必须跟着 endReason 走", (
     it("max-tokens → 说截断，不说「正常结束」", () => {
         const t = n("turn", "t1", { endReason: { type: "max-tokens", data: {} } }, [step("s1", [tool("x1")])]);
         expect(endLeafTip(t)).toContain("上限");
+    });
+
+    // review ##253 小项4：notice 是 main 写下的"更细的那句"，**每个分支都该压过模板文案**
+    // （原来只有 completed 分支读它）。
+    it("max-tokens 带 notice → 用 notice（与 completed 分支同一优先级）", () => {
+        const t = n(
+            "turn",
+            "t1",
+            { endReason: { type: "max-tokens", data: {} }, notice: "长思考撞上限" },
+            [step("s1", [think("k1")])],
+        );
+        expect(endLeafTip(t)).toBe("长思考撞上限");
+    });
+
+    // review ##253 小项4：endleaf 的末件**不一定是工具**（max-tokens 撞在长思考里时是思考，
+    // 甚至 plan），而那一件东西就画在 tip 旁边 —— tooltip 不该再断言它是什么。
+    it("不替末件断言类型：末件是思考时也不说「停在工具」", () => {
+        const t = n("turn", "t1", { endReason: { type: "max-tokens", data: {} } }, [step("s1", [think("k1")])]);
+        expect(endLeafTip(t)).not.toContain("工具");
+        const t2 = n("turn", "t2", {}, [step("s1", [think("k1")])]);
+        expect(endLeafTip(t2)).not.toContain("工具");
     });
 
     it("无 endReason（旧日志）→ 说「结束原因未知」，不替它编一个结束原因", () => {

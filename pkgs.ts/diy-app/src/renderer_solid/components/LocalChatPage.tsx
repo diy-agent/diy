@@ -16,7 +16,7 @@
  * ⚠️ 历史行**按 key 复用行对象**（见 `rootRows` / `reuseRows`）：`<For>` 按引用判定同一行，
  *   而直播轮的块树节点每帧都是新对象 —— 直接喂新数组会让整块 DOM 每帧重建，后果不是"卡"
  *   而是**点击全丢**（2026-10-11 CDP 实测）。
- * ⚠️ 结尾槽那一条叶子由 `turnRows` **排除在历史行之外**（判据一处：`tailOf` / `tailNodeOf`）——
+ * ⚠️ 结尾槽那一条叶子由 `turnRows` **排除在历史行之外**（判据一处：`tailOf`）——
  *   两处判据一分叉就是同一块画两遍（review P1-1）。
  *
  * 「开/关」一律由 `RowGutter` 表达（**行首那一列折叠条**：整块高的一根条 + 首行居中的尖头，
@@ -157,9 +157,6 @@ const firstLine = (s: string) => {
     }
     return "";
 };
-
-/** 正文**行数**（折叠阈值判据；与 `clampLines` 同一套"只截行不截字"的口径） */
-const countLines = (s: string) => s.split("\n").length;
 
 /** 过程历史里正文行的折叠阈值（草图 v4 的 `.txt.clamp` 同款：超过 3 行才给折叠能力）。
  *  缺省**展开** —— 折叠是用户主动点的结果，级别不该替他把历史里的正文缩起来。 */
@@ -650,6 +647,11 @@ function TailBox(props: {
  */
 function EndLeafBox(props: {
     node: BlockNode;
+    /** tag 那句 tooltip —— **必须由调用方用 `turn` 算好传进来**：`endLeafTip` 读的是
+     *  `turn.attrs.endReason`，而本组件的 `node` 是**尾叶子**（它同时要拿去画 `ProcBody`），
+     *  叶子身上没有 endReason ⇒ 组件内自算会恒走"结束原因未知"那一支，连新记录也这么说
+     *  （review ##253 RV-5：纯函数绿、接线错）。 */
+    tip: string;
     pin: Record<string, boolean>;
     onToggle: (id: string, force?: boolean) => void;
     onFull: (title: string, content: string) => void;
@@ -674,9 +676,9 @@ function EndLeafBox(props: {
                 <span
                     class="shrink-0 rounded border border-dashed border-base-300 px-1 text-caption opacity-50"
                     data-tail-tag
-                    /* 文案**跟着 endReason 走**（纯函数 `endLeafTip`）：旧日志没有 endReason，
-                       不能替它断言"正常结束"（##253 RV-3）。tag 本身中性，故恒为「本轮结束点」。 */
-                    title={endLeafTip(n())}
+                    /* 文案**跟着 endReason 走**（纯函数 `endLeafTip`，由调用方用 turn 算）：
+                       旧日志没有 endReason，不能替它断言"正常结束"（##253 RV-3）。 */
+                    title={props.tip}
                 >
                     本轮结束点
                 </span>
@@ -804,9 +806,9 @@ function TurnHeader(props: {
                 title: `${turnFoldTip(open())}\n${info().title}`,
             }}
         >
-            {/* 开合手柄在**行首 gutter**（`RowHandle`）：一轮里"轮次头 → 过程 bar → 逐条过程"
+            {/* 开合手柄在**行首 gutter**（`RowGutter`）：一轮里"轮次头 → 过程 bar → 逐条过程"
                 三级同列左对齐，一眼能看出层级（2026-10-11 用户口径：箭头从右边换到左边；
-                2026-10-12 用户口径：竖列成一列，见 RowHandle 头注） */}
+                2026-10-12 用户口径：竖列成一列，见 RowGutter 头注） */}
             <RowGutter open={open()} onToggle={props.onToggle} />
             {/* 身份：**所有级别都显示**（1 级与 2 级必须一致，用户 2026-10-11 口径） */}
             <span
@@ -883,7 +885,11 @@ function TextRow(props: {
 }) {
     const b = () => props.node;
     const raw = () => str(b().attrs.content);
-    const canFold = () => countLines(raw()) > props.lines;
+    /** 能不能折 = **"点开真的会多出东西"**（review ##253 RV-6）。
+     *  原来按**原始**行数判（`countLines(raw()) > lines`），而 `clampLines` 已跳过前导空行
+     *  （RV-2 的修复）⇒ 以空行开头的正文会给出一个"点开毫无变化"的箭头。
+     *  现在直接取 `clampLines` 的 `omitted` —— 与"真截"**同源**，不再有第二套口径。 */
+    const canFold = () => clampLines(raw(), props.lines).omitted > 0;
     const open = () => (b().id in props.pin ? props.pin[b().id]! : props.defaultOpen);
     // 直播中的正文不折：它还在长，折叠只会来回跳；定稿后才折成摘要
     const folded = () => canFold() && b().stopped && !open();
@@ -892,6 +898,8 @@ function TextRow(props: {
     /** 点**这一块**（正文行自己那条竖列折叠条 / 提示行）—— 用户 2026-10-12 R6 报的 bug：
      *  原来结论槽把 `onExpand` 接到了"换级别"，点一下**把工具历史折了、自己没变**。 */
     const fire = () => props.onToggle(b().id, !open());
+    /** 折叠条的无障碍名：只读"展开 / 收起"听不出是**哪一行**（review ##253 小项6） */
+    const foldLabel = () => `${folded() ? "展开" : "收起"}${props.box === "conclusion" ? "结论" : "正文"}`;
     return (
         <div
             data-block-id={b().id}
@@ -901,8 +909,12 @@ function TextRow(props: {
             data-text-open={open() ? "1" : "0"}
         >
             <RowGutter
-                can={canFold()}
-                open={open()}
+                /* 直播中的正文不折（见 `folded`）⇒ 那时**不承诺**可展开：给静态点，不给箭头
+                   （箭头 + `aria-expanded` 会说"收起"，而正文本来就是全的 —— 点了当帧无变化）。 */
+                can={canFold() && b().stopped}
+                /* 显示态取 `folded()`（真截断了才算"收起"），与下面 `view()` 同一个判据 */
+                open={!folded()}
+                label={foldLabel()}
                 onToggle={fire}
                 /* 正文行**没有行头控件**（正文本身就是内容，不是 DisclosureHead）⇒ 条是它唯一的
                    键盘入口，给 `sole`。但收起态那条"⋯ 已折叠 N 行 · 点击展开全部正文"是可见按钮，
@@ -1255,8 +1267,11 @@ function TurnView(props: {
                             />
                         </Match>
                         <Match when={tl().kind === "endleaf"}>
+                            {/* `tip` 用 **turn** 算（`endReason` 只在 turn 上）—— `node` 是尾叶子，
+                                两者不是一回事（review ##253 RV-5）。 */}
                             <EndLeafBox
                                 node={leafById(props.turnId, tl().node.id)}
+                                tip={endLeafTip(t())}
                                 pin={props.pin}
                                 onToggle={props.onToggle}
                                 onFull={props.onFull}
@@ -1708,7 +1723,7 @@ export function LocalChatPage(props: { uri?: string }) {
      *      留着收拢标记会让点过的那些轮次纹丝不动，看着像按钮失灵）。
      *   ② 点某一轮的人物标题 bar —— **只收拢 / 展开这一轮**，不换层。
      *      上一版让它按 1→2→3→4 循环，用户否掉：单条信息不该有"点第几下到第几层"，
-     *      点一下就是"合上/打开"（语义见 `levelOfTurn`）。
+     *      点一下就是"合上/打开"（语义见 `historyOpenOf`）。
      *
      * 落盘策略：全局级别**落盘**（"我习惯看多细"是长期偏好，重开 app 不该变），
      * 单轮的收拢标记**不落盘**（轮次 id 会无限增长，逐轮写进 localStorage 只会越攒越脏）。

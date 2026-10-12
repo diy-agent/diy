@@ -27,6 +27,9 @@ export function RowGutter(props: {
     can?: boolean;
     open?: boolean;
     onToggle?: () => void;
+    /** 这条是**哪一行**的开关（tooltip + 读屏名）。缺省只有"展开/收起"两个字 ——
+     *  读屏听不出是哪一行（review ##253 小项6）。调用方知道自己在画什么，就顺手给一句。 */
+    label?: string;
     /** 本条是该行**唯一**的开关（行头**不是**可点控件，如正文行）—— 只有这时条才可聚焦。
      *  其余行头自己就是 `role="button"`（TurnHeader / 过程 bar / 逐条过程 / 结尾槽 / 现场），
      *  条若也可聚焦就是**同一行动作两个 tab 停靠点**、读屏念两遍（##253 RV-4）。 */
@@ -35,7 +38,7 @@ export function RowGutter(props: {
     const can = () => props.can !== false;
     /** 条能否进 tab 序 / 带 button 语义：能展开 **且** 行头没别的开关 */
     const focusable = () => can() && !!props.sole;
-    const tip = () => (props.open ? "收起" : "展开");
+    const tip = () => props.label ?? (props.open ? "收起" : "展开");
     /** 点击**必须** `stopPropagation`：条挂在块里、行头也是开合开关 —— 不拦就"一次点击翻转两下"
      *  （净效果 = 没反应；源码 R17 / 草图 R24⑥ 踩过两次的坑）。 */
     const fire = (e: Event) => {
