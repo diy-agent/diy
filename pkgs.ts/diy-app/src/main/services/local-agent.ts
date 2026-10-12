@@ -926,6 +926,18 @@ export class LocalAgentManager {
      *   「本轮未完成」。用户 2026-10-06 的判据：「ops 也好、llm 消息也好都应该处理好，
      *   不然 ops 补了、llm 没补，也是问题」。
      */
+    /**
+     * 「残留收敛」op 批（幂等）：先补 tool 的业务终态（patch + stop），再补剩余结构开口（stop）
+     * —— 前者已 stop 的块不会被后者重复处理（danglingStopPatches 只挑未 stop 的）。
+     *
+     * 两个时机共用同一批：**加载时**（convergeOnLoad，兜住被杀/崩溃的进程）与**开新一轮时**
+     * （chat() 开场，兜住"进程活着但上一轮没闭合"）—— 自愈原先只挂在加载（每进程一次），
+     * 于是开口轮能一直挂到主进程重启：生产实测跨 9 轮、挂了 6 天。
+     */
+    private healResidualOps(s: LocalSession): Op[] {
+        return [...interruptedToolPatches(s.store), ...danglingStopPatches(s.store)];
+    }
+
     private convergeOnLoad(taskUri: string, s: LocalSession): void {
         const fp = opsFile(taskUri);
         const sink = (op: Op) => {
@@ -937,7 +949,7 @@ export class LocalAgentManager {
         };
         // 先补 tool 的业务终态（patch + stop），再补剩余结构开口（stop）—— 前者已 stop 的块
         // 不会被后者重复处理（danglingStopPatches 只挑未 stop 的）。
-        for (const op of [...interruptedToolPatches(s.store), ...danglingStopPatches(s.store)]) {
+        for (const op of this.healResidualOps(s)) {
             sink(op);
             s.store.apply(op);
         }
@@ -1622,11 +1634,16 @@ export class LocalAgentManager {
                     console.error(`[local-agent] ops 落盘失败 ${fp}:`, e);
                 }
             };
-            // ── 先收敛上一轮遗留的中断 tool 块（写进 ops，而不是投影时现造）──
+            // ── 先收敛上一轮遗留：tool 的业务终态 + 结构开口（写进 ops，而不是投影时现造）──
             // 不收敛的后果：每次重建历史都现场合成一句「未完成→请重试」，agent 重载会话后
             // 会把被截断的命令再跑一次（任务 92 的「一对话就自杀」）。落盘后它变成已结束的
             // 历史事实，投影与 UI 都只是翻译它。
-            for (const op of interruptedToolPatches(sess.store)) {
+            // 结构开口（danglingStopPatches）也在这里补，不只在加载时补：自愈原先只挂
+            // getSession（每进程一次），于是"上一轮没闭合"能一直挂到主进程重启（生产实测：
+            // 开口 turn 跨越 9 轮、挂了 6 天）。此刻 sess.running 已由上方互斥守卫保证为空 ——
+            // 上一轮真在跑的话新消息连这个函数都进不来 —— 所以未 stop 的块必是残留
+            // （崩溃 / 被杀 / 消费端把生成器整个丢下）。
+            for (const op of this.healResidualOps(sess)) {
                 sink(op);
                 sess.store.apply(op);
                 yield op;
@@ -1697,14 +1714,15 @@ export class LocalAgentManager {
                         { op: "delta", id, fields: { message: msg } },
                         { op: "stop", id },
                     ];
-                    // 与 chat() 其余两处 yield 点同一节奏：sink（落盘）→ store.apply（内存权威）→
-                    // yield。少了 apply 会让内存 store 与 wire/盘上分叉 —— store 是本模块的单一权威
-                    // （见上方"手动驱动内层生成器"的注释）。
+                    // 结构性 op 批的纪律：**先整批落盘 + 收敛内存，再逐条投递**（同 runTurn 的 seal）。
+                    // 逐条 sink→yield 在消费端断开时会被切半：start 落盘、stop 没落 → 盘上留个开口
+                    // error 块（errorBlock 同一个坑）。少了 apply 则内存 store 与盘分叉 —— store 是
+                    // 本模块的单一权威（见上方"手动驱动内层生成器"的注释）。
                     for (const op of ops) {
                         sink(op);
                         sess.store.apply(op);
-                        yield op;
                     }
+                    for (const op of ops) yield op;
                     break;
                 }
                 // 轮末**整批取走**：队列里剩下的全部（两种模式都算）作为下一轮的开场一次性发出。
@@ -1792,6 +1810,26 @@ export class LocalAgentManager {
             if (op.op === "start") started.add(op.id);
             yield op;
         };
+        /**
+         * 结构性 op 批的落盘纪律：**先把整批 sink 完，再逐条投递**。
+         *
+         * 为什么必须整批：消费端断开时生成器以 return 展开，**只执行到 yield 就停**（见 closeTurn
+         * 头注）。一个块的 start/delta/stop 若逐条 `yield* emit`，断开能正好切在中间 —— 盘上留下
+         * "开口块"（生产实测：error 块 start 落了、delta/stop 丢了，"本轮已取消"那句话凭空消失，
+         * 只剩一个永远转圈的块）。结构性 op（一个块的完整生命周期）是原子单位，必须先全部落盘。
+         * 流式 delta 不在此列：它天生逐条即时投递，单条 delta 不构成结构。
+         *
+         * 这里**不**做 `sess.store.apply`：正常路径由 chat() 的驱动循环在 yield 时 apply。
+         * 若断开恰好切在本批中途，内存 store 会少 apply 尾巴（盘上是完整的）—— 由"开新一轮时的
+         * 残留收敛"（chat() 开场的 healResidualOps）补齐，盘与内存不会永久分叉。
+         */
+        const seal = function* (ops: Op[]): Generator<Op, void, void> {
+            for (const op of ops) {
+                sink(op);
+                if (op.op === "start") started.add(op.id);
+            }
+            for (const op of ops) yield op;
+        };
         // provider 不保证 *-start 先到：用数据前先确保 start 已发（wire 永远干净，补救只在适配层）
         const ensure = function* (
             id: string,
@@ -1804,9 +1842,11 @@ export class LocalAgentManager {
         let eN = 0;
         const errorBlock = function* (source: string, text: string): Generator<Op, void, void> {
             const id = `${turnId}_e${++eN}`;
-            yield* emit({ op: "start", id, kind: "error", parent: turnId, meta: { source } });
-            yield* emit({ op: "delta", id, fields: { message: text } });
-            yield* emit({ op: "stop", id });
+            yield* seal([
+                { op: "start", id, kind: "error", parent: turnId, meta: { source } },
+                { op: "delta", id, fields: { message: text } },
+                { op: "stop", id },
+            ]);
         };
         // part id → 块 id（think/text）；tool 块直接用 toolCallId
         const partBlock = new Map<string, string>();
@@ -1982,18 +2022,20 @@ export class LocalAgentManager {
         // 也是重放/续聊时唯一能区分"用户主动说"与"插嘴补一句"的线索。
         for (const [i, item] of input.entries()) {
             const uid = i === 0 ? `${turnId}_u` : `${turnId}_u${i + 1}`;
-            yield* emit({
-                op: "start",
-                id: uid,
-                kind: "text",
-                parent: turnId,
-                meta: {
-                    role: "user",
-                    ...(item.kind === "user" ? {} : { steer: item.kind, ...(item.steerId ? { steerId: item.steerId } : {}) }),
+            yield* seal([
+                {
+                    op: "start",
+                    id: uid,
+                    kind: "text",
+                    parent: turnId,
+                    meta: {
+                        role: "user",
+                        ...(item.kind === "user" ? {} : { steer: item.kind, ...(item.steerId ? { steerId: item.steerId } : {}) }),
+                    },
                 },
-            });
-            yield* emit({ op: "delta", id: uid, fields: { content: item.text } });
-            yield* emit({ op: "stop", id: uid });
+                { op: "delta", id: uid, fields: { content: item.text } },
+                { op: "stop", id: uid },
+            ]);
             // 落位即出队（**先 sink 再出队**，与 next-step 的 landClaimedSteers 同一条铁律）：
             // sink 是"这句话进对话流"的权威，出队是"它不再是待办"。反过来一旦崩在中间，
             // 队列里没有、ops 里也没有 —— 用户白打。现在最坏是重复投一遍（可恢复）。
@@ -2227,22 +2269,22 @@ export class LocalAgentManager {
                         }
                         case "tool-result":
                             yield* ensure(part.toolCallId, "tool", stepId, { tool: part.toolName ?? "tool" });
-                            yield* emit({ op: "delta",
-                                id: part.toolCallId,
-                                fields: { output: outText(part.output) },
-                            });
-                            yield* emit({ op: "patch", id: part.toolCallId, fields: { status: "done" } });
-                            yield* emit({ op: "stop", id: part.toolCallId });
+                            // 终态批（输出 + status + stop）原子落盘：切在中途会留下"状态已 done、
+                            // 块还开着"的 tool 块，而自愈只补 stop，不补那句输出
+                            yield* seal([
+                                { op: "delta", id: part.toolCallId, fields: { output: outText(part.output) } },
+                                { op: "patch", id: part.toolCallId, fields: { status: "done" } },
+                                { op: "stop", id: part.toolCallId },
+                            ]);
                             break;
                         case "tool-error": {
                             const id = (part as { toolCallId?: string }).toolCallId ?? stepId;
                             if (id !== stepId) yield* ensure(id, "tool", stepId, { tool: "tool", status: "streaming" });
-                            yield* emit({ op: "delta",
-                                id,
-                                fields: { output: errText((part as { error?: unknown }).error) },
-                            });
-                            yield* emit({ op: "patch", id, fields: { status: "error" } });
-                            yield* emit({ op: "stop", id });
+                            yield* seal([
+                                { op: "delta", id, fields: { output: errText((part as { error?: unknown }).error) } },
+                                { op: "patch", id, fields: { status: "error" } },
+                                { op: "stop", id },
+                            ]);
                             break;
                         }
                         case "error":
