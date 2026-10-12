@@ -272,6 +272,21 @@
     /* rail 的**贯穿线**：比块边条略深，因为它要当成一条结构线看（不是每块的描边） */
     --diy-rail: color-mix(in oklab, var(--color-base-content) 22%, transparent);
 }
+/* ── 视口外的轮次不渲染 ──────────────────────────────────────────────────
+ * 大会话（实测一次 48 轮 / 6553 块的会话）把每一轮都铺进 DOM，光"离屏布局与绘制"
+ * 就吃掉几百 MB —— **探针实测**：把离屏轮次**完全不渲染**时 JS 堆 745MB → 326MB
+ * （这是"离屏渲染"代价的量级；`auto` 只跳过布局与绘制、**DOM 与组件状态照旧**，收益
+ * 介于"全渲染"与"完全不渲染"之间，**未单独量化** → ##301）。用户一次只看得到
+ * 一两屏。`content-visibility: auto` 让浏览器跳过视口外子树的布局与绘制，DOM 与
+ * 组件状态照旧（折叠态、滚动位置都不丢）—— 比自建虚拟滚动少一层高度估算的账。
+ * `contain-intrinsic-size: auto <估算>`：`auto` 让浏览器记住该轮实测高度（渲染过一次
+ * 就准了），估算值只兜底从未露过面的轮次。 */
+.diy-chat [data-turn-id] {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 24rem;
+}
+
+
 [data-skin="card"] .diy-chat {
     --diy-edge-w: 4px;
 }

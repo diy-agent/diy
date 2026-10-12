@@ -32,7 +32,7 @@ export type TurnEndReason =
     | { type: "interrupted"; data: {} }; // 崩溃/被杀后补 closer（进程已死，不可能是正常收尾）
 
 export type Op =
-    | { op: "start"; id: string; kind: BlockKind; parent?: string; meta?: Record<string, JSONVal> }
+    | { op: "start"; id: string; kind: BlockKind; parent?: string | null; meta?: Record<string, JSONVal> }
     | { op: "delta"; id: string; fields: Record<string, JSONVal> }
     | { op: "patch"; id: string; fields: Record<string, JSONVal> }
     | { op: "stop"; id: string };
@@ -177,8 +177,16 @@ export class BlockStore {
                 // step/tool 块下面（被打断的调用收不到 stop），UI 只渲染 root turn
                 // → 整轮内容直接从界面消失（实测任务 92：26 轮里有 13 轮被藏起来，
                 // 包括最新那轮，用户因此“看不到最后一句”）。
+                // parent 三种形态（见 Op 类型）：
+                //   · turn / 显式 null → 一律无父（root）。null 是「显式无父」这个语义的唯一表达：
+                //     undefined 在 JSON 里整字段消失，重放时只能退回栈顶（隐式），
+                //     于是折叠流（compactOps）里一个"本就该是根的块"会被挂到前一棵未闭合子树上。
+                //   · 显式 id → 用它（折叠流全部走这条）
+                //   · 省略   → 栈顶（隐式，实时流/老日志的形态）
                 const parent =
-                    op.kind === "turn" ? undefined : (op.parent ?? this.openStack[this.openStack.length - 1]);
+                    op.kind === "turn" || op.parent === null
+                        ? undefined
+                        : (op.parent ?? this.openStack[this.openStack.length - 1]);
                 if (parent !== undefined && !this.blocks.has(parent)) {
                     this.issues.push({ op, reason: `parent 不存在: ${parent}` });
                 }
@@ -202,8 +210,12 @@ export class BlockStore {
                     this.issues.push({ op, reason: `stop 未知块: ${op.id}` });
                     return;
                 }
-                b.stopped = true;
-                this.touch(op.id);
+                // 只有"未定稿 → 定稿"这一次才算触碰：重复 stop（同一份折叠流再喂一遍）必须无副作用，
+                // 否则 touched 一变，toForest 的身份缓存整片失效（渲染端 reload 时全量重建）。
+                if (!b.stopped) {
+                    b.stopped = true;
+                    this.touch(op.id);
+                }
                 // 弹栈：从栈顶找该 id（允许交叉闭合，非 LIFO 时只清它之上的）
                 const i = this.openStack.lastIndexOf(op.id);
                 if (i >= 0) this.openStack.length = i;
@@ -216,11 +228,17 @@ export class BlockStore {
                     this.issues.push({ op, reason: `${op.op} 未知块: ${op.id}` });
                     return;
                 }
+                let changed = false;
                 for (const [path, val] of Object.entries(op.fields ?? {})) {
                     const decl = path === "children" ? undefined : SCHEMA[b.kind]?.[path];
                     if (op.op === "patch") {
+                        // 值没变就既不写也不计数：这让「对同一份折叠流重复 apply」成为**无副作用**操作
+                        // （见下方 touch 的注释 —— 它是渲染端不重建整棵树的前提）。
+                        const cur = path.includes(".") ? getPath(b, path) : (b as Record<string, unknown>)[path];
+                        if (jsonEqual(cur, val)) continue;
                         if (path.includes(".")) setPath(b, path, val);
                         else (b as Record<string, unknown>)[path] = val;
+                        changed = true;
                         continue;
                     }
                     // delta：必须有类型声明，未知字段降级为 patch（前向兼容，记 issue）
@@ -230,6 +248,7 @@ export class BlockStore {
                             reason: `未知字段 ${b.kind}.${path}，delta 降级为 patch`,
                         });
                         setPath(b, path, val);
+                        changed = true;
                         continue;
                     }
                     if (decl === "Flag") {
@@ -253,8 +272,11 @@ export class BlockStore {
                         else arr.push(val);
                         (b as Record<string, unknown>)[path] = arr;
                     }
+                    changed = true;
                 }
-                this.touch(op.id);
+                // 只有真的改了才触碰：`touched` 是 toForest 身份缓存的判据，重复 apply 同一份
+                // 终值若也 bump 它，所有轮次都会被当成"变过"而全量重建（渲染端 reload 的 GC 风暴）。
+                if (changed) this.touch(op.id);
                 return;
             }
         }
@@ -271,6 +293,45 @@ export function replay(ops: Op[]): BlockStore {
     const s = new BlockStore();
     for (const op of ops) s.apply(op);
     return s;
+}
+
+// ─── 折叠：块树 → 等价的紧凑 Op 流 ─────────────────────
+//
+// 为什么需要（用户 2026-10-12 大会话假死）：Op 日志是**逐 token** 落盘的（一个 text-delta
+// 一条 op），于是一次 74MB 的会话有 877,050 条 op —— 其中 98% 只是"同一个块又追加了几个字符"。
+// 全量读 → 全量下发 → 渲染端全量 fold，CPU 与内存都被这层纯属结构开销的碎片吃掉。
+//
+// 折叠把"每块开始的样子 + 结束的样子"直接写出来，中间的碎片不再是一条条 op：
+//   start(每块一次) + patch(该块字段终值) + stop(已闭合的块一次)。
+// 同一棵块树，块数不变、内容一字不差，op 数降到千分之几。
+//
+// 等价性（= 可以安全替换，判据见 tests/core/local-blocks 的往返测试）：
+//   · parent 全部显式写出（无父写 null）→ 不依赖 start 顺序（openStack），
+//     于是「交叉闭合 / 孤儿块 / 未 stop 的残留」都不会被重放出不同的父子关系；
+//   · 字段值取**fold 后的终值**：delta 累加(Text/List)、patch 覆盖、点分路径…… 折叠后
+//     一律由一条 patch 覆盖同一路径写回 —— 终值相同即等价，与它当初怎么变过来的无关；
+//   · children 顺序 = 按块的 children 数组递归输出（与 start 插入序一致）；
+//   · stopped 由 stop op 表达；touched 是 fold 期间的时序号（重放会重编），结构位不进 patch。
+// 有意丢弃的只有「怎么变成这样的」——即流式中间态与 fold issues（诊断信息，见 compact ops
+// 的调用侧：issues 在折叠前统计并出声）。
+export function compactOps(store: BlockStore): Op[] {
+    const out: Op[] = [];
+    const emit = (id: string): void => {
+        const b = store.blocks.get(id);
+        if (!b) return; // 悬挂引用（史书里理论上不该有）：跳过而非崩，与 toTree 的兜底同策
+        out.push({ op: "start", id: b.id, kind: b.kind, parent: b.parent ?? null });
+        const fields: Record<string, JSONVal> = {};
+        for (const [k, v] of Object.entries(b)) {
+            if (k === "id" || k === "kind" || k === "parent" || k === "children" || k === "stopped" || k === "touched") continue;
+            if (v === undefined) continue;
+            fields[k] = v as JSONVal;
+        }
+        if (Object.keys(fields).length > 0) out.push({ op: "patch", id: b.id, fields });
+        for (const c of b.children) emit(c);
+        if (b.stopped) out.push({ op: "stop", id: b.id });
+    };
+    for (const r of store.roots()) emit(r.id);
+    return out;
 }
 
 // ─── 点分路径读写（'usage.in' / 'plan.items'）─────────
@@ -292,6 +353,26 @@ function setPath(obj: unknown, path: string, val: unknown): void {
         cur = cur[s] as Record<string, unknown>;
     }
     cur[segs[segs.length - 1]!] = val;
+}
+
+/** JSON 语义深比较（patch 幂等判据：值没变就别碰块 —— 见 apply 的 patch 分支）。 */
+function jsonEqual(a: unknown, b: unknown): boolean {
+    if (a === b) return true;
+    if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    if (Array.isArray(a) && Array.isArray(b)) {
+        if (a.length !== b.length) return false;
+        for (let i = 0; i < a.length; i++) if (!jsonEqual(a[i], b[i])) return false;
+        return true;
+    }
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    if (ka.length !== kb.length) return false;
+    for (const k of ka) {
+        if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+        if (!jsonEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) return false;
+    }
+    return true;
 }
 
 // ─── 树导出（调试/CLI 用，JSONML 形）──────────────────

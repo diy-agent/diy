@@ -69,6 +69,8 @@ interface TaskState {
     detailScroll: number;
     /** 历史加载在途 promise：open() 并发去重（见 open 内注释） */
     loading?: Promise<void>;
+    /** 上一次并入的**轮次 id 序列**（foldInto 的前缀守卫：只能往后追加，对不上就重建） */
+    turnIds?: string[];
     /**
      * 逐步用量账本（`<key>.usage.jsonl` 的结构化镜像）。
      * 权威在盘上；这里是快照，打开会话时拉一次，轮次收尾（含别人的轮次）时再拉一次。
@@ -118,6 +120,31 @@ function cur(): TaskState | null {
  */
 function refresh(st: TaskState) {
     st.setTrees(toForest(st.store));
+}
+
+/**
+ * 把一份（已折叠的）历史 op 流并入现有块树。**不重建 store** —— 这是治「轮末 GC 风暴」的关键。
+ *
+ * 旧实现每轮 reload 都 `new BlockStore()` 再全量 fold：新 store 里每个 BlockNode 都是新对象
+ * → toForest 的身份缓存（TreeCache）全部失效 → Solid 的 `<For>` 把**每一轮**都销毁重建
+ * （连同全量 Markdown re-parse）。而此刻真正变化的，通常只有刚跑完的那一轮。
+ *
+ * 折叠流是**幂等**的：`start` 重复被忽略、`patch` 值未变不写也不 touch、`stop` 幂等
+ * （见 local-blocks 的 apply / compactOps）。所以整份再喂一遍安全且无副作用 ——
+ * 没变的轮次引用不变，`<For>` 只更新真正变化的那轮。
+ *
+ * 前缀守卫：折叠流的**轮次序列只能往后追加**。对不上（被清空 / 换成别的会话 / 日志被
+ * 外部改写）就退回重建 —— 宁可重来一次，也不把两段历史缝在一起。
+ */
+function foldInto(st: TaskState, ops: Op[]): void {
+    const ids = ops.filter((o) => o.op === "start" && o.kind === "turn").map((o) => o.id);
+    const prev = st.turnIds ?? [];
+    const isAppend = prev.length <= ids.length && prev.every((id, i) => id === ids[i]);
+    if (!isAppend) st.store = new BlockStore();
+    // 重复 apply 会给"重复 start"记 issue；渲染端不消费 issues，但别让它无界堆积
+    if (st.store.issues.length > 0) st.store.issues.length = 0;
+    for (const op of ops) st.store.apply(op);
+    st.turnIds = ids;
 }
 
 // ─── 渲染批处理（合并高频 op，落到每帧至多一次 refresh） ──────────
@@ -207,9 +234,8 @@ async function doReload(taskUri: string): Promise<void> {
     }
     try {
         const ops = (await diyService.diy.agent.local.history({ taskUri })) as Op[];
-        // 重建而不是增量 fold：loadHistory 是"把全部 op 再喂一遍"，增量会导致内容重复
-        st.store = new BlockStore();
-        for (const op of ops) st.store.apply(op);
+        // 并进现有块树（幂等），不重建：只有真正变化的轮次会换引用 → <For> 只重建它
+        foldInto(st, ops);
         st.loaded = true;
         flushRefresh(st);
     } catch (e) {
@@ -302,7 +328,7 @@ const [steerToggleTick, setSteerToggleTick] = createSignal(0);
 async function loadHistory(st: TaskState, taskUri: string): Promise<void> {
     try {
         const ops = (await diyService.diy.agent.local.history({ taskUri })) as Op[];
-        for (const op of ops) st.store.apply(op);
+        foldInto(st, ops);
         refresh(st);
         st.loaded = true;
     } catch (e) {
@@ -573,6 +599,7 @@ async function clear(taskUri: string) {
     }
     const st = stateFor(taskUri);
     st.store = new BlockStore();
+    st.turnIds = undefined; // 前缀守卫一并归零：新会话从空开始（下次并入必走重建那条）
     st.loaded = true; // 文件已删，不必重拉
     st.setError(null);
     st.setSteers([]); // 会话已清，排队中的插话也被 main 一并清掉（见 local-agent 的 clear()）
