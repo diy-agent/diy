@@ -19,9 +19,9 @@
  * ⚠️ 结尾槽那一条叶子由 `turnRows` **排除在历史行之外**（判据一处：`tailOf` / `tailNodeOf`）——
  *   两处判据一分叉就是同一块画两遍（review P1-1）。
  *
- * 「开/关」一律由 `RowHandle` 表达（**行首 gutter 里的竖列手柄**：收起右指 ▸、展开下指 ▾，
- * 树形语义见 `IconChevron` 头注；没有可展开内容的行给同格的静态点）。**不塞在内容行内** ——
- * 手柄是结构不是内容，要成列、要压在皮肤那条结构线上（2026-10-12 用户口径「竖版折叠条」）。
+ * 「开/关」一律由 `RowGutter` 表达（**行首那一列折叠条**：整块高的一根条 + 首行居中的尖头，
+ * 见其头注）。**不塞在内容行内** —— 手柄是结构不是内容，要成列、要压在皮肤那条结构物上
+ * （色条 / 贯穿线），2026-10-12 用户口径「竖版折叠条」。
  * 可展开行头一律 `DisclosureHead`（div + role=button：**按钮内的文本选不中**，见其头注）。
  * 「显示什么、按什么序、开到第几层」的语义全在 `lib/chat-fold.ts`（纯函数 + 单测），本文件只管画。
  * MD 渲染/原文是**正交**的显示偏好：摘要态同样按它渲染（见 TextRow）。
@@ -59,7 +59,7 @@ import { reasoningEffortLabel } from "../../shared/reasoning-effort";
 import { DragDropProvider, DragOverlay, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron } from "./icons";
-import { RowBand, RowHandle } from "./RowHandle";
+import { RowGutter } from "./RowGutter";
 import { VIEW_BAR_H, chatInputMaxHeight } from "../lib/layout-metrics";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
@@ -138,10 +138,27 @@ function DisclosureHead(props: {
     );
 }
 
+/**
+ * 单行摘要：**第一行非空内容**（前导空行不算）。
+ *
+ * 为什么不是 `split("\n")[0]`：真实数据里思考正文常以换行开头（模型的 reasoning 前导 `\n`），
+ * 取第一行会得空串 → 标题退回"思考"两个字，整页看不出这段在琢磨什么
+ * （用户 2026-10-12 反馈："v4 的思考 bar 会显示思考的第一行"）。空行跳过，再截 90 字。
+ */
 const firstLine = (s: string) => {
-    const i = s.indexOf("\n");
-    return i === -1 ? s.slice(0, 90) : s.slice(0, i);
+    for (const line of s.split("\n")) {
+        const t = line.trim();
+        if (t) return t.slice(0, 90);
+    }
+    return "";
 };
+
+/** 正文**行数**（折叠阈值判据；与 `clampLines` 同一套"只截行不截字"的口径） */
+const countLines = (s: string) => s.split("\n").length;
+
+/** 过程历史里正文行的折叠阈值（草图 v4 的 `.txt.clamp` 同款：超过 3 行才给折叠能力）。
+ *  缺省**展开** —— 折叠是用户主动点的结果，级别不该替他把历史里的正文缩起来。 */
+const HISTORY_TEXT_FOLD_LINES = 3;
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v));
 
 /** 输出截断：head + tail，中间计省略行数（行内展开用；超预算才挂全屏按钮） */
@@ -459,7 +476,7 @@ function ProcBody(props: {
  *
  * **行首第一格**：能展开给箭头、不能展开给静态点（见 `expandableOf`）——
  * 思考只有一行时展开体与标题是同一句，点开毫无变化；但格子不能空（左列是齐的层级刻度）。
- * 那一格现在是 `RowHandle`（行首 gutter 的竖列手柄），**不在行内**：见其头注。
+ * 那一格现在是 `RowGutter`（行首那一列折叠条），**不在行内**：见其头注。
  */
 function ProcessRow(props: {
     node: BlockNode;
@@ -471,43 +488,32 @@ function ProcessRow(props: {
     /** 这一行**点开会不会多出东西**（思考只有一行就不给展开能力，见 chat-fold.expandableOf） */
     const can = () => expandableOf(n());
     const open = () => can() && procOpen(n(), props.pin);
-    const head = "flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left";
+    const head = "flex w-full items-center gap-1.5 py-1.5 text-left";
     /**
      * 行头（三种行位共用同一份内容，只是外壳不同）：
      * **能展开** = `DisclosureHead`（可点）；**不能展开** = 静态 `div` —— 不是"按钮"，
-     * 读屏不该念成可按。第一格恒占位（箭头 或静态点，都由 `RowHandle` 给），左列才是齐的层级刻度。
+     * 读屏不该念成可按。折叠条列恒占位（箭头 或静态点，都由 `RowGutter` 给），左列才是齐的层级刻度。
      */
-    const body = (
+    const title = () => (
         <>
-            {/* 开合手柄在**行首 gutter**（不是行内第一格）：左列那一串箭头/点是"这行能展开"
-                的视觉语言，必须成列 —— 见 RowHandle 头注 */}
-            <RowHandle
-                can={can()}
-                open={open()}
-                onToggle={() => props.onToggle(n().id)}
-                label={`${summaryOf(n(), false)}（${can() ? (open() ? "收起" : "展开") : "无展开内容"}）`}
-            />
             {statusMark(n())}
             <span class="font-medium text-base-content/80 truncate flex-1">{summaryOf(n(), open())}</span>
         </>
     );
     return (
-        <div
-            class="rounded-lg border border-base-300 bg-base-200/40 text-body"
-            data-block-id={n().id}
-            data-block-tag={n().tag}
-            data-expandable={can() ? "1" : "0"}
-        >
-            {/* 贴条挂**块级**（整块高，含展开后的正文）；图标在下面行头里（首行居中）——
-                两者锚点不同，见 RowHandle 头注 */}
-            <Show when={can()}>
-                <RowBand onToggle={() => props.onToggle(n().id)} />
-            </Show>
+        <div class="text-body" data-block-id={n().id} data-block-tag={n().tag} data-expandable={can() ? "1" : "0"}>
+            {/* 竖列折叠条：整块高 + 一个点击区（见 RowGutter 头注）；形状全在皮肤里 */}
+            <RowGutter
+                can={can()}
+                open={open()}
+                onToggle={() => props.onToggle(n().id)}
+                label={`${summaryOf(n(), false)}（${can() ? (open() ? "收起" : "展开") : "无展开内容"}）`}
+            />
             <Show
                 when={can()}
                 fallback={
                     <div class={head} data-row-head="1">
-                        {body}
+                        {title()}
                     </div>
                 }
             >
@@ -517,11 +523,11 @@ function ProcessRow(props: {
                     class={`${head} hover:bg-base-200/60`}
                     rest={{ "data-row-head": "1" }}
                 >
-                    {body}
+                    {title()}
                 </DisclosureHead>
             </Show>
             <Show when={open()}>
-                <div class="px-3 pb-2 max-h-72 overflow-auto">
+                <div class="pb-2 max-h-72 overflow-auto" data-row-body="1">
                     <ProcBody node={n()} onFull={props.onFull} />
                 </div>
             </Show>
@@ -578,24 +584,23 @@ function TailBox(props: {
     };
     return (
         <div
-            class={`rounded-lg border text-body ${failing() ? "border-error/50 bg-error/5" : "border-base-300 bg-base-200/40"}`}
+            class="text-body"
             data-block-id={n().id}
             data-block-tag={n().tag}
             data-tail-box={props.live ? "live" : "scene"}
             data-failing={failing() ? "1" : undefined}
             data-live-area={props.live ? (n().stopped ? "waiting" : "active") : undefined}
         >
-            <RowBand onToggle={() => props.onToggle(n().id, props.live ? !open() : undefined)} />
+            <RowGutter
+                open={open()}
+                onToggle={() => props.onToggle(n().id, props.live ? !open() : undefined)}
+            />
             <DisclosureHead
                 open={open()}
                 onToggle={() => props.onToggle(n().id, props.live ? !open() : undefined)}
-                class="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left hover:bg-base-200/60"
+                class="flex w-full items-center gap-1.5 text-left py-1.5"
                 rest={{ "data-row-head": "1" }}
             >
-                <RowHandle
-                    open={open()}
-                    onToggle={() => props.onToggle(n().id, props.live ? !open() : undefined)}
-                />
                 <Show when={failing()} fallback={statusMark(n())}>
                     <span class="text-error">✗</span>
                 </Show>
@@ -613,7 +618,7 @@ function TailBox(props: {
                     ref={(el) => (bodyRef = el)}
                     /* 活动块体定高 ≈ 5 行（leading-relaxed 1.625em × 5 ≈ 8.2em），超出在框内滚；
                        现场给 max-h（内容已定，不必用固定高度锁住空白） */
-                    class={`px-3 pb-2 overflow-auto ${props.live ? "h-[8.2em]" : "max-h-72"}`}
+                    class={`pb-2 overflow-auto ${props.live ? "h-[8.2em]" : "max-h-72"}`}
                     data-live-body={props.live ? (n().stopped ? "waiting" : "active") : undefined}
                 >
                     <Show when={props.error}>
@@ -650,20 +655,14 @@ function EndLeafBox(props: {
     // 认得出是哪一步就够，内容要看再点开）—— 用户 pin 可覆盖
     const open = () => (n().id in props.pin ? props.pin[n().id]! : false);
     return (
-        <div
-            class="rounded-lg border border-base-300 bg-base-200/40 text-body"
-            data-block-id={n().id}
-            data-block-tag={n().tag}
-            data-tail-box="endleaf"
-        >
-            <RowBand onToggle={() => props.onToggle(n().id, !open())} />
+        <div class="text-body" data-block-id={n().id} data-block-tag={n().tag} data-tail-box="endleaf">
+            <RowGutter open={open()} onToggle={() => props.onToggle(n().id, !open())} />
             <DisclosureHead
                 open={open()}
                 onToggle={() => props.onToggle(n().id, !open())}
-                class="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left hover:bg-base-200/60"
+                class="flex w-full items-center gap-1.5 text-left py-1.5 hover:bg-base-200/60"
                 rest={{ "data-row-head": "1" }}
             >
-                <RowHandle open={open()} onToggle={() => props.onToggle(n().id, !open())} />
                 {statusMark(n())}
                 <span class="font-medium text-base-content/80 truncate flex-1">
                     {summaryOf(n(), open())}
@@ -677,7 +676,7 @@ function EndLeafBox(props: {
                 </span>
             </DisclosureHead>
             <Show when={open()}>
-                <div class="px-3 pb-2 max-h-72 overflow-auto">
+                <div class="pb-2 max-h-72 overflow-auto" data-row-body="1">
                     <ProcBody node={n()} onFull={props.onFull} />
                 </div>
             </Show>
@@ -802,8 +801,7 @@ function TurnHeader(props: {
             {/* 开合手柄在**行首 gutter**（`RowHandle`）：一轮里"轮次头 → 过程 bar → 逐条过程"
                 三级同列左对齐，一眼能看出层级（2026-10-11 用户口径：箭头从右边换到左边；
                 2026-10-12 用户口径：竖列成一列，见 RowHandle 头注） */}
-            <RowBand onToggle={props.onToggle} />
-            <RowHandle open={open()} onToggle={props.onToggle} label={`过程历史：${turnFoldTip(open())}`} />
+            <RowGutter open={open()} onToggle={props.onToggle} label={`过程历史：${turnFoldTip(open())}`} />
             {/* 身份：**所有级别都显示**（1 级与 2 级必须一致，用户 2026-10-11 口径） */}
             <span
                 class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-body"
@@ -865,33 +863,42 @@ function TurnHeader(props: {
  */
 function TextRow(props: {
     node: BlockNode;
-    /** 摘要行数上限（仅 clamp 时用） */
+    /** 折叠判据：正文行数超过它才给折叠能力（草图 v4 = 3 行） */
     lines: number;
-    /** true = 压成摘要（1 级）；false = 全文 */
-    clamp: boolean;
+    /** **缺省**开合（用户的 pin 优先）：结论 = 2 级起开、1 级折；过程历史正文 = 恒开 */
+    defaultOpen: boolean;
+    /** 开合状态（与过程行同一套 pin）—— **点自己这一块**，不是换级别、更不是折别人 */
+    pin: Record<string, boolean>;
+    onToggle: (id: string, force?: boolean) => void;
     md: boolean;
-    /** 点提示行 = 进下一级（全文在下一级） */
-    onExpand: () => void;
+    /** 结尾槽的「结论」形态：这一块**自己就是** `[data-tail-box=conclusion]`（草图 v4 的
+        `.tailbox.k-conc` 就是这一块，不再包一层 —— 包一层就是槽里那张卡还套一张卡） */
+    box?: "conclusion";
 }) {
     const b = () => props.node;
     const raw = () => str(b().attrs.content);
-    // 直播中的正文不截：它还在长，截断只会来回跳；定稿后才压成摘要。
-    // clamp=false 时**永不截** —— 那一级要的就是全文，级别说了算，组件不自作主张
-    const clipped = () => props.clamp && b().stopped;
-    const view = () => (clipped() ? clampLines(raw(), props.lines) : { text: raw(), omitted: 0 });
+    const canFold = () => countLines(raw()) > props.lines;
+    const open = () => (b().id in props.pin ? props.pin[b().id]! : props.defaultOpen);
+    // 直播中的正文不折：它还在长，折叠只会来回跳；定稿后才折成摘要
+    const folded = () => canFold() && b().stopped && !open();
+    const view = () => (folded() ? clampLines(raw(), props.lines) : { text: raw(), omitted: 0 });
     const cut = () => view().omitted > 0;
+    /** 点**这一块**（正文行自己那条竖列折叠条 / 提示行）—— 用户 2026-10-12 R6 报的 bug：
+     *  原来结论槽把 `onExpand` 接到了"换级别"，点一下**把工具历史折了、自己没变**。 */
+    const fire = () => props.onToggle(b().id, !open());
     return (
-        <div data-block-id={b().id} data-block-tag="text" data-clamped={cut() ? "1" : undefined}>
-            {/* 截断时才给贴条（= 有得展开）；图标同样只在截断时可点 */}
-            <Show when={cut()}>
-                <RowBand onToggle={props.onExpand} />
-            </Show>
-            {/* 正文行也给手柄（草图 `.k-text` 同款）：截断时才可展开 —— 展开动作就是"进下一级看全文" */}
-            <RowHandle
-                can={cut()}
-                open={false}
-                onToggle={() => props.onExpand()}
-                label="已折叠正文：展开全部"
+        <div
+            data-block-id={b().id}
+            data-block-tag="text"
+            data-tail-box={props.box}
+            data-clamped={cut() ? "1" : undefined}
+            data-text-open={open() ? "1" : "0"}
+        >
+            <RowGutter
+                can={canFold()}
+                open={open()}
+                onToggle={fire}
+                label={`正文${canFold() ? `（${open() ? "收起" : "展开"}）` : ""}`}
             />
             <div
                 style={
@@ -914,7 +921,7 @@ function TextRow(props: {
                 <button
                     type="button"
                     class="mt-0.5 text-caption opacity-60 hover:opacity-100 hover:text-primary"
-                    onClick={() => props.onExpand()}
+                    onClick={fire}
                 >
                     ⋯ 已折叠 {view().omitted} 行 · 点击展开全部正文
                 </button>
@@ -979,20 +986,22 @@ function ProcBar(props: {
     const countsText = () => `${thinks()} 段思考、${tools()} 个工具`;
     return (
         <div
-            class="rounded-lg"
             data-block-tag="proc-bar"
-            data-block-id={props.parts[0]?.id}
+            /* 行键 = 该段**首个叶子** id（与 pin 的 `row:` 前缀同一来源）；加 `_bar` 后缀 ——
+               这块是"一段过程"的容器，不是那个叶子本身，id 不该与子行撞车（同一份 DOM 里
+               两个 `[data-block-id]` 同值，调试/选择器都会指错人）。 */
+            data-block-id={`${props.parts[0]?.id ?? "proc"}_bar`}
             data-has-error={failed() ? "1" : undefined}
+            data-open={props.open ? "1" : "0"}
         >
-            <RowBand onToggle={props.onToggle} />
+            <RowGutter open={props.open} onToggle={props.onToggle} label={`过程：${countsText()}`} />
             <DisclosureHead
                 open={props.open}
                 onToggle={props.onToggle}
-                class="flex items-center gap-1.5 w-full py-1 px-1.5 rounded-lg hover:bg-base-200/60 text-body"
+                class="flex items-center gap-1.5 w-full py-1 pr-1 hover:bg-base-200/60 text-body"
                 ariaLabel={`过程：${countsText()}（点击${props.open ? "收起" : "展开"}这一行）`}
                 rest={{ "data-row-head": "1" }}
             >
-                <RowHandle open={props.open} onToggle={props.onToggle} label={`过程：${countsText()}`} />
                 {/* 计数在**行首**：展开/收起都在（同一位置同一形状，不随开合消失），
                     带底色 chip = 与后面的首行内容分开（见头注） */}
                 <span
@@ -1020,8 +1029,11 @@ function ProcBar(props: {
                     </span>
                 </Show>
             </DisclosureHead>
+            {/* **子层在卡内**（包含关系）：卡 = 块自己，子行缩进在卡的留白里 —— 这样父卡
+                （含它那道 4px 色条 / 贯穿线）覆盖的是**整段**，而不是"只有行头那一行"。
+                缩进量由皮肤给（card = 父卡留白 20px；rail = 线 + 缩进，见 index.css）。 */}
             <Show when={props.open}>
-                <div class="mt-0.5 ml-2 space-y-0.5 border-l border-base-300 pl-2" data-proc-children="1">
+                <div class="space-y-0.5" data-proc-children="1">
                     <For each={props.parts}>
                         {(n) => (
                             <PartRow
@@ -1181,13 +1193,22 @@ function TurnView(props: {
                 `pl-2`：箭头移到行首后，左列箭头的缩进就是层级刻度
                 （轮次头 → 过程 bar → 逐条过程），8px 才读得出"bar 在轮次头之下"。 */}
             <Show when={props.histOpen}>
-                <div class="space-y-1.5 pl-2" data-chat-list>
+                <div class="space-y-1.5" data-chat-list>
                     <For each={rows()}>
                     {(row) => {
                         if (row.kind === "user") return <UserBubble node={row.node} />;
                         if (row.kind === "error") return <ErrorBox node={row.node} />;
                         if (row.kind === "text")
-                            return <TextRow node={row.node} lines={props.conclusionLines} clamp={false} md={props.md} onExpand={props.onCycle} />;
+                            return (
+                                <TextRow
+                                    node={row.node}
+                                    lines={HISTORY_TEXT_FOLD_LINES}
+                                    defaultOpen={true}
+                                    pin={props.pin}
+                                    onToggle={props.onToggle}
+                                    md={props.md}
+                                />
+                            );
                         return (
                             <ProcBar
                                 parts={row.parts}
@@ -1212,15 +1233,17 @@ function TurnView(props: {
                 {(tl) => (
                     <Switch>
                         <Match when={tl().kind === "conclusion"}>
-                            <div data-tail-box="conclusion">
-                                <TextRow
-                                    node={leafById(props.turnId, tl().node.id)}
-                                    lines={props.conclusionLines}
-                                    clamp={plan().conclusionClamped}
-                                    md={props.md}
-                                    onExpand={props.onCycle}
-                                />
-                            </div>
+                            {/* 结论 = **这一块**（`[data-tail-box=conclusion]`）：缺省开合跟级别
+                                （1 级折、2 级起全），**点它折的是它自己**（用户 R6 报的 bug）。 */}
+                            <TextRow
+                                node={leafById(props.turnId, tl().node.id)}
+                                lines={props.conclusionLines}
+                                defaultOpen={!plan().conclusionClamped}
+                                pin={props.pin}
+                                onToggle={props.onToggle}
+                                md={props.md}
+                                box="conclusion"
+                            />
                         </Match>
                         <Match when={tl().kind === "endleaf"}>
                             <EndLeafBox

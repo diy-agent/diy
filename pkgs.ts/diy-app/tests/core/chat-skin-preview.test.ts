@@ -43,12 +43,14 @@ describe("皮肤小样（ChatSkinPreview）与 index.css 规则一致", () => {
     expect(preview).toMatch(/class=[^>]*diy-chat/);
   });
 
-  it("`data-block-tag=\"proc-bar\"` 的命中形状是子元素 `role=\"button\"`（小样同形）", () => {
-    // 规则写作 `[data-block-tag="proc-bar"] > [role="button"]`：少一层子元素就整条不命中
+  it("卡 = `[data-block-id]` 那块**自己**（形状不挂在行头上）", () => {
+    // 2026-10-12 用户 R6：「v4 卡片是包含形式的，现在是缩紧单卡」—— 卡必须挂在块上，
+    // 才可能把"展开后的正文与子层"包在里面；挂在行头上就只剩一行高。
+    // 反面判据：不许再把卡画在 `[data-block-tag="proc-bar"] > [role="button"]` 上。
     const block = skinSelectorBlock();
-    expect(block).toContain('> [role="button"]');
-    expect(preview).toMatch(/data-block-tag="proc-bar"/);
-    expect(preview).toMatch(/role="button"/);
+    expect(block).toMatch(/\[data-skin="card"\] \.diy-chat \[data-block-id\]/);
+    expect(block).not.toContain('> [role="button"]');
+    expect(preview).toMatch(/data-block-tag="proc-bar"[\s\S]{0,200}data-proc-children/);
   });
 
   it("小样覆盖两个吃色态（data-failing / data-has-error），否则看不出「只有错误吃色」", () => {
@@ -56,21 +58,23 @@ describe("皮肤小样（ChatSkinPreview）与 index.css 规则一致", () => {
     expect(preview).toContain("data-has-error");
   });
 
-  it("贴条 `data-row-band` 在**块级**（行头之外），图标 `data-row-handle` 仍在行头里", () => {
-    // 折叠条 = 两件东西两个锚点（2026-10-12 用户口径：贴条整块高（v3）、图标首行居中）：
-    // 贴条塞进行头 → 被框在行头那一行里，大块上就不是"整个块高度"了
-    expect(preview).toMatch(/data-block-tag="proc-bar"[\s\S]{0,120}data-row-band/);
-    // 图标必须仍在行头里（行头单行 ⇒ 行头居中 == 首行居中）
-    expect(preview).toMatch(/data-row-head[\s\S]{0,400}data-row-handle/);
+  it("折叠条是**一根条**（条里嵌图标）：一个点击区，不拆两件", () => {
+    // 2026-10-12 用户 R6：「竖 bar 和折叠箭头是分离的，这样有 2 个点击区」——
+    // 拆两件（贴条锚块、图标锚行头）时行头被卡内留白推右 16px，同一行的条与箭头错开一格。
+    // 判据：小样里 `[data-row-band]` 必须**包住** `[data-row-handle]`（同嵌套才是同形状）。
+    expect(preview).toMatch(/data-row-band[\s\S]{0,120}data-row-handle/);
+    // 条整块高 + 图标由一个**常数**定首行居中（两皮肤同一套：见 `.diy-chat` 上的两个变量）
+    const block = skinSelectorBlock();
+    expect(block).toMatch(/\[data-row-band\][\s\S]{0,200}top: 0;[\s\S]{0,80}bottom: 0;/);
+    expect(block).toMatch(/--diy-gut-top/);
   });
 
-  it("小样给出**手柄列**与**子层容器**（竖列折叠手柄 / card 皮肤不缩进的落点）", () => {
+  it("小样给出**折叠条列**与**子层容器**（行首留白 / 层级缩进的落点）", () => {
     // 这两条是 2026-10-12 用户口径的落点：小样少了任何一个，设置页里就"看着没变"
-    expect(preview).toMatch(/data-row-handle/);
+    expect(preview).toMatch(/data-row-band/);
     expect(preview).toMatch(/data-row-head/);
     expect(preview).toMatch(/data-proc-children/);
-    // 手柄必须**真在**行头里（与真实 DOM 同嵌套：`[data-row-head] > [data-row-handle]`），
-    // 只写两个属性不算 —— 小样的价值是形状一致
-    expect(preview).toMatch(/data-row-head[\s\S]{0,400}data-row-handle/);
+    // 行头必须**真在**块里（与真实 DOM 同嵌套），只写两个属性不算 —— 小样的价值是形状一致
+    expect(preview).toMatch(/data-block-id[\s\S]{0,400}data-row-head/);
   });
 });
