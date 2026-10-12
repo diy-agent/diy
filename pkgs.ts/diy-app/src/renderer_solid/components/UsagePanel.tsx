@@ -39,7 +39,7 @@ import {
     stepView,
     sumBuckets,
     sumCosts,
-    tokenRate,
+    stepRate,
     windowRate,
     type AgentGroup,
     type CostBreakdown,
@@ -84,6 +84,14 @@ function cellMs(ms: number | undefined): string {
     return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`;
 }
 
+/**
+ * 速度列（tok/s）：给不出数 → `–`（不写 0）。
+ * 表格里只写数字（列头已写"速度"，带单位反而每格都冗），口径 = `总输出 ÷ (响应耗时 − TTFT)`。
+ */
+function cellRate(r: number | null): string {
+    return r == null ? "–" : `${Math.round(r)}`;
+}
+
 const faceLabel = (api: string): string => (api === "responses" ? "resp" : "chat");
 
 /**
@@ -116,6 +124,29 @@ function fmtTurnClock(turnId: string): string | null {
     const p = (n: number) => String(n).padStart(2, "0");
     // 日期 + 时间到秒（用户 2026-10-04：轮次末尾要能定位"什么时候说的"）
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/**
+ * 该轮**最后一步**的实测生成速度（tok/s）：两处来源，口径同一个（`shared/usage.stepRate`）。
+ *
+ *   ① `usage.lastStepRate` —— main 在每步 finish-step 下发的 patch 字段：**直播时最新**；
+ *   ② 逐步账本镜像（`localChatStore.usage` = `usage.jsonl` 的镜像，打开会话 / 轮次结束时对账刷新）：
+ *      **本版之前**落的 ops 没有 ①（那时还没这字段），但账本里本来就有 `performance` —— 用它补齐，
+ *      省得"老会话永远看不到速度"。镜像里没有这一轮（直播刚起步、一步都还没跑完）→ null。
+ */
+function turnStepRate(turnId: string, usage: unknown): number | null {
+    const fromPatch = (usage as TurnUsagePatch | undefined)?.lastStepRate;
+    if (typeof fromPatch === "number" && fromPatch > 0) return fromPatch;
+    const mine = localChatStore.usage.filter((r) => r.turnId === turnId);
+    const last = mine[mine.length - 1];
+    return last ? stepRate(last.performance, stepView(last).buckets.outputTotal) : null;
+}
+
+/** 整个会话**最近一次**实测速度（总状态栏口径：没有新 step 也留着上一次的值） */
+export function sessionLastRate(): number | null {
+    const steps = localChatStore.usage;
+    const last = steps[steps.length - 1];
+    return last ? stepRate(last.performance, stepView(last).buckets.outputTotal) : null;
 }
 
 // ─── L2 汇总卡：统一数据模型（A/B 两表同一份源） ───────
@@ -1168,8 +1199,10 @@ export function UsageHoverCard(props: {
  * 状态图标（`✓/✗/⛔`）**只写字形，说明进 tooltip**（用户 2026-10-12：状态行上不写"正常结束"这类字）：
  * 判据 = `endReason`（##288 拍板），翻译见 lib/chat-fold 的 `endMarkOf`。
  *
- * ⚡速度 = **本请求当前**的 token 速度（已输出 ÷ 已耗时，实时），只在直播中出现。
- * 口径与前提见 `shared/usage` 的 `tokenRate` —— 给不出数就**不显示**，不拿假数占位。
+ * ⚡速度 = **本轮最后一步**的生成速度（`总输出 ÷ (响应耗时 − TTFT)`，口径见 `shared/usage.stepRate`）。
+ * 粒度就是"一步"：流内部的 token 计数拿不到，所以**跑着的那一步显示的是上一个已完成步的实测值**，
+ * 该步一结束立刻刷新；轮次结束后这个值留在行上（"老的速度留在 bar 上"）。
+ * 给不出数（本版之前的老记录没有该字段）就**不显示**，不拿假数占位。
  *
  * 时间用**日期+时间到秒**（2026-10-04 用户定）：轮次末尾要能定位"这话什么时候说的"，
  * 只给时分在同一天多轮、或跨天回看时无法定位。旧记录轮次也照样出时间（见下）。
@@ -1211,23 +1244,15 @@ export function TurnUsageBar(props: {
         </Show>
     );
 
-    // ── ⚡速度：**每秒重算**（只在本轮跑着时开表；停下即清，不留常驻定时器）
-    const [nowMs, setNowMs] = createSignal(Date.now());
-    createEffect(() => {
-        if (!props.live) return;
-        setNowMs(Date.now());
-        const h = setInterval(() => setNowMs(Date.now()), 1000);
-        onCleanup(() => clearInterval(h));
-    });
-    const outputTotal = () => (props.usage as TurnUsagePatch | undefined)?.outputTotal ?? 0;
-    const rate = () => tokenRate(outputTotal(), turnStartMs(props.turnId), nowMs());
-    /** 速度：纯文本；给不出数（还没起步 / 缺开始时刻）就整块不画 */
+    // ── ⚡速度：**按步**的实测值（不是"跑着才算"的瞬时值，故无定时器 —— 值只在每步结束时变）
+    const rate = () => turnStepRate(props.turnId, props.usage);
+    /** 速度：纯文本；给不出数（老记录 / 该步没有计时）就整块不画 */
     const Rate = () => (
-        <Show when={props.live && rate() != null}>
+        <Show when={rate() != null}>
             <span
                 class="shrink-0 tabular-nums text-caption opacity-70"
                 data-turn-rate
-                title="当前速度 = 本轮已输出 tokens ÷ 已耗时（每步 finish-step 刷新一次；usage 是按步落盘，故不是逐 token 实时，也不按步骤重算）"
+                title="生成速度 = 本轮最后一步的总输出 ÷ (响应耗时 − 首字耗时 TTFT)。按步统计：流内部的 token 计数拿不到，跑着的那一步显示的是上一步的实测值，该步结束即刷新"
             >
                 ⚡ {Math.round(rate()!)} tok/s
             </span>
@@ -1331,46 +1356,35 @@ export function TurnUsageBar(props: {
     }
 }
 
-// ─── L1③ 输入框底部总状态栏的实时速度 ──────────────
+// ─── L1③ 输入框底部总状态栏的速度 ──────────────
 
 /**
- * ⚡ **当前请求**的输出速度（常驻位，输入框底部工具条）。
+ * ⚡ **最近一次实测**的生成速度（常驻位，输入框底部工具条）。
  *
- * 与轮尾状态行那枚 chip **同一个口径、同一个函数**（`shared/usage.tokenRate`）：
- * `本轮已输出 tokens ÷ 已耗时`，每秒重算一次（分子的"已输出"来自 turn 块的 usage patch）。
- * 两处都留的理由是位置：轮尾那行在对话流里，滚上去看历史时就被移出视野了；而"这一轮跑得
- * 快不快"恰恰在**等待 / 想打断**时最需要看见 —— 那一刻视线在输入框。
+ * 口径（用户 2026-10-12 拍板）：「没有执行新 step，老的速度留在 bar 上，就是最后一次速度」
+ * —— 所以它不是"跑着才显示"的瞬时值，而是**最后一次落盘的步速度**（`shared/usage.stepRate`，
+ * 与轮尾状态行、用量表速度列同一个数），跑完也留着，直到下一步结束才换新值。
  *
- * ⚠️ **精度边界（实测，别当成 bug 再报一遍）**：`usage` 由 main **每步 finish-step 落一次**
- * （`local-agent.ts` 的 `patch{usage}`），流内部的 delta 不带 token 计数 ⇒ 一个长步之内
- * 分子不动、分母在走，读数会**越走越低**，要到该步结束才跳到正确值。要真正"逐 token 实时"
- * 得让 main 在流中途推部分输出量（另一条线，见任务记录的「待办 B 的精度边界」）。
+ * 为什么要有（与轮尾那枚 chip 重复的理由是位置）：轮尾那行在对话流里，滚上去看历史时就移出视野了；
+ * 而"这一轮跑得快不快"恰恰在**等待 / 想打断**时最需要看见 —— 那一刻视线在输入框。
  *
- * 给不出数就**整块不画**（`tokenRate` 返回 null 的三种情形：还没起第一秒 / 已输出为 0 /
- * 轮次 id 解析不出开始时刻）；停下即 `turnId = null` ⇒ 定时器随之清掉，不留常驻表。
+ * ⚠️ **粒度 = 一步**（别当 bug 再报一遍）：流内部的 token 计数拿不到（usage 是 provider 在每步
+ * 收尾才给的），所以跑着的那一步只能显示上一个已完成步的实测值 —— 不拿按流式文本估的假数占位。
+ *
+ * 给不出数（新会话还没跑过步 / 本版之前的老记录）→ 整块不画。
  */
-export function LiveTokenRate(props: {
-    /** 直播轮 id（`t` + 毫秒；非直播 → null）。既是"跑没跑"的开关，也是速度分母的**唯一真源** */
-    turnId: string | null;
-    /** 该轮已输出 tokens（turn 块 usage patch 的 `outputTotal`；与轮尾状态行同一个数） */
-    outputTotal: number;
+export function StepRateChip(props: {
+    /** 最近一次实测的步速度（tok/s）；null → 不画 */
+    rate: number | null;
 }) {
-    const [nowMs, setNowMs] = createSignal(Date.now());
-    createEffect(() => {
-        if (!props.turnId) return; // 没在跑 → 不开定时器
-        setNowMs(Date.now());
-        const h = setInterval(() => setNowMs(Date.now()), 1000);
-        onCleanup(() => clearInterval(h));
-    });
-    const rate = () => (props.turnId ? tokenRate(props.outputTotal, turnStartMs(props.turnId), nowMs()) : null);
     return (
-        <Show when={rate() != null}>
+        <Show when={props.rate != null}>
             <span
                 class="shrink-0 tabular-nums text-caption opacity-70"
                 data-live-rate
-                title="当前速度 = 本轮已输出 tokens ÷ 已耗时（每步 finish-step 刷新一次；usage 是按步落盘，故不是逐 token 实时）"
+                title="生成速度 = 最近一步的总输出 ÷ (响应耗时 − 首字耗时 TTFT)，每步结束刷新一次"
             >
-                ⚡ {Math.round(rate()!)} tok/s
+                ⚡ {Math.round(props.rate!)} tok/s
             </span>
         </Show>
     );
@@ -1486,8 +1500,8 @@ function turnDetailMd(g: TurnGroup | null, rows: StepUsageRecord[], clock: strin
     const total$ = g?.cost?.total ?? null;
     const m = (n: number | null | undefined): string => (n == null ? "n/a" : `${fmtCost(n)}（${costShare(n, total$)}）`);
     out.push(
-        "| 步 | 人物 | 模型 | 面 | 档位 | 非缓存输入 | 缓存读 | 缓存写 | 总输出 | 文本 | 思考 | 缓存命中 | 耗时 | TTFT | 窗口% | 单价快照 | 非缓存$ | 缓存读$ | 缓存写$ | 文本$ | 思考$ | 合计$ |",
-        "|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|",
+        "| 步 | 人物 | 模型 | 面 | 档位 | 非缓存输入 | 缓存读 | 缓存写 | 总输出 | 文本 | 思考 | 缓存命中 | 耗时 | TTFT | 速度 | 窗口% | 单价快照 | 非缓存$ | 缓存读$ | 缓存写$ | 文本$ | 思考$ | 合计$ |",
+        "|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|",
     );
     for (const r of rows) {
         const v = stepView(r);
@@ -1500,6 +1514,7 @@ function turnDetailMd(g: TurnGroup | null, rows: StepUsageRecord[], clock: strin
                 `| ${fmtInt(v.buckets.noCache)} | ${fmtInt(v.buckets.cacheRead)} | ${optCellInt(v.buckets.cacheWrite)} ` +
                 `| ${fmtInt(v.buckets.outputTotal)} | ${fmtInt(v.buckets.text)} | ${fmtInt(v.buckets.reasoning)} ` +
                 `| ${pctText(cacheHitRate(v.buckets))} | ${cellMs(r.performance?.stepTimeMs)} | ${cellMs(r.performance?.timeToFirstOutputMs)} ` +
+                `| ${cellRate(stepRate(r.performance, v.buckets.outputTotal))} ` +
                 `| ${pctText(v.windowRate)} | ${rates} ` +
                 `| ${c ? m(c.noCache) : "n/a"} | ${c ? m(c.cacheRead) : "n/a"} | ${c?.cacheWrite == null ? "n/a" : m(c.cacheWrite)} ` +
                 `| ${c ? m(c.text) : "n/a"} | ${c ? m(c.reasoning) : "n/a"} | ${c ? m(c.total) : "n/a"} |`,
@@ -1556,7 +1571,7 @@ function TurnDetailTable(props: { rows: StepUsageRecord[] }) {
                 <tr class="text-caption">
                     <th colspan="5" class="text-center font-medium opacity-60">身份</th>
                     <th colspan="7" class="text-center font-medium opacity-60">Token 桶</th>
-                    <th colspan="3" class="text-center font-medium opacity-60">性能</th>
+                    <th colspan="4" class="text-center font-medium opacity-60">性能</th>
                     <th colspan="7" class="text-center font-medium opacity-60" title="各项金额下方小字 = 占本轮合计$比例">金额（$）· 占比</th>
                 </tr>
                 <tr>
@@ -1574,6 +1589,7 @@ function TurnDetailTable(props: { rows: StepUsageRecord[] }) {
                     <th class="text-right" title="缓存读 ÷ 总输入">缓存命中</th>
                     <th class="text-right">耗时</th>
                     <th class="text-right">TTFT</th>
+                    <th class="text-right" title="生成速度 = 总输出 ÷ (响应耗时 − 首字耗时 TTFT)；响应耗时不含客户端工具执行">速度</th>
                     <th class="text-right">窗口%</th>
                     <th title="该步生效单价（$/1M，入/出/读/写 · 生效档）">单价快照</th>
                     <th class="text-right">非缓存$</th>
@@ -1604,6 +1620,7 @@ function TurnDetailTable(props: { rows: StepUsageRecord[] }) {
                                 <td class="text-right">{pctText(cacheHitRate(v().buckets))}</td>
                                 <td class="text-right">{cellMs(r.performance?.stepTimeMs)}</td>
                                 <td class="text-right">{cellMs(r.performance?.timeToFirstOutputMs)}</td>
+                                <td class="text-right">{cellRate(stepRate(r.performance, v().buckets.outputTotal))}</td>
                                 <td class={`text-right ${pctClass(v().windowRate)}`}>{pctText(v().windowRate)}</td>
                                 <td class="opacity-70">
                                     <Show when={r.rates} fallback={<span>无价目（该模型不在价格表内）</span>}>

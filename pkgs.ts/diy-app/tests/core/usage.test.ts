@@ -17,11 +17,14 @@ import {
     groupByTurn,
     ratesOf,
     snapshotUsage,
-    tokenRate,
+    fmtRate,
+    lastMeasuredRate,
+    stepRate,
     sumBuckets,
     sumCosts,
     turnUsagePatch,
     windowRate,
+    type StepPerformance,
     type StepUsageRecord,
 } from "../../src/shared/usage";
 import { costOf, contextLimitOf } from "../../src/shared/models";
@@ -165,6 +168,9 @@ describe("窗口占用 / 缓存命中率", () => {
         expect(patch.lastInputTotal).toBe(24_000);
         expect(patch.lastOutputTotal).toBe(100);
         expect(patch.steps).toBe(2);
+        // 速度随 patch 下发（状态栏 ⚡ 的唯一数据源）：缺省 null（老记录/还没跑完一步）
+        expect(turnUsagePatch(cumulative, step(24_000), null, 10_000, 2).lastStepRate).toBeNull();
+        expect(turnUsagePatch(cumulative, step(24_000), null, 10_000, 2, undefined, 52.4).lastStepRate).toBe(52.4);
         // 上限是同一个，但两个分子差一倍以上 —— 混用得出的是假象
         expect(windowRate({ total: patch.windowTotal }, patch.contextLimit!)).toBeCloseTo(0.0241, 6);
         expect(windowRate({ total: patch.total }, patch.contextLimit!)).toBeCloseTo(0.0442, 6);
@@ -293,19 +299,53 @@ describe("模型表价格数据自洽", () => {
     });
 });
 
-describe("实时 token 速度（tokenRate）", () => {
-    // 口径：本请求已输出 ÷ 已耗时（不是轮次平均，不是标称速率）
-    it("已输出 ÷ 已耗时（秒）", () => {
-        expect(tokenRate(3800, 1_000_000, 1_100_000)).toBeCloseTo(38, 5); // 3.8k tok / 100s
+describe("步速度（stepRate）", () => {
+    // 口径（用户 2026-10-12）：该步**总输出 ÷ (响应耗时 − TTFT)** —— 不是轮次平均、
+    // 不是"已输出 ÷ 已耗时"，也**不含**客户端工具执行耗时（那会让"模型写得多快"失真）。
+    const perf = (o: Partial<StepPerformance>) => o as StepPerformance;
+
+    it("ai-sdk 已给 outputTokensPerSecond 时**直接取它**（真值来自上游计时）", () => {
+        // 实测形状：mimo 一步 stepTime 26.5s / response 26.5s / ttft 2.57s / out 1390 → 58.03 tok/s
+        expect(stepRate(perf({ stepTimeMs: 26542.9, responseTimeMs: 26518.8, timeToFirstOutputMs: 2565.5, outputTokensPerSecond: 58.029680429189284 }), 1390))
+            .toBeCloseTo(58.03, 1);
+    });
+
+    it("缺 outputTokensPerSecond → 用 总输出 ÷ (响应耗时 − TTFT) 现算（同一口径的两条来源）", () => {
+        // (26518.8 − 2565.5) / 1000 = 23.9533s；1390 / 23.9533 = 58.03
+        expect(stepRate(perf({ responseTimeMs: 26518.8, timeToFirstOutputMs: 2565.5 }), 1390)).toBeCloseTo(58.03, 1);
+    });
+
+    it("分母用响应耗时而非 stepTimeMs（不含工具执行：工具跑得久不该把速度拉低）", () => {
+        const withTool = perf({ stepTimeMs: 60000, responseTimeMs: 10000, timeToFirstOutputMs: 0 });
+        expect(stepRate(withTool, 9000)).toBeCloseTo(900, 5); // 9000 / 10s，而不是 9000 / 60s
     });
 
     it("前提缺一 → null（宁可不显示，也不给假数）", () => {
-        expect(tokenRate(100, null, 1_000_000)).toBeNull(); // 旧格式 id，无开始时刻
-        expect(tokenRate(100, 1_000_000, 1_000_500)).toBeNull(); // 不足 1 秒（会除出尖峰）
-        expect(tokenRate(0, 1_000_000, 1_100_000)).toBeNull(); // 一步都还没输出
+        expect(stepRate(undefined, 100)).toBeNull(); // 老记录：没有 performance
+        expect(stepRate(perf({ responseTimeMs: 1000 }), 100)).toBeNull(); // 没有 TTFT
+        expect(stepRate(perf({ responseTimeMs: 1000, timeToFirstOutputMs: 900 }), 0)).toBeNull(); // 没输出
+        expect(stepRate(perf({ responseTimeMs: 1000, timeToFirstOutputMs: 1000 }), 100)).toBeNull(); // 零生成时长
+        expect(stepRate(perf({ responseTimeMs: 500, timeToFirstOutputMs: 900 }), 100)).toBeNull(); // 时间倒流
+        expect(stepRate(perf({ outputTokensPerSecond: 0 }), 0)).toBeNull(); // 上游给 0 = 没数
     });
 
-    it("时间倒流（时钟回拨 / 脏 id）→ null，不出负数速度", () => {
-        expect(tokenRate(100, 1_100_000, 1_000_000)).toBeNull();
+    it("fmtRate：给不出 → `–`（不写 0）；有值 → 取整", () => {
+        expect(fmtRate(null)).toBe("–");
+        expect(fmtRate(0)).toBe("–");
+        expect(fmtRate(58.03)).toBe("58 tok/s");
+    });
+});
+
+describe("最近一次实测速度（lastMeasuredRate）", () => {
+    // 状态栏口径（用户 2026-10-12）：「没有执行新 step，老的速度留在 bar 上，就是最后一次速度」
+    it("从最新一轮往回取第一个有值的", () => {
+        expect(lastMeasuredRate([{ lastStepRate: 40 }, { lastStepRate: 52 }])).toBe(52);
+        expect(lastMeasuredRate([{ lastStepRate: 40 }, { lastStepRate: null }, undefined])).toBe(40);
+    });
+
+    it("一轮都没有 / 全无值 → null（bar 不画，不拿假数占位）", () => {
+        expect(lastMeasuredRate([])).toBeNull();
+        expect(lastMeasuredRate([{ lastStepRate: null }, {}])).toBeNull();
+        expect(lastMeasuredRate([{ lastStepRate: 0 }])).toBeNull(); // 0 不是速度
     });
 });

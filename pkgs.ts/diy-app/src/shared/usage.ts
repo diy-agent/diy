@@ -421,8 +421,16 @@ export function snapshotUsage(u: UsageLike | undefined | null): UsageSnapshot | 
 
 export interface StepPerformance {
     stepTimeMs?: number;
+    /**
+     * 模型**响应**耗时（不含客户端工具执行；ai-sdk 的 `performance.responseTimeMs`）。
+     * 速度的分母 = 它 − `timeToFirstOutputMs` —— 用 `stepTimeMs` 会把工具执行时间算进去，
+     * 工具跑 30s、模型写 1s 时除下来等于"没在写"（`stepRate` 头注）。
+     */
+    responseTimeMs?: number;
     timeToFirstOutputMs?: number;
+    /** = `outputTokens / (responseTimeMs − timeToFirstOutputMs)`（ai-sdk 流式步给的真值） */
     outputTokensPerSecond?: number;
+    /** = `outputTokens / responseTimeMs`（含首字等待；**不是**我们要的口径，别用） */
     effectiveOutputTokensPerSecond?: number;
 }
 
@@ -520,6 +528,12 @@ export type TurnUsagePatch = {
     lastOutputTotal?: number;
     /** 本轮步数（解释"为什么累计远大于窗口"：每一步都要重发整个上下文）；同上 optional */
     steps?: number;
+    /**
+     * 本轮**最后一步**的生成速度（tok/s，口径见 `stepRate`）。给不出数 → null。
+     * ⚠️ 是"最后一步"而不是"正在跑的那一步"：流内的 token 计数拿不到，跑着的一步只能沿用
+     * 上一个已完成步的实测值（该步一结束即刷新）。optional：本版之前的记录没有 → bar 不画。
+     */
+    lastStepRate?: number | null;
     /** 上下文窗口上限（未知 → null；UI 显示「—」而不是编一个百分比） */
     contextLimit: number | null;
     /** 本轮累计金额 */
@@ -536,6 +550,8 @@ export function turnUsagePatch(
     contextLimit?: number,
     steps = 0,
     contextParts?: { systemBytes: number; toolsBytes: number },
+    /** 本轮最后一步的生成速度（`stepRate`）；给不出 → 传 null */
+    lastStepRate: number | null = null,
 ): TurnUsagePatch {
     return {
         inputTotal: cumulative.inputTotal,
@@ -550,31 +566,62 @@ export function turnUsagePatch(
         lastInputTotal: lastStep?.inputTotal ?? cumulative.inputTotal,
         lastOutputTotal: lastStep?.outputTotal ?? cumulative.outputTotal,
         steps,
+        lastStepRate,
         contextLimit: contextLimit ?? null,
         cost,
         ...(contextParts ? { contextParts } : {}),
     };
 }
 
-// ─── 实时速度（轮尾状态行） ─────────────────────────
+// ─── 速度（按步 · 状态栏与用量表共用） ─────────────
 
 /**
- * **当前 token 速度**（tok/s）= 本请求已输出 tokens ÷ 已耗时。
+ * **一步的生成速度**（tok/s）= 该步总输出 ÷ 该步**生成耗时**。
  *
- * 口径（用户 2026-10-12 拍板）：要的是**本请求此刻**的速度，不是轮次平均、更不是模型标称速率
- * —— 前者能用来看"它现在写得多快"（长轮早段慢吞吞、后段忽然快，平均值把这个盖掉）。
- * 分母是**轮的已耗时**（turnId 内嵌的开始时刻到 now），分子是**本轮累计输出**（含思考，
- * 与用量同一口径，见 TurnUsagePatch.outputTotal）。
+ * 口径（用户 2026-10-12 拍板，第三次修正 —— 前两版分别是"轮次平均"与"当轮已输出 ÷ 已耗时"）：
+ *   · 分子 = **该步**总输出（含思考，与用量同口径）。不是本轮累计：累计 ÷ 耗时是"轮次平均"，
+ *     把中间等待、工具执行、别的步的输出全摊进来，答不了"模型写得多快"。
+ *   · 分母 = 该步生成耗时 = **响应耗时 − TTFT**（用户原话："要减去 TTFT 即首次输出，
+ *     因为前面的时间不知道他在干嘛"）。故用 `responseTimeMs` 而**不是** `stepTimeMs`：
+ *     后者含客户端工具执行耗时（工具跑 30s、模型写 1s，除下来等于没在写）。
+ *   · `outputTokensPerSecond`（ai-sdk 流式步已给）= `outputTokens / (responseTimeMs − ttft)`，
+ *     与上面的口径逐字一致 ⇒ **直接取它**（真值来自上游计时，不是我们拼的）；缺了才现算。
  *
- * 任一前提缺了就返回 null（**宁可不显示，也不给假数**）：没有开始时刻（旧格式 id）、
- * 还没跑满 1 秒（除出来是几百的尖峰）、一步都没输出（除零）。
+ * ⚠️ **粒度 = 一步**：流内部的 token 计数拿不到（usage 由 provider 在每步收尾才给，
+ * 实测 2739/2739 条记录都只有步级数），所以"跑着的那一步"只能显示上一个已完成步的实测值，
+ * 该步一结束立刻刷新 —— 不拿按流式文本估的假数占位（实测那种估算中位误差 41%、p90 200%）。
+ *
+ * 任一前提缺 → null（宁可不显示，也不给假数）。
  */
-export function tokenRate(outputTotal: number, startMs: number | null, nowMs: number): number | null {
-    if (startMs == null) return null;
-    const secs = (nowMs - startMs) / 1000;
-    if (!(secs >= 1)) return null;
-    if (!(outputTotal > 0)) return null;
-    return outputTotal / secs;
+export function stepRate(p: StepPerformance | undefined | null, outputTokens: number): number | null {
+    const given = p?.outputTokensPerSecond;
+    if (typeof given === "number" && Number.isFinite(given) && given > 0) return given;
+    const resp = p?.responseTimeMs;
+    const ttft = p?.timeToFirstOutputMs;
+    if (resp == null || ttft == null) return null;
+    const genMs = resp - ttft;
+    if (!(genMs > 0) || !(outputTokens > 0)) return null;
+    return (outputTokens / genMs) * 1000;
+}
+
+/** 速度展示（UI 与 CLI 同字形，避免两处各写一套）：给不出数 → `–`（不写 0） */
+export function fmtRate(r: number | null | undefined): string {
+    return r == null || !Number.isFinite(r) || r <= 0 ? "–" : `${Math.round(r)} tok/s`;
+}
+
+/**
+ * 若干轮的 usage patch（**时间正序**）→ 最近一次实测步速度。
+ *
+ * 总状态栏的口径（用户 2026-10-12）：「没有执行新 step，老的速度留在 bar 上，就是最后一次速度」
+ * —— 故不是一个"跑着才显示"的瞬时值，而是**最后一次落盘的速度**，从最新一轮往回找第一个有值的。
+ * 一轮都没有（新会话 / 本版之前的记录）→ null（那时 bar 不画，不拿假数占位）。
+ */
+export function lastMeasuredRate(usages: (Pick<TurnUsagePatch, "lastStepRate"> | undefined | null)[]): number | null {
+    for (let i = usages.length - 1; i >= 0; i--) {
+        const r = usages[i]?.lastStepRate;
+        if (typeof r === "number" && Number.isFinite(r) && r > 0) return r;
+    }
+    return null;
 }
 
 // ─── 聚合（UI 明细/看板与 CLI 表格共用）──

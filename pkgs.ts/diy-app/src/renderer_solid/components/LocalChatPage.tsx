@@ -36,7 +36,8 @@ import {
     TurnUsageDetailDrawer,
     SessionUsageChip,
     WindowRing,
-    LiveTokenRate,
+    StepRateChip,
+    sessionLastRate,
     UsageDrawer,
     UsageHoverCard,
     armHoverClose,
@@ -57,6 +58,8 @@ import type { ReasoningEffort } from "../../main/services/local-agent";
 // 插话队列项：与草稿同文件存储（任务目录 .diy/drafts.yaml），类型只在 main 侧定义
 import type { SteerItem, SteerMode } from "../../main/core/drafts";
 import { reasoningEffortLabel } from "../../shared/reasoning-effort";
+// 速度口径与"最近一次实测"的取值（与轮尾状态行、用量表速度列**同一个函数**，见 shared/usage.stepRate）
+import { lastMeasuredRate, type TurnUsagePatch } from "../../shared/usage";
 import { DragDropProvider, DragOverlay, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron } from "./icons";
@@ -1675,12 +1678,21 @@ export function LocalChatPage(props: { uri?: string }) {
         // （2026-10-11 实测：错误现场被画成"进行中"的红框）。真实的直播轮 turn 块必然未 stop。
         return last && !last.stopped ? last.id : null;
     };
-    /** 直播轮**已输出**的 tokens（⚡ 速度的分子；与轮尾状态行同源，都是 turn 块的 usage patch） */
-    const liveOutputTokens = () => {
-        const id = liveTurnId();
-        if (!id) return 0;
-        const u = localChatStore.trees.find((x) => x.id === id)?.attrs.usage as { outputTotal?: number } | undefined;
-        return u?.outputTotal ?? 0;
+    /**
+     * ⚡ 总状态栏的速度 = **最近一次实测的步速度**（tok/s）。
+     *
+     * 口径（用户 2026-10-12）：「没有执行新 step，老的速度留在 bar 上，就是最后一次速度」
+     * —— 从最新一轮往回找第一个有 `lastStepRate` 的（`shared/usage.lastMeasuredRate`：
+     * 一轮都没有 → null → 整块不画）。值随每步结束的 usage patch 更新，故这里读的就是真值，
+     * 不需要本地定时器（按步统计，值只在步结束时变）。
+     */
+    const lastRate = () => {
+        const usages = localChatStore.trees
+            .filter((t) => t.tag === "turn")
+            .map((t) => t.attrs.usage as TurnUsagePatch | undefined);
+        // 主源 = 各轮 usage patch 的 `lastStepRate`；本版之前的 ops 没有该字段（那时还没这个数）
+        // ⇒ 回退到逐步账本镜像（打开会话时已对账刷新），老会话也看得见速度。
+        return lastMeasuredRate(usages) ?? sessionLastRate();
     };
     // Markdown 渲染开关（视图 cache 持久化）：全局开关而非 per-message
     const [md, setMdRaw] = createSignal<boolean>(Caches.diy_chat_md.get());
@@ -2184,10 +2196,10 @@ export function LocalChatPage(props: { uri?: string }) {
                         {/* L1 窗口占用环（chip 的 token/金额总量右侧）：hover 出构成卡（含「压缩」按钮 + 可降低窗口比较条）。
                             【用户 2026-10-07】压缩入口**移进 token 窗口的 card**（不再单独一个按钮）；生成中禁用+提示。 */}
                         <WindowRing />
-                        {/* ⚡ 总状态栏的**当前请求**输出速度（R25 待办 B）：与轮尾状态行同一个判据
-                            （`tokenRate` = 已输出 ÷ 已耗时），放在**常驻**位置 —— 轮尾那行会随滚屏
-                            移出视野，而"这一轮跑得快不快"恰恰在等待/想打断时最需要看见。 */}
-                        <LiveTokenRate turnId={liveTurnId()} outputTotal={liveOutputTokens()} />
+                        {/* ⚡ 总状态栏的生成速度（R25 待办 B；口径见 lastRate）：与轮尾状态行、用量表速度列
+                            同一个数（最近一步的 `总输出 ÷ (响应耗时 − TTFT)`），放在**常驻**位置 ——
+                            轮尾那行会随滚屏移出视野，而"跑得快不快"恰恰在等待/想打断时最需要看见。 */}
+                        <StepRateChip rate={lastRate()} />
                         <div class="flex-1" />
                         {/* 生成中的可见性：别人（CLI/另一窗口）发起时本地 running 全程为 false，
                             不显式说出来，界面看起来就像"什么都没发生"（任务 194 现象一的另一半） */}

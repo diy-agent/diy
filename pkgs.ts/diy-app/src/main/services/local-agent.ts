@@ -51,6 +51,7 @@ import {
     bucketsOf,
     costBreakdown,
     snapshotUsage,
+    stepRate,
     sumBuckets,
     sumCosts,
     turnUsagePatch,
@@ -1841,6 +1842,10 @@ export class LocalAgentManager {
         // 与累计金额（每步按各自生效单价算好再加，tier 每一步都可能不同）。
         let turnBuckets: UsageBuckets = { noCache: 0, cacheRead: 0, cacheWrite: null, text: 0, reasoning: 0, outputTotal: 0, inputTotal: 0, total: 0 };
         let lastStepBuckets: UsageBuckets | null = null;
+        // 本轮**最后一步**的生成速度（tok/s = 该步输出 ÷ (响应耗时 − TTFT)，口径见 shared/usage.stepRate）。
+        // 为什么要进 turn patch：状态栏的 ⚡ 要能"没在跑时也留在那儿"（老的速度不消失），
+        // 而流内部的 token 计数拿不到 ⇒ 只能每步落一次、由 UI 显示最后一次实测值。
+        let lastStepRate: number | null = null;
         let turnCost: CostBreakdown = { noCache: 0, cacheRead: 0, cacheWrite: null, text: 0, reasoning: 0, total: 0 };
         // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
         let lastAct: "none" | "text" | "tool" = "none";
@@ -2322,6 +2327,7 @@ export class LocalAgentManager {
                                 const b = bucketsOf(su);
                                 turnBuckets = sumBuckets([turnBuckets, b]);
                                 lastStepBuckets = b;
+                                lastStepRate = stepRate(fsPart.performance, b.outputTotal);
                                 // **按 response.modelId 查价**：上游可能路由改写模型（##211 §四.4.4）
                                 const priceModel = fsPart.response?.modelId ?? model;
                                 const rates = costOf(priceModel, b.inputTotal);
@@ -2352,7 +2358,7 @@ export class LocalAgentManager {
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
-                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts) },
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate) },
                                 });
                             }
                             if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
@@ -2381,7 +2387,7 @@ export class LocalAgentManager {
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
-                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts) },
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate) },
                                 });
                             }
                             // turn 的 stop 由 closeTurn 发（finally 里那一处）：收尾必须闭合
