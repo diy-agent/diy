@@ -66,6 +66,7 @@ import {
     clampLines,
     composeTail,
     cycleTurnLevel,
+    endReasonOf,
     expandableOf,
     isTurnLevel,
     isUserText,
@@ -564,6 +565,7 @@ function TailBox(props: {
             data-block-id={n().id}
             data-block-tag={n().tag}
             data-tail-box={props.live ? "live" : "scene"}
+            data-failing={failing() ? "1" : undefined}
             data-live-area={props.live ? (n().stopped ? "waiting" : "active") : undefined}
         >
             <DisclosureHead
@@ -878,7 +880,12 @@ function ProcBar(props: {
     /** 计数块的读屏/自动化文案（图标的字形读屏念不出来）；**两个计数恒在**（见下） */
     const countsText = () => `${thinks()} 段思考、${tools()} 个工具`;
     return (
-        <div class="rounded-lg" data-block-tag="proc-bar" data-block-id={props.parts[0]?.id}>
+        <div
+            class="rounded-lg"
+            data-block-tag="proc-bar"
+            data-block-id={props.parts[0]?.id}
+            data-has-error={failed() ? "1" : undefined}
+        >
             <DisclosureHead
                 open={props.open}
                 onToggle={props.onToggle}
@@ -1136,6 +1143,10 @@ function TurnView(props: {
                     turnId={t().id}
                     usage={t().attrs.usage}
                     pending={usagePending()}
+                    /* 直播中：状态图标走"进行中"、⚡速度才显示（停下即不显示 —— 静默的旧轮没有"当前速度"） */
+                    live={isLiveTurn()}
+                    /* 结束原因：状态行那个 ✓/✗/⛔ 的判据（##288 的 endReason；旧日志 null → 不给图标） */
+                    end={endReasonOf(t())}
                     /* 本轮统计（步数 · 耗时 · ⚙ n · 💭 n · ❌ n）画在**轮尾**：时刻右边、
                        用量左边（用户 2026-10-11 口径，判据见 turnStatLine） */
                     stat={turnStatLine(t(), counts())}
@@ -1829,7 +1840,7 @@ export function LocalChatPage(props: { uri?: string }) {
             {/* 块树滚动区 */}
             <div
                 ref={(el) => (scrollRef = el)}
-                class="flex-1 overflow-y-auto px-4 py-3"
+                class="diy-chat flex-1 overflow-y-auto px-4 py-3"
                 onScroll={(e) => setStick(nearBottom(e.currentTarget))}
             >
                 <div class="space-y-3">

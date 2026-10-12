@@ -265,6 +265,45 @@ export function turnEndNote(turn: BlockNode): string | null {
 }
 
 /**
+ * 轮尾**状态行**的状态图标（末行恒显 —— 它是"这轮到底怎么结束的"的唯一常显位）。
+ *
+ * 用户 2026-10-11 口径："我起码知道是模型说我正常结束了，还是模型说有长度/金额限制所以要结束了，
+ * 还是压根没收到 llm 结束"。`endReason`（##288 拍板）是判据，这里只把它翻成一个字形 + 一句 tip。
+ * **字形承载状态、文字只进 tooltip**（用户 2026-10-12：状态行上不写"正常结束"这类字）。
+ *
+ * tone 三档给样式用（不是给判据用）：`ok` 绿 · `cut` 黄（被限制/被中断，非报错）· `err` 红 ·
+ * `live` 灰（进行中）。无 `endReason` 的旧日志 → 不给图标（`icon: ""`，不编状态）。
+ */
+export interface EndMark {
+    icon: string;
+    tip: string;
+    tone: "live" | "ok" | "cut" | "err" | "none";
+}
+
+export function endMarkOf(end: TurnEndReason | null, live: boolean): EndMark {
+    if (live) return { icon: "◌", tip: "本轮进行中", tone: "live" };
+    if (!end) return { icon: "", tip: "", tone: "none" };
+    switch (end.type) {
+        case "completed":
+            return { icon: "✓", tip: "正常结束（completed）", tone: "ok" };
+        case "max-steps":
+            return { icon: "⛔", tip: `步数上限收尾（上限 ${end.data.limit}）`, tone: "cut" };
+        case "max-tokens":
+            return { icon: "⛔", tip: "输出长度上限", tone: "cut" };
+        case "aborted":
+            return {
+                icon: "⛔",
+                tip: end.data.source === "detached" ? "被中断（消费端断开，未跑完）" : "被中断（未跑完）",
+                tone: "cut",
+            };
+        case "interrupted":
+            return { icon: "⛔", tip: "未完成（流中断/崩溃恢复）", tone: "cut" };
+        case "error":
+            return { icon: "✗", tip: "错误终止", tone: "err" };
+    }
+}
+
+/**
  * 活动块**该插在中间区的第几项之前**（`contentItems` 已把它 skip 掉，位置得补回来）。
  *
  * 为什么必须补：活动块是"最后一个过程叶子"，但它后面**可能还有东西** —— 最常见的就是

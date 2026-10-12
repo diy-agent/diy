@@ -23,6 +23,9 @@ import { DEFAULT_TURN_LEVEL, isTurnLevel } from "./chat-fold";
 
 export type DiyTheme = "dark" | "light";
 
+/** 界面样式（皮肤）：见 lib/skin（系统整体样式，本期只作用于 agent 输出区） */
+export type DiySkin = "rail" | "card";
+
 // ─── 聊天的两个视图数：全局展开级别 + 摘要行数 ─────────
 //
 // 2026-10-11：原「正常 / 大纲」两态开关已取消 —— 改成**展开级别**（1 摘要结论 /
@@ -272,6 +275,13 @@ export const Caches = {
     parse: (raw) => (raw === "1" ? true : raw === "0" ? false : null),
     serialize: (v) => (v ? "1" : "0"),
     defaultValue: true,
+  }),
+  /** 界面样式（皮肤）：竖栏 / 卡片。**系统整体样式**偏好，非聊天页私有开关 ——
+   *  改它 = 整个界面换一套风格（本期只落地 agent 输出区，其余页面暂无差异）。 */
+  diy_app_skin: field<DiySkin>("diy_app_skin", {
+    parse: (raw) => (raw === "rail" || raw === "card" ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "card",
   }),
   /** 主题偏好（白名单 dark/light） */
   diy_app_theme: field<DiyTheme>("diy_app_theme", {

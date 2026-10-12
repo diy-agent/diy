@@ -18,6 +18,7 @@ import {
     isUserText,
     conclusionOf,
     composeTail,
+    endMarkOf,
     endReasonOf,
     leadUsers,
     sceneTailOf,
@@ -570,5 +571,31 @@ describe("turnRows：一条行序列、所有级别同构", () => {
         expect(shape(turnRows(cut, 1, null))).toEqual(["tail:x1"]);
         // 4 级：那句更早的过程正文也在（真位置在失败工具之前），现场仍是尾行
         expect(shape(turnRows(cut, 4, null))).toEqual(["text:a1", "tail:x1"]);
+    });
+});
+
+describe("轮尾状态行的状态图标（endMarkOf）", () => {
+    // 判据来自 endReason（##288）；这里钉的是**字形与色档**，不是文案
+    it("直播中 → ◌（灰），不看 endReason", () => {
+        expect(endMarkOf({ type: "completed" } as never, true)).toMatchObject({ icon: "◌", tone: "live" });
+    });
+
+    it("completed → ✓ 绿；error → ✗ 红；被限制/被中断 → ⛔ 黄（不是红：没报错）", () => {
+        expect(endMarkOf({ type: "completed" } as never, false)).toMatchObject({ icon: "✓", tone: "ok" });
+        expect(endMarkOf({ type: "error", data: {} } as never, false)).toMatchObject({ icon: "✗", tone: "err" });
+        expect(endMarkOf({ type: "max-tokens", data: {} } as never, false)).toMatchObject({ icon: "⛔", tone: "cut" });
+        expect(endMarkOf({ type: "aborted", data: { source: "abort" } } as never, false)).toMatchObject({
+            icon: "⛔",
+            tone: "cut",
+        });
+        expect(endMarkOf({ type: "interrupted", data: {} } as never, false)).toMatchObject({ icon: "⛔", tone: "cut" });
+    });
+
+    it("旧日志没有 endReason → 不给图标（不编状态，连灰点都不给）", () => {
+        expect(endMarkOf(null, false)).toMatchObject({ icon: "", tone: "none" });
+    });
+
+    it("max-steps 的 tip 带上限（用户要能分辨「限制」与「报错」）", () => {
+        expect(endMarkOf({ type: "max-steps", data: { limit: 40 } } as never, false).tip).toContain("40");
     });
 });

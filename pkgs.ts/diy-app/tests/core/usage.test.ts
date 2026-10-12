@@ -17,6 +17,7 @@ import {
     groupByTurn,
     ratesOf,
     snapshotUsage,
+    tokenRate,
     sumBuckets,
     sumCosts,
     turnUsagePatch,
@@ -289,5 +290,22 @@ describe("模型表价格数据自洽", () => {
         // responses 面（有 cacheWrite 价）与 chat 面（无）必须区分开：这是"可测性"的前提
         expect(OPENCODE_GO_SNAPSHOT.find((m) => m.id === "gpt-6-luna")!.cost!.cacheWrite).toBe(0.125);
         expect(OPENCODE_GO_SNAPSHOT.find((m) => m.id === "mimo-v2.6-flash")!.cost!.cacheWrite).toBeUndefined();
+    });
+});
+
+describe("实时 token 速度（tokenRate）", () => {
+    // 口径：本请求已输出 ÷ 已耗时（不是轮次平均，不是标称速率）
+    it("已输出 ÷ 已耗时（秒）", () => {
+        expect(tokenRate(3800, 1_000_000, 1_100_000)).toBeCloseTo(38, 5); // 3.8k tok / 100s
+    });
+
+    it("前提缺一 → null（宁可不显示，也不给假数）", () => {
+        expect(tokenRate(100, null, 1_000_000)).toBeNull(); // 旧格式 id，无开始时刻
+        expect(tokenRate(100, 1_000_000, 1_000_500)).toBeNull(); // 不足 1 秒（会除出尖峰）
+        expect(tokenRate(0, 1_000_000, 1_100_000)).toBeNull(); // 一步都还没输出
+    });
+
+    it("时间倒流（时钟回拨 / 脏 id）→ null，不出负数速度", () => {
+        expect(tokenRate(100, 1_100_000, 1_000_000)).toBeNull();
     });
 });

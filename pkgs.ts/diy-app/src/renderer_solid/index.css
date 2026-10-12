@@ -196,3 +196,55 @@
   background-color: var(--color-warning);
   color: var(--color-warning-content);
 }
+
+/* ── 界面样式（皮肤：rail 竖栏 / card 卡片）────────────────────────────
+ * 两套皮肤改的**只是"块怎么摆"**，不改 DOM：组件输出中立结构 + 语义 data 钩子
+ * （`data-block-tag` / `data-tail-box` / `data-has-error` / `data-failing` / `data-testid`），
+ * 皮肤规则全部在本段 —— 加皮肤、调皮肤都不动组件（见 lib/skin 的头注）。
+ *
+ * 挂载：`document.documentElement.dataset.skin`（main.tsx 先于首屏应用，避免闪一下）。
+ * **本期只覆盖 agent 输出区**（`.diy-chat`，LocalChatPage 的块树滚动容器）：其它页面暂无差异；
+ * 扩面时给它加同一个 `diy-chat` 类即可 —— 这就是"系统整体样式"的落地方式，
+ * 而不是给聊天页做一套私有开关。
+ *
+ * 判据（用户 2026-10-12 定稿）：边条一律**灰**，**只有错误/警告吃色**；状态行不卡片化。
+ * 颜色全走 daisyUI 变量（跟主题走），不写死色值。 */
+.diy-chat {
+    --diy-edge: color-mix(in oklab, var(--color-base-content) 16%, transparent);
+    --diy-card: color-mix(in oklab, var(--color-base-200) 55%, transparent);
+}
+
+/* card：每块一张卡（左 4px 灰条 = 类型；这次只做形状，色归错误/警告） */
+[data-skin="card"] .diy-chat [data-block-tag="proc-bar"] > [role="button"],
+[data-skin="card"] .diy-chat [data-tail-box],
+[data-skin="card"] .diy-chat [data-testid="turn-header"] {
+    background: var(--diy-card);
+    border: 1px solid var(--diy-edge);
+    border-left: 4px solid var(--diy-edge);
+    border-radius: 0.5rem;
+    padding-inline: 0.55rem;
+}
+
+/* rail：一条竖线贯穿（层级 = 线 + 缩进），行不带卡底 */
+[data-skin="rail"] .diy-chat [data-block-tag="proc-bar"] > [role="button"],
+[data-skin="rail"] .diy-chat [data-tail-box],
+[data-skin="rail"] .diy-chat [data-testid="turn-header"] {
+    background: transparent;
+    border: 0;
+    border-left: 2px solid var(--diy-edge);
+    border-radius: 0;
+    padding-inline: 0.5rem;
+}
+
+/* 错误/警告吃色：判据与颜色两皮肤一致，只有形状不同（卡片的边条 / 竖栏的线） */
+[data-skin="card"] .diy-chat [data-tail-box][data-failing],
+[data-skin="card"] .diy-chat [data-block-tag="proc-bar"][data-has-error] > [role="button"] {
+    border-color: color-mix(in oklab, var(--color-error) 40%, transparent);
+    border-left-color: var(--color-error);
+    background: color-mix(in oklab, var(--color-error) 8%, transparent);
+}
+[data-skin="rail"] .diy-chat [data-tail-box][data-failing],
+[data-skin="rail"] .diy-chat [data-block-tag="proc-bar"][data-has-error] > [role="button"] {
+    border-left-color: var(--color-error);
+    background: color-mix(in oklab, var(--color-error) 6%, transparent);
+}

@@ -556,6 +556,27 @@ export function turnUsagePatch(
     };
 }
 
+// ─── 实时速度（轮尾状态行） ─────────────────────────
+
+/**
+ * **当前 token 速度**（tok/s）= 本请求已输出 tokens ÷ 已耗时。
+ *
+ * 口径（用户 2026-10-12 拍板）：要的是**本请求此刻**的速度，不是轮次平均、更不是模型标称速率
+ * —— 前者能用来看"它现在写得多快"（长轮早段慢吞吞、后段忽然快，平均值把这个盖掉）。
+ * 分母是**轮的已耗时**（turnId 内嵌的开始时刻到 now），分子是**本轮累计输出**（含思考，
+ * 与用量同一口径，见 TurnUsagePatch.outputTotal）。
+ *
+ * 任一前提缺了就返回 null（**宁可不显示，也不给假数**）：没有开始时刻（旧格式 id）、
+ * 还没跑满 1 秒（除出来是几百的尖峰）、一步都没输出（除零）。
+ */
+export function tokenRate(outputTotal: number, startMs: number | null, nowMs: number): number | null {
+    if (startMs == null) return null;
+    const secs = (nowMs - startMs) / 1000;
+    if (!(secs >= 1)) return null;
+    if (!(outputTotal > 0)) return null;
+    return outputTotal / secs;
+}
+
 // ─── 聚合（UI 明细/看板与 CLI 表格共用）──
 
 /** 一步的桶与金额（从落盘记录还原；记录缺 rates/cost 时按模型表**现价**重算并标记） */
