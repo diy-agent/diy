@@ -182,7 +182,13 @@ function mirrorWindowPos(
     const fitH = Math.min(height, h);
     // 尺寸恰好 = workArea 会被 macOS 判为「出生即已 zoom」（双击标题栏 → 塌成最小值，##87），
     // 命中时统一内缩一点，让窗口出生就是普通窗口。
-    const winW = fitW === w ? Math.max(WINDOW_MIN_WIDTH, w - ZOOM_INSET) : fitW;
+    // ⚠️ 宽度**不**内缩，只内缩高度（##297）：宽度一旦掉到 Tailwind 的 lg 断点（1024）以下，
+    // App 根节点的 `lg:drawer-open`（App.tsx）就失效 → DaisyUI 抽屉关闭、侧栏被挪到画面外
+    // （实测 x=-224 / visibility:hidden），而侧栏**没有任何可见的打开入口**（`#sidebar-toggle`
+    // 只被 drawer-overlay 那张「点空白关闭」的 label 引用）→ nav 整体不可达。宽 1024 的屏上
+    // dev/preview/lab 窗口正好 1024−48=976，掉进去，7 个 nav 意图测试全红。
+    // 高度内缩已足以避免「出生即已 zoom」：macOS 的标准帧 = 工作区**整块**，高度不同即不等。
+    const winW = fitW;
     const winH = fitH === h ? Math.max(WINDOW_MIN_HEIGHT, h - ZOOM_INSET) : fitH;
     return {
       width: winW,
