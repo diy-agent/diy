@@ -11,8 +11,9 @@
 //     图标在行头里首行居中、贴条整块高，见 RowHandle.tsx）
 //   · `data-testid="turn-header"` → LocalChatPage 的 TurnHeader
 //   · `data-block-tag="proc-bar"` 且**子元素带 `role="button"`** → 过程 bar 的命中形状
-//   · `data-proc-children` → 过程 bar 铺开后的**子层容器**（card 皮肤在这里去掉缩进，
-//     子层卡片与父级同一条左边缘，层级只靠色条色差 —— 2026-10-12 用户口径）
+//   · `data-proc-children` → 过程 bar 铺开后的**子层容器**（子层位移在这里补：card = 父卡
+//     边条 4 + 行首留白 16 = 20px（草图 rail-v4.html 实测 `669 → 689`）、rail = 留白 16 + 5，
+//     与草图两皮肤逐像素对齐；card 去掉竖线，层级只靠色条色差）
 //   · `data-tail-box`（+ `data-failing`）/ `data-block-tag="proc-bar"[data-has-error]` → 结尾槽与出错态
 //   · `data-chat-list` → **每轮的过程历史容器**（rail 那条贯穿线的作用点；结尾槽与状态行在它之外）
 //   · `data-turn-status` → 状态行（末行恒显，两皮肤同一形态：上虚线 + 纯文本，不卡片化）
@@ -80,7 +81,8 @@ export function ChatSkinPreview() {
         <span class="min-w-0 truncate opacity-60">mimo-v2.6-flash</span>
       </div>
       {/* 过程 bar（铺开）：命中形状是 `[data-block-tag="proc-bar"] > [role="button"]`；
-          子层容器 `data-proc-children` 里是逐条过程 —— card 皮肤下它不缩进、色条浅一档 */}
+          子层容器 `data-proc-children` 里是逐条过程 —— 位移由容器补（card 20px / rail 21px），
+           card 下不带竖线、色条浅一档（草图 rail-v4.html 的 B 列同款） */}
       <div data-block-tag="proc-bar" data-block-id="skin-preview-proc">
         <Band />
         <div

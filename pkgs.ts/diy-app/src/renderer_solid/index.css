@@ -233,7 +233,8 @@
     border: 1px solid var(--diy-edge);
     border-left: 4px solid var(--diy-edge);
     border-radius: 0.5rem;
-    padding-inline: 0.55rem;
+    padding-left: 1rem;
+    padding-right: 0.6875rem;
 }
 /* 正文行：**只在过程历史里**算一张卡（`[data-chat-list]` 的直属行）。结尾槽（结论）里那份正文
    不算 —— 它已经在结尾槽那张卡里，再套一层就是"卡里还一张卡"（同一个块两条边，纯噪声）。 */
@@ -242,7 +243,8 @@
     border: 1px solid var(--diy-edge);
     border-left: 4px solid var(--diy-edge);
     border-radius: 0.5rem;
-    padding-inline: 0.55rem;
+    padding-left: 1rem;
+    padding-right: 0.6875rem;
 }
 
 /* 子层（逐条过程）：同一张卡，**色条浅一档** */
@@ -251,7 +253,8 @@
     border: 1px solid var(--diy-edge);
     border-left: 4px solid var(--diy-edge-child);
     border-radius: 0.5rem;
-    padding-inline: 0.55rem;
+    padding-left: 1rem;
+    padding-right: 0.6875rem;
 }
 
 /* rail：**一条竖线贯穿**（线画在块树容器上，不是每块一条边）——层级 = 线 + 缩进 */
@@ -351,7 +354,8 @@
  * 卡片行也吃这条（卡内左侧 16px）：既是草图的口径，也让 chevron 与首字之间留出气。 */
 .diy-chat [data-row-head],
 .diy-chat [data-block-tag="text"],
-.diy-chat [data-turn-status] {
+.diy-chat [data-turn-status],
+.diy-chat [data-tail-box] {
     padding-left: 1rem;
 }
 
@@ -371,23 +375,57 @@
 
 [data-skin="card"] .diy-chat [data-row-handle],
 [data-skin="card"] .diy-chat [data-row-band] {
-    /* -8px：手柄盒 356..372 —— 压在卡的 4px 色条（364..368）上，且**不压到卡内文字**
-       （卡的 padding-inline 只有 0.55rem=8.8px，靠 -4px 时 chevron 会啃掉计数 chip 2px） */
-    left: -0.5rem;
+    /* `-4px` = 草图 rail-v4.html 的 `.B .gut{left:-4px}`：手柄盒 360..376，压在卡的 4px
+       色条（364..368）上、中心落在色条右缘 —— 与草图实测一致。卡内容自 384 起
+       （边 4 + 行首留白 16），手柄右缘 376 距首字还有 8px，不啃字。 */
+    left: -0.25rem;
 }
 [data-skin="rail"] .diy-chat [data-row-handle],
 [data-skin="rail"] .diy-chat [data-row-band] {
     left: -0.6rem;
 }
 
-/* ── card 皮肤的层级：**不缩进**（草图 v2 口径：层级 = 块间距 + 色条色）────────
- * rail 用「线 + 缩进」表达层级；card 皮肤下子层容器**去掉竖线与缩进**，子行卡片与父级
- * 同一条左边缘（2026-10-12 用户口径「card 形式的 card 外框没有缩进层级」），层级只由
- * 色条色区分（主层 `--diy-edge` / 子层 `--diy-edge-child`，都灰，只有错误吃色）。 */
+/* ── 结尾槽的折叠条落点（草图 `rail-v4.html` 的 `.tailbox .gut{left:-4px}`）─────────────
+ * 槽比别的行多一层嵌套（`[data-tail-box]` → 行头 / 正文行 → 手柄）：若让内层当定位上下文，
+ * 手柄会被它那 16px 行首留白推右 16px（CDP 实测：卡左缘 +24，应在 +8）。三步走 ——
+ *   ① 槽自己当定位上下文（结论槽的 `[data-tail-box]` 没有 `data-block-id`，得显式给）；
+ *   ② 内层行头/正文降静态，且**不再给第二份行首留白**（否则结论正文比别的行右移 16px）；
+ *   ③ 手柄锚槽（`-4px`）。
+ * 两个入口都要覆盖：`> [data-row-head]`（现场 / 结束点 / 执行过程）与
+ * `> [data-block-tag="text"]`（**结论** —— 正文行直接当槽体）。结果与 v4 两皮肤一致：
+ * card = 槽左缘 +8（`-4px` 落在 4px 边条内的 padding box）、rail = 槽左缘 +4（槽无边框）。 */
+.diy-chat [data-tail-box] {
+    position: relative;
+}
+.diy-chat [data-tail-box] > [data-row-head],
+.diy-chat [data-tail-box] > [data-block-tag="text"] {
+    position: static;
+    /* 槽自己已给行首留白（见上面「行首留白」段）——内层再给一次就是**双重缩进**：
+       结论正文会比其他行内容右移 16px（CDP 实测过）。v4 的 `.tailbox` 里也没有第二层留白。 */
+    padding-left: 0;
+}
+.diy-chat [data-tail-box] > [data-row-head] > [data-row-handle],
+.diy-chat [data-tail-box] > [data-block-tag="text"] > [data-row-handle] {
+    left: -0.25rem;
+}
+
+/* ── 子层容器（过程 bar 铺开后那一列）的层级落点：**两皮肤都照草图 rail-v4.html** ──────
+ * 草图把子行**嵌在父行卡/父行的留白里**：`sub` 自己 ML/PL/BL 全 0（CDP 实测 B 列
+ * `subML:0 subPL:0 subBLW:0`），位移全部由父行留白给出 ——
+ *   · 草图 B（card）：子卡左缘 = 父卡左缘 + **20px**（实测 `669 → 689` = 4px 边条 + 16px 留白）；
+ *   · 草图 A（rail）：子行左缘 = 父行左缘 + **30px**（实测 `52 → 82` = 留白 16 + `sub{margin-left:5}`
+ *     + `sub{padding-left:8}` + 1px 竖线）。
+ * 我们这两处结构不同（子层容器与父行**平级**、不在父行内容盒里），所以位移改由本容器补：
+ *   · card：**去掉竖线**（草图 .B 的 `.sub` 不带 border-left），位移 = 1.25rem（4+16），
+ *     层级只由色条色读（主层 `--diy-edge` / 子层 `--diy-edge-child`，都灰，只有错误吃色）；
+ *   · rail：**线 + 缩进**照旧（草图 `.A .bulk .sub`），位移 = 1rem + 5px（父行留白 + sub 的 margin）。 */
 [data-skin="card"] .diy-chat [data-proc-children] {
-    margin-left: 0;
+    margin-left: 1.25rem;
     padding-left: 0;
     border-left: 0;
+}
+[data-skin="rail"] .diy-chat [data-proc-children] {
+    margin-left: calc(1rem + 5px);
 }
 
 /* 错误/警告吃色：判据与颜色两皮肤一致，只有形状不同（卡片的边条 / 竖栏的线） */
