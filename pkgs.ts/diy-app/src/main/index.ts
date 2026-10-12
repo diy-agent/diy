@@ -147,6 +147,16 @@ if (!gotLock) {
 
 // ── 窗口 ──
 
+// ##87：macOS 视「尺寸恰好 = 标准帧（workArea）」的窗口为「出生即已 zoom」。双击标题栏是
+// toggle，这次走的是 un-zoom，而它的还原目标是「从未被记录过的用户帧」——窗口遂塌成只剩
+// 标题栏的最小值（实测 1×29@0,815，贴在**主屏**工作区左下角）；且它并不是最小化，点 Dock
+// 也救不回来。故命中 workArea 时内缩一圈，让窗口出生就是普通窗口。
+const ZOOM_INSET = 48;
+
+/** 最小可用尺寸：即便将来有别的路径把窗口压小，也不至于塌成 1px。 */
+const WINDOW_MIN_WIDTH = 480;
+const WINDOW_MIN_HEIGHT = 320;
+
 /**
  * 测试/开发时把窗口定位到「非主工作屏」，避免遮挡用户正在干活的屏幕。
  * 仅当非 production（dev/test 就地判 cfg.env）时生效；检测不到合适副屏则回退空对象（默认主屏定位）。
@@ -168,8 +178,12 @@ function mirrorWindowPos(
       null;
     if (!target) return {}; // 单屏：只有主屏，回退默认定位
     const { x, y, width: w, height: h } = target.workArea;
-    const winW = Math.min(width, w);
-    const winH = Math.min(height, h);
+    const fitW = Math.min(width, w);
+    const fitH = Math.min(height, h);
+    // 尺寸恰好 = workArea 会被 macOS 判为「出生即已 zoom」（双击标题栏 → 塌成最小值，##87），
+    // 命中时统一内缩一点，让窗口出生就是普通窗口。
+    const winW = fitW === w ? Math.max(WINDOW_MIN_WIDTH, w - ZOOM_INSET) : fitW;
+    const winH = fitH === h ? Math.max(WINDOW_MIN_HEIGHT, h - ZOOM_INSET) : fitH;
     return {
       width: winW,
       height: winH,
@@ -225,6 +239,9 @@ function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy/rp
   mainWindow = new BrowserWindow({
     width: WIDTH,
     height: HEIGHT,
+    // 最小尺寸兜底：macOS un-zoom（双击标题栏）曾把窗口塌成 1×29，无此下限则不可用（##87）。
+    minWidth: WINDOW_MIN_WIDTH,
+    minHeight: WINDOW_MIN_HEIGHT,
     title,
     show: false,
     ...mirrorWindowPos(WIDTH, HEIGHT),
@@ -240,6 +257,9 @@ function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy/rp
   // （renderer 自己也设一份 document.title，同源同值：serve 模式的浏览器标签、
   //   以及 CDP 断言都读它。此处拦掉的只是「页面 → 窗口标题」这条通路。）
   mainWindow.on("page-title-updated", (e) => e.preventDefault());
+
+  // 几何留痕（##87）：出生 / 可见 / zoom 切换各记一行，便于事后从 main.log 还原现场。
+  traceWindowState(mainWindow);
 
   // RPC Server — 渲染进程 ↔ 主进程通信
   const ipcTransport = createMainTransport(() => mainWindow!.webContents);
@@ -393,6 +413,26 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   rpcPort?.stop();
 });
+
+/**
+ * 几何留痕 —— **不是修复**，只把「窗口出生 / 状态切换」各记一行，让人事后能从 main.log 看懂现场。
+ * `created` / `show` 两行是判断「出生即已 zoom」（##87 的触发条件）的直接证据，
+ * 无需真的双击：`max=true` 就意味第一次双击会走 un-zoom。
+ */
+function traceWindowState(win: BrowserWindow): void {
+  const dump = (tag: string): void => {
+    const b = win.getBounds();
+    console.log(
+      `[win] ${tag} ${b.width}×${b.height}@${b.x},${b.y} min=${win.isMinimized()} max=${win.isMaximized()}`,
+    );
+  };
+  dump("created");
+  win.on("show", () => dump("show"));
+  win.on("maximize", () => dump("maximize"));
+  win.on("unmaximize", () => dump("unmaximize"));
+  win.on("minimize", () => dump("minimize"));
+  win.on("restore", () => dump("restore"));
+}
 
 /**
  * 确保有窗口（没有就重建）。activate（点 Dock）与 second-instance（再启动一次）共用：
