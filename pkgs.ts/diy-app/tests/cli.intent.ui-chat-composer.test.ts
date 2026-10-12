@@ -145,18 +145,23 @@ const inFullscreen = () =>
     ui.query<boolean>("!!document.querySelector('.cm-editor')?.closest('.rounded-field.fixed')");
 
 /**
- * 每条消息 meta 行（user-byline / assistant-byline）：时刻 span + 几何。
+ * 每轮的**两行**（v4 契约，##253「身份上移」+ 轮尾状态行）：一轮各一处，同序（文档序 = 时间序）。
+ *
+ *   ① 轮首署名行 `turn-header` —— 头像 + 名字 + 该轮模型（窄栏截断纪律在这一行）
+ *   ② 轮尾状态行 `[data-turn-status]` —— 时刻 + 统计 + 速度 + 用量（**时刻一轮只在这里出现一次**）
  *
  * 几何一次性取全，是因为窄栏断言要的是**相对关系**（行高 vs 图标高、内容宽 vs 自身宽），
  * 分多次查会拿到不同帧的值。
  */
-const metaRows = () =>
+const turnRows = () =>
     ui.query<
         Array<{
-            who: "user" | "assistant";
             text: string;
+            turnId: string | null;
             time: string | null;
-            title: string;
+            statusH: number;
+            statusW: number;
+            statusScrollW: number;
             rowH: number;
             rowW: number;
             scrollW: number;
@@ -168,30 +173,41 @@ const metaRows = () =>
             modelScrollW: number;
         }>
     >(
-        `[...document.querySelectorAll('[data-testid=user-byline],[data-testid=assistant-byline]')].map((b) => {
-           const spans = [...b.querySelectorAll('span')];
-           const t = spans.find((s) => /^\\d\\d-\\d\\d \\d\\d:\\d\\d$/.test((s.textContent || '').trim()));
-           const ic = spans.find((s) => s.getAttribute('aria-hidden') === 'true');
-           const mdl = spans.find((s) => (s.textContent || '').includes('experimental')) || null;
-           const cont = b.closest('.overflow-auto') || b.parentElement;
-           const br = b.getBoundingClientRect(), cr = cont.getBoundingClientRect();
-           const tr = t && t.getBoundingClientRect();
-           return {
-             who: b.getAttribute('data-testid') === 'user-byline' ? 'user' : 'assistant',
-             text: b.textContent || '',
-             time: t ? t.textContent.trim() : null,
-             title: (t && t.getAttribute('title')) || '',
-             rowH: Math.round(br.height),
-             rowW: Math.round(br.width),
-             scrollW: Math.round(b.scrollWidth),
-             iconH: Math.round(ic ? ic.getBoundingClientRect().height : 0),
-             timeH: Math.round(tr ? tr.height : 0),
-             timeRight: Math.round(tr ? tr.right : 0),
-             contRight: Math.round(cr.right),
-             modelW: Math.round(mdl ? mdl.getBoundingClientRect().width : 0),
-             modelScrollW: Math.round(mdl ? mdl.scrollWidth : 0),
-           };
-         })`,
+        `(() => {
+           const rows = [...document.querySelectorAll('[data-turn-id]')].map((root) => {
+             const b = root.querySelector('[data-testid="turn-header"]');
+             if (!b) return null;
+             const s = root.querySelector('[data-turn-status]'); // 没有 usage 记录的旧轮根本没这行
+             const spans = [...b.querySelectorAll('span')];
+             const ic = spans.find((x) => x.getAttribute('aria-hidden') === 'true');
+             const mdl = spans.find((x) => (x.textContent || '').includes('experimental')) || null;
+             const t = s
+               ? [...s.querySelectorAll('span')].find((x) => /^\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d$/.test((x.textContent || '').trim()))
+               : null;
+             const cont = b.closest('.overflow-auto') || b.parentElement;
+             const br = b.getBoundingClientRect(), cr = cont.getBoundingClientRect();
+             const sr = s && s.getBoundingClientRect();
+             const tr = t && t.getBoundingClientRect();
+             return {
+               turnId: root.getAttribute('data-turn-id'),
+               text: b.textContent || '',
+               time: t ? t.textContent.trim() : null,
+               statusH: Math.round(sr ? sr.height : 0),
+               statusW: Math.round(sr ? sr.width : 0),
+               statusScrollW: s ? Math.round(s.scrollWidth) : 0,
+               rowH: Math.round(br.height),
+               rowW: Math.round(br.width),
+               scrollW: Math.round(b.scrollWidth),
+               iconH: Math.round(ic ? ic.getBoundingClientRect().height : 0),
+               timeH: Math.round(tr ? tr.height : 0),
+               timeRight: Math.round(tr ? tr.right : 0),
+               contRight: Math.round(cr.right),
+               modelW: Math.round(mdl ? mdl.getBoundingClientRect().width : 0),
+               modelScrollW: Math.round(mdl ? mdl.scrollWidth : 0),
+             };
+           });
+           return rows.filter(Boolean);
+         })()`,
     );
 
 describe("R5 聊天输入框高度：一行起、随内容长、整个输入区 view 1/3 封顶", () => {
@@ -254,6 +270,30 @@ describe("R5 聊天输入框高度：一行起、随内容长、整个输入区 
             { op: "start", id: `t${STAMP3_MS}_a1`, kind: "text", parent: `t${STAMP3_MS}`, meta: { role: "assistant" } },
             { op: "delta", id: `t${STAMP3_MS}_a1`, fields: { content: "第三轮回复" } },
             { op: "stop", id: `t${STAMP3_MS}_a1` },
+            // 用量补丁：轮尾状态行（时刻 + 统计 + 用量）要 `usage` 或"直播中"才渲染，
+            // 真实轮次必有（main 在 finish-step 下发）；不给的话这轮连时刻都看不到
+            {
+                op: "patch",
+                id: `t${STAMP3_MS}`,
+                fields: {
+                    usage: {
+                        inputTotal: 100,
+                        outputTotal: 20,
+                        cacheRead: 0,
+                        noCache: 100,
+                        cacheWrite: null,
+                        text: 20,
+                        reasoning: 0,
+                        total: 120,
+                        windowTotal: 120,
+                        lastInputTotal: 100,
+                        lastOutputTotal: 20,
+                        steps: 1,
+                        contextLimit: 200000,
+                        cost: null,
+                    },
+                },
+            },
             { op: "stop", id: `t${STAMP3_MS}` },
         ];
         writeFileSync(file, ops.map((o) => JSON.stringify(o)).join("\n") + "\n", "utf-8");
@@ -357,20 +397,20 @@ describe("R5 聊天输入框高度：一行起、随内容长、整个输入区 
 });
 
 describe("R6 对话消息显示时间：真源 = turnId 内嵌毫秒", () => {
-    it("一轮一处：时刻挂在该轮首个消息块（用户发言）上，助理侧与用量条都不重复", async () => {
-        const rows = await waitUntil(metaRows, (r) => r.length >= 5, { label: "三轮消息上屏" });
-        // 真实毫秒 id 那轮：时刻只出现在**用户发言那一行**，全页（innerText）也只有这一处
-        const stamped = rows.filter((r) => r.time === "09-26 14:07");
+    it("一轮一处：时刻挂在**轮尾状态行**，轮首署名行与用量条都不再各说一次", async () => {
+        const rows = await waitUntil(turnRows, (r) => r.length >= 3, { label: "三轮上屏" });
+        // 三个轮里两个是真实毫秒 id → 恰好两处时刻，一轮一处
+        expect(rows.filter((r) => r.time != null)).toHaveLength(2);
+        const stamped = rows.filter((r) => r.time === "2026-09-26 14:07:09");
         expect(stamped).toHaveLength(1);
-        expect(stamped[0]!.who).toBe("user");
-        expect(stamped[0]!.title).toBe("2026-09-26 14:07:09"); // hover 出精确到秒
-        expect(await ui.query<number>("(document.body.innerText.match(/09-26 14:07/g) || []).length")).toBe(1);
+        // 全页（innerText）也只此一处：消息块与轮首署名行都不挂时刻（v4：时刻收敛到状态行）
+        expect(await ui.query<number>("(document.body.innerText.match(/2026-09-26 14:07:09/g) || []).length")).toBe(1);
 
-        // 助理署名行：一轮里每一块都渲染它（"谁答的"确实是块的属性），但**不挂时刻**
-        // （review2-3：按块挂时一轮两步就有两条带时刻的署名行 + 用户行 + 用量条 = 同一轮 4 声）
-        expect(rows.filter((r) => r.who === "assistant" && r.time != null)).toHaveLength(0);
+        // 轮首署名行：承载"谁答的"（头像 + 名字 + 该轮模型），**不挂时刻**
+        // （review2-3：按块/按行挂时一轮会有好几声时刻，用户 2026-10-11 口径：一轮一处）
+        expect(rows.every((r) => !/\d{4}-\d\d-\d\d \d\d:\d\d/.test(r.text))).toBe(true);
 
-        // 轮底用量条：同样不重复（它的维度是 token/金额，不是时间）
+        // 轮尾状态行：时刻 + 统计 + 速度 + 用量在**同一行**；用量条自己不再重复时刻
         const bar = '[aria-label="本轮用量（悬停看汇总，点击开逐步明细）"]';
         await waitUntil(
             () => ui.query<boolean>(`!!document.querySelector('${bar}')`),
@@ -378,68 +418,78 @@ describe("R6 对话消息显示时间：真源 = turnId 内嵌毫秒", () => {
             { label: "用量条上屏" },
         );
         expect(await ui.query<string>(`document.querySelector('${bar}')?.textContent ?? ''`)).not.toMatch(
-            /\d\d-\d\d \d\d:\d\d/,
+            /\d{4}-\d\d-\d\d \d\d:\d\d/,
         );
+        // 但时刻与用量在**同一个状态行**里（v4：一行 = 时刻 + 统计 + 速度 + 用量，一轮一行）
+        expect(
+            await ui.query<string>(
+                `(() => {
+                   const row = document.querySelector('${bar}')?.closest('[data-turn-status]');
+                   return row ? row.textContent : '';
+                 })()`,
+            ),
+        ).toContain("2026-09-26 14:07:09");
 
-        // 位置：user 那一刻在气泡**上方**、与气泡**右缘对齐**（每条消息块以一行 meta 开头，时间在最右）。
-        const geo = await ui.query<{
-            rowBottom: number;
-            rowRight: number;
-            bubbleTop: number;
-            bubbleRight: number;
-            vw: number;
-        }>(
-            `(() => {
-               const row = document.querySelector('[data-testid=user-byline]');
-               const bubble = row.nextElementSibling.querySelector('div');
-               const rr = row.getBoundingClientRect();
-               const br = bubble.getBoundingClientRect();
-               return { rowBottom: rr.bottom, rowRight: rr.right, bubbleTop: br.top, bubbleRight: br.right, vw: innerWidth };
-             })()`,
-        );
-        expect(geo.rowBottom).toBeLessThanOrEqual(geo.bubbleTop + 1); // 在气泡上方
-        expect(Math.abs(geo.rowRight - geo.bubbleRight)).toBeLessThanOrEqual(2); // 右缘对齐
-        expect(geo.rowRight).toBeGreaterThan(geo.vw / 2); // 确在右半区（不是左边残留）
+        // 位置：状态行排在轮首署名行**之后**（文档序 = 时间序 —— "轮尾"）
+        expect(
+            await ui.query<boolean>(
+                `(() => {
+                   const h = document.querySelector('[data-testid="turn-header"]');
+                   const s = document.querySelector('[data-turn-status]');
+                   return !!(h && s && (h.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_FOLLOWING));
+                 })()`,
+            ),
+        ).toBe(true);
     });
 
     it("解析不出时刻的旧 turnId：不显示时间，也不编一个（更不显示空行）", async () => {
-        const rows = await metaRows();
-        // 旧轮的助理署名行照旧（它承载"谁答的"），但没有时刻
-        const legacy = rows.find((r) => r.who === "assistant" && r.text.includes("legacy-model"));
+        const rows = await turnRows();
+        // 旧轮的署名行照旧（它承载"谁答的"），但它的状态行里**没有**时刻
+        const legacy = rows.find((r) => r.text.includes("legacy-model"));
         expect(legacy).toBeTruthy();
         expect(legacy!.time).toBeNull();
-        // 时刻行只在**解析得出**时才渲染：三块 user 内容里只有两块（两个真实毫秒 id）有这种行
-        const userRows = rows.filter((r) => r.who === "user");
-        expect(userRows).toHaveLength(2);
-        expect(userRows.every((r) => r.time != null)).toBe(true);
+        // 时刻只在**解析得出**时才渲染：三个轮里只有两个（真实毫秒 id）有
+        expect(rows.filter((r) => r.time != null)).toHaveLength(2);
+        expect(rows.filter((r) => r.time == null)).toHaveLength(1);
         // 界面上不该有任何"假时间"
         expect(await ui.query<boolean>("document.body.textContent.includes('NaN')")).toBe(false);
     });
 
-    it("窄栏（420px）下长模型署名行仍一行、被截断而非溢出；轮首时刻完整可见（review2-1）", async () => {
+    it("窄栏下长模型署名行仍一行、被截断而非溢出；状态行不横向溢出（review2-1）", async () => {
         const viewport = await ui.query<{ w: number; h: number }>("({ w: innerWidth, h: innerHeight })");
-        await ui.setViewport(420, 720);
-        try {
+        const longRow = async () => {
             const rows = await waitUntil(
                 async () => {
-                    const r = await metaRows();
-                    return r.some((x) => x.who === "assistant" && x.text.includes("experimental")) ? r : null;
+                    const r = await turnRows();
+                    return r.some((x) => x.text.includes("experimental")) ? r : null;
                 },
                 (v) => v != null,
-                { label: "窄栏下长模型署名行上屏" },
+                { label: "长模型署名行上屏" },
             );
-            const long = rows!.find((x) => x.who === "assistant" && x.text.includes("experimental"))!;
-            // ① 不换行：行高仍是单行（截图里换行会到图标高的两倍）
-            expect(long.rowH).toBeLessThanOrEqual(long.iconH + 4);
+            return rows!.find((x) => x.text.includes("experimental"))!;
+        };
+        try {
+            // ── 极窄栏：窗口 420px，侧栏占满后内容列只剩 ~88px ─────────────────────
+            await ui.setViewport(420, 720);
+            const narrow = await longRow();
+            // ① 轮首行不换行（换行会到图标高的两倍）
+            expect(narrow.rowH).toBeLessThanOrEqual(narrow.iconH + 4);
             // ② 不溢出容器：内容被截在行内（撑破时 scrollWidth 会大于自身宽度）
-            expect(long.scrollW).toBeLessThanOrEqual(long.rowW + 2);
+            expect(narrow.scrollW).toBeLessThanOrEqual(narrow.rowW + 2);
             // ③ 截断**真的发生了**（而不是这次内容恰好短）：模型名比它那块可见宽度长
-            expect(long.modelScrollW).toBeGreaterThan(long.modelW + 4);
-            // ④ 该轮的轮首时刻完整可见：右缘没越过容器右缘，且没被挤成两行
-            const timeRow = rows!.find((x) => x.who === "user" && x.time === "09-27 09:15")!;
-            expect(timeRow).toBeTruthy();
-            expect(timeRow.timeRight).toBeLessThanOrEqual(timeRow.contRight + 1);
-            expect(timeRow.rowH).toBeLessThanOrEqual(timeRow.timeH + 4);
+            expect(narrow.modelScrollW).toBeGreaterThan(narrow.modelW + 4);
+            // ④ 时刻文本仍是完整到秒的（极窄栏里状态行会被几个 shrink-0 兄弟挤破 —— 那是
+            //    另一个问题，不在这条里锁；反正**轮首不再承担时刻**）
+            expect(narrow.time).toBe("2026-09-27 09:15:30");
+
+            // ── 日常窄栏：窗口 700px（内容列 ~368px）——状态行的下限档 ────────────
+            await ui.setViewport(700, 720);
+            const long = await longRow();
+            // ⑤ 状态行自己也不横向溢出，且没被挤成两行（挤成两行会到 ~37px）
+            expect(long.statusScrollW).toBeLessThanOrEqual(long.statusW + 2);
+            expect(long.statusH).toBeLessThanOrEqual(24);
+            // ⑥ 时刻在容器内完整可见（右缘没越过容器右缘）
+            expect(long.timeRight!).toBeLessThanOrEqual(long.contRight! + 1);
         } finally {
             await ui.setViewport(viewport.w, viewport.h);
         }

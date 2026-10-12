@@ -654,7 +654,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         expect(text).toContain(byName.model.replace(/^[^@]+@/, ""));
     });
 
-    it("每条 assistant 回复上方显示人物头像与名字（回复人可见）", async () => {
+    it("每轮上方显示人物头像与名字（回复人可见）", async () => {
         const 名 = uniq("发言人");
         const id = await addPersona(名, "mimo-v2.6-flash");
         const uri = await setupTask("回复人展示任务");
@@ -675,16 +675,19 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         writeFileSync(ops, lines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf-8");
 
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
-        // 回复人 = 本任务绑定的人物（名字 + 模型），显示在消息**上方**
+        // 回复人 = 本任务绑定的人物（头像 + 名字 + 该轮模型），显示在**该轮内容上方**。
+        // ##253「身份上移」：不再是"每条 assistant 消息一条署名行"，改成轮首一处
+        // （`turn-header`，任何折叠级别都显示）—— 事实口径不变，只是位置跟着契约挪。
         const byline = await waitUntil(
             async () =>
                 ui!.eval<string | null>(`(() => {
-                const el = document.querySelector('[data-testid="assistant-byline"]');
+                const el = document.querySelector('[data-testid="turn-header"]');
                 return el ? el.textContent : null;
             })()`),
             (t) => !!t && t.includes("发言人"),
             { label: "出现回复人署名" },
         );
+        expect(byline).toContain("🤖"); // 头像
         expect(byline).toContain(名);
         expect(byline).toContain("mimo-v2.6-flash");
     });
@@ -722,9 +725,10 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         writeFileSync(ops, lines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf-8");
 
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        // 署名落在**轮首**（##253 身份上移：一轮一处），不是每条 assistant 消息一处
         const bylines = async () =>
             ui!.eval<string[]>(`(() => {
-                return [...document.querySelectorAll('[data-testid="assistant-byline"]')]
+                return [...document.querySelectorAll('[data-testid="turn-header"]')]
                     .map((el) => (el.textContent ?? "") + "|" + (el.getAttribute("data-inferred") ?? ""));
             })()`);
         const got = await waitUntil(bylines, (v) => v.length === 3, {

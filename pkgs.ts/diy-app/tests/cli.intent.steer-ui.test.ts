@@ -354,23 +354,18 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
         const lastTurnId = turnIds[turnIds.length - 1]!;
         const d = new Date(Number(lastTurnId.slice(1)));
         const p2 = (n: number) => String(n).padStart(2, "0");
-        const expTime = `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
         const expTitle = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
         const shown = await waitUntil(
             () =>
-                ui.query<Array<{ time: string; title: string }>>(
-                    `[...document.querySelectorAll('[data-testid=user-byline],[data-testid=assistant-byline]')]
-                       .map((b) => {
-                         const s = [...b.querySelectorAll('span')].find((x) => /^\\d\\d-\\d\\d \\d\\d:\\d\\d$/.test((x.textContent || '').trim()));
-                         return s ? { time: s.textContent.trim(), title: s.getAttribute('title') || '' } : null;
-                       })
-                       .filter(Boolean)`,
+                ui.query<string[]>(
+                    `[...document.querySelectorAll('[data-turn-status] span')]
+                       .map((s) => (s.textContent || '').trim())
+                       .filter((t) => /^\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d$/.test(t))`,
                 ),
-            (rows) => rows.some((r) => r.title === expTitle),
+            (rows) => rows.includes(expTitle),
             { label: `真轮 ${lastTurnId} 的时刻已上屏` },
         );
-        const hit = shown.find((r) => r.title === expTitle)!;
-        expect(hit.time).toBe(expTime); // 可见文案 = turnId 内嵌毫秒的本地时刻
-        expect(expTime).toMatch(/^\d\d-\d\d \d\d:\d\d$/);
+        // v4（##253）：时刻收敛到**轮尾状态行**一处，且直接显示到秒 —— 不再是 `MM-DD HH:MM` + hover title
+        expect(shown.filter((t) => t === expTitle)).toHaveLength(1);
     }, 120_000); // 本用例要跑完「一轮收尾 → 自动续轮」，且每次断言都要一次 CLI 往返：给足预算
 });
