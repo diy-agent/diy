@@ -296,7 +296,11 @@ const THINK_LINE_MAX = 90;
 export function expandableOf(n: BlockNode): boolean {
     if (n.tag !== "think") return true;
     const c = typeof n.attrs.content === "string" ? n.attrs.content : "";
-    return c.includes("\n") || c.trim().length > THINK_LINE_MAX;
+    // 判据必须与标题同一套：先去掉前导/尾随空行再数行。
+    // 反例（review ##253 RV-2）：content = "\n只有一行" —— 原始串含 "\n" 被判可展开，
+    // 而标题 `firstLine` 跳过空行后就是"只有一行"，点开看到的和标题一模一样（"像坏了"）。
+    const t = c.trim();
+    return t.includes("\n") || t.length > THINK_LINE_MAX;
 }
 
 // ─── 一轮的行（级别同构的唯一切口） ──────────────────────
@@ -365,6 +369,32 @@ export function tailOf(turn: BlockNode, live: BlockNode | null): TurnTail | null
 }
 
 /**
+ * `endleaf`（结束点）那句 tag 的 tooltip —— **必须跟着 `endReason` 走**。
+ *
+ * 为什么单独成一个纯函数：`EndLeafBox` 原来把它写死成「正常结束，但模型未给文字结论」，
+ * 而 `tailOf` 在没有 `endReason` 的**旧日志**上同样会给 `endleaf`（判据只看"末件不是正文、
+ * 又没异常"）⇒ 同一件事，状态行说"不知道"（`endMarkOf` 对无 endReason 刻意不给图标），
+ * 尾槽却断言"正常结束"（review ##253 RV-3）。旧日志里"末件是工具"完全可能是崩溃/中断留下的，
+ * 不能替它编一个结束原因。搁在纯函数里才能被单测钉住（组件文案测不到）。
+ */
+export function endLeafTip(turn: BlockNode): string {
+    const r = endReasonOf(turn);
+    if (!r) return "末件是工具 · 结束原因未知（本版之前的记录没有 endReason）";
+    switch (r.type) {
+        case "completed":
+            return (
+                (typeof turn.attrs.notice === "string" && turn.attrs.notice) ||
+                "正常结束，但模型未给文字结论"
+            );
+        case "max-tokens":
+            return "输出达到上限被截断，末件停在工具";
+        default:
+            // tailOf 只在这一步之外（非异常）才会给 endleaf；真走到这儿就照实说
+            return turnEndNote(turn) ?? "本轮结束点";
+    }
+}
+
+/**
  * 一轮的**过程历史行**（"级别同构"的唯一切口）—— 纯函数，可单测。
  *
  * 只产历史（用户发言 / error / 助理正文 / 过程 bar），**不含结尾槽**：
@@ -380,6 +410,12 @@ export function tailOf(turn: BlockNode, live: BlockNode | null): TurnTail | null
 export function turnRows(turn: BlockNode, live: BlockNode | null): TurnRow[] {
     const tail = tailOf(turn, live)?.node ?? null;
     const owned = new Set<string>(tail ? [tail.id] : []);
+    // **现场的主体也要排进 owned**：末叶子是 error 时尾槽画的是「红条 + 它前面那个叶子」，
+    // 那个 body 不排掉就会在过程历史里再画一遍（同一块上下各一份，默认 3 级下不用点就能看见）。
+    // 这条 R20 修过、R21「级别同构」重构把 owned 收成 `{tail.id}` 时又丢了（review ##253 RV-1）。
+    // 排除判据只此一处 —— 组件里不许再补 skip 集合（级别同构的口径）。
+    const sceneBody = composeTail(turn, tail)?.body;
+    if (sceneBody) owned.add(sceneBody.id);
     const rows: TurnRow[] = [];
     for (const it of contentItems(turn, (n) => owned.has(n.id))) {
         if (it.kind === "proc") rows.push({ kind: "proc", key: it.key, parts: it.parts });
@@ -491,6 +527,12 @@ export function planOfLevel(level: TurnLevel): LevelPlan {
  */
 export function clampLines(text: string, n: number): { text: string; omitted: number } {
     const lines = text.split("\n");
-    if (lines.length <= n) return { text, omitted: 0 };
-    return { text: lines.slice(0, n).join("\n"), omitted: lines.length - n };
+    // **前导空行不算额度**：Markdown 里首个块之前的空行没有语义（渲染时本来就被吃掉），
+    // 却会占满摘要的全部行数 —— `clampLines("\n\n正文", 2)` 会把两行额度全用在空行上，
+    // 摘要里一个字都看不见（review ##253 RV-2 的同一类"判据两处口径"）。
+    let start = 0;
+    while (start < lines.length && lines[start]!.trim() === "") start++;
+    const kept = lines.slice(start);
+    if (kept.length <= n) return { text: kept.join("\n"), omitted: 0 };
+    return { text: kept.slice(0, n).join("\n"), omitted: kept.length - n };
 }

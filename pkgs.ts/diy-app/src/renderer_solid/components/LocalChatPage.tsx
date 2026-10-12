@@ -36,6 +36,7 @@ import {
     TurnUsageDetailDrawer,
     SessionUsageChip,
     WindowRing,
+    LiveTokenRate,
     UsageDrawer,
     UsageHoverCard,
     armHoverClose,
@@ -70,6 +71,7 @@ import {
     clampLines,
     composeTail,
     cycleTurnLevel,
+    endLeafTip,
     endReasonOf,
     expandableOf,
     isTurnLevel,
@@ -507,7 +509,6 @@ function ProcessRow(props: {
                 can={can()}
                 open={open()}
                 onToggle={() => props.onToggle(n().id)}
-                label={`${summaryOf(n(), false)}（${can() ? (open() ? "收起" : "展开") : "无展开内容"}）`}
             />
             <Show
                 when={can()}
@@ -670,7 +671,9 @@ function EndLeafBox(props: {
                 <span
                     class="shrink-0 rounded border border-dashed border-base-300 px-1 text-caption opacity-50"
                     data-tail-tag
-                    title="正常结束，但模型未给文字结论"
+                    /* 文案**跟着 endReason 走**（纯函数 `endLeafTip`）：旧日志没有 endReason，
+                       不能替它断言"正常结束"（##253 RV-3）。tag 本身中性，故恒为「本轮结束点」。 */
+                    title={endLeafTip(n())}
                 >
                     本轮结束点
                 </span>
@@ -801,7 +804,7 @@ function TurnHeader(props: {
             {/* 开合手柄在**行首 gutter**（`RowHandle`）：一轮里"轮次头 → 过程 bar → 逐条过程"
                 三级同列左对齐，一眼能看出层级（2026-10-11 用户口径：箭头从右边换到左边；
                 2026-10-12 用户口径：竖列成一列，见 RowHandle 头注） */}
-            <RowGutter open={open()} onToggle={props.onToggle} label={`过程历史：${turnFoldTip(open())}`} />
+            <RowGutter open={open()} onToggle={props.onToggle} />
             {/* 身份：**所有级别都显示**（1 级与 2 级必须一致，用户 2026-10-11 口径） */}
             <span
                 class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-body"
@@ -898,7 +901,10 @@ function TextRow(props: {
                 can={canFold()}
                 open={open()}
                 onToggle={fire}
-                label={`正文${canFold() ? `（${open() ? "收起" : "展开"}）` : ""}`}
+                /* 正文行**没有行头控件**（正文本身就是内容，不是 DisclosureHead）⇒ 条是它唯一的
+                   键盘入口，给 `sole`。但收起态那条"⋯ 已折叠 N 行 · 点击展开全部正文"是可见按钮，
+                   已经有停靠点 ⇒ 那时条退回装饰（免得同一行动作两个 tab 停靠点）。 */
+                sole={!cut()}
             />
             <div
                 style={
@@ -994,7 +1000,7 @@ function ProcBar(props: {
             data-has-error={failed() ? "1" : undefined}
             data-open={props.open ? "1" : "0"}
         >
-            <RowGutter open={props.open} onToggle={props.onToggle} label={`过程：${countsText()}`} />
+            <RowGutter open={props.open} onToggle={props.onToggle} />
             <DisclosureHead
                 open={props.open}
                 onToggle={props.onToggle}
@@ -1669,6 +1675,13 @@ export function LocalChatPage(props: { uri?: string }) {
         // （2026-10-11 实测：错误现场被画成"进行中"的红框）。真实的直播轮 turn 块必然未 stop。
         return last && !last.stopped ? last.id : null;
     };
+    /** 直播轮**已输出**的 tokens（⚡ 速度的分子；与轮尾状态行同源，都是 turn 块的 usage patch） */
+    const liveOutputTokens = () => {
+        const id = liveTurnId();
+        if (!id) return 0;
+        const u = localChatStore.trees.find((x) => x.id === id)?.attrs.usage as { outputTotal?: number } | undefined;
+        return u?.outputTotal ?? 0;
+    };
     // Markdown 渲染开关（视图 cache 持久化）：全局开关而非 per-message
     const [md, setMdRaw] = createSignal<boolean>(Caches.diy_chat_md.get());
     const setMd = (v: boolean) => {
@@ -2171,6 +2184,10 @@ export function LocalChatPage(props: { uri?: string }) {
                         {/* L1 窗口占用环（chip 的 token/金额总量右侧）：hover 出构成卡（含「压缩」按钮 + 可降低窗口比较条）。
                             【用户 2026-10-07】压缩入口**移进 token 窗口的 card**（不再单独一个按钮）；生成中禁用+提示。 */}
                         <WindowRing />
+                        {/* ⚡ 总状态栏的**当前请求**输出速度（R25 待办 B）：与轮尾状态行同一个判据
+                            （`tokenRate` = 已输出 ÷ 已耗时），放在**常驻**位置 —— 轮尾那行会随滚屏
+                            移出视野，而"这一轮跑得快不快"恰恰在等待/想打断时最需要看见。 */}
+                        <LiveTokenRate turnId={liveTurnId()} outputTotal={liveOutputTokens()} />
                         <div class="flex-1" />
                         {/* 生成中的可见性：别人（CLI/另一窗口）发起时本地 running 全程为 false，
                             不显式说出来，界面看起来就像"什么都没发生"（任务 194 现象一的另一半） */}

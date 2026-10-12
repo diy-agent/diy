@@ -77,4 +77,28 @@ describe("皮肤小样（ChatSkinPreview）与 index.css 规则一致", () => {
     // 行头必须**真在**块里（与真实 DOM 同嵌套），只写两个属性不算 —— 小样的价值是形状一致
     expect(preview).toMatch(/data-block-id[\s\S]{0,400}data-row-head/);
   });
+
+  // review ##253 RV-4：同一行的开合动作**不该有两个 tab 停靠点**。
+  // 故条默认 `aria-hidden` + 不进 tab 序，只有"行头不是控件"的正文行才传 `sole`。
+  it("折叠条默认**不进 tab 序**（键盘/读屏只认行头那一个开关）", () => {
+    const gutter = readFileSync(resolve(appDir, "src/renderer_solid/components/RowGutter.tsx"), "utf8");
+    expect(gutter).toMatch(/const focusable = \(\) => can\(\) && !!props\.sole;/);
+    expect(gutter).toMatch(/tabindex=\{focusable\(\) \? 0 : undefined\}/);
+    expect(gutter).toMatch(/role=\{focusable\(\) \? "button" : undefined\}/);
+    expect(gutter).toMatch(/aria-hidden=\{focusable\(\) \? undefined : "true"\}/);
+    // `sole` 只有一个调用点：正文行（它的行头是正文本身，不是 DisclosureHead）
+    const chat = readFileSync(resolve(appDir, "src/renderer_solid/components/LocalChatPage.tsx"), "utf8");
+    expect([...chat.matchAll(/sole=\{/g)].length, "sole 只该给正文行（行头没开关的那一行）").toBe(1);
+  });
+
+  it("小样覆盖条与行头的**两种真实结构**（别只看一种就以为结构统一）", () => {
+    // CDP 实测真实 DOM 两种都有：人物栏把条**放进**行头里；过程行 / 正文行是**同层兄弟**。
+    // 小样两种都要有 —— 否则"小样显示的差异"不等于"真实的差异"（本文件的第一原则）。
+    const row = preview.slice(preview.indexOf("function ProcRow"), preview.indexOf("export function ChatSkinPreview"));
+    expect(row, "过程行：条与行头同层（条在前）").toMatch(/<Gutter[\s\S]{0,200}data-row-head/);
+    // `lastIndexOf`：头注里也提过这个钩子名，取 JSX 那一处
+    const at = preview.lastIndexOf('data-testid="turn-header"');
+    const head = preview.slice(at, preview.indexOf("</div>", at));
+    expect(head, "人物栏：条嵌在行头里").toMatch(/data-row-head=[\s\S]{0,400}<Gutter/);
+  });
 });

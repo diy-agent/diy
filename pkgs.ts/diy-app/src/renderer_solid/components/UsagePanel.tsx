@@ -1227,7 +1227,7 @@ export function TurnUsageBar(props: {
             <span
                 class="shrink-0 tabular-nums text-caption opacity-70"
                 data-turn-rate
-                title="当前速度 = 本请求已输出 tokens ÷ 已耗时（实时，非轮次平均）"
+                title="当前速度 = 本轮已输出 tokens ÷ 已耗时（每步 finish-step 刷新一次；usage 是按步落盘，故不是逐 token 实时，也不按步骤重算）"
             >
                 ⚡ {Math.round(rate()!)} tok/s
             </span>
@@ -1329,6 +1329,51 @@ export function TurnUsageBar(props: {
             </div>
         );
     }
+}
+
+// ─── L1③ 输入框底部总状态栏的实时速度 ──────────────
+
+/**
+ * ⚡ **当前请求**的输出速度（常驻位，输入框底部工具条）。
+ *
+ * 与轮尾状态行那枚 chip **同一个口径、同一个函数**（`shared/usage.tokenRate`）：
+ * `本轮已输出 tokens ÷ 已耗时`，每秒重算一次（分子的"已输出"来自 turn 块的 usage patch）。
+ * 两处都留的理由是位置：轮尾那行在对话流里，滚上去看历史时就被移出视野了；而"这一轮跑得
+ * 快不快"恰恰在**等待 / 想打断**时最需要看见 —— 那一刻视线在输入框。
+ *
+ * ⚠️ **精度边界（实测，别当成 bug 再报一遍）**：`usage` 由 main **每步 finish-step 落一次**
+ * （`local-agent.ts` 的 `patch{usage}`），流内部的 delta 不带 token 计数 ⇒ 一个长步之内
+ * 分子不动、分母在走，读数会**越走越低**，要到该步结束才跳到正确值。要真正"逐 token 实时"
+ * 得让 main 在流中途推部分输出量（另一条线，见任务记录的「待办 B 的精度边界」）。
+ *
+ * 给不出数就**整块不画**（`tokenRate` 返回 null 的三种情形：还没起第一秒 / 已输出为 0 /
+ * 轮次 id 解析不出开始时刻）；停下即 `turnId = null` ⇒ 定时器随之清掉，不留常驻表。
+ */
+export function LiveTokenRate(props: {
+    /** 直播轮 id（`t` + 毫秒；非直播 → null）。既是"跑没跑"的开关，也是速度分母的**唯一真源** */
+    turnId: string | null;
+    /** 该轮已输出 tokens（turn 块 usage patch 的 `outputTotal`；与轮尾状态行同一个数） */
+    outputTotal: number;
+}) {
+    const [nowMs, setNowMs] = createSignal(Date.now());
+    createEffect(() => {
+        if (!props.turnId) return; // 没在跑 → 不开定时器
+        setNowMs(Date.now());
+        const h = setInterval(() => setNowMs(Date.now()), 1000);
+        onCleanup(() => clearInterval(h));
+    });
+    const rate = () => (props.turnId ? tokenRate(props.outputTotal, turnStartMs(props.turnId), nowMs()) : null);
+    return (
+        <Show when={rate() != null}>
+            <span
+                class="shrink-0 tabular-nums text-caption opacity-70"
+                data-live-rate
+                title="当前速度 = 本轮已输出 tokens ÷ 已耗时（每步 finish-step 刷新一次；usage 是按步落盘，故不是逐 token 实时）"
+            >
+                ⚡ {Math.round(rate()!)} tok/s
+            </span>
+        </Show>
+    );
 }
 
 // ─── L1② 发送区会话汇总 chip ────────────────────────

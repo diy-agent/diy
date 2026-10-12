@@ -18,6 +18,7 @@ import {
     isUserText,
     conclusionOf,
     composeTail,
+    endLeafTip,
     endMarkOf,
     endReasonOf,
     leadUsers,
@@ -49,6 +50,9 @@ const tool = (id: string, stopped = true, status = "done") =>
 const err = (id: string) => n("error", id, { source: "llm", message: id });
 const step = (id: string, kids: BlockNode[]) => n("step", id, {}, kids);
 const turn = (...kids: BlockNode[]) => n("turn", "t1", {}, kids);
+/** 带 `endReason` 的轮（结尾槽 / 现场 / 结束点的判据都读它） */
+const ended = (type: string, data: Record<string, unknown> = {}, kids: BlockNode[] = []): BlockNode =>
+    n("turn", "t1", { endReason: { type, data } }, kids);
 
 describe("leavesOf：文档序拉平", () => {
     it("step 是纯容器，DFS 顺序 = 时间顺序", () => {
@@ -407,6 +411,14 @@ describe("clampLines：1 级摘要按行截断", () => {
     it("按行切而不是按字符切：代码块/列表不会被切在中间", () => {
         expect(clampLines("```\nx=1\n```\ntail", 3).text).toBe("```\nx=1\n```");
     });
+
+    // review ##253 RV-2：前导空行在 Markdown 里没有语义（首个块之前本来就被吃掉），
+    // 却会占满摘要的行额度 —— 摘要的语义是"看得见内容"。
+    it("前导空行不占额度：`\\n\\n正文` 在 2 行额度下仍看得见正文", () => {
+        expect(clampLines("\n\n正文", 2)).toEqual({ text: "正文", omitted: 0 });
+        // 额度用完之后照旧按行截（前导空行只是不参与计数，不许把正文一起吞了）
+        expect(clampLines("\n\n一行\n二行\n三行", 2)).toEqual({ text: "一行\n二行", omitted: 1 });
+    });
 });
 
 // ─── 级别同构（2026-10-11 用户口径：「级别显示应该是同构的，尽量不要特殊处理」） ───
@@ -425,6 +437,18 @@ describe("expandableOf：这一行点开会不会多出东西", () => {
 
     it("工具恒可展开：它有 result / 完整命令可看", () => {
         expect(expandableOf(tool("x1"))).toBe(true);
+    });
+
+    // review ##253 RV-2：判据必须与标题（`firstLine` 跳过前导空行）**同一套**，
+    // 否则 content = "\n只有一行" 会被判成可展开，点开后体里与标题是同一句（"像坏了"）。
+    it("前导空行不改变判据：`\\n只有一行` 仍不给展开能力，`\\n一行\\n两行` 仍可展开", () => {
+        expect(expandableOf(n("think", "k1", { content: "\n只有一行" }))).toBe(false);
+        // 只有空行 / 空白 → 同样没东西可展（标题会退回"思考"两字）
+        expect(expandableOf(n("think", "k2", { content: "\n  \n" }))).toBe(false);
+        expect(expandableOf(n("think", "k3", { content: "\n一行\n两行" }))).toBe(true);
+        // 单行超长那条底线别丢：前导空行 + 超长单行照样可展开（标题会被裁到 90 字）
+        expect(expandableOf(n("think", "k4", { content: `\n${"x".repeat(91)}` }))).toBe(true);
+        expect(expandableOf(n("think", "k5", { content: `\n${"x".repeat(90)}` }))).toBe(false);
     });
 });
 
@@ -447,12 +471,25 @@ describe("turnRows：过程历史行（**不含结尾槽**）", () => {
         expect(rows.some((r) => r.kind === "proc" && r.parts.some((p) => p.id === "k1"))).toBe(false);
         expect(rows.some((r) => r.kind === "proc" && r.parts.some((p) => p.id === "x1"))).toBe(true);
     });
+
+    // review ##253 RV-1：末叶子是 error 时，尾槽画的是「红条 + 它前面那个叶子（body）」——
+    // body 也算"被尾槽占用了"，否则同一块在过程历史里再画一遍（默认 3 级、尾槽默认展开，
+    // 不点任何东西就能看见上下各一份）。这条 R20 修过、R21 级别同构重构时收了 owned 又丢了。
+    it("现场：末件是 error 时，现场主体（它前面那个叶子）不进历史行", () => {
+        const t = ended("error", {}, [step("s1", [tool("x1"), err("e1")])]);
+        const body = composeTail(t, sceneTailOf(t))!.body!;
+        expect(body.id).toBe("x1");
+        expect(turnRows(t, null).some((r) => r.kind === "proc" && r.parts.some((p) => p.id === "x1"))).toBe(false);
+    });
+
+    it("现场：主体是助理正文时，那条正文也不进历史行（历史 text 行 vs 现场主体）", () => {
+        const t = ended("error", {}, [step("s1", [say("a1"), err("e1")])]);
+        expect(composeTail(t, sceneTailOf(t))!.body!.id).toBe("a1");
+        expect(turnRows(t, null).some((r) => r.key === "a1")).toBe(false);
+    });
 });
 
 describe("tailOf：结尾槽的四种形态（自暴露 · 恒显）", () => {
-    const ended = (type: string, data: Record<string, unknown> = {}, kids: BlockNode[] = []): BlockNode =>
-        n("turn", "t1", { endReason: { type, data } }, kids);
-
     it("末件是助理正文 → 结论", () => {
         const tl = tailOf(turn(think("k1"), say("a9")), null)!;
         expect(tl.kind).toBe("conclusion");
@@ -513,5 +550,36 @@ describe("轮尾状态行的状态图标（endMarkOf）", () => {
 
     it("max-steps 的 tip 带上限（用户要能分辨「限制」与「报错」）", () => {
         expect(endMarkOf({ type: "max-steps", data: { limit: 40 } } as never, false).tip).toContain("40");
+    });
+});
+
+describe("结束点（endleaf）tag 的 tooltip：必须跟着 endReason 走", () => {
+    // review ##253 RV-3：`tailOf` 在没有 endReason 的**旧日志**上同样会给 endleaf，
+    // 而 `endMarkOf` 对同一批轮刻意"不编状态"（连图标都不给）。
+    // 原来组件把 tip 写死成「正常结束，但模型未给文字结论」⇒ 同一件事两个口径。
+    it("completed → 可以断言「正常结束」（这是 endReason 说的）", () => {
+        const t = n("turn", "t1", { endReason: { type: "completed", data: {} } }, [step("s1", [tool("x1")])]);
+        expect(endLeafTip(t)).toBe("正常结束，但模型未给文字结论");
+    });
+
+    it("completed 带 notice → 用 notice（更细的那句优先）", () => {
+        const t = n("turn", "t1", { endReason: { type: "completed", data: {} }, notice: "提前收尾" }, [
+            step("s1", [tool("x1")]),
+        ]);
+        expect(endLeafTip(t)).toBe("提前收尾");
+    });
+
+    it("max-tokens → 说截断，不说「正常结束」", () => {
+        const t = n("turn", "t1", { endReason: { type: "max-tokens", data: {} } }, [step("s1", [tool("x1")])]);
+        expect(endLeafTip(t)).toContain("上限");
+    });
+
+    it("无 endReason（旧日志）→ 说「结束原因未知」，不替它编一个结束原因", () => {
+        const t = n("turn", "t1", {}, [step("s1", [tool("x1")])]);
+        expect(tailOf(t, null)!.kind).toBe("endleaf"); // 可达（尾槽确实会画它）
+        expect(endLeafTip(t)).toContain("未知");
+        expect(endLeafTip(t)).not.toContain("正常结束");
+        // 与状态行同一批轮的"不编状态"口径一致：那边连图标都不给
+        expect(endMarkOf(endReasonOf(t), false).icon).toBe("");
     });
 });
