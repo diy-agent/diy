@@ -5,6 +5,7 @@ import { createSignal, For } from "solid-js";
 import { getTheme, setTheme, type DiyTheme } from "../lib/theme";
 import { getSkin, setSkin, SKINS, type DiySkin } from "../lib/skin";
 import { clearUiCache } from "../lib/ui-state";
+import { ChatSkinPreview } from "./ChatSkinPreview";
 
 export function ThemeSettings() {
   const [theme, setThemeSig] = createSignal<DiyTheme>(getTheme());
@@ -65,6 +66,8 @@ export function ThemeSettings() {
         系统整体样式（不是聊天页私有开关）：换的是"块怎么摆"。当前只有 agent 输出区落地，
         其余页面暂无差异。两套皮肤的样式规则都在 index.css 的 [data-skin] 段。
       </div>
+      {/* 实时小样：设置页会把聊天区整个换掉 ⇒ 不预览就等于"点了没反应"（见 ChatSkinPreview 头注） */}
+      <ChatSkinPreview />
 
       <div class="divider"></div>
       <div class="text-title font-bold">🧹 视图缓存</div>
