@@ -193,6 +193,10 @@ export function previewLines(text: string, head = 20, tail = 30): Preview {
 // 我们主动赋值 scrollTop 抢位置。当前 Markdown 只在本块内增长、历史块 memo
 // 稳定不变高，Shiki 同步无异步撑高 → 用不上，反而添乱。
 const STICK_PX = 32;
+
+/** 距顶多少 px 内就算「滚到顶了」⇒ 触发补一段更早的历史（任务 293）。
+ *  不取 0：滚动是像素级的，留一点余量才能在真的触顶前就把请求发出去（滚动手感更连续）。 */
+const TOP_TRIGGER_PX = 240;
 /** 是否已贴底（容差内即算底部，避免差 1px 永远跟不住） */
 const nearBottom = (el: HTMLElement) =>
     el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX;
@@ -1610,6 +1614,31 @@ export function LocalChatPage(props: { uri?: string }) {
         setStick(true);
     };
 
+    /**
+     * 滚到顶部附近 ⇒ 补一段更早的历史（任务 293）。
+     *
+     * 位置补偿是**必需**的：内容插在视口上方会把它顶走（浏览器不替我们保持位置），
+     * 表现为"刚要读的那一行突然跳下去"。做法是保持「距底距离」不变 —— 前插只增高
+     * `scrollHeight`，把 `scrollTop` 按同一个增量推回去，视口内的内容原地不动。
+     *
+     * 时机：等一帧再量。Solid 的 DOM 更新在 `setTrees` 后同步落盘，但布局高度要到下次
+     * 渲染前才成立；rAF 回调正好在 layout 之前，改 `scrollTop` 不会产生可见跳动。
+     */
+    const maybeLoadOlder = (el: HTMLDivElement) => {
+        if (el.scrollTop > TOP_TRIGGER_PX) return;
+        if (!localChatStore.hasOlder || localChatStore.olderLoading) return;
+        const u = uri();
+        if (!u) return;
+        const fromBottom = el.scrollHeight - el.scrollTop;
+        void localChatStore.loadOlder(u).then((inserted) => {
+            if (!inserted) return; // 没插内容（到顶 / 对不上已重置）⇒ 不补偿
+            requestAnimationFrame(() => {
+                const shift = el.scrollHeight - fromBottom;
+                if (shift > 0) el.scrollTop = shift;
+            });
+        });
+    };
+
     /** 恢复某会话阅读位置：有记录（p>0）回到该处并按位置校准跟随态；
      *  无记录（p=0，含新会话）→ 直接看最新，而不是停在顶部。 */
     const restore = (u: string) => {
@@ -2029,11 +2058,22 @@ export function LocalChatPage(props: { uri?: string }) {
             <div
                 ref={(el) => (scrollRef = el)}
                 class="diy-chat flex-1 overflow-y-auto px-4 py-3"
-                onScroll={(e) => setStick(nearBottom(e.currentTarget))}
+                onScroll={(e) => {
+                    setStick(nearBottom(e.currentTarget));
+                    maybeLoadOlder(e.currentTarget);
+                }}
             >
                 {/* 块树列：轮与轮之间（`data-chat-list` **不在这里** —— 它是**每轮的过程历史容器**，
                     见 TurnView：皮肤那条"贯穿线"要画在历史容器上，才只贯穿历史、不穿过结尾与状态）。 */}
                 <div class="space-y-3">
+                    {/* 上滚补历史（任务 293）：分页后首载只有「最近一段」，更早的在滚动到这里时补。
+                        这一条既是进度指示，也是"上面还有"的可见线索 —— 没有它，滚到顶会被读成
+                        「会话就这么多」，而其实老内容还在盘上。 */}
+                    <Show when={localChatStore.hasOlder || localChatStore.olderLoading}>
+                        <div class="flex items-center justify-center gap-2 py-2 text-xs opacity-60 select-none">
+                            {localChatStore.olderLoading ? "正在加载更早的消息…" : "上滚加载更早的消息"}
+                        </div>
+                    </Show>
                     <For each={rootRows()}>
                         {(row) =>
                             row.tag === "turn" ? (

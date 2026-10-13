@@ -370,6 +370,23 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().history(input.taskUri);
   });
+  // 大会话分页（任务 293）：只 fold 一段 —— 首载按预算 seek，刷新/上滚按游标取
+  binding.on(app.agent.local.historyWindow, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.historyWindow", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().historyWindow(input.taskUri, {
+      budgetBytes: input.budgetBytes,
+      cursor: input.cursor,
+    });
+  });
+  binding.on(app.agent.local.historyOlder, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.historyOlder", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().historyOlder(input.taskUri, {
+      cursor: input.cursor,
+      budgetBytes: input.budgetBytes,
+    });
+  });
   binding.on(app.agent.local.clear, async ({ input }) => {
     noteRendererTouch("diy.agent.local.clear", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");

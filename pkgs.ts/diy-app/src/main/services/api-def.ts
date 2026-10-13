@@ -493,6 +493,44 @@ export const apiDef = RpcSchema.router({
                 },
                 output: z.array(z.any()),
               }),
+              // ─── 大会话分页（任务 293）─────────────────────────────
+              // 与上面的 `history` **并存而不替换**：`history` = 全量、始终全量的语义，
+              // CLI（`agent local history`）与意图测试都钉着它；分页是**渲染端专用**的通路
+              // （窗口边界只有 UI 用得上，命令行拿一整份更合手）。
+              /** 最近一段（首载）／同一段的重取（轮末刷新，带 cursor） */
+              historyWindow: RpcSchema.unary({
+                desc: `读取本地 agent 会话的**最近一段** Op 流（按字节预算向上 seek 轮首；带游标 = 从该段起点重取）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  /** 窗口字节预算（首载用；带 cursor 时忽略）。缺省 0 = 全量 */
+                  budgetBytes: z.number().optional(),
+                  /** 段起点游标（main 签发的不透明 token）；只回传，不解释 */
+                  cursor: z.string().optional(),
+                },
+                output: z.object({
+                  ops: z.array(z.any()),
+                  cursor: z.string(),
+                  hasMore: z.boolean(),
+                  /** 游标失效 ⇒ 本次是退化全量（渲染端必须重置现有段，不能当前缀拼） */
+                  stale: z.boolean(),
+                }),
+              }),
+              /** 更早的一段（滚动上取）：`cursor` 所在段之前的 `budgetBytes` 字节 */
+              historyOlder: RpcSchema.unary({
+                desc: `读取本地 agent 会话中**更早的一段** Op 流（向上滚动时补历史）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  cursor: z.string(),
+                  budgetBytes: z.number().optional(),
+                },
+                output: z.object({
+                  ops: z.array(z.any()),
+                  cursor: z.string(),
+                  hasMore: z.boolean(),
+                  /** 游标失效 ⇒ 本次是退化全量（渲染端必须重置现有段，不能当前缀拼） */
+                  stale: z.boolean(),
+                }),
+              }),
               clear: RpcSchema.unary({
                 desc: `清空本地 agent 会话（中断生成、删除 Op/LLM 日志，并清空待投递的插话队列）`,
                 input: {

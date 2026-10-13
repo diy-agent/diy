@@ -30,8 +30,32 @@ import { sessionView, type SessionView } from "../../shared/session-view";
 import type { StepUsageRecord } from "../../shared/usage";
 import type { FlatCompactPolicy, HeadTailPolicy } from "../../shared/context/compaction";
 
-interface TaskState {
+/**
+ * 已加载的一段窗口（任务 293）：一段从**轮首**开始的折叠 op 流 fold 出来的块树。
+ *
+ * 为什么分段而不是一个 store：上滚补一段时，**前面所有段的块对象引用不变** ——
+ * `toForest` 的身份缓存（TreeCache）全保留，已渲染的轮不重建、折叠态不丢、
+ * Markdown 不重解析（任务 236 的治本点，分段是它在分页下的延伸）。
+ */
+interface Segment {
     store: BlockStore;
+    /** 本段的轮次 id 序列（升序）；段间拼接即全局轮次序 */
+    ids: string[];
+    /** 本段起点游标（main 签发的不透明 token）—— 上滚时回传它取更早一段 */
+    cursor: string;
+}
+
+interface TaskState {
+    /** 已加载的窗口段，**升序**（更早的在前）；尾部流式内容落在最后一段 */
+    segments: Segment[];
+    /** 末段起点游标（轮末刷新回传它重取**同一段**：起点固定，于是能增量并入） */
+    tailCursor: string | null;
+    /** 最老段之前是否还有更早的轮次（信号：UI 的「加载更早」提示条读它） */
+    hasMore: () => boolean;
+    setHasMore: (v: boolean) => void;
+    /** 上滚补段在途（信号 + 并发去重：滚动事件会连发） */
+    olderBusy: () => boolean;
+    setOlderBusy: (v: boolean) => void;
     loaded: boolean;
     trees: () => BlockNode[];
     setTrees: (v: BlockNode[]) => void;
@@ -69,8 +93,6 @@ interface TaskState {
     detailScroll: number;
     /** 历史加载在途 promise：open() 并发去重（见 open 内注释） */
     loading?: Promise<void>;
-    /** 上一次并入的**轮次 id 序列**（foldInto 的前缀守卫：只能往后追加，对不上就重建） */
-    turnIds?: string[];
     /**
      * 逐步用量账本（`<key>.usage.jsonl` 的结构化镜像）。
      * 权威在盘上；这里是快照，打开会话时拉一次，轮次收尾（含别人的轮次）时再拉一次。
@@ -79,6 +101,15 @@ interface TaskState {
     usage: () => StepUsageRecord[];
     setUsage: (v: StepUsageRecord[]) => void;
 }
+
+/**
+ * 冷加载 / 上滚补段的字节预算（任务 293，**临时手段**）。
+ *
+ * 大会话（数十~数百 MB）不能整份 fold 也不能整量回包：按预算取「最近一段」，上滚再补。
+ * 4MB 是取舍：窗口内实测 fold ~60ms（74.8MB 会话，见任务 ##293 实测表），一屏翻完
+ * 通常不会再触发上滚；调大 = 首载变慢，调小 = 上滚更频繁。终局方案是「固定 step 数 + 补桩」。
+ */
+const HISTORY_WINDOW_BYTES = 4 * 1024 * 1024;
 
 const states = new Map<string, TaskState>();
 const [currentUri, setCurrentUri] = createSignal<string | null>(null);
@@ -93,8 +124,11 @@ function stateFor(taskUri: string): TaskState {
         const [error, setError] = createSignal<string | null>(null);
         const [steers, setSteers] = createSignal<SteerItem[]>([]);
         const [usage, setUsage] = createSignal<StepUsageRecord[]>([]);
+        const [hasMore, setHasMore] = createSignal(false);
+        const [olderBusy, setOlderBusy] = createSignal(false);
         s = {
-            store: new BlockStore(), loaded: false, trees, setTrees, running, setRunning,
+            segments: [], tailCursor: null, hasMore, setHasMore, olderBusy, setOlderBusy,
+            loaded: false, trees, setTrees, running, setRunning,
             active, setActive, stopRequestedAt, setStopRequestedAt, abort: null,
             error, setError, steers, setSteers, usage, setUsage, steerSeq: 0, steerSettled: 0,
             scroll: 0, tab: "local", detailScroll: 0,
@@ -119,32 +153,77 @@ function cur(): TaskState | null {
  * 这是任务 236 的治本点：以前每帧全量重建 → 折叠态被清、点击无响应、长回答卡顿。
  */
 function refresh(st: TaskState) {
-    st.setTrees(toForest(st.store));
+    // 段间拼接：每段已有自己的身份缓存，跨段拼出新数组只多一次 O(轮数) 遍历
+    st.setTrees(st.segments.flatMap((seg) => toForest(seg.store)));
+}
+
+/** 一份 op 流里的轮次 id 序列（折叠流里 turn 的 `start` 即轮次边界） */
+function turnIdsOf(ops: Op[]): string[] {
+    return ops.filter((o) => o.op === "start" && o.kind === "turn").map((o) => o.id);
+}
+
+/** 把 op 流并入某一段的块树（幂等：重复 apply 同一份折叠流无副作用，见 local-blocks 的 apply） */
+function applyInto(seg: Segment, ops: Op[]): void {
+    // 重复 apply 会给"重复 start"记 issue；渲染端不消费 issues，但别让它无界堆积
+    if (seg.store.issues.length > 0) seg.store.issues.length = 0;
+    for (const op of ops) seg.store.apply(op);
+}
+
+/** `prefix` 是不是 `arr` 的前缀（前缀守卫的判据；空前缀恒真） */
+function isPrefix(prefix: readonly string[], arr: readonly string[]): boolean {
+    if (prefix.length > arr.length) return false;
+    for (let i = 0; i < prefix.length; i++) if (prefix[i] !== arr[i]) return false;
+    return true;
+}
+
+/** 末段（尾部窗口所在的那一段）；还没有段时返回 undefined */
+function tailSegment(st: TaskState): Segment | undefined {
+    return st.segments[st.segments.length - 1];
+}
+
+/** 流式 op 的落点：末段；还不存在段时补建一个空段（首载失败也会先收到流） */
+function tailForWrite(st: TaskState): Segment {
+    let seg = tailSegment(st);
+    if (!seg) {
+        seg = { store: new BlockStore(), ids: [], cursor: "" };
+        st.segments.push(seg);
+    }
+    return seg;
 }
 
 /**
- * 把一份（已折叠的）历史 op 流并入现有块树。**不重建 store** —— 这是治「轮末 GC 风暴」的关键。
+ * 把一份**尾部窗口**（首载 / 轮末刷新）并入块树。**能增量就绝不重建** —— 这是治
+ * 「轮末 GC 风暴」的关键（任务 236/290）。
  *
  * 旧实现每轮 reload 都 `new BlockStore()` 再全量 fold：新 store 里每个 BlockNode 都是新对象
  * → toForest 的身份缓存（TreeCache）全部失效 → Solid 的 `<For>` 把**每一轮**都销毁重建
  * （连同全量 Markdown re-parse）。而此刻真正变化的，通常只有刚跑完的那一轮。
  *
  * 折叠流是**幂等**的：`start` 重复被忽略、`patch` 值未变不写也不 touch、`stop` 幂等
- * （见 local-blocks 的 apply / compactOps）。所以整份再喂一遍安全且无副作用 ——
+ * （见 local-blocks 的 apply / compactOps）。所以整段再喂一遍安全且无副作用 ——
  * 没变的轮次引用不变，`<For>` 只更新真正变化的那轮。
  *
- * 前缀守卫：折叠流的**轮次序列只能往后追加**。对不上（被清空 / 换成别的会话 / 日志被
- * 外部改写）就退回重建 —— 宁可重来一次，也不把两段历史缝在一起。
+ * 前缀守卫（按段）：窗口的轮次序列只能以**末段的序列为前缀**（起点固定 ⇒ 只会变长）。
+ * 对不上（被清空 / 换成别的会话 / 日志被外部改写 / 窗口起点漂移）⇒ 重置为**单段** ——
+ * 宁可重来一次，也不把两段历史缝在一起。
  */
-function foldInto(st: TaskState, ops: Op[]): void {
-    const ids = ops.filter((o) => o.op === "start" && o.kind === "turn").map((o) => o.id);
-    const prev = st.turnIds ?? [];
-    const isAppend = prev.length <= ids.length && prev.every((id, i) => id === ids[i]);
-    if (!isAppend) st.store = new BlockStore();
-    // 重复 apply 会给"重复 start"记 issue；渲染端不消费 issues，但别让它无界堆积
-    if (st.store.issues.length > 0) st.store.issues.length = 0;
-    for (const op of ops) st.store.apply(op);
-    st.turnIds = ids;
+function mergeWindow(st: TaskState, ops: Op[], cursor: string, hasMore: boolean): void {
+    const ids = turnIdsOf(ops);
+    const tail = tailSegment(st);
+    if (tail && isPrefix(tail.ids, ids)) {
+        applyInto(tail, ops); // 增量：只有真正变化的那一轮换引用
+        tail.ids = ids;
+        tail.cursor = cursor;
+        st.tailCursor = cursor;
+        // ⚠️ 不动 hasMore：那是「**最老**段之前还有没有轮」，单段时才等于本窗口的 hasMore
+        return;
+    }
+    const seg: Segment = { store: new BlockStore(), ids: [], cursor };
+    applyInto(seg, ops);
+    seg.ids = ids;
+    st.segments = [seg];
+    st.tailCursor = cursor;
+    st.setHasMore(hasMore);
 }
 
 // ─── 渲染批处理（合并高频 op，落到每帧至多一次 refresh） ──────────
@@ -233,9 +312,14 @@ async function doReload(taskUri: string): Promise<void> {
         if (st.running()) return; // 等首载期间又开始发送 → 同样不重建
     }
     try {
-        const ops = (await diyService.diy.agent.local.history({ taskUri })) as Op[];
-        // 并进现有块树（幂等），不重建：只有真正变化的轮次会换引用 → <For> 只重建它
-        foldInto(st, ops);
+        // 带**末段游标**重取同一段（起点固定 ⇒ 只有尾巴变长 ⇒ 末段增量并入，不重建）。
+        // 不带游标就得重新 seek，窗口起点会随文件增长往前漂 → 末段前缀守卫必然失败 → 整树重建。
+        const r = await diyService.diy.agent.local.historyWindow({
+            taskUri,
+            cursor: st.tailCursor ?? undefined,
+            budgetBytes: st.tailCursor ? undefined : HISTORY_WINDOW_BYTES,
+        });
+        mergeWindow(st, r.ops as Op[], r.cursor, r.hasMore);
         st.loaded = true;
         flushRefresh(st);
     } catch (e) {
@@ -327,8 +411,13 @@ const [steerToggleTick, setSteerToggleTick] = createSignal(0);
 /** 拉历史并 fold 进块树（open 的实际加载体，被在途去重包裹） */
 async function loadHistory(st: TaskState, taskUri: string): Promise<void> {
     try {
-        const ops = (await diyService.diy.agent.local.history({ taskUri })) as Op[];
-        foldInto(st, ops);
+        // 首载只取**最近一段**（按字节预算向上 seek 轮首）；更早的在用户上滚时再补（loadOlder）
+        const r = await diyService.diy.agent.local.historyWindow({
+            taskUri,
+            budgetBytes: HISTORY_WINDOW_BYTES,
+            cursor: undefined,
+        });
+        mergeWindow(st, r.ops as Op[], r.cursor, r.hasMore);
         refresh(st);
         st.loaded = true;
     } catch (e) {
@@ -458,7 +547,7 @@ async function send(taskUri: string, text: string): Promise<boolean> {
                 console.warn("[localChat] 丢弃无法解析的 op 行:", e, String(raw).slice(0, 120));
                 continue;
             }
-            st.store.apply(op);
+            tailForWrite(st).store.apply(op);
             scheduleRefresh(st);
             // 插话被投递：main 落了带 steer 标记的 user 块（见 local-agent 的 steerBlockOps）→
             // 队列已经少了一条，立刻重拉快照。否则横条会一直挂着"待发送"，而模型其实已经看见了。
@@ -598,8 +687,9 @@ async function clear(taskUri: string) {
         return;
     }
     const st = stateFor(taskUri);
-    st.store = new BlockStore();
-    st.turnIds = undefined; // 前缀守卫一并归零：新会话从空开始（下次并入必走重建那条）
+    st.segments = []; // 前缀守卫一并归零：新会话从空开始（下次并入必走重建那条）
+    st.tailCursor = null;
+    st.setHasMore(false);
     st.loaded = true; // 文件已删，不必重拉
     st.setError(null);
     st.setSteers([]); // 会话已清，排队中的插话也被 main 一并清掉（见 local-agent 的 clear()）
@@ -612,6 +702,66 @@ async function clear(taskUri: string) {
     void refreshSteers(taskUri);
     st.scroll = 0; // 会话清空，阅读位置一并归位
     refresh(st);
+}
+
+/**
+ * 上滚补一段历史（任务 293）：取**最老段之前**的一段，前插进段列表。
+ *
+ * 返回 `true` 表示**真的插入了内容** —— 调用方据此做滚动位置补偿：内容插在视口上方会把
+ * 正在看的那一行顶走（浏览器不会替我们保持位置），必须自己把 scrollTop 推回去。
+ *
+ * 不插入的三种情形（都返回 false，且都不该补偿）：
+ *   · 没有更早的（`hasMore` false）或在途 / 首载未完成；
+ *   · 取回来的段里没有轮次（前面只剩非轮内容）⇒ 顺带把 `hasMore` 置 false，别再请求；
+ *   · main 报 `stale`（游标失效 ⇒ 给的是全量）或两段轮次重叠（防线）⇒ 按重置处理（见下）。
+ *
+ * ⚠️ **不要**用"新段与现有段的轮次构成前缀关系"判连续性：两段在字节上是切分的、
+ * 轮次**不重叠**，那个判据恒假 ⇒ 每次上滚都会误重置（##293 踩过）。连续性由 main 的
+ * 游标校验保证（decodeCursor + 轮首检查），渲染端只需认 `stale` 这一个信号。
+ */
+async function loadOlder(taskUri: string): Promise<boolean> {
+    const st = states.get(taskUri);
+    if (!st || !st.loaded || !st.hasMore() || st.olderBusy()) return false;
+    const oldest = st.segments[0];
+    if (!oldest) return false;
+    st.setOlderBusy(true);
+    try {
+        const r = await diyService.diy.agent.local.historyOlder({
+            taskUri,
+            cursor: oldest.cursor,
+            budgetBytes: HISTORY_WINDOW_BYTES,
+        });
+        const ops = r.ops as Op[];
+        const ids = turnIdsOf(ops);
+        if (ids.length === 0) {
+            st.setHasMore(false); // 到顶：别再多跑一次白工
+            return false;
+        }
+        // 重叠防线：正常补段取的是 [新起点, 最老段起点)，与现有轮次必然不相交。
+        // 相交 = main 给的不是"更早一段"（游标失效退了全量）⇒ 两段不许缝在一起（与 mergeWindow 同一取向）：
+        // 重置为这一段，并**说出来** —— 用户看到历史被复位，必须知道是为什么。
+        if (r.stale || ids.some((id) => oldest.ids.includes(id))) {
+            console.warn(`[localChat] 上滚补段游标失效/重叠，已重置块树 ${taskUri}`);
+            notificationStore.addToast("info", "会话日志已被改写，已重新加载最近一段");
+            st.segments = [];
+            mergeWindow(st, ops, r.cursor, r.hasMore);
+            flushRefresh(st);
+            return false; // 重建不是前插 ⇒ 不做位置补偿（视口本就该挪到新内容上）
+        }
+        const seg: Segment = { store: new BlockStore(), ids: [], cursor: r.cursor };
+        applyInto(seg, ops);
+        seg.ids = ids;
+        st.segments.unshift(seg); // 前插：**已有段的块对象引用一个都不动** → 折叠态/渲染不重来
+        st.setHasMore(r.hasMore);
+        flushRefresh(st);
+        return true;
+    } catch (e) {
+        console.warn(`[localChat] 上滚补段失败 ${taskUri}:`, e);
+        notificationStore.addToast("error", "更早的会话历史加载失败");
+        return false;
+    } finally {
+        st.setOlderBusy(false);
+    }
 }
 
 /** 记录某任务的阅读位置（切走会话时由组件保存滚动容器 scrollTop） */
@@ -786,6 +936,16 @@ export const localChatStore = {
     autoCompactSetConfig,
     undoCompact,
     compactEvents,
+    /** 上滚补一段更早的历史；返回是否真的插入了内容（调用方据此做滚动位置补偿） */
+    loadOlder,
+    /** 更早还有没有轮次（响应式：UI 的「加载更早」提示条读它） */
+    get hasOlder(): boolean {
+        return cur()?.hasMore() ?? false;
+    },
+    /** 上滚补段在途（响应式） */
+    get olderLoading(): boolean {
+        return cur()?.olderBusy() ?? false;
+    },
     setScroll,
     getScroll,
     setTab,

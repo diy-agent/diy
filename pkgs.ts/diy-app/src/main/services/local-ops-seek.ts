@@ -33,6 +33,7 @@
 //     outputClipChars 6000 兜着，实测单块 ≤1.1MB、单轮 ≤8.7MB），放开限制后窗口会退化
 //     → 终局方案（固定 step 数 + 补桩）或 appender 侧分段闭合。
 //   · 轮首也非 100% 干净：t184 有 8 条跨轮 `stop 未知块`（无害，由「忽略并记 issue」的既有策略覆盖）。
+import { createHash } from "node:crypto";
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 
 /**
@@ -98,12 +99,16 @@ function isTurnStartLine(fd: number, at: number): boolean {
 }
 
 /**
- * 取「窗口起点」的字节偏移：**≤ `size - budgetBytes` 的最近一个轮首**（floor）。
+ * 取 **≤ `targetOffset` 的最近一个轮首**的字节偏移（floor）。
  *
- * 返回 `0` 即「从文件头开始」= 全量（预算 ≥ 全文件，或前面根本没有更近的轮首）。
- * 纯读、无副作用；文件夹不存在返回 0。
+ * 尾部窗口（`seekWindowStart`）与「上滚再往前一段」共用同一条：区别只在基线。
+ * 前者 `targetOffset = size - budget`，后者 `targetOffset = 当前窗口起点 - budget`。
+ *
+ * 找不到（含 `targetOffset <= 0`、无文件、无轮首）一律返回 `0` = 文件头 = 全量 ——
+ * **安全降级方向**：给不出窗口时退全量，永远不给出错位的窗口。
  */
-export function seekWindowStart(fp: string, budgetBytes: number): number {
+export function seekTurnStartAtOrBefore(fp: string, targetOffset: number): number {
+    if (!(targetOffset > 0)) return 0; // NaN / 0 / 负数 ⇒ 全量
     let size: number;
     try {
         size = statSync(fp).size;
@@ -111,11 +116,7 @@ export function seekWindowStart(fp: string, budgetBytes: number): number {
         return 0; // 尚无日志 = 无窗口
     }
     if (size <= 0) return 0;
-    // 预算无效（NaN / 负数）按 0 处理：退化成「只取最后一个轮首」，不会给出越界偏移。
-    // `+Infinity` 例外 —— 它走自然算术（`size - ∞ = -∞` ⇒ 全量），语义就是"不留可省之处"。
-    const budget = Number.isNaN(budgetBytes) ? 0 : Math.max(0, budgetBytes);
-    const target = size - budget; // 「窗口 ≥ budget」⟺「起点 ≤ target」
-    if (target <= 0) return 0; // 预算 ≥ 全文件：没有任何可省的
+    const target = Math.min(targetOffset, size);
     const fd = openSync(fp, "r");
     try {
         // 右界取 `target + needle` 而非 `target`：候选**允许恰好在 target**（此时窗口 = 预算），
@@ -137,6 +138,131 @@ export function seekWindowStart(fp: string, budgetBytes: number): number {
             if (from === 0) return 0; // 找到文件头都没有轮首 → 全量（安全降级）
             hi = from;
         }
+    } finally {
+        closeSync(fd);
+    }
+}
+
+/**
+ * 取「窗口起点」的字节偏移：**≤ `size - budgetBytes` 的最近一个轮首**（floor）。
+ *
+ * 返回 `0` 即「从文件头开始」= 全量（预算 ≥ 全文件，或前面根本没有更近的轮首）。
+ * 纯读、无副作用；文件夹不存在返回 0。
+ */
+export function seekWindowStart(fp: string, budgetBytes: number): number {
+    let size: number;
+    try {
+        size = statSync(fp).size;
+    } catch {
+        return 0;
+    }
+    if (size <= 0) return 0;
+    // 预算无效（NaN / 负数）按 0 处理：退化成「只取最后一个轮首」，不会给出越界偏移。
+    // `+Infinity` 例外 —— 它走自然算术（`size - ∞ = -∞` ⇒ 全量），语义就是"不留可省之处"。
+    const budget = Number.isNaN(budgetBytes) ? 0 : Math.max(0, budgetBytes);
+    const target = size - budget; // 「窗口 ≥ budget」⟺「起点 ≤ target」
+    if (target <= 0) return 0; // 预算 ≥ 全文件：没有任何可省的
+    return seekTurnStartAtOrBefore(fp, target);
+}
+
+// ─── 游标 token（不透明）────────────────────────────────────
+//
+// 【为什么是不透明 token】渲染端只**回传**，不解释 —— 于是「窗口边界」这一知识只存在于
+// main（字节偏移这个概念对渲染端不可见）。理由：##301 的硬警告 —— 拿字节水位当渲染端的
+// 守卫判据，任何一次文件改写/压缩都会让水位失去意义；token 由 main 签发并在 main 校验，
+// 渲染端无从算错。
+//
+// 【绑定的是什么】不是「这一刻的文件大小」（日志本来就在长大，那样每次轮末回传都会失效），
+// 而是「**同一份日志**」：文件只能变长（`size` 不得回退）+ 前 4KB 指纹一致（`sig`）。
+// 后者正是 290 折叠缓存的整文件覆盖写哨兵 —— 同尺寸覆盖时大小看不出来，指纹才看得出来。
+// 两者任一破了 ⇒ 段起点失效（清空 / 被 compact 覆盖 / 被外部改写）⇒ 调用方退全量。
+
+/** token 形态版本：字段语义变了就 +1，旧 token 自然失效（退全量，安全方向）。 */
+const CURSOR_V = 1;
+
+/** 指纹字节数（与 local-agent 的折叠缓存同口径：整文件覆盖写的唯一线索）。 */
+const CURSOR_SIG_BYTES = 4096;
+
+/** 游标正文：段起点的字节偏移 + 签发时的文件大小 + 前 4KB 指纹。 */
+interface CursorBody {
+    v: number;
+    at: number;
+    size: number;
+    sig: string;
+}
+
+/** 文件前 4KB 的短指纹（读不到 ⇒ 空串，token 必然判失效）。 */
+function fileSig(fp: string): string {
+    try {
+        const fd = openSync(fp, "r");
+        try {
+            const buf = Buffer.allocUnsafe(CURSOR_SIG_BYTES);
+            const got = readSync(fd, buf, 0, CURSOR_SIG_BYTES, 0);
+            return createHash("sha256")
+                .update(buf.subarray(0, Math.max(0, got)))
+                .digest("hex")
+                .slice(0, 16);
+        } finally {
+            closeSync(fd);
+        }
+    } catch {
+        return "";
+    }
+}
+
+/**
+ * 为 `fp` 的偏移 `at` 签发一个游标 token。
+ * `at` 不是行首时照签 —— 由消费端（`decodeCursor` + `isTurnStartAt`）校验，签发端不做策略。
+ */
+export function encodeCursor(fp: string, at: number): string {
+    let size = 0;
+    try {
+        size = statSync(fp).size;
+    } catch {
+        /* 文件不在 = size 0；sig 也是空串，token 必然判失效 */
+    }
+    const body: CursorBody = { v: CURSOR_V, at, size, sig: fileSig(fp) };
+    return Buffer.from(JSON.stringify(body), "utf-8").toString("base64url");
+}
+
+/**
+ * 解出游标偏移；形态 / 版本 / 指纹 / 大小回退任一不成立 ⇒ `null`（调用方退全量）。
+ *
+ * 只做**形式**校验，不碰「还算不算轮首」（那是 `isTurnStartAt` 的字节级判断）。
+ */
+export function decodeCursor(token: string, fp: string): number | null {
+    let body: CursorBody;
+    try {
+        body = JSON.parse(Buffer.from(token, "base64url").toString("utf-8")) as CursorBody;
+    } catch {
+        return null;
+    }
+    if (body?.v !== CURSOR_V) return null;
+    if (typeof body.at !== "number" || !Number.isInteger(body.at) || body.at < 0) return null;
+    if (typeof body.size !== "number") return null;
+    let sizeNow: number;
+    try {
+        sizeNow = statSync(fp).size;
+    } catch {
+        return null; // 文件都没了
+    }
+    if (sizeNow < body.size) return null; // 变短 = 被截断 / 清空
+    if (fileSig(fp) !== body.sig) return null; // 前缀变了 = 覆盖写 / 换了文件
+    return body.at;
+}
+
+/** `at` 处是否仍是轮 `start` 行（游标的字节级复核；文件不在 / 越界 / 半行 ⇒ false）。 */
+export function isTurnStartAt(fp: string, at: number): boolean {
+    let fd: number;
+    try {
+        fd = openSync(fp, "r");
+    } catch {
+        return false;
+    }
+    try {
+        // 行首 + 内容双重校验：`at` 恰好落在行中间时（日志被改写），只查内容会误判
+        if (at > 0 && byteAt(fd, at - 1) !== 0x0a) return false;
+        return isTurnStartLine(fd, at);
     } finally {
         closeSync(fd);
     }
