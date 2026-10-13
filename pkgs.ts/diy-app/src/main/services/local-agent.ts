@@ -971,16 +971,17 @@ export class LocalAgentManager {
             this.providers.set(ck, entry);
         }
         if (m.api === "responses") {
-            entry.resp ??= createOpenAI({ name: m.provider, baseURL: baseUrl, apiKey: key, fetch: llmTraffic.tap() });
+            entry.resp ??= createOpenAI({ name: m.provider, baseURL: baseUrl, apiKey: key });
             return entry.resp.responses(m.id);
         }
-        entry.chat ??= createOpenAICompatible({ name: m.provider, baseURL: baseUrl, apiKey: key, fetch: llmTraffic.tap() });
+        entry.chat ??= createOpenAICompatible({ name: m.provider, baseURL: baseUrl, apiKey: key });
         return entry.chat(m.id);
     }
 
     /**
-     * 发请求前登记归属 —— 流量 tap 靠请求头里的 `x-opencode-session` 反查「这条记录属于谁」，
-     * 因此每次真发（streamText / generateText）前必须登记一次：同时把 attempt 计数归零（重试即自增）。
+     * 发请求前登记归属 —— 流量观测（undici diagnostics_channel，见 core/llm-traffic.ts）靠
+     * 请求头里的 `x-opencode-session` 反查「这条记录属于谁」，因此每次真发（streamText /
+     * generateText）前必须登记一次：同时把 attempt 计数归零（重试即自增）。
      */
     private noteTraffic(taskUri: string, turnId: string, rm: ResolvedModel, maxRetries: number): void {
         llmTraffic.noteRun({
