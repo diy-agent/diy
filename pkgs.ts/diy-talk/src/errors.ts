@@ -8,17 +8,19 @@
 export type TalkErrorCode =
     /** 反序列化输入不是合法 JSON */
     | 'invalid-json'
-    /** 锚点非法：未知 type、缺 data、字段类型不对、offset 非非负整数 */
+    /** 锚点非法：未知 type、缺 data、字段类型不对、offset 非非负整数、未知字段 */
     | 'invalid-anchor'
-    /** 事件字段非法（id / author / content / at 非非空字符串，causes 非字符串数组） */
+    /** 事件字段非法（id / author / content 非非空字符串，at 非 ISO-8601，causes 非字符串数组 / 自指 / 重复） */
     | 'invalid-event'
-    /** 反应字段非法（含 replyTo 非 string | null） */
+    /** 反应字段非法（含 replyTo 缺失或非 string | null、at 非 ISO-8601） */
     | 'invalid-reaction'
     /** 同一 thread 内 id 重复（结构化寻址的前提是 id 唯一） */
     | 'duplicate-id'
     /** replyTo 指向本 thread 内不存在的 id（或指向自己） */
     | 'dangling-reply'
-    /** 违反 role 铁律：他人发言被装配成 assistant，或他人 tool/thinking 进入装配 */
+    /** 同一 thread 内的发言锚点不一致（thread 是「同一锚点下的发言集合」，见 review2 意见 2） */
+    | 'mixed-anchor'
+    /** 违反 role 铁律：他人发言被装配成 assistant，或他人 tool/thinking 进入装配，或来源类别非法 */
     | 'role-violation';
 
 /** 本包唯一错误类型：带 `code`（机器判据）与 `path`（从根到字段的点路径，如 `event.anchor.data.offset`） */

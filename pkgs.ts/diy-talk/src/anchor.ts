@@ -9,7 +9,7 @@
 // 分支私有数据进 `data`。锚点没有公共字段 ⇒ 每个分支就是 `{ type, data }`。
 
 import { TalkError } from './errors';
-import { takeObject, takeOffset, takeString } from './validate';
+import { rejectUnknown, takeObject, takeOffset, takeString, type ParseOptions } from './validate';
 
 /** 合法锚点类型全集（引擎枚举；新增类型 = 改代码 + 发版，不做行业自定义，见 ##166 §13.2） */
 export const ANCHOR_TYPES = ['message', 'doc-range', 'task-field', 'node'] as const;
@@ -47,33 +47,45 @@ export type Anchor =
     | { readonly type: 'task-field'; readonly data: TaskFieldAnchorData }
     | { readonly type: 'node'; readonly data: NodeAnchorData };
 
+// 构造器一律**自检**（review2 意见 5）：与 createEvent / createReaction 同口径 ——
+// 形状不对立即报错，而不是返回一个 `isAnchor === false` 的「Anchor」假信号。
 export function messageAnchor(messageId: string): Anchor {
-    return { type: 'message', data: { messageId } };
+    return parseAnchor({ type: 'message', data: { messageId } });
 }
 
 /** doc-range 构造器：三个字段都是必填 —— 少一个就不叫「钉住 revision」 */
 export function docRangeAnchor(revisionId: string, offset: number, quote: string): Anchor {
-    return { type: 'doc-range', data: { revisionId, offset, quote } };
+    return parseAnchor({ type: 'doc-range', data: { revisionId, offset, quote } });
 }
 
 export function taskFieldAnchor(field: string): Anchor {
-    return { type: 'task-field', data: { field } };
+    return parseAnchor({ type: 'task-field', data: { field } });
 }
 
 export function nodeAnchor(nodeId: string): Anchor {
-    return { type: 'node', data: { nodeId } };
+    return parseAnchor({ type: 'node', data: { nodeId } });
 }
 
 const CODE = 'invalid-anchor' as const;
 
+const ANCHOR_KEYS = ['type', 'data'] as const;
+const DATA_KEYS: Record<AnchorType, readonly string[]> = {
+    message: ['messageId'],
+    'doc-range': ['revisionId', 'offset', 'quote'],
+    'task-field': ['field'],
+    node: ['nodeId'],
+};
+
 /** 校验并规范化锚点（只保留已知字段，键序固定）；非法一律抛 `invalid-anchor`（带点路径） */
-export function parseAnchor(value: unknown, path = 'anchor'): Anchor {
+export function parseAnchor(value: unknown, path = 'anchor', options: ParseOptions = {}): Anchor {
     const obj = takeObject(value, path, CODE);
+    if (!options.allowUnknown) rejectUnknown(obj, ANCHOR_KEYS, path, CODE);
     const type = obj.type;
     if (typeof type !== 'string' || !(ANCHOR_TYPES as readonly string[]).includes(type)) {
         throw new TalkError(CODE, `未知锚点类型 ${JSON.stringify(type)}（合法：${ANCHOR_TYPES.join(' | ')}）`, `${path}.type`);
     }
     const data = takeObject(obj.data, `${path}.data`, CODE);
+    if (!options.allowUnknown) rejectUnknown(data, DATA_KEYS[type as AnchorType], `${path}.data`, CODE);
     switch (type as AnchorType) {
         case 'message':
             return { type: 'message', data: { messageId: takeString(data.messageId, `${path}.data.messageId`, CODE) } };
@@ -103,7 +115,16 @@ export function isAnchor(value: unknown): value is Anchor {
     }
 }
 
-/** 该锚点是否钉在同一修订上（`doc-range` 之外的类型恒返回 true） */
-export function isOnRevision(anchor: Anchor, revisionId: string): boolean {
-    return anchor.type !== 'doc-range' || anchor.data.revisionId === revisionId;
+/**
+ * 该锚点是否钉在给定修订上（review2 意见 1：三态，不再把「不在修订轴」静默当成 true）。
+ * - `true`  = 是 `doc-range` 且 revisionId 相同；
+ * - `false` = 是 `doc-range` 但 revisionId 不同；
+ * - `null`  = 该锚点**不参与修订轴**（message / task-field / node），调用方必须显式处理。
+ *
+ * 旧名 `isOnRevision` 对非 doc-range 恒返回 true，会被误当「本修订批注」过滤器用
+ * （`anchors.filter(isOnRevision)` 把三种非文档锚点全纳入）—— 这正是它被改成三态的原因。
+ */
+export function pinsRevision(anchor: Anchor, revisionId: string): boolean | null {
+    if (anchor.type !== 'doc-range') return null;
+    return anchor.data.revisionId === revisionId;
 }
