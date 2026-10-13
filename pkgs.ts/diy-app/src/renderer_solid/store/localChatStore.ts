@@ -162,7 +162,14 @@ function turnIdsOf(ops: Op[]): string[] {
     return ops.filter((o) => o.op === "start" && o.kind === "turn").map((o) => o.id);
 }
 
-/** 把 op 流并入某一段的块树（幂等：重复 apply 同一份折叠流无副作用，见 local-blocks 的 apply） */
+/**
+ * 把 op 流并入某一段的块树。
+ *
+ * ⚠️ 「重复 apply 无副作用」**有前提**：store **不得领先于**这份快照（`patch` 无条件覆盖、
+ * `delta` 只管追加，见 local-blocks 的 apply）。拿一份**早于在途流**的快照再喂一遍，会把
+ * 更靠前的值写回去、后续 delta 追加在回退值上 ⇒ 丢一段，直到下次 reload 从盘上恢复。
+ * 触发面：首载与在途流式并发（`doReload` 有 `running()` 挡着，首载没有）。
+ */
 function applyInto(seg: Segment, ops: Op[]): void {
     // 重复 apply 会给"重复 start"记 issue；渲染端不消费 issues，但别让它无界堆积
     if (seg.store.issues.length > 0) seg.store.issues.length = 0;
@@ -206,11 +213,16 @@ function tailForWrite(st: TaskState): Segment {
  * 前缀守卫（按段）：窗口的轮次序列只能以**末段的序列为前缀**（起点固定 ⇒ 只会变长）。
  * 对不上（被清空 / 换成别的会话 / 日志被外部改写 / 窗口起点漂移）⇒ 重置为**单段** ——
  * 宁可重来一次，也不把两段历史缝在一起。
+ *
+ * `stale` = **main 说游标失效、这一份是全量**（`HistoryWindow.stale`）。它必须像"前缀守卫
+ * 不成立"一样**强制重置**，不能只靠前缀守卫兜：被覆盖写的全量若与末段轮次 id 巧合相容
+ * （同会话重写 / 同 id 重放），前缀守卫会**放行**，于是前面那些属于旧日志的段被静默留在
+ * 树里 —— 用户看到的是"上一份历史 + 这一份历史"缝在一起的东西。契约归契约，巧合不算数。
  */
-function mergeWindow(st: TaskState, ops: Op[], cursor: string, hasMore: boolean): void {
+function mergeWindow(st: TaskState, ops: Op[], cursor: string, hasMore: boolean, stale = false): void {
     const ids = turnIdsOf(ops);
     const tail = tailSegment(st);
-    if (tail && isPrefix(tail.ids, ids)) {
+    if (!stale && tail && isPrefix(tail.ids, ids)) {
         applyInto(tail, ops); // 增量：只有真正变化的那一轮换引用
         tail.ids = ids;
         tail.cursor = cursor;
@@ -319,7 +331,13 @@ async function doReload(taskUri: string): Promise<void> {
             cursor: st.tailCursor ?? undefined,
             budgetBytes: st.tailCursor ? undefined : HISTORY_WINDOW_BYTES,
         });
-        mergeWindow(st, r.ops as Op[], r.cursor, r.hasMore);
+        // 游标失效（日志被清空 / 被覆盖写）⇒ main 给的是**全量**：必须整树重置。
+        // 不重置的话，末段之外的更早段全是已然不存在于日志里的旧内容（见 mergeWindow 头注）。
+        if (r.stale) {
+            console.warn(`[localChat] 轮末重放游标失效，已重置块树 ${taskUri}`);
+            notificationStore.addToast("info", "会话日志已被改写，已重新加载最近一段");
+        }
+        mergeWindow(st, r.ops as Op[], r.cursor, r.hasMore, r.stale);
         st.loaded = true;
         flushRefresh(st);
     } catch (e) {
@@ -749,7 +767,7 @@ async function loadOlder(taskUri: string, beforeApply?: () => void): Promise<boo
             console.warn(`[localChat] 上滚补段游标失效/重叠，已重置块树 ${taskUri}`);
             notificationStore.addToast("info", "会话日志已被改写，已重新加载最近一段");
             st.segments = [];
-            mergeWindow(st, ops, r.cursor, r.hasMore);
+            mergeWindow(st, ops, r.cursor, r.hasMore, r.stale);
             flushRefresh(st);
             return false; // 重建不是前插 ⇒ 不做位置补偿（视口本就该挪到新内容上）
         }
