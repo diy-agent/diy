@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>diy-ui · web 原型</title>
+    <style>
+      :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --border: #30363d;
+        --fg: #e6edf3;
+        --muted: #8b949e;
+        --accent: #4493f8;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 32px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      header { max-width: 1100px; margin: 0 auto 24px; }
+      header h1 { margin: 0 0 6px; font-size: 20px; }
+      header p { margin: 0; color: var(--muted); }
+      main {
+        max-width: 1100px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 16px;
+      }
+      .demo {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 16px;
+      }
+      .demo h2 {
+        margin: 0 0 12px;
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .demo-wide { grid-column: 1 / -1; }
+      /* ── diy-ui DOM 组件样式 ── */
+      .diy-column { display: flex; flex-direction: column; gap: 8px; }
+      .diy-row { display: flex; flex-direction: row; gap: 8px; flex-wrap: wrap; align-items: center; }
+      .diy-text { white-space: pre-wrap; }
+      .diy-button {
+        background: #21262d;
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 4px 12px;
+        font: inherit;
+        cursor: pointer;
+      }
+      .diy-button:hover { border-color: var(--accent); color: var(--accent); }
+      .diy-input {
+        background: #0d1117;
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 4px 8px;
+        font: inherit;
+        min-width: 160px;
+      }
+      .diy-input:focus { outline: none; border-color: var(--accent); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>diy-ui · web 原型</h1>
+      <p>
+        Signal / ScopeNode / Cell / Provider —— 直接操控 DOM，cell rerun 清空重建。
+        core（signal/scope/cell/scheduler）复用老 TS 实现，本页只新增 <code>providers/dom.ts</code>。
+      </p>
+    </header>
+    <main>
+      <section class="demo"><h2>Counter</h2><div id="demo-counter"></div></section>
+      <section class="demo"><h2>Reactive</h2><div id="demo-reactive"></div></section>
+      <section class="demo"><h2>Chat</h2><div id="demo-chat"></div></section>
+      <section class="demo"><h2>Generator cell</h2><div id="demo-generator"></div></section>
+      <section class="demo demo-wide"><h2>Async refresh blocks (并发隔离)</h2><div id="demo-async"></div></section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
