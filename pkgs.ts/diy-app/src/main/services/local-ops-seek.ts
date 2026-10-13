@@ -146,7 +146,7 @@ export function seekTurnStartAtOrBefore(fp: string, targetOffset: number): numbe
 /**
  * 取「窗口起点」的字节偏移：**≤ `size - budgetBytes` 的最近一个轮首**（floor）。
  *
- * 返回 `0` 即「从文件头开始」= 全量（预算 ≥ 全文件，或前面根本没有更近的轮首）。
+ * 返回 `0` 即「从文件头开始」= 全量（预算 ≤ 0 / 无效、预算 ≥ 全文件，或前面根本没有更近的轮首）。
  * 纯读、无副作用；文件夹不存在返回 0。
  */
 export function seekWindowStart(fp: string, budgetBytes: number): number {
@@ -157,11 +157,14 @@ export function seekWindowStart(fp: string, budgetBytes: number): number {
         return 0;
     }
     if (size <= 0) return 0;
-    // 预算无效（NaN / 负数）按 0 处理：退化成「只取最后一个轮首」，不会给出越界偏移。
-    // `+Infinity` 例外 —— 它走自然算术（`size - ∞ = -∞` ⇒ 全量），语义就是"不留可省之处"。
-    const budget = Number.isNaN(budgetBytes) ? 0 : Math.max(0, budgetBytes);
-    const target = size - budget; // 「窗口 ≥ budget」⟺「起点 ≤ target」
-    if (target <= 0) return 0; // 预算 ≥ 全文件：没有任何可省的
+    // 预算无效（缺省 / 0 / NaN / 负）⇒ 退**全量**：0 字节预算 = 不留可省之处。
+    // 【为什么不退化成"只取最后一轮"】那是最糟的**静默截断** —— 调用方漏传预算时，
+    // 用户看到的历史只剩一轮且毫无提示。慢一点（全量 fold）永远优于给出残缺的窗口，
+    // 与本模块「给不出窗口就退全量」的总取向一致。
+    // `+Infinity` 从上方同一条路出去（`size - ∞ = -∞` ⇒ 全量），语义同样是"不留可省之处"。
+    if (!(budgetBytes > 0)) return 0; // NaN / 0 / 负 ⇒ 全量
+    const target = size - budgetBytes; // 「窗口 ≥ budget」⟺「起点 ≤ target」
+    if (target <= 0) return 0; // 预算 ≥ 全文件（含 +∞）：没有任何可省的
     return seekTurnStartAtOrBefore(fp, target);
 }
 

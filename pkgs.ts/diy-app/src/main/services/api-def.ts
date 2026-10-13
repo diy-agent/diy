@@ -503,9 +503,15 @@ export const apiDef = RpcSchema.router({
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
                   /** 窗口字节预算（首载用；带 cursor 时忽略）。缺省 0 = 全量 */
-                  budgetBytes: z.number().optional(),
+                  budgetBytes: z
+                    .number()
+                    .optional()
+                    .cliOption({ desc: "窗口字节预算（缺省 0 = 全量）；带 --cursor 时忽略" }),
                   /** 段起点游标（main 签发的不透明 token）；只回传，不解释 */
-                  cursor: z.string().optional(),
+                  cursor: z
+                    .string()
+                    .optional()
+                    .cliOption({ desc: "上一次返回的游标（= 从该段起点重取）；失效则退全量" }),
                 },
                 output: z.object({
                   ops: z.array(z.any()),
@@ -520,8 +526,11 @@ export const apiDef = RpcSchema.router({
                 desc: `读取本地 agent 会话中**更早的一段** Op 流（向上滚动时补历史）`,
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                  cursor: z.string(),
-                  budgetBytes: z.number().optional(),
+                  cursor: z.string().cliOption({ desc: "上一段的游标（取它之前的窗口）" }),
+                  budgetBytes: z
+                    .number()
+                    .optional()
+                    .cliOption({ desc: "窗口字节预算（缺省 0 = 只取前一轮）" }),
                 },
                 output: z.object({
                   ops: z.array(z.any()),

@@ -109,17 +109,14 @@ describe("seekWindowStart — 基本语义", () => {
         expect(seekWindowStart(fp, size)).toBe(0); // 恰好相等：target = 0
     });
 
-    it("预算无效（0 / NaN / 负）→ 退化成「只取最后一个轮首」", () => {
+    it("预算无效（缺省 / 0 / NaN / 负 / +∞）→ 一律退全量（绝不静默截断到单轮）", () => {
         const fp = tmpFile();
         writeOps(fp, [...turnOps("t1", 50), ...turnOps("t2", 50)]);
-        const buf = readFileSync(fp);
-        const last = buf.lastIndexOf(Buffer.from('{"op":"start","id":"t2"', "utf-8"));
-        for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
-            const off = seekWindowStart(fp, bad);
-            // ±Infinity：+∞ ⇒ 预算 ≥ 全文件 ⇒ 0；其余 ⇒ 末轮轮首
-            if (bad === Number.POSITIVE_INFINITY) expect(off).toBe(0);
-            else expect(off).toBe(last);
+        for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+            expect(seekWindowStart(fp, bad)).toBe(0);
         }
+        // 反向对照：正预算**确实**会切窗口 —— 否则上面全 0 可能只是"切不动"
+        expect(seekWindowStart(fp, 40)).toBeGreaterThan(0);
     });
 
     it("尾部半行（正在流式写）不干扰：仍取到完整轮首", () => {
