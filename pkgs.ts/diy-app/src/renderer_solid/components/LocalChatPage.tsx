@@ -1614,29 +1614,88 @@ export function LocalChatPage(props: { uri?: string }) {
         setStick(true);
     };
 
+    /** 视口里**最上面那一轮**（锚点：用户正在看的起点）；一轮都没露头时退回最老的一轮。
+     *  ⚠️ 判据要用**滚动容器**的顶边，不是页面视口：容器在页面里偏下，被滚出去的轮
+     *  其页面坐标仍是正的（`bottom > 0` 恒真 ⇒ 永远返回第一轮）。 */
+    const pickAnchor = (el: HTMLElement): HTMLElement | null => {
+        const turns = [...el.querySelectorAll<HTMLElement>("[data-turn-id]")];
+        const top = el.getBoundingClientRect().top;
+        return turns.find((n) => n.getBoundingClientRect().bottom > top) ?? turns[0] ?? null;
+    };
+
     /**
      * 滚到顶部附近 ⇒ 补一段更早的历史（任务 293）。
      *
      * 位置补偿是**必需**的：内容插在视口上方会把它顶走（浏览器不替我们保持位置），
-     * 表现为"刚要读的那一行突然跳下去"。做法是保持「距底距离」不变 —— 前插只增高
-     * `scrollHeight`，把 `scrollTop` 按同一个增量推回去，视口内的内容原地不动。
+     * 表现为"刚要读的那一行突然跳下去"。
      *
-     * 时机：等一帧再量。Solid 的 DOM 更新在 `setTrees` 后同步落盘，但布局高度要到下次
-     * 渲染前才成立；rAF 回调正好在 layout 之前，改 `scrollTop` 不会产生可见跳动。
+     * 补偿量取**增量**（插完的 scrollHeight − 插入前的 scrollHeight），不能取「触发那一刻的
+     * 距底距离」算**绝对**位置：取历史要走 RPC（大会话上几十~几百 ms，main 忙时到秒级），
+     * 这期间用户还在上滚，绝对位置会把这段滚动一并吞掉 —— 表现就是"滚到顶还要再滚一点，
+     * 补完段又被拽回触发那一刻"（##293 现象二，CDP 实测锚点被推回 239px）。
+     *
+     * 基准在 `beforeApply` 里取（紧贴前插落 DOM 之前）：那时量到的才是真正「插入前」。
+     *
+     * 基准在 `beforeApply` 里取（紧贴前插落 DOM 之前）：那时量到的才是真正「插入前」。
+     *
+     * 时机是**两种错都踩过**才定的：
+     *   · 补偿量取「触发那一刻的距底距离」算**绝对**位置 ⇒ 走 RPC 期间用户还在上滚，
+     *     绝对位置把这段滚动一并吞掉（CDP 实测锚点被推回 239px）；
+     *   · 插入后**同步**读 `scrollHeight` ⇒ 读到的是估算高度，不是最终高度 ——
+     *     `[data-turn-id]` 带 `content-visibility: auto` + `contain-intrinsic-size: 24rem`，
+     *     没露过面的轮先按 24rem 占位，要等这一帧的布局才换成实测高度（实测：同一份前插，
+     *     同步读到 1188px，一帧后是 4751px）。所以补偿必须**在 rAF 里量**（原实现就是这么做的，
+     *     只是基准取错了地方）。
+     *
+     * 之后再用**锚点元素**连校几帧：更上方还没露面的轮，其占位高度会在用户继续上滚、它们
+     * 进入视口附近时被换成实测值 —— 那一下会把下方内容整体推走。这一步只能量元素位置
+     * （高度增量分不清长在上面还是下面）；用户在滚（scrollTop 不是我们上次设的值）⇒
+     * 重新取基准跟随，绝不跟用户抢。
      */
     const maybeLoadOlder = (el: HTMLDivElement) => {
         if (el.scrollTop > TOP_TRIGGER_PX) return;
         if (!localChatStore.hasOlder || localChatStore.olderLoading) return;
         const u = uri();
         if (!u) return;
-        const fromBottom = el.scrollHeight - el.scrollTop;
-        void localChatStore.loadOlder(u).then((inserted) => {
-            if (!inserted) return; // 没插内容（到顶 / 对不上已重置）⇒ 不补偿
-            requestAnimationFrame(() => {
-                const shift = el.scrollHeight - fromBottom;
-                if (shift > 0) el.scrollTop = shift;
+        let base = 0;
+        let anchor: HTMLElement | null = null;
+        let anchorTop = 0;
+        void localChatStore
+            .loadOlder(u, () => {
+                base = el.scrollHeight;
+                anchor = pickAnchor(el);
+                anchorTop = anchor ? anchor.getBoundingClientRect().top : 0;
+            })
+            .then((inserted) => {
+                if (!inserted || base === 0) return; // 没插内容（到顶 / 对不上已重置）⇒ 不补偿
+                const a0 = anchor;
+                requestAnimationFrame(() => {
+                    // ① 增量补偿：前插垫进去多少就推回多少（基准是插入前的，故用户期间滚的那段照样算数）
+                    const d = el.scrollHeight - base;
+                    if (d > 0) el.scrollTop += d;
+                    if (!a0) return;
+                    // ② 连校几帧：盯住锚点，稳住「用户正看的那一行」
+                    let lastSt = el.scrollTop;
+                    let quiet = 0;
+                    let left = 24; // 硬上限 ≈ 24 帧（400ms）
+                    const tick = () => {
+                        const top = a0.getBoundingClientRect().top;
+                        if (Math.abs(el.scrollTop - lastSt) > 1) {
+                            anchorTop = top; // 用户在滚：跟随他的新位置，只记基准
+                            quiet = 0;
+                        } else {
+                            const drift = top - anchorTop;
+                            if (drift !== 0) {
+                                el.scrollTop += drift;
+                                quiet = 0;
+                            } else quiet++;
+                        }
+                        lastSt = el.scrollTop;
+                        if (left-- > 0 && quiet < 3) requestAnimationFrame(tick);
+                    };
+                    requestAnimationFrame(tick);
+                });
             });
-        });
     };
 
     /** 恢复某会话阅读位置：有记录（p>0）回到该处并按位置校准跟随态；

@@ -23,9 +23,11 @@ import { waitUntil } from "./wait";
 import { makeUiDriver, type A11yNode, type UiDriver } from "./ui-drive";
 import { opsFile } from "../src/main/services/local-agent";
 
-// 会话规模：10 轮 × ~700KB（大头是 tool 输出）≈ 7MB —— 超过渲染端 4MB 首载窗口（HISTORY_WINDOW_BYTES），
-// 于是「首载只有一部分、更早的要上滚取」这件事在**真实 UI** 里看得见。
-const TURNS = 10;
+// 会话规模：16 轮 × ~700KB（大头是 tool 输出）≈ 11MB —— 渲染端首载窗口 4MB（HISTORY_WINDOW_BYTES），
+// 上滚补段**也按 4MB**，于是整份 = 3 段：够「首载只有一部分」「滚一次还有更早的」都能在真实 UI 里看见。
+// 反例（踩过）：10 轮 / 7MB 时整份只有 2 段，第 3 段不存在 ⇒ 「补段途中继续上滚」那条用例
+// 会拿不到段可补，断言退化成恒真（waitUntil 超时警告暴露了它）。
+const TURNS = 16;
 /** CLI 侧的分页预算：≈ 1 轮多一点 ⇒ 上滚一步回溯 1 轮，轮次链条便于逐段核对 */
 const BUDGET = 800 * 1024;
 
@@ -255,12 +257,12 @@ describe("大会话分页：渲染端（真实 UI）", () => {
                 ` const r = a.getBoundingClientRect();` +
                 ` return { top: Math.round(r.top), scrollTop: Math.round(el.scrollTop), vis: document.visibilityState }; })()`,
         );
-        // rAF 是补偿的执行时机：窗口被完全遮挡时 macOS 会把 visibilityState 打成 hidden
+        // 补偿时机：同步 + 一帧 rAF（迟到布局兜底）；窗口被完全遮挡时 macOS 会把 visibilityState 打成 hidden
         // ⇒ Chromium 节流 rAF ⇒ 补偿不跑（假红，不是代码错）。bringToFront 已在前一条用例调过。
         expect(p0.vis).toBe("visible");
 
         await waitUntil(domTurns, (ids) => ids.length > before.length, { label: "上滚补出更早的轮" });
-        // 补偿在 rAF 里执行，等一帧再量
+        // 补偿在 rAF 兜底里收尾，等一帧再量
         await new Promise((r) => setTimeout(r, 200));
         const p1 = await probe();
         expect(p1.scrollHeight).toBeGreaterThan(0);
@@ -270,6 +272,37 @@ describe("大会话分页：渲染端（真实 UI）", () => {
         const ids = await domTurns();
         expect(ids).toContain(anchor);
         expect(ids.length).toBeGreaterThanOrEqual(before.length + 1);
+    }, 60_000);
+
+    it("补段途中用户继续上滚：用户那一段滚动不被吞（补偿按增量算）", async () => {
+        const before = await domTurns();
+        const a0 = before[0]!;
+        // 「触发 → 让出一个 task（RPC 必未回）→ 继续上滚」在同一次 eval 里做完：
+        // 这样用户的后半段滚动**必定**落在 RPC 在途期间（旧实现就是在补偿时
+        // 按触发那一刻的位置重算，把这段吞掉）。随手记下两个时刻的锚点屏幕坐标。
+        await ui.query(
+            `(async () => { const el = document.querySelector('.diy-chat');` +
+                ` const a = () => document.querySelector('[data-turn-id="${a0}"]');` +
+                ` el.scrollTop = 239; el.dispatchEvent(new Event('scroll'));` +
+                ` window.__trigTop = Math.round(a().getBoundingClientRect().top);` +
+                ` await new Promise((r) => setTimeout(r, 0));` +
+                ` el.scrollTop = 0; el.dispatchEvent(new Event('scroll'));` +
+                ` window.__userTop = Math.round(a().getBoundingClientRect().top);` +
+                ` return 'ok'; })()`,
+        );
+        await waitUntil(domTurns, (ids) => ids.length > before.length, { label: "上滚补出更早的轮" });
+        // 显式要求真的补了段：没有这一条，下面「位置没变」的断言在"什么都没发生"时也成立
+        expect((await domTurns()).length).toBeGreaterThan(before.length);
+        await new Promise((r) => setTimeout(r, 250));
+        const p = await ui.query<{ top: number; userTop: number; trigTop: number }>(
+            `(() => { const a = document.querySelector('[data-turn-id="${a0}"]');` +
+                ` return { top: Math.round(a.getBoundingClientRect().top),` +
+                ` userTop: window.__userTop, trigTop: window.__trigTop }; })()`,
+        );
+        // 两个时刻确实不同（否则这条用例什么都没测到）
+        expect(Math.abs(p.userTop - p.trigTop)).toBeGreaterThan(100);
+        // 补偿后锚点应停在**用户最后停留**的位置，而不是触发那一刻的位置
+        expect(Math.abs(p.top - p.userTop)).toBeLessThanOrEqual(2);
     }, 60_000);
 
     it("上滚到头：所有轮都进 DOM（无重无漏），顶部提示退场", async () => {

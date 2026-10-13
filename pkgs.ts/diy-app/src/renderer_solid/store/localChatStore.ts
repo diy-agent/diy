@@ -718,8 +718,13 @@ async function clear(taskUri: string) {
  * ⚠️ **不要**用"新段与现有段的轮次构成前缀关系"判连续性：两段在字节上是切分的、
  * 轮次**不重叠**，那个判据恒假 ⇒ 每次上滚都会误重置（##293 踩过）。连续性由 main 的
  * 游标校验保证（decodeCursor + 轮首检查），渲染端只需认 `stale` 这一个信号。
+ *
+ * `beforeApply`：**紧贴前插落 DOM 之前**同步回调一次（拿到的是「插入前」的视口量）。
+ * 位置补偿的基准必须在这里取，不能在 `loadOlder` 之前取 —— 取历史要走 RPC，这段
+ * 时间里用户还在上滚，拿旧基准算出的**绝对**滚动位置会把用户这段滚动吞掉（##293 现象二：
+ * 滚到顶继续滚，补段后又被拽回触发那一刻）。改由调用方在这里量、在插入后按**增量**补。
  */
-async function loadOlder(taskUri: string): Promise<boolean> {
+async function loadOlder(taskUri: string, beforeApply?: () => void): Promise<boolean> {
     const st = states.get(taskUri);
     if (!st || !st.loaded || !st.hasMore() || st.olderBusy()) return false;
     const oldest = st.segments[0];
@@ -753,6 +758,7 @@ async function loadOlder(taskUri: string): Promise<boolean> {
         seg.ids = ids;
         st.segments.unshift(seg); // 前插：**已有段的块对象引用一个都不动** → 折叠态/渲染不重来
         st.setHasMore(r.hasMore);
+        beforeApply?.(); // 基准取样点：必须紧贴 flushRefresh（此刻 DOM 还是「插入前」）
         flushRefresh(st);
         return true;
     } catch (e) {
