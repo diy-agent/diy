@@ -1624,19 +1624,11 @@ export function LocalChatPage(props: { uri?: string }) {
     };
 
     /**
-     * 滚到顶部附近 ⇒ 补一段更早的历史（任务 293）。
+     * 补一段更早的历史 + 位置补偿（任务 293）。**两个入口共用**：滚到顶部附近的
+     * `onScroll`，以及顶部提示条被点（后者不依赖"容器可滚"，见提示条处的注释）。
      *
      * 位置补偿是**必需**的：内容插在视口上方会把它顶走（浏览器不替我们保持位置），
      * 表现为"刚要读的那一行突然跳下去"。
-     *
-     * 补偿量取**增量**（插完的 scrollHeight − 插入前的 scrollHeight），不能取「触发那一刻的
-     * 距底距离」算**绝对**位置：取历史要走 RPC（大会话上几十~几百 ms，main 忙时到秒级），
-     * 这期间用户还在上滚，绝对位置会把这段滚动一并吞掉 —— 表现就是"滚到顶还要再滚一点，
-     * 补完段又被拽回触发那一刻"（##293 现象二，CDP 实测锚点被推回 239px）。
-     *
-     * 基准在 `beforeApply` 里取（紧贴前插落 DOM 之前）：那时量到的才是真正「插入前」。
-     *
-     * 基准在 `beforeApply` 里取（紧贴前插落 DOM 之前）：那时量到的才是真正「插入前」。
      *
      * 时机是**两种错都踩过**才定的：
      *   · 补偿量取「触发那一刻的距底距离」算**绝对**位置 ⇒ 走 RPC 期间用户还在上滚，
@@ -1652,8 +1644,7 @@ export function LocalChatPage(props: { uri?: string }) {
      * （高度增量分不清长在上面还是下面）；用户在滚（scrollTop 不是我们上次设的值）⇒
      * 重新取基准跟随，绝不跟用户抢。
      */
-    const maybeLoadOlder = (el: HTMLDivElement) => {
-        if (el.scrollTop > TOP_TRIGGER_PX) return;
+    const loadOlderInto = (el: HTMLDivElement) => {
         if (!localChatStore.hasOlder || localChatStore.olderLoading) return;
         const u = uri();
         if (!u) return;
@@ -1696,6 +1687,18 @@ export function LocalChatPage(props: { uri?: string }) {
                     requestAnimationFrame(tick);
                 });
             });
+    };
+
+    /**
+     * 滚到顶部附近 ⇒ 补一段更早的历史（任务 293）。
+     *
+     * ⚠️ 滚动**不是唯一**入口（也**不能**是）：若首载窗口的渲染高度 ≤ 视口，"滚到顶"
+     * 这个前提根本不成立（用户滚不出 scroll 事件），补段就永远不发生、提示条一直挂着。
+     * 所以提示条本身是个可点的按钮，走同一份 `loadOlderInto`。
+     */
+    const maybeLoadOlder = (el: HTMLDivElement) => {
+        if (el.scrollTop > TOP_TRIGGER_PX) return;
+        loadOlderInto(el);
     };
 
     /** 恢复某会话阅读位置：有记录（p>0）回到该处并按位置校准跟随态；
@@ -2126,12 +2129,20 @@ export function LocalChatPage(props: { uri?: string }) {
                     见 TurnView：皮肤那条"贯穿线"要画在历史容器上，才只贯穿历史、不穿过结尾与状态）。 */}
                 <div class="space-y-3">
                     {/* 上滚补历史（任务 293）：分页后首载只有「最近一段」，更早的在滚动到这里时补。
-                        这一条既是进度指示，也是"上面还有"的可见线索 —— 没有它，滚到顶会被读成
-                        「会话就这么多」，而其实老内容还在盘上。 */}
+                        这一条既是进度指示、是"上面还有"的可见线索（没有它，滚到顶会被读成
+                        「会话就这么多」，而其实老内容还在盘上），也是个**可点的补段入口**。 */}
                     <Show when={localChatStore.hasOlder || localChatStore.olderLoading}>
-                        <div class="flex items-center justify-center gap-2 py-2 text-xs opacity-60 select-none">
+                        {/* 可点：滚动只是**触发方式之一** —— 窗口渲染高度 ≤ 视口时用户根本
+                            滚不出 scroll 事件，只有这条按钮能补出更早的轮（##293 review R5）。 */}
+                        <button
+                            type="button"
+                            data-load-older="1"
+                            class="flex items-center justify-center gap-2 py-2 text-xs opacity-60 hover:opacity-100 w-full"
+                            disabled={localChatStore.olderLoading}
+                            onClick={() => scrollRef && loadOlderInto(scrollRef)}
+                        >
                             {localChatStore.olderLoading ? "正在加载更早的消息…" : "上滚加载更早的消息"}
-                        </div>
+                        </button>
                     </Show>
                     <For each={rootRows()}>
                         {(row) =>

@@ -23,11 +23,11 @@ import { waitUntil } from "./wait";
 import { makeUiDriver, type A11yNode, type UiDriver } from "./ui-drive";
 import { opsFile } from "../src/main/services/local-agent";
 
-// 会话规模：16 轮 × ~700KB（大头是 tool 输出）≈ 11MB —— 渲染端首载窗口 4MB（HISTORY_WINDOW_BYTES），
-// 上滚补段**也按 4MB**，于是整份 = 3 段：够「首载只有一部分」「滚一次还有更早的」都能在真实 UI 里看见。
-// 反例（踩过）：10 轮 / 7MB 时整份只有 2 段，第 3 段不存在 ⇒ 「补段途中继续上滚」那条用例
-// 会拿不到段可补，断言退化成恒真（waitUntil 超时警告暴露了它）。
-const TURNS = 16;
+// 会话规模：24 轮 × ~700KB（大头是 tool 输出）≈ 16.8MB —— 渲染端首载窗口 4MB（HISTORY_WINDOW_BYTES），
+// 上滚补段**也按 4MB**，于是整份 = 4 段：三条补段用例（点提示条 / 滚到顶 / 在途继续滚）各消费一段。
+// 反例（踩过两次）：10 轮 / 7MB 时整份只有 2 段；16 轮 / 11MB 时只有 3 段 —— 段数不够时
+// 后面的用例会拿到"没有更早的"，断言退化成恒真（第一次靠 waitUntil 超时警告才暴露）。
+const TURNS = 24;
 /** CLI 侧的分页预算：≈ 1 轮多一点 ⇒ 上滚一步回溯 1 轮，轮次链条便于逐段核对 */
 const BUDGET = 800 * 1024;
 
@@ -74,13 +74,13 @@ afterAll(async () => {
  * 反例（踩过）：把 700KB 塞进单行 assistant 文本 —— 单行文本 `omitted = 0` 永不折叠，
  * 7MB 全进 DOM、几十万个 line box，`ui inspect` 直接 20s 超时。
  */
-function buildOps(): string {
+function buildOps(turns: number = TURNS): string {
     const lines: string[] = [];
     const push = (o: Record<string, unknown>) => lines.push(JSON.stringify(o));
     // 单轮 ~700KB：14,000 行 × 50 字节（多行才可能被折叠，行数与真实工具输出同量级）
     const payload = (i: number) =>
         Array.from({ length: 14_000 }, (_, k) => `第${i}轮第${k}行 tool 输出内容 padding padding`).join("\n");
-    for (let i = 1; i <= TURNS; i++) {
+    for (let i = 1; i <= turns; i++) {
         const tn = `t${3000 + i}`;
         push({ op: "start", id: tn, kind: "turn", meta: { model: "test" } });
         push({ op: "start", id: `${tn}_u`, kind: "text", parent: tn, meta: { role: "user" } });
@@ -119,6 +119,19 @@ async function older(cursor: string, budget: number = BUDGET): Promise<Win> {
         `./diy.sh agent local historyOlder ${uri} --cursor '${cursor}' --budget-bytes ${budget}`,
     );
     return r.data as unknown as Win;
+}
+
+/**
+ * 窗口不可见（macOS 遮挡跟踪把它打成 `hidden` / 无显示环境）⇒ Chromium **节流 rAF** ⇒
+ * 「前插后的位置补偿」那几帧根本不跑。此时位置断言**必然假红，且不是代码错** —— 跳过并说明，
+ * 别把它写成断言失败（review1 R7；无人值守的 CI 上尤其如此）。
+ */
+async function skipIfHidden(ctx: { skip: () => void }): Promise<boolean> {
+    const vis = await ui.query<string>(`document.visibilityState`);
+    if (vis === "visible") return false;
+    console.warn(`[##293] 跳过位置补偿断言：document.visibilityState=${vis}（rAF 被节流，补偿不跑）`);
+    ctx.skip();
+    return true;
 }
 
 async function a11yText(): Promise<string> {
@@ -236,7 +249,8 @@ describe("大会话分页：渲染端（真实 UI）", () => {
         expect(await ui.query<boolean>(`document.body.textContent.includes("上滚加载更早的消息")`)).toBe(true);
     }, 60_000);
 
-    it("滚到顶 → 补出更早的轮；位置补偿让正在看的那一行纹丝不动", async () => {
+    it("滚到顶 → 补出更早的轮；位置补偿让正在看的那一行纹丝不动", async (ctx) => {
+        if (await skipIfHidden(ctx)) return;
         const before = await domTurns();
         const anchor = before[0]!;
         const probe = () =>
@@ -257,9 +271,7 @@ describe("大会话分页：渲染端（真实 UI）", () => {
                 ` const r = a.getBoundingClientRect();` +
                 ` return { top: Math.round(r.top), scrollTop: Math.round(el.scrollTop), vis: document.visibilityState }; })()`,
         );
-        // 补偿时机：同步 + 一帧 rAF（迟到布局兜底）；窗口被完全遮挡时 macOS 会把 visibilityState 打成 hidden
-        // ⇒ Chromium 节流 rAF ⇒ 补偿不跑（假红，不是代码错）。bringToFront 已在前一条用例调过。
-        expect(p0.vis).toBe("visible");
+        expect(p0.vis).toBe("visible"); // 上面已按可见性提前跳过，走到这里必为 visible
 
         await waitUntil(domTurns, (ids) => ids.length > before.length, { label: "上滚补出更早的轮" });
         // 补偿在 rAF 兜底里收尾，等一帧再量
@@ -274,7 +286,8 @@ describe("大会话分页：渲染端（真实 UI）", () => {
         expect(ids.length).toBeGreaterThanOrEqual(before.length + 1);
     }, 60_000);
 
-    it("补段途中用户继续上滚：用户那一段滚动不被吞（补偿按增量算）", async () => {
+    it("补段途中用户继续上滚：用户那一段滚动不被吞（补偿按增量算）", async (ctx) => {
+        if (await skipIfHidden(ctx)) return;
         const before = await domTurns();
         const a0 = before[0]!;
         // 「触发 → 让出一个 task（RPC 必未回）→ 继续上滚」在同一次 eval 里做完：
@@ -325,5 +338,67 @@ describe("大会话分页：渲染端（真实 UI）", () => {
         expect(final).toEqual(allTurns); // 到齐且按时间序（段是前插的，DOM 序 = 文件序）
         expect(final).toHaveLength(TURNS);
         expect(await hasOlder()).toBe(false); // 到顶 ⇒ 提示退场，不再白跑一次请求
+    }, 120_000);
+
+    /**
+     * review1 R5：补段原先**只有** `onScroll` 一条触发路。若首载窗口的渲染高度 ≤ 视口，
+     * 用户根本滚不出 scroll 事件 ⇒ 补段永不发生、而提示条一直挂着 = **死角**。
+     *
+     * 造这个前提的办法：**先把视口拉高**（窗口撑不满一屏），**再首次进入会话** ——
+     * 顺序不能反：先进入再拉高时，容器会从已滚动的位置被 clamp 回 0，**那一下就会派发
+     * 一次 scroll**、走滚动路径把段补掉，就测不到"点也能补"了。故本用例用**独立会话**，
+     * 且排在最后（它会切走当前 tab）。
+     */
+    it("窗口不满一屏时点顶部提示条：照样补出更早的轮（补段不再只有滚动一条路）", async () => {
+        const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/clickolder --label 点击补段`);
+        const pid = String((p.data as any)?.data?.id);
+        const t = await fx.sh.getJson(`./diy.sh task create "点击补段" ${pid}`);
+        const uri2 = String((t.data as any)?.data?.uri);
+        const fp2 = join(fx.HOME, "local", basename(opsFile(uri2)));
+        mkdirSync(dirname(fp2), { recursive: true });
+        // 8 轮 ≈ 5.6MB ⇒ 2 段（首载 4MB 一段，剩下的一段等点击）
+        writeFileSync(fp2, buildOps(8), "utf-8");
+
+        await ui.setViewport(1280, 3000); // 拉高：让"窗口不满一屏"成为既定前提
+        try {
+            await fx.sh.getJson(`./diy.sh ui tab open ${uri2}`);
+            await waitUntil(domTurns, (ids) => ids.length > 0, { label: "新会话首载上屏" });
+            await new Promise((r) => setTimeout(r, 300));
+            const before = await domTurns();
+            const m = await ui.query<{ scrollHeight: number; clientHeight: number; scrollTop: number }>(
+                `(() => { const el = document.querySelector('.diy-chat');` +
+                    ` return { scrollHeight: Math.round(el.scrollHeight), clientHeight: Math.round(el.clientHeight),` +
+                    ` scrollTop: Math.round(el.scrollTop) }; })()`,
+            );
+            // 前提自证：**不可滚**（内容撑不满视口）⇒ 用户造不出 scroll 事件 ⇒
+            // 接下来新出现的轮只可能来自那次点击。前提不成立就**跳过**而不是假绿。
+            if (m.scrollHeight > m.clientHeight + 1) {
+                console.warn(
+                    `[##293] 跳过点击补段用例：窗口仍可滚（scrollHeight=${m.scrollHeight} > clientHeight=${m.clientHeight}），` +
+                        `"滚不出 scroll 事件"这个死角前提没造出来`,
+                );
+                return;
+            }
+            expect(before.length).toBeGreaterThan(0);
+            expect(before.length).toBeLessThan(8); // 首载确实只铺了一段
+            expect(await ui.query<boolean>(`!!document.querySelector('[data-load-older]')`)).toBe(true);
+
+            await ui.clickSelector("[data-load-older]"); // 真实鼠标手势
+
+            await waitUntil(domTurns, (ids) => ids.length > before.length, {
+                label: "点提示条补出更早的轮",
+                timeoutMs: 15_000,
+            });
+            const after = await domTurns();
+            expect(after.length).toBeGreaterThan(before.length);
+            expect(after.length).toBe(8); // 点到文件头：8 轮到齐
+            // 全程没有被"弹"到别处：不可滚的容器里 scrollTop 恒为 0
+            const st = await ui.query<{ st: number }>(
+                `(() => ({ st: Math.round(document.querySelector('.diy-chat').scrollTop) }))()`,
+            );
+            expect(st.st).toBe(0);
+        } finally {
+            await ui.clearViewport();
+        }
     }, 120_000);
 });
