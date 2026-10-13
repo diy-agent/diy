@@ -116,7 +116,8 @@ import {
 import { renderSummarySection } from "./prompt-registry";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
-import { SteerQueue } from "../core/steer-queue";
+import { SteerQueue, fileSteerPort } from "../core/steer-queue";
+import { DEFAULT_STEER_MODE } from "../../shared/steer-mode";
 import type { SteerItem, SteerMode } from "../core/drafts";
 
 import {
@@ -188,6 +189,14 @@ export interface LocalAgentLimits {
     outputClipChars: number;
     /** read 工具单次返回的字节上限（见 core/file-read.ts） */
     readMaxBytes: number;
+    /**
+     * 插话/排队队列的条数上限（##306）。
+     *
+     * 防的不是"条数多"，而是**无界**：会话在跑时新消息改为排队后，灌风暴的那一端
+     * 不再是报错的调用方，而是这个队列（落盘文件 + 内存 + 提示词）。合并投递消化的是
+     * 请求次数，条数上限守的是队列本身的体量。
+     */
+    maxSteerQueue: number;
 }
 
 export const DEFAULT_LIMITS: LocalAgentLimits = {
@@ -196,6 +205,7 @@ export const DEFAULT_LIMITS: LocalAgentLimits = {
     bashTimeoutMs: 30_000,
     outputClipChars: 6000,
     readMaxBytes: READ_MAX_BYTES,
+    maxSteerQueue: 1000,
 };
 
 function limitsFile(): string {
@@ -228,6 +238,7 @@ export function resolveLimits(
         bashTimeoutMs: envPosInt(env, "DIY_LOCAL_BASH_TIMEOUT_MS") ?? num(base.bashTimeoutMs, DEFAULT_LIMITS.bashTimeoutMs),
         outputClipChars: envPosInt(env, "DIY_LOCAL_OUTPUT_CLIP_CHARS") ?? num(base.outputClipChars, DEFAULT_LIMITS.outputClipChars),
         readMaxBytes: envPosInt(env, "DIY_LOCAL_READ_MAX_BYTES") ?? num(base.readMaxBytes, DEFAULT_LIMITS.readMaxBytes),
+        maxSteerQueue: envPosInt(env, "DIY_LOCAL_MAX_STEER_QUEUE") ?? num(base.maxSteerQueue, DEFAULT_LIMITS.maxSteerQueue),
     };
 }
 
@@ -915,7 +926,7 @@ export class LocalAgentManager {
      * 权威落盘在任务目录 .diy/drafts.yaml（与聊天草稿同文件、同类数据：都是"丢了 = 用户白打"），
      * 因此重启应用、切 Electron/serve 模式后队列仍在；本对象只是无状态门面（每次现读盘）。
      */
-    private queue = new SteerQueue();
+    private queue = new SteerQueue(fileSteerPort, () => this.getLimits().maxSteerQueue);
     /**
      * provider 实例缓存，按 `baseUrl|key` 分组（一个 provider 可能配多个账号 → 多实例）。
      * chat 面（/chat/completions）与 responses 面（/responses）各一，key 同生命周期。
@@ -999,6 +1010,82 @@ export class LocalAgentManager {
     // 【已移除】sinceTurnIdOf / deliveryOptsOf —— 旧"读压缩账边界"的投递口径。
     // 配置 / 历史分离后，投递口径一律取**当前配置**（见 deliveryHistory / requestView），
     // 压缩账只作历史快照。（保留此说明，免得后来者又去找它们。）
+
+    /**
+     * 会话正在生成中：把新消息**入队**并回一条显式回执（##306）。
+     *
+     * 为什么必须给回执：调用方（CLI / UI / 另一个窗口）拿到的流若不产 op，用户就无从分辨
+     * 「已排队」与「被吞了」—— 空流退出就是静默失败。回执走本模块的**单一权威路径**
+     * （先整批落盘 + 收敛内存，再逐条投递），与插话上限分支同一纪律：消费端中途断开也不会
+     * 留半截块。kind 用 error 只是因为 error 块**不参与 LLM 投影**（projectAll 不把它转成
+     * 消息），免得这条机器回执被当成真实发言发给模型。
+     *
+     * 入队失败（队列满 / 空消息）直接抛出 —— 那是"这条消息没送达"，调用方必须知道。
+     */
+    private *enqueueWhileRunning(taskUri: string, sess: LocalSession, message: string): Generator<Op> {
+        // ⚠️ 语义是 **steer 合并**（并入正在跑的轮次序列、轮末整批投），**不是**串行独立
+        // 轮次排队 —— 与 review306 发现①对齐：入队后由续轮循环整批取走（见 chat 的轮末逻辑），
+        // 多条排队消息 = 一次续轮请求消化，不逐条开轮。
+        // 用 `next-turn`（本轮收尾后整批投）而不是 `next-step`：排队语义是"排在这一轮
+        // **之后**"；`next-step` 会插进正在跑的轮次内部，把"谁先说话谁先投"的顺序打乱。
+        const items = this.queue.add(taskUri, DEFAULT_STEER_MODE, message);
+        // items 的末条就是刚入队的那条（`add` 返回整批快照）
+        const item = items[items.length - 1]!;
+        const turnId = this.receiptTurnId(sess, item.id);
+        const noticeId = `${turnId}_queued`;
+        const ops: Op[] = [
+            // `steerId` = 这条回执对应的队列条目（`steer/N`）：id 里已含，再落一份到 meta
+            // 是为了让消费端（CLI / 后续 UI）不必**解析 id 字符串**就能回查该条队列项
+            { op: "start", id: turnId, kind: "turn", meta: { source: "queue", steerId: item.id } },
+            { op: "start", id: noticeId, kind: "error", parent: turnId, meta: { source: "queue" } },
+            {
+                op: "delta",
+                id: noticeId,
+                fields: {
+                    message: `会话正在生成中：这条消息已排队（队列第 ${items.length} 条），本轮结束后自动投递`,
+                },
+            },
+            { op: "stop", id: noticeId },
+            { op: "stop", id: turnId },
+        ];
+        const sink = this.opsSink(taskUri);
+        for (const op of ops) {
+            sink(op);
+            sess.store.apply(op);
+        }
+        for (const op of ops) yield op;
+    }
+
+    /**
+     * 排队回执轮的 id：`qt-` + 队列条目 id（`qt-steer/3`）—— 与队列条目**一一对应**，
+     * 看 id 就知道是哪条排队消息（CLI / 日志 / UI 回查都靠它）。
+     *
+     * 为什么不只用条目 id：条目序号**在队列清空后从头来**（`newSteerId` 的既定语义：只保证
+     * 队列内唯一，见 `steer-queue.ts` 头注），而回执轮一旦落进 ops.jsonl 就**长期留在史书里**。
+     * 于是「投递完 → 再排一条」必然重发 `steer/1` → 撞上历史里那条回执轮：重放时 BlockStore
+     * 对「重复 start」只记 issue 并**丢弃** start（`local-blocks.ts`），随后 notice 的 delta
+     * 会累加到**上一集那条回执块**上（文案拼接），stop 提前闭合 —— 静默且难查（review2 发现 C）。
+     * 故撞上已存在的块 id 时加序号后缀；判据是**块树里是否已有**（含重载后重放出来的历史块），
+     * 跨重启也成立（不依赖会话内存，也不需要 Date.now 这种毫秒粒度的巧合）。
+     */
+    private receiptTurnId(sess: LocalSession, itemId: string): string {
+        let id = `qt-${itemId}`;
+        for (let n = 1; sess.store.blocks.has(id); n++) id = `qt-${itemId}_${n}`;
+        return id;
+    }
+
+    /** op 即传即落的落盘函数（存储 = 传输）：与 chat 内联的那份同行为，供排队回执复用 */
+    private opsSink(taskUri: string): (op: Op) => void {
+        const fp = opsFile(taskUri);
+        return (op) => {
+            try {
+                appendFileSync(fp, `${JSON.stringify(op)}\n`, "utf-8");
+            } catch (e) {
+                // 落盘失败不阻断流，但必须出声（否则丢行不可观测）
+                console.error(`[local-agent] ops 落盘失败 ${fp}:`, e);
+            }
+        };
+    }
 
     private getSession(taskUri: string): LocalSession {
         let s = this.sessions.get(taskUri);
@@ -1732,7 +1819,13 @@ export class LocalAgentManager {
         // 手写 personas.yaml 可能把档位留空：兜底到该模型自己的默认档，不把空档发给上游
         const reasoningEffort = reasoningEffortOverride ?? (persona.reasoningEffort || reasoningOf(model).default);
         let sess = this.getSession(taskUri);
-        if (sess.running) throw new Error(`任务 ${taskUri} 的本地会话正在生成中`);
+        if (sess.running) {
+            // 会话在跑 —— **不拒绝，改排队**（##306 / ##180 专项第 1 步）。
+            // 「窗口只是后端的使用窗口」：同任务第二个客户端发消息不该拿到错误，
+            // 而该排进插话队列，由正在跑的轮次在轮末整批取走（见下方续轮循环）。
+            yield* this.enqueueWhileRunning(taskUri, sess, message);
+            return;
+        }
 
         // ── 自动压缩（新请求之前，是唯一正确的时机）──
         // 为什么在这里：三个触发条件（缓存过期 / 系统上下文变 / 窗口超限）都要求"**发出去之前**"

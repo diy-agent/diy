@@ -61,7 +61,16 @@ export function newSteerId(items: readonly SteerItem[]): string {
 }
 
 export class SteerQueue {
-  constructor(private readonly port: SteerQueuePort = fileSteerPort) {}
+  constructor(
+    private readonly port: SteerQueuePort = fileSteerPort,
+    /**
+     * 队列条数上限（##306）。做成**函数**而不是数字：上限是运行时配置
+     * （默认值 < `$DIY_HOME/local/limits.json` < `DIY_LOCAL_MAX_STEER_QUEUE`），
+     * 同一个 manager 实例里重启后生效的下次入队即按新值算；单测直接传常量。
+     * 缺省 Infinity = 不设限 —— 只有 manager 会注入真实上限，历史调用点与测试不受影响。
+     */
+    private readonly limitOf: () => number = () => Number.POSITIVE_INFINITY,
+  ) {}
 
   /** 队列快照（顺序 = 投递顺序） */
   list(uri: string): SteerItem[] {
@@ -77,6 +86,17 @@ export class SteerQueue {
     }
     // 先读队列再算 id（读→写之间没有 await，JS 单线程下不会被别的 add 插进来）
     const existing = this.port.read(uri);
+    // 条数上限（##306）：闸门放在**唯一入队口** —— 插话（steer add）与「会话在跑时排队的新消息」
+    // 共用同一个队列，也就该共用同一个上限；两个入口各自计数会把队列撑成两倍。
+    // 超限**抛错**而不是静默丢弃：丢的是用户已经打出来的话，必须让调用方看见
+    // （UI 据此保留输入框内容、CLI 非零退出）—— 静默丢弃正是「用户白打」。
+    const limit = this.limitOf();
+    if (existing.length >= limit) {
+      throw new Error(
+        `插话队列已满（上限 ${limit} 条），本条未入队：等已排队的投递完或先取消一部分，` +
+          `也可调高上限（limits.json 的 maxSteerQueue / 环境变量 DIY_LOCAL_MAX_STEER_QUEUE）`,
+      );
+    }
     const item: SteerItem = { id: newSteerId(existing), mode, text: body, created: now.toISOString() };
     const items = [...existing, item];
     this.port.write(uri, items);
