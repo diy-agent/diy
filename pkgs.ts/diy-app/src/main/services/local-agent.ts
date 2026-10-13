@@ -1030,6 +1030,9 @@ export class LocalAgentManager {
      * 入队失败（队列满 / 空消息）直接抛出 —— 那是"这条消息没送达"，调用方必须知道。
      */
     private *enqueueWhileRunning(taskUri: string, sess: LocalSession, message: string): Generator<Op> {
+        // ⚠️ 语义是 **steer 合并**（并入正在跑的轮次序列、轮末整批投），**不是**串行独立
+        // 轮次排队 —— 与 review306 发现①对齐：入队后由续轮循环整批取走（见 chat 的轮末逻辑），
+        // 多条排队消息 = 一次续轮请求消化，不逐条开轮。
         const items = this.queue.add(taskUri, QUEUED_MESSAGE_MODE, message);
         // id 前缀 `qt`：这是"排队回执轮"，与真实生成轮（`t<ts>`）区分开，同毫秒也不会撞 id
         const turnId = `qt${Date.now()}`;

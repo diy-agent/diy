@@ -625,6 +625,53 @@ describe("会话正在生成中再发消息（##306 / ##180 第 1 步）：不�
     expect(opsA.filter((o) => o.op === "start" && o.kind === "turn").length).toBeGreaterThanOrEqual(2);
   });
 
+  it("生成中连灌 30 条：轮末一次整批投走（多 1 次请求），不撞 MAX_STEER_ROUNDS", async () => {
+    // review306 发现②的决策证据：条数上限（1000）与续轮上限（8）是**两个维度** ——
+    // 整批投递下 30 条排队消息 = 1 次续轮请求消化完，不消耗 30 轮，故 8 轮上限
+    // 拦不到"第二客户端 9 条以后全卡死"（那担忧基于"一条一轮"的误解）。
+    const uri = newUri();
+    // 第一次请求挂住（= running 可自由保持），第二次正常结束
+    let releaseFirst!: () => void;
+    const firstHang = new Promise<void>((r) => (releaseFirst = r));
+    let calls = 0;
+    const hanging = new MockLanguageModelV3({
+      provider: "stub",
+      modelId: "stub-model",
+      doStream: () => {
+        calls += 1;
+        // 第 1 次请求挂住（= running 可自由保持），之后正常结束
+        if (calls === 1) return firstHang.then(() => textReply("第一条的答复"));
+        return Promise.resolve(textReply("排队批的答复"));
+      },
+    });
+    const mgr = new LocalAgentManager(() => hanging as unknown as LanguageModel);
+
+    const first = mgr.chat(uri, "第一条");
+    await first.next(); // 推进到 running
+
+    // 生成中连灌 30 条（旧守卫下每条都 throw；现应全部排队）
+    for (let i = 1; i <= 30; i++) {
+      const opsB: Op[] = [];
+      for await (const op of mgr.chat(uri, `排队消息 ${i}`)) opsB.push(op);
+      expect(opsB.some((o) => o.op === "start" && o.kind === "error")).toBe(true);
+    }
+    expect(new SteerQueue().list(uri)).toHaveLength(30);
+
+    // 放行首轮 → 轮末整批取走 30 条
+    releaseFirst();
+    const opsA: Op[] = [];
+    for await (const op of first) opsA.push(op);
+
+    // ① 上游只多 1 次请求：首轮 + 1 次整批续轮（不是 30 轮、更不撞 8 轮上限）
+    expect(hanging.doStreamCalls).toHaveLength(2);
+    // ② 30 条全在第二次请求的 prompt 里（一条不丢）
+    const second = promptText(hanging, 1);
+    for (let i = 1; i <= 30; i++) expect(second).toContain(`排队消息 ${i}`);
+    // ③ 队列清空 + 上限提示块不存在（没撞上限）
+    expect(new SteerQueue().list(uri)).toEqual([]);
+    expect(opsA.some((o) => o.op === "start" && o.kind === "error")).toBe(false);
+  });
+
   it("排队的那条走 next-turn：不在正在跑的轮次内部插队", async () => {
     const uri = newUri();
     const model = stubModel([toolCallReply("c1", "echo a"), textReply("第一轮"), textReply("第二轮")]);
