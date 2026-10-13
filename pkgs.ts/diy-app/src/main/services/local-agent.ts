@@ -117,6 +117,7 @@ import { renderSummarySection } from "./prompt-registry";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
 import { SteerQueue, fileSteerPort } from "../core/steer-queue";
+import { DEFAULT_STEER_MODE } from "../../shared/steer-mode";
 import type { SteerItem, SteerMode } from "../core/drafts";
 
 import {
@@ -153,14 +154,6 @@ export type { LocalModel, LocalModelApi, LocalModelReasoning, ReasoningEffort };
  * 到顶后剩余的插话**留在队列里**（UI 横条照旧显示待发送），并写一条 error 块告知。
  */
 export const MAX_STEER_ROUNDS = 8;
-
-/**
- * 会话**正在生成中**时，新来的消息以哪种插话模式排队（##306）。
- *
- * 用 `next-turn`（本轮收尾后整批投）而不是 `next-step`：排队语义是"排在这一轮**之后**"，
- * 与正在跑的那一轮**串行**；`next-step` 会插进正在跑的轮次内部，把"谁先说话谁先投"的顺序打乱。
- */
-export const QUEUED_MESSAGE_MODE: SteerMode = "next-turn";
 
 /**
  * 生效 baseUrl：一律走 spec 配的 baseUrl。`DIY_ZEN_BASE_URL` 是**测试/自建代理**接缝
@@ -1033,12 +1026,17 @@ export class LocalAgentManager {
         // ⚠️ 语义是 **steer 合并**（并入正在跑的轮次序列、轮末整批投），**不是**串行独立
         // 轮次排队 —— 与 review306 发现①对齐：入队后由续轮循环整批取走（见 chat 的轮末逻辑），
         // 多条排队消息 = 一次续轮请求消化，不逐条开轮。
-        const items = this.queue.add(taskUri, QUEUED_MESSAGE_MODE, message);
-        // id 前缀 `qt`：这是"排队回执轮"，与真实生成轮（`t<ts>`）区分开，同毫秒也不会撞 id
-        const turnId = `qt${Date.now()}`;
+        // 用 `next-turn`（本轮收尾后整批投）而不是 `next-step`：排队语义是"排在这一轮
+        // **之后**"；`next-step` 会插进正在跑的轮次内部，把"谁先说话谁先投"的顺序打乱。
+        const items = this.queue.add(taskUri, DEFAULT_STEER_MODE, message);
+        // items 的末条就是刚入队的那条（`add` 返回整批快照）
+        const item = items[items.length - 1]!;
+        const turnId = this.receiptTurnId(sess, item.id);
         const noticeId = `${turnId}_queued`;
         const ops: Op[] = [
-            { op: "start", id: turnId, kind: "turn", meta: { source: "queue" } },
+            // `steerId` = 这条回执对应的队列条目（`steer/N`）：id 里已含，再落一份到 meta
+            // 是为了让消费端（CLI / 后续 UI）不必**解析 id 字符串**就能回查该条队列项
+            { op: "start", id: turnId, kind: "turn", meta: { source: "queue", steerId: item.id } },
             { op: "start", id: noticeId, kind: "error", parent: turnId, meta: { source: "queue" } },
             {
                 op: "delta",
@@ -1056,6 +1054,24 @@ export class LocalAgentManager {
             sess.store.apply(op);
         }
         for (const op of ops) yield op;
+    }
+
+    /**
+     * 排队回执轮的 id：`qt-` + 队列条目 id（`qt-steer/3`）—— 与队列条目**一一对应**，
+     * 看 id 就知道是哪条排队消息（CLI / 日志 / UI 回查都靠它）。
+     *
+     * 为什么不只用条目 id：条目序号**在队列清空后从头来**（`newSteerId` 的既定语义：只保证
+     * 队列内唯一，见 `steer-queue.ts` 头注），而回执轮一旦落进 ops.jsonl 就**长期留在史书里**。
+     * 于是「投递完 → 再排一条」必然重发 `steer/1` → 撞上历史里那条回执轮：重放时 BlockStore
+     * 对「重复 start」只记 issue 并**丢弃** start（`local-blocks.ts`），随后 notice 的 delta
+     * 会累加到**上一集那条回执块**上（文案拼接），stop 提前闭合 —— 静默且难查（review2 发现 C）。
+     * 故撞上已存在的块 id 时加序号后缀；判据是**块树里是否已有**（含重载后重放出来的历史块），
+     * 跨重启也成立（不依赖会话内存，也不需要 Date.now 这种毫秒粒度的巧合）。
+     */
+    private receiptTurnId(sess: LocalSession, itemId: string): string {
+        let id = `qt-${itemId}`;
+        for (let n = 1; sess.store.blocks.has(id); n++) id = `qt-${itemId}_${n}`;
+        return id;
     }
 
     /** op 即传即落的落盘函数（存储 = 传输）：与 chat 内联的那份同行为，供排队回执复用 */

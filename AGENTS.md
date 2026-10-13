@@ -62,10 +62,6 @@
 - `rule.new-pkg` — 新增包检查单：`tsconfig.json`（composite + noEmit + include）+ `tsconfig.all.json` references
 - `rule.renderer` — UI 主线是 `renderer_solid/`（SolidJS）；React 版已删除
 
-## agent — 本地 agent 会话
-
-- `agent.steer-queue` — 会话**生成中**再发消息（第二/第三个客户端）**入队、不报错**：模式 `next-turn`（本轮收尾后整批投递，落任务目录 `.diy/drafts.yaml`）；条数上限 `maxSteerQueue`（默认 1000，`local/limits.json` / `DIY_LOCAL_MAX_STEER_QUEUE`，超限抛错不静默丢）。**UI 侧仍拦**该路径（`LocalChatPage.submit` 的 `live` 断言）→ 目前只由 CLI / RPC 可达
-
 ## model — 本地 agent 测试用什么模型
 
 - `model.allowed` — **测试只准用 `mimo-v2.6-flash` 与 `deepseek-v4.1-flash`**；其他模型一律不用（太贵）。确需验证某模型特有行为时，先取得用户许可再跑，且一次只跑一条用例
