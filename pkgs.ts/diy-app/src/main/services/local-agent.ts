@@ -86,6 +86,7 @@ import {
 } from "../../shared/context/cache-ttl";
 import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
+import { llmTraffic } from "../core/llm-traffic";
 import { statFromStep } from "../../shared/context/stats";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import {
@@ -970,11 +971,27 @@ export class LocalAgentManager {
             this.providers.set(ck, entry);
         }
         if (m.api === "responses") {
-            entry.resp ??= createOpenAI({ name: m.provider, baseURL: baseUrl, apiKey: key });
+            entry.resp ??= createOpenAI({ name: m.provider, baseURL: baseUrl, apiKey: key, fetch: llmTraffic.tap() });
             return entry.resp.responses(m.id);
         }
-        entry.chat ??= createOpenAICompatible({ name: m.provider, baseURL: baseUrl, apiKey: key });
+        entry.chat ??= createOpenAICompatible({ name: m.provider, baseURL: baseUrl, apiKey: key, fetch: llmTraffic.tap() });
         return entry.chat(m.id);
+    }
+
+    /**
+     * 发请求前登记归属 —— 流量 tap 靠请求头里的 `x-opencode-session` 反查「这条记录属于谁」，
+     * 因此每次真发（streamText / generateText）前必须登记一次：同时把 attempt 计数归零（重试即自增）。
+     */
+    private noteTraffic(taskUri: string, turnId: string, rm: ResolvedModel, maxRetries: number): void {
+        llmTraffic.noteRun({
+            session: sessionIdOf(taskUri),
+            taskUri,
+            turnId,
+            provider: rm.provider,
+            model: rm.id,
+            baseUrl: resolveBaseUrl(rm),
+            maxRetries,
+        });
     }
 
     /**
@@ -1577,6 +1594,7 @@ export class LocalAgentManager {
         const model = personaForTask(diyHome(), taskUri).model;
         const { rm, key } = this.resolveModel(model);
         const dropped = droppedTextOf(p.store, p.droppedIds);
+        this.noteTraffic(taskUri, "summary", rm, 2);
         const res = await generateText({
             model: this.modelFor(rm, key),
             prompt: summaryExtractionPrompt(dropped, p.droppedIds.length),
@@ -2375,6 +2393,7 @@ export class LocalAgentManager {
             // 变更统计（**按项目**累计；只存变化路径 → 体积小、可长期留）。
             // 用途：跑几天后回答"这个节点到底变了几次" —— 划分位置的判据（见 task 178）。
             appendContextStat(projectDir(projectFromUri(taskUri)), statFromStep(step, prevStep?.valueHashes ?? null, taskUri));
+            this.noteTraffic(taskUri, turnId, rm, 2);
             const result = streamText({
                 model: this.modelFor(rm, key),
                 system: delivery.system.text,

@@ -1,6 +1,7 @@
 import { createSignal, onMount, Show } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "../store/notificationStore";
+import { LlmTrafficPanel } from "./LlmTrafficPanel";
 
 export function LlmPage() {
     const [running, setRunning] = createSignal(false);
@@ -28,7 +29,7 @@ export function LlmPage() {
         await refresh();
     };
     return (
-        <div class="flex flex-col gap-4 p-4 max-w-xl">
+        <div class="flex flex-col gap-4 p-4 max-w-4xl">
             <h2 class="text-display font-bold">LLM 代理</h2>
             <div class="card border p-4 bg-base-100">
                 <div class="flex items-center justify-between mb-3">
@@ -51,6 +52,8 @@ export function LlmPage() {
                     {loading() ? "处理中…" : running() ? "停止" : "启动"}
                 </button>
             </div>
+            <div class="divider" />
+            <LlmTrafficPanel />
         </div>
     );
 }

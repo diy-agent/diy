@@ -48,6 +48,8 @@ async function getLlmProxy() {
   return _llmProxyInstance;
 }
 
+import { llmTraffic } from "../core/llm-traffic";
+
 const app = apiDef.diy;
 
 /**
@@ -685,6 +687,24 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const proxy = await getLlmProxy();
     proxy.stop();
     return { status: "ok" };
+  });
+
+  // ── llmTraffic（内存流量环；见 core/llm-traffic.ts）──
+  binding.on(app.llmTraffic.snapshot, async () => llmTraffic.snapshot());
+  binding.on(app.llmTraffic.clear, async () => {
+    llmTraffic.clear();
+    return { status: "ok" };
+  });
+  binding.on(app.llmTraffic.setRecording, async ({ input }) => {
+    llmTraffic.setRecording(input.on);
+    return llmTraffic.snapshot();
+  });
+  binding.on(app.llmTraffic.setCap, async ({ input }) => {
+    llmTraffic.setCap(input.n, input.which ?? "keepLast");
+    return llmTraffic.snapshot();
+  });
+  binding.on(app.llmTraffic.events, async function* () {
+    for await (const ev of llmTraffic.events()) yield ev;
   });
 
   // ── llmConfig（模型 provider 配置）──
