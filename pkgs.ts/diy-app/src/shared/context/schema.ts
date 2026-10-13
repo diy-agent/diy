@@ -4,6 +4,7 @@
 import { z } from "zod";
 import type { ContextLab, PlaceCandidate } from "./preview";
 import type { StepSummary } from "./steps";
+import type { CtxChangeRow, CtxTurnHistory } from "./changelog";
 
 const Container = z.enum(["system", "runtime"]);
 
@@ -125,3 +126,53 @@ export const StatsSchema = z.object({
     ),
 });
 export type Stats = z.infer<typeof StatsSchema>;
+
+/**
+ * 一轮变更历史的**视图**形状（= `foldCtxLog` 的一轮 + 该轮 ref）。
+ * ref 的两段来源不同、都可能不可得（→ null，UI 不画徽章，不谎报）：
+ *   · 划分与两份容器是否变 ← 真发投递快照（按 turnId join；快照已被清理就没有）
+ *   · 缓存率与金额 ← 用量账本（`local/<key>.usage.jsonl`，按 turnId join）
+ */
+export interface HistoryTurnView extends CtxTurnHistory {
+    systemPlaces: string[];
+    systemDiffers: boolean | null;
+    runtimeDiffers: boolean | null;
+    incomparable: boolean | null;
+    cacheHitRate: number | null;
+    cost: number | null;
+}
+
+/** 变更历史的一行变更（见 shared/context/changelog.ts 的 CtxChangeRow） */
+const changeRowSchema: z.ZodType<CtxChangeRow> = z.object({
+    kind: z.enum(["add", "update", "remove"]),
+    path: z.string(),
+    before: z.string().nullable(),
+    after: z.string().nullable(),
+});
+
+/** 变更历史的一轮 */
+const historyTurnSchema: z.ZodType<HistoryTurnView> = z.object({
+    index: z.number(),
+    ts: z.string(),
+    turnId: z.string(),
+    model: z.string(),
+    wireVersion: z.string(),
+    baseline: z.boolean(),
+    changes: z.array(changeRowSchema),
+    systemPlaces: z.array(z.string()),
+    systemDiffers: z.boolean().nullable(),
+    runtimeDiffers: z.boolean().nullable(),
+    incomparable: z.boolean().nullable(),
+    cacheHitRate: z.number().nullable(),
+    cost: z.number().nullable(),
+});
+
+/** 变更历史（见 app.context.changelog） */
+export const CtxLogSchema = z.object({
+    /** 总轮数（可能大于 turns.length —— limit 截尾） */
+    total: z.number(),
+    /** log = 变更日志本体；derived = 该任务还没有日志，从投递快照的值 hash 折算（无值预览） */
+    source: z.enum(["log", "derived"]),
+    turns: z.array(historyTurnSchema),
+});
+export type CtxLog = z.infer<typeof CtxLogSchema>;
