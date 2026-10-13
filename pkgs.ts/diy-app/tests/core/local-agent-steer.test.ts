@@ -580,3 +580,70 @@ describe("插话认领与落位分离（落位点 = start-step）", () => {
         expect(steerIdx).toBeLessThan(stepStarts[1]!.i); // 在第二步之前
     });
 });
+
+describe("会话正在生成中再发消息（##306 / ##180 第 1 步）：不拒绝，改排队", () => {
+  it("第二个客户端发消息 → 不抛错，回一条排队回执，本轮收尾后整批投递", async () => {
+    const uri = newUri();
+    const model = stubModel([textReply("第一条的答复"), textReply("排队那条的答复")]);
+    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+
+    // 客户端 A：起一轮并推到「已在跑」。generator 是惰性的 —— next() 之前
+    // sess.running 仍是空，所以必须真推一次才模拟出"会话在跑"。
+    const first = mgr.chat(uri, "第一条");
+    const head = await first.next();
+    expect(head.done).toBe(false);
+
+    // 客户端 B：同一任务、同一会话再发一条 —— 旧行为是 throw「……正在生成中」
+    const opsB = await run(uri, "第二条", model, mgr);
+
+    // ① 回执块：kind=error 且 source=queue（error 块不参与 LLM 投影，不会被当成真实发言）
+    const notice = opsB.find(
+      (o) =>
+        o.op === "start" &&
+        o.kind === "error" &&
+        (o as { meta?: { source?: string } }).meta?.source === "queue",
+    );
+    expect(notice).toBeTruthy();
+    // ② 回执必须带内容：空流退出 = 用户分不清"已排队"与"被吞了"
+    expect(
+      opsB.some((o) =>
+        String((o as { fields?: { message?: string } }).fields?.message ?? "").includes("已排队"),
+      ),
+    ).toBe(true);
+    // ③ 回执自己那一轮闭合（不留僵尸轮）
+    expect(opsB.some((o) => o.op === "stop" && o.id === notice!.id)).toBe(true);
+
+    // 继续跑完 A：本轮收尾后自动开下一轮，把排队那条投出去
+    const opsA: Op[] = [head.value!];
+    for await (const op of first) opsA.push(op);
+
+    // ④ 模型第二次请求里确实带上了"第二条"（真的投递了，不只是记了一笔）
+    expect(promptText(model, 1)).toContain("第二条");
+    // ⑤ 投递后队列清空（否则会被投第二次）
+    expect(new SteerQueue().list(uri)).toEqual([]);
+    // ⑥ 两轮结构：第一条那轮 + 排队那条自动开的下一轮
+    expect(opsA.filter((o) => o.op === "start" && o.kind === "turn").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("排队的那条走 next-turn：不在正在跑的轮次内部插队", async () => {
+    const uri = newUri();
+    const model = stubModel([toolCallReply("c1", "echo a"), textReply("第一轮"), textReply("第二轮")]);
+    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+
+    const first = mgr.chat(uri, "开始");
+    await first.next();
+
+    await run(uri, "排队的话", model, mgr);
+
+    // 正在跑的这一轮的下一个模型步（第 2 次请求 = 工具步之后）里**不该**看到排队的消息：
+    // 它在 next-turn 语义下属于**下一轮**，不是本轮的下一个 step。
+    const opsA: Op[] = [];
+    for await (const op of first) opsA.push(op);
+    expect(opsA.some((o) => o.op === "start" && o.kind === "turn")).toBe(true);
+    expect(promptText(model, 1)).not.toContain("排队的话");
+    // 它出现在紧接着的下一轮（本轮的第二次请求是工具步后，第三/四次请求里能看到）
+    const rounds = model.doStreamCalls.length;
+    const lastPrompt = promptText(model, rounds - 1);
+    expect(lastPrompt).toContain("排队的话");
+  });
+});

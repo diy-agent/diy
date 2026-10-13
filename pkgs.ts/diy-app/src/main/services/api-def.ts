@@ -578,6 +578,7 @@ export const apiDef = RpcSchema.router({
                   bashTimeoutMs: z.number(),
                   outputClipChars: z.number(),
                   readMaxBytes: z.number(),
+                  maxSteerQueue: z.number(),
                 }),
               }),
               /**
