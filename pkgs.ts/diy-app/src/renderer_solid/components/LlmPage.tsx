@@ -29,9 +29,9 @@ export function LlmPage() {
         await refresh();
     };
     return (
-        <div class="flex flex-col gap-4 p-4 max-w-4xl">
-            <h2 class="text-display font-bold">LLM 代理</h2>
-            <div class="card border p-4 bg-base-100">
+        <div class="flex flex-col gap-4 p-4 h-full min-h-0">
+            <h2 class="text-display font-bold shrink-0">LLM 代理</h2>
+            <div class="card border p-4 bg-base-100 max-w-4xl shrink-0">
                 <div class="flex items-center justify-between mb-3">
                     <span class="text-title font-medium">运行状态</span>
                     <span class={`badge ${running() ? "badge-success" : "badge-ghost"}`}>
@@ -52,8 +52,10 @@ export function LlmPage() {
                     {loading() ? "处理中…" : running() ? "停止" : "启动"}
                 </button>
             </div>
-            <div class="divider" />
-            <LlmTrafficPanel />
+            <div class="divider my-0 shrink-0" />
+            <div class="flex-1 min-h-0">
+                <LlmTrafficPanel />
+            </div>
         </div>
     );
 }
