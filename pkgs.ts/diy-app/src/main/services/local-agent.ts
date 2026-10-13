@@ -1431,7 +1431,9 @@ export class LocalAgentManager {
         if (at <= 0) return { ops: [], cursor: encodeCursor(fp, 0), hasMore: false, stale: false };
         // 至少往前 1 字节：`budget` 缺失（或 0）时退化成「只取前一轮」，而不是原地打转
         const start = seekTurnStartAtOrBefore(fp, at - Math.max(1, opts.budgetBytes ?? 0));
-        if (start >= at) return { ops: [], cursor: encodeCursor(fp, at), hasMore: false, stale: false }; // 防御：不许空转
+        // 当前**不可达**（`seekTurnStartAtOrBefore` 的 floor 语义保证 `start ≤ at - 1`），
+        // 留着是防未来改动把「至少往前 1 字节」这条丢掉 —— 那时空转 = 渲染端死循环补同一段。
+        if (start >= at) return { ops: [], cursor: encodeCursor(fp, at), hasMore: false, stale: false };
         return this.segmentOf(taskUri, fp, start, at);
     }
 

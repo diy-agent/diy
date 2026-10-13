@@ -42,7 +42,8 @@ import { closeSync, openSync, readSync, statSync } from "node:fs";
  */
 const TURN_PREFIX = '{"op":"start","id":"';
 
-/** 回溯块大小：一块足以装下成百上千行；匹配跨块也无妨（下一块接着往前找）。 */
+/** 回溯块大小：一块足以装下成百上千行；跨块边界由相邻块的重叠兜住（见 seekTurnStartAtOrBefore）。
+ *  导出供测试构造「轮首恰压在某次回溯的块边界上」的场景。 */
 export const SEEK_CHUNK_BYTES = 256 * 1024;
 
 /** 单行读取上限 —— 轮首行只带 meta（model/reasoningEffort），几百字节；超了就不可能是轮首行。 */
@@ -136,7 +137,12 @@ export function seekTurnStartAtOrBefore(fp: string, targetOffset: number): numbe
                 pos = hit; // 继续往左找
             }
             if (from === 0) return 0; // 找到文件头都没有轮首 → 全量（安全降级）
-            hi = from;
+            // ⚠️ 回退必须**留 `NEEDLE.length - 1` 字节重叠**，不能 `hi = from`：
+            // 两块首尾相接时，起始偏移落在块边界左侧 1~19 字节的轮首行**两块里都不完整**
+            // ⇒ `lastIndexOf` 两边都命中不了 ⇒ 被漏检，回退到更早的轮首（窗口被撑大，
+            // 最坏退全量 = 分页在这条 seek 上失效）。重叠 19 字节后任一 needle 必完整落在
+            // 某一块里（块 k 的右界 = 块 k-1 起点 + 19，仍严格下降 ⇒ 不死循环）。
+            hi = from + NEEDLE.length - 1;
         }
     } finally {
         closeSync(fd);
@@ -232,6 +238,10 @@ export function encodeCursor(fp: string, at: number): string {
  * 解出游标偏移；形态 / 版本 / 指纹 / 大小回退任一不成立 ⇒ `null`（调用方退全量）。
  *
  * 只做**形式**校验，不碰「还算不算轮首」（那是 `isTurnStartAt` 的字节级判断）。
+ *
+ * ⚠️ **不校验 `at <= sizeNow`**：伪造的 token 可以带一个超大 `at`。当前是安全的 ——
+ * 越界处读不到完整字节 ⇒ `isTurnStartAt` 的「行首 + JSON」双重判据必然 false ⇒ 退全量；
+ * 但这层防御是**间接**的（靠消费端复核，不是靠这里的形式校验）。改动消费端前先确认这条链还在。
  */
 export function decodeCursor(token: string, fp: string): number | null {
     let body: CursorBody;

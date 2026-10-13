@@ -6,7 +6,10 @@
 //   ① 返回偏移恒在**行首**（字节偏移；UTF-8 多字节内容不按字符数算）；
 //   ② 返回 `0` 或 `size - offset >= budgetBytes`（`0` = 全量，永远合法）；
 //   ③ 窗口内每轮完整（除末轮外每个 turn 的 start 都有 stop）。
-// 另加「与朴素全量实现逐一对拍」—— 语义的唯一权威是那句定义，不是本实现的回溯技巧。
+// 另加「与参照实现逐一对拍」—— 语义的唯一权威是那句定义，不是本实现的回溯技巧：
+//   · 确定性抽样对拍（固定种子 PRNG，可复现）；
+//   · **块接缝全扫**（把 target 反算到回溯块的边界上）—— 回溯是分块做的，接缝是它独有的
+//     失手位置，抽样命中率 ~1e-5，看不见这类缺陷（review1 R2/R4）。
 //
 // 纯文件读写，无 Electron / 无网络。
 // ═══════════════════════════════════════════════════════════════
@@ -43,6 +46,20 @@ function turnOps(id: string, pad = 0, unit = "x"): Op[] {
         { op: "stop", id: sid },
         { op: "stop", id },
     ];
+}
+
+/**
+ * 确定性 PRNG（mulberry32）。对拍必须**可复现**：`Math.random()` 让失败无法重放，
+ * 也让"同一份代码两次跑出不同结论"变成常态（review1 R4）。
+ */
+function rng(seed: number): () => number {
+    let a = seed >>> 0;
+    return () => {
+        a = (a + 0x6d2b79f5) >>> 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
 }
 
 /** 参照实现（朴素全量扫描）：同一句定义的另一份写法，用来对拍 */
@@ -256,9 +273,84 @@ describe("seekWindowStart — 识别与回溯", () => {
         expect(seekWindowStart(fp, buf.length - t3 + 1)).toBe(t2);
     });
 
-    it("随机对拍：不同规模/预算下与朴素实现逐一致，且三条保证成立", () => {
+    it("块接缝全扫：轮首恰压在回溯块边界上也不漏检（对每个块边界 ±24 逐一致）", () => {
+        // 布局：4 轮，轮首间距 ≈ 1.6 块 —— 保证「target 与其最近的轮首之间不会插进下一轮」，
+        // 于是能**把 target 反算到接缝上**：`target = t + CHUNK + d`（d ∈ [-19,-1] 时，
+        // 轮首 t 的起始偏移正落在回溯块 [target+20-CHUNK, …) 的接缝左侧 1~19 字节里）。
+        // 反例（review1 R2 的实测）：`hi = from` 两块首尾相接 ⇒ 接缝上的轮首两块都不完整
+        // ⇒ 被漏检、回退到**更早**的轮首（窗口被撑大 ≈ 一整轮；前面没别的轮首时直接退全量）。
+        const GAP = Math.round(SEEK_CHUNK_BYTES * 1.6);
         const fp = tmpFile();
-        const rand = (n: number): number => Math.floor(Math.random() * n);
+        let body = "";
+        const starts: number[] = [];
+        for (let i = 0; i < 4; i++) {
+            starts.push(Buffer.byteLength(body, "utf-8"));
+            body += `${JSON.stringify({ op: "start", id: `b${i}`, kind: "turn", meta: { model: "m" } })}\n`;
+            body += `${JSON.stringify({ op: "delta", id: `b${i}`, fields: { content: "x".repeat(GAP) } })}\n`;
+        }
+        // 尾部留 2 块：让 target 能扫过最后一个接缝之外
+        body += `${JSON.stringify({ op: "delta", id: "tail", fields: { content: "y".repeat(SEEK_CHUNK_BYTES * 2) } })}\n`;
+        writeFileSync(fp, body, "utf-8");
+        const buf = readFileSync(fp);
+        // 布局自证：每个轮首都真的是「轮 start 行行首」
+        for (const t of starts) {
+            if (t > 0) expect(buf[t - 1]).toBe(0x0a);
+            const nl = buf.indexOf(0x0a, t);
+            const o = JSON.parse(buf.subarray(t, nl).toString("utf-8")) as { op?: string; kind?: string };
+            expect([o.op, o.kind]).toEqual(["start", "turn"]);
+        }
+        /** 定义的直接写法：≤ target 的最近轮首（无则 0 = 全量） */
+        const floorAt = (target: number): number =>
+            starts.filter((t) => t <= target).reduce((a, b) => Math.max(a, b), 0);
+
+        let checked = 0;
+        let straddled = 0;
+        for (const t of starts) {
+            for (let d = -24; d <= 24; d++) {
+                const target = t + SEEK_CHUNK_BYTES + d;
+                if (target + 20 > buf.length) continue;
+                const want = floorAt(target);
+                // 非空洞性自证：接缝窗口（d ∈ [-19,-1]）里「最近轮首」必须**就是 t 自己** ——
+                // 否则这条扫描根本没测到"漏检 t"这件事
+                if (d >= -19 && d <= -1) {
+                    expect(want, `接缝窗口没对准轮首（t=${t}, d=${d}）`).toBe(t);
+                    expect(seekWindowStart(fp, buf.length - target)).toBe(t);
+                    straddled++;
+                }
+                expect(seekWindowStart(fp, buf.length - target), `t=${t} d=${d}`).toBe(want);
+                checked++;
+            }
+        }
+        expect(straddled).toBe(4 * 19); // 每个轮首 19 个接缝 target
+        expect(checked).toBeGreaterThan(100);
+    });
+
+    it("接缝漏检的极端形态：漏检之后再无其它轮首 ⇒ **不**退全量（分页不失效）", () => {
+        // 只有两轮时，"漏检后回退"没有中间站，直接掉到文件头 = 全量 = 这次 seek 上分页完全失效。
+        const GAP = Math.round(SEEK_CHUNK_BYTES * 1.6);
+        const fp = tmpFile();
+        let body = "";
+        const starts: number[] = [];
+        for (let i = 0; i < 2; i++) {
+            starts.push(Buffer.byteLength(body, "utf-8"));
+            body += `${JSON.stringify({ op: "start", id: `only${i}`, kind: "turn", meta: { model: "m" } })}\n`;
+            body += `${JSON.stringify({ op: "delta", id: `only${i}`, fields: { content: "x".repeat(GAP) } })}\n`;
+        }
+        body += `${JSON.stringify({ op: "delta", id: "tail", fields: { content: "y".repeat(SEEK_CHUNK_BYTES * 2) } })}\n`;
+        writeFileSync(fp, body, "utf-8");
+        const buf = readFileSync(fp);
+        const t = starts[1]!;
+        for (let d = -19; d <= -1; d++) {
+            const target = t + SEEK_CHUNK_BYTES + d;
+            const off = seekWindowStart(fp, buf.length - target);
+            expect(off, `d=${d}`).toBe(t); // 不是 0（0 = 全量 = 这一次 seek 上分页失效）
+        }
+    });
+
+    it("抽样对拍：不同规模/预算下与朴素实现逐一致，且三条保证成立（固定种子，可复现）", () => {
+        const fp = tmpFile();
+        const r01 = rng(0x293_290);
+        const rand = (n: number): number => Math.floor(r01() * n);
         const ops: Op[] = [];
         let bytes = 0;
         for (let i = 0; i < 30; i++) {
