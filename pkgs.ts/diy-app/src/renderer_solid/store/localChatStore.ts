@@ -72,6 +72,15 @@ interface TaskState {
     /** 上一次并入的**轮次 id 序列**（foldInto 的前缀守卫：只能往后追加，对不上就重建） */
     turnIds?: string[];
     /**
+     * op 增量订阅的**已应用到第几行**（ops.jsonl 行号，1-based；0 = 尚无）。
+     * 见 subscribeOps 头注：首载用 history（折叠流），增量用 opsWatch，两者按 seq 对齐。
+     */
+    appliedSeq: number;
+    /** 已见会话代次（main 侧 clear 会换发 → 收到不符的帧说明历史被清空，须重建） */
+    epoch: number;
+    /** op 订阅的取消句柄（null = 未订阅）。切任务时取消，回来时按水位补发追平 */
+    opsAbort: AbortController | null;
+    /**
      * 逐步用量账本（`<key>.usage.jsonl` 的结构化镜像）。
      * 权威在盘上；这里是快照，打开会话时拉一次，轮次收尾（含别人的轮次）时再拉一次。
      * 对话流页脚**不依赖它**（页脚用 turn 块属性，实时就有）——它服务于明细与看板。
@@ -98,6 +107,7 @@ function stateFor(taskUri: string): TaskState {
             active, setActive, stopRequestedAt, setStopRequestedAt, abort: null,
             error, setError, steers, setSteers, usage, setUsage, steerSeq: 0, steerSettled: 0,
             scroll: 0, tab: "local", detailScroll: 0,
+            appliedSeq: 0, epoch: -1, opsAbort: null,
         };
         states.set(taskUri, s);
     }
@@ -186,8 +196,12 @@ function flushRefresh(st: TaskState) {
 // 在没有它之前，UI 至少不该把别人正在跑的轮次说成"流中断"。间隔克制（2s），
 // 且只在会话页挂载期间运行（watch 的 stop 由组件 cleanup 调用）。
 
-/** main 运行态轮询间隔（会话页挂载期间） */
-const ACTIVE_POLL_MS = 2000;
+/**
+ * 运行态真值的**事件驱动**节流窗口（见 touchActive）。
+ * ##307 之后不再定时轮询：轮次边界 op 到达时对一次 main 真值即可，
+ * 窗口只是防止 token 级高频 op 把「对真值」打成风暴。
+ */
+const ACTIVE_TOUCH_MS = 400;
 
 /** 判据用的"现在"：轮询每拍推进一次，让停止宽限期（shared/session-view.ts）能自己过期 */
 const [nowMs, setNowMs] = createSignal(Date.now());
@@ -295,11 +309,18 @@ async function refreshUsage(taskUri: string): Promise<void> {
     }
 }
 
-/** 会话页挂载期间持续对真值；返回停止函数（组件 cleanup 调用） */
+/**
+ * 会话页挂载期间对一次 main 真值；返回清理函数（组件 cleanup 调用）。
+ *
+ * ##307：原来的 2s 轮询已删。「别人正在跑」这件事现在由 **op 增量事件**发现 ——
+ * 轮次边界 op 一到就 touchActive 对一次真值（见 applyOpsFrame），不再有"最多迟 2s"的窗口，
+ * 也不再有空转的定时器。清理函数保留（组件契约不变），但已无定时器可清。
+ */
 function watch(taskUri: string): () => void {
     void refreshActive(taskUri);
-    const timer = setInterval(() => void refreshActive(taskUri), ACTIVE_POLL_MS);
-    return () => clearInterval(timer);
+    // 组件卸载（切走会话页 / 页面关闭）时退订，别让订阅悬着 ——
+    // 悬着的订阅在页销毁时会以「Client disposed」形式炸日志（renderer 已死，流才断）
+    return () => unsubscribeOps(taskUri);
 }
 
 /** 运行态视图（判据全在 shared/session-view.ts，这里只把三个信号喂进去） */
@@ -395,22 +416,166 @@ async function refreshSteers(taskUri: string): Promise<void> {
     }
 }
 
+// ─── op 增量订阅（##307：写侧即推，取代 2s 轮询 / 轮末重放） ─────────────
+//
+// 帧形状与契约见 main 的 services/ops-feed.ts 与 api-def 的 opsWatch / opsWatermark。
+//
+// 时序（必须按此序，否则会漏掉「首载期间」写入的 op）：
+//   ① 取水位 wm = {epoch, seq}（ops.jsonl 当前行号）；
+//   ② 拉 history（**折叠流**，大会话快路径）fold 成块树 —— 它覆盖范围 **≥ wm.seq**
+//      （main 侧同步读文件，且①在②之前发起）；
+//   ③ `appliedSeq = wm.seq`，建 opsWatch(since=wm.seq) → main 先补发 `(wm.seq, 现在]`，再接实时。
+// ②③ 之间与补发段的重复由 seq 去重吸收；即便漏掉去重，`BlockStore.apply` 本身幂等
+//（重复 start / patch / stop 都是 no-op），所以这条路径「重不重」都不出错，只是别重复算。
+
+type OpsFrame =
+    | { kind: "hello"; epoch: number; seq: number }
+    | { kind: "batch"; epoch: number; fromSeq: number; ops: Op[] }
+    | { kind: "reset"; epoch: number };
+
+/** 取会话 op 流水位（订阅起点的校准值） */
+async function fetchWatermark(taskUri: string): Promise<{ epoch: number; seq: number }> {
+    try {
+        return (await diyService.diy.agent.local.opsWatermark({ taskUri })) as { epoch: number; seq: number };
+    } catch (e) {
+        // 拿不到水位不阻断会话：退化为「从 0 起订阅」—— 会全量补发（代价大但正确），
+        // epoch 用 -1 表示「未知」，首帧 hello 会带回真值并触发一次重建校准。
+        console.warn(`[localChat] op 水位读取失败 ${taskUri}:`, e);
+        return { epoch: -1, seq: 0 };
+    }
+}
+
+/**
+ * 建立 op 增量订阅（**幂等**：已在订阅则直接返回）。
+ *
+ * 订阅句柄挂在 state 上，切任务时由 unsubscribeOps 取消 —— 后台任务的 op 不再进本窗口
+ * （用户看不到，不必算），切回来时按 `appliedSeq` 水位补发追平（main 侧 subscribe 的补发段）。
+ */
+function ensureOpsSubscription(taskUri: string): void {
+    const st = stateFor(taskUri);
+    if (st.opsAbort) return;
+    const ctrl = new AbortController();
+    st.opsAbort = ctrl;
+    const since = st.appliedSeq;
+    const epoch = st.epoch;
+    void (async () => {
+        try {
+            const stream = await diyService.diy.agent.local.opsWatch(
+                { taskUri, since, epoch },
+                { signal: ctrl.signal },
+            );
+            for await (const frame of stream) applyOpsFrame(taskUri, frame as OpsFrame);
+        } catch (e) {
+            // 正常退订（abort）与页面销毁（client disposed）都不是故障，别当异常刷日志
+            const msg = e instanceof Error ? e.message : String(e);
+            if (!ctrl.signal.aborted && !/disposed|abort/i.test(msg)) {
+                console.warn(`[localChat] op 订阅中断 ${taskUri}:`, e);
+            }
+        } finally {
+            if (st.opsAbort === ctrl) st.opsAbort = null;
+        }
+    })();
+}
+
+/** 退订（切任务 / 清空时）。幂等。 */
+function unsubscribeOps(taskUri: string): void {
+    const st = states.get(taskUri);
+    if (!st) return;
+    st.opsAbort?.abort();
+    st.opsAbort = null;
+}
+
+/** 运行态真值的最近一次询问时刻（节流：见 ACTIVE_TOUCH_MS） */
+const activeTouchedAt = new Map<string, number>();
+
+/** 轮次边界到达时对一次 main 真值（取代原来的 2s 轮询；节流防 token 级风暴） */
+function touchActive(taskUri: string): void {
+    const last = activeTouchedAt.get(taskUri) ?? 0;
+    if (Date.now() - last < ACTIVE_TOUCH_MS) return;
+    activeTouchedAt.set(taskUri, Date.now());
+    void refreshActive(taskUri);
+}
+
+/** 落地一帧增量（判据全在此处，见上方时序注） */
+function applyOpsFrame(taskUri: string, frame: OpsFrame): void {
+    const st = states.get(taskUri);
+    if (!st) return;
+    if (frame.kind === "hello") {
+        // 校准代次：epoch 不符时 main 会在本帧后紧跟一帧 reset（见 ops-feed.subscribe）
+        st.epoch = frame.epoch;
+        return;
+    }
+    if (frame.kind === "reset") {
+        // 会话被清空（clear）：块树整棵作废，改由权威 history 重建（文件此刻是空/新内容）
+        st.store = new BlockStore();
+        st.turnIds = undefined;
+        st.appliedSeq = 0;
+        st.epoch = frame.epoch;
+        st.loaded = true;
+        flushRefresh(st);
+        void reload(taskUri);
+        return;
+    }
+    // batch
+    if (frame.epoch !== st.epoch) {
+        // 代次不符（会话在订阅期间被清空过）→ 当前块树属于旧史书，丢掉重来
+        st.store = new BlockStore();
+        st.turnIds = undefined;
+        st.appliedSeq = 0;
+        st.epoch = frame.epoch;
+    }
+    let ops = frame.ops;
+    if (frame.fromSeq <= st.appliedSeq) {
+        const skip = st.appliedSeq - frame.fromSeq + 1;
+        if (skip >= ops.length) return; // 整批都已在树里（补发段/自发流的重叠）
+        ops = ops.slice(skip);
+    } else if (frame.fromSeq > st.appliedSeq + 1) {
+        // 有洞（订阅曾中断 / 丢帧）→ 拉一次全量 history 合并（幂等），把缺口补上
+        void reload(taskUri);
+    }
+    let sawTurnBoundary = false;
+    for (const op of ops) {
+        st.store.apply(op);
+        if (op.op === "start" && op.kind === "turn") sawTurnBoundary = true;
+        // stop 不带 kind：向块树查该 id 是不是轮次块（apply 后块仍在，仅 stopped 置位）
+        else if (op.op === "stop" && st.store.blocks.get(op.id)?.kind === "turn") sawTurnBoundary = true;
+    }
+    st.appliedSeq = frame.fromSeq + frame.ops.length - 1;
+    scheduleRefresh(st);
+    // 轮次边界 → 立刻对一次真值（原 2s 轮询的职责，现在由事件驱动）
+    if (sawTurnBoundary) touchActive(taskUri);
+}
+
 async function open(taskUri: string) {
+    // 切走旧会话：取消它的订阅（回来时按水位补发追平 —— 见 ensureOpsSubscription）
+    const prev = currentUri();
+    if (prev && prev !== taskUri) unsubscribeOps(prev);
     setCurrentUri(taskUri);
     const st = stateFor(taskUri);
-    void refreshActive(taskUri); // 进入会话立刻对一次真值，不等轮询第一拍
+    void refreshActive(taskUri); // 进入会话立刻对一次真值
     // 队列与历史独立：loaded 与否都要拉（横条反映的是"当前待投递"，与历史加载进度无关）
     void refreshSteers(taskUri);
     // 用量账本同理独立：看板/明细要的是"这个会话花过多少"，与块树加载进度无关
     void refreshUsage(taskUri);
-    if (st.loaded) return;
+    if (st.loading) return st.loading;
+    if (st.loaded) {
+        // 已加载过（含切任务回来）：块树已在，只需确保增量订阅在（幂等）
+        ensureOpsSubscription(taskUri);
+        return;
+    }
     // 并发去重（必需）：LocalChatPage 首挂时 onMount 与 uri 切换 effect 都会调 open，
     // 而 loaded 只在 await 之后置位 —— 没有这道闸门，两次 history 会被先后 fold 进同一个
     // store，表现为「每条消息内容整体重复一遍」。
     // 失败时清掉在途标记（不置 loaded），保留「下次进入自动重试」的既有语义。
-    if (st.loading) return st.loading;
     st.setError(null);
-    st.loading = loadHistory(st, taskUri).finally(() => {
+    st.loading = (async () => {
+        // ① 水位 → ② history（覆盖 ≥ 水位）→ ③ 订阅（补发 ≤ 水位之后的）
+        const wm = await fetchWatermark(taskUri);
+        await loadHistory(st, taskUri);
+        st.appliedSeq = wm.seq;
+        st.epoch = wm.epoch;
+        ensureOpsSubscription(taskUri);
+    })().finally(() => {
         st.loading = undefined;
     });
     await st.loading;
@@ -600,6 +765,7 @@ async function clear(taskUri: string) {
     const st = stateFor(taskUri);
     st.store = new BlockStore();
     st.turnIds = undefined; // 前缀守卫一并归零：新会话从空开始（下次并入必走重建那条）
+    st.appliedSeq = 0; // 订阅游标归零（main 侧同一次 clear 也会 reset：epoch 换发 + 水位归零）
     st.loaded = true; // 文件已删，不必重拉
     st.setError(null);
     st.setSteers([]); // 会话已清，排队中的插话也被 main 一并清掉（见 local-agent 的 clear()）
