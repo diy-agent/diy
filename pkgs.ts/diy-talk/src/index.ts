@@ -10,7 +10,7 @@
 //                              content: '该段漏了并发写保护', at: '2026-10-13T00:00:00.000Z' });
 //   const b = createReaction({ id: 'r2', author: 'c', turnId: 't1', target, replyTo: 'r1',
 //                              content: '同意，且需要补锁', at: '2026-10-13T00:00:05.000Z' });
-//   assertThreadRefs([a, b]);                                 // 悬空 replyTo 在这里报错
+//   assertThreadRefs([a, b]);                                 // 悬空 replyTo / 异锚点在这里报错
 //   assemblyRole({ kind: 'speech', author: 'b', self: 'a' }); // => 'user'（绝不是 'assistant'）
 //
 // 形状速览（详见 SPEC.md；需求真源是 tests/intent.talk.test.ts 的 R1–R7）：
@@ -30,10 +30,10 @@ export {
     ANCHOR_TYPES,
     docRangeAnchor,
     isAnchor,
-    isOnRevision,
     messageAnchor,
     nodeAnchor,
     parseAnchor,
+    pinsRevision,
     taskFieldAnchor,
 } from './anchor';
 export type {
@@ -51,7 +51,10 @@ export type { Event, EventInit } from './event';
 export { assertThreadRefs, createReaction, parseReaction, parseThread } from './reaction';
 export type { Reaction, ReactionInit } from './reaction';
 
-export { assemblyRole, assertRoleAssignments } from './role';
+export { assemblyRole, assertRoleAssignments, SOURCE_KINDS } from './role';
 export type { AssemblyRole, RoleAssignment, RoleInput, SourceKind } from './role';
 
 export { eventFromJson, eventToJson, reactionFromJson, reactionToJson, threadFromJson, threadToJson } from './serialize';
+export type { SerializeOptions } from './serialize';
+
+export type { ParseOptions } from './validate';

@@ -5,6 +5,7 @@
 >
 > 范围：本包是「对话容器与工作流容器**共用的地基**」的第一块（##311 序列第 1 个原子任务，##312）。
 > 依据：##166 §一 结论 5/10/11/12、§3.5 role 表、§7.4 痛点、§10.2 统一原语、§12.4「存储上是 thread，聊天室是它的渲染」。
+> 本次收口：review1（mimo2.6）四条 + review2（deepseek-4.1-flash）六条，采纳见文末「评审收口」。
 
 ## 目录
 
@@ -13,6 +14,7 @@
 - [3. 决策记录](#3-决策记录)
 - [4. 明确不做](#4-明确不做)
 - [5. 边界（谁接在后面）](#5-边界谁接在后面)
+- [6. 评审收口](#6-评审收口)
 
 ---
 
@@ -20,12 +22,12 @@
 
 | # | 需求（人类语言） | 用例位置 |
 |---|---|---|
-| R1 | **role 铁律**：自己的内容 → `assistant`；他人的发言 → `user`（**绝不能是 `assistant`**）；文档资料对谁都算 `user`；他人的 tool/thinking 不得进入装配 | `describe('R1 …')` |
-| R2 | **doc-range 钉 revision**：`{ revisionId, offset, quote }` 三字段缺一不可；正文改版后仍报得出「针对哪一版」 | `describe('R2 …')` |
-| R3 | **JSON round-trip 恒等**；键序固定（落盘 diff 友好） | `describe('R3 …')` |
-| R4 | **引用完整性**：悬空 `replyTo` / 指向自己 / `id` 重号一律报错 | `describe('R4 …')` |
-| R5 | **非法 anchor 一律拒绝**（未知 type、缺 `data`、字段类型错），带点路径定位 | `describe('R5 …')` |
-| R6 | **反序列化边界**：非 JSON、缺字段报错；多余字段丢弃 | `describe('R6 …')` |
+| R1 | **role 铁律**：自己的内容 → `assistant`；他人的发言 → `user`（**绝不能是 `assistant`**）；文档资料对谁都算 `user`；他人的 tool/thinking 不得进入装配；**非法来源类别报错**（不静默降级） | `describe('R1 …')` |
+| R2 | **doc-range 钉 revision**：`{ revisionId, offset, quote }` 三字段缺一不可；`pinsRevision` **三态**判是否本修订；**锚点构造器一律自检** | `describe('R2 …')` |
+| R3 | **JSON round-trip 恒等**；键序固定（落盘 diff 友好）；`compact` 单行输出（jsonl 用） | `describe('R3 …')` |
+| R4 | **引用完整性**：悬空 `replyTo` / 指向自己 / `id` 重号 / **异锚点混串** / **事件 `causes` 自指·重复** 一律报错 | `describe('R4 …')` |
+| R5 | **非法 anchor 一律拒绝**（未知 type、缺 `data`、字段类型错、**未知字段**），带点路径定位 | `describe('R5 …')` |
+| R6 | **反序列化边界**：非 JSON、缺字段（含 `replyTo` 键缺失）、**未知字段（写侧拒绝 / 读侧可选放行）**、**`at` 非 ISO** 一律报错 | `describe('R6 …')` |
 | R7 | **零依赖纯内核**：不 import `node:fs` / `electron` / `@diy/app`，不取时间 | `describe('R7 …')` |
 
 ## 2. 形状
@@ -46,9 +48,13 @@ Reaction = { id, author, turnId, target, replyTo, content, at } // 对话侧特�
 role     = 自己 → 'assistant'；他人发言 / 资料 → 'user'
 ```
 
-- **`at` 一律由调用方传入**（ISO 字符串）：本包不取时间 ⇒ 可重放、可测试、可脱离 Node 运行。
-- `causes` 缺省 `[]`（「没有触发谁」只有这一种表示，缺省不丢信息）；其余字段缺失一律报错 ——
-  `at` 没有自然缺省，时间是事实，不能凭空补。
+- **`at` 一律由调用方传入**（ISO-8601 字符串，接受 `YYYY-MM-DDTHH:mm:ss[.sss][Z|±HH:mm]`）：本包不取时间 ⇒
+  可重放、可测试、可脱离 Node 运行。**格式在入口校验**（「时间是事实，格式也是事实」）。
+- `causes` 缺省 `[]`（「没有触发谁」只有这一种表示，缺省不丢信息）；**不得自指或重复**。
+  其余字段缺失一律报错 —— `at` 没有自然缺省，时间是事实，不能凭空补。
+- `Reaction.replyTo` **必须显式出现**（`null` = 起头）：键缺失不能被静默当成「起头」，否则丢的是回复链本身。
+- **thread = 同一锚点下的发言集合**：`parseThread` / `assertThreadRefs` 要求所有 `target` 同锚点。
+- **未知字段**：写侧 / 读侧**缺省一律拒绝**（形状封闭）；读侧前向兼容显式传 `{ allowUnknown: true }`。
 - 校验函数一律返回**规范化后的新对象**（只含已知字段、键序固定）⇒ 序列化天然稳定，不受调用方书写顺序影响。
 
 ## 3. 决策记录
@@ -62,13 +68,23 @@ role     = 自己 → 'assistant'；他人发言 / 资料 → 'user'
 3. **`replyTo` 是结构化寻址**（§7.4 痛点 2）。案例里轮次靠肉眼对齐编号 → 人被逼纠正「最后一条是 R19，不是你说的 R21」。
    **引 id 才能被机器校验（悬空即报错），引文字只能靠人对齐。** 故 `replyTo` 是 `string | null` 且必须是本 thread 内的 id。
 4. **`Reaction` 与 `Event` 并存不是重复**：前者是对话侧特化（带 `turnId` + 回复链），后者是容器无关泛化（带 `causes`，
-   为工作流的「触发谁」准备，见 §10.2）。两者字段同源可互相投影，但**不强行合成一个类型** ——
-   合成会让对话侧无谓携带 `causes`、工作流侧无谓携带 `turnId`。
+   为工作流的「触发谁」准备，见 §10.2）。**`Reaction` 可单向投影为 `Event`**（丢掉 `turnId` 与回复链 `replyTo`），
+   反向不成立（`Event` 无 `turnId` 无从补）—— 故**不强行合成一个类型**（review2 意见 6：原「可互相投影」是过度承诺）。
 5. **role 铁律不做例外开关**（结论 5）。「例外仅限真正共用同一 API session 的连续轮次」，DIY 不属此例；
    留一个参数就等于留一条把他人发言标成 `assistant` 的后门。将来真有共用 session 的形态，应是**显式的新 `kind`**，
-   由意图测试先定义，而不是一个布尔开关。
+   由意图测试先定义，而不是一个布尔开关。`assemblyRole` 对非法 `kind` **抛错**（review1 意见 1），不得静默降级。
 6. **诊断一律不静默**（沿用 `@diy/template` 的教训）：非法 anchor / 悬空 replyTo / role 违规全部抛 `TalkError`（带 `code` + `path`）。
    静默丢弃的后果是「装配出来的历史少一条反驳」，而这正是决策线断掉最难发现的形态。
+   **「绝不静默丢弃」的精确口径**（review2 意见 4 收口）：**已识别字段的非法值 / 引用悬空 / 未知字段**一律报错；
+   未知字段写侧拒绝（防调用方数据被抹）、读侧缺省拒绝（可 `allowUnknown` 放行做前向兼容）。
+7. **`pinsRevision` 三态而非 `isOnRevision` 二态**（review2 意见 1）：非 `doc-range` 锚点不参与修订轴，返回 `null`
+   而非 `true` —— 旧的「恒 true」会被误当「本修订批注」过滤器，把 message / task-field / node 全纳入。
+8. **thread 必须同锚点**（review2 意见 2）：否则「所有不同对象的争论全串在一条时间线上」在存储层就已合法
+   （§7.4 痛点 4，正是本包要干掉的状态）。`mixed-anchor` 在写 / 读侧都拦。
+9. **`at` 校验 ISO-8601**（review1 意见 2）：格式也是事实，下游排序 / 比较依赖它；非 ISO 文本入口即拒。
+10. **`eventToJson` / `reactionToJson` / `threadToJson` 支持 `{ compact: true }`**（review1 意见 4）：
+    缺省缩进多行（人读 / diff），compact 单行供 ##319 拼 jsonl；两者 round-trip 等价。
+11. **`causes` 不得自指或重复**（review1 意见 3）：自指是环、重复是噪音，均非合法事实。
 
 ## 4. 明确不做
 
@@ -85,4 +101,11 @@ role     = 自己 → 'assistant'；他人发言 / 资料 → 'user'
 |---|---|
 | ##313 `@diy/flow` | 用 `anchor.type = 'node'` 表达泳道节点；容器不变量（单指针 / 可回退）在那边 |
 | ##314 装配器 | 消费 `Reaction[]` / `Event[]` + `assemblyRole`，产出 `messages[]`；三种装配策略与窗口裁剪 |
-| ##319 宿主接入 | 事件流落地（jsonl？）+ `diy flow` CLI 域 + 提示词装配；本包的 `eventToJson` / `threadToJson` 是唯一出入口 |
+| ##319 宿主接入 | 事件流落地（jsonl）+ `diy flow` CLI 域 + 提示词装配；本包 `*ToJson` 负责**校验 / 规范化**（`compact` 供 jsonl），行分隔与文件布局由 ##319 定 |
+
+## 6. 评审收口
+
+- **review1**：意见 1（非法 kind）✓采纳；意见 2（ISO `at`）✓采纳；意见 3（causes 自指·重复）✓采纳，
+  **前向 replyTo 顺序约束 ✗驳回**（见 `tests/intent.talk.test.ts` R4 与探针 `t312-reject-forward-reply`）；意见 4（多行 vs jsonl）✓采纳（加 `compact`）。
+- **review2**：意见 1（`pinsRevision` 三态）✓采纳；意见 2（同锚点）✓采纳；意见 3（`replyTo` 显式）✓采纳；
+  意见 4（未知字段）✓采纳（写侧拒绝 + 读侧 `allowUnknown`）；意见 5（构造器自检）✓采纳；意见 6（投影措辞）✓采纳（改为单向）。

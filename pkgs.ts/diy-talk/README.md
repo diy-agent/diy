@@ -26,7 +26,7 @@ const r2 = createReaction({
     content: '同意，且需要补一条锁顺序说明', at: '2026-10-13T00:00:05.000Z',
 });
 
-assertThreadRefs([r1, r2]);                             // 悬空 replyTo / 重号在这里报错
+assertThreadRefs([r1, r2]);                             // 悬空 replyTo / 重号 / 异锚点在这里报错
 
 assemblyRole({ kind: 'speech', author: 'b', self: 'a' }); // => 'user'（绝不能是 'assistant'）
 ```
@@ -41,11 +41,12 @@ assemblyRole({ kind: 'speech', author: 'b', self: 'a' }); // => 'user'（绝不�
 | `assemblyRole` / `assertRoleAssignments` | role 翻译与铁律核对（他人发言绝不能装配成 `assistant`） |
 
 序列化：`eventToJson/FromJson` · `reactionToJson/FromJson` · `threadToJson/FromJson`（读侧同样做完整校验，不静默丢弃）。
+`*ToJson` 缺省缩进多行；传 `{ compact: true }` 得紧凑单行（供 jsonl）。读侧可选 `{ allowUnknown: true }` 做前向兼容。
 
 ## 硬约束
 
 - **零依赖**：不 import `node:fs` / `electron` / `@diy/app`（意图测试 R7 静态把关）。
-- **不取时间**：`at` 由调用方传入 ⇒ 可重放、可测试。
+- **不取时间**：`at` 由调用方传入（须 ISO-8601）⇒ 可重放、可测试。
 - **只做数据与纯函数**：不做存储、不做装配（见 SPEC §4）。
 - 非法输入一律抛 `TalkError`（带 `code` + 点路径 `path`），**绝不静默丢弃**。
 
@@ -53,7 +54,7 @@ assemblyRole({ kind: 'speech', author: 'b', self: 'a' }); // => 'user'（绝不�
 
 ```bash
 cd pkgs.ts/diy-talk
-./sha.sh test          # 意图测试（31 例）
+./sha.sh test          # 意图测试（40 例）
 ./sha.sh check         # 本包类型 + lint
 # 全仓检查（含产物 / 可执行位护栏）：在仓库根跑 ./sha.sh check
 ```

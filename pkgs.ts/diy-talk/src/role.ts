@@ -17,7 +17,8 @@ export type AssemblyRole = 'user' | 'assistant';
  * - `trace`    tool / thinking 等过程产物 → 只可能是自己的（他人过程私有，不投递）
  * - `material` 文档修订等资料 → 对模型是外部事实，谁写的都是 user（没人跟它说话）
  */
-export type SourceKind = 'speech' | 'trace' | 'material';
+export const SOURCE_KINDS = ['speech', 'trace', 'material'] as const;
+export type SourceKind = (typeof SOURCE_KINDS)[number];
 
 export interface RoleInput {
     kind: SourceKind;
@@ -27,9 +28,17 @@ export interface RoleInput {
     self: string;
 }
 
-/** 翻译一条内容的 role；违反结构前提（他人 trace 进装配、self 未指定）立即抛 `role-violation` */
+/**
+ * 翻译一条内容的 role；违反结构前提立即抛 `role-violation`：
+ * 未知来源类别（JS 调用方 / `as any` 转发也可能传进来，review1 意见 1）、
+ * 他人 trace 进装配、author / self 未指定。
+ */
 export function assemblyRole(input: RoleInput): AssemblyRole {
     const { kind, author, self } = input;
+    // 先校验判别键：非法 kind 绝不能静默走 speech 分支（那会让「他人 trace」漏网）
+    if (!(SOURCE_KINDS as readonly string[]).includes(kind)) {
+        throw new TalkError('role-violation', `未知来源类别 ${JSON.stringify(kind)}（合法：${SOURCE_KINDS.join(' | ')}）`, 'kind');
+    }
     if (author === '') throw new TalkError('role-violation', 'author 不能为空', 'author');
     if (self === '') throw new TalkError('role-violation', 'self（装配对象）不能为空：没有「我」就无从判断哪条是自己的', 'self');
     if (kind === 'trace' && author !== self) {

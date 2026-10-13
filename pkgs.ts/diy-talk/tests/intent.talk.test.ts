@@ -3,12 +3,14 @@
 // 🎯 对话容器内核「意图测试」—— 需求级（人类语言描述需求，不描述实现）
 //
 // 需求定义（本文件即契约，逐条对应 SPEC.md §1 的 R1–R7，依据 ##166 §一 结论 5/10/11/12）：
-//   R1  role 铁律：他人的发言**绝不能**装配成 assistant；资料对谁都算 user；他人过程产物不得进装配
-//   R2  doc-range 钉 revision：`{ revisionId, offset, quote }` 三字段缺一不可，rev 变了也报得出原版
-//   R3  JSON round-trip：序列化 → 反序列化恒等；键序固定（落盘 diff 友好）
-//   R4  引用完整性：悬空 replyTo / 指向自己 / 重复 id 一律报错（结构化寻址的前提）
-//   R5  非法 anchor 一律拒绝：未知 type、缺 data、字段类型错（带点路径定位）
-//   R6  反序列化边界：非 JSON、缺字段、多余字段（多余丢弃、缺失报错）
+//   R1  role 铁律：他人的发言**绝不能**装配成 assistant；资料对谁都算 user；他人过程产物不得进装配；
+//       非法来源类别（JS 调用方绕过类型）同样报错，不得静默降级
+//   R2  doc-range 钉 revision：`{ revisionId, offset, quote }` 三字段缺一不可，rev 变了也报得出原版；
+//       `pinsRevision` 三态（是否本修订 / 不同修订 / 不在修订轴）；锚点构造器一律自检
+//   R3  JSON round-trip：序列化 → 反序列化恒等；键序固定（落盘 diff 友好）；`compact` 单行（jsonl 用）
+//   R4  引用完整性：悬空 replyTo / 指向自己 / 重复 id / 异锚点混串 / 事件 causes 自指·重复 一律报错
+//   R5  非法 anchor 一律拒绝：未知 type、缺 data、字段类型错、未知字段（带点路径定位）
+//   R6  反序列化边界：非 JSON、缺字段（含 replyTo 键缺失）、未知字段（写侧拒绝 / 读侧可选放行）、at 非 ISO
 //   R7  零依赖纯内核：不 import node:fs / electron / @diy/app，不取时间（at 由调用方传入）
 //
 // 测试风格：**以真实讨论形态为素材**（文档批注线、群争论线、工作流泳道节点），断言
@@ -21,6 +23,7 @@ import { describe, expect, it } from 'vitest';
 import {
     TalkError,
     ANCHOR_TYPES,
+    SOURCE_KINDS,
     assemblyRole,
     assertRoleAssignments,
     assertThreadRefs,
@@ -30,15 +33,17 @@ import {
     eventFromJson,
     eventToJson,
     isAnchor,
-    isOnRevision,
     messageAnchor,
     nodeAnchor,
     parseAnchor,
+    parseThread,
+    pinsRevision,
     reactionFromJson,
     reactionToJson,
     taskFieldAnchor,
     threadFromJson,
     threadToJson,
+    type Event,
     type Reaction,
 } from '../src/index';
 
@@ -108,6 +113,17 @@ describe('R1 role 铁律（##166 结论 5）', () => {
         expect(e.code).toBe('role-violation');
     });
 
+    it('非法来源类别 → role-violation，绝不静默降级成 speech（review1 意见 1）', () => {
+        // JS 调用方 / as any 转发可绕过类型；运行时必须拦住，否则「他人 trace」会漏网
+        expect(SOURCE_KINDS).toEqual(['speech', 'trace', 'material']);
+        expect(caught(() => assemblyRole({ kind: 'speechh' as never, author: 'a', self: 'a' })).code).toBe(
+            'role-violation',
+        );
+        const e = caught(() => assemblyRole({ kind: 'trace ' as never, author: 'b', self: 'a' }));
+        expect(e.code).toBe('role-violation');
+        expect(e.path).toBe('kind');
+    });
+
     it('装配侧提交前核对：把他人发言标成 assistant 会被拦下', () => {
         const e = caught(() =>
             assertRoleAssignments([
@@ -149,13 +165,28 @@ describe('R2 doc-range 钉 revision（##166 结论 11）', () => {
 
     it('正文改版后仍报得出「这条批注针对哪一版」（只存 offset 就会漂）', () => {
         const anchor = docRangeAnchor('rev-7', 1240, '此处有问题');
-        expect(isOnRevision(anchor, 'rev-7')).toBe(true);
-        expect(isOnRevision(anchor, 'rev-9')).toBe(false);
+        expect(pinsRevision(anchor, 'rev-7')).toBe(true);
+        expect(pinsRevision(anchor, 'rev-9')).toBe(false);
         // quote 随锚点留存 —— 装配 / 宿主侧据此在当前版做 fuzzy 校正
         expect(parseAnchor(anchor).data).toMatchObject({
             revisionId: 'rev-7',
             quote: '此处有问题',
         });
+    });
+
+    it('pinsRevision 三态：非文档锚点返回 null（不在修订轴），不再静默当 true（review2 意见 1）', () => {
+        expect(pinsRevision(messageAnchor('m-1'), 'rev-7')).toBeNull();
+        expect(pinsRevision(taskFieldAnchor('body'), 'rev-7')).toBeNull();
+        expect(pinsRevision(nodeAnchor('n1'), 'rev-7')).toBeNull();
+    });
+
+    it('锚点构造器一律自检：空标识 / 负偏移当场报错，不产出 isAnchor=false 的「Anchor」（review2 意见 5）', () => {
+        expect(caught(() => nodeAnchor('')).code).toBe('invalid-anchor');
+        expect(caught(() => messageAnchor('')).code).toBe('invalid-anchor');
+        expect(caught(() => docRangeAnchor('', -1, '')).code).toBe('invalid-anchor');
+        // 构造器产出必过校验
+        expect(isAnchor(nodeAnchor('review'))).toBe(true);
+        expect(isAnchor(docRangeAnchor('rev-7', 0, 'x'))).toBe(true);
     });
 
     it('缺 revisionId（只存 offset 的写法）→ invalid-anchor，路径指到字段', () => {
@@ -198,7 +229,7 @@ describe('R2 doc-range 钉 revision（##166 结论 11）', () => {
     });
 });
 
-describe('R3 JSON round-trip（存储层的唯一出入口）', () => {
+describe('R3 JSON round-trip（存储层的规范化出入口）', () => {
     it('Event 序列化 → 反序列化恒等', () => {
         const event = createEvent({
             id: 'e1',
@@ -219,6 +250,19 @@ describe('R3 JSON round-trip（存储层的唯一出入口）', () => {
     it('整条 thread round-trip 恒等', () => {
         const thread = docThread();
         expect(threadFromJson(threadToJson(thread))).toEqual(thread);
+    });
+
+    it('compact 输出单行、可逐行 jsonl 组装与回读（review1 意见 4）', () => {
+        const e1 = createEvent({ id: 'e1', author: 'b', anchor: nodeAnchor('review'), content: 'x', at: AT });
+        const e2 = createEvent({ id: 'e2', author: 'c', anchor: nodeAnchor('review'), content: 'y', at: AT });
+        const lines = [e1, e2].map((e) => eventToJson(e, { compact: true }));
+        expect(lines.every((line) => !line.includes('\n'))).toBe(true);
+        // 每行独立可解析（jsonl 的硬要求）
+        expect(lines.map((line) => eventFromJson(line))).toEqual([e1, e2]);
+        // thread 同样支持 compact
+        const thread = docThread();
+        expect(threadToJson(thread, { compact: true })).not.toContain('\n');
+        expect(threadFromJson(threadToJson(thread, { compact: true }))).toEqual(thread);
     });
 
     it('键序固定：不同书写顺序的同一对象，序列化结果逐字节相同', () => {
@@ -248,7 +292,7 @@ describe('R3 JSON round-trip（存储层的唯一出入口）', () => {
     });
 });
 
-describe('R4 引用完整性：悬空 / 自指 / 重号（##166 §7.4 痛点 2 的根因）', () => {
+describe('R4 引用完整性：悬空 / 自指 / 重号 / 异锚点 / causes（##166 §7.4 痛点 2 的根因）', () => {
     it('正常回复链通过', () => {
         expect(() => assertThreadRefs(docThread())).not.toThrow();
     });
@@ -270,6 +314,26 @@ describe('R4 引用完整性：悬空 / 自指 / 重号（##166 §7.4 痛点 2 �
         const [r1, r2] = docThread();
         const e = caught(() => assertThreadRefs([r1, { ...r2, id: 'r1' }]));
         expect(e.code).toBe('duplicate-id');
+    });
+
+    it('thread 内锚点不一致 → mixed-anchor（多条时间线不得混串，##166 §7.4 痛点 4 / review2 意见 2）', () => {
+        const a = createReaction({ id: 'a', author: 'b', turnId: 't1', target: docRangeAnchor('rev-7', 0, 'x'), content: 'x', at: AT });
+        const b = createReaction({ id: 'b', author: 'c', turnId: 't1', target: nodeAnchor('n1'), content: 'y', at: AT });
+        const e = caught(() => assertThreadRefs([a, b]));
+        expect(e.code).toBe('mixed-anchor');
+        expect(e.path).toBe('[1].target');
+        // 反序列化同样拦
+        expect(caught(() => parseThread([a, b])).code).toBe('mixed-anchor');
+    });
+
+    it('事件 causes 自指 / 重复 → invalid-event（review1 意见 3）', () => {
+        const base = { id: 'e1', author: 'a', anchor: nodeAnchor('n1'), content: 'x', at: AT };
+        const self = caught(() => createEvent({ ...base, causes: ['e1'] }));
+        expect(self.code).toBe('invalid-event');
+        expect(self.path).toBe('event.causes[0]');
+        const dup = caught(() => createEvent({ ...base, causes: ['e2', 'e2'] }));
+        expect(dup.code).toBe('invalid-event');
+        expect(dup.path).toBe('event.causes[1]');
     });
 
     it('threadFromJson 也会拒绝悬空引用（读侧同样不静默）', () => {
@@ -305,6 +369,16 @@ describe('R5 非法 anchor 一律拒绝（不静默丢弃）', () => {
         expect(caught(() => parseAnchor({ type: 'task-field', data: { field: '' } })).path).toBe(
             'anchor.data.field',
         );
+    });
+
+    it('未知字段 → invalid-anchor（形状封闭，写侧也绝不静默剥离，review2 意见 4）', () => {
+        expect(caught(() => parseAnchor({ type: 'node', data: { nodeId: 'n1' }, extra: 1 })).path).toBe(
+            'anchor.extra',
+        );
+        expect(caught(() => parseAnchor({ type: 'node', data: { nodeId: 'n1', extra: 1 } })).path).toBe(
+            'anchor.data.extra',
+        );
+        expect(isAnchor({ type: 'node', data: { nodeId: 'n1' }, extra: 1 })).toBe(false);
     });
 
     it('事件里的锚点同样被校验（不是只看顶层）', () => {
@@ -343,19 +417,43 @@ describe('R6 反序列化边界', () => {
         expect(e.path).toBe('event.at');
     });
 
-    it('多余字段被丢弃（形状封闭 ⇒ 落盘稳定）', () => {
-        const event = eventFromJson(
-            JSON.stringify({
-                id: 'e1',
-                author: 'a',
-                anchor: messageAnchor('m-1'),
-                content: 'x',
-                causes: [],
-                at: AT,
-                extra: 'drop me',
-            }),
-        );
-        expect(Object.keys(event)).toEqual(['id', 'author', 'anchor', 'content', 'causes', 'at']);
+    it('replyTo 键缺失 → invalid-reaction；显式 null 才合法（review2 意见 3）', () => {
+        const base = {
+            id: 'r1',
+            author: 'b',
+            turnId: 't1',
+            target: messageAnchor('m-1'),
+            content: 'x',
+            at: AT,
+        };
+        const e = caught(() => reactionFromJson(JSON.stringify(base)));
+        expect(e.code).toBe('invalid-reaction');
+        expect(e.path).toBe('reaction.replyTo');
+        // 显式 null = 起头，合法
+        expect(reactionFromJson(JSON.stringify({ ...base, replyTo: null })).replyTo).toBeNull();
+    });
+
+    it('at 非 ISO-8601 → 报错（时间是事实，格式也是事实，review1 意见 2）', () => {
+        const e = caught(() => createEvent({ id: 'e1', author: 'a', anchor: nodeAnchor('n1'), content: 'x', at: '昨天下午' }));
+        expect(e.code).toBe('invalid-event');
+        expect(e.path).toBe('event.at');
+        expect(
+            caught(() => createReaction({ id: 'r1', author: 'a', turnId: 't1', target: nodeAnchor('n1'), content: 'x', at: '2026/10/13' })).code,
+        ).toBe('invalid-reaction');
+    });
+
+    it('未知字段：写侧拒绝、读侧缺省拒绝、读侧 allowUnknown 放行（review2 意见 4）', () => {
+        const event = createEvent({ id: 'e1', author: 'a', anchor: nodeAnchor('n1'), content: 'x', at: AT });
+        // 写侧：绝不在落盘前静默抹掉调用方数据
+        const writeErr = caught(() => eventToJson({ ...event, from: 'implement' } as unknown as Event));
+        expect(writeErr.code).toBe('invalid-event');
+        expect(writeErr.path).toBe('event.from');
+        // 读侧缺省严格
+        const json = JSON.stringify({ ...event, from: 'implement' });
+        expect(caught(() => eventFromJson(json)).path).toBe('event.from');
+        // 读侧显式放行（前向兼容：新版本加的字段）
+        const relaxed = eventFromJson(json, { allowUnknown: true });
+        expect(Object.keys(relaxed)).toEqual(['id', 'author', 'anchor', 'content', 'causes', 'at']);
     });
 
     it('thread 反序列化要求数组', () => {
