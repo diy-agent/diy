@@ -86,7 +86,10 @@ import {
 } from "../../shared/context/cache-ttl";
 import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
+import { appendCtxLog } from "../core/context-changelog";
 import { statFromStep } from "../../shared/context/stats";
+import { opsFromHashes } from "../../shared/context/changelog";
+import { previewOf } from "../../shared/context/render";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import {
     estimateTokens,
@@ -2375,6 +2378,18 @@ export class LocalAgentManager {
             // 变更统计（**按项目**累计；只存变化路径 → 体积小、可长期留）。
             // 用途：跑几天后回答"这个节点到底变了几次" —— 划分位置的判据（见 task 178）。
             appendContextStat(projectDir(projectFromUri(taskUri)), statFromStep(step, prevStep?.valueHashes ?? null, taskUri));
+            // 变更历史（**按任务**一条时间线）：事件粒度 + 一行值预览，落 `local/<key>.changelog.jsonl`。
+            // 与投递快照同点写、同序 append ⇒ 轮序天然对齐（第 N 条 changelog = 第 N 步），
+            // 所以事件行能直接驱动"第 N 步 vs 上一步"的 diff（见 ContextLabPage 的变更历史）。
+            appendCtxLog(taskUri, {
+                ts: step.ts,
+                turnId,
+                model,
+                wireVersion: step.wireVersion,
+                ops: opsFromHashes(prevStep?.valueHashes ?? null, delivery.valueHashes, (p) =>
+                    previewOf(delivery.tree, p) || null,
+                ),
+            });
             const result = streamText({
                 model: this.modelFor(rm, key),
                 system: delivery.system.text,

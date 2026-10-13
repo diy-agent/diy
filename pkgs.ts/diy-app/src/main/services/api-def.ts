@@ -19,7 +19,7 @@
 import { RpcSchema } from "@diy/rpc";
 import { z } from "zod";
 import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-schema";
-import { ContextDiffSchema, StatsSchema, StepsSchema } from "../../shared/context/schema";
+import { ContextDiffSchema, CtxLogSchema, StatsSchema, StepsSchema } from "../../shared/context/schema";
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
 // agent 人物契约（纯 zod，renderer 同源）——模型/参数/行为指令的配置实体
 import { PersonaSchema } from "../../shared/persona";
@@ -870,6 +870,14 @@ export const apiDef = RpcSchema.router({
               limit: z.number().optional().cliOption({ desc: "只看最近 N 轮（缺省全部）" }),
             },
             output: StatsSchema,
+          }),
+          changelog: RpcSchema.unary({
+            desc: `变更历史：每轮真发一条变更事件（op + path + 一行值预览，old→new 由回放得出），附该轮 ref（当轮划分 / 缓存率 / 金额）`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+              limit: z.number().optional().cliOption({ desc: "只看最近 N 轮（缺省全部）" }),
+            },
+            output: CtxLogSchema,
           }),
           diff: RpcSchema.unary({
             desc: `某步 vs 上一步的 diff；不给 --step 则是「当前变量树 vs 最后一步」（main 侧算完）`,
