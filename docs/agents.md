@@ -7,7 +7,7 @@ UI 层当前使用 **Local Agent**（`local-agent.ts`）作为唯一的对话后
 **保留的 RPC 端点：**
 - `diy.agent.local.chat` — 流式对话
 - `diy.agent.local.cancel` — 中断生成
-- `diy.agent.local.history` — 读取 Op 日志
+- `diy.agent.local.history` — 读取 Op 日志（**折叠流**：逐 token 碎片压成每块一条终值，见 `pkgs.ts/diy-app/AGENTS.md` 的 `pit.ops-fold`）
 - `diy.agent.local.clear` — 清空会话
 - `diy.agent.local.models` — 可选模型列表
 - `diy.agent.local.limits` — 运行限制查询

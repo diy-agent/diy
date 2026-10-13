@@ -17,11 +17,15 @@ import { z } from "zod";
 import { execFile } from "node:child_process";
 import {
     appendFileSync,
+    closeSync,
     existsSync,
     mkdirSync,
+    openSync,
     readFileSync,
+    readSync,
     renameSync,
     rmSync,
+    statSync,
     writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -34,6 +38,7 @@ import { resolveCwd as resolveCwdWithNote } from "../core/cwd";
 import {
     BlockStore,
     blocksToMessages,
+    compactOps,
     danglingStopPatches,
     interruptedToolPatches,
     projectAll,
@@ -419,6 +424,75 @@ function readJsonl<T>(path: string): T[] {
         }
     }
     return out;
+}
+
+/** 文件字节数（不存在 = 0）。会话历史缓存的失效判据之一。 */
+function fileSize(fp: string): number {
+    try {
+        return statSync(fp).size;
+    } catch {
+        return 0;
+    }
+}
+
+/** 折叠缓存的上限（LRU）：块树常驻内存，多开几个大会话也不至于无界堆积。 */
+const HISTORY_CACHE_MAX = 8;
+
+/** 前 4KB 指纹：整文件覆盖写的哨兵（同尺寸覆盖时的唯一线索，见 history 的缓存判定）。 */
+const HISTORY_PREFIX_BYTES = 4096;
+function readPrefix(fp: string): string {
+    try {
+        const fd = openSync(fp, "r");
+        try {
+            const buf = Buffer.allocUnsafe(HISTORY_PREFIX_BYTES);
+            const got = readSync(fd, buf, 0, HISTORY_PREFIX_BYTES, 0);
+            return buf.subarray(0, Math.max(0, got)).toString("utf-8");
+        } finally {
+            closeSync(fd);
+        }
+    } catch {
+        return "";
+    }
+}
+
+/**
+ * 读 `[from, to)` 的 op 行，返回实际消费到的字节偏移（只到**最后一个完整行**为止，
+ * 尾部半行留给下一次 —— 崩溃/写入中途读到的半行不能被当成一条 op）。
+ *
+ * 为什么不是「读满一次就完事」（任务 290 review B1）：`Buffer.allocUnsafe` 的未初始化区
+ * 在短读（信号打断、offset 越界）时会被当作日志解析 —— 未初始化堆内存里恰好有个 '
+'，
+ * 消费位置就会被推过真实数据，**永久跳掉一段对话**。故：循环读满 + 一切以 got 为界。
+ */
+function readOpsRange(fp: string, from: number, to: number): { ops: Op[]; consumed: number } {
+    const len = to - from;
+    if (len <= 0) return { ops: [], consumed: from };
+    const fd = openSync(fp, "r");
+    try {
+        const buf = Buffer.allocUnsafe(len);
+        let got = 0;
+        while (got < len) {
+            const n = readSync(fd, buf, got, len - got, from + got);
+            if (n <= 0) break;
+            got += n;
+        }
+        const lastNl = got > 0 ? buf.lastIndexOf(0x0a, got - 1) : -1;
+        if (lastNl < 0) return { ops: [], consumed: from }; // 连一行都还完整不了
+        const text = buf.subarray(0, lastNl + 1).toString("utf-8");
+        const ops: Op[] = [];
+        for (const line of text.split("\n")) {
+            const t = line.trim();
+            if (!t) continue;
+            try {
+                ops.push(JSON.parse(t) as Op);
+            } catch (e) {
+                console.warn(`[local-agent] 跳过无法解析的 jsonl 行 ${fp}:`, String(e).slice(0, 120));
+            }
+        }
+        return { ops, consumed: from + lastNl + 1 };
+    } finally {
+        closeSync(fd);
+    }
 }
 
 // ─── 压缩（compact）：账本 / 边界 / 原文寻回 ──────────────
@@ -847,6 +921,14 @@ export class LocalAgentManager {
      * chat 面（/chat/completions）与 responses 面（/responses）各一，key 同生命周期。
      */
     private providers = new Map<string, { chat: ReturnType<typeof createOpenAICompatible> | null; resp: ReturnType<typeof createOpenAI> | null }>();
+    /**
+     * 会话历史的折叠缓存（per task）：已消费字节 + 前 4KB 指纹 + 增量 fold 出的块树。
+     *
+     * 为什么必须有：主进程是单线程，全量重放 74MB 会同步阻塞 ~1s 卡住所有 RPC
+     * （含别的任务）。而轮末每次 append 只加一点点 —— 缓存后每轮成本 = **尾部大小 + O(块数)**。
+     * 上限 HISTORY_CACHE_MAX（LRU）：块树常驻内存，不能无界堆积。
+     */
+    private historyCache = new Map<string, { consumed: number; prefix: string; store: BlockStore }>();
     private _limits: LocalAgentLimits | null = null;
 
     /**
@@ -1219,12 +1301,53 @@ export class LocalAgentManager {
         return getModelCatalog().map(({ key: _key, baseUrl: _b, npm: _n, kind: _k, ...meta }) => meta);
     }
 
-    /** 会话的 ops 视图（UI 重放）：**固定消息集合**，始终全量（压缩不隐藏历史，只过滤投递） */
+    /**
+     * 会话的 ops 视图（UI 重放）：**固定消息集合**，始终全量（压缩不隐藏历史，只过滤投递）。
+     *
+     * 返回的是**折叠后的等价 op 流**（见 local-blocks 的 compactOps）—— 对消费端完全透明：
+     * 同一棵块树、同样的渲染结果，只是把逐 token 的碎片压成"每块一次 start + 终值 + stop"。
+     * 一次 74MB / 877,050 op 的会话因此变成约 15MB / 1.8 万 op（-98%），
+     * 读盘、RPC、渲染端 fold 三段的成本一起降下来（任务 290：大会话假死的治本点）。
+     *
+     * 【配置 / 历史分离】聊天页始终全显，压缩只体现在"发给模型的"与压缩面板里
+     * （压缩是投递侧的**过滤**，不销毁、不隐藏）。旧实现按边界切片 → 预算的分散保留与之不吻合，已废。
+     *
+     * 增量：per task 缓存已 fold 的块树 + 已消费字节，只读新增尾巴（轮末 append 的代价 = 尾巴大小）。
+     * 失效判据见下方 invalid —— 宁可把整份日志重放一遍，也绝不把两份文件的历史缝在一起。
+     */
     history(taskUri: string): Op[] {
-        // 【配置 / 历史分离】历史 = **固定的消息集合**：聊天页始终全显，压缩只体现在"发给模型的"
-        // 与压缩面板里（压缩是投递侧的**过滤**，不销毁、不隐藏）。旧实现按边界切片 → 预算的
-        // 分散保留与之不吻合，已废。
-        return readJsonl<Op>(opsFile(taskUri));
+        const fp = opsFile(taskUri);
+        const size = fileSize(fp);
+        const prefix = readPrefix(fp);
+        const cached = this.historyCache.get(taskUri);
+        // 缓存可用 ⟺ 两条都成立（任一破了就重放整份）：
+        //   ① 已消费长度不超过当前文件（否则 = 被清空/截断/换了文件）；
+        //   ② 前 4KB 指纹一致（否则 = 被整文件覆盖 —— 同尺寸覆盖时大小与偏移都看不出来）。
+        const c: { consumed: number; prefix: string; store: BlockStore } =
+            cached && !(cached.consumed > size || (size > 0 && cached.prefix !== prefix))
+                ? cached
+                : { consumed: 0, prefix: "", store: new BlockStore() };
+        if (size > c.consumed) {
+            const { ops, consumed } = readOpsRange(fp, c.consumed, size);
+            for (const op of ops) c.store.apply(op);
+            c.consumed = consumed;
+        }
+        c.prefix = prefix;
+        // LRU（Map 保插入序）：访问即移到队尾，超限淘汰最久没打开的会话（谁也不希望
+        // 「刚看过的那本」被另一个冷会话挤掉）。
+        this.historyCache.delete(taskUri);
+        this.historyCache.set(taskUri, c);
+        if (this.historyCache.size > HISTORY_CACHE_MAX) {
+            const oldest = this.historyCache.keys().next().value;
+            if (oldest !== undefined) this.historyCache.delete(oldest);
+        }
+        // fold 期的异常（未知块 / 重复 start / 悬挂 parent）会随折叠一起消失 —— 但那是
+        // **诊断信息**，不该在压缩里静默蒸发（任务 290 review B4）。出声，带前几条样例。
+        if (c.store.issues.length > 0) {
+            const sample = c.store.issues.slice(0, 3).map((i) => i.reason).join(" | ");
+            console.warn(`[local-agent] 会话 ${taskUri} 折叠前 fold 出 ${c.store.issues.length} 条 issue：${sample}`);
+        }
+        return compactOps(c.store);
     }
 
     /**
@@ -1584,6 +1707,7 @@ export class LocalAgentManager {
         }
         // 内存态无论如何都丢：留着它才是真的不一致（盘上文件仍在 → 重进会重新加载）
         this.sessions.delete(taskUri);
+        this.historyCache.delete(taskUri); // 折叠缓存同理：日志已删，留着就是读一份不存在的文件
         return ok;
     }
 
