@@ -3,7 +3,8 @@
 > **本文档状态：意图测试为唯一真源** —— `tests/intent.talk.test.ts`（R1–R7）已覆盖本 SPEC 全部可验证行为。
 > 本文保留作**决策记录与索引**：新增需求先写意图测试，再补实现。
 >
-> 范围：本包是「对话容器与工作流容器**共用的地基**」的第一块（##311 序列第 1 个原子任务，##312）。
+> 范围：本包是「对话容器与工作流容器**共用的地基**」（##311 序列第 1 个原子任务 ##312 + 装配器 ##314）。
+> ##314 的装配器决策见 §7（需求真源 `tests/intent.assemble.test.ts` A1–A6）。
 > 依据：##166 §一 结论 5/10/11/12、§3.5 role 表、§7.4 痛点、§10.2 统一原语、§12.4「存储上是 thread，聊天室是它的渲染」。
 > 本次收口：review1（mimo2.6）四条 + review2（deepseek-4.1-flash）六条，采纳见文末「评审收口」。
 
@@ -15,6 +16,7 @@
 - [4. 明确不做](#4-明确不做)
 - [5. 边界（谁接在后面）](#5-边界谁接在后面)
 - [6. 评审收口](#6-评审收口)
+- [7. 装配器（##314）](#7-装配器314)
 
 ---
 
@@ -101,8 +103,8 @@ role     = 自己 → 'assistant'；他人发言 / 资料 → 'user'
 ## 4. 明确不做
 
 - **不做存储**：不 import `node:fs`，不认识 task 目录、不决定落地格式与版本号（归 ##319 宿主接入）。
-- **不做装配**：不拼 prompt、不产出 `messages[]`、不做窗口裁剪与投影（归 ##314）。本包只给
-  「一条内容该装配成哪个 role」的纯函数与断言。
+- **不做存储 / 不碰 LLM SDK**：本包的装配（§7）只把结构渲染成纯 `Message[]` 数据，不 import 任何
+  LLM SDK、不拼 prompt 的具体形状 —— 输出形状由宿主映射。
 - **不做工作流**：泳道单指针、guard 求值、轨迹折线归 ##313（`@diy/flow`，依赖本包）。
 - **不做 fuzzy 搜索算法**（见决策 2）。
 - **不做插件 / 可见性规则 / 通知投递**（§13.2 的五个插件槽与 §10.5 待决 7 的调度，均属后续任务）。
@@ -112,7 +114,7 @@ role     = 自己 → 'assistant'；他人发言 / 资料 → 'user'
 | 后续 | 接什么 |
 |---|---|
 | ##313 `@diy/flow` | 用 `anchor.type = 'node'` 表达泳道节点；容器不变量（单指针 / 可回退）在那边 |
-| ##314 装配器 | 消费 `Reaction[]` / `Event[]` + `assemblyRole`，产出 `messages[]`；三种装配策略与窗口裁剪 |
+| ##314 装配器 | **已完成**（本包含 `src/assemble.ts`）；消费 `Reaction[]` / `Event[]` + `assemblyRole`，产出 `Message[]`；三种装配策略 + 注入式窗口钩子 |
 | ##319 宿主接入 | 事件流落地（jsonl）+ `diy flow` CLI 域 + 提示词装配；本包 `*ToJson` 负责**校验 / 规范化**（`compact` 供 jsonl），行分隔与文件布局由 ##319 定 |
 
 ## 6. 评审收口
@@ -124,3 +126,58 @@ role     = 自己 → 'assistant'；他人发言 / 资料 → 'user'
 - **review3**（收口复审，PR 已准予）：意见 1（`allowUnknown` 只读、不保留未知字段）✓采纳（决策 11：
   文档写明只读闸边界）；意见 2（ISO 只校形态）✓采纳（决策 12：明写不校日历合法性）；意见 3（`assertThreadRefs`
   入口自检）✓采纳（决策 13：逐条 `parseReaction`，类型错报 `invalid-reaction`）。
+
+---
+
+## 7. 装配器（##314）
+
+> `assemble({ sources, strategy, window, selfId }) → Message[]`；需求真源 `tests/intent.assemble.test.ts`（A1–A6）。
+
+把「多源 + 投影 + 窗口」装配成一次 LLM 请求的 `messages[]` —— ##166 §一 结论 4「**模式 = 一份装配策略，
+不是三套实现**」的代码化（§3.1 那张图）。
+
+**输入（多源）**：`Source` 是判别联合 `{ type, data }`，每源内容**同质**（源类型定 role 轴）：
+
+```ts
+Source =
+  | { type: 'reactions'; data: { reactions: readonly Reaction[] } }   // 发言线 → kind=speech
+  | { type: 'trace';     data: { events: readonly Event[] } }        // 私有过程 → kind=trace
+  | { type: 'material';  data: { events: readonly Event[] } }        // 资料演进 → kind=material
+```
+
+**输出**：`Message = { role: 'user' | 'assistant', content: string }` —— 纯数据，宿主自行映射到 SDK。
+
+**三条内置策略**（`STRATEGIES`；也可传自定义 `AssemblyStrategy` 对象）：
+
+| 策略 | 选源 + 投影 | 对应模式 |
+|---|---|---|
+| `full` | 全收（含**自己的**过程，**他方过程除外**） | 模式 1 全量档案 |
+| `text-only` | 去 `trace`（tool / thinking），保留发言（含 `replyTo` 寻址）与资料 | 模式 2 邮件组型 |
+| `changes-only` | 只留 `material`（文档修订）+ 钉在 `doc-range` 上的发言（批注线） | 模式 3 文档型 |
+
+**决策记录**：
+
+1. **内核不变量先于策略**：**他人的过程产物（tool / thinking）永不进入装配** —— 连 `full` 也不。
+   故 `full` 与 `text-only` 的差别是「是否带上**自己的**过程」，不是「是否暴露别人的过程」。
+   - **依据**（review1 意见 1 补）：##166 结论 6「过程私有——各 agent 自己的 tool/thinking 不强制共享」+
+     §3.5 表「自己的 tool / thinking → assistant ｜ **仅自己可见**」+ §七「实践中 tool/thinking 从未流转」。
+     该不变量**已由 ##312 `role.ts` 的 `assemblyRole` 编码**（`kind='trace' && author !== self` 直接抛
+     `role-violation`，探针 `probe5-foreign-trace-guard.mts`）—— 装配器只是复用它，不是自创。
+   - **与 §3.1 表格的显式偏离**：§3.1 把模式 1 写作「全量 message 流（含 tool/thinking）……过程全暴露，像开会各自表演」。
+     该表述描述的是**共享态（存储）**，而非**投递态（装配）** —— 「按需检索他人推理」（结论 14）是档案检索
+     能力，不是默认塞入本次 `messages[]`。
+   - **留白**：若 §四 待决 3「隐私边界」（谁能看谁的 tool/thinking）将来放开，须**协调改 `role.ts`**
+     （按决策 5「应是显式的新 `kind`」新增，由意图测试先定义），**不能**在装配策略层私自放行。
+2. **role 翻译复用 `role.ts`**（不在装配器重写）：每条内容经 `assemblyRole` 得 role，再以 `assertRoleAssignments`
+   复核铁律 —— 他人发言绝不可能被装配成 `assistant`（结论 5）。
+3. **存结构、装配时渲染**（结论 13）：输入是 `Reaction` / `Event` 结构，渲染（作者前缀 + `[回复 <id>]` 寻址）
+   只发生在装配时；缺省渲染 `renderItem`，策略可换 `render`。
+4. **窗口 / 摘要是注入式钩子**（§五「真正的取舍点」）：`window: (Message[]) => Message[]` 由**宿主**给，
+   内核不自作主张 —— 渲染之后再交给它，可裁剪、可前插摘要。**排序同理归宿主**（内核保序，不替宿主排）。
+   - **次序偏离标注**（review1 意见 6）：§3.4 草图写「策略(选源) → 窗口/摘要 → **role 翻译**」；
+     实现为「选源/投影 → **role 翻译** → 渲染 → **窗口**」，即窗口在 role 翻译**之后**。
+     这是**有意选择**：对已渲染文本做摘要更自然（无需把 role 翻译权重算进摘要上下文）。
+   - **铁律保证边界**（review1 意见 2）：`window` 是宿主**可信代码**，其返回值**不再经
+     `assertRoleAssignments` 复核**（`Message` 已丢 author/kind 溯源，无从复核）。故「他人发言绝不为
+     `assistant`」的保证**仅覆盖装配器自身产出（window 之前）**。
+5. **不碰 LLM SDK**：输出是纯 `Message[]` 数据；具体 SDK 的 message 形状由宿主映射（##319）。

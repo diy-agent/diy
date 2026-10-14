@@ -20,8 +20,11 @@
 //   Reaction = { id, author, turnId, target, replyTo, content, at } ← 对话侧特化，replyTo 是结构化寻址
 //   role     = 自己的内容 assistant；他人发言 / 资料 user（铁律：他人发言绝不能是 assistant）
 //
-// 边界：本包**不做存储、不做装配**（不碰 fs、不拼 prompt、不产 messages[]）——
-// 装配策略归 ##314，工作流容器归 ##313，落地格式与宿主接入归 ##319。
+// 装配（##314）：`assemble({ sources, strategy, window, selfId }) → Message[]` ——
+// 多源 + 投影 + 窗口 装配成一次 LLM 请求；三内置策略 `full` / `text-only` / `changes-only`。
+//
+// 边界：本包**不做存储、不碰 LLM SDK**（不 import node:fs / electron / @diy/app，不拼 prompt 的具体 SDK 形状）——
+// 工作流容器归 ##313，落地格式与宿主接入归 ##319。
 
 export { TalkError } from './errors';
 export type { TalkErrorCode } from './errors';
@@ -53,6 +56,30 @@ export type { Reaction, ReactionInit } from './reaction';
 
 export { assemblyRole, assertRoleAssignments, SOURCE_KINDS } from './role';
 export type { AssemblyRole, RoleAssignment, RoleInput, SourceKind } from './role';
+
+export {
+    assemble,
+    parseSource,
+    renderItem,
+    resolveStrategy,
+    CHANGES_ONLY,
+    FULL,
+    SOURCE_TYPES,
+    STRATEGIES,
+    STRATEGY_NAMES,
+    TEXT_ONLY,
+} from './assemble';
+export type {
+    AssembleInput,
+    AssemblyItem,
+    AssemblyStrategy,
+    Message,
+    Source,
+    SourceType,
+    StrategyContext,
+    StrategyName,
+    WindowHook,
+} from './assemble';
 
 export { eventFromJson, eventToJson, reactionFromJson, reactionToJson, threadFromJson, threadToJson } from './serialize';
 export type { SerializeOptions } from './serialize';
