@@ -336,6 +336,13 @@ describe('R4 引用完整性：悬空 / 自指 / 重号 / 异锚点 / causes（#
         expect(dup.path).toBe('event.causes[1]');
     });
 
+    it('assertThreadRefs 入口自检：replyTo 类型错 → invalid-reaction，不误报成 dangling-reply（review3 意见 3）', () => {
+        const [r1] = docThread();
+        const e = caught(() => assertThreadRefs([{ ...r1, replyTo: 123 } as unknown as Reaction]));
+        expect(e.code).toBe('invalid-reaction');
+        expect(e.path).toBe('[0].replyTo');
+    });
+
     it('threadFromJson 也会拒绝悬空引用（读侧同样不静默）', () => {
         const json = JSON.stringify([
             {
@@ -442,6 +449,16 @@ describe('R6 反序列化边界', () => {
         ).toBe('invalid-reaction');
     });
 
+    it('at 只校 ISO 形态、不校日历合法性：不存在的时刻也放行（review3 意见 2，内核不引 Date）', () => {
+        // 词法成立即放行（99 月 / 99 日、越界时分、越界时区）；「时刻是否真实存在」属语义，归宿主
+        const accept = (at: string) =>
+            createEvent({ id: 'e1', author: 'a', anchor: nodeAnchor('n1'), content: 'x', at });
+        expect(() => accept('2026-99-99T99:99:99Z')).not.toThrow();
+        expect(() => accept('2026-02-30T25:00:00+99:99')).not.toThrow();
+        // 反面对照：连形态都不成立的一律拒绝
+        expect(caught(() => accept('2026-10-13')).code).toBe('invalid-event');
+    });
+
     it('未知字段：写侧拒绝、读侧缺省拒绝、读侧 allowUnknown 放行（review2 意见 4）', () => {
         const event = createEvent({ id: 'e1', author: 'a', anchor: nodeAnchor('n1'), content: 'x', at: AT });
         // 写侧：绝不在落盘前静默抹掉调用方数据
@@ -452,6 +469,8 @@ describe('R6 反序列化边界', () => {
         const json = JSON.stringify({ ...event, from: 'implement' });
         expect(caught(() => eventFromJson(json)).path).toBe('event.from');
         // 读侧显式放行（前向兼容：新版本加的字段）
+        // review3 意见 1：allowUnknown 是「只读检查闸」—— 它只让解析不报错，**不保留**未知字段
+        // （返回的仍是只含已知字段的规范化对象）。故读到的对象不得再经写侧落盘：读写往返不丢字段归宿主。
         const relaxed = eventFromJson(json, { allowUnknown: true });
         expect(Object.keys(relaxed)).toEqual(['id', 'author', 'anchor', 'content', 'causes', 'at']);
     });

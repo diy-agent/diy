@@ -85,6 +85,9 @@ function sameAnchor(a: Anchor, b: Anchor): boolean {
 
 /**
  * 校验一个 thread 的结构约束（thread = **同一锚点下的**发言集合）：
+ * 0. 每条元素须是合法 `Reaction`（入口自检，review3 意见 3）：与其它入口同口径 ——
+ *    `replyTo` 类型错之类在这里报精确的 `invalid-reaction`，而不是被下游误报成 `dangling-reply`；
+ *    只有 `parseReaction` 的产物才保证「结构错 = 结构错、类型错 = 类型错」可区分。
  * 1. `id` 在本 thread 内唯一（重复 → `duplicate-id`）；
  * 2. 非 null 的 `replyTo` 必须指向本 thread 内**另一条** id（不存在或指向自己 → `dangling-reply`）；
  * 3. 所有发言的 `target` 必须**同锚点**（不一致 → `mixed-anchor`，review2 意见 2）——
@@ -92,16 +95,22 @@ function sameAnchor(a: Anchor, b: Anchor): boolean {
  *
  * 这三条是「决策线可追溯」在存储层的护栏：编号幻觉与覆盖丢失在这里就报错，
  * 不必等到装配出来的历史缺一条反驳才被发现（##166 §7.4 痛点 1/2/7）。
+ *
+ * 入参可为已 `parse` 过的 `Reaction[]`，也可为裸对象数组 —— 每条先经 `parseReaction` 自检
+ * （已解析对象重解析是幂等的），故调用方无需先自行 parse。
  */
 export function assertThreadRefs(reactions: readonly Reaction[]): void {
+    // 入口自检（review3 意见 3）：把元素规整为可信 Reaction —— 类型错在此报 invalid-reaction，
+    // 后续结构检查因此只可能在「结构」上失败（不再把类型错误报为 dangling-reply）。
+    const parsed = reactions.map((reaction, i) => parseReaction(reaction, `[${i}]`));
     const seen = new Set<string>();
-    reactions.forEach((reaction, i) => {
+    parsed.forEach((reaction, i) => {
         if (seen.has(reaction.id)) {
             throw new TalkError('duplicate-id', `thread 内 id 重复：${reaction.id}`, `[${i}].id`);
         }
         seen.add(reaction.id);
     });
-    reactions.forEach((reaction, i) => {
+    parsed.forEach((reaction, i) => {
         const replyTo = reaction.replyTo;
         if (replyTo === null) return;
         if (replyTo === reaction.id) {
@@ -115,9 +124,9 @@ export function assertThreadRefs(reactions: readonly Reaction[]): void {
             );
         }
     });
-    const first = reactions[0];
+    const first = parsed[0];
     if (first === undefined) return;
-    reactions.forEach((reaction, i) => {
+    parsed.forEach((reaction, i) => {
         if (!sameAnchor(reaction.target, first.target)) {
             throw new TalkError(
                 'mixed-anchor',
