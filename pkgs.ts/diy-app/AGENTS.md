@@ -111,6 +111,8 @@
 - `pit.usage-buckets` — 用量口径三条硬约束（`shared/usage.ts` 是唯一实现，别在别处另算）：① **思考输出是总输出的子集**，展示可拆、计价**不另加**（照抄 opencode 公式即重复计费）；② **不可测桶写 `null` 不写 0**（`api:"chat"` 面拿不到 cacheWrite，记 0 = 静默低估成钱）；③ **窗口占用取最后一步**（总输入+总输出），累加值只解释「这轮为什么贵」。单价快照随每行落盘（单价会变，历史账不能漂）
 - `pit.rpc-output-schema` — RPC 的 `outputSchema` **只用于类型推导，运行期不校验也不剥字段**（`pkgs.ts/diy-rpc/src/core/meta.ts`；只有 input 走 zod）。故漏写字段**不会报错**：handler 原样送出的字段仍在，但类型上没有 → 消费端「拿不到、画不出」，且改起来像幽灵 bug。共享形状必须落成 schema（如 `shared/usage.ts` 的 `ModelCostSchema`）并被两侧引用，别手写第二份子集
 - `pit.cli-kebab` — CLI 选项名默认取 schema 字段名（camelCase），parser 另注册 kebab 别名并**在 help 里显示 kebab**（`--by-agent`），两种写法都接受 —— 新增 camelCase 选项无需额外处理
+- `pit.zod-cli-meta-order` — **zod schema 必须在 `_cli-meta.ts` 补丁之后创建**（v4 实例创建即定死原型链，事后打补丁看不见）。打包会把**被多个 chunk 共用**的模块提升成独立 chunk 并**先于入口模块体求值** ⇒ 一个带 schema 的模块（`main/core/task-state.ts`）只要被拖进共享 chunk（如 `shared/task-head.ts` 之类共享常量模块一旦 import 了 `shared/task-detail.ts`），启动即 `TypeError: TaskStateSchema.cliArg is not a function`。判据：**共享常量模块必须零依赖**（清单归它、zod 形状归消费方）
+- `pit.cli-readfile` — CLI 的 `readFile` 选项（如 `task edit --append-body <file|->`）**在调用方进程的 parser 里读**（`pkgs.ts/diy-rpc/src/cli/_parser.ts`）：handler 跑在 app 进程，它的 fd 0 / cwd 都不是调用方的，在调用方读才两件事都对。故含 `-`（stdin）的调用必须**绕开 /cli 转发**（`diy.sh` 的 http 模式已按 argv 判定并落回直连 CLI）
 - `pit.head-note` — **关键设计理由都写在各自文件头注**（`src/main/core/steer-queue.ts` / `persona.ts` / `drafts.ts` / `src/main/services/local-agent.ts`）：改动前先读头注，别只看函数名
 
 - `pit.traffic-scope` — 流量观测**只覆盖 undici**（Electron 主进程 / serve 的 `fetch` 与 ai-sdk 发出的请求）：renderer 是 Chromium 栈（要看需 CDP）、`net.fetch` / 子进程 / native binding **看不到** —— 「某条请求怎么没记下」先问它走的是不是这条路。订阅必须早于任何请求（`traffic.init()` 在 `src/main/index.ts` 与 `src/serve/index.ts`，另有 `noteRun` 惰性兜底）

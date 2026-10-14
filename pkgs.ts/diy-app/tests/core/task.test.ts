@@ -9,6 +9,7 @@ import { diyHome, getTask } from "../../src/main/core/state";
 import {
   createTask,
   updateTask,
+  stripHeadFromBody,
   MIN_BODY_LENGTH,
   deleteTask,
   listTasks,
@@ -446,5 +447,212 @@ describe("结构化字段（change_type / module / priority）", () => {
     updateTask(uri, { change_type: "perf" });
     expect(getTask(uri)!.created).toBe(before);
     expect(getTask(uri)!.updated).not.toBeUndefined();
+  });
+});
+
+// ═══════════════════════════════════════
+// 读写对称（##322）：整份文件剥头 / 追加 / 往返 byte-exact
+//
+//   背景：`--body "$(cat AGENTS.md)"` 是最自然的写法，而旧实现把整份当正文收下 —— 正文里
+//   复制出一个 frontmatter，且异常自我延续（第二段头又成了正文的一部分）。历史中招：
+//   ##87/##209/##224/##171/##263/##307/##293/##310/##312。
+//   这里锁死三件事：① 读到的正文写回去 → 正文区逐字节不变；② 传整份文件 → 头被剥掉；
+//   ③ 追加不必先读文件（消灭 read-modify-write）。
+// ═══════════════════════════════════════
+
+describe("任务文件读写对称（##322）", () => {
+  const fpOf = (uri: string) => join(diyHome(), uri, "AGENTS.md");
+  const rawOf = (uri: string) => readFileSync(fpOf(uri), "utf-8");
+  /** 正文区 = 头之后的部分 */
+  const bodyRegionOf = (raw: string) => raw.slice(raw.indexOf("---", 3) + 3);
+  /** `---` 独占行数：规范的任务文件正好 2（头首尾各一行）—— 双头就是 4 */
+  const sepLines = (raw: string) => raw.split("\n").filter((l) => l.trim() === "---").length;
+
+  it("读-写往返 byte-exact：正文区逐字不变，头仍只有一个", () => {
+    const body = "# 需求\n\n段落一\n\n段落二，够长以通过最小长度校验";
+    const uri = createTask({ title: "往返", project: PROJECT, body });
+    const before = rawOf(uri);
+
+    const read = getTask(uri)!.body;
+    expect(read).toBe(body);
+
+    updateTask(uri, { body: read });
+
+    const after = rawOf(uri);
+    expect(bodyRegionOf(after)).toBe(bodyRegionOf(before));
+    expect(after).toContain("title: 往返");
+    expect(sepLines(after)).toBe(2);
+  });
+
+  it("--body 收到整份文件 → 剥头取正文，不产生双头（并回报剥离结果）", () => {
+    const body = "原始正文，长度足够通过最小长度校验";
+    const uri = createTask({ title: "整份", project: PROJECT, body });
+
+    const report = updateTask(uri, { body: rawOf(uri) });
+
+    const after = rawOf(uri);
+    expect(sepLines(after)).toBe(2); // 仍只有一个头（双头污染的反面）
+    expect(getTask(uri)!.body).toBe(body); // 正文没被头污染
+    expect(report.body_head_stripped?.keys).toContain("title");
+    // 头来自同一份文件 → 无差异（有差异才需要调用方知道）
+    expect(report.body_head_stripped?.differs).toEqual([]);
+  });
+
+  it("整份文件 + 空正文 → 被最小长度守卫拒绝（剥离在校验之前，不能靠头蒙混过关）", () => {
+    const uri = createTask({ title: "空正文", project: PROJECT });
+    expect(() => updateTask(uri, { body: rawOf(uri) })).toThrow(ValidationError);
+  });
+
+  it("追加原语：appendBody 追加到正文末尾（空行分隔），并回报追加字符数", () => {
+    const uri = createTask({ title: "追加", project: PROJECT, body: "第一段，够长通过校验" });
+
+    const report = updateTask(uri, { appendBody: "第二段\n" });
+
+    expect(getTask(uri)!.body).toBe("第一段，够长通过校验\n\n第二段");
+    expect(report.appended_chars).toBe(3);
+    expect(sepLines(rawOf(uri))).toBe(2);
+  });
+
+  it("追加到空正文：正文就是追加内容（不产生前导空行）", () => {
+    const uri = createTask({ title: "空追加起点", project: PROJECT });
+    updateTask(uri, { appendBody: "唯一的一段正文" });
+    expect(getTask(uri)!.body).toBe("唯一的一段正文");
+  });
+
+  it("追加内容为空 → 拒绝（不静默写个空段落）", () => {
+    const uri = createTask({ title: "空追加", project: PROJECT, body: "原文，够长通过校验" });
+    expect(() => updateTask(uri, { appendBody: "  \n" })).toThrow(ValidationError);
+    expect(getTask(uri)!.body).toBe("原文，够长通过校验");
+  });
+
+  it("追加内容若其实是整份文件 → 同样剥头（否则又复制出一个头）", () => {
+    const uri = createTask({ title: "追加整份", project: PROJECT, body: "原文，够长通过校验" });
+    const other = createTask({ title: "别的任务", project: PROJECT, body: "别处的正文" });
+
+    const report = updateTask(uri, { appendBody: rawOf(other) });
+
+    expect(sepLines(rawOf(uri))).toBe(2);
+    expect(getTask(uri)!.body).toBe("原文，够长通过校验\n\n别处的正文");
+    expect(report.append_head_stripped?.keys).toContain("title");
+    // 回报里带**被剥掉的原文** —— 只报键名，调用方看不出丢了什么内容（##322 review R1c）
+    expect(report.append_head_stripped?.head_text).toContain("title: 别的任务");
+  });
+
+  it("非托管键不会被整份文件写法吃掉（头仍归用户）", () => {
+    const uri = createTask({ title: "自定义键", project: PROJECT, body: "原文，够长通过最小长度校验" });
+    writeFileSync(
+      fpOf(uri),
+      rawOf(uri).replace("state: pending", "state: pending\nnote: '我自己加的备注'"),
+      "utf-8",
+    );
+
+    updateTask(uri, { body: readFileSync(fpOf(uri), "utf-8") }); // 传整份文件（含自定义键）
+
+    // 键与值都在（引号形式由 yaml.dump 归一，属既有行为；这里只锁"没被吃掉"）
+    expect(rawOf(uri)).toContain("note: 我自己加的备注");
+    expect(sepLines(rawOf(uri))).toBe(2);
+  });
+
+  it("正文里的 `---` 段落不被误判成头（未命中已知头键 → 原样保留）", () => {
+    const md = "---\nfoo: bar\n---\n这是正文里的一段，够长通过最小长度校验";
+    const uri = createTask({ title: "误判防护", project: PROJECT, body: "占位正文，够长通过校验" });
+
+    updateTask(uri, { body: md });
+
+    expect(getTask(uri)!.body).toBe(md);
+    expect(sepLines(rawOf(uri))).toBe(4); // 真正的头 2 行 + 正文里自带的 2 行
+  });
+
+  // ── 判据边界（##322 review R1：并入作者自带探针 /tmp/t266-review/p322-strip-head.probe.ts 的 5 例）──
+  //
+  // 两条路的误判代价**不对称**：`--body` 收到整份任务文件是常态（剥头是正解）；
+  // `--append-body` 收到一份**文档**是常态（Markdown 文档带 front matter 很常见，`title:` 恰是已知键）
+  // ⇒ 追加用严判据（必须命中头的特征键 state/created/updated），否则文档头被静默吞掉。
+  it("stripHeadFromBody 判据：真头剥 / 正文里的 --- 段落与纯自定义头一律不剥", () => {
+    const cases: Array<{ name: string; input: string; strict?: boolean; expectStrip: boolean }> = [
+      {
+        name: "整份任务文件（真头）",
+        input: `---\ntitle: 某任务\nstate: active\ncreated: 2026-01-01T00:00:00.000Z\n---\n\n## 正文\n\n内容\n`,
+        expectStrip: true,
+      },
+      {
+        // 宽判据（--body）下会剥；严格模式（--append-body）下**不剥**（追加一份文档是常态）
+        name: "正文以 --- 开头 + 只有 title（文档 front matter）",
+        input: `---\ntitle: 这是我的文档标题\n---\n\n上面是正文里引用的 frontmatter 示例。\n`,
+        expectStrip: true,
+      },
+      {
+        name: "同上，但严格模式（--append-body 的判据）",
+        input: `---\ntitle: 这是我的文档标题\n---\n\n上面是正文里引用的 frontmatter 示例。\n`,
+        strict: true,
+        expectStrip: false,
+      },
+      {
+        name: "正文以 --- 开头 + 自定义键（无已知键）",
+        input: `---\nfoo: bar\nbaz: 1\n---\n\n正文\n`,
+        strict: true,
+        expectStrip: false,
+      },
+      {
+        name: "markdown 分隔线 + 表格",
+        input: `---\n\n| a | b |\n|---|---|\n| 1 | 2 |\n`,
+        expectStrip: false,
+      },
+      { name: "只有 --- 一行", input: `---\n`, expectStrip: false },
+      {
+        name: "严格模式下真头（含 state）仍剥",
+        input: `---\ntitle: 某任务\nstate: active\n---\n\n正文\n`,
+        strict: true,
+        expectStrip: true,
+      },
+    ];
+    const bad: string[] = [];
+    for (const c of cases) {
+      const got = stripHeadFromBody(c.input, { strict: c.strict ?? false }) !== null;
+      if (got !== c.expectStrip) bad.push(`${c.name}：期望剥=${c.expectStrip} 实际剥=${got}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("--append-body 追加一份带 front matter 的文档 → 文档头**原样保留**（不静默吞掉）", () => {
+    // review R1 的端到端复现（并入 /tmp/t266-review/probe-322-append-head.test.ts）：
+    // 追加 `---\ntitle: 练习册答案\nnote: 手写文档\n---\n\n# 正文` 时，两行内容曾从盘上消失。
+    const uri = createTask({ title: "追加文档", project: PROJECT, body: "原始正文，长度足够不会被拒。" });
+    const doc = "---\ntitle: 练习册答案\nnote: 手写文档\n---\n\n# 正文\n\n1. 答案 A\n";
+
+    const report = updateTask(uri, { appendBody: doc });
+    const body = getTask(uri)!.body;
+
+    expect(report.append_head_stripped).toBeUndefined(); // 没剥头
+    expect(body).toContain("title: 练习册答案"); // 文档头逐行在
+    expect(body).toContain("note: 手写文档");
+    expect(body).toContain("# 正文");
+    expect(sepLines(rawOf(uri))).toBe(4); // 任务自己的头 2 行 + 文档自带的 2 行（是正文，不是双头）
+  });
+
+  it("判据不对称：同一份文档 `--body` 传会剥头（整篇覆盖时剥头是正解）", () => {
+    const uri = createTask({ title: "覆盖文档", project: PROJECT, body: "原始正文，长度足够不会被拒。" });
+    const doc = "---\ntitle: 练习册答案\nnote: 手写文档\n---\n\n# 正文\n\n1. 答案 A\n";
+
+    const report = updateTask(uri, { body: doc });
+
+    expect(getTask(uri)!.body).toBe("# 正文\n\n1. 答案 A");
+    expect(report.body_head_stripped?.keys).toEqual(["note", "title"]);
+    expect(report.body_head_stripped?.head_text).toContain("练习册答案");
+    expect(sepLines(rawOf(uri))).toBe(2);
+  });
+
+  it("getTask 暴露文件头原件（含非托管键）—— 读侧不必落盘求证", () => {
+    const uri = createTask({ title: "暴露头", project: PROJECT, change_type: "fix", priority: "P2" });
+    writeFileSync(
+      fpOf(uri),
+      rawOf(uri).replace("state: pending", "state: pending\nnote: '自定义'"),
+      "utf-8",
+    );
+
+    const t = getTask(uri)!;
+    expect(t.frontmatter["title"]).toBe("暴露头");
+    expect(t.frontmatter["change_type"]).toBe("fix");
+    expect(t.frontmatter["note"]).toBe("自定义");
   });
 });

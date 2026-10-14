@@ -12,8 +12,10 @@
 import { diyService } from "./rpc";
 
 type TaskEditInput = Parameters<typeof diyService.diy.task.edit>[0];
-/** 只传要改的字段：契约里每个键都是必填（值可为 undefined），这里全改可选（见文件头说明） */
-export type TaskEditPatch = { [K in keyof Omit<TaskEditInput, "uri">]?: TaskEditInput[K] };
+/** 只传要改的字段：契约里每个键都是必填（值可为 undefined），这里全改可选（见文件头说明）。
+ *  排除 `appendBody`：**追加**是 CLI / agent 的写原语（##322），UI 的编辑框永远是整篇覆盖 ——
+ *  界面上给一个"追加"开关，用户看不见自己刚覆盖掉什么。 */
+export type TaskEditPatch = { [K in keyof Omit<TaskEditInput, "uri" | "appendBody">]?: TaskEditInput[K] };
 
 /**
  * 编辑任务（只传要改的字段；未传的字段保持原值）。
@@ -32,5 +34,7 @@ export async function editTask(uri: string, patch: TaskEditPatch): Promise<void>
     priority: patch.priority,
     // agent 人物（换绑 = 只改本任务的引用；模型/参数由人物定义决定，见 shared/persona.ts）
     persona: patch.persona,
+    // 追加不由 UI 发起（见 TaskEditPatch 说明）：契约为「键必须出现」，故显式给 undefined
+    appendBody: undefined,
   });
 }

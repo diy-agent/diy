@@ -45,6 +45,27 @@ import { TaskStateSchema } from "../core/task-state";
 import { ChangeTypeSchema, PrioritySchema } from "../core/task-fields";
 
 const StatusDataUri = z.object({ status: z.string(), data: z.object({ uri: z.string() }) });
+/** task edit 的回报：uri + 本次写入实际做了什么（剥头 / 追加）—— 见 core/task.ts 的 TaskWriteReport。
+ *  可选字段（不剥头/不追加就不出现）：避免调用方从"空对象"里猜发生了什么。 */
+const StrippedHeadReportSchema = z.object({
+  keys: z.array(z.string()),
+  /** 被剥掉的头**原文**（调用方据此核对丢了什么内容 —— 只报键名看不出） */
+  head_text: z.string(),
+  /** 与文件现有头不一致、**未写回**的键（文件头才是权威） */
+  differs: z.array(z.string()).optional(),
+});
+const StatusDataTaskWrite = z.object({
+  status: z.string(),
+  data: z.object({
+    uri: z.string(),
+    /** 入参 `--body` 其实是「整份文件」→ 头已剥离取正文（`--append-body` 的严判据见 core/task.ts） */
+    body_head_stripped: StrippedHeadReportSchema.optional(),
+    /** 入参 `--append-body` 其实是「整份文件」→ 头已剥离取正文 */
+    append_head_stripped: StrippedHeadReportSchema.optional(),
+    /** 本次实际追加的字符数 */
+    appended_chars: z.number().optional(),
+  }),
+});
 const StatusDataId = z.object({ status: z.string(), data: z.object({ id: z.string() }) });
 const StatusOk = z.object({ status: z.string() });
 
@@ -261,12 +282,31 @@ export const apiDef = RpcSchema.router({
             },
           }),
           edit: RpcSchema.unary({
-            desc: `编辑任务`,
+            desc: `
+            编辑任务
+
+            正文（body）语义分两种：\`--body\` **整篇覆盖**，\`--append-body\` **追加**（不必先读文件）。
+            两者都接受"整份任务文件"（frontmatter + 正文）作输入：头会被**剥离**后丢弃（文件头才是权威），
+            在返回值里回报剥了哪些键与**被剥掉的原文** —— 于是 \`--body "$(cat AGENTS.md)"\` 不再产生双头。
+            判据不对称：\`--append-body\` 更严（追加一份"带 front matter 的文档"是常态，只认已知键会把
+            文档头的 \`title:\` 当成任务头吞掉）。
+            `,
             input: {
               uri: z.string().cliArg({ desc: "任务 URI" }),
               title: z.string().optional().cliOption({ short: "t", desc: "新标题" }),
               state: TaskStateSchema.optional().cliOption({ desc: "新状态" }),
-              body: z.string().optional().cliOption({ desc: "新内容（至少 10 字符，拒绝空/过短以免误清空正文）" }),
+              body: z
+                .string()
+                .optional()
+                .cliOption({ desc: "新内容，整篇覆盖（至少 10 字符，拒绝空/过短以免误清空正文；传整份文件会自动剥头）" }),
+              appendBody: z
+                .string()
+                .optional()
+                .cliOption({
+                  placeholder: "<file|->",
+                  readFile: true,
+                  desc: "追加内容：文件路径（相对路径按当前目录解析），`-` 读 stdin。追加在原正文之后（空行分隔），不必先读任务文件",
+                }),
               parent: z.string().optional().cliOption({ desc: "父任务 URI（空字符串=取消父子关系）" }),
               // 三态：不传=保持原绑定 / `default`（或空串）=**跟随缺省**（取消固定绑定）/ 值=换绑到该人物。
               // 换绑是续聊（会话与上下文不动），新模型**下一轮**生效。
@@ -278,7 +318,7 @@ export const apiDef = RpcSchema.router({
               module: z.string().optional().cliOption({ desc: "模块（空字符串=清除）" }),
               priority: z.string().optional().cliOption({ desc: "优先级 P0-P3（空字符串=清除回未定级）" }),
             },
-            output: StatusDataUri,
+            output: StatusDataTaskWrite,
           }),
           move: RpcSchema.unary({
             desc: `移动任务（改变父级）`,

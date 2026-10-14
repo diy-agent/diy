@@ -7,6 +7,13 @@
  */
 
 // Zod 扩展：cliArg / cliOption（side-effect import，必须在任何 schema 定义前执行）
+//
+// 「schema 定义前」是**字面**要求，不是顺序洁癖：zod v4 的 schema 实例在创建时就把原型链定死，
+// 事后往 `z.ZodType.prototype` 上补方法看不见（实测：先建 `z.enum(...)` 再打补丁 → 该实例上
+// 没有 `cliArg`）。而**打包会把被多个 chunk 共用的模块提升成独立 chunk，先于入口模块体求值** ——
+// 于是一个带 schema 的模块只要被拖进共享 chunk，它的 schema 就"先于补丁"创建了，症状是启动即
+// `TypeError: TaskStateSchema.cliArg is not a function`（实测于 ##322：把共享常量模块
+// shared/task-head.ts 牵进了 shared/task-detail.ts → main/core/task-state.ts）。
 import './_cli-meta';
 
 // 传输类型（消费者可见的最小面：信封内部类型 _Envelope/_CallMsg/_DataMsg/_EndMsg/_StreamMode 不外泄）
