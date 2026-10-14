@@ -26,6 +26,7 @@ import { BlockStore, toForest, type BlockNode, type Op } from "../../main/servic
 import type { SteerItem, SteerMode } from "../../main/core/drafts";
 import { personaStore } from "./personaStore";
 import { sessionView, type SessionView } from "../../shared/session-view";
+import { StopTicker } from "../lib/stop-ticker";
 // 用量账本类型：与 main 落盘、CLI 报表、看板共用同一份形状（shared/usage 是唯一口径处）
 import type { StepUsageRecord } from "../../shared/usage";
 import type { FlatCompactPolicy, HeadTailPolicy } from "../../shared/context/compaction";
@@ -203,8 +204,30 @@ function flushRefresh(st: TaskState) {
  */
 const ACTIVE_TOUCH_MS = 400;
 
-/** 判据用的"现在"：轮询每拍推进一次，让停止宽限期（shared/session-view.ts）能自己过期 */
+/** 判据用的"现在"：让停止宽限期（shared/session-view.ts）能自己过期 */
 const [nowMs, setNowMs] = createSignal(Date.now());
+
+/**
+ * 「停止收尾中」的时钟推进器（##307 review2 R2）。
+ *
+ * 删掉 2s 轮询后 nowMs 只在「refreshActive 返回 / cancel」前进；main 卡在工具里（不发 op、
+ * 不落轮次边界）时它会冻住 → stoppingStuck 永假 → 「强制中断」出口成死代码（本地说"还在
+ * 停止"，服务端也仍在跑，按钮却永不可点）。故**仅在**有任务处于停止收尾时保留一节克制的
+ * tick，只推进 nowMs；无任务在停止即停表（不空转）。逻辑见 lib/stop-ticker.ts。
+ */
+const STOP_TICK_MS = 500;
+const stopTicker = new StopTicker(() => setNowMs(Date.now()), { intervalMs: STOP_TICK_MS });
+
+/** 是否有任务处于「已请求停止」（判据同 session-view 的 requested） */
+function anyTaskStopping(): boolean {
+    for (const st of states.values()) if (st.stopRequestedAt() !== null) return true;
+    return false;
+}
+
+/** 对齐停止时钟（cancel / refreshActive 清掉停止态 / 页面卸载时调用）。幂等。 */
+function syncStopTicker(): void {
+    stopTicker.sync(anyTaskStopping());
+}
 
 /**
  * 重放 ops 重建块树。
@@ -267,7 +290,10 @@ async function refreshActive(taskUri: string): Promise<void> {
         const active = (r?.active ?? []).some((t) => t.taskUri === taskUri);
         st.setActive(active);
         // main 说这轮已收尾 → 停止请求使命结束（否则宽限期后会把"停止中"又说成"正在生成"）
-        if (!active) st.setStopRequestedAt(null);
+        if (!active) {
+            st.setStopRequestedAt(null);
+            syncStopTicker(); // main 已收尾 → 停止态结束，时钟该停就停
+        }
         // 下降沿：main 刚收尾一轮 —— 它的 op 我这条流收不到，主动重放让树追上终态；
         // 用量账本同理（别人跑的轮次也要在看板/明细里看见，不能只有自己发的才算数）
         if (was && !active) {
@@ -320,7 +346,11 @@ function watch(taskUri: string): () => void {
     void refreshActive(taskUri);
     // 组件卸载（切走会话页 / 页面关闭）时退订，别让订阅悬着 ——
     // 悬着的订阅在页销毁时会以「Client disposed」形式炸日志（renderer 已死，流才断）
-    return () => unsubscribeOps(taskUri);
+    return () => {
+        unsubscribeOps(taskUri);
+        // 页面卸载（切走 / 关闭）：本窗口不再显示停止态 → 停表，别留空转的计时器
+        stopTicker.stop();
+    };
 }
 
 /** 运行态视图（判据全在 shared/session-view.ts，这里只把三个信号喂进去） */
@@ -464,12 +494,21 @@ function ensureOpsSubscription(taskUri: string): void {
                 { taskUri, since, epoch },
                 { signal: ctrl.signal },
             );
-            for await (const frame of stream) applyOpsFrame(taskUri, frame as OpsFrame);
+            for await (const frame of stream) {
+                // 已被重订（补洞）或退订：本流作废，别再处理它可能残留的帧
+                //（否则会拿旧 since 的帧去撞新的 appliedSeq，误报缺口）
+                if (st.opsAbort !== ctrl) break;
+                applyOpsFrame(taskUri, frame as OpsFrame);
+            }
         } catch (e) {
             // 正常退订（abort）与页面销毁（client disposed）都不是故障，别当异常刷日志
             const msg = e instanceof Error ? e.message : String(e);
             if (!ctrl.signal.aborted && !/disposed|abort/i.test(msg)) {
-                console.warn(`[localChat] op 订阅中断 ${taskUri}:`, e);
+                console.warn(`[localChat] op 订阅中断 ${taskUri}，将退避重连:`, e);
+                // ##307 review2 R3：非主动退订的中断若就此作罢，UI 会**静默冻结** ——
+                // reload 的触发源全是订阅事件，旧实现靠 2s 轮询兜底而轮询已删。
+                // 退避重订：从 appliedSeq 补发，断线期间的 op 不丢。
+                scheduleOpsReconnect(taskUri);
             }
         } finally {
             if (st.opsAbort === ctrl) st.opsAbort = null;
@@ -477,10 +516,43 @@ function ensureOpsSubscription(taskUri: string): void {
     })();
 }
 
+/** op 订阅的退避重连句柄（每 task 至多一个在途重连） */
+const opsReconnectAt = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** 退避重连间隔（ms）：非主动中断后按此重订；再次失败会再排下一次 */
+const OPS_RECONNECT_MS = 1000;
+
+/** 安排一次退避重连（幂等：已有在途则不重复排） */
+function scheduleOpsReconnect(taskUri: string): void {
+    if (opsReconnectAt.has(taskUri)) return;
+    const t = setTimeout(() => {
+        opsReconnectAt.delete(taskUri);
+        const st = states.get(taskUri);
+        if (!st || st.opsAbort) return; // 已退订（切任务）/ 已重订 → 放弃这次
+        ensureOpsSubscription(taskUri);
+    }, OPS_RECONNECT_MS);
+    opsReconnectAt.set(taskUri, t);
+}
+
+/** 重订当前订阅（补洞用）：断旧流、按 appliedSeq 重建（main 侧连续补发缺口） */
+function resubscribeOps(taskUri: string): void {
+    const st = states.get(taskUri);
+    if (!st) return;
+    const ctrl = st.opsAbort;
+    st.opsAbort = null; // 先清，让 ensure 能重建（旧流的 finally 因句柄已换而不会误清新句柄）
+    ctrl?.abort();
+    ensureOpsSubscription(taskUri);
+}
+
 /** 退订（切任务 / 清空时）。幂等。 */
 function unsubscribeOps(taskUri: string): void {
     const st = states.get(taskUri);
     if (!st) return;
+    const t = opsReconnectAt.get(taskUri);
+    if (t !== undefined) {
+        clearTimeout(t);
+        opsReconnectAt.delete(taskUri);
+    }
     st.opsAbort?.abort();
     st.opsAbort = null;
 }
@@ -530,8 +602,14 @@ function applyOpsFrame(taskUri: string, frame: OpsFrame): void {
         if (skip >= ops.length) return; // 整批都已在树里（补发段/自发流的重叠）
         ops = ops.slice(skip);
     } else if (frame.fromSeq > st.appliedSeq + 1) {
-        // 有洞（订阅曾中断 / 丢帧）→ 拉一次全量 history 合并（幂等），把缺口补上
-        void reload(taskUri);
+        // 洞：缺的前文可能正是本批 patch/delta 的目标块的 start —— 按序并入会落成「未知块」。
+        // 不猜、也不依赖可能被 running/loading 跳过的 reload（review2 R4）：abort 当前流、
+        // 按 appliedSeq 重订，让 main 的 subscribe 把 (appliedSeq, now] **连续**补一遍
+        // （补发是同步读文件，无跳过条件）。本批丢弃（重订后连同缺口一起重新送达），
+        // 故**不推进** appliedSeq。
+        console.warn(`[localChat] op 增量出现缺口 ${taskUri}: applied=${st.appliedSeq} got=${frame.fromSeq}，重订补发`);
+        resubscribeOps(taskUri);
+        return;
     }
     let sawTurnBoundary = false;
     for (const op of ops) {
@@ -735,6 +813,7 @@ async function cancel(taskUri: string) {
     const st = stateFor(taskUri);
     st.setStopRequestedAt(Date.now());
     setNowMs(Date.now());
+    syncStopTicker(); // 进入停止收尾 → 开表推进 now（否则 main 卡住时 stoppingStuck 永不翻真）
     st.abort?.abort();
     try {
         await diyService.diy.agent.local.cancel({ taskUri });

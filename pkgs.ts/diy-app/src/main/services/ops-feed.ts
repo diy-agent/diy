@@ -139,7 +139,16 @@ class OpsFeed {
    */
   publish(taskUri: string, ops: readonly Op[]): void {
     if (ops.length === 0) return;
+    const existed = this.feeds.has(taskUri);
     const s = this.st(taskUri);
+    if (!existed) {
+      // ⚠️ 首次建 feed 恰好走 **publish 路径** 时，st() 的 countLines **已含本批** ——
+      // sink 的时序是「先 appendFileSync 再 publish」（见 local-agent.opsSink）。基线必须
+      // 扣掉本批行数，否则水位全体 +1：实时帧内容无碍，但**断线补发**走的是真实行号，
+      // 坐标错位 1 → 重连时丢掉断线期间的第一条 op（review2 R1）。
+      // publish 的调用契约就是「本批已落盘」，故此扣减是确定的、非猜测。
+      s.seq -= ops.length;
+    }
     const fromSeq = s.seq + 1;
     s.seq += ops.length;
     if (s.subs.size === 0) return; // 没人订阅：只推水位，不构造帧

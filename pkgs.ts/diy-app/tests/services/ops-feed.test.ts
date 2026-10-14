@@ -135,6 +135,40 @@ describe("opsFeed — 水位与增量", () => {
     expect(frames[1]).toEqual({ kind: "reset", epoch: 1 });
   });
 
+  it("首次 publish 建 feed：水位 == 真实行数（sink 先落盘再 publish，基线不许 +1）", () => {
+    // 回归 review2 R1：本进程内该 task 从未 watermark/subscribe/reset（UI 没开过它），
+    // CLI / 后台先落第一个 op → feed 在 publish 时才建立，而此刻 countLines 已含刚写的那行。
+    const uri = newUri();
+    const a: Op = { op: "start", id: "t1", kind: "turn" };
+    const b: Op = { op: "stop", id: "t1" };
+    writeOps(uri, [a]); // 盘上 1 行，feed 未触碰
+    writeOps(uri, [b]); // sink 时序：先落盘（盘上 2 行）
+    opsFeed.publish(uri, [b]); //             再 publish（b 是第 2 行）
+    expect(opsFeed.watermark(uri).seq).toBe(2); // 曾是 3（基线多算 → 水位全体 +1）
+  });
+
+  it("断线期间写入的 op，重连补发不丢（基线偏移曾吞掉断线期间的首条）", async () => {
+    // 回归 review2 R1 的后果面：坐标错位 1 会让 readOpLines(since+1, seq) 少读一条。
+    const uri = newUri();
+    const op1: Op = { op: "start", id: "t1", kind: "turn" };
+    const op2: Op = { op: "start", id: "t2", kind: "turn" };
+    const op3: Op = { op: "stop", id: "t1" };
+    writeOps(uri, [op1]);
+    opsFeed.publish(uri, [op1]); // 首建 feed（同上一用例的路径）
+    const wm = opsFeed.watermark(uri);
+    expect(wm.seq).toBe(1);
+
+    await collect(opsFeed.subscribe(uri, wm.seq, wm.epoch), 1); // 首订拿 hello 即断线
+    writeOps(uri, [op2]);
+    opsFeed.publish(uri, [op2]); // 断线期间（真实行 2、3）
+    writeOps(uri, [op3]);
+    opsFeed.publish(uri, [op3]);
+
+    const frames = await collect(opsFeed.subscribe(uri, wm.seq, wm.epoch), 2); // 重连
+    const batch = frames.find((f): f is Extract<OpsFrame, { kind: "batch" }> => f.kind === "batch");
+    expect(batch?.ops).toEqual([op2, op3]); // 曾只回 [op3]（op2 被吞）
+  });
+
   it("退订：订阅取消后不再收帧（防内存/事件泄漏）", async () => {
     const uri = newUri();
     const sub = opsFeed.subscribe(uri, 0);
