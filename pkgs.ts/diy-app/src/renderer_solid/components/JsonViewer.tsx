@@ -33,10 +33,11 @@ export function JsonViewer(props: { data: unknown }) {
         <div class="flex flex-col h-full min-h-0">
             {/* 查看栏：右侧 `<>` 切树/原文，旁边是复制 */}
             <div class="flex items-center gap-1 shrink-0 pb-1 border-b border-base-300 mb-1">
-                <span class="text-caption opacity-50">{raw() ? "原文" : "树"}</span>
+                {/* 当前态用徽标（实心）+ 右侧 `<>` 实心按钮双重表达：单靠按钮压暗在暗色主题下几乎看不出 */}
+                <span class="badge badge-sm badge-neutral">{raw() ? "原文" : "树"}</span>
                 <div class="ml-auto" />
                 <button
-                    class={`btn btn-xs btn-ghost font-mono ${raw() ? "btn-active" : ""}`}
+                    class={`btn btn-xs font-mono ${raw() ? "btn-primary" : "btn-ghost"}`}
                     aria-pressed={raw()}
                     title={raw() ? "当前：原文 —— 点击切到「树」" : "当前：树 —— 点击切到「原文」"}
                     onClick={() => setRaw((v) => !v)}

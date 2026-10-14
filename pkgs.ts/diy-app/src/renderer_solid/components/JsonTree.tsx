@@ -16,6 +16,37 @@ const FORMATS = [
     { v: "yaml", label: "YAML", tip: "按 YAML 解析后树形展示；解析失败会提示" },
 ] as const;
 
+/**
+ * 嵌套层级底色：逐层加深，让「谁在谁里面」一眼可见（不靠数缩进）。
+ *
+ * 为什么用 inline style 而不是工具类：层级是运行时才知道的，`bg-base-200/[0.04]` 这种
+ * 动态 alpha 类 Tailwind 扫不到 → 不会生成，只能走 inline。颜色是中性偏蓝的灰，暗/亮主题
+ * 下都是「比背景略亮一丢丢」的叠加，越深越明显，到 0.16 封顶（再深就看不清字了）。
+ */
+function depthTint(depth: number): { background: string } | undefined {
+    if (depth <= 0) return undefined;
+    const a = Math.min(0.055 + (depth - 1) * 0.045, 0.2);
+    return { background: `rgba(125,145,175,${a.toFixed(3)})` };
+}
+
+/**
+ * 猜测性预览（MD / JSON / YAML）的外框：按格式给不同底色 + 左侧色条，
+ * 明确告诉用户「这块不是原文，是被猜成某种格式渲染的」，且一眼分得清猜成了哪种。
+ * 原文（raw）不给底色 —— 只有「猜」出来的才需要提示。
+ */
+function fmtBox(fmt: "raw" | "md" | "json" | "yaml"): string {
+    switch (fmt) {
+        case "md":
+            return "border-info/70 bg-info/15";
+        case "json":
+            return "border-success/70 bg-success/15";
+        case "yaml":
+            return "border-warning/70 bg-warning/15";
+        default:
+            return "border-base-300";
+    }
+}
+
 /** 字符串预览：原文 / Markdown / JSON / YAML 四态（后三者是「猜一猜」的渲染） */
 function StringPreview(props: { fmt: "raw" | "md" | "json" | "yaml"; raw: string }) {
     return (
@@ -111,7 +142,8 @@ function JsonNode(props: { k?: string; v: unknown; depth: number; floor: () => n
                                 <For each={FORMATS}>
                                     {(f) => (
                                         <button
-                                            class={`btn btn-xs join-item ${fmt() === f.v ? "btn-active" : "btn-ghost"}`}
+                                            class={`btn btn-xs join-item ${fmt() === f.v ? "btn-primary" : "btn-ghost"}`}
+                                            aria-pressed={fmt() === f.v}
                                             title={f.tip}
                                             onClick={() => setFmt((cur) => (cur === f.v ? "raw" : f.v))}
                                         >
@@ -123,7 +155,9 @@ function JsonNode(props: { k?: string; v: unknown; depth: number; floor: () => n
                         </Show>
                     </div>
                     <Show when={open()}>
-                        <div class="ml-4 border-l border-base-300 pl-2">
+                        {/* 叶子框用「格式色」而非层级色：这一层要回答的是「猜成了哪种格式」，
+                            层级深浅交给外层容器（见下）。两者都上会互相盖掉。 */}
+                        <div class={`ml-3 rounded-r border-l-2 pl-2 ${fmtBox(fmt())}`}>
                             <StringPreview fmt={fmt()} raw={s} />
                         </div>
                     </Show>
@@ -162,7 +196,7 @@ function JsonNode(props: { k?: string; v: unknown; depth: number; floor: () => n
                 </Show>
             </div>
             <Show when={open()}>
-                <div class="ml-4 border-l border-base-300 pl-2">
+                <div class="ml-3 rounded-r border-l-2 border-base-300 pl-2" style={depthTint(props.depth)}>
                     <Show when={isArr()} fallback={<For each={keys()}>{(k) => <JsonNode k={k} v={(v() as Record<string, unknown>)[k]} depth={props.depth + 1} floor={props.floor} />}</For>}>
                         <For each={items()}>
                             {(item, i) => (

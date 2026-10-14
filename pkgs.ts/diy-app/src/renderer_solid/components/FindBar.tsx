@@ -24,12 +24,15 @@ export function FindBar() {
         <Show when={findStore.open}>
             <div
                 data-find-skip
-                class="flex shrink-0 items-center gap-2 border-b border-warning/30 bg-warning/15 px-2 py-0.5 text-body"
+                class="mx-2 my-1.5 flex shrink-0 items-center gap-2 rounded-lg border border-warning/70 bg-warning/20 px-2 py-1 text-body shadow-md"
             >
+                {/* 明确标注这是「查找」条：原先只有一条与面包屑同款的淡黄细线，在流量页这类
+                    内容密集的页面里几乎看不出输入框（实测与背景对比度仅 1.37） */}
+                <span class="whitespace-nowrap font-medium text-warning">🔍 查找</span>
                 <input
                     ref={inputEl}
                     type="search"
-                    class="input input-bordered input-xs min-w-24 max-w-72 flex-1"
+                    class="input input-bordered input-sm min-w-40 max-w-96 flex-1 border-warning/50 bg-base-100 placeholder:opacity-50"
                     placeholder="页面内查找…"
                     value={findStore.query}
                     onInput={(e) => findStore.setQuery(e.currentTarget.value)}
