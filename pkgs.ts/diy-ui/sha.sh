@@ -51,6 +51,8 @@ check() {
 #   ./sha.sh test                       # 全部测试
 #   ./sha.sh test test/cell.test.ts    # 单个测试文件
 test() { run npx vitest run "${@:-}"; }
+# 本包全是快速单测，无慢测试：test ≡ test-unit
+test-unit() { run npx vitest run "$@"; }
 
 # ci：check + test
 ci() { check; test; }

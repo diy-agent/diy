@@ -371,6 +371,19 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().history(input.taskUri);
   });
+  // 会话 op 增量（##307 读侧）：水位校准起点 + 订阅写侧推送 —— UI 不再轮询、不再等轮末重放。
+  // opsFeed 是 main 侧唯一写盘点的广播总线（见 services/ops-feed.ts）；CLI / 他窗口 /
+  // 自愈补写的 op 同样经过它 → 任何来源的写入对所有订阅窗口即时可见。
+  binding.on(app.agent.local.opsWatermark, async ({ input }) => {
+    const { opsFeed } = await import("./ops-feed");
+    return opsFeed.watermark(input.taskUri);
+  });
+  binding.on(app.agent.local.opsWatch, async function* ({ input }) {
+    const { opsFeed } = await import("./ops-feed");
+    for await (const frame of opsFeed.subscribe(input.taskUri, input.since, input.epoch)) {
+      yield frame;
+    }
+  });
   binding.on(app.agent.local.clear, async ({ input }) => {
     noteRendererTouch("diy.agent.local.clear", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");

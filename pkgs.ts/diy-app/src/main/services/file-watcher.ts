@@ -6,52 +6,13 @@
 import { watch, FSWatcher } from "chokidar";
 import { join } from "node:path";
 import { diyHome } from "../core/state";
+import { AsyncQueue, withCleanup } from "./async-queue";
 
 export type WatchChangeEvent = "state-change" | "task-change" | "agent-change";
 
 export interface FileChangeEvent {
   event: WatchChangeEvent;
   ts: number;
-}
-
-// ── AsyncQueue：桥接 emit 回调 → async iterable（供 RPC serverStream yield） ──
-
-class _AsyncQueue<T> {
-  private q: T[] = [];
-  private resolvers: Array<(v: IteratorResult<T>) => void> = [];
-  private closed = false;
-
-  push(v: T): void {
-    if (this.closed) return;
-    if (this.resolvers.length > 0) {
-      this.resolvers.shift()!({ value: v, done: false });
-    } else {
-      this.q.push(v);
-    }
-  }
-
-  close(): void {
-    this.closed = true;
-    while (this.resolvers.length > 0) {
-      this.resolvers.shift()!({ value: undefined as unknown as T, done: true });
-    }
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<T> {
-    return {
-      next: (): Promise<IteratorResult<T>> => {
-        if (this.q.length > 0) {
-          return Promise.resolve({ value: this.q.shift()!, done: false });
-        }
-        if (this.closed) {
-          return Promise.resolve({ value: undefined as unknown as T, done: true });
-        }
-        return new Promise((resolve) => {
-          this.resolvers.push(resolve);
-        });
-      },
-    };
-  }
 }
 
 // ── FileWatcher：单例，按需启停 chokidar ──
@@ -72,29 +33,19 @@ class _AsyncQueue<T> {
  */
 class FileWatcher {
   private watcher: FSWatcher | null = null;
-  private queues = new Set<_AsyncQueue<FileChangeEvent>>();
+  private queues = new Set<AsyncQueue<FileChangeEvent>>();
   private debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   /** 订阅文件变更事件流（RPC serverStream 直接 yield 此 async iterable）。 */
   subscribe(): AsyncIterable<FileChangeEvent> {
-    const q = new _AsyncQueue<FileChangeEvent>();
+    const q = new AsyncQueue<FileChangeEvent>();
     this.queues.add(q);
     if (this.queues.size === 1) this._start();
-
-    return {
-      [Symbol.asyncIterator]: () => {
-        // 异步移除订阅（消费者 close 后 q.next() → done:true，消费者退出，再执行此 finally）
-        const cleanup = () => {
-          this.queues.delete(q);
-          if (this.queues.size === 0) this._stop();
-        };
-        const inner = q[Symbol.asyncIterator]();
-        return {
-          next: () => inner.next().then((r) => { if (r.done) cleanup(); return r; }),
-          return: () => { cleanup(); return Promise.resolve({ value: undefined, done: true as const }); },
-        };
-      },
-    };
+    // 消费端 return()（close/abort）→ 移除订阅；末订阅者走后关掉 chokidar
+    return withCleanup(q, () => {
+      this.queues.delete(q);
+      if (this.queues.size === 0) this._stop();
+    });
   }
 
   private _emit(event: WatchChangeEvent): void {
