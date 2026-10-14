@@ -45,18 +45,27 @@ export type FlowErrorCode =
     /** 同种出边多条、`when` 命中数不为 1（不替作者掷骰子） */
     | 'ambiguous-edge'
     /** 打回次数超过上限（死循环护栏） */
-    | 'bounce-limit';
+    | 'bounce-limit'
+    /** 运行期选项 / 调用入参形状不对（未知字段 —— 如把 `maxBounces` 拼成 `maxBounce`） */
+    | 'invalid-option'
+    /** 宣布非法：`author` 空 / 冒用内核保留字 `system` */
+    | 'invalid-declare'
+    /** 插件函数自己抛了异常（宿主边界：统一包装成 FlowError；`cause` 保留原异常） */
+    | 'plugin-threw';
 
 /** 本包唯一错误类型：带 `code`（机器判据）与 `path`（从根到字段的点路径，如 `edges[2].to`） */
 export class FlowError extends Error {
     readonly code: FlowErrorCode;
     /** 出错位置的点路径；空串表示整体 */
     readonly path: string;
+    /** 原始异常（仅 `plugin-threw` 之类「包了个下层的错」时有值） */
+    readonly cause?: unknown;
 
-    constructor(code: FlowErrorCode, message: string, path = '') {
+    constructor(code: FlowErrorCode, message: string, path = '', cause?: unknown) {
         super(path === '' ? `${code}: ${message}` : `${code} @ ${path}: ${message}`);
         this.name = 'FlowError';
         this.code = code;
         this.path = path;
+        if (cause !== undefined) this.cause = cause;
     }
 }

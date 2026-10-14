@@ -17,6 +17,7 @@ import type { EdgeDef, EdgeKind } from './define';
 import { FlowError } from './errors';
 import { parseActionResult, parseGuardResult, type PluginContext } from './plugins';
 import type { PluginRegistry } from './registry';
+import { callPlugin } from './validate';
 
 /** guard 引用的三种前缀 —— `prompt:` 之外都可观测 */
 export const GUARD_PREFIXES = ['prompt', 'pred', 'action'] as const;
@@ -62,6 +63,8 @@ export interface GuardCheck {
 
 export interface GuardEvaluation {
     readonly mode: GuardMode;
+    /** 是否**真的跑过插件**：`false` = 一个插件都没调（打回声明不设闸门 → 连「能不能往前走」都不问） */
+    readonly evaluated: boolean;
     /** 已求值的可观测 guard 是否**全过**（短路：首个失败即停，之后的不求值） */
     readonly pass: boolean;
     /** 已求值的可观测 guard（按数组序；短路时少于全部） */
@@ -79,13 +82,24 @@ export function classifyGuards(refs: readonly string[], base = 'guard'): { mode:
     return { mode: pending.length > 0 ? 'actor' : 'system', refs: parsed, pending };
 }
 
+/**
+ * 「不评估」的求值结果：`evaluated = false`、`checks` 空、`pass` 恒真（**没有闸门**）。
+ *
+ * 用于**打回声明**：宣布打回不主张推进，节点 guard 问的是「能不能往前走」，打回根本不问它 ——
+ * 所以一个插件都不跑（`action:` 是写外部世界的，绝不能因为「有人往后退」而动手）。
+ */
+export function unevaluatedGuards(refs: readonly string[], base = 'guard'): GuardEvaluation {
+    const { mode, pending } = classifyGuards(refs, base);
+    return { mode, evaluated: false, pass: true, checks: [], pending, reason: '' };
+}
+
 function runGuard(ref: GuardRef, ctx: PluginContext, registry: PluginRegistry, path: string): GuardCheck {
     if (ref.prefix === 'pred') {
-        const result = parseGuardResult(registry.resolve('guard', ref.name)(ctx), path);
+        const result = parseGuardResult(callPlugin(`guard 插件 ${ref.name}`, path, () => registry.resolve('guard', ref.name)(ctx)), path);
         return { ref, pass: result.pass, reason: result.pass ? '' : (result.reason ?? `guard 「${ref.name}」未过`) };
     }
     // `action:` —— 求值即「对外部世界动手」，`ok` 就是过没过（##166 §14.4：`impl` 把 pred/action 注册成真函数）
-    const result = parseActionResult(registry.resolve('action', ref.name)(ctx), path);
+    const result = parseActionResult(callPlugin(`action 插件 ${ref.name}`, path, () => registry.resolve('action', ref.name)(ctx)), path);
     const why = result.ref === undefined ? `action 「${ref.name}」未成功` : `action 「${ref.name}」未成功（${result.ref}）`;
     return { ref, pass: result.ok, reason: result.ok ? '' : why };
 }
@@ -113,6 +127,7 @@ export function evaluateGuards(refs: readonly string[], ctx: PluginContext, regi
 
     return {
         mode: pending.length > 0 ? 'actor' : 'system',
+        evaluated: true,
         pass: failed === null,
         checks,
         pending,
@@ -121,17 +136,16 @@ export function evaluateGuards(refs: readonly string[], ctx: PluginContext, regi
 }
 
 /**
- * 从同种边里选出**唯一**一条（多出口时的消歧）。
+ * 从同种边里选出**唯一**一条可用出边；`null` = 一条都不满足（边在、但此刻走不了）。
  *
- * 单条直接用；多条时用边上的 `when` 判（`when` 与 `guard` 同一套前缀规则）：
+ * `when` 是**边的条件**（##166 §14.4「何时走这条边」），与 `guard` 同一套前缀规则 ——
+ * **单出口也照判**：边上写了 `when: 'pred:never'`，那就是「此刻不走这条边」，
+ * 不能因为它是唯一一条就当成恒真（那正是本包最反对的「悄悄偏到另一条路径」）。
  * - `when` 缺省 = 恒真；`when` 不可观测（`prompt:`）= 系统选不了 → 不算命中（只能由 actor 宣布）；
- * - 命中数须恰为 1，否则 `ambiguous-edge`（宁可报错，也不替作者掷骰子）。
+ * - 命中数 > 1 → `ambiguous-edge`（宁可报错，也不替作者掷骰子）；命中数 = 0 → `null`。
  */
-export function selectEdge<Id extends string>(edges: readonly EdgeDef<Id>[], kind: EdgeKind, ctx: PluginContext, registry: PluginRegistry): EdgeDef<Id> {
+export function selectEdge<Id extends string>(edges: readonly EdgeDef<Id>[], kind: EdgeKind, ctx: PluginContext, registry: PluginRegistry): EdgeDef<Id> | null {
     const candidates = edges.filter((edge) => edge.kind === kind);
-    if (candidates.length === 0) throw new FlowError('no-edge', `当前节点没有 kind=${kind} 的出边`, 'edges');
-    if (candidates.length === 1) return candidates[0];
-
     const matched = candidates.filter((edge) => {
         if (edge.when === undefined) return true;
         const index = edges.indexOf(edge);
@@ -139,8 +153,8 @@ export function selectEdge<Id extends string>(edges: readonly EdgeDef<Id>[], kin
         if (!isObservable(ref)) return false;
         return evaluateGuards([edge.when], ctx, registry).pass;
     });
-    if (matched.length !== 1) {
+    if (matched.length > 1) {
         throw new FlowError('ambiguous-edge', `当前节点有 ${candidates.length} 条 kind=${kind} 的边，when 命中 ${matched.length} 条（须恰 1 条）`, 'edges');
     }
-    return matched[0];
+    return matched.length === 1 ? matched[0] : null;
 }

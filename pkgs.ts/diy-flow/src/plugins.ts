@@ -20,6 +20,7 @@
 import type { Anchor, Event } from '@diy/talk';
 import { RENDERERS, type NodeDef, type Renderer, type WorkflowDef } from './define';
 import { FlowError } from './errors';
+import { isObject } from './validate';
 
 /** 插件槽位全集（引擎枚举；工作流只能引用这五个） */
 export const SLOTS = ['guard', 'source', 'action', 'render', 'notify'] as const;
@@ -94,10 +95,6 @@ export type Plugin = SlotPlugins[Slot];
 // ── 返回值校验：插件是宿主代码，形状不对**立即报错**（不静默降级成「不通过 / 空数据」）──────
 // 与 define.ts 的「形状封闭」略有不同：插件返回值是运行期产物，**允许多带调试字段**
 // （多带不该失败），但**必填字段类型不对一律抛**。
-
-function isObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function takeBool(obj: Record<string, unknown>, key: string, path: string, what: string): boolean {
     if (typeof obj[key] !== 'boolean') throw new FlowError('invalid-plugin-result', `${what} 的 ${key} 应为 boolean`, `${path}.${key}`);

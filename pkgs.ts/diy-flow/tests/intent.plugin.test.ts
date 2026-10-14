@@ -8,10 +8,13 @@
 //   R3  guard 数组 = **与**：全部满足才可转移；求值**短路**（前项失败就不再执行后面的 `action:`）
 //   R4  可观测 guard（`pred:` / `action:`）→ 系统求值并**自动转移**，落一条 `author = system` 的 Event
 //   R5  不可观测 guard（`prompt:`）→ **只能由 actor 宣布**，**转移本身就是一条 Event**
+//       （含次序铁律：`action:` 副作用只跑一次 · 被拒的宣布不动手 · 打回不跑 guard · `author` 不得冒名 `system`）
 //   R6  guard 未过 → **停在原位**（「卡住」在边上，##101 结论四）；有 `bounce` 边则 = **打回**
+//       （边上的 `when` 是**边的条件**：单出口也照判 —— 不满足 = 这条边此刻不可用）
 //   R7  死循环护栏：打回上限（`maxBounces`）
 //   R8  端到端：开发工作流 8 步含 1 次 actor 打回；金融工作流含 1 次**系统**打回（##166 §14.3）
 //   R9  纯内核：不触外部世界 / 不取时间 —— 由 `intent.flow.test.ts` 的 R7 静态把关（它读整个 src/）
+//       （另：运行期选项形状封闭 · notify 失败不作废转移 · 插件异常包装成 FlowError）
 //
 // 测试风格：以 ##166 §14.3/§14.4 的**真实工作流**为素材（开发 / 金融），断言公开 API 的行为与
 // 错误码，不断言内部实现；插件全是假实现（真 CI / 真行情接入是 ##319 的事）。
@@ -231,6 +234,32 @@ const branchDef = defineWorkflow({
     ],
 });
 
+/** 混合节点：可观测（`action:`）+ 不可观测（`prompt:`）→ 只能由 actor 宣布；另带一条打回边 */
+const mixedActionDef = defineWorkflow({
+    id: 'mixed-action',
+    entry: 'ship',
+    nodes: [
+        { id: 'ship', name: '发布', actor: 'agent', guard: ['action:publish', 'prompt:shipped'], hint: '' },
+        { id: 'end', name: '终态', actor: 'system', guard: [], hint: '' },
+        { id: 'back', name: '退回', actor: 'human', guard: ['prompt:retry'], hint: '' },
+    ],
+    edges: [
+        { from: 'ship', to: 'end', kind: 'next' },
+        { from: 'ship', to: 'back', kind: 'bounce' },
+    ],
+});
+
+/** 唯一一条出边，但边上写了 `when` —— 边的条件，单出口也算数 */
+const gateDef = defineWorkflow({
+    id: 'gate',
+    entry: 'gate',
+    nodes: [
+        { id: 'gate', name: '闸门', actor: 'system', guard: ['pred:check_green'], hint: '' },
+        { id: 'down', name: '下游', actor: 'system', guard: [], hint: '' },
+    ],
+    edges: [{ from: 'gate', to: 'down', kind: 'next', when: 'pred:no_conflict' }],
+});
+
 type IdOf<W> = W extends WorkflowDef<infer Id> ? Id : never;
 
 // ═══════════════════════════════════════════════════════════════
@@ -283,6 +312,34 @@ describe('R2 注册表：未注册即报错（不许静默降级）', () => {
     it('工作流里引用了没注册的 guard 名字 → 求值时报错，**不当成「不通过」糊过去**', () => {
         const ctx: PluginContext = { workflow: pairDef, node: pairDef.nodes[0], params: {}, actor: 'system' };
         expect(caught(() => evaluateGuards(['pred:ci_grenn'], ctx, createRegistry())).code).toBe('unknown-plugin');
+    });
+
+    it('组合期就报：错字不必等到「走到那一步」才暴露（`guard` / `when` / `notify` 全是静态可枚举的名字）', () => {
+        const { registry } = fakes();
+        const typo = defineWorkflow({
+            id: 'typo',
+            nodes: [{ id: 'solo', name: '单', actor: 'system', guard: ['pred:ci_grenn'], hint: '' }],
+            edges: [],
+        });
+        const e = caught(() => createRuntime(typo, { registry }));
+        expect(e.code).toBe('unknown-plugin');
+        expect(e.path).toBe('nodes[0].guard[0]');
+        expect(e.message).toContain('check_green'); // 已注册的名字列出来，好改错字
+
+        // 边上的 `when` 与 `notify` 同样静态可查
+        expect(caught(() => createRuntime(gateDef, { registry, notify: ['nope'] })).path).toBe('notify[0]');
+        const badWhen = defineWorkflow({
+            id: 'bad-when',
+            entry: 'a',
+            nodes: [
+                { id: 'a', name: 'A', actor: 'system', guard: [], hint: '' },
+                { id: 'b', name: 'B', actor: 'system', guard: [], hint: '' },
+            ],
+            edges: [{ from: 'a', to: 'b', kind: 'next', when: 'pred:nope' }],
+        });
+        expect(caught(() => createRuntime(badWhen, { registry })).path).toBe('edges[0].when');
+        // `prompt:` 不是插件名（本来就不注册）→ 不查
+        expect(() => createRuntime(pairDef, { registry })).not.toThrow();
     });
 });
 
@@ -442,6 +499,51 @@ describe('R5 不可观测 guard → 只能由 actor 宣布，转移本身就是�
         expect(bounced.event.anchor).toEqual({ type: 'node', data: { nodeId: 'up' } });
         expect(bounced.state.path[1].kind).toBe('bounce');
     });
+
+    it('`action:` 副作用只跑一次：含 `prompt:` 的节点，`step` 一个插件都不调，动手只落在 `declare`', () => {
+        const { registry, calls } = fakes();
+        const rt = createRuntime(mixedActionDef, { registry });
+        const r = runner(rt);
+        r.step(); // 进入 ship
+        expect(rt.step(r.state(), nextSeed()).status).toBe('awaiting-actor');
+        expect(calls).toEqual([]); // 系统还没动手（否则 declare 时会再来一次 = 同一件事做两遍）
+        r.declare({ author: '发布 agent', to: 'end', content: '发布完成' });
+        expect(calls).toEqual(['action:publish@ship']); // 只跑一次
+    });
+
+    it('被拒的 `declare` 不动手：系统节点上宣布 → not-declarable，且一个插件都没跑', () => {
+        const { registry, calls } = fakes();
+        const rt = createRuntime(sideFxDef, { registry }); // go: ['pred:check_green', 'action:place_order']
+        const r = runner(rt);
+        r.step(); // 进入 go
+        const e = caught(() => rt.declare(r.state(), { ...nextSeed(), author: 'agent', to: 'end', content: '我说了算' }));
+        expect(e.code).toBe('not-declarable');
+        expect(calls).toEqual([]); // 先拒单，后求值 —— 不能先下了单再报「不允许」
+    });
+
+    it('打回声明不跑 guard：`action:` 不该因为「有人往后退」而动手', () => {
+        const { registry, calls } = fakes();
+        const rt = createRuntime(mixedActionDef, { registry });
+        const r = runner(rt);
+        r.step(); // 进入 ship
+        const bounced = r.declare({ author: '发布 agent', to: 'back', content: '环境不对，先退回' });
+        expect(calls).toEqual([]); // 打回不主张推进 → 连求值都不做
+        expect(bounced.guard.evaluated).toBe(false);
+        expect(bounced.guard.pass).toBe(true); // 「没有闸门」，不是「条件满足了」
+        expect(bounced.state.path[1].kind).toBe('bounce');
+    });
+
+    it('`author` 不得冒名内核保留字 `system`（否则下游分不清「系统推」与「谁宣布推」）', () => {
+        const { registry } = fakes();
+        const rt = createRuntime(devDef, { registry });
+        const r = runner(rt);
+        r.step(); // clarify
+        const e = caught(() => r.declare({ author: 'system', to: 'design', content: '我说了算' }));
+        expect(e.code).toBe('invalid-declare');
+        expect(e.path).toBe('request.author');
+        expect(caught(() => r.declare({ author: '', to: 'design', content: '' })).code).toBe('invalid-declare');
+        expect(r.state().position).toBe('clarify'); // 位置没动
+    });
 });
 
 describe('R6 guard 未过：停在边上 / 打回', () => {
@@ -491,6 +593,20 @@ describe('R6 guard 未过：停在边上 / 打回', () => {
         const r2 = runner(rt2);
         r2.step(); // 进入 gate（两个 when 都真）
         expect(caught(() => rt2.step(r2.state(), nextSeed())).code).toBe('ambiguous-edge');
+    });
+
+    it('唯一一条出边上的 `when` 也算数：不满足 = 这条边此刻不可用 → 停在原位', () => {
+        const { registry, flags, calls } = fakes();
+        flags.set('no_conflict', false);
+        const rt = createRuntime(gateDef, { registry });
+        const r = runner(rt);
+        r.step(); // 进入 gate
+        const result = rt.step(r.state(), nextSeed());
+        expect(result.status).toBe('stuck');
+        if (result.status !== 'stuck') throw new Error('unreachable');
+        expect(result.reason).toContain('when');
+        expect(r.state().position).toBe('gate'); // 边上写着「此刻不走」，就不能因为「只有这一条」而硬走
+        expect(calls).toEqual(['check_green@gate', 'no_conflict@gate']); // 边的条件真的被求值了
     });
 });
 
@@ -664,6 +780,64 @@ describe('R9 上下文与旁路：params 透传 / notify 唤醒 / status 分类'
         const rt = createRuntime(pairDef, { registry });
         const e = caught(() => rt.declare(initialState<IdOf<typeof pairDef>>(), { ...nextSeed(), author: 'agent', to: 'b', content: '' }));
         expect(e.code).toBe('invalid-entry');
+    });
+
+    it('未知选项 / 拼错护栏名 → invalid-option（形状封闭，绝不静默忽略）', () => {
+        const { registry } = fakes();
+        // @ts-expect-error 故意把 maxBounces 拼成 maxBounce
+        const e = caught(() => createRuntime(pairDef, { registry, maxBounce: 1 }));
+        expect(e.code).toBe('invalid-option');
+        expect(e.path).toBe('options.maxBounce');
+        // step 的 seed 也只认 { id, at }
+        const rt = createRuntime(pairDef, { registry });
+        // @ts-expect-error 故意多带一个字段
+        expect(caught(() => rt.step(initialState<IdOf<typeof pairDef>>(), { id: 'e', at: AT, 多余: 1 })).code).toBe('invalid-option');
+        const r = runner(rt);
+        r.step();
+        // @ts-expect-error 宣布请求只认 { id, at, author, to, content, causes? }
+        expect(caught(() => rt.declare(r.state(), { ...nextSeed(), author: 'agent', to: 'b', content: 'x', 多余: 1 })).code).toBe('invalid-option');
+    });
+
+    it('notify 失败不作废转移：事实（state + event）照样落定，失败只记账', () => {
+        const registry = createRegistry()
+            .register('guard', 'check_green', () => ({ pass: true }))
+            .register('guard', 'intent_green', () => ({ pass: true }))
+            .register('notify', 'boom', () => {
+                throw new Error('通知服务挂了');
+            });
+        const rt = createRuntime(pairDef, { registry, notify: ['boom'] });
+        const r = runner(rt);
+        const entered = r.step(); // 不抛
+        expect(entered.state.position).toBe('a');
+        expect(entered.event.author).toBe('system');
+        expect(entered.receipts).toEqual([]);
+        expect(entered.notifyErrors.map((failure) => failure.plugin)).toEqual(['boom']);
+        expect(entered.notifyErrors[0].error.code).toBe('plugin-threw');
+        expect(entered.notifyErrors[0].error.message).toContain('通知服务挂了');
+    });
+
+    it('插件自己抛原生 Error → 统一包成 FlowError（code = plugin-threw），不让它直穿内核', () => {
+        const registry = createRegistry().register('guard', 'explode', () => {
+            throw new Error('CI 服务 500');
+        });
+        const def = defineWorkflow({ nodes: [{ id: 'solo', name: '单', actor: 'system', guard: ['pred:explode'], hint: '' }], edges: [] });
+        const rt = createRuntime(def, { registry });
+        const r = runner(rt);
+        r.step(); // 进入 solo
+        const e = caught(() => rt.step(r.state(), nextSeed()));
+        expect(e.code).toBe('plugin-threw');
+        expect(e.path).toBe('guard[0]');
+        expect(e.message).toContain('CI 服务 500');
+    });
+
+    it('ctx.params 是冻结的副本：插件改不动宿主对象', () => {
+        const registry = createRegistry().register('guard', 'probe', () => ({ pass: true }));
+        const def = defineWorkflow({ nodes: [{ id: 'solo', name: '单', actor: 'system', guard: ['pred:probe'], hint: '' }], edges: [] });
+        const host = { ci: { command: 'npm test' } };
+        const rt = createRuntime(def, { registry, params: host });
+        expect(rt.params).toEqual(host);
+        expect(rt.params).not.toBe(host); // 不是宿主那个对象
+        expect(Object.isFrozen(rt.params)).toBe(true);
     });
 
     it('宣布一条不存在的边 → no-edge（不许跳步）', () => {

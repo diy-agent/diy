@@ -39,6 +39,10 @@
 //   }
 //   // `pred:` / `action:` 可观测 → rt.step 自己求值并自动转移，事件 author = 'system'
 //
+// 三条次序铁律（`action:` 是写外部世界的槽）：**先分类后求值**（含 `prompt:` 的节点，step 一个插件都不调）、
+// **先拒单后求值**（非法 declare 不得先动手）、**打回不求值**。`declare` 的 `author` 不得取内核保留字
+// `system`；`step` / `declare` 每次调用都会重新求值 ⇒ `action:` 插件须幂等、`done` 后勿轮询。
+//
 // 边界：本包只做**内核** —— 不做事件存储、不做参数校验（`params` 只透传，校验归 ##316）、
 // 不做渲染（`render` 只给形状，画页面归 ##320）、不做调度（`notify` 只给回执）。
 // 事件形状与 `@diy/talk` 的 `Event` 完全一致（##312）：**不另造一套历史**（##166 §八）。
@@ -70,8 +74,10 @@ export type { ActionResult, ActionPlugin, GuardPlugin, GuardResult, NotifyPlugin
 export { createRegistry } from './registry';
 export type { PluginRegistry } from './registry';
 
-export { GUARD_PREFIXES, classifyGuards, evaluateGuards, isObservable, parseGuardRef, selectEdge } from './eval';
+export { GUARD_PREFIXES, classifyGuards, evaluateGuards, isObservable, parseGuardRef, selectEdge, unevaluatedGuards } from './eval';
 export type { GuardCheck, GuardEvaluation, GuardMode, GuardPrefix, GuardRef } from './eval';
 
 export { createRuntime } from './execute';
-export type { DeclareRequest, EventSeed, NodeStatus, Runtime, RuntimeOptions, StepResult, Transition } from './execute';
+export type { DeclareRequest, EventSeed, NodeStatus, NotifyFailure, Runtime, RuntimeOptions, StepResult, Transition } from './execute';
+
+export { callPlugin, isObject, rejectUnknown } from './validate';
