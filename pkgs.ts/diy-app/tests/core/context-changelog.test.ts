@@ -1,104 +1,148 @@
 // tests/core/context-changelog.test.ts
 // ═══════════════════════════════════════════════════════════════
-// 🎯 变更历史：「哪一轮、哪个变量、从什么变成了什么」。
+// 🎯 变更历史（##310 二版）：「哪一步、哪个变量、从什么变成了什么」。
 //
-// 这份数据要**长期留**（小、append-only），口径必须稳：
-//   · 基线（首轮）是**起点**不是"变了 n 次"；
-//   · 老→新由**回放**得出（落盘只存改成了什么）—— 回不动就是这份日志没用；
-//   · 0 变更的轮也要留（"这轮什么都没变"是事实：缓存没被砸）。
+// 口径必须稳（这份数据要长期留）：
+//   · **原子单元** = 变更单位：`chain` 整体一条，**不下钻** `chain.0.content`（下钻会谎报半棵树变了）；
+//   · **有变才写**；首条 = `baseline`（整棵树）；
+//   · **before/after 自带**（落盘自包含）→ 读侧不回放。
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, expect } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { changedOf, foldCtxLog, opsFromHashes, type CtxLogRecord } from "../../src/shared/context/changelog";
-import { appendCtxLog, ctxLogFile, readCtxLog } from "../../src/main/core/context-changelog";
+import {
+    changesOf,
+    entryToRows,
+    summarizeValue,
+    type CtxLogEntry,
+    type CtxSnapshot,
+} from "../../src/shared/context/changelog";
+import {
+    appendCtxLog,
+    ctxLogFile,
+    hasCtxLog,
+    lastCtxLogSeq,
+    readCtxLog,
+    readCtxLogEntries,
+} from "../../src/main/core/context-changelog";
+import type { ContextTreeState } from "../../src/shared/context/types";
 
-const base = { ts: "2026-10-01T00:00:00.000Z", turnId: "t1", model: "m", wireVersion: "w1" };
+const stateOf = (values: Record<string, unknown>): ContextTreeState => ({
+    values,
+    renderers: {},
+    places: [],
+    placement: {},
+    wireVersion: "w1",
+    placementEpoch: 0,
+});
+const snap = (values: Record<string, unknown>, hashes: Record<string, string>): CtxSnapshot => ({
+    tree: stateOf(values),
+    valueHashes: hashes,
+});
 
-describe("opsFromHashes：值 hash 差 → 变更事件", () => {
-    it("★ 首轮（无上一轮）= 基线：全部算 add，不是'变了 n 次'", () => {
-        const ops = opsFromHashes(null, { b: "2", a: "1" });
-        expect(ops.map((o) => [o.kind, o.path])).toEqual([
-            ["add", "a"],
-            ["add", "b"],
-        ]);
-        // 基线也要值预览（没有它，回放的起点就是空的）
-        expect(opsFromHashes(null, { a: "1" }, () => "preview-A")[0]).toMatchObject({
-            kind: "add",
-            path: "a",
-            preview: "preview-A",
-        });
+describe("summarizeValue：值 → 一行摘要", () => {
+    it("短标量给原值（不标截断）", () => {
+        expect(summarizeValue("running")).toEqual({ text: "running", truncated: false });
+        expect(summarizeValue(42)).toEqual({ text: "42", truncated: false });
+        expect(summarizeValue(true)).toEqual({ text: "true", truncated: false });
+        expect(summarizeValue(null)).toEqual({ text: "null", truncated: false });
     });
-
-    it("值变算 update；值同不算；新出现 add / 消失 remove（字典序稳定）", () => {
-        const ops = opsFromHashes({ a: "1", b: "2", c: "3" }, { a: "1", b: "9", d: "4" }, () => "p");
-        expect(ops).toEqual([
-            { kind: "update", path: "b", preview: "p" },
-            // 删除没有"变更后的值" → preview 必须是 null（不能编一个）
-            { kind: "remove", path: "c", preview: null },
-            { kind: "add", path: "d", preview: "p" },
-        ]);
+    it("长文本截断并标 truncated（全文在 steps 快照里）", () => {
+        const long = "很长的正文".repeat(40);
+        const s = summarizeValue(long);
+        expect(s.truncated).toBe(true);
+        expect(s.text.endsWith("…")).toBe(true);
+        expect(s.text.length).toBeLessThanOrEqual(73);
     });
-
-    it("折算路径（拿不到值）也要能出事件 —— 只到 path 粒度，preview = null", () => {
-        const ops = opsFromHashes({ a: "1" }, { a: "2" }, undefined);
-        expect(ops).toEqual([{ kind: "update", path: "a", preview: null }]);
+    it("数组给「计数 + 元素标签」，元素有 path 时用 ~ 缩写（chain 一眼认出是哪层）", () => {
+        const s = summarizeValue([
+            { path: "/Users/ccc/AGENTS.md", scope: "/Users/ccc" },
+            { path: "/Users/ccc/git/AGENTS.md", scope: "/Users/ccc/git" },
+        ]);
+        expect(s.truncated).toBe(true);
+        expect(s.text.startsWith("[2 项]")).toBe(true);
+        expect(s.text).toContain("~/AGENTS.md");
+        expect(s.text).toContain("~/git/AGENTS.md");
+    });
+    it("对象给「键数 + 前几个键」", () => {
+        const s = summarizeValue({ cli: "/x/diy", home: "/Users/ccc/.diy" });
+        expect(s.text).toContain("{2 键}");
+        expect(s.text).toContain("cli: /x/diy");
     });
 });
 
-describe("foldCtxLog：逐轮回放（老→新由前缀推出来）", () => {
-    const records: CtxLogRecord[] = [
-        { ...base, ops: [{ kind: "add", path: "a", preview: "A1" }] },
-        // 0 变更的轮：留一条（"这一轮什么都没变"）
-        { ...base, turnId: "t2", ops: [] },
-        { ...base, turnId: "t3", ops: [{ kind: "update", path: "a", preview: "A2" }] },
-        { ...base, turnId: "t4", ops: [{ kind: "remove", path: "a", preview: null }] },
-        { ...base, turnId: "t5", ops: [{ kind: "add", path: "a", preview: "A3" }] },
-    ];
-    const turns = foldCtxLog(records);
-
-    it("★ 轮序 = 落盘序（与真发投递快照同序）；首轮标 baseline", () => {
-        expect(turns.map((t) => t.index)).toEqual([1, 2, 3, 4, 5]);
-        expect(turns.map((t) => t.baseline)).toEqual([true, false, false, false, false]);
-        expect(turns[1]!.changes).toEqual([]);
+describe("changesOf：原子单元 diff（不下钻数组）", () => {
+    const units = ["chain", "task.title", "task.body", "skills"];
+    it("★ chain 变 → 一条 `chain`（**不是** chain.0.content）", () => {
+        const prev = snap({ chain: [{ path: "/a" }] }, { chain: "h1" });
+        const next = snap({ chain: [{ path: "/a" }, { path: "/b" }] }, { chain: "h2" });
+        const changes = changesOf(prev, next, units);
+        expect(changes.map((c) => c.path)).toEqual(["chain"]);
+        expect(changes[0]!.type).toBe("update");
+        expect(changes[0]!.data.after).toContain("[2 项]");
+        expect(changes[0]!.data.truncated).toBe(true);
     });
-
-    it("★ update 的 before 从回放里来（落盘只有 after）：A1 → A2", () => {
-        expect(turns[2]!.changes).toEqual([{ kind: "update", path: "a", before: "A1", after: "A2" }]);
+    it("值 hash 相同 → 不是变更（有变才写）", () => {
+        const a = snap({ task: { title: "t" } }, { "task.title": "h" });
+        expect(changesOf(a, a, units)).toEqual([]);
     });
-
-    it("★ remove 之后 add：before = null（不是上一次的值 —— 中间确实不存在过）", () => {
-        expect(turns[3]!.changes).toEqual([{ kind: "remove", path: "a", before: "A2", after: null }]);
-        expect(turns[4]!.changes).toEqual([{ kind: "add", path: "a", before: null, after: "A3" }]);
-    });
-
-    it("基线轮的 before 全为 null（起点之前什么都没有）", () => {
-        expect(turns[0]!.changes).toEqual([{ kind: "add", path: "a", before: null, after: "A1" }]);
-    });
-
-    it("changedOf = 该轮变化的 path（喂 sysCauses 用，与投递快照的 changed 同集）", () => {
-        expect(changedOf(records[2]!)).toEqual(["a"]);
-        expect(changedOf(records[1]!)).toEqual([]);
+    it("新增 = add（before 为 null）、消失 = remove（after 为 null）、值变 = update", () => {
+        const prev = snap({ task: { title: "旧" }, skills: [{ name: "s" }] }, { "task.title": "h1", skills: "s1" });
+        const next = snap({ task: { title: "新", body: "正文" } }, { "task.title": "h2", "task.body": "b1" });
+        const changes = changesOf(prev, next, units);
+        // 顺序 = 单元字典序（skills < task.body < task.title）
+        expect(changes.map((c) => [c.type, c.path])).toEqual([
+            ["remove", "skills"],
+            ["add", "task.body"],
+            ["update", "task.title"],
+        ]);
+        const byPath = new Map(changes.map((c) => [c.path, c]));
+        expect(byPath.get("task.title")!.data).toMatchObject({ before: "旧", after: "新" });
+        expect(byPath.get("task.body")!.data.before).toBeNull();
+        expect(byPath.get("skills")!.data.after).toBeNull();
     });
 });
 
-describe("文件层：append-only + 坏行出声跳过", () => {
-    it("写一条读一条；坏行跳过不炸（观测不能阻断会话）", () => {
+describe("entryToRows：记录 → UI 行", () => {
+    it("baseline 无 changes；changed 展开", () => {
+        const base: CtxLogEntry = {
+            seq: 0, type: "baseline", ts: "t", model: "m", wireVersion: "w",
+            ref: { turnId: "t1", stepId: "t1_s1", step: 1 },
+            data: { tree: stateOf({}) },
+        };
+        expect(entryToRows(base)).toEqual([]);
+        const changed: CtxLogEntry = {
+            ...base, seq: 1, type: "changed",
+            data: { changes: [{ type: "update", path: "chain", data: { before: "a", after: "b", truncated: true } }] },
+        };
+        expect(entryToRows(changed)).toEqual([{ kind: "update", path: "chain", before: "a", after: "b" }]);
+    });
+});
+
+describe("文件层：append-only + seq 续写 + 坏行出声跳过", () => {
+    it("写一条读一条；seq 从末行 +1；坏行跳过不炸（观测不能阻断会话）", () => {
         const dir = mkdtempSync(join(tmpdir(), "ctxlog-"));
         const old = process.env.DIY_HOME;
         process.env.DIY_HOME = dir;
         try {
             const uri = "projects/1/tasks/1";
-            expect(readCtxLog(uri)).toEqual([]);
-            appendCtxLog(uri, { ...base, ops: [{ kind: "add", path: "a", preview: "A1" }] });
+            expect(hasCtxLog(uri)).toBe(false);
+            expect(lastCtxLogSeq(uri)).toBe(-1);
+            const mk = (seq: number, type: "baseline" | "changed"): CtxLogEntry => ({
+                seq, type, ts: "t", model: "m", wireVersion: "w",
+                ref: { turnId: "t1", stepId: `t1_s${seq + 1}`, step: seq + 1 },
+                data: type === "baseline" ? { tree: stateOf({}) } : { changes: [] },
+            });
+            appendCtxLog(uri, mk(0, "baseline"));
             // 坏行（半截 JSON）：读侧跳过，好行照读
             writeFileSync(ctxLogFile(uri), "{ 这不合法\n", { flag: "a" });
-            appendCtxLog(uri, { ...base, turnId: "t2", ops: [] });
-            const back = readCtxLog(uri);
-            expect(back.map((r) => r.turnId)).toEqual(["t1", "t2"]);
-            expect(foldCtxLog(back).map((t) => t.index)).toEqual([1, 2]);
+            appendCtxLog(uri, mk(1, "changed"));
+            expect(readCtxLog(uri).length).toBe(2);
+            expect(readCtxLogEntries(uri).map((e) => e.seq)).toEqual([0, 1]);
+            expect(lastCtxLogSeq(uri)).toBe(1);
+            expect(hasCtxLog(uri)).toBe(true);
         } finally {
             if (old === undefined) delete process.env.DIY_HOME;
             else process.env.DIY_HOME = old;

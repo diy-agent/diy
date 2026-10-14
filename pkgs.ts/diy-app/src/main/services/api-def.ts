@@ -1001,7 +1001,7 @@ export const apiDef = RpcSchema.router({
             output: StatsSchema,
           }),
           changelog: RpcSchema.unary({
-            desc: `变更历史：每轮真发一条变更事件（op + path + 一行值预览，old→new 由回放得出），附该轮 ref（当轮划分 / 缓存率 / 金额）`,
+            desc: `变更历史：每步**有变才写**（首条 baseline 给整棵树）；变更单位 = 原子单元，before/after 自带；附 ref（当轮划分 / 缓存率 / 金额）`,
             input: {
               taskUri: z.string().cliArg({ desc: "任务 URI" }),
               limit: z.number().optional().cliOption({ desc: "只看最近 N 轮（缺省全部）" }),

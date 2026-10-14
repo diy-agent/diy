@@ -10,9 +10,9 @@
  *                  不必再维护一张独立的"规则表"—— 契约本身就是那张表的骨架。
  *                  改动写进 `$DIY_HOME/context.yaml`（**真源**）：真发读同一份，
  *                  所以页面上看到的划分就是下一轮会用的划分（不存 localStorage —— 那种页面会说谎）。
- *                  另有「变更历史」列表：每轮真发落一条**变更事件**（op + path + 值预览 old→new，
- *                  读 `local/<key>.changelog.jsonl`，不轮询），点一轮 → 与上一轮比的行级 diff；
- *                  点一条事件 → 在请求预览里定位该变量；取消选中 → 当前 vs 最后一轮。
+ *                  另有「变更历史」列表：**每步**有变才落一条（首条 = baseline 给整棵树；变更单位
+ *                  = 原子单元），事件带旧→新值摘要，读 `local/<key>.changelog.jsonl`（不轮询）；
+ *                  点一条 → 与上一步比的行级 diff；点事件 → 在请求预览里定位该变量。
  *   · 中「请求预览」 **整份请求的大 YAML**：内嵌 system/runtime 文本就地解析展开；
  *                  可切"原文"看真发 JSON —— wire 不变。
  *                  （system 份 / runtime 份两个单独 view 已删：它们的价值全部包含在
@@ -400,7 +400,7 @@ export function ContextLabPage(props: { uri: string }) {
 
     /** 变更次数（基线的 add 不算"变更" —— 它只是起点） */
     const changeCount = (): number =>
-        (history()?.turns ?? []).reduce((a, t) => a + (t.baseline ? 0 : t.changes.length), 0);
+        (history()?.entries ?? []).reduce((a, t) => a + (t.type === "baseline" ? 0 : t.changes.length), 0);
 
     /** 变更种类的记号与配色（add / update / remove 三态） */
     const kindGlyph = (k: "add" | "update" | "remove"): string => (k === "add" ? "+" : k === "remove" ? "−" : "~");
@@ -425,7 +425,7 @@ export function ContextLabPage(props: { uri: string }) {
         return (
         <div class="p-1">
             <div class="mb-1 flex items-center gap-1 px-1 opacity-70">
-                <span>{total} 轮真发</span>
+                <span>{total} 条记录</span>
                 <span class="ml-auto" title="列表里每行的时间是该轮真发的落盘时刻">
                     {pickedStep() === null ? "看：当前 vs 最后一步" : `看：第 ${pickedStep()} 步 vs 上一步`}
                 </span>
@@ -434,18 +434,18 @@ export function ContextLabPage(props: { uri: string }) {
                 when={total > 0}
                 fallback={
                     <div class="p-2 opacity-60">
-                        还没有真发记录。在对话页发一轮，这里就会出现一条（每轮真发落一行变更日志）。
+                        还没有变更记录。在对话页发一轮，这里先落 baseline（起点），之后每步**有变**才落一行。
                     </div>
                 }
             >
                 <Show when={h?.source === "derived"}>
                     <div class="mb-1 px-1 text-caption opacity-50">
-                        这份历史由投递快照的值 hash 折算（该任务尚无变更日志 —— 从下一轮起才落盘）：
+                        这份历史是降级视图（老格式日志回放，或从投递快照的值 hash 折算）：
                         只有变化路径，没有值预览
                     </div>
                 </Show>
                 <ul class="menu menu-xs">
-                    <For each={[...(h?.turns ?? [])].reverse()}>
+                    <For each={[...(h?.entries ?? [])].reverse()}>
                         {(t) => {
                             // system 全量重建的原因：把该轮变化的变量收拢到**当轮快照的** system 单元
                             // （叶子 `chain.0.path` 归到 `chain`）—— 一眼看到"是谁在打断缓存"。
@@ -460,7 +460,7 @@ export function ContextLabPage(props: { uri: string }) {
                                 return ` ${c.slice(0, 2).join(",")}${c.length > 2 ? ` +${c.length - 2}` : ""}`;
                             };
                             const headText = (): string => {
-                                if (t.baseline) return "baseline（起点）";
+                                if (t.type === "baseline") return "baseline（起点）";
                                 if (t.changes.length === 0) return "无变化";
                                 const ps = changedPaths();
                                 return `${ps.slice(0, 2).join(", ")}${ps.length > 2 ? ` +${ps.length - 2}` : ""}`;
@@ -469,14 +469,17 @@ export function ContextLabPage(props: { uri: string }) {
                             <li>
                                 {/* 轮：点它 = 中栏「变更详情」看这轮 vs 上轮的行级 diff */}
                                 <button
-                                    class={`flex items-center gap-2 ${rowCls(pickedStep() === t.index)}`}
-                                    title="点一下：看这一步相对上一步改了什么；再点取消：看当前 vs 最后一步"
-                                    onClick={() => setPickedStep(pickedStep() === t.index ? null : t.index)}
+                                    class={`flex items-center gap-2 ${rowCls(t.turnIndex !== null && pickedStep() === t.turnIndex)}`}
+                                    title="点一下：看该轮相对上一轮改了什么；再点取消：看当前 vs 最后一步"
+                                    onClick={() => {
+                                        if (t.turnIndex === null) return;
+                                        setPickedStep(pickedStep() === t.turnIndex ? null : t.turnIndex);
+                                    }}
                                 >
-                                    <span class="badge badge-xs">{t.index}</span>
+                                    <span class="badge badge-xs">{`第${t.ref.step}步`}</span>
                                     <span
                                         class="shrink-0 font-mono text-caption opacity-60"
-                                        title={`${t.ts}（第 ${t.index} 轮真发）`}
+                                        title={`${t.ts}（${t.ref.turnId} · 第 ${t.ref.step} 步）`}
                                     >
                                         {fmtShortTime(t.ts)}
                                     </span>
@@ -515,7 +518,7 @@ export function ContextLabPage(props: { uri: string }) {
                                     </span>
                                 </button>
                                 {/* 事件：点它 = 中栏请求预览滚到并高亮该变量 */}
-                                <Show when={!t.baseline && t.changes.length > 0}>
+                                <Show when={t.type !== "baseline" && t.changes.length > 0}>
                                     <ul class="ml-4 border-l border-base-300">
                                         <For each={t.changes}>
                                             {(c) => (
@@ -782,7 +785,7 @@ export function ContextLabPage(props: { uri: string }) {
                 <Fold
                     k="history"
                     label="变更历史（真发轮次）"
-                    extra={`本任务 · ${history()?.total ?? 0} 轮真发 · ${changeCount()} 次变更`}
+                    extra={`本任务 · ${history()?.total ?? 0} 条记录 · ${changeCount()} 次变更`}
                 >
                     {historyPane()}
                 </Fold>

@@ -28,7 +28,7 @@ import { apiDef } from "./api-def";
 import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
 import type { ToolResultMode } from "../../shared/context/compaction";
-import type { HistoryTurnView } from "../../shared/context/schema";
+import type { HistoryEntryView } from "../../shared/context/schema";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
 import { resolve as resolvePath } from "node:path";
 
@@ -653,51 +653,80 @@ export function bindAppHandlers(binding: ServerBinding): void {
 
   binding.on(app.context.changelog, async ({ input }) => {
     const { readCtxLog } = await import("../core/context-changelog");
-    const { foldCtxLog, opsFromHashes } = await import("../../shared/context/changelog");
+    const { isV2Entry, entryToRows, foldCtxLog, opsFromHashes } = await import("../../shared/context/changelog");
     const { readDeliverySteps, readStepUsages } = await import("./local-agent");
     const { groupByTurn } = await import("../../shared/usage");
     const steps = readDeliverySteps(input.taskUri);
-    let records = readCtxLog(input.taskUri);
-    let source: "log" | "derived" = "log";
-    // 折算（降级视图）：这版之前的任务真发过、却没有变更日志 → 用投递快照的值 hash 差还原事件。
-    // 拿不到值预览（快照不存值）—— 只到 path 粒度；方向由 hash 有无判定，仍然比只列 changed 强。
-    if (records.length === 0 && steps.length > 0) {
-      source = "derived";
-      records = steps.map((s, i) => ({
-        ts: s.ts,
-        turnId: s.turnId,
-        model: s.model,
-        wireVersion: s.wireVersion,
-        ops: opsFromHashes(i === 0 ? null : steps[i - 1]!.valueHashes, s.valueHashes),
-      }));
-    }
-    const turns = foldCtxLog(records);
-    // 该轮 ref：投递快照（划分 + 两份容器是否变）与用量账本（缓存率 + 金额）都按 turnId join。
+    // 每条 ref 的徽章：投递快照（划分 + 两份容器是否变）与用量账本（缓存率 + 金额）都按 turnId join。
     // 都**可能不可得**（快照被清、老账本没字段）→ 给 null，UI 不画徽章，不谎报"没变"。
     const stepIdx = new Map(steps.map((s, i) => [s.turnId, i]));
     const usage = new Map(groupByTurn(readStepUsages(input.taskUri)).map((g) => [g.turnId, g]));
-    const view: HistoryTurnView[] = turns.map((t) => {
-      const i = stepIdx.get(t.turnId);
+    const badges = (turnId: string) => {
+      const i = stepIdx.get(turnId);
       const cur = i === undefined ? undefined : steps[i];
       const prev = i !== undefined && i > 0 ? steps[i - 1] : undefined;
-      const g = usage.get(t.turnId);
-      const buckets = g?.buckets;
+      const buckets = usage.get(turnId)?.buckets;
       return {
-        ...t,
+        turnIndex: i === undefined ? null : i + 1,
         systemPlaces: cur?.systemPlaces ?? [],
         systemDiffers: cur && prev ? cur.systemText !== prev.systemText : null,
         runtimeDiffers: cur && prev ? cur.runtimeText !== prev.runtimeText : null,
         incomparable: cur && prev ? cur.wireVersion !== prev.wireVersion : null,
-        cacheHitRate:
-          buckets && buckets.inputTotal > 0 ? buckets.cacheRead / buckets.inputTotal : null,
-        cost: g?.cost ? g.cost.total : null,
+        cacheHitRate: buckets && buckets.inputTotal > 0 ? buckets.cacheRead / buckets.inputTotal : null,
+        cost: usage.get(turnId)?.cost ? usage.get(turnId)!.cost!.total : null,
       };
-    });
-    const total = view.length;
+    };
+
+    const raw = readCtxLog(input.taskUri);
+    const v2 = raw.filter(isV2Entry);
+    const entries: HistoryEntryView[] = [];
+    let source: "log" | "derived" = "log";
+    if (v2.length > 0) {
+      // 二版：before/after 自带 → 直接可渲染（不再回放）
+      for (const e of v2) {
+        entries.push({
+          seq: e.seq,
+          type: e.type,
+          ts: e.ts,
+          model: e.model,
+          wireVersion: e.wireVersion,
+          ref: e.ref,
+          changes: entryToRows(e),
+          ...badges(e.ref.turnId),
+        });
+      }
+    } else {
+      // 降级：老格式日志（一版回放）或纯折算（从投递快照的值 hash 差还原；无值预览）
+      const legacy = raw.filter((r) => !isV2Entry(r));
+      source = legacy.length > 0 ? "log" : "derived";
+      const records =
+        legacy.length > 0
+          ? (legacy as unknown as Parameters<typeof foldCtxLog>[0])
+          : steps.map((s, i) => ({
+              ts: s.ts,
+              turnId: s.turnId,
+              model: s.model,
+              wireVersion: s.wireVersion,
+              ops: opsFromHashes(i === 0 ? null : steps[i - 1]!.valueHashes, s.valueHashes),
+            }));
+      for (const t of foldCtxLog(records)) {
+        entries.push({
+          seq: t.index - 1,
+          type: t.baseline ? "baseline" : "changed",
+          ts: t.ts,
+          model: t.model,
+          wireVersion: t.wireVersion,
+          ref: { turnId: t.turnId, stepId: t.turnId, step: t.index },
+          changes: t.changes,
+          ...badges(t.turnId),
+        });
+      }
+    }
+    const total = entries.length;
     return {
       total,
       source,
-      turns: input.limit && input.limit > 0 ? view.slice(-input.limit) : view,
+      entries: input.limit && input.limit > 0 ? entries.slice(-input.limit) : entries,
     };
   });
 

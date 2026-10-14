@@ -4,7 +4,7 @@
 import { z } from "zod";
 import type { ContextLab, PlaceCandidate } from "./preview";
 import type { StepSummary } from "./steps";
-import type { CtxChangeRow, CtxTurnHistory } from "./changelog";
+import type { CtxChangeRow, CtxLogRef } from "./changelog";
 
 const Container = z.enum(["system", "runtime"]);
 
@@ -128,12 +128,21 @@ export const StatsSchema = z.object({
 export type Stats = z.infer<typeof StatsSchema>;
 
 /**
- * 一轮变更历史的**视图**形状（= `foldCtxLog` 的一轮 + 该轮 ref）。
- * ref 的两段来源不同、都可能不可得（→ null，UI 不画徽章，不谎报）：
+ * 变更历史的一条**记录视图**（##310 二版）：每步一条（有变才写；首条 = baseline）。
+ * 附带的徽章两段来源不同、都可能不可得（→ null，UI 不画徽章，不谎报）：
  *   · 划分与两份容器是否变 ← 真发投递快照（按 turnId join；快照已被清理就没有）
  *   · 缓存率与金额 ← 用量账本（`local/<key>.usage.jsonl`，按 turnId join）
  */
-export interface HistoryTurnView extends CtxTurnHistory {
+export interface HistoryEntryView {
+    seq: number;
+    type: "baseline" | "changed";
+    ts: string;
+    model: string;
+    wireVersion: string;
+    ref: CtxLogRef;
+    /** 该条所属轮在**投递快照**里的 1 基序号（点行驱动中栏 diff 用；快照不可得 = null） */
+    turnIndex: number | null;
+    changes: CtxChangeRow[];
     systemPlaces: string[];
     systemDiffers: boolean | null;
     runtimeDiffers: boolean | null;
@@ -150,14 +159,15 @@ const changeRowSchema: z.ZodType<CtxChangeRow> = z.object({
     after: z.string().nullable(),
 });
 
-/** 变更历史的一轮 */
-const historyTurnSchema: z.ZodType<HistoryTurnView> = z.object({
-    index: z.number(),
+/** 变更历史的一条记录 */
+const historyEntrySchema: z.ZodType<HistoryEntryView> = z.object({
+    seq: z.number(),
+    type: z.enum(["baseline", "changed"]),
     ts: z.string(),
-    turnId: z.string(),
     model: z.string(),
     wireVersion: z.string(),
-    baseline: z.boolean(),
+    ref: z.object({ turnId: z.string(), stepId: z.string(), step: z.number() }),
+    turnIndex: z.number().nullable(),
     changes: z.array(changeRowSchema),
     systemPlaces: z.array(z.string()),
     systemDiffers: z.boolean().nullable(),
@@ -169,10 +179,10 @@ const historyTurnSchema: z.ZodType<HistoryTurnView> = z.object({
 
 /** 变更历史（见 app.context.changelog） */
 export const CtxLogSchema = z.object({
-    /** 总轮数（可能大于 turns.length —— limit 截尾） */
+    /** 总条数（可能大于 entries.length —— limit 截尾） */
     total: z.number(),
     /** log = 变更日志本体；derived = 该任务还没有日志，从投递快照的值 hash 折算（无值预览） */
     source: z.enum(["log", "derived"]),
-    turns: z.array(historyTurnSchema),
+    entries: z.array(historyEntrySchema),
 });
 export type CtxLog = z.infer<typeof CtxLogSchema>;

@@ -95,10 +95,9 @@ import {
 import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
 import { traffic } from "../core/traffic";
-import { appendCtxLog } from "../core/context-changelog";
+import { appendCtxLog, hasCtxLog, lastCtxLogSeq } from "../core/context-changelog";
 import { statFromStep } from "../../shared/context/stats";
-import { opsFromHashes } from "../../shared/context/changelog";
-import { previewOf } from "../../shared/context/render";
+import { atomicUnitPaths, changesOf, type CtxSnapshot } from "../../shared/context/changelog";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import {
     estimateTokens,
@@ -2435,6 +2434,13 @@ export class LocalAgentManager {
         // 上一步投递的两个容器文本（比较基准；初值 = 轮首这份）
         let prevSystemText = delivery.system.text;
         let prevRuntimeText = delivery.runtime.text;
+
+        // 变更历史（##310 二版）：每步**有变才写**；首条 = baseline（整棵树）。
+        // 变更单位 = 原子单元（`chain` 整体一条，不下钻数组 —— 原子字段要变一起变）。
+        const ctxUnits = atomicUnitPaths();
+        let ctxSeq = lastCtxLogSeq(taskUri);
+        let ctxBaselineWritten = hasCtxLog(taskUri);
+        let ctxPrevSnap: CtxSnapshot = { tree: delivery.tree, valueHashes: delivery.valueHashes };
         // 预算判据与模版线**共用同一个函数**（services/prompt-registry 的 systemOverBudget）：
         // 曾经这里是内联的 `bytes > budget`，逻辑等价但两处各写一遍 —— 日后任何一侧改口径
         // （比如"等于预算算不算超"）都会悄悄分叉，而单测只覆盖得到被调用的那一侧（209 第 3 轮 R-1）。
@@ -2548,18 +2554,6 @@ export class LocalAgentManager {
             // 变更统计（**按项目**累计；只存变化路径 → 体积小、可长期留）。
             // 用途：跑几天后回答"这个节点到底变了几次" —— 划分位置的判据（见 task 178）。
             appendContextStat(projectDir(projectFromUri(taskUri)), statFromStep(step, prevStep?.valueHashes ?? null, taskUri));
-            // 变更历史（**按任务**一条时间线）：事件粒度 + 一行值预览，落 `local/<key>.changelog.jsonl`。
-            // 与投递快照同点写、同序 append ⇒ 轮序天然对齐（第 N 条 changelog = 第 N 步），
-            // 所以事件行能直接驱动"第 N 步 vs 上一步"的 diff（见 ContextLabPage 的变更历史）。
-            appendCtxLog(taskUri, {
-                ts: step.ts,
-                turnId,
-                model,
-                wireVersion: step.wireVersion,
-                ops: opsFromHashes(prevStep?.valueHashes ?? null, delivery.valueHashes, (p) =>
-                    previewOf(delivery.tree, p) || null,
-                ),
-            });
             this.noteTraffic(taskUri, turnId, rm, 2);
             const result = streamText({
                 model: this.modelFor(rm, key),
@@ -2612,6 +2606,26 @@ export class LocalAgentManager {
                     //   · runtime −→ 就地替换尾部那条 user 容器（它是"当前值"，不是历史）
                     try {
                         const fresh = rebuildDelivery();
+                        // ── 变更历史（##310）：每步一条，**有变才写** ──
+                        // 首条写 baseline（整棵树，会话起点）；之后只写真变的步 —— "什么都没变"不落盘。
+                        const stepNo = stepNumber + 1;
+                        const ref = { turnId, stepId: `${turnId}_s${stepNo}`, step: stepNo };
+                        if (!ctxBaselineWritten) {
+                            appendCtxLog(taskUri, {
+                                seq: ++ctxSeq, type: "baseline", ts: new Date().toISOString(), model,
+                                wireVersion: fresh.wireVersion, ref, data: { tree: fresh.tree },
+                            });
+                            ctxBaselineWritten = true;
+                        } else {
+                            const changes = changesOf(ctxPrevSnap, fresh, ctxUnits);
+                            if (changes.length > 0) {
+                                appendCtxLog(taskUri, {
+                                    seq: ++ctxSeq, type: "changed", ts: new Date().toISOString(), model,
+                                    wireVersion: fresh.wireVersion, ref, data: { changes },
+                                });
+                            }
+                        }
+                        ctxPrevSnap = { tree: fresh.tree, valueHashes: fresh.valueHashes };
                         if (fresh.system.text !== prevSystemText) {
                             prevSystemText = fresh.system.text;
                             instructions = fresh.system.text;

@@ -417,7 +417,7 @@ describe("上下文树：变更历史（事件粒度）", () => {
 
     const empty = await fx.sh.getJson(`./diy.sh context changelog ${uri}`);
     expect((empty.data as any).total).toBe(0);
-    expect((empty.data as any).turns).toEqual([]);
+    expect((empty.data as any).entries).toEqual([]);
 
     // 手写两条**真发投递快照**（老任务的样子：有快照、还没有变更日志）→ 读侧折算
     const rec = (over: Record<string, unknown>) => ({
@@ -447,18 +447,18 @@ describe("上下文树：变更历史（事件粒度）", () => {
     const dv = derived.data as any;
     expect(dv.source).toBe("derived");
     expect(dv.total).toBe(2);
-    expect(dv.turns.map((x: any) => x.index)).toEqual([1, 2]);
-    expect(dv.turns[0].baseline).toBe(true);
+    expect(dv.entries.map((x: any) => x.ref.step)).toEqual([1, 2]);
+    expect(dv.entries[0].type).toBe("baseline");
     // 折算拿不到值（快照不存值）→ 只到 path 粒度，不编预览
-    expect(dv.turns[1].changes).toEqual([
+    expect(dv.entries[1].changes).toEqual([
       { kind: "update", path: "task.body", before: null, after: null },
     ]);
     // ref 从投递快照按 turnId join：第 2 轮的划分 + 两份容器是否变
-    expect(dv.turns[1].systemPlaces).toEqual(["diy"]);
-    expect(dv.turns[1].systemDiffers).toBe(false);
-    expect(dv.turns[1].runtimeDiffers).toBe(true);
-    expect(dv.turns[1].incomparable).toBe(false);
-    expect(dv.turns[1].cost).toBeNull(); // 没有用量账本 → 不编数
+    expect(dv.entries[1].systemPlaces).toEqual(["diy"]);
+    expect(dv.entries[1].systemDiffers).toBe(false);
+    expect(dv.entries[1].runtimeDiffers).toBe(true);
+    expect(dv.entries[1].incomparable).toBe(false);
+    expect(dv.entries[1].cost).toBeNull(); // 没有用量账本 → 不编数
 
     const op = (over: Record<string, unknown>) => ({
       ts: "2026-09-30T00:00:00.000Z",
@@ -483,14 +483,14 @@ describe("上下文树：变更历史（事件粒度）", () => {
     expect(lv.source).toBe("log"); // 有日志就以日志为准（预览/方向只有它有）
     expect(lv.total).toBe(3);
     // 老→新由回放得出：落盘只存"改成了什么"
-    expect(lv.turns[0].changes).toEqual([{ kind: "add", path: "task.body", before: null, after: "一" }]);
-    expect(lv.turns[1].changes).toEqual([{ kind: "update", path: "task.body", before: "一", after: "二" }]);
-    expect(lv.turns[2].changes).toEqual([{ kind: "remove", path: "task.body", before: "二", after: null }]);
+    expect(lv.entries[0].changes).toEqual([{ kind: "add", path: "task.body", before: null, after: "一" }]);
+    expect(lv.entries[1].changes).toEqual([{ kind: "update", path: "task.body", before: "一", after: "二" }]);
+    expect(lv.entries[2].changes).toEqual([{ kind: "remove", path: "task.body", before: "二", after: null }]);
 
     // --limit 只截尾（total 仍是全部）
     const limited = await fx.sh.getJson(`./diy.sh context changelog ${uri} --limit 1`);
     expect((limited.data as any).total).toBe(3);
-    expect((limited.data as any).turns.map((x: any) => x.index)).toEqual([3]);
+    expect((limited.data as any).entries.map((x: any) => x.ref.step)).toEqual([3]);
 
     // 清干净再走：后面还有用例会撞名（它们只覆盖写 steps，会被这份 changelog 压过）
     clearLocal(uri);
@@ -541,12 +541,12 @@ describe("上下文树：变更历史上屏（事件行 + 旧→新）", () => {
       { label: "变更历史（事件行 + 旧→新）上屏" },
     );
     // 折叠块口径：轮数 + 变更次数（基线不算"变更"）
-    expect(s).toContain("2 轮真发 · 1 次变更");
+    expect(s).toContain("2 条记录 · 1 次变更");
     // 事件行：path + op + 值预览（旧→新由回放得出）
     expect(s).toContain("task.body");
     expect(s).toContain("一 → 二");
     // 有日志 → 不该出现折算的说明（那是降级路径）
-    expect(s).not.toContain("由投递快照的值 hash 折算");
+    expect(s).not.toContain("降级视图");
 
     const ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
       const r = await fx.sh.getJson("./diy.sh ui inspect");
@@ -709,7 +709,7 @@ describe("上下文树：UI 上屏（两列 + 请求预览）", () => {
     } finally {
       uiRefresh.close();
     }
-    const withSteps = await waitUntil(a11yText, (s) => s.includes("2 轮真发"), {
+    const withSteps = await waitUntil(a11yText, (s) => s.includes("2 条记录"), {
       label: "刷新后真发轮次上屏",
     });
     expect(withSteps).toContain("task.body");
