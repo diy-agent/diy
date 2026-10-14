@@ -89,6 +89,19 @@ describe("traffic（undici diagnostics_channel）", () => {
         expect(r.reqBody!.headBytes).toBe(r.reqBody!.totalBytes);
     });
 
+    it("字节数：reqBytes / resBytes 记完整大小（不受首尾法截断影响）", () => {
+        const body = "x".repeat(40 * 1024); // 40K > 24K → 必被截断
+        const req = fireReq({ body });
+        fireRes(req, 200, { "content-type": "application/json" }, body);
+
+        const r = traffic.snapshot().records[0];
+        expect(r.reqBody!.truncated).toBe(true);
+        expect(r.resBody!.truncated).toBe(true);
+        // 正文被截断了，但字节数仍是完整大小（表格「大小」列据此显示）
+        expect(r.reqBytes).toBe(40 * 1024);
+        expect(r.resBytes).toBe(40 * 1024);
+    });
+
     it("400：记下上游错误体（扁平错误 + trace_id）", () => {
         const req = fireReq({ body: "{}" });
         fireRes(req, 400, { "content-type": "application/json" }, JSON.stringify({ message: "invalid request error trace_id: 1662a9a0", type: "invalid_request_error" }));

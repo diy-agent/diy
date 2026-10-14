@@ -716,6 +716,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     dir: traffic.logDir(),
     files: traffic.listLogFiles(),
     dates: traffic.listLogDates(),
+    bytes: traffic.logStats().bytes,
   }));
   binding.on(app.traffic.revealLog, async ({ input }) => {
     const abs = traffic.absLogFile(input.file);

@@ -37,13 +37,15 @@ import {
     listFiles,
     listDates,
     queryRecords,
+    logStats,
     TrafficLogError,
     type LogLoc,
     type QueryOpts,
     type QueryResult,
+    type LogStats,
 } from "./traffic-log";
 
-export { TrafficLogError, type LogLoc, type QueryOpts, type QueryResult };
+export { TrafficLogError, type LogLoc, type QueryOpts, type QueryResult, type LogStats };
 
 const CH_CREATE = "undici:request:create";
 const CH_REQ_CHUNK = "undici:request:bodyChunkSent";
@@ -109,6 +111,10 @@ export interface TrafficRecord {
     maxRetries: number;
     status: number | null;
     ms: number;
+    /** 请求正文字节数（完整大小，不受首尾法截断影响；无正文为 0） */
+    reqBytes: number;
+    /** 响应正文字节数（完整大小；未收到为 0） */
+    resBytes: number;
     reqHeaders: Record<string, string>;
     reqBody: BodyCapture | null;
     resHeaders: Record<string, string>;
@@ -334,7 +340,12 @@ function payloadOf(rec: TrafficRecord): Record<string, unknown> {
 }
 
 class Traffic {
-    private seq = 0;
+    /**
+     * 记录序号。**用进程启动时刻打底**而不是从 0 起 —— 记录会落盘、跨进程回看（同一目录一天一个文件，
+     * 上一次运行写的行还在），若每次运行都从 1 开始，新旧记录的 id 就会撞车；界面按 id 定位时会
+     * 打开错的那条（id 相同的旧记录）。用启动毫秒数打底后，不同运行的 id 区间天然错开。
+     */
+    private seq = Date.now();
     private version = 0;
     private records: TrafficRecord[] = [];
     private fullCapture = false;
@@ -438,6 +449,11 @@ class Traffic {
         return listDates();
     }
 
+    /** 日志总体积（文件数 + 字节总数）—— 头部「日志大小」指示用 */
+    logStats(): LogStats {
+        return logStats();
+    }
+
     /** 某个日志文件的绝对路径（界面「打开文件位置」用） */
     absLogFile(file: string): string {
         return absOf(file);
@@ -495,6 +511,8 @@ class Traffic {
             maxRetries: meta?.maxRetries ?? 0,
             status: null,
             ms: 0,
+            reqBytes: 0,
+            resBytes: 0,
             reqHeaders: headers,
             reqBody: null,
             resHeaders: {},
@@ -559,6 +577,8 @@ class Traffic {
         acc.committed = true;
         const rec = acc.rec;
         rec.ms = Date.now() - rec.ts;
+        rec.reqBytes = acc.reqBody.total;
+        rec.resBytes = acc.resBody ? acc.resBody.total : 0;
         if (acc.reqBody.total > 0) {
             // 请求体不压缩（我们自己发的），直接按文本保留
             rec.reqBody = acc.reqBody.capture("");

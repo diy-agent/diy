@@ -181,6 +181,32 @@ export function listFiles(): string[] {
     }
 }
 
+/** 日志总体积：文件数 + 字节总数（头部「日志大小」指示用） */
+export interface LogStats {
+    files: number;
+    bytes: number;
+}
+
+/** 数一下日志目录现有多少文件、共多少字节 */
+export function logStats(): LogStats {
+    const d = join(diyHome(), LOG_DIR_REL);
+    if (!existsSync(d)) return { files: 0, bytes: 0 };
+    try {
+        const names = readdirSync(d).filter((f) => f.endsWith(".jsonl"));
+        let bytes = 0;
+        for (const n of names) {
+            try {
+                bytes += statSync(join(d, n)).size;
+            } catch {
+                /* 读不到就跳过这一个 */
+            }
+        }
+        return { files: names.length, bytes };
+    } catch {
+        return { files: 0, bytes: 0 };
+    }
+}
+
 /** 日志里出现过的日期（从文件名取，降序 = 新的在前） */
 export function listDates(): string[] {
     return listFiles()

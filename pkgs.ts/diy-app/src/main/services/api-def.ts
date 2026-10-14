@@ -82,6 +82,8 @@ const TrafficRecordSchema = z.object({
   maxRetries: z.number(),
   status: z.number().nullable().describe("HTTP 状态码；null = 未收到响应（网络错 / 超时）"),
   ms: z.number().describe("耗时 ms"),
+  reqBytes: z.number().describe("请求正文字节数（完整大小，不受截断影响）"),
+  resBytes: z.number().describe("响应正文字节数（完整大小；未收到为 0）"),
   reqHeaders: z.record(z.string(), z.string()).describe("已脱敏（authorization 只留尾 4 位）"),
   reqBody: BodyCaptureSchema.nullable().describe("请求正文（首尾法保留，见字段说明）"),
   resHeaders: z.record(z.string(), z.string()),
@@ -1004,12 +1006,13 @@ export const apiDef = RpcSchema.router({
             }),
           }),
           logFiles: RpcSchema.unary({
-            desc: `列出磁盘上的流量日志文件与日期（清理界面 / 日期过滤用）`,
+            desc: `列出磁盘上的流量日志文件、日期与总体积（头部「日志大小」/ 日期过滤用）`,
             input: {},
             output: z.object({
               dir: z.string(),
               files: z.array(z.string()),
               dates: z.array(z.string()).describe("出现过的日期（新的在前）"),
+              bytes: z.number().describe("日志目录总字节数"),
             }),
           }),
           revealLog: RpcSchema.unary({
