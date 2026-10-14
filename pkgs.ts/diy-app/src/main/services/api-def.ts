@@ -84,15 +84,14 @@ const TrafficRecordSchema = z.object({
   reqBody: BodyCaptureSchema.nullable().describe("请求正文（首尾法保留，见字段说明）"),
   resHeaders: z.record(z.string(), z.string()),
   resBody: BodyCaptureSchema.nullable().describe("响应正文（首尾法保留）；未捕获时为 null，原因见 resNote"),
-  resNote: z.string().nullable().describe("未捕获响应正文时的说明（流式 / 成功未录制 / 过大未解压）"),
+  resNote: z.string().nullable().describe("未能保留响应正文时的说明（如正文过大）"),
   traceId: z.string().nullable().describe("上游追责凭据（响应头 x-trace-id / x-request-id / x-opencode-log-id）"),
   err: z.string().nullable().describe("网络层异常消息"),
   log: LogLocSchema.nullable().describe("该条落盘位置（界面按位置随机读；null = 未落盘）"),
 });
 const TrafficSnapshotSchema = z.object({
-  recording: z.boolean().describe("是否录制模式（上限放大且不截断）"),
-  cap: z.number().describe("当前生效上限"),
-  keepLast: z.number().describe("常开时的上限"),
+  fullCapture: z.boolean().describe("是否完整捕获（正文不截断）"),
+  cap: z.number().describe("内存里最多留多少条"),
   total: z.number(),
   logDir: z.string().describe("日志目录（相对 DIY_HOME）"),
   records: z.array(TrafficRecordSchema),
@@ -959,7 +958,7 @@ export const apiDef = RpcSchema.router({
       }),
 
       traffic: RpcSchema.group({
-        desc: `流量（最近发出的 HTTP 请求 / 响应；只在内存留最近若干条，进程重启即空）`,
+        desc: `流量（应用发出去的 HTTP 请求 / 收到的响应；内存留最近若干条 + 逐条追加到 log/network/ 磁盘日志）`,
         children: {
           snapshot: RpcSchema.unary({
             desc: `取当前流量记录（界面数据源）`,
@@ -989,19 +988,15 @@ export const apiDef = RpcSchema.router({
             input: {},
             output: z.object({ dir: z.string(), files: z.array(z.string()) }),
           }),
-          setRecording: RpcSchema.unary({
-            desc: `开关录制模式（开 = 上限放大到 recCap 且不截断）`,
-            input: { on: z.boolean().cliArg({ desc: "true 开始录制 / false 关闭" }) },
+          setFullCapture: RpcSchema.unary({
+            desc: `开关「完整捕获」（开 = 正文不再截断，全留；默认关 = 超长正文只留首尾一段）`,
+            input: { on: z.boolean().cliArg({ desc: "true 开 / false 关" }) },
             output: TrafficSnapshotSchema,
           }),
           setCap: RpcSchema.unary({
-            desc: `设置上限（条数）`,
+            desc: `设置内存保留条数上限`,
             input: {
               n: z.number().cliArg({ desc: "条数上限（1..5000）" }),
-              which: z
-                .enum(["keepLast", "recCap"])
-                .optional()
-                .cliOption({ desc: "改哪个上限（缺省 keepLast）" }),
             },
             output: TrafficSnapshotSchema,
           }),

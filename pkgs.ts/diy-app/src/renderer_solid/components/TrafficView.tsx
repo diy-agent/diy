@@ -5,8 +5,8 @@ import { JsonViewer } from "./JsonViewer";
 /**
  * 流量视图 —— 看「实际发出去的 HTTP 请求 / 响应」。
  *
- * 数据来自主进程（core/traffic.ts）：内存里留最近若干条供即时查看，同时每条都写一份到
- * `<DIY_HOME>/log/network/YYYY-MM-DD.jsonl`（按天切、重启不丢）。所以偶发的上游 400 就算
+ * 数据来自主进程（core/traffic.ts）：内存留最近若干条供即时查看，同时每条都写一份到
+ * `log/network/YYYY-MM-DD.jsonl`（相对 DIY_HOME，按天切、重启不丢）。所以偶发的上游 400 就算
  * 崩在你没注意的时候，事后点开还能看到那一条的请求 / 响应 / trace_id，也能按记录位置回磁盘读。
  *
  * 本文件导出 `TrafficView`：纯视图，撑满父容器（列表 ⇄ 详情）。流量页与聊天侧抽屉共用同一份。
@@ -209,13 +209,12 @@ export function TrafficView(props: {
         setSel(r.id);
         setTab(isFail(r) ? "res" : "req");
     };
-    const toggleRec = async () => {
-        const s = await diyService.diy.traffic.setRecording({ on: !snap()?.recording });
+    const toggleFullCapture = async () => {
+        const s = await diyService.diy.traffic.setFullCapture({ on: !snap()?.fullCapture });
         setSnap(s);
     };
     const setCap = async (n: number) => {
-        // 改的是「当前生效」的那个上限：录制模式改 recCap，普通模式改 keepLast
-        const s = await diyService.diy.traffic.setCap({ n, which: snap()?.recording ? "recCap" : "keepLast" });
+        const s = await diyService.diy.traffic.setCap({ n });
         setSnap(s);
     };
     const clear = async () => {
@@ -230,15 +229,16 @@ export function TrafficView(props: {
                 <Show when={props.showIntro !== false}>
                     <h2 class="text-display font-bold mr-auto">流量</h2>
                 </Show>
-                <span
-                    class={`badge ${snap()?.recording ? "badge-error" : "badge-ghost"}`}
-                    title={snap()?.recording ? "正在录制：上限放大且不截断内容" : "未录制：只留最近若干条、内容过长会截断"}
-                >
-                    {snap()?.recording ? "● 录制中" : "● 常开"}
+                <span class="badge badge-ghost" title="一直在记：请求和响应都留，超长正文只留首尾一段">
+                    ● 常开
                 </span>
                 <CapLabel total={snap()?.total ?? 0} cap={snap()?.cap ?? 0} onSetCap={(n) => void setCap(n)} />
-                <button class="btn btn-xs" onClick={toggleRec}>
-                    {snap()?.recording ? "停止录制" : "开始录制"}
+                <button
+                    class={`btn btn-xs ${snap()?.fullCapture ? "btn-error" : ""}`}
+                    onClick={() => void toggleFullCapture()}
+                    title="开 = 正文完整保存、不再截断；关 = 超长正文只留首尾一段（省内存）"
+                >
+                    {snap()?.fullCapture ? "● 完整捕获中" : "完整捕获"}
                 </button>
                 <button class="btn btn-xs btn-ghost" onClick={() => void clear()}>
                     清空
@@ -246,7 +246,7 @@ export function TrafficView(props: {
             </div>
             <Show when={props.showIntro !== false}>
                 <p class="text-caption opacity-50 shrink-0">
-                    这里显示应用实际发出去的 HTTP 请求与收到的响应。内存留最近若干条；同时每条都写进磁盘日志（按天切文件），重启不丢。
+                    这里显示应用实际发出去的 HTTP 请求与收到的响应。一直开着；内存留最近若干条，同时每条都写进磁盘日志（按天切文件），重启不丢。超长正文默认只留首尾一段，需要完整时点「完整捕获」。
                 </p>
             </Show>
 

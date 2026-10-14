@@ -1,26 +1,25 @@
 /**
- * 流量观测 —— 把主进程实际发出去的 HTTP 请求 / 响应留一份，供界面查看。
+ * 流量 —— 把主进程实际发出去的 HTTP 请求和收到的响应留一份，供界面查看。
  *
  * 为什么要有它：出问题时用户只看到一行错误（比如上游偶发 400 只回一句带 trace_id 的话），
- * 却看不到是哪个地址、发了什么、上游回了什么。这里把每一次请求原样记下，界面点开就能看。
+ * 却看不到是哪个地址、发了什么、上游回了什么。这里把每一次请求都记下，界面点开就能看。
  *
- * ## 怎么拿到的：订阅 Node 的 undici 事件（不改 fetch）
+ * 怎么拿到的：主进程的 fetch 底层是 Node 的 undici，它每发一次请求都会往
+ * `node:diagnostics_channel` 广播事件。我们只是旁听这些广播：请求方法 / 地址 / 头 / 正文、
+ * 响应状态 / 头 / 正文都能拿到，而且不碰数据流、不改时序，对业务完全无感。
  *
- * 主进程里 `fetch` 底层是 Node 的 undici，它每发一次请求都会往 `node:diagnostics_channel`
- * 广播事件。我们只是「旁听」这些广播：请求方法 / 地址 / 头 / body、响应状态 / 头 / body
- * 都能拿到，而且不碰数据流、不改时序，对业务完全无感（比替换 fetch 干净得多）。
- *
- * ## 记录去哪了
- *
+ * 记录在哪：
  *  - 内存里留最近若干条，供界面即时查看（见 snapshot）。
- *  - 同时每条都追加一份到磁盘：`<DIY_HOME>/log/network/YYYY-MM-DD.jsonl`（见 core/traffic-log.ts），
- *    按天切文件，重启不丢。每条记录会附带它在文件里的位置（rec.log），界面可按位置随机读那一条。
+ *  - 每条都追加进磁盘日志 `log/network/YYYY-MM-DD.jsonl`（相对 DIY_HOME，按天切文件，
+ *    重启不丢；见 core/traffic-log.ts）。每条记录带它在文件里的位置（rec.log），
+ *    界面可按位置只读那一段。
  *
- * ## 两条设计决定（改前先读）
- *  1. **一直开着** —— 问题什么时候出现不可预期（比如偶发 0.67% 的失败），所以最近若干条
- *     始终留着兜底；「录制」只是把上限放大、并且不再截断内容，方便主动抓包时看全。
- *  2. **回调在请求的同步路径上** —— 事件回调是被同步调用的，所以这里只做「复制字节 + 计数」，
- *     绝不 await、绝不抛错（抛出去会连累正常请求）。
+ * 一直开着、不分开关：请求和响应始终记，失败什么时候出现不可预期，事后必须能回看。
+ * 正文按「首尾法」有界保留（超长留开头 + 结尾，中间省略，见 BodyBuf）；要看完整正文时
+ * 打开「完整捕获」（setFullCapture），此后不再截断。
+ *
+ * 回调在请求的同步路径上：事件回调是被同步调用的，所以这里只做「复制字节 + 计数」，
+ * 绝不 await、绝不抛错（抛出去会连累正常请求）。
  *
  * 归属：优先看请求头 `x-opencode-session`（我们自己发的 LLM 请求带），反查是哪个任务 / 轮次；
  * 没有该头时，按「同一个地址」兜底匹配（同一个 provider 的地址只对应一个运行中的任务）。
@@ -41,23 +40,19 @@ const CH_RES_CHUNK = "undici:request:bodyChunkReceived";
 const CH_TRAILERS = "undici:request:trailers";
 const CH_ERROR = "undici:request:error";
 
-const KEEP_LAST_DEFAULT = 20;
-const REC_CAP_DEFAULT = 500;
+const CAP_DEFAULT = 500;
 
 /**
- * 正文的保留上限（首尾法）：超长时**保留开头一段 + 结尾一段**，中间丢掉。
- * 开头固定 {@link HEAD_BYTES} 字节，结尾保留「总量 - 开头」那么多字节（先进先出，只留最后一段）。
- * 两者相加 = {@link BODY_TOTAL_BYTES}。录制模式下不截断，全留。
+ * 正文保留上限（首尾法）：超长时保留开头一段 + 结尾一段，中间丢掉。
+ * 开头固定 {@link HEAD_BYTES} 字节，结尾保留「总量 - 开头」那么多（只留最后一段），
+ * 两者相加 = {@link BODY_TOTAL_BYTES}。开启「完整捕获」后不截断，全留。
  */
 const HEAD_BYTES = 8 * 1024;
 const BODY_TOTAL_BYTES = 24 * 1024;
 const TAIL_BYTES = BODY_TOTAL_BYTES - HEAD_BYTES;
 
-/** 压缩响应体超过这个大小就不解压了（解压是大 CPU 活，不宜卡在主链路上）；只留长度说明 */
+/** 压缩响应体：整段超过这个大小就不留着解压了（避免为解压攒一大块内存） */
 const MAX_DECOMPRESS_BYTES = 1024 * 1024;
-
-const STREAM_NOTE = "（流式响应，普通模式不保存正文；开「录制」可看全文）";
-const UNCAPTURED_NOTE = "（普通模式不保存成功响应正文；开「录制」可看全文）";
 
 /** 这条请求从哪来：LLM 对话 / 模型配置探测 / 其它 */
 export type TrafficKind = "llm" | "probe" | "http";
@@ -126,9 +121,10 @@ export interface RunMeta {
 }
 
 export interface TrafficSnapshot {
-    recording: boolean;
+    /** 是否「完整捕获」（正文不截断）；默认 false */
+    fullCapture: boolean;
+    /** 内存里最多留多少条 */
     cap: number;
-    keepLast: number;
     total: number;
     /** 日志目录（相对 DIY_HOME），界面展示 / 将来清理用 */
     logDir: string;
@@ -150,9 +146,9 @@ interface URes {
 /** 一次往返的累积器（create 时建，trailers / error 时收口） */
 interface Acc {
     rec: TrafficRecord;
-    reqChunks: Buffer[];
-    resChunks: Buffer[];
-    captureRes: boolean;
+    reqBody: BodyBuf;
+    /** 响应正文累积器（收到响应头、知道 content-encoding 后才建） */
+    resBody: BodyBuf | null;
     committed: boolean;
 }
 
@@ -199,17 +195,81 @@ function decodeBody(buf: Buffer, encoding: string): string {
     return buf.toString("utf8");
 }
 
-/** 首尾法保留：超长留头 8K + 尾 16K，中间丢；full=true（录制）时不截断 */
-function captureBody(buf: Buffer, encoding: string, full = false): BodyCapture {
-    const text = decodeBody(buf, encoding);
-    const bytes = Buffer.from(text, "utf8");
-    const total = bytes.length;
-    if (full || total <= BODY_TOTAL_BYTES) {
-        return { head: text, tail: "", headBytes: total, tailBytes: 0, totalBytes: total, truncated: false };
+/**
+ * 正文累积器：边收边留，内存有界。
+ *
+ * 默认（截断）只留「开头固定一段 + 结尾固定一段」，中间直接丢；再大的正文也只占
+ * BODY_TOTAL_BYTES 左右。full = true（完整捕获）时不丢，全留。
+ * 响应体若声明了 content-encoding（压缩），必须整段收到才能解压，所以这时按 full 收，
+ * 但带上限 MAX_DECOMPRESS_BYTES：超过就不留了，免得为解压攒一大块内存。
+ */
+class BodyBuf {
+    private headParts: Buffer[] = [];
+    private headLen = 0;
+    private tailParts: Buffer[] = [];
+    private tailLen = 0;
+    /** 收到的总字节数 */
+    total = 0;
+    /** full 模式下超过上限（压缩体）：正文没留住 */
+    overLimit = false;
+    constructor(
+        private full: boolean,
+        private limit = Number.POSITIVE_INFINITY,
+    ) {}
+
+    push(chunk: Buffer): void {
+        this.total += chunk.length;
+        if (this.full) {
+            if (this.total <= this.limit) this.headParts.push(chunk);
+            else this.overLimit = true;
+            return;
+        }
+        // 先填满开头那段
+        if (this.headLen < HEAD_BYTES) {
+            const need = HEAD_BYTES - this.headLen;
+            const take = chunk.length <= need ? chunk : chunk.subarray(0, need);
+            this.headParts.push(take);
+            this.headLen += take.length;
+            if (chunk.length <= need) return;
+            chunk = chunk.subarray(need);
+        }
+        // 其余进结尾那段，只留最近 TAIL_BYTES 字节
+        this.tailParts.push(chunk);
+        this.tailLen += chunk.length;
+        while (this.tailLen > TAIL_BYTES) {
+            const first = this.tailParts[0]!;
+            const excess = this.tailLen - TAIL_BYTES;
+            if (first.length <= excess) {
+                this.tailParts.shift();
+                this.tailLen -= first.length;
+            } else {
+                this.tailParts[0] = first.subarray(excess);
+                this.tailLen -= excess;
+            }
+        }
     }
-    const head = bytes.subarray(0, HEAD_BYTES).toString("utf8");
-    const tail = bytes.subarray(total - TAIL_BYTES).toString("utf8");
-    return { head, tail, headBytes: HEAD_BYTES, tailBytes: TAIL_BYTES, totalBytes: total, truncated: true };
+
+    /** 是否留住了完整正文 */
+    private get complete(): boolean {
+        return this.full ? !this.overLimit : this.total <= this.headLen + this.tailLen;
+    }
+
+    /** 收口成展示用的正文；encoding 非空时按声明解压（只对完整正文有意义） */
+    capture(encoding: string): BodyCapture {
+        if (this.complete) {
+            const text = decodeBody(Buffer.concat(this.headParts), encoding);
+            const n = Buffer.byteLength(text, "utf8");
+            return { head: text, tail: "", headBytes: n, tailBytes: 0, totalBytes: n, truncated: false };
+        }
+        return {
+            head: Buffer.concat(this.headParts).toString("utf8"),
+            tail: Buffer.concat(this.tailParts).toString("utf8"),
+            headBytes: this.headLen,
+            tailBytes: this.tailLen,
+            totalBytes: this.total,
+            truncated: true,
+        };
+    }
 }
 
 function originOf(url: string): string {
@@ -238,9 +298,8 @@ class Traffic {
     private seq = 0;
     private version = 0;
     private records: TrafficRecord[] = [];
-    private recording = false;
-    private recCap = REC_CAP_DEFAULT;
-    private keepLast = KEEP_LAST_DEFAULT;
+    private fullCapture = false;
+    private cap = CAP_DEFAULT;
     private inited = false;
     /** session → 本轮归属（发请求前登记；事件里按 session / 地址反查） */
     private runs = new Map<string, RunMeta>();
@@ -308,8 +367,8 @@ class Traffic {
         });
     }
 
-    isRecording(): boolean {
-        return this.recording;
+    isFullCapture(): boolean {
+        return this.fullCapture;
     }
 
     /** 日志目录（相对 DIY_HOME） */
@@ -391,13 +450,13 @@ class Traffic {
             err: null,
             log: null,
         };
-        this.accs.set(r, { rec, reqChunks: [], resChunks: [], captureRes: false, committed: false });
+        this.accs.set(r, { rec, reqBody: new BodyBuf(this.fullCapture), resBody: null, committed: false });
     }
 
     private onReqChunk(msg: { request: UReq; chunk: Uint8Array }): void {
         const acc = this.accOf(msg.request);
         // 复制一份：chunk 是底层复用/回收的字节，直接留引用会拿到后续内容
-        if (acc && msg.chunk) acc.reqChunks.push(Buffer.from(msg.chunk));
+        if (acc && msg.chunk) acc.reqBody.push(Buffer.from(msg.chunk));
     }
 
     private onHeaders(msg: { request: UReq; response: URes }): void {
@@ -415,13 +474,17 @@ class Traffic {
             h["x-opencode-log-id"] ??
             // 再退一步：任何形如 `*-trace-id` / `*-log-id` 的头（如 deepseek 的 x-ds-trace-id）
             (Object.entries(h).find(([k]) => /(^|-)trace[-_]?id$|(^|-)log[-_]?id$/.test(k))?.[1] ?? null);
-        // 失败体一定留；成功体仅录制模式留（其余记一行说明，省内存）
-        acc.captureRes = res.statusCode >= 400 || this.recording;
+        // 响应正文一律留（有界）。压缩体要整段收到才能解压，故按 full 收、带上限。
+        const encoding = acc.rec.resHeaders["content-encoding"] ?? "";
+        acc.resBody = new BodyBuf(
+            encoding ? true : this.fullCapture,
+            encoding ? MAX_DECOMPRESS_BYTES : Number.POSITIVE_INFINITY,
+        );
     }
 
     private onResChunk(msg: { request: UReq; chunk: Uint8Array }): void {
         const acc = this.accOf(msg.request);
-        if (acc && acc.captureRes && msg.chunk) acc.resChunks.push(Buffer.from(msg.chunk));
+        if (acc?.resBody && msg.chunk) acc.resBody.push(Buffer.from(msg.chunk));
     }
 
     private onError(msg: { request: UReq; error: Error }): void {
@@ -442,22 +505,15 @@ class Traffic {
         acc.committed = true;
         const rec = acc.rec;
         rec.ms = Date.now() - rec.ts;
-        const encoding = rec.resHeaders["content-encoding"] ?? "";
-        if (acc.reqChunks.length) {
+        if (acc.reqBody.total > 0) {
             // 请求体不压缩（我们自己发的），直接按文本保留
-            rec.reqBody = captureBody(Buffer.concat(acc.reqChunks), "", this.recording);
+            rec.reqBody = acc.reqBody.capture("");
         }
-        if (acc.captureRes) {
-            const raw = Buffer.concat(acc.resChunks);
-            if (raw.length > MAX_DECOMPRESS_BYTES && encoding) {
-                rec.resNote = `（响应体过大（${raw.length} 字节，压缩后），未解压保留）`;
-            } else if (raw.length) {
-                rec.resBody = captureBody(raw, encoding, this.recording);
-            }
-        } else if ((rec.resHeaders["content-type"] ?? "").includes("text/event-stream")) {
-            rec.resNote = STREAM_NOTE;
-        } else if (rec.status != null) {
-            rec.resNote = UNCAPTURED_NOTE;
+        const rb = acc.resBody;
+        if (rb && rb.overLimit) {
+            rec.resNote = `（响应体过大（${rb.total} 字节），未保留）`;
+        } else if (rb && rb.total > 0) {
+            rec.resBody = rb.capture(rec.resHeaders["content-encoding"] ?? "");
         }
         this.push(rec);
     }
@@ -470,16 +526,14 @@ class Traffic {
             rec.log = null;
         }
         this.records.push(rec);
-        const cap = this.recording ? this.recCap : this.keepLast;
-        while (this.records.length > cap) this.records.shift();
+        while (this.records.length > this.cap) this.records.shift();
         this.notify();
     }
 
     snapshot(): TrafficSnapshot {
         return {
-            recording: this.recording,
-            cap: this.recording ? this.recCap : this.keepLast,
-            keepLast: this.keepLast,
+            fullCapture: this.fullCapture,
+            cap: this.cap,
             total: this.records.length,
             logDir: LOG_DIR_REL,
             records: [...this.records],
@@ -491,17 +545,16 @@ class Traffic {
         this.notify();
     }
 
-    setRecording(on: boolean): void {
-        this.recording = on;
+    /** 完整捕获：开 = 正文不再截断（默认关）。关掉不影响已经记下的条。 */
+    setFullCapture(on: boolean): void {
+        this.fullCapture = on;
         this.notify();
     }
 
-    setCap(n: number, which: "keepLast" | "recCap"): void {
-        const v = Math.max(1, Math.min(5000, Math.floor(n)));
-        if (which === "keepLast") this.keepLast = v;
-        else this.recCap = v;
-        const cap = this.recording ? this.recCap : this.keepLast;
-        while (this.records.length > cap) this.records.shift();
+    /** 内存保留条数上限 */
+    setCap(n: number): void {
+        this.cap = Math.max(1, Math.min(5000, Math.floor(n)));
+        while (this.records.length > this.cap) this.records.shift();
         this.notify();
     }
 

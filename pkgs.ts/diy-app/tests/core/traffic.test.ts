@@ -1,6 +1,6 @@
 // tests/core/traffic.test.ts
 // 流量观测（undici diagnostics_channel）的纯逻辑：记录形状、脱敏、上限裁剪、
-// 录制放大、归属反查、attempt 递增、错误体捕获、来源分类。
+// 常开上限、正文有界保留（首尾法）、归属反查、attempt 递增、错误体捕获、来源分类。
 //
 // 驱动方式：直接往 `node:diagnostics_channel` 上 publish 假事件 —— 与 undici 真实
 // 收发的事件同形（见 core/traffic.ts 顶部注释），比真发便宜且可观（真发要 key、
@@ -60,8 +60,8 @@ function fireRes(req: FakeReq, status: number, headers: Record<string, string>, 
 
 beforeEach(() => {
     traffic.clear();
-    traffic.setRecording(false);
-    traffic.setCap(20, "keepLast");
+    traffic.setFullCapture(false);
+    traffic.setCap(20);
     traffic.noteRun(RUN); // 内含 init()：订阅通道
 });
 
@@ -168,7 +168,7 @@ describe("traffic（undici diagnostics_channel）", () => {
         expect(r.session).toBe(RUN.session);
     });
 
-    it("常开上限：超过 keepLast 挤掉最旧的", () => {
+    it("上限：超过 cap 挤掉最旧的", () => {
         for (let i = 0; i < 25; i++) {
             const req = fireReq({ body: JSON.stringify({ model: `m${i}` }) });
             fireRes(req, 200, { "content-type": "application/json" }, "{}");
@@ -178,24 +178,25 @@ describe("traffic（undici diagnostics_channel）", () => {
         expect(JSON.parse(records[0].reqBody!.head).model).toBe("m5"); // m0..m4 被挤掉
     });
 
-    it("录制模式：上限放大 + 捕获成功响应体 → 25 条全留", () => {
-        traffic.setRecording(true);
+    it("完整捕获：成功响应体全留 → 25 条（上限内）都在", () => {
+        traffic.setFullCapture(true);
+        traffic.setCap(500);
         for (let i = 0; i < 25; i++) {
             const req = fireReq({ body: "{}" });
             fireRes(req, 200, { "content-type": "application/json" }, JSON.stringify({ n: i }));
         }
         const snap = traffic.snapshot();
-        expect(snap).toMatchObject({ recording: true, cap: 500 });
+        expect(snap).toMatchObject({ fullCapture: true, cap: 500 });
         expect(snap.records).toHaveLength(25);
         expect(JSON.parse(snap.records[24].resBody!.head)).toEqual({ n: 24 });
     });
 
-    it("非录制模式：成功流式响应不捕获正文（只留说明）", () => {
+    it("常开：成功流式响应的正文也捕获（默认截断模式下同样有界保留）", () => {
         const req = fireReq({ body: "{}" });
         fireRes(req, 200, { "content-type": "text/event-stream" }, "data: hello\n\n");
         const r = traffic.snapshot().records[0];
-        expect(r.resBody).toBeNull();
-        expect(r.resNote).toContain("流式");
+        expect(r.resBody?.head).toContain("data: hello");
+        expect(r.resBody?.truncated).toBe(false);
     });
 
     it("traceId fallback：x-trace-id 缺省时退到 x-opencode-log-id", () => {
@@ -217,6 +218,24 @@ describe("traffic（undici diagnostics_channel）", () => {
         expect(b.tail.endsWith('xxx"}')).toBe(true);
         // 首尾相接 + 中间省略 = 总长
         expect(b.headBytes + b.tailBytes).toBeLessThan(b.totalBytes);
+    });
+
+    it("常开：大响应体分块到达也按首尾法有界保留（头 8K + 尾 16K）", () => {
+        const req = fireReq({ body: "{}" });
+        channel("undici:request:headers").publish({
+            request: req,
+            response: { statusCode: 200, headers: headersBufArr({ "content-type": "application/json" }) },
+        });
+        const chunk = "y".repeat(1024);
+        for (let i = 0; i < 40; i++) channel("undici:request:bodyChunkReceived").publish({ request: req, chunk: enc(chunk) });
+        channel("undici:request:trailers").publish({ request: req, trailers: [] });
+        const b = traffic.snapshot().records[0].resBody!;
+        expect(b.truncated).toBe(true);
+        expect(b.headBytes).toBe(8 * 1024);
+        expect(b.tailBytes).toBe(16 * 1024);
+        expect(b.totalBytes).toBe(40 * 1024);
+        expect(b.head).toBe("y".repeat(8 * 1024));
+        expect(b.tail).toBe("y".repeat(16 * 1024));
     });
 
     it("落盘：每条记录带文件位置，可按位置随机读回", () => {
