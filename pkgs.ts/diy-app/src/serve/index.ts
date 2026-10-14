@@ -88,7 +88,9 @@ const MIME: Record<string, string> = {
   ".json": "application/json",
 };
 
-// 端口优先级: --port flag > DIY_PORT（入口注入） > 兜底 18888
+// 端口优先级: --port flag > DIY_PORT（入口注入） > 兜底 18888。
+// serve 不写 app.port、也不是 CLI 的复用目标 —— 它的端口是**给人浏览器的地址**，
+// 故不参与 ##328(实例身份只靠端口) 的「dev/test 缺省不占 18888」（那说的是 Electron 实例）。
 let port = cfg.port ?? 18888;
 const args = process.argv.slice(2);
 const portIdx = args.indexOf("--port");
