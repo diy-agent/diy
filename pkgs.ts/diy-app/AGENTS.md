@@ -19,6 +19,7 @@
 - `find.turn-end` — **轮次结束原因** `turn.endReason`（判别联合 6 值：`completed`/`max-steps`/`max-tokens`/`aborted`/`error`/`interrupted`；判别键 `type` + 分支私有 `data`）：判据**散在 `main/services/local-agent.ts` 的流循环**（`setEndReason` **8 处** / 5 类：budget 超限 · llm `error` · **stream `error`** · `abort`（两处） · finish 后的 `max-tokens`/`max-steps`/`completed`），`closeTurn` 只是**兜底**（`endReason ?? (streamDone ? completed : aborted{detached})`）；崩溃/被杀留下的开口轮由 `local-blocks.ts` 的 `danglingStopPatches` 补 `interrupted`（冷读合成，不覆盖已有值）。UI 只消费（`chat-fold.ts` 的 `turnEndNote` 出结束说明、`sceneTailOf` 出"错误/未完成现场"）
 - `find.model` — 模型 provider 配置机制（##184）：契约 `src/shared/model-config.ts`（`model.yaml` 配置层 + `providers.custom.yaml` spec 层 + 限定名切分 `splitQualified`）· 运行时可解析目录 `src/shared/models.ts`（`setModelCatalog`/`findModel`/`apiOf`…，**无内置 provider：无配置 = 空目录**）· 装配 `src/main/core/model-runtime.ts`（快照 ⊕ custom ⊕ `$DIY_HOME/model.yaml` → 目录，含 `$VAR` 展开；档触发条件判别 `toTierWhens` —— **快照是 `JSON.parse` 直取、不过 zod**，此处是最后一道哨；档写 `{window:"id"}` 时按时段表展开成多条 `TierWhen`）· 文件 I/O `src/main/core/model-config.ts` · 配置 UI `src/renderer_solid/components/ModelConfigPage.tsx` · **价目登记（CLI）** `src/main/core/llm-cost.ts`（`diy llmConfig costs/setCost/setTiers` 的落点判定 + 落盘 + 回执；纯变换在 `src/shared/cost-edit.ts`，与 UI 同源；UI 每个编辑入口都包 `editCost` 收尾 —— 价目空了就删键，不留 `cost: {}`） · **运行时价目形状**（RPC 下发 / UI / CLI 同一份）`src/shared/usage.ts` 的 `ModelCostSchema`（camelCase，含 `baseLabel` 与分档 `tiers`）· **内置数据三件**（文件名常量在 `src/shared/model-config.ts`，定位 `src/main/core/data-file.ts`；`sha.sh build` 按 `src/main/data/*.json` 通配拷贝）：① 快照 `models.dev.json`（models.dev npm 白名单，上游产物整份重下，`scripts/gen-models-dev.mts`）② **diy 扩展层** `models.dev.diy.json`（**手写、只增不改**：具名时段表 `windows` —— models.dev 零个时间字段，时段计费只能自己登记；加载 `src/main/core/cost-windows.ts`，形状/展开/摘要 `src/shared/cost-windows.ts`）③ `calendars.json`（工作日日历，`scripts/gen-calendars.mts` 从 chinese-days 生成；`CN-business-day` 含调休补班、`CN-mon-fri-ex-holiday` 不含 —— 同一地域多套作息是常态，按语义分 id）· 单测夹具 `tests/fixtures/models.ts` · env 导入 `src/main/core/model-import.ts`（snapshot 声明的 env ∩ 本机变量 → 候选；**只列不写、不落明文、不覆盖已有**，UI 提示条与 `diy llmConfig scanEnv|importEnv` 同源）
 - `find.env-import` — 模型页「环境变量导入」提示条 `src/renderer_solid/components/EnvImportBar.tsx`：**四态常显**（可导入 / 命中但均已配置 / 零命中 / 扫描失败），零命中态靠 `llmConfig.scanEnv` 回报的**扫描面**（`scanned`：191 家 / 181 个变量名）交代「查过什么」——只在有候选时出条，会让用户分不清「env 没这个变量」与「功能没跑」
+- `find.traffic` — **出站流量观测**（##309）：`src/main/core/traffic.ts`（订阅 undici `node:diagnostics_channel` 采集请求/响应 + 归属反查 + 正文首尾法有界保留）· `src/main/core/traffic-log.ts`（`log/network/YYYY-MM-DD.jsonl` 按天落盘 + 按位置随机读 + 全文查询；行首 `_fmt` 小版本兼容、大版本跳过）· 契约 `src/main/services/api-def.ts` 的 `traffic.*`（CLI `diy traffic …`）· UI `src/renderer_solid/components/TrafficView.tsx`（导航页与聊天侧抽屉共用同一份）+ `TrafficPage.tsx` / `TrafficDrawer.tsx` / `JsonViewer.tsx` / `JsonTree.tsx`
 - `find.serve` — `src/serve/index.ts` 纯 Web 模式（无 Electron）
 - `find.tests` — `tests/`：`cli.intent.*` 意图测试（真实 UI / 隔离 Electron，**跑 `out/` 产物**）· `core/` `services/` 单测（vitest **直读 `src/`**）· 夹具 `electron-test.ts` · `ui-drive.ts` · `shell-test.ts` · `setup.ts`
 - `find.scripts` — 仓库 `scripts/`：`ui-smoke/`（CDP 冒烟）· `cdp-colorscheme-demo.mts` · `repro-epipe-dialog.mts` · `doctor-env.sh`
@@ -112,6 +113,9 @@
 - `pit.cli-kebab` — CLI 选项名默认取 schema 字段名（camelCase），parser 另注册 kebab 别名并**在 help 里显示 kebab**（`--by-agent`），两种写法都接受 —— 新增 camelCase 选项无需额外处理
 - `pit.head-note` — **关键设计理由都写在各自文件头注**（`src/main/core/steer-queue.ts` / `persona.ts` / `drafts.ts` / `src/main/services/local-agent.ts`）：改动前先读头注，别只看函数名
 
+- `pit.traffic-scope` — 流量观测**只覆盖 undici**（Electron 主进程 / serve 的 `fetch` 与 ai-sdk 发出的请求）：renderer 是 Chromium 栈（要看需 CDP）、`net.fetch` / 子进程 / native binding **看不到** —— 「某条请求怎么没记下」先问它走的是不是这条路。订阅必须早于任何请求（`traffic.init()` 在 `src/main/index.ts` 与 `src/serve/index.ts`，另有 `noteRun` 惰性兜底）
+- `pit.traffic-chunk` — undici 事件的 `chunk` 是**底层复用/回收的字节** → 落盘前必须 `Buffer.from(chunk)` 复制；归属靠请求头 `x-opencode-session`（`local-agent.ts` 每处真发都带，按 task 稳定），**新增 LLM 发送入口若漏带该头，流量页就认不出任务归属**（退化成按 origin 兜底、或记为「其它」）
+
 ## tool — 验证与调试
 
 - `tool.check` — `./sha.sh check`（提交前唯一检查）· `./sha.sh test` 全仓 · `npx vitest run tests/core/…` 单测
@@ -121,5 +125,6 @@
 - `tool.smoke` — `node scripts/ui-smoke/task-detail-smoke.mjs`（任务详情三块 + 拖宽落盘）· `python3 scripts/ui-smoke/dnd-smoke.py`（⚠️ 它的收尾用按名匹配的强杀，**会连正在用的 diy 一起收掉** —— 跑之前先改掉那段；且本机需 `pip install playwright`）
 - `tool.log` — 应用日志 `$DIY_HOME/log/`：`main.log` / `cli.log` / `serve.log` / `dev.jsonl`（`grep watch-stall-suspect` 判 watcher 卡死）/ `agent-bash.jsonl`（agent 命令审计，write-ahead）
 - `tool.isolate` — 起隔离实例：全新 `DIY_HOME`（`mktemp -d`）+ `export HOME=$H`；演示数据落 `/tmp`，不写用户 `~/.diy`
+- `tool.traffic` — `diy traffic snapshot|query|logFiles|readLog|revealLog|setFullCapture`（worktree 里 `./diy.sh traffic …`）；日志落 `$DIY_HOME/log/network/`（**等同 cache，可随时清理**）
 - `tool.persona` — `diy agent persona list|set|setDefault`；模型/参数属**人物**，任务只持引用 id
 - `tool.steer` — `diy chat --mode next-step|next-turn` 入队插话；`steer` 组只做队列管理（list/cancel/toggleMode/reorder）
