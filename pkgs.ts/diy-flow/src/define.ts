@@ -4,12 +4,15 @@
 //   - 泳道 ≡ 节点，1:1（无 `lanes` 段；`name` 只是节点自带的泳道显示名，原 `band`）；
 //   - 打回不新建节点（`edges[].kind = 'bounce'` 只影响画线颜色与事件标注，**不改结构**）；
 //   - 定义用 TS、参数用数据：`guard` / `hint` 是声明，`params` 是数据（L2，用户可调值）。
+//     节点上的 `params` 是**参数层（##316）的唯一声明入口**（局部名 + 类型 + default）；全限定 /
+//     校验 / 默认合并 / 序列化在 `src/params.ts`，本文件只负责把它挂进节点定义。
 //
 // **唯一保留的护栏**：`edges[].from / to` 只能取节点 id 的字面量联合 —— 打错字或「回退到泳道」
 // 在**编译期**即报错（`defineWorkflow` 用 `const` 元组泛型把 `nodes[].id` 推成字面量联合，见
 // `DefineInput`）。运行期再兜一层：悬空边 / 重号 / 入口不唯一一律抛 `FlowError`。
 
 import { FlowError } from './errors';
+import { parseParamDefs, type ParamDef } from './params';
 import { isObject, rejectUnknown } from './validate';
 
 /** 谁能在这里动作并宣布推进（##166 §14.4） */
@@ -36,18 +39,6 @@ export interface Art {
     readonly note?: string;
 }
 
-/** 参数（L2，用户可调值）的可枚举类型全集 —— 与 ##311 §二 一致 */
-export const PARAM_TYPES = ['string', 'number', 'boolean', 'enum', 'list'] as const;
-export type ParamType = (typeof PARAM_TYPES)[number];
-
-export interface ParamDef {
-    readonly name: string;
-    readonly type: ParamType;
-    readonly label?: string;
-    /** `type === 'enum'` 时的候选值（必填、非空） */
-    readonly values?: readonly string[];
-}
-
 /** 一个泳道节点（泳道 ≡ 节点，1:1） */
 export interface NodeDef<Id extends string = string> {
     /** 节点标识 = 泳道标识（1:1）；边只能引用它 */
@@ -62,7 +53,7 @@ export interface NodeDef<Id extends string = string> {
     readonly hint: string;
     /** 本节点产物的展示链；无结构化产物则省略 */
     readonly art?: Art;
-    /** 本节点可调参数（L2） */
+    /** 本节点可调参数（L2，声明入口唯一）—— 全限定名 = `节点 id.局部名`，见 `params.ts` */
     readonly params?: readonly ParamDef[];
 }
 
@@ -159,33 +150,6 @@ function parseArt(value: unknown, path: string): Art {
     return art;
 }
 
-function parseParams(value: unknown, path: string): ParamDef[] {
-    if (!Array.isArray(value)) throw new FlowError(CODE, 'params 应为数组', path);
-    return value.map((item, i) => {
-        const p = `${path}[${i}]`;
-        if (!isObject(item)) throw new FlowError(CODE, '参数应为对象', p);
-        noUnknown(item, ['name', 'type', 'label', 'values'], p);
-        const type = item.type;
-        if (typeof type !== 'string' || !(PARAM_TYPES as readonly string[]).includes(type)) {
-            throw new FlowError(CODE, `未知参数类型 ${JSON.stringify(type)}（合法：${PARAM_TYPES.join(' | ')}）`, `${p}.type`);
-        }
-        const def: { name: string; type: ParamType; label?: string; values?: readonly string[] } = {
-            name: takeString(item.name, `${p}.name`),
-            type: type as ParamType,
-        };
-        if (item.label !== undefined) def.label = takeString(item.label, `${p}.label`, true);
-        if (type === 'enum') {
-            if (!Array.isArray(item.values) || item.values.length === 0) {
-                throw new FlowError(CODE, 'enum 参数必须给出非空 values', `${p}.values`);
-            }
-            def.values = item.values.map((v, j) => takeString(v, `${p}.values[${j}]`));
-        } else if (item.values !== undefined) {
-            throw new FlowError(CODE, '仅 enum 参数可带 values', `${p}.values`);
-        }
-        return def;
-    });
-}
-
 function parseNode<Id extends string>(value: unknown, path: string): NodeDef<Id> {
     if (!isObject(value)) throw new FlowError(CODE, '节点应为对象', path);
     noUnknown(value, ['id', 'name', 'actor', 'guard', 'hint', 'art', 'params'], path);
@@ -209,7 +173,7 @@ function parseNode<Id extends string>(value: unknown, path: string): NodeDef<Id>
         hint: takeString(value.hint, `${path}.hint`, true),
     };
     if (value.art !== undefined && value.art !== null) node.art = parseArt(value.art, `${path}.art`);
-    if (value.params !== undefined) node.params = parseParams(value.params, `${path}.params`);
+    if (value.params !== undefined) node.params = parseParamDefs(value.params, `${path}.params`, CODE);
     return node;
 }
 
@@ -246,6 +210,14 @@ export function parseWorkflow<Id extends string = string>(value: unknown, path =
     nodes.forEach((n, i) => {
         if (ids.has(n.id)) throw new FlowError('duplicate-node', `节点 id 重复 ${JSON.stringify(n.id)}`, `${path}.nodes[${i}].id`);
         ids.add(n.id);
+    });
+
+    // 参数路径用点号限定（`节点 id.局部名`）⇒ 声明了参数的节点 id 不得含 `.`，
+    // 否则 `${a.b.c}` 的归属无法判定（含混而不是报错，正是本包最反对的失败形态）。
+    nodes.forEach((node, i) => {
+        if ((node.params?.length ?? 0) > 0 && node.id.includes('.')) {
+            throw new FlowError(CODE, `节点 id 含 '.' 却又声明了参数：点号是参数路径的限定符（${JSON.stringify(node.id)}）`, `${path}.nodes[${i}].id`);
+        }
     });
 
     const edges = value.edges.map((e, i) => parseEdge<Id>(e, `${path}.edges[${i}]`));

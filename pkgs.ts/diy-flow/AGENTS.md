@@ -1,21 +1,23 @@
-# @diy/flow — 工作流内核（定义 DSL + 泳道容器 + 插件槽 + guard 求值 + 转移执行器 + 轨迹投影）
+# @diy/flow — 工作流内核（定义 DSL + 泳道容器 + 插件槽 + 参数层 + guard 求值 + 转移执行器 + 轨迹投影）
 
 > 全仓契约见**仓库根 `AGENTS.md`**。本包是**纯内核**：不 import `node:fs` / `electron` / `@diy/app`，
 > **不触外部世界**（插件副作用全在宿主给的函数体里）、**不取时间**（事件的 `at` 由调用方传入）
 > ⇒ 现在即可拆成单独项目。唯一依赖是 `@diy/talk`（复用 `Event` 原语，`anchor = node` 指目标节点）。
-> 需求真源：`tests/intent.flow.test.ts`（R1–R7，26 例）+ `tests/intent.plugin.test.ts`（R1–R9，43 例）。
+> 需求真源：`tests/intent.flow.test.ts`（R1–R7，26 例）+ `tests/intent.plugin.test.ts`（R1–R9，43 例）
+> + `tests/intent.params.test.ts`（R1–R6，34 例）。
 
 ## find — 包内定位
 
-- `find.define` — `src/define.ts`：`defineWorkflow(def)`；节点 `{ id, name, actor, guard[], hint, art?, params? }`、边 `{ from, to, when?, kind }`
+- `find.define` — `src/define.ts`：`defineWorkflow(def)`；节点 `{ id, name, actor, guard[], hint, art?, params? }`、边 `{ from, to, when?, kind }`（`params?` 的形状与规则归 `src/params.ts`）
 - `find.container` — `src/container.ts`：单指针容器 —— `createContainer(def).apply(event)`（不可变）；一条转移 = 一条 `@diy/talk` 的 `Event`（`anchor.data.nodeId` = 目标节点）
 - `find.project` — `src/project.ts`：`project(events, def) → { currentNode, path: Visit[], visits }`（折线投影，纯函数）
 - `find.plugins` — `src/plugins.ts`：五个固定槽位（`guard`/`source`/`action`/`render`/`notify`）+ `PluginContext` + 返回值校验；**一个具体实现的字节都不写**
 - `find.registry` — `src/registry.ts`：`createRegistry().register(slot, name, fn)` / `.resolve(slot, name)`；未注册即抛 `unknown-plugin`
 - `find.eval` — `src/eval.ts`：`parseGuardRef`（`prompt:`/`pred:`/`action:`）+ `classifyGuards`（静态分类，无副作用）+ `evaluateGuards`（与 + 短路）+ `unevaluatedGuards`（打回声明用：不跑插件）+ `selectEdge`（边上的 `when` 消歧，**单出口也判**，**系统选边与 actor 宣布两侧共用**）
-- `find.execute` — `src/execute.ts`：`createRuntime(def, { registry, params?, maxBounces?, notify? })` → `step` / `declare` / `status`；`Transition` 带 `receipts` + `notifyErrors`
+- `find.execute` — `src/execute.ts`：`createRuntime(def, { registry, params?, maxBounces?, notify? })` → `step` / `declare` / `status`；`Transition` 带 `receipts` + `notifyErrors`；`params` 是 L2 的**唯一注入点**（工作流声明了参数就校验 + 合并缺省）
 - `find.validate` — `src/validate.ts`：`rejectUnknown`（形状封闭，定义/选项/入参共用）+ `isObject` + `callPlugin`（宿主插件抛错 → 包成 `plugin-threw`）
-- `find.intent` — `tests/intent.flow.test.ts`（定义 / 容器 / 投影，素材取 ##166 §14.3 三场景）· `tests/intent.plugin.test.ts`（槽位 / guard 求值 / 执行器，素材取开发与金融两条真实轨迹）
+- `find.params` — `src/params.ts`：参数层（L2）—— `paramsOf(def)` 出 `{ schema, defaults }` · `resolveParams(schema, values)` 校验 + 合并 · `parseParamsSchema` 快照反向校验 · `interpolate` / `renderHint` 做 `${节点 id.局部名}` 插值
+- `find.intent` — `tests/intent.flow.test.ts`（定义 / 容器 / 投影，素材取 ##166 §14.3 三场景）· `tests/intent.plugin.test.ts`（槽位 / guard 求值 / 执行器，素材取开发与金融两条真实轨迹）· `tests/intent.params.test.ts`（声明 / 实例值 / 默认合并 / hint 插值 / 快照 / 只改值不改形；素材 = ##311 §二 那三个例子 `ci.command` `review.maxBounces` `review.reviewers`）
 
 ## rule — 硬约束
 
@@ -38,5 +40,13 @@
 - `rule.notify-bypass` — `notify` 是**旁路**：插件抛错 / 回执形状错只记进 `transition.notifyErrors`，**不作废**已落定的 `state`/`event`；插件异常统一包成 `plugin-threw`（带 `cause`）
 - `rule.no-downgrade` — 未注册插件 / 非法 guard 引用一律抛 `FlowError`（`unknown-plugin` / `invalid-guard`），**绝不降级**成「永远不通过」或「永远通过」
 - `rule.no-side-effect` — 只读查询（`status`）走 `classifyGuards` 静态分类，**不调用插件**（否则查一次状态就下了一单）
-- `rule.boundary` — 本包只做内核：不做事件存储（归 ##319）、不校验 `params`（归 ##316）、不渲染（归 ##320）、不调度（`notify` 只给回执）
+- `rule.param-scope` — **参数声明在节点上**（`NodeDef.params`，L1 代码）：局部名 + `type` + `default`（**必填**）；全限定名 = `节点 id.局部名`，实例值是同构嵌套 `ctx.params[节点 id][局部名]`；局部名与「声明了参数的节点 id」都不许含 `.`（点号是限定符）
+- `rule.param-types` — 类型全集 `string | number | boolean | enum | list` **只收引擎画得出控件的**（不支持嵌套对象：没有表单渲染方案就别开）；`list` 只装标量；约束 `enum?`（仅 enum）/ `min?` `max?` `unit?`（仅 number），写错类型即 `invalid-def`
+- `rule.param-value` — 实例值必须**纯 JSON**（标量 / 标量列表、有限数 ⇒ 可落库、可被 UI 改）；非法值 `invalid-param`、未知节点 / 未知参数名 `unknown-param`，**绝不静默忽略**
+- `rule.param-default` — `default` 必填（一个值都不填也要能跑）；声明期的 `default` 与运行期的实例值走**同一个** `checkValue`（两处不分叉）；`resolveParams` 结果全量 + 冻结
+- `rule.param-no-shape` — **参数只改值、不改形**：不许增删节点 / 边；「本次跳过某步」= 参数让 `guard` / 边的 `when` 短路（##311 §二）
+- `rule.param-export` — `{ schema, defaults }` 快照**单向导出**（供 UI 自动生成表单 / 供文档渲染，##311 §三.5）；`defaults` 只是派生视图（唯一真源 = 每项 `default`，不一致即 `invalid-param`）
+- `rule.param-bag-when-undeclared` — 工作流**没声明任何参数**时 `params` 不校验、原样透传（##315 的袋口径）：形状封闭的前提是「形状已声明」，引擎不越权判定自己不认识的键
+- `rule.param-hint` — `hint` 里 `${局部名}` / `${节点 id.局部名}` 由 `interpolate` 插值；找不到参数抛 `unknown-param`（**不插空串**）、未闭合 `${` 抛 `invalid-param`；`$$` = 字面量 `$`
+- `rule.boundary` — 本包只做内核：不做事件存储（归 ##319）、参数层在 `src/params.ts`（值从哪来归 ##319）、不渲染（归 ##320）、不调度（`notify` 只给回执）
 - `rule.loud` — 非法定义 / 非法转移一律抛 `FlowError`（带 `code` + 点路径 `path`），**绝不静默丢弃**
