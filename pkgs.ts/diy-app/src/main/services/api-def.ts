@@ -61,6 +61,8 @@ const LogLocSchema = z.object({
   file: z.string().describe("日志文件（相对 DIY_HOME，如 log/network/2026-10-13.jsonl）"),
   offset: z.number().describe("该条记录在文件中的起始字节"),
   len: z.number().describe("该条记录的字节长度"),
+  line: z.number().describe("行号（1 起；一行 = 一条记录）"),
+  abs: z.string().describe("文件绝对路径（界面展示 / 打开文件位置用）"),
 });
 const TrafficRecordSchema = z.object({
   id: z.number(),
@@ -90,7 +92,7 @@ const TrafficRecordSchema = z.object({
   log: LogLocSchema.nullable().describe("该条落盘位置（界面按位置随机读；null = 未落盘）"),
 });
 const TrafficSnapshotSchema = z.object({
-  fullCapture: z.boolean().describe("是否完整捕获（正文不截断）"),
+  fullCapture: z.boolean().describe("是否记录完整请求内容（正文不截断）"),
   cap: z.number().describe("内存里最多留多少条"),
   total: z.number(),
   logDir: z.string().describe("日志目录（相对 DIY_HOME）"),
@@ -966,7 +968,7 @@ export const apiDef = RpcSchema.router({
             output: TrafficSnapshotSchema,
           }),
           clear: RpcSchema.unary({
-            desc: `清空流量记录（内存；磁盘日志不动）`,
+            desc: `清空流量记录（仅内存里的即时列表；磁盘日志不动）`,
             input: {},
             output: StatusOk,
           }),
@@ -983,13 +985,43 @@ export const apiDef = RpcSchema.router({
               record: z.any().nullable().describe("读到的原始记录"),
             }),
           }),
+          query: RpcSchema.unary({
+            desc: `按条件查磁盘日志（流量页数据源）：全文关键词 / 状态 / 方法 / 日期（不传或 all = 全部日期）`,
+            input: {
+              text: z.string().optional().cliArg({ desc: "全文关键词（匹配地址、方法、状态、模型、正文等）" }),
+              status: z.enum(["all", "ok", "4xx", "5xx", "err"]).optional().cliArg({ desc: "状态过滤" }),
+              method: z.string().optional().cliArg({ desc: "HTTP 方法（all = 不限）" }),
+              date: z.string().optional().cliArg({ desc: "日期 YYYY-MM-DD / all" }),
+              limit: z.number().optional().cliArg({ desc: "最多返回条数（默认 1000）" }),
+            },
+            output: z.object({
+              records: z.array(z.any()).describe("命中的记录（含 log 位置），按时间倒序"),
+              scanned: z.number().describe("扫过的行数"),
+              files: z.array(z.string()).describe("扫过的文件"),
+              hits: z.number().describe("命中数"),
+              truncated: z.boolean().describe("是否因超过 limit 被截断"),
+              ms: z.number().describe("耗时 ms"),
+            }),
+          }),
           logFiles: RpcSchema.unary({
-            desc: `列出磁盘上的流量日志文件（将来清理界面用）`,
+            desc: `列出磁盘上的流量日志文件与日期（清理界面 / 日期过滤用）`,
             input: {},
-            output: z.object({ dir: z.string(), files: z.array(z.string()) }),
+            output: z.object({
+              dir: z.string(),
+              files: z.array(z.string()),
+              dates: z.array(z.string()).describe("出现过的日期（新的在前）"),
+            }),
+          }),
+          revealLog: RpcSchema.unary({
+            desc: `在系统文件管理器里定位到某个日志文件（打开所在目录并选中该文件）`,
+            input: { file: z.string().cliArg({ desc: "日志文件（相对 DIY_HOME）" }) },
+            output: z.object({
+              ok: z.boolean(),
+              message: z.string().nullable().describe("失败原因（人话）"),
+            }),
           }),
           setFullCapture: RpcSchema.unary({
-            desc: `开关「完整捕获」（开 = 正文不再截断，全留；默认关 = 超长正文只留首尾一段）`,
+            desc: `开关「记录完整请求内容」（开 = 正文不再截断，全留；默认关 = 超长正文只留首尾一段）`,
             input: { on: z.boolean().cliArg({ desc: "true 开 / false 关" }) },
             output: TrafficSnapshotSchema,
           }),

@@ -256,6 +256,16 @@ describe("traffic（undici diagnostics_channel）", () => {
         ).toThrow(TrafficLogError);
     });
 
+    it("首尾法截断：多字节字符边界不切出半个字（无替换字符）", () => {
+        const big = "中".repeat(30000); // 每个 3 字节，超 24K
+        const req = fireReq({ body: JSON.stringify({ pad: big }) });
+        fireRes(req, 200, { "content-type": "application/json" }, "{}");
+        const b = traffic.snapshot().records[0].reqBody!;
+        expect(b.truncated).toBe(true);
+        expect(b.head.includes("\uFFFD")).toBe(false);
+        expect(b.tail.includes("\uFFFD")).toBe(false);
+    });
+
     it("读取失效：位置越界 → 抛 TrafficLogError", () => {
         const req = fireReq({ body: "{}" });
         fireRes(req, 200, { "content-type": "application/json" }, "{}");

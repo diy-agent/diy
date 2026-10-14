@@ -11,10 +11,12 @@
 //   - 小版本（小数点后）只增字段 —— 老读侧遇到不认识的字段忽略即可，仍能读。
 //   - 大版本（小数点前）不兼容 —— 读到不认识的大版本，直接跳过，不迁移、不报错。
 //
-// 每条记录在文件里的位置（文件 + 起始字节 + 长度）会被记下来（见 TrafficRecord.log），
+// 每条记录在文件里的位置（文件 + 行号 + 起始字节 + 长度）会被记下来（见 LogLoc），
 // 之后「打开某条记录」时按这个位置**随机读**那一小段，不必把整个文件读进来。
+//
+// 界面按日期/全文查历史时，走 queryRecords：一天一个文件地流式扫，不把全部内容堆进内存。
 
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readSync, statSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { diyHome } from "./state";
 
@@ -24,11 +26,22 @@ export const LOG_FORMAT = "1.0";
 /** 日志目录（相对 DIY_HOME 的路径） */
 export const LOG_DIR_REL = "log/network";
 
-/** 一条记录落盘后的位置（文件路径相对 DIY_HOME；offset/len 为字节） */
+/**
+ * 一条记录落盘后的位置。
+ * 界面就是靠它把「这条」定位到磁盘上的具体一处（见 `存储在` 显示与随机读）。
+ * 位置格式（写进 AGENTS.md 的通用约定）：`<绝对路径>:<行>[:<列>]`。
+ */
 export interface LogLoc {
+    /** 文件（相对 DIY_HOME，如 log/network/2026-10-13.jsonl） */
     file: string;
+    /** 该条记录在文件中的起始字节 */
     offset: number;
+    /** 该条记录的字节长度（含行尾换行） */
     len: number;
+    /** 行号（1 起；一行 = 一条记录） */
+    line: number;
+    /** 绝对路径（界面直接展示 / 打开文件位置用） */
+    abs: string;
 }
 
 export class TrafficLogError extends Error {
@@ -57,11 +70,24 @@ export function absOf(rel: string): string {
     return join(diyHome(), rel);
 }
 
+/** 数一个文件里有多少个换行（用来续算行号，读一次即够） */
+function countLines(abs: string): number {
+    let n = 0;
+    try {
+        const buf = readFileSync(abs);
+        for (let i = 0; i < buf.length; i++) if (buf[i] === 0x0a) n++;
+    } catch {
+        return 0;
+    }
+    return n;
+}
+
 /** 写入器：保持当天文件的 fd 与写入位置，跨天自动切换 */
 class Writer {
     private fd: number | null = null;
     private day = "";
     private pos = 0;
+    private line = 0;
 
     private ensureFd(): void {
         const today = dayFile();
@@ -73,8 +99,10 @@ class Writer {
         // 续写：从现有文件末尾接着写（同一天多次写入 / 进程重启后）
         try {
             this.pos = fstatSync(this.fd).size;
+            this.line = countLines(abs);
         } catch {
             this.pos = 0;
+            this.line = 0;
         }
     }
 
@@ -86,7 +114,8 @@ class Writer {
         const offset = this.pos;
         const wrote = writeSync(this.fd!, buf, 0, buf.length, this.pos);
         this.pos += wrote;
-        return { file: `${LOG_DIR_REL}/${this.day}`, offset, len: wrote };
+        this.line += 1;
+        return { file: `${LOG_DIR_REL}/${this.day}`, offset, len: wrote, line: this.line, abs: join(dirAbs(), this.day) };
     }
 }
 
@@ -101,7 +130,7 @@ export function appendRecord(payload: unknown): LogLoc {
  * 按位置随机读一条记录。
  * 文件不存在 / 位置越界 / 版本不认识 → 抛 TrafficLogError（带人话原因，界面直接显示）。
  */
-export function readRecord(loc: LogLoc): Record<string, unknown> {
+export function readRecord(loc: Pick<LogLoc, "file" | "offset" | "len">): Record<string, unknown> {
     if (!loc || typeof loc.file !== "string") throw new TrafficLogError("记录位置无效");
     const abs = absOf(loc.file);
     if (!existsSync(abs)) {
@@ -137,7 +166,7 @@ export function readRecord(loc: LogLoc): Record<string, unknown> {
     }
 }
 
-/** 目录里现有日志文件（按名字升序），供清理界面将来使用 */
+/** 目录里现有日志文件（按名字降序 = 新日期在前） */
 export function listFiles(): string[] {
     const d = join(diyHome(), LOG_DIR_REL);
     if (!existsSync(d)) return [];
@@ -145,8 +174,124 @@ export function listFiles(): string[] {
         return readdirSync(d)
             .filter((f) => f.endsWith(".jsonl"))
             .sort()
+            .reverse()
             .map((f) => `${LOG_DIR_REL}/${f}`);
     } catch {
         return [];
     }
+}
+
+/** 日志里出现过的日期（从文件名取，降序 = 新的在前） */
+export function listDates(): string[] {
+    return listFiles()
+        .map((f) => (f.split("/").pop() ?? "").replace(/\.jsonl$/, ""))
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+}
+
+export type StatusFilter = "all" | "ok" | "4xx" | "5xx" | "err";
+
+export interface QueryOpts {
+    /** 全文检索关键词（匹配地址 / 方法 / 状态 / 模型 / 正文等，不区分大小写） */
+    text?: string;
+    /** 只查这一天（YYYY-MM-DD）；不传或 "all" = 全部日期 */
+    date?: string | null;
+    status?: StatusFilter;
+    method?: string;
+    /** 最多返回多少条（默认 1000） */
+    limit?: number;
+}
+
+export interface QueryResult {
+    records: Array<Record<string, unknown> & { log: LogLoc }>;
+    /** 实际扫过的行数 */
+    scanned: number;
+    /** 实际扫过的文件（相对路径） */
+    files: string[];
+    /** 命中数（可能被 limit 截断，见 truncated） */
+    hits: number;
+    /** 是否因超过 limit 被截断 */
+    truncated: boolean;
+    /** 耗时 ms */
+    ms: number;
+}
+
+function matchStatus(status: unknown, f: StatusFilter): boolean {
+    if (f === "all") return true;
+    if (f === "err") return status === null || status === undefined;
+    const s = typeof status === "number" ? status : NaN;
+    if (f === "ok") return s < 400;
+    if (f === "4xx") return s >= 400 && s < 500;
+    return s >= 500;
+}
+
+/** 把一条记录摊成一段可全文匹配的小写文本 */
+function haystack(rec: Record<string, unknown>): string {
+    const body = rec.reqBody as { head?: string; tail?: string } | null | undefined;
+    const res = rec.resBody as { head?: string; tail?: string } | null | undefined;
+    const parts: unknown[] = [
+        rec.url, rec.method, rec.status, rec.host, rec.path, rec.kind,
+        rec.model, rec.provider, rec.taskUri, rec.turnId, rec.traceId, rec.err, rec.resNote,
+        rec.reqHeaders, rec.resHeaders, body?.head, body?.tail, res?.head, res?.tail,
+    ];
+    return parts
+        .map((p) => (p == null ? "" : typeof p === "string" ? p : JSON.stringify(p)))
+        .join("\u0000")
+        .toLowerCase();
+}
+
+/**
+ * 按条件在磁盘日志里查记录（界面「流量」页的数据源）。
+ * 一天一个文件，流式逐行扫；命中按时间倒序（新的在前），最多返回 limit 条。
+ */
+export function queryRecords(opts: QueryOpts): QueryResult {
+    const t0 = Date.now();
+    const limit = Math.max(1, Math.min(10000, opts.limit ?? 1000));
+    const want = opts.date && opts.date !== "all" ? [`${LOG_DIR_REL}/${opts.date}.jsonl`] : listFiles();
+    const text = (opts.text ?? "").trim().toLowerCase();
+    const wantsText = text.length > 0;
+    const method = opts.method && opts.method !== "all" ? opts.method.toUpperCase() : "";
+    const status = opts.status ?? "all";
+
+    const out: Array<Record<string, unknown> & { log: LogLoc }> = [];
+    let scanned = 0;
+    const files: string[] = [];
+
+    for (const rel of want) {
+        const abs = absOf(rel);
+        if (!existsSync(abs)) continue;
+        files.push(rel);
+        const buf = readFileSync(abs);
+        let start = 0;
+        let line = 0;
+        for (let i = 0; i < buf.length; i++) {
+            if (buf[i] !== 0x0a) continue;
+            const end = i; // 不含换行
+            const len = end - start + 1; // 含行尾换行，与写入时一致
+            line += 1;
+            if (len > 1) {
+                scanned += 1;
+                const raw = buf.subarray(start, end).toString("utf8");
+                let rec: Record<string, unknown> | null = null;
+                try {
+                    rec = JSON.parse(raw) as Record<string, unknown>;
+                } catch {
+                    rec = null;
+                }
+                const major = rec ? String(rec._fmt ?? "").split(".")[0] : "0";
+                if (rec && major === String(LOG_FORMAT).split(".")[0]) {
+                    const ok =
+                        (!method || String(rec.method ?? "").toUpperCase() === method) &&
+                        matchStatus(rec.status, status) &&
+                        (!wantsText || haystack(rec).includes(text));
+                    if (ok) out.push({ ...rec, log: { file: rel, offset: start, len, line, abs } });
+                }
+            }
+            start = i + 1;
+        }
+    }
+
+    out.sort((a, b) => Number(b.ts ?? 0) - Number(a.ts ?? 0));
+    const hits = out.length;
+    const truncated = hits > limit;
+    return { records: out.slice(0, limit), scanned, files, hits, truncated, ms: Date.now() - t0 };
 }

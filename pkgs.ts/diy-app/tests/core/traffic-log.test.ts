@@ -2,7 +2,7 @@
 // 流量日志落盘：按天切文件、追加并回读位置、版本兼容口径、失效提示。
 import { describe, it, expect } from "vitest";
 import { appendFileSync } from "node:fs";
-import { appendRecord, readRecord, dayFile, absOf, LOG_DIR_REL, LOG_FORMAT, TrafficLogError } from "../../src/main/core/traffic-log";
+import { appendRecord, readRecord, queryRecords, dayFile, absOf, LOG_DIR_REL, LOG_FORMAT, TrafficLogError } from "../../src/main/core/traffic-log";
 
 describe("traffic-log", () => {
     it("按天切文件名（本地日期）", () => {
@@ -36,5 +36,44 @@ describe("traffic-log", () => {
 
     it("文件不存在 → 人话提示", () => {
         expect(() => readRecord({ file: `${LOG_DIR_REL}/1997-01-01.jsonl`, offset: 0, len: 1 })).toThrow(/不存在/);
+    });
+
+    it("位置带回行号与绝对路径（1 起算）", () => {
+        const loc = appendRecord({ url: "https://a.example/l", status: 200 });
+        expect(loc.line).toBeGreaterThan(0);
+        expect(loc.abs.endsWith(loc.file)).toBe(true);
+        const back = readRecord(loc) as Record<string, unknown>;
+        expect(back.url).toBe("https://a.example/l");
+    });
+
+    it("按日期查（当天）→ 命中且新的在前，附 log 位置", () => {
+        appendRecord({ url: "https://a.example/1", status: 200, ts: 1000 });
+        appendRecord({ url: "https://a.example/2", status: 500, ts: 2000 });
+        const r = queryRecords({ date: dayFile().replace(".jsonl", "") });
+        expect(r.records.length).toBeGreaterThanOrEqual(2);
+        // 新的在前
+        expect(Number(r.records[0]!.ts)).toBeGreaterThanOrEqual(Number(r.records[1]!.ts));
+        expect(r.records[0]!.log.abs).toBeTruthy();
+        expect(r.records[0]!.log.line).toBeGreaterThan(0);
+    });
+
+    it("全文检索匹配正文（不区分大小写）", () => {
+        appendRecord({ url: "https://a.example/s", status: 200, resBody: { head: "Hello TRACE-XYZ", tail: "" } });
+        const hit = queryRecords({ date: "all", text: "trace-xyz" });
+        expect(hit.records.some((x) => (x.url as string) === "https://a.example/s")).toBe(true);
+        const miss = queryRecords({ date: "all", text: "不存在的关键词zzz" });
+        expect(miss.records.some((x) => (x.url as string) === "https://a.example/s")).toBe(false);
+    });
+
+    it("状态过滤：err = 无状态（网络错）", () => {
+        appendRecord({ url: "https://a.example/err", status: null, err: "ECONNRESET" });
+        const r = queryRecords({ date: "all", status: "err" });
+        expect(r.records.some((x) => (x.url as string) === "https://a.example/err")).toBe(true);
+    });
+
+    it("limit 截断时 truncated=true", () => {
+        const r = queryRecords({ date: "all", limit: 1 });
+        expect(r.records.length).toBeLessThanOrEqual(1);
+        if (r.hits > 1) expect(r.truncated).toBe(true);
     });
 });

@@ -1,13 +1,16 @@
 import { createSignal, createEffect, createMemo, onCleanup, onMount, For, Show } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { JsonViewer } from "./JsonViewer";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 /**
  * 流量视图 —— 看「实际发出去的 HTTP 请求 / 响应」。
  *
- * 数据来自主进程（core/traffic.ts）：内存留最近若干条供即时查看，同时每条都写一份到
- * `log/network/YYYY-MM-DD.jsonl`（相对 DIY_HOME，按天切、重启不丢）。所以偶发的上游 400 就算
- * 崩在你没注意的时候，事后点开还能看到那一条的请求 / 响应 / trace_id，也能按记录位置回磁盘读。
+ * 数据来自磁盘日志（主进程 `core/traffic-log.ts` 写的 `log/network/YYYY-MM-DD.jsonl`）：
+ * 一天一个文件，按 日期 + 全文关键词 + 状态 + 方法 查询，新的在前。为什么直接查文件而不是只看内存：
+ * 内存只留最近若干条（进程重启就空），而「偶发 400」这类问题事后才想回看，必须能翻历史。
+ *
+ * 主进程也在内存里留了最近若干条（用于聊天侧错误块一键深链），本视图的头部状态和深链 id 从那里取。
  *
  * 本文件导出 `TrafficView`：纯视图，撑满父容器（列表 ⇄ 详情）。流量页与聊天侧抽屉共用同一份。
  */
@@ -16,6 +19,12 @@ type Snapshot = Awaited<ReturnType<typeof diyService.diy.traffic.snapshot>>;
 type Rec = Snapshot["records"][number];
 
 const time = (ts: number) => new Date(ts).toLocaleTimeString("zh-CN", { hour12: false });
+
+/** 本地日期 YYYY-MM-DD（与落盘文件名一致） */
+function todayStr(): string {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 function statusText(r: Rec): string {
     if (r.status !== null) return String(r.status);
@@ -31,7 +40,10 @@ const isFail = (r: Rec) => (r.status != null && r.status >= 400) || !!r.err;
 
 type BodyCapture = NonNullable<Rec["reqBody"]>;
 
-/** 把「首尾法保留的正文」还原成可展示的值：未截断且能解析成 JSON → 结构；否则 → 文本 */
+/**
+ * 把「首尾法保留的正文」还原成可展示的值：未截断且能解析成 JSON → 结构；否则 → 文本。
+ * 被截断时，中间省略的部分用 `<…>` 包一句说明插在头尾之间，一眼能看出这里断过。
+ */
 function bodyValue(c: BodyCapture | null, note: string | null): unknown {
     if (!c) return note ?? "（无正文）";
     if (!c.truncated) {
@@ -42,31 +54,71 @@ function bodyValue(c: BodyCapture | null, note: string | null): unknown {
         }
     }
     const omitted = c.totalBytes - c.headBytes - c.tailBytes;
-    return `${c.head}\n\n…（中间省略 ${omitted} 字节，正文共 ${c.totalBytes} 字节）…\n\n${c.tail}`;
+    return `${c.head}\n<中间省略 ${omitted} 字节（正文共 ${c.totalBytes} 字节）>\n${c.tail}`;
 }
 
-/** 落盘位置 + 「从磁盘读取」按钮：按记录的 文件+offset+len 随机读那一条；失效时显示原因 */
-function LogLocBar(props: { loc: Rec["log"] }) {
+/**
+ * 「存储在 <绝对路径>:<行>」—— 把这条记录定位到磁盘上的具体一处。
+ * 路径是超链接：点它弹出小菜单，可选「在文件管理器中显示」（打开所在目录并选中该文件）。
+ * 位置格式是通用约定 `<绝对路径>:<行>`（见 ~/AGENTS.md）。
+ */
+function StoredAt(props: { loc: Rec["log"] }) {
+    const [menu, setMenu] = createSignal(false);
+    const [pos, setPos] = createSignal({ x: 0, y: 0 });
     const [msg, setMsg] = createSignal<string | null>(null);
-    const read = async () => {
+    let linkRef: HTMLAnchorElement | undefined;
+
+    const openMenu = () => {
+        const r = linkRef?.getBoundingClientRect();
+        if (r) setPos({ x: r.left, y: r.bottom + 4 });
+        setMenu(true);
+    };
+    const reveal = async () => {
+        setMenu(false);
         const loc = props.loc;
         if (!loc) return;
-        const res = await diyService.diy.traffic.readLog({ file: loc.file, offset: loc.offset, len: loc.len });
-        setMsg(res.ok ? "✓ 已按位置随机读到该条记录" : `✗ ${res.message}`);
+        const res = await diyService.diy.traffic.revealLog({ file: loc.file });
+        setMsg(res.ok ? null : (res.message ?? "打开失败"));
     };
+    // 点别处关掉小菜单
+    onMount(() => {
+        const onDoc = (e: MouseEvent) => {
+            if (linkRef && e.target instanceof Node && linkRef.contains(e.target)) return;
+            setMenu(false);
+        };
+        document.addEventListener("click", onDoc);
+        onCleanup(() => document.removeEventListener("click", onDoc));
+    });
+
     return (
         <Show when={props.loc}>
             {(loc) => (
                 <div class="flex items-center gap-2 text-caption shrink-0 flex-wrap">
-                    <span class="opacity-50">落盘位置</span>
-                    <code class="select-all opacity-80">
-                        {loc().file} @ {loc().offset}+{loc().len}
-                    </code>
-                    <button class="btn btn-xs btn-ghost" onClick={() => void read()}>
-                        从磁盘读取
-                    </button>
+                    <span class="opacity-50">存储在</span>
+                    <a
+                        ref={(el) => (linkRef = el)}
+                        class="link link-hover cursor-pointer font-mono opacity-80 break-all"
+                        title={`${loc().abs}:${loc().line}\n（等价写法：${loc().abs}#${loc().line}）`}
+                        onClick={(e) => {
+                            e.preventDefault();
+                            openMenu();
+                        }}
+                    >
+                        {loc().abs}:{loc().line}
+                    </a>
+                    <Show when={menu()}>
+                        <div
+                            class="fixed z-[60] bg-base-100 border border-base-300 rounded shadow-lg py-1"
+                            style={{ left: `${pos().x}px`, top: `${pos().y}px` }}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <button class="block w-full text-left px-3 py-1 hover:bg-base-200 text-body" onClick={() => void reveal()}>
+                                在文件管理器中显示
+                            </button>
+                        </div>
+                    </Show>
                     <Show when={msg()}>
-                        <span class="opacity-70">{msg()}</span>
+                        <span class="text-warning">{msg()}</span>
                     </Show>
                 </div>
             )}
@@ -82,15 +134,15 @@ function kindLabel(k: Rec["kind"]): string {
 
 /** 状态筛选：全部 / 成功 / 4xx / 5xx / 失败（网络错/超时） */
 type StatusFilter = "all" | "ok" | "4xx" | "5xx" | "err";
-function matchStatus(r: Rec, f: StatusFilter): boolean {
-    if (f === "all") return true;
-    if (f === "ok") return r.status != null && r.status < 400;
-    if (f === "4xx") return r.status != null && r.status >= 400 && r.status < 500;
-    if (f === "5xx") return r.status != null && r.status >= 500;
-    return r.status === null;
-}
+const STATUS_OPTIONS: Array<{ v: StatusFilter; label: string }> = [
+    { v: "all", label: "全部状态" },
+    { v: "ok", label: "成功（2xx/3xx）" },
+    { v: "4xx", label: "4xx" },
+    { v: "5xx", label: "5xx" },
+    { v: "err", label: "失败（网络错/超时）" },
+];
 
-/** 「24/500行」—— 点数字可改成上限（输入框），悬停提示当前/上限 */
+/** 「24/500行」—— 点数字可改成上限（输入框），悬停提示当前/上限（只管内存里留多少条） */
 function CapLabel(props: { total: number; cap: number; onSetCap: (n: number) => void }) {
     const [editing, setEditing] = createSignal(false);
     const [draft, setDraft] = createSignal("");
@@ -145,52 +197,90 @@ export function TrafficView(props: {
     showIntro?: boolean;
 }) {
     const [snap, setSnap] = createSignal<Snapshot | null>(null);
+    const [rows, setRows] = createSignal<Rec[]>([]);
+    const [loading, setLoading] = createSignal(false);
+    const [stats, setStats] = createSignal<{ scanned: number; ms: number; truncated: boolean } | null>(null);
     const [sel, setSel] = createSignal<number | null>(null);
     const [tab, setTab] = createSignal<"req" | "res">("req");
     // 筛选
-    const [qUrl, setQUrl] = createSignal("");
+    const [qText, setQText] = createSignal("");
     const [fStatus, setFStatus] = createSignal<StatusFilter>("all");
     const [fMethod, setFMethod] = createSignal("all");
+    const [fDate, setFDate] = createSignal<string>(todayStr());
+    const [dates, setDates] = createSignal<string[]>([]);
+    const [confirmFull, setConfirmFull] = createSignal(false);
 
-    const refresh = async () => {
-        const s = await diyService.diy.traffic.snapshot({});
-        setSnap(s);
-        if (sel() !== null && !s.records.some((r) => r.id === sel())) setSel(null);
+    const loadSnapshot = async () => {
+        setSnap(await diyService.diy.traffic.snapshot({}));
     };
+    const loadDates = async () => {
+        const r = await diyService.diy.traffic.logFiles({});
+        setDates(r.dates);
+    };
+
+    /** 按当前筛选查磁盘日志 */
+    const runQuery = async () => {
+        setLoading(true);
+        try {
+            const res = await diyService.diy.traffic.query({
+                text: qText(),
+                status: fStatus(),
+                method: fMethod(),
+                date: fDate(),
+                limit: 1000,
+            });
+            setRows(res.records as unknown as Rec[]);
+            setStats({ scanned: res.scanned, ms: res.ms, truncated: res.truncated });
+            if (sel() !== null && !res.records.some((r) => (r as { id: number }).id === sel())) setSel(null);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // 输入防抖：敲字时别每一下都扫盘
+    let qTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleQuery = (delay = 0) => {
+        if (qTimer) clearTimeout(qTimer);
+        qTimer = setTimeout(() => void runQuery(), delay);
+    };
+
     onMount(() => {
-        void refresh();
+        void loadSnapshot();
+        void loadDates();
+        void runQuery();
         const ac = new AbortController();
         void diyService.diy.traffic
             .events({}, { signal: ac.signal })
             .then(async (stream) => {
-                for await (const _ev of stream) void refresh();
+                // 有新记录 / 开关变更 → 刷新状态，并（防抖）重查一次今日数据
+                for await (const _ev of stream) {
+                    void loadSnapshot();
+                    void loadDates();
+                    scheduleQuery(300);
+                }
             })
             .catch(() => {
                 /* 断流即停（窗口关闭） */
             });
-        onCleanup(() => ac.abort());
+        onCleanup(() => {
+            ac.abort();
+            if (qTimer) clearTimeout(qTimer);
+        });
     });
 
-    /** 过滤后、最新在前 */
-    const records = createMemo(() => {
-        const q = qUrl().trim().toLowerCase();
-        const m = fMethod();
-        const f = fStatus();
-        return (snap()?.records ?? [])
-            .filter((r) => (q ? r.url.toLowerCase().includes(q) : true))
-            .filter((r) => (m === "all" ? true : r.method === m))
-            .filter((r) => matchStatus(r, f))
-            .slice()
-            .reverse();
+    const methods = createMemo(() => Array.from(new Set(rows().map((r) => r.method))).sort());
+    const dateOptions = createMemo(() => {
+        const t = todayStr();
+        const rest = dates().filter((d) => d !== t);
+        return { today: t, rest };
     });
-    const cur = () => (snap()?.records ?? []).find((r) => r.id === sel()) ?? null;
-    const methods = createMemo(() => Array.from(new Set((snap()?.records ?? []).map((r) => r.method))).sort());
+    const cur = () => rows().find((r) => r.id === sel()) ?? null;
 
-    // 定位：优先 id → trace_id → 最近一次失败
+    // 定位：优先 id → trace_id → 最近一次失败（在当前查询结果里找）
     createEffect(() => {
         const f = props.focus;
         if (!f) return;
-        const all = snap()?.records ?? [];
+        const all = rows();
         if (all.length === 0) return;
         let r = f.reqId != null ? all.find((x) => x.id === f.reqId) : undefined;
         if (!r && f.traceId) r = all.find((x) => x.traceId === f.traceId);
@@ -209,9 +299,13 @@ export function TrafficView(props: {
         setSel(r.id);
         setTab(isFail(r) ? "res" : "req");
     };
-    const toggleFullCapture = async () => {
-        const s = await diyService.diy.traffic.setFullCapture({ on: !snap()?.fullCapture });
+    const doSetFullCapture = async (on: boolean) => {
+        const s = await diyService.diy.traffic.setFullCapture({ on });
         setSnap(s);
+    };
+    const onToggleFullCapture = () => {
+        if (snap()?.fullCapture) void doSetFullCapture(false);
+        else setConfirmFull(true); // 开启是重操作：先弹窗说清楚
     };
     const setCap = async (n: number) => {
         const s = await diyService.diy.traffic.setCap({ n });
@@ -220,25 +314,38 @@ export function TrafficView(props: {
     const clear = async () => {
         await diyService.diy.traffic.clear({});
         setSel(null);
-        await refresh();
+        await loadSnapshot();
     };
 
     return (
         <div class="flex flex-col gap-3 h-full min-h-0">
+            <Show when={confirmFull()}>
+                <ConfirmDialog
+                    title="记录完整请求内容"
+                    message="开启后，每个请求/响应正文都会完整写入磁盘日志，不再只留首尾一段。长时间运行可能占用大量磁盘空间。本开关只在本次运行内有效，应用退出后自动关闭。确定开启吗？"
+                    confirmLabel="开启"
+                    onCancel={() => setConfirmFull(false)}
+                    onConfirm={() => {
+                        setConfirmFull(false);
+                        void doSetFullCapture(true);
+                    }}
+                />
+            </Show>
             <div class="flex items-center gap-2 flex-wrap shrink-0">
                 <Show when={props.showIntro !== false}>
                     <h2 class="text-display font-bold mr-auto">流量</h2>
                 </Show>
-                <span class="badge badge-ghost" title="一直在记：请求和响应都留，超长正文只留首尾一段">
-                    ● 常开
-                </span>
                 <CapLabel total={snap()?.total ?? 0} cap={snap()?.cap ?? 0} onSetCap={(n) => void setCap(n)} />
                 <button
                     class={`btn btn-xs ${snap()?.fullCapture ? "btn-error" : ""}`}
-                    onClick={() => void toggleFullCapture()}
-                    title="开 = 正文完整保存、不再截断；关 = 超长正文只留首尾一段（省内存）"
+                    onClick={onToggleFullCapture}
+                    title={
+                        snap()?.fullCapture
+                            ? "正在完整记录：正文不再截断。点击关闭（关闭后恢复只留首尾一段）"
+                            : "默认只保留正文开头 8K + 结尾 16K（中间省略）。开启后正文完整记录、不截断；会占用较多磁盘，应用退出时自动关闭。"
+                    }
                 >
-                    {snap()?.fullCapture ? "● 完整捕获中" : "完整捕获"}
+                    {snap()?.fullCapture ? "● 完整记录中" : "记录完整请求内容"}
                 </button>
                 <button class="btn btn-xs btn-ghost" onClick={() => void clear()}>
                     清空
@@ -246,7 +353,8 @@ export function TrafficView(props: {
             </div>
             <Show when={props.showIntro !== false}>
                 <p class="text-caption opacity-50 shrink-0">
-                    这里显示应用实际发出去的 HTTP 请求与收到的响应。一直开着；内存留最近若干条，同时每条都写进磁盘日志（按天切文件），重启不丢。超长正文默认只留首尾一段，需要完整时点「完整捕获」。
+                    这里显示应用实际发出去的 HTTP 请求与收到的响应。记录一直开着，逐条写进磁盘日志（按天切文件），可用日期 + 关键词翻查历史。
+                    超长正文默认只留首尾一段，需要完整时打开「记录完整请求内容」。
                 </p>
             </Show>
 
@@ -254,36 +362,63 @@ export function TrafficView(props: {
                 when={cur()}
                 fallback={
                     <div class="flex flex-col flex-1 min-h-0 gap-2">
-                        {/* 查询条：按地址 / 状态 / 方法过滤 */}
+                        {/* 查询条：全文关键词 / 日期 / 状态 / 方法 */}
                         <div class="flex items-center gap-2 flex-wrap shrink-0">
                             <input
                                 class="input input-bordered input-xs w-64"
-                                placeholder="🔍 按地址过滤…"
-                                value={qUrl()}
-                                onInput={(e) => setQUrl(e.currentTarget.value)}
+                                placeholder="🔍 全文搜索（地址 / 状态 / 模型 / 正文…）"
+                                value={qText()}
+                                onInput={(e) => {
+                                    setQText(e.currentTarget.value);
+                                    scheduleQuery(300);
+                                }}
                             />
                             <select
                                 class="select select-xs"
-                                value={fStatus()}
-                                onChange={(e) => setFStatus(e.currentTarget.value as StatusFilter)}
+                                value={fDate()}
+                                onChange={(e) => {
+                                    setFDate(e.currentTarget.value);
+                                    scheduleQuery();
+                                }}
+                                title="数据按天存放；默认只看当天，可切到其它日期或全部"
                             >
-                                <option value="all">全部状态</option>
-                                <option value="ok">成功（2xx/3xx）</option>
-                                <option value="4xx">4xx</option>
-                                <option value="5xx">5xx</option>
-                                <option value="err">失败（网络错/超时）</option>
+                                <option value={dateOptions().today}>{dateOptions().today}（今日）</option>
+                                <For each={dateOptions().rest}>{(d) => <option value={d}>{d}</option>}</For>
+                                <option value="all">全部日期</option>
+                            </select>
+                            <select
+                                class="select select-xs"
+                                value={fStatus()}
+                                onChange={(e) => {
+                                    setFStatus(e.currentTarget.value as StatusFilter);
+                                    scheduleQuery();
+                                }}
+                            >
+                                <For each={STATUS_OPTIONS}>{(o) => <option value={o.v}>{o.label}</option>}</For>
                             </select>
                             <select
                                 class="select select-xs"
                                 value={fMethod()}
-                                onChange={(e) => setFMethod(e.currentTarget.value)}
+                                onChange={(e) => {
+                                    setFMethod(e.currentTarget.value);
+                                    scheduleQuery();
+                                }}
                             >
                                 <option value="all">全部方法</option>
                                 <For each={methods()}>{(m) => <option value={m}>{m}</option>}</For>
                             </select>
                             <span class="text-caption opacity-50">
-                                {records().length} / {snap()?.total ?? 0} 条
+                                <Show when={loading()} fallback={<span>{rows().length} 条</span>}>
+                                    <span class="animate-pulse">查询中…</span>
+                                </Show>
                             </span>
+                            <Show when={!loading() && stats()}>
+                                {(s) => (
+                                    <span class="text-caption opacity-40">
+                                        扫 {s().scanned} 行 · {s().ms}ms{s().truncated ? " · 已截断，请缩小范围" : ""}
+                                    </span>
+                                )}
+                            </Show>
                         </div>
                         <div class="flex-1 min-h-0 overflow-auto border border-base-300 rounded">
                             <table class="table table-xs table-pin-rows w-full">
@@ -291,28 +426,24 @@ export function TrafficView(props: {
                                     <tr>
                                         <th class="w-16">状态</th>
                                         <th class="w-16">方法</th>
-                                        <th>名称</th>
-                                        <th class="w-28">来源</th>
+                                        <th>地址</th>
+                                        <th class="w-32">来源</th>
                                         <th class="w-14 text-right">尝试</th>
                                         <th class="w-20 text-right">耗时</th>
-                                        <th class="w-24">时间</th>
+                                        <th class="w-20">时间</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <Show when={records().length === 0}>
+                                    <Show when={rows().length === 0}>
                                         <tr>
                                             <td colspan="7" class="text-center opacity-50 py-6">
-                                                {snap()?.total ? "没有符合筛选条件的记录" : "暂无记录 —— 发起一次请求后这里会出现"}
+                                                {loading() ? "查询中…" : "没有符合筛选条件的记录"}
                                             </td>
                                         </tr>
                                     </Show>
-                                    <For each={records()}>
+                                    <For each={rows()}>
                                         {(r) => (
-                                            <tr
-                                                class="cursor-pointer hover:bg-base-200"
-                                                onClick={() => open(r)}
-                                                title={r.url}
-                                            >
+                                            <tr class="cursor-pointer hover:bg-base-200" onClick={() => open(r)} title={r.url}>
                                                 <td>
                                                     <span class={`badge badge-sm ${statusCls(r)}`}>{statusText(r)}</span>
                                                 </td>
@@ -368,7 +499,7 @@ export function TrafficView(props: {
                         <Show when={r().err}>
                             <div class="text-body text-error shrink-0">⚠ {r().err}</div>
                         </Show>
-                        <LogLocBar loc={r().log} />
+                        <StoredAt loc={r().log} />
                         <div role="tablist" class="tabs tabs-boxed tabs-xs w-fit shrink-0">
                             <button
                                 role="tab"
@@ -403,10 +534,7 @@ export function TrafficView(props: {
                                         url: r().url,
                                         method: r().method,
                                         headers: r().reqHeaders,
-                                        body: bodyValue(
-                                            r().reqBody,
-                                            r().method === "GET" ? "（GET 请求无 body）" : null,
-                                        ),
+                                        body: bodyValue(r().reqBody, r().method === "GET" ? "（GET 请求无 body）" : null),
                                     }}
                                 />
                             </Show>

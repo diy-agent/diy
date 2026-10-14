@@ -711,7 +711,23 @@ export function bindAppHandlers(binding: ServerBinding): void {
       return { ok: false, message: e instanceof Error ? e.message : String(e), record: null };
     }
   });
-  binding.on(app.traffic.logFiles, async () => ({ dir: traffic.logDir(), files: traffic.listLogFiles() }));
+  binding.on(app.traffic.query, async ({ input }) => traffic.query(input));
+  binding.on(app.traffic.logFiles, async () => ({
+    dir: traffic.logDir(),
+    files: traffic.listLogFiles(),
+    dates: traffic.listLogDates(),
+  }));
+  binding.on(app.traffic.revealLog, async ({ input }) => {
+    const abs = traffic.absLogFile(input.file);
+    try {
+      // Electron 主进程才有 shell；web/serve 模式下拿不到 → 给人话提示
+      const { shell } = await import("electron");
+      shell.showItemInFolder(abs);
+      return { ok: true, message: null };
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e), };
+    }
+  });
   binding.on(app.traffic.events, async function* () {
     for await (const ev of traffic.events()) yield ev;
   });

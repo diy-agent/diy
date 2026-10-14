@@ -16,7 +16,7 @@
  *
  * 一直开着、不分开关：请求和响应始终记，失败什么时候出现不可预期，事后必须能回看。
  * 正文按「首尾法」有界保留（超长留开头 + 结尾，中间省略，见 BodyBuf）；要看完整正文时
- * 打开「完整捕获」（setFullCapture），此后不再截断。
+ * 打开「记录完整请求内容」（setFullCapture），此后不再截断。
  *
  * 回调在请求的同步路径上：事件回调是被同步调用的，所以这里只做「复制字节 + 计数」，
  * 绝不 await、绝不抛错（抛出去会连累正常请求）。
@@ -29,9 +29,21 @@
 
 import { subscribe } from "node:diagnostics_channel";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
-import { appendRecord, readRecord, LOG_DIR_REL, absOf, listFiles, TrafficLogError, type LogLoc } from "./traffic-log";
+import {
+    appendRecord,
+    readRecord,
+    LOG_DIR_REL,
+    absOf,
+    listFiles,
+    listDates,
+    queryRecords,
+    TrafficLogError,
+    type LogLoc,
+    type QueryOpts,
+    type QueryResult,
+} from "./traffic-log";
 
-export { TrafficLogError, type LogLoc };
+export { TrafficLogError, type LogLoc, type QueryOpts, type QueryResult };
 
 const CH_CREATE = "undici:request:create";
 const CH_REQ_CHUNK = "undici:request:bodyChunkSent";
@@ -45,7 +57,7 @@ const CAP_DEFAULT = 500;
 /**
  * 正文保留上限（首尾法）：超长时保留开头一段 + 结尾一段，中间丢掉。
  * 开头固定 {@link HEAD_BYTES} 字节，结尾保留「总量 - 开头」那么多（只留最后一段），
- * 两者相加 = {@link BODY_TOTAL_BYTES}。开启「完整捕获」后不截断，全留。
+ * 两者相加 = {@link BODY_TOTAL_BYTES}。开启「记录完整请求内容」后不截断，全留。
  */
 const HEAD_BYTES = 8 * 1024;
 const BODY_TOTAL_BYTES = 24 * 1024;
@@ -101,7 +113,7 @@ export interface TrafficRecord {
     reqBody: BodyCapture | null;
     resHeaders: Record<string, string>;
     resBody: BodyCapture | null;
-    /** 未捕获响应正文时的说明（流式 / 成功未录制 / 过大未解压） */
+    /** 未捕获响应正文时的说明（流式 / 成功响应未保留正文 / 过大未解压） */
     resNote: string | null;
     traceId: string | null;
     err: string | null;
@@ -121,7 +133,7 @@ export interface RunMeta {
 }
 
 export interface TrafficSnapshot {
-    /** 是否「完整捕获」（正文不截断）；默认 false */
+    /** 是否「记录完整请求内容」（正文不截断）；默认 false */
     fullCapture: boolean;
     /** 内存里最多留多少条 */
     cap: number;
@@ -199,7 +211,7 @@ function decodeBody(buf: Buffer, encoding: string): string {
  * 正文累积器：边收边留，内存有界。
  *
  * 默认（截断）只留「开头固定一段 + 结尾固定一段」，中间直接丢；再大的正文也只占
- * BODY_TOTAL_BYTES 左右。full = true（完整捕获）时不丢，全留。
+ * BODY_TOTAL_BYTES 左右。full = true（记录完整请求内容）时不丢，全留。
  * 响应体若声明了 content-encoding（压缩），必须整段收到才能解压，所以这时按 full 收，
  * 但带上限 MAX_DECOMPRESS_BYTES：超过就不留了，免得为解压攒一大块内存。
  */
@@ -262,14 +274,41 @@ class BodyBuf {
             return { head: text, tail: "", headBytes: n, tailBytes: 0, totalBytes: n, truncated: false };
         }
         return {
-            head: Buffer.concat(this.headParts).toString("utf8"),
-            tail: Buffer.concat(this.tailParts).toString("utf8"),
+            head: utf8Head(Buffer.concat(this.headParts)),
+            tail: utf8Tail(Buffer.concat(this.tailParts)),
             headBytes: this.headLen,
             tailBytes: this.tailLen,
             totalBytes: this.total,
             truncated: true,
         };
     }
+}
+
+/** 让一段按字节截出来的正文不以「半个多字节字符」结尾（丢掉末尾那个不完整字符） */
+function utf8Head(buf: Buffer): string {
+    let i = buf.length - 1;
+    let back = 0;
+    while (i >= 0 && (buf[i]! & 0xc0) === 0x80 && back < 3) {
+        i--;
+        back++;
+    }
+    let end = buf.length;
+    if (i >= 0) {
+        const lead = buf[i]!;
+        let need = 1;
+        if ((lead & 0xe0) === 0xc0) need = 2;
+        else if ((lead & 0xf0) === 0xe0) need = 3;
+        else if ((lead & 0xf8) === 0xf0) need = 4;
+        if (i + need > buf.length) end = i; // 末尾字符不完整 → 丢掉
+    }
+    return buf.subarray(0, end).toString("utf8");
+}
+
+/** 让一段按字节截出来的正文不从「半个多字节字符」中间开始（跳过开头的续字节） */
+function utf8Tail(buf: Buffer): string {
+    let start = 0;
+    while (start < buf.length && (buf[start]! & 0xc0) === 0x80) start++;
+    return buf.subarray(start).toString("utf8");
 }
 
 function originOf(url: string): string {
@@ -377,16 +416,31 @@ class Traffic {
     }
 
     /**
-     * 按位置随机读一条落盘记录（界面「打开磁盘上的本条」用）。
+     * 按位置随机读一条落盘记录。
      * 文件失效 / 版本不符 → 抛 TrafficLogError，界面直接显示原因。
      */
-    readLog(loc: LogLoc): Record<string, unknown> {
+    readLog(loc: Pick<LogLoc, "file" | "offset" | "len">): Record<string, unknown> {
         return readRecord(loc);
     }
 
-    /** 现有日志文件清单（清理界面将来用） */
+    /** 按条件查磁盘日志（流量页的数据源：全文 / 状态 / 方法 / 日期） */
+    query(opts: QueryOpts): QueryResult {
+        return queryRecords(opts);
+    }
+
+    /** 现有日志文件清单（相对 DIY_HOME） */
     listLogFiles(): string[] {
         return listFiles();
+    }
+
+    /** 日志里出现过的日期（新的在前） */
+    listLogDates(): string[] {
+        return listDates();
+    }
+
+    /** 某个日志文件的绝对路径（界面「打开文件位置」用） */
+    absLogFile(file: string): string {
+        return absOf(file);
     }
 
     /** 日志目录绝对路径（将来打开目录用） */
@@ -545,7 +599,7 @@ class Traffic {
         this.notify();
     }
 
-    /** 完整捕获：开 = 正文不再截断（默认关）。关掉不影响已经记下的条。 */
+    /** 记录完整请求内容：开 = 正文不再截断（默认关）。关掉不影响已经记下的条。 */
     setFullCapture(on: boolean): void {
         this.fullCapture = on;
         this.notify();
