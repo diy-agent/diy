@@ -57,6 +57,7 @@ import {
     seekWindowStart,
 } from "./local-ops-seek";
 import { appendAudit } from "./agent-audit";
+import { opsFeed } from "./ops-feed";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
 import {
@@ -1109,16 +1110,26 @@ export class LocalAgentManager {
         return id;
     }
 
-    /** op 即传即落的落盘函数（存储 = 传输）：与 chat 内联的那份同行为，供排队回执复用 */
+    /**
+     * op 即传即落的落盘函数（存储 = 传输）：chat / 排队回执 / 加载自愈**共用的唯一落盘点**。
+     *
+     * 【为什么收敛成一处】落盘与广播必须成对（##307）：写侧 publish 让订阅方（UI 各窗口、
+     * 其他 agent）即时看到增量，而 **publish 只能在 appendFileSync 成功之后** —— 落盘失败
+     * 还广播，订阅侧水位就会超前于盘上文件，此后一切按行号的补发/去重全错。
+     * 三份各自 append 的实现只要有一处漏 publish，症状就是「该来源的 op UI 永远看不见」，
+     * 且只在特定路径（排队回执 / 崩溃自愈）复现 —— 所以只留这一份。
+     */
     private opsSink(taskUri: string): (op: Op) => void {
         const fp = opsFile(taskUri);
         return (op) => {
             try {
                 appendFileSync(fp, `${JSON.stringify(op)}\n`, "utf-8");
             } catch (e) {
-                // 落盘失败不阻断流，但必须出声（否则丢行不可观测）
+                // 落盘失败不阻断流，但必须出声（否则丢行不可观测）；**不 publish**（水位不许超前盘）
                 console.error(`[local-agent] ops 落盘失败 ${fp}:`, e);
+                return;
             }
+            opsFeed.publish(taskUri, [op]);
         };
     }
 
@@ -1162,14 +1173,8 @@ export class LocalAgentManager {
     }
 
     private convergeOnLoad(taskUri: string, s: LocalSession): void {
-        const fp = opsFile(taskUri);
-        const sink = (op: Op) => {
-            try {
-                appendFileSync(fp, `${JSON.stringify(op)}\n`, "utf-8");
-            } catch (e) {
-                console.error(`[local-agent] 加载自愈落盘失败 ${fp}:`, e);
-            }
-        };
+        // 自愈补写的 op 也要走同一个 sink：它们同样是「会话内容」，UI 必须即时看见
+        const sink = this.opsSink(taskUri);
         // 先补 tool 的业务终态（patch + stop），再补剩余结构开口（stop）—— 前者已 stop 的块
         // 不会被后者重复处理（danglingStopPatches 只挑未 stop 的）。
         for (const op of this.healResidualOps(s)) {
@@ -1895,6 +1900,9 @@ export class LocalAgentManager {
                 }
             }
         }
+        // 会话内容已从盘上消失 → 换发 epoch、水位归零，并通知所有订阅方重建块树。
+        // 少了它，订阅方拿着旧 since 会以为「新写入落进了旧会话」（epoch 不变 = 同一本史书）。
+        opsFeed.reset(taskUri);
         // 内存态无论如何都丢：留着它才是真的不一致（盘上文件仍在 → 重进会重新加载）
         this.sessions.delete(taskUri);
         // 折叠缓存同理：日志已删，留着就是读一份不存在的文件。
@@ -1967,16 +1975,9 @@ export class LocalAgentManager {
         sess.running = ctrl;
         let done = false;
         try {
-            const fp = opsFile(taskUri);
-            // 落盘与投递解耦：sink 在 emission 时直接写文件，即使消费端提前断开，日志也不丢尾
-            const sink = (op: Op) => {
-                try {
-                    appendFileSync(fp, `${JSON.stringify(op)}\n`, "utf-8");
-                } catch (e) {
-                    // 落盘失败不阻断流，但必须出声（否则丢行不可观测）
-                    console.error(`[local-agent] ops 落盘失败 ${fp}:`, e);
-                }
-            };
+            // 落盘与投递解耦：sink 在 emission 时直接写文件并广播，即使消费端提前断开，
+            // 日志也不丢尾、别的窗口也照样看得见（唯一落盘点，见 opsSink 头注）
+            const sink = this.opsSink(taskUri);
             // ── 先收敛上一轮遗留：tool 的业务终态 + 结构开口（写进 ops，而不是投影时现造）──
             // 不收敛的后果：每次重建历史都现场合成一句「未完成→请重试」，agent 重载会话后
             // 会把被截断的命令再跑一次（任务 92 的「一对话就自杀」）。落盘后它变成已结束的

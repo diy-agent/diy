@@ -1120,13 +1120,30 @@ function PartRow(props: {
  * "还有 N 条插话没投出去"这种关键信息。
  */
 function ErrorBox(props: { node: BlockNode }) {
+    const source = str(props.node.attrs.source);
+    // 排队回执（`meta.source === "queue"`，##306）走 error 块**只是通道选择**
+    // （error 块不进 LLM 投影），语义却是**正常态**——"生成中，这条已排队"。
+    // 画成红色 + ❌ 会被读成失败：##307 让回执全体窗口可见后误读面更大，故按 source 降级成普通提示条。
+    // （`meta` 由 BlockStore 摊平进块字段，故这里读的是 `attrs.source`。）
+    if (source === "queue") {
+        return (
+            <div
+                class="rounded-lg border border-base-300 bg-base-200/60 px-3 py-2 text-body text-base-content/70 whitespace-pre-wrap"
+                data-block-id={props.node.id}
+                data-block-tag="error"
+                data-source="queue"
+            >
+                {`⏳ ${str(props.node.attrs.message)}`}
+            </div>
+        );
+    }
     return (
         <div
             class="rounded-lg border border-error/40 bg-error/10 px-3 py-2 text-body text-error whitespace-pre-wrap"
             data-block-id={props.node.id}
             data-block-tag="error"
         >
-            {`❌ [${str(props.node.attrs.source)}] ${str(props.node.attrs.message)}`}
+            {`❌ [${source}] ${str(props.node.attrs.message)}`}
         </div>
     );
 }
@@ -1142,7 +1159,8 @@ function countTags(turn: BlockNode): { step: number; tool: number; think: number
             if (c.tag === "step") step++;
             else if (c.tag === "tool") tool++;
             else if (c.tag === "think") think++;
-            else if (c.tag === "error") error++;
+            // 排队回执是正常态，不计入"出过事"的红 ✗ 计数（见 ErrorBox 的降级判据）
+            else if (c.tag === "error" && str(c.attrs.source) !== "queue") error++;
             walk(c);
         }
     };

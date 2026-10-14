@@ -21,11 +21,13 @@ import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "./notificationStore";
 import { BlockStore, toForest, type BlockNode, type Op } from "../../main/services/local-blocks";
+import type { OpsFrame } from "../../shared/ops-frame";
 // 插话队列项的类型在 core/drafts（与草稿同文件存储）；这里只要类型，故 type-only import
 //（不会把 node:fs 依赖带进 renderer）
 import type { SteerItem, SteerMode } from "../../main/core/drafts";
 import { personaStore } from "./personaStore";
 import { sessionView, type SessionView } from "../../shared/session-view";
+import { StopTicker } from "../lib/stop-ticker";
 // 用量账本类型：与 main 落盘、CLI 报表、看板共用同一份形状（shared/usage 是唯一口径处）
 import type { StepUsageRecord } from "../../shared/usage";
 import type { FlatCompactPolicy, HeadTailPolicy } from "../../shared/context/compaction";
@@ -94,6 +96,15 @@ interface TaskState {
     /** 历史加载在途 promise：open() 并发去重（见 open 内注释） */
     loading?: Promise<void>;
     /**
+     * op 增量订阅的**已应用到第几行**（ops.jsonl 行号，1-based；0 = 尚无）。
+     * 见 subscribeOps 头注：首载用 history（折叠流），增量用 opsWatch，两者按 seq 对齐。
+     */
+    appliedSeq: number;
+    /** 已见会话代次（main 侧 clear 会换发 → 收到不符的帧说明历史被清空，须重建） */
+    epoch: number;
+    /** op 订阅的取消句柄（null = 未订阅）。切任务时取消，回来时按水位补发追平 */
+    opsAbort: AbortController | null;
+    /**
      * 逐步用量账本（`<key>.usage.jsonl` 的结构化镜像）。
      * 权威在盘上；这里是快照，打开会话时拉一次，轮次收尾（含别人的轮次）时再拉一次。
      * 对话流页脚**不依赖它**（页脚用 turn 块属性，实时就有）——它服务于明细与看板。
@@ -132,6 +143,7 @@ function stateFor(taskUri: string): TaskState {
             active, setActive, stopRequestedAt, setStopRequestedAt, abort: null,
             error, setError, steers, setSteers, usage, setUsage, steerSeq: 0, steerSettled: 0,
             scroll: 0, tab: "local", detailScroll: 0,
+            appliedSeq: 0, epoch: -1, opsAbort: null,
         };
         states.set(taskUri, s);
     }
@@ -273,15 +285,42 @@ function flushRefresh(st: TaskState) {
 //
 // 为什么必须问 main：renderer 拿不到"别人正在跑"这件事 —— 别人的 op 不经过我们这条流，
 // 本地 running 永远是 false，于是正在跑的轮次就被当成中断的历史（任务 194 现象一）。
-// 代价是轮询：main 侧目前没有"轮次开始/结束"的元事件通路（那是 180 的设计题），
-// 在没有它之前，UI 至少不该把别人正在跑的轮次说成"流中断"。间隔克制（2s），
-// 且只在会话页挂载期间运行（watch 的 stop 由组件 cleanup 调用）。
+// ##307 起不再轮询：轮次边界 op 到达时对一次 main 真值即可（见 applyOpsFrame）。
 
-/** main 运行态轮询间隔（会话页挂载期间） */
-const ACTIVE_POLL_MS = 2000;
-
-/** 判据用的"现在"：轮询每拍推进一次，让停止宽限期（shared/session-view.ts）能自己过期 */
+/** 判据用的"现在"：让停止宽限期（shared/session-view.ts）能自己过期 */
 const [nowMs, setNowMs] = createSignal(Date.now());
+
+/**
+ * 「停止收尾中」的时钟推进器（##307 review2 R2）。
+ *
+ * 删掉 2s 轮询后 nowMs 只在「refreshActive 返回 / cancel」前进；main 卡在工具里（不发 op、
+ * 不落轮次边界）时它会冻住 → stoppingStuck 永假 → 「强制中断」出口成死代码（本地说"还在
+ * 停止"，服务端也仍在跑，按钮却永不可点）。故**仅在**有任务处于停止收尾时保留一节克制的
+ * tick，只推进 nowMs；无任务在停止即停表（不空转）。逻辑见 lib/stop-ticker.ts。
+ */
+const STOP_TICK_MS = 500;
+const stopTicker = new StopTicker(() => setNowMs(Date.now()), { intervalMs: STOP_TICK_MS });
+
+/** 是否有任务处于「已请求停止」（判据同 session-view 的 requested） */
+function anyTaskStopping(): boolean {
+    for (const st of states.values()) if (st.stopRequestedAt() !== null) return true;
+    return false;
+}
+
+/** 对齐停止时钟（cancel / refreshActive 清掉停止态 / 页面卸载时调用）。幂等。 */
+function syncStopTicker(): void {
+    stopTicker.sync(anyTaskStopping());
+}
+
+/**
+ * `stopRequestedAt` 的**唯一写点**：改值后立刻对齐停止时钟（幂等）。
+ * 收口在此，杜绝「某处清了停止态却忘了同步 ticker」的漂移（review3 R6：
+ * send 清停态未同步、watch/open 起始未同步，都会让 ticker 停在错的状态）。
+ */
+function setStopRequested(st: TaskState, v: number | null): void {
+    st.setStopRequestedAt(v);
+    syncStopTicker();
+}
 
 /**
  * 重放 ops 重建块树。
@@ -355,7 +394,10 @@ async function refreshActive(taskUri: string): Promise<void> {
         const active = (r?.active ?? []).some((t) => t.taskUri === taskUri);
         st.setActive(active);
         // main 说这轮已收尾 → 停止请求使命结束（否则宽限期后会把"停止中"又说成"正在生成"）
-        if (!active) st.setStopRequestedAt(null);
+        if (!active) {
+            // main 已收尾 → 停止态结束（helper 内同步对齐时钟）
+            setStopRequested(st, null);
+        }
         // 下降沿：main 刚收尾一轮 —— 它的 op 我这条流收不到，主动重放让树追上终态；
         // 用量账本同理（别人跑的轮次也要在看板/明细里看见，不能只有自己发的才算数）
         if (was && !active) {
@@ -397,11 +439,27 @@ async function refreshUsage(taskUri: string): Promise<void> {
     }
 }
 
-/** 会话页挂载期间持续对真值；返回停止函数（组件 cleanup 调用） */
+/**
+ * 会话页挂载期间对一次 main 真值；返回清理函数（组件 cleanup 调用）。
+ *
+ * ##307：原来的 2s 轮询已删。「别人正在跑」这件事现在由 **op 增量事件**发现 ——
+ * 轮次边界 op 一到就 `refreshActive` 对一次真值（见 applyOpsFrame），不再有"最多迟 2s"的窗口，
+ * 也不再有空转的定时器。清理函数保留（组件契约不变）：退订 + 对齐停止时钟。
+ */
 function watch(taskUri: string): () => void {
+    // 起始对齐停止时钟（review3 R6）：切走再切回时，若该 task 仍在停止收尾，必须重新开表，
+    // 否则 now 冻住 → stoppingStuck 恒假 → 「强制中断」出口再次成死代码。
+    syncStopTicker();
     void refreshActive(taskUri);
-    const timer = setInterval(() => void refreshActive(taskUri), ACTIVE_POLL_MS);
-    return () => clearInterval(timer);
+    // 组件卸载（切走会话页 / 页面关闭）时退订，别让订阅悬着 ——
+    // 悬着的订阅在页销毁时会以「Client disposed」形式炸日志（renderer 已死，流才断）
+    return () => {
+        unsubscribeOps(taskUri);
+        // 页面卸载（切走 / 关闭）：本窗口不再显示停止态 → 停表（避免离开后 ticker 空转）。
+        // 停止态本身留在 state 里；下次进入由 watch()/open() 起始的 syncStopTicker() 重新开表
+        // （review3 R6：只停不开是缺陷，起始补 sync 即修）。
+        stopTicker.stop();
+    };
 }
 
 /** 运行态视图（判据全在 shared/session-view.ts，这里只把三个信号喂进去） */
@@ -502,22 +560,206 @@ async function refreshSteers(taskUri: string): Promise<void> {
     }
 }
 
+// ─── op 增量订阅（##307：写侧即推，取代 2s 轮询 / 轮末重放） ─────────────
+//
+// 帧形状与契约见 main 的 services/ops-feed.ts 与 api-def 的 opsWatch / opsWatermark。
+//
+// 时序（必须按此序，否则会漏掉「首载期间」写入的 op）：
+//   ① 取水位 wm = {epoch, seq}（ops.jsonl 当前行号）；
+//   ② 拉 history（**折叠流**，大会话快路径）fold 成块树 —— 它覆盖范围 **≥ wm.seq**
+//      （main 侧同步读文件，且①在②之前发起）；
+//   ③ `appliedSeq = wm.seq`，建 opsWatch(since=wm.seq) → main 先补发 `(wm.seq, 现在]`，再接实时。
+// ②③ 之间与补发段的重复由 seq 去重吸收；即便漏掉去重，`BlockStore.apply` 本身幂等
+//（重复 start / patch / stop 都是 no-op），所以这条路径「重不重」都不出错，只是别重复算。
+
+/** 取会话 op 流水位（订阅起点的校准值） */
+async function fetchWatermark(taskUri: string): Promise<{ epoch: number; seq: number }> {
+    try {
+        return (await diyService.diy.agent.local.opsWatermark({ taskUri })) as { epoch: number; seq: number };
+    } catch (e) {
+        // 拿不到水位不阻断会话：退化为「从 0 起订阅」—— 会全量补发（代价大但正确），
+        // epoch 用 -1 表示「未知」，首帧 hello 会带回真值并触发一次重建校准。
+        console.warn(`[localChat] op 水位读取失败 ${taskUri}:`, e);
+        return { epoch: -1, seq: 0 };
+    }
+}
+
+/**
+ * 建立 op 增量订阅（**幂等**：已在订阅则直接返回）。
+ *
+ * 订阅句柄挂在 state 上，切任务时由 unsubscribeOps 取消 —— 后台任务的 op 不再进本窗口
+ * （用户看不到，不必算），切回来时按 `appliedSeq` 水位补发追平（main 侧 subscribe 的补发段）。
+ */
+function ensureOpsSubscription(taskUri: string): void {
+    const st = stateFor(taskUri);
+    if (st.opsAbort) return;
+    const ctrl = new AbortController();
+    st.opsAbort = ctrl;
+    const since = st.appliedSeq;
+    const epoch = st.epoch;
+    void (async () => {
+        try {
+            const stream = await diyService.diy.agent.local.opsWatch(
+                { taskUri, since, epoch },
+                { signal: ctrl.signal },
+            );
+            for await (const frame of stream) {
+                // 已被重订（补洞）或退订：本流作废，别再处理它可能残留的帧
+                //（否则会拿旧 since 的帧去撞新的 appliedSeq，误报缺口）
+                if (st.opsAbort !== ctrl) break;
+                applyOpsFrame(taskUri, frame as OpsFrame);
+            }
+        } catch (e) {
+            // 正常退订（abort）与页面销毁（client disposed）都不是故障，别当异常刷日志
+            const msg = e instanceof Error ? e.message : String(e);
+            if (!ctrl.signal.aborted && !/disposed|abort/i.test(msg)) {
+                console.warn(`[localChat] op 订阅中断 ${taskUri}，将退避重连:`, e);
+                // ##307 review2 R3：非主动退订的中断若就此作罢，UI 会**静默冻结** ——
+                // reload 的触发源全是订阅事件，旧实现靠 2s 轮询兜底而轮询已删。
+                // 退避重订：从 appliedSeq 补发，断线期间的 op 不丢。
+                scheduleOpsReconnect(taskUri);
+            }
+        } finally {
+            if (st.opsAbort === ctrl) st.opsAbort = null;
+        }
+    })();
+}
+
+/** op 订阅的退避重连句柄（每 task 至多一个在途重连） */
+const opsReconnectAt = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** 退避重连间隔（ms）：非主动中断后按此重订；再次失败会再排下一次 */
+const OPS_RECONNECT_MS = 1000;
+
+/** 安排一次退避重连（幂等：已有在途则不重复排） */
+function scheduleOpsReconnect(taskUri: string): void {
+    if (opsReconnectAt.has(taskUri)) return;
+    const t = setTimeout(() => {
+        opsReconnectAt.delete(taskUri);
+        const st = states.get(taskUri);
+        if (!st || st.opsAbort) return; // 已退订（切任务）/ 已重订 → 放弃这次
+        ensureOpsSubscription(taskUri);
+    }, OPS_RECONNECT_MS);
+    opsReconnectAt.set(taskUri, t);
+}
+
+/** 重订当前订阅（补洞用）：断旧流、按 appliedSeq 重建（main 侧连续补发缺口） */
+function resubscribeOps(taskUri: string): void {
+    const st = states.get(taskUri);
+    if (!st) return;
+    const ctrl = st.opsAbort;
+    st.opsAbort = null; // 先清，让 ensure 能重建（旧流的 finally 因句柄已换而不会误清新句柄）
+    ctrl?.abort();
+    ensureOpsSubscription(taskUri);
+}
+
+/** 退订（切任务 / 清空时）。幂等。 */
+function unsubscribeOps(taskUri: string): void {
+    const st = states.get(taskUri);
+    if (!st) return;
+    const t = opsReconnectAt.get(taskUri);
+    if (t !== undefined) {
+        clearTimeout(t);
+        opsReconnectAt.delete(taskUri);
+    }
+    st.opsAbort?.abort();
+    st.opsAbort = null;
+}
+
+/** 落地一帧增量（判据全在此处，见上方时序注） */
+function applyOpsFrame(taskUri: string, frame: OpsFrame): void {
+    const st = states.get(taskUri);
+    if (!st) return;
+    if (frame.kind === "hello") {
+        // 校准代次：epoch 不符时 main 会在本帧后紧跟一帧 reset（见 ops-feed.subscribe）
+        st.epoch = frame.epoch;
+        return;
+    }
+    if (frame.kind === "reset") {
+        // 会话被清空（clear）：块树整棵作废，改由权威 history 重建（文件此刻是空/新内容）
+        st.segments = [];
+        st.tailCursor = null;
+        st.setHasMore(false);
+        st.appliedSeq = 0;
+        st.epoch = frame.epoch;
+        st.loaded = true;
+        flushRefresh(st);
+        void reload(taskUri);
+        return;
+    }
+    // batch
+    if (frame.epoch !== st.epoch) {
+        // 代次不符（会话在订阅期间被清空过）→ 当前块树属于旧史书，丢掉重来
+        st.segments = [];
+        st.tailCursor = null;
+        st.setHasMore(false);
+        st.appliedSeq = 0;
+        st.epoch = frame.epoch;
+    }
+    let ops = frame.ops;
+    if (frame.fromSeq <= st.appliedSeq) {
+        const skip = st.appliedSeq - frame.fromSeq + 1;
+        if (skip >= ops.length) return; // 整批都已在树里（补发段/自发流的重叠）
+        ops = ops.slice(skip);
+    } else if (frame.fromSeq > st.appliedSeq + 1) {
+        // 洞：缺的前文可能正是本批 patch/delta 的目标块的 start —— 按序并入会落成「未知块」。
+        // 不猜、也不依赖可能被 running/loading 跳过的 reload（review2 R4）：abort 当前流、
+        // 按 appliedSeq 重订，让 main 的 subscribe 把 (appliedSeq, now] **连续**补一遍
+        // （补发是同步读文件，无跳过条件）。本批丢弃（重订后连同缺口一起重新送达），
+        // 故**不推进** appliedSeq。
+        console.warn(`[localChat] op 增量出现缺口 ${taskUri}: applied=${st.appliedSeq} got=${frame.fromSeq}，重订补发`);
+        resubscribeOps(taskUri);
+        return;
+    }
+    let sawTurnBoundary = false;
+    // 增量 op 落在**末段**（尾部窗口所在的那一段）：它接在 loadHistory 的窗口之后，
+    // 与流式 op 同一落点（tailForWrite），故已有段的块对象引用不动（任务 293 分段语义）。
+    const seg = tailForWrite(st);
+    for (const op of ops) {
+        seg.store.apply(op);
+        if (op.op === "start" && op.kind === "turn") sawTurnBoundary = true;
+        // stop 不带 kind：向块树查该 id 是不是轮次块（apply 后块仍在，仅 stopped 置位）
+        else if (op.op === "stop" && seg.store.blocks.get(op.id)?.kind === "turn") sawTurnBoundary = true;
+    }
+    st.appliedSeq = frame.fromSeq + frame.ops.length - 1;
+    scheduleRefresh(st);
+    // 轮次边界 → 立刻对一次真值（原 2s 轮询的职责，现在由事件驱动）。
+    // 边界是稀有事件（一轮仅 start/stop 各一次），**不经节流**：短轮（<400ms）的 stop 边界
+    // 若被节流吞掉，「别人在跑」会滞留到下一次活动（review3 R7）。
+    if (sawTurnBoundary) void refreshActive(taskUri);
+}
+
 async function open(taskUri: string) {
+    // 切走旧会话：取消它的订阅（回来时按水位补发追平 —— 见 ensureOpsSubscription）
+    const prev = currentUri();
+    if (prev && prev !== taskUri) unsubscribeOps(prev);
     setCurrentUri(taskUri);
     const st = stateFor(taskUri);
-    void refreshActive(taskUri); // 进入会话立刻对一次真值，不等轮询第一拍
+    syncStopTicker(); // 进入会话先对齐停止时钟（切回仍在收尾的任务需重新开表，review3 R6）
+    void refreshActive(taskUri); // 进入会话立刻对一次真值
     // 队列与历史独立：loaded 与否都要拉（横条反映的是"当前待投递"，与历史加载进度无关）
     void refreshSteers(taskUri);
     // 用量账本同理独立：看板/明细要的是"这个会话花过多少"，与块树加载进度无关
     void refreshUsage(taskUri);
-    if (st.loaded) return;
+    if (st.loading) return st.loading;
+    if (st.loaded) {
+        // 已加载过（含切任务回来）：块树已在，只需确保增量订阅在（幂等）
+        ensureOpsSubscription(taskUri);
+        return;
+    }
     // 并发去重（必需）：LocalChatPage 首挂时 onMount 与 uri 切换 effect 都会调 open，
     // 而 loaded 只在 await 之后置位 —— 没有这道闸门，两次 history 会被先后 fold 进同一个
     // store，表现为「每条消息内容整体重复一遍」。
     // 失败时清掉在途标记（不置 loaded），保留「下次进入自动重试」的既有语义。
-    if (st.loading) return st.loading;
     st.setError(null);
-    st.loading = loadHistory(st, taskUri).finally(() => {
+    st.loading = (async () => {
+        // ① 水位 → ② history（覆盖 ≥ 水位）→ ③ 订阅（补发 ≤ 水位之后的）
+        const wm = await fetchWatermark(taskUri);
+        await loadHistory(st, taskUri);
+        st.appliedSeq = wm.seq;
+        st.epoch = wm.epoch;
+        ensureOpsSubscription(taskUri);
+    })().finally(() => {
         st.loading = undefined;
     });
     await st.loading;
@@ -538,7 +780,7 @@ async function send(taskUri: string, text: string): Promise<boolean> {
     if (!msg || !taskUri || st.running()) return false;
     st.setError(null);
     st.setRunning(true);
-    st.setStopRequestedAt(null);
+    setStopRequested(st, null); // 新一轮开始 → 清停止态（helper 同步对齐 ticker，review3 R6）
     const ctrl = new AbortController();
     st.abort = ctrl;
     try {
@@ -675,8 +917,8 @@ async function cancelSteer(taskUri: string, id: string): Promise<void> {
  */
 async function cancel(taskUri: string) {
     const st = stateFor(taskUri);
-    st.setStopRequestedAt(Date.now());
     setNowMs(Date.now());
+    setStopRequested(st, Date.now()); // 进入停止收尾 → 开表推进 now（helper 同步对齐，review3 R6）
     st.abort?.abort();
     try {
         await diyService.diy.agent.local.cancel({ taskUri });
@@ -708,6 +950,7 @@ async function clear(taskUri: string) {
     st.segments = []; // 前缀守卫一并归零：新会话从空开始（下次并入必走重建那条）
     st.tailCursor = null;
     st.setHasMore(false);
+    st.appliedSeq = 0; // 订阅游标归零（main 侧同一次 clear 也会 reset：epoch 换发 + 水位归零）
     st.loaded = true; // 文件已删，不必重拉
     st.setError(null);
     st.setSteers([]); // 会话已清，排队中的插话也被 main 一并清掉（见 local-agent 的 clear()）

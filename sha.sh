@@ -83,11 +83,11 @@ fix() {
   run npx oxfmt --write pkgs.ts/
   run npx oxlint --fix pkgs.ts/
 }
-# 全部测试：两包快速单测 + 构建 + diy-app 意图测试（起隔离 Electron，最慢放最后）
+# 全部测试：各包 test 子命令（diy-app 含意图测试，起隔离 Electron，最慢放最后）
 test() {
   _ws_run command ./sha.sh test
 }
-# 编程中快速验证：两包单测，不构建、不起 Electron
+# 编程中快速验证：各包单测，不构建、不起 Electron
 test-unit() {  _ws_run command ./sha.sh test-unit; }
 
 _vendors_run() {

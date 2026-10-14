@@ -17,6 +17,9 @@ import type { Op } from "../../src/main/services/local-blocks";
 const h = vi.hoisted(() => ({
     historyWindow: vi.fn(),
     historyOlder: vi.fn(),
+    // ##307：open() 现在还要取水位 + 建 op 增量订阅；本用例只关心分页，给空流即可
+    opsWatermark: vi.fn(),
+    opsWatch: vi.fn(),
     running: vi.fn(),
     usage: vi.fn(),
     steerList: vi.fn(),
@@ -30,6 +33,8 @@ vi.mock("../../src/renderer_solid/lib/rpc", () => ({
                 local: {
                     historyWindow: h.historyWindow,
                     historyOlder: h.historyOlder,
+                    opsWatermark: h.opsWatermark,
+                    opsWatch: h.opsWatch,
                     running: h.running,
                     usage: h.usage,
                     steer: { list: h.steerList },
@@ -86,9 +91,14 @@ beforeEach(() => {
     h.historyWindow.mockReset();
     h.historyOlder.mockReset();
     h.running.mockReset();
+    h.opsWatermark.mockReset();
+    h.opsWatch.mockReset();
     h.usage.mockReset();
     h.steerList.mockReset();
     h.toasts.length = 0;
+    h.opsWatermark.mockResolvedValue({ epoch: 0, seq: 0 });
+    // 空 async 迭代：订阅建立后立刻正常收尾（无帧、无中断 ⇒ 不触发退避重连）
+    h.opsWatch.mockResolvedValue({ async *[Symbol.asyncIterator]() {} });
     h.usage.mockResolvedValue([]);
     h.steerList.mockResolvedValue([]);
     h.running.mockResolvedValue({ active: [] });
