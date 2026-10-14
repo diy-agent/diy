@@ -8,7 +8,7 @@
 // 一条转移 = 一条 Event；**打回 = 走一条 `bounce` 边 = 目标节点再驻留一次**（`visit.seq` 递增），
 // **不新建节点**（##166 §14.2 推论 2）。边的 `kind` 只记进 `Visit`，不改结构。
 //
-// 本包只做「定义 + 位置」，**不做 guard 求值**（归 ##315）、**不做参数校验**（归 ##316）。
+// 本文件只做「位置」：**不做 guard 求值**（在 `eval.ts` + `execute.ts`）、**不做参数校验**（归 ##316）。
 
 import type { Event } from '@diy/talk';
 import type { EdgeKind, WorkflowDef } from './define';

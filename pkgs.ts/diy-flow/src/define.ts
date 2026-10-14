@@ -69,7 +69,7 @@ export interface NodeDef<Id extends string = string> {
 export interface EdgeDef<Id extends string = string> {
     readonly from: Id;
     readonly to: Id;
-    /** 何时走这条边（同样分可观测 / 不可观测；本任务不求值，归 ##315） */
+    /** 何时走这条边（与 `guard` 同一套前缀规则；系统节点多出口时由 `selectEdge` 用它消歧，缺失 = 恒真） */
     readonly when?: string;
     readonly kind: EdgeKind;
 }
@@ -265,7 +265,7 @@ export function parseWorkflow<Id extends string = string>(value: unknown, path =
         }
         const key = `${e.from}\u0000${e.to}`;
         if (pairs.has(key)) {
-            throw new FlowError('duplicate-edge', `同一条 (${e.from} → ${e.to}) 出现多条边（无 guard 求值无法确定走哪条）`, `${path}.edges[${i}]`);
+            throw new FlowError('duplicate-edge', `同一条 (${e.from} → ${e.to}) 出现多条边（「走哪条」必须唯一：消歧只看 kind + when）`, `${path}.edges[${i}]`);
         }
         pairs.add(key);
     });
