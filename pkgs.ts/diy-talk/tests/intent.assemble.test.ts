@@ -10,7 +10,8 @@
 //       · changes-only（文档修订 + 批注线）
 //   A4  存结构、装配时渲染（结论 13）：输入是 Reaction / Event 结构，装配时才渲染成字符串
 //   A5  窗口 / 摘要是**注入式钩子**：宿主给裁剪函数，内核不自作主张（§五：真正的取舍点）
-//   A6  非法输入一律抛 TalkError（未知策略 / 空 selfId / 源形状非法），绝不静默（rule.loud）
+//   A6  非法输入一律抛 TalkError（未知策略 / 空 selfId / 源形状非法 / window 非函数 / 顶层未知字段），绝不静默（rule.loud）
+//       附：A2「角色最终把关在 role.ts」与 A5「window 是宿主可信代码」是 review1 意见 1/2 的收口测试。
 //
 // 测试风格：以真实讨论形态为素材（群争论线 + 私有过程 + 文档批注线），断言公开 API 行为，不断言实现。
 // ═══════════════════════════════════════════════════════════════
@@ -19,6 +20,7 @@ import { describe, expect, it } from 'vitest';
 import {
     TalkError,
     assemble,
+    assemblyRole,
     createEvent,
     createReaction,
     docRangeAnchor,
@@ -128,6 +130,25 @@ describe('A2 role 铁律（复用 ##312 role.ts，不在本任务重写）', () 
         const full = assemble({ sources: sources(), strategy: 'full', selfId: SELF });
         expect(texts(full).some((t) => t.includes('b 的私有 tool 输出'))).toBe(false);
     });
+
+    it('该不变量不是装配器自创：role.ts 对他人过程同样抛 role-violation，且策略根本看不到它', () => {
+        // 探针 probe5-foreign-trace-guard.mts（review1 意见 1 反驳）：最终把关在 ##312 的 assemblyRole
+        expect(caught(() => assemblyRole({ kind: 'trace', author: 'b', self: SELF })).code).toBe('role-violation');
+        // 即便写一个「全收」策略，也拿不到他人过程 —— 内核已先剔除，故无需、也不存在「放行开关」
+        const seen: string[] = [];
+        assemble({
+            sources: sources(),
+            strategy: {
+                name: 'greedy',
+                selectItem: (item) => {
+                    seen.push(item.content);
+                    return true;
+                },
+            },
+            selfId: SELF,
+        });
+        expect(seen.some((c) => c.includes('b 的私有 tool 输出'))).toBe(false);
+    });
 });
 
 describe('A3 三种内置策略', () => {
@@ -186,6 +207,18 @@ describe('A5 窗口 / 摘要是注入式钩子（##166 §五：真正的取舍�
     it('缺省 window：不裁剪（内核不替宿主做取舍）', () => {
         expect(assemble({ sources: sources(), strategy: 'full', selfId: SELF })).toHaveLength(7);
     });
+
+    it('window 是宿主可信代码：返回值原样成为最终 messages（铁律保证仅覆盖 window 之前）', () => {
+        // review1 意见 2②：Message 只含 role+content，丢失 author/kind 溯源 ⇒ 窗口后无法复核铁律；
+        // 故显式声明边界 —— 装配器「他人发言绝不为 assistant」的保证止于 window 之前。
+        const out = assemble({
+            sources: sources(),
+            strategy: 'full',
+            selfId: SELF,
+            window: () => [{ role: 'assistant', content: '宿主注入的摘要' }],
+        });
+        expect(out).toEqual([{ role: 'assistant', content: '宿主注入的摘要' }]);
+    });
 });
 
 describe('A6 非法输入一律报错（rule.loud）', () => {
@@ -227,6 +260,18 @@ describe('A6 非法输入一律报错（rule.loud）', () => {
         const e = caught(() => assemble({ sources: [], strategy: { name: 'x', selectItem: 1 } as never, selfId: SELF }));
         expect(e.code).toBe('invalid-assembly');
         expect(e.path).toBe('strategy.selectItem');
+    });
+
+    it('window 非函数 → invalid-assembly（不抛原生 TypeError）', () => {
+        const e = caught(() => assemble({ sources: [], strategy: 'full', selfId: SELF, window: 1 as never }));
+        expect(e.code).toBe('invalid-assembly');
+        expect(e.path).toBe('window');
+    });
+
+    it('顶层未知字段 → invalid-assembly（window 误拼成 windo 不再静默失效）', () => {
+        const e = caught(() => assemble({ sources: [], strategy: 'full', selfId: SELF, windo: () => [] } as never));
+        expect(e.code).toBe('invalid-assembly');
+        expect(e.path).toBe('assemble.windo');
     });
 
     it('renderItem 对四类锚点都能给出定位（资料 / 过程前缀）', () => {

@@ -7,6 +7,15 @@
 // 他人的过程产物（tool / thinking）**永不进入装配**（过程私有，不投递）—— 故 `full`
 // 与 `text-only` 的差别是「是否带上**自己的**过程」，绝不是「是否暴露别人的过程」。
 //
+// ⚠️ 需求对齐（review1 意见 1）：这条不变量**不是本装配器自创**，而是 ##312 `role.ts` 的既有契约 ——
+// `assemblyRole({ kind: 'trace', author !== self })` 直接抛 `role-violation`（探针 `probe5-foreign-trace-guard.mts`）。
+// 依据：##166 结论 6「过程私有——自己的 tool/thinking 不强制共享」+ §3.5 表「自己的 tool/thinking … **仅自己可见**」
+// + §七「实践中 tool/thinking 从未流转，只流转结论与探针脚本」。故它落在 role 翻译层（策略看不到），
+// **与 ##166 §3.1 表格「模式 1 … 过程全暴露，像开会各自表演」的字面表述偏离** ——
+// 后者描述的是共享态（存储），非投递态（装配）；「按需检索他人推理」（结论 14）是**档案检索能力**，
+// 不是默认塞入本次 messages[]。若 §四 待决 3「隐私边界」将来放开，须**协调改 role.ts**（新增显式 kind），
+// 不能在装配层私自放行。
+//
 // 边界（结论 13：存结构、装配时渲染）：本包只消费 `Reaction` / `Event` 结构，**在装配时**渲染成
 // 字符串；窗口 / 摘要是**注入式钩子**（宿主给裁剪函数），内核不自作主张（##166 §五：
 // 「上下文窗口裁剪 / 摘要策略是真正的取舍点」）。
@@ -148,7 +157,7 @@ function anchorLabel(anchor: Anchor): string {
     }
 }
 
-/** 模式 1 全量档案：**自己的**过程 + 发言 + 资料，全收 */
+/** 模式 1 全量档案：**自己的**过程 + 发言 + 资料（**他方过程除外**，见文件头需求对齐） */
 export const FULL: AssemblyStrategy = { name: 'full' };
 
 /** 模式 2 去过程：丢掉 tool / thinking（含自己的），保留发言（含 replyTo 寻址）与资料 */
@@ -196,6 +205,12 @@ export function resolveStrategy(strategy: StrategyName | AssemblyStrategy): Asse
 /**
  * 窗口 / 摘要钩子：宿主给裁剪函数，内核不自作主张（##166 §五）。
  * 入参是渲染后的 `Message[]`，返回裁剪（必要时前插摘要消息）后的 `Message[]`。
+ *
+ * ⚠️ 边界（review1 意见 2，选②「显式声明」）：`window` 是**宿主注入的可信代码**，
+ * 其返回值被视为宿主的最终意图、**不再经 `assertRoleAssignments` 复核**。
+ * 故 README「他人发言绝不为 `assistant`」的保证**仅覆盖装配器自身产出**（window 之前）；
+ * 钩子若改写 role，责任在宿主。（窗口后无法复核的原因：`Message` 只含 `role`+`content`，
+ * 已丢失 author/kind 溯源信息；要复核就得让 `Message` 携带溯源，与「输出是纯 `Message[]`」冲突。）
  */
 export type WindowHook = (messages: readonly Message[]) => readonly Message[];
 
@@ -212,6 +227,9 @@ export interface AssembleInput {
     readonly window?: WindowHook;
 }
 
+/** 装配入参的合法顶层键（形状封闭，见 `rejectUnknown`） */
+const ASSEMBLE_KEYS = ['sources', 'strategy', 'selfId', 'window'] as const;
+
 /**
  * 装配：多源 + 投影 + 窗口 → `Message[]`（唯一出口）。
  *
@@ -221,9 +239,14 @@ export interface AssembleInput {
  */
 export function assemble(input: AssembleInput): Message[] {
     if (typeof input !== 'object' || input === null) throw new TalkError(CODE, 'assemble 入参应为对象', 'assemble');
+    // 形状封闭（rule.loud）：顶层未知字段一律拒绝 —— 否则把 `window` 误拼成 `windo` 会静默失效
+    rejectUnknown(input as unknown as Record<string, unknown>, ASSEMBLE_KEYS, 'assemble', CODE);
     if (!Array.isArray(input.sources)) throw new TalkError(CODE, 'sources 应为数组', 'sources');
     if (typeof input.selfId !== 'string' || input.selfId === '') {
         throw new TalkError(CODE, 'selfId（装配对象）不能为空：没有「我」就无从判断哪条是自己的', 'selfId');
+    }
+    if (input.window !== undefined && typeof input.window !== 'function') {
+        throw new TalkError(CODE, 'window 应为函数（窗口 / 摘要钩子）', 'window');
     }
     const strategy = resolveStrategy(input.strategy);
     const selfId = input.selfId;

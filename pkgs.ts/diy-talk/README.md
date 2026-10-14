@@ -50,8 +50,13 @@ assemble({
 // => Message[]（{ role: 'user' | 'assistant', content }；他人发言绝不为 assistant）
 ```
 
-三条内置策略（模式 = 一份装配策略，##166 结论 4）：`full`（模式 1 全量档案）· `text-only`（模式 2 去
-tool/thinking、保 `replyTo` 寻址）· `changes-only`（模式 3 文档修订 + 批注线）。
+三条内置策略（模式 = 一份装配策略，##166 结论 4）：`full`（模式 1 全量档案，**他方过程除外**）·
+`text-only`（模式 2 去 tool/thinking、保 `replyTo` 寻址）· `changes-only`（模式 3 文档修订 + 批注线）。
+
+> **process 私有 + window 边界**（review1 意见 1/2）：他人的 tool/thinking **永不进入本次装配**（连 `full` 也不，
+> 依据 ##166 结论 6 + §3.5「仅自己可见」）；该不变量由 `role.ts` 的 `assemblyRole` 最终把关。
+> `window` 是宿主注入的**可信代码**，其输出不再复核 —— 上文「他人发言绝不为 assistant」的保证**仅覆盖装配器
+> 自身产出（window 之前）**。
 
 ## 四个原语
 
@@ -76,7 +81,7 @@ tool/thinking、保 `replyTo` 寻址）· `changes-only`（模式 3 文档修订
 
 ```bash
 cd pkgs.ts/diy-talk
-./sha.sh test          # 意图测试（60 例：R1–R7 + A1–A6）
+./sha.sh test          # 意图测试（R1–R7 + A1–A6）
 ./sha.sh check         # 本包类型 + lint
 # 全仓检查（含产物 / 可执行位护栏）：在仓库根跑 ./sha.sh check
 ```

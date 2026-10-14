@@ -10,7 +10,7 @@
 - `find.reaction` — `src/reaction.ts`：`Reaction { …, turnId, target, replyTo, … }` + `assertThreadRefs`（悬空 / 自指 / 重号 / 异锚点）
 - `find.role` — `src/role.ts`：`assemblyRole` + `assertRoleAssignments`（铁律：他人发言绝不能装配成 `assistant`）；非法 `kind` 报错
 - `find.serialize` — `src/serialize.ts`：JSON 出入口（写读两侧都校验；`{compact}` 单行供 jsonl，`{allowUnknown}` 读侧前向兼容）
-- `find.assemble` — `src/assemble.ts`：`assemble({ sources, strategy, window, selfId }) → Message[]`；源 `reactions|trace|material`，三内置策略 `full|text-only|changes-only`（##166 结论 4）；`window` 是宿主注入的裁剪钩子（内核不自作主张）
+- `find.assemble` — `src/assemble.ts`：`assemble({ sources, strategy, window, selfId }) → Message[]`；源 `reactions|trace|material`，三内置策略 `full|text-only|changes-only`（##166 结论 4）；**他人过程（tool/thinking）永不进入（`full` 也不，由 `role.ts` 最终把关）**；`window` 是宿主注入的**可信**裁剪钩子 —— 其输出不再复核铁律（内核不自作主张）
 - `find.consumers` — `@diy/flow`(##313 泳道容器) 已依赖；装配器 `assemble` 供 ##319（宿主接入与提示词装配）消费
 
 ## rule — 硬约束
