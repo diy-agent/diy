@@ -21,7 +21,9 @@ export type TalkErrorCode =
     /** 同一 thread 内的发言锚点不一致（thread 是「同一锚点下的发言集合」，见 review2 意见 2） */
     | 'mixed-anchor'
     /** 违反 role 铁律：他人发言被装配成 assistant，或他人 tool/thinking 进入装配，或来源类别非法 */
-    | 'role-violation';
+    | 'role-violation'
+    /** 装配入参非法：未知策略名 / 策略对象无 name / selfId 为空 / 源形状非法（##314） */
+    | 'invalid-assembly';
 
 /** 本包唯一错误类型：带 `code`（机器判据）与 `path`（从根到字段的点路径，如 `event.anchor.data.offset`） */
 export class TalkError extends Error {
