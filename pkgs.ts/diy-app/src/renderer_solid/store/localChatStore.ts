@@ -569,13 +569,23 @@ async function refreshSteers(taskUri: string): Promise<void> {
 //
 // 帧形状与契约见 main 的 services/ops-feed.ts 与 api-def 的 opsWatch / opsWatermark。
 //
+// ⚠️ **本订阅是块树的唯一 apply 通道**（##327）：main 侧**同一个 op 走两条路**送达本窗口 ——
+//   ① `opsFeed.publish` → 本订阅（广播，**带行号 seq**）；
+//   ② `agent.local.chat` 的流（发起方专属，**不带 seq**，见 main 的 api-impl）。
+// 两条都 apply = 同一条 delta 追加两遍 = **整段叠字**（实测：`先把现场看清楚` →
+// `先把现场先把现场看清楚看清楚`）。症状只表现为文字、块结构却正常，是因为
+// **delta 是纯追加、无唯一键、不幂等**，而 start / patch / stop 恰好幂等 ——
+// 「重复 apply 无害」这个前提从来只对后三者成立。
+// 故 `send()` 只**消费**那条流（拿"我这轮结束了/报错了"这一个信号），一个 op 都不落地；
+// 实时显示（含插话投递后的队列刷新、轮次边界对真值）全部收口在本文件的 `applyOpsFrame`。
+//
 // 时序（必须按此序，否则会漏掉「首载期间」写入的 op）：
 //   ① 取水位 wm = {epoch, seq}（ops.jsonl 当前行号）；
 //   ② 拉 history（**折叠流**，大会话快路径）fold 成块树 —— 它覆盖范围 **≥ wm.seq**
 //      （main 侧同步读文件，且①在②之前发起）；
 //   ③ `appliedSeq = wm.seq`，建 opsWatch(since=wm.seq) → main 先补发 `(wm.seq, 现在]`，再接实时。
-// ②③ 之间与补发段的重复由 seq 去重吸收；即便漏掉去重，`BlockStore.apply` 本身幂等
-//（重复 start / patch / stop 都是 no-op），所以这条路径「重不重」都不出错，只是别重复算。
+// ②③ 之间与补发段的重复由 seq 去重吸收 —— 但这份去重**只在本通道内成立**：它的依据是
+// ops.jsonl 行号，而 chat 流的 op 没有行号、无从比对。这正是「chat 流不许 apply」的硬理由。
 
 /** 取会话 op 流水位（订阅起点的校准值） */
 async function fetchWatermark(taskUri: string): Promise<{ epoch: number; seq: number }> {
@@ -717,6 +727,11 @@ function applyOpsFrame(taskUri: string, frame: OpsFrame): void {
         return;
     }
     let sawTurnBoundary = false;
+    // 插话被投递：main 落了带 steer 标记的 user 块（见 local-agent 的 steerBlockOps）→ 队列少
+    // 一条，立刻重拉快照；否则横条一直挂着"待发送"，而模型其实已经看见了。
+    // ##327：这条判定原先长在 send 的流循环里 —— apply 只剩本通道后判定随之内收
+    //（留在 send 里就成了"一个已经不落地任何 op 的循环顺手刷队列"，职责错位）。
+    let sawSteerDelivered = false;
     // 增量 op 落在**末段**（尾部窗口所在的那一段）：它接在 loadHistory 的窗口之后，
     // 与流式 op 同一落点（tailForWrite），故已有段的块对象引用不动（任务 293 分段语义）。
     const seg = tailForWrite(st);
@@ -725,9 +740,11 @@ function applyOpsFrame(taskUri: string, frame: OpsFrame): void {
         if (op.op === "start" && op.kind === "turn") sawTurnBoundary = true;
         // stop 不带 kind：向块树查该 id 是不是轮次块（apply 后块仍在，仅 stopped 置位）
         else if (op.op === "stop" && seg.store.blocks.get(op.id)?.kind === "turn") sawTurnBoundary = true;
+        else if (op.op === "start" && op.kind === "text" && op.meta?.["steer"]) sawSteerDelivered = true;
     }
     st.appliedSeq = frame.fromSeq + frame.ops.length - 1;
     scheduleRefresh(st);
+    if (sawSteerDelivered) void refreshSteers(taskUri);
     // 轮次边界 → 立刻对一次真值（原 2s 轮询的职责，现在由事件驱动）。
     // 边界是稀有事件（一轮仅 start/stop 各一次），**不经节流**：短轮（<400ms）的 stop 边界
     // 若被节流吞掉，「别人在跑」会滞留到下一次活动（review3 R7）。
@@ -788,6 +805,10 @@ async function send(taskUri: string, text: string): Promise<boolean> {
     setStopRequested(st, null); // 新一轮开始 → 清停止态（helper 同步对齐 ticker，review3 R6）
     const ctrl = new AbortController();
     st.abort = ctrl;
+    // ##327：本流不再 apply，实时显示全交给 op 增量订阅 → 发之前确保订阅在（幂等：已订阅直接返回）。
+    // 这层兜底必要：send 若跑在"没走 open"的路径上（订阅未建），少了它就是整轮输出"发出去却看不见"，
+    // 要等轮末重放才补回来。
+    ensureOpsSubscription(taskUri);
     try {
         // 不传 model/reasoningEffort：模型与参数由 main 按**任务绑定的人物**解析（配置真源唯一，
         // 见 main/services/local-agent.ts 的 chat）。renderer 只决定"要谁干活"（persona 字段）。
@@ -803,21 +824,12 @@ async function send(taskUri: string, text: string): Promise<boolean> {
             },
             { signal: ctrl.signal },
         );
-        for await (const raw of stream) {
-            let op: Op;
-            try {
-                op = (typeof raw === "string" ? JSON.parse(raw) : raw) as Op;
-            } catch (e) {
-                // 坏行属数据层容错：跳过但必须留痕（main 侧日志重放同理，fold issues 另有计数）
-                console.warn("[localChat] 丢弃无法解析的 op 行:", e, String(raw).slice(0, 120));
-                continue;
-            }
-            tailForWrite(st).store.apply(op);
-            scheduleRefresh(st);
-            // 插话被投递：main 落了带 steer 标记的 user 块（见 local-agent 的 steerBlockOps）→
-            // 队列已经少了一条，立刻重拉快照。否则横条会一直挂着"待发送"，而模型其实已经看见了。
-            if (op.op === "start" && op.kind === "text" && op.meta?.["steer"]) void refreshSteers(taskUri);
-        }
+        // ##327：**只消费，不 apply** —— 这批 op 与 opsWatch 订阅收到的是同一批（main 侧落盘后
+        // `opsFeed.publish` 一次、再作为本流 yield 一次），两边都落地就是整段叠字（见本文件上方
+        // 「唯一 apply 通道」）。本流剩下的职责只有一个：**"我这轮还活着 / 结束了"这个信号** ——
+        // running 复位、轮末对真值、队列与用量刷新都在 finally，与流里的内容无关。
+        // 相应地不再逐条 JSON.parse：那是为 apply 服务的解析，不再需要内容就不必付这份 CPU。
+        for await (const op of stream) void op;
         return true;
     } catch (e) {
         // 自己点的停止不算错误：signal 中断会让流正常收尾（不抛），这里只是防御
