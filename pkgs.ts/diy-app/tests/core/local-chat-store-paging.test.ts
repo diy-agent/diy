@@ -145,6 +145,26 @@ describe("轮末重放（doReload）遇上失效游标", () => {
         expect(store.hasOlder).toBe(true);
         expect(h.toasts).toEqual([]); // 常规路径不该惊动用户
     });
+
+    it("stale 退全量后必须丢弃游标：下一轮末重放要重新按预算 seek，不许粘住全量游标", async () => {
+        const store = await freshStore();
+        h.historyWindow.mockResolvedValueOnce(win(["t1", "t2"], "c1", true));
+        await store.open(URI);
+
+        // 日志被清空 / 覆盖写：main 退**全量**、游标 = 全量游标（at:0）。它是个**合法轮首**，
+        // 回传下去 main 会照收 ⇒ 此后每轮末都退全量（== 把 R9 想消灭的"整量回包"贴回来）。
+        h.historyWindow.mockResolvedValueOnce(win(["t1", "t2", "t3"], "c-at0", false, true));
+        await turnEndReload(store);
+
+        // 下一轮末重放：必须**不带游标**（重新按预算 seek），而不是把 at:0 粘住回传
+        h.historyWindow.mockResolvedValueOnce(win(["t1", "t2", "t3"], "c-new", false));
+        await turnEndReload(store);
+        const req = h.historyWindow.mock.calls.at(-1)![0];
+        expect(req.cursor).toBeUndefined();
+        // 且**必须带预算**：无游标却不带预算 ⇒ main 认为预算非法、照样退全量，bug 原样复发
+        // （seekWindowStart 对 !(budget > 0) 直接退全量）。只守 cursor 会漏掉这半个条件（R3）。
+        expect(req.budgetBytes).toBe(4 * 1024 * 1024);
+    });
 });
 
 describe("上滚补段（loadOlder）遇上失效游标", () => {
@@ -159,6 +179,12 @@ describe("上滚补段（loadOlder）遇上失效游标", () => {
         expect(inserted).toBe(false);
         expect(loadedTurns(store)).toEqual(["t1", "t2"]); // 重置成单段（没有缝进两份）
         expect(h.toasts.map((t) => t.type)).toEqual(["info"]);
+
+        // R4：stale 重置还须**丢弃末段游标** ⇒ 随后一次轮末重放的请求 cursor 必须为 undefined。
+        // 否则这半修补可静默回退：下一轮回传全量游标，每次上滚/收尾又退全量。
+        h.historyWindow.mockResolvedValueOnce(win(["t1", "t2"], "c1", false));
+        await turnEndReload(store);
+        expect(h.historyWindow.mock.calls.at(-1)![0].cursor).toBeUndefined();
     });
 
     it("两段轮次重叠（防线）⇒ 同样重置 + 出声，不缝", async () => {
