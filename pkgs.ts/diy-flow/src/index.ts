@@ -13,12 +13,15 @@
 //           { id: 'implement', name: '开发', actor: 'agent', guard: ['prompt:dev_done'], hint: '…' },
 //       ],
 //       edges: [{ from: 'review', to: 'implement', kind: 'bounce' }],   // 打回：不新建节点
-//   });
+//   });   // 入口自动推断 = 'review'（唯一没有入边的节点）
 //
-//   // 一条转移 = 一条 Event（anchor = node 指目标节点）
-//   const ev = createEvent({ id: 'e1', author: 'review-agent', anchor: nodeAnchor('implement'),
-//                            content: 'P0 未落点，打回', at: '2026-10-13T00:00:00.000Z' });
-//   project([ev], wf).path;   // → [{ node: 'implement', seq: 1, kind: 'bounce', … }]
+//   // 一条转移 = 一条 Event（anchor = node 指目标节点）；首个事件必须进入入口
+//   const enter = createEvent({ id: 'e1', author: 'review-agent', anchor: nodeAnchor('review'),
+//                               content: '进入 Review', at: '2026-10-13T00:00:00.000Z' });
+//   const back = createEvent({ id: 'e2', author: 'review-agent', anchor: nodeAnchor('implement'),
+//                              content: 'P0 未落点，打回', at: '2026-10-13T00:00:00.000Z' });
+//   project([enter, back], wf).path;   // → [{ node:'review', seq:1, kind:'next', … },
+//                                      //    { node:'implement', seq:1, kind:'bounce', … }]
 //
 // 边界：本任务只做「定义 + 位置 + 投影」——
 // **不做 guard 求值**（归 ##315）、**不做参数校验**（归 ##316）、不做事件存储（归 ##319）。

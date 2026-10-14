@@ -16,6 +16,7 @@ import { defineWorkflow, project } from '@diy/flow';
 const wf = defineWorkflow({
     id: 'dev',
     name: '开发工作流',
+    entry: 'implement',   // 双向环两个节点都有入边，入口须显式指定
     nodes: [
         { id: 'implement', name: '开发', actor: 'agent', guard: ['prompt:dev_done'], hint: '开发完成 xx 任务，完成后提交给 Review 步骤' },
         { id: 'review', name: 'Review', actor: 'agent', guard: ['prompt:review_done'], hint: 'P0/P1 打回，全部有落点则放行' },
