@@ -2102,7 +2102,7 @@ export class LocalAgentManager {
         ): Generator<Op, void, void> {
             const id = `${turnId}_e${++eN}`;
             yield* seal([
-                { op: "start", id, kind: "error", parent: turnId, meta: { source, ...(extra ?? {}) } },
+                { op: "start", id, kind: "error", parent: turnId, meta: extra ? { source, ...extra } : { source } },
                 { op: "delta", id, fields: { message: text } },
                 { op: "stop", id },
             ]);

@@ -112,7 +112,14 @@ class Writer {
         const line = `${JSON.stringify({ _fmt: LOG_FORMAT, ...(payload as object) })}\n`;
         const buf = Buffer.from(line, "utf8");
         const offset = this.pos;
-        const wrote = writeSync(this.fd!, buf, 0, buf.length, this.pos);
+        // writeSync 允许少写（信号中断等）。写不完整就是**半行 JSON**：既读不出这条，
+        // 也会把下一条粘在同一行一起废掉 —— 故循环写满，真写不满就抛（调用方置 log=null）。
+        let wrote = 0;
+        while (wrote < buf.length) {
+            const n = writeSync(this.fd!, buf, wrote, buf.length - wrote, this.pos + wrote);
+            if (n <= 0) throw new TrafficLogError(`日志写入不完整（${wrote}/${buf.length} 字节）`);
+            wrote += n;
+        }
         this.pos += wrote;
         this.line += 1;
         return { file: `${LOG_DIR_REL}/${this.day}`, offset, len: wrote, line: this.line, abs: join(dirAbs(), this.day) };

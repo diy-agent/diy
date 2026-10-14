@@ -36,16 +36,17 @@ interface FakeReq {
 }
 
 function fireReq(opt?: { headers?: Record<string, string>; body?: string }): FakeReq {
+    const headers: Record<string, string> = {
+        "content-type": "application/json",
+        "x-opencode-session": RUN.session,
+        authorization: "Bearer sk-abcdefgh",
+    };
+    Object.assign(headers, opt?.headers ?? {});
     const req: FakeReq = {
         method: "POST",
         origin: "https://api.example.com",
         path: "/provider/v1/chat/completions",
-        headers: headersArr({
-            "content-type": "application/json",
-            "x-opencode-session": RUN.session,
-            authorization: "Bearer sk-abcdefgh",
-            ...(opt?.headers ?? {}),
-        }),
+        headers: headersArr(headers),
     };
     channel("undici:request:create").publish({ request: req });
     if (opt?.body !== undefined) channel("undici:request:bodyChunkSent").publish({ request: req, chunk: enc(opt.body) });
@@ -87,6 +88,37 @@ describe("traffic（undici diagnostics_channel）", () => {
         expect(JSON.parse(r.reqBody!.head)).toEqual({ model: "x" });
         expect(r.reqBody!.truncated).toBe(false);
         expect(r.reqBody!.headBytes).toBe(r.reqBody!.totalBytes);
+    });
+
+    it("脱敏：无 scheme 的裸凭据不得原样落盘（authorization / x-api-key / cookie 一律只留尾 4 位）", () => {
+        const req = fireReq({
+            headers: {
+                // 无 scheme 的裸 key：早先实现会把整把 key 当「scheme」留下 → 明文落盘
+                authorization: "sk-1234567890abcdef",
+                "x-api-key": "abcdef1234567890",
+                cookie: "session=deadbeefcafe",
+            },
+            body: "{}",
+        });
+        fireRes(req, 200, { "content-type": "application/json" }, "{}");
+        const h = traffic.snapshot().records[0]!.reqHeaders;
+        expect(h.authorization).toBe("****cdef");
+        expect(h["x-api-key"]).toBe("****7890");
+        expect(h.cookie).toBe("****cafe");
+        // 明文一个都不许漏
+        const all = JSON.stringify(h);
+        expect(all).not.toContain("1234567890abcdef");
+        expect(all).not.toContain("abcdef1234567890");
+        expect(all).not.toContain("deadbeefcafe");
+    });
+
+    it("snapshot(withRecords:false)：只回状态，不带记录数组（事件流刷新用，省 IPC）", () => {
+        const req = fireReq({ body: "{}" });
+        fireRes(req, 200, { "content-type": "application/json" }, "{}");
+        const light = traffic.snapshot(false);
+        expect(light.records).toEqual([]);
+        expect(light.total).toBe(1); // 总数照报
+        expect(traffic.snapshot().records).toHaveLength(1); // 默认仍带记录
     });
 
     it("字节数：reqBytes / resBytes 记完整大小（不受首尾法截断影响）", () => {

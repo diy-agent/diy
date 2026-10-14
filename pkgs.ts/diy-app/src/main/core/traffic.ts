@@ -18,8 +18,8 @@
  * 正文按「首尾法」有界保留（超长留开头 + 结尾，中间省略，见 BodyBuf）；要看完整正文时
  * 打开「记录完整请求内容」（setFullCapture），此后不再截断。
  *
- * 回调在请求的同步路径上：事件回调是被同步调用的，所以这里只做「复制字节 + 计数」，
- * 绝不 await、绝不抛错（抛出去会连累正常请求）。
+ * 回调在请求的同步路径上：事件回调是被同步调用的，所以这里只做「复制字节 + 计数 +
+ * 追加一行日志（一次 write，同步）」，绝不 await、绝不抛错（抛出去会连累正常请求）。
  *
  * 归属：优先看请求头 `x-opencode-session`（我们自己发的 LLM 请求带），反查是哪个任务 / 轮次；
  * 没有该头时，按「同一个地址」兜底匹配（同一个 provider 的地址只对应一个运行中的任务）。
@@ -188,14 +188,35 @@ function headersToObject(h: unknown): Record<string, string> {
     } else if (h && typeof h === "object") {
         for (const [k, v] of Object.entries(h as Record<string, unknown>)) out[k.toLowerCase()] = toStr(v);
     }
-    if (out["authorization"]) out["authorization"] = redact(out["authorization"]);
+    for (const k of Object.keys(out)) if (SECRET_HEADERS.has(k)) out[k] = redact(out[k]!);
     return out;
 }
 
-/** `Bearer sk-…abcd` → `Bearer ****abcd`（只留尾 4 位） */
+/**
+ * 需要脱敏的头（**会落盘**，不能带明文凭据）。各家的叫法不同，宁可多列：
+ * 标准的 authorization / cookie，及常见的私有 key 头（anthropic `x-api-key` 等）。
+ */
+const SECRET_HEADERS = new Set([
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+    "x-api-key",
+    "api-key",
+    "x-auth-token",
+    "x-access-token",
+]);
+
+/**
+ * 凭据脱敏：只留尾 4 位。
+ * 带 scheme 的（`Bearer sk-…abcd`）保留 scheme，把凭据换成 `****abcd`；
+ * 不带的（裸 key、cookie 串）**整段**换成 `****abcd` —— 早先的实现拿空格切第一段当
+ * 「scheme」，裸 key 没有空格 → 第一段就是整把 key，等于把密钥原样写进磁盘（已修）。
+ */
 function redact(v: string): string {
     const tail = v.slice(-4);
-    return `${v.split(/\s/)[0]} ****${tail}`;
+    const m = /^(\S+)\s+(.*)$/.exec(v);
+    return m ? `${m[1]} ****${tail}` : `****${tail}`;
 }
 
 /**
@@ -335,7 +356,8 @@ function hostOf(url: string): string {
 
 /** 落盘前把 `log` 摘掉（行里不需要记自己位置），其余原样存 */
 function payloadOf(rec: TrafficRecord): Record<string, unknown> {
-    const { log: _log, ...rest } = rec;
+    const rest: Record<string, unknown> = { ...rec };
+    delete rest.log;
     return rest;
 }
 
@@ -604,13 +626,19 @@ class Traffic {
         this.notify();
     }
 
-    snapshot(): TrafficSnapshot {
+    /**
+     * 当前状态快照。
+     * `withRecords=false` 时只回状态（开关 / 上限 / 总数 / 目录名），`records` 给空数组 ——
+     * 界面只关心「是否在完整记录」时用它：事件流每次请求都会触发一次拉取，若每次都带上
+     * 最多 cap 条（每条正文可达 24K×2）的记录，等于每次请求都往 IPC 里灌十几 MB。
+     */
+    snapshot(withRecords = true): TrafficSnapshot {
         return {
             fullCapture: this.fullCapture,
             cap: this.cap,
             total: this.records.length,
             logDir: LOG_DIR_REL,
-            records: [...this.records],
+            records: withRecords ? [...this.records] : [],
         };
     }
 

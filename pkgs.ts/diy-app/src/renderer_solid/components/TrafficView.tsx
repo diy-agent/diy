@@ -265,8 +265,11 @@ export function TrafficView(props: {
     const [shown, setShown] = createSignal(PAGE_SIZE);
     let tableScroll: HTMLDivElement | undefined;
 
+    // 只取状态（开关 / 上限 / 目录）：记录一律走磁盘查询（query）。
+    // 事件流每落一条请求就触发一次刷新，若这里把最多 500 条记录（每条正文可达几十 KB）
+    // 一起拉回来丢掉，等于每次请求都白灌一遍 IPC。
     const loadSnapshot = async () => {
-        setSnap(await diyService.diy.traffic.snapshot({}));
+        setSnap(await diyService.diy.traffic.snapshot({ withRecords: false }));
     };
     const loadFiles = async () => {
         const r = await diyService.diy.traffic.logFiles({});
@@ -312,7 +315,9 @@ export function TrafficView(props: {
             .events({}, { signal: ac.signal })
             .then(async (stream) => {
                 // 有新记录 / 开关变更 → 刷新状态，并（防抖）重查一次今日数据
-                for await (const _ev of stream) {
+                // 事件载荷只有版本号，界面不关心内容 —— 收到就刷新（`void ev` 同 localChatStore 惯例）
+                for await (const ev of stream) {
+                    void ev;
                     void loadSnapshot();
                     void loadFiles();
                     scheduleQuery(300);
@@ -394,12 +399,6 @@ export function TrafficView(props: {
         setSnap(s);
         setAlertOff(false); // 每次打开都重新醒目提示一次
     };
-    const clear = async () => {
-        await diyService.diy.traffic.clear({});
-        setSel(null);
-        await loadSnapshot();
-    };
-
     return (
         <div class="flex flex-col gap-3 h-full min-h-0">
             {/* 开启「记录完整请求内容」时的醒目告警（daisyUI alert）。关掉即消失，不弹确认框。 */}
@@ -432,9 +431,6 @@ export function TrafficView(props: {
                     }
                 >
                     {snap()?.fullCapture ? "● 完整记录中" : "记录完整请求内容"}
-                </button>
-                <button class="btn btn-xs btn-ghost" onClick={() => void clear()}>
-                    清空
                 </button>
             </div>
             <Show when={props.showIntro !== false}>
@@ -536,7 +532,7 @@ export function TrafficView(props: {
                             </Show>
                         </div>
                         <div
-                            ref={tableScroll}
+                            ref={(el) => (tableScroll = el)}
                             onScroll={onTableScroll}
                             class="flex-1 min-h-0 overflow-auto border border-base-300 rounded"
                         >

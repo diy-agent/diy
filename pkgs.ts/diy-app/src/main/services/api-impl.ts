@@ -690,7 +690,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
 
   // ── traffic（流量观测；见 core/traffic.ts）──
-  binding.on(app.traffic.snapshot, async () => traffic.snapshot());
+  binding.on(app.traffic.snapshot, async ({ input }) => traffic.snapshot(input.withRecords ?? true));
   binding.on(app.traffic.clear, async () => {
     traffic.clear();
     return { status: "ok" };

@@ -965,8 +965,13 @@ export const apiDef = RpcSchema.router({
         desc: `流量（应用发出去的 HTTP 请求 / 收到的响应；内存留最近若干条 + 逐条追加到 log/network/ 磁盘日志）`,
         children: {
           snapshot: RpcSchema.unary({
-            desc: `取当前流量记录（界面数据源）`,
-            input: {},
+            desc: `取当前流量快照（开关状态 + 内存里的记录）。withRecords=false 时只回状态、不带记录数组`,
+            input: {
+              withRecords: z
+                .boolean()
+                .optional()
+                .cliOption({ desc: "是否带上记录数组（默认 true；界面只关心开关状态时可省）" }),
+            },
             output: TrafficSnapshotSchema,
           }),
           clear: RpcSchema.unary({
