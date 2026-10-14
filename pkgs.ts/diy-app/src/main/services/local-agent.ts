@@ -74,7 +74,7 @@ import {
     type UsageBuckets,
     type UsageLike,
 } from "../../shared/usage";
-import { buildDelivery } from "../../shared/context/delivery";
+import { buildDelivery, type Delivery } from "../../shared/context/delivery";
 import { renderBudgetNote } from "../../shared/context/budget-note";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
@@ -411,6 +411,36 @@ function withRuntime(hist: ModelMessage[], runtime: string): ModelMessage[] {
         return [...hist.slice(0, -1), { role: "user", content: runtime }, last];
     }
     return [...hist, { role: "user", content: runtime }];
+}
+
+/**
+ * 替换 messages 里**上一步投递的 runtime 容器**（##310 及时刷新）。
+ *
+ * runtime 在 messages 里的形态：`withRuntime` 插一条 user、紧挨本轮输入，`normalizeUserRuns`
+ * 再把连续 user 合并 —— 于是那条消息的 content 是 `runtime + "\n" + 本轮输入`（本轮输入为空时
+ * 恰为 runtime 本身）。所以定位靠「content 含旧 runtime 全文」，替换只动那一处、其余原样。
+ *
+ * 为什么替换而不是追加：runtime 是**当前值**（"环境事实"），不是对话历史；追加会让模型同时
+ * 看见新旧两份、以哪份为准全看它猜。就地换值语义才对（history 那种"发生过的事"才用追加）。
+ *
+ * 返回 null = 没定位到（上一步没投 runtime / 构造被外力改过）——调用方据新值决定兜底。
+ */
+export function replaceRuntimeInMessages(
+    messages: readonly ModelMessage[],
+    prevRuntime: string,
+    nextRuntime: string,
+): ModelMessage[] | null {
+    if (!prevRuntime) return null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i]!;
+        if (m.role !== "user") continue;
+        const c = m.content;
+        if (typeof c !== "string" || !c.includes(prevRuntime)) continue;
+        const out = messages.slice();
+        out[i] = { ...m, content: c.replace(prevRuntime, nextRuntime) };
+        return out;
+    }
+    return null;
 }
 
 /** 读某任务的投递快照（时间正序；文件不存在 = 还没真发过） */
@@ -2393,6 +2423,18 @@ export class LocalAgentManager {
         // 划分规则读**真源**（$DIY_HOME/context.yaml；缺失/损坏则推荐名单 + 出声）——
         // 与上下文树页读的是同一份，所以页面上看到的 system/runtime 划分就是这里会用的划分。
         const delivery = buildDelivery(globals, loadSystemPlaces(diyHome()));
+
+        // ── 每步重算上下文（##310）──────────────────────────────────
+        // 轮首这份 delivery 原本整轮复用 → 长轮次里变量变了模型仍按旧值干活（几小时的 tool 循环
+        // 全建在过期数据上）。prepareStep 每步重算一次，**变了才注入**（没变不动 ⇒ 前缀缓存只在
+        // 真变那步失效）。system 与 runtime 各走各的通道（见 prepareStep）。
+        const rebuildDelivery = (): Delivery => {
+            const g = assembleGlobals(diyHome(), projectFromUri(taskUri), { taskUri }) as unknown as Record<string, unknown>;
+            return buildDelivery(g, loadSystemPlaces(diyHome()));
+        };
+        // 上一步投递的两个容器文本（比较基准；初值 = 轮首这份）
+        let prevSystemText = delivery.system.text;
+        let prevRuntimeText = delivery.runtime.text;
         // 预算判据与模版线**共用同一个函数**（services/prompt-registry 的 systemOverBudget）：
         // 曾经这里是内联的 `bytes > budget`，逻辑等价但两处各写一遍 —— 日后任何一侧改口径
         // （比如"等于预算算不算超"）都会悄悄分叉，而单测只覆盖得到被调用的那一侧（209 第 3 轮 R-1）。
@@ -2561,11 +2603,47 @@ export class LocalAgentManager {
                 // 立刻发生**的轮次边界生效。让这一轮干净地结束、由 chat() 开下一轮（插话就是
                 // 下一轮的开场白）语义更准，轮次结构/usage/停止边界也不用为夹层做特例。
                 prepareStep: ({ messages, stepNumber }) => {
-                    if (signal.aborted || stepNumber === 0) return {};
-                    const items = claimStepSteers();
-                    return items.length === 0
-                        ? {}
-                        : { messages: [...messages, ...items.map((it) => ({ role: "user" as const, content: it.text }))] };
+                    if (signal.aborted) return {};
+                    let instructions: string | undefined;
+                    let nextMessages: ModelMessage[] | undefined;
+                    // ── 上下文及时刷新（##310）──
+                    // 每步重算；**变了才注入**（没变什么都不返回 ⇒ 不砸前缀缓存）：
+                    //   · system  −→ instructions（SDK 的 system 覆盖，carry forward 到后续步）
+                    //   · runtime −→ 就地替换尾部那条 user 容器（它是"当前值"，不是历史）
+                    try {
+                        const fresh = rebuildDelivery();
+                        if (fresh.system.text !== prevSystemText) {
+                            prevSystemText = fresh.system.text;
+                            instructions = fresh.system.text;
+                        }
+                        if (fresh.runtime.text !== prevRuntimeText) {
+                            const replaced = replaceRuntimeInMessages(messages, prevRuntimeText, fresh.runtime.text);
+                            prevRuntimeText = fresh.runtime.text;
+                            // 定位失败（上一步没投 runtime）时兜底追加：宁可重复也强过模型拿着旧值
+                            nextMessages = replaced ?? [
+                                ...messages,
+                                { role: "user" as const, content: `[上下文更新] 易变上下文已刷新，以此为准：\n${fresh.runtime.text}` },
+                            ];
+                        }
+                    } catch (e) {
+                        // 重算失败**不阻断**发送：这是增强（及时性），不是正确性前提 —— 沿用上一步的投递
+                        console.error(`[local-agent] 每步重算上下文失败（沿用上一步投递）${taskUri}:`, e);
+                    }
+                    // ── 插话注入（原逻辑；只在第二步及之后）──
+                    if (stepNumber > 0) {
+                        const items = claimStepSteers();
+                        if (items.length > 0) {
+                            nextMessages = [
+                                ...(nextMessages ?? messages),
+                                ...items.map((it) => ({ role: "user" as const, content: it.text })),
+                            ];
+                        }
+                    }
+                    if (instructions === undefined && nextMessages === undefined) return {};
+                    return {
+                        ...(instructions === undefined ? {} : { instructions }),
+                        ...(nextMessages === undefined ? {} : { messages: nextMessages }),
+                    };
                 },
             });
 
