@@ -10,6 +10,7 @@
 // `DefineInput`）。运行期再兜一层：悬空边 / 重号 / 入口不唯一一律抛 `FlowError`。
 
 import { FlowError } from './errors';
+import { isObject, rejectUnknown } from './validate';
 
 /** 谁能在这里动作并宣布推进（##166 §14.4） */
 export const ACTORS = ['agent', 'system', 'human'] as const;
@@ -69,7 +70,7 @@ export interface NodeDef<Id extends string = string> {
 export interface EdgeDef<Id extends string = string> {
     readonly from: Id;
     readonly to: Id;
-    /** 何时走这条边（同样分可观测 / 不可观测；本任务不求值，归 ##315） */
+    /** 何时走这条边（与 `guard` 同一套前缀规则；系统节点多出口时由 `selectEdge` 用它消歧，缺失 = 恒真） */
     readonly when?: string;
     readonly kind: EdgeKind;
 }
@@ -120,22 +121,15 @@ export function defineWorkflow<const N extends readonly NodeDef[]>(def: DefineIn
 
 const CODE = 'invalid-def' as const;
 
-function isObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
+/** 定义层的形状封闭（错误码固定 `invalid-def`，见 parseWorkflow 头注） */
+function noUnknown(obj: Record<string, unknown>, known: readonly string[], path: string): void {
+    rejectUnknown(obj, known, path, CODE);
 }
 
 function takeString(value: unknown, path: string, allowEmpty = false): string {
     if (typeof value !== 'string') throw new FlowError(CODE, '应为字符串', path);
     if (!allowEmpty && value === '') throw new FlowError(CODE, '不能是空串', path);
     return value;
-}
-
-function rejectUnknown(obj: Record<string, unknown>, known: readonly string[], path: string): void {
-    for (const key of Object.keys(obj)) {
-        if (!known.includes(key)) {
-            throw new FlowError(CODE, `未知字段 ${JSON.stringify(key)}（形状封闭）`, `${path}.${key}`);
-        }
-    }
 }
 
 function parseGuard(value: unknown, path: string): string[] {
@@ -151,7 +145,7 @@ function parseGuard(value: unknown, path: string): string[] {
 
 function parseArt(value: unknown, path: string): Art {
     if (!isObject(value)) throw new FlowError(CODE, 'art 应为对象', path);
-    rejectUnknown(value, ['raw', 'renderer', 'plugin', 'note'], path);
+    noUnknown(value, ['raw', 'renderer', 'plugin', 'note'], path);
     const renderer = value.renderer;
     if (typeof renderer !== 'string' || !(RENDERERS as readonly string[]).includes(renderer)) {
         throw new FlowError(CODE, `未知 renderer ${JSON.stringify(renderer)}（合法：${RENDERERS.join(' | ')}）`, `${path}.renderer`);
@@ -170,7 +164,7 @@ function parseParams(value: unknown, path: string): ParamDef[] {
     return value.map((item, i) => {
         const p = `${path}[${i}]`;
         if (!isObject(item)) throw new FlowError(CODE, '参数应为对象', p);
-        rejectUnknown(item, ['name', 'type', 'label', 'values'], p);
+        noUnknown(item, ['name', 'type', 'label', 'values'], p);
         const type = item.type;
         if (typeof type !== 'string' || !(PARAM_TYPES as readonly string[]).includes(type)) {
             throw new FlowError(CODE, `未知参数类型 ${JSON.stringify(type)}（合法：${PARAM_TYPES.join(' | ')}）`, `${p}.type`);
@@ -194,7 +188,7 @@ function parseParams(value: unknown, path: string): ParamDef[] {
 
 function parseNode<Id extends string>(value: unknown, path: string): NodeDef<Id> {
     if (!isObject(value)) throw new FlowError(CODE, '节点应为对象', path);
-    rejectUnknown(value, ['id', 'name', 'actor', 'guard', 'hint', 'art', 'params'], path);
+    noUnknown(value, ['id', 'name', 'actor', 'guard', 'hint', 'art', 'params'], path);
     const actor = value.actor;
     if (typeof actor !== 'string' || !(ACTORS as readonly string[]).includes(actor)) {
         throw new FlowError(CODE, `未知 actor ${JSON.stringify(actor)}（合法：${ACTORS.join(' | ')}）`, `${path}.actor`);
@@ -221,7 +215,7 @@ function parseNode<Id extends string>(value: unknown, path: string): NodeDef<Id>
 
 function parseEdge<Id extends string>(value: unknown, path: string): EdgeDef<Id> {
     if (!isObject(value)) throw new FlowError(CODE, '边应为对象', path);
-    rejectUnknown(value, ['from', 'to', 'when', 'kind'], path);
+    noUnknown(value, ['from', 'to', 'when', 'kind'], path);
     const kind = value.kind;
     if (typeof kind !== 'string' || !(EDGE_KINDS as readonly string[]).includes(kind)) {
         throw new FlowError(CODE, `未知边种类 ${JSON.stringify(kind)}（合法：${EDGE_KINDS.join(' | ')}）`, `${path}.kind`);
@@ -241,7 +235,7 @@ function parseEdge<Id extends string>(value: unknown, path: string): EdgeDef<Id>
  */
 export function parseWorkflow<Id extends string = string>(value: unknown, path = 'workflow'): WorkflowDef<Id> {
     if (!isObject(value)) throw new FlowError(CODE, '工作流定义应为对象', path);
-    rejectUnknown(value, ['id', 'name', 'entry', 'nodes', 'edges'], path);
+    noUnknown(value, ['id', 'name', 'entry', 'nodes', 'edges'], path);
     if (!Array.isArray(value.nodes)) throw new FlowError(CODE, 'nodes 应为数组', `${path}.nodes`);
     if (!Array.isArray(value.edges)) throw new FlowError(CODE, 'edges 应为数组', `${path}.edges`);
 
@@ -265,7 +259,7 @@ export function parseWorkflow<Id extends string = string>(value: unknown, path =
         }
         const key = `${e.from}\u0000${e.to}`;
         if (pairs.has(key)) {
-            throw new FlowError('duplicate-edge', `同一条 (${e.from} → ${e.to}) 出现多条边（无 guard 求值无法确定走哪条）`, `${path}.edges[${i}]`);
+            throw new FlowError('duplicate-edge', `同一条 (${e.from} → ${e.to}) 出现多条边（「走哪条」必须唯一：消歧只看 kind + when）`, `${path}.edges[${i}]`);
         }
         pairs.add(key);
     });
