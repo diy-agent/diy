@@ -128,7 +128,7 @@ import {
 } from "../../shared/context/summary";
 import { renderSummarySection } from "./prompt-registry";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
-import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
+import { readFileWindow, formatReadOutput, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
 import { SteerQueue, fileSteerPort } from "../core/steer-queue";
 import { DEFAULT_STEER_MODE } from "../../shared/steer-mode";
 import type { SteerItem, SteerMode } from "../core/drafts";
@@ -924,8 +924,13 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     // style: "tool" —— 续读提示写成工具参数 offset=N（不是 shell 的 --offset）
                     return formatReadOutput(window, { maxBytes: limits.readMaxBytes, style: "tool" });
                 } catch (e) {
-                    if (e instanceof ReadWindowError) return `[读取失败] ${e.message}`;
-                    return `[读取失败] ${e instanceof Error ? e.message : e}`;
+                    // **抛，不返回字符串**（##329）：catch-and-return 的返回值是**正常工具结果**，
+                    // SDK 走 tool-result 分支 → patch status:"done" → UI 画 ✓、且失败块不自动展开
+                    // —— 失败只躺在折叠正文里（模型看得见，用户看不见）。
+                    // 抛出 → SDK 发 tool-error → status:"error"（UI 画 ✗ 并自动展开）。
+                    // ⚠️ 别改回 return：这里与 bash 相反 —— bash 无 try/catch 是有意设计
+                    //   （非零退出不算工具失败），read **读不到就是失败**。
+                    throw new Error(`[读取失败] ${e instanceof Error ? e.message : e}`);
                 }
             },
         }),
