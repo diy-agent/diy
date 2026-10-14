@@ -193,6 +193,10 @@ export function previewLines(text: string, head = 20, tail = 30): Preview {
 // 我们主动赋值 scrollTop 抢位置。当前 Markdown 只在本块内增长、历史块 memo
 // 稳定不变高，Shiki 同步无异步撑高 → 用不上，反而添乱。
 const STICK_PX = 32;
+
+/** 距顶多少 px 内就算「滚到顶了」⇒ 触发补一段更早的历史（任务 293）。
+ *  不取 0：滚动是像素级的，留一点余量才能在真的触顶前就把请求发出去（滚动手感更连续）。 */
+const TOP_TRIGGER_PX = 240;
 /** 是否已贴底（容差内即算底部，避免差 1px 永远跟不住） */
 const nearBottom = (el: HTMLElement) =>
     el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX;
@@ -1625,6 +1629,93 @@ export function LocalChatPage(props: { uri?: string }) {
         setStick(true);
     };
 
+    /** 视口里**最上面那一轮**（锚点：用户正在看的起点）；一轮都没露头时退回最老的一轮。
+     *  ⚠️ 判据要用**滚动容器**的顶边，不是页面视口：容器在页面里偏下，被滚出去的轮
+     *  其页面坐标仍是正的（`bottom > 0` 恒真 ⇒ 永远返回第一轮）。 */
+    const pickAnchor = (el: HTMLElement): HTMLElement | null => {
+        const turns = [...el.querySelectorAll<HTMLElement>("[data-turn-id]")];
+        const top = el.getBoundingClientRect().top;
+        return turns.find((n) => n.getBoundingClientRect().bottom > top) ?? turns[0] ?? null;
+    };
+
+    /**
+     * 补一段更早的历史 + 位置补偿（任务 293）。**两个入口共用**：滚到顶部附近的
+     * `onScroll`，以及顶部提示条被点（后者不依赖"容器可滚"，见提示条处的注释）。
+     *
+     * 位置补偿是**必需**的：内容插在视口上方会把它顶走（浏览器不替我们保持位置），
+     * 表现为"刚要读的那一行突然跳下去"。
+     *
+     * 时机是**两种错都踩过**才定的：
+     *   · 补偿量取「触发那一刻的距底距离」算**绝对**位置 ⇒ 走 RPC 期间用户还在上滚，
+     *     绝对位置把这段滚动一并吞掉（CDP 实测锚点被推回 239px）；
+     *   · 插入后**同步**读 `scrollHeight` ⇒ 读到的是估算高度，不是最终高度 ——
+     *     `[data-turn-id]` 带 `content-visibility: auto` + `contain-intrinsic-size: 24rem`，
+     *     没露过面的轮先按 24rem 占位，要等这一帧的布局才换成实测高度（实测：同一份前插，
+     *     同步读到 1188px，一帧后是 4751px）。所以补偿必须**在 rAF 里量**（原实现就是这么做的，
+     *     只是基准取错了地方）。
+     *
+     * 之后再用**锚点元素**连校几帧：更上方还没露面的轮，其占位高度会在用户继续上滚、它们
+     * 进入视口附近时被换成实测值 —— 那一下会把下方内容整体推走。这一步只能量元素位置
+     * （高度增量分不清长在上面还是下面）；用户在滚（scrollTop 不是我们上次设的值）⇒
+     * 重新取基准跟随，绝不跟用户抢。
+     */
+    const loadOlderInto = (el: HTMLDivElement) => {
+        if (!localChatStore.hasOlder || localChatStore.olderLoading) return;
+        const u = uri();
+        if (!u) return;
+        let base = 0;
+        let anchor: HTMLElement | null = null;
+        let anchorTop = 0;
+        void localChatStore
+            .loadOlder(u, () => {
+                base = el.scrollHeight;
+                anchor = pickAnchor(el);
+                anchorTop = anchor ? anchor.getBoundingClientRect().top : 0;
+            })
+            .then((inserted) => {
+                if (!inserted || base === 0) return; // 没插内容（到顶 / 对不上已重置）⇒ 不补偿
+                const a0 = anchor;
+                requestAnimationFrame(() => {
+                    // ① 增量补偿：前插垫进去多少就推回多少（基准是插入前的，故用户期间滚的那段照样算数）
+                    const d = el.scrollHeight - base;
+                    if (d > 0) el.scrollTop += d;
+                    if (!a0) return;
+                    // ② 连校几帧：盯住锚点，稳住「用户正看的那一行」
+                    let lastSt = el.scrollTop;
+                    let quiet = 0;
+                    let left = 24; // 硬上限 ≈ 24 帧（400ms）
+                    const tick = () => {
+                        const top = a0.getBoundingClientRect().top;
+                        if (Math.abs(el.scrollTop - lastSt) > 1) {
+                            anchorTop = top; // 用户在滚：跟随他的新位置，只记基准
+                            quiet = 0;
+                        } else {
+                            const drift = top - anchorTop;
+                            if (drift !== 0) {
+                                el.scrollTop += drift;
+                                quiet = 0;
+                            } else quiet++;
+                        }
+                        lastSt = el.scrollTop;
+                        if (left-- > 0 && quiet < 3) requestAnimationFrame(tick);
+                    };
+                    requestAnimationFrame(tick);
+                });
+            });
+    };
+
+    /**
+     * 滚到顶部附近 ⇒ 补一段更早的历史（任务 293）。
+     *
+     * ⚠️ 滚动**不是唯一**入口（也**不能**是）：若首载窗口的渲染高度 ≤ 视口，"滚到顶"
+     * 这个前提根本不成立（用户滚不出 scroll 事件），补段就永远不发生、提示条一直挂着。
+     * 所以提示条本身是个可点的按钮，走同一份 `loadOlderInto`。
+     */
+    const maybeLoadOlder = (el: HTMLDivElement) => {
+        if (el.scrollTop > TOP_TRIGGER_PX) return;
+        loadOlderInto(el);
+    };
+
     /** 恢复某会话阅读位置：有记录（p>0）回到该处并按位置校准跟随态；
      *  无记录（p=0，含新会话）→ 直接看最新，而不是停在顶部。 */
     const restore = (u: string) => {
@@ -2046,11 +2137,30 @@ export function LocalChatPage(props: { uri?: string }) {
             <div
                 ref={(el) => (scrollRef = el)}
                 class="diy-chat flex-1 overflow-y-auto px-4 py-3"
-                onScroll={(e) => setStick(nearBottom(e.currentTarget))}
+                onScroll={(e) => {
+                    setStick(nearBottom(e.currentTarget));
+                    maybeLoadOlder(e.currentTarget);
+                }}
             >
                 {/* 块树列：轮与轮之间（`data-chat-list` **不在这里** —— 它是**每轮的过程历史容器**，
                     见 TurnView：皮肤那条"贯穿线"要画在历史容器上，才只贯穿历史、不穿过结尾与状态）。 */}
                 <div class="space-y-3">
+                    {/* 上滚补历史（任务 293）：分页后首载只有「最近一段」，更早的在滚动到这里时补。
+                        这一条既是进度指示、是"上面还有"的可见线索（没有它，滚到顶会被读成
+                        「会话就这么多」，而其实老内容还在盘上），也是个**可点的补段入口**。 */}
+                    <Show when={localChatStore.hasOlder || localChatStore.olderLoading}>
+                        {/* 可点：滚动只是**触发方式之一** —— 窗口渲染高度 ≤ 视口时用户根本
+                            滚不出 scroll 事件，只有这条按钮能补出更早的轮（##293 review R5）。 */}
+                        <button
+                            type="button"
+                            data-load-older="1"
+                            class="flex items-center justify-center gap-2 py-2 text-xs opacity-60 hover:opacity-100 w-full"
+                            disabled={localChatStore.olderLoading}
+                            onClick={() => scrollRef && loadOlderInto(scrollRef)}
+                        >
+                            {localChatStore.olderLoading ? "正在加载更早的消息…" : "上滚加载更早的消息"}
+                        </button>
+                    </Show>
                     <For each={rootRows()}>
                         {(row) =>
                             row.tag === "turn" ? (

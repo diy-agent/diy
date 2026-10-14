@@ -132,6 +132,26 @@ describe("delta/patch 合并语义", () => {
         expect(s.blocks.get("p1")!.items).toEqual(["做 A", "做 B", "做 C"]);
     });
 
+    // 【时间线假定】「整段折叠流再喂一遍无副作用」只在 store **不领先于**该快照时成立 ——
+    // 这条不是本模块的锅，但它是消费端（localChatStore）能安全"整段再喂"的前提，写在这里留证。
+    // 反例：把一份**早于在途流**的快照再 apply 一遍 ⇒ patch 无条件覆盖回旧值、delta 追在回退值上
+    // ⇒ 丢一段（下次从盘上 reload 才恢复，故表现为瞬时闪烁）。
+    it("旧快照的 patch 会把 store 回退，后续 delta 追加在回退值上（时间线假定）", () => {
+        const s = ops(
+            { op: "start", id: "t1", kind: "turn" },
+            { op: "start", id: "t1_a", kind: "text", parent: "t1", meta: { role: "assistant" } },
+            { op: "delta", id: "t1_a", fields: { content: "AB" } },
+            { op: "delta", id: "t1_a", fields: { content: "CD" } },
+            { op: "delta", id: "t1_a", fields: { content: "EF" } },
+        );
+        expect(s.blocks.get("t1_a")!.content).toBe("ABCDEF"); // 流已到 ABCDEF
+        // main 在早于那两条 delta 的时刻读盘 → 快照里的终值是 "ABC"
+        s.apply({ op: "patch", id: "t1_a", fields: { content: "ABC" } });
+        expect(s.blocks.get("t1_a")!.content).toBe("ABC"); // ← 回退（前提被破的地方）
+        s.apply({ op: "delta", id: "t1_a", fields: { content: "G" } });
+        expect(s.blocks.get("t1_a")!.content).toBe("ABCG"); // ← "DEF" 丢了
+    });
+
     it("嵌套路径 patch（usage.in）与未知字段前向兼容（delta 降级 patch）", () => {
         const s = ops({ op: "start", id: "t1", kind: "turn" });
         s.apply({ op: "patch", id: "t1", fields: { "usage.in": 10 } });

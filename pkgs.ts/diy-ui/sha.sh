@@ -54,6 +54,10 @@ test() { run npx vitest run "${@:-}"; }
 # 本包全是快速单测，无慢测试：test ≡ test-unit
 test-unit() { run npx vitest run "$@"; }
 
+# test-unit：workspace 统一入口（根 ./sha.sh test-unit 对每个包跑它 —— 缺了它整轮会在这里中止；
+# 与其余 4 个包对齐）
+test-unit() { run npx vitest run "$@"; }
+
 # ci：check + test
 ci() { check; test; }
 

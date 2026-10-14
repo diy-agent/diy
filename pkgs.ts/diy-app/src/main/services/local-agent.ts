@@ -49,6 +49,13 @@ import {
     type JSONVal,
     type TurnEndReason,
 } from "./local-blocks";
+import {
+    decodeCursor,
+    encodeCursor,
+    isTurnStartAt,
+    seekTurnStartAtOrBefore,
+    seekWindowStart,
+} from "./local-ops-seek";
 import { appendAudit } from "./agent-audit";
 import { opsFeed } from "./ops-feed";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
@@ -450,6 +457,23 @@ function fileSize(fp: string): number {
     }
 }
 
+/**
+ * 分页窗口的一段（任务 293）：**已折叠**的 op 流 + 段起点游标 + 「更早还有轮吗」。
+ * `cursor` 是 main 签发的不透明 token（渲染端只回传），见 local-ops-seek。
+ *
+ * `stale` = 「请求带的游标失效，本次给的是**全量**而非按游标切的段」。渲染端必须据此重置
+ * 现有段（否则它会拿全量当"更早一段"前插，把历史拼重复）。窗口与游标的连续性只有 main
+ * 校验得了（渲染端看不懂字节），所以**由 main 出声**，而不是让渲染端猜（任务 ##293 的坑：
+ * 曾试图用"两段轮次互为前缀"判连续性 —— 两段在字节上是切分的、轮次不重叠，判据恒假）。
+ */
+export interface HistoryWindow {
+    ops: Op[];
+    cursor: string;
+    hasMore: boolean;
+    /** 游标失效（清空 / 覆盖写 / 起点不再是轮首）⇒ 本次是退化全量，渲染端要重置 */
+    stale: boolean;
+}
+
 /** 折叠缓存的上限（LRU）：块树常驻内存，多开几个大会话也不至于无界堆积。 */
 const HISTORY_CACHE_MAX = 8;
 
@@ -508,6 +532,14 @@ function readOpsRange(fp: string, from: number, to: number): { ops: Op[]; consum
     } finally {
         closeSync(fd);
     }
+}
+
+/** 读 `[from, to)` → fold → compact（**定长区间**：上滚取的那一段，不走增量缓存）。 */
+function foldRange(fp: string, from: number, to: number): Op[] {
+    const ops = from < to ? readOpsRange(fp, from, to).ops : [];
+    const store = new BlockStore();
+    for (const op of ops) store.apply(op);
+    return compactOps(store);
 }
 
 // ─── 压缩（compact）：账本 / 边界 / 原文寻回 ──────────────
@@ -937,13 +969,13 @@ export class LocalAgentManager {
      */
     private providers = new Map<string, { chat: ReturnType<typeof createOpenAICompatible> | null; resp: ReturnType<typeof createOpenAI> | null }>();
     /**
-     * 会话历史的折叠缓存（per task）：已消费字节 + 前 4KB 指纹 + 增量 fold 出的块树。
+     * 会话历史的折叠缓存（per task **+ 窗口起点**）：已消费字节 + 前 4KB 指纹 + 增量 fold 出的块树。
      *
      * 为什么必须有：主进程是单线程，全量重放 74MB 会同步阻塞 ~1s 卡住所有 RPC
      * （含别的任务）。而轮末每次 append 只加一点点 —— 缓存后每轮成本 = **尾部大小 + O(块数)**。
      * 上限 HISTORY_CACHE_MAX（LRU）：块树常驻内存，不能无界堆积。
      */
-    private historyCache = new Map<string, { consumed: number; prefix: string; store: BlockStore }>();
+    private historyCache = new Map<string, { start: number; consumed: number; prefix: string; store: BlockStore }>();
     private _limits: LocalAgentLimits | null = null;
 
     /**
@@ -1411,17 +1443,31 @@ export class LocalAgentManager {
      * 失效判据见下方 invalid —— 宁可把整份日志重放一遍，也绝不把两份文件的历史缝在一起。
      */
     history(taskUri: string): Op[] {
-        const fp = opsFile(taskUri);
+        return this.foldedOps(taskUri, opsFile(taskUri), 0);
+    }
+
+    /**
+     * 从 `start` 字节读到文件尾 → fold → compact。**全量与窗口共用这一条**（`start = 0`
+     * 就是全量），于是「增量 fold」「缓存失效判据」「issue 出声」只有一份实现。
+     *
+     * 增量：per (task, start) 缓存已 fold 的块树 + 已消费字节，只读新增尾巴
+     * （轮末 append 的代价 = 尾巴大小）。缓存按键含 `start`：**不同窗口起点是不同的树**，
+     * 共用一条会被互相冲掉（尾部窗口的起点固定 ⇒ 轮末刷新稳定命中同一条）。
+     *
+     * 失效判据（任一破了就重放整段）：
+     *   ① 已消费长度不超过当前文件（否则 = 被清空 / 截断 / 换了文件）；
+     *   ② 前 4KB 指纹一致（否则 = 被整文件覆盖 —— 同尺寸覆盖时大小与偏移都看不出来）。
+     * 取向：宁可重放一遍，也绝不把两份日志的历史缝在一起。
+     */
+    private foldedOps(taskUri: string, fp: string, start: number): Op[] {
         const size = fileSize(fp);
         const prefix = readPrefix(fp);
-        const cached = this.historyCache.get(taskUri);
-        // 缓存可用 ⟺ 两条都成立（任一破了就重放整份）：
-        //   ① 已消费长度不超过当前文件（否则 = 被清空/截断/换了文件）；
-        //   ② 前 4KB 指纹一致（否则 = 被整文件覆盖 —— 同尺寸覆盖时大小与偏移都看不出来）。
-        const c: { consumed: number; prefix: string; store: BlockStore } =
-            cached && !(cached.consumed > size || (size > 0 && cached.prefix !== prefix))
+        const key = `${taskUri}#${start}`;
+        const cached = this.historyCache.get(key);
+        const c: { start: number; consumed: number; prefix: string; store: BlockStore } =
+            cached && cached.start === start && !(cached.consumed > size || (size > 0 && cached.prefix !== prefix))
                 ? cached
-                : { consumed: 0, prefix: "", store: new BlockStore() };
+                : { start, consumed: start, prefix: "", store: new BlockStore() };
         if (size > c.consumed) {
             const { ops, consumed } = readOpsRange(fp, c.consumed, size);
             for (const op of ops) c.store.apply(op);
@@ -1430,8 +1476,8 @@ export class LocalAgentManager {
         c.prefix = prefix;
         // LRU（Map 保插入序）：访问即移到队尾，超限淘汰最久没打开的会话（谁也不希望
         // 「刚看过的那本」被另一个冷会话挤掉）。
-        this.historyCache.delete(taskUri);
-        this.historyCache.set(taskUri, c);
+        this.historyCache.delete(key);
+        this.historyCache.set(key, c);
         if (this.historyCache.size > HISTORY_CACHE_MAX) {
             const oldest = this.historyCache.keys().next().value;
             if (oldest !== undefined) this.historyCache.delete(oldest);
@@ -1443,6 +1489,60 @@ export class LocalAgentManager {
             console.warn(`[local-agent] 会话 ${taskUri} 折叠前 fold 出 ${c.store.issues.length} 条 issue：${sample}`);
         }
         return compactOps(c.store);
+    }
+
+    /**
+     * **尾部窗口**（大会话分页的「最近一段」）—— 只 fold 一段，不再是整份。
+     *
+     * 为什么要有它（任务 293）：290 折叠后冷加载仍是**整份** —— 读盘 + 全量 fold（74MB 会话
+     * ~2.3s，主线程阻塞）+ 整量回包（15.2MB）。分页只 fold「最近一段」，滚动上取再补一段。
+     *
+     * `cursor` 语义：**回传上一次发的游标** = 「从这段的起点重取」（轮末刷新的路径 —— 起点
+     * 固定，文件只变长，于是渲染端的段依然是同一段的延长，增量并入即可）。缺省则是首载：
+     * 按 `budgetBytes` 从尾部 seek 一个轮首作为起点。游标失效（清空 / 覆盖写）⇒ 退全量。
+     *
+     * 不变量：`ops` 里除末轮（可能正在写）外每轮完整，且起点落在轮 `start` 行行首
+     * （见 local-ops-seek 的三条保证）—— 窗口边界错位会让块塌成根、patch 丢失。
+     */
+    historyWindow(taskUri: string, opts: { budgetBytes?: number; cursor?: string } = {}): HistoryWindow {
+        const fp = opsFile(taskUri);
+        const at = opts.cursor ? decodeCursor(opts.cursor, fp) : null;
+        // 带了游标却失效（清空 / 覆盖写 / 换了文件）⇒ 退全量：**绝不把两段历史缝在一起**，
+        // 与折叠缓存的判据同一取向（宁可重放整份，也不给出错位的窗口）。
+        if (opts.cursor && (at === null || !isTurnStartAt(fp, at))) return this.segmentOf(taskUri, fp, 0, undefined, true);
+        return this.segmentOf(taskUri, fp, at ?? seekWindowStart(fp, opts.budgetBytes ?? 0));
+    }
+
+    /**
+     * **更早的一段**（上滚取）：`cursor` 所在段起点之前的 `budgetBytes` 字节，
+     * 同样向上取一个轮首作为新段起点（floor，永不落空）。
+     *
+     * 已到文件头（`at === 0`）⇒ 空段 + `hasMore: false`（渲染端据此收工，不再请求）。
+     */
+    historyOlder(taskUri: string, opts: { cursor: string; budgetBytes?: number }): HistoryWindow {
+        const fp = opsFile(taskUri);
+        const at = decodeCursor(opts.cursor, fp);
+        if (at === null || !isTurnStartAt(fp, at)) return this.segmentOf(taskUri, fp, 0, undefined, true); // 游标失效 ⇒ 全量 + stale
+        if (at <= 0) return { ops: [], cursor: encodeCursor(fp, 0), hasMore: false, stale: false };
+        // 至少往前 1 字节：`budget` 缺失（或 0）时退化成「只取前一轮」，而不是原地打转
+        const start = seekTurnStartAtOrBefore(fp, at - Math.max(1, opts.budgetBytes ?? 0));
+        // 当前**不可达**（`seekTurnStartAtOrBefore` 的 floor 语义保证 `start ≤ at - 1`），
+        // 留着是防未来改动把「至少往前 1 字节」这条丢掉 —— 那时空转 = 渲染端死循环补同一段。
+        if (start >= at) return { ops: [], cursor: encodeCursor(fp, at), hasMore: false, stale: false };
+        return this.segmentOf(taskUri, fp, start, at);
+    }
+
+    /**
+     * 窗口的唯一出口：读 `[from, to)` → fold → compact。三种取法共用同一份语义
+     * （读满 / 半行留给下次见 readOpsRange；compact 让回包从 15MB 降到段大小）。
+     *
+     * `hasMore = from > 0`：起点不在文件头 ⇒ 前面可能还有轮。若前面只剩非轮内容，
+     * 下一次上滚会得到空段 + `hasMore: false` —— 多一次请求，不会出错。
+     */
+    private segmentOf(taskUri: string, fp: string, from: number, to?: number, stale = false): HistoryWindow {
+        // `to` 缺省 = 到文件尾 ⇒ 走增量缓存（轮末刷新的高频路径）；定长区间（上滚段）直读直 fold。
+        const ops = to === undefined ? this.foldedOps(taskUri, fp, from) : foldRange(fp, from, to);
+        return { ops, cursor: encodeCursor(fp, from), hasMore: from > 0, stale };
     }
 
     /**
@@ -1805,7 +1905,11 @@ export class LocalAgentManager {
         opsFeed.reset(taskUri);
         // 内存态无论如何都丢：留着它才是真的不一致（盘上文件仍在 → 重进会重新加载）
         this.sessions.delete(taskUri);
-        this.historyCache.delete(taskUri); // 折叠缓存同理：日志已删，留着就是读一份不存在的文件
+        // 折叠缓存同理：日志已删，留着就是读一份不存在的文件。
+        // 键是 `${taskUri}#${start}`（分页后一个 task 可能有多条窗口），按前缀清干净。
+        for (const k of [...this.historyCache.keys()]) {
+            if (k.startsWith(`${taskUri}#`)) this.historyCache.delete(k);
+        }
         return ok;
     }
 

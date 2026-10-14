@@ -371,6 +371,23 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().history(input.taskUri);
   });
+  // 大会话分页（任务 293）：只 fold 一段 —— 首载按预算 seek，刷新/上滚按游标取
+  binding.on(app.agent.local.historyWindow, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.historyWindow", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().historyWindow(input.taskUri, {
+      budgetBytes: input.budgetBytes,
+      cursor: input.cursor,
+    });
+  });
+  binding.on(app.agent.local.historyOlder, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.historyOlder", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().historyOlder(input.taskUri, {
+      cursor: input.cursor,
+      budgetBytes: input.budgetBytes,
+    });
+  });
   // 会话 op 增量（##307 读侧）：水位校准起点 + 订阅写侧推送 —— UI 不再轮询、不再等轮末重放。
   // opsFeed 是 main 侧唯一写盘点的广播总线（见 services/ops-feed.ts）；CLI / 他窗口 /
   // 自愈补写的 op 同样经过它 → 任何来源的写入对所有订阅窗口即时可见。
