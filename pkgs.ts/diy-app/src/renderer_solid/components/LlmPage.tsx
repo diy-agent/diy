@@ -1,7 +1,6 @@
 import { createSignal, onMount, Show } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "../store/notificationStore";
-import { LlmTrafficPanel } from "./LlmTrafficPanel";
 
 export function LlmPage() {
     const [running, setRunning] = createSignal(false);
@@ -51,10 +50,6 @@ export function LlmPage() {
                 <button class="btn btn-sm mt-3" disabled={loading()} onClick={toggle}>
                     {loading() ? "处理中…" : running() ? "停止" : "启动"}
                 </button>
-            </div>
-            <div class="divider my-0 shrink-0" />
-            <div class="flex-1 min-h-0">
-                <LlmTrafficPanel />
             </div>
         </div>
     );

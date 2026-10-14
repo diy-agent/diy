@@ -5,6 +5,7 @@ import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { TaskRunPage } from "./components/TaskRunPage";
 import { LabPage } from "./components/LabPage";
 import { LlmPage } from "./components/LlmPage";
+import { TrafficPage } from "./components/TrafficPage";
 import { ModelConfigPage } from "./components/ModelConfigPage";
 // 折叠框展开态仍是 lab view 内部的局部状态（与「view 在哪个 area」是两件事）
 import { setLabView } from "./components/PromptLabV4Page";
@@ -41,7 +42,7 @@ import { isAncestorOf } from "./lib/task-lineage";
  * 「任务执行页」不在顶级导航里 —— 它是**动态页面**：每打开一个任务就多一个，
  * 挂在导航「任务」之下（等同浏览器/编辑器开 tab）。故用 route 而不是扁平 page id。
  */
-type Section = "task" | "llm" | "settings";
+type Section = "task" | "llm" | "traffic" | "settings";
 
 /**
  * 路由 = 顶级 section，或一个**已打开的 tab**（key 形如 `task-run:<uri>` / `lab:<uri>`）。
@@ -53,14 +54,15 @@ type Route = { kind: "section"; section: Section } | { kind: "tab"; key: string 
 type DragEndEvent = Parameters<NonNullable<DragDropProviderProps["onDragEnd"]>>[0];
 
 /** 顶级导航（一侧栏项 = 一类事情）。任务执行页不出现在这里，它是任务下的动态页面 */
-const NAV_ITEMS: Array<{ id: "task" | "llm" | "settings"; label: string; icon: string }> = [
+const NAV_ITEMS: Array<{ id: "task" | "llm" | "traffic" | "settings"; label: string; icon: string }> = [
     { id: "task", label: "任务管理", icon: "📋" },
     { id: "llm", label: "LLM", icon: "🧠" },
+    { id: "traffic", label: "流量", icon: "📡" },
     { id: "settings", label: "设置", icon: "⚙️" },
 ];
 
 /** `ui page navigate` 的合法取值（非法值一律忽略：宁可不跳，也不能把主区打成白屏） */
-const VALID_PAGES = new Set(["task", "task-run", "lab", "llm", "settings"]);
+const VALID_PAGES = new Set(["task", "task-run", "lab", "llm", "traffic", "settings"]);
 
 /**
  * 窄窗断点。**必须与 index.css 的 `@media (width < 1024px)`、daisyUI 的 `lg:` 分支
@@ -727,6 +729,9 @@ export default function App() {
                     </Show>
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "llm"}>
                         <LlmPage />
+                    </Show>
+                    <Show when={route().kind === "section" && (route() as { section: Section }).section === "traffic"}>
+                        <TrafficPage />
                     </Show>
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "settings"}>
                         <div class="flex flex-col h-full">

@@ -28,7 +28,7 @@ import { WsTransport } from "@diy/rpc/ws";
 import { bindApi, setRpcPort } from "../main/services/api-impl";
 import { AppConfig } from "../main/core/app-config";
 import { installDiagnostics } from "../main/services/diagnostics";
-import { llmTraffic } from "../main/core/llm-traffic";
+import { traffic } from "../main/core/traffic";
 import { readRuntimeConfig } from "../runtime";
 import { cliEntryForRepo, findRepoRoot, prodHomeAllowed } from "../main/core/instance-identity";
 import { resolveDevHome } from "../main/core/dev-home";
@@ -72,7 +72,7 @@ if (repoRoot) {
 const cfg = readRuntimeConfig();
 // serve 是纯 Node 常驻进程，同样要防 EPIPE / 未捕获异常裸奔；日志独立落 serve.log
 installDiagnostics(cfg.home, "serve");
-llmTraffic.init(); // LLM 流量观测（订阅 undici diagnostics_channel）
+traffic.init(); // 流量观测（订阅 undici diagnostics_channel）
 const ROOT = path.resolve(__dirname, "..", "..");
 // 与上面的数据根同一根：build/<variant>/{renderer,home}（缺省 prod，与 resolveDevHome 的 variant 同源）
 const STATIC_DIR = path.resolve(ROOT, "build", process.env["DIY_VARIANT"] ?? "prod", "renderer");

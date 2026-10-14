@@ -37,7 +37,7 @@ import { RpcPortService } from "./services/rpc-port";
 import { AppConfig } from "./core/app-config";
 import { bindApi, bindAppHandlers, setRpcPort } from "./services/api-impl";
 import { installDiagnostics } from "./services/diagnostics";
-import { llmTraffic } from "./core/llm-traffic";
+import { traffic } from "./core/traffic";
 import { installCrashReporting } from "./services/crash-reporting";
 import { detectGpu } from "./core/gpu-detect";
 import { readRuntimeConfig } from "../runtime";
@@ -96,8 +96,8 @@ app.setPath("cache", appConfig.cache);
 
 // 诊断设施必须早于任何 console 输出安装：EPIPE 防护 + 日志落 DIY_HOME/log/main.log
 installDiagnostics(appConfig.diyHome);
-// LLM 流量观测：订阅 undici diagnostics_channel，早于任何 LLM 请求（见 core/llm-traffic.ts）
-llmTraffic.init();
+// 流量观测：订阅 undici diagnostics_channel，早于任何请求（见 core/traffic.ts）
+traffic.init();
 // 原生崩溃采集：Crashpad minidump → <DIY_HOME>/log/crashes + 子进程消亡日志进 main.log
 installCrashReporting(appConfig.diyHome);
 

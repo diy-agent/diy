@@ -1,13 +1,13 @@
-// tests/core/llm-traffic.test.ts
-// LLM 流量观测（undici diagnostics_channel）的纯逻辑：记录形状、脱敏、保底环裁剪、
-// 录制放大、归属反查、attempt 递增、错误体捕获。
+// tests/core/traffic.test.ts
+// 流量观测（undici diagnostics_channel）的纯逻辑：记录形状、脱敏、上限裁剪、
+// 录制放大、归属反查、attempt 递增、错误体捕获、来源分类。
 //
 // 驱动方式：直接往 `node:diagnostics_channel` 上 publish 假事件 —— 与 undici 真实
-// 收发的事件同形（见 core/llm-traffic.ts 顶部注释），比真发便宜且可观（真发要 key、
+// 收发的事件同形（见 core/traffic.ts 顶部注释），比真发便宜且可观（真发要 key、
 // 要钱，且偶发 400 不可控）。
 import { describe, it, expect, beforeEach } from "vitest";
 import { channel } from "node:diagnostics_channel";
-import { llmTraffic } from "../../src/main/core/llm-traffic";
+import { traffic } from "../../src/main/core/traffic";
 
 const RUN = {
     session: "ses_test",
@@ -59,18 +59,18 @@ function fireRes(req: FakeReq, status: number, headers: Record<string, string>, 
 }
 
 beforeEach(() => {
-    llmTraffic.clear();
-    llmTraffic.setRecording(false);
-    llmTraffic.setCap(20, "keepLast");
-    llmTraffic.noteRun(RUN); // 内含 init()：订阅通道
+    traffic.clear();
+    traffic.setRecording(false);
+    traffic.setCap(20, "keepLast");
+    traffic.noteRun(RUN); // 内含 init()：订阅通道
 });
 
-describe("llm-traffic（undici diagnostics_channel）", () => {
+describe("traffic（undici diagnostics_channel）", () => {
     it("成功往返：status / traceId / 请求头（脱敏）/ 请求体，归属反查得到 task", () => {
         const req = fireReq({ body: JSON.stringify({ model: "x" }) });
         fireRes(req, 200, { "content-type": "text/event-stream", "x-trace-id": "trace-abc-123" });
 
-        const { records } = llmTraffic.snapshot();
+        const { records } = traffic.snapshot();
         expect(records).toHaveLength(1);
         const r = records[0];
         expect(r.status).toBe(200);
@@ -90,7 +90,7 @@ describe("llm-traffic（undici diagnostics_channel）", () => {
         const req = fireReq({ body: "{}" });
         fireRes(req, 400, { "content-type": "application/json" }, JSON.stringify({ message: "invalid request error trace_id: 1662a9a0", type: "invalid_request_error" }));
 
-        const r = llmTraffic.snapshot().records[0];
+        const r = traffic.snapshot().records[0];
         expect(r.status).toBe(400);
         expect((r.resBody as { type: string }).type).toBe("invalid_request_error");
     });
@@ -100,18 +100,18 @@ describe("llm-traffic（undici diagnostics_channel）", () => {
             const req = fireReq({ body: "{}" });
             fireRes(req, 429, { "content-type": "application/json" }, "{}");
         }
-        expect(llmTraffic.snapshot().records.map((r) => r.attempt)).toEqual([1, 2]);
+        expect(traffic.snapshot().records.map((r) => r.attempt)).toEqual([1, 2]);
     });
 
     it("网络异常：status 落 null 并记 err（error 事件收口）", () => {
         const req = fireReq({ body: "{}" });
         channel("undici:request:error").publish({ request: req, error: new Error("connect ETIMEDOUT") });
-        const r = llmTraffic.snapshot().records[0];
+        const r = traffic.snapshot().records[0];
         expect(r.status).toBeNull();
         expect(r.err).toContain("ETIMEDOUT");
     });
 
-    it("无归属（无 x-opencode-session 且 origin 未登记）：不记录", () => {
+    it("无归属（无 x-opencode-session 且 origin 未登记）：仍记录为其它来源", () => {
         const req: FakeReq = {
             method: "GET",
             origin: "https://other.example.net",
@@ -120,7 +120,35 @@ describe("llm-traffic（undici diagnostics_channel）", () => {
         };
         channel("undici:request:create").publish({ request: req });
         channel("undici:request:trailers").publish({ request: req, trailers: [] });
-        expect(llmTraffic.snapshot().records).toHaveLength(0);
+        const r = traffic.snapshot().records[0];
+        expect(r.kind).toBe("http");
+        expect(r.taskUri).toBeNull();
+        expect(r.host).toBe("other.example.net");
+    });
+
+    it("noteProbe：登记探测地址后，该地址的请求归类为 probe", () => {
+        traffic.noteProbe("https://probe.example.com/v1");
+        const req: FakeReq = {
+            method: "GET",
+            origin: "https://probe.example.com",
+            path: "/v1/models",
+            headers: headersArr({ "content-type": "application/json" }),
+        };
+        channel("undici:request:create").publish({ request: req });
+        fireRes(req, 200, { "content-type": "application/json" }, "{}");
+        const r = traffic.snapshot().records[0];
+        expect(r.kind).toBe("probe");
+        expect(r.method).toBe("GET");
+    });
+
+    it("latestFailure：返回最近一次失败记录 id（可按 session 过滤）", () => {
+        const ok = fireReq({ body: "{}" });
+        fireRes(ok, 200, { "content-type": "application/json" }, "{}");
+        const bad = fireReq({ body: "{}" });
+        fireRes(bad, 400, { "content-type": "application/json" }, "{}");
+        expect(traffic.latestFailure()).toBe(traffic.snapshot().records[1].id);
+        expect(traffic.latestFailure(RUN.session)).toBe(traffic.snapshot().records[1].id);
+        expect(traffic.latestFailure("nope")).toBeNull();
     });
 
     it("origin 兜底归属：缺 x-opencode-session 但 origin 命中已登记 baseUrl → 仍记", () => {
@@ -132,28 +160,28 @@ describe("llm-traffic（undici diagnostics_channel）", () => {
         };
         channel("undici:request:create").publish({ request: req });
         fireRes(req, 200, { "content-type": "application/json" }, "{}");
-        const r = llmTraffic.snapshot().records[0];
+        const r = traffic.snapshot().records[0];
         expect(r.taskUri).toBe(RUN.taskUri);
         expect(r.session).toBe(RUN.session);
     });
 
-    it("保底环：超过 keepLast 挤掉最旧的", () => {
+    it("常开上限：超过 keepLast 挤掉最旧的", () => {
         for (let i = 0; i < 25; i++) {
             const req = fireReq({ body: JSON.stringify({ model: `m${i}` }) });
             fireRes(req, 200, { "content-type": "application/json" }, "{}");
         }
-        const { records } = llmTraffic.snapshot();
+        const { records } = traffic.snapshot();
         expect(records).toHaveLength(20);
         expect((records[0].reqBody as { model: string }).model).toBe("m5"); // m0..m4 被挤掉
     });
 
     it("录制模式：上限放大 + 捕获成功响应体 → 25 条全留", () => {
-        llmTraffic.setRecording(true);
+        traffic.setRecording(true);
         for (let i = 0; i < 25; i++) {
             const req = fireReq({ body: "{}" });
             fireRes(req, 200, { "content-type": "application/json" }, JSON.stringify({ n: i }));
         }
-        const snap = llmTraffic.snapshot();
+        const snap = traffic.snapshot();
         expect(snap).toMatchObject({ recording: true, cap: 500 });
         expect(snap.records).toHaveLength(25);
         expect(snap.records[24].resBody).toEqual({ n: 24 });
@@ -162,7 +190,7 @@ describe("llm-traffic（undici diagnostics_channel）", () => {
     it("非录制模式：成功流式响应不捕获正文（只留说明）", () => {
         const req = fireReq({ body: "{}" });
         fireRes(req, 200, { "content-type": "text/event-stream" }, "data: hello\n\n");
-        const r = llmTraffic.snapshot().records[0];
+        const r = traffic.snapshot().records[0];
         expect(typeof r.resBody).toBe("string");
         expect(r.resBody as string).toContain("流式");
     });
@@ -170,6 +198,6 @@ describe("llm-traffic（undici diagnostics_channel）", () => {
     it("traceId fallback：x-trace-id 缺省时退到 x-opencode-log-id", () => {
         const req = fireReq({ body: "{}" });
         fireRes(req, 200, { "content-type": "application/json", "x-opencode-log-id": "log-9" }, "{}");
-        expect(llmTraffic.snapshot().records[0].traceId).toBe("log-9");
+        expect(traffic.snapshot().records[0].traceId).toBe("log-9");
     });
 });

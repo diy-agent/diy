@@ -48,7 +48,7 @@ async function getLlmProxy() {
   return _llmProxyInstance;
 }
 
-import { llmTraffic } from "../core/llm-traffic";
+import { traffic } from "../core/traffic";
 
 const app = apiDef.diy;
 
@@ -689,22 +689,22 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { status: "ok" };
   });
 
-  // ── llmTraffic（内存流量环；见 core/llm-traffic.ts）──
-  binding.on(app.llmTraffic.snapshot, async () => llmTraffic.snapshot());
-  binding.on(app.llmTraffic.clear, async () => {
-    llmTraffic.clear();
+  // ── traffic（内存流量环；见 core/traffic.ts）──
+  binding.on(app.traffic.snapshot, async () => traffic.snapshot());
+  binding.on(app.traffic.clear, async () => {
+    traffic.clear();
     return { status: "ok" };
   });
-  binding.on(app.llmTraffic.setRecording, async ({ input }) => {
-    llmTraffic.setRecording(input.on);
-    return llmTraffic.snapshot();
+  binding.on(app.traffic.setRecording, async ({ input }) => {
+    traffic.setRecording(input.on);
+    return traffic.snapshot();
   });
-  binding.on(app.llmTraffic.setCap, async ({ input }) => {
-    llmTraffic.setCap(input.n, input.which ?? "keepLast");
-    return llmTraffic.snapshot();
+  binding.on(app.traffic.setCap, async ({ input }) => {
+    traffic.setCap(input.n, input.which ?? "keepLast");
+    return traffic.snapshot();
   });
-  binding.on(app.llmTraffic.events, async function* () {
-    for await (const ev of llmTraffic.events()) yield ev;
+  binding.on(app.traffic.events, async function* () {
+    for await (const ev of traffic.events()) yield ev;
   });
 
   // ── llmConfig（模型 provider 配置）──
@@ -782,6 +782,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
       return { ok: false, status: null, models: [], error: expanded.error ?? "密钥为空" };
     }
     const base = input.baseUrl.replace(/\/+$/, "");
+    traffic.noteProbe(base); // 让流量页能标注「模型配置探测」来源
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 12_000);
     try {

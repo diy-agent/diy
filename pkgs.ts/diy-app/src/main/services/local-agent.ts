@@ -86,7 +86,7 @@ import {
 } from "../../shared/context/cache-ttl";
 import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
-import { llmTraffic } from "../core/llm-traffic";
+import { traffic } from "../core/traffic";
 import { statFromStep } from "../../shared/context/stats";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import {
@@ -979,12 +979,12 @@ export class LocalAgentManager {
     }
 
     /**
-     * 发请求前登记归属 —— 流量观测（undici diagnostics_channel，见 core/llm-traffic.ts）靠
+     * 发请求前登记归属 —— 流量观测（undici diagnostics_channel，见 core/traffic.ts）靠
      * 请求头里的 `x-opencode-session` 反查「这条记录属于谁」，因此每次真发（streamText /
      * generateText）前必须登记一次：同时把 attempt 计数归零（重试即自增）。
      */
     private noteTraffic(taskUri: string, turnId: string, rm: ResolvedModel, maxRetries: number): void {
-        llmTraffic.noteRun({
+        traffic.noteRun({
             session: sessionIdOf(taskUri),
             taskUri,
             turnId,
@@ -2095,10 +2095,14 @@ export class LocalAgentManager {
             if (!started.has(id)) yield* emit({ op: "start", id, kind, parent, meta });
         };
         let eN = 0;
-        const errorBlock = function* (source: string, text: string): Generator<Op, void, void> {
+        const errorBlock = function* (
+            source: string,
+            text: string,
+            extra?: Record<string, JSONVal>,
+        ): Generator<Op, void, void> {
             const id = `${turnId}_e${++eN}`;
             yield* seal([
-                { op: "start", id, kind: "error", parent: turnId, meta: { source } },
+                { op: "start", id, kind: "error", parent: turnId, meta: { source, ...(extra ?? {}) } },
                 { op: "delta", id, fields: { message: text } },
                 { op: "stop", id },
             ]);
@@ -2582,7 +2586,10 @@ export class LocalAgentManager {
                         case "error": {
                             const msg = errText((part as { error?: unknown }).error);
                             setEndReason({ type: "error", data: { source: "llm", message: msg } });
-                            yield* errorBlock("llm", msg);
+                            // 把「这次失败对应哪条实际请求」一并记下：错误块据此直接跳到那条
+                            // 请求/响应（能定位就定位，不靠用户猜 trace_id）。
+                            const failId = traffic.latestFailure(sessionIdOf(taskUri));
+                            yield* errorBlock("llm", msg, failId != null ? { reqId: failId } : undefined);
                             break;
                         }
                         case "abort":

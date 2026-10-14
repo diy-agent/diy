@@ -48,20 +48,22 @@ const StatusDataUri = z.object({ status: z.string(), data: z.object({ uri: z.str
 const StatusDataId = z.object({ status: z.string(), data: z.object({ id: z.string() }) });
 const StatusOk = z.object({ status: z.string() });
 
-/** LLM 流量记录（内存环形的一条 HTTP 往返；body 形状任意，故用 any） */
-const LlmTrafficRecordSchema = z.object({
+/** 一条流量记录（一次 HTTP 往返；body 形状任意，故用 any） */
+const TrafficRecordSchema = z.object({
   id: z.number(),
   ts: z.number().describe("请求发出时刻（epoch ms）"),
-  session: z.string().describe("x-opencode-session（归属键，反查 task/turn 用）"),
-  taskUri: z.string().nullable().describe("归属任务；未知（非本进程发起）则 null"),
+  kind: z.enum(["llm", "probe", "http"]).describe("来源：LLM 对话 / 模型配置探测 / 其它"),
+  session: z.string().describe("x-opencode-session（归属键，反查 task/turn 用）；无归属则空串"),
+  taskUri: z.string().nullable().describe("归属任务；未知则 null"),
   turnId: z.string().nullable().describe("归属轮次"),
   provider: z.string().describe("provider id"),
   model: z.string().describe("模型 id"),
   baseUrl: z.string(),
   method: z.string(),
   url: z.string().describe("完整请求 URL"),
+  host: z.string().describe("主机名（含端口）"),
   path: z.string(),
-  attempt: z.number().describe("本轮第几次请求（ai-sdk 每次重试即一次 fetch，天然逐次自增）"),
+  attempt: z.number().describe("本轮第几次请求（每次重试即一次 HTTP 往返，逐次自增）"),
   maxRetries: z.number(),
   status: z.number().nullable().describe("HTTP 状态码；null = 未收到响应（网络错 / 超时）"),
   ms: z.number().describe("耗时 ms"),
@@ -69,15 +71,15 @@ const LlmTrafficRecordSchema = z.object({
   reqBody: z.any(),
   resHeaders: z.record(z.string(), z.string()),
   resBody: z.any(),
-  traceId: z.string().nullable().describe("上游追责凭据（响应头 x-trace-id）"),
+  traceId: z.string().nullable().describe("上游追责凭据（响应头 x-trace-id / x-request-id / x-opencode-log-id）"),
   err: z.string().nullable().describe("网络层异常消息"),
 });
-const LlmTrafficSnapshotSchema = z.object({
+const TrafficSnapshotSchema = z.object({
   recording: z.boolean().describe("是否录制模式（上限放大且不截断）"),
   cap: z.number().describe("当前生效上限"),
-  keepLast: z.number().describe("保底环上限（常开）"),
+  keepLast: z.number().describe("常开时的上限"),
   total: z.number(),
-  records: z.array(LlmTrafficRecordSchema),
+  records: z.array(TrafficRecordSchema),
 });
 
 /** 任务树节点 schema（递归，供 ui.tree 输出强类型） */
@@ -940,13 +942,13 @@ export const apiDef = RpcSchema.router({
         },
       }),
 
-      llmTraffic: RpcSchema.group({
-        desc: `LLM 流量（内存环形：最近发出的 HTTP 请求 / 响应；不落盘，进程重启即空）`,
+      traffic: RpcSchema.group({
+        desc: `流量（最近发出的 HTTP 请求 / 响应；只在内存留最近若干条，进程重启即空）`,
         children: {
           snapshot: RpcSchema.unary({
-            desc: `取当前流量记录（UI 面板数据源）`,
+            desc: `取当前流量记录（界面数据源）`,
             input: {},
-            output: LlmTrafficSnapshotSchema,
+            output: TrafficSnapshotSchema,
           }),
           clear: RpcSchema.unary({
             desc: `清空流量记录`,
@@ -956,10 +958,10 @@ export const apiDef = RpcSchema.router({
           setRecording: RpcSchema.unary({
             desc: `开关录制模式（开 = 上限放大到 recCap 且不截断）`,
             input: { on: z.boolean().cliArg({ desc: "true 开始录制 / false 关闭" }) },
-            output: LlmTrafficSnapshotSchema,
+            output: TrafficSnapshotSchema,
           }),
           setCap: RpcSchema.unary({
-            desc: `设置环形上限（条数）`,
+            desc: `设置上限（条数）`,
             input: {
               n: z.number().cliArg({ desc: "条数上限（1..5000）" }),
               which: z
@@ -967,7 +969,7 @@ export const apiDef = RpcSchema.router({
                 .optional()
                 .cliOption({ desc: "改哪个上限（缺省 keepLast）" }),
             },
-            output: LlmTrafficSnapshotSchema,
+            output: TrafficSnapshotSchema,
           }),
           events: RpcSchema.serverStream({
             desc: `流量变更事件流（记录 / 清空 / 开关变更时推版本号；UI 收到后拉 snapshot）`,

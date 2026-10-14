@@ -45,10 +45,10 @@ import {
     type UsageHoverState,
 } from "./UsagePanel";
 import { CompactHistoryPanel } from "./CompactSessionPanel";
-import { LlmTrafficDrawer } from "./LlmTrafficDrawer";
+import { TrafficDrawer } from "./TrafficDrawer";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { draftStore } from "../store/draftStore";
-import { llmTrafficStore } from "../store/llmTrafficStore";
+import { trafficStore } from "../store/trafficStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
 import { Caches } from "../lib/ui-state";
@@ -1126,6 +1126,12 @@ function traceIdOf(msg: string): string | null {
 function ErrorBox(props: { node: BlockNode }) {
     const msg = () => str(props.node.attrs.message);
     const tid = () => traceIdOf(msg());
+    // 出错的那条请求：主进程在记错误块时把它的记录 id 一并写进 meta.reqId，
+    // 这里直接拿它定位（比从错误文本里抠 trace_id 更准）。
+    const reqId = () => {
+        const v = props.node.attrs.reqId;
+        return typeof v === "number" ? v : null;
+    };
     return (
         <div
             class="rounded-lg border border-error/40 bg-error/10 px-3 py-2 text-body text-error"
@@ -1134,13 +1140,13 @@ function ErrorBox(props: { node: BlockNode }) {
         >
             <div class="whitespace-pre-wrap">{`❌ [${str(props.node.attrs.source)}] ${msg()}`}</div>
             {/* 深链：错误块是「用户实际看到出错」的地方，从这里一步到实际请求/响应 ——
-                否则用户看到一行原文、却不知去哪查（入口缺失正是本条待改 1/3 的核心）。
-                判据：source 为 `llm` 的错（LLM 调用失败）恒给入口；带 trace_id 的顺带定位到那条。 */}
+                否则用户看到一行原文、却不知去哪查。source 为 `llm` 的错恒给入口；
+                有 reqId 就精确打开那条请求，否则退到按 trace_id 找、再退到最近一次失败。 */}
             <Show when={str(props.node.attrs.source) === "llm" || tid()}>
                 <button
-                    class="mt-1 text-caption underline decoration-dotted hover:no-underline"
+                    class="mt-1 text-caption underline decoration-dotted hover:no-underline cursor-pointer"
                     data-testid="error-traffic-link"
-                    onClick={() => llmTrafficStore.openWith(tid())}
+                    onClick={() => trafficStore.openWith({ traceId: tid(), reqId: reqId() })}
                 >
                     {tid()
                         ? `查看实际请求 / 响应（trace_id ${tid()!.slice(0, 8)}…）→`
@@ -1942,8 +1948,8 @@ export function LocalChatPage(props: { uri?: string }) {
                 live={liveTurnId() === usageDetail()}
                 onClose={() => setUsageDetail(null)}
             />
-            {/* LLM 流量抽屉（当前会话的请求/响应；错误块「查看流量 →」深链打开） */}
-            <LlmTrafficDrawer />
+            {/* 流量抽屉（当前会话的请求/响应；错误块「查看实际请求 / 响应」深链打开） */}
+            <TrafficDrawer />
             {/* L2：用量汇总 hover 卡（Portal 到 body，滚动容器裁不到） */}
             <UsageHoverCard
                 state={usageHover()}
@@ -1967,9 +1973,9 @@ export function LocalChatPage(props: { uri?: string }) {
                 <button
                     class="btn btn-xs btn-ghost shrink-0"
                     data-testid="chat-traffic-btn"
-                    data-tip="LLM 流量（当前会话实际发出的请求 / 响应）"
-                    aria-label="LLM 流量"
-                    onClick={() => llmTrafficStore.openWith()}
+                    data-tip="流量（当前会话实际发出的请求 / 响应）"
+                    aria-label="流量"
+                    onClick={() => trafficStore.openWith()}
                 >
                     <span class="text-body leading-none">📡</span>
                 </button>
