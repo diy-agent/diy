@@ -22,6 +22,15 @@
 //      抛错 —— 不能先下了单、再告诉调用方「这次调用不允许」。
 //   3. **打回不求值。** 节点 guard 问的是「能不能往前走」；打回不主张推进 → 不问、不跑插件。
 //
+//   **边上的 `when` 是「边的条件」（§14.4），两侧共用一套语义**：系统选边（`selectEdge`）与 actor
+//   宣布（`declare`）都要判它可观测的那一半 —— 同一条边换个方向推也得同一个答案，否则失败形态正是
+//   本包最反对的「悄悄偏到另一条路径」。宣布时 `when` 不可观测（`prompt:`）的那半由**宣布者担责**
+//   （他宣布走这条边 = 他断言条件成立），与 `guard` 的分水岭一致。
+//
+//   **组合期交叉校验**（`createRuntime`）：`actor: 'system'` 却带不可观测 guard = **死锁**
+//   （系统判不了、actor 又不得宣布）→ 当场 `invalid-def`，不留到运行期静默卡死。
+//   另：`pred:` / `action:` / `notify` 的名字组合期就查注册表 ⇒ **装配顺序是「先注册齐、再 createRuntime」**。
+//
 //   `step` / `declare` 都是**纯函数式的状态机驱动**：给同一个 `state` 再调一次就会再推一次
 //   （`seed` 由调用方给新 id）。故 `action:` 插件**必须幂等**（同一 `ref` 不重复动手），
 //   调用方拿到 `done` / `stuck` / `awaiting-actor` 后也不该空转轮询。
@@ -117,6 +126,24 @@ export interface Runtime<Id extends string = string> {
     status(state: FlowState<Id>): NodeStatus<Id>;
 }
 
+/**
+ * 边的条件（`when`）在 **actor 宣布**这一侧也要算数（`step` 侧的选边由 `selectEdge` 负责）。
+ *
+ * `when` 是**边的条件**（##166 §14.4「何时走这条边」），不是「系统选边的消歧技巧」—— 同一条边，
+ * 换个人推也得同一个答案；只在系统侧判，失败形态正是本包最反对的「悄悄偏到另一条路径」。
+ *
+ * 分水岭与 `guard` 一致：`pred:` / `action:` 可观测 → 系统当场核（不过即 `edge-unavailable`，
+ * 与系统侧的 `stuck` 对齐）；`prompt:` 不可观测 → 由**宣布者担责**（他宣布走这条边 = 他断言条件成立）。
+ */
+function requireEdgeAvailable<Id extends string>(def: WorkflowDef<Id>, edge: EdgeDef<Id>, ctx: PluginContext, registry: PluginRegistry): void {
+    if (edge.when === undefined || edge.when === '') return;
+    const path = `edges[${def.edges.indexOf(edge)}].when`;
+    const ref = parseGuardRef(edge.when, path);
+    if (!isObservable(ref)) return; // 不可观测 → 宣布者担责，系统判不了
+    if (evaluateGuards([edge.when], ctx, registry).pass) return;
+    throw new FlowError('edge-unavailable', `这条边的 \`when\`（${edge.when}）此刻不成立：${JSON.stringify(edge.from)} → ${JSON.stringify(edge.to)} 此刻不可用`, path);
+}
+
 const SEED_KEYS = ['id', 'at'] as const;
 const DECLARE_KEYS = ['id', 'at', 'author', 'to', 'content', 'causes'] as const;
 const OPTION_KEYS = ['registry', 'params', 'maxBounces', 'notify'] as const;
@@ -155,7 +182,7 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
     if (!Array.isArray(notifiers) || notifiers.some((name) => typeof name !== 'string')) {
         throw new FlowError('invalid-option', 'notify 应为插件名（字符串）数组', 'options.notify');
     }
-    const params = Object.freeze({ ...(options.params ?? {}) });
+    const params = Object.freeze({ ...options.params });
 
     const nodeAt = (id: Id): NodeDef<Id> => {
         const node = findNode(def, id);
@@ -181,6 +208,16 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
             const slot = slotOf(ref.prefix);
             if (slot) requirePlugin(slot, ref.name, `nodes[${ni}].guard[${gi}]`);
         });
+        // 定义矛盾：系统节点却要等一个不可观测的 guard ⇒ **谁也推不动**（`step` 说「等 actor」，
+        // `declare` 说「系统节点不得宣布」）。这类矛盾必须在组合期大声报，不留到运行期静默卡死。
+        const { pending } = classifyGuards(node.guard, `nodes[${ni}].guard`);
+        if (node.actor === 'system' && pending.length > 0) {
+            throw new FlowError(
+                'invalid-def',
+                `节点 ${JSON.stringify(node.id)} 的 actor = system，却带不可观测 guard（${pending.map((ref) => ref.raw).join(', ')}）：系统判不了、actor 又不得宣布 ⇒ 谁也推不动（死锁）`,
+                `nodes[${ni}]`,
+            );
+        }
     });
     def.edges.forEach((edge, ei) => {
         if (edge.when === undefined || edge.when === '') return;
@@ -267,7 +304,15 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
         }
 
         const bounced = selectEdge(edges, 'bounce', ctx, registry);
-        if (!bounced) return { status: 'stuck', reason: guard.reason, guard };
+        if (!bounced) {
+            // 区分「压根没有打回边」（那就是停在原位）与「有打回边、只是它此刻的 `when` 不成立」
+            const hasBounce = edges.some((candidate) => candidate.kind === 'bounce');
+            return {
+                status: 'stuck',
+                reason: hasBounce ? `${guard.reason}（且打回边此刻不可用：边上 \`when\` 未过）` : guard.reason,
+                guard,
+            };
+        }
         const event = createEvent({
             id: seed.id,
             author: SYSTEM_AUTHOR,
@@ -279,7 +324,7 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
     }
 
     function declare(state: FlowState<Id>, request: DeclareRequest<Id>): Transition<Id> {
-        rejectUnknown(request as unknown as Record<string, unknown>, DECLARE_KEYS, 'request', 'invalid-option');
+        rejectUnknown(request as unknown as Record<string, unknown>, DECLARE_KEYS, 'request', 'invalid-declare');
 
         if (state.position === null) {
             throw new FlowError('invalid-entry', '尚未进入工作流：先用 step 进入入口节点', 'state.position');
@@ -309,10 +354,19 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
             throw new FlowError('not-declarable', `节点 ${JSON.stringify(state.position)} 的 guard 全可观测（${node.guard.join(', ')}），只能由系统推 —— actor 不得宣布`, 'request.to');
         }
 
-        // ③ 打回不主张推进 → 不设闸门，**连求值也不做**（`action:` 不该因为「有人往后退」而动手）
-        const guard = edge.kind === 'next' ? evaluateGuards(node.guard, contextOf(node, request.author), registry) : unevaluatedGuards(node.guard);
-        if (edge.kind === 'next' && !guard.pass) {
-            throw new FlowError('guard-failed', `宣布推进，但可观测 guard 未过：${guard.reason}`, 'request.to');
+        // ③ 打回不主张推进 → 不设闸门，**连求值也不做**（`action:` 不该因为「有人往后退」而动手；
+        //    边上的 `when` 同此 —— 打回不主张推进，凭什么去判「走这条边的条件」）
+        const ctx = contextOf(node, request.author);
+        let guard: GuardEvaluation;
+        if (edge.kind === 'bounce') {
+            guard = unevaluatedGuards(node.guard);
+        } else {
+            // ④ 走 `next` 边：**边的条件**（`when`）先判，再判节点 guard（两道闸门都在求值前拒）
+            requireEdgeAvailable(def, edge, ctx, registry);
+            guard = evaluateGuards(node.guard, ctx, registry);
+            if (!guard.pass) {
+                throw new FlowError('guard-failed', `宣布推进，但可观测 guard 未过：${guard.reason}`, 'request.to');
+            }
         }
 
         const event = createEvent({

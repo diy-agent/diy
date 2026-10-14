@@ -126,10 +126,11 @@ if (a.status === 'moved') {
 | guard 全 `pred:`/`action:` 且**全过** | 走唯一 `next` 出边，落 `author = 'system'` 的 Event；**没有** `next` 出边 → `done`（终态） |
 | guard 全 `pred:`/`action:` 且**有不过** | 有 `bounce` 出边 → **打回**（也是 `author = 'system'`）；没有 → `stuck`（**停在原位**） |
 | guard 含 `prompt:` | `step` → `awaiting-actor`（引擎不替 actor 决定）；只能 `declare` |
-| `declare` 走 `next` 边 | 可观测那部分须全过（否则 `guard-failed`）；`prompt:` 部分由宣布者担责 |
-| `declare` 走 `bounce` 边 | 打回不主张推进 → 不设闸门，**连 guard 求值都不做**（`guard.evaluated === false`） |
-| 边上的 `when` | 是**边的条件**（§14.4）——**单出口也照判**；不满足 = 这条边此刻不可用（不是「只有一条就硬走」） |
+| `declare` 走 `next` 边 | 边的条件（`when`）先判（不可用 → `edge-unavailable`）；节点 guard 可观测那部分须全过（否则 `guard-failed`）；`prompt:` 部分由宣布者担责 |
+| `declare` 走 `bounce` 边 | 打回不主张推进 → 不设闸门，**连 guard / `when` 求值都不做**（`guard.evaluated === false`） |
+| 边上的 `when` | 是**边的条件**（§14.4）——**单出口也照判**，且**系统选边与 actor 宣布两侧共用**；不满足 = 这条边此刻不可用（不是「只有一条就硬走」） |
 | 同种出边多条 | 用边上的 `when` 消歧；命中数 > 1 → `ambiguous-edge`；命中 0 → 停/无可用出边 |
+| `actor: 'system'` 却带 `prompt:` guard | **组合期**就 `invalid-def`（系统判不了、actor 又不得宣布 = 死锁），不留到运行期静默卡住 |
 | `declare` 的 `author` | 必填字符串，且**不得等于内核保留字 `system`**（→ `invalid-declare`） |
 | `notify` 抛错 / 回执形状错 | 转移**照样落定**（事实已成立），失败记进 `transition.notifyErrors` |
 | 插件函数自己抛异常 | 统一包成 `FlowError`（`code = plugin-threw`，`cause` 保留原异常） |
@@ -139,8 +140,12 @@ if (a.status === 'moved') {
 求值**短路** —— 遇到第一个失败即停（`action:` 有副作用，不能在已知前项失败后仍执行它）。
 
 `createRuntime` 的**选项 / 入参形状封闭**：未知字段一律 `invalid-option`（`maxBounces` 少写个 `s`
-不再等于「静默关掉死循环护栏」）；`pred:` / `action:` / `notify` 的名字**组合期就查注册表**，
-错字不必等到「走到那一步」才暴露。
+不再等于「静默关掉死循环护栏」）；`declare` 的入参形状错与 `author` 非法同码（`invalid-declare`）。
+`pred:` / `action:` / `notify` 的名字**组合期就查注册表**，错字不必等到「走到那一步」才暴露。
+
+> **装配顺序：先注册齐，再 `createRuntime`。** 组合期扫描要求名字此刻已注册（修前是惰性 resolve，
+> 可以「先构造、后注册」）。界线是**内核只校验自己 `resolve` 的槽**：`guard` / `action` / `notify` 查，
+> `render` / `source` 的名字**不查** —— 它们的消费者是 ##320 与装配侧，按需注册合理。
 
 ### 次序铁律（`action:` 是**写外部世界**的槽）
 
@@ -163,6 +168,7 @@ if (a.status === 'moved') {
 - **不触外部世界**：插件的副作用全在宿主给的函数体里；`status` 只做静态分类，不调用插件（轮询请用它）。
 - **不校验宣布者身份**：`declare` 只拒内核保留字 `system`；「谁能代表哪个 actor」（agent id / human 的映射）是
   **宿主知识**（归 ##319），内核管不了 —— 宿主须自己保证传给 `declare` 的 `author` 可信。
+- **`actor` 与 guard 不得矛盾**：`actor: 'system'` 带不可观测 guard（谁推不动）→ 组合期 `invalid-def`。
 - 非法定义 / 非法转移 / 未注册插件一律抛 `FlowError`（带 `code` + 点路径 `path`），**绝不静默降级** ——
   打错一个插件名若被当成「永远不通过」，工作流会悄悄偏到另一条路径上。
 - 本包只做**内核**：不做事件存储（归 ##319）、不校验 `params`（只透传 —— 交给插件的是**冻结的浅副本**，归 ##316）、不渲染（`render` 只给形状，归 ##320）。
@@ -171,7 +177,7 @@ if (a.status === 'moved') {
 
 ```bash
 cd pkgs.ts/diy-flow
-./sha.sh test          # 意图测试（66 例：定义/容器/投影 26 + 槽位/求值/执行器 40）
+./sha.sh test          # 意图测试（69 例：定义/容器/投影 26 + 槽位/求值/执行器 43）
 ./sha.sh check         # 本包类型 + lint
 # 全仓检查（含产物 / 可执行位护栏）：在仓库根跑 ./sha.sh check
 ```

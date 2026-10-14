@@ -48,8 +48,10 @@ export type FlowErrorCode =
     | 'bounce-limit'
     /** 运行期选项 / 调用入参形状不对（未知字段 —— 如把 `maxBounces` 拼成 `maxBounce`） */
     | 'invalid-option'
-    /** 宣布非法：`author` 空 / 冒用内核保留字 `system` */
+    /** 宣布非法：`author` 空 / 冒用内核保留字 `system` / 宣布请求形状不对 */
     | 'invalid-declare'
+    /** 宣布走一条边，但那条边的 `when`（**边的条件**）此刻不成立 —— 这条边此刻不可用 */
+    | 'edge-unavailable'
     /** 插件函数自己抛了异常（宿主边界：统一包装成 FlowError；`cause` 保留原异常） */
     | 'plugin-threw';
 

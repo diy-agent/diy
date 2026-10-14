@@ -10,7 +10,8 @@
 //   R5  不可观测 guard（`prompt:`）→ **只能由 actor 宣布**，**转移本身就是一条 Event**
 //       （含次序铁律：`action:` 副作用只跑一次 · 被拒的宣布不动手 · 打回不跑 guard · `author` 不得冒名 `system`）
 //   R6  guard 未过 → **停在原位**（「卡住」在边上，##101 结论四）；有 `bounce` 边则 = **打回**
-//       （边上的 `when` 是**边的条件**：单出口也照判 —— 不满足 = 这条边此刻不可用）
+//       （边上的 `when` 是**边的条件**，系统选边与 actor 宣布**两侧共用一套语义**：单出口也照判，
+//        宣布时同样判 —— 不满足 = 这条边此刻不可用）
 //   R7  死循环护栏：打回上限（`maxBounces`）
 //   R8  端到端：开发工作流 8 步含 1 次 actor 打回；金融工作流含 1 次**系统**打回（##166 §14.3）
 //   R9  纯内核：不触外部世界 / 不取时间 —— 由 `intent.flow.test.ts` 的 R7 静态把关（它读整个 src/）
@@ -338,8 +339,31 @@ describe('R2 注册表：未注册即报错（不许静默降级）', () => {
             edges: [{ from: 'a', to: 'b', kind: 'next', when: 'pred:nope' }],
         });
         expect(caught(() => createRuntime(badWhen, { registry })).path).toBe('edges[0].when');
-        // `prompt:` 不是插件名（本来就不注册）→ 不查
-        expect(() => createRuntime(pairDef, { registry })).not.toThrow();
+        // `prompt:` 不是插件名（本来就不注册）→ 不查（用一个**真含 `prompt:`** 的定义来验，别空转）
+        const promptOnly = defineWorkflow({
+            id: 'prompt-only',
+            nodes: [{ id: 'only', name: '单', actor: 'agent', guard: ['prompt:没人注册的提示词'], hint: '' }],
+            edges: [],
+        });
+        expect(() => createRuntime(promptOnly, { registry })).not.toThrow();
+    });
+
+    it('定义矛盾：`actor: system` 却带不可观测 guard → 组合期 invalid-def（不留到运行期静默卡死）', () => {
+        const { registry } = fakes();
+        // 系统判不了（prompt:）、actor 又不得宣布（not-declarable）⇒ 谁也推不动 = 死锁
+        const deadlock = defineWorkflow({
+            id: 'deadlock',
+            entry: 'wait',
+            nodes: [
+                { id: 'wait', name: '等外部系统', actor: 'system', guard: ['prompt:external_done'], hint: '' },
+                { id: 'down', name: '下游', actor: 'system', guard: [], hint: '' },
+            ],
+            edges: [{ from: 'wait', to: 'down', kind: 'next' }],
+        });
+        const e = caught(() => createRuntime(deadlock, { registry }));
+        expect(e.code).toBe('invalid-def');
+        expect(e.path).toBe('nodes[0]');
+        expect(e.message).toContain('external_done');
     });
 });
 
@@ -420,6 +444,27 @@ describe('R4 可观测 guard → 系统求值并自动转移（author = system�
         r.step(); // a
         r.step(); // a → b
         expect(rt.step(r.state(), nextSeed()).status).toBe('done');
+    });
+
+    it('终态节点的 guard **要**求值（`action:` 的求值就是「下单」）；`done` 后重复 `step` 会重跑 ⇒ 轮询用 `status()`', () => {
+        const { registry, calls } = fakes();
+        const terminal = defineWorkflow({
+            id: 'terminal-action',
+            entry: 'go',
+            nodes: [{ id: 'go', name: '放行并下单', actor: 'system', guard: ['action:place_order'], hint: '' }],
+            edges: [],
+        });
+        const rt = createRuntime(terminal, { registry });
+        const r = runner(rt);
+        r.step(); // 进入 go
+        expect(rt.step(r.state(), nextSeed()).status).toBe('done');
+        // 「先判终态、再求值」= 订单永不提交 —— 终态 guard 的求值就是对外部世界动手那一下
+        expect(calls).toEqual(['action:place_order@go']);
+        expect(rt.status(r.state()).mode).toBe('system'); // 只读查询不调插件（零副作用）
+        expect(calls).toEqual(['action:place_order@go']);
+        // 已知边界（契约兜）：同一个 state 再 step 会再推一次 ⇒ ① `action:` 插件须幂等 ② 轮询用 status()
+        expect(rt.step(r.state(), nextSeed()).status).toBe('done');
+        expect(calls).toEqual(['action:place_order@go', 'action:place_order@go']);
     });
 });
 
@@ -608,6 +653,29 @@ describe('R6 guard 未过：停在边上 / 打回', () => {
         expect(r.state().position).toBe('gate'); // 边上写着「此刻不走」，就不能因为「只有这一条」而硬走
         expect(calls).toEqual(['check_green@gate', 'no_conflict@gate']); // 边的条件真的被求值了
     });
+
+    it('`when` 是**边的条件**：actor 宣布走同一条边时同样算数（不满足 → edge-unavailable）', () => {
+        const { registry, flags } = fakes();
+        flags.set('no_conflict', false);
+        const wf = defineWorkflow({
+            id: 'when-declare',
+            entry: 'gate',
+            nodes: [
+                { id: 'gate', name: '闸门', actor: 'agent', guard: ['prompt:gate_ok'], hint: '' },
+                { id: 'down', name: '下游', actor: 'system', guard: [], hint: '' },
+            ],
+            edges: [{ from: 'gate', to: 'down', kind: 'next', when: 'pred:no_conflict' }],
+        });
+        const rt = createRuntime(wf, { registry });
+        const r = runner(rt);
+        r.step(); // 进入 gate（`prompt:` 节点 → 等 actor）
+        const e = caught(() => r.declare({ author: 'agent-1', to: 'down', content: '我宣布推进' }));
+        expect(e.code).toBe('edge-unavailable');
+        expect(e.path).toBe('edges[0].when');
+        expect(r.state().position).toBe('gate'); // 位置没动：同一条边换个方向推，答案得一样
+        flags.set('no_conflict', true);
+        expect(r.declare({ author: 'agent-1', to: 'down', content: '条件成立了' }).state.position).toBe('down');
+    });
 });
 
 describe('R7 死循环护栏：打回上限', () => {
@@ -794,8 +862,8 @@ describe('R9 上下文与旁路：params 透传 / notify 唤醒 / status 分类'
         expect(caught(() => rt.step(initialState<IdOf<typeof pairDef>>(), { id: 'e', at: AT, 多余: 1 })).code).toBe('invalid-option');
         const r = runner(rt);
         r.step();
-        // @ts-expect-error 宣布请求只认 { id, at, author, to, content, causes? }
-        expect(caught(() => rt.declare(r.state(), { ...nextSeed(), author: 'agent', to: 'b', content: 'x', 多余: 1 })).code).toBe('invalid-option');
+        // @ts-expect-error 宣布请求只认 { id, at, author, to, content, causes? } —— 形状错与 author 非法同一个码
+        expect(caught(() => rt.declare(r.state(), { ...nextSeed(), author: 'agent', to: 'b', content: 'x', 多余: 1 })).code).toBe('invalid-declare');
     });
 
     it('notify 失败不作废转移：事实（state + event）照样落定，失败只记账', () => {
