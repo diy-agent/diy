@@ -813,7 +813,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
     return (
         <Show when={props.open}>
             {/* 与用量抽屉同构：全宽贴顶、高 2/3 屏；点遮罩 / ✕ / Escape 退出 */}
-            <div class="fixed inset-0 z-50 flex flex-col" onClick={props.onClose}>
+            <div class="fixed inset-0 z-50 flex flex-col" data-find-surface onClick={props.onClose}>
                 <div class="absolute inset-0 bg-black/30" />
                 <div
                     class="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl" style={DM.style()}
@@ -1719,7 +1719,7 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
             {/* 形态（2026-10-03 定稿，与人物面板 PersonaDrawer 同构）：**全宽贴顶、高 2/3 屏** ——
                 占满整个上半部分页面、下面只留 1/3 空位（用户点名，不再居中悬浮）。
                 点遮罩 / ✕ / Escape 退出（Escape 在 LocalChatPage 的全局键处理里）。 */}
-            <div class="fixed inset-0 z-50 flex flex-col" onClick={props.onClose}>
+            <div class="fixed inset-0 z-50 flex flex-col" data-find-surface onClick={props.onClose}>
                 <div class="absolute inset-0 bg-black/30" />
                 <div
                     class="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl" style={DM.style()}
@@ -1896,7 +1896,7 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
         <Show when={props.open}>
             {/* 与 TurnUsageDetailDrawer 同款形态（与 PersonaDrawer 同构）：全宽贴顶、高 2/3 屏，
                 下方留 1/3 空位；点遮罩 / ✕ / Escape 退出（2026-10-03 定稿） */}
-            <div class="fixed inset-0 z-50 flex flex-col" onClick={props.onClose}>
+            <div class="fixed inset-0 z-50 flex flex-col" data-find-surface onClick={props.onClose}>
                 <div class="absolute inset-0 bg-black/30" />
                 <div
                     class="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl" style={DM.style()}

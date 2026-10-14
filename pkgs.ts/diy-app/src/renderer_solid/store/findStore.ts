@@ -9,8 +9,10 @@
  * 与「提示词页的标注」同形：都是「收集出现处区间 + i/n 计数 + ↑/↓ 跳转」，
  * 差别只在本 store 是**通用页内查找**（面向任意页面 DOM 文本），而非编辑器内的范围高亮。
  *
- * 搜索范围 = 主内容区（App 的 mainAreaEl）内的文本节点；跳过脚本/样式与显式标了
- * `data-find-skip` 的区域（悬停详情覆盖层等）。
+ * 搜索范围**动态解析**（`setRootResolver`）：默认是主内容区（App 的 mainAreaEl），
+ * 但当某个**全屏浮层**（流量抽屉 / 人物配置 / 用量面板…，标了 `data-find-surface`）
+ * 打开时，范围切到**最上面的那一层** —— 否则你会搜到被抽屉盖在下面、根本看不见的正文。
+ * 跳过脚本/样式与显式标了 `data-find-skip` 的区域（悬停详情覆盖层、查找条自身等）。
  */
 import { createSignal } from "solid-js";
 
@@ -23,7 +25,12 @@ const [count, setCount] = createSignal(0);
 const [index, setIndex] = createSignal(0);
 
 let ranges: Range[] = [];
-let root: HTMLElement | undefined;
+
+/**
+ * 搜索根**解析器**（而非固定元素）：每次 `collect` 现取，以反映"此刻最上面那层是谁"。
+ * 由 App 装配：优先返回最前的 `data-find-surface` 浮层，其次主内容区。
+ */
+let resolveRoot: () => HTMLElement | undefined = () => undefined;
 
 type CssHighlights = { set(name: string, h: unknown): void; delete(name: string): boolean };
 function highlights(): CssHighlights | null {
@@ -42,6 +49,7 @@ function clearHighlights(): void {
 
 function collect(text: string): Range[] {
     const out: Range[] = [];
+    const root = resolveRoot();
     if (!root || !text) return out;
     const q = text.toLowerCase();
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
@@ -120,9 +128,9 @@ export const findStore = {
     get index(): number {
         return index();
     },
-    /** 设定搜索根（App 挂载时把主内容区元素传进来） */
-    setRoot(el: HTMLElement | undefined): void {
-        root = el;
+    /** 设定搜索根**解析器**（App 挂载时装配：最前浮层优先、否则主内容区） */
+    setRootResolver(fn: () => HTMLElement | undefined): void {
+        resolveRoot = fn;
     },
     openFind(): void {
         setOpen(true);

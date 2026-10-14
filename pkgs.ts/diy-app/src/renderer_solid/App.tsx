@@ -37,6 +37,34 @@ import { findTaskProject } from "./components/TaskTree";
 import { isAncestorOf } from "./lib/task-lineage";
 
 /**
+ * 取"此刻最上面的可查找浮层"（##309）。
+ *
+ * 全屏抽屉（流量 z-50 / 人物配置 z-70 / 用量 z-50…）都标了 `data-find-surface`，
+ * 且是 `fixed inset-0`。页内查找据此**把范围切到最前那一层**：否则抽屉开着时，
+ * 会搜到被抽屉盖住、根本看不见的正文（计数虚高、高亮落在遮罩后面）。
+ *
+ * 判据：可见（有尺寸、非 display:none/visibility:hidden）者中取 **z-index 最大**。
+ * 注意 `offsetParent` 对 `position:fixed` 元素恒为 null，不能拿它判可见。
+ */
+function topFindSurface(): HTMLElement | undefined {
+    let best: HTMLElement | undefined;
+    let bestZ = -Infinity;
+    for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-find-surface]"))) {
+        const r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) continue;
+        const cs = getComputedStyle(el);
+        if (cs.display === "none" || cs.visibility === "hidden") continue;
+        const z = Number(cs.zIndex);
+        const zv = Number.isFinite(z) ? z : 0;
+        if (zv >= bestZ) {
+            bestZ = zv;
+            best = el;
+        }
+    }
+    return best;
+}
+
+/**
  * 路由（page 一级 + 任务执行页的实例）。
  *
  * 「任务执行页」不在顶级导航里 —— 它是**动态页面**：每打开一个任务就多一个，
@@ -366,14 +394,15 @@ export default function App() {
 
         // ── 页内查找（##234）──
         // 搜索根 = 主内容区（不含面包屑/侧栏/查找条自身）
-        findStore.setRoot(mainAreaEl);
+        findStore.setRootResolver(() => topFindSurface() ?? mainAreaEl);
         // ⌘/Ctrl+F：打开页内查找并聚焦（全局；任务树搜索不再抢这个键，见 TaskTree）
         const onFindKey = (e: KeyboardEvent) => {
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
                 e.preventDefault();
-                // 弹层开着时页内查找让位（review3 R3-1b）：FindBar 是主区内的**流内**元素、
-                // 无层级，会被弹层 z-500 全屏遮罩压住 —— 开了也看不见点不到，像「⌘F 没反应」。
-                // 模态优先；关掉弹层再按即可。按住不放的连发也只响应首次（R3-2）。
+                // 全局搜索（⌘K 的 NavSearch）开着时让位：它是**自己的输入框**在等人打字，
+                // 再叠一层查找条只会打架。除此之外**一律可开** —— 查找条已上提到顶层
+                // （Z_FIND），流量/人物配置这类全屏抽屉不再盖住它（##309 修）。
+                // 按住不放的连发也只响应首次（R3-2）。
                 if (e.repeat || navSearchOpen()) return;
                 findStore.openFind();
             } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -704,8 +733,8 @@ export default function App() {
                         }}
                         closeTab={closeTab}
                     />
-                    {/* 页内查找条：动态出现（关掉即消失），不是模态弹窗。放在面包屑与主内容之间，
-                        且在 mainAreaEl 之外 —— 查找不搜自己。 */}
+                    {/* 页内查找条：动态出现（关掉即消失），不是模态弹窗。它自己 Portal 到 body
+                        顶层（Z_FIND），**不在流内占位**；这里只是挂载点。查找不搜自己（data-find-skip）。 */}
                     <FindBar />
                     <div ref={(el) => (mainAreaEl = el)} class="flex-1 min-h-0 overflow-hidden relative">
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "task"}>

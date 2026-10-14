@@ -36,7 +36,7 @@ export function TrafficDrawer() {
 
     return (
         <Show when={trafficStore.open}>
-            <div class="fixed inset-0 z-50 flex flex-col" onClick={() => trafficStore.close()}>
+            <div class="fixed inset-0 z-50 flex flex-col" data-find-surface onClick={() => trafficStore.close()}>
                 <div class="absolute inset-0 bg-black/30" />
                 <div
                     class="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl"

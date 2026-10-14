@@ -411,7 +411,7 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
         <Show when={props.open}>
             {/* 贴顶 drawer：下方留白给输入框与消息流（改人物时常要对着消息反复核对，
                 全屏会挡住"我刚在聊什么"）。点遮罩或 ✕ 关闭。 */}
-            <div class="fixed inset-0 z-[70] flex flex-col">
+            <div class="fixed inset-0 z-[70] flex flex-col" data-find-surface>
                 <div class="absolute inset-0 bg-black/25" onClick={props.onClose} />
                 <div
                     class="relative flex min-h-0 shrink-0 flex-col border-b border-base-300 bg-base-100 shadow-2xl"
