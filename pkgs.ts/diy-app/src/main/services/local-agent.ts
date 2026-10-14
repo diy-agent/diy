@@ -1149,6 +1149,9 @@ export class LocalAgentManager {
             } catch (e) {
                 // 落盘失败不阻断流，但必须出声（否则丢行不可观测）；**不 publish**（水位不许超前盘）
                 console.error(`[local-agent] ops 落盘失败 ${fp}:`, e);
+                // ⚠️ 于是这条 op 会**只 yield 不 publish** —— 消费侧（##307 起 UI 走 opsWatch 增量订阅，
+                // ##327 起 chat 流不再 apply）因此看不见它。这是**自洽的**，不是缺陷：盘上没有的东西，
+                // 重载后本来也会丢，显示它反而是假象（与「wire = 存储 = 渲染输入」同一取向）。
                 return;
             }
             opsFeed.publish(taskUri, [op]);
@@ -2273,6 +2276,10 @@ export class LocalAgentManager {
             // 块 id 沿用 turn 内局部序号风格（`<turnId>_suN`），另在 meta 里记 steerId 指回
             // 队列项（`steer/N`）：排障时能对上"日志里这条块是哪次插话投的"
             const id = `${turnId}_su${++uN}`;
+            // ⚠️ `meta.steer` 这个键名有两处消费：renderer 的 `applyOpsFrame` 用「带 steer 标记的
+            // user 块到达」判定"插话已投递 → 重拉队列快照"（见 localChatStore 的 sawSteerDelivered），
+            // 以及这里渲染插话样式。改键名必须**同时**改那处，否则横条会一直挂着"待发送"
+            //（模型其实已经看见了）—— 症状静默、只表现为 UI 落后。
             return [
                 {
                     op: "start",

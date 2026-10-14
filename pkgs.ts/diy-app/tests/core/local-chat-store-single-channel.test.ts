@@ -24,8 +24,15 @@ function makeSub() {
     const buf: OpsFrame[] = [];
     let wake: (() => void) | null = null;
     let closed = false;
+    // **静默**：帧照"发"但从不到达本窗口（模拟 main 侧那条推送路坏了 —— R1 的三种路径里
+    // 最阴的一种：没有异常、没有断流，只是什么都不来）
+    let quiet = false;
     return {
+        setQuiet(v: boolean) {
+            quiet = v;
+        },
         push(f: OpsFrame) {
+            if (quiet) return;
             buf.push(f);
             wake?.();
         },
@@ -55,6 +62,12 @@ const h = vi.hoisted(() => ({
     sub: null as null | { push: (f: unknown) => void },
     /** 下一次 chat 调用要"产出"的 op（模拟 main 的双送） */
     chatOps: [] as Op[],
+    /** 前 N 次订阅**静默**（帧一个都不送；0 = 都正常，99 = 一直坏 —— 见 R1 用例） */
+    silentUntil: 0,
+    /** opsWatch 已被调用几次（重订 = 第 2 次） */
+    opsWatchN: 0,
+    /** 界面提示（toast）间谍：##327 review1 R1 的"可见性"就断言在它上面 */
+    addToast: vi.fn(),
 }));
 
 vi.mock("../../src/renderer_solid/lib/rpc", () => ({
@@ -77,7 +90,7 @@ vi.mock("../../src/renderer_solid/lib/rpc", () => ({
 }));
 vi.mock("../../src/renderer_solid/store/personaStore", () => ({ personaStore: { load: async () => {} } }));
 vi.mock("../../src/renderer_solid/store/notificationStore", () => ({
-    notificationStore: { addToast: () => {} },
+    notificationStore: { addToast: h.addToast },
 }));
 
 // node 环境没有 rAF，而 op 落地后的合帧刷新走它。替身必须**延后执行**、由 flushFrames() 手动跑：
@@ -118,8 +131,8 @@ async function freshStore() {
 }
 
 /** 让订阅循环把已推的帧跑完，并跑掉合帧回调 */
-async function settle() {
-    for (let i = 0; i < 5; i++) {
+async function settle(rounds = 5) {
+    for (let i = 0; i < rounds; i++) {
         await new Promise((r) => setTimeout(r, 0));
         while (rafQueue.length > 0) rafQueue.shift()!();
     }
@@ -152,15 +165,28 @@ beforeEach(() => {
     h.chat.mockReset();
     h.sub = null;
     h.chatOps = [];
+    h.silentUntil = 0;
+    h.opsWatchN = 0;
+    h.addToast.mockReset();
     // 首载：空会话（本用例只关心一轮实时流）
     h.historyWindow.mockResolvedValue({ ops: [], cursor: "c0", hasMore: false });
     h.opsWatermark.mockResolvedValue({ epoch: 0, seq: 0 });
     h.usage.mockResolvedValue([]);
     h.steerList.mockResolvedValue([]);
     h.running.mockResolvedValue({ active: [] });
-    h.opsWatch.mockImplementation(async () => {
+    h.opsWatch.mockImplementation(async (input: unknown) => {
         const sub = makeSub();
-        h.sub = sub as unknown as { push: (f: unknown) => void };
+        h.sub = sub as unknown as { push: (f: unknown) => void; setQuiet: (v: boolean) => void };
+        h.opsWatchN += 1;
+        sub.setQuiet(h.opsWatchN <= h.silentUntil);
+        // 照 main 的 subscribe 时序（见 ops-feed.subscribe）：首帧恒为 hello，
+        // 若 since 落后于盘上水位 → 再从 since+1 **连续补发**这批。
+        // 这就是"显示通道坏了也能把这一轮补齐"的机制本身。
+        const since = (input as { since: number }).since;
+        sub.push({ kind: "hello", epoch: 0, seq: feedSeq });
+        if (since < feedSeq) {
+            sub.push({ kind: "batch", epoch: 0, fromSeq: since + 1, ops: TURN.slice(since) });
+        }
         return sub;
     });
     h.chat.mockImplementation(async () => chatThroughBothChannels(h.chatOps)());
@@ -209,6 +235,56 @@ describe("chat 流与 opsWatch 双通道送达同一批 op", () => {
         expect(turns).toHaveLength(1);
         expect(turns[0]!.children.filter((c) => c.tag === "text")).toHaveLength(1);
         expect(texts(store.trees)).toEqual(["x"]);
+    });
+});
+
+// ─── R1 回归（原 /tmp/t266-review/probe-327-silent-subscription.test.ts 改造并入）───
+// 单通道化的**代价**：chat 流的 op 不再 apply ⇒ 订阅没送达 = 这一轮一个字也看不见
+// （旧实现由 chat 流兜住）。探针证明了"静默订阅 → UI 空"；这里把 R1 定案的兜底钉死：
+// **发现（可见提示）+ 补齐（重订补发）**。
+
+/** 一轮：一段被逐 token 追加的回复 —— 同 ##305 现场那段（也是补发内容的来源） */
+const TURN: Op[] = [
+    { op: "start", id: "t1", kind: "turn" },
+    { op: "start", id: "t1_a", kind: "text", parent: "t1" },
+    { op: "delta", id: "t1_a", fields: { content: "大王" } },
+    { op: "delta", id: "t1_a", fields: { content: "，" } },
+    { op: "delta", id: "t1_a", fields: { content: "先把现场" } },
+    { op: "delta", id: "t1_a", fields: { content: "看清楚" } },
+    { op: "delta", id: "t1_a", fields: { content: "。" } },
+    { op: "stop", id: "t1_a" },
+    { op: "stop", id: "t1" },
+];
+
+describe("订阅静默（R1）：显示通道坏了不许静默", () => {
+    it("流连着却一个帧都不送 → 轮末自检发现水位没前进：出声 + 重订补发", async () => {
+        const store = await freshStore();
+        h.silentUntil = 99; // 订阅"连着"却一个帧都不来，重订也白搭（无异常 —— 最阴的一种）
+        await store.open(URI); // 订阅在这里建立（quiet 必须在建之前定）
+        h.chatOps = TURN;
+        await store.send(URI, "看现场");
+        await settle(10);
+
+        // 现状（= 探针的结论）：这一轮确实没进树 —— chat 流的 op 已不 apply，订阅又是坏的
+        expect(texts(store.trees)).toEqual([]);
+        // 但**不许就这样静默**：轮末自检必须发现并重订（main 从 appliedSeq 连续补发）
+        expect(h.opsWatchN).toBe(2);
+        const toasts = h.addToast.mock.calls.map((c) => [c[0], String(c[1])] as const);
+        expect(toasts.some(([t, m]) => t === "error" && /实时/.test(m))).toBe(true);
+    });
+
+    it("重订的连续补发把这一轮补齐可见（用户最终看得到，一个字不丢）", async () => {
+        const store = await freshStore();
+        h.silentUntil = 1; // 第 1 次订阅静默（坏掉）；重订那次是好的 —— 现实里绝大多数情形
+        await store.open(URI)
+        h.chatOps = TURN;
+        await store.send(URI, "看现场");
+        await settle(10); // 重订（第 2 次订阅）会立刻推来 (0, N] 的连续补发
+
+        expect(texts(store.trees)).toEqual(["大王，先把现场看清楚。"]);
+        // 有始有终：恢复也要出声，否则用户不知道"现在可以看实时了"
+        const toasts = h.addToast.mock.calls.map((c) => [c[0], String(c[1])] as const);
+        expect(toasts.some(([t, m]) => t === "success" && /恢复/.test(m))).toBe(true);
     });
 });
 

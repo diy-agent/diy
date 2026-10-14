@@ -97,8 +97,15 @@ beforeEach(() => {
     h.steerList.mockReset();
     h.toasts.length = 0;
     h.opsWatermark.mockResolvedValue({ epoch: 0, seq: 0 });
-    // 空 async 迭代：订阅建立后立刻正常收尾（无帧、无中断 ⇒ 不触发退避重连）
-    h.opsWatch.mockResolvedValue({ async *[Symbol.asyncIterator]() {} });
+    // ⚠️ 必须给一条**永远连着**的空流（不送帧，也不收尾）：main 的 subscribe 不会自己结束
+    //（见 ops-feed：它只等帧 / 被客户端 abort）。给"立刻正常收尾"的空流等于模拟"main 把订阅关了"
+    // —— 那按 ##327 R1 是**故障**（会出声 + 退避重订），而本用例量的是分页/重放，不该被假订阅干扰。
+    h.opsWatch.mockResolvedValue({
+        async *[Symbol.asyncIterator]() {
+            yield { kind: "hello", epoch: 0, seq: 0 }; // main 的 subscribe 首帧恒为 hello
+            await new Promise<void>(() => {}); // 然后一直连着：不送帧，也不收尾
+        },
+    });
     h.usage.mockResolvedValue([]);
     h.steerList.mockResolvedValue([]);
     h.running.mockResolvedValue({ active: [] });
