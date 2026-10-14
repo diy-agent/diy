@@ -703,6 +703,15 @@ export function bindAppHandlers(binding: ServerBinding): void {
     traffic.setCap(input.n, input.which ?? "keepLast");
     return traffic.snapshot();
   });
+  binding.on(app.traffic.readLog, async ({ input }) => {
+    try {
+      const record = traffic.readLog({ file: input.file, offset: input.offset, len: input.len });
+      return { ok: true, message: null, record };
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e), record: null };
+    }
+  });
+  binding.on(app.traffic.logFiles, async () => ({ dir: traffic.logDir(), files: traffic.listLogFiles() }));
   binding.on(app.traffic.events, async function* () {
     for await (const ev of traffic.events()) yield ev;
   });

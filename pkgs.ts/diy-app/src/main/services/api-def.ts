@@ -49,6 +49,19 @@ const StatusDataId = z.object({ status: z.string(), data: z.object({ id: z.strin
 const StatusOk = z.object({ status: z.string() });
 
 /** 一条流量记录（一次 HTTP 往返；body 形状任意，故用 any） */
+const BodyCaptureSchema = z.object({
+  head: z.string().describe("首段文本（未截断时即全文）"),
+  tail: z.string().describe("尾段文本（只保留最后一段；未截断时为空串）"),
+  headBytes: z.number().describe("首段保留的字节数"),
+  tailBytes: z.number().describe("尾段保留的字节数"),
+  totalBytes: z.number().describe("正文完整字节数"),
+  truncated: z.boolean().describe("是否被截断（headBytes + tailBytes < totalBytes 即截断）"),
+});
+const LogLocSchema = z.object({
+  file: z.string().describe("日志文件（相对 DIY_HOME，如 log/network/2026-10-13.jsonl）"),
+  offset: z.number().describe("该条记录在文件中的起始字节"),
+  len: z.number().describe("该条记录的字节长度"),
+});
 const TrafficRecordSchema = z.object({
   id: z.number(),
   ts: z.number().describe("请求发出时刻（epoch ms）"),
@@ -68,17 +81,20 @@ const TrafficRecordSchema = z.object({
   status: z.number().nullable().describe("HTTP 状态码；null = 未收到响应（网络错 / 超时）"),
   ms: z.number().describe("耗时 ms"),
   reqHeaders: z.record(z.string(), z.string()).describe("已脱敏（authorization 只留尾 4 位）"),
-  reqBody: z.any(),
+  reqBody: BodyCaptureSchema.nullable().describe("请求正文（首尾法保留，见字段说明）"),
   resHeaders: z.record(z.string(), z.string()),
-  resBody: z.any(),
+  resBody: BodyCaptureSchema.nullable().describe("响应正文（首尾法保留）；未捕获时为 null，原因见 resNote"),
+  resNote: z.string().nullable().describe("未捕获响应正文时的说明（流式 / 成功未录制 / 过大未解压）"),
   traceId: z.string().nullable().describe("上游追责凭据（响应头 x-trace-id / x-request-id / x-opencode-log-id）"),
   err: z.string().nullable().describe("网络层异常消息"),
+  log: LogLocSchema.nullable().describe("该条落盘位置（界面按位置随机读；null = 未落盘）"),
 });
 const TrafficSnapshotSchema = z.object({
   recording: z.boolean().describe("是否录制模式（上限放大且不截断）"),
   cap: z.number().describe("当前生效上限"),
   keepLast: z.number().describe("常开时的上限"),
   total: z.number(),
+  logDir: z.string().describe("日志目录（相对 DIY_HOME）"),
   records: z.array(TrafficRecordSchema),
 });
 
@@ -951,9 +967,27 @@ export const apiDef = RpcSchema.router({
             output: TrafficSnapshotSchema,
           }),
           clear: RpcSchema.unary({
-            desc: `清空流量记录`,
+            desc: `清空流量记录（内存；磁盘日志不动）`,
             input: {},
             output: StatusOk,
+          }),
+          readLog: RpcSchema.unary({
+            desc: `按位置读取磁盘日志里的一条记录（文件失效 / 版本不符时 ok=false 并给原因）`,
+            input: {
+              file: z.string().cliArg({ desc: "日志文件（相对 DIY_HOME）" }),
+              offset: z.number().cliArg({ desc: "起始字节" }),
+              len: z.number().cliArg({ desc: "字节长度" }),
+            },
+            output: z.object({
+              ok: z.boolean(),
+              message: z.string().nullable().describe("失败原因（人话）"),
+              record: z.any().nullable().describe("读到的原始记录"),
+            }),
+          }),
+          logFiles: RpcSchema.unary({
+            desc: `列出磁盘上的流量日志文件（将来清理界面用）`,
+            input: {},
+            output: z.object({ dir: z.string(), files: z.array(z.string()) }),
           }),
           setRecording: RpcSchema.unary({
             desc: `开关录制模式（开 = 上限放大到 recCap 且不截断）`,

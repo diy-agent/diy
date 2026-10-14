@@ -5,9 +5,9 @@ import { JsonViewer } from "./JsonViewer";
 /**
  * 流量视图 —— 看「实际发出去的 HTTP 请求 / 响应」。
  *
- * 数据来自主进程（core/traffic.ts）：只在内存里留最近若干条，进程重启就没了 ——
- * 这是「当下排查」用的，不是审计日志。常开时也始终留着最近若干条，所以偶发的上游
- * 400 就算崩在你没注意的时候，事后点开还能看到那一条的请求 / 响应 / trace_id。
+ * 数据来自主进程（core/traffic.ts）：内存里留最近若干条供即时查看，同时每条都写一份到
+ * `<DIY_HOME>/log/network/YYYY-MM-DD.jsonl`（按天切、重启不丢）。所以偶发的上游 400 就算
+ * 崩在你没注意的时候，事后点开还能看到那一条的请求 / 响应 / trace_id，也能按记录位置回磁盘读。
  *
  * 本文件导出 `TrafficView`：纯视图，撑满父容器（列表 ⇄ 详情）。流量页与聊天侧抽屉共用同一份。
  */
@@ -28,6 +28,51 @@ function statusCls(r: Rec): string {
     return "badge-success";
 }
 const isFail = (r: Rec) => (r.status != null && r.status >= 400) || !!r.err;
+
+type BodyCapture = NonNullable<Rec["reqBody"]>;
+
+/** 把「首尾法保留的正文」还原成可展示的值：未截断且能解析成 JSON → 结构；否则 → 文本 */
+function bodyValue(c: BodyCapture | null, note: string | null): unknown {
+    if (!c) return note ?? "（无正文）";
+    if (!c.truncated) {
+        try {
+            return JSON.parse(c.head);
+        } catch {
+            return c.head;
+        }
+    }
+    const omitted = c.totalBytes - c.headBytes - c.tailBytes;
+    return `${c.head}\n\n…（中间省略 ${omitted} 字节，正文共 ${c.totalBytes} 字节）…\n\n${c.tail}`;
+}
+
+/** 落盘位置 + 「从磁盘读取」按钮：按记录的 文件+offset+len 随机读那一条；失效时显示原因 */
+function LogLocBar(props: { loc: Rec["log"] }) {
+    const [msg, setMsg] = createSignal<string | null>(null);
+    const read = async () => {
+        const loc = props.loc;
+        if (!loc) return;
+        const res = await diyService.diy.traffic.readLog({ file: loc.file, offset: loc.offset, len: loc.len });
+        setMsg(res.ok ? "✓ 已按位置随机读到该条记录" : `✗ ${res.message}`);
+    };
+    return (
+        <Show when={props.loc}>
+            {(loc) => (
+                <div class="flex items-center gap-2 text-caption shrink-0 flex-wrap">
+                    <span class="opacity-50">落盘位置</span>
+                    <code class="select-all opacity-80">
+                        {loc().file} @ {loc().offset}+{loc().len}
+                    </code>
+                    <button class="btn btn-xs btn-ghost" onClick={() => void read()}>
+                        从磁盘读取
+                    </button>
+                    <Show when={msg()}>
+                        <span class="opacity-70">{msg()}</span>
+                    </Show>
+                </div>
+            )}
+        </Show>
+    );
+}
 
 function kindLabel(k: Rec["kind"]): string {
     if (k === "llm") return "LLM";
@@ -201,7 +246,7 @@ export function TrafficView(props: {
             </div>
             <Show when={props.showIntro !== false}>
                 <p class="text-caption opacity-50 shrink-0">
-                    这里显示应用实际发出去的 HTTP 请求与收到的响应，只保留最近若干条（进程重启就没了）。
+                    这里显示应用实际发出去的 HTTP 请求与收到的响应。内存留最近若干条；同时每条都写进磁盘日志（按天切文件），重启不丢。
                 </p>
             </Show>
 
@@ -323,6 +368,7 @@ export function TrafficView(props: {
                         <Show when={r().err}>
                             <div class="text-body text-error shrink-0">⚠ {r().err}</div>
                         </Show>
+                        <LogLocBar loc={r().log} />
                         <div role="tablist" class="tabs tabs-boxed tabs-xs w-fit shrink-0">
                             <button
                                 role="tab"
@@ -344,7 +390,11 @@ export function TrafficView(props: {
                                 when={tab() === "req"}
                                 fallback={
                                     <JsonViewer
-                                        data={{ status: r().status, headers: r().resHeaders, body: r().resBody }}
+                                        data={{
+                                            status: r().status,
+                                            headers: r().resHeaders,
+                                            body: bodyValue(r().resBody, r().resNote),
+                                        }}
                                     />
                                 }
                             >
@@ -353,7 +403,10 @@ export function TrafficView(props: {
                                         url: r().url,
                                         method: r().method,
                                         headers: r().reqHeaders,
-                                        body: r().reqBody ?? (r().method === "GET" ? "（GET 请求无 body）" : null),
+                                        body: bodyValue(
+                                            r().reqBody,
+                                            r().method === "GET" ? "（GET 请求无 body）" : null,
+                                        ),
                                     }}
                                 />
                             </Show>

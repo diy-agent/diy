@@ -7,7 +7,7 @@
 // 要钱，且偶发 400 不可控）。
 import { describe, it, expect, beforeEach } from "vitest";
 import { channel } from "node:diagnostics_channel";
-import { traffic } from "../../src/main/core/traffic";
+import { traffic, TrafficLogError } from "../../src/main/core/traffic";
 
 const RUN = {
     session: "ses_test",
@@ -83,7 +83,10 @@ describe("traffic（undici diagnostics_channel）", () => {
         expect(r.url).toBe("https://api.example.com/provider/v1/chat/completions");
         expect(r.method).toBe("POST");
         expect(r.reqHeaders.authorization).toBe("Bearer ****efgh"); // 只留尾 4 位
-        expect(r.reqBody).toEqual({ model: "x" });
+        // 正文按「首尾法」保留：没超上限 → 全文在 head，未截断
+        expect(JSON.parse(r.reqBody!.head)).toEqual({ model: "x" });
+        expect(r.reqBody!.truncated).toBe(false);
+        expect(r.reqBody!.headBytes).toBe(r.reqBody!.totalBytes);
     });
 
     it("400：记下上游错误体（扁平错误 + trace_id）", () => {
@@ -92,7 +95,7 @@ describe("traffic（undici diagnostics_channel）", () => {
 
         const r = traffic.snapshot().records[0];
         expect(r.status).toBe(400);
-        expect((r.resBody as { type: string }).type).toBe("invalid_request_error");
+        expect(JSON.parse(r.resBody!.head).type).toBe("invalid_request_error");
     });
 
     it("重试：同一轮内 attempt 逐次自增（ai-sdk 每次重试即一次 HTTP 往返）", () => {
@@ -172,7 +175,7 @@ describe("traffic（undici diagnostics_channel）", () => {
         }
         const { records } = traffic.snapshot();
         expect(records).toHaveLength(20);
-        expect((records[0].reqBody as { model: string }).model).toBe("m5"); // m0..m4 被挤掉
+        expect(JSON.parse(records[0].reqBody!.head).model).toBe("m5"); // m0..m4 被挤掉
     });
 
     it("录制模式：上限放大 + 捕获成功响应体 → 25 条全留", () => {
@@ -184,20 +187,62 @@ describe("traffic（undici diagnostics_channel）", () => {
         const snap = traffic.snapshot();
         expect(snap).toMatchObject({ recording: true, cap: 500 });
         expect(snap.records).toHaveLength(25);
-        expect(snap.records[24].resBody).toEqual({ n: 24 });
+        expect(JSON.parse(snap.records[24].resBody!.head)).toEqual({ n: 24 });
     });
 
     it("非录制模式：成功流式响应不捕获正文（只留说明）", () => {
         const req = fireReq({ body: "{}" });
         fireRes(req, 200, { "content-type": "text/event-stream" }, "data: hello\n\n");
         const r = traffic.snapshot().records[0];
-        expect(typeof r.resBody).toBe("string");
-        expect(r.resBody as string).toContain("流式");
+        expect(r.resBody).toBeNull();
+        expect(r.resNote).toContain("流式");
     });
 
     it("traceId fallback：x-trace-id 缺省时退到 x-opencode-log-id", () => {
         const req = fireReq({ body: "{}" });
         fireRes(req, 200, { "content-type": "application/json", "x-opencode-log-id": "log-9" }, "{}");
         expect(traffic.snapshot().records[0].traceId).toBe("log-9");
+    });
+
+    it("首尾法截断：超 24K 正文保头 8K + 尾 16K，中间丢，记录首/尾/总字节", () => {
+        const big = "x".repeat(40000);
+        const req = fireReq({ body: JSON.stringify({ model: "m", pad: big }) });
+        fireRes(req, 200, { "content-type": "application/json" }, "{}");
+        const b = traffic.snapshot().records[0].reqBody!;
+        expect(b.truncated).toBe(true);
+        expect(b.headBytes).toBe(8 * 1024);
+        expect(b.tailBytes).toBe(16 * 1024);
+        expect(b.totalBytes).toBeGreaterThan(24 * 1024);
+        expect(b.head.startsWith('{"model":"m","pad":"xxx')).toBe(true);
+        expect(b.tail.endsWith('xxx"}')).toBe(true);
+        // 首尾相接 + 中间省略 = 总长
+        expect(b.headBytes + b.tailBytes).toBeLessThan(b.totalBytes);
+    });
+
+    it("落盘：每条记录带文件位置，可按位置随机读回", () => {
+        const req = fireReq({ body: JSON.stringify({ model: "x" }) });
+        fireRes(req, 200, { "content-type": "application/json" }, "{}");
+        const r = traffic.snapshot().records[0];
+        expect(r.log).not.toBeNull();
+        expect(r.log!.file).toMatch(/^log\/network\/\d{4}-\d{2}-\d{2}\.jsonl$/);
+        expect(r.log!.len).toBeGreaterThan(0);
+        const back = traffic.readLog(r.log!) as { url: string; status: number };
+        expect(back.url).toBe(r.url);
+        expect(back.status).toBe(200);
+    });
+
+    it("读取失效：文件不存在 → 抛 TrafficLogError（界面据此提示）", () => {
+        expect(() =>
+            traffic.readLog({ file: "log/network/1999-01-01.jsonl", offset: 0, len: 10 }),
+        ).toThrow(TrafficLogError);
+    });
+
+    it("读取失效：位置越界 → 抛 TrafficLogError", () => {
+        const req = fireReq({ body: "{}" });
+        fireRes(req, 200, { "content-type": "application/json" }, "{}");
+        const loc = traffic.snapshot().records[0].log!;
+        expect(() => traffic.readLog({ file: loc.file, offset: loc.offset + 10_000_000, len: 10 })).toThrow(
+            TrafficLogError,
+        );
     });
 });

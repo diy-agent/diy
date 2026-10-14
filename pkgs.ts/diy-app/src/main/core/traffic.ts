@@ -10,12 +10,16 @@
  * 广播事件。我们只是「旁听」这些广播：请求方法 / 地址 / 头 / body、响应状态 / 头 / body
  * 都能拿到，而且不碰数据流、不改时序，对业务完全无感（比替换 fetch 干净得多）。
  *
- * ## 三条设计决定（改前先读）
- *  1. **不做存储** —— 只在内存里留最近若干条，进程重启就没了。这是「当下排查」用的，
- *     不是审计日志（要留档另说）。
- *  2. **一直开着** —— 问题什么时候出现不可预期（比如偶发 0.67% 的失败），所以最近若干条
+ * ## 记录去哪了
+ *
+ *  - 内存里留最近若干条，供界面即时查看（见 snapshot）。
+ *  - 同时每条都追加一份到磁盘：`<DIY_HOME>/log/network/YYYY-MM-DD.jsonl`（见 core/traffic-log.ts），
+ *    按天切文件，重启不丢。每条记录会附带它在文件里的位置（rec.log），界面可按位置随机读那一条。
+ *
+ * ## 两条设计决定（改前先读）
+ *  1. **一直开着** —— 问题什么时候出现不可预期（比如偶发 0.67% 的失败），所以最近若干条
  *     始终留着兜底；「录制」只是把上限放大、并且不再截断内容，方便主动抓包时看全。
- *  3. **回调在请求的同步路径上** —— 事件回调是被同步调用的，所以这里只做「复制字节 + 计数」，
+ *  2. **回调在请求的同步路径上** —— 事件回调是被同步调用的，所以这里只做「复制字节 + 计数」，
  *     绝不 await、绝不抛错（抛出去会连累正常请求）。
  *
  * 归属：优先看请求头 `x-opencode-session`（我们自己发的 LLM 请求带），反查是哪个任务 / 轮次；
@@ -26,6 +30,9 @@
 
 import { subscribe } from "node:diagnostics_channel";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
+import { appendRecord, readRecord, LOG_DIR_REL, absOf, listFiles, TrafficLogError, type LogLoc } from "./traffic-log";
+
+export { TrafficLogError, type LogLoc };
 
 const CH_CREATE = "undici:request:create";
 const CH_REQ_CHUNK = "undici:request:bodyChunkSent";
@@ -36,13 +43,44 @@ const CH_ERROR = "undici:request:error";
 
 const KEEP_LAST_DEFAULT = 20;
 const REC_CAP_DEFAULT = 500;
-/** 单条请求/响应体截断上限（普通模式；录制模式不截断） */
-const BODY_LIMIT = 256 * 1024;
+
+/**
+ * 正文的保留上限（首尾法）：超长时**保留开头一段 + 结尾一段**，中间丢掉。
+ * 开头固定 {@link HEAD_BYTES} 字节，结尾保留「总量 - 开头」那么多字节（先进先出，只留最后一段）。
+ * 两者相加 = {@link BODY_TOTAL_BYTES}。录制模式下不截断，全留。
+ */
+const HEAD_BYTES = 8 * 1024;
+const BODY_TOTAL_BYTES = 24 * 1024;
+const TAIL_BYTES = BODY_TOTAL_BYTES - HEAD_BYTES;
+
+/** 压缩响应体超过这个大小就不解压了（解压是大 CPU 活，不宜卡在主链路上）；只留长度说明 */
+const MAX_DECOMPRESS_BYTES = 1024 * 1024;
+
 const STREAM_NOTE = "（流式响应，普通模式不保存正文；开「录制」可看全文）";
 const UNCAPTURED_NOTE = "（普通模式不保存成功响应正文；开「录制」可看全文）";
 
 /** 这条请求从哪来：LLM 对话 / 模型配置探测 / 其它 */
 export type TrafficKind = "llm" | "probe" | "http";
+
+/**
+ * 一段正文的保留结果（首尾法）。
+ * 未截断时 `head` 即全文、`tail` 为空、`headBytes === totalBytes`；
+ * 截断时 `headBytes + tailBytes < totalBytes`，中间省略的字节数 = totalBytes - headBytes - tailBytes。
+ */
+export interface BodyCapture {
+    /** 首段文本（固定 HEAD_BYTES 字节；未截断时即全文） */
+    head: string;
+    /** 尾段文本（只留最后一段；未截断时为空串） */
+    tail: string;
+    /** 首段保留的字节数 */
+    headBytes: number;
+    /** 尾段保留的字节数（未截断为 0） */
+    tailBytes: number;
+    /** 正文完整字节数 */
+    totalBytes: number;
+    /** 是否被截断 */
+    truncated: boolean;
+}
 
 export interface TrafficRecord {
     id: number;
@@ -65,11 +103,15 @@ export interface TrafficRecord {
     status: number | null;
     ms: number;
     reqHeaders: Record<string, string>;
-    reqBody: unknown;
+    reqBody: BodyCapture | null;
     resHeaders: Record<string, string>;
-    resBody: unknown;
+    resBody: BodyCapture | null;
+    /** 未捕获响应正文时的说明（流式 / 成功未录制 / 过大未解压） */
+    resNote: string | null;
     traceId: string | null;
     err: string | null;
+    /** 该条记录落盘后的位置（随机读用）；写盘失败或未启用时为 null */
+    log: LogLoc | null;
 }
 
 /** 一次运行的归属信息（发请求前登记，供反查） */
@@ -88,6 +130,8 @@ export interface TrafficSnapshot {
     cap: number;
     keepLast: number;
     total: number;
+    /** 日志目录（相对 DIY_HOME），界面展示 / 将来清理用 */
+    logDir: string;
     records: TrafficRecord[];
 }
 
@@ -140,14 +184,6 @@ function redact(v: string): string {
     return `${v.split(/\s/)[0]} ****${tail}`;
 }
 
-function safeJson(text: string): unknown {
-    try {
-        return JSON.parse(text);
-    } catch {
-        return text;
-    }
-}
-
 /**
  * 响应体可能在传输层被压缩（content-encoding: br/gzip/deflate），undici 事件给的是**压缩后的
  * 原始字节**。按声明的编码解压；解不开就退回按文本读（宁可看到乱码也不丢这条记录）。
@@ -163,11 +199,17 @@ function decodeBody(buf: Buffer, encoding: string): string {
     return buf.toString("utf8");
 }
 
-function clip(v: unknown, limit: number): unknown {
-    if (v == null) return v;
-    const s = typeof v === "string" ? v : JSON.stringify(v);
-    if (s == null || s.length <= limit) return v;
-    return `${s.slice(0, limit)}\n…(截断，共 ${s.length} 字符)`;
+/** 首尾法保留：超长留头 8K + 尾 16K，中间丢；full=true（录制）时不截断 */
+function captureBody(buf: Buffer, encoding: string, full = false): BodyCapture {
+    const text = decodeBody(buf, encoding);
+    const bytes = Buffer.from(text, "utf8");
+    const total = bytes.length;
+    if (full || total <= BODY_TOTAL_BYTES) {
+        return { head: text, tail: "", headBytes: total, tailBytes: 0, totalBytes: total, truncated: false };
+    }
+    const head = bytes.subarray(0, HEAD_BYTES).toString("utf8");
+    const tail = bytes.subarray(total - TAIL_BYTES).toString("utf8");
+    return { head, tail, headBytes: HEAD_BYTES, tailBytes: TAIL_BYTES, totalBytes: total, truncated: true };
 }
 
 function originOf(url: string): string {
@@ -184,6 +226,12 @@ function hostOf(url: string): string {
     } catch {
         return url;
     }
+}
+
+/** 落盘前把 `log` 摘掉（行里不需要记自己位置），其余原样存 */
+function payloadOf(rec: TrafficRecord): Record<string, unknown> {
+    const { log: _log, ...rest } = rec;
+    return rest;
 }
 
 class Traffic {
@@ -264,6 +312,29 @@ class Traffic {
         return this.recording;
     }
 
+    /** 日志目录（相对 DIY_HOME） */
+    logDir(): string {
+        return LOG_DIR_REL;
+    }
+
+    /**
+     * 按位置随机读一条落盘记录（界面「打开磁盘上的本条」用）。
+     * 文件失效 / 版本不符 → 抛 TrafficLogError，界面直接显示原因。
+     */
+    readLog(loc: LogLoc): Record<string, unknown> {
+        return readRecord(loc);
+    }
+
+    /** 现有日志文件清单（清理界面将来用） */
+    listLogFiles(): string[] {
+        return listFiles();
+    }
+
+    /** 日志目录绝对路径（将来打开目录用） */
+    logDirAbs(): string {
+        return absOf(LOG_DIR_REL);
+    }
+
     /** 最近一次失败的记录 id（status>=400 或网络错）—— 错误块「打开那条请求」用 */
     latestFailure(session?: string): number | null {
         for (let i = this.records.length - 1; i >= 0; i--) {
@@ -315,8 +386,10 @@ class Traffic {
             reqBody: null,
             resHeaders: {},
             resBody: null,
+            resNote: null,
             traceId: null,
             err: null,
+            log: null,
         };
         this.accs.set(r, { rec, reqChunks: [], resChunks: [], captureRes: false, committed: false });
     }
@@ -369,23 +442,33 @@ class Traffic {
         acc.committed = true;
         const rec = acc.rec;
         rec.ms = Date.now() - rec.ts;
-        if (acc.reqChunks.length) rec.reqBody = safeJson(Buffer.concat(acc.reqChunks).toString("utf8"));
+        const encoding = rec.resHeaders["content-encoding"] ?? "";
+        if (acc.reqChunks.length) {
+            // 请求体不压缩（我们自己发的），直接按文本保留
+            rec.reqBody = captureBody(Buffer.concat(acc.reqChunks), "", this.recording);
+        }
         if (acc.captureRes) {
-            rec.resBody = acc.resChunks.length
-                ? safeJson(decodeBody(Buffer.concat(acc.resChunks), rec.resHeaders["content-encoding"] ?? ""))
-                : null;
+            const raw = Buffer.concat(acc.resChunks);
+            if (raw.length > MAX_DECOMPRESS_BYTES && encoding) {
+                rec.resNote = `（响应体过大（${raw.length} 字节，压缩后），未解压保留）`;
+            } else if (raw.length) {
+                rec.resBody = captureBody(raw, encoding, this.recording);
+            }
         } else if ((rec.resHeaders["content-type"] ?? "").includes("text/event-stream")) {
-            rec.resBody = STREAM_NOTE;
+            rec.resNote = STREAM_NOTE;
         } else if (rec.status != null) {
-            rec.resBody = UNCAPTURED_NOTE;
+            rec.resNote = UNCAPTURED_NOTE;
         }
         this.push(rec);
     }
 
     private push(rec: TrafficRecord): void {
-        const limit = this.recording ? Infinity : BODY_LIMIT;
-        rec.reqBody = clip(rec.reqBody, limit);
-        rec.resBody = clip(rec.resBody, limit);
+        // 落盘（尽力而为：写失败不影响界面查看）
+        try {
+            rec.log = appendRecord(payloadOf(rec));
+        } catch {
+            rec.log = null;
+        }
         this.records.push(rec);
         const cap = this.recording ? this.recCap : this.keepLast;
         while (this.records.length > cap) this.records.shift();
@@ -398,6 +481,7 @@ class Traffic {
             cap: this.recording ? this.recCap : this.keepLast,
             keepLast: this.keepLast,
             total: this.records.length,
+            logDir: LOG_DIR_REL,
             records: [...this.records],
         };
     }
