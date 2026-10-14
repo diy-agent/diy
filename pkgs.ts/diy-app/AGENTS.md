@@ -93,6 +93,7 @@
 - `pit.excepthook` — 主进程**自注册 `uncaughtException` 处理器即抑制 Electron 的模态异常框**（其内置守卫是 `listenerCount > 1`），与有没有 try/catch 无关；诊断由 `installDiagnostics` 统一挂（三入口各落独立日志）
 - `pit.interrupt` — 中断的 tool 调用必须**在新一轮开始时收敛成显式终态并写进 ops**，投影（`blocksToMessages`）只做纯翻译。禁止退回"投影时现造占位文案"：文案会被模型当待办，重载后同一条自毁命令会被重发
 - `pit.llm-log` — `$DIY_HOME/local/<key>.llm.jsonl` 是**append-only 全量消息日志**（每行 1 条原生 ModelMessage + 索引位 `turn`/`step` + 工具结果的 `origin` 自证位），**行号 = 消息序号**（压缩注记的 `range` 就指它）。与压缩**解耦**：压缩只改投递期投影，绝不写它。加载时与 ops 投影对账（前缀则补齐 / 中部不一致则整份重建）
+- `pit.tool-result-error` — tool-result 的**成败落在 `output.type`**（`error-text` = 失败），**不是**块上的 `status` —— `status` 是 diy 私有属性、模型看不见。投影（`projectAll`）与投递渲染（`renderMessage`）**两处都不许压回 `text`**：只改前者会被后者静默撤销（##329 的 b；理由见 `local-blocks.ts` 的 `ToolResultOutput` 头注）
 - `pit.theme` — 主题**不得回落 `prefers-color-scheme`**：Playwright 的 `colorScheme` 默认 `"light"`，attach CDP 会覆盖系统外观把界面刷白
 - `pit.daisyui-drawer` — drawer 需渲染 `<input class="drawer-toggle">`，漏了侧栏 `visibility:hidden` 直接消失
 - `pit.hl-token` — CodeMirror 默认**只给 token 挂 class、不上色**：必须配 `HighlightStyle` + `syntaxHighlighting()`。`&light`/`&dark` **只能**用在 `EditorView.baseTheme`，写在 `EditorView.theme` 里是**模块加载期**抛错 → 整个 renderer 白屏

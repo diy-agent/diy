@@ -25,7 +25,7 @@ import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { LocalAgentManager } from "../../src/main/services/local-agent";
-import type { Op } from "../../src/main/services/local-blocks";
+import { BlockStore, blocksToMessages, type Op } from "../../src/main/services/local-blocks";
 
 let PROJECT = "1";
 beforeAll(() => {
@@ -159,6 +159,30 @@ describe("read 失败 → tool 块 status:error（##329）", () => {
     // 旧行为（catch-and-return 的字符串）能给模型的，现在同样给得到
     expect(promptDump(model, 1)).toContain("[读取失败]");
     expect(promptDump(model, 1)).toMatch(/ENOENT/);
+  });
+
+  it("历史重建形状：落盘 ops 投影出的 tool-result 是 error-text（##329 的 b —— 成败落在结构位）", async () => {
+    const uri = newUri();
+    const model = stubModel([
+      readCallReply("c1", "/nonexistent-diy-329/nope.txt"),
+      textReply("读不到，换个路径"),
+    ]);
+
+    const ops = await run(uri, model);
+
+    // ⚠️ 判据必须取**投影**（ops → 块树 → ModelMessage），不能取 model.doStreamCalls[1].prompt ——
+    //   后者是 SDK 自己在**同一轮内**多步循环时携带的消息（execute 抛错 → SDK 自己就造
+    //   error-text），与本改动无关：把 b 改回去那条断言照样通过（实测，无判别力）。
+    //   b 的落点只在**历史重建**：下一轮请求 / 进程重启后重放 ops 的那份历史，
+    //   那才是 diy 自己拼的消息（buildHistory → blocksToMessages）。
+    const store = new BlockStore();
+    for (const op of ops) store.apply(op);
+    const results = blocksToMessages(store)
+      .filter((m) => m.role === "tool")
+      .map((m) => (m.content as Array<{ output: { type: string; value: string } }>)[0]!.output);
+    expect(results).toHaveLength(1);
+    expect(results[0]!.type).toBe("error-text");
+    expect(results[0]!.value).toContain("[读取失败]");
   });
 
   it("工具报错不打断这一轮：后续步照常执行、轮次正常收尾", async () => {
