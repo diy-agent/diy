@@ -545,3 +545,94 @@ export function clampLines(text: string, n: number): { text: string; omitted: nu
     if (kept.length <= n) return { text: kept.join("\n"), omitted: 0 };
     return { text: kept.slice(0, n).join("\n"), omitted: kept.length - n };
 }
+
+// ─── 过程行的**状态**（图标 / 默认开合）──────────────────────
+//
+// 判据**只在这里**：组件 `statusMark` / `procOpen` 只把结果画成字形与 class。
+//
+// 为什么必须抽出来（##329 review1 R1）：`status==="error"` → ✗、失败块恒展开，
+// 是**用户唯一能看出"这一步失败了"的地方**；判据若留在组件私有函数里，单测够不着 ⇒
+// 有人改 status 语义时测试全绿、界面照旧 —— 那正是 ##329 的原始形态（数据对了、界面没变）。
+//
+// ⚠️ 判据要的是 main 真值 `live`（含别人发起的轮次），**作为参数传进来**，不在本层读 store：
+//    本地 running 只代表"我这轮在等自己的流"，拿它当整体运行态会把 CLI 正在跑的一轮
+//    判成"中断的历史"（任务 194 现象一）；反过来把"未收 stop"当直播中，真崩溃的历史就不再可见。
+
+const attrStr = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v));
+
+/** tool 块是否**失败**（`status==="error"`，##329 起由 main 侧抛错路径保证）
+ *  —— 判据唯一出处：状态灯 ✗ / 恒展开 / 过程 bar 的 ✗ 三处共用 */
+export function isFailedTool(n: BlockNode): boolean {
+    return n.tag === "tool" && attrStr(n.attrs.status) === "error";
+}
+
+/**
+ * 中断的 tool 块：
+ *   ① 显式终态 status=interrupted（main 已收敛并写进 ops）→ 直接读，不靠推断
+ *   ② 兼容旧会话：未收 stop 且该任务**此刻确实没有轮次在跑**（历史日志里还没收敛）
+ */
+export function isInterruptedToolBlock(n: BlockNode, live: boolean): boolean {
+    if (n.tag !== "tool") return false;
+    const s = attrStr(n.attrs.status);
+    if (s === "interrupted") return true;
+    if (n.stopped) return false;
+    if (s === "done" || s === "error") return false;
+    return !live;
+}
+
+/** 状态灯的样式档（组件映到 class；**判据不认 class**） */
+export type ProcTone = "error" | "ok" | "warn" | "wait" | "muted" | "none";
+
+/** 过程行行首那枚状态灯 */
+export interface ProcStatus {
+    /** 字形；`""` = 这一行不画状态灯（用户发言） */
+    icon: string;
+    tone: ProcTone;
+    /** 在跑（闪动） */
+    pulse?: boolean;
+    tip?: string;
+}
+
+/**
+ * 行首状态灯 = 💭 / ⚙ 类字形的**状态位**（● 在跑 / ✓ 完成 / ✗ 失败 / ⊘ 中断）。
+ * 少了它，一行 `思考` 与一行 `Bash · 命令` 在长列表里只能靠读文字分辨（2026-10-11 用户口径）。
+ */
+export function procStatusOf(n: BlockNode, live: boolean): ProcStatus {
+    if (n.tag === "error") return { icon: "❌", tone: "error" };
+    if (n.tag === "text") {
+        if (isUserText(n)) return { icon: "", tone: "none" };
+        return n.stopped ? { icon: "✍", tone: "muted" } : { icon: "●", tone: "wait", pulse: true };
+    }
+    if (n.tag === "think") {
+        return n.stopped ? { icon: "💭", tone: "none" } : { icon: "●", tone: "wait", pulse: true };
+    }
+    if (attrStr(n.attrs.status) === "done") return { icon: "✓", tone: "ok" };
+    if (isFailedTool(n)) return { icon: "✗", tone: "error" };
+    // 中断遗留（无 stop、无结果）：不能跟"正在执行"共用同一个点，否则用户看不出历史断在哪
+    if (isInterruptedToolBlock(n, live)) {
+        return {
+            icon: "⊘",
+            tone: "warn",
+            tip: "上一轮中断，没有结果（此行已被收敛为终态，正文与发往模型的同源）",
+        };
+    }
+    if (!n.stopped) return { icon: "●", tone: "wait", pulse: true };
+    return { icon: "○", tone: "muted" };
+}
+
+/**
+ * 过程行**默认开不开**（2026-10-04 重写）：**pin 是用户的显式覆盖，默认值只给这几档**。
+ *
+ * 正文与过程分两套默认：
+ *   · 正文：pin → L2/L3 默认展开、L1 折成一行（**直播中同样折叠** —— L1 的语义就是
+ *     "只看最后一行"，收起态仍显示正在写的那一行 + 光标，进度照样可见）；
+ *   · 过程：error 块 / **失败的工具行** / 中断遗留 tool 恒开（看"断在哪"）→ pin → 一律默认收起
+ *     （原 L4「全开」档已取消 —— 档位不再负责"帮用户全开"）。
+ */
+export function procOpenOf(n: BlockNode, pin: Record<string, boolean>, live: boolean): boolean {
+    if (n.tag === "error") return true;
+    if (isFailedTool(n)) return true;
+    if (isInterruptedToolBlock(n, live)) return true;
+    if (n.id in pin) return pin[n.id]!;
+    return false;
+}
