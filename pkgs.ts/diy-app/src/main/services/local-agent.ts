@@ -58,6 +58,7 @@ import {
 } from "./local-ops-seek";
 import { appendAudit } from "./agent-audit";
 import { opsFeed } from "./ops-feed";
+import { AsyncQueue, withCleanup } from "./async-queue";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
 import {
@@ -275,6 +276,45 @@ interface LocalSession {
     logged: number;
     loaded: boolean;
     running: AbortController | null;
+}
+
+/**
+ * 一次**轮次运行**（##305）：生命周期独立于任何消费端连接。
+ *
+ * 改造前 `chat()` 生成器**就是**轮次的驱动者 —— RPC 流一断（刷新/切页/关窗/杀 CLI），
+ * 链式 `gen.return()` 展开生成器，`finally` 里 `ctrl.abort()` 把正在跑的轮次掐掉（无人消费即停）。
+ * 现在驱动（`driveTurn`）归本管理器持有，`agent.local.chat` 的流只是**订阅者**：
+ * 断开只退订，重连靠 ops 水位（##307 读侧）追平 —— 刷新只是"重新接上视图"。
+ *
+ * 无人消费**继续烧 token**（用户定案：agent 对话是后台进程的维护，窗口只是它的使用窗口之一）：
+ * 单轮开销由 **`maxSteps`（缺省 200）步数上限**天然收口 —— 打满即强制收尾并落
+ * `endReason:{type:"max-steps"}`（机制已存在）。**不设时间维度的超时回收**（用户拍板：
+ * 离开两小时不该误杀正常长任务）；main 卡死（卡在工具里不产步）由人在全局会话视图上
+ * 手动强制中断（[5] ##308）。
+ */
+interface TurnRun {
+    taskUri: string;
+    /** 本轮的中止源。**唯一来源 = 用户主动停止**（`cancel()`）—— 不再由消费端断开触发 */
+    ctrl: AbortController;
+    /** 订阅本轮的 `agent.local.chat` 流。断开只从集合摘掉，不影响驱动 */
+    subs: Set<AsyncQueue<Op>>;
+    /** 驱动异常：按原语义经流上抛（RPC 层转 error 帧），由订阅端在流尾 rethrow */
+    error?: unknown;
+    done: boolean;
+}
+
+/** 中止的可见文案（中止的唯一来源 = 用户主动停止，见 `cancel()`） */
+function abortNotice(_source: string): string {
+    return "生成已取消";
+}
+
+/** 从 abort reason 取「结束原因来源」：对象 `{source}` 用它的，否则退回 fallback（如用户停止 = abort） */
+function abortSource(signal: AbortSignal, fallback: string): string {
+    const r: unknown = signal.reason;
+    if (r && typeof r === "object" && "source" in (r as Record<string, unknown>)) {
+        return String((r as { source: unknown }).source);
+    }
+    return fallback;
 }
 
 // 会话路径（keyOf / opsFile / llmFile）已抽到 ../core/local-paths —— 见那里的头注：
@@ -978,6 +1018,11 @@ export class LocalAgentManager {
      */
     private historyCache = new Map<string, { start: number; consumed: number; prefix: string; store: BlockStore }>();
     private _limits: LocalAgentLimits | null = null;
+    /**
+     * 在跑的轮次（taskUri → TurnRun）：**轮次的唯一真源**（#305 起不再借道生成器寿命）。
+     * 它同时是「同任务并发拒绝」的判据（原 `sess.running`）与消费端订阅者的挂载点。
+     */
+    private turns = new Map<string, TurnRun>();
 
     /**
      * 语言模型解析的可注入出口（缺省按 API 面走 zen/go）。
@@ -1838,11 +1883,28 @@ export class LocalAgentManager {
         return true;
     }
 
+    /**
+     * 用户主动停止：中止在跑的轮次。**唯一的"停"入口**（##305：孤儿不再自动回收）。
+     * 消费端断开**不**走这里 —— 刷新/切页/关窗不再掐掉正在跑的轮次。
+     */
     cancel(taskUri: string): boolean {
         const s = this.sessions.get(taskUri);
         if (!s?.running) return false;
         s.running.abort();
         return true;
+    }
+
+    /**
+     * 本会话的**观察者数** = 本轮 chat 流的消费端（`run.subs`）+ 该会话 op 流的订阅者
+     * （UI 窗口 / CLI watch，`opsFeed`）。
+     *
+     * 用途：`agent.local.running` 的可见性标注（detached / subscribers，[5] ##308 数据源）。
+     * **不用于回收**（##305 拍板：不做"无人即停"—— 会误杀正常长任务）。
+     * 两个来源都要算：CLI 只消费 chat 流、UI 只订阅 op 流 —— 少算一个就会把"有人正在看"
+     * 的轮次标成 detached（##308 页面上会误报"没人看"）。
+     */
+    watchers(taskUri: string): number {
+        return (this.turns.get(taskUri)?.subs.size ?? 0) + opsFeed.subscriberCount(taskUri);
     }
 
     /** 入队一条插话（只入队，不唤醒轮次；正在跑的轮次按投递时机取走，没有则留待下一轮）。 */
@@ -1953,10 +2015,11 @@ export class LocalAgentManager {
         // 手写 personas.yaml 可能把档位留空：兜底到该模型自己的默认档，不把空档发给上游
         const reasoningEffort = reasoningEffortOverride ?? (persona.reasoningEffort || reasoningOf(model).default);
         let sess = this.getSession(taskUri);
-        if (sess.running) {
-            // 会话在跑 —— **不拒绝，改排队**（##306 / ##180 专项第 1 步）。
-            // 「窗口只是后端的使用窗口」：同任务第二个客户端发消息不该拿到错误，
-            // 而该排进插话队列，由正在跑的轮次在轮末整批取走（见下方续轮循环）。
+        // 该会话已有轮次在跑 —— **不拒绝，改排队**（##306 / ##180 专项第 1 步）。
+        // 「窗口只是后端的使用窗口」：同任务第二个客户端发消息不该拿到错误，
+        // 而该排进插话队列，由正在跑的轮次在轮末整批取走（见下方续轮循环）。
+        // 判据是 `turns` 注册表而非生成器：轮次寿命不再等于这条流的寿命（##305）。
+        if (this.turns.has(taskUri)) {
             yield* this.enqueueWhileRunning(taskUri, sess, message);
             return;
         }
@@ -1990,10 +2053,62 @@ export class LocalAgentManager {
             }
         }
 
-        const ctrl = new AbortController();
-        sess.running = ctrl;
+        // ── 建「轮次运行」并**分离启动驱动**（##305）────────────────────────
+        // 轮次的寿命不再等于这条 RPC 流的寿命：驱动（driveTurn）归本管理器持有，
+        // 本生成器只是它的订阅者。刷新/切页/关窗/RPC 断开 ⇒ 只退订，不 abort ——
+        // 「刷新 = 重新接上视图」。无人消费时的开销由 maxSteps 步数上限收口（见 TurnRun 头注）。
+        const run: TurnRun = {
+            taskUri,
+            ctrl: new AbortController(),
+            subs: new Set(),
+            done: false,
+        };
+        sess.running = run.ctrl;
+        this.turns.set(taskUri, run);
+        // 先注册订阅再启动驱动：op 的路径是「落盘 → push 给当前订阅者」，晚注册会丢开头几条。
+        // 注册是同步的，与驱动的首个 await 之间没有竞态窗口。
+        const q = new AsyncQueue<Op>();
+        run.subs.add(q);
+        const sub = withCleanup(q, () => {
+            run.subs.delete(q);
+        });
+        const driving = this.driveTurn(run, sess, message, model, reasoningEffort, key, rm, persona.id).catch((e) => {
+            // 驱动异常按原语义经流上抛（RPC 层转 error 帧），由订阅端在流尾 rethrow
+            run.error = e;
+        });
+        // for-await 的 IteratorClose（消费端 return 展开 = 刷新/切页/关窗/杀 CLI）会调到 sub 的
+        // return → 只摘掉订阅。这正是本次改造的落点：**轮次继续跑**，重连走 ops 水位（##307 读侧）。
+        for await (const op of sub) yield op;
+        await driving; // 等驱动落位（订阅流关闭正是驱动尾部触发）→ run.error 必已写入
+        if (run.error) throw run.error;
+    }
+
+    /**
+     * **轮次驱动**（##305）：自持消费 runTurn 内层生成器，把 op「落盘（sink）+ 收敛内存（store.apply）
+     * + 推给订阅者」。全程没有 yield —— 消费端来了走、走了留，驱动都照常跑完本轮。
+     *
+     * 由 chat() 以 `void` 启动；异常记入 `run.error`（订阅端在流尾 rethrow，保持"错误经流传递"的旧语义）。
+     * 收尾（abort 上游 / appendLlm / 注销 / 关订阅流）全在 finally —— 任何退出路径都不留僵尸轮次。
+     */
+    private async driveTurn(
+        run: TurnRun,
+        sess: LocalSession,
+        message: string,
+        model: string,
+        reasoningEffort: ReasoningEffort,
+        key: string,
+        rm: ResolvedModel,
+        personaId: string,
+    ): Promise<void> {
+        const taskUri = run.taskUri;
+        const ctrl = run.ctrl;
+        /** 推 op 给当前所有订阅者（落盘与内存收敛由各调用点负责 —— 见 emit/seal 的头注） */
+        const publish = (op: Op): void => {
+            for (const s of run.subs) s.push(op);
+        };
         let done = false;
         try {
+
             // 落盘与投递解耦：sink 在 emission 时直接写文件并广播，即使消费端提前断开，
             // 日志也不丢尾、别的窗口也照样看得见（唯一落盘点，见 opsSink 头注）
             const sink = this.opsSink(taskUri);
@@ -2009,7 +2124,7 @@ export class LocalAgentManager {
             for (const op of this.healResidualOps(sess)) {
                 sink(op);
                 sess.store.apply(op);
-                yield op;
+                publish(op);
             }
 
             // ── 轮次循环：首轮 = 调用方消息，之后各轮 = 插话队列喂进来的消息 ──
@@ -2025,7 +2140,7 @@ export class LocalAgentManager {
                 // 逐步用量记录的身份字段：这几项 chat() 时已知，但不进任何日志就答不出
                 // 「哪种配置更省」（##211 §六.2）—— 尤其同一会话换模型/换面时。
                 const inner = this.runTurn(taskUri, sess, pending, model, reasoningEffort, ctrl.signal, key, rm, sink, {
-                    persona: persona.id,
+                    persona: personaId,
                     apiFace: apiOf(model),
                     contextLimit: contextLimitOf(model),
                 });
@@ -2041,7 +2156,7 @@ export class LocalAgentManager {
                             break;
                         }
                         sess.store.apply(r.value);
-                        yield r.value;
+                        publish(r.value);
                     }
                 } finally {
                     // 消费端提前断开（切页/停止）：把内层也关掉，别让它的收尾悬在半路
@@ -2085,7 +2200,7 @@ export class LocalAgentManager {
                         sink(op);
                         sess.store.apply(op);
                     }
-                    for (const op of ops) yield op;
+                    for (const op of ops) publish(op);
                     break;
                 }
                 // 轮末**整批取走**：队列里剩下的全部（两种模式都算）作为下一轮的开场一次性发出。
@@ -2105,7 +2220,9 @@ export class LocalAgentManager {
             done = true;
             // llm dump 移到 finally（见那里：链式 return 会截断 try 尾，finally 才是每条退出路径的保证）
         } finally {
-            // 消费端提前断开（切 tab/刷新/杀 CLI）：停掉上游，不让 LLM/工具在无人处继续烧 token
+            // ⚠️ 这里**不再**因「消费端断开」而 abort（##305）：轮次由本管理器独立驱动，
+            // 消费端只是订阅者 —— 断开只退订（见 chat 的 for-await）。此处 abort 只在
+            // **驱动自身异常**（done 未置位）时兜底，停掉上游不让它空转。
             // （AbortController.abort() 按规范不抛错，此处无需 try/catch）
             if (!done) ctrl.abort();
             sess.running = null;
@@ -2128,6 +2245,12 @@ export class LocalAgentManager {
             //   「永远显示生成中 + 停止按钮点了没反应」，用户只能重启。
             //   noteTurnEnd 是 Map.delete，幂等：closeTurn 已注销过时，这里再删一次无害。
             noteTurnEnd(taskUri);
+            // 归档本轮（##305）：注销注册表 + 关掉所有订阅流（消费端据此正常收尾）。
+            // 放在 noteTurnEnd 之后：先让「运行态真值」翻下去，再放消费端走完。
+            run.done = true;
+            this.turns.delete(taskUri);
+            for (const s of run.subs) s.close();
+            run.subs.clear();
         }
     }
 
@@ -2712,10 +2835,12 @@ export class LocalAgentManager {
                             yield* errorBlock("llm", msg, failId != null ? { reqId: failId } : undefined);
                             break;
                         }
-                        case "abort":
-                            setEndReason({ type: "aborted", data: { source: "abort" } });
-                            yield* errorBlock("abort", "生成已取消");
+                        case "abort": {
+                            const src = abortSource(signal, "abort");
+                            setEndReason({ type: "aborted", data: { source: src } });
+                            yield* errorBlock("abort", abortNotice(src));
                             break;
+                        }
                         case "finish-step": {
                             // 每步 usage：① 落一条独立账（usage.jsonl，逐步明细/金额的唯一来源）
                             // ② 累加进本轮桶（对话流页脚）
@@ -2811,8 +2936,9 @@ export class LocalAgentManager {
             } catch (e) {
                 // 取消（消费端断开 / 停止按钮）与真实错误分流：前者是预期收尾，后者记 error 块
                 if (signal.aborted) {
-                    setEndReason({ type: "aborted", data: { source: "abort" } });
-                    yield* errorBlock("abort", "生成已取消");
+                    const src = abortSource(signal, "abort");
+                    setEndReason({ type: "aborted", data: { source: src } });
+                    yield* errorBlock("abort", abortNotice(src));
                 } else {
                     const msg = errText(e);
                     setEndReason({ type: "error", data: { source: "stream", message: msg } });

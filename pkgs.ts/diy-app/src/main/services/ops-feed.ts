@@ -119,6 +119,17 @@ class OpsFeed {
     return s;
   }
 
+  /**
+   * 当前订阅者数（**不建状态**：该会话没被订阅过就直接 0）。
+   *
+   * 用途：`agent.local.running` 的可见性标注（##305 / [5] ##308）—— "这个会话此刻有没有人在看"
+   * 必须问订阅总线，而不能只看 chat 流的消费端（UI 走的是 op 流，不消费 chat 流）。
+   * **不用于任何回收**：##305 定案不做"无人即停"。
+   */
+  subscriberCount(taskUri: string): number {
+    return this.feeds.get(taskUri)?.subs.size ?? 0;
+  }
+
   /** 此刻水位（订阅前校准起点用） */
   watermark(taskUri: string): { epoch: number; seq: number } {
     const s = this.st(taskUri);

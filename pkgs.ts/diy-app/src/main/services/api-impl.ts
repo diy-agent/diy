@@ -366,7 +366,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // 直接读 runtime-context 的内存表 —— 那才是「此刻主进程真正在跑哪些轮次」的权威。
   binding.on(app.agent.local.running, async () => {
     const { activeTurnList } = await import("./runtime-context");
-    return { active: activeTurnList() };
+    const { getLocalAgent } = await import("./local-agent");
+    // 订阅者数是**运行时事实**（含 detached 与观测者接入，##305）—— 由 LocalAgentManager 算，
+    // runtime-context 只管"哪些任务在跑"（纯内存表，不依赖 agent 层）。
+    const agent = getLocalAgent();
+    return { active: activeTurnList().map((t) => ({ ...t, subscribers: agent.watchers(t.taskUri) })) };
   });
   binding.on(app.agent.local.history, async ({ input }) => {
     noteRendererTouch("diy.agent.local.history", input.taskUri);

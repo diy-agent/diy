@@ -535,6 +535,9 @@ export const apiDef = RpcSchema.router({
                       model: z.string().optional(),
                       cwd: z.string().optional(),
                       since: z.string().describe("轮次起始 ISO 时间"),
+                      // ##305：无订阅者（detached）的活跃轮次也如实列出 —— 它是 [5] ##308 的数据源。
+                      // 0 = 此刻没人看（UI 都退订了），轮次仍在跑；开销由 maxSteps 步数上限收口。
+                      subscribers: z.number().describe("此刻观察该会话的订阅者数（chat 流 + op 订阅）"),
                     }),
                   ),
                 }),
