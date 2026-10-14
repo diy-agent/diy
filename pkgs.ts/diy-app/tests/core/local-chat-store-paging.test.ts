@@ -145,6 +145,22 @@ describe("轮末重放（doReload）遇上失效游标", () => {
         expect(store.hasOlder).toBe(true);
         expect(h.toasts).toEqual([]); // 常规路径不该惊动用户
     });
+
+    it("stale 退全量后必须丢弃游标：下一轮末重放要重新按预算 seek，不许粘住全量游标", async () => {
+        const store = await freshStore();
+        h.historyWindow.mockResolvedValueOnce(win(["t1", "t2"], "c1", true));
+        await store.open(URI);
+
+        // 日志被清空 / 覆盖写：main 退**全量**、游标 = 全量游标（at:0）。它是个**合法轮首**，
+        // 回传下去 main 会照收 ⇒ 此后每轮末都退全量（== 把 R9 想消灭的"整量回包"贴回来）。
+        h.historyWindow.mockResolvedValueOnce(win(["t1", "t2", "t3"], "c-at0", false, true));
+        await turnEndReload(store);
+
+        // 下一轮末重放：必须**不带游标**（重新按预算 seek），而不是把 at:0 粘住回传
+        h.historyWindow.mockResolvedValueOnce(win(["t1", "t2", "t3"], "c-new", false));
+        await turnEndReload(store);
+        expect(h.historyWindow.mock.calls.at(-1)![0].cursor).toBeUndefined();
+    });
 });
 
 describe("上滚补段（loadOlder）遇上失效游标", () => {
