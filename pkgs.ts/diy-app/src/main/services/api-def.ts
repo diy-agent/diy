@@ -48,6 +48,59 @@ const StatusDataUri = z.object({ status: z.string(), data: z.object({ uri: z.str
 const StatusDataId = z.object({ status: z.string(), data: z.object({ id: z.string() }) });
 const StatusOk = z.object({ status: z.string() });
 
+/** 一条流量记录（一次 HTTP 往返；body 形状任意，故用 any） */
+const BodyCaptureSchema = z.object({
+  head: z.string().describe("首段文本（未截断时即全文）"),
+  tail: z.string().describe("尾段文本（只保留最后一段；未截断时为空串）"),
+  headBytes: z.number().describe("首段保留的字节数"),
+  tailBytes: z.number().describe("尾段保留的字节数"),
+  totalBytes: z.number().describe("正文完整字节数"),
+  truncated: z.boolean().describe("是否被截断（headBytes + tailBytes < totalBytes 即截断）"),
+});
+const LogLocSchema = z.object({
+  file: z.string().describe("日志文件（相对 DIY_HOME，如 log/network/2026-10-13.jsonl）"),
+  offset: z.number().describe("该条记录在文件中的起始字节"),
+  len: z.number().describe("该条记录的字节长度"),
+  line: z.number().describe("行号（1 起；一行 = 一条记录）"),
+  abs: z.string().describe("文件绝对路径（界面展示 / 打开文件位置用）"),
+});
+const TrafficRecordSchema = z.object({
+  id: z.number(),
+  ts: z.number().describe("请求发出时刻（epoch ms）"),
+  kind: z.enum(["llm", "probe", "http"]).describe("来源：LLM 对话 / 模型配置探测 / 其它"),
+  session: z.string().describe("x-opencode-session（归属键，反查 task/turn 用）；无归属则空串"),
+  taskUri: z.string().nullable().describe("归属任务；未知则 null"),
+  turnId: z.string().nullable().describe("归属轮次"),
+  provider: z.string().describe("provider id"),
+  model: z.string().describe("模型 id"),
+  baseUrl: z.string(),
+  method: z.string(),
+  url: z.string().describe("完整请求 URL"),
+  host: z.string().describe("主机名（含端口）"),
+  path: z.string(),
+  attempt: z.number().describe("本轮第几次请求（每次重试即一次 HTTP 往返，逐次自增）"),
+  maxRetries: z.number(),
+  status: z.number().nullable().describe("HTTP 状态码；null = 未收到响应（网络错 / 超时）"),
+  ms: z.number().describe("耗时 ms"),
+  reqBytes: z.number().describe("请求正文字节数（完整大小，不受截断影响）"),
+  resBytes: z.number().describe("响应正文字节数（完整大小；未收到为 0）"),
+  reqHeaders: z.record(z.string(), z.string()).describe("已脱敏（authorization 只留尾 4 位）"),
+  reqBody: BodyCaptureSchema.nullable().describe("请求正文（首尾法保留，见字段说明）"),
+  resHeaders: z.record(z.string(), z.string()),
+  resBody: BodyCaptureSchema.nullable().describe("响应正文（首尾法保留）；未捕获时为 null，原因见 resNote"),
+  resNote: z.string().nullable().describe("未能保留响应正文时的说明（如正文过大）"),
+  traceId: z.string().nullable().describe("上游追责凭据（响应头 x-trace-id / x-request-id / x-opencode-log-id）"),
+  err: z.string().nullable().describe("网络层异常消息"),
+  log: LogLocSchema.nullable().describe("该条落盘位置（界面按位置随机读；null = 未落盘）"),
+});
+const TrafficSnapshotSchema = z.object({
+  fullCapture: z.boolean().describe("是否记录完整请求内容（正文不截断）"),
+  cap: z.number().describe("内存里最多留多少条"),
+  total: z.number(),
+  logDir: z.string().describe("日志目录（相对 DIY_HOME）"),
+  records: z.array(TrafficRecordSchema),
+});
+
 /** 任务树节点 schema（递归，供 ui.tree 输出强类型） */
 /** UI 快照数据（ui.state 单读 / ui.watch.uiState 流 共用同一形状） */
 const UiSnapshotData = z.object({
@@ -988,6 +1041,93 @@ export const apiDef = RpcSchema.router({
             desc: `停止 LLM 代理`,
             input: {},
             output: StatusOk,
+          }),
+        },
+      }),
+
+      traffic: RpcSchema.group({
+        desc: `流量（应用发出去的 HTTP 请求 / 收到的响应；内存留最近若干条 + 逐条追加到 log/network/ 磁盘日志）`,
+        children: {
+          snapshot: RpcSchema.unary({
+            desc: `取当前流量快照（开关状态 + 内存里的记录）。withRecords=false 时只回状态、不带记录数组`,
+            input: {
+              withRecords: z
+                .boolean()
+                .optional()
+                .cliOption({ desc: "是否带上记录数组（默认 true；界面只关心开关状态时可省）" }),
+            },
+            output: TrafficSnapshotSchema,
+          }),
+          clear: RpcSchema.unary({
+            desc: `清空流量记录（仅内存里的即时列表；磁盘日志不动）`,
+            input: {},
+            output: StatusOk,
+          }),
+          readLog: RpcSchema.unary({
+            desc: `按位置读取磁盘日志里的一条记录（文件失效 / 版本不符时 ok=false 并给原因）`,
+            input: {
+              file: z.string().cliArg({ desc: "日志文件（相对 DIY_HOME）" }),
+              offset: z.number().cliArg({ desc: "起始字节" }),
+              len: z.number().cliArg({ desc: "字节长度" }),
+            },
+            output: z.object({
+              ok: z.boolean(),
+              message: z.string().nullable().describe("失败原因（人话）"),
+              record: z.any().nullable().describe("读到的原始记录"),
+            }),
+          }),
+          query: RpcSchema.unary({
+            desc: `按条件查磁盘日志（流量页数据源）：全文关键词 / 状态 / 方法 / 日期（不传或 all = 全部日期）`,
+            input: {
+              text: z.string().optional().cliArg({ desc: "全文关键词（匹配地址、方法、状态、模型、正文等）" }),
+              status: z.enum(["all", "ok", "4xx", "5xx", "err"]).optional().cliArg({ desc: "状态过滤" }),
+              method: z.string().optional().cliArg({ desc: "HTTP 方法（all = 不限）" }),
+              date: z.string().optional().cliArg({ desc: "日期 YYYY-MM-DD / all" }),
+              limit: z.number().optional().cliArg({ desc: "最多返回条数（默认 1000）" }),
+            },
+            output: z.object({
+              records: z.array(z.any()).describe("命中的记录（含 log 位置），按时间倒序"),
+              scanned: z.number().describe("扫过的行数"),
+              files: z.array(z.string()).describe("扫过的文件"),
+              hits: z.number().describe("命中数"),
+              truncated: z.boolean().describe("是否因超过 limit 被截断"),
+              ms: z.number().describe("耗时 ms"),
+            }),
+          }),
+          logFiles: RpcSchema.unary({
+            desc: `列出磁盘上的流量日志文件、日期与总体积（头部「日志大小」/ 日期过滤用）`,
+            input: {},
+            output: z.object({
+              dir: z.string(),
+              files: z.array(z.string()),
+              dates: z.array(z.string()).describe("出现过的日期（新的在前）"),
+              bytes: z.number().describe("日志目录总字节数"),
+            }),
+          }),
+          revealLog: RpcSchema.unary({
+            desc: `在系统文件管理器里定位到某个日志文件（打开所在目录并选中该文件）`,
+            input: { file: z.string().cliArg({ desc: "日志文件（相对 DIY_HOME）" }) },
+            output: z.object({
+              ok: z.boolean(),
+              message: z.string().nullable().describe("失败原因（人话）"),
+            }),
+          }),
+          setFullCapture: RpcSchema.unary({
+            desc: `开关「记录完整请求内容」（开 = 正文不再截断，全留；默认关 = 超长正文只留首尾一段）`,
+            input: { on: z.boolean().cliArg({ desc: "true 开 / false 关" }) },
+            output: TrafficSnapshotSchema,
+          }),
+          setCap: RpcSchema.unary({
+            desc: `设置内存保留条数上限`,
+            input: {
+              n: z.number().cliArg({ desc: "条数上限（1..5000）" }),
+            },
+            output: TrafficSnapshotSchema,
+          }),
+          events: RpcSchema.serverStream({
+            desc: `流量变更事件流（记录 / 清空 / 开关变更时推版本号；UI 收到后拉 snapshot）`,
+            input: {},
+            output: z.object({ version: z.number() }),
           }),
         },
       }),

@@ -45,8 +45,10 @@ import {
     type UsageHoverState,
 } from "./UsagePanel";
 import { CompactHistoryPanel } from "./CompactSessionPanel";
+import { TrafficDrawer } from "./TrafficDrawer";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { draftStore } from "../store/draftStore";
+import { trafficStore } from "../store/trafficStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
 import { Caches } from "../lib/ui-state";
@@ -1119,8 +1121,22 @@ function PartRow(props: {
  * 不在这里兜底的话，根渲染分支只会吐一句「[未知根 error]」，用户看不到
  * "还有 N 条插话没投出去"这种关键信息。
  */
+/** 从错误原文里抠 `trace_id: <id>`（上游回执格式，见 ##309）：缺则无深链 */
+function traceIdOf(msg: string): string | null {
+    const m = msg.match(/trace_id[:\s]+([0-9a-fA-F_-]{8,})/);
+    return m ? m[1]! : null;
+}
+
 function ErrorBox(props: { node: BlockNode }) {
     const source = str(props.node.attrs.source);
+    const msg = () => str(props.node.attrs.message);
+    const tid = () => traceIdOf(msg());
+    // 出错的那条请求：主进程在记错误块时把它的记录 id 一并写进 meta.reqId，
+    // 这里直接拿它定位（比从错误文本里抠 trace_id 更准）。
+    const reqId = () => {
+        const v = props.node.attrs.reqId;
+        return typeof v === "number" ? v : null;
+    };
     // 排队回执（`meta.source === "queue"`，##306）走 error 块**只是通道选择**
     // （error 块不进 LLM 投影），语义却是**正常态**——"生成中，这条已排队"。
     // 画成红色 + ❌ 会被读成失败：##307 让回执全体窗口可见后误读面更大，故按 source 降级成普通提示条。
@@ -1133,17 +1149,31 @@ function ErrorBox(props: { node: BlockNode }) {
                 data-block-tag="error"
                 data-source="queue"
             >
-                {`⏳ ${str(props.node.attrs.message)}`}
+                {`⏳ ${msg()}`}
             </div>
         );
     }
     return (
         <div
-            class="rounded-lg border border-error/40 bg-error/10 px-3 py-2 text-body text-error whitespace-pre-wrap"
+            class="rounded-lg border border-error/40 bg-error/10 px-3 py-2 text-body text-error"
             data-block-id={props.node.id}
             data-block-tag="error"
         >
-            {`❌ [${source}] ${str(props.node.attrs.message)}`}
+            <div class="whitespace-pre-wrap">{`❌ [${source}] ${msg()}`}</div>
+            {/* 深链：错误块是「用户实际看到出错」的地方，从这里一步到实际请求/响应 ——
+                否则用户看到一行原文、却不知去哪查。source 为 `llm` 的错恒给入口；
+                有 reqId 就精确打开那条请求，否则退到按 trace_id 找、再退到最近一次失败。 */}
+            <Show when={source === "llm" || tid()}>
+                <button
+                    class="mt-1 text-caption underline decoration-dotted hover:no-underline cursor-pointer"
+                    data-testid="error-traffic-link"
+                    onClick={() => trafficStore.openWith({ traceId: tid(), reqId: reqId() })}
+                >
+                    {tid()
+                        ? `查看实际请求 / 响应（trace_id ${tid()!.slice(0, 8)}…）→`
+                        : "查看实际请求 / 响应 →"}
+                </button>
+            </Show>
         </div>
     );
 }
@@ -2027,6 +2057,8 @@ export function LocalChatPage(props: { uri?: string }) {
                 live={liveTurnId() === usageDetail()}
                 onClose={() => setUsageDetail(null)}
             />
+            {/* 流量抽屉（当前会话的请求/响应；错误块「查看实际请求 / 响应」深链打开） */}
+            <TrafficDrawer />
             {/* L2：用量汇总 hover 卡（Portal 到 body，滚动容器裁不到） */}
             <UsageHoverCard
                 state={usageHover()}
@@ -2045,6 +2077,17 @@ export function LocalChatPage(props: { uri?: string }) {
             <div
                 class={`flex items-center justify-end gap-2 pl-4 pr-16 ${VIEW_BAR_H} border-b shrink-0`}
             >
+                {/* LLM 流量入口：与错误块深链同一个抽屉。常驻在视图栏，用户随时能开，
+                    不必先撞上一次错误才知道有这东西（##309(上游偶发 400 不可归因)）。 */}
+                <button
+                    class="btn btn-xs btn-ghost shrink-0"
+                    data-testid="chat-traffic-btn"
+                    data-tip="流量（当前会话实际发出的请求 / 响应）"
+                    aria-label="流量"
+                    onClick={() => trafficStore.openWith()}
+                >
+                    <span class="text-body leading-none">📡</span>
+                </button>
                 {/* 全局展开级别：`n/4 展开` 点一下**所有轮次**换一层（2026-10-11 用户口径：
                     **只有它能换层**）。整段调粗细是高频动作，20 轮逐轮点太累；单轮那边只有
                     "收拢 / 展开"两态（点人物标题 bar，收拢标记见 foldedTurns）。

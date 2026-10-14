@@ -94,6 +94,7 @@ import {
 } from "../../shared/context/cache-ttl";
 import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
+import { traffic } from "../core/traffic";
 import { appendCtxLog } from "../core/context-changelog";
 import { statFromStep } from "../../shared/context/stats";
 import { opsFromHashes } from "../../shared/context/changelog";
@@ -1014,6 +1015,23 @@ export class LocalAgentManager {
     }
 
     /**
+     * 发请求前登记归属 —— 流量观测（undici diagnostics_channel，见 core/traffic.ts）靠
+     * 请求头里的 `x-opencode-session` 反查「这条记录属于谁」，因此每次真发（streamText /
+     * generateText）前必须登记一次：同时把 attempt 计数归零（重试即自增）。
+     */
+    private noteTraffic(taskUri: string, turnId: string, rm: ResolvedModel, maxRetries: number): void {
+        traffic.noteRun({
+            session: sessionIdOf(taskUri),
+            taskUri,
+            turnId,
+            provider: rm.provider,
+            model: rm.id,
+            baseUrl: resolveBaseUrl(rm),
+            maxRetries,
+        });
+    }
+
+    /**
      * 解析「人物/覆盖里写的模型引用」→ 运行时模型 + 密钥。
      * 未知名一律 fail-fast；密钥未配置也 fail-fast（不静默换模型、不拿空 key 发请求）。
      * 例外：注入了 `modelResolver`（单测桩模型）时跳过密钥解析 —— 桩模型不出网，无需 key。
@@ -1685,6 +1703,7 @@ export class LocalAgentManager {
         const model = personaForTask(diyHome(), taskUri).model;
         const { rm, key } = this.resolveModel(model);
         const dropped = droppedTextOf(p.store, p.droppedIds);
+        this.noteTraffic(taskUri, "summary", rm, 2);
         const res = await generateText({
             model: this.modelFor(rm, key),
             prompt: summaryExtractionPrompt(dropped, p.droppedIds.length),
@@ -2184,10 +2203,14 @@ export class LocalAgentManager {
             if (!started.has(id)) yield* emit({ op: "start", id, kind, parent, meta });
         };
         let eN = 0;
-        const errorBlock = function* (source: string, text: string): Generator<Op, void, void> {
+        const errorBlock = function* (
+            source: string,
+            text: string,
+            extra?: Record<string, JSONVal>,
+        ): Generator<Op, void, void> {
             const id = `${turnId}_e${++eN}`;
             yield* seal([
-                { op: "start", id, kind: "error", parent: turnId, meta: { source } },
+                { op: "start", id, kind: "error", parent: turnId, meta: extra ? { source, ...extra } : { source } },
                 { op: "delta", id, fields: { message: text } },
                 { op: "stop", id },
             ]);
@@ -2495,6 +2518,7 @@ export class LocalAgentManager {
                     previewOf(delivery.tree, p) || null,
                 ),
             });
+            this.noteTraffic(taskUri, turnId, rm, 2);
             const result = streamText({
                 model: this.modelFor(rm, key),
                 system: delivery.system.text,
@@ -2682,7 +2706,10 @@ export class LocalAgentManager {
                         case "error": {
                             const msg = errText((part as { error?: unknown }).error);
                             setEndReason({ type: "error", data: { source: "llm", message: msg } });
-                            yield* errorBlock("llm", msg);
+                            // 把「这次失败对应哪条实际请求」一并记下：错误块据此直接跳到那条
+                            // 请求/响应（能定位就定位，不靠用户猜 trace_id）。
+                            const failId = traffic.latestFailure(sessionIdOf(taskUri));
+                            yield* errorBlock("llm", msg, failId != null ? { reqId: failId } : undefined);
                             break;
                         }
                         case "abort":

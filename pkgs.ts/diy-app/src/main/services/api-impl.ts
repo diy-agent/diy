@@ -49,6 +49,8 @@ async function getLlmProxy() {
   return _llmProxyInstance;
 }
 
+import { traffic } from "../core/traffic";
+
 const app = apiDef.diy;
 
 /**
@@ -768,6 +770,50 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { status: "ok" };
   });
 
+  // ── traffic（流量观测；见 core/traffic.ts）──
+  binding.on(app.traffic.snapshot, async ({ input }) => traffic.snapshot(input.withRecords ?? true));
+  binding.on(app.traffic.clear, async () => {
+    traffic.clear();
+    return { status: "ok" };
+  });
+  binding.on(app.traffic.setFullCapture, async ({ input }) => {
+    traffic.setFullCapture(input.on);
+    return traffic.snapshot();
+  });
+  binding.on(app.traffic.setCap, async ({ input }) => {
+    traffic.setCap(input.n);
+    return traffic.snapshot();
+  });
+  binding.on(app.traffic.readLog, async ({ input }) => {
+    try {
+      const record = traffic.readLog({ file: input.file, offset: input.offset, len: input.len });
+      return { ok: true, message: null, record };
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e), record: null };
+    }
+  });
+  binding.on(app.traffic.query, async ({ input }) => traffic.query(input));
+  binding.on(app.traffic.logFiles, async () => ({
+    dir: traffic.logDir(),
+    files: traffic.listLogFiles(),
+    dates: traffic.listLogDates(),
+    bytes: traffic.logStats().bytes,
+  }));
+  binding.on(app.traffic.revealLog, async ({ input }) => {
+    const abs = traffic.absLogFile(input.file);
+    try {
+      // Electron 主进程才有 shell；web/serve 模式下拿不到 → 给人话提示
+      const { shell } = await import("electron");
+      shell.showItemInFolder(abs);
+      return { ok: true, message: null };
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e), };
+    }
+  });
+  binding.on(app.traffic.events, async function* () {
+    for await (const ev of traffic.events()) yield ev;
+  });
+
   // ── llmConfig（模型 provider 配置）──
   binding.on(app.llmConfig.read, async () => {
     const { registryView } = await import("../core/model-registry");
@@ -843,6 +889,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
       return { ok: false, status: null, models: [], error: expanded.error ?? "密钥为空" };
     }
     const base = input.baseUrl.replace(/\/+$/, "");
+    traffic.noteProbe(base); // 让流量页能标注「模型配置探测」来源
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 12_000);
     try {

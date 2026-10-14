@@ -477,3 +477,25 @@ export function subtreeChanges(rows: readonly YamlDiffRow[]): Map<number, Change
     }
     return out;
 }
+
+/**
+ * 去整体缩进：把 YAML 文本「第一个非空行」的缩进当基准，全文剥掉等量前缀。
+ *
+ * 用途：预览被嵌进字符串的 YAML（如 JSON 里的多行配置）时，内容常被整体缩进，且首行缩进、
+ * 后续行回到第 0 列（参差）。这种文本 js-yaml 会报 `end of the stream...`，但内容其实合法。
+ * 剥掉基准缩进后各行**相对**层级不变，只是整体左移回第 0 列 → 可正常解析。
+ * 基准为 0 或无内容时原样返回（没有可剥的前缀）。
+ */
+export function dedentYamlBlock(s: string): string {
+    const lines = s.split("\n");
+    const first = lines.find((l) => l.trim() !== "");
+    if (!first) return s;
+    const prefix = /^[ \t]*/.exec(first)![0];
+    if (!prefix) return s;
+    const strip = (l: string): string => {
+        let i = 0;
+        while (i < prefix.length && i < l.length && (l[i] === " " || l[i] === "\t")) i++;
+        return l.slice(i);
+    };
+    return lines.map(strip).join("\n");
+}
