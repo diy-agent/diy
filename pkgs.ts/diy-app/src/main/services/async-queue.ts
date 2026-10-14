@@ -54,17 +54,33 @@ export class AsyncQueue<T> {
  * 且**只执行一次**（正常读完 done 与主动 return 不会双重清理）。
  *
  * 这是订阅生命周期的唯一出口：注册表按它做「末订阅者关闭上游」——漏调即泄漏 chokidar/注册项。
+ *
+ * `signal`（RPC serverStream 的取消上下文，由 binding 注入）是**第二条出口**，且不可省：
+ * 传输断开时 RPC 层调的是 `ctrl.abort()` + `void g.return()`，而 `return()` **排在悬挂的
+ * `next()` 之后**（生成器卡在 `await inner.next()`，JS 规范下 return 请求只能排队）——
+ * 于是「无事件期间断开」根本走不到上面那条出口：队列没人唤醒 → `cleanup` 不跑 → 订阅不释放
+ * （症状：`subscriberCount` 虚高，直到下一条事件才归零）。监听 abort 把队列关掉即可让悬挂的
+ * `next()` 立刻以 done 恢复，两条出口等价、都只跑一次。
  */
 export function withCleanup<T>(
   q: AsyncQueue<T>,
   cleanup: () => void,
+  signal?: AbortSignal,
 ): AsyncIterable<T> {
   let done = false;
+  const onAbort = () => {
+    q.close(); // 唤醒悬挂的 next()（此后有缓冲帧仍可读，close 只是不再阻塞）
+    once();
+  };
   const once = () => {
     if (done) return;
     done = true;
+    signal?.removeEventListener("abort", onAbort);
     cleanup();
   };
+  // 断连早于订阅（signal 已 abort）：立即收尾，不留悬挂
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
   return {
     [Symbol.asyncIterator]: () => {
       const inner = q[Symbol.asyncIterator]();

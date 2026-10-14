@@ -179,7 +179,12 @@ class OpsFeed {
    *      `BlockStore.apply` 对重复 start/patch/stop 都是幂等的）；
    *   ③ 注册订阅，此后 publish 实时推。
    */
-  subscribe(taskUri: string, since: number, epoch?: number): AsyncIterable<OpsFrame> {
+  subscribe(
+    taskUri: string,
+    since: number,
+    epoch?: number,
+    signal?: AbortSignal,
+  ): AsyncIterable<OpsFrame> {
     const s = this.st(taskUri);
     const q = new AsyncQueue<OpsFrame>();
     q.push({ kind: "hello", epoch: s.epoch, seq: s.seq });
@@ -190,9 +195,15 @@ class OpsFeed {
       if (ops.length > 0) q.push({ kind: "batch", epoch: s.epoch, fromSeq: since + 1, ops });
     }
     s.subs.add(q);
-    return withCleanup(q, () => {
-      s.subs.delete(q);
-    });
+    // signal：传输断开时（RPC 层 abort）即时退订 —— 否则悬挂的 next() 会让
+    // subs 滞留到**下一条 op**，`subscriberCount`（[5] ##308 的「有没有人在看」）随之虚高。
+    return withCleanup(
+      q,
+      () => {
+        s.subs.delete(q);
+      },
+      signal,
+    );
   }
 }
 
