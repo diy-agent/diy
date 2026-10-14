@@ -9,6 +9,7 @@ import {
     foldLevelCount,
     subtreeChanges,
     toYamlLines,
+    dedentYamlBlock,
     visibleDiffRows,
     visibleLineIndexes,
     type YamlLine,
@@ -207,5 +208,29 @@ describe("逐级展开（foldDepths / collapsedAtLevel）+ 变更点", () => {
         const dIdx = rows.findIndex((r) => (r.right?.text ?? r.left?.text ?? "") === "d: 2");
         expect(ch.get(dIdx)?.add ?? 0).toBe(0);
         expect(ch.get(dIdx)?.del ?? 0).toBe(0);
+    });
+});
+
+describe("dedentYamlBlock（嵌入式 YAML 的整体缩进去除）", () => {
+    it("首行缩进、后续行回到第 0 列 → 按首行基准剥掉", () => {
+        expect(dedentYamlBlock("  foo: bar\nbaz: 1")).toBe("foo: bar\nbaz: 1");
+    });
+
+    it("整体缩进：相对层级不变", () => {
+        expect(dedentYamlBlock("   a:\n     b: 1\n   c: 2")).toBe("a:\n  b: 1\nc: 2");
+    });
+
+    it("前导空行不影响基准（取第一个非空行）", () => {
+        expect(dedentYamlBlock("\n  a: 1\n  b: 2")).toBe("\na: 1\nb: 2");
+    });
+
+    it("无缩进 / 空文本 → 原样返回", () => {
+        expect(dedentYamlBlock("a: 1\nb: 2")).toBe("a: 1\nb: 2");
+        expect(dedentYamlBlock("")).toBe("");
+        expect(dedentYamlBlock("\n\n")).toBe("\n\n");
+    });
+
+    it("超过基准缩进的短行按实际可剥量处理（不越界）", () => {
+        expect(dedentYamlBlock("    a: 1\n  b: 2")).toBe("a: 1\nb: 2");
     });
 });

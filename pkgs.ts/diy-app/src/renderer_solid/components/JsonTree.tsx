@@ -1,6 +1,7 @@
 import { createSignal, createEffect, createMemo, on, For, Show } from "solid-js";
 import { load as yamlLoad } from "js-yaml";
 import { MarkdownView } from "./MarkdownView";
+import { dedentYamlBlock } from "../../shared/yaml-lines";
 
 /** JSON 树形查看：对象/数组逐层折叠，长字符串按真实换行展开。
  *  长字符串可切换预览格式（MD / JSON / YAML）：字符串里塞的往往是 markdown 正文、
@@ -67,7 +68,19 @@ function StringPreview(props: { fmt: "raw" | "md" | "json" | "yaml"; raw: string
 function ParsedPreview(props: { raw: string; kind: "json" | "yaml" }) {
     const res = createMemo(() => {
         try {
-            const data = props.kind === "json" ? JSON.parse(props.raw) : yamlLoad(props.raw);
+            const data =
+                props.kind === "json"
+                    ? JSON.parse(props.raw)
+                    : // YAML：先按原文解析；失败再试「剥掉整体缩进」的版本（见 dedentYamlBlock）
+                      (() => {
+                          try {
+                              return yamlLoad(props.raw);
+                          } catch (e) {
+                              const dedented = dedentYamlBlock(props.raw);
+                              if (dedented === props.raw) throw e;
+                              return yamlLoad(dedented);
+                          }
+                      })();
             return { ok: true as const, data };
         } catch (e) {
             return { ok: false as const, message: e instanceof Error ? e.message : String(e) };
