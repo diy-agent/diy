@@ -95,7 +95,7 @@ import {
 } from "../lib/chat-fold";
 // 历史 mode 值归一与文案放 shared（纯函数、可单测）：ops 日志是 append-only 的史书，
 // 枚举改名前的 step/turn 与现值长期共存，读侧必须归一（详见 shared/steer-mode.ts）
-import { steerModeLabel, steerModeTip } from "../../shared/steer-mode";
+import { DEFAULT_STEER_MODE, steerModeLabel, steerModeTip } from "../../shared/steer-mode";
 
 // ─── 层级 ───────────────────────────────────────────
 
@@ -1358,9 +1358,6 @@ function TurnView(props: {
 // 松手即落盘（`steer.reorder` 提交完整顺序）。拖拽只认手柄：整行可拖会让"想选中那句话"
 // 变成"拖走了它"，而手柄是明确的意图声明（与任务树整行可拖不同 —— 那里一行只有一个含义）。
 
-/** 「留言」按钮的缺省时机：排到下一轮（提交后可在横条上切换）。 */
-const DEFAULT_STEER_MODE: SteerMode = "next-turn";
-
 function SteerBar(props: {
     items: SteerItem[];
     onCancel: (id: string) => void;
@@ -1950,7 +1947,9 @@ export function LocalChatPage(props: { uri?: string }) {
 
     const submit = async () => {
         const text = inputValue().trim();
-        // live（含别人正在跑）= main 会拒发（"正在生成中"），本地先拦：不发无效请求
+        // live（含别人正在跑）= 这一轮不归本窗口管，本地先拦：拦的不是"服务端会拒发"
+        // （##306 起生成中再发消息改入队，不再拒发），而是"本窗口此刻不该接管这条流" ——
+        // 排队回执不属于本窗口那一轮。想往正在跑的轮次里说话走**留言**（submitSteer，同一队列）
         if (!text || !uri() || localChatStore.live) return;
         setInputValue("");
         // 内容已作为消息发出，草稿使命结束：清掉，避免下次进入看到已发送的旧文本

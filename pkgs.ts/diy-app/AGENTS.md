@@ -55,6 +55,7 @@
 - `rule.agents-chain` — AGENTS.md 链**上界到 `$HOME` 为止**（不进 `/`、`/Users`）；不在 `$HOME` 下时只取工作目录一层
 - `rule.budget` — 系统提示词预算 `clamp(模型上下文 × 4B × 5%, 16KB, 64KB)`；超限**拒发不截断**，且早退也必须闭合轮次（stop + noteTurnEnd + 审计）
 - `rule.golden` — 改内置模版（`src/main/prompts/defaults.ts`）**必须同步** `tests/fixtures/system.golden.txt`（当前内置模版的逐字节快照）。⚠️ `./sha.sh check` **不含 vitest**，不会替你抓到这类失效 —— 改完模版跑 `npx vitest run tests/core/template-dsl-golden.test.ts`
+- `rule.steer-queue` — **会话生成中再发消息不拒绝、改排队**（##306）：入 `SteerQueue`（`next-turn`，本轮收尾后整批投），只回一条排队回执（`kind=error` + `meta.source=queue`，error 块不进 LLM 投影）；条数上限 `maxSteerQueue`（默认 1000，`local/limits.json` / `DIY_LOCAL_MAX_STEER_QUEUE`，超限在 `SteerQueue.add` **抛错**不静默丢）。**UI 两个入口**：输入框发送（`LocalChatPage` 的 `submit` 在 `live` 时本地早退 → 该路径目前只由 CLI / RPC 可达）与横条**留言**（`submitSteer`，同一队列、同一缺省时机 `shared/steer-mode.ts` 的 `DEFAULT_STEER_MODE`）
 - `rule.agents-injected` — **本文件会被 `chainOf` 注入 system 提示词**（受 64KB 预算 `SYSTEM_BUDGET_CAP_BYTES` 约束）：长文写 README / 独立文档，这里只留指针
 - `rule.no-silent-catch` — 不要静默吞异常（如切模型曾一律 `catch {}` → 用户以为切了其实没切）
 - `rule.log-vs-config` — **落盘日志**（`local/*.jsonl`）读侧宽松（初版紧凑/扩展松散/缺必填即**异常数据**，见 `log-schema.ts`）；**配置真源**（`context.yaml` / `auto-compact.yaml`）读侧出声回落默认、写侧归一 + 原子写，且**不进 localStorage**（有损 + 两进程各持一份）

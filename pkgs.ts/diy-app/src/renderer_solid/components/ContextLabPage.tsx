@@ -10,8 +10,9 @@
  *                  不必再维护一张独立的"规则表"—— 契约本身就是那张表的骨架。
  *                  改动写进 `$DIY_HOME/context.yaml`（**真源**）：真发读同一份，
  *                  所以页面上看到的划分就是下一轮会用的划分（不存 localStorage —— 那种页面会说谎）。
- *                  另有「变更（真发轮次）」列表：每轮真发落一条投递快照（读文件，不轮询），
- *                  点一条 → 与上一轮比；取消选中 → 当前 vs 最后一轮。
+ *                  另有「变更历史」列表：每轮真发落一条**变更事件**（op + path + 值预览 old→new，
+ *                  读 `local/<key>.changelog.jsonl`，不轮询），点一轮 → 与上一轮比的行级 diff；
+ *                  点一条事件 → 在请求预览里定位该变量；取消选中 → 当前 vs 最后一轮。
  *   · 中「请求预览」 **整份请求的大 YAML**：内嵌 system/runtime 文本就地解析展开；
  *                  可切"原文"看真发 JSON —— wire 不变。
  *                  （system 份 / runtime 份两个单独 view 已删：它们的价值全部包含在
@@ -42,7 +43,7 @@ import { diffSize } from "../../shared/context/steps";
 import { attributionOf, foldStatRows, sysCauses, unitsFromRules, type Attribution } from "../../shared/context/attribution";
 import { fmtAgo, fmtShortTime } from "../../shared/date-format";
 import { lineRange, matchRanges, type LineRange } from "../../shared/context/match";
-import type { ContextDiff, Stats } from "../../shared/context/schema";
+import type { ContextDiff, CtxLog, Stats } from "../../shared/context/schema";
 import type { DiffLine } from "../../shared/line-diff";
 
 const PAGE = "ctxlab";
@@ -228,42 +229,22 @@ export function ContextLabPage(props: { uri: string }) {
     });
 
     /**
-     * 真发投递快照列表（每轮一条，读文件；没有实时推送，靠顶栏「⟳ 刷新」重拉）。
-     * 实时观测机制还没定结构 —— 暂用显式刷新（debug UI 用显式刷新代替事件流，
-     * 与提示词页同一取舍；外部改动界面不会自己变，按一下刷新）。
+     * 变更历史（每轮一条事件流，读 `local/<key>.changelog.jsonl`；没有实时推送，靠顶栏「⟳ 刷新」重拉）。
+     * 轮序与真发投递快照同序（两份日志同点写）—— 所以这里的 `index` 就是"第几步"，
+     * 点一行即可驱动中栏「变更详情」的 diff。老任务没有这份日志时 main 会从投递快照折算
+     * （`source: "derived"`，只有变化路径、没有值预览）。
      */
-    const [steps, { refetch: refetchSteps }] = createResource(
+    const [history, { refetch: refetchHistory }] = createResource(
         () => props.uri,
         async (uri) => {
-            return (await diyService.diy.context.steps({ taskUri: uri, limit: undefined, diff: undefined })) as {
-                total: number;
-                steps: Array<{
-                    index: number;
-                    ts: string;
-                    turnId: string;
-                    model: string;
-                    bytes: { system: number; runtime: number };
-                    /** 该轮快照的划分（历史归因的**唯一依据**；不能用页面当前划分反推） */
-                    systemPlaces: string[];
-                    runtimePlaces: string[];
-                    changed?: string[];
-                    sincePrev: {
-                        changed: string[];
-                        systemDiffers: boolean;
-                        runtimeDiffers: boolean;
-                        incomparable: boolean;
-                        systemSize: { add: number; del: number };
-                        runtimeSize: { add: number; del: number };
-                    } | null;
-                }>;
-            };
+            return (await diyService.diy.context.changelog({ taskUri: uri, limit: undefined })) as CtxLog;
         },
     );
 
     /**
      * 变更统计（**按项目累计**，跨任务）：回答"这个节点用了几天变了几次 / 变化率"。
      * 为什么不按任务：单任务样本太小；长期累计才有"该不该待在 system"的判据价值
-     * （逐轮明细已由上面的「变更（真发轮次）」给出；见 shared/context/stats.ts 头注）。
+     * （逐轮明细已由上面的「变更历史（真发轮次）」给出；见 shared/context/stats.ts 头注）。
      */
     const [stats, { refetch: refetchStats }] = createResource(
         () => projectFromUri(props.uri),
@@ -295,11 +276,11 @@ export function ContextLabPage(props: { uri: string }) {
         })) as ContextDiff | null;
     });
 
-    /** 顶栏刷新：重拉五处（当前上下文 / 快照列表 / 变更详情 / 划分规则真源 / 变更统计）——
+    /** 顶栏刷新：重拉六处（当前上下文 / 变更历史 / 变更详情 / 划分规则真源 / 变更统计）——
      *  没有实时推送，只有显式刷新（外部改了 context.yaml 也靠它捡回来） */
     const refresh = (): void => {
         void refetch();
-        void refetchSteps();
+        void refetchHistory();
         void refetchDiff();
         void refetchConfig();
         void refetchStats();
@@ -367,7 +348,7 @@ export function ContextLabPage(props: { uri: string }) {
      * （review RV-10：一份实现 + 可单测）。这里只负责把**页面当前划分**（`unitMap()`）喂进去。
      * ⚠️ 注意两处口径**有意不同**（review RV-09）：
      *   · 本页「变更统计」表的归属列与中间容器折叠、结构树的 ⇄ 开关 = **当前**划分（用户眼前这把刀，改划分即重算）；
-     *   · 「变更（真发轮次）」的 sys 徽章 = **该轮快照**的划分（`sysCauses(changed, st.systemPlaces)`，
+     *   · 「变更历史（真发轮次）」的 sys 徽章 = **该轮快照**的划分（`sysCauses(changed, st.systemPlaces)`，
      *     历史不该被当前划分改写 —— RV-02）。
      */
     const attrOf = (path: string): Attribution => attributionOf(unitMap(), path);
@@ -417,63 +398,93 @@ export function ContextLabPage(props: { uri: string }) {
         setFocusIdx((i) => (i + d + n) % n);
     };
 
+    /** 变更次数（基线的 add 不算"变更" —— 它只是起点） */
+    const changeCount = (): number =>
+        (history()?.turns ?? []).reduce((a, t) => a + (t.baseline ? 0 : t.changes.length), 0);
+
+    /** 变更种类的记号与配色（add / update / remove 三态） */
+    const kindGlyph = (k: "add" | "update" | "remove"): string => (k === "add" ? "+" : k === "remove" ? "−" : "~");
+    const kindCls = (k: "add" | "update" | "remove"): string =>
+        k === "add" ? "badge-success" : k === "remove" ? "badge-error" : "badge-warning";
+
+    /** 一行变更的值预览：`旧 → 新`（删除/新增没有对侧，用 ∅ 表示"不存在"） */
+    const changeText = (c: { before: string | null; after: string | null }): string => {
+        if (c.before === null && c.after === null) return "（无值预览）";
+        return `${c.before ?? "∅"} → ${c.after ?? "∅"}`;
+    };
+
     /**
-     * 变更列表 = **真发快照**（每轮一条，读文件）。
-     * 点一条 → 选中它（看"它相对上一步改了什么"）；再点一次取消 → 看"当前 vs 最后一步"。
-     * 首步没有"上一步"，选中它是给自己看全文（diff 为空，界面会说明）。
+     * 变更历史 = **每轮一条事件流**（读变更日志；老任务由 main 从投递快照折算）。
+     * 两级：轮（ref：时间 / 当轮划分 / 缓存率 / 金额）+ 事件（op + path + 值预览 old→new）。
+     * 点轮 → 选中它（中栏「变更详情」看"它相对上一步的行级 diff"），再点取消 = 当前 vs 最后一步；
+     * 点事件 → 选中该 path（中栏请求预览滚到并高亮）。
      */
-    const stepsPane = () => (
+    const historyPane = () => {
+        const h = history();
+        const total = h?.total ?? 0;
+        return (
         <div class="p-1">
             <div class="mb-1 flex items-center gap-1 px-1 opacity-70">
-                <span>{steps()?.total ?? 0} 轮真发</span>
+                <span>{total} 轮真发</span>
                 <span class="ml-auto" title="列表里每行的时间是该轮真发的落盘时刻">
                     {pickedStep() === null ? "看：当前 vs 最后一步" : `看：第 ${pickedStep()} 步 vs 上一步`}
                 </span>
             </div>
             <Show
-                when={(steps()?.total ?? 0) > 0}
+                when={total > 0}
                 fallback={
                     <div class="p-2 opacity-60">
-                        还没有真发记录。在对话页发一轮，这里就会出现一条（每轮真发落一条投递快照）。
+                        还没有真发记录。在对话页发一轮，这里就会出现一条（每轮真发落一行变更日志）。
                     </div>
                 }
             >
+                <Show when={h?.source === "derived"}>
+                    <div class="mb-1 px-1 text-caption opacity-50">
+                        这份历史由投递快照的值 hash 折算（该任务尚无变更日志 —— 从下一轮起才落盘）：
+                        只有变化路径，没有值预览
+                    </div>
+                </Show>
                 <ul class="menu menu-xs">
-                    <For each={[...(steps()?.steps ?? [])].reverse()}>
-                        {(st) => {
-                            // system 全量重建的原因：把这一步变化的变量收拢到**该轮快照的** system 单元
-                            // （叶子 `chain.0.path` 归到 `chain`）—— 徽章旁边一眼看到"是谁在打断缓存"。
-                            // ⚠️ 用 `st.systemPlaces`（当轮快照），不用页面当前划分：改划分不该改写历史（RV-02）。
-                            const incomparable = (): boolean => st.sincePrev?.incomparable === true;
+                    <For each={[...(h?.turns ?? [])].reverse()}>
+                        {(t) => {
+                            // system 全量重建的原因：把该轮变化的变量收拢到**当轮快照的** system 单元
+                            // （叶子 `chain.0.path` 归到 `chain`）—— 一眼看到"是谁在打断缓存"。
+                            // ⚠️ 用 `t.systemPlaces`（当轮快照），不用页面当前划分：改划分不该改写历史（RV-02）。
+                            const incomparable = (): boolean => t.incomparable === true;
+                            const changedPaths = (): string[] => t.changes.map((c) => c.path);
                             const causes = (): string[] =>
-                                incomparable() ? [] : sysCauses(st.sincePrev?.changed, st.systemPlaces);
+                                incomparable() ? [] : sysCauses(changedPaths(), t.systemPlaces);
                             const causeText = (): string => {
                                 const c = causes();
                                 if (c.length === 0) return "";
                                 return ` ${c.slice(0, 2).join(",")}${c.length > 2 ? ` +${c.length - 2}` : ""}`;
                             };
+                            const headText = (): string => {
+                                if (t.baseline) return "baseline（起点）";
+                                if (t.changes.length === 0) return "无变化";
+                                const ps = changedPaths();
+                                return `${ps.slice(0, 2).join(", ")}${ps.length > 2 ? ` +${ps.length - 2}` : ""}`;
+                            };
                             return (
                             <li>
+                                {/* 轮：点它 = 中栏「变更详情」看这轮 vs 上轮的行级 diff */}
                                 <button
-                                    class={`flex items-center gap-2 ${rowCls(pickedStep() === st.index)}`}
+                                    class={`flex items-center gap-2 ${rowCls(pickedStep() === t.index)}`}
                                     title="点一下：看这一步相对上一步改了什么；再点取消：看当前 vs 最后一步"
-                                    onClick={() => setPickedStep(pickedStep() === st.index ? null : st.index)}
+                                    onClick={() => setPickedStep(pickedStep() === t.index ? null : t.index)}
                                 >
-                                    <span class="badge badge-xs">{st.index}</span>
+                                    <span class="badge badge-xs">{t.index}</span>
                                     <span
                                         class="shrink-0 font-mono text-caption opacity-60"
-                                        title={`${st.ts}（第 ${st.index} 轮真发）`}
+                                        title={`${t.ts}（第 ${t.index} 轮真发）`}
                                     >
-                                        {fmtShortTime(st.ts)}
+                                        {fmtShortTime(t.ts)}
                                     </span>
-                                    <span class="truncate font-mono">
-                                        {(st.sincePrev?.changed ?? []).slice(0, 2).join(", ") || "baseline"}
-                                        {(st.sincePrev?.changed.length ?? 0) > 2
-                                            ? ` +${st.sincePrev!.changed.length - 2}`
-                                            : ""}
+                                    <span classList={{ "truncate font-mono": true, "opacity-50": t.changes.length === 0 }}>
+                                        {headText()}
                                     </span>
-                                    <span class="ml-auto flex gap-1">
-                                        <Show when={st.sincePrev?.systemDiffers}>
+                                    <span class="ml-auto flex shrink-0 items-center gap-1">
+                                        <Show when={t.systemDiffers === true}>
                                             <span
                                                 class="badge badge-primary badge-xs font-mono"
                                                 title={
@@ -488,11 +499,45 @@ export function ContextLabPage(props: { uri: string }) {
                                                 {`sys${causeText()}`}
                                             </span>
                                         </Show>
-                                        <Show when={st.sincePrev?.runtimeDiffers}>
+                                        <Show when={t.runtimeDiffers === true}>
                                             <span class="badge badge-warning badge-xs">run</span>
+                                        </Show>
+                                        <Show when={t.cacheHitRate !== null}>
+                                            <span class="text-caption opacity-60" title="缓存读 / 总输入">
+                                                {`缓存 ${Math.round(t.cacheHitRate! * 100)}%`}
+                                            </span>
+                                        </Show>
+                                        <Show when={t.cost !== null}>
+                                            <span class="text-caption opacity-60" title="该轮金额（账本快照之和）">
+                                                {`$${t.cost!.toFixed(4)}`}
+                                            </span>
                                         </Show>
                                     </span>
                                 </button>
+                                {/* 事件：点它 = 中栏请求预览滚到并高亮该变量 */}
+                                <Show when={!t.baseline && t.changes.length > 0}>
+                                    <ul class="ml-4 border-l border-base-300">
+                                        <For each={t.changes}>
+                                            {(c) => (
+                                                <li>
+                                                    <button
+                                                        class={`flex items-center gap-1 ${rowCls(selected() === c.path)}`}
+                                                        title={`${c.path}：${changeText(c)}（点一下：在请求预览里定位这个变量）`}
+                                                        onClick={() => setSelected(c.path)}
+                                                    >
+                                                        <span class={`badge badge-xs font-mono ${kindCls(c.kind)}`}>
+                                                            {kindGlyph(c.kind)}
+                                                        </span>
+                                                        <span class="shrink-0 font-mono">{c.path}</span>
+                                                        <span class="truncate text-caption opacity-60">
+                                                            {changeText(c)}
+                                                        </span>
+                                                    </button>
+                                                </li>
+                                            )}
+                                        </For>
+                                    </ul>
+                                </Show>
                             </li>
                             );
                         }}
@@ -500,7 +545,8 @@ export function ContextLabPage(props: { uri: string }) {
                 </ul>
             </Show>
         </div>
-    );
+        );
+    };
 
     /** 变更详情（main 侧算好的行级 diff）：选中步 → 步 vs 步；未选中 → 当前 vs 最后一步 */
     const changePane = () => {
@@ -676,7 +722,7 @@ export function ContextLabPage(props: { uri: string }) {
                 {/* RV-09：归属列按**页面当前划分**（统计是"今天这把刀切哪"的操作视角），
                     与上面 sys 徽章"按当轮快照"的口径**有意不同** → 必须写出来，否则用户当成一套。 */}
                 <div class="mb-1 px-1 text-caption opacity-50">
-                    归属列与折叠均按当前划分（改划分即重算；历史轮次的原因看「变更（真发轮次）」的 sys 徽章，按当轮快照）
+                    归属列与折叠均按当前划分（改划分即重算；历史轮次的原因看「变更历史（真发轮次）」的 sys 徽章，按当轮快照）
                 </div>
                 <Show when={collapsed > 0}>
                     <div class="mb-1 px-1 text-caption opacity-50">
@@ -732,9 +778,13 @@ export function ContextLabPage(props: { uri: string }) {
         /** 左：结构树（契约 + 划分操作） */
         "ctxlab.structure": () => (
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-body">
-                {/* 变更列表：真发快照（每轮一条；点一条看它改了什么） */}
-                <Fold k="steps" label="变更（真发轮次）" extra={`本任务 · ${steps()?.total ?? 0} 轮`}>
-                    {stepsPane()}
+                {/* 变更历史：每轮一条事件流（变更日志；点轮看 diff，点事件定位变量） */}
+                <Fold
+                    k="history"
+                    label="变更历史（真发轮次）"
+                    extra={`本任务 · ${history()?.total ?? 0} 轮真发 · ${changeCount()} 次变更`}
+                >
+                    {historyPane()}
                 </Fold>
                 {/* 变更统计：按项目累计的长期视角（"用了几天变了几次"），是判断该不该待在 system 的判据 */}
                 <Fold
@@ -861,7 +911,7 @@ export function ContextLabPage(props: { uri: string }) {
                 </span>
                 <button
                     class="btn btn-xs btn-ghost"
-                    title="重新计算：当前上下文 + 真发快照列表 + 变更详情（没有实时推送，改动要按一下）"
+                    title="重新计算：当前上下文 + 变更历史 + 变更详情 + 变更统计（没有实时推送，改动要按一下）"
                     onClick={refresh}
                 >
                     ⟳ 刷新

@@ -22,4 +22,10 @@ describe("resolveLimits", () => {
     it("env 空串视为未设置", () => {
         expect(resolveLimits(null, { DIY_LOCAL_MAX_STEPS: "" }).maxSteps).toBe(DEFAULT_LIMITS.maxSteps);
     });
+    it("maxSteerQueue（##306）：默认 1000，文件与 env 都能覆盖，非法值逐级回退", () => {
+        expect(DEFAULT_LIMITS.maxSteerQueue).toBe(1000);
+        expect(resolveLimits({ maxSteerQueue: 5 }, {}).maxSteerQueue).toBe(5);
+        expect(resolveLimits(null, { DIY_LOCAL_MAX_STEER_QUEUE: "7" }).maxSteerQueue).toBe(7);
+        expect(resolveLimits({ maxSteerQueue: 5 }, { DIY_LOCAL_MAX_STEER_QUEUE: "abc" }).maxSteerQueue).toBe(5);
+    });
 });
