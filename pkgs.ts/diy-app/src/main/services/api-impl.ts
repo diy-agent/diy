@@ -28,6 +28,7 @@ import { apiDef } from "./api-def";
 import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
 import type { ToolResultMode } from "../../shared/context/compaction";
+import type { HistoryTurnView } from "../../shared/context/schema";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
 import { resolve as resolvePath } from "node:path";
 
@@ -372,6 +373,36 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().history(input.taskUri);
   });
+  // 大会话分页（任务 293）：只 fold 一段 —— 首载按预算 seek，刷新/上滚按游标取
+  binding.on(app.agent.local.historyWindow, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.historyWindow", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().historyWindow(input.taskUri, {
+      budgetBytes: input.budgetBytes,
+      cursor: input.cursor,
+    });
+  });
+  binding.on(app.agent.local.historyOlder, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.historyOlder", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().historyOlder(input.taskUri, {
+      cursor: input.cursor,
+      budgetBytes: input.budgetBytes,
+    });
+  });
+  // 会话 op 增量（##307 读侧）：水位校准起点 + 订阅写侧推送 —— UI 不再轮询、不再等轮末重放。
+  // opsFeed 是 main 侧唯一写盘点的广播总线（见 services/ops-feed.ts）；CLI / 他窗口 /
+  // 自愈补写的 op 同样经过它 → 任何来源的写入对所有订阅窗口即时可见。
+  binding.on(app.agent.local.opsWatermark, async ({ input }) => {
+    const { opsFeed } = await import("./ops-feed");
+    return opsFeed.watermark(input.taskUri);
+  });
+  binding.on(app.agent.local.opsWatch, async function* ({ input }) {
+    const { opsFeed } = await import("./ops-feed");
+    for await (const frame of opsFeed.subscribe(input.taskUri, input.since, input.epoch)) {
+      yield frame;
+    }
+  });
   binding.on(app.agent.local.clear, async ({ input }) => {
     noteRendererTouch("diy.agent.local.clear", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
@@ -618,6 +649,56 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const total = records.length;
     if (input.limit && input.limit > 0) records = records.slice(-input.limit);
     return { ...summarizeStats(records), records: total };
+  });
+
+  binding.on(app.context.changelog, async ({ input }) => {
+    const { readCtxLog } = await import("../core/context-changelog");
+    const { foldCtxLog, opsFromHashes } = await import("../../shared/context/changelog");
+    const { readDeliverySteps, readStepUsages } = await import("./local-agent");
+    const { groupByTurn } = await import("../../shared/usage");
+    const steps = readDeliverySteps(input.taskUri);
+    let records = readCtxLog(input.taskUri);
+    let source: "log" | "derived" = "log";
+    // 折算（降级视图）：这版之前的任务真发过、却没有变更日志 → 用投递快照的值 hash 差还原事件。
+    // 拿不到值预览（快照不存值）—— 只到 path 粒度；方向由 hash 有无判定，仍然比只列 changed 强。
+    if (records.length === 0 && steps.length > 0) {
+      source = "derived";
+      records = steps.map((s, i) => ({
+        ts: s.ts,
+        turnId: s.turnId,
+        model: s.model,
+        wireVersion: s.wireVersion,
+        ops: opsFromHashes(i === 0 ? null : steps[i - 1]!.valueHashes, s.valueHashes),
+      }));
+    }
+    const turns = foldCtxLog(records);
+    // 该轮 ref：投递快照（划分 + 两份容器是否变）与用量账本（缓存率 + 金额）都按 turnId join。
+    // 都**可能不可得**（快照被清、老账本没字段）→ 给 null，UI 不画徽章，不谎报"没变"。
+    const stepIdx = new Map(steps.map((s, i) => [s.turnId, i]));
+    const usage = new Map(groupByTurn(readStepUsages(input.taskUri)).map((g) => [g.turnId, g]));
+    const view: HistoryTurnView[] = turns.map((t) => {
+      const i = stepIdx.get(t.turnId);
+      const cur = i === undefined ? undefined : steps[i];
+      const prev = i !== undefined && i > 0 ? steps[i - 1] : undefined;
+      const g = usage.get(t.turnId);
+      const buckets = g?.buckets;
+      return {
+        ...t,
+        systemPlaces: cur?.systemPlaces ?? [],
+        systemDiffers: cur && prev ? cur.systemText !== prev.systemText : null,
+        runtimeDiffers: cur && prev ? cur.runtimeText !== prev.runtimeText : null,
+        incomparable: cur && prev ? cur.wireVersion !== prev.wireVersion : null,
+        cacheHitRate:
+          buckets && buckets.inputTotal > 0 ? buckets.cacheRead / buckets.inputTotal : null,
+        cost: g?.cost ? g.cost.total : null,
+      };
+    });
+    const total = view.length;
+    return {
+      total,
+      source,
+      turns: input.limit && input.limit > 0 ? view.slice(-input.limit) : view,
+    };
   });
 
   binding.on(app.context.diff, async ({ input }) => {

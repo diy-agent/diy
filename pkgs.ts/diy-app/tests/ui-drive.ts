@@ -266,6 +266,16 @@ export interface UiDriver {
   setViewport(width: number, height: number): Promise<void>;
   /** 撤销 setViewport 的覆写（回到真实窗口尺寸） */
   clearViewport(): Promise<void>;
+  /**
+   * 把被测窗口推到前台（CDP `Page.bringToFront`）。
+   *
+   * 为什么用例要管这个：macOS 的**窗口遮挡跟踪**会把被完全挡住的窗口的
+   * `document.visibilityState` 打成 `hidden`，而 `hidden` 时 Chromium 节流
+   * `requestAnimationFrame`（实测完全不调度）。凡是断言「上滚补段后的位置补偿」
+   * 的用例 —— 补偿那一步就在 rAF 回调里 —— 不先让页面可见就会**假红**：
+   * 代码没错，是它的执行时机被系统掐了。CI 上窗口很可能正被别的窗口盖着。
+   */
+  bringToFront(): Promise<void>;
   /** 在 renderer 里求值 */
   eval<T>(expr: string): Promise<T>;
   close(): void;
@@ -569,6 +579,12 @@ export async function makeUiDriver(
     async clearViewport() {
       await cdp.send("Emulation.clearDeviceMetricsOverride");
       await new Promise((r) => setTimeout(r, 200));
+    },
+
+    async bringToFront() {
+      await cdp.send("Page.bringToFront");
+      // 给遮挡状态一次提交的余量：visibilityState 的变化与下一帧 rAF 都不在同一次微任务里
+      await new Promise((r) => setTimeout(r, 150));
     },
 
     eval: (expr) => cdp.eval(expr),

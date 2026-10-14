@@ -19,7 +19,7 @@
 import { RpcSchema } from "@diy/rpc";
 import { z } from "zod";
 import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-schema";
-import { ContextDiffSchema, StatsSchema, StepsSchema } from "../../shared/context/schema";
+import { ContextDiffSchema, CtxLogSchema, StatsSchema, StepsSchema } from "../../shared/context/schema";
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
 // agent 人物契约（纯 zod，renderer 同源）——模型/参数/行为指令的配置实体
 import { PersonaSchema } from "../../shared/persona";
@@ -540,11 +540,87 @@ export const apiDef = RpcSchema.router({
                 }),
               }),
               history: RpcSchema.unary({
-                desc: `读取本地 agent 会话的块协议 Op 日志（UI 重放用）`,
+                desc: `读取本地 agent 会话的块协议 Op 日志（UI 重放用；返回**折叠后**的等价流，大会话快路径）`,
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
                 },
                 output: z.array(z.any()),
+              }),
+              // ─── 大会话分页（任务 293）─────────────────────────────
+              // 与上面的 `history` **并存而不替换**：`history` = 全量、始终全量的语义，
+              // CLI（`agent local history`）与意图测试都钉着它；分页是**渲染端专用**的通路
+              // （窗口边界只有 UI 用得上，命令行拿一整份更合手）。
+              /** 最近一段（首载）／同一段的重取（轮末刷新，带 cursor） */
+              historyWindow: RpcSchema.unary({
+                desc: `读取本地 agent 会话的**最近一段** Op 流（按字节预算向上 seek 轮首；带游标 = 从该段起点重取）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  /** 窗口字节预算（首载用；带 cursor 时忽略）。缺省 0 = 全量 */
+                  budgetBytes: z
+                    .number()
+                    .optional()
+                    .cliOption({ desc: "窗口字节预算（缺省 0 = 全量）；带 --cursor 时忽略" }),
+                  /** 段起点游标（main 签发的不透明 token）；只回传，不解释 */
+                  cursor: z
+                    .string()
+                    .optional()
+                    .cliOption({ desc: "上一次返回的游标（= 从该段起点重取）；失效则退全量" }),
+                },
+                output: z.object({
+                  ops: z.array(z.any()),
+                  cursor: z.string(),
+                  hasMore: z.boolean(),
+                  /** 游标失效 ⇒ 本次是退化全量（渲染端必须重置现有段，不能当前缀拼） */
+                  stale: z.boolean(),
+                }),
+              }),
+              /** 更早的一段（滚动上取）：`cursor` 所在段之前的 `budgetBytes` 字节 */
+              historyOlder: RpcSchema.unary({
+                desc: `读取本地 agent 会话中**更早的一段** Op 流（向上滚动时补历史）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  cursor: z.string().cliOption({ desc: "上一段的游标（取它之前的窗口）" }),
+                  budgetBytes: z
+                    .number()
+                    .optional()
+                    .cliOption({ desc: "窗口字节预算（缺省 0 = 只取前一轮）" }),
+                },
+                output: z.object({
+                  ops: z.array(z.any()),
+                  cursor: z.string(),
+                  hasMore: z.boolean(),
+                  /** 游标失效 ⇒ 本次是退化全量（渲染端必须重置现有段，不能当前缀拼） */
+                  stale: z.boolean(),
+                }),
+              }),
+              /**
+               * 会话 op 流水位（epoch + 行号）。订阅增量前用它校准起点：
+               * 先取水位、再拉 history（history 覆盖范围 ≥ 水位），此后从水位起订阅。
+               * seq = ops.jsonl 的物理行号（append-only，故行数即水位）；epoch 随 clear 换发。
+               */
+              opsWatermark: RpcSchema.unary({
+                desc: `会话 op 流水位（{epoch, seq}）—— 订阅增量前校准起点（seq=行号，epoch 随清空换发）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                },
+                output: z.object({ epoch: z.number(), seq: z.number() }),
+              }),
+              /**
+               * 会话 op 增量订阅（写侧即推）：所有来源（本人 / CLI / 另一窗口 / agent 自愈补写）
+               * 的 op 落到 main 的同一落盘点后就广播 —— UI 不必轮询、不必在轮结束才重放。
+               * 帧形状（OpsFrame 判别联合，见 services/ops-feed.ts）：
+               *   {kind:"hello", epoch, seq} 建流首帧水位
+               *   {kind:"batch", epoch, fromSeq, ops} 一段连续 op
+               *   {kind:"reset", epoch} 会话被清空 → 订阅方重建块树
+               */
+              opsWatch: RpcSchema.serverStream({
+                desc: `订阅会话 op 增量（写侧即推；含 CLI / 他窗口 / 自愈补写）—— 取代 UI 轮询`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  since: z.number().cliArg({ desc: "起始水位（行号）；此后的 op 会被补发" }),
+                  epoch: z.number().optional().cliArg({ desc: "订阅方已知的会话代次；不符则首帧后补发 reset" }),
+                },
+                output: z.any(),
               }),
               clear: RpcSchema.unary({
                 desc: `清空本地 agent 会话（中断生成、删除 Op/LLM 日志，并清空待投递的插话队列）`,
@@ -923,6 +999,14 @@ export const apiDef = RpcSchema.router({
               limit: z.number().optional().cliOption({ desc: "只看最近 N 轮（缺省全部）" }),
             },
             output: StatsSchema,
+          }),
+          changelog: RpcSchema.unary({
+            desc: `变更历史：每轮真发一条变更事件（op + path + 一行值预览，old→new 由回放得出），附该轮 ref（当轮划分 / 缓存率 / 金额）`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+              limit: z.number().optional().cliOption({ desc: "只看最近 N 轮（缺省全部）" }),
+            },
+            output: CtxLogSchema,
           }),
           diff: RpcSchema.unary({
             desc: `某步 vs 上一步的 diff；不给 --step 则是「当前变量树 vs 最后一步」（main 侧算完）`,
