@@ -179,6 +179,31 @@ describe("opsFeed — 水位与增量", () => {
     // 退订后 publish 不应抛错，且水位照常推进（广播只是没人收）
     expect(opsFeed.watermark(uri).seq).toBe(1);
   });
+
+  it("多订阅者广播：两个订阅者（N 窗口 = N 订阅者）收到同一批，非单播", async () => {
+    const uri = newUri();
+    const a: Op = { op: "start", id: "t1", kind: "turn" };
+    writeOps(uri, [a]); // 水位 1
+
+    // 两个独立订阅者，都从水位 1 起（= 两个窗口同时看同一 task）
+    const f1: OpsFrame[] = [];
+    const f2: OpsFrame[] = [];
+    void (async () => { for await (const f of opsFeed.subscribe(uri, 1)) f1.push(f); })();
+    void (async () => { for await (const f of opsFeed.subscribe(uri, 1)) f2.push(f); })();
+    await new Promise((r) => setTimeout(r, 30)); // 两订阅先建流
+
+    const b: Op = { op: "stop", id: "t1" };
+    writeOps(uri, [b]);
+    opsFeed.publish(uri, [b]);
+    await new Promise((r) => setTimeout(r, 30));
+
+    const b1 = f1.find((f): f is Extract<OpsFrame, { kind: "batch" }> => f.kind === "batch");
+    const b2 = f2.find((f): f is Extract<OpsFrame, { kind: "batch" }> => f.kind === "batch");
+    expect(b1?.fromSeq).toBe(2);
+    expect(b2?.fromSeq).toBe(2);
+    expect(b1?.ops).toEqual([b]);
+    expect(b2?.ops).toEqual(b1?.ops); // 两个窗口看到的内容逐字一致
+  });
 });
 
 // ─── ② 与 LocalAgentManager 写侧联动 ─────────────────────

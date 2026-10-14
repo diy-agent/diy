@@ -23,15 +23,9 @@ import { StringDecoder } from "node:string_decoder";
 import { opsFile } from "../core/local-paths";
 import type { Op } from "./local-blocks";
 import { AsyncQueue, withCleanup } from "./async-queue";
+import { type OpsFrame } from "../../shared/ops-frame";
 
-/** 订阅帧（`agent.local.opsWatch` 的 yield 形状） */
-export type OpsFrame =
-  /** 建流首帧：此刻水位。订阅方据此校准 appliedSeq（此后批次从 seq+1 起） */
-  | { kind: "hello"; epoch: number; seq: number }
-  /** 一段连续 op（`fromSeq` = 首行的行号） */
-  | { kind: "batch"; epoch: number; fromSeq: number; ops: Op[] }
-  /** 会话被清空（epoch 已换发）→ 订阅方必须重建块树 */
-  | { kind: "reset"; epoch: number };
+export type { OpsFrame };
 
 interface TaskFeed {
   epoch: number;

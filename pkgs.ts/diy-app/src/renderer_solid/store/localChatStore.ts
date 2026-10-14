@@ -21,6 +21,7 @@ import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "./notificationStore";
 import { BlockStore, toForest, type BlockNode, type Op } from "../../main/services/local-blocks";
+import type { OpsFrame } from "../../shared/ops-frame";
 // 插话队列项的类型在 core/drafts（与草稿同文件存储）；这里只要类型，故 type-only import
 //（不会把 node:fs 依赖带进 renderer）
 import type { SteerItem, SteerMode } from "../../main/core/drafts";
@@ -193,16 +194,7 @@ function flushRefresh(st: TaskState) {
 //
 // 为什么必须问 main：renderer 拿不到"别人正在跑"这件事 —— 别人的 op 不经过我们这条流，
 // 本地 running 永远是 false，于是正在跑的轮次就被当成中断的历史（任务 194 现象一）。
-// 代价是轮询：main 侧目前没有"轮次开始/结束"的元事件通路（那是 180 的设计题），
-// 在没有它之前，UI 至少不该把别人正在跑的轮次说成"流中断"。间隔克制（2s），
-// 且只在会话页挂载期间运行（watch 的 stop 由组件 cleanup 调用）。
-
-/**
- * 运行态真值的**事件驱动**节流窗口（见 touchActive）。
- * ##307 之后不再定时轮询：轮次边界 op 到达时对一次 main 真值即可，
- * 窗口只是防止 token 级高频 op 把「对真值」打成风暴。
- */
-const ACTIVE_TOUCH_MS = 400;
+// ##307 起不再轮询：轮次边界 op 到达时对一次 main 真值即可（见 applyOpsFrame）。
 
 /** 判据用的"现在"：让停止宽限期（shared/session-view.ts）能自己过期 */
 const [nowMs, setNowMs] = createSignal(Date.now());
@@ -227,6 +219,16 @@ function anyTaskStopping(): boolean {
 /** 对齐停止时钟（cancel / refreshActive 清掉停止态 / 页面卸载时调用）。幂等。 */
 function syncStopTicker(): void {
     stopTicker.sync(anyTaskStopping());
+}
+
+/**
+ * `stopRequestedAt` 的**唯一写点**：改值后立刻对齐停止时钟（幂等）。
+ * 收口在此，杜绝「某处清了停止态却忘了同步 ticker」的漂移（review3 R6：
+ * send 清停态未同步、watch/open 起始未同步，都会让 ticker 停在错的状态）。
+ */
+function setStopRequested(st: TaskState, v: number | null): void {
+    st.setStopRequestedAt(v);
+    syncStopTicker();
 }
 
 /**
@@ -291,8 +293,8 @@ async function refreshActive(taskUri: string): Promise<void> {
         st.setActive(active);
         // main 说这轮已收尾 → 停止请求使命结束（否则宽限期后会把"停止中"又说成"正在生成"）
         if (!active) {
-            st.setStopRequestedAt(null);
-            syncStopTicker(); // main 已收尾 → 停止态结束，时钟该停就停
+            // main 已收尾 → 停止态结束（helper 内同步对齐时钟）
+            setStopRequested(st, null);
         }
         // 下降沿：main 刚收尾一轮 —— 它的 op 我这条流收不到，主动重放让树追上终态；
         // 用量账本同理（别人跑的轮次也要在看板/明细里看见，不能只有自己发的才算数）
@@ -339,16 +341,21 @@ async function refreshUsage(taskUri: string): Promise<void> {
  * 会话页挂载期间对一次 main 真值；返回清理函数（组件 cleanup 调用）。
  *
  * ##307：原来的 2s 轮询已删。「别人正在跑」这件事现在由 **op 增量事件**发现 ——
- * 轮次边界 op 一到就 touchActive 对一次真值（见 applyOpsFrame），不再有"最多迟 2s"的窗口，
- * 也不再有空转的定时器。清理函数保留（组件契约不变），但已无定时器可清。
+ * 轮次边界 op 一到就 `refreshActive` 对一次真值（见 applyOpsFrame），不再有"最多迟 2s"的窗口，
+ * 也不再有空转的定时器。清理函数保留（组件契约不变）：退订 + 对齐停止时钟。
  */
 function watch(taskUri: string): () => void {
+    // 起始对齐停止时钟（review3 R6）：切走再切回时，若该 task 仍在停止收尾，必须重新开表，
+    // 否则 now 冻住 → stoppingStuck 恒假 → 「强制中断」出口再次成死代码。
+    syncStopTicker();
     void refreshActive(taskUri);
     // 组件卸载（切走会话页 / 页面关闭）时退订，别让订阅悬着 ——
     // 悬着的订阅在页销毁时会以「Client disposed」形式炸日志（renderer 已死，流才断）
     return () => {
         unsubscribeOps(taskUri);
-        // 页面卸载（切走 / 关闭）：本窗口不再显示停止态 → 停表，别留空转的计时器
+        // 页面卸载（切走 / 关闭）：本窗口不再显示停止态 → 停表（避免离开后 ticker 空转）。
+        // 停止态本身留在 state 里；下次进入由 watch()/open() 起始的 syncStopTicker() 重新开表
+        // （review3 R6：只停不开是缺陷，起始补 sync 即修）。
         stopTicker.stop();
     };
 }
@@ -458,11 +465,6 @@ async function refreshSteers(taskUri: string): Promise<void> {
 // ②③ 之间与补发段的重复由 seq 去重吸收；即便漏掉去重，`BlockStore.apply` 本身幂等
 //（重复 start / patch / stop 都是 no-op），所以这条路径「重不重」都不出错，只是别重复算。
 
-type OpsFrame =
-    | { kind: "hello"; epoch: number; seq: number }
-    | { kind: "batch"; epoch: number; fromSeq: number; ops: Op[] }
-    | { kind: "reset"; epoch: number };
-
 /** 取会话 op 流水位（订阅起点的校准值） */
 async function fetchWatermark(taskUri: string): Promise<{ epoch: number; seq: number }> {
     try {
@@ -557,17 +559,6 @@ function unsubscribeOps(taskUri: string): void {
     st.opsAbort = null;
 }
 
-/** 运行态真值的最近一次询问时刻（节流：见 ACTIVE_TOUCH_MS） */
-const activeTouchedAt = new Map<string, number>();
-
-/** 轮次边界到达时对一次 main 真值（取代原来的 2s 轮询；节流防 token 级风暴） */
-function touchActive(taskUri: string): void {
-    const last = activeTouchedAt.get(taskUri) ?? 0;
-    if (Date.now() - last < ACTIVE_TOUCH_MS) return;
-    activeTouchedAt.set(taskUri, Date.now());
-    void refreshActive(taskUri);
-}
-
 /** 落地一帧增量（判据全在此处，见上方时序注） */
 function applyOpsFrame(taskUri: string, frame: OpsFrame): void {
     const st = states.get(taskUri);
@@ -620,8 +611,10 @@ function applyOpsFrame(taskUri: string, frame: OpsFrame): void {
     }
     st.appliedSeq = frame.fromSeq + frame.ops.length - 1;
     scheduleRefresh(st);
-    // 轮次边界 → 立刻对一次真值（原 2s 轮询的职责，现在由事件驱动）
-    if (sawTurnBoundary) touchActive(taskUri);
+    // 轮次边界 → 立刻对一次真值（原 2s 轮询的职责，现在由事件驱动）。
+    // 边界是稀有事件（一轮仅 start/stop 各一次），**不经节流**：短轮（<400ms）的 stop 边界
+    // 若被节流吞掉，「别人在跑」会滞留到下一次活动（review3 R7）。
+    if (sawTurnBoundary) void refreshActive(taskUri);
 }
 
 async function open(taskUri: string) {
@@ -630,6 +623,7 @@ async function open(taskUri: string) {
     if (prev && prev !== taskUri) unsubscribeOps(prev);
     setCurrentUri(taskUri);
     const st = stateFor(taskUri);
+    syncStopTicker(); // 进入会话先对齐停止时钟（切回仍在收尾的任务需重新开表，review3 R6）
     void refreshActive(taskUri); // 进入会话立刻对一次真值
     // 队列与历史独立：loaded 与否都要拉（横条反映的是"当前待投递"，与历史加载进度无关）
     void refreshSteers(taskUri);
@@ -674,7 +668,7 @@ async function send(taskUri: string, text: string): Promise<boolean> {
     if (!msg || !taskUri || st.running()) return false;
     st.setError(null);
     st.setRunning(true);
-    st.setStopRequestedAt(null);
+    setStopRequested(st, null); // 新一轮开始 → 清停止态（helper 同步对齐 ticker，review3 R6）
     const ctrl = new AbortController();
     st.abort = ctrl;
     try {
@@ -811,9 +805,8 @@ async function cancelSteer(taskUri: string, id: string): Promise<void> {
  */
 async function cancel(taskUri: string) {
     const st = stateFor(taskUri);
-    st.setStopRequestedAt(Date.now());
     setNowMs(Date.now());
-    syncStopTicker(); // 进入停止收尾 → 开表推进 now（否则 main 卡住时 stoppingStuck 永不翻真）
+    setStopRequested(st, Date.now()); // 进入停止收尾 → 开表推进 now（helper 同步对齐，review3 R6）
     st.abort?.abort();
     try {
         await diyService.diy.agent.local.cancel({ taskUri });
