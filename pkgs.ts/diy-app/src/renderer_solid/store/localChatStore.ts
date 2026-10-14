@@ -246,7 +246,11 @@ function mergeWindow(st: TaskState, ops: Op[], cursor: string, hasMore: boolean,
     applyInto(seg, ops);
     seg.ids = ids;
     st.segments = [seg];
-    st.tailCursor = cursor;
+    // 游标策略收口在此（**唯一**决定点）：`stale` 时 main 给的是**全量**，游标落在 at:0 ——
+    // 它是个合法轮首，回传下去 main 会照收 ⇒ 此后每轮末都退全量（把"整量回包"贴回来）。
+    // 故 stale 一律丢弃（下一轮按预算重新 seek；前缀守卫不符时自会重置成新窗口，无副作用）。
+    // 注意 `seg.cursor` 仍 = 传入游标（末段自身可继续增量），只有**跨轮的 tailCursor** 被丢弃。
+    st.tailCursor = stale ? null : cursor;
     st.setHasMore(hasMore);
 }
 
@@ -376,12 +380,8 @@ async function doReload(taskUri: string): Promise<void> {
             console.warn(`[localChat] 轮末重放游标失效，已重置块树 ${taskUri}`);
             notificationStore.addToast("info", "会话日志已被改写，已重新加载最近一段");
         }
+        // stale ⇒ 这份是全量，尾游标由 mergeWindow 统一丢弃（见其重置分支）；下一轮按预算重新 seek。
         mergeWindow(st, r.ops as Op[], r.cursor, r.hasMore, r.stale);
-        // 游标失效 ⇒ 这一份是**全量**（游标落在 at:0）。**别把它粘在 tailCursor 上**：留着的话
-        // 下一轮末重放会带着它回去，main 认它（at===0 是合法轮首）⇒ 每轮都退全量，把 ##293
-        // 想消灭的"整量回包"每次收尾又贴回来。丢弃 ⇒ 下一轮按预算重新 seek（前缀守卫不符时
-        // mergeWindow 自会重置成新窗口，无副作用）。
-        if (r.stale) st.tailCursor = null;
         st.loaded = true;
         flushRefresh(st);
     } catch (e) {
@@ -1015,9 +1015,8 @@ async function loadOlder(taskUri: string, beforeApply?: () => void): Promise<boo
             console.warn(`[localChat] 上滚补段游标失效/重叠，已重置块树 ${taskUri}`);
             notificationStore.addToast("info", "会话日志已被改写，已重新加载最近一段");
             st.segments = [];
+            // stale 的全量游标由 mergeWindow 统一丢弃（见其重置分支）：别粘住 ⇒ 下次重新 seek。
             mergeWindow(st, ops, r.cursor, r.hasMore, r.stale);
-            // 同上：stale 的全量游标不许粘住（下一轮回传它 ⇒ 每次上滚/收尾都退全量）
-            if (r.stale) st.tailCursor = null;
             flushRefresh(st);
             return false; // 重建不是前插 ⇒ 不做位置补偿（视口本就该挪到新内容上）
         }
