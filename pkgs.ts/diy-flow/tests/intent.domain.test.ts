@@ -13,9 +13,12 @@
 //       `project` 仍能从日志重建折线（但重建不出运行期发现的终态标记）
 //   R4  内核**不编人类文本**：转移给结构化语义 `move = { kind, from, to }` + `reason`；正文由宿主给
 //   R5  关联靠**显式 ref**（`taskUri` / `turnId` / `stepId`）：内核只透传不解释
-//   R6  终态记账：跑完是**领域事实**（`FlowState.done`）—— 重复 `step` 不重跑 `action:`
+//   R6  终态记账：跑完是**领域事实**（`FlowState.done`）—— 重复 `step` 不重跑 `action:`；
+//       终态判据是**结构事实**（没有 `next` 出边），边上的 `when` **不参与**判定（有边而 `when` 不过 = `stuck`）
 //   R7  **`params` 值纳入状态**（##311 §二 L3 / ##333 交付 G）：L2 实例值随领域态流转、落盘、读回 ——
-//       「状态文件为一等真源」读回后跑得回原样；值语义仍归 ##316 `resolveParams`（本包不重写校验）
+//       「状态文件为一等真源」读回后跑得回原样；值语义仍归 ##316 `resolveParams`（本包不重写校验）。
+//       两条不变量：① 已进入却没记参数值 = 丢了配置 ⇒ 亮错（「缺省」与「丢了」分开）；② 凡从 runtime
+//       出来的 state 一律带本次运行的参数值（`done` 分支也不例外）。冻结深度差异见 `rule.param-bag-when-undeclared`
 //
 // 测试风格：与 `intent.flow.test.ts` / `intent.plugin.test.ts` 同形（`caught()` / 真实工作流素材），
 // 断言公开 API 的行为与错误码，不断言内部实现。
@@ -260,6 +263,20 @@ describe('R2 落盘 / 读回可信（serialize）', () => {
         expect(parseFlowState(withExtra, 'flowState', { allowUnknown: true })).toEqual(state);
     });
 
+    it('`at` **不要求单调**（立场）：折线次序由 `path` 承载 —— `at` 倒流照收，读盘的人别拿 `at` 排序', () => {
+        // 第二次驻留的 `at` 比第一次**早**（时钟回拨 / 宿主补录）：次序看数组下标，不看 `at`
+        const reversed = parseFlowState<IdOf<typeof devDef>>({
+            position: 'design',
+            path: [
+                { node: 'clarify', seq: 1, kind: 'next', at: AT3 },
+                { node: 'design', seq: 1, kind: 'next', at: AT },
+            ],
+        });
+        expect(reversed.path.map((v) => v.node)).toEqual(['clarify', 'design']);
+        expect(reversed.path.map((v) => v.at)).toEqual([AT3, AT]);
+        expect(flowStateFromJson(flowStateToJson(reversed))).toEqual(reversed); // 倒流的 `at` 原样落盘 / 读回
+    });
+
     it('写侧同样严格：拿一个「形状像但字段非法」的对象去序列化，当场报错（不静默抹掉）', () => {
         const { state } = walked();
         expect(caught(() => flowStateToJson({ ...state, path: [{ ...state.path[0], seq: 0 }] })).code).toBe('invalid-state');
@@ -456,6 +473,50 @@ describe('R6 终态记账：跑完是领域事实，重复 `step` 不重跑 `act
         expect(restored.done).toBe(true);
         expect(rt.step(restored, { at: AT }).status).toBe('done');
     });
+
+    it('终态判据是**结构事实**（没有 `next` 出边），边上的 `when` 不参与：只有 `bounce` 出边的节点 guard 全过 = `done`', () => {
+        const registry = createRegistry()
+            .register('guard', 'ok', () => ({ pass: true }))
+            .register('guard', 'gate', () => ({ pass: false }));
+        const bounceOnly = defineWorkflow({
+            id: 'bounce-only',
+            name: '只有打回边',
+            nodes: [
+                { id: 'a', name: 'A', actor: 'system', guard: ['pred:ok'], hint: '' },
+                { id: 'back', name: '退', actor: 'system', guard: [], hint: '' },
+            ],
+            edges: [{ from: 'a', to: 'back', kind: 'bounce' }],
+        });
+        const rt = createRuntime(bounceOnly, { registry });
+        const entered = rt.step(initialState<IdOf<typeof bounceOnly>>(), { at: AT });
+        if (entered.status !== 'moved') throw new Error('unreachable');
+        // guard 全过、`bounce` 边不是「下一步」⇒ 没有下一步可走 = 跑完（不是「打回」）
+        const done = rt.step(entered.transition.state, { at: AT2 });
+        expect(done.status).toBe('done');
+        if (done.status !== 'done') throw new Error('unreachable');
+        expect(done.state.done).toBe(true);
+    });
+
+    it('有 `next` 出边、只是边上 `when` 不成立 → 停在**边上**（`stuck`），**不是** `done`', () => {
+        const registry = createRegistry()
+            .register('guard', 'ok', () => ({ pass: true }))
+            .register('guard', 'gate', () => ({ pass: false }));
+        const gated = defineWorkflow({
+            id: 'gated',
+            name: '带门边',
+            nodes: [
+                { id: 'a', name: 'A', actor: 'system', guard: ['pred:ok'], hint: '' },
+                { id: 'b', name: 'B', actor: 'system', guard: [], hint: '' },
+            ],
+            edges: [{ from: 'a', to: 'b', kind: 'next', when: 'pred:gate' }],
+        });
+        const rt = createRuntime(gated, { registry });
+        const entered = rt.step(initialState<IdOf<typeof gated>>(), { at: AT });
+        if (entered.status !== 'moved') throw new Error('unreachable');
+        const stuck = rt.step(entered.transition.state, { at: AT2 });
+        expect(stuck.status).toBe('stuck'); // 结构上有下一步（边在），只是这一步走不了
+        expect(entered.transition.state.done).toBeUndefined();
+    });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -585,5 +646,60 @@ describe('R7 `params` 值纳入状态（状态文件为一等真源）', () => {
         const next = advance(ciDef, state, { to: 'ci', at: AT });
         expect(next.state.params).toEqual({ ci: { command: 'pnpm test' } });
         expect(next.state.done).toBeUndefined();
+    });
+
+    it('**已进入却没记参数值**的状态 → 当场亮错（不静默按本次这份跑）：`invalid-param @ state.params`', () => {
+        const { registry } = spy();
+        const rt = createRuntime(ciDef, { registry, params: { ci: { command: 'pnpm test' } } });
+        // 外来态：位置非空（已进入）却没记参数值 —— 它丢了自己的运行配置，不是「缺省」
+        const stray: FlowState<IdOf<typeof ciDef>> = { position: 'ci', path: [{ node: 'ci', seq: 1, kind: 'next', at: AT }] };
+        const e = caught(() => rt.step(stray, { at: AT2, id: 'e2' }));
+        expect(e.code).toBe('invalid-param');
+        expect(e.path).toBe('state.params');
+        expect(e.message).toContain('另起一次运行');
+        // `declare` 同一条闸门
+        expect(caught(() => rt.declare(stray, { author: 'agent', to: 'merge', content: '推', at: AT2, id: 'e3' })).code).toBe('invalid-param');
+    });
+
+    it('「缺省」与「丢了」分开：尚未进入（新一次运行）照旧跑；没声明参数的工作流没有配置可丢', () => {
+        const { registry } = spy();
+        const rt = createRuntime(ciDef, { registry, params: { ci: { command: 'pnpm test' } } });
+        expect(rt.step(initialState<IdOf<typeof ciDef>>(), { at: AT, id: 'e1' }).status).toBe('moved');
+
+        const { registry: plain } = fakes();
+        const solo = defineWorkflow({ nodes: [{ id: 'solo', name: '单', actor: 'system', guard: [], hint: '' }], edges: [] });
+        const bare = createRuntime(solo, { registry: plain });
+        const stray: FlowState<IdOf<typeof solo>> = { position: 'solo', path: [{ node: 'solo', seq: 1, kind: 'next', at: AT }] };
+        expect(bare.step(stray, { at: AT2 }).status).toBe('done'); // 没声明参数 ⇒ 无配置可丢
+    });
+
+    it('终态产出态**也带**参数值（凡从 runtime 出来的 state 都带本次运行的配置）', () => {
+        const { registry } = spy();
+        const rt = createRuntime(ciDef, { registry, params: { ci: { command: 'pnpm test' } } });
+        let state = initialState<IdOf<typeof ciDef>>();
+        let last = rt.step(state, { at: AT, id: 'e1' });
+        for (const [i, at] of [AT2, AT3].entries()) {
+            if (last.status !== 'moved') throw new Error(`期望 moved，实得 ${last.status}`);
+            state = last.transition.state;
+            last = rt.step(state, { at, id: `e${i + 2}` });
+        }
+        const done = last;
+        expect(done.status).toBe('done');
+        if (done.status !== 'done') throw new Error('unreachable');
+        expect(done.state.params).toEqual({ ci: { command: 'pnpm test' } });
+        // 终态落盘读回：盘上那份依旧自足（`done` 与 `params` 都在）
+        expect(flowStateFromJson(flowStateToJson(done.state))).toEqual(done.state);
+    });
+
+    it('冻结深度：声明了参数 = 逐项受管（袋 / list 都冻结）；没声明 = 只冻顶层，内层照旧透传（##316 H-1 的已知差异）', () => {
+        const { registry } = fakes();
+        const declared = createRuntime(ciDef, { registry, params: { ci: { command: 'pnpm test' } } });
+        expect(Object.isFrozen(declared.params)).toBe(true);
+        expect(Object.isFrozen(declared.params.ci)).toBe(true);
+
+        const solo = defineWorkflow({ nodes: [{ id: 'solo', name: '单', actor: 'system', guard: [], hint: '' }], edges: [] });
+        const bagged = createRuntime(solo, { registry, params: { whatever: { deep: [1, 2] } } });
+        expect(Object.isFrozen(bagged.params)).toBe(true); // 顶层冻
+        expect(Object.isFrozen(bagged.params.whatever)).toBe(false); // 内层照旧是宿主那份（不越权管不认识的形状）
     });
 });

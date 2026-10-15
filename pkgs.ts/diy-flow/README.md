@@ -116,23 +116,32 @@ Visit     { node: Id; seq: number; kind: 'next' | 'bounce'; at: string; ref?: Re
 - **`params` 是领域事实**（##311 §二 L3 / ##333 交付 G）：L2 实例参数值（`{ 节点 id: { 局部名: 值 } }`，
   全量、缺省已合并、纯 JSON、冻结）**随状态一起流转**。`createRuntime` 把本次运行用的那份写进产出的状态
   ⇒ 状态文件自足：读回时把它交回 `createRuntime`（`params: state.params`）就与原来那次运行**同配置**
-  （`ctx.params` 与插件读到的完全一致）。状态里带着另一份参数值 → **当场 `invalid-param`**（不静默按谁跑）。
+  （`ctx.params` 与插件读到的完全一致）。两条不变量（都亮 `invalid-param @ state.params`）：
+  **① 状态带着另一份参数值** ⇒ 亮错（不静默按谁跑）；**② 状态已进入却没记参数值**（`position !== null`
+  且 `params === undefined`，而本次运行有参数值）⇒ 也亮错 —— 那不是「缺省」而是**这份状态丢了自己的配置**
+  （唯一放行的是尚未进入：`initialState()` 本就不带 `params`，那是全新一次运行的正路）。
+  凡从 runtime 出来的 `state` **一律带**本次运行的参数值（`done` 分支也不例外）。
   值的**语义**校验归 ##316（`resolveParams(paramsOf(def), 值)` 是唯一入口，本包不重写）；快照这层只保证
   它是可落盘的纯 JSON（`NaN` / 函数 / 环形结构 → `invalid-state`）。
-- **`done` 是领域事实**：guard 全过且当前位置**没有 `next` 出边** ⇒ 工作流跑完。记在态里，重复 `step` 才
-  能不重跑 `action:`（##315 review2 §D 的记账）。它**重建不出来**（日志里没有）—— 这正是「日志可清可丢、
-  领域态必须自己落盘」的具体样子。
+  冻结深度有一处**已知差异**：声明了参数 = 逐项受管（袋 / list 都冻结）；没声明 = 只冻顶层、内层照旧透传
+  （引擎不替宿主定「透传袋里只准放纯 JSON」）。
+- **`done` 是领域事实**：guard 全过且当前位置**没有 `next` 出边** ⇒ 工作流跑完。判据是**结构事实** ——
+  **边上的 `when` 不参与**：有 `next` 出边而 `when` 全不成立 = 停在**边上**（`stuck`）；只有 `bounce` 出边的
+  节点 guard 全过 = `done`。记在态里，重复 `step` 才能不重跑 `action:`（##315 review2 §D 的记账）。
+  它**重建不出来**（日志里没有）—— 这正是「日志可清可丢、领域态必须自己落盘」的具体样子。
 - `flowStateToJson(state, { compact? })`：先校验规范化再写（键序固定、字段封闭）⇒ 落盘文本稳定、diff 友好；
   `compact: true` 输出单行（jsonl 用）。
 - `parseFlowState(value, path?, { allowUnknown? })` / `flowStateFromJson(json, opts?)`：**读回可信** ——
   除形状外还兜住**语义自洽**：`position === null` 当且仅当折线为空、`position` 必须等于折线末端、
   每节点 `seq` 按序恰为 `1,2,3…`。非法一律抛 `FlowError`（`invalid-state` / `invalid-json`）。
+  **`at` 不要求单调**（立场，非疏漏）：折线次序由 `path` 数组承载，`at` 只是那次驻留的信息 —— 要次序看下标，
+  别信 `at`（时钟回拨 / 宿主补录都照收）。
 - `isFlowState(value)`：非抛出版试探（给 UI / 宿主读盘前用）。
 - `allowUnknown` 是**只读检查闸**（同 `@diy/talk`）：只让解析不报错、**不保留**未知字段 ⇒ 别拿它读进来的对象
   再 `flowStateToJson` 写回（读-改-写会抹掉新字段）。
 - `apply(def, state, event)` / `project(events, def)` 是**审计侧**的入口：把日志重放成折线（重建路径）。
-  事件的 `id` / `author` / `content` **一律不进领域态**；`done` 与 `params` 也**重建不出来**（日志里没有）
-  —— 这正是「领域态必须自己落盘」的具体样子。
+  事件的 `id` / `author` / `content` **一律不进领域态**；`done`、`params` 与 `Visit.ref` 都**重建不出来**
+  （日志里没有 / `apply` 只解 `anchor.data.nodeId` 与 `at`）—— 这正是「领域态必须自己落盘」的具体样子。
 
 ## 导出
 

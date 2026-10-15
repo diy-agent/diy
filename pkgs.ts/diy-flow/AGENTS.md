@@ -4,7 +4,7 @@
 > **不触外部世界**（插件副作用全在宿主给的函数体里）、**不取时间**（`at` 由调用方传入）⇒ 现在即可拆成单独项目。
 > 唯一依赖是 `@diy/talk`（复用 `Event` 原语，`anchor = node` 指目标节点）。
 > 需求真源：`tests/intent.flow.test.ts`（定义 / 容器 / 投影 26 例）+ `tests/intent.plugin.test.ts`（槽位 / 求值 / 执行器 43 例）
-> + `tests/intent.params.test.ts`（参数层 34 例）+ `tests/intent.domain.test.ts`（领域态一等 / 落盘 / 关联 / 终态 / params 入态 36 例）。
+> + `tests/intent.params.test.ts`（参数层 41 例）+ `tests/intent.domain.test.ts`（领域态一等 / 落盘 / 关联 / 终态 / params 入态 43 例）—— 共 153 例。
 >
 > **##333 依赖反转（本包当前模型）**：**领域状态一等、`Event` 降为审计** ——
 > 领域态 `FlowState` 自成真源、由 `advance` 产出、可落盘可读回；`Event` 只是进程内的进度通知 / 落盘后的
@@ -27,14 +27,14 @@
 ## rule — 硬约束
 
 - `rule.domain-first` — **领域状态一等**（##333）：位置变更的正路是 `advance`（只吃 `{ to, at, ref? }`，**不吃事件**）；`FlowState` 自成真源、可独立落盘读回。凡「让 core 依赖日志 / 为日志好看」的改动一律错
-- `rule.audit-adapter` — `apply(def, state, event)` 是**审计 / 消息入口**（薄适配：解 `anchor.data.nodeId` 再调 `advance`），**不参与状态构造**；留它只为「从旧日志重建」（`project`）与老调用方兼容。事件的 `id` / `author` / `content` **一律不进领域态**
+- `rule.audit-adapter` — `apply(def, state, event)` 是**审计 / 消息入口**（薄适配：解 `anchor.data.nodeId` 再调 `advance`），**不参与状态构造**；留它只为「从旧日志重建」（`project`）与老调用方兼容。事件的 `id` / `author` / `content` **一律不进领域态**；**重建不出 `done` 与 `Visit.ref`**（日志里没有 / `apply` 只解 `nodeId` 与 `at`）—— 要它们只能读落盘的状态文件
 - `rule.visit-fields` — `Visit{node,seq,kind,at}` 四项全是领域事实 + 宿主 `ref?`；**没有日志 id**（旧 `eventId` 已删）。方向反转：审计侧要指回领域，用折线末端的 `{ node, seq }` 作坐标
 - `rule.ref-passthrough` — `ref?: Record<string,string>`（`taskUri` / `turnId` / `stepId`…）**开放袋**：键不封闭（宿主自己命名）、值必须是字符串；内核**只透传不解释**
 - `rule.no-human-text` — 内核**不编人类文本**：转移给 `Move{kind:'entry'|'next'|'bounce', from, to}` + `reason`，审计事件正文由宿主给（`seed.content`，缺省空串）。改 `execute.ts` 时别把文案加回去
 - `rule.event-optional` — `EventSeed.id` 可选：**不给 = 不落审计事件**（`transition.event === undefined`），领域照样推进；`notify` 因此只在**落了事件**时才唤醒（无事件 = 无通知，`receipts` 为空）
-- `rule.done-marker` — 终态（guard 全过且**没有 `next` 出边**）把 `FlowState.done = true` 记进**领域态**；重复 `step` 直接返回 `done`，**不求值、不重跑 `action:`**（##315 review2 §D）
-- `rule.params-in-state` — **`params` 值属领域状态**（##311 §二 L3 / ##333 交付 G）：`createRuntime` 把本次用的那份写进产出的 `FlowState.params`；状态里已有参数值时必须与 `options.params` **一致**（键序无关），否则 `invalid-param @ state.params`。值的**语义**校验归 ##316，本包不重写
-- `rule.state-serialize` — 落盘 / 读回只走 `serialize.ts`：写侧先校验规范化（键序固定、字段封闭）、读侧同样严格（`invalid-state` / `invalid-json`）。除形状外还兜**语义自洽**（`position` 与折线末端一致、每节点 `seq` 恰为 `1,2,3…`）与 `params` 的纯 JSON 性。`allowUnknown` 是**只读检查闸**（放行不保留，别拿它读进来的对象写回）
+- `rule.done-marker` — 终态（guard 全过且**没有 `next` 出边**）把 `FlowState.done = true` 记进**领域态**；重复 `step` 直接返回 `done`，**不求值、不重跑 `action:`**（##315 review2 §D）。判据是**结构事实**：**边上的 `when` 不参与**（`when` 管「这条边此刻能不能走」，不管「有没有下一步」）⇒ 有 `next` 边而 `when` 全不成立 = `stuck`（停在**边上**）；只有 `bounce` 出边的节点 guard 全过 = `done`
+- `rule.params-in-state` — **`params` 值属领域状态**（##311 §二 L3 / ##333 交付 G）：`createRuntime` 把本次用的那份写进产出的 `FlowState.params`（`done` 分支也 `stampParams`）。两条不变量，都亮 `invalid-param @ state.params`：① 状态带着**另一份**参数值（键序无关比较）⇒ 拒；② 状态**已进入却没记参数值**（`position !== null` 且 `params === undefined`，本次运行有参数值）⇒ 拒 —— **「缺省」≠「丢了」**，唯一放行的是尚未进入（`initialState()` 本就不带 `params`，那是另起一次运行的正路；消息里给修法）。值的**语义**校验归 ##316，本包不重写
+- `rule.state-serialize` — 落盘 / 读回只走 `serialize.ts`：写侧先校验规范化（键序固定、字段封闭）、读侧同样严格（`invalid-state` / `invalid-json`）。除形状外还兜**语义自洽**（`position` 与折线末端一致、每节点 `seq` 恰为 `1,2,3…`）与 `params` 的纯 JSON 性。**`at` 不要求单调**（立场）：次序由 `path` 数组承载、`at` 只是信息 —— 要次序看下标，别信 `at`。`allowUnknown` 是**只读检查闸**（放行不保留，别拿它读进来的对象写回）
 - `rule.state-file-not-here` — **落盘位置 / 文件布局 / 事件存储 / 谁给参数值**全归 ##319；`done` 与 `params` **重建不出来**（日志里没有）⇒ 领域态必须自己落盘
 - `rule.lane-1to1` — **泳道 ≡ 节点，1:1**（##311 §一）：无 `lanes` 段，`name` 只是节点自带的泳道显示名
 - `rule.bounce-no-node` — **打回不新建节点**（##166 §14.2 推论 2）：`kind: 'bounce'` 只是让目标节点**再驻留一次**（`Visit.seq` 递增），边只影响画线与标注、**不改结构**
@@ -60,7 +60,7 @@
 - `rule.param-value` — 实例值必须**纯 JSON**（标量 / 标量列表、有限数）；非法值 `invalid-param`、未知节点 / 未知参数名 `unknown-param`，**绝不静默忽略**；`resolveParams` 结果全量 + 冻结
 - `rule.param-no-shape` — **参数只改值、不改形**：不许增删节点 / 边；「本次跳过某步」= 参数让 `guard` / 边上的 `when` 短路（##311 §二）
 - `rule.param-export` — `{ schema, defaults }` 快照**单向导出**（供 UI 生成表单 / 文档渲染）；`defaults` 只是派生视图（真源 = 每项 `default`）；`parseParamsSchema` 读回时守与定义期**同一组**不变量（`name`/`node` 不含 `.`、同 `path` 唯一）
-- `rule.param-bag-when-undeclared` — 工作流**没声明任何参数**时 `params` 不校验、原样透传（##315 的袋口径）：形状封闭的前提是「形状已声明」
+- `rule.param-bag-when-undeclared` — 工作流**没声明任何参数**时 `params` 不校验、原样透传（##315 的袋口径）：形状封闭的前提是「形状已声明」。**冻结深度随之有差异**（##316 review1 H-1，已知并记录）：声明了参数 ⇒ `resolveParams` 逐项受管（袋与 `list` 都冻结）；没声明 ⇒ 只 `Object.freeze` **顶层**，内层仍是宿主那份、可被插件改。**不统一**的理由：引擎不知道透传袋里是什么（可能是类实例 / 回调 / 宿主的活对象）—— 原地深冻结会改到**宿主自己的对象**，深拷贝则破坏「原样透传」；要统一就得先替宿主定「袋里只准放纯 JSON」，那是 ##316 的口径变更
 - `rule.param-hint` — `hint` 里 `${局部名}`（本节点）/ `${节点 id.局部名}` 由 `interpolate` 插值；`$$` = 字面量 `$`、空 `list` 插成空串（合法值）；**定义期**校验占位符（`parseWorkflow` 的 `checkHints`，仅工作流声明了 ≥1 参数时；拼错 / 未闭合 → `invalid-def @ workflow.nodes[i].hint`），运行期找不到参数 / 未闭合 → `unknown-param` / `invalid-param`；`renderHint` 出错定位 `nodes.<id>.hint`
 - `rule.boundary` — 本包只做内核：不做事件存储 / 状态文件布局 / 参数值来源（归 ##319）、不渲染（归 ##320）、不调度（`notify` 只给回执）、不引入权限机制
 - `rule.loud` — 非法定义 / 非法转移 / 非法快照一律抛 `FlowError`（带 `code` + 点路径 `path`），**绝不静默丢弃**

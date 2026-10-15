@@ -268,6 +268,13 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
     // 参数层（##316）：唯一注入点。声明了参数 ⇒ 校验 + 合并缺省（非法值在这里就大声报，
     // 不留到插件里读到 `undefined` 静默偏路）；没声明 ⇒ 参数层未启用，保持 ##315 的透传口径
     // （形状封闭的前提是「形状已声明」—— 引擎不越权判定自己不认识的键）。
+    //
+    // ⚠️ 冻结深度的**已知差异**（##316 review1 H-1，本包只记录、不改口径）：声明了参数 ⇒ `resolveParams`
+    // 逐项校验并**深冻结**（标量 / 已冻结的 list，没有可变内层）；没声明 ⇒ 只 `Object.freeze({...袋})`
+    // 冻**顶层**，内层对象仍是宿主那份、可被插件改。为什么不在透传袋上深冻结 / 深拷贝：
+    // 引擎**不知道**袋里是什么（可能是类实例 / 回调 / 宿主自己的活对象）—— 原地深冻结会改到**宿主自己的
+    // 对象**（`Object.freeze` 是原地操作），深拷贝则破坏「原样透传」本身。要动它就得先替宿主定「袋里只准
+    // 放纯 JSON」，那是 ##316 的口径变更，不归本任务。故：**声明了才受管，没声明就照旧透传**。
     const declared = paramsOf(def);
     const params: Readonly<Record<string, unknown>> =
         declared.schema.length === 0 ? Object.freeze({ ...options.params }) : resolveParams(declared, options.params);
@@ -277,16 +284,31 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
     const stampParams = (state: FlowState<Id>): FlowState<Id> => (hasParams ? { ...state, params } : state);
 
     /**
-     * 状态里带着参数值时，必须与本次 `createRuntime` 拿到的那份**一致**（键序无关）。
+     * 状态里的参数值与本次 `createRuntime` 拿到的那份必须**一致**（键序无关）—— 两个方向都算不一致：
      *
-     * 不一致 = 「读回来的状态」与「现在这份参数」是**两次不同的运行配置**；静默按谁跑都会悄悄偏
-     * （正是本包最反对的失败形态），故当场亮错，并指明修法：把 `state.params` 交回 `createRuntime`。
+     * - **状态带着另一份值** ⇒ 「读回来的状态」与「现在这份参数」是两次不同的运行配置，静默按谁跑都会
+     *   悄悄偏（正是本包最反对的失败形态）；
+     * - **状态压根没记值，而本次运行有**（`state.params === undefined` 且本次有参数值）⇒ 这份状态**丢了
+     *   自己的运行配置** —— 同样不许静默按「本次这份」跑。**唯一例外是尚未进入**（`position === null`）：
+     *   那时还没有「这次运行的配置」可丢，`initialState()` 本来就不带 `params`（全新一次运行的正路）。
+     *
+     * 这不是「缺省」而是「丢了」：`FlowState.params` 缺省的语义是「工作流没声明参数、宿主也没给袋」，
+     * 而这里是「声明了、也给了，只是这份状态里没记」—— 两者后果天差地别，故必须分开。
+     * 修法写在消息里（交出原状态文件 / 当作另起一次运行）。
      */
     const requireParamsMatch = (state: FlowState<Id>): void => {
-        if (state.params === undefined || sameJson(state.params, params)) return;
+        if (state.params === undefined) {
+            if (state.position === null || !hasParams) return;
+            throw new FlowError(
+                'invalid-param',
+                `这份状态里没有参数值，而本次运行有（\`position = ${JSON.stringify(state.position)}\` 已进入工作流）：它丢了自己的运行配置。修法：把原运行那份状态（连同它的 \`params\`）交回 —— 状态文件是一等真源；或当作**另起一次运行**（用 \`initialState()\` 从头进入）`,
+                'state.params',
+            );
+        }
+        if (sameJson(state.params, params)) return;
         throw new FlowError(
             'invalid-param',
-            '状态里带着另一份 L2 参数值（状态文件是一等真源）：把 `state.params` 交回 createRuntime —— `createRuntime(def, { registry, params: state.params })`；或先清掉状态里的 params 再跑',
+            '状态里带着另一份 L2 参数值（状态文件是一等真源）：把 `state.params` 交回 createRuntime —— `createRuntime(def, { registry, params: state.params })`；已进入工作流的状态**不允许**清掉 `params` 再跑（那等于换了一次运行配置）',
             'state.params',
         );
     };
@@ -381,7 +403,7 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
 
         // 终态（##333 交付 F）：已跑完 ⇒ 直接返回 —— **不求值、不重跑 `action:`**
         // （「已经跑完」是领域事实，记在 `FlowState.done` 里，不是日志事实）
-        if (state.done === true) return { status: 'done', state };
+        if (state.done === true) return { status: 'done', state: stampParams(state) };
 
         if (state.position === null) {
             const event = audit(parsed, def.entry, SYSTEM_AUTHOR);
@@ -403,9 +425,15 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
         if (guard.pass) {
             const edge = selectEdge(edges, 'next', ctx, registry);
             if (!edge) {
-                // 压根没有 next 出边 = 终态 → **把「跑完了」记进领域态**（重复 step 才会不重跑 action:）；
-                // 有边但 `when` 不满足 = 停在边上（这一步不走）
-                if (!edges.some((candidate) => candidate.kind === 'next')) return { status: 'done', state: { ...state, done: true } };
+                // 终态判据是**结构事实**：压根没有 `next` 出边 ⇒ 跑完了（**边上的 `when` 不参与判定** ——
+                // `when` 是「这条边此刻能不能走」，不是「工作流有没有下一步」）。故：
+                //   有 `next` 出边但 `when` 全不成立 ⇒ 停在**边上**（`stuck`，这一步不走）；
+                //   只有 `bounce` 出边的节点 guard 全过 ⇒ `done`（没有下一步可走）。
+                // 走 `done` 与 `moved` 两条路**都** `stampParams`：「凡从 runtime 出来的 state 一律带本次
+                // 运行的参数值（有参数时）」是可断言的不变量（否则终态产出态会把自己的配置丢掉）。
+                if (!edges.some((candidate) => candidate.kind === 'next')) {
+                    return { status: 'done', state: stampParams({ ...state, done: true }) };
+                }
                 return { status: 'stuck', reason: '没有可用的 next 出边（边上 `when` 未过）', guard };
             }
             const event = audit(parsed, edge.to, SYSTEM_AUTHOR);
