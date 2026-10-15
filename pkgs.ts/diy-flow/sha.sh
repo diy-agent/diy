@@ -51,10 +51,10 @@ test-unit() { run npx vitest run "$@"; }
 
 test-watch() { run npx vitest "$@"; }
 typecheck() { run npx tsc --noEmit; }
-lint() { run npx oxlint src/ tests/; }
-lint-fix() { run npx oxlint --fix src/ tests/; }
-fmt() { run npx oxfmt --check src/ tests/; }
-fmt-fix() { run npx oxfmt --write src/ tests/; }
+lint() { run npx oxlint src/ tests/ examples/; }
+lint-fix() { run npx oxlint --fix src/ tests/ examples/; }
+fmt() { run npx oxfmt --check src/ tests/ examples/; }
+fmt-fix() { run npx oxfmt --write src/ tests/ examples/; }
 
 
 sha "$@"

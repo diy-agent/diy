@@ -22,6 +22,7 @@ import { AssembleGlobalsSchema, type AssembleGlobals } from "../../shared/prompt
 export type { AssembleGlobals };
 import { flattenVars } from "../../shared/var-tree";
 import { PROMPT_DEFAULTS } from "../prompts/defaults";
+import { FLOW_NODE_HINT_RELPATH, FLOW_PROMPT_DEFAULTS } from "../prompts/flow";
 import {
   renderSummaryFallback,
   summaryHasContent,
@@ -425,6 +426,17 @@ export function renderSystemDsl(opts: {
   entry?: string;
 }): string {
   return renderSystemDslTraced(opts).text;
+}
+
+/**
+ * 渲染「工作流当前节点的提示」（`diy flow prompt` 的唯一装配入口）。
+ *
+ * 与 system 装配**共用同一个引擎与入口**（`renderSystemDsl` + `parseMd`），只是模版来自
+ * `prompts/flow.ts`（不进用户清单的理由见该文件头注）。`globals` 由 `core/flow.ts` 给 ——
+ * `hint` 已经过内核 `renderHint` 插值，本函数只负责把它装进节点标签里。
+ */
+export function renderFlowNodeHint(globals: Record<string, unknown>): string {
+  return renderSystemDsl({ globals, templates: FLOW_PROMPT_DEFAULTS, entry: FLOW_NODE_HINT_RELPATH });
 }
 
 /**
