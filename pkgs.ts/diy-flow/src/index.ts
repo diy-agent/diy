@@ -43,8 +43,9 @@
 // **先拒单后求值**（非法 declare 不得先动手）、**打回不求值**。`declare` 的 `author` 不得取内核保留字
 // `system`；`step` / `declare` 每次调用都会重新求值 ⇒ `action:` 插件须幂等、`done` 后勿轮询。
 //
-// 边界：本包只做**内核** —— 不做事件存储、不做参数校验（`params` 只透传，校验归 ##316）、
-// 不做渲染（`render` 只给形状，画页面归 ##320）、不做调度（`notify` 只给回执）。
+// 边界：本包只做**内核** —— 不做事件存储（归 ##319）、不做渲染（`render` 只给形状，画页面归 ##320）、
+// 不做调度（`notify` 只给回执）。参数层（L2）已落 `params.ts`：声明在节点上、校验与默认合并
+// 由 `createRuntime` 在**工作流声明了参数**时执行（没声明 = 参数层未启用，`params` 仍是透传袋）。
 // 事件形状与 `@diy/talk` 的 `Event` 完全一致（##312）：**不另造一套历史**（##166 §八）。
 
 export { FlowError } from './errors';
@@ -53,14 +54,16 @@ export type { FlowErrorCode } from './errors';
 export {
     ACTORS,
     EDGE_KINDS,
-    PARAM_TYPES,
     RENDERERS,
     defineWorkflow,
     findNode,
     isWorkflow,
     parseWorkflow,
 } from './define';
-export type { Actor, Art, DefineInput, EdgeDef, EdgeKind, NodeDef, ParamDef, ParamType, Renderer, WorkflowDef } from './define';
+export type { Actor, Art, DefineInput, EdgeDef, EdgeKind, NodeDef, Renderer, WorkflowDef } from './define';
+
+export { PARAM_TYPES, interpolate, paramsOf, parseParamsSchema, renderHint, resolveParams } from './params';
+export type { InterpolateOptions, ParamDef, ParamEntry, ParamsSchema, ParamScalar, ParamType, ParamValue, ParamValues } from './params';
 
 export { apply, createContainer, initialState } from './container';
 export type { Container, FlowState, Visit } from './container';

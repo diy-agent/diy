@@ -37,7 +37,12 @@ export interface PluginContext {
     readonly workflow: WorkflowDef;
     /** 当前驻留节点（`guard` 判的就是「能不能离开它」；`source` 取的就是「它的产物」） */
     readonly node: NodeDef;
-    /** L2 实例参数（##316 注入；本任务只透传、不校验） */
+    /**
+     * L2 实例参数（##316）：形状 `{ 节点 id: { 局部名: 值 } }`，**已校验 + 已合并缺省**（全量、冻结）。
+     *
+     * 工作流没声明任何参数时，它是宿主原样传进来的袋子（参数层未启用，内核不越权校验）。
+     * 插件按 `ctx.params[ctx.node.id]?.<名>` 读「本节点可调的旋钮」，别读别人的节点（那是别人的旋钮）。
+     */
     readonly params: Readonly<Record<string, unknown>>;
     /** 求值 / 宣布的主体：`system`（引擎求值）或 actor id（actor 宣布，##166 §10.3） */
     readonly actor: string;

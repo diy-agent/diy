@@ -8,7 +8,7 @@
 - `find.rpc` — `pkgs.ts/diy-rpc/` RPC 协议 + 传输（纯内核，零 Node/Electron 依赖）
 - `find.template` — `pkgs.ts/diy-template/` 提示词模版引擎（零依赖）
 - `find.talk` — `pkgs.ts/diy-talk/` 对话容器内核（事件 / 锚点 / 反应原语 + role 铁律，零依赖；消费者 `@diy/flow`（`Event` 原语）；接 ##319 存储/装配）
-- `find.flow` — `pkgs.ts/diy-flow/` 工作流内核（定义 DSL + 泳道容器 + 插件槽 + guard 求值 + 转移执行器 + 轨迹投影；零 IDE 依赖，唯一依赖 `@diy/talk` 的 `Event` 原语；接 ##316/##319）
+- `find.flow` — `pkgs.ts/diy-flow/` 工作流内核（定义 DSL + 泳道容器 + 插件槽 + 参数层 L2 + guard 求值 + 转移执行器 + 轨迹投影；零 IDE 依赖，唯一依赖 `@diy/talk` 的 `Event` 原语；接 ##319）
 - `find.dev` — `pkgs.ts/diy-dev/` 独立的 `dev` 命令（ref 仓库引用 / vendor 镜像，cwd 即作用域）；细节见其 `AGENTS.md`
 - `find.cfg` — `pkgs.ts/diy-app/src/runtime.ts` —— **`DIY_*` 环境变量契约的唯一源**
 - `find.prompt` — 内置提示词 `pkgs.ts/diy-app/src/main/prompts/defaults.ts`（唯一真源）· 装配 `pkgs.ts/diy-app/src/main/services/prompt-registry.ts`

@@ -1,6 +1,6 @@
 # @diy/flow
 
-diy **工作流内核**：工作流定义 DSL + 泳道容器（单指针 / 打回）+ 插件槽 + guard 求值 + 转移执行器 + 轨迹折线投影。
+diy **工作流内核**：工作流定义 DSL + 泳道容器（单指针 / 打回）+ 插件槽 + 参数层（L2）+ guard 求值 + 转移执行器 + 轨迹折线投影。
 纯内核（仅依赖 `@diy/talk` 的事件原语）：不认识文件系统、**不触外部世界**（插件副作用全在宿主给的函数体里）、
 **不取时间**（事件的 `at` 由调用方传入）。
 
@@ -97,6 +97,9 @@ if (a.status === 'moved') {
 | `createRegistry()` | 插件注册表：`register(slot, name, fn)` / `resolve(slot, name)`（未注册即报错） |
 | `evaluateGuards` / `classifyGuards` / `unevaluatedGuards` / `parseGuardRef` / `selectEdge` | guard 求值（与 + 短路）与出口消歧（`when` 单出口也判），可单独复用 |
 | `project(events, def)` | 折线投影（纯函数）：`{ currentNode, path: Visit[], visits }` |
+| `paramsOf(def)` / `resolveParams(schema, values)` | 参数层：收集 `{ schema, defaults }` / 实例值校验 + 默认合并 |
+| `parseParamsSchema(snapshot)` | 参数快照的反向校验（形状封闭 + `defaults` 与 `schema` 对齐） |
+| `interpolate(template, params)` / `renderHint(node, params)` | `hint` 插值（`${局部名}` / `${节点 id.局部名}`，`$$` 转义）；`renderHint` 出错定位到 `nodes.<id>.hint` |
 
 `Event` 复用 `@diy/talk` 原语：`{ id, author, anchor, content, causes, at }`，其中 `anchor = { type: 'node', data: { nodeId } }`。
 
@@ -117,6 +120,49 @@ if (a.status === 'moved') {
 
 真函数由宿主（各工作流开发包）在启动时注册 —— 内核只按名调用，一个具体实现的字节都不写。
 `prompt:` 引用的名字**不需要**注册（它本来就只是提示词）。
+
+## 参数层（L2：用户只能改值，不能改形）
+
+判据同「引擎能枚举的 → 配置」（##166 §13.1）：**引擎画得出一个控件的类型才收**。声明写在节点定义里
+（L1 代码），值走数据（L2，纯 JSON —— 可落库、可被 UI 表单改）：
+
+```ts
+const wf = defineWorkflow({
+    entry: 'implement',
+    nodes: [
+        { id: 'implement', name: '开发', actor: 'agent', guard: ['prompt:dev_done'], hint: '开发完提交 Review' },
+        {
+            id: 'ci', name: 'CI', actor: 'system', guard: ['pred:check_green'], hint: '跑 ${command}',
+            params: [
+                { name: 'command', type: 'string', label: 'CI 命令', default: 'npm test' },
+                { name: 'targets', type: 'list', label: '目标平台', default: ['bilibili'] },
+                { name: 'timeout', type: 'number', label: '超时', default: 30, min: 1, max: 600, unit: '秒' },
+                { name: 'flaky', type: 'boolean', label: '容忍抖动', default: false },
+                { name: 'mode', type: 'enum', label: '模式', default: 'fast', enum: ['fast', 'full'] },
+            ],
+        },
+    ],
+    …
+});
+
+const schema = paramsOf(wf);                                  // { schema: ParamEntry[], defaults }
+const params = resolveParams(schema, { ci: { command: 'pnpm test' } });
+// → { ci: { command: 'pnpm test', targets: ['bilibili'], timeout: 30, flaky: false, mode: 'fast' } }
+createRuntime(wf, { registry, params });                      // ctx.params = 上面那个（全量、冻结）
+```
+
+| 项 | 规则 |
+|---|---|
+| 类型全集 | `string` / `number` / `boolean` / `enum` / `list` —— **不支持嵌套对象**（没有表单渲染方案就别开）；`list` 只装标量 |
+| 全限定名 | `节点 id.局部名`（`ci.command`）；实例值是同构嵌套 `ctx.params['ci']['command']` |
+| `default` | **必填**（一个值都不填也要能跑）⇒ 合并后 `ctx.params` 恒为全量 |
+| 约束 | `enum?`（仅 enum，必填非空）/ `min?` `max?` `unit?`（仅 number）；**写错类型即报**（不静默忽略） |
+| 值 | 必须**纯 JSON**（标量 / 标量列表、有限数）：类型错 / 越界 / NaN → `invalid-param`；未知节点 / 未知参数名 → `unknown-param` |
+| `hint` 插值 | `${局部名}`（本节点）/ `${节点 id.局部名}`（全限定）；**定义期**即校验占位符（拼错 → `invalid-def`，仅在工作流声明了参数时），运行期找不到参数 → `unknown-param`（**不插空串**）；`$$` = 字面量 `$`；空 `list` 插成空串（合法值） |
+| 单向导出 | `{ schema, defaults }` 快照供 UI / 文档渲染（`JSON.stringify(paramsOf(def))`）；`defaults` 只是派生视图（真源 = 每项 `default`）；`parseParamsSchema` 读回时守与定义期**同一组**不变量（`name` / `node` 不含 `.`、同 `path` 唯一） |
+| 只改值 | 参数**不得增删节点 / 边**；「本次跳过某步」= 参数让 `guard` / 边上的 `when` 短路 |
+
+> 工作流**没声明任何参数**时 `params` 不被校验、原样透传（参数层未启用）：形状封闭的前提是「形状已声明」。
 
 ## 转移规则（`createRuntime`）
 
@@ -171,13 +217,13 @@ if (a.status === 'moved') {
 - **`actor` 与 guard 不得矛盾**：`actor: 'system'` 带不可观测 guard（谁推不动）→ 组合期 `invalid-def`。
 - 非法定义 / 非法转移 / 未注册插件一律抛 `FlowError`（带 `code` + 点路径 `path`），**绝不静默降级** ——
   打错一个插件名若被当成「永远不通过」，工作流会悄悄偏到另一条路径上。
-- 本包只做**内核**：不做事件存储（归 ##319）、不校验 `params`（只透传 —— 交给插件的是**冻结的浅副本**，归 ##316）、不渲染（`render` 只给形状，归 ##320）。
+- 本包只做**内核**：不做事件存储（归 ##319）、参数层落在 `src/params.ts`（**值**从哪来归 ##319，表单长什么样归 ##320）、不渲染（`render` 只给形状，归 ##320）。
 
 ## 开发
 
 ```bash
 cd pkgs.ts/diy-flow
-./sha.sh test          # 意图测试（69 例：定义/容器/投影 26 + 槽位/求值/执行器 43）
+./sha.sh test          # 意图测试（110 例：定义/容器/投影 26 + 槽位/求值/执行器 43 + 参数层 41）
 ./sha.sh check         # 本包类型 + lint
 # 全仓检查（含产物 / 可执行位护栏）：在仓库根跑 ./sha.sh check
 ```
