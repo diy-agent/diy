@@ -45,8 +45,8 @@
 - `rule.param-value` — 实例值必须**纯 JSON**（标量 / 标量列表、有限数 ⇒ 可落库、可被 UI 改）；非法值 `invalid-param`、未知节点 / 未知参数名 `unknown-param`，**绝不静默忽略**
 - `rule.param-default` — `default` 必填（一个值都不填也要能跑）；声明期的 `default` 与运行期的实例值走**同一个** `checkValue`（两处不分叉）；`resolveParams` 结果全量 + 冻结
 - `rule.param-no-shape` — **参数只改值、不改形**：不许增删节点 / 边；「本次跳过某步」= 参数让 `guard` / 边的 `when` 短路（##311 §二）
-- `rule.param-export` — `{ schema, defaults }` 快照**单向导出**（供 UI 自动生成表单 / 供文档渲染，##311 §三.5）；`defaults` 只是派生视图（唯一真源 = 每项 `default`，不一致即 `invalid-param`）
+- `rule.param-export` — `{ schema, defaults }` 快照**单向导出**（供 UI 自动生成表单 / 供文档渲染，##311 §三.5）；`defaults` 只是派生视图（唯一真源 = 每项 `default`，不一致即 `invalid-param`）；`parseParamsSchema` 读回时守与定义期**同一组**不变量（`name`/`node` 不含 `.`、同 `path` 唯一）
 - `rule.param-bag-when-undeclared` — 工作流**没声明任何参数**时 `params` 不校验、原样透传（##315 的袋口径）：形状封闭的前提是「形状已声明」，引擎不越权判定自己不认识的键
-- `rule.param-hint` — `hint` 里 `${局部名}` / `${节点 id.局部名}` 由 `interpolate` 插值；找不到参数抛 `unknown-param`（**不插空串**）、未闭合 `${` 抛 `invalid-param`；`$$` = 字面量 `$`
+- `rule.param-hint` — `hint` 里 `${局部名}`（本节点）/ `${节点 id.局部名}` 由 `interpolate` 插值；`$$` = 字面量 `$`、空 `list` 插成空串（合法值）；**定义期**校验占位符（`parseWorkflow` 的 `checkHints`，仅工作流声明了 ≥1 参数时；拼错 / 未闭合 → `invalid-def @ workflow.nodes[i].hint`），运行期找不到参数 / 未闭合 → `unknown-param` / `invalid-param`；`renderHint` 出错定位 `nodes.<id>.hint`
 - `rule.boundary` — 本包只做内核：不做事件存储（归 ##319）、参数层在 `src/params.ts`（值从哪来归 ##319）、不渲染（归 ##320）、不调度（`notify` 只给回执）
 - `rule.loud` — 非法定义 / 非法转移一律抛 `FlowError`（带 `code` + 点路径 `path`），**绝不静默丢弃**

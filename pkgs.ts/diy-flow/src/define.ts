@@ -12,7 +12,7 @@
 // `DefineInput`）。运行期再兜一层：悬空边 / 重号 / 入口不唯一一律抛 `FlowError`。
 
 import { FlowError } from './errors';
-import { parseParamDefs, type ParamDef } from './params';
+import { parseParamDefs, scanPlaceholders, type ParamDef } from './params';
 import { isObject, rejectUnknown } from './validate';
 
 /** 谁能在这里动作并宣布推进（##166 §14.4） */
@@ -194,6 +194,45 @@ function parseEdge<Id extends string>(value: unknown, path: string): EdgeDef<Id>
 }
 
 /**
+ * 定义期静态校验 `hint` 里的参数占位符（##316 review1 R1-2）。
+ *
+ * 为什么放在定义期：本包第一卖点是「写错一个字当场知道」，而 `hint` 里拼错参数名恰恰是**最典型的
+ * 悄悄偏路** —— 人拿到的提示词缺了一段，却要等到真跑那条路径（可能在生产、可能几天后）才炸。
+ * `renderHint` 的逻辑不变（运行期仍会拦），这里只是把同一判据**提前到定义期**。
+ *
+ * 规则（与运行期 `interpolate` 一致，不会误伤）：
+ *   · 仅当工作流**声明了至少一个参数**时校验（一个都没声明 = 参数袋自由，§`rule.param-bag-when-undeclared`）。
+ *   · `${节点 id.局部名}` ⇒ 节点须存在且声明该参数；`${局部名}` ⇒ **本节点**须声明该参数。
+ *   · 不命中 / 空引用 / 未闭合 `${` ⇒ `invalid-def`，path = `workflow.nodes[i].hint`。
+ */
+function checkHints(nodes: readonly NodeDef[], path: string): void {
+    if (!nodes.some((node) => (node.params?.length ?? 0) > 0)) return;
+    const declared = new Map<string, Set<string>>();
+    for (const node of nodes) declared.set(node.id, new Set((node.params ?? []).map((param) => param.name)));
+
+    nodes.forEach((node, i) => {
+        const { refs, unclosed } = scanPlaceholders(node.hint);
+        const at = `${path}.nodes[${i}].hint`;
+        if (unclosed) throw new FlowError(CODE, '未闭合的插值 `${`（字面量 `$` 请写 `$$`）', at);
+        for (const ref of refs) {
+            const dot = ref.indexOf('.');
+            const qualified = dot > 0; // `{node}.{name}`：点名节点（`.x` 这种以点开头的不算全限定）
+            const owner = qualified ? ref.slice(0, dot) : node.id;
+            const name = qualified ? ref.slice(dot + 1) : ref;
+            const bag = declared.get(owner);
+            if (!bag || name === '' || !bag.has(name)) {
+                const why = !bag
+                    ? `节点 ${JSON.stringify(owner)} 不存在或没声明参数`
+                    : name === ''
+                      ? `${owner} 后面的参数名为空`
+                      : `节点 ${JSON.stringify(owner)} 没声明 ${JSON.stringify(name)}（已声明：${bag.size === 0 ? '（无）' : [...bag].join(', ')}）`;
+                throw new FlowError(CODE, `hint 里的 \${${ref}} 找不到参数：${why}`, at);
+            }
+        }
+    });
+}
+
+/**
  * 校验并规范化工作流定义（键序固定），非法一律抛 `FlowError`（带点路径）：
  * 节点重号 / 悬空边 / 同 (from,to) 重边 / 入口缺失或不唯一。
  */
@@ -219,6 +258,9 @@ export function parseWorkflow<Id extends string = string>(value: unknown, path =
             throw new FlowError(CODE, `节点 id 含 '.' 却又声明了参数：点号是参数路径的限定符（${JSON.stringify(node.id)}）`, `${path}.nodes[${i}].id`);
         }
     });
+
+    // `hint` 里的 `${参数}` 归属在此刻就能判定 ⇒ 定义期报（别拖到 renderHint，见 checkHints）。
+    checkHints(nodes, path);
 
     const edges = value.edges.map((e, i) => parseEdge<Id>(e, `${path}.edges[${i}]`));
     const pairs = new Set<string>();

@@ -280,6 +280,155 @@ describe('R1 声明：节点上的 `params` 是唯一真源（##311 §二）', (
         );
     });
 
+    it('hint 里的 `${参数}` 定义期就校验（拼错一个字当场知道，不等 renderHint）', () => {
+        // 裸名拼错：本节点没这个参数
+        const typo = caught(() =>
+            parseWorkflow({
+                nodes: [
+                    {
+                        id: 'a',
+                        name: 'A',
+                        actor: 'agent',
+                        guard: [],
+                        hint: '跑 ${cmmand}',
+                        params: [{ name: 'command', type: 'string', default: 'npm test' }],
+                    },
+                ],
+                edges: [],
+            }),
+        );
+        expect(typo.code).toBe('invalid-def');
+        expect(typo.path).toBe('workflow.nodes[0].hint');
+
+        // 全限定引用到「不存在的节点」/「存在但没声明该参数」
+        for (const ref of ['${nope.x}', '${a.y}']) {
+            const e = caught(() =>
+                parseWorkflow({
+                    nodes: [
+                        {
+                            id: 'a',
+                            name: 'A',
+                            actor: 'agent',
+                            guard: [],
+                            hint: `看 ${ref}`,
+                            params: [{ name: 'command', type: 'string', default: 'npm test' }],
+                        },
+                    ],
+                    edges: [],
+                }),
+            );
+            expect(e.code, ref).toBe('invalid-def');
+            expect(e.path, ref).toBe('workflow.nodes[0].hint');
+        }
+
+        // 裸名在别的节点声明了也不行（裸名 = 本节点）
+        const crossNode = caught(() =>
+            parseWorkflow({
+                nodes: [
+                    {
+                        id: 'a',
+                        name: 'A',
+                        actor: 'agent',
+                        guard: [],
+                        hint: '看 ${command}',
+                        params: [{ name: 'x', type: 'string', default: '' }],
+                    },
+                    {
+                        id: 'b',
+                        name: 'B',
+                        actor: 'agent',
+                        guard: [],
+                        hint: '',
+                        params: [{ name: 'command', type: 'string', default: '' }],
+                    },
+                ],
+                edges: [],
+            }),
+        );
+        expect(crossNode.code).toBe('invalid-def');
+        expect(crossNode.path).toBe('workflow.nodes[0].hint');
+
+        // 未闭合的 `${`
+        const unclosed = caught(() =>
+            parseWorkflow({
+                nodes: [
+                    {
+                        id: 'a',
+                        name: 'A',
+                        actor: 'agent',
+                        guard: [],
+                        hint: '跑 ${command',
+                        params: [{ name: 'command', type: 'string', default: '' }],
+                    },
+                ],
+                edges: [],
+            }),
+        );
+        expect(unclosed.code).toBe('invalid-def');
+        expect(unclosed.path).toBe('workflow.nodes[0].hint');
+    });
+
+    it('hint 占位符在定义期校验「不会误伤」：合法引用通过；未声明参数的工作流整段跳过', () => {
+        // 裸名（本节点）+ 全限定（别的节点）都命中 ⇒ 通过
+        expect(() =>
+            parseWorkflow({
+                nodes: [
+                    {
+                        id: 'a',
+                        name: 'A',
+                        actor: 'agent',
+                        guard: [],
+                        hint: '跑 ${command}，${b.flag} 时停',
+                        params: [{ name: 'command', type: 'string', default: '' }],
+                    },
+                    {
+                        id: 'b',
+                        name: 'B',
+                        actor: 'system',
+                        guard: [],
+                        hint: '',
+                        params: [{ name: 'flag', type: 'boolean', default: false }],
+                    },
+                ],
+                edges: [{ from: 'a', to: 'b', kind: 'next' }],
+            }),
+        ).not.toThrow();
+
+        // `$${x}` 是转义 ⇒ 不是引用，不校验
+        expect(() =>
+            parseWorkflow({
+                nodes: [
+                    {
+                        id: 'a',
+                        name: 'A',
+                        actor: 'agent',
+                        guard: [],
+                        hint: '字面量 $${whatever}',
+                        params: [{ name: 'command', type: 'string', default: '' }],
+                    },
+                ],
+                edges: [],
+            }),
+        ).not.toThrow();
+
+        // 一个参数都没声明 ⇒ 参数袋自由，hint 里的占位符不校验（rule.param-bag-when-undeclared）
+        expect(() =>
+            parseWorkflow({
+                nodes: [{ id: 'a', name: 'A', actor: 'agent', guard: [], hint: '看 ${whatever}' }],
+                edges: [],
+            }),
+        ).not.toThrow();
+    });
+
+    it('paramsOf 与 parseWorkflow 报同一个不变量、同一个错误点（nodes[<i>].id）', () => {
+        const handmade = {
+            nodes: [{ id: 'x.y', params: [{ name: 'p', type: 'string', default: '' }] }],
+        };
+        const e = caught(() => paramsOf(handmade as never));
+        expect(e.code).toBe('invalid-def');
+        expect(e.path).toBe('nodes[0].id');
+    });
+
     it('同一节点内参数重名 → invalid-def', () => {
         const e = caught(() =>
             parseWorkflow(
@@ -477,6 +626,16 @@ describe('R4 hint 插值（提示词里读到参数）', () => {
         );
     });
 
+    it('空 list 插值成空串（合法值，不是 bug）：`评审人：${reviewers}` + [] → `评审人：`', () => {
+        expect(interpolate('评审人：${review.reviewers}', { review: { reviewers: [] } })).toBe('评审人：');
+    });
+
+    it('renderHint 出错定位到具体节点（nodes.<id>.hint），不再退化成裸 hint', () => {
+        const e = caught(() => renderHint({ id: 'review', hint: '${nope}' }, params));
+        expect(e.code).toBe('unknown-param');
+        expect(e.path).toBe('nodes.review.hint');
+    });
+
     it('`$$` 是字面量 `$`；孤立 `$` 原样保留', () => {
         expect(interpolate('$${command} 与 $5 与 ${ci.command}', params)).toBe('${command} 与 $5 与 npm test');
     });
@@ -560,6 +719,78 @@ describe('R5 单向导出：schema 快照（##311 §三.5）', () => {
         const badShape = caught(() => parseParamsSchema({ schema: snapshot.schema }));
         expect(badShape.code).toBe('invalid-param');
         expect(badShape.path).toBe('params.defaults');
+    });
+
+    it('快照期守定义期的三条不变量（与 R1 的三条同名用例成对）', () => {
+        const entry = (over: Record<string, unknown>) => ({
+            node: 'a',
+            name: 'x',
+            path: 'a.x',
+            type: 'string',
+            label: 'x',
+            default: '',
+            ...over,
+        });
+
+        // ① 局部名含 `.` ⇒ invalid-param
+        const dotName = caught(() =>
+            parseParamsSchema({ schema: [entry({ name: 'b.c', path: 'a.b.c' })], defaults: { a: { 'b.c': '' } } }),
+        );
+        expect(dotName.code).toBe('invalid-param');
+        expect(dotName.path).toBe('params.schema[0].name');
+
+        // ② 节点 id 含 `.` ⇒ invalid-param
+        const dotNode = caught(() =>
+            parseParamsSchema({ schema: [entry({ node: 'a.b', path: 'a.b.x' })], defaults: { 'a.b': { x: '' } } }),
+        );
+        expect(dotNode.code).toBe('invalid-param');
+        expect(dotNode.path).toBe('params.schema[0].node');
+
+        // ③ 同一 path 出现两次 ⇒ invalid-param
+        const dup = caught(() =>
+            parseParamsSchema({
+                schema: [entry({ default: 'p' }), entry({ default: 'q' })],
+                defaults: { a: { x: 'q' } },
+            }),
+        );
+        expect(dup.code).toBe('invalid-param');
+        expect(dup.path).toBe('params.schema[1].path');
+    });
+
+    it('enum 参数也 round-trip 恒等（enum 分支有实证）', () => {
+        const enumDef = defineWorkflow({
+            nodes: [
+                {
+                    id: 'publish',
+                    name: '发布',
+                    actor: 'system',
+                    guard: [],
+                    hint: '平台 ${platform}',
+                    params: [
+                        {
+                            name: 'platform',
+                            type: 'enum',
+                            label: '目标平台',
+                            default: 'bilibili',
+                            enum: ['bilibili', 'youtube'],
+                        },
+                    ],
+                },
+            ],
+            edges: [],
+        });
+        const snapshot = paramsOf(enumDef);
+        const round = parseParamsSchema(JSON.parse(JSON.stringify(snapshot)) as unknown);
+        expect(round).toEqual(snapshot);
+        expect(round.schema[0]).toEqual({
+            node: 'publish',
+            name: 'platform',
+            path: 'publish.platform',
+            type: 'enum',
+            label: '目标平台',
+            default: 'bilibili',
+            enum: ['bilibili', 'youtube'],
+        });
     });
 
     it('导出的是数据不是代码：改快照不影响原定义（单向）', () => {

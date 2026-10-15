@@ -99,7 +99,7 @@ if (a.status === 'moved') {
 | `project(events, def)` | 折线投影（纯函数）：`{ currentNode, path: Visit[], visits }` |
 | `paramsOf(def)` / `resolveParams(schema, values)` | 参数层：收集 `{ schema, defaults }` / 实例值校验 + 默认合并 |
 | `parseParamsSchema(snapshot)` | 参数快照的反向校验（形状封闭 + `defaults` 与 `schema` 对齐） |
-| `interpolate(template, params)` / `renderHint(node, params)` | `hint` 插值（`${局部名}` / `${节点 id.局部名}`，`$$` 转义） |
+| `interpolate(template, params)` / `renderHint(node, params)` | `hint` 插值（`${局部名}` / `${节点 id.局部名}`，`$$` 转义）；`renderHint` 出错定位到 `nodes.<id>.hint` |
 
 `Event` 复用 `@diy/talk` 原语：`{ id, author, anchor, content, causes, at }`，其中 `anchor = { type: 'node', data: { nodeId } }`。
 
@@ -158,8 +158,8 @@ createRuntime(wf, { registry, params });                      // ctx.params = �
 | `default` | **必填**（一个值都不填也要能跑）⇒ 合并后 `ctx.params` 恒为全量 |
 | 约束 | `enum?`（仅 enum，必填非空）/ `min?` `max?` `unit?`（仅 number）；**写错类型即报**（不静默忽略） |
 | 值 | 必须**纯 JSON**（标量 / 标量列表、有限数）：类型错 / 越界 / NaN → `invalid-param`；未知节点 / 未知参数名 → `unknown-param` |
-| `hint` 插值 | `${局部名}`（本节点）/ `${节点 id.局部名}`（全限定）；找不到参数 → `unknown-param`（**不插空串**）；`$$` = 字面量 `$` |
-| 单向导出 | `{ schema, defaults }` 快照供 UI / 文档渲染（`JSON.stringify(paramsOf(def))`）；`defaults` 只是派生视图（真源 = 每项 `default`） |
+| `hint` 插值 | `${局部名}`（本节点）/ `${节点 id.局部名}`（全限定）；**定义期**即校验占位符（拼错 → `invalid-def`，仅在工作流声明了参数时），运行期找不到参数 → `unknown-param`（**不插空串**）；`$$` = 字面量 `$`；空 `list` 插成空串（合法值） |
+| 单向导出 | `{ schema, defaults }` 快照供 UI / 文档渲染（`JSON.stringify(paramsOf(def))`）；`defaults` 只是派生视图（真源 = 每项 `default`）；`parseParamsSchema` 读回时守与定义期**同一组**不变量（`name` / `node` 不含 `.`、同 `path` 唯一） |
 | 只改值 | 参数**不得增删节点 / 边**；「本次跳过某步」= 参数让 `guard` / 边上的 `when` 短路 |
 
 > 工作流**没声明任何参数**时 `params` 不被校验、原样透传（参数层未启用）：形状封闭的前提是「形状已声明」。
@@ -223,7 +223,7 @@ createRuntime(wf, { registry, params });                      // ctx.params = �
 
 ```bash
 cd pkgs.ts/diy-flow
-./sha.sh test          # 意图测试（103 例：定义/容器/投影 26 + 槽位/求值/执行器 43 + 参数层 34）
+./sha.sh test          # 意图测试（110 例：定义/容器/投影 26 + 槽位/求值/执行器 43 + 参数层 41）
 ./sha.sh check         # 本包类型 + lint
 # 全仓检查（含产物 / 可执行位护栏）：在仓库根跑 ./sha.sh check
 ```

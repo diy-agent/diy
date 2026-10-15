@@ -284,14 +284,15 @@ export function parseParamDefs(value: unknown, path: string, code: FlowErrorCode
 export function paramsOf(def: { readonly nodes: readonly NodeDef[] }): ParamsSchema {
     const schema: ParamEntry[] = [];
     const defaults: Record<string, Record<string, ParamValue>> = {};
-    for (const node of def.nodes) {
+    def.nodes.forEach((node, i) => {
         const defs = node.params ?? [];
-        if (defs.length === 0) continue;
+        if (defs.length === 0) return;
         if (node.id.includes('.')) {
+            // 与 `parseWorkflow` 同一不变量、同一错误形态（`nodes[<i>].id`）—— 两条入口不许各报各的。
             throw new FlowError(
                 'invalid-def',
                 `节点 id 含 '.' 却又声明了参数：点号是参数路径的限定符（${JSON.stringify(node.id)}）`,
-                `nodes.${node.id}.params`,
+                `nodes[${i}].id`,
             );
         }
         const bag: Record<string, ParamValue> = {};
@@ -312,7 +313,7 @@ export function paramsOf(def: { readonly nodes: readonly NodeDef[] }): ParamsSch
             bag[param.name] = param.default;
         }
         defaults[node.id] = Object.freeze(bag);
-    }
+    });
     return Object.freeze({ schema: Object.freeze(schema), defaults: Object.freeze(defaults) });
 }
 
@@ -379,7 +380,23 @@ function parseParamEntry(value: unknown, path: string): ParamEntry {
     if (!isObject(value)) throw new FlowError('invalid-param', 'schema 条目应为对象', path);
     rejectUnknown(value, ENTRY_KEYS, path, 'invalid-param');
     const node = takeString(value.node, `${path}.node`, 'invalid-param');
+    // 定义期禁的三条，快照期一条不少（快照是读回的唯一入口，不变量不许分叉）：
+    // ① 节点 id 不含 `.`　② 局部名不含 `.`　③ 同一 path 只出现一次（③ 在 parseParamsSchema 收尾）。
+    if (node.includes('.')) {
+        throw new FlowError(
+            'invalid-param',
+            `节点 id 不得含 '.'（点号是参数路径的限定符）：${JSON.stringify(node)}`,
+            `${path}.node`,
+        );
+    }
     const name = takeString(value.name, `${path}.name`, 'invalid-param');
+    if (name.includes('.')) {
+        throw new FlowError(
+            'invalid-param',
+            `参数名不得含 '.'（点号是节点限定符，全限定名 = 节点 id.局部名）：${JSON.stringify(name)}`,
+            `${path}.name`,
+        );
+    }
     const full = `${node}.${name}`;
     if (value.path !== full) {
         throw new FlowError(
@@ -450,6 +467,18 @@ export function parseParamsSchema(value: unknown, path = 'params'): ParamsSchema
     rejectUnknown(value, SCHEMA_KEYS, path, 'invalid-param');
     if (!Array.isArray(value.schema)) throw new FlowError('invalid-param', 'schema 应为数组', `${path}.schema`);
     const schema = value.schema.map((item, i) => parseParamEntry(item, `${path}.schema[${i}]`));
+    // 一条 path 只能出现一次：重复会让下游（UI 按 path 拆键、宿主按 path 拆值袋）拿到两个同键条目。
+    const paths = new Set<string>();
+    schema.forEach((entry, i) => {
+        if (paths.has(entry.path)) {
+            throw new FlowError(
+                'invalid-param',
+                `参数 path 重复 ${JSON.stringify(entry.path)}（快照里一条 path 只能出现一次）`,
+                `${path}.schema[${i}].path`,
+            );
+        }
+        paths.add(entry.path);
+    });
     const defaults = deriveDefaults(schema);
     if (!isObject(value.defaults) || !sameValues(value.defaults, defaults)) {
         throw new FlowError(
@@ -521,6 +550,27 @@ function isParamList(value: unknown): value is readonly ParamScalar[] {
     );
 }
 
+/** `hint` 占位符语法（唯一真源）：`${ref}` 引用 + `$$` 转义（见 `interpolate`） */
+const PLACEHOLDER = /\$(\$|\{([^{}]*)\})/g;
+
+/**
+ * 扫出 `hint` 里的占位符引用（供**定义期静态校验**复用同一套语法，见 `define.ts`）。
+ *
+ * 只认 `interpolate` 认的那两种：`${ref}`（返回 `ref`）、`$$`（转义，不算引用）。
+ * `unclosed` = 模板里还剩没配对的 `${`（`$$` 已消费 ⇒ 不会被误认）。
+ */
+export function scanPlaceholders(template: string): { refs: string[]; unclosed: boolean } {
+    const refs: string[] = [];
+    const pattern = new RegExp(PLACEHOLDER.source, 'g');
+    let match: RegExpExecArray | null;
+    let cursor = 0;
+    while ((match = pattern.exec(template)) !== null) {
+        cursor = match.index + match[0].length;
+        if (match[1] !== '$') refs.push(match[2]);
+    }
+    return { refs, unclosed: template.slice(cursor).includes('${') };
+}
+
 /**
  * `hint` 插值：把 `${参数}` 换成值。
  *
@@ -561,7 +611,8 @@ export function interpolate(
 export function renderHint(
     node: { readonly id: string; readonly hint: string },
     params: Readonly<Record<string, unknown>>,
-    path = 'hint',
+    path?: string,
 ): string {
-    return interpolate(node.hint, params, { node: node.id, path });
+    // 出错定位到具体节点（`nodes.<id>.hint`）—— 包内所有错误都点路径，插值错没道理退化成裸 `hint`。
+    return interpolate(node.hint, params, { node: node.id, path: path ?? `nodes.${node.id}.hint` });
 }
