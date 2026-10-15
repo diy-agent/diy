@@ -57,13 +57,19 @@ export interface FlowAuditRecord {
     readonly ref?: Readonly<Record<string, string>>;
 }
 
-/** 四份文件的路径（唯一出口；别处不许自己 join） */
+/** 文件的路径（唯一出口；别处不许自己 join）—— 四份领域/审计文件 + 讨论流（旁注，见 `FlowPost`）。 */
 export function flowDir(uri: string): string {
     return join(taskDir(uri), "flow");
 }
 
-export function flowFile(uri: string, name: "instance" | "state" | "path" | "events"): string {
-    const file = name === "path" ? "path.jsonl" : name === "events" ? "events.jsonl" : `${name}.json`;
+export function flowFile(uri: string, name: "instance" | "state" | "path" | "events" | "threads"): string {
+    const file = name === "path"
+        ? "path.jsonl"
+        : name === "events"
+            ? "events.jsonl"
+            : name === "threads"
+                ? "threads.jsonl"
+                : `${name}.json`;
     return join(flowDir(uri), file);
 }
 
@@ -253,8 +259,108 @@ export function readAudit(uri: string): { records: FlowAuditRecord[]; skipped: n
     return { records, skipped };
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 讨论流（##342）：`flow/threads.jsonl` —— 打回意见与讨论的**一等载体**
+// ═══════════════════════════════════════════════════════════════
+//
+// 定性（**旁注 / 审计**，不是领域态）：
+//   · 与 `events.jsonl` 并列、同样**可清可丢**：删掉 / 损坏都**不影响推进**（`rule.core-log`）；
+//   · **不进 `state.json`**（`rule.domain-first`：领域态只有 position / path / params / done）；
+//   · **驱动判据不读它**（打回判据看节点结论末行，不看这里）。
+// 为什么还要它：打回反复争论的**意见正文**此前只有 `--note`（审计后缀），没有一等载体 ——
+// 讨论要可见、要留痕，就得有自己的流（##342 的用户原话）。
+//
+// 形状（判别联合：`type` 同级 = 所有分支共有；三分支字段集相同 ⇒ 无私有数据、不设 `data`）：
+//   `{ id, at, author, type, anchor:{from,to,seq}, text }`
+// **锚点 = 一条真打回边的一次穿越**：`from` = 打回前位置、`to` = 落点节点、
+// `seq` = **落点那次驻留**的 `Visit.seq`。一次 bounce 恰好创生一次驻留 ⇒ 该三元组唯一；
+// 同节点二次打回各是各的（不同 `seq`）—— 这正是 ##320 P1-1「逐驻留键必须带 seq」的教训。
+// 线程的文本 id = `from->to#seq`（人可读、可当 CLI 参数）。
+
+/** 发言的类型：普通发言（含自动打回时的意见正文）/ 宣布线程已解决 / 升级人裁决 */
+export type FlowPostType = "note" | "resolved" | "escalate";
+
+/** 线程锚点 = 一条**真打回边的一次穿越**（见上面「形状」；锚点必须真，不造数据） */
+export interface FlowAnchor {
+    readonly from: string;
+    readonly to: string;
+    readonly seq: number;
+}
+
+/** 一条发言（`threads.jsonl` 的一行） */
+export interface FlowPost {
+    readonly id: string;
+    readonly at: string;
+    /** 谁说的：`cli`（人敲） / agent 标识（驱动环起的轮次） / `human` */
+    readonly author: string;
+    readonly type: FlowPostType;
+    readonly anchor: FlowAnchor;
+    readonly text: string;
+}
+
+/** 线程的文本 id（CLI 参数 / UI 键）：`from->to#seq` */
+export function anchorKey(anchor: FlowAnchor): string {
+    return `${anchor.from}->${anchor.to}#${anchor.seq}`;
+}
+
+/** 反解线程 id —— 形状不对即抛（这是个**输入闸门**，不静默吞掉） */
+export function parseAnchorKey(key: string): FlowAnchor {
+    const m = /^(.*?)->(.*?)#(\d+)$/.exec(key.trim());
+    if (!m || m[1] === "" || m[2] === "") {
+        throw new Error(`线程写法应为 <打回源节点>-><落点节点>#<落点驻留序号>，实得 ${JSON.stringify(key)}`);
+    }
+    return { from: m[1]!, to: m[2]!, seq: Number(m[3]) };
+}
+
+const POST_TYPES: readonly FlowPostType[] = ["note", "resolved", "escalate"];
+
+/** 一行的形状校验（读侧容错用：形状不对 ⇒ 跳过并计数，不当成发言） */
+function parsePost(raw: unknown): FlowPost | null {
+    if (typeof raw !== "object" || raw === null) return null;
+    const o = raw as Record<string, unknown>;
+    const { id, at, author, type, text } = o;
+    if (typeof id !== "string" || typeof at !== "string" || typeof author !== "string" || typeof text !== "string") return null;
+    if (typeof type !== "string" || !POST_TYPES.includes(type as FlowPostType)) return null;
+    const a = o["anchor"];
+    if (typeof a !== "object" || a === null) return null;
+    const { from, to, seq } = a as Record<string, unknown>;
+    if (typeof from !== "string" || typeof to !== "string" || typeof seq !== "number" || !Number.isInteger(seq)) return null;
+    return { id, at, author, type: type as FlowPostType, anchor: { from, to, seq }, text };
+}
+
+/** 追加一条发言（append-only；目录不存在就建） */
+export function appendPost(uri: string, post: FlowPost): void {
+    const file = flowFile(uri, "threads");
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, `${JSON.stringify(post)}\n`, "utf-8");
+}
+
 /**
- * 收尾：把领域态标记为**已跑完**（`FlowState.done = true`）。
+ * 读讨论流（**容错**：坏行跳过并计数 —— 旁注坏了不该影响运行，与 `readAudit` 同一立场，
+ * 也与 `path.jsonl` 的「坏了就亮错」相反：那是重建材料，这是旁注）。
+ */
+export function readPosts(uri: string): { posts: FlowPost[]; skipped: number } {
+    const file = flowFile(uri, "threads");
+    if (!existsSync(file)) return { posts: [], skipped: 0 };
+    const posts: FlowPost[] = [];
+    let skipped = 0;
+    for (const line of readFileSync(file, "utf-8").split("\n")) {
+        if (line.trim() === "") continue;
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(line);
+        } catch {
+            skipped += 1;
+            continue;
+        }
+        const post = parsePost(parsed);
+        if (post) posts.push(post);
+        else skipped += 1;
+    }
+    return { posts, skipped };
+}
+
+/** 收尾：把领域态标记为**已跑完**（`FlowState.done = true`）。
  *
  * 用的就是内核自己的写法（`execute.ts` 终态分支也是原地加标记 `{ ...state, done: true }`，**不经过
  * `advance`** —— 那不是一次位置变更），再交给内核 `parseFlowState` 兜住不变式（`done ⇒ 已进入`）。

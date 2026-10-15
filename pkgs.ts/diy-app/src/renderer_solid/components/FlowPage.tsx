@@ -8,9 +8,10 @@
  *  · `flow show` → 折线 / 当前节点 / 参数 / 终态（##319 已在 main）；
  *  · `flow view` → 产物（##337；未合入时本页显示「产物区待接入」，**不造假数据**）。
  *
- * 三个 view（注册表在 `shared/view-registry.ts`）：
+ * 四个 view（注册表在 `shared/view-registry.ts`）：
  *  · `flow.stage`      —— center：泳道图（折线 + 每步产物）
  *  · `flow.inspector`  —— right：节点详情 + 参数表单
+ *  · `flow.dispute`    —— right（下部）：打回讨论线程（##342；锚点 = 折线上的真打回边）
  */
 import { createEffect, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { diyService } from "../lib/rpc";
@@ -20,7 +21,15 @@ import { ViewGrid } from "./ViewGrid";
 import { FlowStage, visitKey, type ArtifactState } from "./flow/FlowStage";
 import { NodeDetail } from "./flow/NodeDetail";
 import { ParamForm } from "./flow/ParamForm";
-import { loadArtifacts as loadArtifactsOf, loadFlow, type FlowInstanceView } from "../lib/flow-view";
+import { DisputePanel } from "./flow/DisputePanel";
+import {
+    fetchThreads,
+    loadArtifacts as loadArtifactsOf,
+    loadFlow,
+    threadIdOfVisit,
+    type FlowInstanceView,
+    type FlowThreadsView,
+} from "../lib/flow-view";
 import { notificationStore } from "../store/notificationStore";
 
 const PAGE = "flow";
@@ -31,6 +40,11 @@ export function FlowPage(props: { uri: string }) {
     const [artifacts, setArtifacts] = createSignal<Record<string, ArtifactState>>({});
     const [selected, setSelected] = createSignal<number | null>(null);
     const [busy, setBusy] = createSignal(false);
+    /** 讨论线程（##342）：只走 RPC（`flow thread list`）—— 界面永不读 `flow/*.json` */
+    const [threads, setThreads] = createSignal<FlowThreadsView | null>(null);
+    const [threadError, setThreadError] = createSignal<string | null>(null);
+    /** 用户在讨论区里点的线程（null = 跟着折线上选中的打回卡 / 缺省最后一条打回） */
+    const [pickedThread, setPickedThread] = createSignal<string | null>(null);
     let alive = true;
     onCleanup(() => (alive = false));
 
@@ -47,6 +61,17 @@ export function FlowPage(props: { uri: string }) {
         setArtifacts(next);
     };
 
+    /**
+     * 取讨论线程（##342）。旁注取不到**不影响页面**：`threads` 置空、原因进 `threadError`
+     * （错误位，对照 ##337 P2-B）—— 折线 / 产物 / 推进照常。
+     */
+    const loadThreads = async () => {
+        const probe = await fetchThreads(props.uri);
+        if (!alive) return;
+        setThreads(probe.ok ? probe.value : null);
+        setThreadError(probe.ok ? null : probe.reason);
+    };
+
     const load = async () => {
         setBusy(true);
         setError(null);
@@ -54,7 +79,7 @@ export function FlowPage(props: { uri: string }) {
             const v = await loadFlow(props.uri);
             if (!alive) return;
             setView(v);
-            await loadArtifacts(v);
+            await Promise.all([loadArtifacts(v), loadThreads()]);
         } catch (e) {
             if (!alive) return;
             const msg = e instanceof Error ? e.message : String(e);
@@ -71,6 +96,7 @@ export function FlowPage(props: { uri: string }) {
             () => props.uri,
             () => {
                 setSelected(null);
+                setPickedThread(null);
                 void load();
             },
         ),
@@ -87,8 +113,13 @@ export function FlowPage(props: { uri: string }) {
     const move = async (kind: "advance" | "bounce", to?: string) => {
         setBusy(true);
         try {
-            if (kind === "advance") await diyService.diy.flow.advance({ uri: props.uri, to, ref: undefined, note: undefined });
-            else await diyService.diy.flow.bounce({ uri: props.uri, to, ref: undefined, note: undefined });
+            // 入参键要**齐全**（typed-client 的出参类型把每个键都写实，缺一个就过不了类型检查）——
+            // `opinion`（##342 的意见正文）留给自己发起的打回用：UI 本轮只读讨论流，不代填意见。
+            if (kind === "advance") {
+                await diyService.diy.flow.advance({ uri: props.uri, to, ref: undefined, note: undefined });
+            } else {
+                await diyService.diy.flow.bounce({ uri: props.uri, to, ref: undefined, note: undefined, opinion: undefined, author: undefined });
+            }
             await load();
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
@@ -98,6 +129,22 @@ export function FlowPage(props: { uri: string }) {
         }
     };
 
+    /**
+     * 讨论区当前活跃的线程（纯派生，优先级从高到低）：
+     *   ① 用户在讨论区点的那条；② **折线上选中的驻留**若是一次打回（点打回卡 ⇒ 展开该锚点）；
+     *   ③ 缺省 = 最后一条打回（最近发生的争议）。
+     */
+    const activeThread = () => {
+        if (pickedThread() !== null) return pickedThread();
+        const v = view();
+        if (!v) return null;
+        if (selected() !== null) {
+            const id = threadIdOfVisit(v.trajectory, selected()!);
+            if (id !== null) return id;
+        }
+        return threads()?.threads[threads()!.threads.length - 1]?.id ?? null;
+    };
+
     const page = findPage(PAGE)!;
 
     const viewFor = (viewId: string) => {
@@ -105,7 +152,18 @@ export function FlowPage(props: { uri: string }) {
         if (!v) return <div class="p-3 text-body opacity-60">加载中…</div>;
         switch (viewId) {
             case "flow.stage":
-                return <FlowStage view={v} artifacts={artifacts()} selected={selected()} onSelect={setSelected} />;
+                return (
+                    <FlowStage
+                        view={v}
+                        artifacts={artifacts()}
+                        selected={selected()}
+                        onSelect={(i) => {
+                            setSelected(i);
+                            // 点折线上的**打回卡** ⇒ 讨论区跟着换到那条锚点（同一份事件流，两种投影）
+                            setPickedThread(null);
+                        }}
+                    />
+                );
             case "flow.inspector":
                 return (
                     <div class="flex h-full flex-col overflow-hidden">
@@ -127,6 +185,15 @@ export function FlowPage(props: { uri: string }) {
                             <ParamForm view={v} uri={props.uri} onSaved={(next) => setView(next)} />
                         </div>
                     </div>
+                );
+            case "flow.dispute":
+                return (
+                    <DisputePanel
+                        threads={threads()}
+                        probeError={threadError()}
+                        selected={activeThread()}
+                        onSelect={setPickedThread}
+                    />
                 );
             default:
                 return <div class="p-3 text-body opacity-60">未注册的 view: {viewId}</div>;

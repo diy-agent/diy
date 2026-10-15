@@ -322,6 +322,32 @@ describe("flow run：自动轮转", () => {
         expect(ev.find((e) => e.kind === "bounce")?.author).toBe("评审 agent");
     }, 150_000);
 
+    /**
+     * ##342：自动打回的**评审意见正文**要有它自己的载体（可见、留痕）。
+     *
+     * 判据：驱动环走 bounce 边时把 `verdict.reason`（结论末行括号里那句话）落进讨论流
+     * `flow/threads.jsonl`，锚点 = 这次打回的落点驻留（`review#1 → implement#2`），作者 = 评审 agent。
+     * 它**只是旁注**（`rule.core-log`）：不进 `state.json`、删了不影响推进（上一条幂等用例照常）。
+     */
+    it("自动打回的意见进讨论流：锚点 = 那次打回、作者 = 评审 agent（不参与驱动判据）", async () => {
+        const r = await fx.sh.getJson(`./diy.sh flow thread list ${uri}`);
+        const d = r.data as Record<string, unknown>;
+        const threads = (d["threads"] as Array<Record<string, unknown>>) ?? [];
+        expect(threads.map((t) => t["id"])).toEqual(["review->implement#2"]);
+        // 锚点对得上折线：源 = review#1、落点 = implement#2、折线上第 5 条
+        expect(threads[0]).toMatchObject({ real: true, fromSeq: 1, at: 4, status: "open" });
+        const posts = (threads[0]!["posts"] as Array<Record<string, unknown>>) ?? [];
+        expect(posts).toHaveLength(1);
+        expect(posts[0]).toMatchObject({
+            author: "评审 agent",
+            type: "note",
+            anchor: { from: "review", to: "implement", seq: 2 },
+        });
+        expect(String(posts[0]!["text"])).toContain("边界条件没覆盖");
+        // 旁注不是领域态：意见正文一个字都不进 state.json（`rule.domain-first`）
+        expect(readFileSync(join(fx.HOME, uri, "flow", "state.json"), "utf-8")).not.toContain("边界条件");
+    }, 60_000);
+
     it("幂等：重复 run 立刻在同一个点停下，不重复消费已走完的节点", async () => {
         const before = (await show(uri)).trajectory.length;
         const { stop, frames } = await runFlow(uri);
