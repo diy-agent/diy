@@ -445,6 +445,19 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().getLimits();
   });
+  // 会话/轮次注册表（##240）：一条**全局**订阅（不是 per-task）—— 快照 + delta，只推状态不推 op。
+  // 不加 --watch = 只 yield 一份快照就结束（CLI 无参路径）；signal = 传输断开即退订。
+  binding.on(app.agent.local.sessions, async function* ({ input, signal }) {
+    const { sessionRegistry } = await import("./session-registry");
+    for await (const frame of sessionRegistry.subscribe({ watch: input.watch ?? false, signal })) {
+      yield frame;
+    }
+  });
+  // 写运行限制：写盘 + 失效缓存（下一轮生效）；返回值 = 合并后的生效值（含环境变量覆盖）
+  binding.on(app.agent.local.setLimits, async ({ input }) => {
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().setLimits(input);
+  });
   // 逐步用量账本：结构化直出（分组/汇总在 shared/usage 的纯函数里，两端同一套口径）
   binding.on(app.agent.local.usage, async ({ input }) => {
     noteRendererTouch("diy.agent.local.usage", input.taskUri);

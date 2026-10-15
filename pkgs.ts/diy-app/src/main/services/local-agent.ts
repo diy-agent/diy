@@ -30,7 +30,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
-import { keyOf, llmFile, llmLogRelPath, localDir, opsFile } from "../core/local-paths";
+import { keyOf, llmFile, llmLogRelPath, localDir, opsFile, sessionIdOf } from "../core/local-paths";
 
 // 再导出：测试与产品共用同一路径实现（不把 key 算法复制到测试里）
 export { opsFile };
@@ -61,6 +61,7 @@ import { appendAudit } from "./agent-audit";
 import { opsFeed } from "./ops-feed";
 import { AsyncQueue, withCleanup } from "./async-queue";
 import { noteTurnEnd, noteTurnStart } from "./runtime-context";
+import { sessionRegistry } from "./session-registry";
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
 import {
     bucketsOf,
@@ -396,10 +397,6 @@ function markShape(s: StepStreamShape, ch: "r" | "t" | "x"): void {
     else s.toolCalls++;
 }
 
-/** zen/go 会话亲和头：按 task 稳定（实测缺失会被 MissingSessionID 拒绝） */
-function sessionIdOf(taskUri: string): string {
-    return `local-${keyOf(taskUri)}`;
-}
 
 /**
  * runtime 容器作为**尾部 user 消息**插在本轮输入之前（144 的投递设计）。
@@ -1063,6 +1060,18 @@ export class LocalAgentManager {
 
     constructor(modelResolver?: (id: string, key: string) => LanguageModel) {
         this.modelResolver = modelResolver;
+        // 注册表（##240）的活态属性取值器：viewers 只由**内容**订阅者构成（R3 —— 注册表自身的
+        // 订阅者不许计入，否则注册表一开全库会话都显示"有人看"）；queue = 待投递留言条数。
+        sessionRegistry.setDeps({
+            viewersOf: (uri) => this.watchers(uri),
+            queueOf: (uri) => {
+                try {
+                    return this.queue.list(uri).length;
+                } catch {
+                    return 0; // 队列读盘失败不能让注册表崩（它只是"此刻的事实"，不是权威落盘）
+                }
+            },
+        });
     }
 
     /**
@@ -1117,21 +1126,48 @@ export class LocalAgentManager {
         return { rm, key: this.modelResolver ? "" : resolveModelKey(rm) };
     }
 
-    /** 生效限制：首次使用读 limits.json 并缓存（改文件需重启应用，与 zen key 同生命周期语义） */
+    /** 读 $DIY_HOME/local/limits.json（不存在/解析失败 → null，交由 resolveLimits 逐级回退） */
+    private readLimitsFile(): Partial<LocalAgentLimits> | null {
+        try {
+            if (existsSync(limitsFile())) {
+                return JSON.parse(readFileSync(limitsFile(), "utf-8")) as Partial<LocalAgentLimits>;
+            }
+        } catch (e) {
+            console.warn(`[local-agent] limits.json 解析失败，用默认值:`, e);
+        }
+        return null;
+    }
+
+    /**
+     * 生效限制：首次使用读 limits.json 并缓存（与 zen key 同生命周期语义）。
+     * ⚠️ 缓存**必须**由 `setLimits` 显式失效，否则页面改了不生效（反直觉坑，##240）。
+     */
     getLimits(): LocalAgentLimits {
         if (!this._limits) {
-            let file: Partial<LocalAgentLimits> | null = null;
-            try {
-                if (existsSync(limitsFile())) {
-                    file = JSON.parse(readFileSync(limitsFile(), "utf-8")) as Partial<LocalAgentLimits>;
-                }
-            } catch (e) {
-                console.warn(`[local-agent] limits.json 解析失败，用默认值:`, e);
-            }
-            this._limits = resolveLimits(file);
+            this._limits = resolveLimits(this.readLimitsFile());
             console.log(`[local-agent] 生效运行限制: ${JSON.stringify(this._limits)}`);
         }
         return this._limits;
+    }
+
+    /**
+     * 写运行限制（##240 第 3 项）：patch 合并进 `$DIY_HOME/local/limits.json`，并**立即失效缓存**。
+     *
+     * 语义：**下一轮生效** —— 在跑的轮次用的是它起跑时读到的值（`runTurn` 开头 `getLimits()` 一次），
+     * 本轮不中途换挡（换挡会让同轮前后步数口径不一致）。
+     *
+     * 优先级提醒：环境变量 `DIY_LOCAL_*` **高于**文件（见 resolveLimits）；若某字段被环境变量
+     * 钉死，写文件对它无效 —— 返回值是合并后的**生效值**，调用方以它为准即可发现。
+     */
+    setLimits(patch: Partial<LocalAgentLimits>): LocalAgentLimits {
+        const merged: Partial<LocalAgentLimits> = { ...(this.readLimitsFile() ?? {}) };
+        for (const [k, v] of Object.entries(patch) as [keyof LocalAgentLimits, unknown][]) {
+            // 非法值忽略（不写坏文件）：与 resolveLimits 同一判据（有限正数）
+            if (typeof v === "number" && Number.isFinite(v) && v > 0) merged[k] = v;
+        }
+        writeFileSync(limitsFile(), `${JSON.stringify(merged, null, 2)}\n`, "utf-8");
+        this._limits = null; // 失效缓存：下一次 getLimits() 现读（含新值）
+        return this.getLimits();
     }
 
     // 【已移除】sinceTurnIdOf / deliveryOptsOf —— 旧"读压缩账边界"的投递口径。
@@ -1156,6 +1192,7 @@ export class LocalAgentManager {
         // 用 `next-turn`（本轮收尾后整批投）而不是 `next-step`：排队语义是"排在这一轮
         // **之后**"；`next-step` 会插进正在跑的轮次内部，把"谁先说话谁先投"的顺序打乱。
         const items = this.queue.add(taskUri, DEFAULT_STEER_MODE, message);
+        sessionRegistry.noteActivity(taskUri); // queue 变化 → 注册表订阅方即时可见
         // items 的末条就是刚入队的那条（`add` 返回整批快照）
         const item = items[items.length - 1]!;
         const turnId = this.receiptTurnId(sess, item.id);
@@ -1946,7 +1983,9 @@ export class LocalAgentManager {
 
     /** 入队一条插话（只入队，不唤醒轮次；正在跑的轮次按投递时机取走，没有则留待下一轮）。 */
     steerAdd(taskUri: string, mode: SteerMode, text: string): SteerItem[] {
-        return this.queue.add(taskUri, mode, text);
+        const r = this.queue.add(taskUri, mode, text);
+        sessionRegistry.noteActivity(taskUri); // queue 是注册表的活态属性
+        return r;
     }
 
     /** 当前待投递的插话（FIFO，顺序即投递顺序） */
@@ -1956,17 +1995,23 @@ export class LocalAgentManager {
 
     /** 取消一条待投递插话（幂等：id 不存在就返回原队列） */
     steerCancel(taskUri: string, id: string): SteerItem[] {
-        return this.queue.remove(taskUri, id);
+        const r = this.queue.remove(taskUri, id);
+        sessionRegistry.noteActivity(taskUri);
+        return r;
     }
 
     /** 切换一条插话的投递时机（next-step ⇄ next-turn；差别只在投递点，两者都整批投）。 */
     steerToggleMode(taskUri: string, id: string): SteerItem[] {
-        return this.queue.toggleMode(taskUri, id);
+        const r = this.queue.toggleMode(taskUri, id);
+        sessionRegistry.noteActivity(taskUri);
+        return r;
     }
 
     /** 重排待投递插话的顺序（横条上的拖拽排序；顺序即投递顺序） */
     steerReorder(taskUri: string, ids: string[]): SteerItem[] {
-        return this.queue.reorder(taskUri, ids);
+        const r = this.queue.reorder(taskUri, ids);
+        sessionRegistry.noteActivity(taskUri);
+        return r;
     }
 
     /**
@@ -1983,6 +2028,7 @@ export class LocalAgentManager {
         // 会话都要删了，排队中的插话无处可投 —— 一并清掉（否则横条会一直挂着"待发送"）
         try {
             this.queue.clear(taskUri);
+            sessionRegistry.noteActivity(taskUri);
         } catch (e) {
             console.error(`[local-agent] 清空插话队列失败 ${taskUri}:`, e);
             ok = false;
@@ -2298,6 +2344,8 @@ export class LocalAgentManager {
             //   「永远显示生成中 + 停止按钮点了没反应」，用户只能重启。
             //   noteTurnEnd 是 Map.delete，幂等：closeTurn 已注销过时，这里再删一次无害。
             noteTurnEnd(taskUri);
+            // 注册表兜底：装配期抛错等"closeTurn 没跑到"的路径也要把 turn 摘掉（幂等）。
+            sessionRegistry.noteTurnEnd(taskUri, { type: "aborted", data: { source: "detached" } });
             // 归档本轮（##305）：注销注册表 + 关掉所有订阅流（消费端据此正常收尾）。
             // 放在 noteTurnEnd 之后：先让「运行态真值」翻下去，再放消费端走完。
             this.turns.delete(taskUri);
@@ -2329,6 +2377,7 @@ export class LocalAgentManager {
         const turnId = `t${Date.now()}`;
         const cwd0 = resolveCwdWithNote(diyHome(), taskUri).cwd;
         noteTurnStart({ taskUri, model: model, cwd: cwd0 });
+        sessionRegistry.noteTurnStart(taskUri, { turnId, model, cwd: cwd0 });
         appendAudit(diyHome(), {
             phase: "turn-start",
             taskUri,
@@ -2497,6 +2546,7 @@ export class LocalAgentManager {
                 }
                 try {
                     this.queue.remove(taskUri, item.id);
+                    sessionRegistry.noteActivity(taskUri);
                 } catch (e) {
                     // 出队失败：ops 已有这条块（不会丢），但队列里还留着（可能被再投一遍）。
                     // 不能静默 —— 重复投递是用户可见的行为差异。
@@ -2543,6 +2593,9 @@ export class LocalAgentManager {
                 sess.store.apply(op);
             }
             noteTurnEnd(taskUri);
+            // 注册表收口（R5）：只清 turn、**条目保留**（turnCount +1 / 记末轮 endReason）。
+            // 放在同一段同步副作用里，与 closeTurn 的其他落定动作同生共死。
+            sessionRegistry.noteTurnEnd(taskUri, reason, { steps, tokens: acc.total });
             appendAudit(diyHome(), {
                 phase: "turn-end",
                 taskUri,
@@ -2616,6 +2669,7 @@ export class LocalAgentManager {
             if (item.steerId) {
                 try {
                     this.queue.remove(taskUri, item.steerId);
+                    sessionRegistry.noteActivity(taskUri);
                 } catch (e) {
                     console.error(`[local-agent] 插话出队失败（已落盘，可能重复投递）${taskUri}#${item.steerId}:`, e);
                 }
@@ -2763,6 +2817,7 @@ export class LocalAgentManager {
                             yield* flushSteer();
                             stepN++;
                             stepId = `${turnId}_s${stepN}`;
+                            sessionRegistry.noteTurnStep(taskUri, stepN);
                             yield* emit({ op: "start", id: stepId, kind: "step", parent: turnId });
                             break;
                         case "reasoning-start": {
@@ -2923,6 +2978,7 @@ export class LocalAgentManager {
                                 const rates = costOf(priceModel, b.inputTotal);
                                 const cost = rates ? costBreakdown(rates, b) : null;
                                 turnCost = sumCosts([turnCost, cost ?? { noCache: 0, cacheRead: 0, cacheWrite: b.cacheWrite == null ? null : 0, text: 0, reasoning: 0, total: 0 }]);
+                                sessionRegistry.noteTurnUsage(taskUri, acc.total);
                                 appendUsage(taskUri, {
                                     ts: new Date().toISOString(),
                                     turnId,

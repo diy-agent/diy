@@ -754,6 +754,52 @@ export const apiDef = RpcSchema.router({
                 }),
               }),
               /**
+               * 会话/轮次注册表（##240）：**本次 main 进程启动后活跃过的会话**（内存态，进程死即消）。
+               *
+               * 与 `running` 的分工：`running` = 「**此刻**在跑」（轮次结束即摘掉）；
+               * 这里是「**本次启动以来活跃过**」—— 轮次结束只清 `turn`、条目保留（R5），
+               * 故它同时回答"谁在跑"与"今天动过哪些会话"，且带 steps / tokens / queue / viewers /
+               * lastEndReason 深度字段（`running` 只有 taskUri / model / cwd / since）。
+               *
+               * 订阅语义（R2：状态 ⊥ 内容）：**只推注册表状态、绝不推 op** —— 对话内容归每条会话的
+               * `opsWatch`（##307）。这条流**无水位**（快照 + delta 即可，状态可随时整体重放）。
+               * `--watch` 的订阅者**不计入 `viewers`**（R3）：注册表是"看状态"，不是"看内容"。
+               * CLI 别名：`diy agent local sessions`（不带 `--watch` = 打一份快照就退出）。
+               */
+              sessions: RpcSchema.serverStream({
+                desc: `会话/轮次注册表（本次启动后活跃过的会话）：快照 + 增量；只推状态不推 op（内容见 opsWatch）`,
+                input: {
+                  watch: z
+                    .boolean()
+                    .optional()
+                    .cliOption({ desc: "持续订阅注册表变更（缺省只打一份快照就退出）" }),
+                },
+                output: z.any(),
+              }),
+              /**
+               * 写运行限制（##240 第 3 项）：写 `$DIY_HOME/local/limits.json` 并**即时失效缓存**。
+               * 语义 = **下一轮生效**（在跑的轮次沿用起跑时的值）；环境变量 `DIY_LOCAL_*` 优先级更高。
+               */
+              setLimits: RpcSchema.unary({
+                desc: `写运行限制（下一轮生效；环境变量 DIY_LOCAL_* 优先级更高，会盖过写入值）`,
+                input: {
+                  maxSteps: z.number().optional().cliOption({ desc: "单轮最大模型步数（>0）" }),
+                  maxOutputTokens: z.number().optional().cliOption({ desc: "单次模型请求输出上限（>0）" }),
+                  bashTimeoutMs: z.number().optional().cliOption({ desc: "单条 bash 命令超时毫秒（>0）" }),
+                  outputClipChars: z.number().optional().cliOption({ desc: "bash 输出回喂截断字符数（>0）" }),
+                  readMaxBytes: z.number().optional().cliOption({ desc: "read 工具单次返回字节上限（>0）" }),
+                  maxSteerQueue: z.number().optional().cliOption({ desc: "插话队列条数上限（>0）" }),
+                },
+                output: z.object({
+                  maxSteps: z.number(),
+                  maxOutputTokens: z.number(),
+                  bashTimeoutMs: z.number(),
+                  outputClipChars: z.number(),
+                  readMaxBytes: z.number(),
+                  maxSteerQueue: z.number(),
+                }),
+              }),
+              /**
                * 逐步用量账本（`<key>.usage.jsonl`）：结构化返回，UI 的明细/看板与 CLI 走**同一份数据**。
                * 不做服务端预聚合 —— 分组/汇总在 shared/usage.ts 里（纯函数），两端同一套口径。
                */
