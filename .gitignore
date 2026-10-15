@@ -50,6 +50,7 @@ data/
 !.idea/typescript-compiler.xml
 
 .worktree/
+_diy.worktrees/
 .playwright-cli/
 .hermes/
 .commandcode/
