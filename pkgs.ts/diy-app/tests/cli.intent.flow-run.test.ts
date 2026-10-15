@@ -15,7 +15,10 @@
 //      **任务会话正忙时不替用户插话**（停因 `session-busy`，##341 review1 P2-1 —— 老实现会
 //      把节点提示词排进用户会话的插话队列，且停因报 `empty-conclusion` 指错病因）。
 //   3. **幂等**：重复 `run` 接着走、不重复消费已完成的节点（判据一律读 `flow show`）。
-//   4. **观察面**（不新增真源）：`flow show` 的折线/位置/终态、产物袋、`events.jsonl` 的 `author`
+//   4. **落袋失败不挡轮次**（##341 review1 P3-4 / review2 P3-1）：agent 结论整段是纯 JSON 对象
+//      而节点声明的是 `diff`/`patch` ⇒ 试译必抛。立场 = **不拿派生数据作废领域步**：
+//      turn 帧亮 `artifactError`，环照常推进，袋里一个字节都不写。
+//   5. **观察面**（不新增真源）：`flow show` 的折线/位置/终态、产物袋、`events.jsonl` 的 `author`
 //      （谁推的这一步）。
 //
 // 为什么用桩上游：桩（本地 HTTP + SSE）让「agent 这一轮说什么」变成**确定输入** ——
@@ -46,6 +49,13 @@ interface Stub {
     readonly seen: Map<string, number>;
     /** review 还要打回几次（**用例显式设定**；按全局第几次判会串到别的用例） */
     reviewBounceLeft: number;
+    /**
+     * 让**这个节点**这一轮回一段**纯 JSON 对象**（不带任何「结论：」行 ⇒ 判据按通过）。
+     * 用来测「结论落袋试译失败」那条路（##341 review2 P3-1）：`implement` 声明的是 `diff`/`patch`，
+     * 而 `patch` 的 `asText` 只认字符串 / `{text}` ⇒ 这一段必被 `putArtifact` 的试译拒掉。
+     * `null` = 关（缺省）。
+     */
+    jsonNode: string | null;
     close(): Promise<void>;
 }
 
@@ -87,7 +97,9 @@ async function startStub(): Promise<Stub> {
             if (bounce) stub.reviewBounceLeft -= 1;
             const text = bounce
                 ? "评审意见：开发的边界条件没覆盖。\n结论：打回（边界条件没覆盖）"
-                : `${node} 这一步做完了。\n结论：通过`;
+                : node === stub.jsonNode
+                  ? '{"summary":"这一步的结论恰好是个纯 JSON 对象（译不进 diff/patch）"}'
+                  : `${node} 这一步做完了。\n结论：通过`;
             const chunk = (delta: Record<string, unknown>, finish: string | null) =>
                 `data: ${JSON.stringify({
                     id: "stub",
@@ -109,6 +121,7 @@ async function startStub(): Promise<Stub> {
         requests,
         seen,
         reviewBounceLeft: 0,
+        jsonNode: null,
         get mode() {
             return mode;
         },
@@ -170,6 +183,8 @@ interface Frame {
     message?: string;
     outcome?: string;
     to?: string | null;
+    /** 结论落袋失败的原因（##341 review1 P3-4；`null` = 落袋正常） */
+    artifactError?: string | null;
 }
 
 /** 跑一轮驱动环，逐帧解析（帧是**给人看的输出**，不是真源） */
@@ -450,6 +465,39 @@ describe("flow run：停得住", () => {
                 /* 已退出 */
             }
             stub.mode = "reply";
+        }
+    }, 150_000);
+});
+
+describe("flow run：产物落袋失败不挡这一轮（##341 review1 P3-4 / review2 P3-1）", () => {
+    it("结论整段是纯 JSON 对象（译不进 diff/patch）⇒ 亮 artifactError、照常推进、袋里一个字节不写", async () => {
+        stub.jsonNode = "implement"; // implement 声明的是 `diff`/`patch`，而这一轮正文是纯 JSON 对象
+        try {
+            const uri = await freshFlow("artifact-error", ["ci.command=echo CI-OK", "merge.command=echo MERGEABLE"]);
+            const { stop, frames } = await runFlow(uri);
+
+            // ① 立场：落袋失败**不作废**这一轮 —— 停因不是 turn-error，位置也越过了 implement
+            expect(stop.reason).not.toBe("turn-error");
+            expect(stop.reason).toBe("human"); // 照常走到人工审批点
+            const impl = frames.filter((f) => f.kind === "turn" && f.node === "implement");
+            expect(impl).toHaveLength(1);
+            // 失败原因**亮出来**（不静默）：说得出是哪个插件、原样是对象
+            expect(impl[0]!.artifactError).toBeTruthy();
+            expect(String(impl[0]!.artifactError)).toContain("patch");
+
+            // ② 照常推进：后一个节点（review）也跑了，折线位置在审批点
+            expect(frames.filter((f) => f.kind === "turn").map((f) => f.node)).toEqual(["clarify", "design", "implement", "review"]);
+            const view = await show(uri);
+            expect(view.position).toBe("approve");
+            expect(view.done).toBe(false);
+            expect(view.trajectory.map(line)).toEqual(["clarify#1", "design#1", "implement#1", "review#1", "ci#1", "approve#1"]);
+
+            // ③ 袋里**一个字节都没写**（试译失败就不留「谁也译不出的半成品」）……
+            expect(existsSync(join(fx.HOME, uri, "flow", "artifacts", "implement.json"))).toBe(false);
+            // …而**不相干**的节点照常落袋（不是一损俱损）
+            expect(JSON.stringify(await payloadOf(uri, "review", 1))).toContain("通过");
+        } finally {
+            stub.jsonNode = null;
         }
     }, 150_000);
 });

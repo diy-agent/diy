@@ -14,6 +14,7 @@ import { describe, it, expect } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { advanceFlow, putArtifact, showFlow, startFlow } from "../../src/main/core/flow";
+import type { FlowView } from "../../src/main/core/flow";
 import { composeTurnMessage, routeOf, verdictOf } from "../../src/main/services/flow-runner";
 import { collectFacts, createRenderRegistry } from "../../src/main/workflows/plugins";
 import type { PluginContext } from "@diy/flow";

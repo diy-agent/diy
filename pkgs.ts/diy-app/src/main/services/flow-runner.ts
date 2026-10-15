@@ -223,7 +223,11 @@ export async function runFlow(uri: string, opts: RunOptions = {}): Promise<RunRe
         }
 
         // ③ agent 节点：起一轮、收结论、落产物、按判据推进（`route` 只剩 `agent` 这一支）
-        const turn = await runNodeTurn(uri, view, route.exec, opts);
+        //
+        // `actor` = **收窄后的**执行者（##341 review2 P1-1）：判别搬进 `routeOf` 之后，
+        // `exec` 在调用处仍是联合类型 —— 那层 narrowing 现在只能从 `route` 的 `agent` 一支拿。
+        const actor = route.exec;
+        const turn = await runNodeTurn(uri, view, actor, opts);
         if (turn.aborted) return stop("aborted", "agent 轮次被中断", steps);
         if (turn.busy) {
             return stop("session-busy", `任务会话正忙（有人 / 有别的轮次在跑）：没有**替用户**插话，「${node.name}」这一步没跑 —— 等人跑完再 \`diy flow run\``, steps);
@@ -244,22 +248,22 @@ export async function runFlow(uri: string, opts: RunOptions = {}): Promise<RunRe
         const verdict = verdictOf(conclusion);
         const bounceEdge = view.next.edges.find((edge) => edge.kind === "bounce");
         const nextEdge = view.next.edges.find((edge) => edge.kind === "next");
-        emit({ kind: "turn", node: node.id, nodeName: node.name, agent: exec.agent, verdict: verdict.kind, chars: conclusion.length, artifactError });
+        emit({ kind: "turn", node: node.id, nodeName: node.name, agent: actor.agent, verdict: verdict.kind, chars: conclusion.length, artifactError });
 
         if (bounceEdge && verdict.kind === "bounce") {
             const limit = bounceLimitOf(view);
             if (limit !== null && view.bounces + 1 > limit) {
                 return stop("bounce-limit", `打回已达上限（${limit} 次）：停在这里等人决定（产物与意见都在袋里与审计流里）`, steps);
             }
-            bounceFlow(uri, bounceEdge.to, [refArg(exec.agent)], verdict.reason || "打回", exec.agent);
+            bounceFlow(uri, bounceEdge.to, [refArg(actor.agent)], verdict.reason || "打回", actor.agent);
             continue;
         }
         if (!nextEdge) {
             // 结构终端 + 结论已出 ⇒ 宣布收尾（与内核「没有 next 出边 = 走完」同一条结构判据）
-            finishFlow(uri, `由「${exec.agent}」的结论宣布`);
+            finishFlow(uri, `由「${actor.agent}」的结论宣布`);
             return stop("done", `「${node.name}」是终端节点且结论已出 ⇒ 工作流走完`, steps);
         }
-        advanceFlow(uri, nextEdge.to, [refArg(exec.agent)], "", exec.agent);
+        advanceFlow(uri, nextEdge.to, [refArg(actor.agent)], "", actor.agent);
     }
 
     return stop("max-steps", `步数护栏 ${maxSteps} 到顶（定义可能有环，或某一步反复不过）`, steps);
@@ -323,7 +327,8 @@ async function runNodeTurn(uri: string, view: FlowView, exec: Extract<NodeExecut
     let order = 0;
     try {
         for await (const op of agent.chat(uri, message, model, undefined, opts.signal)) {
-            const meta = op.meta as Record<string, unknown> | undefined;
+            // `Op` 只有部分分支带 `meta`（`delta` 没有）—— 故不能直接取，先问在不在（##341 review2 P1-1）
+            const meta = "meta" in op ? (op.meta as Record<string, unknown>) : undefined;
             if (op.op === "start" && op.kind === "turn") {
                 if (meta?.["source"] === "queue") {
                     const sid = meta?.["steerId"];
