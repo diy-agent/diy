@@ -11,8 +11,9 @@
 //    `define.ts` 的 `RENDERERS` —— 两者由**两道编译期护栏**对齐（漏一种 / 多一种都当场报错，见 `ViewShapes`）。
 //
 // ⚠️ **纯类型、零运行时代码**（##318 硬约束）：类型只在编译期起作用，运行期一个字节都不产出。
-//    故它**不进 `index.ts` 的导出面** —— 跨包子路径 import 是 hack（`@diy/flow` 的 `exports` 只有 `.`），
-//    本包自己的测试用相对路径 `../src/view` 引用它；发版时随 `src/` 一起走（见 `examples/README.md`）。
+//    故 `index.ts` 末尾以 `export type *` 把它**类型导出** —— 消费者按形状收窄 `View.payload` 的正路是
+//    `import type { ViewData } from '@diy/flow'`；跨包**子路径** import（`@diy/flow/src/view`）才是 hack
+//    （`exports` 只有 `.`）。类型导出零运行时代价：不产出运行时成员，`import` 侧也不留副作用。
 
 import type { Renderer } from './define';
 

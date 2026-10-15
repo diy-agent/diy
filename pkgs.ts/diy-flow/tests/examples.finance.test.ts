@@ -9,7 +9,7 @@
 //      「行业只写形状翻译，不写页面」（##166 §14.7）
 //   F4 有事件 / 无事件 + `place_order` 的**范例态假数据**（不做权限模型，不许碰 fs / 网络）
 //
-// 风格：只用包内公开 API（`../src/index`）+ 契约类型（`../src/view`）断言行为，不摸内核私有模块。
+// 风格：只用包内公开 API（`../src/index`）+ 契约类型（`../src/index` —— 即包公开面导出的 `src/view.ts` 形状）断言行为，不摸内核私有模块。
 
 import { describe, expect, it } from 'vitest';
 import type { Event } from '@diy/talk';
@@ -27,8 +27,12 @@ import {
     type Transition,
     type View,
     type Visit,
+    type BadgeData,
+    type EquityData,
+    type HeatmapData,
+    type KlineData,
+    type TableData,
 } from '../src/index';
-import type { BadgeData, EquityData, HeatmapData, KlineData, TableData } from '../src/view';
 import {
     FINANCE_NODE_IDS,
     FINANCE_REF_KEY,

@@ -57,8 +57,11 @@ tests/examples.<行业>.test.ts 契约测试：定义 / 轨迹 / view / 事件�
 | `heatmap`  | `{ cells: { value, tint? }[] }`                             | 因子矩阵 / 相关性               |
 | `equity`   | `{ nav, drawdown?, markDrawdown? }`                         | 净值曲线 + 回撤                 |
 
-- **不复制 id 清单**：`ViewShapes extends Record<Renderer, unknown>` ⇒ 内核加 / 删一种渲染器时，
-  `view.ts` 漏一种**当场编译报错**（真源永远只有 `define.ts` 的 `RENDERERS`，见 ##318 订正 1）。
+- **不复制 id 清单**：`view.ts` 只有一张**显式形状表** `ShapeMap`（九种 renderer 各一项，见下），
+  外加**两道编译期护栏**（`src/view.ts`）：`_ShapeMapIsExhaustive`（`ShapeMap` 的键必须**恰等于** `Renderer`
+  全集）+ `ViewShapes`（`Record<Renderer, …>` 映射类型，漏一种就去索引不存在的键）⇒ 内核加 / 删一种渲染器时，
+  漏一种 / 多一种都在 `tsc` **当场报错**（真源永远只有 `define.ts` 的 `RENDERERS`，见 ##318 订正 1）。
+  ⚠️ **别写成** `ViewShapes extends Record<Renderer, unknown>`：那样漏一种会从基类**继承到 `unknown`**，护栏形同虚设。
 - **`tone` 是语义、不是颜色**：行业只说「这行是 ok / warn / danger / muted」，配色归引擎 ——
   行业一给色值，就等于开始写页面了。
 - 内核的 `View.payload` 是 `unknown`（内核不认识行业数据）；宿主用 `ViewData<'kline'>` 把形状化。
@@ -77,10 +80,13 @@ tests/examples.<行业>.test.ts 契约测试：定义 / 轨迹 / view / 事件�
 
 ## 发版时：升为独立包
 
-`@diy/flow` 的 `package.json` 的 `exports` **只有 `"."`** —— 跨包按子路径 import（`@diy/flow/src/view`）是 hack。
-因此：
+`@diy/flow` 的 `package.json` 的 `exports` **只有 `"."`** —— 跨包按**子路径** import（`@diy/flow/src/view`）是 hack。因此：
 
-- `src/view.ts` 与 `examples/**` 目前**只在本包内**被引用（包自己的测试走相对路径 `../src/view`）；
-- 宿主侧要用这份契约，**现阶段自持定义**（##319 让宿主自持工作流定义，正是同一条理由）；
-- **发版时把 `examples/` 升为独立包**（本仓 `pkgs.ts/*` 一目录一包）：那时 `view.ts` 随包发布，
-  子路径（或独立包名）就成为正式 API，不必再 hack。
+- **通用渲染器契约**（`src/view.ts`）已从 `index.ts` 末尾以 `export type *` **类型导出**：消费者按形状收窄
+  `View.payload` 直接 `import type { ViewData, ViewShapes } from '@diy/flow'` —— 纯类型 ⇒ **零运行时代价**
+  （不产出运行时成员、不改 `exports` 策略）。宿主 ##320 要按 renderer id 渲染九种 `data`，从这里取形状即可，
+  **不必自持第二份形状清单**。
+- `examples/**` 目前**只在本包内**被引用：范例自己走 `@diy/flow` 公开面（模拟外部工作流包的写法），
+  测试走包内公开面 `../src/index`（含上面这行类型导出）。
+- **发版时把 `examples/` 升为独立包**（本仓 `pkgs.ts/*` 一目录一包）：那时行业包按**正式包名**取用，
+  子路径（或独立包名）即正式 API，**不必再 hack**。
