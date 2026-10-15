@@ -147,6 +147,27 @@ export function IconDot(props: { class?: string }) {
 }
 
 /**
+ * 一对尖括号 `< >` —— 语义：查看 / 切换源码（VSCode 视图栏「切换源码」同款）。
+ * 用在「Markdown 原文 ⇄ 渲染」这类**两态开关**上：图标本身不带态，态由调用方的
+ * `aria-pressed` + tooltip 表达（见 LocalChatPage 的显示方式按钮，##348 ④）。
+ */
+export function IconCode(props: { class?: string }) {
+    return (
+        <svg
+            class={`fill-none stroke-current ${props.class ?? ""}`}
+            viewBox="0 0 24 24"
+            stroke-width="1.9"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+        >
+            <path d="m8.6 7.4-5 4.6 5 4.6" />
+            <path d="m15.4 7.4 5 4.6-5 4.6" />
+        </svg>
+    );
+}
+
+/**
  * 开合指示（树形 disclosure：**收起右指 ▸、展开下指 ▾**）。
  *
  * 两个口径（2026-10-11 用户反馈）：
