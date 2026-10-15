@@ -273,6 +273,31 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
     };
 
     /**
+     * 跳转到「当前缺省人物」**本体**（##350 ③）。
+     *
+     * 「跟随缺省」那一行代表的是**绑定模式**（不固定），它自己不是一个可编辑的人物 ——
+     * 要看/改缺省人物的模型与行为指令，得到左边列表里那个真人物上去（条目上带「缺省」徽标）。
+     *
+     * 为什么要显式滚动：左列是 `overflow-y-auto` 容器，人物多时缺省那个人可能在视野之外。
+     * 只把右侧切过去 = 用户看见右边内容变了、却不知道"刚才那一下把我带到哪去了"（现象即"无有效跳转"）。
+     * 故：① 若搜索词把它滤掉了，先清搜索；② 滚动到它的条目并聚焦（滚动 + 焦点是"跳到了这里"的完整表达）。
+     */
+    const jumpToDefault = () => {
+        const id = personaStore.defaultPersona;
+        setManualPick(true);
+        setEditing(id);
+        if (filteredPersonas().every((p) => p.id !== id)) setSearch("");
+        // 等一帧：清搜索后列表要重排，立刻查会拿到被卸载的旧节点
+        queueMicrotask(() => {
+            const row = leftListEl?.querySelector<HTMLElement>(`[data-persona-id="${id}"]`);
+            if (!row) return;
+            row.scrollIntoView({ block: "nearest" });
+            // 焦点落在条目按钮上（外层 div 不可聚焦；焦点 = "就在这儿"的第二个信号）
+            row.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
+        });
+    };
+
+    /**
      * 双击左列某人物 = 换绑本任务 + 关面板（本面板最常用的动作，一次点击闭环）。
      * 换绑失败**不关窗**（错误另有 toast，关掉会让人以为成功了）；已是本任务在用则只关窗。
      */
@@ -361,6 +386,8 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
     const [drawerH, setDrawerH] = createSignal(Caches.diy_persona_drawer_height.get());
     const [leftW, setLeftW] = createSignal(Caches.diy_persona_left_width.get());
     let leftColEl: HTMLDivElement | undefined;
+    /** 左列滚动容器（##350 ③：跳转到缺省人物要把它的条目滚进视野） */
+    let leftListEl: HTMLDivElement | undefined;
 
     const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
     /** 当前高度（px）：拖过用缓存；否则 2/3 视口。最大化态见 heightStyle */
@@ -471,7 +498,11 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                 悬浮提示是绝对定位在条目内的，贴着容器底边的那一项下方没有余量就会被裁掉
                                 （daisyUI tooltip 被 overflow 容器裁剪是本项目踩过的坑）。
                                 留白放在滚动内容的末端，视觉上就是列表尾部一点空隙，不占布局。 */}
-                            <div class="flex-1 overflow-y-auto p-2 pb-9" data-testid="persona-left-list">
+                            <div
+                                ref={leftListEl}
+                                class="flex-1 overflow-y-auto p-2 pb-9"
+                                data-testid="persona-left-list"
+                            >
                                 <div class="mb-2 flex items-center gap-2">
                                     <input
                                         class="input input-sm input-bordered min-w-0 flex-1"
@@ -563,10 +594,8 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                                 class="btn btn-ghost btn-xs my-auto h-5 min-h-0 shrink-0 px-1"
                                                 aria-label="跳转到当前缺省人物"
                                                 data-tip="查看当前缺省人物的模型与行为指令"
-                                                onClick={() => {
-                                                    setManualPick(true);
-                                                    setEditing(personaStore.defaultPersona);
-                                                }}
+                                                data-testid="persona-jump-default"
+                                                onClick={jumpToDefault}
                                             >
                                                 ↗
                                             </button>
@@ -589,7 +618,11 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                         // daisyUI 的 `.tooltip`/`tooltip-content` 会被 overflow 容器裁掉，本行
                                         // 身处 `overflow-y-auto` 抽屉里正是踩坑场景（2026-10-03 统一替换）。
                                         // `block` 必需：不要它，每项会退化成 inline-block，行盒之间多出空隙。
-                                        <div class="group block w-full" data-tip="双击选择此人物">
+                                        <div
+                                            class="group block w-full"
+                                            data-tip="双击选择此人物"
+                                            data-persona-id={p.id}
+                                        >
                                             <div class="mb-1 flex w-full items-stretch gap-1">
                                                 <button
                                                     class={`min-w-0 flex-1 flex-col items-start gap-0.5 rounded-box px-2 py-1.5 text-left transition-colors ${

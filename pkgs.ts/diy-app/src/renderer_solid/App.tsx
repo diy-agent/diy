@@ -1160,11 +1160,31 @@ export default function App() {
                                                                 onMouseLeave={scheduleHideHoverTask}
                                                             >
                                                                 {/* 缩进用竖线引导（比箭头更清楚地表示「挂在上面那项之下」）；
-                                                                    状态圆点始终保留 —— 缩进与状态是两件事，不该二选一 */}
+                                                                    行首标记的取舍见下：任务 tab 是状态圆点，子页面 tab 是页面图标 */}
                                                                 <Show when={isNested()}>
                                                                     <span class="w-1.5 shrink-0 self-stretch border-l border-base-content/25" />
                                                                 </Show>
-                                                                <span class={`w-1.5 h-1.5 rounded-full shrink-0 ${taskStateColor(findNode(taskStore.nodes, t.ctx ?? "")?.state)}`} />
+                                                                {/* 行首标记：**是任务还是页面**的唯一视觉判据（##350 ①）。
+                                                                    任务 tab = 任务状态圆点（颜色即状态）；
+                                                                    子页面 tab（lab / ctxlab / flow）= 注册表的页面图标，**不标任务状态** ——
+                                                                    子页面挂的 ctx 只是"哪个任务的"，它自己不是任务；标了状态圆点就会被读成"又一个任务"。
+                                                                    外层定宽 w-4：两种标记同宽，混排时标题左缘才对得齐。
+                                                                    会话 chip/dot（##308）不在此列 —— 那是"这条会话在烧"的会话态，与"这是不是任务"是两件事。 */}
+                                                                <span class="flex w-4 shrink-0 items-center justify-center">
+                                                                    <Show
+                                                                        when={isSubPage()}
+                                                                        fallback={
+                                                                            <span
+                                                                                class={`w-1.5 h-1.5 rounded-full ${taskStateColor(findNode(taskStore.nodes, t.ctx ?? "")?.state)}`}
+                                                                                data-task-state-dot
+                                                                            />
+                                                                        }
+                                                                    >
+                                                                        <span class="font-mono text-caption opacity-80" data-subpage-icon>
+                                                                            {icon()}
+                                                                        </span>
+                                                                    </Show>
+                                                                </span>
                                                                 <span class="truncate flex-1">{label()}</span>
                                                                 {/* 会话状态 chip（##308）：与任务表行、总览页**同一份判据**（sessionStore.chipOf） */}
                                                                 <Show when={t.ctx}>

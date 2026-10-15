@@ -38,7 +38,12 @@ export interface ViewPlacement {
 export interface PageDef {
   id: string;
   title: string;
-  /** nav tab 图标（短字符）。缺省时由 tab 显示页面序号 —— 别在组件里特判 pageId（review RV-10）。 */
+  /**
+   * nav tab 图标（短字符）。缺省时由 tab 显示页面序号 —— 别在组件里特判 pageId（review RV-10）。
+   * **子页面 tab 就用它当行首标记**（代替任务的状态圆点，##350 ①）：子页面不是任务，
+   * 标任务状态会被读成"又一个任务"。故新子页面**应给 icon** —— 不给就退回序号，
+   * 看上去与任务 tab 的序号无异，正是本字段要消解的那种错觉。
+   */
   icon?: string;
   /** 是否可多开（任务执行页：每个任务一个实例，等同浏览器 tab） */
   multi?: boolean;
@@ -230,6 +235,7 @@ export const PAGES: PageDef[] = [
     // 也避免上下文树（整页是真实数据的另一种组织）与提示词预览互相抢空间。
     id: "ctxlab",
     title: "上下文树",
+    icon: "C", // 子页面 tab 的行首标记（##350 ①）：有它才不落到"页面序号"上、看着像个任务
     multi: true, // 每个任务一个实例
     parentPage: "task-run",
     layout: {

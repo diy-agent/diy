@@ -949,6 +949,64 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         ).toBe(true);
     });
 
+    it("↗ 跳转缺省人物：滚到底后点它，缺省人物的条目被滚回视野（##350 ③）", async () => {
+        // 需求原文：「缺省人物条目点击无有效跳转」→「点击后滚动/跳转到它实际指向的人物」。
+        // 修前只 setEditing：右栏换了，左列（`overflow-y-auto`）纹丝不动 —— 人物一多，
+        // 用户看见右边变了却不知道"跳哪去了"，观感就是"没反应"。
+        const uri = await setupTask("缺省跳转任务");
+        // 缺省人物是 seed 的 persona/1，排在列表**首**：条目少于一屏就测不出滚动，故先造够多
+        for (let i = 0; i < 12; i++) await addPersona(uniq(`跳转占位${i}`), "mimo-v2.6-flash");
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+
+        /** 缺省人物条目相对左列滚动容器的位置（inView = 完整可见） */
+        const probe = `(() => {
+            const d = document.querySelector('${sel(uri)}');
+            const list = d?.querySelector('[data-testid="persona-left-list"]');
+            const def = d?.getAttribute('data-default') ?? '';
+            const row = list?.querySelector('[data-persona-id="' + def + '"]');
+            if (!list || !row) return null;
+            const lr = list.getBoundingClientRect(), rr = row.getBoundingClientRect();
+            return {
+                def,
+                editing: d?.getAttribute('data-editing') ?? null,
+                rowTop: Math.round(rr.top - lr.top),
+                inView: rr.top >= lr.top - 1 && rr.bottom <= lr.bottom + 1,
+            };
+        })()`;
+        const scrolled = await ui!.eval<number>(
+            `(() => {
+                const list = document.querySelector('${sel(uri)} [data-testid="persona-left-list"]');
+                if (!list) return -1;
+                list.scrollTop = list.scrollHeight;
+                return Math.round(list.scrollTop);
+            })()`,
+        );
+        expect(scrolled).toBeGreaterThan(0); // 列表确实能滚（否则这条用例测不到东西）
+        const before = await ui!.eval<{ inView: boolean } | null>(probe);
+        expect(before).toBeTruthy();
+        expect(before!.inView).toBe(false); // 前提：缺省人物条目此刻在视野之外
+
+        // 用 DOM click 而不是 clickIn：clickIn 会先 `scrollIntoView(block:"center")`，
+        // 那会把列表滚回顶部、把上面这个前提毁掉（跳转按钮就在列表首行）
+        await ui!.eval<boolean>(
+            `(() => {
+                const b = document.querySelector('${sel(uri)} [data-testid="persona-jump-default"]');
+                if (!b) return false;
+                b.click();
+                return true;
+            })()`,
+        );
+
+        const after = await waitUntil(
+            async () => ui!.eval<{ def: string; editing: string | null; inView: boolean } | null>(probe),
+            (v) => !!v && v.inView,
+            { label: "缺省人物条目被滚进视野" },
+        );
+        // 右侧编辑的也是那个人物本体（"跳转到它实际指向的人物"，不是一个特殊设置页）
+        expect(after!.editing).toBe(after!.def);
+    });
+
     it("**双击**左列人物 = 换绑本任务 + 关面板（只改引用，不改任何人物配置）", async () => {
         // 需求原文：「不需要用于本任务的按钮，双击就是改了人物并关掉窗口」。
         // 这条同时锁三件事：① 双击真的触发换绑（不是"两次单击"——那不会产生 dblclick）
