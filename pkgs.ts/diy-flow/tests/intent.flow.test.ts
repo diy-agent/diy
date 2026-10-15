@@ -405,4 +405,11 @@ describe('R7 纯内核（##311 §四）', () => {
             expect(text, `${f} 不应取时间`).not.toMatch(/Date\.now|new Date\(/);
         }
     });
+
+    it('不用随机数（`Math.random` 会破坏「同一输入 → 同一轨迹」这一可重放前提）', () => {
+        for (const f of files) {
+            const text = readFileSync(`${SRC_DIR}/${f}`, 'utf8');
+            expect(text, `${f} 不应取随机数`).not.toMatch(/Math\.random/);
+        }
+    });
 });

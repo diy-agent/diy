@@ -109,7 +109,8 @@ DIY_CLI_MODE="${DIY_CLI_MODE:-auto}"
 # 机制：POST http://127.0.0.1:<port>/cli  body={"argv":[...],"cwd":...}
 #       server 进程内跑同一份 CliApp；响应 body=stdout，x-diy-exit=退出码，
 #       x-diy-err=stderr(base64)。输出/退出与直连逐字节同源（同一份代码生成）。
-# 回退：无端口文件 / curl 缺失或不支持 h2 / 传输失败 → 落到下方直连（含 ensureAppPort spawn）。
+# 回退：无端口文件 / curl 缺失或不支持 h2 / 传输失败 / 服务端拒绝（非本数据根的实例，409）
+# → 落到下方直连（含 ensureAppPort 的身份校验与 spawn）。
 # 实测：curl 地板 ~17ms（含 bash 脚本自身开销总计 ~45ms/条；tsx 601、compiled 300）。
 # 位置：放在新鲜度 find 之前 —— http 模式不需要选 tsx/compiled，省掉那次 find（~14ms）。
 if [[ "$DIY_CLI_MODE" == "http" ]]; then
@@ -137,7 +138,21 @@ if [[ "$DIY_CLI_MODE" == "http" ]]; then
     _cwd="${DIY_CALLER_CWD:-$PWD}"
     _cwd=${_cwd//\\/\\\\}
     _cwd=${_cwd//\"/\\\"}
-    _json+="],\"cwd\":\"$_cwd\"}"
+    # home：本次调用的数据根，服务端据此校验身份（##328(实例身份只靠端口)）。
+    # 不是本数据根的实例 → 服务端回 409（无 x-diy-exit）→ 下面自然回退直连 CLI，
+    # 由直连路径做完整校验与报错。**必须带**：不带就等于「谁在监听这个端口就发给谁」，
+    # 那正是串台（生产 CLI 的命令被执行在 dev 实例的数据上）。
+    _home_json=${_home//\\/\\\\}
+    _home_json=${_home_json//\"/\\\"}
+    _json+="],\"cwd\":\"$_cwd\",\"home\":\"$_home_json\"}"
+
+    # 含 `-`（读 stdin）的调用**不经 /cli**：端点里跑的是 app 进程，它的 fd 0 不是用户的
+    # 管道（同理 resolvePath 要把 cwd 显式传过去）——读 stdin 只有本进程做得到。故这类调用
+    # 直接落下方直连 CLI（它的 fd 0 天然正确），代价只是一次进程启动。
+    _has_stdin_arg=0
+    for _a in "$@"; do
+      if [[ "$_a" == "-" ]]; then _has_stdin_arg=1; fi
+    done
 
     # 用 $$ 而非 mktemp：省两次 fork（实测每次 ~3.5ms）；同进程唯一，够用
     _tmp="${TMPDIR:-/tmp}"
@@ -145,7 +160,9 @@ if [[ "$DIY_CLI_MODE" == "http" ]]; then
     _body="${_tmp%/}/diy-cli-b.$$"
     # curl 非 0 = 传输层失败（h2 不支持/端口半死）；缺 x-diy-exit = 对端没有 /cli 端点
     # （旧版 server / UNIMPLEMENTED）——两者都回退直连，body 丢弃不污染 stdout。
-    if curl -sS --http2-prior-knowledge -D "$_hdr" -o "$_body" -X POST \
+    if [[ $_has_stdin_arg == 1 ]]; then
+      : # 见上方：读 stdin 的调用跳过 /cli
+    elif curl -sS --http2-prior-knowledge -D "$_hdr" -o "$_body" -X POST \
         -H 'content-type: application/json' --data-binary "$_json" \
         "http://127.0.0.1:${_port}/cli"; then
       _hdrs="$(< "$_hdr")"

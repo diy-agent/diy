@@ -10,6 +10,12 @@
 // 约定：本文件只放 schema/类型，禁止 import node:fs 等 main 专属模块 —— renderer 会打进包。
 
 import { z } from "zod";
+import { TASK_HEAD_FIELDS, type TaskHeadField } from "./task-head";
+
+/** 头字段的 zod 形状：从 TASK_HEAD_FIELDS 派生（清单在 ./task-head，见该文件头注）*/
+const TASK_HEAD_SHAPE = Object.fromEntries(
+  TASK_HEAD_FIELDS.map((f) => [f.key, z.string().describe(f.desc)] as const),
+) as { [K in TaskHeadField]: z.ZodString };
 
 /** 模版条目（含生效正文与覆盖状态） */
 export const PromptEntrySchema = z.object({
@@ -77,9 +83,11 @@ export const AssembleGlobalsSchema = z.object({
   task: z
     .object({
       uri: z.string().describe("任务 URI"),
-      title: z.string(),
-      state: z.string().describe("状态"),
-      body: z.string().describe("正文"),
+      // 任务头字段（含 title/state）：**清单不在此手抄**，从 shared/task-detail.ts 的
+      // TASK_HEAD_FIELDS 派生（##322 review R3）—— 三处手抄必漏一处。它们是任务文件
+      // frontmatter 的同一份；空串 = 文件头里没有这个键。
+      ...TASK_HEAD_SHAPE,
+      body: z.string().describe("正文（文件里 frontmatter 之后的部分，首尾空白已去）"),
       dir: z.string().describe("任务目录"),
     })
     .describe("当前任务"),

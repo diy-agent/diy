@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import type { _AnyProcedureMeta } from '../core/meta';
 import { _getCliOptionMeta, _getCliArgMeta } from '../core/_cli-meta';
@@ -168,6 +169,13 @@ export function parseArgv(def: _AnyProcedureMeta, argv: string[], opts: ParseArg
       input[key] = val === 'true' || val === '1';
     } else if (unwrap(field) instanceof z.ZodArray) {
       try { input[key] = JSON.parse(val); } catch { /* 保留原字符串，让 zod 报错 */ }
+    } else if (_getCliOptionMeta(field)?.readFile || _getCliArgMeta(field)?.readFile) {
+      // 值来自文件：`-` = stdin，其余按调用方 cwd 解析成绝对路径后读。
+      // 为什么在 parser 里读（而不是 handler）：handler 跑在 app 进程 —— 它的 stdin 不是用户的
+      // stdin、cwd 不是用户敲命令的目录。在调用方进程读，两件事都天然正确。
+      // 同步读：parser 是同步函数（CliApp.parse 一路同步），而 readFileSync(0) 读管道/重定向
+      // 是同步的。stdin 是 TTY 且没重定向时会阻塞等 EOF（shell 里的 `-` 本来就是这个语义）。
+      input[key] = readTextArg(val, opts.cwd ?? process.cwd());
     } else if (_getCliOptionMeta(field)?.resolvePath || _getCliArgMeta(field)?.resolvePath) {
       // 路径参数解析成绝对路径，基准是**调用方**（敲命令的那个 shell）的 cwd。
       //
@@ -188,6 +196,20 @@ export function parseArgv(def: _AnyProcedureMeta, argv: string[], opts: ParseArg
       throw new CliParseError(`Validation errors:\n${msgs}`);
     }
     throw err;
+  }
+}
+
+/**
+ * 读「值来自文件」的参数（`readFile` 标记）：`-` = stdin，其余按 cwd 解析成绝对路径。
+ * 读不出来直接报错（**不吞**）——静默给个空串会让调用方以为"追加了个空段落"，比报错更难查。
+ */
+function readTextArg(raw: string, cwd: string): string {
+  const stdin = raw === '-';
+  const target = stdin ? 'stdin' : resolvePath(cwd, raw);
+  try {
+    return readFileSync(stdin ? 0 : target, 'utf-8');
+  } catch (e) {
+    throw new CliParseError(`读取 ${target} 失败：${e instanceof Error ? e.message : String(e)}`);
   }
 }
 

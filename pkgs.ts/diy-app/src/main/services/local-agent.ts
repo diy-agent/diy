@@ -42,6 +42,7 @@ import {
     danglingStopPatches,
     interruptedToolPatches,
     projectAll,
+    replay,
     selectHistoryByBudget,
     selectForDelivery,
     type DeliveryOpts,
@@ -128,7 +129,7 @@ import {
 } from "../../shared/context/summary";
 import { renderSummarySection } from "./prompt-registry";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
-import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
+import { readFileWindow, formatReadOutput, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
 import { SteerQueue, fileSteerPort } from "../core/steer-queue";
 import { DEFAULT_STEER_MODE } from "../../shared/steer-mode";
 import type { SteerItem, SteerMode } from "../core/drafts";
@@ -719,10 +720,13 @@ function scanOpsFile(taskUri: string): OpsScan {
     return { ops, turnOffsets, turnOpIndex, turnBytes, totalBytes: offset };
 }
 
-/** 一组 op → 规模快照（messages 用真实投影，bytes 用 JSON 字节 —— 与真发口径一致） */
-function sizeOfOps(ops: readonly Op[], opts?: Parameters<typeof blocksToMessages>[1]): SizeSnapshot {
-    const store = new BlockStore();
-    for (const op of ops) store.apply(op);
+/**
+ * 块树 → 规模快照（messages 用真实投影，bytes 用 JSON 字节 —— 与真发口径一致）。
+ * ⚠️ 收 **store** 而不是 op 数组（##321）：调用方（`planCompact`）手里已经有折好的块树，
+ *    再让它按 op 重建一遍 = 对同一份会话白折一次（78MB 会话实测每次 ~1.3s，两处叠加）。
+ *    `blocksToMessages` 只读块树（不回写），故复用安全。
+ */
+function sizeOfStore(store: BlockStore, opts?: Parameters<typeof blocksToMessages>[1]): SizeSnapshot {
     const msgs = blocksToMessages(store, opts);
     const bytes = utf8Bytes(msgs.map((m) => JSON.stringify(m)).join("\n"));
     // ⚠️ `turns` 必须按**投递口径**数，不能拿 `listTurnIds(ops)`（那是全部轮的个数）。
@@ -886,7 +890,16 @@ function clip(s: string, n = 6000): string {
         : s;
 }
 
-/** bash：30s 超时；失败也以文本回喂模型（错误是一等信息，不抛） */
+/**
+ * bash：30s 超时；**命令级**失败也以文本回喂模型（错误是一等信息，不抛）。
+ *
+ * ⚠️ "不抛"只覆盖"命令跑起来了"那一档：非零退出 / 超时被杀 / 被取消（都是模型的输入问题，
+ *    看到退出码才能自己改命令）。**别据此说"bash 永不报错"** —— 但也不是"spawn/IO 失败会抛"：
+ *    cwd 不存在、`/bin/bash` 不在，这些**同样**走下面那个 `else if (err)` 收敛成
+ *    `[退出码 ENOENT]` 文本 ⇒ 这一档也被标成 done（**已知缺口**，与 ##329 同族：工具没跑起来
+ *    本该是失败。要改就让 spawn 类与命令级分开、前者抛，另开任务）。
+ *    对照：`read` 的 execute 特意**相反**（读不到就抛），见 buildTools 里 read 的注释。
+ */
 function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?: AbortSignal): Promise<string> {
     return new Promise((resolve) => {
         if (signal?.aborted) {
@@ -959,8 +972,18 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     // style: "tool" —— 续读提示写成工具参数 offset=N（不是 shell 的 --offset）
                     return formatReadOutput(window, { maxBytes: limits.readMaxBytes, style: "tool" });
                 } catch (e) {
-                    if (e instanceof ReadWindowError) return `[读取失败] ${e.message}`;
-                    return `[读取失败] ${e instanceof Error ? e.message : e}`;
+                    // **抛，不返回字符串**（##329）：catch-and-return 的返回值是**正常工具结果**，
+                    // SDK 走 tool-result 分支 → patch status:"done" → UI 画 ✓、且失败块不自动展开
+                    // —— 失败只躺在折叠正文里（模型看得见，用户看不见）。
+                    // 抛出 → SDK 发 tool-error → status:"error"（UI 画 ✗ 并自动展开）。
+                    // ⚠️ 别改回 return：read **读不到就是失败**（catch 里返字符串 = 把失败包成
+                    //   "正常结果" → status:"done" → ✓ 且不展开，就是 ##329 的形态）。
+                    //   与 bash 的"不抛"是**两个方向的有意设计**，别互相抄：bash 把**命令级**
+                    //   失败当数据（非零退出/超时，模型要靠退出码改命令）；read 把**读不到**当失败
+                    //   （目标文件不存在没有"信息"可给，只有"这一步没做成"）。
+                    //   注意「bash 无 try/catch」≠「bash 永不报错」，也≠「它的 spawn 失败会抛」
+                    //   —— 细节见 runBash 头注（那档现在是缺口，不属本任务）。
+                    throw new Error(`[读取失败] ${e instanceof Error ? e.message : e}`);
                 }
             },
         }),
@@ -1189,6 +1212,9 @@ export class LocalAgentManager {
             } catch (e) {
                 // 落盘失败不阻断流，但必须出声（否则丢行不可观测）；**不 publish**（水位不许超前盘）
                 console.error(`[local-agent] ops 落盘失败 ${fp}:`, e);
+                // ⚠️ 于是这条 op 会**只 yield 不 publish** —— 消费侧（##307 起 UI 走 opsWatch 增量订阅，
+                // ##327 起 chat 流不再 apply）因此看不见它。这是**自洽的**，不是缺陷：盘上没有的东西，
+                // 重载后本来也会丢，显示它反而是假象（与「wire = 存储 = 渲染输入」同一取向）。
                 return;
             }
             opsFeed.publish(taskUri, [op]);
@@ -1646,8 +1672,8 @@ export class LocalAgentManager {
             keptFromTurnId !== null ? (scan.turnOpIndex.get(keptFromTurnId) ?? -1) : scan.ops.length;
 
         const clipped: ClippedToolDetail[] = [];
-        const before = sizeOfOps(scan.ops);
-        const after = sizeOfOps(scan.ops, optsFor(policy, clipped));
+        const before = sizeOfStore(store);
+        const after = sizeOfStore(store, optsFor(policy, clipped));
 
         const droppedDetail = droppedIds.map((id) =>
             describeTurn(store, id, scan.turnOffsets.get(id) ?? 0, scan.turnBytes.get(id) ?? 0),
@@ -1684,6 +1710,10 @@ export class LocalAgentManager {
         policy: CompactPolicy | null,
         keptFromTurnId: string | null | undefined,
         summaryOverride?: string,
+        /** 调用方**手里已有同一份会话折好的块树**时传入（`compactPreview` 一次算 base/mod 两份视图）：
+         *  省掉两遍「整读 + 解析 + 折叠」—— 这是「一份 78MB 文件被读三遍」的那两遍（##321）。
+         *  只读复用：`buildHistory` 只投影（`blocksToMessages` / `projectAll` 均不回写块树）。 */
+        storeInput?: BlockStore,
     ): RequestView {
         const home = diyHome();
         const globals = assembleGlobals(home, projectFromUri(taskUri), { taskUri }) as unknown as Record<string, unknown>;
@@ -1691,8 +1721,7 @@ export class LocalAgentManager {
         const { cwd } = resolveCwdWithNote(home, taskUri);
         const L = this.getLimits();
         const tools = buildTools(cwd, L, taskUri);
-        const store = new BlockStore();
-        for (const op of readJsonl<Op>(opsFile(taskUri))) store.apply(op);
+        const store = storeInput ?? replay(readJsonl<Op>(opsFile(taskUri)));
         // 与真发**同一条链**（含压缩注记）：面板里的"压缩后预览"就是这一份
         const history = withRuntime(
             this.deliveryHistoryForView(store, policy, taskUri),
@@ -1774,16 +1803,19 @@ export class LocalAgentManager {
     /** 压缩预览（只算不写）：面板左侧参数 + 右侧请求 YAML diff + 事实表的数据源 */
     compactPreview(taskUri: string, policyInput: unknown, summaryText?: string): CompactPreview {
         const p = this.planCompact(taskUri, policyInput);
+        // 一次算两份视图（base/mod）→ 复用 planCompact 刚折好的块树：整读 + 解析 + 折叠只做一次。
+        // 同步链路内文件不会变，且投影只读（不回写块树），故两份视图看到的是**同一份**历史。
+        const store = p.store;
         // base = **未压缩**的投递（全量历史、无注记）—— 配置 / 历史分离后，"当前配置"就是 mod，
         // 拿它当 base 会得出"无差异"。预览的价值是看"这次压缩**去掉/改了什么**"，故 base 取全量。
-        const base = this.buildRequestView(taskUri, null, undefined);
+        const base = this.buildRequestView(taskUri, null, undefined, undefined, store);
         // 勾选摘要但尚未生成 → 用占位骨架（让用户先看见"会得到什么"，且不花一分钱）
         const sum = p.policy.summary
             ? summaryText !== undefined
                 ? summaryText
                 : this.effectiveSummary(taskUri) || summaryPlaceholder(emptySummary(p.droppedIds.length))
             : "";
-        const mod = this.buildRequestView(taskUri, p.policy, p.keptFromTurnId, sum);
+        const mod = this.buildRequestView(taskUri, p.policy, p.keptFromTurnId, sum, store);
         const inputRate = costOf(base.model, p.after.estTokens)?.input ?? 0;
         return {
             policy: p.policy,
@@ -2400,6 +2432,10 @@ export class LocalAgentManager {
             // 块 id 沿用 turn 内局部序号风格（`<turnId>_suN`），另在 meta 里记 steerId 指回
             // 队列项（`steer/N`）：排障时能对上"日志里这条块是哪次插话投的"
             const id = `${turnId}_su${++uN}`;
+            // ⚠️ `meta.steer` 这个键名有两处消费：renderer 的 `applyOpsFrame` 用「带 steer 标记的
+            // user 块到达」判定"插话已投递 → 重拉队列快照"（见 localChatStore 的 sawSteerDelivered），
+            // 以及这里渲染插话样式。改键名必须**同时**改那处，否则横条会一直挂着"待发送"
+            //（模型其实已经看见了）—— 症状静默、只表现为 UI 落后。
             return [
                 {
                     op: "start",

@@ -26,6 +26,8 @@ import { HttpServerBinding } from '@diy/rpc/http';
 import { CliApp } from '@diy/rpc/cli';
 import type { AppConfig } from '../core/app-config';
 import { apiDef } from './api-def';
+import { PROD_DEFAULT_PORT } from '../../runtime';
+import { sameDataHome } from '../core/instance-identity';
 
 /**
  * 可替换目标的「渲染进程转发」壳。
@@ -101,6 +103,8 @@ export class RpcPortService {
   /** /cli 端点的进程内客户端（与 _httpRaw 同一套 handler，经 mem channel 直连） */
   private _cliClient: ClientBinding | null = null;
   private _port = 0;
+  /** 本实例的数据根（`/cli` 端点校验调用方身份的判据，见 _handleCli） */
+  private _diyHome = '';
 
   get port(): number {
     return this._port;
@@ -122,7 +126,10 @@ export class RpcPortService {
     preferredPort?: number,
     rendererTransport?: import('@diy/rpc').EnvelopeTransport,
   ): Promise<void> {
-    const targetPort = preferredPort ?? appConfig.readPort() ?? 18888;
+    // 缺省首选端口由调用方（main）按 env 给定（见 runtime.ts::defaultPort）；
+    // 这里的 18888 只是最后一道防御 —— 走到它说明调用方没给值，那按生产的门牌兜。
+    const targetPort = preferredPort ?? appConfig.readPort() ?? PROD_DEFAULT_PORT;
+    this._diyHome = appConfig.diyHome;
 
     // 单例 HttpServerBinding：本地 handler + 转发 diy.ui.* 直接共享注册表
     this._httpRaw = new HttpServerBinding();
@@ -180,7 +187,7 @@ export class RpcPortService {
   private async _handleCli(stream: http2.ServerHttp2Stream): Promise<void> {
     try {
       const raw = await readAllBody(stream);
-      let req: { argv?: unknown; cwd?: unknown } = {};
+      let req: { argv?: unknown; cwd?: unknown; home?: unknown } = {};
       try {
         req = JSON.parse(raw.toString('utf8') || '{}');
       } catch {
@@ -191,6 +198,16 @@ export class RpcPortService {
       if (!Array.isArray(req.argv) || !req.argv.every((a) => typeof a === 'string')) {
         stream.respond({ ':status': 400, 'content-type': 'application/json' });
         stream.end(JSON.stringify({ error: 'argv must be string[]' }));
+        return;
+      }
+      // 身份校验（##328(实例身份只靠端口)）：/cli 是「本实例的捷径」，只服务**同一个数据根**。
+      // 不带 home 的调用方（旧脚本，如 scripts/ui-smoke/*）视为兼容调用，放行。
+      // 别的数据根的调用方打过来（它读的 app.port 陈旧到了本实例的端口上）必须拒绝 ——
+      // 否则命令会执行在错误的数据上（串台）。响应**不带 x-diy-exit**，调用方（diy.sh 的
+      // http 模式）据此回退直连 CLI，由那条路做完整校验、报错或另起正确的实例。
+      if (typeof req.home === 'string' && req.home !== '' && !sameDataHome(req.home, this._diyHome)) {
+        stream.respond({ ':status': 409, 'content-type': 'application/json' });
+        stream.end(JSON.stringify({ error: 'home-mismatch', serverHome: this._diyHome, clientHome: req.home }));
         return;
       }
       const { code, out, err } = await this._runCli(req.argv as string[], req.cwd);
@@ -279,6 +296,7 @@ export class RpcPortService {
 
   stop(): void {
     this._cliClient = null;
+    this._diyHome = '';
     this._forwarder?.dispose();
     this._forwarder = null;
     this._httpRaw?.destroy();

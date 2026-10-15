@@ -116,8 +116,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     for (const [k, v] of Object.entries(changes)) {
       if (v !== undefined) filtered[k] = v as string;
     }
-    task.updateTask(uri, filtered);
-    return { status: "ok", data: { uri } };
+    // 回报本次写入实际做了什么（剥头 / 追加）—— CLI 侧才有话可说，见 core/task.ts 的 TaskWriteReport
+    const report = task.updateTask(uri, filtered as task.UpdateTaskChanges);
+    return { status: "ok", data: { uri, ...report } };
   });
   binding.on(app.task.move, async ({ input }) => {
     task.moveTask(input.uri, input.parent);

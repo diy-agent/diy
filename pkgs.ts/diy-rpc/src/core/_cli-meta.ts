@@ -11,6 +11,14 @@ export interface _CliOptionMeta {
   placeholder?: string;
   /** 值是路径：解析成绝对路径（基准 = 调用方进程的 cwd）。实现见 cli/_parser.ts */
   resolvePath?: boolean;
+  /**
+   * 值是**文件路径**（`-` = stdin）：由**调用方进程**读出文件内容当值（相对路径按调用方 cwd 解析）。
+   * 用途是"内容太大不适合当命令行参数"（ARG_MAX 上限）或"内容本来就在文件/管道里"。
+   * 实现见 cli/_parser.ts：在 parser 里读，因为 handler 跑在 app 进程，它的 stdin/cwd 都不是调用方的。
+   * 注意：`-` 读 stdin 只在**调用方进程**里成立 —— 入口把 CLI 转发到 app 进程执行时
+   * （如 diy 的 /cli 端点），入口脚本必须绕开转发（否则读到的是 app 的 fd 0）。
+   */
+  readFile?: boolean;
 }
 
 /** @internal */
@@ -19,6 +27,8 @@ export interface _CliArgMeta {
   placeholder?: string;
   /** 值是路径：解析成绝对路径（基准 = 调用方进程的 cwd）。实现见 cli/_parser.ts */
   resolvePath?: boolean;
+  /** 值是文件路径（`-` = stdin）：内容当值。见 _CliOptionMeta.readFile */
+  readFile?: boolean;
 }
 
 // ═══════════════════════════════════════════════════

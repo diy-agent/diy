@@ -8,7 +8,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
@@ -413,6 +413,168 @@ describe("task drafts（未提交草稿）", () => {
 
     const list = await fx.sh.getJson(`./diy.sh task list -p ${pid}`);
     expect((list.data as any).data.tasks).toEqual([uri]);
+    await cleanupProj(pid);
+  });
+});
+// ═══════════════════════════════════════════════════════════════
+// 正文写侧对称（##322）：整份文件剥头 / 追加原语
+//
+//   意图：agent 追加任务正文**不必先读文件**，把整份文件当输入也**不会写出第二个头**。
+//   复现写法就是 `--body "$(cat AGENTS.md)"` —— 旧实现在正文里复制出一个 frontmatter。
+// ═══════════════════════════════════════════════════════════════
+
+describe("task 正文写侧对称（##322）", () => {
+  const fpOf = (uri: string) => join(fx.HOME, uri, "AGENTS.md");
+  const rawOf = (uri: string) => readFileSync(fpOf(uri), "utf-8");
+  /** 正文区（头之后的部分） */
+  const bodyRegion = (raw: string) => raw.slice(raw.indexOf("---", 3) + 3);
+  /** `---` 独占行数：规范任务文件 = 2（双头就是 4） */
+  const seps = (raw: string) => raw.split("\n").filter((l) => l.trim() === "---").length;
+
+  it("读-写往返 byte-exact：show 的 body 写回 → 正文区逐字不变、头仍只有一个", async () => {
+    const pid = await freshProj("rt");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 往返 ${pid} --body 第一段正文够长通过校验`);
+    const before = bodyRegion(rawOf(uri));
+
+    const body = ((await fx.sh.getJson(`./diy.sh task show ${uri}`)).data as any).data.body;
+    expect(body).toBe("第一段正文够长通过校验");
+
+    await fx.sh.run(`./diy.sh task edit ${uri} --body '${body}'`);
+
+    expect(bodyRegion(rawOf(uri))).toBe(before);
+    expect(seps(rawOf(uri))).toBe(2);
+    await cleanupProj(pid);
+  });
+
+  it('--body "$(cat AGENTS.md)"（整份文件）不再产生双头，剥离结果如实回报', async () => {
+    const pid = await freshProj("whole");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 整份 ${pid} --body 原始正文够长通过校验`);
+    const before = bodyRegion(rawOf(uri));
+
+    const r = await fx.sh.getJson(`./diy.sh task edit ${uri} --body "$(cat ${fpOf(uri)})"`);
+    const d = (r.data as any).data;
+
+    expect(d.uri).toBe(uri);
+    expect(d.body_head_stripped.keys).toContain("title");
+    expect(d.body_head_stripped.differs).toEqual([]); // 头来自同一份文件 → 无差异
+    expect(d.body_head_stripped.head_text).toContain("title: 整份"); // 剥掉的原文也回报（丢了什么看得见）
+    expect(seps(rawOf(uri))).toBe(2); // 仍只有一个头
+    expect(bodyRegion(rawOf(uri))).toBe(before); // 正文没被头污染
+    await cleanupProj(pid);
+  });
+
+  it("整份文件 + 空正文 → 被拒（剥离后才校验长度，不能靠头蒙混过关）", async () => {
+    const pid = await freshProj("empty");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 空正文 ${pid}`);
+
+    await fx.sh.assertSession(`
+      $! ./diy.sh task edit ${uri} --body "$(cat ${fpOf(uri)})"
+      *正文至少 10 个字符*
+    `);
+    await cleanupProj(pid);
+  });
+
+  it("--append-body <file> 追加正文（不必先读任务文件）", async () => {
+    const pid = await freshProj("app");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 追加 ${pid} --body 第一段够长通过校验`);
+    const chunk = join(fx.HOME, "chunk.md");
+    writeFileSync(chunk, "第二段：追加进来的内容\n", "utf-8");
+
+    const r = await fx.sh.getJson(`./diy.sh task edit ${uri} --append-body ${chunk}`);
+    const d = (r.data as any).data;
+    expect(d.uri).toBe(uri);
+    expect(d.appended_chars).toBeGreaterThan(0);
+
+    const t = await fx.sh.getJson(`./diy.sh task show ${uri}`);
+    expect((t.data as any).data.body).toBe("第一段够长通过校验\n\n第二段：追加进来的内容");
+    expect(seps(rawOf(uri))).toBe(2);
+    await cleanupProj(pid);
+  });
+
+  it("--append-body - 从 stdin 追加（管道即可，不必落盘）", async () => {
+    const pid = await freshProj("stdin");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 管道 ${pid} --body 原文够长通过校验`);
+
+    await fx.sh.run(`printf '从管道追加的一段' | ./diy.sh task edit ${uri} --append-body -`);
+
+    const t = await fx.sh.getJson(`./diy.sh task show ${uri}`);
+    expect((t.data as any).data.body).toBe("原文够长通过校验\n\n从管道追加的一段");
+    await cleanupProj(pid);
+  });
+
+  it("空 stdin 追加 → 报错（不静默写个空段落）", async () => {
+    const pid = await freshProj("emptyadd");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 空追加 ${pid} --body 原文够长通过校验`);
+
+    await fx.sh.assertSession(`
+      $! printf '' | ./diy.sh task edit ${uri} --append-body -
+      *追加内容为空*
+    `);
+    const t = await fx.sh.getJson(`./diy.sh task show ${uri}`);
+    expect((t.data as any).data.body).toBe("原文够长通过校验");
+    await cleanupProj(pid);
+  });
+
+  it("读侧显式给头：task show 带 frontmatter（含自定义键）", async () => {
+    const pid = await freshProj("head");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 头 ${pid} --change_type fix --priority P1`);
+    writeFileSync(
+      fpOf(uri),
+      rawOf(uri).replace("state: pending", "state: pending\nnote: '自定义备注'"),
+      "utf-8",
+    );
+
+    const r = await fx.sh.getJson(`./diy.sh task show ${uri}`);
+    const d = (r.data as any).data;
+    expect(d.frontmatter.title).toBe("头");
+    expect(d.frontmatter.change_type).toBe("fix");
+    expect(d.frontmatter.note).toBe("自定义备注");
+    await cleanupProj(pid);
+  });
+
+  // ── 追加的判据比 `--body` 更严（##322 review R1）──
+  // 追加一份"带 YAML front matter 的文档"是常态；只认已知头键会把文档的 `title:` 当成任务头吞掉。
+
+  it("--append-body <带 front matter 的文档> → 文档头原样保留（不静默吞内容）", async () => {
+    const pid = await freshProj("doc");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 文档 ${pid} --body 原始正文够长通过校验`);
+    const doc = join(fx.HOME, "doc.md");
+    writeFileSync(doc, "---\ntitle: 练习册答案\nnote: 手写文档\n---\n\n# 正文\n\n1. 答案 A\n", "utf-8");
+
+    const r = await fx.sh.getJson(`./diy.sh task edit ${uri} --append-body ${doc}`);
+    const d = (r.data as any).data;
+
+    expect(d.append_head_stripped).toBeUndefined(); // 没剥头
+    const t = await fx.sh.getJson(`./diy.sh task show ${uri}`);
+    const body = (t.data as any).data.body;
+    expect(body).toContain("title: 练习册答案");
+    expect(body).toContain("note: 手写文档");
+    expect(body).toContain("# 正文");
+    await cleanupProj(pid);
+  });
+
+  it("--append-body <整份任务文件> → 剥头取正文（追加也不会写出第二个头）", async () => {
+    const pid = await freshProj("appwhole");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 追加整份 ${pid} --body 原文够长通过校验`);
+    const other = `projects/${pid}/tasks/2`;
+    await fx.sh.run(`./diy.sh task create 别处 ${pid} --body 别处的正文`);
+
+    const r = await fx.sh.getJson(`./diy.sh task edit ${uri} --append-body ${fpOf(other)}`);
+    const d = (r.data as any).data;
+
+    expect(d.append_head_stripped.keys).toContain("title"); // 认出来了（有 state/created）
+    expect(seps(rawOf(uri))).toBe(2);
+    const t = await fx.sh.getJson(`./diy.sh task show ${uri}`);
+    expect((t.data as any).data.body).toBe("原文够长通过校验\n\n别处的正文");
     await cleanupProj(pid);
   });
 });

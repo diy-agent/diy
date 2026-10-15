@@ -88,7 +88,10 @@ describe("请求预览：内嵌文本就地解析展开", () => {
     it("说明头在预览里是注释（内容不丢、仍是 YAML），数据紧跟其后", () => {
         expect(view.text).toContain("# 系统上下文（Context Tree）");
         expect(view.text).toContain("# 以下是本次会话的系统上下文");
-        expect(view.text).toMatch(/# - 路径是稳定标识[\s\S]{0,120}?\bchain:/);
+        // 锚在说明头的**末行**（CONTEXT_GUIDE 的收尾句）：它之后只隔一空行就紧跟数据。
+        // 改 guide 文案时同步改这里的锚句 —— 断言的是"数据紧随说明头"，不是某句话本身。
+        // 说明头与数据之间**只有空白**（说明头末行 → 换行 → 空行 → 数据第一行）
+        expect(view.text).toMatch(/不会被当成任务头吃掉）\n\s*chain:/);
     });
 
     it("行号映射与文本同源：每个 path 的区间**只含该 path 的内容**", () => {
