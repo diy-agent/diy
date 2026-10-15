@@ -278,6 +278,36 @@ createRuntime(wf, { registry, params });                      // ctx.params = �
 > 所以：① `action:` 插件**必须幂等**（同一 `ref` 不重复动手）；② **要轮询「能不能推进」用 `status()`
 > （零副作用）**，别反复 `step`；③ 拿到 `done` / `stuck` / `awaiting-actor` 之后不该空转轮询。
 
+## 范例：工作流开发包长什么样（`examples/`）
+
+内核只认「泳道图 + 插件」；**一个工作流开发包自己要管的就三样**：① 泳道图声明、② 插件实现、③ 装配。
+`examples/` 是这个三件套的最小样板（**只用公开 API**，模拟外部包怎么写），同时也是集成测试的素材：
+
+| 文件 | 是什么 |
+|---|---|
+| `examples/dev.ts` | 6 节点开发工作流：`clarify → design → implement → review → ci → merge`（guard 4 个 `prompt:` + `pred:ci_green` + `action:pr_mergeable`；`art` = doc/diff/table/badge；`params` = `ci.command` / `review.reviewers` / `review.maxBounces`；`review → implement` 是 `bounce` 边） |
+| `examples/dev.plugins.ts` | 两个插件（假数据）：`pred:ci_green` 读 CI 状态、`action:pr_mergeable` 写合并动作 —— 真接入归 ##319 |
+| `tests/examples.dev.test.ts` | 端到端复现 ##166 §14.3 的开发轨迹：**8 步 / 6 泳道 / 1 次打回**，逐步断言领域态与 `project` 重放相等 |
+
+```ts
+import { createRegistry, createRuntime, initialState } from '@diy/flow';
+import { devWorkflow, type DevNodeId } from './examples/dev';
+import { registerDevPlugins } from './examples/dev.plugins';
+
+const registry = registerDevPlugins(createRegistry());          // 先注册齐，再 createRuntime
+const rt = createRuntime(devWorkflow, { registry, maxBounces: 2 });
+
+const entered = rt.step(initialState<DevNodeId>(), { at: '2026-10-13T00:00:01.000Z' }); // entry → clarify
+if (entered.status !== 'moved') throw new Error(entered.status);
+
+// clarify / design / implement / review 的 guard 是 `prompt:` ⇒ 引擎判不了：再 `step` 是 `awaiting-actor`，
+// 只能由 actor 宣布（宣布本身就是一条发言，那条审计 Event 的 author 就是宣布者）
+const toDesign = rt.declare(entered.transition.state, {
+    at: '2026-10-13T00:00:02.000Z', author: '需求 agent', to: 'design', content: '需求澄清完，提交设计',
+});
+// ci（`pred:`）/ merge（`action:`）全可观测 ⇒ 系统自己求值并自动转移，无需 declare
+```
+
 ## 硬约束
 
 - **泳道 ≡ 节点，1:1**；**打回不新建节点**（只让目标节点再驻留一次）。
@@ -296,7 +326,7 @@ createRuntime(wf, { registry, params });                      // ctx.params = �
 
 ```bash
 cd pkgs.ts/diy-flow
-./sha.sh test          # 意图测试（146 例：定义/容器/投影 26 + 槽位/求值/执行器 43 + 参数层 41 + 领域态一等 36）
+./sha.sh test          # 意图测试（180 例：定义/容器/投影 26 + 槽位/求值/执行器 43 + 参数层 41 + 领域态一等 49 + 范例① 21）
 ./sha.sh check         # 本包类型 + lint
 # 全仓检查（含产物 / 可执行位护栏）：在仓库根跑 ./sha.sh check
 ```
