@@ -22,7 +22,7 @@
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { join } from "node:path";
-import { writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
@@ -432,4 +432,86 @@ describe("泳道视图页（##320）", () => {
             `[##320 产物区] ##337 ${ready ? "已接入" : "未接入"} ⇒ 各卡文本：${JSON.stringify(cards)}`,
         );
     });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 讨论线程视图（##342）
+//
+// 契约（用户能看见的行为）：
+//   1. 打回 ⇒ 讨论区出现**一条线程**（锚点 = 折线上的真打回边）；意见正文在面板上看得见（原话可见）；
+//   2. 点折线上的**打回卡** ⇒ 讨论区切到那条锚点（泳道视图与讨论视图是同一份事件流的两种投影）；
+//   3. 数据**只走 RPC**（`flow thread list`）—— 删掉讨论流文件后刷新：线程结构仍在（从折线推）、
+//      发言为空、**不报错**（旁注可丢，`rule.core-log`）。
+// ═══════════════════════════════════════════════════════════════
+
+describe("讨论线程视图（##342）", () => {
+    it("打回意见在讨论区可见；点打回卡切到那条锚点；删掉讨论流后不报错（线程仍在、发言为空）", async () => {
+        const uri = await freshInstance("dispute");
+        await cliToImplement(uri); // clarify → design → implement
+        await cliAdvance(uri, "review"); // → review
+        const one = join(fx.HOME, "ui-opinion-one.txt");
+        writeFileSync(one, "UI-ONE：边界条件没覆盖", "utf-8");
+        const b1 = await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion ${one} --author '评审 agent'`);
+        expect(b1.code, b1.stderr).toBe(0);
+        // 出口 (a) 撤销打回（合法 next 边）→ 再打回一次 ⇒ 两条**不同锚点**的线程（不串台）
+        await cliAdvance(uri, "review");
+        const two = join(fx.HOME, "ui-opinion-two.txt");
+        writeFileSync(two, "UI-TWO：第二轮意见", "utf-8");
+        const b2 = await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion ${two} --author '评审 agent'`);
+        expect(b2.code, b2.stderr).toBe(0);
+
+        await openFlowPage(uri);
+        // ① 线程列表 = 折线上的两次真打回（一个节点都不多）
+        await waitUntil(
+            () => ui.query<number>(`document.querySelectorAll('[data-flow-thread]').length`),
+            (n) => n === 2,
+            { label: "讨论区两条线程", timeoutMs: 10000 },
+        );
+        expect(
+            await ui.query<string[]>(`[...document.querySelectorAll('[data-flow-thread]')].map(e => e.dataset.flowThread)`),
+        ).toEqual(["review->implement#2", "review->implement#3"]);
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-thread-real="1"]').length`)).toBe(2);
+        // 缺省活跃线程 = 最后一条打回 ⇒ 它的意见正文在面板上（原话可见）
+        expect(
+            await ui.query<string>(`document.querySelector('[data-flow-thread-posts]').dataset.flowThreadPosts`),
+        ).toBe("review->implement#3");
+        await waitUntil(
+            () => ui.query<string>(`document.querySelector('[data-flow-dispute]').textContent`),
+            (text) => text.includes("UI-TWO：第二轮意见"),
+            { label: "最新意见可见", timeoutMs: 8000 },
+        );
+        // 发言的作者也在（谁说的）
+        expect(await ui.query<string>(`document.querySelector('[data-flow-post-author]').textContent`)).toBe("评审 agent");
+        // 没有错误位（旁注好好的）
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-thread-error]').length`)).toBe(0);
+
+        // ② 点折线上的**打回卡**（第 5 次驻留 = implement#2）⇒ 讨论区切到那条锚点
+        await scrollIntoView('[data-flow-visit="4"]');
+        await ui.clickSelector('[data-flow-visit="4"]');
+        await waitUntil(
+            () => ui.query<string>(`document.querySelector('[data-flow-thread-posts]').dataset.flowThreadPosts`),
+            (id) => id === "review->implement#2",
+            { label: "点打回卡展开那条线程", timeoutMs: 8000 },
+        );
+        const panel = await ui.query<string>(`document.querySelector('[data-flow-dispute]').textContent`);
+        expect(panel).toContain("UI-ONE：边界条件没覆盖");
+        expect(panel).not.toContain("UI-TWO：第二轮意见"); // 不串台
+
+        // ③ 删掉讨论流 ⇒ 刷新后线程结构仍在（从折线推）、发言为空、**不报错**
+        rmSync(join(fx.HOME, uri, "flow", "threads.jsonl"));
+        await refresh();
+        await waitUntil(
+            () => ui.query<number>(`document.querySelectorAll('[data-flow-thread]').length`),
+            (n) => n === 2,
+            { label: "删流后线程结构仍在", timeoutMs: 8000 },
+        );
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-thread-error]').length`)).toBe(0);
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-post]').length`)).toBe(0);
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-thread-empty]').length`)).toBe(1);
+        // 折线照常（领域读没被旁注拖垮）
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-visit]').length`)).toBe(7);
+        console.error(
+            `[##342 讨论区] 线程=${await ui.query<string>(`JSON.stringify([...document.querySelectorAll('[data-flow-thread]')].map(e => e.dataset.flowThread))`)}`,
+        );
+    }, 120_000);
 });

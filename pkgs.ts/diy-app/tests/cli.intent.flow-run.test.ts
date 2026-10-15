@@ -56,6 +56,11 @@ interface Stub {
      * `null` = 关（缺省）。
      */
     jsonNode: string | null;
+    /**
+     * 让 review 打回时**不带原因**（结论行只写「结论：打回」）—— `pit.flow-driver` ⑤ 明文允许这种写法。
+     * 用来测「空意见不落讨论流」（##342 review1 P2-1）。`false` = 关（缺省）。
+     */
+    bounceReasonless: boolean;
     close(): Promise<void>;
 }
 
@@ -96,7 +101,9 @@ async function startStub(): Promise<Stub> {
             const bounce = node === "review" && stub.reviewBounceLeft > 0;
             if (bounce) stub.reviewBounceLeft -= 1;
             const text = bounce
-                ? "评审意见：开发的边界条件没覆盖。\n结论：打回（边界条件没覆盖）"
+                ? stub.bounceReasonless
+                    ? "评审意见：这一版先这样。\n结论：打回"
+                    : "评审意见：开发的边界条件没覆盖。\n结论：打回（边界条件没覆盖）"
                 : node === stub.jsonNode
                   ? '{"summary":"这一步的结论恰好是个纯 JSON 对象（译不进 diff/patch）"}'
                   : `${node} 这一步做完了。\n结论：通过`;
@@ -122,6 +129,7 @@ async function startStub(): Promise<Stub> {
         seen,
         reviewBounceLeft: 0,
         jsonNode: null,
+        bounceReasonless: false,
         get mode() {
             return mode;
         },
@@ -322,6 +330,32 @@ describe("flow run：自动轮转", () => {
         expect(ev.find((e) => e.kind === "bounce")?.author).toBe("评审 agent");
     }, 150_000);
 
+    /**
+     * ##342：自动打回的**评审意见正文**要有它自己的载体（可见、留痕）。
+     *
+     * 判据：驱动环走 bounce 边时把 `verdict.reason`（结论末行括号里那句话）落进讨论流
+     * `flow/threads.jsonl`，锚点 = 这次打回的落点驻留（`review#1 → implement#2`），作者 = 评审 agent。
+     * 它**只是旁注**（`rule.core-log`）：不进 `state.json`、删了不影响推进（上一条幂等用例照常）。
+     */
+    it("自动打回的意见进讨论流：锚点 = 那次打回、作者 = 评审 agent（不参与驱动判据）", async () => {
+        const r = await fx.sh.getJson(`./diy.sh flow thread list ${uri}`);
+        const d = r.data as Record<string, unknown>;
+        const threads = (d["threads"] as Array<Record<string, unknown>>) ?? [];
+        expect(threads.map((t) => t["id"])).toEqual(["review->implement#2"]);
+        // 锚点对得上折线：源 = review#1、落点 = implement#2、折线上第 5 条
+        expect(threads[0]).toMatchObject({ real: true, fromSeq: 1, at: 4, status: "open" });
+        const posts = (threads[0]!["posts"] as Array<Record<string, unknown>>) ?? [];
+        expect(posts).toHaveLength(1);
+        expect(posts[0]).toMatchObject({
+            author: "评审 agent",
+            type: "note",
+            anchor: { from: "review", to: "implement", seq: 2 },
+        });
+        expect(String(posts[0]!["text"])).toContain("边界条件没覆盖");
+        // 旁注不是领域态：意见正文一个字都不进 state.json（`rule.domain-first`）
+        expect(readFileSync(join(fx.HOME, uri, "flow", "state.json"), "utf-8")).not.toContain("边界条件");
+    }, 60_000);
+
     it("幂等：重复 run 立刻在同一个点停下，不重复消费已走完的节点", async () => {
         const before = (await show(uri)).trajectory.length;
         const { stop, frames } = await runFlow(uri);
@@ -498,6 +532,49 @@ describe("flow run：产物落袋失败不挡这一轮（##341 review1 P3-4 / re
             expect(JSON.stringify(await payloadOf(uri, "review", 1))).toContain("通过");
         } finally {
             stub.jsonNode = null;
+        }
+    }, 150_000);
+});
+
+describe("flow run：打回但结论没写原因 ⇒ 不落空发言（##342 review1 P2-1）", () => {
+    /**
+     * **病根**：`pit.flow-driver` ⑤ 明文允许结论行只写「结论：打回」⇒ `verdictOf` 给出
+     * `{kind:"bounce", reason:""}`（**合法**）。而驱动环那两行是
+     * `bounceFlow(..., verdict.reason || "打回", ...)` 紧跟 `appendBounceOpinion(..., verdict.reason, ...)`：
+     * ⇒ **审计**记 `打回`、**讨论流**落空串 —— 同一次打回两处留痕不一致，UI 上一条没有任何内容的争议发言。
+     * 这是**无人值守的主路径**，不是罕见分支（「留痕可见」恰是本任务的交付）。
+     *
+     * **修法**：闸门收成一处真源（`flow-store.ts::requirePostText`，与 CLI 面板 `postThread` 共用）；
+     * 驱动环侧**不凑** `verdict.reason || "打回"`（那是往留痕里造一句评审没说过的话），
+     * 它已有 catch ⇒ 自动降级为**不写 + warn**（领域事实已落盘，不该因一句留痕停环）。
+     */
+    it("自动打回无原因 ⇒ 讨论流**一条发言都没有**（审计照旧记 打回）", async () => {
+        stub.reviewBounceLeft = 1;
+        stub.bounceReasonless = true; // 结论行 = 「结论：打回」（无括号）
+        try {
+            const uri = await freshFlow("reasonless", ["ci.command=echo CI-OK", "merge.command=echo MERGEABLE"]);
+            const { stop, frames } = await runFlow(uri);
+            expect(stop.reason).toBe("human"); // 照常跑到人工审批点（打回确实发生且不挡环）
+
+            // 打回那一跳：**审计**照旧有（口径不同是对的 —— 它记的是「发生了打回」这件事）
+            const bounced = frames.filter((f) => f.kind === "turn" && f.verdict === "bounce");
+            expect(bounced).toHaveLength(1); // 打回是环自己走的（`turn` 帧不带 reason —— 那在审计与结论里）
+            const ev = audit(uri).filter((e) => e.kind === "bounce");
+            expect(ev).toHaveLength(1);
+            // 审计记的是「发生了打回」（人类可读，note 兜底成「打回」放括号里）—— 与讨论流的空申报不是一回事
+            expect(String(ev[0]!.content)).toContain("打回：「Review」→「开发」");
+            expect(String(ev[0]!.content)).toMatch(/（打回）$/);
+
+            // **讨论流**：线程**在**（从折线的真打回边推得出来），但**一条发言都没有**（不落空发言）
+            const r = await fx.sh.getJson(`./diy.sh flow thread list ${uri}`);
+            const threads = ((r.data as Record<string, unknown>)["threads"] as Array<Record<string, unknown>>) ?? [];
+            expect(threads.map((t) => t["id"])).toEqual(["review->implement#2"]);
+            expect(threads[0]!["posts"]).toEqual([]);
+            // 一次写都没发生 ⇒ 文件根本不该被创建
+            expect(existsSync(join(fx.HOME, uri, "flow", "threads.jsonl"))).toBe(false);
+        } finally {
+            stub.bounceReasonless = false;
+            stub.reviewBounceLeft = 0;
         }
     }, 150_000);
 });

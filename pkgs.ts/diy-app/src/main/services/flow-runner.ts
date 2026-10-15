@@ -44,7 +44,7 @@
 //   不是真源 —— 关掉它、杀掉 CLI，状态文件照样是权威（`rule.core-log`）。
 
 import type { FlowView } from "../core/flow";
-import { advanceFlow, bounceFlow, finishFlow, putArtifact, showFlow, stepFlow } from "../core/flow";
+import { advanceFlow, appendBounceOpinion, bounceFlow, finishFlow, putArtifact, showFlow, stepFlow } from "../core/flow";
 import { readArtifacts } from "../core/flow-store";
 import { diyHome } from "../core/state";
 import { personaByIdOrName } from "../core/persona";
@@ -255,7 +255,11 @@ export async function runFlow(uri: string, opts: RunOptions = {}): Promise<RunRe
             if (limit !== null && view.bounces + 1 > limit) {
                 return stop("bounce-limit", `打回已达上限（${limit} 次）：停在这里等人决定（产物与意见都在袋里与审计流里）`, steps);
             }
-            bounceFlow(uri, bounceEdge.to, [refArg(actor.agent)], verdict.reason || "打回", actor.agent);
+            const bounced = bounceFlow(uri, bounceEdge.to, [refArg(actor.agent)], verdict.reason || "打回", actor.agent);
+            // ##342：把**评审意见正文**（判据那行括号里的原因）一等落进讨论流，锚点 = 这次打回的落点驻留。
+            // 讨论是**旁注**（`rule.core-log`）：写不进去只警告，不作废这一步（与产物落袋同一立场）。
+            // 整段结论仍在产物袋里（`review#seq`）—— 讨论流记一句意见，袋里存全文，一短一全。
+            postBounceOpinionQuietly(uri, bounced, verdict.reason, actor.agent);
             continue;
         }
         if (!nextEdge) {
@@ -406,6 +410,20 @@ function artifactSummary(uri: string, nodeId: string, seq: number): string {
         return text.length > ARTIFACT_CLIP ? `${text.slice(0, ARTIFACT_CLIP)}…（截断）` : text;
     } catch (e) {
         return `（产物袋读不出：${(e as Error).message}）`;
+    }
+}
+
+/**
+ * 把打回意见落进讨论流（##342）——**旁注**：写不进去只警告，不打断驱动环（`rule.core-log`）。
+ *
+ * 与产物落袋失败（`artifactError` 随 turn 帧出去）的分别：产物是**这一轮的产出**，人有理由知道它丢了；
+ * 讨论流是**留痕**，而领域事实（那次打回）已经落盘 —— 无人值守的环不该因为一句留痕写不进去就停。
+ */
+function postBounceOpinionQuietly(uri: string, view: FlowView, text: string, author: string): void {
+    try {
+        appendBounceOpinion(uri, view, text, author);
+    } catch (e) {
+        console.warn(`[flow-runner] 打回意见没落进讨论流（旁注，不影响推进）：${(e as Error).message}`);
     }
 }
 

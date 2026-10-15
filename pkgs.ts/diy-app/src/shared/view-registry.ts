@@ -119,6 +119,15 @@ export const VIEWS: ViewDef[] = [
     placement: { flow: { area: "right", order: 10 } },
   },
   {
+    // 同页右栏下部：打回讨论线程（##342）—— 锚点 = 折线上的**真打回边**，
+    // 与泳道图是**同一份事件流的两种投影**（打回不新建节点、讨论不占位置）。
+    // 数据只走 RPC（`flow thread list`）；旁注坏了只在面板里亮错误位（rule.core-log）。
+    id: "flow.dispute",
+    title: "讨论",
+    instanceScope: "context",
+    placement: { flow: { area: "right", order: 20 } },
+  },
+  {
     // 边聊边调：与任务执行页是**同一个 view**，只是换个 area（卫星）
     // 这正是「靠 placement、不靠嵌套」的体现
     id: "chat.local",
