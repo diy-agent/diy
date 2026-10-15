@@ -482,8 +482,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
     },
     summary: i.summary as boolean | undefined,
   });
-  binding.on(app.agent.local.compact, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.compact", input.taskUri);
+  binding.on(app.agent.local.compact.run, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.run", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     const summary =
       input.summaryText !== undefined
@@ -506,8 +506,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const patch = (input.patch ?? {}) as Record<string, unknown>;
     return saveAutoCompact(home, { ...cur, ...patch });
   });
-  binding.on(app.agent.local.summarize, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.summarize", input.taskUri);
+  binding.on(app.agent.local.compact.summarize, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.summarize", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().summarize(input.taskUri);
   });
@@ -516,21 +516,70 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().requestView(input.taskUri);
   });
-  binding.on(app.agent.local.compactPreview, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.compactPreview", input.taskUri);
+  binding.on(app.agent.local.compact.preview, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.preview", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     const txt = (input as { summaryText?: string }).summaryText;
     return getLocalAgent().compactPreview(input.taskUri, policyOf(input), txt);
   });
-  binding.on(app.agent.local.undoCompact, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.undoCompact", input.taskUri);
+  binding.on(app.agent.local.compact.undo, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.undo", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     return { undone: getLocalAgent().undoCompact(input.taskUri, input.ref) };
   });
-  binding.on(app.agent.local.compactEvents, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.compactEvents", input.taskUri);
+  binding.on(app.agent.local.compact.events, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.events", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().compactEvents(input.taskUri);
+  });
+
+  // ── 装配管道 plan（##344 M2）：读 / **校验后**写 / 检查 ──
+  // 与 `autoCompactSetConfig`（写整份配置的任意子集）分开：这三条只谈 plan，且 set/check 会**校验**。
+  const keepSourceOf = (cfg: { history?: { keep?: unknown } }): "config" | "default" =>
+    Array.isArray(cfg.history?.keep) && (cfg.history!.keep as unknown[]).length > 0 ? "config" : "default";
+  binding.on(app.agent.local.compact.plan.get, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.plan.get", input.taskUri);
+    const { loadAutoCompact, readAutoCompactText } = await import("../core/auto-compact-config");
+    const { DEFAULT_KEEP } = await import("../../shared/context/compact-keep");
+    const { budgetBytesOf } = await import("../../shared/context/compaction");
+    const { diyHome } = await import("../core/state");
+    const home = diyHome();
+    const cfg = loadAutoCompact(home);
+    const source = keepSourceOf(cfg);
+    return {
+      source,
+      // 生效的级列表：配置有就用配置的，否则就是代码缺省管道（**回显成数据**，用户看得见"现在在用什么"）
+      keep: source === "config" ? cfg.history!.keep : DEFAULT_KEEP,
+      budgetBytes: budgetBytesOf(cfg.policy),
+      raw: readAutoCompactText(home),
+    };
+  });
+  binding.on(app.agent.local.compact.plan.set, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.plan.set", input.taskUri);
+    const { saveKeepConfig, parseKeepText } = await import("../core/auto-compact-config");
+    const { diyHome } = await import("../core/state");
+    const keep = parseKeepText(input.keep);
+    return saveKeepConfig(diyHome(), keep);
+  });
+  binding.on(app.agent.local.compact.plan.check, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.plan.check", input.taskUri);
+    const { loadAutoCompact, parseKeepText } = await import("../core/auto-compact-config");
+    const { DEFAULT_KEEP } = await import("../../shared/context/compact-keep");
+    const { budgetBytesOf } = await import("../../shared/context/compaction");
+    const { checkKeep, formatCheckFailure } = await import("./compact-plan-service");
+    const { getLocalAgent } = await import("./local-agent");
+    const { diyHome } = await import("../core/state");
+    const home = diyHome();
+    const cfg = loadAutoCompact(home);
+    const report = checkKeep({
+      rawKeep: input.keep !== undefined ? parseKeepText(input.keep) : cfg.history?.keep ?? DEFAULT_KEEP,
+      source: input.keep !== undefined ? "config" : keepSourceOf(cfg),
+      budgetBytes: budgetBytesOf(cfg.policy),
+      // must 层是否撑爆硬上限：**只有量过才知道**（预算是管不到 must 的），故此处实算一次。
+      measure: (keep) => getLocalAgent().measureMustStages(input.taskUri, keep),
+    });
+    if (!report.ok) throw new Error(formatCheckFailure(report));
+    return report;
   });
   // 会话用量报表（人读表格）：与 UI 同源同口径，只是在这里渲染成等宽文本
   binding.on(app.agent.usage, async ({ input }) => {

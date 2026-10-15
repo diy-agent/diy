@@ -1201,7 +1201,7 @@ function getDetailScroll(taskUri: string): number {
 
 /** 压缩预览（只算不写）：返回 base（未压缩全量）与 mod（当前预算）两个请求 + 事实表 */
 async function compactPreview(taskUri: string, policy: FlatCompactPolicy, summaryText?: string) {
-    return diyService.diy.agent.local.compactPreview({ taskUri, ...policyFlat(policy), summaryText });
+    return diyService.diy.agent.local.compact.preview({ taskUri, ...policyFlat(policy), summaryText });
 }
 
 /** 自动压缩检测（只读）：事实 / 触发理由 / 生效 TTL / 当前配置 */
@@ -1220,7 +1220,7 @@ async function compact(
     policy: FlatCompactPolicy,
     summary?: { text: string; data: unknown; cost: number | null },
 ) {
-    const rec = (await diyService.diy.agent.local.compact({
+    const rec = (await diyService.diy.agent.local.compact.run({
         taskUri,
         ...policyFlat(policy),
         ...(summary ? { summaryText: summary.text, summaryData: summary.data, summaryCost: summary.cost } : {}),
@@ -1232,14 +1232,32 @@ async function compact(
 
 /** 撤销一次压缩（append-only 的 undo）；成功后重建到恢复后的边界 */
 async function undoCompact(taskUri: string, ref: string) {
-    const r = await diyService.diy.agent.local.undoCompact({ taskUri, ref });
+    const r = await diyService.diy.agent.local.compact.undo({ taskUri, ref });
     if (r.undone) await reload(taskUri);
     return r.undone;
 }
 
 /** 压缩事件账（历史页：不可变快照列表） */
 async function compactEvents(taskUri: string) {
-    return diyService.diy.agent.local.compactEvents({ taskUri });
+    return diyService.diy.agent.local.compact.events({ taskUri });
+}
+
+// ── 装配管道 plan（##344 M2）──
+// 读侧用 `autoCompactStatus`（整份配置已在里面）；这三条只在「写 / 校验」时用。
+
+/** 读当前生效 plan（来源 + 级列表 + 真源原文） */
+async function compactPlanGet(taskUri: string) {
+    return diyService.diy.agent.local.compact.plan.get({ taskUri });
+}
+
+/** 写 plan（YAML/JSON 级列表；**主进程校验后才落地**，非法 ⇒ 抛错且不改文件） */
+async function compactPlanSet(taskUri: string, keepYaml: string) {
+    return diyService.diy.agent.local.compact.plan.set({ taskUri, keep: keepYaml });
+}
+
+/** 校验 plan（缺省校验盘上配置）；不合法 ⇒ 抛错（消息里带全部理由） */
+async function compactPlanCheck(taskUri: string, keepYaml?: string) {
+    return diyService.diy.agent.local.compact.plan.check({ taskUri, keep: keepYaml });
 }
 
 /** 策略对象 → RPC 扁平参数（headtail 展开成顶层字段，与 api-def 的 cliOption 对齐） */
@@ -1327,6 +1345,9 @@ export const localChatStore = {
     clear,
     /** 压缩：预览（只算）/ 执行 / 撤销 / 压缩历史（事件快照列表，只读查看）*/
     compactPreview,
+    compactPlanGet,
+    compactPlanSet,
+    compactPlanCheck,
     compact,
     autoCompactStatus,
     autoCompactSetConfig,

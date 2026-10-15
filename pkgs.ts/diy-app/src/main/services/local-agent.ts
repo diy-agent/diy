@@ -42,6 +42,7 @@ import {
     interruptedToolPatches,
     projectAll,
     replay,
+    costOfWith,
     selectHistoryByBudget,
     selectForDelivery,
     type DeliveryOpts,
@@ -49,6 +50,8 @@ import {
     type JSONVal,
     type TurnEndReason,
 } from "./local-blocks";
+import { DEFAULT_KEEP, DEFAULT_MUST_HARD_CAP_BYTES, type KeepStage } from "../../shared/context/compact-keep";
+import { keepStagesToPlan, runPlan } from "./compaction-plan";
 import {
     decodeCursor,
     encodeCursor,
@@ -104,10 +107,13 @@ import { opsFromHashes } from "../../shared/context/changelog";
 import { previewOf } from "../../shared/context/render";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import {
+    budgetBytesOf,
+    clipSpecOf,
     estimateTokens,
     fmtBytes,
     makeDeliveryTransform,
     listTurnIds,
+    toolResultOf,
     type CompactTrigger,
     normalizePolicy,
     parseCompactLog,
@@ -115,6 +121,7 @@ import {
     utf8Bytes,
     type ClippedToolDetail,
     type CompactEventRecord,
+    type CompactPlanSnapshot,
     type CompactLogEvent,
     type CompactPolicy,
     type DroppedTurnDetail,
@@ -732,8 +739,15 @@ function sizeOfStore(store: BlockStore, opts?: Parameters<typeof blocksToMessage
  * 抽出来的理由：真发（deliveryOptsOf）与**预览/记账**（compact）必须用同一份构造逻辑，
  * 否则「预览说省 97%、真发却照旧」这种分叉根本测不出来。
  */
-function optsFor(policy: CompactPolicy, collect?: ClippedToolDetail[]): DeliveryOpts {
-    return makeDeliveryTransform(policy, toolOutRelPath, collect);
+function optsFor(policy: CompactPolicy, collect?: ClippedToolDetail[], keep?: readonly KeepStage[] | null): DeliveryOpts {
+    // 管道来自**当前配置**（config / history 分离：投递只读当前配置）—— 每个调用点都现读一次，
+    // 于是「改配置本轮即生效」对 `history.keep[]` 与预算**同一条**（无需压缩事件、无需重启）。
+    // `keep` 显式传入 = 调用方手里已有那一刻的配置（记账要快照，见 planCompact）。
+    const specs = keep !== undefined ? keep : loadAutoCompact(diyHome()).history?.keep;
+    return {
+        ...makeDeliveryTransform(policy, toolOutRelPath, collect),
+        plan: keepStagesToPlan(specs, budgetBytesOf(policy), clipSpecOf(toolResultOf(policy))),
+    };
 }
 
 /** 压缩预案的中间态（planCompact 输出；compact 与 compactPreview 共用） */
@@ -754,6 +768,8 @@ interface CompactPlan {
     rateSnap?: RateSnapshot;
     /** 账目（可缺；形状与账本的 `cost` 分组一致） */
     stats: NonNullable<CompactEventRecord["cost"]>;
+    /** 这次用的**整条 plan 原文**（含来源）—— 事件账 v3 的快照来源（##344 M2） */
+    planSnapshot: CompactPlanSnapshot;
 }
 
 /** 压缩预览（只算不写）：panel「事实」行 + 预览页共用 */
@@ -1695,13 +1711,21 @@ export class LocalAgentManager {
      */
     private planCompact(taskUri: string, policyInput: unknown): CompactPlan {
         const policy = normalizePolicy(policyInput);
+        // 装配管道 = **当前配置**的 `history.keep[]`；没配 ⇒ 缺省管道（回落，行为与 ##343 M1 一致）。
+        const cfgKeep = loadAutoCompact(diyHome()).history?.keep;
+        const keepUsed: readonly KeepStage[] = cfgKeep && cfgKeep.length > 0 ? cfgKeep : DEFAULT_KEEP;
+        const planSnapshot: CompactPlanSnapshot = {
+            budgetBytes: policy.modeData.budgetBytes,
+            keep: keepUsed.map((k) => ({ ...k })),
+            source: cfgKeep && cfgKeep.length > 0 ? "config" : "default",
+        };
         const scan = scanOpsFile(taskUri);
         const turnIds = listTurnIds(scan.ops);
         const store = new BlockStore();
         for (const op of scan.ops) store.apply(op);
         // 保留 = 预算选择（实时算）。keptRuns = 预算的**过滤器表达**（存进事件，供历史回溯还原 diff）
         const all = projectAll(store);
-        const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, optsFor(policy));
+        const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, optsFor(policy, undefined, keepUsed));
         const keptRuns = sel.keptRuns;
         const keptSet = new Set(sel.kept.map((i) => all[i]!.turn).filter((t): t is string => !!t));
         const keptTurns = keptSet.size;
@@ -1738,7 +1762,7 @@ export class LocalAgentManager {
               }
             : undefined;
         const stats = usageStats(readStepUsages(taskUri), after.estTokens, rateSnap);
-        return { policy, keptTurns, keptFromTurnId, keepFromOpIndex, droppedIds, keptRuns, scan, store, before, after, droppedDetail, clipped, rateSnap, stats };
+        return { policy, keptTurns, keptFromTurnId, keepFromOpIndex, droppedIds, keptRuns, scan, store, before, after, droppedDetail, clipped, rateSnap, stats, planSnapshot };
     }
 
     /**
@@ -1874,6 +1898,24 @@ export class LocalAgentManager {
     }
 
     /**
+     * 「必保层（`must` 级）实占字节」测量（##344 M2 · `plan check` 的硬判据）。
+     *
+     * 只跑**必保级**：那是预算**管不到**的部分（撑爆就白压 —— 压了跟没压一样，还白付重建代价）。
+     * 硬上限 = 模型上下文窗口 token × 4（无 tokenizer，与全仓同一个粗估口径）；窗口未知 ⇒ 兜底常量。
+     */
+    measureMustStages(taskUri: string, keep: readonly KeepStage[]): { mustBytes: number; hardCapBytes: number } {
+        const policy = loadAutoCompact(diyHome()).policy;
+        const capTokens = contextLimitOf(personaForTask(diyHome(), taskUri).model);
+        const hardCapBytes = capTokens !== undefined ? capTokens * 4 : DEFAULT_MUST_HARD_CAP_BYTES;
+        const must = keep.filter((s) => s.must === true);
+        if (must.length === 0) return { mustBytes: 0, hardCapBytes };
+        const all = projectAll(replay(readJsonl<Op>(opsFile(taskUri))));
+        const p = keepStagesToPlan(must, Number.MAX_SAFE_INTEGER, clipSpecOf(toolResultOf(policy)));
+        const sel = runPlan(all, p, { costOf: costOfWith(optsFor(policy)) });
+        return { mustBytes: sel.keptBytes, hardCapBytes };
+    }
+
+    /**
      * 执行压缩：写一条账（append-only）+ 落盘被裁原文 + 重置内存态。
      *
      * 失败/边界原则（照 clear 的教训）：**先把可失败的事做完，最后才改内存态**。
@@ -1910,12 +1952,14 @@ export class LocalAgentManager {
         const ts = new Date().toISOString();
         const rec: CompactEventRecord = {
             kind: "compact",
-            v: 2,
+            v: 3,
             id: ts,
             ts,
             by,
             trigger,
             policy: p.policy,
+            // v3 新增：**当时整条 plan 的原文**（快照 ⇒ 事后可回放「那一刻用的是哪套 plan」）
+            plan: p.planSnapshot,
             // 锚点：只记**物理位置**（逻辑 id 只是 label）
             boundary: {
                 keptFromTurnId: p.keptFromTurnId,

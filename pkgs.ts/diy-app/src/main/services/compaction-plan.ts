@@ -28,7 +28,10 @@
 //     「保底最近 N 步全量」正是靠它：`exempt` 级 + `clip: full` ⇒ 这 N 步的工具结果字节保真。
 
 import type { ClipSpec } from "../../shared/context/compaction";
+import { DEFAULT_EXEMPT_STEPS, DEFAULT_KEEP, type KeepStage } from "../../shared/context/compact-keep";
 import type { LocalModelMessage } from "./local-blocks";
+
+export { DEFAULT_EXEMPT_STEPS };
 
 // ─── 分类（纵向阶梯；系统定义、只读可见）──────────────────────────
 
@@ -254,30 +257,63 @@ export const exemptStage = (picker: Picker, opts: { limit?: number; clip?: ClipS
 /** 装配一条管道 */
 export const plan = (budgetBytes: number, ...stages: PickStage[]): CompactPlan => ({ budgetBytes, stages });
 
-/** 「保底最近 N 步」的 N（用户 2026-10-15 定：**6 步全量**） */
-export const DEFAULT_EXEMPT_STEPS = 6;
-
 /** `full` 的规范值（级声明用，避免每处各写一份字面量） */
 export const CLIP_FULL: ClipSpec = { type: "full" };
 
+// ─── 配置面 → 可执行管道（##344 M2）────────────────────────────
+//
+// `history.keep[]`（数据，见 shared/context/compact-keep.ts）→ `CompactPlan`（可执行）。
+// 这一层是 M2 的**唯一接缝**：存储/CLI/UI 都只说「级列表」，执行只认 `CompactPlan`。
+
+/** 取法 → 挑选元件（**唯一映射点**；加取法只改这里 + shared 的 schema） */
+export function pickerOf(s: KeepStage): Picker {
+    switch (s.type) {
+        case "ladder":
+            return byLadder();
+        case "role":
+            return byRole(s.data.role);
+        case "recent":
+            return recentMessages(s.data.n, s.data.role ? { role: s.data.role } : {});
+        case "steps":
+            return recentSteps(s.data.n);
+    }
+}
+
 /**
- * **默认管道**（##343 M1 起）：
+ * 级列表（数据）→ 管道（可执行）。`keep` 缺省 / 空 ⇒ 用 `DEFAULT_KEEP`（= 缺省管道，回落语义）。
+ *
+ * 预算 **0 = 用户口径的「清零」**（policy 文档明写：「0 = 清零」）：此时**整条管道作废**
+ * （含 `must` 级）—— 清零是「这个会话的上下文我全不要了」，保底级不得把它悄悄改写成「留最近 6 步」。
+ * 要「留 6 步」就给一个正预算。（与 ##343 M1 的 `defaultBudgetPlan` 同一条口径，故两者在 0 处一致。）
+ */
+export function keepStagesToPlan(
+    keep: readonly KeepStage[] | undefined | null,
+    budgetBytes: number,
+    defaultClip?: ClipSpec | null,
+): CompactPlan {
+    if (!(budgetBytes > 0)) return plan(0);
+    const specs = keep && keep.length > 0 ? keep : DEFAULT_KEEP;
+    return plan(
+        budgetBytes,
+        ...specs.map((s) => {
+            const picker = pickerOf(s);
+            const opts = { limit: s.limit, ...(s.clip ? { clip: s.clip } : {}) };
+            return s.must ? exemptStage(picker, opts) : stage(picker, opts);
+        }),
+    );
+}
+
+/**
+ * **默认管道**（##343 M1 起）—— 现由 `DEFAULT_KEEP`（数据）生成，**单一真源**：
  *   ① `exempt`（不计预算）· `recentSteps(6)` · **`clip: full`** —— 最近 6 步的工具结果**字节保真**；
- *   ② `count`（计预算）· `byLadder` · `clip: defaultClip` —— 旧消息照旧按全局策略裁（headtail 3/3）。
+ *   ② `count`（计预算）· `byLadder` —— 旧消息按全局策略（`defaultClip`）裁（headtail 3/3）。
  *
  * 为什么保底必须 `full`（##340 量尺的结论）：迷路的病灶不是「进度被删」，而是**留下的工具结果
  * 被裁成头尾** —— 只保下标不保字节，等于没保。
- * ⚠️ 它就是「人」现在装配的那条；第二轮由 agent 组合其它管道，行为从此可插拔。
+ * ⚠️ 它就是「人」现在装配的那条；第二轮起由配置 `history.keep[]` 覆写（M2），行为从此可插拔。
  */
 export const defaultBudgetPlan = (budgetBytes: number, defaultClip?: ClipSpec | null): CompactPlan =>
-    plan(
-        budgetBytes,
-        // ⚠️ 预算 **0 = 用户口径的「清零」**（policy 文档明写：「0 = 清零」）——保底**不得**把它
-        // 悄悄改写成「留最近 6 步」：清零是「这个会话的上下文我全不要了」，两句话不是一个意思。
-        // 于是这里按 0 关掉保底级；要「留 6 步」就给它一个正预算。
-        ...(budgetBytes > 0 ? [exemptStage(recentSteps(DEFAULT_EXEMPT_STEPS), { clip: CLIP_FULL })] : []),
-        stage(byLadder(), defaultClip ? { clip: defaultClip } : {}),
-    );
+    keepStagesToPlan(DEFAULT_KEEP, budgetBytes, defaultClip);
 
 // ─── 执行（装配器）────────────────────────────────────────────
 

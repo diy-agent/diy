@@ -163,21 +163,30 @@ export function budgetBytesOf(p: CompactPolicy): number {
 // **可按级声明**：每条取法（picker / stage）各自带 `clip`，**先声明者赢**，缺省回落
 // `history.defaultClip`（= 旧全局策略的降级 ⇒ 不声明即老行为）。
 // 形状遵 `rule.discriminated-union`：判别键 `type` 同级 = 所有分支共有；分支私有参数进 `data`。
-export type ClipSpec =
-    /** 不裁（**保底最近 N 步**要的就是字节保真：headtail 一动，「留下的结果被裁成头尾」就治不了） */
-    | { type: "full" }
-    /** 只留调用 + 原文路径 */
-    | { type: "path" }
-    /** 头尾保留 + 中间 marker（私有参数进 `data`） */
-    | { type: "headtail"; data: HeadTailParams };
-
 /** headtail 的私有参数（触发阈值 = head + tail，见 HeadTailPolicy） */
-export interface HeadTailParams {
-    head: number;
-    tail: number;
-    maxLineChars: number;
-    maxKeepBytes: number;
-}
+export const HeadTailParamsSchema = z.object({
+    head: z.number().int().nonnegative().describe("保留头部行数"),
+    tail: z.number().int().nonnegative().describe("保留尾部行数"),
+    maxLineChars: z.number().int().positive().describe("单行超长截断阈值（字符）"),
+    maxKeepBytes: z.number().int().positive().describe("保留总量字节兜底"),
+});
+export type HeadTailParams = z.infer<typeof HeadTailParamsSchema>;
+
+/**
+ * clip 的**真源 schema**（zod）—— 因为 clip 要**从配置读进来**（`history.keep[].clip`，##344 M2），
+ * 校验必须在写盘前发生（非法 clip 形状 → 拒绝写、给理由）。类型由 schema 推出，杜绝两处漂移。
+ */
+export const ClipSpecSchema = z.discriminatedUnion("type", [
+    z.object({
+        type: z.literal("full").describe("不裁（保底最近 N 步要的就是字节保真：headtail 一动，「留下的结果被裁成头尾」就治不了）"),
+    }),
+    z.object({ type: z.literal("path").describe("只留调用 + 原文路径") }),
+    z.object({
+        type: z.literal("headtail").describe("头尾保留 + 中间 marker（私有参数进 data）"),
+        data: HeadTailParamsSchema.describe("headtail 私有参数（只此支有）"),
+    }),
+]);
+export type ClipSpec = z.infer<typeof ClipSpecSchema>;
 
 /** 全局策略（旧形状）→ clip 缺省值（**降级**：M1 之前只有这一档） */
 export function clipSpecOf(tr: ToolResultPolicy): ClipSpec {
@@ -557,6 +566,23 @@ export type CompactTrigger =
     | "contextWindowOver";
 
 /**
+ * **plan 快照**（##344 M2 · 事件账 v3）：压缩那一刻**整条装配管道**的原文（配置面形状）。
+ *
+ * 为什么必须存：`policy` 只说明「旋钮拧到哪」（预算 / 全局裁法），说明不了「**为什么留这些**」——
+ * 那是 `history.keep[]`（级列表）决定的。存下它，事后才能把某次压缩**回放**成「当时用的是哪套 plan」，
+ * 也才能回答「换了 plan 之后，压缩后果变好还是变坏」（##340 量尺的 A/B 基线）。
+ * 存**配置面**形状（`keep` 级列表）而不是可执行管道：前者是**人读、可 diff、可再喂回去**的原文。
+ */
+export interface CompactPlanSnapshot {
+    /** 当时的历史字节上限（= `policy.modeData.budgetBytes`） */
+    budgetBytes: number;
+    /** 当时的级列表原文（`{ type, must?, limit?, clip?, data }`；见 shared/context/compact-keep.ts） */
+    keep: import("./compact-keep").KeepStage[];
+    /** 这套 plan 从哪来：`config` = 用户/agent 配的；`default` = 配置没写、回落代码缺省管道 */
+    source: "config" | "default";
+}
+
+/**
  * 压缩账（**v2：按语义分组**，用户 2026-10-06 定；D5 命名规范「结构即语义」）。
  *
  * 为什么分组：v1 把十几项平铺，读的人要自己分辨哪些是**用户输入**、哪些是**锚点**、
@@ -573,7 +599,8 @@ export type CompactTrigger =
  */
 export interface CompactEventRecord {
     kind: "compact";
-    v: 2;
+    /** v2 = 只有 `policy`（旋钮）；**v3 = 多一条 `plan` 快照**（##344 M2）。读侧两版都收。 */
+    v: 2 | 3;
     /** 压缩 id（= ts，供 measure / undo 回指） */
     id: string;
     ts: string;
@@ -583,6 +610,11 @@ export interface CompactEventRecord {
     trigger: CompactTrigger;
     /** 用户拧的旋钮 */
     policy: CompactPolicy;
+    /**
+     * **当时整条装配管道的原文**（v3 起；v2 旧行无此字段 ⇒ 视为「缺省管道」）。
+     * 只记锚点/数字说明不了「留什么、怎么裁」——那是 plan 决定的，故必须快照。
+     */
+    plan?: CompactPlanSnapshot;
     /** **锚点**：只记物理位置（逻辑 id 只是 label；锚必须锚在物理位置，见 keepFromOpIndex 头注） */
     boundary: {
         /** 保留起点轮 id（label；null = 压缩那一刻全部清零） */
@@ -680,8 +712,9 @@ interface CompactEventRecordV1 {
  * ⚠️ v1 的 `boundary.keptTurns/droppedTurns` 是**结果数字**却塞在锚点里 → 归到 `size`。
  */
 function normalizeCompactEvent(e: CompactEventRecord | CompactEventRecordV1): CompactEventRecord {
-    if (e.v === 2) return e;
-    const v1 = e;
+    // v2（无 plan）/ v3（带 plan 快照）都已是分组形状 —— 原样透传；只有 v1 平铺要归一。
+    if (e.v !== 1) return e as CompactEventRecord;
+    const v1 = e as CompactEventRecordV1;
     const hasDetails =
         v1.droppedDetail !== undefined ||
         v1.clipped !== undefined ||

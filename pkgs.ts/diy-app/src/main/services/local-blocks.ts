@@ -548,10 +548,15 @@ export interface LocalModelMessage {
  */
 export interface DeliveryOpts {
     /**
-     * 【新·目标式预算】历史消息可占字节上限（不含固定开支）。**有它就按纵向优先级阶梯选择**，
+     * 【新·目标式预算】历史消息可占字节上限（不含固定开支）。**有它就按装配管道选择**，
      * 忽略 `sinceTurnId`/`content`（旧的轮边界口径）—— 见 selectHistoryByBudget。
      */
     budgetBytes?: number;
+    /**
+     * 【##344 M2】可执行装配管道（来自当前配置 `history.keep[]`，由 `keepStagesToPlan` 造）。
+     * 给了它就**按它选**（其中的 `budgetBytes` 即预算）；缺省 ⇒ `defaultBudgetPlan(budgetBytes, defaultClip)`。
+     */
+    plan?: CompactPlan;
     /** 只投递从这个 turn 起的块（压缩边界）；null = 一个都不投（全部清零）；缺省 = 全投 */
     sinceTurnId?: string | null;
     /**
@@ -592,7 +597,14 @@ export interface DeliveryOpts {
 
 import { utf8Bytes, type ClipSpec } from "../../shared/context/compaction";
 // 选择算法（元件库 + 装配器）—— 见 compaction-plan.ts 头注。此处**转出**旧公开名以保持兼容。
-import { runPlan, defaultBudgetPlan, HISTORY_LADDER, type BudgetSelection, type HistoryRank } from "./compaction-plan";
+import {
+    runPlan,
+    defaultBudgetPlan,
+    HISTORY_LADDER,
+    type BudgetSelection,
+    type HistoryRank,
+    type CompactPlan,
+} from "./compaction-plan";
 export { HISTORY_LADDER, type HistoryRank, type BudgetSelection };
 
 /**
@@ -774,13 +786,20 @@ export function selectHistory(
 export function selectHistoryByBudget(
     all: readonly LocalModelMessage[],
     budgetBytes: number,
-    opts: Pick<DeliveryOpts, "transformToolResult" | "defaultClip"> = {},
+    opts: Pick<DeliveryOpts, "transformToolResult" | "defaultClip" | "plan"> = {},
 ): BudgetSelection {
-    return runPlan(all, defaultBudgetPlan(budgetBytes, opts.defaultClip), {
-        // 成本 = **投递**口径（渲染后字节；工具结果按**该级的 clip** 裁剪）。
-        // 与最终渲染走同一个 renderMessage ⇒ 「算预算的字节」就是「发出去的字节」。
-        costOf: (m, clip) => utf8Bytes(JSON.stringify(renderMessage(m, opts, clip))),
-    });
+    // 管道来源只有一个决策点：给了 `plan`（配置面）就用它，否则回落缺省管道。
+    return runPlan(all, opts.plan ?? defaultBudgetPlan(budgetBytes, opts.defaultClip), { costOf: costOfWith(opts) });
+}
+
+/**
+ * 选择阶段的**成本口径**：投递口径（渲染后字节；工具结果按**该级的 clip** 裁剪）。
+ * 与最终渲染走同一个 `renderMessage` ⇒ 「算预算的字节」就是「发出去的字节」。
+ * 抽出来是因为 ##344 M2 的 `plan check` 要**单独**跑「只有 must 级」的管道来量它占多少字节 ——
+ * 测量若另写一份口径，「量出来的」与「真发的」就是两个数。
+ */
+export function costOfWith(opts: Pick<DeliveryOpts, "transformToolResult" | "defaultClip">) {
+    return (m: LocalModelMessage, clip: ClipSpec | null): number => utf8Bytes(JSON.stringify(renderMessage(m, opts, clip)));
 }
 
 /**

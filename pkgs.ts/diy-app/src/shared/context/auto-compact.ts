@@ -16,6 +16,7 @@
 
 import { z } from "zod";
 import { cacheStateAfterGap, type EffectiveTtl } from "./cache-ttl";
+import { validateKeepStages, type KeepStage } from "./compact-keep";
 import {
     CompactPolicySchema,
     DEFAULT_BUDGET_BYTES,
@@ -37,6 +38,20 @@ export const AutoCompactTriggersSchema = z.object({
         ),
 });
 
+/**
+ * `history` —— 「留给模型的历史消息」怎么装配（##344 M2 新增；压缩的**作用对象**）。
+ *
+ * 与 `policy` 的分工：`policy` 是**旋钮**（预算 / 工具结果全局呈现），`history.keep[]` 是**管道**
+ * （级列表：每条取法留哪些、怎么裁）。缺 `keep` ⇒ 回落代码缺省管道（= ##343 M1 的 `defaultBudgetPlan`）。
+ * 形状与校验的真源：`shared/context/compact-keep.ts`（此处只保证「是个数组」，容错归一在 normalizeAutoCompact）。
+ */
+export const AutoCompactHistorySchema = z.object({
+    keep: z
+        .array(z.unknown())
+        .optional()
+        .describe("级列表 `{ type, must?, limit?, clip?, data }`（形状见 shared/context/compact-keep.ts）；缺省回落默认管道"),
+});
+
 export const AutoCompactConfigSchema = z.object({
     mode: z
         .enum(["off", "notify", "auto"])
@@ -49,8 +64,20 @@ export const AutoCompactConfigSchema = z.object({
      * 各造一个形状必然分叉。
      */
     policy: CompactPolicySchema.describe("自动压时用的策略（与手动面板同一真源形状）"),
+    history: AutoCompactHistorySchema.optional().describe("历史装配管道（级列表）；缺省 = 回落代码缺省管道"),
 });
-export type AutoCompactConfig = z.infer<typeof AutoCompactConfigSchema>;
+/**
+ * 配置真源类型（**手写**而非 `z.infer`）：`history.keep` 在 schema 里是 `unknown[]`（容错由
+ * `normalizeAutoCompact` 用 `validateKeepStages` 做，非法级**只丢 history、不丢整份配置**），
+ * 而对外读到的必然是**校验过的** `KeepStage[]` —— 两者不同，不能靠 z.infer 硬凑。
+ */
+export interface AutoCompactConfig {
+    mode: "off" | "notify" | "auto";
+    triggers: AutoCompactTriggers;
+    policy: CompactPolicy;
+    /** 级列表（已校验；非法 / 空列表在此缺席 = 回落缺省管道） */
+    history?: { keep: KeepStage[] };
+}
 export type AutoCompactTriggers = z.infer<typeof AutoCompactTriggersSchema>;
 
 /**
@@ -110,6 +137,7 @@ export function normalizeAutoCompact(raw: unknown): AutoCompactConfig {
     const src = (raw ?? {}) as Record<string, unknown>;
     const t = (src["triggers"] ?? {}) as Record<string, unknown>;
     const mode = src["mode"] === "off" || src["mode"] === "auto" ? src["mode"] : "notify";
+    const history = normalizeHistory(src["history"]);
     return {
         mode,
         triggers: {
@@ -120,7 +148,33 @@ export function normalizeAutoCompact(raw: unknown): AutoCompactConfig {
         // 策略（自动 / 手动**同一套**）→ 交给 normalizePolicy 统一宽松归一；
         // 缺省用 DEFAULT_AUTO_COMPACT.policy（见本函数头注）。
         policy: src["policy"] !== undefined ? normalizePolicy(src["policy"]) : DEFAULT_AUTO_COMPACT.policy,
+        // history 只在**校验通过且非空**时出现（否则缺席 = 回落缺省管道）。见 normalizeHistory。
+        ...(history ? { history } : {}),
     };
+}
+
+/**
+ * `history` 的容错归一（**读侧宽松**，硬要求）：
+ *   · 缺 `history` / 缺 `keep` → 缺席（= 回落缺省管道）；
+ *   · `keep` 有**非法级** → 只丢 `history`（出声），**不丢整份配置**（mode/triggers/policy 照用）；
+ *   · `keep: []`（空级列表）→ 同样回落缺省 —— 空列表的字面后果是「什么都不留」（= 清零），
+ *     而"清空所有级"几乎都是编辑途中的手滑，不该静默把会话清掉。要清零请把预算设 0。
+ */
+function normalizeHistory(raw: unknown): { keep: KeepStage[] } | undefined {
+    if (raw === null || typeof raw !== "object") return undefined;
+    const keepRaw = (raw as Record<string, unknown>)["keep"];
+    if (keepRaw === undefined) return undefined;
+    const { stages, issues } = validateKeepStages(keepRaw);
+    const errors = issues.filter((i) => i.level === "error");
+    if (errors.length > 0) {
+        console.warn(`[auto-compact] history.keep 非法（${errors.map((e) => e.message).join("；")}）→ 回落缺省管道`);
+        return undefined;
+    }
+    if (stages.length === 0) {
+        console.warn("[auto-compact] history.keep 是空级列表 → 回落缺省管道（要清零请把 policy.modeData.budgetBytes 设为 0）");
+        return undefined;
+    }
+    return { keep: stages };
 }
 
 /** 判定所需的**事实**（全部可观测，不含预测） */
