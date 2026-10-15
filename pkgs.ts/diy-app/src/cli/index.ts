@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
 import electronPath from "electron";
 import { HttpClientBinding } from "@diy/rpc/http";
+import { probeInstance } from "./probe-instance";
 import { CliApp } from "@diy/rpc/cli";
 import { apiDef } from "../main/services/api-def";
 import { readRuntimeConfig, type RuntimeConfig } from "../runtime";
@@ -35,24 +36,16 @@ function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** 探测某端口上是否已有可用的 diy app */
-async function probePort(port: number): Promise<boolean> {
-  const c = new HttpClientBinding(`http://127.0.0.1:${port}`);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      c.ready(),
-      new Promise((_, rej) => {
-        timer = setTimeout(() => rej(new Error("timeout")), 1500);
-      }),
-    ]);
-    return true;
-  } catch {
-    return false;
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-    c.dispose();
-  }
+/** 端口被别的实例占着：把「谁是谁」说清楚（走 stderr，不污染 --json 的 stdout） */
+function reportForeignInstance(
+  cfg: RuntimeConfig,
+  hit: { port: number; diyHome: string; env: string; pid: number },
+): void {
+  console.error(
+    `[diy] 端口 ${hit.port}（记在 ${cfg.home}/app.port）上运行的是**另一个实例**：` +
+      `数据根 ${hit.diyHome}、env=${hit.env}、pid=${hit.pid}`,
+  );
+  console.error(`[diy] 不复用它（两边数据根不同，连上去就是串台），接着启动 ${cfg.home} 自己的实例。`);
 }
 
 /** 定位包根（build/ 的父目录）。**别数 dirname**：源码模式 `src/cli/index.ts` 与产物模式
@@ -117,12 +110,19 @@ function printCdpHint(cfg: RuntimeConfig): void {
 
 /**
  * 确保 diy 管控台在运行。
- * 1) 已运行 → 直接复用其端口；2) 未运行 → 自动启动并等待就绪。
+ * 1) `app.port` 记的端口上住着**本数据根**的实例 → 复用；
+ * 2) 端口上住着**别的实例**（另一个 DIY_HOME，如 worktree 的 dev 实例占了同一个端口）→ 拒绝复用
+ *    （##328(实例身份只靠端口)：旧行为只探「有 HTTP 响应」，于是生产 CLI 连到 dev 实例上），另起自己的；
+ * 3) 端口上没人 → 自动启动并等待就绪。
  * 起不来则报错（不再回退本地内存执行）。
  */
 async function ensureAppPort(cfg: RuntimeConfig): Promise<number> {
-  const existing = readPort(cfg);
-  if (existing !== null && (await probePort(existing))) return existing;
+  const recorded = readPort(cfg);
+  if (recorded !== null) {
+    const hit = await probeInstance(recorded, cfg.home);
+    if (hit.kind === "mine") return recorded;
+    if (hit.kind === "other") reportForeignInstance(cfg, hit);
+  }
 
   // 测试环境：只允许复用，不允许自建。测试用 startElectronTest 启动实例并持有句柄，
   // 此处若在探测超时（如并发抢 CPU 让 probePort 的 1500ms 落空）时另起 detached 实例，
@@ -130,7 +130,7 @@ async function ensureAppPort(cfg: RuntimeConfig): Promise<number> {
   // 报错而非静默继续：把「app 未就绪」暴露成测试失败，而不是留一个没人管的进程。
   if (cfg.noLaunch) {
     throw new Error(
-      `DIY_NO_LAUNCH=1：app 未在 ${cfg.home} 就绪（app.port=${existing ?? "缺失"}）。` +
+      `DIY_NO_LAUNCH=1：app 未在 ${cfg.home} 就绪（app.port=${recorded ?? "缺失"}）。` +
         `测试环境禁止 CLI 自动拉起实例；请确认 startElectronTest() 已成功启动并传入了同一个 HOME。`,
     );
   }
@@ -147,10 +147,12 @@ async function ensureAppPort(cfg: RuntimeConfig): Promise<number> {
     while (Date.now() < deadline) {
       const p = readPort(cfg);
       if (p !== null) {
-        const ok = await Promise.race([probePort(p), spawnError]);
-        if (ok) {
+        // 等待期同样要验身份：新实例还没写好 app.port 时，读到的是**旧值**，
+        // 那个端口上可能站着别人（##328(实例身份只靠端口) 的串台就这样在等待循环里发生）
+        const hit = await Promise.race([probeInstance(p, cfg.home), spawnError]);
+        if (hit.kind === "mine") {
           printCdpHint(cfg);
-          return p;
+          return hit.port;
         }
       }
       await Promise.race([delay(POLL_INTERVAL_MS), spawnError]);

@@ -10,7 +10,7 @@
 //   1. readRuntimeConfig + AppConfig.fromRuntime
 //   2. requestSingleInstanceLock → 同 userData 只一个实例
 //   3. 创建窗口 + IPC transport
-//   4. 端口绑定 → 18888（或 DIY_PORT 覆盖）
+//   4. 端口绑定 → DIY_PORT > app.port 文件 > defaultPort(env)（生产 18888；dev/test 随机）
 
 import { app, BrowserWindow, screen } from "electron";
 import path from "node:path";
@@ -40,7 +40,7 @@ import { installDiagnostics } from "./services/diagnostics";
 import { traffic } from "./core/traffic";
 import { installCrashReporting } from "./services/crash-reporting";
 import { detectGpu } from "./core/gpu-detect";
-import { readRuntimeConfig } from "../runtime";
+import { readRuntimeConfig, resolvePort } from "../runtime";
 import { instanceTitle } from "../shared/instance-title";
 import { cliEntryForRepo, findRepoRoot, homeDisplayOf, repoDisplayOf } from "./core/instance-identity";
 import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "./core/single-instance";
@@ -337,11 +337,20 @@ app.on("render-process-gone", (_event, webContents, details) => {
 // ── RPC 端口服务（外部 CLI 接入） ──
 
 async function startRpcPort(ipcTransport: import("@diy/rpc").EnvelopeTransport): Promise<boolean> {
-  // 优先级: DIY_PORT（入口注入） > app.port 文件（上次实例） > rpc 兜底 18888
-  const preferredPort = cfg.port ?? appConfig.readPort() ?? undefined;
-  console.log(
-    `  Port:         ${preferredPort ?? "auto"}${cfg.port !== undefined ? ` (DIY_PORT=${cfg.port})` : ` (from ${appConfig.diyHome}/app.port)`}`,
-  );
+  // 裁决逻辑（含「非生产不沿用记录里的 18888」）在 runtime.ts::resolvePort —— 纯函数、可单测。
+  const resolved = resolvePort({
+    env: cfg.env,
+    cliPort: cfg.port,
+    recordedPort: appConfig.readPort(),
+  });
+  const preferredPort = resolved.port;
+  const portSource =
+    resolved.source === "cli"
+      ? `DIY_PORT=${resolved.port}`
+      : resolved.source === "recorded"
+        ? `from ${appConfig.diyHome}/app.port`
+        : `${cfg.env} 缺省`;
+  console.log(`  Port:         ${preferredPort === 0 ? "auto(随机)" : preferredPort} (${portSource})`);
 
   rpcPort = new RpcPortService();
 
@@ -354,12 +363,10 @@ async function startRpcPort(ipcTransport: import("@diy/rpc").EnvelopeTransport):
     if (err?.code === "EADDRINUSE") {
       console.log(`  ⚠ Port ${preferredPort} 被占`);
     }
-    // TODO(端口竞争)：dev watcher 热重启时，旧 Electron 刚被 kill、18888 的 socket 还没
-    //   完全释放，新实例首次 bind 就 EADDRINUSE，于是**立刻**回落到随机端口 —— 实测
-    //   13 次热重启里有 3 次落到随机端口（见 main.log 的「→ 尝试随机端口」），
-    //   破坏了「dev 恒在 18888」的约定。CLI 靠 app.port 文件仍能找到，所以不致命但很烦。
-    //   修法：回落随机之前，对 preferredPort 做几轮短重试（如 5 × 200ms），
-    //   只在重试耗尽后才认定确有外部进程占用。注意别把「真的端口冲突」也拖成慢启动。
+    // TODO(端口竞争)：热重启时旧 Electron 刚被 kill、socket 还没完全释放，新实例首次 bind
+    //   就 EADDRINUSE，于是**立刻**回落到随机端口。开发态已无所谓（缺省本来就是随机，见
+    //   runtime.ts::defaultPort）—— 但 production（18888）与显式 DIY_PORT 仍值得几轮短重试
+    //   （如 5 × 200ms）再回落，别把「真的端口冲突」也拖成慢启动。
     console.log("  → 尝试随机端口...");
     try {
       await rpcPort.start(bindAppHandlers, appConfig, 0, ipcTransport);
