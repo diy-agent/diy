@@ -25,10 +25,10 @@ import {
 // ─── 策略归一（只有 budget 一种算法）───
 
 describe("normalizePolicy：预算 + 工具结果兜底", () => {
-    it("空输入 → 默认 3KB 预算 + 头尾裁剪", () => {
+    it("空输入 → 默认 20KB 预算 + 头尾裁剪（##343 M1：默认值与生产 auto-compact.yaml 对齐）", () => {
         const p = normalizePolicy(undefined);
         expect(p.mode).toBe("budget");
-        expect(p.modeData.budgetBytes).toBe(3 * 1024);
+        expect(p.modeData.budgetBytes).toBe(20 * 1024);
         expect(p.modeData.toolResult.render).toBe("headtail");
         expect(flatPolicyOf(p).headtail).toEqual(DEFAULT_HEADTAIL);
     });
@@ -42,7 +42,7 @@ describe("normalizePolicy：预算 + 工具结果兜底", () => {
         expect(normalizePolicy({ budgetBytes: 5120 }).modeData.budgetBytes).toBe(5120);
     });
     it("坏值回落：负数预算 → 缺省（脏数据不当作清零）；未知 render → asis", () => {
-        expect(normalizePolicy({ budgetBytes: -5 }).modeData.budgetBytes).toBe(3 * 1024);
+        expect(normalizePolicy({ budgetBytes: -5 }).modeData.budgetBytes).toBe(20 * 1024);
         expect(normalizePolicy({ toolResult: "nope" }).modeData.toolResult.render).toBe("asis");
     });
 });

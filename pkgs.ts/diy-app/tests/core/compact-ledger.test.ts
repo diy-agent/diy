@@ -115,7 +115,9 @@ describe("④ 预算事件的**过滤器表达**（历史回溯可还原投递�
 describe("② details.clipped：同 id 只记一次（去重 —— 回归「虚胖一倍」）", () => {
     it("headtail 裁剪时，每个工具 id 在 details.clipped 里只出现一次", () => {
         const uri = newUri();
-        seedOpsBigTools(uri);
+        // ⚠️ 必须**多于保底步数**（##343 M1：最近 6 步 `clip: full` ⇒ 不再被 headtail 裁）：
+        //    8 轮 ⇒ 最早两轮的工具输出走阶梯级、照旧被裁，去重才有对象可验。
+        seedOpsBigTools(uri, 8);
         const rec = getLocalAgent().compact(
             uri,
             { mode: "budget", budgetBytes: 1024 * 1024, toolResult: { render: "headtail" }, summary: false },

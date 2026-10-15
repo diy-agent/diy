@@ -159,10 +159,13 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
 
         const pid = createProject(join(diyHome(), "auto-work"));
         const uri = createTask({ title: "自动压缩", project: pid });
-        // 三轮会话落盘（每轮 user + assistant 文本 + tool）
+        // 十轮会话落盘（每轮 user + assistant 文本 + tool）。
+        // ⚠️ 必须**够大**才谈得上「压出东西」（##343 M1 后缺省预算 20KB、最近 6 步保底 `clip: full`）：
+        //    非保底的旧轮若本来就装得进预算、又没被裁，压缩就是**空操作**（noop 不写账）——
+        //    那是设计（见 compact 的 noop 判据），不是 bug。这里每轮 400 行输出 ⇒ 旧轮必被 headtail 裁。
         const lines: string[] = [];
         const pushes = (o: unknown) => lines.push(JSON.stringify(o));
-        for (let i = 1; i <= 3; i++) {
+        for (let i = 1; i <= 10; i++) {
             const t = `t${7000 + i}`;
             pushes({ op: "start", id: t, kind: "turn" });
             pushes({ op: "start", id: `${t}_u`, kind: "text", parent: t, meta: { role: "user" } });
@@ -170,7 +173,7 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
             pushes({ op: "stop", id: `${t}_u` });
             pushes({ op: "start", id: `${t}_s1`, kind: "step", parent: t });
             pushes({ op: "start", id: `${t}_c`, kind: "tool", parent: `${t}_s1`, meta: { tool: "bash" } });
-            pushes({ op: "patch", id: `${t}_c`, fields: { args: { command: "ls" }, status: "done", output: Array.from({ length: 120 }, (_, k) => `row ${k}`).join("\n") } });
+            pushes({ op: "patch", id: `${t}_c`, fields: { args: { command: "ls" }, status: "done", output: Array.from({ length: 400 }, (_, k) => `row ${k}`).join("\n") } });
             pushes({ op: "stop", id: `${t}_c` });
             pushes({ op: "stop", id: `${t}_s1` });
             pushes({ op: "stop", id: t });
@@ -183,7 +186,7 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
             join(localDir(), `${keyOf(uri)}.usage.jsonl`),
             JSON.stringify({
                 ts: new Date().toISOString(),
-                turnId: "t7003",
+                turnId: "t7010",
                 step: 1,
                 model: "mimo-v2.6-flash",
                 apiFace: "chat",
@@ -229,7 +232,7 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
         expect(c).toBeTruthy();
         expect(c.by).toBe("auto");
         expect(c.trigger).toBe("contextWindowOver");
-        // 自动压用的是默认策略：目标式预算 3KB
+        // 自动压用的是默认策略：目标式预算 20KB（##343 M1 与生产 auto-compact.yaml 对齐）
         expect(c.policy).toEqual(DEFAULT_AUTO_COMPACT.policy);
         // 旧历史仍在（压缩只改投递）
         expect(readFileSync(opsFile(uri), "utf-8")).toContain("第 1 句");

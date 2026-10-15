@@ -19,7 +19,6 @@ import {
     appendFileSync,
     closeSync,
     existsSync,
-    mkdirSync,
     openSync,
     readFileSync,
     readSync,
@@ -58,6 +57,7 @@ import {
     seekWindowStart,
 } from "./local-ops-seek";
 import { appendAudit } from "./agent-audit";
+import { capToolOutput, safeId, toolOutDir, toolOutRelPath } from "./tool-output";
 import { abortText } from "../../shared/turn-end";
 import { opsFeed } from "./ops-feed";
 import { AsyncQueue, withCleanup } from "./async-queue";
@@ -105,6 +105,7 @@ import { previewOf } from "../../shared/context/render";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import {
     estimateTokens,
+    fmtBytes,
     makeDeliveryTransform,
     listTurnIds,
     type CompactTrigger,
@@ -596,22 +597,6 @@ export function compactFile(taskUri: string): string {
     return path.join(localDir(), `${keyOf(taskUri)}.compact.jsonl`);
 }
 
-/** 工具 id 里的非法文件名字符归一（块 id 形如 `t1759_s1_r1`，一般无需动） */
-function safeId(id: string): string {
-    return id.replace(/[^\w.-]+/g, "_");
-}
-
-/** 被裁剪工具输出的原文落盘目录（模型可回取；##127 的「原文可寻回」） */
-function toolOutDir(): string {
-    const d = path.join(localDir(), "toolout");
-    mkdirSync(d, { recursive: true });
-    return d;
-}
-
-/** marker 里写的相对路径：相对 $DIY_HOME，人/模型都能照此找到原文 */
-function toolOutRelPath(id: string): string {
-    return `local/toolout/${safeId(id)}.txt`;
-}
 
 /** 读取压缩账本（文件不存在 = 从未压缩过；坏行由 parseCompactLog 跳过） */
 function readCompactLog(taskUri: string): CompactLogEvent[] {
@@ -889,6 +874,16 @@ function clip(s: string, n = 6000): string {
 }
 
 /**
+ * bash 输出缓冲上限（**内存护栏，不是截断策略**）。
+ *
+ * 旧值是 1MB 且触顶＝**静默**截断（`ERR_CHILD_PROCESS_STDIO_MAXBUFFER`，模型与用户都拿不到信号）。
+ * 现在两件事分开：① 上限提到 32MB —— 够装下正常的大输出，好让**投递层**落盘的是**完整**原文
+ * （否则「原文可回取」取回的是个半截）；② 触顶**显式**识别（见下面 err.code 分支），
+ * 与成功/报错**走同一条**投递截断路径（`capToolOutput`）。
+ */
+const BASH_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+
+/**
  * bash：30s 超时；**命令级**失败也以文本回喂模型（错误是一等信息，不抛）。
  *
  * ⚠️ "不抛"只覆盖"命令跑起来了"那一档：非零退出 / 超时被杀 / 被取消（都是模型的输入问题，
@@ -907,13 +902,18 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
         execFile(
             "/bin/bash",
             ["-c", command],
-            { cwd, timeout: limits.bashTimeoutMs, maxBuffer: 1024 * 1024, signal },
+            { cwd, timeout: limits.bashTimeoutMs, maxBuffer: BASH_MAX_BUFFER_BYTES, signal },
             (err, stdout, stderr) => {
                 const out = [stdout, stderr].filter(Boolean).join("\n");
+                // ⚠️ 这里一律返回**完整**文本（不 clip）：发给模型的那一份由 `capToolOutput` 在
+                //    投递层现算（##127）—— 在 execute 里裁 = 落进 ops 的原文当场丢。
                 if (err?.name === "AbortError") resolve("[已取消]");
-                else if (err?.killed) resolve(`[命令超时被杀]\n${clip(out)}`);
-                else if (err)
-                    resolve(`[退出码 ${err.code ?? "?"}]\n${clip(out || String(err.message))}`);
+                else if (err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || err?.code === "ENOBUFS")
+                    resolve(
+                        `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
+                    );
+                else if (err?.killed) resolve(`[命令超时被杀]\n${out}`);
+                else if (err) resolve(`[退出码 ${err.code ?? "?"}]\n${out || String(err.message)}`);
                 else resolve(out || "(无输出)");
             },
         );
@@ -925,6 +925,13 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
         bash: tool({
             description: "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
             inputSchema: z.object({ command: z.string().describe("要执行的 bash 命令") }),
+            // ##127：单条工具输出的截断**只落投递层** —— `toModelOutput` 改写「发给模型的那一份」
+            // （超 2000 行 / 50KB 时头尾 + marker + 原文落盘可 read 回取），`execute` 的返回值
+            // 仍是全文（落进 ops 的原文永不动）。见 services/tool-output.ts。
+            toModelOutput: ({ toolCallId, output }) => ({
+                type: "text" as const,
+                value: capToolOutput(String(output), toolCallId).text,
+            }),
             execute: async ({ command }, opts) => {
                 const home = diyHome();
                 // 自杀护栏（agent-guard.ts）已停用（2026-10-02）：

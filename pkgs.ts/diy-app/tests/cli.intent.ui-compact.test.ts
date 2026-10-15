@@ -170,7 +170,8 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="压缩（详情页）"]')`)).toBe(true);
     expect(await ui.query<string>(`document.querySelector('[aria-label="窗口构成视图"] button')?.textContent?.trim() ?? ''`)).toBe("压缩");
     expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="窗口构成视图"] button.btn-active')`)).toBe(true);
-    expect(await budgetKb()).toBe("3");
+    // 缺省预算 = DEFAULT_BUDGET_BYTES（##343 M1 起 20KB，与生产 auto-compact.yaml 对齐）
+    expect(await budgetKb()).toBe("20");
   });
 
   it("M3：参数区按 mode → modeData → toolResult → renderData 层次展示（归属可见）", async () => {
