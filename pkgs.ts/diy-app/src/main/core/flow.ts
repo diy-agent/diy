@@ -24,29 +24,36 @@ import { existsSync, readdirSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { TASK_URI_RE } from "../../shared/task-uri";
 import {
-    createRegistry,
-    createRuntime,
     advance,
+    callPlugin,
+    createRuntime,
     paramsOf,
     parseFlowState,
+    parseView,
     renderHint,
+    type Art,
     type FlowState,
     type ParamEntry,
+    type View,
     type Visit,
     type WorkflowDef,
 } from "@diy/flow";
 import { listWorkflows, workflowById, workflowIds, type WorkflowSummary } from "../workflows";
+import { createRenderRegistry } from "../workflows/plugins";
 import { diyHome, projectsRoot, taskDir, taskExists } from "./state";
 import {
     appendAudit,
     appendPathRecord,
     applyFinish,
+    artifactFile,
     assertSnapshotMatches,
     flowDir,
     flowFile,
+    readArtifacts,
     readAudit,
     readBinding,
     readState,
+    writeArtifact,
     writeBinding,
     writeState,
     type FlowBinding,
@@ -109,6 +116,31 @@ export interface FlowView {
     /** 折线上已有的打回次数（内核 `status()` 的只读分类） */
     readonly bounces: number;
     readonly next: FlowNextView;
+    /**
+     * **当前节点**声明的产物展示链（内核 `NodeDef.art`，##337）。
+     *
+     * 未进入（没有当前节点）/ 该节点没声明 ⇒ `null`。它是**声明**（「这一步的产物长什么样、给哪个
+     * 渲染器」），不是产物本身；产物在袋里，译好后见下面的 `view`。
+     */
+    readonly art: Art | null;
+    /**
+     * 当前节点**当前驻留**（折线最后一条）的产物经 render 插件翻译后的结果（`View`：renderer + payload）。
+     *
+     * `null` = 该驻留没放产物（**正常态**：产物不是领域态，推进不产生它）。payload 是 `unknown`
+     * —— 宿主**原样透传**，形状校验归 renderer 的消费者（UI 按 `renderer` 收窄）。
+     * 产物路**坏**（袋不是合法 JSON / 不是数组 / 声明与翻译不一致）⇒ 仍是 `null`，并把话写进 `viewError`
+     * （**不阻断本命令**：产物是派生数据，`show` 是泳道页唯一的数据源，见 `viewError`）。
+     */
+    readonly view: View | null;
+    /**
+     * **产物路的错误位**（##337 review1 P2-B）：`null` = 产物路没出错。
+     *
+     * 非空 = 袋坏了 / 声明与翻译不一致 —— 此时 `view` 仍是 `null`，但**位置 / 折线 / 参数照常可用**
+     * （产物不是领域态，不许拖垮领域读）。消息里带**袋的路径与出路**（删掉它不影响推进）。
+     * 「无」与「坏」照样分得清：`view === null && viewError === null` = 没放产物；
+     * `viewError !== null` = 坏了。要**亮错**的场合（人在查产物）用 `diy flow view`（产物专读，仍抛）。
+     */
+    readonly viewError: string | null;
     /** 折线（append-only 的领域事实；次序看数组下标，别信 `at` —— 见内核 serialize.ts 立场） */
     readonly trajectory: Visit<string>[];
     readonly params: Record<string, unknown>;
@@ -188,9 +220,15 @@ export function loadInstance(uri: string): LoadedInstance {
     return { binding, def, state };
 }
 
-/** 宿主侧的运行态（内核 `createRuntime` 的包装：本版无插件，registry 恒空） */
+/**
+ * 宿主注册的插件表（##337）—— 本版**只有 `render` 一个槽**有实现（其余四槽一个都没注册，
+ * 见 `workflows/plugins.ts` 头注）。建一次即可：注册表无态，内核只读它（`resolve`）。
+ */
+const REGISTRY = createRenderRegistry();
+
+/** 宿主侧的运行态（内核 `createRuntime` 的包装：注册表由宿主给，内核只按名解析） */
 function runtimeOf(def: WorkflowDef<string>, params: Readonly<Record<string, unknown>> | undefined) {
-    return createRuntime(def, { registry: createRegistry(), params });
+    return createRuntime(def, { registry: REGISTRY, params });
 }
 
 function nodeNameOf(def: WorkflowDef<string>, id: string | null): string {
@@ -211,6 +249,11 @@ function viewOf(uri: string, def: WorkflowDef<string>, state: FlowState<string>)
         when: e.when ?? null,
     }));
     const audit = readAudit(uri);
+    // 产物（##337）：当前节点 + **当前驻留**（折线最后一条 = 现在这一步）那一份 raw 的翻译结果。
+    // 未进入（没有当前节点 / 没有驻留）就没什么可译 —— 声明与结果都给 null（不猜）。
+    // 走**容错版**：产物路坏了只说在 `viewError` 里（##337 review1 P2-B —— 派生数据不许拖垮领域读）。
+    const current = currentVisit(state);
+    const artifact = node && current ? tryArtifactAt(uri, def, node.id, current.seq) : EMPTY_ARTIFACT;
     // 终态判据 = **没有 `next` 出边**（与内核 execute.ts 的 `done` 判据同一条结构事实）；
     // 未进入时不算终态（`outEdges` 为空只是因为没位置，不代表走完）。
     const hasNext = status.outEdges.some((e) => e.kind === "next");
@@ -226,6 +269,9 @@ function viewOf(uri: string, def: WorkflowDef<string>, state: FlowState<string>)
         done: status.done,
         bounces: status.bounces,
         next: { mode: status.mode, pending: status.pending.map((ref) => ref.raw), edges, terminal: state.position !== null && !hasNext },
+        art: artifact.art,
+        view: artifact.view,
+        viewError: artifact.error,
         trajectory: [...state.path],
         params: { ...params },
         paramsSchema: [...paramsOf(def).schema],
@@ -238,6 +284,221 @@ function viewOf(uri: string, def: WorkflowDef<string>, state: FlowState<string>)
         },
         auditSkipped: audit.skipped,
     };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 产物链（##337）：袋里的 raw → render 插件 → `View{ renderer, payload }`
+// ═══════════════════════════════════════════════════════════════
+//
+// 三层归属（##311 §二「三层归属」）：
+//   · **声明**（`NodeDef.art`，宿主定义里写）= 「这一步的产物长什么样、翻给哪个渲染器」；
+//   · **数据**（产物袋 `flow/artifacts/<节点 id>.json`）= raw 本身。**不是领域态**（`rule.domain-first`）：
+//     不进 `state.json`、不参与 `path.jsonl` 对账、删了不影响推进；
+//   · **代码**（`render` 插件，`workflows/plugins.ts`）= 形状翻译。页面归 ##320。
+//
+// 内核**从不调用** `render` 槽（槽位与 `parseView` 是内核给的，调用是宿主的决定）——
+// 全工程的调用点只有下面 `translateArtifact` 一处。
+
+/**
+ * 「当前节点 / 当前驻留的产物」四件套；没有可译的产物时前三件是 null / 空、`error` 也是 null。
+ *
+ * `error` 是**产物路的错误位**（##337 review1 P2-B）：产物不是领域态，它坏了**不许**把领域读
+ * （`flow show` —— 泳道页唯一的数据源）一起拖瘫。故 `viewOf` 走容错版（`tryArtifactAt`）：
+ * 出任何事只把话说在 `error` 里（`view: null`），位置 / 折线 / 参数照常下发；
+ * 而**产物专读**命令（`diy flow view`）仍走严格版（`artifactAt`）**亮错** —— 「无」与「坏」照样分得清。
+ */
+interface ArtifactAt {
+    readonly art: Art | null;
+    readonly plugin: string | null;
+    readonly view: View | null;
+    /** 产物路的错（坏袋 / 声明与翻译不一致 / 插件抛）——`null` = 没错；见上面立场 */
+    readonly error: string | null;
+}
+
+const EMPTY_ARTIFACT: ArtifactAt = { art: null, plugin: null, view: null, error: null };
+
+/** 折线上最后一条驻留 = **现在这一步**；未进入（折线为空）⇒ null */
+function currentVisit(state: FlowState<string>): Visit<string> | null {
+    return state.path.length > 0 ? state.path[state.path.length - 1]! : null;
+}
+
+/** 节点声明的展示链（内核 `NodeDef.art`）；节点不存在或没声明 ⇒ null */
+function artOf(def: WorkflowDef<string>, nodeId: string): Art | null {
+    return def.nodes.find((n) => n.id === nodeId)?.art ?? null;
+}
+
+/**
+ * 交给 render 插件的**锚点**：这条泳道的节点 id。
+ *
+ * 与内核执行器给事件用的 `nodeAnchor(to)` 同形（`@diy/talk` 的 `Anchor` 的 `node` 分支）。
+ * 这里只手搓同形字面量、**不 import `@diy/talk`**：宿主不因一个只读锚点多一条包依赖；
+ * 形状对不对由调用点的类型核对（`RenderPlugin` 的第二个参数）。
+ */
+function anchorOf(nodeId: string): { readonly type: "node"; readonly data: { readonly nodeId: string } } {
+    return { type: "node", data: { nodeId } };
+}
+
+/**
+ * 把袋里那份 raw 翻成 view（##337 的**唯一**调用点；导出只为单测能直接构造失配的 `art` ——
+ * 宿主调用点只有本文件）。三条立场：
+ *
+ *   1. `raw` 缺（越界）或为 `null` ⇒ **无产物** ⇒ `null`。不是错：产物不是领域态，缺项是正常态。
+ *   2. `art.plugin` 留空 ⇒ **直吃 raw**：`{ renderer: art.renderer, payload: raw }` —— 但这句话的**唯一**
+ *      合法含义是「**raw 本身已经是该 renderer 的 data**」（##337 review1 P2-A）。宿主不替它包一层：
+ *      纯文本 raw ≠ `doc` 的 data（`{ text }`），要包就**写成插件**（如 `text`），别指望消费侧兜。
+ *   3. 挂了插件 ⇒ 内核 `resolve`（未注册即 `unknown-plugin`）+ `callPlugin`（宿主异常→`plugin-threw`）
+ *      + `parseView`（形状不对即 `invalid-plugin-result`）；且结果**必须与声明的 renderer 一致**
+ *      —— 声明是给 UI 预选渲染器的契约，不一致就是定义在撒谎，宁可当场炸。
+ */
+export function translateArtifact(uri: string, nodeId: string, art: Art, raw: unknown): View | null {
+    if (raw === undefined || raw === null) return null;
+    const pluginName = art.plugin ?? null;
+    if (pluginName === null) return { renderer: art.renderer, payload: raw };
+    const plugin = REGISTRY.resolve("render", pluginName);
+    const view = callPlugin(`render 插件 ${pluginName}`, artifactFile(uri, nodeId), () =>
+        parseView(plugin(raw, anchorOf(nodeId))),
+    );
+    if (view.renderer !== art.renderer) {
+        throw new Error(
+            `节点「${nodeId}」声明的 renderer 是 ${art.renderer}，render 插件 ${pluginName} 却返回了 ${view.renderer}` +
+                `：声明与翻译不一致（UI 按声明选渲染器 ⇒ 会画错）—— 改 art.renderer 或换插件`,
+        );
+    }
+    return view;
+}
+
+/**
+ * 「节点 + 第 seq 次驻留」→ 四件套（`flow view` 走这条**严格版**：产物专读，有问题必须亮出来）。
+ * 与 `tryArtifactAt` 是**同一条链**，只差「产物路的异常谁来接」——不另立一套翻译。
+ */
+function artifactAt(uri: string, def: WorkflowDef<string>, nodeId: string, seq: number): ArtifactAt {
+    const art = artOf(def, nodeId);
+    if (!art) return EMPTY_ARTIFACT;
+    const raw = readArtifacts(uri, nodeId)[seq - 1];
+    return { art, plugin: art.plugin ?? null, view: translateArtifact(uri, nodeId, art, raw), error: null };
+}
+
+/**
+ * `artifactAt` 的**容错版**（`flow show` 走它，##337 review1 P2-B）：产物路出任何事都**不外抛**，
+ * 降级成 `error` 位（`view: null`）。
+ *
+ * 理由：产物**不是领域态**（`rule.domain-first`）—— 一份派生数据不该让领域读命令失败。
+ * 对照先例：审计流坏只报 `auditSkipped`（##319），`flow show` 照常出整张泳道页。
+ */
+function tryArtifactAt(uri: string, def: WorkflowDef<string>, nodeId: string, seq: number): ArtifactAt {
+    try {
+        return artifactAt(uri, def, nodeId, seq);
+    } catch (e) {
+        const art = artOf(def, nodeId);
+        return { art, plugin: art?.plugin ?? null, view: null, error: (e as Error).message };
+    }
+}
+
+/** 折线上某节点驻留过几次（= 它的最大 `seq`）；没驻留过 ⇒ 0 */
+function residenciesOf(state: FlowState<string>, nodeId: string): number {
+    return state.path.reduce((max, visit) => (visit.node === nodeId ? Math.max(max, visit.seq) : max), 0);
+}
+
+/** 定目标节点：给了 `--node` 就按定义校验；没给 ⇒ 当前节点（尚未进入则无从取，报错给下一步） */
+function resolveNode(uri: string, def: WorkflowDef<string>, state: FlowState<string>, nodeId?: string): string {
+    if (nodeId !== undefined && nodeId !== "") {
+        if (!def.nodes.some((n) => n.id === nodeId)) {
+            throw new Error(`未知节点 ${JSON.stringify(nodeId)}（本工作流「${def.id}」的节点：${def.nodes.map((n) => n.id).join(" / ")}）`);
+        }
+        return nodeId;
+    }
+    if (state.position === null) {
+        throw new Error(
+            `实例尚未进入工作流（${uri}）：没有「当前节点」可当缺省 —— 先 \`diy flow advance\`，或显式给 \`--node <节点 id>\``,
+        );
+    }
+    return state.position;
+}
+
+/**
+ * 定目标驻留（1-based）。缺省 = 该节点**最后一次**驻留（手工放产物时人在的就是那一次）；
+ * 显式 `--seq` 越界 ⇒ 拒（**产物属于已经发生过的驻留**：给还没到的驻留占位是假数据）。
+ */
+function resolveSeq(uri: string, state: FlowState<string>, nodeId: string, seq?: number): number {
+    const max = residenciesOf(state, nodeId);
+    if (max === 0) {
+        throw new Error(`节点「${nodeId}」在 ${uri} 上还没驻留过：产物属于某一次驻留 —— 先 advance / bounce 到它`);
+    }
+    if (seq === undefined) return max;
+    if (!Number.isInteger(seq) || seq < 1 || seq > max) {
+        throw new Error(`节点「${nodeId}」只驻留过 ${max} 次：第 ${seq} 次驻留不存在（可取 1..${max}）`);
+    }
+    return seq;
+}
+
+/**
+ * 一份产物视图（`diy flow view <uri> [--node <id>] [--seq <n>]` 的载荷，##337）。
+ *
+ * 为什么要有这条只读命令（而不只让 `show` 带上当前节点的）：**UI 要点折线上任意一步看图**
+ * （`##320` 的「产物 view」区）—— 那一步既不是当前节点、也可能不是最后一次驻留。
+ */
+export interface FlowArtifactView {
+    readonly uri: string;
+    readonly node: string;
+    readonly nodeName: string;
+    /** 目标驻留序号（1-based = 折线上该节点第几次驻留，与 `Visit.seq` 同一口径） */
+    readonly seq: number;
+    /** 该节点声明的展示链（没声明 ⇒ null） */
+    readonly art: Art | null;
+    /** 实际用到的 render 插件名（`null` = 直吃 raw / 没声明 art） */
+    readonly plugin: string | null;
+    /** 翻译结果；该驻留没有产物 ⇒ null */
+    readonly view: View | null;
+    /** 产物袋文件（诊断 / UI 指路用；**不存在也是正常态**） */
+    readonly bag: string;
+}
+
+/** 取任意节点、任意驻留的产物视图（只读；含实例对账） */
+export function viewArtifact(uri: string, nodeId?: string, seq?: number): FlowArtifactView {
+    const { def, state } = loadInstance(uri);
+    const target = resolveNode(uri, def, state, nodeId);
+    const at = resolveSeq(uri, state, target, seq);
+    const { art, plugin, view } = artifactAt(uri, def, target, at);
+    return { uri, node: target, nodeName: nodeNameOf(def, target), seq: at, art, plugin, view, bag: artifactFile(uri, target) };
+}
+
+/**
+ * `--file` 的内容 → 袋里的 raw：**能当 JSON 解析就是那个值，否则原样当字符串**。
+ *
+ * 为什么是这个约定（而不加 `--json` 开关）：写侧要**最小** —— 一段 diff / 一段 CI 日志本来就是文本，
+ * 清单 / 表格类产物本来就是 JSON，两种都直接扔进来最省事。判定只看**整体**能不能 parse：
+ * 半截 JSON（`{a:1}` 这种非标写法）落到「当字符串」那一支，再由插件当场拒掉 ——
+ * 不会静默塞进一个半新半旧的值里。
+ */
+function parseArtifactContent(content: string): unknown {
+    if (content.trim() === "") {
+        throw new Error("产物内容为空（`--file` 读到 0 字节）：不写空产物 —— 要么给内容，要么别放");
+    }
+    try {
+        return JSON.parse(content);
+    } catch {
+        return content;
+    }
+}
+
+/**
+ * 放一份产物 raw 进袋（`diy flow artifact put`，##337 的**写侧最小入口**：给人和后续 agent 用，
+ * 不做批量、不做校验研究 —— raw 对不对由 render 插件在**读**的时候认）。
+ *
+ * `seq` 缺省 = 该节点最后一次驻留；给 `--seq` 可回填更早的驻留（越界的 seq 一律拒，见 `resolveSeq`）。
+ *
+ * **写之前先试译一次**（该节点声明了 art 就译）：译不出来就**一个字节都不写** ——
+ * 免得留下「命令报错、袋里却多了个谁也译不出的 raw」的半成品（下一次 `flow view` 才炸）。
+ */
+export function putArtifact(uri: string, nodeId: string, content: string, seq?: number): FlowArtifactView {
+    const { def, state } = loadInstance(uri);
+    const target = resolveNode(uri, def, state, nodeId);
+    const at = resolveSeq(uri, state, target, seq);
+    const raw = parseArtifactContent(content);
+    const art = artOf(def, target);
+    if (art) translateArtifact(uri, target, art, raw); // 试译（译不出就抛，袋不动）
+    writeArtifact(uri, target, at - 1, raw);
+    return viewArtifact(uri, target, at);
 }
 
 // ═══════════════════════════════════════════════════════════════

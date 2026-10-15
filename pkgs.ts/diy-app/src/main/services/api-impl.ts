@@ -971,6 +971,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     ...(input.instances ? { instances: flow.listFlowInstances() } : {}),
   }));
   binding.on(app.flow.show, async ({ input }) => flow.showFlow(input.uri));
+  binding.on(app.flow.view, async ({ input }) => flow.viewArtifact(input.uri, input.node, input.seq));
+  // `--file` 的内容由**调用方进程**的 CLI parser 读好送进来（stdin / 相对路径都归它，见 _cli-meta.readFile）
+  binding.on(app.flow.artifact.put, async ({ input }) => flow.putArtifact(input.uri, input.node, input.file, input.seq));
   binding.on(app.flow.start, async ({ input }) => {
     if (!input.workflow) {
       throw new Error(`缺 --workflow <id>（可用：${flow.listFlowDefinitions().map((w) => w.id).join(" / ")}）`);

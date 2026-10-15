@@ -18,6 +18,8 @@
 
 import { RpcSchema } from "@diy/rpc";
 import { z } from "zod";
+// 引擎通用渲染器 id 的真源（别处不复制这份清单；内核加渲染器时这里的 schema 自动跟上）
+import { RENDERERS } from "@diy/flow";
 import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-schema";
 import { ContextDiffSchema, CtxLogSchema, StatsSchema, StepsSchema } from "../../shared/context/schema";
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
@@ -212,6 +214,8 @@ const FlowNodeSchema = z.object({
   actor: z.string(),
   hint: z.string(),
 });
+/** 引擎通用渲染器 id —— **真源是内核 `define.ts` 的 `RENDERERS`**（schema 只是引用它，不复制清单） */
+const FlowRendererSchema = z.enum(RENDERERS);
 /** 一条出边：「卡在哪条边」的数据源 */
 const FlowEdgeSchema = z.object({
   to: z.string(),
@@ -219,6 +223,25 @@ const FlowEdgeSchema = z.object({
   kind: z.enum(["next", "bounce"]),
   when: z.string().nullable(),
 });
+/**
+ * 节点产物的**展示链**（内核 `NodeDef.art`，##337）—— 声明「这一步的产物长什么样、翻给哪个渲染器」：
+ * `raw` 是行业知道的产物形状（说明文本），`renderer` 是引擎九种通用渲染器之一（合法值真源 = 内核
+ * `RENDERERS`），`plugin` 是宿主注册的 render 插件名（**给 null / 不给 = 直吃 raw**）。
+ */
+const FlowArtSchema = z.object({
+  raw: z.string().describe("该节点产物的形状说明（raw 长什么样；行业自己知道）"),
+  renderer: FlowRendererSchema,
+  plugin: z.string().nullable().optional().describe("宿主 render 插件名（`diy flow view` 用的就是它）；空 = 直吃 raw（只在 raw 本身已是该 renderer 的 data 时才合法）"),
+  note: z.string().optional(),
+});
+
+/** 一份**译好**的产物视图（内核 `View`）：renderer + 给它的 payload（宿主**原样透传**，不校验形状） */
+const FlowPayloadViewSchema = z.object({
+  renderer: FlowRendererSchema,
+  payload: z.any().describe("给该渲染器的数据（形状由 renderer 约定；宿主原样透传 —— 收窄归 UI）"),
+  note: z.string().optional(),
+});
+
 /** 折线上一次驻留（领域事实：node/seq/kind/at + 宿主关联 ref） */
 const FlowVisitSchema = z.object({
   node: z.string(),
@@ -250,6 +273,16 @@ const FlowViewSchema = z.object({
       .boolean()
       .describe("结构事实：已进入且当前位置没有 next 出边 ⇒ 往前无路可走（bounce 边不算下一步）。与内核 execute.ts 的 done 判据同一条结构事实"),
   }),
+  art: FlowArtSchema.nullable().describe("当前节点声明的产物展示链（未进入 / 没声明 ⇒ null）"),
+  view: FlowPayloadViewSchema.nullable().describe(
+    "当前节点**当前驻留**的产物经 render 插件翻译后的结果（该驻留没放产物 ⇒ null —— 产物不是领域态，缺项是正常态）",
+  ),
+  viewError: z
+    .string()
+    .nullable()
+    .describe(
+      "产物路的错误位（null = 没出错）：袋不是合法 JSON / 不是数组 / 声明与翻译不一致时**不阻断本命令**（view 仍为 null，位置与折线照常）—— 产物是派生数据，不许拖垮领域读；要亮错用 `diy flow view`",
+    ),
   trajectory: z.array(FlowVisitSchema),
   params: z.record(z.string(), z.any()).describe("L2 参数值（权威 = 任务目录 flow/state.json）"),
   paramsSchema: z.array(z.any()).describe("参数声明（内核 paramsOf 的 schema，供表单/文档渲染）"),
@@ -261,6 +294,18 @@ const FlowViewSchema = z.object({
     events: z.string(),
   }),
   auditSkipped: z.number().describe("审计流里跳过（解析失败）的行数 —— 审计坏了只报数，不阻断运行"),
+});
+
+/** 一份产物视图（`diy flow view` / `flow artifact put` 的回执；形状与 core/flow.ts 的 `FlowArtifactView` 一致） */
+const FlowArtifactViewSchema = z.object({
+  uri: z.string(),
+  node: z.string(),
+  nodeName: z.string(),
+  seq: z.number().describe("目标驻留序号（1-based = 折线上该节点第几次驻留）"),
+  art: FlowArtSchema.nullable().describe("该节点声明的展示链（没声明 ⇒ null）"),
+  plugin: z.string().nullable().describe("实际用到的 render 插件名（null = 直吃 raw / 没声明 art）"),
+  view: FlowPayloadViewSchema.nullable().describe("翻译结果；该驻留没有产物 ⇒ null"),
+  bag: z.string().describe("产物袋文件（不存在也是正常态：产物不是领域态）"),
 });
 
 /**
@@ -1418,6 +1463,38 @@ export const apiDef = RpcSchema.router({
               uri: z.string().cliArg({ desc: "任务 URI（projects/<pid>/tasks/<tid>）" }),
             },
             output: FlowViewSchema,
+          }),
+
+          view: RpcSchema.unary({
+            desc: `取某个节点、某次驻留的产物视图（袋里的 raw → render 插件 → { renderer, payload }）。缺省 = 当前节点的最后一次驻留 —— UI 点折线上任意一步看图靠它`,
+            input: {
+              uri: z.string().cliArg({ desc: "任务 URI（projects/<pid>/tasks/<tid>）" }),
+              node: z.string().optional().cliOption({ desc: "节点 id（缺省 = 当前节点）" }),
+              seq: z.number().optional().cliOption({ desc: "第几次驻留（1-based；缺省 = 该节点最后一次）" }),
+            },
+            output: FlowArtifactViewSchema,
+          }),
+
+          artifact: RpcSchema.group({
+            desc: `节点产物的**写入**（袋 = 任务目录 flow/artifacts/<节点 id>.json，下标 = 驻留 seq − 1；读走 \`flow view\`）`,
+            children: {
+              put: RpcSchema.unary({
+                desc: `放一份产物 raw 进袋（写前**先试译一次**：译不出来一个字节都不写）。内容能当 JSON 解析就是那个值，否则原样当字符串`,
+                input: {
+                  uri: z.string().cliArg({ desc: "任务 URI（projects/<pid>/tasks/<tid>）" }),
+                  node: z.string().cliOption({ desc: "节点 id（产物属于哪个节点）" }),
+                  seq: z.number().optional().cliOption({ desc: "第几次驻留（1-based；缺省 = 该节点最后一次）" }),
+                  file: z
+                    .string()
+                    .cliOption({
+                      placeholder: "<file|->",
+                      readFile: true,
+                      desc: "产物内容：文件路径（相对路径按当前目录解析），`-` 读 stdin。JSON 能解析就用那个值，否则当字符串",
+                    }),
+                },
+                output: FlowArtifactViewSchema,
+              }),
+            },
           }),
 
           start: RpcSchema.unary({
