@@ -12,6 +12,11 @@
  */
 
 import type { BlockNode, TurnEndReason } from "../../main/services/local-blocks";
+// 结束原因 → 人话 / 图标 的**唯一文案源**（main 与 renderer 共用，##308）：这里只做
+// 「块树 → endReason/notice」的取数，措辞一律不在此处另写一份（否则又分叉）。
+import { endMarkOf, turnEndText, type EndMark } from "../../shared/turn-end";
+export { endMarkOf, type EndMark };
+
 
 /** 用户发言块（插话与轮次开场那次发言同形，只差 attrs.steer） */
 export function isUserText(n: BlockNode): boolean {
@@ -225,62 +230,10 @@ export function turnEndNote(turn: BlockNode): string | null {
     const notice = typeof turn.attrs.notice === "string" && turn.attrs.notice ? turn.attrs.notice : null;
     const r = endReasonOf(turn);
     if (!r) return turn.attrs.interrupted ? "本轮未完成（流中断/崩溃恢复）" : notice;
-    switch (r.type) {
-        case "completed":
-            return notice;
-        case "max-steps":
-            return notice ?? `达到步数上限 ${r.data.limit}，本轮被强制收尾（模型仍在请求工具）`;
-        case "max-tokens":
-            return notice ?? "输出达到上限被截断";
-        case "aborted":
-            // `detached` 自 ##305 起不再由消费端断开触发（刷新只退订、不打断），
-            // 只剩"流意外中断"这一个来源（closeTurn 的兜底分支）。
-            return r.data.source === "detached" ? "本轮被中断（流中断，未跑完）" : "本轮被中断（未跑完）";
-        case "error":
-            return notice; // 细节由 error 块 / 现场说，同一句不写两遍
-        case "interrupted":
-            return "本轮未完成（流中断/崩溃恢复）";
-    }
+    // 说明句本身（含 aborted 按 source 的分句）在 shared/turn-end —— main 的中止 error 块同源同句。
+    return turnEndText(r, notice);
 }
 
-/**
- * 轮尾**状态行**的状态图标（末行恒显 —— 它是"这轮到底怎么结束的"的唯一常显位）。
- *
- * 用户 2026-10-11 口径："我起码知道是模型说我正常结束了，还是模型说有长度/金额限制所以要结束了，
- * 还是压根没收到 llm 结束"。`endReason`（##288 拍板）是判据，这里只把它翻成一个字形 + 一句 tip。
- * **字形承载状态、文字只进 tooltip**（用户 2026-10-12：状态行上不写"正常结束"这类字）。
- *
- * tone 三档给样式用（不是给判据用）：`ok` 绿 · `cut` 黄（被限制/被中断，非报错）· `err` 红 ·
- * `live` 灰（进行中）。无 `endReason` 的旧日志 → 不给图标（`icon: ""`，不编状态）。
- */
-export interface EndMark {
-    icon: string;
-    tip: string;
-    tone: "live" | "ok" | "cut" | "err" | "none";
-}
-
-export function endMarkOf(end: TurnEndReason | null, live: boolean): EndMark {
-    if (live) return { icon: "◌", tip: "本轮进行中", tone: "live" };
-    if (!end) return { icon: "", tip: "", tone: "none" };
-    switch (end.type) {
-        case "completed":
-            return { icon: "✓", tip: "正常结束（completed）", tone: "ok" };
-        case "max-steps":
-            return { icon: "⛔", tip: `步数上限收尾（上限 ${end.data.limit}）`, tone: "cut" };
-        case "max-tokens":
-            return { icon: "⛔", tip: "输出长度上限", tone: "cut" };
-        case "aborted":
-            return {
-                icon: "⛔",
-                tip: end.data.source === "detached" ? "被中断（流中断，未跑完）" : "被中断（未跑完）",
-                tone: "cut",
-            };
-        case "interrupted":
-            return { icon: "⛔", tip: "未完成（流中断/崩溃恢复）", tone: "cut" };
-        case "error":
-            return { icon: "✗", tip: "错误终止", tone: "err" };
-    }
-}
 
 /**
  * 这一行**点开会不会多出东西** —— 决定行首给「展开箭头」还是「末级点」。
