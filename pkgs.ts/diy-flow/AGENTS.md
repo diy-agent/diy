@@ -4,7 +4,8 @@
 > **不触外部世界**（插件副作用全在宿主给的函数体里）、**不取时间**（`at` 由调用方传入）⇒ 现在即可拆成单独项目。
 > 唯一依赖是 `@diy/talk`（复用 `Event` 原语，`anchor = node` 指目标节点）。
 > 需求真源：`tests/intent.flow.test.ts`（定义 / 容器 / 投影 26 例）+ `tests/intent.plugin.test.ts`（槽位 / 求值 / 执行器 43 例）
-> + `tests/intent.params.test.ts`（参数层 41 例）+ `tests/intent.domain.test.ts`（领域态一等 / 落盘 / 关联 / 终态 / params 入态 / 正路自足 / 不许换配置 49 例）—— 共 159 例。
+> + `tests/intent.params.test.ts`（参数层 41 例）+ `tests/intent.domain.test.ts`（领域态一等 / 落盘 / 关联 / 终态 / params 入态 / 正路自足 / 不许换配置 49 例）
+> + `tests/examples.dev.test.ts`（**范例①**：开发工作流端到端含打回 21 例）—— 共 180 例。
 >
 > **##333 依赖反转（本包当前模型）**：**领域状态一等、`Event` 降为审计** ——
 > 领域态 `FlowState` 自成真源、由 `advance` 产出、可落盘可读回；`Event` 只是进程内的进度通知 / 落盘后的
@@ -23,6 +24,7 @@
 - `find.params` — `src/params.ts`：参数层（L2）—— `paramsOf(def)` 出 `{ schema, defaults }` · `resolveParams(schema, values)` 校验 + 合并 · `parseParamsSchema` 快照反向校验 · `interpolate` / `renderHint` 做 `${节点 id.局部名}` 插值
 - `find.validate` — `src/validate.ts`：`rejectUnknown`（形状封闭）+ `isObject` + `isIsoString` + `sameJson`（键序无关比较）+ `callPlugin`（宿主插件抛错 → 包成 `plugin-threw`）
 - `find.intent` — `tests/intent.*.test.ts`（素材取 ##166 §14.3 三场景 / 开发与金融真实轨迹 / ##311 §二 的三个参数例子）
+- `find.examples` — `examples/dev.ts`（**范例①：工作流开发包长什么样** —— 6 节点开发工作流声明）+ `examples/dev.plugins.ts`（`pred:ci_green` / `action:pr_mergeable` 假数据实现）+ `tests/examples.dev.test.ts`（跑 ##166 §14.3 轨迹：8 步 / 6 泳道 / 1 打回）。范例**只用公开 API**（`@diy/flow`）、不碰 fs、不引新依赖；`tsconfig.json` 的 `include` 含 `examples/**/*`（否则范例一个字符都不被 `tsc` 检查）
 
 ## rule — 硬约束
 
