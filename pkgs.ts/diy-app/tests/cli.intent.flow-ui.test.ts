@@ -1,0 +1,333 @@
+// tests/cli.intent.flow-ui.test.ts
+// ═══════════════════════════════════════════════════════════════
+// 🎯 泳道视图页（##320）的**行为**契约 —— 真实 UI（隔离 Electron + CDP）+ 真实数据（flow 实例）
+//
+// 契约（用户能看见的行为）：
+//   1. 页面可打开（`ui tab open flow:<uri>` / 任务执行页的 🛤 按钮），吃**真实例**数据（无实例则直说）
+//   2. **未进入**：图上是空舞台（不编造折线）；参数表单**可编辑**并可落盘（`flow params set`）
+//   3. **已进入**：折线每步一张卡（同一泳道可二次驻留 = 打回）、连线数 = 驻留数 − 1、
+//      打回那条是**红虚线**；参数表单转**只读** + 说明（换配置 = 另起一次运行）
+//   4. **节点详情**：hint 原文 / guard 逐条（标「不可观测」）/ actor / art 三段链
+//   5. **产物区**（##337）：命令未合入 ⇒ 如实写「待接入」；合入后 ⇒ 渲染出 renderer 徽章与 view
+//   6. **像素判据**（##166 §14.5 / §14.8）：连线**真的画出来了且没被泳道底纹盖住** ——
+//      A/B 对照：正常态红/蓝像素可数；把连线层置底 + 底纹改不透明（复现「被盖住」）⇒ 归零。
+//      「截图无报错」不算证据：首帧抛错时截图照样出图，只是图上什么都没有。
+//   7. **层叠一次性画清**：背景(0) → 连线(2) → 节点(3)，且 `#wires` 是 `pointer-events:none`
+//
+// 每个用例自建 project / task，自删；共享的只有隔离 Electron 基础设施。
+// ═══════════════════════════════════════════════════════════════
+
+import { describe, it, beforeAll, afterAll, expect } from "vitest";
+import { join } from "node:path";
+import { ShellTest } from "./shell-test";
+import { startElectronTest, type ElectronTest } from "./electron-test";
+import { waitUntil } from "./wait";
+import { makeUiDriver, type A11yNode, type UiDriver } from "./ui-drive";
+import { countPixels, decodePng, isBlue, isRed } from "./png-pixels";
+
+let fx: { sh: ShellTest; HOME: string; electron: ElectronTest };
+let ui: UiDriver;
+
+beforeAll(async () => {
+    const electron = await startElectronTest();
+    const HOME = electron.home;
+    fx = {
+        electron,
+        HOME,
+        sh: new ShellTest({ cwd: join(__dirname, "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
+    };
+    ui = await makeUiDriver(fx.electron.cdpUrl, () => a11y());
+});
+
+afterAll(async () => {
+    ui?.close();
+    await fx?.electron?.stop();
+});
+
+async function a11y(): Promise<A11yNode | undefined> {
+    const r = await fx.sh.getJson("./diy.sh ui inspect");
+    return (r.data as Record<string, unknown>)?.data as A11yNode | undefined;
+}
+
+/** 建「项目 + 一条任务 + dev 工作流实例」，返回任务 URI */
+async function freshInstance(name: string, started = true): Promise<string> {
+    const repo = `${fx.HOME}/flow-ui-${name}`;
+    const res = await fx.sh.getJson(`./diy.sh project create ${repo}`);
+    const pid = String(((res.data as Record<string, unknown>)?.data as Record<string, unknown>)?.id);
+    await fx.sh.run(`./diy.sh task create 泳道视图任务 ${pid}`);
+    const uri = `projects/${pid}/tasks/1`;
+    if (started) await fx.sh.run(`./diy.sh flow start ${uri} --workflow dev`);
+    return uri;
+}
+
+/** 打开泳道视图页并等它渲染出舞台（无舞台 = 页面没挂上） */
+async function openFlowPage(uri: string): Promise<void> {
+    await fx.sh.getJson(`./diy.sh ui tab open flow:${uri}`);
+    await waitUntil(
+        () => ui.query<number>(`document.querySelectorAll('[data-flow-stage]').length`),
+        (n) => n === 1,
+        { label: "泳道页挂载（stage 出现）", timeoutMs: 10000 },
+    );
+}
+
+/**
+ * CLI 侧推进 / 打回。
+ *
+ * **`--to` 必填**：宿主对 `to` 是**运行期闸门**（`main/services/api-impl.ts` 的
+ * `flow.advance` / `flow.bounce` 都先查 `if (!input.to) throw "缺 --to <节点 id>"`），
+ * 虽然 api-def 的入参写着 `optional` —— 运行期不给就报错（实测）。既有 `cli.intent.flow`
+ * 的用例也都显名给 `--to`。
+ */
+async function cliAdvance(uri: string, to: string): Promise<void> {
+    await fx.sh.run(`./diy.sh flow advance ${uri} --to ${to}`);
+}
+async function cliBounce(uri: string, to: string): Promise<void> {
+    await fx.sh.run(`./diy.sh flow bounce ${uri} --to ${to}`);
+}
+
+/** 点「⟳ 刷新」（页面数据只在显式刷新 / 保存后重取；没有实时推送） */
+async function refresh(): Promise<void> {
+    await ui.clickSelector("[data-flow-refresh]");
+}
+
+/** 舞台区域（视口坐标 ∩ 视口），含 devicePixelRatio —— 像素采样的坐标基准 */
+async function stageRect(): Promise<{ x: number; y: number; w: number; h: number; dpr: number }> {
+    return await ui.query<{ x: number; y: number; w: number; h: number; dpr: number }>(`(() => {
+        const el = document.querySelector('[data-flow-stage]');
+        el.scrollIntoView({ block: 'start', inline: 'start' });
+        const r = el.getBoundingClientRect();
+        const x = Math.max(0, r.x);
+        const y = Math.max(0, r.y);
+        const w = Math.max(0, Math.min(r.right, window.innerWidth) - x);
+        const h = Math.max(0, Math.min(r.bottom, window.innerHeight) - y);
+        return { x, y, w, h, dpr: window.devicePixelRatio || 1 };
+    })()`);
+}
+
+/** 数舞台区域内的红/蓝像素（真截图 → 解码 → 计数） */
+async function stagePixels(): Promise<{ red: number; blue: number; w: number; h: number }> {
+    const rect = await stageRect();
+    const png = decodePng(await ui.screenshot());
+    const region = { x: rect.x * rect.dpr, y: rect.y * rect.dpr, w: rect.w * rect.dpr, h: rect.h * rect.dpr };
+    return {
+        red: countPixels(png, region, isRed),
+        blue: countPixels(png, region, isBlue),
+        w: Math.round(region.w),
+        h: Math.round(region.h),
+    };
+}
+
+/** 注入一段临时样式（像素对照用；测完必须移除） */
+async function injectStyle(css: string, id: string): Promise<void> {
+    await ui.query(`(() => {
+        document.getElementById(${JSON.stringify(id)})?.remove();
+        const s = document.createElement('style');
+        s.id = ${JSON.stringify(id)};
+        s.textContent = ${JSON.stringify(css)};
+        document.head.appendChild(s);
+        return true;
+    })()`);
+}
+async function removeStyle(id: string): Promise<void> {
+    await ui.query(`(() => { document.getElementById(${JSON.stringify(id)})?.remove(); return true; })()`);
+}
+
+describe("泳道视图页（##320）", () => {
+    it("打开页面：未进入 ⇒ 空舞台（不编造折线）+ 参数表单可编辑", async () => {
+        const uri = await freshInstance("open");
+        await openFlowPage(uri);
+
+        expect(await ui.query<string>(`document.querySelector('[data-flow-position]').textContent.trim()`)).toContain("未进入");
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-lane]').length`)).toBe(0);
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-visit]').length`)).toBe(0);
+        // 参数表单：未进入 ⇒ 可编辑（有保存按钮），且控件在
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-params-save]').length`)).toBe(1);
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-param-input]').length`)).toBeGreaterThan(0);
+        // 节点详情：art 三段链区在（未接入时写「待接入」）
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-detail]').length`)).toBe(1);
+    });
+
+    it("参数表单落盘：改值 → 保存 → CLI 读回同一个值（权威 = flow/state.json）", async () => {
+        const uri = await freshInstance("params");
+        await openFlowPage(uri);
+
+        // 改 `review.reviewers` = 3（真实输入路径：聚焦 → 全选 → 键入）
+        await ui.clickSelector('[data-flow-param-input="review.reviewers"]');
+        await ui.press("Meta+A");
+        await ui.type("3");
+        await ui.clickSelector("[data-flow-params-save]");
+
+        // 以 CLI 读回（UI 说什么不算数，落盘才算）
+        const got = await waitUntil(
+            async () => {
+                const r = await fx.sh.getJson(`./diy.sh flow params get ${uri}`);
+                const values = ((r.data as Record<string, unknown>)?.values ?? {}) as Record<string, Record<string, unknown>>;
+                return values["review"]?.["reviewers"];
+            },
+            (v) => v === 3,
+            { label: "参数落盘读回 3", timeoutMs: 8000 },
+        );
+        expect(got).toBe(3);
+        // 表单本身也反映了新值
+        expect(await ui.query<string>(`document.querySelector('[data-flow-param-input="review.reviewers"]').value`)).toBe("3");
+    });
+
+    it("推进与打回：折线每步一张卡、连线数 = 驻留数 − 1、打回是红虚线；参数表单转只读", async () => {
+        const uri = await freshInstance("trace");
+        // UI 上点「进入 implement」—— 证明按钮真的能推进（不是只有 CLI 能走）；
+        // 按钮自带目标（`to` 必填，UI 不给宿主就没得推）
+        await openFlowPage(uri);
+        await ui.clickSelector("[data-flow-enter]");
+        await waitUntil(
+            () => ui.query<number>(`document.querySelectorAll('[data-flow-visit]').length`),
+            (n) => n === 1,
+            { label: "进入入口节点（1 次驻留）", timeoutMs: 8000 },
+        );
+
+        // 余下两跳用 CLI（正路同一条；UI 的下拉交互不在这里重复测）
+        await cliAdvance(uri, "review"); // implement → review
+        await cliBounce(uri, "implement"); // review → implement（打回，不新建节点）
+        await refresh();
+        await waitUntil(
+            () => ui.query<number>(`document.querySelectorAll('[data-flow-visit]').length`),
+            (n) => n === 3,
+            { label: "折线 3 次驻留", timeoutMs: 8000 },
+        );
+
+        // 泳道 = 折线里出现过的节点 ∪ **当前节点**的出边目标（数据缺口：`FlowView` 没有节点全表）。
+        // 此刻当前位置是 implement（打回回来），出边只有 → review ⇒ 图上就是 2 条泳道。
+        // 注意 `ci` **只有 review 当当前节点时才看得见**（它的出边在那时才有）—— 这是真数据的边界，
+        // 不为了凑第三条编造它（缺口的补法：`FlowView` 增 `nodes[]`，见 lib/flow-model.ts 头注）。
+        expect(
+            await ui.query<string[]>(`[...document.querySelectorAll('[data-flow-lane]')].map((e) => e.dataset.flowLane)`),
+        ).toEqual(["implement", "review"]);
+        // 折线：3 次驻留、2 条线；打回 1 条；同一节点二次驻留标「第 2 次」
+        expect(await ui.query<number>(`document.querySelectorAll('path[data-wire-kind="next"]').length`)).toBe(1);
+        expect(await ui.query<number>(`document.querySelectorAll('path[data-wire-kind="bounce"]').length`)).toBe(1);
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-seq="2"]').length`)).toBe(1);
+
+        // **线真的画出来了**（§14.8 的教训：path 数为 0 / 长度为 0 = 白画）
+        const lens = await ui.query<number[]>(`[...document.querySelectorAll('[data-flow-wires] path[data-wire-kind]')].map(p => p.getTotalLength())`);
+        expect(lens.length).toBe(2);
+        for (const l of lens) expect(l).toBeGreaterThan(20);
+
+        // 打回 = 红虚线；推进 = 蓝实线（两色，订正 6 的收窄）
+        const styles = await ui.query<Array<{ kind: string; stroke: string; dash: string }>>(`[
+            ...document.querySelectorAll('[data-flow-wires] path[data-wire-kind]')
+        ].map(p => ({ kind: p.dataset.wireKind, stroke: getComputedStyle(p).stroke, dash: p.getAttribute('stroke-dasharray') || '' }))`);
+        const bounce = styles.find((s) => s.kind === "bounce")!;
+        const next = styles.find((s) => s.kind === "next")!;
+        expect(bounce.stroke).toBe("rgb(239, 68, 68)");
+        expect(bounce.dash).toBe("6 5");
+        expect(next.stroke).toBe("rgb(59, 130, 246)");
+        expect(next.dash).toBe("");
+
+        // 已进入 ⇒ 参数表单只读 + 说明（订正 5）
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-params-readonly]').length`)).toBe(1);
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-params-save]').length`)).toBe(0);
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-params-note]').length`)).toBe(1);
+        // 详情面板：guard 逐条标「不可观测」；hint 原文可见
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-guard]').length`)).toBeGreaterThan(0);
+        expect(await ui.query<string>(`document.querySelector('[data-flow-guard]').textContent`)).toContain("不可观测");
+        expect(await ui.query<string>(`document.querySelector('[data-flow-detail-hint]').textContent.length`)).toBeGreaterThan(0);
+    });
+
+    it("层叠一次性画清：背景(0) → 连线(2) → 节点(3)，`wires` 是 pointer-events:none", async () => {
+        const uri = await freshInstance("z");
+        await cliAdvance(uri, "implement");
+        await openFlowPage(uri);
+        await waitUntil(
+            () => ui.query<number>(`document.querySelectorAll('[data-flow-visit]').length`),
+            (n) => n >= 1,
+            { label: "折线就绪", timeoutMs: 8000 },
+        );
+        const z = await ui.query<{ lane: number; wire: number; node: number; pe: string }>(`(() => {
+            const lane = document.querySelector('[data-flow-lanes]');
+            const wire = document.querySelector('[data-flow-wires]');
+            const node = document.querySelector('[data-flow-nodes]');
+            return {
+                lane: Number(getComputedStyle(lane).zIndex),
+                wire: Number(getComputedStyle(wire).zIndex),
+                node: Number(getComputedStyle(node).zIndex),
+                pe: getComputedStyle(wire).pointerEvents,
+            };
+        })()`);
+        expect(z.lane).toBeLessThan(z.wire);
+        expect(z.wire).toBeLessThan(z.node);
+        expect(z.pe).toBe("none"); // 连线不抢卡片点击
+        // 节点卡确实可点（点击卡片 → 选中态出现）
+        await ui.clickSelector("[data-flow-visit]");
+        await waitUntil(
+            () => ui.query<number>(`document.querySelectorAll('[data-flow-selected="1"]').length`),
+            (n) => n >= 1,
+            { label: "选中节点卡", timeoutMs: 5000 },
+        );
+    });
+
+    it("像素判据 A/B：红线蓝线可见，且被底纹盖住时归零（不是「截图无报错」）", async () => {
+        const uri = await freshInstance("pixel");
+        await cliAdvance(uri, "implement"); // 进入 implement
+        await cliAdvance(uri, "review"); // → review
+        await cliBounce(uri, "implement"); // → implement（打回红线）
+        await openFlowPage(uri);
+        await waitUntil(
+            () => ui.query<number>(`document.querySelectorAll('path[data-wire-kind="bounce"]').length`),
+            (n) => n === 1,
+            { label: "打回线就绪", timeoutMs: 8000 },
+        );
+
+        // 只留「泳道底纹 + 连线」两层：
+        //  · 节点层隐藏 —— 卡片自带红/蓝（actor 色条、按钮）会干扰计数；
+        //  · **泳道标题也隐掉** —— 它的颜色是 `ACTOR_COLOR.agent` = `#3b82f6`，与 next 线**同色**，
+        //    留着会在 B 对照里被当成「蓝线还看得见」（实测 A/B 都数到 ~800 蓝像素，正是这行字）。
+        // A/B 两态共用这段，**只允许底纹与层叠这一个变量不同**。
+        const ONLY_WIRES = `[data-flow-nodes]{display:none!important}
+             [data-flow-lane] > div{visibility:hidden!important}`;
+        await injectStyle(ONLY_WIRES, "__t320_pixel_layer");
+        const a = await stagePixels();
+        expect(a.w).toBeGreaterThan(100); // 舞台真的截到了
+        expect(a.h).toBeGreaterThan(100);
+        expect(a.red, `A 态红像素=${a.red}（打回红线；舞台 ${a.w}×${a.h}）`).toBeGreaterThan(20);
+        expect(a.blue, `A 态蓝像素=${a.blue}（推进蓝线；舞台 ${a.w}×${a.h}）`).toBeGreaterThan(50);
+
+        // B：复现 ##166 §14.5 的缺陷现场 —— 连线层沉到不透明底纹之下 ⇒ 一条线都看不见
+        await injectStyle(
+            `${ONLY_WIRES}
+             [data-flow-lanes]{background:#ffffff!important}
+             [data-flow-lane]{background-color:#ffffff!important}
+             [data-flow-wires]{z-index:-1!important}`,
+            "__t320_pixel_hidden",
+        );
+        const b = await stagePixels();
+        expect(b.red, `B 态红像素=${b.red}（被底纹盖住应≈0；A 态 ${a.red}）`).toBeLessThanOrEqual(Math.max(2, a.red * 0.1));
+        expect(b.blue, `B 态蓝像素=${b.blue}（被底纹盖住应≈0；A 态 ${a.blue}）`).toBeLessThanOrEqual(Math.max(2, a.blue * 0.1));
+
+        // 实测数字留在日志里：判据要能被**复核**，不能只有一句「绿了」（##166 §14.8 的立场）
+        console.error(
+            `[##320 像素判据] 舞台 ${a.w}×${a.h}：A（只看底纹+连线）红=${a.red} 蓝=${a.blue}` +
+                ` · B（连线层沉到不透明底纹下）红=${b.red} 蓝=${b.blue}`,
+        );
+
+        await removeStyle("__t320_pixel_layer");
+        await removeStyle("__t320_pixel_hidden");
+    });
+
+    it("产物区（##337）：命令未合入 ⇒ 如实写「待接入」；合入后 ⇒ 渲染 renderer 徽章 + view 元素", async () => {
+        const uri = await freshInstance("artifact");
+        await cliAdvance(uri, "implement");
+        await openFlowPage(uri);
+        await waitUntil(
+            () => ui.query<number>(`document.querySelectorAll('[data-flow-artifact]').length`),
+            (n) => n >= 1,
+            { label: "产物区出现", timeoutMs: 8000 },
+        );
+        const txt = await ui.query<string>(`document.querySelector('[data-flow-artifact]').textContent`);
+        const hasRenderer = await ui.query<number>(
+            `document.querySelectorAll('[data-flow-artifact] .badge, [data-flow-art-view], [data-flow-heatmap], [data-flow-kline], [data-flow-equity]').length`,
+        );
+        // 两态取其一：未接入（占位文案）或已接入（真的渲染出东西）—— 两者都算过，但**不许什么都没有**
+        const pending = txt.includes("待接入");
+        expect(pending || hasRenderer > 0).toBe(true);
+        if (pending) expect(txt).toContain("##337");
+    });
+});

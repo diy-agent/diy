@@ -105,6 +105,20 @@ export const VIEWS: ViewDef[] = [
     placement: { ctxlab: { area: "center", order: 10 } },
   },
   {
+    // 泳道视图页（##320）：中心 = 轨迹折线（泳道 ≡ 节点 1:1，打回不新建节点）
+    id: "flow.stage",
+    title: "轨迹",
+    instanceScope: "context",
+    placement: { flow: { area: "center", order: 10 } },
+  },
+  {
+    // 同页右栏：节点详情（hint / guard / actor / art 三段链）+ 参数表单（按 schema 自动渲染）
+    id: "flow.inspector",
+    title: "节点与参数",
+    instanceScope: "context",
+    placement: { flow: { area: "right", order: 10 } },
+  },
+  {
     // 边聊边调：与任务执行页是**同一个 view**，只是换个 area（卫星）
     // 这正是「靠 placement、不靠嵌套」的体现
     id: "chat.local",
@@ -217,6 +231,26 @@ export const PAGES: PageDef[] = [
       areas: [
         { id: "left", col: 0, row: 0 },
         { id: "center", col: 1, row: 0 },
+      ],
+    },
+  },
+  {
+    // 泳道视图页（##320）：**独立子页面**（与提示词页 lab / 上下文树页 ctxlab 平级，
+    // 挂在任务执行页之下）。单独开 tab 的理由：泳道数 = 步骤数，折线要横向铺开 ——
+    // 塞进任务执行页会与 chat 抢空间，也会被既有 view 的折叠框挤成一条。
+    id: "flow",
+    title: "泳道",
+    icon: "W",
+    multi: true, // 每个任务一个实例（上下文键 = 任务 URI）
+    parentPage: "task-run",
+    layout: {
+      version: 1,
+      // 两列：泳道图（主）| 节点详情 + 参数表单
+      cols: [fr(1), px(380)],
+      rows: [fr(1)],
+      areas: [
+        { id: "center", col: 0, row: 0 },
+        { id: "right", col: 1, row: 0 },
       ],
     },
   },
