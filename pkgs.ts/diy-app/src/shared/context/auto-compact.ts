@@ -31,7 +31,10 @@ export const AutoCompactTriggersSchema = z.object({
     cacheExpired: z.boolean().describe("缓存已过期（距上次请求 > 生效 TTL）→ 同上，冷启动压缩是白赚"),
     contextWindowOver: z
         .number()
-        .describe("上下文窗口占用比例上限（0~1）；0 = 关闭该触发。撞墙即压，不是划不划算的问题"),
+        .describe(
+            "上下文窗口占用上限（**token 数** = 该会话最后一步实测用量 usage.total，见 ##268 §6.9 D7）；" +
+                "0 = 关闭该触发。撞墙即压，不是划不划算的问题",
+        ),
 });
 
 export const AutoCompactConfigSchema = z.object({
@@ -51,13 +54,43 @@ export type AutoCompactConfig = z.infer<typeof AutoCompactConfigSchema>;
 export type AutoCompactTriggers = z.infer<typeof AutoCompactTriggersSchema>;
 
 /**
+ * 窗口触发默认阈值（**token 域**，用户 2026-10-15 拍板 = 固定数字）：
+ * 38400 token —— 用户口径「窗口占用到 150KB 就压」（150×1024 字节 ÷ 4 ≈ 38400 token）。
+ * 判据 = 该会话**最后一步实测用量**（`usage.total`，真实 token 数）≥ 本值 ⇒ 压。
+ *
+ * **不是比例**（旧 `0.8` 在 1M 窗口上 ≈ 80 万 token 才触发 ⇒ 等于不压，等爆），
+ * **也不是投影字节 / 字符数 / 文本量**。常量先写死（用户：「随时可以改」），
+ * 将来变量树就地编辑（##268 §6.10）再迁。
+ */
+export const DEFAULT_WINDOW_OVER_TOKENS = 38400;
+
+/**
+ * 窗口阈值归一（单位：**token 数**）。
+ *
+ * 【单位迁移】旧单位是**比例**（0~1，×contextLimit）。两单位在 (0,1) 区间**冲突**：
+ * 旧的 `0.8` 会被当 0.8 token → 几乎必然触发（每轮都压，误伤用户的会话）。
+ * 故把 `(0,1)` 视为**旧比例值**：出声告警并回落默认（38400），绝不静默把它当 token 用。
+ * `0` = 关闭、`>=1` = 合法 token 阈值，原样保留。
+ */
+export function normalizeWindowOver(v: unknown): number {
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return DEFAULT_WINDOW_OVER_TOKENS;
+    if (v > 0 && v < 1) {
+        console.warn(
+            `[auto-compact] contextWindowOver=${v} 疑似旧比例值；现单位为 **token 数**，已回落默认 ${DEFAULT_WINDOW_OVER_TOKENS}（≈150KB）`,
+        );
+        return DEFAULT_WINDOW_OVER_TOKENS;
+    }
+    return v;
+}
+
+/**
  * 默认配置。**默认 `notify`**（不静默改用户的会话）：
  * 静默压缩是在用户背后丢他的对话历史，且损失不可见 —— 与 `rule.no-silent-catch` 同一条原则。
  * `auto` 要用户显式开（开了也会写账本 + 有理由可查）。
  */
 export const DEFAULT_AUTO_COMPACT: AutoCompactConfig = {
     mode: "notify",
-    triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 0.8 },
+    triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: DEFAULT_WINDOW_OVER_TOKENS },
     // 目标式预算：默认 3KB（≈清零）—— 用户 2026-10-07「更倾向于清零，经验上也没啥大不了」。
     // 自动压与手动压**同一套策略**（合并后不再有第二套）。
     policy: {
@@ -76,15 +109,13 @@ export const DEFAULT_AUTO_COMPACT: AutoCompactConfig = {
 export function normalizeAutoCompact(raw: unknown): AutoCompactConfig {
     const src = (raw ?? {}) as Record<string, unknown>;
     const t = (src["triggers"] ?? {}) as Record<string, unknown>;
-    const num = (v: unknown, d: number, min: number, max: number): number =>
-        typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : d;
     const mode = src["mode"] === "off" || src["mode"] === "auto" ? src["mode"] : "notify";
     return {
         mode,
         triggers: {
             systemContextChanged: t["systemContextChanged"] !== false,
             cacheExpired: t["cacheExpired"] !== false,
-            contextWindowOver: num(t["contextWindowOver"], DEFAULT_AUTO_COMPACT.triggers.contextWindowOver, 0, 1),
+            contextWindowOver: normalizeWindowOver(t["contextWindowOver"]),
         },
         // 策略（自动 / 手动**同一套**）→ 交给 normalizePolicy 统一宽松归一；
         // 缺省用 DEFAULT_AUTO_COMPACT.policy（见本函数头注）。
@@ -100,8 +131,8 @@ export interface AutoCompactFacts {
     sinceLastRequestMs: number | null;
     /** 生效 TTL（由 cache-ttl 的实测夹逼 + 先验得出） */
     ttl: EffectiveTtl;
-    /** 上下文窗口占用比（0~1）；null = 未知（无 usage） */
-    windowRatio: number | null;
+    /** 上下文窗口占用（**token 数** = 该会话最后一步实测用量 `usage.total`）；null = 未知（无用量账） */
+    windowTokens: number | null;
 }
 
 /**
@@ -116,7 +147,7 @@ export function detectAutoCompactTriggers(
 ): CompactTrigger[] {
     const out: CompactTrigger[] = [];
     const t = cfg.triggers;
-    if (t.contextWindowOver > 0 && facts.windowRatio !== null && facts.windowRatio >= t.contextWindowOver) {
+    if (t.contextWindowOver > 0 && facts.windowTokens !== null && facts.windowTokens >= t.contextWindowOver) {
         out.push("contextWindowOver");
     }
     if (t.systemContextChanged && facts.systemContextChanged) out.push("systemContextChanged");
@@ -131,7 +162,7 @@ export const TRIGGER_TEXT: Record<CompactTrigger, string> = {
     manual: "手动触发",
     systemContextChanged: "系统上下文已变化 → 前缀缓存已作废（此刻压缩无重建代价）",
     cacheExpired: "缓存已过期（距上次请求超过生效 TTL）→ 冷启动，压缩无重建代价",
-    contextWindowOver: "上下文窗口占用超过上限（不压就撞墙）",
+    contextWindowOver: "上下文窗口占用超过上限（token 阈值；不压就撞墙）",
 };
 
 /**
