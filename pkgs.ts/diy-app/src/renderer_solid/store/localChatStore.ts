@@ -1209,7 +1209,12 @@ async function autoCompactStatus(taskUri: string) {
     return diyService.diy.agent.local.autoCompactStatus({ taskUri });
 }
 
-/** 写自动压缩配置（真源 = $DIY_HOME/auto-compact.yaml；patch = 部分字段，主进程浅合并） */
+/**
+ * 写自动压缩配置（真源 = $DIY_HOME/auto-compact.yaml；patch = 部分字段，主进程浅合并）。
+ * ⚠️ 级列表（`history.keep[]`）也走这里（`{ history: { keep } }`）—— 读侧在 `autoCompactStatus`
+ * 的 `config.history`；UI 写前用 shared 的 `validateKeepStages` **本地校验**（同一判据，不打空 RPC）。
+ * 命令行那三条（`compact plan get|set|check`）是给 CLI/脚本用的，renderer 不绕那一圈。
+ */
 async function autoCompactSetConfig(patch: Record<string, unknown>) {
     return diyService.diy.agent.local.autoCompactSetConfig({ patch });
 }
@@ -1242,23 +1247,6 @@ async function compactEvents(taskUri: string) {
     return diyService.diy.agent.local.compact.events({ taskUri });
 }
 
-// ── 装配管道 plan（##344 M2）──
-// 读侧用 `autoCompactStatus`（整份配置已在里面）；这三条只在「写 / 校验」时用。
-
-/** 读当前生效 plan（来源 + 级列表 + 真源原文） */
-async function compactPlanGet(taskUri: string) {
-    return diyService.diy.agent.local.compact.plan.get({ taskUri });
-}
-
-/** 写 plan（YAML/JSON 级列表；**主进程校验后才落地**，非法 ⇒ 抛错且不改文件） */
-async function compactPlanSet(taskUri: string, keepYaml: string) {
-    return diyService.diy.agent.local.compact.plan.set({ taskUri, keep: keepYaml });
-}
-
-/** 校验 plan（缺省校验盘上配置）；不合法 ⇒ 抛错（消息里带全部理由） */
-async function compactPlanCheck(taskUri: string, keepYaml?: string) {
-    return diyService.diy.agent.local.compact.plan.check({ taskUri, keep: keepYaml });
-}
 
 /** 策略对象 → RPC 扁平参数（headtail 展开成顶层字段，与 api-def 的 cliOption 对齐） */
 function policyFlat(p: FlatCompactPolicy): {
@@ -1345,9 +1333,6 @@ export const localChatStore = {
     clear,
     /** 压缩：预览（只算）/ 执行 / 撤销 / 压缩历史（事件快照列表，只读查看）*/
     compactPreview,
-    compactPlanGet,
-    compactPlanSet,
-    compactPlanCheck,
     compact,
     autoCompactStatus,
     autoCompactSetConfig,

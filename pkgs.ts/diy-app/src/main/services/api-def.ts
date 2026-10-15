@@ -1011,7 +1011,7 @@ export const apiDef = RpcSchema.router({
                         taskUri: z.string().cliArg({ desc: "任务 URI" }),
                         keep: z
                           .string()
-                          .cliArg({ readFile: true, desc: "级列表（YAML/JSON 数组；`-` = 读 stdin）" }),
+                          .cliArg({ readFile: true, desc: "级列表**文件路径**（内容为 YAML/JSON 数组或 `{keep: [...]}`；`-` = 读 stdin）" }),
                       },
                       output: z.any(),
                     }),
@@ -1022,7 +1022,7 @@ export const apiDef = RpcSchema.router({
                         keep: z
                           .string()
                           .optional()
-                          .cliArg({ readFile: true, desc: "待校验的级列表（缺省 = 校验盘上配置；`-` = 读 stdin）" }),
+                          .cliArg({ readFile: true, desc: "待校验的级列表**文件路径**（缺省 = 校验盘上配置；`-` = 读 stdin）" }),
                       },
                       output: z.any(),
                     }),

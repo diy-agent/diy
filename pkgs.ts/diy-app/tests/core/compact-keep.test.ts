@@ -15,8 +15,13 @@ import { join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
 import {
     DEFAULT_EXEMPT_STEPS,
+    DEFAULT_HEADTAIL_CLIP_DATA,
+    retypeStage,
     validateKeepStages,
     keepStageLabel,
+    withClip,
+    withLimit,
+    withMust,
     type KeepStage,
 } from "../../src/shared/context/compact-keep";
 import { DEFAULT_AUTO_COMPACT, normalizeAutoCompact, type AutoCompactConfig } from "../../src/shared/context/auto-compact";
@@ -237,5 +242,55 @@ describe("⑤ check：静态判据 + must 层硬上限（测量注入）", () =>
         const r = checkKeep({ rawKeep: [{ type: "ladder" }], source: "default", budgetBytes: 0, measure: () => ({ mustBytes: 999, hardCapBytes: 1 }) });
         expect(r.must).toBeUndefined();
         expect(r.ok).toBe(true);
+    });
+});
+
+describe("⑥ 级列表编辑（UI 用的纯函数）：改一个字段不动别的，且不改出非法形状", () => {
+    const base: KeepStage = { type: "role", must: true, limit: 3, clip: { type: "full" }, data: { role: "user" } };
+    /** 编辑后的级必须仍是**合法**形状（zod + yaml 往返；`clip: null` 这种坑在此现形） */
+    const legal = (s: KeepStage): boolean => {
+        const r = validateKeepStages([s]);
+        return !r.issues.some((i) => i.level === "error");
+    };
+
+    it("改 clip：传值与清空各自正确；**清空是「不写」而不是「写 null」**", () => {
+        const ht = withClip(base, { type: "headtail", data: DEFAULT_HEADTAIL_CLIP_DATA });
+        expect(ht.clip).toEqual({ type: "headtail", data: DEFAULT_HEADTAIL_CLIP_DATA });
+        // headtail 缺省参数是**完整**的一包（不会留半拉形状）
+        expect(legal(ht)).toBe(true);
+
+        const cleared = withClip(ht, undefined);
+        expect("clip" in cleared).toBe(false); // 键消失，不是 undefined 也不是 null
+        expect(JSON.stringify(cleared)).not.toContain("clip");
+        expect(legal(cleared)).toBe(true);
+
+        // 反例：真写成 `clip: null` 会被 schema 判非法（js-yaml 会把 null 落成 `clip: null`）
+        expect(legal({ ...cleared, clip: null } as unknown as KeepStage)).toBe(false);
+        // 而「键不存在」经 yaml 往返仍是键不存在（= 回落全局 clip）
+        saveKeepConfig(HOME, [cleared]);
+        expect(loadAutoCompact(HOME).history?.keep?.[0]).toEqual(cleared);
+    });
+
+    it("改 must / limit：undefined = 删键（回到缺省语义），传值 = 覆盖", () => {
+        expect(withMust(base, false).must).toBe(false);
+        const noMust = withMust(base, undefined);
+        expect("must" in noMust).toBe(false);
+        expect(noMust.limit).toBe(3); // 别的字段不动
+        expect(noMust.clip).toEqual(base.clip);
+
+        const noLimit = withLimit(base, undefined);
+        expect("limit" in noLimit).toBe(false);
+        expect(noLimit.must).toBe(true);
+        expect(withLimit(base, 7).limit).toBe(7);
+    });
+
+    it("换取法：公共字段留下、data 换成该取法的一包（不清空必保/裁剪）", () => {
+        const asSteps = retypeStage(base, "steps");
+        expect(asSteps).toMatchObject({ type: "steps", must: true, limit: 3, clip: { type: "full" }, data: { n: DEFAULT_EXEMPT_STEPS } });
+        const asLadder = retypeStage(asSteps, "ladder");
+        expect(asLadder).toEqual({ type: "ladder", must: true, limit: 3, clip: { type: "full" } }); // ladder 无 data
+        expect(retypeStage(base, "role")).toMatchObject({ type: "role", data: { role: "user" } }); // 同类互换保原值
+        // 每种取法的产出都合法（对话框里换来换去不会撞非法形状）
+        for (const t of ["ladder", "role", "recent", "steps"] as const) expect(legal(retypeStage(base, t)), t).toBe(true);
     });
 });

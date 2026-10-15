@@ -199,6 +199,71 @@ export function keepStageLabel(s: KeepStage): string {
     }
 }
 
+/**
+ * **换取法**：`data` 整包换掉（遵 `rule.discriminated-union`「换 type 就换一整包」）。
+ * 公共字段（`must` / `limit` / `clip`）保留 —— 换取法多半是「换个方式挑同一批东西」，
+ * 把必保/裁剪一起清掉反而更烦人。
+ */
+export function retypeStage(s: KeepStage, t: KeepStageType): KeepStage {
+    const common = { ...(s.must !== undefined ? { must: s.must } : {}), ...(s.limit !== undefined ? { limit: s.limit } : {}), ...(s.clip ? { clip: s.clip } : {}) };
+    switch (t) {
+        case "ladder":
+            return { type: "ladder", ...common };
+        case "role":
+            return { type: "role", ...common, data: { role: s.type === "role" ? s.data.role : "user" } };
+        case "recent":
+            return { type: "recent", ...common, data: { n: s.type === "recent" ? s.data.n : 10 } };
+        case "steps":
+            return { type: "steps", ...common, data: { n: s.type === "steps" ? s.data.n : DEFAULT_EXEMPT_STEPS } };
+    }
+}
+
+/**
+ * 取出一条级的**公共字段**（只有确实存在的才带上）。
+ * ⚠️ 不能写成 `{...s}` 后删键：`{...s, clip: undefined}` 会被 `yaml.dump` 落成 `clip: null`，
+ * 而 `null` 在 schema 里是**非法值**（应"不写"而不是"写成 null"）。
+ */
+function commonOf(s: KeepStage): Record<string, unknown> {
+    const c: Record<string, unknown> = {};
+    if (s.must !== undefined) c["must"] = s.must;
+    if (s.limit !== undefined) c["limit"] = s.limit;
+    if (s.clip !== undefined) c["clip"] = s.clip;
+    return c;
+}
+
+/** 用新的公共字段重建一级（`data` 原样带上；`ladder` 没有 `data`） */
+function rebuild(s: KeepStage, common: Record<string, unknown>): KeepStage {
+    const data = s.type === "ladder" ? undefined : (s as { data: unknown }).data;
+    return { type: s.type, ...common, ...(data !== undefined ? { data } : {}) } as KeepStage;
+}
+
+/** 改公共字段 `must`（`undefined` = 删掉该键 ⇒ 回到"计预算"的缺省语义） */
+export function withMust(s: KeepStage, must: boolean | undefined): KeepStage {
+    const c = commonOf(s);
+    if (must === undefined) delete c["must"];
+    else c["must"] = must;
+    return rebuild(s, c);
+}
+
+/** 改公共字段 `limit`（`undefined` = 不限） */
+export function withLimit(s: KeepStage, limit: number | undefined): KeepStage {
+    const c = commonOf(s);
+    if (limit === undefined) delete c["limit"];
+    else c["limit"] = limit;
+    return rebuild(s, c);
+}
+
+/** 改 clip：`undefined` = **不声明**（⇒ 回落策略的全局 clip）；`headtail` 用缺省参数补齐（UI 编辑用） */
+export function withClip(s: KeepStage, clip: import("./compaction").ClipSpec | undefined): KeepStage {
+    const c = commonOf(s);
+    if (clip === undefined) delete c["clip"];
+    else c["clip"] = clip;
+    return rebuild(s, c);
+}
+
+/** headtail 的缺省参数（UI 从「回落」切到「headtail」时拿它初始化，避免半拉形状） */
+export const DEFAULT_HEADTAIL_CLIP_DATA = { head: 3, tail: 3, maxLineChars: 300, maxKeepBytes: 8192 };
+
 /** clip → 人读短名 */
 export function clipLabel(clip: z.infer<typeof ClipSpecSchema> | undefined | null): string {
     if (!clip) return "回落全局";
