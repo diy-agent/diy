@@ -7,6 +7,9 @@
 //        修复：path.resolve(cwd, filePath) — 绝对路径直接返回
 //   #156 截断语义：曾用 clip(s, 6000) 取头尾丢中间；现接 core/file-read 的行窗口，
 //        输出带行号 + offset 续读入口（与 `diy tool read` 同源）
+//   #329 失败语义：execute 曾 catch-and-return `[读取失败] …` —— 那是**正常工具结果**，
+//        SDK 走 tool-result 分支打 status:"done"，UI 画 ✓ 且不展开（模型看得见、用户看不见）。
+//        现改为**抛**，由 SDK 发 tool-error → status:"error"。读不到的用例一律断言 rejects。
 //
 // 无网络、无 LLM、无 Electron — 纯函数级验证
 // ═══════════════════════════════════════════════════════════════
@@ -74,11 +77,13 @@ describe("read 工具 — 路径解析（#149）", () => {
         expect(result).not.toContain("ENOENT");
     });
 
-    it("不存在的文件：返回读取失败而非崩溃", async () => {
+    // ##329：失败必须**抛**（→ SDK 发 tool-error → status:"error"），不能 return 失败字符串
+    // （→ SDK 走 tool-result → status:"done"，UI 画 ✓ 且不展开）。
+    it("不存在的文件：抛出而非返回失败字符串（##329）", async () => {
         const tools = buildTools(workDir, limits, "test/task");
-        const result = await (tools as any).read.execute({ path: "nonexistent.txt" });
-        expect(result).toContain("[读取失败]");
-        expect(result).toContain("ENOENT");
+        await expect((tools as any).read.execute({ path: "nonexistent.txt" })).rejects.toThrow(
+            /\[读取失败\][\s\S]*ENOENT/,
+        );
     });
 });
 
@@ -107,11 +112,11 @@ describe("read 工具 — 行窗口与续读（#156）", () => {
         expect(result).toContain("15: row15");
     });
 
-    it("offset 越界：返回读取失败而非崩溃", async () => {
+    it("offset 越界：抛出而非返回失败字符串（##329）", async () => {
         const tools = buildTools(workDir, limits, "test/task");
-        const result = await (tools as any).read.execute({ path: "many.txt", offset: 9999 });
-        expect(result).toContain("[读取失败]");
-        expect(result).toContain("超出文件范围");
+        await expect((tools as any).read.execute({ path: "many.txt", offset: 9999 })).rejects.toThrow(
+            /\[读取失败\][\s\S]*超出文件范围/,
+        );
     });
 
     it("超长单行原样返回（不砍半行 —— jsonl 一行一条记录）", async () => {

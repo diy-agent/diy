@@ -4,6 +4,8 @@
 //（2026-10-04 现象），实时区判错一次就是"步骤一完就空白"或"同一句出现两遍"（review P1-1）。
 // 故钉在这里，组件只管画。
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
     DEFAULT_TURN_LEVEL,
     TURN_DETAIL_LAYER,
@@ -13,6 +15,8 @@ import {
     cycleTurnLevel,
     expandableOf,
     historyOpenOf,
+    isFailedTool,
+    isInterruptedToolBlock,
     isProc,
     isTurnLevel,
     isUserText,
@@ -27,6 +31,8 @@ import {
     leavesOf,
     liveTailOf,
     planOfLevel,
+    procOpenOf,
+    procStatusOf,
     tailOf,
     turnLevelLabel,
     turnRows,
@@ -627,5 +633,58 @@ describe("结束点（endleaf）tag 的 tooltip：必须跟着 endReason 走", (
         const t = n("turn", "t1", { interrupted: true }, [step("s1", [tool("x1")])]);
         expect(endLeafTip(t)).toBe(turnEndNote(t));
         expect(endLeafTip(t)).toContain("未完成");
+    });
+});
+
+// ─── 过程行状态：用户看得见的那一档（##329 review1 R1）────────────────
+//
+// 判据原来是组件里的私有函数（`statusMark` / `procOpen`），单测够不着 ⇒ 有人改 status 语义
+// 或改坏组件接线，测试全绿而用户照旧看不到 ✗ —— 那正是 ##329 的原始形态（数据对了、界面没变）。
+// 现在判据在纯函数里，下面这几条就是"数据 → 界面"那一段的钉子。
+describe("过程行状态：✗ 与失败块恒开（##329）", () => {
+    it('status==="error" → ✗（失败不许画成 ✓）', () => {
+        expect(procStatusOf(tool("x1", true, "error"), false)).toMatchObject({ icon: "✗", tone: "error" });
+        expect(procStatusOf(tool("x2", true, "done"), false)).toMatchObject({ icon: "✓", tone: "ok" });
+    });
+
+    it("失败块**默认展开**（error 块 / 失败的工具行），且默认值没被翻过来", () => {
+        expect(procOpenOf(err("e1"), {}, false)).toBe(true);
+        expect(procOpenOf(tool("x1", true, "error"), {}, false)).toBe(true);
+        // 成功 / 在跑的工具行仍默认收起（原来的默认口径没变）
+        expect(procOpenOf(tool("x2", true, "done"), {}, false)).toBe(false);
+        // pin 仍是用户的显式覆盖
+        expect(procOpenOf(tool("x2", true, "done"), { x2: true }, false)).toBe(true);
+    });
+
+    it("中断遗留 → ⊘（没结果 ≠ 失败）；有轮次在跑时是 ●（别把 CLI 在跑的一轮读成历史）", () => {
+        expect(procStatusOf(tool("x1", false, "interrupted"), false)).toMatchObject({ icon: "⊘", tone: "warn" });
+        // 旧日志：未收 stop、无 status，此刻没有轮次在跑 → 中断遗留
+        expect(procStatusOf(tool("x2", false, ""), false).icon).toBe("⊘");
+        // 同一块，此刻有轮次在跑 → 不能判成"中断的历史"（任务 194 现象一）
+        expect(procStatusOf(tool("x2", false, ""), true)).toMatchObject({ icon: "●", tone: "wait" });
+        // ⊘ 不是 ✗：两者不共用一个判据（中断的块不会被算成失败）
+        expect(isFailedTool(tool("x2", false, "interrupted"))).toBe(false);
+    });
+
+    // ★ 纯函数绿 ≠ 用户看得见：**接线**才是那一段。有人把判据抄回组件（或干脆不调新函数），
+    // 上面几条全绿而 ✗ 照旧不出现 —— 那正是 ##329 的原始形态（数据对了、界面没变）。
+    // 同款先例：`prompt-registry.test.ts` 的 ★「两条链路都真的调它」。
+    it("★ 源码护栏：组件真的走这两个纯函数，且没把判据抄回去", () => {
+        const src = readFileSync(
+            join(__dirname, "..", "..", "src", "renderer_solid", "components", "LocalChatPage.tsx"),
+            "utf-8",
+        );
+        expect(src).toContain("procStatusOf("); // 状态灯接上了
+        expect(src).toContain("procOpenOf("); // 默认开合接上了
+        expect(src).not.toMatch(/attrs\.status\s*===\s*"error"/); // 失败判据没被内联回来
+        expect(src).not.toMatch(/function\s+procOpen\b/); // 组件私有判据没复活
+        expect(src).not.toMatch(/function\s+isInterruptedToolBlock/);
+    });
+
+    it("用户发言不给状态灯；过程 bar 的 ✗ 与状态灯共用同一判据", () => {
+        expect(procStatusOf(user("u1"), false).icon).toBe("");
+        expect(isFailedTool(tool("x1", true, "error"))).toBe(true);
+        expect(isFailedTool(think("k1"))).toBe(false);
+        expect(isInterruptedToolBlock(think("k1"), false)).toBe(false);
     });
 });

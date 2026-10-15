@@ -128,7 +128,7 @@ import {
 } from "../../shared/context/summary";
 import { renderSummarySection } from "./prompt-registry";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
-import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
+import { readFileWindow, formatReadOutput, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
 import { SteerQueue, fileSteerPort } from "../core/steer-queue";
 import { DEFAULT_STEER_MODE } from "../../shared/steer-mode";
 import type { SteerItem, SteerMode } from "../core/drafts";
@@ -851,7 +851,16 @@ function clip(s: string, n = 6000): string {
         : s;
 }
 
-/** bash：30s 超时；失败也以文本回喂模型（错误是一等信息，不抛） */
+/**
+ * bash：30s 超时；**命令级**失败也以文本回喂模型（错误是一等信息，不抛）。
+ *
+ * ⚠️ "不抛"只覆盖"命令跑起来了"那一档：非零退出 / 超时被杀 / 被取消（都是模型的输入问题，
+ *    看到退出码才能自己改命令）。**别据此说"bash 永不报错"** —— 但也不是"spawn/IO 失败会抛"：
+ *    cwd 不存在、`/bin/bash` 不在，这些**同样**走下面那个 `else if (err)` 收敛成
+ *    `[退出码 ENOENT]` 文本 ⇒ 这一档也被标成 done（**已知缺口**，与 ##329 同族：工具没跑起来
+ *    本该是失败。要改就让 spawn 类与命令级分开、前者抛，另开任务）。
+ *    对照：`read` 的 execute 特意**相反**（读不到就抛），见 buildTools 里 read 的注释。
+ */
 function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?: AbortSignal): Promise<string> {
     return new Promise((resolve) => {
         if (signal?.aborted) {
@@ -924,8 +933,18 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     // style: "tool" —— 续读提示写成工具参数 offset=N（不是 shell 的 --offset）
                     return formatReadOutput(window, { maxBytes: limits.readMaxBytes, style: "tool" });
                 } catch (e) {
-                    if (e instanceof ReadWindowError) return `[读取失败] ${e.message}`;
-                    return `[读取失败] ${e instanceof Error ? e.message : e}`;
+                    // **抛，不返回字符串**（##329）：catch-and-return 的返回值是**正常工具结果**，
+                    // SDK 走 tool-result 分支 → patch status:"done" → UI 画 ✓、且失败块不自动展开
+                    // —— 失败只躺在折叠正文里（模型看得见，用户看不见）。
+                    // 抛出 → SDK 发 tool-error → status:"error"（UI 画 ✗ 并自动展开）。
+                    // ⚠️ 别改回 return：read **读不到就是失败**（catch 里返字符串 = 把失败包成
+                    //   "正常结果" → status:"done" → ✓ 且不展开，就是 ##329 的形态）。
+                    //   与 bash 的"不抛"是**两个方向的有意设计**，别互相抄：bash 把**命令级**
+                    //   失败当数据（非零退出/超时，模型要靠退出码改命令）；read 把**读不到**当失败
+                    //   （目标文件不存在没有"信息"可给，只有"这一步没做成"）。
+                    //   注意「bash 无 try/catch」≠「bash 永不报错」，也≠「它的 spawn 失败会抛」
+                    //   —— 细节见 runBash 头注（那档现在是缺口，不属本任务）。
+                    throw new Error(`[读取失败] ${e instanceof Error ? e.message : e}`);
                 }
             },
         }),

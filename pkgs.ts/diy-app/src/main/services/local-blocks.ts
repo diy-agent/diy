@@ -497,11 +497,28 @@ export interface LocalToolCallPart {
  */
 export type ToolResultOrigin = "tool" | "interrupted" | "empty";
 
+/**
+ * 工具结果的**输出形状**（判别联合，对齐 `@ai-sdk` 的 `ToolResultOutput`）：
+ *   "text"       —— 成功结果（含"（空结果）"占位、中断契约文案）
+ *   "error-text" —— **失败结果**（execute 抛错 → SDK 的 tool-error → 块 status="error"）
+ *
+ * 为什么失败必须换个判别键、而不是也写 "text"（##329 的 b）：
+ *   块上的 `status` 是**我们自己的**属性，模型看不见；发给模型的只有 `output`。
+ *   若失败也写 "text"，协议层这条 tool-result 与成功结果**形状完全相同** ——
+ *   成败只剩 `[读取失败] ` 这个文案前缀可辨，等于把机器判据押在用户可见文案上
+ *   （body 否掉的 c 方案就是同一个错）。`error-text` 让"这条是失败"落在**结构位**上。
+ *   注：当前 openai-compatible / openai 两个 provider 把 text 与 error-text **拍平进同一分支**
+ *   （`case "text": case "error-text": contentValue = output.value`），wire 上逐字节相同 ——
+ *   所以这不是"让模型多知道什么"，而是**形状不再撒谎 + 判据回到状态**；
+ *   换 Anthropic 这类把 error-text 映射成 `is_error: true` 的 provider 时才有实感。
+ */
+export type ToolResultOutput = { type: "text"; value: string } | { type: "error-text"; value: string };
+
 export interface LocalToolResultPart {
     type: "tool-result";
     toolCallId: string;
     toolName: string;
-    output: { type: "text"; value: string };
+    output: ToolResultOutput;
     /** 自证位（仅 withOrigin 时写；投递默认不带 —— 见 ToolResultOrigin） */
     origin?: ToolResultOrigin;
 }
@@ -654,6 +671,11 @@ export function projectAll(store: BlockStore): LocalModelMessage[] {
                     : INTERRUPTED_TOOL_NOTICE;
             const origin: ToolResultOrigin =
                 interrupted || (!realOut && !doneish) ? "interrupted" : realOut ? "tool" : "empty";
+            // 失败结果换判别键（##329 的 b）：**只有** status==="error" 才是 tool-error 的产物。
+            // `interrupted` 走 status="interrupted"，是本地补的契约终态（不是工具抛错）→ 保持 "text"，
+            // 别让模型把「被中断」读成「这条命令失败了」（语义不同，成本是模型据此换路子重试）。
+            const output: ToolResultOutput =
+                status === "error" ? { type: "error-text", value: raw } : { type: "text", value: raw };
             out.push({
                 role: "tool",
                 content: [
@@ -661,7 +683,7 @@ export function projectAll(store: BlockStore): LocalModelMessage[] {
                         type: "tool-result",
                         toolCallId: b.id,
                         toolName: String(b.tool ?? "bash"),
-                        output: { type: "text", value: raw },
+                        output,
                         origin,
                     },
                 ],
@@ -767,7 +789,9 @@ function renderMessage(m: LocalModelMessage, opts: DeliveryOpts): LocalModelMess
             toolCallId: p.toolCallId,
             toolName: p.toolName,
             output: {
-                type: "text",
+                // 判别键**原样透传**（勿写成固定 "text"）：`error-text` 是「这条工具失败了」的
+                // 结构位判据，压回 text 就等于把 ##329 的 b 在最后一步又丢掉。
+                type: p.output.type,
                 // 裁剪只作用于**工具真实输出**（origin="tool"）—— 中断契约文本与占位文案动了
                 // 就误导模型（用户 2026-10-06：本地补的错误信息不许当历史投递）
                 value:

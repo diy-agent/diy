@@ -79,6 +79,8 @@ import {
     endLeafTip,
     endReasonOf,
     expandableOf,
+    isFailedTool,
+    isInterruptedToolBlock,
     isTurnLevel,
     historyOpenOf,
     isUserText,
@@ -86,11 +88,14 @@ import {
     leavesOf,
     liveTailOf,
     planOfLevel,
+    procOpenOf,
+    procStatusOf,
     tailOf,
     turnEndNote,
     turnFoldTip,
     turnLevelTip,
     turnRows,
+    type ProcTone,
     type TurnLevel,
     type TurnRow,
     type TurnTail,
@@ -283,42 +288,6 @@ function reuseRows(prev: TurnRow[], next: TurnRow[]): TurnRow[] {
     });
 }
 
-/**
- * 中断的 tool 块：
- *   ① 显式终态 status=interrupted（main 已收敛并写进 ops）→ 直接读，不靠推断
- *   ② 兼容旧会话：未收 stop 且该任务**此刻确实没有轮次在跑**（历史日志里还没收敛）
- *
- * ⚠️ 判据必须是 main 真值 `live`（含别人发起的轮次），不能用本地 `running`：
- *    本地 running 只代表"我这轮在等自己的流" —— 拿它当整体运行态，会把 CLI 正在跑的
- *    一轮判成"中断的历史"（任务 194 现象一）。也不能反过来把"未收 stop"当成直播中
- *    （那会让真崩溃/中断的历史不再可见）。
- */
-function isInterruptedToolBlock(n: BlockNode): boolean {
-    if (n.tag !== "tool") return false;
-    const s = str(n.attrs.status);
-    if (s === "interrupted") return true;
-    if (n.stopped) return false;
-    if (s === "done" || s === "error") return false;
-    return !localChatStore.live;
-}
-
-/**
- * 展开判定（2026-10-04 重写）：**pin 是用户的显式覆盖，档位只给默认值**。
- *
- * 正文与过程分两套默认：
- *   · 正文：pin → L2/L3 默认展开、L1 折成一行（**直播中同样折叠** —— L1 的语义就是
- *     "只看最后一行"，收起态仍显示正在写的那一行 + 光标，进度照样可见）；
- *   · 过程：error 块 / 中断遗留 tool 恒开（看"断在哪"）→ pin → 一律默认收起
- *     （原 L4「全开」档已取消 —— 档位不再负责"帮用户全开"）。
- */
-function procOpen(n: BlockNode, pin: Record<string, boolean>): boolean {
-    if (n.tag === "error") return true;
-    if (n.tag === "tool" && str(n.attrs.status) === "error") return true;
-    if (isInterruptedToolBlock(n)) return true;
-    if (n.id in pin) return pin[n.id]!;
-    return false;
-}
-
 // ─── 行摘要与正文 ───────────────────────────────────
 
 function toolCommand(n: BlockNode): string {
@@ -352,36 +321,31 @@ function summaryOf(n: BlockNode, open = true): string {
         return firstLine(str(n.attrs.content)).trim() || (n.stopped ? "思考" : "思考中…");
     }
     if (n.tag === "tool") {
-        return `${str(n.attrs.tool) || "tool"}${toolCommand(n) ? ` · ${firstLine(toolCommand(n))}` : ""}${isInterruptedToolBlock(n) ? " · ⊘ 中断" : ""}`;
+        return `${str(n.attrs.tool) || "tool"}${toolCommand(n) ? ` · ${firstLine(toolCommand(n))}` : ""}${isInterruptedToolBlock(n, localChatStore.live) ? " · ⊘ 中断" : ""}`;
     }
     return n.tag;
 }
 
-function statusMark(n: BlockNode) {
-    if (n.tag === "error") return <span class="text-error">❌</span>;
-    if (n.tag === "text") {
-        if (isUserText(n)) return null;
-        return !n.stopped ? <span class="text-warning animate-pulse">●</span> : <span class="opacity-50">✍</span>;
-    }
-    if (n.tag === "think") {
-        return !n.stopped ? <span class="text-warning animate-pulse">●</span> : <span>💭</span>;
-    }
-    const s = str(n.attrs.status);
-    if (s === "done") return <span class="text-success">✓</span>;
-    if (s === "error") return <span class="text-error">✗</span>;
-    // 中断遗留（无 stop、无结果）：不能跟"正在执行"共用同一个点，否则用户看不出历史断在哪
-    if (isInterruptedToolBlock(n)) {
-        return (
-            <span
-                class="text-warning"
-                title="上一轮中断，没有结果（此行已被收敛为终态，正文与发往模型的同源）"
-            >
-                ⊘
-            </span>
-        );
-    }
-    if (!n.stopped) return <span class="text-warning animate-pulse">●</span>;
-    return <span class="opacity-50">○</span>;
+/** 状态灯档位 → class（**只有这里认 class**；"什么时候失败"的判据在 `procStatusOf`） */
+const STATUS_TONE_CLASS: Record<ProcTone, string> = {
+    error: "text-error",
+    ok: "text-success",
+    warn: "text-warning",
+    wait: "text-warning",
+    muted: "opacity-50",
+    none: "",
+};
+
+/** 行首状态灯：判据在 `lib/chat-fold.procStatusOf`（纯函数 + 单测），这里只画（见其头注） */
+function statusMark(node: BlockNode) {
+    const m = procStatusOf(node, localChatStore.live);
+    if (!m.icon) return null;
+    const cls = [STATUS_TONE_CLASS[m.tone], m.pulse ? "animate-pulse" : ""].filter(Boolean).join(" ");
+    return (
+        <span class={cls || undefined} title={m.tip}>
+            {m.icon}
+        </span>
+    );
 }
 
 function ThinkBody(props: { node: BlockNode }) {
@@ -427,7 +391,7 @@ function ToolBody(props: {
                 <div class="animate-pulse text-base-content/50">⋯ 执行中，等待工具返回…</div>
             </Show>
             {/* 中断遗留：正文显示与发往 LLM 完全同源的占位说明（不再是空白让人无从下手） */}
-            <Show when={isInterruptedToolBlock(n)}>
+            <Show when={isInterruptedToolBlock(n, localChatStore.live)}>
                 <div class="alert alert-warning alert-soft text-body py-2 font-sans">
                     <span class="whitespace-pre-wrap">{INTERRUPTED_TOOL_NOTICE}</span>
                 </div>
@@ -479,6 +443,8 @@ function ProcBody(props: {
  * 内容可含正文；两处各写一套必然分叉，R17→R19 已经吃过一次）。
  *
  * 行首 `statusMark` **恒显**（💭 / ⚙ 类字形 + ● 在跑 / ✓ 完成 / ✗ 失败 / ⊘ 中断）：
+ * 判据在 `lib/chat-fold.procStatusOf`（**纯函数 + 单测**：`status==="error"` → ✗ 有测试守着 —— ##329），
+ * 本文件只把档位映成 class；
  * 少了它，一行 `思考` 与一行 `Bash · 命令` 在长列表里只能靠读文字分辨（2026-10-11 用户口径
  * "给工具和思考 bar 前加前缀图标"）。它同时是**状态位**（● / ✗ / ⊘），不是纯装饰。
  *
@@ -495,7 +461,7 @@ function ProcessRow(props: {
     const n = () => props.node;
     /** 这一行**点开会不会多出东西**（思考只有一行就不给展开能力，见 chat-fold.expandableOf） */
     const can = () => expandableOf(n());
-    const open = () => can() && procOpen(n(), props.pin);
+    const open = () => can() && procOpenOf(n(), props.pin, localChatStore.live);
     const head = "flex w-full items-center gap-1.5 py-1.5 text-left";
     /**
      * 行头（三种行位共用同一份内容，只是外壳不同）：
@@ -1008,7 +974,7 @@ function ProcBar(props: {
 }) {
     const thinks = () => props.parts.filter((n) => n.tag === "think").length;
     const tools = () => props.parts.filter((n) => n.tag === "tool").length;
-    const failed = () => props.parts.some((n) => n.tag === "tool" && str(n.attrs.status) === "error");
+    const failed = () => props.parts.some(isFailedTool);
     /** 计数块的读屏/自动化文案（图标的字形读屏念不出来）；**两个计数恒在**（见下） */
     const countsText = () => `${thinks()} 段思考、${tools()} 个工具`;
     return (
