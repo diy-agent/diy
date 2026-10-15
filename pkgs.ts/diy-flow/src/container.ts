@@ -9,7 +9,9 @@
 //      只吃领域输入 `{ to, at, ref?, params? }`（目标节点 / 时刻 / 宿主关联 / 本次运行的参数值），**不吃日志**。
 //      于是它可独立序列化落盘、可读回（`serialize.ts`），清掉日志也不影响运行。
 //      `params` 也在请求里（##333 review2 P1）：**正路必须能产出完整真源** —— 若只有 runtime 能补参数值，
-//      用 `advance` 落盘的「正路状态」就是残缺真源（读回喂回 runtime 会被 `invalid-param` 拒）。
+//      用 `advance` 落盘的「正路状态」就是残缺真源（读回喂回 runtime 会被 `invalid-param` 拒）；
+//      同时正路**不许静默换配置**（review3 P2-1）：状态里已有参数值、请求又带了**不同**的一份 ⇒ 拒 ——
+//      折线上早先那些驻留是拿旧配置跑的，悄悄换掉即「混配状态」，事后无从发现（换配置 = 另起一次运行）。
 //   ② `Visit` 只记**领域事实**：`node` / `seq` / `kind` / `at`（四项）+ 宿主关联 `ref`。
 //      旧版必填的 `eventId` **已删** —— 领域不必知道日志。
 //   ③ **方向反转**：关联由**审计侧指回领域**（审计记录带领域坐标 `{ node, seq }`，即
@@ -27,7 +29,7 @@
 import type { Event } from '@diy/talk';
 import type { EdgeKind, WorkflowDef } from './define';
 import { FlowError, type FlowErrorCode } from './errors';
-import { isIsoString, isObject, rejectUnknown } from './validate';
+import { isIsoString, isObject, rejectUnknown, sameJson } from './validate';
 
 /**
  * 一次驻留：折线在某个节点上停留的一次（同一节点可驻留多次 —— 打回后再穿过）。
@@ -105,6 +107,11 @@ export interface AdvanceRequest<Id extends string = string> {
      * 给了就用它（写进产出态），没给就**继承入参状态那份**（位置变更不改运行配置）。为什么正路要收它：
      * 参数值是领域态的一部分（##311 §二 L3），而「用领域操作推进」是产出一等真源的正路 ——
      * 正路不能承载它，产出的状态就是**残缺真源**（##333 review2 P1）。
+     *
+     * ⚠️ 它**不是「改配置」的口子**（##333 review3 P2-1）：入参状态已有参数值、而本次携带了**不同**的值
+     * （`sameJson` 键序无关比较）⇒ 抛 `invalid-param @ request.params`。折线上早先那些驻留是拿旧配置跑的，
+     * 换掉即产出「混配状态」（状态文件本身还把旧值抹了，事后无从发现）—— **换参数值 = 另起一次运行**
+     * （用 `initialState()` 从头进入），不是一次位置变更。
      */
     readonly params?: Readonly<Record<string, unknown>>;
 }
@@ -200,12 +207,23 @@ export function advance<Id extends string>(def: WorkflowDef<Id>, state: FlowStat
         kind = edge.kind;
     }
 
+    // 状态里已有参数值、而本次携带了**不同**的一份 ⇒ 拒（##333 review3 P2-1）。
+    // 「换参数值不是一次位置变更、那是另起一次运行」—— 这句话从前只写在注释里，现在**执行**它：
+    // 放行就会产出「混配状态」（折线上早先的驻留拿旧配置跑、状态里却记着新配置），且落盘时旧值被抹掉、
+    // 事后无从发现 —— 与 review2 P1 同源的静默窗口。内容相同（键序无关）不算换。
+    if (state.params !== undefined && carriedParams !== undefined && !sameJson(state.params, carriedParams)) {
+        throw new FlowError(
+            'invalid-param',
+            '状态里已有的参数值与本次携带的不一致 —— **换参数值 = 另起一次运行**（用 `initialState()` 从头进入），不是一次位置变更；要把这份状态继续跑下去，就交回它自己那份 `params`',
+            `${base}.params`,
+        );
+    }
+
     const visit: Visit<Id> = ref === undefined
         ? { node: to as Id, seq: seqOf(state.path, to as Id) + 1, kind, at: request.at }
         : { node: to as Id, seq: seqOf(state.path, to as Id) + 1, kind, at: request.at, ref };
     // 推进即离开终态：`done` 不继承（能走，就说明没走完）；`params` 是这次运行的配置 ⇒
-    // **本次请求给了就用本次的，没给就继承**（换参数值不是一次「位置变更」，那是另起一次运行 ——
-    // 归宿主决定，见 ##319；`advance` 只如实承载，不判定合法性）
+    // **本次请求给了就用本次的（与入参那份不一致已在上面被拒）、没给就继承**
     const nextParams = carriedParams !== undefined ? carriedParams : state.params;
     const next: { position: Id; path: readonly Visit<Id>[]; params?: Readonly<Record<string, unknown>> } = {
         position: to as Id,

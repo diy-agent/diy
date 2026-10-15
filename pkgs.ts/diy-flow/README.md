@@ -118,10 +118,14 @@ Visit     { node: Id; seq: number; kind: 'next' | 'bounce'; at: string; ref?: Re
   `createRuntime` 把本次运行用的那份写进产出的状态；**`advance` 也能收**（`AdvanceRequest.params`，纯透传）
   —— 若只有 runtime 能补参数值，用领域正路落盘的状态就是**残缺真源**（读回喂回 runtime 会被 `invalid-param` 拒）。
   ⇒ 状态文件自足：读回时把它交回 `createRuntime`（`params: state.params`）就与原来那次运行**同配置**
-  （`ctx.params` 与插件读到的完全一致）。两条不变量（都亮 `invalid-param @ state.params`）：
-  **① 状态带着另一份参数值** ⇒ 亮错（不静默按谁跑）；**② 状态已进入却没记参数值**（`position !== null`
-  且 `params === undefined`，而本次运行有参数值）⇒ 也亮错 —— 那不是「缺省」而是**这份状态丢了自己的配置**
-  （唯一放行的是尚未进入：`initialState()` 本就不带 `params`，那是全新一次运行的正路）。
+  （`ctx.params` 与插件读到的完全一致）。三条不变量：
+  **① 状态带着另一份参数值** ⇒ 亮错（不静默按谁跑，`invalid-param @ state.params`）；**② 状态已进入却没记
+  参数值**（`position !== null` 且 `params === undefined`，而本次运行有参数值）⇒ 也亮错 —— 那不是「缺省」
+  而是**这份状态丢了自己的配置**（唯一放行的是尚未进入：`initialState()` 本就不带 `params`，那是全新一次
+  运行的正路）；**③ 状态已有的参数值不许被换掉**：`advance` 请求带的值与状态里那份不一致（键序无关比较）
+  ⇒ 亮错（`invalid-param @ request.params`）—— 折线上早先的驻留是拿旧配置跑的，换掉即「混配状态」，
+  而落盘会把旧值抹掉、事后无从发现。**换参数值 = 另起一次运行**（`initialState()` 从头进入），
+  `createRuntime` 与 `advance` 同一条口径。
   凡从 runtime 出来的 `state` **一律带**本次运行的参数值（`done` 分支也不例外）。
   值的**语义**校验归 ##316（`resolveParams(paramsOf(def), 值)` 是唯一入口，本包不重写）；快照这层只保证
   它是可落盘的纯 JSON（`NaN` / 函数 / 环形结构 → `invalid-state`）。
@@ -153,7 +157,7 @@ Visit     { node: Id; seq: number; kind: 'next' | 'bounce'; at: string; ref?: Re
 | 导出 | 是什么 |
 |---|---|
 | `defineWorkflow(def)` | 定义工作流：`nodes[]`（泳道） + `edges[]`（转移）；`edges[].from/to` 只能取节点 id（编译期护栏） |
-| `advance(def, state, { to, at, ref?, params? })` | **领域操作**：位置变更 → `{ state, kind }`（纯函数、不吃事件、不落日志；`params` 给了就用、没给继承，`ref` 随状态继承） |
+| `advance(def, state, { to, at, ref?, params? })` | **领域操作**：位置变更 → `{ state, kind }`（纯函数、不吃事件、不落日志；`params` 给了就用、没给继承，**带的值与状态里那份不一致即拒**；`ref` 随状态继承） |
 | `createContainer(def)` | 单指针容器：`.advance(req)`（正路）/ `.apply(event)`（审计适配），均返回新容器（不可变）；`.position` / `.path` / `.params` / `.done` 是领域态的只读视图 |
 | `apply(def, state, event)` | **薄适配**（审计 / 消息入口）：Event → 一次 `advance`；`project` 的重放路径靠它 |
 | `flowStateToJson` / `parseFlowState` / `flowStateFromJson` / `isFlowState` | 领域态落盘 / 读回（结构 + 语义自洽校验，读回可信） |

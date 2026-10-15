@@ -17,8 +17,9 @@
 //       终态判据是**结构事实**（没有 `next` 出边），边上的 `when` **不参与**判定（有边而 `when` 不过 = `stuck`）
 //   R7  **`params` 值纳入状态**（##311 §二 L3 / ##333 交付 G）：L2 实例值随领域态流转、落盘、读回 ——
 //       「状态文件为一等真源」读回后跑得回原样；值语义仍归 ##316 `resolveParams`（本包不重写校验）。
-//       两条不变量：① 已进入却没记参数值 = 丢了配置 ⇒ 亮错（「缺省」与「丢了」分开）；② 凡从 runtime
-//       出来的 state 一律带本次运行的参数值（`done` 分支也不例外）。冻结深度差异见 `rule.param-bag-when-undeclared`
+//       三条不变量：① 已进入却没记参数值 = 丢了配置 ⇒ 亮错（「缺省」与「丢了」分开）；② 凡从 runtime
+//       出来的 state 一律带本次运行的参数值（`done` 分支也不例外）；③ 状态已有的参数值**不许静默换掉**
+//       （正路 `advance` 与 runtime 同一口径 —— 换配置 = 另起一次运行）。冻结深度差异见 `rule.param-bag-when-undeclared`
 //
 // 测试风格：与 `intent.flow.test.ts` / `intent.plugin.test.ts` 同形（`caught()` / 真实工作流素材），
 // 断言公开 API 的行为与错误码，不断言内部实现。
@@ -727,6 +728,32 @@ describe('R7 `params` 值纳入状态（状态文件为一等真源）', () => {
         const e = caught(() => advance(ciDef, initialState<IdOf<typeof ciDef>>(), { to: 'ci', at: AT, params: 'nope' as unknown as Record<string, unknown> }));
         expect(e.code).toBe('invalid-option');
         expect(e.path).toBe('request.params');
+    });
+
+    it('**【P2-1】正路不许静默换配置**：状态里已有的参数值与本次携带的不同 ⇒ 拒（换配置 = 另起一次运行）', () => {
+        const entered = advance(ciDef, initialState<IdOf<typeof ciDef>>(), { to: 'ci', at: AT, params: { ci: { command: 'npm test' } } }).state;
+
+        // 同值（含键序不同的同内容）照样放行 —— 那不是换配置
+        expect(advance(ciDef, entered, { to: 'merge', at: AT2, params: { ci: { command: 'npm test' } } }).state.params).toEqual({ ci: { command: 'npm test' } });
+
+        // 换一份不同的值：折线上 `ci` 那次是拿旧配置跑的 ⇒ 混配状态，事后无从发现
+        const e = caught(() => advance(ciDef, entered, { to: 'merge', at: AT2, params: { ci: { command: 'pnpm test' } } }));
+        expect(e.code).toBe('invalid-param');
+        expect(e.path).toBe('request.params');
+        expect(e.message).toContain('另起一次运行');
+
+        // 容器是同一条正路的视图 ⇒ 一并拒（不留第二条口径）
+        const c = createContainer(ciDef).advance({ to: 'ci', at: AT, params: { ci: { command: 'npm test' } } });
+        expect(caught(() => c.advance({ to: 'merge', at: AT2, params: { ci: { command: 'pnpm test' } } })).code).toBe('invalid-param');
+
+        // 对照 runtime 那条路：同一个换配置意图，报的是同一件事（口径一致，不是两套）
+        const { registry } = spy();
+        const rt = createRuntime(ciDef, { registry, params: { ci: { command: 'pnpm test' } } });
+        expect(caught(() => rt.step(entered, { at: AT2, id: 'e9' })).code).toBe('invalid-param');
+
+        // 真「另起一次运行」的正路：从 `initialState()` 起、带新配置 ⇒ 照旧跑
+        const fresh = advance(ciDef, initialState<IdOf<typeof ciDef>>(), { to: 'ci', at: AT3, params: { ci: { command: 'pnpm test' } } }).state;
+        expect(fresh.params).toEqual({ ci: { command: 'pnpm test' } });
     });
 
     it('容器是领域态的**视图**：`Container.advance` 走出来的态也带着参数值（三样都拿得全）', () => {

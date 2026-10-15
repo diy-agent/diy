@@ -5,7 +5,7 @@
 // 因此现在就能拆成单独项目（##311 §四）。
 //
 // ##333 依赖反转后的口径（**领域状态一等、事件降为审计**）：
-//   · 领域态 `FlowState{ position, path }` 自成真源 —— 由 `advance` 产出、可落盘可读回（`serialize.ts`）；
+//   · 领域态 `FlowState{ position, path, params }` 自成真源 —— 由 `advance` 产出、可落盘可读回（`serialize.ts`）；
 //   · `Event` 只是**进度通知消息 / 审计材料**：`seed.id` 给了才落，不给就是纯领域推进；
 //   · 内核**不编人类文本**：`Transition.move` 给结构化语义（`{ kind, from, to }`），渲染归宿主。
 //
