@@ -381,8 +381,9 @@ describe("turnEndNote：结束原因翻成人话（所有级别恒显）", () =>
         expect(turnEndNote(ended("max-steps", { limit: 8 }))).toContain("8");
     });
 
-    it("消费端断开（detached）与用户停止（abort）分开说", () => {
-        expect(turnEndNote(ended("aborted", { source: "detached" }))).toContain("消费端断开");
+    it("流中断（detached）与用户停止（abort）分开说", () => {
+        // ##305 起 `detached` 不再表示"消费端断开"（刷新只退订、不打断）——文案随之改口径
+        expect(turnEndNote(ended("aborted", { source: "detached" }))).toContain("流中断");
         expect(turnEndNote(ended("aborted", { source: "abort" }))).toContain("被中断");
     });
 

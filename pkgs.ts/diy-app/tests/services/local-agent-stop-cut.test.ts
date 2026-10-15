@@ -9,10 +9,11 @@
 //     · turn 的 stop 永不落 ops → toTree 重放 interrupted=true → UI 永久「⚠ 本轮未完成」
 //     · turn-end 审计丢失（崩溃现场误判「死在生成中」）、llm.jsonl 缺最后一轮
 //
-// 两条路径（与 201 探针 probe-stop-truth.mts 同构，但 mock 掉 ai，零网络秒级跑）：
-//   A = 消费端点停止：for-await 中途 break（= 链式 return，channel-server 取消的等价物）
-//   B = 只 cancel 不断流：main 侧 abort → fullStream 自然结束 → 生成器正常走完
-// 两者都必须「收尾完整」；A 在修复前必红（反事实），B 用于钉住「别改坏正常收尾」。
+// ##305 后 A 的口径变了：消费端断开**不再**是"停止"——轮次由 main 独立驱动，断开只退订。
+//   旧 A（断开 → 立即收尾）正是本任务要废除的行为，故 A 改为验证：
+//     切断后轮次**仍在跑** → 之后 cancel 才收尾，且收尾依旧完整。
+//   B = 只 cancel 不断流（CLI 路径）：main 侧 abort → fullStream 自然结束 → 生成器正常走完
+// 两者都必须「收尾完整」；B 用于钉住「别改坏正常收尾」。
 //
 // 无网络、无 Electron：vi.mock("ai") 只吐两个 token 后挂起等 abort。
 // ═══════════════════════════════════════════════════════════════
@@ -128,8 +129,8 @@ beforeEach(() => {
 });
 
 describe("主动停止的收尾完整性（201 R1-S1 回归）", () => {
-    it("A：消费端中途切断（= renderer 点停止的链式 return）→ 终态五项齐全", async () => {
-        const uri = freshTask("切断停止");
+    it("A：消费端中途切断（= 刷新页面）不再打断轮次；此后 cancel 仍完整收尾", async () => {
+        const uri = freshTask("切断不打断");
         const mgr = new LocalAgentManager();
         const gen = mgr.chat(uri, "你好");
 
@@ -143,10 +144,18 @@ describe("主动停止的收尾完整性（201 R1-S1 回归）", () => {
             }
         }
         expect(cut, "应到达直播中状态再切断").toBe(true);
-        await sleep(50); // chat.finally 的异步收尾余量（写盘本身是同步的）
+        await sleep(50);
+        // ##305 的落点：断开只退订，**轮次仍在跑**（旧语义此刻已被 abort、以 aborted{detached} 收场）
+        expect(
+            activeTurnList().some((t) => t.taskUri === uri),
+            "消费端断开后轮次仍在跑",
+        ).toBe(true);
 
-        expectTerminal(uri, "A 切断");
-        // 修复前的指纹（反事实可对照）：turn 无 stop、无 turn-end、llm dump 缺失
+        // 收尾现在由「用户主动停止」触发，而不是消费端断开（##305 不设自动回收）
+        expect(mgr.cancel(uri), "cancel 应命中在途轮次").toBe(true);
+        await sleep(50); // 收尾的异步余量（写盘本身是同步的）
+
+        expectTerminal(uri, "A 切断后 cancel");
         rmSync(projectDir, { recursive: true, force: true });
     });
 

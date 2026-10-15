@@ -274,9 +274,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // —— watch —— 文件系统变更推送（serverStream：FileWatcher → RPC → renderer）
   // 在 diy.watch.*（Main 域）：diy.ui.* 会被 rpc-port 全量转发给 renderer，
   // 挂那里会与本地注册冲突（ServerBinding 抛「已注册」→ RPC 起不来）。
-  binding.on(app.watch.fileChange, async function* () {
+  binding.on(app.watch.fileChange, async function* ({ signal }) {
     const { fileWatcher } = await import("./file-watcher");
-    for await (const change of fileWatcher.subscribe()) {
+    for await (const change of fileWatcher.subscribe(signal)) {
       yield change;
     }
   });
@@ -345,7 +345,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
 
   // —— agent.local —— 本地自定义 agent（ai-sdk 块协议，与 ACP 独立）
-  binding.on(app.agent.local.chat, async function* ({ input }) {
+  binding.on(app.agent.local.chat, async function* ({ input, signal }) {
     noteRendererTouch("diy.agent.local.chat", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     const agent = getLocalAgent();
@@ -354,7 +354,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
       agent.steerAdd(input.taskUri, input.mode, input.message);
       return;
     }
-    for await (const op of agent.chat(input.taskUri, input.message, input.model, input.reasoningEffort)) {
+    // signal：客户端断开（刷新/切页/杀 CLI）时即时退订 run.subs —— 缺了它，「无 op 产出期间断开」要
+    // 等到下一条 op 才释放订阅（return() 排在悬挂的 next() 之后），`subscribers` 会虚高（[5] ##308）。
+    for await (const op of agent.chat(input.taskUri, input.message, input.model, input.reasoningEffort, signal)) {
       yield JSON.stringify(op);
     }
   });
@@ -367,7 +369,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // 直接读 runtime-context 的内存表 —— 那才是「此刻主进程真正在跑哪些轮次」的权威。
   binding.on(app.agent.local.running, async () => {
     const { activeTurnList } = await import("./runtime-context");
-    return { active: activeTurnList() };
+    const { getLocalAgent } = await import("./local-agent");
+    // 订阅者数是**运行时事实**（含 detached 与观测者接入，##305）—— 由 LocalAgentManager 算，
+    // runtime-context 只管"哪些任务在跑"（纯内存表，不依赖 agent 层）。
+    const agent = getLocalAgent();
+    return { active: activeTurnList().map((t) => ({ ...t, subscribers: agent.watchers(t.taskUri) })) };
   });
   binding.on(app.agent.local.history, async ({ input }) => {
     noteRendererTouch("diy.agent.local.history", input.taskUri);
@@ -398,9 +404,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { opsFeed } = await import("./ops-feed");
     return opsFeed.watermark(input.taskUri);
   });
-  binding.on(app.agent.local.opsWatch, async function* ({ input }) {
+  binding.on(app.agent.local.opsWatch, async function* ({ input, signal }) {
     const { opsFeed } = await import("./ops-feed");
-    for await (const frame of opsFeed.subscribe(input.taskUri, input.since, input.epoch)) {
+    // signal：客户端断开（刷新/切页/杀 CLI）时即时退订。缺了它，无 op 期间断开要等到
+    // 下一条 op 才释放订阅（悬挂的 next()），`agent.local.running.subscribers` 会虚高。
+    for await (const frame of opsFeed.subscribe(input.taskUri, input.since, input.epoch, signal)) {
       yield frame;
     }
   });

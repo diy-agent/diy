@@ -233,7 +233,9 @@ export function turnEndNote(turn: BlockNode): string | null {
         case "max-tokens":
             return notice ?? "输出达到上限被截断";
         case "aborted":
-            return r.data.source === "detached" ? "本轮被中断（消费端断开，未跑完）" : "本轮被中断（未跑完）";
+            // `detached` 自 ##305 起不再由消费端断开触发（刷新只退订、不打断），
+            // 只剩"流意外中断"这一个来源（closeTurn 的兜底分支）。
+            return r.data.source === "detached" ? "本轮被中断（流中断，未跑完）" : "本轮被中断（未跑完）";
         case "error":
             return notice; // 细节由 error 块 / 现场说，同一句不写两遍
         case "interrupted":
@@ -270,7 +272,7 @@ export function endMarkOf(end: TurnEndReason | null, live: boolean): EndMark {
         case "aborted":
             return {
                 icon: "⛔",
-                tip: end.data.source === "detached" ? "被中断（消费端断开，未跑完）" : "被中断（未跑完）",
+                tip: end.data.source === "detached" ? "被中断（流中断，未跑完）" : "被中断（未跑完）",
                 tone: "cut",
             };
         case "interrupted":

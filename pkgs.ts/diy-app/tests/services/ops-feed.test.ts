@@ -180,6 +180,33 @@ describe("opsFeed — 水位与增量", () => {
     expect(opsFeed.watermark(uri).seq).toBe(1);
   });
 
+  it("断连（signal abort）即时退订：无 op 期间 subscriberCount 立刻归零，不必等下一条 op", () => {
+    // 回归：RPC 传输断开调的是 abort + void g.return()，而 return 排在悬挂的 next() 之后
+    // （无 op 时生成器卡在 await next 上）→ 订阅曾滞留到**下一条 op** 才释放，
+    // `agent.local.running.subscribers`（[5] ##308「有没有人在看」）随之虚高。
+    const uri = newUri();
+    const ctrl = new AbortController();
+    const sub = opsFeed.subscribe(uri, 0, undefined, ctrl.signal);
+    const it = sub[Symbol.asyncIterator]();
+    return it.next().then(() => {
+      expect(opsFeed.subscriberCount(uri)).toBe(1);
+      ctrl.abort(); // 复刻 stream.on('close') 的 abort（此后不会有任何 op 流入）
+      expect(opsFeed.subscriberCount(uri)).toBe(0); // 曾要等到下一条 op 才归零
+    });
+  });
+
+  it("订阅后连接正常关闭（return）同样退订，且与 abort 不双重清理", async () => {
+    const uri = newUri();
+    const ctrl = new AbortController();
+    const sub = opsFeed.subscribe(uri, 0, undefined, ctrl.signal);
+    const it = sub[Symbol.asyncIterator]();
+    await it.next(); // hello
+    await it.return?.({ value: undefined, done: true });
+    expect(opsFeed.subscriberCount(uri)).toBe(0);
+    ctrl.abort(); // 迟到的 abort 不应二次 cleanup（计数不会变负/抛错）
+    expect(opsFeed.subscriberCount(uri)).toBe(0);
+  });
+
   it("多订阅者广播：两个订阅者（N 窗口 = N 订阅者）收到同一批，非单播", async () => {
     const uri = newUri();
     const a: Op = { op: "start", id: "t1", kind: "turn" };
