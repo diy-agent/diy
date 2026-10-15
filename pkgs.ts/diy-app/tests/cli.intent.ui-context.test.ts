@@ -740,6 +740,24 @@ describe("上下文树：UI 上屏（两列 + 信封原始数据 `<>`）", () =>
     expect(detail).toContain('body: "二（意图测试）"');
     expect(detail).toContain("绿 = 新增行，红 = 删除行");
 
+    // ★ `<>` 的说明走 view 顶的 **info bar**，**不掺进原始数据正文**（用户 2026-10-15：
+    // 「上面这一段不要出现，不要人误会这也是发出去的」）。判据：说明句在（info bar），
+    // 而带 `#` 前缀的那一份**不在**（正文只留真发字节）。
+    const ui3 = await makeUiDriver(fx.electron.cdpUrl, async () => {
+      const r = await fx.sh.getJson("./diy.sh ui inspect");
+      return (r.data as any)?.data?.tree as A11yNode | undefined;
+    });
+    try {
+      await ui3.clickSelector('button[title*="runtime diff"]');
+    } finally {
+      ui3.close();
+    }
+    const rawRt = await waitUntil(a11yText, (s) => s.includes("流量日志里找不到该步的请求"), {
+      label: "runtime `<>` 原始数据 + info bar 上屏",
+    });
+    expect(rawRt).not.toContain("# 流量日志里找不到该步的请求"); // 注释不再进正文
+    expect(rawRt).toContain('body: "二（意图测试）"'); // 正文 = 真发的组装产物
+
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 180_000);
 });
