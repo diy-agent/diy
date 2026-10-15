@@ -48,6 +48,13 @@ import {
 
 const AT = '2026-10-13T00:00:00.000Z';
 
+/** 取这次转移的审计事件：本文件的驱动器**总是**给 `id`（##333 后事件可选）⇒ 必有 */
+function auditOf<Id extends string>(transition: Transition<Id>): Event {
+    const event = transition.event;
+    if (event === undefined) throw new Error('这次转移应当落了审计事件（驱动器给了 id）');
+    return event;
+}
+
 /** 捕获错误（断言分类 + 定位路径） */
 function caught(fn: () => unknown): FlowError {
     try {
@@ -72,7 +79,7 @@ function runner<Id extends string>(rt: Runtime<Id>) {
     const events: Event[] = [];
     function record(transition: Transition<Id>): Transition<Id> {
         state = transition.state;
-        events.push(transition.event);
+        events.push(auditOf(transition));
         return transition;
     }
     return {
@@ -413,12 +420,12 @@ describe('R3 guard 数组 = 与（全部满足才可转移；短路）', () => {
         const moved = r.step();
         expect(moved.guard.pass).toBe(true);
         expect(calls).toEqual(['check_green@go', 'action:place_order@go']);
-        expect(moved.event.anchor).toEqual({ type: 'node', data: { nodeId: 'end' } });
+        expect(auditOf(moved).anchor).toEqual({ type: 'node', data: { nodeId: 'end' } });
     });
 });
 
 describe('R4 可观测 guard → 系统求值并自动转移（author = system）', () => {
-    it('事件 author = system、锚点指向目标节点、正文带求值结果', () => {
+    it('事件 author = system、锚点指向目标节点；语义（kind / from / to）走 `move`，内核不编人类文本', () => {
         const { registry } = fakes();
         const rt = createRuntime(devDef, { registry });
         const r = runner(rt);
@@ -429,10 +436,10 @@ describe('R4 可观测 guard → 系统求值并自动转移（author = system�
         r.declare({ author: 'Review agent', to: 'ci', content: '放行 CI' });
         const moved = r.step(); // ci：全 pred → 系统自己求值、自己推
 
-        expect(moved.event.author).toBe('system');
-        expect(moved.event.anchor).toEqual({ type: 'node', data: { nodeId: 'merge' } });
-        expect(moved.event.content).toContain('pred:check_green ✓');
-        expect(moved.event.content).toContain('→ merge');
+        expect(auditOf(moved).author).toBe('system');
+        expect(auditOf(moved).anchor).toEqual({ type: 'node', data: { nodeId: 'merge' } });
+        expect(moved.move).toEqual({ kind: 'next', from: 'ci', to: 'merge' });
+        expect(moved.reason).toBe('');
         expect(moved.guard.mode).toBe('system');
         expect(moved.state.position).toBe('merge');
     });
@@ -486,9 +493,10 @@ describe('R5 不可观测 guard → 只能由 actor 宣布，转移本身就是�
         const r = runner(rt);
         r.step();
         const declared = r.declare({ author: 'human', to: 'design', content: '需求已澄清，交设计' });
-        expect(declared.event.author).toBe('human');
-        expect(declared.event.content).toBe('需求已澄清，交设计');
-        expect(declared.event.anchor).toEqual({ type: 'node', data: { nodeId: 'design' } });
+        expect(auditOf(declared).author).toBe('human');
+        expect(auditOf(declared).content).toBe('需求已澄清，交设计');
+        expect(auditOf(declared).anchor).toEqual({ type: 'node', data: { nodeId: 'design' } });
+        expect(declared.move).toEqual({ kind: 'next', from: 'clarify', to: 'design' });
         expect(declared.guard.mode).toBe('actor');
         expect(declared.guard.pending.map((ref) => ref.raw)).toEqual(['prompt:clear_enough']);
         expect(declared.state.position).toBe('design');
@@ -541,7 +549,8 @@ describe('R5 不可观测 guard → 只能由 actor 宣布，转移本身就是�
         const r = runner(rt);
         r.step();
         const bounced = r.declare({ author: '开发 agent', to: 'up', content: '这个需求我做不到，打回' });
-        expect(bounced.event.anchor).toEqual({ type: 'node', data: { nodeId: 'up' } });
+        expect(auditOf(bounced).anchor).toEqual({ type: 'node', data: { nodeId: 'up' } });
+        expect(bounced.move).toEqual({ kind: 'bounce', from: 'impl', to: 'up' });
         expect(bounced.state.path[1].kind).toBe('bounce');
     });
 
@@ -617,9 +626,10 @@ describe('R6 guard 未过：停在边上 / 打回', () => {
         r.step(); // backtest → risk
         const bounced = r.step(); // risk：权重不合格 → 打回 select
 
-        expect(bounced.event.author).toBe('system');
-        expect(bounced.event.anchor).toEqual({ type: 'node', data: { nodeId: 'select' } });
-        expect(bounced.event.content).toContain('打回 select');
+        expect(auditOf(bounced).author).toBe('system');
+        expect(auditOf(bounced).anchor).toEqual({ type: 'node', data: { nodeId: 'select' } });
+        expect(bounced.move).toEqual({ kind: 'bounce', from: 'risk', to: 'select' });
+        expect(bounced.reason).toContain('weight_ok');
         expect(bounced.state.path[bounced.state.path.length - 1].kind).toBe('bounce');
         expect(bounced.state.position).toBe('select');
     });
@@ -806,9 +816,9 @@ describe('R9 上下文与旁路：params 透传 / notify 唤醒 / status 分类'
         const rt = createRuntime(pairDef, { registry, notify: ['wake'] });
         const r = runner(rt);
         const entered = r.step();
-        expect(entered.receipts).toEqual([{ delivered: ['system'], note: entered.event.id }]);
+        expect(entered.receipts).toEqual([{ delivered: ['system'], note: auditOf(entered).id }]);
         const moved = r.step();
-        expect(moved.receipts).toEqual([{ delivered: ['system'], note: moved.event.id }]);
+        expect(moved.receipts).toEqual([{ delivered: ['system'], note: auditOf(moved).id }]);
     });
 
     it('status：现在轮到谁（entry / system / actor）与已有打回数', () => {
@@ -877,7 +887,7 @@ describe('R9 上下文与旁路：params 透传 / notify 唤醒 / status 分类'
         const r = runner(rt);
         const entered = r.step(); // 不抛
         expect(entered.state.position).toBe('a');
-        expect(entered.event.author).toBe('system');
+        expect(auditOf(entered).author).toBe('system');
         expect(entered.receipts).toEqual([]);
         expect(entered.notifyErrors.map((failure) => failure.plugin)).toEqual(['boom']);
         expect(entered.notifyErrors[0].error.code).toBe('plugin-threw');

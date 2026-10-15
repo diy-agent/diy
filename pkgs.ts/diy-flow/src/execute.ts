@@ -2,24 +2,33 @@
 //
 // 依据 ##166 §10.3 / §14.3 与 ##101 结论四：
 //
-//   **可观测 guard（`pred:` / `action:`）** —— 系统求值**并自动转移**，落一条 `author = system`
-//   的 Event（「系统自动求值，无人发言」）。过 → 走 `next` 边；不过 → **有可用 `bounce` 边就打回**，
-//   没有就**停在原位**（##101 结论四：「卡住」在**边上**，不在节点上 —— 别把「在等某条件」伪装成
-//   节点内的困难）。金融工作流的 `risk` 就是这条：权重不合格 → 系统打回 `select`。
+//   **可观测 guard（`pred:` / `action:`）** —— 系统求值**并自动转移**。过 → 走 `next` 边；
+//   不过 → **有可用 `bounce` 边就打回**，没有就**停在原位**（##101 结论四：「卡住」在**边上**，
+//   不在节点上 —— 别把「在等某条件」伪装成节点内的困难）。金融工作流的 `risk` 就是这条：
+//   权重不合格 → 系统打回 `select`。
 //
 //   **不可观测 guard（`prompt:`）** —— 引擎判不了，**只能由 actor 宣布**，**转移本身就是一条 Event**
 //   （§10.3：越不可观测越像聊天室）。actor 宣布时仍要把可观测那部分交给系统核一遍
 //   （宣布「推进」而 `pred:` 明明不过 = `guard-failed`）；宣布「打回」不主张推进，不设闸门。
 //
-//   **打回**：不新建节点，只是一条锚在目标节点的 Event（##166 §14.2 推论 2 / ##313 的 container）。
+//   **打回**：不新建节点，只是一次回到目标节点的**位置变更**（##166 §14.2 推论 2 / ##313 的 container）。
 //   死循环护栏 = 打回上限（`maxBounces`），超过即 `bounce-limit`。
+//
+// ── ##333 依赖反转：内核产出**结构化语义**，事件退成审计 ──────────────────────────────
+//   `step` / `declare` 的产物是**领域态**（`Transition.state`）+ **结构化语义**（`Transition.move`
+//   = `{ kind: 'entry'|'next'|'bounce', from, to }` + `reason`）。内核**不再编人类文本**
+//   （旧版的 `进入入口节点「x」` / `系统求值通过（…）→ x` / `打回 x` 全部拆掉）：渲染成什么字
+//   是宿主的事（##319 / ##320）。
+//   `Event` 也**不再是必产**：`seed.id` 给了才落一条（供 `notify` 与宿主记账），不给就是
+//   **纯领域推进**（`transition.event === undefined`）—— 日志是审计/统计材料，可清可丢（##333）。
+//   于是 `notify` 只在这条转移**有事件**时才被唤醒（无事件 = 无通知，旁路照旧只记账不作废）。
 //
 // ── 三条次序铁律（`action:` 是**写外部世界**的槽，次序错了就是对外部世界多动手 / 白动手）──────
 //
 //   1. **先分类（零副作用），再求值。** `step` 撞上含 `prompt:` 的节点 → 直接 `awaiting-actor`，
 //      **一个插件都不调**：否则 `action:` 会在 step 里跑一次、actor 宣布时再跑一次（同一件事做两遍）。
-//   2. **先拒单，再求值。** 非法的 `declare`（系统节点 / 冒名 `system` / 边不存在）必须在求值**之前**
-//      抛错 —— 不能先下了单、再告诉调用方「这次调用不允许」。
+//   2. **先拒单，再求值。** 非法的 `declare`（系统节点 / 冒名 `system` / 边不存在 / 入参形状错 /
+//      审计事件形状错）必须在求值**之前**抛错 —— 不能先下了单、再告诉调用方「这次调用不允许」。
 //   3. **打回不求值。** 节点 guard 问的是「能不能往前走」；打回不主张推进 → 不问、不跑插件。
 //
 //   **边上的 `when` 是「边的条件」（§14.4），两侧共用一套语义**：系统选边（`selectEdge`）与 actor
@@ -32,26 +41,38 @@
 //   另：`pred:` / `action:` / `notify` 的名字组合期就查注册表 ⇒ **装配顺序是「先注册齐、再 createRuntime」**。
 //
 //   `step` / `declare` 都是**纯函数式的状态机驱动**：给同一个 `state` 再调一次就会再推一次
-//   （`seed` 由调用方给新 id）。故 `action:` 插件**必须幂等**（同一 `ref` 不重复动手），
+//   （`id` 由调用方给新值）。故 `action:` 插件**必须幂等**（同一 `ref` 不重复动手），
 //   调用方拿到 `done` / `stuck` / `awaiting-actor` 后也不该空转轮询。
+//   **例外**：跑完的终态记在领域态里（`FlowState.done`，##333 交付 F）—— 重复 `step` 直接返回
+//   `done`，**不再求值、不重跑 `action:`**（##315 review2 §D 的记账）。
 //
-// 内核**不取时间、不生成 id**：`EventSeed { id, at }` 由调用方给（同 ##313 的 `apply`）。
+// 内核**不取时间、不生成 id**：`at` 必填（领域事实，要落盘），`id` 给了才落审计事件。
 
 import { createEvent, nodeAnchor, type Event } from '@diy/talk';
-import { apply, type FlowState } from './container';
+import { advance, parseRef, type FlowState } from './container';
 import { findNode, type EdgeDef, type NodeDef, type WorkflowDef } from './define';
-import { FlowError } from './errors';
+import { FlowError, type FlowErrorCode } from './errors';
 import { classifyGuards, evaluateGuards, isObservable, parseGuardRef, selectEdge, unevaluatedGuards, type GuardEvaluation, type GuardRef } from './eval';
 import { paramsOf, resolveParams } from './params';
 import { parseReceipt, type PluginContext, type Receipt, type Slot } from './plugins';
 import type { PluginRegistry } from './registry';
-import { callPlugin, isObject, rejectUnknown } from './validate';
+import { callPlugin, isIsoString, isObject, rejectUnknown, sameJson } from './validate';
 
-/** 新事件的种子：`id` 唯一性由调用方保证、`at` 由调用方给（内核不取时间、不生成 id） */
+/**
+ * 一次转移的入参：**领域输入 + 可选审计**（##333）。
+ *
+ * - `at`（必填）是**领域事实** —— 本次驻留的时刻，要落盘，所以内核必须拿到（内核不取时间）；
+ * - `ref`（可选）是宿主关联标识，落到 `Visit.ref`（内核只透传不解释）；
+ * - `id`（可选）是**审计事件 id**：不给 ⇒ **不落事件**（`transition.event === undefined`），
+ *   领域照样推进 —— 这就是「日志可清可丢」在 API 上的样子；
+ * - `content`（可选）是审计事件正文：**宿主自己渲染**，内核不编人类文本（缺省空串）。
+ */
 export interface EventSeed {
-    readonly id: string;
+    readonly id?: string;
     /** ISO-8601 */
     readonly at: string;
+    readonly ref?: Readonly<Record<string, string>>;
+    readonly content?: string;
 }
 
 /** actor 宣布一次转移（不可观测 guard 由宣布者担责，##166 §10.3） */
@@ -71,10 +92,26 @@ export interface NotifyFailure {
     readonly error: FlowError;
 }
 
-/** 一次成功的转移：新态 + 落下的那条 Event + 用到的 guard 求值 + notify 回执 */
+/**
+ * 一次转移的**结构化语义**（##333 交付 D）—— 内核给事实，**不给人类文本**。
+ *
+ * 宿主拿它渲染（UI 文案 / 日志正文 / 审计记录）：`kind = 'entry'` 即「从没进过工作流到进入入口」。
+ */
+export interface Move<Id extends string = string> {
+    readonly kind: 'entry' | 'next' | 'bounce';
+    /** 从哪来（`null` = 从「尚未进入」进入入口节点） */
+    readonly from: Id | null;
+    readonly to: Id;
+}
+
+/** 一次成功的转移：新领域态 + 结构化语义 + 可选审计事件 + 用到的 guard 求值 + notify 回执 */
 export interface Transition<Id extends string = string> {
     readonly state: FlowState<Id>;
-    readonly event: Event;
+    readonly move: Move<Id>;
+    /** 结构化语义的补充：打回 / 未过的原因（`pass` 时为空串） */
+    readonly reason: string;
+    /** 审计事件：**给了 `seed.id` 才落**（缺省 = 这次转移没有日志，领域态照样前进） */
+    readonly event?: Event;
     /** 打回声明时 `evaluated === false`（不设闸门 → 连求值都没做） */
     readonly guard: GuardEvaluation;
     readonly receipts: readonly Receipt[];
@@ -85,8 +122,8 @@ export interface Transition<Id extends string = string> {
 /** `step` 的结果：走了 / 终态 / 停在原位 / 等 actor 宣布 —— 四种都不是异常，故用判别联合而非抛错 */
 export type StepResult<Id extends string = string> =
     | { readonly status: 'moved'; readonly transition: Transition<Id> }
-    /** guard 全过且**没有 next 出边**（终态节点）→ 工作流跑完 */
-    | { readonly status: 'done' }
+    /** guard 全过且**没有 next 出边**（终态节点）→ 工作流跑完；`state.done` 已置位 */
+    | { readonly status: 'done'; readonly state: FlowState<Id> }
     /** guard 未过（或无可用出边）且无法打回 → 停在原位（「卡住」在边上） */
     | { readonly status: 'stuck'; readonly reason: string; readonly guard: GuardEvaluation }
     /** 含不可观测 guard → 系统判不了，等 actor 宣布 */
@@ -102,6 +139,8 @@ export interface NodeStatus<Id extends string = string> {
     readonly outEdges: readonly EdgeDef<Id>[];
     /** 折线上已有的打回次数 */
     readonly bounces: number;
+    /** 工作流是否已跑完（`FlowState.done`；只读事实，不调插件） */
+    readonly done: boolean;
 }
 
 export interface RuntimeOptions {
@@ -109,17 +148,25 @@ export interface RuntimeOptions {
     /**
      * L2 实例值（##316）：形状 `{ 节点 id: { 局部名: 值 } }`，按工作流的参数声明**校验 + 合并缺省**
      * （##315 时只透传；参数层落地后归这里）。工作流没声明任何参数 = 参数层未启用，原样透传。
+     *
+     * ##333 交付 G：**这份值会随产出的领域态一起走**（写进 `FlowState.params`）—— 状态文件因此自足：
+     * 读回时把它交回 `createRuntime`（`params: state.params`）就与原来那次运行**同配置**。
+     * 状态里已带参数值时，这里给的必须与它一致（否则 `invalid-param`，见 `requireParamsMatch`）。
      */
     readonly params?: Readonly<Record<string, unknown>>;
     /** 打回上限（死循环护栏）；缺省不限 —— 具体数值属 L2 参数，内核不预设行业策略 */
     readonly maxBounces?: number;
-    /** 每次转移后要唤醒的 `notify` 插件名（##166 §13.2 第五槽） */
+    /** 每次转移后要唤醒的 `notify` 插件名（##166 §13.2 第五槽）；**只在这次转移落了事件时才唤醒** */
     readonly notify?: readonly string[];
 }
 
 export interface Runtime<Id extends string = string> {
     readonly def: WorkflowDef<Id>;
     readonly registry: PluginRegistry;
+    /**
+     * 本次运行用的 L2 实例值（##316：已校验 + 已合并缺省；工作流没声明参数时是宿主透传袋）。
+     * ##333 交付 G：它会被写进产出的 `FlowState.params` —— 状态文件里那份才是**一等真源**。
+     */
     readonly params: Readonly<Record<string, unknown>>;
     readonly maxBounces: number;
     /** 系统自动推：可观测 guard 全过 → 前进；不过 → 打回（有可用 bounce 边）或停在原位 */
@@ -148,8 +195,8 @@ function requireEdgeAvailable<Id extends string>(def: WorkflowDef<Id>, edge: Edg
     throw new FlowError('edge-unavailable', `这条边的 \`when\`（${edge.when}）此刻不成立：${JSON.stringify(edge.from)} → ${JSON.stringify(edge.to)} 此刻不可用`, path);
 }
 
-const SEED_KEYS = ['id', 'at'] as const;
-const DECLARE_KEYS = ['id', 'at', 'author', 'to', 'content', 'causes'] as const;
+const SEED_KEYS = ['id', 'at', 'ref', 'content'] as const;
+const DECLARE_KEYS = ['id', 'at', 'ref', 'content', 'author', 'to', 'causes'] as const;
 const OPTION_KEYS = ['registry', 'params', 'maxBounces', 'notify'] as const;
 
 /** 内核保留的 `author`：「系统自动求值，无人发言」（§14.3 靠它区分「系统推」与「谁宣布推」） */
@@ -164,8 +211,40 @@ const NO_GUARD: GuardEvaluation = Object.freeze({
     reason: '',
 });
 
-function describeChecks(guard: GuardEvaluation): string {
-    return guard.checks.map((check) => `${check.ref.raw} ✓`).join(', ');
+/** 解析后的入参：领域部分（`at` / `ref`）+ 审计部分（`id` / `content`） */
+interface ParsedSeed {
+    readonly at: string;
+    readonly ref?: Readonly<Record<string, string>>;
+    readonly id?: string;
+    readonly content: string;
+}
+
+/**
+ * 校验并拆分 `EventSeed`（形状封闭）。
+ *
+ * 领域部分（`at` / `ref`）与审计部分（`id` / `content`）**都在求值之前**校验完 —— 先拒单后求值
+ * （审计字段形状错也不许「先对外部世界动手、再报错」）。
+ */
+function parseSeed(seed: unknown, keys: readonly string[], path: string, code: FlowErrorCode): ParsedSeed {
+    if (!isObject(seed)) throw new FlowError(code, '入参应为对象', path);
+    rejectUnknown(seed, keys, path, code);
+    if (!isIsoString(seed.at)) {
+        throw new FlowError(code, `at 应为 ISO-8601 时刻（如 2026-10-13T00:00:00.000Z），实得 ${JSON.stringify(seed.at)}`, `${path}.at`);
+    }
+    const ref = parseRef(seed.ref, `${path}.ref`, code);
+    if (seed.id !== undefined && (typeof seed.id !== 'string' || seed.id === '')) {
+        throw new FlowError(code, `id 应为非空字符串（审计事件 id；不给 = 不落事件），实得 ${JSON.stringify(seed.id)}`, `${path}.id`);
+    }
+    if (seed.content !== undefined && typeof seed.content !== 'string') {
+        throw new FlowError(code, 'content 应为字符串（审计事件正文）', `${path}.content`);
+    }
+    const parsed: { at: string; ref?: Readonly<Record<string, string>>; id?: string; content: string } = {
+        at: seed.at,
+        content: typeof seed.content === 'string' ? seed.content : '',
+    };
+    if (ref !== undefined) parsed.ref = ref;
+    if (typeof seed.id === 'string') parsed.id = seed.id;
+    return parsed;
 }
 
 export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, options: RuntimeOptions): Runtime<Id> {
@@ -192,6 +271,25 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
     const declared = paramsOf(def);
     const params: Readonly<Record<string, unknown>> =
         declared.schema.length === 0 ? Object.freeze({ ...options.params }) : resolveParams(declared, options.params);
+    const hasParams = Object.keys(params).length > 0;
+
+    /** 参数值属**领域状态**（##311 §二 L3 / ##333 交付 G）：本次运行用的那份写进产出的状态 */
+    const stampParams = (state: FlowState<Id>): FlowState<Id> => (hasParams ? { ...state, params } : state);
+
+    /**
+     * 状态里带着参数值时，必须与本次 `createRuntime` 拿到的那份**一致**（键序无关）。
+     *
+     * 不一致 = 「读回来的状态」与「现在这份参数」是**两次不同的运行配置**；静默按谁跑都会悄悄偏
+     * （正是本包最反对的失败形态），故当场亮错，并指明修法：把 `state.params` 交回 `createRuntime`。
+     */
+    const requireParamsMatch = (state: FlowState<Id>): void => {
+        if (state.params === undefined || sameJson(state.params, params)) return;
+        throw new FlowError(
+            'invalid-param',
+            '状态里带着另一份 L2 参数值（状态文件是一等真源）：把 `state.params` 交回 createRuntime —— `createRuntime(def, { registry, params: state.params })`；或先清掉状态里的 params 再跑',
+            'state.params',
+        );
+    };
 
     const nodeAt = (id: Id): NodeDef<Id> => {
         const node = findNode(def, id);
@@ -251,9 +349,9 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
         return { receipts, notifyErrors };
     };
 
-    /** 落定一条事实（`apply` + 打回护栏）—— **不动外部世界**；通知在 `landed` 里补 */
-    const commit = (state: FlowState<Id>, event: Event): FlowState<Id> => {
-        const next = apply(def, state, event);
+    /** 落定一次**领域推进**（`advance` + 打回护栏）—— **不动外部世界**；通知在 `landed` 里补 */
+    const commit = (state: FlowState<Id>, to: Id, seed: ParsedSeed): FlowState<Id> => {
+        const next = advance(def, state, seed.ref === undefined ? { to, at: seed.at } : { to, at: seed.at, ref: seed.ref }).state;
         const last = next.path[next.path.length - 1];
         if (last.kind === 'bounce') {
             const used = next.path.filter((visit) => visit.kind === 'bounce').length;
@@ -261,27 +359,34 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
                 throw new FlowError('bounce-limit', `打回已达 ${used} 次，超过上限 ${maxBounces}（死循环护栏）`, 'state.path');
             }
         }
-        return next;
+        return stampParams(next);
     };
 
-    const landed = (state: FlowState<Id>, event: Event, guard: GuardEvaluation): Transition<Id> => {
-        const { receipts, notifyErrors } = fireNotify(event);
-        return { state, event, guard, receipts, notifyErrors };
+    /** 审计事件（纯构造，**无副作用**）：`seed.id` 缺省 ⇒ 这次转移不落日志（##333） */
+    const audit = (seed: ParsedSeed, to: Id, author: string, causes?: readonly string[]): Event | undefined =>
+        seed.id === undefined
+            ? undefined
+            : createEvent({ id: seed.id, author, anchor: nodeAnchor(to), content: seed.content, causes: causes ?? [], at: seed.at });
+
+    const landed = (state: FlowState<Id>, move: Move<Id>, guard: GuardEvaluation, event: Event | undefined): Transition<Id> => {
+        const { receipts, notifyErrors } = event === undefined ? { receipts: [] as Receipt[], notifyErrors: [] as NotifyFailure[] } : fireNotify(event);
+        return event === undefined
+            ? { state, move, reason: guard.reason, guard, receipts, notifyErrors }
+            : { state, move, reason: guard.reason, event, guard, receipts, notifyErrors };
     };
 
     function step(state: FlowState<Id>, seed: EventSeed): StepResult<Id> {
-        rejectUnknown(seed as unknown as Record<string, unknown>, SEED_KEYS, 'seed', 'invalid-option');
+        const parsed = parseSeed(seed, SEED_KEYS, 'seed', 'invalid-option');
+        requireParamsMatch(state);
+
+        // 终态（##333 交付 F）：已跑完 ⇒ 直接返回 —— **不求值、不重跑 `action:`**
+        // （「已经跑完」是领域事实，记在 `FlowState.done` 里，不是日志事实）
+        if (state.done === true) return { status: 'done', state };
 
         if (state.position === null) {
-            const entry = nodeAt(def.entry);
-            const event = createEvent({
-                id: seed.id,
-                author: SYSTEM_AUTHOR,
-                anchor: nodeAnchor(def.entry),
-                content: `进入入口节点「${entry.name}」`,
-                at: seed.at,
-            });
-            return { status: 'moved', transition: landed(commit(state, event), event, NO_GUARD) };
+            const event = audit(parsed, def.entry, SYSTEM_AUTHOR);
+            const move: Move<Id> = { kind: 'entry', from: null, to: def.entry };
+            return { status: 'moved', transition: landed(commit(state, def.entry, parsed), move, NO_GUARD, event) };
         }
 
         const node = nodeAt(state.position);
@@ -298,18 +403,14 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
         if (guard.pass) {
             const edge = selectEdge(edges, 'next', ctx, registry);
             if (!edge) {
-                // 压根没有 next 出边 = 终态；有边但 `when` 不满足 = 停在边上（这一步不走）
-                if (!edges.some((candidate) => candidate.kind === 'next')) return { status: 'done' };
+                // 压根没有 next 出边 = 终态 → **把「跑完了」记进领域态**（重复 step 才会不重跑 action:）；
+                // 有边但 `when` 不满足 = 停在边上（这一步不走）
+                if (!edges.some((candidate) => candidate.kind === 'next')) return { status: 'done', state: { ...state, done: true } };
                 return { status: 'stuck', reason: '没有可用的 next 出边（边上 `when` 未过）', guard };
             }
-            const event = createEvent({
-                id: seed.id,
-                author: SYSTEM_AUTHOR,
-                anchor: nodeAnchor(edge.to),
-                content: `系统求值通过（${describeChecks(guard)}）→ ${edge.to}`,
-                at: seed.at,
-            });
-            return { status: 'moved', transition: landed(commit(state, event), event, guard) };
+            const event = audit(parsed, edge.to, SYSTEM_AUTHOR);
+            const move: Move<Id> = { kind: 'next', from: state.position, to: edge.to };
+            return { status: 'moved', transition: landed(commit(state, edge.to, parsed), move, guard, event) };
         }
 
         const bounced = selectEdge(edges, 'bounce', ctx, registry);
@@ -322,18 +423,14 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
                 guard,
             };
         }
-        const event = createEvent({
-            id: seed.id,
-            author: SYSTEM_AUTHOR,
-            anchor: nodeAnchor(bounced.to),
-            content: `系统求值未过（${guard.reason}）→ 打回 ${bounced.to}`,
-            at: seed.at,
-        });
-        return { status: 'moved', transition: landed(commit(state, event), event, guard) };
+        const event = audit(parsed, bounced.to, SYSTEM_AUTHOR);
+        const move: Move<Id> = { kind: 'bounce', from: state.position, to: bounced.to };
+        return { status: 'moved', transition: landed(commit(state, bounced.to, parsed), move, guard, event) };
     }
 
     function declare(state: FlowState<Id>, request: DeclareRequest<Id>): Transition<Id> {
-        rejectUnknown(request as unknown as Record<string, unknown>, DECLARE_KEYS, 'request', 'invalid-declare');
+        const parsed = parseSeed(request, DECLARE_KEYS, 'request', 'invalid-declare');
+        requireParamsMatch(state);
 
         if (state.position === null) {
             throw new FlowError('invalid-entry', '尚未进入工作流：先用 step 进入入口节点', 'state.position');
@@ -363,6 +460,9 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
             throw new FlowError('not-declarable', `节点 ${JSON.stringify(state.position)} 的 guard 全可观测（${node.guard.join(', ')}），只能由系统推 —— actor 不得宣布`, 'request.to');
         }
 
+        // 审计事件**先构造**（纯函数）：`id` / `content` / `causes` 形状错也必须在求值前暴露
+        const event = audit(parsed, edge.to, request.author, request.causes);
+
         // ③ 打回不主张推进 → 不设闸门，**连求值也不做**（`action:` 不该因为「有人往后退」而动手；
         //    边上的 `when` 同此 —— 打回不主张推进，凭什么去判「走这条边的条件」）
         const ctx = contextOf(node, request.author);
@@ -378,21 +478,15 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
             }
         }
 
-        const event = createEvent({
-            id: request.id,
-            author: request.author,
-            anchor: nodeAnchor(edge.to),
-            content: request.content,
-            causes: request.causes ?? [],
-            at: request.at,
-        });
-        return landed(commit(state, event), event, guard);
+        const move: Move<Id> = { kind: edge.kind, from: state.position, to: edge.to };
+        return landed(commit(state, edge.to, parsed), move, guard, event);
     }
 
     function status(state: FlowState<Id>): NodeStatus<Id> {
         const bounces = state.path.filter((visit) => visit.kind === 'bounce').length;
+        const done = state.done === true;
         if (state.position === null) {
-            return { position: null, node: null, mode: 'entry', pending: [], outEdges: [], bounces };
+            return { position: null, node: null, mode: 'entry', pending: [], outEdges: [], bounces, done };
         }
         const node = nodeAt(state.position);
         const refs = node.guard.map((raw, i) => parseGuardRef(raw, `guard[${i}]`));
@@ -404,6 +498,7 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
             pending,
             outEdges: outEdges(state.position),
             bounces,
+            done,
         };
     }
 
