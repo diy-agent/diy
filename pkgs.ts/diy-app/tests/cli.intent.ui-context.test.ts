@@ -492,6 +492,11 @@ describe("上下文树：变更历史（事件粒度）", () => {
     expect((limited.data as any).total).toBe(3);
     expect((limited.data as any).entries.map((x: any) => x.ref.step)).toEqual([3]);
 
+    // 重置起点：命令只**置位**（落盘要等下一次真发 —— 起点只能在轮首写），故这里只验契约
+    const rl = await fx.sh.getJson(`./diy.sh context rebaseline ${uri}`);
+    expect((rl.data as any).ok).toBe(true);
+    expect(String((rl.data as any).message)).toContain("baseline");
+
     // 清干净再走：后面还有用例会撞名（它们只覆盖写 steps，会被这份 changelog 压过）
     clearLocal(uri);
     await fx.sh.run(`./diy.sh project remove ${pid}`);

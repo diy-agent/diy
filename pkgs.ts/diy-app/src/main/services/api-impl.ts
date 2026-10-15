@@ -730,6 +730,17 @@ export function bindAppHandlers(binding: ServerBinding): void {
     };
   });
 
+  binding.on(app.context.rebaseline, async ({ input }) => {
+    const { getLocalAgent } = await import("./local-agent");
+    getLocalAgent().markRebaseline(input.taskUri);
+    return {
+      ok: true,
+      message:
+        "已置位：该任务下一次真发时落一条新 baseline（起点）。" +
+        "（轮次中途置位则下一轮生效 —— 起点只能在轮首写）",
+    };
+  });
+
   binding.on(app.context.diff, async ({ input }) => {
     const { readDeliverySteps } = await import("./local-agent");
     const { diffSteps } = await import("../../shared/context/steps");

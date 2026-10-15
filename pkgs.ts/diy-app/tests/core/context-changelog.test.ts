@@ -22,7 +22,7 @@ import {
 import {
     appendCtxLog,
     ctxLogFile,
-    hasCtxLog,
+    hasV2CtxLog,
     lastCtxLogSeq,
     readCtxLog,
     readCtxLogEntries,
@@ -128,7 +128,7 @@ describe("文件层：append-only + seq 续写 + 坏行出声跳过", () => {
         process.env.DIY_HOME = dir;
         try {
             const uri = "projects/1/tasks/1";
-            expect(hasCtxLog(uri)).toBe(false);
+            expect(hasV2CtxLog(uri)).toBe(false);
             expect(lastCtxLogSeq(uri)).toBe(-1);
             const mk = (seq: number, type: "baseline" | "changed"): CtxLogEntry => ({
                 seq, type, ts: "t", model: "m", wireVersion: "w",
@@ -142,7 +142,36 @@ describe("文件层：append-only + seq 续写 + 坏行出声跳过", () => {
             expect(readCtxLog(uri).length).toBe(2);
             expect(readCtxLogEntries(uri).map((e) => e.seq)).toEqual([0, 1]);
             expect(lastCtxLogSeq(uri)).toBe(1);
-            expect(hasCtxLog(uri)).toBe(true);
+            expect(hasV2CtxLog(uri)).toBe(true);
+        } finally {
+            if (old === undefined) delete process.env.DIY_HOME;
+            else process.env.DIY_HOME = old;
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    // 起点的判据是「有二版记录」，不是「文件非空」—— 老文件全是老格式时读侧只会走降级视图，
+    // 补一条二版 baseline 才切得到新格式。曾经用 readCtxLog().length > 0：老任务升级后永远
+    // 补不上起点，UI 永远停在「降级视图」。
+    it("★ 只有老格式记录 → 仍算「没有起点」（该补 baseline）", () => {
+        const dir = mkdtempSync(join(tmpdir(), "ctxlog-legacy-"));
+        const old = process.env.DIY_HOME;
+        process.env.DIY_HOME = dir;
+        try {
+            const uri = "projects/1/tasks/1";
+            const legacy = {
+                ts: "t", turnId: "t1", model: "m", wireVersion: "w",
+                ops: [{ kind: "update", path: "chain", preview: "…" }],
+            };
+            writeFileSync(ctxLogFile(uri), `${JSON.stringify(legacy)}\n`, "utf-8");
+            expect(readCtxLog(uri).length).toBe(1); // 文件不空
+            expect(hasV2CtxLog(uri)).toBe(false); // 但没有起点
+            appendCtxLog(uri, {
+                seq: 0, type: "baseline", ts: "t", model: "m", wireVersion: "w",
+                ref: { turnId: "t2", stepId: "t2_s1", step: 1 },
+                data: { tree: stateOf({}) },
+            });
+            expect(hasV2CtxLog(uri)).toBe(true);
         } finally {
             if (old === undefined) delete process.env.DIY_HOME;
             else process.env.DIY_HOME = old;

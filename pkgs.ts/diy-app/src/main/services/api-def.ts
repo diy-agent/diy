@@ -1001,12 +1001,22 @@ export const apiDef = RpcSchema.router({
             output: StatsSchema,
           }),
           changelog: RpcSchema.unary({
-            desc: `变更历史：每步**有变才写**（首条 baseline 给整棵树）；变更单位 = 原子单元，before/after 自带；附 ref（当轮划分 / 缓存率 / 金额）`,
+            desc: `变更历史：每步**有变才写**（每段会话起点给一条 baseline 整棵树）；变更单位 = 原子单元，before/after 自带；附 ref（当轮划分 / 缓存率 / 金额）`,
             input: {
               taskUri: z.string().cliArg({ desc: "任务 URI" }),
               limit: z.number().optional().cliOption({ desc: "只看最近 N 轮（缺省全部）" }),
             },
             output: CtxLogSchema,
+          }),
+          rebaseline: RpcSchema.unary({
+            desc: `重置变更历史的起点：该任务**下一步真发**时写一条新 baseline（整棵树）。临时手工入口 —— 会话注册表/关停启动机制落地后改由「会话启动」自动触发，本命令留作调试`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+            },
+            output: z.object({
+              ok: z.boolean().describe("是否已置位（true = 下一步真发落新起点）"),
+              message: z.string().describe("给用户看的一句话（本轮下次真发生效；当轮已开跑则下一轮）"),
+            }),
           }),
           diff: RpcSchema.unary({
             desc: `某步 vs 上一步的 diff；不给 --step 则是「当前变量树 vs 最后一步」（main 侧算完）`,

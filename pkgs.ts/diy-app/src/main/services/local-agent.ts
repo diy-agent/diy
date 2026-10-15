@@ -95,7 +95,7 @@ import {
 import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
 import { traffic } from "../core/traffic";
-import { appendCtxLog, hasCtxLog, lastCtxLogSeq } from "../core/context-changelog";
+import { appendCtxLog, hasV2CtxLog, lastCtxLogSeq } from "../core/context-changelog";
 import { statFromStep } from "../../shared/context/stats";
 import { atomicUnitPaths, changesOf, type CtxSnapshot } from "../../shared/context/changelog";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
@@ -1900,6 +1900,27 @@ export class LocalAgentManager {
     }
 
     /**
+     * 变更历史的「起点重置」标记（##310）。
+     *
+     * 为什么需要它：`baseline` 的语义是**一段会话的起点**，理想触发点是「会话启动」。可会话注册表 /
+     * 关停启动机制还没落地，写起点的判据只能退化成「文件里还没有二版记录」—— 于是老任务升级后、
+     * 或想"从此刻重新起算"时，没有任何入口能让它再写一条起点。
+     *
+     * 这是**临时**入口，动作刻意做成与会话启动**完全一致**：置标记 → 下一步真发时写一条新 baseline。
+     * 等会话注册表/关停启动落地，把置标记的两处（`clear` 与 `rebaseline` 命令）换成「会话启动」一处即可，
+     * 命令本身留作调试口，不必回收。
+     *
+     * 只在内存里：**进程重启即失效** —— 重启不是会话边界（对话从盘上重建、继续），这点是刻意的；
+     * 真需要「重启后也算新起点」，那是会话注册表的语义，不该在这里假装实现。
+     */
+    private rebaselinePending = new Set<string>();
+
+    /** 标记：该任务下一步真发时写一条新 baseline（新会话起点）。会话注册表落地后由「会话启动」自动置位。 */
+    markRebaseline(taskUri: string): void {
+        this.rebaselinePending.add(taskUri);
+    }
+
+    /**
      * 清空会话：中断在途生成 + 清插话队列 + 删 ops/llm/raw 日志。
      *
      * 顺序原则：**先把所有可失败的事做完，最后才丢内存态**。
@@ -1951,6 +1972,11 @@ export class LocalAgentManager {
         // 会话内容已从盘上消失 → 换发 epoch、水位归零，并通知所有订阅方重建块树。
         // 少了它，订阅方拿着旧 since 会以为「新写入落进了旧会话」（epoch 不变 = 同一本史书）。
         opsFeed.reset(taskUri);
+        // 变更日志**故意不在上面的删除清单里**：它按任务存、是跨会话的**审计时间线**（"这个变量一共变过几次"
+        // 要求它活过清零），而本轮的对话（ops/llm/steps…）才是该销毁的东西。代价是旧条目引用的 turnId
+        // 没了 → `context changelog` 按 turnId join 不到投递快照/用量，徽章给 null（不谎报）。语义等价物：
+        // 「清对话」≠「清审计」。所以这里只**置起点标记**：下一次真发落一条新 baseline，等于给新会话另起一段。
+        this.rebaselinePending.add(taskUri);
         // 内存态无论如何都丢：留着它才是真的不一致（盘上文件仍在 → 重进会重新加载）
         this.sessions.delete(taskUri);
         // 折叠缓存同理：日志已删，留着就是读一份不存在的文件。
@@ -2435,11 +2461,13 @@ export class LocalAgentManager {
         let prevSystemText = delivery.system.text;
         let prevRuntimeText = delivery.runtime.text;
 
-        // 变更历史（##310 二版）：每步**有变才写**；首条 = baseline（整棵树）。
+        // 变更历史（##310 二版）：每步**有变才写**；一段会话的起点 = 一条 baseline（整棵树）。
         // 变更单位 = 原子单元（`chain` 整体一条，不下钻数组 —— 原子字段要变一起变）。
         const ctxUnits = atomicUnitPaths();
         let ctxSeq = lastCtxLogSeq(taskUri);
-        let ctxBaselineWritten = hasCtxLog(taskUri);
+        // 该不该写起点：还没有二版记录（新任务 / 从没写过的新格式），或有人显式要求重新起算
+        // （会话清零、`diy context rebaseline`）。**每轮只在轮首判一次**：轮中途置的标记下一轮生效。
+        let ctxBaselineWritten = hasV2CtxLog(taskUri) && !this.rebaselinePending.has(taskUri);
         let ctxPrevSnap: CtxSnapshot = { tree: delivery.tree, valueHashes: delivery.valueHashes };
         // 预算判据与模版线**共用同一个函数**（services/prompt-registry 的 systemOverBudget）：
         // 曾经这里是内联的 `bytes > budget`，逻辑等价但两处各写一遍 —— 日后任何一侧改口径
@@ -2615,6 +2643,8 @@ export class LocalAgentManager {
                                 seq: ++ctxSeq, type: "baseline", ts: new Date().toISOString(), model,
                                 wireVersion: fresh.wireVersion, ref, data: { tree: fresh.tree },
                             });
+                            // 标记是一次性的：写完即销，下一步起走正常「有变才写」。
+                            this.rebaselinePending.delete(taskUri);
                             ctxBaselineWritten = true;
                         } else {
                             const changes = changesOf(ctxPrevSnap, fresh, ctxUnits);

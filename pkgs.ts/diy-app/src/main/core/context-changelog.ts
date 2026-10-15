@@ -58,7 +58,17 @@ export function lastCtxLogSeq(taskUri: string): number {
     return entries.length === 0 ? -1 : entries[entries.length - 1]!.seq;
 }
 
-/** 是否已有**任何**记录（含老格式）——用来决定"该不该写 baseline 首条" */
-export function hasCtxLog(taskUri: string): boolean {
-    return readCtxLog(taskUri).length > 0;
+/**
+ * 是否已有**二版**记录 —— 决定"该不该补一条 baseline（起点）"。
+ *
+ * 判据是「有二版记录」而不是「文件非空」：老文件里全是老格式（没有 `type`）时读侧一路走降级
+ * 路径（UI 只有变化路径、没有值预览），**补一条二版起点**才切得到新格式。曾经用 `readCtxLog().length > 0`，
+ * 于是老任务升级后永远补不上起点、UI 永远停在降级视图（##310 review 意见 1 的同一根因）。
+ *
+ * 反过来，**进程重启不算会话边界**（对话从盘上重建、继续），所以这里不因重启写新起点；
+ * 「从此刻重新起算」走显式入口：`diy context rebaseline` 或会话清零
+ * （见 local-agent 的 `rebaselinePending`）。
+ */
+export function hasV2CtxLog(taskUri: string): boolean {
+    return readCtxLogEntries(taskUri).length > 0;
 }
