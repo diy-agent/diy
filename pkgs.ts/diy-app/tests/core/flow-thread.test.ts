@@ -160,6 +160,23 @@ describe("意见一等落盘（##342）：`appendBounceOpinion` 挂的锚点 = �
         expect(t.threads[0]!.posts.map((p) => [p.type, p.author, p.text])).toEqual([
             ["note", "评审 agent", "P0：边界条件没覆盖"],
         ]);
+        // **空正文一律拒**（##342 review1 P2-1：「不写空发言」这道闸只有**一处真源**
+        // `flow-store.ts::requirePostText`）—— 两个写入口（意见 / CLI 面板）错误**逐字相同**即证同源。
+        // 病根：`verdictOf("结论：打回")` 合法地给出 `reason: ""`，而驱动环走的正是 `appendBounceOpinion`。
+        const msgOf = (f: () => unknown): string => {
+            try {
+                f();
+                return "";
+            } catch (e) {
+                return (e as Error).message;
+            }
+        };
+        const byOpinion = msgOf(() => appendBounceOpinion(uri, view, "  \n ", "评审 agent"));
+        const byPanel = msgOf(() => postThread(uri, "review->implement#2", "\t", "note", "cli"));
+        expect(byOpinion).toMatch(/正文为空/);
+        expect(byOpinion).toBe(byPanel); // 同一处闸（改一处漏一处的风险就此消掉）
+        expect(listThreads(uri).threads[0]!.posts).toHaveLength(1); // 一个字节都没写
+
         // 只接受**打回**的回执（拿推进的回执来挂意见是调用方的错，当场拒）
         const adv = advanceFlow(uri, "review");
         expect(() => appendBounceOpinion(uri, adv, "挂错地方", "cli")).toThrow(/只接\*\*打回\*\*的回执/);

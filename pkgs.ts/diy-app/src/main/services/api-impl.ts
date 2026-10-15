@@ -32,6 +32,7 @@ import type { HistoryTurnView } from "../../shared/context/schema";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
 import { resolve as resolvePath } from "node:path";
 import * as flow from "../core/flow";
+import { requirePostText } from "../core/flow-store";
 import * as flowThread from "../core/flow-thread";
 import { flowPrompt } from "./flow-prompt";
 import { AsyncQueue } from "./async-queue";
@@ -991,6 +992,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.flow.bounce, async ({ input }) => {
     if (!input.to) throw new Error("缺 --to <节点 id>");
     const author = input.author ?? "cli";
+    // 空意见在**领域态变更前**就拒（否则打回落了盘、命令却报错 = 半截成功）。
+    // 闸门与 discussion 写入共用一处真源（##342 review1 P2-1）。
+    if (input.opinion !== undefined) requirePostText(input.opinion);
     const view = flow.bounceFlow(input.uri, input.to, kvList(input.ref), input.note, author);
     if (input.opinion !== undefined) {
       try {

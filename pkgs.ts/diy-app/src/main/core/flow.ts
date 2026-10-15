@@ -58,6 +58,7 @@ import {
     readBinding,
     readPosts,
     readState,
+    requirePostText,
     writeArtifact,
     writeBinding,
     writeState,
@@ -762,6 +763,11 @@ export function bounceFlow(uri: string, to: string, refArgs: readonly string[] =
  * `at` 用**那次驻留自己的时间戳**（不是「现在」）：这条发言属于那次打回，不是另起一条时间线。
  * 落盘失败**外抛**（调用方决定怎么办）：CLI 显名要求带意见时该响亮报错；
  * 驱动环无人值守，自己 catch 后只警告（旁注坏了不打断推进，`rule.core-log`）。
+ *
+ * **空正文一律拒**（##342 review1 P2-1）：闸门是 `flow-store.ts::requirePostText`（与 CLI 面板的
+ * `postThread` **同一处真源**）。这里必须装 —— 驱动环的结论行合法地可以只写「结论：打回」（无原因），
+ * 放行就等于往留痕里落一条**没有任何内容的争议发言**。驱动环侧已有 catch ⇒ 自动降级为「不写 + warn」，
+ * 审计那半照旧记 `打回`（审计与讨论口径不同是对的）。
  */
 export function appendBounceOpinion(
     uri: string,
@@ -770,6 +776,7 @@ export function appendBounceOpinion(
     author: string,
     type: FlowPostType = "note",
 ): FlowPost {
+    requirePostText(text);
     const landing = view.trajectory[view.trajectory.length - 1];
     const source = view.trajectory[view.trajectory.length - 2];
     if (!landing || !source || landing.kind !== "bounce") {

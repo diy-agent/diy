@@ -785,6 +785,29 @@ describe("flow 讨论线程（##342）", () => {
         expect(`${missing.stdout}${missing.stderr}`).toMatch(/没有这条打回线程/);
     });
 
+    /**
+     * ##342 review1 P2-1：**空正文一律拒**，且 CLI 这条路要**拒在领域态变更之前**。
+     *
+     * 判据两半：① 命令失败（说得出「正文为空」）；② 折线/位置/打回次数**一个字节没动**
+     * （否则就是「打回落了盘、命令却报错」的半截成功）。闸门与驱动环那条共用 `flow-store.ts::requirePostText`。
+     */
+    it("空意见一律拒：`--opinion` 空 ⇒ 命令失败，且领域态**没被改**（不留半截状态）", async () => {
+        const uri = await freshTask("thread-empty");
+        await fx.sh.run(`./diy.sh flow start ${uri} --workflow dev`);
+        await advanceTo(uri, "clarify", "design", "implement", "review");
+        const blank = join(fx.HOME, "opinion-blank.txt");
+        writeFileSync(blank, "   \n\t\n", "utf-8");
+        const r = await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion ${blank}`);
+        expect(r.code).not.toBe(0);
+        expect(`${r.stdout}${r.stderr}`).toMatch(/正文为空/);
+        // 领域态没动：位置仍在 review、一次打回都没记、讨论流根本没被创建
+        const shown = (await fx.sh.getJson(`./diy.sh flow show ${uri}`)).data as Record<string, unknown>;
+        expect(shown["position"]).toBe("review");
+        expect(shown["bounces"]).toBe(0);
+        expect((shown["trajectory"] as unknown[]).length).toBe(4);
+        expect(existsSync(flowFile(uri, "threads.jsonl"))).toBe(false);
+    });
+
     it("同一节点二次打回：两条线程各带各的意见（不同 seq，不串台）；往老线程发言不新建线程", async () => {
         const uri = await freshTask("thread-twice");
         await fx.sh.run(`./diy.sh flow start ${uri} --workflow dev`);

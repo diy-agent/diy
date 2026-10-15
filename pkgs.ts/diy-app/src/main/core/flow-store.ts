@@ -328,6 +328,21 @@ function parsePost(raw: unknown): FlowPost | null {
     return { id, at, author, type: type as FlowPostType, anchor: { from, to, seq }, text };
 }
 
+/**
+ * 发言正文的**非空闸门**（##342 review1 P2-1：这是**唯一真源**，两个写入口共用）。
+ *
+ * 为什么必须收成一处：本任务有两条写入口 —— CLI 面板（`flow-thread.ts::postThread`）与
+ * `bounce --opinion` / **驱动环自动打回**（`flow.ts::appendBounceOpinion`）。各装各的闸就会漏，
+ * 而实测漏掉的恰是**无人值守的主路径**：`verdictOf("结论：打回")` 合法地给出 `reason: ""`
+ * （`pit.flow-driver` ⑤ 允许结论行只写「打回」）⇒ 讨论流里落一条**没有任何内容的争议发言**，
+ * 同一回打回在审计（记 `打回`）与讨论流（`""`）两处留痕不一致 —— 而「留痕可见」正是本任务的交付。
+ *
+ * 拒绝 = 抛；调用方自己决定往上抛（CLI）还是降级成 warning（驱动环：领域事实已落盘，不该因留痕停环）。
+ */
+export function requirePostText(text: string): void {
+    if (text.trim() === "") throw new Error("发言正文为空：不写空发言（要么给正文，要么别发）");
+}
+
 /** 追加一条发言（append-only；目录不存在就建） */
 export function appendPost(uri: string, post: FlowPost): void {
     const file = flowFile(uri, "threads");

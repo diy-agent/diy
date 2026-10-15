@@ -25,7 +25,7 @@
 //   (c) **升级人裁决** —— `postThread(..., type: "escalate")`（一条升级发言，`actor` 写清是谁升的）；
 //       它的**领域侧落点**是走到 `actor: 'human'` 的节点（如 dev 定义的 `approve`），由人宣布。
 
-import { flowFile, anchorKey, parseAnchorKey, readPosts, appendPost, type FlowAnchor, type FlowPost, type FlowPostType } from "./flow-store";
+import { flowFile, anchorKey, parseAnchorKey, readPosts, appendPost, requirePostText, type FlowAnchor, type FlowPost, type FlowPostType } from "./flow-store";
 import { loadInstance } from "./flow";
 import { randomUUID } from "node:crypto";
 import type { FlowState, WorkflowDef } from "@diy/flow";
@@ -187,14 +187,25 @@ export function postThread(uri: string, thread: string, text: string, type: Flow
     const { state } = loadInstance(uri);
     const anchor = parseAnchorKey(thread);
     requireRealBounce(state, anchor);
-    if (text.trim() === "") throw new Error("发言正文为空：不写空发言（要么给正文，要么别发）");
+    requirePostText(text); // 唯一真源在 flow-store（与 `appendBounceOpinion` 共用一道闸，见其头注）
     appendPost(uri, { id: randomUUID(), at: new Date().toISOString(), author, type, anchor, text });
     return listThreads(uri);
 }
 
-/** 锚点闸门：折线上确有 `to#seq` 这次驻留、它是**打回**进来的、且源节点就是 `from`（缺一即拒） */
+/**
+ * 锚点闸门：折线上确有 `to#seq` 这次驻留、它是**打回**进来的、且源节点就是 `from`（缺一即拒）。
+ *
+ * **判据只有一处**（##342 review1 P3-1）：命中与否 = 「该锚点在 `realBounces(state)` 里」——
+ * 与读侧 `listThreads` 同一份推导，不再各自 `state.path` 遍历一遍（改一处漏一处的风险）。
+ * 下面那段重新翻折线的代码**只用于把拒绝原因说清**（是没这次驻留 / 是 `next` 进来的 / 是 `from` 不符），
+ * **不是判据** —— 它给出的任何结论都不影响上面那句「在不在集合里」。
+ */
 function requireRealBounce(state: FlowState<string>, anchor: FlowAnchor): void {
-    const available = realBounces(state).map((b) => anchorKey(b.anchor));
+    const bounces = realBounces(state);
+    const key = anchorKey(anchor);
+    const available = bounces.map((b) => anchorKey(b.anchor));
+    if (available.includes(key)) return;
+    // ── 以下只是**诊断**（把「为什么拒」说清），放行判据在上面的集合命中 ──
     const i = state.path.findIndex((v) => v.node === anchor.to && v.seq === anchor.seq);
     if (i < 0) {
         throw new Error(
