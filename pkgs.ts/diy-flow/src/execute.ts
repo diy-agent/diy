@@ -42,6 +42,7 @@ import { apply, type FlowState } from './container';
 import { findNode, type EdgeDef, type NodeDef, type WorkflowDef } from './define';
 import { FlowError } from './errors';
 import { classifyGuards, evaluateGuards, isObservable, parseGuardRef, selectEdge, unevaluatedGuards, type GuardEvaluation, type GuardRef } from './eval';
+import { paramsOf, resolveParams } from './params';
 import { parseReceipt, type PluginContext, type Receipt, type Slot } from './plugins';
 import type { PluginRegistry } from './registry';
 import { callPlugin, isObject, rejectUnknown } from './validate';
@@ -105,7 +106,10 @@ export interface NodeStatus<Id extends string = string> {
 
 export interface RuntimeOptions {
     readonly registry: PluginRegistry;
-    /** L2 实例参数（##316 注入；本任务只透传 —— 冻结一份副本交给插件，宿主对象不被改） */
+    /**
+     * L2 实例值（##316）：形状 `{ 节点 id: { 局部名: 值 } }`，按工作流的参数声明**校验 + 合并缺省**
+     * （##315 时只透传；参数层落地后归这里）。工作流没声明任何参数 = 参数层未启用，原样透传。
+     */
     readonly params?: Readonly<Record<string, unknown>>;
     /** 打回上限（死循环护栏）；缺省不限 —— 具体数值属 L2 参数，内核不预设行业策略 */
     readonly maxBounces?: number;
@@ -182,7 +186,12 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
     if (!Array.isArray(notifiers) || notifiers.some((name) => typeof name !== 'string')) {
         throw new FlowError('invalid-option', 'notify 应为插件名（字符串）数组', 'options.notify');
     }
-    const params = Object.freeze({ ...options.params });
+    // 参数层（##316）：唯一注入点。声明了参数 ⇒ 校验 + 合并缺省（非法值在这里就大声报，
+    // 不留到插件里读到 `undefined` 静默偏路）；没声明 ⇒ 参数层未启用，保持 ##315 的透传口径
+    // （形状封闭的前提是「形状已声明」—— 引擎不越权判定自己不认识的键）。
+    const declared = paramsOf(def);
+    const params: Readonly<Record<string, unknown>> =
+        declared.schema.length === 0 ? Object.freeze({ ...options.params }) : resolveParams(declared, options.params);
 
     const nodeAt = (id: Id): NodeDef<Id> => {
         const node = findNode(def, id);
