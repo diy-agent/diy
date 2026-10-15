@@ -14,7 +14,7 @@ import { describe, it, expect } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { advanceFlow, putArtifact, showFlow, startFlow } from "../../src/main/core/flow";
-import { composeTurnMessage, verdictOf } from "../../src/main/services/flow-runner";
+import { composeTurnMessage, routeOf, verdictOf } from "../../src/main/services/flow-runner";
 import { collectFacts, createRenderRegistry } from "../../src/main/workflows/plugins";
 import type { PluginContext } from "@diy/flow";
 import { DEV_WORKFLOW } from "../../src/main/workflows/dev";
@@ -74,6 +74,25 @@ describe("turn 消息装配（##341）：agent 的输入契约", () => {
         const msg = composeTurnMessage(uri, showFlow(uri), { kind: "agent", agent: "设计 agent", role: "" });
         expect(msg).toContain("产物袋读不出");
         expect(msg).toContain("【交付约定】");
+    });
+});
+
+describe("分类与优先级（##341 review1 P3-1）：`human` 压过一切自动推", () => {
+    /** 只关心 `next.mode` 与执行者的分类，其余字段不参与判据 */
+    const view = (mode: "entry" | "actor" | "system"): FlowView => ({ next: { mode } }) as unknown as FlowView;
+    const agentExec = { kind: "agent", agent: "开发 agent", role: "" } as const;
+
+    it("`actor: human` **且**守卫可观测（mode=system）⇒ 仍是 human（自推 = 没有审批点）", () => {
+        expect(routeOf(view("system"), { kind: "human" }).kind).toBe("human");
+        expect(routeOf(view("actor"), { kind: "human" }).kind).toBe("human");
+    });
+
+    it("其余三分流照旧：system 模式求值自推 · `actor: system` 落 actor 模式 ⇒ 停住 · agent 起轮", () => {
+        expect(routeOf(view("system"), agentExec).kind).toBe("system");
+        expect(routeOf(view("actor"), { kind: "system" }).kind).toBe("inert-system");
+        const r = routeOf(view("actor"), agentExec);
+        expect(r.kind).toBe("agent");
+        expect(r.kind === "agent" && r.exec).toBe(agentExec); // agent 那一支带出收窄后的执行者
     });
 });
 

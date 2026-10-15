@@ -14,7 +14,11 @@
 //     actor + agent⇒ 起一轮本地 agent（节点提示词 + 上游产物 + 交付约定）→ 收结论 → 落产物 → 推进/打回
 //     actor + human⇒ **停下等人**（人工审批点：`diy flow advance` / UI 上点「推进」才继续）
 //
-//   停止条件：终态（done）/ 等人 / 停在边上（stuck）/ 打回超上限 / 空结论 / 出错 / `--max-steps` / 被中断。
+//   分类的**顺序**有讲究：`human` 判在 `system` **之前**（##341 review1 P3-1）—— 「该谁拍板」优先于
+//   「守卫可不可观测」，否则 `actor:human` + 可观测守卫的节点会被自推过去、审批点就没了。
+//
+//   停止条件：终态（done）/ 等人 / 停在边上（stuck）/ 打回超上限 / 空结论 / **会话忙（session-busy）**
+//   / 出错 / `--max-steps` / 被中断。
 //   **幂等**：一切判据读 `flow show`（状态文件），推进过的节点不会再被消费 —— 重复 `run` 接着走，
 //   已跑完的实例立刻返回（终态幂等 ##333）。
 //
@@ -59,6 +63,14 @@ export type RunStop =
     | "bounce-limit"
     /** 本步的 agent 没给出结论（空正文）—— 不拿空结论推进 */
     | "empty-conclusion"
+    /**
+     * 任务会话**正忙**（有人 / 有别的轮次在跑）：不起轮、不动队列、不动领域态（##341 review1 P2-1）。
+     *
+     * 为什么要单列这个停因：`chat()` 对忙会话的既有语义是「不拒绝、改排队」（##306 插话），
+     * 环若不先问一句就起轮，那一轮会**静默退化成一条插话** —— 收不到正文（老实现报
+     * `empty-conclusion`，**病因说错**），提示词还被排进**用户自己的会话队列**（污染对话）。
+     */
+    | "session-busy"
     /** 起 agent 轮次失败（模型 / 网络 / 配置） */
     | "turn-error"
     /** 步数护栏（`--max-steps`）到顶 */
@@ -85,6 +97,8 @@ export type RunFrame =
           readonly agent: string;
           readonly verdict: "pass" | "bounce";
           readonly chars: number;
+          /** 结论落袋失败的原因（##341 review1 P3-4）——`null` = 落袋正常；**生成失败也照常推进**，故必须亮出来 */
+          readonly artifactError: string | null;
       }
     | { readonly kind: "stop"; readonly reason: RunStop; readonly message: string };
 
@@ -110,6 +124,31 @@ export interface RunResult {
 
 /** 缺省步数护栏：够走完「6 节点 + 一轮打回 + 人工审批」还有余量 */
 const DEFAULT_MAX_STEPS = 32;
+
+/** 驱动环对当前这一步的**分类**（`routeOf` 的返回值；`agent` 一支带着收窄后的执行者） */
+export type StepRoute =
+    | { readonly kind: "human" }
+    | { readonly kind: "system" }
+    | { readonly kind: "inert-system" }
+    /** `agent` 这一支**带上**收窄后的执行者 —— 调用处不必再断言 `exec.kind` 是谁 */
+    | { readonly kind: "agent"; readonly exec: Extract<NodeExecutor, { kind: "agent" }> };
+
+/**
+ * 这一步**该谁来走**。抽成纯函数是为了让「**顺序即优先级**」这条规则可单测
+ * （##341 review1 P3-1）—— 顺序排错（比如把人排到 system 后面）在这里就该红。
+ *
+ *   `human`        ⇒ 停下等人（**最高优先**：actor 身份 = 该谁拍板，压过「守卫可不可观测」）
+ *   `system`       ⇒ 求值 `pred:` / `action:` 自动推（「绿线」）
+ *   `inert-system` ⇒ `actor: system` 却落在 actor 模式（不可观测 guard）：组合期本应被内核拒，
+ *                    真遇到就停住不替人宣布
+ *   `agent`        ⇒ 起一轮 agent
+ */
+export function routeOf(view: FlowView, exec: NodeExecutor): StepRoute {
+    if (exec.kind === "human") return { kind: "human" };
+    if (view.next.mode === "system") return { kind: "system" };
+    if (exec.kind === "system") return { kind: "inert-system" };
+    return { kind: "agent", exec };
+}
 
 /** 上游产物进 turn 消息时的截断长度（提示词不是日志转储） */
 const ARTIFACT_CLIP = 800;
@@ -149,9 +188,18 @@ export async function runFlow(uri: string, opts: RunOptions = {}): Promise<RunRe
 
         const node = view.node;
         const exec = executorOf(view.workflowId, node.id, node.actor);
+        // 分类与优先级只有一处（`routeOf`）：`human` 判在 `system` **之前**（##341 review1 P3-1）
+        // —— 「该谁拍板」优先于「守卫可不可观测」，否则 `actor:human` + 可观测守卫会被自推。
+        const route = routeOf(view, exec);
 
-        // ① 系统推（`pred:` / `action:`）—— 「绿线」的路径
-        if (view.next.mode === "system") {
+        // ① 人工审批点：停下等人
+        if (route.kind === "human") {
+            const next = view.next.edges.map((edge) => edge.to).join(" / ") || "（无）";
+            return stop("human", `停在人工审批点「${node.name}（${node.id}）」：批了就 \`diy flow advance ${uri} --to <下一节点>\`（可走：${next}），然后再 \`diy flow run\``, steps);
+        }
+
+        // ② 系统推（`pred:` / `action:`）—— 「绿线」的路径
+        if (route.kind === "system") {
             const r = await stepFlow(uri, opts.deps ?? {});
             if (r.status === "moved") {
                 persistSystemFacts(uri, node.id, view, r.facts);
@@ -169,28 +217,34 @@ export async function runFlow(uri: string, opts: RunOptions = {}): Promise<RunRe
             return stop("stuck", `${node.name} 这一步没走成：${r.reason}`, steps);
         }
 
-        // ② 人工审批点：停下等人
-        if (exec.kind === "human") {
-            const next = view.next.edges.map((edge) => edge.to).join(" / ") || "（无）";
-            return stop("human", `停在人工审批点「${node.name}（${node.id}）」：批了就 \`diy flow advance ${uri} --to <下一节点>\`（可走：${next}），然后再 \`diy flow run\``, steps);
-        }
-        if (exec.kind === "system") {
-            // 定义自相矛盾（`actor: system` 却带不可观测 guard）在组合期就被内核拒了，走不到这里
+        // `actor: system` + 不可观测 guard 这种自相矛盾的定义在组合期就被内核拒了，走不到这里
+        if (route.kind === "inert-system") {
             return stop("stuck", `节点「${node.id}」的执行者是 system，但当前是 actor 模式（含不可观测 guard）：驱动环不替人宣布`, steps);
         }
 
-        // ③ agent 节点：起一轮、收结论、落产物、按判据推进
-        const turn = await runNodeTurn(uri, view, exec, opts);
+        // ③ agent 节点：起一轮、收结论、落产物、按判据推进（`route` 只剩 `agent` 这一支）
+        const turn = await runNodeTurn(uri, view, route.exec, opts);
         if (turn.aborted) return stop("aborted", "agent 轮次被中断", steps);
+        if (turn.busy) {
+            return stop("session-busy", `任务会话正忙（有人 / 有别的轮次在跑）：没有**替用户**插话，「${node.name}」这一步没跑 —— 等人跑完再 \`diy flow run\``, steps);
+        }
         if (turn.error !== null) return stop("turn-error", `起 agent 轮次失败：${turn.error}`, steps);
         const conclusion = turn.text.trim();
         if (conclusion === "") return stop("empty-conclusion", `「${node.name}」这一轮没有产出结论（空正文）：不拿空结论推进`, steps);
 
-        putArtifact(uri, node.id, conclusion);
+        // 结论落袋：**落不进去不挡这一轮**（##341 review1 P3-4）。
+        // 产物是派生数据（`rule.domain-first`），而结论（领域判据）已经出来了 —— 一份渲染不出来的
+        // 产物不该把一整轮 token 作废。但也**不静默**：原因随 `turn` 帧出去（人从 `flow run` 输出就看得到）。
+        let artifactError: string | null = null;
+        try {
+            putArtifact(uri, node.id, conclusion);
+        } catch (e) {
+            artifactError = (e as Error).message;
+        }
         const verdict = verdictOf(conclusion);
         const bounceEdge = view.next.edges.find((edge) => edge.kind === "bounce");
         const nextEdge = view.next.edges.find((edge) => edge.kind === "next");
-        emit({ kind: "turn", node: node.id, nodeName: node.name, agent: exec.agent, verdict: verdict.kind, chars: conclusion.length });
+        emit({ kind: "turn", node: node.id, nodeName: node.name, agent: exec.agent, verdict: verdict.kind, chars: conclusion.length, artifactError });
 
         if (bounceEdge && verdict.kind === "bounce") {
             const limit = bounceLimitOf(view);
@@ -220,6 +274,8 @@ interface TurnResult {
     readonly text: string;
     readonly aborted: boolean;
     readonly error: string | null;
+    /** 任务会话正忙（没起轮，或起了却被退化成插话）—— 见 `RunStop` 的 `session-busy` */
+    readonly busy: boolean;
 }
 
 /**
@@ -229,29 +285,54 @@ interface TurnResult {
  * ——于是工作流的每一轮都落在任务页上，用户**看得见** agent 在干什么（用户的原话是「我只要观察」）。
  */
 async function runNodeTurn(uri: string, view: FlowView, exec: Extract<NodeExecutor, { kind: "agent" }>, opts: RunOptions): Promise<TurnResult> {
-    const { getLocalAgent } = await import("./local-agent");
+    const agent = (await import("./local-agent")).getLocalAgent();
+    // **还没起轮就已被中断** ⇒ 什么都别起、更别停（老实现在这里调 `cancel(uri)` ——
+    // 那会掐掉**用户自己**正在跑的轮次，见 file 头「可停」与 `session-busy`）。
+    if (opts.signal?.aborted) return { text: "", aborted: true, error: null, busy: false };
+
+    // **会话忙 ⇒ 不起轮**（##341 review1 P2-1）。判据 = `chat()` 自己的排队判据（`turns` 注册表），
+    // 不另立真源。忙时只**报**不**动**：不插话、不改队列、不碰领域态。
+    if (agent.busy(uri)) return { text: "", aborted: false, error: null, busy: true };
+
     const message = composeTurnMessage(uri, view, exec);
     const model = personaModelOf(exec.persona);
+
     // **可停**（本任务硬约束）：断开 RPC 流只让 `chat()` 的订阅退订，**不停正在跑的轮次**
     // （##305 拍板：消费端断开不掐轮次，刷新只是重新接上视图）。驱动环是**替用户跑**的，
     // 没人看了还继续烧 token、还卡着 `flow run` 不返回 —— 那不是「可停」。
     // 故这里在中断时**显式停轮次**（`LocalAgentManager.cancel` 是唯一的"停"入口）；
     // 判据只看 signal，不看「有没有人在看」（后者会误杀正常长任务）。
-    const stopTurnOnAbort = (): void => {
+    //
+    // 但「停」必须**只停自己起的那一轮**（review1 P2-1 后半）：归属判据 = 收到**自己的**
+    // `start kind:"turn"`（排队回执也带 turn 块，但它 `meta.source === "queue"`，描述的是**别人**的轮次）。
+    let ownTurn = false;
+    const stopOwnTurnOnAbort = (): void => {
+        if (!ownTurn) return; // 会话上跑的不是本环起的轮次：不归本环停
         try {
-            getLocalAgent().cancel(uri);
+            agent.cancel(uri);
         } catch {
             /* 轮次已经结束（或本会话没在跑）：没什么可停的 */
         }
     };
-    if (opts.signal?.aborted) stopTurnOnAbort();
-    else opts.signal?.addEventListener("abort", stopTurnOnAbort, { once: true });
+    opts.signal?.addEventListener("abort", stopOwnTurnOnAbort, { once: true });
+
+    // 后验保险：`busy()` 与 `chat()` 内部那次判定之间若被别的轮次抢先（窗口极小但不为零），
+    // `chat()` 会回一条**排队回执** —— 认出来就按忙处理，并把**自己刚排进去的那一条**撤掉。
+    let queuedSteerId: string | null = null;
     const texts = new Map<string, { role: string; text: string; order: number }>();
     let order = 0;
     try {
-        for await (const op of getLocalAgent().chat(uri, message, model, undefined, opts.signal)) {
-            if (op.op === "start" && op.kind === "text") {
-                texts.set(op.id, { role: String(op.meta?.["role"] ?? ""), text: "", order: (order += 1) });
+        for await (const op of agent.chat(uri, message, model, undefined, opts.signal)) {
+            const meta = op.meta as Record<string, unknown> | undefined;
+            if (op.op === "start" && op.kind === "turn") {
+                if (meta?.["source"] === "queue") {
+                    const sid = meta?.["steerId"];
+                    queuedSteerId = typeof sid === "string" ? sid : null;
+                } else {
+                    ownTurn = true;
+                }
+            } else if (op.op === "start" && op.kind === "text") {
+                texts.set(op.id, { role: String(meta?.["role"] ?? ""), text: "", order: (order += 1) });
             } else if (op.op === "delta") {
                 const block = texts.get(op.id);
                 const chunk = op.fields["content"];
@@ -259,14 +340,26 @@ async function runNodeTurn(uri: string, view: FlowView, exec: Extract<NodeExecut
             }
         }
     } catch (e) {
-        return { text: "", aborted: opts.signal?.aborted === true, error: (e as Error).message };
+        ownTurn = false;
+        return { text: "", aborted: opts.signal?.aborted === true, error: (e as Error).message, busy: false };
     } finally {
-        opts.signal?.removeEventListener("abort", stopTurnOnAbort);
+        // 循环已退出：此刻会话上的轮次（若有）不再由本环驱动 ⇒ 不再由本环停
+        ownTurn = false;
+        opts.signal?.removeEventListener("abort", stopOwnTurnOnAbort);
     }
-    if (opts.signal?.aborted) return { text: "", aborted: true, error: null };
+    if (queuedSteerId !== null) {
+        // 保险生效：撤回自己插进去的那条（**只撤自己的**，用户既有的队列项不动），按「会话忙」报回
+        try {
+            agent.steerCancel(uri, queuedSteerId);
+        } catch {
+            /* 已被消化 / 已不在队列：没什么可撤的 */
+        }
+        return { text: "", aborted: false, error: null, busy: true };
+    }
+    if (opts.signal?.aborted) return { text: "", aborted: true, error: null, busy: false };
     // 结论 = **最后一段**非空 assistant 正文（多步轮次里，收尾那一段才是结论）
     const assistant = [...texts.values()].filter((b) => b.role === "assistant" && b.text.trim() !== "").sort((a, b) => a.order - b.order);
-    return { text: assistant.length > 0 ? assistant[assistant.length - 1]!.text : "", aborted: false, error: null };
+    return { text: assistant.length > 0 ? assistant[assistant.length - 1]!.text : "", aborted: false, error: null, busy: false };
 }
 
 /**

@@ -11,7 +11,9 @@
 //      在人工审批点 `approve` 停下 —— 全程**无人** `advance`；`review→implement` 那一轮
 //      **打回是自动的**（agent 末行说「打回」，环自己走 bounce 边）。
 //   2. **停得对**：`human` 节点停下等人（不是自推）、CI 红**不推**（停在边上）、
-//      `--max-steps` 到顶停、断开 RPC 流**中断在跑的轮次**（不悬着）。
+//      `--max-steps` 到顶停、断开 RPC 流**中断在跑的轮次**（不悬着）、
+//      **任务会话正忙时不替用户插话**（停因 `session-busy`，##341 review1 P2-1 —— 老实现会
+//      把节点提示词排进用户会话的插话队列，且停因报 `empty-conclusion` 指错病因）。
 //   3. **幂等**：重复 `run` 接着走、不重复消费已完成的节点（判据一律读 `flow show`）。
 //   4. **观察面**（不新增真源）：`flow show` 的折线/位置/终态、产物袋、`events.jsonl` 的 `author`
 //      （谁推的这一步）。
@@ -408,5 +410,46 @@ describe("flow run：停得住", () => {
         expect(view.trajectory.map(line)).toEqual(["clarify#1"]);
         const again = await runFlow(uri, "--max-steps 3");
         expect(again.stop.reason).toBe("max-steps");
+    }, 150_000);
+
+    it("会话忙：不替用户插话、不污染用户会话（停因 session-busy，提示词一个字节都没发上游）", async () => {
+        const uri = await freshFlow("busy", []);
+        stub.mode = "hang"; // 用户那一轮永远不结束 ⇒ 该任务会话一直「在跑」
+        // 用户自己的轮次（同一条任务会话）—— 驱动环**不许**把自己那一步塞进他后面排队
+        const child = spawn("./diy.sh", ["agent", "local", "chat", uri, "用户插话：先别动"], {
+            cwd: join(__dirname, "..", "..", ".."),
+            env: { ...process.env, DIY_HOME: fx.HOME, HOME: fx.HOME, DIY_VARIANT: "test", DIY_CLI_MODE: "compiled" },
+            detached: true,
+            stdio: "ignore",
+        });
+        try {
+            const first = stub.requests.length;
+            await waitUntil(async () => stub.requests.length > first, (ok) => ok, { label: "用户轮次起飞", timeoutMs: 30_000 });
+            const busyAt = stub.requests.length;
+
+            const { stop, frames } = await runFlow(uri, "", 60_000);
+            // 停因**说得出病因**（老实现报 `empty-conclusion`「这一轮没有产出结论」—— 把人引去查模型/提示词）
+            expect(stop.reason).toBe("session-busy");
+            expect(stop.message).toContain("会话正忙");
+            // 一轮 agent 都没起（只有「进入入口」那一领域步，不经会话）
+            expect(frames.filter((f) => f.kind === "turn")).toHaveLength(0);
+            // 节点提示词**一个字节都没发上游**（老实现：退化成插话 ⇒ 请求数不增）
+            expect(stub.requests.length).toBe(busyAt);
+            // 领域态：照常进入入口，但**停在原地**（没推进 —— 安全侧）
+            const view = await show(uri);
+            expect(view.position).toBe("clarify");
+            expect(view.done).toBe(false);
+            expect(view.trajectory.map(line)).toEqual(["clarify#1"]);
+            // **没有污染**：用户会话的插话队列里没有驱动环的 turn 消息
+            const steer = await fx.sh.run(`./diy.sh agent local steer list ${uri}`);
+            expect(steer.stdout).not.toContain("【当前节点】");
+        } finally {
+            try {
+                process.kill(-child.pid!, "SIGKILL");
+            } catch {
+                /* 已退出 */
+            }
+            stub.mode = "reply";
+        }
     }, 150_000);
 });
