@@ -4,7 +4,12 @@
  * 一句话：系统上下文 = **一棵变量树**，按稳定性划成两份 ——
  * 稳定的进 system 提示词开头（可缓存），易变的进 user 消息。
  *
- * 两列（左=输入，中=产出）：
+ * 两列（左=输入，中=产出）；中栏自上而下四块：
+ *   · 变量树变更     整棵变量树 + 把**生效那条变更记录**的变更标在命中节点上（步级 · 变量级）；
+ *   · 该步实际请求   这一步**真发出去的那条 HTTP 请求**（流量日志 = 地面真相）+ 一键跳流量页定位；
+ *   · 变更详情       该步所在轮 vs 上一轮的**行级文本 diff**（轮级 · 文本级）；
+ *   · 请求预览       整份请求的大 YAML（当前值）。
+ *
  *   · 左「结构树」 变量契约（zod），含类型/描述与无值变量。
  *                  **划分操作就在这做**：点节点上的 ⇄ 换容器（system ⇄ runtime），
  *                  不必再维护一张独立的"规则表"—— 契约本身就是那张表的骨架。
@@ -43,10 +48,80 @@ import { diffSize } from "../../shared/context/steps";
 import { attributionOf, foldStatRows, sysCauses, unitsFromRules, type Attribution } from "../../shared/context/attribution";
 import { fmtAgo, fmtShortTime } from "../../shared/date-format";
 import { lineRange, matchRanges, type LineRange } from "../../shared/context/match";
-import type { ContextDiff, CtxLog, Stats } from "../../shared/context/schema";
+import type { ContextDiff, CtxLog, HistoryEntryView, Stats } from "../../shared/context/schema";
 import type { DiffLine } from "../../shared/line-diff";
+import { changeForNode } from "../../shared/context/changelog";
+import { dateOfLogFile, pickStepTraffic, type TrafficStepRecord } from "../../shared/context/traffic-step";
+import { trafficStore } from "../store/trafficStore";
+import { getRendererActions } from "../lib/renderer-actions";
 
 const PAGE = "ctxlab";
+
+/** 人类可读字节数（1024 进制；与流量页同口径） */
+function fmtBytes(n: number): string {
+    if (!Number.isFinite(n) || n <= 0) return "0 B";
+    const u = ["B", "KB", "MB", "GB"];
+    let i = 0;
+    let v = n;
+    while (v >= 1024 && i < u.length - 1) {
+        v /= 1024;
+        i++;
+    }
+    return `${i === 0 ? v : v.toFixed(1)} ${u[i]}`;
+}
+
+/** 一条 ModelMessage 的 content → 可读文本（字符串原样；分片数组按类型摊平） */
+function msgText(c: unknown): string {
+    if (typeof c === "string") return c;
+    if (Array.isArray(c)) {
+        return c
+            .map((p) => {
+                const o = p as { type?: unknown; text?: unknown; toolName?: unknown; input?: unknown; output?: unknown };
+                if (typeof o?.text === "string") return o.text;
+                if (o?.type === "tool-call") return `[tool-call ${String(o.toolName)}] ${JSON.stringify(o.input ?? {})}`;
+                if (o?.type === "tool-result") return `[tool-result] ${JSON.stringify(o.output ?? {})}`;
+                return JSON.stringify(p);
+            })
+            .join("\n");
+    }
+    return c === undefined || c === null ? "" : JSON.stringify(c);
+}
+
+/** 流量记录里我们渲染时用到的字段（traffic.query 返回值是其超集） */
+interface TrafficRec extends TrafficStepRecord {
+    id?: number;
+    traceId?: string | null;
+    reqBytes?: number;
+    resBytes?: number;
+    ms?: number;
+    reqBody?: { head?: string; tail?: string; truncated?: boolean; totalBytes?: number } | null;
+}
+
+/**
+ * 请求体（首尾法保留的正文）→ 会话消息。
+ * 默认**只留首尾一段**（`truncated`），这时 JSON 解不开 —— 如实说"被截断"并给出开关提示，
+ * 不把半截 JSON 当正文渲染（那会让人以为请求就是这么发的）。
+ */
+function parseBodyMessages(rec: TrafficRec): { msgs: Array<{ role: string; text: string }> | null; note: string } {
+    const rb = rec.reqBody ?? null;
+    if (!rb || typeof rb.head !== "string" || rb.head === "") return { msgs: null, note: "这条记录没有请求正文。" };
+    try {
+        const json = JSON.parse(rb.head) as { messages?: unknown };
+        if (!Array.isArray(json.messages)) return { msgs: null, note: "请求体里没有 messages 数组。" };
+        const msgs = (json.messages as Array<{ role?: unknown; content?: unknown }>).map((m) => ({
+            role: String(m?.role ?? "?"),
+            text: msgText(m?.content),
+        }));
+        return { msgs, note: "" };
+    } catch {
+        return {
+            msgs: null,
+            note: rb.truncated
+                ? `请求正文被截断（共 ${rb.totalBytes ?? 0} 字节，默认只留首尾）—— 在流量页打开「记录完整请求内容」后重发一轮即可见全文。`
+                : "请求正文不是合法 JSON。",
+        };
+    }
+}
 
 /** 折叠块展开态（模块级 + 落 Caches：`ui view expand` 可能在页面挂载前就切过来） */
 const [fold, setFoldSig] = createSignal<Record<string, boolean>>(Caches.diy_ctxlab_fold.get());
@@ -242,6 +317,57 @@ export function ContextLabPage(props: { uri: string }) {
     );
 
     /**
+     * 选中的变更**记录**（seq）。
+     *
+     * 为什么不能只用 `pickedStep`（steps.jsonl 的**轮**序）驱动新 view：变更日志是**逐步**写的，
+     * 而投递快照是**逐轮**写的 —— 只在"两份日志等长"时才勉强对得上，老任务升级后
+     * （日志从中间开始）按轮序去取就会指到别的轮（##310 review 意见 1，用户实测"点击 ↔ 详情对不上"）。
+     * 新 view 直接拿**被点的那条记录**：由构造保证与左栏一致，不再有间接映射。
+     */
+    const [pickedSeq, setPickedSeq] = createSignal<number | null>(null);
+
+    /** 生效的变更记录：选中的那条；没选 = 最后一条**有变**的（页面一打开就有东西看，不必先点） */
+    const effectiveEntry = (): HistoryEntryView | null => {
+        const es = history()?.entries ?? [];
+        const s = pickedSeq();
+        if (s !== null) return es.find((e) => e.seq === s) ?? null;
+        for (let i = es.length - 1; i >= 0; i--) if (es[i]!.changes.length > 0) return es[i]!;
+        return null;
+    };
+
+    /**
+     * 该步真发的**那条 HTTP 请求**（流量日志，按 turnId 找）。
+     *
+     * 为什么从流量日志找而不是本页重算：这是"实际效果"的**地面真相** —— 页面重算只能证明
+     * "我以为会发什么"，流量日志证明"确实发了什么"。找不到 = `null`（日志被清 / 该轮没真发过）
+     * → UI 出声，不编。
+     */
+    const [stepTraffic, { refetch: refetchStepTraffic }] = createResource(
+        () => {
+            const e = effectiveEntry();
+            return e ? `${e.ref.turnId}\u0000${e.ref.step}` : null;
+        },
+        async (key) => {
+            const [turnId, step] = key.split("\u0000");
+            const res = await diyService.diy.traffic.query({
+                text: turnId,
+                status: "all",
+                method: "all",
+                date: "all",
+                limit: 500,
+            });
+            // 时刻从"被点的那条记录"来（不只是 key 里的 turnId/step）—— pickStepTraffic 用它挑出该步那条
+            const e = effectiveEntry();
+            return pickStepTraffic<TrafficRec>(
+                (res.records ?? []) as unknown as TrafficRec[],
+                { turnId: turnId!, step: Number(step) },
+                props.uri,
+                e?.ts ?? null,
+            );
+        },
+    );
+
+    /**
      * 变更统计（**按项目累计**，跨任务）：回答"这个节点用了几天变了几次 / 变化率"。
      * 为什么不按任务：单任务样本太小；长期累计才有"该不该待在 system"的判据价值
      * （逐轮明细已由上面的「变更历史（真发轮次）」给出；见 shared/context/stats.ts 头注）。
@@ -284,6 +410,7 @@ export function ContextLabPage(props: { uri: string }) {
         void refetchDiff();
         void refetchConfig();
         void refetchStats();
+        void refetchStepTraffic();
     };
 
     /** 请求预览的形态：YAML（默认；内嵌 system/runtime 文本就地解析展开）/ 原文（真发 JSON） */
@@ -469,14 +596,28 @@ export function ContextLabPage(props: { uri: string }) {
                             <li>
                                 {/* 轮：点它 = 中栏「变更详情」看这轮 vs 上轮的行级 diff */}
                                 <button
-                                    class={`flex items-center gap-2 ${rowCls(t.turnIndex !== null && pickedStep() === t.turnIndex)}`}
-                                    title="点一下：看该轮相对上一轮改了什么；再点取消：看当前 vs 最后一步"
+                                    class={`flex items-center gap-2 ${rowCls(pickedSeq() === t.seq)}`}
+                                    title="点一下：上方「变量树变更」标注这一步改了整棵树里的哪几处、下方「该步实际请求」看真发出去的那条；再点取消"
                                     onClick={() => {
-                                        if (t.turnIndex === null) return;
-                                        setPickedStep(pickedStep() === t.turnIndex ? null : t.turnIndex);
+                                        if (pickedSeq() === t.seq) {
+                                            setPickedSeq(null);
+                                            setPickedStep(null);
+                                            return;
+                                        }
+                                        setPickedSeq(t.seq);
+                                        // 变更详情是**轮级**文本 diff → 用轮序；取不到轮序就退回"当前 vs 最后一步"
+                                        setPickedStep(t.turnIndex);
                                     }}
                                 >
                                     <span class="badge badge-xs">{`第${t.ref.step}步`}</span>
+                                    <Show when={t.turnIndex !== null}>
+                                        <span
+                                            class="badge badge-ghost badge-xs font-mono"
+                                            title="该轮在投递快照（steps.jsonl）里的序号 —— 与左边的「第 N 步」不是同一根轴：左边是**轮内的第几步**，这里是**第几轮**（一个轮会有多步）"
+                                        >
+                                            {`#${t.turnIndex}`}
+                                        </span>
+                                    </Show>
                                     <span
                                         class="shrink-0 font-mono text-caption opacity-60"
                                         title={`${t.ts}（${t.ref.turnId} · 第 ${t.ref.step} 步）`}
@@ -551,6 +692,201 @@ export function ContextLabPage(props: { uri: string }) {
         );
     };
 
+    /** 变更种类 → 行配色（vscode diff 的观感：增绿 / 删红 / 改黄） */
+    const diffRowCls = (kind: "add" | "update" | "remove" | null): string =>
+        kind === "add"
+            ? "bg-success/10"
+            : kind === "remove"
+              ? "bg-error/10"
+              : kind === "update"
+                ? "bg-warning/10"
+                : "";
+
+    /**
+     * 变量树变更（##310）—— 整棵 context 变量树 + 把**这一步**的变更标在命中节点上。
+     *
+     * 与「变更详情」的分工（两把不同的尺，都要）：
+     *   · 本块 = **步级 · 变量级**：读 changelog 的原子单元（`chain` 整体一条），点哪条记录标哪条
+     *     → 不会与左栏错位（左栏点击直接喂这一块，没有"轮序→步序"的间接映射）；
+     *   · 「变更详情」= **轮级 · 文本级**：system/runtime 两份全文逐行比，看"发出去的字节差在哪"。
+     *
+     * 树用 `lab().tree`（与真发同一条 assembleGlobals 链的**当前值树**）；标注用变更记录的
+     * before/after 摘要 —— 所以"当前值"列永远是此刻的真值，"变更"列是本步的旧→新（可能截断）。
+     */
+    const varDiffPane = () => {
+        const e = effectiveEntry();
+        if (!e) {
+            return (
+                <div class="p-2 opacity-60">
+                    还没有带变化的记录可标注。在对话页真发一轮（改了变量），左栏「变更历史」出现一行后这里就有内容。
+                </div>
+            );
+        }
+        const changes = e.changes;
+        return (
+            <div class="p-1">
+                <div class="mb-1 flex flex-wrap items-center gap-1 px-1 text-caption opacity-70">
+                    <span class="badge badge-xs">{`第 ${e.ref.step} 步`}</span>
+                    <span>{`${fmtShortTime(e.ts)} · 本步 ${changes.length} 处变更`}</span>
+                    <Show when={pickedSeq() === null}>
+                        <span>（未选中：显示最后一条有变的记录；点左栏「变更历史」任意一行切换）</span>
+                    </Show>
+                    <Show when={e.incomparable === true}>
+                        <span class="badge badge-warning badge-xs">编码版本不同（不可比）</span>
+                    </Show>
+                </div>
+                <table class="table table-xs">
+                    <thead>
+                        <tr>
+                            <th>变量（整棵树）</th>
+                            <th>当前值</th>
+                            <th>本步变更（旧 → 新）</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <For each={lab()?.tree ?? []}>
+                            {(n) => {
+                                const c = changeForNode(n.path, changes);
+                                const own = c && c.path === n.path ? c : null;
+                                return (
+                                    <tr
+                                        class={`cursor-pointer hover:bg-base-300/60 ${diffRowCls(c ? c.kind : null)} ${rowCls(selected() === n.path)}`}
+                                        title={c ? `${c.path}：本步 ${c.kind}` : "本步未变"}
+                                        onClick={() => setSelected(n.path)}
+                                    >
+                                        <td class="whitespace-nowrap font-mono">
+                                            <span style={{ "padding-left": `${(n.path.split(".").length - 1) * 12}px` }} />
+                                            <span class={c ? "font-bold" : ""}>{n.path}</span>
+                                            <Show when={c}>
+                                                <span class={`ml-1 badge badge-xs font-mono ${kindCls(c!.kind)}`}>
+                                                    {kindGlyph(c!.kind)}
+                                                </span>
+                                            </Show>
+                                        </td>
+                                        <td class="max-w-[22rem] truncate opacity-70" title={n.preview}>
+                                            {n.hasValue ? n.preview || "（容器）" : "（无值）"}
+                                        </td>
+                                        <td class="max-w-[26rem]">
+                                            <Show
+                                                when={own}
+                                                fallback={
+                                                    <Show when={c}>
+                                                        <span class="opacity-50">{`（随 ${c!.path} 变）`}</span>
+                                                    </Show>
+                                                }
+                                            >
+                                                {(o) => (
+                                                    <span class="flex items-center gap-1">
+                                                        <span class="truncate text-error line-through" title={o().before ?? ""}>
+                                                            {o().before ?? "∅"}
+                                                        </span>
+                                                        <span class="opacity-40">→</span>
+                                                        <span class="truncate text-success" title={o().after ?? ""}>
+                                                            {o().after ?? "∅"}
+                                                        </span>
+                                                    </span>
+                                                )}
+                                            </Show>
+                                        </td>
+                                    </tr>
+                                );
+                            }}
+                        </For>
+                    </tbody>
+                </table>
+            </div>
+        );
+    };
+
+    /**
+     * 跳到「流量」页并定位到这条请求。
+     * 先把筛选条件置成这条记录的 turnId + 它所在的日期（列表默认只查当天）——
+     * 否则目标那条不在结果里，流量页的定位会退化成"最近一次失败"，看着像点错了。
+     */
+    const openInTraffic = (e: HistoryEntryView, rec: TrafficRec): void => {
+        trafficStore.focusWith({
+            text: e.ref.turnId,
+            date: dateOfLogFile(rec.log?.file ?? null) ?? "all",
+            traceId: rec.traceId ?? null,
+        });
+        getRendererActions().navigate?.("traffic");
+    };
+
+    /**
+     * 该步实际请求（真发 · 流量）—— 回答"这一步**实际**发出去的是什么"。
+     *
+     * 为什么要有它：变量树只说明"变得对不对"，不能证明"真发的是不是这个"（构造链跑在 main 里）。
+     * 流量日志是地面真相：同一个 turnId 的请求按 ts 排序就是各步，取第 `ref.step` 条。
+     * 数据源是**磁盘日志**（跨进程、跨天都在），所以能回看历史步。
+     */
+    const stepSessionPane = () => {
+        const e = effectiveEntry();
+        if (!e) return <div class="p-2 opacity-60">先在上方选中一条变更记录。</div>;
+        const t = stepTraffic();
+        if (t === undefined) return <div class="p-2 opacity-60">正在查该步的实际请求…</div>;
+        if (t === null) {
+            return (
+                <div class="p-2 text-body">
+                    <div class="mb-1">{`未找到该步的实际请求（轮 ${e.ref.turnId} · 第 ${e.ref.step} 步）。`}</div>
+                    <div class="opacity-60">
+                        可能的原因：① 这条记录是手写/演示数据，没真发过；② 流量日志被清（log 等同 cache，可随时清理）；
+                        ③ 该轮不是本机发出的。真发一轮后再回来看即可对上。
+                    </div>
+                </div>
+            );
+        }
+        const rec = t.record;
+        const parsed = parseBodyMessages(rec);
+        return (
+            <div class="flex flex-col gap-1 p-1">
+                <div class="flex flex-wrap items-center gap-2 px-1 text-body">
+                    <span class="badge badge-xs font-mono">{fmtShortTime(new Date(rec.ts).toISOString())}</span>
+                    <span
+                        class="badge badge-xs"
+                        classList={{
+                            "badge-success": rec.status !== null && rec.status < 400,
+                            "badge-error": rec.status === null || rec.status >= 400,
+                        }}
+                    >
+                        {rec.status === null ? "无响应" : String(rec.status)}
+                    </span>
+                    <span class="font-mono opacity-70">{rec.model}</span>
+                    <span class="opacity-60">{fmtBytes((rec.reqBytes ?? 0) + (rec.resBytes ?? 0))}</span>
+                    <span class="opacity-60" title="同一个轮（turnId）在流量日志里的全部请求条数（含重试）">
+                        {`该轮共 ${t.turnRecords} 条请求`}
+                    </span>
+                    <button class="btn btn-xs btn-primary ml-auto" onClick={() => openInTraffic(e, rec)}>
+                        在流量页打开
+                    </button>
+                </div>
+                <Show when={rec.log}>
+                    <div class="px-1 font-mono text-caption opacity-60">{`${rec.log!.abs}:${rec.log!.line}`}</div>
+                </Show>
+                <Show when={parsed.note}>
+                    <div class="px-1 text-caption text-warning">{parsed.note}</div>
+                </Show>
+                <Show when={parsed.msgs}>
+                    {(list) => (
+                        <div class="flex flex-col gap-1">
+                            <For each={list()}>
+                                {(m, i) => (
+                                    <details class="rounded border border-base-300 bg-base-100" open={i() === 0}>
+                                        <summary class="cursor-pointer px-2 py-1 text-body font-bold">
+                                            {`${i() + 1}. ${m.role} · ${m.text.length} 字`}
+                                        </summary>
+                                        <pre class="max-h-72 overflow-auto whitespace-pre-wrap px-2 pb-1 font-mono text-body">
+                                            {m.text}
+                                        </pre>
+                                    </details>
+                                )}
+                            </For>
+                        </div>
+                    )}
+                </Show>
+            </div>
+        );
+    };
+
     /** 变更详情（main 侧算好的行级 diff）：选中步 → 步 vs 步；未选中 → 当前 vs 最后一步 */
     const changePane = () => {
         const d = () => diff();
@@ -558,6 +894,10 @@ export function ContextLabPage(props: { uri: string }) {
             <Show when={d()} fallback={<div class="p-2 opacity-60">还没有真发记录，无从比较。</div>}>
                 {(dd) => (
                     <div class="space-y-2 p-2">
+                        <div class="text-caption opacity-60">
+                            本块是轮级文本 diff（该步所在轮 vs 上一轮，system / runtime 两份全文逐行比）；
+                            逐步的变量级变化看上方「变量树变更」
+                        </div>
                         <div class="flex flex-wrap items-center gap-2 text-body">
                             <Show when={dd().base}>
                                 {(b) => (
@@ -825,6 +1165,30 @@ export function ContextLabPage(props: { uri: string }) {
         /** 中：请求预览（整份请求 = 一份大 YAML；可切原文 JSON） */
         "ctxlab.delivery": () => (
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-body">
+                {/* 变量树变更：整棵变量树 + 把选中那条记录的变更标在命中节点上（步级 · 变量级） */}
+                <Fold
+                    k="vardiff"
+                    label="变量树变更（整棵树 + 标注）"
+                    extra={(() => {
+                        const e = effectiveEntry();
+                        return e ? `第 ${e.ref.step} 步 · ${e.changes.length} 处变更` : "没有带变化的记录";
+                    })()}
+                >
+                    {varDiffPane()}
+                </Fold>
+                {/* 该步实际请求：真发的那条 HTTP 请求（流量日志 = 地面真相）+ 一键跳流量页定位 */}
+                <Fold
+                    k="stepsess"
+                    label="该步实际请求（真发 · 流量）"
+                    extra={(() => {
+                        const t = stepTraffic();
+                        if (t === undefined) return "查询中…";
+                        if (t === null) return "未找到";
+                        return `${t.record.status ?? "无响应"} · 该轮 ${t.turnRecords} 条`;
+                    })()}
+                >
+                    {stepSessionPane()}
+                </Fold>
                 {/* 变更详情：选中某轮 → 与上一轮比；未选中 → 当前 vs 最后一轮（main 侧算好的行级 diff） */}
                 <Fold
                     k="change"

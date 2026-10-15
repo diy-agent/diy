@@ -252,3 +252,34 @@ export function entryToRows(entry: CtxLogEntry): CtxChangeRow[] {
         after: c.data.after,
     }));
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// 树节点 × 变更：把一条变更标到**整棵变量树**的对应节点上（##310 变量树 diff view）
+// ══════════════════════════════════════════════════════════════════════════
+
+/**
+ * 树上一个节点路径是否被某条变更命中。
+ *
+ * 命中的两种情形（**只有这两种**）：
+ *   · 同路径（变更就发生在该节点）；
+ *   · 落在变更单元**之下**（`chain` 变了 → `chain.0` / `chain.0.content` 也算它变的）。
+ *
+ * 反向（`chain.0` 变了命中 `chain`）**不成立**：变更单位是原子单元，`chain.0` 那种记录
+ * 本身就不该存在（旧实现的 bug）。这里如实反映"这条变更是谁引起的"。
+ */
+export function nodeHitByChange(nodePath: string, changePath: string): boolean {
+    return nodePath === changePath || nodePath.startsWith(`${changePath}.`);
+}
+
+/** 某节点命中的**最具体**那条变更（同路径优先，其次最近的祖先单元）；都没有 = null */
+export function changeForNode<T extends { path: string }>(
+    nodePath: string,
+    changes: readonly T[],
+): T | null {
+    let best: T | null = null;
+    for (const c of changes) {
+        if (!nodeHitByChange(nodePath, c.path)) continue;
+        if (best === null || c.path.length > best.path.length) best = c;
+    }
+    return best;
+}

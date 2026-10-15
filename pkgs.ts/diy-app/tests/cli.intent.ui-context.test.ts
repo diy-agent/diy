@@ -1056,3 +1056,186 @@ describe("上下文树：归属口径标注与 URI 解析失败出口（review R
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 120_000);
 });
+
+describe("上下文树：变量树变更 view + 该步实际请求（真发 · 流量）", () => {
+  /**
+   * 这一组钉住 ##310 的两条契约：
+   *   · 「变量树变更」由**被点/生效的那条记录**驱动（整棵树 + 命中节点标注），不再用"轮序"间接映射
+   *     —— 那是"点击 ↔ 详情对不上"的根因（review 意见 1）；
+   *   · 「该步实际请求」拿**流量日志**当地面真相（按 turnId + 记录时刻挑该步那条），
+   *     有 → 列出会话消息 + 可跳流量页；没有 → 明确提示（不编）。
+   *
+   * 两个任务分别覆盖"有流量"与"无流量"两条路（都**不点变更历史**就能到达：
+   * 未选中时展示最后一条**有变**的记录）—— 判定不依赖点击坐标，稳。
+   */
+  const state = {
+    values: { task: { title: "一" } },
+    renderers: {},
+    places: [],
+    placement: {},
+    wireVersion: "w1",
+    placementEpoch: 0,
+  };
+  const entry = (over: Record<string, unknown>) => ({
+    seq: 0,
+    type: "baseline",
+    ts: "2026-10-15T00:00:00.000Z",
+    model: "mimo-v2.5",
+    wireVersion: "w1",
+    ref: { turnId: "t-a", stepId: "t-a_s1", step: 1 },
+    data: { tree: state },
+    ...over,
+  });
+  const emptyAndWrite = async (label: string, entries: unknown[]) => {
+    const repo = `${fx.HOME}/ctxlab-${label}`;
+    mkdirSync(repo, { recursive: true });
+    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label ${label}`);
+    const pid = String((p.data as any)?.data?.id);
+    const t = await fx.sh.getJson(`./diy.sh task create ${label}任务 ${pid}`);
+    const uri = String((t.data as any)?.data?.uri);
+    clearLocal(uri);
+    mkdirSync(join(fx.HOME, "local"), { recursive: true });
+    writeFileSync(
+      join(fx.HOME, "local", `${keyOf(uri)}.changelog.jsonl`),
+      entries.map((r) => JSON.stringify(r)).join("\n") + "\n",
+    );
+    return { pid, uri };
+  };
+  // 真发流量日志（traffic.query 直接扫这个文件）：同一个 turn 两条请求（第 1 步 / 第 2 步）。
+  // 两条用不同耗时区分（0.11s / 0.22s）—— 用来钉"挑中的是该步那条"，不是"随便挑了该轮第一条"。
+  const rec = (ts: number, attempt: number, uri: string) => ({
+    _fmt: "1.0",
+    id: attempt,
+    ts,
+    kind: "llm",
+    session: "s",
+    taskUri: uri,
+    turnId: "t-b",
+    provider: "x",
+    model: "mimo-v2.6-flash",
+    baseUrl: "https://x",
+    method: "POST",
+    url: "https://x/v1/chat/completions",
+    host: "x",
+    path: "/v1/chat/completions",
+    attempt,
+    maxRetries: 2,
+    status: 200,
+    ms: attempt * 111,
+    reqBytes: attempt,
+    resBytes: 1,
+    reqHeaders: {},
+    resHeaders: {},
+    resNote: null,
+    traceId: `tr-${attempt}`,
+    err: null,
+    reqBody: {
+      head: JSON.stringify({
+        messages: [
+          { role: "system", content: `SYS-MARK-310-${attempt}` },
+          { role: "user", content: `ASK-MARK-310-${attempt}` },
+        ],
+      }),
+      tail: "",
+      headBytes: 1,
+      tailBytes: 0,
+      totalBytes: 1,
+      truncated: false,
+    },
+    resBody: null,
+  });
+
+  it("整棵树标注该步变更（旧→新）；该步请求取自流量日志（挑中该步那条）+ 可跳流量页", async () => {
+    const { pid, uri } = await emptyAndWrite("treediff", [
+      entry({}),
+      entry({
+        seq: 1,
+        type: "changed",
+        ts: "2026-10-15T00:00:15.000Z",
+        ref: { turnId: "t-b", stepId: "t-b_s2", step: 2 },
+        data: { changes: [{ type: "update", path: "task.title", data: { before: "一", after: "二" } }] },
+      }),
+    ]);
+    const netDir = join(fx.HOME, "log", "network");
+    mkdirSync(netDir, { recursive: true });
+    writeFileSync(
+      join(netDir, "2026-10-15.jsonl"),
+      [rec(Date.parse("2026-10-15T00:00:10.000Z"), 1, uri), rec(Date.parse("2026-10-15T00:00:20.000Z"), 2, uri)]
+        .map((r) => JSON.stringify(r))
+        .join("\n") + "\n",
+    );
+
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
+    await fold("vardiff", true);
+    await fold("stepsess", true);
+
+    const s = await waitUntil(
+      a11yText,
+      (x) =>
+        x.includes("变量树变更（整棵树 + 标注）") &&
+        x.includes("该步实际请求（真发 · 流量）") &&
+        x.includes("SYS-MARK-310-2"),
+      { label: "变量树变更 + 该步实际请求上屏" },
+    );
+    // 变量树：整棵树都列出来，命中的节点标出来并带旧→新
+    expect(s).toContain("第 2 步 · 1 处变更");
+    expect(s).toContain("task.title");
+    expect(s).toContain("一 → 二");
+    // 该步请求取的是**第 2 步**那条（时刻判据），不是第 1 步那条
+    expect(s).toContain("ASK-MARK-310-2");
+    expect(s).not.toContain("ASK-MARK-310-1");
+    expect(s).toContain("在流量页打开");
+
+    // 点「在流量页打开」→ 真跳到流量页并定位到那条请求（详情面板 = 有「← 列表」返回键；
+    // 耗时 0.22s 进一步钉住"就是第 2 步那条"）
+    const ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
+      const r = await fx.sh.getJson("./diy.sh ui inspect");
+      return (r.data as any)?.data?.tree as A11yNode | undefined;
+    });
+    try {
+      await ui.click("在流量页打开");
+      const traffic = await waitUntil(a11yText, (x) => x.includes("← 列表") && x.includes("0.22"), {
+        label: "流量页定位到该步请求",
+      });
+      expect(traffic).toContain("← 列表");
+      expect(traffic).toContain("0.22");
+    } finally {
+      ui.close();
+    }
+    rmSync(join(netDir, "2026-10-15.jsonl"), { force: true });
+    clearLocal(uri);
+    await fx.sh.run(`./diy.sh project remove ${pid}`);
+  }, 180_000);
+
+  it("该步在流量日志里没有记录 → 明确提示（不编）", async () => {
+    const { pid, uri } = await emptyAndWrite("treediff-miss", [
+      entry({}),
+      entry({
+        seq: 1,
+        type: "changed",
+        ts: "2026-10-15T00:00:05.000Z",
+        ref: { turnId: "t-nope", stepId: "t-nope_s1", step: 1 },
+        data: { changes: [{ type: "update", path: "task.body", data: { before: "一", after: "二" } }] },
+      }),
+    ]);
+    try {
+      await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+      await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
+      await fold("vardiff", true);
+      await fold("stepsess", true);
+      const s = await waitUntil(a11yText, (x) => x.includes("未找到该步的实际请求"), {
+        label: "该步无流量记录 → 提示",
+      });
+      // 表头步数跟着**该条记录**（不再是"轮序"）：这条是第 1 步 · 1 处变更
+      expect(s).toContain("第 1 步 · 1 处变更");
+      expect(s).toContain("可能的原因");
+      // 变量树仍然有内容（整棵树 + 标注），不是空白页
+      expect(s).toContain("task.body");
+      expect(s).toContain("一 → 二");
+    } finally {
+      clearLocal(uri);
+      await fx.sh.run(`./diy.sh project remove ${pid}`);
+    }
+  }, 180_000);
+});
