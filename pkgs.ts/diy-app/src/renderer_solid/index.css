@@ -272,19 +272,15 @@
     /* rail 的**贯穿线**：比块边条略深，因为它要当成一条结构线看（不是每块的描边） */
     --diy-rail: color-mix(in oklab, var(--color-base-content) 22%, transparent);
 }
-/* ── 视口外的轮次不渲染 ──────────────────────────────────────────────────
- * 大会话（实测一次 48 轮 / 6553 块的会话）把每一轮都铺进 DOM，光"离屏布局与绘制"
- * 就吃掉几百 MB —— **探针实测**：把离屏轮次**完全不渲染**时 JS 堆 745MB → 326MB
- * （这是"离屏渲染"代价的量级；`auto` 只跳过布局与绘制、**DOM 与组件状态照旧**，收益
- * 介于"全渲染"与"完全不渲染"之间，**未单独量化** → ##301）。用户一次只看得到
- * 一两屏。`content-visibility: auto` 让浏览器跳过视口外子树的布局与绘制，DOM 与
- * 组件状态照旧（折叠态、滚动位置都不丢）—— 比自建虚拟滚动少一层高度估算的账。
- * `contain-intrinsic-size: auto <估算>`：`auto` 让浏览器记住该轮实测高度（渲染过一次
- * 就准了），估算值只兜底从未露过面的轮次。 */
-.diy-chat [data-turn-id] {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 24rem;
-}
+/* ── 视口外的轮次**不挂 DOM**（##301 视口虚拟化）──────────────────────────
+ * 这里曾用 `content-visibility: auto` + `contain-intrinsic-size: auto 24rem`：它只让
+ * 浏览器跳过离屏子树的**布局与绘制**，DOM 与组件状态照旧 —— 一次 48 轮会话实测仍有
+ * 1441 个节点全体在树里，堆随会话长度无界。
+ * 现在改由组件层真做虚拟化（`LocalChatPage` 只挂视口附近若干轮，几何与高度账见
+ * `src/renderer_solid/lib/chat-virtual.ts`）：摘出窗口的行**不在 DOM**，也就没有
+ * 「离屏布局」这笔开销，不需要这条规则。
+ * ⚠️ 高度估算的**唯一**出口是 `chat-virtual.ROW_FALLBACK`：账与 CSS 两处各估一次必然漂移
+ * （CSS 的 `24rem` 与账面估算不一致 ⇒ 总高度与滚动位置对不上），故这里不再留任何估算。 */
 
 
 [data-skin="card"] .diy-chat {
