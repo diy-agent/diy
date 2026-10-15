@@ -9,7 +9,9 @@ import { isAbsolute } from "node:path";
 const isAbsPath = (id: string) => isAbsolute(id) || /^[a-zA-Z]:[\\/]/.test(id);
 
 const V = process.env.DIY_VARIANT ?? "prod"; // 变体产物根：prod|test|preview|lab
-const pkgDeps = ["@diy/rpc", "@diy/template"];
+// pkgDeps = 要**打包进来**的 workspace 包（它们是 TS 源码，external 化 = 产物里留 `import "@diy/x"`
+// → node 加载 `.ts` 直接炸）。新增 workspace 依赖必须同步加这里。
+const pkgDeps = ["@diy/rpc", "@diy/template", "@diy/flow", "@diy/talk"];
 const external = ["electron", ...builtinModules, ...builtinModules.map((m) => `node:${m}`)];
 
 export default defineConfig({

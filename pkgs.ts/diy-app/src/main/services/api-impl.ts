@@ -31,6 +31,8 @@ import type { ToolResultMode } from "../../shared/context/compaction";
 import type { HistoryTurnView } from "../../shared/context/schema";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
 import { resolve as resolvePath } from "node:path";
+import * as flow from "../core/flow";
+import { flowPrompt } from "./flow-prompt";
 
 /**
  * 实际 RPC 监听端口，由入口在绑定完成后回填。
@@ -933,6 +935,46 @@ export function bindAppHandlers(binding: ServerBinding): void {
       clearTimeout(timer);
     }
   });
+
+  // ── flow（##319：工作流实例与任务绑定；状态真源 = 任务目录 flow/state.json）──
+  // 「多个 k=v」型入参在 schema 里是「JSON 数组或单个裸值」（见 api-def 的 kvList 工厂）：
+  // parser 只对 `z.array` 自动 JSON.parse，联合类型到这就还是字符串 → 在这里归一（唯一一处）。
+  const kvList = (v: string | string[] | undefined): string[] => {
+    if (v === undefined) return [];
+    if (Array.isArray(v)) return v;
+    const raw = v.trim();
+    if (raw.startsWith("[")) {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed) || parsed.some((x) => typeof x !== "string")) {
+        throw new Error(`应为字符串数组或单个 "k=v"，实得 ${JSON.stringify(v)}`);
+      }
+      return parsed as string[];
+    }
+    return [raw];
+  };
+
+  binding.on(app.flow.list, async ({ input }) => ({
+    workflows: flow.listFlowDefinitions(),
+    ...(input.instances ? { instances: flow.listFlowInstances() } : {}),
+  }));
+  binding.on(app.flow.show, async ({ input }) => flow.showFlow(input.uri));
+  binding.on(app.flow.start, async ({ input }) => {
+    if (!input.workflow) {
+      throw new Error(`缺 --workflow <id>（可用：${flow.listFlowDefinitions().map((w) => w.id).join(" / ")}）`);
+    }
+    return flow.startFlow(input.uri, input.workflow, kvList(input.param));
+  });
+  binding.on(app.flow.advance, async ({ input }) => {
+    if (!input.to) throw new Error("缺 --to <节点 id>");
+    return flow.advanceFlow(input.uri, input.to, kvList(input.ref), input.note);
+  });
+  binding.on(app.flow.bounce, async ({ input }) => {
+    if (!input.to) throw new Error("缺 --to <节点 id>");
+    return flow.bounceFlow(input.uri, input.to, kvList(input.ref), input.note);
+  });
+  binding.on(app.flow.params.get, async ({ input }) => flow.paramsGet(input.uri));
+  binding.on(app.flow.params.set, async ({ input }) => flow.paramsSet(input.uri, kvList(input.param)));
+  binding.on(app.flow.prompt, async ({ input }) => flowPrompt(input.uri));
 
   // ── seed ──
   binding.on(app.seed.run, async () => {

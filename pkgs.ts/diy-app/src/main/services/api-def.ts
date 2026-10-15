@@ -202,6 +202,68 @@ export const SteerItemSchema = z.object({
   created: z.string(),
 });
 
+/** ── 工作流（##319）──────────────────────────────────────────────
+ * 形状与 core/flow.ts 的视图一一对应。注意：**outputSchema 运行期不校验**（只用于类型推导，
+ * 见 pit.rpc-output-schema），故这里写的是契约、不是闸门 —— 改 handler 出参时两边一起改。 */
+/** 当前节点（hint 已经内核 `renderHint` 插值 —— 宿主不再自己拼字符串） */
+const FlowNodeSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  actor: z.string(),
+  hint: z.string(),
+});
+/** 一条出边：「卡在哪条边」的数据源 */
+const FlowEdgeSchema = z.object({
+  to: z.string(),
+  toName: z.string(),
+  kind: z.enum(["next", "bounce"]),
+  when: z.string().nullable(),
+});
+/** 折线上一次驻留（领域事实：node/seq/kind/at + 宿主关联 ref） */
+const FlowVisitSchema = z.object({
+  node: z.string(),
+  seq: z.number(),
+  kind: z.enum(["next", "bounce"]),
+  at: z.string(),
+  ref: z.record(z.string(), z.string()).optional(),
+});
+/** 实例视图（show / start / advance / bounce / params.set 同一份回执形状） */
+const FlowViewSchema = z.object({
+  uri: z.string(),
+  workflowId: z.string(),
+  workflowName: z.string(),
+  entry: z.string(),
+  entered: z.boolean(),
+  position: z.string().nullable(),
+  node: FlowNodeSchema.nullable(),
+  done: z.boolean(),
+  bounces: z.number(),
+  next: z.object({
+    mode: z.enum(["entry", "system", "actor"]).describe("下一手是谁：entry=尚未进入，system=系统自动推，actor=等人宣布"),
+    pending: z.array(z.string()).describe("不可观测（prompt:）的 guard —— 等人宣布，系统判不了"),
+    edges: z.array(FlowEdgeSchema),
+  }),
+  trajectory: z.array(FlowVisitSchema),
+  params: z.record(z.string(), z.any()).describe("L2 参数值（权威 = 任务目录 flow/state.json）"),
+  paramsSchema: z.array(z.any()).describe("参数声明（内核 paramsOf 的 schema，供表单/文档渲染）"),
+  files: z.object({
+    dir: z.string(),
+    instance: z.string(),
+    state: z.string(),
+    path: z.string(),
+    events: z.string(),
+  }),
+  auditSkipped: z.number().describe("审计流里跳过（解析失败）的行数 —— 审计坏了只报数，不阻断运行"),
+});
+
+/**
+ * 「多个 `k=v`」型 CLI 入参：JSON 数组（与既有 array 选项同形，parser 会 JSON.parse）或单个裸值。
+ *
+ * ⚠️ 必须是**工厂**不是共享常量：`cliOption` 的元数据注册在 `_unwrap()`（剥掉 optional 后的那层）上，
+ * 共用一个 schema 对象会让后注册的 desc 覆盖前面每个使用点（help 文案串台）。
+ */
+const kvList = () => z.union([z.string(), z.array(z.string())]);
+
 export const apiDef = RpcSchema.router({
   diy: RpcSchema.group({
     desc: `
@@ -1255,6 +1317,8 @@ export const apiDef = RpcSchema.router({
         },
       }),
 
+
+
       seed: RpcSchema.group({
         desc: `初始数据种入（preview/lab 空数据根；幂等，已存在不动）`,
         children: {
@@ -1262,6 +1326,121 @@ export const apiDef = RpcSchema.router({
             desc: `种入最小可用数据：opencode-go 模型配置 + 缺省人物（mimo-v2.6-flash）+ 示例项目与任务`,
             input: {},
             output: SeedReportSchema,
+          }),
+        },
+      }),
+
+      flow: RpcSchema.group({
+        desc: `工作流实例（与任务绑定；状态真源 = 任务目录 flow/state.json，见 ##319）`,
+        children: {
+          list: RpcSchema.unary({
+            desc: `列出可用工作流定义（--instances 改为扫盘列出已绑定的实例）`,
+            input: {
+              instances: z.boolean().optional().cliOption({ desc: "改为列出各任务上的实例（含位置）" }),
+            },
+            output: z.object({
+              workflows: z.array(
+                z.object({
+                  id: z.string(),
+                  name: z.string(),
+                  entry: z.string(),
+                  nodes: z.number(),
+                  edges: z.number(),
+                }),
+              ),
+              instances: z
+                .array(
+                  z.object({
+                    uri: z.string(),
+                    workflowId: z.string(),
+                    position: z.string().nullable(),
+                    error: z.string().optional(),
+                  }),
+                )
+                .optional(),
+            }),
+          }),
+
+          show: RpcSchema.unary({
+            desc: `看实例：当前节点 + 折线 + 出边 + 参数值（含 state.json 与 path.jsonl 的对账，不一致即报）`,
+            input: {
+              uri: z.string().cliArg({ desc: "任务 URI（projects/<pid>/tasks/<tid>）" }),
+            },
+            output: FlowViewSchema,
+          }),
+
+          start: RpcSchema.unary({
+            desc: `建实例：绑定工作流 + 参数值过内核闸门（**不自动进入**入口，首次 advance 才进入）`,
+            input: {
+              uri: z.string().cliArg({ desc: "任务 URI" }),
+              workflow: z.string().optional().cliOption({ desc: "工作流 id（见 `diy flow list`）" }),
+              param: kvList().optional().cliOption({ desc: "参数值 `节点 id.局部名=值`（缺省用声明里的 default）" }),
+            },
+            output: FlowViewSchema,
+          }),
+
+          advance: RpcSchema.unary({
+            desc: `推进：走 next 边（首次 = 进入入口节点；不许跳步）`,
+            input: {
+              uri: z.string().cliArg({ desc: "任务 URI" }),
+              to: z.string().optional().cliOption({ desc: "目标节点 id" }),
+              ref: kvList().optional().cliOption({ desc: "宿主关联（写进 Visit.ref）" }),
+              note: z.string().optional().cliOption({ desc: "审计正文的后缀备注（不参与领域态）" }),
+            },
+            output: FlowViewSchema,
+          }),
+
+          bounce: RpcSchema.unary({
+            desc: `打回：走 bounce 边（目标节点再驻留一次，不新建节点）`,
+            input: {
+              uri: z.string().cliArg({ desc: "任务 URI" }),
+              to: z.string().optional().cliOption({ desc: "目标节点 id" }),
+              ref: kvList().optional().cliOption({ desc: "宿主关联（写进 Visit.ref）" }),
+              note: z.string().optional().cliOption({ desc: "审计正文的后缀备注" }),
+            },
+            output: FlowViewSchema,
+          }),
+
+          params: RpcSchema.group({
+            desc: `实例参数值（权威 = flow/state.json）`,
+            children: {
+              get: RpcSchema.unary({
+                desc: `看参数值 + 参数声明（供表单 / 文档渲染）`,
+                input: { uri: z.string().cliArg({ desc: "任务 URI" }) },
+                output: z.object({
+                  uri: z.string(),
+                  workflowId: z.string(),
+                  workflowName: z.string(),
+                  authority: z.string().describe("权威文件（state.json 的绝对路径）"),
+                  entered: z.boolean(),
+                  values: z.record(z.string(), z.any()),
+                  schema: z.array(z.any()),
+                  defaults: z.record(z.string(), z.any()),
+                }),
+              }),
+              set: RpcSchema.unary({
+                desc: `改参数值（**只在尚未进入时**允许：换配置 = 另起一次运行）`,
+                input: {
+                  uri: z.string().cliArg({ desc: "任务 URI" }),
+                  param: kvList().optional().cliOption({ desc: "新的参数值（未给的项回落声明里的 default）" }),
+                },
+                output: FlowViewSchema,
+              }),
+            },
+          }),
+
+          prompt: RpcSchema.unary({
+            desc: `按当前节点装配提示词（hint 内核插值 + 既有 prompt-registry 渲染；只读）`,
+            input: { uri: z.string().cliArg({ desc: "任务 URI" }) },
+            output: z.object({
+              uri: z.string(),
+              workflowId: z.string(),
+              nodeId: z.string(),
+              nodeName: z.string(),
+              hint: z.string().describe("插值后的节点提示（内核 renderHint）"),
+              prompt: z.string().describe("装配结果（prompt-registry 渲染的节）"),
+              bytes: z.number(),
+            }),
           }),
         },
       }),
