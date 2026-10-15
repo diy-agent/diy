@@ -10,7 +10,9 @@
 // 故本文件钉两条**反向**行为（防止"顺手加个超时"把定案改回去）：
 //   ① 无观察者 + 长时间无进展 → **不回收**（signal 不被 abort、轮次仍在 activeTurnList）；
 //   ② 可见性数据源：`watchers` = chat 流消费端 + op 订阅（UI 打开会话 = 有人在看），
-//      断开 chat 流后 op 订阅仍计（[5] ##308 的 `subscribers` 由它算）。
+//      断开 chat 流后 op 订阅仍计（[5] ##308 的 `subscribers` 由它算）；
+//   ③ RPC 形态断开（卡在 `await next()`、无 op 窗口）→ chat 流订阅**即时**释放（不许滞留到
+//      下一帧）—— review1-R1：chat 自己那条订阅也接了 RPC 的 `signal`（与 ops-feed 同修法）。
 //
 // 无网络、无 Electron：vi.mock("ai") 吐两个 token 后挂起等 abort（与 stop-cut 同手法）。
 // ═══════════════════════════════════════════════════════════════
@@ -83,6 +85,34 @@ async function startThenDetach(uri: string, mgr: LocalAgentManager): Promise<voi
   await it.return({ failed: false } as never);
 }
 
+
+/** 消费到首个 delta 后确认"不再有新 op"—— 返回时生成器停在 `await next()`（q 已空） */
+async function consumeToQuiet(gen: AsyncGenerator<{ op: string }>): Promise<void> {
+  let seenDelta = false;
+  for (let i = 0; i < 40; i++) {
+    const r = await gen.next();
+    if (r.done) return;
+    if (r.value.op === "delta") seenDelta = true;
+    if (seenDelta) {
+      // 再等 40ms 看是否还有 op；没有则视为排空（注意这次 next() 会留下悬挂的请求）
+      const more = await Promise.race([gen.next().then((x) => ({ x })), sleep(40).then(() => null)]);
+      if (more === null) return;
+      if (more.x.done) return;
+    }
+  }
+}
+
+/** 挂一个**不 await** 的 next()：RPC 层真实形态就是一直 await 下一个 op。断言它在窗口内不 resolve */
+async function parkOnNext(gen: AsyncGenerator<{ op: string }>): Promise<void> {
+  let resolved = false;
+  void gen.next().then((r) => {
+    resolved = true;
+    return r;
+  });
+  await sleep(60);
+  expect(resolved, "生成器应卡在 await next()（q 已空）").toBe(false);
+}
+
 describe("轮次不随消费端断开而死（##305）", () => {
   it("无观察者且长时间无进展 → **不回收**（不设时间超时）；仍由主动停止收尾且留痕", async () => {
     const uri = newUri();
@@ -122,5 +152,33 @@ describe("轮次不随消费端断开而死（##305）", () => {
 
     mgr.cancel(uri); // 清场
     await sleep(60);
+  });
+
+  it("RPC 形态断开（卡在 await next()、无 op 窗口）→ chat 流订阅**即时**释放（review1-R1/R7）", async () => {
+    const uri = newUri();
+    const mgr = new LocalAgentManager();
+    const ac = new AbortController();
+    const gen = mgr.chat(uri, "会挂住的轮次", undefined, undefined, ac.signal) as unknown as AsyncGenerator<{ op: string }>;
+
+    // 排空已产出的 op —— 生成器随即停在 `await next()`（RPC 真实形态：一直 await 下一个 op）
+    await consumeToQuiet(gen);
+    expect(mgr.watchers(uri), "断开前 chat 流订阅在").toBe(1);
+
+    await parkOnNext(gen);
+    // 传输断开：abort（signal = 第二条出口）+ 不 await 的 return（排在悬挂的 next() 之后）
+    const ret = gen.return({ failed: false } as never);
+    ac.abort();
+    await sleep(80);
+
+    expect(mgr.watchers(uri), "无 op 窗口断开 → 订阅必须即时释放（不许滞留到下一帧）").toBe(0);
+    expect(
+      activeTurnList().some((t) => t.taskUri === uri),
+      "断开只退订，轮次仍在跑（##305 核心语义）",
+    ).toBe(true);
+
+    mgr.cancel(uri); // 清场：唯一"停"入口
+    await Promise.race([ret, sleep(500)]);
+    await sleep(60);
+    expect(activeTurnList().some((t) => t.taskUri === uri)).toBe(false);
   });
 });

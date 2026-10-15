@@ -344,7 +344,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
 
   // —— agent.local —— 本地自定义 agent（ai-sdk 块协议，与 ACP 独立）
-  binding.on(app.agent.local.chat, async function* ({ input }) {
+  binding.on(app.agent.local.chat, async function* ({ input, signal }) {
     noteRendererTouch("diy.agent.local.chat", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     const agent = getLocalAgent();
@@ -353,7 +353,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
       agent.steerAdd(input.taskUri, input.mode, input.message);
       return;
     }
-    for await (const op of agent.chat(input.taskUri, input.message, input.model, input.reasoningEffort)) {
+    // signal：客户端断开（刷新/切页/杀 CLI）时即时退订 run.subs —— 缺了它，「无 op 产出期间断开」要
+    // 等到下一条 op 才释放订阅（return() 排在悬挂的 next() 之后），`subscribers` 会虚高（[5] ##308）。
+    for await (const op of agent.chat(input.taskUri, input.message, input.model, input.reasoningEffort, signal)) {
       yield JSON.stringify(op);
     }
   });
