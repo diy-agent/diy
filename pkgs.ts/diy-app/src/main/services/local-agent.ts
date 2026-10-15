@@ -42,6 +42,7 @@ import {
     danglingStopPatches,
     interruptedToolPatches,
     projectAll,
+    replay,
     selectHistoryByBudget,
     selectForDelivery,
     type DeliveryOpts,
@@ -680,10 +681,13 @@ function scanOpsFile(taskUri: string): OpsScan {
     return { ops, turnOffsets, turnOpIndex, turnBytes, totalBytes: offset };
 }
 
-/** 一组 op → 规模快照（messages 用真实投影，bytes 用 JSON 字节 —— 与真发口径一致） */
-function sizeOfOps(ops: readonly Op[], opts?: Parameters<typeof blocksToMessages>[1]): SizeSnapshot {
-    const store = new BlockStore();
-    for (const op of ops) store.apply(op);
+/**
+ * 块树 → 规模快照（messages 用真实投影，bytes 用 JSON 字节 —— 与真发口径一致）。
+ * ⚠️ 收 **store** 而不是 op 数组（##321）：调用方（`planCompact`）手里已经有折好的块树，
+ *    再让它按 op 重建一遍 = 对同一份会话白折一次（78MB 会话实测每次 ~1.3s，两处叠加）。
+ *    `blocksToMessages` 只读块树（不回写），故复用安全。
+ */
+function sizeOfStore(store: BlockStore, opts?: Parameters<typeof blocksToMessages>[1]): SizeSnapshot {
     const msgs = blocksToMessages(store, opts);
     const bytes = utf8Bytes(msgs.map((m) => JSON.stringify(m)).join("\n"));
     // ⚠️ `turns` 必须按**投递口径**数，不能拿 `listTurnIds(ops)`（那是全部轮的个数）。
@@ -1602,8 +1606,8 @@ export class LocalAgentManager {
             keptFromTurnId !== null ? (scan.turnOpIndex.get(keptFromTurnId) ?? -1) : scan.ops.length;
 
         const clipped: ClippedToolDetail[] = [];
-        const before = sizeOfOps(scan.ops);
-        const after = sizeOfOps(scan.ops, optsFor(policy, clipped));
+        const before = sizeOfStore(store);
+        const after = sizeOfStore(store, optsFor(policy, clipped));
 
         const droppedDetail = droppedIds.map((id) =>
             describeTurn(store, id, scan.turnOffsets.get(id) ?? 0, scan.turnBytes.get(id) ?? 0),
@@ -1640,6 +1644,10 @@ export class LocalAgentManager {
         policy: CompactPolicy | null,
         keptFromTurnId: string | null | undefined,
         summaryOverride?: string,
+        /** 调用方**手里已有同一份会话折好的块树**时传入（`compactPreview` 一次算 base/mod 两份视图）：
+         *  省掉两遍「整读 + 解析 + 折叠」—— 这是「一份 78MB 文件被读三遍」的那两遍（##321）。
+         *  只读复用：`buildHistory` 只投影（`blocksToMessages` / `projectAll` 均不回写块树）。 */
+        storeInput?: BlockStore,
     ): RequestView {
         const home = diyHome();
         const globals = assembleGlobals(home, projectFromUri(taskUri), { taskUri }) as unknown as Record<string, unknown>;
@@ -1647,8 +1655,7 @@ export class LocalAgentManager {
         const { cwd } = resolveCwdWithNote(home, taskUri);
         const L = this.getLimits();
         const tools = buildTools(cwd, L, taskUri);
-        const store = new BlockStore();
-        for (const op of readJsonl<Op>(opsFile(taskUri))) store.apply(op);
+        const store = storeInput ?? replay(readJsonl<Op>(opsFile(taskUri)));
         // 与真发**同一条链**（含压缩注记）：面板里的"压缩后预览"就是这一份
         const history = withRuntime(
             this.deliveryHistoryForView(store, policy, taskUri),
@@ -1730,16 +1737,19 @@ export class LocalAgentManager {
     /** 压缩预览（只算不写）：面板左侧参数 + 右侧请求 YAML diff + 事实表的数据源 */
     compactPreview(taskUri: string, policyInput: unknown, summaryText?: string): CompactPreview {
         const p = this.planCompact(taskUri, policyInput);
+        // 一次算两份视图（base/mod）→ 复用 planCompact 刚折好的块树：整读 + 解析 + 折叠只做一次。
+        // 同步链路内文件不会变，且投影只读（不回写块树），故两份视图看到的是**同一份**历史。
+        const store = p.store;
         // base = **未压缩**的投递（全量历史、无注记）—— 配置 / 历史分离后，"当前配置"就是 mod，
         // 拿它当 base 会得出"无差异"。预览的价值是看"这次压缩**去掉/改了什么**"，故 base 取全量。
-        const base = this.buildRequestView(taskUri, null, undefined);
+        const base = this.buildRequestView(taskUri, null, undefined, undefined, store);
         // 勾选摘要但尚未生成 → 用占位骨架（让用户先看见"会得到什么"，且不花一分钱）
         const sum = p.policy.summary
             ? summaryText !== undefined
                 ? summaryText
                 : this.effectiveSummary(taskUri) || summaryPlaceholder(emptySummary(p.droppedIds.length))
             : "";
-        const mod = this.buildRequestView(taskUri, p.policy, p.keptFromTurnId, sum);
+        const mod = this.buildRequestView(taskUri, p.policy, p.keptFromTurnId, sum, store);
         const inputRate = costOf(base.model, p.after.estTokens)?.input ?? 0;
         return {
             policy: p.policy,

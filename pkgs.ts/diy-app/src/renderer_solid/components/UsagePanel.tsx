@@ -507,7 +507,9 @@ const pctCell = (v: number | null, prompt: number | null) =>
  * · hover 弹构成卡（三段估算 + 总量精确）；卡上「明细 →」打开构成报表（总/分两表）。
  * 数据链：turn patch 的 contextParts（main 每步真发时记字节）+ 账本 prompt —— 不做 hover 现算。
  */
-export function WindowRing() {
+export function WindowRing(props: { uri: string | null }) {
+    // ⚠️ 一律用**本页的 uri**（props.uri），不用 `localChatStore.currentUri`：后者在组件挂载那一刻
+    //    还指着**上一个会话**，于是"切到别的会话"会拿旧 uri 白算一遍（##321 现象二）。
     const w = () => currentWindow(localChatStore.trees);
     /** 无数据也显示环（0%）—— 用户 2026-10-07：「无数据时应显示 0%」，不是整块消失 */
     const win = () => w() ?? { total: 0, contextLimit: 0, rate: 0, prompt: null, parts: null };
@@ -516,7 +518,7 @@ export function WindowRing() {
     const [busy, setBusy] = createSignal(false);
     /** 直接压缩一次（用当前配置的预算）—— 用户 2026-10-07「点后直接压缩，不要弹到详情页」 */
     const apply = async () => {
-        const u = localChatStore.currentUri;
+        const u = props.uri;
         if (!u) return;
         setBusy(true);
         try {
@@ -534,7 +536,9 @@ export function WindowRing() {
     let closeT: ReturnType<typeof setTimeout> | undefined;
 
     /** 当前生效预算（字节）—— 取配置真源 `auto-compact.yaml` 的 policy.modeData.budgetBytes */
-    const [budget] = createResource(() => localChatStore.currentUri, async (u) => {
+    // 门槛 = 卡或抽屉真的开着：本组件常挂（会话页脚常驻），无门槛则**每次切会话页**都白打一次
+    // `autoCompactStatus`（##321 复核补记的次级成本；非主因，但同属"抽屉关着也算"）。
+    const [budget] = createResource(() => (open() || drawerOpen() ? props.uri : null), async (u) => {
         if (!u) return null;
         const st = (await localChatStore.autoCompactStatus(u)) as {
             config?: { policy?: { modeData?: { budgetBytes?: number }; budgetBytes?: number } };
@@ -698,7 +702,7 @@ export function WindowRing() {
                     </div>
                 </Portal>
             </Show>
-            <ContextPartsDrawer open={drawerOpen()} onClose={() => setDrawerOpen(false)} />
+            <ContextPartsDrawer open={drawerOpen()} uri={props.uri} onClose={() => setDrawerOpen(false)} />
         </>
     );
 }
@@ -710,12 +714,12 @@ export function WindowRing() {
  * · 分表 = 按步列表（步时间到秒 + 轮 id + 该步 prompt 与执行时窗口 + 压缩点位；数量/占比同样 3+3）
  * 单元格口径：数量 = 字节÷4 估（~）；占比 = 该段 ÷ 同行 prompt；– = 未落盘构成（本版前的记录）。
  */
-export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }) {
+export function ContextPartsDrawer(props: { open: boolean; uri: string | null; onClose: () => void }) {
     const [view, setView] = createSignal<"compact" | "total" | "step">("compact");
     // 打开对账一次账本 + Escape 自管（stopPropagation：别把别的抽屉连带关了）
     createEffect(() => {
         if (!props.open) return;
-        const u = localChatStore.currentUri;
+        const u = props.uri;
         if (u) void localChatStore.refreshUsage(u);
         void refetchCompactEvents();
         const onKey = (e: KeyboardEvent) => {
@@ -729,14 +733,16 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
     });
     const steps = () => localChatStore.usage;
     const groups = () => groupByTurn(steps());
-    /** 压缩面板控制器（供 tab 栏执行按钮 + 压缩 tab 内容共享） */
-    const ctl = useCompactPanel(() => localChatStore.currentUri ?? "");
+    /** 压缩面板控制器（供 tab 栏执行按钮 + 压缩 tab 内容共享）。
+     *  第二个参数 = **成本闸门**：抽屉关着时组件仍挂在树上，不加门槛则任何会话页一打开
+     *  就全量算一次压缩预案（78MB 会话 8~16s 卡住 main，见 ##321）。 */
+    const ctl = useCompactPanel(() => props.uri ?? "", () => props.open);
 
     // ─── M4：压缩点位（分表按步标注「哪次请求被压过」）───
     // 【用户 2026-10-08】压缩可能发生在**一轮中间** ⇒ 用**轮次总表**表达不了「哪个请求压过」，
     // 必须落在**分表（按步）**：一步 = 一次请求。判据 = 该步 ts 是该压缩事件之后的**第一步**。
     const [compactEvents, { refetch: refetchCompactEvents }] = createResource(
-        () => (props.open ? localChatStore.currentUri : null),
+        () => (props.open ? props.uri : null),
         async (u) => (u ? ((await localChatStore.compactEvents(u)) as CompactEventRecord[]) : []),
     );
     /** 展开的压缩点位（键 = `<turnId>#<step>`；同时只开一个） */
