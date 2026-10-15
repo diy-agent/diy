@@ -26,6 +26,10 @@
 //      **产物不是领域态** —— 不进 `state.json`、不产生 `path.jsonl` 增量、删了不影响 `advance` / `show` / 对账；
 //      坏袋也**不拖垮领域读**：`flow show` 照常出整页（`view: null` + `viewError` 亮错），
 //      只有**产物专读**的 `flow view` 仍亮错（##337 review1 P2-B）
+//  11. ##341 起定义升级为 **7 节点**（`clarify→design→implement⇄review→ci→approve(human)→merge`）+
+//      **驱动**命令（`flow step` 系统推 / `flow run` 驱动环）；驱动那两条的用例在
+//      `tests/cli.intent.flow-run.test.ts`。本文件里钉着旧形状的断言按新形状更新
+//      （入口 implement→clarify、折线多 clarify/design 两跳、参数多一组 `merge.*`）—— **每例意图不变**。
 //
 // 每个用例自建 project / task，自删；共享的只有隔离 Electron 基础设施。
 // ═══════════════════════════════════════════════════════════════
@@ -63,6 +67,17 @@ async function freshTask(name: string): Promise<string> {
     return `projects/${pid}/tasks/1`;
 }
 
+/**
+ * 从入口逐跳走到目标节点（##341 起入口是 `clarify`：折线上要先过 clarify / design）。
+ * 传一串节点 id，按序 `advance`。
+ */
+async function advanceTo(uri: string, ...nodes: string[]): Promise<void> {
+    for (const node of nodes) {
+        const r = await fx.sh.run(`./diy.sh flow advance ${uri} --to ${node}`);
+        expect(r.code, `到 ${node} 的推进应成功：${r.stdout}${r.stderr}`).toBe(0);
+    }
+}
+
 /** `flow/` 下的文件路径（存储布局是契约的一部分，用例直接按路径核对） */
 function flowFile(uri: string, name: string): string {
     return join(fx.HOME, uri, "flow", name);
@@ -75,7 +90,8 @@ describe("flow list", () => {
         const r = await fx.sh.getJson(`./diy.sh flow list`);
         const workflows = (r.data as Record<string, unknown>)["workflows"] as Array<Record<string, unknown>>;
         expect(workflows.map((w) => w["id"])).toEqual(["dev"]);
-        expect(workflows[0]).toMatchObject({ name: "开发工作流", entry: "implement", nodes: 3, edges: 3 });
+        // ##341：入口 = clarify，7 节点（6 节点形状 + 1 个人工审批点）、7 条边
+        expect(workflows[0]).toMatchObject({ name: "开发工作流", entry: "clarify", nodes: 7, edges: 7 });
         // --instances 缺省不出现（缺省只列定义，扫盘是显式请求）
         expect((r.data as Record<string, unknown>)["instances"]).toBeUndefined();
 
@@ -97,14 +113,18 @@ describe("flow start", () => {
             uri,
             workflowId: "dev",
             workflowName: "开发工作流",
-            entry: "implement",
+            entry: "clarify",
             entered: false,
             position: null,
             node: null,
             done: false,
             bounces: 0,
         });
-        expect(v["params"]).toEqual({ review: { reviewers: 3, maxBounces: 2 }, ci: { command: "./sha.sh check" } });
+        expect(v["params"]).toEqual({
+            review: { reviewers: 3, maxBounces: 2 },
+            ci: { command: "./sha.sh check" },
+            merge: { command: "gh pr view --json mergeable,state -q .mergeable", apply: false },
+        });
         expect(v["next"]).toEqual({ mode: "entry", pending: [], edges: [], terminal: false });
         // 四份文件（存储布局是契约）；权威快照里就有参数值
         for (const f of FLOW_FILES) expect(existsSync(flowFile(uri, f)), `缺 ${f}`).toBe(true);
@@ -157,7 +177,7 @@ describe("flow start", () => {
         expect((shown["params"] as Record<string, Record<string, unknown>>)["review"]?.["reviewers"]).toBe(4);
 
         // 已进入：换工作流 / 换配置 = 另起一次运行 ⇒ 拒（要重来只能清 flow/ 目录）
-        await fx.sh.run(`./diy.sh flow advance ${uri} --to implement`);
+        await advanceTo(uri, "clarify");
         const late = await fx.sh.run(`./diy.sh flow start ${uri} --workflow dev`);
         expect(late.code).not.toBe(0);
         expect(`${late.stdout}\n${late.stderr}`).toMatch(/已进入工作流/);
@@ -174,16 +194,17 @@ describe("flow advance / bounce", () => {
         expect(bad.code).not.toBe(0);
         expect(`${bad.stdout}\n${bad.stderr}`).toMatch(/首次推进只能进入入口节点/);
 
-        const entry = await fx.sh.getJson(`./diy.sh flow advance ${uri} --to implement`);
+        // 入口 = clarify（##341 起）
+        const entry = await fx.sh.getJson(`./diy.sh flow advance ${uri} --to clarify`);
         const v0 = entry.data as Record<string, unknown>;
-        expect(v0).toMatchObject({ entered: true, position: "implement", done: false, bounces: 0 });
-        expect((v0["node"] as Record<string, unknown>)["hint"]).toBe("在 worktree 里改完、自测过再宣布提交 Review。");
+        expect(v0).toMatchObject({ entered: true, position: "clarify", done: false, bounces: 0 });
+        expect((v0["node"] as Record<string, unknown>)["hint"]).toContain("把需求澄清到没有歧义");
         // 谁该动作 + 可走的边（「卡在哪条边」的数据源）
         expect(v0["next"]).toEqual({
             mode: "actor",
-            pending: ["prompt:dev_done"],
-            edges: [{ to: "review", toName: "Review", kind: "next", when: null }],
-            terminal: false, // implement 还有 next 出边 ⇒ 不是终端
+            pending: ["prompt:requirement_clear"],
+            edges: [{ to: "design", toName: "设计", kind: "next", when: null }],
+            terminal: false, // 还有 next 出边 ⇒ 不是终端
         });
 
         // 跳步：no-edge
@@ -191,9 +212,12 @@ describe("flow advance / bounce", () => {
         expect(jump.code).not.toBe(0);
         expect(`${jump.stdout}\n${jump.stderr}`).toMatch(/不许跳步/);
 
-        // 推进到 review：hint 里的 `${reviewers}` 由内核插值成 2
-        const r = await fx.sh.getJson(`./diy.sh flow advance ${uri} --to review --ref turnId=t1`);
-        const v1 = r.data as Record<string, unknown>;
+        // 一路推进到 review：hint 里的 `${reviewers}` 由内核插值成 2
+        const r = await fx.sh.getJson(`./diy.sh flow advance ${uri} --to design`);
+        expect((r.data as Record<string, unknown>)["position"]).toBe("design");
+        await advanceTo(uri, "implement");
+        const r1 = await fx.sh.getJson(`./diy.sh flow advance ${uri} --to review --ref turnId=t1`);
+        const v1 = r1.data as Record<string, unknown>;
         expect(v1["position"]).toBe("review");
         expect((v1["node"] as Record<string, unknown>)["hint"]).toContain("按 2 人评审");
         expect((v1["next"] as Record<string, unknown>)["edges"]).toEqual([
@@ -202,8 +226,13 @@ describe("flow advance / bounce", () => {
         ]);
         // 折线 = 领域事实（node/seq/kind + 宿主 ref），次序看数组下标
         const traj = v1["trajectory"] as Array<Record<string, unknown>>;
-        expect(traj.map((t) => `${t["node"]}#${t["seq"]}/${t["kind"]}`)).toEqual(["implement#1/next", "review#1/next"]);
-        expect(traj[1]?.["ref"]).toMatchObject({ taskUri: uri, turnId: "t1" });
+        expect(traj.map((t) => `${t["node"]}#${t["seq"]}/${t["kind"]}`)).toEqual([
+            "clarify#1/next",
+            "design#1/next",
+            "implement#1/next",
+            "review#1/next",
+        ]);
+        expect(traj[3]?.["ref"]).toMatchObject({ taskUri: uri, turnId: "t1" });
         // `show` 与 `advance` 的回执形状同源（同一份视图）
         const shown = (await fx.sh.getJson(`./diy.sh flow show ${uri}`)).data as Record<string, unknown>;
         expect(shown["position"]).toBe("review");
@@ -213,13 +242,13 @@ describe("flow advance / bounce", () => {
     it("bounce 走 bounce 边（目标节点再驻留 seq=2）；走 next 边拒；未进入拒", async () => {
         const uri = await freshTask("bounce");
         await fx.sh.run(`./diy.sh flow start ${uri} --workflow dev`);
-        // 未进入就打回：无从打回
-        const early = await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement`);
+        // 未进入就打回：无从打回（目标取**入口节点** —— 打在别的节点上会先撞
+        // 「首次推进只能进入入口」那条闸，测不到「未进入」这一支）
+        const early = await fx.sh.run(`./diy.sh flow bounce ${uri} --to clarify`);
         expect(early.code).not.toBe(0);
         expect(`${early.stdout}\n${early.stderr}`).toMatch(/尚未进入工作流/);
 
-        await fx.sh.run(`./diy.sh flow advance ${uri} --to implement`);
-        await fx.sh.run(`./diy.sh flow advance ${uri} --to review`);
+        await advanceTo(uri, "clarify", "design", "implement", "review");
 
         // review → ci 是 next 边，只能用 advance
         const wrong = await fx.sh.run(`./diy.sh flow bounce ${uri} --to ci`);
@@ -237,6 +266,8 @@ describe("flow advance / bounce", () => {
         const traj = v["trajectory"] as Array<Record<string, unknown>>;
         // 打回**不新建节点**：目标节点再驻留一次（seq 递增）
         expect(traj.map((t) => `${t["node"]}#${t["seq"]}/${t["kind"]}`)).toEqual([
+            "clarify#1/next",
+            "design#1/next",
             "implement#1/next",
             "review#1/next",
             "implement#2/bounce",
@@ -256,12 +287,18 @@ describe("flow params", () => {
         const g = (await fx.sh.getJson(`./diy.sh flow params get ${uri}`)).data as Record<string, unknown>;
         expect(g["authority"]).toBe(flowFile(uri, "state.json"));
         expect(g["entered"]).toBe(false);
-        expect(g["values"]).toEqual({ review: { reviewers: 4, maxBounces: 2 }, ci: { command: "./sha.sh check" } });
+        expect(g["values"]).toEqual({
+            review: { reviewers: 4, maxBounces: 2 },
+            ci: { command: "./sha.sh check" },
+            merge: { command: "gh pr view --json mergeable,state -q .mergeable", apply: false },
+        });
         // schema / defaults 来自定义（供表单 / 文档渲染）
         expect((g["schema"] as Array<Record<string, unknown>>).map((s) => s["path"])).toEqual([
             "review.reviewers",
             "review.maxBounces",
             "ci.command",
+            "merge.command",
+            "merge.apply",
         ]);
         expect((g["defaults"] as Record<string, unknown>)["review"]).toEqual({ reviewers: 1, maxBounces: 2 });
 
@@ -271,7 +308,7 @@ describe("flow params", () => {
         expect(JSON.parse(readFileSync(flowFile(uri, "state.json"), "utf-8")).params.review.reviewers).toBe(5);
 
         // 进入之后：拒（内核同一立场）
-        await fx.sh.run(`./diy.sh flow advance ${uri} --to implement`);
+        await advanceTo(uri, "clarify");
         const late = await fx.sh.run(`./diy.sh flow params set ${uri} --param 'review.reviewers=1'`);
         expect(late.code).not.toBe(0);
         expect(`${late.stdout}\n${late.stderr}`).toMatch(/参数值不可改/);
@@ -282,10 +319,9 @@ describe("flow 存储对账", () => {
     it("state.json 与 path.jsonl 不一致 ⇒ 亮错（不静默择一）；审计流删掉不影响运行", async () => {
         const uri = await freshTask("store");
         await fx.sh.run(`./diy.sh flow start ${uri} --workflow dev`);
-        await fx.sh.run(`./diy.sh flow advance ${uri} --to implement`);
-        await fx.sh.run(`./diy.sh flow advance ${uri} --to review`);
+        await advanceTo(uri, "clarify", "design", "implement", "review");
         const okLines = readFileSync(flowFile(uri, "path.jsonl"), "utf-8").trim().split("\n");
-        expect(okLines.length).toBe(3); // config + 两次 advance
+        expect(okLines.length).toBe(5); // config + 四次 advance
 
         // 审计流是 cache 性质：删掉之后照样跑（且 run 里没有「审计缺失」的噪声判定）
         rmSync(flowFile(uri, "events.jsonl"));
@@ -314,8 +350,7 @@ describe("flow prompt", () => {
         expect(none.code).not.toBe(0);
         expect(`${none.stdout}\n${none.stderr}`).toMatch(/尚未进入/);
 
-        await fx.sh.run(`./diy.sh flow advance ${uri} --to implement`);
-        await fx.sh.run(`./diy.sh flow advance ${uri} --to review`);
+        await advanceTo(uri, "clarify", "design", "implement", "review");
         const r = (await fx.sh.getJson(`./diy.sh flow prompt ${uri}`)).data as Record<string, unknown>;
         expect(r["nodeId"]).toBe("review");
         expect(r["hint"]).toContain("按 2 人评审");
@@ -331,15 +366,17 @@ describe("flow 终态与收尾", () => {
     it("终端节点：next.terminal 亮（结构事实）、advance/bounce 都无路；finish 宣布收尾后 done 才亮", async () => {
         const uri = await freshTask("terminal");
         await fx.sh.run(`./diy.sh flow start ${uri} --workflow dev --param 'review.reviewers=2'`);
-        await fx.sh.run(`./diy.sh flow advance ${uri} --to implement`);
+        await advanceTo(uri, "clarify", "design", "implement");
         // 非终端节点：还有 next 出边 ⇒ terminal 为假
         const atImplement = (await fx.sh.getJson(`./diy.sh flow show ${uri}`)).data as Record<string, unknown>;
         expect((atImplement["next"] as Record<string, unknown>)["terminal"]).toBe(false);
 
-        await fx.sh.run(`./diy.sh flow advance ${uri} --to review`);
-        const ci = (await fx.sh.getJson(`./diy.sh flow advance ${uri} --to ci`)).data as Record<string, unknown>;
+        // ##341 起的终端节点是 merge（ci → approve(human) → merge 都是 next 边）
+        await advanceTo(uri, "review", "ci", "approve", "merge");
+        const ci = (await fx.sh.getJson(`./diy.sh flow show ${uri}`)).data as Record<string, unknown>;
         const next = ci["next"] as Record<string, unknown>;
-        // 结构事实：没有 next 出边 ⇒ terminal；而 done 还没亮（内核那条判定在 prompt: guard 下走不到）
+        // 结构事实：没有 next 出边 ⇒ terminal；而 done 还没亮（`merge` 的 guard 是 action:，要系统去求值）
+        expect(ci["position"]).toBe("merge");
         expect(next["terminal"]).toBe(true);
         expect(next["edges"]).toEqual([]);
         expect(ci["done"]).toBe(false);
@@ -383,7 +420,7 @@ describe("flow 终态与收尾", () => {
         expect(early.code).not.toBe(0);
         expect(`${early.stdout}\n${early.stderr}`).toMatch(/尚未进入/);
 
-        await fx.sh.run(`./diy.sh flow advance ${uri} --to implement`);
+        await advanceTo(uri, "clarify", "design", "implement");
         const mid = await fx.sh.run(`./diy.sh flow finish ${uri}`);
         expect(mid.code).not.toBe(0);
         expect(`${mid.stdout}\n${mid.stderr}`).toMatch(/还有 next 出边/);
@@ -428,7 +465,7 @@ describe("flow 产物与视图下发（art + render 插件）", () => {
     it("放 raw → view 的 renderer 与声明一致（插件翻译）；`doc` 的 payload 必须是 `{ text }`（不是裸字符串）", async () => {
         const uri = await freshTask("artifact");
         await fx.sh.run(`./diy.sh flow start ${uri} --workflow dev`);
-        await fx.sh.run(`./diy.sh flow advance ${uri} --to implement`);
+        await advanceTo(uri, "clarify", "design", "implement");
 
         // 还没放产物：声明在（art）、结果是 null —— **缺项不是错**（产物不是领域态，本就不必存在）
         const empty = (await fx.sh.getJson(`./diy.sh flow view ${uri}`)).data as Record<string, unknown>;
@@ -484,7 +521,7 @@ describe("flow 产物与视图下发（art + render 插件）", () => {
     it("多次驻留各取各的：打回后第 2 次驻留的产物 ≠ 第 1 次；缺项为 null", async () => {
         const uri = await freshTask("artifact-seq");
         await fx.sh.run(`./diy.sh flow start ${uri} --workflow dev`);
-        await fx.sh.run(`./diy.sh flow advance ${uri} --to implement`);
+        await advanceTo(uri, "clarify", "design", "implement");
         const f1 = join(fx.HOME, "t337-review1.json");
         writeFileSync(f1, JSON.stringify({ columns: ["项", "结论"], rows: [["落点", "P0 未落"]] }), "utf-8");
         await fx.sh.run(`./diy.sh flow advance ${uri} --to review`);
@@ -519,7 +556,7 @@ describe("flow 产物与视图下发（art + render 插件）", () => {
     it("拒：袋坏（亮错，不静默当「没产物」）· 内容空 · 未知节点 · 没驻留过 / seq 越界 · 非形状 URI", async () => {
         const uri = await freshTask("artifact-bad");
         await fx.sh.run(`./diy.sh flow start ${uri} --workflow dev`);
-        await fx.sh.run(`./diy.sh flow advance ${uri} --to implement`);
+        await advanceTo(uri, "clarify", "design", "implement");
         const good = join(fx.HOME, "t337-good.txt");
         writeFileSync(good, "一段文本", "utf-8");
         const wrongShape = join(fx.HOME, "t337-wrong.json");
@@ -572,7 +609,7 @@ describe("flow 产物坏袋不拖垮领域读（##337 review1 P2-B）", () => {
     it("坏袋 ⇒ `show` 照常出整页（view:null + viewError 亮错、带路径与出路）；`flow view` 仍亮错", async () => {
         const uri = await freshTask("artifact-bagerror");
         await fx.sh.run(`./diy.sh flow start ${uri} --workflow dev`);
-        await fx.sh.run(`./diy.sh flow advance ${uri} --to implement`);
+        await advanceTo(uri, "clarify", "design", "implement");
         const good = join(fx.HOME, "t337-bage-left.diff");
         writeFileSync(good, "-旧\n+新\n", "utf-8");
         await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node implement --file ${good}`);
@@ -589,7 +626,7 @@ describe("flow 产物坏袋不拖垮领域读（##337 review1 P2-B）", () => {
         const view = shown.data as Record<string, unknown>;
         expect(view["position"]).toBe("implement"); // 领域事实照常
         expect(view["next"]).toBeDefined(); // 出边照常
-        expect(view["trajectory"]).toEqual([expect.objectContaining({ node: "implement", seq: 1 })]);
+        expect((view["trajectory"] as unknown[]).at(-1)).toMatchObject({ node: "implement", seq: 1 });
         expect(view["art"]).toMatchObject({ renderer: "diff" }); // 声明照常（它来自定义，不来自袋）
         expect(view["view"]).toBeNull();
         // 错误位：把话说清（袋的路径 + 出路），不静默降级成「没产物」
@@ -626,7 +663,7 @@ describe("flow 产物不是领域态", () => {
     it("放产物不动 state.json / path.jsonl；删掉袋不影响 advance / show / 对账", async () => {
         const uri = await freshTask("artifact-nostate");
         await fx.sh.run(`./diy.sh flow start ${uri} --workflow dev`);
-        await fx.sh.run(`./diy.sh flow advance ${uri} --to implement`);
+        await advanceTo(uri, "clarify", "design", "implement");
         const stateBefore = readFileSync(flowFile(uri, "state.json"), "utf-8");
         const pathBefore = readFileSync(flowFile(uri, "path.jsonl"), "utf-8");
 
