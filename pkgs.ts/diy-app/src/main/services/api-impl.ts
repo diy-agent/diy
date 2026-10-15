@@ -972,6 +972,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     if (!input.to) throw new Error("缺 --to <节点 id>");
     return flow.bounceFlow(input.uri, input.to, kvList(input.ref), input.note);
   });
+  binding.on(app.flow.finish, async ({ input }) => flow.finishFlow(input.uri, input.note));
   binding.on(app.flow.params.get, async ({ input }) => flow.paramsGet(input.uri));
   binding.on(app.flow.params.set, async ({ input }) => flow.paramsSet(input.uri, kvList(input.param)));
   binding.on(app.flow.prompt, async ({ input }) => flowPrompt(input.uri));

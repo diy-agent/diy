@@ -236,12 +236,19 @@ const FlowViewSchema = z.object({
   entered: z.boolean(),
   position: z.string().nullable(),
   node: FlowNodeSchema.nullable(),
-  done: z.boolean(),
+  done: z.boolean().describe(
+    "工作流是否已跑完（领域事实 FlowState.done）：本版唯一来源是 `diy flow finish`（宣布收尾）—— 节点 guard 全是 prompt:，内核 step 的终态分支走不到",
+  ),
   bounces: z.number(),
   next: z.object({
-    mode: z.enum(["entry", "system", "actor"]).describe("下一手是谁：entry=尚未进入，system=系统自动推，actor=等人宣布"),
+    mode: z
+      .enum(["entry", "system", "actor"])
+      .describe("下一手是谁：entry=尚未进入，actor=等人宣布。system（系统自动推）本版不会出现 —— 它要有 pred:/action: 插件，本版 guard 全是 prompt:"),
     pending: z.array(z.string()).describe("不可观测（prompt:）的 guard —— 等人宣布，系统判不了"),
     edges: z.array(FlowEdgeSchema),
+    terminal: z
+      .boolean()
+      .describe("结构事实：已进入且当前位置没有 next 出边 ⇒ 往前无路可走（bounce 边不算下一步）。与内核 execute.ts 的 done 判据同一条结构事实"),
   }),
   trajectory: z.array(FlowVisitSchema),
   params: z.record(z.string(), z.any()).describe("L2 参数值（权威 = 任务目录 flow/state.json）"),
@@ -1317,8 +1324,6 @@ export const apiDef = RpcSchema.router({
         },
       }),
 
-
-
       seed: RpcSchema.group({
         desc: `初始数据种入（preview/lab 空数据根；幂等，已存在不动）`,
         children: {
@@ -1370,11 +1375,20 @@ export const apiDef = RpcSchema.router({
           }),
 
           start: RpcSchema.unary({
-            desc: `建实例：绑定工作流 + 参数值过内核闸门（**不自动进入**入口，首次 advance 才进入）`,
+            desc: `建实例：绑定工作流 + 参数值过内核闸门（**不自动进入**入口，首次 advance 才进入；已有**未进入**实例会被重写，已进入则拒 —— 换工作流/换配置 = 另起一次运行）`,
             input: {
               uri: z.string().cliArg({ desc: "任务 URI" }),
               workflow: z.string().optional().cliOption({ desc: "工作流 id（见 `diy flow list`）" }),
               param: kvList().optional().cliOption({ desc: "参数值 `节点 id.局部名=值`（缺省用声明里的 default）" }),
+            },
+            output: FlowViewSchema,
+          }),
+
+          finish: RpcSchema.unary({
+            desc: `收尾：宣布实例已走完（置 done）。**只允许在结构终端节点上**（没有 next 出边）；guard 那一半由宣布者担责（prompt: 不可观测）`,
+            input: {
+              uri: z.string().cliArg({ desc: "任务 URI" }),
+              note: z.string().optional().cliOption({ desc: "审计正文的后缀备注（不参与领域态）" }),
             },
             output: FlowViewSchema,
           }),

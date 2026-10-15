@@ -11,13 +11,18 @@
 //      都过一遍 `createRuntime`，拿它合并缺省后的**全量**值去落盘（`rule.params-in-state`）。
 //   3. **换参数值 = 另起一次运行**（内核同一立场）：已进入的实例不许改参数值，只允许「尚未进入」时改
 //      —— 这正对应遗留观察 **O-1**（`position === null` 却带 `params` 的态）；本版据此实现，**不改内核**。
+//   4. **`done` 由宿主「宣布收尾」置位**（`finishFlow`，##319 review1 P2-B）：内核把 `done` 只交给
+//      `runtime.step` 的终态分支（guard 全过 + 无 next 出边），而本版 guard 全是 `prompt:` ⇒ 那条分支走不到。
+//      宿主于是把同一件事拆成两半：**结构那一半系统核**（必须真无 `next` 出边）、**guard 那一半宣布者担责**
+//      （`prompt:` 不可观测，与 `declare` 同一立场）。仍是原地加标记，**不改内核**。
 //
 // 命令语义（比内核更严一档，避免「两条命令都能走同一条边」的模糊）：
 //   `advance` 只走 `next` 边；`bounce` 只走 `bounce` 边。首次推进必须落到入口节点（内核 `invalid-entry`）。
 
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
+import { TASK_URI_RE } from "../../shared/task-uri";
 import {
     createRegistry,
     createRuntime,
@@ -31,10 +36,11 @@ import {
     type WorkflowDef,
 } from "@diy/flow";
 import { listWorkflows, workflowById, workflowIds, type WorkflowSummary } from "../workflows";
-import { projectsRoot, taskExists } from "./state";
+import { diyHome, projectsRoot, taskDir, taskExists } from "./state";
 import {
     appendAudit,
     appendPathRecord,
+    applyFinish,
     assertSnapshotMatches,
     flowDir,
     flowFile,
@@ -62,7 +68,8 @@ export interface FlowEdgeView {
  * 「下一手是谁 / 有哪些路可走」。
  *
  * ⚠️ `mode` / `pending` 来自内核 `status()`（**只读分类，不调用插件**）：本版所有 guard 都是
- * `prompt:`（不可观测）⇒ 节点恒为 `actor`（等人宣布）。「系统在边上卡住」（guard 求值不过、
+ * `prompt:`（不可观测）⇒ 节点恒为 `actor`（等人宣布），`system` 本版**不会出现**（要它得有
+ * `pred:` / `action:` 插件，见 `workflows/dev.ts` 头注）。「系统在边上卡住」（guard 求值不过、
  * 又无可用的 bounce 边）是后续任务的事 —— 那时才会出现 `system` 模式与 `stuck`。
  */
 export interface FlowNextView {
@@ -70,6 +77,15 @@ export interface FlowNextView {
     /** 等人宣布的 guard 原文（`prompt:xxx`）；内核 `status().pending` 给的是解析后的 `GuardRef`，这里取 `raw` */
     readonly pending: string[];
     readonly edges: FlowEdgeView[];
+    /**
+     * **结构事实**：已进入、且当前位置**没有 `next` 出边** ⇒ 往前无路可走（`bounce` 边不算「下一步」）。
+     *
+     * 内核对「跑完」的判据就是这条结构事实（`execute.ts`：guard 全过 + 无 `next` 出边 ⇒ `done`）。
+     * 本版 guard 全是 `prompt:`（不可观测）⇒ 内核那条判定走不到、`done` 不会自己亮，于是视图至少要把
+     * 「结构上走到头了」说清楚（UI 靠它说「这条工作流到此收尾」，而不是照 `done` 撒谎）。
+     * `false` = 要么还没进入，要么还能 `advance`。
+     */
+    readonly terminal: boolean;
 }
 
 /** 实例视图（`diy flow show` 的载荷） */
@@ -82,6 +98,13 @@ export interface FlowView {
     readonly entered: boolean;
     readonly position: string | null;
     readonly node: { readonly id: string; readonly name: string; readonly actor: string; readonly hint: string } | null;
+    /**
+     * 工作流是否已跑完（领域事实 `FlowState.done`）。
+     *
+     * 来源只有两个：内核 `runtime.step` 的终态分支（本版走不到 —— guard 全是 `prompt:`），
+     * 与宿主 `diy flow finish`（**宣布收尾**，要求当前节点结构上确无 `next` 出边）。故 `done === true`
+     * 与 `next.terminal === true` 在当前实现里同时成立；`terminal` 是**结构**、`done` 是**已宣布**。
+     */
     readonly done: boolean;
     /** 折线上已有的打回次数（内核 `status()` 的只读分类） */
     readonly bounces: number;
@@ -107,8 +130,33 @@ function requireDef(id: string): WorkflowDef<string> {
     return def;
 }
 
-function requireTask(uri: string): void {
+/**
+ * URI 形状闸门（##319 review1 P3-A）—— **单点**：`loadInstance`（读/推进/打回/参数）与 `requireTask`
+ * （`start`）都先过它，别处不许再各自判。
+ *
+ * 两道判据，缺一不可：
+ *   · **形状** —— `projects/<pid>/tasks/<tid>`，用 `shared/task-uri.ts` 的**唯一**正则（别处不重写；
+ *     历史教训见该文件头注：两份正则口径不同 ⇒ 静默写到别的项目目录去）；
+ *   · **落点仍在数据根之内** —— 光靠正则不够：`projects/../evil/tasks/1` 逐段都「非斜杠」⇒ 正则放行，
+ *     而 `taskDir` 一 `join` 就逸出数据根（`flow/` 四份文件会被写/读在 `$DIY_HOME` 之外；
+ *     review 的探针正是这么读到数据根外的）。故按**解析后的相对路径**再判一次：以 `..` 开头或绝对路径即拒。
+ *
+ * 本地 CLI 没有权限边界，所以这是 P3 不是 P2 —— 但「报错说 URI 不对、实际写到别处去」这种不一致，
+ * 不值得留给下一个读 `did flow show ../../x` 的人去发现。
+ */
+function requireUriShape(uri: string): void {
     if (!uri) throw new Error("任务 URI 不能为空（形如 projects/<pid>/tasks/<tid>）");
+    if (!TASK_URI_RE.test(uri)) {
+        throw new Error(`任务 URI 形状应为 projects/<pid>/tasks/<tid>，实得 ${JSON.stringify(uri)}`);
+    }
+    const rel = relative(diyHome(), taskDir(uri));
+    if (rel.startsWith("..") || isAbsolute(rel)) {
+        throw new Error(`任务 URI 解析后逸出数据根：${JSON.stringify(uri)} → ${taskDir(uri)}（数据根 ${diyHome()}）`);
+    }
+}
+
+function requireTask(uri: string): void {
+    requireUriShape(uri);
     if (!taskExists(uri)) throw new Error(`任务不存在：${uri}（先 \`diy task create <标题> <projectId>\`）`);
 }
 
@@ -123,6 +171,7 @@ export interface LoadedInstance {
  * 对账不通过 ⇒ 亮错（`assertSnapshotMatches` 抛），绝不拿一份可能分歧的状态继续跑。
  */
 export function loadInstance(uri: string): LoadedInstance {
+    requireUriShape(uri);
     const binding = readBinding(uri);
     if (!binding) {
         throw new Error(`任务 ${uri} 没有工作流实例（先 \`diy flow start ${uri} --workflow <id>\`）`);
@@ -162,6 +211,9 @@ function viewOf(uri: string, def: WorkflowDef<string>, state: FlowState<string>)
         when: e.when ?? null,
     }));
     const audit = readAudit(uri);
+    // 终态判据 = **没有 `next` 出边**（与内核 execute.ts 的 `done` 判据同一条结构事实）；
+    // 未进入时不算终态（`outEdges` 为空只是因为没位置，不代表走完）。
+    const hasNext = status.outEdges.some((e) => e.kind === "next");
     return {
         uri,
         workflowId: def.id,
@@ -173,7 +225,7 @@ function viewOf(uri: string, def: WorkflowDef<string>, state: FlowState<string>)
         node: node ? { id: node.id, name: node.name, actor: node.actor, hint: renderHint(node, params) } : null,
         done: status.done,
         bounces: status.bounces,
-        next: { mode: status.mode, pending: status.pending.map((ref) => ref.raw), edges },
+        next: { mode: status.mode, pending: status.pending.map((ref) => ref.raw), edges, terminal: state.position !== null && !hasNext },
         trajectory: [...state.path],
         params: { ...params },
         paramsSchema: [...paramsOf(def).schema],
@@ -337,7 +389,7 @@ export function startFlow(uri: string, workflowId: string, paramArgs: readonly s
         const prior = readState(uri);
         if (prior && prior.position !== null) {
             throw new Error(
-                `任务 ${uri} 已有实例且**已进入**工作流（position = ${prior.position}）：` +
+                `任务 ${uri} 已有实例且已进入工作流（position = ${prior.position}）：` +
                     `换工作流 / 换参数值 = 另起一次运行，本版不提供重建命令 —— 要重来请清掉 ${flowDir(uri)}（先确认不再需要这份轨迹）`,
             );
         }
@@ -378,6 +430,59 @@ export function bounceFlow(uri: string, to: string, refArgs: readonly string[] =
     requireEdge(def, state.position, to, "bounce");
     const ref = { taskUri: uri, ...parseRefArgs(refArgs) };
     return commit(uri, def, state, to, "bounce", ref, note);
+}
+
+/**
+ * 收尾：**宣布**这个实例已走完（置 `FlowState.done`）—— `diy flow finish <uri>`。
+ *
+ * 为什么需要它（##319 review1 P2-B）：`done` 只由内核 `runtime.step` 的终态分支置位，而本版节点
+ * guard **全是 `prompt:`（不可观测）** ⇒ `step` 在①分类即返回 `awaiting-actor`，那条分支**永不进入**
+ * ⇒ 走到终端节点后 `done` 恒 false、也没有任何命令能表达「走完」，而 `show` 仍报 `mode: 'actor'`
+ * —— 对外契约（`FlowView.done` / api-def 的 `done: z.boolean()`）等于撒谎。二选一里取「补终态语义」。
+ *
+ * 两半各自归位（**不改内核**）：
+ *   · **结构那一半由系统核** —— 判据与内核同一条结构事实：当前位置**没有 `next` 出边**。还有 next 出边
+ *     就不是终端节点，「走完」在那儿是假话 ⇒ 直接拒（先 `advance` / `bounce` 走到终端）。
+ *   · **guard 那一半由宣布者担责** —— `prompt:` 不可观测，谁能断言它成立？与 `declare` 同一立场：
+ *     宣布者。本版唯一操作入口是 CLI，审计里记 `author = "cli"`。
+ *
+ * 不做的事：不重跑 `action:`（本版没有插件）、不改位置（`done` 不是位置变更 —— 内核自己也是原地加标记）、
+ * 不动 `params`（收尾不改运行配置）。
+ */
+export function finishFlow(uri: string, note?: string): FlowView {
+    const { def, state } = loadInstance(uri);
+    if (state.position === null) {
+        throw new Error(`实例尚未进入工作流（${uri}）：没跑过就无所谓「走完」—— 先 \`diy flow advance ${uri} --to <入口节点>\``);
+    }
+    if (state.done === true) {
+        throw new Error(`实例已收尾（done = true，位置 = ${state.position}）：重复收尾没有意义`);
+    }
+    const outs = def.edges.filter((e) => e.from === state.position);
+    const nextEdges = outs.filter((e) => e.kind === "next");
+    if (nextEdges.length > 0) {
+        throw new Error(
+            `节点「${nodeNameOf(def, state.position)}」（${state.position}）还有 next 出边：` +
+                `${nextEdges.map((e) => e.to).join(" / ")} —— 不是终端节点，「走完」在这里是假话` +
+                `（先 \`diy flow advance\` 到终端节点，或 \`diy flow bounce\`）`,
+        );
+    }
+    const at = new Date().toISOString();
+    const next = applyFinish(state);
+    // 与 commit 同一落盘次序：先权威快照、再重建材料、最后审计（中途崩最坏是「快照多一条增量少一条」⇒ 对账亮错）
+    writeState(uri, next);
+    appendPathRecord(uri, { op: "finish", at });
+    const tail = note && note.trim() !== "" ? `（${note.trim()}）` : "";
+    appendAudit(uri, {
+        id: randomUUID(),
+        at,
+        kind: "finish",
+        from: state.position,
+        to: state.position,
+        author: "cli",
+        content: `收尾：节点「${nodeNameOf(def, state.position)}」没有 next 出边，宣布工作流走完${tail}`,
+        ref: { taskUri: uri },
+    });
+    return viewOf(uri, def, next);
 }
 
 /** 看参数值（`state.json` 是权威；schema 来自定义，供表单/文档渲染） */
