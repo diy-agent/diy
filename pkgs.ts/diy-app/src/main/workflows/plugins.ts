@@ -12,6 +12,11 @@
 // 范围（第一版，##337）：**只有 `render` 一个槽有实现**。`guard` 全是 `prompt:`（不可观测）、
 // 没有 `pred:`/`action:`/`notify`，故其余四槽一个都不注册（见 `workflows/dev.ts` 头注）。
 //
+// ⚠️ 「直吃 raw」（节点 `art.plugin` 留空）只有一种合法含义：**raw 本身已经是该 renderer 的 data**
+//    （##337 review1 P2-A）—— 宿主不替它包一层，UI 拿到的 `payload` 就是 raw。
+//    故「raw 是纯文本」**不等于**「`doc` 的 data」（那是 `{ text: string }`）：文本类节点必须挂下面
+//    的 `text` 插件包一层。声明错了（裸字符串配 `doc`）是**定义侧**的错，不是 UI 该兜的。
+//
 // ⚠️ 内核**从不调用** `render` 槽（`rg "resolve\('render'" pkgs.ts/diy-flow/src` 零命中）：
 //    槽位与 `parseView` 校验是内核给的，**什么时候译、拿哪份 raw 去译是宿主的决定** ——
 //    调用点唯一：`core/flow.ts` 的 `translateArtifact`（见那里的立场：无产物 ⇒ null，坏 ⇒ 抛）。
@@ -20,6 +25,10 @@
 // 绝不静默降级（`registry.ts` 头注：插件名打错一个字而静默降级，工作流会悄悄偏到另一条路上）。
 
 import { createRegistry, type PluginRegistry, type RenderPlugin, type View } from '@diy/flow';
+// ⚠️ `ViewData<'…'>` 就是「这个 renderer 要吃的 data 形状」（真源 = `@diy/flow` 的 `view.ts`，##318）。
+//    下面每个插件都用它给 payload 站岗：**插件产出**与**渲染器消费**因此由 `tsc` 对齐 ——
+//    ##337 review1 P2-A 正是这条缝（声明 `doc`、却把裸文本当 `DocData`），当时没有任何一道机器判据管它。
+import type { DiffData, DocData, TableData } from '@diy/flow';
 
 /** 把 raw 里「本该是字符串」的部分取出来（翻不了就抛，交给宿主 `callPlugin` 包成 `plugin-threw`） */
 function asText(data: unknown, plugin: string): string {
@@ -32,10 +41,10 @@ function asText(data: unknown, plugin: string): string {
 }
 
 /**
- * `patch` —— raw 是 unified diff 文本 ⇒ 引擎 `diff` 渲染器要吃的 `{ lines }`（`view.ts::DiffData`）。
+ * `patch` —— raw 是 unified diff 文本 ⇒ `diff` 渲染器要吃的 `DiffData` = `{ lines }`（真源 = `@diy/flow` 的 `view.ts`：`ViewData<'diff'>`）。
  *
  * `DiffLine.text` **含或不含行首标记都行**（渲染器只按 `kind` 上色），故这里按首字符分类后**原样保留文本**：
- * 插件只补「加 / 删 / 上下文」这个语义，剥不剥标记是渲染器的事（`view.ts` 的 `DiffLine` 头注）。
+ * 插件只补「加 / 删 / 上下文」这个语义，剥不剥标记是渲染器的事。
  */
 const patch: RenderPlugin = (data): View => {
     const text = asText(data, 'patch');
@@ -53,7 +62,8 @@ const patch: RenderPlugin = (data): View => {
     }));
     // 末尾换行会多切出一个空行；diff 里它没有语义，去掉（只在**最后一个**是空串时）
     if (lines.length > 1 && lines[lines.length - 1]!.text === '') lines.pop();
-    return { renderer: 'diff', payload: { lines } };
+    const payload: DiffData = { lines };
+    return { renderer: 'diff', payload };
 };
 
 /** 一行记录的取值：数组行原样当 cells；对象行按列序取值（缺列 ⇒ 空串，值一律 String —— table 只吃字符串） */
@@ -69,7 +79,7 @@ function cellsOf(row: unknown, columns: readonly string[] | undefined, plugin: s
 }
 
 /**
- * `records` —— raw 是「若干条记录」的清单 ⇒ 引擎 `table` 要吃的 `{ columns?, rows }`（`view.ts::TableData`）。
+ * `records` —— raw 是「若干条记录」的清单 ⇒ `table` 渲染器要吃的 `TableData` = `{ columns?, rows }`（真源 = `@diy/flow` 的 `view.ts`：`ViewData<'table'>`）。
  *
  * 认两种 raw：`{ columns?, rows }` 或**裸数组**（= 只有 rows，列序取第一行的键序）。
  * 「评审判定 / 检查项 / 打回意见」这类产物天然是这个形状，故它是第一版最用得上的翻译器。
@@ -88,7 +98,23 @@ const records: RenderPlugin = (data): View => {
     }
     const columns = Array.isArray(rawColumns) ? rawColumns.map((c: unknown) => String(c)) : undefined;
     const rows = rawRows.map((row) => ({ cells: cellsOf(row, columns, 'records') }));
-    return columns === undefined ? { renderer: 'table', payload: { rows } } : { renderer: 'table', payload: { columns, rows } };
+    const payload: TableData = columns === undefined ? { rows } : { columns, rows };
+    return { renderer: 'table', payload };
+};
+
+/**
+ * `text` —— raw 是**一段纯文本**（CI 日志 / 正文 / 说明）⇒ `doc` 渲染器要吃的 `{ text: string }`。
+ *
+ * 为什么非有它不可（##337 review1 P2-A）：`doc` 的 data 是 `DocData` = `{ text }`（真源 =
+ * `@diy/flow` 的 `view.ts`），
+ * **裸字符串不是它** —— 一句 `plugin` 留空就把裸文本当 `doc` 的 data，UI 上只会显示「形状不符」，
+ * 用户永远看不到 CI 输出。纯文本 → `{ text }` 这件事只有行业（= 这里）知道，故它是插件。
+ *
+ * 认两种 raw：裸字符串（管道进来的正文）与已经是 `{ text }` 的对象（幂等，便于二次加工）。
+ */
+const text: RenderPlugin = (data): View => {
+    const payload: DocData = { text: asText(data, 'text') };
+    return { renderer: 'doc', payload };
 };
 
 /**
@@ -98,7 +124,10 @@ const records: RenderPlugin = (data): View => {
  * 名字一旦被实例数据引用就等于公开契约：**只增不改**（改名 = 老产物袋译不出来）。
  */
 export function createRenderRegistry(): PluginRegistry {
-    return createRegistry().register('render', 'patch', patch).register('render', 'records', records);
+    return createRegistry()
+        .register('render', 'patch', patch)
+        .register('render', 'records', records)
+        .register('render', 'text', text);
 }
 
 /** 已注册的 render 插件名（诊断 / 文档用；注册序） */

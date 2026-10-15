@@ -127,10 +127,20 @@ export interface FlowView {
      * 当前节点**当前驻留**（折线最后一条）的产物经 render 插件翻译后的结果（`View`：renderer + payload）。
      *
      * `null` = 该驻留没放产物（**正常态**：产物不是领域态，推进不产生它）。payload 是 `unknown`
-     * —— 宿主**原样透传**，形状校验归 renderer 的消费者（UI 按 `renderer` 收窄，见内核 `view.ts`）。
-     * 袋坏（不是合法 JSON）在这里会**响亮报错**，不降级成 `null`（无 vs 坏不是一回事）。
+     * —— 宿主**原样透传**，形状校验归 renderer 的消费者（UI 按 `renderer` 收窄）。
+     * 产物路**坏**（袋不是合法 JSON / 不是数组 / 声明与翻译不一致）⇒ 仍是 `null`，并把话写进 `viewError`
+     * （**不阻断本命令**：产物是派生数据，`show` 是泳道页唯一的数据源，见 `viewError`）。
      */
     readonly view: View | null;
+    /**
+     * **产物路的错误位**（##337 review1 P2-B）：`null` = 产物路没出错。
+     *
+     * 非空 = 袋坏了 / 声明与翻译不一致 —— 此时 `view` 仍是 `null`，但**位置 / 折线 / 参数照常可用**
+     * （产物不是领域态，不许拖垮领域读）。消息里带**袋的路径与出路**（删掉它不影响推进）。
+     * 「无」与「坏」照样分得清：`view === null && viewError === null` = 没放产物；
+     * `viewError !== null` = 坏了。要**亮错**的场合（人在查产物）用 `diy flow view`（产物专读，仍抛）。
+     */
+    readonly viewError: string | null;
     /** 折线（append-only 的领域事实；次序看数组下标，别信 `at` —— 见内核 serialize.ts 立场） */
     readonly trajectory: Visit<string>[];
     readonly params: Record<string, unknown>;
@@ -241,8 +251,9 @@ function viewOf(uri: string, def: WorkflowDef<string>, state: FlowState<string>)
     const audit = readAudit(uri);
     // 产物（##337）：当前节点 + **当前驻留**（折线最后一条 = 现在这一步）那一份 raw 的翻译结果。
     // 未进入（没有当前节点 / 没有驻留）就没什么可译 —— 声明与结果都给 null（不猜）。
+    // 走**容错版**：产物路坏了只说在 `viewError` 里（##337 review1 P2-B —— 派生数据不许拖垮领域读）。
     const current = currentVisit(state);
-    const artifact = node && current ? artifactAt(uri, def, node.id, current.seq) : EMPTY_ARTIFACT;
+    const artifact = node && current ? tryArtifactAt(uri, def, node.id, current.seq) : EMPTY_ARTIFACT;
     // 终态判据 = **没有 `next` 出边**（与内核 execute.ts 的 `done` 判据同一条结构事实）；
     // 未进入时不算终态（`outEdges` 为空只是因为没位置，不代表走完）。
     const hasNext = status.outEdges.some((e) => e.kind === "next");
@@ -260,6 +271,7 @@ function viewOf(uri: string, def: WorkflowDef<string>, state: FlowState<string>)
         next: { mode: status.mode, pending: status.pending.map((ref) => ref.raw), edges, terminal: state.position !== null && !hasNext },
         art: artifact.art,
         view: artifact.view,
+        viewError: artifact.error,
         trajectory: [...state.path],
         params: { ...params },
         paramsSchema: [...paramsOf(def).schema],
@@ -287,14 +299,23 @@ function viewOf(uri: string, def: WorkflowDef<string>, state: FlowState<string>)
 // 内核**从不调用** `render` 槽（槽位与 `parseView` 是内核给的，调用是宿主的决定）——
 // 全工程的调用点只有下面 `translateArtifact` 一处。
 
-/** 「当前节点 / 当前驻留的产物」三件套；没有可译的产物时三件都是 null / 空 */
+/**
+ * 「当前节点 / 当前驻留的产物」四件套；没有可译的产物时前三件是 null / 空、`error` 也是 null。
+ *
+ * `error` 是**产物路的错误位**（##337 review1 P2-B）：产物不是领域态，它坏了**不许**把领域读
+ * （`flow show` —— 泳道页唯一的数据源）一起拖瘫。故 `viewOf` 走容错版（`tryArtifactAt`）：
+ * 出任何事只把话说在 `error` 里（`view: null`），位置 / 折线 / 参数照常下发；
+ * 而**产物专读**命令（`diy flow view`）仍走严格版（`artifactAt`）**亮错** —— 「无」与「坏」照样分得清。
+ */
 interface ArtifactAt {
     readonly art: Art | null;
     readonly plugin: string | null;
     readonly view: View | null;
+    /** 产物路的错（坏袋 / 声明与翻译不一致 / 插件抛）——`null` = 没错；见上面立场 */
+    readonly error: string | null;
 }
 
-const EMPTY_ARTIFACT: ArtifactAt = { art: null, plugin: null, view: null };
+const EMPTY_ARTIFACT: ArtifactAt = { art: null, plugin: null, view: null, error: null };
 
 /** 折线上最后一条驻留 = **现在这一步**；未进入（折线为空）⇒ null */
 function currentVisit(state: FlowState<string>): Visit<string> | null {
@@ -318,16 +339,18 @@ function anchorOf(nodeId: string): { readonly type: "node"; readonly data: { rea
 }
 
 /**
- * 把袋里那份 raw 翻成 view（##337 的唯一调用点）。三条立场：
+ * 把袋里那份 raw 翻成 view（##337 的**唯一**调用点；导出只为单测能直接构造失配的 `art` ——
+ * 宿主调用点只有本文件）。三条立场：
  *
  *   1. `raw` 缺（越界）或为 `null` ⇒ **无产物** ⇒ `null`。不是错：产物不是领域态，缺项是正常态。
- *   2. `art.plugin` 留空 ⇒ **直吃 raw**：`{ renderer: art.renderer, payload: raw }`。宿主**不替它包一层**
- *      （包法是 UI 侧按 `renderer` 收窄的事，见内核 `view.ts`）—— 只把声明里的 renderer 配上。
+ *   2. `art.plugin` 留空 ⇒ **直吃 raw**：`{ renderer: art.renderer, payload: raw }` —— 但这句话的**唯一**
+ *      合法含义是「**raw 本身已经是该 renderer 的 data**」（##337 review1 P2-A）。宿主不替它包一层：
+ *      纯文本 raw ≠ `doc` 的 data（`{ text }`），要包就**写成插件**（如 `text`），别指望消费侧兜。
  *   3. 挂了插件 ⇒ 内核 `resolve`（未注册即 `unknown-plugin`）+ `callPlugin`（宿主异常→`plugin-threw`）
  *      + `parseView`（形状不对即 `invalid-plugin-result`）；且结果**必须与声明的 renderer 一致**
  *      —— 声明是给 UI 预选渲染器的契约，不一致就是定义在撒谎，宁可当场炸。
  */
-function translateArtifact(uri: string, nodeId: string, art: Art, raw: unknown): View | null {
+export function translateArtifact(uri: string, nodeId: string, art: Art, raw: unknown): View | null {
     if (raw === undefined || raw === null) return null;
     const pluginName = art.plugin ?? null;
     if (pluginName === null) return { renderer: art.renderer, payload: raw };
@@ -344,12 +367,31 @@ function translateArtifact(uri: string, nodeId: string, art: Art, raw: unknown):
     return view;
 }
 
-/** 「节点 + 第 seq 次驻留」→ 三件套（`show` 的 `view` 与 `flow view` 走**同一条链**，不另立一套） */
+/**
+ * 「节点 + 第 seq 次驻留」→ 四件套（`flow view` 走这条**严格版**：产物专读，有问题必须亮出来）。
+ * 与 `tryArtifactAt` 是**同一条链**，只差「产物路的异常谁来接」——不另立一套翻译。
+ */
 function artifactAt(uri: string, def: WorkflowDef<string>, nodeId: string, seq: number): ArtifactAt {
     const art = artOf(def, nodeId);
     if (!art) return EMPTY_ARTIFACT;
     const raw = readArtifacts(uri, nodeId)[seq - 1];
-    return { art, plugin: art.plugin ?? null, view: translateArtifact(uri, nodeId, art, raw) };
+    return { art, plugin: art.plugin ?? null, view: translateArtifact(uri, nodeId, art, raw), error: null };
+}
+
+/**
+ * `artifactAt` 的**容错版**（`flow show` 走它，##337 review1 P2-B）：产物路出任何事都**不外抛**，
+ * 降级成 `error` 位（`view: null`）。
+ *
+ * 理由：产物**不是领域态**（`rule.domain-first`）—— 一份派生数据不该让领域读命令失败。
+ * 对照先例：审计流坏只报 `auditSkipped`（##319），`flow show` 照常出整张泳道页。
+ */
+function tryArtifactAt(uri: string, def: WorkflowDef<string>, nodeId: string, seq: number): ArtifactAt {
+    try {
+        return artifactAt(uri, def, nodeId, seq);
+    } catch (e) {
+        const art = artOf(def, nodeId);
+        return { art, plugin: art?.plugin ?? null, view: null, error: (e as Error).message };
+    }
 }
 
 /** 折线上某节点驻留过几次（= 它的最大 `seq`）；没驻留过 ⇒ 0 */

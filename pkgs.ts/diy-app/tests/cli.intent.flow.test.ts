@@ -20,9 +20,12 @@
 //  10. 产物与视图下发（##337，`flow artifact put` / `flow view`）：节点产物 raw 放袋
 //      （`flow/artifacts/<节点 id>.json`，下标 = 驻留 `seq` − 1）→ render 插件翻成 `{ renderer, payload }`；
 //      **声明（`art`）、数据（袋）、代码（插件）三层各归各位**：`view` 的 renderer 必须与 `art.renderer`
-//      一致；没挂插件的节点**直吃 raw**；袋里缺项 = 无产物（`view: null`，正常态）、**袋坏 = 亮错**
-//      （无 vs 坏不是一回事）；多次驻留各取各的；**产物不是领域态** —— 不进 `state.json`、不产生
-//      `path.jsonl` 增量、删了不影响 `advance` / `show` / 对账
+//      一致；`art.plugin` 留空的**唯一**合法含义 =「raw 本身已经是该 renderer 的 data」（纯文本 raw ≠
+//      `doc` 的 data ⇒ 文本类节点挂 `text` 插件包成 `{ text }`，否则 UI 上只剩「形状不符」）；
+//      袋里缺项 = 无产物（`view: null`，正常态）、**袋坏 = 亮错**（无 vs 坏不是一回事）；多次驻留各取各的；
+//      **产物不是领域态** —— 不进 `state.json`、不产生 `path.jsonl` 增量、删了不影响 `advance` / `show` / 对账；
+//      坏袋也**不拖垮领域读**：`flow show` 照常出整页（`view: null` + `viewError` 亮错），
+//      只有**产物专读**的 `flow view` 仍亮错（##337 review1 P2-B）
 //
 // 每个用例自建 project / task，自删；共享的只有隔离 Electron 基础设施。
 // ═══════════════════════════════════════════════════════════════
@@ -422,7 +425,7 @@ describe("flow URI 闸门", () => {
 });
 
 describe("flow 产物与视图下发（art + render 插件）", () => {
-    it("放 raw → view 的 renderer 与声明一致（插件翻译）；没挂插件的节点直吃 raw", async () => {
+    it("放 raw → view 的 renderer 与声明一致（插件翻译）；`doc` 的 payload 必须是 `{ text }`（不是裸字符串）", async () => {
         const uri = await freshTask("artifact");
         await fx.sh.run(`./diy.sh flow start ${uri} --workflow dev`);
         await fx.sh.run(`./diy.sh flow advance ${uri} --to implement`);
@@ -460,15 +463,22 @@ describe("flow 产物与视图下发（art + render 插件）", () => {
         expect(shown["position"]).toBe("implement");
         expect(shown["view"]).toEqual(put["view"]);
 
-        // 没挂插件（ci 节点）⇒ **直吃 raw**：renderer 取声明，payload 就是 raw 本身（不替它包一层）
+        // ci 节点：raw 是**纯文本**，而 `doc` 渲染器吃的是 `{ text: string }`（**裸字符串不是它**）
+        // ⇒ 必须过 `text` 插件包一层。少了这一步，UI 上的 CI 产物只剩「形状不符」，用户看不到 CI 输出
+        // （##337 review1 P2-A；UI 侧的渲染断言归 ##320）
         await fx.sh.run(`./diy.sh flow advance ${uri} --to review`);
         await fx.sh.run(`./diy.sh flow advance ${uri} --to ci`);
         const ciFile = join(fx.HOME, "t337-ci.txt");
         writeFileSync(ciFile, "./sha.sh check\nEXIT=0\n", "utf-8");
         // `-` = 读 stdin（管道；内容在**调用方进程**读，见 _cli-meta.readFile）
         const ciPut = (await fx.sh.getJson(`cat ${ciFile} | ./diy.sh flow artifact put ${uri} --node ci --file -`)).data as Record<string, unknown>;
-        expect(ciPut).toMatchObject({ node: "ci", seq: 1, plugin: null, view: { renderer: "doc", payload: "./sha.sh check\nEXIT=0\n" } });
-        expect(ciPut["art"]).toMatchObject({ renderer: "doc" });
+        expect(ciPut["art"]).toMatchObject({ renderer: "doc", plugin: "text" });
+        expect(ciPut).toMatchObject({ node: "ci", seq: 1, plugin: "text" });
+        const ciView = ciPut["view"] as Record<string, unknown>;
+        expect(ciView["renderer"]).toBe("doc");
+        // `doc` 的 data（`DocData`）= `{ text: string }`：**不是**裸字符串（这正是 P2-A 卡住的那条缝）
+        expect(ciView["payload"]).toEqual({ text: "./sha.sh check\nEXIT=0\n" });
+        expect(typeof ciView["payload"]).toBe("object"); // 裸字符串就是 P2-A 那个 bug
     });
 
     it("多次驻留各取各的：打回后第 2 次驻留的产物 ≠ 第 1 次；缺项为 null", async () => {
@@ -541,21 +551,74 @@ describe("flow 产物与视图下发（art + render 插件）", () => {
         // 拒 = 一个字节都不写（连 diff 这种「译不出来」的 raw 也拒在写之前：implement 挂的是 patch 插件）
         expect(existsSync(join(fx.HOME, uri, "flow", "artifacts", "implement.json"))).toBe(false);
 
-        // 袋坏：**亮错**并指出路径与出路（删掉它不影响推进），不静默当成「没产物」
+        // 袋坏：**产物专读**（`flow view`）亮错并指出路径与出路（删掉它不影响推进），不静默当「没产物」。
+        // `flow show`（领域读）**不抛** —— 立场见下一节「坏袋不拖垮领域读」（##337 review1 P2-B）
         await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node implement --file ${good}`);
         const bag = join(fx.HOME, uri, "flow", "artifacts", "implement.json");
         writeFileSync(bag, "{ 半截 JSON", "utf-8");
-        for (const cmd of [`./diy.sh flow view ${uri} --node implement`, `./diy.sh flow show ${uri}`]) {
-            const r = await fx.sh.run(cmd);
-            expect(r.code, `$ ${cmd} 应失败`).not.toBe(0);
-            expect(`${r.stdout}\n${r.stderr}`).toContain(bag);
-            expect(`${r.stdout}\n${r.stderr}`).toMatch(/产物袋不是合法 JSON/);
-        }
+        const badView = await fx.sh.run(`./diy.sh flow view ${uri} --node implement`);
+        expect(badView.code).not.toBe(0);
+        expect(`${badView.stdout}\n${badView.stderr}`).toContain(bag);
+        expect(`${badView.stdout}\n${badView.stderr}`).toMatch(/产物袋不是合法 JSON/);
         // 袋不是数组同样亮错
         writeFileSync(bag, JSON.stringify({ raw: "对象不是袋" }), "utf-8");
         const notArray = await fx.sh.run(`./diy.sh flow view ${uri} --node implement`);
         expect(notArray.code).not.toBe(0);
         expect(`${notArray.stdout}\n${notArray.stderr}`).toMatch(/应为 JSON 数组/);
+    });
+});
+
+describe("flow 产物坏袋不拖垮领域读（##337 review1 P2-B）", () => {
+    it("坏袋 ⇒ `show` 照常出整页（view:null + viewError 亮错、带路径与出路）；`flow view` 仍亮错", async () => {
+        const uri = await freshTask("artifact-bagerror");
+        await fx.sh.run(`./diy.sh flow start ${uri} --workflow dev`);
+        await fx.sh.run(`./diy.sh flow advance ${uri} --to implement`);
+        const good = join(fx.HOME, "t337-bage-left.diff");
+        writeFileSync(good, "-旧\n+新\n", "utf-8");
+        await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node implement --file ${good}`);
+        const bag = join(fx.HOME, uri, "flow", "artifacts", "implement.json");
+
+        // 先证「不坏时 show 的产物路是好的」（后面不是本来就空）
+        const ok = (await fx.sh.getJson(`./diy.sh flow show ${uri}`)).data as Record<string, unknown>;
+        expect(ok["viewError"]).toBeNull();
+        expect((ok["view"] as Record<string, unknown>)["renderer"]).toBe("diff");
+
+        // 袋坏 —— **产物不是领域态**：此刻 state.json / path.jsonl 一个字节没动
+        writeFileSync(bag, "{ 半截 JSON", "utf-8");
+        const shown = await fx.sh.getJson(`./diy.sh flow show ${uri}`);
+        const view = shown.data as Record<string, unknown>;
+        expect(view["position"]).toBe("implement"); // 领域事实照常
+        expect(view["next"]).toBeDefined(); // 出边照常
+        expect(view["trajectory"]).toEqual([expect.objectContaining({ node: "implement", seq: 1 })]);
+        expect(view["art"]).toMatchObject({ renderer: "diff" }); // 声明照常（它来自定义，不来自袋）
+        expect(view["view"]).toBeNull();
+        // 错误位：把话说清（袋的路径 + 出路），不静默降级成「没产物」
+        const err = String(view["viewError"]);
+        expect(err).toContain(bag);
+        expect(err).toMatch(/产物袋不是合法 JSON/);
+        expect(err).toMatch(/删掉/); // 出路
+        // 「无」与「坏」分得清：viewError 非空 = 坏；都 null 才是「没放产物」
+        expect(view["viewError"]).not.toBeNull();
+
+        // 产物专读仍**亮错**（人在查产物时必须知道是坏的）
+        const strict = await fx.sh.run(`./diy.sh flow view ${uri} --node implement`);
+        expect(strict.code).not.toBe(0);
+        expect(`${strict.stdout}\n${strict.stderr}`).toContain(bag);
+        expect(`${strict.stdout}\n${strict.stderr}`).toMatch(/产物袋不是合法 JSON/);
+
+        // 袋不是数组同样是「坏」：`show` 还是不失败，只在 viewError 里说
+        writeFileSync(bag, JSON.stringify({ raw: "对象不是袋" }), "utf-8");
+        const notArray = (await fx.sh.getJson(`./diy.sh flow show ${uri}`)).data as Record<string, unknown>;
+        expect(String(notArray["viewError"])).toMatch(/应为 JSON 数组/);
+        expect(notArray["view"]).toBeNull();
+        expect((await fx.sh.run(`./diy.sh flow view ${uri} --node implement`)).code).not.toBe(0);
+
+        // 领域推进不受牵连；换个节点（袋不存在）⇒ viewError 回到 null（错只属于那个坏袋 —— `show`
+        // 只看**当前节点**那一份）
+        const adv = (await fx.sh.getJson(`./diy.sh flow advance ${uri} --to review`)).data as Record<string, unknown>;
+        expect(adv["position"]).toBe("review");
+        expect(adv["view"]).toBeNull();
+        expect(adv["viewError"]).toBeNull();
     });
 });
 

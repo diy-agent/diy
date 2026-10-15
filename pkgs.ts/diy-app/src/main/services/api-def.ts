@@ -231,14 +231,14 @@ const FlowEdgeSchema = z.object({
 const FlowArtSchema = z.object({
   raw: z.string().describe("该节点产物的形状说明（raw 长什么样；行业自己知道）"),
   renderer: FlowRendererSchema,
-  plugin: z.string().nullable().optional().describe("宿主 render 插件名（`diy flow view` 用的就是它）；空 = 直吃 raw"),
+  plugin: z.string().nullable().optional().describe("宿主 render 插件名（`diy flow view` 用的就是它）；空 = 直吃 raw（只在 raw 本身已是该 renderer 的 data 时才合法）"),
   note: z.string().optional(),
 });
 
 /** 一份**译好**的产物视图（内核 `View`）：renderer + 给它的 payload（宿主**原样透传**，不校验形状） */
 const FlowPayloadViewSchema = z.object({
   renderer: FlowRendererSchema,
-  payload: z.any().describe("给该渲染器的数据（形状由 renderer 约定；宿主原样透传 —— 收窄归 UI，见内核 view.ts）"),
+  payload: z.any().describe("给该渲染器的数据（形状由 renderer 约定；宿主原样透传 —— 收窄归 UI）"),
   note: z.string().optional(),
 });
 
@@ -277,6 +277,12 @@ const FlowViewSchema = z.object({
   view: FlowPayloadViewSchema.nullable().describe(
     "当前节点**当前驻留**的产物经 render 插件翻译后的结果（该驻留没放产物 ⇒ null —— 产物不是领域态，缺项是正常态）",
   ),
+  viewError: z
+    .string()
+    .nullable()
+    .describe(
+      "产物路的错误位（null = 没出错）：袋不是合法 JSON / 不是数组 / 声明与翻译不一致时**不阻断本命令**（view 仍为 null，位置与折线照常）—— 产物是派生数据，不许拖垮领域读；要亮错用 `diy flow view`",
+    ),
   trajectory: z.array(FlowVisitSchema),
   params: z.record(z.string(), z.any()).describe("L2 参数值（权威 = 任务目录 flow/state.json）"),
   paramsSchema: z.array(z.any()).describe("参数声明（内核 paramsOf 的 schema，供表单/文档渲染）"),

@@ -13,9 +13,12 @@
 // 「show 报的 pending 是求值过的结果」（可观测 guard 的求值属后续任务）。
 //
 // `art`（##337）：每个节点产物的**展示链** `{ raw, renderer, plugin? }`（内核 §14.7）——
-// `renderer` 是引擎侧九种通用渲染器之一，`plugin` 是宿主注册的 render 插件名（`workflows/plugins.ts`），
-// **留空 = 直吃 raw**（产物本身就是该渲染器要吃的形状，不需要翻译）。宿主不画页面（那是 ##320）：
-// 这里只声明「这一步的产物长什么样、翻给哪个渲染器」，翻译在 `core/flow.ts::translateArtifact`。
+// `renderer` 是引擎侧九种通用渲染器之一，`plugin` 是宿主注册的 render 插件名（`workflows/plugins.ts`）。
+// `plugin` 留空的**唯一**合法含义是「**raw 本身已经是该 renderer 的 data**」（形状真源 = `@diy/flow`
+// 的 `view.ts`：`ViewData<'…'>`；##337 review1 P2-A）：纯文本 raw ≠ `doc` 的 `DocData`（`{ text }`），
+// 故文本类节点必须挂 `text` 插件 —— 本定义三个节点都挂了。
+// 宿主不画页面（那是 ##320）：这里只声明「这一步的产物长什么样、翻给哪个渲染器」，
+// 翻译在 `core/flow.ts::translateArtifact`。
 
 import { defineWorkflow } from '@diy/flow';
 
@@ -54,9 +57,10 @@ export const DEV_WORKFLOW = defineWorkflow({
             guard: ['prompt:ci_done'],
             params: [{ name: 'command', label: 'CI 命令', type: 'string', default: './sha.sh check' }],
             hint: '跑 `${command}`，绿了才算走完。',
-            // 产物 = 命令原始输出（纯文本）。`doc` 渲染器吃的就是 `{ text }`… 但 raw 本身就是那段文本
-            // ⇒ **不挂插件**：直吃 raw（宿主不再替它包一层，包法归 UI 侧按 `renderer` 收窄 —— `view.ts`）
-            art: { raw: 'CI 命令的原始输出（纯文本）', renderer: 'doc' },
+            // 产物 = 命令原始输出（纯文本）。`doc` 渲染器吃的是 `{ text: string }`，**裸字符串不是它**
+            // ⇒ 交 `text` 插件包一层（##337 review1 P2-A：直吃 raw 只在「raw 本身就是该 renderer 的 data」
+            // 时才成立 —— 少了这一步，UI 上的 CI 产物永远显示「形状不符」，用户看不到 CI 输出）
+            art: { raw: 'CI 命令的原始输出（纯文本）', renderer: 'doc', plugin: 'text' },
         },
     ],
     edges: [
