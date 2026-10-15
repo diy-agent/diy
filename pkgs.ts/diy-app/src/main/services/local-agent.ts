@@ -1500,7 +1500,7 @@ export class LocalAgentManager {
      * 三个事实都从现成数据取（零额外请求、零额外模型调用）：
      *   · systemContextChanged —— 当前 system 全文 vs 上一条 steps 快照的 systemText
      *   · sinceLastRequestMs   —— now − 最后一条 usage 的 ts
-     *   · windowRatio          —— 最后一步用量（最后一步 = 窗口占用，见 ##211 §三）/ contextLimit
+     *   · windowTokens         —— 最后一步**实测**用量（最后一步 = 窗口占用，见 ##211 §三）的 token 数
      */
     autoCompactStatus(taskUri: string): {
         config: AutoCompactConfig;
@@ -1521,23 +1521,17 @@ export class LocalAgentManager {
         const usages = readStepUsages(taskUri);
         const last = usages.at(-1) ?? null;
         const sinceLastRequestMs = last ? Date.now() - Date.parse(last.ts) : null;
-        const model = personaForTask(home, taskUri).model;
-        const limit = contextLimitOf(model);
-        // 窗口占用：优先用**实测**（最后一步用量 = 窗口占用的权威口径，见 ##211 §三）；
-        // 没有用量账（老会话 / 手工造的会话）时退回**估算**（当前投递的字节）——
-        // 估不准总比"未知"强：未知会让"窗口超限"这个硬件约束形同虚设。
-        const windowRatio = !limit
-            ? null
-            : last
-              ? bucketsOf(last.usage as UsageLike).total / limit
-              : (delivery.system.bytes + delivery.runtime.bytes + this.deliveryHistory(taskUri, this.sessions.get(taskUri)?.store ?? new BlockStore()).reduce((a, m) => a + JSON.stringify(m).length, 0)) /
-                limit;
+        // 窗口占用（**token 数**）：口径 = 该会话**最后一步实测用量** `usage.total`（真实 token 数，
+        // 最后一步 = 窗口占用，见 ##211 §三；用户 2026-10-15 拍板 token 域，见 ##268 §6.9 D7）。
+        // 没有用量账（老会话 / 手工造的会话）→ null：**无实测不判**，不退回「投影字节」估算
+        // （那是被用户否掉的"文字数"口径；估出来的 token 数只会误导触发时机）。
+        const windowTokens = last ? bucketsOf(last.usage as UsageLike).total : null;
 
         const facts: AutoCompactFacts = {
             systemContextChanged,
             sinceLastRequestMs,
             ttl: this.effectiveTtlOf(taskUri),
-            windowRatio,
+            windowTokens,
         };
         const triggers = detectAutoCompactTriggers(facts, config);
         const raw = { path: autoCompactFile(home), text: readAutoCompactText(home) };
@@ -2748,6 +2742,18 @@ export class LocalAgentManager {
                     this.effectiveSummary(taskUri),
                 ),
             );
+            // 本轮的**投递选择事实**（配置驱动压缩）：分表用它标注「本步（轮首）投递被压过」（##272 B1）。
+            // 与 compact 事件解耦 —— 事件只在触发/手动时写；这里每轮首都有（投递本就无条件按当前配置筛选）。
+            const selPolicy = loadAutoCompact(diyHome()).policy;
+            const allMsgs = projectAll(sess.store);
+            const sel = selectHistoryByBudget(allMsgs, selPolicy.modeData.budgetBytes, optsFor(selPolicy));
+            const historySelection = {
+                budgetBytes: selPolicy.modeData.budgetBytes,
+                keptBytes: sel.keptBytes,
+                keptRuns: sel.keptRuns.length,
+                droppedMessages: sel.dropped.length,
+                totalMessages: allMsgs.length,
+            };
             rawSink({
                 kind: "request",
                 ts: new Date().toISOString(),
@@ -3035,6 +3041,9 @@ export class LocalAgentManager {
                                     rates: rates ? { ...rates, asOf: MODEL_COST_AS_OF } : null,
                                     cost,
                                     contextParts: ctxParts,
+                                    // 投递选择事实**只在轮首**（stepN===1）：一轮只在轮首按当前配置重建投递，
+                                    // 后续步复用同一份历史（##272 B1 / ##321）。
+                                    ...(stepN === 1 ? { historySelection } : {}),
                                 });
                                 yield* emit({
                                     op: "patch",
