@@ -16,19 +16,25 @@
 //   local-agent**（它们描述的是"怎么跑"，不是"有哪些会话"）；`feeds`（op 广播）归 ops-feed
 //   （##307，本任务**不动**）。本表只回答：**有哪些会话、各自现在什么状态、谁在看、排了几条**。
 //
+//   `runtime-context.activeTurns`（「此刻在跑」）**已收敛为本表的投影**（review1 P2-3 选 A）：
+//   它原来是第二份"轮次在跑"的真源，与这里由同一批调用点驱动、随时可能漂移。现在它只剩
+//   `lastRendererTouch`（崩溃现场的另一维），`activeTurnList()` 直接读本模块的 `turn != null`
+//   条目 —— R1「会话事实只存一处」在文字上成立。
+//
 // 【R3 观测不污染】本模块的订阅者（`sessions` / `--watch`）**不计入 `viewers`** ——
 //   `viewers` 只由**内容**订阅者（chat 流 + op 流）构成，答案必须由 local-agent 注入（见 deps）。
 //   否则注册表一开，全库会话都显示「有人看」。
 
 import type { TurnEndReason } from "./local-blocks";
 import { AsyncQueue, withCleanup } from "./async-queue";
+import { opsFeed } from "./ops-feed";
 import { sessionIdOf } from "../core/local-paths";
 import type { RegistryFrame, SessionEntry, SessionRef, SessionTurn } from "../../shared/registry-frame";
 
 export type { RegistryFrame, SessionEntry, SessionRef, SessionTurn };
 
 /**
- * 活态属性的取值器（由 local-agent 注入）。
+ * 活态属性的取值器（由 local-agent **覆盖**，见下方 defaultDeps）。
  *
  * 为什么注入而不是 import local-agent：反向依赖会成环（local-agent 已经要 import 本模块去
  * noteTurnStart）。这两个值**不是注册表的状态**，是"此刻的事实"（R2：状态 ⊥ 内容），
@@ -41,12 +47,35 @@ export interface SessionRegistryDeps {
   queueOf(taskUri: string): number;
 }
 
+/**
+ * 缺省取值器 —— **不是"没有观察者"**。
+ *
+ * `viewers` 的两个来源里，op 流订阅者属于 ops-feed（与 LocalAgentManager 是否实例化无关：
+ * UI 打开某会话只是想看内容时，manager 往往还没被构造出来）。缺省直接问 ops-feed，
+ * 于是"只被打开、没说过话"的会话也能报出真观察者数（review1 P2-1 缺口 C）。
+ * 另一半（chat 流订阅者 `run.subs`）只存在于 manager 里，故 manager 注入的是它的超集。
+ */
+const defaultDeps: SessionRegistryDeps = {
+  viewersOf: (uri) => opsFeed.subscriberCount(uri),
+  queueOf: () => 0, // 待投递留言队列归 manager；manager 未构造 = 没有队列，0 是事实而非占位
+};
+
 /** 注册表内核条目（不含活态属性 viewers / queue —— 那两个是取值器给的） */
 interface CoreEntry {
   /** 内部键（= taskUri）；对外 id 由 sessionIdOf 派生，见 `SessionEntry.id` */
   uri: string;
   refs: SessionRef[];
-  turn: { turnId: string; steps: number; tokens: number; lastOpAt: string } | null;
+  turn: {
+    turnId: string;
+    steps: number;
+    tokens: number;
+    /** 心跳（每步刷新）—— 卡死/无进展判据的输入 */
+    lastOpAt: string;
+    /** 起始时刻（不随步进变）；`agent.local.running.since` 与崩溃现场都读它 */
+    startedAt: string;
+    model?: string;
+    cwd?: string;
+  } | null;
   firstSeenAt: string;
   lastActivity: string;
   turnCount: number;
@@ -60,7 +89,17 @@ class SessionRegistry {
   private entries = new Map<string, CoreEntry>();
   /** 注册表订阅者（**不等于** viewers，R3） */
   private subs = new Set<AsyncQueue<RegistryFrame>>();
-  private deps: SessionRegistryDeps = { viewersOf: () => 0, queueOf: () => 0 };
+  private deps: SessionRegistryDeps = defaultDeps;
+
+  constructor() {
+    // 「谁在看」是活态属性 → 内容订阅者增 / 退必须**变化即推帧**（review1 P2-1 缺口 A/B）：
+    //   ① 订阅发生 = 一次真实的"活跃"（会话被打开）⇒ `noteActivity` 会建档，
+    //      "打开·未通讯"这一格才有东西可显示；
+    //   ② viewers 归零 / 翻 detached 也能在一行内被 `--watch` 看到。
+    // 挂在**内容总线**上而不是 RPC 绑定处：所有内容订阅（UI 窗口 / CLI / 别的 agent）都经它，
+    // 而注册表自身的订阅者不经它 ⇒ R3「观测不污染」天然成立。
+    opsFeed.setSubsChangedListener((uri) => this.noteActivity(uri));
+  }
 
   /** local-agent 启动时注入活态取值器（测试可直接摆桩） */
   setDeps(deps: SessionRegistryDeps): void {
@@ -125,11 +164,26 @@ class SessionRegistry {
 
   // ─── 变更入口（local-agent 驱动显式调用；数据来源是内存态，不靠日志反推）───
 
-  /** 轮次开始：建 turn（steps=0 / tokens=0），条目"见过即留痕" */
-  noteTurnStart(uri: string, opts: { turnId: string; model?: string; cwd?: string }): void {
+  /**
+   * 轮次开始：建 turn（steps=0 / tokens=0），条目"见过即留痕"。
+   *
+   * `turnId` 可省（生成一个）—— 调用方（local-agent）总有真 turnId；省缺只服务"只想表达
+   * 有一轮在跑"的调用方（如崩溃现场的单测）。`model` / `cwd` 是**该轮的事实**，必须收下并
+   * 出现在 `SessionEntry.turn` 里，否则 `agent.local.running` 的消费方要再拉一次做字段合并
+   * （review1 P2-2）。
+   */
+  noteTurnStart(uri: string, opts: { turnId?: string; model?: string; cwd?: string }): void {
     const e = this.entry(uri);
     const t = this.now();
-    e.turn = { turnId: opts.turnId, steps: 0, tokens: 0, lastOpAt: t };
+    e.turn = {
+      turnId: opts.turnId ?? `t${Date.now()}`,
+      steps: 0,
+      tokens: 0,
+      lastOpAt: t,
+      startedAt: t,
+      model: opts.model,
+      cwd: opts.cwd,
+    };
     this.touch(e);
   }
 
@@ -186,6 +240,39 @@ class SessionRegistry {
     this.touch(e);
   }
 
+  /**
+   * 此刻**在跑**的轮次（`turn != null` 的条目），按起始时间升序。
+   *
+   * ⚠️ 与 `snapshot()` 的关键差别：**不碰 deps**（不查 viewers、不读 queue 落盘）。
+   * 它的读路是 `agent.local.running` 与崩溃现场（`crashScene`）—— 后者跑在崩溃钩子里，
+   * 同步、不许任何 I/O，更不能去碰 manager。故这里只做纯内存读。
+   */
+  activeTurnList(): Array<{
+    uri: string;
+    turnId: string;
+    model?: string;
+    cwd?: string;
+    since: string;
+    steps: number;
+    tokens: number;
+  }> {
+    const out: Array<{
+      uri: string;
+      turnId: string;
+      model?: string;
+      cwd?: string;
+      since: string;
+      steps: number;
+      tokens: number;
+    }> = [];
+    for (const e of this.entries.values()) {
+      const t = e.turn;
+      if (!t) continue;
+      out.push({ uri: e.uri, turnId: t.turnId, model: t.model, cwd: t.cwd, since: t.startedAt, steps: t.steps, tokens: t.tokens });
+    }
+    return out.sort((a, b) => a.since.localeCompare(b.since));
+  }
+
   // ─── 读侧 ───
 
   /** 全量快照（按 firstSeenAt 升序 = 人读顺序） */
@@ -226,7 +313,7 @@ class SessionRegistry {
     this.entries.clear();
     for (const q of this.subs) q.close();
     this.subs.clear();
-    this.deps = { viewersOf: () => 0, queueOf: () => 0 };
+    this.deps = defaultDeps;
   }
 }
 

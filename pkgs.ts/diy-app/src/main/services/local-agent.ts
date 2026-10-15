@@ -60,7 +60,6 @@ import {
 import { appendAudit } from "./agent-audit";
 import { opsFeed } from "./ops-feed";
 import { AsyncQueue, withCleanup } from "./async-queue";
-import { noteTurnEnd, noteTurnStart } from "./runtime-context";
 import { sessionRegistry } from "./session-registry";
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
 import {
@@ -1062,6 +1061,8 @@ export class LocalAgentManager {
         this.modelResolver = modelResolver;
         // 注册表（##240）的活态属性取值器：viewers 只由**内容**订阅者构成（R3 —— 注册表自身的
         // 订阅者不许计入，否则注册表一开全库会话都显示"有人看"）；queue = 待投递留言条数。
+        // 这里是注册表缺省取值器的**超集**（多算 chat 流订阅者 `run.subs`）；manager 未构造时
+        // 注册表退回缺省（直查 ops-feed）——照样数得出来（review1 P2-1 缺口 C）。
         sessionRegistry.setDeps({
             viewersOf: (uri) => this.watchers(uri),
             queueOf: (uri) => {
@@ -1160,7 +1161,7 @@ export class LocalAgentManager {
      * 钉死，写文件对它无效 —— 返回值是合并后的**生效值**，调用方以它为准即可发现。
      */
     setLimits(patch: Partial<LocalAgentLimits>): LocalAgentLimits {
-        const merged: Partial<LocalAgentLimits> = { ...(this.readLimitsFile() ?? {}) };
+        const merged: Partial<LocalAgentLimits> = this.readLimitsFile() ?? {};
         for (const [k, v] of Object.entries(patch) as [keyof LocalAgentLimits, unknown][]) {
             // 非法值忽略（不写坏文件）：与 resolveLimits 同一判据（有限正数）
             if (typeof v === "number" && Number.isFinite(v) && v > 0) merged[k] = v;
@@ -2158,6 +2159,10 @@ export class LocalAgentManager {
         // 注册是同步的，与驱动的首个 await 之间没有竞态窗口。
         const q = new AsyncQueue<Op>();
         run.subs.add(q);
+        // chat 流订阅者也是 `viewers` 的一半（见 watchers）⇒ 增 / 退同样要推一次注册表帧，
+        // 否则「窗口发完消息就断开」会让 viewers 停在旧值（review1 P2-1 同一类缺口）。
+        // op 流那一半由 ops-feed 的订阅者变化回调覆盖（见 session-registry 构造器）。
+        sessionRegistry.noteActivity(taskUri);
         // signal（RPC serverStream 的取消上下文）= 本订阅的**第二条出口**，与 ops-feed / file-watcher
         // 是同一条修法：传输断开时 RPC 层调的是 `ctrl.abort()` + `void g.return()`，而 `return()` **排在
         // 悬挂的 `next()` 之后**（生成器卡在 `await next()`）—— 只靠 return 出口的话，「模型思考中（无 op
@@ -2167,6 +2172,7 @@ export class LocalAgentManager {
             q,
             () => {
                 run.subs.delete(q);
+                sessionRegistry.noteActivity(taskUri); // 退订 = 一次"谁在看"的变化
             },
             signal,
         );
@@ -2205,6 +2211,29 @@ export class LocalAgentManager {
             for (const s of run.subs) s.push(op);
         };
         let done = false;
+        /** 驱动自身抛出的异常（兜底收口时据此判「error」而不是「消费端断开」，见 finally） */
+        let driveError: unknown = null;
+        /**
+         * 兜底收口的原因（review1 P3-2）：走到 finally 的兜底 = closeTurn **没跑到**，
+         * 此处按**可证的事实**分类，不再借用 ##305 的"消费端断开"（此处与消费端无关）：
+         *   · 驱动抛异常（装配期 / 流异常）→ `error{drive-turn, message}`
+         *   · 显式中断（用户 cancel / 上游 abort）→ `aborted{source}`
+         *   · 两者皆非却没走完 → `interrupted`（未正常收尾）
+         * 幂等：closeTurn 正常收口过时 turn 已清，这个原因不会被用上（noteTurnEnd 只刷新心跳）。
+         */
+        const fallbackEndReason = (): TurnEndReason => {
+            if (driveError != null) {
+                return {
+                    type: "error",
+                    data: {
+                        source: "drive-turn",
+                        message: driveError instanceof Error ? driveError.message : String(driveError),
+                    },
+                };
+            }
+            if (ctrl.signal.aborted) return { type: "aborted", data: { source: abortSource(ctrl.signal, "abort") } };
+            return { type: "interrupted", data: {} };
+        };
         try {
 
             // 落盘与投递解耦：sink 在 emission 时直接写文件并广播，即使消费端提前断开，
@@ -2318,6 +2347,10 @@ export class LocalAgentManager {
             }
             done = true;
             // llm dump 移到 finally（见那里：链式 return 会截断 try 尾，finally 才是每条退出路径的保证）
+        } catch (e) {
+            // 只记因、不吞：原样再抛，由 chat() 的 `.catch` 写进 run.error（错误仍经流上抛）。
+            driveError = e;
+            throw e;
         } finally {
             // ⚠️ 这里**不再**因「消费端断开」而 abort（##305）：轮次由本管理器独立驱动，
             // 消费端只是订阅者 —— 断开只退订（见 chat 的 for-await）。此处 abort 只在
@@ -2338,14 +2371,16 @@ export class LocalAgentManager {
             if (sess.store.roots().length > 0) this.appendLlm(taskUri, sess);
             // ⚠️ 兜底注销活跃轮次 —— **不能只依赖 runTurn 的 closeTurn**：
             //   runTurn 里 try{streamText} 之前的那些步骤（装配系统上下文、读模版、算 cwd）
-            //   都不在 try 覆盖内，任何一步抛错就等于跳过 closeTurn → activeTurns 留下僵尸条目。
+            //   都不在 try 覆盖内，任何一步抛错就等于跳过 closeTurn → 注册表留下僵尸 turn。
             //   以前这只影响"崩溃现场"的可读性（UI 看的是本地 running，异常时它会被复位）；
             //   但现在 UI 把 agent.local.running 当**运行态真值**（session 194），僵尸会表现为
             //   「永远显示生成中 + 停止按钮点了没反应」，用户只能重启。
-            //   noteTurnEnd 是 Map.delete，幂等：closeTurn 已注销过时，这里再删一次无害。
-            noteTurnEnd(taskUri);
-            // 注册表兜底：装配期抛错等"closeTurn 没跑到"的路径也要把 turn 摘掉（幂等）。
-            sessionRegistry.noteTurnEnd(taskUri, { type: "aborted", data: { source: "detached" } });
+            //   noteTurnEnd 幂等：closeTurn 已收口时（turn 已清）这里只刷新 lastActivity。
+            //
+            // 结束原因**不能借用 `aborted{detached}`**（review1 P3-2）：那是 ##305 的"消费端断开"
+            // 语义，而这条路径恰恰与消费端无关 —— 走到这里意味着 **closeTurn 压根没跑到**
+            // （装配期抛错 / 流异常 / 生成器被展开）。故按可证的事实分三类：
+            sessionRegistry.noteTurnEnd(taskUri, fallbackEndReason());
             // 归档本轮（##305）：注销注册表 + 关掉所有订阅流（消费端据此正常收尾）。
             // 放在 noteTurnEnd 之后：先让「运行态真值」翻下去，再放消费端走完。
             this.turns.delete(taskUri);
@@ -2376,7 +2411,8 @@ export class LocalAgentManager {
     ): AsyncGenerator<Op, { failed: boolean; turnId: string }, void> {
         const turnId = `t${Date.now()}`;
         const cwd0 = resolveCwdWithNote(diyHome(), taskUri).cwd;
-        noteTurnStart({ taskUri, model: model, cwd: cwd0 });
+        // 轮次事实的**唯一**登记点（##240 review1 P2-3：runtime-context 的 activeTurns 已收敛为
+        // 本注册表的投影，故此处不再另调它 —— 两份由同一批调用点驱动 = 迟早漂移）。
         sessionRegistry.noteTurnStart(taskUri, { turnId, model, cwd: cwd0 });
         appendAudit(diyHome(), {
             phase: "turn-start",
@@ -2592,7 +2628,6 @@ export class LocalAgentManager {
                 // 下一轮 blocksToMessages / 下降沿 reload 都读它
                 sess.store.apply(op);
             }
-            noteTurnEnd(taskUri);
             // 注册表收口（R5）：只清 turn、**条目保留**（turnCount +1 / 记末轮 endReason）。
             // 放在同一段同步副作用里，与 closeTurn 的其他落定动作同生共死。
             sessionRegistry.noteTurnEnd(taskUri, reason, { steps, tokens: acc.total });

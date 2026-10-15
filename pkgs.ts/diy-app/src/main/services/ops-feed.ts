@@ -107,6 +107,23 @@ function readOpLines(fp: string, fromLine: number, toLine: number): Op[] {
  */
 class OpsFeed {
   private feeds = new Map<string, TaskFeed>();
+  /**
+   * 订阅者集合变化回调（**只一个**：会话注册表 ##240）。
+   *
+   * 为什么需要它：某个会话"此刻有没有人在看"（`viewers`）是注册表的**活态属性**，而它的一半
+   * 来源就是本总线的订阅者数。没有这个回调时，窗口开关只改订阅集合、不产生任何事件 ⇒
+   * 注册表订阅方（`agent.local.sessions --watch` / 总览页）永远看到陈旧的 viewers，
+   * 且「只被打开、从未跑过轮次」的会话**压根不入册**（review1 P2-1 缺口 A/B）。
+   *
+   * 语义边界：回调**不参与** op 的分发（帧形状 / 水位 / epoch 一概不动，##307 契约不变），
+   * 也不改变订阅者本身 —— 它只是"有人变了"的一声通知。
+   */
+  private onSubsChanged: ((taskUri: string) => void) | null = null;
+
+  /** 登记订阅者变化观察者（传 null 摘除） */
+  setSubsChangedListener(cb: ((taskUri: string) => void) | null): void {
+    this.onSubsChanged = cb;
+  }
 
   private st(taskUri: string): TaskFeed {
     let s = this.feeds.get(taskUri);
@@ -195,12 +212,14 @@ class OpsFeed {
       if (ops.length > 0) q.push({ kind: "batch", epoch: s.epoch, fromSeq: since + 1, ops });
     }
     s.subs.add(q);
+    this.onSubsChanged?.(taskUri); // 订阅集合变了 → 通知观察者（注册表重算 viewers）
     // signal：传输断开时（RPC 层 abort）即时退订 —— 否则悬挂的 next() 会让
     // subs 滞留到**下一条 op**，`subscriberCount`（[5] ##308 的「有没有人在看」）随之虚高。
     return withCleanup(
       q,
       () => {
         s.subs.delete(q);
+        this.onSubsChanged?.(taskUri); // 退订同样是一次"谁在看"的变化
       },
       signal,
     );

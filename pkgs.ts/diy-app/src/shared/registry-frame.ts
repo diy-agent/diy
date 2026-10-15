@@ -20,10 +20,20 @@ import type { TurnEndReason } from "../main/services/local-blocks";
 export interface SessionRef {
   /** 引用实体类型（`task` 已落地；`plugin` / `agent` / `workflow` 等只保留数据形状） */
   kind: string;
-  /** 实体标识（如 `projects/4/tasks/240`） */
+  /** 实体标识：`task` = 任务 URI（如 `projects/4/tasks/240`）；
+   *  `plugin` = 复合 id，三段另见 `plugin` / `entity`（`uri` 仍是"这一次引用的唯一定位串"） */
   uri: string;
   /** 显示名（resolver 给出；缺省 = 渲染端退回 uri） */
   label?: string;
+  /**
+   * 插件类引用的三段（用户 2026-10-15 设想：`{kind:"plugin", plugin:"x", entity:"someEntityId", id:"xxx"}`）。
+   *
+   * 本任务只落**数据形状**（resolver 注册机制不做，见 body §5）：留出位置，插件会话接入时不必
+   * 破坏性改形状。`plugin` = 插件名，`entity` = 插件内实体类别；最末的实体 id 仍在 `uri` 里
+   * （于是 `{kind:"plugin", plugin, entity, uri}` 就是完整三段，读侧只认 `uri` 也不会瞎）。
+   */
+  plugin?: string;
+  entity?: string;
 }
 
 /** 在途轮次（`turn:null` = 此刻没有轮次在跑，即 idle —— R5：条目仍在，只清 turn） */
@@ -35,6 +45,12 @@ export interface SessionTurn {
   tokens: number;
   /** 心跳：最后一次活动时刻（卡死判据的输入之一） */
   lastOpAt: string;
+  /** 轮次起始时刻（`agent.local.running` 的 `since` 同源；与 lastOpAt 不同：它不随步进变） */
+  startedAt: string;
+  /** 本轮用的模型（与 `agent.local.running` 字段对齐 —— 总览页要显示"哪个模型在跑"） */
+  model?: string;
+  /** 本轮的工作目录（同上，回答"哪个项目在跑"） */
+  cwd?: string;
   /** `detached` = 有轮次在跑但此刻无观察者（viewers=0）；它**不是**回收判据（##305） */
   state: "active" | "detached";
 }

@@ -21,6 +21,7 @@ import { createTask } from "../../src/main/core/task";
 import { sessionRegistry } from "../../src/main/services/session-registry";
 import { LocalAgentManager } from "../../src/main/services/local-agent";
 import { opsFeed } from "../../src/main/services/ops-feed";
+import { activeTurnList } from "../../src/main/services/runtime-context";
 import type { RegistryFrame } from "../../src/shared/registry-frame";
 
 let PROJECT = "";
@@ -194,5 +195,112 @@ describe("LocalAgentManager.setLimits — 写盘 + 失效缓存", () => {
     const after = agent.setLimits({ maxSteps: 0, maxSteerQueue: Number.NaN });
     expect(after.maxSteps).toBe(150);
     expect(after.maxSteerQueue).toBe(1000); // 仍是缺省
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// review1 处置（2026-10-15）—— 活态属性「变化即 touch」/ turn 字段 / 单真源
+//
+// 这三条原是 review1 探针（`probe.review240-registry-gaps.test.ts`）**断言缺口现状**的用例，
+// 修复后按正确行为翻转断言并并入本文件（探针文件已删，不进 main）。
+// ═══════════════════════════════════════════════════════════════
+
+const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+/** 取某任务的注册表条目（快照口径 = 对外视图，含 viewers / turn） */
+const entryOf = (uri: string) => sessionRegistry.snapshot().find((e) => e.refs.some((r) => r.kind === "task" && r.uri === uri));
+
+describe("review1 P2-1 — 活态属性「变化即 touch」", () => {
+  it("A：只被打开（有内容观察者）、从未跑过轮次的会话**也在册**（viewers=1 / turn=null）", async () => {
+    const uri = newUri();
+    const opIt = opsFeed.subscribe(uri, 0)[Symbol.asyncIterator]();
+    void opIt.next();
+    await wait(20);
+
+    const e = entryOf(uri);
+    // ← 反证点：修复前这里 snapshot() 是空的（「打开·未通讯」这一格无处可显示）
+    expect(e, "只被打开、没跑过轮次的会话也应入册").toBeDefined();
+    expect(e!.viewers).toBe(1);
+    expect(e!.turn).toBe(null); // 没有轮次在跑，但会话存在
+    expect(e!.turnCount).toBe(0);
+    await opIt.return?.();
+  });
+
+  it("B：内容订阅者增 / 退**各推一帧**（viewers 与 turn.state 一行内翻转，不再陈旧）", async () => {
+    const uri = newUri();
+    sessionRegistry.noteTurnStart(uri, { turnId: "t1" });
+
+    const seen: RegistryFrame[] = [];
+    const it = sessionRegistry.subscribe({ watch: true })[Symbol.asyncIterator]();
+    void (async () => {
+      for (;;) {
+        const r = await it.next();
+        if (r.done) return;
+        seen.push(r.value);
+      }
+    })();
+    await wait(20);
+    seen.length = 0; // 丢弃首帧 snapshot，只看增量
+
+    // ① 一个内容观察者接入 → 应推一帧（viewers 0→1，state 翻 active）
+    const opIt = opsFeed.subscribe(uri, 0)[Symbol.asyncIterator]();
+    void opIt.next();
+    await wait(30);
+    const ups = seen.filter((f) => f.kind === "upsert") as Extract<RegistryFrame, { kind: "upsert" }>[];
+    expect(ups.length, "订阅接入应推帧").toBeGreaterThanOrEqual(1);
+    expect(ups.at(-1)!.entry.viewers).toBe(1);
+    expect(ups.at(-1)!.entry.turn!.state).toBe("active");
+
+    // ② 退订 → 再推一帧（viewers 归零、state 翻 detached）
+    seen.length = 0;
+    await opIt.return?.();
+    await wait(30);
+    const ups2 = seen.filter((f) => f.kind === "upsert") as Extract<RegistryFrame, { kind: "upsert" }>[];
+    // ← 反证点：修复前这里是 0 帧（订阅方要重新快照才看得到）
+    expect(ups2.length, "退订也应推帧").toBeGreaterThanOrEqual(1);
+    expect(ups2.at(-1)!.entry.viewers).toBe(0);
+    expect(ups2.at(-1)!.entry.turn!.state).toBe("detached");
+    await it.return?.();
+  });
+
+  it("C：LocalAgentManager 未构造时也数得出真观察者（缺省取值器直查 ops-feed，不再恒 0）", async () => {
+    const uri = newUri();
+    sessionRegistry.noteTurnStart(uri, { turnId: "t1" }); // 注意：**不**构造 manager
+    const opIt = opsFeed.subscribe(uri, 0)[Symbol.asyncIterator]();
+    void opIt.next();
+    await wait(20);
+
+    expect(opsFeed.subscriberCount(uri)).toBe(1);
+    // ← 反证点：修复前缺省 viewersOf 恒 0，真观察者 1 被报成 0
+    expect(entryOf(uri)!.viewers).toBe(1);
+    await opIt.return?.();
+  });
+});
+
+describe("review1 P2-2 — turn 带 model / cwd（与 agent.local.running 字段对齐）", () => {
+  it("轮次事实里的 model / cwd 出现在条目与 activeTurnList 投影里", () => {
+    const uri = newUri();
+    sessionRegistry.noteTurnStart(uri, { turnId: "t9", model: "mimo-v2.6-flash", cwd: "/tmp/proj" });
+
+    const t = entryOf(uri)!.turn!;
+    expect(t.model).toBe("mimo-v2.6-flash");
+    expect(t.cwd).toBe("/tmp/proj");
+    expect(t.startedAt).toBe(t.lastOpAt); // 起始即心跳的第一次读数
+
+    // running 的消费方（[5] ##308 总览）不必再拉一次 `agent.local.running` 做字段合并
+    const p = activeTurnList().find((x) => x.taskUri === uri)!;
+    expect(p.model).toBe("mimo-v2.6-flash");
+    expect(p.cwd).toBe("/tmp/proj");
+  });
+});
+
+describe("review1 P2-3 — activeTurns 收敛为注册表投影（R1 单真源）", () => {
+  it("轮次在 → 投影有条目；收口 → 投影消失而条目仍在（R5）", () => {
+    const uri = newUri();
+    sessionRegistry.noteTurnStart(uri, { turnId: "t1", model: "m", cwd: "/x" });
+    expect(activeTurnList().some((t) => t.taskUri === uri)).toBe(true);
+
+    sessionRegistry.noteTurnEnd(uri, { type: "completed", data: {} }, { steps: 2, tokens: 7 });
+    expect(activeTurnList().some((t) => t.taskUri === uri)).toBe(false); // 投影摘掉
+    expect(entryOf(uri)!.turnCount).toBe(1); // 条目保留（同一份数据的另一面）
   });
 });
