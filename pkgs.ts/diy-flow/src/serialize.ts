@@ -20,6 +20,12 @@
 // ⚠️ **`at` 不要求单调**（立场，非疏漏）：折线的**次序**由 `path` 数组本身承载（`path[i]` 就是第 i 次驻留），
 // `at` 只是那次驻留的**信息**。故 `at` 倒流（后一条比前一条早）**照收** —— 它可能来自时钟回拨 / 宿主补录，
 // 那是宿主的事实；拿它排序才是错的（会把次序判歪）。**读盘的人：要次序看数组下标，别信 `at`。**
+//
+// ⚠️ **`params` 只兜「纯 JSON 性」，不兜「值语义」**（立场，非疏漏）：类型 / enum / 上下界归 ##316 的
+// `resolveParams(paramsOf(def), 值)` —— 它在 `createRuntime` 跑一次，而**读回路径不经过它**
+// （`parseFlowState` 只吃状态、不吃 `def`，没法校验）。故盘上的 `params` 可能是**脏**的；但它进不了运行态：
+// 第二次 `createRuntime` 仍会用 `resolveParams` 拒掉（`requireParamsMatch` 只比相等、不比合法性）。
+// 要连值一起核：`resolveParams(paramsOf(def), state.params)`。
 
 import { parseRef, type FlowState, type Visit } from './container';
 import { EDGE_KINDS, type EdgeKind } from './define';
@@ -133,11 +139,13 @@ function parseVisit<Id extends string>(value: unknown, path: string, options: Pa
  * 除了形状（`position` / `path` / `params` / `done` / 每条 Visit 的字段），还兜住**语义自洽**：
  * - `position === null` **当且仅当** `path` 为空（单指针容器：位置就是折线末端）；
  * - `position === path.at(-1).node`（位置与折线末端必须一致 —— 不一致的状态会悄悄把工作流推歪）；
- * - 每个节点的 `seq` 按折线序恰为 `1, 2, 3…`（`seq` 的定义就是「该节点第几次驻留」）。
+ * - 每个节点的 `seq` 按折线序恰为 `1, 2, 3…`（`seq` 的定义就是「该节点第几次驻留」）；
+ * - `done === true` ⇒ **已经进入过**（`position !== null`）—— 「跑完」不能凭空发生。
  *
  * **不校验边的存在性**：那要 `WorkflowDef`，本函数只吃状态（同 talk 的 `parse*` 只吃自己那份数据）。
  * **也不校验 `params` 的值语义**（类型 / enum / 上下界）—— 那是 ##316 `resolveParams(paramsOf(def), 值)`
- * 的活；本函数只保证它是可落盘的纯 JSON。要连值一起核：`resolveParams(paramsOf(def), state.params)`。
+ * 的活；本函数只保证它是可落盘的纯 JSON。故**盘上的 `params` 可能脏**，但脏值进不了运行态（`createRuntime`
+ * 是唯一闸门）。要连值一起核：`resolveParams(paramsOf(def), state.params)`。
  */
 export function parseFlowState<Id extends string = string>(value: unknown, path = 'flowState', options: ParseOptions = {}): FlowState<Id> {
     const obj = takeObject(value, path);
@@ -173,6 +181,10 @@ export function parseFlowState<Id extends string = string>(value: unknown, path 
     const done = obj.done;
     if (done !== undefined && typeof done !== 'boolean') {
         throw new FlowError(CODE, `done 应为 boolean（缺省 = 未跑完），实得 ${JSON.stringify(done)}`, `${path}.done`);
+    }
+    // 自洽：「跑完」的前提是**先进入过**（`done` 由 `step` 在某个节点上求值发现，位置为空时压根没得跑）
+    if (done === true && position === null) {
+        throw new FlowError(CODE, 'done = true 却从未进入工作流（position 为 null / 折线为空）—— 「跑完」的前提是先进入', `${path}.done`);
     }
     const state: { position: Id | null; path: readonly Visit<Id>[]; params?: Readonly<Record<string, unknown>>; done?: boolean } = { position, path: visits };
     if (params !== undefined) state.params = params;

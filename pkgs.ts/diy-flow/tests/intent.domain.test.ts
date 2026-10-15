@@ -30,6 +30,7 @@ import {
     FlowError,
     advance,
     apply,
+    createContainer,
     createRegistry,
     createRuntime,
     defineWorkflow,
@@ -280,6 +281,20 @@ describe('R2 落盘 / 读回可信（serialize）', () => {
     it('写侧同样严格：拿一个「形状像但字段非法」的对象去序列化，当场报错（不静默抹掉）', () => {
         const { state } = walked();
         expect(caught(() => flowStateToJson({ ...state, path: [{ ...state.path[0], seq: 0 }] })).code).toBe('invalid-state');
+    });
+
+    it('语义自洽：`done === true` 却从未进入工作流 ⇒ `invalid-state`（「跑完」的前提是先进入）', () => {
+        expect(caught(() => parseFlowState({ position: null, path: [], done: true })).code).toBe('invalid-state');
+        expect(parseFlowState({ position: null, path: [], done: false })).toEqual({ position: null, path: [], done: false });
+    });
+
+    it('立场：`params` 只兜**纯 JSON 性**、不兜**值语义** —— 脏值读得进来，但进不了运行态', () => {
+        const dirty = { position: null, path: [], params: { ci: { command: 1 } } };
+        expect(parseFlowState(dirty)).toEqual(dirty); // 读侧只保证「写下去能读回来」
+        const { registry } = fakes();
+        const e = caught(() => createRuntime(ciDef, { registry, params: dirty.params })); // 闸门仍只在 ##316
+        expect(e.code).toBe('invalid-param');
+        expect(e.path).toBe('values.ci.command');
     });
 });
 
@@ -689,6 +704,36 @@ describe('R7 `params` 值纳入状态（状态文件为一等真源）', () => {
         expect(done.state.params).toEqual({ ci: { command: 'pnpm test' } });
         // 终态落盘读回：盘上那份依旧自足（`done` 与 `params` 都在）
         expect(flowStateFromJson(flowStateToJson(done.state))).toEqual(done.state);
+    });
+
+    it('**【P1】`advance` 正路产出的就是完整真源**：走完 → 落盘 → 读回 → 喂回 `runtime.step` 照样跑得下去', () => {
+        const { registry } = spy();
+        // 宿主只用领域操作推进（连 runtime 都不建）—— 这条正路必须产出「读回后跑得回原样」的状态
+        let state = advance(ciDef, initialState<IdOf<typeof ciDef>>(), { to: 'ci', at: AT, params: { ci: { command: 'pnpm test' } } }).state;
+        state = advance(ciDef, state, { to: 'merge', at: AT2 }).state;
+        expect(state.params).toEqual({ ci: { command: 'pnpm test' } });
+
+        const restored = flowStateFromJson<IdOf<typeof ciDef>>(flowStateToJson(state));
+        expect(restored).toEqual(state);
+        const rt = createRuntime(ciDef, { registry, params: restored.params });
+        expect(rt.step(restored, { at: AT3, id: 'e9' }).status).toBe('done'); // 不抛 invalid-param ⇒ 真源自足
+    });
+
+    it('`advance` 携带参数值：给了就用本次的、没给就继承入参那份；形状错照旧大声报', () => {
+        const entered = advance(ciDef, initialState<IdOf<typeof ciDef>>(), { to: 'ci', at: AT, params: { ci: { command: 'pnpm test' } } }).state;
+        expect(entered.params).toEqual({ ci: { command: 'pnpm test' } });
+        expect(advance(ciDef, entered, { to: 'merge', at: AT2 }).state.params).toEqual({ ci: { command: 'pnpm test' } });
+
+        const e = caught(() => advance(ciDef, initialState<IdOf<typeof ciDef>>(), { to: 'ci', at: AT, params: 'nope' as unknown as Record<string, unknown> }));
+        expect(e.code).toBe('invalid-option');
+        expect(e.path).toBe('request.params');
+    });
+
+    it('容器是领域态的**视图**：`Container.advance` 走出来的态也带着参数值（三样都拿得全）', () => {
+        const c = createContainer(ciDef).advance({ to: 'ci', at: AT, params: { ci: { command: 'pnpm test' } } });
+        expect(c.position).toBe('ci');
+        expect(c.params).toEqual({ ci: { command: 'pnpm test' } });
+        expect(c.done).toBe(false);
     });
 
     it('冻结深度：声明了参数 = 逐项受管（袋 / list 都冻结）；没声明 = 只冻顶层，内层照旧透传（##316 H-1 的已知差异）', () => {

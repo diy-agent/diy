@@ -5,9 +5,11 @@
 //   恒有且只有一个「当前节点」；写入语义是**位置变更**（不是追加），历史形状是**一条折线**。
 //
 // ── ##333 依赖反转：领域状态一等，`Event` 退出 core 概念层 ──────────────────────────
-//   ① **领域态 `FlowState{ position, path }` 自成真源**：它的每一步由**领域操作** `advance` 产出 ——
-//      只吃领域输入 `{ to, at, ref? }`（目标节点 / 时刻 / 宿主关联），**不吃日志**。
+//   ① **领域态 `FlowState{ position, path, params }` 自成真源**：它的每一步由**领域操作** `advance` 产出 ——
+//      只吃领域输入 `{ to, at, ref?, params? }`（目标节点 / 时刻 / 宿主关联 / 本次运行的参数值），**不吃日志**。
 //      于是它可独立序列化落盘、可读回（`serialize.ts`），清掉日志也不影响运行。
+//      `params` 也在请求里（##333 review2 P1）：**正路必须能产出完整真源** —— 若只有 runtime 能补参数值，
+//      用 `advance` 落盘的「正路状态」就是残缺真源（读回喂回 runtime 会被 `invalid-param` 拒）。
 //   ② `Visit` 只记**领域事实**：`node` / `seq` / `kind` / `at`（四项）+ 宿主关联 `ref`。
 //      旧版必填的 `eventId` **已删** —— 领域不必知道日志。
 //   ③ **方向反转**：关联由**审计侧指回领域**（审计记录带领域坐标 `{ node, seq }`，即
@@ -95,6 +97,16 @@ export interface AdvanceRequest<Id extends string = string> {
     readonly at: string;
     /** 宿主关联标识（见 `Visit.ref`） */
     readonly ref?: Readonly<Record<string, string>>;
+    /**
+     * **本次运行的 L2 参数值**（见 `FlowState.params`）—— **纯透传，内核不校验值语义**（归 ##316），
+     * 也**不改、不冻结**它（没声明参数的透传袋里可能是类实例 / 宿主的活对象：原地冻结会改到宿主自己的对象、
+     * 展开或深拷会破坏「原样透传」本身 —— 同 `rule.param-bag-when-undeclared` 的理由）。
+     *
+     * 给了就用它（写进产出态），没给就**继承入参状态那份**（位置变更不改运行配置）。为什么正路要收它：
+     * 参数值是领域态的一部分（##311 §二 L3），而「用领域操作推进」是产出一等真源的正路 ——
+     * 正路不能承载它，产出的状态就是**残缺真源**（##333 review2 P1）。
+     */
+    readonly params?: Readonly<Record<string, unknown>>;
 }
 
 /** `advance` 的产物：新态 + 本次驻留所走的边种类 */
@@ -104,7 +116,7 @@ export interface Advance<Id extends string = string> {
     readonly kind: EdgeKind;
 }
 
-const ADVANCE_KEYS = ['to', 'at', 'ref'] as const;
+const ADVANCE_KEYS = ['to', 'at', 'ref', 'params'] as const;
 
 /**
  * 解析宿主的关联袋（`Visit.ref`）：**开放键**（宿主自己命名，内核不解释）、**值必须是字符串**。
@@ -120,6 +132,20 @@ export function parseRef(value: unknown, path: string, code: FlowErrorCode = 'in
         out[key] = item;
     }
     return Object.freeze(out);
+}
+
+/**
+ * 解析随领域推进携带的 L2 参数值（##333 review2 P1）：**纯透传、不校验值语义**。
+ *
+ * 值语义（类型 / enum / 上下界 / 纯 JSON）的唯一闸门是 ##316 的 `resolveParams`，本包**不重写**；
+ * 这里只认「是个对象」这一层**字段自身的形状**（`Record<string, unknown>` 是它的类型，不是值的语义）。
+ * 没给（`undefined` / `null`）即「不携带」⇒ 调用方按「继承入参状态那份」处理。
+ * **返回原对象本身**（不改、不冻结、不深拷）：理由同 `rule.param-bag-when-undeclared`。
+ */
+function parseAdvanceParams(value: unknown, path: string): Readonly<Record<string, unknown>> | undefined {
+    if (value === undefined || value === null) return undefined;
+    if (!isObject(value)) throw new FlowError('invalid-option', 'params 应为对象（{ 节点 id: { 局部名: 值 } }）', path);
+    return value;
 }
 
 function seqOf<Id extends string>(path: readonly Visit<Id>[], node: Id): number {
@@ -154,6 +180,7 @@ export function advance<Id extends string>(def: WorkflowDef<Id>, state: FlowStat
         throw new FlowError('invalid-option', `at 应为 ISO-8601 时刻（如 2026-10-13T00:00:00.000Z），实得 ${JSON.stringify(request.at)}`, `${base}.at`);
     }
     const ref = parseRef(request.ref, `${base}.ref`);
+    const carriedParams = parseAdvanceParams(request.params, `${base}.params`);
 
     if (!def.nodes.some((n) => n.id === to)) {
         throw new FlowError('unknown-node', `事件指向未知节点 ${JSON.stringify(to)}`, toPath);
@@ -176,13 +203,15 @@ export function advance<Id extends string>(def: WorkflowDef<Id>, state: FlowStat
     const visit: Visit<Id> = ref === undefined
         ? { node: to as Id, seq: seqOf(state.path, to as Id) + 1, kind, at: request.at }
         : { node: to as Id, seq: seqOf(state.path, to as Id) + 1, kind, at: request.at, ref };
-    // 推进即离开终态：`done` 不继承（能走，就说明没走完）；`params` 是这次运行的配置 ⇒ **继承**
-    // （换参数值不是一次「位置变更」，那是另起一次运行 —— 归宿主决定，见 ##319）
+    // 推进即离开终态：`done` 不继承（能走，就说明没走完）；`params` 是这次运行的配置 ⇒
+    // **本次请求给了就用本次的，没给就继承**（换参数值不是一次「位置变更」，那是另起一次运行 ——
+    // 归宿主决定，见 ##319；`advance` 只如实承载，不判定合法性）
+    const nextParams = carriedParams !== undefined ? carriedParams : state.params;
     const next: { position: Id; path: readonly Visit<Id>[]; params?: Readonly<Record<string, unknown>> } = {
         position: to as Id,
         path: [...state.path, visit],
     };
-    if (state.params !== undefined) next.params = state.params;
+    if (nextParams !== undefined) next.params = nextParams;
     return { state: next, kind };
 }
 
@@ -191,7 +220,7 @@ export function advance<Id extends string>(def: WorkflowDef<Id>, state: FlowStat
  *
  * ```ts
  * const c0 = createContainer(wf);
- * const c1 = c0.advance({ to: 'design', at });     // 正路：领域输入，无日志
+ * const c1 = c0.advance({ to: 'design', at });     // 正路：领域输入（含本次运行的 params），无日志
  * const c2 = c1.apply(designEvent);                // 兼容路：一条消息 → 一次领域推进
  * ```
  */
@@ -201,9 +230,15 @@ export interface Container<Id extends string = string> {
     readonly position: Id | null;
     /** 折线轨迹（只读） */
     readonly path: readonly Visit<Id>[];
+    /**
+     * L2 实例参数值（见 `FlowState.params`）—— 与 `position` / `path` 一样是**领域态的一部分**。
+     *
+     * 容器是领域态的一个视图：三样都在，宿主才拿得全（否则用容器落盘照样丢配置 —— ##333 review2 P1）。
+     */
+    readonly params: Readonly<Record<string, unknown>> | undefined;
     /** 是否已跑完（见 `FlowState.done`） */
     readonly done: boolean;
-    /** **领域推进**（正路）：只吃领域输入，不产生也不依赖任何日志 */
+    /** **领域推进**（正路）：只吃领域输入（可携带本次运行的 `params`），不产生也不依赖任何日志 */
     advance(request: AdvanceRequest<Id>): Container<Id>;
     /** **审计 / 消息入口**（薄适配，见 `apply`）：一条 Event → 一次领域推进 */
     apply(event: Event): Container<Id>;
@@ -217,6 +252,9 @@ export function createContainer<Id extends string>(def: WorkflowDef<Id>): Contai
         },
         get path() {
             return state.path;
+        },
+        get params() {
+            return state.params;
         },
         get done() {
             return state.done === true;
@@ -234,6 +272,10 @@ export function createContainer<Id extends string>(def: WorkflowDef<Id>): Contai
 //   ② 兼容「一条转移 = 一条 Event」的老调用方（##312~##315 的既有语义不变）。
 // **事件的 id / author / content 一律不进领域态** —— 领域只记 `{ node, seq, kind, at, ref }`。
 // 反过来，审计侧要指回领域，用 `state.path.at(-1)` 的 `{ node, seq }` 作坐标（方向反转，交付 B）。
+//
+// ⚠️ **`params` 只继承、不能凭空造**：`apply` 的请求里没有参数值，故产出态带的是**入参状态那份**
+// （`advance` 的继承规则）；`project` 从 `initialState()` 起步 ⇒ 重放出来的态**没有 `params`**
+// （与重建不出 `done` / `Visit.ref` 同因：日志里没有它）。要它只能读落盘的状态文件。
 
 /**
  * 薄适配：`Event`（`anchor.data.nodeId` = 目标节点）→ `advance`。

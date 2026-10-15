@@ -49,7 +49,7 @@
 // 内核**不取时间、不生成 id**：`at` 必填（领域事实，要落盘），`id` 给了才落审计事件。
 
 import { createEvent, nodeAnchor, type Event } from '@diy/talk';
-import { advance, parseRef, type FlowState } from './container';
+import { advance, parseRef, type AdvanceRequest, type FlowState } from './container';
 import { findNode, type EdgeDef, type NodeDef, type WorkflowDef } from './define';
 import { FlowError, type FlowErrorCode } from './errors';
 import { classifyGuards, evaluateGuards, isObservable, parseGuardRef, selectEdge, unevaluatedGuards, type GuardEvaluation, type GuardRef } from './eval';
@@ -57,6 +57,9 @@ import { paramsOf, resolveParams } from './params';
 import { parseReceipt, type PluginContext, type Receipt, type Slot } from './plugins';
 import type { PluginRegistry } from './registry';
 import { callPlugin, isIsoString, isObject, rejectUnknown, sameJson } from './validate';
+
+/** 去掉 `readonly`（构造请求对象时先摆必填项、再按条件补可选项，比三层三元清楚） */
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
 /**
  * 一次转移的入参：**领域输入 + 可选审计**（##333）。
@@ -280,7 +283,13 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
         declared.schema.length === 0 ? Object.freeze({ ...options.params }) : resolveParams(declared, options.params);
     const hasParams = Object.keys(params).length > 0;
 
-    /** 参数值属**领域状态**（##311 §二 L3 / ##333 交付 G）：本次运行用的那份写进产出的状态 */
+    /**
+     * 参数值属**领域状态**（##311 §二 L3 / ##333 交付 G）：本次运行用的那份写进产出的状态。
+     *
+     * ⚠️ **正路是 `advance` 自己承载**（`AdvanceRequest.params`，##333 review2 P1）—— `commit` 走的是那条路。
+     * 这里只服务**不经过 `advance` 的两条 `done` 返回**（`{ ...state, done: true }` 是原地加标记，不是一次
+     * 位置变更），让「凡从 runtime 出来的 `state` 一律带本次运行的参数值（有参数时）」这条不变量处处成立。
+     */
     const stampParams = (state: FlowState<Id>): FlowState<Id> => (hasParams ? { ...state, params } : state);
 
     /**
@@ -371,9 +380,17 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
         return { receipts, notifyErrors };
     };
 
-    /** 落定一次**领域推进**（`advance` + 打回护栏）—— **不动外部世界**；通知在 `landed` 里补 */
+    /**
+     * 落定一次**领域推进**（`advance` + 打回护栏）—— **不动外部世界**；通知在 `landed` 里补。
+     *
+     * 本次运行的参数值**随请求交给 `advance`**（##333 review2 P1）：这样产出态是**完整真源**
+     * （`position` / `path` / `params` 一次成型），不必在 `advance` 之外再补一刀。
+     */
     const commit = (state: FlowState<Id>, to: Id, seed: ParsedSeed): FlowState<Id> => {
-        const next = advance(def, state, seed.ref === undefined ? { to, at: seed.at } : { to, at: seed.at, ref: seed.ref }).state;
+        const request: Mutable<AdvanceRequest<Id>> = { to, at: seed.at };
+        if (seed.ref !== undefined) request.ref = seed.ref;
+        if (hasParams) request.params = params;
+        const next = advance(def, state, request).state;
         const last = next.path[next.path.length - 1];
         if (last.kind === 'bounce') {
             const used = next.path.filter((visit) => visit.kind === 'bounce').length;
@@ -381,7 +398,7 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
                 throw new FlowError('bounce-limit', `打回已达 ${used} 次，超过上限 ${maxBounces}（死循环护栏）`, 'state.path');
             }
         }
-        return stampParams(next);
+        return next;
     };
 
     /** 审计事件（纯构造，**无副作用**）：`seed.id` 缺省 ⇒ 这次转移不落日志（##333） */
@@ -429,8 +446,9 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
                 // `when` 是「这条边此刻能不能走」，不是「工作流有没有下一步」）。故：
                 //   有 `next` 出边但 `when` 全不成立 ⇒ 停在**边上**（`stuck`，这一步不走）；
                 //   只有 `bounce` 出边的节点 guard 全过 ⇒ `done`（没有下一步可走）。
-                // 走 `done` 与 `moved` 两条路**都** `stampParams`：「凡从 runtime 出来的 state 一律带本次
-                // 运行的参数值（有参数时）」是可断言的不变量（否则终态产出态会把自己的配置丢掉）。
+                // 这条 `done` 不经过 `advance`（原地加标记），故由 `stampParams` 补上本次运行的参数值：
+                // 「凡从 runtime 出来的 state 一律带本次运行的参数值（有参数时）」是可断言的不变量
+                // （`moved` 那条路已由 `commit` 随 `AdvanceRequest.params` 承载，见 ##333 review2 P1）。
                 if (!edges.some((candidate) => candidate.kind === 'next')) {
                     return { status: 'done', state: stampParams({ ...state, done: true }) };
                 }

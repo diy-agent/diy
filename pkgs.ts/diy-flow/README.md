@@ -10,7 +10,7 @@ diy **工作流内核**：工作流定义 DSL + 泳道容器（单指针 / 打�
 
 **领域状态一等、`Event` 降为审计（##333 依赖反转）**：
 
-- **领域态 `FlowState{ position, path }` 自成真源**：由领域操作 `advance(def, state, { to, at, ref? })` 产出，
+- **领域态 `FlowState{ position, path, params }` 自成真源**：由领域操作 `advance(def, state, { to, at, ref?, params? })` 产出，
   **不吃日志**；可整份落盘、可读回（`flowStateToJson` / `parseFlowState`）。判据：**「第 n 次驻留」是领域
   事实（进 `path`）；「这条 Event」是消息（审计）**。
 - **`Event` 只是进度通知 / 审计材料**：`step` / `declare` 的 `seed.id` 给了才落一条；不给就是纯领域推进
@@ -114,7 +114,9 @@ Visit     { node: Id; seq: number; kind: 'next' | 'bounce'; at: string; ref?: Re
 - **`path` 是 append-only 折线**：`advance` 只追加一条 Visit ⇒ 天然满足「增量」；整份 `FlowState` 又是快照 ⇒
   「增量 + 可重建快照」两种形态都成立。**落盘位置 / 文件布局不归本包**（归 ##319）。
 - **`params` 是领域事实**（##311 §二 L3 / ##333 交付 G）：L2 实例参数值（`{ 节点 id: { 局部名: 值 } }`，
-  全量、缺省已合并、纯 JSON、冻结）**随状态一起流转**。`createRuntime` 把本次运行用的那份写进产出的状态
+  全量、缺省已合并、纯 JSON、冻结）**随状态一起流转**。两条路都承载它（##333 review2 P1）：
+  `createRuntime` 把本次运行用的那份写进产出的状态；**`advance` 也能收**（`AdvanceRequest.params`，纯透传）
+  —— 若只有 runtime 能补参数值，用领域正路落盘的状态就是**残缺真源**（读回喂回 runtime 会被 `invalid-param` 拒）。
   ⇒ 状态文件自足：读回时把它交回 `createRuntime`（`params: state.params`）就与原来那次运行**同配置**
   （`ctx.params` 与插件读到的完全一致）。两条不变量（都亮 `invalid-param @ state.params`）：
   **① 状态带着另一份参数值** ⇒ 亮错（不静默按谁跑）；**② 状态已进入却没记参数值**（`position !== null`
@@ -133,9 +135,12 @@ Visit     { node: Id; seq: number; kind: 'next' | 'bounce'; at: string; ref?: Re
   `compact: true` 输出单行（jsonl 用）。
 - `parseFlowState(value, path?, { allowUnknown? })` / `flowStateFromJson(json, opts?)`：**读回可信** ——
   除形状外还兜住**语义自洽**：`position === null` 当且仅当折线为空、`position` 必须等于折线末端、
-  每节点 `seq` 按序恰为 `1,2,3…`。非法一律抛 `FlowError`（`invalid-state` / `invalid-json`）。
+  每节点 `seq` 按序恰为 `1,2,3…`、`done === true` ⇒ 已进入过（「跑完」不能凭空发生）。
+  非法一律抛 `FlowError`（`invalid-state` / `invalid-json`）。
   **`at` 不要求单调**（立场，非疏漏）：折线次序由 `path` 数组承载，`at` 只是那次驻留的信息 —— 要次序看下标，
   别信 `at`（时钟回拨 / 宿主补录都照收）。
+  **`params` 只兜纯 JSON 性、不兜值语义**（立场，非疏漏）：读回路径不经过 `resolveParams`（它只吃状态、不吃
+  `def`）⇒ 盘上的 `params` 可能是脏的；但脏值**进不了运行态**（唯一闸门仍是 `createRuntime`）。
 - `isFlowState(value)`：非抛出版试探（给 UI / 宿主读盘前用）。
 - `allowUnknown` 是**只读检查闸**（同 `@diy/talk`）：只让解析不报错、**不保留**未知字段 ⇒ 别拿它读进来的对象
   再 `flowStateToJson` 写回（读-改-写会抹掉新字段）。
@@ -148,8 +153,8 @@ Visit     { node: Id; seq: number; kind: 'next' | 'bounce'; at: string; ref?: Re
 | 导出 | 是什么 |
 |---|---|
 | `defineWorkflow(def)` | 定义工作流：`nodes[]`（泳道） + `edges[]`（转移）；`edges[].from/to` 只能取节点 id（编译期护栏） |
-| `advance(def, state, { to, at, ref? })` | **领域操作**：位置变更 → `{ state, kind }`（纯函数、不吃事件、不落日志；`params` / `ref` 随状态继承） |
-| `createContainer(def)` | 单指针容器：`.advance(req)`（正路）/ `.apply(event)`（审计适配），均返回新容器（不可变） |
+| `advance(def, state, { to, at, ref?, params? })` | **领域操作**：位置变更 → `{ state, kind }`（纯函数、不吃事件、不落日志；`params` 给了就用、没给继承，`ref` 随状态继承） |
+| `createContainer(def)` | 单指针容器：`.advance(req)`（正路）/ `.apply(event)`（审计适配），均返回新容器（不可变）；`.position` / `.path` / `.params` / `.done` 是领域态的只读视图 |
 | `apply(def, state, event)` | **薄适配**（审计 / 消息入口）：Event → 一次 `advance`；`project` 的重放路径靠它 |
 | `flowStateToJson` / `parseFlowState` / `flowStateFromJson` / `isFlowState` | 领域态落盘 / 读回（结构 + 语义自洽校验，读回可信） |
 | `createRuntime(def, opts)` | 转移执行器：`step`（系统自动推）/ `declare`（actor 宣布）/ `status`（现在轮到谁） |
