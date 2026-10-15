@@ -20,7 +20,7 @@
  *   刻意**不落盘**：它是"本次会话内我读到哪"的观测量，刷新后重算即可（注册表本身也是纯内存）。
  */
 
-import { createSignal } from "solid-js";
+import { createSignal, untrack } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { StopTicker } from "../lib/stop-ticker";
 import { sessionChipOf, stepsNow, type SessionChipView } from "../../shared/session-overview";
@@ -205,11 +205,23 @@ export const sessionStore = {
      *
      * 只有**正在看**的会话该被追平（App 侧对当前激活的 task-run tab 调用）—— 
      * 若对所有条目无条件追，等于"看一次全库都算已读"。
+     *
+     * ⚠️ **读水位必须 untrack**（##308 review3 P1-1，回归见 tests/core/session-store.test.ts）：
+     * 本方法是给 App 的 `createEffect` 在**tracked 作用域**里调的，而 Solid 的
+     * `updateComputation` 会先把那个 effect `cleanNode`（依赖 state 归零）再跑 fn ——
+     * 若此处读了 `seen()`，该 effect 就注册成水位的观察者，紧随其后的 `setSeen` 会把它
+     * **重新入队** ⇒ effect → 读 seen → 写 seen → 再跑…… 递归到栈溢出（RangeError）。
+     * 真机症状**不是**"界面难看"，而是**订阅自杀**：异常从帧处理里抛出 → 被 `connect()` 的
+     * catch 当成流断 → `connection="down"` + 退避重连（[5] 要的"实时"直接失效），
+     * 且 `diy ui tab open …` 当场报 `Maximum call stack size exceeded`。
+     * 水位是**写**侧本地量（"我读到哪"）——本就不该让调用方订阅它。
+     *
+     * 注意上面读 `table()` **不** untrack：帧到了调用方本就该重跑（这一条正是"水位随帧前进"）。
      */
     markViewed(uri: string): void {
         const e = table().get(uri);
         if (!e) return;
-        const next = new Map(seen());
+        const next = new Map(untrack(seen));
         next.set(uri, stepsNow(e));
         setSeen(next);
     },

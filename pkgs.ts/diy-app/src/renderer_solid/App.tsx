@@ -374,6 +374,10 @@ export default function App() {
      *
      * 只追激活的 task-run tab（不是"开着就算"）：`isTaskDisplayed` 的语义就是"在屏上"，
      * 与 hover 覆盖层用的是同一条判据。读了 `entries` 让注册表帧到达时重跑（水位随步数前进）。
+     *
+     * ⚠️ 本 effect 里**只许读**、不许写（自读自写会自我入队 → 无限递归，##308 review3 P1-1）：
+     * `markViewed` 内部对水位读做了 `untrack`，故这里可以安全地在 tracked 作用域里调它。
+     * 详见 sessionStore.markViewed 的注释与 tests/core/session-store.test.ts。
      */
     createEffect(() => {
         const t = tabStore.activeTab();
