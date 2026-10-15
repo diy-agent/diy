@@ -22,6 +22,8 @@ import { diyService } from "../lib/rpc";
 import { notificationStore } from "./notificationStore";
 import { BlockStore, toForest, type BlockNode, type Op } from "../../main/services/local-blocks";
 import type { OpsFrame } from "../../shared/ops-frame";
+// 阅读位置锚点的形状（纯函数模块，零 DOM）：与滚动决策同源，故不在此另定一份
+import type { ChatAnchor } from "../lib/chat-scroll";
 // 插话队列项的类型在 core/drafts（与草稿同文件存储）；这里只要类型，故 type-only import
 //（不会把 node:fs 依赖带进 renderer）
 import type { SteerItem, SteerMode } from "../../main/core/drafts";
@@ -96,8 +98,15 @@ interface TaskState {
     steerSeq: number;
     /** 已落地的最新序号（小于它的响应一律丢弃） */
     steerSettled: number;
-    /** 阅读位置：会话块树滚动区 scrollTop（内存态，随会话保留；不落盘——重启后从最新看起） */
-    scroll: number;
+    /**
+     * 阅读位置：**视口顶部那个块的锚点**（块 id + 块内偏移），不是绝对 scrollTop（##331 ③）。
+     *
+     * 为什么不是像素：本页高度已知不稳定（`content-visibility:auto` 的估算高度 / Markdown 撑高），
+     * 绝对像素在"保存"与"恢复"两个时刻指向的**内容**不是同一处 —— 实测切走切回偏 10 轮。
+     * 块身份在高度怎么变的情况下都指同一行（与 ##293 的位置补偿同一思路）。
+     * 内存态，随会话保留；不落盘 —— 重启后从最新看起。
+     */
+    scroll: ChatAnchor | null;
     /** 详情面板当前 tab（local=agent 对话 / info=任务详情），per-task 记忆 */
     tab: "local" | "info";
     /** 详情 tab 的滚动位置（info 滚动容器 scrollTop） */
@@ -155,7 +164,7 @@ function stateFor(taskUri: string): TaskState {
             loaded: false, trees, setTrees, running, setRunning,
             active, setActive, stopRequestedAt, setStopRequestedAt, abort: null,
             error, setError, steers, setSteers, usage, setUsage, steerSeq: 0, steerSettled: 0,
-            scroll: 0, tab: "local", detailScroll: 0,
+            scroll: null, tab: "local", detailScroll: 0,
             appliedSeq: 0, epoch: -1, opsAbort: null, opsState: "idle", opsDownNotified: false,
         };
         states.set(taskUri, s);
@@ -1080,7 +1089,7 @@ async function clear(taskUri: string) {
     // 保持序号单调递增，旧响应才会一律被判过期；再用一次真实拉取把界面与盘上对齐
     // （盘上此刻确实是空队列；刷新走自己的新序号，于是它在途里的旧响应全部作废）。
     void refreshSteers(taskUri);
-    st.scroll = 0; // 会话清空，阅读位置一并归位
+    st.scroll = null; // 会话清空，阅读位置一并归位
     refresh(st);
 }
 
@@ -1151,14 +1160,14 @@ async function loadOlder(taskUri: string, beforeApply?: () => void): Promise<boo
     }
 }
 
-/** 记录某任务的阅读位置（切走会话时由组件保存滚动容器 scrollTop） */
-function setScroll(taskUri: string, v: number): void {
+/** 记录某任务的阅读位置（切走会话时由组件保存「视口顶部块 + 块内偏移」，见 ChatAnchor） */
+function setScroll(taskUri: string, v: ChatAnchor | null): void {
     stateFor(taskUri).scroll = v;
 }
 
-/** 读取某任务的阅读位置（0=从未滚动过；只读不创建 state） */
-function getScroll(taskUri: string): number {
-    return states.get(taskUri)?.scroll ?? 0;
+/** 读取某任务的阅读位置（null = 从未记录过；只读不创建 state） */
+function getScroll(taskUri: string): ChatAnchor | null {
+    return states.get(taskUri)?.scroll ?? null;
 }
 
 /** 记录某任务的详情面板 tab（切走时由面板保存） */

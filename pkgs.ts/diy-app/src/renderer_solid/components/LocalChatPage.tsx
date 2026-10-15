@@ -55,6 +55,10 @@ import { Caches } from "../lib/ui-state";
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
 import { bylineOf } from "../lib/assistant-byline";
+// 滚动决策（纯函数，可单测：跟随时序 / 锚点恢复）—— 本文件只负责 DOM 读写
+import { anchorScrollTop, clampScrollTop, followPlan, lastLeafId, type ChatAnchor } from "../lib/chat-scroll";
+// user 发言的时刻 label（纯函数：块 id → 所属轮起点时刻；数据源与降级口径见模块头注）
+import { userStamp } from "../lib/user-stamp";
 // 对话流的时间戳：真源是 turnId 内嵌的毫秒（shared/date-format 统一解析与格式化）
 import type { ReasoningEffort } from "../../main/services/local-agent";
 // 插话队列项：与草稿同文件存储（任务目录 .diy/drafts.yaml），类型只在 main 侧定义
@@ -207,6 +211,35 @@ const TOP_TRIGGER_PX = 240;
 /** 是否已贴底（容差内即算底部，避免差 1px 永远跟不住） */
 const nearBottom = (el: HTMLElement) =>
     el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX;
+
+/** 按块 id 找 DOM（滚动容器内的块）—— 找不到 = 该块还没上屏（布局未稳 / 已被移除）。
+ *  `CSS.escape`：块 id 形如 `t1791126774555_s1_a`，虽然当前都是安全字符，也照规矩转义。 */
+function blockElOf(el: HTMLElement, id: string): HTMLElement | null {
+    return el.querySelector<HTMLElement>(`[data-block-id="${CSS.escape(id)}"]`);
+}
+
+/** 块在**内容坐标系**里的顶（px）：屏幕坐标差 + 当前 scrollTop —— 与滚动位置无关的量 */
+function blockTopIn(el: HTMLElement, node: HTMLElement): number {
+    return node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+}
+
+/**
+ * 视口顶部那一块 + 它在容器内的相对偏移（≤0 = 块顶被滚出容器顶）—— **阅读位置的锚点**（##331 ③）。
+ *
+ * 为什么锚 `[data-block-id]` 而不是 `[data-turn-id]`：一轮里可能有很多块，
+ * 轮粒度太粗（长轮里切走切回想回到"同一段正文"，不是"同一轮"）。
+ */
+function pickAnchorIn(el: HTMLElement): ChatAnchor | null {
+    const cTop = el.getBoundingClientRect().top;
+    for (const n of el.querySelectorAll<HTMLElement>("[data-block-id]")) {
+        const r = n.getBoundingClientRect();
+        if (r.bottom > cTop + 1) {
+            const id = n.getAttribute("data-block-id");
+            return id ? { id, offset: Math.round(r.top - cTop) } : null;
+        }
+    }
+    return null;
+}
 
 /** assistant 正文（纯文本呈现）：原文模式 + L1 单行摘要用 */
 function PlainText(props: { text: string; class?: string }) {
@@ -927,6 +960,9 @@ function TextRow(props: {
 function UserBubble(props: { node: BlockNode }) {
     const b = () => props.node;
     const steer = () => str(b().attrs.steer);
+    /** 这句话的时刻：块 id 自带所属轮（turnId 内嵌毫秒），格式复用 agent 侧那个 `fmtTurnStamp`。
+     *  取不到就不显示（绝不用渲染时刻顶替）—— 数据源与降级口径见 `lib/user-stamp` 头注。 */
+    const stamp = () => userStamp(b().id);
     return (
         <div class="flex justify-end">
             <div class="max-w-[85%] bg-primary/10 border border-primary/20 rounded-2xl px-3.5 py-2 text-prose whitespace-pre-wrap break-words">
@@ -936,6 +972,14 @@ function UserBubble(props: { node: BlockNode }) {
                     </span>
                 </Show>
                 {str(b().attrs.content)}
+                {/* 时刻压在气泡内右下（IM 惯例）：与 agent 侧同格式，不另起一行占版面 */}
+                <Show when={stamp()}>
+                    {(s) => (
+                        <div class="mt-0.5 text-right text-caption opacity-50" data-user-stamp title={s().title}>
+                            {s().text}
+                        </div>
+                    )}
+                </Show>
             </div>
         </div>
     );
@@ -1712,21 +1756,58 @@ export function LocalChatPage(props: { uri?: string }) {
         loadOlderInto(el);
     };
 
-    /** 恢复某会话阅读位置：有记录（p>0）回到该处并按位置校准跟随态；
-     *  无记录（p=0，含新会话）→ 直接看最新，而不是停在顶部。 */
+    /**
+     * 按锚点定位（##331 ③）：先设一次，再**连校几帧**（同 `loadOlderInto` 的 tick 写法）。
+     *
+     * 为什么要连校：锚点块上屏那一刻高度还没稳定（`content-visibility:auto` 的估算高度换实测值
+     * 会把下方内容整体推走），一次赋值只能落进"当时的坐标系"。
+     * 校正只做两件事：锚点没归位就推回去；**用户在滚**（scrollTop 不再是我们设的值）就收手跟人。
+     * 硬上限 ≈ 24 帧（400ms），且连续 3 帧不漂即收 —— 不会无限跑。
+     */
+    const applyAnchor = (el: HTMLDivElement, a: ChatAnchor) => {
+        const first = blockElOf(el, a.id);
+        if (first) el.scrollTop = anchorScrollTop(blockTopIn(el, first), a.offset, el.scrollHeight, el.clientHeight);
+        let lastSt = el.scrollTop;
+        let quiet = 0;
+        let left = 24;
+        const tick = () => {
+            const userScrolled = Math.abs(el.scrollTop - lastSt) > 1;
+            const n = blockElOf(el, a.id);
+            if (n) {
+                if (userScrolled) {
+                    quiet = 0; // 用户在滚：只记基准跟随，绝不抢
+                } else {
+                    const drift = n.getBoundingClientRect().top - el.getBoundingClientRect().top - a.offset;
+                    if (Math.abs(drift) >= 1) {
+                        el.scrollTop = clampScrollTop(el.scrollTop + drift, el.scrollHeight, el.clientHeight);
+                        quiet = 0;
+                    } else quiet++;
+                }
+            }
+            lastSt = el.scrollTop;
+            if (left-- > 0 && quiet < 3) requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+    };
+
+    /** 恢复某会话阅读位置：有锚点 → 按**块身份**回到那一行并按位置校准跟随态；
+     *  无记录（新会话 / 没读过）→ 直接看最新，而不是停在顶部。 */
     const restore = (u: string) => {
         restoring = true;
+        // 上一个会话的末叶子 id 在这里失去意义：不清掉的话，本会话内容上屏那帧会被判成
+        // "新块出现"而跟着它滚（`restoring` 闸门只挡到 rAF 之前）
+        prevTailId = null;
         void localChatStore
             .open(u)
             .catch(() => undefined)
             .then(() => {
-                const p = localChatStore.getScroll(u);
+                const a = localChatStore.getScroll(u);
                 requestAnimationFrame(() => {
                     restoring = false;
                     const el = scrollRef;
                     if (!el) return;
-                    if (p > 0) {
-                        el.scrollTop = p;
+                    if (a) {
+                        applyAnchor(el, a);
                         setStick(nearBottom(el)); // 上次停在底部 → 继续跟随；否则尊重阅读位置
                     } else {
                         gotoBottom();
@@ -1775,13 +1856,21 @@ export function LocalChatPage(props: { uri?: string }) {
             applyDraft(u);
         }
     });
-    // 组件卸载（切 tab 到 info）前把防抖中的草稿落盘（内容在 input 事件里已写进 draftStore）
-    // + 停掉运行态轮询（没人看就不该继续问 main）
+    // 组件卸载前：**保存阅读位置** + 防抖中的草稿落盘 + 停掉运行态轮询。
+    //
+    // ⚠️ 阅读位置的**保存点在卸载**，不在 `on(uri)` effect（##331 ③ 的真根因）：
+    //   本页每个任务一个实例（`TaskRunPage` 给的是**固定** `props.uri`），切 tab = 本实例卸载 +
+    //   另一个实例挂载 —— `uri` 这个信号对单个实例**永远不变**，挂在它上面的保存代码一次都不会跑，
+    //   于是 `getScroll` 读到的永远是空，每次切回都退化成"看最新"（实测切回顶部从第 8 轮变第 18 轮）。
+    //   卸载时 DOM 还在（cleanup 先于节点移除），几何读得到。
     onCleanup(() => {
         unwatch?.();
         unwatch = null;
         const u = uri();
-        if (u) void draftStore.flushNow(u);
+        if (u) {
+            if (scrollRef) localChatStore.setScroll(u, pickAnchorIn(scrollRef));
+            void draftStore.flushNow(u);
+        }
     });
     // 直播中的尾轮 turn id：中断警告 / 等待态 gating 用。
     // 判据是 main 真值（localChatStore.live），不是本地 running —— 别人（CLI/另一窗口）
@@ -1906,12 +1995,21 @@ export function LocalChatPage(props: { uri?: string }) {
     });
     /** 会话用量看板（抽屉）开关 */
     const [usageBoard, setUsageBoard] = createSignal(false);
+    /** 上一帧的**末叶子 id** —— 「新块出现」与「同一块内流式增长」的判据（见 lib/chat-scroll.followPlan）。
+     *  切会话时也会更新（跟随 effect 头部无条件写），故切回来不会被误判成"新块"。 */
+    let prevTailId: string | null = null;
 
     createEffect(
         on(uri, (u, prev) => {
-            // 切走前保存旧会话阅读位置（组件不卸载，滚动容器 DOM 还在）+ 冲掉待写草稿
+            // 切走前保存旧会话阅读位置 + 冲掉待写草稿。
+            //
+            // ⚠️ 这几行在**当前架构下走不到**：本页每个任务一个实例，`uri` 对单个实例是常量
+            //  （切 tab = 本实例卸载 + 另一个挂载），所以真正的保存点在下面的 `onCleanup`。
+            //  留着是因为 `TaskRunPage` 已写明"将来做 tab 保活时再改为逐实例传 uri" ——
+            //  那时 `uri` 会变，这条路径就有了语义。
             if (prev) {
-                if (scrollRef) localChatStore.setScroll(prev, scrollRef.scrollTop);
+                // 存**锚点**（视口顶部那块 + 块内偏移），不存 scrollTop —— 见 ChatAnchor 的注释
+                if (scrollRef) localChatStore.setScroll(prev, pickAnchorIn(scrollRef));
                 void draftStore.flushNow(prev);
             }
             // 切走：停掉上一个会话的运行态轮询（只轮询当前打开的会话）
@@ -1935,21 +2033,47 @@ export function LocalChatPage(props: { uri?: string }) {
         ),
     );
 
-    // 跟随：内容变化（trees 信号）→ 贴底则滚到底。
+    // 跟随（##331 ①）：内容变化（trees 信号）→ 按 `followPlan` 决策，不是无脑滚到底。
+    //
+    // 为什么不是"贴底就钉到 scrollHeight"（原实现）：那样**高块**刷出来时视口停在它的**末行**
+    //   （实测该块首行被推到容器顶上方 265px），用户看到结尾、要往回翻才看到开头。
+    // 口径（lib/chat-scroll.followPlan）：新块矮 → 跟到底（IM 直觉）；新块高 → 首行贴视口顶；
+    //   **同一块内流式增长 → 不动**（内容从屏幕下方自然长出）；用户上翻 → 一律不动（既有语义）。
     //
     // 顺序要求：必须声明在上方 uri 切换 effect 之后——Solid 按创建顺序执行 effect，
     //   切会话时 uri effect 先同步置 restoring 闸门，本 effect 才会让位给 restore 的定位。
-    // 时机：createEffect 在 DOM 写入之后运行，故 scrollHeight 已含新内容（同步赋值无闪帧）；
-    //   再补一帧 rAF 兜住布局后置变化。rAF 内重读 stick——期间用户若已上滚则放弃，不抢位置。
+    // 时机：createEffect 在 DOM 写入之后运行，故能读到新内容的几何；再补一帧 rAF 兜住
+    //   布局后置变化（Markdown 撑高 / 估算高度换实测）。rAF 内重读 stick——用户若已上滚则放弃。
     createEffect(() => {
-        void localChatStore.trees;
+        const tailId = lastLeafId(localChatStore.trees);
+        const prev = prevTailId;
+        prevTailId = tailId; // 无条件更新（含 restoring 期间）：切回来才不会被误判成"新块"
         if (restoring || !stick()) return;
         const el = scrollRef;
-        if (el) el.scrollTop = el.scrollHeight;
-        requestAnimationFrame(() => {
-            const e2 = scrollRef;
-            if (e2 && stick()) e2.scrollTop = e2.scrollHeight;
+        if (!el) return;
+        const node = tailId ? blockElOf(el, tailId) : null;
+        const plan = followPlan({
+            stick: true,
+            prevTailId: prev,
+            tailId,
+            blockTop: node ? blockTopIn(el, node) : 0,
+            blockHeight: node ? node.getBoundingClientRect().height : 0,
+            clientHeight: el.clientHeight,
         });
+        if (plan.kind === "idle") return;
+        const apply = () => {
+            const e2 = scrollRef;
+            if (!e2 || !stick()) return;
+            if (plan.kind === "bottom") {
+                e2.scrollTop = e2.scrollHeight;
+                return;
+            }
+            // 块顶在 rAF 里重新现量：布局后置变化会挪它
+            const n2 = tailId ? blockElOf(e2, tailId) : null;
+            e2.scrollTop = clampScrollTop(n2 ? blockTopIn(e2, n2) : plan.blockTop, e2.scrollHeight, e2.clientHeight);
+        };
+        apply();
+        requestAnimationFrame(apply);
     });
 
     // ─── agent 人物（模型/参数/行为指令都在人物定义里，这里只选"要谁干活"）───
