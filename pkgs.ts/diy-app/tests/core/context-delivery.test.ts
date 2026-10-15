@@ -109,8 +109,12 @@ describe("行为契约（identity / rules / guard）默认归 system", () => {
         const withPersona = { ...globals, persona: { name: "大副", instructions: "每次回答前先称一声「大王」。" } };
         const d = buildDelivery(withPersona, defaultSystemPlaces());
         expect(d.tree.places).not.toContain("persona");
-        expect(d.system.text).not.toContain("persona:");
-        expect(d.runtime.text).not.toContain("persona:");
+        // 不投的是**值节点** `persona`（纯数据段里不出现它）。
+        // ⚠️ 判据用 `systemData`（纯数据）而**非** `system.text`（含 help 段）：help 由 zod 派生，
+        // 里面有 **`task.persona`** —— 那是任务头字段（##322），与全局 `persona` 值节点是两回事；
+        // 用 `not.toContain("persona:")` 会让一个子串把两件事混成一件（merge main 后实测踩到）。
+        expect(d.systemData.text).not.toContain("persona");
+        expect(d.runtime.text).not.toContain("persona");
         // 但指令本身必须在（来自 identity 节）
         expect(d.system.text).toContain("每次回答前先称一声「大王」。");
     });

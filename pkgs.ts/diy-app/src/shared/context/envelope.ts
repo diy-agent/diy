@@ -12,6 +12,8 @@
 //     system:  ← 系统变量树（稳定项）
 //
 //   尾部 user 消息（不进块树/llm 历史；每轮现拼 → 不会累积）
+//     summary:     ← 被压掉那段的摘要（仅摘要功能启用时；背景，不是变量树）
+//     history:     ← 压缩索引注记（仅历史被压缩时；纯数据）
 //     runtime:     ← 易变变量树（**每轮首步全量**）
 //     runtimeDiff: ← 本步**变化的原子单元** → 变更后的当前值（只列变化的）
 //     user:
@@ -39,17 +41,21 @@ import type { ContextPath, ContextTreeState } from "./types";
  * 信封的**总逻辑**（zod 描述不了的那部分）—— 固定话术，逐条讲清「help 描述不了的事」。
  *
  * 它是**代码**（改这段 = 改发给模型的话术）。⚠️ 但它**不参与** `WIRE_VERSION` 派生
- * （那只由 `wire.ts::WIRE_ENCODING` 的结构语义决定）；而顶层键增删**是** wire 形态变化
- * —— 八轮加了 `history` 键却没在 `WIRE_ENCODING` 里加轴（会让存量 step 记录集体变
- * "不可比"，代价与收益待定），故此处留注：**要不要为信封键集加轴，是个开口问题**。
+ * （那只由 `wire.ts::WIRE_ENCODING` 的结构语义决定）。
+ *
+ * 【已决 · 用户 2026-10-15】信封**顶层键集不进 `WIRE_ENCODING`**：加键（`history` / `summary`）
+ * 只改「给人/模型看的编排」，**不影响业务**（原子单元 hash 与投递到各容器的值都没变）——
+ * 故 `WIRE_VERSION` 保持不变，免得存量 step 记录集体判「不可比」（UI 全标 incomparable）。
+ * 真正该动版本的只有 `WIRE_ENCODING` 里那些**语义**（system/runtime 投递形态、hash 口径、渲染格式）。
  */
 export const ENVELOPE_ABOUT = [
-    "本消息是一份 YAML 信封：顶层键只有 help / system / runtime / runtimeDiff / history / user（见 help 各节）；其中 history 只在会话历史被压缩时出现。",
+    "本消息是一份 YAML 信封：顶层键只有 help / system / runtime / runtimeDiff / summary / history / user（见 help 各节）；其中 summary / history 只在会话历史被压缩时出现。",
     "· help 段是**结构说明**（由代码里的 zod 定义派生，随代码版本变化）——读它就知道每个键是什么、下面有哪些字段。",
     "· 值段（system / runtime / runtimeDiff / history / user）只放**数据**，不放解释；解释一律在 help。",
     "· system 段每次请求**全量重建**（稳定项），变更时直接以新值替换、不带历史。",
     "· runtime 段是**易变项**：每轮首步给全量；轮中途某一步变了，就**追加**一条只含 runtimeDiff 的消息（键 = 变化的单元，值 = 该单元变更后的当前值）。新旧以**后出现**的为准。",
     "· **历史压缩不影响变量树**：`history:` 段只说明「对话历史被压掉了哪些行」。system / runtime 两段**每次都是全量当前值**（system 段随每个请求重建；runtime 段在每轮第一条 user 消息里给全量，轮中途变了再追加 `runtimeDiff`）—— 变量树**不会**因压缩而丢失或陈旧。**不要**为「某个变量现在是什么值」去做额外查询（cat 文件 / 跑命令），直接看本消息里的值。",
+    "· `summary:` 是被压缩掉那段对话的**结论**（摘要功能启用时才有）—— 只做**背景**，不是变量树：要取某个变量的值仍看 system / runtime 段。",
     "· `[]` / `{}` 表示「该变量存在但为空」，与「没有这个变量」不是一回事。",
 ].join("\n");
 
@@ -63,6 +69,20 @@ export const RuntimeDiffSchema = z
     .record(z.string(), z.unknown())
     .describe("本步发生变化的原子单元 → 该单元**变更后的当前值**（全量；没变的单元不列）");
 
+/**
+ * 历史摘要（作为信封的 `summary` 键；被压缩掉那段的结论）。
+ *
+ * 为什么是**独立顶层键**（##310 九轮，用户拍板「user.message 里不能加其他任何消息」）：
+ * 摘要此前作为**一条普通 user 消息**前置 → `normalizeUserRuns` 把它并进保留首条 user 的正文，
+ * 于是自动生成的内容伪装成用户原话（与压缩注记同一个坑）。凡**自动生成**的段一律有自己的顶层键。
+ */
+export const SummarySchema = z
+    .string()
+    .describe(
+        "被压缩掉的那段对话的**摘要**（上一段会话的结论，由摘要模型生成；仅在摘要功能启用时出现）。" +
+            "它只做**背景**：变量树的**当前值**一律看 system / runtime 段（每次全量），**不要**为取某个变量的值去翻历史。",
+    );
+
 /** 用户消息（信封的 `user` 键） */
 export const UserEnvelopeSchema = z
     .object({ message: z.string().describe("用户本轮真实发言（原样，未加工）") })
@@ -74,6 +94,7 @@ export const EnvelopeSchema = z
         system: z.record(z.string(), z.unknown()).describe("系统上下文变量树（稳定项，进 system 参数，全量重建）"),
         runtime: RuntimeSchema,
         runtimeDiff: RuntimeDiffSchema,
+        summary: SummarySchema,
         user: UserEnvelopeSchema,
     })
     .describe(ENVELOPE_ABOUT);
@@ -103,6 +124,7 @@ export function buildHelpDoc(opts: {
         system: { desc: key("system"), ...pruneSchemaDoc(globalsDoc, opts.systemPlaces) },
         runtime: { desc: key("runtime"), ...pruneSchemaDoc(globalsDoc, opts.runtimePlaces) },
         runtimeDiff: { desc: EnvelopeSchema.shape.runtimeDiff.description },
+        summary: describeSchema(SummarySchema),
         history: { desc: HistoryNoteSchema.description, ...describeSchema(HistoryNoteSchema) },
         user: { desc: key("user"), ...describeSchema(UserEnvelopeSchema) },
     };
@@ -122,6 +144,15 @@ export function tailEnvelope(parts: readonly string[], userText?: string): strin
     const blocks = parts.filter((p) => p.trim());
     if (userText !== undefined) blocks.push(toYaml({ user: { message: userText } }));
     return blocks.join("\n");
+}
+
+/**
+ * 把摘要渲染成信封里的一个**顶层键片段**（`summary:` 一段；空文本 → 空串 = 不投递）。
+ * 见 `SummarySchema` 头注：摘要是**自动生成的段**，必须有自己的顶层键，不进 `user.message`。
+ */
+export function renderSummaryPart(text: string): string {
+    if (!text.trim()) return "";
+    return toYaml({ summary: text });
 }
 
 /** 只拼 `runtime:` + `user:` 的常见形（见 `tailEnvelope`） */

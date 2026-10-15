@@ -665,22 +665,27 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });
 
-    it("摘要：compactPreview 勾选 summary → mod 请求首条消息是 <summary> 骨架；compact 落账保留摘要", async () => {
+    it("摘要：compactPreview 勾选 summary → mod 请求**尾条信封的 `summary:` 键**带 <summary> 骨架；compact 落账保留摘要", async () => {
         const uri = await seededSession("摘要落账");
-        // 勾选 summary（尚未生成）→ 预览里出现占位骨架（预算 0 → 全部轮被丢弃，摘要针对它们）
+        // 勾选 summary（尚未生成）→ 预览里出现占位骨架（预算 0 → 全部轮被丢弃，摘要针对它们）。
+        // 位置：摘要是**自动生成的段**（##310 九轮）→ 与 runtime / user 同处**尾部信封**的顶层键
+        // `summary:`，**不是**首条独立 user 消息（那样会被 normalizeUserRuns 并进 user.message 正文）。
         const pv = (await fx.sh.getJson(
             `./diy.sh agent local compactPreview ${uri} --budget-bytes 0 --summary`,
         )).data as { modRequest: { messages: unknown[] } };
-        const first = JSON.stringify(pv.modRequest.messages[0] ?? "");
-        expect(first).toContain("<summary");
-        expect(first).toContain("{{summary.conclusions}}"); // 占位里带变量名
+        const tail = JSON.stringify(pv.modRequest.messages.at(-1) ?? "");
+        expect(tail).toContain("summary:");
+        expect(tail).toContain("<summary");
+        expect(tail).toContain("{{summary.conclusions}}"); // 占位里带变量名
 
-        // 执行压缩并带一段摘要文本 → 账本里摘要可查，投递首条即该摘要
+        // 执行压缩并带一段摘要文本 → 账本里摘要可查，投递尾部信封的 summary 即该摘要
         await fx.sh.getJson(
             `./diy.sh agent local compact ${uri} --budget-bytes 0 --summary --summary-text ${JSON.stringify('<summary turns="3">\n关键结论：\n- 已定稿\n</summary>')}`,
         );
         const rv = (await fx.sh.getJson(`./diy.sh agent local requestView ${uri}`)).data as { messages: unknown[] };
-        expect(JSON.stringify(rv.messages[0] ?? "")).toContain("关键结论");
+        const rvTail = JSON.stringify(rv.messages.at(-1) ?? "");
+        expect(rvTail).toContain("summary:");
+        expect(rvTail).toContain("关键结论");
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });
 

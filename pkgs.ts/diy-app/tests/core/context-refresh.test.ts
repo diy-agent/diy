@@ -18,7 +18,8 @@ import { createTask, updateTask } from "../../src/main/core/task";
 import { LocalAgentManager } from "../../src/main/services/local-agent";
 import { readCtxLog } from "../../src/main/core/context-changelog";
 import { isV2Entry, entryToRows } from "../../src/shared/context/changelog";
-import { appendUserKey, tailEnvelope } from "../../src/shared/context/envelope";
+import * as yaml from "js-yaml";
+import { appendUserKey, renderSummaryPart, tailEnvelope } from "../../src/shared/context/envelope";
 import { buildDelivery, runtimeDiffDelivery } from "../../src/shared/context/delivery";
 
 let PROJECT = "";
@@ -99,6 +100,25 @@ describe("信封：尾部各段各占一个顶层键（tailEnvelope / appendUser
     });
     it("一个片段都没有 → 原样（不编 user 段）", () => {
         expect(tailEnvelope([], undefined)).toBe("");
+    });
+
+    it("摘要也是**自动生成的段** → 顶层键 `summary:`，不混进 user.message（withSummary 的坑）", () => {
+        // 用户 2026-10-15：「user.message 消息里不能加其他任何消息」——摘要是自动生成的段，
+        // 与注记同法各占一个顶层键（此前它作为普通 user 消息前置 → 被 normalizeUserRuns 并进正文）
+        const out = tailEnvelope([renderSummaryPart("上一段的结论"), "runtime:\n  task:\n    body: x"], "新一句");
+        const loaded = yaml.load(out, { schema: yaml.JSON_SCHEMA }) as any;
+        expect(loaded.summary).toBe("上一段的结论");
+        expect(loaded.runtime.task.body).toBe("x");
+        expect(loaded.user.message).toBe("新一句");
+        // 关键：user.message 只剩用户真话（不含摘要/变量树）
+        expect(loaded.user.message).not.toContain("上一段的结论");
+        expect(loaded.user.message).not.toContain("body");
+        // 顺序：summary 在前，user 在最后
+        expect(out.indexOf("summary:")).toBeLessThan(out.indexOf("runtime:"));
+        expect(out.indexOf("\nuser:")).toBeGreaterThan(out.indexOf("runtime:"));
+    });
+    it("空摘要 → 空串（不投递，不编空段）", () => {
+        expect(renderSummaryPart("   ")).toBe("");
     });
 
     it("runtime 之前、user 之后，一份合法 YAML（不是两条相邻 user 被合并出的怪东西）", () => {

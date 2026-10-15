@@ -79,7 +79,7 @@ import {
 } from "../../shared/usage";
 import { buildDelivery, isRuntimePlace, runtimeDiffDelivery, type Delivery } from "../../shared/context/delivery";
 import { renderBudgetNote } from "../../shared/context/budget-note";
-import { tailEnvelope } from "../../shared/context/envelope";
+import { renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -399,16 +399,6 @@ function markShape(s: StepStreamShape, ch: "r" | "t" | "x"): void {
  * runtime 为空 → 原样返回（不硬塞空消息：白耗 token 且让模型困惑）。
  */
 /**
- * 摘要作为**首条上下文消息**插在历史之前（承接语义）：[摘要, ...历史, runtime, 新输入]。
- * 为什么是 user 而非 system：system 是稳定前缀（缓存友好），摘要是动态内容；放 user 段
- * 既不砸缓存，也符合"把上一段会话的结论交给你"的对话语义。
- */
-function withSummary(hist: ModelMessage[], summaryText: string): ModelMessage[] {
-    if (!summaryText.trim()) return hist;
-    return [{ role: "user" as const, content: summaryText }, ...hist];
-}
-
-/**
  * 合并**相邻的 user 消息**为一条。
  *
  * 为什么必须做：多家 OpenAI-compatible provider（含 zen/go 的部分路由）要求角色交替、
@@ -443,13 +433,16 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
 }
 
 /**
- * 把**尾部信封**拼进 messages：`history:`（压缩索引注记，可选）+ `runtime:`（或 `runtimeDiff:`）
- * + `user:`（本轮输入），合成**一份**合法 YAML（`tailEnvelope`）。
+ * 把**尾部信封**拼进 messages：`summary:`（历史摘要素，可选）+ `history:`（压缩索引注记，可选）
+ * + `runtime:`（或 `runtimeDiff:`）+ `user:`（本轮输入），合成**一份**合法 YAML（`tailEnvelope`）。
  *
  * 为什么合成一份（##310 六轮拍板）：这些段与本轮输入是**相邻 user**，而
  * `normalizeUserRuns` 必然把它们合并成一条（多家 provider 拒连续同角色）。与其让合并
  * 产出一段"YAML 后面跟着裸文本"的怪东西，不如**我们自己合成一份合法 YAML**：
  *
+ *     summary:      ← 仅当有历史摘要（自动生成的元数据，自己的顶层键）
+ *       |-
+ *       …
  *     history:      ← 仅当历史被压缩（自动生成的元数据，自己的顶层键）
  *       kept: [[5, 8]]
  *     runtime:      ← 或 runtimeDiff:
@@ -457,21 +450,24 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
  *     user:
  *       message: '用户真正说的话'
  *
- * ⚠️ 自动生成的段**一律要有自己的顶层键**（##310 八轮）：注记曾与保留首条 user 被合并，
+ * ⚠️ 自动生成的段**一律要有自己的顶层键**（##310 八/九轮）：注记曾与保留首条 user 被合并，
  * 于是 `user.message` = 「history 索引 + 用户原话」拼在一起 —— 模型把它当成任务内容去查
- * （tasks/5 实测：多烧 3 次 bash、5.6 万 prompt token 就为一个字）。
+ * （tasks/5 实测：多烧 3 次 bash、5.6 万 prompt token 就为一个字）。摘要（`withSummary`）同坑，
+ * 九轮一并改成顶层键 `summary:`。
  *
- * 尾部不是 user（如自动续跑、纯工具轮）→ 不编 `user:` 段；既无 runtime 又无注记 → 原样返回。
+ * 尾部不是 user（如自动续跑、纯工具轮）→ 不编 `user:` 段；三段全空 → 原样返回。
  */
-function withRuntime(hist: ModelMessage[], runtime: string, historyNote = ""): ModelMessage[] {
-    const parts = [historyNote, runtime].filter((t) => t.trim());
+function withRuntime(hist: ModelMessage[], runtime: string, historyNote = "", summaryPart = ""): ModelMessage[] {
+    const parts = [summaryPart, historyNote, runtime].filter((t) => t.trim());
     if (parts.length === 0) return hist;
     const last = hist[hist.length - 1];
     if (last && last.role === "user" && typeof last.content === "string" && last.content.trim()) {
         return [...hist.slice(0, -1), { role: "user", content: tailEnvelope(parts, last.content) }];
     }
-    // 没有可并的输入：只有 runtime 时保持旧形（逐字一致）；带注记则让注记有自己的顶层键
-    if (parts.length === 1 && !historyNote.trim()) return [...hist, { role: "user", content: runtime }];
+    // 没有可并的输入：只有 runtime 一段时保持旧形（逐字一致）；否则各段各有顶层键
+    if (parts.length === 1 && runtime.trim() && !historyNote.trim() && !summaryPart.trim()) {
+        return [...hist, { role: "user", content: runtime }];
+    }
     return [...hist, { role: "user", content: tailEnvelope(parts) }];
 }
 
@@ -1795,9 +1791,11 @@ export class LocalAgentManager {
         const store = storeInput ?? replay(readJsonl<Op>(opsFile(taskUri)));
         // 与真发**同一条链**（含压缩注记）：面板里的"压缩后预览"就是这一份
         const histView = this.deliveryHistoryForView(store, policy, taskUri);
-        const history = withRuntime(histView.messages, delivery.runtime.text, histView.note);
         const summaryText = summaryOverride !== undefined ? summaryOverride : this.effectiveSummary(taskUri);
-        const messages = normalizeUserRuns(withSummary(history, summaryText));
+        // 摘要与注记一样是**自动生成的段** → 各占顶层键，不进 user.message（##310 九轮）
+        const messages = normalizeUserRuns(
+            withRuntime(histView.messages, delivery.runtime.text, histView.note, renderSummaryPart(summaryText)),
+        );
         return {
             model: personaForTask(home, taskUri).model,
             system: delivery.system.text,
@@ -2850,10 +2848,7 @@ export class LocalAgentManager {
             };
             const hist = this.deliveryHistory(taskUri, sess.store);
             const sent: ModelMessage[] = normalizeUserRuns(
-                withSummary(
-                    withRuntime(hist.messages, delivery.runtime.text, hist.note),
-                    this.effectiveSummary(taskUri),
-                ),
+                withRuntime(hist.messages, delivery.runtime.text, hist.note, renderSummaryPart(this.effectiveSummary(taskUri))),
             );
             // 本轮的**投递选择事实**（配置驱动压缩）：分表用它标注「本步（轮首）投递被压过」（##272 B1）。
             // 与 compact 事件解耦 —— 事件只在触发/手动时写；这里每轮首都有（投递本就无条件按当前配置筛选）。
@@ -3428,6 +3423,7 @@ export async function previewSimulatedRequest(opts: {
             [...hist.messages, { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" }],
             opts.runtime ?? "",
             hist.note,
+            renderSummaryPart(getLocalAgent().effectiveSummary(taskUri)),
         ),
     );
     let body: Record<string, unknown> | null = null;

@@ -509,6 +509,12 @@ export function ContextLabPage(props: { uri: string }) {
         label: string;
         extra?: string;
         raw: () => string;
+        /**
+         * `<>` 原始数据的**说明** —— 贴 view 顶的 info block（用户 2026-10-15：「上面这一段不要出现，
+         * 不要人误会这也是发出去的，这个可以用 info bar 说明」）。
+         * **不进** `raw()` 正文：那里是"原样子节"，掺一行注释就等于往证据里塞话 —— 看着像发出去的内容。
+         */
+        rawInfo?: string;
         right?: JSX.Element;
         children: JSX.Element;
     }): JSX.Element => (
@@ -527,9 +533,18 @@ export function ContextLabPage(props: { uri: string }) {
                 when={rawOf() === p.k}
                 fallback={p.children}
             >
-                <pre class="max-h-[70vh] overflow-auto whitespace-pre-wrap break-all rounded bg-base-100 p-1 font-mono text-caption">
-                    {p.raw()}
-                </pre>
+                <div class="flex flex-col gap-1">
+                    <Show when={p.rawInfo}>
+                        {(info) => (
+                            <div class="rounded border border-info/40 bg-info/10 px-2 py-1 text-caption leading-snug">
+                                {info()}
+                            </div>
+                        )}
+                    </Show>
+                    <pre class="max-h-[70vh] overflow-auto whitespace-pre-wrap break-all rounded bg-base-100 p-1 font-mono text-caption">
+                        {p.raw()}
+                    </pre>
+                </div>
             </Show>
         </Fold>
     );
@@ -968,17 +983,14 @@ export function ContextLabPage(props: { uri: string }) {
         );
     };
 
-    /** system 侧的原始数据 = 该步真发的 system 全文（steps.jsonl 的 systemText） */
-    const rawSystem = (): string => {
+    /** system 侧的原始数据 = 该步真发的 system 全文（steps.jsonl 的 systemText）——正文只放真发字节 */
+    const rawSystem = (): string => diff()?.systemText ?? "（没有真发记录）";
+    /** 上面那份 raw 的说明（贴 view 顶的 info block；不掺进正文，免得被当成"发出去的内容"） */
+    const rawSystemInfo = (): string => {
         const d = diff();
-        if (!d) return "（没有真发记录）";
-        return [
-            `# 该步真发的 system 参数全文（steps.jsonl 的 systemText，逐字）`,
-            `# 侧：${d.mode === "live" ? "当前组装" : `第 ${d.target?.index ?? "?"} 轮 ${d.target?.turnId ?? ""}`}`,
-            `# 结构：help 段（zod 派生的结构说明）+ system 段（变量树）`,
-            "",
-            d.systemText,
-        ].join("\n");
+        if (!d) return "没有真发记录 —— 下面无内容。";
+        const side = d.mode === "live" ? "当前组装" : `第 ${d.target?.index ?? "?"} 轮 ${d.target?.turnId ?? ""}`;
+        return `该步真发的 system 参数全文（steps.jsonl 的 systemText，逐字）。侧：${side}。结构：help 段（zod 派生的结构说明）+ system 段（变量树）。`;
     };
 
     /**
@@ -993,26 +1005,22 @@ export function ContextLabPage(props: { uri: string }) {
             const parsed = parseBodyMessages(t.record);
             const users = (parsed.msgs ?? []).filter((m) => m.role === "user");
             const last = users[users.length - 1];
-            if (last) {
-                return [
-                    `# 该步**实际发出去**的末条 user 消息（流量日志 ${t.record.log?.abs ?? "?"}:${t.record.log?.line ?? "?"}）`,
-                    `# 里面就是 runtime / runtimeDiff 信封（+ 本轮用户输入）—— 模型真正看到的那段`,
-                    parsed.note ? `# ⚠️ ${parsed.note}` : "",
-                    "",
-                    last.text,
-                ]
-                    .filter((x) => x !== "")
-                    .join("\n");
+            if (last) return last.text;
+        }
+        return diff()?.runtimeText ?? "（没有真发记录）";
+    };
+    /** 上面那份 raw 的说明（贴 view 顶的 info block；不掺进正文） */
+    const rawRuntimeInfo = (): string => {
+        const t = stepTraffic();
+        if (t) {
+            const parsed = parseBodyMessages(t.record);
+            const users = (parsed.msgs ?? []).filter((m) => m.role === "user");
+            if (users[users.length - 1]) {
+                const loc = `${t.record.log?.abs ?? "?"}:${t.record.log?.line ?? "?"}`;
+                return `该步**实际发出去**的末条 user 消息（流量日志 ${loc}）—— 就是**模型真正看到的那段**（runtime / runtimeDiff 信封 + 本轮用户输入）。${parsed.note ? `⚠️ ${parsed.note}` : ""}`;
             }
         }
-        const d = diff();
-        if (!d) return "（没有真发记录）";
-        return [
-            `# 流量日志里找不到该步的请求 → 退回 steps.jsonl 的**组装产物**（runtimeText）`,
-            `# ⚠️ 那份是"我们组装了什么"，不是"线上真发了什么"（后者见「该步实际请求」view）`,
-            "",
-            d.runtimeText,
-        ].join("\n");
+        return "流量日志里找不到该步的请求 → 下面是 steps.jsonl 的**组装产物**（runtimeText）：它是「我们组装了什么」，不是「线上真发了什么」（后者见「该步实际请求」view）。";
     };
 
     /**
@@ -1317,6 +1325,7 @@ export function ContextLabPage(props: { uri: string }) {
                         return n.add + n.del === 0 ? "无差异" : `+${n.add} / -${n.del} 行`;
                     })()}
                     raw={rawSystem}
+                    rawInfo={rawSystemInfo()}
                 >
                     {diffPane("system")}
                 </View>
@@ -1331,6 +1340,7 @@ export function ContextLabPage(props: { uri: string }) {
                         return n.add + n.del === 0 ? "无差异" : `+${n.add} / -${n.del} 行`;
                     })()}
                     raw={rawRuntime}
+                    rawInfo={rawRuntimeInfo()}
                 >
                     {diffPane("runtime")}
                 </View>
