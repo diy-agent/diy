@@ -35,6 +35,17 @@ export const CONTEXT_GUIDE = `# 系统上下文（Context Tree）
 - **易变**变量（任务正文、技能清单、环境探测结果等）不在这里，会作为后续 user 消息单独给出
 - 同一路径若在后续消息中再次出现，一律以**最新**的那份为准（后者覆盖前者）
 - 路径是稳定标识：不因列表顺序或内容变化而改变，可直接引用（如 \`task.title\`）
+
+## 权威性（哪些能信、什么时候必须落盘）
+
+- \`task.*\` **每轮请求现取**，与任务文件 \`AGENTS.md\` 是同一份（不是快照）：
+  \`title/state/parent/created/updated/change_type/module/priority/persona\` = 文件头 frontmatter 的同一份
+  （空串 = 文件头里没有这个键）；\`task.body\` = 文件头之后的正文字节（首尾空白已去）
+- **读**：确认任务、看正文、取父级/状态，直接用上面这些值即可 —— **不必**再 \`cat\` 任务文件求证
+- **写**：正文不必先读文件。追加用 \`diy task edit <uri> --append-body <file|->\`（\`-\` = stdin），
+  整篇覆盖用 \`--body\`；两者收到「整份文件」（含 frontmatter）都会自动**剥头**，不会写出第二个头。
+  判据不对称：追加只剥「认得出的任务头」（须含 state/created/updated）—— 追加一份自带 front matter
+  的普通文档时，文档头**原样保留**（不会被当成任务头吃掉）
 `;
 
 /** 说明头的行数（拼接 YAML 时给行号映射加偏移，保证高亮定位不漂） */
