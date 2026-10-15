@@ -902,7 +902,10 @@ export const apiDef = RpcSchema.router({
                   maxSteps: z.number().optional().cliOption({ desc: "单轮最大模型步数（>0）" }),
                   maxOutputTokens: z.number().optional().cliOption({ desc: "单次模型请求输出上限（>0）" }),
                   bashTimeoutMs: z.number().optional().cliOption({ desc: "单条 bash 命令超时毫秒（>0）" }),
-                  outputClipChars: z.number().optional().cliOption({ desc: "bash 输出回喂截断字符数（>0）" }),
+                  outputClipChars: z
+                    .number()
+                    .optional()
+                    .cliOption({ desc: "（已废弃：无消费方。bash 输出截断改由**投递层**按 2000 行 / 50KB 收口，见 services/tool-output.ts）" }),
                   readMaxBytes: z.number().optional().cliOption({ desc: "read 工具单次返回字节上限（>0）" }),
                   maxSteerQueue: z.number().optional().cliOption({ desc: "插话队列条数上限（>0）" }),
                 },

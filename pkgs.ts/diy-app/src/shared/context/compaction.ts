@@ -120,8 +120,12 @@ export type CompactPolicy = z.infer<typeof CompactPolicySchema>;
 export type CompactMode = CompactPolicy["mode"];
 
 
-/** 默认预算：用户 2026-10-07 定的经验值 **3KB**（≈清零 —— 经验上清零也没啥大不了、还挺干净） */
-export const DEFAULT_BUDGET_BYTES = 3 * 1024;
+/**
+ * 默认预算：**20KB**（用户 2026-10-15 定；##343 M1 落地）。
+ * 旧值 3KB（≈清零）是 ##271 的经验值；生产 `auto-compact.yaml` 早已是 20480 —— 默认值与生产
+ * 实跑不一致，等于「新装的环境」与「现网」跑两套策略，故同步过来。
+ */
+export const DEFAULT_BUDGET_BYTES = 20 * 1024;
 
 /** 预算缺省的工具结果呈现（头尾裁剪：长输出留头尾、中间省略，原文可回取） */
 export const DEFAULT_TOOL_RESULT_POLICY: ToolResultPolicy = {
@@ -151,6 +155,45 @@ export function toolResultOf(p: CompactPolicy): ToolResultPolicy {
 /** 策略 → **字节预算**（0 = 清零）。预算路径**唯一入口** */
 export function budgetBytesOf(p: CompactPolicy): number {
     return p.modeData.budgetBytes;
+}
+
+// ── 裁剪能力轴（clip）──
+//
+// 「这条工具结果**怎么裁**」原先只有**全局一档**（`toolResult.render`）；##343 M1 起升为
+// **可按级声明**：每条取法（picker / stage）各自带 `clip`，**先声明者赢**，缺省回落
+// `history.defaultClip`（= 旧全局策略的降级 ⇒ 不声明即老行为）。
+// 形状遵 `rule.discriminated-union`：判别键 `type` 同级 = 所有分支共有；分支私有参数进 `data`。
+export type ClipSpec =
+    /** 不裁（**保底最近 N 步**要的就是字节保真：headtail 一动，「留下的结果被裁成头尾」就治不了） */
+    | { type: "full" }
+    /** 只留调用 + 原文路径 */
+    | { type: "path" }
+    /** 头尾保留 + 中间 marker（私有参数进 `data`） */
+    | { type: "headtail"; data: HeadTailParams };
+
+/** headtail 的私有参数（触发阈值 = head + tail，见 HeadTailPolicy） */
+export interface HeadTailParams {
+    head: number;
+    tail: number;
+    maxLineChars: number;
+    maxKeepBytes: number;
+}
+
+/** 全局策略（旧形状）→ clip 缺省值（**降级**：M1 之前只有这一档） */
+export function clipSpecOf(tr: ToolResultPolicy): ClipSpec {
+    if (tr.render === "asis") return { type: "full" };
+    if (tr.render === "callpath") return { type: "path" };
+    return { type: "headtail", data: { ...tr.renderData } };
+}
+
+/**
+ * clip → `clipToolResult` 吃的策略（**唯一换算点**）。
+ * 选择阶段算成本、渲染阶段真裁，两段必须走同一份换算 —— 否则「预算按 A 算、发出去是 B」。
+ */
+export function toToolResultPolicy(clip: ClipSpec): ToolResultPolicy {
+    if (clip.type === "full") return { render: "asis" };
+    if (clip.type === "path") return { render: "callpath" };
+    return { render: "headtail", renderData: { ...clip.data } };
 }
 
 /**
@@ -365,7 +408,16 @@ export function clipToolResult(text: string, toolResult: ToolResultPolicy, opts:
 export interface DeliveryTransform {
     /** 历史消息可占字节上限（按纵向优先级阶梯选择） */
     budgetBytes: number;
-    transformToolResult?: (b: { id: string; tool: string; output: string }) => string;
+    /**
+     * **全局回落 clip**（= 策略 `toolResult.render` 的降级）：没被任何级声明 clip 的消息用它。
+     * 有它才谈得上「保底级声明 `full`、其余照旧裁」—— 回落值必须随策略走，不能各自写死。
+     */
+    defaultClip: ClipSpec;
+    /**
+     * 工具结果渲染。入参带 `clip`（**这条消息**的裁法；缺省 = 回落 `defaultClip`）：
+     * 选择阶段与渲染阶段共用同一个渲染器，clip 由选择结果带出（见 local-blocks 的两段分离）。
+     */
+    transformToolResult?: (b: { id: string; tool: string; output: string; clip?: ClipSpec | null }) => string;
 }
 
 /** 由策略构造投递选项（真发与预览共用；预览在 renderer 现算，真发在 main 算） */
@@ -374,31 +426,34 @@ export function makeDeliveryTransform(
     origPathOf: (id: string) => string,
     collect?: ClippedToolDetail[],
 ): DeliveryTransform {
-    const opts: DeliveryTransform = { budgetBytes: budgetBytesOf(policy) };
     const tr = toolResultOf(policy);
-    if (tr.render !== "asis") {
-        // 去重：同一 transform 会在**多次渲染**里对同一工具结果重复调用（投递渲染 + 选择时的成本
-        // 估算各一次；见 sizeOfOps 的 blocksToMessages + selectForDelivery）——同一 id 的裁剪结果
-        // 确定，重复记会让 `details.clipped` 虚胖（实测每个 id 恰 2×）。按 id 只记一次。
-        const seen = new Set<string>();
-        opts.transformToolResult = ({ id, output }) => {
-            const r = clipToolResult(output, tr, { origPath: origPathOf(id) });
-            if (!r.clipped) return output;
-            if (seen.has(id)) return r.text;
-            seen.add(id);
-            collect?.push({
-                id,
-                tool: "",
-                render: tr.render,
-                origLines: r.origLines,
-                origBytes: r.origBytes,
-                keptLines: r.keptLines,
-                keptBytes: r.keptBytes,
-                origPath: origPathOf(id),
-            });
-            return r.text;
-        };
-    }
+    const opts: DeliveryTransform = { budgetBytes: budgetBytesOf(policy), defaultClip: clipSpecOf(tr) };
+    // 一律装上渲染器（不再按 `tr.render !== "asis"` 早退）：全局策略是 `asis` 时它是**恒等变换**
+    // （`clipToolResult` 直接原样返回），但**级声明的 clip 仍要生效** —— 否则「全局 asis + 保底 full」
+    // 这类组合会被全局策略掐死（级声明比全局更具体，谁更具体听谁的）。
+    // 去重：同一 transform 会在**多次渲染**里对同一工具结果重复调用（投递渲染 + 选择时的成本
+    // 估算各一次；见 sizeOfOps 的 blocksToMessages + selectForDelivery）——同一 id 的裁剪结果
+    // 确定，重复记会让 `details.clipped` 虚胖（实测每个 id 恰 2×）。按 id 只记一次。
+    const seen = new Set<string>();
+    opts.transformToolResult = ({ id, output, clip }) => {
+        // 缺省回落：该消息没被任何级声明 clip ⇒ 用全局策略（老行为逐字不变）
+        const eff = clip ?? opts.defaultClip;
+        const r = clipToolResult(output, toToolResultPolicy(eff), { origPath: origPathOf(id) });
+        if (!r.clipped) return output;
+        if (seen.has(id)) return r.text;
+        seen.add(id);
+        collect?.push({
+            id,
+            tool: "",
+            render: eff.type === "path" ? "callpath" : "headtail",
+            origLines: r.origLines,
+            origBytes: r.origBytes,
+            keptLines: r.keptLines,
+            keptBytes: r.keptBytes,
+            origPath: origPathOf(id),
+        });
+        return r.text;
+    };
     return opts;
 }
 
