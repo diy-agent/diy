@@ -122,7 +122,7 @@ function turnOps(turnId: string, userText: string, outText: string): Array<Recor
 function setConfigPolicy(budgetBytes: number, toolResult: Record<string, unknown> = { render: "asis" }): void {
     const cfg = {
         mode: "notify",
-        triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 0.8 },
+        triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 38400 },
         policy: { mode: "budget", modeData: { budgetBytes, toolResult }, summary: false },
     };
     writeFileSync(join(fx.HOME, "auto-compact.yaml"), JSON.stringify(cfg), "utf-8");

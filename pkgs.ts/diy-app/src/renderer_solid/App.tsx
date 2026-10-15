@@ -12,6 +12,7 @@ import { ModelConfigPage } from "./components/ModelConfigPage";
 // 折叠框展开态仍是 lab view 内部的局部状态（与「view 在哪个 area」是两件事）
 import { setLabView } from "./components/PromptLabV4Page";
 import { ContextLabPage, setCtxLabFold } from "./components/ContextLabPage";
+import { FlowPage } from "./components/FlowPage";
 import { AppInfo } from "./components/AppInfo";
 import { LogPanel } from "./components/LogPanel";
 import { ThemeSettings } from "./components/ThemeSettings";
@@ -780,6 +781,11 @@ export default function App() {
                     <Show when={route().kind === "tab" && activeTabItem()?.pageId === "ctxlab"}>
                         <Show when={activeTabItem()} keyed>
                             {(t) => <ContextLabPage uri={t.ctx ?? ""} />}
+                        </Show>
+                    </Show>
+                    <Show when={route().kind === "tab" && activeTabItem()?.pageId === "flow"}>
+                        <Show when={activeTabItem()} keyed>
+                            {(t) => <FlowPage uri={t.ctx ?? ""} />}
                         </Show>
                     </Show>
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "llm"}>

@@ -78,6 +78,14 @@ export function TaskRunPage(props: { uri: string }) {
                 >
                     🌲 上下文树
                 </button>
+                {/* 打开泳道视图页（**独立子页面**：轨迹折线 + 每步产物 + 参数表单，##320） */}
+                <button
+                    class="btn btn-xs btn-ghost"
+                    title="打开泳道视图页（轨迹折线 / 节点详情 / 参数表单）"
+                    onClick={() => getRendererActions().openTab?.("flow", props.uri)}
+                >
+                    🛤 泳道
+                </button>
                 {/* 布局切换：只给**有 view 的 area** 渲染按钮（空 area 点了没反应，见 menuAreas）。
                     图标用序号替代 —— 动态绘制随 grid 结构变化的图标待定（见 133）。 */}
                 <For each={menuAreas()}>

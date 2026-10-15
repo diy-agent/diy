@@ -67,6 +67,29 @@ export function flowFile(uri: string, name: "instance" | "state" | "path" | "eve
     return join(flowDir(uri), file);
 }
 
+/**
+ * 产物袋（##337）—— 任务目录 `flow/artifacts/<节点 id>.json`，与上面四份**并列**（第五份）。
+ *
+ * 定性（与四份的分别）：**产物不是领域态**（`rule.domain-first`：领域态只有 `position`/`path`/`params`/`done`）
+ * —— 不进 `state.json`、不参与 `path.jsonl` 对账、**删了不影响推进**；推进也不产生它：本版的真来源是
+ * 「人 / 后续任务把 raw 放进来」（agent 产出是后续任务）。它是**派生数据**：raw → render 插件 → view。
+ *
+ * 形状：**JSON 数组，下标 = 该节点第 n 次驻留（`Visit.seq`）− 1**；`null` 或越界 = 该驻留无产物。
+ */
+export function artifactDir(uri: string): string {
+    return join(flowDir(uri), "artifacts");
+}
+
+export function artifactFile(uri: string, nodeId: string): string {
+    // 节点 id 直接当文件名 ⇒ 这里兜一道「不许含路径分隔符 / 不许是 . 或 ..」。
+    // 调用方（core/flow.ts）另有一道「节点必须在本工作流定义里」的闸门 —— **两道都要**：
+    // id 来自定义，而定义是宿主 / 工作流开发包给的，不能假定它一定干净。
+    if (nodeId === "" || nodeId === "." || nodeId === ".." || nodeId.includes("/") || nodeId.includes("\\")) {
+        throw new Error(`节点 id 不能用作产物袋文件名：${JSON.stringify(nodeId)}`);
+    }
+    return join(artifactDir(uri), `${nodeId}.json`);
+}
+
 /** 原子写（tmp + rename）：同目录内改名是原子操作，不会留半截文件 */
 function writeFileAtomic(path: string, content: string): void {
     mkdirSync(dirname(path), { recursive: true });
@@ -312,4 +335,44 @@ export function assertSnapshotMatches(def: WorkflowDef<string>, uri: string, sta
             "flow/state.json",
         );
     }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 产物袋（##337）：读 / 写
+// ═══════════════════════════════════════════════════════════════
+
+/** 产物袋的内容：下标 = 驻留 `seq` − 1 的 raw 列表（`null` = 该驻留无产物）；越界同样算「无产物」 */
+export type ArtifactBag = unknown[];
+
+/**
+ * 读一份产物袋。
+ *
+ * 立场（「**无**」与「**坏**」不是一回事 —— 与 `readBinding` / `readState` 同一套）：
+ *   · **文件不存在** ⇒ `[]`：没放过产物是**正常态**（产物不是领域态，本就不必存在）；
+ *   · **文件在但读不出 / 不是数组** ⇒ **抛**：袋只有一个写入口，读不出就是放的人写坏了 ——
+ *     静默当成「没有产物」会让坏袋永远不被发现（而它正被人当「这一步的产物」看着）。
+ */
+export function readArtifacts(uri: string, nodeId: string): ArtifactBag {
+    const file = artifactFile(uri, nodeId);
+    if (!existsSync(file)) return [];
+    let raw: unknown;
+    try {
+        raw = readJson(file);
+    } catch (e) {
+        throw new Error(
+            `产物袋不是合法 JSON：${file}（产物不是领域态 —— 删掉它不影响推进，修好或删掉再放）—— ${(e as Error).message}`,
+        );
+    }
+    if (!Array.isArray(raw)) {
+        throw new Error(`产物袋应为 JSON 数组（下标 = 该节点第 n 次驻留 − 1）：${file}`);
+    }
+    return raw;
+}
+
+/** 放一份 raw 到 `index`（0-based = 驻留 seq − 1）；中间缺的项补 `null`（= 那些驻留无产物） */
+export function writeArtifact(uri: string, nodeId: string, index: number, raw: unknown): void {
+    const bag = readArtifacts(uri, nodeId);
+    while (bag.length < index) bag.push(null);
+    bag[index] = raw;
+    writeFileAtomic(artifactFile(uri, nodeId), `${JSON.stringify(bag, null, 2)}\n`);
 }

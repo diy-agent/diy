@@ -437,3 +437,79 @@ describe("M4：分表压缩点位", () => {
     await ui.clickSelector('[aria-label="关闭窗口构成"]');
   });
 });
+
+// ─── ##272 B1 / ##339：投递压缩可见性进「分表（按步）」────────────
+// 「投递」徽标 = 配置驱动压缩的**事实**（每轮首按当前配置重建，与 compact 事件无关）：
+// 只在**轮首步**（step===1，且账本落了 `historySelection`）标注；其余步不标。
+// 与上面的「压缩」事件列语义分离：两列可同时出现。
+describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
+  let uri3 = "";
+
+  it("种 usage.jsonl：轮首步带 historySelection（丢过），其余步不带", async () => {
+    const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/cp3 --label 投递`);
+    const pid = String((p.data as any)?.data?.id);
+    const t = await fx.sh.getJson(`./diy.sh task create "投递徽标" ${pid}`);
+    uri3 = String((t.data as any)?.data?.uri);
+
+    const dir = join(fx.HOME, "local");
+    mkdirSync(dir, { recursive: true });
+    const key = basename(opsFile(uri3)).replace(/\.ops\.jsonl$/, "");
+    const ts = new Date().toISOString();
+    const step = (turnId: string, s: number, extra: Record<string, unknown>) =>
+      JSON.stringify({
+        ts,
+        turnId,
+        step: s,
+        model: "test",
+        apiFace: "chat",
+        usage: { inputTokens: 1000, outputTokens: 100 },
+        ...extra,
+      });
+    writeFileSync(
+      join(dir, `${key}.usage.jsonl`),
+      [
+        // 轮首步：投递被压过（丢 3 条、保留 1 段）+ 一条压缩事件命中的位置
+        step("t3000", 1, {
+          historySelection: { budgetBytes: 3072, keptBytes: 800, keptRuns: 1, droppedMessages: 3, totalMessages: 5 },
+        }),
+        // 同轮第二步：**不带**（配置驱动的重建点只在轮首）
+        step("t3000", 2, {}),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+    const opsFile3 = join(dir, `${key}.ops.jsonl`);
+    writeFileSync(
+      opsFile3,
+      [
+        { op: "start", id: "t3000", kind: "turn" },
+        { op: "start", id: "t3000_u", kind: "text", parent: "t3000", meta: { role: "user" } },
+        { op: "delta", id: "t3000_u", fields: { content: "投递话题" } },
+        { op: "stop", id: "t3000_u" },
+        { op: "stop", id: "t3000" },
+      ].map((o) => JSON.stringify(o)).join("\n") + "\n",
+      "utf-8",
+    );
+
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri3}`);
+    await waitUntil(a11yText, (t) => t.includes("投递话题"), { label: "会话上屏" });
+  });
+
+  it("分表：**只有轮首步**有「投递」徽标（其余步无）；悬停给出预算/丢几条", async () => {
+    await openDrawer();
+    await ui.clickSelector('[data-drawer-tab="step"]');
+    await waitUntil(
+      () => ui.query<number>("document.querySelectorAll('[data-delivery-compact]').length"),
+      (n) => n >= 1,
+      { label: "投递徽标出现" },
+    );
+    // 恰好一处（= 轮首步）；第二步不标
+    expect(await ui.query<number>("document.querySelectorAll('[data-delivery-compact]').length")).toBe(1);
+    const badge = await ui.query<string>("document.querySelector('[data-delivery-compact]')?.textContent?.trim() ?? ''");
+    expect(badge).toContain("投递");
+    const tip = await ui.query<string>("document.querySelector('[data-delivery-compact]')?.getAttribute('title') ?? ''");
+    expect(tip).toContain("3 KB");
+    expect(tip).toContain("丢 3/5");
+    expect(tip).toContain("保留 1 段");
+    await ui.clickSelector('[aria-label="关闭窗口构成"]');
+  });
+});
