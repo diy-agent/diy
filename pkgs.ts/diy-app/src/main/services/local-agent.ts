@@ -297,7 +297,13 @@ interface TurnRun {
     taskUri: string;
     /** 本轮的中止源。**唯一来源 = 用户主动停止**（`cancel()`）—— 不再由消费端断开触发 */
     ctrl: AbortController;
-    /** 订阅本轮的 `agent.local.chat` 流。断开只从集合摘掉，不影响驱动 */
+    /**
+     * 订阅本轮的 `agent.local.chat` 流。断开只从集合摘掉，不影响驱动。
+     *
+     * 边界（review2 R6）：**只承载驱动产出的 op**（`publish`）。`enqueueWhileRunning` 的排队回执走
+     * 它自己的 `yield`（那条路径压根没有 TurnRun），不进这里 —— UI 靠 ops 流（##307）全可见，故当下无感。
+     * 若将来把 chat 流当「全会话镜像」，须先统一 emit 出口，否则会漏掉排队回执。
+     */
     subs: Set<AsyncQueue<Op>>;
     /** 驱动异常：按原语义经流上抛（RPC 层转 error 帧），由订阅端在流尾 rethrow */
     error?: unknown;
