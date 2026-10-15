@@ -33,6 +33,7 @@ import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-
 import { resolve as resolvePath } from "node:path";
 import * as flow from "../core/flow";
 import { flowPrompt } from "./flow-prompt";
+import { AsyncQueue } from "./async-queue";
 
 /**
  * 实际 RPC 监听端口，由入口在绑定完成后回填。
@@ -992,6 +993,25 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.flow.params.get, async ({ input }) => flow.paramsGet(input.uri));
   binding.on(app.flow.params.set, async ({ input }) => flow.paramsSet(input.uri, kvList(input.param)));
   binding.on(app.flow.prompt, async ({ input }) => flowPrompt(input.uri));
+  // ##341：系统推一步（真求值 pred:/action:）—— 与上面两条「宣布」命令走的是不同那条路
+  binding.on(app.flow.step, async ({ input }) => {
+    const { status, to, kind, reason, view } = await flow.stepFlow(input.uri, input.cwd === undefined ? {} : { cwd: input.cwd });
+    return { status, to, kind, reason, view };
+  });
+  // ##341 驱动环：流式（逐帧）+ **客户端断开即中断**（signal 一路传到在跑的 agent 轮次）
+  binding.on(app.flow.run, async function* ({ input, signal }) {
+    const { runFlow } = await import("./flow-runner");
+    const queue = new AsyncQueue<unknown>();
+    void runFlow(input.uri, {
+      ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
+      ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+      signal,
+      onFrame: (frame) => queue.push(frame),
+    })
+      .catch((e: unknown) => queue.push({ kind: "stop", reason: "turn-error", message: e instanceof Error ? e.message : String(e) }))
+      .finally(() => queue.close());
+    for await (const frame of queue) yield JSON.stringify(frame);
+  });
 
   // ── seed ──
   binding.on(app.seed.run, async () => {

@@ -1581,6 +1581,33 @@ export const apiDef = RpcSchema.router({
               bytes: z.number(),
             }),
           }),
+          /**
+           * ##341 起 flow 域多两条**驱动**命令（一个系统推、一个自动轮转）。
+           * 与既有命令的分别：`advance` / `bounce` 是**宣布**（不评价 guard），它们走内核的**求值**那条路。
+           */
+          step: RpcSchema.unary({
+            desc: `系统推一步：当前节点 guard 全可观测 ⇒ 真求值（pred:/action:）并自动推进；尚未进入 ⇒ 进入入口。含 prompt: 的节点一步都不推（返回 awaiting-actor）`,
+            input: {
+              uri: z.string().cliArg({ desc: "任务 URI" }),
+              cwd: z.string().optional().cliOption({ desc: "命令类插件（pred:/action:）的工作目录；缺省 = 应用进程 cwd" }),
+            },
+            output: z.object({
+              status: z.enum(["moved", "done", "stuck", "awaiting-actor"]).describe("moved=推成了 / done=走完 / stuck=停在边上 / awaiting-actor=这一步要 actor 宣布"),
+              to: z.string().nullable(),
+              kind: z.enum(["entry", "next", "bounce"]).nullable(),
+              reason: z.string().describe("stuck / awaiting-actor 的原因（其余为空串）"),
+              view: FlowViewSchema,
+            }),
+          }),
+          run: RpcSchema.serverStream({
+            desc: `驱动环（##341）：按 next.mode 三分流自动轮转 —— system 真求值自动推（绿线）· actor+agent 起一轮 agent 收结论后推进/打回 · actor+human 停下等人。**客户端断开即中断**（可停）；判据一律读 flow show（幂等，重复 run 接着走）`,
+            input: {
+              uri: z.string().cliArg({ desc: "任务 URI" }),
+              maxSteps: z.number().optional().cliOption({ desc: "步数护栏（缺省 32）" }),
+              cwd: z.string().optional().cliOption({ desc: "命令类插件的工作目录；缺省 = 应用进程 cwd" }),
+            },
+            output: z.string().describe("逐行 JSON 帧：{kind:'step'|'turn'|'stop', …}（给人看的输出，不是真源）"),
+          }),
         },
       }),
 

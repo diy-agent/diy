@@ -5,9 +5,14 @@
 // 否则「工作流开发包」成熟后换供给方，就得回头改数据文件。
 //
 // 第一版只有一个内置定义（`workflows/dev.ts`）；加定义 = 加文件 + 在下面注册一行。
+// ##341 起，本注册表还**转出「执行者绑定」的取法**（`executors.ts`）—— 定义说「哪一类主体推得动」，
+// 执行者表说「到底谁去干」，两者都按定义 id 关联，故同住这一层。
 
 import type { WorkflowDef } from '@diy/flow';
 import { DEV_WORKFLOW } from './dev';
+
+export { executorOf } from './executors';
+export type { NodeExecutor } from './executors';
 
 /** 已注册的定义（键 = 定义自己的 `id`）。**只增不改**：实例文件里的 workflowId 要能长期解析。 */
 const WORKFLOWS: Readonly<Record<string, WorkflowDef<string>>> = Object.freeze({

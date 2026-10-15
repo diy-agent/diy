@@ -8,6 +8,7 @@
 //   3. **已进入**：折线每步一张卡（同一泳道可二次驻留 = 打回）、连线数 = 驻留数 − 1、
 //      打回那条是**红虚线**；参数表单转**只读** + 说明（换配置 = 另起一次运行）
 //   4. **节点详情**：hint 原文 / guard 逐条（标「不可观测」）/ actor / art 三段链
+//      （##341 起 dev 定义升级为 7 节点、入口 = clarify：折线与泳道断言按新形状更新，**意图不变**）
 //   5. **产物区**（##337）：**逐驻留一张卡**，且每个驻留显示**它自己那次**的产物（review1 P1-1）；
 //      命令未合入 ⇒ 如实写「待接入」（占位也要逐驻留、逐字对得上）；合入后 ⇒ 断言**渲染出的内容**
 //      （不是「有元素就算」—— P3-1：两态取一等于永远绿灯）
@@ -87,22 +88,48 @@ async function cliAdvance(uri: string, to: string): Promise<void> {
 async function cliBounce(uri: string, to: string): Promise<void> {
     await fx.sh.run(`./diy.sh flow bounce ${uri} --to ${to}`);
 }
+/** 从入口走到 `implement`（##341 起入口是 `clarify`：折线上先过 clarify / design 两跳） */
+async function cliToImplement(uri: string): Promise<void> {
+    for (const node of ["clarify", "design", "implement"]) await cliAdvance(uri, node);
+}
+
+/** 把某元素滚进它所在滚动容器的可视区（真人会滚；不滚就是点一个点不到的坐标） */
+async function scrollIntoView(selector: string): Promise<void> {
+    await ui.query<boolean>(
+        `(() => { const e = document.querySelector(${JSON.stringify(selector)}); if (!e) return false; e.scrollIntoView({ block: "center" }); return true; })()`,
+    );
+    await new Promise((r) => setTimeout(r, 150));
+}
 
 /** 点「⟳ 刷新」（页面数据只在显式刷新 / 保存后重取；没有实时推送） */
 async function refresh(): Promise<void> {
     await ui.clickSelector("[data-flow-refresh]");
 }
 
-/** 舞台区域（视口坐标 ∩ 视口），含 devicePixelRatio —— 像素采样的坐标基准 */
+/**
+ * 舞台区域（视口坐标 ∩ 视口），含 devicePixelRatio —— 像素采样的坐标基准。
+ *
+ * `scrollIntoView` 连**内层**滚动容器一起滚，而舞台就贴在容器顶（内容只有它）—— 于是它等于把
+ * 容器 `scrollTop` 打回 0。##341 起折线变长（7 节点定义的入口链 + 打回 = 5 次驻留），打回线落在
+ * 容器可视区之外，采样区采不到红线，故这里**先存后还**：定位到舞台顶是给外层页面用的，
+ * 内层滚动归调用方（像素用例）自己控制。
+ */
 async function stageRect(): Promise<{ x: number; y: number; w: number; h: number; dpr: number }> {
     return await ui.query<{ x: number; y: number; w: number; h: number; dpr: number }>(`(() => {
         const el = document.querySelector('[data-flow-stage]');
+        const sc = el.parentElement;
+        const keep = sc ? sc.scrollTop : 0;
         el.scrollIntoView({ block: 'start', inline: 'start' });
+        if (sc) sc.scrollTop = keep;
         const r = el.getBoundingClientRect();
-        const x = Math.max(0, r.x);
-        const y = Math.max(0, r.y);
-        const w = Math.max(0, Math.min(r.right, window.innerWidth) - x);
-        const h = Math.max(0, Math.min(r.bottom, window.innerHeight) - y);
+        // 取样区还要 ∩ **滚动容器的可视盒**：舞台比容器高时它的 rect 会伸到容器外
+        // （底部被裁掉、顶部滚到负 y），只用 rect ∩ 视口会把容器外的东西（顶部工具条上的
+        // 红/蓝徽章）算进来 —— B 对照里那些像素不会消失，判据就假红。
+        const c = sc ? sc.getBoundingClientRect() : r;
+        const x = Math.max(0, r.x, c.x);
+        const y = Math.max(0, r.y, c.y);
+        const w = Math.max(0, Math.min(r.right, c.right, window.innerWidth) - x);
+        const h = Math.max(0, Math.min(r.bottom, c.bottom, window.innerHeight) - y);
         return { x, y, w, h, dpr: window.devicePixelRatio || 1 };
     })()`);
 }
@@ -182,6 +209,10 @@ describe("泳道视图页（##320）", () => {
         await ui.clickSelector('[data-flow-param-input="review.reviewers"]');
         await ui.press("Meta+A");
         await ui.type("3");
+        // 参数区挂在 inspector 下部的滚动容器里（`max-h-[45%] overflow-auto`，见 FlowPage.tsx）：
+        // ##341 定义升级成 7 节点后参数多一组（`merge.*`），保存按钮落到**容器可视区之外** ——
+        // 坐标点不到（`elementFromPoint` 返回 null，点击静默落空）。真人会先滚动，故这里也滚。
+        await scrollIntoView("[data-flow-params-save]");
         await ui.clickSelector("[data-flow-params-save]");
 
         // 以 CLI 读回（UI 说什么不算数，落盘才算）
@@ -201,7 +232,7 @@ describe("泳道视图页（##320）", () => {
 
     it("推进与打回：折线每步一张卡、连线数 = 驻留数 − 1、打回是红虚线；参数表单转只读", async () => {
         const uri = await freshInstance("trace");
-        // UI 上点「进入 implement」—— 证明按钮真的能推进（不是只有 CLI 能走）；
+        // UI 上点「进入入口」—— 证明按钮真的能推进（不是只有 CLI 能走）；
         // 按钮自带目标（`to` 必填，UI 不给宿主就没得推）
         await openFlowPage(uri);
         await ui.clickSelector("[data-flow-enter]");
@@ -211,31 +242,32 @@ describe("泳道视图页（##320）", () => {
             { label: "进入入口节点（1 次驻留）", timeoutMs: 8000 },
         );
 
-        // 余下两跳用 CLI（正路同一条；UI 的下拉交互不在这里重复测）
+        // 余下几跳用 CLI（正路同一条；UI 的下拉交互不在这里重复测）
+        await cliAdvance(uri, "design"); // clarify → design
+        await cliAdvance(uri, "implement"); // design → implement
         await cliAdvance(uri, "review"); // implement → review
         await cliBounce(uri, "implement"); // review → implement（打回，不新建节点）
         await refresh();
         await waitUntil(
             () => ui.query<number>(`document.querySelectorAll('[data-flow-visit]').length`),
-            (n) => n === 3,
-            { label: "折线 3 次驻留", timeoutMs: 8000 },
+            (n) => n === 5,
+            { label: "折线 5 次驻留", timeoutMs: 8000 },
         );
 
         // 泳道 = 折线里出现过的节点 ∪ **当前节点**的出边目标（数据缺口：`FlowView` 没有节点全表）。
-        // 此刻当前位置是 implement（打回回来），出边只有 → review ⇒ 图上就是 2 条泳道。
-        // 注意 `ci` **只有 review 当当前节点时才看得见**（它的出边在那时才有）—— 这是真数据的边界，
-        // 不为了凑第三条编造它（缺口的补法：`FlowView` 增 `nodes[]`，见 lib/flow-model.ts 头注）。
+        // 此刻当前位置是 implement（打回回来），出边只有 → review ⇒ 图上就是折线里那 4 条泳道
+        // （`ci` / `approve` / `merge` 要等 review 当当前节点时才看得见 —— 真数据的边界，不编造）。
         expect(
             await ui.query<string[]>(`[...document.querySelectorAll('[data-flow-lane]')].map((e) => e.dataset.flowLane)`),
-        ).toEqual(["implement", "review"]);
-        // 折线：3 次驻留、2 条线；打回 1 条；同一节点二次驻留标「第 2 次」
-        expect(await ui.query<number>(`document.querySelectorAll('path[data-wire-kind="next"]').length`)).toBe(1);
+        ).toEqual(["clarify", "design", "implement", "review"]);
+        // 折线：5 次驻留、4 条线（3 蓝 1 红）；同一节点二次驻留标「第 2 次」
+        expect(await ui.query<number>(`document.querySelectorAll('path[data-wire-kind="next"]').length`)).toBe(3);
         expect(await ui.query<number>(`document.querySelectorAll('path[data-wire-kind="bounce"]').length`)).toBe(1);
         expect(await ui.query<number>(`document.querySelectorAll('[data-flow-seq="2"]').length`)).toBe(1);
 
         // **线真的画出来了**（§14.8 的教训：path 数为 0 / 长度为 0 = 白画）
         const lens = await ui.query<number[]>(`[...document.querySelectorAll('[data-flow-wires] path[data-wire-kind]')].map(p => p.getTotalLength())`);
-        expect(lens.length).toBe(2);
+        expect(lens.length).toBe(4);
         for (const l of lens) expect(l).toBeGreaterThan(20);
 
         // 打回 = 红虚线；推进 = 蓝实线（两色，订正 6 的收窄）
@@ -261,7 +293,7 @@ describe("泳道视图页（##320）", () => {
 
     it("层叠一次性画清：背景(0) → 连线(2) → 节点(3)，`wires` 是 pointer-events:none", async () => {
         const uri = await freshInstance("z");
-        await cliAdvance(uri, "implement");
+        await cliToImplement(uri);
         await openFlowPage(uri);
         await waitUntil(
             () => ui.query<number>(`document.querySelectorAll('[data-flow-visit]').length`),
@@ -293,7 +325,7 @@ describe("泳道视图页（##320）", () => {
 
     it("像素判据 A/B：红线蓝线可见，且被底纹盖住时归零（不是「截图无报错」）", async () => {
         const uri = await freshInstance("pixel");
-        await cliAdvance(uri, "implement"); // 进入 implement
+        await cliToImplement(uri); // 入口链 → implement
         await cliAdvance(uri, "review"); // → review
         await cliBounce(uri, "implement"); // → implement（打回红线）
         await openFlowPage(uri);
@@ -311,6 +343,11 @@ describe("泳道视图页（##320）", () => {
         const ONLY_WIRES = `[data-flow-nodes]{display:none!important}
              [data-flow-lane] > div{visibility:hidden!important}`;
         await injectStyle(ONLY_WIRES, "__t320_pixel_layer");
+        // 滚到舞台底部：采样区 = 视口 ∩ 舞台，而容器只看得见前 2 行多 —— ##341 定义升级后折线
+        // 有 5 次驻留（clarify/design/implement/review/implement），**打回线在第 4→5 行**，
+        // 不滚下去就只采得到前两条蓝线、红线恒 0（这正是本用例先前红的原因）。
+        // 滚到底后同一屏里既有「implement → review」的蓝线（第 3→4 行）也有打回红线 —— 两色一次采到。
+        await ui.query<number>(`(() => { const sc = document.querySelector('[data-flow-stage]').parentElement; sc.scrollTop = sc.scrollHeight; return sc.scrollTop; })()`);
         const a = await stagePixels();
         expect(a.w).toBeGreaterThan(100); // 舞台真的截到了
         expect(a.h).toBeGreaterThan(100);
@@ -353,7 +390,7 @@ describe("泳道视图页（##320）", () => {
      */
     it("产物区：逐驻留一张卡；##337 接入后各驻留各显示各的（P1-1 回归）", async () => {
         const uri = await freshInstance("artifact");
-        await cliAdvance(uri, "implement");
+        await cliToImplement(uri);
         await cliAdvance(uri, "review");
         await cliBounce(uri, "implement");
         await cliAdvance(uri, "review"); // review 二次驻留（seq=2）—— P1-1 的必要条件
@@ -367,12 +404,19 @@ describe("泳道视图页（##320）", () => {
         await openFlowPage(uri);
         await waitUntil(
             () => ui.query<number>(`document.querySelectorAll('[data-flow-artifact]').length`),
-            (n) => n >= 4,
-            { label: "产物区出现（4 次驻留 ⇒ 4 张卡）", timeoutMs: 10000 },
+            (n) => n >= 6,
+            { label: "产物区出现（6 次驻留 ⇒ 6 张卡）", timeoutMs: 10000 },
         );
         const cards = await artifactCards();
-        // 逐驻留：key 是 `节点#序号`，4 次驻留各一张卡
-        expect(Object.keys(cards).sort()).toEqual(["implement#1", "implement#2", "review#1", "review#2"]);
+        // 逐驻留：key 是 `节点#序号`，6 次驻留（入口链 clarify/design + implement 两次 + review 两次）各一张卡
+        expect(Object.keys(cards).sort()).toEqual([
+            "clarify#1",
+            "design#1",
+            "implement#1",
+            "implement#2",
+            "review#1",
+            "review#2",
+        ]);
 
         if (ready) {
             expect(cards["review#1"], `review#1 卡：${cards["review#1"]}`).toContain("REVIEW_ONE");
