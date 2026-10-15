@@ -351,10 +351,23 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
         const opsRaw = readFileSync(join(fx.HOME, "local", basename(opsFile(uri))), "utf-8");
         const turnIds = [...opsRaw.matchAll(/"id":"(t\d{13})"/g)].map((m) => m[1]!);
         expect(turnIds.length).toBeGreaterThan(0); // 真轮确实落盘了
-        const lastTurnId = turnIds[turnIds.length - 1]!;
-        const d = new Date(Number(lastTurnId.slice(1)));
-        const p2 = (n: number) => String(n).padStart(2, "0");
-        const expTitle = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+        // 同一个 turn id 会随**每条** op 重复出现（start/delta/stop 各带 id）→ 唯一化保序
+        const uniqTurns = [...new Set(turnIds)];
+        const lastTurnId = uniqTurns[uniqTurns.length - 1]!;
+        const titleOf = (id: string) => {
+            const dd = new Date(Number(id.slice(1)));
+            const p2 = (n: number) => String(n).padStart(2, "0");
+            return `${dd.getFullYear()}-${p2(dd.getMonth() + 1)}-${p2(dd.getDate())} ${p2(dd.getHours())}:${p2(dd.getMinutes())}:${p2(dd.getSeconds())}`;
+        };
+        // ⚠️ 钉的是**这一对**真 id（最后一条 + 它前面那条），不是"只钉最后一条"：
+        // 本用例末尾那轮是 `stub` **挂住未结束**的续轮，它在界面上**没有**轮尾状态行
+        // （状态行的条件是 `attrs.usage || usagePending()`，挂起的续轮两条都不满足）——
+        // 界面上可见的时刻只有**上一轮**（已结束）的。而两轮相隔仅 ~250ms，常在**同一秒**，
+        // 于是"只钉最后一条"退化成「撞秒即绿、跨秒即红」的 flaky：实测在 **main**（未含 ##327
+        // 改动）上，`last=09:48:36 / 界面=09:48:35` 跨秒即红，同秒 4/4 全绿（##327 取证）。
+        // 钉这一对：仍是 main 用 `t${Date.now()}` 写出的真 id（换 id 形状照样立刻红），
+        // 且仍要求**每个上屏时刻只出现一处**（原意图），只是不再依赖撞秒。
+        const titles = new Set([titleOf(uniqTurns[uniqTurns.length - 2] ?? lastTurnId), titleOf(lastTurnId)]);
         const shown = await waitUntil(
             () =>
                 ui.query<string[]>(
@@ -362,10 +375,13 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
                        .map((s) => (s.textContent || '').trim())
                        .filter((t) => /^\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d$/.test(t))`,
                 ),
-            (rows) => rows.includes(expTitle),
-            { label: `真轮 ${lastTurnId} 的时刻已上屏` },
+            (rows) => rows.some((t) => titles.has(t)),
+            { label: `真轮 ${lastTurnId} 的时刻已上屏`, timeoutMs: 30_000 },
         );
-        // v4（##253）：时刻收敛到**轮尾状态行**一处，且直接显示到秒 —— 不再是 `MM-DD HH:MM` + hover title
-        expect(shown.filter((t) => t === expTitle)).toHaveLength(1);
+        // v4（##253）：时刻收敛到**轮尾状态行**一处，且直接显示到秒 —— 不再是 `MM-DD HH:MM` + hover title。
+        // "一处"= 同一时刻不重复渲染（下面用集合大小钉住）；至于是哪一轮的时刻，见上面的撞秒说明。
+        const got = shown.filter((t) => titles.has(t));
+        expect(got.length).toBeGreaterThan(0);
+        expect(new Set(got).size).toBe(got.length);
     }, 120_000); // 本用例要跑完「一轮收尾 → 自动续轮」，且每次断言都要一次 CLI 往返：给足预算
 });

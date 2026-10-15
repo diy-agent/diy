@@ -47,6 +47,15 @@ interface Segment {
     cursor: string;
 }
 
+/**
+ * op 订阅健康度（##327 review1 R1）。
+ *
+ * 为什么需要这个状态位：单通道化（chat 流不再 apply）之后，**实时输出 100% 依赖订阅送达**，
+ * 而"订阅坏了"在界面上与"模型正在想"完全同形 —— 没有这个位，谁也说不出"这一轮为什么没有字"。
+ * 它同时是轮末自检（settleOpsAfterTurn）的判据：`live` 却不前进 = 流连着但一个帧也不来。
+ */
+type OpsState = "idle" | "connecting" | "live" | "down";
+
 interface TaskState {
     /** 已加载的窗口段，**升序**（更早的在前）；尾部流式内容落在最后一段 */
     segments: Segment[];
@@ -104,6 +113,10 @@ interface TaskState {
     epoch: number;
     /** op 订阅的取消句柄（null = 未订阅）。切任务时取消，回来时按水位补发追平 */
     opsAbort: AbortController | null;
+    /** op 订阅健康度（见 OpsState 头注）：实时显示的唯一通道通不通 */
+    opsState: OpsState;
+    /** 本段故障是否已浮到界面（一段故障只提示一次；恢复时清，下段故障还能提示） */
+    opsDownNotified: boolean;
     /**
      * 逐步用量账本（`<key>.usage.jsonl` 的结构化镜像）。
      * 权威在盘上；这里是快照，打开会话时拉一次，轮次收尾（含别人的轮次）时再拉一次。
@@ -143,7 +156,7 @@ function stateFor(taskUri: string): TaskState {
             active, setActive, stopRequestedAt, setStopRequestedAt, abort: null,
             error, setError, steers, setSteers, usage, setUsage, steerSeq: 0, steerSettled: 0,
             scroll: 0, tab: "local", detailScroll: 0,
-            appliedSeq: 0, epoch: -1, opsAbort: null,
+            appliedSeq: 0, epoch: -1, opsAbort: null, opsState: "idle", opsDownNotified: false,
         };
         states.set(taskUri, s);
     }
@@ -569,13 +582,31 @@ async function refreshSteers(taskUri: string): Promise<void> {
 //
 // 帧形状与契约见 main 的 services/ops-feed.ts 与 api-def 的 opsWatch / opsWatermark。
 //
+// ⚠️ **本订阅是块树的唯一 apply 通道**（##327）：main 侧**同一个 op 走两条路**送达本窗口 ——
+//   ① `opsFeed.publish` → 本订阅（广播，**带行号 seq**）；
+//   ② `agent.local.chat` 的流（发起方专属，**不带 seq**，见 main 的 api-impl）。
+// 两条都 apply = 同一条 delta 追加两遍 = **整段叠字**（实测：`先把现场看清楚` →
+// `先把现场先把现场看清楚看清楚`）。症状只表现为文字、块结构却正常，是因为
+// **delta 是纯追加、无唯一键、不幂等**，而 start / patch / stop 恰好幂等 ——
+// 「重复 apply 无害」这个前提从来只对后三者成立。
+// 故 `send()` 只**消费**那条流（拿"我这轮结束了/报错了"这一个信号），一个 op 都不落地；
+// 实时显示（含插话投递后的队列刷新、轮次边界对真值）全部收口在本文件的 `applyOpsFrame`。
+//
 // 时序（必须按此序，否则会漏掉「首载期间」写入的 op）：
 //   ① 取水位 wm = {epoch, seq}（ops.jsonl 当前行号）；
 //   ② 拉 history（**折叠流**，大会话快路径）fold 成块树 —— 它覆盖范围 **≥ wm.seq**
 //      （main 侧同步读文件，且①在②之前发起）；
 //   ③ `appliedSeq = wm.seq`，建 opsWatch(since=wm.seq) → main 先补发 `(wm.seq, 现在]`，再接实时。
-// ②③ 之间与补发段的重复由 seq 去重吸收；即便漏掉去重，`BlockStore.apply` 本身幂等
-//（重复 start / patch / stop 都是 no-op），所以这条路径「重不重」都不出错，只是别重复算。
+// ②③ 之间与补发段的重复由 seq 去重吸收 —— 但这份去重**只在本通道内成立**：它的依据是
+// ops.jsonl 行号，而 chat 流的 op 没有行号、无从比对。这正是「chat 流不许 apply」的硬理由。
+//
+// ⚠️ 单通道的**代价**与兜底（##327 review1 R1）：订阅坏了 = 用户一个字也看不见（旧实现由
+// chat 流兜住）。三条可达路径都不许当成"理论上不会发生"：
+//   ① 订阅中断 / main 关流（有异常或流结束）→ 退避重订 + **界面出声**（notifyOpsDown）；
+//   ② 退避窗口（OPS_RECONNECT_MS）内发的轮次 → 轮末自检发现水位没前进 → 立刻重订补发；
+//   ③ 流"连着却一个帧也不来"（**无异常**，最阴的一种）→ 同样只有轮末自检能发现（settleOpsAfterTurn）。
+// 补齐一律靠**重订**（main 的 subscribe 从 appliedSeq 同步读文件连续补发），
+// 绝不把 chat 流请回来 apply —— 那条路的 op 没有行号，请回来就是双通道的老病。
 
 /** 取会话 op 流水位（订阅起点的校准值） */
 async function fetchWatermark(taskUri: string): Promise<{ epoch: number; seq: number }> {
@@ -600,9 +631,12 @@ function ensureOpsSubscription(taskUri: string): void {
     if (st.opsAbort) return;
     const ctrl = new AbortController();
     st.opsAbort = ctrl;
+    st.opsState = "connecting";
     const since = st.appliedSeq;
     const epoch = st.epoch;
     void (async () => {
+        // 非主动终止（中断 / main 侧关流）—— 与「被重订」「主动退订」分流，别混成一个布尔
+        let broken = false;
         try {
             const stream = await diyService.diy.agent.local.opsWatch(
                 { taskUri, since, epoch },
@@ -612,22 +646,93 @@ function ensureOpsSubscription(taskUri: string): void {
                 // 已被重订（补洞）或退订：本流作废，别再处理它可能残留的帧
                 //（否则会拿旧 since 的帧去撞新的 appliedSeq，误报缺口）
                 if (st.opsAbort !== ctrl) break;
+                // "通了"的判据是**收到帧**，不是调用返回：RPC 收下订阅≠main 那条推送路是通的
+                // （subscribe 的首帧恒为 hello，见 ops-feed）。拿调用返回当健康，会在"流哑了"
+                // 时给出假的"已恢复" —— 那正是 R1 要防的自欺。
+                if (st.opsState !== "live") markOpsLive(st);
                 applyOpsFrame(taskUri, frame as OpsFrame);
             }
+            // 循环正常退出：要么被重订（句柄已换，自有新流接手），要么 main 把流关了 —— 后者
+            // 与中断同价（订阅没了 = 实时显示没了），**不能当"无事发生"**（旧实现就是这么静默的）。
+            broken = st.opsAbort === ctrl;
+            if (broken) console.warn(`[localChat] op 订阅被 main 关闭 ${taskUri}，将退避重连`);
         } catch (e) {
             // 正常退订（abort）与页面销毁（client disposed）都不是故障，别当异常刷日志
             const msg = e instanceof Error ? e.message : String(e);
             if (!ctrl.signal.aborted && !/disposed|abort/i.test(msg)) {
                 console.warn(`[localChat] op 订阅中断 ${taskUri}，将退避重连:`, e);
-                // ##307 review2 R3：非主动退订的中断若就此作罢，UI 会**静默冻结** ——
-                // reload 的触发源全是订阅事件，旧实现靠 2s 轮询兜底而轮询已删。
-                // 退避重订：从 appliedSeq 补发，断线期间的 op 不丢。
-                scheduleOpsReconnect(taskUri);
+                broken = true;
             }
         } finally {
-            if (st.opsAbort === ctrl) st.opsAbort = null;
+            if (st.opsAbort === ctrl) {
+                st.opsAbort = null;
+                if (broken) {
+                    st.opsState = "down";
+                    notifyOpsDown(st);
+                    // ##307 review2 R3：非主动退订的中断若就此作罢，UI 会**静默冻结** ——
+                    // reload 的触发源全是订阅事件，旧实现靠 2s 轮询兜底而轮询已删。
+                    // 退避重订：从 appliedSeq 补发，断线期间的 op 不丢。
+                    scheduleOpsReconnect(taskUri);
+                } else {
+                    st.opsState = "idle";
+                }
+            }
         }
     })();
+}
+
+/**
+ * 订阅**真的通**了（收到帧，见调用点）：记健康度；刚从故障里恢复则出一声"已恢复"
+ * （**有始有终** —— 用户才知道现在可以看实时了；只报故障不报恢复，等于把"要不要刷新"留给用户猜）。
+ */
+function markOpsLive(st: TaskState): void {
+    st.opsState = "live";
+    if (st.opsDownNotified) {
+        st.opsDownNotified = false;
+        notificationStore.addToast("success", "会话实时更新已恢复");
+    }
+}
+
+/**
+ * 显示通道不可用 → 浮到界面上（**每段故障一次**，恢复时由 markOpsLive 清）。
+ *
+ * 为什么非做不可（##327 review1 R1）：单通道化后订阅不可用 = 用户**一个字也看不到**，
+ * 而这件事在界面上与"模型还在想"完全同形，只有 console.warn 的话用户永远不知道。
+ * 提示只负责"告诉他现在不实时"，真正的补齐由调用方负责（退避重订 / 轮末自检重订）。
+ */
+function notifyOpsDown(st: TaskState): void {
+    if (st.opsDownNotified) return;
+    st.opsDownNotified = true;
+    notificationStore.addToast("error", "会话实时更新中断，正在自动重连…");
+}
+
+/**
+ * 轮末自检（##327 review1 R1）：这一轮产出过 op，**我的树就必须前进** —— 没前进就是"发出去
+ * 却看不见"（chat 流的 op 已不落地，订阅是唯一通道）。
+ *
+ * 判据取**本地水位是否前进**（不问 main：省一次 RPC，也不搭"yield ⊆ publish"那条约定 ——
+ * 那是 R2 的事，且 sink 落盘失败时它本来就允许分叉）。真值在我手上：本轮我确实从 chat 流里
+ * 数到了 op，健康的订阅必然把同一批 op 也送进来。
+ *
+ * 先空等几拍再判（不是"等一会儿"）：同一连接上的帧**先于** chat 流的收尾写出
+ * （main 侧 `sink` 落盘 → `publish` → 才 `yield`），故它们此时已在客户端，只差事件循环把
+ * 它们投给订阅循环。空等一场若仍不前进，就不是在途、是真没来。
+ * 误判的代价也只是多一次重订（幂等、不重复落地）—— 比"整轮看不见"便宜得多。
+ */
+async function settleOpsAfterTurn(taskUri: string, baseSeq: number): Promise<void> {
+    for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
+    const st = states.get(taskUri);
+    if (!st) return;
+    if (currentUri() !== taskUri) return; // 已切走：订阅本就该退订，别把它请回来
+    if (st.running()) return; // 新一轮已在跑：它的轮末自检负责（别动在途那一条流）
+    if (st.opsState === "live" && st.appliedSeq > baseSeq) return; // 健康：这一轮经订阅送到了
+    console.warn(
+        `[localChat] 本轮 op 未经订阅送达 ${taskUri}：state=${st.opsState} applied=${st.appliedSeq} base=${baseSeq}，重订补发`,
+    );
+    notifyOpsDown(st);
+    // 重订 = abort 旧流 + 按 appliedSeq 重建：main 的 subscribe 会从该水位**连续补发**
+    // （同步读文件，不走可能已坏的那条 publish 路），于是这一轮（乃至断线期间的一切）立刻补齐。
+    resubscribeOps(taskUri);
 }
 
 /** op 订阅的退避重连句柄（每 task 至多一个在途重连） */
@@ -669,6 +774,7 @@ function unsubscribeOps(taskUri: string): void {
     }
     st.opsAbort?.abort();
     st.opsAbort = null;
+    st.opsState = "idle"; // 主动退订（切任务/卸载）不是故障，不该留在 down 上
 }
 
 /** 落地一帧增量（判据全在此处，见上方时序注） */
@@ -717,6 +823,11 @@ function applyOpsFrame(taskUri: string, frame: OpsFrame): void {
         return;
     }
     let sawTurnBoundary = false;
+    // 插话被投递：main 落了带 steer 标记的 user 块（见 local-agent 的 steerBlockOps）→ 队列少
+    // 一条，立刻重拉快照；否则横条一直挂着"待发送"，而模型其实已经看见了。
+    // ##327：这条判定原先长在 send 的流循环里 —— apply 只剩本通道后判定随之内收
+    //（留在 send 里就成了"一个已经不落地任何 op 的循环顺手刷队列"，职责错位）。
+    let sawSteerDelivered = false;
     // 增量 op 落在**末段**（尾部窗口所在的那一段）：它接在 loadHistory 的窗口之后，
     // 与流式 op 同一落点（tailForWrite），故已有段的块对象引用不动（任务 293 分段语义）。
     const seg = tailForWrite(st);
@@ -725,9 +836,11 @@ function applyOpsFrame(taskUri: string, frame: OpsFrame): void {
         if (op.op === "start" && op.kind === "turn") sawTurnBoundary = true;
         // stop 不带 kind：向块树查该 id 是不是轮次块（apply 后块仍在，仅 stopped 置位）
         else if (op.op === "stop" && seg.store.blocks.get(op.id)?.kind === "turn") sawTurnBoundary = true;
+        else if (op.op === "start" && op.kind === "text" && op.meta?.["steer"]) sawSteerDelivered = true;
     }
     st.appliedSeq = frame.fromSeq + frame.ops.length - 1;
     scheduleRefresh(st);
+    if (sawSteerDelivered) void refreshSteers(taskUri);
     // 轮次边界 → 立刻对一次真值（原 2s 轮询的职责，现在由事件驱动）。
     // 边界是稀有事件（一轮仅 start/stop 各一次），**不经节流**：短轮（<400ms）的 stop 边界
     // 若被节流吞掉，「别人在跑」会滞留到下一次活动（review3 R7）。
@@ -788,6 +901,12 @@ async function send(taskUri: string, text: string): Promise<boolean> {
     setStopRequested(st, null); // 新一轮开始 → 清停止态（helper 同步对齐 ticker，review3 R6）
     const ctrl = new AbortController();
     st.abort = ctrl;
+    // ##327：本流不再 apply，实时显示全交给 op 增量订阅 → 发之前确保订阅在（幂等：已订阅直接返回）。
+    // 这层兜底必要：send 若跑在"没走 open"的路径上（订阅未建），少了它就是整轮输出"发出去却看不见"，
+    // 要等轮末重放才补回来。
+    ensureOpsSubscription(taskUri);
+    // 轮末自检的基准：订阅让 appliedSeq 前进，才说明这一轮真经显示通道进了树（见 settleOpsAfterTurn）
+    const baseSeq = st.appliedSeq;
     try {
         // 不传 model/reasoningEffort：模型与参数由 main 按**任务绑定的人物**解析（配置真源唯一，
         // 见 main/services/local-agent.ts 的 chat）。renderer 只决定"要谁干活"（persona 字段）。
@@ -803,21 +922,12 @@ async function send(taskUri: string, text: string): Promise<boolean> {
             },
             { signal: ctrl.signal },
         );
-        for await (const raw of stream) {
-            let op: Op;
-            try {
-                op = (typeof raw === "string" ? JSON.parse(raw) : raw) as Op;
-            } catch (e) {
-                // 坏行属数据层容错：跳过但必须留痕（main 侧日志重放同理，fold issues 另有计数）
-                console.warn("[localChat] 丢弃无法解析的 op 行:", e, String(raw).slice(0, 120));
-                continue;
-            }
-            tailForWrite(st).store.apply(op);
-            scheduleRefresh(st);
-            // 插话被投递：main 落了带 steer 标记的 user 块（见 local-agent 的 steerBlockOps）→
-            // 队列已经少了一条，立刻重拉快照。否则横条会一直挂着"待发送"，而模型其实已经看见了。
-            if (op.op === "start" && op.kind === "text" && op.meta?.["steer"]) void refreshSteers(taskUri);
-        }
+        // ##327：**只消费，不 apply** —— 这批 op 与 opsWatch 订阅收到的是同一批（main 侧落盘后
+        // `opsFeed.publish` 一次、再作为本流 yield 一次），两边都落地就是整段叠字（见本文件上方
+        // 「唯一 apply 通道」）。本流剩下的职责只有一个：**"我这轮还活着 / 结束了"这个信号** ——
+        // running 复位、轮末对真值、队列与用量刷新都在 finally，与流里的内容无关。
+        // 相应地不再逐条 JSON.parse：那是为 apply 服务的解析，不再需要内容就不必付这份 CPU。
+        for await (const op of stream) void op;
         return true;
     } catch (e) {
         // 自己点的停止不算错误：signal 中断会让流正常收尾（不抛），这里只是防御
@@ -838,6 +948,10 @@ async function send(taskUri: string, text: string): Promise<boolean> {
         void refreshSteers(taskUri);
         // 用量同理：本轮的逐步账已写完，刷新让明细/看板立刻含上这一轮
         void refreshUsage(taskUri);
+        // ##327 review1 R1：轮末自检显示通道（chat 流的 op 已不落地，订阅是唯一通道）。
+        // 不能只靠上面那句 refreshActive：它的重建挂在"main 报下降沿"上，而这条**也**源于
+        // 订阅事件 —— 订阅静默时两者一起失效，整轮输出就永远不出现。
+        void settleOpsAfterTurn(taskUri, baseSeq);
     }
 }
 
