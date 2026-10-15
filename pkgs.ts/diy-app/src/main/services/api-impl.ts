@@ -763,6 +763,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
         runtimeDiffers: d?.runtimeDiffers ?? true,
         systemDiff: d?.systemDiff ?? [],
         runtimeDiff: d?.runtimeDiff ?? [],
+        systemText: cur.systemText,
+        runtimeText: cur.runtimeText,
+        baseSystemText: prev?.systemText ?? null,
+        baseRuntimeText: prev?.runtimeText ?? null,
       };
     }
     // 未选中：**当前变量树** vs 最后一步（"我现在改的东西会带来什么变化"）
@@ -791,6 +795,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
       runtimeDiffers: d.runtimeDiffers,
       systemDiff: d.systemDiff,
       runtimeDiff: d.runtimeDiff,
+      systemText: now.system.text,
+      runtimeText: now.runtime.text,
+      baseSystemText: last.systemText,
+      baseRuntimeText: last.runtimeText,
     };
   });
 

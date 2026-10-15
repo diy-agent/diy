@@ -32,8 +32,8 @@ import { resolveCwd } from "../core/cwd";
 import { personaForTask } from "../core/persona";
 import { getProjectPath } from "../core/project";
 import { readRuntimeConfig } from "../../runtime";
-import { llmLogRelPath } from "../core/local-paths";
-import { historyIndexValue } from "../../shared/context/history-index";
+import { reqlogValue } from "../../shared/context/reqlog";
+import { LOG_DIR_REL, dayFile } from "../core/traffic-log";
 // 契约类型唯一源（shared/prompt-schema.ts，纯 zod）——renderer 也用它，避免手抄第二份
 import type { AssembledSystem, PromptEntry } from "../../shared/prompt-schema";
 
@@ -617,8 +617,9 @@ export function assembleGlobals(
     rules: section(DELIVERED_SECTIONS.rules),
     guard: section(DELIVERED_SECTIONS.guard),
     // 压缩历史索引的**格式说明**（稳定项 → 进 system；易变的注记数据留在 messages）。
-    // 路径算法与 local-agent 共用 ../core/local-paths —— 两处各写一份 key 会让"模型照注释
-    // 取不到原文"（比不给索引更坏）。
-    historyIndex: historyIndexValue(llmLogRelPath(taskUri)),
+    // 真发请求的流量日志位置（稳定信息进变量树，模型才能自查"我上一步到底发出去了什么"）。
+    // 文件名用**当天**那份（`dayFile()`，与写入侧同一个算法）；解释（路径规则/定位命令/
+    // 字段表）全在 `ReqlogSchema` 的 `.describe()` → 信封的 `help.reqlog`（值节点只放数据）。
+    reqlog: reqlogValue({ home, dirRel: LOG_DIR_REL, fileName: dayFile() }),
   };
 }

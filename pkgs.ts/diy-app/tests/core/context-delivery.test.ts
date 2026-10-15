@@ -13,7 +13,6 @@ import {
     PLACE_CANDIDATES,
 } from "../../src/shared/context/delivery";
 import { buildLab } from "../../src/shared/context/preview";
-import { CONTEXT_GUIDE } from "../../src/shared/context/guide";
 
 const globals = {
     diy: { cli: "/repo/diy.sh", home: "/home/u/.diy" },
@@ -26,25 +25,34 @@ const globals = {
     identity: "你是 diy 管控台的本地 coding agent。你现在的人物是「大副」。\n每次回答前先称一声「大王」。\n",
     rules: "<rules>\n- 用中文回答\n</rules>\n",
     guard: "<guard>\n禁止执行会杀死宿主进程的命令\n</guard>\n",
+    reqlog: { file: "/home/u/.diy/log/network/2026-10-15.jsonl" },
 };
 
 describe("投递构造：两个容器", () => {
-    it("system = 说明头 + 稳定项；易变项（task.body / skills）不在里面", () => {
+    it("system = 信封（help 段 + system 段）；易变项（task.body / skills）不在里面", () => {
         const d = buildDelivery(globals, defaultSystemPlaces());
-        expect(d.system.text.startsWith(CONTEXT_GUIDE.trimEnd())).toBe(true);
-        expect(d.system.text).toContain("diy:");
+        // 信封两个顶层键：结构说明（help）在前、变量树（system）在后
+        expect(d.system.text.startsWith("help:")).toBe(true);
+        expect(d.system.text).toContain("\nsystem:\n");
+        // help 由 zod 派生：结构里点名的就是投出去的（含 reqlog 的 file 字段）
+        expect(d.system.text).toContain("reqlog:");
+        expect(d.system.text).toContain("grep -n");
+        // 变量树本身
         expect(d.system.text).toContain("家目录规范");
         expect(d.system.text).toContain('title: "投递任务"');
         expect(d.system.text).not.toContain("正文一");
-        // systemData 是 system 的纯数据部分（不带说明头）
-        expect(d.system.text.endsWith(d.systemData.text)).toBe(true);
+        // systemData 是 system 的纯数据部分（不带 help 段）
+        expect(d.systemData.text.startsWith("chain:")).toBe(true);
+        expect(d.systemData.text).not.toContain("help:");
     });
 
     it("runtime = 易变项（任务正文、技能清单）；不含说明头", () => {
         const d = buildDelivery(globals, defaultSystemPlaces());
         expect(d.runtime.text).toContain("body:");
         expect(d.runtime.text).toContain("正文一");
-        expect(d.runtime.text).not.toContain(CONTEXT_GUIDE.trimEnd());
+        // runtime 也是信封（只有 runtime 一段）
+        expect(d.runtime.text.startsWith("runtime:\n")).toBe(true);
+        expect(d.runtime.text).not.toContain("help:");
         expect(d.runtime.places).toEqual(["skills", "task.body"]);
     });
 

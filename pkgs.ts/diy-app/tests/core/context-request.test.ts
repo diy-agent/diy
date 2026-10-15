@@ -75,28 +75,30 @@ describe("请求预览：内嵌文本就地解析展开", () => {
     it("整份预览是合法 YAML —— 内嵌块成了子节点（不是转义字符串）", () => {
         const loaded = yaml.load(view.text, { schema: yaml.JSON_SCHEMA }) as any;
         expect(loaded.model).toBe("mimo-v2.5");
-        // system 份：说明头是注释（读回不可见），数据是对象
-        expect(loaded.messages[0].content.diy.cli).toBe("/repo/diy.sh");
-        expect(loaded.messages[0].content.chain[0].path).toBe("/home/AGENTS.md");
-        // runtime 份：末条 user 同样展开
-        expect(loaded.messages[2].content.task.title).toBe("任务 148");
-        expect(loaded.messages[2].content.task.body).toContain("正文第二行");
+        // system 份：信封两个顶层键都展开（help 段 = 结构说明；system 段 = 变量树）
+        expect(loaded.messages[0].content.help.about).toContain("信封");
+        expect(loaded.messages[0].content.system.diy.cli).toBe("/repo/diy.sh");
+        expect(loaded.messages[0].content.system.chain[0].path).toBe("/home/AGENTS.md");
+        // runtime 份：末条 user 同样展开（信封只有 runtime 一段）
+        expect(loaded.messages[2].content.runtime.task.title).toBe("任务 148");
+        expect(loaded.messages[2].content.runtime.task.body).toContain("正文第二行");
         // 普通历史消息保持字符串（只有内嵌文本被解析，别的文本不动）
         expect(loaded.messages[1].content).toContain("上一轮用户消息");
     });
 
-    it("说明头在预览里是注释（内容不丢、仍是 YAML），数据紧跟其后", () => {
-        expect(view.text).toContain("# 系统上下文（Context Tree）");
-        expect(view.text).toContain("# 以下是本次会话的系统上下文");
-        expect(view.text).toMatch(/# - 路径是稳定标识[\s\S]{0,120}?\bchain:/);
+    it("系统上下文本身就是合法 YAML（说明头已换成 help 段，不再需要「按注释拆」）", () => {
+        expect(() => yaml.load(sys, { schema: yaml.JSON_SCHEMA })).not.toThrow();
+        const loaded = yaml.load(sys, { schema: yaml.JSON_SCHEMA }) as any;
+        expect(Object.keys(loaded)).toEqual(["help", "system"]);
+        expect(loaded.help.system.desc).toContain("系统上下文变量树");
     });
 
     it("行号映射与文本同源：每个 path 的区间**只含该 path 的内容**", () => {
-        expect(at("diy.cli").trim()).toBe("cli: /repo/diy.sh");
-        expect(at("chain.0.path").trim()).toBe("- path: /home/AGENTS.md");
-        expect(at("chain.0.content")).toContain("家目录规范");
-        expect(at("chain.0.content")).toContain("第二行");
-        expect(at("task.body")).toContain("正文第二行");
+        expect(at("system.diy.cli").trim()).toBe("cli: /repo/diy.sh");
+        expect(at("system.chain.0.path").trim()).toBe("- path: /home/AGENTS.md");
+        expect(at("system.chain.0.content")).toContain("家目录规范");
+        expect(at("system.chain.0.content")).toContain("第二行");
+        expect(at("runtime.task.body")).toContain("正文第二行");
     });
 
     it("responses 面同形：input[0]=developer 文本、runtime 在嵌套 content[].text 里", () => {
@@ -113,9 +115,9 @@ describe("请求预览：内嵌文本就地解析展开", () => {
         };
         const v2 = requestYaml(respBody, [sys, run]);
         const loaded = yaml.load(v2.text, { schema: yaml.JSON_SCHEMA }) as any;
-        expect(loaded.input[0].content.chain[0].path).toBe("/home/AGENTS.md");
-        expect(loaded.input[1].content[0].text.task.title).toBe("任务 148");
-        expect(v2.lines["task.title"]).toBeTruthy();
+        expect(loaded.input[0].content.system.chain[0].path).toBe("/home/AGENTS.md");
+        expect(loaded.input[1].content[0].text.runtime.task.title).toBe("任务 148");
+        expect(v2.lines["runtime.task.title"]).toBeTruthy();
     });
 
     it("解析不了的内嵌文本不强行展开：按原文输出（原文不丢）", () => {
@@ -126,7 +128,7 @@ describe("请求预览：内嵌文本就地解析展开", () => {
         expect(loaded.messages[0].content).toBe(bad);
     });
 
-    it("说明头变化的兜底：仍按第一个顶层键拆出数据（不因文案调整而放弃解析）", () => {
+    it("前后缀文本的兜底：仍按第一个顶层键拆出数据（不因文案调整而放弃解析）", () => {
         const custom = "# 别的说明头\n\n这里也是说明文字\n\nchain: []";
         const v = requestYaml({ x: custom }, [custom]);
         const loaded = yaml.load(v.text, { schema: yaml.JSON_SCHEMA }) as any;
@@ -137,10 +139,10 @@ describe("请求预览：内嵌文本就地解析展开", () => {
         const body = { model: "x", input: [sys, "普通字符串"] };
         const v = requestYaml(body, [sys]);
         const loaded = yaml.load(v.text, { schema: yaml.JSON_SCHEMA }) as any;
-        expect(loaded.input[0].diy.cli).toBe("/repo/diy.sh");
+        expect(loaded.input[0].system.diy.cli).toBe("/repo/diy.sh");
         expect(loaded.input[1]).toBe("普通字符串");
         expect(v.lines["input.0"]).toBeTruthy();
-        expect(v.lines["diy.cli"]).toBeTruthy();
+        expect(v.lines["system.diy.cli"]).toBeTruthy();
     });
 
     it("空文本/无内嵌时不启用展开，照常输出", () => {

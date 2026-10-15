@@ -1,34 +1,30 @@
 /**
- * ContextLabPage — 上下文树页（**独立子页面**，任务 148）。
+ * ContextLabPage — 上下文树页（**独立子页面**，任务 148 / ##310）。
  *
- * 一句话：系统上下文 = **一棵变量树**，按稳定性划成两份 ——
- * 稳定的进 system 提示词开头（可缓存），易变的进 user 消息。
+ * 一句话：模型 wire = **一个 YAML 信封**（`help` 结构说明 + `system` / `runtime` / `runtimeDiff` / `user`
+ * 值段，见 shared/context/envelope.ts），本页把「它到底长什么样、哪一步变了」摆出来。
  *
- * 两列（左=输入，中=产出）；中栏自上而下四块：
- *   · 变量树变更     整棵变量树 + 把**生效那条变更记录**的变更标在命中节点上（步级 · 变量级）；
- *   · 该步实际请求   这一步**真发出去的那条 HTTP 请求**（流量日志 = 地面真相）+ 一键跳流量页定位；
- *   · 变更详情       该步所在轮 vs 上一轮的**行级文本 diff**（轮级 · 文本级）；
- *   · 请求预览       整份请求的大 YAML（当前值）。
+ * 两列（左=输入，中=产出）；每块右上角都有 `<>`：**就地切成该块背后的原始数据**（原样，
+ * 不经任何加工）—— 视图一旦和真实数据对不上，人只能靠猜；原文摆出来就无从撒谎。
  *
  *   · 左「结构树」 变量契约（zod），含类型/描述与无值变量。
  *                  **划分操作就在这做**：点节点上的 ⇄ 换容器（system ⇄ runtime），
- *                  不必再维护一张独立的"规则表"—— 契约本身就是那张表的骨架。
- *                  改动写进 `$DIY_HOME/context.yaml`（**真源**）：真发读同一份，
- *                  所以页面上看到的划分就是下一轮会用的划分（不存 localStorage —— 那种页面会说谎）。
- *                  另有「变更历史」列表：**每步**有变才落一条（首条 = baseline 给整棵树；变更单位
- *                  = 原子单元），事件带旧→新值摘要，读 `local/<key>.changelog.jsonl`（不轮询）；
- *                  点一条 → 与上一步比的行级 diff；点事件 → 在请求预览里定位该变量。
- *   · 中「请求预览」 **整份请求的大 YAML**：内嵌 system/runtime 文本就地解析展开；
- *                  可切"原文"看真发 JSON —— wire 不变。
- *                  （system 份 / runtime 份两个单独 view 已删：它们的价值全部包含在
- *                    请求预览里 —— 同一份文本的展开形态就在树里，不必看两遍）
+ *                  改动写进 `$DIY_HOME/context.yaml`（**真源**，真发读同一份）。
+ *   · 左「变更历史」= **表格**：`轮次 | 步 | 实际请求`（只到"步"这一层，不列变了哪些字段）。
+ *                  「实际请求」是超链接 → 弹**流量抽屉**（与对话页报错后那个「查看实际请求」同一个）。
+ *                  点一行 = 选中该步（驱动中栏两块）。数据读 `local/<key>.changelog.jsonl`（不轮询）。
+ *   · 左「变更统计」= 按项目累计的长期视角（"这个节点变了几次"）—— 判断该不该待在 system 的判据。
+ *   · 中「变量树变更」整棵变量树 + 把**生效那条记录**的变更标在命中节点上（步级 · 变量级）。
+ *   · 中「system / runtime diff」两份全文各自一块（轮级 · 文本级，行号 + hunk 折叠）。
+ *                  runtime 那块 `<>` 给的是**该步实际发出去的末条 user 消息**（runtime 变更告知原文）。
+ *   · 中「该步实际请求」这一步真发出去的那条 HTTP 请求（流量日志 = 地面真相）+ 一键跳流量页定位。
  *
- * 选中联动：点结构树的一行 → 请求预览滚到并高亮**那一段**（行号映射与渲染同源，
- * 见 shared/context/render.ts 的 renderPathsTraced / request.ts）。
+ * 已删（##310 六轮）：**「请求预览（实际发送格式）」**（那是*仿真*请求体，真发形态看上面那块）
+ * 与**「变更详情」**（与「变量树变更」是两把尺且与左栏点击错位 —— 现由两侧 diff 块承担）。
  *
  * 数据是**当前任务的真实上下文**（与真发同一条 assembleGlobals 链），不是编造的。
  */
-import { createEffect, createMemo, createResource, createSignal, For, on, onMount, Show, type JSX } from "solid-js";
+import { createResource, createSignal, For, onMount, Show, type JSX } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { taskStore } from "../store/taskStore";
 import { ViewGrid } from "./ViewGrid";
@@ -38,21 +34,18 @@ import { Caches } from "../lib/ui-state";
 import { projectFromUri } from "../../shared/task-uri";
 import { buildVarTree, type VarNode } from "../../shared/var-tree";
 import { AssembleGlobalsSchema } from "../../shared/prompt-schema";
-import { MdEditor, type HlLines } from "./MdEditor";
-import { JsonTree } from "./JsonTree";
-import { DynamicBar } from "./DynamicBar";
 import { notificationStore } from "../store/notificationStore";
 import type { ContextLab, PlaceCandidate } from "../../shared/context/preview";
-import { requestYaml } from "../../shared/context/request";
 import { diffSize } from "../../shared/context/steps";
+import { foldCounts, foldDiff, numberDiff, type DiffRow } from "../../shared/context/diff-view";
 import { attributionOf, foldStatRows, sysCauses, unitsFromRules, type Attribution } from "../../shared/context/attribution";
 import { fmtAgo, fmtShortTime } from "../../shared/date-format";
-import { lineRange, matchRanges, type LineRange } from "../../shared/context/match";
 import type { ContextDiff, CtxLog, HistoryEntryView, Stats } from "../../shared/context/schema";
 import type { DiffLine } from "../../shared/line-diff";
 import { changeForNode } from "../../shared/context/changelog";
 import { dateOfLogFile, pickStepTraffic, type TrafficStepRecord } from "../../shared/context/traffic-step";
 import { trafficStore } from "../store/trafficStore";
+import { TrafficDrawer } from "./TrafficDrawer";
 import { getRendererActions } from "../lib/renderer-actions";
 
 const PAGE = "ctxlab";
@@ -326,6 +319,21 @@ export function ContextLabPage(props: { uri: string }) {
      */
     const [pickedSeq, setPickedSeq] = createSignal<number | null>(null);
 
+    /**
+     * 文本 diff 里**被展开的空隙**（`gap id` 集合）。
+     * 折叠态是默认（一份 system 二十几 KB 全摊开 = 找不着重点），展开由人点。
+     */
+    const [openGaps, setOpenGaps] = createSignal<Set<string>>(new Set());
+    const toggleGap = (id: string): void => {
+        const next = new Set(openGaps());
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        setOpenGaps(next);
+    };
+
+    /** 文本 diff 一次最多渲染多少行（真发全文可能几千行；上限兜住渲染量，超了给 truncated 行） */
+    const DIFF_MAX_LINES = 800;
+
     /** 生效的变更记录：选中的那条；没选 = 最后一条**有变**的（页面一打开就有东西看，不必先点） */
     const effectiveEntry = (): HistoryEntryView | null => {
         const es = history()?.entries ?? [];
@@ -413,19 +421,6 @@ export function ContextLabPage(props: { uri: string }) {
         void refetchStepTraffic();
     };
 
-    /** 请求预览的形态：YAML（默认；内嵌 system/runtime 文本就地解析展开）/ 原文（真发 JSON） */
-    const [reqMode, setReqMode] = createSignal<"yaml" | "json">("yaml");
-    /**
-     * 请求预览的 YAML 文本 + 行号映射：由**真实请求体**现算（纯函数，见 shared/context/request）。
-     * 内嵌块由"与 system/runtime 两份文本逐字相等"判定 —— 解析的就是 body 里那段原文。
-     */
-    const reqView = createMemo(() => {
-        const l = lab();
-        const body = l?.request.body;
-        if (!body) return null;
-        return requestYaml(body, [l!.system.text, l!.runtime.text]);
-    });
-
     /**
      * 切换容器（点一下开关）。
      * 只维护 system 名单：在名单里 → 移出（回默认 runtime）；不在 → 加入。
@@ -482,213 +477,231 @@ export function ContextLabPage(props: { uri: string }) {
 
     const structure = () => buildVarTree(AssembleGlobalsSchema);
 
-    /**
-     * 选中结构树一行 → 请求预览里**所有**匹配的位置（一个变量可以出现多处：system 段、runtime 段、
-     * 甚至同一段里的多次引用），配 ↑/↓ 在它们之间跳（与提示词页同一套交互）。
-     * 行号取自**与文本同源的渲染映射**（`requestYaml` 边产出边收集）—— 内嵌的 system/runtime
-     * 子节点用的就是变量路径（`chain.0.path`），与结构树同名，所以无需任何换算；
-     * 集合元素走 `[ChainEntry]` → 数字下标段的通配（见 rangesFor）。
-     */
-    const hlMatches = createMemo<LineRange[]>(() => {
-        const view = reqView();
-        const p = selected();
-        if (!p || !view) return [];
-        return matchRanges(view.lines, p);
-    });
-    /** 焦点下标（换选中行时归零；↑/↓ 在匹配之间走） */
-    const [focusIdx, setFocusIdx] = createSignal(0);
-    createEffect(on(selected, () => setFocusIdx(0)));
-
-    const hlForRequest = (): HlLines | null => {
-        const view = reqView();
-        const ms = hlMatches();
-        const p = selected();
-        if (!p || !view || ms.length === 0) return null;
-        const idx = Math.min(Math.max(0, focusIdx()), ms.length - 1);
-        const r = ms[idx]!;
-        const textLines = view.text.split("\n");
-        let pos = 0;
-        for (let i = 0; i < r.from - 1 && i < textLines.length; i++) pos += textLines[i]!.length + 1;
-        const end = pos + (r.to - r.from === 0 ? (textLines[r.from - 1]?.length ?? 0) : 1);
-        return {
-            // 浅色 = 全部匹配（每处的整行），深色 = 当前焦点那一处
-            lines: ms.flatMap((m) => lineRange(m)),
-            focusLines: lineRange(r),
-            focusPos: pos,
-            focusEnd: end,
-            focusKey: `${p}#${idx}`,
-        };
-    };
-    const stepFocus = (d: number): void => {
-        const n = hlMatches().length;
-        if (n === 0) return;
-        setFocusIdx((i) => (i + d + n) % n);
-    };
-
     /** 变更次数（基线的 add 不算"变更" —— 它只是起点） */
     const changeCount = (): number =>
         (history()?.entries ?? []).reduce((a, t) => a + (t.type === "baseline" ? 0 : t.changes.length), 0);
+
+    /**
+     * 每个 view 背后的**原始数据**（用户 2026-10-15：「如果可以的话每个 view 背后的原始数据
+     * 都可以通过 `<>` 提供出来」）—— 点 `<>` 就地切成原文，再点切回。
+     *
+     * 为什么值得有：这一页的每个块都是**加工过的视图**（表格/折行/配色/摘要）。一旦视图和
+     * 真实数据对不上，人只能靠猜。原文摆出来就无从撒谎 —— 而且它同时也是"发出去的到底是什么"
+     * 的证据链（system / runtime 两份全文、流量日志那条请求）。
+     */
+    const [rawOf, setRawOf] = createSignal<string | null>(null);
+    const rawBtn = (k: string, label: string): JSX.Element => (
+        <button
+            class="btn btn-xs px-1 font-mono"
+            classList={{ "btn-active": rawOf() === k, "btn-ghost": rawOf() !== k }}
+            title={`看「${label}」这个 view 背后的原始数据（原样，不经任何加工）；再点一下切回视图`}
+            onClick={(e) => {
+                e.stopPropagation();
+                setRawOf(rawOf() === k ? null : k);
+            }}
+        >
+            {"<>"}
+        </button>
+    );
+    /** 折叠块 + `<>`（每个 view 统一带原始数据出口） */
+    const View = (p: {
+        k: string;
+        label: string;
+        extra?: string;
+        raw: () => string;
+        right?: JSX.Element;
+        children: JSX.Element;
+    }): JSX.Element => (
+        <Fold
+            k={p.k}
+            label={p.label}
+            extra={p.extra}
+            right={
+                <span class="flex items-center gap-1">
+                    {p.right}
+                    {rawBtn(p.k, p.label)}
+                </span>
+            }
+        >
+            <Show
+                when={rawOf() === p.k}
+                fallback={p.children}
+            >
+                <pre class="max-h-[70vh] overflow-auto whitespace-pre-wrap break-all rounded bg-base-100 p-1 font-mono text-caption">
+                    {p.raw()}
+                </pre>
+            </Show>
+        </Fold>
+    );
+
+    /**
+     * 「实际请求」超链接 → 弹**流量抽屉**，定位到该步真发出去的那条。
+     *
+     * 与对话页报错后「查看实际请求 / 响应」是**同一个抽屉**（`trafficStore.openWith`）——
+     * 用户已认得那个形态，不必再造一种。
+     * 为什么要先查一次再开：抽屉靠 `reqId`/`traceId` 精确定位；只给关键词会退化成
+     * "最近一次失败"，看着像点错了。查不到就明说（不编）。
+     */
+    const openRequestDrawer = async (t: HistoryEntryView): Promise<void> => {
+        try {
+            const res = await diyService.diy.traffic.query({
+                text: t.ref.turnId,
+                status: "all",
+                method: "all",
+                date: "all",
+                limit: 500,
+            });
+            const hit = pickStepTraffic<TrafficRec>(
+                (res.records ?? []) as unknown as TrafficRec[],
+                { turnId: t.ref.turnId, step: t.ref.step },
+                props.uri,
+                t.ts ?? null,
+            );
+            if (!hit) {
+                notificationStore.addToast(
+                    "error",
+                    `未找到这一步的实际请求（${t.ref.turnId} · 第 ${t.ref.step} 步）：可能没真发过 / 流量日志被清。`,
+                );
+                return;
+            }
+            trafficStore.openWith({
+                reqId: hit.record.id ?? null,
+                traceId: hit.record.traceId ?? null,
+                text: t.ref.turnId,
+                date: dateOfLogFile(hit.record.log?.file ?? null) ?? "all",
+            });
+        } catch (e) {
+            notificationStore.addToast("error", `查流量日志失败：${e instanceof Error ? e.message : String(e)}`);
+        }
+    };
 
     /** 变更种类的记号与配色（add / update / remove 三态） */
     const kindGlyph = (k: "add" | "update" | "remove"): string => (k === "add" ? "+" : k === "remove" ? "−" : "~");
     const kindCls = (k: "add" | "update" | "remove"): string =>
         k === "add" ? "badge-success" : k === "remove" ? "badge-error" : "badge-warning";
 
-    /** 一行变更的值预览：`旧 → 新`（删除/新增没有对侧，用 ∅ 表示"不存在"） */
-    const changeText = (c: { before: string | null; after: string | null }): string => {
-        if (c.before === null && c.after === null) return "（无值预览）";
-        return `${c.before ?? "∅"} → ${c.after ?? "∅"}`;
-    };
-
     /**
-     * 变更历史 = **每轮一条事件流**（读变更日志；老任务由 main 从投递快照折算）。
-     * 两级：轮（ref：时间 / 当轮划分 / 缓存率 / 金额）+ 事件（op + path + 值预览 old→new）。
-     * 点轮 → 选中它（中栏「变更详情」看"它相对上一步的行级 diff"），再点取消 = 当前 vs 最后一步；
-     * 点事件 → 选中该 path（中栏请求预览滚到并高亮）。
+     * 变更历史 = **表格**（用户 2026-10-15 拍板：「轮次和步分两列，只显示序号/id，不显示中文 xx步，
+     * 减少页面占用。不需要树形结构，不显示具体变化的字段，只有显示步这一层次」）。
+     *
+     * 三列：`轮次 | 步 | 实际请求`。
+     *   · 轮次 = `#M`（投递快照里的第几轮；取不到就不编 —— 老任务/演示数据 join 不上）
+     *   · 步   = 该轮内第几次真发请求（`ref.step`，纯序号）
+     *   · 实际请求 = 超链接 → 弹**流量抽屉**（与对话页报错后「查看实际请求 / 响应」同一个抽屉）
+     * 点行 = 选中该步（驱动「变量树变更」「该步实际请求」两块）；每步改了哪些字段**不在这里列**
+     * （那是「变量树变更」块的事 —— 本块只回答"哪一步"）。
      */
     const historyPane = () => {
         const h = history();
         const total = h?.total ?? 0;
         return (
-        <div class="p-1">
-            <div class="mb-1 flex items-center gap-1 px-1 opacity-70">
-                <span>{total} 条记录</span>
-                <span class="ml-auto" title="列表里每行的时间是该轮真发的落盘时刻">
-                    {pickedStep() === null ? "看：当前 vs 最后一步" : `看：第 ${pickedStep()} 步 vs 上一步`}
-                </span>
-            </div>
-            <Show
-                when={total > 0}
-                fallback={
-                    <div class="p-2 opacity-60">
-                        还没有变更记录。在对话页发一轮，这里先落 baseline（起点），之后每步**有变**才落一行。
-                    </div>
-                }
-            >
-                <Show when={h?.source === "derived"}>
-                    <div class="mb-1 px-1 text-caption opacity-50">
-                        这份历史是降级视图（老格式日志回放，或从投递快照的值 hash 折算）：
-                        只有变化路径，没有值预览
-                    </div>
-                </Show>
-                <ul class="menu menu-xs">
-                    <For each={[...(h?.entries ?? [])].reverse()}>
-                        {(t) => {
-                            // system 全量重建的原因：把该轮变化的变量收拢到**当轮快照的** system 单元
-                            // （叶子 `chain.0.path` 归到 `chain`）—— 一眼看到"是谁在打断缓存"。
-                            // ⚠️ 用 `t.systemPlaces`（当轮快照），不用页面当前划分：改划分不该改写历史（RV-02）。
-                            const incomparable = (): boolean => t.incomparable === true;
-                            const changedPaths = (): string[] => t.changes.map((c) => c.path);
-                            const causes = (): string[] =>
-                                incomparable() ? [] : sysCauses(changedPaths(), t.systemPlaces);
-                            const causeText = (): string => {
-                                const c = causes();
-                                if (c.length === 0) return "";
-                                return ` ${c.slice(0, 2).join(",")}${c.length > 2 ? ` +${c.length - 2}` : ""}`;
-                            };
-                            const headText = (): string => {
-                                if (t.type === "baseline") return "baseline（起点）";
-                                if (t.changes.length === 0) return "无变化";
-                                const ps = changedPaths();
-                                return `${ps.slice(0, 2).join(", ")}${ps.length > 2 ? ` +${ps.length - 2}` : ""}`;
-                            };
-                            return (
-                            <li>
-                                {/* 轮：点它 = 中栏「变更详情」看这轮 vs 上轮的行级 diff */}
-                                <button
-                                    class={`flex items-center gap-2 ${rowCls(pickedSeq() === t.seq)}`}
-                                    title="点一下：上方「变量树变更」标注这一步改了整棵树里的哪几处、下方「该步实际请求」看真发出去的那条；再点取消"
-                                    onClick={() => {
-                                        if (pickedSeq() === t.seq) {
-                                            setPickedSeq(null);
-                                            setPickedStep(null);
-                                            return;
+            <div class="p-1">
+                <div class="mb-1 flex items-center gap-1 px-1 text-caption opacity-70">
+                    <span>{`${total} 条记录 · ${changeCount()} 次变更`}</span>
+                    <span class="ml-auto">点一行 = 选中该步</span>
+                </div>
+                <Show
+                    when={total > 0}
+                    fallback={
+                        <div class="p-2 opacity-60">
+                            还没有变更记录。在对话页发一轮，这里先落 baseline（起点），之后每步**有变**才落一行。
+                        </div>
+                    }
+                >
+                    <Show when={h?.source === "derived"}>
+                        <div class="mb-1 px-1 text-caption opacity-50">
+                            这份历史是降级视图（老格式日志回放，或从投递快照的值 hash 折算）：只有变化路径，没有值预览
+                        </div>
+                    </Show>
+                    <table class="table table-xs">
+                        <thead>
+                            <tr>
+                                <th>轮次</th>
+                                <th>步</th>
+                                <th>实际请求</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <For each={[...(h?.entries ?? [])].reverse()}>
+                                {(t) => {
+                                    // system 全量重建的原因：把该步变化的变量收拢到**该步快照的** system 单元
+                                    // （⚠️ 用 `t.systemPlaces` 当轮快照，不用页面当前划分 —— 改划分不该改写历史，RV-02）
+                                    const causes = (): string[] =>
+                                        t.incomparable === true ? [] : sysCauses(t.changes.map((c) => c.path), t.systemPlaces);
+                                    const tip = (): string => {
+                                        const bits = [`${t.ts}`, `${t.ref.turnId} · 第 ${t.ref.step} 步`];
+                                        bits.push(
+                                            t.type === "baseline"
+                                                ? "baseline（起点）"
+                                                : t.changes.length === 0
+                                                  ? "本步无变化"
+                                                  : `本步 ${t.changes.length} 处变化：${t.changes.map((c) => c.path).join(", ")}`,
+                                        );
+                                        if (t.systemDiffers) {
+                                            bits.push(
+                                                t.incomparable
+                                                    ? "system 重建（编码版本变化，不可比）"
+                                                    : causes().length > 0
+                                                      ? `system 重建，由 ${causes().join(", ")} 引起`
+                                                      : "system 重建（非值变化引起）",
+                                            );
                                         }
-                                        setPickedSeq(t.seq);
-                                        // 变更详情是**轮级**文本 diff → 用轮序；取不到轮序就退回"当前 vs 最后一步"
-                                        setPickedStep(t.turnIndex);
-                                    }}
-                                >
-                                    <span class="badge badge-xs">{`第${t.ref.step}步`}</span>
-                                    <Show when={t.turnIndex !== null}>
-                                        <span
-                                            class="badge badge-ghost badge-xs font-mono"
-                                            title="该轮在投递快照（steps.jsonl）里的序号 —— 与左边的「第 N 步」不是同一根轴：左边是**轮内的第几步**，这里是**第几轮**（一个轮会有多步）"
-                                        >
-                                            {`#${t.turnIndex}`}
-                                        </span>
-                                    </Show>
-                                    <span
-                                        class="shrink-0 font-mono text-caption opacity-60"
-                                        title={`${t.ts}（${t.ref.turnId} · 第 ${t.ref.step} 步）`}
-                                    >
-                                        {fmtShortTime(t.ts)}
-                                    </span>
-                                    <span classList={{ "truncate font-mono": true, "opacity-50": t.changes.length === 0 }}>
-                                        {headText()}
-                                    </span>
-                                    <span class="ml-auto flex shrink-0 items-center gap-1">
-                                        <Show when={t.systemDiffers === true}>
-                                            <span
-                                                class="badge badge-primary badge-xs font-mono"
-                                                title={
-                                                    "system 全量重建（每轮重发，断前缀缓存）—— " +
-                                                    (incomparable()
-                                                        ? "投递编码版本变化（不可比，非值变化引起，不归因）"
-                                                        : causes().length > 0
-                                                          ? `由这些投递单元变化引起：${causes().join(", ")}`
-                                                          : "非值变化引起（说明头/渲染变了，或投递范围变了）")
+                                        if (t.cacheHitRate !== null) bits.push(`缓存命中 ${Math.round(t.cacheHitRate * 100)}%`);
+                                        if (t.cost !== null) bits.push(`$${t.cost.toFixed(4)}`);
+                                        return bits.join(" · ");
+                                    };
+                                    return (
+                                        <tr
+                                            class={`cursor-pointer hover:bg-base-300/60 ${rowCls(pickedSeq() === t.seq)}`}
+                                            title={tip()}
+                                            onClick={() => {
+                                                if (pickedSeq() === t.seq) {
+                                                    setPickedSeq(null);
+                                                    setPickedStep(null);
+                                                    return;
                                                 }
-                                            >
-                                                {`sys${causeText()}`}
-                                            </span>
-                                        </Show>
-                                        <Show when={t.runtimeDiffers === true}>
-                                            <span class="badge badge-warning badge-xs">run</span>
-                                        </Show>
-                                        <Show when={t.cacheHitRate !== null}>
-                                            <span class="text-caption opacity-60" title="缓存读 / 总输入">
-                                                {`缓存 ${Math.round(t.cacheHitRate! * 100)}%`}
-                                            </span>
-                                        </Show>
-                                        <Show when={t.cost !== null}>
-                                            <span class="text-caption opacity-60" title="该轮金额（账本快照之和）">
-                                                {`$${t.cost!.toFixed(4)}`}
-                                            </span>
-                                        </Show>
-                                    </span>
-                                </button>
-                                {/* 事件：点它 = 中栏请求预览滚到并高亮该变量 */}
-                                <Show when={t.type !== "baseline" && t.changes.length > 0}>
-                                    <ul class="ml-4 border-l border-base-300">
-                                        <For each={t.changes}>
-                                            {(c) => (
-                                                <li>
-                                                    <button
-                                                        class={`flex items-center gap-1 ${rowCls(selected() === c.path)}`}
-                                                        title={`${c.path}：${changeText(c)}（点一下：在请求预览里定位这个变量）`}
-                                                        onClick={() => setSelected(c.path)}
-                                                    >
-                                                        <span class={`badge badge-xs font-mono ${kindCls(c.kind)}`}>
-                                                            {kindGlyph(c.kind)}
-                                                        </span>
-                                                        <span class="shrink-0 font-mono">{c.path}</span>
-                                                        <span class="truncate text-caption opacity-60">
-                                                            {changeText(c)}
-                                                        </span>
-                                                    </button>
-                                                </li>
-                                            )}
-                                        </For>
-                                    </ul>
-                                </Show>
-                            </li>
-                            );
-                        }}
-                    </For>
-                </ul>
-            </Show>
-        </div>
+                                                setPickedSeq(t.seq);
+                                                setPickedStep(t.turnIndex);
+                                            }}
+                                        >
+                                            <td class="whitespace-nowrap font-mono">
+                                                {t.turnIndex !== null ? `#${t.turnIndex}` : "—"}
+                                                {/* 轮内元信息（步骤级）：system 是否全量重建 + 由谁引起、runtime 是否变。
+                                                    放这一格而不另开列 —— 表格只到"步"这一层，细节在行的 title 里。 */}
+                                                <Show when={t.systemDiffers}>
+                                                    <span class="badge badge-primary badge-xs ml-1 font-mono">
+                                                        {(() => {
+                                                            const c = causes();
+                                                            return c.length === 0 ? "sys" : `sys ${c.slice(0, 2).join(",")}${c.length > 2 ? ` +${c.length - 2}` : ""}`;
+                                                        })()}
+                                                    </span>
+                                                </Show>
+                                                <Show when={t.runtimeDiffers}>
+                                                    <span class="badge badge-warning badge-xs ml-1">run</span>
+                                                </Show>
+                                            </td>
+                                            <td class="font-mono">{t.ref.step}</td>
+                                            <td>
+                                                <button
+                                                    class="link link-primary text-caption"
+                                                    onClick={(ev) => {
+                                                        ev.stopPropagation();
+                                                        setPickedSeq(t.seq);
+                                                        setPickedStep(t.turnIndex);
+                                                        void openRequestDrawer(t);
+                                                    }}
+                                                >
+                                                    查看实际请求 →
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    );
+                                }}
+                            </For>
+                        </tbody>
+                    </table>
+                </Show>
+            </div>
         );
     };
 
@@ -813,6 +826,196 @@ export function ContextLabPage(props: { uri: string }) {
     };
 
     /**
+     * 文本 diff（逐行 · 真发全文），**system / runtime 各一个 view**（用户 2026-10-15：
+     * 「diff view 的系统和 runtime 拆成 2 个 view」——两份全文各自有正文、混在一个块里
+     * 只会互相挤，展开态也没法各记各的）。
+     *
+     * 与前两块的**分工**（三把尺，各回答一个问题）：
+     *   · 变量树变更 = **变量级**（哪几个变量变了，值旧→新，**压缩摘要**）；
+     *   · 本块       = **文本级**（发出去的字节逐行差在哪，改动的整段上下文都在）—— vscode 观感；
+     *   · 该步实际请求 = **地面真相**（磁盘上那条请求原文，证明确实发了这个）。
+     *
+     * 数据源 = `steps.jsonl` 的 `systemText` / `runtimeText`（每轮**真发全文**，落盘事实）→
+     * 所以本块是**轮级**（该轮 vs 上一轮），不是步级：changelog 那份是压缩摘要，做不了行级 diff。
+     *
+     * `<>` 给出这一侧的**全文本身**：
+     *   · system  → 该步的 system 上下文本体（= 变量树 + `help` 段，真发参数原样）
+     *   · runtime → 该步**实际发出去的末条 user 消息**（流量日志里那条；找不到才退回组装产物）
+     */
+    const diffPane = (which: "system" | "runtime") => {
+        const d = () => diff();
+        const raw = (): DiffLine[] => (which === "system" ? (d()?.systemDiff ?? []) : (d()?.runtimeDiff ?? []));
+        const differs = (): boolean => (which === "system" ? (d()?.systemDiffers ?? false) : (d()?.runtimeDiffers ?? false));
+        const rows = (): DiffRow[] => {
+            const all = raw();
+            const folded = foldDiff(all, { context: 3, maxLines: DIFF_MAX_LINES });
+            const open = openGaps();
+            if (open.size === 0) return folded;
+            const numbered = numberDiff(all);
+            const out: DiffRow[] = [];
+            for (const r of folded) {
+                if (r.kind === "line" || !open.has(r.id)) {
+                    out.push(r);
+                    continue;
+                }
+                for (let i = r.fromIdx; i <= r.toIdx; i++) {
+                    const line = numbered[i];
+                    if (line) out.push({ kind: "line", line });
+                }
+            }
+            return out;
+        };
+        const counts = () => foldCounts(foldDiff(raw(), { context: 3, maxLines: DIFF_MAX_LINES }));
+        return (
+            <Show when={d()} fallback={<div class="p-2 opacity-60">还没有真发记录，无从比较（真发一轮后再来）。</div>}>
+                {(dd) => (
+                    <div class="flex flex-col gap-1 p-1">
+                        <div class="flex flex-wrap items-center gap-2 px-1 text-caption opacity-70">
+                            <Show when={dd().base}>
+                                {(b) => (
+                                    <>
+                                        <span class="badge badge-xs" title={b().ts}>{`第 ${b().index} 轮 · ${b().turnId}`}</span>
+                                        <span class="opacity-40">→</span>
+                                    </>
+                                )}
+                            </Show>
+                            <span class="badge badge-xs badge-primary">
+                                <Show when={dd().target} fallback={<>当前（未发送）</>}>
+                                    {(tg) => <>{`第 ${tg().index} 轮 · ${tg().turnId}`}</>}
+                                </Show>
+                            </span>
+                            <span>
+                                {dd().mode === "live"
+                                    ? "数据源：当前组装 vs 最后一步（steps.jsonl 全文）"
+                                    : "数据源：steps.jsonl 的两轮真发全文（轮级）"}
+                            </span>
+                            <span class={differs() ? "text-error" : "opacity-50"}>
+                                {differs() ? `-${counts().del}` : "与上一轮逐字相同（可缓存）"}
+                            </span>
+                            <Show when={differs()}>
+                                <span class="text-success">{`+${counts().add}`}</span>
+                                <span class="opacity-50">{`已渲染 ${counts().del + counts().add} 行改动 · 折叠 ${counts().gapLines} 行原文`}</span>
+                            </Show>
+                            <Show when={dd().incomparable}>
+                                <span class="badge badge-warning badge-xs">编码版本不同（不可比）</span>
+                            </Show>
+                            <button
+                                class="btn btn-xs btn-ghost ml-auto"
+                                title="全部重新折叠"
+                                onClick={() => setOpenGaps(new Set())}
+                            >
+                                折叠全部
+                            </button>
+                        </div>
+                        <div class="px-1 text-caption opacity-70">
+                            绿 = 新增行，红 = 删除行；行号：左=旧 / 右=新；「⋯」行可点开。
+                        </div>
+                        <Show
+                            when={differs()}
+                            fallback={
+                                <div class="rounded border border-base-300 bg-base-100 p-1 font-mono text-caption opacity-50">
+                                    （本份未变 —— system 每轮全量重发；runtime 只在易变项变了才不同）
+                                </div>
+                            }
+                        >
+                            <div class="max-h-96 overflow-auto rounded border border-base-300 bg-base-100">
+                                <For each={rows()}>
+                                    {(r) => (
+                                        <Show
+                                            when={r.kind === "line"}
+                                            fallback={
+                                                <button
+                                                    class="flex w-full cursor-pointer items-center gap-1 bg-base-200/70 px-1 text-left font-mono text-caption opacity-70 hover:opacity-100"
+                                                    title="点击展开这段未变的原文"
+                                                    onClick={() => toggleGap((r as { id: string }).id)}
+                                                >
+                                                    <span class="w-20 shrink-0" />
+                                                    <span>
+                                                        {(r as { truncated?: boolean }).truncated
+                                                            ? "… 超出渲染上限（点右上 <> 看原文，或折起这段）"
+                                                            : `⋯ 展开 ${(r as { count: number }).count} 行未变`}
+                                                    </span>
+                                                </button>
+                                            }
+                                        >
+                                            {(() => {
+                                                const l = (r as Extract<DiffRow, { kind: "line" }>).line;
+                                                return (
+                                                    <div
+                                                        class={`flex items-start font-mono text-caption ${
+                                                            l.t === "+" ? "bg-success/15" : l.t === "-" ? "bg-error/15" : ""
+                                                        }`}
+                                                    >
+                                                        <span class="w-10 shrink-0 select-none border-r border-base-300 px-1 text-right opacity-40">
+                                                            {l.oldNo ?? ""}
+                                                        </span>
+                                                        <span class="w-10 shrink-0 select-none border-r border-base-300 px-1 text-right opacity-40">
+                                                            {l.newNo ?? ""}
+                                                        </span>
+                                                        <span class="w-4 shrink-0 select-none text-center opacity-70">{l.t === " " ? "" : l.t}</span>
+                                                        <span class="whitespace-pre-wrap break-all pr-1">{l.s === "" ? " " : l.s}</span>
+                                                    </div>
+                                                );
+                                            })()}
+                                        </Show>
+                                    )}
+                                </For>
+                            </div>
+                        </Show>
+                    </div>
+                )}
+            </Show>
+        );
+    };
+
+    /** system 侧的原始数据 = 该步真发的 system 全文（steps.jsonl 的 systemText） */
+    const rawSystem = (): string => {
+        const d = diff();
+        if (!d) return "（没有真发记录）";
+        return [
+            `# 该步真发的 system 参数全文（steps.jsonl 的 systemText，逐字）`,
+            `# 侧：${d.mode === "live" ? "当前组装" : `第 ${d.target?.index ?? "?"} 轮 ${d.target?.turnId ?? ""}`}`,
+            `# 结构：help 段（zod 派生的结构说明）+ system 段（变量树）`,
+            "",
+            d.systemText,
+        ].join("\n");
+    };
+
+    /**
+     * runtime 侧的原始数据 = **该步真发出去的末条 user 消息**（用户原话：「里面切换为实际组装成
+     * user message 的实际内容，即当前步骤真的发出去的那个通知 llm runtime 变量变了的内容」）。
+     * 流量日志是地面真相；查不到（没真发过 / 日志被清 / 正文被截断）才退回 steps.jsonl 的
+     * **组装产物**，并如实标注是退回的那份。
+     */
+    const rawRuntime = (): string => {
+        const t = stepTraffic();
+        if (t) {
+            const parsed = parseBodyMessages(t.record);
+            const users = (parsed.msgs ?? []).filter((m) => m.role === "user");
+            const last = users[users.length - 1];
+            if (last) {
+                return [
+                    `# 该步**实际发出去**的末条 user 消息（流量日志 ${t.record.log?.abs ?? "?"}:${t.record.log?.line ?? "?"}）`,
+                    `# 里面就是 runtime / runtimeDiff 信封（+ 本轮用户输入）—— 模型真正看到的那段`,
+                    parsed.note ? `# ⚠️ ${parsed.note}` : "",
+                    "",
+                    last.text,
+                ]
+                    .filter((x) => x !== "")
+                    .join("\n");
+            }
+        }
+        const d = diff();
+        if (!d) return "（没有真发记录）";
+        return [
+            `# 流量日志里找不到该步的请求 → 退回 steps.jsonl 的**组装产物**（runtimeText）`,
+            `# ⚠️ 那份是"我们组装了什么"，不是"线上真发了什么"（后者见「该步实际请求」view）`,
+            "",
+            d.runtimeText,
+        ].join("\n");
+    };
+
+    /**
      * 该步实际请求（真发 · 流量）—— 回答"这一步**实际**发出去的是什么"。
      *
      * 为什么要有它：变量树只说明"变得对不对"，不能证明"真发的是不是这个"（构造链跑在 main 里）。
@@ -860,7 +1063,18 @@ export function ContextLabPage(props: { uri: string }) {
                     </button>
                 </div>
                 <Show when={rec.log}>
-                    <div class="px-1 font-mono text-caption opacity-60">{`${rec.log!.abs}:${rec.log!.line}`}</div>
+                    <div class="rounded border border-base-300 bg-base-100 px-1 py-0.5">
+                        <div class="flex items-center gap-1">
+                            <span class="badge badge-xs badge-outline">落在</span>
+                            <span class="select-all font-mono text-caption">{`${rec.log!.abs}:${rec.log!.line}`}</span>
+                        </div>
+                        <div class="text-caption opacity-60">
+                            {`查找规则：目录 log/network/（相对 $DIY_HOME，按天切分，一天一个 YYYY-MM-DD.jsonl）；` +
+                                `本任务是 grep '"taskUri":"${rec.taskUri ?? ""}"' 该文件，行号 = 文件内第几行；` +
+                                `一轮多步 = 同一 turnId 多行（按 ts 升序 = 第 1/2/… 步），attempt 是「重试」序号、不是步序。` +
+                                `变量树里的 reqlog 节点给模型的就是这套（自查用）。`}
+                        </div>
+                    </div>
                 </Show>
                 <Show when={parsed.note}>
                     <div class="px-1 text-caption text-warning">{parsed.note}</div>
@@ -884,104 +1098,6 @@ export function ContextLabPage(props: { uri: string }) {
                     )}
                 </Show>
             </div>
-        );
-    };
-
-    /** 变更详情（main 侧算好的行级 diff）：选中步 → 步 vs 步；未选中 → 当前 vs 最后一步 */
-    const changePane = () => {
-        const d = () => diff();
-        return (
-            <Show when={d()} fallback={<div class="p-2 opacity-60">还没有真发记录，无从比较。</div>}>
-                {(dd) => (
-                    <div class="space-y-2 p-2">
-                        <div class="text-caption opacity-60">
-                            本块是轮级文本 diff（该步所在轮 vs 上一轮，system / runtime 两份全文逐行比）；
-                            逐步的变量级变化看上方「变量树变更」
-                        </div>
-                        <div class="flex flex-wrap items-center gap-2 text-body">
-                            <Show when={dd().base}>
-                                {(b) => (
-                                    <>
-                                        <span class="badge badge-sm" title={b().ts}>
-                                            {`第 ${b().index} 步 · ${fmtShortTime(b().ts)}`}
-                                        </span>
-                                        <span class="opacity-40">→</span>
-                                    </>
-                                )}
-                            </Show>
-                            <span class="badge badge-sm badge-primary">
-                                <Show
-                                    when={dd().target}
-                                    fallback={<>当前（未发送）</>}
-                                >
-                                    {(tg) => <>{`第 ${tg().index} 步 · ${fmtShortTime(tg().ts)}`}</>}
-                                </Show>
-                            </span>
-                            <span class="opacity-60">
-                                <Show when={dd().mode === "live"} fallback={<>真发落盘时刻（点上方列表切换）</>}>
-                                    {`相对最后一步的改动（最后一步 ${fmtAgo(dd().base!.ts)}）`}
-                                </Show>
-                            </span>
-                            <Show when={dd().incomparable}>
-                                <span class="badge badge-warning badge-xs" title="投递编码版本不同，两份不可比">
-                                    编码版本不同（不可比）
-                                </span>
-                            </Show>
-                        </div>
-                        <div>
-                            <div class="mb-1 font-bold opacity-70">{`变化的变量（${dd().changed.length}）`}</div>
-                            <Show
-                                when={dd().changed.length > 0}
-                                fallback={
-                                    <div class="opacity-50">
-                                        {dd().systemDiffers || dd().runtimeDiffers
-                                            ? "无值变化（说明头/渲染变了，或投递范围变了）"
-                                            : "没有变化：当前投递与最后一步一致"}
-                                    </div>
-                                }
-                            >
-                                <div class="flex flex-wrap gap-1">
-                                    <For each={dd().changed}>
-                                        {(p) => <span class="badge badge-xs font-mono">{p}</span>}
-                                    </For>
-                                </div>
-                            </Show>
-                        </div>
-                        <div class="flex flex-col gap-1 text-body">
-                            <div>
-                                <span class="badge badge-primary badge-xs badge-outline">system</span>{" "}
-                                {dd().systemDiffers ? "重建（全量）" : "未变（可缓存）"}
-                            </div>
-                            <div>
-                                <span class="badge badge-warning badge-xs badge-outline">runtime</span>{" "}
-                                {dd().runtimeDiffers ? "增量 patch" : "未变"}
-                            </div>
-                        </div>
-                        <For
-                            each={[
-                                { name: "system 份变化", diff: dd().systemDiff as DiffLine[] },
-                                { name: "runtime 份变化", diff: dd().runtimeDiff as DiffLine[] },
-                            ]}
-                        >
-                            {(x) => (
-                                <Show when={x.diff.length > 0}>
-                                    <div>
-                                        <div class="mb-1 font-bold opacity-70">
-                                            {x.name}（+{diffSize(x.diff).add} / -{diffSize(x.diff).del}）
-                                        </div>
-                                        <pre class="max-h-64 overflow-auto rounded bg-base-100 p-1 font-mono text-body">
-                                            {x.diff
-                                                .filter((l) => l.t !== " ")
-                                                .map((l) => `${l.t} ${l.s}`)
-                                                .join("\n") || "（无实质变化）"}
-                                        </pre>
-                                    </div>
-                                </Show>
-                            )}
-                        </For>
-                    </div>
-                )}
-            </Show>
         );
     };
 
@@ -1121,63 +1237,105 @@ export function ContextLabPage(props: { uri: string }) {
         /** 左：结构树（契约 + 划分操作） */
         "ctxlab.structure": () => (
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-body">
-                {/* 变更历史：每轮一条事件流（变更日志；点轮看 diff，点事件定位变量） */}
-                <Fold
+                {/* 变更历史：**表格**（轮次 | 步 | 实际请求），点一行选中该步 */}
+                <View
                     k="history"
                     label="变更历史（真发轮次）"
                     extra={`本任务 · ${history()?.total ?? 0} 条记录 · ${changeCount()} 次变更`}
+                    raw={() => JSON.stringify(history() ?? null, null, 2)}
                 >
                     {historyPane()}
-                </Fold>
+                </View>
                 {/* 变更统计：按项目累计的长期视角（"用了几天变了几次"），是判断该不该待在 system 的判据 */}
-                <Fold
+                <View
                     k="stats"
                     label="变更统计（项目累计）"
                     extra={`项目累计 · ${stats()?.turns ?? 0} 轮 · ${stats()?.taskCount ?? 0} 个任务`}
+                    raw={() => JSON.stringify(stats() ?? null, null, 2)}
                 >
                     {statsPane()}
-                </Fold>
-                <Fold k="structure" label="结构树（变量契约）" extra="含无值变量 · 类型与描述">
-                <table class="table table-xs">
-                    <thead>
-                        <tr>
-                            <th>变量（契约）</th>
-                            <th>说明</th>
-                            <th class="text-right">归属</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <StructureRows
-                            nodes={structure()}
-                            prefix=""
-                            containerOf={containerOf}
-                            canSwap={canSwap}
-                            selected={selected()}
-                            onPick={setSelected}
-                            onSwap={toggleUnit}
-                        />
-                    </tbody>
-                </table>
-                </Fold>
+                </View>
+                <View
+                    k="structure"
+                    label="结构树（变量契约）"
+                    extra="含无值变量 · 类型与描述"
+                    raw={() => JSON.stringify(structure(), null, 2)}
+                >
+                    <table class="table table-xs">
+                        <thead>
+                            <tr>
+                                <th>变量（契约）</th>
+                                <th>说明</th>
+                                <th class="text-right">归属</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <StructureRows
+                                nodes={structure()}
+                                prefix=""
+                                containerOf={containerOf}
+                                canSwap={canSwap}
+                                selected={selected()}
+                                onPick={setSelected}
+                                onSwap={toggleUnit}
+                            />
+                        </tbody>
+                    </table>
+                </View>
             </div>
         ),
 
-        /** 中：请求预览（整份请求 = 一份大 YAML；可切原文 JSON） */
+        /**
+         * 中：**真发投递的视角**（步级变量级 + 两侧全文行级 diff + 该步真发的那条请求）。
+         * 「请求预览（实际发送格式）」已删（用户 2026-10-15：「现在有真实请求了，假的不要了」）——
+         * 那份是**仿真**请求体；要真的看「该步实际请求」（流量日志）那一块。
+         */
         "ctxlab.delivery": () => (
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-body">
                 {/* 变量树变更：整棵变量树 + 把选中那条记录的变更标在命中节点上（步级 · 变量级） */}
-                <Fold
+                <View
                     k="vardiff"
                     label="变量树变更（整棵树 + 标注）"
                     extra={(() => {
                         const e = effectiveEntry();
                         return e ? `第 ${e.ref.step} 步 · ${e.changes.length} 处变更` : "没有带变化的记录";
                     })()}
+                    raw={() =>
+                        JSON.stringify({ 记录: effectiveEntry(), 当前变量树: lab()?.tree ?? null }, null, 2)
+                    }
                 >
                     {varDiffPane()}
-                </Fold>
+                </View>
+                {/* system 全文 diff（轮级 · 文本级）—— `<>` = 该步真发的 system 参数原文 */}
+                <View
+                    k="sysdiff"
+                    label="system diff（逐行 · 真发全文）"
+                    extra={(() => {
+                        const d = diff();
+                        if (!d) return "无真发记录";
+                        const n = diffSize(d.systemDiff);
+                        return n.add + n.del === 0 ? "无差异" : `+${n.add} / -${n.del} 行`;
+                    })()}
+                    raw={rawSystem}
+                >
+                    {diffPane("system")}
+                </View>
+                {/* runtime 全文 diff —— `<>` = 该步**实际发出去的末条 user 消息**（runtime 变更告知原文） */}
+                <View
+                    k="rtdiff"
+                    label="runtime diff（逐行 · 真发全文）"
+                    extra={(() => {
+                        const d = diff();
+                        if (!d) return "无真发记录";
+                        const n = diffSize(d.runtimeDiff);
+                        return n.add + n.del === 0 ? "无差异" : `+${n.add} / -${n.del} 行`;
+                    })()}
+                    raw={rawRuntime}
+                >
+                    {diffPane("runtime")}
+                </View>
                 {/* 该步实际请求：真发的那条 HTTP 请求（流量日志 = 地面真相）+ 一键跳流量页定位 */}
-                <Fold
+                <View
                     k="stepsess"
                     label="该步实际请求（真发 · 流量）"
                     extra={(() => {
@@ -1186,84 +1344,10 @@ export function ContextLabPage(props: { uri: string }) {
                         if (t === null) return "未找到";
                         return `${t.record.status ?? "无响应"} · 该轮 ${t.turnRecords} 条`;
                     })()}
+                    raw={() => JSON.stringify(stepTraffic() ?? null, null, 2)}
                 >
                     {stepSessionPane()}
-                </Fold>
-                {/* 变更详情：选中某轮 → 与上一轮比；未选中 → 当前 vs 最后一轮（main 侧算好的行级 diff） */}
-                <Fold
-                    k="change"
-                    label="变更详情"
-                    extra={
-                        pickedStep() === null
-                            ? "当前 vs 最后一步"
-                            : `第 ${pickedStep()} 步 vs 上一步`
-                    }
-                >
-                    {changePane()}
-                </Fold>
-                <Fold
-                    k="request"
-                    label="请求预览（实际发送格式）"
-                    extra={lab()?.request.model ?? ""}
-                    right={
-                        <span class="join join-horizontal">
-                            <button
-                                class={`btn btn-xs join-item ${reqMode() === "yaml" ? "btn-active" : "btn-ghost"}`}
-                                title="整份请求渲染为 YAML：内嵌的 system/runtime 文本就地解析展开（解析的就是请求体里那段原文）"
-                                onClick={() => setReqMode("yaml")}
-                            >
-                                YAML
-                            </button>
-                            <button
-                                class={`btn btn-xs join-item ${reqMode() === "json" ? "btn-active" : "btn-ghost"}`}
-                                title="请求体的原始 JSON（真发格式，一字不改）"
-                                onClick={() => setReqMode("json")}
-                            >
-                                原文
-                            </button>
-                        </span>
-                    }
-                >
-                    <Show
-                        when={lab()?.request.body}
-                        fallback={<div class="p-2 opacity-60">{lab()?.request.note ?? "构造中…"}</div>}
-                    >
-                        {(b) => (
-                            <div class="flex h-full min-h-0 flex-col">
-                                <div class="shrink-0 px-2 py-1 text-caption opacity-60">{lab()!.request.note}</div>
-                                <Show
-                                    when={reqMode() === "yaml"}
-                                    fallback={
-                                        <div class="min-h-0 flex-1 overflow-auto p-2">
-                                            <JsonTree data={b()} />
-                                        </div>
-                                    }
-                                >
-                                    {/* 选中结构树一行 → 所有匹配处的导航条（↑/↓ 在它们之间跳；与提示词页同一套交互） */}
-                                    <Show when={selected() && hlMatches().length > 0}>
-                                        <DynamicBar
-                                            label={selected()!}
-                                            count={hlMatches().length}
-                                            index={Math.min(focusIdx(), Math.max(0, hlMatches().length - 1))}
-                                            onPrev={() => stepFocus(-1)}
-                                            onNext={() => stepFocus(1)}
-                                            onClear={() => setSelected(null)}
-                                        />
-                                    </Show>
-                                    <div class="min-h-0 flex-1">
-                                        <MdEditor
-                                            value={reqView()?.text ?? ""}
-                                            editable={false}
-                                            onChange={() => {}}
-                                            lang="yaml"
-                                            highlight={hlForRequest()}
-                                        />
-                                    </div>
-                                </Show>
-                            </div>
-                        )}
-                    </Show>
-                </Fold>
+                </View>
             </div>
         ),
     };
@@ -1278,7 +1362,7 @@ export function ContextLabPage(props: { uri: string }) {
                 </span>
                 <button
                     class="btn btn-xs btn-ghost"
-                    title="重新计算：当前上下文 + 变更历史 + 变更详情 + 变更统计（没有实时推送，改动要按一下）"
+                    title="重新计算：当前上下文 + 变更历史 + 变更日志 diff + 变更统计（没有实时推送，改动要按一下）"
                     onClick={refresh}
                 >
                     ⟳ 刷新
@@ -1306,6 +1390,9 @@ export function ContextLabPage(props: { uri: string }) {
                     }
                 />
             </div>
+            {/* 流量抽屉：本页「变更历史」表格里的「查看实际请求」超链接弹它（与对话页报错后
+                「查看实际请求 / 响应」是同一个抽屉、同一套定位语义） */}
+            <TrafficDrawer />
         </div>
     );
 }

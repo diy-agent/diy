@@ -105,6 +105,14 @@ export const ContextDiffSchema = z.object({
     runtimeDiffers: z.boolean(),
     systemDiff: z.array(diffLine),
     runtimeDiff: z.array(diffLine),
+    /** target 侧的**全文**（system 信封 / runtime 信封）—— `<>` 原始数据视图用。
+     *  为什么随 diff 一起给：那两个 view 的"原始数据"就是这份文本本身，另开一个 RPC
+     *  只会多一次 round-trip 且两份可能不同源（diff 是同一份 steps 记录算的）。 */
+    systemText: z.string(),
+    runtimeText: z.string(),
+    /** base 侧全文（没有上一步 = null）—— 供"两侧对照"看原始数据 */
+    baseSystemText: z.string().nullable(),
+    baseRuntimeText: z.string().nullable(),
 });
 export type ContextDiff = z.infer<typeof ContextDiffSchema>;
 

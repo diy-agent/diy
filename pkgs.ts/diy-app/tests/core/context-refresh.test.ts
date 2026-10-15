@@ -14,7 +14,11 @@ import { join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask, updateTask } from "../../src/main/core/task";
-import { LocalAgentManager, replaceRuntimeInMessages } from "../../src/main/services/local-agent";
+import { LocalAgentManager } from "../../src/main/services/local-agent";
+import { readCtxLog } from "../../src/main/core/context-changelog";
+import { isV2Entry, entryToRows } from "../../src/shared/context/changelog";
+import { appendUserKey } from "../../src/shared/context/envelope";
+import { buildDelivery, runtimeDiffDelivery } from "../../src/shared/context/delivery";
 
 let PROJECT = "";
 beforeAll(() => {
@@ -74,25 +78,34 @@ function promptText(model: MockLanguageModelV3, callIndex: number): string {
     return out.join("\n");
 }
 
-describe("replaceRuntimeInMessages（纯函数）", () => {
-    const msg = (content: string): ModelMessage => ({ role: "user", content });
-    it("runtime 与输入合并成一条时，只替换 runtime 那一段", () => {
-        const out = replaceRuntimeInMessages([msg("RT-旧\n用户的输入")], "RT-旧", "RT-新");
-        expect((out![0] as { content: string }).content).toBe("RT-新\n用户的输入");
+describe("信封：runtime + 本轮输入合成一份 YAML（appendUserKey）", () => {
+    it("runtime 之前、user 之后，一份合法 YAML（不是两条相邻 user 被合并出的怪东西）", () => {
+        const out = appendUserKey("runtime:\n  task:\n    body: x", "你好");
+        expect(out).toBe('runtime:\n  task:\n    body: x\nuser:\n  message: "你好"');
     });
-    it("runtime 单独成条时整体替换", () => {
-        const out = replaceRuntimeInMessages([msg("RT-旧")], "RT-旧", "RT-新");
-        expect((out![0] as { content: string }).content).toBe("RT-新");
+    it("多行输入用块标量（仍是合法 YAML，内容逐字保真）", () => {
+        const out = appendUserKey("runtime:\n  a: 1", "第一行\n第二行");
+        expect(out).toContain("message: |");
+        expect(out).toContain("    第一行\n    第二行");
     });
-    it("后面有 assistant/tool 时仍能找到并替换（不动其它消息）", () => {
-        const msgs: ModelMessage[] = [msg("RT-旧\n输入"), { role: "assistant", content: "答复" }, msg("tool 结果")];
-        const out = replaceRuntimeInMessages(msgs, "RT-旧", "RT-新")!;
-        expect((out[0] as { content: string }).content).toBe("RT-新\n输入");
-        expect(out[1]).toEqual({ role: "assistant", content: "答复" });
+});
+
+describe("runtimeDiff：只写**变化**的原子单元 → 变更后的当前值", () => {
+    const globals = (body: string): Record<string, unknown> => ({
+        diy: { cli: "/d", home: "/h" },
+        task: { uri: "projects/1/tasks/1", title: "T", state: "active", dir: "/h/t", body },
+        skills: [],
     });
-    it("定位不到 / 旧值为空 → null（交给调用方兜底）", () => {
-        expect(replaceRuntimeInMessages([msg("无关")], "RT-旧", "RT-新")).toBeNull();
-        expect(replaceRuntimeInMessages([msg("任意")], "", "RT-新")).toBeNull();
+    it("变了的单元出现（值 = 新值全量），没变的单元不出现", () => {
+        const next = buildDelivery(globals("新值"), ["diy"]);
+        const diff = runtimeDiffDelivery(next.tree, ["task.body"]);
+        expect(diff.text).toBe('runtimeDiff:\n  task:\n    body: "新值"');
+        expect(diff.text).not.toContain("title");
+    });
+    it("无变化 → 空串（调用方据此**不注入**，不砸前缀缓存）", () => {
+        const next = buildDelivery(globals("x"), ["diy"]);
+        expect(runtimeDiffDelivery(next.tree, []).text).toBe("");
+        expect(runtimeDiffDelivery(next.tree, []).bytes).toBe(0);
     });
 });
 
@@ -118,8 +131,10 @@ describe("轮内重算：变量变了 → 下一步请求即用新值", () => {
         // 第一步：旧值
         expect(promptText(model, 0)).toContain("正文旧值-AAAAAAAAAA");
         expect(promptText(model, 0)).not.toContain("正文新值-BBBBBBBBBB");
-        // 第二步：新值（不必等下一轮）
-        expect(promptText(model, 1)).toContain("正文新值-BBBBBBBBBB");
+        // 第二步：新值（不必等下一轮）—— 且形态是**追加的 runtimeDiff 段**（让模型知道"哪几个单元变了"）
+        const p1 = promptText(model, 1);
+        expect(p1).toContain("正文新值-BBBBBBBBBB");
+        expect(p1).toContain("runtimeDiff:");
     });
 
     it("轮内改任务标题（system）→ 第二步请求的 system 已刷新", async () => {
@@ -162,4 +177,56 @@ describe("轮内重算：变量变了 → 下一步请求即用新值", () => {
         // runtime 只出现一次（若每步都追加而非"变了才注入"，这里会 > 1）
         expect(count(promptText(model, 1), "正文固定值-CCCCCCCCCC")).toBe(1);
     });
+});
+
+describe("跨轮变更：上一轮之后改的东西，下一轮必须落一条 changed", () => {
+    /**
+     * 这条钉的是一个**实测到的 bug**（##310 五轮）：
+     * 变更的比较基准曾经是"**本轮**轮首那份投递"（`let ctxPrevSnap = 轮首值`）—— 于是它只看得见
+     * 一轮**之内**的变化；而最常见的变化（用户改了正文/标题，再来问一句）发生在**两轮之间**：
+     * 新轮次的轮首值已经是改后的值 ⇒ diff 恒为空 ⇒ 变更日志里永远只有 baseline，没有 changed。
+     * 真发复现：`diy task edit --title X` → 下一轮 changelog 无任何 changed（只有 baseline）。
+     *
+     * 修法 = 比较基准改成**跨轮游标**（`LocalAgentManager.ctxSnap`，每任务一份）。
+     */
+    it("两轮之间改任务正文 → 第二轮落 changed 且 path = task.body", async () => {
+        const uri = newUri("跨轮变更", "旧正文-AAAAAAAAAA");
+        const model = new MockLanguageModelV3({
+            provider: "stub",
+            modelId: "stub-model",
+            doStream: () => Promise.resolve(textReply("好")),
+        });
+        const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+
+        for await (const _op of mgr.chat(uri, "第一轮")) void _op;
+        // 两轮之间改（用户编辑任务正文 —— 最常见的那类变化）
+        updateTask(uri, { body: "新正文-BBBBBBBBBB" });
+        for await (const _op of mgr.chat(uri, "第二轮")) void _op;
+
+        const v2 = readCtxLog(uri).filter(isV2Entry);
+        expect(v2.map((e) => e.type)).toEqual(["baseline", "changed"]);
+        const changed = v2[1]!;
+        const changes = "changes" in changed.data ? changed.data.changes : [];
+        expect(changes.map((c) => c.path)).toContain("task.body");
+        // 变更单位是原子单元：数组不下钻（chain 整体一条，不该出现 chain.0.content）
+        expect(changes.every((c) => !/^chain\.\d/.test(c.path))).toBe(true);
+        // 读侧能给出旧→新（before/after 自带，不回放）
+        const row = entryToRows(changed).find((c) => c.path === "task.body")!;
+        expect(row.before).toContain("旧正文");
+        expect(row.after).toContain("新正文");
+    }, 60_000);
+
+    it("跨轮没变就不写（基准对了也不能凭空造记录）", async () => {
+        const uri = newUri("跨轮无变", "正文一直不动不动不动");
+        const model = new MockLanguageModelV3({
+            provider: "stub",
+            modelId: "stub-model",
+            doStream: () => Promise.resolve(textReply("好")),
+        });
+        const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+        for await (const _op of mgr.chat(uri, "第一轮")) void _op;
+        for await (const _op of mgr.chat(uri, "第二轮")) void _op;
+        const v2 = readCtxLog(uri).filter(isV2Entry);
+        expect(v2.map((e) => e.type)).toEqual(["baseline"]);
+    }, 60_000);
 });

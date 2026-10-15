@@ -74,8 +74,9 @@ import {
     type UsageBuckets,
     type UsageLike,
 } from "../../shared/usage";
-import { buildDelivery, type Delivery } from "../../shared/context/delivery";
+import { buildDelivery, isRuntimePlace, runtimeDiffDelivery, type Delivery } from "../../shared/context/delivery";
 import { renderBudgetNote } from "../../shared/context/budget-note";
+import { appendUserKey } from "../../shared/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -403,43 +404,28 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
     return out;
 }
 
+/**
+ * 把 runtime **信封**拼进 messages，并把**本轮输入**并进同一份信封（`user: message:`）。
+ *
+ * 为什么合成一份（##310 六轮拍板）：runtime 信封与本轮输入是**两条相邻 user**，而
+ * `normalizeUserRuns` 必然把它们合并成一条（多家 provider 拒连续同角色）。与其让合并
+ * 产出一段"YAML 后面跟着裸文本"的怪东西，不如**我们自己合成一份合法 YAML**：
+ *
+ *     runtime:      ← 或 runtimeDiff:
+ *       task: {…}
+ *     user:
+ *       message: '用户真正说的话'
+ *
+ * 尾部不是 user（如自动续跑、纯工具轮）→ 退回旧行为：runtime 单独一条消息
+ * （没有可并的输入，就不编一个 `user:` 出来）。
+ */
 function withRuntime(hist: ModelMessage[], runtime: string): ModelMessage[] {
     if (!runtime.trim()) return hist;
     const last = hist[hist.length - 1];
-    if (last && last.role === "user") {
-        return [...hist.slice(0, -1), { role: "user", content: runtime }, last];
+    if (last && last.role === "user" && typeof last.content === "string" && last.content.trim()) {
+        return [...hist.slice(0, -1), { role: "user", content: appendUserKey(runtime, last.content) }];
     }
     return [...hist, { role: "user", content: runtime }];
-}
-
-/**
- * 替换 messages 里**上一步投递的 runtime 容器**（##310 及时刷新）。
- *
- * runtime 在 messages 里的形态：`withRuntime` 插一条 user、紧挨本轮输入，`normalizeUserRuns`
- * 再把连续 user 合并 —— 于是那条消息的 content 是 `runtime + "\n" + 本轮输入`（本轮输入为空时
- * 恰为 runtime 本身）。所以定位靠「content 含旧 runtime 全文」，替换只动那一处、其余原样。
- *
- * 为什么替换而不是追加：runtime 是**当前值**（"环境事实"），不是对话历史；追加会让模型同时
- * 看见新旧两份、以哪份为准全看它猜。就地换值语义才对（history 那种"发生过的事"才用追加）。
- *
- * 返回 null = 没定位到（上一步没投 runtime / 构造被外力改过）——调用方据新值决定兜底。
- */
-export function replaceRuntimeInMessages(
-    messages: readonly ModelMessage[],
-    prevRuntime: string,
-    nextRuntime: string,
-): ModelMessage[] | null {
-    if (!prevRuntime) return null;
-    for (let i = messages.length - 1; i >= 0; i--) {
-        const m = messages[i]!;
-        if (m.role !== "user") continue;
-        const c = m.content;
-        if (typeof c !== "string" || !c.includes(prevRuntime)) continue;
-        const out = messages.slice();
-        out[i] = { ...m, content: c.replace(prevRuntime, nextRuntime) };
-        return out;
-    }
-    return null;
 }
 
 /** 读某任务的投递快照（时间正序；文件不存在 = 还没真发过） */
@@ -1358,12 +1344,11 @@ export class LocalAgentManager {
         const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, opts);
         const note = renderBudgetNote(
             {
-                about: "会话历史已按字节预算压缩：以下是**保留位置索引**，区间之间的行号即被省略的部分",
                 budgetBytes: policy.modeData.budgetBytes,
                 keptBytes: sel.keptBytes,
                 kept: sel.keptRuns,
             },
-            { file: llmLogRelPath(taskUriOf), absPath: llmFile(taskUriOf), legendInSystem: true },
+            { file: llmLogRelPath(taskUriOf), absPath: llmFile(taskUriOf) },
         );
         return normalizeUserRuns([{ role: "user", content: note }, ...kept]);
     }
@@ -1921,6 +1906,20 @@ export class LocalAgentManager {
     }
 
     /**
+     * **跨轮**的投递游标：该任务**上一次真发**的投递快照（tree + 值 hash），每任务一份。
+     *
+     * 为什么必须跨轮（实测的 bug）：变更是「**这次**请求的当前值 vs **上一次**请求的当前值」。
+     * 曾经把游标放成一轮一个局部量（`let ctxPrevSnap = 轮首那份`）—— 于是它只能看见一轮**之内**
+     * 的变化（step 2..N），而最常见的变化（用户改了正文/标题，再来问一句）发生在**两轮之间**：
+     * 新轮次的轮首值已经是改后的值，拿它当基准 ⇒ 永远 diff 出空 → 变更日志从不记录。
+     * 实测：真发改标题 → 下一轮落不出任何 `changed`（只有 baseline）。
+     *
+     * 内存里即可（`rule.core-log`：核心逻辑不依赖日志）：进程重启后为空 → 该任务那一轮
+     * 只做轮内比较，**少报**而不是拿错值当基准（后续可选择性从 `steps.jsonl` 末条播种）。
+     */
+    private ctxSnap = new Map<string, CtxSnapshot>();
+
+    /**
      * 清空会话：中断在途生成 + 清插话队列 + 删 ops/llm/raw 日志。
      *
      * 顺序原则：**先把所有可失败的事做完，最后才丢内存态**。
@@ -2460,6 +2459,9 @@ export class LocalAgentManager {
         // 上一步投递的两个容器文本（比较基准；初值 = 轮首这份）
         let prevSystemText = delivery.system.text;
         let prevRuntimeText = delivery.runtime.text;
+        // runtimeDiff 的比较基准 = **本轮首步投出去的那份 runtime**（模型上下文里就是它）。
+        // 不用跨轮游标：跨轮变化已由本轮首步的**全量** runtime 带上，再说一遍是噪音。
+        let prevRunSnap: CtxSnapshot = { tree: delivery.tree, valueHashes: delivery.valueHashes };
 
         // 变更历史（##310 二版）：每步**有变才写**；一段会话的起点 = 一条 baseline（整棵树）。
         // 变更单位 = 原子单元（`chain` 整体一条，不下钻数组 —— 原子字段要变一起变）。
@@ -2468,7 +2470,12 @@ export class LocalAgentManager {
         // 该不该写起点：还没有二版记录（新任务 / 从没写过的新格式），或有人显式要求重新起算
         // （会话清零、`diy context rebaseline`）。**每轮只在轮首判一次**：轮中途置的标记下一轮生效。
         let ctxBaselineWritten = hasV2CtxLog(taskUri) && !this.rebaselinePending.has(taskUri);
-        let ctxPrevSnap: CtxSnapshot = { tree: delivery.tree, valueHashes: delivery.valueHashes };
+        // 变更比较的基准 = **上一次真发**的值（跨轮游标；缺省才退回本轮的轮首值）。
+        // 用轮首值当基准就只能看见"轮内变化"，跨轮变化（改完正文再来问）会永远漏掉 —— 见字段注释。
+        let ctxPrevSnap: CtxSnapshot = this.ctxSnap.get(taskUri) ?? {
+            tree: delivery.tree,
+            valueHashes: delivery.valueHashes,
+        };
         // 预算判据与模版线**共用同一个函数**（services/prompt-registry 的 systemOverBudget）：
         // 曾经这里是内联的 `bytes > budget`，逻辑等价但两处各写一遍 —— 日后任何一侧改口径
         // （比如"等于预算算不算超"）都会悄悄分叉，而单测只覆盖得到被调用的那一侧（209 第 3 轮 R-1）。
@@ -2656,18 +2663,27 @@ export class LocalAgentManager {
                             }
                         }
                         ctxPrevSnap = { tree: fresh.tree, valueHashes: fresh.valueHashes };
+                        this.ctxSnap.set(taskUri, ctxPrevSnap);
                         if (fresh.system.text !== prevSystemText) {
                             prevSystemText = fresh.system.text;
                             instructions = fresh.system.text;
                         }
                         if (fresh.runtime.text !== prevRuntimeText) {
-                            const replaced = replaceRuntimeInMessages(messages, prevRuntimeText, fresh.runtime.text);
+                            // runtime 变了 → **追加**一条只含 `runtimeDiff:` 的信封（用户 2026-10-15
+                            // 「runtime 变 → 追加什么变了，形态 = 与实际用户消息分离的 user 消息」）。
+                            // 为什么追加而不是就地把旧容器换掉：模型要的不只是新值，还要**知道哪几个
+                            // 单元变了** —— 就地替换只给一坨新值，变化本身看不见。
+                            // 基准 = **本轮首步投出去的那份**（模型上下文里的就是它），不是跨轮游标：
+                            // 跨轮的那些变化已由本轮首步的**全量** runtime 覆盖，重复说一遍是噪音。
+                            const changedRun = changesOf(prevRunSnap, fresh, ctxUnits)
+                                .map((c) => c.path)
+                                .filter((p) => isRuntimePlace(fresh.tree, p));
+                            const diff = runtimeDiffDelivery(fresh.tree, changedRun);
                             prevRuntimeText = fresh.runtime.text;
-                            // 定位失败（上一步没投 runtime）时兜底追加：宁可重复也强过模型拿着旧值
-                            nextMessages = replaced ?? [
-                                ...messages,
-                                { role: "user" as const, content: `[上下文更新] 易变上下文已刷新，以此为准：\n${fresh.runtime.text}` },
-                            ];
+                            prevRunSnap = { tree: fresh.tree, valueHashes: fresh.valueHashes };
+                            if (diff.text) {
+                                nextMessages = [...messages, { role: "user" as const, content: diff.text }];
+                            }
                         }
                     } catch (e) {
                         // 重算失败**不阻断**发送：这是增强（及时性），不是正确性前提 —— 沿用上一步的投递
