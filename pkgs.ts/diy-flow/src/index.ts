@@ -94,3 +94,10 @@ export { createRuntime } from './execute';
 export type { DeclareRequest, EventSeed, Move, NodeStatus, NotifyFailure, Runtime, RuntimeOptions, StepResult, Transition } from './execute';
 
 export { callPlugin, isIsoString, isObject, rejectUnknown } from './validate';
+
+// 通用渲染器契约（九种 renderer 各自吃哪种 `data` 形状，##166 §14.7 / ##318）——
+// **纯类型导出、零运行时代价**：类型导出不产出任何运行时成员，也不改 `exports` 的子路径策略。
+// 消费者（行业工作流包、宿主 UI ##320）按形状**收窄** `View.payload` 的正路就是
+//   import type { ViewData, ViewShapes } from '@diy/flow';
+// —— 跨包**子路径** import（`@diy/flow/src/view`）才是 hack（`exports` 只有 `"."`）。
+export type * from './view';
