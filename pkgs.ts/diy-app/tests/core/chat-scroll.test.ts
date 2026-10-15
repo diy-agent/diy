@@ -5,7 +5,7 @@
 //   · anchorScrollTop：切走切回后回到哪一行（③ 的 bug 就是基准取错）
 // 故与 chat-fold 同规格钉在这里；组件只管把结果写进 scrollTop。
 import { describe, expect, it } from "vitest";
-import { anchorScrollTop, clampScrollTop, followPlan, lastLeafId } from "../../src/renderer_solid/lib/chat-scroll";
+import { anchorScrollTop, anchorTick, clampScrollTop, followPlan, lastLeafId } from "../../src/renderer_solid/lib/chat-scroll";
 import type { BlockNode } from "../../src/main/services/local-blocks";
 
 function n(tag: string, id: string, attrs: Record<string, unknown> = {}, children: BlockNode[] = []): BlockNode {
@@ -90,5 +90,72 @@ describe("anchorScrollTop：切走切回的锚点恢复（##331 ③）", () => {
     it("超界由 clamp 收口（锚点之后的内容被删/变矮时不给出非法位置）", () => {
         expect(anchorScrollTop(100, 500, 5000, 800)).toBe(0); // 目标为负 → 收到 0
         expect(anchorScrollTop(9000, 0, 5000, 800)).toBe(4200);
+    });
+});
+
+// ── anchorTick：切回后的连校单帧决策（review1 R1 钉在这） ────────────────────
+//
+// 背景：恢复锚点后要连校几帧（高度估算值换实测值会挪位置）。原实现在"发现用户在滚"这一帧
+// 只更新基准、**没有 latch** ⇒ 下一帧基准已等于用户位置、`userScrolled` 为假 ⇒ 漂移校正
+// 立刻把用户**推回锚点**，与注释「绝不抢」相反。下面第一条用例就是钉死这个回归。
+describe("anchorTick：锚点连校（用户一旦动手就永不抢）", () => {
+    const M = (scrollTop: number, blockOffset: number | null, extra: Partial<Parameters<typeof anchorTick>[0]> = {}) => ({
+        scrollTop,
+        blockOffset,
+        offset: 0,
+        scrollHeight: 1000,
+        clientHeight: 400,
+        quietFrames: 3,
+        ...extra,
+    });
+
+    it("用户滚一下 → latch 收手；**下一帧停手时也不会被 drift 推回锚点**（R1 的 bug）", () => {
+        let st = { lastSt: 400, quiet: 0, userLeft: false };
+
+        // k：用户自己滚到 350（≠ 我们写下的 400）
+        const k = anchorTick(M(350, 0), st);
+        expect(k.stop).toBe(true); // 收手：把控制权交还用户
+        expect(k.setTop).toBeNull(); // 绝不写 scrollTop
+        expect(k.state.userLeft).toBe(true); // latch
+        st = k.state;
+
+        // k+1：用户停手，此刻 scrollTop === lastSt（正是旧实现误判"我们写的"、然后推回锚点的那一帧）
+        const k1 = anchorTick(M(350, 0), st);
+        expect(k1.setTop).toBeNull(); // 旧实现这里会 setTop=400（推回锚点）❌
+        expect(k1.stop).toBe(true);
+    });
+
+    it("没人动 → 有漂移就校正到「块顶落在 offset 处」", () => {
+        // 块顶现在比容器顶低 60px，但我们要求它压在容器顶（offset=0）⇒ 视口下滚 60
+        const r = anchorTick(M(400, 60), { lastSt: 400, quiet: 0, userLeft: false });
+        expect(r.setTop).toBe(460);
+        expect(r.state.quiet).toBe(0);
+
+        // 越界由 clampScrollTop 收口：要求滚到 1300 但底部只到 600
+        const c = anchorTick(M(600, 700), { lastSt: 600, quiet: 0, userLeft: false });
+        expect(c.setTop).toBe(600);
+
+        // 块顶已被滚出容器顶 20px（offset 存的正是这个负值）⇒ 不能动
+        const keep = anchorTick(M(400, -20, { offset: -20 }), { lastSt: 400, quiet: 0, userLeft: false });
+        expect(keep.setTop).toBeNull();
+    });
+
+    it("块顶在 offset 处 → 不写 scrollTop，只累静默；满 quietFrames 即收手", () => {
+        let st = { lastSt: 400, quiet: 0, userLeft: false };
+        for (let i = 0; i < 2; i++) {
+            const r = anchorTick(M(400, 0), st);
+            expect(r.setTop).toBeNull();
+            expect(r.stop).toBe(false);
+            st = r.state;
+        }
+        const last = anchorTick(M(400, 0), st);
+        expect(last.stop).toBe(true); // 第 3 帧静默 → 稳了
+        expect(last.state.quiet).toBe(3);
+    });
+
+    it("锚点块不在 DOM（blockTop=null）→ 不动 scrollTop、帧预算交给调用点（R3 有界）", () => {
+        const r = anchorTick(M(400, null), { lastSt: 400, quiet: 0, userLeft: false });
+        expect(r.setTop).toBeNull();
+        expect(r.stop).toBe(false);
     });
 });

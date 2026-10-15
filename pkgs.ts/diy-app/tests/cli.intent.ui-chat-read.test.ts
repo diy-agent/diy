@@ -255,4 +255,33 @@ describe("##331 聊天页阅读体验", () => {
         expect(after!.id).toBe(before!.id);
         expect(Math.abs(after!.top - before!.top)).toBeLessThanOrEqual(2);
     }, 120_000);
+
+    // review1 R1：恢复锚点后会连校几帧（高度估算值换实测值会挪位置）。旧实现在"发现用户在滚"
+    // 那一帧只更新基准、**没 latch** ⇒ 用户滚完停手的下一帧就被 drift 推回锚点（与注释"绝不抢"相反）。
+    // 这里在**连校窗口内**由用户自己跳到顶部，然后看它会不会被拽回锚点。
+    it("③R1 恢复窗口内用户自己滚动 → 不被拉回锚点（review1 R1）", async () => {
+        await openTask(uriA, "第 20 轮问题");
+        await ui.query(
+            `(() => { const el = document.querySelector('.diy-chat');` +
+                ` el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) * 0.75);` +
+                ` el.dispatchEvent(new Event('scroll')); return 1; })()`,
+        );
+        await new Promise((r) => setTimeout(r, 300));
+        const anchor = await topTurnProbe();
+        expect(anchor).not.toBeNull();
+        // 切走 → 切回：restore 开始按锚点定位，连校窗口随之打开
+        await openTask(uriB, "第 3 轮问题");
+        await openTask(uriA, "第 20 轮问题");
+        // 窗口内**立刻**由用户自己往上跳（这是"用户接管"的硬证据，不看时序巧合）
+        await ui.query(
+            `(() => { const el = document.querySelector('.diy-chat'); el.scrollTop = 0;` +
+                ` el.dispatchEvent(new Event('scroll')); return 1; })()`,
+        );
+        await new Promise((r) => setTimeout(r, 900));
+        const after = await chatProbe();
+        const top = await topTurnProbe();
+        console.error(`[##331 ③R1] 锚点=${JSON.stringify(anchor)} 用户跳顶后=${JSON.stringify(after)} 顶部块=${JSON.stringify(top)}`);
+        expect(after.scrollTop).toBeLessThanOrEqual(2); // 用户到顶了（不是被拽回 75% 处）
+        expect(top!.id).not.toBe(anchor!.id); // 也没停在锚点那一轮
+    }, 120_000);
 });

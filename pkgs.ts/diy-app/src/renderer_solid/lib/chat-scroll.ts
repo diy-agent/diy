@@ -103,3 +103,74 @@ export function anchorScrollTop(
 ): number {
     return clampScrollTop(blockTop - offset, scrollHeight, clientHeight);
 }
+
+/** 锚点连校的跨帧状态（`anchorTick` 的输入输出） */
+export interface AnchorTickState {
+    /** 上一次我们**写下去**的 scrollTop（写后以实际值为准）。用来识别"这一帧的值不是我们写的" */
+    lastSt: number;
+    /** 已连续静默（无漂移）的帧数 */
+    quiet: number;
+    /** **latch**：已发现用户自己滚过 ⇒ 此后永不再校正（review1 R1） */
+    userLeft: boolean;
+}
+
+export interface AnchorTickResult {
+    /** 非 null = 该帧要写进 scrollTop 的值 */
+    setTop: number | null;
+    /** 下一帧的状态 */
+    state: AnchorTickState;
+    /** 是否收手（不再排下一帧） */
+    stop: boolean;
+}
+
+/**
+ * 锚点连校的**单帧决策**（##331 ③ · 纯函数，DOM 读写在组件里）。
+ *
+ * 三件事，按优先级：**用户接管 > 漂移校正 > 静默计数**。
+ *
+ * **latch 是必须的**（review1 R1 的 bug）：漂移校正是"相对基准"的 —— 若发现用户滚动只更新
+ * 基准而不锁死，下一帧 `userScrolled` 又会变假（基准已被改写成用户的位置），drift 立刻把用户
+ * **推回锚点**，与"绝不抢"正好相反：
+ *
+ *   | 帧 | scrollTop | lastSt | 判定 | 旧行为 | 本函数 |
+ *   |---|---|---|---|---|---|
+ *   | k（用户滚到 Y） | Y | X | 变过 | quiet=0，基准←Y | **latch，收手** |
+ *   | k+1（停手） | Y | Y | 没变 | drift=X−Y ⇒ 推回 X ❌ | 已 latch，不动 ✅ |
+ *
+ * 所以：值与基准不符 ⇒ 认定用户接管 ⇒ 永久停止（`stop: true`），把控制权交还用户。
+ *
+ * `blockTop === null`（锚点块还没上屏 / 已被移除）：不动，只跟基准 —— 帧预算由调用点兜底（R3）。
+ */
+export function anchorTick(
+    m: {
+        /** 当前 scrollTop */
+        scrollTop: number;
+        /** 锚点块顶**当前**相对容器顶的偏移（屏幕坐标差，与坐标原点无关）；null = 该块不在 DOM 里 */
+        blockOffset: number | null;
+        /** 目标：锚点块顶相对容器顶的偏移（≤0 = 块顶被滚出容器顶） */
+        offset: number;
+        scrollHeight: number;
+        clientHeight: number;
+        /** 连续静默多少帧即算稳（组件传 3） */
+        quietFrames: number;
+    },
+    st: AnchorTickState,
+): AnchorTickResult {
+    if (st.userLeft) return { setTop: null, state: st, stop: true };
+    if (Math.abs(m.scrollTop - st.lastSt) > 1) {
+        // 值不是我们写的 ⇒ 用户在滚。latch 并收手（R1：绝不把用户推回锚点）
+        return { setTop: null, state: { lastSt: m.scrollTop, quiet: 0, userLeft: true }, stop: true };
+    }
+    if (m.blockOffset === null) {
+        return { setTop: null, state: { lastSt: m.scrollTop, quiet: st.quiet, userLeft: false }, stop: false };
+    }
+    // 漂移 = 块顶**现在**在哪 - 我们希望它在哪。`blockOffset` 已把屏幕坐标之差算好，
+    // 无需再减容器顶（**别**把"内容坐标系"和"屏幕坐标系"混进同一个差里 —— 那样差的是 scrollTop）。
+    const drift = m.blockOffset - m.offset;
+    if (Math.abs(drift) >= 1) {
+        const top = clampScrollTop(m.scrollTop + drift, m.scrollHeight, m.clientHeight);
+        return { setTop: top, state: { lastSt: top, quiet: 0, userLeft: false }, stop: false };
+    }
+    const quiet = st.quiet + 1;
+    return { setTop: null, state: { lastSt: m.scrollTop, quiet, userLeft: false }, stop: quiet >= m.quietFrames };
+}

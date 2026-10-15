@@ -56,7 +56,7 @@ import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
 import { bylineOf } from "../lib/assistant-byline";
 // 滚动决策（纯函数，可单测：跟随时序 / 锚点恢复）—— 本文件只负责 DOM 读写
-import { anchorScrollTop, clampScrollTop, followPlan, lastLeafId, type ChatAnchor } from "../lib/chat-scroll";
+import { anchorScrollTop, anchorTick, clampScrollTop, followPlan, lastLeafId, type AnchorTickState, type ChatAnchor } from "../lib/chat-scroll";
 // user 发言的时刻 label（纯函数：块 id → 所属轮起点时刻；数据源与降级口径见模块头注）
 import { userStamp } from "../lib/user-stamp";
 // 对话流的时间戳：真源是 turnId 内嵌的毫秒（shared/date-format 统一解析与格式化）
@@ -1767,25 +1767,29 @@ export function LocalChatPage(props: { uri?: string }) {
     const applyAnchor = (el: HTMLDivElement, a: ChatAnchor) => {
         const first = blockElOf(el, a.id);
         if (first) el.scrollTop = anchorScrollTop(blockTopIn(el, first), a.offset, el.scrollHeight, el.clientHeight);
-        let lastSt = el.scrollTop;
-        let quiet = 0;
-        let left = 24;
+        // 逐帧决策全在 `anchorTick`（纯函数，review1 R1 的 latch 在那）：组件只负责量 DOM 与写 scrollTop。
+        let st: AnchorTickState = { lastSt: el.scrollTop, quiet: 0, userLeft: false };
+        let left = 24; // 硬上限 ≈24 帧（400ms）：估算高度回填 + Markdown 撑高都在这个尺度内收敛
         const tick = () => {
-            const userScrolled = Math.abs(el.scrollTop - lastSt) > 1;
             const n = blockElOf(el, a.id);
-            if (n) {
-                if (userScrolled) {
-                    quiet = 0; // 用户在滚：只记基准跟随，绝不抢
-                } else {
-                    const drift = n.getBoundingClientRect().top - el.getBoundingClientRect().top - a.offset;
-                    if (Math.abs(drift) >= 1) {
-                        el.scrollTop = clampScrollTop(el.scrollTop + drift, el.scrollHeight, el.clientHeight);
-                        quiet = 0;
-                    } else quiet++;
-                }
+            const r = anchorTick(
+                {
+                    scrollTop: el.scrollTop,
+                    blockOffset: n ? n.getBoundingClientRect().top - el.getBoundingClientRect().top : null,
+                    offset: a.offset,
+                    scrollHeight: el.scrollHeight,
+                    clientHeight: el.clientHeight,
+                    quietFrames: 3,
+                },
+                st,
+            );
+            st = r.state;
+            if (r.setTop !== null) {
+                el.scrollTop = r.setTop;
+                st.lastSt = el.scrollTop; // 写后以**实际值**为准（浏览器可能自行收口，避免下一帧误判成"用户在滚"）
             }
-            lastSt = el.scrollTop;
-            if (left-- > 0 && quiet < 3) requestAnimationFrame(tick);
+            if (r.stop || left-- <= 0) return;
+            requestAnimationFrame(tick);
         };
         requestAnimationFrame(tick);
     };
@@ -2053,7 +2057,7 @@ export function LocalChatPage(props: { uri?: string }) {
         if (!el) return;
         const node = tailId ? blockElOf(el, tailId) : null;
         const plan = followPlan({
-            stick: true,
+            stick: stick(), // 上方 `if (restoring || !stick())` 已保证为真，这里传函数值免得读成"与 stick 无关"（review1 R2）
             prevTailId: prev,
             tailId,
             blockTop: node ? blockTopIn(el, node) : 0,
