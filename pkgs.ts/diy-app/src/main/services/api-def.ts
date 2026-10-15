@@ -631,8 +631,10 @@ export const apiDef = RpcSchema.router({
               /**
                * 运行态真值查询：renderer 的私有 `running` 只表示"我这轮在等自己的流"，
                * 回答不了「别人（CLI/另一窗口）是否正在这个任务上跑」。
-               * 真相在主进程内存里（runtime-context 的 activeTurns —— LocalAgentManager 的 running 会话）：
+               * 真相在**会话注册表**里（`session-registry` 的 `turn != null` 条目；`runtime-context.activeTurnList`
+               * 是它的投影读口，##240 review1 P2-3 收敛）：
                * 把它查出来，UI 才不会把别人正在跑的轮次误判成「流中断」，也才谈得上给它一个停止入口。
+               * 深度字段（steps / tokens / queue / viewers / lastEndReason）见 `sessions`。
                */
               running: RpcSchema.unary({
                 desc: `列出此刻真正在跑的本地 agent 轮次（主进程内存权威；UI 判「直播中/可停止」用它，不靠日志猜）`,

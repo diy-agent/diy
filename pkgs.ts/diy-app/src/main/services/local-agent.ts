@@ -58,6 +58,7 @@ import {
     seekWindowStart,
 } from "./local-ops-seek";
 import { appendAudit } from "./agent-audit";
+import { abortText } from "../../shared/turn-end";
 import { opsFeed } from "./ops-feed";
 import { AsyncQueue, withCleanup } from "./async-queue";
 import { sessionRegistry } from "./session-registry";
@@ -307,11 +308,6 @@ interface TurnRun {
     subs: Set<AsyncQueue<Op>>;
     /** 驱动异常：按原语义经流上抛（RPC 层转 error 帧），由订阅端在流尾 rethrow */
     error?: unknown;
-}
-
-/** 中止的可见文案（中止的唯一来源 = 用户主动停止，见 `cancel()`） */
-function abortNotice(_source: string): string {
-    return "生成已取消";
 }
 
 /** 从 abort reason 取「结束原因来源」：对象 `{source}` 用它的，否则退回 fallback（如用户停止 = abort） */
@@ -1965,7 +1961,11 @@ export class LocalAgentManager {
     cancel(taskUri: string): boolean {
         const s = this.sessions.get(taskUri);
         if (!s?.running) return false;
-        s.running.abort();
+        // 显式带 `source`：`TurnEndReason.aborted.data.source` 是**可见文案的判据**
+        // （shared/turn-end 的 `abortText`），也是"用户停止"与"流意外中断"的分档位。
+        // 不带 reason 的话 `abortSource(signal, "abort")` 会把它兜成 `"abort"`，
+        // 与旧日志里"来源不明的中断"同档 —— 那正是 R4 要消掉的分叉（##308）。
+        s.running.abort({ source: "user" });
         return true;
     }
 
@@ -2350,6 +2350,14 @@ export class LocalAgentManager {
         } catch (e) {
             // 只记因、不吞：原样再抛，由 chat() 的 `.catch` 写进 run.error（错误仍经流上抛）。
             driveError = e;
+            // R5（##305 review2 → 本任务收口）：**此刻**没有任何订阅者时，这条异常将无出口 ——
+            // chat() 的 `throw run.error` 落在已经 return 的生成器上（消费端早走了），
+            // 结果是一个真实的驱动故障在日志里一片空白。所以在这里判一次并显式上报。
+            // 判据必须用 `run.subs` 的**当下值**：finally 里会 `run.subs.clear()`，
+            // 等到 chat() 那边再看就恒为空（人人都成"无订阅者"）。
+            if (run.subs.size === 0) {
+                console.error(`[local-agent] 轮次驱动异常且无人订阅（异常仅此可见）${taskUri}:`, e);
+            }
             throw e;
         } finally {
             // ⚠️ 这里**不再**因「消费端断开」而 abort（##305）：轮次由本管理器独立驱动，
@@ -2601,7 +2609,7 @@ export class LocalAgentManager {
         /**
          * 收尾必闭合（幂等）：step 先于 turn，摘掉活跃轮次并落 turn-end 审计。
          * 抽成生成器是为了让「超预算早退」也走同一套收尾 —— 历史 bug：早退的 return 在 try 之前，
-         * 绕过 finally → activeTurns 留僵尸轮次、落盘 ops 缺 turn 的 stop、审计缺 turn-end。
+         * 绕过 finally → 注册表（session-registry）留僵尸轮次、落盘 ops 缺 turn 的 stop、审计缺 turn-end。
          *
          * ⚠️ 副作用必须**同步做完，且在任何 yield 之前**。原因：生成器被 return 展开（轮次被中断 /
          * 驱动收尾）时，finally 里只执行到**第一个 yield** 就把控制权交回调用方
@@ -2985,7 +2993,7 @@ export class LocalAgentManager {
                         case "abort": {
                             const src = abortSource(signal, "abort");
                             setEndReason({ type: "aborted", data: { source: src } });
-                            yield* errorBlock("abort", abortNotice(src));
+                            yield* errorBlock("abort", abortText(src));
                             break;
                         }
                         case "finish-step": {
@@ -3086,7 +3094,7 @@ export class LocalAgentManager {
                 if (signal.aborted) {
                     const src = abortSource(signal, "abort");
                     setEndReason({ type: "aborted", data: { source: src } });
-                    yield* errorBlock("abort", abortNotice(src));
+                    yield* errorBlock("abort", abortText(src));
                 } else {
                     const msg = errText(e);
                     setEndReason({ type: "error", data: { source: "stream", message: msg } });
@@ -3100,7 +3108,7 @@ export class LocalAgentManager {
         } finally {
             // ⚠️ 收尾**必须在 finally 里**（历史 bug 的复现版）：生成器被 return 展开（轮次被中断 /
             // 驱动收尾）时，try/catch 之后的顺序语句一律不执行 —— 那会留下未 stop 的 turn（UI 显示"本轮未完成"
-            // + 重放时被 interruptedToolPatches 当成中断轮）、僵尸 activeTurns、缺 turn-end 审计。
+            // + 重放时被 interruptedToolPatches 当成中断轮）、注册表里的僵尸轮次、缺 turn-end 审计。
             // closeTurn 内部先把副作用同步做完（见其头注），再尽力 yield，故 return 展开下也安全。
             yield* closeTurn(stepId, stepN);
         }

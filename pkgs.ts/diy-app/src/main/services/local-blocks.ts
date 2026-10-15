@@ -27,7 +27,9 @@ export type TurnEndReason =
     | { type: "completed"; data: {} } // 模型自然说完（末步无待续工具）
     | { type: "max-steps"; data: { steps: number; limit: number } } // 打满 maxSteps，模型仍在请求工具
     | { type: "max-tokens"; data: { maxOutputTokens: number } } // 撞 maxOutputTokens 被截断
-    | { type: "aborted"; data: { source: string } } // 用户停止 / 消费端断开
+    // source：`"user"` = 用户主动停止（`cancel()` 显式带上）· `"detached"` = 流意外中断/没跑完的兜底
+    //（##305 起消费端断开**不再**产生它）· 旧日志里的 `"abort"` = 来源不明的中断。文案映射唯一源见 shared/turn-end
+    | { type: "aborted"; data: { source: string } }
     | { type: "error"; data: { source: string; message: string } } // llm / stream / budget
     | { type: "interrupted"; data: {} }; // 崩溃/被杀后补 closer（进程已死，不可能是正常收尾）
 

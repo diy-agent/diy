@@ -381,9 +381,13 @@ describe("turnEndNote：结束原因翻成人话（所有级别恒显）", () =>
         expect(turnEndNote(ended("max-steps", { limit: 8 }))).toContain("8");
     });
 
-    it("流中断（detached）与用户停止（abort）分开说", () => {
-        // ##305 起 `detached` 不再表示"消费端断开"（刷新只退订、不打断）——文案随之改口径
+    it("aborted 按 source 分三句：用户停止 / 流中断 / 来源不明（##308 统一语义）", () => {
+        // 判据是 `source`，不是"有没有 detached"：main 的中止 error 块与这里同源同句
+        // （唯一文案源 shared/turn-end 的 `abortText`），不再一个轮次两个结论。
+        expect(turnEndNote(ended("aborted", { source: "user" }))).toBe("生成已取消");
+        // ##305 起 `detached` 不再表示"消费端断开"（刷新只退订、不打断）——只剩"流意外中断"
         expect(turnEndNote(ended("aborted", { source: "detached" }))).toContain("流中断");
+        // 旧日志里用户停止也不带 reason（`"abort"`）→ 不冒充用户停止，按"被中断、未跑完"说
         expect(turnEndNote(ended("aborted", { source: "abort" }))).toContain("被中断");
     });
 
@@ -557,6 +561,8 @@ describe("轮尾状态行的状态图标（endMarkOf）", () => {
             icon: "⛔",
             tone: "cut",
         });
+        // aborted 的 tip 同样按 source 分句（与 turnEndNote 同源，不许各写各的）
+        expect(endMarkOf({ type: "aborted", data: { source: "user" } } as never, false).tip).toBe("生成已取消");
         expect(endMarkOf({ type: "interrupted", data: {} } as never, false)).toMatchObject({ icon: "⛔", tone: "cut" });
     });
 

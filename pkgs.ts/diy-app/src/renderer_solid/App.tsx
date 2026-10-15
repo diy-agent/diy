@@ -6,6 +6,8 @@ import { TaskRunPage } from "./components/TaskRunPage";
 import { LabPage } from "./components/LabPage";
 import { LlmPage } from "./components/LlmPage";
 import { TrafficPage } from "./components/TrafficPage";
+import { SessionOverviewPage } from "./components/SessionOverviewPage";
+import { SessionChip, SessionDot } from "./components/SessionChip";
 import { ModelConfigPage } from "./components/ModelConfigPage";
 // 折叠框展开态仍是 lab view 内部的局部状态（与「view 在哪个 area」是两件事）
 import { setLabView } from "./components/PromptLabV4Page";
@@ -16,6 +18,8 @@ import { ThemeSettings } from "./components/ThemeSettings";
 import { ToastContainer } from "./components/ToastContainer";
 import { taskStore, type TreeNode } from "./store/taskStore";
 import { tabStore } from "./store/tabStore";
+// 全局会话可见性（##308）：**唯一的注册表订阅**在这里起，nav / 任务表 / 总览页共读同一份。
+import { sessionStore } from "./store/sessionStore";
 import { layoutStore } from "./store/layoutStore";
 import { diyService } from "./lib/rpc";
 import { notificationStore } from "./store/notificationStore";
@@ -70,7 +74,7 @@ function topFindSurface(): HTMLElement | undefined {
  * 「任务执行页」不在顶级导航里 —— 它是**动态页面**：每打开一个任务就多一个，
  * 挂在导航「任务」之下（等同浏览器/编辑器开 tab）。故用 route 而不是扁平 page id。
  */
-type Section = "task" | "llm" | "traffic" | "settings";
+type Section = "task" | "llm" | "traffic" | "sessions" | "settings";
 
 /**
  * 路由 = 顶级 section，或一个**已打开的 tab**（key 形如 `task-run:<uri>` / `lab:<uri>`）。
@@ -82,15 +86,18 @@ type Route = { kind: "section"; section: Section } | { kind: "tab"; key: string 
 type DragEndEvent = Parameters<NonNullable<DragDropProviderProps["onDragEnd"]>>[0];
 
 /** 顶级导航（一侧栏项 = 一类事情）。任务执行页不出现在这里，它是任务下的动态页面 */
-const NAV_ITEMS: Array<{ id: "task" | "llm" | "traffic" | "settings"; label: string; icon: string }> = [
+const NAV_ITEMS: Array<{ id: "task" | "llm" | "traffic" | "sessions" | "settings"; label: string; icon: string }> = [
     { id: "task", label: "任务管理", icon: "📋" },
     { id: "llm", label: "LLM", icon: "🧠" },
     { id: "traffic", label: "流量", icon: "📡" },
+    // 「会话」= 全局消费视图（##308）：不点进任何任务页，也能看到谁在跑、跑到第几步。
+    // 放在导航里（而不是藏进某个任务页）正是本任务的验收语言 —— 它是**跨任务**的视图。
+    { id: "sessions", label: "会话", icon: "🛰" },
     { id: "settings", label: "设置", icon: "⚙️" },
 ];
 
 /** `ui page navigate` 的合法取值（非法值一律忽略：宁可不跳，也不能把主区打成白屏） */
-const VALID_PAGES = new Set(["task", "task-run", "lab", "llm", "traffic", "settings"]);
+const VALID_PAGES = new Set(["task", "task-run", "lab", "llm", "traffic", "sessions", "settings"]);
 
 /**
  * 窄窗断点。**必须与 index.css 的 `@media (width < 1024px)`、daisyUI 的 `lg:` 分支
@@ -361,6 +368,21 @@ export default function App() {
         return r.kind === "section" ? r.section : null;
     };
 
+    /**
+     * 已读水位：**正在看**的那条会话追到当前步数 —— 它是"距上次看新增多少步"的基线（##308）。
+     *
+     * 只追激活的 task-run tab（不是"开着就算"）：`isTaskDisplayed` 的语义就是"在屏上"，
+     * 与 hover 覆盖层用的是同一条判据。读了 `entries` 让注册表帧到达时重跑（水位随步数前进）。
+     */
+    createEffect(() => {
+        const t = tabStore.activeTab();
+        if (t?.pageId !== "task-run" || !t.ctx) return;
+        // 读一次条目表 = **订阅注册表帧**：帧到了本 effect 就重跑，把水位追到最新
+        //（不读它的话，步数涨了水位还停在打开那一刻，"新增"会一路涨成假信号）。
+        if (sessionStore.entries.length === 0) return;
+        sessionStore.markViewed(t.ctx);
+    });
+
     /** 当前激活的 tab key（无则 ""） */
     const activeKey = () => {
         const r = route();
@@ -615,9 +637,13 @@ export default function App() {
                 if (change.event === "task-change") taskStore.loadTree();
             }
         });
+        // 全局会话可见性（##308）：注册表订阅只此一处（R3：多一处订阅就多一份漂移源）；
+        // 目的一 = nav 角标 / 任务表 chip / 总览页三处同源，二 = 不点进任务页也知道谁在跑。
+        sessionStore.start();
     });
     onCleanup(() => {
         fsAbort?.abort();
+        sessionStore.stop();
         resetRendererActions();
     });
 
@@ -761,6 +787,9 @@ export default function App() {
                     </Show>
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "traffic"}>
                         <TrafficPage />
+                    </Show>
+                    <Show when={route().kind === "section" && (route() as { section: Section }).section === "sessions"}>
+                        <SessionOverviewPage />
                     </Show>
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "settings"}>
                         <div class="flex flex-col h-full">
@@ -1001,12 +1030,26 @@ export default function App() {
                                     <li class="flex justify-center">
                                         {/* tab 式选中指示：当前页加高亮胶囊 + 左侧指示条，收起态也可见 */}
                                         <button
-                                            class={`flex items-center gap-2 w-full transition-colors cursor-pointer ${expanded() ? "px-3 py-2 rounded-lg" : "h-8 w-8 rounded-lg justify-center"} ${navActive() === item.id ? "bg-primary/30 text-base-content font-semibold ring-1 ring-primary/40" : "hover:bg-base-300"}`}
-                                            title={item.label}
+                                            class={`relative flex items-center gap-2 w-full transition-colors cursor-pointer ${expanded() ? "px-3 py-2 rounded-lg" : "h-8 w-8 rounded-lg justify-center"} ${navActive() === item.id ? "bg-primary/30 text-base-content font-semibold ring-1 ring-primary/40" : "hover:bg-base-300"}`}
+                                            title={
+                                                item.id === "sessions"
+                                                    ? `会话（在跑 ${sessionStore.workingCount} / 本次启动活跃过 ${sessionStore.entries.length}）`
+                                                    : item.label
+                                            }
                                             onClick={() => goSection(item.id)}
                                         >
                                             <span>{item.icon}</span>
                                             {expanded() && <span>{item.label}</span>}
+                                            {/* 「会话」项的在跑数（##308）：不点进去就知道有没有东西在烧。
+                                                收起态（40px rail）装不下数字 → 退成一个角标点。 */}
+                                            <Show when={item.id === "sessions" && sessionStore.workingCount > 0}>
+                                                <span
+                                                    class={`badge badge-primary badge-xs font-mono ${expanded() ? "ml-auto" : "absolute -top-0.5 -right-0.5 px-1"}`}
+                                                    data-nav-working={sessionStore.workingCount}
+                                                >
+                                                    {sessionStore.workingCount}
+                                                </span>
+                                            </Show>
                                         </button>
                                     </li>
                                     {/* 「任务管理」下的动态页面：每个打开的任务一项（等同编辑器开 tab）。
@@ -1085,6 +1128,11 @@ export default function App() {
                                                                     <Show when={isNested()}>
                                                                         <span class="absolute left-0.5 bottom-0.5 text-caption opacity-50">↳</span>
                                                                     </Show>
+                                                                    {/* 会话状态点（##308）：rail 是常驻可见的那一态，
+                                                                        最该一眼看到的正是"这条会话在烧/有留言"。全文在 title（SessionDot 内）。 */}
+                                                                    <Show when={t.ctx}>
+                                                                        <SessionDot uri={t.ctx!} class="absolute top-0.5 right-0.5" />
+                                                                    </Show>
                                                                 </button>
                                                             }
                                                         >
@@ -1108,6 +1156,10 @@ export default function App() {
                                                                 </Show>
                                                                 <span class={`w-1.5 h-1.5 rounded-full shrink-0 ${taskStateColor(findNode(taskStore.nodes, t.ctx ?? "")?.state)}`} />
                                                                 <span class="truncate flex-1">{label()}</span>
+                                                                {/* 会话状态 chip（##308）：与任务表行、总览页**同一份判据**（sessionStore.chipOf） */}
+                                                                <Show when={t.ctx}>
+                                                                    <SessionChip uri={t.ctx!} />
+                                                                </Show>
                                                                 <button
                                                                     class="btn btn-ghost btn-xs px-1 opacity-0 group-hover:opacity-70 hover:!opacity-100 shrink-0"
                                                                     title={isSubPage() ? "关闭该子页面" : "关闭（暂时不理会，不影响任务状态）"}
