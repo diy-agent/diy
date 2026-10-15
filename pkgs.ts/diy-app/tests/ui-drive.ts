@@ -232,11 +232,13 @@ export interface UiDriver {
    * 为什么不用 `el.value = x` 或派发合成 input 事件：那些绕过浏览器输入路径，
    * 输入框不会经历真实的插入会话（而 Solid 的 onInput 绑在事件上，恰好会"看起来能过"）。
    * 用 CDP 的 insertText 走的就是输入法/键盘最终落到的同一条路径。
-   * 注意：文本会插到**插入点**，不替换已有内容；要先 click 聚焦、必要时 `press("Meta+A")` 全选。
+   * 注意：文本会插到**插入点**，不替换已有内容；要先 click 聚焦、必要时 `press("Meta+A")` 全选
+   * （`Meta+A` 已带 `SelectAll`，是真的全选；早先不带的版本会把「覆盖」悄悄变成「追加」）。
    */
   type(text: string): Promise<void>;
   /**
-   * 真实按键（如 Enter / ArrowDown / Escape）。可带 Meta/Ctrl/Shift 修饰，如 `Meta+A`。
+   * 真实按键（如 Enter / ArrowDown / Escape）。可带 Meta/Ctrl/Shift 修饰，如 `Meta+A`
+   * （`Meta/Ctrl+A` 会附上 CDP 的 `SelectAll` 编辑命令 —— 只发按键码 Chromium 不会全选，见下）。
    *
    * `autoRepeat: true` = 把这次 keydown 标成**按住不放的连发**（CDP `autoRepeat` →
    * `KeyboardEvent.repeat === true`）。用于验证"连发只响应首次"这类契约：没有它就只能
@@ -276,6 +278,16 @@ export interface UiDriver {
    * 代码没错，是它的执行时机被系统掐了。CI 上窗口很可能正被别的窗口盖着。
    */
   bringToFront(): Promise<void>;
+  /**
+   * 截当前页（PNG 字节；CDP `Page.captureScreenshot`）。
+   *
+   * 为什么要有它：**像素判据**（##166 §14.5 / §14.8）——「截图无报错」≠「画出来了」：
+   * 首帧抛错时截图照样出图，只是图上什么都没有。解码见 `tests/png-pixels.ts`。
+   * 坐标：不带 `clip` = 整视口；本驱动不传 `clip`（CDP 的 clip 是**页面坐标**，
+   * 而调用方手里的 rect 多是**视口坐标**，两套坐标混用最容易错 —— 裁切交给像素工具按
+   * `devicePixelRatio` 自己做，那里有原始 rect 可比对）。
+   */
+  screenshot(): Promise<Buffer>;
   /** 在 renderer 里求值 */
   eval<T>(expr: string): Promise<T>;
   close(): void;
@@ -544,7 +556,18 @@ export async function makeUiDriver(
         modifiers,
       };
       // autoRepeat 只打在 keyDown 上（keyUp 没有"连发"这回事）
-      await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", autoRepeat: opts?.autoRepeat ?? false, ...base });
+      // **全选必须走 CDP 的 `commands`**：只发 `Meta+A` 的 keyDown/keyUp，Chromium 一个字都不选。
+      // 实测（##320）：输入框里 value 已是 "1"，`Meta+A` 后 `insertText("3")` 得到 **"13"**（追加），
+      // 加了 `commands: ["SelectAll"]` 才得到 "3"（替换）。而 `press("Meta+A")` **不报错**，
+      // 于是「全选覆盖」的用例会静默变成「追加」——症状是断言里的值莫名其妙多了一位。
+      // 编辑命令不走 keyCode 派发链（它是浏览器对快捷键的**语义**处理），CDP 必须显式告知。
+      const commands = main.toLowerCase() === "a" && (modifiers & 4 || modifiers & 2) ? ["SelectAll"] : undefined;
+      await cdp.send("Input.dispatchKeyEvent", {
+        type: "keyDown",
+        autoRepeat: opts?.autoRepeat ?? false,
+        ...(commands ? { commands } : {}),
+        ...base,
+      });
       await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
       await new Promise((r) => setTimeout(r, 120));
     },
@@ -587,6 +610,10 @@ export async function makeUiDriver(
       await new Promise((r) => setTimeout(r, 150));
     },
 
+    screenshot: async () => {
+      const r = await cdp.send<{ data: string }>("Page.captureScreenshot", { format: "png" });
+      return Buffer.from(r.data, "base64");
+    },
     eval: (expr) => cdp.eval(expr),
     close: () => cdp.close(),
   };

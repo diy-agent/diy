@@ -36,16 +36,25 @@ class FileWatcher {
   private queues = new Set<AsyncQueue<FileChangeEvent>>();
   private debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  /** 订阅文件变更事件流（RPC serverStream 直接 yield 此 async iterable）。 */
-  subscribe(): AsyncIterable<FileChangeEvent> {
+  /**
+   * 订阅文件变更事件流（RPC serverStream 直接 yield 此 async iterable）。
+   *
+   * `signal`（RPC 传输断开）必传：无变更事件期间断连时，消费端的 `return()` 会悬挂在
+   * 未决的 `next()` 后，订阅要等下一条文件事件才释放（末订阅者的 chokidar 也跟着多活）。
+   */
+  subscribe(signal?: AbortSignal): AsyncIterable<FileChangeEvent> {
     const q = new AsyncQueue<FileChangeEvent>();
     this.queues.add(q);
     if (this.queues.size === 1) this._start();
     // 消费端 return()（close/abort）→ 移除订阅；末订阅者走后关掉 chokidar
-    return withCleanup(q, () => {
-      this.queues.delete(q);
-      if (this.queues.size === 0) this._stop();
-    });
+    return withCleanup(
+      q,
+      () => {
+        this.queues.delete(q);
+        if (this.queues.size === 0) this._stop();
+      },
+      signal,
+    );
   }
 
   private _emit(event: WatchChangeEvent): void {

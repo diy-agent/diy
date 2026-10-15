@@ -18,6 +18,7 @@ import { hashValue } from "./hash";
 import { WIRE_VERSION } from "./wire";
 import { isPlainObject } from "./tree";
 import type { ContextFact, ContextPath, ContextTreeState } from "./types";
+import { TASK_HEAD_FIELDS, type TaskHeadField } from "../task-head";
 import { emptyCursor } from "./projection";
 
 /** 候选投递单元（规则表里可选的行；不重叠） */
@@ -28,6 +29,19 @@ export interface PlaceCandidate {
     /** 稳定性判断（也就是"为什么"） */
     reason: string;
 }
+
+/** 任务头字段的投递理由（逐键必填：清单在 shared/task-head.ts 的 TASK_HEAD_FIELDS） */
+const TASK_HEAD_REASONS: Record<TaskHeadField, string> = {
+    title: "任务标题：偶尔改一次",
+    state: "任务状态：偶尔改一次",
+    parent: "父任务 URI：只在 move 时变",
+    created: "创建时间：不变",
+    updated: "最后编辑时间：编辑时变（与 title 同频）",
+    change_type: "变更性质：偶尔改一次",
+    module: "模块：偶尔改一次",
+    priority: "优先级：偶尔改一次",
+    persona: "绑定的人物：绑定时变（空 = 跟随缺省）",
+};
 
 /**
  * 候选投递单元 = 顶层字段 + 少数需要单独拆开的子字段。
@@ -41,9 +55,12 @@ export const PLACE_CANDIDATES: PlaceCandidate[] = [
     { path: "project", system: true, reason: "项目路径：只在切项目时变" },
     { path: "cwd", system: true, reason: "工作目录：任务存续期内固定" },
     { path: "chain", system: true, reason: "AGENTS.md 链：只在目录/文件改动时变" },
-    { path: "task.title", system: true, reason: "任务标题：偶尔改一次" },
+    // 任务头（frontmatter）字段（##322：**读侧显式给头**，确认任务/取父级不必去 cat 文件）。
+    // 它们就是文件头的同一份（不是副本），随文件走；容量都很小，与 title 同频（编辑就变）。
+    // **名单不在此手抄**：path 从 TASK_HEAD_FIELDS 派生（##322 review R3），reason 必须逐键齐全
+    // （Record<TaskHeadField,string> ⇒ 新增头字段漏写 reason 直接编译失败，这就是要的效果）。
+    ...TASK_HEAD_FIELDS.map((f) => ({ path: `task.${f.key}`, system: true, reason: TASK_HEAD_REASONS[f.key] })),
     { path: "task.uri", system: true, reason: "任务 URI：不变" },
-    { path: "task.state", system: true, reason: "任务状态：偶尔改一次" },
     { path: "task.dir", system: true, reason: "任务目录：不变" },
     // ── 模版节（identity / rules / guard，值是模版渲染结果；见 prompt-registry 的 DELIVERED_SECTIONS）──
     // 为什么必须有：它们此前**完全不在投递里**（名单没有 = 两个容器都不投）—— 真发于是丢掉

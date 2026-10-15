@@ -51,6 +51,12 @@ export const TaskDetailSchema = z.object({
   priority: z.string().optional(),
   /** agent 人物名：本任务由哪个「人物」干活（决定模型/参数/行为指令，见 shared/persona.ts） */
   persona: z.string().optional(),
+  /**
+   * 文件头原件（frontmatter 的**未过滤**解析结果，含本系统不认识的键）—— 与磁盘上
+   * `AGENTS.md` 的 `---…---` 是同一份（见 core/state.ts 的 TaskData.frontmatter）。
+   * 上面那些具名字段是它的**投影**，不是权限白名单：读侧显式给出头，写侧才有「传整份文件 → 剥头」的对称。
+   */
+  frontmatter: z.record(z.string(), z.unknown()).optional(),
   /** 未提交草稿：renderer 用它恢复编辑态与输入框（见 core/drafts.ts） */
   ui_drafts: DraftsData.nullable().optional(),
 });

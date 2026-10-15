@@ -177,6 +177,8 @@ export interface CompactPanelCtl {
     setKbDraft: (v: string) => void;
     commitKb: () => Promise<void>;
     pv: () => CompactPreviewModel | undefined;
+    /** 预览在算（抽屉刚打开、大会话需数秒）—— 界面据此出 loading，而不是把空值当"零差异" */
+    pvLoading: () => boolean;
     busy: () => boolean;
     err: () => string | null;
     /** 立即压缩：按当前预算压一次（历史保留、可撤销）。成功 toast。 */
@@ -199,10 +201,16 @@ export interface CompactPanelCtl {
 /**
  * 压缩面板控制器 —— 自动压缩配置（真源 `$DIY_HOME/auto-compact.yaml` 的 policy）+ 预览 + 执行。
  * 自动与手动**同一套策略**（用户 2026-10-07：「所有压缩都改为自动压缩策略……提供手工压缩执行的按钮」）。
+ *
+ * ⚠️ `visible` 是**成本闸门**（##321）：控制器由常挂组件（`WindowRing` → `ContextPartsDrawer`）持有，
+ *   不设门槛时「打开任何会话页」都会立刻对整份 `ops.jsonl` 算一次压缩预案 —— 成本 ∝ 会话字节数
+ *   （实测 78MB 会话 8~16s）、与「屏幕上显示多少」无关，且 main 单线程 ⇒ 期间所有 RPC 排队。
+ *   真实语义：**只有「窗口构成」抽屉真的打开**才需要这份数据。
  */
-export function useCompactPanel(uri: () => string): CompactPanelCtl {
+export function useCompactPanel(uri: () => string, visible: () => boolean = () => true): CompactPanelCtl {
     const [auto, { refetch: refetchAuto }] = createResource(
-        () => uri(),
+        // 抽屉关着 → 连配置都不查（与预览同门槛：这份数据只服务抽屉）
+        () => (visible() ? uri() : null),
         async (u) => {
             if (!u) return undefined;
             return (await localChatStore.autoCompactStatus(u)) as {
@@ -281,17 +289,27 @@ export function useCompactPanel(uri: () => string): CompactPanelCtl {
     const [busy, setBusy] = createSignal(false);
     const [err, setErr] = createSignal<string | null>(null);
 
-    /** 预览（只算不写）：预算变化即重算。base = 未压缩（compactPreview 现算），mod = 当前预算。 */
-    const [pv] = createResource(
-        () => {
-            const u = uri();
-            return u ? { uri: u, p: flatPolicyOf(autoPolicy()) } : null;
-        },
-        (k) =>
-            k
-                ? (localChatStore.compactPreview(k.uri, k.p) as Promise<CompactPreviewModel>)
-                : Promise.resolve(undefined),
-    );
+    /** 预览（只算不写）：预算变化即重算。base = 未压缩（compactPreview 现算），mod = 当前预算。
+     *  闸门两道（##321）：
+     *   ① `visible()` —— 抽屉关着就不算（这是「切页卡 main」的根因：本控制器由常挂组件持有）。
+     *   ② `auto` 未落定 —— 等配置回来再算。否则会先按**缺省策略**白算一遍、等 auto 到了再按真策略
+     *      算第二遍，同一份文件读两趟（大会话 = 2×8s；开抽屉的卡点反而翻倍）。
+     *  source 返回**字符串键**（而非对象字面量）：`createResource` 的 source 是按值比较的 memo，
+     *  只要返回新对象，依赖被重复求值（`auto.state` 与 `auto()` 分两拍更新）就会同键重算一遍。 */
+    const pvKey = (): string | null => {
+        if (!visible()) return null;
+        if (auto.loading || auto.state === "unresolved") return null; // 配置未落定：别用缺省策略白算
+        const u = uri();
+        if (!u) return null;
+        return u + "\u0000" + JSON.stringify(flatPolicyOf(autoPolicy()));
+    };
+    const [pv] = createResource(pvKey, (k) => {
+        const i = k.indexOf("\u0000");
+        return localChatStore.compactPreview(k.slice(0, i), JSON.parse(k.slice(i + 1))) as Promise<CompactPreviewModel>;
+    });
+
+    /** 预览是否在算（见 CompactPanelCtl.pvLoading） */
+    const pvLoading = (): boolean => pv.loading;
 
     /** 立即压缩：按当前预算压一次（历史保留、可撤销） */
     const apply = async () => {
@@ -313,7 +331,7 @@ export function useCompactPanel(uri: () => string): CompactPanelCtl {
     };
 
     return {
-        auto, autoBusy, patchAuto, autoPolicy, budgetBytes, kbDraft, setKbDraft, commitKb, pv, busy, err, apply,
+        auto, autoBusy, patchAuto, autoPolicy, budgetBytes, kbDraft, setKbDraft, commitKb, pv, pvLoading, busy, err, apply,
         render, setRender, renderData: headtailData, setRenderData, summaryEnabled, setSummary, rawText, rawPath,
     };
 }
@@ -490,10 +508,12 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                             />
                         </div>
                         <div class="text-caption opacity-70">
-                            当前 {estTok(ctl.pv()?.before.bytes ?? 0).toLocaleString()} tok → 压缩后{" "}
-                            {estTok(ctl.pv()?.after.bytes ?? 0).toLocaleString()} tok{" "}
-                            <span class="text-success">(-{ratio()}%)</span>
-                            <span class="opacity-60">　删 {diffCounts().del} / 增 {diffCounts().add} 行</span>
+                            <Show when={!ctl.pvLoading()} fallback={<span class="opacity-60">正在计算预览…</span>}>
+                                当前 {estTok(ctl.pv()?.before.bytes ?? 0).toLocaleString()} tok → 压缩后{" "}
+                                {estTok(ctl.pv()?.after.bytes ?? 0).toLocaleString()} tok{" "}
+                                <span class="text-success">(-{ratio()}%)</span>
+                                <span class="opacity-60">　删 {diffCounts().del} / 增 {diffCounts().add} 行</span>
+                            </Show>
                         </div>
                         <div class="text-caption opacity-70">
                             历史 ≤ <b>{budgetKbLabel()}</b> · 整份请求 ≈ <b>{afterKb()}</b>
@@ -712,7 +732,11 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                         </For>
                     </Show>
                     <Show when={renderRows().length === 0}>
-                        <div class="p-4 opacity-60">无差异（当前参数与生效请求一致）</div>
+                        {/* 预览现算（##321 懒算后 = 打开抽屉那一刻）⇒ 大会话要等数秒：把"在算"
+                            与"确实没差异"分开说，否则用户看到的是"无差异"这个**假结论**。 */}
+                        <div class="p-4 opacity-60">
+                            {ctl.pvLoading() ? "正在计算预览…（大会话首次需要数秒）" : "无差异（当前参数与生效请求一致）"}
+                        </div>
                     </Show>
                 </div>
             </div>

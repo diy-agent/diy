@@ -282,62 +282,76 @@ describe("大会话分页：渲染端（真实 UI）", () => {
         expect(Math.abs(p1.top - p0.top)).toBeLessThanOrEqual(2);
         // 且补的是**更早**的轮：老段没被动过（锚点仍在），段数变多
         const ids = await domTurns();
-        expect(ids).toContain(anchor);
-        expect(ids.length).toBeGreaterThanOrEqual(before.length + 1);
+        expect(ids).toContain(anchor); // 锚点仍在窗口里（用户正看着它）
+        // ##301：DOM 只挂视口附近一段 ⇒「轮数变多」不再等价于「补出了更早的轮」；
+        // 判据换成**窗口第一行落到了更早的轮**（内容真的往上扩了）。
+        expect(allTurns.indexOf(ids[0]!)).toBeLessThan(allTurns.indexOf(anchor));
     }, 60_000);
 
-    it("补段途中用户继续上滚：用户那一段滚动不被吞（补偿按增量算）", async (ctx) => {
+    it("补段途中用户继续上滚：补段完成后视口仍停在用户滚到的地方（不被拽回）", async (ctx) => {
         if (await skipIfHidden(ctx)) return;
         const before = await domTurns();
-        const a0 = before[0]!;
-        // 「触发 → 让出一个 task（RPC 必未回）→ 继续上滚」在同一次 eval 里做完：
-        // 这样用户的后半段滚动**必定**落在 RPC 在途期间（旧实现就是在补偿时
-        // 按触发那一刻的位置重算，把这段吞掉）。随手记下两个时刻的锚点屏幕坐标。
+        // 「触发 → 让出一个 task（RPC 必未回）→ 继续上滚到顶」：后一段滚动**必定**落在
+        // RPC 在途期间（旧实现按触发那一刻的位置重算补偿，会把这段滚动吞掉）。
         await ui.query(
             `(async () => { const el = document.querySelector('.diy-chat');` +
-                ` const a = () => document.querySelector('[data-turn-id="${a0}"]');` +
                 ` el.scrollTop = 239; el.dispatchEvent(new Event('scroll'));` +
-                ` window.__trigTop = Math.round(a().getBoundingClientRect().top);` +
                 ` await new Promise((r) => setTimeout(r, 0));` +
                 ` el.scrollTop = 0; el.dispatchEvent(new Event('scroll'));` +
-                ` window.__userTop = Math.round(a().getBoundingClientRect().top);` +
                 ` return 'ok'; })()`,
         );
-        await waitUntil(domTurns, (ids) => ids.length > before.length, { label: "上滚补出更早的轮" });
-        // 显式要求真的补了段：没有这一条，下面「位置没变」的断言在"什么都没发生"时也成立
-        expect((await domTurns()).length).toBeGreaterThan(before.length);
-        await new Promise((r) => setTimeout(r, 250));
-        const p = await ui.query<{ top: number; userTop: number; trigTop: number }>(
-            `(() => { const a = document.querySelector('[data-turn-id="${a0}"]');` +
-                ` return { top: Math.round(a.getBoundingClientRect().top),` +
-                ` userTop: window.__userTop, trigTop: window.__trigTop }; })()`,
+        // 记下「用户滚到顶」那一刻他看到的**第一行**及其屏幕位置（补段后要回到这里）
+        const p0 = await ui.query<{ first: string | null; top: number }>(
+            `(() => { const el = document.querySelector('.diy-chat');` +
+                ` const f = el.querySelector('[data-turn-id]');` +
+                ` return { first: f?.getAttribute('data-turn-id') ?? null,` +
+                ` top: f ? Math.round(f.getBoundingClientRect().top) : 0 }; })()`,
         );
-        // 两个时刻确实不同（否则这条用例什么都没测到）
-        expect(Math.abs(p.userTop - p.trigTop)).toBeGreaterThan(100);
-        // 补偿后锚点应停在**用户最后停留**的位置，而不是触发那一刻的位置
-        expect(Math.abs(p.top - p.userTop)).toBeLessThanOrEqual(2);
+        expect(p0.first).toBeTruthy();
+        const earlier = async () => {
+            const ids = await domTurns();
+            return allTurns.indexOf(ids[0] ?? "") < allTurns.indexOf(before[0]!);
+        };
+        await waitUntil(earlier, (v) => v, { label: "上滚补出更早的轮" });
+        await new Promise((r) => setTimeout(r, 300));
+        // 显式要求真的补了段（否则下面「位置没变」在"什么都没发生"时也恒真）
+        expect(await earlier()).toBe(true);
+        const p1 = await ui.query<{ top: number | null }>(
+            `(() => { const f = document.querySelector('[data-turn-id="${p0.first}"]');` +
+                ` return { top: f ? Math.round(f.getBoundingClientRect().top) : null }; })()`,
+        );
+        // ##301：那一行必须**仍在窗口里**（被摘出 = 视口已被新内容顶走），且屏幕位置不变。
+        expect(p1.top).not.toBeNull();
+        expect(Math.abs((p1.top ?? 0) - p0.top)).toBeLessThanOrEqual(4);
     }, 60_000);
 
-    it("上滚到头：所有轮都进 DOM（无重无漏），顶部提示退场", async () => {
+    it("上滚到头：补到文件头（提示退场），DOM 仍只挂视口附近一段（##301）", async () => {
         const hasOlder = () => ui.query<boolean>(`document.body.textContent.includes("上滚加载更早的消息")`);
         // 一段一段往上补，直到没有更早的（提示行随之消失）
-        for (let i = 0; i < TURNS + 2; i++) {
-            const cur = await domTurns();
-            if (cur.length >= TURNS) break;
-            if (!(await hasOlder())) break;
+        for (let i = 0; i < TURNS + 2 && (await hasOlder()); i++) {
             await ui.query(
                 `(() => { const el = document.querySelector('.diy-chat');` +
                     ` el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); return 'ok'; })()`,
             );
-            await waitUntil(domTurns, (v) => v.length > cur.length, {
-                label: `第 ${i + 1} 次上滚补段`,
-                timeoutMs: 10_000,
-            });
+            await new Promise((r) => setTimeout(r, 400));
         }
-        const final = await domTurns();
-        expect(final).toEqual(allTurns); // 到齐且按时间序（段是前插的，DOM 序 = 文件序）
-        expect(final).toHaveLength(TURNS);
-        expect(await hasOlder()).toBe(false); // 到顶 ⇒ 提示退场，不再白跑一次请求
+        // 补到文件头了（提示退场、main 说没有更早的）
+        expect(await hasOlder()).toBe(false);
+        // ##301：DOM 里**只有视口附近一段** ⇒ "所有轮都进 DOM"不再成立；改成验
+        // 「窗口里的轮是时间序上的**连续一段**」（DOM 序 = 时间序，不许错位/乱序）
+        const win = await domTurns();
+        expect(win.length).toBeGreaterThan(0);
+        expect(win.length).toBeLessThan(TURNS);
+        const i0 = allTurns.indexOf(win[0]!);
+        expect(i0).toBeGreaterThanOrEqual(0);
+        expect(win).toEqual(allTurns.slice(i0, i0 + win.length));
+        // 且**滚到顶**能看到最早那一轮（补出来的历史真的可读）
+        await ui.query(
+            `(() => { const el = document.querySelector('.diy-chat');` +
+                ` el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); return 'ok'; })()`,
+        );
+        await new Promise((r) => setTimeout(r, 300));
+        expect((await domTurns())[0]).toBe(allTurns[0]);
     }, 120_000);
 
     /**
@@ -385,13 +399,14 @@ describe("大会话分页：渲染端（真实 UI）", () => {
 
             await ui.clickSelector("[data-load-older]"); // 真实鼠标手势
 
-            await waitUntil(domTurns, (ids) => ids.length > before.length, {
+            await waitUntil(domTurns, (ids) => ids[0] === "t3001", {
                 label: "点提示条补出更早的轮",
                 timeoutMs: 15_000,
             });
             const after = await domTurns();
-            expect(after.length).toBeGreaterThan(before.length);
-            expect(after.length).toBe(8); // 点到文件头：8 轮到齐
+            // ##301：DOM 只挂视口附近一段 ⇒「到齐」的判据是**最早那一轮进了窗口**，
+            // 而不是「8 轮全在 DOM」。
+            expect(after[0]).toBe("t3001");
             // 全程没有被"弹"到别处：不可滚的容器里 scrollTop 恒为 0
             const st = await ui.query<{ st: number }>(
                 `(() => ({ st: Math.round(document.querySelector('.diy-chat').scrollTop) }))()`,

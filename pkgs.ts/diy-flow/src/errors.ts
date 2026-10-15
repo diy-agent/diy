@@ -6,7 +6,7 @@
 
 /** 错误分类（UI / 测试 / 宿主按此判断处置方式） */
 export type FlowErrorCode =
-    /** 工作流定义非法：字段类型不对、缺必填、未知 actor / kind / renderer、art / params 形状不对 */
+    /** 工作流定义非法：字段类型不对、缺必填、未知 actor / kind / renderer、art / params 声明形状不对 */
     | 'invalid-def'
     /** 节点 id 重复（边只能引用 id，id 必须唯一） */
     | 'duplicate-node'
@@ -52,6 +52,14 @@ export type FlowErrorCode =
     | 'invalid-declare'
     /** 宣布走一条边，但那条边的 `when`（**边的条件**）此刻不成立 —— 这条边此刻不可用 */
     | 'edge-unavailable'
+    /** 参数值 / 参数快照非法：类型不对、enum 不在候选、number 越界、非纯 JSON、defaults 与 schema 不一致 */
+    | 'invalid-param'
+    /** 领域状态快照非法（##333）：形状不对 / `position` 与折线不一致 / `seq` 不单调 / `at` 非 ISO */
+    | 'invalid-state'
+    /** JSON 文本解析失败（`flowStateFromJson`；同 `@diy/talk` 的 `invalid-json`） */
+    | 'invalid-json'
+    /** 参数名不在声明里（未知节点 / 未知局部名）—— 与 `unknown-plugin` 同型：绝不静默忽略 */
+    | 'unknown-param'
     /** 插件函数自己抛了异常（宿主边界：统一包装成 FlowError；`cause` 保留原异常） */
     | 'plugin-threw';
 

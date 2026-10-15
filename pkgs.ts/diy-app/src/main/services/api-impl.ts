@@ -31,6 +31,8 @@ import type { ToolResultMode } from "../../shared/context/compaction";
 import type { HistoryEntryView } from "../../shared/context/schema";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
 import { resolve as resolvePath } from "node:path";
+import * as flow from "../core/flow";
+import { flowPrompt } from "./flow-prompt";
 
 /**
  * 实际 RPC 监听端口，由入口在绑定完成后回填。
@@ -116,8 +118,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     for (const [k, v] of Object.entries(changes)) {
       if (v !== undefined) filtered[k] = v as string;
     }
-    task.updateTask(uri, filtered);
-    return { status: "ok", data: { uri } };
+    // 回报本次写入实际做了什么（剥头 / 追加）—— CLI 侧才有话可说，见 core/task.ts 的 TaskWriteReport
+    const report = task.updateTask(uri, filtered as task.UpdateTaskChanges);
+    return { status: "ok", data: { uri, ...report } };
   });
   binding.on(app.task.move, async ({ input }) => {
     task.moveTask(input.uri, input.parent);
@@ -273,9 +276,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // —— watch —— 文件系统变更推送（serverStream：FileWatcher → RPC → renderer）
   // 在 diy.watch.*（Main 域）：diy.ui.* 会被 rpc-port 全量转发给 renderer，
   // 挂那里会与本地注册冲突（ServerBinding 抛「已注册」→ RPC 起不来）。
-  binding.on(app.watch.fileChange, async function* () {
+  binding.on(app.watch.fileChange, async function* ({ signal }) {
     const { fileWatcher } = await import("./file-watcher");
-    for await (const change of fileWatcher.subscribe()) {
+    for await (const change of fileWatcher.subscribe(signal)) {
       yield change;
     }
   });
@@ -344,7 +347,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
 
   // —— agent.local —— 本地自定义 agent（ai-sdk 块协议，与 ACP 独立）
-  binding.on(app.agent.local.chat, async function* ({ input }) {
+  binding.on(app.agent.local.chat, async function* ({ input, signal }) {
     noteRendererTouch("diy.agent.local.chat", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     const agent = getLocalAgent();
@@ -353,7 +356,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
       agent.steerAdd(input.taskUri, input.mode, input.message);
       return;
     }
-    for await (const op of agent.chat(input.taskUri, input.message, input.model, input.reasoningEffort)) {
+    // signal：客户端断开（刷新/切页/杀 CLI）时即时退订 run.subs —— 缺了它，「无 op 产出期间断开」要
+    // 等到下一条 op 才释放订阅（return() 排在悬挂的 next() 之后），`subscribers` 会虚高（[5] ##308）。
+    for await (const op of agent.chat(input.taskUri, input.message, input.model, input.reasoningEffort, signal)) {
       yield JSON.stringify(op);
     }
   });
@@ -366,7 +371,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // 直接读 runtime-context 的内存表 —— 那才是「此刻主进程真正在跑哪些轮次」的权威。
   binding.on(app.agent.local.running, async () => {
     const { activeTurnList } = await import("./runtime-context");
-    return { active: activeTurnList() };
+    const { getLocalAgent } = await import("./local-agent");
+    // 订阅者数是**运行时事实**（含 detached 与观测者接入，##305）—— 由 LocalAgentManager 算，
+    // runtime-context 只管"哪些任务在跑"（纯内存表，不依赖 agent 层）。
+    const agent = getLocalAgent();
+    return { active: activeTurnList().map((t) => ({ ...t, subscribers: agent.watchers(t.taskUri) })) };
   });
   binding.on(app.agent.local.history, async ({ input }) => {
     noteRendererTouch("diy.agent.local.history", input.taskUri);
@@ -397,9 +406,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { opsFeed } = await import("./ops-feed");
     return opsFeed.watermark(input.taskUri);
   });
-  binding.on(app.agent.local.opsWatch, async function* ({ input }) {
+  binding.on(app.agent.local.opsWatch, async function* ({ input, signal }) {
     const { opsFeed } = await import("./ops-feed");
-    for await (const frame of opsFeed.subscribe(input.taskUri, input.since, input.epoch)) {
+    // signal：客户端断开（刷新/切页/杀 CLI）时即时退订。缺了它，无 op 期间断开要等到
+    // 下一条 op 才释放订阅（悬挂的 next()），`agent.local.running.subscribers` 会虚高。
+    for await (const frame of opsFeed.subscribe(input.taskUri, input.since, input.epoch, signal)) {
       yield frame;
     }
   });
@@ -435,6 +446,19 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.agent.local.limits, async () => {
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().getLimits();
+  });
+  // 会话/轮次注册表（##240）：一条**全局**订阅（不是 per-task）—— 快照 + delta，只推状态不推 op。
+  // 不加 --watch = 只 yield 一份快照就结束（CLI 无参路径）；signal = 传输断开即退订。
+  binding.on(app.agent.local.sessions, async function* ({ input, signal }) {
+    const { sessionRegistry } = await import("./session-registry");
+    for await (const frame of sessionRegistry.subscribe({ watch: input.watch ?? false, signal })) {
+      yield frame;
+    }
+  });
+  // 写运行限制：写盘 + 失效缓存（下一轮生效）；返回值 = 合并后的生效值（含环境变量覆盖）
+  binding.on(app.agent.local.setLimits, async ({ input }) => {
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().setLimits(input);
   });
   // 逐步用量账本：结构化直出（分组/汇总在 shared/usage 的纯函数里，两端同一套口径）
   binding.on(app.agent.local.usage, async ({ input }) => {
@@ -972,6 +996,50 @@ export function bindAppHandlers(binding: ServerBinding): void {
       clearTimeout(timer);
     }
   });
+
+  // ── flow（##319：工作流实例与任务绑定；状态真源 = 任务目录 flow/state.json）──
+  // 「多个 k=v」型入参在 schema 里是「JSON 数组或单个裸值」（见 api-def 的 kvList 工厂）：
+  // parser 只对 `z.array` 自动 JSON.parse，联合类型到这就还是字符串 → 在这里归一（唯一一处）。
+  const kvList = (v: string | string[] | undefined): string[] => {
+    if (v === undefined) return [];
+    if (Array.isArray(v)) return v;
+    const raw = v.trim();
+    if (raw.startsWith("[")) {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed) || parsed.some((x) => typeof x !== "string")) {
+        throw new Error(`应为字符串数组或单个 "k=v"，实得 ${JSON.stringify(v)}`);
+      }
+      return parsed as string[];
+    }
+    return [raw];
+  };
+
+  binding.on(app.flow.list, async ({ input }) => ({
+    workflows: flow.listFlowDefinitions(),
+    ...(input.instances ? { instances: flow.listFlowInstances() } : {}),
+  }));
+  binding.on(app.flow.show, async ({ input }) => flow.showFlow(input.uri));
+  binding.on(app.flow.view, async ({ input }) => flow.viewArtifact(input.uri, input.node, input.seq));
+  // `--file` 的内容由**调用方进程**的 CLI parser 读好送进来（stdin / 相对路径都归它，见 _cli-meta.readFile）
+  binding.on(app.flow.artifact.put, async ({ input }) => flow.putArtifact(input.uri, input.node, input.file, input.seq));
+  binding.on(app.flow.start, async ({ input }) => {
+    if (!input.workflow) {
+      throw new Error(`缺 --workflow <id>（可用：${flow.listFlowDefinitions().map((w) => w.id).join(" / ")}）`);
+    }
+    return flow.startFlow(input.uri, input.workflow, kvList(input.param));
+  });
+  binding.on(app.flow.advance, async ({ input }) => {
+    if (!input.to) throw new Error("缺 --to <节点 id>");
+    return flow.advanceFlow(input.uri, input.to, kvList(input.ref), input.note);
+  });
+  binding.on(app.flow.bounce, async ({ input }) => {
+    if (!input.to) throw new Error("缺 --to <节点 id>");
+    return flow.bounceFlow(input.uri, input.to, kvList(input.ref), input.note);
+  });
+  binding.on(app.flow.finish, async ({ input }) => flow.finishFlow(input.uri, input.note));
+  binding.on(app.flow.params.get, async ({ input }) => flow.paramsGet(input.uri));
+  binding.on(app.flow.params.set, async ({ input }) => flow.paramsSet(input.uri, kvList(input.param)));
+  binding.on(app.flow.prompt, async ({ input }) => flowPrompt(input.uri));
 
   // ── seed ──
   binding.on(app.seed.run, async () => {

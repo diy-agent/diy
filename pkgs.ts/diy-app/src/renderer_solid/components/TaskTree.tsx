@@ -11,6 +11,7 @@ import { isAncestorOf } from "../lib/task-lineage";
 import { TASK_STATES, taskStateColor } from "../../main/core/task-state";
 import { CreateTaskSheet } from "./CreateTaskSheet";
 import { DynamicBar } from "./DynamicBar";
+import { SessionChip } from "./SessionChip";
 import { findNode } from "../lib/task-lineage";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 import {
@@ -691,6 +692,10 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                     >
                         {row.node.title}
                     </span>
+                    {/* 会话状态（##308）：任务表行不点进去就知道谁在跑、跑到第几步、有没有未读步数/
+                        待投递留言/上一轮异常收尾。判据与 nav chip、总览页**同一份**（sessionStore）。
+                        chip 自身只在"有事"时渲染（空闲且无事 → 不占地方，见 shared/session-overview）。 */}
+                    <SessionChip uri={row.key} />
                     <CreateTaskSheet projectId={row.projectId} projectLabel={row.node.title ?? ""} parentUri={row.key} compact />
                 </span>
                 {/* 正文命中片段：行内第二行（不新增 <tr>，否则树的行序/键盘导航要重新定义）。

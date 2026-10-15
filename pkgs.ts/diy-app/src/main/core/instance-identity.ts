@@ -8,7 +8,7 @@
 //   2. git 分支只有 main 能查（要跑 git / 读 .git）：判断「跑的是哪个 worktree 的构建」。
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -139,4 +139,34 @@ function detectBranch(startDir: string): string | null {
   if (head !== "HEAD") return head; // 正常分支（worktree 也是分支名）
   const sha = git(root, ["rev-parse", "--short", "HEAD"]);
   return sha ? `${sha}(detached)` : null;
+}
+
+/**
+ * 两个数据根是否指向同一处（写法差异 —— 相对路径 / 尾斜杠 / 符号链接 —— 不该绕过）。
+ *
+ * 何时需要：CLI 复用已有实例前校验身份（`cli/probe-instance.ts`）—— 实例自报的 `diyHome`
+ * 与本进程的 `DIY_HOME` 来自两条不同的路（前者写进 state、后者来自环境变量），
+ * macOS 上 `/tmp` 与 `/private/tmp`、`..`、尾斜杠都会让字面比较误判「不是我的实例」。
+ * 符号链接能解就解（realpath），解不动（路径不存在）退回 `resolve` 的写法归一。
+ *
+ * 与 `isProdDataHome` 的分工：那个回答「是不是生产根」（判据是真实家目录），
+ * 这个回答「是不是同一个根」（纯同一性，与生产/开发无关）。
+ */
+export function sameDataHome(a: string, b: string): boolean {
+  // 先比写法归一的字面值（尾斜杠 / `.` / `..` / 相对路径），再解开符号链接比。
+  // 方向性：只有两条路都证明「是同一处」才返回 true —— 绝**不**在没有依据时判相等。
+  // 判据错向的代价不对称：误判相等 = CLI 连到别人的实例（串台，##328(实例身份只靠端口)）；误判不等 = 多起一个实例（吵，但安全）。
+  if (resolve(a) === resolve(b)) return true;
+  const ra = tryRealpath(a);
+  const rb = tryRealpath(b);
+  return ra !== null && rb !== null && ra === rb;
+}
+
+/** 解符号链接；路径不存在（或不可达）时返回 null —— 不猜。 */
+function tryRealpath(p: string): string | null {
+  try {
+    return realpathSync(p);
+  } catch {
+    return null;
+  }
 }

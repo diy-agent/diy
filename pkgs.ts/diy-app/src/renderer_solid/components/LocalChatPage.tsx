@@ -52,9 +52,14 @@ import { trafficStore } from "../store/trafficStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
 import { Caches } from "../lib/ui-state";
+import { HeightLedger, stackRows, windowRange } from "../lib/chat-virtual";
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
 import { bylineOf } from "../lib/assistant-byline";
+// 滚动决策（纯函数，可单测：跟随时序 / 锚点恢复）—— 本文件只负责 DOM 读写
+import { anchorScrollTop, anchorTick, clampScrollTop, followPlan, lastLeafId, type AnchorTickState, type ChatAnchor } from "../lib/chat-scroll";
+// user 发言的时刻 label（纯函数：块 id → 所属轮起点时刻；数据源与降级口径见模块头注）
+import { userStamp } from "../lib/user-stamp";
 // 对话流的时间戳：真源是 turnId 内嵌的毫秒（shared/date-format 统一解析与格式化）
 import type { ReasoningEffort } from "../../main/services/local-agent";
 // 插话队列项：与草稿同文件存储（任务目录 .diy/drafts.yaml），类型只在 main 侧定义
@@ -79,6 +84,8 @@ import {
     endLeafTip,
     endReasonOf,
     expandableOf,
+    isFailedTool,
+    isInterruptedToolBlock,
     isTurnLevel,
     historyOpenOf,
     isUserText,
@@ -86,11 +93,14 @@ import {
     leavesOf,
     liveTailOf,
     planOfLevel,
+    procOpenOf,
+    procStatusOf,
     tailOf,
     turnEndNote,
     turnFoldTip,
     turnLevelTip,
     turnRows,
+    type ProcTone,
     type TurnLevel,
     type TurnRow,
     type TurnTail,
@@ -203,6 +213,42 @@ const TOP_TRIGGER_PX = 240;
 const nearBottom = (el: HTMLElement) =>
     el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX;
 
+/** 块树里有没有这个 id（DFS；虚拟化下"块 → 行"的定位用，见 `anchorRowIndex`） */
+function containsBlockId(n: BlockNode, id: string): boolean {
+    if (n.id === id) return true;
+    for (const c of n.children) if (containsBlockId(c, id)) return true;
+    return false;
+}
+
+/** 按块 id 找 DOM（滚动容器内的块）—— 找不到 = 该块还没上屏（布局未稳 / 已被移除）。
+ *  `CSS.escape`：块 id 形如 `t1791126774555_s1_a`，虽然当前都是安全字符，也照规矩转义。 */
+function blockElOf(el: HTMLElement, id: string): HTMLElement | null {
+    return el.querySelector<HTMLElement>(`[data-block-id="${CSS.escape(id)}"]`);
+}
+
+/** 块在**内容坐标系**里的顶（px）：屏幕坐标差 + 当前 scrollTop —— 与滚动位置无关的量 */
+function blockTopIn(el: HTMLElement, node: HTMLElement): number {
+    return node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+}
+
+/**
+ * 视口顶部那一块 + 它在容器内的相对偏移（≤0 = 块顶被滚出容器顶）—— **阅读位置的锚点**（##331 ③）。
+ *
+ * 为什么锚 `[data-block-id]` 而不是 `[data-turn-id]`：一轮里可能有很多块，
+ * 轮粒度太粗（长轮里切走切回想回到"同一段正文"，不是"同一轮"）。
+ */
+function pickAnchorIn(el: HTMLElement): ChatAnchor | null {
+    const cTop = el.getBoundingClientRect().top;
+    for (const n of el.querySelectorAll<HTMLElement>("[data-block-id]")) {
+        const r = n.getBoundingClientRect();
+        if (r.bottom > cTop + 1) {
+            const id = n.getAttribute("data-block-id");
+            return id ? { id, offset: Math.round(r.top - cTop) } : null;
+        }
+    }
+    return null;
+}
+
 /** assistant 正文（纯文本呈现）：原文模式 + L1 单行摘要用 */
 function PlainText(props: { text: string; class?: string }) {
     return (
@@ -283,42 +329,6 @@ function reuseRows(prev: TurnRow[], next: TurnRow[]): TurnRow[] {
     });
 }
 
-/**
- * 中断的 tool 块：
- *   ① 显式终态 status=interrupted（main 已收敛并写进 ops）→ 直接读，不靠推断
- *   ② 兼容旧会话：未收 stop 且该任务**此刻确实没有轮次在跑**（历史日志里还没收敛）
- *
- * ⚠️ 判据必须是 main 真值 `live`（含别人发起的轮次），不能用本地 `running`：
- *    本地 running 只代表"我这轮在等自己的流" —— 拿它当整体运行态，会把 CLI 正在跑的
- *    一轮判成"中断的历史"（任务 194 现象一）。也不能反过来把"未收 stop"当成直播中
- *    （那会让真崩溃/中断的历史不再可见）。
- */
-function isInterruptedToolBlock(n: BlockNode): boolean {
-    if (n.tag !== "tool") return false;
-    const s = str(n.attrs.status);
-    if (s === "interrupted") return true;
-    if (n.stopped) return false;
-    if (s === "done" || s === "error") return false;
-    return !localChatStore.live;
-}
-
-/**
- * 展开判定（2026-10-04 重写）：**pin 是用户的显式覆盖，档位只给默认值**。
- *
- * 正文与过程分两套默认：
- *   · 正文：pin → L2/L3 默认展开、L1 折成一行（**直播中同样折叠** —— L1 的语义就是
- *     "只看最后一行"，收起态仍显示正在写的那一行 + 光标，进度照样可见）；
- *   · 过程：error 块 / 中断遗留 tool 恒开（看"断在哪"）→ pin → 一律默认收起
- *     （原 L4「全开」档已取消 —— 档位不再负责"帮用户全开"）。
- */
-function procOpen(n: BlockNode, pin: Record<string, boolean>): boolean {
-    if (n.tag === "error") return true;
-    if (n.tag === "tool" && str(n.attrs.status) === "error") return true;
-    if (isInterruptedToolBlock(n)) return true;
-    if (n.id in pin) return pin[n.id]!;
-    return false;
-}
-
 // ─── 行摘要与正文 ───────────────────────────────────
 
 function toolCommand(n: BlockNode): string {
@@ -352,36 +362,31 @@ function summaryOf(n: BlockNode, open = true): string {
         return firstLine(str(n.attrs.content)).trim() || (n.stopped ? "思考" : "思考中…");
     }
     if (n.tag === "tool") {
-        return `${str(n.attrs.tool) || "tool"}${toolCommand(n) ? ` · ${firstLine(toolCommand(n))}` : ""}${isInterruptedToolBlock(n) ? " · ⊘ 中断" : ""}`;
+        return `${str(n.attrs.tool) || "tool"}${toolCommand(n) ? ` · ${firstLine(toolCommand(n))}` : ""}${isInterruptedToolBlock(n, localChatStore.live) ? " · ⊘ 中断" : ""}`;
     }
     return n.tag;
 }
 
-function statusMark(n: BlockNode) {
-    if (n.tag === "error") return <span class="text-error">❌</span>;
-    if (n.tag === "text") {
-        if (isUserText(n)) return null;
-        return !n.stopped ? <span class="text-warning animate-pulse">●</span> : <span class="opacity-50">✍</span>;
-    }
-    if (n.tag === "think") {
-        return !n.stopped ? <span class="text-warning animate-pulse">●</span> : <span>💭</span>;
-    }
-    const s = str(n.attrs.status);
-    if (s === "done") return <span class="text-success">✓</span>;
-    if (s === "error") return <span class="text-error">✗</span>;
-    // 中断遗留（无 stop、无结果）：不能跟"正在执行"共用同一个点，否则用户看不出历史断在哪
-    if (isInterruptedToolBlock(n)) {
-        return (
-            <span
-                class="text-warning"
-                title="上一轮中断，没有结果（此行已被收敛为终态，正文与发往模型的同源）"
-            >
-                ⊘
-            </span>
-        );
-    }
-    if (!n.stopped) return <span class="text-warning animate-pulse">●</span>;
-    return <span class="opacity-50">○</span>;
+/** 状态灯档位 → class（**只有这里认 class**；"什么时候失败"的判据在 `procStatusOf`） */
+const STATUS_TONE_CLASS: Record<ProcTone, string> = {
+    error: "text-error",
+    ok: "text-success",
+    warn: "text-warning",
+    wait: "text-warning",
+    muted: "opacity-50",
+    none: "",
+};
+
+/** 行首状态灯：判据在 `lib/chat-fold.procStatusOf`（纯函数 + 单测），这里只画（见其头注） */
+function statusMark(node: BlockNode) {
+    const m = procStatusOf(node, localChatStore.live);
+    if (!m.icon) return null;
+    const cls = [STATUS_TONE_CLASS[m.tone], m.pulse ? "animate-pulse" : ""].filter(Boolean).join(" ");
+    return (
+        <span class={cls || undefined} title={m.tip}>
+            {m.icon}
+        </span>
+    );
 }
 
 function ThinkBody(props: { node: BlockNode }) {
@@ -427,7 +432,7 @@ function ToolBody(props: {
                 <div class="animate-pulse text-base-content/50">⋯ 执行中，等待工具返回…</div>
             </Show>
             {/* 中断遗留：正文显示与发往 LLM 完全同源的占位说明（不再是空白让人无从下手） */}
-            <Show when={isInterruptedToolBlock(n)}>
+            <Show when={isInterruptedToolBlock(n, localChatStore.live)}>
                 <div class="alert alert-warning alert-soft text-body py-2 font-sans">
                     <span class="whitespace-pre-wrap">{INTERRUPTED_TOOL_NOTICE}</span>
                 </div>
@@ -479,6 +484,8 @@ function ProcBody(props: {
  * 内容可含正文；两处各写一套必然分叉，R17→R19 已经吃过一次）。
  *
  * 行首 `statusMark` **恒显**（💭 / ⚙ 类字形 + ● 在跑 / ✓ 完成 / ✗ 失败 / ⊘ 中断）：
+ * 判据在 `lib/chat-fold.procStatusOf`（**纯函数 + 单测**：`status==="error"` → ✗ 有测试守着 —— ##329），
+ * 本文件只把档位映成 class；
  * 少了它，一行 `思考` 与一行 `Bash · 命令` 在长列表里只能靠读文字分辨（2026-10-11 用户口径
  * "给工具和思考 bar 前加前缀图标"）。它同时是**状态位**（● / ✗ / ⊘），不是纯装饰。
  *
@@ -495,7 +502,7 @@ function ProcessRow(props: {
     const n = () => props.node;
     /** 这一行**点开会不会多出东西**（思考只有一行就不给展开能力，见 chat-fold.expandableOf） */
     const can = () => expandableOf(n());
-    const open = () => can() && procOpen(n(), props.pin);
+    const open = () => can() && procOpenOf(n(), props.pin, localChatStore.live);
     const head = "flex w-full items-center gap-1.5 py-1.5 text-left";
     /**
      * 行头（三种行位共用同一份内容，只是外壳不同）：
@@ -961,6 +968,9 @@ function TextRow(props: {
 function UserBubble(props: { node: BlockNode }) {
     const b = () => props.node;
     const steer = () => str(b().attrs.steer);
+    /** 这句话的时刻：块 id 自带所属轮（turnId 内嵌毫秒），格式复用 agent 侧那个 `fmtTurnStamp`。
+     *  取不到就不显示（绝不用渲染时刻顶替）—— 数据源与降级口径见 `lib/user-stamp` 头注。 */
+    const stamp = () => userStamp(b().id);
     return (
         <div class="flex justify-end">
             <div class="max-w-[85%] bg-primary/10 border border-primary/20 rounded-2xl px-3.5 py-2 text-prose whitespace-pre-wrap break-words">
@@ -970,6 +980,14 @@ function UserBubble(props: { node: BlockNode }) {
                     </span>
                 </Show>
                 {str(b().attrs.content)}
+                {/* 时刻压在气泡内右下（IM 惯例）：与 agent 侧同格式，不另起一行占版面 */}
+                <Show when={stamp()}>
+                    {(s) => (
+                        <div class="mt-0.5 text-right text-caption opacity-50" data-user-stamp title={s().title}>
+                            {s().text}
+                        </div>
+                    )}
+                </Show>
             </div>
         </div>
     );
@@ -1008,7 +1026,7 @@ function ProcBar(props: {
 }) {
     const thinks = () => props.parts.filter((n) => n.tag === "think").length;
     const tools = () => props.parts.filter((n) => n.tag === "tool").length;
-    const failed = () => props.parts.some((n) => n.tag === "tool" && str(n.attrs.status) === "error");
+    const failed = () => props.parts.some(isFailedTool);
     /** 计数块的读屏/自动化文案（图标的字形读屏念不出来）；**两个计数恒在**（见下） */
     const countsText = () => `${thinks()} 段思考、${tools()} 个工具`;
     return (
@@ -1624,6 +1642,45 @@ function FullscreenModal(props: { title: string; content: string; onClose: () =>
     );
 }
 
+/**
+ * 虚拟行壳（##301）：一行 = 一个绝对定位的盒子，顶边由**高度账**给出。
+ *
+ * 为什么绝对定位而不是 `space-y-*` + 上下 spacer：spacer 与相邻行的间距要单独推一遍账，
+ * 边界（首行 / 末行 / spacer 自己）极易差一个 gap；绝对定位下"每行顶边 = 前缀和"是恒等式。
+ *
+ * 尺寸观察登记（`ro`）挂在这里而不是页面级 ref：**卸载时要反注册** —— RO 强引用目标元素，
+ * 不反注册就是"每滚过一行泄漏一个 DOM 元素"（长会话滚动会累积成灾）。onMount/onCleanup
+ * 天然成对。
+ */
+function VirtRow(props: {
+    rowKey: string;
+    /** 该行顶边（px，账面前缀和） */
+    top: number;
+    ro: ResizeObserver;
+    register: (el: Element, key: string) => void;
+    children: JSX.Element;
+}) {
+    let el: HTMLDivElement | undefined;
+    onMount(() => {
+        if (el) props.ro.observe(el);
+    });
+    onCleanup(() => {
+        if (el) props.ro.unobserve(el);
+    });
+    return (
+        <div
+            ref={(e) => {
+                el = e;
+                if (e) props.register(e, props.rowKey);
+            }}
+            class="absolute inset-x-0"
+            style={{ top: `${props.top}px` }}
+        >
+            {props.children}
+        </div>
+    );
+}
+
 // ─── 页面 ───────────────────────────────────────────
 
 export function LocalChatPage(props: { uri?: string }) {
@@ -1651,87 +1708,158 @@ export function LocalChatPage(props: { uri?: string }) {
     /** 当前会话的运行态轮询停止函数（切会话/卸载时调用） */
     let unwatch: (() => void) | null = null;
 
-    /** 滚到底并置跟随态 */
-    const gotoBottom = () => {
+    // ─── 视口虚拟化（##301）：只挂视口附近的轮，未渲染轮走**实测高度账** ─────────────
+    // 为什么不沿用 `content-visibility: auto`：它只跳过「离屏子树的布局与绘制」，**DOM 仍是全量**
+    // （一次 48 轮会话实测 1441 个节点全体在树里），堆随会话长度无界 —— 本任务要把远端轮真从
+    // DOM 摘掉（判据与几何见 lib/chat-virtual 头注）。
+    /** 滚动容器当前 scrollTop（窗口计算的输入） */
+    const [scrollTop, setScrollTop] = createSignal(0);
+    /** 滚动容器可视高度（首帧未量到 = 0 ⇒ 只挂 overscan 那一段） */
+    const [chatVpH, setChatVpH] = createSignal(0);
+    /** 高度账的版本号：账一变就 ++，让布局 memo 重算（账本身不是信号） */
+    const [ledgerTick, setLedgerTick] = createSignal(0);
+    /** 视口外上下各多挂一段：滚动时下一屏的行已就位，不至于滚一下闪一下 */
+    const OVERSCAN_PX = 600;
+    /** 高度账**按 taskUri** 存：切走再切回来（组件不卸载）仍复用实测高度，省一次重新测量 */
+    const ledgers = new Map<string, HeightLedger>();
+    const curLedger = createMemo(() => {
+        const u = uri() ?? "";
+        let l = ledgers.get(u);
+        if (!l) {
+            l = new HeightLedger();
+            ledgers.set(u, l);
+        }
+        return l;
+    });
+    const touchLedger = () => setLedgerTick((v) => v + 1);
+    /** 被观察的行元素 → 行键（RO 回调只拿得到元素） */
+    const rowKeyOf = new WeakMap<Element, string>();
+    const registerRow = (el: Element, key: string) => rowKeyOf.set(el, key);
+
+    /**
+     * 落地一批实测高度（**唯一**写账入口）。
+     *
+     * 这里**只写账**，不碰 scrollTop —— 位置由「视口锚定」统一负责（见下面那个监听 layout 的
+     * effect）。为什么必须收口到一处：**任何**能让行顶边变化的因（测量修正、前插补段、清空重置）
+     * 都得按同一基准补偿，散在两处（旧实现是 applyHeights 一处、loadOlderInto 一处）就会
+     * 重复补偿 —— 实测症状是一次上滚把视口多推 605px（补偿量算了两遍）。
+     */
+    const applyHeights = (list: Array<[string, number]>) => {
+        const led = curLedger();
+        const ks = rowKeys();
+        const live = new Set(ks);
+        const tailKey = ks[ks.length - 1];
+        let changed = false;
+        let changedAboveTail = false;
+        for (const [k, h] of list) {
+            if (!(h > 0) || !live.has(k) || led.get(k) === h) continue;
+            changed = true;
+            // 末行自身长高/变矮 = "内容从屏幕下方自然长出"，**不该**把视口拽回去（与 ##331
+            // followPlan 同一口径）。只有**非末行**的高度修正才会把底部内容整体顶走。
+            if (k !== tailKey) changedAboveTail = true;
+        }
+        if (!changed) return;
+        for (const [k, h] of list) if (h > 0 && live.has(k)) led.set(k, h);
+        touchLedger();
+        // 贴底时非末行变化 ⇒ 补偿回底部（不然内容跳）。非贴底的补偿归上面的「视口锚定」effect。
         const el = scrollRef;
-        if (!el) return;
-        el.scrollTop = el.scrollHeight;
-        setStick(true);
+        if (el && stick() && changedAboveTail) writeScrollTop(el, el.scrollHeight);
     };
 
-    /** 视口里**最上面那一轮**（锚点：用户正在看的起点）；一轮都没露头时退回最老的一轮。
-     *  ⚠️ 判据要用**滚动容器**的顶边，不是页面视口：容器在页面里偏下，被滚出去的轮
-     *  其页面坐标仍是正的（`bottom > 0` 恒真 ⇒ 永远返回第一轮）。 */
-    const pickAnchor = (el: HTMLElement): HTMLElement | null => {
-        const turns = [...el.querySelectorAll<HTMLElement>("[data-turn-id]")];
-        const top = el.getBoundingClientRect().top;
-        return turns.find((n) => n.getBoundingClientRect().bottom > top) ?? turns[0] ?? null;
+    /** 行尺寸观察（一个 RO 观察窗口内所有行；卸载的行由 VirtRow 的 onCleanup 反注册） */
+    const rowRO = new ResizeObserver((entries) => {
+        const list: Array<[string, number]> = [];
+        for (const e of entries) {
+            const k = rowKeyOf.get(e.target);
+            if (k) list.push([k, (e.target as HTMLElement).offsetHeight]);
+        }
+        if (list.length > 0) applyHeights(list);
+    });
+
+    /**
+     * 视口锚点：**滚动位置锚在「块」上，不锚在像素上**（##301；类型与决策见 lib/chat-scroll）。
+     *
+     * 行顶边 = 账面高度前缀和 ⇒ 账一变（测量修正 / 前插补段 / 重置）所有行的绝对位置都变，
+     * 而 scrollTop 是像素量、不会自己跟着走。锚定 = 记下「视口顶那一块 + 它相对视口顶的偏移」，
+     * 布局一变就把它放回原处 —— 这是"上滚补段 / 上方行被测量"不跳的唯一保证。
+     *
+     * ⚠️ 锚点必须在**布局变化之前**捕获：`captureAnchor` 挂在滚动事件上（滚动不改布局，
+     * 那一刻读到的就是"变之前的"锚）。若改成在布局变化后现取，取的已是插了新内容的**新**布局
+     * —— 锚点落到新内容第一块、偏移变 0，补偿直接归零（实测：上滚补段交替出现"补了 / 没补"）。
+     */
+    let vpAnchor: ChatAnchor | null = null;
+
+    /** 取当前视口锚点（视口顶那一块 + 块内偏移）—— 定义在 lib/chat-scroll 的 `pickAnchorIn` */
+    const captureAnchor = (el: HTMLElement) => {
+        vpAnchor = pickAnchorIn(el);
     };
 
     /**
-     * 补一段更早的历史 + 位置补偿（任务 293）。**两个入口共用**：滚到顶部附近的
-     * `onScroll`，以及顶部提示条被点（后者不依赖"容器可滚"，见提示条处的注释）。
+     * 我们自己写 scrollTop 的**唯一出口**（程序化滚动）。
      *
-     * 位置补偿是**必需**的：内容插在视口上方会把它顶走（浏览器不替我们保持位置），
-     * 表现为"刚要读的那一行突然跳下去"。
-     *
-     * 时机是**两种错都踩过**才定的：
-     *   · 补偿量取「触发那一刻的距底距离」算**绝对**位置 ⇒ 走 RPC 期间用户还在上滚，
-     *     绝对位置把这段滚动一并吞掉（CDP 实测锚点被推回 239px）；
-     *   · 插入后**同步**读 `scrollHeight` ⇒ 读到的是估算高度，不是最终高度 ——
-     *     `[data-turn-id]` 带 `content-visibility: auto` + `contain-intrinsic-size: 24rem`，
-     *     没露过面的轮先按 24rem 占位，要等这一帧的布局才换成实测高度（实测：同一份前插，
-     *     同步读到 1188px，一帧后是 4751px）。所以补偿必须**在 rAF 里量**（原实现就是这么做的，
-     *     只是基准取错了地方）。
-     *
-     * 之后再用**锚点元素**连校几帧：更上方还没露面的轮，其占位高度会在用户继续上滚、它们
-     * 进入视口附近时被换成实测值 —— 那一下会把下方内容整体推走。这一步只能量元素位置
-     * （高度增量分不清长在上面还是下面）；用户在滚（scrollTop 不是我们上次设的值）⇒
-     * 重新取基准跟随，绝不跟用户抢。
+     * 为什么要收口：虚拟窗口（`win`）吃的是 `scrollTop` **信号**，不是元素的 `el.scrollTop`。
+     * 只写元素 ⇒ 窗口还按旧位置挂行 —— 补偿后"锚点行"根本不在 DOM，`applyAnchor` 找不到它，
+     * 连校几帧空转后放弃（实测症状：上滚补段后锚点那一轮被新内容顶出窗口）。
+     * 故：写元素 + 同步信号（窗口当场重挂）+ 记下写入值，让紧随其后的 scroll 事件**别重取锚点**
+     * （那是我们自己的滚动，不是用户的；照取会用旧窗口的 DOM 重新锚到别的块，丢掉用户正读的那一块）。
      */
-    const loadOlderInto = (el: HTMLDivElement) => {
+    let progWriteTop: number | null = null;
+    const writeScrollTop = (el: HTMLDivElement, v: number) => {
+        el.scrollTop = clampScrollTop(v, el.scrollHeight, el.clientHeight);
+        progWriteTop = el.scrollTop; // 浏览器可能自行收口，以**实际**值为准
+        setScrollTop(el.scrollTop);
+        return el.scrollTop;
+    };
+
+    /**
+     * 块 id → 它所属**行**在账面布局里的下标（虚拟化下定位用：块自己可能还没上屏）。
+     *
+     * 行 = 块树的根级项；`layout().keys` 与 `localChatStore.trees` 同序同长，故先找含该块的
+     * 根项、再在 keys 里定位。只在恢复阅读位置 / 布局补偿时调用（O(块数) 一次，可接受）。
+     */
+    const anchorRowIndex = (blockId: string): number => {
+        for (const t of localChatStore.trees) {
+            if (t.id === blockId || containsBlockId(t, blockId)) return layout().keys.indexOf(t.id);
+        }
+        return -1;
+    };
+
+    /** 滚到底并置跟随态。
+     *  ##301：虚拟化下总高随「测量」增长（未渲染轮先是估算），一次设值到不了底 ——
+     *  迭代几帧直到贴底位置稳定（每帧都会把新进窗口的行量进账，总高随之收敛）。 */
+    const gotoBottom = () => {
+        const el = scrollRef;
+        if (!el) return;
+        setStick(true);
+        let left = 30;
+        let prev = -1;
+        let stable = 0;
+        const tick = () => {
+            // ⚠️ 每一帧都要重读跟随态：用户（或测试）在这 30 帧里上滚了 ⇒ 立刻让位。
+            // 少了这一条，本循环会把他的滚动**反复拽回底部** —— 实测表现为随机的
+            // "滚到顶后又弹回底部"（谁抢到就在谁那一侧）。
+            if (!stick()) return;
+            const at = writeScrollTop(el, el.scrollHeight);
+            stable = at === prev ? stable + 1 : 0;
+            prev = at;
+            if (left-- > 0 && stable < 3) requestAnimationFrame(tick);
+        };
+        tick();
+    };
+
+    /**
+     * 补一段更早的历史（任务 293 / ##301）。**两个入口共用**：滚到顶部附近的 `onScroll`，
+     * 以及顶部提示条被点（后者不依赖"容器可滚"，见提示条处的注释）。
+     *
+     * 位置补偿**不在这里**：虚拟化后"前插了内容"只是让账面顶边整体下移，纠正它的是
+     * 上面那个**视口锚定** effect（行集合一变就重跑）。这里只管取历史 —— 补偿只此一处，
+     * 免得两套机制各推一次（旧实现正是如此，实测一次上滚多推 605px）。
+     */
+    const loadOlderInto = () => {
         if (!localChatStore.hasOlder || localChatStore.olderLoading) return;
         const u = uri();
         if (!u) return;
-        let base = 0;
-        let anchor: HTMLElement | null = null;
-        let anchorTop = 0;
-        void localChatStore
-            .loadOlder(u, () => {
-                base = el.scrollHeight;
-                anchor = pickAnchor(el);
-                anchorTop = anchor ? anchor.getBoundingClientRect().top : 0;
-            })
-            .then((inserted) => {
-                if (!inserted || base === 0) return; // 没插内容（到顶 / 对不上已重置）⇒ 不补偿
-                const a0 = anchor;
-                requestAnimationFrame(() => {
-                    // ① 增量补偿：前插垫进去多少就推回多少（基准是插入前的，故用户期间滚的那段照样算数）
-                    const d = el.scrollHeight - base;
-                    if (d > 0) el.scrollTop += d;
-                    if (!a0) return;
-                    // ② 连校几帧：盯住锚点，稳住「用户正看的那一行」
-                    let lastSt = el.scrollTop;
-                    let quiet = 0;
-                    let left = 24; // 硬上限 ≈ 24 帧（400ms）
-                    const tick = () => {
-                        const top = a0.getBoundingClientRect().top;
-                        if (Math.abs(el.scrollTop - lastSt) > 1) {
-                            anchorTop = top; // 用户在滚：跟随他的新位置，只记基准
-                            quiet = 0;
-                        } else {
-                            const drift = top - anchorTop;
-                            if (drift !== 0) {
-                                el.scrollTop += drift;
-                                quiet = 0;
-                            } else quiet++;
-                        }
-                        lastSt = el.scrollTop;
-                        if (left-- > 0 && quiet < 3) requestAnimationFrame(tick);
-                    };
-                    requestAnimationFrame(tick);
-                });
-            });
+        void localChatStore.loadOlder(u);
     };
 
     /**
@@ -1743,24 +1871,80 @@ export function LocalChatPage(props: { uri?: string }) {
      */
     const maybeLoadOlder = (el: HTMLDivElement) => {
         if (el.scrollTop > TOP_TRIGGER_PX) return;
-        loadOlderInto(el);
+        loadOlderInto();
     };
 
-    /** 恢复某会话阅读位置：有记录（p>0）回到该处并按位置校准跟随态；
-     *  无记录（p=0，含新会话）→ 直接看最新，而不是停在顶部。 */
+    /**
+     * 按锚点定位（##331 ③）：先设一次，再**连校几帧**（同 `loadOlderInto` 的 tick 写法）。
+     *
+     * 为什么要连校：锚点块上屏那一刻高度还没稳定（`content-visibility:auto` 的估算高度换实测值
+     * 会把下方内容整体推走），一次赋值只能落进"当时的坐标系"。
+     * 校正只做两件事：锚点没归位就推回去；**用户在滚**（scrollTop 不再是我们设的值）就收手跟人。
+     * 硬上限 ≈ 24 帧（400ms），且连续 3 帧不漂即收 —— 不会无限跑。
+     */
+    const applyAnchor = (el: HTMLDivElement, a: ChatAnchor) => {
+        const first = blockElOf(el, a.id);
+        if (first) writeScrollTop(el, anchorScrollTop(blockTopIn(el, first), a.offset, el.scrollHeight, el.clientHeight));
+        // 逐帧决策全在 `anchorTick`（纯函数，review1 R1 的 latch 在那）：组件只负责量 DOM 与写 scrollTop。
+        let st: AnchorTickState = { lastSt: el.scrollTop, quiet: 0, userLeft: false };
+        // 起始基准取**写后**的实际值：上面那次定位可能被浏览器收口（内容变矮），
+        // 若基准仍记着"想写的值"，第一帧就被误判成"用户在滚"而 latch 收手（R1 的反面）。
+        let left = 24; // 硬上限 ≈24 帧（400ms）：估算高度回填 + Markdown 撑高都在这个尺度内收敛
+        const tick = () => {
+            const n = blockElOf(el, a.id);
+            const r = anchorTick(
+                {
+                    scrollTop: el.scrollTop,
+                    blockOffset: n ? n.getBoundingClientRect().top - el.getBoundingClientRect().top : null,
+                    offset: a.offset,
+                    scrollHeight: el.scrollHeight,
+                    clientHeight: el.clientHeight,
+                    quietFrames: 3,
+                },
+                st,
+            );
+            st = r.state;
+            if (r.setTop !== null) {
+                writeScrollTop(el, r.setTop);
+                st.lastSt = el.scrollTop; // 写后以**实际值**为准（浏览器可能自行收口，避免下一帧误判成"用户在滚"）
+            }
+            if (r.stop || left-- <= 0) return;
+            requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+    };
+
+    /** 恢复某会话阅读位置：有锚点 → 按**块身份**回到那一行并按位置校准跟随态；
+     *  无记录（新会话 / 没读过）→ 直接看最新，而不是停在顶部。 */
     const restore = (u: string) => {
         restoring = true;
+        // 上一个会话的末叶子 id 在这里失去意义：不清掉的话，本会话内容上屏那帧会被判成
+        // "新块出现"而跟着它滚（`restoring` 闸门只挡到 rAF 之前）
+        prevTailId = null;
         void localChatStore
             .open(u)
             .catch(() => undefined)
             .then(() => {
-                const p = localChatStore.getScroll(u);
+                const a = localChatStore.getScroll(u);
                 requestAnimationFrame(() => {
                     restoring = false;
                     const el = scrollRef;
                     if (!el) return;
-                    if (p > 0) {
-                        el.scrollTop = p;
+                    if (a) {
+                        // ##301：虚拟化下锚点块**可能还没进窗口**（窗口由 scrollTop 决定）——
+                        // 先按锚点所在**行**的账面顶把窗口挪过去，再按块身份精修（`applyAnchor`
+                        // 自带连校；块上屏那一刻即收敛）。
+                        //
+                        // ⚠️ 必须把 `vpAnchor` 一并设为恢复值：程序化滚动被 `writeScrollTop` 记了
+                        // 下来（紧随的 scroll 事件不再重取锚点），若此处不设，锚点就一直是 null ——
+                        // 之后测量回填（估算 → 实测）让行顶整体位移时，已无锚可依，视口静静漂走
+                        // （实测症状：切回后视口顶部落到**下一轮**上，偏出一整轮）。
+                        vpAnchor = a;
+                        const ri = anchorRowIndex(a.id);
+                        // 走 `writeScrollTop`：同步窗口信号，锚点行**这一帧就上屏**，
+                        // 后面的 `applyAnchor` 才找得到它（只写元素的话窗口还按旧位置挂行）。
+                        if (ri >= 0) writeScrollTop(el, layout().tops[ri]!);
+                        applyAnchor(el, a);
                         setStick(nearBottom(el)); // 上次停在底部 → 继续跟随；否则尊重阅读位置
                     } else {
                         gotoBottom();
@@ -1798,8 +1982,17 @@ export function LocalChatPage(props: { uri?: string }) {
         const ro = new ResizeObserver(() => setViewH(rootRef?.clientHeight ?? 0));
         if (rootRef) ro.observe(rootRef);
         setViewH(rootRef?.clientHeight ?? 0);
+        // ##301：滚动容器高度 = 虚拟化的视口高度；容器尺寸变（窗口缩放 / 面板开合）要重算窗口
+        const cro = new ResizeObserver(() => {
+            setChatVpH(scrollRef?.clientHeight ?? 0);
+            setScrollTop(scrollRef?.scrollTop ?? 0);
+        });
+        if (scrollRef) cro.observe(scrollRef);
+        setChatVpH(scrollRef?.clientHeight ?? 0);
         onCleanup(() => {
             ro.disconnect();
+            cro.disconnect();
+            rowRO.disconnect(); // 组件卸载：RO 不 disconnect 会攥着整个窗口的行元素
             document.removeEventListener("click", closePopovers);
             document.removeEventListener("keydown", onKey, true);
         });
@@ -1809,13 +2002,21 @@ export function LocalChatPage(props: { uri?: string }) {
             applyDraft(u);
         }
     });
-    // 组件卸载（切 tab 到 info）前把防抖中的草稿落盘（内容在 input 事件里已写进 draftStore）
-    // + 停掉运行态轮询（没人看就不该继续问 main）
+    // 组件卸载前：**保存阅读位置** + 防抖中的草稿落盘 + 停掉运行态轮询。
+    //
+    // ⚠️ 阅读位置的**保存点在卸载**，不在 `on(uri)` effect（##331 ③ 的真根因）：
+    //   本页每个任务一个实例（`TaskRunPage` 给的是**固定** `props.uri`），切 tab = 本实例卸载 +
+    //   另一个实例挂载 —— `uri` 这个信号对单个实例**永远不变**，挂在它上面的保存代码一次都不会跑，
+    //   于是 `getScroll` 读到的永远是空，每次切回都退化成"看最新"（实测切回顶部从第 8 轮变第 18 轮）。
+    //   卸载时 DOM 还在（cleanup 先于节点移除），几何读得到。
     onCleanup(() => {
         unwatch?.();
         unwatch = null;
         const u = uri();
-        if (u) void draftStore.flushNow(u);
+        if (u) {
+            if (scrollRef) localChatStore.setScroll(u, pickAnchorIn(scrollRef));
+            void draftStore.flushNow(u);
+        }
     });
     // 直播中的尾轮 turn id：中断警告 / 等待态 gating 用。
     // 判据是 main 真值（localChatStore.live），不是本地 running —— 别人（CLI/另一窗口）
@@ -1938,19 +2139,57 @@ export function LocalChatPage(props: { uri?: string }) {
         });
         return prevRows;
     });
+    // ─── 视口虚拟化的布局（##301）：行键 → 账面高度 → 前缀和 → 视口窗口 ────────────
+    const rowKeys = createMemo(() => rootRows().map((r) => r.key));
+    /**
+     * 前缀和布局。`heights` 与 `keys` 同长；未渲染过的行走**估算**（见 HeightLedger）。
+     * 账不是信号，故显式依赖 `ledgerTick`（写账处 `touchLedger()`）。
+     */
+    const layout = createMemo(() => {
+        void ledgerTick();
+        const led = curLedger();
+        const ks = rowKeys();
+        led.retain(ks); // 会话被清空/重置后，旧轮的高度别继续拖均值
+        const heights = ks.map((k) => led.get(k));
+        return { keys: ks, heights, ...stackRows(heights) };
+    });
+    /** 视口窗口 [from, to)（含 overscan）—— DOM 里只该有这一段 */
+    const win = createMemo(() => {
+        const L = layout();
+        return windowRange(L.tops, L.heights, scrollTop(), chatVpH(), OVERSCAN_PX);
+    });
+    /** 窗口内的行对象（仍是 rootRows 里按 id 复用的那份 ⇒ `<For>` 不重建未变的行） */
+    const windowRows = createMemo(() => {
+        const [f, t] = win();
+        return rootRows().slice(f, t);
+    });
+    /** 被摘出行列之外的行：保留实测高度（不清），滚回来时位置才稳定 */
+
     /** 会话用量看板（抽屉）开关 */
     const [usageBoard, setUsageBoard] = createSignal(false);
+    /** 上一帧的**末叶子 id** —— 「新块出现」与「同一块内流式增长」的判据（见 lib/chat-scroll.followPlan）。
+     *  切会话时也会更新（跟随 effect 头部无条件写），故切回来不会被误判成"新块"。 */
+    let prevTailId: string | null = null;
 
     createEffect(
         on(uri, (u, prev) => {
-            // 切走前保存旧会话阅读位置（组件不卸载，滚动容器 DOM 还在）+ 冲掉待写草稿
+            // 切走前保存旧会话阅读位置 + 冲掉待写草稿。
+            //
+            // ⚠️ 这几行在**当前架构下走不到**：本页每个任务一个实例，`uri` 对单个实例是常量
+            //  （切 tab = 本实例卸载 + 另一个挂载），所以真正的保存点在下面的 `onCleanup`。
+            //  留着是因为 `TaskRunPage` 已写明"将来做 tab 保活时再改为逐实例传 uri" ——
+            //  那时 `uri` 会变，这条路径就有了语义。
             if (prev) {
-                if (scrollRef) localChatStore.setScroll(prev, scrollRef.scrollTop);
+                // 存**锚点**（视口顶部那块 + 块内偏移），不存 scrollTop —— 见 ChatAnchor 的注释
+                if (scrollRef) localChatStore.setScroll(prev, pickAnchorIn(scrollRef));
                 void draftStore.flushNow(prev);
             }
             // 切走：停掉上一个会话的运行态轮询（只轮询当前打开的会话）
             unwatch?.();
             unwatch = null;
+            // ##301：新会话的视口锚点从零开始（旧会话的块在新会话里不存在）
+            vpAnchor = null;
+            setScrollTop(0);
             // 进入新会话：内容恢复（历史重放）+ 阅读位置恢复 + 输入框草稿恢复
             // + 运行态真值轮询（别人在跑 → 界面必须知道，见 store.watch）
             if (u) {
@@ -1969,21 +2208,82 @@ export function LocalChatPage(props: { uri?: string }) {
         ),
     );
 
-    // 跟随：内容变化（trees 信号）→ 贴底则滚到底。
+    // 跟随（##331 ①）：内容变化（trees 信号）→ 按 `followPlan` 决策，不是无脑滚到底。
+    //
+    // 为什么不是"贴底就钉到 scrollHeight"（原实现）：那样**高块**刷出来时视口停在它的**末行**
+    //   （实测该块首行被推到容器顶上方 265px），用户看到结尾、要往回翻才看到开头。
+    // 口径（lib/chat-scroll.followPlan）：新块矮 → 跟到底（IM 直觉）；新块高 → 首行贴视口顶；
+    //   **同一块内流式增长 → 不动**（内容从屏幕下方自然长出）；用户上翻 → 一律不动（既有语义）。
     //
     // 顺序要求：必须声明在上方 uri 切换 effect 之后——Solid 按创建顺序执行 effect，
     //   切会话时 uri effect 先同步置 restoring 闸门，本 effect 才会让位给 restore 的定位。
-    // 时机：createEffect 在 DOM 写入之后运行，故 scrollHeight 已含新内容（同步赋值无闪帧）；
-    //   再补一帧 rAF 兜住布局后置变化。rAF 内重读 stick——期间用户若已上滚则放弃，不抢位置。
+    // 时机：createEffect 在 DOM 写入之后运行，故能读到新内容的几何；再补一帧 rAF 兜住
+    //   布局后置变化（Markdown 撑高 / 估算高度换实测）。rAF 内重读 stick——用户若已上滚则放弃。
     createEffect(() => {
-        void localChatStore.trees;
+        const tailId = lastLeafId(localChatStore.trees);
+        const prev = prevTailId;
+        prevTailId = tailId; // 无条件更新（含 restoring 期间）：切回来才不会被误判成"新块"
         if (restoring || !stick()) return;
         const el = scrollRef;
-        if (el) el.scrollTop = el.scrollHeight;
-        requestAnimationFrame(() => {
+        if (!el) return;
+        const node = tailId ? blockElOf(el, tailId) : null;
+        const plan = followPlan({
+            stick: stick(), // 上方 `if (restoring || !stick())` 已保证为真，这里传函数值免得读成"与 stick 无关"（review1 R2）
+            prevTailId: prev,
+            tailId,
+            blockTop: node ? blockTopIn(el, node) : 0,
+            blockHeight: node ? node.getBoundingClientRect().height : 0,
+            clientHeight: el.clientHeight,        });
+        if (plan.kind === "idle") return;
+        const apply = () => {
             const e2 = scrollRef;
-            if (e2 && stick()) e2.scrollTop = e2.scrollHeight;
-        });
+            if (!e2 || !stick()) return;
+            if (plan.kind === "bottom") {
+                writeScrollTop(e2, e2.scrollHeight);
+                return;
+            }
+            // 块顶在 rAF 里重新现量：布局后置变化会挪它
+            const n2 = tailId ? blockElOf(e2, tailId) : null;
+            writeScrollTop(e2, n2 ? blockTopIn(e2, n2) : plan.blockTop);
+        };
+        apply();
+        requestAnimationFrame(apply);
+    });
+
+    // ─── 视口锚定（##301）──────────────────────────────────────────────────────
+    //
+    // 虚拟化后，行顶边 = **账面高度前缀和** ⇒ 账一变（前插补段 / 上方行被测量修正 /
+    // 清空重置）所有行的绝对位置都变，而 scrollTop 是像素量、不会自己跟着走。
+    // 这条 effect 把「视口顶那一块」放回它原来的屏幕位置，是"上滚 / 补段不跳"的唯一保证。
+    //
+    // 分工：贴着底（`stick`）时**让位给上面那条 followPlan**（它按末叶子决策：矮块跟到底 /
+    // 高块首行贴顶），这条只管"用户在中间读历史"时的补偿 —— 两条各管一段，不抢。
+    // 锚点必须在布局变化**之前**取（`captureAnchor` 挂在滚动事件上，见其注释）。
+    // ⚠️ 别再各写一份补偿：位置只由这一条 + followPlan 决定。
+    createEffect(() => {
+        const L = layout();
+        const el = scrollRef;
+        if (!el || restoring || stick()) return;
+        if (!vpAnchor) {
+            captureAnchor(el); // 首个布局：以当前位置为锚（此后由滚动事件维护）
+            return;
+        }
+        // ① 锚点块**还在窗口里**（常态：窗口上下各带 overscan）⇒ 按块身份精确落位。
+        //    别在这里用"行的账面顶 − offset"近似 —— 那个式子漏掉块在行内的偏移，
+        //    每次补偿都会把视口整体挪 δ（实测偏 101px，正是"补段完成后跳一下"的来源）。
+        if (blockElOf(el, vpAnchor.id)) {
+            applyAnchor(el, vpAnchor);
+            return;
+        }
+        // ② 被摘出窗口（补段把内容推到窗口外）⇒ 先按**行**的账面顶把窗口挪过去，
+        //    块上屏后由 `applyAnchor` 的连校收敛（它自带 3 帧静默退出）。
+        const ri = anchorRowIndex(vpAnchor.id);
+        if (ri < 0) {
+            captureAnchor(el); // 锚点行没了（清空 / 换会话）⇒ 以当前位置重取
+            return;
+        }
+        writeScrollTop(el, L.tops[ri]!);
+        applyAnchor(el, vpAnchor);
     });
 
     // ─── agent 人物（模型/参数/行为指令都在人物定义里，这里只选"要谁干活"）───
@@ -2181,64 +2481,84 @@ export function LocalChatPage(props: { uri?: string }) {
                 ref={(el) => (scrollRef = el)}
                 class="diy-chat flex-1 overflow-y-auto px-4 py-3"
                 onScroll={(e) => {
+                    // 视口锚点：跟着**实际滚动**走（此刻布局还没变，正是"变化前"的基准）。
+                    // 但**我们自己写的**滚动不重取（见 `writeScrollTop`）：那会把锚点挪到旧窗口
+                    // 里恰好路过视口顶的别的块上，用户正读的那一块就此丢失。
+                    const at = e.currentTarget.scrollTop;
+                    const ours = progWriteTop !== null && Math.abs(at - progWriteTop) < 1.5;
+                    progWriteTop = null; // 只豁免**紧随的那一次**事件（见 `writeScrollTop`）
+                    if (!ours) captureAnchor(e.currentTarget);
+                    // 窗口的输入（虚拟化）：scrollTop 一变就重算该挂哪几行
+                    setScrollTop(at);
                     setStick(nearBottom(e.currentTarget));
                     maybeLoadOlder(e.currentTarget);
                 }}
             >
-                {/* 块树列：轮与轮之间（`data-chat-list` **不在这里** —— 它是**每轮的过程历史容器**，
-                    见 TurnView：皮肤那条"贯穿线"要画在历史容器上，才只贯穿历史、不穿过结尾与状态）。 */}
-                <div class="space-y-3">
-                    {/* 上滚补历史（任务 293）：分页后首载只有「最近一段」，更早的在滚动到这里时补。
-                        这一条既是进度指示、是"上面还有"的可见线索（没有它，滚到顶会被读成
-                        「会话就这么多」，而其实老内容还在盘上），也是个**可点的补段入口**。 */}
-                    <Show when={localChatStore.hasOlder || localChatStore.olderLoading}>
-                        {/* 可点：滚动只是**触发方式之一** —— 窗口渲染高度 ≤ 视口时用户根本
-                            滚不出 scroll 事件，只有这条按钮能补出更早的轮（##293 review R5）。 */}
-                        <button
-                            type="button"
-                            data-load-older="1"
-                            class="flex items-center justify-center gap-2 py-2 text-xs opacity-60 hover:opacity-100 w-full"
-                            disabled={localChatStore.olderLoading}
-                            onClick={() => scrollRef && loadOlderInto(scrollRef)}
-                        >
-                            {localChatStore.olderLoading ? "正在加载更早的消息…" : "上滚加载更早的消息"}
-                        </button>
-                    </Show>
-                    <For each={rootRows()}>
-                        {(row) =>
-                            row.tag === "turn" ? (
-                                <TurnView
-                                    turnId={row.key}
-                                    pin={pinned()}
-                                    level={globalLevel()}
-                                    histOpen={histOpenOf(row.key)}
-                                    onCycle={() => toggleTurn(row.key)}
-                                    conclusionLines={conclusionLines()}
-                                    onToggle={togglePin}
-                                    onFull={(title, content) => setFull({ title, content })}
-                                    liveTurnId={liveTurnId()}
-                                    md={md()}
-                                    usageHover={usageHover()}
-                                    onHoverUsage={(id, el) => hoverUsageIn(id, el)}
-                                    onHoverEndUsage={hoverUsageOut}
-                                    usageDetail={usageDetail()}
-                                    onDetailUsage={(id) => setUsageDetail((d) => (d === id ? null : id))}
-                                />
-                            ) : row.tag === "error" ? (
-                                /* 遗留的**根级** error 块（历史日志：旧版上限提示未挂 parent）。
-                                   新日志已把提示挂进 turn（见 local-agent 的上限分支），但重放旧
-                                   ops.jsonl 时根块仍会出现 —— 必须能读懂，不能只吐「[未知根 error]」。
-                                   这类块一旦落盘就不再变，故按值取一次即可（不必走 getter） */
-                                <ErrorBox node={turnById(row.key)} />
-                            ) : (
-                                <div class="text-body opacity-40">[未知根 {row.tag}]</div>
-                            )
-                        }
+                {/* 上滚补历史（任务 293）：分页后首载只有「最近一段」，更早的在滚动到这里时补。
+                    这一条既是进度指示、是"上面还有"的可见线索（没有它，滚到顶会被读成
+                    「会话就这么多」，而其实老内容还在盘上），也是个**可点的补段入口**。
+                    ⚠️ 它在**虚拟区之外**（顶部）：虚拟区只放"行"，它随滚动滚出视口 —— 与
+                    非虚拟版的位置语义一致。 */}
+                <Show when={localChatStore.hasOlder || localChatStore.olderLoading}>
+                    {/* 可点：滚动只是**触发方式之一** —— 窗口渲染高度 ≤ 视口时用户根本
+                        滚不出 scroll 事件，只有这条按钮能补出更早的轮（##293 review R5）。 */}
+                    <button
+                        type="button"
+                        data-load-older="1"
+                        class="mb-3 flex items-center justify-center gap-2 py-2 text-xs opacity-60 hover:opacity-100 w-full"
+                        disabled={localChatStore.olderLoading}
+                        onClick={loadOlderInto}
+                    >
+                        {localChatStore.olderLoading ? "正在加载更早的消息…" : "上滚加载更早的消息"}
+                    </button>
+                </Show>
+                {/* 块树列（##301 视口虚拟化）：DOM 里只挂**视口附近若干轮**，其余行用高度账占位。
+                    ⚠️ `data-chat-list` **不在这里** —— 它是**每轮的过程历史容器**，见 TurnView：
+                    皮肤那条"贯穿线"要画在历史容器上，才只贯穿历史、不穿过结尾与状态。
+                    几何（绝对定位 + 前缀和，行间距由账给出）见 lib/chat-virtual 头注。 */}
+                <div class="relative" style={{ height: `${layout().total}px` }}>
+                    <For each={windowRows()}>
+                        {(row, i) => (
+                            <VirtRow
+                                rowKey={row.key}
+                                top={layout().tops[win()[0] + i()] ?? 0}
+                                ro={rowRO}
+                                register={registerRow}
+                            >
+                                {row.tag === "turn" ? (
+                                    <TurnView
+                                        turnId={row.key}
+                                        pin={pinned()}
+                                        level={globalLevel()}
+                                        histOpen={histOpenOf(row.key)}
+                                        onCycle={() => toggleTurn(row.key)}
+                                        conclusionLines={conclusionLines()}
+                                        onToggle={togglePin}
+                                        onFull={(title, content) => setFull({ title, content })}
+                                        liveTurnId={liveTurnId()}
+                                        md={md()}
+                                        usageHover={usageHover()}
+                                        onHoverUsage={(id, el) => hoverUsageIn(id, el)}
+                                        onHoverEndUsage={hoverUsageOut}
+                                        usageDetail={usageDetail()}
+                                        onDetailUsage={(id) => setUsageDetail((d) => (d === id ? null : id))}
+                                    />
+                                ) : row.tag === "error" ? (
+                                    /* 遗留的**根级** error 块（历史日志：旧版上限提示未挂 parent）。
+                                       新日志已把提示挂进 turn（见 local-agent 的上限分支），但重放旧
+                                       ops.jsonl 时根块仍会出现 —— 必须能读懂，不能只吐「[未知根 error]」。
+                                       这类块一旦落盘就不再变，故按值取一次即可（不必走 getter） */
+                                    <ErrorBox node={turnById(row.key)} />
+                                ) : (
+                                    <div class="text-body opacity-40">[未知根 {row.tag}]</div>
+                                )}
+                            </VirtRow>
+                        )}
                     </For>
-                    <Show when={localChatStore.error}>
-                        <div class="text-error text-body">{localChatStore.error}</div>
-                    </Show>
                 </div>
+                <Show when={localChatStore.error}>
+                    <div class="text-error text-body mt-3">{localChatStore.error}</div>
+                </Show>
             </div>
 
             {/* 待发送插话横条（正常态）：贴着输入区上方一行 —— 队列是"还没发生的事"，
@@ -2380,7 +2700,7 @@ export function LocalChatPage(props: { uri?: string }) {
                         />
                         {/* L1 窗口占用环（chip 的 token/金额总量右侧）：hover 出构成卡（含「压缩」按钮 + 可降低窗口比较条）。
                             【用户 2026-10-07】压缩入口**移进 token 窗口的 card**（不再单独一个按钮）；生成中禁用+提示。 */}
-                        <WindowRing />
+                        <WindowRing uri={uri()} />
                         {/* ⚡ 总状态栏的生成速度（R25 待办 B；口径见 lastRate）：与轮尾状态行、用量表速度列
                             同一个数（最近一步的 `总输出 ÷ (响应耗时 − TTFT)`），放在**常驻**位置 ——
                             轮尾那行会随滚屏移出视野，而"跑得快不快"恰恰在等待/想打断时最需要看见。 */}

@@ -1,9 +1,7 @@
 import { defineConfig } from "vite";
-import { builtinModules } from "node:module";
+import { VARIANT as V, isExternal } from "./vite.pkg-deps";
 
-const V = process.env.DIY_VARIANT ?? "prod"; // 变体产物根：prod|test|preview|lab
-const pkgDeps = ["@diy/rpc", "@diy/template"];
-const external = ["electron", ...builtinModules, ...builtinModules.map((m) => `node:${m}`)];
+// pkgDeps / external 判据 / 变体根 = vite.pkg-deps.ts（共享真源）
 
 export default defineConfig({
   build: {
@@ -14,9 +12,7 @@ export default defineConfig({
       fileName: () => "index.js",
     },
     rollupOptions: {
-      external: (id: string) =>
-        pkgDeps.some((p) => id === p || id.startsWith(`${p}/`)) ? false
-          : external.some((e) => id === e || id.startsWith(`${e}/`)),
+      external: (id: string) => isExternal(id),
     },
     minify: false,
     emptyOutDir: true,

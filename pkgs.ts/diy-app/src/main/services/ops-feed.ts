@@ -107,6 +107,23 @@ function readOpLines(fp: string, fromLine: number, toLine: number): Op[] {
  */
 class OpsFeed {
   private feeds = new Map<string, TaskFeed>();
+  /**
+   * 订阅者集合变化回调（**只一个**：会话注册表 ##240）。
+   *
+   * 为什么需要它：某个会话"此刻有没有人在看"（`viewers`）是注册表的**活态属性**，而它的一半
+   * 来源就是本总线的订阅者数。没有这个回调时，窗口开关只改订阅集合、不产生任何事件 ⇒
+   * 注册表订阅方（`agent.local.sessions --watch` / 总览页）永远看到陈旧的 viewers，
+   * 且「只被打开、从未跑过轮次」的会话**压根不入册**（review1 P2-1 缺口 A/B）。
+   *
+   * 语义边界：回调**不参与** op 的分发（帧形状 / 水位 / epoch 一概不动，##307 契约不变），
+   * 也不改变订阅者本身 —— 它只是"有人变了"的一声通知。
+   */
+  private onSubsChanged: ((taskUri: string) => void) | null = null;
+
+  /** 登记订阅者变化观察者（传 null 摘除） */
+  setSubsChangedListener(cb: ((taskUri: string) => void) | null): void {
+    this.onSubsChanged = cb;
+  }
 
   private st(taskUri: string): TaskFeed {
     let s = this.feeds.get(taskUri);
@@ -117,6 +134,17 @@ class OpsFeed {
       this.feeds.set(taskUri, s);
     }
     return s;
+  }
+
+  /**
+   * 当前订阅者数（**不建状态**：该会话没被订阅过就直接 0）。
+   *
+   * 用途：`agent.local.running` 的可见性标注（##305 / [5] ##308）—— "这个会话此刻有没有人在看"
+   * 必须问订阅总线，而不能只看 chat 流的消费端（UI 走的是 op 流，不消费 chat 流）。
+   * **不用于任何回收**：##305 定案不做"无人即停"。
+   */
+  subscriberCount(taskUri: string): number {
+    return this.feeds.get(taskUri)?.subs.size ?? 0;
   }
 
   /** 此刻水位（订阅前校准起点用） */
@@ -168,7 +196,12 @@ class OpsFeed {
    *      `BlockStore.apply` 对重复 start/patch/stop 都是幂等的）；
    *   ③ 注册订阅，此后 publish 实时推。
    */
-  subscribe(taskUri: string, since: number, epoch?: number): AsyncIterable<OpsFrame> {
+  subscribe(
+    taskUri: string,
+    since: number,
+    epoch?: number,
+    signal?: AbortSignal,
+  ): AsyncIterable<OpsFrame> {
     const s = this.st(taskUri);
     const q = new AsyncQueue<OpsFrame>();
     q.push({ kind: "hello", epoch: s.epoch, seq: s.seq });
@@ -179,9 +212,17 @@ class OpsFeed {
       if (ops.length > 0) q.push({ kind: "batch", epoch: s.epoch, fromSeq: since + 1, ops });
     }
     s.subs.add(q);
-    return withCleanup(q, () => {
-      s.subs.delete(q);
-    });
+    this.onSubsChanged?.(taskUri); // 订阅集合变了 → 通知观察者（注册表重算 viewers）
+    // signal：传输断开时（RPC 层 abort）即时退订 —— 否则悬挂的 next() 会让
+    // subs 滞留到**下一条 op**，`subscriberCount`（[5] ##308 的「有没有人在看」）随之虚高。
+    return withCleanup(
+      q,
+      () => {
+        s.subs.delete(q);
+        this.onSubsChanged?.(taskUri); // 退订同样是一次"谁在看"的变化
+      },
+      signal,
+    );
   }
 }
 

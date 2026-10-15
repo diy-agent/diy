@@ -6,7 +6,8 @@ import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { killSegments, killTargetCandidates, judgeSelfKill, type SelfProcessInfo } from "../../src/main/services/agent-guard";
 import { appendAudit, auditFile, crashContext, crashScene, tailAudit } from "../../src/main/services/agent-audit";
-import { activeTurnList, noteRendererTouch, noteTurnEnd, noteTurnStart, resetRuntimeContext } from "../../src/main/services/runtime-context";
+import { activeTurnList, noteRendererTouch, resetRuntimeContext } from "../../src/main/services/runtime-context";
+import { sessionRegistry } from "../../src/main/services/session-registry";
 import { diyHome } from "../../src/main/core/state";
 
 /** 构造"我"= pid 1000，pgid 1000，子进程 1001/1002，命令行含 Electron 特征 */
@@ -130,8 +131,9 @@ describe("崩溃现场 crashScene", () => {
     const a = "projects/9/tasks/100";
     const b = "projects/9/tasks/113";
     appendAudit(home, { phase: "turn-start", taskUri: a, model: "mimo-v2.5", cwd: "/tmp" });
-    noteTurnStart({ taskUri: a, model: "mimo-v2.5", cwd: "/tmp" });
-    noteTurnStart({ taskUri: b, model: "mimo-v2.5", cwd: "/tmp" });
+    // 活跃轮次的**唯一真源**是会话注册表（##240 review1 P2-3：runtime-context 已收敛为它的投影）
+    sessionRegistry.noteTurnStart(a, { model: "mimo-v2.5", cwd: "/tmp" });
+    sessionRegistry.noteTurnStart(b, { model: "mimo-v2.5", cwd: "/tmp" });
     noteRendererTouch("diy.agent.local.chat", a);
 
     const scene = crashScene(home);
@@ -140,8 +142,8 @@ describe("崩溃现场 crashScene", () => {
     expect(scene).toContain(b);
     expect(scene).toContain("diy.agent.local.chat");
 
-    noteTurnEnd(a);
-    noteTurnEnd(b);
+    sessionRegistry.noteTurnEnd(a, { type: "completed", data: {} });
+    sessionRegistry.noteTurnEnd(b, { type: "completed", data: {} });
     expect(activeTurnList()).toHaveLength(0);
     resetRuntimeContext();
   });

@@ -32,6 +32,15 @@ export function keyOf(taskUri: string): string {
 }
 
 /**
+ * 会话 id（zen/go 会话亲和头 + 注册表条目 id）。
+ * 从 keyOf 派生：**id 算法只有这一份** —— local-agent 的亲和头、注册表条目、
+ * 流量观测（traffic 的 `x-opencode-session`）三处必须同源，两处漂移 = 串会话。
+ */
+export function sessionIdOf(taskUri: string): string {
+    return `local-${keyOf(taskUri)}`;
+}
+
+/**
  * 会话 Op 流文件路径。
  * 导出供测试构造「历史对话已存在」的落盘状态：测试与产品共用同一路径实现
  * （key = 可读前缀 + uri 哈希），不复制 key 算法到测试里。
