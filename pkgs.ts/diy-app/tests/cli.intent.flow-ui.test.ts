@@ -8,7 +8,9 @@
 //   3. **已进入**：折线每步一张卡（同一泳道可二次驻留 = 打回）、连线数 = 驻留数 − 1、
 //      打回那条是**红虚线**；参数表单转**只读** + 说明（换配置 = 另起一次运行）
 //   4. **节点详情**：hint 原文 / guard 逐条（标「不可观测」）/ actor / art 三段链
-//   5. **产物区**（##337）：命令未合入 ⇒ 如实写「待接入」；合入后 ⇒ 渲染出 renderer 徽章与 view
+//   5. **产物区**（##337）：**逐驻留一张卡**，且每个驻留显示**它自己那次**的产物（review1 P1-1）；
+//      命令未合入 ⇒ 如实写「待接入」（占位也要逐驻留、逐字对得上）；合入后 ⇒ 断言**渲染出的内容**
+//      （不是「有元素就算」—— P3-1：两态取一等于永远绿灯）
 //   6. **像素判据**（##166 §14.5 / §14.8）：连线**真的画出来了且没被泳道底纹盖住** ——
 //      A/B 对照：正常态红/蓝像素可数；把连线层置底 + 底纹改不透明（复现「被盖住」）⇒ 归零。
 //      「截图无报错」不算证据：首帧抛错时截图照样出图，只是图上什么都没有。
@@ -19,6 +21,7 @@
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
@@ -130,6 +133,30 @@ async function injectStyle(css: string, id: string): Promise<void> {
 }
 async function removeStyle(id: string): Promise<void> {
     await ui.query(`(() => { document.getElementById(${JSON.stringify(id)})?.remove(); return true; })()`);
+}
+
+/**
+ * 产物命令（##337：`flow view` / `flow artifact put`）是否已接入本分支。
+ * 判据取**CLI 自身的退出码**（真源），不看 UI 文案。
+ */
+async function artifactCommandsReady(uri: string): Promise<boolean> {
+    const r = await fx.sh.run(`./diy.sh flow view ${uri}`);
+    return r.code === 0;
+}
+
+/** 放一份**已知**产物进袋（内容 JSON 化 ⇒ 可按内容断言），`--seq` 指定是哪次驻留的 */
+async function putArtifact(uri: string, node: string, seq: number, content: unknown): Promise<void> {
+    const file = join(fx.HOME, `artifact-${node}-${seq}.json`);
+    writeFileSync(file, JSON.stringify(content), "utf-8");
+    const r = await fx.sh.run(`./diy.sh flow artifact put ${uri} --node ${node} --seq ${seq} --file ${file}`);
+    expect(r.code, `放产物失败（${node}#${seq}）：${r.stdout}${r.stderr}`).toBe(0);
+}
+
+/** 产物区各卡（key = `data-flow-artifact`）的文本 —— 判据看的是**卡上的内容** */
+async function artifactCards(): Promise<Record<string, string>> {
+    return await ui.query<Record<string, string>>(
+        `Object.fromEntries([...document.querySelectorAll('[data-flow-artifact]')].map(e => [e.dataset.flowArtifact, e.textContent]))`,
+    );
 }
 
 describe("泳道视图页（##320）", () => {
@@ -312,22 +339,53 @@ describe("泳道视图页（##320）", () => {
         await removeStyle("__t320_pixel_hidden");
     });
 
-    it("产物区（##337）：命令未合入 ⇒ 如实写「待接入」；合入后 ⇒ 渲染 renderer 徽章 + view 元素", async () => {
+    /**
+     * 产物区的**确定态**判据（P3-1：不认「有元素就算」，只认**渲染出的内容**）+ **逐驻留**（P1-1）。
+     *
+     * 造一条**同节点二次驻留**的折线（implement#1 → review#1 → implement#2 → review#2），
+     * 然后按 ##337 是否接入分两支，两支都是**精确**断言：
+     *  · 未接入 ⇒ 4 次驻留 ⇒ **4 张卡**，key 逐一对得上，且卡上**逐字**写着未接入的原因；
+     *  · 已接入 ⇒ 给 review 的两次驻留**各放一份已知产物**，断言 `review#1` 显示 `REVIEW_ONE`、
+     *    `review#2` 显示 `REVIEW_TWO`，且**互不串台** —— 这正是 review1 P1-1 的回归判据
+     *    （旧实现：两次都拿「最后一次驻留」的产物 ⇒ review#1 显示 REVIEW_TWO）。
+     *
+     * 「未接入」支不是跳过：它照样证明**产物区按驻留数画够了卡**（画不出来 = 页面坏了）。
+     */
+    it("产物区：逐驻留一张卡；##337 接入后各驻留各显示各的（P1-1 回归）", async () => {
         const uri = await freshInstance("artifact");
         await cliAdvance(uri, "implement");
+        await cliAdvance(uri, "review");
+        await cliBounce(uri, "implement");
+        await cliAdvance(uri, "review"); // review 二次驻留（seq=2）—— P1-1 的必要条件
+
+        const ready = await artifactCommandsReady(uri);
+        if (ready) {
+            await putArtifact(uri, "review", 1, { columns: ["项", "结论"], rows: [["轮次", "REVIEW_ONE"]] });
+            await putArtifact(uri, "review", 2, { columns: ["项", "结论"], rows: [["轮次", "REVIEW_TWO"]] });
+        }
+
         await openFlowPage(uri);
         await waitUntil(
             () => ui.query<number>(`document.querySelectorAll('[data-flow-artifact]').length`),
-            (n) => n >= 1,
-            { label: "产物区出现", timeoutMs: 8000 },
+            (n) => n >= 4,
+            { label: "产物区出现（4 次驻留 ⇒ 4 张卡）", timeoutMs: 10000 },
         );
-        const txt = await ui.query<string>(`document.querySelector('[data-flow-artifact]').textContent`);
-        const hasRenderer = await ui.query<number>(
-            `document.querySelectorAll('[data-flow-artifact] .badge, [data-flow-art-view], [data-flow-heatmap], [data-flow-kline], [data-flow-equity]').length`,
+        const cards = await artifactCards();
+        // 逐驻留：key 是 `节点#序号`，4 次驻留各一张卡
+        expect(Object.keys(cards).sort()).toEqual(["implement#1", "implement#2", "review#1", "review#2"]);
+
+        if (ready) {
+            expect(cards["review#1"], `review#1 卡：${cards["review#1"]}`).toContain("REVIEW_ONE");
+            expect(cards["review#2"], `review#2 卡：${cards["review#2"]}`).toContain("REVIEW_TWO");
+            // P1-1 的正题：早前驻留**不许**显示后一次的产物
+            expect(cards["review#1"]).not.toContain("REVIEW_TWO");
+        } else {
+            // 未接入：占位要说得准（逐驻留同一原因），且不许悄悄变成「无产物」
+            expect(cards["review#1"]).toContain("待接入");
+            expect(cards["review#2"]).toContain("##337");
+        }
+        console.error(
+            `[##320 产物区] ##337 ${ready ? "已接入" : "未接入"} ⇒ 各卡文本：${JSON.stringify(cards)}`,
         );
-        // 两态取其一：未接入（占位文案）或已接入（真的渲染出东西）—— 两者都算过，但**不许什么都没有**
-        const pending = txt.includes("待接入");
-        expect(pending || hasRenderer > 0).toBe(true);
-        if (pending) expect(txt).toContain("##337");
     });
 });

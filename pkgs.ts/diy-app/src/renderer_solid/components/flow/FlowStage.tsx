@@ -14,18 +14,14 @@
 import { For, Show, createMemo } from "solid-js";
 import type { FlowInstanceView, FlowVisitBrief, FlowArtifactView } from "../../lib/flow-view";
 import { deriveLanes } from "../../lib/flow-view";
+import { visitKey, type ArtifactState } from "../../lib/flow-model";
 import { ACTOR_COLOR, LANE_Z, NODE_Z, WIRE_Z, WIRE_COLOR, buildStage, type StageVisit } from "./swimlane";
 import { renderFlowView } from "./ViewRenderer";
 
-/** 产物取数的三态 + 「这个驻留本来就没产物」 */
-export type ArtifactState =
-    | { readonly kind: "loading" }
-    | { readonly kind: "unavailable"; readonly reason: string }
-    | { readonly kind: "none" }
-    | { readonly kind: "ready"; readonly value: FlowArtifactView };
-
-/** 驻留的 key（同一节点多次驻留各取各的产物 —— `seq` 是领域事实） */
-export const visitKey = (node: string, seq: number): string => `${node}#${seq}`;
+// 产物取数态与驻留 key 的**唯一出处**在纯派生层（`lib/flow-model.ts`）——
+// 那里不碰 RPC，故能被单测直接 import（tests/core/flow-artifacts.test.ts 用它钉死 P1-1）。
+// 此处 re-export 只为让组件侧的 import 面不变。
+export { type ArtifactState, visitKey };
 
 function ArtifactBox(props: { state: ArtifactState | undefined; visit: FlowVisitBrief }) {
     return (

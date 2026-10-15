@@ -20,7 +20,7 @@ import { ViewGrid } from "./ViewGrid";
 import { FlowStage, visitKey, type ArtifactState } from "./flow/FlowStage";
 import { NodeDetail } from "./flow/NodeDetail";
 import { ParamForm } from "./flow/ParamForm";
-import { fetchArtifact, loadFlow, type FlowInstanceView } from "../lib/flow-view";
+import { loadArtifacts as loadArtifactsOf, loadFlow, type FlowInstanceView } from "../lib/flow-view";
 import { notificationStore } from "../store/notificationStore";
 
 const PAGE = "flow";
@@ -34,31 +34,17 @@ export function FlowPage(props: { uri: string }) {
     let alive = true;
     onCleanup(() => (alive = false));
 
-    /** 折线上出现过的节点（去重、保持首次出现序） */
-    const nodesOf = (v: FlowInstanceView): string[] => [...new Set(v.trajectory.map((x) => x.node))];
-
     /**
-     * 取产物：**每个节点一次**（`diy flow view <uri> --node <id>`）。
-     * 节点级而非驻留级，是命令的粒度（##337 的 `--seq` 可选）—— 返回里的 `seq` 告诉我们
-     * 它给的是哪次驻留的产物，按那个 key 落位；取不到就标 `none`，命令不在就标 `unavailable`。
+     * 取产物：**逐驻留取数**（P1-1 的修点）。
+     *
+     * 之前是「每个节点取一次、不传 `--seq`」⇒ 缺省 = 该节点**最后一次**驻留的产物，再按
+     * `visitKey(node, seq)` 各落各的 key ⇒ 早前驻留显示后一次的产物。现在每次驻留带**自己的 seq**
+     * （逻辑在 `lib/flow-model.ts::collectArtifacts`，单测在 tests/core/flow-artifacts.test.ts）。
      */
     const loadArtifacts = async (v: FlowInstanceView) => {
-        const nodes = nodesOf(v);
-        setArtifacts(Object.fromEntries(nodes.map((n) => [n, { kind: "loading" } as ArtifactState])));
-        await Promise.all(
-            v.trajectory.map(async (visit) => {
-                const probe = await fetchArtifact(props.uri, visit.node);
-                if (!alive) return;
-                setArtifacts((prev) => {
-                    const key = visitKey(visit.node, visit.seq);
-                    if (!probe.ok) {
-                        // 命令不在（##337 未合并）⇒ 同一个原因对每个驻留都说一遍（占位要说得准）
-                        return { ...prev, [key]: { kind: "unavailable", reason: probe.reason } };
-                    }
-                    return { ...prev, [key]: probe.value ? { kind: "ready", value: probe.value } : { kind: "none" } };
-                });
-            }),
-        );
+        const next = await loadArtifactsOf(props.uri, v.trajectory);
+        if (!alive) return;
+        setArtifacts(next);
     };
 
     const load = async () => {

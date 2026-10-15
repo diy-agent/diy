@@ -123,6 +123,58 @@ export interface FlowArtifactView {
 /** 探测结果：`ok: false` = 命令尚未在 main 上（##337 未合并）/ 调用失败 —— **不是**「这个节点没产物」 */
 export type ArtifactProbe = { readonly ok: true; readonly value: FlowArtifactView | null } | { readonly ok: false; readonly reason: string };
 
+/** 驻留的 key（同一节点多次驻留**各取各的**产物 —— `seq` 是领域事实，不是显示细节） */
+export const visitKey = (node: string, seq: number): string => `${node}#${seq}`;
+
+/** 一个驻留的产物取数态（四态；`unavailable` 专指命令不在/调用失败，与「本来就没产物」分开） */
+export type ArtifactState =
+    | { readonly kind: "loading" }
+    | { readonly kind: "unavailable"; readonly reason: string }
+    | { readonly kind: "none" }
+    | { readonly kind: "ready"; readonly value: FlowArtifactView };
+
+/** 取一份产物的函数（IO 注入点：真实现是 `flow-view.ts` 的 `fetchArtifact`，单测传桩） */
+export type ArtifactFetcher = (uri: string, node: string, seq?: number) => Promise<ArtifactProbe>;
+
+/**
+ * 逐驻留取产物 —— **每个驻留用「它自己的 seq」取数**。
+ *
+ * 这里是 ##320 review1 的 P1-1 修点：`diy flow view` 不给 `--seq` 时缺省 = 该节点
+ * **最后一次**驻留（##337 的 `resolveSeq`），于是同一节点的每个驻留卡都拿到最后一次的产物；
+ * 若再按 `visitKey(node, seq)` 各落各的 key，早前驻留就会**显示后一次的产物**（打回后
+ * 「第 2 次评审结论」盖掉「第 1 次的」）。⇒ 取数粒度必须与落位粒度一致：**驻留级**。
+ *
+ * 纯派生：IO 由调用方注入（`fetch` 必给），故本函数可在 node 环境的单测里直接跑
+ * （tests/core/flow-artifacts.test.ts 用它把「每个驻留各带自己的 seq」钉死）。
+ */
+export async function collectArtifacts(
+    uri: string,
+    visits: readonly FlowVisitBrief[],
+    fetch: ArtifactFetcher,
+): Promise<Record<string, ArtifactState>> {
+    /** 先全置 loading：key 与落位 key 同一套（`visitKey`），避免「加载中」查不到 */
+    const out: Record<string, ArtifactState> = {};
+    for (const v of visits) out[visitKey(v.node, v.seq)] = { kind: "loading" };
+
+    await Promise.all(
+        visits.map(async (v) => {
+            const key = visitKey(v.node, v.seq);
+            let probe: ArtifactProbe;
+            try {
+                probe = await fetch(uri, v.node, v.seq);
+            } catch (e) {
+                probe = { ok: false, reason: e instanceof Error ? e.message : String(e) };
+            }
+            out[key] = !probe.ok
+                ? { kind: "unavailable", reason: probe.reason }
+                : probe.value
+                  ? { kind: "ready", value: probe.value }
+                  : { kind: "none" };
+        }),
+    );
+    return out;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 派生（纯函数；单测在 tests/core/flow-ui-swimlane.test.ts）
 // ═══════════════════════════════════════════════════════════════

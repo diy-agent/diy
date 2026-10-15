@@ -10,7 +10,8 @@
  *     **绝不自己造数据**（##166 §14.8 的教训：假数据会让「画出来了」的判据失去意义）。
  */
 import { diyService } from "./rpc";
-import type { ArtifactProbe, FlowArtifactView, FlowInstanceView } from "./flow-model";
+import { collectArtifacts } from "./flow-model";
+import type { ArtifactProbe, ArtifactState, FlowArtifactView, FlowInstanceView, FlowVisitBrief } from "./flow-model";
 
 export * from "./flow-model";
 
@@ -34,22 +35,37 @@ export async function saveParams(uri: string, params: readonly string[]): Promis
 }
 
 /**
- * 取某节点的产物（##337 的只读命令）。
+ * 取某节点**某次驻留**的产物（##337 的只读命令）。
+ *
+ * `seq` 必传（调用方总有它：折线上的每次驻留都带 `seq`）—— **不给就退化成「该节点最后一次
+ * 驻留」**，那正是 ##320 review1 P1-1 的错配来源。此处把它设成**必填参数**，让「忘了传」
+ * 在类型层就过不去；要「最后一次」的语义就显式传 `undefined`（见 `collectArtifacts` 的签名）。
  *
  * **存在性判据**用的是 typed-client 的实现细节（`core/typed-client.ts` 的 `buildProxy`）：
  * 未注册的过程名返回的是**下一层 Proxy 对象**而非函数 ⇒ `typeof fn === "object"` 即「命令不存在」。
  * 这条判据只用于**给出人话的占位原因**，调用失败（命令在但出错）走 catch 分支。
  */
-export async function fetchArtifact(uri: string, node: string): Promise<ArtifactProbe> {
+export async function fetchArtifact(uri: string, node: string, seq?: number): Promise<ArtifactProbe> {
     const ns = diyService.diy.flow as unknown as Record<string, unknown>;
     const fn = ns["view"];
     if (typeof fn !== "function") {
         return { ok: false, reason: "主进程未提供 `diy flow view` 命令（##337 未合入）" };
     }
     try {
-        const out = await (fn as (input: { uri: string; node?: string }) => Promise<unknown>)({ uri, node });
+        const out = await (fn as (input: { uri: string; node?: string; seq?: number }) => Promise<unknown>)({ uri, node, seq });
         return { ok: true, value: (out ?? null) as FlowArtifactView | null };
     } catch (e) {
         return { ok: false, reason: e instanceof Error ? e.message : String(e) };
     }
+}
+
+/**
+ * 折线上所有驻留的产物（**逐驻留取数**，P1-1）。
+ *
+ * 逻辑在 `flow-model.ts::collectArtifacts`（纯派生、可单测），此处只把它与真 RPC 绑起来；
+ * 抽这一层是为了让「每个驻留各带自己的 seq」能被**单测**钉死（无 Electron 也能证），
+ * 而那正是本条 bug 的判据。
+ */
+export async function loadArtifacts(uri: string, visits: readonly FlowVisitBrief[]): Promise<Record<string, ArtifactState>> {
+    return collectArtifacts(uri, visits, fetchArtifact);
 }
