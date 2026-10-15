@@ -36,15 +36,20 @@ import { emitYamlTraced, renderPaths, subsetOf, toYaml } from "./render";
 import type { ContextPath, ContextTreeState } from "./types";
 
 /**
- * 信封的**总逻辑**（zod 描述不了的那部分）。它是代码：改这段 = 改 wire 语义
- * （`WIRE_ENCODING` 跟着变，见 wire.ts）。
+ * 信封的**总逻辑**（zod 描述不了的那部分）—— 固定话术，逐条讲清「help 描述不了的事」。
+ *
+ * 它是**代码**（改这段 = 改发给模型的话术）。⚠️ 但它**不参与** `WIRE_VERSION` 派生
+ * （那只由 `wire.ts::WIRE_ENCODING` 的结构语义决定）；而顶层键增删**是** wire 形态变化
+ * —— 八轮加了 `history` 键却没在 `WIRE_ENCODING` 里加轴（会让存量 step 记录集体变
+ * "不可比"，代价与收益待定），故此处留注：**要不要为信封键集加轴，是个开口问题**。
  */
 export const ENVELOPE_ABOUT = [
-    "本消息是一份 YAML 信封：顶层键固定为 system / runtime / runtimeDiff / user（见 help 各节）。",
+    "本消息是一份 YAML 信封：顶层键只有 help / system / runtime / runtimeDiff / history / user（见 help 各节）；其中 history 只在会话历史被压缩时出现。",
     "· help 段是**结构说明**（由代码里的 zod 定义派生，随代码版本变化）——读它就知道每个键是什么、下面有哪些字段。",
-    "· 值段（system / runtime / runtimeDiff / user）只放**数据**，不放解释；解释一律在 help。",
+    "· 值段（system / runtime / runtimeDiff / history / user）只放**数据**，不放解释；解释一律在 help。",
     "· system 段每次请求**全量重建**（稳定项），变更时直接以新值替换、不带历史。",
     "· runtime 段是**易变项**：每轮首步给全量；轮中途某一步变了，就**追加**一条只含 runtimeDiff 的消息（键 = 变化的单元，值 = 该单元变更后的当前值）。新旧以**后出现**的为准。",
+    "· **历史压缩不影响变量树**：`history:` 段只说明「对话历史被压掉了哪些行」。system / runtime 两段**每次都是全量当前值**（system 段随每个请求重建；runtime 段在每轮第一条 user 消息里给全量，轮中途变了再追加 `runtimeDiff`）—— 变量树**不会**因压缩而丢失或陈旧。**不要**为「某个变量现在是什么值」去做额外查询（cat 文件 / 跑命令），直接看本消息里的值。",
     "· `[]` / `{}` 表示「该变量存在但为空」，与「没有这个变量」不是一回事。",
 ].join("\n");
 
@@ -104,13 +109,24 @@ export function buildHelpDoc(opts: {
 }
 
 /**
- * 把 **`user:` 段**（本轮输入）续在 runtime 信封之后，成**一份**合法 YAML。
+ * 把若干**顶层键片段**（各自是 `k:` + 缩进正文的一段 YAML）与可选的 `user:` 段拼成**一份**合法 YAML。
  *
- * 为什么不各自一条消息：`normalizeUserRuns` 必然把相邻 user 合并（多家 provider 拒连续
+ * 硬规则（##310）：消息里一切**自动生成**的段（`history:` 压缩索引、`runtime:` 变量树）
+ * 都必须有**自己的顶层键名**，与用户真话（`user.message`）泾渭分明 —— 混进 `user.message`
+ * 会被模型当成"用户的任务内容"去处理（tasks/5 实测：模型为此多烧 3 次 bash、5.6 万 prompt token）。
+ *
+ * 为什么不各自发一条消息：`normalizeUserRuns` 必然把相邻 user 合并（多家 provider 拒连续
  * 同角色），合并出来是「YAML + 裸文本」—— 不是 YAML 也不是对话。自己合成一份才可控。
  */
+export function tailEnvelope(parts: readonly string[], userText?: string): string {
+    const blocks = parts.filter((p) => p.trim());
+    if (userText !== undefined) blocks.push(toYaml({ user: { message: userText } }));
+    return blocks.join("\n");
+}
+
+/** 只拼 `runtime:` + `user:` 的常见形（见 `tailEnvelope`） */
 export function appendUserKey(runtimeText: string, userText: string): string {
-    return `${runtimeText}\n${toYaml({ user: { message: userText } })}`;
+    return tailEnvelope([runtimeText], userText);
 }
 
 export type { SchemaDoc };

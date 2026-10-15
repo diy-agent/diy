@@ -44,7 +44,7 @@ export const HistoryNoteSchema = z
             .array(z.tuple([z.number(), z.number()]))
             .describe("保留的消息行号区间 [from, to]（含两端，1-based = 日志文件物理行号）；区间之间的空隙即被省略的部分"),
     })
-    .describe("会话历史被按字节预算压缩时，**头部**那条 user 消息里的 `history:` 段：被省略区间的**保留位置索引**");
+    .describe("会话历史被按字节预算压缩时的**保留位置索引**：信封里的 `history:` 键（与 runtime / user 平级，**不进** user.message）。`kept` 列出保留的消息行号区间，区间之间的空隙即被省略的部分");
 
 export type HistoryNote = z.infer<typeof HistoryNoteSchema>;
 
@@ -55,7 +55,7 @@ export interface HistoryNoteCtx {
     absPath: string;
 }
 
-/** 把注记渲染成一段可直接插进 user 消息的 **YAML 文本**（字段说明在 `help.history`） */
+/** 把注记渲染成信封里的一个**顶层键片段**（`history:` 一段；字段说明在 `help.history`） */
 export function renderBudgetNote(note: Omit<HistoryNote, "file" | "absPath">, ctx: HistoryNoteCtx): string {
     return toYaml({ history: { file: ctx.file, absPath: ctx.absPath, ...note } });
 }

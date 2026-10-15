@@ -76,7 +76,7 @@ import {
 } from "../../shared/usage";
 import { buildDelivery, isRuntimePlace, runtimeDiffDelivery, type Delivery } from "../../shared/context/delivery";
 import { renderBudgetNote } from "../../shared/context/budget-note";
-import { appendUserKey } from "../../shared/context/envelope";
+import { tailEnvelope } from "../../shared/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -405,27 +405,49 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
 }
 
 /**
- * 把 runtime **信封**拼进 messages，并把**本轮输入**并进同一份信封（`user: message:`）。
+ * 把**尾部信封**拼进 messages：`history:`（压缩索引注记，可选）+ `runtime:`（或 `runtimeDiff:`）
+ * + `user:`（本轮输入），合成**一份**合法 YAML（`tailEnvelope`）。
  *
- * 为什么合成一份（##310 六轮拍板）：runtime 信封与本轮输入是**两条相邻 user**，而
+ * 为什么合成一份（##310 六轮拍板）：这些段与本轮输入是**相邻 user**，而
  * `normalizeUserRuns` 必然把它们合并成一条（多家 provider 拒连续同角色）。与其让合并
  * 产出一段"YAML 后面跟着裸文本"的怪东西，不如**我们自己合成一份合法 YAML**：
  *
+ *     history:      ← 仅当历史被压缩（自动生成的元数据，自己的顶层键）
+ *       kept: [[5, 8]]
  *     runtime:      ← 或 runtimeDiff:
  *       task: {…}
  *     user:
  *       message: '用户真正说的话'
  *
- * 尾部不是 user（如自动续跑、纯工具轮）→ 退回旧行为：runtime 单独一条消息
- * （没有可并的输入，就不编一个 `user:` 出来）。
+ * ⚠️ 自动生成的段**一律要有自己的顶层键**（##310 八轮）：注记曾与保留首条 user 被合并，
+ * 于是 `user.message` = 「history 索引 + 用户原话」拼在一起 —— 模型把它当成任务内容去查
+ * （tasks/5 实测：多烧 3 次 bash、5.6 万 prompt token 就为一个字）。
+ *
+ * 尾部不是 user（如自动续跑、纯工具轮）→ 不编 `user:` 段；既无 runtime 又无注记 → 原样返回。
  */
-function withRuntime(hist: ModelMessage[], runtime: string): ModelMessage[] {
-    if (!runtime.trim()) return hist;
+function withRuntime(hist: ModelMessage[], runtime: string, historyNote = ""): ModelMessage[] {
+    const parts = [historyNote, runtime].filter((t) => t.trim());
+    if (parts.length === 0) return hist;
     const last = hist[hist.length - 1];
     if (last && last.role === "user" && typeof last.content === "string" && last.content.trim()) {
-        return [...hist.slice(0, -1), { role: "user", content: appendUserKey(runtime, last.content) }];
+        return [...hist.slice(0, -1), { role: "user", content: tailEnvelope(parts, last.content) }];
     }
-    return [...hist, { role: "user", content: runtime }];
+    // 没有可并的输入：只有 runtime 时保持旧形（逐字一致）；带注记则让注记有自己的顶层键
+    if (parts.length === 1 && !historyNote.trim()) return [...hist, { role: "user", content: runtime }];
+    return [...hist, { role: "user", content: tailEnvelope(parts) }];
+}
+
+/**
+ * 投递口径的历史 = **消息** + **压缩索引注记片段**（`history:` 一段，纯数据）。
+ *
+ * 为什么把注记拿出来（##310 八轮）：它进 messages 就必然被 `normalizeUserRuns` 合并进
+ * 相邻那条 user 的正文 —— 于是自动生成的元数据伪装成用户原话。改成"注记 = 独立顶层键片段"，
+ * 由调用方与 runtime 一起塞进**尾部信封**（`withRuntime`），`user.message` 只剩用户真说的那句。
+ */
+export interface HistoryDelivery {
+    messages: ModelMessage[];
+    /** 压缩索引注记片段（`history:` 一段；空串 = 本次没压缩，不投递） */
+    note: string;
 }
 
 /** 读某任务的投递快照（时间正序；文件不存在 = 还没真发过） */
@@ -1301,9 +1323,10 @@ export class LocalAgentManager {
      * **投递口径的历史**（真发 / 预览 / panel 三处唯一入口）。
      *
      * 未压缩 → 与历史行为逐字一致（全量投影）。
-     * 已压缩 → 被省区间渲染成一条 **user 索引注记**，拼在保留部分之前（形式 B）：
-     *   messages 保持原样（provider 最友好、前缀缓存不砸），结构化索引只出现在"被省的位置"。
-     *   注记与紧邻的保留首条 user 会被 normalizeUserRuns 合并成一条（provider 拒连续同角色）。
+     * 已压缩 → 被省区间渲染成一段 **`history:` 索引注记**（纯数据，解释在 `help.history`），
+     * 由调用方放进**尾部信封**（`withRuntime`）—— 见下 `HistoryDelivery.note`。
+     * **messages 保持原样**（provider 最友好、前缀缓存不砸）：注记不再拼进历史里，
+     * 免得被 `normalizeUserRuns` 并进某条 user 的正文（那是 ##310 八轮修掉的坑）。
      *
      * 行号口径：llm.jsonl 只增且**第 i 行 = 全量投影第 i 条**（加载时已对账/补齐），
      * 故此处用全量投影的序号当行号 —— 它是模型回取时的真实落点。
@@ -1312,7 +1335,7 @@ export class LocalAgentManager {
         taskUri: string,
         store: BlockStore,
         collect?: ClippedToolDetail[],
-    ): ModelMessage[] {
+    ): HistoryDelivery {
         // 【配置 / 历史分离，用户 2026-10-07】投递口径 = **当前配置**（期望值），每次请求实时算 ——
         // 改预算**本轮即生效**。压缩账（compact.jsonl）只是**历史快照**（不可变，供回溯/对比），
         // 不再决定投递（旧实现读 `resolveBoundary` → 没压过就不生效，违反直觉）。
@@ -1321,12 +1344,12 @@ export class LocalAgentManager {
     }
 
     /** 面板参数预览用（给定 policy + 边界现算，不读生效账本）—— 与真发同一条构造链 */
-    private deliveryHistoryForView(store: BlockStore, policy: CompactPolicy | null, taskUri: string): ModelMessage[] {
+    private deliveryHistoryForView(store: BlockStore, policy: CompactPolicy | null, taskUri: string): HistoryDelivery {
         return this.buildHistory(store, policy, undefined, taskUri);
     }
 
 /**
-     * 投递历史的**唯一构造**：原生投影 + 预算注记。
+     * 投递历史的**唯一构造**：原生投影 + 预算注记（注记**另作一段**，不拼进 messages）。
      * policy=null ⇒ 全量（未压缩，无注记）。
      */
     private buildHistory(
@@ -1335,10 +1358,10 @@ export class LocalAgentManager {
         collect?: ClippedToolDetail[],
         /** 原文路径用（注记里的 file 字段）；view 路径与真发同一个 taskUri */
         taskUriOf = "",
-    ): ModelMessage[] {
+    ): HistoryDelivery {
         const opts: DeliveryOpts = policy ? optsFor(policy, collect) : {};
         const kept = blocksToMessages(store, opts) as unknown as ModelMessage[];
-        if (!policy || !this.noteEnabled()) return kept;
+        if (!policy || !this.noteEnabled()) return { messages: kept, note: "" };
         // 预算注记：只列**保留区间**（gap 自明，不逐 gap 标注）
         const all = projectAll(store);
         const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, opts);
@@ -1350,7 +1373,7 @@ export class LocalAgentManager {
             },
             { file: llmLogRelPath(taskUriOf), absPath: llmFile(taskUriOf) },
         );
-        return normalizeUserRuns([{ role: "user", content: note }, ...kept]);
+        return { messages: kept, note };
     }
 
     /** 索引注记开关（默认开；`DIY_CTX_HISTORY_NOTE=0` 关 —— 对照实验用，将来收编进 policy） */
@@ -1430,7 +1453,7 @@ export class LocalAgentManager {
             ? null
             : last
               ? bucketsOf(last.usage as UsageLike).total / limit
-              : (delivery.system.bytes + delivery.runtime.bytes + this.deliveryHistory(taskUri, this.sessions.get(taskUri)?.store ?? new BlockStore()).reduce((a, m) => a + JSON.stringify(m).length, 0)) /
+              : (delivery.system.bytes + delivery.runtime.bytes + this.deliveryHistory(taskUri, this.sessions.get(taskUri)?.store ?? new BlockStore()).messages.reduce((a, m) => a + JSON.stringify(m).length, 0)) /
                 limit;
 
         const facts: AutoCompactFacts = {
@@ -1449,7 +1472,7 @@ export class LocalAgentManager {
      * **只读**：自己 replay ops，不加载会话、不落盘 —— 预览用，不应有副作用。
      * （不能用 llm.jsonl：那是 append-only 的**全量**日志，含已被压掉的轮。）
      */
-    deliveryMessages(taskUri: string): ModelMessage[] {
+    deliveryMessages(taskUri: string): HistoryDelivery {
         const store = new BlockStore();
         for (const op of readJsonl<Op>(opsFile(taskUri))) store.apply(op);
         return this.deliveryHistory(taskUri, store);
@@ -1664,10 +1687,8 @@ export class LocalAgentManager {
         const store = new BlockStore();
         for (const op of readJsonl<Op>(opsFile(taskUri))) store.apply(op);
         // 与真发**同一条链**（含压缩注记）：面板里的"压缩后预览"就是这一份
-        const history = withRuntime(
-            this.deliveryHistoryForView(store, policy, taskUri),
-            delivery.runtime.text,
-        );
+        const histView = this.deliveryHistoryForView(store, policy, taskUri);
+        const history = withRuntime(histView.messages, delivery.runtime.text, histView.note);
         const summaryText = summaryOverride !== undefined ? summaryOverride : this.effectiveSummary(taskUri);
         const messages = normalizeUserRuns(withSummary(history, summaryText));
         return {
@@ -2556,9 +2577,10 @@ export class LocalAgentManager {
                 systemBytes: delivery.system.bytes,
                 toolsBytes: JSON.stringify(tools).length,
             };
+            const hist = this.deliveryHistory(taskUri, sess.store);
             const sent: ModelMessage[] = normalizeUserRuns(
                 withSummary(
-                    withRuntime(this.deliveryHistory(taskUri, sess.store), delivery.runtime.text),
+                    withRuntime(hist.messages, delivery.runtime.text, hist.note),
                     this.effectiveSummary(taskUri),
                 ),
             );
@@ -3106,15 +3128,17 @@ export async function previewSimulatedRequest(opts: {
     // 历史：优先用调用方传的；否则从块树现算（与真发同一条投影 —— 含压缩边界与工具裁剪）。
     // 全量下发（不再有截尾上限）：历史已被压缩边界裁过，再截尾会破坏「预览=真发」。
     const hist = opts.messages?.length
-        ? { messages: opts.messages }
-        : { messages: getLocalAgent().deliveryMessages(taskUri) };
-    // 与真发同样合并相邻 user（真发 = normalizeUserRuns(...本轮的 runtime + 输入)）——
-    // 否则预览会显示两条连续 user，而真发只有一条，破坏「预览看到的 = 发出去的」
-    const messages: ModelMessage[] = normalizeUserRuns([
-        ...hist.messages,
-        ...(opts.runtime ? [{ role: "user" as const, content: opts.runtime }] : []),
-        { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" },
-    ]);
+        ? { messages: opts.messages, note: "" }
+        : getLocalAgent().deliveryMessages(taskUri);
+    // 与真发**逐字同形**：末条 user = 本轮输入 → 外面套**尾部信封**（history? + runtime + user），
+    // 再合并相邻 user。别各插一条消息 —— 那样合出来是「YAML + 裸文本」，预览会撒谎。
+    const messages: ModelMessage[] = normalizeUserRuns(
+        withRuntime(
+            [...hist.messages, { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" }],
+            opts.runtime ?? "",
+            hist.note,
+        ),
+    );
     let body: Record<string, unknown> | null = null;
     simBodySink = (b) => {
         body = b;

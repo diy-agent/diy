@@ -618,7 +618,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
         taskUri,
         system: lab.system.text,
         model,
-        // runtime 作为独立 user 消息插在末条之前 —— 与真发（runTurn 的 withRuntime）同形
+        // runtime 由 previewSimulatedRequest 经 withRuntime 拼进**尾部信封**（history? + runtime + user）
         runtime: lab.runtime.text,
       });
       request = { body: sim.body, note: sim.note, model };

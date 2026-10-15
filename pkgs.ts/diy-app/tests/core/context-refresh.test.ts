@@ -11,13 +11,14 @@ import type { LanguageModelV3StreamPart, LanguageModelV3StreamResult, LanguageMo
 import { MockLanguageModelV3 } from "ai/test";
 import type { LanguageModel, ModelMessage } from "ai";
 import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask, updateTask } from "../../src/main/core/task";
 import { LocalAgentManager } from "../../src/main/services/local-agent";
 import { readCtxLog } from "../../src/main/core/context-changelog";
 import { isV2Entry, entryToRows } from "../../src/shared/context/changelog";
-import { appendUserKey } from "../../src/shared/context/envelope";
+import { appendUserKey, tailEnvelope } from "../../src/shared/context/envelope";
 import { buildDelivery, runtimeDiffDelivery } from "../../src/shared/context/delivery";
 
 let PROJECT = "";
@@ -78,7 +79,28 @@ function promptText(model: MockLanguageModelV3, callIndex: number): string {
     return out.join("\n");
 }
 
-describe("信封：runtime + 本轮输入合成一份 YAML（appendUserKey）", () => {
+describe("信封：尾部各段各占一个顶层键（tailEnvelope / appendUserKey）", () => {
+    it("history 注记与 runtime 并列、user 在最后 —— 自动生成的段不混进 user.message", () => {
+        const out = tailEnvelope(
+            ["history:\n  kept:\n    - - 1\n      - 1", "runtime:\n  task:\n    body: x"],
+            "回复 1",
+        );
+        expect(out).toBe(
+            'history:\n  kept:\n    - - 1\n      - 1\nruntime:\n  task:\n    body: x\nuser:\n  message: "回复 1"',
+        );
+        // 关键：`user.message` 只剩用户真话（曾经注记被并进这里，模型把它当任务去查 —— tasks/5 实测）
+        expect(out.slice(out.indexOf("\nuser:"))).not.toContain("history");
+        // 注记在前、user 在最后
+        expect(out.indexOf("history:")).toBeLessThan(out.indexOf("runtime:"));
+        expect(out.indexOf("\nuser:")).toBeGreaterThan(out.indexOf("runtime:"));
+    });
+    it("没有注记时逐字等于旧形（appendUserKey）", () => {
+        expect(tailEnvelope(["runtime:\n  a: 1"], "你好")).toBe(appendUserKey("runtime:\n  a: 1", "你好"));
+    });
+    it("一个片段都没有 → 原样（不编 user 段）", () => {
+        expect(tailEnvelope([], undefined)).toBe("");
+    });
+
     it("runtime 之前、user 之后，一份合法 YAML（不是两条相邻 user 被合并出的怪东西）", () => {
         const out = appendUserKey("runtime:\n  task:\n    body: x", "你好");
         expect(out).toBe('runtime:\n  task:\n    body: x\nuser:\n  message: "你好"');
@@ -176,6 +198,45 @@ describe("轮内重算：变量变了 → 下一步请求即用新值", () => {
         const count = (s: string, sub: string): number => s.split(sub).length - 1;
         // runtime 只出现一次（若每步都追加而非"变了才注入"，这里会 > 1）
         expect(count(promptText(model, 1), "正文固定值-CCCCCCCCCC")).toBe(1);
+    });
+});
+
+describe("压缩注记的位置：进尾部信封的 history: 键，不进 user.message", () => {
+    it("历史被压缩时，末条 user 消息 = history + runtime + user 三段；用户原话无污染", async () => {
+        // 把历史预算调到极小 → 一定触发注记（真源 = $DIY_HOME/auto-compact.yaml 的 policy）
+        writeFileSync(
+            join(diyHome(), "auto-compact.yaml"),
+            JSON.stringify({
+                mode: "notify",
+                triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 0.8 },
+                policy: { mode: "budget", modeData: { budgetBytes: 64, toolResult: { render: "asis" } }, summary: false },
+            }),
+            "utf-8",
+        );
+        const uri = newUri("注记位置", "正文-AAAAAAAAAA");
+        const model = new MockLanguageModelV3({
+            provider: "stub",
+            modelId: "stub-model",
+            doStream: () => Promise.resolve(textReply("好")),
+        });
+        const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+        for await (const _op of mgr.chat(uri, "第一轮")) void _op;
+        for await (const _op of mgr.chat(uri, "第二轮")) void _op;
+
+        const prompt = (model.doStreamCalls[1]?.prompt ?? []) as Array<{ role: string; content: unknown }>;
+        const last = prompt[prompt.length - 1];
+        expect(last?.role).toBe("user");
+        // ⚠️ 经 SDK 后 user 的 content 一律是 part 数组（可能是单 part 或多 part）→ 取首段文本
+        const content = last?.content;
+        const text =
+            typeof content === "string"
+                ? content
+                : ((content ?? []) as Array<{ text?: string }>).map((part) => part.text ?? "").join("\n");
+        expect(text.startsWith("history:")).toBe(true);
+        expect(text).toContain("\nruntime:");
+        expect(text.endsWith('user:\n  message: "第二轮"')).toBe(true);
+        // 用户原话那一节里不出现自动生成的元数据
+        expect(text.slice(text.indexOf("\nuser:"))).not.toContain("history");
     });
 });
 
