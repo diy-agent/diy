@@ -67,7 +67,7 @@ import type { SteerItem, SteerMode } from "../../main/core/drafts";
 import { reasoningEffortLabel } from "../../shared/reasoning-effort";
 import { DragDropProvider, DragOverlay, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
-import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron } from "./icons";
+import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron, IconCode } from "./icons";
 import { RowGutter } from "./RowGutter";
 import { VIEW_BAR_H, chatInputMaxHeight } from "../lib/layout-metrics";
 import type { BlockNode } from "../../main/services/local-blocks";
@@ -2394,26 +2394,26 @@ export function LocalChatPage(props: { uri?: string }) {
                     <IconChevron open={globalLevel() > 1} class="h-3.5 w-3.5 opacity-40" />
                     <span class="text-body leading-none">{`${globalLevel()}/${TURN_LEVEL_MAX} 展开`}</span>
                 </button>
-                {/* 显示方式二选一：两个选项都可见、当前态高亮 —— 单按钮式「MD」看不出
-                    处于哪一态（切回去要猜），且与破坏性按钮同形时易误点。 */}
-                <div class="join shrink-0" role="group" aria-label="Markdown 显示方式">
-                    <button
-                        class={`btn btn-xs join-item ${md() ? "btn-ghost" : "btn-active"}`}
-                        title="原文：按纯文本显示，不做 Markdown 渲染"
-                        aria-pressed={!md()}
-                        onClick={() => setMd(false)}
-                    >
-                        MD 原文
-                    </button>
-                    <button
-                        class={`btn btn-xs join-item ${md() ? "btn-active" : "btn-ghost"}`}
-                        title="渲染：按 Markdown 富文本显示"
-                        aria-pressed={md()}
-                        onClick={() => setMd(true)}
-                    >
-                        MD 渲染
-                    </button>
-                </div>
+                {/* 显示方式 = **一个开关的两态**，故用单个 `<>` 图标按钮（VSCode「切换源码」范式，##348 ④）。
+                    原先摆两个按钮（MD 原文 / MD 渲染）像两个动作，其实是同一开关的两面，白占两格。
+                    单按钮最容易犯的错是「看不出当前是哪态」，这里用三处一起说清，不靠用户猜：
+                      · 图标按钮的**按下态**（`btn-active` + `aria-pressed` = 正处于原文态）
+                      · tooltip 直接写**点一下会去哪**（不是描述当前态）
+                      · `data-md` 给测试/自动化一个不随皮肤变的口径
+                    用 daisyUI 的 `btn-active` 而不是 `swap`：swap 的两图标交替需要两块图标，
+                    而这里只有一个 `<>`（态由底色表达）。 */}
+                <button
+                    class="btn btn-xs btn-ghost shrink-0"
+                    classList={{ "btn-active": !md() }}
+                    data-testid="chat-md-toggle"
+                    data-md={md() ? "1" : "0"}
+                    aria-pressed={!md()}
+                    aria-label="Markdown 显示方式（原文 / 渲染）"
+                    data-tip={md() ? "查看 Markdown 原文（纯文本）" : "回到 Markdown 渲染（富文本）"}
+                    onClick={() => setMd(!md())}
+                >
+                    <IconCode class="h-3.5 w-3.5" />
+                </button>
                 {/* 「⋯」溢出菜单：低频/危险操作的收容处（学 VSCode 视图栏的 ... 附加菜单）。
                     清空历史破坏且不可恢复，常驻图标太显眼（防误删已改三轮：改名/确认/挪位，
                     本轮诉求是**位置/层级**）—— 收进来，点开才露出。
