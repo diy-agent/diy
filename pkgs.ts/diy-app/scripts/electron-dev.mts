@@ -181,8 +181,8 @@ function installStallDetector(): void {
       st.warned = key;
       state.set(pair.label, st);
       const message = missing
-        ? `${pair.output} 不存在且 60s 内未重建：watcher 可能已卡死，重启 ./sha.sh dev`
-        : `源码比 ${pair.output} 新且持续 60s 未重建：watcher 可能已卡死，重启 ./sha.sh dev`;
+        ? `${pair.output} 不存在且 60s 内未重建：watcher 可能已卡死，重启 ./sha.sh preview|lab`
+        : `源码比 ${pair.output} 新且持续 60s 未重建：watcher 可能已卡死，重启 ./sha.sh preview|lab`;
       devLog("watch-stall-suspect", {
         pair: pair.label,
         output: pair.output,
