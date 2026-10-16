@@ -30,7 +30,8 @@ import { draftStore } from "../store/draftStore";
 import { editTask } from "../lib/task-edit";
 import { diyService } from "../lib/rpc";
 import { getRendererActions } from "../lib/renderer-actions";
-import { lineageRows } from "../lib/task-lineage";
+import { findNode, lineageRows } from "../lib/task-lineage";
+import { TaskParentEditor } from "./TaskParentControls";
 import { notificationStore } from "../store/notificationStore";
 import { Caches, TASK_DETAIL_LEFT_MIN, TASK_DETAIL_LEFT_MAX } from "../lib/ui-state";
 import { MarkdownView } from "./MarkdownView";
@@ -231,6 +232,12 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
         }
     };
 
+    /** 父任务节点（树现查；父是「一级任务」或树未加载时为 undefined） */
+    const parentNode = () => {
+        const p = findNode(taskStore.nodes, props.uri)?.parentUri;
+        return p ? findNode(taskStore.nodes, p) : undefined;
+    };
+
     /** 改状态 / 分类字段：不进编辑态，改完即存 */
     const savePatch = async (patch: Record<string, string>) => {
         setSaving(true);
@@ -382,6 +389,15 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                             📂 {props.task.project_label ?? props.task.project_path ?? props.task.project}
                         </span>
                     </div>
+                    {/* 父级（##356 ①）：此前只能靠任务表里拖动改父 —— 任务一多就没法同屏定位
+                        两个节点。这里就地重设（选一个已有任务 / 提升为一级）。
+                        父名**从任务树现查**：parentUri 才是父子关系的真相源，且树一刷新
+                        这里跟着变（不必等详情重取）。 */}
+                    <TaskParentEditor
+                        uri={props.uri}
+                        project={props.task.project ?? ""}
+                        parentTitle={parentNode()?.title ?? null}
+                    />
                 </Show>
                 <Show when={props.task.created}>
                     <div class="task-field-row">
