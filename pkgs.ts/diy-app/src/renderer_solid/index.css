@@ -302,6 +302,42 @@
     padding-top: 0.2rem;
 }
 
+/* ── 轮尾状态行的**截断纪律**（##298）────────────────────────────────────
+ * 极窄栏（420px 窗口、侧栏占满后内容列只剩 ~88px）里几个 `shrink-0` 兄弟互不相让：
+ * 时刻（全量到秒，##253）109px + 统计 + 速度 + 用量条，行被顶破容器 36px，
+ * 且文本在 span 内**折行**（行高 21px → 37px）。两条修法：
+ *   ① 每一段都能缩、会截（`min-w-0 truncate`，见 UsagePanel 的 `CLIP`）—— 行**永不横向溢出**；
+ *   ② 谁先退场按**本行自己的宽度**排（`container-type` 让这段查询的是行宽，**不是窗口宽**：
+ *      侧栏被拖宽时窗口宽 ≠ 内容宽，媒体查询在这里根本判不准）。
+ *      顺序 = 信息密度：速度（可省）→ 统计（可省）→ 用量条（还有别的入口）→ 时刻（##253 用户
+ *      口径：它是定位用的，留到最后、截断也在）。
+ * 阈值取"再窄就只是几个省略号"的档，不是审美偏好。 */
+.diy-chat [data-turn-status] {
+    container-type: inline-size;
+}
+@container (width < 20rem) {
+    /* 速度两档（##349：直播 ⚡ = `data-turn-live-rate` / 轮均 ⌀ = `data-turn-rate`）
+     * 同一位置换档，退场当然也要一起退 —— 两个属性都列，免得只剩一档时又冒出来。 */
+    .diy-chat [data-turn-status] [data-turn-rate],
+    .diy-chat [data-turn-status] [data-turn-live-rate] {
+        display: none;
+    }
+}
+@container (width < 14rem) {
+    .diy-chat [data-turn-status] [data-turn-stat] {
+        display: none;
+    }
+}
+/* 用量条也退场（<10rem = 160px）—— 这一档只剩得下"时刻 + 省略号"，留个 8px 的按钮
+ * 只会把时刻一起挤成 0（两个都看不见、点也点不中）。这一档本就是**侧栏被拖宽 > 窗口宽**
+ * 的病态走廊（实测 420px 窗口里内容列只剩 48px），此时整行只保住时刻 —— 少掉的是**这一轮**的
+ * 逐步明细入口，会话累计用量在输入框底部的 chip（点击开用量看板）里照旧可达。 */
+@container (width < 10rem) {
+    .diy-chat [data-turn-status] [data-turn-usage] {
+        display: none;
+    }
+}
+
 /* card：**每块一张卡**（左 4px 灰条 = 类型；色归错误/警告）——
  * 主层（正文行 / 过程 bar / 结尾槽 / 逐条过程）同一张卡；**子层在卡内、色条浅一档**。
  * 人物栏不是卡（草图 v4 的 `.B .k-head{border:0}`）：它只是"这轮是谁"，不是一件东西。 */
