@@ -50,6 +50,17 @@ export const AutoCompactHistorySchema = z.object({
         .array(z.unknown())
         .optional()
         .describe("级列表 `{ type, must?, limit?, clip?, data }`（形状见 shared/context/compact-keep.ts）；缺省回落默认管道"),
+    /**
+     * **闸**：允许本地 agent 经 `compact_plan` 工具改写 plan（##362 M3a）。
+     *
+     * 缺省 `false` = agent 只读（get / check 始终可用）——plan 是**全局配置**，改它等于改所有任务、
+     * 所有 agent 的投递；给手的同时必须给闸，且闸的缺省方向只能是"关"（写坏 keep ⇒ 全库会话静默丢上下文）。
+     * 人工入口（CLI `compact plan set` / UI 编辑器）**不受此闸约束**：那是用户自己的显式操作。
+     */
+    allowAgentWrite: z
+        .boolean()
+        .optional()
+        .describe("允许本地 agent 写 plan（缺省 false；CLI/UI 不受此闸约束）"),
 });
 
 export const AutoCompactConfigSchema = z.object({
@@ -75,8 +86,11 @@ export interface AutoCompactConfig {
     mode: "off" | "notify" | "auto";
     triggers: AutoCompactTriggers;
     policy: CompactPolicy;
-    /** 级列表（已校验；非法 / 空列表在此缺席 = 回落缺省管道） */
-    history?: { keep: KeepStage[] };
+    /**
+     * 级列表（已校验；非法 / 空列表 ⇒ `keep` 缺席 = 回落缺省管道）+ agent 写闸。
+     * ⚠️ `keep` 缺席 ≠ `history` 缺席：只写了 `allowAgentWrite` 的配置也要能读到闸。
+     */
+    history?: { keep?: KeepStage[]; allowAgentWrite?: boolean };
 }
 export type AutoCompactTriggers = z.infer<typeof AutoCompactTriggersSchema>;
 
@@ -160,21 +174,26 @@ export function normalizeAutoCompact(raw: unknown): AutoCompactConfig {
  *   · `keep: []`（空级列表）→ 同样回落缺省 —— 空列表的字面后果是「什么都不留」（= 清零），
  *     而"清空所有级"几乎都是编辑途中的手滑，不该静默把会话清掉。要清零请把预算设 0。
  */
-function normalizeHistory(raw: unknown): { keep: KeepStage[] } | undefined {
+function normalizeHistory(raw: unknown): { keep?: KeepStage[]; allowAgentWrite?: boolean } | undefined {
     if (raw === null || typeof raw !== "object") return undefined;
-    const keepRaw = (raw as Record<string, unknown>)["keep"];
-    if (keepRaw === undefined) return undefined;
+    const src = raw as Record<string, unknown>;
+    // 闸的**权威读法**：只有字面 `true` 才算开（`"yes"` / `1` 之类不算 —— 闸的缺省方向是关）。
+    const allowAgentWrite = src["allowAgentWrite"] === true ? (true as const) : undefined;
+    const withGate = allowAgentWrite ? { allowAgentWrite } : {};
+    const keepRaw = src["keep"];
+    if (keepRaw === undefined) return allowAgentWrite ? withGate : undefined;
     const { stages, issues } = validateKeepStages(keepRaw);
     const errors = issues.filter((i) => i.level === "error");
     if (errors.length > 0) {
         console.warn(`[auto-compact] history.keep 非法（${errors.map((e) => e.message).join("；")}）→ 回落缺省管道`);
-        return undefined;
+        // 坏 keep 只丢 keep：闸是另一件事，不该被一并丢掉（否则用户开闸的意图会被一个笔误静默撤销）
+        return allowAgentWrite ? withGate : undefined;
     }
     if (stages.length === 0) {
         console.warn("[auto-compact] history.keep 是空级列表 → 回落缺省管道（要清零请把 policy.modeData.budgetBytes 设为 0）");
-        return undefined;
+        return allowAgentWrite ? withGate : undefined;
     }
-    return { keep: stages };
+    return { keep: stages, ...withGate };
 }
 
 /** 判定所需的**事实**（全部可观测，不含预测） */

@@ -556,49 +556,39 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return getLocalAgent().compactEvents(input.taskUri);
   });
 
-  // ── 装配管道 plan（##344 M2）：读 / **校验后**写 / 检查 ──
+  // ── 装配管道 plan（##344 M2 读/写/校验；##362 M3a 起抽成 services/compact-plan-io，工具与 RPC **共用**）──
   // 与 `autoCompactSetConfig`（写整份配置的任意子集）分开：这三条只谈 plan，且 set/check 会**校验**。
-  const keepSourceOf = (cfg: { history?: { keep?: unknown } }): "config" | "default" =>
-    Array.isArray(cfg.history?.keep) && (cfg.history!.keep as unknown[]).length > 0 ? "config" : "default";
+  // ⚠️ `via:"user"`：CLI / UI 是用户自己的显式操作，**不受** agent 写闸（`history.allowAgentWrite`）约束。
+  //    （闸只管 agent 那条路，见 compact-plan-io 头注 —— 若闸也拦人，用户就没法给自己开闸了。）
   binding.on(app.agent.local.compact.plan.get, async ({ input }) => {
     noteRendererTouch("diy.agent.local.compact.plan.get", input.taskUri);
-    const { loadAutoCompact, readAutoCompactText } = await import("../core/auto-compact-config");
-    const { DEFAULT_KEEP } = await import("../../shared/context/compact-keep");
-    const { budgetBytesOf } = await import("../../shared/context/compaction");
+    const { planGet } = await import("./compact-plan-io");
     const { diyHome } = await import("../core/state");
-    const home = diyHome();
-    const cfg = loadAutoCompact(home);
-    const source = keepSourceOf(cfg);
-    return {
-      source,
-      // 生效的级列表：配置有就用配置的，否则就是代码缺省管道（**回显成数据**，用户看得见"现在在用什么"）
-      keep: source === "config" ? cfg.history!.keep : DEFAULT_KEEP,
-      budgetBytes: budgetBytesOf(cfg.policy),
-      raw: readAutoCompactText(home),
-    };
+    return planGet(diyHome());
   });
   binding.on(app.agent.local.compact.plan.set, async ({ input }) => {
     noteRendererTouch("diy.agent.local.compact.plan.set", input.taskUri);
-    const { saveKeepConfig, parseKeepText } = await import("../core/auto-compact-config");
+    const { planSet } = await import("./compact-plan-io");
+    const { getLocalAgent } = await import("./local-agent");
     const { diyHome } = await import("../core/state");
-    const keep = parseKeepText(input.keep);
-    return saveKeepConfig(diyHome(), keep);
+    return planSet({
+      home: diyHome(),
+      taskUri: input.taskUri,
+      via: "user",
+      keepText: input.keep,
+      measure: (keep) => getLocalAgent().measureMustStages(input.taskUri, keep),
+    });
   });
   binding.on(app.agent.local.compact.plan.check, async ({ input }) => {
     noteRendererTouch("diy.agent.local.compact.plan.check", input.taskUri);
-    const { loadAutoCompact, parseKeepText } = await import("../core/auto-compact-config");
-    const { DEFAULT_KEEP } = await import("../../shared/context/compact-keep");
-    const { budgetBytesOf } = await import("../../shared/context/compaction");
-    const { checkKeep, formatCheckFailure } = await import("./compact-plan-service");
+    const { planCheck } = await import("./compact-plan-io");
+    const { formatCheckFailure } = await import("./compact-plan-service");
     const { getLocalAgent } = await import("./local-agent");
     const { diyHome } = await import("../core/state");
-    const home = diyHome();
-    const cfg = loadAutoCompact(home);
-    const report = checkKeep({
-      rawKeep: input.keep !== undefined ? parseKeepText(input.keep) : cfg.history?.keep ?? DEFAULT_KEEP,
-      source: input.keep !== undefined ? "config" : keepSourceOf(cfg),
-      budgetBytes: budgetBytesOf(cfg.policy),
-      // must 层是否撑爆硬上限：**只有量过才知道**（预算是管不到 must 的），故此处实算一次。
+    const report = planCheck({
+      home: diyHome(),
+      taskUri: input.taskUri,
+      ...(input.keep !== undefined ? { keepText: input.keep } : {}),
       measure: (keep) => getLocalAgent().measureMustStages(input.taskUri, keep),
     });
     if (!report.ok) throw new Error(formatCheckFailure(report));
