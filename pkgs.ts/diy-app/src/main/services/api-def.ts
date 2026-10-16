@@ -1431,13 +1431,46 @@ export const apiDef = RpcSchema.router({
             }),
           }),
           logFiles: RpcSchema.unary({
-            desc: `列出磁盘上的流量日志文件、日期与总体积（头部「日志大小」/ 日期过滤用）`,
+            desc: `列出磁盘上的流量日志文件、日期与总体积（头部「日志大小」/ 日期过滤 / 清理面板用）`,
             input: {},
             output: z.object({
               dir: z.string(),
               files: z.array(z.string()),
               dates: z.array(z.string()).describe("出现过的日期（新的在前）"),
               bytes: z.number().describe("日志目录总字节数"),
+              detail: z
+                .array(
+                  z.object({
+                    file: z.string(),
+                    date: z.string(),
+                    bytes: z.number(),
+                    mtimeMs: z.number(),
+                    today: z.boolean().describe("当天文件（正在写入 → 不可清理）"),
+                  }),
+                )
+                .describe("逐文件详情（清理面板：列文件 + 显示占用）"),
+            }),
+          }),
+          cleanLogs: RpcSchema.unary({
+            desc: `清理磁盘流量日志（删整个按天文件）。files 或 keepDays 二选一；今天正在写入的文件一律不删；dryRun 只算不删`,
+            input: {
+              files: z
+                .array(z.string())
+                .optional()
+                .cliOption({ desc: `要删的文件（相对 DIY_HOME），JSON 数组如 '[\"log/network/2026-10-01.jsonl\"]'` }),
+              keepDays: z
+                .number()
+                .int()
+                .min(1)
+                .optional()
+                .cliOption({ desc: "只留最近 N 天（含今天），删更早的日期文件" }),
+              dryRun: z.boolean().optional().cliOption({ desc: "试运行：只统计将删什么 / 释放多少，不动磁盘" }),
+            },
+            output: z.object({
+              deleted: z.array(z.string()).describe("真删掉的文件"),
+              freedBytes: z.number().describe("释放的字节数"),
+              skipped: z.array(z.object({ file: z.string(), reason: z.string() })).describe("被跳过的（附原因）"),
+              remaining: z.object({ files: z.number(), bytes: z.number() }).describe("清理后剩余（文件数 / 字节）"),
             }),
           }),
           revealLog: RpcSchema.unary({

@@ -3,6 +3,8 @@ import type { Accessor } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { JsonViewer } from "./JsonViewer";
 import { findStore } from "../store/findStore";
+import { fmtBytes } from "../lib/bytes";
+import { TrafficLogCleanButton } from "./TrafficLogCleanup";
 
 /**
  * 流量视图 —— 看「实际发出去的 HTTP 请求 / 响应」。
@@ -32,19 +34,6 @@ const time = (ts: number) => {
 function todayStr(): string {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-/** 人类可读字节数（1024 进制） */
-function fmtBytes(n: number): string {
-    if (!Number.isFinite(n) || n <= 0) return "0 B";
-    const u = ["B", "KB", "MB", "GB"];
-    let i = 0;
-    let v = n;
-    while (v >= 1024 && i < u.length - 1) {
-        v /= 1024;
-        i++;
-    }
-    return `${i === 0 ? v : v.toFixed(1)} ${u[i]}`;
 }
 
 function statusText(r: Rec): string {
@@ -416,6 +405,8 @@ export function createTrafficState(opts: {
         methods, dateOptions, cur, sortedRows, visibleRows, toggleSort, onTableScroll,
         setTableEl: (el: HTMLDivElement | undefined) => (tableScroll = el),
         open, scheduleQuery, toggleFullCapture,
+        /** 清理面板删完文件后刷新体积 / 日期下拉（##324） */
+        loadFiles,
     };
 }
 
@@ -640,6 +631,12 @@ export function TrafficList(props: { st: TrafficState; intro?: boolean }) {
                 <span class="text-body opacity-70" title="磁盘日志总体积（按天切文件；log 等同 cache，可随时清理）">
                     日志 {fmtBytes(st.logBytes())} · {st.dateOptions().rest.length + 1} 个文件
                 </span>
+                <TrafficLogCleanButton
+                    onDone={() => {
+                        void st.loadFiles();
+                        st.scheduleQuery();
+                    }}
+                />
                 <div class="flex-1" />
                 <button
                     class={`btn btn-xs ${st.snap()?.fullCapture ? "btn-error" : ""}`}
@@ -783,6 +780,12 @@ export function TrafficView(props: {
                 <span class="text-body opacity-70" title="磁盘日志总体积（按天切文件；log 等同 cache，可随时清理）">
                     日志 {fmtBytes(st.logBytes())} · {st.dateOptions().rest.length + 1} 个文件
                 </span>
+                <TrafficLogCleanButton
+                    onDone={() => {
+                        void st.loadFiles();
+                        st.scheduleQuery();
+                    }}
+                />
                 <button
                     class={`btn btn-xs ${st.snap()?.fullCapture ? "btn-error" : ""}`}
                     onClick={() => void st.toggleFullCapture()}

@@ -16,7 +16,7 @@
 //
 // 界面按日期/全文查历史时，走 queryRecords：一天一个文件地流式扫，不把全部内容堆进内存。
 
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { diyHome } from "./state";
 
@@ -327,4 +327,136 @@ export function queryRecords(opts: QueryOpts): QueryResult {
     const hits = out.length;
     const truncated = hits > limit;
     return { records: out.slice(0, limit), scanned, files, hits, truncated, ms: Date.now() - t0 };
+}
+
+// ── 清理（##324 流量日志缓存清理界面）──────────────────────────────────────
+//
+// 清理单位是**整个按天文件** —— 一天一个文件本就是为了好清理（不做「按条删 / 截断单文件」）。
+// **今天的文件不可删**：Writer 持着它的 fd（`ensureFd` 只在跨天时重开），unlink 后 fd 悬空、
+// 后续记录会写进**已删除的 inode**，重启后这批记录凭空消失。
+// 删除**不可恢复**（直接 unlink，不进系统回收站、不先归档），故界面侧必须二次确认。
+
+/** 一个日志文件的详情（清理面板：列文件 + 显示占用） */
+export interface LogFileDetail {
+    /** 相对 DIY_HOME 的路径（log/network/YYYY-MM-DD.jsonl） */
+    file: string;
+    /** 日期（YYYY-MM-DD，从文件名取） */
+    date: string;
+    /** 字节数 */
+    bytes: number;
+    /** 最后写入时刻（ms；读不到 = 0） */
+    mtimeMs: number;
+    /** 是否当天（正在写入 → 不可清理） */
+    today: boolean;
+}
+
+/** 列日志文件详情（日期新的在前）—— 清理面板的数据源 */
+export function listFileDetail(): LogFileDetail[] {
+    const today = dayFile();
+    return listFiles().map((file) => {
+        const name = file.split("/").pop() ?? "";
+        let bytes = 0;
+        let mtimeMs = 0;
+        try {
+            const st = statSync(absOf(file));
+            bytes = st.size;
+            mtimeMs = st.mtimeMs;
+        } catch {
+            /* 读不到就按 0 报（并发清理时可能刚被删） */
+        }
+        return { file, date: name.replace(/\.jsonl$/, ""), bytes, mtimeMs, today: name === today };
+    });
+}
+
+export interface CleanResult {
+    /** 真删掉的文件（相对 DIY_HOME，升序） */
+    deleted: string[];
+    /** 释放的字节数 */
+    freedBytes: number;
+    /** 被跳过的（附人话原因） */
+    skipped: Array<{ file: string; reason: string }>;
+    /** 清理后剩余（文件数 + 字节；dryRun 时为当前磁盘实况） */
+    remaining: LogStats;
+}
+
+export interface CleanOpts {
+    /** 要删的文件（相对 DIY_HOME，如 log/network/2026-10-01.jsonl） */
+    files?: string[];
+    /** 只留最近 N 天（含今天）→ 删更早的日期文件；与 files 二选一 */
+    keepDays?: number;
+    /** 试运行：只算将删什么 / 释放多少，不动磁盘 */
+    dryRun?: boolean;
+}
+
+/** 文件名是否合规的按天日志（防越界删到别处）→ 合规则回文件名，否则 null */
+function parseLogName(file: string): string | null {
+    const prefix = `${LOG_DIR_REL}/`;
+    if (!file.startsWith(prefix)) return null;
+    const name = file.slice(prefix.length);
+    return /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(name) ? name : null;
+}
+
+/** 本地日期 → "YYYY-MM-DD"（dayFile 的姊妹） */
+function dateOf(d: Date): string {
+    return dayFile(d).replace(/\.jsonl$/, "");
+}
+
+/**
+ * 清理磁盘日志：删整个按天文件（今天正在写入的那个一律不删，见文件头说明）。
+ * `files` 与 `keepDays` 二选一（都给 = 并集，实际界面只用其一）。
+ */
+export function cleanLogs(opts: CleanOpts): CleanResult {
+    const today = dayFile();
+    const target = new Set<string>();
+    const skipped: Array<{ file: string; reason: string }> = [];
+
+    if (opts.keepDays != null) {
+        const n = Math.max(1, Math.floor(opts.keepDays));
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - (n - 1)); // 含今天，故减 n-1
+        const cutoffStr = dateOf(cutoff);
+        for (const f of listFiles()) {
+            const name = parseLogName(f);
+            if (name && name.replace(/\.jsonl$/, "") < cutoffStr) target.add(f);
+        }
+    }
+    for (const f of opts.files ?? []) {
+        if (target.has(f)) continue;
+        const name = parseLogName(f);
+        if (!name) {
+            skipped.push({ file: f, reason: "不是日志目录里的按天文件" });
+            continue;
+        }
+        if (name === today) {
+            skipped.push({ file: f, reason: "今天正在写入，不清理" });
+            continue;
+        }
+        target.add(f);
+    }
+
+    const deleted: string[] = [];
+    let freedBytes = 0;
+    for (const f of target) {
+        let size = 0;
+        try {
+            size = statSync(absOf(f)).size;
+        } catch {
+            skipped.push({ file: f, reason: "文件不存在（可能已被清理）" });
+            continue;
+        }
+        if (opts.dryRun) {
+            deleted.push(f);
+            freedBytes += size;
+            continue;
+        }
+        try {
+            unlinkSync(absOf(f));
+            deleted.push(f);
+            freedBytes += size;
+        } catch (e) {
+            skipped.push({ file: f, reason: `删除失败：${e instanceof Error ? e.message : String(e)}` });
+        }
+    }
+    deleted.sort();
+    return { deleted, freedBytes, skipped, remaining: logStats() };
 }
