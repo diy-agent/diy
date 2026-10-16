@@ -36,6 +36,10 @@ export type DiySkin = "rail" | "card";
 //   · 摘要行数 —— 1 级把结论压成几行（默认 3）
 // **单轮的手动覆盖不落盘**：轮次 id 会无限增长，逐轮写进 localStorage 只会越攒越脏。
 export const CONCLUSION_LINES_DEFAULT = 3;
+/** 1 级「摘要结论」可视行数的下限 / 上限。下限 1 = 至少一句；上限 40 = 「拖高」够用又不至于
+ *  把摘要拖成一整篇（真要全看就用 2 级）。拖拽换算与 parse 共用这一对值。 */
+export const CONCLUSION_LINES_MIN = 1;
+export const CONCLUSION_LINES_MAX = 40;
 
 // ─── 缓存字段（get/set/reset，内部吞异常 + 留痕） ─────────────
 
@@ -250,12 +254,13 @@ export const Caches = {
     serialize: (v) => v,
     defaultValue: "",
   }),
-  /** 1 级「摘要结论」的行数上限（**默认 3**；暂无 UI 入口，仅测试写入），parse 夹在 1-10。
+  /** 1 级「摘要结论」的可视行数（**默认 3**；结论下缘拖拽调整，见 LocalChatPage 的结论拖条），
+   *  parse 夹在 1-40。
    *  MD 渲染/原文开关对摘要同样生效（2026-10-11 反馈：摘要态强制原文是错的）。 */
   diy_chat_conclusion_lines: field<number>("diy_chat_conclusion_lines", {
     parse: (raw) => {
       const v = Number(raw);
-      return Number.isInteger(v) && v >= 1 && v <= 10 ? v : null;
+      return Number.isInteger(v) && v >= CONCLUSION_LINES_MIN && v <= CONCLUSION_LINES_MAX ? v : null;
     },
     serialize: (v) => String(v),
     defaultValue: CONCLUSION_LINES_DEFAULT,
