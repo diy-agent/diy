@@ -148,3 +148,4 @@
 - `tool.traffic` — `diy traffic snapshot|query|logFiles|readLog|revealLog|setFullCapture`（worktree 里 `./diy.sh traffic …`）；日志落 `$DIY_HOME/log/network/`（**等同 cache，可随时清理**）
 - `tool.persona` — `diy agent persona list|set|setDefault`；模型/参数属**人物**，任务只持引用 id
 - `tool.steer` — `diy chat --mode next-step|next-turn` 入队插话；`steer` 组只做队列管理（list/cancel/toggleMode/reorder）
+- `tool.models-sync` — `./sha.sh models-sync [源]` 重下 models.dev 快照 → `src/main/data/models.dev.json`（上游产物**整份覆盖**；diy 扩展层 `models.dev.diy.json` 手维护、本命令不碰）；缺省源 `https://models.dev/api.json`。生效需**重启实例**（snapshot 进程内缓存一次；prod 走源树兜底、免 build）。自动化见 ##107(models 数据同步)

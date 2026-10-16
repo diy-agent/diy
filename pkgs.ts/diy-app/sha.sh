@@ -157,6 +157,13 @@ dist-win() {
   run npx electron-builder --win "$@"
 }
 
+# 内置数据同步：models.dev 快照（上游产物，**整份覆盖**；diy 扩展层 models.dev.diy.json 不生成、手维护）
+# 用法：./sha.sh models-sync [源]   源缺省 https://models.dev/api.json（也收本地文件路径，如先 curl 落盘再传）
+# 产物：src/main/data/models.dev.json（唯一改动文件）→ 有 diff 就 commit。
+# 生效：snapshot 进程内缓存一次 ⇒ 需**重启实例**；prod 走源树兜底（build/<V>/main 无 data/ 时），免 build。
+# 自动化（定时 workflow 开 PR）见 ##107(models 数据同步)。
+models-sync() { run npx tsx scripts/gen-models-dev.mts "$@"; }
+
 icon() { run python3 scripts/gen-icon.py; }
 
 
