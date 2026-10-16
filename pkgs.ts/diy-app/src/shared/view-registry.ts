@@ -167,6 +167,22 @@ export const VIEWS: ViewDef[] = [
     instanceScope: "global",
     placement: { settings: { area: "main", order: 30 } },
   },
+  {
+    // 流量页左栏：基本信息（告警 + 完整记录开关 + 日志体积 + 查询条 + 请求表）
+    id: "traffic.list",
+    title: "请求列表",
+    instanceScope: "global",
+    placement: { traffic: { area: "left", order: 10 } },
+  },
+  {
+    // 流量页右栏：请求 / 响应编辑器（选中那条记录的概览 + 两个 JsonViewer）。
+    // 与左栏是**同一份状态的两种投影**（选中项在 state 里，两边各画一块），
+    // 故不用 context 型：整页只有一份"当前选中"，多实例反而各选各的。
+    id: "traffic.detail",
+    title: "请求 / 响应",
+    instanceScope: "global",
+    placement: { traffic: { area: "right", order: 10 } },
+  },
 ];
 
 // ═══════════════════════════════════════════
@@ -265,6 +281,22 @@ export const PAGES: PageDef[] = [
       rows: [fr(1)],
       areas: [
         { id: "center", col: 0, row: 0 },
+        { id: "right", col: 1, row: 0 },
+      ],
+    },
+  },
+  {
+    // 流量页（导航栏「流量」）：左 = 基本信息（列表），右 = 请求 / 响应编辑器。
+    // 走 ViewGrid 而非手拼 —— 与普通 page 一致：可控显隐 + 每个 view 可最大化 / 恢复（##133）。
+    id: "traffic",
+    title: "流量",
+    layout: {
+      version: 1,
+      // 列表列多（名称 / 类型 / 大小…），给它多一档宽度；右侧编辑器可拖（线是全局的）
+      cols: [fr(3), fr(2)],
+      rows: [fr(1)],
+      areas: [
+        { id: "left", col: 0, row: 0 },
         { id: "right", col: 1, row: 0 },
       ],
     },
@@ -442,6 +474,81 @@ export function areasWithViews(
   views: ViewDef[] = VIEWS,
 ): Set<string> {
   return new Set(groupViewsByArea(page, ctx, binding, views).map((g) => g.areaId));
+}
+
+// ═══════════════════════════════════════════
+// area 开合 / 最大化（纯函数：渲染层与单测同一份判据）
+// ═══════════════════════════════════════════
+
+/**
+ * 某 view 在本 page 的**默认归属 area**（静态层判据，不掺用户 binding）。
+ *
+ * 用途：判定"左右两块是哪两块"这类**归属问题**（如流量页左=列表、右=编辑器），
+ * 以及测试里断言注册表本身没写错。返回 null = 该 view 不来本 page。
+ */
+export function viewAreaId(
+  page: PageDef,
+  viewId: string,
+  ctx: string | null,
+  views: ViewDef[] = VIEWS,
+): string | null {
+  void ctx; // 归属只由 placement 决定（实例键才用 ctx），保留参数与 groupViewsByArea 同形
+  const def = views.find((v) => v.id === viewId);
+  return def?.placement[page.id]?.area ?? null;
+}
+
+/**
+ * area 开合 / 最大化的**用户态**。
+ *
+ * 刻意只声明本函数需要的两个字段（而不是 import layoutStore 的 PageLayoutState）：
+ * 这是 shared 层，不能反向依赖 renderer 的 store 类型 —— 由结构兼容自动满足。
+ */
+export interface AreaOpenState {
+  /** areaId → 隐藏（最小化）；缺省 = 显示 */
+  hidden: Record<string, boolean>;
+  /** 被最大化的 area id；null = 正常网格 */
+  maximized: string | null;
+}
+
+/** 一次渲染要画什么：可见 area、生效的最大化 area、被最大化挤掉的 area */
+export interface PageViewPlan {
+  /** 有 view 且**未被最小化**的 area，按 layout.areas 声明顺序（= 几何顺序） */
+  visibleAreaIds: string[];
+  /**
+   * **生效的**最大化 area。
+   * 用户态里记的那个若不可见（被最小化 / area 已不存在 / 本就无 view）→ null（退回网格）。
+   * 即"最大化"不是一个可以指向空气的状态。
+   */
+  maximizedAreaId: string | null;
+  /** 最大化期间不渲染的其它可见 area（最大化→还原时原样回来） */
+  suppressedAreaIds: string[];
+}
+
+/**
+ * layout + binding + 用户态 → 本次渲染的 area 计划。
+ *
+ * 为什么把它抽出来（而不是留在 ViewGrid 的 createMemo 里）：这块判据是
+ * 「点最小化后界面该少哪块、点最大化后只剩哪块」的**唯一真源**，可判定、可回归测试；
+ * 留在组件里就只能靠 CDP 肉眼验（##351 review2 R2）。
+ */
+export function planPageViews(
+  page: PageDef,
+  ctx: string | null,
+  binding: Binding,
+  state: AreaOpenState,
+  views: ViewDef[] = VIEWS,
+): PageViewPlan {
+  const withViews = areasWithViews(page, ctx, binding, views);
+  const visibleAreaIds = page.layout.areas
+    .map((a) => a.id)
+    .filter((id) => withViews.has(id) && state.hidden[id] !== true);
+  const maximizedAreaId =
+    state.maximized && visibleAreaIds.includes(state.maximized) ? state.maximized : null;
+  return {
+    visibleAreaIds,
+    maximizedAreaId,
+    suppressedAreaIds: maximizedAreaId ? visibleAreaIds.filter((id) => id !== maximizedAreaId) : [],
+  };
 }
 
 // ═══════════════════════════════════════════

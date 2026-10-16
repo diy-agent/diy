@@ -51,7 +51,7 @@ import { draftStore } from "../store/draftStore";
 import { trafficStore } from "../store/trafficStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
-import { Caches } from "../lib/ui-state";
+import { Caches, CONCLUSION_LINES_MAX, CONCLUSION_LINES_MIN } from "../lib/ui-state";
 import { HeightLedger, stackRows, windowRange } from "../lib/chat-virtual";
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
@@ -89,6 +89,7 @@ import {
     isUserText,
     leadUsers,
     leavesOf,
+    linesFromDrag,
     liveTailOf,
     planOfLevel,
     procOpenOf,
@@ -416,13 +417,28 @@ function ToolBody(props: {
                 <pre class="text-base-content/70">$ {toolCommand(n)}</pre>
             </Show>
             <Show when={output()}>
-                {/* live：内层不设 max-h/overflow —— 外面那层就是唯一的滚动容器，
-                    两层各自滚动会出现"滚不动"的错觉（实测：内层吃掉滚轮） */}
-                <pre
-                    class={`whitespace-pre-wrap bg-base-100/60 rounded p-2 ${props.live ? "" : "max-h-72 overflow-auto"}`}
-                >
-                    {pv().text}
-                </pre>
+                {/* 相对定位容器：**最大化按钮**浮在框右上角（≠ 插一行按钮把正文挤下去，
+                    也不随内层滚动跑）。点了开全屏（`FullscreenModal`，那里给「恢复」）。
+                    恒显（不只超长时）：短输出也可能要整屏看/复制，判据不该是"有没有被截过"。 */}
+                <div class="relative">
+                    <button
+                        class="btn btn-ghost btn-xs absolute right-1 top-1 z-10 min-h-0 px-1 opacity-40 hover:opacity-100"
+                        data-tool-max="1"
+                        data-tip={`最大化（全屏查看 / 复制，共 ${pv().total} 行）`}
+                        aria-label="最大化工具输出"
+                        onClick={() => props.onFull(title(), output())}
+                    >
+                        <IconExpand class="h-3.5 w-3.5" />
+                    </button>
+                    {/* live：内层不设 max-h/overflow —— 外面那层就是唯一的滚动容器，
+                        两层各自滚动会出现"滚不动"的错觉（实测：内层吃掉滚轮）。
+                        `pr-8` 给右上角那个按钮让位，长行不钻到它下面。 */}
+                    <pre
+                        class={`whitespace-pre-wrap bg-base-100/60 rounded p-2 pr-8 ${props.live ? "" : "max-h-72 overflow-auto"}`}
+                    >
+                        {pv().text}
+                    </pre>
+                </div>
             </Show>
             {/* 工具返回前的结果区是**真空**（ai-sdk 只在 tool-result 一次给全量 stdout），
                 固定高度的框里说明白"在等什么"，否则看着像卡住 */}
@@ -434,14 +450,6 @@ function ToolBody(props: {
                 <div class="alert alert-warning alert-soft text-body py-2 font-sans">
                     <span class="whitespace-pre-wrap">{INTERRUPTED_TOOL_NOTICE}</span>
                 </div>
-            </Show>
-            <Show when={pv().omitted > 0}>
-                <button
-                    class="btn btn-ghost btn-xs opacity-70"
-                    onClick={() => props.onFull(title(), output())}
-                >
-                    全屏查看（共 {pv().total} 行）
-                </button>
             </Show>
         </div>
     );
@@ -893,8 +901,13 @@ function TextRow(props: {
     /** 结尾槽的「结论」形态：这一块**自己就是** `[data-tail-box=conclusion]`（草图 v4 的
         `.tailbox.k-conc` 就是这一块，不再包一层 —— 包一层就是槽里那张卡还套一张卡） */
     box?: "conclusion";
+    /** **仅结论行**：拖下缘改「可见行数」（= 1 级摘要的可视高度）。给了才渲染拖条 ——
+     *  过程历史里的正文行（`HISTORY_TEXT_FOLD_LINES` 固定）不给，它们的高度不归用户调。 */
+    onResizeLines?: (n: number) => void;
 }) {
     const b = () => props.node;
+    /** 正文宿主（拖拽时量它当前高度 —— 等比换算的基准，见 `linesFromDrag`） */
+    let bodyRef: HTMLDivElement | undefined;
     const raw = () => str(b().attrs.content);
     /** 能不能折 = **"点开真的会多出东西"**（review ##253 RV-6）。
      *  原来按**原始**行数判（`countLines(raw()) > lines`），而 `clampLines` 已跳过前导空行
@@ -911,6 +924,30 @@ function TextRow(props: {
     const fire = () => props.onToggle(b().id, !open());
     /** 折叠条的无障碍名：只读"展开 / 收起"听不出是**哪一行**（review ##253 小项6） */
     const foldLabel = () => `${folded() ? "展开" : "收起"}${props.box === "conclusion" ? "结论" : "正文"}`;
+    /** 结论下缘拖拽：改的是**全局**摘要行数（1 级所有轮次一起变 —— 它是"我习惯看几行"的偏好，
+     *  与顶部 `n/4 展开` 同级，不是逐轮覆盖；逐轮覆盖不落盘，见 ui-state 头注）。
+     *  起点量一次宿主高度，之后按等比换算出行数（纯函数 `linesFromDrag`）。 */
+    const startResize = (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const onResize = props.onResizeLines;
+        const el = bodyRef;
+        if (!onResize || !el) return;
+        const h0 = el.getBoundingClientRect().height;
+        const n0 = props.lines;
+        const startY = e.clientY;
+        const move = (ev: MouseEvent) =>
+            onResize(linesFromDrag(n0, h0, ev.clientY - startY, CONCLUSION_LINES_MIN, CONCLUSION_LINES_MAX));
+        const up = () => {
+            window.removeEventListener("mousemove", move);
+            window.removeEventListener("mouseup", up);
+        };
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
+    };
+    /** 拖条只在**结论收起态**给（拖它 = 改"1 级看几行"）：展开态（2 级全看）没有高度可调；
+     *  未定稿（还在长）也不给 —— 高度每帧变，拖了没有稳定基准。 */
+    const canResize = () => props.box === "conclusion" && !!props.onResizeLines && !open() && b().stopped;
     return (
         <div
             data-block-id={b().id}
@@ -933,6 +970,7 @@ function TextRow(props: {
                 sole={!cut()}
             />
             <div
+                ref={(el) => (bodyRef = el)}
                 style={
                     cut()
                         ? {
@@ -957,6 +995,21 @@ function TextRow(props: {
                 >
                     ⋯ 已折叠 {view().omitted} 行 · 点击展开全部正文
                 </button>
+            </Show>
+            {/* 1 级「摘要结论」下缘拖条：往下拖 = 这一块画更多行（免在 1/2 级间来回切）。
+                全局偏好（所有轮次一起变），tooltip 说清；`data-concl-resize` 供 CDP 定位。 */}
+            <Show when={canResize()}>
+                <div
+                    class="group mt-1 flex h-2 cursor-row-resize items-center justify-center rounded hover:bg-primary/20 active:bg-primary/40"
+                    data-concl-resize={String(props.lines)}
+                    role="separator"
+                    aria-orientation="horizontal"
+                    aria-label={`拖动调整 1 级摘要高度（当前 ${props.lines} 行）`}
+                    title={`拖动调整「1 级摘要」高度（当前 ${props.lines} 行；往下拖看更多，全局生效）`}
+                    onMouseDown={startResize}
+                >
+                    <span class="h-0.5 w-10 rounded-full bg-base-content/20 group-hover:bg-base-content/50" />
+                </div>
             </Show>
         </div>
     );
@@ -1225,8 +1278,10 @@ function TurnView(props: {
     histOpen: boolean;
     /** 点轮次头 = **收拢 / 展开这一轮的历史**（不换层；层归顶部那个全局按钮） */
     onCycle: () => void;
-    /** 1 级结论摘要的行数 */
+    /** 1 级结论摘要的行数（拖结论下缘改它，见 `onResizeLines`） */
     conclusionLines: number;
+    /** 结论下缘拖拽 → 新的摘要行数（页面级：改全局偏好并落盘） */
+    onResizeLines: (n: number) => void;
     onToggle: (id: string, force?: boolean) => void;
     onFull: (title: string, content: string) => void;
     liveTurnId: string | null;
@@ -1332,6 +1387,7 @@ function TurnView(props: {
                                 onToggle={props.onToggle}
                                 md={props.md}
                                 box="conclusion"
+                                onResizeLines={props.onResizeLines}
                             />
                         </Match>
                         <Match when={tl().kind === "endleaf"}>
@@ -1596,6 +1652,13 @@ function SteerRow(props: {
 
 // ─── 全屏输出 ───────────────────────────────────────
 
+/**
+ * 工具输出的**最大化**视图（过程内容框右上角那枚放大按钮点开）。
+ *
+ * 双态是「最大化 ⇄ 恢复」：框上是 `IconExpand`（最大化），进来后这里是 `IconCompress`
+ * （恢复）—— 与 ViewGrid 的 area chrome 同一套 swap 语汇，不另立一套。关闭的三条路
+ * （恢复按钮 / Esc / 点遮罩）等价：`onClose` 都回原处，全屏只是**看完即走**的临时层。
+ */
 function FullscreenModal(props: { title: string; content: string; onClose: () => void }) {
     const onKey = (e: KeyboardEvent) => {
         if (e.key === "Escape") {
@@ -1617,19 +1680,28 @@ function FullscreenModal(props: { title: string; content: string; onClose: () =>
     };
     return (
         <div
-            class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6"
+            class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-2"
+            data-fullscreen-modal
             onClick={(e) => {
                 if (e.target === e.currentTarget) props.onClose();
             }}
         >
-            <div class="bg-base-100 rounded-xl w-full max-w-4xl max-h-full flex flex-col">
+            {/* 真·全屏（`w-full h-full max-w-none`）：名字叫"最大化"，就该铺满内容区 ——
+                原来 `max-w-4xl` 只占 90% 宽、下面留白，看长输出反而更挤。 */}
+            <div class="bg-base-100 rounded-lg w-full h-full max-w-none flex flex-col">
                 <div class="flex items-center gap-2 px-4 py-2 border-b shrink-0">
                     <span class="font-mono text-body truncate flex-1">{props.title}</span>
                     <button class="btn btn-ghost btn-xs" onClick={copy}>
                         复制
                     </button>
-                    <button class="btn btn-ghost btn-xs" onClick={() => props.onClose()}>
-                        ✕
+                    <button
+                        class="btn btn-ghost btn-xs px-1"
+                        data-fullscreen-restore
+                        data-tip="恢复（退出最大化）"
+                        aria-label="恢复尺寸"
+                        onClick={() => props.onClose()}
+                    >
+                        <IconCompress class="h-4 w-4" />
                     </button>
                 </div>
                 <pre class="overflow-auto p-4 text-body font-mono whitespace-pre-wrap break-all flex-1">
@@ -2085,7 +2157,13 @@ export function LocalChatPage(props: { uri?: string }) {
         setPinned({});
     };
     /** 1 级摘要的行数 */
-    const conclusionLines = () => Caches.diy_chat_conclusion_lines.get();
+    /** 1 级摘要可视行数（全局偏好，落盘）—— 结论下缘拖拽改它（见 TextRow.startResize） */
+    const [conclusionLines, setConclusionLines] = createSignal(Caches.diy_chat_conclusion_lines.get());
+    const changeConclusionLines = (n: number) => {
+        const v = Math.min(CONCLUSION_LINES_MAX, Math.max(CONCLUSION_LINES_MIN, Math.round(n)));
+        setConclusionLines(v);
+        Caches.diy_chat_conclusion_lines.set(v);
+    };
     /** 清空确认：清空会删掉 main 侧 ops/llm 日志（rmSync，不可恢复），必须二次确认 */
     const [confirmClear, setConfirmClear] = createSignal(false);
     const [pinned, setPinned] = createSignal<Record<string, boolean>>({});
@@ -2547,6 +2625,7 @@ export function LocalChatPage(props: { uri?: string }) {
                                         histOpen={histOpenOf(row.key)}
                                         onCycle={() => toggleTurn(row.key)}
                                         conclusionLines={conclusionLines()}
+                                        onResizeLines={changeConclusionLines}
                                         onToggle={togglePin}
                                         onFull={(title, content) => setFull({ title, content })}
                                         liveTurnId={liveTurnId()}

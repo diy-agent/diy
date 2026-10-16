@@ -563,7 +563,7 @@ export const apiDef = RpcSchema.router({
       // 于是 Electron 里 window.diy 为 undefined（可选链短路，永远卡在「加载中…」）、
       // serve 里方法不存在。走 RPC 后三种入口共用同一实现。
       getAppInfo: RpcSchema.unary({
-        desc: `查询运行环境详情（端口/目录/版本/系统）`,
+        desc: `查询运行环境详情（端口/目录/版本/系统/CDP 连接地址）`,
         input: {},
         output: z.object({
           port: z.number(),
@@ -582,6 +582,11 @@ export const apiDef = RpcSchema.router({
           branch: z.string(),
           cache: z.string(),
           userData: z.string(),
+          /** CDP 连接地址（`ws://127.0.0.1:<port>/devtools/browser/...`）—— 供
+           *  `playwright-cli attach --cdp=<它>` 驱动真实窗口（设置页「复制调试信息」用）。
+           *  Electron 以 `--remote-debugging-port=0` 启动时端口写在 userData/DevToolsActivePort；
+           *  未启用 CDP / 文件不在（serve 模式）时为空串，不编造。 */
+          cdp: z.string(),
           electron: z.string(),
           node: z.string(),
           chrome: z.string(),
