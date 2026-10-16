@@ -66,6 +66,7 @@ import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-
 import {
     bucketsOf,
     costBreakdown,
+    rateFromTotals,
     snapshotUsage,
     stepRate,
     sumBuckets,
@@ -2515,6 +2516,11 @@ export class LocalAgentManager {
         // 为什么要进 turn patch：状态栏的 ⚡ 要能"没在跑时也留在那儿"（老的速度不消失），
         // 而流内部的 token 计数拿不到 ⇒ 只能每步落一次、由 UI 显示最后一次实测值。
         let lastStepRate: number | null = null;
+        // 轮均速度（##349）的 Σ 累加：各步总输出与各步响应耗时（含首字等待）。
+        // 每步结束时重算一次 → 直播中也在长，轮末即为该轮平均。
+        let rateOutSum = 0;
+        let rateMsSum = 0;
+        let turnRate: number | null = null;
         let turnCost: CostBreakdown = { noCache: 0, cacheRead: 0, cacheWrite: null, text: 0, reasoning: 0, total: 0 };
         // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
         let lastAct: "none" | "text" | "tool" = "none";
@@ -3041,6 +3047,13 @@ export class LocalAgentManager {
                                 // **测不出就留着上一次的**：有的步没有输出 token（空回复 / 纯工具步），
                                 // 直接赋 null 会把状态栏那枚 ⚡ 打回更早一轮（review ##253 小项2）。
                                 lastStepRate = stepRate(fsPart.performance, b.outputTotal) ?? lastStepRate;
+                                // 轮均累加（##349）：只计"有计时且确有输出"的步（与 `avgRate` 同判据）
+                                const respMs = fsPart.performance?.responseTimeMs;
+                                if (respMs != null && respMs > 0 && b.outputTotal > 0) {
+                                    rateOutSum += b.outputTotal;
+                                    rateMsSum += respMs;
+                                }
+                                turnRate = rateFromTotals(rateOutSum, rateMsSum);
                                 // **按 response.modelId 查价**：上游可能路由改写模型（##211 §四.4.4）
                                 const priceModel = fsPart.response?.modelId ?? model;
                                 const rates = costOf(priceModel, b.inputTotal);
@@ -3075,7 +3088,7 @@ export class LocalAgentManager {
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
-                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate) },
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate, turnRate) },
                                 });
                             }
                             if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
@@ -3104,7 +3117,7 @@ export class LocalAgentManager {
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
-                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate) },
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate, turnRate) },
                                 });
                             }
                             // turn 的 stop 由 closeTurn 发（finally 里那一处）：收尾必须闭合
