@@ -10,6 +10,7 @@
 // 约定：本文件只放 schema/类型，禁止 import node:fs 等 main 专属模块 —— renderer 会打进包。
 
 import { z } from "zod";
+import { ReqlogSchema } from "./context/reqlog";
 import { TASK_HEAD_FIELDS, type TaskHeadField } from "./task-head";
 
 /** 头字段的 zod 形状：从 TASK_HEAD_FIELDS 派生（清单在 ./task-head，见该文件头注）*/
@@ -116,35 +117,15 @@ export const AssembleGlobalsSchema = z.object({
   rules: z.string().describe("规范节（rules.md 渲染结果）"),
   guard: z.string().describe("保命契约（_guard.md 渲染结果，模版锁定）"),
   /**
-   * 压缩历史索引的**格式说明**（用户 2026-10-06 定）。
+   * 真发请求的**流量日志**（用户 2026-10-15）。
    *
-   * 为什么进变量树而不是拼在消息里：它是**稳定**结构（只在 schema 升级时变）——稳定项进
-   * system 不砸前缀缓存；而易变的 dropped 数据留在 messages 的那条注记里。
-   * 「一条信息只在一处」＝ 不再到处写解释性注释（用户原话）。
-   *
-   * 字段表由 `history-index.ts` 从 zod 派生（禁止手写第二真源）。
+   * 为什么进变量树：「我自己的东西在哪、怎么找」是**稳定**信息（只在换天时变文件名），
+   * 模型才能自查"我上一步到底发出去了什么"——上下文树主要是给模型**定位**信息用的。
+   * **值只有 `file` 一个字段**；路径规则 / 定位命令 / 字段表全在 `.describe()` 里，
+   * 派生进信封的 `help.reqlog`（值节点里禁出现解释性字段：一条信息只在一处，见 envelope.ts）。
+   * 行号给不出来：那条记录是请求发出**之后**才落盘的（UI 侧由流量日志反查）。
    */
-  historyIndex: z
-    .object({
-      about: z.string().describe("这段说明的用途"),
-      source: z.string().describe("压缩前原文的位置（全量消息日志）"),
-      retrieve: z
-        .object({
-          byLine: z.string().describe("按行号区间回取原文的 bash 命令"),
-          byTurn: z.string().describe("按轮次 id 回取原文的 bash 命令"),
-        })
-        .describe("回取法"),
-      note: z
-        .array(
-          z.object({
-            name: z.string().describe("字段名"),
-            desc: z.string().describe("含义"),
-            required: z.boolean().describe("是否必填"),
-          }),
-        )
-        .describe("注记字段表（由 zod 定义派生）"),
-    })
-    .describe("压缩历史索引的格式说明（稳定；易变的 dropped 数据在 messages 里）"),
+  reqlog: ReqlogSchema,
 });
 export type AssembleGlobals = z.infer<typeof AssembleGlobalsSchema>;
 

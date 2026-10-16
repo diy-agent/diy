@@ -13,8 +13,7 @@
 
 import { project as projectTree } from "./projection";
 import { applyFacts, createTree, setPlacement, setPlaces } from "./reducer";
-import { renderPathsTraced } from "./render";
-import { CONTEXT_GUIDE } from "./guide";
+import { runtimeDiffEnvelope, systemDataText, systemEnvelope, runtimeEnvelope } from "./envelope";
 import { hashValue } from "./hash";
 import { WIRE_VERSION } from "./wire";
 import { isPlainObject } from "./tree";
@@ -71,9 +70,11 @@ export const PLACE_CANDIDATES: PlaceCandidate[] = [
     { path: "identity", system: true, reason: "身份：人物名 + 行为指令（模版节渲染结果）；任务存续期内不变 → 可缓存" },
     { path: "rules", system: true, reason: "行为规范：静态文本，只在改模版时变" },
     { path: "guard", system: true, reason: "保命契约：静态文本，丢了模型可能换写法杀宿主进程" },
-    // 压缩历史索引的格式说明：**稳定**结构（只在 schema 升级时变）+ 回取命令 → 进 system。
-    // 易变的 dropped 数据留在 messages 那条注记里（用户 2026-10-06：一条信息只在一处）。
-    { path: "historyIndex", system: true, reason: "压缩索引的格式说明与回取法：结构稳定（仅 schema 升级时变），进 system 不砸缓存" },
+    // 「我自己的东西在哪、怎么找」：稳定信息 → 默认进 system。
+    // 用户 2026-10-15：上下文树主要是**给模型定位信息**用的 —— 关键位置（我这个任务真发的请求
+    // 落到哪个文件、怎么找）给不出来，模型就无法自查"我上一步到底发出去了什么"。
+    // 值只有 `file`（纯数据）；路径规则/定位命令在 `.describe()` → 信封的 `help.reqlog`。
+    { path: "reqlog", system: true, reason: "真发请求的流量日志在哪：稳定（仅文件名按天变）→ 可缓存" },
     { path: "task.body", system: false, reason: "任务正文：每次编辑正文就变 → 放 runtime，不污染 system 缓存" },
     { path: "skills", system: false, reason: "技能清单：安装/升级技能就变" },
 ];
@@ -83,7 +84,7 @@ export function defaultSystemPlaces(): ContextPath[] {
     return PLACE_CANDIDATES.filter((c) => c.system).map((c) => c.path);
 }
 
-/** 一份容器的投递内容 */
+/** 一份容器的投递内容（信封里的一段） */
 export interface DeliveryPart {
     places: ContextPath[];
     text: string;
@@ -95,14 +96,20 @@ export interface DeliveryPart {
     lines: Record<ContextPath, { from: number; to: number }>;
 }
 
-/** 一轮请求的投递（真发用它发；预览用它显示；快照把它记下来给 diff 用） */
+/**
+ * 一轮请求的投递（真发用它发；预览用它显示；快照把它记下来给 diff 用）。
+ *
+ * 文本形态 = **信封**（见 envelope.ts）：`system.text` = `help:` + `system:` 两段的一份 YAML；
+ * `runtime.text` = `runtime:` 一段（首投全量）。轮中途的 `runtimeDiff:` 由
+ * `runtimeDiffDelivery` 按"变化的原子单元"现造。
+ */
 export interface Delivery {
     tree: ContextTreeState;
-    /** system 容器全文（含说明头）：放 system 参数 */
+    /** system 容器全文（信封：`help:` + `system:`）→ 放 `streamText` 的 system 参数 */
     system: DeliveryPart;
-    /** system 的**纯数据**部分（不带说明头）—— golden 比对与调试用 */
+    /** system 的**纯数据**部分（只有变量树、不带 help 段）—— golden 比对与调试用 */
     systemData: DeliveryPart;
-    /** runtime 容器全文：作为尾部 user 消息 */
+    /** runtime 容器全文（信封：`runtime:` 一段）→ 作为尾部 user 消息 */
     runtime: DeliveryPart;
     /** path → 子树值 hash（前 12 位）：步间比较"哪些变量变了" */
     valueHashes: Record<ContextPath, string>;
@@ -184,12 +191,11 @@ export function buildDelivery(
 
     const sysPlaces = tree.places.filter((p) => tree.placement[p] === "system").sort();
     const runPlaces = tree.places.filter((p) => (tree.placement[p] ?? "runtime") === "runtime").sort();
-    // 文本与行号映射同出一次渲染 —— 高亮/滚动才不会指错行。
-    // system 份带说明头（结构 + 解读规则，纯文本，见 guide.ts）：这就是"提示词"本体，
-    // 要先说明这是什么、怎么读。
-    const sys = renderPathsTraced(tree, sysPlaces, CONTEXT_GUIDE);
-    const sysData = renderPathsTraced(tree, sysPlaces);
-    const run = renderPathsTraced(tree, runPlaces);
+    // system 信封：`help:`（**唯一的结构说明源**，由 zod 递归派生）+ `system:`（变量树）。
+    // 一次产出同时给出文本与行号映射（emitValue 边写边记）—— 高亮/滚动才不会指错行；
+    // 行号键剥掉 `system.` 前缀，与变量树 path 口径一致。
+    const sys = systemEnvelope(tree, sysPlaces, runPlaces);
+    const run = runtimeEnvelope(tree, runPlaces);
 
     const part = (p: ContextPath[], t: { text: string; lines: DeliveryPart["lines"] }): DeliveryPart => ({
         places: p,
@@ -200,11 +206,35 @@ export function buildDelivery(
     return {
         tree,
         system: part(sysPlaces, sys),
-        systemData: part(sysPlaces, sysData),
+        systemData: part(sysPlaces, { text: systemDataText(tree, sysPlaces), lines: {} }),
         runtime: part(runPlaces, run),
         valueHashes: valueHashesOf(tree),
         wireVersion: WIRE_VERSION,
     };
+}
+
+/**
+ * 轮中途那一步的 `runtimeDiff:` 信封（**只列变化的原子单元** → 变更后的当前值）。
+ *
+ * 为什么是「变更后的当前值」而不是 before/after 摘要：这一步的作用是**纠正模型手里的数据**
+ * ——它要的是新值；旧值它本来就在上下文里（该轮首步的全量 runtime）。给截断的 before/after
+ * 只会让它继续按旧值干活（那正是「几小时的会话建立在错误数据上」这个 bug 的形态）。
+ *
+ * 无变化的单元 → 空 places → 空串（调用方跳过注入，不砸前缀缓存）。
+ */
+export function runtimeDiffDelivery(tree: ContextTreeState, paths: readonly ContextPath[]): DeliveryPart {
+    const sorted = [...paths].sort();
+    const r = runtimeDiffEnvelope(tree, sorted);
+    return { places: sorted, text: r.text, bytes: byteLen(r.text), lines: r.lines };
+}
+
+/**
+ * 该 path 在这种划分下是否归 **runtime**。
+ * 判据与 `buildDelivery` 同一套（不在 places 里的按 runtime 算）—— 分叉出一份"runtime 判据"
+ * 必然与真发漂移（哪里是 system 才是真源）。
+ */
+export function isRuntimePlace(tree: ContextTreeState, path: ContextPath): boolean {
+    return !tree.places.includes(path) || (tree.placement[path] ?? "runtime") === "runtime";
 }
 
 /** 调试用：确认投递与 project() 口径一致 */

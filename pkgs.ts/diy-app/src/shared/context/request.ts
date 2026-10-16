@@ -19,23 +19,15 @@
 // 约定：本文件只放纯函数，禁止 import node:*（renderer 会打进包）。
 
 import * as yaml from "js-yaml";
-import { CONTEXT_GUIDE } from "./guide";
 import { emitYamlTraced, type EmbedSpec, type RenderedYaml } from "./render";
 
 /**
  * 拆「说明头 + 数据」。
- * 正常路径按内建说明头（guide.ts）精确切分（说明头是固定长文，拼法见 renderPathsTraced）；
- * 说明头被自定义/调整时退化为启发式：**第一个"顶层键"行之前**算说明头 ——
- * 只在精确切分失败时兜底，不改变正常语义。
+ * 信封出现后 system/runtime 两份文本**本身就是纯 YAML**（说明头改成了 `help:` 段，
+ * 见 envelope.ts），所以这里通常直接返回全文；仍保留启发式兜底（第一个顶层键之前的行
+ * 当说明头），以便未来真有前后缀时预览不至于崩。
  */
 function splitGuide(text: string): { guide: string[]; data: string } {
-    if (text.startsWith(CONTEXT_GUIDE)) {
-        return {
-            // 逐行输出为注释（含说明头与数据之间那行空行，与源文本逐行一一对应）
-            guide: [...CONTEXT_GUIDE.replace(/\n$/, "").split("\n"), ""],
-            data: text.slice(CONTEXT_GUIDE.length).replace(/^\n+/, ""),
-        };
-    }
     const lines = text.split("\n");
     const at = lines.findIndex((l) => /^[A-Za-z_$][A-Za-z0-9_$.-]*:( |$)/.test(l));
     if (at > 0) return { guide: lines.slice(0, at), data: lines.slice(at).join("\n") };

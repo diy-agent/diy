@@ -15,6 +15,7 @@ import { areasWithViews, findPage } from "../../shared/view-registry";
 import { ViewGrid } from "./ViewGrid";
 import { layoutStore } from "../store/layoutStore";
 import { createTrafficState, TrafficDetail, TrafficList } from "./TrafficView";
+import { trafficStore } from "../store/trafficStore";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 
 const PAGE = findPage("traffic")!;
@@ -22,7 +23,12 @@ const PAGE = findPage("traffic")!;
 const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
 
 export function TrafficPage() {
-    const st = createTrafficState();
+    // 跨页跳（##310 的「在流量页打开」）：抽屉只挂对话页，跳过来的是本页 ——
+    // 所以本页也要读同一个 store 的焦点（焦点语义只有一份），消费后清掉。
+    const st = createTrafficState({
+        focus: () => trafficStore.focus,
+        onFocusConsumed: () => trafficStore.clearFocus(),
+    });
     const binding = () => layoutStore.bindingFor(PAGE, null);
 
     /** 菜单条只列**有 view 的 area**（空 area 的按钮点了没反应，见 TaskRunPage） */
