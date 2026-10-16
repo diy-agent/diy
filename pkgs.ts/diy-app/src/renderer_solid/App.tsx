@@ -20,6 +20,7 @@ import { ThemeSettings } from "./components/ThemeSettings";
 import { ToastContainer } from "./components/ToastContainer";
 import { taskStore, type TreeNode } from "./store/taskStore";
 import { tabStore } from "./store/tabStore";
+import { staleTaskTabCtxs } from "../shared/tab-prune";
 // 全局会话可见性（##308）：**唯一的注册表订阅**在这里起，nav / 任务表 / 总览页共读同一份。
 import { sessionStore } from "./store/sessionStore";
 import { layoutStore } from "./store/layoutStore";
@@ -206,40 +207,55 @@ export default function App() {
     };
     let mainAreaEl: HTMLDivElement | undefined;
 
-    /**
-     * 树刷新后清理「已从树里消失的任务」的 tab（226 关联：dropCtx 接线）。
-     *
-     * 删除任务（CLI `task delete` / 删目录）走 watch → loadTree，但摘 tab 的
-     * `tabStore.dropCtx` 曾是零调用的死代码 —— 导航残留幽灵 tab（label 退化成 URI、
-     * 点开是空白页）。diff 只认「上一轮在、这一轮不在」：首轮 prev 为空，启动时树
-     * 未加载完（nodes=[]）不会把恢复出来的 tab 清光。树响应的乱序由 taskStore.loadTree
-     * 的过期丢弃守住，防止旧快照让这里误判「任务消失」。
-     */
-    let prevUris = new Set<string>();
     // RV-03（##245 review）：切页后旧页面的查找 Range 随 Solid 卸载退化成 zeroWidth，
     // badge 还挂着过期计数（refresh 全仓零调用）。查找条是**页内**语义 → 换页即关
     // （close 会清 Range/计数/高亮，一步到位）。
     createEffect(on(() => route(), () => findStore.close()));
+
+    /**
+     * 树刷新后剪掉「指向已不存在任务」的 tab，并告知用户（##226 接线 + ##361 存在性校验）。
+     *
+     * 为什么要校验存在性、而不只做「上一轮在、这一轮不在」的 diff：tab 是**持久化**的
+     * （`diy_tabs_opened`）—— 跨重启后，盘上仍躺着早就被删掉的任务的 tab；diff 的 prev
+     * 首轮为空，永远发现不了它们。判据收在 shared/tab-prune（纯函数、可单测）：
+     *   ① 只剪任务是 ctx 的 tab（别的页面 ctx 不动）；
+     *   ② **树成功加载过**才剪（treeLoaded）—— 启动那一瞬 nodes=[] 是「树还没到」，
+     *      照剪会把用户恢复出来的 tab 全清光。
+     *
+     * 过期快照的防护在 taskStore.loadTree（旧响应丢弃）：本 effect 读的 nodes 永远是
+     * **已生效**的那一份，不会拿旧树误判「任务消失」（见 task-store.test.ts）。
+     * `tabStore.opened` 用 untrack 读：剪枝会写 tab，若不 untrack 就自我触发成环。
+     */
     createEffect(() => {
-        const cur = new Set<string>();
+        const treeLoaded = taskStore.treeLoaded;
+        const nodes = taskStore.nodes;
+        const alive = new Set<string>();
         const walk = (ns: TreeNode[]) => {
             for (const n of ns) {
-                if (n.uri) cur.add(n.uri); // 项目节点没有 uri，成不了 tab，跳过
+                if (n.uri) alive.add(n.uri); // 项目节点没有 uri，成不了任务的 tab，跳过
                 walk(n.children ?? []);
             }
         };
-        walk(taskStore.nodes);
-        const gone = [...prevUris].filter((u) => !cur.has(u));
-        prevUris = cur;
-        if (gone.length === 0) return;
-        for (const u of gone) tabStore.dropCtx(u);
-        // 被摘的恰是当前 route → route 悬空（主区所有 page 的 Show 全 false = 白屏）→ 跟随 active
+        walk(nodes);
+        const opened = untrack(() => tabStore.opened.map((t) => ({ pageId: t.pageId, ctx: t.ctx })));
+        const stale = staleTaskTabCtxs({ opened, aliveUris: alive, treeLoaded });
+        if (stale.length === 0) return;
         untrack(() => {
+            for (const ctx of stale) tabStore.dropCtx(ctx);
+            // 被剪的若是任务管理页当前选中的任务 → 清掉选中（面板切到「任务不存在」终态）
+            if (taskStore.selectedUri && stale.includes(taskStore.selectedUri)) void taskStore.selectTask(null);
+            // 被摘的恰是当前 route → route 悬空（主区所有 page 的 Show 全 false = 白屏）→ 跟随 active
             const r = route();
             if (r.kind === "tab" && !tabStore.find(r.key)) {
                 const k = tabStore.active;
                 setRoute(k ? { kind: "tab", key: k } : { kind: "section", section: "task" });
             }
+            notificationStore.addToast(
+                "info",
+                stale.length === 1
+                    ? `任务 ${stale[0]} 已不存在，已关闭其页面`
+                    : `${stale.length} 个任务已不存在，已关闭对应页面`,
+            );
         });
     });
 

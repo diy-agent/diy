@@ -4,7 +4,7 @@ import { localChatStore } from "../store/localChatStore";
 import { draftStore } from "../store/draftStore";
 import { getRendererActions } from "../lib/renderer-actions";
 import { Caches } from "../lib/ui-state";
-import { TaskDetailContent } from "./TaskDetailContent";
+import { TaskDetailContent, TaskMissingNotice } from "./TaskDetailContent";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 
 const PANEL_W_MIN = 360;
@@ -135,7 +135,24 @@ export function TaskDetailPanel() {
                             （draftStore.hasAny），只要用户改过内容就会自动恢复，无内容损失。
                             内容本体与任务执行页左栏 / nav 悬停覆盖层**同一个组件**：
                             这里宽度够（默认 560px），流式布局自动排成两列。 */}
-                        <Show when={taskStore.selectedTask} keyed fallback={<div class="opacity-60 text-prose">加载中…</div>}>
+                        {/* 三态：已就绪 → 内容；判明不存在 → 终态 + 出路（##361）；其余 → 加载中。
+                            不存在态**不能**回退成「加载中…」：面板是「选中任务即打开」，
+                            任务被删后这里曾是永远转圈的空白（无终态无出路）。 */}
+                        <Show
+                            when={taskStore.selectedTask}
+                            keyed
+                            fallback={
+                                <Show
+                                    when={taskStore.selectedMissing}
+                                    fallback={<div class="opacity-60 text-prose">加载中…</div>}
+                                >
+                                    <TaskMissingNotice
+                                        uri={taskStore.selectedUri ?? ""}
+                                        onRefresh={() => void taskStore.selectTask(taskStore.selectedUri)}
+                                    />
+                                </Show>
+                            }
+                        >
                             {(t) => <TaskDetailContent uri={t.uri} task={t} host="manage" />}
                         </Show>
                 </div>
