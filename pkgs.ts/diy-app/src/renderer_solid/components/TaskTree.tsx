@@ -7,6 +7,9 @@ import { notificationStore } from "../store/notificationStore";
 import { diyService } from "../lib/rpc";
 import { Caches } from "../lib/ui-state";
 import { CreateProjectSheet } from "./CreateProjectSheet";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { DeleteEntryButton } from "./DeleteEntryButton";
+import { deleteTaskViaUi, removeProjectViaUi } from "../lib/delete-entry";
 import { isAncestorOf } from "../lib/task-lineage";
 import { TASK_STATES, taskStateColor } from "../../main/core/task-state";
 import { CreateTaskSheet } from "./CreateTaskSheet";
@@ -38,6 +41,15 @@ interface FlatRow {
     projectId: string;
     /** 命中的正文片段（搜索态才有；标题命中时为 null）。就地赋值，行对象引用终身不变 */
     snippet: SearchSnippet | null;
+}
+
+/** 待确认的删除目标（任务行 / 项目行共用；弹窗状态挂在 TaskTree 上） */
+interface PendingDelete {
+    kind: "task" | "project";
+    /** 任务 = 任务 URI；项目 = project id */
+    id: string;
+    /** 展示用：任务标题 / 项目 label */
+    label: string;
 }
 
 /**
@@ -463,6 +475,26 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
         }
     };
 
+    // ── 删除入口（##352）：任务行 / 项目行共用**一次**确认（弹窗状态在列表层，行内只发请求）──
+    const [pendingDelete, setPendingDelete] = createSignal<PendingDelete | null>(null);
+    /** 防重入：确认弹窗的「删除」可被连点，重入就是两次 rmSync（第二次落在不存在的目录上） */
+    let deleting = false;
+
+    const doDelete = async (p: PendingDelete) => {
+        if (deleting) return;
+        deleting = true;
+        try {
+            if (p.kind === "task") await deleteTaskViaUi(p.id, p.label);
+            else await removeProjectViaUi(p.id, p.label);
+            setPendingDelete(null);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            notificationStore.addToast("error", `删除失败: ${msg}`);
+        } finally {
+            deleting = false;
+        }
+    };
+
     return (
         <DragDropProvider onDragEnd={handleDragEnd} sensors={[PointerSensor]}>
             <div class="h-full flex flex-col">
@@ -537,13 +569,31 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
                             <For each={rows()}>
                                 {(row) =>
                                     row.kind === "project" ? (
-                                        <ProjectRow row={row} expanded={expanded()} onToggle={toggle} />
+                                        <ProjectRow
+                                            row={row}
+                                            expanded={expanded()}
+                                            onToggle={toggle}
+                                            onRequestDelete={() =>
+                                                setPendingDelete({
+                                                    kind: "project",
+                                                    id: row.projectId,
+                                                    label: row.node.title ?? "",
+                                                })
+                                            }
+                                        />
                                     ) : (
                                         <TaskRow
                                             row={row}
                                             expanded={expanded()}
                                             onToggle={toggle}
                                             focused={(searching() && row.key === focusUri()) || row.key === revealFlash()}
+                                            onRequestDelete={() =>
+                                                setPendingDelete({
+                                                    kind: "task",
+                                                    id: row.key,
+                                                    label: row.node.title ?? row.key,
+                                                })
+                                            }
                                         />
                                     )
                                 }
@@ -571,11 +621,34 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
                     ) : null
                 }
             </DragOverlay>
+
+            {/* 破坏性二次确认：走应用内 ConfirmDialog（禁用原生 window.confirm，见其头注释）。
+                ##138（回收站）未就绪 → 文案如实标注「不可恢复」，别让用户以为删了还能捞回来。 */}
+            <Show when={pendingDelete()}>
+                {(p) => (
+                    <ConfirmDialog
+                        title={p().kind === "task" ? `删除任务「${p().label}」？` : `删除项目「${p().label}」？`}
+                        message={
+                            p().kind === "task"
+                                ? "仅删除该任务本身：其子任务不删，会失去父级升为一级任务。回收站尚未实现（##138 待做），本次删除不可恢复。"
+                                : "该项目及其全部任务将被删除（数据目录连带任务一并移除）。回收站尚未实现（##138 待做），本次删除不可恢复。"
+                        }
+                        confirmLabel="删除"
+                        onCancel={() => setPendingDelete(null)}
+                        onConfirm={() => void doDelete(p())}
+                    />
+                )}
+            </Show>
         </DragDropProvider>
     );
 }
 
-function ProjectRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: string) => void }) {
+function ProjectRow(props: {
+    row: FlatRow;
+    expanded: Set<string>;
+    onToggle: (k: string) => void;
+    onRequestDelete: () => void;
+}) {
     const { row } = props;
     // 项目节点作为拖放目标：拖到其上 → 子任务提升为该项目一级任务
     const drop = useDroppable({
@@ -618,6 +691,10 @@ function ProjectRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: 
                         {row.node.title}
                     </span>
                     <CreateTaskSheet projectId={row.projectId} projectLabel={row.node.title ?? ""} />
+                    <DeleteEntryButton
+                        title="删除项目（连带其下全部任务）"
+                        onRequest={props.onRequestDelete}
+                    />
                 </span>
             </td>
             {/* 项目行的其余列：项目路径（原 URI 列的语义，项目自身没有任务字段） */}
@@ -628,7 +705,13 @@ function ProjectRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: 
     );
 }
 
-function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: string) => void; focused: boolean }) {
+function TaskRow(props: {
+    row: FlatRow;
+    expanded: Set<string>;
+    onToggle: (k: string) => void;
+    focused: boolean;
+    onRequestDelete: () => void;
+}) {
     const { row } = props;
     const isSelected = () => taskStore.selectedUri === row.key;
     const drag = useDraggable({
@@ -697,6 +780,10 @@ function TaskRow(props: { row: FlatRow; expanded: Set<string>; onToggle: (k: str
                         chip 自身只在"有事"时渲染（空闲且无事 → 不占地方，见 shared/session-overview）。 */}
                     <SessionChip uri={row.key} />
                     <CreateTaskSheet projectId={row.projectId} projectLabel={row.node.title ?? ""} parentUri={row.key} compact />
+                    <DeleteEntryButton
+                        title="删除任务（子任务升为一级，不随删）"
+                        onRequest={props.onRequestDelete}
+                    />
                 </span>
                 {/* 正文命中片段：行内第二行（不新增 <tr>，否则树的行序/键盘导航要重新定义）。
                     纯文本单行展示——不做 Markdown 渲染：片段是"定位线索"，渲染只会增加噪音。 */}
