@@ -47,6 +47,7 @@ import { diyHome, projectsRoot, taskDir, taskExists } from "./state";
 import {
     appendAudit,
     appendPathRecord,
+    appendPost,
     applyFinish,
     artifactFile,
     assertSnapshotMatches,
@@ -55,11 +56,15 @@ import {
     readArtifacts,
     readAudit,
     readBinding,
+    readPosts,
     readState,
+    requirePostText,
     writeArtifact,
     writeBinding,
     writeState,
     type FlowBinding,
+    type FlowPost,
+    type FlowPostType,
 } from "./flow-store";
 
 // ═══════════════════════════════════════════════════════════════
@@ -148,9 +153,26 @@ export interface FlowView {
     readonly trajectory: Visit<string>[];
     readonly params: Record<string, unknown>;
     readonly paramsSchema: ParamEntry[];
-    readonly files: { readonly dir: string; readonly instance: string; readonly state: string; readonly path: string; readonly events: string };
+    readonly files: {
+        readonly dir: string;
+        readonly instance: string;
+        readonly state: string;
+        readonly path: string;
+        readonly events: string;
+        /** 讨论流（##342）—— 旁注，可清可丢（删了不影响推进，只是线程里的发言没了） */
+        readonly threads: string;
+    };
     /** 审计流里跳过（解析失败）的行数 —— 审计可坏，坏了只报数（不阻断运行） */
     readonly auditSkipped: number;
+    /**
+     * **讨论流的错误位**（##342；`null` = 旁注没出错）。
+     *
+     * 与 `viewError` 同一立场（##337 review1 P2-B）：讨论流是**旁注 / 审计**（`rule.core-log`），
+     * 读坏了**不许**拖垮领域读（泳道页唯一的数据源就是 `flow show`）—— 位置 / 折线 / 参数照常下发，
+     * 只在这里说一句「讨论流有 N 行读不出，删掉 `flow/threads.jsonl` 即可」。
+     * 要**看**讨论流本身的错，用 `diy flow thread list`（它另报 `skipped` 计数，同样不炸）。
+     */
+    readonly threadError: string | null;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -295,8 +317,10 @@ function viewOf(uri: string, def: WorkflowDef<string>, state: FlowState<string>)
             state: flowFile(uri, "state"),
             path: flowFile(uri, "path"),
             events: flowFile(uri, "events"),
+            threads: flowFile(uri, "threads"),
         },
         auditSkipped: audit.skipped,
+        threadError: threadErrorOf(uri),
     };
 }
 
@@ -330,6 +354,22 @@ interface ArtifactAt {
 }
 
 const EMPTY_ARTIFACT: ArtifactAt = { art: null, plugin: null, view: null, error: null };
+
+/**
+ * 讨论流的**错误位**（##342）：读得出 ⇒ `null`；读不出 / 有坏行 ⇒ 一句人话（**不外抛**）。
+ *
+ * 旁注坏了不该让领域读失败（与 `tryArtifactAt` 同一立场）；文件不在是**正常态**（还没人发过言）。
+ */
+function threadErrorOf(uri: string): string | null {
+    try {
+        const { skipped } = readPosts(uri);
+        if (skipped === 0) return null;
+        return `讨论流有 ${skipped} 行读不出（旁注坏了不影响推进 —— 删掉 ${flowFile(uri, "threads")} 即可）：` +
+            "打回意见是旁注，驱动判据不读它";
+    } catch (e) {
+        return `讨论流读不出：${(e as Error).message}（旁注坏了不影响推进 —— 删掉 ${flowFile(uri, "threads")} 即可）`;
+    }
+}
 
 /** 折线上最后一条驻留 = **现在这一步**；未进入（折线为空）⇒ null */
 function currentVisit(state: FlowState<string>): Visit<string> | null {
@@ -711,6 +751,49 @@ export function bounceFlow(uri: string, to: string, refArgs: readonly string[] =
     requireEdge(def, state.position, to, "bounce");
     const ref = { taskUri: uri, ...parseRefArgs(refArgs) };
     return commit(uri, def, state, to, "bounce", ref, note, author);
+}
+
+/**
+ * 给**刚发生的那次打回**挂一条发言（##342 的写侧；`diy flow bounce --opinion` 与驱动环的自动打回共用它）。
+ *
+ * 锚点从**回执折线**里取（`{from: 打回前位置, to: 落点节点, seq: 落点那次 Visit.seq}`）——
+ * 不另算一遍、也不接受调用方传进来的「想挂哪就挂哪」：一次 bounce 恰创生一次驻留，
+ * 该三元组唯一标识这条打回边的一次穿越（同节点二次打回自然各是各的，##320 P1-1 的教训）。
+ *
+ * `at` 用**那次驻留自己的时间戳**（不是「现在」）：这条发言属于那次打回，不是另起一条时间线。
+ * 落盘失败**外抛**（调用方决定怎么办）：CLI 显名要求带意见时该响亮报错；
+ * 驱动环无人值守，自己 catch 后只警告（旁注坏了不打断推进，`rule.core-log`）。
+ *
+ * **空正文一律拒**（##342 review1 P2-1）：闸门是 `flow-store.ts::requirePostText`（与 CLI 面板的
+ * `postThread` **同一处真源**）。这里必须装 —— 驱动环的结论行合法地可以只写「结论：打回」（无原因），
+ * 放行就等于往留痕里落一条**没有任何内容的争议发言**。驱动环侧已有 catch ⇒ 自动降级为「不写 + warn」，
+ * 审计那半照旧记 `打回`（审计与讨论口径不同是对的）。
+ */
+export function appendBounceOpinion(
+    uri: string,
+    view: FlowView,
+    text: string,
+    author: string,
+    type: FlowPostType = "note",
+): FlowPost {
+    requirePostText(text);
+    const landing = view.trajectory[view.trajectory.length - 1];
+    const source = view.trajectory[view.trajectory.length - 2];
+    if (!landing || !source || landing.kind !== "bounce") {
+        throw new Error(
+            `只接**打回**的回执（折线最后一条应是 kind:'bounce'）：${uri} 实得 ${landing ? `${landing.node}#${landing.seq}/${landing.kind}` : "（空折线）"}`,
+        );
+    }
+    const post: FlowPost = {
+        id: randomUUID(),
+        at: landing.at,
+        author,
+        type,
+        anchor: { from: source.node, to: landing.node, seq: landing.seq },
+        text,
+    };
+    appendPost(uri, post);
+    return post;
 }
 
 /**

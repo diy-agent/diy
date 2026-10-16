@@ -37,6 +37,7 @@ import {
     fmtTokens,
     groupByAgent,
     groupByTurn,
+    recordsAvgRate,
     stepView,
     sumBuckets,
     sumCosts,
@@ -120,7 +121,8 @@ function fmtTurnClock(turnId: string): string | null {
 }
 
 /**
- * 该轮**最后一步**的实测生成速度（tok/s）：两处来源，口径同一个（`shared/usage.stepRate`）。
+ * 该轮**实时档**速度（tok/s，⚡）= **最后一步**的实测生成速度：两处来源，口径同一个
+ * （`shared/usage.stepRate`，**含首字等待**）。
  *
  *   ① `usage.lastStepRate` —— main 在每步 finish-step 下发的 patch 字段：**直播时最新**；
  *   ② 逐步账本镜像（`localChatStore.usage` = `usage.jsonl` 的镜像，打开会话 / 轮次结束时对账刷新）：
@@ -135,11 +137,28 @@ function turnStepRate(turnId: string, usage: unknown): number | null {
     return last ? stepRate(last.performance, stepView(last).buckets.outputTotal) : null;
 }
 
-/** 整个会话**最近一次**实测速度（总状态栏口径：没有新 step 也留着上一次的值） */
-export function sessionLastRate(): number | null {
-    const steps = localChatStore.usage;
-    const last = steps[steps.length - 1];
-    return last ? stepRate(last.performance, stepView(last).buckets.outputTotal) : null;
+/**
+ * 该轮**轮均档**速度（tok/s，⌀）= 本轮 Σ总输出 ÷ Σ各步响应耗时（含首字等待，`shared/usage.avgRate`）。
+ *
+ * 优先用 main 每步下发的 `usage.turnRate`（**直播中也在长**，不是轮末才算一次）；
+ * 本版之前的 ops 没有该字段 → 由逐步账本镜像现算（账本里本来就有各步 `performance`）。
+ * 镜像里没有这一轮（直播刚起步、一步都还没跑完）→ null。
+ */
+function turnAvgRate(turnId: string, usage: unknown): number | null {
+    const fromPatch = (usage as TurnUsagePatch | undefined)?.turnRate;
+    if (typeof fromPatch === "number" && fromPatch > 0) return fromPatch;
+    const mine = localChatStore.usage.filter((r) => r.turnId === turnId);
+    return mine.length ? recordsAvgRate(mine) : null;
+}
+
+/**
+ * 整个会话**总均档**速度（tok/s，⌀）= 全部步 Σ总输出 ÷ Σ各步响应耗时（含首字等待）。
+ *
+ * 数据源 = 逐步账本镜像（`localChatStore.usage`；**直播中按步刷新**）。
+ * 与轮尾那枚不重复：轮尾是"本轮"，这里是"全局"（用户 2026-10-15 口径）。
+ */
+export function sessionAvgRate(): number | null {
+    return recordsAvgRate(localChatStore.usage);
 }
 
 // ─── L2 汇总卡：统一数据模型（A/B 两表同一份源） ───────
@@ -1271,17 +1290,26 @@ export function TurnUsageBar(props: {
         </Show>
     );
 
-    // ── ⚡速度：**按步**的实测值（不是"跑着才算"的瞬时值，故无定时器 —— 值只在每步结束时变）
-    const rate = () => turnStepRate(props.turnId, props.usage);
+    // ── 速度（##349 三档）：**同一位置按轮次生死换档**，避免两处重复同一数字
+    //    · 直播中 = **实时档** ⚡（本轮最近一步的实测值；流内 token 计数拿不到，故非"跑着那一步"的实时）
+    //    · 轮结束 = **轮均档** ⌀（本轮 Σ总输出 ÷ Σ各步响应耗时；给不出数回退逐步账本）
+    //    无定时器：两档都只在每步结束时变（live 时每步追新，停后即为定值）。
+    const isLive = () => !!props.live;
+    const rate = () => (isLive() ? turnStepRate(props.turnId, props.usage) : turnAvgRate(props.turnId, props.usage));
     /** 速度：纯文本；给不出数（老记录 / 该步没有计时）就整块不画 */
     const Rate = () => (
         <Show when={rate() != null}>
             <span
-                class="shrink-0 tabular-nums text-caption opacity-70"
-                data-turn-rate
-                title="生成速度 = 本轮最后一步的总输出 ÷ (响应耗时 − 首字耗时 TTFT)。按步统计：流内部的 token 计数拿不到，跑着的那一步显示的是上一步的实测值，该步结束即刷新"
+                class={isLive()
+                    ? "shrink-0 tabular-nums text-caption text-accent animate-pulse"
+                    : "shrink-0 tabular-nums text-caption opacity-60"}
+                data-turn-live-rate={isLive() ? "1" : undefined}
+                data-turn-rate={isLive() ? undefined : "1"}
+                title={isLive()
+                    ? "实时速度 ⚡ = 本轮最近一步的总输出 ÷ 该步响应耗时（含首字等待 TTFT），每步结束刷新一次"
+                    : "轮均速度 ⌀ = 本轮总输出 ÷ 本轮各步响应耗时之和（含首字等待 TTFT）"}
             >
-                ⚡ {Math.round(rate()!)} tok/s
+                {isLive() ? "⚡" : "⌀"} {Math.round(rate()!)} tok/s
             </span>
         </Show>
     );
@@ -1383,35 +1411,29 @@ export function TurnUsageBar(props: {
     }
 }
 
-// ─── L1③ 输入框底部总状态栏的速度 ──────────────
+// ─── L1③ 输入框底部总状态栏的速度（总均档） ──────────────
 
 /**
- * ⚡ **最近一次实测**的生成速度（常驻位，输入框底部工具条）。
+ * ⌀ **全局平均**生成速度（常驻位，输入框底部工具条）。
  *
- * 口径（用户 2026-10-12 拍板）：「没有执行新 step，老的速度留在 bar 上，就是最后一次速度」
- * —— 所以它不是"跑着才显示"的瞬时值，而是**最后一次落盘的步速度**（`shared/usage.stepRate`，
- * 与轮尾状态行、用量表速度列同一个数），跑完也留着，直到下一步结束才换新值。
- *
- * 为什么要有（与轮尾那枚 chip 重复的理由是位置）：轮尾那行在对话流里，滚上去看历史时就移出视野了；
- * 而"这一轮跑得快不快"恰恰在**等待 / 想打断**时最需要看见 —— 那一刻视线在输入框。
- *
- * ⚠️ **粒度 = 一步**（别当 bug 再报一遍）：流内部的 token 计数拿不到（usage 是 provider 在每步
- * 收尾才给的），所以跑着的那一步只能显示上一个已完成步的实测值 —— 不拿按流式文本估的假数占位。
- *
- * 给不出数（新会话还没跑过步 / 本版之前的老记录）→ 整块不画。
+ * 口径（##349，用户 2026-10-15）：**总均** = 全部轮次 Σ总输出 ÷ Σ各步响应耗时（含首字等待，
+ * `shared/usage.recordsAvgRate`）。为什么放在这里 —— 轮尾那行在对话流里、会随滚屏移出视野，
+ * 而"整体跑得快不快"是常驻参考；且用户明确要求**避免与上方轮均重复同一数字**：
+ * 轮尾给的是"本轮"，这里给的是"全局"，两者口径一致但范围不同，故可比而不重复。
+ * 给不出数（新会话还没跑过步 / 老记录没有计时）→ 整块不画，不拿假数占位。
  */
-export function StepRateChip(props: {
-    /** 最近一次实测的步速度（tok/s）；null → 不画 */
+export function OverallRateChip(props: {
+    /** 全局平均速度（tok/s）；null → 不画 */
     rate: number | null;
 }) {
     return (
         <Show when={props.rate != null}>
             <span
-                class="shrink-0 tabular-nums text-caption opacity-70"
-                data-live-rate
-                title="生成速度 = 最近一步的总输出 ÷ (响应耗时 − 首字耗时 TTFT)，每步结束刷新一次"
+                class="shrink-0 tabular-nums text-caption opacity-60"
+                data-overall-rate
+                title="总均速度 ⌀ = 全部轮次总输出 ÷ 全部步响应耗时之和（含首字等待 TTFT）"
             >
-                ⚡ {Math.round(props.rate!)} tok/s
+                ⌀ {Math.round(props.rate!)} tok/s
             </span>
         </Show>
     );

@@ -176,6 +176,84 @@ export async function collectArtifacts(
 }
 
 // ═══════════════════════════════════════════════════════════════
+// 讨论线程（##342）：形状 + 纯派生
+// ═══════════════════════════════════════════════════════════════
+//
+// 线程**挂在锚点上**（= 折线上真发生过的一次打回边），不占位置、不产生新历史 ——
+// 于是「泳道视图」与「讨论视图」是同一份事件流的两种投影，锚点就是它们之间的键。
+// 形状与 `main/core/flow-store.ts` 的 `FlowPost` / `main/core/flow-thread.ts` 的 `FlowThreadView` 一一对应。
+
+/** 线程锚点：`{from: 打回前节点, to: 落点节点, seq: 落点那次驻留的序号}` */
+export interface FlowAnchorBrief {
+    readonly from: string;
+    readonly to: string;
+    readonly seq: number;
+}
+
+/** 发言类型：普通发言 / 宣布线程已解决 / 升级人裁决 */
+export type FlowPostType = "note" | "resolved" | "escalate";
+
+export interface FlowPostView {
+    readonly id: string;
+    readonly at: string;
+    /** 谁说的：`cli` / agent 标识 / `human` */
+    readonly author: string;
+    readonly type: FlowPostType;
+    readonly anchor: FlowAnchorBrief;
+    readonly text: string;
+}
+
+export type FlowThreadStatus = "open" | "resolved" | "escalated";
+
+export interface FlowThreadView {
+    /** 线程 id：`from->to#seq`（UI 的 `data-flow-thread`、CLI 的 `--thread` 用的是同一个键） */
+    readonly id: string;
+    readonly anchor: FlowAnchorBrief;
+    readonly fromName: string;
+    readonly toName: string;
+    /** 打回源那次驻留的序号（从折线推；假锚点 ⇒ null） */
+    readonly fromSeq: number | null;
+    /** 折线上确有这条打回边（false = 讨论流里有、折线上查无 ⇒ 坏数据，界面亮出来而不是藏起来） */
+    readonly real: boolean;
+    /** 折线上的次序（第几次位置变更；假锚点 ⇒ -1） */
+    readonly at: number;
+    readonly status: FlowThreadStatus;
+    readonly posts: readonly FlowPostView[];
+}
+
+/** `flow thread list` 的载荷 */
+export interface FlowThreadsView {
+    readonly uri: string;
+    readonly threads: readonly FlowThreadView[];
+    readonly skipped: number;
+    readonly error: string | null;
+    readonly file: string;
+}
+
+/** 线程 id（与 main 的 `anchorKey` 同一形）：折线第 `index` 次驻留若**是打回进来的**，它就是那个线程；否则 null */
+export function threadIdOfVisit(visits: readonly FlowVisitBrief[], index: number): string | null {
+    const visit = visits[index];
+    if (!visit || visit.kind !== "bounce") return null;
+    const source = visits[index - 1];
+    if (!source) return null;
+    return `${source.node}->${visit.node}#${visit.seq}`;
+}
+
+/** 线程状态徽标文案（唯一处：界面与单测共用一份口径） */
+export const THREAD_STATUS_LABEL: Record<FlowThreadStatus, string> = {
+    open: "进行中",
+    resolved: "已解决",
+    escalated: "已升级人裁决",
+};
+
+/** 发言类型徽标文案（唯一处） */
+export const POST_TYPE_LABEL: Record<FlowPostType, string> = {
+    note: "发言",
+    resolved: "宣布已解决",
+    escalate: "升级人裁决",
+};
+
+// ═══════════════════════════════════════════════════════════════
 // 派生（纯函数；单测在 tests/core/flow-ui-swimlane.test.ts）
 // ═══════════════════════════════════════════════════════════════
 

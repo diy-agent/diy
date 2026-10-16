@@ -329,4 +329,76 @@ describe("resolveLayout", () => {
     const out = resolveLayout(base(), { hidden: { detail: false } });
     expect(out.cols).toEqual([px(240), fr(1), px(320)]);
   });
+
+  // ── 收起时的**空间去向**（##348 ⑤：左栏最小化后中栏不铺满）──────────────────
+  // 本轴有弹性轨时剩余空间天然归它；**拖过线之后**两侧都是 px，就得手工把被收起的
+  // 尺寸交给邻居 —— 否则那几百 px 变成死区，网格只有内容宽、右侧一片空白。
+
+  /** 任务执行页的真实形状：左 | 中 | 右（右初始 0），底栏默认收起 */
+  const bar = (): Layout => ({
+    version: LAYOUT_VERSION,
+    cols: [px(300), fr(1), px(0)],
+    rows: [fr(1), px(320)],
+    areas: [
+      { id: "left", col: 0, row: 0 },
+      { id: "center", col: 1, row: 0 },
+      { id: "right", col: 2, row: 0 },
+      { id: "bottom", col: 0, row: 1, colSpan: 3 },
+    ],
+  });
+
+  it("有弹性轨：收起左栏不必搬尺寸（fr 自己吃下剩余空间）", () => {
+    const out = resolveLayout(bar(), { hidden: { left: true } });
+    expect(out.cols).toEqual([px(0), fr(1), px(0)]);
+  });
+
+  it("拖过线（全 px）：收起左栏 → 它的宽度交给右邻，中栏才是铺满的", () => {
+    // 用户拖过线之后的尺寸覆盖：360 + 624 + 0 = 984（容器宽）
+    const out = resolveLayout(bar(), {
+      cols: [px(360), px(624), px(0)],
+      hidden: { left: true },
+    });
+    expect(out.cols).toEqual([px(0), px(984), px(0)]);
+    expect(out.cols.reduce((n, t) => n + t.value, 0)).toBe(984); // 总宽守恒：没有死区
+  });
+
+  it("行同理：全 px 时收起底栏 → 高度交给上邻", () => {
+    const out = resolveLayout(bar(), {
+      rows: [px(664), px(320)],
+      hidden: { bottom: true },
+    });
+    expect(out.rows).toEqual([px(984), px(0)]);
+  });
+
+  it("偏好方向没有未收起的轨 → 反向找（内容区在左上的口径）", () => {
+    const l: Layout = {
+      version: LAYOUT_VERSION,
+      cols: [px(200), px(300), px(400)],
+      rows: [fr(1)],
+      areas: [
+        { id: "a", col: 0, row: 0 },
+        { id: "b", col: 1, row: 0 },
+        { id: "c", col: 2, row: 0 },
+      ],
+    };
+    // 收起最右列：右边没有邻居 → 交给左邻 col1
+    const out = resolveLayout(l, { cols: [px(200), px(300), px(400)], hidden: { c: true } });
+    expect(out.cols).toEqual([px(200), px(700), px(0)]);
+  });
+
+  it("被收起的是 fr 轨 / 全被收起 → 不搬（没有可交的绝对尺寸）", () => {
+    const l: Layout = {
+      version: LAYOUT_VERSION,
+      cols: [fr(1), px(300)],
+      rows: [fr(1)],
+      areas: [
+        { id: "a", col: 0, row: 0 },
+        { id: "b", col: 1, row: 0 },
+      ],
+    };
+    // col0 是 fr：收它只是把弹性轨移走，不产生可搬的 px
+    expect(resolveLayout(l, { hidden: { a: true } }).cols).toEqual([px(0), px(300)]);
+    // 两列都收起：没有未收起的邻居可接
+    expect(resolveLayout(l, { hidden: { a: true, b: true } }).cols).toEqual([px(0), px(0)]);
+  });
 });

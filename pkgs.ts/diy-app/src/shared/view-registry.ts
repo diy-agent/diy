@@ -38,7 +38,12 @@ export interface ViewPlacement {
 export interface PageDef {
   id: string;
   title: string;
-  /** nav tab 图标（短字符）。缺省时由 tab 显示页面序号 —— 别在组件里特判 pageId（review RV-10）。 */
+  /**
+   * nav tab 图标（短字符）。缺省时由 tab 显示页面序号 —— 别在组件里特判 pageId（review RV-10）。
+   * **子页面 tab 就用它当行首标记**（代替任务的状态圆点，##350 ①）：子页面不是任务，
+   * 标任务状态会被读成"又一个任务"。故新子页面**应给 icon** —— 不给就退回序号，
+   * 看上去与任务 tab 的序号无异，正是本字段要消解的那种错觉。
+   */
   icon?: string;
   /** 是否可多开（任务执行页：每个任务一个实例，等同浏览器 tab） */
   multi?: boolean;
@@ -117,6 +122,15 @@ export const VIEWS: ViewDef[] = [
     title: "节点与参数",
     instanceScope: "context",
     placement: { flow: { area: "right", order: 10 } },
+  },
+  {
+    // 同页右栏下部：打回讨论线程（##342）—— 锚点 = 折线上的**真打回边**，
+    // 与泳道图是**同一份事件流的两种投影**（打回不新建节点、讨论不占位置）。
+    // 数据只走 RPC（`flow thread list`）；旁注坏了只在面板里亮错误位（rule.core-log）。
+    id: "flow.dispute",
+    title: "讨论",
+    instanceScope: "context",
+    placement: { flow: { area: "right", order: 20 } },
   },
   {
     // 边聊边调：与任务执行页是**同一个 view**，只是换个 area（卫星）
@@ -221,6 +235,7 @@ export const PAGES: PageDef[] = [
     // 也避免上下文树（整页是真实数据的另一种组织）与提示词预览互相抢空间。
     id: "ctxlab",
     title: "上下文树",
+    icon: "C", // 子页面 tab 的行首标记（##350 ①）：有它才不落到"页面序号"上、看着像个任务
     multi: true, // 每个任务一个实例
     parentPage: "task-run",
     layout: {
@@ -480,6 +495,18 @@ export function validateRegistry(
     for (const a of p.layout.areas) {
       if (seen.has(a.id)) errs.push({ path: `pages[${i}].layout.areas`, msg: `area id 重复: ${a.id}` });
       seen.add(a.id);
+    }
+    // 子页面（有 parentPage）**必须**有 icon：没有它 tab 行首就退回"页面序号"，
+    // 与任务 tab 的序号一模一样 —— 正是 ##350 ① 要消解的"子页面看着像任务"错觉。
+    // 靠人记不住（R1 实测：clab 补完就以为治好了，存量靠肉眼核），故升成注册表不变量。
+    if (p.parentPage && !p.icon?.trim()) {
+      errs.push({
+        path: `pages[${i}].icon`,
+        msg: `子页面「${p.id}」缺 icon（##350 ①）：无 icon 会退回页面序号，tab 上看不出它是页面还是任务`,
+      });
+    }
+    if (p.parentPage && !pages.some((q) => q.id === p.parentPage)) {
+      errs.push({ path: `pages[${i}].parentPage`, msg: `父页面不存在: ${p.parentPage}` });
     }
   });
 

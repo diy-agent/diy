@@ -36,8 +36,8 @@ import {
     TurnUsageDetailDrawer,
     SessionUsageChip,
     WindowRing,
-    StepRateChip,
-    sessionLastRate,
+    OverallRateChip,
+    sessionAvgRate,
     UsageDrawer,
     UsageHoverCard,
     armHoverClose,
@@ -65,11 +65,9 @@ import type { ReasoningEffort } from "../../main/services/local-agent";
 // 插话队列项：与草稿同文件存储（任务目录 .diy/drafts.yaml），类型只在 main 侧定义
 import type { SteerItem, SteerMode } from "../../main/core/drafts";
 import { reasoningEffortLabel } from "../../shared/reasoning-effort";
-// 速度口径与"最近一次实测"的取值（与轮尾状态行、用量表速度列**同一个函数**，见 shared/usage.stepRate）
-import { lastMeasuredRate, type TurnUsagePatch } from "../../shared/usage";
 import { DragDropProvider, DragOverlay, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
-import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron } from "./icons";
+import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron, IconCode } from "./icons";
 import { RowGutter } from "./RowGutter";
 import { VIEW_BAR_H, chatInputMaxHeight } from "../lib/layout-metrics";
 import type { BlockNode } from "../../main/services/local-blocks";
@@ -2031,21 +2029,13 @@ export function LocalChatPage(props: { uri?: string }) {
         return last && !last.stopped ? last.id : null;
     };
     /**
-     * ⚡ 总状态栏的速度 = **最近一次实测的步速度**（tok/s）。
+     * ⌀ 底部汇总行的速度 = **全局平均**（总均档，tok/s）。
      *
-     * 口径（用户 2026-10-12）：「没有执行新 step，老的速度留在 bar 上，就是最后一次速度」
-     * —— 从最新一轮往回找第一个有 `lastStepRate` 的（`shared/usage.lastMeasuredRate`：
-     * 一轮都没有 → null → 整块不画）。值随每步结束的 usage patch 更新，故这里读的就是真值，
-     * 不需要本地定时器（按步统计，值只在步结束时变）。
+     * 口径（##349，用户 2026-10-15）：「页面最下汇总行显示**总平均**速度，避免与上方重复同一数字」
+     * —— 上方轮尾那枚是"本轮"（⚡实时 / ⌀轮均），这里是"全部轮次"的 Σ总输出 ÷ Σ响应耗时。
+     * 数据源 = 逐步账本镜像（`localChatStore.usage`），随每步刷新；没有步 → null → 整块不画。
      */
-    const lastRate = () => {
-        const usages = localChatStore.trees
-            .filter((t) => t.tag === "turn")
-            .map((t) => t.attrs.usage as TurnUsagePatch | undefined);
-        // 主源 = 各轮 usage patch 的 `lastStepRate`；本版之前的 ops 没有该字段（那时还没这个数）
-        // ⇒ 回退到逐步账本镜像（打开会话时已对账刷新），老会话也看得见速度。
-        return lastMeasuredRate(usages) ?? sessionLastRate();
-    };
+    const overallRate = () => sessionAvgRate();
     // Markdown 渲染开关（视图 cache 持久化）：全局开关而非 per-message
     const [md, setMdRaw] = createSignal<boolean>(Caches.diy_chat_md.get());
     const setMd = (v: boolean) => {
@@ -2404,26 +2394,26 @@ export function LocalChatPage(props: { uri?: string }) {
                     <IconChevron open={globalLevel() > 1} class="h-3.5 w-3.5 opacity-40" />
                     <span class="text-body leading-none">{`${globalLevel()}/${TURN_LEVEL_MAX} 展开`}</span>
                 </button>
-                {/* 显示方式二选一：两个选项都可见、当前态高亮 —— 单按钮式「MD」看不出
-                    处于哪一态（切回去要猜），且与破坏性按钮同形时易误点。 */}
-                <div class="join shrink-0" role="group" aria-label="Markdown 显示方式">
-                    <button
-                        class={`btn btn-xs join-item ${md() ? "btn-ghost" : "btn-active"}`}
-                        title="原文：按纯文本显示，不做 Markdown 渲染"
-                        aria-pressed={!md()}
-                        onClick={() => setMd(false)}
-                    >
-                        MD 原文
-                    </button>
-                    <button
-                        class={`btn btn-xs join-item ${md() ? "btn-active" : "btn-ghost"}`}
-                        title="渲染：按 Markdown 富文本显示"
-                        aria-pressed={md()}
-                        onClick={() => setMd(true)}
-                    >
-                        MD 渲染
-                    </button>
-                </div>
+                {/* 显示方式 = **一个开关的两态**，故用单个 `<>` 图标按钮（VSCode「切换源码」范式，##348 ④）。
+                    原先摆两个按钮（MD 原文 / MD 渲染）像两个动作，其实是同一开关的两面，白占两格。
+                    单按钮最容易犯的错是「看不出当前是哪态」，这里用三处一起说清，不靠用户猜：
+                      · 图标按钮的**按下态**（`btn-active` + `aria-pressed` = 正处于原文态）
+                      · tooltip 直接写**点一下会去哪**（不是描述当前态）
+                      · `data-md` 给测试/自动化一个不随皮肤变的口径
+                    用 daisyUI 的 `btn-active` 而不是 `swap`：swap 的两图标交替需要两块图标，
+                    而这里只有一个 `<>`（态由底色表达）。 */}
+                <button
+                    class="btn btn-xs btn-ghost shrink-0"
+                    classList={{ "btn-active": !md() }}
+                    data-testid="chat-md-toggle"
+                    data-md={md() ? "1" : "0"}
+                    aria-pressed={!md()}
+                    aria-label="Markdown 显示方式（原文 / 渲染）"
+                    data-tip={md() ? "查看 Markdown 原文（纯文本）" : "回到 Markdown 渲染（富文本）"}
+                    onClick={() => setMd(!md())}
+                >
+                    <IconCode class="h-3.5 w-3.5" />
+                </button>
                 {/* 「⋯」溢出菜单：低频/危险操作的收容处（学 VSCode 视图栏的 ... 附加菜单）。
                     清空历史破坏且不可恢复，常驻图标太显眼（防误删已改三轮：改名/确认/挪位，
                     本轮诉求是**位置/层级**）—— 收进来，点开才露出。
@@ -2701,10 +2691,10 @@ export function LocalChatPage(props: { uri?: string }) {
                         {/* L1 窗口占用环（chip 的 token/金额总量右侧）：hover 出构成卡（含「压缩」按钮 + 可降低窗口比较条）。
                             【用户 2026-10-07】压缩入口**移进 token 窗口的 card**（不再单独一个按钮）；生成中禁用+提示。 */}
                         <WindowRing uri={uri()} />
-                        {/* ⚡ 总状态栏的生成速度（R25 待办 B；口径见 lastRate）：与轮尾状态行、用量表速度列
-                            同一个数（最近一步的 `总输出 ÷ (响应耗时 − TTFT)`），放在**常驻**位置 ——
-                            轮尾那行会随滚屏移出视野，而"跑得快不快"恰恰在等待/想打断时最需要看见。 */}
-                        <StepRateChip rate={lastRate()} />
+                        {/* ⌀ 底部汇总行的总均速度（##349 三档之"总均"；口径见 overallRate）：与轮尾那枚
+                            不重复 —— 轮尾给"本轮"（⚡实时 / ⌀轮均），这里给"全局"。放在**常驻**位置 ——
+                            轮尾那行会随滚屏移出视野，而"整体跑得快不快"是常驻参考。 */}
+                        <OverallRateChip rate={overallRate()} />
                         <div class="flex-1" />
                         {/* 生成中的可见性：别人（CLI/另一窗口）发起时本地 running 全程为 false，
                             不显式说出来，界面看起来就像"什么都没发生"（任务 194 现象一的另一半） */}

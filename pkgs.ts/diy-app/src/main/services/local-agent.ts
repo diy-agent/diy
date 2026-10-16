@@ -69,6 +69,7 @@ import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-
 import {
     bucketsOf,
     costBreakdown,
+    rateFromTotals,
     snapshotUsage,
     stepRate,
     sumBuckets,
@@ -900,19 +901,38 @@ function clip(s: string, n = 6000): string {
 const BASH_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 
 /**
+ * bash 执行结果的**语义档**（##353：工具行 ✓/✗ 的口径真源）。
+ *
+ * `failed` = 这一行该画 ✗（execute 据此抛错 → SDK 发 tool-error → ops `status:"error"`）。
+ * 判据只看「命令跑起来了没有」这一条主线（##332）＋「有没有错误输出」（##353 复议 ##332 ①）。
+ */
+interface BashRun {
+    /** 回喂模型 / 落 ops 的**完整**文本（不在这里裁：投递层 `capToolOutput` 现算，##127） */
+    text: string;
+    /** 是否应标失败（✗）。判据见 runBash。 */
+    failed: boolean;
+}
+
+/**
  * bash：30s 超时；**命令级**失败也以文本回喂模型（错误是一等信息，不抛）。
  *
- * ⚠️ "不抛"只覆盖"命令跑起来了"那一档：非零退出 / 超时被杀 / 被取消（都是模型的输入问题，
- *    看到退出码才能自己改命令）。**别据此说"bash 永不报错"** —— 但也不是"spawn/IO 失败会抛"：
- *    cwd 不存在、`/bin/bash` 不在，这些**同样**走下面那个 `else if (err)` 收敛成
- *    `[退出码 ENOENT]` 文本 ⇒ 这一档也被标成 done（**已知缺口**，与 ##329 同族：工具没跑起来
- *    本该是失败。要改就让 spawn 类与命令级分开、前者抛，另开任务）。
+ * ── ##353 复议（##332 ① 档）：「非零退出」不再一律当数据 ──
+ *   ① **命令级非零退出**（`err.code` 是数字 ⇒ 命令确实跑起来了）：
+ *        · **有错误输出**（stderr 非空）⇒ **失败**（`failed: true`：命令报了错，✗ 且恒展开）；
+ *        · **无错误输出** ⇒ **数据**（`grep`/`fd`/`rg`/`test` 未命中 = 退出 1 且静默 —— 这不是
+ *          "失败"，是"没查到"；模型仍靠 `[退出码 N]` 改命令 ⇒ 保持 ✓）。
+ *        · 正文一律 `[退出码 N]` + 输出，**不再兜底塞 `err.message`**：`Command failed: /bin/bash -c …`
+ *          正是「✓ + Command failed」自相矛盾的来源（无输出时把 Node 的报错文案当成了命令输出）。
+ *   ② **超时 / 取消**（`err.killed` / AbortError）⇒ 当数据（**保持现状**，不属本任务，见 ##332 ②）；
+ *   ③ **spawn / IO 失败**（`err.code` ∈ ENOENT / EACCES / ENOTDIR…，**非数字**）⇒ **本任务不动**：
+ *      现仍收敛成 `[退出码 ENOENT]` 文本 ⇒ 同样被标 done（**已知缺口**：命令没跑起来本该是失败，
+ *      留 ##332 ③ 抛错、与 read 同口径）。
  *    对照：`read` 的 execute 特意**相反**（读不到就抛），见 buildTools 里 read 的注释。
  */
-function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?: AbortSignal): Promise<string> {
+function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?: AbortSignal): Promise<BashRun> {
     return new Promise((resolve) => {
         if (signal?.aborted) {
-            resolve("[已取消]");
+            resolve({ text: "[已取消]", failed: false });
             return;
         }
         execFile(
@@ -923,14 +943,18 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
                 const out = [stdout, stderr].filter(Boolean).join("\n");
                 // ⚠️ 这里一律返回**完整**文本（不 clip）：发给模型的那一份由 `capToolOutput` 在
                 //    投递层现算（##127）—— 在 execute 里裁 = 落进 ops 的原文当场丢。
-                if (err?.name === "AbortError") resolve("[已取消]");
+                if (err?.name === "AbortError") resolve({ text: "[已取消]", failed: false });
                 else if (err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || err?.code === "ENOBUFS")
-                    resolve(
-                        `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
-                    );
-                else if (err?.killed) resolve(`[命令超时被杀]\n${out}`);
-                else if (err) resolve(`[退出码 ${err.code ?? "?"}]\n${out || String(err.message)}`);
-                else resolve(out || "(无输出)");
+                    resolve({
+                        text: `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
+                        failed: false,
+                    });
+                else if (err?.killed) resolve({ text: `[命令超时被杀]\n${out}`, failed: false });
+                else if (typeof err?.code === "number")
+                    // 命令级非零退出（##353）：有 stderr = 失败，无 stderr = 查询未命中（数据）
+                    resolve({ text: `[退出码 ${err.code}]\n${out || "(无输出)"}`, failed: stderr.trim().length > 0 });
+                else if (err) resolve({ text: `[退出码 ${err.code ?? "?"}]\n${out || String(err.message)}`, failed: false });
+                else resolve({ text: out || "(无输出)", failed: false });
             },
         );
     });
@@ -958,7 +982,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 // 现仅保留 write-ahead 审计：先落盘再执行，保证最后一幕不丢
                 appendAudit(home, { phase: "bash-start", taskUri, cwd, command });
                 const t0 = Date.now();
-                const out = await runBash(
+                const run = await runBash(
                     command,
                     cwd,
                     limits,
@@ -970,9 +994,15 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     cwd,
                     command,
                     ms: Date.now() - t0,
-                    result: clip(out, 500),
+                    result: clip(run.text, 500),
                 });
-                return out;
+                // **抛，不 return**（##353，与 read 的 ##329 同口径）：catch-and-return 的字符串是
+                // **正常工具结果** → SDK 走 tool-result 分支 → patch status:"done" → UI 画 ✓（就是
+                // 「✓ + Command failed」那种自相矛盾）；抛出 → SDK 发 tool-error → status:"error"
+                // → ✗ 且恒展开。失败文案随 error.message 落进 ops —— 模型侧照旧看得到（它要靠
+                // 退出码/诊断改命令）。判据（非零退出 + 有错误输出）全在 runBash 头注。
+                if (run.failed) throw new Error(run.text);
+                return run.text;
             },
         }),
         read: tool({
@@ -999,11 +1029,11 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     // 抛出 → SDK 发 tool-error → status:"error"（UI 画 ✗ 并自动展开）。
                     // ⚠️ 别改回 return：read **读不到就是失败**（catch 里返字符串 = 把失败包成
                     //   "正常结果" → status:"done" → ✓ 且不展开，就是 ##329 的形态）。
-                    //   与 bash 的"不抛"是**两个方向的有意设计**，别互相抄：bash 把**命令级**
-                    //   失败当数据（非零退出/超时，模型要靠退出码改命令）；read 把**读不到**当失败
-                    //   （目标文件不存在没有"信息"可给，只有"这一步没做成"）。
-                    //   注意「bash 无 try/catch」≠「bash 永不报错」，也≠「它的 spawn 失败会抛」
-                    //   —— 细节见 runBash 头注（那档现在是缺口，不属本任务）。
+                    //   与 bash 的判据**不同向**，别互相抄（bash 侧 ##353 复议过）：bash 只在
+                    //   **非零退出且有错误输出**时才抛（无输出的非零退出 = 查询未命中，是数据；
+                    //   超时/取消仍当数据，模型靠退出码改命令；spawn/IO 失败那档未抛 = 缺口，见 ##332 ③）。
+                    //   read 则「读不到就是失败」：目标文件不存在没有"信息"可给，只有"这一步没做成"。
+                    //   ⚠️「bash.execute 现在会抛」≠「它见错就抛」—— 判据细节全在 runBash 头注。
                     throw new Error(`[读取失败] ${e instanceof Error ? e.message : e}`);
                 }
             },
@@ -2559,6 +2589,11 @@ export class LocalAgentManager {
         // 为什么要进 turn patch：状态栏的 ⚡ 要能"没在跑时也留在那儿"（老的速度不消失），
         // 而流内部的 token 计数拿不到 ⇒ 只能每步落一次、由 UI 显示最后一次实测值。
         let lastStepRate: number | null = null;
+        // 轮均速度（##349）的 Σ 累加：各步总输出与各步响应耗时（含首字等待）。
+        // 每步结束时重算一次 → 直播中也在长，轮末即为该轮平均。
+        let rateOutSum = 0;
+        let rateMsSum = 0;
+        let turnRate: number | null = null;
         let turnCost: CostBreakdown = { noCache: 0, cacheRead: 0, cacheWrite: null, text: 0, reasoning: 0, total: 0 };
         // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
         let lastAct: "none" | "text" | "tool" = "none";
@@ -3085,6 +3120,13 @@ export class LocalAgentManager {
                                 // **测不出就留着上一次的**：有的步没有输出 token（空回复 / 纯工具步），
                                 // 直接赋 null 会把状态栏那枚 ⚡ 打回更早一轮（review ##253 小项2）。
                                 lastStepRate = stepRate(fsPart.performance, b.outputTotal) ?? lastStepRate;
+                                // 轮均累加（##349）：只计"有计时且确有输出"的步（与 `avgRate` 同判据）
+                                const respMs = fsPart.performance?.responseTimeMs;
+                                if (respMs != null && respMs > 0 && b.outputTotal > 0) {
+                                    rateOutSum += b.outputTotal;
+                                    rateMsSum += respMs;
+                                }
+                                turnRate = rateFromTotals(rateOutSum, rateMsSum);
                                 // **按 response.modelId 查价**：上游可能路由改写模型（##211 §四.4.4）
                                 const priceModel = fsPart.response?.modelId ?? model;
                                 const rates = costOf(priceModel, b.inputTotal);
@@ -3119,7 +3161,7 @@ export class LocalAgentManager {
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
-                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate) },
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate, turnRate) },
                                 });
                             }
                             if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
@@ -3148,7 +3190,7 @@ export class LocalAgentManager {
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
-                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate) },
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate, turnRate) },
                                 });
                             }
                             // turn 的 stop 由 closeTurn 发（finally 里那一处）：收尾必须闭合

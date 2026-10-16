@@ -271,6 +271,20 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                 </div>
             </div>
 
+            {/* 任务 URI（##350 ②）：紧贴标题**正下方** —— 「我在看哪个任务」最先要认的就是它。
+                历史：A 方案（2026-10-03）把它从任务执行页的 page 菜单条移进属性面板，
+                但落到了最下面的元信息块（夹在创建/修改时间之间），要扫到底才看得见。
+                「突出」靠位置 + mono + 浅底衬，不再靠字号抢戏（标题已经在抢了）。 */}
+            <div class="task-field-row" data-testid="task-detail-uri">
+                <span class="task-field-label text-body opacity-50">URI</span>
+                <span
+                    class="min-w-0 truncate rounded bg-base-200 px-1 font-mono text-body"
+                    title={props.uri}
+                >
+                    {props.uri}
+                </span>
+            </div>
+
             {/* 字段**逐行**排（不是 flex-wrap 一行塞几个）：
                 左列最窄只有 200px，横排会让「模块」这种带输入框的字段把邻居挤没、
                 字段名被压到看不见。行内 label 左、控件右（justify-between）—— 
@@ -336,14 +350,6 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
             </div>
 
             <div class="flex flex-col gap-1 text-body opacity-60">
-                {/* 任务 URI：原在任务执行页 page 菜单条上，A 方案（2026-10-03）移入属性 ——
-                    page 条只留页面级入口（提示词/上下文树/area 开合），信息字段归属性面板 */}
-                <div class="task-field-row">
-                    <span class="task-field-label">URI</span>
-                    <span class="min-w-0 truncate font-mono" title={props.uri}>
-                        {props.uri}
-                    </span>
-                </div>
                 <Show when={props.task.project}>
                     <div class="task-field-row">
                         <span class="task-field-label">项目</span>

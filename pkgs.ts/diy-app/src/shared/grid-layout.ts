@@ -363,9 +363,42 @@ export function resolveLayout(base: Layout, override: LayoutOverride): Layout {
   if (hiddenIds.length === 0) return { ...base, cols, rows };
   // 只收「该 track 的格子全属已隐藏 area」的那些（见 collapsibleTracks 的教训注释）
   const fold = collapsibleTracks(base, new Set(hiddenIds));
-  const nextCols = [...cols];
-  const nextRows = [...rows];
-  for (const i of fold.cols) nextCols[i] = px(0);
-  for (const j of fold.rows) nextRows[j] = px(0);
-  return { ...base, cols: nextCols, rows: nextRows };
+  return { ...base, cols: foldTracks(cols, fold.cols, "col"), rows: foldTracks(rows, fold.rows, "row") };
+}
+
+/**
+ * 收起若干 track —— 并把**被收起的尺寸交给邻居**。
+ *
+ * 为什么不能只把尺寸写 0（##348 ⑤ 的根因）：
+ *   本轴只要还有弹性轨（fr），剩余空间天然归它 —— 用户不动线时（默认 `300px 1fr 0px`）
+ *   收起左栏不必做任何事。但**拖过线之后**两侧 track 都被写成 px（见 layoutStore.setTrackPair
+ *   的理由：拖过就不再受 fr 重算影响），此时收 col0 就是净丢 300px：网格内容只剩 624px、容器
+ *   984px ⇒ 中栏右侧空出一条死区，看起来就是「左栏最小化后中栏不扩到全宽」。
+ *   故无弹性轨时把这份尺寸交给**同轴最近的未收起邻居**（交给一个而不是均摊：一份尺寸只该有
+ *   一个去处，"谁变宽了"才可预测）。方向选「内容区在左上」——列向右找、行向上找。
+ */
+function foldTracks(tracks: TrackSize[], folded: number[], axis: "col" | "row"): TrackSize[] {
+  if (folded.length === 0) return [...tracks];
+  const out = [...tracks];
+  const dir = axis === "col" ? 1 : -1;
+  for (const i of folded) {
+    const freed = out[i]!;
+    out[i] = px(0);
+    // fr 轨本身没有可交的绝对尺寸；本轴还有别的弹性轨时它会吃下剩余空间，不用搬
+    if (freed.unit !== "px" || freed.value === 0) continue;
+    if (out.some((t) => t.unit === "fr" && t.value > 0)) continue;
+    const target = nearestOpenTrack(out, folded, i, dir);
+    if (target >= 0) out[target] = px(out[target]!.value + freed.value);
+  }
+  return out;
+}
+
+/** 同轴最近的未收起 track（先偏好方向，没有则反向）；-1 = 全被收起了 */
+function nearestOpenTrack(tracks: TrackSize[], folded: number[], from: number, dir: number): number {
+  for (const step of [dir, -dir]) {
+    for (let i = from + step; i >= 0 && i < tracks.length; i += step) {
+      if (!folded.includes(i)) return i;
+    }
+  }
+  return -1;
 }
