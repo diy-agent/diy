@@ -1472,7 +1472,7 @@ function TurnView(props: {
 // 用户刚按下「留言」，横条里就是那句话本身，含义不言自明）。
 // 每行分三列：**最左 = 拖拽手柄**（图标，按住拖 = 改顺序），**中 = 留言内容**（占满剩余宽度，
 // 要发出去的就是这句话），**右 = 排队时机两态开关（时钟 ⇄ 闪电）+ ✕**。
-// 默认留言排到下一轮；右侧那个开关可切到下一步，也可再次切回排队。
+// 默认留言排到下一步（马上生效，##360）；右侧那个开关可切回下一轮排队，也可再次切回来。
 //
 // 顺序：队列是 FIFO 且**顺序即投递顺序**，所以拖拽改的是真实的投递次序（不是显示偏好），
 // 松手即落盘（`steer.reorder` 提交完整顺序）。拖拽只认手柄：整行可拖会让"想选中那句话"
@@ -1611,8 +1611,8 @@ function SteerRow(props: {
             <span class="min-w-0 flex-1 truncate" title={it().text}>{it().text}</span>
             {/* 右：排到哪一轮的两态开关（daisyUI swap，可逆）。
                 两态**同时改形状与颜色**，不能只换色 —— 小图标上"同一个形状换个颜色"扫一眼分不出：
-                  · 下一轮（默认）：时钟 + 弱色 = "还得等"
-                  · 下一步（加急）：闪电 + warning 高对比底色/描边 + 呼吸 = "马上插进去"
+                  · 下一轮：时钟 + 弱色 = "还得等"
+                  · 下一步（默认，加急）：闪电 + warning 高对比底色/描边 + 呼吸 = "马上插进去"
                 形状不同，不读 tooltip 也能分辨；动画只作用于图标，不动整行布局。 */}
             <label
                 class={`btn btn-xs shrink-0 swap ${ it().mode === "next-step" ? "border-warning/60 bg-warning/15 text-warning hover:bg-warning/25" : "btn-ghost text-base-content/45 hover:text-base-content/80" }`}
@@ -2812,7 +2812,7 @@ export function LocalChatPage(props: { uri?: string }) {
                             <Show when={inputValue().trim()}>
                                 <button
                                     class="btn btn-outline btn-xs"
-                                    data-tip="留言：排到下一轮（回车同此）。想让它马上生效，提交后点上方那条的闪电图标"
+                                    data-tip="留言：排到下一步（回车同此）。想改成不打断本轮、等它跑完再说，提交后点上方那条的时钟图标"
                                     onClick={() => void submitSteer(DEFAULT_STEER_MODE)}
                                 >
                                     留言
