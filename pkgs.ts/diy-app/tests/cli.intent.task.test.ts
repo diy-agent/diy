@@ -578,3 +578,153 @@ describe("task 正文写侧对称（##322）", () => {
     await cleanupProj(pid);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// 正文输入契约（##338）：`--body` 只收**内联正文**，传文本 / 传文件分家
+//
+//   现场写法就是 `diy task edit <uri> --body /tmp/x.md`（本意"传这个文件"）——
+//   旧实现把路径串当正文**静默存下**，原正文丢失且无任何告警（##290 / ##294 / ##87 三例）。
+//   契约：`--body` < `--body-text` < `--body-file <file|->`；整篇覆盖三选一、追加三选一。
+// ═══════════════════════════════════════════════════════════════
+
+describe("task 正文输入契约（##338）", () => {
+  const bodyOf = async (uri: string): Promise<string> =>
+    (((await fx.sh.getJson(`./diy.sh task show ${uri}`)).data as any).data.body as string);
+
+  /** 一份真实存在的正文文件（写到 HOME 下，避免污染仓库） */
+  const bodyFile = (name: string, text: string): string => {
+    const f = join(fx.HOME, name);
+    writeFileSync(f, text, "utf-8");
+    return f;
+  };
+
+  it("--body <存在的文件路径> → 报错并提示 --body-file（原正文不被路径串顶掉）", async () => {
+    const pid = await freshProj("g1");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 护栏 ${pid} --body 原始正文够长通过校验`);
+    const f = bodyFile("g1-body.md", "文件里的新正文，长度足够\n");
+
+    await fx.sh.assertSession(`
+      $! ./diy.sh task edit ${uri} --body ${f}
+      ---
+      *内联正文*
+      *--body-file*
+    `);
+    expect(await bodyOf(uri)).toBe("原始正文够长通过校验");
+    await cleanupProj(pid);
+  });
+
+  it("--body <不存在的路径形态> → 同样报错（形态可疑就出声，不靠「文件在不在」）", async () => {
+    const pid = await freshProj("g2");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 护栏2 ${pid} --body 原始正文够长通过校验`);
+
+    await fx.sh.assertSession(`
+      $! ./diy.sh task edit ${uri} --body ${fx.HOME}/t338-不存在.md
+      ---
+      *该路径不存在*
+    `);
+    expect(await bodyOf(uri)).toBe("原始正文够长通过校验");
+    await cleanupProj(pid);
+  });
+
+  it("--body 收「含空白的单行」与「多行」照常写入（护栏只认整体是一个路径 token）", async () => {
+    const pid = await freshProj("g3");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 边界 ${pid}`);
+
+    // 路径出现在句子里（含空白）→ 是正文，不是路径
+    await fx.sh.run(`./diy.sh task edit ${uri} --body '见 /tmp/t338-nope.md 一节'`);
+    expect(await bodyOf(uri)).toBe("见 /tmp/t338-nope.md 一节");
+
+    // 多行正文的第一行恰好是路径 → 整体不是单 token，放行
+    await fx.sh.run(`./diy.sh task edit ${uri} --body "$(printf '/tmp/t338-nope.md\\n第二行正文')"`);
+    expect(await bodyOf(uri)).toBe("/tmp/t338-nope.md\n第二行正文");
+    await cleanupProj(pid);
+  });
+
+  it("--body-text <路径串> → 照写（显式文本不受护栏；正文本身就是一行路径时用它）", async () => {
+    const pid = await freshProj("g4");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 显式 ${pid}`);
+    const f = bodyFile("g4-body.md", "文件里的正文\n");
+
+    await fx.sh.run(`./diy.sh task edit ${uri} --body-text ${f}`);
+    expect(await bodyOf(uri)).toBe(f); // 路径串就是正文（这次是**故意**的）
+    await cleanupProj(pid);
+  });
+
+  it("--body-file <file> 整篇覆盖；--body-file - 读 stdin", async () => {
+    const pid = await freshProj("g5");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 文件 ${pid}`);
+    const f = bodyFile("g5-body.md", "来自文件的新正文，长度足够\n");
+
+    const r = await fx.sh.getJson(`./diy.sh task edit ${uri} --body-file ${f}`);
+    expect((r.data as any).data.uri).toBe(uri);
+    expect(await bodyOf(uri)).toBe("来自文件的新正文，长度足够");
+
+    const r2 = await fx.sh.run(`printf '来自标准输入的正文内容' | ./diy.sh task edit ${uri} --body-file -`);
+    expect(r2.stderr).toBe("");
+    expect(r2.code).toBe(0);
+    expect(await bodyOf(uri)).toBe("来自标准输入的正文内容");
+    await cleanupProj(pid);
+  });
+
+  it('--body-file <整份任务文件> → 与 --body "$(cat f)" 同效：剥头取正文', async () => {
+    const pid = await freshProj("g6");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 整份 ${pid} --body 原始正文够长通过校验`);
+    const other = `projects/${pid}/tasks/2`;
+    await fx.sh.run(`./diy.sh task create 别处 ${pid} --body 别处的正文内容够长通过校验`);
+
+    const r = await fx.sh.getJson(`./diy.sh task edit ${uri} --body-file ${join(fx.HOME, other, "AGENTS.md")}`);
+    const d = (r.data as any).data;
+    expect(d.body_head_stripped.keys).toContain("title");
+    expect(await bodyOf(uri)).toBe("别处的正文内容够长通过校验");
+    await cleanupProj(pid);
+  });
+
+  it("三选一：整篇覆盖 / 追加 各给多个 → 报错（不猜、不按顺序取）", async () => {
+    const pid = await freshProj("g7");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 冲突 ${pid} --body 原始正文够长通过校验`);
+    const f = bodyFile("g7-body.md", "文件正文够长\n");
+
+    await fx.sh.assertSession(`
+      $! ./diy.sh task edit ${uri} --body '内联正文够长够长' --body-file ${f}
+      ---
+      *三选一*
+    `);
+    await fx.sh.assertSession(`
+      $! ./diy.sh task edit ${uri} --append-body-text 内联追加 --append-body ${f}
+      ---
+      *三选一*
+    `);
+    expect(await bodyOf(uri)).toBe("原始正文够长通过校验");
+    await cleanupProj(pid);
+  });
+
+  it("追加的对称三态：--append-body-text 内联追加、--append-body-file 同 --append-body", async () => {
+    const pid = await freshProj("g8");
+    const uri = `projects/${pid}/tasks/1`;
+    await fx.sh.run(`./diy.sh task create 追加 ${pid} --body 第一段够长通过校验`);
+    const f = bodyFile("g8-chunk.md", "第三段：来自文件\n");
+
+    await fx.sh.run(`./diy.sh task edit ${uri} --append-body-text 第二段：直接内联`);
+    expect(await bodyOf(uri)).toBe("第一段够长通过校验\n\n第二段：直接内联");
+
+    await fx.sh.run(`./diy.sh task edit ${uri} --append-body-file ${f}`);
+    expect(await bodyOf(uri)).toBe("第一段够长通过校验\n\n第二段：直接内联\n\n第三段：来自文件");
+    await cleanupProj(pid);
+  });
+
+  it("task edit --help 写明正文输入契约（三种入参 + 护栏）", async () => {
+    const h = await fx.sh.run(`./diy.sh task edit --help`);
+    expect(h.code).toBe(0);
+    for (const opt of ["--body-file", "--body-text", "--append-body-file", "--append-body-text"]) {
+      expect(h.stdout).toContain(opt);
+    }
+    expect(h.stdout).toContain("内联正文");
+  });
+});

@@ -19,6 +19,16 @@ export interface _CliOptionMeta {
    * （如 diy 的 /cli 端点），入口脚本必须绕开转发（否则读到的是 app 的 fd 0）。
    */
   readFile?: boolean;
+  /**
+   * 值必须是**内联文本**：形如「单行文件路径」的值 → 解析期直接报错（`CliParseError`），
+   * 提示改用 `fileOpt`（传文件）或 `textOpt`（显式文本）。
+   *
+   * 为什么（##338）：`--body` 的语义是文本，但直觉是"传文件"（`--append-body` 恰恰收 `<file|->`，
+   * 两侧不对称），于是 `diy task edit X --body /tmp/x.md` 把**路径当正文静默存下**、原正文丢失 ——
+   * 实测三例（##290 / ##294 / ##87）。护栏在**解析期**（调用方进程）做：cwd 是用户敲命令的目录，
+   * 相对路径的"存在性"判得准（handler 跑在 app 进程，cwd 不对）。
+   */
+  inlineText?: { fileOpt: string; textOpt: string };
 }
 
 /** @internal */

@@ -42,8 +42,10 @@ export const CONTEXT_GUIDE = `# 系统上下文（Context Tree）
   \`title/state/parent/created/updated/change_type/module/priority/persona\` = 文件头 frontmatter 的同一份
   （空串 = 文件头里没有这个键）；\`task.body\` = 文件头之后的正文字节（首尾空白已去）
 - **读**：确认任务、看正文、取父级/状态，直接用上面这些值即可 —— **不必**再 \`cat\` 任务文件求证
-- **写**：正文不必先读文件。追加用 \`diy task edit <uri> --append-body <file|->\`（\`-\` = stdin），
-  整篇覆盖用 \`--body\`；两者收到「整份文件」（含 frontmatter）都会自动**剥头**，不会写出第二个头。
+- **写**：正文不必先读文件。整篇覆盖：\`--body <文本>\`（**只收内联正文** —— 值形如单行文件路径会被
+  **拒**并提示正确写法，见 ##338）/ \`--body-file <file|->\`（从文件读）/ \`--body-text <文本>\`（显式文本）；
+  追加：\`--append-body <file|->\` / \`--append-body-file <file|->\` / \`--append-body-text <文本>\`。
+  每组**三选一**（多给即报错）；收到「整份文件」（含 frontmatter）都会自动**剥头**，不会写出第二个头。
   判据不对称：追加只剥「认得出的任务头」（须含 state/created/updated）—— 追加一份自带 front matter
   的普通文档时，文档头**原样保留**（不会被当成任务头吃掉）
 `;

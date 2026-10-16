@@ -459,7 +459,16 @@ export const apiDef = RpcSchema.router({
             desc: `
             编辑任务
 
-            正文（body）语义分两种：\`--body\` **整篇覆盖**，\`--append-body\` **追加**（不必先读文件）。
+            正文（body）输入契约（##322 / ##338）—— **整篇覆盖三选一、追加三选一**，同时给多个会被拒
+            （不猜、不按顺序取）：
+              \`--body <文本>\`        整篇覆盖（内联正文；值形如**单行文件路径** → 直接报错并提示正确写法）
+              \`--body-text <文本>\`   整篇覆盖（显式内联文本，不做路径护栏 —— 正文本身就是一行路径时用它）
+              \`--body-file <file|->\` 整篇覆盖（从文件读，\`-\` = stdin；等价 \`--body "$(cat f)"\`，但不受 ARG_MAX 限制）
+              \`--append-body\` / \`--append-body-file\` / \`--append-body-text\`：追加的同样三态。
+            为什么把"传文件"和"传文本"分开：在此之前 \`--body\` 只收文本，而 \`--append-body\` 收 \`<file|->\` ——
+            两侧不对称，直觉上"都是传文件"，于是 \`diy task edit X --body /tmp/x.md\` 把**路径串当正文静默存下**、
+            原正文丢失且无告警（##290 / ##294 / ##87 三例现场）。
+
             两者都接受"整份任务文件"（frontmatter + 正文）作输入：头会被**剥离**后丢弃（文件头才是权威），
             在返回值里回报剥了哪些键与**被剥掉的原文** —— 于是 \`--body "$(cat AGENTS.md)"\` 不再产生双头。
             判据不对称：\`--append-body\` 更严（追加一份"带 front matter 的文档"是常态，只认已知键会把
@@ -472,15 +481,43 @@ export const apiDef = RpcSchema.router({
               body: z
                 .string()
                 .optional()
-                .cliOption({ desc: "新内容，整篇覆盖（至少 10 字符，拒绝空/过短以免误清空正文；传整份文件会自动剥头）" }),
+                .cliOption({
+                  placeholder: "<text>",
+                  inlineText: { fileOpt: "--body-file", textOpt: "--body-text" },
+                  desc: "新内容，整篇覆盖（**内联正文**，不是文件路径：值形如单行路径会被拒；至少 10 字符；传整份文件自动剥头）",
+                }),
+              bodyText: z
+                .string()
+                .optional()
+                .cliOption({ placeholder: "<text>", desc: "新内容，整篇覆盖（显式内联文本：与 `--body` 同义，但不做「形如路径」护栏）" }),
+              bodyFile: z
+                .string()
+                .optional()
+                .cliOption({
+                  placeholder: "<file|->",
+                  readFile: true,
+                  desc: "新内容，整篇覆盖：从**文件**读（`-` = stdin；相对路径按当前目录解析；传整份文件自动剥头）",
+                }),
               appendBody: z
                 .string()
                 .optional()
                 .cliOption({
                   placeholder: "<file|->",
                   readFile: true,
-                  desc: "追加内容：文件路径（相对路径按当前目录解析），`-` 读 stdin。追加在原正文之后（空行分隔），不必先读任务文件",
+                  desc: "追加内容：文件路径（相对路径按当前目录解析），`-` 读 stdin。追加在原正文之后（空行分隔），不必先读任务文件（= `--append-body-file`）",
                 }),
+              appendBodyFile: z
+                .string()
+                .optional()
+                .cliOption({
+                  placeholder: "<file|->",
+                  readFile: true,
+                  desc: "追加内容：文件路径（`-` = stdin）—— 与 `--append-body` 同义，是同一件事的显式名",
+                }),
+              appendBodyText: z
+                .string()
+                .optional()
+                .cliOption({ placeholder: "<text>", desc: "追加内容：**内联文本**（`--append-body` 的对称项：追加也能直接给文本，不必先落盘）" }),
               parent: z.string().optional().cliOption({ desc: "父任务 URI（空字符串=取消父子关系）" }),
               // 三态：不传=保持原绑定 / `default`（或空串）=**跟随缺省**（取消固定绑定）/ 值=换绑到该人物。
               // 换绑是续聊（会话与上下文不动），新模型**下一轮**生效。
