@@ -496,6 +496,18 @@ export function validateRegistry(
       if (seen.has(a.id)) errs.push({ path: `pages[${i}].layout.areas`, msg: `area id 重复: ${a.id}` });
       seen.add(a.id);
     }
+    // 子页面（有 parentPage）**必须**有 icon：没有它 tab 行首就退回"页面序号"，
+    // 与任务 tab 的序号一模一样 —— 正是 ##350 ① 要消解的"子页面看着像任务"错觉。
+    // 靠人记不住（R1 实测：clab 补完就以为治好了，存量靠肉眼核），故升成注册表不变量。
+    if (p.parentPage && !p.icon?.trim()) {
+      errs.push({
+        path: `pages[${i}].icon`,
+        msg: `子页面「${p.id}」缺 icon（##350 ①）：无 icon 会退回页面序号，tab 上看不出它是页面还是任务`,
+      });
+    }
+    if (p.parentPage && !pages.some((q) => q.id === p.parentPage)) {
+      errs.push({ path: `pages[${i}].parentPage`, msg: `父页面不存在: ${p.parentPage}` });
+    }
   });
 
   return errs;

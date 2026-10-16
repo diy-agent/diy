@@ -954,8 +954,16 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         // 修前只 setEditing：右栏换了，左列（`overflow-y-auto`）纹丝不动 —— 人物一多，
         // 用户看见右边变了却不知道"跳哪去了"，观感就是"没反应"。
         const uri = await setupTask("缺省跳转任务");
-        // 缺省人物是 seed 的 persona/1，排在列表**首**：条目少于一屏就测不出滚动，故先造够多
-        for (let i = 0; i < 12; i++) await addPersona(uniq(`跳转占位${i}`), "mimo-v2.6-flash");
+        // 两件事都得先备好，否则这条用例测不到它想测的东西：
+        //  ① 人物要多于一屏 —— 否则列表根本不可滚，"跳转"退化成"本来就看得见"。
+        //  ② 缺省人物得在列表**中部** —— seed 的 persona/1 在首位，而"摆到正中"对首项
+        //     物理上做不到（scrollTop 不能为负，只能顶到容器上边）。验 `block:"center"`
+        //     就必须让它有上下余量，故先把缺省挪到中间（用后恢复，不污染同文件其余用例）。
+        const 原缺省 = ((await fx.sh.getJson(`./diy.sh agent persona list`)).data as { default: string }).default;
+        const 占位: string[] = [];
+        for (let i = 0; i < 24; i++) 占位.push(await addPersona(uniq(`跳转占位${i}`), "mimo-v2.6-flash"));
+        const 中位 = 占位[11];
+        await fx.sh.run(`./diy.sh agent persona setDefault ${中位}`);
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
         await openPanel(uri);
 
@@ -1005,6 +1013,121 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         );
         // 右侧编辑的也是那个人物本体（"跳转到它实际指向的人物"，不是一个特殊设置页）
         expect(after!.editing).toBe(after!.def);
+        expect(after!.def).toBe(中位); // 且跳的确实是**刚设的中位缺省**（防"跳了个别的"误判成通过）
+
+        // R2-①：滚到**视野正中**（`block:"center"`），不是"勉强露个边"（nearest）
+        const centered = await ui!.eval<{ inView: boolean; centerGap: number } | null>(
+            `(() => {
+                const d = document.querySelector('${sel(uri)}');
+                const list = d?.querySelector('[data-testid="persona-left-list"]');
+                const def = d?.getAttribute('data-default') ?? '';
+                const row = list?.querySelector('[data-persona-id="' + def + '"]');
+                if (!list || !row) return null;
+                const lr = list.getBoundingClientRect(), rr = row.getBoundingClientRect();
+                return {
+                    inView: rr.top >= lr.top - 1 && rr.bottom <= lr.bottom + 1,
+                    // 条目中线与容器中线的距离（center 命中时远小于容器高的一半）
+                    centerGap: Math.round(Math.abs((rr.top + rr.bottom) / 2 - (lr.top + lr.bottom) / 2)),
+                };
+            })()`,
+        );
+        expect(centered!.inView).toBe(true);
+        // 摆到**正中**：中点偏差远小于容器高的一半（nearest 在这个位置只把它推到"刚露头"，
+        // 偏差会是容器高量级 —— 实测 102px，对着 ~400px 的容器就是"压根没滚"）
+        const listH = await ui!.eval<number>(
+            `Math.round(document.querySelector('${sel(uri)} [data-testid="persona-left-list"]')?.getBoundingClientRect().height ?? 0)`,
+        );
+        expect(centered!.centerGap).toBeLessThan(listH / 4);
+
+        // R2-②：目标条目**短暂高亮**（缺省人物本身无特殊设置 → 高亮是"跳到了谁"的唯一反馈）
+        const flashed = await ui!.eval<boolean>(
+            `(() => {
+                const d = document.querySelector('${sel(uri)}');
+                const def = d?.getAttribute('data-default') ?? '';
+                const row = d?.querySelector('[data-testid="persona-left-list"] [data-persona-id="' + def + '"]');
+                if (!row) return false;
+                return row.getAttribute('data-jump-flash') === "1"
+                    && (row.className || "").includes("ring-2");
+            })()`,
+        );
+        expect(flashed).toBe(true);
+
+        // 原缺省还回去（本文件共用同一个实例，别把"缺省是谁"留给后面的用例去撞）
+        await fx.sh.run(`./diy.sh agent persona setDefault ${原缺省}`);
+    });
+
+    it("↗ 跳转缺省人物：搜索词把它滤掉时先清搜索，仍能带到（##350 ③ · R2）", async () => {
+        // 上一版遗留的分支：缺省人物被搜索词滤掉时，左列**根本没有它的条目** ——
+        // 不清搜索，"跳转"就无从谈起（滚动无从下手）。故这跳的第一件事是把搜索清掉。
+        const uri = await setupTask("缺省跳转被滤任务");
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+        // 缺省人物 id 从**已挂载的面板**上读（顺序反了会拿到空串 → 后面永远查不到条目）
+        const 缺省 = await ui!.eval<string>(
+            `document.querySelector('${sel(uri)}')?.getAttribute('data-default') ?? ''`,
+        );
+        expect(缺省).not.toBe("");
+
+        // 快照：永不返回 null（返回 null 会让失败现场只剩一句"读不到属性"，白跑一轮）
+        const 快照 = `(() => {
+            const d = document.querySelector('${sel(uri)}');
+            const list = d?.querySelector('[data-testid="persona-left-list"]');
+            const row = list?.querySelector('[data-persona-id="${缺省}"]');
+            const input = d?.querySelector('[aria-label="搜索人物"]');
+            const lr = list?.getBoundingClientRect(), rr = row?.getBoundingClientRect();
+            return {
+                hasRow: !!row,
+                search: input ? input.value : "(无输入框)",
+                rows: list ? list.querySelectorAll('[data-persona-id]').length : -1,
+                editing: d?.getAttribute('data-editing') ?? null,
+                rowTopRel: lr && rr ? Math.round(rr.top - lr.top) : null,
+                rowBotRel: lr && rr ? Math.round(rr.bottom - lr.top) : null,
+                listH: lr ? Math.round(lr.height) : -1,
+                inView: !!(lr && rr && rr.top >= lr.top - 1 && rr.bottom <= lr.bottom + 1),
+            };
+        })()`;
+
+        // 搜索词选「跟随缺省」不是随手的：↗ 按钮本身就在 `<Show when={followMatchesSearch()}>` 里，
+        // 而两者用的是**同一组字段**（名字/模型/档位/行为指令）—— 所以"缺省人物被滤掉"与
+        // "按钮还在"通常互斥：随便填个滤不中的词，按钮连 DOM 都没有，点击是**静默空操作**
+        // （本用例第一版就是这么假通过的）。唯一同时成立的输入，是那个只命中"跟随缺省"
+        // 这行、不命中任何人物字段的字面词 —— 用它才真的走到"先清搜索"那条分支。
+        await ui!.eval<boolean>(
+            `(() => {
+                const i = document.querySelector('${sel(uri)} [aria-label="搜索人物"]');
+                if (!i) return false;
+                const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                set.call(i, '跟随缺省');
+                i.dispatchEvent(new Event('input', { bubbles: true }));
+                return true;
+            })()`,
+        );
+        await waitUntil(
+            async () => ui!.eval<{ hasRow: boolean; rows: number }>(快照),
+            (v) => v.hasRow === false && v.rows === 0,
+            { label: "缺省人物条目被搜索词滤掉（一个都不剩）" },
+        );
+
+        // 断言"点到了"：按钮此时**只能在**（上面那条 Show 的判据），拿不到就是用例的前提崩了，
+        // 不能让它退化成"什么都没点、然后等着断言去报一个看不懂的错"
+        const 点到 = await ui!.eval<boolean>(
+            `(() => {
+                const b = document.querySelector('${sel(uri)} [data-testid="persona-jump-default"]');
+                if (!b) return false;
+                b.click();
+                return true;
+            })()`,
+        );
+        expect(点到, "↗ 按钮应当就在（搜索词只命中「跟随缺省」这一行）").toBe(true);
+
+        const back = await waitUntil(
+            async () => ui!.eval<{ hasRow: boolean; inView: boolean; search: string }>(快照),
+            (v) => v.hasRow && v.inView,
+            { label: "清搜索后缺省人物条目回到视野" },
+        );
+        expect(back.hasRow, JSON.stringify(back)).toBe(true);
+        expect(back.search, JSON.stringify(back)).toBe(""); // 搜索词被清掉（否则条目根本不存在）
+        expect(back.inView, JSON.stringify(back)).toBe(true);
     });
 
     it("**双击**左列人物 = 换绑本任务 + 关面板（只改引用，不改任何人物配置）", async () => {
