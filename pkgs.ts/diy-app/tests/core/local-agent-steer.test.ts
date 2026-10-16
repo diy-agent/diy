@@ -697,26 +697,27 @@ describe("会话正在生成中再发消息（##306 / ##180 第 1 步）：不�
     expect(opsA.some((o) => o.op === "start" && o.kind === "error")).toBe(false);
   });
 
-  it("排队的那条走 next-turn：不在正在跑的轮次内部插队", async () => {
+  it("排队的那条走缺省 next-step：插进正在跑的轮次的下一个模型步，不另开一轮（##360）", async () => {
     const uri = newUri();
     const model = stubModel([toolCallReply("c1", "echo a"), textReply("第一轮"), textReply("第二轮")]);
     const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
 
     const first = mgr.chat(uri, "开始");
-    await first.next();
+    const head = await first.next(); // 第 1 个 op = 本轮 turn 开场（消费掉，下面连同一起算）
 
     await run(uri, "排队的话", model, mgr);
 
-    // 正在跑的这一轮的下一个模型步（第 2 次请求 = 工具步之后）里**不该**看到排队的消息：
-    // 它在 next-turn 语义下属于**下一轮**，不是本轮的下一个 step。
-    const opsA: Op[] = [];
+    // 缺省时机自 ##360 起是 next-step：它在本轮**下一个模型步**（第 2 次请求 = 工具步之后）
+    // 之前就被注入 —— 不必等本轮收尾，这正是"95% 的插话要的是马上生效"的落点。
+    const opsA: Op[] = [head.value!];
     for await (const op of first) opsA.push(op);
-    expect(opsA.some((o) => o.op === "start" && o.kind === "turn")).toBe(true);
-    expect(promptText(model, 1)).not.toContain("排队的话");
-    // 它出现在紧接着的下一轮（本轮的第二次请求是工具步后，第三/四次请求里能看到）
-    const rounds = model.doStreamCalls.length;
-    const lastPrompt = promptText(model, rounds - 1);
-    expect(lastPrompt).toContain("排队的话");
+    expect(promptText(model, 1)).toContain("排队的话");
+    // 投完即空：同一批只投一次（不会既插进本轮、又留到下一轮再投一遍）
+    expect(new SteerQueue().list(uri)).toEqual([]);
+    // 全程只有一轮：上游总共 2 次请求（工具步 + 收尾步），没有为排队那条另开一轮。
+    // 想"排到本轮之后"的用户在界面上把该条切成 next-turn，那条路径由上面 next-turn 用例覆盖。
+    expect(opsA.filter((o) => o.op === "start" && o.kind === "turn")).toHaveLength(1);
+    expect(model.doStreamCalls).toHaveLength(2);
   });
 });
 
