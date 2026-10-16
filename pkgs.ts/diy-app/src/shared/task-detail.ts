@@ -59,5 +59,13 @@ export const TaskDetailSchema = z.object({
   frontmatter: z.record(z.string(), z.unknown()).optional(),
   /** 未提交草稿：renderer 用它恢复编辑态与输入框（见 core/drafts.ts） */
   ui_drafts: DraftsData.nullable().optional(),
+  /**
+   * 该任务**是否与 agent 对话过**（##355 的「干净任务」态）。
+   * 真源 = 会话 Op 日志存在且非空（main/core/local-paths.ts 的 hasConversation）——
+   * 与任务树节点上的同名字段是**同一个判据**，两处都从 main 侧算，渲染端不猜。
+   */
+  has_session: z.boolean().optional(),
+  /** 该任务是否有未发送的草稿（##355 的「有草稿」态；真源同 `ui_drafts`，这里只给"有没有"） */
+  has_draft: z.boolean().optional(),
 });
 export type TaskDetail = z.infer<typeof TaskDetailSchema>;

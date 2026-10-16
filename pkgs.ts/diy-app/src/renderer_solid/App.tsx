@@ -8,6 +8,7 @@ import { LlmPage } from "./components/LlmPage";
 import { TrafficPage } from "./components/TrafficPage";
 import { SessionOverviewPage } from "./components/SessionOverviewPage";
 import { SessionChip, SessionDot } from "./components/SessionChip";
+import { TaskAgentStateBadge, TaskAgentStateDot } from "./components/TaskAgentState";
 import { ModelConfigPage } from "./components/ModelConfigPage";
 // 折叠框展开态仍是 lab view 内部的局部状态（与「view 在哪个 area」是两件事）
 import { setLabView } from "./components/PromptLabV4Page";
@@ -1138,6 +1139,17 @@ export default function App() {
                                                                     <Show when={isNested()}>
                                                                         <span class="absolute left-0.5 bottom-0.5 text-caption opacity-50">↳</span>
                                                                     </Show>
+                                                                    {/* agent 面状态点（##355）：rail 装不下文案，退成一个点
+                                                                        （颜色即语义，全文在 title 里）。占**左上**角、与右上角的
+                                                                        ##308 会话点并存（两条轴各占一角，不互相盖）。 */}
+                                                                    <Show when={t.ctx}>
+                                                                        <TaskAgentStateDot
+                                                                            uri={t.ctx!}
+                                                                            hasSession={findNode(taskStore.nodes, t.ctx!)?.has_session}
+                                                                            hasDraft={findNode(taskStore.nodes, t.ctx!)?.has_draft}
+                                                                            class="absolute top-0.5 left-0.5"
+                                                                        />
+                                                                    </Show>
                                                                     {/* 会话状态点（##308）：rail 是常驻可见的那一态，
                                                                         最该一眼看到的正是"这条会话在烧/有留言"。全文在 title（SessionDot 内）。 */}
                                                                     <Show when={t.ctx}>
@@ -1186,6 +1198,16 @@ export default function App() {
                                                                     </Show>
                                                                 </span>
                                                                 <span class="truncate flex-1">{label()}</span>
+                                                                {/* agent 面状态（##355）：四态单轴一句话。与任务表行、
+                                                                    属性面板**同一份判据**（shared/task-agent-state + lib/agent-state）；
+                                                                    两个逐任务真源取自任务树节点（main 侧算的）。 */}
+                                                                <Show when={t.ctx}>
+                                                                    <TaskAgentStateBadge
+                                                                        uri={t.ctx!}
+                                                                        hasSession={findNode(taskStore.nodes, t.ctx!)?.has_session}
+                                                                        hasDraft={findNode(taskStore.nodes, t.ctx!)?.has_draft}
+                                                                    />
+                                                                </Show>
                                                                 {/* 会话状态 chip（##308）：与任务表行、总览页**同一份判据**（sessionStore.chipOf） */}
                                                                 <Show when={t.ctx}>
                                                                     <SessionChip uri={t.ctx!} />

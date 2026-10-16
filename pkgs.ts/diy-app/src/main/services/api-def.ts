@@ -163,6 +163,13 @@ export interface TaskNodeShape {
   change_type?: string;
   module?: string;
   priority?: string;
+  /**
+   * 该任务**是否与 agent 对话过**（##355「干净任务」态；真源 = 会话 Op 日志存在且非空，
+   * 见 core/local-paths.ts 的 hasConversation）。缺省 = 未算（旧载荷），读侧按"未知"处理。
+   */
+  has_session?: boolean;
+  /** 该任务是否有**未发送的草稿**（##355「有草稿」态；真源 = 任务目录 .diy/drafts.yaml 的 agent_input） */
+  has_draft?: boolean;
   children: TaskNodeShape[];
 }
 const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
@@ -184,6 +191,10 @@ const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
     change_type: z.string().optional(),
     module: z.string().optional(),
     priority: z.string().optional(),
+    // agent 面状态（##355）：两枚逐任务布尔（判据见 TaskNodeShape 上的注释）。
+    // 与上面的字段同样 optional —— 读侧宽容，缺了只是"这一项不知道"，不是错误。
+    has_session: z.boolean().optional(),
+    has_draft: z.boolean().optional(),
     children: z.array(TaskNodeSchema),
   }),
 );

@@ -36,6 +36,7 @@ import { Caches, TASK_DETAIL_LEFT_MIN, TASK_DETAIL_LEFT_MAX } from "../lib/ui-st
 import { MarkdownView } from "./MarkdownView";
 import { CodeBlock } from "./CodeBlock";
 import { StateSelect, TaskFieldSelect, TaskModuleInput } from "./TaskFieldControls";
+import { AgentWindowUsage, TaskAgentStateBadge } from "./TaskAgentState";
 import { taskStateColor } from "../../main/core/task-state";
 
 /** 两列布局下正文的最小宽度（px）：拖左列时不许把正文压到比这更窄 */
@@ -346,6 +347,29 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                             )}
                         </For>
                     </select>
+                </div>
+                {/* agent 面状态（##355）：四态 + 空闲，单轴的**一句话**（判据见 shared/task-agent-state）。
+                    放这里而不是只放列表 chip：这里空间够，能同时给出**窗口占用**（下面一行）。
+                    数据源 = 注册表（在跑/未读）/ draftStore（草稿）/ 任务载荷（has_session 等），
+                    见 lib/agent-state.ts 与 components/TaskAgentState.tsx 的头注。 */}
+                <div class="task-field-row">
+                    <span class="task-field-label text-body opacity-50">agent 状态</span>
+                    <div class="flex min-w-0 items-center gap-1">
+                        {/* always：单任务视图里"空闲"是一个**明确结论**，比什么都不显示好 */}
+                        <TaskAgentStateBadge
+                            uri={props.uri}
+                            hasSession={props.task.has_session}
+                            hasDraft={props.task.has_draft}
+                            always
+                        />
+                    </div>
+                </div>
+                {/* 窗口占用（##339 阈值口径 / ##262 用量 UI）：最后一步实测 token ÷ 触发压缩阈值 */}
+                <div class="task-field-row">
+                    <span class="task-field-label text-body opacity-50">窗口</span>
+                    <div class="flex min-w-0 items-center gap-1">
+                        <AgentWindowUsage uri={props.uri} />
+                    </div>
                 </div>
             </div>
 

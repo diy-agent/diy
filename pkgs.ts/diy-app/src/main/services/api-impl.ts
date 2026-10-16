@@ -16,6 +16,7 @@ import * as state from "../core/state";
 import * as taskTree from "../core/task-tree";
 import { AppConfig } from "../core/app-config";
 import { refreshModelRuntime } from "../core/model-runtime";
+import { hasConversation } from "../core/local-paths";
 import { autoSeedEnabled, seedHome } from "../core/seed";
 import { platform, arch, release, totalmem, freemem } from "node:os";
 import { currentGitBranch, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
@@ -252,6 +253,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
         project_path: pinfo?.path,
         project_label: pinfo?.label,
         ui_drafts: d ? { base_updated: d.base_updated, saved: d.saved, fields: d.fields } : null,
+        // agent 面状态（##355）：与任务树节点同一判据、同一真源（见 shared/task-detail.ts 注释）。
+        // 草稿直接由上面读到的 `d`（readDrafts 的返回值）派生，不再二次读盘。
+        has_session: hasConversation(input.uri),
+        has_draft: d?.fields?.agent_input !== undefined,
       }),
     };
   });
