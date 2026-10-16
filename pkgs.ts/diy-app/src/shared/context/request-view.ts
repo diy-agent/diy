@@ -31,7 +31,7 @@ export interface LayerRow {
     label: string;
     oldTokens: number;
     newTokens: number;
-    /** 金额差（$）；负 = 省。按当前模型非缓存输入单价算 */
+    /** 金额差（$）；负 = 省。按当前模型非缓存单价算 */
     costDelta: number;
     /** 这一层**当前**的输入费用（$）—— 图形对比用（= oldTokens/1M × 单价） */
     oldCost: number;
@@ -74,7 +74,7 @@ const tok = (bytes: number): number => Math.round(bytes / 4);
 
 /**
  * 事实表：base（当前生效请求）vs mod（改参数后）。
- * @param inputRate 非缓存输入单价（$/1M）—— 用**全价**算差值：压缩改变的是"要重发的量"，
+ * @param inputRate 非缓存单价（$/1M）—— 用**全价**算差值：压缩改变的是"要重发的量"，
  *                  差值属于输入侧；缓存读折扣不进这里（那是另一个口径，且随前缀而定）。
  */
 export function layerFacts(base: RequestView, mod: RequestView, inputRate: number): LayerRow[] {
