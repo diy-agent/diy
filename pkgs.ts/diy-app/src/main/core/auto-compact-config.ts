@@ -103,6 +103,24 @@ export function saveKeepConfig(home: string, rawKeep: unknown): { keep: KeepStag
     return { keep: stages, issues };
 }
 
+/**
+ * 删除 `history.keep[]` —— **回到「未配置」状态**（= 回落出厂缺省管道）。`compact plan reset` 的写入口。
+ *
+ * 与 `saveKeepConfig` 的差别就是**删键 vs 写值**：写死缺省的字面量会把配置**冻结**在当时那一版缺省
+ * （将来缺省演进它不跟随）；删键则永远回落到**当前**缺省（`DEFAULT_KEEP` / `defaultBudgetPlan`）。
+ * ⚠️ 只删 `keep`，**保留 `history` 其余字段**（`allowAgentWrite`）—— 与 `saveKeepConfig` 同一条教训
+ * （##362 实测过：整包换成 `{ keep }` 会顺手把闸关掉）。
+ */
+export function deleteKeepConfig(home: string): void {
+    const cur = loadAutoCompact(home);
+    const h = cur.history ?? {};
+    const rest: { allowAgentWrite?: boolean } = {};
+    if (h.allowAgentWrite !== undefined) rest.allowAgentWrite = h.allowAgentWrite;
+    // 不带 `keep`：`normalizeAutoCompact` 会把 `keep` 缺席视为「回落缺省管道」；
+    // 若连 `allowAgentWrite` 都没有，`history` 会整个缺席 —— 正是「未配置」的样子。
+    saveAutoCompact(home, { ...cur, history: rest });
+}
+
 /** 写自动压缩配置（原子：tmp → rename）。宽松归一后再写（不存坏数据）。 */
 export function saveAutoCompact(home: string, cfg: unknown): AutoCompactConfig {
     const norm = normalizeAutoCompact(cfg);

@@ -1238,6 +1238,16 @@ async function autoCompactSetConfig(patch: Record<string, unknown>) {
     return diyService.diy.agent.local.autoCompactSetConfig({ patch });
 }
 
+/**
+ * 重置装配管道为**出厂缺省**（##363）：走 `compact plan reset`（`via:"user"`，不受 agent 写闸约束）。
+ * ⚠️ 与 `autoCompactSetConfig({ history: { keep: DEFAULT_KEEP } })` 的差别是**语义**：
+ *   后者把缺省**写死**进配置（`source:"config"`，冻结在当时那版缺省）；reset 是**删键**
+ *   （`source:"default"`，自动跟随将来缺省演进）。所以不能拿 patch 顶替。
+ */
+async function compactPlanReset(taskUri: string) {
+    return diyService.diy.agent.local.compact.plan.reset({ taskUri });
+}
+
 /** 执行压缩（写边界账 + 落盘被裁原文 + 内存态重置）；成功后重建本地块树到新边界 */
 async function compact(
     taskUri: string,
@@ -1362,6 +1372,7 @@ export const localChatStore = {
     compact,
     autoCompactStatus,
     autoCompactSetConfig,
+    compactPlanReset,
     undoCompact,
     compactEvents,
     /** 上滚补一段更早的历史；返回是否真的插入了内容（调用方据此做滚动位置补偿） */

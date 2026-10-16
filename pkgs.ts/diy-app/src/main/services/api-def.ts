@@ -1091,6 +1091,16 @@ export const apiDef = RpcSchema.router({
                       },
                       output: z.any(),
                     }),
+                    /**
+                     * 重置为**出厂缺省**（##363 M3a 补）：删 `history.keep[]` 键（不写死缺省字面量 ——
+                     * 删键才能跟随将来缺省演进）。**不依赖任何快照**，是快照全坏时的逃生窗口。
+                     * reset 前先把旧 keep 存一份快照 ⇒ reset 也能被 `restore` 回滚；其余字段不动。
+                     */
+                    reset: RpcSchema.unary({
+                      desc: `重置装配管道为**出厂缺省**（删 history.keep[]；不依赖快照的逃生窗口；mode/triggers/policy/allowAgentWrite 保留）`,
+                      input: { taskUri: z.string().cliArg({ desc: "任务 URI" }) },
+                      output: z.any(),
+                    }),
                   },
                 }),
 
