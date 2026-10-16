@@ -15,7 +15,9 @@
  *   · L3    = `<key>.usage.jsonl` 镜像（localChatStore.usage；开抽屉时对账刷新）
  *
  * 口径硬约束（##211 §一/§四，违者即口径事故）：
- *   · 总输入 = 非缓存输入 + 缓存读 + 缓存写；总输出 = 文本输出 + 思考输出（思考不另加价）
+ *   · 总输入 = 非缓存 + 缓存读 + 缓存写；总输出 = 文本输出 + 思考输出（思考不另加价）
+ *     （##354 ①：桶名一律**不带「输入」后缀** —— 有的带有的不带就成了不成对的一组，
+ *      且组行已叫「总输入」；「非缓存 / 缓存读 / 缓存写」才是平行的一组）
  *   · L1/L2 只放**累计口径**（各步累加，解释"花了多少"）；窗口% 是**最后一步**口径，只进 L3
  *     —— 两个口径不同框并排，是 ##231 相除误读（"986k 才 4%?"）的直接教训
  *   · 不可测桶写 `–`/`n/a`，**不写 0**；旧记录（无四桶字段）按原样降级，不假装能拆
@@ -355,8 +357,8 @@ function UsageTableTree(props: { m: UsageModel }) {
             <tbody class="text-body">
                 {groupRow("总输入", m().inputTotal, input$(), "= 非缓存 + 缓存读 + 缓存写 的金额")}
                 {childRow(
-                    "├ 非缓存输入", m().noCache, "未命中前缀缓存、按全价计（本轮各步累计）",
-                    c()?.noCache ?? null, "非缓存输入金额",
+                    "├ 非缓存", m().noCache, "未命中前缀缓存、按全价计（本轮各步累计）",
+                    c()?.noCache ?? null, "非缓存金额",
                     innerFrac(m().noCache, totTok()), innerFrac(c()?.noCache ?? null, totCost()),
                 )}
                 {childRow(
@@ -457,10 +459,18 @@ const ringValue = (rate: number): string => String(Math.min(100, Math.round(rate
 /**
  * 环形进度：**底轨（浅色全环）+ 进度环叠放** —— daisyUI radial-progress 的轨道是透明的
  * （conic-gradient 进度外是 #0000），单放一个在浅底上只有进度段、看不见空环（2026-10-03 修正）。
+ *
+ * ⚠️ **弧长必须与百分比文字同源、同刻**（##354 ②）。`--value` 的字符串**只能在 JSX 里现算**
+ * （`style={ringStyle(...)}`），不能像 load 一次那样提到组件体里算：
+ * Solid 的组件体**只执行一次**，提到体外的那串值会被**冻在挂载那一刻**，此后 rate 怎么变都不再
+ * 参与绑定 —— 而旁边的百分比文字是响应式插值。症状：文字 9%、弧长还停在挂载时的 60%
+ * （切会话时 `trees` 还是上一个会话的 → 挂载帧算出的就是旧值）。判据：弧长与文字**恒等**
+ * （同一次渲染里同一个 `props.rate`），不得引入任何中间基准/梯度缩放。
  */
 function RingBar(props: { rate: number; size: string; thickness: string; center?: string; label?: string }) {
-    const base = `--value:100;--size:${props.size};--thickness:${props.thickness}`;
-    const prog = `--value:${ringValue(props.rate)};--size:${props.size};--thickness:${props.thickness}`;
+    /** 环的样式串（在 JSX 里调用 → 读到的是**本次**的 props.rate，故随信号更新） */
+    const ringStyle = (value: number | string) =>
+        `--value:${value};--size:${props.size};--thickness:${props.thickness}`;
     return (
         <div
             class="relative shrink-0"
@@ -469,8 +479,11 @@ function RingBar(props: { rate: number; size: string; thickness: string; center?
             aria-label={props.label ?? "窗口占用"}
             aria-valuenow={Math.round(props.rate * 100)}
         >
-            <div class="radial-progress absolute left-0 top-0 text-base-300" style={base} />
-            <div class={`radial-progress absolute left-0 top-0 ${ringClass(props.rate)}`} style={prog} />
+            <div class="radial-progress absolute left-0 top-0 text-base-300" style={ringStyle(100)} />
+            <div
+                class={`radial-progress absolute left-0 top-0 ${ringClass(props.rate)}`}
+                style={ringStyle(ringValue(props.rate))}
+            />
             <Show when={props.center != null}>
                 <span class="absolute inset-0 flex items-center justify-center text-caption font-medium tabular-nums">
                     {props.center}
@@ -1549,7 +1562,7 @@ function turnDetailMd(g: TurnGroup | null, rows: StepUsageRecord[], clock: strin
     const total$ = g?.cost?.total ?? null;
     const m = (n: number | null | undefined): string => (n == null ? "n/a" : `${fmtCost(n)}（${costShare(n, total$)}）`);
     out.push(
-        "| 步 | 人物 | 模型 | 面 | 档位 | 非缓存输入 | 缓存读 | 缓存写 | 总输出 | 文本 | 思考 | 缓存命中 | 耗时 | TTFT | 速度 | 窗口% | 单价快照 | 非缓存$ | 缓存读$ | 缓存写$ | 文本$ | 思考$ | 合计$ |",
+        "| 步 | 人物 | 模型 | 面 | 档位 | 非缓存 | 缓存读 | 缓存写 | 总输出 | 文本 | 思考 | 缓存命中 | 耗时 | TTFT | 速度 | 窗口% | 单价快照 | 非缓存$ | 缓存读$ | 缓存写$ | 文本$ | 思考$ | 合计$ |",
         "|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|",
     );
     for (const r of rows) {
@@ -1582,7 +1595,7 @@ function sessionBoardMd(groups: AgentGroup[]): string {
     const buckets = sumBuckets(groups.map((g) => g.buckets));
     const out: string[] = ["## 会话用量（按人物）", ""];
     out.push(
-        "| 人物 | 步 | 非缓存输入 | 缓存读 | 缓存写 | 总输入 | 总输出 | 文本 | 思考 | 缓存命中 | 非缓存$ | 缓存读$ | 缓存写$ | 文本$ | 思考$ | 合计$ |",
+        "| 人物 | 步 | 非缓存 | 缓存读 | 缓存写 | 总输入 | 总输出 | 文本 | 思考 | 缓存命中 | 非缓存$ | 缓存读$ | 缓存写$ | 文本$ | 思考$ | 合计$ |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     );
     for (const g of groups) {
@@ -1629,7 +1642,7 @@ function TurnDetailTable(props: { rows: StepUsageRecord[] }) {
                     <th>模型</th>
                     <th>面</th>
                     <th>档位</th>
-                    <th class="text-right">非缓存输入</th>
+                    <th class="text-right">非缓存</th>
                     <th class="text-right">缓存读</th>
                     <th class="text-right">缓存写</th>
                     <th class="text-right" title="总输出 = 文本输出 + 思考输出">总输出</th>
@@ -1855,7 +1868,7 @@ function SessionUsageTable(props: { groups: AgentGroup[] }) {
                 <tr>
                     <th>人物</th>
                     <th class="text-right">步</th>
-                    <th class="text-right">非缓存输入</th>
+                    <th class="text-right">非缓存</th>
                     <th class="text-right">缓存读</th>
                     <th class="text-right">缓存写</th>
                     <th class="text-right">总输入</th>

@@ -6,11 +6,15 @@
 // （##227 的核心诉求就是「数字可信才敢用来决定何时重置」）。真值设计见 ##211 §六b/§四。
 //
 // ── 术语契约（禁止把包含关系显示成并列关系）──
-//   总输入 = 非缓存输入 + 缓存读 + 缓存写
+//   总输入 = 非缓存 + 缓存读 + 缓存写
 //   总输出 = 文本输出 + 思考输出       （思考是总输出的**子集**：展示可拆、计价不另加）
 //   窗口占用 = 总输入 + 总输出
-//   计费桶 4 个 = 非缓存输入 / 缓存读 / 缓存写 / **总输出**
+//   计费桶 4 个 = 非缓存 / 缓存读 / 缓存写 / **总输出**
 //   ——❌ 不写「输出 29 · 思考 7」（歧义） → ✅ 写「总输出 29（文本 22 + 思考 7）」
+//
+// ⚠️ **桶名一律不带「输入」后缀**（##354 ①）：组行才叫「总输入」，三个子桶是
+//   「非缓存 / 缓存读 / 缓存写」—— 有的带后缀有的不带就不是一组（且与金额列「非缓存$」自相矛盾）。
+//   这三个词与上游 `noCacheTokens / cacheReadTokens / cacheWriteTokens` 同构，UI 与 CLI 同词。
 //
 // **不可测 ≠ 0**：`api:"chat"` 面拿不到 cacheWrite（ai-sdk 的 openai-compatible 恒返回
 // undefined），该桶一律 `null`（不可测），绝不落 0（0 = 实测为零，是另一个事实，混了就是静默低估算钱）。
@@ -133,7 +137,7 @@ export const COST_SOURCE = "models.dev";
  * （权威关系见 ##211 §1b，实测自 ai/dist/index.js 的 asLanguageModelUsage）
  */
 export interface UsageBuckets {
-    /** 非缓存输入（未命中前缀缓存、按全价计的部分） */
+    /** 非缓存（未命中前缀缓存、按全价计的部分） */
     noCache: number;
     /** 缓存读（暖输入，按 cache_read 单价） */
     cacheRead: number;
@@ -271,7 +275,7 @@ export function ratesOf(
  * 只有字面量类型能满足索引签名（interface 不满足，TS 会拒绝赋值）。
  */
 export type CostBreakdown = {
-    /** 非缓存输入金额 */
+    /** 非缓存金额 */
     noCache: number;
     /** 缓存读金额 */
     cacheRead: number;
@@ -523,7 +527,7 @@ export type TurnUsagePatch = {
     outputTotal: number;
     /** 本轮累计：缓存读 */
     cacheRead: number;
-    /** 本轮累计：非缓存输入 */
+    /** 本轮累计：非缓存 */
     noCache: number;
     /** 本轮累计：缓存写（全轮都不可测 → null） */
     cacheWrite: number | null;

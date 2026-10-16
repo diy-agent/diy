@@ -2337,6 +2337,10 @@ export function LocalChatPage(props: { uri?: string }) {
             ref={(el) => (rootRef = el)}
             class="flex flex-col h-full overflow-hidden"
             data-testid="local-chat-page"
+            /* op 订阅健康度（idle|connecting|live|down）：**唯一**能一眼判"实时通道通不通"的位
+               （单通道化后订阅坏了 = 一个字也看不见，与"模型在想"同形）。落成 DOM 属性 = 可被
+               CDP/意图测试断言（`data-ops-down` 那条常驻条只是它的一个渲染分支）。 */
+            data-ops-state={localChatStore.opsState}
         >
             <PersonaDrawer open={personaPanelOpen()} onClose={() => setPersonaPanelOpen(false)} />
             {/* 打开时顺手对一次账本（轮次间隙别人跑的那几轮不该漏） */}
@@ -2465,6 +2469,26 @@ export function LocalChatPage(props: { uri?: string }) {
                     </div>
                 </Show>
             </div>
+
+            {/* 会话实时更新**中断常驻条**（##354 ③；判据 = `localChatStore.opsState === "down"`）。
+                单通道化（##327）之后 op 订阅是实时显示的唯一通道 ⇒ 它断了 = 用户**一个字都看不到**，
+                而那在界面上与"模型还在想"完全同形。旧实现是一条**一次性 toast**：故障瞬间切走窗口
+                就错过、也读不到"现在还没恢复"。故改为**常驻**：只要有 `down` 这条就在，
+                恢复（markOpsLive）才消失 —— 状态可见的生命周期与故障本身等长。
+                放在滚动区**之外**（不随消息滚走），"正在补历史"的补齐由 store 的退避重订负责。 */}
+            <Show when={localChatStore.opsState === "down"}>
+                <div
+                    data-ops-down="1"
+                    role="status"
+                    aria-live="polite"
+                    class="flex shrink-0 items-center gap-2 border-b border-error/40 bg-error/10 px-3 py-1.5 text-body text-error"
+                    title="实时通道断了：这段时间别人/模型写的字不会实时出现，重连后会整段补齐（历史一条不丢）"
+                >
+                    <span class="inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-error" />
+                    <span class="shrink-0 font-medium">会话实时更新中断</span>
+                    <span class="opacity-80">正在自动重连…（重连成功后补齐，历史不丢）</span>
+                </div>
+            </Show>
 
             {/* 块树滚动区 */}
             <div

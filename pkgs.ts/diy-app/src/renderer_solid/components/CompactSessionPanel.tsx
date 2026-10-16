@@ -920,7 +920,7 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                     <Block title="费用对比">
                         <CostCompare facts={ctl.pv()?.facts ?? []} />
                         <div class="mt-2 text-caption opacity-60">
-                            金额 = token ÷ 1M × 当前模型非缓存输入单价；token 按字节 / 4 估算（仅为对比，不进计费）。
+                            金额 = token ÷ 1M × 当前模型非缓存单价；token 按字节 / 4 估算（仅为对比，不进计费）。
                         </div>
                     </Block>
                 </Show>

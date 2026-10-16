@@ -1473,7 +1473,7 @@ export const apiDef = RpcSchema.router({
               provider: z.string().cliArg({ desc: "provider（裸 id 或 custom:<id>）" }),
               model: z.string().cliArg({ desc: "模型 id（见 llmConfig costs）" }),
               target: z.enum(["auto", "spec", "override"]).default("auto").cliOption({ desc: "落点：spec=providers.custom.yaml · override=model.yaml" }),
-              input: z.number().nonnegative().optional().cliOption({ desc: "非缓存输入 $/1M" }),
+              input: z.number().nonnegative().optional().cliOption({ desc: "非缓存 $/1M" }),
               output: z.number().nonnegative().optional().cliOption({ desc: "输出 $/1M" }),
               cacheRead: z.number().nonnegative().optional().cliOption({ desc: "缓存读 $/1M" }),
               cacheWrite: z.number().nonnegative().optional().cliOption({ desc: "缓存写 $/1M" }),
