@@ -219,6 +219,9 @@ export interface CompactPanelCtl {
     keepSource: () => "config" | "default";
     /** 写级列表（**写前先本地校验**；非法 ⇒ 只报错、不落盘） */
     setKeep: (next: KeepStage[]) => Promise<void>;
+    /** 重置为**出厂缺省**（##363）：删配置里的 `history.keep[]`（走 RPC `compact plan reset`）。
+     *  ⚠️ 不是 `setKeep([...DEFAULT_KEEP])` —— 那是把缺省**写死**进配置；这里是**删键**（跟随将来缺省）。 */
+    resetKeep: () => Promise<void>;
 }
 
 /**
@@ -322,6 +325,20 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
         setErr(null);
         await patchAuto({ history: { keep: next } });
     };
+    /** 重置为**出厂缺省**（##363 逃生窗口）：走 `compact plan reset`（删键），**不是**写 DEFAULT_KEEP 字面量。
+     *  成功后 `refetchAuto()` ⇒ `keepSource()` 变 `default`、`keep()` 回显缺省 ⇒ 预览 key 变、自动重算。 */
+    const resetKeep = async (): Promise<void> => {
+        setErr(null);
+        setAutoBusy(true);
+        try {
+            await localChatStore.compactPlanReset(uri());
+            await refetchAuto();
+        } catch (e) {
+            setErr(String(e instanceof Error ? e.message : e));
+        } finally {
+            setAutoBusy(false);
+        }
+    };
 
     /** 提交预算输入（失焦 / 回车）。**返回 Promise**：写盘 + refetch 异步，apply 必须先 await 它。 */
     const commitKb = async (): Promise<void> => {
@@ -386,7 +403,7 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
     return {
         auto, autoBusy, patchAuto, autoPolicy, budgetBytes, kbDraft, setKbDraft, commitKb, pv, pvLoading, busy, err, apply,
         render, setRender, renderData: headtailData, setRenderData, summaryEnabled, setSummary, rawText, rawPath,
-        keep, keepSource, setKeep,
+        keep, keepSource, setKeep, resetKeep,
     };
 }
 
@@ -775,11 +792,13 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                                 </button>
                                 <button
                                     data-keep-reset
+                                    aria-label="重置为缺省"
                                     class="btn btn-xs btn-ghost"
                                     disabled={ctl.autoBusy() || ctl.keepSource() === "default"}
+                                    title="删除配置里的 history.keep[]，回落到出厂缺省管道（逃生窗口；不依赖任何快照）"
                                     onClick={() => setPendingReset(true)}
                                 >
-                                    恢复缺省
+                                    重置为缺省
                                 </button>
                             </div>
                             <div data-keep-source class="opacity-50">
@@ -906,13 +925,13 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                     </Show>
                     <Show when={pendingReset()}>
                         <ConfirmDialog
-                            title="恢复缺省管道"
-                            message="把 history.keep[] 写回缺省管道（保底最近 6 步全量 + 纵向阶梯）。历史不删，只改投递。"
-                            confirmLabel="恢复缺省"
+                            title="重置为出厂缺省"
+                            message="将 history.keep[] 重置为出厂缺省，影响所有任务的投递（当前级列表会先存快照，可用 restore 找回）。历史不删，只改投递。"
+                            confirmLabel="重置为缺省"
                             onCancel={() => setPendingReset(false)}
                             onConfirm={() => {
                                 setPendingReset(false);
-                                void ctl.setKeep([...DEFAULT_KEEP]);
+                                void ctl.resetKeep();
                             }}
                         />
                     </Show>

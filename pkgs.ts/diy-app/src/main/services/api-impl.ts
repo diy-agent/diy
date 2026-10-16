@@ -594,6 +594,13 @@ export function bindAppHandlers(binding: ServerBinding): void {
     if (!report.ok) throw new Error(formatCheckFailure(report));
     return report;
   });
+  binding.on(app.agent.local.compact.plan.reset, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.plan.reset", input.taskUri);
+    const { planReset } = await import("./compact-plan-io");
+    const { diyHome } = await import("../core/state");
+    // `via:"user"`：这是用户显式操作（CLI / UI 按钮），不受 agent 写闸约束（同 set 口径）。
+    return planReset({ home: diyHome(), taskUri: input.taskUri, via: "user" });
+  });
   // 会话用量报表（人读表格）：与 UI 同源同口径，只是在这里渲染成等宽文本
   binding.on(app.agent.usage, async ({ input }) => {
     const { readUsage, renderUsageSteps, renderUsageByAgent } = await import("./usage-report");

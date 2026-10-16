@@ -6,15 +6,18 @@
 //   ② 非法 plan 被拒（抛错 + 文件一字不改）
 //   ③ 闸开时 set 成功 + 快照落盘（`plan-history/`）
 //   ④ restore 回滚到上一份（且回滚本身也留快照 = 可回滚）
-// 另：审计落 `log/compact/plan-edits.jsonl`（set/restore 各一行）。
+//   ⑤⑥⑦⑧ reset（##363 M3a 补）：删键回出厂缺省 + 快照 + 闸 + 幂等
+// 另：审计落 `log/compact/plan-edits.jsonl`（set/restore/reset 各一行）。
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import * as yaml from "js-yaml";
 import { diyHome } from "../../src/main/core/state";
-import { autoCompactFile, saveAutoCompact } from "../../src/main/core/auto-compact-config";
+import { autoCompactFile, loadAutoCompact, saveAutoCompact } from "../../src/main/core/auto-compact-config";
 import { DEFAULT_AUTO_COMPACT } from "../../src/shared/context/auto-compact";
+import { budgetBytesOf } from "../../src/shared/context/compaction";
 import { DEFAULT_KEEP, type KeepStage } from "../../src/shared/context/compact-keep";
 import {
     agentWriteAllowed,
@@ -23,6 +26,7 @@ import {
     planEditLogFile,
     planGet,
     planHistoryDir,
+    planReset,
     planRestore,
     planSet,
 } from "../../src/main/services/compact-plan-io";
@@ -136,5 +140,117 @@ describe("plan 的手与闸（##362 M3a）", () => {
         });
         expect(r.ok).toBe(false);
         expect(r.issues.some((i) => i.code === "keep.mustOverCap")).toBe(true);
+    });
+});
+
+// ─── reset（##363 M3a 补）：逃生窗口 —— 删键回出厂缺省 ──────────────
+// 「逃生」的判据：reset **不依赖任何快照** —— 快照全坏时它是唯一落点（restore 做不到）。
+describe("plan reset 逃生窗口（##363）", () => {
+    /** 造一份带自定义 policy / mode 的配置（用来验 reset 只动 keep、其余原样） */
+    const seedRich = (history: Record<string, unknown> = {}): void => {
+        saveAutoCompact(HOME, {
+            ...DEFAULT_AUTO_COMPACT,
+            mode: "auto",
+            policy: { mode: "budget", modeData: { budgetBytes: 4096, toolResult: { render: "path" } }, summary: false },
+            history: { keep: [...DEFAULT_KEEP], ...history },
+        });
+    };
+
+    it("⑤ reset（user）：keep 键**消失** → source 回落 default；mode/triggers/policy/allowAgentWrite 原样保留", () => {
+        seedRich({ allowAgentWrite: true });
+        expect(planGet(HOME).source).toBe("config");
+        const r = planReset({ home: HOME, taskUri: TASK, via: "user" });
+        expect(r.ok).toBe(true);
+        expect(r.written).toBe(true);
+        expect(r.after?.map((s) => s.type)).toEqual(DEFAULT_KEEP.map((s) => s.type));
+
+        // ⚠️ 删键（不是写死 DEFAULT_KEEP 字面量）：`history` 里没有 `keep` 这个键
+        const doc = yaml.load(readFileSync(autoCompactFile(HOME), "utf-8")) as {
+            history?: { keep?: unknown; allowAgentWrite?: boolean };
+            mode?: string;
+            policy?: unknown;
+        };
+        expect(doc.history?.keep).toBeUndefined();
+        expect(planGet(HOME).source).toBe("default");
+        expect(planGet(HOME).keep.map((s) => s.type)).toEqual(DEFAULT_KEEP.map((s) => s.type));
+
+        // 其余全保留（reset 只重置 plan）
+        const cfg = loadAutoCompact(HOME);
+        expect(cfg.mode).toBe("auto");
+        expect(cfg.triggers).toEqual(DEFAULT_AUTO_COMPACT.triggers);
+        expect(budgetBytesOf(cfg.policy)).toBe(4096);
+        expect(cfg.history?.allowAgentWrite).toBe(true);
+    });
+
+    it("⑥ reset 前**快照落盘**（内容是旧 keep）⇒ restore 能回滚回 reset 前", () => {
+        seedConfig(); // keep = 缺省
+        planSet({ home: HOME, taskUri: TASK, via: "user", keepText: KEEP_B }); // 盘上 → recent
+        expect(planGet(HOME).keep.map((s) => s.type)).toEqual(["recent"]);
+
+        const r = planReset({ home: HOME, taskUri: TASK, via: "user" });
+        expect(r.written).toBe(true);
+        expect(r.snapshotId).toBeTruthy();
+        expect(existsSync(snapshotFile(r.snapshotId!))).toBe(true);
+        // 快照内容 = reset 前的旧 keep（recent），不是缺省
+        const snap = yaml.load(readFileSync(snapshotFile(r.snapshotId!), "utf-8")) as { op?: string; keep?: KeepStage[] };
+        expect(snap.op).toBe("reset");
+        expect(snap.keep?.map((s) => s.type)).toEqual(["recent"]);
+        // 已回落缺省
+        expect(planGet(HOME).source).toBe("default");
+
+        // reset 也可被 restore 回滚（回滚本身也可回滚，同 ##362 口径）
+        const rb = planRestore({ home: HOME, taskUri: TASK, via: "user" });
+        expect(rb.written).toBe(true);
+        expect(planGet(HOME).source).toBe("config");
+        expect(planGet(HOME).keep.map((s) => s.type)).toEqual(["recent"]);
+
+        // 审计：op:reset 一行，beforeKeep = 旧 keep、afterKeep = 缺省回显
+        const rows = readFileSync(planEditLogFile(HOME), "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+        const reset = rows.find((x) => x.op === "reset" && x.result === "ok")!;
+        expect(reset.snapshotId).toBe(r.snapshotId);
+        expect(reset.beforeKeep.map((s: KeepStage) => s.type)).toEqual(["recent"]);
+        expect(reset.afterKeep.map((s: KeepStage) => s.type)).toEqual(DEFAULT_KEEP.map((s) => s.type));
+    });
+
+    it("⑦ 闸关：agent 的 op:reset 被拒（文本不抛错）、文件 md5 不变；闸开即可 reset", () => {
+        seedConfig(); // 闸关（history 无 allowAgentWrite）
+        expect(agentWriteAllowed(HOME)).toBe(false);
+        const before = md5(autoCompactFile(HOME));
+        const r = planReset({ home: HOME, taskUri: TASK, via: "agent" });
+        expect(r.ok).toBe(false);
+        expect(r.written).toBe(false);
+        expect(r.blocked).toBe("agent-write-disabled");
+        // 让模型知道是「没权限」而非「你写错了」
+        expect(r.text).toContain("history.allowAgentWrite=false");
+        // 逃生窗口的 scope 提示必带（模型要知道自己在动全局）
+        expect(r.text).toContain("所有任务");
+        expect(md5(autoCompactFile(HOME))).toBe(before);
+        // 闸关也记账
+        const rows = readFileSync(planEditLogFile(HOME), "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+        expect(rows.at(-1)).toMatchObject({ op: "reset", result: "blocked", via: "agent" });
+
+        // 开闸后 agent 可 reset（逃生窗口对 agent 开放 = 它能在自伤后自救）
+        openGate();
+        const ok = planReset({ home: HOME, taskUri: TASK, via: "agent" });
+        expect(ok.ok).toBe(true);
+        expect(ok.written).toBe(true);
+        expect(planGet(HOME).source).toBe("default");
+    });
+
+    it("⑧ 已是缺省（无 keep 键）⇒ reset 幂等成功：不写文件、不多存快照", () => {
+        // 只有闸、没有 keep 的配置 = 「未配置 plan」
+        saveAutoCompact(HOME, { ...DEFAULT_AUTO_COMPACT, history: { allowAgentWrite: true } });
+        expect(planGet(HOME).source).toBe("default");
+        const before = md5(autoCompactFile(HOME));
+        const snapsBefore = listPlanSnapshots(HOME).length;
+        const r = planReset({ home: HOME, taskUri: TASK, via: "agent" });
+        expect(r.ok).toBe(true);
+        expect(r.written).toBe(false);
+        expect(r.noop).toBe(true);
+        expect(r.text).toContain("已是缺省");
+        expect(md5(autoCompactFile(HOME))).toBe(before);
+        expect(listPlanSnapshots(HOME).length).toBe(snapsBefore);
+        // 闸不被幂等路径关掉（allowAgentWrite 原样）
+        expect(loadAutoCompact(HOME).history?.allowAgentWrite).toBe(true);
     });
 });

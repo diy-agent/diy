@@ -60,7 +60,7 @@ import {
     seekWindowStart,
 } from "./local-ops-seek";
 import { appendAudit } from "./agent-audit";
-import { planCheck, planGet, planRestore, planSet, renderCheckView, renderPlanView } from "./compact-plan-io";
+import { planCheck, planGet, planReset, planRestore, planSet, renderCheckView, renderPlanView } from "./compact-plan-io";
 import { capToolOutput, safeId, toolOutDir, toolOutRelPath } from "./tool-output";
 import { abortText } from "../../shared/turn-end";
 import { opsFeed } from "./ops-feed";
@@ -1053,10 +1053,11 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 "**这是全局配置：改动影响所有任务、所有 agent 的投递**。" +
                 "op=get 读当前生效 plan（含来源与预算）；op=check 校验一份级列表（可传 keep，缺省校验盘上配置）；" +
                 "op=set 写 history.keep[]（需用户在配置里开 history.allowAgentWrite=true，否则返回「没权限」而非报错）；" +
-                "op=restore 回滚到历史快照（缺省最近一份；回滚本身也可回滚）。" +
+                "op=restore 回滚到历史快照（缺省最近一份；回滚本身也可回滚）；" +
+                "op=reset 一键回**出厂缺省** plan（删 history.keep[]；**不依赖任何快照的逃生窗口** —— 快照全坏时用它）。" +
                 "级列表形状：`[{ type: ladder|role|recent|steps, must?, limit?, clip?, data }]`，从上往下生效（先声明的先挑）。",
             inputSchema: z.object({
-                op: z.enum(["get", "check", "set", "restore"]).describe("要做什么"),
+                op: z.enum(["get", "check", "set", "restore", "reset"]).describe("要做什么"),
                 keep: z
                     .string()
                     .optional()
@@ -1080,6 +1081,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     // 闸关 ⇒ 本调用返回**拒绝文本**（不抛）；非法 plan ⇒ 抛（那是模型写错了，该看到错在哪）
                     return planSet({ home, taskUri, via: "agent", keepText, measure }).text;
                 }
+                if (op === "reset") return planReset({ home, taskUri, via: "agent" }).text;
                 return planRestore({ home, taskUri, via: "agent", ...(snapshot ? { snapshot } : {}), measure }).text;
             },
         }),

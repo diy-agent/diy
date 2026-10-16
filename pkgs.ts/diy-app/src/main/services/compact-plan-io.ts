@@ -14,7 +14,10 @@
 //   ② 写前必校验 —— 复用 `saveKeepConfig`（非法 ⇒ 拒绝且**文件一字不改**），不得绕过。
 //   ③ 快照 + 回滚 —— 每次成功写入前把**旧 keep** 存 `$DIY_HOME/plan-history/<id>.yaml`（留最近 20 份）；
 //      restore 走**同一套**校验 + 快照路径（即回滚本身也可回滚）。
-//   ④ 审计 —— 每次 set / restore 追加一行到 `$DIY_HOME/log/compact/plan-edits.jsonl`（`log/` 可清可丢）。
+//   ④ 审计 —— 每次 set / restore / reset 追加一行到 `$DIY_HOME/log/compact/plan-edits.jsonl`（`log/` 可清可丢）。
+//
+// 另：`reset`（##363）= **删 `history.keep[]` 回出厂缺省** —— 与 restore 的本质差别是**不依赖快照**
+//   （快照全坏时它是唯一的逃生窗口）。它同样走闸 + 快照（旧 keep）+ 审计（`op:"reset"`）。
 //
 // ── 分层 ──
 // 判据（validate / checkKeep）在 shared + compact-plan-service；文件 I/O 在 core/auto-compact-config；
@@ -24,6 +27,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSyn
 import { dirname, join } from "node:path";
 import * as yaml from "js-yaml";
 import {
+    deleteKeepConfig,
     loadAutoCompact,
     parseKeepText,
     readAutoCompactText,
@@ -142,8 +146,10 @@ export function planCheck(args: PlanCheckArgs): PlanCheckView {
 
 export interface PlanWriteResult {
     ok: boolean;
-    /** 是否真的落盘（闸关 / 校验失败时 false） */
+    /** 是否真的落盘（闸关 / 校验失败 / reset 幂等时 false） */
     written: boolean;
+    /** 幂等空转（如 reset 时已是缺省）：成功但没动文件、没存快照 */
+    noop?: boolean;
     /** 被闸挡下（不是调用方写错 —— 工具侧据此返回"你没权限"而不是抛错） */
     blocked?: "agent-write-disabled";
     before?: readonly KeepStage[];
@@ -167,7 +173,7 @@ export interface PlanWriteArgs {
 interface PlanSnapshotDoc {
     ts: string;
     taskUri: string;
-    op: "set" | "restore";
+    op: "set" | "restore" | "reset";
     keep: readonly KeepStage[];
 }
 
@@ -177,7 +183,7 @@ function snapshotIdNow(): string {
 }
 
 /** 写一份快照（旧 keep），返回 snapshotId；顺带按份数上限清理最旧的 */
-export function writePlanSnapshot(home: string, taskUri: string, op: "set" | "restore", keep: readonly KeepStage[]): string {
+export function writePlanSnapshot(home: string, taskUri: string, op: "set" | "restore" | "reset", keep: readonly KeepStage[]): string {
     const dir = planHistoryDir(home);
     mkdirSync(dir, { recursive: true });
     let id = snapshotIdNow();
@@ -230,7 +236,7 @@ function appendPlanEdit(
     home: string,
     entry: {
         taskUri: string;
-        op: "set" | "restore";
+        op: "set" | "restore" | "reset";
         result: "ok" | "rejected" | "blocked";
         via: PlanWriteVia;
         snapshotId?: string;
@@ -350,6 +356,70 @@ export function planRestore(args: PlanWriteArgs & { snapshot?: string }): PlanWr
     };
 }
 
+/**
+ * **reset —— 逃生窗口**（##363 M3a 补）：把 `history.keep[]` **删键**回出厂缺省。
+ *
+ * 与 `restore` 的本质差别：restore 依赖「某份快照是好的」；reset **不依赖任何快照** ——
+ * 第一份快照就是坏的、或 20 份快照全被污染时，它是**唯一的落点**（这就是它存在的理由）。
+ *
+ * 语义（钉死，见 ##363 body）：
+ *   · 目标 = 出厂缺省（唯一真源 `DEFAULT_KEEP` / `defaultBudgetPlan`）—— **删键**而非写死字面量：
+ *     写死会把配置冻结在当时那版缺省；删键则 `plan get` 报 `source:"default"`、自动跟随未来缺省。
+ *   · **只重置 plan**（`history.keep[]`），保留 `mode` / `triggers` / `policy` / `allowAgentWrite`。
+ *   · reset 本身**也先快照旧 keep** ⇒ reset 也可被 `restore` 回滚（与 ##362「回滚本身也可回滚」同口径）。
+ *   · 幂等：已是缺省（配置里没有 keep 键）⇒ 成功返回「已是缺省，无需重置」，不写文件、不多存快照。
+ *   · 闸：与 set/restore 同 —— `via:"agent"` 且闸关 ⇒ 返回拒绝文本（**不抛错**，口径同 ##362）。
+ */
+export function planReset(args: PlanWriteArgs): PlanWriteResult {
+    const { home, taskUri, via } = args;
+    const { source, keep: before } = effectiveKeep(home);
+    const beforeList = source === "config" ? before : [];
+    if (via === "agent" && !agentWriteAllowed(home)) {
+        appendPlanEdit(home, { taskUri, op: "reset", result: "blocked", via, beforeKeep: beforeList, reason: "agent-write-disabled" });
+        return {
+            ok: false,
+            written: false,
+            blocked: "agent-write-disabled",
+            before: beforeList,
+            scope: PLAN_SCOPE,
+            note: PLAN_SCOPE_NOTE,
+            text:
+                `plan 写入未开启（history.allowAgentWrite=false）；重置同样被闸挡住。\n` +
+                `${PLAN_SCOPE_NOTE}——请把改动方案告诉用户，由用户在配置里把 history.allowAgentWrite 设为 true。`,
+        };
+    }
+    if (source === "default") {
+        // 幂等：没有 keep 键 ⇒ 已经落在出厂缺省上。不写文件、不多存快照（存了也只是噪音）。
+        appendPlanEdit(home, { taskUri, op: "reset", result: "ok", via, reason: "already-default" });
+        return {
+            ok: true,
+            written: false,
+            noop: true,
+            before: [],
+            after: DEFAULT_KEEP,
+            scope: PLAN_SCOPE,
+            note: PLAN_SCOPE_NOTE,
+            text:
+                `plan reset：history.keep[] **已是缺省**（配置里没有 keep 键），无需重置。\n` +
+                `当前生效级列表（出厂缺省，从上往下生效）：\n${renderKeep(DEFAULT_KEEP)}\n` +
+                `scope: ${PLAN_SCOPE} —— ${PLAN_SCOPE_NOTE}。`,
+        };
+    }
+    const snapshotId = writePlanSnapshot(home, taskUri, "reset", beforeList);
+    deleteKeepConfig(home);
+    appendPlanEdit(home, { taskUri, op: "reset", result: "ok", via, snapshotId, beforeKeep: beforeList, afterKeep: DEFAULT_KEEP });
+    return {
+        ok: true,
+        written: true,
+        before: beforeList,
+        after: DEFAULT_KEEP,
+        snapshotId,
+        scope: PLAN_SCOPE,
+        note: PLAN_SCOPE_NOTE,
+        text: renderWriteResult("reset", DEFAULT_KEEP, snapshotId),
+    };
+}
+
 // ─── 人读文本（工具输出 / CLI 提示共用；不许两处各写）──
 
 /** 级列表 → 多行文本 */
@@ -398,10 +468,14 @@ export function renderPlanView(v: PlanView): string {
     );
 }
 
-/** set / restore 成功的人读文本 */
-export function renderWriteResult(op: "set" | "restore", keep: readonly KeepStage[], snapshotId: string): string {
+/** set / restore / reset 成功的人读文本 */
+export function renderWriteResult(op: "set" | "restore" | "reset", keep: readonly KeepStage[], snapshotId: string): string {
+    const head =
+        op === "reset"
+            ? `plan reset 成功 —— history.keep[] 已删除，回落**出厂缺省管道**（未配置状态；将来缺省演进会自动跟随）`
+            : `plan ${op} 成功`;
     return (
-        `plan ${op} 成功，当前级列表（从上往下生效）：\n` +
+        `${head}，当前级列表（从上往下生效）：\n` +
         `${renderKeep(keep)}\n` +
         `快照：${snapshotId}（回滚用 op:"restore" snapshot:"${snapshotId}"）\n` +
         `scope: ${PLAN_SCOPE} —— ${PLAN_SCOPE_NOTE}。`

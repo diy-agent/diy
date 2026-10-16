@@ -692,4 +692,38 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
     // 校验盘上配置（不带 keep 参数）也通过
     expect((await fx.sh.run(`./diy.sh agent local compact plan check ${uri}`)).code).toBe(0);
   });
+
+  it("##363：点「重置为缺省」→ ConfirmDialog（点明影响面）→ 确认 → keep 键消失、标记变「缺省回落」、级列表回显缺省", async () => {
+    await gotoCompactTab();
+    expect(autoYaml()).toContain("keep:");
+    // 合成 click（同上：左栏窄、真实命中点会被裁）
+    await ui.query<string>(
+      `(() => { const b=document.querySelector('[data-keep-reset]'); if(!b) return 'no'; if(b.disabled) return 'disabled'; b.click(); return 'ok'; })()`,
+    );
+    await waitUntil(
+      () => ui.query<boolean>(`!!document.querySelector('button.btn-error')`),
+      (v) => v === true,
+      { label: "重置 ConfirmDialog 出现" },
+    );
+    // 文案点明影响面（全局 + 可 restore 找回）
+    expect(await bodyHas("所有任务")).toBe(true);
+    expect(await bodyHas("restore")).toBe(true);
+    // 未确认前**不动文件**
+    const before = autoYaml();
+    expect(before).toContain("keep:");
+    await ui.clickSelector("button.btn-error");
+    // 删键（不是写死 DEFAULT_KEEP 字面量）⇒ 文件里不再有 `keep:`
+    await waitUntil(() => Promise.resolve(autoYaml()), (t) => !t.includes("keep:"), { label: "history.keep 键消失" });
+    // 标记回落 + 级列表回显缺省（steps + ladder）
+    await waitUntil(() => a11yText(), (t) => t.includes("缺省回落"), { label: "标记变缺省回落" });
+    await waitUntil(
+      () => ui.query<number>(`document.querySelectorAll('[data-keep-stage]').length`),
+      (n) => n === 2,
+      { label: "级列表回显缺省（2 级）" },
+    );
+    expect(await ui.query<string>(`document.querySelectorAll('[data-keep-stage]')[0].getAttribute('data-keep-type')`)).toBe("steps");
+    // CLI 读同一真源：source 回落 default
+    const get = (await fx.sh.getJson(`./diy.sh agent local compact plan get ${uri}`)).data as { source: string };
+    expect(get.source).toBe("default");
+  });
 });
