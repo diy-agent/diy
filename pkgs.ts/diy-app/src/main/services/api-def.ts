@@ -2120,6 +2120,13 @@ export const apiDef = RpcSchema.router({
                 },
                 output: StatusDataId,
               }),
+              remove: RpcSchema.unary({
+                desc: `删除项目（UI 入口；连带其下全部任务，不可恢复 —— 回收站见 ##138）`,
+                input: {
+                  id: z.string().cliArg({ desc: "project id" }),
+                },
+                output: StatusDataId,
+              }),
             },
           }),
 
@@ -2153,6 +2160,13 @@ export const apiDef = RpcSchema.router({
                 input: {
                   uri: z.string().cliArg({ desc: "任务 URI" }),
                   state: TaskStateSchema.cliArg({ desc: "新状态" }),
+                },
+                output: StatusDataUri,
+              }),
+              delete: RpcSchema.unary({
+                desc: `删除任务（UI 入口；仅删本条，子任务失父升为一级任务，不可恢复 —— 回收站见 ##138）`,
+                input: {
+                  uri: z.string().cliArg({ desc: "任务 URI" }),
                 },
                 output: StatusDataUri,
               }),

@@ -11,6 +11,7 @@ import { checkViewTarget } from "../../shared/view-registry";
 import { parseTracks } from "../../shared/grid-layout";
 import { notificationStore } from "../store/notificationStore";
 import { createProjectViaUi } from "./create-project";
+import { deleteTaskViaUi, removeProjectViaUi } from "./delete-entry";
 import { createTaskViaUi } from "./create-task";
 import { uiWatchStream, currentSnapshot } from "./ui-watch";
 
@@ -193,6 +194,12 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     return { status: "ok", data: { id } };
   });
 
+  // diy.ui.project.remove — 与项目行「🗑」按钮共用同一入口（##352；连带其下全部任务）
+  binding.on(ui.project.remove, async ({ input }) => {
+    await removeProjectViaUi(input.id);
+    return { status: "ok", data: { id: input.id } };
+  });
+
   // diy.ui.task.create — 与 UI「项目行 ＋ 添加任务」按钮共用同一入口
   binding.on(ui.task.create, async ({ input }) => {
     const uri = await createTaskViaUi({
@@ -213,6 +220,12 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     }
     getRendererActions().toast?.("任务已更新", "success");
     return { status: "ok", data: { uri } };
+  });
+
+  // diy.ui.task.delete — 与任务行「🗑」按钮共用同一入口（##352；仅删本条，子任务失父升为一级）
+  binding.on(ui.task.delete, async ({ input }) => {
+    await deleteTaskViaUi(input.uri);
+    return { status: "ok", data: { uri: input.uri } };
   });
 
   // diy.ui.task.setState — 在 tree 中直接修改任务状态
