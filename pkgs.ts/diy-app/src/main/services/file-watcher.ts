@@ -15,6 +15,41 @@ export interface FileChangeEvent {
   ts: number;
 }
 
+/** chokidar 会发给我们的事件名（本模块只关心这 5 个） */
+export type WatchFsEvent = "add" | "addDir" | "change" | "unlink" | "unlinkDir";
+
+/** 项目元数据：projects/<pid>/meta.yaml（改名 / 换路径 / 标签 → 树上的项目节点要跟着变） */
+const PROJECT_META_RE = /\/projects\/[^/]+\/meta\.yaml$/;
+
+/** 任务树真正依赖的路径：任务文档本身，或 tasks/ 下任何东西（任务目录 = tasks/<tid>） */
+const isTaskDoc = (p: string): boolean => p.endsWith("AGENTS.md") || p.includes("/tasks/");
+
+/**
+ * 把 chokidar 的一次文件系统事件分类成本应用关心的三种变更（纯函数；闸门只此一处）。
+ *
+ * 为什么必须收成一函数（真实故障，见 ##361）：目录**整棵**被删（`task delete` 的
+ * rmSync / 手工 `rm -rf`）时，chokidar 报的是 `unlinkDir` —— 原先只挂了 `unlink`
+ * 且判据只认 AGENTS.md，于是这类删除一条事件都不认 → 不发 task-change → 树不重载
+ * → nav 上那一行留着（点进去永远「加载中…」）。
+ * 更早还有一处**判据不对称**：`change` 分支用 isTaskDoc（认 /tasks/ 下任意路径），
+ * `unlink` 却只认 AGENTS.md。同一件事在两处判据不同 → 迟早只修好一半。
+ *
+ * 故：写 / 删 / 建 全部走同一判据；目录增删（addDir / unlinkDir）只要落在 projects/
+ * 下就重载树（新建任务目录、删除任务或项目目录都是树形变化）。
+ * 非任务路径（如 projects/<pid>/template/*.md 的保存）一律不触发 —— 曾经的 catch-all
+ * 会让「保存一次提示词模版」也重载任务树（名不副实 + 日志噪音）。
+ */
+export function classifyWatchEvent(ev: WatchFsEvent, p: string): WatchChangeEvent | null {
+  if (p.endsWith("state.yaml")) return ev === "change" ? "state-change" : null;
+  if (p.includes("/projects/")) {
+    if (ev === "addDir" || ev === "unlinkDir") return "task-change";
+    if (ev === "change") return PROJECT_META_RE.test(p) || isTaskDoc(p) ? "task-change" : null;
+    return isTaskDoc(p) ? "task-change" : null; // add / unlink：与 change 判据对齐
+  }
+  if (p.includes("/agents/")) return ev === "change" ? "agent-change" : null;
+  return null;
+}
+
 // ── FileWatcher：单例，按需启停 chokidar ──
 
 /**
@@ -74,21 +109,15 @@ class FileWatcher {
       [join(home, "state.yaml"), join(home, "projects/"), join(home, "agents/")],
       { ignoreInitial: true, depth: 5, persistent: true, awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 100 } },
     );
-    this.watcher
-      .on("change", (p: string) => {
-        if (p.endsWith("state.yaml")) this._emit("state-change");
-        else if (p.includes("/projects/")) {
-          // 只有任务树真正依赖的路径才重载：项目元数据 / tasks/ 下的任务数据。
-          // 曾经的 catch-all（projects/ 下任何 change）会让「保存一次提示词模版」
-          // （projects/<id>/template/*.md）也触发任务树重载 —— 名不副实 + 日志噪音。
-          const isProjectMeta = /\/projects\/[^/]+\/meta\.yaml$/.test(p);
-          const isTaskDoc = p.endsWith("AGENTS.md") || p.includes("/tasks/");
-          if (isProjectMeta || isTaskDoc) this._emit("task-change");
-        } else if (p.includes("/agents/")) this._emit("agent-change");
-      })
-      .on("addDir", (p: string) => { if (p.includes("/projects/")) this._emit("task-change"); })
-      .on("add",    (p: string) => { if (p.endsWith("AGENTS.md")) this._emit("task-change"); })
-      .on("unlink", (p: string) => { if (p.endsWith("AGENTS.md")) this._emit("task-change"); });
+    // 事件分类只经 classifyWatchEvent（判据单源，见其注释）：五个事件一视同仁地过它，
+    // 避免「change 认 /tasks/、unlink 只认 AGENTS.md」这类不对称再次出现。
+    const FS_EVENTS: WatchFsEvent[] = ["add", "addDir", "change", "unlink", "unlinkDir"];
+    for (const ev of FS_EVENTS) {
+      this.watcher.on(ev, (p: string) => {
+        const cls = classifyWatchEvent(ev, p);
+        if (cls) this._emit(cls);
+      });
+    }
   }
 
   private _stop(): void {
