@@ -17,6 +17,7 @@ import {
     normalizeAutoCompact,
     type AutoCompactConfig,
 } from "../../shared/context/auto-compact";
+import { validateKeepStages, type KeepIssue, type KeepStage } from "../../shared/context/compact-keep";
 
 export function autoCompactFile(home: string): string {
     return join(home, "auto-compact.yaml");
@@ -58,6 +59,47 @@ export function readAutoCompactText(home: string): string {
     }
 }
 
+/**
+ * 解析 plan 文本（YAML 或 JSON）→ 待校验的原始值。
+ *
+ * 接受两种写法（都是人/agent 自然会写出来的）：**级列表数组**，或 `{ keep: [...] }`
+ * （后者可直接从 `auto-compact.yaml` 里粘一段过来，零改写）。形状是否合法由 `validateKeepStages` 判 ——
+ * 这里只负责「把文本变成值」，不做任何猜测性修复（猜错了就是静默丢上下文）。
+ */
+export function parseKeepText(text: string): unknown {
+    const src = text.trim();
+    if (src === "") throw new Error("plan 文本为空（要给级列表数组，或 `{ keep: [...] }`）");
+    let v: unknown;
+    try {
+        v = yaml.load(src);
+    } catch (e) {
+        throw new Error(`plan 文本解析失败（YAML/JSON）：${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (v === null || typeof v !== "object") throw new Error("plan 文本不是级列表（应为数组，或 `{ keep: [...] }`）");
+    if (Array.isArray(v)) return v;
+    const keep = (v as Record<string, unknown>)["keep"];
+    if (keep === undefined) throw new Error("plan 文本既不是数组、也没有 `keep` 字段");
+    return keep;
+}
+
+/**
+ * 写 `history.keep[]`（**校验后才落地**）—— `compact plan set` 与 UI 级列表编辑器的**唯一写入口**。
+ * 非法 ⇒ 抛错且**不改文件**：写好 plan 就是决定「哪些历史发给模型」，静默写坏等于静默丢上下文。
+ * （读侧是另一回事：坏 `keep` 只丢 `history`、回落缺省管道，见 normalizeHistory —— 两面都硬就是自锁。）
+ */
+export function saveKeepConfig(home: string, rawKeep: unknown): { keep: KeepStage[]; issues: KeepIssue[] } {
+    const { stages, issues } = validateKeepStages(rawKeep);
+    const errors = issues.filter((i) => i.level === "error");
+    if (errors.length > 0) {
+        throw new Error(`plan 非法，已拒绝写入（配置未改动）：\n${errors.map((e) => `· ${e.message}`).join("\n")}`);
+    }
+    if (stages.length === 0) {
+        throw new Error("keep 不能是空级列表（要清零请把预算 `policy.modeData.budgetBytes` 设为 0）");
+    }
+    saveAutoCompact(home, { ...loadAutoCompact(home), history: { keep: stages } });
+    return { keep: stages, issues };
+}
+
 /** 写自动压缩配置（原子：tmp → rename）。宽松归一后再写（不存坏数据）。 */
 export function saveAutoCompact(home: string, cfg: unknown): AutoCompactConfig {
     const norm = normalizeAutoCompact(cfg);
@@ -75,6 +117,13 @@ export function saveAutoCompact(home: string, cfg: unknown): AutoCompactConfig {
         "#   modeData: **只属于该 mode** 的私有参数（换 mode 就换一整包；与 mode 同级的 summary 才是所有算法共有）\n" +
         "#     · budget：budgetBytes 历史字节上限（0=清零）· toolResult 工具结果呈现\n" +
         "#         toolResult.render: asis 原样 / headtail 头尾裁剪（私有参数在 renderData）/ callpath 只留调用\n" +
+        "# history: 历史装配管道（##344 M2 起可从配置改；缺省 = 代码里的缺省管道）\n" +
+        "#   keep[]: 级列表，**从上往下**生效（先声明的先挑）；形状 `{ type, must?, limit?, clip?, data }`\n" +
+        "#     type: ladder 纵向阶梯（缺省兜底）/ role 某角色全部 / recent 最近 N 条 / steps 最近 N 步\n" +
+        "#     must: true = 必保（不占预算）；limit: 最多几个单元（call+result=1）\n" +
+        "#     clip: full 不裁 / path 只留调用+路径 / { type: headtail, data: { head, tail, maxLineChars, maxKeepBytes } }\n" +
+        "#     data: 各取法私有参数（role: { role } · recent: { n, role? } · steps: { n }）\n" +
+        "#   预算(**0 = 清零**，含 must 级) 在 policy.modeData.budgetBytes；校验/读写走 `diy ... compact plan`\n" +
         "# 契约：pkgs.ts/diy-app/src/shared/context/auto-compact.ts 的 AutoCompactConfigSchema\n";
     const tmp = `${p}.tmp-${process.pid}`;
     writeFileSync(tmp, header + yaml.dump(norm, { indent: 2, noRefs: true }), "utf-8");

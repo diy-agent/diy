@@ -1201,7 +1201,7 @@ function getDetailScroll(taskUri: string): number {
 
 /** 压缩预览（只算不写）：返回 base（未压缩全量）与 mod（当前预算）两个请求 + 事实表 */
 async function compactPreview(taskUri: string, policy: FlatCompactPolicy, summaryText?: string) {
-    return diyService.diy.agent.local.compactPreview({ taskUri, ...policyFlat(policy), summaryText });
+    return diyService.diy.agent.local.compact.preview({ taskUri, ...policyFlat(policy), summaryText });
 }
 
 /** 自动压缩检测（只读）：事实 / 触发理由 / 生效 TTL / 当前配置 */
@@ -1209,7 +1209,12 @@ async function autoCompactStatus(taskUri: string) {
     return diyService.diy.agent.local.autoCompactStatus({ taskUri });
 }
 
-/** 写自动压缩配置（真源 = $DIY_HOME/auto-compact.yaml；patch = 部分字段，主进程浅合并） */
+/**
+ * 写自动压缩配置（真源 = $DIY_HOME/auto-compact.yaml；patch = 部分字段，主进程浅合并）。
+ * ⚠️ 级列表（`history.keep[]`）也走这里（`{ history: { keep } }`）—— 读侧在 `autoCompactStatus`
+ * 的 `config.history`；UI 写前用 shared 的 `validateKeepStages` **本地校验**（同一判据，不打空 RPC）。
+ * 命令行那三条（`compact plan get|set|check`）是给 CLI/脚本用的，renderer 不绕那一圈。
+ */
 async function autoCompactSetConfig(patch: Record<string, unknown>) {
     return diyService.diy.agent.local.autoCompactSetConfig({ patch });
 }
@@ -1220,7 +1225,7 @@ async function compact(
     policy: FlatCompactPolicy,
     summary?: { text: string; data: unknown; cost: number | null },
 ) {
-    const rec = (await diyService.diy.agent.local.compact({
+    const rec = (await diyService.diy.agent.local.compact.run({
         taskUri,
         ...policyFlat(policy),
         ...(summary ? { summaryText: summary.text, summaryData: summary.data, summaryCost: summary.cost } : {}),
@@ -1232,15 +1237,16 @@ async function compact(
 
 /** 撤销一次压缩（append-only 的 undo）；成功后重建到恢复后的边界 */
 async function undoCompact(taskUri: string, ref: string) {
-    const r = await diyService.diy.agent.local.undoCompact({ taskUri, ref });
+    const r = await diyService.diy.agent.local.compact.undo({ taskUri, ref });
     if (r.undone) await reload(taskUri);
     return r.undone;
 }
 
 /** 压缩事件账（历史页：不可变快照列表） */
 async function compactEvents(taskUri: string) {
-    return diyService.diy.agent.local.compactEvents({ taskUri });
+    return diyService.diy.agent.local.compact.events({ taskUri });
 }
+
 
 /** 策略对象 → RPC 扁平参数（headtail 展开成顶层字段，与 api-def 的 cliOption 对齐） */
 function policyFlat(p: FlatCompactPolicy): {
