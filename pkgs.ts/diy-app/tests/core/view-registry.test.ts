@@ -63,7 +63,9 @@ describe("子页面必须带 icon（##350 ① · review R1）", () => {
   it("防复发：子页面不给 icon → 注册表报错（指向该页的 icon 字段）", () => {
     const bare: PageDef = { id: "sub.x", title: "X", parentPage: "task-run", layout: TASK_RUN_LAYOUT };
     const errs = validateRegistry(VIEWS, [...PAGES, bare]);
-    expect(errs.some((e) => e.path === "pages[7].icon" && e.msg.includes("sub.x"))).toBe(true);
+    // 下标 = 传入数组的末尾（实现按传入下标生成 path，见 src/shared/view-registry.ts），
+    // 不写死数字：PAGES 再变长也不失效（##364 的教训）
+    expect(errs.some((e) => e.path === `pages[${PAGES.length}].icon` && e.msg.includes("sub.x"))).toBe(true);
   });
 
   it("子页面的 parentPage 指向不存在的页面 → 报错", () => {
