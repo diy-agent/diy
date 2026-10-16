@@ -14,7 +14,7 @@
 // 约定：本文件只放纯函数，禁止 import node:*（renderer 会打进包）。
 
 import { PLACE_CANDIDATES } from "./delivery";
-import { getValue } from "./tree";
+import { getValue, removePath, setValue } from "./tree";
 import type { ContextPath, ContextTreeState } from "./types";
 
 /** 一次变更的种类 */
@@ -251,6 +251,38 @@ export function entryToRows(entry: CtxLogEntry): CtxChangeRow[] {
         before: c.data.before,
         after: c.data.after,
     }));
+}
+
+/**
+ * 从**变更日志**重放出"上一次真发时的值树"（跨进程重启后的游标播种用）。
+ *
+ * 为什么需要：变更比较的基准 `LocalAgentManager.ctxSnap` 是**内存 Map**，进程重启即空。
+ * 空游标会让重启后第一轮只能拿"轮首值"当基准 → **跨轮变化漏报**（少报不错报，但确实丢了）。
+ * 落盘材料齐全，故可播种：`valueHashes` 取 `steps.jsonl` 末条（真值 hash），
+ * 值树取最后一条 `baseline` 的全量树 + 之后各 `changed` 的 `after`。
+ *
+ * ⚠️ 精度边界（别拿它当值树真源）：`changed` 里存的是 `summarizeValue` 的**摘要**
+ * （长串截断、数组/对象只留一行标签），所以重放是**单元级**——整单元被摘要串替换
+ * （不做深合并）。对**长值**这棵树不是全文；它只够产出 **before 摘要**（本用途，摘要再过一次
+ * `summarizeValue` 仍是同一行），全文在 `steps.jsonl` 的 `systemText` / `runtimeText`。
+ * 也别把它喂 UI 当真值树显示（`baseline` 段那部分是真值，被 `changed` 覆盖的段不是）。
+ *
+ * 没有 `baseline`（老任务 / 还没写过起点）→ 返回 `null`：调用方应**退回"不播种"**
+ * （少报），而不是拿当前值冒充旧值（错报）。
+ */
+export function foldCtxTree(records: readonly CtxLogEntry[]): ContextTreeState | null {
+    const lastBaseline = records.map((r) => r.type).lastIndexOf("baseline");
+    if (lastBaseline < 0) return null;
+    const base = records[lastBaseline]!;
+    let tree = (base.data as { tree: ContextTreeState }).tree;
+    for (const rec of records.slice(lastBaseline + 1)) {
+        if (rec.type !== "changed") continue;
+        for (const c of (rec.data as { changes: CtxChangeItem[] }).changes) {
+            // `remove` = 该单元此刻不存在；其余（add/update）写回 after 摘要串。
+            tree = c.type === "remove" ? removePath(tree, c.path) : setValue(tree, c.path, c.data.after ?? null);
+        }
+    }
+    return tree;
 }
 
 // ══════════════════════════════════════════════════════════════════════════

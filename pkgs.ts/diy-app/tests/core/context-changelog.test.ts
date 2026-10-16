@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import {
     changesOf,
     entryToRows,
+    foldCtxTree,
     summarizeValue,
     type CtxLogEntry,
     type CtxSnapshot,
@@ -177,5 +178,48 @@ describe("文件层：append-only + seq 续写 + 坏行出声跳过", () => {
             else process.env.DIY_HOME = old;
             rmSync(dir, { recursive: true, force: true });
         }
+    });
+});
+
+describe("foldCtxTree：从变更日志重放「上一次真发时的值树」（跨重启播种用）", () => {
+    const base = (tree: ContextTreeState, seq: number): CtxLogEntry => ({
+        seq, type: "baseline", ts: "t", model: "m", wireVersion: "w1",
+        ref: { turnId: `t${seq}`, stepId: `t${seq}_s1`, step: 1 },
+        data: { tree },
+    });
+    const changed = (seq: number, changes: CtxLogEntry extends never ? never : Array<{ type: "update" | "add" | "remove"; path: string; data: { before: string | null; after: string | null } }>): CtxLogEntry => ({
+        seq, type: "changed", ts: "t", model: "m", wireVersion: "w1",
+        ref: { turnId: `t${seq}`, stepId: `t${seq}_s1`, step: 1 },
+        data: { changes },
+    });
+
+    it("没有 baseline（老任务）→ null（调用方应退回「不播种」，不拿当前值冒充旧值）", () => {
+        expect(foldCtxTree([])).toBeNull();
+        expect(foldCtxTree([changed(0, [])])).toBeNull();
+    });
+
+    it("baseline 的全量树 + 后续 changed 的 after → 上一次真发的值", () => {
+        const recs = [
+            base(stateOf({ task: { title: "旧标题" }, chain: [{ path: "a" }] }), 0),
+            changed(1, [
+                { type: "update", path: "task", data: { before: "旧标题", after: "新标题" } },
+                { type: "remove", path: "chain", data: { before: "[1 项]", after: null } },
+            ]),
+        ];
+        const tree = foldCtxTree(recs)!;
+        // ⚠️ 重放是**单元级**：`changed` 里只有摘要，所以整个单元被摘要串替换（不是深合并）。
+        // 该树只服务 before **摘要**（`summarizeValue` 再过一遍），全文在 steps.jsonl。
+        expect(tree.values["task"]).toBe("新标题");
+        expect(tree.values["chain"]).toBeUndefined();
+    });
+
+    it("重置（第二条 baseline）从**最后一条**起算，不叠加旧段", () => {
+        const recs = [
+            base(stateOf({ task: { title: "第一段" } }), 0),
+            changed(1, [{ type: "update", path: "task", data: { before: "第一段", after: "第一段改" } }]),
+            base(stateOf({ task: { title: "第二段起点" } }), 2),
+        ];
+        // 第二条 baseline 是**全量树**（这里是真值），故起点之后没 changed → 原样返回
+        expect(foldCtxTree(recs)!.values["task"]).toEqual({ title: "第二段起点" });
     });
 });

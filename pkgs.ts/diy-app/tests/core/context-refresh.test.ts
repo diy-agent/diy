@@ -297,6 +297,33 @@ describe("跨轮变更：上一轮之后改的东西，下一轮必须落一条 
         expect(row.after).toContain("新正文");
     }, 60_000);
 
+    /**
+     * 承接上一条：游标是**内存 Map**，进程重启即空 —— 不播种则重启后第一轮又退回"轮首为基准"，
+     * 跨轮变化静默漏报。这里用**两个 manager 实例**模拟重启（新实例的 ctxSnap 必空），
+     * 断言重启后第一轮**仍**落得出 changed 且 before 是旧值（来自盘上 changelog 重放）。
+     */
+    it("进程重启（新 manager 实例）后第一轮：游标从盘上播种，跨轮变更不漏报", async () => {
+        const uri = newUri("重启播种", "旧正文-EEEEEEEEEE");
+        const model = new MockLanguageModelV3({
+            provider: "stub",
+            modelId: "stub-model",
+            doStream: () => Promise.resolve(textReply("好")),
+        });
+        const mk = () => new LocalAgentManager(() => model as unknown as LanguageModel);
+        for await (const _op of mk().chat(uri, "第一轮")) void _op;
+
+        updateTask(uri, { body: "新正文-FFFFFFFFFF" });
+
+        // 新实例 = 内存游标为空（等价于重启后第一次真发）
+        for await (const _op of mk().chat(uri, "第二轮")) void _op;
+
+        const v2 = readCtxLog(uri).filter(isV2Entry);
+        expect(v2.map((e) => e.type)).toEqual(["baseline", "changed"]);
+        const row = entryToRows(v2[1]!).find((c) => c.path === "task.body")!;
+        expect(row.before).toContain("旧正文");
+        expect(row.after).toContain("新正文");
+    }, 60_000);
+
     it("跨轮没变就不写（基准对了也不能凭空造记录）", async () => {
         const uri = newUri("跨轮无变", "正文一直不动不动不动");
         const model = new MockLanguageModelV3({

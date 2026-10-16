@@ -99,9 +99,9 @@ import {
 import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
 import { traffic } from "../core/traffic";
-import { appendCtxLog, hasV2CtxLog, lastCtxLogSeq } from "../core/context-changelog";
+import { appendCtxLog, hasV2CtxLog, lastCtxLogSeq, readCtxLogEntries } from "../core/context-changelog";
 import { statFromStep } from "../../shared/context/stats";
-import { atomicUnitPaths, changesOf, type CtxSnapshot } from "../../shared/context/changelog";
+import { atomicUnitPaths, changesOf, foldCtxTree, type CtxSnapshot } from "../../shared/context/changelog";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import {
     estimateTokens,
@@ -401,12 +401,17 @@ function markShape(s: StepStreamShape, ch: "r" | "t" | "x"): void {
 /**
  * 合并**相邻的 user 消息**为一条。
  *
- * 为什么必须做：多家 OpenAI-compatible provider（含 zen/go 的部分路由）要求角色交替、
- * 或对连续同角色消息行为不一致（有的报错、有的静默丢弃）。而我们的投递**天然会造出连续 user**：
- *   · runtime 作为尾部 user 插在本轮输入之前 → [..., {user: runtime}, {user: 本轮输入}]
- *   · 摘要作为首条 user 插在历史之前 → [{user: 摘要}, ...{user: 历史首条}]
+ * ⚠️ 依据已实测订正（2026-10-16，##310）：**本仓在用的两家 provider 都不拒连续同角色**
+ * —— `goat`（`api.commandcode.ai`）与 `opencode-go`（`opencode.ai/inference/go`）对
+ * `[{user: A},{user: B}]` 以及 content 数组形式的连续 user 均返回 200。所以这条合并
+ * **不是**"provider 要求"，而是**收敛语义**：投递**天然会造出连续 user**
+ * （runtime / summary 作为尾部 user 插在本轮输入之前），合并成一条能让"给模型的这份信封"
+ * 只有一处 user，减少歧义、少一条消息。**若将来遇到真拒连续同角色的 provider，这里就是唯一改动点。**
+ *
  * 合并只动相邻 user、位置与总文本不变（前缀缓存不受影响：摘要/runtime 本就在变化段），
  * tool-call/tool-result 配对铁律也不涉及（只合并 user）。
+ *
+ * 依据实测记录：`bash /tmp/t310-role3.sh`（两家 × 纯文本/parts 各一条，全 200）。
  */
 /** user 消息的 content 形态：既可为纯字符串，也可为 part 数组（text/image/file） */
 type UserContent = Extract<ModelMessage, { role: "user" }>["content"];
@@ -437,7 +442,7 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
  * + `runtime:`（或 `runtimeDiff:`）+ `user:`（本轮输入），合成**一份**合法 YAML（`tailEnvelope`）。
  *
  * 为什么合成一份（##310 六轮拍板）：这些段与本轮输入是**相邻 user**，而
- * `normalizeUserRuns` 必然把它们合并成一条（多家 provider 拒连续同角色）。与其让合并
+ * `normalizeUserRuns` 必然把它们合并成一条（收敛成"一份信封一条 user"）。与其让合并
  * 产出一段"YAML 后面跟着裸文本"的怪东西，不如**我们自己合成一份合法 YAML**：
  *
  *     summary:      ← 仅当有历史摘要（自动生成的元数据，自己的顶层键）
@@ -2072,10 +2077,33 @@ export class LocalAgentManager {
      * 新轮次的轮首值已经是改后的值，拿它当基准 ⇒ 永远 diff 出空 → 变更日志从不记录。
      * 实测：真发改标题 → 下一轮落不出任何 `changed`（只有 baseline）。
      *
-     * 内存里即可（`rule.core-log`：核心逻辑不依赖日志）：进程重启后为空 → 该任务那一轮
-     * 只做轮内比较，**少报**而不是拿错值当基准（后续可选择性从 `steps.jsonl` 末条播种）。
+     * 内存里即可（`rule.core-log`：核心逻辑不依赖日志）；进程重启后为空 → 由 `seedCtxSnap`
+     * 从盘上**播种**上一次真发的值（steps 末条的 hash + changelog 重放出的值树），
+     * 播不出来（老任务没 baseline / 从没真发过）才退回"以轮首值为基准"——**少报不错报**。
      */
     private ctxSnap = new Map<string, CtxSnapshot>();
+
+    /**
+     * 跨进程重启后**播种**跨轮游标（`ctxSnap` 是内存 Map，重启即空）。
+     *
+     * 材料（都在盘上，且都是"上一次真发"的事实）：
+     *   · `valueHashes` ← `steps.jsonl` 末条 —— **真值 hash**，判定"变没变"足够精确；
+     *   · 值树 ← changelog 最后一条 `baseline` + 之后各 `changed` 的 `after`（`foldCtxTree`）——
+     *     只够产出 before **摘要**（长值在 changelog 里本就是截断摘要）。
+     * 缺任一份 → `null`，调用方退回"以轮首值为基准"（**少报不错报**）。
+     */
+    private seedCtxSnap(taskUri: string): CtxSnapshot | null {
+        try {
+            const lastStep = readDeliverySteps(taskUri).at(-1);
+            if (!lastStep) return null;
+            const tree = foldCtxTree(readCtxLogEntries(taskUri));
+            if (!tree) return null;
+            return { tree, valueHashes: lastStep.valueHashes };
+        } catch (e) {
+            console.warn(`[local-agent] 播种变更游标失败（退回轮首基准）${taskUri}:`, e);
+            return null;
+        }
+    }
 
     /**
      * 清空会话：中断在途生成 + 清插话队列 + 删 ops/llm/raw 日志。
@@ -2761,10 +2789,13 @@ export class LocalAgentManager {
         let ctxBaselineWritten = hasV2CtxLog(taskUri) && !this.rebaselinePending.has(taskUri);
         // 变更比较的基准 = **上一次真发**的值（跨轮游标；缺省才退回本轮的轮首值）。
         // 用轮首值当基准就只能看见"轮内变化"，跨轮变化（改完正文再来问）会永远漏掉 —— 见字段注释。
-        let ctxPrevSnap: CtxSnapshot = this.ctxSnap.get(taskUri) ?? {
-            tree: delivery.tree,
-            valueHashes: delivery.valueHashes,
-        };
+        // 内存里没有（进程刚起）= 尝试从盘上**播种**上一次真发的值；播不出来才退回本轮的轮首值。
+        let ctxPrevSnap: CtxSnapshot =
+            this.ctxSnap.get(taskUri) ??
+            this.seedCtxSnap(taskUri) ?? {
+                tree: delivery.tree,
+                valueHashes: delivery.valueHashes,
+            };
         // 预算判据与模版线**共用同一个函数**（services/prompt-registry 的 systemOverBudget）：
         // 曾经这里是内联的 `bytes > budget`，逻辑等价但两处各写一遍 —— 日后任何一侧改口径
         // （比如"等于预算算不算超"）都会悄悄分叉，而单测只覆盖得到被调用的那一侧（209 第 3 轮 R-1）。
