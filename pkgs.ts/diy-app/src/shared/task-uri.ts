@@ -13,3 +13,8 @@ export function projectFromUri(uri: string): string {
   const m = uri.match(/^projects\/([^/]+)\/tasks\//);
   return m?.[1] ?? "";
 }
+
+/** 是否是任务 URI（`projects/<pid>/tasks/<tid>`）。剪枝 / 守卫一律用它，别各处手写正则 */
+export function isTaskUri(uri: string | null | undefined): boolean {
+  return typeof uri === "string" && TASK_URI_RE.test(uri);
+}

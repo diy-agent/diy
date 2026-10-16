@@ -8,6 +8,8 @@ import { join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
 import { loadTaskTree, renderTreeText } from "../../src/main/core/task-tree";
 import { createProject } from "../../src/main/core/project";
+import { opsFile } from "../../src/main/core/local-paths";
+import { taskSystemDir } from "../../src/main/core/state";
 
 // ═══════════════════════════════════════
 // Helper: 在测试目录下创建任务文件
@@ -162,6 +164,62 @@ describe("结构化字段随树带回", () => {
     const t3 = proj.children.find((c) => c.num === "3")!;
     expect(t3.priority).toBe("high");
     expect(t3.change_type).toBe("bug");
+  });
+});
+
+// ═══════════════════════════════════════
+// agent 面状态的两个真源（##355）
+//   判据必须来自**任务自己的落盘数据**，不能由渲染端逐个任务回读（列表几百行）：
+//   · has_session = 会话 Op 日志存在且非空（`clear` 会删它 ⇒ 存在即"对话过"）
+//   · has_draft   = 任务目录 .diy/drafts.yaml 的 agent_input（未提交的输入）
+// ═══════════════════════════════════════
+
+describe("agent 面状态真源随树带回（##355）", () => {
+  let AG = "";
+  beforeAll(() => {
+    AG = createProject(join(diyHome(), "repos", "agent-state-project"), { label: "状态" });
+    makeTask(`projects/${AG}/tasks/1`, { title: "干净任务" });
+    makeTask(`projects/${AG}/tasks/2`, { title: "对话过" });
+    makeTask(`projects/${AG}/tasks/3`, { title: "有草稿" });
+    // ② 造出「对话过」的落盘事实：Op 日志非空（走产品同一路径函数，不复制 key 算法）
+    writeFileSync(opsFile(`projects/${AG}/tasks/2`), '{"op":"start","kind":"turn","id":"t1"}\n', "utf-8");
+    // ③ 造出「有草稿」的落盘事实：任务目录 .diy/drafts.yaml 的 agent_input
+    const sysDir = taskSystemDir(`projects/${AG}/tasks/3`);
+    mkdirSync(sysDir, { recursive: true });
+    writeFileSync(
+      join(sysDir, "drafts.yaml"),
+      ["kind: diy.ui-drafts", "version: 3", `task: projects/${AG}/tasks/3`, "fields:", "  agent_input: 半句话", ""].join("\n"),
+      "utf-8",
+    );
+  });
+
+  it("干净任务：has_session=false、has_draft=false（是真值不是 undefined —— 判据要能当真）", () => {
+    const proj = loadTaskTree().find((n) => n.project === AG)!;
+    const t1 = proj.children.find((c) => c.num === "1")!;
+    expect(t1.has_session).toBe(false);
+    expect(t1.has_draft).toBe(false);
+  });
+
+  it("有 Op 日志 → has_session=true", () => {
+    const proj = loadTaskTree().find((n) => n.project === AG)!;
+    const t2 = proj.children.find((c) => c.num === "2")!;
+    expect(t2.has_session).toBe(true);
+    expect(t2.has_draft).toBe(false);
+  });
+
+  it("drafts.yaml 有 agent_input → has_draft=true（title/body 草稿不算 —— agent 面状态只看输入框）", () => {
+    const proj = loadTaskTree().find((n) => n.project === AG)!;
+    const t3 = proj.children.find((c) => c.num === "3")!;
+    expect(t3.has_draft).toBe(true);
+    expect(t3.has_session).toBe(false);
+  });
+
+  it("空文件不算对话过（clear 之后留下的空日志不是「对话过」）", () => {
+    const uri = `projects/${AG}/tasks/4`;
+    makeTask(uri, { title: "空日志" });
+    writeFileSync(opsFile(uri), "", "utf-8");
+    const proj = loadTaskTree().find((n) => n.project === AG)!;
+    expect(proj.children.find((c) => c.num === "4")!.has_session).toBe(false);
   });
 });
 

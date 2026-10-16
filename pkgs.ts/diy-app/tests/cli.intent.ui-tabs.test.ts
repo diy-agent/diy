@@ -654,3 +654,80 @@ describe("删除任务 → 打开列表摘掉幽灵 tab（dropCtx 接线）", ()
     if (st.active) expect(st.opened).toContain(st.active);
   });
 });
+
+// ═══════════════════════════════════════════════════════════
+// 页面标识与定位（##350）：子页面 tab 是「页面」不是「任务」；URI 贴在标题下
+// ═══════════════════════════════════════════════════════════
+
+describe("子页面 tab 的身份标记（##350 ①）", () => {
+  it("任务 tab 带任务状态圆点；子页面 tab 用页面图标、不标任务状态", async () => {
+    const ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
+      const r = await fx.sh.getJson("./diy.sh ui inspect");
+      return (r.data as any)?.data?.tree as A11yNode | undefined;
+    });
+    try {
+      await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+      await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
+      await lockNavOpen(ui); // 行首标记只在**展开态**渲染（收起 rail 装不下）
+      const st = await waitUntil(
+        () =>
+          ui.query<{ sub: { text: string; row: string }[]; dots: string[] }>(`(() => {
+            const rowOf = (el) => (el.closest('li')?.textContent ?? '').trim();
+            return {
+              sub: [...document.querySelectorAll('[data-subpage-icon]')].map((e) => ({
+                text: (e.textContent ?? '').trim(),
+                row: rowOf(e),
+              })),
+              dots: [...document.querySelectorAll('[data-task-state-dot]')].map(rowOf),
+            };
+          })()`),
+        (v) => !!v && v.sub.length >= 1 && v.dots.length >= 1,
+        { label: "侧栏两态标记上屏（子页面图标 + 任务状态圆点）" },
+      );
+      // 子页面那一行：行首是 registry 的页面图标（"C"），不是任务序号/状态圆点
+      const sub = st.sub.find((s) => s.row.includes("上下文树"));
+      expect(sub).toBeTruthy();
+      expect(sub!.text).toBe("C");
+      // 任务状态圆点只认**任务** tab：子页面行上不许有（有 = 又被读成"一个任务"）
+      expect(st.dots.some((r) => r.includes("上下文树"))).toBe(false);
+      await unlockNav(ui);
+    } finally {
+      ui.close();
+    }
+  });
+});
+
+describe("任务详情的 URI 位置（##350 ②）", () => {
+  it("URI 紧跟标题正下方（修复前压在元信息块最底部）", async () => {
+    const ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
+      const r = await fx.sh.getJson("./diy.sh ui inspect");
+      return (r.data as any)?.data?.tree as A11yNode | undefined;
+    });
+    try {
+      await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+      await waitUntil(a11yText, (t) => t.includes("任务详情"), { label: "任务执行页上屏" });
+      const st = await waitUntil(
+        () =>
+          ui.query<{ order: string[]; titleBottom: number; uriTop: number; uriText: string } | null>(`(() => {
+            const rows = [...document.querySelectorAll('.task-field-row')];
+            const uriEl = document.querySelector('[data-testid="task-detail-uri"]');
+            if (!uriEl || rows.length === 0) return null;
+            return {
+              order: rows.map((r) => (r.textContent ?? '').trim().slice(0, 4)),
+              titleBottom: Math.round(rows[0].getBoundingClientRect().bottom),
+              uriTop: Math.round(uriEl.getBoundingClientRect().top),
+              uriText: (uriEl.textContent ?? '').trim(),
+            };
+          })()`),
+        (v) => !!v && v.order.length > 1 && v.order[0].startsWith("标题"),
+        { label: "任务属性面板就位" },
+      );
+      expect(st!.order[0].startsWith("标题")).toBe(true);
+      expect(st!.order[1].startsWith("URI")).toBe(true); // 标题的**下一个**字段就是它
+      expect(st!.uriTop).toBeGreaterThanOrEqual(st!.titleBottom); // 且真的落在标题下方
+      expect(st!.uriText).toContain(uri);
+    } finally {
+      ui.close();
+    }
+  });
+});

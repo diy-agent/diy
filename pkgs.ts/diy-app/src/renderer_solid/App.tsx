@@ -1,4 +1,4 @@
-import { createSignal, createEffect, on, onMount, onCleanup, untrack, Show, For } from "solid-js";
+import { createSignal, createMemo, createEffect, on, onMount, onCleanup, untrack, Show, For } from "solid-js";
 import * as Tabs from "@kobalte/core/tabs";
 import { TaskTree } from "./components/TaskTree";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
@@ -8,6 +8,7 @@ import { LlmPage } from "./components/LlmPage";
 import { TrafficPage } from "./components/TrafficPage";
 import { SessionOverviewPage } from "./components/SessionOverviewPage";
 import { SessionChip, SessionDot } from "./components/SessionChip";
+import { TaskAgentStateBadge, TaskAgentStateDot } from "./components/TaskAgentState";
 import { ModelConfigPage } from "./components/ModelConfigPage";
 // 折叠框展开态仍是 lab view 内部的局部状态（与「view 在哪个 area」是两件事）
 import { setLabView } from "./components/PromptLabV4Page";
@@ -19,6 +20,8 @@ import { ThemeSettings } from "./components/ThemeSettings";
 import { ToastContainer } from "./components/ToastContainer";
 import { taskStore, type TreeNode } from "./store/taskStore";
 import { tabStore } from "./store/tabStore";
+import { staleTaskTabCtxs } from "../shared/tab-prune";
+import { navPinStore } from "./store/navPinStore";
 // 全局会话可见性（##308）：**唯一的注册表订阅**在这里起，nav / 任务表 / 总览页共读同一份。
 import { sessionStore } from "./store/sessionStore";
 import { layoutStore } from "./store/layoutStore";
@@ -26,6 +29,8 @@ import { diyService } from "./lib/rpc";
 import { notificationStore } from "./store/notificationStore";
 import { defaultBinding, findPage, findView, viewInstanceKey } from "../shared/view-registry";
 import { taskIndentOf } from "../shared/tab-order";
+import { partitionByPin } from "../shared/nav-pin";
+import { groupByProject, projectColor, projectIndexOf, projectOfCtx } from "../shared/nav-project";
 import { taskStateColor } from "../main/core/task-state";
 import { instanceTitle } from "../shared/instance-title";
 import { Caches, NAV_W_MIN, NAV_W_MAX, NAV_W_DEFAULT } from "./lib/ui-state";
@@ -205,40 +210,55 @@ export default function App() {
     };
     let mainAreaEl: HTMLDivElement | undefined;
 
-    /**
-     * 树刷新后清理「已从树里消失的任务」的 tab（226 关联：dropCtx 接线）。
-     *
-     * 删除任务（CLI `task delete` / 删目录）走 watch → loadTree，但摘 tab 的
-     * `tabStore.dropCtx` 曾是零调用的死代码 —— 导航残留幽灵 tab（label 退化成 URI、
-     * 点开是空白页）。diff 只认「上一轮在、这一轮不在」：首轮 prev 为空，启动时树
-     * 未加载完（nodes=[]）不会把恢复出来的 tab 清光。树响应的乱序由 taskStore.loadTree
-     * 的过期丢弃守住，防止旧快照让这里误判「任务消失」。
-     */
-    let prevUris = new Set<string>();
     // RV-03（##245 review）：切页后旧页面的查找 Range 随 Solid 卸载退化成 zeroWidth，
     // badge 还挂着过期计数（refresh 全仓零调用）。查找条是**页内**语义 → 换页即关
     // （close 会清 Range/计数/高亮，一步到位）。
     createEffect(on(() => route(), () => findStore.close()));
+
+    /**
+     * 树刷新后剪掉「指向已不存在任务」的 tab，并告知用户（##226 接线 + ##361 存在性校验）。
+     *
+     * 为什么要校验存在性、而不只做「上一轮在、这一轮不在」的 diff：tab 是**持久化**的
+     * （`diy_tabs_opened`）—— 跨重启后，盘上仍躺着早就被删掉的任务的 tab；diff 的 prev
+     * 首轮为空，永远发现不了它们。判据收在 shared/tab-prune（纯函数、可单测）：
+     *   ① 只剪任务是 ctx 的 tab（别的页面 ctx 不动）；
+     *   ② **树成功加载过**才剪（treeLoaded）—— 启动那一瞬 nodes=[] 是「树还没到」，
+     *      照剪会把用户恢复出来的 tab 全清光。
+     *
+     * 过期快照的防护在 taskStore.loadTree（旧响应丢弃）：本 effect 读的 nodes 永远是
+     * **已生效**的那一份，不会拿旧树误判「任务消失」（见 task-store.test.ts）。
+     * `tabStore.opened` 用 untrack 读：剪枝会写 tab，若不 untrack 就自我触发成环。
+     */
     createEffect(() => {
-        const cur = new Set<string>();
+        const treeLoaded = taskStore.treeLoaded;
+        const nodes = taskStore.nodes;
+        const alive = new Set<string>();
         const walk = (ns: TreeNode[]) => {
             for (const n of ns) {
-                if (n.uri) cur.add(n.uri); // 项目节点没有 uri，成不了 tab，跳过
+                if (n.uri) alive.add(n.uri); // 项目节点没有 uri，成不了任务的 tab，跳过
                 walk(n.children ?? []);
             }
         };
-        walk(taskStore.nodes);
-        const gone = [...prevUris].filter((u) => !cur.has(u));
-        prevUris = cur;
-        if (gone.length === 0) return;
-        for (const u of gone) tabStore.dropCtx(u);
-        // 被摘的恰是当前 route → route 悬空（主区所有 page 的 Show 全 false = 白屏）→ 跟随 active
+        walk(nodes);
+        const opened = untrack(() => tabStore.opened.map((t) => ({ pageId: t.pageId, ctx: t.ctx })));
+        const stale = staleTaskTabCtxs({ opened, aliveUris: alive, treeLoaded });
+        if (stale.length === 0) return;
         untrack(() => {
+            for (const ctx of stale) tabStore.dropCtx(ctx);
+            // 被剪的若是任务管理页当前选中的任务 → 清掉选中（面板切到「任务不存在」终态）
+            if (taskStore.selectedUri && stale.includes(taskStore.selectedUri)) void taskStore.selectTask(null);
+            // 被摘的恰是当前 route → route 悬空（主区所有 page 的 Show 全 false = 白屏）→ 跟随 active
             const r = route();
             if (r.kind === "tab" && !tabStore.find(r.key)) {
                 const k = tabStore.active;
                 setRoute(k ? { kind: "tab", key: k } : { kind: "section", section: "task" });
             }
+            notificationStore.addToast(
+                "info",
+                stale.length === 1
+                    ? `任务 ${stale[0]} 已不存在，已关闭其页面`
+                    : `${stale.length} 个任务已不存在，已关闭对应页面`,
+            );
         });
     });
 
@@ -256,6 +276,24 @@ export default function App() {
 
     /** ⌘K 快速打开会话的弹层开关（##254）。内容与键盘导航见 components/NavSearch.tsx */
     const [navSearchOpen, setNavSearchOpen] = createSignal(false);
+
+    /**
+     * nav 任务项列表 = **置顶项固定在前**（##356 ②）。
+     *
+     * 只**分区**、不排序：区内顺序仍是 `tabStore.opened` 的全局顺序（任务树序），
+     * 故置顶不会打乱父子相邻关系；缩进也照旧由全局层级算（置顶不改层级，
+     * 也不隐式把置顶项的祖先一起置顶）。规则本体是纯函数，见 shared/nav-pin。
+     */
+    const navTabs = createMemo(() => {
+        const { pinned, rest } = partitionByPin(tabStore.opened, (t) => t.key, new Set(navPinStore.keys));
+        return { all: [...pinned, ...rest], pinnedCount: pinned.length };
+    });
+
+    // 关掉的 tab（或其任务被删）不留置顶键：tab 列表一变就剪枝。
+    // 语义边界：只剪「键已不存在」的，**不管它现在指什么** —— 同 key 再打开仍是置顶。
+    createEffect(() => {
+        navPinStore.prune(tabStore.opened.map((t) => t.key));
+    });
 
     /**
      * 记下「切页前的当前任务」并请求树定位它。
@@ -694,6 +732,22 @@ export default function App() {
     /** 当前激活的 tab 对象（供主区按 pageId 分派） */
     const activeTabItem = () => tabStore.activeTab();
 
+    /**
+     * nav 任务分区的**项目分组**（##302）：显示层重排 —— 把同项目的 tab 挪到一起，
+     * 组内保持 navTabs 的顺序（缩进 / 父子相邻语义因此不受影响）。项目显示名从任务树
+     * 现查（projectIndexOf），故树刷新后组头文案自动跟上。
+     *
+     * 与置顶（##356 ②）的合流：喂进去的是 `navTabs().all`（**置顶项固定在前**），
+     * 于是「钉住的项在最上面」原样成立 —— 它所在的**组**也跟着排到最前（组是整体：
+     * 不能只把组里一行提到别的组前面而不拆散分组）。组内顺序同样是 navTabs 的顺序，
+     * 分隔线按组内 pinnedCount 画（见 groupByProject 的 pinned 参数）。
+     * 副作用：置顶会让**该项目的整组**上移 —— 这是「分组」与「置顶」不可兼得处的取舍，
+     * 已在任务 body 标为待拍板项。
+     */
+    const navProjectGroups = createMemo(() =>
+        groupByProject(navTabs().all, projectIndexOf(taskStore.nodes), new Set(navPinStore.keys)),
+    );
+
     /** 打开/聚焦某个 tab（含子页面） */
     const goto = (key: string) => {
         hideHoverLayers();
@@ -1066,125 +1120,246 @@ export default function App() {
                                         **展开与收缩两态结构一致** —— 收缩态用「序号」图标承载同样的
                                         层级与选中语义（收缩态不显示标题与关闭按钮，装不下）。 */}
                                     <Show when={item.id === "task"}>
-                                        <For each={tabStore.opened}>
-                                            {(t) => {
-                                                const isActive = () => activeKey() === t.key;
-                                                /** 页面层次的子页面（lab 挂 task-run 下） */
-                                                const isSubPage = () => !!t.parent || !!findPage(t.pageId)?.parentPage;
-                                                /** 任务层次的缩进层级（已打开的祖先任务个数；0 = 顶级） */
-                                                const taskIndent = () => taskIndentOf(t, tabStore.opened);
-                                                const num = () => (t.ctx ? findNode(taskStore.nodes, t.ctx)?.num : undefined);
-                                                // 非 task-run 的页面 tab 一律用 registry 的 title（避免"新页面忘了加特判"
-                                                // 就显示成所属任务名 —— R3 那个 bug 的成因；见 review RV-05）。
-                                                // task-run 例外：它代表任务本体，显示任务名而非页面名。
-                                                const label = () => {
-                                                    const def = findPage(t.pageId);
-                                                    if (def && t.pageId !== "task-run")
-                                                        return `${def.title}${num() ? ` #${num()}` : ""}`;
-                                                    return tabLabel(t.ctx ?? "");
-                                                };
-                                                // 图标同样走 registry（RV-10）：别在组件里特判 pageId ——
-                                                // 新页面忘记加特判就会重复 R3 那个 bug；无 icon 时退回页面序号。
-                                                const icon = () => findPage(t.pageId)?.icon ?? (num() ?? "•");
-                                                const tabGoto = () => {
-                                                    hideHoverLayers();
-                                                    collapseRail(); // 窄窗：浮层也一起收
-                                                    tabStore.activate(t.key);
-                                                    setRoute({ kind: "tab", key: t.key });
-                                                };
-                                                /** 缩进：页面子页面一级 + 每个已打开的祖先任务一级 */
-                                                const indentPx = () => 28 + (isSubPage() ? 12 : 0) + taskIndent() * 14;
-                                                const isNested = () => isSubPage() || taskIndent() > 0;
-                                                // nav 拖拽改父子（任务 242）：带任务上下文的 tab 都可拖/可放
-                                                // （lab 提示词页也有 ctx=挂的任务；dnd id 用 tab key —— 同一任务
-                                                // 可开多个 tab，uri 会撞 id）。只挂展开态（收起态看不出标题，不支持拖）。
-                                                const drag = useDraggable({
-                                                    get id() {
-                                                        return t.key;
-                                                    },
-                                                    get data() {
-                                                        return { title: label(), kind: "nav-task" };
-                                                    },
-                                                });
-                                                const drop = useDroppable({
-                                                    get id() {
-                                                        return t.key;
-                                                    },
-                                                });
-                                                const dndRef = (el: Element | undefined) => {
-                                                    drag.ref(el);
-                                                    drop.ref(el);
-                                                };
-                                                return (
-                                                    <li class="flex justify-center">
-                                                        <Show
-                                                            when={expanded()}
-                                                            fallback={
-                                                                <button
-                                                                    class={`relative flex items-center justify-center h-8 w-8 rounded-lg text-caption font-mono transition-colors cursor-pointer ${
-                                                                        isActive()
-                                                                            ? "bg-primary/30 ring-1 ring-primary/40 font-semibold"
-                                                                            : "hover:bg-base-300 opacity-70"
-                                                                    }`}
-                                                                    title={label()}
+                                        <For each={navProjectGroups()}>
+                                            {(g) => (
+                                                <>
+                                                    {/* 项目分组标题（##302）：**仅展开态** —— rail（40px）装不下文字，
+                                                        那一态靠每行左缘的项目色条区分（同一个颜色 = 同一个项目）。
+                                                        组序 = 该组在 navTabs（置顶项在前）里的首次出现位置，组内保持 navTabs 顺序、
+                                                        置顶项在组内最前 —— 缩进 / 父子相邻语义因此不受影响。 */}
+                                                    <Show when={expanded()}>
+                                                        <li class="flex justify-center">
+                                                            <div
+                                                                class="flex items-center gap-1.5 w-full min-w-0 px-3 pt-2 pb-0.5 text-caption opacity-60 select-none"
+                                                                data-nav-project-head={g.project?.id ?? ""}
+                                                                title={g.project ? (g.project.path ?? g.project.label) : "没有项目归属的页面"}
+                                                            >
+                                                                <Show when={g.project}>
+                                                                    {(p) => (
+                                                                        <span
+                                                                            class="w-1.5 h-1.5 rounded-full shrink-0"
+                                                                            style={{ "background-color": projectColor(p().id) }}
+                                                                        />
+                                                                    )}
+                                                                </Show>
+                                                                <span class="truncate">📁 {g.project?.label ?? "未归属项目"}</span>
+                                                            </div>
+                                                        </li>
+                                                    </Show>
+                                                    <For each={g.tabs}>
+                                                        {(t, i) => {
+                                                    const isActive = () => activeKey() === t.key;
+                                                    /** 页面层次的子页面（lab 挂 task-run 下） */
+                                                    const isSubPage = () => !!t.parent || !!findPage(t.pageId)?.parentPage;
+                                                    /** 任务层次的缩进层级（已打开的祖先任务个数；0 = 顶级） */
+                                                    const taskIndent = () => taskIndentOf(t, tabStore.opened);
+                                                    const num = () => (t.ctx ? findNode(taskStore.nodes, t.ctx)?.num : undefined);
+                                                    // 非 task-run 的页面 tab 一律用 registry 的 title（避免"新页面忘了加特判"
+                                                    // 就显示成所属任务名 —— R3 那个 bug 的成因；见 review RV-05）。
+                                                    // task-run 例外：它代表任务本体，显示任务名而非页面名。
+                                                    const label = () => {
+                                                        const def = findPage(t.pageId);
+                                                        if (def && t.pageId !== "task-run")
+                                                            return `${def.title}${num() ? ` #${num()}` : ""}`;
+                                                        return tabLabel(t.ctx ?? "");
+                                                    };
+                                                    // 图标同样走 registry（RV-10）：别在组件里特判 pageId ——
+                                                    // 新页面忘记加特判就会重复 R3 那个 bug；无 icon 时退回页面序号。
+                                                    const icon = () => findPage(t.pageId)?.icon ?? (num() ?? "•");
+                                                    const tabGoto = () => {
+                                                        hideHoverLayers();
+                                                        collapseRail(); // 窄窗：浮层也一起收
+                                                        tabStore.activate(t.key);
+                                                        setRoute({ kind: "tab", key: t.key });
+                                                    };
+                                                    /** 缩进：页面子页面一级 + 每个已打开的祖先任务一级 */
+                                                    const indentPx = () => 28 + (isSubPage() ? 12 : 0) + taskIndent() * 14;
+                                                    const isNested = () => isSubPage() || taskIndent() > 0;
+                                                    // nav 拖拽改父子（任务 242）：带任务上下文的 tab 都可拖/可放
+                                                    // （lab 提示词页也有 ctx=挂的任务；dnd id 用 tab key —— 同一任务
+                                                    // 可开多个 tab，uri 会撞 id）。只挂展开态（收起态看不出标题，不支持拖）。
+                                                    const drag = useDraggable({
+                                                        get id() {
+                                                            return t.key;
+                                                        },
+                                                        get data() {
+                                                            return { title: label(), kind: "nav-task" };
+                                                        },
+                                                    });
+                                                    const drop = useDroppable({
+                                                        get id() {
+                                                            return t.key;
+                                                        },
+                                                    });
+                                                    const dndRef = (el: Element | undefined) => {
+                                                        drag.ref(el);
+                                                        drop.ref(el);
+                                                    };
+                                                    /** 置顶态（##356 ②）：投影自 navPinStore，切换即写视图 cache（跨重启保持） */
+                                                    const pinned = () => navPinStore.has(t.key);
+                                                    return (
+                                                        <>
+                                                            {/* 置顶区与普通区之间一条细分隔线（##356 ②；**##302 之后按组内计**）：
+                                                                分组后置顶项仍是各组的前缀（组序由 navTabs 决定 —— 含置顶项的组排在最前），
+                                                                故分隔线画在**本组**置顶段的末尾；本组无置顶项时不出现。 */}
+                                                            <Show when={g.pinnedCount > 0 && i() === g.pinnedCount}>
+                                                                <li class="px-1 py-0.5" aria-hidden="true">
+                                                                    <div class="border-t border-base-content/15" />
+                                                                </li>
+                                                            </Show>
+                                                        <li class="flex justify-center">
+                                                            <Show
+                                                                when={expanded()}
+                                                                fallback={
+                                                                    <button
+                                                                        class={`relative flex items-center justify-center h-8 w-8 rounded-lg text-caption font-mono transition-colors cursor-pointer ${
+                                                                            isActive()
+                                                                                ? "bg-primary/30 ring-1 ring-primary/40 font-semibold"
+                                                                                : "hover:bg-base-300 opacity-70"
+                                                                        }`}
+                                                                        title={label()}
+                                                                        data-nav-project={projectOfCtx(t.ctx)}
+                                                                        data-nav-tab={t.ctx ?? t.key}
+                                                                        onClick={tabGoto}
+                                                                        onMouseEnter={() => {
+                                                                            if (!navDragging()) showHoverTask(t.ctx);
+                                                                        }}
+                                                                        onMouseLeave={scheduleHideHoverTask}
+                                                                    >
+                                                                        {/* 项目归属（##302）：收起态没有组头文字，**色条是唯一的归属线索**
+                                                                            （同一个颜色 = 同一个项目；展开态的组头色点同色）。贴在左缘 ——
+                                                                            ##355 的 agent 状态点在 left-0.5，色条占 left-0 的 2px，两者相邻不叠。 */}
+                                                                        <Show when={projectOfCtx(t.ctx)}>
+                                                                            <span
+                                                                                class="absolute left-0 top-1 bottom-1 w-0.5 rounded-full"
+                                                                                style={{ "background-color": projectColor(projectOfCtx(t.ctx)) }}
+                                                                            />
+                                                                        </Show>
+                                                                        {icon()}
+                                                                        {/* 收起态装不下缩进，用一个小角标表达「有父」 */}
+                                                                        <Show when={isNested()}>
+                                                                            <span class="absolute left-0.5 bottom-0.5 text-caption opacity-50">↳</span>
+                                                                        </Show>
+                                                                        {/* agent 面状态点（##355）：rail 装不下文案，退成一个点
+                                                                            （颜色即语义，全文在 title 里）。占**左上**角、与右上角的
+                                                                            ##308 会话点并存（两条轴各占一角，不互相盖）。 */}
+                                                                        <Show when={t.ctx}>
+                                                                            <TaskAgentStateDot
+                                                                                uri={t.ctx!}
+                                                                                hasSession={findNode(taskStore.nodes, t.ctx!)?.has_session}
+                                                                                hasDraft={findNode(taskStore.nodes, t.ctx!)?.has_draft}
+                                                                                class="absolute top-0.5 left-0.5"
+                                                                            />
+                                                                        </Show>
+                                                                        {/* 会话状态点（##308）：rail 是常驻可见的那一态，
+                                                                            最该一眼看到的正是"这条会话在烧/有留言"。全文在 title（SessionDot 内）。 */}
+                                                                        <Show when={t.ctx}>
+                                                                            <SessionDot uri={t.ctx!} class="absolute top-0.5 right-0.5" />
+                                                                        </Show>
+                                                                    </button>
+                                                                }
+                                                            >
+                                                                <div
+                                                                    ref={dndRef}
+                                                                    class={`relative group flex items-center gap-1 w-full pr-1 py-1 rounded-lg text-body cursor-pointer transition-colors ${
+                                                                        isActive() ? "bg-primary/25 ring-1 ring-primary/30" : "hover:bg-base-300"
+                                                                    } ${drop.isDropTarget() ? "ring-2 ring-primary/60 ring-inset" : ""}`}
+                                                                    style={{ "padding-left": `${indentPx()}px` }}
+                                                                    title={t.ctx ?? t.key}
+                                                                    data-nav-project={projectOfCtx(t.ctx)}
+                                                                    data-nav-tab={t.ctx ?? t.key}
                                                                     onClick={tabGoto}
                                                                     onMouseEnter={() => {
                                                                         if (!navDragging()) showHoverTask(t.ctx);
                                                                     }}
                                                                     onMouseLeave={scheduleHideHoverTask}
                                                                 >
-                                                                    {icon()}
-                                                                    {/* 收起态装不下缩进，用一个小角标表达「有父」 */}
+                                                                    {/* 项目归属（##302）：左缘色条 —— 与分组标题的色点同色，
+                                                                        行离组头很远（滚过一屏）时仍读得出「我属哪一组」。 */}
+                                                                    <Show when={projectOfCtx(t.ctx)}>
+                                                                        <span
+                                                                            class="absolute left-0 top-1 bottom-1 w-0.5 rounded-full"
+                                                                            style={{ "background-color": projectColor(projectOfCtx(t.ctx)) }}
+                                                                        />
+                                                                    </Show>
+                                                                    {/* 缩进用竖线引导（比箭头更清楚地表示「挂在上面那项之下」）；
+                                                                        行首标记的取舍见下：任务 tab 是状态圆点，子页面 tab 是页面图标 */}
                                                                     <Show when={isNested()}>
-                                                                        <span class="absolute left-0.5 bottom-0.5 text-caption opacity-50">↳</span>
+                                                                        <span class="w-1.5 shrink-0 self-stretch border-l border-base-content/25" />
                                                                     </Show>
-                                                                    {/* 会话状态点（##308）：rail 是常驻可见的那一态，
-                                                                        最该一眼看到的正是"这条会话在烧/有留言"。全文在 title（SessionDot 内）。 */}
+                                                                    {/* 行首标记：**是任务还是页面**的唯一视觉判据（##350 ①）。
+                                                                        任务 tab = 任务状态圆点（颜色即状态）；
+                                                                        子页面 tab（lab / ctxlab / flow）= 注册表的页面图标，**不标任务状态** ——
+                                                                        子页面挂的 ctx 只是"哪个任务的"，它自己不是任务；标了状态圆点就会被读成"又一个任务"。
+                                                                        外层定宽 w-4：两种标记同宽，混排时标题左缘才对得齐。
+                                                                        会话 chip/dot（##308）不在此列 —— 那是"这条会话在烧"的会话态，与"这是不是任务"是两件事。 */}
+                                                                    <span class="flex w-4 shrink-0 items-center justify-center">
+                                                                        <Show
+                                                                            when={isSubPage()}
+                                                                            fallback={
+                                                                                <span
+                                                                                    class={`w-1.5 h-1.5 rounded-full ${taskStateColor(findNode(taskStore.nodes, t.ctx ?? "")?.state)}`}
+                                                                                    data-task-state-dot
+                                                                                />
+                                                                            }
+                                                                        >
+                                                                            <span class="font-mono text-caption opacity-80" data-subpage-icon>
+                                                                                {icon()}
+                                                                            </span>
+                                                                        </Show>
+                                                                    </span>
+                                                                    <span class="truncate flex-1">{label()}</span>
+                                                                    {/* agent 面状态（##355）：四态单轴一句话。与任务表行、
+                                                                        属性面板**同一份判据**（shared/task-agent-state + lib/agent-state）；
+                                                                        两个逐任务真源取自任务树节点（main 侧算的）。 */}
                                                                     <Show when={t.ctx}>
-                                                                        <SessionDot uri={t.ctx!} class="absolute top-0.5 right-0.5" />
+                                                                        <TaskAgentStateBadge
+                                                                            uri={t.ctx!}
+                                                                            hasSession={findNode(taskStore.nodes, t.ctx!)?.has_session}
+                                                                            hasDraft={findNode(taskStore.nodes, t.ctx!)?.has_draft}
+                                                                        />
                                                                     </Show>
-                                                                </button>
-                                                            }
-                                                        >
-                                                            <div
-                                                                ref={dndRef}
-                                                                class={`group flex items-center gap-1 w-full pr-1 py-1 rounded-lg text-body cursor-pointer transition-colors ${
-                                                                    isActive() ? "bg-primary/25 ring-1 ring-primary/30" : "hover:bg-base-300"
-                                                                } ${drop.isDropTarget() ? "ring-2 ring-primary/60 ring-inset" : ""}`}
-                                                                style={{ "padding-left": `${indentPx()}px` }}
-                                                                title={t.ctx ?? t.key}
-                                                                onClick={tabGoto}
-                                                                onMouseEnter={() => {
-                                                                    if (!navDragging()) showHoverTask(t.ctx);
-                                                                }}
-                                                                onMouseLeave={scheduleHideHoverTask}
-                                                            >
-                                                                {/* 缩进用竖线引导（比箭头更清楚地表示「挂在上面那项之下」）；
-                                                                    状态圆点始终保留 —— 缩进与状态是两件事，不该二选一 */}
-                                                                <Show when={isNested()}>
-                                                                    <span class="w-1.5 shrink-0 self-stretch border-l border-base-content/25" />
-                                                                </Show>
-                                                                <span class={`w-1.5 h-1.5 rounded-full shrink-0 ${taskStateColor(findNode(taskStore.nodes, t.ctx ?? "")?.state)}`} />
-                                                                <span class="truncate flex-1">{label()}</span>
-                                                                {/* 会话状态 chip（##308）：与任务表行、总览页**同一份判据**（sessionStore.chipOf） */}
-                                                                <Show when={t.ctx}>
-                                                                    <SessionChip uri={t.ctx!} />
-                                                                </Show>
-                                                                <button
-                                                                    class="btn btn-ghost btn-xs px-1 opacity-0 group-hover:opacity-70 hover:!opacity-100 shrink-0"
-                                                                    title={isSubPage() ? "关闭该子页面" : "关闭（暂时不理会，不影响任务状态）"}
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        closeTab(t.key);
-                                                                    }}
-                                                                >
-                                                                    ✕
-                                                                </button>
-                                                            </div>
-                                                        </Show>
-                                                    </li>
-                                                );
-                                            }}
+                                                                    {/* 会话状态 chip（##308）：与任务表行、总览页**同一份判据**（sessionStore.chipOf） */}
+                                                                    <Show when={t.ctx}>
+                                                                        <SessionChip uri={t.ctx!} />
+                                                                    </Show>
+                                                                    {/* 置顶开关（##356 ②）：置顶项常显 📌（一眼看出为什么它在最上面），
+                                                                        普通项 hover 才显 📍。收起态（rail）不渲染 —— 40px 装不下，
+                                                                        但排序与缩进在 rail 态同样生效。 */}
+                                                                    <button
+                                                                        class={`btn btn-ghost btn-xs px-1 shrink-0 ${
+                                                                            pinned()
+                                                                                ? "opacity-80 hover:!opacity-100"
+                                                                                : "opacity-0 group-hover:opacity-70 hover:!opacity-100"
+                                                                        }`}
+                                                                        title={pinned() ? "取消置顶" : "置顶（固定在上部）"}
+                                                                        data-testid="nav-tab-pin"
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            navPinStore.toggle(t.key);
+                                                                        }}
+                                                                    >
+                                                                        {pinned() ? "📌" : "📍"}
+                                                                    </button>
+                                                                    <button
+                                                                        class="btn btn-ghost btn-xs px-1 opacity-0 group-hover:opacity-70 hover:!opacity-100 shrink-0"
+                                                                        title={isSubPage() ? "关闭该子页面" : "关闭（暂时不理会，不影响任务状态）"}
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            closeTab(t.key);
+                                                                        }}
+                                                                    >
+                                                                        ✕
+                                                                    </button>
+                                                                </div>
+                                                            </Show>
+                                                        </li>
+                                                        </>
+                                                        );
+                                                        }}
+                                                    </For>
+                                                </>
+                                            )}
                                         </For>
                                     </Show>
                                 </>

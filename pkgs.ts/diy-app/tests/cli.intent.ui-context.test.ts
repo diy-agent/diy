@@ -1206,19 +1206,28 @@ describe("上下文树：变量树变更 view + 该步实际请求（真发 · �
     expect(s).not.toContain("ASK-MARK-310-1");
     expect(s).toContain("在流量页打开");
 
-    // 点「在流量页打开」→ 真跳到流量页并定位到那条请求（详情面板 = 有「← 列表」返回键；
-    // 耗时 0.22s 进一步钉住"就是第 2 步那条"）
+    // 点「在流量页打开」→ 真跳到**导航栏「流量」页**并定位到那条请求。
+    // ⚠️ ##351 之后流量页走 ViewGrid（左列表 / 右详情两块 viewset），**不再是抽屉形态** ⇒
+    //    旧的「← 列表」返回键已不存在；判据改成：页面出现（页头副标题只此一处）+ 详情已选中该条
+    //    （`trace_id tr-2` 只在详情里出现 —— 列表不显示 traceId）。
+    //    ⚠️ 耗时文本是 `{(ms/1000).toFixed(2)}s`（数字与 `s` 是两个 text node）⇒ a11y 里是 `0.22 s`（带空格）。
     const ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
       const r = await fx.sh.getJson("./diy.sh ui inspect");
       return (r.data as any)?.data?.tree as A11yNode | undefined;
     });
     try {
       await ui.click("在流量页打开");
-      const traffic = await waitUntil(a11yText, (x) => x.includes("← 列表") && x.includes("0.22"), {
-        label: "流量页定位到该步请求",
-      });
-      expect(traffic).toContain("← 列表");
-      expect(traffic).toContain("0.22");
+      const traffic = await waitUntil(
+        a11yText,
+        (x) =>
+          x.includes("跨会话查看应用发出的全部 HTTP 请求 / 响应") &&
+          x.includes("tr-2") &&
+          x.includes("0.22 s"),
+        { label: "流量页定位到该步请求" },
+      );
+      // `tr-2` = 详情已选中第 2 步那条（列表不显示 traceId）；耗时再钉一次"不是第 1 步那条"
+      expect(traffic).toContain("tr-2");
+      expect(traffic).toContain("0.22 s");
     } finally {
       ui.close();
     }

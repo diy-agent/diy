@@ -9,6 +9,10 @@
 //
 // 与流式渲染的配合：未定稿的代码块（内容还在增长）不请求高亮，直接 <pre> 呈现；
 // 定稿后触发一次异步高亮。异步期间显示纯文本，不阻塞也不闪烁布局。
+// 两态共用**同一个滚动外壳**（见下方 return 的注释）—— 定稿那次切换不许丢掉用户的
+// 横向滚动位置与选区（##348 ②③）。
+// `code` 必须是**反应式** prop（调用方给访问器/表达式，别传一次性算好的快照）：
+// MarkdownView 走 reconcile 后节点就地更新，快照会停在第一帧。
 import { Show, createResource } from "solid-js";
 import { getTheme } from "../lib/theme";
 
@@ -95,19 +99,33 @@ export function CodeBlock(props: {
     },
   );
 
+  /**
+   * 外壳（滚动容器）**恒常存在**，里面才分「未定稿纯文本 / 定稿 Shiki」两态。
+   *
+   * 为什么不让两态各带一个滚动容器（##348 ② 的原状）：定稿那次切换会**换掉滚动容器本体**
+   * —— 用户拖到长行右侧看 JSON，流一结束就被拉回起点；在外壳里拖出的选区同理被清掉。
+   * 外壳不动、只换里面的内容，滚动位置与选区都留在原处（内容只是从文本变成着色文本）。
+   */
   return (
-    <Show
-      when={html()}
-      fallback={
-        <pre class="my-2 overflow-auto rounded-lg bg-base-200 p-3 text-body leading-relaxed font-mono">
-          <code>{props.code}</code>
-        </pre>
-      }
+    <div
+      data-code-block=""
+      class={`my-2 overflow-auto rounded-lg bg-base-200 text-body ${
+        html() ? "[&_pre]:m-0 [&_pre]:p-3 [&_pre]:!bg-base-200" : ""
+      }`}
     >
-      {/* Shiki 产出的是自带 <pre class="shiki"> 的完整结构，直接挂载其输出。
-          内容由 Shiki 从纯文本生成（非用户 HTML 注入），是官方消费方式。
-          背景/内边距用 CSS 覆盖，让深浅主题与 daisyUI 变量一致。 */}
-      <div class="my-2 overflow-auto rounded-lg text-body [&_pre]:m-0 [&_pre]:p-3 [&_pre]:!bg-base-200" innerHTML={html()!} />
-    </Show>
+      <Show
+        when={html()}
+        fallback={
+          <pre class="m-0 p-3 font-mono leading-relaxed">
+            <code>{props.code}</code>
+          </pre>
+        }
+      >
+        {/* Shiki 产出的是自带 <pre class="shiki"> 的完整结构，直接挂载其输出。
+            内容由 Shiki 从纯文本生成（非用户 HTML 注入），是官方消费方式。
+            背景/内边距用 CSS 覆盖，让深浅主题与 daisyUI 变量一致。 */}
+        <div innerHTML={html()!} />
+      </Show>
+    </div>
   );
 }

@@ -6,11 +6,15 @@
 // （##227 的核心诉求就是「数字可信才敢用来决定何时重置」）。真值设计见 ##211 §六b/§四。
 //
 // ── 术语契约（禁止把包含关系显示成并列关系）──
-//   总输入 = 非缓存输入 + 缓存读 + 缓存写
+//   总输入 = 非缓存 + 缓存读 + 缓存写
 //   总输出 = 文本输出 + 思考输出       （思考是总输出的**子集**：展示可拆、计价不另加）
 //   窗口占用 = 总输入 + 总输出
-//   计费桶 4 个 = 非缓存输入 / 缓存读 / 缓存写 / **总输出**
+//   计费桶 4 个 = 非缓存 / 缓存读 / 缓存写 / **总输出**
 //   ——❌ 不写「输出 29 · 思考 7」（歧义） → ✅ 写「总输出 29（文本 22 + 思考 7）」
+//
+// ⚠️ **桶名一律不带「输入」后缀**（##354 ①）：组行才叫「总输入」，三个子桶是
+//   「非缓存 / 缓存读 / 缓存写」—— 有的带后缀有的不带就不是一组（且与金额列「非缓存$」自相矛盾）。
+//   这三个词与上游 `noCacheTokens / cacheReadTokens / cacheWriteTokens` 同构，UI 与 CLI 同词。
 //
 // **不可测 ≠ 0**：`api:"chat"` 面拿不到 cacheWrite（ai-sdk 的 openai-compatible 恒返回
 // undefined），该桶一律 `null`（不可测），绝不落 0（0 = 实测为零，是另一个事实，混了就是静默低估算钱）。
@@ -133,7 +137,7 @@ export const COST_SOURCE = "models.dev";
  * （权威关系见 ##211 §1b，实测自 ai/dist/index.js 的 asLanguageModelUsage）
  */
 export interface UsageBuckets {
-    /** 非缓存输入（未命中前缀缓存、按全价计的部分） */
+    /** 非缓存（未命中前缀缓存、按全价计的部分） */
     noCache: number;
     /** 缓存读（暖输入，按 cache_read 单价） */
     cacheRead: number;
@@ -271,7 +275,7 @@ export function ratesOf(
  * 只有字面量类型能满足索引签名（interface 不满足，TS 会拒绝赋值）。
  */
 export type CostBreakdown = {
-    /** 非缓存输入金额 */
+    /** 非缓存金额 */
     noCache: number;
     /** 缓存读金额 */
     cacheRead: number;
@@ -423,14 +427,17 @@ export interface StepPerformance {
     stepTimeMs?: number;
     /**
      * 模型**响应**耗时（不含客户端工具执行；ai-sdk 的 `performance.responseTimeMs`）。
-     * 速度的分母 = 它 − `timeToFirstOutputMs` —— 用 `stepTimeMs` 会把工具执行时间算进去，
-     * 工具跑 30s、模型写 1s 时除下来等于"没在写"（`stepRate` 头注）。
+     * **速度的分母就是它**（含首字等待 TTFT，##349 第四次修正）—— 用 `stepTimeMs` 会把工具执行
+     * 时间算进去，工具跑 30s、模型写 1s 时除下来等于"没在写"（`stepRate` 头注）。
      */
     responseTimeMs?: number;
     timeToFirstOutputMs?: number;
-    /** = `outputTokens / (responseTimeMs − timeToFirstOutputMs)`（ai-sdk 流式步给的真值） */
+    /** = `outputTokens / (responseTimeMs − timeToFirstOutputMs)`（ai-sdk 给的另一个值；**含**首字等待的口径见下一字段） */
     outputTokensPerSecond?: number;
-    /** = `outputTokens / responseTimeMs`（含首字等待；**不是**我们要的口径，别用） */
+    /**
+     * = `outputTokens / responseTimeMs` —— **这就是我们要的口径**（token ÷ 总耗时，含首字等待；
+     * ##349 第四次修正），`stepRate` 直接取它。旧注释曾写"不是我们的口径、别用"，已作废。
+     */
     effectiveOutputTokensPerSecond?: number;
 }
 
@@ -520,7 +527,7 @@ export type TurnUsagePatch = {
     outputTotal: number;
     /** 本轮累计：缓存读 */
     cacheRead: number;
-    /** 本轮累计：非缓存输入 */
+    /** 本轮累计：非缓存 */
     noCache: number;
     /** 本轮累计：缓存写（全轮都不可测 → null） */
     cacheWrite: number | null;
@@ -546,11 +553,17 @@ export type TurnUsagePatch = {
     /** 本轮步数（解释"为什么累计远大于窗口"：每一步都要重发整个上下文）；同上 optional */
     steps?: number;
     /**
-     * 本轮**最后一步**的生成速度（tok/s，口径见 `stepRate`）。给不出数 → null。
+     * **实时档**速度（tok/s）：本轮**最后一步**的生成速度（口径见 `stepRate`）。给不出数 → null。
      * ⚠️ 是"最后一步"而不是"正在跑的那一步"：流内的 token 计数拿不到，跑着的一步只能沿用
      * 上一个已完成步的实测值（该步一结束即刷新）。optional：本版之前的记录没有 → bar 不画。
      */
     lastStepRate?: number | null;
+    /**
+     * **轮均档**速度（tok/s）= 本轮 Σ总输出 ÷ Σ各步响应耗时（含首字等待，口径见 `avgRate`）。
+     * 每步结束时随累计桶一起刷新，故直播中也是实时增长的真值（不是轮末才算一次）。
+     * 给不出数（本步无计时 / 一步都还没完成）→ null。optional：##349 之前的记录没有 → 回退逐步账本。
+     */
+    turnRate?: number | null;
     /** 上下文窗口上限（未知 → null；UI 显示「—」而不是编一个百分比） */
     contextLimit: number | null;
     /** 本轮累计金额 */
@@ -567,8 +580,10 @@ export function turnUsagePatch(
     contextLimit?: number,
     steps = 0,
     contextParts?: { systemBytes: number; toolsBytes: number },
-    /** 本轮最后一步的生成速度（`stepRate`）；给不出 → 传 null */
+    /** 实时档：本轮最后一步的生成速度（`stepRate`）；给不出 → 传 null */
     lastStepRate: number | null = null,
+    /** 轮均档：本轮 Σ总输出 ÷ Σ响应耗时（`avgRate`）；给不出 → 传 null（UI 回退逐步账本） */
+    turnRate: number | null = null,
 ): TurnUsagePatch {
     return {
         inputTotal: cumulative.inputTotal,
@@ -584,61 +599,89 @@ export function turnUsagePatch(
         lastOutputTotal: lastStep?.outputTotal ?? cumulative.outputTotal,
         steps,
         lastStepRate,
+        turnRate,
         contextLimit: contextLimit ?? null,
         cost,
         ...(contextParts ? { contextParts } : {}),
     };
 }
 
-// ─── 速度（按步 · 状态栏与用量表共用） ─────────────
+// ─── 速度（三档 · 状态栏与用量表共用） ─────────────
 
 /**
- * **一步的生成速度**（tok/s）= 该步总输出 ÷ 该步**生成耗时**。
+ * 通用底座：**Σ 输出 token ÷ Σ 总耗时**（ms）→ tok/s。任一前提缺 → null（不给假数）。
  *
- * 口径（用户 2026-10-12 拍板，第三次修正 —— 前两版分别是"轮次平均"与"当轮已输出 ÷ 已耗时"）：
+ * 单步 / 轮均 / 总均三档共用它，只是求和范围不同（一步 / 一轮 / 全会话）。
+ */
+export function rateFromTotals(outputTokens: number, totalMs: number): number | null {
+    if (!(outputTokens > 0) || !(totalMs > 0)) return null;
+    const r = (outputTokens / totalMs) * 1000;
+    return Number.isFinite(r) && r > 0 ? r : null;
+}
+
+/**
+ * **一步的生成速度**（tok/s）= 该步总输出 ÷ 该步**总耗时**。
+ *
+ * 口径（用户 2026-10-15 拍板，第四次修正 —— 前三版分别是"轮次平均"、"当轮已输出 ÷ 已耗时"、
+ * "响应耗时 − TTFT"）：
  *   · 分子 = **该步**总输出（含思考，与用量同口径）。不是本轮累计：累计 ÷ 耗时是"轮次平均"，
- *     把中间等待、工具执行、别的步的输出全摊进来，答不了"模型写得多快"。
- *   · 分母 = 该步生成耗时 = **响应耗时 − TTFT**（用户原话："要减去 TTFT 即首次输出，
- *     因为前面的时间不知道他在干嘛"）。故用 `responseTimeMs` 而**不是** `stepTimeMs`：
- *     后者含客户端工具执行耗时（工具跑 30s、模型写 1s，除下来等于没在写）。
- *   · `outputTokensPerSecond`（ai-sdk 流式步已给）= `outputTokens / (responseTimeMs − ttft)`，
+ *     把中间等待、工具执行、别的步的输出全摊进来，答不了"这步写得多快"。
+ *   · 分母 = 该步**总耗时** = `responseTimeMs`（模型响应耗时，**含首字等待 TTFT**）。
+ *     为什么不再减 TTFT：有的模型头 token 等很久、之后一次性高速返回 —— 只除以"首字后耗时"
+ *     会算出几万 tok/s 的假象（用户 2026-10-15 现象）；**含等待**才是"这一步到底花了多久"。
+ *     仍用 `responseTimeMs` 而**不是** `stepTimeMs`：后者含客户端工具执行耗时，
+ *     工具跑 30s、模型写 1s 时除下来等于"没在写"。
+ *   · `effectiveOutputTokensPerSecond`（ai-sdk 流式步已给）= `outputTokens / responseTimeMs`，
  *     与上面的口径逐字一致 ⇒ **直接取它**（真值来自上游计时，不是我们拼的）；缺了才现算。
  *
- * ⚠️ **粒度 = 一步**：流内部的 token 计数拿不到（usage 由 provider 在每步收尾才给，
- * 实测 2739/2739 条记录都只有步级数），所以"跑着的那一步"只能显示上一个已完成步的实测值，
- * 该步一结束立刻刷新 —— 不拿按流式文本估的假数占位（实测那种估算中位误差 41%、p90 200%）。
+ * ⚠️ **粒度 = 一步**：流内部的 token 计数拿不到（usage 由 provider 在每步收尾才给），
+ * 所以"跑着的那一步"只能显示上一个已完成步的实测值，该步一结束立刻刷新 —— 不拿按流式文本
+ * 估的假数占位（实测那种估算中位误差 41%、p90 200%）。
  *
  * 任一前提缺 → null（宁可不显示，也不给假数）。
  */
 export function stepRate(p: StepPerformance | undefined | null, outputTokens: number): number | null {
-    const given = p?.outputTokensPerSecond;
+    const given = p?.effectiveOutputTokensPerSecond;
     if (typeof given === "number" && Number.isFinite(given) && given > 0) return given;
     const resp = p?.responseTimeMs;
-    const ttft = p?.timeToFirstOutputMs;
-    if (resp == null || ttft == null) return null;
-    const genMs = resp - ttft;
-    if (!(genMs > 0) || !(outputTokens > 0)) return null;
-    return (outputTokens / genMs) * 1000;
+    if (resp == null) return null;
+    return rateFromTotals(outputTokens, resp);
+}
+
+/**
+ * **多步的平均速度**（tok/s）= Σ 各步总输出 ÷ Σ 各步总耗时（`responseTimeMs`，含首字等待）。
+ *
+ * 两档共用这一个函数（口径一致 → 数字可比）：
+ *   · **轮均**：传该轮的全部步 → "这一轮平均写得多快"；
+ *   · **总均**：传全部轮的步（`recordsAvgRate`）→ "这个会话整体平均写得多快"。
+ *
+ * **以耗时为权的加权平均**（不是各步速度的算术平均）：慢步本来就占更多时间，理应权重更大；
+ * 也与单步同口径（单步就是这个式子在一步上的特例）。
+ * 只计**有计时且确有输出**的步（`responseTimeMs > 0` 且输出 > 0）：老记录 / 空工具步不进分母，
+ * 免得把"没数的步"当成"零耗时"把平均值抬高。
+ */
+export function avgRate(steps: readonly { performance?: StepPerformance | null; outputTokens: number }[]): number | null {
+    let out = 0;
+    let ms = 0;
+    let counted = 0;
+    for (const s of steps) {
+        const r = s.performance?.responseTimeMs;
+        if (r == null || !(r > 0) || !(s.outputTokens > 0)) continue;
+        out += s.outputTokens;
+        ms += r;
+        counted++;
+    }
+    return counted === 0 ? null : rateFromTotals(out, ms);
+}
+
+/** 逐步账本（落盘记录）→ 平均速度（**轮均 / 总均同一口径**）：Σ总输出 ÷ Σ响应耗时 */
+export function recordsAvgRate(records: readonly StepUsageRecord[]): number | null {
+    return avgRate(records.map((r) => ({ performance: r.performance, outputTokens: stepView(r).buckets.outputTotal })));
 }
 
 /** 速度展示（UI 与 CLI 同字形，避免两处各写一套）：给不出数 → `–`（不写 0） */
 export function fmtRate(r: number | null | undefined): string {
     return r == null || !Number.isFinite(r) || r <= 0 ? "–" : `${Math.round(r)} tok/s`;
-}
-
-/**
- * 若干轮的 usage patch（**时间正序**）→ 最近一次实测步速度。
- *
- * 总状态栏的口径（用户 2026-10-12）：「没有执行新 step，老的速度留在 bar 上，就是最后一次速度」
- * —— 故不是一个"跑着才显示"的瞬时值，而是**最后一次落盘的速度**，从最新一轮往回找第一个有值的。
- * 一轮都没有（新会话 / 本版之前的记录）→ null（那时 bar 不画，不拿假数占位）。
- */
-export function lastMeasuredRate(usages: (Pick<TurnUsagePatch, "lastStepRate"> | undefined | null)[]): number | null {
-    for (let i = usages.length - 1; i >= 0; i--) {
-        const r = usages[i]?.lastStepRate;
-        if (typeof r === "number" && Number.isFinite(r) && r > 0) return r;
-    }
-    return null;
 }
 
 // ─── 聚合（UI 明细/看板与 CLI 表格共用）──

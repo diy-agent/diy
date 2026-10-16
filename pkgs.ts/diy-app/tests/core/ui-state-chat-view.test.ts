@@ -4,7 +4,7 @@
 // 3 全部正文 / 4 逐条过程；第 5 层「单条过程内容」不在循环里，见 lib/chat-fold 的 TurnLevel）。
 // 存储里只剩两个数：
 //   ① 全局级别（顶部 `n/4 展开`）—— 默认 3、parse 只收 1-4（越界回默认）、**落盘**；
-//   ② 摘要行数 —— 默认 3、parse 夹在 1-10；
+//   ② 摘要行数 —— 默认 3、parse 夹在 1-40（1 级结论下缘可拖拽改它）；
 //   ③ 历次迭代的旧 key（三档密度 / 旧紧凑 key / 「正常/大纲」开关与其行数 key）
 //      由 clearUiCache 一并清走，升级不留残渣。
 // **单轮的手动覆盖不落盘**（轮次 id 无限增长）—— 故此处没有对应字段可测，这是有意的。
@@ -22,7 +22,7 @@ const store = new Map<string, string>();
     length: 0,
 } as Storage;
 
-const { Caches, CONCLUSION_LINES_DEFAULT, clearUiCache } = await import(
+const { Caches, CONCLUSION_LINES_DEFAULT, CONCLUSION_LINES_MAX, clearUiCache } = await import(
     "../../src/renderer_solid/lib/ui-state"
 );
 const { DEFAULT_TURN_LEVEL, TURN_LEVEL_MAX } = await import("../../src/renderer_solid/lib/chat-fold");
@@ -56,14 +56,14 @@ describe("聊天全局展开级别", () => {
 describe("聊天结论摘要行数", () => {
     beforeEach(() => store.clear());
 
-    it("结论摘要行数默认 3，parse 夹在 1-10（越界/非整数回默认）", () => {
+    it("结论摘要行数默认 3，parse 夹在 1-40（越界/非整数回默认）", () => {
         expect(Caches.diy_chat_conclusion_lines.defaultValue).toBe(CONCLUSION_LINES_DEFAULT);
         expect(Caches.diy_chat_conclusion_lines.get()).toBe(3);
-        for (const good of [1, 5, 10]) {
+        for (const good of [1, 5, 10, CONCLUSION_LINES_MAX]) {
             store.set("diy_chat_conclusion_lines", String(good));
             expect(Caches.diy_chat_conclusion_lines.get(), String(good)).toBe(good);
         }
-        for (const bad of ["0", "11", "-1", "3.5", "abc", ""]) {
+        for (const bad of ["0", "41", "-1", "3.5", "abc", ""]) {
             store.set("diy_chat_conclusion_lines", bad);
             expect(Caches.diy_chat_conclusion_lines.get(), bad).toBe(CONCLUSION_LINES_DEFAULT);
         }

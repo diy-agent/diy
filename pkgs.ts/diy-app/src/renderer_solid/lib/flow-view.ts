@@ -11,7 +11,14 @@
  */
 import { diyService } from "./rpc";
 import { collectArtifacts } from "./flow-model";
-import type { ArtifactProbe, ArtifactState, FlowArtifactView, FlowInstanceView, FlowVisitBrief } from "./flow-model";
+import type {
+    ArtifactProbe,
+    ArtifactState,
+    FlowArtifactView,
+    FlowInstanceView,
+    FlowThreadsView,
+    FlowVisitBrief,
+} from "./flow-model";
 
 export * from "./flow-model";
 
@@ -68,4 +75,33 @@ export async function fetchArtifact(uri: string, node: string, seq?: number): Pr
  */
 export async function loadArtifacts(uri: string, visits: readonly FlowVisitBrief[]): Promise<Record<string, ArtifactState>> {
     return collectArtifacts(uri, visits, fetchArtifact);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 讨论线程（##342）—— 只读；UI 讨论区**只走 RPC**，永不读 `flow/*.json`
+// ═══════════════════════════════════════════════════════════════
+
+/** 探测结果：`ok: false` = 命令尚未在 main 上 / 调用失败 —— **不是**「这个打回没有发言」 */
+export type ThreadsProbe = { readonly ok: true; readonly value: FlowThreadsView } | { readonly ok: false; readonly reason: string };
+
+/**
+ * 取讨论线程（`flow thread list`）。
+ *
+ * 讨论流坏**不在这里抛**（main 侧 `listThreads` 报 `skipped` / `error` 字段）—— 那是旁注，
+ * 界面把它当**错误位**显示（对照 ##337 P2-B）。这里只兜「命令不在 / 调用失败」这类真异常。
+ * 存在性判据同 `fetchArtifact`（typed-client 的未注册过程名返回对象 Proxy 而非函数）。
+ */
+export async function fetchThreads(uri: string, thread?: string): Promise<ThreadsProbe> {
+    const ns = diyService.diy.flow as unknown as Record<string, unknown>;
+    const threadNs = ns["thread"] as Record<string, unknown> | undefined;
+    const fn = threadNs?.["list"];
+    if (typeof fn !== "function") {
+        return { ok: false, reason: "主进程未提供 `diy flow thread list` 命令（##342 未合入）" };
+    }
+    try {
+        const out = await (fn as (input: { uri: string; thread?: string }) => Promise<unknown>)({ uri, thread });
+        return { ok: true, value: out as FlowThreadsView };
+    } catch (e) {
+        return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+    }
 }

@@ -33,17 +33,21 @@ import {
     renderHint,
     type Art,
     type FlowState,
+    type NodeDef,
     type ParamEntry,
+    type PluginContext,
+    type PluginRegistry,
     type View,
     type Visit,
     type WorkflowDef,
 } from "@diy/flow";
 import { listWorkflows, workflowById, workflowIds, type WorkflowSummary } from "../workflows";
-import { createRenderRegistry } from "../workflows/plugins";
+import { collectFacts, createHostRegistry, type CommandFact, type HostPluginDeps } from "../workflows/plugins";
 import { diyHome, projectsRoot, taskDir, taskExists } from "./state";
 import {
     appendAudit,
     appendPathRecord,
+    appendPost,
     applyFinish,
     artifactFile,
     assertSnapshotMatches,
@@ -52,11 +56,15 @@ import {
     readArtifacts,
     readAudit,
     readBinding,
+    readPosts,
     readState,
+    requirePostText,
     writeArtifact,
     writeBinding,
     writeState,
     type FlowBinding,
+    type FlowPost,
+    type FlowPostType,
 } from "./flow-store";
 
 // ═══════════════════════════════════════════════════════════════
@@ -145,9 +153,26 @@ export interface FlowView {
     readonly trajectory: Visit<string>[];
     readonly params: Record<string, unknown>;
     readonly paramsSchema: ParamEntry[];
-    readonly files: { readonly dir: string; readonly instance: string; readonly state: string; readonly path: string; readonly events: string };
+    readonly files: {
+        readonly dir: string;
+        readonly instance: string;
+        readonly state: string;
+        readonly path: string;
+        readonly events: string;
+        /** 讨论流（##342）—— 旁注，可清可丢（删了不影响推进，只是线程里的发言没了） */
+        readonly threads: string;
+    };
     /** 审计流里跳过（解析失败）的行数 —— 审计可坏，坏了只报数（不阻断运行） */
     readonly auditSkipped: number;
+    /**
+     * **讨论流的错误位**（##342；`null` = 旁注没出错）。
+     *
+     * 与 `viewError` 同一立场（##337 review1 P2-B）：讨论流是**旁注 / 审计**（`rule.core-log`），
+     * 读坏了**不许**拖垮领域读（泳道页唯一的数据源就是 `flow show`）—— 位置 / 折线 / 参数照常下发，
+     * 只在这里说一句「讨论流有 N 行读不出，删掉 `flow/threads.jsonl` 即可」。
+     * 要**看**讨论流本身的错，用 `diy flow thread list`（它另报 `skipped` 计数，同样不炸）。
+     */
+    readonly threadError: string | null;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -221,14 +246,25 @@ export function loadInstance(uri: string): LoadedInstance {
 }
 
 /**
- * 宿主注册的插件表（##337）—— 本版**只有 `render` 一个槽**有实现（其余四槽一个都没注册，
- * 见 `workflows/plugins.ts` 头注）。建一次即可：注册表无态，内核只读它（`resolve`）。
+ * 宿主**完整**插件表（`render` 形状翻译 ⊕ `guard`/`action` 外部世界，##337 / ##341）。
+ *
+ * 为什么必须是完整的那份（而不是只有 render）：dev 定义里已经有 `pred:ci_green` / `action:pr_mergeable`，
+ * 而内核在**组合期**就按名查注册表（`createRuntime` 的 `requirePlugin`）——少注册一个名字，
+ * 连只读的 `flow show`（它也要建 runtime 取 `status`）都会当场 `unknown-plugin`。
+ *
+ * 这里的事实表是**空的**：只读路径（`show` / `view`）**从不调用插件**（`status` 是静态分类，
+ * 见内核 `rule.no-side-effect`），故不需要预热。真求值的路径（`stepFlow`）自己带事实表建注册表。
  */
-const REGISTRY = createRenderRegistry();
+const REGISTRY = createHostRegistry();
 
 /** 宿主侧的运行态（内核 `createRuntime` 的包装：注册表由宿主给，内核只按名解析） */
-function runtimeOf(def: WorkflowDef<string>, params: Readonly<Record<string, unknown>> | undefined) {
-    return createRuntime(def, { registry: REGISTRY, params });
+function runtimeOf(def: WorkflowDef<string>, params: Readonly<Record<string, unknown>> | undefined, registry: PluginRegistry = REGISTRY) {
+    return createRuntime(def, { registry, params });
+}
+
+/** 交插件求值用的上下文（与内核 `createRuntime::contextOf` 同形 —— 它没导出，这里手搓同形字面量） */
+function pluginContext(def: WorkflowDef<string>, node: NodeDef<string>, params: Readonly<Record<string, unknown>> | undefined, actor: string): PluginContext {
+    return { workflow: def, node, params: params ?? {}, actor };
 }
 
 function nodeNameOf(def: WorkflowDef<string>, id: string | null): string {
@@ -281,8 +317,10 @@ function viewOf(uri: string, def: WorkflowDef<string>, state: FlowState<string>)
             state: flowFile(uri, "state"),
             path: flowFile(uri, "path"),
             events: flowFile(uri, "events"),
+            threads: flowFile(uri, "threads"),
         },
         auditSkipped: audit.skipped,
+        threadError: threadErrorOf(uri),
     };
 }
 
@@ -316,6 +354,22 @@ interface ArtifactAt {
 }
 
 const EMPTY_ARTIFACT: ArtifactAt = { art: null, plugin: null, view: null, error: null };
+
+/**
+ * 讨论流的**错误位**（##342）：读得出 ⇒ `null`；读不出 / 有坏行 ⇒ 一句人话（**不外抛**）。
+ *
+ * 旁注坏了不该让领域读失败（与 `tryArtifactAt` 同一立场）；文件不在是**正常态**（还没人发过言）。
+ */
+function threadErrorOf(uri: string): string | null {
+    try {
+        const { skipped } = readPosts(uri);
+        if (skipped === 0) return null;
+        return `讨论流有 ${skipped} 行读不出（旁注坏了不影响推进 —— 删掉 ${flowFile(uri, "threads")} 即可）：` +
+            "打回意见是旁注，驱动判据不读它";
+    } catch (e) {
+        return `讨论流读不出：${(e as Error).message}（旁注坏了不影响推进 —— 删掉 ${flowFile(uri, "threads")} 即可）`;
+    }
+}
 
 /** 折线上最后一条驻留 = **现在这一步**；未进入（折线为空）⇒ null */
 function currentVisit(state: FlowState<string>): Visit<string> | null {
@@ -564,7 +618,13 @@ function moveText(def: WorkflowDef<string>, kind: "entry" | "next" | "bounce", f
     return kind === "bounce" ? `打回：「${fromName}」→「${toName}」${tail}` : `前进：「${fromName}」→「${toName}」${tail}`;
 }
 
-/** 内核**领域操作**：落盘（权威先落 → 重建材料 → 审计）+ 回执视图 */
+/**
+ * 内核**领域操作**：落盘（权威先落 → 重建材料 → 审计）+ 回执视图。
+ *
+ * `author` 是「谁能代表哪个 actor」这条**宿主知识**（内核 `rule.author` 不管本版路径）的落点：
+ * 人 / CLI 宣布记 `cli`（缺省，与 ##319 一致），**节点执行器起的 agent 轮次记该 agent 的标识**
+ * （##341）—— 审计流因此答得出「这一跳是谁推的」。
+ */
 function commit(
     uri: string,
     def: WorkflowDef<string>,
@@ -573,6 +633,7 @@ function commit(
     kind: "entry" | "next" | "bounce",
     ref: Readonly<Record<string, string>>,
     note?: string,
+    author = "cli",
 ): FlowView {
     const at = new Date().toISOString();
     // 正路必须带 params（##333 review2 P1）：交回状态自己那份 —— 内核据此保证「读回同配置」
@@ -590,8 +651,7 @@ function commit(
         kind,
         from: state.position,
         to,
-        // 谁能代表哪个 actor 是宿主知识（内核 `rule.author` 不管本版路径）—— 本版只有一个操作入口：CLI
-        author: "cli",
+        author,
         content: moveText(def, kind, state.position, to, note),
         ref,
     });
@@ -676,21 +736,64 @@ export function startFlow(uri: string, workflowId: string, paramArgs: readonly s
     return viewOf(uri, def, state);
 }
 
-/** 推进：走 `next` 边（首次 = 进入入口节点） */
-export function advanceFlow(uri: string, to: string, refArgs: readonly string[] = [], note?: string): FlowView {
+/** 推进：走 `next` 边（首次 = 进入入口节点）。`author` 缺省 `cli`（节点执行器会传 agent 标识） */
+export function advanceFlow(uri: string, to: string, refArgs: readonly string[] = [], note?: string, author = "cli"): FlowView {
     const { def, state } = loadInstance(uri);
     requireEdge(def, state.position, to, "next");
     const ref = { taskUri: uri, ...parseRefArgs(refArgs) };
     const kind: "entry" | "next" = state.position === null ? "entry" : "next";
-    return commit(uri, def, state, to, kind, ref, note);
+    return commit(uri, def, state, to, kind, ref, note, author);
 }
 
 /** 打回：走 `bounce` 边（目标节点再驻留一次，`Visit.seq` 递增 —— 不新建节点） */
-export function bounceFlow(uri: string, to: string, refArgs: readonly string[] = [], note?: string): FlowView {
+export function bounceFlow(uri: string, to: string, refArgs: readonly string[] = [], note?: string, author = "cli"): FlowView {
     const { def, state } = loadInstance(uri);
     requireEdge(def, state.position, to, "bounce");
     const ref = { taskUri: uri, ...parseRefArgs(refArgs) };
-    return commit(uri, def, state, to, "bounce", ref, note);
+    return commit(uri, def, state, to, "bounce", ref, note, author);
+}
+
+/**
+ * 给**刚发生的那次打回**挂一条发言（##342 的写侧；`diy flow bounce --opinion` 与驱动环的自动打回共用它）。
+ *
+ * 锚点从**回执折线**里取（`{from: 打回前位置, to: 落点节点, seq: 落点那次 Visit.seq}`）——
+ * 不另算一遍、也不接受调用方传进来的「想挂哪就挂哪」：一次 bounce 恰创生一次驻留，
+ * 该三元组唯一标识这条打回边的一次穿越（同节点二次打回自然各是各的，##320 P1-1 的教训）。
+ *
+ * `at` 用**那次驻留自己的时间戳**（不是「现在」）：这条发言属于那次打回，不是另起一条时间线。
+ * 落盘失败**外抛**（调用方决定怎么办）：CLI 显名要求带意见时该响亮报错；
+ * 驱动环无人值守，自己 catch 后只警告（旁注坏了不打断推进，`rule.core-log`）。
+ *
+ * **空正文一律拒**（##342 review1 P2-1）：闸门是 `flow-store.ts::requirePostText`（与 CLI 面板的
+ * `postThread` **同一处真源**）。这里必须装 —— 驱动环的结论行合法地可以只写「结论：打回」（无原因），
+ * 放行就等于往留痕里落一条**没有任何内容的争议发言**。驱动环侧已有 catch ⇒ 自动降级为「不写 + warn」，
+ * 审计那半照旧记 `打回`（审计与讨论口径不同是对的）。
+ */
+export function appendBounceOpinion(
+    uri: string,
+    view: FlowView,
+    text: string,
+    author: string,
+    type: FlowPostType = "note",
+): FlowPost {
+    requirePostText(text);
+    const landing = view.trajectory[view.trajectory.length - 1];
+    const source = view.trajectory[view.trajectory.length - 2];
+    if (!landing || !source || landing.kind !== "bounce") {
+        throw new Error(
+            `只接**打回**的回执（折线最后一条应是 kind:'bounce'）：${uri} 实得 ${landing ? `${landing.node}#${landing.seq}/${landing.kind}` : "（空折线）"}`,
+        );
+    }
+    const post: FlowPost = {
+        id: randomUUID(),
+        at: landing.at,
+        author,
+        type,
+        anchor: { from: source.node, to: landing.node, seq: landing.seq },
+        text,
+    };
+    appendPost(uri, post);
+    return post;
 }
 
 /**
@@ -744,6 +847,143 @@ export function finishFlow(uri: string, note?: string): FlowView {
         ref: { taskUri: uri },
     });
     return viewOf(uri, def, next);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 系统推（##341）：把内核 `runtime.step` 接到落盘上
+// ═══════════════════════════════════════════════════════════════
+//
+// 为什么需要它（##341 交付物 3/4）：`commit` 走的是**宣布**那条路（container `advance`，不评价 guard）
+// —— 那正是 `prompt:` 节点的正确语义（转移本身就是一条发言）。但 `actor: 'system'` 节点问的是
+// 「**外部世界**现在允许往前走吗」（CI 绿没绿 / PR 可不可合），只有内核 `runtime.step` 会去求值
+// （`pred:` / `action:` 插件），」自动推「也只在它那里。本函数就是那条路的**唯一落盘口**。
+//
+// 三条口径与 `commit` 对齐（别在别处另立）：
+//   · 落盘次序：**先权威快照 → 再重建材料 → 最后审计**（中途崩最坏是「快照多一条、增量少一条」⇒ 对账亮错）；
+//   · 审计正文归宿主（内核不编人类文本）—— 复用同一个 `moveText`；
+//   · 位置变更一律落 `path.jsonl` 的 `advance` 记录、终态落 `finish` 记录（重建材料，见 flow-store 头注）。
+//
+// 与 `diy flow finish` 的分工：走 `step` 走到底的实例，`done` 由**内核自己**置位（终态分支），
+// 不需要人再宣布一次；`finish` 只服务「guard 全是 `prompt:`、内核那条分支走不到」的老定义。
+
+/**
+ * 一次系统推的结果（判别联合的**扁平版**：调用方是驱动环，逐字段读比层层解包好用）。
+ *
+ * `facts` = 这次求值**预热**的外部世界事实（键 = 插件名）—— 驱动方据此把「命令输出」落进产物袋
+ * （`ci` 节点的 CI 日志就这么来的）；纯 `prompt:` 节点 / 入口推进时是空表。
+ */
+export interface StepOutcome {
+    readonly status: "moved" | "done" | "stuck" | "awaiting-actor";
+    /** 走到了哪（`moved` 时有值） */
+    readonly to: string | null;
+    /** 怎么走的（`entry` = 进入入口 / `next` / `bounce`） */
+    readonly kind: "entry" | "next" | "bounce" | null;
+    /** `stuck` / `awaiting-actor` 的原因（其余状态为空串） */
+    readonly reason: string;
+    readonly facts: Readonly<Record<string, CommandFact>>;
+    readonly view: FlowView;
+}
+
+/**
+ * 系统推**一步**：当前位置的 guard 全可观测 ⇒ 求值并自动转移（过 → `next` / 不过 → 打回或停在边上）；
+ * 尚未进入 ⇒ 进入入口节点。含 `prompt:` 的节点**一步都不推**（内核的分类，见 `rule.observable-split`）。
+ *
+ * 「两步走」：**先异步取事实**（`collectFacts` 真跑命令），**再同步求值**（内核插件接口是同步的）。
+ * 少了这一步，跑 `./sha.sh check` 会把主进程堵死几十秒（见 `workflows/plugins.ts` 头注）。
+ */
+export async function stepFlow(uri: string, deps: HostPluginDeps = {}): Promise<StepOutcome> {
+    const { def, state } = loadInstance(uri);
+    const params = state.params;
+    // 只读分类（零插件、零副作用）：先回答「这一步到底该谁推」
+    const status = runtimeOf(def, params).status(state);
+    const noFacts: Readonly<Record<string, CommandFact>> = {};
+
+    if (status.done) {
+        return { status: "done", to: null, kind: null, reason: "", facts: noFacts, view: viewOf(uri, def, state) };
+    }
+    if (status.position !== null && status.mode === "actor") {
+        const pending = status.pending.map((ref) => ref.raw).join(" / ");
+        return {
+            status: "awaiting-actor",
+            to: null,
+            kind: null,
+            reason: `节点「${nodeNameOf(def, status.position)}」含不可观测 guard（${pending}）：系统判不了，只能由它的 actor 宣布`,
+            facts: noFacts,
+            view: viewOf(uri, def, state),
+        };
+    }
+
+    // 事实**先取后用**：异步 I/O 全在这里做完（入口推进没有 guard，故没有要取的事实）
+    const node = status.node;
+    const prepared = node ? await collectFacts(pluginContext(def, node, params, "system"), deps) : [];
+    const facts: Record<string, CommandFact> = {};
+    for (const item of prepared) facts[item.name] = item.fact;
+
+    const registry = createHostRegistry({ ...deps, facts });
+    // ⚠️ `at` **只取一次**：内核把它写进 `Visit.at`（权威快照），宿主又把它写进 `path.jsonl`（重建材料）
+    // —— 两边各取一次时间会差几毫秒，而两份必须**逐字同形**（`assertSnapshotMatches`），于是下一次读
+    // 就亮「重建不出快照」的错。这不是洁癖：对账/NTP 对时下 `at` 本来就不单调（见内核 rule.state-serialize）。
+    const at = new Date().toISOString();
+    const result = runtimeOf(def, params, registry).step(state, { at, ref: { taskUri: uri } });
+
+    if (result.status === "moved") {
+        const { move } = result.transition;
+        const next = result.transition.state;
+        persistMove(uri, def, next, move.kind, move.from, move.to, result.transition.reason, at);
+        return { status: "moved", to: move.to, kind: move.kind, reason: result.transition.reason, facts, view: viewOf(uri, def, next) };
+    }
+    if (result.status === "done") {
+        writeState(uri, result.state);
+        appendPathRecord(uri, { op: "finish", at });
+        appendAudit(uri, {
+            id: randomUUID(),
+            at,
+            kind: "finish",
+            from: state.position,
+            to: state.position,
+            author: "system",
+            content: `收尾：系统求值全过且节点「${nodeNameOf(def, state.position)}」没有 next 出边，工作流走完`,
+            ref: { taskUri: uri },
+        });
+        return { status: "done", to: null, kind: null, reason: "", facts, view: viewOf(uri, def, result.state) };
+    }
+    if (result.status === "stuck") {
+        return { status: "stuck", to: null, kind: null, reason: result.reason, facts, view: viewOf(uri, def, state) };
+    }
+    return {
+        status: "awaiting-actor",
+        to: null,
+        kind: null,
+        reason: `内核判为等 actor 宣布（${result.pending.map((ref) => ref.raw).join(" / ")}）`,
+        facts,
+        view: viewOf(uri, def, state),
+    };
+}
+
+/** 一次系统推的落盘（与 `commit` 同一次序；`note` 用内核给的求值原因） */
+function persistMove(
+    uri: string,
+    def: WorkflowDef<string>,
+    next: FlowState<string>,
+    kind: "entry" | "next" | "bounce",
+    fromNode: string | null,
+    to: string,
+    reason: string,
+    at: string,
+): void {
+    const ref = { taskUri: uri };
+    writeState(uri, next);
+    appendPathRecord(uri, { op: "advance", to, at, ref });
+    appendAudit(uri, {
+        id: randomUUID(),
+        at,
+        kind,
+        from: fromNode,
+        to,
+        author: "system",
+        content: moveText(def, kind, fromNode, to, reason === "" ? undefined : reason),
+        ref,
+    });
 }
 
 /** 看参数值（`state.json` 是权威；schema 来自定义，供表单/文档渲染） */

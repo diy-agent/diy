@@ -38,6 +38,8 @@
 - `entry.client` — `diy` 与 `./diy.sh` **都是客户端、都不启动 GUI**：读 `$DIY_HOME/app.port` 探活并**验身份**（连上去问 `getAppInfo.diyHome` 比对，不是本数据根就拒绝复用、另起自己的，##328(实例身份只靠端口)），探不到才 spawn Electron（CLI 与 GUI 是两进程）。连哪个实例由 `DIY_HOME`（数据根）决定
 - `entry.port` — 端口**不承载身份**：`DIY_PORT` > `app.port` 文件 > `runtime.ts::defaultPort(env)`（production=`18888` 门牌；development/test=`0` 随机）；裁决在 `runtime.ts::resolvePort`（纯函数、可单测），**非生产不沿用记录里的 `18888`**（旧版遗留的生产门牌，沿用＝dev 又占生产门牌）。`serve` 例外（浏览器地址，仍兜 18888）
 - `entry.gui` — 起 GUI 两条路：`./sha.sh preview`（HMR，免构建）或 `sha.sh build` 后由 CLI 拉起
+- `entry.launch-vs-client` — **起 GUI 的入口是启动器，不是客户端**：`./sha.sh preview|lab` 只 **spawn 新实例**，从不连已跑的那个（不读 `app.port`）—— 重复运行 = 开第二个实例 → 撞本数据根的 `SingletonLock` 并退出（`core/single-instance.ts::lockAdvice` 会打印「直接用它：`./diy.sh <命令>`」）。**要访问实例一律用客户端**，别指望再敲一次启动器
+- `entry.variant-match` — **客户端与服务端变体必须配对**：`./sha.sh preview` 起的实例配 `./diy.sh`（缺省 `DIY_VARIANT=preview`）；`./sha.sh lab` 起的配 `DIY_VARIANT=lab ./diy.sh`。不配对 = 对着**另一个数据根**敲命令（症状：任务不存在 / 改完没反应）。`./diy.sh` 能连上 HMR 实例，是因为 `electron-dev.mts` 的 watch 已把 `build/<v>/main` 产出来了
 - `entry.verify` — preview/lab 起来后用 `diy getAppInfo` 看 `diyHome` / `env` / `branch`，确认数据目录与启动参数（验证没起错数据根/变体）
 - `entry.risk` — worktree 改码跑测一律 `./diy.sh`（隔离 `./build/<variant>/home`；会拒绝继承来的生产 `DIY_HOME`，需 `DIY_ALLOW_PROD_HOME=1` 放行）；**查/改真实数据才用全局 `diy`**
 - `entry.home-guard` — 「继承来的生产 `DIY_HOME` 一律拒绝」的唯一决策点 `pkgs.ts/diy-app/src/main/core/dev-home.ts`（`./diy.sh` 与 `./sha.sh preview|lab` 共用；宿主 shell 常导出 `DIY_HOME=~/.diy`，不拦则 preview 开着生产数据根跑、还会把种子写进去）
@@ -69,10 +71,11 @@
 
 ## model — 本地 agent 测试用什么模型
 
-- `model.allowed` — **测试只准用 `mimo-v2.6-flash` 与 `deepseek-v4.1-flash`**；其他模型一律不用（太贵）。确需验证某模型特有行为时，先取得用户许可再跑，且一次只跑一条用例
-- `model.default` — 缺省用 **`mimo-v2.6-flash`**（opencode-go，chat 面）：全表最便宜的带工具模型，$0.14 / $0.28 per 1M tokens
+- `model.allowed` — 测试只准用三类：**① 任何带 `free` 后缀的模型**（套餐内免费，优先）· ② `mimo-v2.5` · ③ `deepseek-v4.1-flash`；其余一律不用（太贵）。确需验证某模型特有行为时，先取得用户许可再跑，且一次只跑一条用例
+- `model.free` — **模型 id 带 `free` 后缀 = 套餐内免费（cost 全 0）→ 优先选它**。free 模型**上架 / 下架频繁**，用前必须：① 列 `https://opencode.ai/zen/go/v1/models` 筛 `free` ② **各实测一条**（真发必须带 `x-opencode-session` 头，否则 400 `MissingSessionID`；测法要覆盖**流式 + 工具**，二者齐备才算可用）③ 把可用清单连同**核对日期**写回本行，供其他 agent 直接复用。**最近核对 2026-10-17**：`beam-free` · `longcat-2.5-preview-free`（均流式 + 工具 OK）
+- `model.default` — 缺省**先挑 `model.free` 里的可用项**；没有则用 `mimo-v2.5`（opencode-go，chat 面，$0.14 / $0.28 per 1M）。**`mimo-v2.6-flash` 自 2026-10-17 起不作缺省** —— 上游不稳，实测会返回 `[model_coming_soon] This model is coming soon.`（preview 真跑命中过）
 - `model.reasoning` — 档位只有 `none/low/medium/high`（上游 400 拒绝 `minimal`/`xhigh`/`max`）
-- `model.truth` — 价目真源 `https://models.dev/api.json`（`opencode-go` 的 cost/limit）；可用清单 `$ZEN/v1/models`
+- `model.truth` — 价目真源 `https://models.dev/api.json`（`opencode-go` 的 cost/limit）；**可用清单** `https://opencode.ai/zen/go/v1/models`（真发需带 `x-opencode-session` 头）
 
 ## 历史归档
 

@@ -19,7 +19,6 @@ import {
     appendFileSync,
     closeSync,
     existsSync,
-    mkdirSync,
     openSync,
     readFileSync,
     readSync,
@@ -43,6 +42,7 @@ import {
     interruptedToolPatches,
     projectAll,
     replay,
+    costOfWith,
     selectHistoryByBudget,
     selectForDelivery,
     type DeliveryOpts,
@@ -50,6 +50,8 @@ import {
     type JSONVal,
     type TurnEndReason,
 } from "./local-blocks";
+import { DEFAULT_KEEP, DEFAULT_MUST_HARD_CAP_BYTES, type KeepStage } from "../../shared/context/compact-keep";
+import { keepStagesToPlan, runPlan } from "./compaction-plan";
 import {
     decodeCursor,
     encodeCursor,
@@ -58,6 +60,8 @@ import {
     seekWindowStart,
 } from "./local-ops-seek";
 import { appendAudit } from "./agent-audit";
+import { planCheck, planGet, planReset, planRestore, planSet, renderCheckView, renderPlanView } from "./compact-plan-io";
+import { capToolOutput, safeId, toolOutDir, toolOutRelPath } from "./tool-output";
 import { abortText } from "../../shared/turn-end";
 import { opsFeed } from "./ops-feed";
 import { AsyncQueue, withCleanup } from "./async-queue";
@@ -66,6 +70,7 @@ import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-
 import {
     bucketsOf,
     costBreakdown,
+    rateFromTotals,
     snapshotUsage,
     stepRate,
     sumBuckets,
@@ -104,9 +109,13 @@ import { statFromStep } from "../../shared/context/stats";
 import { atomicUnitPaths, changesOf, foldCtxTree, type CtxSnapshot } from "../../shared/context/changelog";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import {
+    budgetBytesOf,
+    clipSpecOf,
     estimateTokens,
+    fmtBytes,
     makeDeliveryTransform,
     listTurnIds,
+    toolResultOf,
     type CompactTrigger,
     normalizePolicy,
     parseCompactLog,
@@ -114,6 +123,7 @@ import {
     utf8Bytes,
     type ClippedToolDetail,
     type CompactEventRecord,
+    type CompactPlanSnapshot,
     type CompactLogEvent,
     type CompactPolicy,
     type DroppedTurnDetail,
@@ -132,7 +142,7 @@ import { renderSummarySection } from "./prompt-registry";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
 import { SteerQueue, fileSteerPort } from "../core/steer-queue";
-import { DEFAULT_STEER_MODE } from "../../shared/steer-mode";
+import { DEFAULT_STEER_MODE, steerModeLabel } from "../../shared/steer-mode";
 import type { SteerItem, SteerMode } from "../core/drafts";
 
 import {
@@ -634,22 +644,6 @@ export function compactFile(taskUri: string): string {
     return path.join(localDir(), `${keyOf(taskUri)}.compact.jsonl`);
 }
 
-/** 工具 id 里的非法文件名字符归一（块 id 形如 `t1759_s1_r1`，一般无需动） */
-function safeId(id: string): string {
-    return id.replace(/[^\w.-]+/g, "_");
-}
-
-/** 被裁剪工具输出的原文落盘目录（模型可回取；##127 的「原文可寻回」） */
-function toolOutDir(): string {
-    const d = path.join(localDir(), "toolout");
-    mkdirSync(d, { recursive: true });
-    return d;
-}
-
-/** marker 里写的相对路径：相对 $DIY_HOME，人/模型都能照此找到原文 */
-function toolOutRelPath(id: string): string {
-    return `local/toolout/${safeId(id)}.txt`;
-}
 
 /** 读取压缩账本（文件不存在 = 从未压缩过；坏行由 parseCompactLog 跳过） */
 function readCompactLog(taskUri: string): CompactLogEvent[] {
@@ -785,8 +779,15 @@ function sizeOfStore(store: BlockStore, opts?: Parameters<typeof blocksToMessage
  * 抽出来的理由：真发（deliveryOptsOf）与**预览/记账**（compact）必须用同一份构造逻辑，
  * 否则「预览说省 97%、真发却照旧」这种分叉根本测不出来。
  */
-function optsFor(policy: CompactPolicy, collect?: ClippedToolDetail[]): DeliveryOpts {
-    return makeDeliveryTransform(policy, toolOutRelPath, collect);
+function optsFor(policy: CompactPolicy, collect?: ClippedToolDetail[], keep?: readonly KeepStage[] | null): DeliveryOpts {
+    // 管道来自**当前配置**（config / history 分离：投递只读当前配置）—— 每个调用点都现读一次，
+    // 于是「改配置本轮即生效」对 `history.keep[]` 与预算**同一条**（无需压缩事件、无需重启）。
+    // `keep` 显式传入 = 调用方手里已有那一刻的配置（记账要快照，见 planCompact）。
+    const specs = keep !== undefined ? keep : loadAutoCompact(diyHome()).history?.keep;
+    return {
+        ...makeDeliveryTransform(policy, toolOutRelPath, collect),
+        plan: keepStagesToPlan(specs, budgetBytesOf(policy), clipSpecOf(toolResultOf(policy))),
+    };
 }
 
 /** 压缩预案的中间态（planCompact 输出；compact 与 compactPreview 共用） */
@@ -807,6 +808,8 @@ interface CompactPlan {
     rateSnap?: RateSnapshot;
     /** 账目（可缺；形状与账本的 `cost` 分组一致） */
     stats: NonNullable<CompactEventRecord["cost"]>;
+    /** 这次用的**整条 plan 原文**（含来源）—— 事件账 v3 的快照来源（##344 M2） */
+    planSnapshot: CompactPlanSnapshot;
 }
 
 /** 压缩预览（只算不写）：panel「事实」行 + 预览页共用 */
@@ -927,32 +930,70 @@ function clip(s: string, n = 6000): string {
 }
 
 /**
+ * bash 输出缓冲上限（**内存护栏，不是截断策略**）。
+ *
+ * 旧值是 1MB 且触顶＝**静默**截断（`ERR_CHILD_PROCESS_STDIO_MAXBUFFER`，模型与用户都拿不到信号）。
+ * 现在两件事分开：① 上限提到 32MB —— 够装下正常的大输出，好让**投递层**落盘的是**完整**原文
+ * （否则「原文可回取」取回的是个半截）；② 触顶**显式**识别（见下面 err.code 分支），
+ * 与成功/报错**走同一条**投递截断路径（`capToolOutput`）。
+ */
+const BASH_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+
+/**
+ * bash 执行结果的**语义档**（##353：工具行 ✓/✗ 的口径真源）。
+ *
+ * `failed` = 这一行该画 ✗（execute 据此抛错 → SDK 发 tool-error → ops `status:"error"`）。
+ * 判据只看「命令跑起来了没有」这一条主线（##332）＋「有没有错误输出」（##353 复议 ##332 ①）。
+ */
+interface BashRun {
+    /** 回喂模型 / 落 ops 的**完整**文本（不在这里裁：投递层 `capToolOutput` 现算，##127） */
+    text: string;
+    /** 是否应标失败（✗）。判据见 runBash。 */
+    failed: boolean;
+}
+
+/**
  * bash：30s 超时；**命令级**失败也以文本回喂模型（错误是一等信息，不抛）。
  *
- * ⚠️ "不抛"只覆盖"命令跑起来了"那一档：非零退出 / 超时被杀 / 被取消（都是模型的输入问题，
- *    看到退出码才能自己改命令）。**别据此说"bash 永不报错"** —— 但也不是"spawn/IO 失败会抛"：
- *    cwd 不存在、`/bin/bash` 不在，这些**同样**走下面那个 `else if (err)` 收敛成
- *    `[退出码 ENOENT]` 文本 ⇒ 这一档也被标成 done（**已知缺口**，与 ##329 同族：工具没跑起来
- *    本该是失败。要改就让 spawn 类与命令级分开、前者抛，另开任务）。
+ * ── ##353 复议（##332 ① 档）：「非零退出」不再一律当数据 ──
+ *   ① **命令级非零退出**（`err.code` 是数字 ⇒ 命令确实跑起来了）：
+ *        · **有错误输出**（stderr 非空）⇒ **失败**（`failed: true`：命令报了错，✗ 且恒展开）；
+ *        · **无错误输出** ⇒ **数据**（`grep`/`fd`/`rg`/`test` 未命中 = 退出 1 且静默 —— 这不是
+ *          "失败"，是"没查到"；模型仍靠 `[退出码 N]` 改命令 ⇒ 保持 ✓）。
+ *        · 正文一律 `[退出码 N]` + 输出，**不再兜底塞 `err.message`**：`Command failed: /bin/bash -c …`
+ *          正是「✓ + Command failed」自相矛盾的来源（无输出时把 Node 的报错文案当成了命令输出）。
+ *   ② **超时 / 取消**（`err.killed` / AbortError）⇒ 当数据（**保持现状**，不属本任务，见 ##332 ②）；
+ *   ③ **spawn / IO 失败**（`err.code` ∈ ENOENT / EACCES / ENOTDIR…，**非数字**）⇒ **本任务不动**：
+ *      现仍收敛成 `[退出码 ENOENT]` 文本 ⇒ 同样被标 done（**已知缺口**：命令没跑起来本该是失败，
+ *      留 ##332 ③ 抛错、与 read 同口径）。
  *    对照：`read` 的 execute 特意**相反**（读不到就抛），见 buildTools 里 read 的注释。
  */
-function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?: AbortSignal): Promise<string> {
+function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?: AbortSignal): Promise<BashRun> {
     return new Promise((resolve) => {
         if (signal?.aborted) {
-            resolve("[已取消]");
+            resolve({ text: "[已取消]", failed: false });
             return;
         }
         execFile(
             "/bin/bash",
             ["-c", command],
-            { cwd, timeout: limits.bashTimeoutMs, maxBuffer: 1024 * 1024, signal },
+            { cwd, timeout: limits.bashTimeoutMs, maxBuffer: BASH_MAX_BUFFER_BYTES, signal },
             (err, stdout, stderr) => {
                 const out = [stdout, stderr].filter(Boolean).join("\n");
-                if (err?.name === "AbortError") resolve("[已取消]");
-                else if (err?.killed) resolve(`[命令超时被杀]\n${clip(out)}`);
-                else if (err)
-                    resolve(`[退出码 ${err.code ?? "?"}]\n${clip(out || String(err.message))}`);
-                else resolve(out || "(无输出)");
+                // ⚠️ 这里一律返回**完整**文本（不 clip）：发给模型的那一份由 `capToolOutput` 在
+                //    投递层现算（##127）—— 在 execute 里裁 = 落进 ops 的原文当场丢。
+                if (err?.name === "AbortError") resolve({ text: "[已取消]", failed: false });
+                else if (err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || err?.code === "ENOBUFS")
+                    resolve({
+                        text: `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
+                        failed: false,
+                    });
+                else if (err?.killed) resolve({ text: `[命令超时被杀]\n${out}`, failed: false });
+                else if (typeof err?.code === "number")
+                    // 命令级非零退出（##353）：有 stderr = 失败，无 stderr = 查询未命中（数据）
+                    resolve({ text: `[退出码 ${err.code}]\n${out || "(无输出)"}`, failed: stderr.trim().length > 0 });
+                else if (err) resolve({ text: `[退出码 ${err.code ?? "?"}]\n${out || String(err.message)}`, failed: false });
+                else resolve({ text: out || "(无输出)", failed: false });
             },
         );
     });
@@ -963,6 +1004,13 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
         bash: tool({
             description: "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
             inputSchema: z.object({ command: z.string().describe("要执行的 bash 命令") }),
+            // ##127：单条工具输出的截断**只落投递层** —— `toModelOutput` 改写「发给模型的那一份」
+            // （超 2000 行 / 50KB 时头尾 + marker + 原文落盘可 read 回取），`execute` 的返回值
+            // 仍是全文（落进 ops 的原文永不动）。见 services/tool-output.ts。
+            toModelOutput: ({ toolCallId, output }) => ({
+                type: "text" as const,
+                value: capToolOutput(String(output), toolCallId).text,
+            }),
             execute: async ({ command }, opts) => {
                 const home = diyHome();
                 // 自杀护栏（agent-guard.ts）已停用（2026-10-02）：
@@ -973,7 +1021,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 // 现仅保留 write-ahead 审计：先落盘再执行，保证最后一幕不丢
                 appendAudit(home, { phase: "bash-start", taskUri, cwd, command });
                 const t0 = Date.now();
-                const out = await runBash(
+                const run = await runBash(
                     command,
                     cwd,
                     limits,
@@ -985,9 +1033,15 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     cwd,
                     command,
                     ms: Date.now() - t0,
-                    result: clip(out, 500),
+                    result: clip(run.text, 500),
                 });
-                return out;
+                // **抛，不 return**（##353，与 read 的 ##329 同口径）：catch-and-return 的字符串是
+                // **正常工具结果** → SDK 走 tool-result 分支 → patch status:"done" → UI 画 ✓（就是
+                // 「✓ + Command failed」那种自相矛盾）；抛出 → SDK 发 tool-error → status:"error"
+                // → ✗ 且恒展开。失败文案随 error.message 落进 ops —— 模型侧照旧看得到（它要靠
+                // 退出码/诊断改命令）。判据（非零退出 + 有错误输出）全在 runBash 头注。
+                if (run.failed) throw new Error(run.text);
+                return run.text;
             },
         }),
         read: tool({
@@ -1014,13 +1068,59 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     // 抛出 → SDK 发 tool-error → status:"error"（UI 画 ✗ 并自动展开）。
                     // ⚠️ 别改回 return：read **读不到就是失败**（catch 里返字符串 = 把失败包成
                     //   "正常结果" → status:"done" → ✓ 且不展开，就是 ##329 的形态）。
-                    //   与 bash 的"不抛"是**两个方向的有意设计**，别互相抄：bash 把**命令级**
-                    //   失败当数据（非零退出/超时，模型要靠退出码改命令）；read 把**读不到**当失败
-                    //   （目标文件不存在没有"信息"可给，只有"这一步没做成"）。
-                    //   注意「bash 无 try/catch」≠「bash 永不报错」，也≠「它的 spawn 失败会抛」
-                    //   —— 细节见 runBash 头注（那档现在是缺口，不属本任务）。
+                    //   与 bash 的判据**不同向**，别互相抄（bash 侧 ##353 复议过）：bash 只在
+                    //   **非零退出且有错误输出**时才抛（无输出的非零退出 = 查询未命中，是数据；
+                    //   超时/取消仍当数据，模型靠退出码改命令；spawn/IO 失败那档未抛 = 缺口，见 ##332 ③）。
+                    //   read 则「读不到就是失败」：目标文件不存在没有"信息"可给，只有"这一步没做成"。
+                    //   ⚠️「bash.execute 现在会抛」≠「它见错就抛」—— 判据细节全在 runBash 头注。
                     throw new Error(`[读取失败] ${e instanceof Error ? e.message : e}`);
                 }
+            },
+        }),
+        /**
+         * `compact_plan` —— 装配管道（plan）的**手**（##362 M3a）。
+         *
+         * 为什么是**单工具带 op** 而不是三个：三者共用同一份「全局配置 + 闸」语义，工具描述只写一遍
+         * （每个工具都占 prompt 预算）；调用方看到的是一件事「装配管道」而不是三个散命令。
+         * execute 不含任何 plan 逻辑 —— 一律走 `services/compact-plan-io`（与 RPC **同一实现**）：
+         * 「CLI 校验通过、工具绕过校验」这类分叉必现，不能两处各写。
+         */
+        compact_plan: tool({
+            description:
+                "读/校验/改写「历史装配管道」（plan）—— 它决定哪些历史消息发给模型。" +
+                "**这是全局配置：改动影响所有任务、所有 agent 的投递**。" +
+                "op=get 读当前生效 plan（含来源与预算）；op=check 校验一份级列表（可传 keep，缺省校验盘上配置）；" +
+                "op=set 写 history.keep[]（需用户在配置里开 history.allowAgentWrite=true，否则返回「没权限」而非报错）；" +
+                "op=restore 回滚到历史快照（缺省最近一份；回滚本身也可回滚）；" +
+                "op=reset 一键回**出厂缺省** plan（删 history.keep[]；**不依赖任何快照的逃生窗口** —— 快照全坏时用它）。" +
+                "级列表形状：`[{ type: ladder|role|recent|steps, must?, limit?, clip?, data }]`，从上往下生效（先声明的先挑）。",
+            inputSchema: z.object({
+                op: z.enum(["get", "check", "set", "restore", "reset"]).describe("要做什么"),
+                keep: z
+                    .string()
+                    .optional()
+                    .describe('op=check/set：级列表文本（YAML 或 JSON；数组，或 `{ keep: [...] }`）'),
+                snapshot: z.string().optional().describe("op=restore：快照 id（见 set 返回）；缺省最近一份"),
+            }),
+            execute: async ({ op, keep: keepText, snapshot }) => {
+                const home = diyHome();
+                // must 层实占字节要**量**（预算是管不到 must 的）—— 与 RPC 注入的是同一测量
+                const measure = (k: KeepStage[]): { mustBytes: number; hardCapBytes: number } =>
+                    getLocalAgent().measureMustStages(taskUri, k);
+                if (op === "get") return renderPlanView(planGet(home));
+                if (op === "check") {
+                    // 校验**不抛**（ok=false 也是有用信息）—— 与 set 的"写错就抛"不同向，理由见 compact-plan-io 头注
+                    return renderCheckView(planCheck({ home, taskUri, ...(keepText !== undefined ? { keepText } : {}), measure }));
+                }
+                if (op === "set") {
+                    if (!keepText || keepText.trim() === "") {
+                        throw new Error('op:"set" 需要 `keep`（级列表文本：YAML/JSON 数组，或 `{ keep: [...] }`）');
+                    }
+                    // 闸关 ⇒ 本调用返回**拒绝文本**（不抛）；非法 plan ⇒ 抛（那是模型写错了，该看到错在哪）
+                    return planSet({ home, taskUri, via: "agent", keepText, measure }).text;
+                }
+                if (op === "reset") return planReset({ home, taskUri, via: "agent" }).text;
+                return planRestore({ home, taskUri, via: "agent", ...(snapshot ? { snapshot } : {}), measure }).text;
             },
         }),
     };
@@ -1221,11 +1321,13 @@ export class LocalAgentManager {
      * 入队失败（队列满 / 空消息）直接抛出 —— 那是"这条消息没送达"，调用方必须知道。
      */
     private *enqueueWhileRunning(taskUri: string, sess: LocalSession, message: string): Generator<Op> {
-        // ⚠️ 语义是 **steer 合并**（并入正在跑的轮次序列、轮末整批投），**不是**串行独立
+        // ⚠️ 语义是 **steer 合并**（并入正在跑的轮次序列、整批投），**不是**串行独立
         // 轮次排队 —— 与 review306 发现①对齐：入队后由续轮循环整批取走（见 chat 的轮末逻辑），
         // 多条排队消息 = 一次续轮请求消化，不逐条开轮。
-        // 用 `next-turn`（本轮收尾后整批投）而不是 `next-step`：排队语义是"排在这一轮
-        // **之后**"；`next-step` 会插进正在跑的轮次内部，把"谁先说话谁先投"的顺序打乱。
+        // 投递时机取 `DEFAULT_STEER_MODE`（现为 `next-step`，##360）：生成中再发消息，多数情形
+        // 就是"立刻补一句 / 纠正"，故插进正在跑的轮次、下一个模型步边界前整批投。代价是它排在
+        // 当前轮未说完的话前面（不再是"谁先说话谁先投"的严格顺序）—— 想"排在这一轮之后"的用户
+        // 可在横条上把该条切回 `next-turn`（切换只改这条队列项的 mode）。
         const items = this.queue.add(taskUri, DEFAULT_STEER_MODE, message);
         sessionRegistry.noteActivity(taskUri); // queue 变化 → 注册表订阅方即时可见
         // items 的末条就是刚入队的那条（`add` 返回整批快照）
@@ -1241,7 +1343,7 @@ export class LocalAgentManager {
                 op: "delta",
                 id: noticeId,
                 fields: {
-                    message: `会话正在生成中：这条消息已排队（队列第 ${items.length} 条），本轮结束后自动投递`,
+                    message: `会话正在生成中：这条消息已排队（队列第 ${items.length} 条，投递时机：${steerModeLabel(DEFAULT_STEER_MODE)}）`,
                 },
             },
             { op: "stop", id: noticeId },
@@ -1726,13 +1828,21 @@ export class LocalAgentManager {
      */
     private planCompact(taskUri: string, policyInput: unknown): CompactPlan {
         const policy = normalizePolicy(policyInput);
+        // 装配管道 = **当前配置**的 `history.keep[]`；没配 ⇒ 缺省管道（回落，行为与 ##343 M1 一致）。
+        const cfgKeep = loadAutoCompact(diyHome()).history?.keep;
+        const keepUsed: readonly KeepStage[] = cfgKeep && cfgKeep.length > 0 ? cfgKeep : DEFAULT_KEEP;
+        const planSnapshot: CompactPlanSnapshot = {
+            budgetBytes: policy.modeData.budgetBytes,
+            keep: keepUsed.map((k) => ({ ...k })),
+            source: cfgKeep && cfgKeep.length > 0 ? "config" : "default",
+        };
         const scan = scanOpsFile(taskUri);
         const turnIds = listTurnIds(scan.ops);
         const store = new BlockStore();
         for (const op of scan.ops) store.apply(op);
         // 保留 = 预算选择（实时算）。keptRuns = 预算的**过滤器表达**（存进事件，供历史回溯还原 diff）
         const all = projectAll(store);
-        const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, optsFor(policy));
+        const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, optsFor(policy, undefined, keepUsed));
         const keptRuns = sel.keptRuns;
         const keptSet = new Set(sel.kept.map((i) => all[i]!.turn).filter((t): t is string => !!t));
         const keptTurns = keptSet.size;
@@ -1769,7 +1879,7 @@ export class LocalAgentManager {
               }
             : undefined;
         const stats = usageStats(readStepUsages(taskUri), after.estTokens, rateSnap);
-        return { policy, keptTurns, keptFromTurnId, keepFromOpIndex, droppedIds, keptRuns, scan, store, before, after, droppedDetail, clipped, rateSnap, stats };
+        return { policy, keptTurns, keptFromTurnId, keepFromOpIndex, droppedIds, keptRuns, scan, store, before, after, droppedDetail, clipped, rateSnap, stats, planSnapshot };
     }
 
     /**
@@ -1905,6 +2015,24 @@ export class LocalAgentManager {
     }
 
     /**
+     * 「必保层（`must` 级）实占字节」测量（##344 M2 · `plan check` 的硬判据）。
+     *
+     * 只跑**必保级**：那是预算**管不到**的部分（撑爆就白压 —— 压了跟没压一样，还白付重建代价）。
+     * 硬上限 = 模型上下文窗口 token × 4（无 tokenizer，与全仓同一个粗估口径）；窗口未知 ⇒ 兜底常量。
+     */
+    measureMustStages(taskUri: string, keep: readonly KeepStage[]): { mustBytes: number; hardCapBytes: number } {
+        const policy = loadAutoCompact(diyHome()).policy;
+        const capTokens = contextLimitOf(personaForTask(diyHome(), taskUri).model);
+        const hardCapBytes = capTokens !== undefined ? capTokens * 4 : DEFAULT_MUST_HARD_CAP_BYTES;
+        const must = keep.filter((s) => s.must === true);
+        if (must.length === 0) return { mustBytes: 0, hardCapBytes };
+        const all = projectAll(replay(readJsonl<Op>(opsFile(taskUri))));
+        const p = keepStagesToPlan(must, Number.MAX_SAFE_INTEGER, clipSpecOf(toolResultOf(policy)));
+        const sel = runPlan(all, p, { costOf: costOfWith(optsFor(policy)) });
+        return { mustBytes: sel.keptBytes, hardCapBytes };
+    }
+
+    /**
      * 执行压缩：写一条账（append-only）+ 落盘被裁原文 + 重置内存态。
      *
      * 失败/边界原则（照 clear 的教训）：**先把可失败的事做完，最后才改内存态**。
@@ -1941,12 +2069,14 @@ export class LocalAgentManager {
         const ts = new Date().toISOString();
         const rec: CompactEventRecord = {
             kind: "compact",
-            v: 2,
+            v: 3,
             id: ts,
             ts,
             by,
             trigger,
             policy: p.policy,
+            // v3 新增：**当时整条 plan 的原文**（快照 ⇒ 事后可回放「那一刻用的是哪套 plan」）
+            plan: p.planSnapshot,
             // 锚点：只记**物理位置**（逻辑 id 只是 label）
             boundary: {
                 keptFromTurnId: p.keptFromTurnId,
@@ -1999,6 +2129,18 @@ export class LocalAgentManager {
         // 与旧日志里"来源不明的中断"同档 —— 那正是 R4 要消掉的分叉（##308）。
         s.running.abort({ source: "user" });
         return true;
+    }
+
+    /**
+     * 此刻本会话**是否有轮次在跑**（判据 = `chat()` 的排队判据，**同一个** `turns` 注册表）。
+     *
+     * 用途（##341 review1 P2-1）：替用户跑轮次的调用方（工作流驱动环）**起轮前**要先问这一句 ——
+     * `chat()` 对忙会话的既有语义是「**不拒绝、改排队**」（##306 插话），于是"起一轮"会静默退化成
+     * "排一条插话"：调用方既收不到正文，它的提示词还进了别人的对话队列。
+     * 只读、不改任何状态 —— 判据与动作分开，调用方自己决定怎么办。
+     */
+    busy(taskUri: string): boolean {
+        return this.turns.has(taskUri);
     }
 
     /**
@@ -2597,6 +2739,11 @@ export class LocalAgentManager {
         // 为什么要进 turn patch：状态栏的 ⚡ 要能"没在跑时也留在那儿"（老的速度不消失），
         // 而流内部的 token 计数拿不到 ⇒ 只能每步落一次、由 UI 显示最后一次实测值。
         let lastStepRate: number | null = null;
+        // 轮均速度（##349）的 Σ 累加：各步总输出与各步响应耗时（含首字等待）。
+        // 每步结束时重算一次 → 直播中也在长，轮末即为该轮平均。
+        let rateOutSum = 0;
+        let rateMsSum = 0;
+        let turnRate: number | null = null;
         let turnCost: CostBreakdown = { noCache: 0, cacheRead: 0, cacheWrite: null, text: 0, reasoning: 0, total: 0 };
         // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
         let lastAct: "none" | "text" | "tool" = "none";
@@ -3208,6 +3355,13 @@ export class LocalAgentManager {
                                 // **测不出就留着上一次的**：有的步没有输出 token（空回复 / 纯工具步），
                                 // 直接赋 null 会把状态栏那枚 ⚡ 打回更早一轮（review ##253 小项2）。
                                 lastStepRate = stepRate(fsPart.performance, b.outputTotal) ?? lastStepRate;
+                                // 轮均累加（##349）：只计"有计时且确有输出"的步（与 `avgRate` 同判据）
+                                const respMs = fsPart.performance?.responseTimeMs;
+                                if (respMs != null && respMs > 0 && b.outputTotal > 0) {
+                                    rateOutSum += b.outputTotal;
+                                    rateMsSum += respMs;
+                                }
+                                turnRate = rateFromTotals(rateOutSum, rateMsSum);
                                 // **按 response.modelId 查价**：上游可能路由改写模型（##211 §四.4.4）
                                 const priceModel = fsPart.response?.modelId ?? model;
                                 const rates = costOf(priceModel, b.inputTotal);
@@ -3242,7 +3396,7 @@ export class LocalAgentManager {
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
-                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate) },
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate, turnRate) },
                                 });
                             }
                             if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
@@ -3271,7 +3425,7 @@ export class LocalAgentManager {
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
-                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate) },
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate, turnRate) },
                                 });
                             }
                             // turn 的 stop 由 closeTurn 发（finally 里那一处）：收尾必须闭合

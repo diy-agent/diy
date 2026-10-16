@@ -548,18 +548,30 @@ export interface LocalModelMessage {
  */
 export interface DeliveryOpts {
     /**
-     * 【新·目标式预算】历史消息可占字节上限（不含固定开支）。**有它就按纵向优先级阶梯选择**，
+     * 【新·目标式预算】历史消息可占字节上限（不含固定开支）。**有它就按装配管道选择**，
      * 忽略 `sinceTurnId`/`content`（旧的轮边界口径）—— 见 selectHistoryByBudget。
      */
     budgetBytes?: number;
+    /**
+     * 【##344 M2】可执行装配管道（来自当前配置 `history.keep[]`，由 `keepStagesToPlan` 造）。
+     * 给了它就**按它选**（其中的 `budgetBytes` 即预算）；缺省 ⇒ `defaultBudgetPlan(budgetBytes, defaultClip)`。
+     */
+    plan?: CompactPlan;
     /** 只投递从这个 turn 起的块（压缩边界）；null = 一个都不投（全部清零）；缺省 = 全投 */
     sinceTurnId?: string | null;
+    /**
+     * **全局回落 clip**（= 策略 `toolResult.render` 的降级，##343 M1）：某条消息**没被任何级声明
+     * clip** 时用它。有它才谈得上「保底级 `full`、其余照旧裁」。
+     */
+    defaultClip?: ClipSpec;
     /**
      * 工具结果渲染（由 main 注入：同一份纯函数既算预览也算真发，见 shared/context/compaction）。
      * **不带 title**：渲染只需要「谁的输出、输出是什么」，title 是 UI 的东西（曾经传了但没人用，
      * 留着等于撒谎说渲染依赖它）。
+     * 入参带 `clip`（**这条消息**的裁法，由选择阶段带出；缺省/null = 回落 `defaultClip`）——
+     * 「谁被裁 / 谁全量」是**按消息**的，渲染器必须能看见它，否则保底级声明 `full` 也白搭。
      */
-    transformToolResult?: (b: { id: string; tool: string; output: string }) => string;
+    transformToolResult?: (b: { id: string; tool: string; output: string; clip?: ClipSpec | null }) => string;
     /**
      * 写 tool-result 的 `origin` 自证位（缺省 false = 原生形状，用于**真发**）。
      * 落盘（llm.jsonl 全量日志）时置 true —— 于是"这条 value 是工具给的还是本地补的"
@@ -583,9 +595,16 @@ export interface DeliveryOpts {
 //   · **渲染**（怎么呈现）才涉及工具结果裁剪/origin 自证位等形状问题。
 // 于是：全量投影（= llm.jsonl 每行）→ 选择 → 渲染。预览与真发共用同一条链。
 
-import { utf8Bytes } from "../../shared/context/compaction";
+import { utf8Bytes, type ClipSpec } from "../../shared/context/compaction";
 // 选择算法（元件库 + 装配器）—— 见 compaction-plan.ts 头注。此处**转出**旧公开名以保持兼容。
-import { runPlan, defaultBudgetPlan, HISTORY_LADDER, type BudgetSelection, type HistoryRank } from "./compaction-plan";
+import {
+    runPlan,
+    defaultBudgetPlan,
+    HISTORY_LADDER,
+    type BudgetSelection,
+    type HistoryRank,
+    type CompactPlan,
+} from "./compaction-plan";
 export { HISTORY_LADDER, type HistoryRank, type BudgetSelection };
 
 /**
@@ -750,26 +769,37 @@ export function selectHistory(
 // ─── 预算驱动的历史选择（用户 2026-10-07：目标式压缩）──────────────────
 //
 // 选择算法已抽到 `compaction-plan.ts`（**元件库 + 装配器**，用户 2026-10-08）：把「排序 / 配对 /
-// 预算累加」拆成可组合的**挑选元件**，默认管道 `defaultBudgetPlan` 复刻既有纵向阶梯行为。
-// 本函数是投递侧的**稳定入口**（真发 / 预览 / 记账共用），内部委托默认管道 ⇒ 行为逐字节不变。
+// 预算累加 / 裁剪声明」拆成可组合的**挑选元件**，默认管道 `defaultBudgetPlan` 定「保底 + 阶梯」。
+// 本函数是投递侧的**稳定入口**（真发 / 预览 / 记账共用），内部委托默认管道。
+// ⚠️ ##343 M1 起默认管道**不再是**「纯纵向阶梯」（多了保底最近 6 步 `clip: full`，见 compaction-plan），
+//    故这里也不再承诺「与旧阶梯逐字节等价」——行为变更见该任务的验收。
 //
 // 为什么是**纵向**（用户 2026-10-07 纠正「逐轮降解」）：**主干 > 细节**。用户发言是他
 // 记得、认为重要的主干，不管多旧都应优先保留；工具结果只是可回取的细节。按轮（横向）
 // 会把前面重要的用户消息整轮陪葬 —— 后几轮工具垃圾一爆，前面的用户发言就没了。
 
 /**
- * **预算选择**：全量投影 + 预算 → 保留哪些下标（纯函数）。
- * 内部委托 `runPlan` + 默认管道（= 纵向阶梯 + 计入预算）；实现见 `compaction-plan.ts`。
+ * **预算选择**：全量投影 + 预算 → 保留哪些下标（纯函数）+ **每条被选中消息的裁法**（`clips`）。
+ * 内部委托 `runPlan` + 默认管道（= 保底最近 N 步 `full` + 纵向阶梯计预算）；实现见 `compaction-plan.ts`。
+ * `opts.defaultClip` = 全局回落裁法（策略的降级），传给默认管道的阶梯级。
  */
 export function selectHistoryByBudget(
     all: readonly LocalModelMessage[],
     budgetBytes: number,
-    opts: Pick<DeliveryOpts, "transformToolResult"> = {},
+    opts: Pick<DeliveryOpts, "transformToolResult" | "defaultClip" | "plan"> = {},
 ): BudgetSelection {
-    return runPlan(all, defaultBudgetPlan(budgetBytes), {
-        // 成本 = **投递**口径（渲染后字节；工具结果已按策略裁剪）
-        costOf: (m) => utf8Bytes(JSON.stringify(renderMessage(m, opts))),
-    });
+    // 管道来源只有一个决策点：给了 `plan`（配置面）就用它，否则回落缺省管道。
+    return runPlan(all, opts.plan ?? defaultBudgetPlan(budgetBytes, opts.defaultClip), { costOf: costOfWith(opts) });
+}
+
+/**
+ * 选择阶段的**成本口径**：投递口径（渲染后字节；工具结果按**该级的 clip** 裁剪）。
+ * 与最终渲染走同一个 `renderMessage` ⇒ 「算预算的字节」就是「发出去的字节」。
+ * 抽出来是因为 ##344 M2 的 `plan check` 要**单独**跑「只有 must 级」的管道来量它占多少字节 ——
+ * 测量若另写一份口径，「量出来的」与「真发的」就是两个数。
+ */
+export function costOfWith(opts: Pick<DeliveryOpts, "transformToolResult" | "defaultClip">) {
+    return (m: LocalModelMessage, clip: ClipSpec | null): number => utf8Bytes(JSON.stringify(renderMessage(m, opts, clip)));
 }
 
 /**
@@ -777,7 +807,7 @@ export function selectHistoryByBudget(
  * 两件事：① 工具结果裁剪（只作用于**真实输出**，见 origin）；② 按 opts 决定写不写
  * `turn`/`step`/`origin` 自证位（真发不带，落盘带）。
  */
-function renderMessage(m: LocalModelMessage, opts: DeliveryOpts): LocalModelMessage {
+function renderMessage(m: LocalModelMessage, opts: DeliveryOpts, clip: ClipSpec | null = null): LocalModelMessage {
     const out: LocalModelMessage = { role: m.role, content: m.content };
     if (opts.withIndex) {
         if (m.turn !== undefined) out.turn = m.turn;
@@ -798,7 +828,13 @@ function renderMessage(m: LocalModelMessage, opts: DeliveryOpts): LocalModelMess
                 // 就误导模型（用户 2026-10-06：本地补的错误信息不许当历史投递）
                 value:
                     transform && p.origin === "tool"
-                        ? transform({ id: p.toolCallId, tool: p.toolName, output: p.output.value })
+                        ? transform({
+                              id: p.toolCallId,
+                              tool: p.toolName,
+                              output: p.output.value,
+                              // 这条消息的裁法（选择阶段带出）；没声明 ⇒ 回落 defaultClip
+                              clip: clip ?? opts.defaultClip ?? null,
+                          })
                         : p.output.value,
             },
         };
@@ -817,7 +853,7 @@ function renderMessage(m: LocalModelMessage, opts: DeliveryOpts): LocalModelMess
 export function selectForDelivery(
     all: readonly LocalModelMessage[],
     opts: DeliveryOpts = {},
-): { kept: number[]; dropped: number[] } {
+): { kept: number[]; dropped: number[]; clips?: (ClipSpec | null)[] } {
     return opts.budgetBytes !== undefined
         ? selectHistoryByBudget(all, opts.budgetBytes, opts)
         : selectHistory(all, opts);
@@ -828,5 +864,6 @@ export function blocksToMessages(store: BlockStore, opts?: DeliveryOpts): LocalM
     const o = opts ?? {};
     const all = projectAll(store);
     const sel = selectForDelivery(all, o);
-    return sel.kept.map((i) => renderMessage(all[i]!, o));
+    // 选择 → 渲染：**把选择出的 clip 带过去**（两段分离不得破：选择只算下标与裁法，渲染才真裁）
+    return sel.kept.map((i) => renderMessage(all[i]!, o, sel.clips?.[i] ?? null));
 }
