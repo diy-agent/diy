@@ -28,6 +28,7 @@ import { WsTransport } from "@diy/rpc/ws";
 import { bindApi, setRpcPort } from "../main/services/api-impl";
 import { AppConfig } from "../main/core/app-config";
 import { installDiagnostics } from "../main/services/diagnostics";
+import { traffic } from "../main/core/traffic";
 import { readRuntimeConfig } from "../runtime";
 import { cliEntryForRepo, findRepoRoot, prodHomeAllowed } from "../main/core/instance-identity";
 import { resolveDevHome } from "../main/core/dev-home";
@@ -71,6 +72,7 @@ if (repoRoot) {
 const cfg = readRuntimeConfig();
 // serve 是纯 Node 常驻进程，同样要防 EPIPE / 未捕获异常裸奔；日志独立落 serve.log
 installDiagnostics(cfg.home, "serve");
+traffic.init(); // 流量观测（订阅 undici diagnostics_channel）
 const ROOT = path.resolve(__dirname, "..", "..");
 // 与上面的数据根同一根：build/<variant>/{renderer,home}（缺省 prod，与 resolveDevHome 的 variant 同源）
 const STATIC_DIR = path.resolve(ROOT, "build", process.env["DIY_VARIANT"] ?? "prod", "renderer");
@@ -86,7 +88,9 @@ const MIME: Record<string, string> = {
   ".json": "application/json",
 };
 
-// 端口优先级: --port flag > DIY_PORT（入口注入） > 兜底 18888
+// 端口优先级: --port flag > DIY_PORT（入口注入） > 兜底 18888。
+// serve 不写 app.port、也不是 CLI 的复用目标 —— 它的端口是**给人浏览器的地址**，
+// 故不参与 ##328(实例身份只靠端口) 的「dev/test 缺省不占 18888」（那说的是 Electron 实例）。
 let port = cfg.port ?? 18888;
 const args = process.argv.slice(2);
 const portIdx = args.indexOf("--port");

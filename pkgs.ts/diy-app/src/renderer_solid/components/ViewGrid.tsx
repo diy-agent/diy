@@ -20,7 +20,7 @@ import {
     trackCss,
     type Layout,
 } from "../../shared/grid-layout";
-import { findPage, groupViewsByArea, type Binding } from "../../shared/view-registry";
+import { findPage, groupViewsByArea, planPageViews, type Binding } from "../../shared/view-registry";
 import { ViewBoundary } from "./ViewBoundary";
 import { layoutStore } from "../store/layoutStore";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
@@ -47,17 +47,28 @@ export function ViewGrid(props: {
      *  算法在 shared（resolveLayout）—— 渲染与 CLI `ui layout get` 必须是同一份结果。 */
     const layout = createMemo<Layout>(() => resolveLayout(props.layout, st()));
 
+    /**
+     * 本次渲染的 area 计划（可见 / 最大化 / 被挤掉）—— 判据在 shared（planPageViews），
+     * 组件只画。放 shared 的理由：这块是可判定的（隐藏谁、最大化后剩谁），要能回归测试。
+     */
+    const plan = createMemo(() => {
+        const p = page();
+        if (!p) return { visibleAreaIds: [] as string[], maximizedAreaId: null, suppressedAreaIds: [] as string[] };
+        return planPageViews(p, props.ctx, props.binding, st());
+    });
+
     /** 按 area 分组；隐藏的 area 不渲染（其 view 的实例状态由 store 保留） */
     const groups = createMemo(() => {
         const p = page();
         if (!p) return [];
-        const s = st();
+        const visible = new Set(plan().visibleAreaIds);
         return groupViewsByArea(p, props.ctx, props.binding)
-            .filter((g) => !s.hidden[g.areaId])
+            .filter((g) => visible.has(g.areaId))
             .map((g) => ({ ...g, rect: findArea(layout(), g.areaId) }));
     });
 
-    const maximized = () => st().maximized;
+    /** 生效的最大化 area：被最大化者若同时被最小化 → null（退回网格，见 planPageViews） */
+    const maximized = () => plan().maximizedAreaId;
 
     /** 该线相邻的 track 是否已被折叠（尺寸 0）→ 拖它无意义，不渲染手柄 */
     const isCollapsed = (axis: "col" | "row", line: number): boolean => {

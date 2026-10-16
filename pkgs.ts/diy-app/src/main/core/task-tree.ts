@@ -8,6 +8,8 @@ import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { diyHome, parseTaskFile, projectsRoot, projectFromUri } from "./state";
 import { listProjects } from "./project";
+import { hasConversation } from "./local-paths";
+import { readDrafts } from "./drafts";
 import { TaskNode } from "./tree-format";
 
 // ═══════════════════════════════════════
@@ -47,6 +49,11 @@ function readTaskNode(
     change_type: fm.change_type,
     module: fm.module,
     priority: fm.priority,
+    // agent 面状态（##355）的两个**逐任务**真源：都在任务自己的落盘数据里，各一次
+    // stat / 小文件读（本函数本来就要读每个任务的 AGENTS.md，这一项相对可忽略）。
+    // 放在这里而不是渲染端猜：列表有几百行，UI 没法逐个任务回读（那会是几百次 RPC）。
+    has_session: hasConversation(uri),
+    has_draft: readDrafts(uri)?.fields?.agent_input !== undefined,
     children: [],
   };
 }

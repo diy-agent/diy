@@ -1,0 +1,29 @@
+{
+  "name": "@diy/talk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "diy 对话容器内核：事件 / 锚点 / 反应原语 + role 翻译铁律 + 装配器（零依赖纯内核，不做存储）",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src/"
+  ],
+  "dependencies": {},
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "oxfmt": {
+    "indent": 4,
+    "lineWidth": 120,
+    "quotes": "single",
+    "ignore": [
+      "node_modules/"
+    ]
+  }
+}

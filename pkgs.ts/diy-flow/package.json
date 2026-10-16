@@ -1,0 +1,31 @@
+{
+  "name": "@diy/flow",
+  "version": "0.1.0",
+  "private": true,
+  "description": "diy 工作流内核：定义 DSL + 泳道容器（单指针 / 打回）+ 插件槽（五槽）+ guard 数组求值 + 转移执行器 + 轨迹折线投影（依赖 @diy/talk，零运行时依赖）",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src/"
+  ],
+  "dependencies": {
+    "@diy/talk": "*"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "oxfmt": {
+    "indent": 4,
+    "lineWidth": 120,
+    "quotes": "single",
+    "ignore": [
+      "node_modules/"
+    ]
+  }
+}

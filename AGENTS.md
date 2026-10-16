@@ -7,10 +7,12 @@
 - `find.app` — `pkgs.ts/diy-app/` Electron 管控台：`src/main` 主进程 · `src/cli` CLI · `src/preload` · `src/renderer_solid` UI（Solid，主线）· `src/serve` Web 模式 · `src/shared` 跨层契约。包内细节见 `pkgs.ts/diy-app/AGENTS.md`
 - `find.rpc` — `pkgs.ts/diy-rpc/` RPC 协议 + 传输（纯内核，零 Node/Electron 依赖）
 - `find.template` — `pkgs.ts/diy-template/` 提示词模版引擎（零依赖）
+- `find.talk` — `pkgs.ts/diy-talk/` 对话容器内核（事件 / 锚点 / 反应原语 + role 铁律，零依赖；消费者 `@diy/flow`（`Event` 原语）；接 ##319 存储/装配）
+- `find.flow` — `pkgs.ts/diy-flow/` 工作流内核（定义 DSL + 泳道容器 + 插件槽 + 参数层 L2 + guard 求值 + 转移执行器 + 轨迹投影；零 IDE 依赖，唯一依赖 `@diy/talk` 的 `Event` 原语；接 ##319）
 - `find.dev` — `pkgs.ts/diy-dev/` 独立的 `dev` 命令（ref 仓库引用 / vendor 镜像，cwd 即作用域）；细节见其 `AGENTS.md`
 - `find.cfg` — `pkgs.ts/diy-app/src/runtime.ts` —— **`DIY_*` 环境变量契约的唯一源**
 - `find.prompt` — 内置提示词 `pkgs.ts/diy-app/src/main/prompts/defaults.ts`（唯一真源）· 装配 `pkgs.ts/diy-app/src/main/services/prompt-registry.ts`
-- `find.intent` — **需求契约 = 意图测试**：`pkgs.ts/diy-app/tests/cli.intent.*.test.ts` + `pkgs.ts/diy-template/tests/intent.*`
+- `find.intent` — **需求契约 = 意图测试**：`pkgs.ts/diy-app/tests/cli.intent.*.test.ts` + `pkgs.ts/diy-template/tests/intent.*` + `pkgs.ts/diy-talk/tests/intent.*` + `pkgs.ts/diy-flow/tests/intent.*`
 - `find.docs` — `docs/` 架构与方案 · `scripts/` 辅助脚本与冒烟脚本 · `pkgs/` Python 归档（不演进）
 
 ## entry — 实例四态（**先问：操作谁的数据 / 谁看 UI**）
@@ -33,8 +35,11 @@
 - `entry.choose` — **先问「操作谁的数据」**：真实任务/项目/agent → 全局 `diy`；worktree 改码·跑测试 → `./diy.sh`；看效果热更新 → `./sha.sh preview`；agent 实验 → `./sha.sh lab`。**别拿 `./diy.sh` 查生产任务**（它的 `./build/<variant>/home` 里没有 → 报「任务 N 不存在」）
 - `entry.variant` — **`DIY_VARIANT` 是产物/数据分根的唯一轴**。vite 配置据此定 `outDir=build/<v>/*`；运行时据此选 `build/<v>/main`。缺省 `prod`（`./diy.sh` 缺省 `preview`）
 - `entry.prod` — 全局 `diy` 一般由 main 上 `npm link` 而来 → 跑的是 **main 的 `build/prod` 编译产物**；worktree 里改的码它看不到
-- `entry.client` — `diy` 与 `./diy.sh` **都是客户端、都不启动 GUI**：读 `$DIY_HOME/app.port` 探测已运行实例，探不到才 spawn Electron（CLI 与 GUI 是两进程）。连哪个实例由 `DIY_HOME`（数据根）决定
+- `entry.client` — `diy` 与 `./diy.sh` **都是客户端、都不启动 GUI**：读 `$DIY_HOME/app.port` 探活并**验身份**（连上去问 `getAppInfo.diyHome` 比对，不是本数据根就拒绝复用、另起自己的，##328(实例身份只靠端口)），探不到才 spawn Electron（CLI 与 GUI 是两进程）。连哪个实例由 `DIY_HOME`（数据根）决定
+- `entry.port` — 端口**不承载身份**：`DIY_PORT` > `app.port` 文件 > `runtime.ts::defaultPort(env)`（production=`18888` 门牌；development/test=`0` 随机）；裁决在 `runtime.ts::resolvePort`（纯函数、可单测），**非生产不沿用记录里的 `18888`**（旧版遗留的生产门牌，沿用＝dev 又占生产门牌）。`serve` 例外（浏览器地址，仍兜 18888）
 - `entry.gui` — 起 GUI 两条路：`./sha.sh preview`（HMR，免构建）或 `sha.sh build` 后由 CLI 拉起
+- `entry.launch-vs-client` — **起 GUI 的入口是启动器，不是客户端**：`./sha.sh preview|lab` 只 **spawn 新实例**，从不连已跑的那个（不读 `app.port`）—— 重复运行 = 开第二个实例 → 撞本数据根的 `SingletonLock` 并退出（`core/single-instance.ts::lockAdvice` 会打印「直接用它：`./diy.sh <命令>`」）。**要访问实例一律用客户端**，别指望再敲一次启动器
+- `entry.variant-match` — **客户端与服务端变体必须配对**：`./sha.sh preview` 起的实例配 `./diy.sh`（缺省 `DIY_VARIANT=preview`）；`./sha.sh lab` 起的配 `DIY_VARIANT=lab ./diy.sh`。不配对 = 对着**另一个数据根**敲命令（症状：任务不存在 / 改完没反应）。`./diy.sh` 能连上 HMR 实例，是因为 `electron-dev.mts` 的 watch 已把 `build/<v>/main` 产出来了
 - `entry.verify` — preview/lab 起来后用 `diy getAppInfo` 看 `diyHome` / `env` / `branch`，确认数据目录与启动参数（验证没起错数据根/变体）
 - `entry.risk` — worktree 改码跑测一律 `./diy.sh`（隔离 `./build/<variant>/home`；会拒绝继承来的生产 `DIY_HOME`，需 `DIY_ALLOW_PROD_HOME=1` 放行）；**查/改真实数据才用全局 `diy`**
 - `entry.home-guard` — 「继承来的生产 `DIY_HOME` 一律拒绝」的唯一决策点 `pkgs.ts/diy-app/src/main/core/dev-home.ts`（`./diy.sh` 与 `./sha.sh preview|lab` 共用；宿主 shell 常导出 `DIY_HOME=~/.diy`，不拦则 preview 开着生产数据根跑、还会把种子写进去）
@@ -43,13 +48,14 @@
 
 ## tool — 命令
 
-- `tool.check` — `./sha.sh check` **提交前唯一检查**：`tsc -b tsconfig.all.json --noEmit` + oxlint + rpc 浏览器安全 + 产物护栏
+- `tool.check` — `./sha.sh check` **提交前唯一检查**：`tsc -b tsconfig.all.json --noEmit` + oxlint + rpc 浏览器安全 + 产物护栏 + 可执行位护栏（shell 脚本索引 mode 必须 100755，见 `scripts/check-exec-bit.sh`）
 - `tool.test` — `./sha.sh test` 全仓 · `./sha.sh test-unit` 快测（不起 Electron）· 意图测试 `pkgs.ts/diy-app/sha.sh test-intent [片段...]`：位置参数**过滤文件**（短名补 `tests/cli.intent.` 前缀，如 `test-intent ui-find`；带 `/` 或 `.test.ts` 原样传），无参才全量
 - `tool.model-import` — 环境变量 → provider 导入候选（只列不写；UI 模型页提示条 / `diy llmConfig scanEnv|importEnv`）→ `pkgs.ts/diy-app/src/main/core/model-import.ts`
 - `tool.confirm` — 破坏性操作的应用内二次确认走 `renderer_solid/components/ConfirmDialog.tsx`；**禁用原生 `window.confirm`**（窗口级模态：卡住整个渲染进程，且非 DOM 节点 —— 自动化点不到）
 - `tool.cli` — 查/改数据：全局 `diy <域> <命令>`（生产）· worktree 里 `./diy.sh <域> <命令>`（隔离）。**域名清单真源 = `diy --help`**（`task` `project` `agent` `tool` `context` `template` `llmConfig` `seed` `log` `ref` `watch` `ui` `doctor`…；本行曾只列 8 个，早已腐坏）
 - `tool.pkg` — `pkgs.ts/diy-app/sha.sh preview|lab|build|test|cli` 单包动作
 - `tool.sync` — **新开 worktree 先 `./sha.sh sync`**（`npm i --workspaces --include-workspace-root` + 子模块 + 各包 sync）；不跑则包没装、`node_modules` 缺。`--include-workspace-root` 不能省：光 `npm i --workspaces` 只装 workspace、漏装根 package.json 依赖（`remark-gfm` 等），干净 worktree 上必现 build 解析失败
+- `tool.electron` — electron 43 **无 postinstall**，二进制改**惰性下载**：`require('electron')` / `npx electron` 时若 `node_modules/electron/dist` 缺，就在**当时那个进程里**同步下载，**且无超时** → 症状是静默卡死（与 npm 的 fetch 超时无关）。zip 缓存在 `~/Library/Caches/electron/`（实测 cache hit：5.5s 解压完、零网络）—— 所以每个 worktree 的真实代价是**解压 ~295MB 占磁盘**，不是下载。省法（本仓实测在用）：`ln -sfn <主仓>/node_modules/electron/dist <worktree>/node_modules/electron/dist`
 - `tool.ui` — 真实 UI 验证走 CDP：`playwright-cli attach --cdp=…`
 
 ## rule — 硬约束
@@ -61,6 +67,7 @@
 - `rule.instance-lifecycle` — **实例起停权限与数据定性**：`test` / `lab` 由 agent **自由起停**（随便折腾，不用问）；`preview` 供**人机沟通·验证 UI**，亦可随便起停（给正当理由即可）；三者数据皆**临时非生产**（仓库根 `build/<variant>/home`，坏了就清，必要时可重置）。**唯全局 `diy`（prod / `~/.diy`）是日常实跑的生产 app** —— 不动其数据根、不杀其进程，重启留给用户手动
 - `rule.new-pkg` — 新增包检查单：`tsconfig.json`（composite + noEmit + include）+ `tsconfig.all.json` references
 - `rule.renderer` — UI 主线是 `renderer_solid/`（SolidJS）；React 版已删除
+- `rule.task-write` — **任务文件头是权威**（##322）：读侧 `task show` / `getTask` / 上下文 `task.*` 给的就是文件头 frontmatter **同一份**（确认任务不必 `cat` 任务文件）；写侧 `task edit --body`（整篇覆盖）与 `--append-body <file|->`（追加，不必先读文件）收到「整份文件」一律**剥头**（追加侧判据更严：须含 `state`/`created`/`updated`，故追加一份自带 front matter 的普通文档时其文档头**保留**），返回值回报剥掉的键与原文
 
 ## model — 本地 agent 测试用什么模型
 

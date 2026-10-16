@@ -19,7 +19,6 @@ import {
     appendFileSync,
     closeSync,
     existsSync,
-    mkdirSync,
     openSync,
     readFileSync,
     readSync,
@@ -30,7 +29,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
-import { keyOf, llmFile, llmLogRelPath, localDir, opsFile } from "../core/local-paths";
+import { keyOf, llmFile, llmLogRelPath, localDir, opsFile, sessionIdOf } from "../core/local-paths";
 
 // 再导出：测试与产品共用同一路径实现（不把 key 算法复制到测试里）
 export { opsFile };
@@ -42,6 +41,8 @@ import {
     danglingStopPatches,
     interruptedToolPatches,
     projectAll,
+    replay,
+    costOfWith,
     selectHistoryByBudget,
     selectForDelivery,
     type DeliveryOpts,
@@ -49,12 +50,27 @@ import {
     type JSONVal,
     type TurnEndReason,
 } from "./local-blocks";
+import { DEFAULT_KEEP, DEFAULT_MUST_HARD_CAP_BYTES, type KeepStage } from "../../shared/context/compact-keep";
+import { keepStagesToPlan, runPlan } from "./compaction-plan";
+import {
+    decodeCursor,
+    encodeCursor,
+    isTurnStartAt,
+    seekTurnStartAtOrBefore,
+    seekWindowStart,
+} from "./local-ops-seek";
 import { appendAudit } from "./agent-audit";
-import { activeTurnList, noteTurnEnd, noteTurnStart } from "./runtime-context";
+import { planCheck, planGet, planReset, planRestore, planSet, renderCheckView, renderPlanView } from "./compact-plan-io";
+import { capToolOutput, safeId, toolOutDir, toolOutRelPath } from "./tool-output";
+import { abortText } from "../../shared/turn-end";
+import { opsFeed } from "./ops-feed";
+import { AsyncQueue, withCleanup } from "./async-queue";
+import { sessionRegistry } from "./session-registry";
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
 import {
     bucketsOf,
     costBreakdown,
+    rateFromTotals,
     snapshotUsage,
     stepRate,
     sumBuckets,
@@ -86,12 +102,20 @@ import {
 } from "../../shared/context/cache-ttl";
 import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
+import { traffic } from "../core/traffic";
+import { appendCtxLog } from "../core/context-changelog";
 import { statFromStep } from "../../shared/context/stats";
+import { opsFromHashes } from "../../shared/context/changelog";
+import { previewOf } from "../../shared/context/render";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import {
+    budgetBytesOf,
+    clipSpecOf,
     estimateTokens,
+    fmtBytes,
     makeDeliveryTransform,
     listTurnIds,
+    toolResultOf,
     type CompactTrigger,
     normalizePolicy,
     parseCompactLog,
@@ -99,6 +123,7 @@ import {
     utf8Bytes,
     type ClippedToolDetail,
     type CompactEventRecord,
+    type CompactPlanSnapshot,
     type CompactLogEvent,
     type CompactPolicy,
     type DroppedTurnDetail,
@@ -115,8 +140,9 @@ import {
 } from "../../shared/context/summary";
 import { renderSummarySection } from "./prompt-registry";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
-import { readFileWindow, formatReadOutput, ReadWindowError, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
-import { SteerQueue } from "../core/steer-queue";
+import { readFileWindow, formatReadOutput, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
+import { SteerQueue, fileSteerPort } from "../core/steer-queue";
+import { DEFAULT_STEER_MODE, steerModeLabel } from "../../shared/steer-mode";
 import type { SteerItem, SteerMode } from "../core/drafts";
 
 import {
@@ -188,6 +214,14 @@ export interface LocalAgentLimits {
     outputClipChars: number;
     /** read 工具单次返回的字节上限（见 core/file-read.ts） */
     readMaxBytes: number;
+    /**
+     * 插话/排队队列的条数上限（##306）。
+     *
+     * 防的不是"条数多"，而是**无界**：会话在跑时新消息改为排队后，灌风暴的那一端
+     * 不再是报错的调用方，而是这个队列（落盘文件 + 内存 + 提示词）。合并投递消化的是
+     * 请求次数，条数上限守的是队列本身的体量。
+     */
+    maxSteerQueue: number;
 }
 
 export const DEFAULT_LIMITS: LocalAgentLimits = {
@@ -196,6 +230,7 @@ export const DEFAULT_LIMITS: LocalAgentLimits = {
     bashTimeoutMs: 30_000,
     outputClipChars: 6000,
     readMaxBytes: READ_MAX_BYTES,
+    maxSteerQueue: 1000,
 };
 
 function limitsFile(): string {
@@ -228,6 +263,7 @@ export function resolveLimits(
         bashTimeoutMs: envPosInt(env, "DIY_LOCAL_BASH_TIMEOUT_MS") ?? num(base.bashTimeoutMs, DEFAULT_LIMITS.bashTimeoutMs),
         outputClipChars: envPosInt(env, "DIY_LOCAL_OUTPUT_CLIP_CHARS") ?? num(base.outputClipChars, DEFAULT_LIMITS.outputClipChars),
         readMaxBytes: envPosInt(env, "DIY_LOCAL_READ_MAX_BYTES") ?? num(base.readMaxBytes, DEFAULT_LIMITS.readMaxBytes),
+        maxSteerQueue: envPosInt(env, "DIY_LOCAL_MAX_STEER_QUEUE") ?? num(base.maxSteerQueue, DEFAULT_LIMITS.maxSteerQueue),
     };
 }
 
@@ -252,6 +288,45 @@ interface LocalSession {
     logged: number;
     loaded: boolean;
     running: AbortController | null;
+}
+
+/**
+ * 一次**轮次运行**（##305）：生命周期独立于任何消费端连接。
+ *
+ * 改造前 `chat()` 生成器**就是**轮次的驱动者 —— RPC 流一断（刷新/切页/关窗/杀 CLI），
+ * 链式 `gen.return()` 展开生成器，`finally` 里 `ctrl.abort()` 把正在跑的轮次掐掉（无人消费即停）。
+ * 现在驱动（`driveTurn`）归本管理器持有，`agent.local.chat` 的流只是**订阅者**：
+ * 断开只退订，重连靠 ops 水位（##307 读侧）追平 —— 刷新只是"重新接上视图"。
+ *
+ * 无人消费**继续烧 token**（用户定案：agent 对话是后台进程的维护，窗口只是它的使用窗口之一）：
+ * 单轮开销由 **`maxSteps`（缺省 200）步数上限**天然收口 —— 打满即强制收尾并落
+ * `endReason:{type:"max-steps"}`（机制已存在）。**不设时间维度的超时回收**（用户拍板：
+ * 离开两小时不该误杀正常长任务）；main 卡死（卡在工具里不产步）由人在全局会话视图上
+ * 手动强制中断（[5] ##308）。
+ */
+interface TurnRun {
+    taskUri: string;
+    /** 本轮的中止源。**唯一来源 = 用户主动停止**（`cancel()`）—— 不再由消费端断开触发 */
+    ctrl: AbortController;
+    /**
+     * 订阅本轮的 `agent.local.chat` 流。断开只从集合摘掉，不影响驱动。
+     *
+     * 边界（review2 R6）：**只承载驱动产出的 op**（`publish`）。`enqueueWhileRunning` 的排队回执走
+     * 它自己的 `yield`（那条路径压根没有 TurnRun），不进这里 —— UI 靠 ops 流（##307）全可见，故当下无感。
+     * 若将来把 chat 流当「全会话镜像」，须先统一 emit 出口，否则会漏掉排队回执。
+     */
+    subs: Set<AsyncQueue<Op>>;
+    /** 驱动异常：按原语义经流上抛（RPC 层转 error 帧），由订阅端在流尾 rethrow */
+    error?: unknown;
+}
+
+/** 从 abort reason 取「结束原因来源」：对象 `{source}` 用它的，否则退回 fallback（如用户停止 = abort） */
+function abortSource(signal: AbortSignal, fallback: string): string {
+    const r: unknown = signal.reason;
+    if (r && typeof r === "object" && "source" in (r as Record<string, unknown>)) {
+        return String((r as { source: unknown }).source);
+    }
+    return fallback;
 }
 
 // 会话路径（keyOf / opsFile / llmFile）已抽到 ../core/local-paths —— 见那里的头注：
@@ -327,10 +402,6 @@ function markShape(s: StepStreamShape, ch: "r" | "t" | "x"): void {
     else s.toolCalls++;
 }
 
-/** zen/go 会话亲和头：按 task 稳定（实测缺失会被 MissingSessionID 拒绝） */
-function sessionIdOf(taskUri: string): string {
-    return `local-${keyOf(taskUri)}`;
-}
 
 /**
  * runtime 容器作为**尾部 user 消息**插在本轮输入之前（144 的投递设计）。
@@ -435,6 +506,23 @@ function fileSize(fp: string): number {
     }
 }
 
+/**
+ * 分页窗口的一段（任务 293）：**已折叠**的 op 流 + 段起点游标 + 「更早还有轮吗」。
+ * `cursor` 是 main 签发的不透明 token（渲染端只回传），见 local-ops-seek。
+ *
+ * `stale` = 「请求带的游标失效，本次给的是**全量**而非按游标切的段」。渲染端必须据此重置
+ * 现有段（否则它会拿全量当"更早一段"前插，把历史拼重复）。窗口与游标的连续性只有 main
+ * 校验得了（渲染端看不懂字节），所以**由 main 出声**，而不是让渲染端猜（任务 ##293 的坑：
+ * 曾试图用"两段轮次互为前缀"判连续性 —— 两段在字节上是切分的、轮次不重叠，判据恒假）。
+ */
+export interface HistoryWindow {
+    ops: Op[];
+    cursor: string;
+    hasMore: boolean;
+    /** 游标失效（清空 / 覆盖写 / 起点不再是轮首）⇒ 本次是退化全量，渲染端要重置 */
+    stale: boolean;
+}
+
 /** 折叠缓存的上限（LRU）：块树常驻内存，多开几个大会话也不至于无界堆积。 */
 const HISTORY_CACHE_MAX = 8;
 
@@ -495,6 +583,14 @@ function readOpsRange(fp: string, from: number, to: number): { ops: Op[]; consum
     }
 }
 
+/** 读 `[from, to)` → fold → compact（**定长区间**：上滚取的那一段，不走增量缓存）。 */
+function foldRange(fp: string, from: number, to: number): Op[] {
+    const ops = from < to ? readOpsRange(fp, from, to).ops : [];
+    const store = new BlockStore();
+    for (const op of ops) store.apply(op);
+    return compactOps(store);
+}
+
 // ─── 压缩（compact）：账本 / 边界 / 原文寻回 ──────────────
 //
 // 存储取舍（三句话）：
@@ -510,22 +606,6 @@ export function compactFile(taskUri: string): string {
     return path.join(localDir(), `${keyOf(taskUri)}.compact.jsonl`);
 }
 
-/** 工具 id 里的非法文件名字符归一（块 id 形如 `t1759_s1_r1`，一般无需动） */
-function safeId(id: string): string {
-    return id.replace(/[^\w.-]+/g, "_");
-}
-
-/** 被裁剪工具输出的原文落盘目录（模型可回取；##127 的「原文可寻回」） */
-function toolOutDir(): string {
-    const d = path.join(localDir(), "toolout");
-    mkdirSync(d, { recursive: true });
-    return d;
-}
-
-/** marker 里写的相对路径：相对 $DIY_HOME，人/模型都能照此找到原文 */
-function toolOutRelPath(id: string): string {
-    return `local/toolout/${safeId(id)}.txt`;
-}
 
 /** 读取压缩账本（文件不存在 = 从未压缩过；坏行由 parseCompactLog 跳过） */
 function readCompactLog(taskUri: string): CompactLogEvent[] {
@@ -632,10 +712,13 @@ function scanOpsFile(taskUri: string): OpsScan {
     return { ops, turnOffsets, turnOpIndex, turnBytes, totalBytes: offset };
 }
 
-/** 一组 op → 规模快照（messages 用真实投影，bytes 用 JSON 字节 —— 与真发口径一致） */
-function sizeOfOps(ops: readonly Op[], opts?: Parameters<typeof blocksToMessages>[1]): SizeSnapshot {
-    const store = new BlockStore();
-    for (const op of ops) store.apply(op);
+/**
+ * 块树 → 规模快照（messages 用真实投影，bytes 用 JSON 字节 —— 与真发口径一致）。
+ * ⚠️ 收 **store** 而不是 op 数组（##321）：调用方（`planCompact`）手里已经有折好的块树，
+ *    再让它按 op 重建一遍 = 对同一份会话白折一次（78MB 会话实测每次 ~1.3s，两处叠加）。
+ *    `blocksToMessages` 只读块树（不回写），故复用安全。
+ */
+function sizeOfStore(store: BlockStore, opts?: Parameters<typeof blocksToMessages>[1]): SizeSnapshot {
     const msgs = blocksToMessages(store, opts);
     const bytes = utf8Bytes(msgs.map((m) => JSON.stringify(m)).join("\n"));
     // ⚠️ `turns` 必须按**投递口径**数，不能拿 `listTurnIds(ops)`（那是全部轮的个数）。
@@ -658,8 +741,15 @@ function sizeOfOps(ops: readonly Op[], opts?: Parameters<typeof blocksToMessages
  * 抽出来的理由：真发（deliveryOptsOf）与**预览/记账**（compact）必须用同一份构造逻辑，
  * 否则「预览说省 97%、真发却照旧」这种分叉根本测不出来。
  */
-function optsFor(policy: CompactPolicy, collect?: ClippedToolDetail[]): DeliveryOpts {
-    return makeDeliveryTransform(policy, toolOutRelPath, collect);
+function optsFor(policy: CompactPolicy, collect?: ClippedToolDetail[], keep?: readonly KeepStage[] | null): DeliveryOpts {
+    // 管道来自**当前配置**（config / history 分离：投递只读当前配置）—— 每个调用点都现读一次，
+    // 于是「改配置本轮即生效」对 `history.keep[]` 与预算**同一条**（无需压缩事件、无需重启）。
+    // `keep` 显式传入 = 调用方手里已有那一刻的配置（记账要快照，见 planCompact）。
+    const specs = keep !== undefined ? keep : loadAutoCompact(diyHome()).history?.keep;
+    return {
+        ...makeDeliveryTransform(policy, toolOutRelPath, collect),
+        plan: keepStagesToPlan(specs, budgetBytesOf(policy), clipSpecOf(toolResultOf(policy))),
+    };
 }
 
 /** 压缩预案的中间态（planCompact 输出；compact 与 compactPreview 共用） */
@@ -680,6 +770,8 @@ interface CompactPlan {
     rateSnap?: RateSnapshot;
     /** 账目（可缺；形状与账本的 `cost` 分组一致） */
     stats: NonNullable<CompactEventRecord["cost"]>;
+    /** 这次用的**整条 plan 原文**（含来源）—— 事件账 v3 的快照来源（##344 M2） */
+    planSnapshot: CompactPlanSnapshot;
 }
 
 /** 压缩预览（只算不写）：panel「事实」行 + 预览页共用 */
@@ -799,24 +891,71 @@ function clip(s: string, n = 6000): string {
         : s;
 }
 
-/** bash：30s 超时；失败也以文本回喂模型（错误是一等信息，不抛） */
-function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?: AbortSignal): Promise<string> {
+/**
+ * bash 输出缓冲上限（**内存护栏，不是截断策略**）。
+ *
+ * 旧值是 1MB 且触顶＝**静默**截断（`ERR_CHILD_PROCESS_STDIO_MAXBUFFER`，模型与用户都拿不到信号）。
+ * 现在两件事分开：① 上限提到 32MB —— 够装下正常的大输出，好让**投递层**落盘的是**完整**原文
+ * （否则「原文可回取」取回的是个半截）；② 触顶**显式**识别（见下面 err.code 分支），
+ * 与成功/报错**走同一条**投递截断路径（`capToolOutput`）。
+ */
+const BASH_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+
+/**
+ * bash 执行结果的**语义档**（##353：工具行 ✓/✗ 的口径真源）。
+ *
+ * `failed` = 这一行该画 ✗（execute 据此抛错 → SDK 发 tool-error → ops `status:"error"`）。
+ * 判据只看「命令跑起来了没有」这一条主线（##332）＋「有没有错误输出」（##353 复议 ##332 ①）。
+ */
+interface BashRun {
+    /** 回喂模型 / 落 ops 的**完整**文本（不在这里裁：投递层 `capToolOutput` 现算，##127） */
+    text: string;
+    /** 是否应标失败（✗）。判据见 runBash。 */
+    failed: boolean;
+}
+
+/**
+ * bash：30s 超时；**命令级**失败也以文本回喂模型（错误是一等信息，不抛）。
+ *
+ * ── ##353 复议（##332 ① 档）：「非零退出」不再一律当数据 ──
+ *   ① **命令级非零退出**（`err.code` 是数字 ⇒ 命令确实跑起来了）：
+ *        · **有错误输出**（stderr 非空）⇒ **失败**（`failed: true`：命令报了错，✗ 且恒展开）；
+ *        · **无错误输出** ⇒ **数据**（`grep`/`fd`/`rg`/`test` 未命中 = 退出 1 且静默 —— 这不是
+ *          "失败"，是"没查到"；模型仍靠 `[退出码 N]` 改命令 ⇒ 保持 ✓）。
+ *        · 正文一律 `[退出码 N]` + 输出，**不再兜底塞 `err.message`**：`Command failed: /bin/bash -c …`
+ *          正是「✓ + Command failed」自相矛盾的来源（无输出时把 Node 的报错文案当成了命令输出）。
+ *   ② **超时 / 取消**（`err.killed` / AbortError）⇒ 当数据（**保持现状**，不属本任务，见 ##332 ②）；
+ *   ③ **spawn / IO 失败**（`err.code` ∈ ENOENT / EACCES / ENOTDIR…，**非数字**）⇒ **本任务不动**：
+ *      现仍收敛成 `[退出码 ENOENT]` 文本 ⇒ 同样被标 done（**已知缺口**：命令没跑起来本该是失败，
+ *      留 ##332 ③ 抛错、与 read 同口径）。
+ *    对照：`read` 的 execute 特意**相反**（读不到就抛），见 buildTools 里 read 的注释。
+ */
+function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?: AbortSignal): Promise<BashRun> {
     return new Promise((resolve) => {
         if (signal?.aborted) {
-            resolve("[已取消]");
+            resolve({ text: "[已取消]", failed: false });
             return;
         }
         execFile(
             "/bin/bash",
             ["-c", command],
-            { cwd, timeout: limits.bashTimeoutMs, maxBuffer: 1024 * 1024, signal },
+            { cwd, timeout: limits.bashTimeoutMs, maxBuffer: BASH_MAX_BUFFER_BYTES, signal },
             (err, stdout, stderr) => {
                 const out = [stdout, stderr].filter(Boolean).join("\n");
-                if (err?.name === "AbortError") resolve("[已取消]");
-                else if (err?.killed) resolve(`[命令超时被杀]\n${clip(out)}`);
-                else if (err)
-                    resolve(`[退出码 ${err.code ?? "?"}]\n${clip(out || String(err.message))}`);
-                else resolve(out || "(无输出)");
+                // ⚠️ 这里一律返回**完整**文本（不 clip）：发给模型的那一份由 `capToolOutput` 在
+                //    投递层现算（##127）—— 在 execute 里裁 = 落进 ops 的原文当场丢。
+                if (err?.name === "AbortError") resolve({ text: "[已取消]", failed: false });
+                else if (err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || err?.code === "ENOBUFS")
+                    resolve({
+                        text: `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
+                        failed: false,
+                    });
+                else if (err?.killed) resolve({ text: `[命令超时被杀]\n${out}`, failed: false });
+                else if (typeof err?.code === "number")
+                    // 命令级非零退出（##353）：有 stderr = 失败，无 stderr = 查询未命中（数据）
+                    resolve({ text: `[退出码 ${err.code}]\n${out || "(无输出)"}`, failed: stderr.trim().length > 0 });
+                else if (err) resolve({ text: `[退出码 ${err.code ?? "?"}]\n${out || String(err.message)}`, failed: false });
+                else resolve({ text: out || "(无输出)", failed: false });
             },
         );
     });
@@ -827,6 +966,13 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
         bash: tool({
             description: "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
             inputSchema: z.object({ command: z.string().describe("要执行的 bash 命令") }),
+            // ##127：单条工具输出的截断**只落投递层** —— `toModelOutput` 改写「发给模型的那一份」
+            // （超 2000 行 / 50KB 时头尾 + marker + 原文落盘可 read 回取），`execute` 的返回值
+            // 仍是全文（落进 ops 的原文永不动）。见 services/tool-output.ts。
+            toModelOutput: ({ toolCallId, output }) => ({
+                type: "text" as const,
+                value: capToolOutput(String(output), toolCallId).text,
+            }),
             execute: async ({ command }, opts) => {
                 const home = diyHome();
                 // 自杀护栏（agent-guard.ts）已停用（2026-10-02）：
@@ -837,7 +983,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 // 现仅保留 write-ahead 审计：先落盘再执行，保证最后一幕不丢
                 appendAudit(home, { phase: "bash-start", taskUri, cwd, command });
                 const t0 = Date.now();
-                const out = await runBash(
+                const run = await runBash(
                     command,
                     cwd,
                     limits,
@@ -849,9 +995,15 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     cwd,
                     command,
                     ms: Date.now() - t0,
-                    result: clip(out, 500),
+                    result: clip(run.text, 500),
                 });
-                return out;
+                // **抛，不 return**（##353，与 read 的 ##329 同口径）：catch-and-return 的字符串是
+                // **正常工具结果** → SDK 走 tool-result 分支 → patch status:"done" → UI 画 ✓（就是
+                // 「✓ + Command failed」那种自相矛盾）；抛出 → SDK 发 tool-error → status:"error"
+                // → ✗ 且恒展开。失败文案随 error.message 落进 ops —— 模型侧照旧看得到（它要靠
+                // 退出码/诊断改命令）。判据（非零退出 + 有错误输出）全在 runBash 头注。
+                if (run.failed) throw new Error(run.text);
+                return run.text;
             },
         }),
         read: tool({
@@ -872,9 +1024,65 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     // style: "tool" —— 续读提示写成工具参数 offset=N（不是 shell 的 --offset）
                     return formatReadOutput(window, { maxBytes: limits.readMaxBytes, style: "tool" });
                 } catch (e) {
-                    if (e instanceof ReadWindowError) return `[读取失败] ${e.message}`;
-                    return `[读取失败] ${e instanceof Error ? e.message : e}`;
+                    // **抛，不返回字符串**（##329）：catch-and-return 的返回值是**正常工具结果**，
+                    // SDK 走 tool-result 分支 → patch status:"done" → UI 画 ✓、且失败块不自动展开
+                    // —— 失败只躺在折叠正文里（模型看得见，用户看不见）。
+                    // 抛出 → SDK 发 tool-error → status:"error"（UI 画 ✗ 并自动展开）。
+                    // ⚠️ 别改回 return：read **读不到就是失败**（catch 里返字符串 = 把失败包成
+                    //   "正常结果" → status:"done" → ✓ 且不展开，就是 ##329 的形态）。
+                    //   与 bash 的判据**不同向**，别互相抄（bash 侧 ##353 复议过）：bash 只在
+                    //   **非零退出且有错误输出**时才抛（无输出的非零退出 = 查询未命中，是数据；
+                    //   超时/取消仍当数据，模型靠退出码改命令；spawn/IO 失败那档未抛 = 缺口，见 ##332 ③）。
+                    //   read 则「读不到就是失败」：目标文件不存在没有"信息"可给，只有"这一步没做成"。
+                    //   ⚠️「bash.execute 现在会抛」≠「它见错就抛」—— 判据细节全在 runBash 头注。
+                    throw new Error(`[读取失败] ${e instanceof Error ? e.message : e}`);
                 }
+            },
+        }),
+        /**
+         * `compact_plan` —— 装配管道（plan）的**手**（##362 M3a）。
+         *
+         * 为什么是**单工具带 op** 而不是三个：三者共用同一份「全局配置 + 闸」语义，工具描述只写一遍
+         * （每个工具都占 prompt 预算）；调用方看到的是一件事「装配管道」而不是三个散命令。
+         * execute 不含任何 plan 逻辑 —— 一律走 `services/compact-plan-io`（与 RPC **同一实现**）：
+         * 「CLI 校验通过、工具绕过校验」这类分叉必现，不能两处各写。
+         */
+        compact_plan: tool({
+            description:
+                "读/校验/改写「历史装配管道」（plan）—— 它决定哪些历史消息发给模型。" +
+                "**这是全局配置：改动影响所有任务、所有 agent 的投递**。" +
+                "op=get 读当前生效 plan（含来源与预算）；op=check 校验一份级列表（可传 keep，缺省校验盘上配置）；" +
+                "op=set 写 history.keep[]（需用户在配置里开 history.allowAgentWrite=true，否则返回「没权限」而非报错）；" +
+                "op=restore 回滚到历史快照（缺省最近一份；回滚本身也可回滚）；" +
+                "op=reset 一键回**出厂缺省** plan（删 history.keep[]；**不依赖任何快照的逃生窗口** —— 快照全坏时用它）。" +
+                "级列表形状：`[{ type: ladder|role|recent|steps, must?, limit?, clip?, data }]`，从上往下生效（先声明的先挑）。",
+            inputSchema: z.object({
+                op: z.enum(["get", "check", "set", "restore", "reset"]).describe("要做什么"),
+                keep: z
+                    .string()
+                    .optional()
+                    .describe('op=check/set：级列表文本（YAML 或 JSON；数组，或 `{ keep: [...] }`）'),
+                snapshot: z.string().optional().describe("op=restore：快照 id（见 set 返回）；缺省最近一份"),
+            }),
+            execute: async ({ op, keep: keepText, snapshot }) => {
+                const home = diyHome();
+                // must 层实占字节要**量**（预算是管不到 must 的）—— 与 RPC 注入的是同一测量
+                const measure = (k: KeepStage[]): { mustBytes: number; hardCapBytes: number } =>
+                    getLocalAgent().measureMustStages(taskUri, k);
+                if (op === "get") return renderPlanView(planGet(home));
+                if (op === "check") {
+                    // 校验**不抛**（ok=false 也是有用信息）—— 与 set 的"写错就抛"不同向，理由见 compact-plan-io 头注
+                    return renderCheckView(planCheck({ home, taskUri, ...(keepText !== undefined ? { keepText } : {}), measure }));
+                }
+                if (op === "set") {
+                    if (!keepText || keepText.trim() === "") {
+                        throw new Error('op:"set" 需要 `keep`（级列表文本：YAML/JSON 数组，或 `{ keep: [...] }`）');
+                    }
+                    // 闸关 ⇒ 本调用返回**拒绝文本**（不抛）；非法 plan ⇒ 抛（那是模型写错了，该看到错在哪）
+                    return planSet({ home, taskUri, via: "agent", keepText, measure }).text;
+                }
+                if (op === "reset") return planReset({ home, taskUri, via: "agent" }).text;
+                return planRestore({ home, taskUri, via: "agent", ...(snapshot ? { snapshot } : {}), measure }).text;
             },
         }),
     };
@@ -915,21 +1123,26 @@ export class LocalAgentManager {
      * 权威落盘在任务目录 .diy/drafts.yaml（与聊天草稿同文件、同类数据：都是"丢了 = 用户白打"），
      * 因此重启应用、切 Electron/serve 模式后队列仍在；本对象只是无状态门面（每次现读盘）。
      */
-    private queue = new SteerQueue();
+    private queue = new SteerQueue(fileSteerPort, () => this.getLimits().maxSteerQueue);
     /**
      * provider 实例缓存，按 `baseUrl|key` 分组（一个 provider 可能配多个账号 → 多实例）。
      * chat 面（/chat/completions）与 responses 面（/responses）各一，key 同生命周期。
      */
     private providers = new Map<string, { chat: ReturnType<typeof createOpenAICompatible> | null; resp: ReturnType<typeof createOpenAI> | null }>();
     /**
-     * 会话历史的折叠缓存（per task）：已消费字节 + 前 4KB 指纹 + 增量 fold 出的块树。
+     * 会话历史的折叠缓存（per task **+ 窗口起点**）：已消费字节 + 前 4KB 指纹 + 增量 fold 出的块树。
      *
      * 为什么必须有：主进程是单线程，全量重放 74MB 会同步阻塞 ~1s 卡住所有 RPC
      * （含别的任务）。而轮末每次 append 只加一点点 —— 缓存后每轮成本 = **尾部大小 + O(块数)**。
      * 上限 HISTORY_CACHE_MAX（LRU）：块树常驻内存，不能无界堆积。
      */
-    private historyCache = new Map<string, { consumed: number; prefix: string; store: BlockStore }>();
+    private historyCache = new Map<string, { start: number; consumed: number; prefix: string; store: BlockStore }>();
     private _limits: LocalAgentLimits | null = null;
+    /**
+     * 在跑的轮次（taskUri → TurnRun）：**轮次的唯一真源**（#305 起不再借道生成器寿命）。
+     * 它同时是「同 task 已有轮次在跑」的判据（据此改为**排队**，##306；原 `sess.running`）与消费端订阅者的挂载点。
+     */
+    private turns = new Map<string, TurnRun>();
 
     /**
      * 语言模型解析的可注入出口（缺省按 API 面走 zen/go）。
@@ -942,6 +1155,20 @@ export class LocalAgentManager {
 
     constructor(modelResolver?: (id: string, key: string) => LanguageModel) {
         this.modelResolver = modelResolver;
+        // 注册表（##240）的活态属性取值器：viewers 只由**内容**订阅者构成（R3 —— 注册表自身的
+        // 订阅者不许计入，否则注册表一开全库会话都显示"有人看"）；queue = 待投递留言条数。
+        // 这里是注册表缺省取值器的**超集**（多算 chat 流订阅者 `run.subs`）；manager 未构造时
+        // 注册表退回缺省（直查 ops-feed）——照样数得出来（review1 P2-1 缺口 C）。
+        sessionRegistry.setDeps({
+            viewersOf: (uri) => this.watchers(uri),
+            queueOf: (uri) => {
+                try {
+                    return this.queue.list(uri).length;
+                } catch {
+                    return 0; // 队列读盘失败不能让注册表崩（它只是"此刻的事实"，不是权威落盘）
+                }
+            },
+        });
     }
 
     /**
@@ -967,6 +1194,23 @@ export class LocalAgentManager {
     }
 
     /**
+     * 发请求前登记归属 —— 流量观测（undici diagnostics_channel，见 core/traffic.ts）靠
+     * 请求头里的 `x-opencode-session` 反查「这条记录属于谁」，因此每次真发（streamText /
+     * generateText）前必须登记一次：同时把 attempt 计数归零（重试即自增）。
+     */
+    private noteTraffic(taskUri: string, turnId: string, rm: ResolvedModel, maxRetries: number): void {
+        traffic.noteRun({
+            session: sessionIdOf(taskUri),
+            taskUri,
+            turnId,
+            provider: rm.provider,
+            model: rm.id,
+            baseUrl: resolveBaseUrl(rm),
+            maxRetries,
+        });
+    }
+
+    /**
      * 解析「人物/覆盖里写的模型引用」→ 运行时模型 + 密钥。
      * 未知名一律 fail-fast；密钥未配置也 fail-fast（不静默换模型、不拿空 key 发请求）。
      * 例外：注入了 `modelResolver`（单测桩模型）时跳过密钥解析 —— 桩模型不出网，无需 key。
@@ -979,26 +1223,145 @@ export class LocalAgentManager {
         return { rm, key: this.modelResolver ? "" : resolveModelKey(rm) };
     }
 
-    /** 生效限制：首次使用读 limits.json 并缓存（改文件需重启应用，与 zen key 同生命周期语义） */
+    /** 读 $DIY_HOME/local/limits.json（不存在/解析失败 → null，交由 resolveLimits 逐级回退） */
+    private readLimitsFile(): Partial<LocalAgentLimits> | null {
+        try {
+            if (existsSync(limitsFile())) {
+                return JSON.parse(readFileSync(limitsFile(), "utf-8")) as Partial<LocalAgentLimits>;
+            }
+        } catch (e) {
+            console.warn(`[local-agent] limits.json 解析失败，用默认值:`, e);
+        }
+        return null;
+    }
+
+    /**
+     * 生效限制：首次使用读 limits.json 并缓存（与 zen key 同生命周期语义）。
+     * ⚠️ 缓存**必须**由 `setLimits` 显式失效，否则页面改了不生效（反直觉坑，##240）。
+     */
     getLimits(): LocalAgentLimits {
         if (!this._limits) {
-            let file: Partial<LocalAgentLimits> | null = null;
-            try {
-                if (existsSync(limitsFile())) {
-                    file = JSON.parse(readFileSync(limitsFile(), "utf-8")) as Partial<LocalAgentLimits>;
-                }
-            } catch (e) {
-                console.warn(`[local-agent] limits.json 解析失败，用默认值:`, e);
-            }
-            this._limits = resolveLimits(file);
+            this._limits = resolveLimits(this.readLimitsFile());
             console.log(`[local-agent] 生效运行限制: ${JSON.stringify(this._limits)}`);
         }
         return this._limits;
     }
 
+    /**
+     * 写运行限制（##240 第 3 项）：patch 合并进 `$DIY_HOME/local/limits.json`，并**立即失效缓存**。
+     *
+     * 语义：**下一轮生效** —— 在跑的轮次用的是它起跑时读到的值（`runTurn` 开头 `getLimits()` 一次），
+     * 本轮不中途换挡（换挡会让同轮前后步数口径不一致）。
+     *
+     * 优先级提醒：环境变量 `DIY_LOCAL_*` **高于**文件（见 resolveLimits）；若某字段被环境变量
+     * 钉死，写文件对它无效 —— 返回值是合并后的**生效值**，调用方以它为准即可发现。
+     */
+    setLimits(patch: Partial<LocalAgentLimits>): LocalAgentLimits {
+        const merged: Partial<LocalAgentLimits> = this.readLimitsFile() ?? {};
+        for (const [k, v] of Object.entries(patch) as [keyof LocalAgentLimits, unknown][]) {
+            // 非法值忽略（不写坏文件）：与 resolveLimits 同一判据（有限正数）
+            if (typeof v === "number" && Number.isFinite(v) && v > 0) merged[k] = v;
+        }
+        writeFileSync(limitsFile(), `${JSON.stringify(merged, null, 2)}\n`, "utf-8");
+        this._limits = null; // 失效缓存：下一次 getLimits() 现读（含新值）
+        return this.getLimits();
+    }
+
     // 【已移除】sinceTurnIdOf / deliveryOptsOf —— 旧"读压缩账边界"的投递口径。
     // 配置 / 历史分离后，投递口径一律取**当前配置**（见 deliveryHistory / requestView），
     // 压缩账只作历史快照。（保留此说明，免得后来者又去找它们。）
+
+    /**
+     * 会话正在生成中：把新消息**入队**并回一条显式回执（##306）。
+     *
+     * 为什么必须给回执：调用方（CLI / UI / 另一个窗口）拿到的流若不产 op，用户就无从分辨
+     * 「已排队」与「被吞了」—— 空流退出就是静默失败。回执走本模块的**单一权威路径**
+     * （先整批落盘 + 收敛内存，再逐条投递），与插话上限分支同一纪律：流被 return 展开也不会
+     * 留半截块。kind 用 error 只是因为 error 块**不参与 LLM 投影**（projectAll 不把它转成
+     * 消息），免得这条机器回执被当成真实发言发给模型。
+     *
+     * 入队失败（队列满 / 空消息）直接抛出 —— 那是"这条消息没送达"，调用方必须知道。
+     */
+    private *enqueueWhileRunning(taskUri: string, sess: LocalSession, message: string): Generator<Op> {
+        // ⚠️ 语义是 **steer 合并**（并入正在跑的轮次序列、整批投），**不是**串行独立
+        // 轮次排队 —— 与 review306 发现①对齐：入队后由续轮循环整批取走（见 chat 的轮末逻辑），
+        // 多条排队消息 = 一次续轮请求消化，不逐条开轮。
+        // 投递时机取 `DEFAULT_STEER_MODE`（现为 `next-step`，##360）：生成中再发消息，多数情形
+        // 就是"立刻补一句 / 纠正"，故插进正在跑的轮次、下一个模型步边界前整批投。代价是它排在
+        // 当前轮未说完的话前面（不再是"谁先说话谁先投"的严格顺序）—— 想"排在这一轮之后"的用户
+        // 可在横条上把该条切回 `next-turn`（切换只改这条队列项的 mode）。
+        const items = this.queue.add(taskUri, DEFAULT_STEER_MODE, message);
+        sessionRegistry.noteActivity(taskUri); // queue 变化 → 注册表订阅方即时可见
+        // items 的末条就是刚入队的那条（`add` 返回整批快照）
+        const item = items[items.length - 1]!;
+        const turnId = this.receiptTurnId(sess, item.id);
+        const noticeId = `${turnId}_queued`;
+        const ops: Op[] = [
+            // `steerId` = 这条回执对应的队列条目（`steer/N`）：id 里已含，再落一份到 meta
+            // 是为了让消费端（CLI / 后续 UI）不必**解析 id 字符串**就能回查该条队列项
+            { op: "start", id: turnId, kind: "turn", meta: { source: "queue", steerId: item.id } },
+            { op: "start", id: noticeId, kind: "error", parent: turnId, meta: { source: "queue" } },
+            {
+                op: "delta",
+                id: noticeId,
+                fields: {
+                    message: `会话正在生成中：这条消息已排队（队列第 ${items.length} 条，投递时机：${steerModeLabel(DEFAULT_STEER_MODE)}）`,
+                },
+            },
+            { op: "stop", id: noticeId },
+            { op: "stop", id: turnId },
+        ];
+        const sink = this.opsSink(taskUri);
+        for (const op of ops) {
+            sink(op);
+            sess.store.apply(op);
+        }
+        for (const op of ops) yield op;
+    }
+
+    /**
+     * 排队回执轮的 id：`qt-` + 队列条目 id（`qt-steer/3`）—— 与队列条目**一一对应**，
+     * 看 id 就知道是哪条排队消息（CLI / 日志 / UI 回查都靠它）。
+     *
+     * 为什么不只用条目 id：条目序号**在队列清空后从头来**（`newSteerId` 的既定语义：只保证
+     * 队列内唯一，见 `steer-queue.ts` 头注），而回执轮一旦落进 ops.jsonl 就**长期留在史书里**。
+     * 于是「投递完 → 再排一条」必然重发 `steer/1` → 撞上历史里那条回执轮：重放时 BlockStore
+     * 对「重复 start」只记 issue 并**丢弃** start（`local-blocks.ts`），随后 notice 的 delta
+     * 会累加到**上一集那条回执块**上（文案拼接），stop 提前闭合 —— 静默且难查（review2 发现 C）。
+     * 故撞上已存在的块 id 时加序号后缀；判据是**块树里是否已有**（含重载后重放出来的历史块），
+     * 跨重启也成立（不依赖会话内存，也不需要 Date.now 这种毫秒粒度的巧合）。
+     */
+    private receiptTurnId(sess: LocalSession, itemId: string): string {
+        let id = `qt-${itemId}`;
+        for (let n = 1; sess.store.blocks.has(id); n++) id = `qt-${itemId}_${n}`;
+        return id;
+    }
+
+    /**
+     * op 即传即落的落盘函数（存储 = 传输）：chat / 排队回执 / 加载自愈**共用的唯一落盘点**。
+     *
+     * 【为什么收敛成一处】落盘与广播必须成对（##307）：写侧 publish 让订阅方（UI 各窗口、
+     * 其他 agent）即时看到增量，而 **publish 只能在 appendFileSync 成功之后** —— 落盘失败
+     * 还广播，订阅侧水位就会超前于盘上文件，此后一切按行号的补发/去重全错。
+     * 三份各自 append 的实现只要有一处漏 publish，症状就是「该来源的 op UI 永远看不见」，
+     * 且只在特定路径（排队回执 / 崩溃自愈）复现 —— 所以只留这一份。
+     */
+    private opsSink(taskUri: string): (op: Op) => void {
+        const fp = opsFile(taskUri);
+        return (op) => {
+            try {
+                appendFileSync(fp, `${JSON.stringify(op)}\n`, "utf-8");
+            } catch (e) {
+                // 落盘失败不阻断流，但必须出声（否则丢行不可观测）；**不 publish**（水位不许超前盘）
+                console.error(`[local-agent] ops 落盘失败 ${fp}:`, e);
+                // ⚠️ 于是这条 op 会**只 yield 不 publish** —— 消费侧（##307 起 UI 走 opsWatch 增量订阅，
+                // ##327 起 chat 流不再 apply）因此看不见它。这是**自洽的**，不是缺陷：盘上没有的东西，
+                // 重载后本来也会丢，显示它反而是假象（与「wire = 存储 = 渲染输入」同一取向）。
+                return;
+            }
+            opsFeed.publish(taskUri, [op]);
+        };
+    }
 
     private getSession(taskUri: string): LocalSession {
         let s = this.sessions.get(taskUri);
@@ -1040,14 +1403,8 @@ export class LocalAgentManager {
     }
 
     private convergeOnLoad(taskUri: string, s: LocalSession): void {
-        const fp = opsFile(taskUri);
-        const sink = (op: Op) => {
-            try {
-                appendFileSync(fp, `${JSON.stringify(op)}\n`, "utf-8");
-            } catch (e) {
-                console.error(`[local-agent] 加载自愈落盘失败 ${fp}:`, e);
-            }
-        };
+        // 自愈补写的 op 也要走同一个 sink：它们同样是「会话内容」，UI 必须即时看见
+        const sink = this.opsSink(taskUri);
         // 先补 tool 的业务终态（patch + stop），再补剩余结构开口（stop）—— 前者已 stop 的块
         // 不会被后者重复处理（danglingStopPatches 只挑未 stop 的）。
         for (const op of this.healResidualOps(s)) {
@@ -1241,7 +1598,7 @@ export class LocalAgentManager {
      * 三个事实都从现成数据取（零额外请求、零额外模型调用）：
      *   · systemContextChanged —— 当前 system 全文 vs 上一条 steps 快照的 systemText
      *   · sinceLastRequestMs   —— now − 最后一条 usage 的 ts
-     *   · windowRatio          —— 最后一步用量（最后一步 = 窗口占用，见 ##211 §三）/ contextLimit
+     *   · windowTokens         —— 最后一步**实测**用量（最后一步 = 窗口占用，见 ##211 §三）的 token 数
      */
     autoCompactStatus(taskUri: string): {
         config: AutoCompactConfig;
@@ -1262,23 +1619,17 @@ export class LocalAgentManager {
         const usages = readStepUsages(taskUri);
         const last = usages.at(-1) ?? null;
         const sinceLastRequestMs = last ? Date.now() - Date.parse(last.ts) : null;
-        const model = personaForTask(home, taskUri).model;
-        const limit = contextLimitOf(model);
-        // 窗口占用：优先用**实测**（最后一步用量 = 窗口占用的权威口径，见 ##211 §三）；
-        // 没有用量账（老会话 / 手工造的会话）时退回**估算**（当前投递的字节）——
-        // 估不准总比"未知"强：未知会让"窗口超限"这个硬件约束形同虚设。
-        const windowRatio = !limit
-            ? null
-            : last
-              ? bucketsOf(last.usage as UsageLike).total / limit
-              : (delivery.system.bytes + delivery.runtime.bytes + this.deliveryHistory(taskUri, this.sessions.get(taskUri)?.store ?? new BlockStore()).reduce((a, m) => a + JSON.stringify(m).length, 0)) /
-                limit;
+        // 窗口占用（**token 数**）：口径 = 该会话**最后一步实测用量** `usage.total`（真实 token 数，
+        // 最后一步 = 窗口占用，见 ##211 §三；用户 2026-10-15 拍板 token 域，见 ##268 §6.9 D7）。
+        // 没有用量账（老会话 / 手工造的会话）→ null：**无实测不判**，不退回「投影字节」估算
+        // （那是被用户否掉的"文字数"口径；估出来的 token 数只会误导触发时机）。
+        const windowTokens = last ? bucketsOf(last.usage as UsageLike).total : null;
 
         const facts: AutoCompactFacts = {
             systemContextChanged,
             sinceLastRequestMs,
             ttl: this.effectiveTtlOf(taskUri),
-            windowRatio,
+            windowTokens,
         };
         const triggers = detectAutoCompactTriggers(facts, config);
         const raw = { path: autoCompactFile(home), text: readAutoCompactText(home) };
@@ -1316,17 +1667,31 @@ export class LocalAgentManager {
      * 失效判据见下方 invalid —— 宁可把整份日志重放一遍，也绝不把两份文件的历史缝在一起。
      */
     history(taskUri: string): Op[] {
-        const fp = opsFile(taskUri);
+        return this.foldedOps(taskUri, opsFile(taskUri), 0);
+    }
+
+    /**
+     * 从 `start` 字节读到文件尾 → fold → compact。**全量与窗口共用这一条**（`start = 0`
+     * 就是全量），于是「增量 fold」「缓存失效判据」「issue 出声」只有一份实现。
+     *
+     * 增量：per (task, start) 缓存已 fold 的块树 + 已消费字节，只读新增尾巴
+     * （轮末 append 的代价 = 尾巴大小）。缓存按键含 `start`：**不同窗口起点是不同的树**，
+     * 共用一条会被互相冲掉（尾部窗口的起点固定 ⇒ 轮末刷新稳定命中同一条）。
+     *
+     * 失效判据（任一破了就重放整段）：
+     *   ① 已消费长度不超过当前文件（否则 = 被清空 / 截断 / 换了文件）；
+     *   ② 前 4KB 指纹一致（否则 = 被整文件覆盖 —— 同尺寸覆盖时大小与偏移都看不出来）。
+     * 取向：宁可重放一遍，也绝不把两份日志的历史缝在一起。
+     */
+    private foldedOps(taskUri: string, fp: string, start: number): Op[] {
         const size = fileSize(fp);
         const prefix = readPrefix(fp);
-        const cached = this.historyCache.get(taskUri);
-        // 缓存可用 ⟺ 两条都成立（任一破了就重放整份）：
-        //   ① 已消费长度不超过当前文件（否则 = 被清空/截断/换了文件）；
-        //   ② 前 4KB 指纹一致（否则 = 被整文件覆盖 —— 同尺寸覆盖时大小与偏移都看不出来）。
-        const c: { consumed: number; prefix: string; store: BlockStore } =
-            cached && !(cached.consumed > size || (size > 0 && cached.prefix !== prefix))
+        const key = `${taskUri}#${start}`;
+        const cached = this.historyCache.get(key);
+        const c: { start: number; consumed: number; prefix: string; store: BlockStore } =
+            cached && cached.start === start && !(cached.consumed > size || (size > 0 && cached.prefix !== prefix))
                 ? cached
-                : { consumed: 0, prefix: "", store: new BlockStore() };
+                : { start, consumed: start, prefix: "", store: new BlockStore() };
         if (size > c.consumed) {
             const { ops, consumed } = readOpsRange(fp, c.consumed, size);
             for (const op of ops) c.store.apply(op);
@@ -1335,8 +1700,8 @@ export class LocalAgentManager {
         c.prefix = prefix;
         // LRU（Map 保插入序）：访问即移到队尾，超限淘汰最久没打开的会话（谁也不希望
         // 「刚看过的那本」被另一个冷会话挤掉）。
-        this.historyCache.delete(taskUri);
-        this.historyCache.set(taskUri, c);
+        this.historyCache.delete(key);
+        this.historyCache.set(key, c);
         if (this.historyCache.size > HISTORY_CACHE_MAX) {
             const oldest = this.historyCache.keys().next().value;
             if (oldest !== undefined) this.historyCache.delete(oldest);
@@ -1348,6 +1713,60 @@ export class LocalAgentManager {
             console.warn(`[local-agent] 会话 ${taskUri} 折叠前 fold 出 ${c.store.issues.length} 条 issue：${sample}`);
         }
         return compactOps(c.store);
+    }
+
+    /**
+     * **尾部窗口**（大会话分页的「最近一段」）—— 只 fold 一段，不再是整份。
+     *
+     * 为什么要有它（任务 293）：290 折叠后冷加载仍是**整份** —— 读盘 + 全量 fold（74MB 会话
+     * ~2.3s，主线程阻塞）+ 整量回包（15.2MB）。分页只 fold「最近一段」，滚动上取再补一段。
+     *
+     * `cursor` 语义：**回传上一次发的游标** = 「从这段的起点重取」（轮末刷新的路径 —— 起点
+     * 固定，文件只变长，于是渲染端的段依然是同一段的延长，增量并入即可）。缺省则是首载：
+     * 按 `budgetBytes` 从尾部 seek 一个轮首作为起点。游标失效（清空 / 覆盖写）⇒ 退全量。
+     *
+     * 不变量：`ops` 里除末轮（可能正在写）外每轮完整，且起点落在轮 `start` 行行首
+     * （见 local-ops-seek 的三条保证）—— 窗口边界错位会让块塌成根、patch 丢失。
+     */
+    historyWindow(taskUri: string, opts: { budgetBytes?: number; cursor?: string } = {}): HistoryWindow {
+        const fp = opsFile(taskUri);
+        const at = opts.cursor ? decodeCursor(opts.cursor, fp) : null;
+        // 带了游标却失效（清空 / 覆盖写 / 换了文件）⇒ 退全量：**绝不把两段历史缝在一起**，
+        // 与折叠缓存的判据同一取向（宁可重放整份，也不给出错位的窗口）。
+        if (opts.cursor && (at === null || !isTurnStartAt(fp, at))) return this.segmentOf(taskUri, fp, 0, undefined, true);
+        return this.segmentOf(taskUri, fp, at ?? seekWindowStart(fp, opts.budgetBytes ?? 0));
+    }
+
+    /**
+     * **更早的一段**（上滚取）：`cursor` 所在段起点之前的 `budgetBytes` 字节，
+     * 同样向上取一个轮首作为新段起点（floor，永不落空）。
+     *
+     * 已到文件头（`at === 0`）⇒ 空段 + `hasMore: false`（渲染端据此收工，不再请求）。
+     */
+    historyOlder(taskUri: string, opts: { cursor: string; budgetBytes?: number }): HistoryWindow {
+        const fp = opsFile(taskUri);
+        const at = decodeCursor(opts.cursor, fp);
+        if (at === null || !isTurnStartAt(fp, at)) return this.segmentOf(taskUri, fp, 0, undefined, true); // 游标失效 ⇒ 全量 + stale
+        if (at <= 0) return { ops: [], cursor: encodeCursor(fp, 0), hasMore: false, stale: false };
+        // 至少往前 1 字节：`budget` 缺失（或 0）时退化成「只取前一轮」，而不是原地打转
+        const start = seekTurnStartAtOrBefore(fp, at - Math.max(1, opts.budgetBytes ?? 0));
+        // 当前**不可达**（`seekTurnStartAtOrBefore` 的 floor 语义保证 `start ≤ at - 1`），
+        // 留着是防未来改动把「至少往前 1 字节」这条丢掉 —— 那时空转 = 渲染端死循环补同一段。
+        if (start >= at) return { ops: [], cursor: encodeCursor(fp, at), hasMore: false, stale: false };
+        return this.segmentOf(taskUri, fp, start, at);
+    }
+
+    /**
+     * 窗口的唯一出口：读 `[from, to)` → fold → compact。三种取法共用同一份语义
+     * （读满 / 半行留给下次见 readOpsRange；compact 让回包从 15MB 降到段大小）。
+     *
+     * `hasMore = from > 0`：起点不在文件头 ⇒ 前面可能还有轮。若前面只剩非轮内容，
+     * 下一次上滚会得到空段 + `hasMore: false` —— 多一次请求，不会出错。
+     */
+    private segmentOf(taskUri: string, fp: string, from: number, to?: number, stale = false): HistoryWindow {
+        // `to` 缺省 = 到文件尾 ⇒ 走增量缓存（轮末刷新的高频路径）；定长区间（上滚段）直读直 fold。
+        const ops = to === undefined ? this.foldedOps(taskUri, fp, from) : foldRange(fp, from, to);
+        return { ops, cursor: encodeCursor(fp, from), hasMore: from > 0, stale };
     }
 
     /**
@@ -1371,13 +1790,21 @@ export class LocalAgentManager {
      */
     private planCompact(taskUri: string, policyInput: unknown): CompactPlan {
         const policy = normalizePolicy(policyInput);
+        // 装配管道 = **当前配置**的 `history.keep[]`；没配 ⇒ 缺省管道（回落，行为与 ##343 M1 一致）。
+        const cfgKeep = loadAutoCompact(diyHome()).history?.keep;
+        const keepUsed: readonly KeepStage[] = cfgKeep && cfgKeep.length > 0 ? cfgKeep : DEFAULT_KEEP;
+        const planSnapshot: CompactPlanSnapshot = {
+            budgetBytes: policy.modeData.budgetBytes,
+            keep: keepUsed.map((k) => ({ ...k })),
+            source: cfgKeep && cfgKeep.length > 0 ? "config" : "default",
+        };
         const scan = scanOpsFile(taskUri);
         const turnIds = listTurnIds(scan.ops);
         const store = new BlockStore();
         for (const op of scan.ops) store.apply(op);
         // 保留 = 预算选择（实时算）。keptRuns = 预算的**过滤器表达**（存进事件，供历史回溯还原 diff）
         const all = projectAll(store);
-        const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, optsFor(policy));
+        const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, optsFor(policy, undefined, keepUsed));
         const keptRuns = sel.keptRuns;
         const keptSet = new Set(sel.kept.map((i) => all[i]!.turn).filter((t): t is string => !!t));
         const keptTurns = keptSet.size;
@@ -1389,8 +1816,8 @@ export class LocalAgentManager {
             keptFromTurnId !== null ? (scan.turnOpIndex.get(keptFromTurnId) ?? -1) : scan.ops.length;
 
         const clipped: ClippedToolDetail[] = [];
-        const before = sizeOfOps(scan.ops);
-        const after = sizeOfOps(scan.ops, optsFor(policy, clipped));
+        const before = sizeOfStore(store);
+        const after = sizeOfStore(store, optsFor(policy, clipped));
 
         const droppedDetail = droppedIds.map((id) =>
             describeTurn(store, id, scan.turnOffsets.get(id) ?? 0, scan.turnBytes.get(id) ?? 0),
@@ -1414,7 +1841,7 @@ export class LocalAgentManager {
               }
             : undefined;
         const stats = usageStats(readStepUsages(taskUri), after.estTokens, rateSnap);
-        return { policy, keptTurns, keptFromTurnId, keepFromOpIndex, droppedIds, keptRuns, scan, store, before, after, droppedDetail, clipped, rateSnap, stats };
+        return { policy, keptTurns, keptFromTurnId, keepFromOpIndex, droppedIds, keptRuns, scan, store, before, after, droppedDetail, clipped, rateSnap, stats, planSnapshot };
     }
 
     /**
@@ -1427,6 +1854,10 @@ export class LocalAgentManager {
         policy: CompactPolicy | null,
         keptFromTurnId: string | null | undefined,
         summaryOverride?: string,
+        /** 调用方**手里已有同一份会话折好的块树**时传入（`compactPreview` 一次算 base/mod 两份视图）：
+         *  省掉两遍「整读 + 解析 + 折叠」—— 这是「一份 78MB 文件被读三遍」的那两遍（##321）。
+         *  只读复用：`buildHistory` 只投影（`blocksToMessages` / `projectAll` 均不回写块树）。 */
+        storeInput?: BlockStore,
     ): RequestView {
         const home = diyHome();
         const globals = assembleGlobals(home, projectFromUri(taskUri), { taskUri }) as unknown as Record<string, unknown>;
@@ -1434,8 +1865,7 @@ export class LocalAgentManager {
         const { cwd } = resolveCwdWithNote(home, taskUri);
         const L = this.getLimits();
         const tools = buildTools(cwd, L, taskUri);
-        const store = new BlockStore();
-        for (const op of readJsonl<Op>(opsFile(taskUri))) store.apply(op);
+        const store = storeInput ?? replay(readJsonl<Op>(opsFile(taskUri)));
         // 与真发**同一条链**（含压缩注记）：面板里的"压缩后预览"就是这一份
         const history = withRuntime(
             this.deliveryHistoryForView(store, policy, taskUri),
@@ -1490,6 +1920,7 @@ export class LocalAgentManager {
         const model = personaForTask(diyHome(), taskUri).model;
         const { rm, key } = this.resolveModel(model);
         const dropped = droppedTextOf(p.store, p.droppedIds);
+        this.noteTraffic(taskUri, "summary", rm, 2);
         const res = await generateText({
             model: this.modelFor(rm, key),
             prompt: summaryExtractionPrompt(dropped, p.droppedIds.length),
@@ -1516,16 +1947,19 @@ export class LocalAgentManager {
     /** 压缩预览（只算不写）：面板左侧参数 + 右侧请求 YAML diff + 事实表的数据源 */
     compactPreview(taskUri: string, policyInput: unknown, summaryText?: string): CompactPreview {
         const p = this.planCompact(taskUri, policyInput);
+        // 一次算两份视图（base/mod）→ 复用 planCompact 刚折好的块树：整读 + 解析 + 折叠只做一次。
+        // 同步链路内文件不会变，且投影只读（不回写块树），故两份视图看到的是**同一份**历史。
+        const store = p.store;
         // base = **未压缩**的投递（全量历史、无注记）—— 配置 / 历史分离后，"当前配置"就是 mod，
         // 拿它当 base 会得出"无差异"。预览的价值是看"这次压缩**去掉/改了什么**"，故 base 取全量。
-        const base = this.buildRequestView(taskUri, null, undefined);
+        const base = this.buildRequestView(taskUri, null, undefined, undefined, store);
         // 勾选摘要但尚未生成 → 用占位骨架（让用户先看见"会得到什么"，且不花一分钱）
         const sum = p.policy.summary
             ? summaryText !== undefined
                 ? summaryText
                 : this.effectiveSummary(taskUri) || summaryPlaceholder(emptySummary(p.droppedIds.length))
             : "";
-        const mod = this.buildRequestView(taskUri, p.policy, p.keptFromTurnId, sum);
+        const mod = this.buildRequestView(taskUri, p.policy, p.keptFromTurnId, sum, store);
         const inputRate = costOf(base.model, p.after.estTokens)?.input ?? 0;
         return {
             policy: p.policy,
@@ -1540,6 +1974,24 @@ export class LocalAgentManager {
             baseRequest: base,
             facts: layerFacts(base, mod, inputRate),
         };
+    }
+
+    /**
+     * 「必保层（`must` 级）实占字节」测量（##344 M2 · `plan check` 的硬判据）。
+     *
+     * 只跑**必保级**：那是预算**管不到**的部分（撑爆就白压 —— 压了跟没压一样，还白付重建代价）。
+     * 硬上限 = 模型上下文窗口 token × 4（无 tokenizer，与全仓同一个粗估口径）；窗口未知 ⇒ 兜底常量。
+     */
+    measureMustStages(taskUri: string, keep: readonly KeepStage[]): { mustBytes: number; hardCapBytes: number } {
+        const policy = loadAutoCompact(diyHome()).policy;
+        const capTokens = contextLimitOf(personaForTask(diyHome(), taskUri).model);
+        const hardCapBytes = capTokens !== undefined ? capTokens * 4 : DEFAULT_MUST_HARD_CAP_BYTES;
+        const must = keep.filter((s) => s.must === true);
+        if (must.length === 0) return { mustBytes: 0, hardCapBytes };
+        const all = projectAll(replay(readJsonl<Op>(opsFile(taskUri))));
+        const p = keepStagesToPlan(must, Number.MAX_SAFE_INTEGER, clipSpecOf(toolResultOf(policy)));
+        const sel = runPlan(all, p, { costOf: costOfWith(optsFor(policy)) });
+        return { mustBytes: sel.keptBytes, hardCapBytes };
     }
 
     /**
@@ -1579,12 +2031,14 @@ export class LocalAgentManager {
         const ts = new Date().toISOString();
         const rec: CompactEventRecord = {
             kind: "compact",
-            v: 2,
+            v: 3,
             id: ts,
             ts,
             by,
             trigger,
             policy: p.policy,
+            // v3 新增：**当时整条 plan 的原文**（快照 ⇒ 事后可回放「那一刻用的是哪套 plan」）
+            plan: p.planSnapshot,
             // 锚点：只记**物理位置**（逻辑 id 只是 label）
             boundary: {
                 keptFromTurnId: p.keptFromTurnId,
@@ -1624,33 +2078,58 @@ export class LocalAgentManager {
         return true;
     }
 
+    /**
+     * 用户主动停止：中止在跑的轮次。**唯一的"停"入口**（##305：孤儿不再自动回收）。
+     * 消费端断开**不**走这里 —— 刷新/切页/关窗不再掐掉正在跑的轮次。
+     */
     cancel(taskUri: string): boolean {
         const s = this.sessions.get(taskUri);
         if (!s?.running) return false;
-        s.running.abort();
+        // 显式带 `source`：`TurnEndReason.aborted.data.source` 是**可见文案的判据**
+        // （shared/turn-end 的 `abortText`），也是"用户停止"与"流意外中断"的分档位。
+        // 不带 reason 的话 `abortSource(signal, "abort")` 会把它兜成 `"abort"`，
+        // 与旧日志里"来源不明的中断"同档 —— 那正是 R4 要消掉的分叉（##308）。
+        s.running.abort({ source: "user" });
         return true;
     }
 
     /**
-     * 入队一条插话 —— **入队本身不开轮**（它只管"记下来"）。
+     * 入队一条插话 —— **入队本身不开轮**（它只管"记下来"；正在跑的轮次按投递时机取走，
+     * 没有轮次在跑则留待下一轮）。
      *
      * 调用方（api-impl 的 chat handler）在入队后必须做「无活跃轮次则唤醒一轮」的判定
      * （见同处的注释与 hasActiveTurn）：否则空闲时入队的留言**没有任何机制会因它启动一轮**，
      * 永远躺在 .diy/drafts.yaml 里（##303：模型永远看不到，用户以为发出去了）。
      */
     steerAdd(taskUri: string, mode: SteerMode, text: string): SteerItem[] {
-        return this.queue.add(taskUri, mode, text);
+        const r = this.queue.add(taskUri, mode, text);
+        sessionRegistry.noteActivity(taskUri); // queue 是注册表的活态属性
+        return r;
     }
 
     /**
-     * 该任务此刻是否真有轮次在跑 —— 读 runtime-context 的内存真值（跨 CLI / 跨窗口，不是本地推测）。
+     * 此刻本会话**是否有轮次在跑**（判据 = `chat()` 的排队判据，**同一个** `turns` 注册表）。
      *
-     * 用它而不是 `this.sessions.get(uri)?.running`：sessions 只在"这个进程碰过该任务"时才有条目，
-     * 而 runtime-context 由 runTurn 的入口/收尾登记，是「此刻真在跑哪些轮次」的同一个权威
-     * （UI 的 agent.local.running 读的也是它）。
+     * 用途（##341 review1 P2-1）：替用户跑轮次的调用方（工作流驱动环）**起轮前**要先问这一句 ——
+     * `chat()` 对忙会话的既有语义是「**不拒绝、改排队**」（##306 插话），于是"起一轮"会静默退化成
+     * "排一条插话"：调用方既收不到正文，它的提示词还进了别人的对话队列。
+     * 只读、不改任何状态 —— 判据与动作分开，调用方自己决定怎么办。
      */
-    hasActiveTurn(taskUri: string): boolean {
-        return activeTurnList().some((t) => t.taskUri === taskUri);
+    busy(taskUri: string): boolean {
+        return this.turns.has(taskUri);
+    }
+
+    /**
+     * 本会话的**观察者数** = 本轮 chat 流的消费端（`run.subs`）+ 该会话 op 流的订阅者
+     * （UI 窗口 / CLI watch，`opsFeed`）。
+     *
+     * 用途：`agent.local.running` 的可见性标注（detached / subscribers，[5] ##308 数据源）。
+     * **不用于回收**（##305 拍板：不做"无人即停"—— 会误杀正常长任务）。
+     * 两个来源都要算：CLI 只消费 chat 流、UI 只订阅 op 流 —— 少算一个就会把"有人正在看"
+     * 的轮次标成 detached（##308 页面上会误报"没人看"）。
+     */
+    watchers(taskUri: string): number {
+        return (this.turns.get(taskUri)?.subs.size ?? 0) + opsFeed.subscriberCount(taskUri);
     }
 
     /**
@@ -1670,7 +2149,7 @@ export class LocalAgentManager {
             steerId: it.id,
         }));
         if (seed.length === 0) return;
-        yield* this.chat(taskUri, "", modelOverride, reasoningEffortOverride, seed);
+        yield* this.chat(taskUri, "", modelOverride, reasoningEffortOverride, undefined, seed);
     }
 
     /**
@@ -1689,7 +2168,7 @@ export class LocalAgentManager {
     ): AsyncGenerator<Op> {
         const items = this.queue.list(taskUri);
         if (items.length === 0) return;
-        if (this.hasActiveTurn(taskUri)) {
+        if (this.busy(taskUri)) {
             // 加急：next-turn 的都改成 next-step（已是 next-step 的原样；用户拖过的顺序不动）
             for (const it of items) {
                 if (it.mode === "next-step") continue;
@@ -1712,17 +2191,23 @@ export class LocalAgentManager {
 
     /** 取消一条待投递插话（幂等：id 不存在就返回原队列） */
     steerCancel(taskUri: string, id: string): SteerItem[] {
-        return this.queue.remove(taskUri, id);
+        const r = this.queue.remove(taskUri, id);
+        sessionRegistry.noteActivity(taskUri);
+        return r;
     }
 
     /** 切换一条插话的投递时机（next-step ⇄ next-turn；差别只在投递点，两者都整批投）。 */
     steerToggleMode(taskUri: string, id: string): SteerItem[] {
-        return this.queue.toggleMode(taskUri, id);
+        const r = this.queue.toggleMode(taskUri, id);
+        sessionRegistry.noteActivity(taskUri);
+        return r;
     }
 
     /** 重排待投递插话的顺序（横条上的拖拽排序；顺序即投递顺序） */
     steerReorder(taskUri: string, ids: string[]): SteerItem[] {
-        return this.queue.reorder(taskUri, ids);
+        const r = this.queue.reorder(taskUri, ids);
+        sessionRegistry.noteActivity(taskUri);
+        return r;
     }
 
     /**
@@ -1739,6 +2224,7 @@ export class LocalAgentManager {
         // 会话都要删了，排队中的插话无处可投 —— 一并清掉（否则横条会一直挂着"待发送"）
         try {
             this.queue.clear(taskUri);
+            sessionRegistry.noteActivity(taskUri);
         } catch (e) {
             console.error(`[local-agent] 清空插话队列失败 ${taskUri}:`, e);
             ok = false;
@@ -1774,14 +2260,22 @@ export class LocalAgentManager {
                 }
             }
         }
+        // 会话内容已从盘上消失 → 换发 epoch、水位归零，并通知所有订阅方重建块树。
+        // 少了它，订阅方拿着旧 since 会以为「新写入落进了旧会话」（epoch 不变 = 同一本史书）。
+        opsFeed.reset(taskUri);
         // 内存态无论如何都丢：留着它才是真的不一致（盘上文件仍在 → 重进会重新加载）
         this.sessions.delete(taskUri);
-        this.historyCache.delete(taskUri); // 折叠缓存同理：日志已删，留着就是读一份不存在的文件
+        // 折叠缓存同理：日志已删，留着就是读一份不存在的文件。
+        // 键是 `${taskUri}#${start}`（分页后一个 task 可能有多条窗口），按前缀清干净。
+        for (const k of [...this.historyCache.keys()]) {
+            if (k.startsWith(`${taskUri}#`)) this.historyCache.delete(k);
+        }
         return ok;
     }
 
     /**
-     * 一轮对话：实时产出块协议 Op；op 即传即落盘（存储=传输）。同 task 并发拒绝。
+     * 一轮对话：实时产出块协议 Op；op 即传即落盘（存储=传输）。同 task 并发**排队**（##306：不拒绝，
+     * 排进插话队列由在跑的轮次轮末整批取走 —— 见下方 `this.turns.has` 分支）。
      *
      * 「插嘴」在同一个流里投递：首轮用调用方的 message，本轮（及后续自动轮）由插话队列喂
      * （见 MAX_STEER_ROUNDS）。对消费端（renderer 的 for await）而言始终只是一个流，
@@ -1799,6 +2293,8 @@ export class LocalAgentManager {
         message: string,
         modelOverride?: string,
         reasoningEffortOverride?: ReasoningEffort,
+        /** RPC 流的取消上下文：客户端断开（刷新/切页/杀 CLI）时即时退订 —— 见下方 `withCleanup`。 */
+        signal?: AbortSignal,
         /**
          * 首轮输入（缺省 = 调用方这一条 message）。
          *
@@ -1813,7 +2309,14 @@ export class LocalAgentManager {
         // 手写 personas.yaml 可能把档位留空：兜底到该模型自己的默认档，不把空档发给上游
         const reasoningEffort = reasoningEffortOverride ?? (persona.reasoningEffort || reasoningOf(model).default);
         let sess = this.getSession(taskUri);
-        if (sess.running) throw new Error(`任务 ${taskUri} 的本地会话正在生成中`);
+        // 该会话已有轮次在跑 —— **不拒绝，改排队**（##306 / ##180 专项第 1 步）。
+        // 「窗口只是后端的使用窗口」：同任务第二个客户端发消息不该拿到错误，
+        // 而该排进插话队列，由正在跑的轮次在轮末整批取走（见下方续轮循环）。
+        // 判据是 `turns` 注册表而非生成器：轮次寿命不再等于这条流的寿命（##305）。
+        if (this.turns.has(taskUri)) {
+            yield* this.enqueueWhileRunning(taskUri, sess, message);
+            return;
+        }
 
         // ── 自动压缩（新请求之前，是唯一正确的时机）──
         // 为什么在这里：三个触发条件（缓存过期 / 系统上下文变 / 窗口超限）都要求"**发出去之前**"
@@ -1844,20 +2347,103 @@ export class LocalAgentManager {
             }
         }
 
-        const ctrl = new AbortController();
-        sess.running = ctrl;
+        // ── 建「轮次运行」并**分离启动驱动**（##305）────────────────────────
+        // 轮次的寿命不再等于这条 RPC 流的寿命：驱动（driveTurn）归本管理器持有，
+        // 本生成器只是它的订阅者。刷新/切页/关窗/RPC 断开 ⇒ 只退订，不 abort ——
+        // 「刷新 = 重新接上视图」。无人消费时的开销由 maxSteps 步数上限收口（见 TurnRun 头注）。
+        const run: TurnRun = {
+            taskUri,
+            ctrl: new AbortController(),
+            subs: new Set(),
+        };
+        sess.running = run.ctrl;
+        this.turns.set(taskUri, run);
+        // 先注册订阅再启动驱动：op 的路径是「落盘 → push 给当前订阅者」，晚注册会丢开头几条。
+        // 注册是同步的，与驱动的首个 await 之间没有竞态窗口。
+        const q = new AsyncQueue<Op>();
+        run.subs.add(q);
+        // chat 流订阅者也是 `viewers` 的一半（见 watchers）⇒ 增 / 退同样要推一次注册表帧，
+        // 否则「窗口发完消息就断开」会让 viewers 停在旧值（review1 P2-1 同一类缺口）。
+        // op 流那一半由 ops-feed 的订阅者变化回调覆盖（见 session-registry 构造器）。
+        sessionRegistry.noteActivity(taskUri);
+        // signal（RPC serverStream 的取消上下文）= 本订阅的**第二条出口**，与 ops-feed / file-watcher
+        // 是同一条修法：传输断开时 RPC 层调的是 `ctrl.abort()` + `void g.return()`，而 `return()` **排在
+        // 悬挂的 `next()` 之后**（生成器卡在 `await next()`）—— 只靠 return 出口的话，「模型思考中（无 op
+        // 产出）刷新页面」会让 q 一直滞留在 run.subs 里 ⇒ watchers() 虚高 ⇒ `agent.local.running.subscribers`
+        // （[5] ##308）误报「有人看」，且 publish 往无人读的队列里堆 op（无界）。
+        const sub = withCleanup(
+            q,
+            () => {
+                run.subs.delete(q);
+                sessionRegistry.noteActivity(taskUri); // 退订 = 一次"谁在看"的变化
+            },
+            signal,
+        );
+        const driving = this.driveTurn(run, sess, message, model, reasoningEffort, key, rm, persona.id, seed).catch((e) => {
+            // 驱动异常按原语义经流上抛（RPC 层转 error 帧），由订阅端在流尾 rethrow
+            run.error = e;
+        });
+        // for-await 的 IteratorClose（消费端 return 展开 = 刷新/切页/关窗/杀 CLI）会调到 sub 的
+        // return → 只摘掉订阅。这正是本次改造的落点：**轮次继续跑**，重连走 ops 水位（##307 读侧）。
+        for await (const op of sub) yield op;
+        await driving; // 等驱动落位（订阅流关闭正是驱动尾部触发）→ run.error 必已写入
+        if (run.error) throw run.error;
+    }
+
+    /**
+     * **轮次驱动**（##305）：自持消费 runTurn 内层生成器，把 op「落盘（sink）+ 收敛内存（store.apply）
+     * + 推给订阅者」。全程没有 yield —— 消费端来了走、走了留，驱动都照常跑完本轮。
+     *
+     * 由 chat() 以 `void` 启动；异常记入 `run.error`（订阅端在流尾 rethrow，保持"错误经流传递"的旧语义）。
+     * 收尾（abort 上游 / appendLlm / 注销 / 关订阅流）全在 finally —— 任何退出路径都不留僵尸轮次。
+     */
+    private async driveTurn(
+        run: TurnRun,
+        sess: LocalSession,
+        message: string,
+        model: string,
+        reasoningEffort: ReasoningEffort,
+        key: string,
+        rm: ResolvedModel,
+        personaId: string,
+        /** 首轮输入（缺省 = 调用方那一条 message）—— 「用队列开一轮」的落点，见 chatQueued（##303）。 */
+        seed?: TurnInput[],
+    ): Promise<void> {
+        const taskUri = run.taskUri;
+        const ctrl = run.ctrl;
+        /** 推 op 给当前所有订阅者（落盘与内存收敛由各调用点负责 —— 见 emit/seal 的头注） */
+        const publish = (op: Op): void => {
+            for (const s of run.subs) s.push(op);
+        };
         let done = false;
+        /** 驱动自身抛出的异常（兜底收口时据此判「error」而不是「消费端断开」，见 finally） */
+        let driveError: unknown = null;
+        /**
+         * 兜底收口的原因（review1 P3-2）：走到 finally 的兜底 = closeTurn **没跑到**，
+         * 此处按**可证的事实**分类，不再借用 ##305 的"消费端断开"（此处与消费端无关）：
+         *   · 驱动抛异常（装配期 / 流异常）→ `error{drive-turn, message}`
+         *   · 显式中断（用户 cancel / 上游 abort）→ `aborted{source}`
+         *   · 两者皆非却没走完 → `interrupted`（未正常收尾）
+         * 幂等：closeTurn 正常收口过时 turn 已清，这个原因不会被用上（noteTurnEnd 只刷新心跳）。
+         */
+        const fallbackEndReason = (): TurnEndReason => {
+            if (driveError != null) {
+                return {
+                    type: "error",
+                    data: {
+                        source: "drive-turn",
+                        message: driveError instanceof Error ? driveError.message : String(driveError),
+                    },
+                };
+            }
+            if (ctrl.signal.aborted) return { type: "aborted", data: { source: abortSource(ctrl.signal, "abort") } };
+            return { type: "interrupted", data: {} };
+        };
         try {
-            const fp = opsFile(taskUri);
-            // 落盘与投递解耦：sink 在 emission 时直接写文件，即使消费端提前断开，日志也不丢尾
-            const sink = (op: Op) => {
-                try {
-                    appendFileSync(fp, `${JSON.stringify(op)}\n`, "utf-8");
-                } catch (e) {
-                    // 落盘失败不阻断流，但必须出声（否则丢行不可观测）
-                    console.error(`[local-agent] ops 落盘失败 ${fp}:`, e);
-                }
-            };
+
+            // 落盘与投递解耦：sink 在 emission 时直接写文件并广播，即使消费端提前断开，
+            // 日志也不丢尾、别的窗口也照样看得见（唯一落盘点，见 opsSink 头注）
+            const sink = this.opsSink(taskUri);
             // ── 先收敛上一轮遗留：tool 的业务终态 + 结构开口（写进 ops，而不是投影时现造）──
             // 不收敛的后果：每次重建历史都现场合成一句「未完成→请重试」，agent 重载会话后
             // 会把被截断的命令再跑一次（任务 92 的「一对话就自杀」）。落盘后它变成已结束的
@@ -1866,11 +2452,11 @@ export class LocalAgentManager {
             // getSession（每进程一次），于是"上一轮没闭合"能一直挂到主进程重启（生产实测：
             // 开口 turn 跨越 9 轮、挂了 6 天）。此刻 sess.running 已由上方互斥守卫保证为空 ——
             // 上一轮真在跑的话新消息连这个函数都进不来 —— 所以未 stop 的块必是残留
-            // （崩溃 / 被杀 / 消费端把生成器整个丢下）。
+            // （崩溃 / 被杀 / 轮次被中途 abort）。
             for (const op of this.healResidualOps(sess)) {
                 sink(op);
                 sess.store.apply(op);
-                yield op;
+                publish(op);
             }
 
             // ── 轮次循环：首轮 = 调用方消息，之后各轮 = 插话队列喂进来的消息 ──
@@ -1887,7 +2473,7 @@ export class LocalAgentManager {
                 // 逐步用量记录的身份字段：这几项 chat() 时已知，但不进任何日志就答不出
                 // 「哪种配置更省」（##211 §六.2）—— 尤其同一会话换模型/换面时。
                 const inner = this.runTurn(taskUri, sess, pending, model, reasoningEffort, ctrl.signal, key, rm, sink, {
-                    persona: persona.id,
+                    persona: personaId,
                     apiFace: apiOf(model),
                     contextLimit: contextLimitOf(model),
                 });
@@ -1903,10 +2489,11 @@ export class LocalAgentManager {
                             break;
                         }
                         sess.store.apply(r.value);
-                        yield r.value;
+                        publish(r.value);
                     }
                 } finally {
-                    // 消费端提前断开（切页/停止）：把内层也关掉，别让它的收尾悬在半路
+                    // 驱动循环退出（内层正常收尾 / 抛错）：尽力把内层也关掉，别让它的收尾悬在半路。
+                    // **消费端断开不走这里**（##305：它只退订），驱动照常跑完本轮。
                     await inner.return({ failed: false, turnId: "" });
                 }
                 if (failed || ctrl.signal.aborted) break;
@@ -1940,14 +2527,14 @@ export class LocalAgentManager {
                         { op: "stop", id },
                     ];
                     // 结构性 op 批的纪律：**先整批落盘 + 收敛内存，再逐条投递**（同 runTurn 的 seal）。
-                    // 逐条 sink→yield 在消费端断开时会被切半：start 落盘、stop 没落 → 盘上留个开口
+                    // 逐条 sink→yield 在生成器被 return 展开时会被切半：start 落盘、stop 没落 → 盘上留个开口
                     // error 块（errorBlock 同一个坑）。少了 apply 则内存 store 与盘分叉 —— store 是
                     // 本模块的单一权威（见上方"手动驱动内层生成器"的注释）。
                     for (const op of ops) {
                         sink(op);
                         sess.store.apply(op);
                     }
-                    for (const op of ops) yield op;
+                    for (const op of ops) publish(op);
                     break;
                 }
                 // 轮末**整批取走**：队列里剩下的全部（两种模式都算）作为下一轮的开场一次性发出。
@@ -1966,8 +2553,22 @@ export class LocalAgentManager {
             }
             done = true;
             // llm dump 移到 finally（见那里：链式 return 会截断 try 尾，finally 才是每条退出路径的保证）
+        } catch (e) {
+            // 只记因、不吞：原样再抛，由 chat() 的 `.catch` 写进 run.error（错误仍经流上抛）。
+            driveError = e;
+            // R5（##305 review2 → 本任务收口）：**此刻**没有任何订阅者时，这条异常将无出口 ——
+            // chat() 的 `throw run.error` 落在已经 return 的生成器上（消费端早走了），
+            // 结果是一个真实的驱动故障在日志里一片空白。所以在这里判一次并显式上报。
+            // 判据必须用 `run.subs` 的**当下值**：finally 里会 `run.subs.clear()`，
+            // 等到 chat() 那边再看就恒为空（人人都成"无订阅者"）。
+            if (run.subs.size === 0) {
+                console.error(`[local-agent] 轮次驱动异常且无人订阅（异常仅此可见）${taskUri}:`, e);
+            }
+            throw e;
         } finally {
-            // 消费端提前断开（切 tab/刷新/杀 CLI）：停掉上游，不让 LLM/工具在无人处继续烧 token
+            // ⚠️ 这里**不再**因「消费端断开」而 abort（##305）：轮次由本管理器独立驱动，
+            // 消费端只是订阅者 —— 断开只退订（见 chat 的 for-await）。此处 abort 只在
+            // **驱动自身异常**（done 未置位）时兜底，停掉上游不让它空转。
             // （AbortController.abort() 按规范不抛错，此处无需 try/catch）
             if (!done) ctrl.abort();
             sess.running = null;
@@ -1976,20 +2577,29 @@ export class LocalAgentManager {
             //   （「turn 已 stop 即定稿」）。中断 tool 块的收敛发生在下一轮开场，但它只改
             //   status/output 字段，而投影按 status 分流（见 local-blocks）⇒ 收敛前后 append
             //   的字节逐字相同，不必等它。
-            // ⚠️ 必须在 finally、不能只放在 try 尾 —— 消费端取消（renderer 点停止 → end 帧 →
-            // channel-server-binding 的 if(cancelled) return → 链式 gen.return()）会把 try 的
-            // 后半段**整段截断**（任务 201 R1-S1：旧实现因此在主动停止后既缺 turn 的 stop、
-            // 也缺这份 dump）。finally 无 yield，不会被吞没，每条退出路径都能留下最后一轮。
+            // ⚠️ 必须在 finally、不能只放在 try 尾 —— 用户点停止（`cancel()` → `ctrl.abort()`）会让
+            // 内层生成器被 return 展开，把 try 的后半段**整段截断**（任务 201 R1-S1：旧实现因此在
+            // 主动停止后既缺 turn 的 stop、也缺这份 dump）。finally 无 yield，不会被吞没，
+            // 每条退出路径都能留下最后一轮。
             // 空树跳过：装配期就抛错时块树未动，什么也不该写。
             if (sess.store.roots().length > 0) this.appendLlm(taskUri, sess);
             // ⚠️ 兜底注销活跃轮次 —— **不能只依赖 runTurn 的 closeTurn**：
             //   runTurn 里 try{streamText} 之前的那些步骤（装配系统上下文、读模版、算 cwd）
-            //   都不在 try 覆盖内，任何一步抛错就等于跳过 closeTurn → activeTurns 留下僵尸条目。
+            //   都不在 try 覆盖内，任何一步抛错就等于跳过 closeTurn → 注册表留下僵尸 turn。
             //   以前这只影响"崩溃现场"的可读性（UI 看的是本地 running，异常时它会被复位）；
             //   但现在 UI 把 agent.local.running 当**运行态真值**（session 194），僵尸会表现为
             //   「永远显示生成中 + 停止按钮点了没反应」，用户只能重启。
-            //   noteTurnEnd 是 Map.delete，幂等：closeTurn 已注销过时，这里再删一次无害。
-            noteTurnEnd(taskUri);
+            //   noteTurnEnd 幂等：closeTurn 已收口时（turn 已清）这里只刷新 lastActivity。
+            //
+            // 结束原因**不能借用 `aborted{detached}`**（review1 P3-2）：那是 ##305 的"消费端断开"
+            // 语义，而这条路径恰恰与消费端无关 —— 走到这里意味着 **closeTurn 压根没跑到**
+            // （装配期抛错 / 流异常 / 生成器被展开）。故按可证的事实分三类：
+            sessionRegistry.noteTurnEnd(taskUri, fallbackEndReason());
+            // 归档本轮（##305）：注销注册表 + 关掉所有订阅流（消费端据此正常收尾）。
+            // 放在 noteTurnEnd 之后：先让「运行态真值」翻下去，再放消费端走完。
+            this.turns.delete(taskUri);
+            for (const s of run.subs) s.close();
+            run.subs.clear();
         }
     }
 
@@ -2015,7 +2625,9 @@ export class LocalAgentManager {
     ): AsyncGenerator<Op, { failed: boolean; turnId: string }, void> {
         const turnId = `t${Date.now()}`;
         const cwd0 = resolveCwdWithNote(diyHome(), taskUri).cwd;
-        noteTurnStart({ taskUri, model: model, cwd: cwd0 });
+        // 轮次事实的**唯一**登记点（##240 review1 P2-3：runtime-context 的 activeTurns 已收敛为
+        // 本注册表的投影，故此处不再另调它 —— 两份由同一批调用点驱动 = 迟早漂移）。
+        sessionRegistry.noteTurnStart(taskUri, { turnId, model, cwd: cwd0 });
         appendAudit(diyHome(), {
             phase: "turn-start",
             taskUri,
@@ -2038,7 +2650,7 @@ export class LocalAgentManager {
         /**
          * 结构性 op 批的落盘纪律：**先把整批 sink 完，再逐条投递**。
          *
-         * 为什么必须整批：消费端断开时生成器以 return 展开，**只执行到 yield 就停**（见 closeTurn
+         * 为什么必须整批：生成器被 return 展开（轮次被中断 / 驱动收尾）时**只执行到 yield 就停**（见 closeTurn
          * 头注）。一个块的 start/delta/stop 若逐条 `yield* emit`，断开能正好切在中间 —— 盘上留下
          * "开口块"（生产实测：error 块 start 落了、delta/stop 丢了，"本轮已取消"那句话凭空消失，
          * 只剩一个永远转圈的块）。结构性 op（一个块的完整生命周期）是原子单位，必须先全部落盘。
@@ -2065,10 +2677,14 @@ export class LocalAgentManager {
             if (!started.has(id)) yield* emit({ op: "start", id, kind, parent, meta });
         };
         let eN = 0;
-        const errorBlock = function* (source: string, text: string): Generator<Op, void, void> {
+        const errorBlock = function* (
+            source: string,
+            text: string,
+            extra?: Record<string, JSONVal>,
+        ): Generator<Op, void, void> {
             const id = `${turnId}_e${++eN}`;
             yield* seal([
-                { op: "start", id, kind: "error", parent: turnId, meta: { source } },
+                { op: "start", id, kind: "error", parent: turnId, meta: extra ? { source, ...extra } : { source } },
                 { op: "delta", id, fields: { message: text } },
                 { op: "stop", id },
             ]);
@@ -2092,6 +2708,11 @@ export class LocalAgentManager {
         // 为什么要进 turn patch：状态栏的 ⚡ 要能"没在跑时也留在那儿"（老的速度不消失），
         // 而流内部的 token 计数拿不到 ⇒ 只能每步落一次、由 UI 显示最后一次实测值。
         let lastStepRate: number | null = null;
+        // 轮均速度（##349）的 Σ 累加：各步总输出与各步响应耗时（含首字等待）。
+        // 每步结束时重算一次 → 直播中也在长，轮末即为该轮平均。
+        let rateOutSum = 0;
+        let rateMsSum = 0;
+        let turnRate: number | null = null;
         let turnCost: CostBreakdown = { noCache: 0, cacheRead: 0, cacheWrite: null, text: 0, reasoning: 0, total: 0 };
         // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
         let lastAct: "none" | "text" | "tool" = "none";
@@ -2102,10 +2723,10 @@ export class LocalAgentManager {
          * 一旦写入就**粘住**（`setEndReason` 先到先得）：`error` 之后照常会收到 finish，
          * 那是同一次流的收尾，不是新结论 —— 后者不许把 error 降级成 completed。
          *
-         * 兜底（closeTurn）：跑完流却没写（消费端断开 / 崩溃）见 `streamDone`。
+         * 兜底（closeTurn）：跑完流却没写（被中断 / 崩溃）见 `streamDone`。
          */
         let endReason: TurnEndReason | null = null;
-        /** 流循环是否**正常跑完**（区别"消费端 return 展开"：那时内层 for-await 被丢弃，不会置位） */
+        /** 流循环是否**正常跑完**（区别「return 展开」：那时内层 for-await 被丢弃，不会置位） */
         let streamDone = false;
         const setEndReason = (r: TurnEndReason): void => {
             if (endReason === null) endReason = r;
@@ -2121,6 +2742,10 @@ export class LocalAgentManager {
             // 块 id 沿用 turn 内局部序号风格（`<turnId>_suN`），另在 meta 里记 steerId 指回
             // 队列项（`steer/N`）：排障时能对上"日志里这条块是哪次插话投的"
             const id = `${turnId}_su${++uN}`;
+            // ⚠️ `meta.steer` 这个键名有两处消费：renderer 的 `applyOpsFrame` 用「带 steer 标记的
+            // user 块到达」判定"插话已投递 → 重拉队列快照"（见 localChatStore 的 sawSteerDelivered），
+            // 以及这里渲染插话样式。改键名必须**同时**改那处，否则横条会一直挂着"待发送"
+            //（模型其实已经看见了）—— 症状静默、只表现为 UI 落后。
             return [
                 {
                     op: "start",
@@ -2176,6 +2801,7 @@ export class LocalAgentManager {
                 }
                 try {
                     this.queue.remove(taskUri, item.id);
+                    sessionRegistry.noteActivity(taskUri);
                 } catch (e) {
                     // 出队失败：ops 已有这条块（不会丢），但队列里还留着（可能被再投一遍）。
                     // 不能静默 —— 重复投递是用户可见的行为差异。
@@ -2194,17 +2820,17 @@ export class LocalAgentManager {
         /**
          * 收尾必闭合（幂等）：step 先于 turn，摘掉活跃轮次并落 turn-end 审计。
          * 抽成生成器是为了让「超预算早退」也走同一套收尾 —— 历史 bug：早退的 return 在 try 之前，
-         * 绕过 finally → activeTurns 留僵尸轮次、落盘 ops 缺 turn 的 stop、审计缺 turn-end。
+         * 绕过 finally → 注册表（session-registry）留僵尸轮次、落盘 ops 缺 turn 的 stop、审计缺 turn-end。
          *
-         * ⚠️ 副作用必须**同步做完，且在任何 yield 之前**。原因：消费端断开（切页/刷新/关窗/
-         * CLI 被杀）时生成器以 return 展开，finally 里只执行到**第一个 yield** 就把控制权交回调用方
+         * ⚠️ 副作用必须**同步做完，且在任何 yield 之前**。原因：生成器被 return 展开（轮次被中断 /
+         * 驱动收尾）时，finally 里只执行到**第一个 yield** 就把控制权交回调用方
          * —— 若把「落盘 stop / noteTurnEnd / 审计」写在 `yield* emit(...)` 之后，它们全都不会执行
          * （实测：`{stop 落盘后 yield}` 的写法在 return 展开下只会执行到 yield，审计一行不跑）。
          * 所以顺序固定为：① sink（同步落盘）② noteTurnEnd / 审计（同步）③ 尽力 yield 给还活着的消费端。
          */
         const closeTurn = function* (currentStepId: string, steps: number): Generator<Op, void, void> {
             const ops: Op[] = [];
-            // 轮次结束原因（该轮事实，##288）：正常分支已写好；没写 = 流没跑完（消费端断开/崩溃）
+            // 轮次结束原因（该轮事实，##288）：正常分支已写好；没写 = 流没跑完（被中断 / 崩溃）
             // → `aborted{detached}` —— 生成器被 return 展开时唯一可证的事实。
             const reason: TurnEndReason = endReason ?? (streamDone ? { type: "completed", data: {} } : { type: "aborted", data: { source: "detached" } });
             ops.push({ op: "patch", id: turnId, fields: { endReason: reason } });
@@ -2216,11 +2842,14 @@ export class LocalAgentManager {
             // ① 同步副作用（无 await、无 yield）：无论走正常收尾还是 return 展开，这一段必定执行完
             for (const op of ops) {
                 sink(op);
-                // 块树同步收敛（stop 幂等）：消费端断开时 chat() 的转发循环不会再 apply，
-                // 盘与内存权威（store）必须一致 —— 下一轮 blocksToMessages / 下降沿 reload 都读它
+                // 块树同步收敛（stop 幂等）：closeTurn 的 op 由内层产出、**不经驱动的 apply 循环**
+                // （驱动只 apply 它从内层 next() 收到的 op）—— 盘与内存权威（store）须在此一致，
+                // 下一轮 blocksToMessages / 下降沿 reload 都读它
                 sess.store.apply(op);
             }
-            noteTurnEnd(taskUri);
+            // 注册表收口（R5）：只清 turn、**条目保留**（turnCount +1 / 记末轮 endReason）。
+            // 放在同一段同步副作用里，与 closeTurn 的其他落定动作同生共死。
+            sessionRegistry.noteTurnEnd(taskUri, reason, { steps, tokens: acc.total });
             appendAudit(diyHome(), {
                 phase: "turn-end",
                 taskUri,
@@ -2294,6 +2923,7 @@ export class LocalAgentManager {
             if (item.steerId) {
                 try {
                     this.queue.remove(taskUri, item.steerId);
+                    sessionRegistry.noteActivity(taskUri);
                 } catch (e) {
                     console.error(`[local-agent] 插话出队失败（已落盘，可能重复投递）${taskUri}#${item.steerId}:`, e);
                 }
@@ -2337,6 +2967,18 @@ export class LocalAgentManager {
                     this.effectiveSummary(taskUri),
                 ),
             );
+            // 本轮的**投递选择事实**（配置驱动压缩）：分表用它标注「本步（轮首）投递被压过」（##272 B1）。
+            // 与 compact 事件解耦 —— 事件只在触发/手动时写；这里每轮首都有（投递本就无条件按当前配置筛选）。
+            const selPolicy = loadAutoCompact(diyHome()).policy;
+            const allMsgs = projectAll(sess.store);
+            const sel = selectHistoryByBudget(allMsgs, selPolicy.modeData.budgetBytes, optsFor(selPolicy));
+            const historySelection = {
+                budgetBytes: selPolicy.modeData.budgetBytes,
+                keptBytes: sel.keptBytes,
+                keptRuns: sel.keptRuns.length,
+                droppedMessages: sel.dropped.length,
+                totalMessages: allMsgs.length,
+            };
             rawSink({
                 kind: "request",
                 ts: new Date().toISOString(),
@@ -2364,6 +3006,19 @@ export class LocalAgentManager {
             // 变更统计（**按项目**累计；只存变化路径 → 体积小、可长期留）。
             // 用途：跑几天后回答"这个节点到底变了几次" —— 划分位置的判据（见 task 178）。
             appendContextStat(projectDir(projectFromUri(taskUri)), statFromStep(step, prevStep?.valueHashes ?? null, taskUri));
+            // 变更历史（**按任务**一条时间线）：事件粒度 + 一行值预览，落 `local/<key>.changelog.jsonl`。
+            // 与投递快照同点写、同序 append ⇒ 轮序天然对齐（第 N 条 changelog = 第 N 步），
+            // 所以事件行能直接驱动"第 N 步 vs 上一步"的 diff（见 ContextLabPage 的变更历史）。
+            appendCtxLog(taskUri, {
+                ts: step.ts,
+                turnId,
+                model,
+                wireVersion: step.wireVersion,
+                ops: opsFromHashes(prevStep?.valueHashes ?? null, delivery.valueHashes, (p) =>
+                    previewOf(delivery.tree, p) || null,
+                ),
+            });
+            this.noteTraffic(taskUri, turnId, rm, 2);
             const result = streamText({
                 model: this.modelFor(rm, key),
                 system: delivery.system.text,
@@ -2428,6 +3083,7 @@ export class LocalAgentManager {
                             yield* flushSteer();
                             stepN++;
                             stepId = `${turnId}_s${stepN}`;
+                            sessionRegistry.noteTurnStep(taskUri, stepN);
                             yield* emit({ op: "start", id: stepId, kind: "step", parent: turnId });
                             break;
                         case "reasoning-start": {
@@ -2551,13 +3207,18 @@ export class LocalAgentManager {
                         case "error": {
                             const msg = errText((part as { error?: unknown }).error);
                             setEndReason({ type: "error", data: { source: "llm", message: msg } });
-                            yield* errorBlock("llm", msg);
+                            // 把「这次失败对应哪条实际请求」一并记下：错误块据此直接跳到那条
+                            // 请求/响应（能定位就定位，不靠用户猜 trace_id）。
+                            const failId = traffic.latestFailure(sessionIdOf(taskUri));
+                            yield* errorBlock("llm", msg, failId != null ? { reqId: failId } : undefined);
                             break;
                         }
-                        case "abort":
-                            setEndReason({ type: "aborted", data: { source: "abort" } });
-                            yield* errorBlock("abort", "生成已取消");
+                        case "abort": {
+                            const src = abortSource(signal, "abort");
+                            setEndReason({ type: "aborted", data: { source: src } });
+                            yield* errorBlock("abort", abortText(src));
                             break;
+                        }
                         case "finish-step": {
                             // 每步 usage：① 落一条独立账（usage.jsonl，逐步明细/金额的唯一来源）
                             // ② 累加进本轮桶（对话流页脚）
@@ -2578,11 +3239,19 @@ export class LocalAgentManager {
                                 // **测不出就留着上一次的**：有的步没有输出 token（空回复 / 纯工具步），
                                 // 直接赋 null 会把状态栏那枚 ⚡ 打回更早一轮（review ##253 小项2）。
                                 lastStepRate = stepRate(fsPart.performance, b.outputTotal) ?? lastStepRate;
+                                // 轮均累加（##349）：只计"有计时且确有输出"的步（与 `avgRate` 同判据）
+                                const respMs = fsPart.performance?.responseTimeMs;
+                                if (respMs != null && respMs > 0 && b.outputTotal > 0) {
+                                    rateOutSum += b.outputTotal;
+                                    rateMsSum += respMs;
+                                }
+                                turnRate = rateFromTotals(rateOutSum, rateMsSum);
                                 // **按 response.modelId 查价**：上游可能路由改写模型（##211 §四.4.4）
                                 const priceModel = fsPart.response?.modelId ?? model;
                                 const rates = costOf(priceModel, b.inputTotal);
                                 const cost = rates ? costBreakdown(rates, b) : null;
                                 turnCost = sumCosts([turnCost, cost ?? { noCache: 0, cacheRead: 0, cacheWrite: b.cacheWrite == null ? null : 0, text: 0, reasoning: 0, total: 0 }]);
+                                sessionRegistry.noteTurnUsage(taskUri, acc.total);
                                 appendUsage(taskUri, {
                                     ts: new Date().toISOString(),
                                     turnId,
@@ -2604,11 +3273,14 @@ export class LocalAgentManager {
                                     rates: rates ? { ...rates, asOf: MODEL_COST_AS_OF } : null,
                                     cost,
                                     contextParts: ctxParts,
+                                    // 投递选择事实**只在轮首**（stepN===1）：一轮只在轮首按当前配置重建投递，
+                                    // 后续步复用同一份历史（##272 B1 / ##321）。
+                                    ...(stepN === 1 ? { historySelection } : {}),
                                 });
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
-                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate) },
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate, turnRate) },
                                 });
                             }
                             if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
@@ -2637,7 +3309,7 @@ export class LocalAgentManager {
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
-                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate) },
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate, turnRate) },
                                 });
                             }
                             // turn 的 stop 由 closeTurn 发（finally 里那一处）：收尾必须闭合
@@ -2651,10 +3323,11 @@ export class LocalAgentManager {
                 streamDone = true;
                 // LLM 历史由外层 chat() 从块树统一重建（见 chat 末尾），此处不操作
             } catch (e) {
-                // 取消（消费端断开 / 停止按钮）与真实错误分流：前者是预期收尾，后者记 error 块
+                // 取消（停止按钮 → cancel/abort；消费端断开不再走这里，##305）与真实错误分流：前者是预期收尾，后者记 error 块
                 if (signal.aborted) {
-                    setEndReason({ type: "aborted", data: { source: "abort" } });
-                    yield* errorBlock("abort", "生成已取消");
+                    const src = abortSource(signal, "abort");
+                    setEndReason({ type: "aborted", data: { source: src } });
+                    yield* errorBlock("abort", abortText(src));
                 } else {
                     const msg = errText(e);
                     setEndReason({ type: "error", data: { source: "stream", message: msg } });
@@ -2666,9 +3339,9 @@ export class LocalAgentManager {
             // 走到这里通常为空；留着是为了"将来新增别的投递点"也不会漏给消费端。
             yield* flushSteer();
         } finally {
-            // ⚠️ 收尾**必须在 finally 里**（历史 bug 的复现版）：消费端断开时生成器以 return 展开，
-            // try/catch 之后的顺序语句一律不执行 —— 那会留下未 stop 的 turn（UI 显示"本轮未完成"
-            // + 重放时被 interruptedToolPatches 当成中断轮）、僵尸 activeTurns、缺 turn-end 审计。
+            // ⚠️ 收尾**必须在 finally 里**（历史 bug 的复现版）：生成器被 return 展开（轮次被中断 /
+            // 驱动收尾）时，try/catch 之后的顺序语句一律不执行 —— 那会留下未 stop 的 turn（UI 显示"本轮未完成"
+            // + 重放时被 interruptedToolPatches 当成中断轮）、注册表里的僵尸轮次、缺 turn-end 审计。
             // closeTurn 内部先把副作用同步做完（见其头注），再尽力 yield，故 return 展开下也安全。
             yield* closeTurn(stepId, stepN);
         }

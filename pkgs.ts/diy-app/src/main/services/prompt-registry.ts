@@ -15,12 +15,14 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, r
 import { homedir } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { analyze, renderWithTrace, type IncludeResolver, type TraceNode, type VarSpec } from "@diy/template";
+import { TASK_HEAD_FIELDS } from "../../shared/task-head";
 import { AssembleGlobalsSchema, type AssembleGlobals } from "../../shared/prompt-schema";
 
 // 契约类型从 schema 推导（单一真源）；装配方按它注入，漂移由 safeParse 兜住
 export type { AssembleGlobals };
 import { flattenVars } from "../../shared/var-tree";
 import { PROMPT_DEFAULTS } from "../prompts/defaults";
+import { FLOW_NODE_HINT_RELPATH, FLOW_PROMPT_DEFAULTS } from "../prompts/flow";
 import {
   renderSummaryFallback,
   summaryHasContent,
@@ -280,13 +282,24 @@ function taskFileAt(home: string, taskUri: string): string {
   return taskUri ? join(home, taskUri, "AGENTS.md") : "";
 }
 
-/** 读任务元信息与正文（不存在/缺 frontmatter 时返回 null） */
-function taskOf(home: string, taskUri: string): { title: string; state: string; body: string } | null {
+/**
+ * 读任务元信息与正文（不存在/缺 frontmatter 时返回 null）。
+ *
+ * 字段 = **任务文件头的同一份**（##322：头不暴露时，agent 确认任务只能去 `cat` 文件 —— 而文件头
+ * 又不是 API 的一部分，读写两边对"正文"的定义就此分叉，一次 `--body "$(cat …)"` 就复制出一个头）。
+ * 缺键一律回空串（不是 undefined）：变量契约里它们是 string，且"空串 = 文件头里没这个键"比
+ * "键不存在"更能表达"未设置"。
+ */
+function taskOf(home: string, taskUri: string): Record<string, string> | null {
   const fp = taskFileAt(home, taskUri);
   if (!fp || !existsSync(fp)) return null;
   const meta = parseTaskFile(readFileSync(fp, "utf-8"));
   if (!meta) return null;
-  return { title: meta.title ?? "", state: meta.state ?? "", body: meta.body ?? "" };
+  // 头字段从 TASK_HEAD_FIELDS 派生（##322 review R3）：清单单一真源，三处手抄必漏一处
+  return {
+    ...Object.fromEntries(TASK_HEAD_FIELDS.map((f) => [f.key, (meta[f.key] as string | undefined) ?? ""])),
+    body: meta.body ?? "",
+  };
 }
 
 /**
@@ -413,6 +426,17 @@ export function renderSystemDsl(opts: {
   entry?: string;
 }): string {
   return renderSystemDslTraced(opts).text;
+}
+
+/**
+ * 渲染「工作流当前节点的提示」（`diy flow prompt` 的唯一装配入口）。
+ *
+ * 与 system 装配**共用同一个引擎与入口**（`renderSystemDsl` + `parseMd`），只是模版来自
+ * `prompts/flow.ts`（不进用户清单的理由见该文件头注）。`globals` 由 `core/flow.ts` 给 ——
+ * `hint` 已经过内核 `renderHint` 插值，本函数只负责把它装进节点标签里。
+ */
+export function renderFlowNodeHint(globals: Record<string, unknown>): string {
+  return renderSystemDsl({ globals, templates: FLOW_PROMPT_DEFAULTS, entry: FLOW_NODE_HINT_RELPATH });
 }
 
 /**
@@ -582,6 +606,14 @@ export function assembleGlobals(
       uri: taskUri,
       title: task?.title ?? "",
       state: task?.state ?? "",
+      // 头字段（title/state 也在其中）：任务文件 frontmatter 的同一份，读侧不必落盘求证
+      parent: task?.parent ?? "",
+      created: task?.created ?? "",
+      updated: task?.updated ?? "",
+      change_type: task?.change_type ?? "",
+      module: task?.module ?? "",
+      priority: task?.priority ?? "",
+      persona: task?.persona ?? "",
       body: task?.body ?? "",
       dir: taskUri ? join(home, taskUri) : "",
     },

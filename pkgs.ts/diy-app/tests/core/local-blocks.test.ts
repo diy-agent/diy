@@ -12,6 +12,8 @@ import {
     toTree,
     blocksToMessages,
     type Op,
+    type ToolResultOrigin,
+    type ToolResultOutput,
 } from "../../src/main/services/local-blocks";
 
 /** 复刻 UI 的 leavesOf（容器递归，叶子入列）——用于验证"整轮可渲染" */
@@ -130,6 +132,26 @@ describe("delta/patch 合并语义", () => {
             { op: "delta", id: "p1", fields: { items: ["做 B", "做 C"] } },
         );
         expect(s.blocks.get("p1")!.items).toEqual(["做 A", "做 B", "做 C"]);
+    });
+
+    // 【时间线假定】「整段折叠流再喂一遍无副作用」只在 store **不领先于**该快照时成立 ——
+    // 这条不是本模块的锅，但它是消费端（localChatStore）能安全"整段再喂"的前提，写在这里留证。
+    // 反例：把一份**早于在途流**的快照再 apply 一遍 ⇒ patch 无条件覆盖回旧值、delta 追在回退值上
+    // ⇒ 丢一段（下次从盘上 reload 才恢复，故表现为瞬时闪烁）。
+    it("旧快照的 patch 会把 store 回退，后续 delta 追加在回退值上（时间线假定）", () => {
+        const s = ops(
+            { op: "start", id: "t1", kind: "turn" },
+            { op: "start", id: "t1_a", kind: "text", parent: "t1", meta: { role: "assistant" } },
+            { op: "delta", id: "t1_a", fields: { content: "AB" } },
+            { op: "delta", id: "t1_a", fields: { content: "CD" } },
+            { op: "delta", id: "t1_a", fields: { content: "EF" } },
+        );
+        expect(s.blocks.get("t1_a")!.content).toBe("ABCDEF"); // 流已到 ABCDEF
+        // main 在早于那两条 delta 的时刻读盘 → 快照里的终值是 "ABC"
+        s.apply({ op: "patch", id: "t1_a", fields: { content: "ABC" } });
+        expect(s.blocks.get("t1_a")!.content).toBe("ABC"); // ← 回退（前提被破的地方）
+        s.apply({ op: "delta", id: "t1_a", fields: { content: "G" } });
+        expect(s.blocks.get("t1_a")!.content).toBe("ABCG"); // ← "DEF" 丢了
     });
 
     it("嵌套路径 patch（usage.in）与未知字段前向兼容（delta 降级 patch）", () => {
@@ -555,5 +577,65 @@ describe("消息级索引位 turn/step（落盘日志用；真发不带）", () 
         const user = ms.find((m) => m.role === "user")!;
         expect(user.step).toBeUndefined();
         for (const m of ms.filter((x) => x.role !== "user")) expect(m.step).toBe("t1_s1");
+    });
+});
+
+describe("tool-result 的失败形状 error-text（##329 的 b）", () => {
+    // 块上的 `status` 是**我们自己的**属性，模型看不见；发给模型的只有 `output`。
+    // 若失败也写 type:"text"，协议层这条结果与成功结果**形状完全相同** ——
+    // 成败只剩 `[读取失败] ` 文案前缀可辨，等于把机器判据押在用户可见文案上。
+    // 本组锁：成败落在**结构位**（判别键），且途中任何一环都不许把它压回 text。
+    const toolParts = (m: ReturnType<typeof blocksToMessages>) =>
+        m.filter((x) => x.role === "tool")
+            .map((x) => (x.content as Array<{ output: ToolResultOutput; origin?: ToolResultOrigin }>)[0]!);
+
+    /** 一轮三块 tool，终态分别为 done / error / interrupted */
+    function mixed(): BlockStore {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: "t1", kind: "turn" });
+        s.apply({ op: "start", id: "ok", kind: "tool", parent: "t1", meta: { tool: "read" } });
+        s.apply({ op: "patch", id: "ok", fields: { args: { path: "/a" } } });
+        s.apply({ op: "delta", id: "ok", fields: { output: "文件正文" } });
+        s.apply({ op: "patch", id: "ok", fields: { status: "done" } });
+        s.apply({ op: "stop", id: "ok" });
+        s.apply({ op: "start", id: "bad", kind: "tool", parent: "t1", meta: { tool: "read" } });
+        s.apply({ op: "patch", id: "bad", fields: { args: { path: "/nope" } } });
+        s.apply({ op: "delta", id: "bad", fields: { output: "[读取失败] ENOENT: no such file" } });
+        s.apply({ op: "patch", id: "bad", fields: { status: "error" } });
+        s.apply({ op: "stop", id: "bad" });
+        s.apply({ op: "start", id: "int", kind: "tool", parent: "t1", meta: { tool: "bash" } });
+        s.apply({ op: "patch", id: "int", fields: { args: { command: "sleep 9" } } });
+        s.apply({ op: "patch", id: "int", fields: { status: INTERRUPTED_STATUS, output: INTERRUPTED_TOOL_NOTICE } });
+        s.apply({ op: "stop", id: "int" });
+        s.apply({ op: "stop", id: "t1" });
+        return s;
+    }
+
+    it("done → text；error → error-text；文案逐字不动", () => {
+        const outs = toolParts(blocksToMessages(mixed())).map((p) => p.output);
+        expect(outs[0]).toEqual({ type: "text", value: "文件正文" });
+        expect(outs[1]).toEqual({ type: "error-text", value: "[读取失败] ENOENT: no such file" });
+    });
+
+    it("中断（status=interrupted）保持 text —— 它是本地补的契约终态，不是工具抛错", () => {
+        // 「被中断」与「命令失败」对模型是两回事：后者该换路子重试，前者该停手。
+        // 顺手把 interrupted 也标成 error-text 会让模型对中断做出「重试」反应。
+        const outs = toolParts(blocksToMessages(mixed())).map((p) => p.output);
+        expect(outs[2]!.type).toBe("text");
+        expect(outs[2]!.value).toBe(INTERRUPTED_TOOL_NOTICE);
+    });
+
+    it("投递渲染（renderMessage）不把 error-text 压回 text，且裁剪仍生效", () => {
+        // 这是最容易漏的一环：投影对了，渲染那一层写死 `type: "text"` 就等于白改。
+        const m = blocksToMessages(mixed(), { transformToolResult: ({ output }) => `[裁]${output.length}` });
+        const outs = toolParts(m).map((p) => p.output);
+        expect(outs[1]!.type).toBe("error-text");
+        expect(outs[1]!.value).toBe("[裁]27");
+    });
+
+    it("落盘形状（withOrigin）：error-text 与 origin 可程序化判错，无需读文案", () => {
+        const p = toolParts(blocksToMessages(mixed(), { withOrigin: true }))[1]!;
+        expect(p.output.type).toBe("error-text");
+        expect(p.origin).toBe("tool");
     });
 });

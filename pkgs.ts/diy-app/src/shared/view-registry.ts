@@ -38,7 +38,12 @@ export interface ViewPlacement {
 export interface PageDef {
   id: string;
   title: string;
-  /** nav tab 图标（短字符）。缺省时由 tab 显示页面序号 —— 别在组件里特判 pageId（review RV-10）。 */
+  /**
+   * nav tab 图标（短字符）。缺省时由 tab 显示页面序号 —— 别在组件里特判 pageId（review RV-10）。
+   * **子页面 tab 就用它当行首标记**（代替任务的状态圆点，##350 ①）：子页面不是任务，
+   * 标任务状态会被读成"又一个任务"。故新子页面**应给 icon** —— 不给就退回序号，
+   * 看上去与任务 tab 的序号无异，正是本字段要消解的那种错觉。
+   */
   icon?: string;
   /** 是否可多开（任务执行页：每个任务一个实例，等同浏览器 tab） */
   multi?: boolean;
@@ -105,6 +110,29 @@ export const VIEWS: ViewDef[] = [
     placement: { ctxlab: { area: "center", order: 10 } },
   },
   {
+    // 泳道视图页（##320）：中心 = 轨迹折线（泳道 ≡ 节点 1:1，打回不新建节点）
+    id: "flow.stage",
+    title: "轨迹",
+    instanceScope: "context",
+    placement: { flow: { area: "center", order: 10 } },
+  },
+  {
+    // 同页右栏：节点详情（hint / guard / actor / art 三段链）+ 参数表单（按 schema 自动渲染）
+    id: "flow.inspector",
+    title: "节点与参数",
+    instanceScope: "context",
+    placement: { flow: { area: "right", order: 10 } },
+  },
+  {
+    // 同页右栏下部：打回讨论线程（##342）—— 锚点 = 折线上的**真打回边**，
+    // 与泳道图是**同一份事件流的两种投影**（打回不新建节点、讨论不占位置）。
+    // 数据只走 RPC（`flow thread list`）；旁注坏了只在面板里亮错误位（rule.core-log）。
+    id: "flow.dispute",
+    title: "讨论",
+    instanceScope: "context",
+    placement: { flow: { area: "right", order: 20 } },
+  },
+  {
     // 边聊边调：与任务执行页是**同一个 view**，只是换个 area（卫星）
     // 这正是「靠 placement、不靠嵌套」的体现
     id: "chat.local",
@@ -138,6 +166,22 @@ export const VIEWS: ViewDef[] = [
     title: "外观",
     instanceScope: "global",
     placement: { settings: { area: "main", order: 30 } },
+  },
+  {
+    // 流量页左栏：基本信息（告警 + 完整记录开关 + 日志体积 + 查询条 + 请求表）
+    id: "traffic.list",
+    title: "请求列表",
+    instanceScope: "global",
+    placement: { traffic: { area: "left", order: 10 } },
+  },
+  {
+    // 流量页右栏：请求 / 响应编辑器（选中那条记录的概览 + 两个 JsonViewer）。
+    // 与左栏是**同一份状态的两种投影**（选中项在 state 里，两边各画一块），
+    // 故不用 context 型：整页只有一份"当前选中"，多实例反而各选各的。
+    id: "traffic.detail",
+    title: "请求 / 响应",
+    instanceScope: "global",
+    placement: { traffic: { area: "right", order: 10 } },
   },
 ];
 
@@ -207,6 +251,7 @@ export const PAGES: PageDef[] = [
     // 也避免上下文树（整页是真实数据的另一种组织）与提示词预览互相抢空间。
     id: "ctxlab",
     title: "上下文树",
+    icon: "C", // 子页面 tab 的行首标记（##350 ①）：有它才不落到"页面序号"上、看着像个任务
     multi: true, // 每个任务一个实例
     parentPage: "task-run",
     layout: {
@@ -217,6 +262,42 @@ export const PAGES: PageDef[] = [
       areas: [
         { id: "left", col: 0, row: 0 },
         { id: "center", col: 1, row: 0 },
+      ],
+    },
+  },
+  {
+    // 泳道视图页（##320）：**独立子页面**（与提示词页 lab / 上下文树页 ctxlab 平级，
+    // 挂在任务执行页之下）。单独开 tab 的理由：泳道数 = 步骤数，折线要横向铺开 ——
+    // 塞进任务执行页会与 chat 抢空间，也会被既有 view 的折叠框挤成一条。
+    id: "flow",
+    title: "泳道",
+    icon: "W",
+    multi: true, // 每个任务一个实例（上下文键 = 任务 URI）
+    parentPage: "task-run",
+    layout: {
+      version: 1,
+      // 两列：泳道图（主）| 节点详情 + 参数表单
+      cols: [fr(1), px(380)],
+      rows: [fr(1)],
+      areas: [
+        { id: "center", col: 0, row: 0 },
+        { id: "right", col: 1, row: 0 },
+      ],
+    },
+  },
+  {
+    // 流量页（导航栏「流量」）：左 = 基本信息（列表），右 = 请求 / 响应编辑器。
+    // 走 ViewGrid 而非手拼 —— 与普通 page 一致：可控显隐 + 每个 view 可最大化 / 恢复（##133）。
+    id: "traffic",
+    title: "流量",
+    layout: {
+      version: 1,
+      // 列表列多（名称 / 类型 / 大小…），给它多一档宽度；右侧编辑器可拖（线是全局的）
+      cols: [fr(3), fr(2)],
+      rows: [fr(1)],
+      areas: [
+        { id: "left", col: 0, row: 0 },
+        { id: "right", col: 1, row: 0 },
       ],
     },
   },
@@ -396,6 +477,81 @@ export function areasWithViews(
 }
 
 // ═══════════════════════════════════════════
+// area 开合 / 最大化（纯函数：渲染层与单测同一份判据）
+// ═══════════════════════════════════════════
+
+/**
+ * 某 view 在本 page 的**默认归属 area**（静态层判据，不掺用户 binding）。
+ *
+ * 用途：判定"左右两块是哪两块"这类**归属问题**（如流量页左=列表、右=编辑器），
+ * 以及测试里断言注册表本身没写错。返回 null = 该 view 不来本 page。
+ */
+export function viewAreaId(
+  page: PageDef,
+  viewId: string,
+  ctx: string | null,
+  views: ViewDef[] = VIEWS,
+): string | null {
+  void ctx; // 归属只由 placement 决定（实例键才用 ctx），保留参数与 groupViewsByArea 同形
+  const def = views.find((v) => v.id === viewId);
+  return def?.placement[page.id]?.area ?? null;
+}
+
+/**
+ * area 开合 / 最大化的**用户态**。
+ *
+ * 刻意只声明本函数需要的两个字段（而不是 import layoutStore 的 PageLayoutState）：
+ * 这是 shared 层，不能反向依赖 renderer 的 store 类型 —— 由结构兼容自动满足。
+ */
+export interface AreaOpenState {
+  /** areaId → 隐藏（最小化）；缺省 = 显示 */
+  hidden: Record<string, boolean>;
+  /** 被最大化的 area id；null = 正常网格 */
+  maximized: string | null;
+}
+
+/** 一次渲染要画什么：可见 area、生效的最大化 area、被最大化挤掉的 area */
+export interface PageViewPlan {
+  /** 有 view 且**未被最小化**的 area，按 layout.areas 声明顺序（= 几何顺序） */
+  visibleAreaIds: string[];
+  /**
+   * **生效的**最大化 area。
+   * 用户态里记的那个若不可见（被最小化 / area 已不存在 / 本就无 view）→ null（退回网格）。
+   * 即"最大化"不是一个可以指向空气的状态。
+   */
+  maximizedAreaId: string | null;
+  /** 最大化期间不渲染的其它可见 area（最大化→还原时原样回来） */
+  suppressedAreaIds: string[];
+}
+
+/**
+ * layout + binding + 用户态 → 本次渲染的 area 计划。
+ *
+ * 为什么把它抽出来（而不是留在 ViewGrid 的 createMemo 里）：这块判据是
+ * 「点最小化后界面该少哪块、点最大化后只剩哪块」的**唯一真源**，可判定、可回归测试；
+ * 留在组件里就只能靠 CDP 肉眼验（##351 review2 R2）。
+ */
+export function planPageViews(
+  page: PageDef,
+  ctx: string | null,
+  binding: Binding,
+  state: AreaOpenState,
+  views: ViewDef[] = VIEWS,
+): PageViewPlan {
+  const withViews = areasWithViews(page, ctx, binding, views);
+  const visibleAreaIds = page.layout.areas
+    .map((a) => a.id)
+    .filter((id) => withViews.has(id) && state.hidden[id] !== true);
+  const maximizedAreaId =
+    state.maximized && visibleAreaIds.includes(state.maximized) ? state.maximized : null;
+  return {
+    visibleAreaIds,
+    maximizedAreaId,
+    suppressedAreaIds: maximizedAreaId ? visibleAreaIds.filter((id) => id !== maximizedAreaId) : [],
+  };
+}
+
+// ═══════════════════════════════════════════
 // 校验（纯函数，可单测 / 可被 CLI 调用）
 // ═══════════════════════════════════════════
 
@@ -446,6 +602,18 @@ export function validateRegistry(
     for (const a of p.layout.areas) {
       if (seen.has(a.id)) errs.push({ path: `pages[${i}].layout.areas`, msg: `area id 重复: ${a.id}` });
       seen.add(a.id);
+    }
+    // 子页面（有 parentPage）**必须**有 icon：没有它 tab 行首就退回"页面序号"，
+    // 与任务 tab 的序号一模一样 —— 正是 ##350 ① 要消解的"子页面看着像任务"错觉。
+    // 靠人记不住（R1 实测：clab 补完就以为治好了，存量靠肉眼核），故升成注册表不变量。
+    if (p.parentPage && !p.icon?.trim()) {
+      errs.push({
+        path: `pages[${i}].icon`,
+        msg: `子页面「${p.id}」缺 icon（##350 ①）：无 icon 会退回页面序号，tab 上看不出它是页面还是任务`,
+      });
+    }
+    if (p.parentPage && !pages.some((q) => q.id === p.parentPage)) {
+      errs.push({ path: `pages[${i}].parentPage`, msg: `父页面不存在: ${p.parentPage}` });
     }
   });
 

@@ -167,6 +167,7 @@ const turnRows = () =>
             scrollW: number;
             iconH: number;
             timeH: number;
+            timeW: number;
             timeRight: number;
             contRight: number;
             modelW: number;
@@ -200,6 +201,7 @@ const turnRows = () =>
                scrollW: Math.round(b.scrollWidth),
                iconH: Math.round(ic ? ic.getBoundingClientRect().height : 0),
                timeH: Math.round(tr ? tr.height : 0),
+               timeW: Math.round(tr ? tr.width : 0),
                timeRight: Math.round(tr ? tr.right : 0),
                contRight: Math.round(cr.right),
                modelW: Math.round(mdl ? mdl.getBoundingClientRect().width : 0),
@@ -478,9 +480,23 @@ describe("R6 对话消息显示时间：真源 = turnId 内嵌毫秒", () => {
             expect(narrow.scrollW).toBeLessThanOrEqual(narrow.rowW + 2);
             // ③ 截断**真的发生了**（而不是这次内容恰好短）：模型名比它那块可见宽度长
             expect(narrow.modelScrollW).toBeGreaterThan(narrow.modelW + 4);
-            // ④ 时刻文本仍是完整到秒的（极窄栏里状态行会被几个 shrink-0 兄弟挤破 —— 那是
-            //    另一个问题，不在这条里锁；反正**轮首不再承担时刻**）
+            // ④ 时刻文本仍是完整到秒的（`truncate` 只剪**可见宽度**，不改 DOM 文本 ——
+            //    截断后靠 title 给全量，"看不见"不等于"没给"）
             expect(narrow.time).toBe("2026-09-27 09:15:30");
+
+            // ⑤ **状态行在这里也不横向溢出、也不被挤成两行**（##298 的病灶）：原先这一档
+            //    只钉时刻文本，就是因为几个 shrink-0 兄弟（时刻/统计/速度/用量）互不相让
+            //    —— 行右缘越过容器 36px，且文本在 span 内折行把行高从 21px 顶到 37px。
+            //    截断纪律（每一段 min-w-0 truncate）+ 按**行宽**退场（`@container`）落地后，
+            //    这一档与 700px 档同口径锁死。
+            expect(narrow.statusScrollW).toBeLessThanOrEqual(narrow.statusW + 2);
+            expect(narrow.statusH).toBeLessThanOrEqual(24);
+            // ⑥ 退场是**有序**的：这一段里内容列只剩 48px（侧栏被拖宽 > 窗口宽的病态走廊），
+            //    速度/统计/用量条先后让位（`@container`，见 index.css 状态行段），
+            //    但**时刻不是被挤成 0**，而是拿到整行去截断 —— 定住这条，免得日后有人
+            //    用一句 `overflow-hidden` 把病灶盖掉（"看不见"≠"修好了"）。
+            expect(narrow.timeW).toBeGreaterThanOrEqual(8);
+            expect(await ui.query<boolean>("!!document.querySelector('[data-turn-status] [data-turn-clock]')")).toBe(true);
 
             // ── 日常窄栏：窗口 700px（内容列 ~368px）——状态行的下限档 ────────────
             await ui.setViewport(700, 720);

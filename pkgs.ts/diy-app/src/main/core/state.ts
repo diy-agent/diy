@@ -55,6 +55,15 @@ export interface TaskData extends TaskMeta {
   uri: string;
   body: string;
   /**
+   * 文件头原件 —— frontmatter 的**未过滤**解析结果（含本系统不认识的键：tags / note / 自定义…）。
+   * 与磁盘上 `AGENTS.md` 的 `---…---` 是同一份，不是副本。
+   *
+   * 为什么读侧要显式给出头（见 ##322）：头此前只在文件里、不在 API 里，两边对"正文"的定义
+   * 不一致 —— 确认任务得去 `cat` 文件（白跑一趟），而写侧一头雾水地把整份文件当正文收下
+   * （双头污染的根因）。给出头 = 读侧不必落盘求证；写侧才有对称可言（传整份文件 → 剥头合并）。
+   */
+  frontmatter: Record<string, unknown>;
+  /**
    * 所属 project id —— **由 URI 路径推导**的投影，不落盘（URI 是唯一真相源）。
    * 与 TaskNode.num 同理：算一次给调用方用，避免 UI/CLI 各自 split 出偏差。
    */
@@ -229,13 +238,20 @@ export function splitTaskFile(raw: string): { front: Record<string, unknown>; bo
   return { front, body };
 }
 
-/** 从 AGENTS.md 原始文本中提取 frontmatter (YAML) + body (markdown)。 */
-export function parseTaskFile(raw: string): TaskMeta | null {
+/** 解析结果：过滤后的 meta + **未过滤**的文件头原件（读写两侧都要用到头，见 TaskData.frontmatter） */
+export interface ParsedTaskFile {
+  meta: TaskMeta;
+  front: Record<string, unknown>;
+  body: string;
+}
+
+/** 从 AGENTS.md 原始文本中提取 frontmatter (YAML) + body (markdown) + 头原件。 */
+export function parseTaskFileWithHead(raw: string): ParsedTaskFile | null {
   const split = splitTaskFile(raw);
   if (!split) return null;
   const { front, body } = split;
 
-  return {
+  const meta: TaskMeta = {
     title: front["title"] as string | undefined,
     state: front["state"] as TaskState | undefined,
     parent: front["parent"] as string | undefined,
@@ -253,17 +269,30 @@ export function parseTaskFile(raw: string): TaskMeta | null {
     module: front["module"] as string | undefined,
     priority: front["priority"] as string | undefined,
   };
+  return { meta, front, body };
+}
+
+/** 从 AGENTS.md 原始文本中提取 frontmatter (YAML) + body (markdown)。 */
+export function parseTaskFile(raw: string): TaskMeta | null {
+  return parseTaskFileWithHead(raw)?.meta ?? null;
 }
 
 /** 读取并解析一条任务文件 */
 export function getTask(uri: string): TaskData | null {
   const fp = taskFilePath(uri);
   if (!existsSync(fp)) return null;
-  const meta = parseTaskFile(readFileSync(fp, "utf-8"));
-  if (!meta) return null;
+  const parsed = parseTaskFileWithHead(readFileSync(fp, "utf-8"));
+  if (!parsed) return null;
   // project 一律从 URI 路径推导（路径即分组）。历史上存在 frontmatter project 字段，
   // 那是冗余副本（可能路径不同步），已由 scripts/migrate-task-fields.mts 清除，此处不再读。
-  return { uri, body: meta.body ?? "", ...meta, project: projectFromUri(uri) };
+  return {
+    uri,
+    body: parsed.meta.body ?? "",
+    ...parsed.meta,
+    // 头原件原样带出（含非托管键），与文件里的 `---…---` 同一份 —— 见 TaskData.frontmatter
+    frontmatter: parsed.front,
+    project: projectFromUri(uri),
+  };
 }
 
 /** 检查任务文件是否存在 */

@@ -149,6 +149,16 @@ const clickButton = (text: string) =>
 const steerBarRows = () =>
     ui.query<number>("document.querySelectorAll('[data-steer-bar] [data-steer-id]').length");
 
+/**
+ * 「停止」按钮在不在 —— **"这一轮还在跑"的唯一判据**。
+ *
+ * ⚠️ 不能用 `a11yText().includes("停止")`：页面别处的**正文**也含这两个字
+ * （实测踩到：水位提示条「对话已停止，但有 N 步是你上次查看之后新跑的」→
+ * "空闲前提"与"收尾了"两处断言双双失真）。判据锚在按钮上，用**全等**而非包含。
+ */
+const stopButtonVisible = () =>
+    ui.query<boolean>("[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === '停止')");
+
 /** 横条里各条插话的 id，按 DOM 顺序（拖拽排序的断言口径） */
 const steerBarIds = () =>
     ui.query<string[]>(
@@ -179,7 +189,7 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
         const text = await waitUntil(a11yText, (s) => s.includes("发送"), { label: "对话页就位" });
         expect(text).toContain("发送");
         // 没在生成：不该出现留言按钮（它只在生成中有意义）
-        expect(text).not.toContain("停止");
+        expect(await stopButtonVisible()).toBe(false);
         expect(text).not.toContain("留言");
         // 清空历史收进「⋯」溢出菜单（低频/危险操作默认不显示，点开才露出）：
         // 收起态只该看到 ⋯ 入口，不该直接露出危险项
@@ -203,8 +213,8 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
 
     it("点「发送」→ 进入生成中（桩上游挂着不回）：停止在、留言按钮仍未出现（此时输入框空）", async () => {
         await clickButton("发送");
-        const running = await waitUntil(a11yText, (s) => s.includes("停止"), { label: "进入生成中" });
-        expect(running).toContain("停止");
+        await waitUntil(stopButtonVisible, (v) => v, { label: "进入生成中" });
+        const running = await a11yText();
         // 停止按钮用 daisyUI aura 保留运行态的环绕动效。
         expect(await ui.query<boolean>("document.querySelector('.aura .btn-error') !== null")).toBe(true);
         expect(await ui.query<string>("getComputedStyle(document.querySelector('.aura')).animationName")).toBe("aura");
@@ -226,46 +236,42 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
         // 而该属性早已改名为 `data-steer-toggle` —— 于是它恒为 0、永远绿（假绿 review P2④）。
         expect(await ui.query<number>("document.querySelectorAll('[data-steer-toggle]').length")).toBe(0);
         // 「停止」仍在（功能没被顶掉），「发送」不在（生成中不该又能发一条）
-        expect(text).toContain("停止");
+        expect(await stopButtonVisible()).toBe(true);
         expect(text).not.toContain("发送");
     });
 
-    it("点「留言」→ 上方横条出现该条（左内容 + 右时机开关，默认排到下一轮） + 已落盘", async () => {
+    it("点「留言」→ 上方横条出现该条（左内容 + 右时机开关，默认排到下一步） + 已落盘", async () => {
         await clickButton("留言");
         await waitUntil(steerBarRows, (n) => n === 1, { label: "横条出现（1 条）" });
-        // eslint-disable-next-line no-console
-        console.log("DBG bar=", await ui.query<string>("document.querySelector('[data-steer-bar]')?.outerHTML ?? 'NONE'"));
-        // eslint-disable-next-line no-console
-        console.log("DBG editor=", await ui.query<string>("document.querySelector('[data-agent-input] .cm-content')?.textContent ?? 'NONE'"));
-        // eslint-disable-next-line no-console
-        console.log("DBG list=", JSON.stringify((await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`)).data));
         const text = await a11yText();
         expect(text).toContain("插一句：记得跑测试");
-        // 默认态是「排到下一轮」：开关提示词说清点它会变成什么
-        expect(text).toContain("排到下一轮");
-        expect(await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`).then((r) => (r.data as any[])[0].mode)).toBe("next-turn");
+        // 默认态是「排到下一步」（##360：缺省即时生效）：开关提示词说清点它会变成什么
+        expect(text).toContain("已加急");
+        expect(await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`).then((r) => (r.data as any[])[0].mode)).toBe("next-step");
         // 输入框已清空 → 留言按钮随之收起（没内容就没得留）
         expect(text).not.toContain("留言");
         // 持久化：真落在任务目录里，而非只活在内存
         expect(draftsRaw()).toContain("插一句：记得跑测试");
-        expect(draftsRaw()).toContain("mode: next-turn");
+        expect(draftsRaw()).toContain("mode: next-step");
         // 契约层看到同一条（UI 与服务端同源）
         const list = await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`);
         expect((list.data as any[]).map((i) => i.text)).toEqual(["插一句：记得跑测试"]);
     });
 
-    it("第二条留言：时机开关在「下一轮 ⇄ 下一步」间可逆切换", async () => {
+    it("第二条留言：时机开关在「下一步 ⇄ 下一轮」间可逆切换", async () => {
         await ui.clickSelector(".cm-content");
         await ui.type("再做一件事");
         await waitUntil(a11yText, (s) => s.includes("留言"), { label: "按钮再现" });
         await clickButton("留言");
         await waitUntil(steerBarRows, (n) => n === 2, { label: "两条并存" });
-        expect(await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`).then((r) => (r.data as any[]).map((i) => i.mode))).toEqual(["next-turn", "next-turn"]);
-        await ui.clickSelector('[data-steer-id="steer/2"] [data-steer-toggle="steer/2"]');
-        expect(await ui.query<boolean>("document.querySelector('[data-steer-toggle=\"steer/2\"] input')?.checked === true")).toBe(true);
+        expect(await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`).then((r) => (r.data as any[]).map((i) => i.mode))).toEqual(["next-step", "next-step"]);
+        // 点一下 → 切回「下一轮」（checkbox 灭）
         await ui.clickSelector('[data-steer-id="steer/2"] [data-steer-toggle="steer/2"]');
         expect(await ui.query<boolean>("document.querySelector('[data-steer-toggle=\"steer/2\"] input')?.checked === false")).toBe(true);
-        expect(await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`).then((r) => (r.data as any[]).map((i) => i.mode))).toEqual(["next-turn", "next-turn"]);
+        // 再点一下 → 回到缺省「下一步」（checkbox 亮）
+        await ui.clickSelector('[data-steer-id="steer/2"] [data-steer-toggle="steer/2"]');
+        expect(await ui.query<boolean>("document.querySelector('[data-steer-toggle=\"steer/2\"] input')?.checked === true")).toBe(true);
+        expect(await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`).then((r) => (r.data as any[]).map((i) => i.mode))).toEqual(["next-step", "next-step"]);
         const text = await a11yText();
         expect(text).toContain("插一句：记得跑测试");
         expect(text).toContain("再做一件事");
@@ -311,7 +317,7 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
 
     it("「停止」照旧能中断（按钮不变；被中断的轮次不投递插话）", async () => {
         await clickButton("停止");
-        await waitUntil(a11yText, (s) => !s.includes("停止"), { label: "生成已停止" });
+        await waitUntil(stopButtonVisible, (v) => !v, { label: "生成已停止" });
         // 本轮被中断 → turn 插话没被投递：仍排在队列里（横条继续显示待发送）
         const list = await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`);
         expect((list.data as any[]).map((i) => i.text)).toEqual(["再做一件事"]);
@@ -328,7 +334,7 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
             "再聊一句",
         );
         await clickButton("发送");
-        await waitUntil(a11yText, (s) => s.includes("停止"), { label: "新一轮跑起来" });
+        await waitUntil(stopButtonVisible, (v) => v, { label: "新一轮跑起来" });
 
         // 放开桩响应 → 本轮收尾 → 轮末取走 turn 插话并开新一轮（新一轮请求再次被桩挂住）
         stub.release();
@@ -342,10 +348,11 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
         expect(list.data).toEqual([]);
 
         // 投递留下的是对话流里的 user 块（带插话标记）+ 自动续起来的下一轮
-        const flow = await waitUntil(a11yText, (s) => s.includes("⤵ 插话") && s.includes("停止"), {
+        const flow = await waitUntil(a11yText, (s) => s.includes("⤵ 插话"), {
             label: "插话进对话流且续起下一轮",
             timeoutMs: 30_000,
         });
+        await waitUntil(stopButtonVisible, (v) => v, { label: "续起来的下一轮在跑" });
         expect(flow).toContain("再做一件事");
         expect(flow).toContain("下一轮"); // 对话流里的标记说出投递时机
 
@@ -357,10 +364,23 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
         const opsRaw = readFileSync(join(fx.HOME, "local", basename(opsFile(uri))), "utf-8");
         const turnIds = [...opsRaw.matchAll(/"id":"(t\d{13})"/g)].map((m) => m[1]!);
         expect(turnIds.length).toBeGreaterThan(0); // 真轮确实落盘了
-        const lastTurnId = turnIds[turnIds.length - 1]!;
-        const d = new Date(Number(lastTurnId.slice(1)));
-        const p2 = (n: number) => String(n).padStart(2, "0");
-        const expTitle = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+        // 同一个 turn id 会随**每条** op 重复出现（start/delta/stop 各带 id）→ 唯一化保序
+        const uniqTurns = [...new Set(turnIds)];
+        const lastTurnId = uniqTurns[uniqTurns.length - 1]!;
+        const titleOf = (id: string) => {
+            const dd = new Date(Number(id.slice(1)));
+            const p2 = (n: number) => String(n).padStart(2, "0");
+            return `${dd.getFullYear()}-${p2(dd.getMonth() + 1)}-${p2(dd.getDate())} ${p2(dd.getHours())}:${p2(dd.getMinutes())}:${p2(dd.getSeconds())}`;
+        };
+        // ⚠️ 钉的是**这一对**真 id（最后一条 + 它前面那条），不是"只钉最后一条"：
+        // 本用例末尾那轮是 `stub` **挂住未结束**的续轮，它在界面上**没有**轮尾状态行
+        // （状态行的条件是 `attrs.usage || usagePending()`，挂起的续轮两条都不满足）——
+        // 界面上可见的时刻只有**上一轮**（已结束）的。而两轮相隔仅 ~250ms，常在**同一秒**，
+        // 于是"只钉最后一条"退化成「撞秒即绿、跨秒即红」的 flaky：实测在 **main**（未含 ##327
+        // 改动）上，`last=09:48:36 / 界面=09:48:35` 跨秒即红，同秒 4/4 全绿（##327 取证）。
+        // 钉这一对：仍是 main 用 `t${Date.now()}` 写出的真 id（换 id 形状照样立刻红），
+        // 且仍要求**每个上屏时刻只出现一处**（原意图），只是不再依赖撞秒。
+        const titles = new Set([titleOf(uniqTurns[uniqTurns.length - 2] ?? lastTurnId), titleOf(lastTurnId)]);
         const shown = await waitUntil(
             () =>
                 ui.query<string[]>(
@@ -368,11 +388,14 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
                        .map((s) => (s.textContent || '').trim())
                        .filter((t) => /^\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d$/.test(t))`,
                 ),
-            (rows) => rows.includes(expTitle),
-            { label: `真轮 ${lastTurnId} 的时刻已上屏` },
+            (rows) => rows.some((t) => titles.has(t)),
+            { label: `真轮 ${lastTurnId} 的时刻已上屏`, timeoutMs: 30_000 },
         );
-        // v4（##253）：时刻收敛到**轮尾状态行**一处，且直接显示到秒 —— 不再是 `MM-DD HH:MM` + hover title
-        expect(shown.filter((t) => t === expTitle)).toHaveLength(1);
+        // v4（##253）：时刻收敛到**轮尾状态行**一处，且直接显示到秒 —— 不再是 `MM-DD HH:MM` + hover title。
+        // "一处"= 同一时刻不重复渲染（下面用集合大小钉住）；至于是哪一轮的时刻，见上面的撞秒说明。
+        const got = shown.filter((t) => titles.has(t));
+        expect(got.length).toBeGreaterThan(0);
+        expect(new Set(got).size).toBe(got.length);
     }, 120_000); // 本用例要跑完「一轮收尾 → 自动续轮」，且每次断言都要一次 CLI 往返：给足预算
 });
 
@@ -415,9 +438,9 @@ describe("##303 —— 留言的投递入口", () => {
 
     /** 收尾：停掉在跑的轮次 + 放开桩响应，别把悬挂留给下一条用例 */
     const stopTurn = async () => {
-        if ((await a11yText()).includes("停止")) {
+        if (await stopButtonVisible()) {
             await clickButton("停止");
-            await waitUntil(a11yText, (s) => !s.includes("停止"), { label: "已停止" });
+            await waitUntil(stopButtonVisible, (v) => !v, { label: "已停止" });
         }
         stub.release();
     };
@@ -427,7 +450,7 @@ describe("##303 —— 留言的投递入口", () => {
         await ui.clickSelector(".cm-content");
         await ui.type(text);
         await clickButton("发送");
-        await waitUntil(a11yText, (s) => s.includes("停止"), { label: "进入生成中" });
+        await waitUntil(stopButtonVisible, (v) => v, { label: "进入生成中" });
     };
 
     it("setup: 新任务的对话页", async () => {
@@ -449,6 +472,8 @@ describe("##303 —— 留言的投递入口", () => {
         await ui.type("排队的话");
         await clickButton("留言");
         await waitUntil(steerBarRows, (n) => n === 1, { label: "入队一条" });
+        // 缺省已是「下一步」（##360）→ 先点开关切回「下一轮」，否则"加急"测不出东西
+        await ui.clickSelector('[data-steer-toggle="steer/1"]');
         expect(await steerModes(u)).toEqual(["next-turn"]);
 
         // 立即投递：有轮次在跑 → 加急到下一步（不是开新一轮，那一轮正被桩挂着）
@@ -510,7 +535,7 @@ describe("##303 —— 留言的投递入口", () => {
         // 全新的任务（没发过任何消息）＝ 真的没有活跃轮次：这正是 ##266 的死消息场景
         const u = await newTask("空闲入队");
         await openChat(u);
-        expect(await a11yText()).not.toContain("停止"); // 前提：空闲
+        expect(await stopButtonVisible(), "前提：空闲（没有在跑的轮次）").toBe(false);
 
         // CLI 入队（后台跑：这一轮会被桩挂住，前台会一直等）
         await fx.sh.run(
@@ -524,16 +549,16 @@ describe("##303 —— 留言的投递入口", () => {
             (n) => n === 0,
             { label: "队列已被投递", timeoutMs: 30_000 },
         );
-        // UI 侧也看得见这一轮（main 真值轮询）：有「停止」= 直播中
-        await waitUntil(a11yText, (s) => s.includes("停止"), { label: "空闲入队唤醒了一轮", timeoutMs: 30_000 });
+        // UI 侧也看得见这一轮（main 真值轮询）：有「停止」按钮 = 直播中
+        await waitUntil(stopButtonVisible, (v) => v, { label: "空闲入队唤醒了一轮", timeoutMs: 30_000 });
 
         // 放开桩 → 本轮收尾 → 下降沿重放让它进对话流
         stub.release();
-        const flow = await waitUntil(a11yText, (s) => s.includes("空闲时的留言"), {
+        await waitUntil(a11yText, (s) => s.includes("空闲时的留言"), {
             label: "留言进了对话流",
             timeoutMs: 60_000,
         });
-        expect(flow).not.toContain("停止"); // 收尾了
+        expect(await stopButtonVisible(), "收尾了（停止按钮该收起）").toBe(false);
         expect(await steerBarRows()).toBe(0); // 横条始终没有它（它已经是历史消息，不是待投递）
     }, 120_000);
 });

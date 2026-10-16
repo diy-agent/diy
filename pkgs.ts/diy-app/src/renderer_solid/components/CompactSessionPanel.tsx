@@ -26,6 +26,7 @@ import {
     normalizePolicy,
     toolResultOf,
     type CompactPolicy,
+    type FlatCompactPolicy,
     type ToolResultMode,
     type ToolResultPolicy,
 } from "../../shared/context/compaction";
@@ -54,6 +55,21 @@ import {
 import { requestViewYaml, type LayerRow, type RequestView } from "../../shared/context/request-view";
 import { DrawerMaxButton } from "./DrawerMaximize";
 import { notificationStore } from "../store/notificationStore";
+import { ConfirmDialog } from "./ConfirmDialog";
+import {
+    DEFAULT_EXEMPT_STEPS,
+    DEFAULT_HEADTAIL_CLIP_DATA,
+    DEFAULT_KEEP,
+    keepStageLabel,
+    retypeStage,
+    validateKeepStages,
+    withClip,
+    withLimit,
+    withMust,
+    type KeepRole,
+    type KeepStage,
+    type KeepStageType,
+} from "../../shared/context/compact-keep";
 
 const INDENT = "  ";
 
@@ -166,7 +182,7 @@ export interface CompactPreviewModel {
 
 export interface CompactPanelCtl {
     auto: () => {
-        config: { mode: "off" | "notify" | "auto"; policy: unknown };
+        config: { mode: "off" | "notify" | "auto"; policy: unknown; history?: { keep?: KeepStage[] } };
         raw?: { path: string; text: string };
     } | undefined;
     autoBusy: () => boolean;
@@ -177,6 +193,8 @@ export interface CompactPanelCtl {
     setKbDraft: (v: string) => void;
     commitKb: () => Promise<void>;
     pv: () => CompactPreviewModel | undefined;
+    /** 预览在算（抽屉刚打开、大会话需数秒）—— 界面据此出 loading，而不是把空值当"零差异" */
+    pvLoading: () => boolean;
     busy: () => boolean;
     err: () => string | null;
     /** 立即压缩：按当前预算压一次（历史保留、可撤销）。成功 toast。 */
@@ -194,19 +212,35 @@ export interface CompactPanelCtl {
     /** 配置真源 `auto-compact.yaml` 原始全文（只读视图用） */
     rawText: () => string;
     rawPath: () => string;
+    // ─── M2（##344）：装配管道 `history.keep[]`（级列表）读写 ───
+    /** 当前级列表（配置没写 ⇒ 缺省管道**回显成数据**，用户看得见"现在在用什么"） */
+    keep: () => KeepStage[];
+    /** 级列表来源：`config` = 用户/agent 配的；`default` = 配置没写、回落缺省管道 */
+    keepSource: () => "config" | "default";
+    /** 写级列表（**写前先本地校验**；非法 ⇒ 只报错、不落盘） */
+    setKeep: (next: KeepStage[]) => Promise<void>;
+    /** 重置为**出厂缺省**（##363）：删配置里的 `history.keep[]`（走 RPC `compact plan reset`）。
+     *  ⚠️ 不是 `setKeep([...DEFAULT_KEEP])` —— 那是把缺省**写死**进配置；这里是**删键**（跟随将来缺省）。 */
+    resetKeep: () => Promise<void>;
 }
 
 /**
  * 压缩面板控制器 —— 自动压缩配置（真源 `$DIY_HOME/auto-compact.yaml` 的 policy）+ 预览 + 执行。
  * 自动与手动**同一套策略**（用户 2026-10-07：「所有压缩都改为自动压缩策略……提供手工压缩执行的按钮」）。
+ *
+ * ⚠️ `visible` 是**成本闸门**（##321）：控制器由常挂组件（`WindowRing` → `ContextPartsDrawer`）持有，
+ *   不设门槛时「打开任何会话页」都会立刻对整份 `ops.jsonl` 算一次压缩预案 —— 成本 ∝ 会话字节数
+ *   （实测 78MB 会话 8~16s）、与「屏幕上显示多少」无关，且 main 单线程 ⇒ 期间所有 RPC 排队。
+ *   真实语义：**只有「窗口构成」抽屉真的打开**才需要这份数据。
  */
-export function useCompactPanel(uri: () => string): CompactPanelCtl {
+export function useCompactPanel(uri: () => string, visible: () => boolean = () => true): CompactPanelCtl {
     const [auto, { refetch: refetchAuto }] = createResource(
-        () => uri(),
+        // 抽屉关着 → 连配置都不查（与预览同门槛：这份数据只服务抽屉）
+        () => (visible() ? uri() : null),
         async (u) => {
             if (!u) return undefined;
             return (await localChatStore.autoCompactStatus(u)) as {
-                config: { mode: "off" | "notify" | "auto"; policy: unknown };
+                config: { mode: "off" | "notify" | "auto"; policy: unknown; history?: { keep?: KeepStage[] } };
                 raw?: { path: string; text: string };
             };
         },
@@ -267,6 +301,45 @@ export function useCompactPanel(uri: () => string): CompactPanelCtl {
     const rawText = (): string => auto()?.raw?.text ?? "";
     const rawPath = (): string => auto()?.raw?.path ?? "";
 
+    // ─── M2：级列表（`history.keep[]`）───
+    // 配置没写 ⇒ 回显**缺省管道**（与主进程 `planFromKeep` 的回落同一份 `DEFAULT_KEEP`）：
+    // 界面必须显示"现在实际在用什么"，否则「回落」在 UI 上等于隐形。
+    const configuredKeep = (): KeepStage[] | undefined => {
+        const k = auto()?.config.history?.keep;
+        return k && k.length > 0 ? k : undefined;
+    };
+    const keep = (): KeepStage[] => configuredKeep() ?? [...DEFAULT_KEEP];
+    const keepSource = (): "config" | "default" => (configuredKeep() ? "config" : "default");
+    /** 写级列表：**先本地校验**（同一个 `validateKeepStages`，与主进程判据同源）⇒ 立刻给反馈、不打空 RPC */
+    const setKeep = async (next: KeepStage[]): Promise<void> => {
+        const { issues } = validateKeepStages(next);
+        const errors = issues.filter((i) => i.level === "error");
+        if (errors.length > 0) {
+            setErr(errors.map((e) => e.message).join("；"));
+            return;
+        }
+        if (next.length === 0) {
+            setErr("级列表不能为空（要清零请把预算设为 0）");
+            return;
+        }
+        setErr(null);
+        await patchAuto({ history: { keep: next } });
+    };
+    /** 重置为**出厂缺省**（##363 逃生窗口）：走 `compact plan reset`（删键），**不是**写 DEFAULT_KEEP 字面量。
+     *  成功后 `refetchAuto()` ⇒ `keepSource()` 变 `default`、`keep()` 回显缺省 ⇒ 预览 key 变、自动重算。 */
+    const resetKeep = async (): Promise<void> => {
+        setErr(null);
+        setAutoBusy(true);
+        try {
+            await localChatStore.compactPlanReset(uri());
+            await refetchAuto();
+        } catch (e) {
+            setErr(String(e instanceof Error ? e.message : e));
+        } finally {
+            setAutoBusy(false);
+        }
+    };
+
     /** 提交预算输入（失焦 / 回车）。**返回 Promise**：写盘 + refetch 异步，apply 必须先 await 它。 */
     const commitKb = async (): Promise<void> => {
         const kb = Number(kbDraft());
@@ -281,17 +354,32 @@ export function useCompactPanel(uri: () => string): CompactPanelCtl {
     const [busy, setBusy] = createSignal(false);
     const [err, setErr] = createSignal<string | null>(null);
 
-    /** 预览（只算不写）：预算变化即重算。base = 未压缩（compactPreview 现算），mod = 当前预算。 */
-    const [pv] = createResource(
-        () => {
-            const u = uri();
-            return u ? { uri: u, p: flatPolicyOf(autoPolicy()) } : null;
-        },
-        (k) =>
-            k
-                ? (localChatStore.compactPreview(k.uri, k.p) as Promise<CompactPreviewModel>)
-                : Promise.resolve(undefined),
-    );
+    /** 预览（只算不写）：预算变化即重算。base = 未压缩（compactPreview 现算），mod = 当前预算。
+     *  闸门两道（##321）：
+     *   ① `visible()` —— 抽屉关着就不算（这是「切页卡 main」的根因：本控制器由常挂组件持有）。
+     *   ② `auto` 未落定 —— 等配置回来再算。否则会先按**缺省策略**白算一遍、等 auto 到了再按真策略
+     *      算第二遍，同一份文件读两趟（大会话 = 2×8s；开抽屉的卡点反而翻倍）。
+     *  source 返回**字符串键**（而非对象字面量）：`createResource` 的 source 是按值比较的 memo，
+     *  只要返回新对象，依赖被重复求值（`auto.state` 与 `auto()` 分两拍更新）就会同键重算一遍。 */
+    const pvKey = (): string | null => {
+        if (!visible()) return null;
+        if (auto.loading || auto.state === "unresolved") return null; // 配置未落定：别用缺省策略白算
+        const u = uri();
+        if (!u) return null;
+        // ⚠️ 必须带上 `keep`：预览算的是「当前配置下的投递」，改了级列表要立刻重算
+        // （与预算同理 —— 漏了它就会出现"改了管道但预览没变"的假象）。
+        // 编码：`<uri>\0<JSON>`，JSON 里同时装 policy 与 keep —— **只能有一个分隔符**，
+        // 多个分隔符会让下面的 `JSON.parse(第一个 \0 之后)` 撞上"JSON 后面还有内容"（实测红灯）。
+        return u + "\u0000" + JSON.stringify({ policy: flatPolicyOf(autoPolicy()), keep: keep() });
+    };
+    const [pv] = createResource(pvKey, (k) => {
+        const i = k.indexOf("\u0000");
+        const { policy } = JSON.parse(k.slice(i + 1)) as { policy: FlatCompactPolicy };
+        return localChatStore.compactPreview(k.slice(0, i), policy) as Promise<CompactPreviewModel>;
+    });
+
+    /** 预览是否在算（见 CompactPanelCtl.pvLoading） */
+    const pvLoading = (): boolean => pv.loading;
 
     /** 立即压缩：按当前预算压一次（历史保留、可撤销） */
     const apply = async () => {
@@ -313,8 +401,9 @@ export function useCompactPanel(uri: () => string): CompactPanelCtl {
     };
 
     return {
-        auto, autoBusy, patchAuto, autoPolicy, budgetBytes, kbDraft, setKbDraft, commitKb, pv, busy, err, apply,
+        auto, autoBusy, patchAuto, autoPolicy, budgetBytes, kbDraft, setKbDraft, commitKb, pv, pvLoading, busy, err, apply,
         render, setRender, renderData: headtailData, setRenderData, summaryEnabled, setSummary, rawText, rawPath,
+        keep, keepSource, setKeep, resetKeep,
     };
 }
 
@@ -324,11 +413,191 @@ export function useCompactPanel(uri: () => string): CompactPanelCtl {
  *   · 右栏 = 预览区（请求结构 YAML 行级 diff：增删变色、可折叠、可只看差异、可并排）
  * 外壳（顶栏 / 底栏 / 遮罩）由外层「窗口构成页」提供；执行按钮在 tab 栏。
  */
+/** 级列表里的 clip 选择值（`inherit` = 不声明 ⇒ 回落计划级全局裁法） */
+type ClipKind = "inherit" | "full" | "path" | "headtail";
+const clipKindOf = (s: KeepStage): ClipKind => s.clip?.type ?? "inherit";
+const stageWithClipKind = (s: KeepStage, kind: ClipKind): KeepStage => {
+    if (kind === "inherit") return withClip(s, undefined);
+    if (kind === "full") return withClip(s, { type: "full" });
+    if (kind === "path") return withClip(s, { type: "path" });
+    return withClip(s, { type: "headtail", data: { ...DEFAULT_HEADTAIL_CLIP_DATA } });
+};
+
+/**
+ * **一级**的编辑器（##344 M2）：选 `type` / 必保 / `limit` / `clip` / 该取法私有的 `data`。
+ *
+ * 形状与校验真源是 `shared/context/compact-keep.ts` —— 这里只做「把一条级画成控件」，
+ * 不自己发明字段（换取法用 `retypeStage`，它保证 `data` **整包换**，见 rule.discriminated-union）。
+ */
+function KeepStageRow(props: {
+    stage: KeepStage;
+    index: number;
+    disabled: boolean;
+    onChange: (next: KeepStage) => void;
+    onRemove: () => void;
+}) {
+    const s = () => props.stage;
+    /** 只改公共字段（type 不动） */
+    const patch = (next: KeepStage) => props.onChange(next);
+    const setMust = (must: boolean) => patch(withMust(s(), must));
+    const setLimit = (v: string) => {
+        const n = v.trim() === "" ? undefined : Math.max(0, Math.floor(Number(v)));
+        patch(withLimit(s(), n !== undefined && Number.isFinite(n) ? n : undefined));
+    };
+    const setDataN = (v: string) => {
+        const n = Math.max(1, Math.floor(Number(v) || 1));
+        const st = s();
+        if (st.type === "recent" || st.type === "steps") patch({ ...st, data: { ...st.data, n } });
+    };
+    const setRole = (role: KeepRole) => {
+        const st = s();
+        if (st.type === "role") patch({ ...st, data: { role } });
+        else if (st.type === "recent") patch({ ...st, data: { ...st.data, role } });
+    };
+    const setHt = (key: "head" | "tail" | "maxLineChars" | "maxKeepBytes", v: string) => {
+        const st = s();
+        if (st.clip?.type !== "headtail") return;
+        patch({ ...st, clip: { type: "headtail", data: { ...st.clip.data, [key]: Math.max(0, Math.floor(Number(v) || 0)) } } });
+    };
+    const d = () => (s().type === "ladder" ? undefined : (s() as { data: Record<string, unknown> }).data);
+    return (
+        <div data-keep-stage data-keep-type={s().type} class="rounded border border-base-300 p-2 space-y-1">
+            <div class="flex items-center gap-1">
+                <span class="font-mono opacity-50">{props.index + 1}</span>
+                <select
+                    data-keep-type-select
+                    class="select select-xs select-bordered"
+                    aria-label={`第 ${props.index + 1} 级取法`}
+                    disabled={props.disabled}
+                    value={s().type}
+                    onChange={(e) => patch(retypeStage(s(), e.currentTarget.value as KeepStageType))}
+                >
+                    <option value="ladder">ladder 纵向阶梯</option>
+                    <option value="steps">steps 最近 N 步</option>
+                    <option value="recent">recent 最近 N 条</option>
+                    <option value="role">role 某角色全部</option>
+                </select>
+                <label class="ml-auto flex items-center gap-1">
+                    <input
+                        data-keep-must
+                        type="checkbox"
+                        class="checkbox checkbox-xs"
+                        aria-label={`第 ${props.index + 1} 级必保`}
+                        disabled={props.disabled}
+                        checked={s().must === true}
+                        onChange={(e) => setMust(e.currentTarget.checked)}
+                    />
+                    <span class="opacity-60">必保</span>
+                </label>
+                <button
+                    data-keep-del
+                    class="btn btn-ghost btn-xs"
+                    aria-label={`删除第 ${props.index + 1} 级`}
+                    disabled={props.disabled}
+                    onClick={props.onRemove}
+                >
+                    ✕
+                </button>
+            </div>
+            <div class="flex items-center gap-1">
+                <span class="opacity-60">limit</span>
+                <input
+                    data-keep-limit
+                    type="number"
+                    min="0"
+                    class="input input-xs w-14"
+                    aria-label={`第 ${props.index + 1} 级 limit`}
+                    placeholder="不限"
+                    disabled={props.disabled}
+                    value={s().limit ?? ""}
+                    onChange={(e) => setLimit(e.currentTarget.value)}
+                />
+                <span class="ml-auto opacity-60">裁</span>
+                <select
+                    data-keep-clip
+                    class="select select-xs select-bordered"
+                    aria-label={`第 ${props.index + 1} 级裁法`}
+                    disabled={props.disabled}
+                    value={clipKindOf(s())}
+                    onChange={(e) => patch(stageWithClipKind(s(), e.currentTarget.value as ClipKind))}
+                >
+                    <option value="inherit">回落全局</option>
+                    <option value="full">full 全量</option>
+                    <option value="path">path 只留调用</option>
+                    <option value="headtail">headtail 头尾</option>
+                </select>
+            </div>
+            <Show when={s().type === "role" || s().type === "recent"}>
+                <div class="flex items-center gap-1">
+                    <span class="opacity-60">role</span>
+                    <select
+                        data-keep-role
+                        class="select select-xs select-bordered"
+                        aria-label={`第 ${props.index + 1} 级角色`}
+                        disabled={props.disabled}
+                        value={String(d()?.role ?? "")}
+                        onChange={(e) => setRole(e.currentTarget.value as KeepRole)}
+                    >
+                        <Show when={s().type === "recent"}>
+                            <option value="">不限</option>
+                        </Show>
+                        <option value="user">user</option>
+                        <option value="assistant">assistant</option>
+                        <option value="tool">tool</option>
+                    </select>
+                </div>
+            </Show>
+            <Show when={s().type === "recent" || s().type === "steps"}>
+                <div class="flex items-center gap-1">
+                    <span class="opacity-60">{s().type === "steps" ? "步数 n" : "条数 n"}</span>
+                    <input
+                        data-keep-n
+                        type="number"
+                        min="1"
+                        class="input input-xs w-16"
+                        aria-label={`第 ${props.index + 1} 级 n`}
+                        disabled={props.disabled}
+                        value={String(d()?.n ?? 1)}
+                        onChange={(e) => setDataN(e.currentTarget.value)}
+                    />
+                </div>
+            </Show>
+            <Show when={s().clip?.type === "headtail"}>
+                <div class="flex flex-wrap items-center gap-1">
+                    <For each={["head", "tail", "maxLineChars", "maxKeepBytes"] as const}>
+                        {(key) => (
+                            <label class="flex items-center gap-1">
+                                <span class="font-mono opacity-60">{key}</span>
+                                <input
+                                    data-keep-ht={key}
+                                    type="number"
+                                    class="input input-xs w-16"
+                                    aria-label={`第 ${props.index + 1} 级 headtail ${key}`}
+                                    disabled={props.disabled}
+                                    value={String((s().clip as { type: "headtail"; data: Record<string, number> }).data[key] ?? 0)}
+                                    onChange={(e) => setHt(key, e.currentTarget.value)}
+                                />
+                            </label>
+                        )}
+                    </For>
+                </div>
+            </Show>
+            <div class="opacity-45" data-keep-label>
+                {keepStageLabel(s())}
+                {s().must === true ? " · 必保（不占预算）" : " · 计预算"}
+            </div>
+        </div>
+    );
+}
+
 export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
     const ctl = props.ctl;
 
     /** 左栏视图：UI 表单 ⇄ 原始 YAML（同 VSCode settings 的 UI/JSON 切换；用户 2026-10-07） */
     const [panelView, setPanelView] = createSignal<"form" | "yaml">("form");
+    // 破坏性操作（删级 / 恢复缺省）走应用内 ConfirmDialog（禁原生 window.confirm，见 tool.confirm）
+    const [pendingRemove, setPendingRemove] = createSignal<number | null>(null);
+    const [pendingReset, setPendingReset] = createSignal(false);
     /** headtail 私有参数的字段表（渲染顺序 + 文案一处定义） */
     const RENDER_DATA_FIELDS: { key: "head" | "tail" | "maxLineChars" | "maxKeepBytes"; hint: string }[] = [
         { key: "head", hint: "保留头部行数" },
@@ -490,10 +759,12 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                             />
                         </div>
                         <div class="text-caption opacity-70">
-                            当前 {estTok(ctl.pv()?.before.bytes ?? 0).toLocaleString()} tok → 压缩后{" "}
-                            {estTok(ctl.pv()?.after.bytes ?? 0).toLocaleString()} tok{" "}
-                            <span class="text-success">(-{ratio()}%)</span>
-                            <span class="opacity-60">　删 {diffCounts().del} / 增 {diffCounts().add} 行</span>
+                            <Show when={!ctl.pvLoading()} fallback={<span class="opacity-60">正在计算预览…</span>}>
+                                当前 {estTok(ctl.pv()?.before.bytes ?? 0).toLocaleString()} tok → 压缩后{" "}
+                                {estTok(ctl.pv()?.after.bytes ?? 0).toLocaleString()} tok{" "}
+                                <span class="text-success">(-{ratio()}%)</span>
+                                <span class="opacity-60">　删 {diffCounts().del} / 增 {diffCounts().add} 行</span>
+                            </Show>
                         </div>
                         <div class="text-caption opacity-70">
                             历史 ≤ <b>{budgetKbLabel()}</b> · 整份请求 ≈ <b>{afterKb()}</b>
@@ -506,8 +777,58 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                         </Show>
                     </div>
 
-                    {/* 参数区：按 mode → modeData → toolResult → renderData 的层次展示（归属可见） */}
-                    <Block title="压缩参数" extra="策略真源">
+                    {/* 装配管道（级列表）：**从上往下**生效 —— 先声明的先挑；一条消息被多级选中 ⇒ 先选中级的 clip 生效 */}
+                    <Block title="装配管道" extra={ctl.keepSource() === "config" ? "来自配置" : "缺省回落（未配置）"}>
+                        <div class="space-y-2 text-caption">
+                            <div class="flex items-center gap-1">
+                                <span class="font-mono opacity-50">history.keep[]</span>
+                                <button
+                                    data-keep-add
+                                    class="btn btn-xs ml-auto"
+                                    disabled={ctl.autoBusy()}
+                                    onClick={() => void ctl.setKeep([...ctl.keep(), { type: "steps", must: true, data: { n: DEFAULT_EXEMPT_STEPS } }])}
+                                >
+                                    + 新增级
+                                </button>
+                                <button
+                                    data-keep-reset
+                                    aria-label="重置为缺省"
+                                    class="btn btn-xs btn-ghost"
+                                    disabled={ctl.autoBusy() || ctl.keepSource() === "default"}
+                                    title="删除配置里的 history.keep[]，回落到出厂缺省管道（逃生窗口；不依赖任何快照）"
+                                    onClick={() => setPendingReset(true)}
+                                >
+                                    重置为缺省
+                                </button>
+                            </div>
+                            <div data-keep-source class="opacity-50">
+                                {ctl.keepSource() === "config"
+                                    ? "真源 = auto-compact.yaml 的 history.keep[]（改动立即生效于下一轮投递）"
+                                    : "配置里没有 history.keep[] ⇒ 用**代码缺省管道**（保底最近 6 步全量 + 纵向阶梯）；改任一字段即写入配置"}
+                            </div>
+                            <For each={ctl.keep()}>
+                                {(stage, i) => (
+                                    <KeepStageRow
+                                        stage={stage}
+                                        index={i()}
+                                        disabled={ctl.autoBusy()}
+                                        onChange={(next) => {
+                                            const list = [...ctl.keep()];
+                                            list[i()] = next;
+                                            void ctl.setKeep(list);
+                                        }}
+                                        onRemove={() => setPendingRemove(i())}
+                                    />
+                                )}
+                            </For>
+                            <Show when={ctl.err()}>
+                                <div class="text-error">{ctl.err()}</div>
+                            </Show>
+                        </div>
+                    </Block>
+
+                    {/* 计划级参数：预算 + 全局裁法（未声明 clip 的级回落到它） */}
+                    <Block title="计划级参数" extra="策略真源">
                         <div class="space-y-2 text-caption">
                             <div class="flex items-center gap-2">
                                 <span class="font-mono opacity-60">mode</span>
@@ -530,9 +851,10 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                                         onBlur={() => void ctl.commitKb()}
                                     />
                                     <span class="opacity-60">KB</span>
+                                    <span class="opacity-45">（0 = 清零，含必保级）</span>
                                 </div>
                                 <div class="space-y-2 border-l-2 border-base-300 pl-2">
-                                    <div class="font-mono opacity-50">toolResult</div>
+                                    <div class="font-mono opacity-50">toolResult（全局裁法）</div>
                                     <div class="flex items-center gap-2">
                                         <span class="font-mono opacity-70">render</span>
                                         <select
@@ -587,11 +909,37 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                             </div>
                         </div>
                     </Block>
+                    <Show when={pendingRemove() !== null}>
+                        <ConfirmDialog
+                            title="删除这一级"
+                            message={`删除「${keepStageLabel(ctl.keep()[pendingRemove()!] ?? ctl.keep()[0]!)}」后，这一级挑中的消息会改由后续级决定是否保留（历史不删，只改投递）。`}
+                            confirmLabel="删除"
+                            onCancel={() => setPendingRemove(null)}
+                            onConfirm={() => {
+                                const i = pendingRemove();
+                                setPendingRemove(null);
+                                if (i === null) return;
+                                void ctl.setKeep(ctl.keep().filter((_, k) => k !== i));
+                            }}
+                        />
+                    </Show>
+                    <Show when={pendingReset()}>
+                        <ConfirmDialog
+                            title="重置为出厂缺省"
+                            message="将 history.keep[] 重置为出厂缺省，影响所有任务的投递（当前级列表会先存快照，可用 restore 找回）。历史不删，只改投递。"
+                            confirmLabel="重置为缺省"
+                            onCancel={() => setPendingReset(false)}
+                            onConfirm={() => {
+                                setPendingReset(false);
+                                void ctl.resetKeep();
+                            }}
+                        />
+                    </Show>
 
                     <Block title="费用对比">
                         <CostCompare facts={ctl.pv()?.facts ?? []} />
                         <div class="mt-2 text-caption opacity-60">
-                            金额 = token ÷ 1M × 当前模型非缓存输入单价；token 按字节 / 4 估算（仅为对比，不进计费）。
+                            金额 = token ÷ 1M × 当前模型非缓存单价；token 按字节 / 4 估算（仅为对比，不进计费）。
                         </div>
                     </Block>
                 </Show>
@@ -712,7 +1060,11 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                         </For>
                     </Show>
                     <Show when={renderRows().length === 0}>
-                        <div class="p-4 opacity-60">无差异（当前参数与生效请求一致）</div>
+                        {/* 预览现算（##321 懒算后 = 打开抽屉那一刻）⇒ 大会话要等数秒：把"在算"
+                            与"确实没差异"分开说，否则用户看到的是"无差异"这个**假结论**。 */}
+                        <div class="p-4 opacity-60">
+                            {ctl.pvLoading() ? "正在计算预览…（大会话首次需要数秒）" : "无差异（当前参数与生效请求一致）"}
+                        </div>
                     </Show>
                 </div>
             </div>

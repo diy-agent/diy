@@ -12,6 +12,11 @@
  */
 
 import type { BlockNode, TurnEndReason } from "../../main/services/local-blocks";
+// 结束原因 → 人话 / 图标 的**唯一文案源**（main 与 renderer 共用，##308）：这里只做
+// 「块树 → endReason/notice」的取数，措辞一律不在此处另写一份（否则又分叉）。
+import { endMarkOf, turnEndText, type EndMark } from "../../shared/turn-end";
+export { endMarkOf, type EndMark };
+
 
 /** 用户发言块（插话与轮次开场那次发言同形，只差 attrs.steer） */
 export function isUserText(n: BlockNode): boolean {
@@ -225,60 +230,10 @@ export function turnEndNote(turn: BlockNode): string | null {
     const notice = typeof turn.attrs.notice === "string" && turn.attrs.notice ? turn.attrs.notice : null;
     const r = endReasonOf(turn);
     if (!r) return turn.attrs.interrupted ? "本轮未完成（流中断/崩溃恢复）" : notice;
-    switch (r.type) {
-        case "completed":
-            return notice;
-        case "max-steps":
-            return notice ?? `达到步数上限 ${r.data.limit}，本轮被强制收尾（模型仍在请求工具）`;
-        case "max-tokens":
-            return notice ?? "输出达到上限被截断";
-        case "aborted":
-            return r.data.source === "detached" ? "本轮被中断（消费端断开，未跑完）" : "本轮被中断（未跑完）";
-        case "error":
-            return notice; // 细节由 error 块 / 现场说，同一句不写两遍
-        case "interrupted":
-            return "本轮未完成（流中断/崩溃恢复）";
-    }
+    // 说明句本身（含 aborted 按 source 的分句）在 shared/turn-end —— main 的中止 error 块同源同句。
+    return turnEndText(r, notice);
 }
 
-/**
- * 轮尾**状态行**的状态图标（末行恒显 —— 它是"这轮到底怎么结束的"的唯一常显位）。
- *
- * 用户 2026-10-11 口径："我起码知道是模型说我正常结束了，还是模型说有长度/金额限制所以要结束了，
- * 还是压根没收到 llm 结束"。`endReason`（##288 拍板）是判据，这里只把它翻成一个字形 + 一句 tip。
- * **字形承载状态、文字只进 tooltip**（用户 2026-10-12：状态行上不写"正常结束"这类字）。
- *
- * tone 三档给样式用（不是给判据用）：`ok` 绿 · `cut` 黄（被限制/被中断，非报错）· `err` 红 ·
- * `live` 灰（进行中）。无 `endReason` 的旧日志 → 不给图标（`icon: ""`，不编状态）。
- */
-export interface EndMark {
-    icon: string;
-    tip: string;
-    tone: "live" | "ok" | "cut" | "err" | "none";
-}
-
-export function endMarkOf(end: TurnEndReason | null, live: boolean): EndMark {
-    if (live) return { icon: "◌", tip: "本轮进行中", tone: "live" };
-    if (!end) return { icon: "", tip: "", tone: "none" };
-    switch (end.type) {
-        case "completed":
-            return { icon: "✓", tip: "正常结束（completed）", tone: "ok" };
-        case "max-steps":
-            return { icon: "⛔", tip: `步数上限收尾（上限 ${end.data.limit}）`, tone: "cut" };
-        case "max-tokens":
-            return { icon: "⛔", tip: "输出长度上限", tone: "cut" };
-        case "aborted":
-            return {
-                icon: "⛔",
-                tip: end.data.source === "detached" ? "被中断（消费端断开，未跑完）" : "被中断（未跑完）",
-                tone: "cut",
-            };
-        case "interrupted":
-            return { icon: "⛔", tip: "未完成（流中断/崩溃恢复）", tone: "cut" };
-        case "error":
-            return { icon: "✗", tip: "错误终止", tone: "err" };
-    }
-}
 
 /**
  * 这一行**点开会不会多出东西** —— 决定行首给「展开箭头」还是「末级点」。
@@ -528,6 +483,26 @@ export function planOfLevel(level: TurnLevel): LevelPlan {
 }
 
 /**
+ * 拖拽 1 级「摘要结论」下缘 → 新的可视行数（**纯函数 + 单测**，组件只负责量高度与算 delta）。
+ *
+ * 为什么是**等比**换算（高度翻倍 ≈ 行数翻倍）而不是 `dy / 行高`：结论是 Markdown 渲染的，
+ * 标题 / 代码块 / 列表各占不同高度，"一行"没有定长 —— 除以名义行高会跳变；等比只依赖
+ * 「已经画出来的这块有多高」，对任何内容都单调、无魔法常数。
+ * 结果夹在 [min,max]（上界防"拖成整篇"，下界至少一句）。
+ */
+export function linesFromDrag(
+    startLines: number,
+    startHeight: number,
+    dy: number,
+    min: number,
+    max: number,
+): number {
+    if (!(startHeight > 0)) return startLines;
+    const n = Math.round((startLines * (startHeight + dy)) / startHeight);
+    return Math.min(max, Math.max(min, n));
+}
+
+/**
  * 按可视行数截断正文（**1 级「摘要结论」**的摘要态；Markdown 不解析时也走这里）。
  *
  * 只截**行**不截字符：正文里代码块/列表被字符数切开比少几行更难看懂。
@@ -544,4 +519,95 @@ export function clampLines(text: string, n: number): { text: string; omitted: nu
     const kept = lines.slice(start);
     if (kept.length <= n) return { text: kept.join("\n"), omitted: 0 };
     return { text: kept.slice(0, n).join("\n"), omitted: kept.length - n };
+}
+
+// ─── 过程行的**状态**（图标 / 默认开合）──────────────────────
+//
+// 判据**只在这里**：组件 `statusMark` / `procOpen` 只把结果画成字形与 class。
+//
+// 为什么必须抽出来（##329 review1 R1）：`status==="error"` → ✗、失败块恒展开，
+// 是**用户唯一能看出"这一步失败了"的地方**；判据若留在组件私有函数里，单测够不着 ⇒
+// 有人改 status 语义时测试全绿、界面照旧 —— 那正是 ##329 的原始形态（数据对了、界面没变）。
+//
+// ⚠️ 判据要的是 main 真值 `live`（含别人发起的轮次），**作为参数传进来**，不在本层读 store：
+//    本地 running 只代表"我这轮在等自己的流"，拿它当整体运行态会把 CLI 正在跑的一轮
+//    判成"中断的历史"（任务 194 现象一）；反过来把"未收 stop"当直播中，真崩溃的历史就不再可见。
+
+const attrStr = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v));
+
+/** tool 块是否**失败**（`status==="error"`，##329 起由 main 侧抛错路径保证）
+ *  —— 判据唯一出处：状态灯 ✗ / 恒展开 / 过程 bar 的 ✗ 三处共用 */
+export function isFailedTool(n: BlockNode): boolean {
+    return n.tag === "tool" && attrStr(n.attrs.status) === "error";
+}
+
+/**
+ * 中断的 tool 块：
+ *   ① 显式终态 status=interrupted（main 已收敛并写进 ops）→ 直接读，不靠推断
+ *   ② 兼容旧会话：未收 stop 且该任务**此刻确实没有轮次在跑**（历史日志里还没收敛）
+ */
+export function isInterruptedToolBlock(n: BlockNode, live: boolean): boolean {
+    if (n.tag !== "tool") return false;
+    const s = attrStr(n.attrs.status);
+    if (s === "interrupted") return true;
+    if (n.stopped) return false;
+    if (s === "done" || s === "error") return false;
+    return !live;
+}
+
+/** 状态灯的样式档（组件映到 class；**判据不认 class**） */
+export type ProcTone = "error" | "ok" | "warn" | "wait" | "muted" | "none";
+
+/** 过程行行首那枚状态灯 */
+export interface ProcStatus {
+    /** 字形；`""` = 这一行不画状态灯（用户发言） */
+    icon: string;
+    tone: ProcTone;
+    /** 在跑（闪动） */
+    pulse?: boolean;
+    tip?: string;
+}
+
+/**
+ * 行首状态灯 = 💭 / ⚙ 类字形的**状态位**（● 在跑 / ✓ 完成 / ✗ 失败 / ⊘ 中断）。
+ * 少了它，一行 `思考` 与一行 `Bash · 命令` 在长列表里只能靠读文字分辨（2026-10-11 用户口径）。
+ */
+export function procStatusOf(n: BlockNode, live: boolean): ProcStatus {
+    if (n.tag === "error") return { icon: "❌", tone: "error" };
+    if (n.tag === "text") {
+        if (isUserText(n)) return { icon: "", tone: "none" };
+        return n.stopped ? { icon: "✍", tone: "muted" } : { icon: "●", tone: "wait", pulse: true };
+    }
+    if (n.tag === "think") {
+        return n.stopped ? { icon: "💭", tone: "none" } : { icon: "●", tone: "wait", pulse: true };
+    }
+    if (attrStr(n.attrs.status) === "done") return { icon: "✓", tone: "ok" };
+    if (isFailedTool(n)) return { icon: "✗", tone: "error" };
+    // 中断遗留（无 stop、无结果）：不能跟"正在执行"共用同一个点，否则用户看不出历史断在哪
+    if (isInterruptedToolBlock(n, live)) {
+        return {
+            icon: "⊘",
+            tone: "warn",
+            tip: "上一轮中断，没有结果（此行已被收敛为终态，正文与发往模型的同源）",
+        };
+    }
+    if (!n.stopped) return { icon: "●", tone: "wait", pulse: true };
+    return { icon: "○", tone: "muted" };
+}
+
+/**
+ * 过程行**默认开不开**（2026-10-04 重写）：**pin 是用户的显式覆盖，默认值只给这几档**。
+ *
+ * 正文与过程分两套默认：
+ *   · 正文：pin → L2/L3 默认展开、L1 折成一行（**直播中同样折叠** —— L1 的语义就是
+ *     "只看最后一行"，收起态仍显示正在写的那一行 + 光标，进度照样可见）；
+ *   · 过程：error 块 / **失败的工具行** / 中断遗留 tool 恒开（看"断在哪"）→ pin → 一律默认收起
+ *     （原 L4「全开」档已取消 —— 档位不再负责"帮用户全开"）。
+ */
+export function procOpenOf(n: BlockNode, pin: Record<string, boolean>, live: boolean): boolean {
+    if (n.tag === "error") return true;
+    if (isFailedTool(n)) return true;
+    if (isInterruptedToolBlock(n, live)) return true;
+    if (n.id in pin) return pin[n.id]!;
+    return false;
 }

@@ -67,7 +67,7 @@ sync()  {
 }
 link() {      _ws_run command npm link; }
 unlink() {    _ws_run command npm unlink -g ; }
-# 全仓唯一检查入口：全项目类型 + 全仓 lint + rpc 浏览器安全 + 产物护栏
+# 全仓唯一检查入口：全项目类型 + 全仓 lint + rpc 浏览器安全 + 产物护栏 + 可执行位护栏
 #（子包目录下单用见 pkgs.ts/*/sha.sh check）
 check() {
   run npx tsc -b tsconfig.all.json --noEmit
@@ -75,17 +75,19 @@ check() {
   run npx tsc --noEmit -p pkgs.ts/diy-rpc/tsconfig.browser.json
   # 产物护栏：TS 包源码目录旁不得出现编译产物（实现见 scripts/check-no-emit.sh）
   run bash scripts/check-no-emit.sh
+  # 可执行位护栏：shell 脚本在 git 索引里必须 100755（Windows 提交会静默丢位，实现见 scripts/check-exec-bit.sh，详见 ##304(Windows 提交丢可执行位)）
+  run bash scripts/check-exec-bit.sh
 }
 # 全仓唯一自动修复入口：格式化 + lint 可修项，能修的全修
 fix() {
   run npx oxfmt --write pkgs.ts/
   run npx oxlint --fix pkgs.ts/
 }
-# 全部测试：两包快速单测 + 构建 + diy-app 意图测试（起隔离 Electron，最慢放最后）
+# 全部测试：各包 test 子命令（diy-app 含意图测试，起隔离 Electron，最慢放最后）
 test() {
   _ws_run command ./sha.sh test
 }
-# 编程中快速验证：两包单测，不构建、不起 Electron
+# 编程中快速验证：各包单测，不构建、不起 Electron
 test-unit() {  _ws_run command ./sha.sh test-unit; }
 
 _vendors_run() {

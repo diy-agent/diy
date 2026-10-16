@@ -6,9 +6,17 @@
  * 一个挡住内容的对话框打断。
  *
  * 只负责 UI；搜索与高亮在 store/findStore（CSS Highlight API，不动 DOM）。
+ *
+ * **顶层贴片（##309 修）**：它是 `Portal` 到 body 的 `fixed` 浮条（`Z_FIND`），不是流内
+ * 元素。原先是 `main` 里包屑与内容区之间的流内元素，会被流量抽屉（z-50）/ 人物配置
+ * （z-70）这类全屏浮层盖住 —— 输入框还在、⌘F 还能打字，**就是看不见**（点它中心命中的
+ * 竟是抽屉里的按钮）。流内元素压不过 fixed 浮层，故上提到最顶层。
+ * 搜索范围随"最前浮层"切换见 findStore.setRootResolver。
  */
 import { Show, createEffect } from "solid-js";
+import { Portal } from "solid-js/web";
 import { findStore } from "../store/findStore";
+import { Z_FIND } from "../lib/z-layers";
 
 export function FindBar() {
     let inputEl: HTMLInputElement | undefined;
@@ -22,14 +30,19 @@ export function FindBar() {
 
     return (
         <Show when={findStore.open}>
+            <Portal>
             <div
                 data-find-skip
-                class="flex shrink-0 items-center gap-2 border-b border-warning/30 bg-warning/15 px-2 py-0.5 text-body"
+                style={{ "z-index": String(Z_FIND) }}
+                class="fixed left-1/2 top-2 -translate-x-1/2 flex max-w-[min(680px,92vw)] items-center gap-2 rounded-lg border border-warning/70 bg-base-100 px-2 py-1 text-body shadow-2xl ring-1 ring-black/20"
             >
+                {/* 明确标注这是「查找」条：原先只有一条与面包屑同款的淡黄细线，在流量页这类
+                    内容密集的页面里几乎看不出输入框（实测与背景对比度仅 1.37） */}
+                <span class="whitespace-nowrap font-medium text-warning">🔍 查找</span>
                 <input
                     ref={inputEl}
                     type="search"
-                    class="input input-bordered input-xs min-w-24 max-w-72 flex-1"
+                    class="input input-bordered input-sm min-w-40 max-w-96 flex-1 border-warning/50 bg-base-100 placeholder:opacity-50"
                     placeholder="页面内查找…"
                     value={findStore.query}
                     onInput={(e) => findStore.setQuery(e.currentTarget.value)}
@@ -69,6 +82,7 @@ export function FindBar() {
                     ✕
                 </button>
             </div>
+            </Portal>
         </Show>
     );
 }

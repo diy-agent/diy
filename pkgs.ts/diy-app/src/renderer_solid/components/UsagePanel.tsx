@@ -15,7 +15,9 @@
  *   · L3    = `<key>.usage.jsonl` 镜像（localChatStore.usage；开抽屉时对账刷新）
  *
  * 口径硬约束（##211 §一/§四，违者即口径事故）：
- *   · 总输入 = 非缓存输入 + 缓存读 + 缓存写；总输出 = 文本输出 + 思考输出（思考不另加价）
+ *   · 总输入 = 非缓存 + 缓存读 + 缓存写；总输出 = 文本输出 + 思考输出（思考不另加价）
+ *     （##354 ①：桶名一律**不带「输入」后缀** —— 有的带有的不带就成了不成对的一组，
+ *      且组行已叫「总输入」；「非缓存 / 缓存读 / 缓存写」才是平行的一组）
  *   · L1/L2 只放**累计口径**（各步累加，解释"花了多少"）；窗口% 是**最后一步**口径，只进 L3
  *     —— 两个口径不同框并排，是 ##231 相除误读（"986k 才 4%?"）的直接教训
  *   · 不可测桶写 `–`/`n/a`，**不写 0**；旧记录（无四桶字段）按原样降级，不假装能拆
@@ -37,6 +39,7 @@ import {
     fmtTokens,
     groupByAgent,
     groupByTurn,
+    recordsAvgRate,
     stepView,
     sumBuckets,
     sumCosts,
@@ -120,7 +123,8 @@ function fmtTurnClock(turnId: string): string | null {
 }
 
 /**
- * 该轮**最后一步**的实测生成速度（tok/s）：两处来源，口径同一个（`shared/usage.stepRate`）。
+ * 该轮**实时档**速度（tok/s，⚡）= **最后一步**的实测生成速度：两处来源，口径同一个
+ * （`shared/usage.stepRate`，**含首字等待**）。
  *
  *   ① `usage.lastStepRate` —— main 在每步 finish-step 下发的 patch 字段：**直播时最新**；
  *   ② 逐步账本镜像（`localChatStore.usage` = `usage.jsonl` 的镜像，打开会话 / 轮次结束时对账刷新）：
@@ -135,11 +139,28 @@ function turnStepRate(turnId: string, usage: unknown): number | null {
     return last ? stepRate(last.performance, stepView(last).buckets.outputTotal) : null;
 }
 
-/** 整个会话**最近一次**实测速度（总状态栏口径：没有新 step 也留着上一次的值） */
-export function sessionLastRate(): number | null {
-    const steps = localChatStore.usage;
-    const last = steps[steps.length - 1];
-    return last ? stepRate(last.performance, stepView(last).buckets.outputTotal) : null;
+/**
+ * 该轮**轮均档**速度（tok/s，⌀）= 本轮 Σ总输出 ÷ Σ各步响应耗时（含首字等待，`shared/usage.avgRate`）。
+ *
+ * 优先用 main 每步下发的 `usage.turnRate`（**直播中也在长**，不是轮末才算一次）；
+ * 本版之前的 ops 没有该字段 → 由逐步账本镜像现算（账本里本来就有各步 `performance`）。
+ * 镜像里没有这一轮（直播刚起步、一步都还没跑完）→ null。
+ */
+function turnAvgRate(turnId: string, usage: unknown): number | null {
+    const fromPatch = (usage as TurnUsagePatch | undefined)?.turnRate;
+    if (typeof fromPatch === "number" && fromPatch > 0) return fromPatch;
+    const mine = localChatStore.usage.filter((r) => r.turnId === turnId);
+    return mine.length ? recordsAvgRate(mine) : null;
+}
+
+/**
+ * 整个会话**总均档**速度（tok/s，⌀）= 全部步 Σ总输出 ÷ Σ各步响应耗时（含首字等待）。
+ *
+ * 数据源 = 逐步账本镜像（`localChatStore.usage`；**直播中按步刷新**）。
+ * 与轮尾那枚不重复：轮尾是"本轮"，这里是"全局"（用户 2026-10-15 口径）。
+ */
+export function sessionAvgRate(): number | null {
+    return recordsAvgRate(localChatStore.usage);
 }
 
 // ─── L2 汇总卡：统一数据模型（A/B 两表同一份源） ───────
@@ -336,8 +357,8 @@ function UsageTableTree(props: { m: UsageModel }) {
             <tbody class="text-body">
                 {groupRow("总输入", m().inputTotal, input$(), "= 非缓存 + 缓存读 + 缓存写 的金额")}
                 {childRow(
-                    "├ 非缓存输入", m().noCache, "未命中前缀缓存、按全价计（本轮各步累计）",
-                    c()?.noCache ?? null, "非缓存输入金额",
+                    "├ 非缓存", m().noCache, "未命中前缀缓存、按全价计（本轮各步累计）",
+                    c()?.noCache ?? null, "非缓存金额",
                     innerFrac(m().noCache, totTok()), innerFrac(c()?.noCache ?? null, totCost()),
                 )}
                 {childRow(
@@ -438,10 +459,18 @@ const ringValue = (rate: number): string => String(Math.min(100, Math.round(rate
 /**
  * 环形进度：**底轨（浅色全环）+ 进度环叠放** —— daisyUI radial-progress 的轨道是透明的
  * （conic-gradient 进度外是 #0000），单放一个在浅底上只有进度段、看不见空环（2026-10-03 修正）。
+ *
+ * ⚠️ **弧长必须与百分比文字同源、同刻**（##354 ②）。`--value` 的字符串**只能在 JSX 里现算**
+ * （`style={ringStyle(...)}`），不能像 load 一次那样提到组件体里算：
+ * Solid 的组件体**只执行一次**，提到体外的那串值会被**冻在挂载那一刻**，此后 rate 怎么变都不再
+ * 参与绑定 —— 而旁边的百分比文字是响应式插值。症状：文字 9%、弧长还停在挂载时的 60%
+ * （切会话时 `trees` 还是上一个会话的 → 挂载帧算出的就是旧值）。判据：弧长与文字**恒等**
+ * （同一次渲染里同一个 `props.rate`），不得引入任何中间基准/梯度缩放。
  */
 function RingBar(props: { rate: number; size: string; thickness: string; center?: string; label?: string }) {
-    const base = `--value:100;--size:${props.size};--thickness:${props.thickness}`;
-    const prog = `--value:${ringValue(props.rate)};--size:${props.size};--thickness:${props.thickness}`;
+    /** 环的样式串（在 JSX 里调用 → 读到的是**本次**的 props.rate，故随信号更新） */
+    const ringStyle = (value: number | string) =>
+        `--value:${value};--size:${props.size};--thickness:${props.thickness}`;
     return (
         <div
             class="relative shrink-0"
@@ -450,8 +479,11 @@ function RingBar(props: { rate: number; size: string; thickness: string; center?
             aria-label={props.label ?? "窗口占用"}
             aria-valuenow={Math.round(props.rate * 100)}
         >
-            <div class="radial-progress absolute left-0 top-0 text-base-300" style={base} />
-            <div class={`radial-progress absolute left-0 top-0 ${ringClass(props.rate)}`} style={prog} />
+            <div class="radial-progress absolute left-0 top-0 text-base-300" style={ringStyle(100)} />
+            <div
+                class={`radial-progress absolute left-0 top-0 ${ringClass(props.rate)}`}
+                style={ringStyle(ringValue(props.rate))}
+            />
             <Show when={props.center != null}>
                 <span class="absolute inset-0 flex items-center justify-center text-caption font-medium tabular-nums">
                     {props.center}
@@ -507,7 +539,9 @@ const pctCell = (v: number | null, prompt: number | null) =>
  * · hover 弹构成卡（三段估算 + 总量精确）；卡上「明细 →」打开构成报表（总/分两表）。
  * 数据链：turn patch 的 contextParts（main 每步真发时记字节）+ 账本 prompt —— 不做 hover 现算。
  */
-export function WindowRing() {
+export function WindowRing(props: { uri: string | null }) {
+    // ⚠️ 一律用**本页的 uri**（props.uri），不用 `localChatStore.currentUri`：后者在组件挂载那一刻
+    //    还指着**上一个会话**，于是"切到别的会话"会拿旧 uri 白算一遍（##321 现象二）。
     const w = () => currentWindow(localChatStore.trees);
     /** 无数据也显示环（0%）—— 用户 2026-10-07：「无数据时应显示 0%」，不是整块消失 */
     const win = () => w() ?? { total: 0, contextLimit: 0, rate: 0, prompt: null, parts: null };
@@ -516,7 +550,7 @@ export function WindowRing() {
     const [busy, setBusy] = createSignal(false);
     /** 直接压缩一次（用当前配置的预算）—— 用户 2026-10-07「点后直接压缩，不要弹到详情页」 */
     const apply = async () => {
-        const u = localChatStore.currentUri;
+        const u = props.uri;
         if (!u) return;
         setBusy(true);
         try {
@@ -534,7 +568,9 @@ export function WindowRing() {
     let closeT: ReturnType<typeof setTimeout> | undefined;
 
     /** 当前生效预算（字节）—— 取配置真源 `auto-compact.yaml` 的 policy.modeData.budgetBytes */
-    const [budget] = createResource(() => localChatStore.currentUri, async (u) => {
+    // 门槛 = 卡或抽屉真的开着：本组件常挂（会话页脚常驻），无门槛则**每次切会话页**都白打一次
+    // `autoCompactStatus`（##321 复核补记的次级成本；非主因，但同属"抽屉关着也算"）。
+    const [budget] = createResource(() => (open() || drawerOpen() ? props.uri : null), async (u) => {
         if (!u) return null;
         const st = (await localChatStore.autoCompactStatus(u)) as {
             config?: { policy?: { modeData?: { budgetBytes?: number }; budgetBytes?: number } };
@@ -698,7 +734,7 @@ export function WindowRing() {
                     </div>
                 </Portal>
             </Show>
-            <ContextPartsDrawer open={drawerOpen()} onClose={() => setDrawerOpen(false)} />
+            <ContextPartsDrawer open={drawerOpen()} uri={props.uri} onClose={() => setDrawerOpen(false)} />
         </>
     );
 }
@@ -710,12 +746,12 @@ export function WindowRing() {
  * · 分表 = 按步列表（步时间到秒 + 轮 id + 该步 prompt 与执行时窗口 + 压缩点位；数量/占比同样 3+3）
  * 单元格口径：数量 = 字节÷4 估（~）；占比 = 该段 ÷ 同行 prompt；– = 未落盘构成（本版前的记录）。
  */
-export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }) {
+export function ContextPartsDrawer(props: { open: boolean; uri: string | null; onClose: () => void }) {
     const [view, setView] = createSignal<"compact" | "total" | "step">("compact");
     // 打开对账一次账本 + Escape 自管（stopPropagation：别把别的抽屉连带关了）
     createEffect(() => {
         if (!props.open) return;
-        const u = localChatStore.currentUri;
+        const u = props.uri;
         if (u) void localChatStore.refreshUsage(u);
         void refetchCompactEvents();
         const onKey = (e: KeyboardEvent) => {
@@ -729,14 +765,16 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
     });
     const steps = () => localChatStore.usage;
     const groups = () => groupByTurn(steps());
-    /** 压缩面板控制器（供 tab 栏执行按钮 + 压缩 tab 内容共享） */
-    const ctl = useCompactPanel(() => localChatStore.currentUri ?? "");
+    /** 压缩面板控制器（供 tab 栏执行按钮 + 压缩 tab 内容共享）。
+     *  第二个参数 = **成本闸门**：抽屉关着时组件仍挂在树上，不加门槛则任何会话页一打开
+     *  就全量算一次压缩预案（78MB 会话 8~16s 卡住 main，见 ##321）。 */
+    const ctl = useCompactPanel(() => props.uri ?? "", () => props.open);
 
     // ─── M4：压缩点位（分表按步标注「哪次请求被压过」）───
     // 【用户 2026-10-08】压缩可能发生在**一轮中间** ⇒ 用**轮次总表**表达不了「哪个请求压过」，
     // 必须落在**分表（按步）**：一步 = 一次请求。判据 = 该步 ts 是该压缩事件之后的**第一步**。
     const [compactEvents, { refetch: refetchCompactEvents }] = createResource(
-        () => (props.open ? localChatStore.currentUri : null),
+        () => (props.open ? props.uri : null),
         async (u) => (u ? ((await localChatStore.compactEvents(u)) as CompactEventRecord[]) : []),
     );
     /** 展开的压缩点位（键 = `<turnId>#<step>`；同时只开一个） */
@@ -813,7 +851,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
     return (
         <Show when={props.open}>
             {/* 与用量抽屉同构：全宽贴顶、高 2/3 屏；点遮罩 / ✕ / Escape 退出 */}
-            <div class="fixed inset-0 z-50 flex flex-col" onClick={props.onClose}>
+            <div class="fixed inset-0 z-50 flex flex-col" data-find-surface onClick={props.onClose}>
                 <div class="absolute inset-0 bg-black/30" />
                 <div
                     class="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl" style={DM.style()}
@@ -893,7 +931,7 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                                     ],
                                                     [
                                                         { label: "窗口%", title: "该步 总输入+总输出 ÷ 上限（执行时的窗口情况）" },
-                                                        { label: "压缩", title: "该步（请求）是否被压缩过 —— 点击展开那次压缩信息" },
+                                                        { label: "压缩", title: "该步（请求）的压缩：投递=按配置（每轮重建，无需事件）；压缩=触发/手动事件（点击展开）" },
                                                     ],
                                                 )}
                                             </thead>
@@ -903,6 +941,9 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                                         const v = stepView(r);
                                                         const k = stepKey(r);
                                                         const evs = () => compactPoints().get(k);
+                                                        // 投递压缩事实：只在**轮首**（step===1）—— 每轮按当前配置重建
+                                                        const hs = () => r.historySelection;
+                                                        const hasDelivery = () => r.step === 1 && !!r.historySelection;
                                                         return (
                                                             <>
                                                                 <tr>
@@ -913,18 +954,42 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                                                     {cellsOf(r.contextParts, v.buckets.inputTotal)}
                                                                     <td class={`text-right ${pctClass(v.windowRate)}`}>{pctText(v.windowRate)}</td>
                                                                     <td class="text-right">
-                                                                        <Show when={evs()} fallback={<span class="opacity-30">—</span>}>
-                                                                            {(list) => (
-                                                                                <button
-                                                                                    class="btn btn-ghost btn-xs text-info"
-                                                                                    aria-label="压缩点位"
-                                                                                    data-compact-point
-                                                                                    onClick={() => setOpenPoint((cur) => (cur === k ? null : k))}
-                                                                                >
-                                                                                    压缩{list().length > 1 ? ` ×${list().length}` : ""}
-                                                                                </button>
-                                                                            )}
-                                                                        </Show>
+                                                                        <div class="flex items-center justify-end gap-1">
+                                                                            <Show when={hasDelivery() ? hs() : undefined}>
+                                                                                {(d) => (
+                                                                                    <span
+                                                                                        data-delivery-compact
+                                                                                        class="badge badge-ghost badge-xs"
+                                                                                        title={`投递压缩（配置驱动·每轮重建）：预算 ${
+                                                                                            d().budgetBytes === 0
+                                                                                                ? "0（清零）"
+                                                                                                : `${Math.round(d().budgetBytes / 1024)} KB`
+                                                                                        } · 丢 ${d().droppedMessages}/${d().totalMessages} 条 · 保留 ${d().keptRuns} 段`}
+                                                                                    >
+                                                                                        投递{d().droppedMessages > 0 ? "" : "·全量"}
+                                                                                    </span>
+                                                                                )}
+                                                                            </Show>
+                                                                            <Show
+                                                                                when={evs()}
+                                                                                fallback={
+                                                                                    <Show when={!hasDelivery()}>
+                                                                                        <span class="opacity-30">—</span>
+                                                                                    </Show>
+                                                                                }
+                                                                            >
+                                                                                {(list) => (
+                                                                                    <button
+                                                                                        class="btn btn-ghost btn-xs text-info"
+                                                                                        aria-label="压缩点位"
+                                                                                        data-compact-point
+                                                                                        onClick={() => setOpenPoint((cur) => (cur === k ? null : k))}
+                                                                                    >
+                                                                                        压缩{list().length > 1 ? ` ×${list().length}` : ""}
+                                                                                    </button>
+                                                                                )}
+                                                                            </Show>
+                                                                        </div>
                                                                     </td>
                                                                 </tr>
                                                                 <Show when={openPoint() === k && evs()}>
@@ -1008,7 +1073,8 @@ export function ContextPartsDrawer(props: { open: boolean; onClose: () => void }
                                 占比 = 该段 ÷ 同行 prompt（合计 = Σ段 ÷ Σprompt）。
                                 <br />
                                 `–` = 该记录未落盘构成（本版前的旧轮）；窗口% = 该步 总输入+总输出 ÷ 上限（与环同源）；
-                                压缩列 = 该步（请求）是否被压缩过（点开看那次的算法/过滤器/规模）。
+                                压缩列 = 该步（请求）的压缩：**投递**=按当前配置（每轮首重建，**无需事件**）→ 悬停看预算/丢几条；
+                                **压缩**=触发/手动事件（点开看算法/过滤器/规模）。
                             </div>
                         </Show>
                     </div>
@@ -1202,7 +1268,16 @@ export function UsageHoverCard(props: {
  *
  * `stat`（步数 · 耗时 · ⚙ n · 💭 n · ❌ n）本文件**只负责摆**，内容与判据见
  * `LocalChatPage.turnStatLine`。
+ *
+ * **截断纪律**（##298）：这一行的每一段都 `min-w-0 truncate`（见 `CLIP`），**不再有 `shrink-0`** ——
+ * 极窄栏（420px 窗口、侧栏占满后内容列只剩 ~88px）里几个 `shrink-0` 兄弟互不相让，行被顶破容器
+ * 36px、并从 21px 涨到 37px（文本在 span 内折行）。谁先退场由**容器宽度**（不是窗口宽度）排：
+ * 速度 → 统计 → 用量按钮 → 时刻，规则在 `index.css` 的状态行段（`@container`）。
  */
+/** 状态行每一段的**截断纪律**（##298）：可缩（flex-shrink）+ 会截（ellipsis）。
+ *  ⚠️ 极窄栏里**不要**给这些段 `shrink-0` —— 几个兄弟互不相让就把整行顶破容器。 */
+const CLIP = "min-w-0 truncate";
+
 export function TurnUsageBar(props: {
     /** 本轮 id（`t` + 毫秒）：时刻与速度分母的**唯一真源**（协议无块级 ts，见 fmtTurnClock） */
     turnId: string;
@@ -1222,32 +1297,45 @@ export function TurnUsageBar(props: {
 }) {
     // 时间与记录格式无关（turnId 里就带着开始时刻）—— 旧记录轮次同样要能定位时间
     const clock = fmtTurnClock(props.turnId);
-    /** 时刻：纯文本、无 hover、无点击（它没有"更多信息"可给，靠左却最容易误触） */
+    /** 时刻：纯文本、无 hover、无点击（它没有"更多信息"可给，靠左却最容易误触）。
+     *  `title` 是**截断后的出口**：极窄栏里 `truncate` 只留得住前几个字（`2026-10-…`），
+     *  完整时刻仍要能查到（DOM 文本也是完整的，见 intent 用例）。 */
     const Clock = () => (
         <Show when={clock != null}>
-            <span class="shrink-0 tabular-nums text-caption opacity-50">{clock}</span>
+            <span class={`${CLIP} tabular-nums text-caption opacity-50`} data-turn-clock title={clock!}>
+                {clock}
+            </span>
         </Show>
     );
     /** 本轮统计：与时刻同为**纯文本**（无 hover / 无点击）—— 它没有"更多信息"可给 */
     const Stat = () => (
         <Show when={props.stat}>
-            <span class="shrink-0 text-caption opacity-60" data-turn-stat>
+            <span class={`${CLIP} text-caption opacity-60`} data-turn-stat title={props.stat}>
                 {props.stat}
             </span>
         </Show>
     );
 
-    // ── ⚡速度：**按步**的实测值（不是"跑着才算"的瞬时值，故无定时器 —— 值只在每步结束时变）
-    const rate = () => turnStepRate(props.turnId, props.usage);
+    // ── 速度（##349 三档）：**同一位置按轮次生死换档**，避免两处重复同一数字
+    //    · 直播中 = **实时档** ⚡（本轮最近一步的实测值；流内 token 计数拿不到，故非"跑着那一步"的实时）
+    //    · 轮结束 = **轮均档** ⌀（本轮 Σ总输出 ÷ Σ各步响应耗时；给不出数回退逐步账本）
+    //    无定时器：两档都只在每步结束时变（live 时每步追新，停后即为定值）。
+    const isLive = () => !!props.live;
+    const rate = () => (isLive() ? turnStepRate(props.turnId, props.usage) : turnAvgRate(props.turnId, props.usage));
     /** 速度：纯文本；给不出数（老记录 / 该步没有计时）就整块不画 */
     const Rate = () => (
         <Show when={rate() != null}>
             <span
-                class="shrink-0 tabular-nums text-caption opacity-70"
-                data-turn-rate
-                title="生成速度 = 本轮最后一步的总输出 ÷ (响应耗时 − 首字耗时 TTFT)。按步统计：流内部的 token 计数拿不到，跑着的那一步显示的是上一步的实测值，该步结束即刷新"
+                class={isLive()
+                    ? `${CLIP} tabular-nums text-caption text-accent animate-pulse`
+                    : `${CLIP} tabular-nums text-caption opacity-60`}
+                data-turn-live-rate={isLive() ? "1" : undefined}
+                data-turn-rate={isLive() ? undefined : "1"}
+                title={isLive()
+                    ? "实时速度 ⚡ = 本轮最近一步的总输出 ÷ 该步响应耗时（含首字等待 TTFT），每步结束刷新一次"
+                    : "轮均速度 ⌀ = 本轮总输出 ÷ 本轮各步响应耗时之和（含首字等待 TTFT）"}
             >
-                ⚡ {Math.round(rate()!)} tok/s
+                {isLive() ? "⚡" : "⌀"} {Math.round(rate()!)} tok/s
             </span>
         </Show>
     );
@@ -1284,7 +1372,7 @@ export function TurnUsageBar(props: {
                     <Stat />
                     <Rate />
                     <span
-                        class="text-caption opacity-40"
+                        class={`${CLIP} text-caption opacity-40`}
                         title="用量要等本步跑完（finish-step）才拿得到；时间是本轮开始时刻"
                     >
                         ⋯ 统计中
@@ -1307,7 +1395,10 @@ export function TurnUsageBar(props: {
                 <span class="flex-1" />
                 <Stat />
                 <Rate />
-                <span class="opacity-60">
+                <span
+                    class={`${CLIP} opacity-60`}
+                    title="旧记录：无四桶/金额"
+                >
                     tokens ↑{fmtInt(l().in ?? 0)} ↓{fmtInt(l().out ?? 0)}（Σ{fmtInt(l().total ?? 0)}）
                     <span class="ml-1">（旧记录：无四桶/金额）</span>
                 </span>
@@ -1328,9 +1419,12 @@ export function TurnUsageBar(props: {
                 <Rate />
                 <button
                     type="button"
-                    class="flex w-max cursor-pointer select-none items-center gap-x-3 rounded px-1 text-body opacity-70 transition-opacity hover:bg-base-200 hover:opacity-100"
+                    /* `w-max` 只是"不主动撑开"（宽度 = 内容），**不是"不可缩"** ——
+                       极窄栏里它仍要能退让，否则它自己是最后一个顶破容器的。内部两段各自截断。 */
+                    class={`flex min-w-0 cursor-pointer select-none items-center gap-x-3 rounded px-1 text-body opacity-70 transition-opacity hover:bg-base-200 hover:opacity-100 ${CLIP}`}
                     aria-haspopup="dialog"
                     aria-expanded={props.hover}
+                    data-turn-usage
                     aria-label="本轮用量（悬停看汇总，点击开逐步明细）"
                     title="各轮/各步累计（重发成本口径，非窗口占用）。悬停看汇总，点击开逐步明细"
                     onPointerEnter={(e) => props.onHover(e.currentTarget)}
@@ -1341,43 +1435,41 @@ export function TurnUsageBar(props: {
                     }}
                     onClick={props.onDetail}
                 >
-                    <span class="tabular-nums">{fmtTokens(p().total)} tok</span>
-                    <span class="tabular-nums">{p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}</span>
+                    <span class={`${CLIP} tabular-nums`} data-turn-usage-tok>
+                        {fmtTokens(p().total)} tok
+                    </span>
+                    <span class={`${CLIP} tabular-nums`} data-turn-usage-cost>
+                        {p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}
+                    </span>
                 </button>
             </div>
         );
     }
 }
 
-// ─── L1③ 输入框底部总状态栏的速度 ──────────────
+// ─── L1③ 输入框底部总状态栏的速度（总均档） ──────────────
 
 /**
- * ⚡ **最近一次实测**的生成速度（常驻位，输入框底部工具条）。
+ * ⌀ **全局平均**生成速度（常驻位，输入框底部工具条）。
  *
- * 口径（用户 2026-10-12 拍板）：「没有执行新 step，老的速度留在 bar 上，就是最后一次速度」
- * —— 所以它不是"跑着才显示"的瞬时值，而是**最后一次落盘的步速度**（`shared/usage.stepRate`，
- * 与轮尾状态行、用量表速度列同一个数），跑完也留着，直到下一步结束才换新值。
- *
- * 为什么要有（与轮尾那枚 chip 重复的理由是位置）：轮尾那行在对话流里，滚上去看历史时就移出视野了；
- * 而"这一轮跑得快不快"恰恰在**等待 / 想打断**时最需要看见 —— 那一刻视线在输入框。
- *
- * ⚠️ **粒度 = 一步**（别当 bug 再报一遍）：流内部的 token 计数拿不到（usage 是 provider 在每步
- * 收尾才给的），所以跑着的那一步只能显示上一个已完成步的实测值 —— 不拿按流式文本估的假数占位。
- *
- * 给不出数（新会话还没跑过步 / 本版之前的老记录）→ 整块不画。
+ * 口径（##349，用户 2026-10-15）：**总均** = 全部轮次 Σ总输出 ÷ Σ各步响应耗时（含首字等待，
+ * `shared/usage.recordsAvgRate`）。为什么放在这里 —— 轮尾那行在对话流里、会随滚屏移出视野，
+ * 而"整体跑得快不快"是常驻参考；且用户明确要求**避免与上方轮均重复同一数字**：
+ * 轮尾给的是"本轮"，这里给的是"全局"，两者口径一致但范围不同，故可比而不重复。
+ * 给不出数（新会话还没跑过步 / 老记录没有计时）→ 整块不画，不拿假数占位。
  */
-export function StepRateChip(props: {
-    /** 最近一次实测的步速度（tok/s）；null → 不画 */
+export function OverallRateChip(props: {
+    /** 全局平均速度（tok/s）；null → 不画 */
     rate: number | null;
 }) {
     return (
         <Show when={props.rate != null}>
             <span
-                class="shrink-0 tabular-nums text-caption opacity-70"
-                data-live-rate
-                title="生成速度 = 最近一步的总输出 ÷ (响应耗时 − 首字耗时 TTFT)，每步结束刷新一次"
+                class="shrink-0 tabular-nums text-caption opacity-60"
+                data-overall-rate
+                title="总均速度 ⌀ = 全部轮次总输出 ÷ 全部步响应耗时之和（含首字等待 TTFT）"
             >
-                ⚡ {Math.round(props.rate!)} tok/s
+                ⌀ {Math.round(props.rate!)} tok/s
             </span>
         </Show>
     );
@@ -1493,7 +1585,7 @@ function turnDetailMd(g: TurnGroup | null, rows: StepUsageRecord[], clock: strin
     const total$ = g?.cost?.total ?? null;
     const m = (n: number | null | undefined): string => (n == null ? "n/a" : `${fmtCost(n)}（${costShare(n, total$)}）`);
     out.push(
-        "| 步 | 人物 | 模型 | 面 | 档位 | 非缓存输入 | 缓存读 | 缓存写 | 总输出 | 文本 | 思考 | 缓存命中 | 耗时 | TTFT | 速度 | 窗口% | 单价快照 | 非缓存$ | 缓存读$ | 缓存写$ | 文本$ | 思考$ | 合计$ |",
+        "| 步 | 人物 | 模型 | 面 | 档位 | 非缓存 | 缓存读 | 缓存写 | 总输出 | 文本 | 思考 | 缓存命中 | 耗时 | TTFT | 速度 | 窗口% | 单价快照 | 非缓存$ | 缓存读$ | 缓存写$ | 文本$ | 思考$ | 合计$ |",
         "|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|",
     );
     for (const r of rows) {
@@ -1526,7 +1618,7 @@ function sessionBoardMd(groups: AgentGroup[]): string {
     const buckets = sumBuckets(groups.map((g) => g.buckets));
     const out: string[] = ["## 会话用量（按人物）", ""];
     out.push(
-        "| 人物 | 步 | 非缓存输入 | 缓存读 | 缓存写 | 总输入 | 总输出 | 文本 | 思考 | 缓存命中 | 非缓存$ | 缓存读$ | 缓存写$ | 文本$ | 思考$ | 合计$ |",
+        "| 人物 | 步 | 非缓存 | 缓存读 | 缓存写 | 总输入 | 总输出 | 文本 | 思考 | 缓存命中 | 非缓存$ | 缓存读$ | 缓存写$ | 文本$ | 思考$ | 合计$ |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     );
     for (const g of groups) {
@@ -1573,7 +1665,7 @@ function TurnDetailTable(props: { rows: StepUsageRecord[] }) {
                     <th>模型</th>
                     <th>面</th>
                     <th>档位</th>
-                    <th class="text-right">非缓存输入</th>
+                    <th class="text-right">非缓存</th>
                     <th class="text-right">缓存读</th>
                     <th class="text-right">缓存写</th>
                     <th class="text-right" title="总输出 = 文本输出 + 思考输出">总输出</th>
@@ -1719,7 +1811,7 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
             {/* 形态（2026-10-03 定稿，与人物面板 PersonaDrawer 同构）：**全宽贴顶、高 2/3 屏** ——
                 占满整个上半部分页面、下面只留 1/3 空位（用户点名，不再居中悬浮）。
                 点遮罩 / ✕ / Escape 退出（Escape 在 LocalChatPage 的全局键处理里）。 */}
-            <div class="fixed inset-0 z-50 flex flex-col" onClick={props.onClose}>
+            <div class="fixed inset-0 z-50 flex flex-col" data-find-surface onClick={props.onClose}>
                 <div class="absolute inset-0 bg-black/30" />
                 <div
                     class="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl" style={DM.style()}
@@ -1799,7 +1891,7 @@ function SessionUsageTable(props: { groups: AgentGroup[] }) {
                 <tr>
                     <th>人物</th>
                     <th class="text-right">步</th>
-                    <th class="text-right">非缓存输入</th>
+                    <th class="text-right">非缓存</th>
                     <th class="text-right">缓存读</th>
                     <th class="text-right">缓存写</th>
                     <th class="text-right">总输入</th>
@@ -1896,7 +1988,7 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
         <Show when={props.open}>
             {/* 与 TurnUsageDetailDrawer 同款形态（与 PersonaDrawer 同构）：全宽贴顶、高 2/3 屏，
                 下方留 1/3 空位；点遮罩 / ✕ / Escape 退出（2026-10-03 定稿） */}
-            <div class="fixed inset-0 z-50 flex flex-col" onClick={props.onClose}>
+            <div class="fixed inset-0 z-50 flex flex-col" data-find-surface onClick={props.onClose}>
                 <div class="absolute inset-0 bg-black/30" />
                 <div
                     class="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl" style={DM.style()}

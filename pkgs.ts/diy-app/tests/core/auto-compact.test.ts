@@ -12,6 +12,7 @@ import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
     DEFAULT_AUTO_COMPACT,
+    DEFAULT_WINDOW_OVER_TOKENS,
     autoCompactPolicyInput,
     detectAutoCompactTriggers,
     normalizeAutoCompact,
@@ -31,7 +32,7 @@ const facts = (over: Partial<AutoCompactFacts> = {}): AutoCompactFacts => ({
     systemContextChanged: false,
     sinceLastRequestMs: 5 * MIN,
     ttl: TTL,
-    windowRatio: 0.3,
+    windowTokens: 10_000,
     ...over,
 });
 
@@ -56,15 +57,17 @@ describe("detectAutoCompactTriggers：确定事实的判定", () => {
 
     it("窗口超上限 → 触发；**排在首位**（撞墙最急）", () => {
         const tr = detectAutoCompactTriggers(
-            facts({ windowRatio: 0.85, systemContextChanged: true, sinceLastRequestMs: 60 * MIN }),
+            facts({ windowTokens: 50_000, systemContextChanged: true, sinceLastRequestMs: 60 * MIN }),
             DEFAULT_AUTO_COMPACT,
         );
         expect(tr).toEqual(["contextWindowOver", "systemContextChanged", "cacheExpired"]);
     });
 
-    it("阈值边界：等于上限即触发（>=）；windowRatio 未知（null）不触发", () => {
-        expect(detectAutoCompactTriggers(facts({ windowRatio: 0.8 }), DEFAULT_AUTO_COMPACT)).toEqual(["contextWindowOver"]);
-        expect(detectAutoCompactTriggers(facts({ windowRatio: null }), DEFAULT_AUTO_COMPACT)).toEqual([]);
+    it("阈值边界：等于上限即触发（>=）；未知（null）不触发", () => {
+        expect(detectAutoCompactTriggers(facts({ windowTokens: DEFAULT_WINDOW_OVER_TOKENS }), DEFAULT_AUTO_COMPACT)).toEqual([
+            "contextWindowOver",
+        ]);
+        expect(detectAutoCompactTriggers(facts({ windowTokens: null }), DEFAULT_AUTO_COMPACT)).toEqual([]);
     });
 
     it("首轮（无历史）不因 cacheExpired 触发 —— 没有「上次请求」就没有过期", () => {
@@ -77,7 +80,7 @@ describe("detectAutoCompactTriggers：确定事实的判定", () => {
         });
         expect(
             detectAutoCompactTriggers(
-                facts({ systemContextChanged: true, sinceLastRequestMs: 60 * MIN, windowRatio: 0.99 }),
+                facts({ systemContextChanged: true, sinceLastRequestMs: 60 * MIN, windowTokens: 999_999 }),
                 cfg,
             ),
         ).toEqual([]);
@@ -100,10 +103,14 @@ describe("normalizeAutoCompact：初版紧凑、扩展松散", () => {
         expect(c.policy).toEqual(DEFAULT_AUTO_COMPACT.policy);
     });
 
-    it("非法 mode/比例回落；0 是合法值（关闭该触发）", () => {
+    it("非法 mode 回落；token 阈值原样保留；0 = 关闭；旧**比例**值（0,1）→ 出声回落默认", () => {
         expect(normalizeAutoCompact({ mode: "nope" }).mode).toBe("notify");
-        expect(normalizeAutoCompact({ triggers: { contextWindowOver: 5 } }).triggers.contextWindowOver).toBe(0.8);
+        expect(normalizeAutoCompact({ triggers: { contextWindowOver: 20480 } }).triggers.contextWindowOver).toBe(20480);
         expect(normalizeAutoCompact({ triggers: { contextWindowOver: 0 } }).triggers.contextWindowOver).toBe(0);
+        // 旧单位（比例 0~1）与 token 域冲突：0.8 绝不能当 0.8 token 用（会每轮都压）→ 回落默认 38400
+        expect(normalizeAutoCompact({ triggers: { contextWindowOver: 0.8 } }).triggers.contextWindowOver).toBe(
+            DEFAULT_WINDOW_OVER_TOKENS,
+        );
     });
 
     it("默认策略 → 压缩策略输入：目标式预算 3KB", () => {
@@ -122,10 +129,10 @@ describe("配置文件层：真源落盘（不是 localStorage）", () => {
         rmSync(fp(), { force: true });
         expect(loadAutoCompact(diyHome()).mode).toBe("notify");
 
-        saveAutoCompact(diyHome(), { mode: "auto", triggers: { contextWindowOver: 0.6 } });
+        saveAutoCompact(diyHome(), { mode: "auto", triggers: { contextWindowOver: 20480 } });
         const c = loadAutoCompact(diyHome());
         expect(c.mode).toBe("auto");
-        expect(c.triggers.contextWindowOver).toBe(0.6);
+        expect(c.triggers.contextWindowOver).toBe(20480);
         // 未给的字段用默认补（初版紧凑）
         expect(c.policy).toEqual(DEFAULT_AUTO_COMPACT.policy);
     });
@@ -152,10 +159,13 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
 
         const pid = createProject(join(diyHome(), "auto-work"));
         const uri = createTask({ title: "自动压缩", project: pid });
-        // 三轮会话落盘（每轮 user + assistant 文本 + tool）
+        // 十轮会话落盘（每轮 user + assistant 文本 + tool）。
+        // ⚠️ 必须**够大**才谈得上「压出东西」（##343 M1 后缺省预算 20KB、最近 6 步保底 `clip: full`）：
+        //    非保底的旧轮若本来就装得进预算、又没被裁，压缩就是**空操作**（noop 不写账）——
+        //    那是设计（见 compact 的 noop 判据），不是 bug。这里每轮 400 行输出 ⇒ 旧轮必被 headtail 裁。
         const lines: string[] = [];
         const pushes = (o: unknown) => lines.push(JSON.stringify(o));
-        for (let i = 1; i <= 3; i++) {
+        for (let i = 1; i <= 10; i++) {
             const t = `t${7000 + i}`;
             pushes({ op: "start", id: t, kind: "turn" });
             pushes({ op: "start", id: `${t}_u`, kind: "text", parent: t, meta: { role: "user" } });
@@ -163,20 +173,20 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
             pushes({ op: "stop", id: `${t}_u` });
             pushes({ op: "start", id: `${t}_s1`, kind: "step", parent: t });
             pushes({ op: "start", id: `${t}_c`, kind: "tool", parent: `${t}_s1`, meta: { tool: "bash" } });
-            pushes({ op: "patch", id: `${t}_c`, fields: { args: { command: "ls" }, status: "done", output: Array.from({ length: 120 }, (_, k) => `row ${k}`).join("\n") } });
+            pushes({ op: "patch", id: `${t}_c`, fields: { args: { command: "ls" }, status: "done", output: Array.from({ length: 400 }, (_, k) => `row ${k}`).join("\n") } });
             pushes({ op: "stop", id: `${t}_c` });
             pushes({ op: "stop", id: `${t}_s1` });
             pushes({ op: "stop", id: t });
         }
         writeFileSync(opsFile(uri), lines.join("\n") + "\n", "utf-8");
-        // 造一条用量账：窗口占用走**实测**口径（最后一步用量 / contextLimit）。
-        // 阈值判定要确定性，故不依赖真实模型：给一个足够大的 total（≈10% 窗口）。
+        // 造一条用量账：窗口占用走**实测**口径（最后一步用量 token 数）。
+        // 阈值判定要确定性，故不依赖真实模型：给一个足够大的 total（100010 token）。
         const { localDir, keyOf } = await import("../../src/main/core/local-paths");
         writeFileSync(
             join(localDir(), `${keyOf(uri)}.usage.jsonl`),
             JSON.stringify({
                 ts: new Date().toISOString(),
-                turnId: "t7003",
+                turnId: "t7010",
                 step: 1,
                 model: "mimo-v2.6-flash",
                 apiFace: "chat",
@@ -191,10 +201,11 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
             "utf-8",
         );
 
-        // mode=auto，阈值 1%（实测占用 ≈9.5% → 必触发；且不依赖真实模型）
+        // mode=auto，**token** 阈值：实测占用 = 最后一步用量 100010 token ≥ 38400 → 必触发
+        // （用量账已手工写死，不依赖真实模型）
         saveAutoCompact(diyHome(), {
             mode: "auto",
-            triggers: { contextWindowOver: 0.01, systemContextChanged: false, cacheExpired: false },
+            triggers: { contextWindowOver: DEFAULT_WINDOW_OVER_TOKENS, systemContextChanged: false, cacheExpired: false },
         });
 
         const stream = {
@@ -221,7 +232,7 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
         expect(c).toBeTruthy();
         expect(c.by).toBe("auto");
         expect(c.trigger).toBe("contextWindowOver");
-        // 自动压用的是默认策略：目标式预算 3KB
+        // 自动压用的是默认策略：目标式预算 20KB（##343 M1 与生产 auto-compact.yaml 对齐）
         expect(c.policy).toEqual(DEFAULT_AUTO_COMPACT.policy);
         // 旧历史仍在（压缩只改投递）
         expect(readFileSync(opsFile(uri), "utf-8")).toContain("第 1 句");

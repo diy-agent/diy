@@ -83,7 +83,7 @@ function seedOps(uri: string): void {
 const setBudget = (budgetBytes: number) =>
     saveAutoCompact(diyHome(), {
         mode: "notify",
-        triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 0.8 },
+        triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 38400 },
         policy: { mode: "budget", modeData: { budgetBytes, toolResult: { render: "asis" } }, summary: false },
     });
 

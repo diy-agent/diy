@@ -9,6 +9,7 @@
 import { describe, it, expect } from "vitest";
 import { SteerQueue, type SteerQueuePort } from "../../src/main/core/steer-queue";
 import { readDrafts, writeSteers, type SteerItem } from "../../src/main/core/drafts";
+import { DEFAULT_LIMITS } from "../../src/main/services/local-agent";
 import { mkdirSync, rmSync } from "node:fs";
 import { taskDir } from "../../src/main/core/state";
 
@@ -287,5 +288,55 @@ describe("steer-queue 默认端口 = 任务目录 .diy/drafts.yaml", () => {
     const q = new SteerQueue();
     q.add(URI, "next-step", "插一句");
     expect(readDrafts(URI)!.steers).toHaveLength(1);
+  });
+});
+
+describe("steer-queue 条数上限（##306：默认 1000，上限注入）", () => {
+  it("未注入上限 → 不设限（历史调用点与测试不受影响）", () => {
+    const q = new SteerQueue(memPort());
+    for (let i = 0; i < 50; i++) q.add(URI, "next-turn", `第${i}条`);
+    expect(q.list(URI)).toHaveLength(50);
+  });
+
+  it("达到上限即拒绝入队：抛错，且**不写盘**（不是先写后报错）", () => {
+    const port = memPort();
+    const q = new SteerQueue(port, () => 3);
+    for (let i = 0; i < 3; i++) q.add(URI, "next-turn", `第${i}条`);
+    expect(q.list(URI)).toHaveLength(3);
+    expect(port.writes).toHaveLength(3);
+    expect(() => q.add(URI, "next-turn", "第四条")).toThrow(/队列已满（上限 3 条）/);
+    // 被拒后队列与盘上都没多：丢的是"没送达"，不是"送达后再丢"
+    expect(q.list(URI)).toHaveLength(3);
+    expect(port.writes).toHaveLength(3);
+  });
+
+  it("上限是函数：改配置即时生效（同一个 manager 实例不必重建）", () => {
+    let limit = 1;
+    const q = new SteerQueue(memPort(), () => limit);
+    q.add(URI, "next-turn", "a");
+    expect(() => q.add(URI, "next-turn", "b")).toThrow();
+    limit = 5;
+    expect(q.add(URI, "next-turn", "b").map((i) => i.text)).toEqual(["a", "b"]);
+  });
+
+  it("插话与「排队的新消息」共用同一上限（同一个入队口，不各算一份）", () => {
+    const q = new SteerQueue(memPort(), () => 2);
+    q.add(URI, "next-step", "插话");
+    q.add(URI, "next-turn", "排队");
+    expect(() => q.add(URI, "next-turn", "再来")).toThrow(/队列已满/);
+  });
+});
+
+describe("steer-queue 灌风暴（##306 验收：1200 条 → 上限生效且有提示）", () => {
+  it("默认上限 1000：前 1000 条入队，之后每条都被拒且提示可操作", () => {
+    const q = new SteerQueue(memPort(), () => DEFAULT_LIMITS.maxSteerQueue);
+    for (let i = 0; i < 1000; i++) q.add(URI, "next-turn", `风暴 ${i}`);
+    expect(q.list(URI)).toHaveLength(1000);
+    for (let i = 0; i < 200; i++) {
+      expect(() => q.add(URI, "next-turn", `溢出 ${i}`)).toThrow(/队列已满（上限 1000 条）/);
+    }
+    // 溢出的一条都没进队、也没被挤掉旧的
+    expect(q.list(URI)).toHaveLength(1000);
+    expect(q.list(URI)[999]!.text).toBe("风暴 999");
   });
 });

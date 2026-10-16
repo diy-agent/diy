@@ -7,6 +7,8 @@
 //   2. 输入即高亮全部命中，显示 i/n 计数（0/0 = 无命中）
 //   3. ↑ / ↓（或回车 / Shift+回车）在命中之间跳，计数跟着变
 //   4. Esc / ✕ 关闭 → 查找条消失、高亮清除
+//   5. 顶层贴片（##309）：查找条 Portal 到 body、fixed、z 高于一切浮层 → 全屏抽屉盖不住它
+//   6. 范围随最前浮层（##309）：出现 data-find-surface 时只搜它，不搜被它盖住的主区
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
@@ -136,6 +138,70 @@ describe("页面内查找（##234）", () => {
     await ui.clickSelector('button[title="页面内查找（⌘F）"]');
     await waitUntil(findBarPresent, (v) => v, { label: "点按钮打开查找条" });
     expect(await findBarPresent()).toBe(true);
+    await ui.press("Escape");
+    await waitUntil(findBarPresent, (v) => !v, { label: "清理" });
+  });
+  it("顶层贴片：Portal 到 body、fixed、z 高于全部浮层（抽屉盖不住）", async () => {
+    // ##309 修：原先是 main 里的**流内**元素，被流量抽屉(z-50)/人物配置(z-70)盖住 ——
+    // 输入框还在、⌘F 还能打字，就是看不见。现改为 Portal 到 body 的顶层 fixed 浮条。
+    await ui.press("Meta+f");
+    await waitUntil(findBarPresent, (v) => v, { label: "打开查找条" });
+    const info = await ui.query<{
+      escapedMain: boolean;
+      fixed: boolean;
+      z: number;
+      coversSelf: boolean;
+    }>(`(() => {
+      const fb = document.querySelector('[data-find-skip]');
+      const cs = getComputedStyle(fb);
+      const r = fb.getBoundingClientRect();
+      const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return {
+        escapedMain: fb.closest('main') === null,
+        fixed: cs.position === 'fixed',
+        z: Number(cs.zIndex),
+        coversSelf: fb.contains(top),
+      };
+    })()`);
+    expect(info.escapedMain).toBe(true); // 已脱离主区（Portal 到 body）
+    expect(info.fixed).toBe(true);
+    expect(info.z).toBeGreaterThan(500); // 高于全局搜索(500) / 抽屉(50) / 人物配置(70)
+    expect(info.coversSelf).toBe(true); // 中心点命中的是它自己 —— 没被任何东西盖住
+    await ui.press("Escape");
+    await waitUntil(findBarPresent, (v) => !v, { label: "清理" });
+  });
+
+  it("范围随最前浮层：只搜 data-find-surface，不搜被它盖住的主区", async () => {
+    // 主区放一个只在"主区"出现的哨兵词；再叠一个全屏浮层（含另一哨兵）。
+    await ui.query(`(() => {
+      const area = document.querySelector('main > div.flex-1') || document.querySelector('main div.overflow-hidden');
+      const s1 = document.createElement('span'); s1.id = '__findSentinelMain'; s1.textContent = 'SENTINELMAIN';
+      area.appendChild(s1);
+      const ov = document.createElement('div');
+      ov.setAttribute('data-find-surface', '');
+      ov.style.cssText = 'position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.5)';
+      const s2 = document.createElement('span'); s2.id = '__findSentinelOverlay'; s2.textContent = 'SENTINELOVERLAY';
+      ov.appendChild(s2); document.body.appendChild(ov);
+      return true;
+    })()`);
+    await ui.press("Meta+f");
+    await waitUntil(findBarPresent, (v) => v, { label: "打开查找条" });
+    await ui.type("SENTINELMAIN");
+    // 主区被浮层盖住 → 不该被搜到
+    expect(await waitUntil(badgeText, (b) => /^\d+\/\d+$/.test(b), { label: "计数出现" })).toBe("0/0");
+    // 换成只存在于浮层里的词 → 命中
+    await ui.query(`(() => {
+      const i = document.querySelector('input[placeholder*="页面内查找"]');
+      i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); return true;
+    })()`);
+    await ui.type("SENTINELOVERLAY");
+    expect(await waitUntil(badgeText, (b) => !b.startsWith("0/"), { label: "浮层内有命中" })).toBe("1/1");
+    // 清理：拆浮层与哨兵
+    await ui.query(`(() => {
+      document.getElementById('__findSentinelMain')?.remove();
+      document.querySelector('[data-find-surface]')?.remove();
+      return true;
+    })()`);
     await ui.press("Escape");
     await waitUntil(findBarPresent, (v) => !v, { label: "清理" });
   });

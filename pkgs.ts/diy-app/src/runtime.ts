@@ -7,7 +7,7 @@
 // 环境变量契约：
 //   DIY_HOME            数据根（state/task/app.port 落此）
 //   DIY_CLI             当前生效的 CLI 入口绝对路径（提示词模版自述用；入口脚本自己注入）
-//   DIY_PORT            首选端口（测试注入 0=随机；缺省时靠 app.port 文件 / rpc 兜底 18888）
+//   DIY_PORT            首选端口（测试注入 0=随机；缺省时靠 app.port 文件，再退回 defaultPort(env)）
 //   DIY_ENV             运行环境（见 DiyEnv）：入口脚本声明"我是什么环境"，业务侧按它派生
 //                       dev/test 专属能力（如副屏定位），不再每能力加一个变量。
 //                       缺省 = production（生产安全：没人声明就是生产，dev 能力默认全关）。
@@ -28,7 +28,7 @@ import { join } from "node:path";
 /**
  * 运行环境枚举 —— DIY_ENV 的合法值。
  * - production: 发布态（bin/diy / npm 全局）。dev 便利能力全部关闭。缺省即此。
- * - development: worktree 开发（./diy.sh、./sha.sh dev）。
+ * - development: worktree 开发（./diy.sh、./sha.sh preview|lab）。
  * - test: 自动化测试（意图测试 harness）。
  * 刻意不借用 NODE_ENV：那是公共频段（Vite/Express/React 各有语义），DIY_ 前缀自管自用。
  */
@@ -44,7 +44,7 @@ export interface RuntimeConfig {
   home: string;
   /** 当前生效的 CLI 入口绝对路径（入口脚本注入；提示词模版 100-diy 消费） */
   cli?: string;
-  /** 首选端口（入口注入；缺省时不固定，由 app.port 文件 / 兜底决定） */
+  /** 首选端口（入口注入；缺省时不固定，由 app.port 文件 / defaultPort(env) 决定） */
   port?: number;
   /** 运行环境（能力开关的唯一判据；用法 cfg.env === "test"，不设 isDev/isProd helper） */
   env: DiyEnv;
@@ -80,4 +80,59 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     noLaunch: env.DIY_NO_LAUNCH === "1",
     seed: parseSeedFlag(env.DIY_SEED),
   };
+}
+
+/**
+ * 生产门牌端口：18888 是**生产实例**的稳定入口（文档、提示词、用户肌肉记忆都指向它）。
+ * ##328(实例身份只靠端口) 之前它被当作「所有人的兜底」—— 生产与 dev/test 两个不同数据根的实例抢同一个端口，
+ * 外部（CLI / 人）只能靠端口猜身份，而端口猜不出身份。
+ */
+export const PROD_DEFAULT_PORT = 18888;
+
+/**
+ * 缺省首选端口（`DIY_PORT` 与 `app.port` 都没有时的兜底）：**只有生产占 18888**。
+ *
+ * 开发 / 测试缺省 0 = 让内核分配随机空闲端口，理由：
+ *   · 同一个 worktree 外的多个 dev 实例（多 worktree 并存）本来就无法共享 18888，
+ *     谁先起谁得、后起的静默回落随机 —— 「dev 恒在 18888」这个约定从未成立过，
+ *     它只是让「谁在 18888」变成随机答案；
+ *   · 端口不再承载身份（身份靠实例自报 `getAppInfo.diyHome` 校验，见 `cli/probe-instance.ts`），
+ *     那「固定端口」就只剩副作用：与生产撞车、EADDRINUSE 回落、dev 之间互踢。
+ * 实例的实际端口始终由 `<DIY_HOME>/app.port` 记录，CLI 据此找到它（与端口是否固定无关）。
+ */
+export function defaultPort(env: DiyEnv): number {
+  return env === "production" ? PROD_DEFAULT_PORT : 0;
+}
+
+/** `resolvePort` 的端口来源（调用方据此拼启动日志，纯函数本身不碰文件系统/环境） */
+export type PortSource = "cli" | "recorded" | "default";
+
+export interface PortResolution {
+  port: number;
+  source: PortSource;
+}
+
+/**
+ * 端口裁决（##328(实例身份只靠端口)）：`DIY_PORT` > `app.port` 记录 > `defaultPort(env)`。
+ *
+ * 唯一的特殊规则：**非生产不沿用记录里的 18888**（`PROD_DEFAULT_PORT`）。旧版把 18888 当
+ * 「所有人的兜底」，各家的 `app.port` 里都留着它；dev/test 若照单沿用，就又把生产门牌占住
+ * —— 这正是 ##328 的现场。其余记录照常沿用（端口稳定，便于人肉访问）。
+ *
+ * 抽成纯函数是因为「怎么选端口」是本策略的核心决策，却原本内联在 Electron 启动函数里，测不到。
+ */
+export function resolvePort(opts: {
+  env: DiyEnv;
+  /** 入口注入的首选端口（DIY_PORT） */
+  cliPort?: number;
+  /** `<DIY_HOME>/app.port` 里的记录（无记录 = null/undefined） */
+  recordedPort?: number | null;
+}): PortResolution {
+  const { env, cliPort, recordedPort } = opts;
+  if (cliPort !== undefined) return { port: cliPort, source: "cli" };
+  const recorded = recordedPort ?? null;
+  const inherited =
+    env !== "production" && recorded === PROD_DEFAULT_PORT ? null : recorded;
+  if (inherited !== null) return { port: inherited, source: "recorded" };
+  return { port: defaultPort(env), source: "default" };
 }

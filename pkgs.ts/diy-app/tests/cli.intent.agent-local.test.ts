@@ -122,7 +122,7 @@ function turnOps(turnId: string, userText: string, outText: string): Array<Recor
 function setConfigPolicy(budgetBytes: number, toolResult: Record<string, unknown> = { render: "asis" }): void {
     const cfg = {
         mode: "notify",
-        triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 0.8 },
+        triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 38400 },
         policy: { mode: "budget", modeData: { budgetBytes, toolResult }, summary: false },
     };
     writeFileSync(join(fx.HOME, "auto-compact.yaml"), JSON.stringify(cfg), "utf-8");
@@ -302,6 +302,47 @@ describe("agent.local — 控制面（无网络）", () => {
         expect(r.data).toEqual({ active: [] });
     });
 
+    // ##308：CLI 面（sessions / setLimits）是总览页的数据与写入口 —— 无网络部分先钉住
+    // 「形状 + 排队属性 + 写盘生效」，真发部分见下面 skipIf 的 watch 用例。
+    it("sessions 快照：形状即契约 + 入队即建档（queue 可见、注册表自己的订阅不留痕）", async () => {
+        const uri = await setup("注册表快照任务");
+        // 队列变化 = 一次真实活动 → 必须建档。
+        // ⚠️ 不能用 `chat --mode` 造这条前置状态：##303 之后空闲任务的入队会**立刻开一轮**
+        //（留言 = 发一句话），那会真打上游。故种盘 + 走一个只动队列的 CLI 入口（reorder）。
+        seedSteers(uri, [{ mode: "next-turn", text: "排队等我" }]);
+        await fx.sh.getJson(`./diy.sh agent local steer reorder ${uri} '["steer/1"]'`);
+        // ⚠️ streams 不套 `{ok,data}` 信封（`--json` 只改 unary 的输出形状）——
+        // 这与 `running`/`history` 那类 unary 用 getJson 的读法不同，直接读原始帧。
+        const r = await fx.sh.run(`./diy.sh agent local sessions`);
+        expect(r.code, r.stderr).toBe(0);
+        const frame = JSON.parse(r.stdout.trim()) as { kind?: string; entries?: Array<Record<string, unknown>> };
+        expect(frame.kind, "无 --watch 时只给一份快照").toBe("snapshot");
+        const e = frame.entries!.find(
+            (x) => ((x.refs as Array<{ uri: string }>) ?? []).some((f) => f.uri === uri),
+        );
+        expect(e, `快照里应有 ${uri}`).toBeTruthy();
+        expect(e!.turn, "没开轮 → turn=null（idle 是这个模型的合法态，不是缺字段）").toBe(null);
+        expect(e!.queue, "待投递留言数必须如实报出（三种排队的判据之一）").toBe(1);
+        // R3：读注册表不算"有人看它"（访问者数只由内容订阅构成）
+        expect(e!.viewers).toBe(0);
+        expect(e!.turnCount).toBe(0);
+        expect(e!.lastEndReason).toBe(null);
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
+
+    it("setLimits 写盘并即时生效：maxSteps 落 limits.json、回执即生效值（页面只消费它）", async () => {
+        const r = await fx.sh.getJson(`./diy.sh agent local setLimits --maxSteps 7`);
+        expect((r.data as { maxSteps?: number }).maxSteps).toBe(7);
+        const file = join(fx.HOME, "local", "limits.json");
+        expect(existsSync(file), "应写 $DIY_HOME/local/limits.json").toBe(true);
+        expect((JSON.parse(readFileSync(file, "utf-8")) as { maxSteps?: number }).maxSteps).toBe(7);
+        // 缓存已失效：读口立刻反映新值（"改完不必重启"是页面"下一轮生效"的前提）
+        const now = await fx.sh.getJson(`./diy.sh agent local limits`);
+        expect((now.data as { maxSteps?: number }).maxSteps).toBe(7);
+        // 还原：本文件后续用例（sleep 20 那类长轮）不该被 7 步上限掐掉
+        await fx.sh.getJson(`./diy.sh agent local setLimits --maxSteps 200`);
+    });
+
     it("clear 幂等删除（不存在也可清）", async () => {
         const uri = await setup("清理任务");
         const c = await fx.sh.getJson(`./diy.sh agent local clear ${uri}`);
@@ -435,10 +476,12 @@ describe("agent.local — 真实对话（zen/go）", () => {
     );
 
     // 任务 194 的根因通路：renderer 过去无从知道"别人（CLI/另一窗口）正在这个任务上跑"
-    // —— main 内存里明明有 activeTurns，却没有查询口。这条用例钉住这个口子：
+    // —— 轮次事实在 main 内存里（##240 后归会话注册表），却没有查询口。这条用例钉住这个口子：
     // 一轮真在跑时 running 必须报出来，收尾后必须消失（否则 UI 会一直显示"停止"或误报中断）。
+    // + ##308 的 R8：「有在途轮次时 subscribers >= 1」必须被覆盖（此前只有空表用例，
+    //   而 subscribers 恰恰是 [5] 判「有没有人在看」的唯一数据源）。
     it.skipIf(!RUN_LLM)(
-        "CLI 起一轮期间 running 报该任务活跃；收尾后消失（UI 真值来源）",
+        "CLI 起一轮期间 running 报该任务活跃、subscribers≥1；收尾后消失（UI 真值来源 + R8）",
         async () => {
             const uri = await setup("运行态任务");
             // 独立会话跑 chat（不 await）：模拟"另一端在跑"，主测试进程继续查真值
@@ -451,17 +494,22 @@ describe("agent.local — 真实对话（zen/go）", () => {
                 240_000,
             );
             try {
-                const activeUris = async () => {
+                const activeRows = async () => {
                     const r = await fx.sh.getJson(`./diy.sh agent local running`);
-                    return ((r.data as { active?: Array<{ taskUri: string }> })?.active ?? []).map((t) => t.taskUri);
+                    return (
+                        (r.data as { active?: Array<{ taskUri: string; subscribers: number }> })?.active ?? []
+                    );
                 };
                 // 轮询（不给固定 sleep：上游首 token 往返时长不定）
-                let seen = false;
-                for (let i = 0; i < 40 && !seen; i++) {
-                    seen = (await activeUris()).includes(uri);
-                    if (!seen) await new Promise((r) => setTimeout(r, 500));
+                let hit: { taskUri: string; subscribers: number } | undefined;
+                for (let i = 0; i < 40 && !hit; i++) {
+                    hit = (await activeRows()).find((t) => t.taskUri === uri);
+                    if (!hit) await new Promise((r) => setTimeout(r, 500));
                 }
-                expect(seen, `running 应报 ${uri} 活跃`).toBe(true);
+                expect(hit, `running 应报 ${uri} 活跃`).toBeTruthy();
+                // R8：这条 chat 流本身就是订阅者（run.subs）+ 该会话的 op 订阅 → 必须 >= 1。
+                // 若这里恒 0，[5] 的"谁在跑"会把正在被观察的轮次误报成 detached。
+                expect(hit!.subscribers, `活跃轮次的 subscribers（实际 ${hit!.subscribers}）`).toBeGreaterThanOrEqual(1);
 
                 // 停止入口走的就是这个 RPC：对别人发起的轮次同样有效
                 const c = await fx.sh.getJson(`./diy.sh agent local cancel ${uri}`);
@@ -469,9 +517,84 @@ describe("agent.local — 真实对话（zen/go）", () => {
                 await running;
 
                 // 收尾后必须不再活跃（UI 据此把按钮收回发送态）
-                expect(await activeUris()).not.toContain(uri);
+                expect((await activeRows()).map((t) => t.taskUri)).not.toContain(uri);
             } finally {
                 await fx.sh.run(`./diy.sh agent local cancel ${uri}`).catch(() => undefined);
+                chat.close();
+                await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+            }
+        },
+        260_000,
+    );
+
+    // ##308 的 CLI 面：`sessions --watch` 就是总览页那份数据（页面与 CLI **同一份语义**，
+    // 见验收「CLI --watch 与页面语义一致」）。这里钉全程：订阅期间能看见 turn≠null 的活条目，
+    // 收尾后同一条目翻成 turn=null / turnCount=1 / lastEndReason=completed —— 这正是页面
+    // 「working → idle + 上次结束」这条线，也是 R5「轮次结束只清 turn、条目保留」的可见证据。
+    it.skipIf(!RUN_LLM)(
+        "sessions --watch：在途可见（turn≠null）→ 收尾翻 idle（turnCount=1 / completed）",
+        async () => {
+            const uri = await setup("注册表 watch 任务");
+            const out = join(fx.HOME, "sessions-watch.jsonl");
+            const snap = await fx.sh.run(
+                `rm -f ${out}; ./diy.sh agent local sessions --watch > ${out} 2>&1 & echo $!`,
+            );
+            const watchPid = (snap.stdout.trim().split("\n").pop() ?? "").trim();
+            expect(watchPid, "后台 watch 应回报 pid").toMatch(/^\d+$/);
+
+            /** 读已经落进文件里的注册表帧（过滤读到一半的残行） */
+            const frames = (): Array<Record<string, unknown>> => {
+                if (!existsSync(out)) return [];
+                const rows: Array<Record<string, unknown>> = [];
+                for (const line of readFileSync(out, "utf-8").split("\n")) {
+                    if (!line.trim().startsWith("{")) continue;
+                    try {
+                        rows.push(JSON.parse(line) as Record<string, unknown>);
+                    } catch {
+                        /* 半行：下一轮再读 */
+                    }
+                }
+                return rows;
+            };
+            /** 该 uri 在帧里的条目（snapshot 在 entries 里，upsert 在 entry 里） */
+            const entryIn = (f: Record<string, unknown>): Record<string, unknown> | null => {
+                const list = f.kind === "snapshot" ? (f.entries as Array<Record<string, unknown>>) : [f.entry as Record<string, unknown>];
+                for (const e of list ?? []) {
+                    const refs = (e?.refs as Array<{ kind: string; uri: string }>) ?? [];
+                    if (refs.some((r) => r.kind === "task" && r.uri === uri)) return e;
+                }
+                return null;
+            };
+            const waitFor = async (pred: (e: Record<string, unknown>) => boolean, label: string) => {
+                let hit: Record<string, unknown> | null = null;
+                for (let i = 0; i < 60 && !hit; i++) {
+                    hit = frames().map(entryIn).filter((e): e is Record<string, unknown> => !!e).find(pred) ?? null;
+                    if (!hit) await new Promise((r) => setTimeout(r, 500));
+                }
+                expect(hit, `${label}（watch 已写 ${frames().length} 帧）`).toBeTruthy();
+                return hit!;
+            };
+
+            const chat = new Session({
+                cwd: join(__dirname, "..", "..", ".."),
+                env: { HOME: fx.HOME, DIY_HOME: fx.HOME },
+            });
+            const running = chat.run(
+                `./diy.sh agent local chat ${uri} "用 bash 执行 sleep 8，然后一句话说明结果"`,
+                240_000,
+            );
+            try {
+                const live = await waitFor((e) => e.turn != null, "watch 应看见在途轮次（turn≠null）");
+                expect(live.turnCount).toBe(0);
+                await running;
+                const idle = await waitFor(
+                    (e) => e.turn === null && e.turnCount === 1,
+                    "收尾后 watch 应把同一条目翻成 idle（只清 turn、条目保留）",
+                );
+                expect((idle.lastEndReason as { type?: string })?.type).toBe("completed");
+                expect(Number(idle.totalSteps)).toBeGreaterThanOrEqual(1);
+            } finally {
+                await fx.sh.run(`kill ${watchPid} 2>/dev/null || true`).catch(() => undefined);
                 chat.close();
                 await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
             }
@@ -504,7 +627,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         const fp = opsPath(uri);
         const before = readFileSync(fp, "utf-8");
 
-        const rec = (await fx.sh.getJson(`./diy.sh agent local compact ${uri} --budget-bytes 0`)).data as {
+        const rec = (await fx.sh.getJson(`./diy.sh agent local compact run ${uri} --budget-bytes 0`)).data as {
             boundary: { keptFromTurnId: string | null; keepFromOpIndex: number };
             policy: { mode?: string; modeData?: { budgetBytes?: number } };
             size: { keptTurns: number; droppedTurns: number; before: { bytes: number }; after: { bytes: number } };
@@ -522,7 +645,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         expect(readFileSync(fp, "utf-8")).toBe(before);
 
         // 契约③：**事件快照**（取代旧的"分代"）—— 一条 compact，带算法 + 过滤器
-        const events = (await fx.sh.getJson(`./diy.sh agent local compactEvents ${uri}`)).data as Array<{
+        const events = (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as Array<{
             kind: string;
             id?: string;
             policy?: { mode?: string };
@@ -566,7 +689,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         const big = Array.from({ length: 200 }, (_, i) => `row ${i}`).join("\n");
         seedOps(uri, [...turnOps("t9000", "只这一轮", big)]);
         const rec = (await fx.sh.getJson(
-            `./diy.sh agent local compact ${uri} --budget-bytes 1048576 --tool-result headtail`,
+            `./diy.sh agent local compact run ${uri} --budget-bytes 1048576 --tool-result headtail`,
         )).data as { details?: { clipped?: unknown[] } };
         // 被裁明细在 details.clipped（预算撑满 → 工具结果被保留，但按 headtail 裁）
         expect(rec.details?.clipped && rec.details.clipped.length).toBeGreaterThan(0);
@@ -581,7 +704,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         const uri = await seededSession("摘要落账");
         // 勾选 summary（尚未生成）→ 预览里出现占位骨架（预算 0 → 全部轮被丢弃，摘要针对它们）
         const pv = (await fx.sh.getJson(
-            `./diy.sh agent local compactPreview ${uri} --budget-bytes 0 --summary`,
+            `./diy.sh agent local compact preview ${uri} --budget-bytes 0 --summary`,
         )).data as { modRequest: { messages: unknown[] } };
         const first = JSON.stringify(pv.modRequest.messages[0] ?? "");
         expect(first).toContain("<summary");
@@ -589,7 +712,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
 
         // 执行压缩并带一段摘要文本 → 账本里摘要可查，投递首条即该摘要
         await fx.sh.getJson(
-            `./diy.sh agent local compact ${uri} --budget-bytes 0 --summary --summary-text ${JSON.stringify('<summary turns="3">\n关键结论：\n- 已定稿\n</summary>')}`,
+            `./diy.sh agent local compact run ${uri} --budget-bytes 0 --summary --summary-text ${JSON.stringify('<summary turns="3">\n关键结论：\n- 已定稿\n</summary>')}`,
         );
         const rv = (await fx.sh.getJson(`./diy.sh agent local requestView ${uri}`)).data as { messages: unknown[] };
         expect(JSON.stringify(rv.messages[0] ?? "")).toContain("关键结论");
@@ -624,7 +747,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         // 看**增量**才对；断言"目录里没有"会把同文件其它用例的合法落账算成预览的锅。
         const baseline = compactCount();
         const pv = (await fx.sh.getJson(
-            `./diy.sh agent local compactPreview ${uri} --budget-bytes 0`,
+            `./diy.sh agent local compact preview ${uri} --budget-bytes 0`,
         )).data as { before: { bytes: number }; after: { bytes: number } };
         expect(pv.after.bytes).toBeLessThan(pv.before.bytes);
         expect(compactCount()).toBe(baseline); // 预览不落账（不新增账本文件）
@@ -633,11 +756,11 @@ describe("agent.local — 压缩 compact（无网络）", () => {
 
     it("undoCompact：标记某次压缩作废（append-only，事件留痕可审计）", async () => {
         const uri = await seededSession("压缩撤销");
-        const rec = (await fx.sh.getJson(`./diy.sh agent local compact ${uri} --budget-bytes 0`)).data as { id: string };
-        const u = (await fx.sh.getJson(`./diy.sh agent local undoCompact ${uri} ${rec.id}`)).data as { undone: boolean };
+        const rec = (await fx.sh.getJson(`./diy.sh agent local compact run ${uri} --budget-bytes 0`)).data as { id: string };
+        const u = (await fx.sh.getJson(`./diy.sh agent local compact undo ${uri} ${rec.id}`)).data as { undone: boolean };
         expect(u.undone).toBe(true);
         // 事件账里出现一条 undo（不删原 compact 行 —— append-only、可审计）
-        const events = (await fx.sh.getJson(`./diy.sh agent local compactEvents ${uri}`)).data as Array<{
+        const events = (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as Array<{
             kind: string;
             ref?: string;
         }>;
@@ -650,7 +773,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
 
     it("clear 是「彻底删除」：连同 compact 账本一起清（与 compact 的正交语义）", async () => {
         const uri = await seededSession("压缩与彻底删除");
-        await fx.sh.getJson(`./diy.sh agent local compact ${uri} --budget-bytes 0`);
+        await fx.sh.getJson(`./diy.sh agent local compact run ${uri} --budget-bytes 0`);
         const dir = join(fx.HOME, "local");
         const key = localKey(uri);
         expect(readdirSync(dir).some((f) => f.startsWith(key) && f.endsWith(".compact.jsonl"))).toBe(true);
@@ -660,7 +783,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         // 账本也删干净（否则删除后仍能查到本会话的压缩史）
         expect(readdirSync(dir).some((f) => f.startsWith(key) && f.endsWith(".compact.jsonl"))).toBe(false);
         // 清后：压缩事件账也没了（本会话的压缩史查不到）
-        const events = (await fx.sh.getJson(`./diy.sh agent local compactEvents ${uri}`)).data as unknown[];
+        const events = (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as unknown[];
         expect(events).toEqual([]);
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });

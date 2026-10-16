@@ -74,6 +74,43 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
     const [activeUri, setActiveUri] = createSignal<string | null>(null);
     let inputEl: HTMLInputElement | undefined;
     let listEl: HTMLUListElement | undefined;
+    let panelEl: HTMLDivElement | undefined;
+
+    /**
+     * 焦点陷阱（##356 ③）：Tab / Shift+Tab 在弹层内循环，焦点不跑到背后的页面上。
+     *
+     * 为什么挂**容器**而不是 document 捕获：焦点陷阱只对「焦点已在弹层内」有意义 ——
+     * 浏览器把键盘事件沿活动元素向上冒泡，挂在容器上天然只在焦点落在弹层里时生效，
+     * 不必自己判断"我该不该管这次 Tab"。弹层一开就 focus 输入框，且面板外点击只会关闭它，
+     * 故不存在"焦点在外面被 Tab 带走"的正常路径。
+     *
+     * 与 Esc 的分工：Esc 是**跨层**语义（要挡住 window 上的 TaskDetailPanel），故在 document
+     * 捕获阶段拦；Tab 是**层内**语义（只管自己这一层怎么走），故在本层容器上拦。
+     */
+    const onPanelKeyDown = (e: KeyboardEvent) => {
+        if (e.key !== "Tab") return;
+        const list = Array.from(
+            panelEl?.querySelectorAll<HTMLElement>('input, button, [tabindex]:not([tabindex="-1"])') ?? [],
+        ).filter((el) => !el.hasAttribute("disabled"));
+        if (list.length === 0) return;
+        const first = list[0]!;
+        const last = list[list.length - 1]!;
+        const cur = document.activeElement as HTMLElement | null;
+        const idx = cur ? list.indexOf(cur) : -1;
+        if (idx === -1) {
+            // 焦点不在弹层内（异常路径）：拉回本层，别让它继续向外走
+            e.preventDefault();
+            (e.shiftKey ? last : first).focus();
+            return;
+        }
+        if (!e.shiftKey && cur === last) {
+            e.preventDefault();
+            first.focus();
+        } else if (e.shiftKey && cur === first) {
+            e.preventDefault();
+            last.focus();
+        }
+    };
     /** 打开弹层前的焦点元素 —— 关闭时归还焦点（RV-7：模态不该把焦点吞掉） */
     const restoreFocus = document.activeElement as HTMLElement | null;
 
@@ -182,6 +219,8 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
                 role="dialog"
                 aria-modal="true"
                 aria-label="搜索任务与会话"
+                ref={(el) => (panelEl = el)}
+                onKeyDown={onPanelKeyDown}
                 onClick={(e) => e.stopPropagation()}
             >
                 <input

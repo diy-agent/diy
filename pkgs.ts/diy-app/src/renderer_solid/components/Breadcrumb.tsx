@@ -40,6 +40,7 @@ function tabLabel(uri: string): string {
 const SECTIONS: Record<string, { label: string; icon: string }> = {
     task: { label: "任务管理", icon: "📋" },
     llm: { label: "LLM", icon: "🧠" },
+    sessions: { label: "会话", icon: "🛰" },
     settings: { label: "设置", icon: "⚙️" },
 };
 

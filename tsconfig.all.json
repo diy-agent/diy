@@ -2,6 +2,12 @@
   "files": [],
   "references": [
     {
+      "path": "pkgs.ts/diy-talk"
+    },
+    {
+      "path": "pkgs.ts/diy-flow"
+    },
+    {
       "path": "pkgs.ts/diy-template"
     },
     {

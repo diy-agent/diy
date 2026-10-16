@@ -115,7 +115,9 @@ describe("④ 预算事件的**过滤器表达**（历史回溯可还原投递�
 describe("② details.clipped：同 id 只记一次（去重 —— 回归「虚胖一倍」）", () => {
     it("headtail 裁剪时，每个工具 id 在 details.clipped 里只出现一次", () => {
         const uri = newUri();
-        seedOpsBigTools(uri);
+        // ⚠️ 必须**多于保底步数**（##343 M1：最近 6 步 `clip: full` ⇒ 不再被 headtail 裁）：
+        //    8 轮 ⇒ 最早两轮的工具输出走阶梯级、照旧被裁，去重才有对象可验。
+        seedOpsBigTools(uri, 8);
         const rec = getLocalAgent().compact(
             uri,
             { mode: "budget", budgetBytes: 1024 * 1024, toolResult: { render: "headtail" }, summary: false },
@@ -221,17 +223,23 @@ describe("③ measure 事件：空壳 predicted 不写", () => {
     });
 });
 
-describe("④ v2 分组形状：看 JSON 就知道每块回答什么（D5「结构即语义」）", () => {
-    it("policy / boundary / size / cost / details 五块，且 keptTurns 归 size（不是锚点）", () => {
+describe("④ v3 分组形状：看 JSON 就知道每块回答什么（D5「结构即语义」）", () => {
+    it("policy / boundary / size / cost / details 五块 + v3 的 plan 快照，且 keptTurns 归 size（不是锚点）", () => {
         const uri = newUri();
         seedOps(uri);
         const rec = getLocalAgent().compact(uri, { budgetBytes: 1024 * 1024, toolResult: { render: "asis" } }, "cli") as unknown as Record<string, unknown>;
         expect(rec.kind).toBe("compact");
-        expect(rec.v).toBe(2);
+        // ##344 M2：v3 = v2 分组 + **当时整条 plan 的原文**（快照 ⇒ 可回放）
+        expect(rec.v).toBe(3);
         expect(rec.trigger).toBe("manual");
         expect(Object.keys(rec)).toEqual(
-            expect.arrayContaining(["policy", "boundary", "size", "cost", "details"]),
+            expect.arrayContaining(["policy", "boundary", "size", "cost", "details", "plan"]),
         );
+        // plan 快照：配置没写 history.keep ⇒ 来源 default，且级列表 = 缺省管道（保底 6 步全量 + 阶梯）
+        const plan = rec.plan as { budgetBytes: number; source: string; keep: { type: string }[] };
+        expect(plan.budgetBytes).toBe(1024 * 1024);
+        expect(plan.source).toBe("default");
+        expect(plan.keep.map((k) => k.type)).toEqual(["steps", "ladder"]);
         // 锚点里**没有** keptTurns/droppedTurns（它们是结果，不是锚）
         const boundary = rec.boundary as Record<string, unknown>;
         expect(boundary).toHaveProperty("keepFromOpIndex");
