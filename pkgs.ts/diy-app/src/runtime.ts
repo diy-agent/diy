@@ -28,7 +28,7 @@ import { join } from "node:path";
 /**
  * 运行环境枚举 —— DIY_ENV 的合法值。
  * - production: 发布态（bin/diy / npm 全局）。dev 便利能力全部关闭。缺省即此。
- * - development: worktree 开发（./diy.sh、./sha.sh dev）。
+ * - development: worktree 开发（./diy.sh、./sha.sh preview|lab）。
  * - test: 自动化测试（意图测试 harness）。
  * 刻意不借用 NODE_ENV：那是公共频段（Vite/Express/React 各有语义），DIY_ 前缀自管自用。
  */
